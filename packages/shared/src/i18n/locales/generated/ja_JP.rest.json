@@ -1779,7 +1779,9 @@
           "peer_refused": "接続拒否",
           "peer_timeout": "接続タイムアウト",
           "no_srflx": "公開側のマッピングなし",
-          "turn_unreachable": "TURN 未到達"
+          "turn_unreachable": "TURN 未到達",
+          "turn_probe_failed": "メンバーの TURN 検査がすべて失敗",
+          "not_probed": "未検査（制御ポートに準ずる）"
         }
       },
       "admit": {

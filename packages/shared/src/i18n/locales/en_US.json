@@ -2542,7 +2542,9 @@
           "peer_refused": "Connection refused",
           "peer_timeout": "Timed out",
           "no_srflx": "No public mapping",
-          "turn_unreachable": "TURN unreachable"
+          "turn_unreachable": "TURN unreachable",
+          "turn_probe_failed": "All member TURN probes failed",
+          "not_probed": "Not probed (follows control port)"
         }
       },
       "admit": {

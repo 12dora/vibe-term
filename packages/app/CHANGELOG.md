@@ -9,7 +9,7 @@ _2026-09-13_（未发布）
 - **Local-machine inbound ports.** The heading follows role (“ports this machine / Hub / relay must open”), with a legend, a red ring on blocked, “—” for rows that were not probed, and Re-check on this machine.
 - **Copy mode.** The two options sit side by side; the button item is “Copy via button” (finish the selection, then click Copy). Keyboard shortcuts are unchanged.
 - **CLI coverage.** New client group `vibeterm agent` (sessions, send / steer / queue, confirm, model). `nodes` gains hub-role, tenant relay ls/switch/rm/readmit, ports, upgrade cancel / `--ids`, op clear. `settings` gains passwd / totp / passkey / local-auth / telegram / weixin / `system update-check` (`local direct` honours `--node`). Local `relay metrics`. `tmux move|break|order-*`, `devices disconnect` / `folders rename|reset`, `files mkdir` / `roots enable|disable` / `browse`.
-- 端口可达性后端：（待 WPPB 落地后补充）
+- **Port reachability backend.** Cloud hosts behind 1:1 DNAT (only a private interface address) now also advertise `ws://<public IPv4>:<peer port>/peer`, derived from the STUN mapped address or `VIBETERM_PEER_PUBLIC_HOST`, so peers can probe and dial the public port. A `refused` probe turns the dot red at once; `timeout` needs two strikes. Re-check on this machine bumps `peer_reach_epoch` so peers re-probe within 30 s instead of the 5-min cadence. Relay / hub hosts get derived rows for `public-https` (members online) and TURN control / allocation range (members' TURN tally).
 
 ## 中文
 
@@ -18,7 +18,7 @@ _2026-09-13_（未发布）
 - **本机卡入站端口。** 标题随角色（本机 / Hub / 中继需开通端口），带图例；红灯加 ring；未探测的行画「—」；本机可重新检测。
 - **复制方式。** 两项并排；按钮项改名为「点击按钮后复制」（选区完成后再点复制）。快捷键复制不受此开关影响。
 - **CLI 覆盖。** 新增客户端组 `vibeterm agent`（会话、send / steer / queue、confirm、model）。`nodes` 补 hub-role、租户侧 relay ls/switch/rm/readmit、ports、upgrade cancel / `--ids`、op clear。`settings` 补 passwd / totp / passkey / local-auth / telegram / weixin / `system update-check`（`local direct` 尊重 `--node`）。本机 `relay metrics`。`tmux move|break|order-*`、`devices disconnect` / `folders rename|reset`、`files mkdir` / `roots enable|disable` / `browse`。
-- 端口可达性后端：（待 WPPB 落地后补充）
+- **端口可达性后端。** 只有内网地址的云主机（1:1 DNAT）现在额外广播 `ws://<公网 IPv4>:<peer 端口>/peer`（取自 STUN 映射地址或 `VIBETERM_PEER_PUBLIC_HOST`），对端据此探测并可直连公网口。`refused` 一次即红，`timeout` 两击才红。本机「重新检测」抬高 `peer_reach_epoch`，对端 30 s 内重探，不再等 5 min 周期。中继 / Hub 主机的 `public-https`（成员在线）与 TURN 控制口 / 分配段（成员 TURN 统计）派生出状态行。
 
 # 2.3.5
 

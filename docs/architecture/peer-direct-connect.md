@@ -15,6 +15,7 @@
 - IPv6 ULA `fc00::/7` 与废弃的 site-local `fec0::/10` 默认不广播。
 - CGNAT `100.64/10` 默认不广播，仅当本机自己有非 internal 的 `100.64/10` 地址时才广播（Tailscale 场景）。
 - 普通网卡上的 RFC1918（`10.x`、`192.168.x`、`172.16–31.x`）照常广播。
+- 只有内网地址的云主机（1:1 DNAT）在 peer server 绑定全部接口时，额外追加一条 `ws://<公网 IPv4>:<peer 端口>/peer`：公网地址优先取 `VIBETERM_PEER_PUBLIC_HOST`，否则取 STUN 探测 `ok && !fakeIp` 的映射地址（只用 IP）。永不追加 fake-IP `198.18/15`、CGNAT、RFC1918；映射地址变化时随 status 重新广播。对端会 TCP 探测并可能直连这条公网地址。
 
 真正挡住 docker 网桥的是**网卡名过滤**；地址段规则只是补漏。运营商把 `100.64` 配在 `en0` / `ppp0` 上时仍会广播，由接收侧退避消化。**两侧都升级才彻底干净**：广播端升级后别人才看不到它的 docker 地址；接收端的退避用来保护面对尚未升级的旧广播者。
 
@@ -160,7 +161,7 @@ MeshNode.dcBreaker?: {
 
 成员互报走 relay 状态块 / hub `node.status` 的可选 `peer_reach`（键为 nodeId 前 8 hex，≤32 条）。`POST /api/mesh/nodes/:id/ports/probe`（`requireSession`）立刻重探并回 `{ ports }`。进程内结果，peer TCP 探测 3 s 截止、每 peer 至多 5 min 一次。节点表只在 `status === 'blocked'` 时警告；详情框可「重新检测」。
 
-设置页本机卡按行有无决定灯还是「—」：有 `MeshPortReach` 才画点（`open` 绿、`blocked` 红且 `ring-2 ring-destructive`、`unknown` 灰，点上 `data-status`）；今天没有 reach 行的 purpose（如 `public-https` / `turn-*` / `gateway-http`）画「—」，`title` 为「不探测」，不等于灰。`blocked` 且带 `code` 时点的 `title` 追加可读原因（`peer_refused` 连接被拒 / `peer_timeout` 连接超时 / `no_srflx` 未拿到公网映射 / `turn_unreachable` TURN 不通）。本机卡标题按角色区分本机 / Hub / 中继（见 [角色入站端口](../operations/nonstandard-ports.md)）；详情框仍用「入站端口」。红灯仍受后端 blocked 门槛约束（self 要 ≥2 条失败）。本机卡在能解析到 self id 时提供「重新检测」。
+设置页本机卡按行有无决定灯还是「—」：有 `MeshPortReach` 才画点（`open` 绿、`blocked` 红且 `ring-2 ring-destructive`、`unknown` 灰，点上 `data-status`）；今天没有 reach 行的 purpose（如 `public-https` / `turn-*` / `gateway-http`）画「—」，`title` 为「不探测」，不等于灰。`blocked` 且带 `code` 时点的 `title` 追加可读原因（`peer_refused` 连接被拒 / `peer_timeout` 连接超时 / `no_srflx` 未拿到公网映射 / `turn_unreachable` TURN 不通）。本机卡标题按角色区分本机 / Hub / 中继（见 [角色入站端口](../operations/nonstandard-ports.md)）；详情框仍用「入站端口」。红灯门槛：对端探测到 `refused` 一次即 `blocked`（`peer_refused`），`timeout` 需两击（同一探测槽连续两次，或 self 收到两名 reporter / 同一 reporter 两个周期）；任一 `ok` 立即 `open`。本机卡的「重新检测」抬高 `peer_reach_epoch`（随中继 status blob / uplink `node.status` / 直连 peer ctl 下发，可选字段，旧端忽略），对端看到世代变大即清掉该节点的 5 min 周期并在 30 s tick 内重探。中继 / Hub 主机的 self 行还派生 `public-https`（任一成员在线 / 有效 peer_reach 报告 → `open`，否则 `unknown`）与 `turn-control` / `turn-relay`（按本机公网 URL 分桶的成员 TURN 统计：`ok>0` → `open`；`total≥2 && ok===0` → `blocked/turn_probe_failed`；分配段探不了，跟随控制口并标 `not_probed`）。
 
 ## 3. 信令代次、ICE 配置、链路活性与在途流保护
 

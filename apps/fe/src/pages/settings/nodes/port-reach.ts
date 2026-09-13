@@ -20,7 +20,13 @@ import {
 
 export type MeshPortReachStatus = 'open' | 'blocked' | 'unknown';
 
-export type MeshPortReachCode = 'peer_refused' | 'peer_timeout' | 'no_srflx' | 'turn_unreachable';
+export type MeshPortReachCode =
+  | 'peer_refused'
+  | 'peer_timeout'
+  | 'no_srflx'
+  | 'turn_unreachable'
+  | 'turn_probe_failed'
+  | 'not_probed';
 
 export type MeshPortReach = {
   purpose: PortPurpose;
@@ -68,6 +74,8 @@ const PURPOSES: ReadonlySet<string> = new Set([
 ]);
 
 const REACH_CODES: ReadonlySet<string> = new Set([
+  'turn_probe_failed',
+  'not_probed',
   'peer_refused',
   'peer_timeout',
   'no_srflx',

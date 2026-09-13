@@ -2548,7 +2548,9 @@ export const I18N_RESOURCES = {
           "peer_refused": "Connection refused",
           "peer_timeout": "Timed out",
           "no_srflx": "No public mapping",
-          "turn_unreachable": "TURN unreachable"
+          "turn_unreachable": "TURN unreachable",
+          "turn_probe_failed": "All member TURN probes failed",
+          "not_probed": "Not probed (follows control port)"
         }
       },
       "admit": {
@@ -6265,7 +6267,9 @@ export const I18N_RESOURCES = {
           "peer_refused": "连接被拒",
           "peer_timeout": "连接超时",
           "no_srflx": "未拿到公网映射",
-          "turn_unreachable": "TURN 不通"
+          "turn_unreachable": "TURN 不通",
+          "turn_probe_failed": "成员 TURN 探测全部失败",
+          "not_probed": "不探测（随控制口）"
         }
       },
       "admit": {
@@ -9976,7 +9980,9 @@ export const I18N_RESOURCES = {
           "peer_refused": "接続拒否",
           "peer_timeout": "接続タイムアウト",
           "no_srflx": "公開側のマッピングなし",
-          "turn_unreachable": "TURN 未到達"
+          "turn_unreachable": "TURN 未到達",
+          "turn_probe_failed": "メンバーの TURN 検査がすべて失敗",
+          "not_probed": "未検査（制御ポートに準ずる）"
         }
       },
       "admit": {

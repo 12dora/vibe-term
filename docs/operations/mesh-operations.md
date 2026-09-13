@@ -233,7 +233,7 @@ vibeterm hub join https://vibeterm.example.com --token <join 串> [--name 书房
 
 暂停资格（行菜单与批量「暂停」同一套）：本机、Hub、当前 URL 为 `/n/:id/…` 的转发节点不可新暂停。恢复只拦本机与待批准；Hub 与当前转发节点若已暂停则可恢复（2.3.5 上被暂停的 Hub 升级后可点恢复）。批量菜单把暂停 / 恢复放在升级 / 吊销 / 卸载之前；合格集合为空则禁用。同一节点在途的暂停/恢复互斥（行与批量共享守卫）。`ports[].status === 'blocked'` 时名字下警告「端口不可达」；详情框有完整端口表与「重新检测」（`POST /api/mesh/nodes/:id/ports/probe`）。
 
-本机卡网络区入站端口标题随本机角色：含 `relay`（`relay` / `relay,node`）→「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余（`node` / `standalone` / 缺省）→「本机需开通端口」。节点详情框仍用「入站端口」。标题下一行图例：「绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证」。有 `MeshPortReach` 行（purpose + 端口/range 对上）才画状态点：`open` 绿、`blocked` 红且加 ring、`unknown` 灰；无对应行画「—」（不探测），不等于灰。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时本机卡显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。
+本机卡网络区入站端口标题随本机角色：含 `relay`（`relay` / `relay,node`）→「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余（`node` / `standalone` / 缺省）→「本机需开通端口」。节点详情框仍用「入站端口」。标题下一行图例：「绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证」。有 `MeshPortReach` 行（purpose + 端口/range 对上）才画状态点：`open` 绿、`blocked` 红且加 ring、`unknown` 灰；无对应行画「—」（不探测），不等于灰。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时本机卡显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。只有内网地址的云主机会额外广播 STUN 映射出的公网 IPv4（或 `VIBETERM_PEER_PUBLIC_HOST`），所以安全组已放行 39001 的云主机也能变绿；`refused` 一次即红，`timeout` 两击。「重新检测」让对端 30 s 内重探（经 `peer_reach_epoch`）。中继 / Hub 主机的 443 与 TURN 行由成员在线数与成员 TURN 统计派生。
 
 `GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。
 

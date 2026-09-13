@@ -2274,6 +2274,8 @@ export type TranslationKey =
   | 'nodes.ports.code.peer_timeout'
   | 'nodes.ports.code.no_srflx'
   | 'nodes.ports.code.turn_unreachable'
+  | 'nodes.ports.code.turn_probe_failed'
+  | 'nodes.ports.code.not_probed'
   | 'nodes.admit'
   | 'nodes.admit.blocked'
   | 'nodes.admit.unavailable'
