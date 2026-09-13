@@ -8,7 +8,7 @@ import { telegramService } from '../telegram/service';
 import { weixinService } from '../weixin/service';
 import { registerEventNotifyBroadcaster } from './broadcaster';
 import type { NotificationChannel } from './channels/types';
-import { EventNotifier, eventNotifier } from './index';
+import { EventNotifier, THROTTLE_TTL_MS, eventNotifier } from './index';
 
 beforeAll(() => {
   runMigrations();
@@ -295,6 +295,34 @@ describe('ws-broadcast channel 经注册桥转发', () => {
       await notifier.notify('terminal_bell', event);
 
       expect(received).toEqual(['terminal_bell']);
+    } finally {
+      registerEventNotifyBroadcaster(null);
+      updateSiteSettings({
+        bellThrottleSeconds: original.bellThrottleSeconds,
+        enableBellPush: original.enableBellPush,
+      });
+    }
+  });
+
+  test('throttle map 超过 10 分钟的条目会被 prune', async () => {
+    const received: EventType[] = [];
+    registerEventNotifyBroadcaster((eventType) => {
+      received.push(eventType);
+    });
+    const original = getSiteSettings();
+    try {
+      updateSiteSettings({ bellThrottleSeconds: 30, enableBellPush: false });
+      const notifier = new EventNotifier();
+      const event = {
+        ...baseEvent,
+        device: { id: 'device-throttle-prune', name: 'dev-pr', type: 'local' as const },
+      };
+      await notifier.notify('terminal_bell', event);
+      await notifier.notify('terminal_bell', event);
+      expect(received).toEqual(['terminal_bell']);
+      notifier.pruneThrottleMaps(Date.now() + THROTTLE_TTL_MS + 1);
+      await notifier.notify('terminal_bell', event);
+      expect(received).toEqual(['terminal_bell', 'terminal_bell']);
     } finally {
       registerEventNotifyBroadcaster(null);
       updateSiteSettings({

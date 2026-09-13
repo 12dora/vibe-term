@@ -4,6 +4,7 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { encrypt } from '../../crypto';
 import { type AgentSettingsRecord, ensureAgentSettingsInitialized } from '../../db/agent';
 import { getDb as getOrmDb } from '../../db/client';
+import { loadAiSdk } from '../../llm/ai-sdk-lazy';
 import {
   createFetchUrlTool,
   createWebSearchTool,
@@ -41,9 +42,10 @@ afterAll(() => {
   }
 });
 
-beforeAll(() => {
+beforeAll(async () => {
   migrate(getOrmDb(), { migrationsFolder: resolve(import.meta.dir, '../../../drizzle') });
   ensureAgentSettingsInitialized();
+  await loadAiSdk();
 });
 
 describe('isPrivateHostname / validateFetchUrl（SSRF 拒绝表）', () => {

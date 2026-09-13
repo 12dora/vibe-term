@@ -236,7 +236,7 @@ export class TlsService {
     let certificate: TlsStatus['certificate'] = null;
     if (row.certPem) {
       try {
-        const { subject, sans, notBefore, notAfter, issuer } = parseCertificate(row.certPem);
+        const { subject, sans, notBefore, notAfter, issuer } = await parseCertificate(row.certPem);
         certificate = { subject, sans, notBefore, notAfter, issuer };
       } catch {
         certificate = null;
@@ -622,7 +622,7 @@ export class TlsService {
   private async issueSelfSigned(sans: string[]): Promise<void> {
     const ca = await this.ensureCa();
     const leaf = await issueLeaf({ ca, sans, days: SELF_SIGNED_DAYS, now: this.now() });
-    const parsed = parseCertificate(leaf.certPem);
+    const parsed = await parseCertificate(leaf.certPem);
     await this.upsert({
       certPem: `${leaf.certPem.trim()}\n${ca.certPem.trim()}\n`,
       keyPem: leaf.keyPem,
@@ -636,7 +636,7 @@ export class TlsService {
     const row = await this.opts.store.get();
     const secrets = await this.opts.store.getPrivateMaterial();
     if (row.caCertPem && secrets.caKeyPem) {
-      const parsed = parseCertificate(row.caCertPem);
+      const parsed = await parseCertificate(row.caCertPem);
       const remainingMs = parsed.notAfter - this.now();
       if (remainingMs > 0) {
         if (remainingMs < CA_MIN_REMAINING_MS) {
@@ -691,7 +691,7 @@ export async function rotateSelfSignedCa(
   const now = options.now ?? Date.now();
   const ca = await createCa({ name: 'VibeTerm local CA', now });
   const leaf = await issueLeaf({ ca, sans: row.sans, days: SELF_SIGNED_DAYS, now });
-  const parsed = parseCertificate(leaf.certPem);
+  const parsed = await parseCertificate(leaf.certPem);
   await store.upsert({
     caCertPem: ca.certPem,
     caKeyPem: ca.keyPem,

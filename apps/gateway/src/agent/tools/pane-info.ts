@@ -1,5 +1,6 @@
-import { type Tool, tool } from 'ai';
+import type { Tool } from 'ai';
 import { z } from 'zod';
+import { getAiTool } from '../../llm/ai-sdk-lazy';
 import type { PaneInfo } from '../../tmux-client/capture-history';
 import { getDeviceSnapshot } from '../../tmux/snapshot-directory';
 import {
@@ -83,7 +84,7 @@ function formatPaneInfo(
 }
 
 export function createGetPaneInfoTool(ctx: TerminalToolContext): Tool {
-  return tool({
+  return getAiTool()({
     description:
       'Get live metadata of the bound tmux pane: size (cols/rows), cursor position, whether the alternate screen is active (a full-screen TUI like vim/less), the current foreground command, plus pane context (title, current path, tmux session/window, split-pane count) and entry-host terminal/locale/encoding. Use it to understand TUI state, how output wraps, and confirm the pane still exists.',
     inputSchema: z.object({}),

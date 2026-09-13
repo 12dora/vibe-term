@@ -22,7 +22,7 @@ describe('cert-authority', () => {
     expect(leafCert.verify(caCert.publicKey)).toBe(true);
     expect(leafCert.checkHost('localhost')).toBe('localhost');
 
-    const parsedCa = parseCertificate(ca.certPem);
+    const parsedCa = await parseCertificate(ca.certPem);
     expect(parsedCa.subject.toLowerCase()).toContain('vibeterm test ca');
     expect(parsedCa.issuer).toBe(parsedCa.subject);
     const tenYearsMs = 10 * 365 * 24 * 60 * 60 * 1000;
@@ -30,7 +30,7 @@ describe('cert-authority', () => {
       tenYearsMs - 2 * 24 * 60 * 60 * 1000
     );
 
-    const parsedLeaf = parseCertificate(leaf.certPem);
+    const parsedLeaf = await parseCertificate(leaf.certPem);
     expect(parsedLeaf.sans).toEqual(expect.arrayContaining(['localhost', '127.0.0.1', '::1']));
     expect(parsedLeaf.issuer.toLowerCase()).toContain('vibeterm test ca');
     const daysMs = 398 * 24 * 60 * 60 * 1000;
@@ -48,8 +48,8 @@ describe('cert-authority', () => {
     const now = Date.now();
     const ca = await createCa({ name: 'skew CA', now });
     const leaf = await issueLeaf({ ca, sans: ['localhost'], days: 398, now });
-    const parsedCa = parseCertificate(ca.certPem);
-    const parsedLeaf = parseCertificate(leaf.certPem);
+    const parsedCa = await parseCertificate(ca.certPem);
+    const parsedLeaf = await parseCertificate(leaf.certPem);
     expect(now - parsedCa.notBefore).toBeGreaterThanOrEqual(CERT_NOT_BEFORE_SKEW_MS - 2000);
     expect(now - parsedCa.notBefore).toBeLessThan(CERT_NOT_BEFORE_SKEW_MS + 2000);
     expect(now - parsedLeaf.notBefore).toBeGreaterThanOrEqual(CERT_NOT_BEFORE_SKEW_MS - 2000);
@@ -60,8 +60,8 @@ describe('cert-authority', () => {
     const now = Date.now();
     const ca = await createCa({ name: 'short CA', days: 10, now });
     const leaf = await issueLeaf({ ca, sans: ['localhost'], days: 398, now });
-    const parsedCa = parseCertificate(ca.certPem);
-    const parsedLeaf = parseCertificate(leaf.certPem);
+    const parsedCa = await parseCertificate(ca.certPem);
+    const parsedLeaf = await parseCertificate(leaf.certPem);
     expect(parsedLeaf.notAfter).toBeLessThanOrEqual(parsedCa.notAfter);
     const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
     expect(parsedLeaf.notAfter - now).toBeLessThanOrEqual(tenDaysMs);

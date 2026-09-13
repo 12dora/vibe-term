@@ -10,6 +10,8 @@ ROOT_DIR="$(cd "${APP_DIR}/../.." && pwd)"
 # bundled `dist/runtime/server.js` 的相对解析指向 `dist/runtime/assets/ghostty-vt.wasm`，
 # 但 `bun build` 不会把该 wasm 当作 asset 输出。这里在构建后补拷，使其随 runtime 目录
 # 一起被 deployRuntimeFiles 收进 `<installDir>/runtime/assets/`，生产运行时即可命中。
+# code-split chunks 由 Bun.build(splitting:true) 写到 dist/runtime/chunks/，本脚本不删、
+# 不搬；deployRuntimeFiles 整目录拷贝 runtime/，升级 preflight 校验 server.js + chunks。
 WASM_SRC="${ROOT_DIR}/packages/ghostty-terminal/src/assets/ghostty-vt.wasm"
 RUNTIME_ASSETS_DIR="${APP_DIR}/dist/runtime/assets"
 

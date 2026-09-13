@@ -6,7 +6,7 @@ import {
   parseTurnBindHost,
 } from '../../../../apps/gateway/src/config';
 import { clientIpFromRequest } from '../../../../apps/gateway/src/mesh/client-ip';
-import { type RelayRuntime, createRelayRuntime } from '../../../../apps/gateway/src/relay';
+import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
 import {
   parseTurnExternalIp,
   parseTurnHost,
@@ -20,6 +20,7 @@ import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import type { VibeTermRoles } from '../lib/roles';
 import type { LocalRouteDeps } from './local-routes';
+import { loadRelayRuntime } from './relay-lazy';
 import { resolveSetupEnvPath } from './setup-service';
 
 /** production 才把首启生成的中继管理令牌写回 app.env；dev/test 只打印一次。 */
@@ -54,17 +55,18 @@ function relayTurnConfig(): { url: string; username: string; credential: string 
 }
 
 /** `relay` 角色的运行时；只在 `VIBETERM_ROLES` 含 relay 时创建，缺 public url 直接报配置错误。 */
-export function createAssembledRelay(input: {
+export async function createAssembledRelay(input: {
   roles: VibeTermRoles;
   gateway: GatewayRuntime;
   routeDeps: LocalRouteDeps;
-}): Promise<RelayRuntime> | null {
+}): Promise<RelayRuntime | null> {
   if (!input.roles.relay) return null;
   // gateway config 是模块加载时的 env 快照；这里按运行时 env 优先，便于同进程内多实例测试
   const publicUrl = process.env.VIBETERM_RELAY_PUBLIC_URL?.trim() || gatewayConfig.relayPublicUrl;
   if (!publicUrl) {
     throw new Error('VIBETERM_RELAY_PUBLIC_URL is required when VIBETERM_ROLES includes relay');
   }
+  const { createRelayRuntime } = await loadRelayRuntime();
   return createRelayRuntime({
     db: input.gateway.db,
     config: {

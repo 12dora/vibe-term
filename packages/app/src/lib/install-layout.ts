@@ -36,6 +36,23 @@ export interface InstallLayout {
   lockPath: string;
 }
 
+export function runtimeChunksDir(runtimeDirPath: string): string {
+  return join(runtimeDirPath, 'chunks');
+}
+
+export async function assertRuntimeBundle(runtimeDirPath: string): Promise<void> {
+  const serverJs = join(runtimeDirPath, 'server.js');
+  if (!(await pathExists(serverJs))) {
+    throw new Error(t('errors.layout.runtimeMissing', { path: serverJs }));
+  }
+  const text = await readText(serverJs);
+  if (!text.includes('chunks/')) return;
+  const chunksDir = runtimeChunksDir(runtimeDirPath);
+  if (!(await pathExists(chunksDir))) {
+    throw new Error(t('errors.layout.runtimeMissing', { path: chunksDir }));
+  }
+}
+
 function versionedPaths(root: string) {
   return {
     runtimeDir: join(root, 'runtime'),
@@ -154,11 +171,7 @@ export async function resolvePackageLayout(fromModuleUrl: string): Promise<Packa
     resourceDrizzlePath: join(packageRoot, 'resources', 'gateway-drizzle'),
   };
 
-  if (!(await pathExists(join(layout.runtimeDirPath, 'server.js')))) {
-    throw new Error(
-      t('errors.layout.runtimeMissing', { path: join(layout.runtimeDirPath, 'server.js') })
-    );
-  }
+  await assertRuntimeBundle(layout.runtimeDirPath);
 
   if (!(await pathExists(layout.resourceFePath))) {
     throw new Error(t('errors.layout.feMissing', { path: layout.resourceFePath }));
@@ -181,11 +194,7 @@ export async function packageLayoutFromRoot(packageRoot: string): Promise<Packag
     resourceDrizzlePath: join(packageRoot, 'resources', 'gateway-drizzle'),
   };
 
-  if (!(await pathExists(join(layout.runtimeDirPath, 'server.js')))) {
-    throw new Error(
-      t('errors.layout.runtimeMissing', { path: join(layout.runtimeDirPath, 'server.js') })
-    );
-  }
+  await assertRuntimeBundle(layout.runtimeDirPath);
   if (!(await pathExists(layout.resourceFePath))) {
     throw new Error(t('errors.layout.feMissing', { path: layout.resourceFePath }));
   }

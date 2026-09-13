@@ -3,7 +3,7 @@
 // 只在 step 边界落库完整 ModelMessage；流式 delta 仅聚合节流广播，不持久化。
 
 import { type AgentEventPayloadMap, type EventType, errorMessage, wsBorsh } from '@vibeterm/shared';
-import { type LanguageModel, type ModelMessage, streamText } from 'ai';
+import type { LanguageModel, ModelMessage } from 'ai';
 import { getDeviceById } from '../db';
 import {
   type AgentMessageRole,
@@ -16,6 +16,7 @@ import {
   updateAgentSession,
 } from '../db/agent';
 import { t } from '../i18n';
+import { loadAiSdk } from '../llm/ai-sdk-lazy';
 import type { PaneEmulator } from '../tmux-client/pane-emulator';
 import {
   type BuiltRunRequest,
@@ -222,8 +223,9 @@ export class AgentRun {
         }))
       );
     });
+    const stream = await this.openRunStream(request, persister, runtime);
     await consumeAgentStream(
-      this.openRunStream(request, persister, runtime).fullStream,
+      stream.fullStream,
       createRunStreamHandlers({
         deltas: this.deltas,
         broadcast: (eventType, payload) => this.broadcast(eventType, payload),
@@ -287,7 +289,7 @@ export class AgentRun {
       createWebSearchTool: this.deps.createWebSearchTool,
       createFetchUrlTool: this.deps.createFetchUrlTool,
     });
-    return buildRunRequest({
+    return await buildRunRequest({
       messages: listAgentMessagesForWindow(this.sessionId, MESSAGE_WINDOW_CHAR_BUDGET).map(
         (record) => record.content as ModelMessage
       ),
@@ -301,11 +303,12 @@ export class AgentRun {
     });
   }
 
-  private openRunStream(
+  private async openRunStream(
     request: BuiltRunRequest,
     persister: StepMessagePersister,
     runtime: TerminalRuntimeLike | null
   ) {
+    const { streamText } = await loadAiSdk();
     return streamText({
       ...request,
       abortSignal: this.abortController.signal,

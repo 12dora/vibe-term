@@ -19,10 +19,19 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { createWeixinAdapter, processInboundCommand } from '../messaging';
-import { WeixinClient, type WeixinClientOptions, WeixinSessionExpiredError } from './ilink/client';
+import type { WeixinClient, WeixinClientOptions } from './ilink/client';
 import type { WeixinCredentials, WeixinInboundMessage } from './ilink/types';
+import { WeixinSessionExpiredError } from './ilink/update-loop';
+import { loadWeixinIlink } from './lazy';
 
-export type WeixinClientFactory = (opts: WeixinClientOptions) => WeixinClient;
+export type WeixinClientFactory = (
+  opts: WeixinClientOptions
+) => WeixinClient | Promise<WeixinClient>;
+
+async function defaultCreateWeixinClient(opts: WeixinClientOptions): Promise<WeixinClient> {
+  const { WeixinClient } = await loadWeixinIlink();
+  return new WeixinClient(opts);
+}
 
 // 8 小时保活：iLink 无主动 push 且 context_token 会过期，定时提醒已绑定用户回复任意内容以保持新鲜。
 const KEEPALIVE_INTERVAL_MS = 8 * 60 * 60 * 1000;
@@ -55,9 +64,7 @@ export class WeixinService {
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private lastKeepaliveAt = new Map<string, number>();
 
-  constructor(
-    private readonly createClient: WeixinClientFactory = (opts) => new WeixinClient(opts)
-  ) {}
+  constructor(private readonly createClient: WeixinClientFactory = defaultCreateWeixinClient) {}
 
   /** 串行化入口：避免并发 refresh 在 await 点交错，导致同一账号被启动两次、旧 client 游离泄漏。 */
   async refresh(): Promise<void> {
@@ -116,14 +123,14 @@ export class WeixinService {
         await this.stopAccount(account.id);
       }
 
-      this.startAccount(account, botToken);
+      await this.startAccount(account, botToken);
     }
   }
 
-  private startAccount(account: WeixinAccountConfigRecord, botToken: string): void {
+  private async startAccount(account: WeixinAccountConfigRecord, botToken: string): Promise<void> {
     const baseUrl = account.baseUrl ?? '';
     const weixinUin = account.weixinUin ?? account.id;
-    const client = this.createClient({ accountId: weixinUin, botToken, baseUrl });
+    const client = await this.createClient({ accountId: weixinUin, botToken, baseUrl });
 
     // 同步注水 context_token 缓存：start() 是 detached，若靠它注水则 refresh() 后立刻发消息会取不到 token。
     for (const { userId, contextToken } of getWeixinUserContextTokens(account.id)) {
@@ -351,7 +358,7 @@ export class WeixinService {
     }
 
     const abort = new AbortController();
-    const client = this.createClient({});
+    const client = await this.createClient({});
 
     return await new Promise<StartWeixinLoginResponse>((resolve, reject) => {
       let resolved = false;

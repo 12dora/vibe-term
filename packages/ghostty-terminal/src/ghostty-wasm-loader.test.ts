@@ -2,7 +2,7 @@
 // （边下边编译，省掉一次 555 KB 的整包 arrayBuffer）；MIME 不对或流式失败必须无声退回整包路径。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { instantiateWasmSource } from './ghostty-wasm-loader';
+import { ghosttyWasmCandidates, instantiateWasmSource } from './ghostty-wasm-loader';
 
 const SOURCE = 'https://vibeterm.example/assets/ghostty-vt-abc12345.wasm';
 const FAKE_RESULT = {
@@ -51,6 +51,17 @@ function install(options: {
   };
   return harness;
 }
+
+describe('ghosttyWasmCandidates', () => {
+  test('includes sibling assets and the chunk-parent assets path', () => {
+    const candidates = ghosttyWasmCandidates();
+    const fileUrls = candidates.filter((source) => source.startsWith('file://'));
+    expect(fileUrls[0]).toMatch(/\/assets\/ghostty-vt\.wasm$/);
+    expect(fileUrls[1]).toMatch(/\/assets\/ghostty-vt\.wasm$/);
+    expect(new URL('./assets/ghostty-vt.wasm', import.meta.url).href).toBe(fileUrls[0]);
+    expect(new URL('../assets/ghostty-vt.wasm', import.meta.url).href).toBe(fileUrls[1]);
+  });
+});
 
 describe('instantiateWasmSource', () => {
   test('application/wasm 走流式实例化，只取一次网络', async () => {

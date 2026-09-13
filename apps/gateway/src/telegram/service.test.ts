@@ -312,3 +312,47 @@ describe('TelegramService.handleIncomingText', () => {
     expect(replies.length).toBe(1);
   });
 });
+
+describe('TelegramService.refresh lazy bot factory', () => {
+  test('decryptable token goes through createBot', async () => {
+    const { encrypt } = await import('../crypto');
+    const botId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    createTelegramBot({
+      id: botId,
+      name: 'lazy',
+      tokenEnc: await encrypt('fake-token'),
+      enabled: true,
+      allowAuthRequests: false,
+      allowCommands: false,
+      lastUpdateId: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const tokens: string[] = [];
+    const fakeBot = {
+      on() {
+        return fakeBot;
+      },
+      onError() {
+        return fakeBot;
+      },
+      onResponse() {
+        return fakeBot;
+      },
+      async start() {},
+      async stop() {},
+    };
+    const service = new TelegramService((token) => {
+      tokens.push(token);
+      return fakeBot as never;
+    });
+    try {
+      await service.refresh();
+      expect(tokens).toEqual(['fake-token']);
+    } finally {
+      await service.stopAll();
+      updateTelegramBot(botId, { enabled: false });
+    }
+  });
+});

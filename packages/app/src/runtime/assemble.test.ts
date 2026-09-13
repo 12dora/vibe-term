@@ -1111,7 +1111,7 @@ describe('assembleVibeTerm role matrix', () => {
       sans: ['localhost', '127.0.0.1'],
       days: 398,
     });
-    const parsed = parseCertificate(leaf.certPem);
+    const parsed = await parseCertificate(leaf.certPem);
     await new TlsConfigStore(db).upsert({
       mode: 'selfsigned',
       tlsPort: port,

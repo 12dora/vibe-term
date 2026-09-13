@@ -1,5 +1,5 @@
 import type { ControlModeCommandQueue } from './control-mode-capture';
-import type { InputCommandWindow } from './input-command-window';
+import { type InputCommandWindow, isQueueFullError } from './input-command-window';
 import { PIPELINED_INPUT_TIMEOUT_MS, buildSendKeysCommands } from './input-encoder';
 import type { InputSubmission } from './input-submission';
 
@@ -43,6 +43,8 @@ export function sendExternalInput(
   const completion = transport.window
     ? transport.window.enqueue(commands, execute, submission)
     : Promise.all(commands.map(execute)).then(() => undefined);
-  void completion.catch((error) => transport.onError(error));
+  void completion.catch((error) => {
+    if (!isQueueFullError(error)) transport.onError(error);
+  });
   return completion;
 }

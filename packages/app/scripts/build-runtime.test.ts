@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, readdirSync } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildRuntimeEntry, unresolvedPackageRequires } from './build-runtime';
 
 const tempDirs: string[] = [];
@@ -82,6 +83,80 @@ describe('cpu-features stub plugin', () => {
     const mod = (await import(outfile)) as { probe: () => string };
     expect(mod.probe()).toBe('cpu-features unavailable');
   });
+
+  test('splitting emits a chunks/ directory next to the entry', async () => {
+    const dir = await tempDir();
+    const heavy = join(dir, 'heavy.js');
+    const entry = join(dir, 'entry.js');
+    const outfile = join(dir, 'out.js');
+    await writeFile(heavy, 'export const marker = "lazy-chunk";\n');
+    await writeFile(entry, 'export async function loadHeavy() { return import("./heavy.js"); }\n');
+
+    await buildRuntimeEntry({
+      entrypoint: entry,
+      outfile,
+      version: '0.0.0-test',
+    });
+
+    const text = await readFile(outfile, 'utf8');
+    expect(existsSync(outfile)).toBe(true);
+    expect(text).toMatch(/chunks\//);
+    const chunks = readdirSync(join(dir, 'chunks')).filter((name) => name.endsWith('.js'));
+    expect(chunks.length).toBeGreaterThan(0);
+    const heavyChunk = chunks.find((name) => name.startsWith('heavy-'));
+    expect(heavyChunk).toBeDefined();
+    const heavyText = await readFile(join(dir, 'chunks', heavyChunk as string), 'utf8');
+    expect(heavyText).toContain('lazy-chunk');
+  });
+
+  test(
+    'split runtime resolves ghostty wasm via parent assets after copy-runtime-assets layout',
+    async () => {
+      const dir = await tempDir();
+      const runtimeDir = join(dir, 'runtime');
+      await mkdir(runtimeDir, { recursive: true });
+      const loaderPath = resolve(
+        import.meta.dir,
+        '../../ghostty-terminal/src/ghostty-wasm-loader.ts'
+      );
+      const wasmSrc = resolve(import.meta.dir, '../../ghostty-terminal/src/assets/ghostty-vt.wasm');
+      expect(existsSync(loaderPath)).toBe(true);
+      expect(existsSync(wasmSrc)).toBe(true);
+
+      const entry = join(dir, 'entry.ts');
+      await writeFile(
+        entry,
+        `export async function loadCandidates() {
+  const mod = await import(${JSON.stringify(loaderPath)});
+  return mod.ghosttyWasmCandidates();
+}
+`
+      );
+      const outfile = join(runtimeDir, 'server.js');
+      await buildRuntimeEntry({
+        entrypoint: entry,
+        outfile,
+        version: '0.0.0-test',
+        splitting: true,
+      });
+
+      const assetsDir = join(runtimeDir, 'assets');
+      await mkdir(assetsDir, { recursive: true });
+      await copyFile(wasmSrc, join(assetsDir, 'ghostty-vt.wasm'));
+
+      const { loadCandidates } = (await import(outfile)) as {
+        loadCandidates: () => Promise<string[]>;
+      };
+      const candidates = await loadCandidates();
+      const existing = candidates
+        .map((source) => (source.startsWith('file://') ? fileURLToPath(source) : source))
+        .filter((path) => existsSync(path));
+      expect(
+        existing.some((path) => path.endsWith(join('runtime', 'assets', 'ghostty-vt.wasm')))
+      ).toBe(true);
+    },
+    { timeout: 20_000 }
+  );
 
   const packagedServerJs = resolve(import.meta.dir, '../dist/runtime/server.js');
   // 只在跑过 build:runtime 的环境里检查产物；单测环境没有 dist。

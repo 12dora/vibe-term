@@ -1,5 +1,9 @@
 import type { ShareScope } from '@vibeterm/shared/share';
-import { agentSupervisor } from './agent/supervisor';
+import {
+  restoreRemoteAgentSessionsIfLoaded,
+  startAgentSupervisor,
+  stopAgentSupervisorIfLoaded,
+} from './agent/lazy';
 import { type SystemApiHandler, handleApiRequest } from './api';
 import { json } from './api/http';
 import type { AuthDb } from './auth/types';
@@ -25,13 +29,17 @@ import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
 import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
 import { getShareService } from './share';
-import { telegramService } from './telegram/service';
+import {
+  loadTelegramService,
+  refreshTelegramService,
+  stopTelegramServiceIfLoaded,
+} from './telegram/lazy';
 import { tmuxRuntimeRegistry } from './tmux-client/registry';
 import { primeLocalShellPath } from './tmux/local-shell-path';
 import { registerSnapshotLookup } from './tmux/snapshot-directory';
-import { tunnelManager } from './tunnel/manager';
-import { watchService } from './watch/service';
-import { weixinService } from './weixin/service';
+import { startTunnelManager, stopTunnelManagerIfLoaded } from './tunnel/lazy';
+import { startWatchService, stopWatchServiceIfLoaded } from './watch/lazy';
+import { loadWeixinService, refreshWeixinService, stopWeixinServiceIfLoaded } from './weixin/lazy';
 import { WebSocketServer } from './ws';
 import { startGatewayEventLoopLag, stopGatewayEventLoopLag } from './ws/event-loop-lag';
 import type { GatewaySocketData } from './ws/types';
@@ -101,6 +109,10 @@ export type LiveGatewayStartDeps = {
 async function sendGatewayOnlineMessages(): Promise<void> {
   try {
     const settings = getSiteSettings();
+    const [{ telegramService }, { weixinService }] = await Promise.all([
+      loadTelegramService(),
+      loadWeixinService(),
+    ]);
     await telegramService.sendGatewayOnlineMessage(settings.siteName);
     await weixinService.sendGatewayOnlineMessage(settings.siteName);
   } catch (err) {
@@ -118,20 +130,34 @@ export async function startLiveGatewayServices(deps: LiveGatewayStartDeps = {}):
   const messaging = shouldStartMessagingServices(deps.roles ?? resolveLiveRoles());
   (deps.startLag ?? startGatewayEventLoopLag)();
   registerMessagingRuntime(createMessagingRuntimeHooks());
-  if (messaging) {
-    await (deps.refreshTelegram ?? (() => telegramService.refresh()))();
-    await (deps.refreshWeixin ?? (() => weixinService.refresh()))();
-  }
+  if (!messaging) return;
+  await (deps.refreshTelegram ?? refreshTelegramService)();
+  await (deps.refreshWeixin ?? refreshWeixinService)();
   await (deps.startPush ?? (() => pushSupervisor.start()))();
-  await (deps.startAgent ?? (() => agentSupervisor.start()))();
-  if (messaging) {
-    await (deps.startWatch ?? (() => watchService.start()))();
-  }
-  await (deps.startTunnel ?? (() => tunnelManager.start()))();
-  if (messaging) {
-    startPortMaps();
-    await (deps.sendOnline ?? sendGatewayOnlineMessages)();
-  }
+  await (deps.startAgent ?? startAgentSupervisor)();
+  await (deps.startWatch ?? startWatchService)();
+  await (deps.startTunnel ?? startTunnelManager)();
+  startPortMaps();
+  await (deps.sendOnline ?? sendGatewayOnlineMessages)();
+}
+
+async function stopGatewayLiveServices(): Promise<void> {
+  stopGatewayEventLoopLag();
+  resetMessagingRuntime();
+  setMessagingMeshRuntime(null);
+  connectionAlertNotifier.setBroadcaster(null);
+  connectionAlertNotifier.setEventEmitter(null);
+  registerSettingsBroadcaster(null);
+  registerEventNotifyBroadcaster(null);
+  registerTreeOverlayBridge(null);
+  stopPortMaps();
+  await stopTunnelManagerIfLoaded();
+  await stopWatchServiceIfLoaded();
+  await stopAgentSupervisorIfLoaded();
+  await pushSupervisor.stopAll();
+  await tmuxRuntimeRegistry.shutdownAll();
+  await stopTelegramServiceIfLoaded();
+  await stopWeixinServiceIfLoaded();
 }
 
 function createPreflightGatewayRuntime(options: GatewayRuntimeOptions): GatewayRuntime {
@@ -296,30 +322,15 @@ export async function createGatewayRuntime(
       runtimeController.onRestart(listener);
     },
     restoreRemoteAgentSessions() {
-      agentSupervisor.restoreRemoteSessions();
+      restoreRemoteAgentSessionsIfLoaded();
     },
     stopAgentSessions() {
-      return agentSupervisor.stop();
+      return stopAgentSupervisorIfLoaded();
     },
     async stop() {
-      stopGatewayEventLoopLag();
-      resetMessagingRuntime();
-      setMessagingMeshRuntime(null);
-      connectionAlertNotifier.setBroadcaster(null);
-      connectionAlertNotifier.setEventEmitter(null);
-      registerSettingsBroadcaster(null);
-      registerEventNotifyBroadcaster(null);
-      registerTreeOverlayBridge(null);
       wsServer.closeAll();
       await getShareService().stop();
-      stopPortMaps();
-      await tunnelManager.stop();
-      await watchService.stop();
-      await agentSupervisor.stop();
-      await pushSupervisor.stopAll();
-      await tmuxRuntimeRegistry.shutdownAll();
-      await telegramService.stopAll();
-      await weixinService.stopAll();
+      await stopGatewayLiveServices();
     },
   };
 }

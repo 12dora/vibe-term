@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process';
 import type { Device } from '@vibeterm/shared';
 
 import { runMigrations } from '../../db/migrate';
+import { loadAiSdk } from '../../llm/ai-sdk-lazy';
 import { createDeviceSessionRuntime } from '../../tmux-client/device-session-runtime';
 import {
   LocalExternalTmuxConnection,
@@ -151,8 +152,9 @@ async function invokeRunCommand(
 
 let leftoverSocket: string | null = null;
 
-beforeAll(() => {
+beforeAll(async () => {
   runMigrations();
+  await loadAiSdk();
 });
 
 afterAll(() => {

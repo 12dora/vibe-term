@@ -1,4 +1,5 @@
 import type { PaneModeFlags } from '@vibeterm/shared';
+import { logAt } from '../log/level';
 import type { ControlModeBlock } from './control-mode-parser';
 import { isTmuxPaneId } from './snapshot-format';
 
@@ -45,6 +46,16 @@ interface OrphanControlBlock {
 
 /** 过期 orphan 的 command-number 暂留，用来识别迟到块，避免把它 stamp 到下一条命令上。 */
 const MAX_DISCARDED_ORPHAN_SEQS = 16;
+export const CONTROL_QUEUE_MAX_DEPTH = 512;
+const FULL_WARN_INTERVAL_MS = 5_000;
+
+export class ControlQueueFullError extends Error {
+  readonly code = 'control_queue_full' as const;
+  constructor() {
+    super('control_queue_full');
+    this.name = 'ControlQueueFullError';
+  }
+}
 
 export interface ControlCommandLatencyOptions {
   /** 上报一次 write→%end 往返毫秒数（仅限队列空闲时写出、正常收到 %end 的命令）。 */
@@ -62,6 +73,7 @@ export class ControlModeCommandQueue {
   private readonly orphans: OrphanControlBlock[] = [];
   private readonly discardedSeqs: number[] = [];
   private readonly clockNow: () => number;
+  private lastFullWarnAt = 0;
 
   constructor(
     private readonly onPoison?: () => void,
@@ -90,6 +102,10 @@ export class ControlModeCommandQueue {
     }
   ): Promise<T> {
     if (this.poisoned) return Promise.reject(new Error('tmux control command queue is closed'));
+    if (this.pending.length >= CONTROL_QUEUE_MAX_DEPTH) {
+      this.warnFull();
+      return Promise.reject(new ControlQueueFullError());
+    }
     return new Promise<T>((resolve, reject) => {
       const timeoutMs = options.timeoutMs ?? 10_000;
       const pending: PendingControlCommand<T> = {
@@ -154,6 +170,13 @@ export class ControlModeCommandQueue {
       pending.reject(error instanceof Error ? error : new Error(String(error)));
     }
     return true;
+  }
+
+  private warnFull(): void {
+    const now = Date.now();
+    if (now - this.lastFullWarnAt < FULL_WARN_INTERVAL_MS) return;
+    this.lastFullWarnAt = now;
+    logAt('warn', `[tmux] control_queue_full pending=${this.pending.length}`);
   }
 
   dispose(reason = 'tmux control command queue closed'): void {

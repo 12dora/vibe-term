@@ -1,5 +1,5 @@
 import { type ByteTransport, CTL_STREAM_ID, FrameOp } from '@vibeterm/shared/link';
-import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
+import { fanoutMaxPendingBytes } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
 import { isDcHandshakeWire } from './dc-handshake';
 import {
@@ -346,7 +346,7 @@ export class DataChannelLink implements ByteTransport {
 
   private dispatchFrame(frame: Uint8Array): void {
     if (this.dataCbs.length === 0) {
-      if (this.pendingBytes + frame.byteLength > FANOUT_MAX_PENDING_BYTES) {
+      if (this.pendingBytes + frame.byteLength > fanoutMaxPendingBytes()) {
         rtcLog('buffer overflow', {
           peer: this.peer ?? 'unknown',
           dropped: this.pendingFrames.length + 1,

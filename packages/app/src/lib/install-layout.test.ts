@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInstallLayout, hasCurrentLayout } from './install-layout';
+import { assertRuntimeBundle, createInstallLayout, hasCurrentLayout } from './install-layout';
 
 describe('createInstallLayout', () => {
   test('nativeDir is <installDir>/native when current is absent', () => {
@@ -31,5 +31,23 @@ describe('createInstallLayout', () => {
     expect(layout.cliDir).toBe(join(installDir, 'current', 'cli'));
     expect(layout.envPath).toBe(join(installDir, 'app.env'));
     await rm(installDir, { recursive: true, force: true });
+  });
+});
+
+describe('assertRuntimeBundle', () => {
+  test('accepts a single-file runtime and requires chunks when referenced', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-runtime-bundle-'));
+    const runtimeDir = join(dir, 'runtime');
+    await mkdir(runtimeDir, { recursive: true });
+    await writeFile(join(runtimeDir, 'server.js'), 'export {}\n');
+    await assertRuntimeBundle(runtimeDir);
+
+    await writeFile(join(runtimeDir, 'server.js'), 'import "./chunks/agent.js";\n');
+    await expect(assertRuntimeBundle(runtimeDir)).rejects.toThrow(/chunks/);
+
+    await mkdir(join(runtimeDir, 'chunks'), { recursive: true });
+    await writeFile(join(runtimeDir, 'chunks', 'agent.js'), 'export {}\n');
+    await assertRuntimeBundle(runtimeDir);
+    await rm(dir, { recursive: true, force: true });
   });
 });

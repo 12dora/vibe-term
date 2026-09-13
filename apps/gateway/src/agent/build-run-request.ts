@@ -1,6 +1,6 @@
 import type { Device } from '@vibeterm/shared';
 import type { LanguageModel, LanguageModelMiddleware, ModelMessage, Tool, ToolSet } from 'ai';
-import { stepCountIs, wrapLanguageModel } from 'ai';
+import { loadAiSdk } from '../llm/ai-sdk-lazy';
 import type { PaneEmulator } from '../tmux-client/pane-emulator';
 import { buildAgentSystemPrompt, collectAgentEnvironment } from './prompts';
 import { createRedactionMiddleware } from './redaction-middleware';
@@ -66,14 +66,13 @@ export type WrapRunModelFn = (args: {
 
 export function wrapRunModel(
   resolvedModel: LanguageModel,
-  wrap?: WrapRunModelFn,
+  wrap: WrapRunModelFn,
   createMiddleware?: () => LanguageModelMiddleware
 ): LanguageModel {
   if (typeof resolvedModel === 'string') {
     return resolvedModel;
   }
-  const wrapFn = wrap ?? (wrapLanguageModel as WrapRunModelFn);
-  return wrapFn({
+  return wrap({
     model: resolvedModel,
     middleware: (createMiddleware ?? createRedactionMiddleware)(),
   });
@@ -84,11 +83,11 @@ export interface BuiltRunRequest {
   system: string;
   messages: ModelMessage[];
   tools: ToolSet;
-  stopWhen: ReturnType<typeof stepCountIs>;
+  stopWhen: ReturnType<typeof import('ai')['stepCountIs']>;
   providerOptions: { openai: { store: false } };
 }
 
-export function buildRunRequest(input: {
+export async function buildRunRequest(input: {
   messages: ModelMessage[];
   resolvedModel: LanguageModel;
   tools: ToolSet;
@@ -100,9 +99,14 @@ export function buildRunRequest(input: {
   charBudget?: number;
   wrapModel?: WrapRunModelFn;
   createMiddleware?: () => LanguageModelMiddleware;
-}): BuiltRunRequest {
+}): Promise<BuiltRunRequest> {
+  const { stepCountIs, wrapLanguageModel } = await loadAiSdk();
   return {
-    model: wrapRunModel(input.resolvedModel, input.wrapModel, input.createMiddleware),
+    model: wrapRunModel(
+      input.resolvedModel,
+      input.wrapModel ?? (wrapLanguageModel as WrapRunModelFn),
+      input.createMiddleware
+    ),
     system: buildAgentSystemPrompt({
       paneId: input.paneId,
       writeMode: input.writeMode,
@@ -135,8 +139,10 @@ export interface BuildRunToolsParams {
     keys: readonly string[]
   ) => Promise<Record<string, Tool>>;
   createWebSearchTool: () => Promise<Tool | null>;
-  createFetchUrlTool: () => Tool;
-  createTerminalTools?: (options: CreateTerminalToolsOptions) => Record<string, Tool>;
+  createFetchUrlTool: () => Tool | Promise<Tool>;
+  createTerminalTools?: (
+    options: CreateTerminalToolsOptions
+  ) => Record<string, Tool> | Promise<Record<string, Tool>>;
 }
 
 export async function buildRunTools(params: BuildRunToolsParams): Promise<ToolSet> {
@@ -145,9 +151,12 @@ export async function buildRunTools(params: BuildRunToolsParams): Promise<ToolSe
 
   if (params.runtime && params.paneId) {
     const runtime = params.runtime;
+    if (!params.createTerminalTools) {
+      await loadAiSdk();
+    }
     Object.assign(
       tools,
-      makeTerminalTools({
+      await makeTerminalTools({
         paneId: params.paneId,
         deviceId: params.deviceId ?? '',
         getRuntime: () => runtime,
@@ -182,6 +191,6 @@ export async function buildRunTools(params: BuildRunToolsParams): Promise<ToolSe
     Object.assign(tools, hostedTools);
   }
 
-  tools.fetch_url = params.createFetchUrlTool();
+  tools.fetch_url = await Promise.resolve(params.createFetchUrlTool());
   return tools;
 }

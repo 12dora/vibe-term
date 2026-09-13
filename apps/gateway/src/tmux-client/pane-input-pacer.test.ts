@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { InputQueueFullError } from './input-command-window';
 import { splitMouseSequences } from './mouse-sequence';
 import { PaneInputPacer } from './pane-input-pacer';
 import { TestClock } from './pane-input-test-helpers';
@@ -460,5 +461,29 @@ describe('per-pane input pacing', () => {
     await Promise.resolve();
     expect(errors).toEqual([error]);
     expect(clock.timers.size).toBe(0);
+  });
+  test('queue-full does not drop the pane or mark the device errored', async () => {
+    const clock = new TestClock();
+    const errors: unknown[] = [];
+    const writes: string[] = [];
+    let failNext = true;
+    const pacer = new PaneInputPacer(
+      (_pane, bytes) => {
+        if (failNext) {
+          failNext = false;
+          return Promise.reject(new InputQueueFullError());
+        }
+        writes.push(new TextDecoder().decode(bytes));
+      },
+      clock,
+      () => {},
+      (failure) => errors.push(failure)
+    );
+    await expect(pacer.sendInputBytes('%1', encode('A'))).rejects.toBeInstanceOf(
+      InputQueueFullError
+    );
+    await pacer.sendInputBytes('%1', encode('B'));
+    expect(writes).toEqual(['B']);
+    expect(errors).toEqual([]);
   });
 });

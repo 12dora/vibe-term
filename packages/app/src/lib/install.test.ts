@@ -127,6 +127,25 @@ describe('writeRunScript', () => {
       `exec ${posixQuote('/usr/bin/bun')} ${posixQuote(join(installDir, 'current', 'runtime', 'server.js'))}`
     );
     expect(script).not.toContain('BASH_SOURCE');
+    expect(script).not.toContain('VIBETERM_GHOSTTY_WASM_PATH');
+  });
+
+  test('exports VIBETERM_GHOSTTY_WASM_PATH when runtime assets wasm exists', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-install-'));
+    tempDirs.push(installDir);
+
+    const wasmPath = join(installDir, 'current', 'runtime', 'assets', 'ghostty-vt.wasm');
+    await mkdir(dirname(wasmPath), { recursive: true });
+    await writeFile(wasmPath, 'wasm');
+
+    const installLayout = createInstallLayout(installDir);
+    await writeRunScript(installLayout, '/usr/bin/bun');
+
+    const script = await readFile(installLayout.runScriptPath, 'utf8');
+    expect(script).toContain(`export VIBETERM_GHOSTTY_WASM_PATH=${posixQuote(wasmPath)}`);
+    expect(
+      spawnSync('bash', ['-n', installLayout.runScriptPath], { encoding: 'utf8' }).status
+    ).toBe(0);
   });
 
   test('POSIX-quotes interpolated paths that contain quotes, $(...), spaces, and apostrophes', async () => {

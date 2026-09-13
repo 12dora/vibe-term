@@ -1,7 +1,13 @@
 // 传输的资源预算。源侧限制排队/在跑的任务数，目标侧限制单会话的文件数、总字节、并发写与会话数：
 // `/api/mesh-internal/*` 只证明「对端是本用户的某台节点」，一台被攻陷的节点不该能把目标磁盘写满。
 
+import { type MemoryProfile, getMemoryProfile } from '../memory-profile';
+
 const GIB = 1024 * 1024 * 1024;
+
+function isSmallMemory(): boolean {
+  return getMemoryProfile() === 'small';
+}
 
 /** 会话空闲多久回收；有字节在动或有进行中的操作都会续期。 */
 export const SESSION_IDLE_MS = 10 * 60_000;
@@ -9,10 +15,15 @@ export const SESSION_IDLE_MS = 10 * 60_000;
 export const TRANSFER_CHUNK_BYTES = 8 * 1024 * 1024;
 const MIN_CHUNK_BYTES = 64 * 1024;
 
+const SMALL_TRANSFER_CHUNK_BYTES = 1024 * 1024;
+const SMALL_MAX_SESSION_ACTIVE_WRITES = 4;
+
 /** 会话下发给源侧的分片大小；`VIBETERM_TRANSFER_CHUNK_BYTES` 可覆盖（下限 64 KiB）。 */
 export function transferChunkBytes(): number {
   const configured = envNumber('VIBETERM_TRANSFER_CHUNK_BYTES');
-  if (configured === null) return TRANSFER_CHUNK_BYTES;
+  if (configured === null) {
+    return isSmallMemory() ? SMALL_TRANSFER_CHUNK_BYTES : TRANSFER_CHUNK_BYTES;
+  }
   return Math.max(MIN_CHUNK_BYTES, configured);
 }
 
@@ -20,6 +31,11 @@ export function transferChunkBytes(): number {
 export const MAX_SESSION_FILES = 5000;
 /** 单会话同时在写的区间数：并行流最多 4 条，留出重试重叠的余量。 */
 export const MAX_SESSION_ACTIVE_WRITES = 16;
+
+export function maxSessionActiveWrites(profile: MemoryProfile = getMemoryProfile()): number {
+  return profile === 'small' ? SMALL_MAX_SESSION_ACTIVE_WRITES : MAX_SESSION_ACTIVE_WRITES;
+}
+
 /** 同一源节点同时持有的会话数。 */
 export const MAX_SESSIONS_PER_PEER = 4;
 /** 本节点同时持有的会话总数。 */

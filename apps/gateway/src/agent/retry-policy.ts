@@ -1,5 +1,6 @@
-import { errorMessage } from '@vibeterm/shared';
-import { APICallError, RetryError } from 'ai';
+function isNamedError(error: unknown, name: string): error is Error & Record<string, unknown> {
+  return Boolean(error && typeof error === 'object' && (error as { name?: string }).name === name);
+}
 
 const NETWORK_ERROR_PATTERNS = [
   'fetch failed',
@@ -31,14 +32,15 @@ function isNetworkError(error: unknown, depth = 0): boolean {
 }
 
 export function isRetryableLlmError(error: unknown): boolean {
-  if (RetryError.isInstance(error)) {
+  if (isNamedError(error, 'AI_RetryError')) {
     return true;
   }
-  if (APICallError.isInstance(error)) {
-    if (error.isRetryable) {
+  if (isNamedError(error, 'AI_APICallError')) {
+    if (error.isRetryable === true) {
       return true;
     }
-    return error.statusCode !== undefined && error.statusCode >= 500;
+    const statusCode = error.statusCode;
+    return typeof statusCode === 'number' && statusCode >= 500;
   }
   if (error instanceof TypeError) {
     return isNetworkError(error);

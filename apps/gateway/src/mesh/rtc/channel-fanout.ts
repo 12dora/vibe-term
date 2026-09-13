@@ -1,9 +1,16 @@
 import { MAX_LINK_UNACKED } from '@vibeterm/shared/link';
+import { type MemoryProfile, getMemoryProfile } from '../../memory-profile';
 import type { DataChannelLike } from './native';
 import { rtcLog } from './rtc-log';
 
-export const FANOUT_MAX_PENDING_BYTES = MAX_LINK_UNACKED;
+export const FANOUT_MAX_PENDING_BYTES_STANDARD = MAX_LINK_UNACKED;
+export const FANOUT_MAX_PENDING_BYTES_SMALL = 16 * 1024 * 1024;
+export const FANOUT_MAX_PENDING_BYTES = FANOUT_MAX_PENDING_BYTES_STANDARD;
 export const FANOUT_MAX_PENDING_MESSAGES = 32;
+
+export function fanoutMaxPendingBytes(profile: MemoryProfile = getMemoryProfile()): number {
+  return profile === 'small' ? FANOUT_MAX_PENDING_BYTES_SMALL : FANOUT_MAX_PENDING_BYTES_STANDARD;
+}
 
 function messageByteLength(msg: string | Buffer | ArrayBuffer): number {
   if (typeof msg === 'string') return Buffer.byteLength(msg);
@@ -80,7 +87,7 @@ export function fanoutDataChannel(
   const enqueue = (msg: string | Buffer | ArrayBuffer) => {
     if (closedFired) return;
     const size = messageByteLength(msg);
-    if (pendingBytes + size > FANOUT_MAX_PENDING_BYTES) {
+    if (pendingBytes + size > fanoutMaxPendingBytes()) {
       overflow(pendingMessages.length + 1);
       return;
     }
@@ -162,7 +169,7 @@ export function fanoutDataChannel(
         const combined = [...msgs, ...pendingMessages];
         let total = 0;
         for (const item of combined) total += messageByteLength(item);
-        if (total > FANOUT_MAX_PENDING_BYTES) {
+        if (total > fanoutMaxPendingBytes()) {
           overflow(combined.length);
           return;
         }

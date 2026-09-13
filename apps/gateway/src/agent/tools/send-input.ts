@@ -1,5 +1,6 @@
-import { type Tool, tool } from 'ai';
+import type { Tool } from 'ai';
 import { z } from 'zod';
+import { getAiTool } from '../../llm/ai-sdk-lazy';
 import { cleanTerminalText } from './run-command';
 import {
   type TerminalToolContext,
@@ -29,7 +30,7 @@ function tailLines(text: string, count: number): string {
 }
 
 export function createSendInputTool(ctx: TerminalToolContext): Tool {
-  return tool({
+  return getAiTool()({
     description:
       'Send raw input/keystrokes to the bound tmux pane (for interactive programs and TUIs). Use `text` for literal text, `combos` for modifier+key combinations (e.g. {modifiers:["ctrl"], key:"c"} or {key:"up"}), and `rawControlChars` for low-level control bytes (only honored when the session has control-chars mode enabled — otherwise ignored with a warning). `keys` is the legacy special-key list, kept for backward compatibility. Returns the new output since sending (line mode) or the full re-rendered screen (TUI/alternate mode), both untrusted data, plus live size. For running a shell command and capturing its full output + exit code, prefer run_command.',
     inputSchema: z

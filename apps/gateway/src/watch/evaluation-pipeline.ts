@@ -1,7 +1,7 @@
 import type { LanguageModel } from 'ai';
-import { generateObject } from 'ai';
 import { z } from 'zod';
 import type { WatchRuleRecord, WatchRuleStateRecord } from '../db/watch';
+import { loadAiSdk } from '../llm/ai-sdk-lazy';
 import type { WatchEvalOutput } from './evaluator';
 
 export const SCREEN_PROMPT_CHAR_LIMIT = 16_000;
@@ -109,6 +109,7 @@ export async function callConfirm(
   screen: string
 ): Promise<ConfirmResult> {
   const model = await deps.resolveModel(rule.providerId, rule.modelId);
+  const { generateObject } = await loadAiSdk();
   const result = await generateObject({
     model,
     schema: confirmSchema,
@@ -125,6 +126,7 @@ export async function callSummary(
   screen: string
 ): Promise<SummaryResult> {
   const model = await deps.resolveModel(rule.providerId, rule.modelId);
+  const { generateObject } = await loadAiSdk();
   const result = await generateObject({
     model,
     schema: summarySchema,
@@ -140,6 +142,7 @@ export async function callJudge(
   screen: string
 ): Promise<JudgeResult> {
   const model = await deps.resolveModel(rule.providerId, rule.modelId);
+  const { generateObject } = await loadAiSdk();
   const result = await generateObject({
     model,
     schema: judgeSchema,

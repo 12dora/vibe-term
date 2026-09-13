@@ -57,13 +57,13 @@ describe('resolveMaxStepsPerTurn', () => {
 });
 
 describe('buildRunRequest', () => {
-  test('string model 不 wrap；object model 注入 redaction middleware', () => {
+  test('string model 不 wrap；object model 注入 redaction middleware', async () => {
     const wrapped: Array<{ model: unknown; middleware: unknown }> = [];
     const objectModel = { provider: 'mock', modelId: 'm' } as unknown as LanguageModel;
     const wrappedModel = { provider: 'wrapped' } as unknown as LanguageModel;
     const middleware = { specificationVersion: 'v3' } as LanguageModelMiddleware;
 
-    const asString = buildRunRequest({
+    const asString = await buildRunRequest({
       messages: [{ role: 'user', content: 'hi' }],
       resolvedModel: 'openai/gpt-4.1',
       tools: { fetch_url: dummyTool },
@@ -86,7 +86,7 @@ describe('buildRunRequest', () => {
     expect(typeof asString.stopWhen).toBe('function');
     expect(asString.tools.fetch_url).toBe(dummyTool);
 
-    const asObject = buildRunRequest({
+    const asObject = await buildRunRequest({
       messages: [{ role: 'user', content: 'hi' }],
       resolvedModel: objectModel,
       tools: {},
@@ -107,14 +107,14 @@ describe('buildRunRequest', () => {
     expect(wrapped[0]?.middleware).toBe(middleware);
   });
 
-  test('超预算时对 messages 做 user 边界滑窗', () => {
+  test('超预算时对 messages 做 user 边界滑窗', async () => {
     const messages: ModelMessage[] = [
       { role: 'user', content: 'x'.repeat(600) },
       { role: 'assistant', content: [{ type: 'text', text: 'old' }] },
       { role: 'user', content: 'second' },
       { role: 'assistant', content: [{ type: 'text', text: 'new' }] },
     ];
-    const built = buildRunRequest({
+    const built = await buildRunRequest({
       messages,
       resolvedModel: 'mock/model',
       tools: {},

@@ -1,10 +1,11 @@
 // Web 工具：web_search（tavily/brave 分发）与 fetch_url（含 SSRF 防护）
 
 import { errorMessage } from '@vibeterm/shared';
-import { type Tool, tool } from 'ai';
+import type { Tool } from 'ai';
 import { z } from 'zod';
 import { decrypt } from '../../crypto';
 import { type AgentSettingsRecord, getAgentSettings } from '../../db/agent';
+import { getAiTool, loadAiSdk } from '../../llm/ai-sdk-lazy';
 import { isCanonicalIpv4, isPrivateIpv4, isPrivateIpv6Bytes, parseIpv6ToBytes } from './ip-address';
 import { wrapUntrusted } from './untrusted';
 
@@ -260,6 +261,7 @@ export async function createWebSearchTool(
   };
 
   const searchFn = (query: string) => provider.search(query, settings, deps);
+  const { tool } = await loadAiSdk();
   return tool({
     description: 'Search the web. Returns a JSON array of results with title, url and snippet.',
     inputSchema: z.object({
@@ -349,7 +351,7 @@ export interface CreateFetchUrlToolOptions {
 export function createFetchUrlTool(options: CreateFetchUrlToolOptions = {}): Tool {
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  return tool({
+  return getAiTool()({
     description:
       'Fetch a public http/https URL and return its readable text content (HTML is converted to plain text).',
     inputSchema: z.object({

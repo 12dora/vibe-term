@@ -1,16 +1,10 @@
+import { getMemoryProfile } from '../../memory-profile';
 import {
   type ConsumerState,
-  DEFAULT_HOT_TTL_MS,
-  DEFAULT_MAX_ACTIVE_PANES,
-  DEFAULT_MAX_CHECKPOINT_BYTES_PER_PANE,
-  DEFAULT_MAX_HOT_PANES,
-  DEFAULT_MAX_REPLAY_BYTES_PER_PANE,
-  DEFAULT_MAX_RETENTION_BYTES,
-  DEFAULT_REPLAY_TTL_MS,
-  DEFAULT_ROUTE_GRACE_MS,
   type PaneRetentionEvictionReason,
   type PaneRetentionOptions,
   type PaneState,
+  paneRetentionLimitsFor,
 } from './types';
 
 export class RetentionKernel {
@@ -50,15 +44,16 @@ export class RetentionKernel {
   readonly scheduleTimers: boolean;
 
   constructor(options: PaneRetentionOptions = {}) {
-    this.maxActivePanes = options.maxActivePanes ?? DEFAULT_MAX_ACTIVE_PANES;
-    this.maxHotPanes = options.maxHotPanes ?? DEFAULT_MAX_HOT_PANES;
-    this.routeGraceMs = options.routeGraceMs ?? DEFAULT_ROUTE_GRACE_MS;
-    this.hotTtlMs = options.hotTtlMs ?? DEFAULT_HOT_TTL_MS;
-    this.replayTtlMs = options.replayTtlMs ?? DEFAULT_REPLAY_TTL_MS;
-    this.maxReplayBytesPerPane = options.maxReplayBytesPerPane ?? DEFAULT_MAX_REPLAY_BYTES_PER_PANE;
+    const defaults = paneRetentionLimitsFor(options.memoryProfile ?? getMemoryProfile());
+    this.maxActivePanes = options.maxActivePanes ?? defaults.maxActivePanes;
+    this.maxHotPanes = options.maxHotPanes ?? defaults.maxHotPanes;
+    this.routeGraceMs = options.routeGraceMs ?? defaults.routeGraceMs;
+    this.hotTtlMs = options.hotTtlMs ?? defaults.hotTtlMs;
+    this.replayTtlMs = options.replayTtlMs ?? defaults.replayTtlMs;
+    this.maxReplayBytesPerPane = options.maxReplayBytesPerPane ?? defaults.maxReplayBytesPerPane;
     this.maxCheckpointBytesPerPane =
-      options.maxCheckpointBytesPerPane ?? DEFAULT_MAX_CHECKPOINT_BYTES_PER_PANE;
-    this.maxRetentionBytes = options.maxRetentionBytes ?? DEFAULT_MAX_RETENTION_BYTES;
+      options.maxCheckpointBytesPerPane ?? defaults.maxCheckpointBytesPerPane;
+    this.maxRetentionBytes = options.maxRetentionBytes ?? defaults.maxRetentionBytes;
     this.now = options.now ?? Date.now;
     this.scheduleTimers = options.scheduleTimers ?? true;
   }

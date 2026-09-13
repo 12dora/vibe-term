@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { InputCommandWindow } from './input-command-window';
+import {
+  INPUT_PENDING_MAX_BYTES,
+  InputCommandWindow,
+  InputQueueFullError,
+} from './input-command-window';
+import { SEND_KEYS_HEX_CHUNK_BYTES, buildSendKeysCommands } from './input-encoder';
 import { InputSubmission } from './input-submission';
 
 function deferredExecutor() {
@@ -132,5 +137,57 @@ describe('InputCommandWindow', () => {
     const h = deferredExecutor();
     await window.enqueue([], h.execute);
     expect(h.started).toEqual([]);
+  });
+
+  test('rejects the newest payload when pending entries exceed 256', async () => {
+    const window = new InputCommandWindow(() => 0);
+    const h = deferredExecutor();
+    const queued: Promise<void>[] = [];
+    for (let i = 0; i < 256; i += 1) {
+      queued.push(window.enqueue([[`c${i}`]], h.execute));
+    }
+    await expect(window.enqueue([['overflow']], h.execute)).rejects.toBeInstanceOf(
+      InputQueueFullError
+    );
+    window.dispose('done');
+    await Promise.allSettled(queued);
+  });
+
+  test('a 257-chunk paste on an empty window is accepted', async () => {
+    const window = new InputCommandWindow(() => 0);
+    const h = deferredExecutor();
+    const commands = buildSendKeysCommands('%1', new Uint8Array(257 * SEND_KEYS_HEX_CHUNK_BYTES));
+    expect(commands).toHaveLength(257);
+    const accepted = window.enqueue(commands, h.execute);
+    await expect(window.enqueue([['overflow']], h.execute)).rejects.toBeInstanceOf(
+      InputQueueFullError
+    );
+    window.dispose('done');
+    await expect(accepted).rejects.toThrow('done');
+  });
+
+  test('a 1 MiB paste fits the argv byte budget on an empty window', async () => {
+    const window = new InputCommandWindow(() => 0);
+    const h = deferredExecutor();
+    const commands = buildSendKeysCommands('%1', new Uint8Array(1024 * 1024));
+    expect(commands).toHaveLength((1024 * 1024) / SEND_KEYS_HEX_CHUNK_BYTES);
+    const accepted = window.enqueue(commands, h.execute);
+    window.dispose('done');
+    await expect(accepted).rejects.toThrow('done');
+  });
+
+  test('rejects the newest payload when pending bytes exceed the argv budget', async () => {
+    const window = new InputCommandWindow(() => 0);
+    const h = deferredExecutor();
+    const chunk = 'x'.repeat(64 * 1024);
+    const queued: Promise<void>[] = [];
+    for (let i = 0; i < INPUT_PENDING_MAX_BYTES / (64 * 1024); i += 1) {
+      queued.push(window.enqueue([[chunk]], h.execute));
+    }
+    await expect(window.enqueue([['y']], h.execute)).rejects.toMatchObject({
+      code: 'input_queue_full',
+    });
+    window.dispose('done');
+    await Promise.allSettled(queued);
   });
 });

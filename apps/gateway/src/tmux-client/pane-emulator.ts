@@ -7,8 +7,10 @@
 // - 句柄/流订阅在引用计数归零或显式 shutdown 时 free + unsubscribe（幂等）。
 // - bounded scrollback + run_command 输出缓冲硬上限 + 池上限（LRU 驱逐 refCount=0 的旧实例）。
 
-import { HeadlessTerminal } from 'ghostty-terminal/headless';
+import type { HeadlessTerminal } from 'ghostty-terminal/headless';
+import { type MemoryProfile, getMemoryProfile } from '../memory-profile';
 import type { PaneInfo } from './capture-history';
+import { loadGhosttyHeadless } from './ghostty-lazy';
 import {
   DEFAULT_SCROLLBACK,
   hasRetentionSource,
@@ -69,6 +71,7 @@ export class PaneEmulator {
     opts?: { scrollback?: number }
   ): Promise<PaneEmulator> {
     const info = await source.getPaneInfo(paneId).catch(() => null);
+    const { HeadlessTerminal } = await loadGhosttyHeadless();
     const terminal = await HeadlessTerminal.create(resolveEmulatorOptions(info, opts));
     const emulator = new PaneEmulator(paneId, terminal);
 
@@ -169,6 +172,13 @@ interface RegistryEntry {
   emulator: PaneEmulator | null;
 }
 
+export const DEFAULT_MAX_EMULATOR_ENTRIES = 32;
+export const SMALL_MAX_EMULATOR_ENTRIES = 8;
+
+export function defaultEmulatorMaxEntries(profile: MemoryProfile = getMemoryProfile()): number {
+  return profile === 'small' ? SMALL_MAX_EMULATOR_ENTRIES : DEFAULT_MAX_EMULATOR_ENTRIES;
+}
+
 export interface PaneEmulatorRegistryOptions {
   /** 池上限，超出时驱逐 refCount=0 的最久未用实例 */
   maxEntries?: number;
@@ -177,12 +187,12 @@ export interface PaneEmulatorRegistryOptions {
 
 export class PaneEmulatorRegistry {
   private readonly entries = new Map<string, RegistryEntry>();
-  private readonly maxEntries: number;
+  readonly maxEntries: number;
   private readonly scrollback: number;
   private clock = 0;
 
   constructor(options: PaneEmulatorRegistryOptions = {}) {
-    this.maxEntries = options.maxEntries ?? 32;
+    this.maxEntries = options.maxEntries ?? defaultEmulatorMaxEntries();
     this.scrollback = options.scrollback ?? DEFAULT_SCROLLBACK;
   }
 

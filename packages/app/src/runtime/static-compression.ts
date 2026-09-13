@@ -18,7 +18,7 @@ export const COMPRESSIBLE_EXTENSIONS = new Set([
   '.webmanifest',
 ]);
 
-export const DEFAULT_COMPRESSION_CACHE_BYTES = 64 * 1024 * 1024;
+export const DEFAULT_COMPRESSION_CACHE_BYTES = 8 * 1024 * 1024;
 
 const GZIP_MTIME_OFFSET = 4;
 const GZIP_OS_OFFSET = 9;

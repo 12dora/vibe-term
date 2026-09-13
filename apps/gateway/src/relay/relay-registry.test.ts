@@ -63,6 +63,19 @@ describe('RelayRegistry reconnects / RTT', () => {
     expect(live.pingAt).toBeNull();
   });
 
+  test('forgetMember 在仍在线时也清掉 seen，断线后再接入从 0 计', () => {
+    const registry = new RelayRegistry();
+    const live = put(registry, { connectedAt: 1000 });
+    expect(live.result.live.reconnects).toBe(0);
+    registry.forgetMember('tenant-a', 'node-1');
+    expect(registry.reconnectsOf('tenant-a', 'node-1')).toBe(0);
+    registry.removeLink(live.link);
+    const again = put(registry, { connectedAt: 2000 });
+    expect(again.result.live.reconnects).toBe(0);
+    live.link.close();
+    again.link.close();
+  });
+
   test('forgetMember 清掉 reconnects/seen，再接入从 0 计且幂等', () => {
     const registry = new RelayRegistry();
     const first = put(registry, { connectedAt: 1000 });

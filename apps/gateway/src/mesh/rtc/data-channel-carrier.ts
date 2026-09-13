@@ -1,5 +1,5 @@
 import type { Carrier, CarrierSendResult } from '../../ws/carrier';
-import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
+import { fanoutMaxPendingBytes } from './channel-fanout';
 import {
   FragmentProtocolError,
   type FragmentSizing,
@@ -88,7 +88,7 @@ export class DataChannelCarrier implements Carrier {
       }
       if (!frame) return;
       if (this.messageCbs.length === 0) {
-        if (this.pendingBytes + frame.byteLength > FANOUT_MAX_PENDING_BYTES) {
+        if (this.pendingBytes + frame.byteLength > fanoutMaxPendingBytes()) {
           rtcLog('buffer overflow', {
             peer: this.peer ?? 'unknown',
             dropped: this.pendingFrames.length + 1,

@@ -19,6 +19,7 @@ import {
   generateKdfParams,
   generateX25519KeyPair,
   rootKeyFromSeed,
+  setKdfLockHookForTests,
   signEd25519,
   verifyEd25519,
 } from './root-key';
@@ -111,6 +112,33 @@ describe('assertKdfParamsWithinBudget', () => {
         parallelism: 1,
       })
     ).toThrow(KdfParamsBudgetError);
+  });
+
+  it('serializes concurrent deriveSeed so KDF never overlaps', async () => {
+    let active = 0;
+    let maxActive = 0;
+    setKdfLockHookForTests({
+      onEnter() {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+      },
+      onLeave() {
+        active -= 1;
+      },
+    });
+    const params = {
+      salt: new Uint8Array(16).fill(2),
+      memory_kib: 8,
+      iterations: 1,
+      parallelism: 1,
+    };
+    try {
+      await Promise.all([deriveSeed('alpha', params), deriveSeed('beta', params)]);
+      expect(maxActive).toBe(1);
+      expect(active).toBe(0);
+    } finally {
+      setKdfLockHookForTests(null);
+    }
   });
 
   it('deriveSeed refuses over-budget params before Argon2', async () => {

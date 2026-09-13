@@ -1,6 +1,20 @@
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { argon2id } from 'hash-wasm';
+import { AsyncMutex } from './async-mutex';
 import { type KdfParams, randomBytes } from './encoding';
+
+const kdfMutex = new AsyncMutex();
+
+export type KdfLockHook = {
+  onEnter?: () => void;
+  onLeave?: () => void;
+};
+
+let kdfLockHook: KdfLockHook | null = null;
+
+export function setKdfLockHookForTests(hook: KdfLockHook | null): void {
+  kdfLockHook = hook;
+}
 
 export const ARGON2ID_MEMORY_KIB = 65536;
 export const ARGON2ID_ITERATIONS = 3;
@@ -61,16 +75,22 @@ export function generateKdfParams(): KdfParams {
 export async function deriveSeed(password: string, kdfParams: KdfParams): Promise<Uint8Array> {
   assertKdfParamsWithinBudget(kdfParams);
   const normalized = password.normalize('NFKC');
-  const digest = await argon2id({
-    password: new TextEncoder().encode(normalized),
-    salt: new Uint8Array(kdfParams.salt),
-    parallelism: kdfParams.parallelism,
-    iterations: kdfParams.iterations,
-    memorySize: kdfParams.memory_kib,
-    hashLength: ARGON2ID_HASH_LENGTH,
-    outputType: 'binary',
+  return kdfMutex.runExclusive(async () => {
+    kdfLockHook?.onEnter?.();
+    try {
+      return await argon2id({
+        password: new TextEncoder().encode(normalized),
+        salt: new Uint8Array(kdfParams.salt),
+        parallelism: kdfParams.parallelism,
+        iterations: kdfParams.iterations,
+        memorySize: kdfParams.memory_kib,
+        hashLength: ARGON2ID_HASH_LENGTH,
+        outputType: 'binary',
+      });
+    } finally {
+      kdfLockHook?.onLeave?.();
+    }
   });
-  return digest;
 }
 
 export function rootKeyFromSeed(seed: Uint8Array): RootKey {
