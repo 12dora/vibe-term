@@ -80,12 +80,22 @@ export function enumeratePeerEndpoints(
   return appendPublicPeerEndpoint(urls, port, ifaceIps, opts);
 }
 
+/** STUN 映射地址只在最近一轮探测内有效：公网出口变化后旧地址不能继续广播。 */
+export const STUN_MAPPED_ADVERTISE_TTL_MS = 30 * 60 * 1000;
+
 export function stunMappedAddressesForAdvertise(
-  rows: readonly { ok: boolean; fakeIp?: boolean; mappedAddress?: string }[] = stunProbeSnapshot()
+  rows: readonly {
+    ok: boolean;
+    fakeIp?: boolean;
+    mappedAddress?: string;
+    probedAt?: number;
+  }[] = stunProbeSnapshot(),
+  now: number = Date.now()
 ): string[] {
   const out: string[] = [];
   for (const row of rows) {
     if (!row.ok || row.fakeIp || !row.mappedAddress) continue;
+    if (row.probedAt !== undefined && now - row.probedAt > STUN_MAPPED_ADVERTISE_TTL_MS) continue;
     out.push(row.mappedAddress);
   }
   return out;

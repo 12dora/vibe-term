@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type os from 'node:os';
-import { enumeratePeerEndpoints, usablePublicIpv4 } from './peer-endpoints';
+import {
+  enumeratePeerEndpoints,
+  stunMappedAddressesForAdvertise,
+  usablePublicIpv4,
+} from './peer-endpoints';
 
 const v4 = (address: string): os.NetworkInterfaceInfo => ({
   address,
@@ -68,5 +72,20 @@ describe('enumeratePeerEndpoints public IPv4', () => {
       publicHost: '203.0.113.9',
     });
     expect(urls).toEqual(['ws://10.0.0.8:39001/peer']);
+  });
+});
+
+describe('stunMappedAddressesForAdvertise TTL', () => {
+  test('超过 30 min 的映射地址不再广播', () => {
+    const now = 1_000_000_000;
+    const rows = [
+      { ok: true, mappedAddress: '203.0.113.9:54321', probedAt: now - 31 * 60 * 1000 },
+      { ok: true, mappedAddress: '198.51.100.7:1000', probedAt: now - 60 * 1000 },
+      { ok: true, mappedAddress: '192.0.2.5:2000' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
+      '198.51.100.7:1000',
+      '192.0.2.5:2000',
+    ]);
   });
 });
