@@ -1735,12 +1735,6 @@
         "fingerprint": "Fingerprint",
         "actions": "Actions"
       },
-      "time": {
-        "justNow": "just now",
-        "minutes": "{{n}} min ago",
-        "hours": "{{n}} hours ago",
-        "days": "{{n}} days ago"
-      },
       "status": {
         "online": "Online",
         "offline": "Offline",

@@ -1735,12 +1735,6 @@
         "fingerprint": "フィンガープリント",
         "actions": "操作"
       },
-      "time": {
-        "justNow": "たった今",
-        "minutes": "{{n}} 分前",
-        "hours": "{{n}} 時間前",
-        "days": "{{n}} 日前"
-      },
       "status": {
         "online": "オンライン",
         "offline": "オフライン",

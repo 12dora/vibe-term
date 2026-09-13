@@ -19,6 +19,8 @@ export const I18N_CORE_KEY_PREFIXES: readonly string[] = [
   // 上面那条提示复用了节点设置里的复制按钮，只把它用到的两个 key 提上来。
   'nodes.actions.copied',
   'nodes.actions.copy',
+  // 节点地址/离线相对时间的纯函数被入口图引用（merge-nodes → node-address），4 个时间 key 提上来。
+  'nodes.time',
   'notification',
   'settings.terminal.loadFailed',
   'settings.terminal.loadFailedHint',

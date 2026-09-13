@@ -766,6 +766,12 @@
       }
     },
     "nodes": {
+      "time": {
+        "justNow": "たった今",
+        "minutes": "{{n}} 分前",
+        "hours": "{{n}} 時間前",
+        "days": "{{n}} 日前"
+      },
       "actions": {
         "copy": "コピー",
         "copied": "コピーしました"

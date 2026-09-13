@@ -1735,12 +1735,6 @@
         "fingerprint": "公钥指纹",
         "actions": "操作"
       },
-      "time": {
-        "justNow": "刚刚",
-        "minutes": "{{n}} 分钟前",
-        "hours": "{{n}} 小时前",
-        "days": "{{n}} 天前"
-      },
       "status": {
         "online": "在线",
         "offline": "离线",

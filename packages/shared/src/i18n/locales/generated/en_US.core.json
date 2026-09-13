@@ -766,6 +766,12 @@
       }
     },
     "nodes": {
+      "time": {
+        "justNow": "just now",
+        "minutes": "{{n}} min ago",
+        "hours": "{{n}} hours ago",
+        "days": "{{n}} days ago"
+      },
       "actions": {
         "copy": "Copy",
         "copied": "Copied"
