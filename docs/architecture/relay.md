@@ -601,10 +601,11 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 
 配了 ≥ 2 条未被踢的中继时，节点对**每一条**都保持一条活的 uplink。池里那条 live client 是**主中继**，其余是副中继
 （`relay-secondary-attach.ts`，各自 1 s → 60 s 退避重连）。单中继配置不产生副中继。
-`primaryUrl` **只认池当前挂载**（`uplink.attachedHub()?.publicUrl`），不要回退到 presence 里的旧值——
-否则故障转移后 secondary 会与池抢同一 URL。池会话之间（`attach.stop()` → 重配 → `attach.start()`）会拆掉全部副中继，
-重新挂上时再按当前主中继 spawn；循环自然退出必须释放槽位并 `reconcile`，否则残留僵尸槽不再重试。
-detach 时清 presence 的 primary。
+`primaryUrl` 取池的 `primaryTarget()`——**已挂上的 hub URL，否则正在拨的 URL，否则上次尝试的 URL**，只有池空闲/已停才为 null；
+不要回退到 presence 里的旧值，否则故障转移后 secondary 会与池抢同一 URL。主中继重拨空窗期只排除正在拨的那一条，
+其余已挂上的副中继原样保留（不拆、不重置退避），避免重挂风暴与在飞流中断；仍在配置里的行断开一律走 `stop`
+（`markDisconnected` + decay 宽限），只有配置里真的没了才 `gone`（`presence.remove`）。循环自然退出必须释放槽位并 `reconcile`，
+否则残留僵尸槽不再重试。detach 时清 presence 的 primary。
 
 | | 主中继 | 副中继 |
 |---|---|---|
@@ -640,12 +641,15 @@ detach 时清 presence 的 primary。
 ### 系统 DNS 失败时的 DoH 重拨（`dial-resolve.ts`）
 
 上联 / 中继拨号与 `healthz` / CA 探测共用 `resolveDialHost`：先系统 lookup（3 s），失败再走 DoH，
-按解析到的 IP 重拨，TLS `serverName` 与 HTTP `Host` 仍是原主机名，证书继续按主机名校验；
-**只对 DNS 类失败重拨**（`ENOTFOUND` / `EAI_AGAIN` 等），`ECONNREFUSED`、鉴权拒绝、协议错误原样抛出。
+按解析到的 IP 重拨。**注意 Bun 1.3.14 的 WebSocket 客户端只按 URL host 校验证书、URL 为 IP 字面量时跳过 SAN 校验，
+`tls.serverName` 只设 SNI**（`fetch` 则按 `serverName` 校验），所以 WS 按 IP 重拨前先用 `fetch` 对 `https://<ip>/healthz`
+（中继为 `/api/relay/health`）以原主机名做一次证书校验（`dial-identity.ts`），失败则不重拨并记 `dns fallback identity check failed`；
+HTTP `Host` 头用含端口的 `URL.host`。**只在系统解析失败且 DoH 解析成功时重拨**（`via === 'doh'`），
+`ECONNREFUSED` / `ConnectionRefused`、鉴权拒绝、协议错误原样抛出；解析受调用方 signal 与探测超时约束。
 正缓存 60 s、负缓存 15 s。日志 `[uplink] dns fallback host=… ip=… via=doh` 与
 `[uplink] dns recovered host=…`（系统解析恢复后）。默认开；`VIBETERM_DIAL_DNS_FALLBACK=off` 关闭。
 DoH 端点必须是 **https 的 IP 字面量**（系统解析器坏掉时域名端点自己也解析不出来），缺省
-`223.5.5.5` → `120.53.53.53` → `1.1.1.1` → `8.8.8.8`（境内优先），`VIBETERM_DOH_ENDPOINTS` 可覆盖；
+`223.5.5.5` → `120.53.53.53` → `1.1.1.1` → `8.8.8.8`（境内优先，300 ms 交错并发、单端点 2 s、超时端点记忆 60 s、4xx 只跳过本次），`VIBETERM_DOH_ENDPOINTS` 可覆盖；
 隧道边缘与 STUN 解析共用同一份列表。动机与排障见 [mesh 运维「常见排障」](../operations/mesh-operations.md)。
 
 ### 记录应用与重连

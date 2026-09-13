@@ -120,10 +120,10 @@ FFI 取不到时退化为只看句柄，行为不比改动前差。健康连接�
 - 拨号有 15 s 时限（`PORT_MAP_DIAL_DEADLINE_MS`）。超时后迟到的流会被 `reset`，socket 先 `resume`
   再关掉，让被压住的 `close` 事件出来归还名额——名额只在 socket 真正处置掉时才还。
 
-集成测试「慢消费者背压」的上界**不要写死成固定字节数**：Linux 环回会把 `tcp_wmem` / `tcp_rmem` 自适应到数 MiB，
-`bytesOut` 会计入内核缓冲。用例把 `SO_SNDBUF` / `SO_RCVBUF` 压小，再按运行时
-`getSendBufferSize()` + `getRecvBufferSize()` 估内核余量，上界 =
-`INITIAL_STREAM_WINDOW + MAX_DATA_SEND_PAYLOAD + 两侧套接字缓冲 + 2 MiB` 与 `size/2` 的较小值
+集成测试「慢消费者背压」**不要拿 `bytesOut` 对固定字节数断言**：Linux 环回会把 `tcp_wmem` / `tcp_rmem` 自适应到数 MiB，
+`bytesOut` 会计入内核缓冲（CI ubuntu 实测约 15.5 MiB），而 Bun 的 `node:net` socket 没有 `setRecvBufferSize` 之类访问器，
+压不小也读不到。用例改为断言应用层：泵队列 `pendingBytes ≤ PENDING_HIGH_WATER + MAX_DATA_SEND_PAYLOAD`、mux 流 `unacked ≤ INITIAL_STREAM_WINDOW`，
+再加一条粗粒度的 `bytesOut < 载荷/2`（64 MiB 载荷）。`pendingBytes` 由泵维护并随 `manager.get()` / `PortMapDto` 带出
 （`apps/gateway/src/mesh/integration/portmap.integration.test.ts`）。
 
 ### 半关闭与中断
