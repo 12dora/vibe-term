@@ -1,7 +1,7 @@
 // `vibeterm devices`：节点上的设备与分组。
 
 import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
-import { flagString } from '../core/args';
+import { flagBool, flagString } from '../core/args';
 import {
   type SubHandler,
   confirmOrYes,
@@ -41,6 +41,7 @@ const FLAGS = {
   cwd: 'string',
   'ssh-config': 'string',
   yes: 'boolean',
+  once: 'boolean',
   ids: 'string',
   body: 'string',
 } as const;
@@ -56,7 +57,7 @@ const USAGE = [
   '  rm <device> [--yes]              DELETE /api/devices/:id',
   '  test <device>                    POST /api/devices/:id/test-connection',
   '  order --ids a,b,c                PUT /api/devices/order',
-  '  connect <device>                 WS connect-device (wait for device-connected / tree)',
+  '  connect <device> [--once]        WS connect-device; holds the link until Ctrl-C (--once: confirm and exit)',
   '  disconnect <device>              WS disconnect-device',
   '  folders ls|add|rm|layout|rename|reset   /api/device-folders',
   '',
@@ -144,13 +145,20 @@ const order: SubHandler = async (ctx, flags, positionals) => {
   emit(ctx, result, () => ctx.out.data(result));
 };
 
-const connect: SubHandler = async (ctx, _flags, positionals) => {
+const connect: SubHandler = async (ctx, flags, positionals) => {
   const ref = requireArg(positionals, 0, 'device');
   rejectExtra(positionals, 1);
-  const resolved = await connectDevice(ctx, ref);
-  emit(ctx, { ok: true, action: 'connected', id: resolved.device.id }, () => {
-    ctx.out.line(`connected ${resolved.device.name}`);
-  });
+  const hold = flagBool(flags, 'once') !== true;
+  const report = (resolved: { device: { id: string; name: string } }) =>
+    emit(ctx, { ok: true, action: 'connected', id: resolved.device.id, hold }, () => {
+      ctx.out.line(
+        hold
+          ? `connected ${resolved.device.name}; holding the connection (Ctrl-C to release)`
+          : `connected ${resolved.device.name}`
+      );
+    });
+  const resolved = await connectDevice(ctx, ref, { hold, onConnected: report });
+  if (!hold) report(resolved);
 };
 
 const disconnect: SubHandler = async (ctx, _flags, positionals) => {

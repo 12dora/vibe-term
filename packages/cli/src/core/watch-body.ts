@@ -72,6 +72,8 @@ function applyWatchFlags(flags: FlagValues): Record<string, unknown> {
   if (providerId !== undefined) body.providerId = providerId || null;
   const modelId = flagString(flags, 'model-id');
   if (modelId !== undefined) body.modelId = modelId.trim() || null;
+  // 与 GUI applyProviderId(null) 一致：清空提供商时旧模型一起清，避免留下「默认提供商 + 别家模型」
+  if (body.providerId === null && modelId === undefined) body.modelId = null;
   return body;
 }
 

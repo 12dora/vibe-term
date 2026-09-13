@@ -179,7 +179,7 @@ describe('vibeterm devices', () => {
       json: true,
       timeoutMs: 1_000,
     });
-    await devices.run(h.ctx, ['connect', 'laptop']);
+    await devices.run(h.ctx, ['connect', 'laptop', '--once']);
     expect(h.transport.commandsOfType('connect-device')[0]).toMatchObject({
       deviceId: FAKE_DEVICE_ID,
     });
@@ -188,7 +188,26 @@ describe('vibeterm devices', () => {
       ok: true,
       action: 'connected',
       id: FAKE_DEVICE_ID,
+      hold: false,
     });
+    expect(h.closed()).toBe(1);
+  });
+
+  test('connect without --once holds the socket until SIGINT', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-devices-ws-'));
+    dirs.push(dir);
+    const h = createFakeTermContext({
+      session: fakeSession(),
+      configDir: dir,
+      json: true,
+      timeoutMs: 1_000,
+    });
+    const run = devices.run(h.ctx, ['connect', 'laptop']);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(h.closed()).toBe(0);
+    expect(JSON.parse(h.stdout.text().trim())).toMatchObject({ action: 'connected', hold: true });
+    process.emit('SIGINT');
+    await run;
     expect(h.closed()).toBe(1);
   });
 

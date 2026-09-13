@@ -63,10 +63,54 @@ export async function disconnectDevice(
 
 /**
  * 向网关发 `connect-device`，等到 `device-connected` 或第一份会话树快照再返回。
- * 与 `disconnectDevice` 一样用短连接：确认后关 socket，不经过 `DeviceSession`。
+ * 网关在最后一个客户端离开 5 s 后就会释放设备运行时，所以默认像 GUI 页签一样一直持有
+ * 这条 WS（`hold`），直到 SIGINT/SIGTERM 或 socket 断开；`hold: false` 只确认一次就退出。
  */
-export async function connectDevice(ctx: CliContext, raw: string): Promise<ResolvedTargetDevice> {
-  return sendDeviceCommand(ctx, raw, 'connect-device', 'connect');
+export async function connectDevice(
+  ctx: CliContext,
+  raw: string,
+  opts: { hold?: boolean; onConnected?: (device: ResolvedTargetDevice) => void } = {}
+): Promise<ResolvedTargetDevice> {
+  if (!opts.hold) return sendDeviceCommand(ctx, raw, 'connect-device', 'connect');
+  const resolved = await resolveTargetDevice(ctx, raw);
+  const socket = await ctx.openSocket(resolved.nodeId);
+  try {
+    await awaitDeviceAck(
+      socket.connection.transport,
+      resolved.device.id,
+      'connect-device',
+      'connect',
+      ctx.globals.timeoutMs
+    );
+    opts.onConnected?.(resolved);
+    await holdUntilReleased(socket.connection.transport);
+    return resolved;
+  } finally {
+    socket.close();
+  }
+}
+
+function holdUntilReleased(transport: Pick<GatewayTransport, 'onEvent'>): Promise<void> {
+  return new Promise((resolve) => {
+    let unsub = () => {};
+    const done = () => {
+      process.off('SIGINT', done);
+      process.off('SIGTERM', done);
+      unsub();
+      resolve();
+    };
+    process.once('SIGINT', done);
+    process.once('SIGTERM', done);
+    unsub = transport.onEvent((event) => {
+      if (isConnectionClosed(event)) done();
+    });
+  });
+}
+
+function isConnectionClosed(event: unknown): boolean {
+  if (!event || typeof event !== 'object') return false;
+  const type = (event as { type?: unknown }).type;
+  return type === 'connection-closed' || type === 'disconnected' || type === 'close';
 }
 
 async function sendDeviceCommand(
