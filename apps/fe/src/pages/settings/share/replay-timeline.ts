@@ -200,9 +200,25 @@ export function formatReplayClock(ms: number): string {
 /** 拖动/键盘改进度后，预览标签延迟这么久再收起。 */
 export const REPLAY_PREVIEW_HIDE_MS = 800;
 
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 const REPLAY_TICK_STEPS_MS = [
-  1_000, 5_000, 10_000, 30_000, 60_000, 300_000, 900_000, 3_600_000,
+  1_000,
+  5_000,
+  10_000,
+  30_000,
+  60_000,
+  300_000,
+  900_000,
+  HOUR_MS,
+  2 * HOUR_MS,
+  6 * HOUR_MS,
+  12 * HOUR_MS,
+  DAY_MS,
+  7 * DAY_MS,
 ] as const;
+const REPLAY_TICK_HARD_CAP = 24;
+const REPLAY_MINOR_TICK_CAP = 60;
 
 function replayLocaleCode(language: string | undefined): LocaleCode {
   if (!language) return DEFAULT_LOCALE;
@@ -219,7 +235,6 @@ export function formatReplayWallClock(epochMs: number, language?: string): strin
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false,
     hourCycle: 'h23',
   }).formatToParts(date);
   const hour = parts.find((part) => part.type === 'hour')?.value ?? '00';
@@ -250,7 +265,12 @@ function replayTickCap(widthPx?: number): number {
   return Math.max(4, Math.min(12, Math.floor(widthPx / 48)));
 }
 
-/** 选 ~4–12 个主刻度；`widthPx` 收窄时把上限压低。 */
+function replayFallbackStepMs(duration: number, cap: number): number {
+  const raw = Math.ceil(duration / cap);
+  return Math.max(HOUR_MS, Math.ceil(raw / HOUR_MS) * HOUR_MS);
+}
+
+/** 选 ~4–12 个主刻度；档位用尽时按时长/上限向上取整到整小时，硬上限 24。 */
 export function planReplayTicks(
   durationMs: number,
   widthPx?: number
@@ -259,20 +279,23 @@ export function planReplayTicks(
   if (duration <= 0) return { stepMs: REPLAY_TICK_STEPS_MS[0], ticks: [0] };
 
   const cap = replayTickCap(widthPx);
-  let stepMs: number = REPLAY_TICK_STEPS_MS[REPLAY_TICK_STEPS_MS.length - 1];
+  let stepMs: number | null = null;
   for (const step of REPLAY_TICK_STEPS_MS) {
     if (Math.floor(duration / step) + 1 <= cap) {
       stepMs = step;
       break;
     }
   }
+  if (stepMs === null) stepMs = replayFallbackStepMs(duration, cap);
 
   const ticks: number[] = [];
-  for (let t = 0; t <= duration; t += stepMs) ticks.push(t);
+  for (let t = 0; t <= duration && ticks.length < REPLAY_TICK_HARD_CAP; t += stepMs) {
+    ticks.push(t);
+  }
   return { stepMs, ticks };
 }
 
-/** 主刻度之间的次刻度；1 秒档太密，不再画。 */
+/** 主刻度之间的次刻度；1 秒档太密，超过 60 个也不画。 */
 export function planReplayMinorTicks(durationMs: number, stepMs: number): number[] {
   if (durationMs <= 0 || stepMs < 5_000) return [];
   const minor = stepMs / 5;
@@ -280,6 +303,7 @@ export function planReplayMinorTicks(durationMs: number, stepMs: number): number
   const ticks: number[] = [];
   for (let t = minor; t < durationMs; t += minor) {
     if (t % stepMs !== 0) ticks.push(t);
+    if (ticks.length > REPLAY_MINOR_TICK_CAP) return [];
   }
   return ticks;
 }

@@ -63,11 +63,10 @@ function useReplayScrubPreview(disabled: boolean) {
     update();
     const observer = new ResizeObserver(update);
     observer.observe(el);
-    return () => {
-      observer.disconnect();
-      clearHideTimer(hideTimerRef);
-    };
+    return () => observer.disconnect();
   }, []);
+
+  useEffect(() => () => clearHideTimer(hideTimerRef), []);
 
   useEffect(() => {
     if (!disabled) return;
@@ -97,6 +96,7 @@ export function ReplayPreviewLabel({
   return (
     <output
       aria-label={ariaLabel}
+      aria-live="off"
       data-testid="share-replay-preview"
       className="pointer-events-none absolute top-0 z-20 -translate-x-1/2 rounded bg-foreground px-1.5 py-0.5 text-[10px] tabular-nums text-background"
       style={{ left }}

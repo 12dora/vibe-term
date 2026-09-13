@@ -224,6 +224,68 @@ describe('buildShareOriginContext', () => {
     });
   });
 
+  test('中继探测 bad 时站点 URL 即使等于中继 accessUrl 仍保留', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://relay.example.com/n/node-a',
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'bad' }),
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['site']);
+    expect(context.candidates[0]?.accessUrl).toBe('https://relay.example.com/n/node-a');
+    expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
+  });
+
+  test('hub 上联时历史中继行同 host 不吞掉站点 URL', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://mine.example.com',
+        uplinkKind: () => 'hub',
+        relays: () => [{ url: 'https://mine.example.com', priority: 0, attached: false }],
+        relayProbe: () => fakeProbe({ 'https://mine.example.com': 'ok' }),
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['site']);
+    expect(context.candidates[0]?.accessUrl).toBe('https://mine.example.com');
+  });
+
+  test('站点 URL 落在中继域名时前缀仍由中继行提供', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://relay.example.com',
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['relay']);
+    expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
+  });
+
+  test('同一次 build 只读一次 hubs / relays', () => {
+    let hubReads = 0;
+    let relayReads = 0;
+    buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://mine.example.com',
+        hubs: () => {
+          hubReads += 1;
+          return [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }];
+        },
+        uplinkKind: () => 'relay',
+        relays: () => {
+          relayReads += 1;
+          return [{ url: 'https://relay.example.com', priority: 0, attached: true }];
+        },
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
+      })
+    );
+    expect(hubReads).toBe(1);
+    expect(relayReads).toBe(1);
+  });
+
   test('内网 / 回环地址不进候选', () => {
     const context = buildShareOriginContext(
       sources({

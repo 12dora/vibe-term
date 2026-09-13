@@ -14,6 +14,7 @@ import { meshHubs, meshRelays, nodeIdentity } from '../db/schema';
 import { TunnelConfigStore } from '../tunnel/config-store';
 import { tunnelManager } from '../tunnel/manager';
 import { RelayEntryProbe, type RelayProbeState } from './relay-entry-probe';
+import { listedOriginsOf, shouldOfferSite, uniqueByAccessUrl } from './share-origins-site';
 
 export type ShareOriginContext = {
   candidates: ShareOriginCandidate[];
@@ -55,15 +56,6 @@ function labelOf(url: string): string {
     return parsed.host;
   } catch {
     return url;
-  }
-}
-
-function originOf(url: string | null): string | null {
-  if (!url) return null;
-  try {
-    return new URL(url).origin;
-  } catch {
-    return null;
   }
 }
 
@@ -288,10 +280,13 @@ type RawCandidate = {
  * 否则探测过期的那一刻建分享就会存下 `https://<中继>/s/<id>` 这种死链。
  * 探测只决定要不要把它推荐给用户。
  */
-function collectRelays(sources: ShareOriginSources, prefix: string | null): RawCandidate[] {
+function collectRelays(
+  sources: ShareOriginSources,
+  prefix: string | null,
+  relays: ShareOriginRelayRow[]
+): RawCandidate[] {
   if (!prefix || sources.uplinkKind() !== 'relay') return [];
   const probe = sources.relayProbe();
-  const relays = sources.relays();
   invalidateOnAttachedChange(probe, relays);
   return relays.map((relay) => {
     probe.ensure(relay.url);
@@ -304,75 +299,42 @@ function collectRelays(sources: ShareOriginSources, prefix: string | null): RawC
   });
 }
 
-function collectInfraOrigins(sources: ShareOriginSources, tunnel: string | null): Set<string> {
-  const origins = new Set<string>();
-  const add = (url: string | null): void => {
-    const origin = originOf(url);
-    if (origin) origins.add(origin);
-  };
-  add(tunnel);
-  for (const hub of sources.hubs()) add(hub.publicUrl);
-  for (const relay of sources.relays()) add(relay.url);
-  const base = sources.baseUrl();
-  if (base && isIpHost(base)) add(base);
-  return origins;
-}
-
-function shouldOfferSite(
-  sources: ShareOriginSources,
-  site: string | null,
-  tunnel: string | null
-): site is string {
-  if (!site || sources.siteUrlManaged()) return false;
-  const origin = originOf(site);
-  if (!origin) return false;
-  return !collectInfraOrigins(sources, tunnel).has(origin);
-}
-
-function collectRaw(sources: ShareOriginSources): RawCandidate[] {
+function collectHubs(
+  hubs: Array<{ hubNodeId: string; publicUrl: string; name: string | null }>,
+  localNodeId: string | null,
+  prefix: string | null
+): RawCandidate[] {
   const raw: RawCandidate[] = [];
-  const localNodeId = sources.localNodeId();
-  const prefix = localNodeId ? nodeSharePrefix(localNodeId) : null;
-
-  const tunnel = sources.tunnelUrl();
-  const site = sources.siteUrl();
-  // 站点 URL 常被填成隧道 / 中继 / Hub / 公网 IP；由 hub 托管时更是历史残留，一律由对应 kind 代表。
-  if (shouldOfferSite(sources, site, tunnel)) {
-    raw.push({ url: site, kind: 'site', prefix: null, listed: true });
-  }
-
-  for (const hub of sources.hubs()) {
+  for (const hub of hubs) {
     if (!hub.publicUrl) continue;
     const ownHub = Boolean(localNodeId) && hub.hubNodeId === localNodeId;
     raw.push({ url: hub.publicUrl, kind: 'hub', prefix: ownHub ? null : prefix, listed: true });
   }
-
-  raw.push(...collectRelays(sources, prefix));
-
-  if (tunnel) raw.push({ url: tunnel, kind: 'tunnel', prefix: null, listed: true });
-
-  const base = sources.baseUrl();
-  if (base && isIpHost(base)) raw.push({ url: base, kind: 'ip', prefix: null, listed: true });
-
   return raw;
 }
 
-/** 前缀补上后 accessUrl 可能撞车（site 存的是中继 `/n/<id>`，中继候选 url 却是裸 origin）。同地址只留一条，自建域名让路。 */
-function uniqueByAccessUrl(candidates: ShareOriginCandidate[]): ShareOriginCandidate[] {
-  const keyOf = (url: string) => normalizeShareOrigin(url) ?? url;
-  const claimed = new Set(
-    candidates.filter((item) => item.kind !== 'site').map((item) => keyOf(item.accessUrl))
-  );
-  const seen = new Set<string>();
-  const unique: ShareOriginCandidate[] = [];
-  for (const candidate of candidates) {
-    const key = keyOf(candidate.accessUrl);
-    if (seen.has(key)) continue;
-    if (candidate.kind === 'site' && claimed.has(key)) continue;
-    seen.add(key);
-    unique.push(candidate);
+function collectRaw(sources: ShareOriginSources): RawCandidate[] {
+  const localNodeId = sources.localNodeId();
+  const prefix = localNodeId ? nodeSharePrefix(localNodeId) : null;
+  const hubs = sources.hubs();
+  const relays = sources.relays();
+  const tunnel = sources.tunnelUrl();
+  const site = sources.siteUrl();
+
+  const raw: RawCandidate[] = [
+    ...collectHubs(hubs, localNodeId, prefix),
+    ...collectRelays(sources, prefix, relays),
+  ];
+  if (tunnel) raw.push({ url: tunnel, kind: 'tunnel', prefix: null, listed: true });
+  const base = sources.baseUrl();
+  if (base && isIpHost(base)) raw.push({ url: base, kind: 'ip', prefix: null, listed: true });
+
+  // 站点是否让路看会上榜的 infra origin，而不是库里的原始行：探测没过 / 当前不是中继上联时，
+  // 那些中继行根本不会出现在候选里，不能把用户自己的站点 URL 一起抹掉。
+  if (shouldOfferSite(site, sources.siteUrlManaged(), listedOriginsOf(raw))) {
+    raw.push({ url: site, kind: 'site', prefix: null, listed: true });
   }
-  return unique;
+  return raw;
 }
 
 /**

@@ -10,7 +10,11 @@ import { Children, type ReactElement, type ReactNode, isValidElement } from 'rea
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SiteUrlField } from './general-fields';
 import { UNLINKED_SITE_SETTINGS, createDefaultSiteSettingsDraft } from './site-settings-form';
-import { SiteUrlCandidateOption, SiteUrlCandidates } from './site-url-candidates';
+import {
+  SiteUrlCandidateOption,
+  SiteUrlCandidates,
+  visibleSiteUrlCandidates,
+} from './site-url-candidates';
 import type { SiteSettingsForm } from './use-site-settings-form';
 
 function candidate(overrides: Partial<ShareOriginCandidate> = {}): ShareOriginCandidate {
@@ -145,38 +149,20 @@ describe('SiteUrlCandidates', () => {
     });
     const relay = candidate();
     const origins = [siteDup, relay, TUNNEL];
-    let current = siteDup.accessUrl;
-    const render = () =>
-      renderToStaticMarkup(
-        <SiteUrlCandidates
-          candidates={origins}
-          currentValue={current}
-          onSelect={(url) => {
-            current = url;
-          }}
-        />
-      );
-    const click = (item: ShareOriginCandidate) => {
-      const option = SiteUrlCandidateOption({
-        candidate: item,
-        label: item.label,
-        selected: false,
-        onSelect: (url) => {
-          current = url;
-        },
-      });
-      const radio = findByTestId(option, 'settings-site-url-candidate-radio');
-      (radio?.props as { onChange: () => void }).onChange();
-    };
+    const kindsOf = () => visibleSiteUrlCandidates(origins).map((item) => item.kind);
 
-    expect(render().split('data-kind="site"').length - 1).toBe(0);
-    expect(render().split('data-testid="settings-site-url-candidate"').length - 1).toBe(2);
-    click(relay);
-    click(TUNNEL);
-    const html = render();
-    expect(html.split('data-kind="site"').length - 1).toBeLessThanOrEqual(1);
-    expect(html.split('data-kind="site"').length - 1).toBe(0);
-    expect(html.split('data-testid="settings-site-url-candidate"').length - 1).toBe(2);
+    expect(kindsOf()).toEqual(['relay', 'tunnel']);
+
+    let current = siteDup.accessUrl;
+    current = relay.accessUrl;
+    expect(kindsOf()).toEqual(['relay', 'tunnel']);
+    expect(visibleSiteUrlCandidates(origins).filter((item) => item.kind === 'site')).toEqual([]);
+    current = TUNNEL.accessUrl;
+    expect(visibleSiteUrlCandidates(origins).map((item) => item.accessUrl)).toEqual([
+      relay.accessUrl,
+      TUNNEL.accessUrl,
+    ]);
+    expect(current).toBe(TUNNEL.accessUrl);
   });
 });
 
