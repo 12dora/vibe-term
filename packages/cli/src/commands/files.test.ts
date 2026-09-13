@@ -85,8 +85,14 @@ function filesFetch(
       return new Response(null, { status: 204 });
     }
     if (path.startsWith('/api/files/roots/') && request.method === 'PATCH') {
-      const body = (await request.json()) as { enabled?: boolean };
-      return json({ root: { ...ROOT, enabled: body.enabled ?? ROOT.enabled } });
+      const body = (await request.json()) as { enabled?: boolean; path?: string };
+      return json({
+        root: {
+          ...ROOT,
+          enabled: body.enabled ?? ROOT.enabled,
+          path: body.path ?? ROOT.path,
+        },
+      });
     }
     if (path === '/api/files/roots/order') return json({ roots: [ROOT] });
     if (path === '/api/files/mkdir' && request.method === 'POST') {
@@ -283,6 +289,58 @@ describe('vibeterm files', () => {
       path: '/home/me/docs/new',
       created: true,
     });
+  });
+
+  test('roots set --path patches {path}', async () => {
+    let method = '';
+    let url = '';
+    let body = '';
+    const { ctx, stdout } = await testContext(
+      filesFetch({
+        [`PATCH /api/files/roots/${ROOT_ID}`]: async (req, parsed) => {
+          method = req.method;
+          url = parsed.pathname;
+          body = await req.text();
+          const patch = JSON.parse(body) as { path: string };
+          return json({ root: { ...ROOT, path: patch.path } });
+        },
+      }),
+      { json: true }
+    );
+    await files.run(ctx, ['roots', 'set', 'home', '--path', '/opt/src']);
+    expect(method).toBe('PATCH');
+    expect(url).toContain(`/api/files/roots/${ROOT_ID}`);
+    expect(JSON.parse(body)).toEqual({ path: '/opt/src' });
+    expect(JSON.parse(stdout.text()).root.path).toBe('/opt/src');
+  });
+
+  test('roots set --path --enabled off patches both fields', async () => {
+    let body = '';
+    const { ctx, stdout } = await testContext(
+      filesFetch({
+        [`PATCH /api/files/roots/${ROOT_ID}`]: async (req) => {
+          body = await req.text();
+          const patch = JSON.parse(body) as { path: string; enabled: boolean };
+          return json({ root: { ...ROOT, ...patch } });
+        },
+      }),
+      { json: true }
+    );
+    await files.run(ctx, ['roots', 'set', ROOT_ID, '--path', '/data', '--enabled', 'off']);
+    expect(JSON.parse(body)).toEqual({ path: '/data', enabled: false });
+    expect(JSON.parse(stdout.text()).root.enabled).toBe(false);
+  });
+
+  test('roots set requires --path', async () => {
+    const { ctx } = await testContext(filesFetch());
+    await expect(files.run(ctx, ['roots', 'set', 'home'])).rejects.toThrow(UsageError);
+  });
+
+  test('roots set rejects a relative path', async () => {
+    const { ctx } = await testContext(filesFetch());
+    await expect(files.run(ctx, ['roots', 'set', 'home', '--path', 'relative'])).rejects.toThrow(
+      UsageError
+    );
   });
 
   test('roots enable / disable patch {enabled}', async () => {

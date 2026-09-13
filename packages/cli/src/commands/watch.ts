@@ -34,6 +34,9 @@ const FLAGS = {
   prompt: 'string',
   body: 'string',
   yes: 'boolean',
+  'extract-group': 'number',
+  'confirm-with-llm': 'string',
+  'summarize-with-llm': 'string',
   'provider-id': 'string',
   'model-id': 'string',
 } as const;
@@ -46,6 +49,8 @@ const USAGE = [
   '  rules show <id>',
   '  rules add --name --device --pane --trigger-type match|unchanged|llm [--pattern] [--body]',
   '  rules edit <id> …',
+  '    add/edit also: --extract-group N --confirm-with-llm on|off --summarize-with-llm on|off',
+  '                   --provider-id --model-id  (same fields as the GUI watch draft)',
   '  rules rm <id> [--yes]',
   '  rules state <id> [on|off]     GET state; with on|off PATCH enabled',
   '  assist-regex "<description>" [--device] [--pane]',

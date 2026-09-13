@@ -227,9 +227,117 @@ describe('vibeterm share', () => {
     expect(posts[0]).toEqual({ password: 'next-pass-1', endSessions: true });
   });
 
-  test('settings set requires --body', async () => {
+  test('settings set requires flags or --body', async () => {
     const { ctx: cli } = await restCtx({});
     await expect(share.run(cli, ['settings', 'set'])).rejects.toBeInstanceOf(UsageError);
+  });
+
+  test('settings set read-modify-writes unspecified fields from GET', async () => {
+    const current = {
+      recordLogs: true,
+      logRetentionDays: 30,
+      logMaxBytes: 52_428_800,
+      defaultOrigin: 'https://share.example.com',
+    };
+    let putBody = '';
+    const { ctx: cli, stdout } = await restCtx({
+      'GET /api/share/settings': () => current,
+      'PUT /api/share/settings': (_url, init) => {
+        putBody = String(init?.body);
+        return { ...current, ...JSON.parse(putBody) };
+      },
+    });
+    await share.run(cli, ['settings', 'set', '--record-logs', 'off']);
+    expect(JSON.parse(putBody)).toEqual({
+      recordLogs: false,
+      logRetentionDays: 30,
+      logMaxBytes: 52_428_800,
+      defaultOrigin: 'https://share.example.com',
+    });
+    expect(JSON.parse(stdout.text()).recordLogs).toBe(false);
+  });
+
+  test('settings set maps --log-max-mb and --origin auto like the GUI form', async () => {
+    const current = {
+      recordLogs: true,
+      logRetentionDays: 30,
+      logMaxBytes: 52_428_800,
+      defaultOrigin: 'https://share.example.com',
+    };
+    let putBody = '';
+    const { ctx: cli } = await restCtx({
+      'GET /api/share/settings': () => current,
+      'PUT /api/share/settings': (_url, init) => {
+        putBody = String(init?.body);
+        return JSON.parse(putBody);
+      },
+    });
+    await share.run(cli, [
+      'settings',
+      'set',
+      '--retention-days',
+      '7',
+      '--log-max-mb',
+      '20',
+      '--origin',
+      'auto',
+    ]);
+    expect(JSON.parse(putBody)).toEqual({
+      recordLogs: true,
+      logRetentionDays: 7,
+      logMaxBytes: 20 * 1024 * 1024,
+      defaultOrigin: null,
+    });
+  });
+
+  test('settings set --origin normalizes a URL to origin', async () => {
+    const current = {
+      recordLogs: true,
+      logRetentionDays: 30,
+      logMaxBytes: 52_428_800,
+      defaultOrigin: null,
+    };
+    let putBody = '';
+    const { ctx: cli } = await restCtx({
+      'GET /api/share/settings': () => current,
+      'PUT /api/share/settings': (_url, init) => {
+        putBody = String(init?.body);
+        return JSON.parse(putBody);
+      },
+    });
+    await share.run(cli, ['settings', 'set', '--origin', 'https://own.example/foo?x=1']);
+    expect(JSON.parse(putBody).defaultOrigin).toBe('https://own.example');
+  });
+
+  test('settings set --body still overlays the merged settings', async () => {
+    const current = {
+      recordLogs: true,
+      logRetentionDays: 30,
+      logMaxBytes: 52_428_800,
+      defaultOrigin: null,
+    };
+    let putBody = '';
+    const { ctx: cli } = await restCtx({
+      'GET /api/share/settings': () => current,
+      'PUT /api/share/settings': (_url, init) => {
+        putBody = String(init?.body);
+        return JSON.parse(putBody);
+      },
+    });
+    await share.run(cli, [
+      'settings',
+      'set',
+      '--record-logs',
+      'off',
+      '--body',
+      '{"logRetentionDays":3}',
+    ]);
+    expect(JSON.parse(putBody)).toEqual({
+      recordLogs: false,
+      logRetentionDays: 3,
+      logMaxBytes: 52_428_800,
+      defaultOrigin: null,
+    });
   });
 
   test('origins', async () => {

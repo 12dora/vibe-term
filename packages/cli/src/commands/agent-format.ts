@@ -1,6 +1,11 @@
 // `vibeterm agent` 人读输出：短表、消息预览。
 
-import type { AgentMessageDto, AgentQueuedMessageDto, AgentSessionDto } from '@vibeterm/shared';
+import type {
+  AgentConfirmationDto,
+  AgentMessageDto,
+  AgentQueuedMessageDto,
+  AgentSessionDto,
+} from '@vibeterm/shared';
 import { dash, shortId } from '../core/cmd';
 import type { CliContext } from '../core/context';
 
@@ -60,6 +65,15 @@ export function printQueued(ctx: CliContext, queued: AgentQueuedMessageDto[]): v
     { header: 'ID', value: (row) => shortId(row.id) },
     { header: 'SEQ', value: (row) => String(row.seq) },
     { header: 'TEXT', value: (row) => preview(row.text) },
+  ]);
+}
+
+export function printConfirmations(ctx: CliContext, rows: AgentConfirmationDto[]): void {
+  ctx.out.table(rows, [
+    { header: 'ID', value: (row) => shortId(row.id) },
+    { header: 'TOOL', value: (row) => row.toolName },
+    { header: 'STATUS', value: (row) => row.status },
+    { header: 'REASON', value: (row) => dash(row.reason) },
   ]);
 }
 

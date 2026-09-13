@@ -18,7 +18,7 @@ import {
 import type { CliContext } from '../core/context';
 import { deviceMutationBody, parseOrderIds } from '../core/devices-body';
 import { UsageError } from '../core/errors';
-import { disconnectDevice } from '../core/tmux-ops';
+import { connectDevice, disconnectDevice } from '../core/tmux-ops';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -56,7 +56,8 @@ const USAGE = [
   '  rm <device> [--yes]              DELETE /api/devices/:id',
   '  test <device>                    POST /api/devices/:id/test-connection',
   '  order --ids a,b,c                PUT /api/devices/order',
-  '  disconnect <device>              WS disconnect-device (connect is implicit in tmux/term)',
+  '  connect <device>                 WS connect-device (wait for device-connected / tree)',
+  '  disconnect <device>              WS disconnect-device',
   '  folders ls|add|rm|layout|rename|reset   /api/device-folders',
   '',
   'add/edit flags: --name --type --host --port --user --auth-mode',
@@ -143,6 +144,15 @@ const order: SubHandler = async (ctx, flags, positionals) => {
   emit(ctx, result, () => ctx.out.data(result));
 };
 
+const connect: SubHandler = async (ctx, _flags, positionals) => {
+  const ref = requireArg(positionals, 0, 'device');
+  rejectExtra(positionals, 1);
+  const resolved = await connectDevice(ctx, ref);
+  emit(ctx, { ok: true, action: 'connected', id: resolved.device.id }, () => {
+    ctx.out.line(`connected ${resolved.device.name}`);
+  });
+};
+
 const disconnect: SubHandler = async (ctx, _flags, positionals) => {
   const ref = requireArg(positionals, 0, 'device');
   rejectExtra(positionals, 1);
@@ -211,6 +221,7 @@ const HANDLERS: Record<string, SubHandler> = {
   rm,
   test,
   order,
+  connect,
   disconnect,
   folders,
 };

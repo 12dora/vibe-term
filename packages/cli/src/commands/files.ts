@@ -2,6 +2,7 @@
 
 import type { BrowseDirectoryResponse } from '@vibeterm/shared';
 import { flagBool, flagString, parseArgv } from '../core/args';
+import { parseOnOff } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
 import {
@@ -28,7 +29,7 @@ const FLAGS = {
   long: 'boolean',
   all: 'boolean',
   device: 'string',
-  enabled: 'boolean',
+  enabled: 'string',
   disabled: 'boolean',
   recursive: 'boolean',
   hidden: 'boolean',
@@ -81,14 +82,38 @@ async function runRoots(
     if (ids.length === 0) throw new UsageError('usage: vibeterm files roots order <id> [<id>…]');
     return printRoots(ctx, await reorderFileRoots(ctx.http, nodeId, ids));
   }
+  if (action === 'set') return setRoot(ctx, nodeId, flags, positionals);
   if (action === 'enable' || action === 'disable') {
     if (positionals.length > 2) throw new UsageError(`unexpected argument: ${positionals[2]}`);
     return setRootEnabled(ctx, nodeId, positionals[1], action === 'enable');
   }
   throw new UsageError(
     `unknown roots subcommand: ${action}`,
-    'use ls, add, rm, order, enable or disable'
+    'use ls, add, rm, order, set, enable or disable'
   );
+}
+
+const SET_ROOT_USAGE = 'usage: vibeterm files roots set <id|name> --path /abs [--enabled on|off]';
+
+async function setRoot(
+  ctx: CliContext,
+  nodeId: string,
+  flags: ReturnType<typeof parseArgv>['flags'],
+  positionals: string[]
+): Promise<undefined> {
+  const ref = positionals[1];
+  if (!ref) throw new UsageError(SET_ROOT_USAGE);
+  if (positionals.length > 2) throw new UsageError(`unexpected argument: ${positionals[2]}`);
+  const path = flagString(flags, 'path');
+  if (!path) throw new UsageError(SET_ROOT_USAGE);
+  if (!path.startsWith('/')) throw new UsageError(`root path must be absolute: ${path}`);
+  const body: { path: string; enabled?: boolean } = { path };
+  const enabledRaw = flagString(flags, 'enabled');
+  if (enabledRaw !== undefined) body.enabled = parseOnOff(enabledRaw);
+  const root = resolveFileRoot(await listFileRoots(ctx.http, nodeId), ref);
+  const updated = await patchFileRoot(ctx.http, nodeId, root.id, body);
+  if (ctx.globals.json) ctx.out.data({ root: updated });
+  else ctx.out.line(`updated ${updated.id}  ${updated.name}  ${updated.path}`);
 }
 
 async function setRootEnabled(
@@ -122,7 +147,9 @@ async function addRoot(
   }
   if (!path.startsWith('/')) throw new UsageError(`root path must be absolute: ${path}`);
   const device = await ctx.resolver.resolveDevice(nodeId, deviceRef);
-  const enabled = flags.disabled === true ? false : flags.enabled !== false;
+  const enabledRaw = flagString(flags, 'enabled');
+  const enabled =
+    flags.disabled === true ? false : enabledRaw !== undefined ? parseOnOff(enabledRaw) : true;
   const root = await createFileRoot(ctx.http, nodeId, { deviceId: device.id, path, enabled });
   if (ctx.globals.json) ctx.out.data({ root });
   else ctx.out.line(`${root.id}  ${root.name}  ${root.path}`);
@@ -309,6 +336,7 @@ export const command: Command = {
     '  roots add <device> <abs-path>          POST /api/files/roots',
     '  roots rm <id|name>                     DELETE /api/files/roots/:id',
     '  roots order <id> [<id>…]               PUT /api/files/roots/order',
+    '  roots set <id|name> --path /abs        PATCH /api/files/roots/:id {path} [--enabled on|off]',
     '  roots enable|disable <id|name>         PATCH /api/files/roots/:id {enabled}',
     '  ls <spec> [--long] [--all]             GET /api/files/list (caps at 2000 entries)',
     '  stat <spec>                            GET /api/files/stat',

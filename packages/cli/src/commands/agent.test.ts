@@ -180,6 +180,23 @@ describe('vibeterm agent', () => {
     });
   });
 
+  test('new --origin-title posts originPaneTitle', async () => {
+    let body = '';
+    const { ctx: cli } = await ctx({
+      'POST /api/agent/sessions': (_url, init) => {
+        body = String(init?.body);
+        return { session };
+      },
+    });
+    await agent.run(cli, ['new', '--device', 'd-1', '--pane', '%0', '--origin-title', 'vim']);
+    expect(JSON.parse(body)).toEqual({
+      deviceId: 'd-1',
+      paneId: '%0',
+      writeMode: 'confirm',
+      originPaneTitle: 'vim',
+    });
+  });
+
   test('new requires device and pane', async () => {
     const { ctx: cli } = await ctx({});
     await expect(agent.run(cli, ['new', '--device', 'd-1'])).rejects.toBeInstanceOf(UsageError);
@@ -382,6 +399,42 @@ describe('vibeterm agent', () => {
     });
     await agent.run(cli, ['set', 's-1', '--allow-control-chars', 'on']);
     expect(JSON.parse(body)).toEqual({ allowControlChars: true });
+  });
+
+  test('set --pane patches paneId', async () => {
+    let body = '';
+    const { ctx: cli } = await ctx({
+      'PATCH /api/agent/sessions/s-1': (_url, init) => {
+        body = String(init?.body);
+        return { session: { ...session, paneId: '%9' } };
+      },
+    });
+    await agent.run(cli, ['set', 's-1', '--pane', '%9']);
+    expect(JSON.parse(body)).toEqual({ paneId: '%9' });
+  });
+
+  test('confirmations ls hits GET /api/agent/sessions/:id/confirmations', async () => {
+    let path = '';
+    const confirmation = {
+      id: 'c-1',
+      sessionId: 's-1',
+      toolName: 'write',
+      toolCallId: 't-1',
+      input: { path: '/tmp/a' },
+      status: 'pending',
+      reason: null,
+      decidedAt: null,
+      createdAt: '2026-01-01T00:00:03.000Z',
+    };
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/agent/sessions/s-1/confirmations': (url) => {
+        path = url.pathname;
+        return { confirmations: [confirmation] };
+      },
+    });
+    await agent.run(cli, ['confirmations', 'ls', 's-1']);
+    expect(path).toBe('/api/agent/sessions/s-1/confirmations');
+    expect(JSON.parse(stdout.text()).confirmations[0].id).toBe('c-1');
   });
 
   test('set without flags is a usage error', async () => {

@@ -44,6 +44,84 @@ describe('vibeterm watch', () => {
     expect(JSON.parse(stdout.text()).rules[0].id).toBe('r-1');
   });
 
+  test('rules add wires extract/llm flags into the request body', async () => {
+    let body = '';
+    const { ctx: cli } = await ctx({
+      'POST /api/watch/rules': (_url, init) => {
+        body = String(init?.body);
+        return { rule, state: null };
+      },
+    });
+    await watch.run(cli, [
+      'rules',
+      'add',
+      '--name',
+      'done',
+      '--device',
+      'd-1',
+      '--pane',
+      '%0',
+      '--trigger-type',
+      'match',
+      '--pattern',
+      '(\\d+)%',
+      '--extract-group',
+      '1',
+      '--confirm-with-llm',
+      'on',
+      '--summarize-with-llm',
+      'off',
+      '--provider-id',
+      'p-1',
+      '--model-id',
+      'gpt-test',
+    ]);
+    expect(JSON.parse(body)).toMatchObject({
+      name: 'done',
+      deviceId: 'd-1',
+      paneId: '%0',
+      triggerType: 'match',
+      pattern: '(\\d+)%',
+      extractGroup: 1,
+      confirmWithLlm: true,
+      summarizeWithLlm: false,
+      providerId: 'p-1',
+      modelId: 'gpt-test',
+    });
+  });
+
+  test('rules edit patches extractGroup 0 and provider/model', async () => {
+    let body = '';
+    let path = '';
+    const { ctx: cli } = await ctx({
+      'PATCH /api/watch/rules/r-1': (url, init) => {
+        path = url.pathname;
+        body = String(init?.body);
+        return { rule, state: null };
+      },
+    });
+    await watch.run(cli, [
+      'rules',
+      'edit',
+      'r-1',
+      '--extract-group',
+      '0',
+      '--provider-id',
+      'p-2',
+      '--model-id',
+      'other',
+      '--confirm-with-llm',
+      'off',
+    ]);
+    expect(path).toBe('/api/watch/rules/r-1');
+    expect(JSON.parse(body)).toEqual({
+      extractGroup: 0,
+      providerId: 'p-2',
+      modelId: 'other',
+      confirmWithLlm: false,
+    });
+  });
+
   test('rules add posts a match rule', async () => {
     let body = '';
     const { ctx: cli } = await ctx({

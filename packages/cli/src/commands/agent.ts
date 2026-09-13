@@ -1,6 +1,7 @@
 // `vibeterm agent`：AI agent 会话，对齐 GUI 与 `packages/api-client/src/agent.ts`。
 
 import type {
+  AgentConfirmationDto,
   AgentMessageDto,
   AgentQueuedMessageDto,
   AgentSessionDto,
@@ -19,7 +20,12 @@ import {
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
 import { readAllStdin } from '../core/prompt';
-import { printQueued, printSessionDetail, printSessionRows } from './agent-format';
+import {
+  printConfirmations,
+  printQueued,
+  printSessionDetail,
+  printSessionRows,
+} from './agent-format';
 import type { Command } from './types';
 
 const DEFAULT_WRITE_MODE: AgentWriteMode = 'confirm';
@@ -35,6 +41,7 @@ const FLAGS = {
   stdin: 'boolean',
   reason: 'string',
   'allow-control-chars': 'string',
+  'origin-title': 'string',
 } as const;
 
 const USAGE = [
@@ -44,6 +51,7 @@ const USAGE = [
   '  ls [--node]',
   '  show <id>',
   '  new --device <id> --pane <id> [--provider --model --write-mode confirm|auto] [--title]',
+  '     [--origin-title "<pane title>"]',
   '  rm <id> [--yes]',
   '  rename <id> <title>',
   '  send <id> [--stdin] "<text>"',
@@ -53,8 +61,9 @@ const USAGE = [
   '  queue rm <session> <item>',
   '  stop <id>',
   '  confirm <id> approve|deny [--reason]',
+  '  confirmations ls <session>       GET /api/agent/sessions/:id/confirmations',
   '  model <id> --provider <p> --model <m>',
-  '  set <id> --write-mode <mode> | --allow-control-chars on|off',
+  '  set <id> --write-mode <mode> | --allow-control-chars on|off | --pane %N',
   '',
   '--node (global) selects the gateway that stores the session (default: entry).',
   '--json: { sessions } / { session, messages } / { session } / { message|queued } / { queued }',
@@ -135,6 +144,8 @@ const create: SubHandler = async (ctx, flags, positionals) => {
   const modelId = flagString(flags, 'model');
   if (providerId !== undefined) body.providerId = providerId;
   if (modelId !== undefined) body.modelId = modelId;
+  const originPaneTitle = flagString(flags, 'origin-title');
+  if (originPaneTitle !== undefined) body.originPaneTitle = originPaneTitle;
   const nodeId = await ctx.targetNodeId();
   let payload = await ctx.http.json<{ session: { id: string; title: string } }>(
     nodeId,
@@ -287,15 +298,33 @@ const set: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 1);
   const writeModeRaw = flagString(flags, 'write-mode');
   const allowRaw = flagString(flags, 'allow-control-chars');
-  if (writeModeRaw === undefined && allowRaw === undefined) {
-    throw new UsageError('set requires --write-mode or --allow-control-chars');
+  const paneId = flagString(flags, 'pane');
+  if (writeModeRaw === undefined && allowRaw === undefined && paneId === undefined) {
+    throw new UsageError('set requires --write-mode, --allow-control-chars or --pane');
   }
   const patch: Record<string, unknown> = {};
   if (writeModeRaw !== undefined) patch.writeMode = parseWriteMode(writeModeRaw);
   if (allowRaw !== undefined) patch.allowControlChars = parseOnOff(allowRaw);
+  if (paneId !== undefined) patch.paneId = paneId;
   const nodeId = await ctx.targetNodeId();
   const payload = await ctx.http.json(nodeId, 'PATCH', sessionPath(id), patch);
   emit(ctx, payload, () => ctx.out.line(`updated ${id}`));
+};
+
+const confirmations: SubHandler = async (ctx, _flags, positionals) => {
+  const action = requireArg(positionals, 0, 'confirmations action');
+  if (action !== 'ls') {
+    throw new UsageError(`unknown confirmations action: ${action}`, 'use ls');
+  }
+  const id = requireArg(positionals, 1, 'session id');
+  rejectExtra(positionals, 2);
+  const nodeId = await ctx.targetNodeId();
+  const payload = await ctx.http.json<{ confirmations?: AgentConfirmationDto[] }>(
+    nodeId,
+    'GET',
+    sessionPath(id, '/confirmations')
+  );
+  emit(ctx, payload, () => printConfirmations(ctx, payload.confirmations ?? []));
 };
 
 const HANDLERS: Record<string, SubHandler> = {
@@ -309,6 +338,7 @@ const HANDLERS: Record<string, SubHandler> = {
   queue,
   stop,
   confirm,
+  confirmations,
   model,
   set,
 };

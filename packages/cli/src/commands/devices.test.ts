@@ -170,6 +170,28 @@ describe('vibeterm devices', () => {
     expect(JSON.parse(stdout.text()).folders).toEqual([]);
   });
 
+  test('connect sends WS connect-device and waits for device-connected', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-devices-ws-'));
+    dirs.push(dir);
+    const h = createFakeTermContext({
+      session: fakeSession(),
+      configDir: dir,
+      json: true,
+      timeoutMs: 1_000,
+    });
+    await devices.run(h.ctx, ['connect', 'laptop']);
+    expect(h.transport.commandsOfType('connect-device')[0]).toMatchObject({
+      deviceId: FAKE_DEVICE_ID,
+    });
+    expect(h.transport.commandsOfType('disconnect-device')).toHaveLength(0);
+    expect(JSON.parse(h.stdout.text().trim())).toEqual({
+      ok: true,
+      action: 'connected',
+      id: FAKE_DEVICE_ID,
+    });
+    expect(h.closed()).toBe(1);
+  });
+
   test('disconnect sends WS disconnect-device without connect-device', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-devices-ws-'));
     dirs.push(dir);

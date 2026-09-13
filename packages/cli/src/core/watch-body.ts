@@ -65,7 +65,24 @@ function applyWatchFlags(flags: FlagValues): Record<string, unknown> {
   const noMatch = enumFlag(flags, 'no-match', NO_MATCH, '--no-match must be reset|ignore');
   if (noMatch) body.noMatchBehavior = noMatch;
   setString(body, flags, 'prompt', 'conditionPrompt');
+  setNumber(body, flags, 'extract-group', 'extractGroup');
+  setOnOff(body, flags, 'confirm-with-llm', 'confirmWithLlm');
+  setOnOff(body, flags, 'summarize-with-llm', 'summarizeWithLlm');
+  const providerId = flagString(flags, 'provider-id');
+  if (providerId !== undefined) body.providerId = providerId || null;
+  const modelId = flagString(flags, 'model-id');
+  if (modelId !== undefined) body.modelId = modelId.trim() || null;
   return body;
+}
+
+function setOnOff(
+  body: Record<string, unknown>,
+  flags: FlagValues,
+  flag: string,
+  key: string
+): void {
+  const value = flagString(flags, flag);
+  if (value !== undefined) body[key] = parseOnOff(value);
 }
 
 function requireWatchFields(

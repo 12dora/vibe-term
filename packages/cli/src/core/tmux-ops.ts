@@ -4,7 +4,11 @@
 // 落地才算成功，等待谓词由调用方给。
 
 import type { TmuxPane, TmuxSession, TmuxWindow } from '@vibeterm/shared';
-import type { GatewayTransport, GatewayTransportCommand } from '@vibeterm/ws-client';
+import type {
+  GatewayTransport,
+  GatewayTransportCommand,
+  GatewayTransportEvent,
+} from '@vibeterm/ws-client';
 import type { CliContext } from './context';
 import { NetworkError } from './errors';
 import type { Output } from './output';
@@ -54,34 +58,71 @@ export async function disconnectDevice(
   ctx: CliContext,
   raw: string
 ): Promise<ResolvedTargetDevice> {
+  return sendDeviceCommand(ctx, raw, 'disconnect-device', 'disconnect');
+}
+
+/**
+ * 向网关发 `connect-device`，等到 `device-connected` 或第一份会话树快照再返回。
+ * 与 `disconnectDevice` 一样用短连接：确认后关 socket，不经过 `DeviceSession`。
+ */
+export async function connectDevice(ctx: CliContext, raw: string): Promise<ResolvedTargetDevice> {
+  return sendDeviceCommand(ctx, raw, 'connect-device', 'connect');
+}
+
+async function sendDeviceCommand(
+  ctx: CliContext,
+  raw: string,
+  type: 'connect-device' | 'disconnect-device',
+  verb: 'connect' | 'disconnect'
+): Promise<ResolvedTargetDevice> {
   const resolved = await resolveTargetDevice(ctx, raw);
   const socket = await ctx.openSocket(resolved.nodeId);
   try {
-    await awaitDisconnect(socket.connection.transport, resolved.device.id, ctx.globals.timeoutMs);
+    await awaitDeviceAck(
+      socket.connection.transport,
+      resolved.device.id,
+      type,
+      verb,
+      ctx.globals.timeoutMs
+    );
     return resolved;
   } finally {
     socket.close();
   }
 }
 
-function awaitDisconnect(
+function awaitDeviceAck(
   transport: Pick<GatewayTransport, 'send' | 'onEvent'>,
   deviceId: string,
+  type: 'connect-device' | 'disconnect-device',
+  verb: 'connect' | 'disconnect',
   timeoutMs: number
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       unsub();
-      reject(new NetworkError(`timed out waiting for device ${deviceId} to disconnect`));
+      reject(new NetworkError(`timed out waiting for device ${deviceId} to ${verb}`));
     }, timeoutMs);
     const unsub = transport.onEvent((event) => {
-      if (event.type !== 'device-disconnected' || event.deviceId !== deviceId) return;
+      if (!isDeviceAck(event, deviceId, verb)) return;
       clearTimeout(timer);
       unsub();
       resolve();
     });
-    transport.send({ type: 'disconnect-device', deviceId });
+    transport.send({ type, deviceId });
   });
+}
+
+function isDeviceAck(
+  event: GatewayTransportEvent,
+  deviceId: string,
+  verb: 'connect' | 'disconnect'
+): boolean {
+  if (verb === 'disconnect') {
+    return event.type === 'device-disconnected' && event.deviceId === deviceId;
+  }
+  if (event.type === 'device-connected' && event.deviceId === deviceId) return true;
+  return event.type === 'metadata-snapshot' && event.snapshot.deviceId === deviceId;
 }
 
 /** 发一条 tmux 控制命令并等它在会话树上落地。 */

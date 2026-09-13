@@ -9,10 +9,10 @@ import {
   emit,
   mergeBody,
   parseDurationMs,
+  parseOnOff,
   readSecretField,
   rejectExtra,
   requireArg,
-  requireObjectBody,
   resolveJsonBody,
   runSubs,
   shortId,
@@ -35,6 +35,9 @@ const FLAGS = {
   after: 'number',
   limit: 'number',
   'end-sessions': 'boolean',
+  'record-logs': 'string',
+  'retention-days': 'number',
+  'log-max-mb': 'number',
 } as const;
 
 const USAGE = [
@@ -48,7 +51,8 @@ const USAGE = [
   '  revoke <id>                            POST /api/share/:id/revoke',
   '  rm <id> [--yes]                        DELETE (ended shares only; non-TTY requires --yes)',
   '  log <id> [--after N] [--limit N]',
-  '  settings get|set                       GET/PUT /api/share/settings; set needs --body',
+  '  settings get|set                       GET/PUT /api/share/settings',
+  '    set: --record-logs on|off --retention-days N --log-max-mb N --origin auto|<url> [--body]',
   '  origins                                GET /api/share/origins',
   '',
   'create target: [<node>/]<device>:<window>  window is a tmux id (@1), index, or name.',
@@ -197,6 +201,57 @@ const log: SubHandler = async (ctx, flags, positionals) => {
   emit(ctx, payload, () => ctx.out.data(payload));
 };
 
+const SHARE_RETENTION_DAYS_MAX = 3650;
+const SHARE_LOG_MB_MAX = 1024;
+const MB = 1024 * 1024;
+
+function pickShareSettings(raw: Record<string, unknown>): Record<string, unknown> {
+  return {
+    recordLogs: raw.recordLogs,
+    logRetentionDays: raw.logRetentionDays,
+    logMaxBytes: raw.logMaxBytes,
+    defaultOrigin: raw.defaultOrigin ?? null,
+  };
+}
+
+/** 与 GUI `parseShareSettingsDraft` 一致：`auto` → null，URL 收敛成 origin。 */
+function parseShareDefaultOrigin(raw: string): string | null {
+  if (raw.trim().toLowerCase() === 'auto') return null;
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new UsageError(`invalid --origin: ${raw}`, 'use auto or an http(s) URL');
+    }
+    return url.origin;
+  } catch (error) {
+    if (error instanceof UsageError) throw error;
+    throw new UsageError(`invalid --origin: ${raw}`, 'use auto or an http(s) URL');
+  }
+}
+
+function shareSettingsFlagPatch(flags: Parameters<SubHandler>[1]): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  const recordLogs = flagString(flags, 'record-logs');
+  if (recordLogs !== undefined) patch.recordLogs = parseOnOff(recordLogs);
+  const retention = flagNumber(flags, 'retention-days');
+  if (retention !== undefined) {
+    if (!Number.isInteger(retention) || retention < 0 || retention > SHARE_RETENTION_DAYS_MAX) {
+      throw new UsageError(`--retention-days must be an integer 0-${SHARE_RETENTION_DAYS_MAX}`);
+    }
+    patch.logRetentionDays = retention;
+  }
+  const logMaxMb = flagNumber(flags, 'log-max-mb');
+  if (logMaxMb !== undefined) {
+    if (!Number.isInteger(logMaxMb) || logMaxMb < 1 || logMaxMb > SHARE_LOG_MB_MAX) {
+      throw new UsageError(`--log-max-mb must be an integer 1-${SHARE_LOG_MB_MAX}`);
+    }
+    patch.logMaxBytes = logMaxMb * MB;
+  }
+  const origin = flagString(flags, 'origin');
+  if (origin !== undefined) patch.defaultOrigin = parseShareDefaultOrigin(origin);
+  return patch;
+}
+
 const settings: SubHandler = async (ctx, flags, positionals) => {
   const action = requireArg(positionals, 0, 'get|set');
   rejectExtra(positionals, 1);
@@ -207,10 +262,20 @@ const settings: SubHandler = async (ctx, flags, positionals) => {
     return;
   }
   if (action === 'set') {
-    const body = requireObjectBody(
-      await resolveJsonBody(flagString(flags, 'body')),
-      'pass --body \'{"recordLogs":false}\''
+    const patch = shareSettingsFlagPatch(flags);
+    const extra = await resolveJsonBody(flagString(flags, 'body'));
+    if (Object.keys(patch).length === 0 && extra === undefined) {
+      throw new UsageError(
+        'settings set requires flags or --body',
+        'pass --record-logs, --retention-days, --log-max-mb, --origin, or --body'
+      );
+    }
+    const current = await ctx.http.json<Record<string, unknown>>(
+      nodeId,
+      'GET',
+      '/api/share/settings'
     );
+    const body = mergeBody(mergeBody(pickShareSettings(current), patch), extra);
     const payload = await ctx.http.json(nodeId, 'PUT', '/api/share/settings', body);
     emit(ctx, payload, () => ctx.out.data(payload));
     return;
