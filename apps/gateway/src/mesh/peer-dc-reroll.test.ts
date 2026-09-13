@@ -593,6 +593,41 @@ describe('DcRerollCoordinator 应答侧', () => {
     expect(h.dials).toEqual([{ nodeId: peerId, answer: true, transport: 'dc' }]);
   });
 
+  test('answerer backoff 中应答本端 reroll-request 的更高 epoch offer 仍起拨', () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    h.answererAllows.value = false;
+    h.state.pathRtt.record(peerId, { kind: 'tcp-connect', rttMs: 90 });
+    const live = makeLive(h.state, { peerNodeId: peerId, rtcEpoch: 9 });
+    h.coordinator.onRttSample(live, 200);
+    expect(h.sentCtl.some((row) => row.t === 'link.reroll-request')).toBe(true);
+    expect(h.state.rerolls.get(peerId)?.pendingPeerRequest).toBe(true);
+    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
+    expect(h.dials).toEqual([{ nodeId: peerId, answer: true, transport: 'dc' }]);
+  });
+
+  test('answerer backoff 中未请求的 offer 仍 cooldown；结果窗口过期后不再绕过', () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    makeLive(h.state, { peerNodeId: peerId, rtcEpoch: 9 });
+    h.answererAllows.value = false;
+    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+    expect(h.dials).toHaveLength(0);
+
+    h.state.rerolls.set(peerId, {
+      count: 1,
+      windowStartedAt: h.scheduler.nowMs,
+      lastAt: h.scheduler.nowMs,
+      oldMs: null,
+      prevSession: null,
+      transport: 'dc',
+      pendingPeerRequest: true,
+    });
+    h.scheduler.nowMs += DC_REROLL_RESULT_DEADLINE_MS + 1;
+    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+    expect(h.dials).toHaveLength(0);
+  });
+
   test('满预算且超过 90s 窗口仍起 dialReroll({answer:true})', () => {
     const h = harness('ff'.repeat(16));
     const peerId = '11'.repeat(16);

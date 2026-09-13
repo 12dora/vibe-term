@@ -290,10 +290,15 @@ export class RouteDegradeCoordinator {
     const directMs = live?.rttMs ?? this.directMsOf(peerId, live);
     const relayMs = this.relayMsOf(peerId, live);
     const prev = live;
+    const sourceLive = live;
+    const sourceGen = this.ports.state.generation;
     const session = await this.ports.openRelay(peerId);
     if (this.ports.state.stopped) {
       quiet(() => session.close('stopped'));
       return null;
+    }
+    if (!this.degradeStillCurrent(peerId, sourceLive, sourceGen, session)) {
+      return this.abandonLateRelay(peerId, session);
     }
     const nowLive = this.ports.state.live.get(peerId);
     if (nowLive?.transport !== 'relay') {
@@ -321,6 +326,27 @@ export class RouteDegradeCoordinator {
       })
     );
     return this.ports.state.live.get(peerId)?.session ?? session;
+  }
+
+  private degradeStillCurrent(
+    peerId: string,
+    sourceLive: LivePeer | undefined,
+    sourceGen: number,
+    session: LinkSession
+  ): boolean {
+    const mode = this.mode();
+    if (mode !== 'auto' && mode !== 'relay') return false;
+    if (this.ports.state.generation !== sourceGen) return false;
+    const nowLive = this.ports.state.live.get(peerId);
+    return nowLive === sourceLive || nowLive?.session === session;
+  }
+
+  private abandonLateRelay(peerId: string, session: LinkSession): LinkSession | null {
+    quiet(() => session.close('route_switch_abandoned'));
+    logLine('[mesh][peer]', `route_switch_abandoned peer=${peerId}`);
+    const kept = this.ports.state.live.get(peerId);
+    if (kept?.session === session) return null;
+    return kept?.session ?? null;
   }
 
   private armBackoff(peerId: string, degraded: boolean): void {
@@ -391,8 +417,15 @@ export class RouteDegradeCoordinator {
     sendPing();
     candidate.pingTimer = this.ports.state.scheduler.interval(sendPing, PEER_PING_INTERVAL_MS);
     void session.closed.then(() => {
-      if (this.candidates.get(peerId) === candidate) this.candidates.delete(peerId);
+      this.clearCandidateTimer(peerId, candidate);
     });
+  }
+
+  private clearCandidateTimer(peerId: string, candidate: DirectCandidate): void {
+    if (this.candidates.get(peerId) !== candidate) return;
+    candidate.pingTimer?.clear();
+    candidate.pingTimer = null;
+    this.candidates.delete(peerId);
   }
 
   private settleCandidate(peerId: string, candidate: DirectCandidate): void {
@@ -441,8 +474,9 @@ export class RouteDegradeCoordinator {
   private dropCandidate(peerId: string, reason: string): void {
     const candidate = this.candidates.get(peerId);
     if (!candidate) return;
-    this.candidates.delete(peerId);
     candidate.pingTimer?.clear();
+    candidate.pingTimer = null;
+    this.candidates.delete(peerId);
     quiet(() => candidate.session.close(reason));
   }
 

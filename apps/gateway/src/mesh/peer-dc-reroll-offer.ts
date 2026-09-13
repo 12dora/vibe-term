@@ -17,6 +17,8 @@ export type RerollOfferIgnoreInput = {
   inflight: boolean;
   isAnswerer: boolean;
   answererAllows: boolean;
+  /** 对端 offer 对应本端仍在结果窗口内的 `link.reroll-request` 时绕过应答冷却。 */
+  respondsToOurRequest?: boolean;
 };
 
 /**
@@ -38,7 +40,7 @@ export function rerollOfferIgnoreReason(
   }
   if (input.inflight) return 'inflight';
   if (!input.isAnswerer) return 'role';
-  if (!input.answererAllows) return 'cooldown';
+  if (!input.answererAllows && !input.respondsToOurRequest) return 'cooldown';
   return null;
 }
 

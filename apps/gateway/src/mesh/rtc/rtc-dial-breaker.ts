@@ -239,8 +239,16 @@ export class RtcDialBreaker {
     return this.disabled.has(peer);
   }
 
-  /** 应答侧是否还该接这个对端的 offer。冷却中为 false。 */
-  shouldAcceptAnswer(peer: string, now = this.now()): boolean {
+  /**
+   * 应答侧是否还该接这个对端的 offer。冷却中为 false。
+   * `respondsToOurRequest`：对端在应答本端 `link.reroll-request` 时作为独立授权，绕过冷却。
+   */
+  shouldAcceptAnswer(
+    peer: string,
+    now = this.now(),
+    opts?: { respondsToOurRequest?: boolean }
+  ): boolean {
+    if (opts?.respondsToOurRequest === true) return true;
     return this.answererBackoff.shouldAccept(peer, now);
   }
 

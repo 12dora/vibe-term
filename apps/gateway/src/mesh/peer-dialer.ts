@@ -167,9 +167,9 @@ export class PeerDialer {
       this.state.live.get(nodeId)?.transport === 'dc' &&
       this.dcCapable(nodeId) &&
       (answer ? self > peer : self < peer) &&
-      (answer
-        ? this.deps.dcBreaker.shouldAcceptAnswer?.(nodeId) !== false
-        : this.deps.dcBreaker.shouldTry(nodeId).allow);
+      // 应答分支的冷却门在 interceptOffer（含「回应本端 reroll-request」的放行），这里不再二次查，
+      // 否则冷却期内本端请求来的 offer 会在此处被丢进 inbox 黑洞。
+      (answer || this.deps.dcBreaker.shouldTry(nodeId).allow);
     if (!ok) return Promise.resolve(null);
     const { generation, stopAbort } = this.state;
     return this.dialDc(nodeId, generation, stopAbort.signal, 'upgrade', answer);

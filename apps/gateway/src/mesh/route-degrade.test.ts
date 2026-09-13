@@ -63,7 +63,13 @@ function liveOf(
   } as LivePeer;
 }
 
-function makeHarness(opts: { mode?: MeshRouteMode; uplinkMs?: number } = {}) {
+function makeHarness(
+  opts: {
+    mode?: MeshRouteMode;
+    uplinkMs?: number;
+    openRelay?: () => Promise<LinkSession>;
+  } = {}
+) {
   const scheduler = new ImmediateScheduler();
   const mode = fakeMode(opts.mode ?? 'auto');
   const identity = { nodeId: 'aa'.repeat(16), edSecretKey: new Uint8Array(64) } as MeshIdentity;
@@ -82,16 +88,18 @@ function makeHarness(opts: { mode?: MeshRouteMode; uplinkMs?: number } = {}) {
   const coord = new RouteDegradeCoordinator({
     state,
     mode,
-    openRelay: async () => {
-      const session = stubSession();
-      relays.push(session);
-      const prev = state.live.get(PEER);
-      const live = liveOf(PEER, 'relay', session, uplink.rttMs ?? 14);
-      state.live.set(PEER, live);
-      if (prev) retired.push(prev.session);
-      installed.push({ transport: 'relay', session });
-      return session;
-    },
+    openRelay:
+      opts.openRelay ??
+      (async () => {
+        const session = stubSession();
+        relays.push(session);
+        const prev = state.live.get(PEER);
+        const live = liveOf(PEER, 'relay', session, uplink.rttMs ?? 14);
+        state.live.set(PEER, live);
+        if (prev) retired.push(prev.session);
+        installed.push({ transport: 'relay', session });
+        return session;
+      }),
     forceInstall: (session, peerId, transport) => {
       const prev = state.live.get(peerId);
       const live = liveOf(peerId, transport, session, null);
@@ -249,6 +257,32 @@ describe('RouteDegradeCoordinator make-before-break promotion', () => {
     h.coord.dispose();
   });
 
+  test('刚装上的 relay 尚无 pong 时不误判 direct，也不因 relayMs 未知拒候选', async () => {
+    const { h, relayLive } = await degradedRelay();
+    h.state.live.get(PEER)!.rttMs = null;
+    expect(h.coord.decidePath(PEER, 'interactive')).toBe('relay');
+    expect(h.coord.decidePath(PEER, 'bulk')).toBe('relay');
+
+    const dc = stubSession();
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: h.state.identity.nodeId,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:9',
+      prev: relayLive,
+    });
+    h.coord.noteCandidateSample(PEER, 2);
+    h.coord.noteCandidateSample(PEER, 2);
+    h.coord.noteCandidateSample(PEER, 2);
+    expect(dc.closedReason).not.toBe('route-measure-reject');
+    expect(h.state.live.get(PEER)?.transport).toBe('dc');
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    h.coord.dispose();
+  });
+
   test('样本不够好则关掉直连并进入回退', async () => {
     const { h, relayLive } = await degradedRelay();
     const dc = stubSession();
@@ -300,6 +334,42 @@ describe('RouteDegradeCoordinator mode change', () => {
     h.mode.set('direct');
     expect(h.coord.allowsOutboundDirect(PEER)).toBe(true);
     expect(h.upgrades).toContain(PEER);
+    h.coord.dispose();
+  });
+
+  test('openRelay 等待期间切到 direct 后，迟到的 relay 不安装并关掉', async () => {
+    let release!: (session: LinkSession) => void;
+    const hanging = new Promise<LinkSession>((resolve) => {
+      release = resolve;
+    });
+    const h = makeHarness({ openRelay: () => hanging });
+    const dc = stubSession();
+    h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 225));
+    const pending = h.coord.degradeToRelay(PEER);
+
+    const direct = stubSession();
+    h.state.live.set(PEER, liveOf(PEER, 'dc', direct, 8));
+    h.mode.set('direct');
+    expect(h.state.live.get(PEER)?.session).toBe(direct);
+
+    const late = stubSession();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      release(late);
+      await pending;
+    } finally {
+      console.log = orig;
+    }
+
+    expect(h.installed.some((row) => row.session === late)).toBe(false);
+    expect(h.state.live.get(PEER)?.session).toBe(direct);
+    expect(h.state.live.get(PEER)?.transport).toBe('dc');
+    expect(late.closedReason).toBe('route_switch_abandoned');
+    expect(lines.some((row) => row.includes('route_switch_abandoned'))).toBe(true);
     h.coord.dispose();
   });
 
@@ -413,6 +483,37 @@ describe('RouteDegradeCoordinator intercept hold uses a real mux', () => {
     });
     expect(decision.action).toBe('hold');
     expect(h.coord.hasCandidate(PEER)).toBe(true);
+    h.coord.dispose();
+  });
+
+  test('对端关掉测量候选时取消 pingTimer', async () => {
+    const h = makeHarness();
+    const live = liveOf(PEER, 'dc', stubSession(), 225);
+    h.state.live.set(PEER, live);
+    h.coord.onRttSample(live, 225);
+    h.scheduler.nowMs += 15_000;
+    h.coord.onRttSample(live, 225);
+    h.coord.onRttSample(live, 225);
+    await Promise.resolve();
+    h.scheduler.nowMs += 2 * 60 * 1000;
+    const [local] = createInMemoryLinkPair();
+    h.coord.interceptTrack({
+      session: local,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: h.state.identity.nodeId,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:2',
+      prev: h.state.live.get(PEER),
+    });
+    expect(h.coord.hasCandidate(PEER)).toBe(true);
+    expect(h.scheduler.intervals.some((row) => !row.cleared)).toBe(true);
+    local.close('peer-closed');
+    await local.closed;
+    await Promise.resolve();
+    expect(h.coord.hasCandidate(PEER)).toBe(false);
+    expect(h.scheduler.intervals.every((row) => row.cleared)).toBe(true);
     h.coord.dispose();
   });
 });

@@ -323,6 +323,21 @@ describe('RtcDialBreaker', () => {
     }
   });
 
+  test('respondsToOurRequest 授权绕过 answerer backoff，未授权的 offer 仍挡', () => {
+    const breaker = new RtcDialBreaker({ now: () => 0 });
+    const peer = 'ec42f364';
+    for (let i = 0; i < ANSWERER_TIMEOUT_LIMIT; i += 1) {
+      breaker.noteFailure(peer, 'timeout', `n${i}`, undefined, {
+        peerInitiated: true,
+        stage: 'no-remote-sdp',
+        remoteSdpApplied: false,
+      });
+    }
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
+    expect(breaker.shouldAcceptAnswer(peer, 0, { respondsToOurRequest: true })).toBe(true);
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
+  });
+
   test('peer-initiated ice failures still count toward the trip', () => {
     const breaker = new RtcDialBreaker({ now: () => 0, breakerMs: 30_000 });
     const peer = 'p';

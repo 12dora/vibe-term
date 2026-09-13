@@ -82,6 +82,16 @@ describe('rerollOfferIgnoreReason', () => {
         offerEpoch: 6,
         inflight: false,
         isAnswerer: true,
+        answererAllows: false,
+        respondsToOurRequest: true,
+      })
+    ).toBeNull();
+    expect(
+      rerollOfferIgnoreReason({
+        live: live(),
+        offerEpoch: 6,
+        inflight: false,
+        isAnswerer: true,
         answererAllows: true,
       })
     ).toBeNull();

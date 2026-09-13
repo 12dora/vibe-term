@@ -117,6 +117,15 @@ describe('decidePath 三模式表', () => {
       decidePath('p', 'interactive', snap({ liveKind: 'relay', directMs: 40, relayMs: 30 }))
     ).toBe('relay');
   });
+
+  test('auto：relay live 且 relayMs 未知时仍报 relay，不误判 direct', () => {
+    expect(
+      decidePath('p', 'interactive', snap({ liveKind: 'relay', directMs: 40, relayMs: null }))
+    ).toBe('relay');
+    expect(decidePath('p', 'bulk', snap({ liveKind: 'relay', directMs: 40, relayMs: null }))).toBe(
+      'relay'
+    );
+  });
 });
 
 describe('readDirectMs / estimateRelayMs', () => {
@@ -178,6 +187,42 @@ describe('readDirectMs / estimateRelayMs', () => {
     ).toBeNull();
   });
 
+  test('relay live 尚无 RTT 时 fall through：score → self+peer → 2×self；全未知才 null', () => {
+    const unknownLive = { liveIsRelay: true, liveRttMs: null as number | null };
+    expect(
+      estimateRelayMs({
+        ...unknownLive,
+        selfUplinkMs: 14,
+        peerUplinkMs: 1,
+        chooseScoreMs: 15,
+      })
+    ).toBe(15);
+    expect(
+      estimateRelayMs({
+        ...unknownLive,
+        selfUplinkMs: 14,
+        peerUplinkMs: 1,
+        chooseScoreMs: null,
+      })
+    ).toBe(15);
+    expect(
+      estimateRelayMs({
+        ...unknownLive,
+        selfUplinkMs: 14,
+        peerUplinkMs: null,
+        chooseScoreMs: null,
+      })
+    ).toBe(28);
+    expect(
+      estimateRelayMs({
+        ...unknownLive,
+        selfUplinkMs: null,
+        peerUplinkMs: null,
+        chooseScoreMs: null,
+      })
+    ).toBeNull();
+  });
+
   test('presence roster 提供对端上行 RTT 与 chooseRelay.scoreMs', () => {
     const presence = {
       chooseRelay: (id: string) =>
@@ -198,6 +243,15 @@ describe('readDirectMs / estimateRelayMs', () => {
       relayMsForPeer({
         liveTransport: 'dc',
         liveRttMs: 225,
+        peerId: 'p',
+        selfUplinkMs: 14,
+        presence,
+      })
+    ).toBe(15);
+    expect(
+      relayMsForPeer({
+        liveTransport: 'relay',
+        liveRttMs: null,
         peerId: 'p',
         selfUplinkMs: 14,
         presence,

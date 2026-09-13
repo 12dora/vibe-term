@@ -196,18 +196,23 @@ export class DcRerollCoordinator {
 
   /**
    * 应答侧入口：已是 dc 时常规路径不会再建 PC。更高 epoch 的 offer 在这里入队并起应答拨号。
-   * 只接对端报过 reroll 能力的 offer。接 offer 不看本端 request 预算 / 90s 窗口。
+   * 只接对端报过 reroll 能力的 offer。接 offer 不看本端 request 预算；
+   * 应答本端仍在结果窗口内的 reroll-request 时绕过应答冷却。
    */
   interceptOffer(nodeId: string, msg: RtcSignalMessage): boolean {
     if (!dcRerollEnabled() || !msg.sdp) return false;
     const offer = decodeSdpSignal(msg.sdp);
     if (offer?.type !== 'offer') return false;
+    const now = this.state.scheduler.now();
+    const pending = this.state.rerolls.get(nodeId);
+    const respondsToOurRequest = pending != null && this.isAnsweringOwnRequest(pending, now);
     const reason = rerollOfferIgnoreReason({
       live: this.state.live.get(nodeId),
       offerEpoch: offer.epoch,
       inflight: this.deps.hasDcInflight(nodeId),
       isAnswerer: !this.isInitiator(nodeId),
       answererAllows: this.deps.answererAllows?.(nodeId) !== false,
+      respondsToOurRequest,
     });
     if (reason === 'skip') return false;
     if (reason) {
@@ -219,7 +224,6 @@ export class DcRerollCoordinator {
       rtcLog('reroll_offer_ignored', { peer: id8(nodeId), reason: 'inbox-full' });
       return false;
     }
-    const now = this.state.scheduler.now();
     this.noteRerollOfferAccepted(this.recordOf(nodeId, now), now);
     void this.deps
       .dialReroll(nodeId, { answer: true, transport: 'dc' })

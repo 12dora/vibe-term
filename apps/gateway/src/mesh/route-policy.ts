@@ -87,8 +87,7 @@ function autoPathWhenRelayLive(
   streamClass: MeshStreamClass,
   snap: RoutePolicySnapshot
 ): MeshPathKind {
-  if (streamClass !== 'bulk' || snap.directMs == null) return 'relay';
-  if (snap.relayMs == null) return 'direct';
+  if (streamClass !== 'bulk' || snap.directMs == null || snap.relayMs == null) return 'relay';
   return relayClearlyBetterForBulk(snap.directMs, snap.relayMs) ? 'relay' : 'direct';
 }
 
@@ -134,7 +133,10 @@ export function estimateRelayMs(input: {
   peerUplinkMs: number | null;
   chooseScoreMs: number | null;
 }): number | null {
-  if (input.liveIsRelay) return finiteRttMs(input.liveRttMs);
+  if (input.liveIsRelay) {
+    const live = finiteRttMs(input.liveRttMs);
+    if (live != null) return live;
+  }
   const score = finiteRttMs(input.chooseScoreMs);
   if (score != null) return score;
   const self = finiteRttMs(input.selfUplinkMs);
