@@ -56,8 +56,8 @@ export interface RelayQuotaView {
   usage?: RelayQuotaUsage | null;
 }
 
-/** `GET /api/mesh/relay/status`。 */
-export interface RelayTenantStatus {
+/** `GET /api/mesh/relay/status` 的线上形态：后加的字段在 2.2.x 网关上一概缺席。 */
+export interface RelayTenantStatusWire {
   mode: RelayUplinkMode;
   /** 32 位小写 hex；非中继模式为 `null`。 */
   tenantId: string | null;
@@ -87,6 +87,15 @@ export interface RelayTenantStatus {
   preferredUrl?: string | null;
   /** 自动优选的运行状态；旧节点不下发时按「未开启」归一。 */
   autoSelect?: RelayAutoSelectView;
+}
+
+/**
+ * 归一化之后的形态：`normalizeRelayStatus` 必定把固定 / 自动优选填成确定值，
+ * 读侧不该再为 `undefined` 写分支。
+ */
+export interface RelayTenantStatus extends RelayTenantStatusWire {
+  preferredUrl: string | null;
+  autoSelect: RelayAutoSelectView;
 }
 
 /**
@@ -361,7 +370,7 @@ export class RelayTenantApi {
 
   /** `GET /api/mesh/relay/status`：本机 uplink 形态 + 中继列表。路由不存在时抛 404。 */
   async status(): Promise<RelayTenantStatus> {
-    const payload = await this.json<Partial<RelayTenantStatus>>(
+    const payload = await this.json<Partial<RelayTenantStatusWire>>(
       `${BASE}/status`,
       'relay_status_failed'
     );
@@ -373,7 +382,7 @@ export class RelayTenantApi {
    * 并把它记为首选，重启后仍优先。未配置 / 已被踢的地址回 404 / 409。
    */
   switchRelay(url: string): Promise<RelayTenantStatus> {
-    return this.json<Partial<RelayTenantStatus>>(`${BASE}/switch`, 'relay_switch_failed', {
+    return this.json<Partial<RelayTenantStatusWire>>(`${BASE}/switch`, 'relay_switch_failed', {
       method: 'POST',
       body: { url },
     }).then(normalizeRelayStatus);

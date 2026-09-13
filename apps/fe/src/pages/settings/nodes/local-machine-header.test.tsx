@@ -156,6 +156,26 @@ describe('LocalMachineMenuList', () => {
     expect((leave?.props as { variant?: string }).variant).toBe('destructive');
   });
 
+  // 禁用项在 Base UI 里不收指针事件，原生 title 永远不出；理由得有一份读屏拿得到的文本。
+  test('带理由的项挂 aria-describedby，并在项内渲染同一段 sr-only 文本', () => {
+    const { items } = renderList('node', false, [
+      connectItem({ reason: '已达 16 条上限' }),
+      connectItem({ key: 'relay-leave', testId: 'nodes-relay-leave', destructive: true }),
+    ]);
+    const add = items.find((item) => item.props['data-testid'] === 'nodes-relay-add');
+    const props = add?.props as ItemProps & { 'aria-describedby'?: string; title?: string };
+    expect(props['aria-describedby']).toBe('nodes-relay-add-reason');
+    expect(props.title).toBe('已达 16 条上限');
+    expect(props.disabled).toBe(false);
+    const reason = (Children.toArray(props.children) as ReactElement<{ id?: string }>[]).find(
+      (node) => typeof node === 'object' && node.props?.id === 'nodes-relay-add-reason'
+    );
+    expect(reason).toBeTruthy();
+    const leaveProps = items.find((item) => item.props['data-testid'] === 'nodes-relay-leave')
+      ?.props as { 'aria-describedby'?: string };
+    expect(leaveProps['aria-describedby']).toBeUndefined();
+  });
+
   test('中继兼节点：可以切回普通节点，也可以切成纯中继', () => {
     const { items } = renderList('relay,node');
     expect(items.map((item) => item.props['data-testid'])).toContain('local-machine-role-relay');

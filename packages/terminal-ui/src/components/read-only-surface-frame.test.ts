@@ -2,7 +2,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT } from '@vibeterm/shared';
+import { contrastRatio } from '@vibeterm/theme/color-utils';
+import { PRESET_PALETTES } from '@vibeterm/theme/preset-palettes';
 import {
+  MIN_BACKDROP_CONTRAST,
   applyReadOnlySurfaceFrame,
   readOnlySurfaceBackdrop,
   readOnlySurfaceOutline,
@@ -48,6 +51,29 @@ describe('readOnlySurfaceBackdrop', () => {
     });
     expect(backdrop).not.toBe('#000000');
     expect(Number.parseInt(backdrop.slice(1), 16)).toBeGreaterThan(0);
+  });
+
+  // 只按绝对亮度分档时，#0d1117（GitHub Dark）这类近黑底色压出来对比只有 1.05，letterbox 白做。
+  test('每套预设配色的衬底都与终端底色拉开可分差', () => {
+    for (const [preset, palette] of Object.entries(PRESET_PALETTES)) {
+      const background = palette.terminal.background;
+      const backdrop = readOnlySurfaceBackdrop(palette.terminal);
+      expect(
+        contrastRatio(background, backdrop),
+        `${preset} ${background} → ${backdrop}`
+      ).toBeGreaterThanOrEqual(MIN_BACKDROP_CONTRAST);
+    }
+  });
+
+  test('近黑底色压不出反差时掉头提亮，仍然达标', () => {
+    for (const background of ['#000000', '#0d0d0d', '#0d1117', '#111111']) {
+      const backdrop = readOnlySurfaceBackdrop({ ...TERMINAL_THEME_DARK, background });
+      expect(backdrop).not.toBe(background);
+      expect(
+        contrastRatio(background, backdrop),
+        `${background} → ${backdrop}`
+      ).toBeGreaterThanOrEqual(MIN_BACKDROP_CONTRAST);
+    }
   });
 
   test('认不出的颜色退回半透明黑，不抛错', () => {

@@ -3395,8 +3395,10 @@
           "on": "自動選択が有効",
           "lastSwitch": "前回の切り替え {{time}}",
           "pinnedHint": "主中継を固定しているため、自動選択は一時停止中です",
+          "pinnedHintAutoOff": "主中継を固定しています",
           "unpin": "固定を解除",
-          "unpinDone": "固定を解除しました。自動選択を再開します。"
+          "unpinDone": "固定を解除しました。自動選択を再開します。",
+          "unpinDoneAutoOff": "固定を解除しました。"
         },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
         "reauth": {

@@ -157,11 +157,18 @@ export function LocalMachineMenuList({
                 key={item.key}
                 {...(item.destructive ? { variant: 'destructive' as const } : {})}
                 disabled={item.disabled === true}
-                title={item.title}
+                title={item.reason}
+                {...(item.reason ? { 'aria-describedby': `${item.testId}-reason` } : {})}
                 onClick={item.onSelect}
                 data-testid={item.testId}
               >
                 {item.label}
+                {/* 读屏拿不到 title：理由再挂一份 sr-only 文本，由 aria-describedby 指过来。 */}
+                {item.reason ? (
+                  <span id={`${item.testId}-reason`} className="sr-only">
+                    {item.reason}
+                  </span>
+                ) : null}
               </DropdownMenuItem>
             ))}
           </DropdownMenuGroup>

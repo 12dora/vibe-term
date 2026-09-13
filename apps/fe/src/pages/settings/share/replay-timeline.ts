@@ -37,6 +37,14 @@ export interface ReplayPane {
   events: ReplayEvent[];
   /** events 中 checkpoint 的下标，升序。 */
   checkpoints: number[];
+  /** 带行列数的事件（checkpoint / resize）的下标与网格，升序；供 `replayGridAt` 二分。 */
+  grids: ReplayGridAt[];
+}
+
+export interface ReplayGridAt {
+  index: number;
+  cols: number;
+  rows: number;
 }
 
 export interface ReplayTimeline {
@@ -67,31 +75,49 @@ function toEvent(entry: ShareLogEntry, startAt: number): ReplayEvent {
   };
 }
 
-/**
- * 建时间轴。条目按 seq 升序（服务端保证），时间轴起点取最早的 `at`——
- * 个别条目时间戳回退时按 0 处理，不让进度条出现负数。
- */
-export function buildReplayTimeline(entries: readonly ShareLogEntry[]): ReplayTimeline {
-  if (entries.length === 0) return { startAt: 0, durationMs: 0, panes: [] };
-
+function logSpan(entries: readonly ShareLogEntry[]): { startAt: number; endAt: number } {
   let startAt = entries[0].at;
   let endAt = entries[0].at;
   for (const entry of entries) {
     if (entry.at < startAt) startAt = entry.at;
     if (entry.at > endAt) endAt = entry.at;
   }
+  return { startAt, endAt };
+}
 
+function paneFor(byPane: Map<string, ReplayPane>, paneId: string): ReplayPane {
+  const existing = byPane.get(paneId);
+  if (existing) return existing;
+  const pane: ReplayPane = { paneId, bytes: 0, events: [], checkpoints: [], grids: [] };
+  byPane.set(paneId, pane);
+  return pane;
+}
+
+/**
+ * 把一条事件并进 pane，顺手记下 checkpoint 与网格的下标。
+ *
+ * 时间戳回退的条目按同 pane 的前一条拉平：`countEventsUntil` 与 `replayGridAt` 都在 `t` 上二分，
+ * 序列一旦非单调，二分给出的答案就是错的。
+ */
+function appendPaneEvent(pane: ReplayPane, event: ReplayEvent): void {
+  const prev = pane.events[pane.events.length - 1];
+  if (prev && event.t < prev.t) event.t = prev.t;
+  if (event.kind === 'checkpoint') pane.checkpoints.push(pane.events.length);
+  if (event.cols !== null && event.rows !== null) {
+    pane.grids.push({ index: pane.events.length, cols: event.cols, rows: event.rows });
+  }
+  if (event.kind === 'out') pane.bytes += event.bytes;
+  pane.events.push(event);
+}
+
+/** 建时间轴。条目按 seq 升序（服务端保证），时间轴起点取最早的 `at`。 */
+export function buildReplayTimeline(entries: readonly ShareLogEntry[]): ReplayTimeline {
+  if (entries.length === 0) return { startAt: 0, durationMs: 0, panes: [] };
+
+  const { startAt, endAt } = logSpan(entries);
   const byPane = new Map<string, ReplayPane>();
   for (const entry of entries) {
-    let pane = byPane.get(entry.paneId);
-    if (!pane) {
-      pane = { paneId: entry.paneId, bytes: 0, events: [], checkpoints: [] };
-      byPane.set(entry.paneId, pane);
-    }
-    const event = toEvent(entry, startAt);
-    if (event.kind === 'checkpoint') pane.checkpoints.push(pane.events.length);
-    if (event.kind === 'out') pane.bytes += event.bytes;
-    pane.events.push(event);
+    appendPaneEvent(paneFor(byPane, entry.paneId), toEvent(entry, startAt));
   }
 
   const panes = [...byPane.values()].sort(
@@ -132,13 +158,24 @@ export interface ReplayGrid {
   rows: number;
 }
 
-/** t 时刻（含）之前最后一条带行列数的事件（checkpoint / resize）给出的网格；没有则 null。 */
+/**
+ * t 时刻（含）之前最后一条带行列数的事件（checkpoint / resize）给出的网格；没有则 null。
+ *
+ * 只有 checkpoint 与 resize 带行列数，而 checkpoint 通常只在 pane 首次纳入时打一次：
+ * 线性回扫在长录像的片尾要从末尾一路扫回 0，改在 `pane.grids` 上二分。
+ */
 export function replayGridAt(pane: ReplayPane, t: number): ReplayGrid | null {
-  for (let index = countEventsUntil(pane, t) - 1; index >= 0; index--) {
-    const event = pane.events[index];
-    if (event.cols !== null && event.rows !== null) return { cols: event.cols, rows: event.rows };
+  const limit = countEventsUntil(pane, t) - 1;
+  if (limit < 0) return null;
+  let low = 0;
+  let high = pane.grids.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (pane.grids[mid].index <= limit) low = mid + 1;
+    else high = mid;
   }
-  return null;
+  const found = pane.grids[low - 1];
+  return found ? { cols: found.cols, rows: found.rows } : null;
 }
 
 export interface ReplaySeek {

@@ -36,6 +36,8 @@ const RELAY_MODE = {
   reauthRequired: false,
   readmitPending: 0,
   metaKeyLagging: [],
+  preferredUrl: null,
+  autoSelect: { enabled: false, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
   writable: true,
   kicked: false,
   loading: false,
@@ -117,12 +119,24 @@ describe('固定与自动优选那一行', () => {
     });
   }
 
-  test('已固定：一句「自动优选暂停」加一个「取消固定」', () => {
-    const html = multi({ preferredUrl: 'https://relay.example.com' });
+  test('已固定且自动优选开着：一句「自动优选暂停」加一个「取消固定」', () => {
+    const html = multi({
+      preferredUrl: 'https://relay.example.com',
+      autoSelect: { enabled: true, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
+    });
     expect(html).toContain('data-relay-auto-select="pinned"');
     expect(html).toContain('relay.tenant.autoSelect.pinnedHint');
     expect(html).toContain('data-testid="nodes-relay-unpin"');
     expect(html).toContain('relay.tenant.autoSelect.unpin');
+  });
+
+  // 自动优选被配置关掉时仍会下发 preferredUrl：这时说「暂停 / 恢复」是反的，它压根没开。
+  test('已固定但自动优选没开：只说固定，不提暂停', () => {
+    const html = multi({ preferredUrl: 'https://relay.example.com' });
+    expect(html).toContain('data-relay-auto-select="pinned"');
+    expect(html).toContain('relay.tenant.autoSelect.pinnedHintAutoOff');
+    expect(html).not.toContain('relay.tenant.autoSelect.pinnedHint<');
+    expect(html).toContain('data-testid="nodes-relay-unpin"');
   });
 
   test('未固定且自动优选开着：只有一句陈述，没有按钮', () => {

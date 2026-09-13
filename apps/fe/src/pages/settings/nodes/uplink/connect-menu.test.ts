@@ -41,6 +41,7 @@ function run(overrides: Partial<ConnectMenuState> = {}) {
     changeHub: () => calls.push('change-hub'),
     migrateToRelay: () => calls.push('migrate'),
     addRelay: () => calls.push('add'),
+    notifyRelayLimit: () => calls.push('add-max'),
     reauthRelay: (url) => calls.push(`reauth:${url}`),
     removeRelay: (url) => calls.push(`remove:${url}`),
     leaveRelay: () => calls.push('leave'),
@@ -124,15 +125,22 @@ describe('中继租户形态', () => {
   });
 
   // 协议上限就是 16 条，第 17 条会在中继侧以 malformed_payload 告终——那时接入密码已经输完了。
-  test('满 16 条时「追加中继」禁用并说明原因；15 条仍可点', () => {
+  // 禁用项不收指针事件，title 与点击都到不了用户手里，所以满了也留着可点、点了只说原因。
+  test('满 16 条时「追加中继」仍可点，点了只说明原因；15 条照常开对话框', () => {
     const many = (n: number) =>
       Array.from({ length: n }, (_, i) => link({ url: `https://r${i}.example`, priority: i }));
-    const full = run({ ...tenant, relays: many(RELAY_RECORD_MAX_RELAYS) }).items[0];
+    const atMax = run({ ...tenant, relays: many(RELAY_RECORD_MAX_RELAYS) });
+    const full = atMax.items[0];
     expect(full?.testId).toBe('nodes-relay-add');
-    expect(full?.disabled).toBe(true);
-    expect(full?.title).toBe(`relay.tenant.actions.addMax({"n":${RELAY_RECORD_MAX_RELAYS}})`);
-    const room = run({ ...tenant, relays: many(RELAY_RECORD_MAX_RELAYS - 1) }).items[0];
+    expect(full?.disabled).toBeUndefined();
+    expect(full?.reason).toBe(`relay.tenant.actions.addMax({"n":${RELAY_RECORD_MAX_RELAYS}})`);
+    full?.onSelect();
+    expect(atMax.calls).toEqual(['add-max']);
+    const hasRoom = run({ ...tenant, relays: many(RELAY_RECORD_MAX_RELAYS - 1) });
+    const room = hasRoom.items[0];
     expect(room?.disabled).toBeUndefined();
-    expect(room?.title).toBeUndefined();
+    expect(room?.reason).toBeUndefined();
+    room?.onSelect();
+    expect(hasRoom.calls).toEqual(['add']);
   });
 });

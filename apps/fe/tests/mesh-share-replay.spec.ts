@@ -1,12 +1,13 @@
 // 分享日志回放的 e2e：默认跑「左对齐、选区复制、墙钟」三项断言。
 //
 // 另有四个只由环境变量打开的排查模式，默认路径不受影响：
-//   VIBETERM_E2E_REPLAY_WIDE_VIEWER=1  收件端用 2400×900 宽视口 + 220×50 的 tmux 窗口，
-//                                      用来看窄录像在宽外框里的外框/居中表现。
+//   VIBETERM_E2E_REPLAY_WIDE_VIEWER=1  收件端用 2400×900 宽视口：录像（固定 220×50）窄于外框，
+//                                      走的是居中那一支；默认视口下录像溢出，走贴左那一支。
 //   VIBETERM_E2E_REPLAY_TUI=1          被分享端跑 fixtures/replay-tui-payload.sh（备用屏全屏 TUI）。
 //   VIBETERM_E2E_REPLAY_CLAUDE=1       被分享端跑 claude，录一段真实 TUI。
 //   VIBETERM_E2E_REPLAY_LOG_FILE=<f>   回放时用该 JSON 顶掉日志接口，复现线上录像。
 // 后两者（以及给了 LOG_FILE 时）播到片尾后只截图到 SCREENSHOT_DIR，不跑后续断言。
+// 截图默认落在 apps/fe/test-results/replay/，`VIBETERM_E2E_REPLAY_SHOTS` 可以改到别处。
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +22,8 @@ import {
 } from './helpers/mesh';
 
 const SCREENSHOT_DIR =
-  '/private/tmp/claude-501/-Users-konata-code-vibe-term/0ae2b06c-a4c1-4218-8234-a928b2438e5f/scratchpad/r49/e2e';
+  process.env.VIBETERM_E2E_REPLAY_SHOTS ??
+  fileURLToPath(new URL('../test-results/replay/', import.meta.url));
 const TUI_PAYLOAD = fileURLToPath(new URL('./fixtures/replay-tui-payload.sh', import.meta.url));
 const MARKER = 'REPLAY-LEFT-EDGE-1';
 const WIDE = `REPLAY-WIDE-${'W'.repeat(200)}`;
@@ -50,7 +52,9 @@ interface ReadOnlyProbeLine {
 
 interface ReplayLayout {
   rootLeft: number;
+  rootWidth: number;
   screenLeft: number;
+  screenWidth: number;
   canvasLeft: number;
   panScrollLeft: number;
 }
@@ -94,10 +98,10 @@ function sendReplayPayload(sessionName: string): void {
     'REPLAY-LEFT-EDGE-5',
     WIDE,
   ].join('\\n');
-  if (process.env.VIBETERM_E2E_REPLAY_WIDE_VIEWER === '1') {
-    meshTmux(state.hubTmuxSocket, `set-window-option -t ${sessionName}:0 window-size manual`);
-    meshTmux(state.hubTmuxSocket, `resize-window -t ${sessionName}:0 -x 220 -y 50`);
-  }
+  // `new-session -x 220 -y 50` 挡不住 attach：客户端一连上来 tmux 就把窗口改回客户端尺寸。
+  // 录像宽度是这条用例的前提（窄录像走居中、宽录像走贴左），先钉死再发载荷。
+  meshTmux(state.hubTmuxSocket, `set-window-option -t ${sessionName}:0 window-size manual`);
+  meshTmux(state.hubTmuxSocket, `resize-window -t ${sessionName}:0 -x 220 -y 50`);
   if (process.env.VIBETERM_E2E_REPLAY_CLAUDE === '1') {
     meshTmux(
       state.hubTmuxSocket,
@@ -221,7 +225,9 @@ async function readReplayLayout(page: Page): Promise<ReplayLayout> {
     if (!(root instanceof HTMLElement)) {
       return {
         rootLeft: Number.NaN,
+        rootWidth: Number.NaN,
         screenLeft: Number.NaN,
+        screenWidth: Number.NaN,
         canvasLeft: Number.NaN,
         panScrollLeft: Number.NaN,
       };
@@ -230,9 +236,13 @@ async function readReplayLayout(page: Page): Promise<ReplayLayout> {
     const canvas = root.querySelector('canvas');
     const pan =
       root.querySelector('[data-pan-viewport="true"]') ?? root.querySelector('.xterm-viewport');
+    const rootRect = root.getBoundingClientRect();
+    const screenRect = screen instanceof HTMLElement ? screen.getBoundingClientRect() : null;
     return {
-      rootLeft: root.getBoundingClientRect().left,
-      screenLeft: screen instanceof HTMLElement ? screen.getBoundingClientRect().left : Number.NaN,
+      rootLeft: rootRect.left,
+      rootWidth: rootRect.width,
+      screenLeft: screenRect ? screenRect.left : Number.NaN,
+      screenWidth: screenRect ? screenRect.width : Number.NaN,
       canvasLeft: canvas instanceof HTMLElement ? canvas.getBoundingClientRect().left : Number.NaN,
       panScrollLeft: pan instanceof HTMLElement ? pan.scrollLeft : Number.NaN,
     };
@@ -454,8 +464,17 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
     expect(layout.canvasLeft, `canvas left=${layout.canvasLeft}`).toBeGreaterThanOrEqual(
       layout.rootLeft - 0.5
     );
-    expect(Math.abs(layout.canvasLeft - layout.rootLeft)).toBeLessThan(2);
-    expect(Math.abs(layout.screenLeft - layout.rootLeft)).toBeLessThan(2);
+    // 真正的不变量：内容表面窄于外框时居中（margin:auto），溢出时自动边距归零、仍贴左。
+    // 画布本来就该贴内容表面，不是贴外框——外框宽于录像时两者差的正是那半个空当。
+    const centerOffset = Math.max(0, (layout.rootWidth - layout.screenWidth) / 2);
+    expect(
+      Math.abs(layout.screenLeft - layout.rootLeft - centerOffset),
+      `screen left=${layout.screenLeft} root left=${layout.rootLeft} width ${layout.screenWidth}/${layout.rootWidth}`
+    ).toBeLessThan(2);
+    expect(
+      Math.abs(layout.canvasLeft - layout.screenLeft),
+      `canvas left=${layout.canvasLeft} screen left=${layout.screenLeft}`
+    ).toBeLessThan(2);
 
     const wallAtEnd = (await page.getByTestId('share-replay-wall-clock').innerText()).trim();
     expect(wallAtEnd).toMatch(WALL_CLOCK);

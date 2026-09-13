@@ -88,6 +88,41 @@ describe('buildReplayTimeline', () => {
     expect(pane.events[3].data).toBe('');
     expect(pane.events[3].cols).toBe(100);
   });
+
+  test('带行列数的事件另记一份下标索引', () => {
+    const [pane] = buildReplayTimeline(LOG).panes;
+    expect(pane.grids).toEqual([
+      { index: 0, cols: 80, rows: 24 },
+      { index: 3, cols: 100, rows: 30 },
+      { index: 4, cols: 100, rows: 30 },
+    ]);
+  });
+
+  // countEventsUntil / replayGridAt 都在 t 上二分：时间戳一旦回退，二分给出的答案就是错的。
+  test('时间戳回退的条目按同 pane 前一条对齐，t 序列非降', () => {
+    const [pane] = buildReplayTimeline([
+      entry({ seq: 1, at: BASE, data: HI }),
+      entry({ seq: 2, at: BASE + 3000, data: HI }),
+      entry({ seq: 3, at: BASE + 1000, data: HI }),
+      entry({ seq: 4, at: BASE + 500, kind: 'resize', data: '', cols: 90, rows: 20 }),
+      entry({ seq: 5, at: BASE + 4000, data: HI }),
+    ]).panes;
+    expect(pane.events.map((event) => event.t)).toEqual([0, 3000, 3000, 3000, 4000]);
+    expect(countEventsUntil(pane, 3000)).toBe(4);
+    expect(replayGridAt(pane, 3000)).toEqual({ cols: 90, rows: 20 });
+    expect(replayGridAt(pane, 2999)).toBeNull();
+  });
+
+  // 各 pane 自己一条时间线：另一个 pane 的时间不该把这个 pane 的 t 顶起来。
+  test('非降修正按 pane 各算各的', () => {
+    const timeline = buildReplayTimeline([
+      entry({ seq: 1, at: BASE, paneId: '%1', data: HI }),
+      entry({ seq: 2, at: BASE + 9000, paneId: '%2', data: HI }),
+      entry({ seq: 3, at: BASE + 1000, paneId: '%1', data: HI }),
+    ]);
+    const first = timeline.panes.find((pane) => pane.paneId === '%1');
+    expect(first?.events.map((event) => event.t)).toEqual([0, 1000]);
+  });
 });
 
 describe('base64ByteLength', () => {

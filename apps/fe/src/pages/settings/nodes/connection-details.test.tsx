@@ -21,6 +21,8 @@ const NO_RELAY = {
   reauthRequired: false,
   readmitPending: 0,
   metaKeyLagging: [],
+  preferredUrl: null,
+  autoSelect: { enabled: false, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
   writable: true,
   kicked: false,
   loading: false,

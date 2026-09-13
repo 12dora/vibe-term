@@ -4,30 +4,47 @@
 // 命中测试走 .xterm-screen 的 getBoundingClientRect，居中位移自然被算进去。
 
 import type { TerminalThemeColors } from '@vibeterm/shared';
-import { mixColors, relativeLuminance } from '@vibeterm/theme/color-utils';
+import { contrastRatio, mixColors, relativeLuminance } from '@vibeterm/theme/color-utils';
 
 const VIEWPORT_SELECTOR = '.xterm-viewport';
 const SCREEN_SELECTOR = '.xterm-screen';
 
-/** 近黑底色再往黑里混就没有反差了（相对亮度 0.004 ≈ #0d0d0d），改为往白里提一点。 */
-const NEAR_BLACK_LUMINANCE = 0.004;
+/** 衬底与终端底色至少要拉开这么多对比度，否则 letterbox 与录制画面同色，等于没有。 */
+export const MIN_BACKDROP_CONTRAST = 1.2;
 const DARK_LUMINANCE = 0.35;
-const NEAR_BLACK_LIFT = 0.12;
 const DARK_BACKDROP_MIX = 0.45;
 const LIGHT_BACKDROP_MIX = 0.16;
+const OPPOSITE_BACKDROP_MIX = 0.1;
+const BACKDROP_MIX_STEP = 0.05;
 const OUTLINE_MIX = 0.55;
 const FALLBACK_BACKDROP = 'rgba(0, 0, 0, 0.35)';
 const FALLBACK_OUTLINE = 'rgba(128, 128, 128, 0.7)';
 
-/** 衬底色：按底色明暗朝黑/白混，深浅两套预设都能看出内外之分。 */
+/** 朝 `toward` 逐档加量，直到与底色拉开 `MIN_BACKDROP_CONTRAST`。 */
+function mixUntilContrast(background: string, toward: string, start: number): string {
+  let mix = start;
+  let candidate = mixColors(background, toward, mix);
+  while (mix < 1 && contrastRatio(background, candidate) < MIN_BACKDROP_CONTRAST) {
+    mix = Math.min(1, mix + BACKDROP_MIX_STEP);
+    candidate = mixColors(background, toward, mix);
+  }
+  return candidate;
+}
+
+/**
+ * 衬底色：先按底色明暗朝黑里压，压不出可分差就掉头（近黑朝白提，其余继续压）。
+ *
+ * 不能只按绝对亮度分档：那样在近黑处是断崖——`#0d1117`（GitHub Dark）这类底色压完与画面同色，
+ * 整块 letterbox 白做。改成算完再校验对比度，保证任何预设都看得出内外之分。
+ */
 export function readOnlySurfaceBackdrop(theme: TerminalThemeColors): string {
   try {
-    const luminance = relativeLuminance(theme.background);
-    if (luminance < NEAR_BLACK_LUMINANCE) {
-      return mixColors(theme.background, '#ffffff', NEAR_BLACK_LIFT);
-    }
-    const ratio = luminance < DARK_LUMINANCE ? DARK_BACKDROP_MIX : LIGHT_BACKDROP_MIX;
-    return mixColors(theme.background, '#000000', ratio);
+    const background = theme.background;
+    const dark = relativeLuminance(background) < DARK_LUMINANCE;
+    const ratio = dark ? DARK_BACKDROP_MIX : LIGHT_BACKDROP_MIX;
+    const darkened = mixColors(background, '#000000', ratio);
+    if (contrastRatio(background, darkened) >= MIN_BACKDROP_CONTRAST) return darkened;
+    return mixUntilContrast(background, dark ? '#ffffff' : '#000000', OPPOSITE_BACKDROP_MIX);
   } catch {
     return FALLBACK_BACKDROP;
   }

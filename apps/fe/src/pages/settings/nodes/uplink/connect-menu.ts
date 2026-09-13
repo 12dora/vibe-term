@@ -17,8 +17,12 @@ export interface ConnectMenuItem {
   testId: string;
   destructive?: boolean;
   disabled?: boolean;
-  /** 禁用时的悬停解释；没有理由可说时缺席。 */
-  title?: string;
+  /**
+   * 「点了也没用」的理由：同时用作悬停提示与 `aria-describedby` 指向的 sr-only 文本。
+   * 禁用项在 Base UI 里不收指针事件（`data-disabled:pointer-events-none`），
+   * 原生 title 根本不会出，所以带理由的项一律保持可点，点了给一条 toast。
+   */
+  reason?: string;
   onSelect: () => void;
 }
 
@@ -39,6 +43,8 @@ export interface ConnectMenuHandlers {
   changeHub: () => void;
   migrateToRelay: () => void;
   addRelay: () => void;
+  /** 已达上限时点「追加中继」：不开对话框，只说明为什么。 */
+  notifyRelayLimit: () => void;
   reauthRelay: (url: string) => void;
   removeRelay: (url: string) => void;
   leaveRelay: () => void;
@@ -50,21 +56,16 @@ function relayTenantItems(
   state: ConnectMenuState,
   handlers: ConnectMenuHandlers
 ): ConnectMenuItem[] {
-  // 满 16 条时先禁掉：`set-relays` 的协议上限就是这个数，再签一条也只会在中继侧
-  // 以 `malformed_payload` 告终，那时用户已经把接入密码输完了。
+  // 满 16 条时点了只说明原因：`set-relays` 的协议上限就是这个数，再签一条也只会在中继侧
+  // 以 `malformed_payload` 告终，那时用户已经把接入密码输完了。禁用会连带吞掉解释，故保持可点。
   const full = state.relays.length >= RELAY_RECORD_MAX_RELAYS;
   const items: ConnectMenuItem[] = [
     {
       key: 'relay-add',
       label: t('relay.tenant.actions.add'),
       testId: 'nodes-relay-add',
-      ...(full
-        ? {
-            disabled: true,
-            title: t('relay.tenant.actions.addMax', { n: RELAY_RECORD_MAX_RELAYS }),
-          }
-        : {}),
-      onSelect: handlers.addRelay,
+      ...(full ? { reason: t('relay.tenant.actions.addMax', { n: RELAY_RECORD_MAX_RELAYS }) } : {}),
+      onSelect: full ? handlers.notifyRelayLimit : handlers.addRelay,
     },
   ];
   for (const action of relayActionMenu(state.relays)) {
