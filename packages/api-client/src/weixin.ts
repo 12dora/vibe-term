@@ -8,62 +8,55 @@ import type {
   WeixinLoginStatusResponse,
 } from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
-import { requestJson, requestOk } from './json-mutation';
+import { requestJson } from './json-mutation';
+import {
+  type MessagingChannelClient,
+  type MessagingChannelFlags,
+  createMessagingChannelClient,
+} from './messaging-channel';
 
 export type WeixinAccountCreateRequest = {
   name: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-  allowCommands?: boolean;
-};
+} & MessagingChannelFlags;
 
 export type WeixinAccountUpdateRequest = {
   name?: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-  allowCommands?: boolean;
-};
+} & MessagingChannelFlags;
 
-function accountPath(accountId: string, suffix = ''): string {
-  return `/api/settings/weixin/accounts/${encodeURIComponent(accountId)}${suffix}`;
-}
+const WEIXIN_CHANNEL = {
+  basePath: '/api/settings/weixin/accounts',
+  parentLabel: 'weixin account',
+  childCollection: 'users',
+  childLabel: 'weixin user',
+} as const;
 
 export class WeixinApi {
-  constructor(private readonly client: ApiClient = defaultApiClient) {}
+  private readonly channel: MessagingChannelClient;
+
+  constructor(private readonly client: ApiClient = defaultApiClient) {
+    this.channel = createMessagingChannelClient(WEIXIN_CHANNEL, client);
+  }
 
   listAccounts(): Promise<ListWeixinAccountsResponse> {
-    return requestJson<ListWeixinAccountsResponse>(this.client, '/api/settings/weixin/accounts', {
-      errorFallback: 'Failed to list weixin accounts',
-    });
+    return this.channel.list();
   }
 
   createAccount(body: WeixinAccountCreateRequest): Promise<unknown> {
-    return requestJson(this.client, '/api/settings/weixin/accounts', {
-      method: 'POST',
-      body,
-      errorFallback: 'Failed to create weixin account',
-    });
+    return this.channel.create(body);
   }
 
   updateAccount(accountId: string, body: WeixinAccountUpdateRequest): Promise<unknown> {
-    return requestJson(this.client, accountPath(accountId), {
-      method: 'PATCH',
-      body,
-      errorFallback: 'Failed to update weixin account',
-    });
+    return this.channel.update(accountId, body);
   }
 
-  async deleteAccount(accountId: string): Promise<void> {
-    await requestOk(this.client, accountPath(accountId), {
-      method: 'DELETE',
-      errorFallback: 'Failed to delete weixin account',
-    });
+  deleteAccount(accountId: string): Promise<void> {
+    return this.channel.remove(accountId);
   }
 
   startLogin(accountId: string): Promise<StartWeixinLoginResponse> {
     return requestJson<StartWeixinLoginResponse>(
       this.client,
-      accountPath(accountId, '/login/start'),
+      this.channel.parentPath(accountId, '/login/start'),
       {
         method: 'POST',
         errorFallback: 'Failed to start weixin login',
@@ -74,34 +67,24 @@ export class WeixinApi {
   loginStatus(accountId: string): Promise<WeixinLoginStatusResponse> {
     return requestJson<WeixinLoginStatusResponse>(
       this.client,
-      accountPath(accountId, '/login/status'),
+      this.channel.parentPath(accountId, '/login/status'),
       { errorFallback: 'Failed to load weixin login status' }
     );
   }
 
   testAccount(accountId: string): Promise<unknown> {
-    return requestJson(this.client, accountPath(accountId, '/test'), {
+    return requestJson(this.client, this.channel.parentPath(accountId, '/test'), {
       method: 'POST',
       errorFallback: 'Failed to test weixin account',
     });
   }
 
   listUsers(accountId: string): Promise<ListWeixinAccountUsersResponse> {
-    return requestJson<ListWeixinAccountUsersResponse>(
-      this.client,
-      accountPath(accountId, '/users'),
-      {
-        errorFallback: 'Failed to list weixin users',
-      }
-    );
+    return this.channel.listChildren(accountId);
   }
 
   approveUser(accountId: string, userId: string): Promise<{ user: WeixinAccountUser }> {
-    return requestJson(
-      this.client,
-      `${accountPath(accountId, '/users')}/${encodeURIComponent(userId)}/approve`,
-      { method: 'POST', errorFallback: 'Failed to approve weixin user' }
-    );
+    return this.channel.approveChild(accountId, userId);
   }
 }
 

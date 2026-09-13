@@ -1,88 +1,72 @@
 import type { TelegramBotChat, TelegramBotWithStats, TelegramChatType } from '@vibeterm/shared';
-import { and, count, desc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { i18next } from '../i18n';
 import { getDb as getOrmDb } from './client';
 import { toTelegramBotConfigRecord, toTelegramChat } from './mappers';
+import {
+  createMessagingChannelStore,
+  emptyStatusCounters,
+  foldStatusCounters,
+} from './messaging-channel';
 import { telegramBotChats, telegramBots } from './schema';
-import { aggregateByParent } from './stats';
 import type { TelegramBotConfigRecord } from './types';
 
 export type { TelegramBotConfigRecord };
 
+const TELEGRAM_UPDATE_KEYS = [
+  'name',
+  'tokenEnc',
+  'enabled',
+  'allowAuthRequests',
+  'allowCommands',
+  'lastUpdateId',
+] as const;
+
+const store = createMessagingChannelStore({
+  tables: {
+    parent: telegramBots,
+    child: telegramBotChats,
+    parentId: telegramBots.id,
+    parentCreatedAt: telegramBots.createdAt,
+    childId: telegramBotChats.id,
+    childParentId: telegramBotChats.botId,
+    childExternalId: telegramBotChats.chatId,
+    childStatus: telegramBotChats.status,
+    childAppliedAt: telegramBotChats.appliedAt,
+    childAuthorizedAt: telegramBotChats.authorizedAt,
+  },
+  toParent: toTelegramBotConfigRecord,
+  toChild: toTelegramChat,
+  emptyCounters: emptyStatusCounters,
+  foldChild: (acc, row) => foldStatusCounters(acc, row.status),
+  toStats: (bot, counter): TelegramBotWithStats => ({
+    id: bot.id,
+    name: bot.name,
+    enabled: bot.enabled,
+    allowAuthRequests: bot.allowAuthRequests,
+    allowCommands: bot.allowCommands,
+    createdAt: bot.createdAt,
+    updatedAt: bot.updatedAt,
+    pendingCount: counter.pending,
+    authorizedCount: counter.authorized,
+  }),
+  updateKeys: TELEGRAM_UPDATE_KEYS,
+});
+
 export function createTelegramBot(configRecord: TelegramBotConfigRecord): void {
-  const orm = getOrmDb();
-  orm
-    .insert(telegramBots)
-    .values({
-      id: configRecord.id,
-      name: configRecord.name,
-      tokenEnc: configRecord.tokenEnc,
-      enabled: configRecord.enabled,
-      allowAuthRequests: configRecord.allowAuthRequests,
-      allowCommands: configRecord.allowCommands,
-      lastUpdateId: configRecord.lastUpdateId,
-      createdAt: configRecord.createdAt,
-      updatedAt: configRecord.updatedAt,
-    })
-    .run();
+  store.create(configRecord);
 }
 
 export function getTelegramBotById(botId: string): TelegramBotConfigRecord | null {
-  const orm = getOrmDb();
-  const row = orm.select().from(telegramBots).where(eq(telegramBots.id, botId)).get();
-  if (!row) {
-    return null;
-  }
-  return toTelegramBotConfigRecord(row);
+  return store.getById(botId);
 }
 
 export function getAllTelegramBots(): TelegramBotConfigRecord[] {
-  const orm = getOrmDb();
-  return orm
-    .select()
-    .from(telegramBots)
-    .orderBy(desc(telegramBots.createdAt))
-    .all()
-    .map(toTelegramBotConfigRecord);
+  return store.list();
 }
 
 export function getTelegramBotsWithStats(): TelegramBotWithStats[] {
-  const orm = getOrmDb();
-  const bots = orm.select().from(telegramBots).orderBy(desc(telegramBots.createdAt)).all();
-
-  const chatRows = orm
-    .select({ botId: telegramBotChats.botId, status: telegramBotChats.status })
-    .from(telegramBotChats)
-    .all();
-
-  const counters = aggregateByParent(
-    chatRows,
-    (row) => row.botId,
-    () => ({ pending: 0, authorized: 0 }),
-    (current, row) => {
-      if (row.status === 'pending') {
-        current.pending += 1;
-      }
-      if (row.status === 'authorized') {
-        current.authorized += 1;
-      }
-    }
-  );
-
-  return bots.map((bot) => {
-    const counter = counters.get(bot.id) ?? { pending: 0, authorized: 0 };
-    return {
-      id: bot.id,
-      name: bot.name,
-      enabled: bot.enabled,
-      allowAuthRequests: bot.allowAuthRequests,
-      allowCommands: bot.allowCommands,
-      createdAt: bot.createdAt,
-      updatedAt: bot.updatedAt,
-      pendingCount: counter.pending,
-      authorizedCount: counter.authorized,
-    };
-  });
+  return store.listWithStats();
 }
 
 export function updateTelegramBot(
@@ -94,66 +78,18 @@ export function updateTelegramBot(
     >
   >
 ): TelegramBotConfigRecord | null {
-  const orm = getOrmDb();
-  const setValues: Partial<typeof telegramBots.$inferInsert> = {
-    updatedAt: new Date().toISOString(),
-  };
-
-  if (updates.name !== undefined) {
-    setValues.name = updates.name;
-  }
-  if (updates.tokenEnc !== undefined) {
-    setValues.tokenEnc = updates.tokenEnc;
-  }
-  if (updates.enabled !== undefined) {
-    setValues.enabled = updates.enabled;
-  }
-  if (updates.allowAuthRequests !== undefined) {
-    setValues.allowAuthRequests = updates.allowAuthRequests;
-  }
-  if (updates.allowCommands !== undefined) {
-    setValues.allowCommands = updates.allowCommands;
-  }
-  if (updates.lastUpdateId !== undefined) {
-    setValues.lastUpdateId = updates.lastUpdateId;
-  }
-
-  orm.update(telegramBots).set(setValues).where(eq(telegramBots.id, botId)).run();
-  return getTelegramBotById(botId);
+  return store.update(botId, updates);
 }
 
 export function deleteTelegramBot(botId: string): void {
-  const orm = getOrmDb();
-  orm.delete(telegramBots).where(eq(telegramBots.id, botId)).run();
-}
-
-function getTelegramChatCount(botId: string): number {
-  const orm = getOrmDb();
-  const row = orm
-    .select({ total: count() })
-    .from(telegramBotChats)
-    .where(eq(telegramBotChats.botId, botId))
-    .get();
-
-  return Number(row?.total ?? 0);
+  store.remove(botId);
 }
 
 export function getTelegramChatByBotAndChatId(
   botId: string,
   chatId: string
 ): TelegramBotChat | null {
-  const orm = getOrmDb();
-  const row = orm
-    .select()
-    .from(telegramBotChats)
-    .where(and(eq(telegramBotChats.botId, botId), eq(telegramBotChats.chatId, chatId)))
-    .get();
-
-  if (!row) {
-    return null;
-  }
-
-  return toTelegramChat(row);
+  return store.getChild(botId, chatId);
 }
 
 /**
@@ -176,14 +112,13 @@ export function createOrUpdatePendingTelegramChat(params: {
   appliedAt: string;
   userId?: string | null;
 }): TelegramBotChat {
-  const existing = getTelegramChatByBotAndChatId(params.botId, params.chatId);
-  if (!existing && getTelegramChatCount(params.botId) >= 8) {
+  const existing = store.getChild(params.botId, params.chatId);
+  if (!existing && store.countChildren(params.botId) >= 8) {
     throw new Error(i18next.t('apiError.invalidRequest'));
   }
 
   const now = new Date().toISOString();
   const orm = getOrmDb();
-
   const userId = pendingTelegramUserIdForUpsert(existing, params.userId);
 
   if (!existing) {
@@ -227,61 +162,25 @@ export function createOrUpdatePendingTelegramChat(params: {
       .run();
   }
 
-  const next = getTelegramChatByBotAndChatId(params.botId, params.chatId);
+  const next = store.getChild(params.botId, params.chatId);
   if (!next) {
     throw new Error('failed to upsert telegram chat');
   }
-
   return next;
 }
 
 export function listTelegramChatsByBot(botId: string): TelegramBotChat[] {
-  const orm = getOrmDb();
-  return orm
-    .select()
-    .from(telegramBotChats)
-    .where(eq(telegramBotChats.botId, botId))
-    .orderBy(desc(telegramBotChats.appliedAt))
-    .all()
-    .map(toTelegramChat);
+  return store.listChildren(botId);
 }
 
 export function listAuthorizedTelegramChatsByBot(botId: string): TelegramBotChat[] {
-  const orm = getOrmDb();
-  return orm
-    .select()
-    .from(telegramBotChats)
-    .where(and(eq(telegramBotChats.botId, botId), eq(telegramBotChats.status, 'authorized')))
-    .orderBy(desc(telegramBotChats.authorizedAt))
-    .all()
-    .map(toTelegramChat);
+  return store.listAuthorized(botId);
 }
 
 export function approveTelegramChat(botId: string, chatId: string): TelegramBotChat | null {
-  const existing = getTelegramChatByBotAndChatId(botId, chatId);
-  if (!existing) {
-    return null;
-  }
-
-  const now = new Date().toISOString();
-  const orm = getOrmDb();
-  orm
-    .update(telegramBotChats)
-    .set({
-      status: 'authorized',
-      authorizedAt: now,
-      updatedAt: now,
-    })
-    .where(eq(telegramBotChats.id, existing.id))
-    .run();
-
-  return getTelegramChatByBotAndChatId(botId, chatId);
+  return store.approveChild(botId, chatId);
 }
 
 export function deleteTelegramChat(botId: string, chatId: string): void {
-  const orm = getOrmDb();
-  orm
-    .delete(telegramBotChats)
-    .where(and(eq(telegramBotChats.botId, botId), eq(telegramBotChats.chatId, chatId)))
-    .run();
+  store.deleteChild(botId, chatId);
 }

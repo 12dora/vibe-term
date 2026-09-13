@@ -7,85 +7,69 @@ import type {
 } from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { requestJson, requestOk } from './json-mutation';
+import {
+  type MessagingChannelClient,
+  type MessagingChannelFlags,
+  createMessagingChannelClient,
+} from './messaging-channel';
 
 export type TelegramBotCreateRequest = {
   name: string;
   token: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-  allowCommands?: boolean;
-};
+} & MessagingChannelFlags;
 
 export type TelegramBotUpdateRequest = {
   name?: string;
   token?: string;
-  enabled?: boolean;
-  allowAuthRequests?: boolean;
-  allowCommands?: boolean;
-};
+} & MessagingChannelFlags;
 
-function botPath(botId: string, suffix = ''): string {
-  return `/api/settings/telegram/bots/${encodeURIComponent(botId)}${suffix}`;
-}
-
-function chatPath(botId: string, chatId: string, suffix = ''): string {
-  return `${botPath(botId, '/chats')}/${encodeURIComponent(chatId)}${suffix}`;
-}
+const TELEGRAM_CHANNEL = {
+  basePath: '/api/settings/telegram/bots',
+  parentLabel: 'telegram bot',
+  childCollection: 'chats',
+  childLabel: 'telegram chat',
+} as const;
 
 export class TelegramApi {
-  constructor(private readonly client: ApiClient = defaultApiClient) {}
+  private readonly channel: MessagingChannelClient;
+
+  constructor(private readonly client: ApiClient = defaultApiClient) {
+    this.channel = createMessagingChannelClient(TELEGRAM_CHANNEL, client);
+  }
 
   listBots(): Promise<ListTelegramBotsResponse> {
-    return requestJson<ListTelegramBotsResponse>(this.client, '/api/settings/telegram/bots', {
-      errorFallback: 'Failed to list telegram bots',
-    });
+    return this.channel.list();
   }
 
   createBot(body: TelegramBotCreateRequest): Promise<unknown> {
-    return requestJson(this.client, '/api/settings/telegram/bots', {
-      method: 'POST',
-      body,
-      errorFallback: 'Failed to create telegram bot',
-    });
+    return this.channel.create(body);
   }
 
   updateBot(botId: string, body: TelegramBotUpdateRequest): Promise<unknown> {
-    return requestJson(this.client, botPath(botId), {
-      method: 'PATCH',
-      body,
-      errorFallback: 'Failed to update telegram bot',
-    });
+    return this.channel.update(botId, body);
   }
 
-  async deleteBot(botId: string): Promise<void> {
-    await requestOk(this.client, botPath(botId), {
-      method: 'DELETE',
-      errorFallback: 'Failed to delete telegram bot',
-    });
+  deleteBot(botId: string): Promise<void> {
+    return this.channel.remove(botId);
   }
 
   listChats(botId: string): Promise<ListTelegramBotChatsResponse> {
-    return requestJson<ListTelegramBotChatsResponse>(this.client, botPath(botId, '/chats'), {
-      errorFallback: 'Failed to list telegram chats',
-    });
+    return this.channel.listChildren(botId);
   }
 
   approveChat(botId: string, chatId: string): Promise<{ chat: TelegramBotChat }> {
-    return requestJson(this.client, chatPath(botId, chatId, '/approve'), {
-      method: 'POST',
-      errorFallback: 'Failed to approve telegram chat',
-    });
+    return this.channel.approveChild(botId, chatId);
   }
 
   testChat(botId: string, chatId: string): Promise<unknown> {
-    return requestJson(this.client, chatPath(botId, chatId, '/test'), {
+    return requestJson(this.client, this.channel.childPath(botId, chatId, '/test'), {
       method: 'POST',
       errorFallback: 'Failed to test telegram chat',
     });
   }
 
   async deleteChat(botId: string, chatId: string): Promise<void> {
-    await requestOk(this.client, chatPath(botId, chatId), {
+    await requestOk(this.client, this.channel.childPath(botId, chatId), {
       method: 'DELETE',
       errorFallback: 'Failed to delete telegram chat',
     });
