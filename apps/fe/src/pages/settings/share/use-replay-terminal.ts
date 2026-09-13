@@ -3,6 +3,7 @@
 
 import { ReadOnlyTerminal, type ReadOnlyTerminalHandle } from '@vibeterm/terminal-ui';
 import { type ReactElement, createElement, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 export interface ReplayTerminalHandle {
   write: (data: Uint8Array) => void;
@@ -52,12 +53,14 @@ export function createReplayTerminalBinding(onReadyChange: (ready: boolean) => v
 }
 
 export function useReplayTerminal(): ReplayTerminalState {
+  const { t } = useTranslation();
   const [ready, setReady] = useState(false);
   const bindingRef = useRef<ReturnType<typeof createReplayTerminalBinding> | null>(null);
   if (bindingRef.current === null) {
     bindingRef.current = createReplayTerminalBinding(setReady);
   }
   const binding = bindingRef.current;
+  const ariaLabel = t('settings.share.replay.title');
 
   const widget = useMemo(
     () =>
@@ -67,8 +70,9 @@ export function useReplayTerminal(): ReplayTerminalState {
         onReady: binding.onReady,
         onDispose: binding.onDispose,
         testId: 'share-replay-mount',
+        ariaLabel,
       }),
-    [binding]
+    [binding, ariaLabel]
   );
 
   return { handle: binding.handle, ready, widget };

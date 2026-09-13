@@ -41,6 +41,43 @@ export interface ReplayPlayer {
   selectPane: (paneId: string) => void;
 }
 
+export interface ReplaySeekApplyInput {
+  pane: ReplayPane;
+  targetMs: number;
+  cursor: number;
+  force: boolean;
+  terminal: ReplayTerminalHandle;
+  markerSeq?: number;
+}
+
+export interface ReplaySeekApplyResult {
+  cursor: number;
+  reset: boolean;
+  markers: ReplayInputMarker[];
+  nextMarkerSeq: number;
+}
+
+/** 把时间轴窗口落到终端：强制重建时从 checkpoint 起重放，否则从 cursor 接着写。 */
+export function applyReplaySeek(input: ReplaySeekApplyInput): ReplaySeekApplyResult {
+  const planCursor = input.force ? Number.POSITIVE_INFINITY : input.cursor;
+  const plan = planReplaySeek(input.pane, input.targetMs, planCursor);
+  if (plan.reset) input.terminal.reset();
+  let markerSeq = input.markerSeq ?? 0;
+  const markers: ReplayInputMarker[] = [];
+  for (const op of collectReplayOps(input.pane, plan.fromIndex, plan.toIndex)) {
+    if (op.kind === 'resize') input.terminal.resize(op.cols, op.rows);
+    else if (op.kind === 'write') input.terminal.write(concatBytes(op.chunks.map(decodeBase64)));
+    else {
+      markers.push({
+        seq: markerSeq++,
+        t: op.t,
+        text: describeInputBase64(op.data),
+      });
+    }
+  }
+  return { cursor: plan.toIndex, reset: plan.reset, markers, nextMarkerSeq: markerSeq };
+}
+
 export function useReplayPlayer(
   timeline: ReplayTimeline,
   terminal: ReplayTerminalHandle,
@@ -65,23 +102,20 @@ export function useReplayPlayer(
     (target: number, force: boolean) => {
       const current = paneRef.current;
       if (!current || !readyRef.current) return;
-      const cursor = force ? Number.POSITIVE_INFINITY : cursorRef.current;
-      const plan = planReplaySeek(current, target, cursor);
-      if (plan.reset) terminal.reset();
-      const markers: ReplayInputMarker[] = [];
-      for (const op of collectReplayOps(current, plan.fromIndex, plan.toIndex)) {
-        if (op.kind === 'resize') terminal.resize(op.cols, op.rows);
-        else if (op.kind === 'write') terminal.write(concatBytes(op.chunks.map(decodeBase64)));
-        else
-          markers.push({
-            seq: markerSeqRef.current++,
-            t: op.t,
-            text: describeInputBase64(op.data),
-          });
+      const result = applyReplaySeek({
+        pane: current,
+        targetMs: target,
+        cursor: cursorRef.current,
+        force,
+        terminal,
+        markerSeq: markerSeqRef.current,
+      });
+      cursorRef.current = result.cursor;
+      markerSeqRef.current = result.nextMarkerSeq;
+      if (result.reset) setInputs(result.markers.slice(-INPUT_HISTORY));
+      else if (result.markers.length > 0) {
+        setInputs((prev) => [...prev, ...result.markers].slice(-INPUT_HISTORY));
       }
-      cursorRef.current = plan.toIndex;
-      if (plan.reset) setInputs(markers.slice(-INPUT_HISTORY));
-      else if (markers.length > 0) setInputs((prev) => [...prev, ...markers].slice(-INPUT_HISTORY));
     },
     [terminal]
   );
@@ -100,12 +134,14 @@ export function useReplayPlayer(
   // 依赖只认 paneId：日志是一页页到的，pane 对象每页都换一个新的，
   // 按对象身份重跑会让整份录像每来一页就从头快进一遍。
   const paneKey = pane?.paneId ?? null;
+  const applyRef = useRef(apply);
+  applyRef.current = apply;
   useEffect(() => {
     if (!ready || paneKey === null) return;
     terminal.reset();
     cursorRef.current = 0;
-    apply(timeRef.current, true);
-  }, [ready, paneKey, apply, terminal]);
+    applyRef.current(timeRef.current, true);
+  }, [ready, paneKey, terminal]);
 
   useEffect(() => {
     if (!playing) return;

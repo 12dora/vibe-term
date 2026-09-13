@@ -20,7 +20,7 @@ export interface UseReadOnlyTerminalOptions {
 }
 
 export interface ReadOnlyTerminalRefs {
-  containerRef: RefObject<HTMLDivElement | null>;
+  containerRef: RefObject<HTMLElement | null>;
   mountRef: RefObject<HTMLDivElement | null>;
   instance: CompatibleTerminalLike | null;
   terminalTheme: TerminalThemeColors;
@@ -54,7 +54,7 @@ export function clearE2eReadOnlyTerminalProbe(terminal: CompatibleTerminalLike |
 }
 
 function useReadOnlyContainerFit(
-  containerRef: RefObject<HTMLDivElement | null>,
+  containerRef: RefObject<HTMLElement | null>,
   sessionRef: RefObject<ReadOnlyTerminalSession | null>
 ): void {
   useEffect(() => {
@@ -105,7 +105,7 @@ export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOn
     [theme, themePreset]
   );
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
   const mountRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<ReadOnlyController | null>(null);
   const themeRef = useRef(terminalTheme);

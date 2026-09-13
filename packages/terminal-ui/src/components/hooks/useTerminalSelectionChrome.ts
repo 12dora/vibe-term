@@ -7,7 +7,8 @@ import { useTerminalClipboard } from './useTerminalClipboard';
 
 export function useTerminalSelectionChrome(
   instance: CompatibleTerminalLike | null,
-  containerRef: RefObject<HTMLElement | null>
+  containerRef: RefObject<HTMLElement | null>,
+  options?: { readOnly?: boolean }
 ) {
   const toolbarRef = useRef<HTMLDivElement>(null);
   const {
@@ -28,10 +29,11 @@ export function useTerminalSelectionChrome(
   const getTerminalForTouch = useCallback(() => instance, [instance]);
   useMobileTouch(containerRef, getTerminalForTouch, {
     onSelectionCommitted: commitSelectionCopy,
+    readOnly: options?.readOnly,
   });
 
   const handlePointerDownCapture = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+    (event: React.PointerEvent<HTMLElement>) => {
       if (
         shouldDismissSelectionOnPointerDown({
           hasSelection,
@@ -47,7 +49,7 @@ export function useTerminalSelectionChrome(
   );
 
   const handlePointerUp = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+    (event: React.PointerEvent<HTMLElement>) => {
       if (event.pointerType === 'touch') return;
       commitSelectionCopy();
     },

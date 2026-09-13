@@ -24,9 +24,11 @@ const {
   isReadOnlyCopyShortcut,
   mountHasPositiveSize,
   readOnlyTerminalSettingsFromUi,
+  schedulePostPaintRefit,
 } = await import('./hooks/read-only-terminal-session');
 type ReadOnlyController = import('./hooks/read-only-terminal-session').ReadOnlyController;
 const { ReadOnlySelectionToolbar, ReadOnlyTerminal } = await import('./ReadOnlyTerminal');
+const { resolveInitialTerminalGrid } = await import('./terminal-initial-grid');
 const { clearE2eReadOnlyTerminalProbe, setE2eReadOnlyTerminalProbe } = await import(
   './hooks/useReadOnlyTerminal'
 );
@@ -51,6 +53,12 @@ function createMount(width: number, height: number) {
   const box = { width, height };
   return {
     box,
+    get clientWidth() {
+      return box.width;
+    },
+    get clientHeight() {
+      return box.height;
+    },
     getBoundingClientRect: () => ({
       width: box.width,
       height: box.height,
@@ -63,6 +71,7 @@ function createMount(width: number, height: number) {
       toJSON: () => ({}),
     }),
     querySelector: () => null,
+    closest: () => null,
   };
 }
 
@@ -198,6 +207,39 @@ describe('ReadOnlyTerminal settings and controller options', () => {
     runtime.dispose();
   });
 
+  test('缩放后的 bounding rect 不参与估列，按 clientWidth 建网格', () => {
+    const clientWidth = 2400;
+    const clientHeight = 900;
+    const options = buildReadOnlyControllerOptions({
+      fontFamily: 'monospace',
+      fontSize: 18,
+      lineHeight: 1.4,
+      scrollback: 10000,
+      theme: { background: '#000' } as never,
+      mount: {
+        clientWidth,
+        clientHeight,
+        getBoundingClientRect: () => ({
+          width: clientWidth * 0.95,
+          height: clientHeight * 0.95,
+        }),
+      },
+    });
+    const fromClient = resolveInitialTerminalGrid({
+      rect: { width: clientWidth, height: clientHeight },
+      fontSize: 18,
+      lineHeight: 1.4,
+    });
+    const fromScaled = resolveInitialTerminalGrid({
+      rect: { width: clientWidth * 0.95, height: clientHeight * 0.95 },
+      fontSize: 18,
+      lineHeight: 1.4,
+    });
+    expect(options.cols).toBe(fromClient.cols);
+    expect(options.rows).toBe(fromClient.rows);
+    expect(fromClient.cols).not.toBe(fromScaled.cols);
+  });
+
   test('测不到容器时仍用 200×24 建面，而不是引擎默认 80×24', () => {
     const options = buildReadOnlyControllerOptions({
       fontFamily: 'monospace',
@@ -293,17 +335,98 @@ describe('ReadOnlyTerminal viewport pan', () => {
     session.handle.resize(132, 44);
     expect(controller.viewport.scrollLeft).toBe(80);
     expect(controller.viewport.scrollTop).toBe(12);
+    session.handle.resize(140, 48);
+    expect(controller.viewport.scrollLeft).toBe(80);
+    expect(controller.viewport.scrollTop).toBe(12);
     session.dispose();
   });
 
-  test('PanOriginPolicy 在编程滚动时不计为用户平移', () => {
+  test('PanOriginPolicy 用户平移后 resize 不再回原点，reset 才清标志', () => {
     const policy = new PanOriginPolicy();
     policy.runProgrammatic(() => policy.onScroll(40, 10));
     expect(policy.shouldResetOrigin()).toBe(true);
     policy.onScroll(40, 10);
     expect(policy.shouldResetOrigin()).toBe(false);
-    policy.noteResizeConsumed();
+    policy.reset();
     expect(policy.shouldResetOrigin()).toBe(true);
+  });
+
+  test('pan 模式在未收到录像尺寸时允许延迟再 fit 一次', async () => {
+    const events: string[] = [];
+    const { session } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: true,
+      events,
+    });
+    expect(events).toEqual(['fit']);
+    session?.refitIfNoRecordedSize();
+    expect(events).toEqual(['fit', 'fit']);
+    session?.handle.resize(80, 24);
+    session?.refitIfNoRecordedSize();
+    expect(events).toEqual(['fit', 'fit']);
+    session?.dispose();
+  });
+});
+
+describe('schedulePostPaintRefit', () => {
+  const originalRAF = globalThis.requestAnimationFrame;
+  const originalCancel = globalThis.cancelAnimationFrame;
+
+  function installRAF() {
+    const frames: FrameRequestCallback[] = [];
+    globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
+      frames.push(cb);
+      return frames.length;
+    }) as typeof requestAnimationFrame;
+    globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame;
+    return frames;
+  }
+
+  function restoreRAF() {
+    if (originalRAF) globalThis.requestAnimationFrame = originalRAF;
+    else Reflect.deleteProperty(globalThis, 'requestAnimationFrame');
+    if (originalCancel) globalThis.cancelAnimationFrame = originalCancel;
+    else Reflect.deleteProperty(globalThis, 'cancelAnimationFrame');
+  }
+
+  test('没有 data-open 祖先时用第二帧 rAF', () => {
+    const frames = installRAF();
+    try {
+      const runs: string[] = [];
+      schedulePostPaintRefit({ closest: () => null }, () => runs.push('run'));
+      expect(runs).toEqual([]);
+      frames[0](0);
+      expect(runs).toEqual([]);
+      frames[1](0);
+      expect(runs).toEqual(['run']);
+    } finally {
+      restoreRAF();
+    }
+  });
+
+  test('有正在播放的 data-open 祖先时等 animationend', () => {
+    const frames = installRAF();
+    try {
+      const runs: string[] = [];
+      const listeners: Array<() => void> = [];
+      const open = {
+        addEventListener(_type: string, listener: () => void) {
+          listeners.push(listener);
+        },
+        removeEventListener() {},
+        getAnimations: () => [{ playState: 'running' as const }],
+      };
+      schedulePostPaintRefit({ closest: () => open }, () => runs.push('run'));
+      frames[0](0);
+      expect(frames.length).toBe(1);
+      expect(listeners).toHaveLength(1);
+      expect(runs).toEqual([]);
+      listeners[0]();
+      expect(runs).toEqual(['run']);
+    } finally {
+      restoreRAF();
+    }
   });
 });
 
@@ -374,6 +497,25 @@ describe('ReadOnlyTerminal e2e probe', () => {
   });
 });
 
+describe('ReadOnlyTerminal a11y', () => {
+  test('根节点可聚焦并带 region 与 aria-label', () => {
+    const runtime = createAppRuntime({
+      nodeId: 'self',
+      storagePrefix: `read-only-a11y-${Date.now()}:`,
+      host: recordingHost([]),
+    });
+    const html = renderToStaticMarkup(
+      <RuntimeProvider runtime={runtime}>
+        <ReadOnlyTerminal selection ariaLabel="日志回放" />
+      </RuntimeProvider>
+    );
+    expect(html).toContain('<section');
+    expect(html).toContain('tabindex="0"');
+    expect(html).toContain('aria-label="日志回放"');
+    runtime.dispose();
+  });
+});
+
 describe('ReadOnlyTerminal selection toolbar', () => {
   test('selection 挂上工具条且粘贴关闭', () => {
     const runtime = createAppRuntime({
@@ -396,6 +538,7 @@ describe('ReadOnlyTerminal selection toolbar', () => {
       </RuntimeProvider>
     );
     expect(html).toContain('data-testid="read-only-terminal"');
+    expect(html).toContain('tabindex="0"');
     expect(html).toContain('data-testid="terminal-selection-toolbar"');
     expect(html).toContain('data-testid="terminal-selection-copy"');
     expect(html).not.toContain('data-testid="terminal-selection-paste"');

@@ -166,7 +166,7 @@ describe('terminal render diagnostics', () => {
     const { mount, documentLike } = fakeMount({ pixelsReadable: false });
     const lines = Array.from({ length: 800 }, (_, index) => (index === 799 ? 'latest' : ''));
     const diagnostic = collectTerminalRenderDiagnostic({
-      surface: 'preview',
+      surface: 'terminal',
       stage: 'opened' as TerminalDiagnosticStage,
       terminal: fakeTerminal(lines),
       mount: mount as unknown as HTMLElement,

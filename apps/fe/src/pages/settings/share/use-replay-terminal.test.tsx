@@ -5,8 +5,14 @@ import { describe, expect, mock, test } from 'bun:test';
 import type { ReadOnlyTerminalHandle, ReadOnlyTerminalProps } from '@vibeterm/terminal-ui';
 import { type ReactElement, createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import * as ReactI18nRuntime from 'react-i18next';
 
 let latestProps: ReadOnlyTerminalProps | null = null;
+
+mock.module('react-i18next', () => ({
+  ...ReactI18nRuntime,
+  useTranslation: () => ({ t: (key: string) => key, i18n: {}, ready: true }),
+}));
 
 mock.module('@vibeterm/terminal-ui', () => ({
   ReadOnlyTerminal: (props: ReadOnlyTerminalProps) => {
@@ -104,6 +110,8 @@ describe('useReplayTerminal', () => {
     expect(latestProps?.viewportPan).toBe(true);
     expect(latestProps?.selection).toBe(true);
     expect(latestProps?.testId).toBe('share-replay-mount');
+    expect(typeof latestProps?.ariaLabel).toBe('string');
+    expect(latestProps?.ariaLabel).toBeTruthy();
     const widget = state.widget as ReactElement<ReadOnlyTerminalProps>;
     expect(widget.props.viewportPan).toBe(true);
     expect(widget.props.selection).toBe(true);

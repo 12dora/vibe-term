@@ -33,6 +33,8 @@ export interface GestureMachineOptions {
   resolveTerminal: ResolveTerminal;
   elementFromPoint?: ElementFromPoint;
   onSelectionCommitted?: () => void;
+  /** 只读终端：点光标行也不 focus，避免弹出软键盘 */
+  readOnly?: boolean;
 }
 
 function preventIfCancelable(event: Event): void {
@@ -54,6 +56,7 @@ export class MobileTouchGestureMachine {
   private readonly resolveTerminal: ResolveTerminal;
   private readonly elementFromPoint: ElementFromPoint;
   private readonly onSelectionCommitted?: () => void;
+  private readonly readOnly: boolean;
   private readonly scroll: TouchScrollGesture;
   private readonly pan = new TouchPanAnchor();
   private readonly selection = new LongPressSelectionGesture();
@@ -64,6 +67,7 @@ export class MobileTouchGestureMachine {
     this.resolveTerminal = options.resolveTerminal;
     this.elementFromPoint = options.elementFromPoint ?? documentElementFromPoint;
     this.onSelectionCommitted = options.onSelectionCommitted;
+    this.readOnly = options.readOnly === true;
     this.scroll = new TouchScrollGesture(options.container);
   }
 
@@ -338,6 +342,9 @@ export class MobileTouchGestureMachine {
   // .xterm-screen 的 client 基准），滚回历史时读不到行号，轻点自然不聚焦。
   private focusIfTapHitsInputRow(terminal: ReturnType<ResolveTerminal>): void {
     if (!terminal) {
+      return;
+    }
+    if (this.readOnly || terminal.isInputDisabled?.()) {
       return;
     }
     const screen = this.container.querySelector(TERMINAL_SCREEN_SELECTOR);

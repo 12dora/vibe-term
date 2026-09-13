@@ -120,6 +120,8 @@ function createHarness(options: {
   /** 最近一帧的光标视口行号；省略 = 读不到光标（轻点永远不聚焦） */
   cursorRow?: number;
   onSelectionCommitted?: () => void;
+  readOnly?: boolean;
+  inputDisabled?: boolean;
 }): Harness {
   const calls: string[] = [];
   let reporting = options.reporting;
@@ -154,6 +156,7 @@ function createHarness(options: {
     endTouchSelection: () => calls.push('endSelection'),
     noteTouchHandled: () => calls.push('noteTouchHandled'),
     focus: () => calls.push('focus'),
+    isInputDisabled: options.inputDisabled ? () => true : undefined,
   };
   if (options.cursorRow !== undefined) {
     terminal.lastCursor = { visible: true, y: options.cursorRow };
@@ -181,6 +184,7 @@ function createHarness(options: {
     resolveTerminal: () => terminal,
     elementFromPoint: () => null,
     onSelectionCommitted: options.onSelectionCommitted,
+    readOnly: options.readOnly,
   });
 
   return {
@@ -435,6 +439,32 @@ describe('tap on the canvas only wakes the keyboard on the cursor row', () => {
     machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
 
     expect(calls).toEqual(['press(100,110)', 'release(100,110)', 'noteTouchHandled', 'focus']);
+  });
+
+  test('stdin 禁用时点光标行不聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      cursorRow: 5,
+      container: screenContainer(),
+      inputDisabled: true,
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+
+    expect(calls).toEqual(['noteTouchHandled']);
+  });
+
+  test('readOnly 选项同样不聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      cursorRow: 5,
+      container: screenContainer(),
+      readOnly: true,
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+
+    expect(calls).toEqual(['noteTouchHandled']);
   });
 
   test('覆盖层（选区工具条）上的轻点放行，按钮仍可点', () => {
