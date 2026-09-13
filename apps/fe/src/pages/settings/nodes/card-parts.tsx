@@ -3,6 +3,7 @@
 // 提醒过去是四种背景色 + 各自的内联样式散在三个文件里，同一类问题在 hub 面板与中继面板
 // 长得不一样。这里收成一个组件：档位决定颜色，动作永远在右边，行高一致换档不跳版。
 
+import { TONE_CLASS } from '@/lib/tone';
 import { Button } from '@vibeterm/ui/button';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -28,11 +29,11 @@ export function CardSection({
 
 export type NoticeTone = 'danger' | 'warning' | 'muted';
 
-const NOTICE_CLASS: Record<NoticeTone, string> = {
-  danger: 'bg-destructive/10 text-destructive',
-  warning: 'bg-amber-500/10 text-amber-700 dark:text-amber-400',
-  muted: 'bg-muted/60 text-muted-foreground',
-};
+const CARD_NOTICE_TONE = {
+  danger: 'blocked',
+  warning: 'warn',
+  muted: 'muted',
+} as const satisfies Record<NoticeTone, keyof typeof TONE_CLASS.cardNotice>;
 
 export function Notice({
   tone,
@@ -50,7 +51,7 @@ export function Notice({
 }) {
   return (
     <p
-      className={`flex flex-wrap items-center gap-2 rounded-lg p-2 text-xs ${NOTICE_CLASS[tone]}`}
+      className={`flex flex-wrap items-center gap-2 rounded-lg p-2 text-xs ${TONE_CLASS.cardNotice[CARD_NOTICE_TONE[tone]]}`}
       data-testid={testId}
     >
       {spinner ? (

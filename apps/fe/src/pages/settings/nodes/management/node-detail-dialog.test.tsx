@@ -484,6 +484,7 @@ describe('详情正文', () => {
     expect(html).toContain('ffffffffffffffff');
     expect(html).toContain('1.1.9');
     expect(html).toContain('nodes.reach.lan');
+    expect(html).toContain('nodes.status.onlineSignedIn');
     expect(html).toContain(`value="${REMOTE.name}"`);
     expect(html).toContain(`data-testid="nodes-detail-domain-${REMOTE.id}"`);
     expect(html).toContain('nodes.columns.fingerprint');
@@ -500,7 +501,8 @@ describe('详情正文', () => {
     expect(html).toContain(`data-testid="nodes-detail-address-${REMOTE.id}"`);
     expect(html).toContain('office.lan');
     expect(html).toContain(`data-testid="nodes-detail-last-seen-${REMOTE.id}"`);
-    expect(html).toContain(new Date(at).toLocaleString());
+    expect(html).toContain(`title="${new Date(at).toLocaleString()}"`);
+    expect(html).toContain('nodes.time.');
   });
 
   test('hub 不可写时名称输入框禁用并说明原因', () => {

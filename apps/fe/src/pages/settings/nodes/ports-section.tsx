@@ -1,6 +1,7 @@
 // 本机卡入站端口：标题按本机角色说清「谁的口」。
 // 灯三态：绿=open、红=blocked、灰=unknown 或尚未探测（无 reach 行）。
 
+import { TONE_CLASS } from '@/lib/tone';
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
@@ -17,10 +18,10 @@ import {
   reachForSpec,
 } from './port-reach';
 
-const DOT_CLASS: Record<MeshPortReachStatus, string> = {
-  open: 'bg-emerald-500',
-  blocked: 'bg-destructive',
-  unknown: 'bg-muted-foreground/40',
+const PORT_DOT_TONE: Record<MeshPortReachStatus, keyof typeof TONE_CLASS.dot> = {
+  open: 'ok',
+  blocked: 'blocked',
+  unknown: 'muted',
 };
 
 export type ProbeNodePorts = (nodeId: string) => Promise<{ ports: unknown[] }>;
@@ -137,7 +138,7 @@ function PortIndicator({
   const title = reach ? portDotTitle(t, reach) : t('localMachine.ports.notProbedTitle');
   return (
     <span
-      className={`size-1.5 shrink-0 rounded-full ${DOT_CLASS[status]}`}
+      className={`size-1.5 shrink-0 rounded-full ${TONE_CLASS.dot[PORT_DOT_TONE[status]]}`}
       title={title}
       data-testid={`local-port-dot-${spec.purpose}`}
       data-status={status}

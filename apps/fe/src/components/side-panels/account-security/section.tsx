@@ -1,3 +1,5 @@
+import { TONE_CLASS } from '@/lib/tone';
+
 export function Section({
   title,
   description,
@@ -19,9 +21,9 @@ export function Section({
 }
 
 const FEEDBACK_TONE = {
-  error: 'text-destructive',
-  ok: 'text-emerald-500',
-  notice: 'text-muted-foreground',
+  error: TONE_CLASS.text.blocked,
+  ok: TONE_CLASS.text.ok,
+  notice: TONE_CLASS.text.muted,
 } as const;
 
 export function Feedback({ tone, text }: { tone: keyof typeof FEEDBACK_TONE; text: string }) {

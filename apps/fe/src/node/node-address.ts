@@ -1,13 +1,11 @@
 // 节点表 ADDRESS 列：从 hub URL / 直连对端 / 广告 endpoint / 中继主机推导展示用 host。
 // 纯函数，不读 store；缺值一律 `null`，由调用方换成 '—' / '-'。
 
+import { type Translate, formatRelative } from '@/lib/format-relative';
 import type { MeshNodeTransport } from '@vibeterm/api-client/auth/index';
 
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const IPV4_HOSTPORT_RE = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/;
-const MINUTE_MS = 60_000;
-const HOUR_MS = 60 * MINUTE_MS;
-const DAY_MS = 24 * HOUR_MS;
 
 export interface NodeAddressInput {
   isHub?: boolean;
@@ -30,7 +28,7 @@ export interface NodeReachInput {
   transport?: string | null;
 }
 
-export type Translate = (key: string, options?: Record<string, unknown>) => string;
+export type { Translate };
 
 /** 剥 scheme / path，保留 host[:port]；解析失败则原样返回非空串。 */
 export function displayHost(raw: string | null | undefined): string | null {
@@ -120,11 +118,7 @@ export function nodeRelativeTime(
   now: number
 ): string | null {
   if (at == null || !Number.isFinite(at) || at <= 0) return null;
-  const elapsed = Math.max(0, now - at);
-  if (elapsed < MINUTE_MS) return t('nodes.time.justNow');
-  if (elapsed < HOUR_MS) return t('nodes.time.minutes', { n: Math.floor(elapsed / MINUTE_MS) });
-  if (elapsed < DAY_MS) return t('nodes.time.hours', { n: Math.floor(elapsed / HOUR_MS) });
-  return t('nodes.time.days', { n: Math.floor(elapsed / DAY_MS) });
+  return formatRelative(t, at, now, 'nodes.time');
 }
 
 function parseAsUrl(value: string): URL | null {

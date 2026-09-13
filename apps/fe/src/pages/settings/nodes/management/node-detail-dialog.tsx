@@ -10,7 +10,6 @@
 // 生效，与两个草稿项的时序不同。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import { relayHostLabel, relayHostList } from '@/node/relay-extras';
 import { isValidNodeId, nodeAppPath } from '@vibeterm/api-client';
 import {
   AlertDialog,
@@ -36,9 +35,8 @@ import { Switch } from '@vibeterm/ui/switch';
 import { Bell, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { CopyButton } from '../copy-feedback';
 import { type MeshPortReach, formatPortReach, resolveNodePorts } from '../port-reach';
-import { hubModeLabel } from '../uplink/hub-strip';
+import { NodeDetailInfo } from './node-detail-info';
 import {
   type DomainAccessState,
   type NodeDetailIo,
@@ -50,111 +48,12 @@ import { NodeDirectBody, NodeDirectRemoveConfirm } from './node-direct-section';
 import { useNodeDetailState } from './use-node-detail-state';
 import { useNodePorts } from './use-node-ports';
 
-// ---------------------------------------------------------------------------
-// 渲染
-// ---------------------------------------------------------------------------
-
-const TRANSPORT_KEYS: Record<string, string> = {
-  'ws-secure': 'nodes.badge.transportWs',
-  dc: 'nodes.badge.transportDc',
-  relay: 'nodes.badge.transportRelay',
-};
-
-export interface NodeTransportText {
-  key: string;
-  params?: { host: string };
-}
-
-/**
- * 承载那半句。走中继且知道是哪台时写明中继主机名——多中继之后「中转」两个字已经分不清
- * 这条链路究竟经了谁。旧网关不下发 `viaRelay`，退回原来的「中转」。
- */
-export function nodeTransportText(row: NodeRow): NodeTransportText | null {
-  const key = row.transport ? TRANSPORT_KEYS[row.transport] : undefined;
-  if (!key) return null;
-  if (row.transport !== 'relay' || !row.viaRelay) return { key };
-  return { key: 'nodes.badge.transportRelayVia', params: { host: relayHostLabel(row.viaRelay) } };
-}
-
-/** 「在线于」那一行的值；该对端一条中继都没在线（或旧网关）时为 `null`。 */
-export function nodeRelayPresenceText(row: NodeRow): string | null {
-  const urls = row.relayPresence ?? [];
-  return urls.length > 0 ? relayHostList(urls) : null;
-}
-
-function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="w-24 shrink-0 text-xs text-muted-foreground">{label}</span>
-      <span className="min-w-0 flex-1 text-xs">{children}</span>
-    </div>
-  );
-}
-
-/** 只读信息区。单独导出：Dialog 走 portal，静态渲染只看得到这一块。 */
-export function NodeDetailInfo({ row }: { row: NodeRow }) {
-  const { t } = useTranslation();
-  const transport = nodeTransportText(row);
-  const presence = nodeRelayPresenceText(row);
-  return (
-    <div className="flex flex-col gap-1.5" data-testid={`nodes-detail-info-${row.id}`}>
-      <InfoRow label={t('nodes.detail.nodeId')}>
-        <span className="flex items-center gap-1">
-          <code className="rounded bg-muted/50 px-1.5 py-0.5 text-[11px]">
-            {row.id.slice(0, 8)}
-          </code>
-          <CopyButton value={row.id} testId={`nodes-detail-id-${row.id}`} />
-        </span>
-      </InfoRow>
-      <InfoRow label={t('nodes.columns.fingerprint')}>
-        <code className="font-mono text-[11px] text-muted-foreground">{row.fingerprint}</code>
-      </InfoRow>
-      <InfoRow label={t('nodes.columns.address')}>
-        <code
-          className="font-mono text-[11px] text-muted-foreground"
-          data-testid={`nodes-detail-address-${row.id}`}
-        >
-          {row.address ?? '—'}
-        </code>
-      </InfoRow>
-      <InfoRow label={t('nodes.columns.version')}>{row.version ?? '—'}</InfoRow>
-      <InfoRow label={t('nodes.columns.reach')}>
-        {row.reach ? t(`nodes.reach.${row.reach}`) : '—'}
-        {transport ? `｜${t(transport.key, transport.params)}` : ''}
-      </InfoRow>
-      {presence && (
-        <InfoRow label={t('nodes.badge.relayPresence')}>
-          <span data-testid={`nodes-detail-relay-presence-${row.id}`}>{presence}</span>
-        </InfoRow>
-      )}
-      <InfoRow label={t('nodes.columns.lastSeen')}>
-        <span
-          title={row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : undefined}
-          data-testid={`nodes-detail-last-seen-${row.id}`}
-        >
-          {row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '—'}
-        </span>
-      </InfoRow>
-      <InfoRow label={t('nodes.columns.status')}>
-        <span className="flex flex-wrap items-center gap-1">
-          <span className={row.online ? 'text-emerald-500' : 'text-muted-foreground'}>
-            {t(row.online ? 'nodes.status.online' : 'nodes.status.offline')}
-          </span>
-          {row.isSelf && <DetailTag>{t('nodes.self')}</DetailTag>}
-          {row.isHub && <DetailTag>{hubModeLabel(t, row.hubMode ?? null)}</DetailTag>}
-        </span>
-      </InfoRow>
-    </div>
-  );
-}
-
-function DetailTag({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
-      {children}
-    </span>
-  );
-}
+export {
+  NodeDetailInfo,
+  nodeRelayPresenceText,
+  nodeTransportText,
+} from './node-detail-info';
+export type { NodeTransportText } from './node-detail-info';
 
 /** 详情里的端口表。单独导出：静态渲染测表体，不跑「重新检测」。 */
 export function NodePortsTable({

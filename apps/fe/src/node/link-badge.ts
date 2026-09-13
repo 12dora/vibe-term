@@ -1,6 +1,7 @@
 // 链路徽标的语义层：这条链路怎么走（到达路径 / 承载 / 明细种类）、有多快（两段延迟合计）
 // 与显示时的口径。纯函数，不碰 React，供徽标组件与浮层共用。
 
+import type { Tone } from '@/lib/tone';
 import type { MeshNodeReach, MeshNodeTransport } from '@vibeterm/api-client/auth/index';
 import type { DirectCarrierPath } from '@vibeterm/ws-client/direct/types';
 import type { NodeLatency, NodeLink } from './direct-diagnostics';
@@ -57,7 +58,7 @@ export interface LinkBadgeDescriptor {
   labelKey: string;
   /** 浏览器 → tmux 宿主的合计往返毫秒数；未测得为 `null`，此时徽标不带延迟后缀。 */
   rttMs: number | null;
-  tone: 'ok' | 'muted' | 'warn';
+  tone: Extract<Tone, 'ok' | 'muted' | 'warn'>;
 }
 
 /**

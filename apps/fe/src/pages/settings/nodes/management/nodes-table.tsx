@@ -4,37 +4,24 @@
 // 因此**不**跟 hub 在线绑定，只看目标是否在线、是否已登录。
 // 表格本体铺在「节点管理」卡片里，横向滚动壳与「操作」列的钉边都在 components/wide-table。
 
-import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { nodeRelativeTime } from '@/node/node-address';
+import { buildNodeView, useMinuteClock } from '@/node/node-view-model';
 import { Button } from '@vibeterm/ui/button';
 import { Checkbox } from '@vibeterm/ui/checkbox';
-import {
-  ArrowLeftRight,
-  Download,
-  Loader2,
-  ShieldAlert,
-  Square,
-  SquareCheckBig,
-  SquareMinus,
-  X,
-} from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Download, Loader2, ShieldAlert, Square, SquareCheckBig, SquareMinus } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { WideTableScroll, stickyActionColumn } from '../../components/wide-table';
-import { resolveNodePorts } from '../port-reach';
-import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import { NodeMoreMenu } from './node-more-menu';
+import { NameCell, StatusCell } from './node-row-cells';
 import { PendingNodeRow } from './pending-node-row';
-import { nodeReachComposeKeys } from './reach-label';
 import { RevokeDialog } from './revoke-dialog';
-import { MetaKeyLagTag, PausedTag, PortsWarning, Tag, Td, Th, rowBlockedHint } from './row-cells';
+import { Td, Th, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
-import { hubRoleBlockedText } from './use-hub-role-switch';
 import { useNodeRowActions } from './use-node-row-actions';
 import { isUninstalling } from './use-node-uninstall';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
@@ -112,75 +99,6 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
   );
 }
 
-function NameCell({
-  row,
-  hubDetails,
-  roleSwitch,
-  rowBusy,
-}: {
-  row: NodeRow;
-  hubDetails: NodeActionDeps['hubDetails'];
-  roleSwitch: HubRoleSwitchController;
-  rowBusy: boolean;
-}) {
-  const { t } = useTranslation();
-  return (
-    <Td className="whitespace-normal">
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="flex items-center gap-1.5 whitespace-nowrap">
-          <span className="truncate font-medium">{row.name}</span>
-          {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
-          <MetaKeyLagTag nodeId={row.id} />
-          {row.isHub && (
-            <>
-              <HubTag row={row} hubDetails={hubDetails} />
-              <HubRoleSwitchButton row={row} roleSwitch={roleSwitch} rowBusy={rowBusy} />
-            </>
-          )}
-        </span>
-        <PortsWarning nodeId={row.id} ports={resolveNodePorts(row)} />
-      </div>
-    </Td>
-  );
-}
-
-const RELATIVE_TIME_TICK_MS = 60_000;
-
-/** 离线相对时间按分钟刷新；行没有其它状态更新时也要从「刚刚」走到「N 分钟前」。 */
-function useMinuteClock(enabled: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!enabled) return;
-    const timer = setInterval(() => setNow(Date.now()), RELATIVE_TIME_TICK_MS);
-    return () => clearInterval(timer);
-  }, [enabled]);
-  return now;
-}
-
-function deriveNodeRow(row: NodeRow, t: Translate, now = Date.now()) {
-  const relative = !row.online ? nodeRelativeTime(t, row.lastSeenAt, now) : null;
-  return {
-    statusClass: row.online ? 'text-emerald-500' : 'text-muted-foreground',
-    statusText: formatStatusText(row, t, relative),
-    statusTitle:
-      !row.online && row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : undefined,
-    reachText: formatReachText(row, t),
-  };
-}
-
-function formatStatusText(row: NodeRow, t: Translate, relative: string | null): string {
-  if (relative != null) return t('nodes.status.offlineSince', { time: relative });
-  if (!row.online) return t('nodes.status.offline');
-  const signedIn = row.loggedIn || row.isSelf;
-  return t(signedIn ? 'nodes.status.onlineSignedIn' : 'nodes.status.onlineSignedOut');
-}
-
-function formatReachText(row: NodeRow, t: Translate): string {
-  const keys = nodeReachComposeKeys(row);
-  if (!keys) return '—';
-  return keys.map((key) => t(key)).join(' · ');
-}
-
 function NodeRowView({
   row,
   pathname,
@@ -202,7 +120,7 @@ function NodeRowView({
   const writable = deps.hubOnline && deps.hubWritable;
   const disabledHint = writable ? undefined : rowBlockedHint(t, deps);
   const now = useMinuteClock(!row.online);
-  const view = deriveNodeRow(row, t, now);
+  const view = buildNodeView(row, t, now);
   const selectable = !row.isSelf && !uninstalling;
   const switching = roleSwitch.switchingIds.has(row.id);
 
@@ -240,10 +158,10 @@ function NodeRowView({
       <Td>
         <code
           className="block max-w-[14rem] truncate font-mono text-[11px] text-muted-foreground"
-          title={row.address ?? '—'}
+          title={view.addressText}
           data-testid={`nodes-address-${row.id}`}
         >
-          {row.address ?? '—'}
+          {view.addressText}
         </code>
       </Td>
       <Td>{row.directCapable ? t('common.yes') : t('common.no')}</Td>
@@ -286,130 +204,6 @@ function NodeRowView({
         )}
       </Td>
     </tr>
-  );
-}
-
-/**
- * 状态列：正常显示在线态；这一行正在远程卸载时改显「卸载中」，失败则显「卸载失败」并把
- * 原因放进 title，旁边留一个清除按钮——记录只活在入口这边，卸载失败后总得有办法抹掉它。
- */
-function StatusCell({
-  row,
-  uninstall,
-  uninstalling,
-  switching,
-  view,
-}: {
-  row: NodeRow;
-  uninstall: NodeUninstallController;
-  uninstalling: boolean;
-  switching: boolean;
-  view: { statusClass: string; statusText: string; statusTitle?: string };
-}) {
-  const { t } = useTranslation();
-  const failed = row.operation?.kind === 'uninstall' && row.operation.phase === 'failed';
-
-  // 主备切换只活在这一个页面里（服务端不下发 `role-switch` 记录），因此这一档排在最前：
-  // 目标机重启期间它同时是「离线」，照原样显示只会让人以为切换把机器弄挂了。
-  if (switching) {
-    return (
-      <span
-        className="flex items-center gap-1 text-amber-600 dark:text-amber-400"
-        data-testid={`nodes-role-switch-state-${row.id}`}
-      >
-        <Loader2 className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
-        {t('nodes.hubs.role.stateSwitching')}
-      </span>
-    );
-  }
-
-  if (uninstalling) {
-    return (
-      <span
-        className="flex items-center gap-1 text-amber-600 dark:text-amber-400"
-        data-testid={`nodes-uninstall-state-${row.id}`}
-        data-uninstall-phase={row.operation?.phase ?? 'requested'}
-      >
-        <Loader2 className="size-3 shrink-0 animate-spin motion-reduce:animate-none" />
-        {t('nodes.uninstall.stateRunning')}
-      </span>
-    );
-  }
-
-  if (failed) {
-    const clearLabel = t('nodes.uninstall.clear');
-    return (
-      <span className="flex items-center gap-1">
-        <span
-          className="text-destructive"
-          title={row.operation?.error ?? undefined}
-          data-testid={`nodes-uninstall-state-${row.id}`}
-          data-uninstall-phase="failed"
-        >
-          {t('nodes.uninstall.stateFailed')}
-        </span>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          disabled={uninstall.clearingIds.has(row.id)}
-          aria-label={clearLabel}
-          title={clearLabel}
-          onClick={() => uninstall.clear(row)}
-          data-testid={`nodes-uninstall-clear-${row.id}`}
-        >
-          <X />
-        </Button>
-      </span>
-    );
-  }
-
-  return (
-    <span
-      data-testid={`nodes-status-${row.id}`}
-      className="inline-flex items-center gap-1.5"
-      title={view.statusTitle}
-    >
-      <span className={view.statusClass}>{view.statusText}</span>
-      {row.online && !row.loggedIn && !row.isSelf && (
-        <NodeLoginButton nodeId={row.runtimeNodeId} nodeName={row.name} />
-      )}
-      {row.paused === true && <PausedTag />}
-    </span>
-  );
-}
-
-/**
- * Hub 主备切换：备 Hub 上写「设为主 Hub」，当前写者上写「设为备 Hub」。
- * 离线、旧后端不下发授权来源、已有切换在跑、这一行正在升级 / 卸载、以及「须先签授权但 hub
- * 不收写入」都禁用并把原因放进 title——这个按钮会重启目标机，绝不能让人在不确定的前提下点。
- */
-function HubRoleSwitchButton({
-  row,
-  roleSwitch,
-  rowBusy,
-}: { row: NodeRow; roleSwitch: HubRoleSwitchController; rowBusy: boolean }) {
-  const { t } = useTranslation();
-  const state = roleSwitch.stateOf(row, rowBusy);
-  const label = t(
-    state.intent === 'promote' ? 'nodes.hubs.role.promote' : 'nodes.hubs.role.demote'
-  );
-  const title = state.blocked ? hubRoleBlockedText(t, state.blocked) : label;
-
-  return (
-    <Button
-      type="button"
-      size="icon-xs"
-      variant="ghost"
-      disabled={state.blocked !== null}
-      aria-label={label}
-      title={title}
-      onClick={() => roleSwitch.request(row)}
-      data-testid={`nodes-hub-role-${row.id}`}
-      data-role-intent={state.intent}
-    >
-      <ArrowLeftRight />
-    </Button>
   );
 }
 
@@ -510,20 +304,4 @@ function upgradeTitle(
 ): string | undefined {
   if (error) return error;
   return version ? t('nodes.upgrade.hint', { version }) : undefined;
-}
-
-/**
- * hub 徽标：多 hub 下区分主 / 备并把地址、优先级、纪元、在线态放进悬浮详情；
- * 旧后端不下发 `hubMode` 时退回原来的「Hub」，单 hub 用户看不出差别。
- */
-function HubTag({ row, hubDetails }: { row: NodeRow; hubDetails: NodeActionDeps['hubDetails'] }) {
-  const { t } = useTranslation();
-  const detail = hubDetails.get(row.id);
-  return (
-    <Tag title={detail ? hubDetailText(t, detail, false) : undefined}>
-      <span data-testid={`nodes-hub-tag-${row.id}`} data-hub-mode={row.hubMode ?? ''}>
-        {hubModeLabel(t, row.hubMode ?? null)}
-      </span>
-    </Tag>
-  );
 }

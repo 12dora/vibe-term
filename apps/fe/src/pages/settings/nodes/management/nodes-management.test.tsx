@@ -723,6 +723,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       '1.2.0'
     );
     expect(html).toContain('nodes.status.onlineSignedIn');
+    expect(html).toContain('text-emerald-500');
     expect(html).not.toContain('nodes.status.offlineSince');
     expect(html).toContain('nodes.status.paused');
     expect(html).not.toContain('data-testid="node-login-on"');

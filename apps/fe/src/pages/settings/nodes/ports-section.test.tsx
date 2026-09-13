@@ -68,6 +68,7 @@ describe('PortsSection', () => {
     expect(html).not.toContain('ring-2');
     expect(html).toContain('data-port-status="open"');
     expect(html).toContain('data-status="open"');
+    expect(html).toContain('bg-emerald-500');
     expect(html).toContain('39001/tcp');
     expect(html).toContain('nodes.ports.status.blocked');
     expect(html).toContain('nodes.ports.code.peer_refused');

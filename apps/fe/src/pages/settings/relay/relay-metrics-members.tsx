@@ -1,6 +1,7 @@
 // 接入节点表：一行一个成员。租户表管「谁被允许接入」，这张表管「此刻谁在转发」。
 // 排序与筛选由调用方（members-card）持有，本文件只摆版式并把表头点击回传。
 
+import { TONE_CLASS } from '@/lib/tone';
 import { formatRate } from '@vibeterm/api-client/format';
 import type { RelayMetricsMember } from '@vibeterm/api-client/relay/metrics-types';
 import { Badge } from '@vibeterm/ui/badge';
@@ -19,8 +20,8 @@ import {
 
 const RTT_TONE_CLASS = {
   default: '',
-  warning: 'text-amber-600 dark:text-amber-400',
-  destructive: 'text-destructive',
+  warning: TONE_CLASS.text.warn,
+  destructive: TONE_CLASS.text.blocked,
 } as const;
 
 /**

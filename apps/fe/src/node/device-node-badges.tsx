@@ -5,6 +5,7 @@
 // 点击展开诊断浮层：先按跳拆开数字，再给这条链路的现场——走中转就说清中转地址与未直连的
 // 原因，ICE 明细只在真的有 WebRTC 候选对时才列，避免一整屏「未知」。
 
+import { TONE_CLASS } from '@/lib/tone';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { DIRECT_FAILURE_CODES } from '@vibeterm/api-client/auth/index';
 import type { DirectFailureCode, MeshNodeDirectFailure } from '@vibeterm/api-client/auth/index';
@@ -322,12 +323,6 @@ export function buildLinkDiagnosticRows(input: {
   return rows;
 }
 
-const TONE_CLASS: Record<LinkBadgeDescriptor['tone'], string> = {
-  ok: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
-  warn: 'border-orange-400/40 text-orange-500 dark:text-orange-400',
-  muted: 'border-border text-muted-foreground',
-};
-
 function Badge({
   icon: Icon,
   label,
@@ -343,7 +338,7 @@ function Badge({
 }) {
   const className = cn(
     'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
-    TONE_CLASS[tone]
+    TONE_CLASS.badge[tone]
   );
   if (!onClick) {
     return (

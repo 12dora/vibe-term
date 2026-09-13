@@ -3,7 +3,9 @@
 // 它还不是 mesh 成员（`/api/mesh/nodes` 里没有它），因此没有 peer link、没有版本、
 // 也没有可吊销的证书：整行除「批准加入」外一律禁用。
 
+import { TONE_CLASS } from '@/lib/tone';
 import type { NodeRow } from '@/node/mesh-nodes';
+import { buildNodeView } from '@/node/node-view-model';
 import { Button } from '@vibeterm/ui/button';
 import { Checkbox } from '@vibeterm/ui/checkbox';
 import { Check, Ellipsis, Loader2, ShieldAlert } from 'lucide-react';
@@ -24,6 +26,7 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
   const { t } = useTranslation();
   const writable = deps.hubOnline && deps.hubWritable;
   const blocked = writable ? t('nodes.admit.blocked') : rowBlockedHint(t, deps);
+  const view = buildNodeView(row, t, 0);
 
   return (
     <tr className="border-b border-border/60 last:border-0" data-testid={`nodes-row-${row.id}`}>
@@ -35,24 +38,24 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
       </Td>
       <Td>
         <span
-          className="text-amber-600 dark:text-amber-400"
+          className={TONE_CLASS.text[view.statusTone]}
           data-testid={`nodes-status-${row.id}`}
           data-admission="pending"
         >
-          {t('nodes.status.pending')}
+          {view.statusText}
         </span>
       </Td>
       <Td>
-        <span data-testid={`nodes-reach-${row.id}`}>—</span>
+        <span data-testid={`nodes-reach-${row.id}`}>{view.reachText}</span>
       </Td>
       <Td>—</Td>
       <Td>
         <code
           className="block max-w-[14rem] truncate font-mono text-[11px] text-muted-foreground"
-          title="—"
+          title={view.addressText}
           data-testid={`nodes-address-${row.id}`}
         >
-          —
+          {view.addressText}
         </code>
       </Td>
       <Td>{t('common.no')}</Td>

@@ -1,5 +1,6 @@
 // 「分享」标签的展示格式化：全是纯函数，文案一律经 `t` 出。
 
+import { formatCompactDuration, formatRelative } from '@/lib/format-relative';
 import { formatBytes } from '@vibeterm/api-client/format';
 import type { ShareEndReason, ShareRecord } from '@vibeterm/shared/share';
 
@@ -16,13 +17,7 @@ export function shareTerminalText(record: ShareRecord, deviceName: string | null
 
 /** 相对过去时间：刚刚 / N 分钟前 / N 小时前 / N 天前。 */
 export function relativePastText(t: Translate, at: number, now: number): string {
-  const elapsed = Math.max(0, now - at);
-  if (elapsed < MINUTE_MS) return t('settings.share.time.justNow');
-  if (elapsed < HOUR_MS)
-    return t('settings.share.time.minutesAgo', { n: Math.floor(elapsed / MINUTE_MS) });
-  if (elapsed < DAY_MS)
-    return t('settings.share.time.hoursAgo', { n: Math.floor(elapsed / HOUR_MS) });
-  return t('settings.share.time.daysAgo', { n: Math.floor(elapsed / DAY_MS) });
+  return formatRelative(t, at, now, 'settings.share.time') ?? t('settings.share.time.justNow');
 }
 
 /** 到期列：永久 / 已到期 / 剩余 N 分钟（小时、天）。 */
@@ -56,12 +51,11 @@ export function endReasonText(t: Translate, reason: ShareEndReason | null): stri
 /** 分享持续时长：两级（天时 / 时分 / 分秒），未结束的按当前时刻算。 */
 export function durationText(record: ShareRecord, now: number): string {
   const total = Math.max(0, (record.endedAt ?? now) - record.createdAt);
-  const days = Math.floor(total / DAY_MS);
-  const hours = Math.floor((total % DAY_MS) / HOUR_MS);
-  if (days > 0) return `${days}d ${hours}h`;
-  const minutes = Math.floor((total % HOUR_MS) / MINUTE_MS);
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m ${Math.floor((total % MINUTE_MS) / 1000)}s`;
+  const compact = formatCompactDuration(total);
+  if (compact.endsWith('s') && !compact.includes('m') && !compact.includes('h')) {
+    return `0m ${compact}`;
+  }
+  return compact;
 }
 
 /** 日志列：没有日志出「无日志」，被截断的额外标一笔。 */

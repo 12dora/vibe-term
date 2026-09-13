@@ -1,5 +1,6 @@
 // 中继运营面的展示格式化：全是纯函数，文案一律经 `t` 出。
 
+import { formatCompactDuration, formatRelative } from '@/lib/format-relative';
 import { formatBytesFixed } from '@vibeterm/api-client/format';
 import type { RelayQuota } from '@vibeterm/api-client/relay/admin-api';
 
@@ -19,12 +20,7 @@ const DAY_MS = 24 * HOUR_MS;
 /** 相对时间。`null` 与未来时间都按「从未 / 刚刚」处理，不出现负数。 */
 export function relativeTimeText(t: Translate, at: number | null, now: number): string {
   if (at === null) return t('relay.admin.time.never');
-  const elapsed = now - at;
-  if (elapsed < MINUTE_MS) return t('relay.admin.time.justNow');
-  if (elapsed < HOUR_MS)
-    return t('relay.admin.time.minutes', { n: Math.floor(elapsed / MINUTE_MS) });
-  if (elapsed < DAY_MS) return t('relay.admin.time.hours', { n: Math.floor(elapsed / HOUR_MS) });
-  return t('relay.admin.time.days', { n: Math.floor(elapsed / DAY_MS) });
+  return formatRelative(t, at, now, 'relay.admin.time') ?? t('relay.admin.time.justNow');
 }
 
 /** 已运行时长：天 / 小时 / 分钟三档，最小档到分钟为止。 */
@@ -128,16 +124,7 @@ export function formatFramesPerSec(framesPerSec: number): string {
 
 /** 紧凑时长：只出两级，最小到秒。用于磁贴里的「运行时长」。 */
 export function formatDuration(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return '0s';
-  const total = Math.floor(ms / 1000);
-  const days = Math.floor(total / 86_400);
-  const hours = Math.floor((total % 86_400) / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
+  return formatCompactDuration(ms);
 }
 
 /** 毫秒量。`null` 出破折号；秒级以上换算成秒，免得摆出五位数。 */

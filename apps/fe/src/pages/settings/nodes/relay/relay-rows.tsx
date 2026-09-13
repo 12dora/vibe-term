@@ -5,6 +5,7 @@
 // - 多条同时挂载：每条都连着，行不再是单选——各自摆身份、延迟、在线对端数与 TURN，
 //   行尾一个「设为主中继」，主中继那条禁用。
 
+import { TONE_CLASS } from '@/lib/tone';
 import type { RelayLinkErrorCode, RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { cn } from '@vibeterm/ui';
 import { Badge } from '@vibeterm/ui/badge';
@@ -232,9 +233,9 @@ function RelayAttachedRow({
 }
 
 function turnChipClass(tone: RelayTurnChipTone): string {
-  if (tone === 'destructive') return 'border-destructive/40 text-destructive';
-  if (tone === 'warning') return 'border-amber-500/40 text-amber-700 dark:text-amber-400';
-  return 'border-border';
+  if (tone === 'destructive') return TONE_CLASS.chip.blocked;
+  if (tone === 'warning') return TONE_CLASS.chip.warn;
+  return TONE_CLASS.chip.muted;
 }
 
 function RowBadge({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {
