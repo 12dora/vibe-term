@@ -143,6 +143,20 @@ export async function sendAgentMessage(
   );
 }
 
+export async function fetchAgentQueuedMessages(
+  sessionId: string,
+  client: ApiClient = defaultApiClient
+): Promise<AgentQueuedMessageDto[]> {
+  return requestJson<{ queued: AgentQueuedMessageDto[] }, AgentQueuedMessageDto[]>(
+    client,
+    `/api/agent/sessions/${sessionId}/queue`,
+    {
+      errorFallback: 'Failed to load queued messages',
+      pick: (payload) => payload.queued,
+    }
+  );
+}
+
 export async function enqueueAgentMessage(
   sessionId: string,
   text: string,

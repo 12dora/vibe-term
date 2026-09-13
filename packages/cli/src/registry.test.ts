@@ -23,6 +23,7 @@ const DISPATCHED_GROUPS = [
   'port',
   'share',
   'watch',
+  'agent',
   'settings',
 ];
 

@@ -41,6 +41,7 @@ describe('client cli dispatch table', () => {
         'term',
         'tmux',
         'watch',
+        'agent',
         'whoami',
       ].sort()
     );

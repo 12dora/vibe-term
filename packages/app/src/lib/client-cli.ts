@@ -26,6 +26,7 @@ export const CLIENT_CLI_COMMANDS: ReadonlySet<string> = new Set([
   'port',
   'share',
   'watch',
+  'agent',
   'settings',
 ]);
 

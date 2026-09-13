@@ -1,5 +1,6 @@
 // 命令注册表。新增命令组只需要在这里加一行；packages/app 的分发表读的也是这份名单。
 
+import { command as agent } from './commands/agent';
 import { command as api } from './commands/api';
 import { command as cp } from './commands/cp';
 import { command as devices } from './commands/devices';
@@ -28,11 +29,12 @@ export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   devices,
   share,
   watch,
+  agent,
   settings,
   tmux,
   term,
 ];
-/** 十四个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
+/** 十五个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
 export const RESERVED_COMMANDS: readonly Command[] = [];
 export const COMMANDS: readonly Command[] = [...IMPLEMENTED_COMMANDS, ...RESERVED_COMMANDS];
 
