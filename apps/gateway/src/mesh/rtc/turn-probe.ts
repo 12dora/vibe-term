@@ -2,17 +2,20 @@ import type { RelayTurnConfig } from '@vibeterm/shared/relay';
 import { logAt } from '../../log/level';
 import { stamp } from '../mesh-log';
 import { parseTurnUri } from './ice';
+import {
+  MeshProbeLoop,
+  type ProbeLoopDeps,
+  type ProbeScheduler,
+  failedAttemptedProbes,
+} from './probe-loop';
 import { formatRtcLog, rtcLog } from './rtc-log';
 import {
   STUN_PROBE_INTERVAL_MS,
   STUN_PROBE_MIN_INTERVAL_MS,
   type StunProbeDeps,
-  type StunProbeLoopDeps,
   type StunProbeResult,
-  type StunProbeScheduler,
   probeStunServer,
 } from './stun-probe';
-import { stunListKey } from './stun-rank';
 import { formatHostForIceUrl } from './stun-resolver';
 
 export const TURN_PROBE_INTERVAL_MS = STUN_PROBE_INTERVAL_MS;
@@ -21,7 +24,7 @@ export const TURN_PROBE_CONCURRENCY = 2;
 
 export type TurnProbeResult = StunProbeResult;
 export type TurnProbeRecord = TurnProbeResult & { probedAt: number };
-export type TurnProbeLoopDeps = StunProbeLoopDeps;
+export type TurnProbeLoopDeps = ProbeLoopDeps<TurnProbeResult>;
 export type TurnProbeHandle = { stop(after?: () => void): void };
 export type TurnProbeRtc = {
   currentIceConfig(): { turn?: unknown; turnConfigured?: unknown };
@@ -32,7 +35,7 @@ type ParseTurnProbe = StunTarget | 'unsupported' | null;
 
 const ICE_SCHEME_RE = /^(stuns?|turns?):/i;
 
-let session: MeshTurnProbe | null = null;
+let session: MeshProbeLoop<TurnProbeRtc, TurnProbeResult> | null = null;
 let loopDeps: TurnProbeLoopDeps = {};
 let lastResults: TurnProbeRecord[] = [];
 
@@ -125,12 +128,18 @@ function rtcTurnConfig(rtc: TurnProbeRtc): unknown {
   return ice.turnConfigured !== undefined ? ice.turnConfigured : ice.turn;
 }
 
-export function startMeshTurnProbe(
-  rtc: TurnProbeRtc,
-  scheduler: StunProbeScheduler
-): TurnProbeHandle {
+export function startMeshTurnProbe(rtc: TurnProbeRtc, scheduler: ProbeScheduler): TurnProbeHandle {
   session?.stop();
-  session = new MeshTurnProbe(rtc, scheduler, loopDeps);
+  session = new MeshProbeLoop(rtc, scheduler, loopDeps, {
+    intervalMs: TURN_PROBE_INTERVAL_MS,
+    defaultMinIntervalMs: TURN_PROBE_MIN_INTERVAL_MS,
+    urlsOf: (target) => configuredTurnUrls(rtcTurnConfig(target)),
+    defaultProbeAll: (list, signal, now) => probeTurnServers(list, { signal, now }),
+    applyResults: (records) => {
+      lastResults = mergeLatestByUrl(lastResults, records);
+    },
+    logBatch: logTurnProbeBatch,
+  });
   session.start();
   return { stop: (after) => stopMeshTurnProbe(after) };
 }
@@ -142,124 +151,6 @@ export function stopMeshTurnProbe(after?: () => void): void {
 
 export function syncTurnProbe(rtc: TurnProbeRtc): void {
   session?.sync(rtc);
-}
-
-class MeshTurnProbe {
-  private lastKey: string | null = null;
-  private lastCycleAt = 0;
-  private inflight: Promise<void> | null = null;
-  private queued: string[] | null = null;
-  private pending: string[] | null = null;
-  private tick: { clear: () => void } | null = null;
-  private waitH: { clear: () => void } | null = null;
-  private readonly ac = new AbortController();
-  private stopped = false;
-  private armed = false;
-
-  constructor(
-    private readonly rtc: TurnProbeRtc,
-    private readonly scheduler: StunProbeScheduler,
-    private readonly opts: TurnProbeLoopDeps
-  ) {}
-
-  start(): void {
-    void this.runCycle(configuredTurnUrls(rtcTurnConfig(this.rtc)));
-    this.armTick();
-  }
-
-  stop(): void {
-    this.stopped = true;
-    this.ac.abort();
-    this.tick?.clear();
-    this.waitH?.clear();
-    this.tick = this.waitH = null;
-    this.queued = this.pending = null;
-  }
-
-  sync(rtc: TurnProbeRtc): void {
-    const urls = configuredTurnUrls(rtcTurnConfig(rtc));
-    if (stunListKey(urls) === this.lastKey) return;
-    const min = this.opts.minIntervalMs ?? TURN_PROBE_MIN_INTERVAL_MS;
-    const elapsed = (this.opts.now ?? Date.now)() - this.lastCycleAt;
-    if (this.lastCycleAt > 0 && elapsed < min) {
-      this.armWait(urls, min - elapsed);
-      return;
-    }
-    void this.runCycle(urls);
-  }
-
-  private armTick(): void {
-    if (this.stopped || this.armed) return;
-    this.armed = true;
-    const rand = this.opts.random ?? Math.random;
-    const ms = Math.round(TURN_PROBE_INTERVAL_MS * (1 + (rand() * 2 - 1) * 0.1));
-    this.tick = this.scheduler.interval(() => {
-      if (!this.stopped) void this.runCycle(configuredTurnUrls(rtcTurnConfig(this.rtc)));
-    }, ms);
-  }
-
-  private armWait(urls: string[], ms: number): void {
-    if (this.stopped) return;
-    this.pending = urls;
-    this.waitH?.clear();
-    this.waitH = this.scheduler.interval(() => {
-      this.waitH?.clear();
-      this.waitH = null;
-      const next = this.pending ?? configuredTurnUrls(rtcTurnConfig(this.rtc));
-      this.pending = null;
-      if (!this.stopped && stunListKey(next) !== this.lastKey) void this.runCycle(next);
-    }, ms);
-  }
-
-  private runCycle(urls: string[]): Promise<void> {
-    if (this.inflight) {
-      this.queued = urls;
-      return this.inflight;
-    }
-    this.inflight = this.loop(urls)
-      .catch(() => {})
-      .finally(() => {
-        this.inflight = null;
-      });
-    return this.inflight;
-  }
-
-  private async loop(urls: string[]): Promise<void> {
-    let current = urls;
-    const clock = this.opts.now ?? Date.now;
-    const probeAll =
-      this.opts.probeAll ??
-      ((list: readonly string[]) =>
-        probeTurnServers(list, { signal: this.ac.signal, now: this.opts.now }));
-    for (;;) {
-      if (this.stopped || this.ac.signal.aborted) return;
-      this.lastKey = stunListKey(current);
-      this.lastCycleAt = clock();
-      if (process.env.NODE_ENV === 'test' && !this.opts.probeAll) return;
-      let results: TurnProbeResult[];
-      try {
-        results = await probeAll(current);
-      } catch {
-        results = current.map((url) => ({ url, ok: false, rttMs: 0, error: 'error' }));
-      }
-      if (this.stopped) return;
-      const records = results.map((row) => ({ ...row, probedAt: clock() }));
-      lastResults = mergeLatestByUrl(lastResults, records);
-      try {
-        logTurnProbeBatch(records);
-      } catch {}
-      if (!this.queued) break;
-      current = this.queued;
-      this.queued = null;
-      if (stunListKey(current) === this.lastKey) break;
-      const min = this.opts.minIntervalMs ?? TURN_PROBE_MIN_INTERVAL_MS;
-      const wait = min - (clock() - this.lastCycleAt);
-      if (wait > 0) {
-        this.armWait(current, wait);
-        break;
-      }
-    }
-  }
 }
 
 function nonempty(value: string): string | null {
@@ -381,22 +272,24 @@ function parseTurnProbe(url: string): ParseTurnProbe {
 }
 
 function logTurnProbeBatch(results: readonly TurnProbeRecord[]): void {
-  for (const row of results) {
-    rtcLog('turn probe', {
-      url: row.url,
-      skipped: row.skipped,
-      ok: row.skipped ? undefined : row.ok,
-      rtt_ms: row.ok ? row.rttMs : undefined,
-      error: row.ok || row.skipped ? undefined : (row.error ?? 'error'),
-      via: row.skipped ? undefined : row.via,
-      fake_ip: row.skipped ? undefined : row.fakeIp,
-    });
-  }
-  const attempted = results.filter((row) => !row.skipped);
-  if (attempted.length > 0 && attempted.every((row) => !row.ok)) {
-    logAt(
-      'warn',
-      stamp(formatRtcLog('turn unreachable', { url: attempted[0]?.url, all: attempted.length }))
-    );
-  }
+  for (const row of results) rtcLog('turn probe', turnProbeLogFields(row));
+  const failed = failedAttemptedProbes(results);
+  if (!failed) return;
+  logAt(
+    'warn',
+    stamp(formatRtcLog('turn unreachable', { url: failed[0]?.url, all: failed.length }))
+  );
+}
+
+function turnProbeLogFields(row: TurnProbeRecord): Record<string, unknown> {
+  const skipped = Boolean(row.skipped);
+  return {
+    url: row.url,
+    skipped: row.skipped,
+    ok: skipped ? undefined : row.ok,
+    rtt_ms: row.ok ? row.rttMs : undefined,
+    error: row.ok || skipped ? undefined : (row.error ?? 'error'),
+    via: skipped ? undefined : row.via,
+    fake_ip: skipped ? undefined : row.fakeIp,
+  };
 }
