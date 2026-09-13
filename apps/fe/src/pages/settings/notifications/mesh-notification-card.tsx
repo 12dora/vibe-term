@@ -8,6 +8,7 @@
 import { useInventoryReadiness } from '@/node/inventory-readiness';
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchMeshNotificationState, meshNotificationQueryKey } from '@vibeterm/api-client';
 import type {
   MeshNotificationForwardQueueStats,
   MeshNotificationSink,
@@ -20,7 +21,6 @@ import { Switch } from '@vibeterm/ui/switch';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
-import { fetchMeshNotificationState, meshNotificationQueryKey } from './mesh-api';
 import { MeshSinkError, meshSinkErrorText } from './mesh-sink-toggle';
 import { useMeshSinkToggle } from './use-mesh-sink-toggle';
 

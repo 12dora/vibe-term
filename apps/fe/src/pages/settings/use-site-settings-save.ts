@@ -1,6 +1,6 @@
 import { refreshMeshNodes } from '@/node/mesh-nodes';
 import { useMutation } from '@tanstack/react-query';
-import { parseApiError } from '@vibeterm/api-client';
+import { requestJson } from '@vibeterm/api-client/json-mutation';
 import { type SiteSettings, sleep } from '@vibeterm/shared';
 import { useRuntime } from '@vibeterm/stores/react';
 import { useCallback, useRef } from 'react';
@@ -63,16 +63,11 @@ export function useSiteSettingsSave({
         setPinnedName(plan.renameNodeTo);
       }
       if (plan.patch) {
-        const res = await apiClient.fetch('/api/settings/site', {
+        await requestJson(apiClient, '/api/settings/site', {
           method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(plan.patch),
+          body: plan.patch,
+          errorFallback: t('settings.saveFailed'),
         });
-        if (!res.ok) {
-          throw new Error(await parseApiError(res, t('settings.saveFailed')));
-        }
       }
     },
     onSuccess: () => {

@@ -3,6 +3,11 @@
 // 「直接连接」与「访问控制 → 账号密码」两条路径共用同一块 UI：档位与文案由 `directProtection`
 // 单点推导，两处的 testid 保持一致（同一时刻只会渲染其中一处，勾选框 id 不会撞）。
 
+import {
+  bootstrapLocalAuth,
+  localAuthErrorCode,
+  setLocalAuthEnabled,
+} from '@vibeterm/api-client/auth/index';
 import type { LocalAuthStatus } from '@vibeterm/shared';
 import { Button } from '@vibeterm/ui/button';
 import { Input } from '@vibeterm/ui/input';
@@ -18,7 +23,6 @@ import {
   directProtection,
   localAuthErrorKey,
 } from './direct-model';
-import { bootstrapLocalAuth, localAuthErrorCode, setLocalAuthEnabled } from './local-auth-api';
 
 const PROTECTION_TONE: Record<DirectProtection, NoticeTone> = {
   node: 'success',

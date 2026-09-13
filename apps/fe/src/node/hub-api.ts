@@ -11,7 +11,7 @@ import {
   resolveNodeUrl,
 } from '@vibeterm/api-client';
 import type { HubEnrollmentStatus } from '@vibeterm/api-client/auth/index';
-import { readCodedError } from '@vibeterm/api-client/json-mutation';
+import { JSON_HEADERS, readCodedError } from '@vibeterm/api-client/json-mutation';
 import type { HubRoleRequest, HubRoleTransition } from '@vibeterm/shared';
 
 /**
@@ -129,8 +129,6 @@ function readError(res: Response, fallback: string): Promise<HubApiError> {
     }
   );
 }
-
-const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 
 /** 角色接口挂在目标 hub 机的 node 上，与 `HubApi` 实例自身绑定的那台无关。 */
 function rolePath(hubNodeId: string): string {

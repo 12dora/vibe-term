@@ -5,14 +5,13 @@
 
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { setNotificationSinkViaKeyLog } from '@/node/notification-sink';
-import type { ApiClient } from '@vibeterm/api-client';
+import { type ApiClient, updateMeshNotificationState } from '@vibeterm/api-client';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import type { MeshNotificationState } from '@vibeterm/shared';
 import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_NOTIFICATION_SINK_RECORD_VERSION,
 } from '@vibeterm/shared/auth';
-import { updateMeshNotificationState } from './mesh-api';
 
 type Translate = (key: string, params?: Record<string, unknown>) => string;
 
@@ -67,5 +66,5 @@ export async function submitMeshSinkToggle(
   );
   if (!signed) return null;
   if (!signed.ok) throw new MeshSinkError(signed.code);
-  return updateMeshNotificationState(deps.apiClient, enabled);
+  return updateMeshNotificationState(enabled, deps.apiClient);
 }
