@@ -42,17 +42,23 @@ export async function probeRelayHealth(
   const dialUrl = resolveRelayDialUrl(publicUrl, dial);
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    const fail = () => reject(new Error('probe_timeout'));
+    if (ac.signal.aborted) fail();
+    else ac.signal.addEventListener('abort', fail, { once: true });
+  });
   try {
     const init: RequestInit = { method: 'GET', signal: ac.signal, redirect: 'error' };
     const tls = uplinkWebSocketTls(relayTlsCaForDial(dialUrl, tlsCa));
     if (tls) Object.assign(init, tls);
     const url = `${dialUrl.replace(/\/+$/, '')}${RELAY_HEALTH_PATH}`;
-    const res = await fetchWithDnsFallback(url, init, fallback);
+    const res = await Promise.race([fetchWithDnsFallback(url, init, fallback), timedOut]);
     return res.ok;
   } catch {
     return false;
   } finally {
     clearTimeout(timer);
+    if (!ac.signal.aborted) ac.abort();
   }
 }
 
@@ -92,5 +98,8 @@ export function defaultRelayWsFactory(
   tlsCa?: string[] | null,
   deps?: DialWsFactoryDeps
 ): UplinkWsFactory {
-  return createDialWsFactory(tlsCa, deps);
+  return createDialWsFactory(tlsCa, {
+    ...deps,
+    identityPath: deps?.identityPath ?? RELAY_HEALTH_PATH,
+  });
 }

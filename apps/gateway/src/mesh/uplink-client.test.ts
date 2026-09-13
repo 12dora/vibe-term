@@ -92,6 +92,7 @@ describe('defaultWsFactory dns fallback', () => {
       raceCount: 1,
       enabled: true,
       resolve: async () => ({ ip: '203.0.113.10', via: 'doh' }),
+      fetchImpl: async () => new Response(null, { status: 200 }),
       wsCtor: (url, opts) => {
         calls.push({ url, opts });
         const ws = new FakeSocket();

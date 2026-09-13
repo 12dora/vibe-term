@@ -127,8 +127,8 @@ describe('probeRelayHealth dns fallback', () => {
           urls.push(url);
           inits.push(init);
           if (n === 1) {
-            const err = new Error('Unable to connect. Is the computer able to access the url?');
-            (err as Error & { code: string }).code = 'ConnectionRefused';
+            const err = new Error('getaddrinfo ENOTFOUND');
+            (err as Error & { code: string }).code = 'ENOTFOUND';
             throw err;
           }
           return new Response(null, { status: 200 });
@@ -145,15 +145,31 @@ describe('probeRelayHealth dns fallback', () => {
     });
     expect((inits[1] as { headers?: { host?: string } }).headers?.host).toBe('other.example');
   });
+
+  test('探测不会超过 timeoutMs，即使 fetch 忽略 abort', async () => {
+    const started = Date.now();
+    expect(
+      await probeRelayHealth('https://other.example', null, 40, SELF, {
+        enabled: false,
+        fetchImpl: () => new Promise(() => undefined),
+      })
+    ).toBe(false);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
 });
 
 describe('defaultRelayWsFactory dns fallback', () => {
   test('DNS 失败才按 IP 重拨，ECONNREFUSED / 4401 不重拨', async () => {
+    const identity: string[] = [];
     const dnsCalls: string[] = [];
     const dnsFactory = defaultRelayWsFactory(['pem'], {
       raceCount: 1,
       enabled: true,
       resolve: async () => ({ ip: '9.9.9.9', via: 'doh' }),
+      fetchImpl: async (url) => {
+        identity.push(url);
+        return new Response(null, { status: 204 });
+      },
       wsCtor: (url, opts) => {
         dnsCalls.push(url);
         const ws = new FakeSocket();
@@ -170,6 +186,7 @@ describe('defaultRelayWsFactory dns fallback', () => {
       },
     });
     await dnsFactory('wss://relay.example/relay/uplink');
+    expect(identity).toEqual(['https://9.9.9.9/api/relay/health']);
     expect(dnsCalls).toEqual(['wss://relay.example/relay/uplink', 'wss://9.9.9.9/relay/uplink']);
 
     for (const fail of [
