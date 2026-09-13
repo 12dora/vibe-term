@@ -437,6 +437,8 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 | 方法 路由 | 说明 |
 |---|---|
 | `GET /api/mesh/relay/status` | 任何模式都回答，见下 |
+| `POST /switch` | body `{ url }`，换主中继并写入 `relay.preferredUrl` 固定；见 §9 |
+| `POST /unpin` | 清除 `relay.preferredUrl`，`{ ok: true }`。未固定也是 200，不 404 |
 | `POST /enroll/proof-material` | body `{url}` → `{ url, relayHost, ts, maxSkewMs, rootPublicKey, rootEpoch }`；调用方据此本地签 proof。错误 `400 INVALID_URL`、`404 UNKNOWN_USER` |
 | `POST /enroll` | body `{ url, password?, proof: {bytes, sig} }` → `{ tenantId, token, passwordEpoch, metaEpoch, payload, payloadHash }`。**hub 模式也允许**（迁移入口）。错误 `400 INVALID_URL\|MALFORMED\|BAD_PROOF`、`401 <中继返回的 code>`、`409 NO_ADMITTED_NODES`、`502 RELAY_UNREACHABLE\|RELAY_BAD_RESPONSE\|RELAY_ENROLL_FAILED` |
 | `POST /leave/prepare` | 仅 relay 模式 → `{ metaEpoch, payload, payloadHash }`（空 `relays` 的 `set-relays`） |
@@ -457,7 +459,10 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
                "role": "primary" | "secondary" | null,
                "rttMs": null, "peersOnline": null,
                "turn": { "url": "turn:…", "probeOk": true } | null,
-               "lastError": null, "kicked": false }],
+               "lastError": null, "kicked": false,
+               "pinned": true, "autoSelected": true, "score": 42 }],
+  "preferredUrl": "https://…" | null,
+  "autoSelect": { "enabled": true, "lastSwitchAt": 0, "switchReason": "auto-rtt", "nextEvalAt": 0 },
   "metaEpoch": 1,
   "nodesViaRelay": 0,
   "multiAttach": false,
@@ -480,6 +485,11 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 | `turn` | 该中继下发的 TURN 与本机探测结论：`{ url, probeOk, members?, localHint? }`。`probeOk: null` = 还没探。`members` 为该行中继的成员 tally（排除 self；`{ ok, total, updatedAt }`）。`localHint: 'tun'` 仅当 `probeOk === false` 且 TCP 金丝雀判定本机栈就地完成握手（TUN/代理）；金丝雀未跑或已过期不下 hint。新字段全可选，旧壳可忽略 |
 | `nodesViaRelay`（顶层） | 全部已连接中继的**在线对端并集**，不是某一条的数字 |
 | `multiAttach`（顶层） | 配了 ≥ 2 条未被踢的中继（副中继已启用） |
+| `preferredUrl`（顶层） | 用户固定的主中继；未固定且自动优选关闭时不下发 |
+| `autoSelect`（顶层） | 自动优选运行状态；关闭时不下发 |
+| `pinned` | 该行等于 `preferredUrl` |
+| `autoSelected` | 当前主中继由 `auto-rtt` / `auto-failover` 提升（只在 primary） |
+| `score` | 自动优选打分（越小越好，毫秒）；只在已连接行、自动优选开启时下发 |
 
 `quota` / `keyLog` 仍是 primary 的原值，`awaitingToken` 在任一副中继待换令牌时也为真。
 文件传输**实际生效**的 `maxFileBytes` 另取全部已连接中继里的最小值（`setRelayQuotaProvider`，见 [§11](#11-配额与计量)）。
@@ -597,10 +607,11 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 因此 `createKeyLogPublisher` 与 `MeshRtcSignalRouter` 一行未改就能在中继模式工作。
 心跳 ping→pong 记下最新 RTT，经 `/api/mesh/relay/status` 的对应行 `rttMs` 暴露；重连清零。
 
-### 多中继：主 + 副全连（2.3.0 起）
+### 多中继：主 + 副全连（2.3.0 起；N 条，2.4.x）
 
-配了 ≥ 2 条未被踢的中继时，节点对**每一条**都保持一条活的 uplink。池里那条 live client 是**主中继**，其余是副中继
-（`relay-secondary-attach.ts`，各自 1 s → 60 s 退避重连）。单中继配置不产生副中继。
+配了 ≥ 2 条未被踢的中继时，节点对**每一条**都保持一条活的 uplink（上限 `RELAY_RECORD_MAX_RELAYS = 16`，不是 2）。
+池里那条 live client 是**主中继**（唯一密钥日志写者），其余全部是副中继
+（`relay-secondary-attach.ts`，各自 1 s → 60 s 退避重连）。角色仍是二元 `primary | secondary`，没有 tertiary。单中继配置不产生副中继。
 `primaryUrl` 取池的 `primaryTarget()`——**已挂上的 hub URL，否则正在拨的 URL，否则上次尝试的 URL**，只有池空闲/已停才为 null；
 不要回退到 presence 里的旧值，否则故障转移后 secondary 会与池抢同一 URL。主中继重拨空窗期只排除正在拨的那一条，
 其余已挂上的副中继原样保留（不拆、不重置退避），避免重挂风暴与在飞流中断；仍在配置里的行断开一律走 `stop`
@@ -621,10 +632,19 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 - **在线名册取并集**：中继模式下 mesh 的「在线」= 各中继清单的并集；某条 uplink 掉线后它那份在线状态保留 90 s（与 hub 同一 hold），
   到期只把**仅在该中继上可见**的对端置离线。
 - **TURN / STUN 合并**：每条中继各贡献至多一条 TURN，按主中继优先去重成数组；某条中继下发 `turn: null` 或断开，
-  只撤回**它自己**那条。STUN 取并集。
+  只撤回**它自己**那条。STUN 取并集。libjuice 最多纳入 2 条 TURN（`MAX_TURN_ICE_ENTRIES`）：每次拨号重建 ICE 时按探测成功优先、RTT 升序、主中继、priority 取前两条；未探测则维持主中继 + priority 序。选集变化打一条 `[mesh][rtc] turn pick urls=… dropped=… by=probe-rtt`。
 - **被踢**：`relay.kicked` 只标它自己那一行，其余中继不受影响。
-- `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
-  若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。
+- `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继并固定**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
+  若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。成功后写入 `gateway_kv` 键 `relay.preferredUrl`。
+- `POST /api/mesh/relay/unpin` 清除该固定，`{ ok: true }`；本来就没固定也是 200。
+- **自动优选主中继**（`VIBETERM_RELAY_AUTO_SELECT`，未设时 ≥ 2 条未踢中继默认开）：按 uplink 心跳 RTT 的 EWMA 打分，
+  `scoreMs = ewmaRtt + 0.15×pathBestMs + 0.05×(peersOnline/maxNodes)×1000 + 失败罚分`，
+  候选需在线、未踢、≥ 2 个 RTT 样本；相对当前好出 `max(15 ms, 30%)` 且连续 2 次评估、距上次自动切换 ≥ 10 分钟、
+  `healthz` 立刻通过、当前主中继排空在途流（`reason=auto-select`）后，走与 HTTP switch 同一条 `runRelaySwitch(..., { persistPin: false })`，
+  **不写** `preferredUrl`。有固定且该行未踢/未消失时冻结自动切换（failback 仍会回到固定）。
+  评估周期 `VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS`（默认 60 s），心跳 RTT / 上线离线 / 被踢也会触发（合并）。
+  日志 `[relay][auto] switch from=… to=… reason=auto-rtt score_from=… score_to=…`；门挡住时 `[relay][auto] hold …`（60 s 节流）。
+  按对选路 `chooseRelay` 仍独立于谁是主中继。
 - **增删副中继不重启主 uplink**（2.3.2）：`set-relays` 只改动非主行时，`runReconcile()` 走轻路径——`uplink.refreshCandidates()` + `RelaySecondaryAttach.reconcile()` 增删 slot，**不碰 live client**。日志 `[relay] targets updated rows=<n> primary=<host> secondaries=<n> (no restart)`（`primary` 取 `attachedHub()` 的 host，未挂上为 `-`）。主中继被重排但仍挂在旧主上 → 排空重建；已经挂在新主上（例如手动 `switch` 先切过去）→ 仍走轻路径，只刷副中继。主中继行凭证变化、令牌需重认证、hub↔relay 翻转或中继集合清空，仍走排空重建（`attach.stop()` → `reconfigureUplinkPool()` → `attach.start()`）。同 URL 副中继的租户 / 令牌轮换按凭证摘要拆掉该 slot 并重挂，不重启主 uplink。
 - **failback 探测顺序**：`probePreferred` 先对更优先候选做 `healthz`，打 `[uplink] probe ok hub=…` / `[uplink] probe fail hub=…`，**命中才**打 `[uplink] probe waiting drain reason=switch-back …` 并等当前上行排空再 switch-back。不要把健康检查藏在最长 10 分钟的排空等待之后。
 - **副中继日志**：连接失败打 `[uplink] secondary connect failed hub=… attempt=… reason=… next_retry_ms=…`，上线打 `[uplink] secondary online hub=…`；失败日志与主 uplink 同一套 30 s 节流（`UPLINK_CONNECT_LOG_INTERVAL_MS`）。`waitUntilClosed` 对已中止信号与离线状态也能返回。

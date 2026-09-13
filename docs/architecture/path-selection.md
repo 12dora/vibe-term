@@ -39,6 +39,16 @@
 
 中继 RTT 是两边 uplink 心跳之和，不是未用路径上的 mux ping。`chooseRelay` / `relaysFor` 仍要求 presence `connected`；状态行 `peersOnline` 的计数口径见 [公共中继](./relay.md)。
 
+三条选路不要混：
+
+| 层 | 挑什么 | 输入 | 何时动 |
+|---|---|---|---|
+| Hub `preferNearest` | 节点挂哪台 **hub** | hub `/healthz` EWMA；候选必须有 `hubNodeId` | `VIBETERM_UPLINK_PREFER_NEAREST`，多 hub 默认开。中继候选 `hubNodeId` 恒为 null，这条**自动失效** |
+| 中继自动优选 | 哪台中继当 **主**（密钥日志写者） | uplink 心跳 RTT EWMA + pathBest + 负载 + 失败罚分 | `VIBETERM_RELAY_AUTO_SELECT`，≥ 2 条未踢中继默认开；有 `preferredUrl` 固定则冻结。见 [公共中继](./relay.md) §9 |
+| 按对 `chooseRelay` | 这一对节点走哪台中继 **开流** | `rtt(本机,R)+rtt(对端,R)`，所有已连接中继 | 与谁是主中继无关，N 路都参与 |
+
+自动优选只搬家「写者 / primary」；旧主自动变成 secondary。不要用假 `hubNodeId` 去复用 hub 的 nearest-attach。
+
 ### 降级（auto，live 为直连）
 
 同时满足才把流搬到中继：

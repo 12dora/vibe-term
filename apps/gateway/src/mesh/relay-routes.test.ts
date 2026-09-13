@@ -1485,6 +1485,56 @@ describe('POST /api/mesh/relay/switch', () => {
   });
 });
 
+describe('POST /api/mesh/relay/unpin', () => {
+  test('clears the pin and returns { ok: true }', async () => {
+    let attachedUrl = canonicalHubUrl(RELAY_URL);
+    const b = await boot({
+      uplink: {
+        attachedHub: () => ({
+          hubNodeId: null,
+          publicUrl: attachedUrl,
+          mode: 'active',
+          writerEpoch: 0,
+          since: 1,
+        }),
+        liveClient: () => ({ state: 'online', lastConnectError: null }) as never,
+        switchTo: async (url) => {
+          attachedUrl = url;
+          return { ok: true as const };
+        },
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      const switched = await b.call('/api/mesh/relay/switch', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL_2 }),
+      });
+      expect(switched.status).toBe(200);
+      expect(b.secrets.preferredRelayUrl()).toBe(canonicalHubUrl(RELAY_URL_2));
+      const res = await b.call('/api/mesh/relay/unpin', { method: 'POST' });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(b.secrets.preferredRelayUrl()).toBeNull();
+    } finally {
+      b.close();
+    }
+  });
+
+  test('nothing pinned is still 200 { ok: true }', async () => {
+    const b = await boot();
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
+      expect(b.secrets.preferredRelayUrl()).toBeNull();
+      const res = await b.call('/api/mesh/relay/unpin', { method: 'POST' });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+    } finally {
+      b.close();
+    }
+  });
+});
+
 describe('standalone 机器的中继接入', () => {
   test('本机登录门生效时 standalone 也能读 /api/mesh/relay/status（否则永远 401）', async () => {
     const b = await boot({ standalone: true });

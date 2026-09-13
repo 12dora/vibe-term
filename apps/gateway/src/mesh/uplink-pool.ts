@@ -52,7 +52,7 @@ import {
   redactUrl,
   sameHubUrl,
 } from './uplink-pool-url';
-import { UplinkRelayDrain } from './uplink-relay-drain';
+import { UplinkRelayDrain, type UplinkRelayDrainReason } from './uplink-relay-drain';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
 export {
@@ -653,7 +653,10 @@ export class UplinkPool {
   waitForRelayStreamsToDrain(): Promise<void> {
     return this.relayDrain.waitForAll(() => this.live, this.stopAbort?.signal);
   }
-
+  waitForLiveRelayDrain(reason: UplinkRelayDrainReason): Promise<void> {
+    if (!this.live) return Promise.resolve();
+    return this.relayDrain.waitForClient(this.live, reason, this.stopAbort?.signal);
+  }
   queryHubHead() {
     return this.requireLive().queryHubHead();
   }

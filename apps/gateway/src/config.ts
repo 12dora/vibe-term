@@ -253,15 +253,37 @@ export function parseHubAutoPromoteTimeoutMs(raw: string | undefined): number {
   return n;
 }
 
-/** `null` = auto: on when more than one authorized hub is known. */
-export function parseUplinkPreferNearest(raw: string | undefined): boolean | null {
+function parseOnOffNullable(raw: string | undefined, envName: string): boolean | null {
   if (raw === undefined || raw.trim() === '') return null;
   const value = raw.trim().toLowerCase();
   if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
   if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
-  throw new Error(
-    'VIBETERM_UPLINK_PREFER_NEAREST must be 0 | 1 | true | false | yes | no | on | off'
-  );
+  throw new Error(`${envName} must be 0 | 1 | true | false | yes | no | on | off`);
+}
+
+/** `null` = auto: on when more than one authorized hub is known. */
+export function parseUplinkPreferNearest(raw: string | undefined): boolean | null {
+  return parseOnOffNullable(raw, 'VIBETERM_UPLINK_PREFER_NEAREST');
+}
+
+/** `null` = auto: on when ≥ 2 unkicked relays are configured. */
+export function parseRelayAutoSelect(raw: string | undefined): boolean | null {
+  return parseOnOffNullable(raw, 'VIBETERM_RELAY_AUTO_SELECT');
+}
+
+export const RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS = 60_000;
+
+export function parseRelayAutoSelectIntervalMs(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS;
+  const value = raw.trim();
+  if (!/^\d+$/.test(value)) {
+    throw new Error('VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS must be an integer >= 1');
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new Error('VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS must be an integer >= 1');
+  }
+  return n;
 }
 
 /** 转发终端会话（mesh ws 流）单会话在途上限：载体队列 + mux 未回信用字节。 */
@@ -369,6 +391,10 @@ export const config = {
     process.env.VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS
   ),
   uplinkPreferNearest: parseUplinkPreferNearest(process.env.VIBETERM_UPLINK_PREFER_NEAREST),
+  relayAutoSelect: parseRelayAutoSelect(process.env.VIBETERM_RELAY_AUTO_SELECT),
+  relayAutoSelectIntervalMs: parseRelayAutoSelectIntervalMs(
+    process.env.VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS
+  ),
   peerPort: parsePeerPort(process.env.VIBETERM_PEER_PORT),
   stunServers: stunEnv.servers,
   stunSource: stunEnv.source,

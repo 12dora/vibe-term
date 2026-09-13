@@ -4,12 +4,15 @@ import { BUILTIN_STUN_SERVERS } from '@vibeterm/shared/net';
 import {
   HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS,
   LINK_STREAM_INFLIGHT_DEFAULT_BYTES,
+  RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS,
   originUrlFromBindHost,
   parseHubAutoPromote,
   parseHubAutoPromoteTimeoutMs,
   parseLinkStreamInflightBytes,
   parsePeerBindHost,
   parsePeerPort,
+  parseRelayAutoSelect,
+  parseRelayAutoSelectIntervalMs,
   parseRtcPortRange,
   parseTurnBindHost,
   parseTurnExternalIp,
@@ -619,6 +622,29 @@ describe('hub auto-promote and nearest-uplink env', () => {
     expect(parseUplinkPreferNearest('1')).toBe(true);
     expect(parseUplinkPreferNearest('on')).toBe(true);
     expect(() => parseUplinkPreferNearest('maybe')).toThrow('VIBETERM_UPLINK_PREFER_NEAREST');
+  });
+
+  test('relay auto-select is auto when unset and can be forced off or on', () => {
+    expect(parseRelayAutoSelect(undefined)).toBeNull();
+    expect(parseRelayAutoSelect('')).toBeNull();
+    expect(parseRelayAutoSelect('0')).toBe(false);
+    expect(parseRelayAutoSelect('off')).toBe(false);
+    expect(parseRelayAutoSelect('false')).toBe(false);
+    expect(parseRelayAutoSelect('1')).toBe(true);
+    expect(parseRelayAutoSelect('on')).toBe(true);
+    expect(() => parseRelayAutoSelect('maybe')).toThrow('VIBETERM_RELAY_AUTO_SELECT');
+  });
+
+  test('relay auto-select interval defaults to 60s', () => {
+    expect(parseRelayAutoSelectIntervalMs(undefined)).toBe(RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS);
+    expect(parseRelayAutoSelectIntervalMs('')).toBe(RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS);
+    expect(parseRelayAutoSelectIntervalMs('15000')).toBe(15_000);
+    expect(() => parseRelayAutoSelectIntervalMs('0')).toThrow(
+      'VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS'
+    );
+    expect(() => parseRelayAutoSelectIntervalMs('nope')).toThrow(
+      'VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS'
+    );
   });
 });
 

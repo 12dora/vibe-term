@@ -34,6 +34,10 @@ export function writePreferredRelayUrl(db: AuthDb, url: string): void {
     .run();
 }
 
+export function clearPreferredRelayUrl(db: AuthDb): void {
+  db.delete(gatewayKv).where(eq(gatewayKv.key, RELAY_PREFERRED_URL_KEY)).run();
+}
+
 /** 把首选中继排到最前，其余保持原优先级顺序。未知首选则原样返回。 */
 export function orderRelaysByPreferred<T extends { url: string }>(
   rows: readonly T[],

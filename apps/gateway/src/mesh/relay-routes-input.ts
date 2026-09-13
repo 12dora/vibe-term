@@ -3,6 +3,7 @@
 
 import { decodeAuthorization, decodeBase64url } from '@vibeterm/shared/auth';
 import { normalizeRelayUrl } from '@vibeterm/shared/relay';
+import { isTrustedLocalClient } from './client-source';
 
 export type ParsedEnrollment = {
   enrollPk: Uint8Array;
@@ -63,6 +64,10 @@ export function normalizeUrlOrNull(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+export function isLocalRelayStatusRequest(req: Request, path = new URL(req.url).pathname): boolean {
+  return req.method === 'GET' && path === '/api/mesh/relay/status' && isTrustedLocalClient(req);
 }
 
 export function readProof(value: unknown): { bytes: Uint8Array; sig: Uint8Array } | null {

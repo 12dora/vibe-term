@@ -17,7 +17,6 @@ import { readJsonObjectBody } from '../api/http';
 import type { UserKeyService } from '../auth';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { UserStore } from '../auth/user-store';
-import { isTrustedLocalClient } from './client-source';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import {
   RELAY_ENROLL_FETCH_TIMEOUT_MS,
@@ -43,6 +42,7 @@ import { buildReadmitPrepare, nodeDisplayName } from './relay-readmit';
 import { handleRelayResolve } from './relay-resolve-route';
 import {
   type ParsedEnrollment,
+  isLocalRelayStatusRequest,
   normalizeUrlOrNull,
   parseEnrollmentBody,
   parseStoredJson,
@@ -50,7 +50,7 @@ import {
 } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
 import { buildRelayStatusPayload } from './relay-status-row';
-import { handleRelaySwitch } from './relay-switch-route';
+import { handleRelaySwitch, handleRelayUnpin } from './relay-switch-route';
 import type { RelayUplinkView } from './relay-switch-route';
 import { RelayUplinkClient } from './relay-uplink-client';
 import {
@@ -61,6 +61,7 @@ import {
 } from './session-middleware';
 
 export { RELAY_SWITCH_TIMEOUT_MS, type RelayUplinkView } from './relay-switch-route';
+export { isLocalRelayStatusRequest } from './relay-routes-input';
 
 export const RELAY_ROUTE_PREFIX = '/api/mesh/relay';
 export const RELAY_ENROLLMENT_ACK_TIMEOUT_MS = 10_000;
@@ -82,12 +83,6 @@ export type RelayRoutesDeps = {
 
 type PreparedPayload = { payload: string; payloadHash: string };
 type RelayRouteHandler = (req: Request, userId: string) => Promise<Response> | Response;
-
-export function isLocalRelayStatusRequest(req: Request, path = new URL(req.url).pathname): boolean {
-  return (
-    req.method === 'GET' && path === `${RELAY_ROUTE_PREFIX}/status` && isTrustedLocalClient(req)
-  );
-}
 
 /** 租户侧中继接口；本机 node-session 鉴权，与其它 `/api/mesh/*` 路由一致。 */
 export class RelayRoutes {
@@ -115,6 +110,7 @@ export class RelayRoutes {
     const table: Record<string, RelayRouteHandler> = {
       'GET /status': (_r, uid) => this.status(uid),
       'POST /switch': (r, uid) => handleRelaySwitch(this.deps, r, () => this.status(uid)),
+      'POST /unpin': () => handleRelayUnpin(this.deps),
       'GET /readmit/prepare': (_r, uid) => this.readmitPrepare(uid),
       'POST /resolve': (r) =>
         handleRelayResolve(r, { fetchImpl: this.deps.fetchImpl, dial: this.deps.dial }),
@@ -174,6 +170,9 @@ export class RelayRoutes {
         reauthRequired: rows.some((row) => row.kicked),
         readmitPending,
         metaKeyLagging: mode === 'relay' && uid ? this.metaKeyLaggingFor(uid) : [],
+        preferredUrl: this.deps.secrets.preferredRelayUrl(),
+        autoSelect: this.deps.uplink.autoSelectView?.() ?? null,
+        scoreOf: this.deps.uplink.scoreOf,
       })
     );
   }

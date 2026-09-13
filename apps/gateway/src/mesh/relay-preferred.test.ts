@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../auth/test-db';
 import {
+  clearPreferredRelayUrl,
   orderRelaysByPreferred,
   readPreferredRelayUrl,
   writePreferredRelayUrl,
@@ -42,6 +43,10 @@ describe('preferred relay kv', () => {
       expect(readPreferredRelayUrl(db)).toBe('https://b.example');
       writePreferredRelayUrl(db, 'https://c.example');
       expect(readPreferredRelayUrl(db)).toBe('https://c.example');
+      clearPreferredRelayUrl(db);
+      expect(readPreferredRelayUrl(db)).toBeNull();
+      clearPreferredRelayUrl(db);
+      expect(readPreferredRelayUrl(db)).toBeNull();
     } finally {
       close();
     }

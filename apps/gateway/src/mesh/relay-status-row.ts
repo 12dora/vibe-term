@@ -1,7 +1,9 @@
 import type {
+  RelayAutoSelectView,
   RelayStatusPayload,
   RelayStatusRow,
   RelayStatusTurnView,
+  RelaySwitchReason,
 } from '@vibeterm/shared/relay';
 import { membersProbeSnapshot } from './port-reach';
 import { classifyRelayLinkError } from './relay-link-error';
@@ -53,6 +55,9 @@ export type RelayStatusRowExtras = {
   keyLog?: { diverged?: boolean };
   pathBestMs?: number;
   reraces?: number;
+  pinned?: boolean;
+  autoSelected?: boolean;
+  score?: number | null;
 };
 
 function statusRowOnline(
@@ -101,6 +106,17 @@ export function buildRelayStatusRow(
     ...(extras?.keyLog?.diverged === true ? { keyLog: { diverged: true as const } } : {}),
     ...(extras?.pathBestMs != null ? { pathBestMs: extras.pathBestMs } : {}),
     ...(extras?.reraces != null ? { reraces: extras.reraces } : {}),
+    ...selectRowFlags(extras),
+  };
+}
+
+function selectRowFlags(
+  extras: RelayStatusRowExtras | undefined
+): Pick<RelayStatusRow, 'pinned' | 'autoSelected' | 'score'> {
+  return {
+    ...(extras?.pinned ? { pinned: true } : {}),
+    ...(extras?.autoSelected ? { autoSelected: true } : {}),
+    ...(extras?.score !== undefined ? { score: extras.score } : {}),
   };
 }
 
@@ -167,6 +183,9 @@ export function collectRelayStatusRows(input: {
   secondaryOf: (url: string) => RelayUplinkClient | null;
   peersOnlineOn: (url: string) => number | null;
   turnOf: (client: RelayUplinkClient | null, relayUrl: string) => RelayStatusTurnView | null;
+  preferredUrl?: string | null;
+  autoSelected?: boolean;
+  scoreOf?: (url: string) => number | null;
 }): RelayStatusRow[] {
   return input.rows.map((row) => {
     const attached = input.attachedUrl != null && sameHubUrl(input.attachedUrl, row.url);
@@ -180,8 +199,30 @@ export function collectRelayStatusRows(input: {
       ...(client && !attached ? { lastError: client.lastConnectError } : {}),
       ...(client?.keyLog.diverged === true ? { keyLog: { diverged: true as const } } : {}),
       ...uplinkPathView(row.url),
+      ...statusSelectExtras(input, row.url, attached, connected),
     });
   });
+}
+
+function statusSelectExtras(
+  input: {
+    preferredUrl?: string | null;
+    autoSelected?: boolean;
+    scoreOf?: (url: string) => number | null;
+  },
+  url: string,
+  attached: boolean,
+  connected: boolean
+): Pick<RelayStatusRowExtras, 'pinned' | 'autoSelected' | 'score'> {
+  return {
+    ...(input.preferredUrl && sameHubUrl(input.preferredUrl, url) ? { pinned: true } : {}),
+    ...(input.autoSelected && attached && connected ? { autoSelected: true } : {}),
+    ...(connected && input.scoreOf ? { score: input.scoreOf(url) ?? null } : {}),
+  };
+}
+
+function isAutoSwitchReason(reason: RelaySwitchReason | null | undefined): boolean {
+  return reason === 'auto-rtt' || reason === 'auto-failover';
 }
 
 export function buildRelayStatusPayload(input: {
@@ -199,7 +240,12 @@ export function buildRelayStatusPayload(input: {
   reauthRequired: boolean;
   readmitPending: number;
   metaKeyLagging: unknown;
+  preferredUrl?: string | null;
+  autoSelect?: RelayAutoSelectView | null;
+  scoreOf?: (url: string) => number | null;
 }): RelayStatusPayload {
+  const autoOn = input.autoSelect?.enabled === true;
+  const preferredUrl = input.preferredUrl ?? null;
   const relays = collectRelayStatusRows({
     rows: input.rows,
     attachedUrl: input.attachedUrl,
@@ -216,6 +262,9 @@ export function buildRelayStatusPayload(input: {
         selfId: rowClient?.identity.nodeId,
       });
     },
+    preferredUrl,
+    autoSelected: autoOn && isAutoSwitchReason(input.autoSelect?.switchReason),
+    scoreOf: autoOn ? input.scoreOf : undefined,
   });
   const secondaryAwaiting = input.rows.some(
     (row) => input.secondaryOf(row.url)?.awaitingToken === true
@@ -239,5 +288,17 @@ export function buildRelayStatusPayload(input: {
     metaKeyLagging: input.metaKeyLagging,
     quota: input.primary?.quota ?? null,
     keyLog: input.primary?.keyLogHealth() ?? { skipped: 0, blockedSeq: null, caughtUp: false },
+    ...autoSelectPayload(preferredUrl, autoOn, input.autoSelect),
+  };
+}
+
+function autoSelectPayload(
+  preferredUrl: string | null,
+  autoOn: boolean,
+  autoSelect: RelayAutoSelectView | null | undefined
+): Pick<RelayStatusPayload, 'preferredUrl' | 'autoSelect'> {
+  return {
+    ...(preferredUrl || autoOn ? { preferredUrl } : {}),
+    ...(autoOn && autoSelect ? { autoSelect } : {}),
   };
 }

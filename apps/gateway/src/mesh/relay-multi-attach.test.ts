@@ -202,9 +202,10 @@ function stubUplink(
 function stubUplinkWithLifecycle(initialUrl: string | null): {
   pool: UplinkPool;
   detach(): void;
+  attachTo(url: string): void;
 } {
   let attached = initialUrl;
-  const dialling = initialUrl;
+  let dialling = initialUrl;
   const attachedCbs: Array<(hub: { publicUrl: string; nodeId: string; name: string }) => void> = [];
   const detachedCbs: Array<() => void> = [];
   const pool = {
@@ -229,6 +230,11 @@ function stubUplinkWithLifecycle(initialUrl: string | null): {
     detach() {
       attached = null;
       for (const cb of detachedCbs) cb();
+    },
+    attachTo(url: string) {
+      attached = url;
+      dialling = url;
+      for (const cb of attachedCbs) cb({ publicUrl: url, nodeId: PEER_A, name: 'jp' });
     },
   };
 }
@@ -441,6 +447,48 @@ describe('relay multi-attach presence overlay', () => {
     expect(attach.secondaryClient(TK)?.state).toBe('online');
     expect(attach.secondaryClient(JP)?.state).toBe('online');
     expect(attach.secondaryClient(SH)).toBeNull();
+    await attach.stop();
+  });
+
+  test('promote SH→JP 后旧主变副、TK 仍为副', async () => {
+    const scheduler = new FireScheduler();
+    const uplink = stubUplinkWithLifecycle(SH);
+    const spawned: FakeSecondary[] = [];
+    const attach = createRelayMultiAttach({
+      wiring: stubWiring([
+        { url: SH, priority: 0 },
+        { url: TK, priority: 1 },
+        { url: JP, priority: 2 },
+      ]),
+      uplink: uplink.pool,
+      spawn: (opts) => {
+        const client = new FakeSecondary(opts);
+        spawned.push(client);
+        return client;
+      },
+      baseClient: baseClient(scheduler),
+      scheduler,
+      onRelayStream: () => {},
+      onExclusiveOffline: () => {},
+      rtc: { lastRtc: null, lastNodeList: null },
+    });
+    attach.start();
+    attach.handlePrimaryState('online', SH, 20);
+    await attach.reconcile();
+    await waitUntil(
+      () =>
+        spawned.some((client) => client.hubUrl === TK && client.state === 'online') &&
+        spawned.some((client) => client.hubUrl === JP && client.state === 'online')
+    );
+    await attach.prepareSwitch(JP);
+    uplink.attachTo(JP);
+    attach.handlePrimaryState('online', JP, 12);
+    await attach.reconcile();
+    await waitUntil(() => attach.secondaryClient(SH)?.state === 'online');
+    expect(attach.secondaryClient(JP)).toBeNull();
+    expect(attach.secondaryClient(TK)?.state).toBe('online');
+    expect(attach.secondaryClient(SH)?.state).toBe('online');
+    expect(attach.presence.primaryUrl()).toBe(JP);
     await attach.stop();
   });
 });

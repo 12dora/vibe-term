@@ -1,3 +1,4 @@
+import type { RelayAutoSelectView, RelaySwitchReason } from '@vibeterm/shared/relay';
 import { readJsonObjectBody } from '../api/http';
 import { classifyRelayLinkError } from './relay-link-error';
 import type { RelayPresence } from './relay-presence';
@@ -5,7 +6,7 @@ import { normalizeUrlOrNull } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
 import type { RelayStatusCandidate } from './relay-status-row';
 import type { RelayUplinkClient } from './relay-uplink-client';
-import { jsonError } from './session-middleware';
+import { jsonBody, jsonError } from './session-middleware';
 import type { PooledUplink } from './types';
 import { type AttachedHub, sameHubUrl } from './uplink-pool';
 import type { UplinkSwitchResult } from './uplink-pool-switch';
@@ -22,12 +23,19 @@ export type RelayUplinkView = {
   presence?(): RelayPresence | null;
   prepareSwitch?(url: string): Promise<void>;
   multiAttach?(): boolean;
+  autoSelectView?(): RelayAutoSelectView | null;
+  scoreOf?(url: string): number | null;
+  noteSwitchReason?(reason: RelaySwitchReason | null): void;
 };
 
 export type RelaySwitchDeps = {
   secrets: RelaySecrets;
   uplink: RelayUplinkView;
   switchTimeoutMs?: number;
+};
+
+export type RelaySwitchOpts = {
+  persistPin?: boolean;
 };
 
 type SwitchFailure = { ok: false; lastError: string; lastErrorCode: string };
@@ -48,38 +56,58 @@ export async function handleRelaySwitch(
   if (attached && sameHubUrl(attached.publicUrl, url) && live?.state === 'online') {
     return jsonError('RELAY_ALREADY_ATTACHED', 409);
   }
-  await deps.uplink.prepareSwitch?.(url);
-  const switched = await runRelaySwitch(deps, url);
+  const switched = await runRelaySwitch(deps, url, { persistPin: true });
   if (!switched.ok) {
     return jsonError('RELAY_SWITCH_FAILED', 502, {
       lastError: switched.lastError,
       lastErrorCode: switched.lastErrorCode,
     });
   }
-  try {
-    deps.secrets.setPreferredRelayUrl(url);
-  } catch {
-    /* 首选只影响下次启动顺序，切换本身已经成功 */
-  }
   return status();
 }
 
-async function runRelaySwitch(
+export function handleRelayUnpin(deps: Pick<RelaySwitchDeps, 'secrets'>): Response {
+  try {
+    deps.secrets.clearPreferredRelayUrl();
+  } catch {
+    /* 未固定时也当成功 */
+  }
+  return jsonBody({ ok: true });
+}
+
+export async function runRelaySwitch(
   deps: RelaySwitchDeps,
-  url: string
+  url: string,
+  opts?: RelaySwitchOpts
 ): Promise<{ ok: true } | SwitchFailure> {
+  const persistPin = opts?.persistPin !== false;
+  await deps.uplink.prepareSwitch?.(url);
+  deps.uplink.noteSwitchReason?.(persistPin ? 'manual' : 'auto-rtt');
   const ac = new AbortController();
   const timeoutMs = deps.switchTimeoutMs ?? RELAY_SWITCH_TIMEOUT_MS;
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const result = await deps.uplink.switchTo(url, ac.signal);
-    if (!result.ok) return switchFailed(new Error(result.reason));
+    if (!result.ok) {
+      deps.uplink.noteSwitchReason?.(null);
+      return switchFailed(new Error(result.reason));
+    }
+    if (persistPin) persistPreferred(deps, url);
     return { ok: true };
   } catch (err) {
+    deps.uplink.noteSwitchReason?.(null);
     if (ac.signal.aborted) return switchFailed(new Error('connect-timeout'));
     return switchFailed(err);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+function persistPreferred(deps: RelaySwitchDeps, url: string): void {
+  try {
+    deps.secrets.setPreferredRelayUrl(url);
+  } catch {
+    /* 首选只影响下次启动顺序，切换本身已经成功 */
   }
 }
 

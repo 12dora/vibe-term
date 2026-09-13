@@ -30,7 +30,11 @@ import {
 } from './ice';
 import { resetTurnIcePickLogForTest } from './ice-turn-pick';
 import { resetStunResolverForTest } from './stun-resolver';
-import { resetTurnProbeForTest, setTurnProbeSnapshotForTest } from './turn-probe';
+import {
+  resetTurnProbeForTest,
+  setTurnProbeSnapshotForTest,
+  turnProbeSnapshot,
+} from './turn-probe';
 
 describe('ice helpers', () => {
   test('collects stun urls and structured TURN IceServer entries', () => {
@@ -559,7 +563,10 @@ describe('buildRtcIceConfig TURN pick by probe RTT', () => {
       { url: b.url, ok: true, rttMs: 10, probedAt: 1 },
       { url: c.url, ok: true, rttMs: 20, probedAt: 1 },
     ]);
-    const first = buildRtcIceConfig({ stun: [], turn: [a, b, c], turnProbeOk: true }, runtime);
+    const first = buildRtcIceConfig(
+      { stun: [], turn: [a, b, c], turnProbeOk: true, turnProbes: turnProbeSnapshot() },
+      runtime
+    );
     expect(first.iceServers).toEqual([
       iceOf('b.example', 'ub', 'pb'),
       iceOf('c.example', 'uc', 'pc'),
@@ -569,7 +576,10 @@ describe('buildRtcIceConfig TURN pick by probe RTT', () => {
       { url: b.url, ok: true, rttMs: 10, probedAt: 2 },
       { url: c.url, ok: true, rttMs: 20, probedAt: 2 },
     ]);
-    const second = buildRtcIceConfig({ stun: [], turn: [a, b, c], turnProbeOk: true }, runtime);
+    const second = buildRtcIceConfig(
+      { stun: [], turn: [a, b, c], turnProbeOk: true, turnProbes: turnProbeSnapshot() },
+      runtime
+    );
     expect(second.iceServers).toEqual([
       iceOf('a.example', 'ua', 'pa'),
       iceOf('b.example', 'ub', 'pb'),
