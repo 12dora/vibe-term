@@ -2,7 +2,7 @@
 // Node-only（fs.promises）；不要从浏览器 barrel 再导出。
 //
 // 未预知 Accept-Ranges 时，第一次 GET 带 Range 兼做探测：206 则并行其余分片，
-// 200 则把这一次响应当单流写完（避免再打一枪把调用方的挂起流/计数测例冲掉）。
+// 200 或缺少 Content-Range 则把这一次响应当单流写完（避免把全量 200 误当成分片）。
 
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -10,6 +10,14 @@ import { type FileHandle, open } from 'node:fs/promises';
 import { combineAbortSignals } from '../async/abort';
 import { sleepOrAbort } from '../async/sleep';
 import { errorMessage } from '../errors';
+import {
+  DEFAULT_READ_IDLE_MS,
+  MidDownloadRedirectError,
+  followReleaseRedirects,
+  isMidDownloadRedirect,
+  isRedirectStatus,
+  readStreamChunk,
+} from './redirect';
 import type { ReleaseSpeedVerdict } from './speed-probe';
 
 export type ReleaseAssetFetch = (
@@ -30,6 +38,8 @@ export type DownloadAssetRangedOptions = {
   retriesPerChunk?: number;
   acceptsRanges?: boolean;
   headers?: HeadersInit;
+  /** 单次 body `read()` 无字节的上限，超时视为分片失败并重试。 */
+  readIdleMs?: number;
 };
 
 export type DownloadedAsset = {
@@ -47,7 +57,6 @@ const MAX_STREAMS = 8;
 const DEFAULT_CHUNK_BYTES = 4 * 1024 * 1024;
 const DEFAULT_RETRIES = 3;
 const RETRY_BASE_MS = 100;
-const MAX_REDIRECTS = 5;
 const SPEED_DEADLINE_MS = 3000;
 const SPEED_MIN_BYTES = 64 * 1024;
 
@@ -68,28 +77,10 @@ export async function downloadAssetRanged(
     chunkBytes,
     retries,
     streamsWanted: opts.streams,
+    knownTotal: opts.totalBytes,
+    idleMs: opts.readIdleMs ?? DEFAULT_READ_IDLE_MS,
+    originalUrl: url,
   };
-
-  if (opts.acceptsRanges === true && opts.totalBytes != null && opts.totalBytes > chunkBytes) {
-    const streams = clampStreams(opts.streams, Math.ceil(opts.totalBytes / chunkBytes));
-    const speed = createSpeedWatch();
-    await downloadParallel(url, {
-      ...ctx,
-      totalBytes: opts.totalBytes,
-      streams,
-      skipUntil: 0,
-      speed,
-    });
-    const hashed = await sha256File(opts.destPath);
-    return {
-      ...hashed,
-      streams,
-      totalBytes: opts.totalBytes,
-      finalUrl: url,
-      verdict: speed.verdict(hashed.bytes),
-    };
-  }
-
   return await downloadDiscovering(url, ctx);
 }
 
@@ -102,64 +93,49 @@ type DownloadCtx = {
   chunkBytes: number;
   retries: number;
   streamsWanted?: number;
+  knownTotal: number | null;
+  idleMs: number;
+  originalUrl: string;
 };
 
 async function downloadDiscovering(url: string, ctx: DownloadCtx): Promise<DownloadedAsset> {
-  const opened = await openFollowingRedirects(url, ctx);
+  const headers = new Headers(ctx.headers);
+  headers.set('Range', `bytes=0-${ctx.chunkBytes - 1}`);
+  const opened = await followReleaseRedirects(url, ctx.fetchFn, {
+    headers,
+    signal: ctx.signal,
+  });
   if (opened.res.status >= 400) {
     const status = opened.res.status;
     await opened.res.body?.cancel().catch(() => {});
     throw new Error(`GitHub release tarball HTTP ${status}`);
   }
-  if (opened.res.status === 206) {
-    return await downloadFromRangeStart(opened, ctx);
+  const ranged = parseContentRange(opened.res.headers.get('content-range'));
+  if (opened.res.status === 206 && ranged) {
+    if (ctx.knownTotal != null && ranged.total !== ctx.knownTotal) {
+      await opened.res.body?.cancel().catch(() => {});
+      throw new Error('content-range total mismatch');
+    }
+    return await downloadFromRangeStart(opened, ctx, ranged);
   }
   return await drainResponseToFile(opened, ctx);
 }
 
-async function openFollowingRedirects(
-  url: string,
-  ctx: DownloadCtx
-): Promise<{ url: string; res: Response }> {
-  let current = url;
-  for (let hop = 0; hop < MAX_REDIRECTS; hop += 1) {
-    throwIfAborted(ctx.signal);
-    const headers = new Headers(ctx.headers);
-    headers.set('Range', `bytes=0-${ctx.chunkBytes - 1}`);
-    const res = await ctx.fetchFn(current, {
-      method: 'GET',
-      redirect: 'manual',
-      cache: 'no-store',
-      headers,
-      signal: ctx.signal,
-    });
-    if (!isRedirectStatus(res.status)) return { url: current, res };
-    const next = resolveLocation(current, res.headers.get('location'));
-    await res.body?.cancel().catch(() => {});
-    if (!next) throw new Error('GitHub release tarball redirect without Location');
-    current = next;
-  }
-  throw new Error('GitHub release tarball too many redirects');
-}
-
 async function downloadFromRangeStart(
   opened: { url: string; res: Response },
-  ctx: DownloadCtx
+  ctx: DownloadCtx,
+  ranged: ContentRange
 ): Promise<DownloadedAsset> {
   const speed = createSpeedWatch();
-  const ranged = parseContentRange(opened.res.headers.get('content-range'));
-  const total = ranged?.total ?? null;
-  const expected = ranged ? ranged.end - ranged.start + 1 : ctx.chunkBytes;
-  const first = await readExact(opened.res, expected, ctx.signal);
-  if (
-    first.byteLength === 0 ||
-    (total != null && first.byteLength < expected && first.byteLength < total)
-  ) {
+  const total = ranged.total;
+  const expected = ranged.end - ranged.start + 1;
+  const first = await readExact(opened.res, expected, ctx.signal, ctx.idleMs);
+  if (first.byteLength === 0 || (first.byteLength < expected && first.byteLength < total)) {
     throw new Error('GitHub release tarball incomplete first range');
   }
   speed.note(first.byteLength);
 
-  if (total == null || total <= first.byteLength) {
+  if (total <= first.byteLength) {
     const fh = await open(ctx.destPath, 'w', 0o600);
     try {
       await writeAll(fh, first, 0);
@@ -167,12 +143,12 @@ async function downloadFromRangeStart(
     } finally {
       await fh.close().catch(() => {});
     }
-    ctx.onProgress?.(first.byteLength, total ?? first.byteLength);
+    ctx.onProgress?.(first.byteLength, total);
     const hashed = await sha256File(ctx.destPath);
     return {
       ...hashed,
       streams: 1,
-      totalBytes: total ?? hashed.bytes,
+      totalBytes: total,
       finalUrl: opened.url,
       verdict: speed.verdict(hashed.bytes),
     };
@@ -218,7 +194,11 @@ async function drainResponseToFile(
       try {
         for (;;) {
           throwIfAborted(ctx.signal);
-          const { done, value } = await reader.read();
+          const { done, value } = await readStreamChunk(reader, {
+            signal: ctx.signal,
+            idleMs: ctx.idleMs,
+            body: opened.res.body,
+          });
           if (done) break;
           await writeAll(fh, value, offset);
           offset += value.byteLength;
@@ -281,6 +261,9 @@ async function downloadParallel(url: string, opts: ParallelOpts): Promise<void> 
         signal,
         retries: opts.retries,
         headers: opts.headers,
+        originalUrl: opts.originalUrl,
+        totalBytes: opts.totalBytes,
+        idleMs: opts.idleMs,
       });
       await writeAt(buf, chunk.start);
       downloaded += buf.byteLength;
@@ -292,6 +275,7 @@ async function downloadParallel(url: string, opts: ParallelOpts): Promise<void> 
     fail.abort();
     throw err;
   } finally {
+    await writeChain.catch(() => {});
     await fh.close().catch(() => {});
   }
 }
@@ -314,16 +298,26 @@ async function fetchRangeWithRetry(
     signal?: AbortSignal;
     retries: number;
     headers?: HeadersInit;
+    originalUrl: string;
+    totalBytes: number;
+    idleMs: number;
   }
 ): Promise<Buffer> {
   let last: unknown;
+  let target = url;
+  let reresolved = false;
   for (let attempt = 0; attempt <= opts.retries; attempt += 1) {
     throwIfAborted(opts.signal);
     try {
-      return await fetchRange(url, chunk, opts.fetchFn, opts.signal, opts.headers);
+      return await fetchRange(target, chunk, opts);
     } catch (err) {
       last = err;
       if (isAbortError(err)) throw err;
+      if (isMidDownloadRedirect(err) && !reresolved) {
+        target = await reresolveFinalUrl(opts);
+        reresolved = true;
+        continue;
+      }
       if (attempt === opts.retries) break;
       const delay = Math.min(RETRY_BASE_MS * 2 ** attempt, 2000);
       const slept = await sleepOrAbort(delay, opts.signal);
@@ -333,31 +327,55 @@ async function fetchRangeWithRetry(
   throw last instanceof Error ? last : new Error(errorMessage(last));
 }
 
+async function reresolveFinalUrl(opts: {
+  fetchFn: ReleaseAssetFetch;
+  originalUrl: string;
+  headers?: HeadersInit;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const headers = new Headers(opts.headers);
+  headers.set('Range', 'bytes=0-0');
+  const opened = await followReleaseRedirects(opts.originalUrl, opts.fetchFn, {
+    headers,
+    signal: opts.signal,
+  });
+  await opened.res.body?.cancel().catch(() => {});
+  return opened.url;
+}
+
 async function fetchRange(
   url: string,
   chunk: ByteRange,
-  fetchFn: ReleaseAssetFetch,
-  signal?: AbortSignal,
-  extraHeaders?: HeadersInit
+  opts: {
+    fetchFn: ReleaseAssetFetch;
+    signal?: AbortSignal;
+    headers?: HeadersInit;
+    totalBytes: number;
+    idleMs: number;
+  }
 ): Promise<Buffer> {
-  const headers = new Headers(extraHeaders);
+  const headers = new Headers(opts.headers);
   headers.set('Range', `bytes=${chunk.start}-${chunk.endInclusive}`);
-  const res = await fetchFn(url, {
-    cache: 'no-store',
-    redirect: 'follow',
-    signal,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await opts.fetchFn(url, {
+      cache: 'no-store',
+      redirect: 'error',
+      signal: opts.signal,
+      headers,
+    });
+  } catch (err) {
+    if (isMidDownloadRedirect(err)) throw new MidDownloadRedirectError();
+    throw err;
+  }
   const expected = chunk.endInclusive - chunk.start + 1;
-  if (res.status !== 206 && res.status !== 200) {
+  try {
+    assertPartialContent(res, chunk, opts.totalBytes);
+  } catch (err) {
     await res.body?.cancel().catch(() => {});
-    throw new Error(`GitHub release tarball HTTP ${res.status}`);
+    throw err;
   }
-  if (res.status === 200 && chunk.start !== 0) {
-    await res.body?.cancel().catch(() => {});
-    throw new Error('range request returned 200');
-  }
-  const buf = await readExact(res, expected, signal);
+  const buf = await readExact(res, expected, opts.signal, opts.idleMs);
   if (buf.byteLength !== expected) {
     throw new Error(
       `incomplete range bytes=${chunk.start}-${chunk.endInclusive} got=${buf.byteLength}`
@@ -366,7 +384,24 @@ async function fetchRange(
   return buf;
 }
 
-async function readExact(res: Response, expected: number, signal?: AbortSignal): Promise<Buffer> {
+function assertPartialContent(res: Response, chunk: ByteRange, totalBytes: number): void {
+  if (isRedirectStatus(res.status)) throw new MidDownloadRedirectError();
+  if (res.status === 200) throw new Error('range request returned 200');
+  if (res.status !== 206) throw new Error(`GitHub release tarball HTTP ${res.status}`);
+  const ranged = parseContentRange(res.headers.get('content-range'));
+  if (!ranged) throw new Error('missing content-range');
+  if (ranged.total !== totalBytes) throw new Error('content-range total mismatch');
+  if (ranged.start !== chunk.start || ranged.end !== chunk.endInclusive) {
+    throw new Error('content-range bounds mismatch');
+  }
+}
+
+async function readExact(
+  res: Response,
+  expected: number,
+  signal: AbortSignal | undefined,
+  idleMs: number
+): Promise<Buffer> {
   if (!res.body) return Buffer.alloc(0);
   const reader = res.body.getReader();
   const parts: Uint8Array[] = [];
@@ -374,7 +409,11 @@ async function readExact(res: Response, expected: number, signal?: AbortSignal):
   try {
     while (got < expected) {
       throwIfAborted(signal);
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamChunk(reader, {
+        signal,
+        idleMs,
+        body: res.body,
+      });
       if (done) break;
       const take = Math.min(value.byteLength, expected - got);
       parts.push(take === value.byteLength ? value : value.subarray(0, take));
@@ -484,9 +523,9 @@ function clampStreams(requested: number | undefined, chunkCount: number): number
   return Math.max(1, Math.min(MAX_STREAMS, Math.floor(wanted), chunkCount));
 }
 
-function parseContentRange(
-  header: string | null
-): { start: number; end: number; total: number } | null {
+type ContentRange = { start: number; end: number; total: number };
+
+function parseContentRange(header: string | null): ContentRange | null {
   if (!header) return null;
   const matched = /bytes\s+(\d+)-(\d+)\/(\d+)/i.exec(header.trim());
   if (!matched) return null;
@@ -507,19 +546,6 @@ function parsePositiveInt(raw: string | null): number | null {
   if (!raw) return null;
   const value = Number.parseInt(raw.trim(), 10);
   return Number.isFinite(value) && value > 0 ? value : null;
-}
-
-function isRedirectStatus(status: number): boolean {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
-}
-
-function resolveLocation(current: string, location: string | null): string | null {
-  if (!location) return null;
-  try {
-    return new URL(location, current).href;
-  } catch {
-    return null;
-  }
 }
 
 function isAbortError(err: unknown): boolean {

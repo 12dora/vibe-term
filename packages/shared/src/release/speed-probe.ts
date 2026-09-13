@@ -4,6 +4,7 @@
 
 import { combineAbortSignals } from '../async/abort';
 import { errorMessage } from '../errors';
+import { followReleaseRedirects, readStreamChunk } from './redirect';
 
 export type ReleaseSpeedVerdict = 'fast' | 'slow' | 'unreachable';
 
@@ -34,7 +35,6 @@ export interface ReleaseSpeedProbeResult {
 
 const DEFAULT_DEADLINE_MS = 3000;
 const DEFAULT_MIN_BYTES = 64 * 1024;
-const MAX_REDIRECTS = 5;
 
 export async function probeReleaseAssetSpeed(
   url: string,
@@ -87,37 +87,13 @@ async function probeWithRedirects(
   url: string,
   run: ProbeRun
 ): Promise<Omit<ReleaseSpeedProbeResult, 'elapsedMs'>> {
-  let current = url;
-  for (let hop = 0; hop < MAX_REDIRECTS; hop += 1) {
-    throwIfUserAborted(run.userSignal);
-    const res = await rangeGet(current, run);
-    if (isRedirectStatus(res.status)) {
-      const next = resolveLocation(current, res.headers.get('location'));
-      await cancelBody(res);
-      if (!next) return unreachable('redirect without Location');
-      current = next;
-      continue;
-    }
-    return await classifyProbeResponse(res, current, run);
-  }
-  return unreachable('too many redirects');
-}
-
-async function rangeGet(url: string, run: ProbeRun): Promise<Response> {
   const headers = new Headers(run.headers);
   headers.set('Range', `bytes=0-${run.minBytes - 1}`);
-  try {
-    return await run.fetchFn(url, {
-      method: 'GET',
-      redirect: 'manual',
-      cache: 'no-store',
-      headers,
-      signal: run.signal,
-    });
-  } catch (err) {
-    throwIfUserAborted(run.userSignal);
-    throw err;
-  }
+  const opened = await followReleaseRedirects(url, run.fetchFn, {
+    headers,
+    signal: run.signal,
+  });
+  return await classifyProbeResponse(opened.res, opened.url, run);
 }
 
 async function classifyProbeResponse(
@@ -164,7 +140,10 @@ async function readProbeBody(
   try {
     while (bytes < minBytes) {
       throwIfUserAborted(run.userSignal);
-      const { done, value } = await reader.read();
+      const { done, value } = await readStreamChunk(reader, {
+        signal: run.signal,
+        body: res.body,
+      });
       if (done) return { bytes, completed: true };
       bytes += value.byteLength;
     }
@@ -203,19 +182,6 @@ function parsePositiveInt(raw: string | null): number | null {
 
 function acceptsBytesRanges(headers: Headers): boolean {
   return (headers.get('accept-ranges') ?? '').trim().toLowerCase() === 'bytes';
-}
-
-function isRedirectStatus(status: number): boolean {
-  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
-}
-
-function resolveLocation(current: string, location: string | null): string | null {
-  if (!location) return null;
-  try {
-    return new URL(location, current).href;
-  } catch {
-    return null;
-  }
 }
 
 function unreachable(error: string): Omit<ReleaseSpeedProbeResult, 'elapsedMs'> {

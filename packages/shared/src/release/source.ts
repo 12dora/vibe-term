@@ -75,3 +75,25 @@ export function selectReleaseAssetForTarget(
   if (cmp === null || cmp < 0) return legacyReleaseTarballName(releaseVersion);
   return releaseTarballName(releaseVersion);
 }
+
+const RELEASE_GITHUB_HOST = new URL(RELEASE_REPO_URL).hostname.toLowerCase();
+const RELEASE_USERCONTENT_HOST_SUFFIX = usercontentHostSuffix(INSTALL_SCRIPT_URL);
+
+function usercontentHostSuffix(scriptUrl: string): string {
+  const host = new URL(scriptUrl).hostname.toLowerCase();
+  const marker = 'githubusercontent.com';
+  if (host === marker) return `.${marker}`;
+  const at = host.lastIndexOf(`.${marker}`);
+  return at >= 0 ? host.slice(at) : `.${marker}`;
+}
+
+/**
+ * 发行下载重定向允许的主机：起始 URL 的 origin、GitHub 仓库主机，
+ * 或 `*.githubusercontent.com`（后缀从 INSTALL_SCRIPT_URL 推导）。
+ */
+export function isAllowedReleaseDownloadHost(hostname: string, originHost: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host === originHost.toLowerCase()) return true;
+  if (host === RELEASE_GITHUB_HOST) return true;
+  return host.endsWith(RELEASE_USERCONTENT_HOST_SUFFIX);
+}

@@ -201,4 +201,62 @@ describe('probeReleaseAssetSpeed', () => {
       })
     ).rejects.toMatchObject({ name: 'AbortError' });
   });
+
+  test('http redirect is unreachable with redirect_rejected', async () => {
+    const result = await probeReleaseAssetSpeed(
+      'https://github.com/owner/repo/releases/download/v1/a.tgz',
+      {
+        fetch: async () =>
+          new Response(null, {
+            status: 302,
+            headers: { Location: 'http://objects.githubusercontent.com/x' },
+          }),
+      }
+    );
+    expect(result.verdict).toBe('unreachable');
+    expect(result.finalUrl).toBeNull();
+    expect(result.error).toBe('redirect_rejected');
+  });
+
+  test('off-allowlist redirect is unreachable with redirect_rejected', async () => {
+    const result = await probeReleaseAssetSpeed(
+      'https://github.com/owner/repo/releases/download/v1/a.tgz',
+      {
+        fetch: async () =>
+          new Response(null, {
+            status: 302,
+            headers: { Location: 'https://evil.example/steal' },
+          }),
+      }
+    );
+    expect(result.verdict).toBe('unreachable');
+    expect(result.error).toBe('redirect_rejected');
+  });
+
+  test('deadline settles when body read never resolves', async () => {
+    const started = Date.now();
+    const result = await probeReleaseAssetSpeed('https://cdn.example/hang.tgz', {
+      deadlineMs: 50,
+      minBytes: 64,
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            pull() {
+              return new Promise(() => {});
+            },
+          }),
+          {
+            status: 206,
+            headers: {
+              'Content-Range': 'bytes 0-63/1000',
+              'Accept-Ranges': 'bytes',
+            },
+          }
+        ),
+    });
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(result.verdict).toBe('slow');
+    expect(result.finalUrl).toBe('https://cdn.example/hang.tgz');
+    expect(result.bytes).toBe(0);
+  });
 });

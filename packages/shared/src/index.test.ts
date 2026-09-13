@@ -81,6 +81,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'getOsc11ResponseColor',
   'getTerminalTheme',
   'getTmuxWindowStyle',
+  'isAllowedReleaseDownloadHost',
   'isDeviceFolderLayoutValid',
   'isEventType',
   'isFolderListValid',
