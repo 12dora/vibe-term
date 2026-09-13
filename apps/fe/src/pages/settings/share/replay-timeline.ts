@@ -127,6 +127,20 @@ export function countEventsUntil(pane: ReplayPane, t: number): number {
   return low;
 }
 
+export interface ReplayGrid {
+  cols: number;
+  rows: number;
+}
+
+/** t 时刻（含）之前最后一条带行列数的事件（checkpoint / resize）给出的网格；没有则 null。 */
+export function replayGridAt(pane: ReplayPane, t: number): ReplayGrid | null {
+  for (let index = countEventsUntil(pane, t) - 1; index >= 0; index--) {
+    const event = pane.events[index];
+    if (event.cols !== null && event.rows !== null) return { cols: event.cols, rows: event.rows };
+  }
+  return null;
+}
+
 export interface ReplaySeek {
   /** 需要先清空终端（往回跳，或换了 pane）。 */
   reset: boolean;

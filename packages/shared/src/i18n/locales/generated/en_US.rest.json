@@ -851,6 +851,7 @@
           "endTime": "End time",
           "speedValue": "{{n}}x",
           "paneValue": "Pane {{id}}",
+          "recordedSize": "Recorded size",
           "input": "Input",
           "inputEmpty": "None"
         }
@@ -2590,6 +2591,10 @@
           "rolePrimary": "Primary",
           "roleSecondary": "Secondary",
           "roleDetached": "Not connected",
+          "pinned": "Pinned",
+          "autoSelected": "Auto-selected",
+          "score": "Score {{ms}} ms",
+          "scoreTitle": "Score (lower is better)",
           "peersOnline": "{{n}} online",
           "turn": "TURN",
           "turnReachable": "Reachable",
@@ -2623,6 +2628,13 @@
           "primaryDescription": "This machine will write new records and read the member roster through this relay. The other relays stay connected.",
           "primaryDone": "{{host}} is now the primary relay."
         },
+        "autoSelect": {
+          "on": "Auto-selection on",
+          "lastSwitch": "Last switch {{time}}",
+          "pinnedHint": "Primary relay is pinned; auto-selection paused",
+          "unpin": "Unpin",
+          "unpinDone": "Unpinned; auto-selection resumed."
+        },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
           "notice": "The relay token expired. Re-enter the access password.",
@@ -2632,6 +2644,7 @@
           "enroll": "Connect Relay",
           "migrate": "Switch to Relay",
           "add": "Add Relay",
+          "addMax": "Up to {{n}} relays",
           "reauth": "Re-enter Access Password",
           "leave": "Leave Relay",
           "removeOne": "Remove {{host}}",
@@ -2716,6 +2729,7 @@
           "RELAY_KICKED": "That relay revoked this tenant’s token. Re-enter the access password first.",
           "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
           "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later.",
+          "RELAY_UNPIN_FAILED": "Could not unpin the relay. Try again later.",
           "RELAY_QUOTA_TENANTS": "The relay has reached its tenant limit.",
           "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit.",
           "readmit_required": "Some member records are still signed by an old root key. Run \"Re-affirm Members\" before connecting to the relay."

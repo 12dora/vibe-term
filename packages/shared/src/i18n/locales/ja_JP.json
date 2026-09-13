@@ -1058,6 +1058,7 @@
           "endTime": "終了時刻",
           "speedValue": "{{n}}x",
           "paneValue": "ペイン {{id}}",
+          "recordedSize": "録画サイズ",
           "input": "入力",
           "inputEmpty": "なし"
         }
@@ -3353,6 +3354,10 @@
           "rolePrimary": "主中継",
           "roleSecondary": "副中継",
           "roleDetached": "未接続",
+          "pinned": "固定中",
+          "autoSelected": "自動選択",
+          "score": "スコア {{ms}} ms",
+          "scoreTitle": "自動選択のスコア（小さいほど良い）",
           "peersOnline": "{{n}} 台オンライン",
           "turn": "TURN",
           "turnReachable": "到達可能",
@@ -3386,6 +3391,13 @@
           "primaryDescription": "本機はこの中継で新しい記録を書き込み、メンバー名簿を読み取ります。他の中継は接続を維持します。",
           "primaryDone": "{{host}} を主中継に設定しました。"
         },
+        "autoSelect": {
+          "on": "自動選択が有効",
+          "lastSwitch": "前回の切り替え {{time}}",
+          "pinnedHint": "主中継を固定しているため、自動選択は一時停止中です",
+          "unpin": "固定を解除",
+          "unpinDone": "固定を解除しました。自動選択を再開します。"
+        },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
         "reauth": {
           "notice": "中継トークンが失効しました。接続パスワードを入力し直してください。",
@@ -3395,6 +3407,7 @@
           "enroll": "中継に接続",
           "migrate": "中継接続に切り替え",
           "add": "中継を追加",
+          "addMax": "中継は最大 {{n}} 件",
           "reauth": "接続パスワードを再入力",
           "leave": "中継から離脱",
           "removeOne": "{{host}} を削除",
@@ -3479,6 +3492,7 @@
           "RELAY_KICKED": "その中継はこのテナントのトークンを失効させました。先に接続パスワードを入力し直してください。",
           "RELAY_ALREADY_ATTACHED": "本機は既にその中継に接続しています。",
           "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。",
+          "RELAY_UNPIN_FAILED": "固定を解除できませんでした。しばらくしてから再試行してください。",
           "RELAY_QUOTA_TENANTS": "中継のテナント数が上限に達しています。",
           "RELAY_QUOTA_FILE_SIZE": "ファイルが中継の 1 ファイル上限を超えています。",
           "readmit_required": "古いルート鍵で署名されたメンバー記録が残っています。「メンバーを再確認」を実行してから中継に接続してください。"

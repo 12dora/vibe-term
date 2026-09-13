@@ -55,6 +55,7 @@ export function ReplayControls({
           {t('settings.share.replay.speedValue', { n: player.speed })}
         </Button>
         <ReplayClock player={player} language={i18n.language} />
+        <ReplayGridBadge player={player} />
         {panes.length > 1 && (
           <Select
             value={player.paneId ?? ''}
@@ -76,6 +77,24 @@ export function ReplayControls({
         )}
       </div>
     </div>
+  );
+}
+
+/** 录制尺寸：录像的网格是被分享那一端的，与当前外框宽度无关，标出来才知道画面到哪为止。 */
+function ReplayGridBadge({ player }: { player: ReplayPlayer }) {
+  const { t } = useTranslation();
+  const grid = player.grid;
+  if (!grid) return null;
+  const label = t('settings.share.replay.recordedSize');
+  return (
+    <span
+      className="rounded-md border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground tabular-nums"
+      data-testid="share-replay-grid"
+      title={label}
+      aria-label={label}
+    >
+      {grid.cols}×{grid.rows}
+    </span>
   );
 }
 

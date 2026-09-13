@@ -1,5 +1,15 @@
+// 分享日志回放的 e2e：默认跑「左对齐、选区复制、墙钟」三项断言。
+//
+// 另有四个只由环境变量打开的排查模式，默认路径不受影响：
+//   VIBETERM_E2E_REPLAY_WIDE_VIEWER=1  收件端用 2400×900 宽视口 + 220×50 的 tmux 窗口，
+//                                      用来看窄录像在宽外框里的外框/居中表现。
+//   VIBETERM_E2E_REPLAY_TUI=1          被分享端跑 fixtures/replay-tui-payload.sh（备用屏全屏 TUI）。
+//   VIBETERM_E2E_REPLAY_CLAUDE=1       被分享端跑 claude，录一段真实 TUI。
+//   VIBETERM_E2E_REPLAY_LOG_FILE=<f>   回放时用该 JSON 顶掉日志接口，复现线上录像。
+// 后两者（以及给了 LOG_FILE 时）播到片尾后只截图到 SCREENSHOT_DIR，不跑后续断言。
 import { spawnSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { type Browser, type Page, expect, test } from '@playwright/test';
 import {
   type MeshState,
@@ -12,8 +22,9 @@ import {
 
 const SCREENSHOT_DIR =
   '/private/tmp/claude-501/-Users-konata-code-vibe-term/0ae2b06c-a4c1-4218-8234-a928b2438e5f/scratchpad/r49/e2e';
+const TUI_PAYLOAD = fileURLToPath(new URL('./fixtures/replay-tui-payload.sh', import.meta.url));
 const MARKER = 'REPLAY-LEFT-EDGE-1';
-const WIDE = `REPLAY-WIDE-${'W'.repeat(120)}`;
+const WIDE = `REPLAY-WIDE-${'W'.repeat(200)}`;
 const WALL_CLOCK = /^\d{2}:\d{2}:\d{2}$/;
 
 let state: MeshState;
@@ -51,7 +62,10 @@ interface VisibleTextRange {
 }
 
 async function openRecipient(browser: Browser, url: string): Promise<Page> {
-  const context = await browser.newContext();
+  const wideViewer = process.env.VIBETERM_E2E_REPLAY_WIDE_VIEWER === '1';
+  const context = await browser.newContext(
+    wideViewer ? { viewport: { width: 2400, height: 900 }, deviceScaleFactor: 2 } : {}
+  );
   const page = await context.newPage();
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('share-password')).toBeVisible({ timeout: 30_000 });
@@ -62,7 +76,7 @@ function startOwnSession(sessionName: string): void {
   spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
-  meshTmux(state.hubTmuxSocket, `new-session -d -s ${sessionName} "sh -lc 'exec sh'"`);
+  meshTmux(state.hubTmuxSocket, `new-session -d -x 220 -y 50 -s ${sessionName} "sh -lc 'exec sh'"`);
 }
 
 function stopOwnSession(sessionName: string): void {
@@ -80,6 +94,21 @@ function sendReplayPayload(sessionName: string): void {
     'REPLAY-LEFT-EDGE-5',
     WIDE,
   ].join('\\n');
+  if (process.env.VIBETERM_E2E_REPLAY_WIDE_VIEWER === '1') {
+    meshTmux(state.hubTmuxSocket, `set-window-option -t ${sessionName}:0 window-size manual`);
+    meshTmux(state.hubTmuxSocket, `resize-window -t ${sessionName}:0 -x 220 -y 50`);
+  }
+  if (process.env.VIBETERM_E2E_REPLAY_CLAUDE === '1') {
+    meshTmux(
+      state.hubTmuxSocket,
+      `send-keys -t ${sessionName} "printf 'REPLAY-LEFT-EDGE-1\\n'; claude" C-m`
+    );
+    return;
+  }
+  if (process.env.VIBETERM_E2E_REPLAY_TUI === '1') {
+    meshTmux(state.hubTmuxSocket, `send-keys -t ${sessionName} "sh ${TUI_PAYLOAD}" C-m`);
+    return;
+  }
   meshTmux(
     state.hubTmuxSocket,
     `send-keys -t ${sessionName} "printf '\\033[2J\\033[H${lines}\\n'" C-m`
@@ -312,6 +341,8 @@ async function dragReplayText(page: Page, needle: string): Promise<void> {
   await page.mouse.up();
 }
 
+test.use(process.env.VIBETERM_E2E_REPLAY_WIDE_VIEWER === '1' ? { deviceScaleFactor: 2 } : {});
+
 test('mesh: share replay renders from column 0, copies selection, and shows wall-clock time', async ({
   page,
   browser,
@@ -361,9 +392,12 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
     await page.waitForTimeout(2_000);
     sendReplayPayload(sessionName);
 
-    await expect
-      .poll(() => readTerminalBuffer(recipient as Page), { timeout: 30_000 })
-      .toContain(MARKER);
+    if (process.env.VIBETERM_E2E_REPLAY_CLAUDE === '1') await page.waitForTimeout(15_000);
+    else {
+      await expect
+        .poll(() => readTerminalBuffer(recipient as Page), { timeout: 30_000 })
+        .toContain(MARKER);
+    }
     await expect
       .poll(
         async () =>
@@ -384,6 +418,13 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
     await expect(page.getByTestId(`share-history-row-${share.id}`)).toBeVisible({
       timeout: 30_000,
     });
+    const logFile = process.env.VIBETERM_E2E_REPLAY_LOG_FILE;
+    if (logFile) {
+      const body = readFileSync(logFile, 'utf8');
+      await page.route(/\/api\/share\/[^/]+\/log(\?.*)?$/, (route) =>
+        route.fulfill({ status: 200, contentType: 'application/json', body })
+      );
+    }
     const replayButton = page.getByTestId(`share-replay-${share.id}`);
     await expect(replayButton).toBeEnabled({ timeout: 15_000 });
     await replayButton.click();
@@ -394,6 +435,14 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
     await expect(page.getByTestId('share-replay-dialog').locator('.animate-spin')).toHaveCount(0);
 
     await playReplayToEnd(page);
+    if (
+      process.env.VIBETERM_E2E_REPLAY_CLAUDE === '1' ||
+      process.env.VIBETERM_E2E_REPLAY_LOG_FILE
+    ) {
+      await page.waitForTimeout(3_000);
+      await page.screenshot({ path: `${SCREENSHOT_DIR}/replay-claude.png` });
+      return;
+    }
     const markerLine = await waitForReplayMarker(page);
     expect(
       markerLine.index,

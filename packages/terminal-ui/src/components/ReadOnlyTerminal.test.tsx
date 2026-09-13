@@ -516,6 +516,35 @@ describe('ReadOnlyTerminal a11y', () => {
   });
 });
 
+describe('ReadOnlyTerminal surface frame', () => {
+  test('surfaceFrame 才把根节点底色换成衬底，默认仍是终端底色', () => {
+    const runtime = createAppRuntime({
+      nodeId: 'self',
+      storagePrefix: `read-only-frame-${Date.now()}:`,
+      host: recordingHost([]),
+    });
+    const background = (html: string): string =>
+      /style="background-color:([^"]+)"/.exec(html)?.[1] ?? '';
+    const plain = background(
+      renderToStaticMarkup(
+        <RuntimeProvider runtime={runtime}>
+          <ReadOnlyTerminal viewportPan />
+        </RuntimeProvider>
+      )
+    );
+    const framed = background(
+      renderToStaticMarkup(
+        <RuntimeProvider runtime={runtime}>
+          <ReadOnlyTerminal viewportPan surfaceFrame />
+        </RuntimeProvider>
+      )
+    );
+    expect(plain).not.toBe('');
+    expect(framed).not.toBe(plain);
+    runtime.dispose();
+  });
+});
+
 describe('ReadOnlyTerminal selection toolbar', () => {
   test('selection 挂上工具条且粘贴关闭', () => {
     const runtime = createAppRuntime({

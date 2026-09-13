@@ -4,6 +4,7 @@ import { resolveTerminalTheme } from '@vibeterm/theme';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { applyTerminalTheme } from '../theme';
+import { applyReadOnlySurfaceFrame } from './read-only-surface-frame';
 import type { ReadOnlyTerminalHandle } from './read-only-terminal-session';
 import {
   type ReadOnlyBootInput,
@@ -14,6 +15,8 @@ import {
 
 export interface UseReadOnlyTerminalOptions {
   viewportPan: boolean;
+  /** 内容表面按「屏幕」画：外圈衬底 + 描边 + 居中。 */
+  surfaceFrame: boolean;
   scrollback: number;
   onReady?: (handle: ReadOnlyTerminalHandle) => void;
   onDispose?: () => void;
@@ -154,9 +157,12 @@ export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOn
     };
   }, [fontId, fontSize, lineHeight, options.scrollback, options.viewportPan]);
 
+  // instance 进依赖：实例是异步建出来的，就绪那一刻要补下发一次主题与外框样式
+  //（ghostty 的 applyTheme 会重写底色，外框必须排在它后面）。
   useEffect(() => {
     applyTerminalTheme(termRef.current, terminalTheme);
-  }, [terminalTheme]);
+    applyReadOnlySurfaceFrame(instance?.element ?? null, terminalTheme, options.surfaceFrame);
+  }, [terminalTheme, instance, options.surfaceFrame]);
 
   useReadOnlyE2eProbe(instance);
   useReadOnlyContainerFit(containerRef, sessionRef);

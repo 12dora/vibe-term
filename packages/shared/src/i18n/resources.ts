@@ -1064,6 +1064,7 @@ export const I18N_RESOURCES = {
           "endTime": "End time",
           "speedValue": "{{n}}x",
           "paneValue": "Pane {{id}}",
+          "recordedSize": "Recorded size",
           "input": "Input",
           "inputEmpty": "None"
         }
@@ -3367,6 +3368,10 @@ export const I18N_RESOURCES = {
           "rolePrimary": "Primary",
           "roleSecondary": "Secondary",
           "roleDetached": "Not connected",
+          "pinned": "Pinned",
+          "autoSelected": "Auto-selected",
+          "score": "Score {{ms}} ms",
+          "scoreTitle": "Score (lower is better)",
           "peersOnline": "{{n}} online",
           "turn": "TURN",
           "turnReachable": "Reachable",
@@ -3400,6 +3405,13 @@ export const I18N_RESOURCES = {
           "primaryDescription": "This machine will write new records and read the member roster through this relay. The other relays stay connected.",
           "primaryDone": "{{host}} is now the primary relay."
         },
+        "autoSelect": {
+          "on": "Auto-selection on",
+          "lastSwitch": "Last switch {{time}}",
+          "pinnedHint": "Primary relay is pinned; auto-selection paused",
+          "unpin": "Unpin",
+          "unpinDone": "Unpinned; auto-selection resumed."
+        },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
           "notice": "The relay token expired. Re-enter the access password.",
@@ -3409,6 +3421,7 @@ export const I18N_RESOURCES = {
           "enroll": "Connect Relay",
           "migrate": "Switch to Relay",
           "add": "Add Relay",
+          "addMax": "Up to {{n}} relays",
           "reauth": "Re-enter Access Password",
           "leave": "Leave Relay",
           "removeOne": "Remove {{host}}",
@@ -3493,6 +3506,7 @@ export const I18N_RESOURCES = {
           "RELAY_KICKED": "That relay revoked this tenant’s token. Re-enter the access password first.",
           "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
           "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later.",
+          "RELAY_UNPIN_FAILED": "Could not unpin the relay. Try again later.",
           "RELAY_QUOTA_TENANTS": "The relay has reached its tenant limit.",
           "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit.",
           "readmit_required": "Some member records are still signed by an old root key. Run \"Re-affirm Members\" before connecting to the relay."
@@ -4834,6 +4848,7 @@ export const I18N_RESOURCES = {
           "endTime": "结束时间",
           "speedValue": "{{n}}x",
           "paneValue": "窗格 {{id}}",
+          "recordedSize": "录制尺寸",
           "input": "输入",
           "inputEmpty": "无"
         }
@@ -7129,6 +7144,10 @@ export const I18N_RESOURCES = {
           "rolePrimary": "主中继",
           "roleSecondary": "副中继",
           "roleDetached": "未连接",
+          "pinned": "已固定",
+          "autoSelected": "自动优选",
+          "score": "打分 {{ms}} ms",
+          "scoreTitle": "自动优选打分（越小越好）",
           "peersOnline": "{{n}} 台在线",
           "turn": "TURN",
           "turnReachable": "可达",
@@ -7162,6 +7181,13 @@ export const I18N_RESOURCES = {
           "primaryDescription": "本机将改用此中继写入新记录、读取成员名册，其余中继保持连接。",
           "primaryDone": "已将 {{host}} 设为主中继。"
         },
+        "autoSelect": {
+          "on": "自动优选已开启",
+          "lastSwitch": "上次切换 {{time}}",
+          "pinnedHint": "已固定主中继，自动优选暂停",
+          "unpin": "取消固定",
+          "unpinDone": "已取消固定，自动优选恢复。"
+        },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
           "notice": "中继令牌已失效，须重新输入接入密码。",
@@ -7171,6 +7197,7 @@ export const I18N_RESOURCES = {
           "enroll": "接入中继",
           "migrate": "改为接入中继",
           "add": "追加中继",
+          "addMax": "最多 {{n}} 条中继",
           "reauth": "重新输入接入密码",
           "leave": "离开中继",
           "removeOne": "移除 {{host}}",
@@ -7255,6 +7282,7 @@ export const I18N_RESOURCES = {
           "RELAY_KICKED": "该中继已作废本租户的令牌，须先重新输入接入密码。",
           "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
           "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。",
+          "RELAY_UNPIN_FAILED": "取消固定失败，请稍后重试。",
           "RELAY_QUOTA_TENANTS": "中继的租户数已达上限。",
           "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。",
           "readmit_required": "还有成员的记录是旧根签的，请先执行「重新确认成员」再接入中继。"
@@ -8596,6 +8624,7 @@ export const I18N_RESOURCES = {
           "endTime": "終了時刻",
           "speedValue": "{{n}}x",
           "paneValue": "ペイン {{id}}",
+          "recordedSize": "録画サイズ",
           "input": "入力",
           "inputEmpty": "なし"
         }
@@ -10891,6 +10920,10 @@ export const I18N_RESOURCES = {
           "rolePrimary": "主中継",
           "roleSecondary": "副中継",
           "roleDetached": "未接続",
+          "pinned": "固定中",
+          "autoSelected": "自動選択",
+          "score": "スコア {{ms}} ms",
+          "scoreTitle": "自動選択のスコア（小さいほど良い）",
           "peersOnline": "{{n}} 台オンライン",
           "turn": "TURN",
           "turnReachable": "到達可能",
@@ -10924,6 +10957,13 @@ export const I18N_RESOURCES = {
           "primaryDescription": "本機はこの中継で新しい記録を書き込み、メンバー名簿を読み取ります。他の中継は接続を維持します。",
           "primaryDone": "{{host}} を主中継に設定しました。"
         },
+        "autoSelect": {
+          "on": "自動選択が有効",
+          "lastSwitch": "前回の切り替え {{time}}",
+          "pinnedHint": "主中継を固定しているため、自動選択は一時停止中です",
+          "unpin": "固定を解除",
+          "unpinDone": "固定を解除しました。自動選択を再開します。"
+        },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
         "reauth": {
           "notice": "中継トークンが失効しました。接続パスワードを入力し直してください。",
@@ -10933,6 +10973,7 @@ export const I18N_RESOURCES = {
           "enroll": "中継に接続",
           "migrate": "中継接続に切り替え",
           "add": "中継を追加",
+          "addMax": "中継は最大 {{n}} 件",
           "reauth": "接続パスワードを再入力",
           "leave": "中継から離脱",
           "removeOne": "{{host}} を削除",
@@ -11017,6 +11058,7 @@ export const I18N_RESOURCES = {
           "RELAY_KICKED": "その中継はこのテナントのトークンを失効させました。先に接続パスワードを入力し直してください。",
           "RELAY_ALREADY_ATTACHED": "本機は既にその中継に接続しています。",
           "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。",
+          "RELAY_UNPIN_FAILED": "固定を解除できませんでした。しばらくしてから再試行してください。",
           "RELAY_QUOTA_TENANTS": "中継のテナント数が上限に達しています。",
           "RELAY_QUOTA_FILE_SIZE": "ファイルが中継の 1 ファイル上限を超えています。",
           "readmit_required": "古いルート鍵で署名されたメンバー記録が残っています。「メンバーを再確認」を実行してから中継に接続してください。"
