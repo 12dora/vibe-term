@@ -188,6 +188,7 @@ function stubUplink(
 ): UplinkPool {
   return {
     attachedHub: () => ({ publicUrl: url, nodeId: PEER_A, name: 'sh' }),
+    primaryTarget: () => url,
     liveClient: () => live,
     onAttached: () => () => {},
     onDetached: () => () => {},
@@ -203,10 +204,12 @@ function stubUplinkWithLifecycle(initialUrl: string | null): {
   detach(): void;
 } {
   let attached = initialUrl;
+  const dialling = initialUrl;
   const attachedCbs: Array<(hub: { publicUrl: string; nodeId: string; name: string }) => void> = [];
   const detachedCbs: Array<() => void> = [];
   const pool = {
     attachedHub: () => (attached ? { publicUrl: attached, nodeId: PEER_A, name: 'sh' } : null),
+    primaryTarget: () => attached ?? dialling,
     liveClient: () => (attached ? { state: 'online' as UplinkState, rttMs: 10 } : null),
     onAttached: (cb: (hub: { publicUrl: string; nodeId: string; name: string }) => void) => {
       attachedCbs.push(cb);
@@ -230,14 +233,18 @@ function stubUplinkWithLifecycle(initialUrl: string | null): {
   };
 }
 
-function stubWiring(): RelayWiring {
+const JP = 'https://jp.example';
+
+function stubWiring(
+  rows: Array<{ url: string; priority: number }> = [
+    { url: SH, priority: 0 },
+    { url: TK, priority: 1 },
+  ]
+): RelayWiring {
   return {
     secrets: {
       uplinkKind: () => 'relay',
-      relayRows: () => [
-        { url: SH, priority: 0 },
-        { url: TK, priority: 1 },
-      ],
+      relayRows: () => rows,
       credentialKeyFor: () => '',
     },
   } as unknown as RelayWiring;
@@ -399,12 +406,16 @@ describe('relay multi-attach presence overlay', () => {
     await attach.stop();
   });
 
-  test('onDetached 时 attachedHub 为空则拆掉 secondary，即使 presence 仍记着旧 primary', async () => {
+  test('onDetached 后正在拨的 URL 才排除 secondary，其它副中继保留', async () => {
     const scheduler = new FireScheduler();
     const uplink = stubUplinkWithLifecycle(SH);
     const spawned: FakeSecondary[] = [];
     const attach = createRelayMultiAttach({
-      wiring: stubWiring(),
+      wiring: stubWiring([
+        { url: SH, priority: 0 },
+        { url: TK, priority: 1 },
+        { url: JP, priority: 2 },
+      ]),
       uplink: uplink.pool,
       spawn: (opts) => {
         const client = new FakeSecondary(opts);
@@ -420,15 +431,16 @@ describe('relay multi-attach presence overlay', () => {
     attach.start();
     attach.handlePrimaryState('online', SH, 20);
     await attach.reconcile();
-    await waitUntil(() =>
-      spawned.some((client) => client.hubUrl === TK && client.state === 'online')
+    await waitUntil(
+      () =>
+        spawned.some((client) => client.hubUrl === TK && client.state === 'online') &&
+        spawned.some((client) => client.hubUrl === JP && client.state === 'online')
     );
     uplink.detach();
-    await waitUntil(() => attach.secondaryClient(TK) == null);
-    attach.presence.setPrimary(SH);
-    expect(attach.presence.primaryUrl()).toBe(SH);
     await attach.reconcile();
-    expect(attach.secondaryClient(TK)).toBeNull();
+    expect(attach.secondaryClient(TK)?.state).toBe('online');
+    expect(attach.secondaryClient(JP)?.state).toBe('online');
+    expect(attach.secondaryClient(SH)).toBeNull();
     await attach.stop();
   });
 });

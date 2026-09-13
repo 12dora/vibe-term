@@ -35,10 +35,12 @@ export type PortMapCounters = {
   totalConnections: number;
   bytesIn: number;
   bytesOut: number;
+  /** 当前泵队列里还没交给 mux.write 的字节。 */
+  pendingBytes: number;
 };
 
 export function createPortMapCounters(): PortMapCounters {
-  return { activeConnections: 0, totalConnections: 0, bytesIn: 0, bytesOut: 0 };
+  return { activeConnections: 0, totalConnections: 0, bytesIn: 0, bytesOut: 0, pendingBytes: 0 };
 }
 
 /** 单条映射的并发连接上限。真正兜底的是下面按 peer 链路算的共享名额。 */

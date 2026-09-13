@@ -10,14 +10,15 @@ export function waitUntilUplinkClosed(input: {
   if (isWaitReleased(input)) return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
+    let off: (() => void) | null = null;
     const finish = () => {
       if (settled) return;
       settled = true;
       input.signal.removeEventListener('abort', finish);
-      off();
+      off?.();
       resolve();
     };
-    const off = input.onStateChange((state) => {
+    off = input.onStateChange((state) => {
       if (state !== 'online') finish();
     });
     input.signal.addEventListener('abort', finish, { once: true });

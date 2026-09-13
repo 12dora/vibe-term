@@ -5,7 +5,7 @@ import type { PortMapCounters } from './types';
  * socket → 流方向的水位。node:net 的 `pause()` 是真背压（内核窗口收紧，发送方被堵住），
  * 到高水位就停读，回落到低水位再继续；`MAX_PENDING_BYTES` 只兜异常，正常路径永远碰不到。
  */
-const PENDING_HIGH_WATER = 1024 * 1024;
+export const PENDING_HIGH_WATER = 1024 * 1024;
 const PENDING_LOW_WATER = 256 * 1024;
 const MAX_PENDING_BYTES = 8 * 1024 * 1024;
 /**
@@ -117,7 +117,7 @@ export class TcpStreamPump {
   onData(bytes: Uint8Array): void {
     if (this.destroyed || bytes.byteLength === 0) return;
     this.pending.push(bytes);
-    this.pendingBytes += bytes.byteLength;
+    this.addPending(bytes.byteLength);
     if (this.pendingBytes > MAX_PENDING_BYTES) {
       this.destroy('portmap-buffer-overflow');
       return;
@@ -164,6 +164,7 @@ export class TcpStreamPump {
   destroy(reason: string): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.dropPending();
     this.resetStream(reason);
     this.socket.terminate();
   }
@@ -206,7 +207,7 @@ export class TcpStreamPump {
     try {
       while (this.pending.length > 0 && !this.destroyed) {
         const chunk = this.pending.shift() as Uint8Array;
-        this.pendingBytes -= chunk.byteLength;
+        this.addPending(-chunk.byteLength);
         await this.stream.write(chunk);
         this.counters.bytesOut += chunk.byteLength;
         this.maybeResume();
@@ -220,6 +221,18 @@ export class TcpStreamPump {
     if (this.destroyed) return;
     this.maybeResume();
     if (this.localFin) await this.endStream();
+  }
+
+  private addPending(delta: number): void {
+    this.pendingBytes += delta;
+    this.counters.pendingBytes += delta;
+  }
+
+  private dropPending(): void {
+    if (this.pendingBytes <= 0) return;
+    this.counters.pendingBytes = Math.max(0, this.counters.pendingBytes - this.pendingBytes);
+    this.pendingBytes = 0;
+    this.pending.length = 0;
   }
 
   private maybeResume(): void {

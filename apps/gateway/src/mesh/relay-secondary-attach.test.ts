@@ -12,7 +12,9 @@ import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
 const SH = 'https://sh.example';
 const TK = 'https://tk.example';
 const SG = 'https://sg.example';
+const JP = 'https://jp.example';
 const PEER = 'ab'.repeat(16);
+const PEER_JP = 'cd'.repeat(16);
 
 class ParkScheduler implements MeshScheduler {
   nowMs = 1_000;
@@ -243,6 +245,14 @@ describe('RelaySecondaryAttach', () => {
     await manager.stop();
   });
 
+  test('primary 为空时不新开 secondary（只保住已有的）', async () => {
+    const { manager, spawned } = setup([row(SH, 0), row(TK, 1), row(JP, 2)], null);
+    manager.start();
+    await manager.reconcile();
+    expect(spawned).toHaveLength(0);
+    await manager.stop();
+  });
+
   test('primary 尚未挂上时不把唯一行当 secondary', async () => {
     const { manager, spawned, livePrimary } = setup([row(SH, 0)], null);
     manager.start();
@@ -427,15 +437,61 @@ describe('RelaySecondaryAttach', () => {
     await manager.stop();
   });
 
-  test('primaryUrl 为空时拆掉全部 secondary（attached-only）', async () => {
-    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH);
+  test('primaryUrl 为空且仍在跑时保住已有 secondary', async () => {
+    const inbound: Array<{ from: string; viaRelay?: string }> = [];
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH, {
+      onRelayStream: (_stream, from, viaRelay) => {
+        inbound.push({ from, viaRelay });
+      },
+    });
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    const tokyo = spawned.find((c) => c.hubUrl === TK);
     livePrimary.current = null;
     await manager.reconcile();
-    await waitUntil(() => manager.client(TK) == null);
-    expect(spawned.filter((c) => c.hubUrl === TK).every((c) => c.stopped > 0)).toBe(true);
+    expect(manager.client(TK)?.state).toBe('online');
+    expect(tokyo?.stopped).toBe(0);
+    tokyo?.emitInbound(PEER);
+    expect(inbound).toEqual([{ from: PEER, viaRelay: TK }]);
+    await manager.stop();
+  });
+
+  test('三中继：primary 暂缺时 tk/jp 仍在 presence，onlineUnion 保住 peers', async () => {
+    const { manager, spawned, livePrimary, presence, scheduler } = setup(
+      [row(SH, 0), row(TK, 1), row(JP, 2)],
+      SH
+    );
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.filter((c) => c.state === 'online').length >= 2);
+    presence.applyList(TK, [{ id: PEER, online: true }], 1, scheduler.now());
+    presence.applyList(JP, [{ id: PEER_JP, online: true }], 1, scheduler.now());
+    expect(presence.onlineUnion(scheduler.now())).toEqual(new Set([PEER, PEER_JP]));
+
+    livePrimary.current = null;
+    await manager.reconcile();
+    expect(manager.client(TK)?.state).toBe('online');
+    expect(manager.client(JP)?.state).toBe('online');
+    expect(presence.snapshot().some((entry) => entry.url === TK)).toBe(true);
+    expect(presence.snapshot().some((entry) => entry.url === JP)).toBe(true);
+    expect(presence.onlineUnion(scheduler.now())).toEqual(new Set([PEER, PEER_JP]));
+    expect(spawned.filter((c) => c.hubUrl === TK).every((c) => c.stopped === 0)).toBe(true);
+    expect(spawned.filter((c) => c.hubUrl === JP).every((c) => c.stopped === 0)).toBe(true);
+    await manager.stop();
+  });
+
+  test('正在拨的 URL 不挂 secondary，避免双连', async () => {
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], TK);
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    const shanghai = spawned.find((c) => c.hubUrl === SH);
+    livePrimary.current = SH;
+    await manager.reconcile();
+    await waitUntil(() => manager.client(SH) == null);
+    expect(shanghai?.stopped).toBeGreaterThan(0);
+    expect(spawned.filter((c) => c.hubUrl === SH && c.state === 'online')).toHaveLength(0);
     await manager.stop();
   });
 
@@ -526,6 +582,9 @@ describe('RelaySecondaryAttach', () => {
       expect(
         lines.some((row) => /attempt=1 reason=connect-failed next_retry_ms=\d+/.test(row))
       ).toBe(true);
+      const logged = lines.find((row) => /next_retry_ms=\d+/.test(row));
+      const loggedMs = Number(/next_retry_ms=(\d+)/.exec(logged ?? '')?.[1]);
+      expect(scheduler.sleeps[0]?.ms).toBe(loggedMs);
       scheduler.flushSleeps();
       await waitUntil(() => manager.client(TK)?.state === 'online');
       expect(lines.some((row) => row.includes('[uplink] secondary online hub=tk.example'))).toBe(
@@ -534,6 +593,30 @@ describe('RelaySecondaryAttach', () => {
       await manager.stop();
     } finally {
       console.warn = warn;
+      console.info = info;
+    }
+  });
+
+  test('secondary online 按 URL 节流，path-rerace 不刷屏', async () => {
+    const lines: string[] = [];
+    const info = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], SH);
+      manager.start();
+      await manager.reconcile();
+      await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+      const first = spawned.find((c) => c.hubUrl === TK);
+      first!.lastConnectError = { reason: 'path-rerace', at: 1 };
+      first!.disconnect();
+      await waitUntil(() => spawned.filter((c) => c.hubUrl === TK).length >= 2);
+      expect(
+        lines.filter((row) => row.includes('[uplink] secondary online hub=tk.example'))
+      ).toHaveLength(1);
+      await manager.stop();
+    } finally {
       console.info = info;
     }
   });

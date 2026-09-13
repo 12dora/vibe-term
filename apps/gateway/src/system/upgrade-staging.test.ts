@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { partPathOf } from '@vibeterm/transfer/node';
@@ -186,5 +187,29 @@ describe('writeStagedPackage ranged', () => {
     expect(beyond).toEqual({ ok: false, status: 400, code: 'BAD_REQUEST' });
     expect(await readStagedProgress(stagedDir, '1.2.3', hex)).toEqual(before);
     expect(readFileSync(stagedTotalPath(part), 'utf8').trim()).toBe('8');
+  });
+
+  test('link EPERM/ENOSYS/EOPNOTSUPP/EXDEV 回退到 wx pin', async () => {
+    for (const code of ['EPERM', 'ENOSYS', 'EOPNOTSUPP', 'EXDEV'] as const) {
+      const spy = spyOn(fsp, 'link').mockImplementation(async () => {
+        const err = new Error(code) as NodeJS.ErrnoException;
+        err.code = code;
+        throw err;
+      });
+      try {
+        const stagedDir = tempDir();
+        const bytes = payload(8);
+        const hex = sha256Hex(bytes);
+        const first = await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(0, 4), 0, 8);
+        expect(first).toMatchObject({ ok: true, complete: false, receivedBytes: 4 });
+        expect(spy).toHaveBeenCalled();
+        const part = stagedPartPath(stagedDir, '1.2.3', hex);
+        expect(readFileSync(stagedTotalPath(part), 'utf8').trim()).toBe('8');
+        const rest = await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(4), 4, 8);
+        expect(rest).toMatchObject({ ok: true, complete: true, receivedBytes: 8 });
+      } finally {
+        spy.mockRestore();
+      }
+    }
   });
 });

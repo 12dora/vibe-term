@@ -1,5 +1,5 @@
-import { EXEC_CHUNK_BYTES, EXEC_KILL_GRACE_MS, EXEC_STREAM_CAP_BYTES } from './constants';
-import { emptyStreamCap, encodeBase64, takeStreamBytes } from './stream-cap';
+import { EXEC_CHUNK_BYTES, EXEC_KILL_GRACE_MS } from './constants';
+import { emptyStreamCap, encodeBase64, resolveStreamCap, takeStreamBytes } from './stream-cap';
 import type { ExecSink } from './types';
 
 export type ExecProc = {
@@ -33,7 +33,7 @@ export async function runChild(proc: ExecProc, opts: RunChildOpts): Promise<void
   });
   const timedOut = { value: false };
   const stopKill = armTimeout(proc, opts, timedOut);
-  const limit = opts.maxBytes ?? EXEC_STREAM_CAP_BYTES;
+  const limit = resolveStreamCap(opts.maxBytes);
   try {
     await Promise.all([
       pumpStdin(proc, opts.stdin),

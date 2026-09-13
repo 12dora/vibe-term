@@ -35,6 +35,7 @@ import { dialTcp } from '../../portmap/dial';
 import { shutdownWriteHalf } from '../../portmap/half-close';
 import { PortMapManager } from '../../portmap/manager';
 import { isPortFree } from '../../portmap/port-probe';
+import { PENDING_HIGH_WATER } from '../../portmap/pump';
 import { PortMapExportStore, PortMapStore } from '../../portmap/store';
 import {
   type EchoServer,
@@ -73,6 +74,8 @@ function fakeGateway(db: AuthDb): GatewayRuntime {
 
 /** 让测试能制造「链路还在拨」的窗口。 */
 const linkDial = { delayMs: 0, count: 0 };
+type MuxStats = { stats?: () => { unacked: number } };
+const lastMux: { current: MuxStats | null } = { current: null };
 
 function peerLinkFactory(
   selfId: string,
@@ -83,6 +86,7 @@ function peerLinkFactory(
     linkDial.count += 1;
     if (linkDial.delayMs > 0) await Bun.sleep(linkDial.delayMs);
     const [local, other] = createInMemoryLinkPair();
+    lastMux.current = local as MuxStats;
     remote.mesh.peers.adoptLink(selfId, other, 'ws-secure', selfId);
     return local;
   };
@@ -407,44 +411,8 @@ async function tcpClient(port: number): Promise<TcpClient> {
   };
 }
 
-const SMALL_SOCKET_BUF = 32 * 1024;
-const KERNEL_BUF_FALLBACK = 16 * 1024 * 1024;
-
-type SocketBuffers = {
-  setRecvBufferSize?: (n: number) => void;
-  setSendBufferSize?: (n: number) => void;
-  getRecvBufferSize?: () => number;
-  getSendBufferSize?: () => number;
-};
-
-function socketBuffers(socket: Socket): SocketBuffers {
-  return socket as Socket & SocketBuffers;
-}
-
-function shrinkNetBuffers(socket: Socket, bytes = SMALL_SOCKET_BUF): void {
-  const buf = socketBuffers(socket);
-  try {
-    buf.setRecvBufferSize?.(bytes);
-    buf.setSendBufferSize?.(bytes);
-  } catch {
-    // 平台可能忽略；后面用实际 SO_* 估内核余量
-  }
-}
-
-function netBufferBytes(socket: Socket, fallback = KERNEL_BUF_FALLBACK): number {
-  const buf = socketBuffers(socket);
-  try {
-    const n = (buf.getRecvBufferSize?.() ?? 0) + (buf.getSendBufferSize?.() ?? 0);
-    if (n > 0) return n;
-  } catch {
-    // fall through
-  }
-  return fallback;
-}
-
 /**
- * 一开始完全不读的回声服务，并把 SO_SNDBUF/SO_RCVBUF 压小。
- * Linux 环回 tcp_wmem/tcp_rmem 会自适应到数 MiB，不压小的话 `bytesOut` 会计入内核缓冲。
+ * 一开始完全不读的回声服务。目标应用层不读，内核 TCP 缓冲是 mux 窗口之外唯一的另一只槽。
  */
 function startPausedEchoServer(): EchoServer & {
   release: () => void;
@@ -461,7 +429,6 @@ function startPausedEchoServer(): EchoServer & {
     state.last = socket;
     sockets.add(socket);
     socket.allowHalfOpen = true;
-    shrinkNetBuffers(socket);
     socket.on('error', () => {});
     socket.on('close', () => sockets.delete(socket));
     socket.on('data', (chunk) => {
@@ -530,6 +497,7 @@ describe('portmap mesh integration', () => {
   afterEach(async () => {
     linkDial.delayMs = 0;
     linkDial.count = 0;
+    lastMux.current = null;
     resetPeerStreamSlots();
     while (managers.length > 0) managers.pop()?.stop();
     while (servers.length > 0) servers.pop()?.stop();
@@ -706,20 +674,19 @@ describe('portmap mesh integration', () => {
     const slow = startPausedEchoServer();
     const { manager, map } = await setup({ target: slow });
     const client = await tcpClient(map.listenPort);
-    shrinkNetBuffers(client.socket);
     const size = 64 * 1024 * 1024 + 999;
     const payload = pseudoRandom(size, 0x5107_0001);
     const pushed = client.send(payload).catch(() => {});
     const stalled = await waitBytesOutPlateau(() => manager.get(map.id).bytesOut);
-    const targetSock = slow.lastSocket();
-    const kernel =
-      netBufferBytes(client.socket) +
-      (targetSock ? netBufferBytes(targetSock) : KERNEL_BUF_FALLBACK);
-    // bytesOut 是 mux.write 收下的字节：应用侧只有 1 MiB 窗口 + 正在下发的一块；
-    // 其余是内核 TCP 缓冲（Linux 环回会自适应到数 MiB）。证明没把整包吞进进程内存。
-    const bound = INITIAL_STREAM_WINDOW + MAX_DATA_SEND_PAYLOAD + kernel + 2 * 1024 * 1024;
+    const dto = manager.get(map.id);
+    // 泵队列：高水位停读之后最多再收一块 socket 数据。Bun 没有 SO_* 访问器，
+    // 不能从运行时量内核缓冲；目标暂停不读，应用层只剩 pendingBytes + mux 未确认窗口。
+    expect(dto.pendingBytes ?? 0).toBeLessThanOrEqual(PENDING_HIGH_WATER + MAX_DATA_SEND_PAYLOAD);
+    const unacked = lastMux.current?.stats?.().unacked ?? 0;
+    expect(unacked).toBeLessThanOrEqual(INITIAL_STREAM_WINDOW);
     expect(stalled).toBeGreaterThan(0);
-    expect(stalled).toBeLessThan(Math.min(bound, Math.floor(size / 2)));
+    // 粗粒度兜底：64 MiB 载荷下 bytesOut 含内核缓冲（CI ubuntu 约 15.5 MiB），不得把整包吞进进程。
+    expect(stalled).toBeLessThan(size / 2);
     slow.release();
     await pushed;
     const hash = await client.waitHash(size);

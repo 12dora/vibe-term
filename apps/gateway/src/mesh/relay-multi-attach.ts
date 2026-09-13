@@ -185,7 +185,7 @@ function openSecondaryAttach(
         kicked: row.kicked,
         credentialKey: input.wiring.secrets.credentialKeyFor?.(row.url) ?? '',
       })),
-    primaryUrl: () => input.uplink.attachedHub()?.publicUrl ?? null,
+    primaryUrl: () => input.uplink.primaryTarget(),
     spawn: (url) =>
       input.spawn({
         ...input.baseClient,

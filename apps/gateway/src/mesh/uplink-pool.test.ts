@@ -681,6 +681,26 @@ describe('UplinkPool', () => {
     expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
   });
 
+  test('primaryTarget 在拨号窗口指向正在拨的 URL，挂上后跟 attached，stop 后为 null', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { hang: true } },
+      scheduler,
+    });
+    expect(pool.primaryTarget()).toBeNull();
+    pool.start();
+    await waitMicro();
+    expect(pool.attachedHub()).toBeNull();
+    expect(pool.primaryTarget()).toBe('https://a.example');
+    await scheduler.advance(UPLINK_POOL_AUTH_DEADLINE_MS);
+    await waitMicro();
+    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.primaryTarget()).toBe('https://b.example');
+    await pool.stop();
+    expect(pool.primaryTarget()).toBeNull();
+  });
+
   test('fails over after 20s without authenticating', async () => {
     const scheduler = new ManualScheduler();
     const { pool, created } = boot({
