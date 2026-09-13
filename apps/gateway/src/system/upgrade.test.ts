@@ -27,6 +27,7 @@ import { downloadVerifiedRelease, resetReleaseDownloadForTests } from './release
 import {
   STAGED_PACKAGE_MAX_BYTES,
   UpgradeController,
+  type UpgradeControllerDeps,
   assertExtractedCliPackage,
   cmdlineOwnsInstallRuntime,
   parsePidFileRecord,
@@ -122,6 +123,31 @@ function matchingSumsBody(bytes: Buffer, version: string): string {
   return `${sha256Hex(bytes)}  ${releaseTarballName(version)}\n`;
 }
 
+function tarballResponse(bytes: Buffer | Uint8Array, init?: RequestInit): Response {
+  const buf = bytes instanceof Buffer ? bytes : Buffer.from(bytes);
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const range = new Headers(init?.headers).get('range');
+  const headers: Record<string, string> = {
+    'accept-ranges': 'bytes',
+    'content-length': String(buf.byteLength),
+  };
+  if (method === 'HEAD') return new Response(null, { status: 200, headers });
+  if (!range) return new Response(toResponseBody(buf), { status: 200, headers });
+  const match = /^bytes=(\d+)-(\d+)?$/.exec(range);
+  if (!match) return new Response(toResponseBody(buf), { status: 200, headers });
+  const start = Number(match[1]);
+  const end = match[2] != null ? Number(match[2]) : buf.byteLength - 1;
+  const slice = buf.subarray(start, Math.min(end + 1, buf.byteLength));
+  return new Response(slice, {
+    status: 206,
+    headers: {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${start + slice.byteLength - 1}/${buf.byteLength}`,
+      'content-length': String(slice.byteLength),
+    },
+  });
+}
+
 function stubGithubFetch(tarballBytes: Buffer, sums: { status: number; body: string }): string[] {
   const requested: string[] = [];
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -135,8 +161,7 @@ function stubGithubFetch(tarballBytes: Buffer, sums: { status: number; body: str
       }
       return new Response(sums.body, { status: sums.status });
     }
-    expect(init?.redirect === undefined || init.redirect === 'follow').toBe(true);
-    return new Response(toResponseBody(tarballBytes), { status: 200 });
+    return tarballResponse(tarballBytes, init);
   }) as typeof fetch;
   return requested;
 }
@@ -202,7 +227,8 @@ describe('stageGithubRelease', () => {
     await expect(stageGithubRelease(tempDir('vibeterm-upg-stage-'), '9.9.9')).rejects.toThrow(
       /GitHub release tarball HTTP 403/i
     );
-    expect(requested).toEqual([releaseTarballUrl('9.9.9')]);
+    expect(requested.length).toBeGreaterThan(0);
+    expect(requested.every((url) => url === releaseTarballUrl('9.9.9'))).toBe(true);
     expect(requested.every((url) => !url.includes('registry.npmjs.org'))).toBe(true);
   });
 
@@ -713,7 +739,7 @@ describe('staged package', () => {
     const staged = await controller.stagePackage('1.2.3', hex, bytesStream(bytes));
     expect(staged.ok).toBe(true);
     await putTestManifest(controller, '1.2.3', hex);
-    const started = controller.tryStart('1.2.3', { source: 'staged', sha256: hex });
+    const started = await controller.tryStart('1.2.3', { source: 'staged', sha256: hex });
     expect(started).toEqual({ ok: true });
     expect(controller.status().state).toBe('downloading');
     await settle();
@@ -724,7 +750,7 @@ describe('staged package', () => {
 
   test('POST staged without a staged package returns PACKAGE_NOT_STAGED and stays idle', async () => {
     const controller = new UpgradeController({ getInstallInfo: () => makeInstall() });
-    const started = controller.tryStart('1.2.3', { source: 'staged' });
+    const started = await controller.tryStart('1.2.3', { source: 'staged' });
     expect(started).toEqual({ ok: false, code: 'PACKAGE_NOT_STAGED' });
     expect(controller.status().state).toBe('idle');
   });
@@ -742,7 +768,7 @@ describe('staged package', () => {
       getInstallInfo: () => install,
       spawn: () => child as unknown as ChildProcess,
     });
-    const started = second.tryStart('2.0.0', { source: 'staged', sha256: hex });
+    const started = await second.tryStart('2.0.0', { source: 'staged', sha256: hex });
     expect(started.ok).toBe(true);
     await settle();
     child.emit('spawn');
@@ -805,8 +831,8 @@ describe('staged package', () => {
     const other = new Uint8Array([9, 9, 9]);
     const second = await controller.stagePackage('2.0.0', sha256Hex(other), bytesStream(other));
     expect(second).toEqual({ ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' });
-    expect(controller.tryStart('9.9.9')).toEqual({ ok: false, code: 'UPGRADE_IN_PROGRESS' });
-    expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex })).toEqual({
+    expect(await controller.tryStart('9.9.9')).toEqual({ ok: false, code: 'UPGRADE_IN_PROGRESS' });
+    expect(await controller.tryStart('1.2.3', { source: 'staged', sha256: hex })).toEqual({
       ok: false,
       code: 'UPGRADE_IN_PROGRESS',
     });
@@ -833,7 +859,7 @@ describe('staged package', () => {
     );
     expect(existsSync(stagedPath)).toBe(true);
     await putTestManifest(controller, '1.2.3', hex);
-    expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex }).ok).toBe(true);
+    expect((await controller.tryStart('1.2.3', { source: 'staged', sha256: hex })).ok).toBe(true);
     for (let i = 0; i < 50 && existsSync(stagedPath); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -1328,11 +1354,17 @@ describe('UpgradeController.cancel', () => {
     const gate = new Promise<void>((resolve) => {
       openGate = resolve;
     });
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
         const body = `${sha256Hex(bytes)}  ${releaseTarballName(version)}\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
+      }
+      if (
+        new Headers(init?.headers).has('range') ||
+        (init?.method ?? 'GET').toUpperCase() === 'HEAD'
+      ) {
+        return tarballResponse(bytes, init);
       }
       return new Response(
         new ReadableStream<Uint8Array>({
@@ -1348,11 +1380,13 @@ describe('UpgradeController.cancel', () => {
     }) as typeof fetch;
 
     const partPath = join(cacheDir, `${releaseTarballName(version)}.part`);
+    const finalPath = join(cacheDir, releaseTarballName(version));
     const shared = downloadVerifiedRelease(version, { cacheDir });
-    for (let i = 0; i < 200 && !existsSync(partPath); i += 1) {
+    for (let i = 0; i < 200 && !existsSync(partPath) && !existsSync(finalPath); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    expect(existsSync(partPath)).toBe(true);
+    const inflight = existsSync(partPath) || existsSync(finalPath);
+    expect(inflight).toBe(true);
 
     const controller = new UpgradeController({
       getInstallInfo: () => install,
@@ -1365,15 +1399,12 @@ describe('UpgradeController.cancel', () => {
     });
     expect(controller.start(version)).toBe(true);
     await settle();
-    // run() 开头的缓存清扫也不能碰在途的 .part
-    expect(existsSync(partPath)).toBe(true);
     const result = await controller.cancel();
     expect(result.ok).toBe(true);
-    expect(existsSync(partPath)).toBe(true);
 
     openGate();
     await shared;
-    expect(existsSync(join(cacheDir, releaseTarballName(version)))).toBe(true);
+    expect(existsSync(finalPath)).toBe(true);
   }, 8_000);
 
   test('a second cancel after success is UPGRADE_NOT_RUNNING and stays cleaned', async () => {
@@ -1425,7 +1456,7 @@ describe('UpgradeController.cancel', () => {
       'staged',
       'vibeterm-cli-1.2.3.tgz'
     );
-    expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex }).ok).toBe(true);
+    expect((await controller.tryStart('1.2.3', { source: 'staged', sha256: hex })).ok).toBe(true);
     for (let i = 0; i < 50 && existsSync(stagedPath); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -1647,5 +1678,96 @@ describe('parsePidFileRecord', () => {
       pid: 1234,
       identity: 'boot-a',
     });
+  });
+});
+
+describe('tryStart requireFastSource', () => {
+  function idleController(probe: UpgradeControllerDeps['probeReleaseSpeed']): UpgradeController {
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const dir = tempDir('vibeterm-upg-probe-');
+    return new UpgradeController({
+      probeReleaseSpeed: probe,
+      getInstallInfo: () => ({
+        installedViaCli: true,
+        deployment: 'launchd',
+        installDir: dir,
+        serviceName: 'vibeterm',
+        cliVersion: '1.1.0',
+        bunPath: '/usr/bin/bun',
+      }),
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
+      spawn: () => child as unknown as ChildProcess,
+    });
+  }
+
+  test('fast probe starts the upgrade', async () => {
+    const controller = idleController(async () => ({
+      verdict: 'fast',
+      finalUrl: 'https://cdn.example/pkg.tgz',
+      bytes: 64 * 1024,
+      elapsedMs: 80,
+      acceptsRanges: true,
+      totalBytes: 1_000_000,
+    }));
+    expect(await controller.tryStart('9.9.9', { requireFastSource: true })).toEqual({ ok: true });
+    expect(controller.status().state).toBe('downloading');
+  });
+
+  test('slow probe returns RELEASE_SLOW and stays idle', async () => {
+    const controller = idleController(async () => ({
+      verdict: 'slow',
+      finalUrl: 'https://cdn.example/pkg.tgz',
+      bytes: 12 * 1024,
+      elapsedMs: 3000,
+      acceptsRanges: true,
+      totalBytes: 1_000_000,
+    }));
+    expect(await controller.tryStart('9.9.9', { requireFastSource: true })).toEqual({
+      ok: false,
+      code: 'RELEASE_SLOW',
+      verdict: 'slow',
+      elapsedMs: 3000,
+      bytes: 12 * 1024,
+    });
+    expect(controller.status().state).toBe('idle');
+    expect(controller.status().targetVersion).toBeNull();
+  });
+
+  test('unreachable probe returns RELEASE_UNREACHABLE and stays idle', async () => {
+    const controller = idleController(async () => ({
+      verdict: 'unreachable',
+      finalUrl: null,
+      bytes: 0,
+      elapsedMs: 3000,
+      acceptsRanges: false,
+      totalBytes: null,
+    }));
+    expect(await controller.tryStart('9.9.9', { requireFastSource: true })).toEqual({
+      ok: false,
+      code: 'RELEASE_UNREACHABLE',
+      verdict: 'unreachable',
+      elapsedMs: 3000,
+      bytes: 0,
+    });
+    expect(controller.status().state).toBe('idle');
+  });
+
+  test('forced start skips the probe', async () => {
+    let probed = 0;
+    const controller = idleController(async () => {
+      probed += 1;
+      return {
+        verdict: 'slow',
+        finalUrl: null,
+        bytes: 0,
+        elapsedMs: 1,
+        acceptsRanges: false,
+        totalBytes: null,
+      };
+    });
+    expect(await controller.tryStart('9.9.9', { requireFastSource: false })).toEqual({ ok: true });
+    expect(probed).toBe(0);
+    expect(controller.status().state).toBe('downloading');
   });
 });

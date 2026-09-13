@@ -44,6 +44,7 @@ export function handleSystemApiRequest(
         'uninstall',
         'staged-package-resume',
         'signed-package',
+        'release-speed-probe',
       ],
     });
   }
@@ -183,12 +184,18 @@ function stagedRequiresAuth(): Response {
 
 type StartUpgradeParsed =
   | { error: Response }
-  | { version: string; source: 'release' | 'staged'; sha256?: string };
+  | {
+      version: string;
+      source: 'release' | 'staged';
+      sha256?: string;
+      requireFastSource?: boolean;
+    };
 
 async function parseStartUpgradeRequest(req: Request): Promise<StartUpgradeParsed> {
   let version = '';
   let source: 'release' | 'staged' = 'release';
   let sha256: string | undefined;
+  let requireFastSource: boolean | undefined;
   try {
     const body = (await req.json()) as StartUpgradeRequest;
     version = (body?.version ?? '').trim();
@@ -197,13 +204,15 @@ async function parseStartUpgradeRequest(req: Request): Promise<StartUpgradeParse
     }
     if (body?.source === 'staged' || body?.source === 'release') source = body.source;
     if (typeof body?.sha256 === 'string' && body.sha256.trim()) sha256 = body.sha256.trim();
+    // 未知字段一律忽略：2.3.6 节点如此，新字段也只认字面 true。
+    if (body?.requireFastSource === true) requireFastSource = true;
   } catch {
     version = '';
   }
   if (!version || !isReleaseVersion(version)) {
     return { error: json({ error: t('apiError.upgradeVersionRequired') }, 400) };
   }
-  return { version, source, sha256 };
+  return { version, source, sha256, requireFastSource };
 }
 
 async function handleStartUpgradeOpen(req: Request): Promise<Response> {
@@ -217,6 +226,7 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
     source: parsed.source,
     sha256: parsed.sha256,
     remote: requestIsRemotelyInitiated(req),
+    requireFastSource: parsed.requireFastSource,
   });
   if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
@@ -226,6 +236,17 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   }
   if (!result.ok && result.code === 'UPGRADE_SIGNATURE_REQUIRED') {
     return json({ code: 'UPGRADE_SIGNATURE_REQUIRED' }, 409);
+  }
+  if (!result.ok && (result.code === 'RELEASE_SLOW' || result.code === 'RELEASE_UNREACHABLE')) {
+    return json(
+      {
+        code: result.code,
+        verdict: result.verdict,
+        elapsedMs: result.elapsedMs,
+        bytes: result.bytes,
+      },
+      409
+    );
   }
   if (!result.ok) {
     return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);

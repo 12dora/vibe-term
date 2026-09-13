@@ -3,6 +3,7 @@ import {
   type UpdateCheckResult,
   compareSemver,
   legacyReleaseTarballName,
+  releaseApiUrl,
   releaseTarballName,
 } from '@vibeterm/shared';
 import { getBaseVersion } from './version';
@@ -35,6 +36,15 @@ export class ReleaseUnavailableError extends Error {
   constructor(message = 'RELEASE_UNAVAILABLE') {
     super(message);
     this.name = 'ReleaseUnavailableError';
+  }
+}
+
+export class ReleaseNotFoundError extends Error {
+  readonly code = 'RELEASE_NOT_FOUND' as const;
+
+  constructor(message = 'RELEASE_NOT_FOUND') {
+    super(message);
+    this.name = 'ReleaseNotFoundError';
   }
 }
 
@@ -87,8 +97,11 @@ export async function fetchLatestGithubRelease(): Promise<LatestGithubRelease> {
   }
 }
 
-async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> {
-  const res = await fetch(RELEASE_API_LATEST_URL, {
+async function fetchGithubReleaseJson(
+  url: string,
+  notFound: 'unavailable' | 'missing'
+): Promise<GithubRelease> {
+  const res = await fetch(url, {
     cache: 'no-store',
     headers: {
       accept: 'application/vnd.github+json',
@@ -97,10 +110,12 @@ async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> 
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
-    throw githubReleasesHttpError(res.status);
+    throw githubReleasesHttpError(res.status, notFound);
   }
+  return (await res.json()) as GithubRelease;
+}
 
-  const release = (await res.json()) as GithubRelease;
+function parseGithubRelease(release: GithubRelease): LatestGithubRelease {
   const latest = stripLeadingV(release.tag_name);
   const publishedAt = latest ? (release.published_at ?? null) : null;
   const changelog = releaseChangelog(release.body);
@@ -112,7 +127,6 @@ async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> 
       (asset) =>
         asset.name === releaseTarballName(latest) || asset.name === legacyReleaseTarballName(latest)
     );
-
   return {
     latestVersion: latest,
     changelog,
@@ -121,15 +135,45 @@ async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> 
   };
 }
 
-/** 远程/本机升级用：必须有具体版本且存在 CLI tarball 资产。 */
-export async function requireLatestUpgradeRelease(): Promise<{
+async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> {
+  return parseGithubRelease(await fetchGithubReleaseJson(RELEASE_API_LATEST_URL, 'unavailable'));
+}
+
+/** 指定 tag 的发行；404 / 无 tarball 视为未发布。 */
+export async function fetchPublishedGithubRelease(version: string): Promise<LatestGithubRelease> {
+  const release = parseGithubRelease(
+    await fetchGithubReleaseJson(releaseApiUrl(version), 'missing')
+  );
+  if (release.latestVersion !== version) {
+    throw new ReleaseNotFoundError(`release tag mismatch for ${version}`);
+  }
+  return release;
+}
+
+export type UpgradeRelease = {
   latestVersion: string;
   changelog: string | null;
   publishedAt: string | null;
-}> {
+};
+
+/** 远程/本机升级用：必须有具体版本且存在 CLI tarball 资产。 */
+export async function requireLatestUpgradeRelease(): Promise<UpgradeRelease> {
   const release = await fetchLatestGithubRelease();
   if (!release.latestVersion || !release.hasTarball) {
     throw new ReleaseUnavailableError('latest release tarball is unavailable');
+  }
+  return {
+    latestVersion: release.latestVersion,
+    changelog: release.changelog,
+    publishedAt: release.publishedAt,
+  };
+}
+
+/** 指定版本必须是已发布且带 CLI tarball 的发行，否则 `RELEASE_NOT_FOUND`。 */
+export async function requirePublishedUpgradeRelease(version: string): Promise<UpgradeRelease> {
+  const release = await fetchPublishedGithubRelease(version);
+  if (!release.latestVersion || !release.hasTarball) {
+    throw new ReleaseNotFoundError(`release tarball is unavailable for ${version}`);
   }
   return {
     latestVersion: release.latestVersion,
@@ -148,11 +192,15 @@ function releaseChangelog(body: string | null | undefined): string | null {
   return body.trim() ? body : null;
 }
 
-function githubReleasesHttpError(status: number): Error {
+function githubReleasesHttpError(
+  status: number,
+  notFound: 'unavailable' | 'missing' = 'unavailable'
+): Error {
   if (status === 403 || status === 429) {
     return new Error(`GitHub Releases API HTTP ${status}: rate-limited or forbidden`);
   }
   if (status === 404) {
+    if (notFound === 'missing') return new ReleaseNotFoundError();
     return new Error('GitHub Releases API HTTP 404: release not found');
   }
   return new Error(`GitHub Releases API HTTP ${status}`);

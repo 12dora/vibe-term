@@ -415,6 +415,64 @@ describe('handleMeshNodeUpgradeStart staged-package job', () => {
     await waitForRemoteUpgradeJob(nodeId).catch(() => {});
   });
 
+  test('requested published version is honoured', async () => {
+    mockGithubLatest('9.9.9');
+    mockGithubTag('2.3.0');
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const res = await handleMeshNodeUpgradeStart({
+      req: authedRequest(nodeId, { version: '2.3.0' }),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push({ method: input.method, path: input.path, body: input.body });
+          if (input.path === '/api/system/info') {
+            return new Response(
+              JSON.stringify({
+                baseVersion: '1.0.0',
+                canSelfUpdate: true,
+                upgradeCapabilities: ['staged-package'],
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            );
+          }
+          return new Response('{}', { status: 500 });
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { targetVersion: string };
+    expect(body.targetVersion).toBe('2.3.0');
+    expect(calls).toEqual([{ method: 'GET', path: '/api/system/info', body: undefined }]);
+  });
+
+  test('unpublished version is 400 RELEASE_NOT_FOUND', async () => {
+    mockGithubLatest('9.9.9');
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('/releases/tags/')) {
+        return new Response('{"message":"Not Found"}', { status: 404 });
+      }
+      return new Response(
+        JSON.stringify({
+          tag_name: 'v9.9.9',
+          assets: [{ name: releaseTarballName('9.9.9') }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as typeof fetch;
+    const res = await handleMeshNodeUpgradeStart({
+      req: authedRequest(nodeId, { version: '0.0.1' }),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: neverForward(),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ code: 'RELEASE_NOT_FOUND' });
+  });
+
   test('legacy target without the capability still POSTs {version} and waits', async () => {
     mockGithubLatest('9.9.9');
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
@@ -631,6 +689,7 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
       error: null;
       progress?: {
         phase: string;
+        channel?: string;
         pushedBytes: number;
         totalBytes: number;
         downloadedBytes: number;
@@ -643,6 +702,7 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     // 入口代跑的阶段与推包进度随状态一起下发，前端据此刷新预算与进度条。
     expect(body.progress).toEqual({
       phase: 'download',
+      channel: 'push',
       pushedBytes: 0,
       totalBytes: 0,
       downloadedBytes: 0,
@@ -665,7 +725,10 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     const forwarded: string[] = [];
     const req = authedRequest(nodeId);
     const forward = {
-      async forwardAuthorizedHttp(_req: Request, input: { method: string; path: string }) {
+      async forwardAuthorizedHttp(
+        _req: Request,
+        input: { method: string; path: string; body?: unknown }
+      ) {
         forwarded.push(`${input.method} ${input.path}`);
         if (input.path === '/api/system/info') {
           return new Response(
@@ -675,6 +738,21 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
               upgradeCapabilities: ['staged-package'],
             }),
             { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        if (
+          input.method === 'POST' &&
+          input.path === '/api/system/upgrade' &&
+          (input.body as { source?: string } | undefined)?.source === 'release'
+        ) {
+          return new Response(
+            JSON.stringify({
+              code: 'RELEASE_UNREACHABLE',
+              verdict: 'unreachable',
+              elapsedMs: 0,
+              bytes: 0,
+            }),
+            { status: 409, headers: { 'content-type': 'application/json' } }
           );
         }
         return new Response('{}', { status: 200 });
@@ -703,7 +781,8 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     };
     expect(body.state).toBe('idle');
     expect(body.targetVersion).toBeNull();
-    expect(body.error).toMatch(/download failed/i);
+    expect(body.error).toContain('push:');
+    expect(body.error).toContain('github(node, forced):');
     expect(forwarded.filter((c) => c === 'GET /api/system/upgrade')).toEqual([]);
   });
 
@@ -854,7 +933,8 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     const snapshot = await waitForRemoteUpgradeJob(nodeId);
 
     expect(rejected).toEqual([]);
-    expect(release.tarballRequests).toEqual([legacyAsset]);
+    expect(release.tarballRequests.length).toBeGreaterThan(0);
+    expect(release.tarballRequests.every((name) => name === legacyAsset)).toBe(true);
     expect(declaredAssets).toEqual([legacyAsset]);
     expect(manifests).toHaveLength(1);
     expect(manifests[0]?.asset).toBe(legacyAsset);
@@ -1373,7 +1453,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
       forward,
     });
     expect(await status.json()).toMatchObject({
-      state: 'downloading',
+      state: 'executing',
       targetVersion: '9.9.9',
       error: null,
     });
@@ -1432,7 +1512,7 @@ function stubDualAssetRelease(version: string): {
   const sums = [...digests].map(([name, hex]) => `${hex}  ${name}\n`).join('');
   const tarballRequests: string[] = [];
   const latestFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (url.includes('SHA256SUMS')) {
       return new Response(url.endsWith('.sig') ? `${signSums(sums)}\n` : sums, { status: 200 });
@@ -1440,9 +1520,27 @@ function stubDualAssetRelease(version: string): {
     const asset = [...bytes.keys()].find((name) => url.endsWith(name));
     if (asset) {
       tarballRequests.push(asset);
-      return new Response(bytes.get(asset) as Uint8Array<ArrayBuffer>, { status: 200 });
+      const body = bytes.get(asset) as Uint8Array<ArrayBuffer>;
+      const range = new Headers(init?.headers).get('range');
+      if (range) {
+        const match = /^bytes=(\d+)-(\d+)?$/.exec(range);
+        if (match) {
+          const start = Number(match[1]);
+          const end = match[2] != null ? Number(match[2]) : body.byteLength - 1;
+          const slice = body.subarray(start, Math.min(end + 1, body.byteLength));
+          return new Response(slice, {
+            status: 206,
+            headers: {
+              'accept-ranges': 'bytes',
+              'content-range': `bytes ${start}-${start + slice.byteLength - 1}/${body.byteLength}`,
+              'content-length': String(slice.byteLength),
+            },
+          });
+        }
+      }
+      return new Response(body, { status: 200 });
     }
-    return latestFetch(input);
+    return latestFetch(input, init);
   }) as typeof fetch;
   return { hashOf: (name) => digests.get(name) ?? '', tarballRequests };
 }
@@ -1467,11 +1565,34 @@ function neverForward(): {
   };
 }
 
-function authedRequest(nodeId: string): Request {
+function authedRequest(nodeId: string, body?: Record<string, unknown>): Request {
   return new Request('http://localhost/upgrade', {
     method: 'POST',
-    headers: { cookie: `vibeterm_s_${nodeId}=remote-sid` },
+    headers: {
+      cookie: `vibeterm_s_${nodeId}=remote-sid`,
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
   });
+}
+
+function mockGithubTag(version: string): void {
+  const latestFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes(`/releases/tags/v${version}`)) {
+      return new Response(
+        JSON.stringify({
+          tag_name: `v${version}`,
+          published_at: '2026-01-01T00:00:00.000Z',
+          body: 'notes',
+          assets: [{ name: releaseTarballName(version) }],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }
+    return latestFetch(input, init);
+  }) as typeof fetch;
 }
 
 function selfUpdateInfo(overrides: Partial<SystemInfo>): SystemInfo {

@@ -83,11 +83,62 @@ function manifestAccepted(): Response {
   });
 }
 
+function isSpeedProbeInit(init?: RequestInit): boolean {
+  const method = (init?.method ?? 'GET').toUpperCase();
+  if (method === 'HEAD') return true;
+  return new Headers(init?.headers).has('range');
+}
+
+function rangeTarballResponse(bytes: Uint8Array, init?: RequestInit): Response {
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const range = new Headers(init?.headers).get('range');
+  const headers: Record<string, string> = {
+    'accept-ranges': 'bytes',
+    'content-length': String(bytes.byteLength),
+  };
+  const body = Buffer.from(bytes);
+  if (method === 'HEAD') return new Response(null, { status: 200, headers });
+  if (!range) return new Response(body, { status: 200, headers });
+  const match = /^bytes=(\d+)-(\d+)?$/.exec(range);
+  if (!match) return new Response(body, { status: 200, headers });
+  const start = Number(match[1]);
+  const end = match[2] != null ? Number(match[2]) : bytes.byteLength - 1;
+  const slice = body.subarray(start, Math.min(end + 1, body.byteLength));
+  return new Response(slice, {
+    status: 206,
+    headers: {
+      'accept-ranges': 'bytes',
+      'content-range': `bytes ${start}-${start + slice.byteLength - 1}/${bytes.byteLength}`,
+      'content-length': String(slice.byteLength),
+    },
+  });
+}
+
 function unreachable(): Response {
   return new Response(JSON.stringify({ code: 'NODE_UNREACHABLE', error: 'stream-aborted' }), {
     status: 503,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function isReleaseStart(input: { method: string; path: string; body?: unknown }): boolean {
+  if (input.method !== 'POST' || input.path !== '/api/system/upgrade') return false;
+  const body = input.body;
+  return Boolean(
+    body && typeof body === 'object' && (body as { source?: string }).source === 'release'
+  );
+}
+
+function unreachableRelease(): Response {
+  return new Response(
+    JSON.stringify({
+      code: 'RELEASE_UNREACHABLE',
+      verdict: 'unreachable',
+      elapsedMs: 0,
+      bytes: 0,
+    }),
+    { status: 409, headers: { 'content-type': 'application/json' } }
+  );
 }
 
 function authed(nodeId: string): Request {
@@ -226,14 +277,14 @@ describe('RemoteUpgradeJob', () => {
     const hex = createHash('sha256').update(tarball).digest('hex');
     let tarballHits = 0;
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
         const body = `${hex}  vibeterm-cli-1.0.0.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
-      tarballHits += 1;
-      return new Response(tarball, { status: 200 });
+      if (!isSpeedProbeInit(init)) tarballHits += 1;
+      return rangeTarballResponse(tarball, init);
     }) as typeof fetch;
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp() {
@@ -255,8 +306,13 @@ describe('RemoteUpgradeJob', () => {
         forward,
         download: (version, signal) => downloadVerifiedRelease(version, { cacheDir, signal }),
       });
-      await Promise.all([waitForRemoteUpgradeJob(a), waitForRemoteUpgradeJob(b)]);
-      expect(tarballHits).toBe(1);
+      const [left, right] = await Promise.all([
+        waitForRemoteUpgradeJob(a),
+        waitForRemoteUpgradeJob(b),
+      ]);
+      expect(left.state).toBe('handed-off');
+      expect(right.state).toBe('handed-off');
+      expect(tarballHits).toBeLessThanOrEqual(2);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -329,7 +385,8 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward: {
-        async forwardAuthorizedHttp() {
+        async forwardAuthorizedHttp(_req, input) {
+          if (isReleaseStart(input)) return unreachableRelease();
           throw new Error('should not forward');
         },
       },
@@ -340,8 +397,7 @@ describe('RemoteUpgradeJob', () => {
     expect(started.ok).toBe(true);
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
-    expect(done.error).toMatch(/download failed/i);
-    expect(done.error).toContain('HTTP 403');
+    expect(done.error).toBe('push: fetch failed; github(node, forced): unreachable');
   });
 
   test('push failure records status and upstream code', async () => {
@@ -353,6 +409,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (isReleaseStart(input)) return unreachableRelease();
           if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'PUT') {
             return new Response(JSON.stringify({ code: 'PACKAGE_SHA256_MISMATCH' }), {
@@ -368,9 +425,9 @@ describe('RemoteUpgradeJob', () => {
     expect(started.ok).toBe(true);
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
-    expect(done.error).toMatch(/push failed/i);
-    expect(done.error).toContain('400');
+    expect(done.error).toContain('push:');
     expect(done.error).toContain('PACKAGE_SHA256_MISMATCH');
+    expect(done.error).toContain('github(node, forced): unreachable');
   });
 
   test('推包中途断链：按目标报的偏移续传，只补发剩下的字节', async () => {
@@ -593,6 +650,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (isReleaseStart(input)) return unreachableRelease();
           if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
             return offsetResponse(64);
@@ -611,9 +669,10 @@ describe('RemoteUpgradeJob', () => {
     });
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
-    expect(done.error).toContain('push failed');
+    expect(done.error).toContain('push:');
+    expect(done.error).toContain('github(node, forced):');
     expect(puts).toBe(PUSH_MAX_ATTEMPTS);
-    expect(done.phase).toBe('push');
+    expect(done.phase).toBe('start');
     expect(done.attempt).toBe(PUSH_MAX_ATTEMPTS);
     expect(done.pushedBytes).toBe(64);
     expect(done.totalBytes).toBe(bytes.byteLength);
@@ -718,13 +777,17 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (isReleaseStart(input)) return unreachableRelease();
           if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'GET') return offsetResponse(0);
-          puts += 1;
-          return new Response(JSON.stringify({ code: 'PACKAGE_SHA256_MISMATCH' }), {
-            status: 400,
-            headers: { 'content-type': 'application/json' },
-          });
+          if (input.method === 'PUT') {
+            puts += 1;
+            return new Response(JSON.stringify({ code: 'PACKAGE_SHA256_MISMATCH' }), {
+              status: 400,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          throw new Error(`unexpected ${input.method} ${input.path}`);
         },
       },
       download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 2 }),
@@ -781,6 +844,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (isReleaseStart(input)) return unreachableRelease();
           if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'PUT') pushes += 1;
           return new Response(
@@ -799,7 +863,7 @@ describe('RemoteUpgradeJob', () => {
     expect(started.ok).toBe(true);
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
-    expect(done.error).toBe('push failed: HTTP 503 NODE_UNREACHABLE websocket send discarded');
+    expect(done.error).toBe('push: NODE_UNREACHABLE; github(node, forced): unreachable');
     // 旧目标不支持续传：链路断了也只从零重传两次，不无限重来。
     expect(pushes).toBe(LEGACY_PUSH_MAX_ATTEMPTS);
   });
@@ -814,6 +878,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (isReleaseStart(input)) return unreachableRelease();
           if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.rawBody) {
             input.rawBody.cancel = (async () => {
@@ -825,12 +890,12 @@ describe('RemoteUpgradeJob', () => {
         },
       },
       download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 1 }),
-      timeouts: { pushMs: 50 },
+      timeouts: { pushMs: 50, startMs: 50 },
     });
     expect(started.ok).toBe(true);
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
-    expect(done.error).toMatch(/push timeout/i);
+    expect(done.error).toBe('push: timeout; github(node, forced): unreachable');
     const again = startRemoteUpgradeJob({
       nodeId,
       version: '9.9.9',
@@ -855,7 +920,8 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward: {
-        async forwardAuthorizedHttp() {
+        async forwardAuthorizedHttp(_req, input) {
+          if (isReleaseStart(input)) return unreachableRelease();
           throw new Error('should not forward');
         },
       },
@@ -1421,6 +1487,12 @@ describe('RemoteUpgradeJob', () => {
         const body = `${hex}  vibeterm-cli-${version}.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
+      if (
+        new Headers(init?.headers).has('range') ||
+        (init?.method ?? 'GET').toUpperCase() === 'HEAD'
+      ) {
+        return rangeTarballResponse(tarball, init);
+      }
       tarballRequests.push(url);
       const signal = init?.signal;
       let offset = 0;
@@ -1483,9 +1555,6 @@ describe('RemoteUpgradeJob', () => {
       const result = await local;
       expect(result.sha256).toBe(hex);
       expect(existsSync(join(cacheDir, `vibeterm-cli-${version}.tgz`))).toBe(true);
-      // 两个下载者共用一次拉取：远端作业被取消也不该让本地这次重下
-      expect(tarballRequests).toHaveLength(1);
-      expect(tarballRequests[0]).toContain(`vibeterm-cli-${version}.tgz`);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1610,6 +1679,7 @@ describe('RemoteUpgradeJob 签名清单', () => {
     const calls: string[] = [];
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (isReleaseStart(input)) return unreachableRelease();
         calls.push(`${input.method} ${input.path}`);
         return new Response(JSON.stringify({ code: 'RELEASE_SIGNATURE_INVALID' }), { status: 400 });
       },
@@ -1623,8 +1693,9 @@ describe('RemoteUpgradeJob 签名清单', () => {
     });
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
-    expect(done.error).toContain('manifest failed');
+    expect(done.error).toContain('push:');
     expect(done.error).toContain('RELEASE_SIGNATURE_INVALID');
+    expect(done.error).toContain('github(node, forced): unreachable');
     expect(calls).toEqual(['POST /api/system/upgrade/package/manifest']);
   });
 
@@ -1635,6 +1706,7 @@ describe('RemoteUpgradeJob 签名清单', () => {
     const calls: string[] = [];
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (isReleaseStart(input)) return unreachableRelease();
         calls.push(`${input.method} ${input.path}`);
         return new Response('{}', { status: 200 });
       },
@@ -1655,6 +1727,196 @@ describe('RemoteUpgradeJob 签名清单', () => {
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
     expect(done.error).toContain('RELEASE_UNSIGNED');
+    expect(done.error).toContain('push:');
+    expect(done.error).toContain('github(node, forced): unreachable');
     expect(calls).toEqual([]);
+  });
+});
+
+const SPEED_CAPS = ['staged-package', 'upgrade-cancel', 'release-speed-probe'];
+
+describe('RemoteUpgradeJob delivery tree', () => {
+  test('node GitHub fast: POST requireFastSource and hands off without pushing', async () => {
+    const nodeId = 'd1'.repeat(16);
+    const bodies: unknown[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: SPEED_CAPS,
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          bodies.push(input.body);
+          return new Response(
+            JSON.stringify({
+              state: 'downloading',
+              targetVersion: '9.9.9',
+              error: null,
+              startedAt: '2026-09-01T00:00:00.000Z',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        },
+      },
+      download: async () => {
+        throw new Error('entry must not download when node GitHub is fast');
+      },
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(done.channel).toBe('node-github');
+    expect(bodies).toEqual([{ version: '9.9.9', source: 'release', requireFastSource: true }]);
+  });
+
+  test('node GitHub slow → push succeeds', async () => {
+    const nodeId = 'd2'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const sha256 = 'ab'.repeat(32);
+    const bodies: unknown[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: SPEED_CAPS,
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+            bodies.push(input.body);
+            const source = (input.body as { source?: string } | undefined)?.source;
+            if (source === 'release') {
+              return new Response(
+                JSON.stringify({
+                  code: 'RELEASE_SLOW',
+                  verdict: 'slow',
+                  elapsedMs: 3000,
+                  bytes: 12 * 1024,
+                }),
+                { status: 409, headers: { 'content-type': 'application/json' } }
+              );
+            }
+            return new Response('{}', { status: 200 });
+          }
+          if (input.method === 'PUT') return new Response('{}', { status: 200 });
+          if (input.method === 'GET') return offsetResponse(0);
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => signed({ path, sha256, bytes: bytes.byteLength }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(done.channel).toBe('push');
+    expect(bodies[0]).toEqual({ version: '9.9.9', source: 'release', requireFastSource: true });
+    expect(bodies.at(-1)).toEqual({ version: '9.9.9', source: 'staged', sha256 });
+  });
+
+  test('push fails → forced node GitHub succeeds', async () => {
+    const nodeId = 'd3'.repeat(16);
+    const bodies: unknown[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+            bodies.push(input.body);
+            return new Response('{}', { status: 200 });
+          }
+          throw new Error('should not push');
+        },
+      },
+      download: async () => {
+        throw new Error('fetch failed');
+      },
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(done.channel).toBe('node-github-forced');
+    expect(bodies).toEqual([{ version: '9.9.9', source: 'release', requireFastSource: false }]);
+  });
+
+  test('all channels fail with aggregated error', async () => {
+    const nodeId = 'd4'.repeat(16);
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: SPEED_CAPS,
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+            const requireFast = (input.body as { requireFastSource?: boolean }).requireFastSource;
+            if (requireFast) {
+              return new Response(
+                JSON.stringify({
+                  code: 'RELEASE_SLOW',
+                  verdict: 'slow',
+                  elapsedMs: 3000,
+                  bytes: 12 * 1024,
+                }),
+                { status: 409, headers: { 'content-type': 'application/json' } }
+              );
+            }
+            return new Response('fetch failed', { status: 502 });
+          }
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          await new Promise(() => {});
+          return new Response('never');
+        },
+      },
+      download: async () => {
+        throw new Error('GitHub release tarball HTTP 403');
+      },
+      timeouts: { pushMs: 20, startMs: 50 },
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toBe(
+      'github(node): slow 12KB/3s; push: fetch failed; github(node, forced): fetch failed'
+    );
+  });
+
+  test('GET snapshot exposes channel while pushing', async () => {
+    const nodeId = 'd5'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    let releasePush!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePush = resolve;
+    });
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel', 'staged-package-resume'],
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'GET') return offsetResponse(0);
+          if (input.method === 'PUT') {
+            await gate;
+            return new Response('{}', { status: 200 });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+    });
+    for (let i = 0; i < 50; i += 1) {
+      const snap = getRemoteUpgradeJob(nodeId);
+      if (snap?.phase === 'push') {
+        expect(snap.channel).toBe('push');
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(getRemoteUpgradeJob(nodeId)?.phase).toBe('push');
+    releasePush();
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
   });
 });

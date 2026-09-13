@@ -3,6 +3,13 @@
 // 单独放一处让状态机文件只剩流程。
 
 import { errorMessage, withTimeout } from '@vibeterm/shared';
+import { getInstallInfo } from './install-info';
+import {
+  type DownloadProgressFn,
+  downloadVerifiedRelease,
+  resolveReleaseCacheDir,
+} from './release-download';
+import { resolveUpgradeInstallDir } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
 /** 交签名清单的超时：一个几百字节的 POST，慢到这个份上说明链路已经不行了。 */
@@ -150,5 +157,51 @@ export async function pushPackageManifest(input: {
     return { ok: false, error: `manifest failed: ${await describeUpstream(res, remaining)}` };
   } catch (err) {
     return { ok: false, error: `manifest failed: ${errorMessage(err)}` };
+  }
+}
+
+export function releaseCacheDir(): string {
+  return resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo()));
+}
+
+export async function defaultReleaseDownload(
+  version: string,
+  signal?: AbortSignal,
+  onProgress?: DownloadProgressFn,
+  assetName?: string
+): Promise<{ path: string; sha256: string; bytes: number; sums: string; sig: string | null }> {
+  return downloadVerifiedRelease(version, {
+    cacheDir: releaseCacheDir(),
+    signal,
+    onProgress,
+    assetName,
+  });
+}
+
+export async function deleteStagedBestEffort(input: {
+  nodeId: string;
+  version: string;
+  req: Request;
+  forward: AuthorizedUpgradeForward;
+}): Promise<void> {
+  try {
+    const res = await input.forward.forwardAuthorizedHttp(input.req, {
+      nodeId: input.nodeId,
+      method: 'DELETE',
+      path: '/api/system/upgrade/package',
+      query: `?version=${encodeURIComponent(input.version)}`,
+      retry: { attempts: 2 },
+    });
+    await consumeBoundedBody(res);
+    if (res.status < 200 || res.status >= 300) {
+      console.warn(
+        `[mesh][upgrade] cancel staged package failed node=${input.nodeId} version=${input.version} status=${res.status}`
+      );
+    }
+  } catch (err) {
+    const detail = errorMessage(err);
+    console.warn(
+      `[mesh][upgrade] cancel staged package failed node=${input.nodeId} version=${input.version} err=${detail}`
+    );
   }
 }

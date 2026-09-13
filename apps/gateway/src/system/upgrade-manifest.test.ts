@@ -248,7 +248,7 @@ describe('tryStart(source: staged) requires a manifest', () => {
     const bytes = new Uint8Array([5, 6, 7, 8]);
     const hex = sha256Hex(bytes);
     expect((await controller.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
-    expect(controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
+    expect(await controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
       ok: false,
       code: 'UPGRADE_SIGNATURE_REQUIRED',
     });
@@ -263,7 +263,7 @@ describe('tryStart(source: staged) requires a manifest', () => {
     expect((await controller.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
     // 先落包再补一份对不上的清单：装包这一步必须还是拒绝。
     await controller.putPackageManifest('1.1.39', signedSumsFor('1.1.39', 'ab'.repeat(32)));
-    expect(controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
+    expect(await controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
       ok: false,
       code: 'UPGRADE_SIGNATURE_REQUIRED',
     });
@@ -280,7 +280,7 @@ describe('tryStart(source: staged) requires a manifest', () => {
     const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     record.sig = 'tmex-release-sig v1 tk AAAA';
     writeFileSync(path, `${JSON.stringify(record)}\n`);
-    expect(controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
+    expect(await controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
       ok: false,
       code: 'UPGRADE_SIGNATURE_REQUIRED',
     });
@@ -322,24 +322,24 @@ describe('远程发起的升级要过签名下限', () => {
     });
   }
 
-  test('远程 + 下限之前的版本：拒绝，不进 downloading', () => {
+  test('远程 + 下限之前的版本：拒绝，不进 downloading', async () => {
     const controller = stubbedController(tempInstall());
-    expect(controller.tryStart('1.1.38', { remote: true })).toEqual({
+    expect(await controller.tryStart('1.1.38', { remote: true })).toEqual({
       ok: false,
       code: 'UPGRADE_SIGNATURE_REQUIRED',
     });
     expect(controller.status().state).toBe('idle');
   });
 
-  test('本机操作者仍可装历史版本', () => {
+  test('本机操作者仍可装历史版本', async () => {
     const controller = stubbedController(tempInstall());
-    expect(controller.tryStart('1.1.38')).toEqual({ ok: true });
+    expect(await controller.tryStart('1.1.38')).toEqual({ ok: true });
     expect(controller.status().state).toBe('downloading');
   });
 
-  test('远程 + 下限之上的版本照常放行（走下载路径自己验签）', () => {
+  test('远程 + 下限之上的版本照常放行（走下载路径自己验签）', async () => {
     const controller = stubbedController(tempInstall());
-    expect(controller.tryStart('1.1.39', { remote: true })).toEqual({ ok: true });
+    expect(await controller.tryStart('1.1.39', { remote: true })).toEqual({ ok: true });
     expect(controller.status().state).toBe('downloading');
   });
 });
@@ -385,7 +385,9 @@ describe('暂存包过期后重试', () => {
 
     expect((await controller.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
     expect(readStagedManifest(stagedDirOf(install), '1.1.39')?.sha256).toBe(hex);
-    expect(controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({ ok: true });
+    expect(await controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
+      ok: true,
+    });
   });
 
   test('重试跨控制器重启也成立', async () => {
@@ -401,7 +403,9 @@ describe('暂存包过期后重试', () => {
     const second = clockedController(install, () => now, true);
     await second.putPackageManifest('1.1.39', signedSumsFor('1.1.39', hex));
     expect((await second.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
-    expect(second.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({ ok: true });
+    expect(await second.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({
+      ok: true,
+    });
   });
 
   test('没人来重试的清单按自报时间过期', async () => {

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { RELEASE_API_LATEST_URL, releaseTarballName } from '@vibeterm/shared';
+import { RELEASE_API_LATEST_URL, releaseApiUrl, releaseTarballName } from '@vibeterm/shared';
 import {
+  ReleaseNotFoundError,
   checkForUpdate,
   fetchLatestGithubRelease,
   requireLatestUpgradeRelease,
+  requirePublishedUpgradeRelease,
   resetLatestReleaseCache,
 } from './update-check';
 import { getBaseVersion } from './version';
@@ -210,6 +212,42 @@ describe('requireLatestUpgradeRelease', () => {
   test('throws when GitHub Releases is unavailable', async () => {
     mockGithub(502, '{"message":"bad gateway"}');
     await expect(requireLatestUpgradeRelease()).rejects.toThrow(/GitHub Releases API HTTP 502/i);
+  });
+});
+
+describe('requirePublishedUpgradeRelease', () => {
+  test('returns the tagged release when the tarball exists', async () => {
+    mockGithub(200, {
+      tag_name: 'v1.2.3',
+      published_at: '2026-01-01T00:00:00.000Z',
+      body: 'notes',
+      assets: [{ name: releaseTarballName('1.2.3') }],
+    });
+    await expect(requirePublishedUpgradeRelease('1.2.3')).resolves.toEqual({
+      latestVersion: '1.2.3',
+      changelog: 'notes',
+      publishedAt: '2026-01-01T00:00:00.000Z',
+    });
+    expect(captures[0]?.url).toBe(releaseApiUrl('1.2.3'));
+  });
+
+  test('404 is RELEASE_NOT_FOUND', async () => {
+    mockGithub(404, '{"message":"Not Found"}');
+    await expect(requirePublishedUpgradeRelease('0.0.1')).rejects.toBeInstanceOf(
+      ReleaseNotFoundError
+    );
+  });
+
+  test('tag mismatch is RELEASE_NOT_FOUND', async () => {
+    mockGithub(200, {
+      tag_name: 'v9.9.9',
+      published_at: '2026-01-01T00:00:00.000Z',
+      body: 'notes',
+      assets: [{ name: releaseTarballName('9.9.9') }],
+    });
+    await expect(requirePublishedUpgradeRelease('1.2.3')).rejects.toBeInstanceOf(
+      ReleaseNotFoundError
+    );
   });
 });
 

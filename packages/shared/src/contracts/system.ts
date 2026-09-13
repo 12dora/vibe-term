@@ -50,6 +50,9 @@ export interface SystemInfo {
    * `PUT` 带 `offset` 从该处续写，链路中断不再丢掉已收到的部分。
    * `'signed-package'`：接受 `POST /api/system/upgrade/package/manifest`（已签名的 SHA256SUMS），
    * 并且只装有可验签清单的暂存包——推包方自报的 sha256 不再有权威性。
+   * `'release-speed-probe'`：接受 `POST /api/system/upgrade` 的 `requireFastSource`。为 true
+   * 时先探测发行资产速度，慢或不可达则 409 `RELEASE_SLOW` / `RELEASE_UNREACHABLE` 且不改变状态。
+   * 旧节点（≤2.3.6）无此能力，入口仍走「本地下载再推包」。
    */
   upgradeCapabilities?: string[];
   /**
@@ -82,8 +85,16 @@ export const UPGRADE_CANCELLED = 'UPGRADE_CANCELLED';
  * 入口代跑的远程升级进度（`GET /api/mesh/nodes/:id/upgrade`）。本机升级没有这一段。
  * `push` 阶段跨链路中断续传，`attempt` 从 1 开始计，重试时递增。
  */
+/** 远程升级当前走的投递通道。旧入口不上报，前端按缺省处理。 */
+export type RemoteUpgradeChannel = 'node-github' | 'push' | 'node-github-forced';
+
 export interface RemoteUpgradeProgress {
   phase: 'download' | 'push' | 'start';
+  /**
+   * 当前投递通道。`node-github`：目标自拉（速度门控）；`push`：入口下载再推包；
+   * `node-github-forced`：推包失败后强制目标自拉。旧入口不上报。
+   */
+  channel?: RemoteUpgradeChannel;
   /** 已推送到目标的字节数（目标已确认收到的偏移） */
   pushedBytes: number;
   /** 升级包总字节数；下载未完成时为 0 */
@@ -128,6 +139,11 @@ export interface StartUpgradeRequest {
   source?: 'release' | 'staged';
   /** `source='staged'` 时可选，须与暂存包 sha256 一致 */
   sha256?: string;
+  /**
+   * 仅 `source='release'`。为 true 时目标先探测发行资产速度，慢或不可达则 409 且不启动。
+   * 旧入口（≤2.3.6）不发此字段；旧节点忽略未知 JSON 字段。
+   */
+  requireFastSource?: boolean;
 }
 
 /**

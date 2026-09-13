@@ -18,7 +18,11 @@ import {
   hasRunningRemoteUpgradeJob,
   startRemoteUpgradeJob,
 } from './remote-upgrade-job';
-import { requireLatestUpgradeRelease } from './update-check';
+import {
+  ReleaseNotFoundError,
+  requireLatestUpgradeRelease,
+  requirePublishedUpgradeRelease,
+} from './update-check';
 
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 /** 一次「全部升级」会连发 N 个 start，缓存清扫按目录+目标版本做短时记忆，只做一次。 */
@@ -133,22 +137,15 @@ export async function handleMeshNodeUpgradeStart(opts: {
     return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId: resolvedId });
   }
 
-  let latestVersion: string;
-  try {
-    const latest = await requireLatestUpgradeRelease();
-    latestVersion = latest.latestVersion;
-  } catch {
-    return jsonError('RELEASE_UNAVAILABLE', 502);
-  }
-  if (!RELEASE_VERSION_PATTERN.test(latestVersion)) {
-    return jsonError('RELEASE_UNAVAILABLE', 502);
-  }
-  await sweepReleaseCacheForUpgrade(latestVersion);
+  const resolved = await resolveMeshUpgradeVersion(req);
+  if (!resolved.ok) return resolved.response;
+  const targetVersion = resolved.version;
+  await sweepReleaseCacheForUpgrade(targetVersion);
 
   if (local) {
-    return startLocalMeshUpgrade(resolvedId, latestVersion);
+    return startLocalMeshUpgrade(resolvedId, targetVersion);
   }
-  return startRemoteMeshUpgrade(req, resolvedId, latestVersion, forward);
+  return startRemoteMeshUpgrade(req, resolvedId, targetVersion, forward);
 }
 
 export async function handleMeshNodeUpgradeStatus(opts: {
@@ -172,7 +169,7 @@ export async function handleMeshNodeUpgradeStatus(opts: {
   const job = getRemoteUpgradeJob(nodeId);
   if (job?.state === 'running') {
     return jsonBody({
-      state: 'downloading' as const,
+      state: meshJobState(job),
       targetVersion: job.targetVersion,
       error: null,
       startedAt: job.startedAt,
@@ -254,7 +251,12 @@ export async function readLocalUpgradeStatus(): Promise<UpgradeStatus> {
 
 export async function startLocalUpgradeAttempt(
   version: string,
-  opts?: { source?: 'release' | 'staged'; sha256?: string; remote?: boolean }
+  opts?: {
+    source?: 'release' | 'staged';
+    sha256?: string;
+    remote?: boolean;
+    requireFastSource?: boolean;
+  }
 ): Promise<
   | { ok: true; status: UpgradeStatus }
   | {
@@ -264,6 +266,14 @@ export async function startLocalUpgradeAttempt(
         | 'UPGRADE_IN_PROGRESS'
         | 'PACKAGE_NOT_STAGED'
         | 'UPGRADE_SIGNATURE_REQUIRED';
+      status: UpgradeStatus;
+    }
+  | {
+      ok: false;
+      code: 'RELEASE_SLOW' | 'RELEASE_UNREACHABLE';
+      verdict: 'slow' | 'unreachable';
+      elapsedMs: number;
+      bytes: number;
       status: UpgradeStatus;
     }
 > {
@@ -276,9 +286,19 @@ export async function startLocalUpgradeAttempt(
     };
   }
   const { upgradeController } = await import('./upgrade');
-  const started = upgradeController.tryStart(version, opts);
+  const started = await upgradeController.tryStart(version, opts);
   const status = upgradeController.status();
   if (!started.ok) {
+    if (started.code === 'RELEASE_SLOW' || started.code === 'RELEASE_UNREACHABLE') {
+      return {
+        ok: false,
+        code: started.code,
+        verdict: started.verdict,
+        elapsedMs: started.elapsedMs,
+        bytes: started.bytes,
+        status,
+      };
+    }
     return { ok: false, code: started.code, status };
   }
   return { ok: true, status };
@@ -386,23 +406,25 @@ async function startRemoteMeshUpgrade(
     });
   }
 
-  if (hasStagedPackageCapability(info.upgradeCapabilities)) {
+  const capabilities = readUpgradeCapabilities(info.upgradeCapabilities);
+  if (hasRemoteUpgradeJobCapability(capabilities)) {
     const started = startRemoteUpgradeJob({
       nodeId,
       version: latestVersion,
       req,
       forward,
-      upgradeCapabilities: readUpgradeCapabilities(info.upgradeCapabilities),
+      upgradeCapabilities: capabilities,
       targetCurrentVersion: current,
     });
     if (!started.ok) {
       return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId });
     }
     return jsonBody({
-      state: 'downloading',
+      state: meshJobState(started.snapshot),
       targetVersion: latestVersion,
       error: null,
       startedAt: started.snapshot.startedAt,
+      progress: remoteUpgradeProgress(started.snapshot),
     });
   }
 
@@ -418,6 +440,7 @@ async function startRemoteMeshUpgrade(
 function remoteUpgradeProgress(job: RemoteUpgradeJobSnapshot): RemoteUpgradeProgress {
   return {
     phase: job.phase,
+    channel: job.channel,
     pushedBytes: job.pushedBytes,
     totalBytes: job.totalBytes,
     downloadedBytes: job.downloadedBytes,
@@ -426,8 +449,67 @@ function remoteUpgradeProgress(job: RemoteUpgradeJobSnapshot): RemoteUpgradeProg
   };
 }
 
-function hasStagedPackageCapability(raw: unknown): boolean {
-  return readUpgradeCapabilities(raw).includes('staged-package');
+function meshJobState(job: Pick<RemoteUpgradeJobSnapshot, 'channel' | 'phase'>): UpgradeState {
+  if (job.channel === 'push' && job.phase === 'start') return 'executing';
+  return 'downloading';
+}
+
+function hasRemoteUpgradeJobCapability(capabilities: readonly string[]): boolean {
+  return capabilities.includes('staged-package') || capabilities.includes('release-speed-probe');
+}
+
+async function resolveMeshUpgradeVersion(
+  req: Request
+): Promise<{ ok: true; version: string } | { ok: false; response: Response }> {
+  const requested = await readRequestedUpgradeVersion(req);
+  if (!requested.ok) return requested;
+  try {
+    const release = requested.version
+      ? await requirePublishedUpgradeRelease(requested.version)
+      : await requireLatestUpgradeRelease();
+    if (!RELEASE_VERSION_PATTERN.test(release.latestVersion)) {
+      return {
+        ok: false,
+        response: jsonError(
+          requested.version ? 'RELEASE_NOT_FOUND' : 'RELEASE_UNAVAILABLE',
+          requested.version ? 400 : 502
+        ),
+      };
+    }
+    return { ok: true, version: release.latestVersion };
+  } catch (err) {
+    if (err instanceof ReleaseNotFoundError) {
+      return { ok: false, response: jsonError('RELEASE_NOT_FOUND', 400) };
+    }
+    return { ok: false, response: jsonError('RELEASE_UNAVAILABLE', 502) };
+  }
+}
+
+async function readRequestedUpgradeVersion(
+  req: Request
+): Promise<{ ok: true; version: string | null } | { ok: false; response: Response }> {
+  let raw = '';
+  try {
+    raw = await req.text();
+  } catch {
+    return { ok: true, version: null };
+  }
+  if (!raw.trim()) return { ok: true, version: null };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, response: jsonError('RELEASE_NOT_FOUND', 400) };
+    }
+    const version = (parsed as { version?: unknown }).version;
+    if (typeof version !== 'string' || !version.trim()) return { ok: true, version: null };
+    const trimmed = version.trim();
+    if (!RELEASE_VERSION_PATTERN.test(trimmed)) {
+      return { ok: false, response: jsonError('RELEASE_NOT_FOUND', 400) };
+    }
+    return { ok: true, version: trimmed };
+  } catch {
+    return { ok: false, response: jsonError('RELEASE_NOT_FOUND', 400) };
+  }
 }
 
 function readUpgradeCapabilities(raw: unknown): string[] {

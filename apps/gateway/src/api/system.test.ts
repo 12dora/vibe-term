@@ -94,6 +94,23 @@ describe('POST /api/system/upgrade version validation', () => {
     expect(response?.status).toBe(400);
   });
 
+  test('unknown JSON fields including requireFastSource are ignored by the parser', async () => {
+    const response = await handleSystemApiRequest(
+      new Request('http://localhost/api/system/upgrade', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          version: '1.2.3',
+          source: 'release',
+          requireFastSource: true,
+          extra: 'drop-me',
+        }),
+      }),
+      '/api/system/upgrade'
+    );
+    expect(response?.status).not.toBe(400);
+  });
+
   test('does not start upgrade for an invalid version', async () => {
     const response = await handleSystemApiRequest(
       new Request('http://localhost/api/system/upgrade', {
@@ -106,6 +123,54 @@ describe('POST /api/system/upgrade version validation', () => {
     expect(response?.status).toBe(400);
     const payload = (await response?.json()) as { error?: string };
     expect(payload.error).toBeTruthy();
+  });
+});
+
+describe('POST /api/system/upgrade requireFastSource', () => {
+  afterEach(() => {
+    upgradeController.resetForTests();
+  });
+
+  test('slow/unreachable probe is 409 and does not start', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    const probe = spyOn(
+      await import('../../../../packages/shared/src/release/speed-probe'),
+      'probeReleaseAssetSpeed'
+    ).mockResolvedValue({
+      verdict: 'slow',
+      finalUrl: 'https://cdn.example/pkg.tgz',
+      bytes: 12 * 1024,
+      elapsedMs: 3000,
+      acceptsRanges: true,
+      totalBytes: 1_000_000,
+    });
+    try {
+      const response = await handleSystemApiRequest(
+        withMeshAuth(
+          new Request('http://localhost/api/system/upgrade', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              version: '9.9.9',
+              source: 'release',
+              requireFastSource: true,
+            }),
+          })
+        ),
+        '/api/system/upgrade'
+      );
+      expect(response?.status).toBe(409);
+      expect(await response?.json()).toEqual({
+        code: 'RELEASE_SLOW',
+        verdict: 'slow',
+        elapsedMs: 3000,
+        bytes: 12 * 1024,
+      });
+      expect(upgradeController.status().state).toBe('idle');
+    } finally {
+      infoSpy.mockRestore();
+      probe.mockRestore();
+    }
   });
 });
 
@@ -123,6 +188,7 @@ describe('GET /api/system/info upgradeCapabilities', () => {
       'uninstall',
       'staged-package-resume',
       'signed-package',
+      'release-speed-probe',
     ]);
   });
 });

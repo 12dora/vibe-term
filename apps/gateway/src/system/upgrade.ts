@@ -34,6 +34,8 @@ import {
   stagedManifestSha256,
   verifyPackageManifest,
 } from './upgrade-manifest';
+import { identityMatches, pidIsAlive, readNoneModePidRecord } from './upgrade-pid';
+import { type ReleaseSpeedProbeFn, evaluateReleaseSpeedGate } from './upgrade-speed-gate';
 import {
   type StagePackageOpts,
   type StagePackageResult,
@@ -97,6 +99,7 @@ export type UpgradeControllerDeps = {
   processStartIdentity?: ProcessStartIdentityFn;
   maxPackageBytes?: number;
   now?: () => number;
+  probeReleaseSpeed?: ReleaseSpeedProbeFn;
 };
 
 export type UpgradeStartOpts = {
@@ -107,6 +110,8 @@ export type UpgradeStartOpts = {
    * 装回没有验签的老版本、再往那个版本推任意代码。缺签名的历史版本只留给本机操作者。
    */
   remote?: boolean;
+  /** 仅 `source='release'`：启动前探测发行资产，慢 / 不可达则拒绝且不改状态。 */
+  requireFastSource?: boolean;
 };
 
 export type UpgradeStartResult =
@@ -114,6 +119,13 @@ export type UpgradeStartResult =
   | {
       ok: false;
       code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' | 'UPGRADE_SIGNATURE_REQUIRED';
+    }
+  | {
+      ok: false;
+      code: 'RELEASE_SLOW' | 'RELEASE_UNREACHABLE';
+      verdict: 'slow' | 'unreachable';
+      elapsedMs: number;
+      bytes: number;
     };
 
 export type UpgradeCancelResult =
@@ -138,41 +150,6 @@ export type UpgradeCancelResult =
  * 依赖服务 unit 的 KillMode=process / AbandonProcessGroup=true，使 detached 子进程
  * 在服务进程被停止时存活，完成自升级。
  */
-
-function readNoneModePidRecord(installDir: string): PidFileRecord | null {
-  // 改名前安装的实例写的是 tmex.pid；服务重新注册前 run.sh 仍在写旧名。
-  for (const name of ['vibeterm.pid', 'tmex.pid']) {
-    try {
-      return parsePidFileRecord(readFileSync(join(installDir, name), 'utf8'));
-    } catch {
-      // 换下一个名字
-    }
-  }
-  return null;
-}
-
-function pidIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-function identityMatches(
-  pid: number,
-  expected: string,
-  readIdentity: ProcessStartIdentityFn
-): boolean | null {
-  try {
-    const live = readIdentity(pid);
-    if (live === null) return null;
-    return live === expected;
-  } catch {
-    return null;
-  }
-}
 
 export class UpgradeController {
   private state: UpgradeState = 'idle';
@@ -230,10 +207,20 @@ export class UpgradeController {
 
   /** 进入升级流程；返回 false 表示已忙（并发触发）。下载/执行异步进行，不阻塞调用方。 */
   start(version: string, opts?: UpgradeStartOpts): boolean {
-    return this.tryStart(version, opts).ok;
+    return this.commitStart(version, opts).ok;
   }
 
-  tryStart(version: string, opts?: UpgradeStartOpts): UpgradeStartResult {
+  async tryStart(version: string, opts?: UpgradeStartOpts): Promise<UpgradeStartResult> {
+    if (this.isBusy() || this.stagingInFlight) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
+    if ((opts?.source ?? 'release') === 'release' && opts?.requireFastSource === true) {
+      const gated = await evaluateReleaseSpeedGate(version, this.deps.probeReleaseSpeed);
+      if (this.isBusy() || this.stagingInFlight) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
+      if (!gated.ok) return gated;
+    }
+    return this.commitStart(version, opts);
+  }
+
+  private commitStart(version: string, opts?: UpgradeStartOpts): UpgradeStartResult {
     if (this.isBusy() || this.stagingInFlight) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
     // 远程发起：版本必须在签名下限之上，装的东西才一定经过验签（含 source:'release' 的自下载）。
     if (opts?.remote && !releaseSignatureRequired(version)) {

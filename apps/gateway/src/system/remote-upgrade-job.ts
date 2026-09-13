@@ -1,4 +1,5 @@
 import {
+  type RemoteUpgradeChannel,
   UPGRADE_CANCELLED,
   combineAbortSignals,
   errorMessage,
@@ -14,22 +15,27 @@ import {
   runPush,
 } from '@vibeterm/transfer';
 import { openRange } from '@vibeterm/transfer/node';
-import { getInstallInfo } from './install-info';
-import {
-  type DownloadProgressFn,
-  downloadVerifiedRelease,
-  resolveReleaseCacheDir,
-  retainReleaseVersion,
-} from './release-download';
+import { type DownloadProgressFn, retainReleaseVersion } from './release-download';
 import { ReleaseSignatureError, assertPushableRelease } from './release-signature';
+import {
+  type DeliveryStepResult,
+  initialUpgradeChannel,
+  initialUpgradePhase,
+  jobCapabilities,
+  runNodeGithubChannel,
+  runUpgradeDelivery,
+  stepFromSnapshot,
+} from './remote-upgrade-delivery';
 import {
   abortableSleep,
   consumeBoundedBody,
+  defaultReleaseDownload,
+  deleteStagedBestEffort,
   describeUpstream,
   detachRequest,
   pushPackageManifest,
+  releaseCacheDir,
 } from './remote-upgrade-io';
-import { resolveUpgradeInstallDir } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
 const FAILED_TTL_MS = 10 * 60 * 1000;
@@ -55,6 +61,7 @@ export type RemoteUpgradeJobSnapshot = {
   error: string | null;
   startedAt: string;
   phase: RemoteUpgradePhase;
+  channel: RemoteUpgradeChannel;
   /** 目标已确认收到的字节数 */
   pushedBytes: number;
   /** 升级包总字节数；下载完成前为 0 */
@@ -100,6 +107,7 @@ type Job = {
   finished: Promise<RemoteUpgradeJobSnapshot>;
   abort: AbortController;
   phase: RemoteUpgradePhase;
+  channel: RemoteUpgradeChannel;
   pushed: boolean;
   pushedBytes: number;
   totalBytes: number;
@@ -184,6 +192,7 @@ export function startRemoteUpgradeJob(opts: {
   const nowFn = opts.now ?? Date.now;
   const startedAt = new Date(nowFn()).toISOString();
   const detached = detachRequest(opts.req);
+  const capabilities = jobCapabilities(opts.upgradeCapabilities);
   let resolveFinished!: (snapshot: RemoteUpgradeJobSnapshot) => void;
   const finished = new Promise<RemoteUpgradeJobSnapshot>((resolve) => {
     resolveFinished = resolve;
@@ -197,7 +206,8 @@ export function startRemoteUpgradeJob(opts: {
     error: null,
     finished,
     abort: new AbortController(),
-    phase: 'download',
+    phase: initialUpgradePhase(capabilities),
+    channel: initialUpgradeChannel(capabilities),
     pushed: false,
     pushedBytes: 0,
     totalBytes: 0,
@@ -207,12 +217,12 @@ export function startRemoteUpgradeJob(opts: {
     fileStream: null,
     pushPromise: null,
     startPromise: null,
-    upgradeCapabilities: [...(opts.upgradeCapabilities ?? ['staged-package', 'upgrade-cancel'])],
+    upgradeCapabilities: capabilities,
     assetName: selectReleaseAssetForTarget(opts.targetCurrentVersion, opts.version),
   };
   jobs.set(opts.nodeId, job);
 
-  const download = opts.download ?? defaultDownload;
+  const download = opts.download ?? defaultReleaseDownload;
   const timeouts: RemoteUpgradeTimeouts = {
     ...REMOTE_UPGRADE_TIMEOUTS,
     ...opts.timeouts,
@@ -260,7 +270,7 @@ export async function cancelRemoteUpgradeJob(opts: {
       (res) => res.body?.cancel().catch(() => {}),
       () => {}
     );
-    await deleteStagedBestEffort(job, opts.req, opts.forward);
+    await dropStaged(job, opts.req, opts.forward);
     return { handled: true, snapshot: markCancelled(job) };
   }
 
@@ -280,7 +290,7 @@ export async function cancelRemoteUpgradeJob(opts: {
     const landed = pushed != null && pushed.status >= 200 && pushed.status < 300;
     if (landed) job.pushed = true;
     if (landed && !canCancelTarget) return { handled: 'unsupported' };
-    await deleteStagedBestEffort(job, opts.req, opts.forward);
+    await dropStaged(job, opts.req, opts.forward);
     return { handled: true, snapshot: markCancelled(job) };
   }
 
@@ -304,7 +314,7 @@ async function finishStartCancel(
     job.error = null;
     return { handled: false };
   }
-  await deleteStagedBestEffort(job, req, forward);
+  await dropStaged(job, req, forward);
   return { handled: true, snapshot: markCancelled(job) };
 }
 
@@ -329,17 +339,42 @@ type JobDeps = {
 };
 
 async function runJob(job: Job, deps: JobDeps): Promise<RemoteUpgradeJobSnapshot> {
-  // 推包期间别的节点开始升级会带着新版本清扫缓存；租约保住这一版直到本任务收尾。
   const releaseLease = retainReleaseVersion(releaseCacheDir(), job.version);
   try {
-    const downloaded = await runDownloadPhase(job, deps);
-    if (downloaded.done) return downloaded.snapshot;
-    const pushed = await runPushPhase(job, deps, downloaded.value);
-    if (pushed.done) return pushed.snapshot;
-    return (await runStartPhase(job, deps, downloaded.value)).snapshot;
+    return await runUpgradeDelivery({
+      hasSpeedProbe: job.upgradeCapabilities.includes('release-speed-probe'),
+      hasStagedPackage: job.upgradeCapabilities.includes('staged-package'),
+      tryNodeGithub: (requireFast) =>
+        runNodeGithubChannel({
+          job,
+          requireFastSource: requireFast,
+          forward: deps.forward,
+          req: deps.req,
+          timeoutMs: deps.timeouts.startMs,
+          snapshot: () => snapshotOf(job),
+          fail: (error) => fail(job, error, deps.nowFn),
+          markCancelled: () => markCancelled(job, deps.nowFn),
+          isCancelled: () => isCancelled(job),
+        }),
+      runPushPipeline: () => runPushPipeline(job, deps),
+      fail: (error) => fail(job, error, deps.nowFn),
+    });
   } finally {
     releaseLease();
   }
+}
+
+async function runPushPipeline(
+  job: Job,
+  deps: JobDeps
+): Promise<DeliveryStepResult<RemoteUpgradeJobSnapshot>> {
+  job.channel = 'push';
+  const downloaded = await runDownloadPhase(job, deps);
+  if (downloaded.done)
+    return stepFromSnapshot(job.state, job.channel, downloaded.snapshot, job.error);
+  const pushed = await runPushPhase(job, deps, downloaded.value);
+  if (pushed.done) return stepFromSnapshot(job.state, job.channel, pushed.snapshot, job.error);
+  return { kind: 'done', snapshot: (await runStartPhase(job, deps, downloaded.value)).snapshot };
 }
 
 async function runDownloadPhase(
@@ -389,11 +424,6 @@ function supportsStagedResume(job: Job): boolean {
   return job.upgradeCapabilities.includes('staged-package-resume');
 }
 
-/**
- * 推包阶段。目标支持 `staged-package-resume` 时先问一次已收偏移，只补发缺的那一段；
- * 链路断掉（中继复位 / 顶号 / 上行切换）退避重试，整个阶段共用 `pushMs` 预算。
- * 字节搬运本身由 `@vibeterm/transfer` 的 `runPush` 驱动，这里只留升级作业的状态机。
- */
 async function runPushPhase(
   job: Job,
   deps: JobDeps,
@@ -473,7 +503,7 @@ function shouldReuploadFromZero(error: string, offset: number): boolean {
 
 async function cancelPush(job: Job, deps: JobDeps): Promise<RemoteUpgradeJobSnapshot> {
   if (isCancelled(job)) return snapshotOf(job);
-  await deleteStagedBestEffort(job, deps.req, deps.forward);
+  await dropStaged(job, deps.req, deps.forward);
   return markCancelled(job, deps.nowFn);
 }
 
@@ -606,7 +636,7 @@ async function runStartPhase(
   if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
   if (job.abort.signal.aborted) {
     if (supportsUpgradeCancel(job)) {
-      await deleteStagedBestEffort(job, req, forward);
+      await dropStaged(job, req, forward);
       return { done: true, snapshot: markCancelled(job, nowFn) };
     }
   }
@@ -668,31 +698,8 @@ function fail(job: Job, error: string, nowFn: () => number = Date.now): RemoteUp
   return snapshotOf(job);
 }
 
-async function deleteStagedBestEffort(
-  job: Job,
-  req: Request,
-  forward: AuthorizedUpgradeForward
-): Promise<void> {
-  try {
-    const res = await forward.forwardAuthorizedHttp(req, {
-      nodeId: job.nodeId,
-      method: 'DELETE',
-      path: '/api/system/upgrade/package',
-      query: `?version=${encodeURIComponent(job.version)}`,
-      retry: { attempts: 2 },
-    });
-    await consumeBoundedBody(res);
-    if (res.status < 200 || res.status >= 300) {
-      console.warn(
-        `[mesh][upgrade] cancel staged package failed node=${job.nodeId} version=${job.version} status=${res.status}`
-      );
-    }
-  } catch (err) {
-    const detail = errorMessage(err);
-    console.warn(
-      `[mesh][upgrade] cancel staged package failed node=${job.nodeId} version=${job.version} err=${detail}`
-    );
-  }
+function dropStaged(job: Job, req: Request, forward: AuthorizedUpgradeForward): Promise<void> {
+  return deleteStagedBestEffort({ nodeId: job.nodeId, version: job.version, req, forward });
 }
 
 function snapshotOf(job: Job): RemoteUpgradeJobSnapshot {
@@ -702,28 +709,11 @@ function snapshotOf(job: Job): RemoteUpgradeJobSnapshot {
     error: job.error,
     startedAt: job.startedAt,
     phase: job.phase,
+    channel: job.channel,
     pushedBytes: job.pushedBytes,
     totalBytes: job.totalBytes,
     downloadedBytes: job.downloadedBytes,
     downloadTotalBytes: job.downloadTotalBytes,
     attempt: job.attempt,
   };
-}
-
-function releaseCacheDir(): string {
-  return resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo()));
-}
-
-async function defaultDownload(
-  version: string,
-  signal?: AbortSignal,
-  onProgress?: DownloadProgressFn,
-  assetName?: string
-): Promise<DownloadedRelease> {
-  return downloadVerifiedRelease(version, {
-    cacheDir: releaseCacheDir(),
-    signal,
-    onProgress,
-    assetName,
-  });
 }

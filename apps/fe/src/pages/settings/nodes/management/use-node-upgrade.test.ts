@@ -1126,6 +1126,12 @@ describe('推包进度与预算', () => {
       'nodes.upgrade.startFailed'
     );
     expect(upgradeErrorText(t, 'BOOM')).toBe('BOOM');
+    expect(
+      upgradeErrorText(
+        t,
+        'github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed'
+      )
+    ).toBe('github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed');
   });
 });
 

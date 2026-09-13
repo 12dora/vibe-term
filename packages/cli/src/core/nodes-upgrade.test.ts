@@ -131,6 +131,28 @@ describe('nodes-upgrade entry cookies', () => {
     for (const row of seen) expectSelfAndPeerCookies(row.cookie);
   });
 
+  test('startNodeUpgrade passes --version in the POST body', async () => {
+    let body: string | null = null;
+    const { ctx } = await seeded(async (url, init) => {
+      body = typeof init?.body === 'string' ? init.body : null;
+      return jsonResponse({ state: 'downloading', targetVersion: '2.3.0' });
+    });
+    const started = await startNodeUpgrade(ctx, peer, '2.3.0');
+    expect(started.kind).toBe('started');
+    expect(String(body)).toBe(JSON.stringify({ version: '2.3.0' }));
+  });
+
+  test('poll surfaces aggregated delivery error verbatim', async () => {
+    const error = 'github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed';
+    const { ctx } = await seeded(async () =>
+      jsonResponse({ state: 'idle', targetVersion: null, error })
+    );
+    const poll = await pollNodeUpgrade(ctx, peer);
+    expect(poll.kind).toBe('status');
+    expect(poll.status?.state).toBe('idle');
+    expect(poll.status?.error).toBe(error);
+  });
+
   test('NODE_LOGIN_REQUIRED on start is an AuthError with login --node', async () => {
     const { ctx } = await seeded(async () =>
       jsonResponse({ code: 'NODE_LOGIN_REQUIRED', nodeId: peer }, 401)
