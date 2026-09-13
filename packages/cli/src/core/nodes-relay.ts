@@ -31,6 +31,15 @@ export interface RelayStatusRow {
   url: string;
   attached?: boolean;
   caFingerprint?: string | null;
+  priority?: number;
+  online?: boolean;
+  role?: 'primary' | 'secondary' | null;
+  rttMs?: number | null;
+  pathBestMs?: number;
+  peersOnline?: number | null;
+  turn?: { url: string; probeOk: boolean | null } | null;
+  kicked?: boolean;
+  lastError?: string | null;
 }
 
 export interface RelayStatusJson {
@@ -81,7 +90,7 @@ function seqOf(result: KeyLogAppendResult, headSeq: bigint): number | string {
   return (headSeq + 1n).toString();
 }
 
-function assertRelayAck(result: KeyLogAppendResult, action: string): void {
+export function assertRelayAck(result: KeyLogAppendResult, action: string): void {
   assertKeyLogAppended(result, action);
   if (result.relayAck === false) {
     throw new CliError(`${action} was not confirmed by relay (${result.relayError ?? 'no ack'})`);

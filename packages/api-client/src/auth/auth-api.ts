@@ -403,6 +403,28 @@ export class AuthApi {
     return this.postNodePauseResume(nodeId, 'resume');
   }
 
+  /** `DELETE /api/mesh/nodes/:id/upgrade`（需会话）：取消该节点在途升级。 */
+  async cancelNodeUpgrade(nodeId: string): Promise<void> {
+    const res = await this.client.fetch(`/api/mesh/nodes/${encodeURIComponent(nodeId)}/upgrade`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const envelope = await readErrorEnvelope(res, 'Failed to cancel node upgrade');
+      throw requestError(envelope.code, res.status, envelope.message);
+    }
+  }
+
+  /** `DELETE /api/mesh/nodes/:id/operation`（需会话）：清掉失败的长事务记录。 */
+  async clearNodeOperation(nodeId: string): Promise<void> {
+    const res = await this.client.fetch(`/api/mesh/nodes/${encodeURIComponent(nodeId)}/operation`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const envelope = await readErrorEnvelope(res, 'Failed to clear node operation');
+      throw requestError(envelope.code, res.status, envelope.message);
+    }
+  }
+
   private async postNodePauseResume(
     nodeId: string,
     action: 'pause' | 'resume'

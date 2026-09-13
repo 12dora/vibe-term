@@ -7,6 +7,7 @@ import {
   cancelNodeUpgrade,
   isBatchEligible,
   orderUpgradeGroups,
+  parseUpgradeIds,
   pollNodeUpgrade,
   runUpgradeBatch,
   startNodeUpgrade,
@@ -68,6 +69,11 @@ describe('nodes-upgrade batch policy', () => {
       ['hub'],
       ['self'],
     ]);
+  });
+
+  test('parseUpgradeIds splits and rejects empty', () => {
+    expect(parseUpgradeIds('a, b ,c')).toEqual(['a', 'b', 'c']);
+    expect(() => parseUpgradeIds(' , , ')).toThrow();
   });
 
   test('upgradeExitCode is 1 for failed/timeout/unconfirmed', () => {

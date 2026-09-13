@@ -209,6 +209,24 @@ describe('AuthApi', () => {
     });
   });
 
+  test('cancelNodeUpgrade DELETE 到 upgrade 路由', async () => {
+    const { api, calls } = recorder([new Response(null, { status: 204 })]);
+    await api.cancelNodeUpgrade(NODE_A);
+    expect(calls[0]).toMatchObject({
+      url: `/api/mesh/nodes/${NODE_A}/upgrade`,
+      init: { method: 'DELETE' },
+    });
+  });
+
+  test('clearNodeOperation DELETE 到 operation 路由', async () => {
+    const { api, calls } = recorder([new Response(JSON.stringify({ ok: true }), { status: 200 })]);
+    await api.clearNodeOperation(NODE_A);
+    expect(calls[0]).toMatchObject({
+      url: `/api/mesh/nodes/${NODE_A}/operation`,
+      init: { method: 'DELETE' },
+    });
+  });
+
   test('pauseNode / resumeNode POST 到 entry 的 pause/resume 路由', async () => {
     const node = { id: NODE_A, name: 'studio', paused: true } as MeshNode;
     const { api, calls } = recorder([

@@ -3,11 +3,12 @@
 import type { MeshNode } from '@vibeterm/api-client/auth/types';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { type UpgradeStatus, compareSemver } from '@vibeterm/shared';
-import { dash, sleep } from './cmd';
+import { type FlagValues, flagBool, flagString } from './args';
+import { dash, rejectExtra, sleep } from './cmd';
 import type { CliContext } from './context';
-import { AuthError } from './errors';
+import { AuthError, UsageError } from './errors';
 import { type CookieJar, loginRequiredError } from './http';
-import { listMeshNodesFull } from './nodes-hub';
+import { findMeshNode, listMeshNodesFull } from './nodes-hub';
 import { isLiveNodeSession } from './session-store';
 
 export interface UpgradeLatest {
@@ -282,4 +283,74 @@ export function upgradeExitCode(outcomes: UpgradeOutcome[]): number {
 
 export function uninstallPath(nodeId: string): string {
   return `/api/mesh/nodes/${nodeId}/uninstall`;
+}
+
+export function parseUpgradeIds(raw: string): string[] {
+  const ids = raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (ids.length === 0) throw new UsageError('--ids is empty');
+  return ids;
+}
+
+export interface UpgradeInvocation {
+  all: boolean;
+  ids: string[];
+  wait: boolean;
+  version: string | undefined;
+  nodeRef: string | undefined;
+}
+
+export function parseUpgradeInvocation(
+  flags: FlagValues,
+  positionals: string[]
+): UpgradeInvocation {
+  const all = flagBool(flags, 'all');
+  const idsRaw = flagString(flags, 'ids');
+  const ids = idsRaw ? parseUpgradeIds(idsRaw) : [];
+  const subset = ids.length > 0;
+  if (all && subset) throw new UsageError('--all and --ids cannot be combined');
+  if ((all || subset) && positionals[0]) {
+    throw new UsageError('--all/--ids does not take a node argument');
+  }
+  if (!all && !subset && !positionals[0]) {
+    throw new UsageError('missing node (or pass --all / --ids)');
+  }
+  rejectExtra(positionals, all || subset ? 0 : 1);
+  return {
+    all,
+    ids,
+    wait: all || subset || flagBool(flags, 'wait'),
+    version: flagString(flags, 'version'),
+    nodeRef: positionals[0],
+  };
+}
+
+export async function selectUpgradeTargets(
+  ctx: CliContext,
+  options: {
+    all: boolean;
+    ids: string[];
+    nodeRef?: string;
+    latestVersion: string | null;
+    selfId?: string;
+  }
+): Promise<MeshNode[]> {
+  const roster = await listMeshNodesFull(ctx);
+  const eligible = (node: MeshNode) =>
+    node.paused !== true &&
+    isBatchEligible(node, options.latestVersion, options.selfId, (id) =>
+      hasCliNodeSession(ctx.http.jar, id)
+    );
+  if (options.all) return roster.filter(eligible);
+  if (options.ids.length > 0) {
+    const wanted: MeshNode[] = [];
+    for (const ref of options.ids) {
+      wanted.push(await findMeshNode(ctx, ref));
+    }
+    return wanted.filter(eligible);
+  }
+  if (!options.nodeRef) throw new UsageError('missing node (or pass --all / --ids)');
+  return [await findMeshNode(ctx, options.nodeRef)];
 }

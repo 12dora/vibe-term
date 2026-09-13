@@ -25,13 +25,18 @@ import {
   isTrustedHubUrl,
   listListedNodes,
   listMeshNodesDetailed,
-  listMeshNodesFull,
   passwordJoinCommand,
   reachOf,
   resolveHubNodeId,
   roleOf,
 } from '../core/nodes-hub';
-import { admitPendingNode, createSignedEnrollment, revokeNode } from '../core/nodes-keylog';
+import {
+  admitPendingNode,
+  createSignedEnrollment,
+  renameNodeViaKeyLog,
+  revokeNode,
+} from '../core/nodes-keylog';
+import { printPortsTable } from '../core/nodes-ports';
 import {
   type MetaKeyResult,
   appendRelayMetaKey,
@@ -46,12 +51,16 @@ import {
 } from '../core/nodes-relay';
 import {
   fetchUpgradeLatest,
-  hasCliNodeSession,
-  isBatchEligible,
+  parseUpgradeInvocation,
   runUpgradeBatch,
+  selectUpgradeTargets,
   uninstallPath,
   upgradeExitCode,
 } from '../core/nodes-upgrade';
+import { hubRole } from './nodes-hub-role';
+import { op, upgradeCancel } from './nodes-ops';
+import { ports } from './nodes-ports';
+import { relay } from './nodes-relay';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -60,10 +69,13 @@ const FLAGS = {
   version: 'string',
   wait: 'boolean',
   all: 'boolean',
+  ids: 'string',
   yes: 'boolean',
   reason: 'string',
   name: 'string',
   exclude: 'strings',
+  probe: 'boolean',
+  force: 'boolean',
 } as const;
 
 const USAGE = [
@@ -71,9 +83,16 @@ const USAGE = [
   '',
   'Subcommands:',
   '  ls                         list mesh nodes',
-  '  show <node>                full projection (directFailure, dcBreaker, endpoints)',
+  '  show <node>                full projection (directFailure, dcBreaker, endpoints, ports)',
   '  hubs                       GET /api/mesh/hubs',
-  '  rename <node> <name>       POST /n/<hub>/api/hub/nodes/:id/rename',
+  '  hub-role promote|demote|standby <node> [--yes] [--wait] [--force]',
+  '                             POST /n/<hub>/api/hub/role; admit-hub when unsigned',
+  '  rename <node> <name>       hub: POST /n/<hub>/api/hub/nodes/:id/rename; relay: keylog rename-node',
+  '  relay ls                   GET /api/mesh/relay/status',
+  '  relay switch <url>         POST /api/mesh/relay/switch',
+  '  relay rm <url> [--yes]     remove/prepare + keylog set-relays',
+  '  relay readmit [--yes]      GET …/readmit/prepare + keylog readmit-node',
+  '  ports <node> [--probe]     print MeshNode.ports; --probe POST …/ports/probe first',
   '  allow <node>               admit a pending hub node, else enable public-domain access',
   '                             relay: admit-node + meta-key, or wrap K_meta for a pending member',
   '  disallow <node>            disable public-domain access on the node',
@@ -83,7 +102,9 @@ const USAGE = [
   '  meta-key admit <node>      wrap current K_meta for a node (relay; VIBETERM_PASSWORD or TTY)',
   '  meta-key rotate [--exclude <node>...]',
   '                             rotate K_meta, excluding nodes (relay)',
-  '  upgrade <node>|--all [--version] [--wait]',
+  '  upgrade <node>|--all|--ids a,b [--version] [--wait]',
+  '  upgrade cancel <node>      DELETE …/upgrade',
+  '  op clear <node>            DELETE …/operation',
   '  uninstall <node> [--yes]   POST …/uninstall then signed revoke-node',
   '  pause <node>               POST …/pause (entry local; skips user traffic)',
   '  resume <node>              POST …/resume',
@@ -93,12 +114,18 @@ const USAGE = [
   '  ls          { nodes: (MeshNode & { status: "admitted"|"pending" })[] }',
   '  show        MeshNode',
   '  hubs        MeshHubsResponse',
+  '  hub-role    { kind, operationId, verb, node, admitted?, phase?, writerHubId?, error? }',
   '  rename      { ok, id, name }',
+  '  relay ls    RelayTenantStatus',
+  '  relay switch|rm|readmit  result',
+  '  ports       { node, ports: MeshPortReach[] }',
+  '  op clear    { ok, node }',
   '  allow       { node, action: "admit"|"domain-access"|"meta-key", result }',
   '  revoke      { node, result }',
   '  enroll      { id, expiresAt, joinToken, joinCommand, publicUrl, caFingerprint }',
   '  meta-key    { op: "admit"|"rotate", epoch, seq }',
   '  upgrade     { latest, outcomes: UpgradeOutcome[] }  outcome: done|failed|timeout|alreadyLatest|cancelled|unconfirmed',
+  '  upgrade cancel { node, cancelled: true }',
   '  uninstall   { node, scheduled: true, revoked: true }',
   '  pause       { ok, node }',
   '  resume      { ok, node }',
@@ -143,6 +170,7 @@ const show: SubHandler = async (ctx, _flags, positionals) => {
     ctx.out.line(`peerAddress    ${dash(node.peerAddress)}`);
     ctx.out.line(`directCapable  ${yn(node.direct_capable)}`);
     ctx.out.line(`endpoints      ${(node.endpoints ?? []).join(', ') || '-'}`);
+    printPortsTable(ctx, node.ports ?? []);
     ctx.out.data({ directFailure: node.directFailure ?? null, dcBreaker: node.dcBreaker ?? null });
   });
 };
@@ -169,6 +197,13 @@ const rename: SubHandler = async (ctx, _flags, positionals) => {
   const name = requireArg(positionals, 1, 'name');
   rejectExtra(positionals, 2);
   const node = await findMeshNode(ctx, ref);
+  if (await detectRelayUplink(ctx)) {
+    const result = await renameNodeViaKeyLog(ctx, node.id, name);
+    emit(ctx, { ok: true, id: node.id, name, result }, () =>
+      ctx.out.line(`renamed ${node.id} → ${name}`)
+    );
+    return;
+  }
   const hubId = await resolveHubNodeId(ctx);
   const result = await ctx.http.json(
     hubId,
@@ -339,29 +374,29 @@ const metaKey: SubHandler = async (ctx, flags, positionals) => {
 };
 
 const upgrade: SubHandler = async (ctx, flags, positionals) => {
-  const all = flagBool(flags, 'all');
-  const wait = all || flagBool(flags, 'wait');
-  const version = flagString(flags, 'version');
-  if (all && positionals[0]) throw new UsageError('--all does not take a node argument');
-  if (!all && !positionals[0]) throw new UsageError('missing node (or pass --all)');
-  rejectExtra(positionals, all ? 0 : 1);
+  if (positionals[0] === 'cancel') return upgradeCancel(ctx, flags, positionals.slice(1));
+  const sel = parseUpgradeInvocation(flags, positionals);
   const latest = await fetchUpgradeLatest(ctx).catch(() => null);
-  const roster = await listMeshNodesFull(ctx);
   const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
   const latestVersion = latest?.latestVersion ?? null;
-  const targets = all
-    ? roster.filter(
-        (node) =>
-          node.paused !== true &&
-          isBatchEligible(node, latestVersion, mode?.nodeId, (id) =>
-            hasCliNodeSession(ctx.http.jar, id)
-          )
-      )
-    : [await findMeshNode(ctx, positionals[0])];
-  if (all && targets.length === 0) {
+  const targets = await selectUpgradeTargets(ctx, {
+    all: sel.all,
+    ids: sel.ids,
+    nodeRef: sel.nodeRef,
+    latestVersion,
+    selfId: mode?.nodeId,
+  });
+  if ((sel.all || sel.ids.length > 0) && targets.length === 0) {
     ctx.out.info('no eligible nodes (online, logged in, version < latest)');
   }
-  const outcomes = await runUpgradeBatch(ctx, targets, latestVersion, version, wait, mode?.nodeId);
+  const outcomes = await runUpgradeBatch(
+    ctx,
+    targets,
+    latestVersion,
+    sel.version,
+    sel.wait,
+    mode?.nodeId
+  );
   emit(ctx, { latest, outcomes }, () => {
     ctx.out.table(outcomes, [
       { header: 'NODE', value: (row) => shortId(row.node) },
@@ -394,6 +429,19 @@ const uninstall: SubHandler = async (ctx, flags, positionals) => {
   );
 };
 
+const PAUSE_ERROR_TEXT: Record<string, string> = {
+  CANNOT_PAUSE_SELF: 'cannot pause this machine',
+  CANNOT_PAUSE_HUB: 'cannot pause a hub node',
+};
+
+function rethrowPauseError(error: unknown): never {
+  const text = error instanceof Error ? error.message : String(error);
+  for (const [code, message] of Object.entries(PAUSE_ERROR_TEXT)) {
+    if (text.includes(code)) throw new CliError(`${message} (${code})`);
+  }
+  throw error;
+}
+
 async function postPauseResume(
   ctx: CliContext,
   action: 'pause' | 'resume',
@@ -402,12 +450,16 @@ async function postPauseResume(
   const ref = requireArg(positionals, 0, 'node');
   rejectExtra(positionals, 1);
   const node = await findMeshNode(ctx, ref);
-  const result = await ctx.http.json(
-    SELF_NODE_ID,
-    'POST',
-    `/api/mesh/nodes/${encodeURIComponent(node.id)}/${action}`
-  );
-  emit(ctx, result, () => ctx.out.line(`${action}d ${node.name} (${node.id})`));
+  try {
+    const result = await ctx.http.json(
+      SELF_NODE_ID,
+      'POST',
+      `/api/mesh/nodes/${encodeURIComponent(node.id)}/${action}`
+    );
+    emit(ctx, result, () => ctx.out.line(`${action}d ${node.name} (${node.id})`));
+  } catch (error) {
+    rethrowPauseError(error);
+  }
 }
 
 const pause: SubHandler = async (ctx, _flags, positionals) => {
@@ -439,6 +491,10 @@ const HANDLERS: Record<string, SubHandler> = {
   pause,
   resume,
   'rtc-config': rtcConfig,
+  'hub-role': hubRole,
+  relay,
+  ports,
+  op,
 };
 
 export const command: Command = {

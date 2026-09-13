@@ -5,9 +5,13 @@ import {
   ARGON2ID_ITERATIONS,
   ARGON2ID_MEMORY_KIB,
   ARGON2ID_PARALLELISM,
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   type KeyLogType,
+  MIN_HUB_AUTH_RECORD_VERSION,
   type RootKey,
+  buildAdmitHubPayload,
   buildKeyLogRecord,
+  buildRenameNodePayload,
   bytesEqual,
   createEnrollment,
   decodeBase64url,
@@ -21,6 +25,7 @@ import {
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
 } from '@vibeterm/shared/auth';
+import { FORCE_KEYLOG_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { type AuthMode, fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { AuthError, CliError, UsageError } from './errors';
@@ -79,7 +84,7 @@ export function assertNodeHexId(nodeId: string): void {
   }
 }
 
-async function deriveRoot(mode: AuthMode, password: string): Promise<RootKey> {
+export async function deriveRootFromMode(mode: AuthMode, password: string): Promise<RootKey> {
   if (!mode.uid || !mode.kdfParams || mode.rootEpoch === null || mode.rootEpoch === undefined) {
     throw new CliError('auth mode is missing uid/kdf/rootEpoch; cannot sign');
   }
@@ -108,7 +113,7 @@ export async function withRootKey<T>(
     throw new CliError('this entry is not a mesh instance');
   }
   const password = await readAccountPassword();
-  const root = await deriveRoot(mode, password);
+  const root = await deriveRootFromMode(mode, password);
   try {
     return await run(root, mode);
   } finally {
@@ -140,12 +145,21 @@ export interface KeyLogAppendResult {
 export async function appendKeyLog(
   ctx: CliContext,
   bytes: Uint8Array,
-  sig: Uint8Array
+  sig: Uint8Array,
+  options?: { force?: boolean }
 ): Promise<KeyLogAppendResult> {
-  return ctx.http.json(SELF_NODE_ID, 'POST', '/api/auth/keylog?hub=sync', {
-    bytes: encodeBase64url(bytes),
-    sig: encodeBase64url(sig),
-  });
+  const headers = new Headers();
+  if (options?.force) {
+    headers.set(FORCE_KEYLOG_HEADER.name, '1');
+    headers.set(FORCE_KEYLOG_HEADER.legacy, '1');
+  }
+  return ctx.http.json(
+    SELF_NODE_ID,
+    'POST',
+    '/api/auth/keylog?hub=sync',
+    { bytes: encodeBase64url(bytes), sig: encodeBase64url(sig) },
+    { headers }
+  );
 }
 
 export function assertKeyLogAppended(result: KeyLogAppendResult, action: string): void {
@@ -288,5 +302,137 @@ export async function revokeNode(
     const result = await appendKeyLog(ctx, signed.bytes, signed.sig);
     assertKeyLogAppended(result, 'revoke');
     return result;
+  });
+}
+
+export async function renameNodeViaKeyLog(
+  ctx: CliContext,
+  nodeId: string,
+  name: string
+): Promise<KeyLogAppendResult> {
+  assertNodeHexId(nodeId);
+  let payload: Uint8Array;
+  try {
+    payload = buildRenameNodePayload({ nodeId: hexToBytes(nodeId), name });
+  } catch {
+    throw new UsageError(`invalid node name: ${name}`);
+  }
+  return withRootKey(ctx, async (root, mode) => {
+    const head = await keyLogHead(ctx);
+    const signed = signRecord(root, head, mode, 'rename-node', payload);
+    const result = await appendKeyLog(ctx, signed.bytes, signed.sig);
+    assertKeyLogAppended(result, 'rename');
+    return result;
+  });
+}
+
+export interface UnsupportedKeyLogNode {
+  id: string;
+  name: string;
+  version: string | null;
+}
+
+export type AdmitHubAppendOutcome =
+  | { kind: 'ok'; result: KeyLogAppendResult }
+  | { kind: 'unsupportedNodes'; minVersion: string; nodes: UnsupportedKeyLogNode[] }
+  | { kind: 'failed'; code: string };
+
+function parseUnsupportedNodes(value: unknown): UnsupportedKeyLogNode[] {
+  if (!Array.isArray(value)) return [];
+  const nodes: UnsupportedKeyLogNode[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const node = item as Partial<UnsupportedKeyLogNode>;
+    if (typeof node.id !== 'string') continue;
+    nodes.push({
+      id: node.id,
+      name: typeof node.name === 'string' ? node.name : node.id.slice(0, 8),
+      version: typeof node.version === 'string' ? node.version : null,
+    });
+  }
+  return nodes;
+}
+
+function envelopeCode(body: Record<string, unknown>, fallback: string): string {
+  if (typeof body.code === 'string') return body.code;
+  if (typeof body.error === 'string') return body.error;
+  return fallback;
+}
+
+async function appendKeyLogRaw(
+  ctx: CliContext,
+  bytes: Uint8Array,
+  sig: Uint8Array,
+  force: boolean
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (force) {
+    headers[FORCE_KEYLOG_HEADER.name] = '1';
+    headers[FORCE_KEYLOG_HEADER.legacy] = '1';
+  }
+  const response = await ctx.http.fetch(SELF_NODE_ID, '/api/auth/keylog?hub=sync', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ bytes: encodeBase64url(bytes), sig: encodeBase64url(sig) }),
+  });
+  let body: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = await response.json();
+    if (parsed && typeof parsed === 'object') body = parsed as Record<string, unknown>;
+  } catch {
+    // 非 JSON
+  }
+  return { status: response.status, body };
+}
+
+export async function admitHubViaKeyLog(
+  ctx: CliContext,
+  input: { hubNodeId: string; publicUrl: string | null; priority?: number | null; force?: boolean }
+): Promise<AdmitHubAppendOutcome> {
+  assertNodeHexId(input.hubNodeId);
+  return withRootKey(ctx, async (root, mode) => {
+    const head = await keyLogHead(ctx);
+    const signed = signRecord(
+      root,
+      head,
+      mode,
+      'admit-hub',
+      buildAdmitHubPayload({
+        hubNodeId: hexToBytes(input.hubNodeId),
+        publicUrl: input.publicUrl,
+        priority: input.priority ?? null,
+      })
+    );
+    const { status, body } = await appendKeyLogRaw(
+      ctx,
+      signed.bytes,
+      signed.sig,
+      input.force === true
+    );
+    if (status >= 200 && status < 300) {
+      const result: KeyLogAppendResult = {
+        ok: body.ok !== false,
+        seq: typeof body.seq === 'number' || typeof body.seq === 'string' ? body.seq : undefined,
+        hubAck: typeof body.hubAck === 'boolean' ? body.hubAck : undefined,
+        hubError: typeof body.hubError === 'string' ? body.hubError : undefined,
+        relayAck: typeof body.relayAck === 'boolean' ? body.relayAck : undefined,
+        relayError: typeof body.relayError === 'string' ? body.relayError : undefined,
+        code: typeof body.code === 'string' ? body.code : undefined,
+      };
+      if (result.hubAck !== true) {
+        return { kind: 'failed', code: result.hubError || 'HUB_UNCONFIRMED' };
+      }
+      return { kind: 'ok', result };
+    }
+    const code = envelopeCode(body, 'KEY_LOG_REJECTED');
+    if (code === KEYLOG_TYPE_UNSUPPORTED_BY_NODES) {
+      return {
+        kind: 'unsupportedNodes',
+        minVersion:
+          typeof body.minVersion === 'string' ? body.minVersion : MIN_HUB_AUTH_RECORD_VERSION,
+        nodes: parseUnsupportedNodes(body.nodes),
+      };
+    }
+    return { kind: 'failed', code };
   });
 }
