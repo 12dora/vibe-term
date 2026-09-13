@@ -14,6 +14,7 @@ const CODE_STATUS: Record<FileErrorCode, number> = {
   device_not_found: 404,
   root_not_found: 404,
   root_disabled: 403,
+  root_virtual: 400,
   connection_failed: 502,
   auth_unsupported: 400,
   rsync_missing_local: 502,

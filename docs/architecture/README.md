@@ -37,7 +37,8 @@
 | [mobile-keyboard.md](./mobile-keyboard.md) | 移动端软键盘避让与唤起 |
 | [terminal-share.md](./terminal-share.md) | 终端分享 |
 | [device-tree-reorder.md](./device-tree-reorder.md) | 设备树拖拽排序 |
-| [file-transfer.md](./file-transfer.md) | 浏览器文件传输：分块上传、流式下载、`POST /api/files/mkdir` 与上传路径安全 |
+| [file-transfer.md](./file-transfer.md) | 浏览器文件传输：分块上传、流式下载、`POST /api/files/mkdir`、本机免 rsync 与虚拟 `home` 根 |
+| [remote-exec.md](./remote-exec.md) | 非交互远程执行 `POST /api/exec` 与主机快照 `GET /api/system/facts` |
 
 ## Agent、Watch、通知与消息
 

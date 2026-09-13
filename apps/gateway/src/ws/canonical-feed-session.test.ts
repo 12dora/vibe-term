@@ -4,10 +4,12 @@ import { wsBorsh } from '@vibeterm/shared';
 import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
 import type { PaneHistoryCursor, PaneHistoryPage } from '../tmux-client/pane-history-reader';
 import {
+  CANONICAL_MAX_HELD_PANE_BYTES_SMALL,
   PaneRetention,
   type PaneRetentionConsumerCallbacks,
   type PaneScreenCheckpoint,
   type PaneTerminalCursor,
+  canonicalMaxHeldPaneBytes,
 } from '../tmux-client/pane-retention';
 import {
   CANONICAL_MAX_SCREEN_BYTES,
@@ -929,59 +931,119 @@ describe('canonical feed session', () => {
   });
 
   test('bounds held output and aborts the screen transaction with an explicit gap on overflow', async () => {
-    const runtime = new FakeRuntime();
-    const events: wsBorsh.CanonicalEvent[] = [];
-    const session = new CanonicalFeedSession({
-      maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
-      sendEvent: (event) => {
-        events.push(event);
-        return true;
-      },
-      resolveRuntime: async () => runtime,
-    });
-    await session.handleCommand({
-      SetPaneSubscriptions: {
-        generation: 1n,
-        activePanes: [{ pane: target(), cursor: null }],
-        hotPanes: [],
-      },
-    });
-    events.length = 0;
-    const capture = installDelayedScreenCapture(runtime);
+    process.env.VIBETERM_MEMORY_PROFILE = 'standard';
+    try {
+      const runtime = new FakeRuntime();
+      const events: wsBorsh.CanonicalEvent[] = [];
+      const session = new CanonicalFeedSession({
+        maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+        sendEvent: (event) => {
+          events.push(event);
+          return true;
+        },
+        resolveRuntime: async () => runtime,
+      });
+      await session.handleCommand({
+        SetPaneSubscriptions: {
+          generation: 1n,
+          activePanes: [{ pane: target(), cursor: null }],
+          hotPanes: [],
+        },
+      });
+      events.length = 0;
+      const capture = installDelayedScreenCapture(runtime);
 
-    await session.handleCommand({
-      RequestScreen: {
-        requestId: REQUEST_ID,
-        pane: target(),
-        byteLimit: CANONICAL_MAX_SCREEN_BYTES,
-      },
-    });
-    await capture.barrier;
-    const chunk = 'x'.repeat(GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES);
-    const chunkCount =
-      Math.floor(CANONICAL_MAX_HELD_PANE_BYTES / GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) + 1;
-    for (let index = 0; index < chunkCount; index += 1) runtime.output(chunk);
+      await session.handleCommand({
+        RequestScreen: {
+          requestId: REQUEST_ID,
+          pane: target(),
+          byteLimit: CANONICAL_MAX_SCREEN_BYTES,
+        },
+      });
+      await capture.barrier;
+      const chunk = 'x'.repeat(GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES);
+      const chunkCount =
+        Math.floor(CANONICAL_MAX_HELD_PANE_BYTES / GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) + 1;
+      for (let index = 0; index < chunkCount; index += 1) runtime.output(chunk);
 
-    expect(events.map((event) => Object.keys(event)[0])).toEqual(['SourceGap']);
-    const gap = events[0];
-    expect(gap && 'SourceGap' in gap ? gap.SourceGap : null).toEqual({
-      reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
-      scope: { Stream: {} },
-    });
-    expect(session.snapshotStats()).toMatchObject({
-      gatedPanes: 1,
-      paneDataDrops: 1,
-      paneDataDropBytes: chunkCount * GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
-    });
+      expect(events.map((event) => Object.keys(event)[0])).toEqual(['SourceGap']);
+      const gap = events[0];
+      expect(gap && 'SourceGap' in gap ? gap.SourceGap : null).toEqual({
+        reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
+        scope: { Stream: {} },
+      });
+      expect(session.snapshotStats()).toMatchObject({
+        gatedPanes: 1,
+        paneDataDrops: 1,
+        paneDataDropBytes: chunkCount * GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
+      });
 
-    capture.release();
-    await Bun.sleep(0);
-    expect(events.some((event) => 'ScreenBegin' in event || 'ScreenCommit' in event)).toBe(false);
-    expect(session.snapshotStats()).toMatchObject({
-      gatedPanes: 0,
-      screenTransactionsFailed: 1,
-    });
-    session.close();
+      capture.release();
+      await Bun.sleep(0);
+      expect(events.some((event) => 'ScreenBegin' in event || 'ScreenCommit' in event)).toBe(false);
+      expect(session.snapshotStats()).toMatchObject({
+        gatedPanes: 0,
+        screenTransactionsFailed: 1,
+      });
+      session.close();
+    } finally {
+      delete process.env.VIBETERM_MEMORY_PROFILE;
+    }
+  });
+
+  test('small profile trips held-output gap at 1 MiB', async () => {
+    process.env.VIBETERM_MEMORY_PROFILE = 'small';
+    try {
+      expect(canonicalMaxHeldPaneBytes()).toBe(CANONICAL_MAX_HELD_PANE_BYTES_SMALL);
+      const runtime = new FakeRuntime();
+      const events: wsBorsh.CanonicalEvent[] = [];
+      const session = new CanonicalFeedSession({
+        maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+        sendEvent: (event) => {
+          events.push(event);
+          return true;
+        },
+        resolveRuntime: async () => runtime,
+      });
+      await session.handleCommand({
+        SetPaneSubscriptions: {
+          generation: 1n,
+          activePanes: [{ pane: target(), cursor: null }],
+          hotPanes: [],
+        },
+      });
+      events.length = 0;
+      const capture = installDelayedScreenCapture(runtime);
+
+      await session.handleCommand({
+        RequestScreen: {
+          requestId: REQUEST_ID,
+          pane: target(),
+          byteLimit: CANONICAL_MAX_SCREEN_BYTES,
+        },
+      });
+      await capture.barrier;
+      const chunk = 'x'.repeat(GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES);
+      const chunkCount =
+        Math.floor(CANONICAL_MAX_HELD_PANE_BYTES_SMALL / GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) + 1;
+      for (let index = 0; index < chunkCount; index += 1) runtime.output(chunk);
+
+      expect(events.map((event) => Object.keys(event)[0])).toEqual(['SourceGap']);
+      const gap = events[0];
+      expect(gap && 'SourceGap' in gap ? gap.SourceGap : null).toEqual({
+        reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
+        scope: { Stream: {} },
+      });
+      expect(session.snapshotStats()).toMatchObject({
+        gatedPanes: 1,
+        paneDataDrops: 1,
+        paneDataDropBytes: chunkCount * GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
+      });
+      capture.release();
+      session.close();
+    } finally {
+      delete process.env.VIBETERM_MEMORY_PROFILE;
+    }
   });
 
   test('bounds pending pane gaps and escalates overflow to one stream rebase', async () => {

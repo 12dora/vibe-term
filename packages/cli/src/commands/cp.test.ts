@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { buildContext } from '../core/context';
-import { CliError, UsageError } from '../core/errors';
+import { type CliError, NetworkError, UsageError } from '../core/errors';
+import { type FileRootDto, RSYNC_MISSING_LOCAL_MESSAGE } from '../core/files-api';
+import { VIRTUAL_HOME_ROOT_ID } from '../core/files-path';
 import type { FetchLike } from '../core/http';
 import { command as cp } from './cp';
 
@@ -82,6 +84,9 @@ interface RouterState {
   events?: unknown[];
   jobGet?: unknown;
   listTruncated?: boolean;
+  roots?: FileRootDto[];
+  inits?: Array<{ rootId?: string }>;
+  rsyncMissing?: 'stat' | 'commit' | 'prepare';
 }
 
 function router(state: RouterState): FetchLike {
@@ -95,8 +100,11 @@ function router(state: RouterState): FetchLike {
       });
     }
     if (path === '/api/auth/mode') return json({ mode: 'mesh', nodeId: NODE });
-    if (path === '/api/files/roots') return json({ roots: [ROOT] });
+    if (path === '/api/files/roots') return json({ roots: state.roots ?? [ROOT] });
     if (path === '/api/files/stat') {
+      if (state.rsyncMissing === 'stat') {
+        return json({ error: 'rsync missing', code: 'rsync_missing_local' }, 502);
+      }
       const target = url.searchParams.get('path') ?? '';
       if (target === '/home/me' || target.endsWith('/docs')) {
         return json({
@@ -132,6 +140,9 @@ function router(state: RouterState): FetchLike {
       return json({ path: body.path, created: true });
     }
     if (path === '/api/files/upload/init') {
+      const body = (await request.json().catch(() => ({}))) as { rootId?: string };
+      if (!state.inits) state.inits = [];
+      state.inits.push(body);
       return json({ uploadId: 'up-1', chunkSize: 8, ranged: true });
     }
     if (path === '/api/files/upload/up-1' && request.method === 'GET') {
@@ -159,6 +170,9 @@ function router(state: RouterState): FetchLike {
       return new Response(null, { status: 204 });
     }
     if (path === '/api/files/upload/up-1/commit') {
+      if (state.rsyncMissing === 'commit') {
+        return json({ error: 'rsync missing', code: 'rsync_missing_local' }, 502);
+      }
       return ndjson(
         state.commitEvents ?? [
           { type: 'progress', transferred: 3, pct: 100, rate: '1 B/s' },
@@ -167,6 +181,9 @@ function router(state: RouterState): FetchLike {
       );
     }
     if (path === '/api/files/download/prepare') {
+      if (state.rsyncMissing === 'prepare') {
+        return json({ error: 'rsync missing', code: 'rsync_missing_local' }, 502);
+      }
       return ndjson(
         state.prepareEvents ?? [
           { type: 'progress', transferred: 3, pct: 100 },
@@ -450,5 +467,126 @@ describe('vibeterm cp', () => {
     const { ctx, stdout } = await testContext(router(state), { json: true });
     await cp.run(ctx, ['-r', tmp, 'home/docs']);
     expect(stdout.text()).toContain('"reason":"symlink"');
+  });
+
+  test('json progress events include ratePerSec, etaSec, and file', async () => {
+    const { ctx, stdout } = await testContext(router({ puts: [], bodies: [] }), { json: true });
+    await cp.run(ctx, ['office:home/a.txt', 'office:home/docs']);
+    const progress = stdout
+      .text()
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((event) => event.type === 'progress');
+    expect(progress).toBeDefined();
+    expect(progress).toHaveProperty('ratePerSec');
+    expect(progress).toHaveProperty('etaSec');
+    expect(progress?.file).toBe('a.txt');
+    expect(progress?.ratePerSec).toBe(1);
+    expect(progress?.etaSec).toBe(0);
+  });
+
+  test('virtual home-root is accepted without a user-created root', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const state: RouterState = {
+      puts: [],
+      bodies: [],
+      roots: [
+        {
+          id: VIRTUAL_HOME_ROOT_ID,
+          name: 'home',
+          path: '/home/me',
+          deviceId: 'd-1',
+          deviceName: 'laptop',
+          deviceType: 'local',
+          enabled: true,
+          sortOrder: 0,
+          virtual: true,
+        },
+      ],
+    };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, [src, 'office:home/docs']);
+    expect(state.inits?.[0]?.rootId).toBe(VIRTUAL_HOME_ROOT_ID);
+    await cp.run(ctx, [src, `office:${VIRTUAL_HOME_ROOT_ID}/docs`]);
+    expect(state.inits?.[1]?.rootId).toBe(VIRTUAL_HOME_ROOT_ID);
+  });
+
+  test('user-created home wins over virtual home-root', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const state: RouterState = {
+      puts: [],
+      bodies: [],
+      roots: [
+        {
+          id: VIRTUAL_HOME_ROOT_ID,
+          name: 'home',
+          path: '/home/me',
+          deviceId: 'd-1',
+          deviceName: 'laptop',
+          deviceType: 'local',
+          enabled: true,
+          sortOrder: 0,
+          virtual: true,
+        },
+        ROOT,
+      ],
+    };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, [src, 'home/docs']);
+    expect(state.inits?.[0]?.rootId).toBe(ROOT_ID);
+  });
+
+  test('home-root id still copies when a user home root shadows the virtual entry', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const state: RouterState = { puts: [], bodies: [], roots: [ROOT] };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, [src, `office:${VIRTUAL_HOME_ROOT_ID}/docs`]);
+    expect(state.inits?.[0]?.rootId).toBe(ROOT_ID);
+  });
+
+  test('502 rsync_missing_local prints the agent hint and exits 5', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const { ctx } = await testContext(router({ puts: [], bodies: [], rsyncMissing: 'stat' }));
+    const error = (await cp.run(ctx, [src, 'home/docs']).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(NetworkError);
+    expect(error.exitCode).toBe(5);
+    expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
+  });
+
+  test('commit 502 rsync_missing_local is the same exit 5', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const { ctx } = await testContext(router({ puts: [], bodies: [], rsyncMissing: 'commit' }));
+    const error = (await cp.run(ctx, [src, 'home/docs']).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(NetworkError);
+    expect(error.exitCode).toBe(5);
+    expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
+  });
+
+  test('prepare 502 rsync_missing_local is the same exit 5', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'vibeterm-cli-dst-'));
+    dirs.push(tmp);
+    const dest = join(tmp, 'out.txt');
+    const { ctx } = await testContext(router({ puts: [], bodies: [], rsyncMissing: 'prepare' }));
+    const error = (await cp.run(ctx, ['home/a.txt', dest]).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(NetworkError);
+    expect(error.exitCode).toBe(5);
+    expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
+  });
+
+  test('NDJSON commit rsync_missing_local is exit 5', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const { ctx } = await testContext(
+      router({
+        puts: [],
+        bodies: [],
+        commitEvents: [{ type: 'error', code: 'rsync_missing_local', detail: 'missing' }],
+      })
+    );
+    const error = (await cp.run(ctx, [src, 'home/docs']).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(NetworkError);
+    expect(error.exitCode).toBe(5);
+    expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
   });
 });

@@ -1675,6 +1675,7 @@ export type TranslationKey =
   | 'files.error.device_not_found'
   | 'files.error.root_not_found'
   | 'files.error.root_disabled'
+  | 'files.error.root_virtual'
   | 'files.error.connection_failed'
   | 'files.error.auth_unsupported'
   | 'files.error.rsync_missing_local'

@@ -1880,6 +1880,7 @@
         "device_not_found": "Device not found",
         "root_not_found": "Directory entry not found",
         "root_disabled": "This directory is disabled",
+        "root_virtual": "Virtual directory cannot be modified or deleted",
         "connection_failed": "Failed to connect to the device",
         "auth_unsupported": "Device auth method unsupported for files (use key or ssh-agent)",
         "rsync_missing_local": "rsync is not installed on the server",

@@ -1,11 +1,13 @@
 // rootId → 文件根记录的唯一解析入口。所有按 rootId 取目录的调用（浏览 / 传输 / 上传下载）
-// 都必须经过这里，虚拟根 `fs-root` 才不会出现「一处认、另一处不认」的缝。
+// 都必须经过这里，虚拟根 `fs-root` / `home-root` 才不会出现「一处认、另一处不认」的缝。
 //
-// 虚拟根语义：节点一条启用的白名单根都没有时，`fs-root` 折算成本机设备的 `/`，
-// 让传输弹窗至少能浏览起来；只要存在任意一条启用的根，白名单模型立即恢复独占，
-// `fs-root` 与任何不存在的 id 一样返回 `root_not_found`。
+// `fs-root`：节点一条启用的白名单根都没有时，折算成本机设备的 `/`；一旦存在启用根即失效。
+// `home-root`：绑定本机设备 `$HOME`（realpath），不论是否已有其它根都可解析；
+// 用户创建的启用根展示名为 `home` 时，该用户根胜出（resolve 返回用户根，列表不再附带虚拟项）。
 
-import { type FileErrorCode, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
+import { realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { type FileErrorCode, VIRTUAL_FS_ROOT_ID, VIRTUAL_HOME_ROOT_ID } from '@vibeterm/shared';
 import { getAllDevices } from '../db';
 import { type FileRootRecord, getFileRootById, getFileRoots } from '../db/file-roots';
 
@@ -17,25 +19,77 @@ export function hasEnabledFileRoots(): boolean {
   return getFileRoots().some((root) => root.enabled);
 }
 
+export function rootDisplayName(p: string): string {
+  if (p === '/') return '/';
+  const trimmed = p.replace(/\/$/, '');
+  const i = trimmed.lastIndexOf('/');
+  const base = i >= 0 ? trimmed.slice(i + 1) : trimmed;
+  return base || p;
+}
+
+function firstLocalDevice(): ReturnType<typeof getAllDevices>[number] | undefined {
+  return getAllDevices().find((item) => item.type === 'local');
+}
+
+function virtualRecord(
+  id: string,
+  deviceId: string,
+  path: string,
+  createdAt: string,
+  sortOrder: number
+): FileRootRecord {
+  return { id, deviceId, path, enabled: true, sortOrder, createdAt };
+}
+
 function virtualFsRoot(): ResolveFileRootResult {
   if (hasEnabledFileRoots()) return { ok: false, code: 'root_not_found' };
-  const device = getAllDevices().find((item) => item.type === 'local');
+  const device = firstLocalDevice();
   if (!device) return { ok: false, code: 'device_not_found' };
+  return { ok: true, root: virtualRecord(VIRTUAL_FS_ROOT_ID, device.id, '/', device.createdAt, 0) };
+}
+
+export function userEnabledRootNamedHome(): FileRootRecord | null {
+  return (
+    getFileRoots().find((root) => root.enabled && rootDisplayName(root.path) === 'home') ?? null
+  );
+}
+
+function homeDirRealPath(): string | null {
+  try {
+    return realpathSync(homedir());
+  } catch {
+    return null;
+  }
+}
+
+function synthesizeHomeRoot(): ResolveFileRootResult {
+  const device = firstLocalDevice();
+  if (!device) return { ok: false, code: 'device_not_found' };
+  const path = homeDirRealPath();
+  if (!path) return { ok: false, code: 'root_not_found' };
+  const persisted = getFileRoots();
+  const sortOrder = persisted.length === 0 ? 0 : persisted[persisted.length - 1].sortOrder + 1;
   return {
     ok: true,
-    root: {
-      id: VIRTUAL_FS_ROOT_ID,
-      deviceId: device.id,
-      path: '/',
-      enabled: true,
-      sortOrder: 0,
-      createdAt: device.createdAt,
-    },
+    root: virtualRecord(VIRTUAL_HOME_ROOT_ID, device.id, path, device.createdAt, sortOrder),
   };
+}
+
+function virtualHomeRoot(): ResolveFileRootResult {
+  const shadowed = userEnabledRootNamedHome();
+  if (shadowed) return { ok: true, root: shadowed };
+  return synthesizeHomeRoot();
+}
+
+export function virtualHomeRootForList(): FileRootRecord | null {
+  if (userEnabledRootNamedHome()) return null;
+  const made = synthesizeHomeRoot();
+  return made.ok ? made.root : null;
 }
 
 export function resolveFileRoot(rootId: string): ResolveFileRootResult {
   if (rootId === VIRTUAL_FS_ROOT_ID) return virtualFsRoot();
+  if (rootId === VIRTUAL_HOME_ROOT_ID) return virtualHomeRoot();
   const root = getFileRootById(rootId);
   if (!root) return { ok: false, code: 'root_not_found' };
   if (!root.enabled) return { ok: false, code: 'root_disabled' };

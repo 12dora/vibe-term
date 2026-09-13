@@ -7,6 +7,7 @@ import type { BrowseDirectoryEntryDto, BrowseDirectoryResponse, Device } from '@
 import { getDeviceById } from '../db';
 import { quoteShellArg } from '../tmux-client/command-builder';
 import { MAX_ENTRIES } from './categorize';
+import { mapFsError } from './local-fs';
 import { classifyRsyncFailure } from './rsync';
 import {
   type DeviceRsyncHooks,
@@ -56,16 +57,6 @@ function capEntries(entries: BrowseDirectoryEntryDto[]): {
   return { entries: truncated ? entries.slice(0, MAX_ENTRIES) : entries, truncated };
 }
 
-function mapNodeFsError(err: unknown): FileOpResult<never> {
-  const code =
-    err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : '';
-  if (code === 'ENOENT') return fail('not_found');
-  if (code === 'ENOTDIR') return fail('not_a_directory');
-  if (code === 'EACCES' || code === 'EPERM') return fail('permission_denied');
-  if (code === 'ETIMEDOUT') return fail('timeout');
-  return fail('unknown');
-}
-
 function normalizeRequestedPath(raw: string): FileOpResult<string | null> {
   const trimmed = raw.trim();
   if (trimmed === '') return ok(null);
@@ -92,7 +83,7 @@ async function browseLocal(
   try {
     st = await stat(absPath);
   } catch (err) {
-    return mapNodeFsError(err);
+    return mapFsError(err);
   }
   if (!st.isDirectory()) return fail('not_a_directory');
 
@@ -100,7 +91,7 @@ async function browseLocal(
   try {
     dirents = await readdir(absPath, { withFileTypes: true });
   } catch (err) {
-    return mapNodeFsError(err);
+    return mapFsError(err);
   }
 
   const entries: BrowseDirectoryEntryDto[] = [];

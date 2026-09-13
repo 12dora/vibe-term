@@ -60,6 +60,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'TRANSFER_CAPABILITIES',
   'UPGRADE_CANCELLED',
   'VIRTUAL_FS_ROOT_ID',
+  'VIRTUAL_HOME_ROOT_ID',
   'b',
   'basename',
   'collectLayoutLeaves',

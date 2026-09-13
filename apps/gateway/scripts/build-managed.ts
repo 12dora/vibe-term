@@ -1,6 +1,9 @@
 /**
  * Managed standalone Gateway 编译入口。
  *
+ * `bun build --compile` 把动态 import 内联进单一可执行文件，不产出
+ * dist/runtime/chunks/；与 packages/app 的 ESM splitting 运行时包是两条产物路径。
+ *
  * 固定 target matrix：darwin-arm64 / darwin-x64 / linux-arm64 / linux-x64 /
  * windows-x64-baseline / windows-arm64。
  * 仅当前宿主三元组真实 `bun build --compile`；其余目标只输出定义，不假装 PASS。

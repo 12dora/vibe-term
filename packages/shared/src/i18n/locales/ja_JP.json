@@ -1880,6 +1880,7 @@
         "device_not_found": "デバイスが見つかりません",
         "root_not_found": "ディレクトリ項目が見つかりません",
         "root_disabled": "このディレクトリは無効です",
+        "root_virtual": "仮想ディレクトリは変更・削除できません",
         "connection_failed": "デバイスへの接続に失敗しました",
         "auth_unsupported": "このデバイスの認証方式はファイルアクセスに非対応です（鍵か ssh-agent を使用）",
         "rsync_missing_local": "サーバーに rsync がインストールされていません",

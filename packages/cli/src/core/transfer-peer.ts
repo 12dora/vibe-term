@@ -4,9 +4,9 @@
 import { sleepOrAbort } from '@vibeterm/shared/async';
 import type { CliContext } from './context';
 import { CliError, InterruptError, UsageError, throwIfAborted } from './errors';
-import { filesJson, resolveMeshId } from './files-api';
+import { assertFilesOk, filesJson, resolveMeshId } from './files-api';
 import { consumeNdjson } from './transfer-ndjson';
-import { type CopyProgress, pctOf } from './transfer-progress';
+import { type CopyProgress, emitTrackedProgress } from './transfer-progress';
 
 export type OnConflict = 'skip' | 'overwrite' | 'rename';
 
@@ -124,17 +124,11 @@ async function followJob(
     `/api/transfer/jobs/${encodeURIComponent(initial.jobId)}/events`,
     { timeoutMs: null, signal }
   );
-  await ctx.http.assertOk(sourceNodeId, response, `/api/transfer/jobs/${initial.jobId}/events`);
+  await assertFilesOk(sourceNodeId, response, `/api/transfer/jobs/${initial.jobId}/events`);
   await consumeNdjson<TransferJobEvent>(response, (event) => {
     snapshot = applyEvent(snapshot, event);
     if (event.type === 'progress') {
-      progress.emit({
-        type: 'progress',
-        phase: 'transfer',
-        bytes: event.progress.transferredBytes,
-        total: event.progress.totalBytes,
-        pct: pctOf(event.progress.transferredBytes, event.progress.totalBytes),
-      });
+      emitPeerProgress(progress, snapshot, event.progress);
     } else if (event.type === 'item') {
       progress.emit({ type: 'item', path: event.item.relPath });
     } else if (event.type === 'snapshot') {
@@ -188,14 +182,20 @@ function finishJob(snapshot: TransferJobSnapshot): TransferJobSnapshot {
   return snapshot;
 }
 
+function currentRelPath(snapshot: TransferJobSnapshot): string | null {
+  return snapshot.items[snapshot.currentIndex]?.relPath ?? null;
+}
+
+function emitPeerProgress(
+  progress: CopyProgress,
+  snapshot: TransferJobSnapshot,
+  sample: TransferProgressDto
+): void {
+  emitTrackedProgress(progress, 'transfer', sample, { file: currentRelPath(snapshot) });
+}
+
 function reportSnapshot(progress: CopyProgress, snapshot: TransferJobSnapshot): void {
-  progress.emit({
-    type: 'progress',
-    phase: 'transfer',
-    bytes: snapshot.progress.transferredBytes,
-    total: snapshot.progress.totalBytes,
-    pct: pctOf(snapshot.progress.transferredBytes, snapshot.progress.totalBytes),
-  });
+  emitPeerProgress(progress, snapshot, snapshot.progress);
 }
 
 function applyEvent(current: TransferJobSnapshot, event: TransferJobEvent): TransferJobSnapshot {

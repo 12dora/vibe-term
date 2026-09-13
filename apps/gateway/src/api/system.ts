@@ -8,6 +8,7 @@ import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../syste
 import { awaitRelayEntryProbe, relayEntryAccessUrl } from '../system/relay-entry';
 import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade';
 import { json } from './http';
+import { handleSystemFacts } from './system-facts';
 
 // 构建期 define：managed compile 为 true，使自更新模块落入死分支并被剔除。
 declare const VIBETERM_MANAGED_BUILD: boolean | undefined;
@@ -48,6 +49,10 @@ export function handleSystemApiRequest(
         'staged-package-ranged',
       ],
     });
+  }
+
+  if (path === '/api/system/facts' && req.method === 'GET') {
+    return handleSystemFacts();
   }
 
   if (path === '/api/system/addresses' && req.method === 'GET') {

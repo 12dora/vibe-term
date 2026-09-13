@@ -28,6 +28,8 @@ export const CLIENT_CLI_COMMANDS: ReadonlySet<string> = new Set([
   'watch',
   'agent',
   'settings',
+  'exec',
+  'system',
 ]);
 
 export function isClientCliCommand(command: string | null | undefined): boolean {

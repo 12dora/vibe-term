@@ -1,4 +1,8 @@
-import type { FileRootDto, UpdateFileRootRequest } from '@vibeterm/shared';
+import {
+  type FileRootDto,
+  type UpdateFileRootRequest,
+  VIRTUAL_HOME_ROOT_ID,
+} from '@vibeterm/shared';
 import { getDeviceById } from '../db';
 import {
   type FileRootRecord,
@@ -9,19 +13,14 @@ import {
   reorderFileRoots,
   updateFileRoot,
 } from '../db/file-roots';
+import { rootDisplayName, virtualHomeRootForList } from '../files/file-root';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import { codeError } from './file-http';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 
-function rootDisplayName(p: string): string {
-  if (p === '/') return '/';
-  const i = p.replace(/\/$/, '').lastIndexOf('/');
-  const base = i >= 0 ? p.replace(/\/$/, '').slice(i + 1) : p;
-  return base || p;
-}
-
-function toRootDto(root: FileRootRecord): FileRootDto {
+function toRootDto(root: FileRootRecord, virtual = false): FileRootDto {
   const device = getDeviceById(root.deviceId);
   return {
     id: root.id,
@@ -29,14 +28,22 @@ function toRootDto(root: FileRootRecord): FileRootDto {
     deviceName: device?.name ?? null,
     deviceType: device?.type ?? null,
     path: root.path,
-    name: rootDisplayName(root.path),
+    name: virtual ? 'home' : rootDisplayName(root.path),
     enabled: root.enabled,
     sortOrder: root.sortOrder,
+    ...(virtual ? { virtual: true } : {}),
   };
 }
 
 function listRootDtos(): FileRootDto[] {
-  return getFileRoots().map(toRootDto);
+  const persisted = getFileRoots().map((root) => toRootDto(root));
+  const home = virtualHomeRootForList();
+  return home ? [...persisted, toRootDto(home, true)] : persisted;
+}
+
+function rejectVirtualMutation(id: string): Response | null {
+  if (id === VIRTUAL_HOME_ROOT_ID) return codeError('root_virtual');
+  return null;
 }
 
 function handleListRoots(): Response {
@@ -145,11 +152,17 @@ export const fileRootRoutes: ApiRoute[] = [
   route({
     method: 'PATCH',
     path: '/api/files/roots/:id',
-    handler: (req, params) => handleUpdateRoot(req, decodeURIComponent(params.id)),
+    handler: (req, params) => {
+      const id = decodeURIComponent(params.id);
+      return rejectVirtualMutation(id) ?? handleUpdateRoot(req, id);
+    },
   }),
   route({
     method: 'DELETE',
     path: '/api/files/roots/:id',
-    handler: (_req, params) => handleDeleteRoot(decodeURIComponent(params.id)),
+    handler: (_req, params) => {
+      const id = decodeURIComponent(params.id);
+      return rejectVirtualMutation(id) ?? handleDeleteRoot(id);
+    },
   }),
 ];

@@ -6,7 +6,7 @@
 
 | 目录 | 放什么 |
 | --- | --- |
-| [`architecture/`](./architecture/README.md) | 系统如何工作：多节点互联（mesh / hub / 中继 / 直连 / 端口映射）、WebSocket 协议与状态机、终端底座与视口、文件传输、分享、Agent、Watch、通知与消息指令 |
+| [`architecture/`](./architecture/README.md) | 系统如何工作：多节点互联（mesh / hub / 中继 / 直连 / 端口映射）、WebSocket 协议与状态机、终端底座与视口、文件传输、远程执行、分享、Agent、Watch、通知与消息指令 |
 | [`operations/`](./operations/README.md) | 部署与运维手册：安装、mesh 与多 hub 运维、容器节点、HTTPS / 端口 / 隧道、进程存活、发版 / 签名 / 升级 / 改名迁移 |
 | [`security/`](./security/README.md) | 登录面安全模型与访问策略（mesh 的威胁模型在 `architecture/mesh-architecture.md`） |
 | [`development/`](./development/README.md) | 开发与测试：环境变量、前端包结构与外壳行为、性能基准、字体流水线、实测 harness |
@@ -48,7 +48,8 @@
 | [ws-latency-badge.md](./architecture/ws-latency-badge.md) | 延迟徽标的测量口径与毛刺排查 |
 | [mobile-keyboard.md](./architecture/mobile-keyboard.md) | 移动端软键盘：避让三模式与唤起入口 |
 | [device-tree-reorder.md](./architecture/device-tree-reorder.md) | 设备 / 窗口 / pane 拖拽排序与顺序持久化 |
-| [file-transfer.md](./architecture/file-transfer.md) | 浏览器文件传输：分块上传、流式下载、进度、取消、`POST /api/files/mkdir` 建目录与路径安全 |
+| [file-transfer.md](./architecture/file-transfer.md) | 浏览器文件传输：分块上传、流式下载、进度、取消、`POST /api/files/mkdir`、本机免 rsync 与虚拟 `home` 根 |
+| [remote-exec.md](./architecture/remote-exec.md) | 非交互远程执行 `POST /api/exec` 与主机快照 `GET /api/system/facts` |
 | [node-to-node-transfer.md](./architecture/node-to-node-transfer.md) | 节点间文件传输：一次性授权、协议、限制与清理 |
 | [terminal-share.md](./architecture/terminal-share.md) | 终端分享：数据模型、接口、凭证与 ws 隔离、录制回放、安全边界 |
 | [terminal-agent.md](./architecture/terminal-agent.md) | 终端 AI Agent：数据模型、接口、生命周期、系统提示词、终端工具与 `run_command`、凭证处理 |

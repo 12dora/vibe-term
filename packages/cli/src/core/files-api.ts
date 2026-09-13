@@ -1,5 +1,5 @@
-// 文件 REST：根列表、解析、list/stat/raw。错误映射统一交给 `http.assertOk`
-// （403 的 outside_roots 等业务码是权限错误，不当成未登录）。
+// 文件 REST：根列表、解析、list/stat/raw。错误映射走 `assertFilesOk`
+// （`rsync_missing_local` → 退出 5；403 的 outside_roots 等仍是权限错误）。
 
 import { ApiClient } from '@vibeterm/api-client/client';
 import { FileApiError } from '@vibeterm/api-client/file-errors';
@@ -12,8 +12,8 @@ import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import type { BrowseDirectoryResponse } from '@vibeterm/shared';
 import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
-import { CliError, NotFoundError, UsageError } from './errors';
-import { VIRTUAL_FS_ROOT_ID, joinRootPath } from './files-path';
+import { CliError, NetworkError, NotFoundError, UsageError } from './errors';
+import { VIRTUAL_FS_ROOT_ID, VIRTUAL_HOME_ROOT_ID, joinRootPath } from './files-path';
 import type { HttpClient, RequestOptions } from './http';
 import { httpStatusError } from './http';
 
@@ -26,7 +26,12 @@ export interface FileRootDto {
   name: string;
   enabled: boolean;
   sortOrder: number;
+  virtual?: boolean;
 }
+
+export const RSYNC_MISSING_LOCAL_CODE = 'rsync_missing_local';
+export const RSYNC_MISSING_LOCAL_MESSAGE =
+  '目标节点未安装 rsync（本地设备已无需 rsync；SSH 设备请在该节点安装 rsync）';
 
 export interface FileEntryDto {
   name: string;
@@ -97,8 +102,36 @@ export async function filesJson<T>(
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  await http.assertOk(nodeId, response, path);
+  await assertFilesOk(nodeId, response, path);
   return readOkBody<T>(response);
+}
+
+export function mapFilesStatusError(
+  nodeId: string,
+  path: string,
+  status: number,
+  body: string
+): CliError {
+  if (errorCode(body) === RSYNC_MISSING_LOCAL_CODE) {
+    return new NetworkError(RSYNC_MISSING_LOCAL_MESSAGE);
+  }
+  return httpStatusError(nodeId, path, status, body);
+}
+
+export async function assertFilesOk(
+  nodeId: string,
+  response: Response,
+  path: string
+): Promise<Response> {
+  if (response.ok) return response;
+  throw mapFilesStatusError(nodeId, path, response.status, await response.text());
+}
+
+export function throwFilesEventError(code: string | undefined, message: string): never {
+  if (code === RSYNC_MISSING_LOCAL_CODE) {
+    throw new NetworkError(RSYNC_MISSING_LOCAL_MESSAGE);
+  }
+  throw new CliError(message);
 }
 
 async function readOkBody<T>(response: Response): Promise<T> {
@@ -173,7 +206,7 @@ export async function mkdirRemote(
   } catch (error) {
     if (!(error instanceof FileApiError)) throw error;
     if (isMissingRoute(error.status, errorBody)) throw new MkdirUnsupportedError(nodeId);
-    throw httpStatusError(nodeId, '/api/files/mkdir', error.status, errorBody);
+    throw mapFilesStatusError(nodeId, '/api/files/mkdir', error.status, errorBody);
   }
 }
 
@@ -187,41 +220,77 @@ export async function listFileRoots(http: HttpClient, nodeId: string): Promise<F
   return payload.roots ?? [];
 }
 
+function isUserFileRoot(root: FileRootDto): boolean {
+  return root.virtual !== true && root.id !== VIRTUAL_HOME_ROOT_ID;
+}
+
+function chooseNamedRoot(matches: readonly FileRootDto[]): FileRootDto | null {
+  if (matches.length === 0) return null;
+  if (matches.length === 1) return matches[0];
+  const enabledUser = matches.filter((root) => isUserFileRoot(root) && root.enabled);
+  if (enabledUser.length === 1) return enabledUser[0];
+  if (enabledUser.length > 1) return null;
+  const virtuals = matches.filter((root) => !isUserFileRoot(root));
+  return virtuals.length === 1 ? virtuals[0] : null;
+}
+
+function throwAmbiguousRoot(raw: string, matches: readonly FileRootDto[]): never {
+  throw new UsageError(
+    `root name "${raw}" is ambiguous: ${matches.map((root) => root.id).join(', ')}`,
+    'use the root id'
+  );
+}
+
+function pickRootByName(roots: readonly FileRootDto[], raw: string): FileRootDto {
+  const exact = roots.filter((root) => root.name === raw);
+  const picked = chooseNamedRoot(exact);
+  if (picked) return picked;
+  if (exact.length > 1) throwAmbiguousRoot(raw, exact);
+  const insensitive = roots.filter((root) => root.name.toLowerCase() === raw.toLowerCase());
+  const folded = chooseNamedRoot(insensitive);
+  if (folded) return folded;
+  if (insensitive.length > 1) throwAmbiguousRoot(raw, insensitive);
+  throw new NotFoundError(`unknown file root: ${raw}`, 'run: vibeterm files roots');
+}
+
+function uniqueEnabledUserHome(roots: readonly FileRootDto[]): FileRootDto | null {
+  const matches = roots.filter(
+    (root) => isUserFileRoot(root) && root.enabled && root.name === 'home'
+  );
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function resolveVirtualFsRoot(roots: readonly FileRootDto[]): FileRootDto {
+  const enabledUser = roots.filter((root) => root.enabled && isUserFileRoot(root));
+  if (enabledUser.length === 0) {
+    return {
+      id: VIRTUAL_FS_ROOT_ID,
+      deviceId: '',
+      deviceName: null,
+      deviceType: 'local',
+      path: '/',
+      name: '/',
+      enabled: true,
+      sortOrder: 0,
+    };
+  }
+  throw new UsageError(
+    'virtual root fs-root is only valid when the node has no enabled file roots',
+    'use a root id or name from `vibeterm files roots`'
+  );
+}
+
 export function resolveFileRoot(roots: readonly FileRootDto[], ref: string): FileRootDto {
   const raw = ref.trim();
   if (!raw) throw new UsageError('root is empty');
-  if (raw === VIRTUAL_FS_ROOT_ID) {
-    const enabled = roots.filter((root) => root.enabled);
-    if (enabled.length === 0) {
-      return {
-        id: VIRTUAL_FS_ROOT_ID,
-        deviceId: '',
-        deviceName: null,
-        deviceType: 'local',
-        path: '/',
-        name: '/',
-        enabled: true,
-        sortOrder: 0,
-      };
-    }
-    throw new UsageError(
-      'virtual root fs-root is only valid when the node has no enabled file roots',
-      'use a root id or name from `vibeterm files roots`'
-    );
-  }
+  if (raw === VIRTUAL_FS_ROOT_ID) return resolveVirtualFsRoot(roots);
   const byId = roots.find((root) => root.id === raw);
   if (byId) return byId;
-  const exact = roots.filter((root) => root.name === raw);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) {
-    throw new UsageError(
-      `root name "${raw}" is ambiguous: ${exact.map((root) => root.id).join(', ')}`,
-      'use the root id'
-    );
+  if (raw === VIRTUAL_HOME_ROOT_ID) {
+    const shadowed = uniqueEnabledUserHome(roots);
+    if (shadowed) return shadowed;
   }
-  const insensitive = roots.filter((root) => root.name.toLowerCase() === raw.toLowerCase());
-  if (insensitive.length === 1) return insensitive[0];
-  throw new NotFoundError(`unknown file root: ${raw}`, 'run: vibeterm files roots');
+  return pickRootByName(roots, raw);
 }
 
 export async function resolveRemotePath(
