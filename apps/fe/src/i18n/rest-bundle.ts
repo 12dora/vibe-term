@@ -22,10 +22,32 @@ export interface RestBundleOptions {
 
 export interface RestBundleCache {
   load: (lng: string) => Promise<void>;
+  /** 已成功落地的 rest 译文；尚未加载或失败则为 undefined */
+  loaded: (lng: string) => RestTranslation | undefined;
+  /** 把已落地的 rest 再 apply 一次（reloadResources 的浅合并可能刚把它冲掉）；未落地则等 load。 */
+  reapply: (lng: string) => Promise<void>;
 }
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isPlainObject(value: unknown): value is RestTranslation {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** 深合并：双方独有的子树都保留，同路径叶子以 extra 为准。不修改入参。 */
+export function mergeTranslations(base: RestTranslation, extra: RestTranslation): RestTranslation {
+  const out: RestTranslation = { ...base };
+  for (const key of Object.keys(extra)) {
+    const extraVal = extra[key];
+    const baseVal = out[key];
+    out[key] =
+      isPlainObject(baseVal) && isPlainObject(extraVal)
+        ? mergeTranslations(baseVal, extraVal)
+        : extraVal;
+  }
+  return out;
 }
 
 export function createRestBundleCache({
@@ -35,11 +57,14 @@ export function createRestBundleCache({
   sleep = defaultSleep,
 }: RestBundleOptions): RestBundleCache {
   const inflight = new Map<string, Promise<void>>();
+  const loaded = new Map<string, RestTranslation>();
 
   async function fetchWithRetry(lng: string, loader: RestLoader): Promise<void> {
     for (let round = 0; ; round += 1) {
       try {
-        apply(lng, await loader());
+        const translation = await loader();
+        loaded.set(lng, translation);
+        apply(lng, translation);
         return;
       } catch (error) {
         const backoff = backoffMs[round];
@@ -50,6 +75,13 @@ export function createRestBundleCache({
   }
 
   return {
+    loaded: (lng) => loaded.get(lng),
+    reapply(lng) {
+      const translation = loaded.get(lng);
+      if (!translation) return this.load(lng);
+      apply(lng, translation);
+      return Promise.resolve();
+    },
     load(lng) {
       const cached = inflight.get(lng);
       if (cached) return cached;

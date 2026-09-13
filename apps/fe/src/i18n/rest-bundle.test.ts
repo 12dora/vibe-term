@@ -5,6 +5,7 @@ import {
   REST_RETRY_BACKOFF_MS,
   changeLanguageAfterRest,
   createRestBundleCache,
+  mergeTranslations,
 } from './rest-bundle';
 
 function harness(results: (Record<string, unknown> | Error)[]) {
@@ -72,6 +73,60 @@ describe('createRestBundleCache', () => {
       },
     });
     await cache.load('xx_YY');
+    expect(cache.loaded('xx_YY')).toBeUndefined();
+  });
+
+  test('loaded 在落地前是 undefined，成功后返回同一份译文', async () => {
+    const translation = { nodes: { machine: { title: 'Machine' } } };
+    const h = harness([translation]);
+    expect(h.cache.loaded('zh_CN')).toBeUndefined();
+    await h.cache.load('zh_CN');
+    expect(h.cache.loaded('zh_CN')).toEqual(translation);
+  });
+
+  test('成功后再次 load 不重复 apply；reapply 重新 apply 但不重新拉包', async () => {
+    const h = harness([{ settings: {} }]);
+    await h.cache.load('zh_CN');
+    await h.cache.load('zh_CN');
+    expect(h.applied.length).toBe(1);
+    await h.cache.reapply('zh_CN');
+    expect(h.attempts()).toBe(1);
+    expect(h.applied.length).toBe(2);
+    expect(h.applied[1]).toEqual({ lng: 'zh_CN', keys: ['settings'] });
+  });
+
+  test('未落地时 reapply 等价于 load', async () => {
+    const h = harness([{ settings: {} }]);
+    await h.cache.reapply('zh_CN');
+    expect(h.attempts()).toBe(1);
+    expect(h.applied.length).toBe(1);
+  });
+});
+
+describe('mergeTranslations', () => {
+  test('部分重叠的命名空间深合并，双方独有的子树都保留', () => {
+    const core = {
+      nodes: { actions: { copy: 'Copy' }, time: { now: 'now' } },
+      common: { ok: 'OK' },
+    };
+    const rest = {
+      nodes: { machine: { title: 'Machine' } },
+      relay: { title: 'Relay' },
+    };
+    expect(mergeTranslations(core, rest)).toEqual({
+      nodes: {
+        actions: { copy: 'Copy' },
+        time: { now: 'now' },
+        machine: { title: 'Machine' },
+      },
+      common: { ok: 'OK' },
+      relay: { title: 'Relay' },
+    });
+    // 不修改入参
+    expect(core).toEqual({
+      nodes: { actions: { copy: 'Copy' }, time: { now: 'now' } },
+      common: { ok: 'OK' },
+    });
   });
 });
 

@@ -56,6 +56,11 @@ export interface LanguageActivatorOptions {
   unlock: (lng: string) => void;
   /** 强制重新向 backend 取该语言的资源（i18n.reloadResources） */
   reload: (lng: string) => Promise<unknown>;
+  /**
+   * reload 之后补 rest。reload 期间 rest 还在途时 backend 合并不到它，
+   * 落地后必须再 apply，否则浅合并可能已经（或即将）冲掉 rest 子树。
+   */
+  afterReload?: (lng: string) => Promise<unknown>;
 }
 
 /**
@@ -73,6 +78,7 @@ export function createLanguageActivator(
     if (options.isUnlocked(lng)) return;
     options.unlock(lng);
     await options.reload(lng).catch(() => undefined);
+    await Promise.resolve(options.afterReload?.(lng)).catch(() => undefined);
   };
 }
 
