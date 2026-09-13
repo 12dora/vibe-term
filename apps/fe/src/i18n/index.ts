@@ -9,7 +9,7 @@ import {
   createLanguageActivator,
   createLocaleUnlock,
 } from './locale-unlock';
-import { changeLanguageAfterRest, createRestBundleCache } from './rest-bundle';
+import { changeLanguageAfterRest, createRestBundleCache, mergeTranslations } from './rest-bundle';
 import { setI18nRestPrerequisite } from './rest-prerequisite';
 
 // 各语言翻译按需动态加载：每个 locale 拆成独立 chunk，首屏只加载当前语言，
@@ -47,6 +47,21 @@ const initialLanguage = resolveInitialLanguage();
 
 let restRequested = false;
 
+const restCache = createRestBundleCache({
+  loaderFor: (lng) => {
+    const load = loaderFor(restModules, lng, 'rest');
+    return load ? () => translationOf(load) : undefined;
+  },
+  apply: (lng, translation) => {
+    i18n.addResourceBundle(lng, 'translation', translation, true, true);
+  },
+});
+const loadRest = (lng: string): Promise<void> => restCache.load(lng);
+
+function currentLanguage(): string {
+  return i18n.resolvedLanguage ?? i18n.language ?? DEFAULT_LOCALE;
+}
+
 // fallbackLng 会让 i18next 把 DEFAULT_LOCALE 的 core/rest 也排进加载队列，
 // 而首屏根本用不到它（core 覆盖有守卫）。这里只放行「已解锁」的语言，
 // fallback 推迟到真的缺 key 时才补（见 ./locale-unlock）。
@@ -63,15 +78,13 @@ const localeUnlock = createLocaleUnlock({
   hasMissingKeys: (keys) => keys.some((key) => !i18n.exists(key)),
 });
 
-function currentLanguage(): string {
-  return i18n.resolvedLanguage ?? i18n.language ?? DEFAULT_LOCALE;
-}
-
 // 切语言 / 事后兜底的统一入口：解锁 + 强制重载（见 createLanguageActivator 的注释）
 const activateLanguage = createLanguageActivator({
   isUnlocked: (lng) => localeUnlock.isUnlocked(lng),
   unlock: (lng) => localeUnlock.unlock(lng),
   reload: (lng) => i18n.reloadResources(lng, 'translation'),
+  // reload 期间 rest 还在途时 backend 合并不到它，落地后必须再 apply
+  afterReload: (lng) => (restRequested ? restCache.reapply(lng) : Promise.resolve()),
 });
 
 // init 是异步的（要拉取当前语言 chunk）；main.tsx 在首次渲染前 await 此 promise 以避免未翻译闪烁。
@@ -81,7 +94,10 @@ export const i18nReady = i18n
       if (ns !== 'translation' || !localeUnlock.isUnlocked(lng)) return {};
       const load = loaderFor(coreModules, lng, 'core');
       if (!load) return {};
-      return translationOf(load);
+      const core = await translationOf(load);
+      const rest = restCache.loaded(lng);
+      // reloadResources 走浅合并：只回 core 会把 nodes/settings 整棵换成 core 那一角
+      return rest ? mergeTranslations(core, rest) : core;
     })
   )
   .use(initReactI18next)
@@ -108,17 +124,6 @@ export const i18nReady = i18n
       bindI18nStore: 'added',
     },
   });
-
-const restCache = createRestBundleCache({
-  loaderFor: (lng) => {
-    const load = loaderFor(restModules, lng, 'rest');
-    return load ? () => translationOf(load) : undefined;
-  },
-  apply: (lng, translation) => {
-    i18n.addResourceBundle(lng, 'translation', translation, true, true);
-  },
-});
-const loadRest = (lng: string): Promise<void> => restCache.load(lng);
 
 /**
  * 懒路由 / 懒面板挂载前调用：确保当前语言（及 fallback 语言）的 rest 语言包已就位。

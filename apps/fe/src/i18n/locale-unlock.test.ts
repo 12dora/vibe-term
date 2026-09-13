@@ -2,7 +2,12 @@
 // 也不该因为「rest 还没到」那一瞬间的裸 key 就把整份 fallback 拉下来。
 
 import { describe, expect, test } from 'bun:test';
-import { type LocaleUnlock, createActiveCompleteWaiter, createLocaleUnlock } from './locale-unlock';
+import {
+  type LocaleUnlock,
+  createActiveCompleteWaiter,
+  createLanguageActivator,
+  createLocaleUnlock,
+} from './locale-unlock';
 
 interface Harness {
   unlock: LocaleUnlock;
@@ -155,6 +160,59 @@ describe('createLocaleUnlock', () => {
     });
     expect(() => unlock.recordMissingKey('x')).not.toThrow();
     await settle();
+  });
+});
+
+describe('createLanguageActivator', () => {
+  test('未解锁时顺序是 unlock → reload → afterReload', async () => {
+    const order: string[] = [];
+    const activate = createLanguageActivator({
+      isUnlocked: () => false,
+      unlock: () => {
+        order.push('unlock');
+      },
+      reload: async () => {
+        order.push('reload');
+      },
+      afterReload: async () => {
+        order.push('after');
+      },
+    });
+    await activate('en_US');
+    expect(order).toEqual(['unlock', 'reload', 'after']);
+  });
+
+  test('已解锁时 reload / afterReload 都不跑', async () => {
+    const order: string[] = [];
+    const activate = createLanguageActivator({
+      isUnlocked: () => true,
+      unlock: () => {
+        order.push('unlock');
+      },
+      reload: async () => {
+        order.push('reload');
+      },
+      afterReload: async () => {
+        order.push('after');
+      },
+    });
+    await activate('en_US');
+    expect(order).toEqual([]);
+  });
+
+  test('未提供 afterReload 时仍然只 unlock + reload', async () => {
+    const order: string[] = [];
+    const activate = createLanguageActivator({
+      isUnlocked: () => false,
+      unlock: () => {
+        order.push('unlock');
+      },
+      reload: async () => {
+        order.push('reload');
+      },
+    });
+    await activate('en_US');
+    expect(order).toEqual(['unlock', 'reload']);
   });
 });
 
