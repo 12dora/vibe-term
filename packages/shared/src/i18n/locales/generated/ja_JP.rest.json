@@ -265,6 +265,25 @@
         "terminal": "ターミナル",
         "remoteAccess": "リモートアクセス"
       },
+      "nodes": {
+        "routeMode": {
+          "title": "遅延最適化",
+          "loadFailed": "経路モードの読み込みに失敗しました：{{message}}",
+          "saveFailed": "経路モードの保存に失敗しました：{{message}}",
+          "auto": {
+            "title": "スマート",
+            "description": "直接接続と中継の遅延を測定し、結果が安定してから切り替えます。ターミナル、コマンド、ポートマップは低遅延の経路を使い、ファイル転送は直接接続を優先します。"
+          },
+          "direct": {
+            "title": "直接接続",
+            "description": "可能な限り直接接続し、使えない場合は中継します。"
+          },
+          "relay": {
+            "title": "中継",
+            "description": "すべての接続を中継経由にします。"
+          }
+        }
+      },
       "terminal": {
         "title": "ターミナル設定",
         "description": "ターミナルのフォントサイズ・行の高さ・フォント、モバイルのキーボード回避を調整します。フォントの選択はアプリ全体の等幅テキストに適用されます。",
@@ -1737,6 +1756,8 @@
       },
       "status": {
         "online": "オンライン",
+        "onlineSignedIn": "オンライン · サインイン済み",
+        "onlineSignedOut": "オンライン · 未サインイン",
         "offline": "オフライン",
         "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
@@ -1748,6 +1769,13 @@
         "wan": "インターネット",
         "relay": "中継",
         "none": "到達不可"
+      },
+      "link": {
+        "lanDc": "ローカル · ダイレクト",
+        "lanWs": "ローカル · 暗号化 WS",
+        "wanDc": "インターネット · ダイレクト",
+        "wanWs": "インターネット · 暗号化 WS",
+        "relay": "中継"
       },
       "actions": {
         "add": "追加",
@@ -2943,9 +2971,9 @@
         "titleNode": "本機で開放するポート",
         "titleHub": "Hub で開放するポート",
         "titleRelay": "中継で開放するポート",
-        "legend": "緑 = 他ノードから到達済み；赤 = 未開放を検出；灰 = 未検証",
+        "legend": "緑 = 開放済み · 赤 = 未開放 · 灰 = 未検査",
         "notProbed": "—",
-        "notProbedTitle": "検知しない"
+        "notProbedTitle": "未検査"
       }
     }
   }

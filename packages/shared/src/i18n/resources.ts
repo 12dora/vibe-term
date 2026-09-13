@@ -473,6 +473,25 @@ export const I18N_RESOURCES = {
         "terminal": "Terminal",
         "remoteAccess": "Remote access"
       },
+      "nodes": {
+        "routeMode": {
+          "title": "Latency optimisation",
+          "loadFailed": "Failed to load route mode: {{message}}",
+          "saveFailed": "Failed to save route mode: {{message}}",
+          "auto": {
+            "title": "Smart",
+            "description": "Measures direct and relay latency and switches after consistent results. Terminal, commands and port maps follow the faster path; file transfer prefers direct."
+          },
+          "direct": {
+            "title": "Direct",
+            "description": "Direct whenever available, relay as fallback."
+          },
+          "relay": {
+            "title": "Relay",
+            "description": "All connections via relay."
+          }
+        }
+      },
       "terminal": {
         "title": "Terminal Settings",
         "description": "Adjust the terminal font size, line height, family, and mobile keyboard avoidance. The font family applies to all monospaced text across the app.",
@@ -2510,6 +2529,8 @@ export const I18N_RESOURCES = {
       },
       "status": {
         "online": "Online",
+        "onlineSignedIn": "Online · signed in",
+        "onlineSignedOut": "Online · not signed in",
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
@@ -2521,6 +2542,13 @@ export const I18N_RESOURCES = {
         "wan": "Internet",
         "relay": "Relay",
         "none": "Unreachable"
+      },
+      "link": {
+        "lanDc": "LAN · direct",
+        "lanWs": "LAN · secure WS",
+        "wanDc": "WAN · direct",
+        "wanWs": "WAN · secure WS",
+        "relay": "Relay"
       },
       "actions": {
         "add": "Add",
@@ -3724,7 +3752,7 @@ export const I18N_RESOURCES = {
         "titleNode": "Open on this machine",
         "titleHub": "Open on this Hub",
         "titleRelay": "Open on this relay",
-        "legend": "Green = reached by other nodes; red = probed closed; grey = not yet verified",
+        "legend": "Green = open · Red = closed · Grey = not probed",
         "notProbed": "—",
         "notProbedTitle": "Not probed"
       }
@@ -4199,6 +4227,25 @@ export const I18N_RESOURCES = {
         "ai": "AI",
         "terminal": "终端",
         "remoteAccess": "远程访问"
+      },
+      "nodes": {
+        "routeMode": {
+          "title": "延迟优化",
+          "loadFailed": "选路模式读取失败：{{message}}",
+          "saveFailed": "选路模式保存失败：{{message}}",
+          "auto": {
+            "title": "智能",
+            "description": "测量直连与中继延迟，多次结果一致后切换。终端、指令、端口映射跟随低延迟路径，文件传输优先直连"
+          },
+          "direct": {
+            "title": "直连",
+            "description": "尽量直连，直连不可用时走中继"
+          },
+          "relay": {
+            "title": "中继",
+            "description": "所有连接经中继"
+          }
+        }
       },
       "terminal": {
         "title": "终端设置",
@@ -6237,6 +6284,8 @@ export const I18N_RESOURCES = {
       },
       "status": {
         "online": "在线",
+        "onlineSignedIn": "在线 · 已登录",
+        "onlineSignedOut": "在线 · 未登录",
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
@@ -6248,6 +6297,13 @@ export const I18N_RESOURCES = {
         "wan": "公网",
         "relay": "中转",
         "none": "不可达"
+      },
+      "link": {
+        "lanDc": "局域网 · 直连",
+        "lanWs": "局域网 · 加密 WS",
+        "wanDc": "公网 · 直连",
+        "wanWs": "公网 · 加密 WS",
+        "relay": "中继"
       },
       "actions": {
         "add": "添加",
@@ -7445,9 +7501,9 @@ export const I18N_RESOURCES = {
         "titleNode": "本机需开通端口",
         "titleHub": "Hub 需开通端口",
         "titleRelay": "中继需开通端口",
-        "legend": "绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证",
+        "legend": "绿 = 已开通 · 红 = 未开通 · 灰 = 未探测",
         "notProbed": "—",
-        "notProbedTitle": "不探测"
+        "notProbedTitle": "未探测"
       }
     }
   }
@@ -7920,6 +7976,25 @@ export const I18N_RESOURCES = {
         "ai": "AI",
         "terminal": "ターミナル",
         "remoteAccess": "リモートアクセス"
+      },
+      "nodes": {
+        "routeMode": {
+          "title": "遅延最適化",
+          "loadFailed": "経路モードの読み込みに失敗しました：{{message}}",
+          "saveFailed": "経路モードの保存に失敗しました：{{message}}",
+          "auto": {
+            "title": "スマート",
+            "description": "直接接続と中継の遅延を測定し、結果が安定してから切り替えます。ターミナル、コマンド、ポートマップは低遅延の経路を使い、ファイル転送は直接接続を優先します。"
+          },
+          "direct": {
+            "title": "直接接続",
+            "description": "可能な限り直接接続し、使えない場合は中継します。"
+          },
+          "relay": {
+            "title": "中継",
+            "description": "すべての接続を中継経由にします。"
+          }
+        }
       },
       "terminal": {
         "title": "ターミナル設定",
@@ -9958,6 +10033,8 @@ export const I18N_RESOURCES = {
       },
       "status": {
         "online": "オンライン",
+        "onlineSignedIn": "オンライン · サインイン済み",
+        "onlineSignedOut": "オンライン · 未サインイン",
         "offline": "オフライン",
         "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
@@ -9969,6 +10046,13 @@ export const I18N_RESOURCES = {
         "wan": "インターネット",
         "relay": "中継",
         "none": "到達不可"
+      },
+      "link": {
+        "lanDc": "ローカル · ダイレクト",
+        "lanWs": "ローカル · 暗号化 WS",
+        "wanDc": "インターネット · ダイレクト",
+        "wanWs": "インターネット · 暗号化 WS",
+        "relay": "中継"
       },
       "actions": {
         "add": "追加",
@@ -11166,9 +11250,9 @@ export const I18N_RESOURCES = {
         "titleNode": "本機で開放するポート",
         "titleHub": "Hub で開放するポート",
         "titleRelay": "中継で開放するポート",
-        "legend": "緑 = 他ノードから到達済み；赤 = 未開放を検出；灰 = 未検証",
+        "legend": "緑 = 開放済み · 赤 = 未開放 · 灰 = 未検査",
         "notProbed": "—",
-        "notProbedTitle": "検知しない"
+        "notProbedTitle": "未検査"
       }
     }
   }

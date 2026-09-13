@@ -265,6 +265,25 @@
         "terminal": "终端",
         "remoteAccess": "远程访问"
       },
+      "nodes": {
+        "routeMode": {
+          "title": "延迟优化",
+          "loadFailed": "选路模式读取失败：{{message}}",
+          "saveFailed": "选路模式保存失败：{{message}}",
+          "auto": {
+            "title": "智能",
+            "description": "测量直连与中继延迟，多次结果一致后切换。终端、指令、端口映射跟随低延迟路径，文件传输优先直连"
+          },
+          "direct": {
+            "title": "直连",
+            "description": "尽量直连，直连不可用时走中继"
+          },
+          "relay": {
+            "title": "中继",
+            "description": "所有连接经中继"
+          }
+        }
+      },
       "terminal": {
         "title": "终端设置",
         "description": "调整终端的字号、行高、字体与手机键盘避让行为。字体选择对全应用所有等宽文本生效。",
@@ -1737,6 +1756,8 @@
       },
       "status": {
         "online": "在线",
+        "onlineSignedIn": "在线 · 已登录",
+        "onlineSignedOut": "在线 · 未登录",
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
@@ -1748,6 +1769,13 @@
         "wan": "公网",
         "relay": "中转",
         "none": "不可达"
+      },
+      "link": {
+        "lanDc": "局域网 · 直连",
+        "lanWs": "局域网 · 加密 WS",
+        "wanDc": "公网 · 直连",
+        "wanWs": "公网 · 加密 WS",
+        "relay": "中继"
       },
       "actions": {
         "add": "添加",
@@ -2943,9 +2971,9 @@
         "titleNode": "本机需开通端口",
         "titleHub": "Hub 需开通端口",
         "titleRelay": "中继需开通端口",
-        "legend": "绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证",
+        "legend": "绿 = 已开通 · 红 = 未开通 · 灰 = 未探测",
         "notProbed": "—",
-        "notProbedTitle": "不探测"
+        "notProbedTitle": "未探测"
       }
     }
   }

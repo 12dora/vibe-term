@@ -102,6 +102,23 @@ describe('RelayPresence union / staleness', () => {
     expect(p.onlineUnion(1_000 + RELAY_PRESENCE_STALE_MS).has(PEER_B)).toBe(true);
   });
 
+  test('applyList 后不 setConnected 仍返回该 URL 的在线计数', () => {
+    const p = new RelayPresence();
+    p.setPrimary(SH);
+    p.applyList(
+      SH,
+      [
+        { id: PEER_A, online: true },
+        { id: PEER_B, online: true },
+        { id: PEER_C, online: false },
+      ],
+      1,
+      1
+    );
+    expect(p.peersOnlineOn(SH)).toBe(2);
+    expect(p.peersOnlineOn(TK)).toBeNull();
+  });
+
   test('primary 切换改 role，snapshot 里 primary 在前', () => {
     const p = new RelayPresence();
     seedTwo(p);

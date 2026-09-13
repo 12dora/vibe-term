@@ -127,7 +127,8 @@ describe('nodeAddressOf / reachOf / listedOnline', () => {
 
   test('listedOnline 离线拼相对时间', () => {
     const now = 1_700_000_000_000;
-    expect(listedOnline(row({ online: true }), now)).toBe('yes');
+    expect(listedOnline(row({ online: true, loggedIn: true }), now)).toBe('yes · signed-in');
+    expect(listedOnline(row({ online: true, loggedIn: false }), now)).toBe('yes · signed-out');
     expect(listedOnline(row({ online: false, lastSeenAt: now - 3 * 3600_000 }), now)).toBe(
       'no · 3h ago'
     );

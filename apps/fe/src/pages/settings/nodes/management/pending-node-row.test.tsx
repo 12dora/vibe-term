@@ -166,12 +166,15 @@ describe('待批准行', () => {
     expect(selectableRows(rows, new Set()).map((row) => row.id)).toEqual([MEMBER_ID]);
   });
 
-  test('REACH 与地址都是破折号，没有指纹列', () => {
+  test('REACH 与地址都是破折号，没有指纹列与登录状态列', () => {
     const html = render(pendingRow());
     expect(html).toContain(`data-testid="nodes-reach-${PENDING_ID}"`);
     expect(html).toContain(`data-testid="nodes-address-${PENDING_ID}"`);
     expect(html).toContain('nodes.columns.address');
     expect(html).not.toContain('nodes.columns.lastSeen');
     expect(html).not.toContain('nodes.columns.fingerprint');
+    expect(html).not.toContain('nodes.columns.login');
+    expect((html.match(/<th\b/g) ?? []).length).toBe(8);
+    expect((html.match(/<td\b/g) ?? []).length).toBe(8);
   });
 });

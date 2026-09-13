@@ -298,7 +298,7 @@ export function formatRelativeLastSeen(
 }
 
 export function listedOnline(node: MeshNode, now = Date.now()): string {
-  if (node.online) return 'yes';
+  if (node.online) return node.loggedIn ? 'yes · signed-in' : 'yes · signed-out';
   const rel = formatRelativeLastSeen(node.lastSeenAt, now);
   return rel ? `no · ${rel}` : 'no';
 }

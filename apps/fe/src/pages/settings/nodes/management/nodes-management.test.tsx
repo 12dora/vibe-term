@@ -191,7 +191,7 @@ describe('NodesManagement', () => {
     expect(html).toContain('data-testid="nodes-address-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).toContain('sh.example');
     expect(html).toContain('data-testid="nodes-reach-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
-    expect(html).toContain('>relay<');
+    expect(html).toContain('nodes.link.relay');
   });
 
   test('整块只有一张卡片：刷新与「添加」在卡头，加入码表单默认收起', () => {
@@ -693,8 +693,16 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(html).toContain('nodes.columns.reach');
     expect(html).not.toContain('nodes.columns.lastSeen');
     expect(html).not.toContain('nodes.columns.fingerprint');
+    expect(html).not.toContain('nodes.columns.login');
     expect(html).toContain('data-testid="nodes-address-aa"');
     expect(html).toContain('office.lan');
+  });
+
+  test('空表 colSpan 为 8，无登录状态列', () => {
+    const html = renderTable([], '1.2.0');
+    expect(html).toMatch(/colspan="8"/i);
+    expect(html).not.toContain('nodes.columns.login');
+    expect((html.match(/<th\b/g) ?? []).length).toBe(8);
   });
 
   test('离线状态拼相对时间，绝对时间在 title', () => {
@@ -709,23 +717,55 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     );
   });
 
-  test('在线状态仍是「在线」，暂停标记不动', () => {
+  test('在线状态拼登录，暂停标记不动', () => {
     const html = renderTable(
       [nodeRow({ id: 'on', online: true, paused: true, lastSeenAt: 1 })],
       '1.2.0'
     );
-    expect(html).toContain('nodes.status.online');
+    expect(html).toContain('nodes.status.onlineSignedIn');
     expect(html).not.toContain('nodes.status.offlineSince');
     expect(html).toContain('nodes.status.paused');
+    expect(html).not.toContain('data-testid="node-login-on"');
   });
 
-  test('REACH 显示 reach/transport；self / 离线为破折号', () => {
+  test('在线未登录在状态列显示未登录并保留登录按钮', () => {
+    const html = renderTable(
+      [nodeRow({ id: 'out', online: true, loggedIn: false, isSelf: false })],
+      '1.2.0'
+    );
+    expect(html).toContain('nodes.status.onlineSignedOut');
+    expect(html).not.toContain('nodes.status.onlineSignedIn');
+    expect(html).toContain('data-testid="node-login-out"');
+  });
+
+  test('本机在线即使 loggedIn 为 false 也算已登录，无登录按钮', () => {
+    const html = renderTable(
+      [nodeRow({ id: 'me', isSelf: true, online: true, loggedIn: false })],
+      '1.2.0'
+    );
+    expect(html).toContain('nodes.status.onlineSignedIn');
+    expect(html).not.toContain('data-testid="node-login-me"');
+  });
+
+  test('REACH 显示本地化组合；self / 离线为破折号', () => {
     const lan = renderTable(
       [nodeRow({ id: 'dc', reach: 'lan', transport: 'dc', online: true })],
       '1.2.0'
     );
     expect(lan).toContain('data-testid="nodes-reach-dc"');
-    expect(lan).toContain('>lan/dc<');
+    expect(lan).toContain('nodes.link.lanDc');
+
+    const wan = renderTable(
+      [nodeRow({ id: 'ws', reach: 'wan', transport: 'ws-secure', online: true })],
+      '1.2.0'
+    );
+    expect(wan).toContain('nodes.link.wanWs');
+
+    const mixed = renderTable(
+      [nodeRow({ id: 'mix', reach: 'lan', transport: 'relay', online: true })],
+      '1.2.0'
+    );
+    expect(mixed).toContain('nodes.reach.lan · nodes.badge.transportRelay');
 
     const self = renderTable(
       [nodeRow({ id: 'me', isSelf: true, reach: 'lan', transport: 'dc', online: true })],
@@ -738,6 +778,7 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       '1.2.0'
     );
     expect(offline).toContain('data-testid="nodes-reach-z"');
+    expect(offline).toContain('>—</span>');
   });
 
   test('address 优先级：hub URL、直连、广告 endpoint、中继', () => {

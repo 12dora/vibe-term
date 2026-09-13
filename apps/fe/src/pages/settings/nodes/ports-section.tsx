@@ -1,5 +1,5 @@
-// 本机卡入站端口：标题按本机角色说清「谁的口」；灯只在有 MeshPortReach 行时出现。
-// 缺探测结果画「—」而不是灰点，避免和「尚未验证」混在一起。
+// 本机卡入站端口：标题按本机角色说清「谁的口」。
+// 灯三态：绿=open、红=blocked、灰=unknown 或尚未探测（无 reach 行）。
 
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
@@ -19,7 +19,7 @@ import {
 
 const DOT_CLASS: Record<MeshPortReachStatus, string> = {
   open: 'bg-emerald-500',
-  blocked: 'bg-destructive ring-2 ring-destructive ring-offset-1 ring-offset-background',
+  blocked: 'bg-destructive',
   unknown: 'bg-muted-foreground/40',
 };
 
@@ -110,38 +110,37 @@ export function PortsSection({
 function PortRow({ spec, ports }: { spec: PortSpec; ports: MeshPortReach[] | undefined }) {
   const { t } = useTranslation();
   const reach = reachForSpec(ports, spec);
+  const status = reach?.status ?? 'unknown';
   return (
     <li
       className="flex items-center gap-2 text-xs"
       data-testid={`local-port-${spec.purpose}`}
-      data-port-status={reach?.status}
+      data-port-status={status}
     >
-      <PortIndicator spec={spec} reach={reach} />
+      <PortIndicator spec={spec} reach={reach} status={status} />
       <code className="font-mono">{formatPortSpec(spec)}</code>
       <span className="text-muted-foreground">{t(`ports.purpose.${spec.purpose}`)}</span>
     </li>
   );
 }
 
-function PortIndicator({ spec, reach }: { spec: PortSpec; reach: MeshPortReach | undefined }) {
+function PortIndicator({
+  spec,
+  reach,
+  status,
+}: {
+  spec: PortSpec;
+  reach: MeshPortReach | undefined;
+  status: MeshPortReachStatus;
+}) {
   const { t } = useTranslation();
-  if (!reach) {
-    return (
-      <span
-        className="w-2.5 shrink-0 text-center text-[10px] leading-none text-muted-foreground"
-        title={t('localMachine.ports.notProbedTitle')}
-        data-testid={`local-port-dot-${spec.purpose}`}
-      >
-        {t('localMachine.ports.notProbed')}
-      </span>
-    );
-  }
+  const title = reach ? portDotTitle(t, reach) : t('localMachine.ports.notProbedTitle');
   return (
     <span
-      className={`size-1.5 shrink-0 rounded-full ${DOT_CLASS[reach.status]}`}
-      title={portDotTitle(t, reach)}
+      className={`size-1.5 shrink-0 rounded-full ${DOT_CLASS[status]}`}
+      title={title}
       data-testid={`local-port-dot-${spec.purpose}`}
-      data-status={reach.status}
+      data-status={status}
       aria-hidden
     />
   );

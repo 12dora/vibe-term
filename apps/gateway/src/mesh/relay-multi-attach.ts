@@ -20,7 +20,7 @@ import { type RelayWiring, bindRelayMultiAttach, spawnRelayUplink } from './rela
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
 import type { UplinkClientOptions } from './uplink-client';
 import type { UplinkPool } from './uplink-pool';
-import { normalizeHubEndpointUrl } from './uplink-pool-url';
+import { normalizeHubEndpointUrl, sameHubUrl } from './uplink-pool-url';
 import type { UplinkNodeList } from './uplink-protocol';
 
 export type RelayRtcHolder = {
@@ -108,6 +108,7 @@ export function createRelayMultiAttach(input: {
     start() {
       active = true;
       opener.start();
+      if (relayMode()) markPrimaryConnectedIfLive(input.uplink, presence, input.scheduler.now());
     },
     async stop() {
       active = false;
@@ -126,6 +127,13 @@ export function createRelayMultiAttach(input: {
         void opener.reconcile();
         return;
       }
+      // path-rerace 等瞬态非 online：live 仍挂同一 hub 时不要把花名册 connected 打掉。
+      const live = input.uplink.liveClient();
+      const attached = input.uplink.attachedHub()?.publicUrl;
+      if (live?.state === 'online' && attached && sameHubUrl(attached, url)) {
+        void opener.reconcile();
+        return;
+      }
       presence.markDisconnected(url, now, staleMs);
       scheduleDecay(url);
       void opener.reconcile();
@@ -134,6 +142,7 @@ export function createRelayMultiAttach(input: {
       const url = input.uplink.attachedHub()?.publicUrl;
       if (!url) return;
       presence.setPrimary(url);
+      markPrimaryConnectedIfLive(input.uplink, presence, input.scheduler.now());
       presence.applyList(url, presencePeersFromList(list), list.version, input.scheduler.now());
     },
     listHubOnline(now) {
@@ -215,6 +224,18 @@ function mergeSecondaryRoster(
   const primaryIds = primaryUrl ? presence.listedPeerIds(primaryUrl) : [];
   const nodes = overlayOnlineUnion(unioned, presence.onlineUnion(now), primaryIds);
   rtc.lastNodeList = rtc.lastNodeList ? { ...rtc.lastNodeList, nodes } : { ...list, nodes };
+}
+
+function markPrimaryConnectedIfLive(
+  uplink: UplinkPool,
+  presence: RelayPresence,
+  now: number
+): void {
+  const url = uplink.attachedHub()?.publicUrl;
+  const live = uplink.liveClient() as RelayUplinkClient | null;
+  if (!url || live?.state !== 'online') return;
+  presence.setPrimary(url);
+  presence.setConnected(url, true, live && 'rttMs' in live ? live.rttMs : null, now);
 }
 
 function sendRtcViaPresence(

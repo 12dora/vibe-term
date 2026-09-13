@@ -6,7 +6,7 @@
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { nodeReachLabel, nodeRelativeTime } from '@/node/node-address';
+import { nodeRelativeTime } from '@/node/node-address';
 import { Button } from '@vibeterm/ui/button';
 import { Checkbox } from '@vibeterm/ui/checkbox';
 import {
@@ -28,6 +28,7 @@ import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import { NodeMoreMenu } from './node-more-menu';
 import { PendingNodeRow } from './pending-node-row';
+import { nodeReachComposeKeys } from './reach-label';
 import { RevokeDialog } from './revoke-dialog';
 import { MetaKeyLagTag, PausedTag, PortsWarning, Tag, Td, Th, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
@@ -55,7 +56,7 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
   const toggleLabel = t(allSelected ? 'nodes.selection.clearAll' : 'nodes.selection.selectAll');
   return (
     <WideTableScroll>
-      <table className="w-full min-w-[54rem] text-xs" data-testid="nodes-table">
+      <table className="w-full min-w-[48rem] text-xs" data-testid="nodes-table">
         <thead className="text-muted-foreground">
           <tr className="border-b border-border">
             <th className="w-8 px-2 py-2 text-left font-medium">
@@ -79,7 +80,6 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
             <Th>{t('nodes.columns.version')}</Th>
             <Th>{t('nodes.columns.address')}</Th>
             <Th>{t('nodes.columns.direct')}</Th>
-            <Th>{t('nodes.columns.login')}</Th>
             <Th className={stickyActionColumn}>{t('nodes.columns.actions')}</Th>
           </tr>
         </thead>
@@ -101,7 +101,7 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={9} className="vibeterm-fade px-3 py-6 text-center text-muted-foreground">
+              <td colSpan={8} className="vibeterm-fade px-3 py-6 text-center text-muted-foreground">
                 {t('nodes.empty')}
               </td>
             </tr>
@@ -161,14 +161,24 @@ function deriveNodeRow(row: NodeRow, t: Translate, now = Date.now()) {
   const relative = !row.online ? nodeRelativeTime(t, row.lastSeenAt, now) : null;
   return {
     statusClass: row.online ? 'text-emerald-500' : 'text-muted-foreground',
-    statusText:
-      relative != null
-        ? t('nodes.status.offlineSince', { time: relative })
-        : t(row.online ? 'nodes.status.online' : 'nodes.status.offline'),
+    statusText: formatStatusText(row, t, relative),
     statusTitle:
       !row.online && row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : undefined,
-    reachText: nodeReachLabel(row) ?? '—',
+    reachText: formatReachText(row, t),
   };
+}
+
+function formatStatusText(row: NodeRow, t: Translate, relative: string | null): string {
+  if (relative != null) return t('nodes.status.offlineSince', { time: relative });
+  if (!row.online) return t('nodes.status.offline');
+  const signedIn = row.loggedIn || row.isSelf;
+  return t(signedIn ? 'nodes.status.onlineSignedIn' : 'nodes.status.onlineSignedOut');
+}
+
+function formatReachText(row: NodeRow, t: Translate): string {
+  const keys = nodeReachComposeKeys(row);
+  if (!keys) return '—';
+  return keys.map((key) => t(key)).join(' · ');
 }
 
 function NodeRowView({
@@ -237,13 +247,6 @@ function NodeRowView({
         </code>
       </Td>
       <Td>{row.directCapable ? t('common.yes') : t('common.no')}</Td>
-      <Td>
-        {row.loggedIn || row.isSelf ? (
-          <span className="text-emerald-500">{t('nodes.loggedIn')}</span>
-        ) : (
-          <NodeLoginButton nodeId={row.runtimeNodeId} nodeName={row.name} />
-        )}
-      </Td>
       <Td className={stickyActionColumn}>
         <div className="flex items-center gap-1">
           <UpgradeButton row={row} upgrade={deps.upgrade} blocked={uninstalling} />
@@ -364,10 +367,13 @@ function StatusCell({
   return (
     <span
       data-testid={`nodes-status-${row.id}`}
-      className={`inline-flex items-center gap-1.5 ${view.statusClass}`}
+      className="inline-flex items-center gap-1.5"
       title={view.statusTitle}
     >
-      {view.statusText}
+      <span className={view.statusClass}>{view.statusText}</span>
+      {row.online && !row.loggedIn && !row.isSelf && (
+        <NodeLoginButton nodeId={row.runtimeNodeId} nodeName={row.name} />
+      )}
       {row.paused === true && <PausedTag />}
     </span>
   );

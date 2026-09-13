@@ -51,3 +51,4 @@ export {
 } from './wait-socket-open';
 export * from './stun-defaults';
 export * from './adaptive-deadline';
+export * from './route-mode';

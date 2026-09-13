@@ -56,7 +56,6 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
         </code>
       </Td>
       <Td>{t('common.no')}</Td>
-      <Td>—</Td>
       <Td className={stickyActionColumn}>
         <div className="flex items-start gap-1">
           <AdmitButton row={row} writable={writable} {...deps} />

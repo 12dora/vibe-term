@@ -6,6 +6,7 @@ import { matchingTurnProbe } from './rtc/stun-effective';
 import { tcpSamplingTrusted } from './tcp-sampling-trust';
 import type { PooledUplink } from './types';
 import { isUplinkPathRerace, uplinkPathView } from './uplink-path-sampler';
+import { sameHubUrl } from './uplink-pool-url';
 
 export type RelayCandidateError = {
   lastError: string | null;
@@ -85,7 +86,7 @@ export function buildRelayStatusRow(
   candidates: RelayStatusCandidate[],
   extras?: RelayStatusRowExtras
 ) {
-  const attached = attachedUrl === row.url;
+  const attached = attachedUrl != null && sameHubUrl(attachedUrl, row.url);
   const online = statusRowOnline(attached, client, extras);
   const cand = candidates.find((entry) => entry.publicUrl === row.url);
   const errors = statusRowErrors(online, attached, extras, live, cand);
@@ -172,7 +173,7 @@ export function collectRelayStatusRows(input: {
   turnOf: (client: RelayUplinkClient | null, relayUrl: string) => RelayStatusTurnView | null;
 }) {
   return input.rows.map((row) => {
-    const attached = input.attachedUrl === row.url;
+    const attached = input.attachedUrl != null && sameHubUrl(input.attachedUrl, row.url);
     const client = attached ? input.primary : input.secondaryOf(row.url);
     const connected = client?.state === 'online';
     return buildRelayStatusRow(row, input.attachedUrl, client, input.live, input.candidates, {

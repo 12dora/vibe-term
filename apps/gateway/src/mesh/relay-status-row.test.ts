@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { ingestTurnOk, resetPortReachForTest } from './port-reach';
-import { buildRelayStatusRow, enrichRelayTurnView, relayLinkError } from './relay-status-row';
+import { RelayPresence } from './relay-presence';
+import {
+  buildRelayStatusRow,
+  collectRelayStatusRows,
+  enrichRelayTurnView,
+  relayLinkError,
+} from './relay-status-row';
+import type { RelayUplinkClient } from './relay-uplink-client';
 import { ensureTcpSamplingTrust, resetTcpSamplingTrustForTest } from './tcp-sampling-trust';
+import type { UplinkState } from './types';
 
 describe('relayLinkError', () => {
   test('attached row uses the live client error, not the pool candidate', () => {
@@ -205,5 +213,106 @@ describe('enrichRelayTurnView', () => {
       'https://jp.example'
     );
     expect(ok?.localHint).toBeUndefined();
+  });
+});
+
+const SH = 'https://sh.example';
+const TK = 'https://tk.example';
+
+function fakeClient(state: UplinkState, rttMs: number | null = 10): RelayUplinkClient {
+  return { state, rttMs, lastConnectError: null, keyLog: { diverged: false } } as RelayUplinkClient;
+}
+
+function fiveOnlinePeers() {
+  return Array.from({ length: 5 }, (_, i) => ({
+    id: i.toString(16).padStart(32, 'a'),
+    online: true as const,
+  }));
+}
+
+describe('collectRelayStatusRows', () => {
+  const rows = [
+    { url: SH, priority: 0, kicked: false },
+    { url: TK, priority: 1, kicked: false },
+  ];
+
+  function seedPresence(primaryConnected: boolean): RelayPresence {
+    const presence = new RelayPresence();
+    presence.setPrimary(SH);
+    presence.setPriority(SH, 0);
+    presence.setPriority(TK, 1);
+    presence.setConnected(SH, primaryConnected, 12, 1);
+    presence.setConnected(TK, true, 20, 1);
+    presence.applyList(SH, fiveOnlinePeers(), 1, 1);
+    presence.applyList(TK, fiveOnlinePeers(), 1, 1);
+    return presence;
+  }
+
+  test('primary client online + roster 5 + connected=false → peersOnline 5；secondary 仍为 5', () => {
+    const presence = seedPresence(false);
+    const result = collectRelayStatusRows({
+      rows,
+      attachedUrl: SH,
+      primary: fakeClient('online', 12),
+      live: null,
+      candidates: [],
+      secondaryOf: (url) => (url === TK ? fakeClient('online', 20) : null),
+      peersOnlineOn: (url) => presence.peersOnlineOn(url),
+      turnOf: () => null,
+    });
+    expect(result[0]).toMatchObject({
+      url: SH,
+      attached: true,
+      online: true,
+      role: 'primary',
+      peersOnline: 5,
+    });
+    expect(result[1]).toMatchObject({
+      url: TK,
+      attached: false,
+      online: true,
+      role: 'secondary',
+      peersOnline: 5,
+    });
+  });
+
+  test('offline client → peersOnline null', () => {
+    const presence = seedPresence(true);
+    const result = collectRelayStatusRows({
+      rows,
+      attachedUrl: SH,
+      primary: fakeClient('offline', null),
+      live: null,
+      candidates: [],
+      secondaryOf: () => null,
+      peersOnlineOn: (url) => presence.peersOnlineOn(url),
+      turnOf: () => null,
+    });
+    expect(result[0]).toMatchObject({
+      url: SH,
+      attached: true,
+      online: false,
+      peersOnline: null,
+    });
+    expect(result[1]).toMatchObject({ url: TK, attached: false, online: false, peersOnline: null });
+  });
+
+  test('attached 比较忽略尾斜杠', () => {
+    const result = collectRelayStatusRows({
+      rows: [{ url: SH, priority: 0, kicked: false }],
+      attachedUrl: `${SH}/`,
+      primary: fakeClient('online', 12),
+      live: null,
+      candidates: [],
+      secondaryOf: () => null,
+      peersOnlineOn: () => 3,
+      turnOf: () => null,
+    });
+    expect(result[0]).toMatchObject({
+      attached: true,
+      online: true,
+      role: 'primary',
+      peersOnline: 3,
+    });
   });
 });

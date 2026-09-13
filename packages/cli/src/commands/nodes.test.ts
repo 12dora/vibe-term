@@ -91,8 +91,25 @@ describe('vibeterm nodes', () => {
     await nodes.run(cli, ['ls']);
     const text = stdout.text();
     expect(text).toContain('ADDRESS');
+    expect(text).toContain('ONLINE');
     expect(text).toContain('edge.example:39001');
     expect(text).toMatch(/no · 3h ago/);
+  });
+
+  test('ls table folds login into ONLINE when signed in', async () => {
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/nodes': () => ({
+          nodes: [meshNode({ online: true, loggedIn: true })],
+        }),
+      },
+      false
+    );
+    await nodes.run(cli, ['ls']);
+    const text = stdout.text();
+    expect(text).toContain('ONLINE');
+    expect(text).toContain('yes · signed-in');
+    expect(text).not.toContain('LOGIN');
   });
 
   test('pause and resume POST to the entry', async () => {

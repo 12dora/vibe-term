@@ -182,10 +182,13 @@ class FakeSecondary implements SecondaryUplink {
   }
 }
 
-function stubUplink(url: string): UplinkPool {
+function stubUplink(
+  url: string,
+  live: { state: UplinkState; rttMs?: number | null } | null = null
+): UplinkPool {
   return {
     attachedHub: () => ({ publicUrl: url, nodeId: PEER_A, name: 'sh' }),
-    liveClient: () => null,
+    liveClient: () => live,
     onAttached: () => () => {},
     onDetached: () => () => {},
     openRelay: async () => {
@@ -267,6 +270,7 @@ describe('relay multi-attach presence overlay', () => {
     attach.start();
     attach.handlePrimaryState('online', SH, 20);
     attach.applyPrimaryList(nodeList([listed(PEER_A, true)]));
+    expect(attach.presence.peersOnlineOn(SH)).toBe(1);
     await attach.reconcile();
     await waitUntil(() => spawned.some((client) => client.state === 'online'));
     const secondary = spawned.find((client) => client.hubUrl === TK);
@@ -313,5 +317,53 @@ describe('relay multi-attach presence overlay', () => {
     const incoming = nodeList([listed(PEER_A, true)]);
     const extras = primaryNodeListApplyPatch(attach, lastNodes, incoming).extraListedNodes();
     expect(extras).toEqual([listed(PEER_B, false)]);
+  });
+
+  test('applyPrimaryList 后不 setConnected 也给出 per-URL 在线计数', async () => {
+    const scheduler = new FireScheduler();
+    const attach = createRelayMultiAttach({
+      wiring: stubWiring(),
+      uplink: stubUplink(SH),
+      spawn: (opts) => new FakeSecondary(opts),
+      baseClient: baseClient(scheduler),
+      scheduler,
+      onRelayStream: () => {},
+      onExclusiveOffline: () => {},
+      rtc: { lastRtc: null, lastNodeList: null },
+    });
+    attach.start();
+    attach.applyPrimaryList(nodeList([listed(PEER_A, true)]));
+    expect(attach.presence.peersOnlineOn(SH)).toBe(1);
+    expect(attach.presence.snapshot().find((row) => row.url === SH)?.connected).toBe(false);
+    await attach.stop();
+  });
+
+  test('live client 在线时 applyPrimaryList 补 connected；瞬态非 online 不 markDisconnected', async () => {
+    const scheduler = new FireScheduler();
+    const live = { state: 'online' as UplinkState, rttMs: 20 };
+    const attach = createRelayMultiAttach({
+      wiring: stubWiring(),
+      uplink: stubUplink(SH, live),
+      spawn: (opts) => new FakeSecondary(opts),
+      baseClient: baseClient(scheduler),
+      scheduler,
+      onRelayStream: () => {},
+      onExclusiveOffline: () => {},
+      rtc: { lastRtc: null, lastNodeList: null },
+    });
+    attach.start();
+    attach.applyPrimaryList(nodeList([listed(PEER_A, true), listed(PEER_B, true)]));
+    expect(attach.presence.peersOnlineOn(SH)).toBe(2);
+    expect(attach.presence.snapshot().find((row) => row.url === SH)?.connected).toBe(true);
+
+    attach.handlePrimaryState('connecting', SH, null);
+    expect(attach.presence.snapshot().find((row) => row.url === SH)?.connected).toBe(true);
+    expect(attach.presence.peersOnlineOn(SH)).toBe(2);
+
+    live.state = 'offline';
+    attach.handlePrimaryState('offline', SH, null);
+    expect(attach.presence.snapshot().find((row) => row.url === SH)?.connected).toBe(false);
+    expect(attach.presence.peersOnlineOn(SH)).toBe(2);
+    await attach.stop();
   });
 });

@@ -151,7 +151,7 @@ export class RelayPresence implements RelayPresenceIndex {
 
   peersOnlineOn(url: string): number | null {
     const row = this.rows.get(keyOf(url));
-    if (!row?.connected) return null;
+    if (!row) return null;
     let n = 0;
     for (const peer of row.peers.values()) {
       if (peer.online) n += 1;

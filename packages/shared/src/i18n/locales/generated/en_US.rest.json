@@ -265,6 +265,25 @@
         "terminal": "Terminal",
         "remoteAccess": "Remote access"
       },
+      "nodes": {
+        "routeMode": {
+          "title": "Latency optimisation",
+          "loadFailed": "Failed to load route mode: {{message}}",
+          "saveFailed": "Failed to save route mode: {{message}}",
+          "auto": {
+            "title": "Smart",
+            "description": "Measures direct and relay latency and switches after consistent results. Terminal, commands and port maps follow the faster path; file transfer prefers direct."
+          },
+          "direct": {
+            "title": "Direct",
+            "description": "Direct whenever available, relay as fallback."
+          },
+          "relay": {
+            "title": "Relay",
+            "description": "All connections via relay."
+          }
+        }
+      },
       "terminal": {
         "title": "Terminal Settings",
         "description": "Adjust the terminal font size, line height, family, and mobile keyboard avoidance. The font family applies to all monospaced text across the app.",
@@ -1737,6 +1756,8 @@
       },
       "status": {
         "online": "Online",
+        "onlineSignedIn": "Online · signed in",
+        "onlineSignedOut": "Online · not signed in",
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
@@ -1748,6 +1769,13 @@
         "wan": "Internet",
         "relay": "Relay",
         "none": "Unreachable"
+      },
+      "link": {
+        "lanDc": "LAN · direct",
+        "lanWs": "LAN · secure WS",
+        "wanDc": "WAN · direct",
+        "wanWs": "WAN · secure WS",
+        "relay": "Relay"
       },
       "actions": {
         "add": "Add",
@@ -2949,7 +2977,7 @@
         "titleNode": "Open on this machine",
         "titleHub": "Open on this Hub",
         "titleRelay": "Open on this relay",
-        "legend": "Green = reached by other nodes; red = probed closed; grey = not yet verified",
+        "legend": "Green = open · Red = closed · Grey = not probed",
         "notProbed": "—",
         "notProbedTitle": "Not probed"
       }

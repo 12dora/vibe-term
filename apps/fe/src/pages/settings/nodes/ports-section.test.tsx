@@ -15,16 +15,17 @@ describe('PortsSection', () => {
     expect(renderToStaticMarkup(<PortsSection plan={[]} />)).toBe('');
   });
 
-  test('缺探测行时画破折号，不是灰点', () => {
+  test('缺探测行时画灰点 unknown，不是破折号', () => {
     const html = renderToStaticMarkup(<PortsSection plan={plan} reach={null} />);
     expect(html).toContain('data-testid="local-machine-ports"');
     expect(html).toContain('localMachine.ports.titleNode');
     expect(html).toContain('localMachine.ports.legend');
-    expect(html).toContain('localMachine.ports.notProbed');
+    expect(html).toContain('data-port-status="unknown"');
+    expect(html).toContain('data-status="unknown"');
     expect(html).toContain('localMachine.ports.notProbedTitle');
-    expect(html).not.toContain('data-port-status="unknown"');
-    expect(html).not.toContain('data-status="unknown"');
+    expect(html).not.toMatch(/>localMachine\.ports\.notProbed</);
     expect(html).not.toContain('data-port-status="blocked"');
+    expect(html).not.toContain('ring-2');
   });
 
   test('标题随角色变化', () => {
@@ -39,7 +40,7 @@ describe('PortsSection', () => {
     ).toContain('localMachine.ports.titleRelay');
   });
 
-  test('self 行 blocked / open 反映到对应点上，blocked 带 ring', () => {
+  test('self 行 blocked / open 反映到对应点上，blocked 不带 ring', () => {
     const html = renderToStaticMarkup(
       <PortsSection
         plan={plan}
@@ -64,7 +65,7 @@ describe('PortsSection', () => {
     expect(html).toContain('data-port-status="blocked"');
     expect(html).toContain('data-status="blocked"');
     expect(html).toContain('bg-destructive');
-    expect(html).toContain('ring-2');
+    expect(html).not.toContain('ring-2');
     expect(html).toContain('data-port-status="open"');
     expect(html).toContain('data-status="open"');
     expect(html).toContain('39001/tcp');
@@ -72,7 +73,7 @@ describe('PortsSection', () => {
     expect(html).toContain('nodes.ports.code.peer_refused');
   });
 
-  test('计划里没有 reach 行的用途画破折号，有 reach 的才画点', () => {
+  test('计划里没有 reach 行的用途画灰点 unknown，有 reach 的才按 status 着色', () => {
     const html = renderToStaticMarkup(
       <PortsSection
         plan={hubPlan}
@@ -81,15 +82,16 @@ describe('PortsSection', () => {
       />
     );
     expect(html).toContain('data-testid="local-port-public-https"');
-    expect(html).toContain('localMachine.ports.notProbed');
     expect(html).toContain('data-status="open"');
-    expect(html).not.toContain('data-testid="local-port-dot-public-https" data-status');
     const httpsRow = html.slice(
       html.indexOf('data-testid="local-port-public-https"'),
       html.indexOf('data-testid="local-port-peer-signaling"')
     );
-    expect(httpsRow).not.toContain('data-status=');
-    expect(httpsRow).toContain('localMachine.ports.notProbed');
+    expect(httpsRow).toContain('data-status="unknown"');
+    expect(httpsRow).toContain('data-port-status="unknown"');
+    expect(httpsRow).toContain('localMachine.ports.notProbedTitle');
+    expect(httpsRow).not.toMatch(/>localMachine\.ports\.notProbed</);
+    expect(httpsRow).not.toContain('data-status="open"');
   });
 
   test('有 self 时给出重新检测；busy 时转圈并禁用', () => {

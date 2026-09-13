@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  nodeReachComposeKeys,
+  nodeReachLabelKey,
+} from '@/pages/settings/nodes/management/reach-label';
+import {
   advertisedEndpointHost,
   deriveNodeAddress,
   displayHost,
@@ -110,6 +114,55 @@ describe('nodeReachLabel', () => {
     );
     expect(nodeReachLabel({ online: true, reach: 'relay', transport: 'relay' })).toBe('relay');
     expect(nodeReachLabel({ online: true, reach: 'relay', transport: null })).toBe('relay');
+  });
+});
+
+describe('nodeReachLabelKey', () => {
+  test('五种常用组合映射到 nodes.link.*', () => {
+    expect(nodeReachLabelKey({ online: true, reach: 'lan', transport: 'dc' })).toBe(
+      'nodes.link.lanDc'
+    );
+    expect(nodeReachLabelKey({ online: true, reach: 'lan', transport: 'ws-secure' })).toBe(
+      'nodes.link.lanWs'
+    );
+    expect(nodeReachLabelKey({ online: true, reach: 'wan', transport: 'dc' })).toBe(
+      'nodes.link.wanDc'
+    );
+    expect(nodeReachLabelKey({ online: true, reach: 'wan', transport: 'ws-secure' })).toBe(
+      'nodes.link.wanWs'
+    );
+    expect(nodeReachLabelKey({ online: true, reach: 'relay', transport: 'relay' })).toBe(
+      'nodes.link.relay'
+    );
+  });
+
+  test('self / 离线 / pending / 混合 token 为 null', () => {
+    expect(
+      nodeReachLabelKey({ isSelf: true, online: true, reach: 'lan', transport: 'dc' })
+    ).toBeNull();
+    expect(nodeReachLabelKey({ online: false, reach: 'lan', transport: 'dc' })).toBeNull();
+    expect(nodeReachLabelKey({ pending: true, reach: 'lan', transport: 'dc' })).toBeNull();
+    expect(nodeReachLabelKey({ online: true, reach: 'lan', transport: 'relay' })).toBeNull();
+  });
+});
+
+describe('nodeReachComposeKeys', () => {
+  test('已知组合一条 key；混合/残缺拆 reach · transport', () => {
+    expect(nodeReachComposeKeys({ online: true, reach: 'lan', transport: 'dc' })).toEqual([
+      'nodes.link.lanDc',
+    ]);
+    expect(nodeReachComposeKeys({ online: true, reach: 'lan', transport: 'relay' })).toEqual([
+      'nodes.reach.lan',
+      'nodes.badge.transportRelay',
+    ]);
+    expect(nodeReachComposeKeys({ online: true, reach: 'lan', transport: null })).toEqual([
+      'nodes.reach.lan',
+    ]);
+    expect(nodeReachComposeKeys({ online: true, reach: null, transport: 'dc' })).toEqual([
+      'nodes.badge.transportDc',
+    ]);
+    expect(nodeReachComposeKeys({ online: true, reach: 'foo', transport: 'bar' })).toBeNull();
+    expect(nodeReachComposeKeys({ online: false, reach: 'lan', transport: 'dc' })).toBeNull();
   });
 });
 
