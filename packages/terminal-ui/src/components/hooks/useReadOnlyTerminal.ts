@@ -26,6 +26,33 @@ export interface ReadOnlyTerminalRefs {
   terminalTheme: TerminalThemeColors;
 }
 
+interface ReadOnlyE2eGlobals {
+  __vibetermE2eReadOnlyTerminal: CompatibleTerminalLike | null;
+  __vibetermE2eReadOnlyTerminalSelectionText: string | null;
+}
+
+function readOnlyE2eGlobals(): ReadOnlyE2eGlobals {
+  return globalThis as unknown as ReadOnlyE2eGlobals;
+}
+
+function selectionTextOf(terminal: CompatibleTerminalLike): string | null {
+  return terminal.hasSelection?.() ? (terminal.getSelection?.() ?? null) : null;
+}
+
+/** e2e 探针：与 `useTerminalBootSurface` 同一套无条件写入，生产 dist 也能读。 */
+export function setE2eReadOnlyTerminalProbe(terminal: CompatibleTerminalLike): void {
+  const g = readOnlyE2eGlobals();
+  g.__vibetermE2eReadOnlyTerminal = terminal;
+  g.__vibetermE2eReadOnlyTerminalSelectionText = selectionTextOf(terminal);
+}
+
+export function clearE2eReadOnlyTerminalProbe(terminal: CompatibleTerminalLike | null): void {
+  const g = readOnlyE2eGlobals();
+  if (terminal && g.__vibetermE2eReadOnlyTerminal !== terminal) return;
+  g.__vibetermE2eReadOnlyTerminal = null;
+  g.__vibetermE2eReadOnlyTerminalSelectionText = null;
+}
+
 function useReadOnlyContainerFit(
   containerRef: RefObject<HTMLDivElement | null>,
   sessionRef: RefObject<ReadOnlyTerminalSession | null>
@@ -46,6 +73,25 @@ function useReadOnlyContainerFit(
       cancelAnimationFrame(raf);
     };
   }, [containerRef, sessionRef]);
+}
+
+function useReadOnlyE2eProbe(instance: CompatibleTerminalLike | null): void {
+  useEffect(() => {
+    if (!instance) {
+      clearE2eReadOnlyTerminalProbe(null);
+      return;
+    }
+    setE2eReadOnlyTerminalProbe(instance);
+    const disposable = instance.onSelectionChange?.((text) => {
+      const g = readOnlyE2eGlobals();
+      if (g.__vibetermE2eReadOnlyTerminal !== instance) return;
+      g.__vibetermE2eReadOnlyTerminalSelectionText = text;
+    });
+    return () => {
+      disposable?.dispose();
+      clearE2eReadOnlyTerminalProbe(instance);
+    };
+  }, [instance]);
 }
 
 export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOnlyTerminalRefs {
@@ -112,6 +158,7 @@ export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOn
     applyTerminalTheme(termRef.current, terminalTheme);
   }, [terminalTheme]);
 
+  useReadOnlyE2eProbe(instance);
   useReadOnlyContainerFit(containerRef, sessionRef);
 
   return { containerRef, mountRef, instance, terminalTheme };
