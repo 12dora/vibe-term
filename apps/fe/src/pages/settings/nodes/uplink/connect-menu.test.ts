@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { LocalRole } from '@vibeterm/api-client/local/types';
 import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
+import { RELAY_RECORD_MAX_RELAYS } from '@vibeterm/shared/auth';
 import { type ConnectMenuState, connectMenuItems } from './connect-menu';
 
 const t = (key: string, options?: Record<string, unknown>) =>
@@ -120,5 +121,18 @@ describe('中继租户形态', () => {
 
   test('旧节点没有这族路由：整组不出，免得摆一排点了必报错的项', () => {
     expect(run({ ...tenant, unsupported: true }).ids).toEqual([]);
+  });
+
+  // 协议上限就是 16 条，第 17 条会在中继侧以 malformed_payload 告终——那时接入密码已经输完了。
+  test('满 16 条时「追加中继」禁用并说明原因；15 条仍可点', () => {
+    const many = (n: number) =>
+      Array.from({ length: n }, (_, i) => link({ url: `https://r${i}.example`, priority: i }));
+    const full = run({ ...tenant, relays: many(RELAY_RECORD_MAX_RELAYS) }).items[0];
+    expect(full?.testId).toBe('nodes-relay-add');
+    expect(full?.disabled).toBe(true);
+    expect(full?.title).toBe(`relay.tenant.actions.addMax({"n":${RELAY_RECORD_MAX_RELAYS}})`);
+    const room = run({ ...tenant, relays: many(RELAY_RECORD_MAX_RELAYS - 1) }).items[0];
+    expect(room?.disabled).toBeUndefined();
+    expect(room?.title).toBeUndefined();
   });
 });

@@ -231,7 +231,7 @@ export interface RelayEnrollInput {
 /**
  * 接入中继：补签历史成员 → `proof-material` → 根钥签 proof → `enroll` → 签 `set-relays` → 提交。
  *
- * 同一条路径同时服务四件事：首次接入、hub → 中继迁移、追加第二个中继（priority 顺延）、
+ * 同一条路径同时服务四件事：首次接入、hub → 中继迁移、追加中继（第 N 条，priority 顺延）、
  * 令牌被踢后重新输入口令——差别只在节点侧算出来的 `set-relays` payload 里，浏览器这边一模一样。
  *
  * 根公钥对拍放在**发出任何请求之前**：密码打错时若照签不误，中继会拿这把假根公钥开一个新租户。

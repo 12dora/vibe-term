@@ -148,7 +148,9 @@ export type { RelayLinkErrorCode } from './link-error';
 
 export type {
   RelayAttachRole,
+  RelayAutoSelectView,
   RelayKeyLogHealth,
+  RelaySwitchReason,
   RelayStatusPayload,
   RelayStatusRow,
   RelayStatusRowKeyLog,

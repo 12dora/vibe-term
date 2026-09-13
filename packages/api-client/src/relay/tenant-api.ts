@@ -9,27 +9,32 @@
 
 import type {
   RelayAttachRole,
+  RelayAutoSelectView,
   RelayKeyLogHealth,
   RelayLinkErrorCode,
   RelayQuotaUsage,
   RelayStatusRow,
+  RelaySwitchReason,
   RelayUplinkMode,
 } from '@vibeterm/shared/relay';
 import type { HubEnrollmentStatus } from '../auth/types';
 import { type ApiClient, defaultApiClient } from '../client';
 import { type JsonRequestOptions, requestJson } from '../json-mutation';
 import { RelayApiError } from './admin-api';
-import { type RelayMetaKeyLaggingNode, normalizeMetaKeyLagging } from './meta-key-lagging';
+import type { RelayMetaKeyLaggingNode } from './meta-key-lagging';
 import { readRelayTenantError } from './tenant-error';
-import { normalizeRelayTurn } from './tenant-turn';
+import { normalizeRelayStatus } from './tenant-status';
 
 export type { RelayTurnLocalHint, RelayTurnMembers, RelayTurnProbe } from './tenant-turn';
+export { normalizeRelayStatus } from './tenant-status';
 
 export type {
   RelayAttachRole,
+  RelayAutoSelectView,
   RelayKeyLogHealth,
   RelayLinkErrorCode,
   RelayQuotaUsage,
+  RelaySwitchReason,
   RelayUplinkMode,
 };
 
@@ -78,6 +83,10 @@ export interface RelayTenantStatus {
   readmitPending: number;
   /** 成员密钥（`K_meta`）还没送到的成员；旧节点不下发该字段，缺省为空。 */
   metaKeyLagging: RelayMetaKeyLaggingNode[];
+  /** 用户固定的主中继地址；未固定为 `null`。固定期间自动优选冻结。 */
+  preferredUrl?: string | null;
+  /** 自动优选的运行状态；旧节点不下发时按「未开启」归一。 */
+  autoSelect?: RelayAutoSelectView;
 }
 
 /**
@@ -308,67 +317,6 @@ export function isRelayQuotaExceeded(error: unknown): boolean {
   return code === RELAY_QUOTA_NODES || code === 'RELAY_QUOTA_EXCEEDED';
 }
 
-const EMPTY_STATUS: RelayTenantStatus = {
-  quota: null,
-  mode: 'none',
-  tenantId: null,
-  relays: [],
-  metaEpoch: 0,
-  nodesViaRelay: 0,
-  multiAttach: false,
-  reauthRequired: false,
-  awaitingToken: false,
-  keyLog: { skipped: 0, blockedSeq: null, caughtUp: false },
-  readmitPending: 0,
-  metaKeyLagging: [],
-};
-
-/** 缺字段一律补默认值：旧节点没有这条路由，`mode` 之外的字段也可能是后加的。 */
-export function normalizeRelayStatus(
-  payload: Partial<RelayTenantStatus> | null
-): RelayTenantStatus {
-  if (!payload) return EMPTY_STATUS;
-  return {
-    quota: payload.quota
-      ? {
-          ...payload.quota,
-          usage: payload.quota.usage ?? null,
-        }
-      : null,
-    mode: payload.mode ?? 'none',
-    tenantId: payload.tenantId ?? null,
-    relays: (payload.relays ?? []).map((row) => ({
-      url: row.url,
-      priority: row.priority ?? 0,
-      online: row.online === true,
-      attached: row.attached === true,
-      role: row.role === 'primary' || row.role === 'secondary' ? row.role : null,
-      rttMs: row.rttMs ?? null,
-      ...(typeof row.pathBestMs === 'number' ? { pathBestMs: row.pathBestMs } : {}),
-      ...(typeof row.reraces === 'number' ? { reraces: row.reraces } : {}),
-      peersOnline: typeof row.peersOnline === 'number' ? row.peersOnline : null,
-      turn: normalizeRelayTurn(row.turn),
-      lastError: row.online === true ? null : (row.lastError ?? null),
-      lastErrorCode: row.online === true ? null : (row.lastErrorCode ?? null),
-      lastErrorAt: row.online === true ? null : (row.lastErrorAt ?? null),
-      kicked: row.kicked === true,
-      kickedReason: row.kicked === true ? (row.kickedReason ?? null) : null,
-    })),
-    metaEpoch: payload.metaEpoch ?? 0,
-    nodesViaRelay: payload.nodesViaRelay ?? 0,
-    multiAttach: payload.multiAttach === true,
-    reauthRequired: payload.reauthRequired === true,
-    awaitingToken: payload.awaitingToken === true,
-    keyLog: {
-      skipped: payload.keyLog?.skipped ?? 0,
-      blockedSeq: payload.keyLog?.blockedSeq ?? null,
-      caughtUp: payload.keyLog?.caughtUp === true,
-    },
-    readmitPending: payload.readmitPending ?? 0,
-    metaKeyLagging: normalizeMetaKeyLagging(payload.metaKeyLagging),
-  };
-}
-
 /** 材料不全就报错，绝不静默拼一个解不开的 join 串出去。 */
 const RELAY_TENANT_ID_HEX = /^[0-9a-f]{32}$/;
 /** 32 字节的 base64url（无填充）：`K_log` 与租户令牌都是这个长度。 */
@@ -429,6 +377,17 @@ export class RelayTenantApi {
       method: 'POST',
       body: { url },
     }).then(normalizeRelayStatus);
+  }
+
+  /**
+   * `POST /api/mesh/relay/unpin`：清掉固定的主中继，自动优选随即恢复。
+   * 本来就没固定时也是 200（幂等），当前挂着的那条不动。
+   */
+  async unpinRelay(): Promise<void> {
+    await this.json<{ ok: true }>(`${BASE}/unpin`, 'relay_unpin_failed', {
+      method: 'POST',
+      body: {},
+    });
   }
 
   /**

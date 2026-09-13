@@ -65,6 +65,9 @@ describe('RelayTenantApi 状态', () => {
         lastErrorAt: null,
         kicked: false,
         kickedReason: null,
+        pinned: false,
+        autoSelected: false,
+        score: null,
       },
     ]);
     expect(status.metaEpoch).toBe(0);
@@ -186,6 +189,9 @@ describe('RelayTenantApi 状态', () => {
       lastErrorAt: 7,
       kicked: false,
       kickedReason: null,
+      pinned: false,
+      autoSelected: false,
+      score: null,
     });
     expect(normalizeRelayStatus({ quota }).quota).toEqual({ ...quota, usage: null });
     expect(normalizeRelayStatus({}).multiAttach).toBe(false);
@@ -230,6 +236,9 @@ describe('RelayTenantApi 状态', () => {
         lastErrorAt: null,
         kicked: false,
         kickedReason: null,
+        pinned: false,
+        autoSelected: false,
+        score: null,
       },
       {
         url: 'https://ty.example',
@@ -245,6 +254,9 @@ describe('RelayTenantApi 状态', () => {
         lastErrorAt: null,
         kicked: false,
         kickedReason: null,
+        pinned: false,
+        autoSelected: false,
+        score: null,
       },
     ]);
     expect(
@@ -313,6 +325,79 @@ describe('RelayTenantApi 状态', () => {
       { nodeId, name: 'oracle-jp', since: 1700, admitSeq: 5 },
       { nodeId: 'ab'.repeat(16), name: null, since: null, admitSeq: 0 },
     ]);
+  });
+
+  test('normalizeRelayStatus 归一固定 / 自动优选：旧网关缺字段一律落成「没固定、没开」', () => {
+    const fresh = normalizeRelayStatus({
+      preferredUrl: 'https://sh.example',
+      autoSelect: { enabled: true, lastSwitchAt: 1700, switchReason: 'auto-rtt', nextEvalAt: 1800 },
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          pinned: true,
+          autoSelected: true,
+          score: 42.5,
+        },
+      ],
+    });
+    expect(fresh.preferredUrl).toBe('https://sh.example');
+    expect(fresh.autoSelect).toEqual({
+      enabled: true,
+      lastSwitchAt: 1700,
+      switchReason: 'auto-rtt',
+      nextEvalAt: 1800,
+    });
+    expect(fresh.relays[0]).toMatchObject({ pinned: true, autoSelected: true, score: 42.5 });
+
+    const legacy = normalizeRelayStatus({ relays: [] });
+    expect(legacy.preferredUrl).toBeNull();
+    expect(legacy.autoSelect).toEqual({
+      enabled: false,
+      lastSwitchAt: null,
+      switchReason: null,
+      nextEvalAt: null,
+    });
+  });
+
+  test('normalizeRelayStatus 丢掉不认得的换主原因与非有限打分', () => {
+    const status = normalizeRelayStatus({
+      preferredUrl: '',
+      autoSelect: {
+        enabled: true,
+        lastSwitchAt: Number.NaN,
+        switchReason: 'whatever' as never,
+        nextEvalAt: null,
+      },
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          score: Number.POSITIVE_INFINITY,
+        },
+      ],
+    });
+    expect(status.preferredUrl).toBeNull();
+    expect(status.autoSelect?.switchReason).toBeNull();
+    expect(status.autoSelect?.lastSwitchAt).toBeNull();
+    expect(status.relays[0]?.score).toBeNull();
+  });
+
+  test('unpinRelay 走 POST /api/mesh/relay/unpin', async () => {
+    const { api, calls } = recorder([ok({ ok: true })]);
+    await api.unpinRelay();
+    expect(calls[0].url).toBe('/api/mesh/relay/unpin');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(bodyOf(calls[0])).toEqual({});
+  });
+
+  test('unpinRelay 失败抛类型化错误', async () => {
+    const { api } = recorder([fail(500, 'RELAY_UNPIN_FAILED')]);
+    await expect(api.unpinRelay()).rejects.toBeInstanceOf(RelayApiError);
   });
 
   test('路由不存在时抛 404，isRelayRoutesMissing 认得出来', async () => {
