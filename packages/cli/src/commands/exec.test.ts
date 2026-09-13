@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AuthError, CliError, NetworkError, NotFoundError, UsageError } from '../core/errors';
@@ -565,7 +565,7 @@ describe('vibeterm exec', () => {
     expect(typeof payload.elapsedMs).toBe('number');
   });
 
-  test('--json --stream forwards ping events', async () => {
+  test('--json --stream drops ping events', async () => {
     const events = [
       { type: 'ping', t: 1 },
       {
@@ -583,6 +583,147 @@ describe('vibeterm exec', () => {
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as { type: string });
-    expect(lines.map((row) => row.type)).toEqual(['ping', 'exit']);
+    expect(lines.map((row) => row.type)).toEqual(['exit']);
+  });
+
+  test('--stdout-file is mode 0600', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-mode-'));
+    dirs.push(dir);
+    const out = join(dir, 'stdout.txt');
+    const { ctx } = await testContext(
+      execFetch([
+        { type: 'stdout', base64: Buffer.from('secret').toString('base64') },
+        {
+          type: 'exit',
+          code: 0,
+          signal: null,
+          durationMs: 1,
+          truncated: { stdout: false, stderr: false },
+        },
+      ])
+    );
+    await exec.run(ctx, ['laptop', '--stdout-file', out, '--', 'true']);
+    expect((await stat(out)).mode & 0o777).toBe(0o600);
+  });
+
+  test('missing --stdout-file parent dir is usage error before the request', async () => {
+    let posted = false;
+    const { ctx } = await testContext(
+      execFetch([], () => {
+        posted = true;
+      })
+    );
+    const error = (await exec
+      .run(ctx, ['laptop', '--stdout-file', '/nonexistent-dir-xyz-vt/out.txt', '--', 'true'])
+      .catch((err) => err)) as UsageError;
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error.exitCode).toBe(2);
+    expect(error.message).toContain('cannot open --stdout-file');
+    expect(posted).toBe(false);
+  });
+
+  test('--tail 0 is a usage error and does not truncate --stdout-file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-tail0-'));
+    dirs.push(dir);
+    const out = join(dir, 'existing.log');
+    await writeFile(out, 'keep-me');
+    let posted = false;
+    const { ctx } = await testContext(
+      execFetch([], () => {
+        posted = true;
+      })
+    );
+    const error = await exec
+      .run(ctx, ['laptop', '--tail', '0', '--stdout-file', out, '--', 'true'])
+      .catch((err) => err);
+    expect(error).toBeInstanceOf(UsageError);
+    expect(posted).toBe(false);
+    expect(await readFile(out, 'utf8')).toBe('keep-me');
+  });
+
+  test('768 KiB binary stdin is rejected client-side with a cp hint', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-b64-'));
+    dirs.push(dir);
+    const file = join(dir, 'blob.bin');
+    await writeFile(file, Buffer.alloc(768 * 1024, 0xff));
+    let posted = false;
+    const { ctx } = await testContext(
+      execFetch([], () => {
+        posted = true;
+      })
+    );
+    const error = (await exec
+      .run(ctx, ['laptop', '--stdin-file', file, '--', 'cat'])
+      .catch((err) => err)) as UsageError;
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error.message).toContain('vibeterm cp');
+    expect(posted).toBe(false);
+  });
+
+  test('stdin that inflates past the JSON body cap is rejected with a cp hint', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-quotes-'));
+    dirs.push(dir);
+    const file = join(dir, 'quotes.txt');
+    await writeFile(file, '"'.repeat(740 * 1024));
+    let posted = false;
+    const { ctx } = await testContext(
+      execFetch([], () => {
+        posted = true;
+      })
+    );
+    const error = (await exec
+      .run(ctx, ['laptop', '--stdin-file', file, '--', 'cat'])
+      .catch((err) => err)) as UsageError;
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error.message).toContain('request body is');
+    expect(error.message).toContain('1 MiB');
+    expect(error.message).toContain('vibeterm cp');
+    expect(posted).toBe(false);
+  });
+
+  test('stream death JSON includes file paths and bytes received', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-closed-'));
+    dirs.push(dir);
+    const out = join(dir, 'partial.txt');
+    const { ctx, stdout } = await testContext(async (input, init) => {
+      const url = new URL(input);
+      if (url.pathname === '/api/devices') return jsonResponse({ devices: [DEVICE] });
+      if (url.pathname === '/api/mesh/nodes') return jsonResponse({ nodes: [] });
+      if (url.pathname === '/api/auth/mode') return jsonResponse({ nodeId: 'self', mode: 'none' });
+      if ((init?.method ?? 'GET').toUpperCase() === 'POST' && url.pathname === '/api/exec') {
+        let pulled = false;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (!pulled) {
+                pulled = true;
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    `${JSON.stringify({ type: 'stdout', base64: Buffer.from('partial').toString('base64') })}\n`
+                  )
+                );
+                return;
+              }
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/x-ndjson' } }
+        );
+      }
+      return jsonResponse({ error: 'Not found' }, 404);
+    });
+    const error = await exec
+      .run(ctx, ['laptop', '--stdout-file', out, '--', 'true'])
+      .catch((err) => err);
+    expect(error).toBeInstanceOf(ExecStreamClosedError);
+    const payload = JSON.parse(stdout.text()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      ok: false,
+      code: EXEC_STREAM_CLOSED,
+      reason: 'terminated',
+      stdoutPath: out,
+      stdoutBytes: 7,
+    });
+    expect(typeof payload.stderrBytes).toBe('number');
   });
 });

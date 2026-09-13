@@ -25,19 +25,31 @@ export interface ResolvedTargetDevice {
   device: DeviceWithRuntime;
 }
 
+function deviceListHint(names: readonly string[]): string {
+  const shown = names.slice(0, 5);
+  const more = names.length > 5 ? ` (+${names.length - 5} more)` : '';
+  return `devices on this node: ${shown.join(', ')}${more}`;
+}
+
 async function deviceNotFoundOnNode(
   ctx: CliContext,
   node: ResolvedNode,
   deviceRef: string
 ): Promise<NotFoundError> {
   const devices = await ctx.resolver.listDevices(node.id).catch(() => [] as DeviceWithRuntime[]);
-  const names = devices.map((device) => device.name).slice(0, 5);
+  const names = devices.map((device) => device.name);
   const ls =
     node.id === SELF_NODE_ID
       ? 'run: vibeterm devices ls'
       : `run: vibeterm devices ls --node ${node.name}`;
-  const hint = names.length > 0 ? `devices on this node: ${names.join(', ')}` : ls;
-  return new NotFoundError(`device "${deviceRef}" not found on node ${node.name}`, hint);
+  const parts = [names.length > 0 ? deviceListHint(names) : ls];
+  if (ctx.globals.node) {
+    parts.push(`did you mean: vibeterm exec ${node.name}/<device>`);
+  }
+  return new NotFoundError(
+    `device "${deviceRef}" not found on node ${node.name}`,
+    parts.join('; ')
+  );
 }
 
 /** 解析目标里的 node 与 device（只打 REST，不建 WS）。`--node` 只在目标没写 node 时生效。 */

@@ -118,6 +118,26 @@ describe('vibeterm whoami READY', () => {
     expect(stdout.text()).toBe('');
   });
 
+  test('403 via_mismatch on /api/mesh/nodes is not logged in', async () => {
+    const { ctx, stdout } = await testContext(
+      routeFetch({
+        'GET /api/auth/mode': () => ({
+          mode: 'mesh',
+          nodeId: NODE,
+          uid: 'u-1',
+          username: 'root',
+        }),
+        'GET /api/mesh/nodes': () => jsonResponse({ error: 'via_mismatch' }, 403),
+      })
+    );
+    ctx.http.jar.set('self', 'stale-sid', Date.now() + 60_000);
+    const error = (await whoami.run(ctx, []).catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.message).toBe(`not logged in to ${ENTRY}`);
+    expect(stdout.text()).toBe('');
+  });
+
   test('--json stale cookie omits sessionFile and user', async () => {
     const { ctx, stdout } = await testContext(
       routeFetch({

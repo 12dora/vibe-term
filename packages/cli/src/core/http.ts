@@ -381,6 +381,13 @@ function isAuthErrorCode(code: string | null): boolean {
   );
 }
 
+/** 401，或 403 且业务码属于会话失效（`via_mismatch` / `expired` / `revoked` / `SESSION_*`）。 */
+export function isSessionAuthFailure(status: number, body: string): boolean {
+  if (status === 401) return true;
+  if (status !== 403) return false;
+  return isAuthErrorCode(reasonFromBody(body));
+}
+
 function forbiddenError(path: string, code: string | null, body: string): PermissionError {
   const detail = body && body !== code ? `: ${body}` : '';
   return new PermissionError(`${path} → ${code ?? 'forbidden'}${detail}`.trim(), code ?? undefined);

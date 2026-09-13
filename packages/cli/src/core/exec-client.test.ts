@@ -8,6 +8,7 @@ import {
   applyExecEvent,
   concatTail,
   createExecCollect,
+  decodeUtf8Tail,
   emptyExecResult,
   execProcessExit,
   mapExecFailure,
@@ -15,27 +16,27 @@ import {
 } from './exec-client';
 
 describe('applyExecEvent', () => {
-  test('accumulates stdout/stderr and records exit', () => {
+  test('accumulates stdout/stderr and records exit', async () => {
     const result = emptyExecResult();
-    applyExecEvent(
+    await applyExecEvent(
       result,
       { type: 'start', pid: 12, device: { id: 'd', type: 'local' } },
       null,
       null
     );
-    applyExecEvent(
+    await applyExecEvent(
       result,
       { type: 'stdout', base64: Buffer.from('hello').toString('base64') },
       null,
       null
     );
-    applyExecEvent(
+    await applyExecEvent(
       result,
       { type: 'stderr', base64: Buffer.from('warn').toString('base64') },
       null,
       null
     );
-    const done = applyExecEvent(
+    const done = await applyExecEvent(
       result,
       {
         type: 'exit',
@@ -55,17 +56,17 @@ describe('applyExecEvent', () => {
     expect(result.reason).toBe('exit');
   });
 
-  test('timeout error keeps waiting for exit and pins reason', () => {
+  test('timeout error keeps waiting for exit and pins reason', async () => {
     const result = emptyExecResult();
     expect(
-      applyExecEvent(
+      await applyExecEvent(
         result,
         { type: 'error', code: 'exec_timeout', message: 'timed out' },
         null,
         null
       )
     ).toBe('continue');
-    applyExecEvent(
+    await applyExecEvent(
       result,
       {
         type: 'exit',
@@ -81,31 +82,36 @@ describe('applyExecEvent', () => {
     expect(execProcessExit(result)).toBe(EXEC_TIMEOUT_EXIT);
   });
 
-  test('streams live bytes and NDJSON when asked', () => {
+  test('streams live bytes and NDJSON when asked', async () => {
     const result = emptyExecResult();
     const stdout: string[] = [];
     const events: unknown[] = [];
-    applyExecEvent(
+    await applyExecEvent(
       result,
       { type: 'stdout', base64: Buffer.from('x').toString('base64') },
-      { stdout: (bytes) => stdout.push(Buffer.from(bytes).toString()), stderr: () => undefined },
+      {
+        stdout: (bytes) => {
+          stdout.push(Buffer.from(bytes).toString());
+        },
+        stderr: () => undefined,
+      },
       (event) => events.push(event)
     );
     expect(stdout).toEqual(['x']);
     expect(events).toHaveLength(1);
   });
 
-  test('ignores ping and other unknown events', () => {
+  test('ignores ping and other unknown events', async () => {
     const result = emptyExecResult();
-    expect(applyExecEvent(result, { type: 'ping', t: 12 }, null, null)).toBe('continue');
-    expect(applyExecEvent(result, { type: 'start', pid: 1 }, null, null)).toBe('continue');
+    expect(await applyExecEvent(result, { type: 'ping', t: 12 }, null, null)).toBe('continue');
+    expect(await applyExecEvent(result, { type: 'start', pid: 1 }, null, null)).toBe('continue');
     expect(result.stdout).toBe('');
     expect(result.reason).toBe('error');
   });
 
-  test('exit.reason exec_timeout pins CLI reason without waiting for error', () => {
+  test('exit.reason exec_timeout pins CLI reason without waiting for error', async () => {
     const result = emptyExecResult();
-    applyExecEvent(
+    await applyExecEvent(
       result,
       {
         type: 'exit',
@@ -122,10 +128,10 @@ describe('applyExecEvent', () => {
     expect(execProcessExit(result)).toBe(EXEC_TIMEOUT_EXIT);
   });
 
-  test('tail collect keeps the last N bytes and marks truncated', () => {
+  test('tail collect keeps the last N bytes and marks truncated', async () => {
     const result = emptyExecResult();
     const collect = createExecCollect({ tailBytes: 4 });
-    applyExecEvent(
+    await applyExecEvent(
       result,
       { type: 'stdout', base64: Buffer.from('hello world').toString('base64') },
       null,
@@ -137,10 +143,10 @@ describe('applyExecEvent', () => {
     expect(result.truncated.stdout).toBe(true);
   });
 
-  test('omitStdout skips inline strings but still counts bytes', () => {
+  test('omitStdout skips inline strings but still counts bytes', async () => {
     const result = emptyExecResult();
     const collect = createExecCollect({ omitStdout: true });
-    applyExecEvent(
+    await applyExecEvent(
       result,
       { type: 'stdout', base64: Buffer.from('payload').toString('base64') },
       null,
@@ -149,6 +155,42 @@ describe('applyExecEvent', () => {
     );
     expect(result.stdout).toBe('');
     expect(result.stdoutBytes).toBe(7);
+  });
+
+  test('tail of 中文测试abc does not insert U+FFFD', async () => {
+    const result = emptyExecResult();
+    const collect = createExecCollect({ tailBytes: 5 });
+    await applyExecEvent(
+      result,
+      { type: 'stdout', base64: Buffer.from('中文测试abc').toString('base64') },
+      null,
+      null,
+      collect
+    );
+    expect(result.stdout).toBe('abc');
+    expect(result.stdout).not.toContain('\uFFFD');
+  });
+
+  test('inline decode does not split a multibyte character across chunks', async () => {
+    const result = emptyExecResult();
+    const collect = createExecCollect();
+    const zhong = Buffer.from('中');
+    await applyExecEvent(
+      result,
+      { type: 'stdout', base64: zhong.subarray(0, 2).toString('base64') },
+      null,
+      null,
+      collect
+    );
+    await applyExecEvent(
+      result,
+      { type: 'stdout', base64: zhong.subarray(2).toString('base64') },
+      null,
+      null,
+      collect
+    );
+    expect(result.stdout).toBe('中');
+    expect(result.stdout).not.toContain('\uFFFD');
   });
 });
 
@@ -160,6 +202,12 @@ describe('concatTail', () => {
     const second = concatTail(first.bytes, Buffer.from('ef'), 3);
     expect(Buffer.from(second.bytes).toString()).toBe('def');
     expect(second.dropped).toBe(true);
+  });
+
+  test('decodeUtf8Tail strips leading continuation bytes of 中文测试abc', () => {
+    const next = concatTail(new Uint8Array(), Buffer.from('中文测试abc'), 5);
+    expect(decodeUtf8Tail(next.bytes)).toBe('abc');
+    expect(decodeUtf8Tail(next.bytes)).not.toContain('\uFFFD');
   });
 });
 
@@ -228,7 +276,7 @@ describe('runExecRequest stream death', () => {
     expect((error as ExecStreamClosedError).reason).toBe('ended without an exit event');
   });
 
-  test('--json --stream forwards ping as-is', async () => {
+  test('--json --stream drops keepalive ping events', async () => {
     const forwarded: unknown[] = [];
     const ctx = ctxWithNdjson(async function* () {
       yield { type: 'ping', t: 99 };
@@ -244,7 +292,8 @@ describe('runExecRequest stream death', () => {
     const result = await runExecRequest(ctx, 'self', BODY, {
       streamJson: (event) => forwarded.push(event),
     });
-    expect(forwarded[0]).toEqual({ type: 'ping', t: 99 });
+    expect(forwarded.some((event) => (event as { type?: string }).type === 'ping')).toBe(false);
+    expect((forwarded[0] as { type?: string }).type).toBe('exit');
     expect(result.exitCode).toBe(0);
   });
 });

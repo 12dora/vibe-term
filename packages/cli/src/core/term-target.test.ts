@@ -150,8 +150,48 @@ describe('resolveTargetDevice', () => {
     expect(error.message).toBe('device "local" not found on node oracle-jp');
     expect(error.hint).toContain('box');
     expect(error.hint).toContain('remote');
+    expect(error.hint).toContain('did you mean: vibeterm exec oracle-jp/<device>');
     expect(requests.some((row) => row.method === 'POST')).toBe(false);
     expect(requests.filter((row) => row.path === '/api/devices')).toHaveLength(0);
+  });
+
+  test('unknown device lists (+N more) when more than 5 devices exist', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-target-'));
+    dirs.push(dir);
+    const extras = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta'];
+    const fetchImpl: FetchLike = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/mesh/nodes') {
+        return Response.json({
+          nodes: [{ id: ORACLE, name: 'oracle-jp', publicKey: 'pk', online: true }],
+        });
+      }
+      if (url.pathname === `/n/${ORACLE}/api/devices`) {
+        return Response.json({
+          devices: extras.map((name, index) => fakeDevice(`d-${index}`, name)),
+        });
+      }
+      if (url.pathname === '/api/auth/mode') {
+        return Response.json({ nodeId: 'e'.repeat(32) });
+      }
+      return new Response('not found', { status: 404 });
+    };
+    const ctx = buildContext({
+      entryFlag: ENTRY,
+      node: 'oracle-jp',
+      json: false,
+      quiet: false,
+      noColor: true,
+      configDir: dir,
+      installEntry: null,
+      env: {},
+      fetchImpl,
+    });
+    const error = (await resolveTargetDevice(ctx, 'nope').catch((err) => err)) as NotFoundError;
+    expect(error.hint).toContain('alpha, beta, gamma, delta, epsilon');
+    expect(error.hint).toContain('(+2 more)');
+    expect(error.hint).not.toContain('zeta');
+    expect(error.hint).toContain('did you mean: vibeterm exec oracle-jp/<device>');
   });
 
   test('bare mesh node name still falls back to that node first local device', async () => {

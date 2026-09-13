@@ -114,15 +114,15 @@ vibeterm exec office --shell -- 'apt-get update && apt-get install -y jq'
 echo 'payload' | vibeterm exec laptop --stdin -- cat
 vibeterm exec laptop @script.sh -- bash
 vibeterm exec laptop --script setup.sh
-vibeterm exec laptop --max-bytes 65536 --tail 4096 -- -- ip -br addr
-vibeterm exec laptop --stdout-file /tmp/out.txt -- -- dmesg
+vibeterm exec laptop --max-bytes 65536 --tail 4096 -- ip -br addr
+vibeterm exec laptop --stdout-file /tmp/out.txt -- dmesg
 ```
 
 - 目标 `[<node>/]<device>`。只写节点名、当前 node 上又没有同名设备时，落到该节点 sortOrder 最低的 **local** 设备。
 - `POST /api/exec` NDJSON。`--timeout` **只约束远端子进程的墙上时钟**：只有命令行显式给出时才写入请求体 `timeoutMs`；省略则字段不下发，由网关默认 600000 ms（10 分钟，上限 3600000）。它不控制 Bun.serve / `fetch` 空闲超时；长静默命令靠网关每 10 秒一条 `{"type":"ping","t":…}` 续上连接。不要把全局缺省 30000 当成「用户要 30 秒」。`shell:true` 时 argv 只能有一项，经 **`/bin/sh -c`**（不用 `bash -lc`）。CLI **不会**隐式加 `DEBIAN_FRONTEND` 之类环境变量。
 - `--script <path>`：把文件当 stdin，argv 默认 `['/bin/sh','-s']`。文件以 `sh|bash|zsh|dash|ksh` shebang 开头时改用该解释器 `-s`；其它解释器回退 `/bin/sh -s` 并警告。`--interpreter <bin>` 覆盖。与位置 argv / `--shell` / `--stdin*` / `@path` 互斥。stdin 上限约 0.75 MiB，超出请先 `vibeterm cp`。`--shell` 里写 heredoc 仍要按 argv 转义，优先 `--script`。
 - `--max-bytes N`（1 KiB .. 8 MiB）：发给网关的每路输出上限，超出后 `truncated.<stream>=true`，子进程继续跑。`--tail N`：CLI 侧环形缓冲，JSON 字段只留每路最后 N 字节（若同时给 `--max-bytes`，先截服务端）。`--stdout-file` / `--stderr-file`：边收边写文件，JSON 用 `stdoutPath`/`stderrPath` + `stdoutBytes`/`stderrBytes`，不再内嵌字符串。非 TTY 默认仍是内联 JSON；某路超过 64 KiB 时 stderr 提示改用 `--tail` / `--stdout-file`。
-- 非 TTY 或 `--json`：一行 `{exitCode, signal, stdout, stderr, durationMs, truncated, reason}`，`reason` 为 `exit|timeout|error`。`--json --stream` 原样转发 NDJSON 事件（含 `ping`）。TTY 且未 `--json` 时 stdout/stderr 按块写回本机对应 fd。
+- 非 TTY 或 `--json`：一行 `{exitCode, signal, stdout, stderr, durationMs, truncated, reason}`，`reason` 为 `exit|timeout|error`。`--json --stream` 原样转发 NDJSON 事件（保活 `ping` 除外）。TTY 且未 `--json` 时 stdout/stderr 按块写回本机对应 fd。
 - NDJSON 在收到 `exit` 前被掐断（Bun `terminated` / AbortError / 套接字关闭）时：stderr 写 `exec stream closed before exit (reason: …); the remote child receives SIGTERM`；`--json` 另打 `{ "ok": false, "code": "EXEC_STREAM_CLOSED", "reason", "elapsedMs" }`；退出码 **5**。
 - CLI 退出码 = 远端退出码；timeout → **124**；未知设备 4、未登录 3、用法 2、spawn/网络 5。
 

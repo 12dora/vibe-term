@@ -1,5 +1,6 @@
 // POST /api/exec：消费 NDJSON 事件，映射退出码。
 
+import { JSON_BODY_MAX_BYTES } from '@vibeterm/shared/http';
 import type { CliContext } from './context';
 import {
   AuthError,
@@ -14,7 +15,9 @@ export const EXEC_TIMEOUT_EXIT = 124;
 export const DEFAULT_EXEC_TIMEOUT_MS = 600_000;
 export const MAX_EXEC_TIMEOUT_MS = 3_600_000;
 export const EXEC_STREAM_CLOSED = 'EXEC_STREAM_CLOSED';
-export const MAX_EXEC_STDIN_BYTES = 768 * 1024;
+/** 早期上限：给 JSON 信封 / 转义留余量，最终以序列化后的体为准。 */
+export const MAX_EXEC_STDIN_BYTES = 740 * 1024;
+export const EXEC_JSON_BODY_BUDGET = JSON_BODY_MAX_BYTES - 4096;
 export const EXEC_MIN_MAX_BYTES = 1024;
 export const EXEC_MAX_MAX_BYTES = 8 * 1024 * 1024;
 export const EXEC_INLINE_HINT_BYTES = 64 * 1024;
@@ -42,7 +45,9 @@ export class ExecStreamClosedError extends NetworkError {
   readonly code = EXEC_STREAM_CLOSED;
   constructor(
     readonly reason: string,
-    readonly elapsedMs: number
+    readonly elapsedMs: number,
+    readonly stdoutBytes = 0,
+    readonly stderrBytes = 0
   ) {
     super(`exec stream closed before exit (reason: ${reason}); the remote child receives SIGTERM`);
     this.name = 'ExecStreamClosedError';
@@ -80,6 +85,13 @@ export type ExecCollect = {
   omitStderr?: boolean;
   stdoutBag: Uint8Array;
   stderrBag: Uint8Array;
+  stdoutDecoder: TextDecoder;
+  stderrDecoder: TextDecoder;
+};
+
+export type ExecLiveWrites = {
+  stdout: (bytes: Uint8Array) => void | Promise<void>;
+  stderr: (bytes: Uint8Array) => void | Promise<void>;
 };
 
 export function createExecCollect(
@@ -95,7 +107,17 @@ export function createExecCollect(
     omitStderr: opts.omitStderr,
     stdoutBag: new Uint8Array(),
     stderrBag: new Uint8Array(),
+    stdoutDecoder: new TextDecoder('utf-8'),
+    stderrDecoder: new TextDecoder('utf-8'),
   };
+}
+
+/** `--tail` 切口可能落在码点中间：丢掉开头的 UTF-8 续字节再解码，避免 U+FFFD。 */
+export function decodeUtf8Tail(bytes: Uint8Array): string {
+  let start = 0;
+  while (start < bytes.length && start < 4 && (bytes[start] & 0xc0) === 0x80) start += 1;
+  if (start >= bytes.length) return '';
+  return Buffer.from(bytes.subarray(start)).toString('utf8');
 }
 
 export function concatTail(
@@ -169,24 +191,27 @@ export function emptyExecResult(): ExecResult {
 
 function applyChunk(
   result: ExecResult,
-  live: { stdout: (bytes: Uint8Array) => void; stderr: (bytes: Uint8Array) => void } | null,
   stream: 'stdout' | 'stderr',
   raw: unknown,
   collect?: ExecCollect
-): 'continue' {
+): Uint8Array {
   const bytes = decodeChunk(raw);
-  if (live) live[stream](bytes);
   if (stream === 'stdout') result.stdoutBytes += bytes.byteLength;
   else result.stderrBytes += bytes.byteLength;
   const omit = stream === 'stdout' ? collect?.omitStdout : collect?.omitStderr;
-  if (omit) return 'continue';
+  if (omit) return bytes;
   const tail = collect?.tailBytes;
   if (tail !== undefined && collect) {
     applyTailChunk(result, collect, stream, bytes, tail);
-    return 'continue';
+    return bytes;
   }
-  result[stream] += Buffer.from(bytes).toString('utf8');
-  return 'continue';
+  const decoder = stream === 'stdout' ? collect?.stdoutDecoder : collect?.stderrDecoder;
+  if (decoder) {
+    result[stream] += decoder.decode(bytes, { stream: true });
+  } else {
+    result[stream] += Buffer.from(bytes).toString('utf8');
+  }
+  return bytes;
 }
 
 function applyTailChunk(
@@ -200,10 +225,24 @@ function applyTailChunk(
   const next = concatTail(collect[bagKey], bytes, tail);
   collect[bagKey] = next.bytes;
   if (next.dropped) result.truncated[stream] = true;
-  result[stream] = Buffer.from(next.bytes).toString('utf8');
+  result[stream] = decodeUtf8Tail(next.bytes);
 }
 
-function applyExit(result: ExecResult, row: ExecEvent): 'done' {
+function flushStreamDecoder(
+  result: ExecResult,
+  collect: ExecCollect | undefined,
+  stream: 'stdout' | 'stderr'
+): void {
+  if (!collect || collect.tailBytes !== undefined) return;
+  const omit = stream === 'stdout' ? collect.omitStdout : collect.omitStderr;
+  if (omit) return;
+  const decoder = stream === 'stdout' ? collect.stdoutDecoder : collect.stderrDecoder;
+  result[stream] += decoder.decode();
+}
+
+function applyExit(result: ExecResult, row: ExecEvent, collect?: ExecCollect): 'done' {
+  flushStreamDecoder(result, collect, 'stdout');
+  flushStreamDecoder(result, collect, 'stderr');
   result.exitCode = typeof row.code === 'number' ? row.code : null;
   result.signal = typeof row.signal === 'string' ? row.signal : null;
   result.durationMs = typeof row.durationMs === 'number' ? row.durationMs : null;
@@ -231,19 +270,25 @@ function applyError(result: ExecResult, row: ExecEvent): 'continue' | 'done' {
   return 'done';
 }
 
-export function applyExecEvent(
+export async function applyExecEvent(
   result: ExecResult,
   event: unknown,
-  live: { stdout: (bytes: Uint8Array) => void; stderr: (bytes: Uint8Array) => void } | null,
+  live: ExecLiveWrites | null,
   streamJson: ((event: unknown) => void) | null,
   collect?: ExecCollect
-): 'continue' | 'done' {
-  if (streamJson) streamJson(event);
+): Promise<'continue' | 'done'> {
+  // 网关每 10 s 发一条 ping 只为保活，逐行解析的脚本不需要看到它
+  const isPing =
+    Boolean(event) && typeof event === 'object' && (event as ExecEvent).type === 'ping';
+  if (streamJson && !isPing) streamJson(event);
   if (!event || typeof event !== 'object') return 'continue';
   const row = event as ExecEvent;
-  if (row.type === 'stdout') return applyChunk(result, live, 'stdout', row.base64, collect);
-  if (row.type === 'stderr') return applyChunk(result, live, 'stderr', row.base64, collect);
-  if (row.type === 'exit') return applyExit(result, row);
+  if (row.type === 'stdout' || row.type === 'stderr') {
+    const bytes = applyChunk(result, row.type, row.base64, collect);
+    if (live) await live[row.type](bytes);
+    return 'continue';
+  }
+  if (row.type === 'exit') return applyExit(result, row, collect);
   if (row.type === 'error') return applyError(result, row);
   return 'continue';
 }
@@ -267,7 +312,7 @@ function codeFromHttpError(error: unknown): string | null {
 }
 
 export type ExecRunOptions = {
-  live?: { stdout: (bytes: Uint8Array) => void; stderr: (bytes: Uint8Array) => void } | null;
+  live?: ExecLiveWrites | null;
   streamJson?: ((event: unknown) => void) | null;
   collect?: ExecCollect;
 };
@@ -281,15 +326,22 @@ function streamDeathReason(error: unknown): string | null {
   return null;
 }
 
-function throwIfStreamDeath(error: unknown, elapsedMs: number): void {
+function throwIfStreamDeath(error: unknown, elapsedMs: number, result: ExecResult): void {
   const reason = streamDeathReason(error);
-  if (reason) throw new ExecStreamClosedError(reason, elapsedMs);
+  if (reason) {
+    throw new ExecStreamClosedError(reason, elapsedMs, result.stdoutBytes, result.stderrBytes);
+  }
 }
 
 function finishExecStream(result: ExecResult, sawExit: boolean, elapsedMs: number): ExecResult {
   if (sawExit) return result;
   if (result.errorCode) return result;
-  throw new ExecStreamClosedError('ended without an exit event', elapsedMs);
+  throw new ExecStreamClosedError(
+    'ended without an exit event',
+    elapsedMs,
+    result.stdoutBytes,
+    result.stderrBytes
+  );
 }
 
 export async function runExecRequest(
@@ -311,7 +363,7 @@ export async function runExecRequest(
   let sawExit = false;
   try {
     for await (const event of events) {
-      const status = applyExecEvent(result, event, live, streamJson, collect);
+      const status = await applyExecEvent(result, event, live, streamJson, collect);
       if (result.reason === 'exit' || result.reason === 'timeout') sawExit = true;
       if (status === 'done') break;
     }
@@ -323,7 +375,7 @@ export async function runExecRequest(
     ) {
       throw error;
     }
-    throwIfStreamDeath(error, Date.now() - started);
+    throwIfStreamDeath(error, Date.now() - started, result);
     mapExecFailure(
       codeFromHttpError(error),
       error instanceof Error ? error.message : String(error)

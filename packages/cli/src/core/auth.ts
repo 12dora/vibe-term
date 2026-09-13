@@ -23,7 +23,7 @@ import {
 } from '@vibeterm/shared/auth';
 import type { Delegation } from '@vibeterm/shared/auth';
 import { AuthError, CliError, NetworkError } from './errors';
-import type { HttpClient } from './http';
+import { type HttpClient, isSessionAuthFailure } from './http';
 
 /**
  * 服务端的两步验证策略：`either` = 有效 TOTP 或本 origin 的通行密钥断言其一即可。
@@ -169,11 +169,16 @@ export async function loginToNode(args: {
   /** mesh 列表里的该 node 公钥（base64url）；给了就与 challenge 的 nodePk 逐字节核对。 */
   pinnedPublicKey?: string | null;
   totpCode?: string | null;
+  /**
+   * fan-out 才把不可达收成 `NODE_UNREACHABLE` 结果。entry / self 必须保留
+   * NetworkError（退出码 5、原 message），不能降级成 AuthError。
+   */
+  treatUnreachableAsOutcome?: boolean;
 }): Promise<LoginNodeResult> {
   try {
     return await loginToNodeOnce(args);
   } catch (error) {
-    if (isNodeUnreachableError(error)) {
+    if (args.treatUnreachableAsOutcome && isNodeUnreachableError(error)) {
       return { nodeId: args.nodeId, ok: false, code: 'NODE_UNREACHABLE' };
     }
     throw error;
@@ -230,14 +235,15 @@ async function loginToNodeOnce(args: {
   return { nodeId, ok: false, code: await readLoginErrorCode(response), nodePk: challenge.nodePk };
 }
 
-/** `/api/mesh/nodes`：404 当空表；401 表示 self 会话失效（whoami 要跟没登录同一条路）。 */
+/** `/api/mesh/nodes`：404 当空表；401 / 会话类 403 表示 self 会话失效（whoami 要跟没登录同一条路）。 */
 export async function fetchMeshNodes(
   http: HttpClient
 ): Promise<{ ok: true; nodes: MeshNode[] } | { ok: false; unauthorized: true }> {
   const response = await http.fetch(SELF_NODE_ID, '/api/mesh/nodes');
   if (response.status === 404) return { ok: true, nodes: [] };
-  if (response.status === 401) return { ok: false, unauthorized: true };
   if (!response.ok) {
+    const body = await response.text();
+    if (isSessionAuthFailure(response.status, body)) return { ok: false, unauthorized: true };
     throw new NetworkError(`GET /api/mesh/nodes → HTTP ${response.status}`);
   }
   const payload = (await response.json()) as { nodes?: MeshNode[] };

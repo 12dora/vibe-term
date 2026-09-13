@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { encodeBase64url, generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import { buildContext } from '../core/context';
-import { AuthError } from '../core/errors';
+import { AuthError, NetworkError } from '../core/errors';
 import type { FetchLike } from '../core/http';
 import { type FakeGateway, createFakeGateway, createFakeUser } from '../core/test-fakes';
 import { command as login } from './login';
@@ -429,6 +429,72 @@ describe('fan-out failures', () => {
     expect(await login.run(ctx, [])).toBe(0);
     expect(gateway.issued.has(NODE_A)).toBe(true);
     expect(stderr.text()).toContain('skipped oracle: unreachable');
+  });
+
+  test('entry challenge NetworkError exits 5 with the original message', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({ user });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes('/api/auth/challenge')) throw new Error('ECONNRESET');
+      return gateway.fetch(url, init);
+    };
+    const { ctx } = await testContext(gateway, { json: true, fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const error = (await login.run(ctx, []).catch((err) => err)) as NetworkError;
+    expect(error).toBeInstanceOf(NetworkError);
+    expect(error.exitCode).toBe(5);
+    expect(error.message).toContain('ECONNRESET');
+    expect(error.message).toContain('/api/auth/challenge');
+  });
+
+  test('--node targeting an unreachable node exits 5', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_OFFLINE]: 'oracle' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes(`/n/${NODE_OFFLINE}/`)) {
+        return new Response(JSON.stringify({ code: 'NODE_UNREACHABLE', nodeId: NODE_OFFLINE }), {
+          status: 503,
+        });
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stderr } = await testContext(gateway, {
+      node: 'oracle',
+      json: true,
+      fetchImpl,
+    });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(5);
+    expect(gateway.issued.has('self')).toBe(true);
+    expect(stderr.text()).not.toContain('logged in to 1 nodes');
+    expect(stderr.text()).toContain('unreachable');
+  });
+
+  test('one successful node uses the singular noun', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_OFFLINE]: 'oracle' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes(`/n/${NODE_OFFLINE}/`)) {
+        return new Response(JSON.stringify({ code: 'NODE_UNREACHABLE', nodeId: NODE_OFFLINE }), {
+          status: 503,
+        });
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stderr } = await testContext(gateway, { fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(0);
+    expect(stderr.text()).toContain('logged in to 1 node, skipped 1 unreachable');
+    expect(stderr.text()).not.toContain('1 nodes');
   });
 
   test('a reachable node that rejects login exits non-zero', async () => {

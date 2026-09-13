@@ -5,6 +5,7 @@
 
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -12,9 +13,9 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { type ConfigEnv, sessionFilePath } from './config';
-import { CliError } from './errors';
+import { CliError, UsageError } from './errors';
 
 export const SESSION_FILE_VERSION = 1;
 
@@ -103,23 +104,51 @@ export function parseSessionFile(text: string): SessionFile {
   return file;
 }
 
+/** 符号链接一律拒绝；win32 的 mode 恒为 0666/0444，跳过权限位。 */
+export function sessionFilePrivacyError(
+  path: string,
+  info: { isSymbolicLink(): boolean; mode: number },
+  platform: NodeJS.Platform = process.platform
+): UsageError | null {
+  if (info.isSymbolicLink()) {
+    return new UsageError(
+      `session file ${path} is a symlink; refuse to load a redirected session file`
+    );
+  }
+  if (platform === 'win32') return null;
+  if ((info.mode & 0o077) !== 0) {
+    return new UsageError(
+      `session file ${path} is group/world readable; chmod 0600 (this file is a full session capability, protect it)`
+    );
+  }
+  return null;
+}
+
+function directoryExists(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export class SessionStore {
   private data: SessionFile | null = null;
 
-  constructor(readonly path: string) {}
+  constructor(
+    readonly path: string,
+    /** CLI 自有 config dir；覆盖路径的父目录不等于它时，已存在则不 chmod。 */
+    private readonly ownDir: string | null = null
+  ) {}
 
   static open(dir: string, env: ConfigEnv = process.env): SessionStore {
-    return new SessionStore(sessionFilePath(dir, env));
+    return new SessionStore(sessionFilePath(dir, env), dir);
   }
 
   /** 已有文件必须是 0600：group/world 可读就是把完整会话能力泄露出去。 */
   private assertPrivateFile(): void {
-    const mode = statSync(this.path).mode;
-    if ((mode & 0o077) !== 0) {
-      throw new CliError(
-        `session file ${this.path} is group/world readable; chmod 0600 (this file is a full session capability, protect it)`
-      );
-    }
+    const error = sessionFilePrivacyError(this.path, lstatSync(this.path));
+    if (error) throw error;
   }
 
   private load(): SessionFile {
@@ -193,8 +222,11 @@ export class SessionStore {
   save(): void {
     const file = this.load();
     const dir = dirname(this.path);
+    const existed = directoryExists(dir);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    chmodSync(dir, 0o700);
+    const isOwnDir = this.ownDir !== null && resolve(dir) === resolve(this.ownDir);
+    // 只 chmod 本次新建的目录，或 CLI 自有 config dir；用户指定的已存在目录原样保留。
+    if (!existed || isOwnDir) chmodSync(dir, 0o700);
     const tmp = `${this.path}.${process.pid}.${Date.now()}.tmp`;
     try {
       writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
