@@ -1,18 +1,35 @@
-// 复杂度门禁：McCabe 圈复杂度 / 函数行数 / 文件行数 三条阈值，超标即失败。
-// 有意保留的热点写进 allowlist.json（键为 "相对路径:函数名"，值为保留理由），
-// 门禁对这些条目只要求不继续恶化（不高于记录的 cc / lines）。
+// 复杂度门禁：CC / 函数行数 / 文件行数 / 参数个数 / 嵌套深度 / 跨文件重复。
+// 有意保留的热点写进 allowlist.json（键为 "相对路径" 或 "相对路径:函数名"），
+// 门禁对这些条目只要求不继续恶化（不高于记录值）。
+// 故意同构的文件对写进 duplication-allowlist.json。
 // 用法：bun scripts/complexity/gate.ts [--report|--tighten]
-//   --report  只打印排行，不判定失败
-//   --tighten 按当前实测值收紧 allowlist（只降不升；降回默认阈值内的字段/条目直接删除，失配条目剔除）
+//   --report  打印各指标计数与 top-10，不判定失败
+//   --tighten 按当前实测值收紧 allowlist（只降不升；回到默认阈值内的字段/条目删除；
+//             新阈值下已有超标写入冻结条目）
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import ts from 'typescript';
+import {
+  type DupAllowEntry,
+  type DupHit,
+  findDuplication,
+  formatDupHit,
+  isDupAllowed,
+} from './duplication';
+import {
+  type AllowMap,
+  FILE_WARN_LINES,
+  type FnMetrics,
+  LIMITS,
+  analyzeSource,
+  fnKey,
+  tightenAllowlist,
+} from './metrics';
+
+export { LIMITS, FILE_WARN_LINES } from './metrics';
+export { DUP_WINDOW, findDuplication, formatDupHit, isDupAllowed } from './duplication';
+export { analyzeSource, tightenAllowlist } from './metrics';
 
 const ROOT = join(import.meta.dir, '..', '..');
-const LIMITS = { cc: 15, fnLines: 120, fileLines: 600 };
-// 文件接近阈值只提醒不失败：让改动者在被门禁拦下之前就知道该拆了（round22 五个文件曾离 900 行门禁 ≤12 行）。
-// 函数级不提醒：CC 14–15 与 110–120 行的函数有三百多个，提醒会变成噪声。
-const WARN_RATIO = 0.9;
 const SKIP_DIRS = new Set([
   'node_modules',
   'dist',
@@ -26,10 +43,22 @@ const SKIP_DIRS = new Set([
 const SKIP_FILE = /\.test\.|\.spec\.|\.integration\.|\.bench\.|\.d\.ts$/;
 const SKIP_PATH = /\/i18n\/(resources|types)\.ts$|\/vendor\/|\/tests\//;
 
-type Fn = { file: string; name: string; line: number; cc: number; lines: number };
-type Allow = Record<string, { cc?: number; lines?: number; fileLines?: number; reason: string }>;
+export type GateIssueSet = {
+  violations: string[];
+  warnings: string[];
+  stale: string[];
+};
 
-function walk(dir: string, out: string[]): void {
+export type GateCounts = {
+  cc: number;
+  fnLines: number;
+  fileLines: number;
+  params: number;
+  nesting: number;
+  duplication: number;
+};
+
+export function walk(dir: string, out: string[]): void {
   for (const entry of readdirSync(dir)) {
     if (SKIP_DIRS.has(entry)) continue;
     const path = join(dir, entry);
@@ -39,176 +68,181 @@ function walk(dir: string, out: string[]): void {
   }
 }
 
-function cyclomatic(fn: ts.Node): number {
-  let cc = 1;
-  const visit = (n: ts.Node): void => {
-    if (n !== fn && isFunctionLike(n)) return;
-    switch (n.kind) {
-      case ts.SyntaxKind.IfStatement:
-      case ts.SyntaxKind.ConditionalExpression:
-      case ts.SyntaxKind.CaseClause:
-      case ts.SyntaxKind.ForStatement:
-      case ts.SyntaxKind.ForInStatement:
-      case ts.SyntaxKind.ForOfStatement:
-      case ts.SyntaxKind.WhileStatement:
-      case ts.SyntaxKind.DoStatement:
-      case ts.SyntaxKind.CatchClause:
-        cc++;
-        break;
-      case ts.SyntaxKind.BinaryExpression: {
-        const op = (n as ts.BinaryExpression).operatorToken.kind;
-        if (
-          op === ts.SyntaxKind.AmpersandAmpersandToken ||
-          op === ts.SyntaxKind.BarBarToken ||
-          op === ts.SyntaxKind.QuestionQuestionToken
-        )
-          cc++;
-        break;
-      }
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(fn);
-  return cc;
-}
-
-function isFunctionLike(n: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(n) ||
-    ts.isFunctionExpression(n) ||
-    ts.isArrowFunction(n) ||
-    ts.isMethodDeclaration(n)
-  );
-}
-
-function functionName(n: ts.Node): string | null {
-  if (ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n))
-    return n.name?.getText() ?? '<anon>';
-  if ((ts.isFunctionExpression(n) || ts.isArrowFunction(n)) && n.parent) {
-    if (ts.isVariableDeclaration(n.parent)) return n.parent.name.getText();
-    if (ts.isPropertyAssignment(n.parent)) return n.parent.name.getText();
-    if (n.body && ts.isBlock(n.body) && n.body.statements.length > 15) return '<anon>';
+export function collectFiles(root: string): string[] {
+  const files: string[] = [];
+  for (const top of ['apps', 'packages']) {
+    const dir = join(root, top);
+    if (existsSync(dir)) walk(dir, files);
   }
-  return null;
+  return files;
 }
 
-function analyze(file: string): { fns: Fn[]; lines: number } {
-  const text = readFileSync(file, 'utf8');
-  const sf = ts.createSourceFile(
-    file,
-    text,
-    ts.ScriptTarget.Latest,
-    true,
-    file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
-  );
-  const rel = relative(ROOT, file);
-  const fns: Fn[] = [];
-  const visit = (n: ts.Node): void => {
-    const name = isFunctionLike(n) ? functionName(n) : null;
-    if (name !== null) {
-      const start = sf.getLineAndCharacterOfPosition(n.getStart()).line + 1;
-      const end = sf.getLineAndCharacterOfPosition(n.getEnd()).line + 1;
-      fns.push({ file: rel, name, line: start, cc: cyclomatic(n), lines: end - start + 1 });
-    }
-    ts.forEachChild(n, visit);
-  };
-  visit(sf);
-  return { fns, lines: text.split('\n').length };
+export function loadAllow(path: string): AllowMap {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as AllowMap) : {};
 }
 
-const allowPath = join(import.meta.dir, 'allowlist.json');
-const allow: Allow = existsSync(allowPath) ? JSON.parse(readFileSync(allowPath, 'utf8')) : {};
-const files: string[] = [];
-for (const top of ['apps', 'packages']) walk(join(ROOT, top), files);
+export function loadDupAllow(path: string): DupAllowEntry[] {
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as DupAllowEntry[]) : [];
+}
 
-const all: Fn[] = [];
-const violations: string[] = [];
-const warnings: string[] = [];
-const usedAllow = new Set<string>();
-const fileLineCounts = new Map<string, number>();
-for (const file of files) {
-  const { fns, lines } = analyze(file);
-  all.push(...fns);
-  const rel = relative(ROOT, file);
-  fileLineCounts.set(rel, lines);
-  const fileAllow = allow[rel];
-  if (fileAllow) usedAllow.add(rel);
-  const fileLimit = fileAllow?.fileLines ?? LIMITS.fileLines;
-  if (lines > fileLimit) violations.push(`${rel}: ${lines} lines > ${fileLimit}`);
-  else if (!fileAllow && lines > fileLimit * WARN_RATIO)
-    warnings.push(`${rel}: ${lines} lines (limit ${fileLimit})`);
-  for (const fn of fns) {
-    const key = `${rel}:${fn.name}`;
-    const entry = allow[key];
+export function collectIssues(args: {
+  fns: FnMetrics[];
+  fileLines: Map<string, number>;
+  allow: AllowMap;
+  dups: DupHit[];
+  dupAllow: DupAllowEntry[];
+}): GateIssueSet & { usedAllow: Set<string> } {
+  const violations: string[] = [];
+  const warnings: string[] = [];
+  const usedAllow = new Set<string>();
+
+  for (const [rel, lines] of args.fileLines) {
+    const fileAllow = args.allow[rel];
+    if (fileAllow) usedAllow.add(rel);
+    const fileLimit = fileAllow?.fileLines ?? LIMITS.fileLines;
+    if (lines > fileLimit) violations.push(`${rel}: ${lines} lines > ${fileLimit}`);
+    else if (!fileAllow && lines >= FILE_WARN_LINES)
+      warnings.push(`${rel}: ${lines} lines (limit ${LIMITS.fileLines})`);
+  }
+
+  for (const fn of args.fns) {
+    const key = fnKey(fn.file, fn.name);
+    const entry = args.allow[key];
     if (entry) usedAllow.add(key);
     const ccLimit = entry?.cc ?? LIMITS.cc;
     const lineLimit = entry?.lines ?? LIMITS.fnLines;
-    if (fn.cc > ccLimit) violations.push(`${rel}:${fn.line} ${fn.name}: CC ${fn.cc} > ${ccLimit}`);
+    const paramLimit = entry?.params ?? LIMITS.params;
+    const nestLimit = entry?.nesting ?? LIMITS.nesting;
+    if (fn.cc > ccLimit)
+      violations.push(`${fn.file}:${fn.line} ${fn.name}: CC ${fn.cc} > ${ccLimit}`);
     if (fn.lines > lineLimit)
-      violations.push(`${rel}:${fn.line} ${fn.name}: ${fn.lines} lines > ${lineLimit}`);
+      violations.push(`${fn.file}:${fn.line} ${fn.name}: ${fn.lines} lines > ${lineLimit}`);
+    if (fn.params > paramLimit)
+      violations.push(`${fn.file}:${fn.line} ${fn.name}: ${fn.params} params > ${paramLimit}`);
+    if (fn.nesting > nestLimit)
+      violations.push(`${fn.file}:${fn.line} ${fn.name}: nesting ${fn.nesting} > ${nestLimit}`);
   }
-}
-const stale = Object.keys(allow).filter((k) => !usedAllow.has(k));
 
-if (process.argv.includes('--tighten')) {
-  // 同名函数取最大实测值（gate 判定对每个同 key 函数都生效，锁值必须覆盖最大者）
-  const maxCc = new Map<string, number>();
-  const maxLines = new Map<string, number>();
-  for (const fn of all) {
-    const key = `${fn.file}:${fn.name}`;
-    maxCc.set(key, Math.max(maxCc.get(key) ?? 0, fn.cc));
-    maxLines.set(key, Math.max(maxLines.get(key) ?? 0, fn.lines));
+  for (const hit of args.dups) {
+    if (isDupAllowed(hit, args.dupAllow)) continue;
+    violations.push(formatDupHit(hit));
   }
-  const next: Allow = {};
-  for (const [key, entry] of Object.entries(allow)) {
-    if (stale.includes(key)) continue;
-    const updated = { ...entry };
-    if (entry.fileLines !== undefined) {
-      const cur = fileLineCounts.get(key) ?? 0;
-      if (cur > LIMITS.fileLines) updated.fileLines = Math.min(entry.fileLines, cur);
-      else updated.fileLines = undefined;
-    }
-    if (entry.cc !== undefined) {
-      const cur = maxCc.get(key) ?? 0;
-      if (cur > LIMITS.cc) updated.cc = Math.min(entry.cc, cur);
-      else updated.cc = undefined;
-    }
-    if (entry.lines !== undefined) {
-      const cur = maxLines.get(key) ?? 0;
-      if (cur > LIMITS.fnLines) updated.lines = Math.min(entry.lines, cur);
-      else updated.lines = undefined;
-    }
-    if (
-      updated.cc !== undefined ||
-      updated.lines !== undefined ||
-      updated.fileLines !== undefined
-    ) {
-      next[key] = updated;
-    }
-  }
-  writeFileSync(allowPath, `${JSON.stringify(next, null, 2)}\n`);
-  console.log(
-    `allowlist tightened: ${Object.keys(allow).length} -> ${Object.keys(next).length} entries`
-  );
-  process.exit(0);
+
+  const stale = Object.keys(args.allow).filter((k) => !usedAllow.has(k));
+  return { violations, warnings, stale, usedAllow };
 }
 
-if (process.argv.includes('--report')) {
-  const byCc = [...all].sort((a, b) => b.cc - a.cc).slice(0, 30);
-  console.log(
-    `files ${files.length}, functions ${all.length}, CC>${LIMITS.cc}: ${all.filter((f) => f.cc > LIMITS.cc).length}, >${LIMITS.fnLines} lines: ${all.filter((f) => f.lines > LIMITS.fnLines).length}`
-  );
-  for (const f of byCc) console.log(`${f.cc}\t${f.lines}L\t${f.file}:${f.line}\t${f.name}`);
-  process.exit(0);
+export function countOverLimit(
+  fns: FnMetrics[],
+  fileLines: Map<string, number>,
+  dups: DupHit[]
+): GateCounts {
+  return {
+    cc: fns.filter((f) => f.cc > LIMITS.cc).length,
+    fnLines: fns.filter((f) => f.lines > LIMITS.fnLines).length,
+    fileLines: [...fileLines.values()].filter((n) => n > LIMITS.fileLines).length,
+    params: fns.filter((f) => f.params > LIMITS.params).length,
+    nesting: fns.filter((f) => f.nesting > LIMITS.nesting).length,
+    duplication: dups.length,
+  };
 }
-for (const w of warnings) console.warn(`complexity near limit: ${w}`);
-for (const v of violations) console.error(`complexity: ${v}`);
-for (const k of stale)
-  console.error(`complexity: allowlist entry no longer matches anything: ${k}`);
-if (violations.length > 0 || stale.length > 0) {
-  console.error(
-    `complexity gate failed: ${violations.length} violation(s), ${stale.length} stale allowlist entr(y/ies)`
-  );
-  process.exit(1);
+
+export function formatReport(args: {
+  files: number;
+  fns: FnMetrics[];
+  fileLines: Map<string, number>;
+  dups: DupHit[];
+}): string {
+  const counts = countOverLimit(args.fns, args.fileLines, args.dups);
+  const topCc = [...args.fns].sort((a, b) => b.cc - a.cc || b.lines - a.lines).slice(0, 10);
+  const topFn = [...args.fns].sort((a, b) => b.lines - a.lines || b.cc - a.cc).slice(0, 10);
+  const topFile = [...args.fileLines.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 10);
+  const topParams = [...args.fns].sort((a, b) => b.params - a.params || b.cc - a.cc).slice(0, 10);
+  const topNest = [...args.fns].sort((a, b) => b.nesting - a.nesting || b.cc - a.cc).slice(0, 10);
+  const topDup = [...args.dups].sort((a, b) => b.lines - a.lines).slice(0, 10);
+
+  const lines: string[] = [
+    `files ${args.files}, functions ${args.fns.length}`,
+    `CC>${LIMITS.cc}: ${counts.cc}`,
+    `fn>${LIMITS.fnLines}: ${counts.fnLines}`,
+    `file>${LIMITS.fileLines}: ${counts.fileLines}`,
+    `params>${LIMITS.params}: ${counts.params}`,
+    `nesting>${LIMITS.nesting}: ${counts.nesting}`,
+    `duplication: ${counts.duplication}`,
+    'top CC:',
+    ...topCc.map((f) => `  ${f.cc}\t${f.lines}L\t${f.file}:${f.line}\t${f.name}`),
+    'top fn lines:',
+    ...topFn.map((f) => `  ${f.lines}L\tCC${f.cc}\t${f.file}:${f.line}\t${f.name}`),
+    'top files:',
+    ...topFile.map(([file, n]) => `  ${n}L\t${file}`),
+    'top params:',
+    ...topParams.map((f) => `  ${f.params}\t${f.file}:${f.line}\t${f.name}`),
+    'top nesting:',
+    ...topNest.map((f) => `  ${f.nesting}\t${f.file}:${f.line}\t${f.name}`),
+    'top duplication:',
+    ...topDup.map((h) => `  ${formatDupHit(h)}`),
+  ];
+  return `${lines.join('\n')}\n`;
 }
-console.log(`complexity gate ok (${files.length} files, ${all.length} functions)`);
+
+export function scanRoot(root: string): {
+  files: string[];
+  fns: FnMetrics[];
+  fileLines: Map<string, number>;
+  texts: Array<{ rel: string; text: string }>;
+} {
+  const files = collectFiles(root);
+  const fns: FnMetrics[] = [];
+  const fileLines = new Map<string, number>();
+  const texts: Array<{ rel: string; text: string }> = [];
+  for (const abs of files) {
+    const text = readFileSync(abs, 'utf8');
+    const rel = relative(root, abs);
+    texts.push({ rel, text });
+    const analyzed = analyzeSource(text, rel);
+    fns.push(...analyzed.fns);
+    fileLines.set(rel, analyzed.lines);
+  }
+  return { files, fns, fileLines, texts };
+}
+
+export function main(argv: string[], root = ROOT): number {
+  const allowPath = join(import.meta.dir, 'allowlist.json');
+  const dupAllowPath = join(import.meta.dir, 'duplication-allowlist.json');
+  const { files, fns, fileLines, texts } = scanRoot(root);
+  const allow = loadAllow(allowPath);
+  const dupAllow = loadDupAllow(dupAllowPath);
+  const dups = findDuplication(texts);
+
+  if (argv.includes('--tighten')) {
+    const next = tightenAllowlist(allow, fns, fileLines);
+    writeFileSync(allowPath, `${JSON.stringify(next, null, 2)}\n`);
+    console.log(
+      `allowlist tightened: ${Object.keys(allow).length} -> ${Object.keys(next).length} entries`
+    );
+    return 0;
+  }
+
+  if (argv.includes('--report')) {
+    process.stdout.write(formatReport({ files: files.length, fns, fileLines, dups }));
+    return 0;
+  }
+
+  const { violations, warnings, stale } = collectIssues({ fns, fileLines, allow, dups, dupAllow });
+  for (const w of warnings) console.warn(`complexity near limit: ${w}`);
+  for (const v of violations) console.error(`complexity: ${v}`);
+  for (const k of stale)
+    console.error(`complexity: allowlist entry no longer matches anything: ${k}`);
+  if (violations.length > 0 || stale.length > 0) {
+    console.error(
+      `complexity gate failed: ${violations.length} violation(s), ${stale.length} stale allowlist entr(y/ies)`
+    );
+    return 1;
+  }
+  console.log(`complexity gate ok (${files.length} files, ${fns.length} functions)`);
+  return 0;
+}
+
+if (import.meta.main) process.exit(main(process.argv.slice(2)));

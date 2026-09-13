@@ -208,6 +208,21 @@ bunx biome check <改动的文件>                  # 仓库根执行
 bun scripts/complexity/gate.ts
 ```
 
+## 复杂度门禁
+
+`bun run lint` 的后半段是 `bun scripts/complexity/gate.ts`，扫描 `apps/` 与 `packages/` 下的 `.ts` / `.tsx`（跳过 test / spec / integration / bench、生成的 i18n `resources|types`、`vendor/`、`tests/`）。阈值：
+
+| 指标 | 上限 | 说明 |
+| --- | --- | --- |
+| 圈复杂度（McCabe） | 12 | `if` / 三元 / `case` / 循环 / `catch` / 短路逻辑（含 `??`） |
+| 函数行数 | 80 | AST 起止行（含） |
+| 文件行数 | 500（450 起 warn） | 无文件级 allow 时 450–500 只提醒 |
+| 参数个数 | 5 | 不含 TypeScript `this` 参数 |
+| 嵌套深度 | 4 | 只计 `if` / `for` / `while` / `switch` / `try` 与匿名箭头回调块；不计裸 `Block`，`else if` 不加层 |
+| 跨文件重复 | ≥ 15 行规范化窗口，≥ 2 个文件 | 去掉注释 / 字符串 / 数字后做 token-hash；忽略 import 块、纯字面量窗、色板与类型字段噪声 |
+
+存量超标写在 `scripts/complexity/allowlist.json`（键为相对路径或 `相对路径:函数名`），只许缩小不许升高；降回默认阈值内的字段 / 条目直接删除。`--tighten` 按当前实测值收紧，并把新阈值下已有超标冻结成新条目。故意同构的文件对写在 `scripts/complexity/duplication-allowlist.json`（无序对，例如 `en.ts` ↔ `zh-cn.ts`、hub-runtime ↔ relay-runtime）。`--report` 打印各指标计数与 top-10，不判定失败。新代码必须落在默认阈值内，不要往 allowlist 加条目。单测：`bun test scripts/complexity/gate.test.ts`。
+
 ## 注意事项
 
 - 单测不打真实 endpoint。登录流程用 `core/test-fakes.ts` 的假网关（用 `@vibeterm/shared/auth` 真造一个用户，服务端侧真验签名与 TOTP），HTTP 层用假 `fetch`。要打真实网关的用例按 `live-integration-tests.md` 的约定单独放。

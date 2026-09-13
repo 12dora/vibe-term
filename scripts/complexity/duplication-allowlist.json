@@ -1,0 +1,67 @@
+[
+  {
+    "a": "packages/app/src/i18n/en.ts",
+    "b": "packages/app/src/i18n/zh-cn.ts",
+    "reason": "同一文案键的英/中文对照，结构必然同构"
+  },
+  {
+    "a": "apps/gateway/src/hub/hub-runtime.ts",
+    "b": "apps/gateway/src/relay/relay-runtime.ts",
+    "reason": "hub/relay 装配根平行，有意保持同构"
+  },
+  {
+    "a": "apps/gateway/src/db/telegram.ts",
+    "b": "apps/gateway/src/db/weixin.ts",
+    "reason": "messaging channel 的 telegram/weixin 适配，有意平行"
+  },
+  {
+    "a": "apps/gateway/src/api/telegram-routes.ts",
+    "b": "apps/gateway/src/api/weixin-routes.ts",
+    "reason": "messaging channel 路由的 telegram/weixin 适配，有意平行"
+  },
+  {
+    "a": "packages/api-client/src/telegram.ts",
+    "b": "packages/api-client/src/weixin.ts",
+    "reason": "messaging channel 客户端的 telegram/weixin 适配，有意平行"
+  },
+  {
+    "a": "apps/gateway/src/mesh/rtc/stun-probe.ts",
+    "b": "apps/gateway/src/mesh/rtc/turn-probe.ts",
+    "reason": "STUN/TURN 探测循环同构，协议字段不同"
+  },
+  {
+    "a": "apps/gateway/src/relay/relay-metrics.ts",
+    "b": "packages/api-client/src/relay/metrics-types.ts",
+    "reason": "网关不依赖 api-client，metrics 类型有意镜像"
+  },
+  {
+    "a": "packages/ghostty-terminal/src/selection-clipboard.ts",
+    "b": "packages/shared/src/browser-clipboard.ts",
+    "reason": "ghostty-terminal 零依赖，clipboard 实现有意保留本地副本"
+  },
+  {
+    "a": "apps/fe/src/pages/settings/relay/default-quota-dialog.tsx",
+    "b": "apps/fe/src/pages/settings/relay/relay-limits-dialog.tsx",
+    "reason": "中继配额/限额对话框同构，round46 冻结存量"
+  },
+  {
+    "a": "apps/fe/src/pages/settings/relay/default-quota-dialog.tsx",
+    "b": "apps/fe/src/pages/settings/relay/password-dialog.tsx",
+    "reason": "中继对话框表单脚手架同构，round46 冻结存量"
+  },
+  {
+    "a": "apps/fe/src/pages/settings/relay/password-dialog.tsx",
+    "b": "apps/fe/src/pages/settings/relay/relay-limits-dialog.tsx",
+    "reason": "中继对话框表单脚手架同构，round46 冻结存量"
+  },
+  {
+    "a": "apps/gateway/src/mesh/integration/large-push-harness.ts",
+    "b": "apps/gateway/src/mesh/test-support.ts",
+    "reason": "mesh 集成夹具与 test-support 共享装配，round46 冻结存量"
+  },
+  {
+    "a": "packages/cli/src/commands/term.ts",
+    "b": "packages/cli/src/core/pane-session.ts",
+    "reason": "CLI 会话 waiter 同构，round46 冻结存量"
+  }
+]

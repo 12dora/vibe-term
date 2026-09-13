@@ -19,6 +19,7 @@ const TARGETS: Array<{ dir: string; args: string[]; retry?: boolean }> = [
   { dir: 'packages/cli', args: ['test'] },
   { dir: 'packages/app', args: ['test', 'src'] },
   { dir: 'apps/fe', args: ['test', 'src/'] },
+  { dir: '.', args: ['test', 'scripts/complexity'] },
 ];
 // gateway 全量在一个进程里跑时，跨文件共享的 sqlite/端口/RTC 状态会互相打扰（closed database、
 // DC 握手超时），本地实测 4 条 flake 隔离复跑全过。CI 里按 src 一级目录分进程跑，失败的目录单独重跑一次。
