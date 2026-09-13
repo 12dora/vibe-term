@@ -19,6 +19,7 @@ import {
   UPLINK_CONNECT_TIMEOUT_MS,
   UplinkClient,
   classifyUplinkConnectError,
+  defaultWsFactory,
   uplinkWebSocketTls,
 } from './uplink-client';
 import { type UplinkNodeList, decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
@@ -40,6 +41,73 @@ describe('uplinkWebSocketTls', () => {
     expect(uplinkWebSocketTls([])).toBeUndefined();
     expect(uplinkWebSocketTls(['-----BEGIN CERTIFICATE-----'])).toEqual({
       tls: { ca: ['-----BEGIN CERTIFICATE-----'] },
+    });
+  });
+});
+
+describe('defaultWsFactory dns fallback', () => {
+  type Listener = (ev: Event) => void;
+  class FakeSocket {
+    readyState = 0;
+    private readonly listeners = new Map<string, Listener[]>();
+    private pending: { type: string; payload: Record<string, unknown> } | null = null;
+    addEventListener(type: string, fn: Listener): void {
+      if (this.pending?.type === type) {
+        const payload = this.pending.payload;
+        this.pending = null;
+        queueMicrotask(() => fn(payload as unknown as Event));
+        return;
+      }
+      const list = this.listeners.get(type) ?? [];
+      list.push(fn);
+      this.listeners.set(type, list);
+    }
+    close(): void {
+      this.readyState = 3;
+    }
+    open(): void {
+      this.readyState = 1;
+      this.emit('open', {});
+    }
+    fail(err: Error): void {
+      this.readyState = 3;
+      this.emit('error', { error: err, message: err.message });
+    }
+    private emit(type: string, payload: Record<string, unknown>): void {
+      const list = this.listeners.get(type) ?? [];
+      if (list.length === 0) {
+        this.pending = { type, payload };
+        return;
+      }
+      this.listeners.set(type, []);
+      for (const fn of list) fn(payload as unknown as Event);
+    }
+  }
+
+  test('IP redial keeps pinned CA and original hostname as serverName', async () => {
+    const ca = ['-----BEGIN CERTIFICATE-----'];
+    const calls: Array<{ url: string; opts?: { tls?: { ca?: string[]; serverName?: string } } }> =
+      [];
+    const factory = defaultWsFactory(ca, {
+      raceCount: 1,
+      enabled: true,
+      resolve: async () => ({ ip: '122.51.254.148', via: 'doh' }),
+      wsCtor: (url, opts) => {
+        calls.push({ url, opts });
+        const ws = new FakeSocket();
+        if (url.includes('122.51.254.148')) ws.open();
+        else ws.fail(Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }));
+        return ws as never;
+      },
+    });
+    await factory('wss://hub.example/uplink');
+    expect(calls.map((row) => row.url)).toEqual([
+      'wss://hub.example/uplink',
+      'wss://122.51.254.148/uplink',
+    ]);
+    expect(calls[1]?.opts?.tls).toEqual({
+      ca,
+      serverName: 'hub.example',
     });
   });
 });

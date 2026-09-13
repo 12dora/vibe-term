@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import { parseCachedEdge } from './edge-cache';
 import {
   type CachedEdge,
+  DOH_ENDPOINTS,
   EDGE_ADDRS_ENV,
   type EdgeCache,
   type EdgeFetch,
   describeEdge,
+  dohEndpoints,
   isFakeIp,
   isUnusableEdgeIp,
   parseEdgeAddrsEnv,
@@ -132,7 +134,7 @@ describe('resolveHostnameViaDoh', () => {
     const fetchImpl: EdgeFetch = async (input) => {
       const url = new URL(String(input));
       hosts.push(url.host);
-      if (url.host === 'cloudflare-dns.com') throw new Error('blocked');
+      if (url.host === '223.5.5.5') throw new Error('blocked');
       return Response.json({
         Status: 0,
         Answer: [aAnswer(url.searchParams.get('name') ?? '', '8.8.8.8')],
@@ -141,7 +143,7 @@ describe('resolveHostnameViaDoh', () => {
     await expect(resolveHostnameViaDoh('stun.l.google.com', { fetchImpl })).resolves.toEqual([
       '8.8.8.8',
     ]);
-    expect(hosts).toEqual(['cloudflare-dns.com', 'dns.google']);
+    expect(hosts).toEqual(['223.5.5.5', '120.53.53.53']);
   });
 });
 
@@ -155,7 +157,7 @@ describe('resolveEdgeViaDoh', () => {
       '198.41.192.27:7844',
       '198.41.200.53:7844',
     ]);
-    expect(urls[0]).toContain('cloudflare-dns.com');
+    expect(urls[0]).toContain('223.5.5.5');
     expect(urls[0]).toContain('type=33');
   });
 
@@ -167,7 +169,7 @@ describe('resolveEdgeViaDoh', () => {
       return Response.json({ Status: 0, Answer: [aAnswer(name, '198.41.192.7')] });
     });
     const { addrs } = await resolveEdgeViaDoh(fetchImpl);
-    expect(asked.filter((a) => a.endsWith('/33')).length).toBe(2);
+    expect(asked.filter((a) => a.endsWith('/33')).length).toBe(DOH_ENDPOINTS.length);
     expect(asked).toContain('region1.v2.argotunnel.com/1');
     expect(asked).toContain('region2.v2.argotunnel.com/1');
     expect(addrs).toEqual(['198.41.192.7:7844']);
@@ -178,12 +180,12 @@ describe('resolveEdgeViaDoh', () => {
     const fetchImpl: EdgeFetch = async (input) => {
       const url = new URL(String(input));
       hosts.push(url.host);
-      if (url.host === 'cloudflare-dns.com') throw new Error('blocked');
+      if (url.host === '223.5.5.5') throw new Error('blocked');
       const name = url.searchParams.get('name') ?? '';
       return HAPPY_ROUTE(name, url.searchParams.get('type') ?? '');
     };
     const { addrs } = await resolveEdgeViaDoh(fetchImpl);
-    expect(hosts).toContain('dns.google');
+    expect(hosts).toContain('120.53.53.53');
     expect(addrs.length).toBeGreaterThan(0);
   });
 
@@ -193,7 +195,7 @@ describe('resolveEdgeViaDoh', () => {
     const fetchImpl: EdgeFetch = async (input, init) => {
       const url = new URL(String(input));
       hosts.push(`${url.host}/${url.searchParams.get('type')}`);
-      if (url.host === 'cloudflare-dns.com') {
+      if (url.host === '223.5.5.5') {
         // 黑洞：只等自己的超时信号，并按真实开销推进预算时钟
         await new Promise<void>((resolve) => {
           init?.signal?.addEventListener('abort', () => resolve(), { once: true });
@@ -208,8 +210,8 @@ describe('resolveEdgeViaDoh', () => {
       requestTimeoutMs: 20,
     });
     expect(addrs.length).toBeGreaterThan(0);
-    expect(hosts.filter((h) => h.startsWith('cloudflare-dns.com')).length).toBe(1);
-    expect(hosts.filter((h) => h === 'dns.google/1').length).toBe(2);
+    expect(hosts.filter((h) => h.startsWith('223.5.5.5')).length).toBe(1);
+    expect(hosts.filter((h) => h === '120.53.53.53/1').length).toBe(2);
   });
 
   test('throws when every answer is a fake ip', async () => {
@@ -541,5 +543,18 @@ describe('parseCachedEdge', () => {
       parseCachedEdge(JSON.stringify({ edgeAddrs: ['198.41.192.7:7844'], resolvedAt: 'nope' }))
     ).toBeNull();
     expect(parseCachedEdge(JSON.stringify({ resolvedAt: '2026-09-05T00:00:00.000Z' }))).toBeNull();
+  });
+});
+
+describe('dohEndpoints', () => {
+  test('defaults to the ip-literal list and honours the env override', () => {
+    expect(dohEndpoints({})).toEqual([...DOH_ENDPOINTS]);
+    expect(
+      dohEndpoints({
+        VIBETERM_DOH_ENDPOINTS:
+          ' https://10.0.0.1/resolve/, ftp://x , https://doh.example/dns-query',
+      })
+    ).toEqual(['https://10.0.0.1/resolve', 'https://doh.example/dns-query']);
+    expect(dohEndpoints({ VIBETERM_DOH_ENDPOINTS: 'nonsense' })).toEqual([...DOH_ENDPOINTS]);
   });
 });

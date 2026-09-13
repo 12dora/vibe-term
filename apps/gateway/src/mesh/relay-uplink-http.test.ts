@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { RelayDialContext } from './relay-dial';
-import { probeRelayHealth, relayUplinkWsUrl } from './relay-uplink-http';
+import { defaultRelayWsFactory, probeRelayHealth, relayUplinkWsUrl } from './relay-uplink-http';
 
 const SELF: RelayDialContext = {
   roles: { relay: true },
@@ -65,5 +65,131 @@ describe('relayUplinkWsUrl', () => {
       'wss://relay.example/relay/uplink'
     );
     expect(relayUplinkWsUrl('http://127.0.0.1:19993')).toBe('ws://127.0.0.1:19993/relay/uplink');
+  });
+});
+
+type Listener = (ev: Event) => void;
+
+class FakeSocket {
+  readyState = 0;
+  private readonly listeners = new Map<string, Listener[]>();
+  private pending: { type: string; payload: Record<string, unknown> } | null = null;
+
+  addEventListener(type: string, fn: Listener): void {
+    if (this.pending?.type === type) {
+      const payload = this.pending.payload;
+      this.pending = null;
+      queueMicrotask(() => fn(payload as unknown as Event));
+      return;
+    }
+    const list = this.listeners.get(type) ?? [];
+    list.push(fn);
+    this.listeners.set(type, list);
+  }
+
+  close(): void {
+    this.readyState = 3;
+  }
+
+  open(): void {
+    this.readyState = 1;
+    this.emit('open', {});
+  }
+
+  fail(err: string | Error): void {
+    this.readyState = 3;
+    const error = err instanceof Error ? err : new Error(err);
+    this.emit('error', { error, message: error.message });
+  }
+
+  private emit(type: string, payload: Record<string, unknown>): void {
+    const list = this.listeners.get(type) ?? [];
+    if (list.length === 0) {
+      this.pending = { type, payload };
+      return;
+    }
+    this.listeners.set(type, []);
+    for (const fn of list) fn(payload as unknown as Event);
+  }
+}
+
+describe('probeRelayHealth dns fallback', () => {
+  test('DNS 失败后按 IP 重探并带上 serverName 与 Host', async () => {
+    const urls: string[] = [];
+    const inits: Array<RequestInit | undefined> = [];
+    let n = 0;
+    expect(
+      await probeRelayHealth('https://other.example/', ['pem'], 1_000, SELF, {
+        enabled: true,
+        resolve: async () => ({ ip: '1.2.3.4', via: 'doh' }),
+        fetchImpl: async (url, init) => {
+          n += 1;
+          urls.push(url);
+          inits.push(init);
+          if (n === 1) {
+            const err = new Error('Unable to connect. Is the computer able to access the url?');
+            (err as Error & { code: string }).code = 'ConnectionRefused';
+            throw err;
+          }
+          return new Response(null, { status: 200 });
+        },
+      })
+    ).toBe(true);
+    expect(urls).toEqual([
+      'https://other.example/api/relay/health',
+      'https://1.2.3.4/api/relay/health',
+    ]);
+    expect((inits[1] as { tls?: { serverName?: string; ca?: string[] } }).tls).toEqual({
+      ca: ['pem'],
+      serverName: 'other.example',
+    });
+    expect((inits[1] as { headers?: { host?: string } }).headers?.host).toBe('other.example');
+  });
+});
+
+describe('defaultRelayWsFactory dns fallback', () => {
+  test('DNS 失败才按 IP 重拨，ECONNREFUSED / 4401 不重拨', async () => {
+    const dnsCalls: string[] = [];
+    const dnsFactory = defaultRelayWsFactory(['pem'], {
+      raceCount: 1,
+      enabled: true,
+      resolve: async () => ({ ip: '9.9.9.9', via: 'doh' }),
+      wsCtor: (url, opts) => {
+        dnsCalls.push(url);
+        const ws = new FakeSocket();
+        if (url.includes('9.9.9.9')) {
+          expect((opts as { tls?: { serverName?: string; ca?: string[] } }).tls).toEqual({
+            ca: ['pem'],
+            serverName: 'relay.example',
+          });
+          ws.open();
+        } else {
+          ws.fail(Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' }));
+        }
+        return ws as never;
+      },
+    });
+    await dnsFactory('wss://relay.example/relay/uplink');
+    expect(dnsCalls).toEqual(['wss://relay.example/relay/uplink', 'wss://9.9.9.9/relay/uplink']);
+
+    for (const fail of [
+      Object.assign(new Error('connect ECONNREFUSED 9.9.9.9:443'), { code: 'ECONNREFUSED' }),
+      Object.assign(new Error('ws-closed 4401 unauthorized'), { closeCode: 4401 }),
+    ]) {
+      const calls: string[] = [];
+      const factory = defaultRelayWsFactory(null, {
+        raceCount: 1,
+        enabled: true,
+        resolve: async () => ({ ip: '1.2.3.4', via: 'doh' }),
+        wsCtor: (url) => {
+          calls.push(url);
+          const ws = new FakeSocket();
+          ws.fail(fail);
+          return ws as never;
+        },
+      });
+      await expect(factory('wss://relay.example/relay/uplink')).rejects.toBeDefined();
+      expect(calls).toEqual(['wss://relay.example/relay/uplink']);
+    }
   });
 });

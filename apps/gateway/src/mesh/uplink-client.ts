@@ -16,6 +16,7 @@ import { waitSocketOpen } from '@vibeterm/shared/net';
 import type { HubAdvertisement, HubWriteForwardMessage } from '@vibeterm/shared/uplink';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler, jsonStable } from './ctl';
+import { createDialWsFactory } from './dial-resolve';
 import { stamp } from './mesh-log';
 import { parseOpenPayload } from './peer-protocol';
 import type {
@@ -52,9 +53,10 @@ import {
   sanitizeUplinkCtlType,
   sanitizeUplinkReason,
 } from './uplink-reconnect';
-import { type WsDialContext, withWsOpenRace } from './ws-open-race';
+import type { WsDialContext } from './ws-open-race';
 
 export { classifyUplinkConnectError };
+export { createDialWsFactory as defaultWsFactory };
 
 export const UPLINK_PING_INTERVAL_MS = 15_000;
 export const UPLINK_MISSED_PONG_LIMIT = 3;
@@ -105,13 +107,6 @@ export function uplinkWebSocketTls(
   tlsCa: string[] | null | undefined
 ): { tls: { ca: string[] } } | undefined {
   return tlsCa && tlsCa.length > 0 ? { tls: { ca: tlsCa } } : undefined;
-}
-
-function defaultWsFactory(tlsCa?: string[] | null): UplinkWsFactory {
-  return withWsOpenRace((url: string) => {
-    const tls = uplinkWebSocketTls(tlsCa);
-    return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
-  });
 }
 
 type AuthPhase = 'idle' | 'awaiting-challenge' | 'challenge-accepted';
@@ -191,7 +186,7 @@ export class UplinkClient {
     this.onHubForwardCb = opts.onHubForward;
     this.onHubWriteForwardCb = opts.onHubWriteForward;
     this.onHubRelayStreamCb = opts.onHubRelayStream;
-    this.wsFactory = opts.wsFactory ?? defaultWsFactory(opts.tlsCa);
+    this.wsFactory = opts.wsFactory ?? createDialWsFactory(opts.tlsCa);
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
     this.connectTimeoutMs =

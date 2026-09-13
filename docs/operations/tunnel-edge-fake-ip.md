@@ -8,7 +8,7 @@
 
 ## 设计
 
-- `apps/gateway/src/tunnel/edge-resolver.ts`：`isFakeIp`（198.18.0.0/15）、`isUnusableEdgeIp`（另滤私网/环回/CGNAT）、`resolveEdgeViaDoh`（DoH JSON 查 SRV `_v2-origintunneld._tcp.argotunnel.com` → 各 target 的 A；cloudflare-dns.com 失败回落 dns.google，SRV 失败回落 region1/region2:7844；本次解析记住成功端点并跳过已超时端点；单请求 5 s / 总预算 10 s）、`resolveEdge`（系统 lookup 见 fake-IP 才走 DoH；成功 `mode: 'static'`，失败 `mode: 'system'` + `lastError`；永不抛错）。`VIBETERM_TUNNEL_EDGE_ADDRS` 可显式覆盖。
+- `apps/gateway/src/tunnel/edge-resolver.ts`：`isFakeIp`（198.18.0.0/15）、`isUnusableEdgeIp`（另滤私网/环回/CGNAT）、`resolveEdgeViaDoh`（DoH JSON 查 SRV `_v2-origintunneld._tcp.argotunnel.com` → 各 target 的 A；按 IP 字面量端点顺序 223.5.5.5 → 120.53.53.53 → 1.1.1.1 → 8.8.8.8 依次回落（`VIBETERM_DOH_ENDPOINTS` 可覆盖），SRV 失败回落 region1/region2:7844；本次解析记住成功端点并跳过已超时端点；单请求 5 s / 总预算 10 s）、`resolveEdge`（系统 lookup 见 fake-IP 才走 DoH；成功 `mode: 'static'`，失败 `mode: 'system'` + `lastError`；永不抛错）。`VIBETERM_TUNNEL_EDGE_ADDRS` 可显式覆盖。
 - `provider.ts`：named / quick 拉起前解析一次，static 模式在 `run` 前插入 `--edge <ip:port>`（cloudflared `StaticEdge` 跳过 SRV 发现）；结果挂到 `SpawnHandle.edge` / `supervisor.edge`。
 - `manager.ts`：`status().edge` 暴露 `TunnelEdgeResolution`；0 连接时 `connector_down` 与 `connectorHint` 追加 `edge DNS resolved to fake-IP 198.18.x (local proxy); static edge override active|failed: <err>`；连续 ≥ 90 s 报 0 连接且当前 `mode: 'system'` 时重解析并**只重启一次**（连接恢复后复位标志），带代次令牌，手动停止优先；重启时把已解析结果直接传给 provider，不依赖二次解析。外部托管的 cloudflared 不动。
 - 前端 `tunnel-model.ts` `edgeDiagnosis(status)` 三档：`none`（旧后端/未检测到）、`bypassed`（已改走真实边缘）、`bypassFailed`（给出代理侧修法：`always-real-ip` 加 `*.argotunnel.com`、DIRECT 规则、清代理 DNS 缓存 / 重启代理、重启隧道）。
@@ -33,7 +33,7 @@
 `apps/gateway/src/mesh/rtc/stun-resolver.ts` 在 `buildRtcIceConfigResolved`（`connectToPeer` 建 ICE 配置时）里、把 URL 交给 libdatachannel **之前**解析每个 STUN/TURN 主机名：
 
 1. 系统 `dns.lookup`；答案已是 IP 字面量的 URL 原样通过（IPv6 带方括号）。`turns:` / `stuns:` URL 与 `relayType: 'TurnTls'` 条目不解析、不替换（TLS 需要主机名做 SNI / 证书校验）。
-2. 若系统答案全是 fake-IP、`isUnusableEdgeIp` 命中（`0.0.0.0` / 环回 / RFC1918 / CGNAT 等）或 lookup 失败，才走 `resolveHostnameViaDoh`（与隧道边缘相同的 cloudflare-dns / dns.google JSON DoH，目前只查 A）。
+2. 若系统答案全是 fake-IP、`isUnusableEdgeIp` 命中（`0.0.0.0` / 环回 / RFC1918 / CGNAT 等）或 lookup 失败，才走 `resolveHostnameViaDoh`（与隧道边缘相同的 IP 字面量 JSON DoH 端点（阿里 / DNSPod / Cloudflare / Google），目前只查 A）。
 3. **仅当走了 DoH** 才把 IP 写回 URL（保留端口与 `?transport=`；`IceServer.hostname` 写无括号的 IP），并保持 DoH 返回的地址族顺序。系统 DNS 健康时 URL 原样交给 libdatachannel，避免 IPv6-only / DNS64 主机被钉成不可达的 v4。
 4. 缓存键小写。成功缓存 10 分钟；连续失败负缓存 60 秒 → 5 分钟 → 10 分钟（上限），小 LRU。冷缓存最多等 300ms，超时返回上次结果或原始 URL，解析在后台继续（`inflight` 合并；每个调用方用自己的截止时间）。失败则退回原始 URL，行为不差于改之前。
 

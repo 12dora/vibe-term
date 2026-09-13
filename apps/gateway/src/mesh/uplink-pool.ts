@@ -14,6 +14,7 @@ import type { MeshHubRecord } from '../auth/mesh-hub-store';
 import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler } from './ctl';
+import { createDialWsFactory } from './dial-resolve';
 import { stamp } from './mesh-log';
 import type {
   InboundRelayHandler,
@@ -31,7 +32,6 @@ import {
   UplinkClient,
   type UplinkClientOptions,
   type UplinkWsFactory,
-  uplinkWebSocketTls,
 } from './uplink-client';
 import {
   UPLINK_RTT_MIN_SAMPLES,
@@ -52,7 +52,6 @@ import {
   sameHubUrl,
 } from './uplink-pool-url';
 import { UplinkRelayDrain } from './uplink-relay-drain';
-import { withWsOpenRace } from './ws-open-race';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
 export {
@@ -1575,8 +1574,5 @@ function isTlsCertificateError(err: unknown): boolean {
 }
 
 function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {
-  return withWsOpenRace((url) => {
-    const tls = uplinkWebSocketTls(tlsCa);
-    return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
-  });
+  return createDialWsFactory(tlsCa);
 }
