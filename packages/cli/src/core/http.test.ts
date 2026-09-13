@@ -331,4 +331,19 @@ describe('HttpClient', () => {
     for await (const row of http.ndjson('self', '/api/transfer/jobs')) rows.push(row);
     expect(rows).toEqual([{ a: 1 }, { b: 2 }, { c: 3 }]);
   });
+
+  test('ndjson disables AbortSignal timeout and Bun fetch idle timeout', async () => {
+    let seen: { timeout?: unknown; signal?: unknown } = {};
+    const http = client(async (_url, init) => {
+      seen = { timeout: init?.timeout, signal: init?.signal };
+      return new Response('{"a":1}\n', {
+        headers: { 'content-type': 'application/x-ndjson' },
+      });
+    });
+    const rows: unknown[] = [];
+    for await (const row of http.ndjson('self', '/api/exec')) rows.push(row);
+    expect(rows).toEqual([{ a: 1 }]);
+    expect(seen.signal).toBeUndefined();
+    expect(seen.timeout).toBe(false);
+  });
 });

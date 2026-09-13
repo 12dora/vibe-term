@@ -23,7 +23,7 @@
 4. 两步验证由 TOTP 满足（`--totp` / `VIBETERM_TOTP` / TTY 提示）。服务端 `/api/auth/mode.secondFactorPolicy` 为 `either` 时，一个有效 TOTP 码即可通过通行密钥这一关；为 `passkey`（账号没开 TOTP、但本 origin 注册了通行密钥）时 CLI 做不了断言，退出码 3 并说明补救办法。CLI 不实现 WebAuthn。
    `k_totp`（TOTP 密文的解密钥）在签完 delegation、清零种子**之前无条件派生**：旧版本入口的 `/api/auth/mode` 不下发 `totpEnabled` / `secondFactorPolicy`，要等它回 `TOTP_REQUIRED` 才知道要交码，那时种子已经没了。所以只要用户给了码就一定带得上，不会出现「反复重试直到撞限流」。
 5. 登录 entry 之后照浏览器的 `verifySelfPublicKey` 再核一道：challenge 里 entry 当场出示的 `nodePk`，必须与 `/api/mesh/nodes` 里它自己那行的 `publicKey` 逐字节一致。对不上就地删掉刚拿到的会话并以 `NODE_PK_MISMATCH`（退出码 3）中止——入口可能被掉包或配置错乱。名册里没有自己那行（standalone / 旧网关 / 成员表未同步）时跳过。
-6. fan-out 里某台 node 失败，会像 entry 一样给出完整解释（`PASSKEY_REQUIRED` 也不例外），并且**绝不重发**——重发只会再被拒一次、多记一次失败。失败全是鉴权类时退出码 3，混了别的原因才退 1。
+6. fan-out 里某台 node 失败，会像 entry 一样给出完整解释（`PASSKEY_REQUIRED` 也不例外），并且**绝不重发**——重发只会再被拒一次、多记一次失败。失败全是鉴权类时退出码 3，混了别的原因才退 1。离线节点（HTTP 503 `NODE_UNREACHABLE` 或 `NetworkError`）不算拒绝：打 `skipped <node>: unreachable` 并继续；entry 登录成功且其余失败都是不可达时退出码 0，并汇总 `logged in to N nodes, skipped M unreachable`。
 
 ## 目录与模块
 
@@ -102,13 +102,13 @@ interface CliContext {
 ```
 
 - `ctx.http.json(nodeId, method, path, body?)`：非 2xx 直接抛。401、以及 body 里 `error`/`code` 是会话判词的 403（`UNAUTHORIZED`、`via_mismatch`、`expired`、`revoked`、`SESSION_*`、`*LOGIN_REQUIRED`）→ 退出码 3 并带 `vibeterm login --node <id>` 提示；其余 403（`outside_roots`、`FORBIDDEN`、`UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，抛 `PermissionError` → 退出码 1 且 message 带上服务端的业务码；404 → 4，其余 → 1，传输失败 → 5。JSON 错误体里的 `code` 会挂到抛出的 `CliError.code`（`json` / `ndjson` 同一条路径），命令组不要再从 message 里正则抠。这套映射只有 `httpStatusError()` 一份，文件族不再有自己的翻译层。
-- `ctx.globals.timeoutExplicit`：命令行是否真的写了 `--timeout`。HTTP 客户端的等待上限仍用 `timeoutMs`（缺省 30000）；`exec` 只有显式时才把 `timeoutMs` 放进 `POST /api/exec` 请求体，否则省略，让网关走 600000 默认。
-- `runExecRequest`：`AuthError` / `NetworkError` / `NotFoundError` 原样上抛（退出码 3/5/4）；其余 HTTP 失败才按业务 `code` remap（`invalid_body` → 2，`device_not_found` → 4，`exec_unsupported_device` / `exec_spawn_failed` / 无码 400 → 5）。
+- `ctx.globals.timeoutExplicit`：命令行是否真的写了 `--timeout`。HTTP 客户端的等待上限仍用 `timeoutMs`（缺省 30000）；`exec` 只有显式时才把 `timeoutMs` 放进 `POST /api/exec` 请求体，否则省略，让网关走 600000 默认。该字段只是子进程墙上时钟，不关 HTTP 空闲。
+- `runExecRequest`：`AuthError` / `NetworkError` / `NotFoundError` 原样上抛（退出码 3/5/4）；其余 HTTP 失败才按业务 `code` remap（`invalid_body` → 2，`device_not_found` → 4，`exec_unsupported_device` / `exec_spawn_failed` / 无码 400 → 5）。NDJSON 迭代器在 `exit` 前抛出 `terminated` / `AbortError` / 套接字关闭，或流结束却没有 `exit` 时，抛 `ExecStreamClosedError`（`NetworkError`，退出码 5，`code=EXEC_STREAM_CLOSED`）。未知事件（含网关 `{"type":"ping","t"}`）忽略；`--json --stream` 原样转发。
 - `ctx.http.fetch(nodeId, path, init)`：不对状态码做判断，自己处理时用它；`ctx.http.assertOk()` 补上统一翻译。
-- `ctx.http.ndjson(nodeId, path)`：逐行 yield 已解析对象，默认不设超时（长流用）。
+- `ctx.http.ndjson(nodeId, path)`：逐行 yield 已解析对象，默认不设超时（`timeoutMs: null`），并且给 Bun `fetch` 传 `timeout: false`，避免 `BUN_CONFIG_HTTP_IDLE_TIMEOUT` 掐断 body。
 - `ctx.http.bytes(nodeId, path)`：二进制。`RequestOptions.timeoutMs` 可按请求覆盖 `--timeout`，`null` 表示不设。
-- `ctx.resolver.resolveNode(ref)`：接受 node id、node 名字、`self`/`local`/`entry`；重名报用法错误，找不到报 4。
-- `ctx.resolver.resolveDevice(nodeId, ref)`：device id 或名字。
+- `ctx.resolver.resolveNode(ref)`：接受 node id、node 名字、`self`/`local`/`entry`/`.`；重名报用法错误，找不到报 4。这些别名只在解析 **node** 时生效：`resolveNodeLocalDevice` 不会把设备 token `local` 当成 self。
+- `ctx.resolver.resolveDevice(nodeId, ref)`：device id 或名字。`resolveTargetDevice` 在 `--node` 已选定节点（或目标写了 `node/`）时，未知设备抛 `NotFoundError`（`device "<d>" not found on node <n>`，hint 最多列 5 个设备名），不回退 self。无 `--node`、无 slash 的裸节点名仍可回退到该节点第一台 local 设备。
 - `parseTarget(input)`：纯函数，拆 `[<node>/]<device>[:<window>[.<pane>]]`。node 与 device 以**第一个** `/` 分界，device 与位置以**第一个** `:` 分界，window 与 pane 以**最后一个** `.` 分界；同时保留 `location` 原文，窗口名本身含 `.` 时可整段回退。window/pane 到会话树的定位由 term 命令组自己做。
 - `ctx.globals.tls`：`--ca` / `--insecure` 的解析结果，`http` 与 `openSocket` 都已经带上，命令组不用自己管。
 - `ctx.out`：`data(value)`（`--json` 时紧凑一行，否则缩进两格）、`table(rows, columns)`、`line()`、`raw(bytes)`；`info()` / `warn()` 走 stderr，`--quiet` 或 `--json` 时静默。**stdout 只放命令结果**，`main.ts` 已经把库里的 `console.log`（`@vibeterm/ws-client` 的连接状态日志）改道到 stderr。
@@ -160,7 +160,9 @@ Node 上的 `--insecure` 落地方式是 TOFU：先用 `rejectUnauthorized:false
 
 默认 entry：`--entry` > `$VIBETERM_ENTRY` > 会话文件里最后用过的 entry > 本机安装的 `app.env` 里的 `VIBETERM_BASE_URL`（**只读**，CLI 从不改写安装目录） > `http://127.0.0.1:9883`。
 
-`<配置目录>/session.json`（目录 0700、文件 0600、原子写）：
+会话文件默认是 `<配置目录>/session.json`（目录 0700、文件 0600、原子写）。`$VIBETERM_SESSION_FILE` 若设置则整文件改走该路径（覆盖默认；父目录不存在时按 0700 创建，文件 0600；group/world 可读会拒绝加载）。**该文件是完整会话能力，须按密钥保护**。`whoami --json` 只在已登录时带 `sessionFile`。
+
+默认路径形态：
 
 ```json
 {

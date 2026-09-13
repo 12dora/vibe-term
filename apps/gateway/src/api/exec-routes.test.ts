@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Device } from '@vibeterm/shared';
+import type { Server } from 'bun';
 import { createDevice, deleteDevice } from '../db/devices';
 import { runMigrations } from '../db/migrate';
 import type { ExecProc } from '../exec/child';
@@ -61,14 +62,15 @@ function sshDevice(authMode: Device['authMode'] = 'key'): Device {
   return device;
 }
 
-function post(body: unknown, signal?: AbortSignal): Promise<Response> {
+function post(body: unknown, signal?: AbortSignal, server?: Server<unknown>): Promise<Response> {
   return handleApiRequest(
     new Request('http://localhost/api/exec', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
       signal,
-    })
+    }),
+    server
   ) as Promise<Response>;
 }
 
@@ -150,8 +152,11 @@ describe('POST /api/exec', () => {
     const types = events.map((e) => e.type);
     expect(types[0]).toBe('start');
     expect(types).toContain('exit');
-    expect(types[types.length - 1]).toBe('error');
-    expect(events.find((e) => e.type === 'exit')).toMatchObject({ code: null, signal: 'SIGTERM' });
+    expect(events.find((e) => e.type === 'exit')).toMatchObject({
+      code: null,
+      signal: 'SIGTERM',
+      reason: 'exec_timeout',
+    });
     expect(events.find((e) => e.type === 'error')).toMatchObject({ code: 'exec_timeout' });
   });
 
@@ -263,6 +268,69 @@ describe('POST /api/exec', () => {
         message: 'password-auth SSH devices are not supported',
       },
     ]);
+  });
+
+  test(
+    'silent child longer than 12s still exits 0 and emits at least one ping',
+    async () => {
+      const device = localDevice();
+      const started = Date.now();
+      const res = await post({
+        deviceId: device.id,
+        argv: ['/bin/sleep', '13'],
+        timeoutMs: 30_000,
+      });
+      const events = await readEvents(res);
+      expect(Date.now() - started).toBeGreaterThan(12_000);
+      expect(events.find((e) => e.type === 'exit')).toMatchObject({ code: 0, reason: 'exit' });
+      const pings = events.filter((e) => e.type === 'ping');
+      expect(pings.length).toBeGreaterThanOrEqual(1);
+      expect(typeof pings[0]?.t).toBe('number');
+    },
+    { timeout: 25_000 }
+  );
+
+  test('maxBytes caps each stream and marks truncated while the child still exits 0', async () => {
+    const device = localDevice();
+    const res = await post({
+      deviceId: device.id,
+      argv: ['/bin/sh', '-c', 'dd if=/dev/zero bs=4096 count=2 2>/dev/null'],
+      maxBytes: 1024,
+    });
+    const events = await readEvents(res);
+    const exit = events.find((e) => e.type === 'exit') as Record<string, unknown> | undefined;
+    expect(exit?.code).toBe(0);
+    expect(exit?.truncated).toEqual({ stdout: true, stderr: false });
+    const stdoutBytes = events
+      .filter((e) => e.type === 'stdout')
+      .reduce((n, e) => n + Buffer.from(String(e.base64 ?? ''), 'base64').byteLength, 0);
+    expect(stdoutBytes).toBe(1024);
+  });
+
+  test('invalid maxBytes is 400 invalid_body', async () => {
+    const device = localDevice();
+    const res = await post({ deviceId: device.id, argv: ['/bin/true'], maxBytes: 16 });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'invalid_body' });
+  });
+
+  test('handleExec disables Bun.serve idle timeout for the request', async () => {
+    const device = localDevice();
+    const seen: Array<{ seconds: number }> = [];
+    const server = {
+      timeout(_req: Request, seconds: number) {
+        seen.push({ seconds });
+      },
+    } as unknown as Server<unknown>;
+    const res = await post(
+      { deviceId: device.id, argv: ['/bin/echo', 'idle-off'] },
+      undefined,
+      server
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([{ seconds: 0 }]);
+    const events = await readEvents(res);
+    expect(events.find((e) => e.type === 'exit')).toMatchObject({ code: 0 });
   });
 });
 

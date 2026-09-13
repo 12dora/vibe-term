@@ -17,6 +17,7 @@ export async function runLocalExec(
     signal,
     sink,
     device: { id: device.id, type: 'local' },
+    maxBytes: req.maxBytes,
   };
   try {
     const proc = execIo.spawn(argv, {

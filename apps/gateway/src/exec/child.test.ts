@@ -86,3 +86,30 @@ describe('runChild stdin', () => {
     expect(events.find((e) => e.type === 'exit')).toMatchObject({ code: 0 });
   });
 });
+
+describe('runChild maxBytes', () => {
+  test('stops sending after maxBytes and still waits for exit', async () => {
+    const proc = execIo.spawn(['/bin/sh', '-c', 'printf %s aaaaaaaa'], {
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    const { events, sink } = collectSink();
+    await runChild(proc, {
+      timeoutMs: 5_000,
+      sink,
+      device: { id: 'local', type: 'local' },
+      maxBytes: 3,
+    });
+    const stdout = events
+      .filter((e) => e.type === 'stdout')
+      .map((e) => Buffer.from(e.type === 'stdout' ? e.base64 : '', 'base64').toString())
+      .join('');
+    expect(stdout).toBe('aaa');
+    expect(events.find((e) => e.type === 'exit')).toMatchObject({
+      code: 0,
+      truncated: { stdout: true, stderr: false },
+      reason: 'exit',
+    });
+  });
+});

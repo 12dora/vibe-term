@@ -1,4 +1,4 @@
-import { EXEC_CHUNK_BYTES, EXEC_KILL_GRACE_MS } from './constants';
+import { EXEC_CHUNK_BYTES, EXEC_KILL_GRACE_MS, EXEC_STREAM_CAP_BYTES } from './constants';
 import { emptyStreamCap, encodeBase64, takeStreamBytes } from './stream-cap';
 import type { ExecSink } from './types';
 
@@ -19,6 +19,7 @@ export type RunChildOpts = {
   signal?: AbortSignal;
   sink: ExecSink;
   device: { id: string; type: 'local' | 'ssh' };
+  maxBytes?: number;
 };
 
 export async function runChild(proc: ExecProc, opts: RunChildOpts): Promise<void> {
@@ -32,11 +33,12 @@ export async function runChild(proc: ExecProc, opts: RunChildOpts): Promise<void
   });
   const timedOut = { value: false };
   const stopKill = armTimeout(proc, opts, timedOut);
+  const limit = opts.maxBytes ?? EXEC_STREAM_CAP_BYTES;
   try {
     await Promise.all([
       pumpStdin(proc, opts.stdin),
-      pumpStream(proc.stdout, 'stdout', stdoutCap, opts.sink),
-      pumpStream(proc.stderr, 'stderr', stderrCap, opts.sink),
+      pumpStream(proc.stdout, 'stdout', stdoutCap, opts.sink, limit),
+      pumpStream(proc.stderr, 'stderr', stderrCap, opts.sink, limit),
       proc.exited,
     ]);
   } finally {
@@ -137,7 +139,8 @@ async function pumpStream(
   stream: ReadableStream<Uint8Array> | null,
   kind: 'stdout' | 'stderr',
   cap: { sent: number; truncated: boolean },
-  sink: ExecSink
+  sink: ExecSink,
+  limit: number
 ): Promise<void> {
   if (!stream) return;
   const reader = stream.getReader();
@@ -145,7 +148,7 @@ async function pumpStream(
     const { done, value } = await reader.read();
     if (done) break;
     if (!value || value.byteLength === 0 || !sink.isOpen()) continue;
-    for (const chunk of takeStreamBytes(cap, value)) {
+    for (const chunk of takeStreamBytes(cap, value, EXEC_CHUNK_BYTES, limit)) {
       sink.emit({ type: kind, base64: encodeBase64(chunk) });
     }
   }
@@ -165,6 +168,7 @@ function emitExit(input: {
     signal: input.timedOut ? 'SIGTERM' : signalName(input.proc.signalCode),
     durationMs: Date.now() - input.startedAt,
     truncated: input.truncated,
+    reason: input.timedOut ? 'exec_timeout' : 'exit',
   });
   if (input.timedOut) {
     input.sink.emit({ type: 'error', code: 'exec_timeout', message: 'exec timed out' });

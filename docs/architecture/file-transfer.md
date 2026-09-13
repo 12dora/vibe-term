@@ -4,7 +4,7 @@
 
 ## 背景
 
-Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要求：分块上传（不把整文件读进内存）、上传两阶段进度（含最终 rsync 段速度）、下载流式进度、取消、可配置的 2GB 单文件上限。下载是两步（prepare 流式 NDJSON 进度 + content 流式文件）：大文件 / 远程下载否则会被 Bun.serve 默认 10s 空闲超时打断（`apps/gateway/src/index.ts` 设 `idleTimeout: 255`；prepare 持续吐进度使连接不空闲）。Toast 同时显示**两段**进度条（上传：用户→VibeTerm、VibeTerm→服务器；下载：服务器→VibeTerm、VibeTerm→用户）。文件预览页（`FilePage.tsx`）的下载按钮走应用内 `downloadFileWithProgress`（带进度 Toast）；预览用的 `fileRawUrl`（图片/音视频/openRaw）不变；拖到桌面用单次 `GET /api/files/download`（浏览器原生）。
+Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要求：分块上传（不把整文件读进内存）、上传两阶段进度（含最终 rsync 段速度）、下载流式进度、取消、可配置的 2GB 单文件上限。下载是两步（prepare 流式 NDJSON 进度 + content 流式文件）：大文件 / 远程下载否则会被 Bun.serve 默认 10s 空闲超时打断（`apps/gateway/src/index.ts` 设 `idleTimeout: 255`；prepare 持续吐进度使连接不空闲）。`POST /api/exec` 同样受该空闲上限约束：路由里对该请求 `server.timeout(req, 0)`，并在子进程存活期间每 10 秒发一条 NDJSON `ping`，避免静默命令在 255 s（或更旧的 10 s）处被掐断。Toast 同时显示**两段**进度条（上传：用户→VibeTerm、VibeTerm→服务器；下载：服务器→VibeTerm、VibeTerm→用户）。文件预览页（`FilePage.tsx`）的下载按钮走应用内 `downloadFileWithProgress`（带进度 Toast）；预览用的 `fileRawUrl`（图片/音视频/openRaw）不变；拖到桌面用单次 `GET /api/files/download`（浏览器原生）。
 
 ## 配置
 

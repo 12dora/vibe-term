@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AuthError, CliError, NetworkError, NotFoundError, UsageError } from '../core/errors';
+import { EXEC_STREAM_CLOSED, ExecStreamClosedError } from '../core/exec-client';
 import type { FetchLike } from '../core/http';
 import { jsonResponse, testContext } from './cli-test-harness';
 import { command as exec } from './exec';
@@ -303,5 +304,285 @@ describe('vibeterm exec', () => {
     await expect(exec.run(ctx, ['laptop', '--shell', '--', 'echo', 'a'])).rejects.toBeInstanceOf(
       UsageError
     );
+  });
+
+  test('--script sends file as stdin with /bin/sh -s', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-script-'));
+    dirs.push(dir);
+    const file = join(dir, 'run.sh');
+    await writeFile(file, 'echo from-script\n');
+    let posted: Record<string, unknown> = {};
+    const { ctx } = await testContext(
+      execFetch(
+        [
+          {
+            type: 'exit',
+            code: 0,
+            signal: null,
+            durationMs: 1,
+            truncated: { stdout: false, stderr: false },
+          },
+        ],
+        (body) => {
+          posted = body as Record<string, unknown>;
+        }
+      )
+    );
+    await exec.run(ctx, ['laptop', '--script', file]);
+    expect(posted.argv).toEqual(['/bin/sh', '-s']);
+    expect(posted.stdin).toEqual({ text: 'echo from-script\n' });
+    expect(posted.shell).toBeUndefined();
+  });
+
+  test('--script uses bash -s for a bash shebang', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-shebang-'));
+    dirs.push(dir);
+    const file = join(dir, 'run.sh');
+    await writeFile(file, '#!/usr/bin/env bash\necho hi\n');
+    let posted: Record<string, unknown> = {};
+    const { ctx } = await testContext(
+      execFetch(
+        [
+          {
+            type: 'exit',
+            code: 0,
+            signal: null,
+            durationMs: 1,
+            truncated: { stdout: false, stderr: false },
+          },
+        ],
+        (body) => {
+          posted = body as Record<string, unknown>;
+        }
+      )
+    );
+    await exec.run(ctx, ['laptop', '--script', file]);
+    expect(posted.argv).toEqual(['bash', '-s']);
+  });
+
+  test('--script with unknown shebang falls back to /bin/sh -s and warns', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-py-'));
+    dirs.push(dir);
+    const file = join(dir, 'run.py');
+    await writeFile(file, '#!/usr/bin/python3\nprint(1)\n');
+    let posted: Record<string, unknown> = {};
+    const { ctx, stderr } = await testContext(
+      execFetch(
+        [
+          {
+            type: 'exit',
+            code: 0,
+            signal: null,
+            durationMs: 1,
+            truncated: { stdout: false, stderr: false },
+          },
+        ],
+        (body) => {
+          posted = body as Record<string, unknown>;
+        }
+      )
+    );
+    await exec.run(ctx, ['laptop', '--script', file]);
+    expect(posted.argv).toEqual(['/bin/sh', '-s']);
+    expect(stderr.text()).toContain('python3');
+    expect(stderr.text()).toContain('/bin/sh -s');
+  });
+
+  test('--interpreter overrides shebang', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-int-'));
+    dirs.push(dir);
+    const file = join(dir, 'run.sh');
+    await writeFile(file, '#!/bin/bash\necho hi\n');
+    let posted: Record<string, unknown> = {};
+    const { ctx } = await testContext(
+      execFetch(
+        [
+          {
+            type: 'exit',
+            code: 0,
+            signal: null,
+            durationMs: 1,
+            truncated: { stdout: false, stderr: false },
+          },
+        ],
+        (body) => {
+          posted = body as Record<string, unknown>;
+        }
+      )
+    );
+    await exec.run(ctx, ['laptop', '--script', file, '--interpreter', '/bin/zsh']);
+    expect(posted.argv).toEqual(['/bin/zsh', '-s']);
+  });
+
+  test('--script is exclusive with argv, --shell, and stdin', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-excl-'));
+    dirs.push(dir);
+    const file = join(dir, 'run.sh');
+    await writeFile(file, 'echo x\n');
+    const { ctx } = await testContext(execFetch([]));
+    await expect(exec.run(ctx, ['laptop', '--script', file, '--', 'true'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+    await expect(exec.run(ctx, ['laptop', '--script', file, '--shell'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+    await expect(exec.run(ctx, ['laptop', '--script', file, '--stdin'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+  });
+
+  test('--script over the stdin cap points at vibeterm cp', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-big-'));
+    dirs.push(dir);
+    const file = join(dir, 'big.sh');
+    await writeFile(file, 'x'.repeat(768 * 1024 + 1));
+    const { ctx } = await testContext(execFetch([]));
+    const error = await exec.run(ctx, ['laptop', '--script', file]).catch((err) => err);
+    expect(error).toBeInstanceOf(UsageError);
+    expect((error as UsageError).message).toContain('vibeterm cp');
+  });
+
+  test('--max-bytes is sent on the request body', async () => {
+    let posted: unknown;
+    const { ctx } = await testContext(
+      execFetch(
+        [
+          {
+            type: 'exit',
+            code: 0,
+            signal: null,
+            durationMs: 1,
+            truncated: { stdout: false, stderr: false },
+          },
+        ],
+        (body) => {
+          posted = body;
+        }
+      )
+    );
+    await exec.run(ctx, ['laptop', '--max-bytes', '2048', '--', 'true']);
+    expect(posted).toMatchObject({ maxBytes: 2048 });
+  });
+
+  test('--tail keeps the last N bytes in JSON stdout', async () => {
+    const { ctx, stdout } = await testContext(
+      execFetch([
+        { type: 'stdout', base64: Buffer.from('abcdefghij').toString('base64') },
+        {
+          type: 'exit',
+          code: 0,
+          signal: null,
+          durationMs: 1,
+          truncated: { stdout: false, stderr: false },
+        },
+      ])
+    );
+    await exec.run(ctx, ['laptop', '--tail', '4', '--', 'true']);
+    expect(JSON.parse(stdout.text())).toMatchObject({
+      stdout: 'ghij',
+      truncated: { stdout: true, stderr: false },
+      exitCode: 0,
+    });
+  });
+
+  test('--stdout-file writes bytes and omits the inline string', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-exec-out-'));
+    dirs.push(dir);
+    const out = join(dir, 'stdout.txt');
+    const { ctx, stdout } = await testContext(
+      execFetch([
+        { type: 'stdout', base64: Buffer.from('file-payload').toString('base64') },
+        {
+          type: 'exit',
+          code: 0,
+          signal: null,
+          durationMs: 1,
+          truncated: { stdout: false, stderr: false },
+        },
+      ])
+    );
+    await exec.run(ctx, ['laptop', '--stdout-file', out, '--', 'true']);
+    const payload = JSON.parse(stdout.text()) as Record<string, unknown>;
+    expect(payload.stdout).toBeUndefined();
+    expect(payload.stdoutPath).toBe(out);
+    expect(payload.stdoutBytes).toBe(12);
+    expect(payload.stderr).toBe('');
+    expect(await readFile(out, 'utf8')).toBe('file-payload');
+  });
+
+  test('inline JSON over 64 KiB hints --tail / --stdout-file on stderr', async () => {
+    const blob = 'a'.repeat(64 * 1024 + 1);
+    const { ctx, stderr } = await testContext(
+      execFetch([
+        { type: 'stdout', base64: Buffer.from(blob).toString('base64') },
+        {
+          type: 'exit',
+          code: 0,
+          signal: null,
+          durationMs: 1,
+          truncated: { stdout: false, stderr: false },
+        },
+      ])
+    );
+    await exec.run(ctx, ['laptop', '--', 'true']);
+    expect(stderr.text()).toContain('--tail');
+    expect(stderr.text()).toContain('--stdout-file');
+  });
+
+  test('stream death prints EXEC_STREAM_CLOSED JSON and throws NetworkError', async () => {
+    const { ctx, stdout } = await testContext(async (input, init) => {
+      const url = new URL(input);
+      if (url.pathname === '/api/devices') return jsonResponse({ devices: [DEVICE] });
+      if (url.pathname === '/api/mesh/nodes') return jsonResponse({ nodes: [] });
+      if (url.pathname === '/api/auth/mode') return jsonResponse({ nodeId: 'self', mode: 'none' });
+      if ((init?.method ?? 'GET').toUpperCase() === 'POST' && url.pathname === '/api/exec') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `${JSON.stringify({ type: 'start', pid: 1, device: { id: 'dev-1', type: 'local' } })}\n`
+                )
+              );
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/x-ndjson' } }
+        );
+      }
+      return jsonResponse({ error: 'Not found' }, 404);
+    });
+    const error = await exec.run(ctx, ['laptop', '--', 'true']).catch((err) => err);
+    expect(error).toBeInstanceOf(ExecStreamClosedError);
+    expect(error).toBeInstanceOf(NetworkError);
+    expect((error as ExecStreamClosedError).exitCode).toBe(5);
+    const payload = JSON.parse(stdout.text()) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      ok: false,
+      code: EXEC_STREAM_CLOSED,
+      reason: 'terminated',
+    });
+    expect(typeof payload.elapsedMs).toBe('number');
+  });
+
+  test('--json --stream forwards ping events', async () => {
+    const events = [
+      { type: 'ping', t: 1 },
+      {
+        type: 'exit',
+        code: 0,
+        signal: null,
+        durationMs: 3,
+        truncated: { stdout: false, stderr: false },
+      },
+    ];
+    const { ctx, stdout } = await testContext(execFetch(events), { json: true });
+    await exec.run(ctx, ['laptop', '--stream', '--', 'true']);
+    const lines = stdout
+      .text()
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(lines.map((row) => row.type)).toEqual(['ping', 'exit']);
   });
 });

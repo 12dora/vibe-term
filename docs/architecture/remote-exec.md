@@ -20,7 +20,8 @@
   "env": { "FOO": "bar" },
   "stdin": { "text": "…" },
   "timeoutMs": 600000,
-  "shell": false
+  "shell": false,
+  "maxBytes": 8388608
 }
 ```
 
@@ -31,28 +32,42 @@
 | `cwd` | 可选，非空字符串 |
 | `env` | 可选。键须为 `[A-Za-z_][A-Za-z0-9_]*`，值须为字符串。覆盖在**本节点服务用户环境**之上；网关不隐式注入 `DEBIAN_FRONTEND` 等 |
 | `stdin` | `{ "text" }` 或 `{ "base64" }`，二选一。整个请求体受 `/api/*` JSON 体上限 1 MiB 约束，stdin 实际可用约 0.75 MiB；更大的输入请先 `cp` 到设备再以文件形式读取 |
-| `timeoutMs` | 默认 600000，上限 3600000 |
+| `timeoutMs` | 子进程墙上时钟。默认 600000，上限 3600000。**不是** HTTP 空闲超时 |
 | `shell` | `true` 时把 `argv[0]` 交给 **`/bin/sh -c`**。不用 `bash -lc`，不跑 login shell |
+| `maxBytes` | 可选。每路 stdout/stderr 的发送上限，范围 1024（1 KiB）.. 8388608（8 MiB）。缺省 8 MiB。超出后停止发送该路并在 `exit.truncated` 对应位置标 `true`，子进程继续跑 |
 
 校验失败（缺字段、非法 body、设备不存在、密码认证 SSH）在开流前返回 **HTTP 400** JSON `{ "code", "message" }`。一旦开流，HTTP 状态为 200，`Content-Type: application/x-ndjson`。
 
 ### 事件
 
-每行一个 JSON 对象，顺序为 `start` → 若干 `stdout`/`stderr` → `exit`，超时再跟一条 `error`。`error` 也用于开流后的失败（尚未 `start` 也可以单独出现）。
+每行一个 JSON 对象，顺序为 `start` → 若干 `stdout`/`stderr`/`ping` → `exit`，超时再跟一条 `error`。`error` 也用于开流后的失败（尚未 `start` 也可以单独出现）。子进程存活期间每 10 秒一条 `{"type":"ping","t":<unix-ms>}`，用来重置入口 Bun.serve 与 CLI `fetch` 的空闲时钟；CLI 组装 JSON 时忽略，`--json --stream` 原样转发。
 
 ```json
 {"type":"start","pid":123,"device":{"id":"…","type":"local"}}
+{"type":"ping","t":1710000000000}
 {"type":"stdout","base64":"…"}
 {"type":"stderr","base64":"…"}
-{"type":"exit","code":0,"signal":null,"durationMs":12,"truncated":{"stdout":false,"stderr":false}}
+{"type":"exit","code":0,"signal":null,"durationMs":12,"truncated":{"stdout":false,"stderr":false},"reason":"exit"}
 {"type":"error","code":"exec_timeout","message":"exec timed out"}
 ```
 
 - 每个流的分块 ≤ 64 KiB（编码前原始字节），同流保序。
-- 单流累计 8 MiB 后丢弃后续字节，并在 `exit.truncated` 对应位置标 `true`；进程继续跑到退出。这不是终端 `error`（`exec_output_limit` 保留给将来的硬中止，当前 cap 不发该事件）。
+- 单流累计 `maxBytes`（缺省 8 MiB）后丢弃后续字节，并在 `exit.truncated` 对应位置标 `true`；进程继续跑到退出。这不是终端 `error`（`exec_output_limit` 保留给将来的硬中止，当前 cap 不发该事件）。
 - `stdout` / `stderr` 分 fd，互不混流。
+- `exit.reason`：`exit`（正常结束）或 `exec_timeout`（墙上时钟到了）。超时仍追加 `error` 事件，`code` 仍为 `exec_timeout`（其它错误码不变）。
 
 错误码：`invalid_body`、`device_not_found`、`exec_unsupported_device`、`exec_spawn_failed`、`exec_timeout`、`exec_output_limit`。
+
+### 空闲与超时（谁杀什么）
+
+| 计时器 | 默认 | 作用对象 | 静默 exec 怎么办 |
+| --- | --- | --- | --- |
+| Bun.serve `idleTimeout` | 255 s（未设置时 Bun 默认 10 s） | CLI → **本机入口** HTTP 连接 | `/api/exec` 对该请求 `server.timeout(req, 0)` 关掉上限；mesh 转发则靠 `ping` 字节重置入口空闲时钟 |
+| CLI `fetch` 空闲（`timeout` / `BUN_CONFIG_HTTP_IDLE_TIMEOUT`） | 5 min | CLI → 入口的 NDJSON body | `ndjson` 传 `timeout: false`；`ping` 也会重置 |
+| 子进程 `timeoutMs` | 600000 ms，上限 3600000 | 远端子进程墙上时钟 | `--timeout` 只写这个。到点 `SIGTERM`，5 s 后 `SIGKILL`，`exit.reason=exec_timeout` |
+| 客户端断开 | — | 远端子进程 | Request abort 或 NDJSON `cancel` → `SIGTERM`（再 5 s `SIGKILL`） |
+
+`timeoutMs` **不是** HTTP 空闲超时。完全静默的命令只要子进程还活着，就会持续发 `ping`。
 
 ### 设备实现
 
