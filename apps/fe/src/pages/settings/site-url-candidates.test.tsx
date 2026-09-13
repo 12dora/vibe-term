@@ -1,8 +1,8 @@
-// 站点访问 URL 的候选地址列表：可编辑（可「填入」）、由 Hub 托管（只读，只能复制）、无候选三种形态。
-// 无 DOM 测试环境：版式用 react-dom/server 静态渲染断言。`t` 的产出在这里一概不断言——同进程里
-// 别的测试文件（如 `FilePage.test.tsx`）会用 `mock.module` 把 `useTranslation` 换成原样返回 key
-// 的桩，单跑与合跑的文案因此并不一致；能稳的只有结构：testId、`data-kind` 与候选的 accessUrl。
-// 「填入」是回调，直接调用无 hook 的行组件并驱动它的 onClick。
+// 站点访问 URL 的候选地址单选组：可编辑（点选写草稿）、由 Hub 托管（只读，只标出生效地址）、
+// 无候选三种形态。无 DOM 测试环境：版式用 react-dom/server 静态渲染断言。`t` 的产出在这里一概
+// 不断言——同进程里别的测试文件（如 `FilePage.test.tsx`）会用 `mock.module` 把 `useTranslation`
+// 换成原样返回 key 的桩，单跑与合跑的文案因此并不一致；能稳的只有结构：testId、`data-kind`、
+// `data-selected` 与候选的 accessUrl。点选是回调，直接调用无 hook 的选项组件并驱动 radio 的 onChange。
 
 import { describe, expect, test } from 'bun:test';
 import type { ShareOriginCandidate } from '@vibeterm/shared/share';
@@ -10,7 +10,7 @@ import { Children, type ReactElement, type ReactNode, isValidElement } from 'rea
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SiteUrlField } from './general-fields';
 import { UNLINKED_SITE_SETTINGS, createDefaultSiteSettingsDraft } from './site-settings-form';
-import { SiteUrlCandidateRow, visibleSiteUrlCandidates } from './site-url-candidates';
+import { SiteUrlCandidateOption, SiteUrlCandidates } from './site-url-candidates';
 import type { SiteSettingsForm } from './use-site-settings-form';
 
 function candidate(overrides: Partial<ShareOriginCandidate> = {}): ShareOriginCandidate {
@@ -57,61 +57,111 @@ function findByTestId(node: ReactNode, testId: string): ReactElement | null {
   return null;
 }
 
-describe('visibleSiteUrlCandidates', () => {
-  test('与当前值相同的候选不再列出，末尾斜杠不算差异', () => {
-    const list = [candidate(), TUNNEL];
-    expect(visibleSiteUrlCandidates(list, 'https://vibeterm.example/')).toEqual([candidate()]);
-    expect(visibleSiteUrlCandidates(list, 'https://other.example')).toEqual(list);
+/** 静态 HTML 里第 index 颗候选的某个属性值。 */
+function attrAt(html: string, attr: string, index: number): string | null {
+  const pills = html.split('data-testid="settings-site-url-candidate"').slice(1);
+  const pill = pills[index];
+  if (pill === undefined) return null;
+  return new RegExp(`${attr}="([^"]*)"`).exec(pill.slice(0, pill.indexOf('>')))?.[1] ?? null;
+}
+
+describe('SiteUrlCandidateOption', () => {
+  test('点选把候选的完整访问地址回传', () => {
+    const picked: string[] = [];
+    const option = SiteUrlCandidateOption({
+      candidate: candidate(),
+      label: 'common.originKind.relay · relay.example',
+      selected: false,
+      onSelect: (accessUrl) => picked.push(accessUrl),
+    });
+    const radio = findByTestId(option, 'settings-site-url-candidate-radio');
+    expect(radio).not.toBeNull();
+    (radio?.props as { onChange: () => void }).onChange();
+    expect(picked).toEqual(['https://relay.example/n/abc']);
+  });
+
+  test('完整地址只进 title 与 sr-only，可见文字仍是「种类 · host」', () => {
+    const html = renderToStaticMarkup(
+      <SiteUrlCandidateOption candidate={candidate()} label="relay · relay.example" selected />
+    );
+    expect(html).toContain('title="https://relay.example/n/abc"');
+    expect(html).toContain('class="sr-only">https://relay.example/n/abc<');
+    expect(html).toContain('<span class="truncate">relay · relay.example</span>');
+    expect(html).toContain('checked=""');
+  });
+
+  test('只读形态不可点：radio 被禁用、胶囊标 aria-disabled', () => {
+    const option = SiteUrlCandidateOption({
+      candidate: candidate(),
+      label: 'l',
+      selected: false,
+    });
+    const pill = findByTestId(option, 'settings-site-url-candidate');
+    expect((pill?.props as { 'aria-disabled'?: boolean })['aria-disabled']).toBe(true);
+    const radio = findByTestId(option, 'settings-site-url-candidate-radio');
+    expect((radio?.props as { disabled?: boolean }).disabled).toBe(true);
   });
 });
 
-describe('SiteUrlCandidateRow', () => {
-  test('「填入」把候选的完整访问地址回传', () => {
-    const filled: string[] = [];
-    const row = SiteUrlCandidateRow({
-      candidate: candidate(),
-      label: 'common.originKind.relay · relay.example',
-      useLabel: 'use',
-      testId: 'settings-site-url-candidate-0',
-      onUse: (accessUrl) => filled.push(accessUrl),
-    });
-    const button = findByTestId(row, 'settings-site-url-candidate-use');
-    expect(button).not.toBeNull();
-    (button?.props as { onClick: () => void }).onClick();
-    expect(filled).toEqual(['https://relay.example/n/abc']);
+describe('SiteUrlCandidates', () => {
+  test('与当前值相同的候选照样列出，并标为选中；末尾斜杠与 host 大小写不算差异', () => {
+    const html = renderToStaticMarkup(
+      <SiteUrlCandidates
+        candidates={[candidate(), TUNNEL]}
+        currentValue="https://VIBETERM.example/"
+        onSelect={() => undefined}
+      />
+    );
+    expect(html.split('data-testid="settings-site-url-candidate"').length - 1).toBe(2);
+    expect(attrAt(html, 'data-selected', 0)).toBe('false');
+    expect(attrAt(html, 'data-selected', 1)).toBe('true');
   });
 
-  test('只读形态不给「填入」', () => {
-    const row = SiteUrlCandidateRow({
-      candidate: candidate(),
-      label: 'l',
-      useLabel: 'use',
-      testId: 'settings-site-url-candidate-0',
-    });
-    expect(findByTestId(row, 'settings-site-url-candidate-use')).toBeNull();
+  test('当前值是自己敲的地址：一个都不选中', () => {
+    const html = renderToStaticMarkup(
+      <SiteUrlCandidates
+        candidates={[candidate(), TUNNEL]}
+        currentValue="https://other.example"
+        onSelect={() => undefined}
+      />
+    );
+    expect(attrAt(html, 'data-selected', 0)).toBe('false');
+    expect(attrAt(html, 'data-selected', 1)).toBe('false');
+  });
+
+  test('当前值为空：一个都不选中', () => {
+    const html = renderToStaticMarkup(
+      <SiteUrlCandidates candidates={[candidate()]} currentValue="" onSelect={() => undefined} />
+    );
+    expect(attrAt(html, 'data-selected', 0)).toBe('false');
   });
 });
 
 describe('SiteUrlField', () => {
-  test('可编辑且有候选：提示 + 可用地址列表，每行给「填入」', () => {
+  test('可编辑且有候选：提示 + 单选组，全部候选都在', () => {
     const html = renderToStaticMarkup(
-      <SiteUrlField form={form({ siteAccessOrigins: [candidate(), TUNNEL] })} />
+      <SiteUrlField
+        form={form({ siteAccessOrigins: [candidate(), TUNNEL] }, 'https://relay.example/n/abc')}
+      />
     );
 
     expect(html).not.toContain('data-testid="settings-site-url-readonly"');
     expect(html).toContain('data-testid="settings-site-url-hint"');
     expect(html).toContain('data-testid="settings-site-url-candidates"');
+    expect(html).toContain('role="radiogroup"');
     expect(html).toContain('data-kind="relay"');
     expect(html).toContain('data-kind="tunnel"');
     // 种类前缀由 `originKindLabel` 拼，前半截是 key 还是中文取决于同进程里谁先跑；host 一定在。
     expect(html).toContain('· relay.example');
-    expect(html).toContain('https://relay.example/n/abc');
-    expect(html).toContain('https://vibeterm.example');
-    // 「填入」在场即说明这一列走的是可编辑那一支（标题随之是「可用地址」）。
-    expect(html).toContain('data-testid="settings-site-url-candidate-use"');
+    // 完整地址只进 title / sr-only，可见文字不铺开长 URL。
+    expect(html).toContain('title="https://relay.example/n/abc"');
+    expect(html).not.toContain('truncate">https://');
+    // 输入框里已是这条候选，于是它被标为选中。
+    expect(attrAt(html, 'data-selected', 0)).toBe('true');
+    expect(attrAt(html, 'data-selected', 1)).toBe('false');
   });
 
-  test('由 Hub 托管：只读输入 + 其它可用地址，只能复制，且不重复列出生效地址', () => {
+  test('由 Hub 托管：只读输入 + 生效地址被标选中，整组不可点', () => {
     const html = renderToStaticMarkup(
       <SiteUrlField
         form={form({
@@ -125,11 +175,13 @@ describe('SiteUrlField', () => {
     expect(html).toContain('data-testid="settings-site-url-readonly"');
     expect(html).toContain('data-testid="settings-site-url-hint"');
     expect(html).toContain('data-testid="settings-site-url-candidates"');
-    // 只读那一支不给「填入」（标题随之是「其它可用地址」），只留复制。
-    expect(html).not.toContain('data-testid="settings-site-url-candidate-use"');
-    expect(html).toContain('data-testid="settings-site-url-candidate-0-copy"');
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('disabled=""');
+    // 生效地址也列出来，并且是选中的那颗。
+    expect(html).toContain('data-kind="tunnel"');
     expect(html).toContain('data-kind="relay"');
-    expect(html).not.toContain('data-kind="tunnel"');
+    expect(attrAt(html, 'data-selected', 0)).toBe('true');
+    expect(attrAt(html, 'data-selected', 1)).toBe('false');
   });
 
   test('没有候选：不出列表', () => {

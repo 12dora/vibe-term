@@ -430,9 +430,7 @@ export const I18N_RESOURCES = {
         "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
         "urlHint": "Used in notification links and share addresses.",
         "urlManagedHint": "Set by the Hub public address. Change it under Mesh.",
-        "urlCandidates": "Available Addresses",
-        "urlOtherCandidates": "Other Addresses",
-        "urlUseCandidate": "Use"
+        "urlCandidates": "Available Addresses"
       },
       "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
@@ -2633,6 +2631,13 @@ export const I18N_RESOURCES = {
         "directRestartFailed": "Restart failed: {{error}}",
         "directRestartTimeout": "Timed out"
       },
+      "table": {
+        "mobile": {
+          "selected": "{{count}} selected",
+          "direct": "Direct capable",
+          "noDirect": "No direct"
+        }
+      },
       "selection": {
         "more": "More",
         "selectAll": "Select All",
@@ -3601,6 +3606,9 @@ export const I18N_RESOURCES = {
           "invalidMaxFile": "Max file size must be an integer between 1 and {{max}} MB, or empty for no limit."
         },
         "tenants": {
+          "mobile": {
+            "usage": "Usage"
+          },
           "title": "Tenants",
           "total": "{{n}} total",
           "empty": "No tenant has joined yet.",
@@ -4188,9 +4196,7 @@ export const I18N_RESOURCES = {
         "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
         "urlHint": "用于通知链接与分享地址。",
         "urlManagedHint": "由 Hub 公开地址决定，在「多节点互联」中修改。",
-        "urlCandidates": "可用地址",
-        "urlOtherCandidates": "其它可用地址",
-        "urlUseCandidate": "填入"
+        "urlCandidates": "可用地址"
       },
       "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
@@ -6391,6 +6397,13 @@ export const I18N_RESOURCES = {
         "directRestartFailed": "重启失败：{{error}}",
         "directRestartTimeout": "等待超时"
       },
+      "table": {
+        "mobile": {
+          "selected": "已选 {{count}} 台",
+          "direct": "支持直连",
+          "noDirect": "不支持直连"
+        }
+      },
       "selection": {
         "more": "更多",
         "selectAll": "全选",
@@ -7351,6 +7364,9 @@ export const I18N_RESOURCES = {
           "invalidMaxFile": "单文件上限须为 1–{{max}} 的整数（MB），留空即不限。"
         },
         "tenants": {
+          "mobile": {
+            "usage": "用量"
+          },
           "title": "租户",
           "total": "共 {{n}} 个",
           "empty": "还没有租户接入。",
@@ -7938,9 +7954,7 @@ export const I18N_RESOURCES = {
         "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
         "urlHint": "通知リンクと共有アドレスに使用します。",
         "urlManagedHint": "Hub の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
-        "urlCandidates": "利用可能なアドレス",
-        "urlOtherCandidates": "その他のアドレス",
-        "urlUseCandidate": "入力"
+        "urlCandidates": "利用可能なアドレス"
       },
       "bellThrottle": "ベル通知の制限（秒）",
       "notificationThrottle": "通知制限（秒）",
@@ -10141,6 +10155,13 @@ export const I18N_RESOURCES = {
         "directRestartFailed": "再起動に失敗しました：{{error}}",
         "directRestartTimeout": "タイムアウト"
       },
+      "table": {
+        "mobile": {
+          "selected": "{{count}} 件選択",
+          "direct": "ダイレクト対応",
+          "noDirect": "ダイレクト非対応"
+        }
+      },
       "selection": {
         "more": "その他",
         "selectAll": "すべて選択",
@@ -11101,6 +11122,9 @@ export const I18N_RESOURCES = {
           "invalidMaxFile": "1 ファイルの上限は 1〜{{max}} の整数（MB）です。空欄で無制限になります。"
         },
         "tenants": {
+          "mobile": {
+            "usage": "使用状況"
+          },
           "title": "テナント",
           "total": "全 {{n}} 件",
           "empty": "参加しているテナントはまだありません。",

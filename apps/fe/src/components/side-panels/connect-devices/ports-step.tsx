@@ -2,7 +2,12 @@
 // 旧节点不下发时按路径角色套默认计划。
 
 import { asPortRole, portPlanOrFallback } from '@/pages/settings/nodes/port-reach';
-import { type PortRole, type PortSpec, formatPortSpec } from '@vibeterm/shared/net';
+import {
+  type PortRole,
+  type PortSpec,
+  coalesceTurnSpecs,
+  formatPortSpec,
+} from '@vibeterm/shared/net';
 import { useTranslation } from 'react-i18next';
 import { GuideStep } from './guide-step';
 
@@ -16,7 +21,10 @@ export function PortsStep({
   portPlan?: PortSpec[] | null;
 }) {
   const { t } = useTranslation();
-  const specs = portPlanOrFallback(portPlan ?? undefined, asPortRole(fallbackRole, fallbackRole));
+  // TURN 控制口与中继段并成一行：放行时它们本来就是连着的一段。
+  const specs = coalesceTurnSpecs(
+    portPlanOrFallback(portPlan ?? undefined, asPortRole(fallbackRole, fallbackRole))
+  );
   return (
     <GuideStep
       index={index}

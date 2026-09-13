@@ -61,8 +61,9 @@ export function LocalMachineHeader({
   // 比没有菜单更糟。
   const menuRole = meshEnabled && role && isMeshRole(role) ? role : null;
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <CardTitle className="mr-auto flex min-w-0 flex-wrap items-center gap-2">
+    // ⋯ 永远钉在右上角：整行不换行，标题与徽标在左半边自己折。
+    <div className="flex min-w-0 items-start gap-2">
+      <CardTitle className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         {t('nodes.machine.title')}
         {meshEnabled && role && (
           <Badge
@@ -89,6 +90,7 @@ export function LocalMachineHeader({
                 type="button"
                 variant="ghost"
                 size="icon-sm"
+                className="ml-auto shrink-0"
                 aria-label={t('nodes.machine.menu.label')}
                 title={t('nodes.machine.menu.label')}
                 data-testid="local-machine-menu"

@@ -224,9 +224,7 @@
         "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
         "urlHint": "Used in notification links and share addresses.",
         "urlManagedHint": "Set by the Hub public address. Change it under Mesh.",
-        "urlCandidates": "Available Addresses",
-        "urlOtherCandidates": "Other Addresses",
-        "urlUseCandidate": "Use"
+        "urlCandidates": "Available Addresses"
       },
       "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
@@ -1857,6 +1855,13 @@
         "directRestartFailed": "Restart failed: {{error}}",
         "directRestartTimeout": "Timed out"
       },
+      "table": {
+        "mobile": {
+          "selected": "{{count}} selected",
+          "direct": "Direct capable",
+          "noDirect": "No direct"
+        }
+      },
       "selection": {
         "more": "More",
         "selectAll": "Select All",
@@ -2825,6 +2830,9 @@
           "invalidMaxFile": "Max file size must be an integer between 1 and {{max}} MB, or empty for no limit."
         },
         "tenants": {
+          "mobile": {
+            "usage": "Usage"
+          },
           "title": "Tenants",
           "total": "{{n}} total",
           "empty": "No tenant has joined yet.",

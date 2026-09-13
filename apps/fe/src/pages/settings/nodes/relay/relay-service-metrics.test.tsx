@@ -6,16 +6,16 @@ import { installWindowStorage } from '@vibeterm/stores/test-utils';
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { RelayServiceMetrics, relaySummaryText } = await import('./relay-service-metrics');
+const { RelayServiceMetrics, relaySummaryParts } = await import('./relay-service-metrics');
 const { relayMetricsFixture } = await import('../../relay/relay-metrics-fixture');
 const { resetRelayMetricsStateForTest, setRelayMetricsStateForTest } = await import(
   '../../relay/relay-metrics-store'
 );
 
 /** 摘要每一段实际取了哪个 key、传了哪些参数。 */
-function summaryParts(data: Parameters<typeof relaySummaryText>[1]) {
+function summaryParts(data: Parameters<typeof relaySummaryParts>[1]) {
   const seen: Array<{ key: string; params?: Record<string, unknown> }> = [];
-  relaySummaryText((key, params) => {
+  relaySummaryParts((key, params) => {
     if (key.startsWith('relay.metrics.summary')) seen.push({ key, ...(params ? { params } : {}) });
     return key;
   }, data);
@@ -71,7 +71,7 @@ describe('RelayServiceMetrics', () => {
     expect(html).not.toContain('data-stale=""');
   });
 
-  // 英文的租户 / 活跃流按数量变单复数，一条长模板做不到：逐段取文案再用 ` · ` 串起来。
+  // 英文的租户 / 活跃流按数量变单复数，一条长模板做不到：逐段取文案，宽屏用 ` · ` 串、窄屏堆叠。
   test('一行读数由五段拼成，各段各自带自己的参数', () => {
     const data = relayMetricsFixture();
     const parts = summaryParts(data);

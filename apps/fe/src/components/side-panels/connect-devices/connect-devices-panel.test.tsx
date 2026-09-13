@@ -464,10 +464,10 @@ describe('放行端口步骤', () => {
     expect(html).toContain('connectDevices.ports.desc');
     expect(html).toContain('data-testid="connect-port-public-https"');
     expect(html).toContain('443/tcp');
+    // TURN 控制口与中继段并成一行
     expect(html).toContain('data-testid="connect-port-turn-control"');
-    expect(html).toContain('40000/udp');
-    expect(html).toContain('data-testid="connect-port-turn-relay"');
-    expect(html).toContain('40001-40049/udp');
+    expect(html).toContain('40000-40049/udp');
+    expect(html).not.toContain('data-testid="connect-port-turn-relay"');
     expect(html).toContain('ports.purpose.turn-control');
   });
 

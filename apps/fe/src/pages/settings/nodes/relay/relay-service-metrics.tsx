@@ -12,7 +12,9 @@ import { useTranslation } from 'react-i18next';
 import { uptimeText } from '../../relay/relay-format';
 import { RelayMetricsRetryLine } from '../../relay/relay-metrics-panel';
 import { type RelayMetricsApi, useRelayMetrics } from '../../relay/relay-metrics-store';
-import { Row } from '../copy-feedback';
+import { Row, type SegmentItem, Segments } from '../copy-feedback';
+
+const SUMMARY_KEYS = ['nodes', 'tenants', 'streams', 'rate', 'uptime'] as const;
 
 export type RelayServiceMetricsProps = {
   publicUrl: string | null;
@@ -24,12 +26,12 @@ export type RelayServiceMetricsProps = {
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /**
- * 一行读数：在线节点 · 租户 · 活跃流 · 上下行速率 · 已运行。
+ * 一行读数的各段：在线节点 · 租户 · 活跃流 · 上下行速率 · 已运行。
  *
  * 逐段取文案而不是一条长模板：英文的「租户」「活跃流」要按数量变单复数，
- * 塞进一条模板就只能写成 `1 tenants`。
+ * 塞进一条模板就只能写成 `1 tenants`。窄屏还要把这几段拆成一段一行。
  */
-export function relaySummaryText(t: Translate, data: RelayMetricsResponse): string {
+export function relaySummaryParts(t: Translate, data: RelayMetricsResponse): string[] {
   const { totals } = data;
   return [
     t('relay.metrics.summaryNodes', { online: totals.membersOnline, total: totals.members }),
@@ -40,7 +42,7 @@ export function relaySummaryText(t: Translate, data: RelayMetricsResponse): stri
       in: formatRate(totals.bytesInPerSec),
     }),
     t('relay.metrics.summaryUptime', { uptime: uptimeText(t, data.uptimeMs) }),
-  ].join(' · ');
+  ];
 }
 
 /**
@@ -68,7 +70,8 @@ export function RelayServiceMetrics({ onOpenConsole, api }: RelayServiceMetricsP
         <Button
           size="xs"
           variant="ghost"
-          className="ml-auto text-muted-foreground"
+          // 窄屏：整条摆在读数下面，不再挤在行尾；宽屏：贴回行尾。
+          className="w-full justify-center border border-border/60 text-muted-foreground sm:ml-auto sm:w-auto sm:border-0"
           onClick={onOpenConsole}
           data-testid="relay-service-metrics-console"
         >
@@ -98,13 +101,17 @@ function RuntimeValue({ metrics }: { metrics: ReturnType<typeof useRelayMetrics>
       />
     );
   }
+  const items: SegmentItem[] = relaySummaryParts(t, data).map((text, index) => ({
+    key: SUMMARY_KEYS[index] ?? String(index),
+    node: <span className="whitespace-nowrap">{text}</span>,
+  }));
   return (
     <span
       className={lastError ? 'min-w-0 text-muted-foreground' : 'min-w-0'}
       data-testid="relay-service-metrics"
       data-stale={lastError ? '' : undefined}
     >
-      {relaySummaryText(t, data)}
+      <Segments items={items} />
     </span>
   );
 }
