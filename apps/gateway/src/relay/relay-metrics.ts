@@ -1,6 +1,14 @@
 import { loadavg } from 'node:os';
 import type { LinkSession } from '@vibeterm/shared/link';
-import type { RelayQuota } from '@vibeterm/shared/relay';
+import type {
+  RelayMetricsMember,
+  RelayMetricsProcess,
+  RelayMetricsResponse,
+  RelayMetricsSample,
+  RelayMetricsTenant,
+  RelayMetricsTotals,
+  RelayQuota,
+} from '@vibeterm/shared/relay';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import { type RelayLimitTotals, defaultRelayLimits, relayLimitTotals } from './relay-limits';
 import type { RelayMetering, RelayUsageDelta } from './relay-metering';
@@ -9,105 +17,13 @@ import { type RelayLiveNode, type RelayRegistry, memberKey } from './relay-regis
 import type { RelayTenantStore } from './relay-tenant-store';
 import { RELAY_METRICS_HISTORY_LIMIT, RELAY_METRICS_INTERVAL_MS } from './types';
 
-export type RelayMetricsProcess = {
-  memory: {
-    rssBytes: number;
-    heapTotalBytes: number;
-    heapUsedBytes: number;
-    externalBytes: number;
-  };
-  cpu: { utilizationPct: number | null };
-  loadAvg: [number, number, number] | null;
-  eventLoop: { lagMs: number; maxLagMs: number };
-  openSockets: number;
-  authenticatedLinks: number;
-};
-
-export type RelayMetricsTotals = RelayLimitTotals & {
-  tenants: number;
-  members: number;
-  membersOnline: number;
-  activeStreams: number;
-  bytesIn: number;
-  bytesOut: number;
-  bytesInPerSec: number;
-  bytesOutPerSec: number;
-  framesInPerSec: number;
-  framesOutPerSec: number;
-  bandwidthBytesPerSec: number;
-};
-
-export type RelayMetricsTenant = {
-  id: string;
-  label: string | null;
-  memberCount: number;
-  onlineMembers: number;
-  activeStreams: number;
-  bytesIn: number;
-  bytesOut: number;
-  bytesInPerSec: number;
-  bytesOutPerSec: number;
-  lastSeenAt: number | null;
-  pack: { sizeBytes: number; updatedAt: number | null };
-  quota: {
-    maxNodes: number;
-    maxStreams: number;
-    bandwidthBytesPerSec: number | null;
-    maxFileBytes?: number | null;
-  };
-  usage: {
-    currentNodes: number;
-    currentStreams: number;
-    bytesInPerSec: number;
-    bytesOutPerSec: number;
-    bandwidthBytesPerSec: number;
-  };
-};
-
-export type RelayMetricsMember = {
-  tenantId: string;
-  nodeId: string;
-  name: string | null;
-  online: boolean;
-  lastSeenAt: number | null;
-  connectedAt: number | null;
-  rttMs: number | null;
-  reconnects: number;
-  activeStreams: number;
-  bytesInPerSec: number;
-  bytesOutPerSec: number;
-};
-
-export type RelayMetricsSample = {
-  sampledAt: number;
-  membersOnline: number;
-  activeStreams: number;
-  bytesInPerSec: number;
-  bytesOutPerSec: number;
-  framesInPerSec: number;
-  framesOutPerSec: number;
-  rssBytes: number;
-  heapUsedBytes: number;
-  eventLoopLagMs: number;
-  cpuUtilizationPct: number | null;
-};
-
-/**
- * `GET /api/relay/metrics` 响应。
- * `bytesIn` = 从成员收到的字节，`bytesOut` = 发给成员的字节；
- * 同一份中转字节在租户 in/out 上各记一次（与 `RelayMetering` 落库口径一致）。
- */
-export type RelayMetricsResponse = {
-  schemaVersion: 1;
-  sampledAt: number;
-  intervalMs: number;
-  uptimeMs: number;
-  version: string;
-  process: RelayMetricsProcess;
-  totals: RelayMetricsTotals;
-  tenants: RelayMetricsTenant[];
-  members: RelayMetricsMember[];
-  history: { intervalMs: number; samples: RelayMetricsSample[] };
+export type {
+  RelayMetricsMember,
+  RelayMetricsProcess,
+  RelayMetricsResponse,
+  RelayMetricsSample,
+  RelayMetricsTenant,
+  RelayMetricsTotals,
 };
 
 export type RelayMetricsCollectorOptions = {

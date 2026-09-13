@@ -142,3 +142,29 @@ export {
   tenantIdBytes,
 } from './relay-pack';
 export type { RelayPackKdfJson, RelayPackPlaintext, SealRelayPackInput } from './relay-pack';
+
+export { RELAY_LINK_ERROR_CODES } from './link-error';
+export type { RelayLinkErrorCode } from './link-error';
+
+export type {
+  RelayAttachRole,
+  RelayKeyLogHealth,
+  RelayStatusPayload,
+  RelayStatusRow,
+  RelayStatusRowKeyLog,
+  RelayStatusTurnLocalHint,
+  RelayStatusTurnMembers,
+  RelayStatusTurnView,
+  RelayUplinkMode,
+} from './status-row';
+
+export type { RelayChoice, RelayPeerPresence, RelayPresenceSnapshot } from './presence';
+
+export type {
+  RelayMetricsMember,
+  RelayMetricsProcess,
+  RelayMetricsResponse,
+  RelayMetricsSample,
+  RelayMetricsTenant,
+  RelayMetricsTotals,
+} from './metrics';

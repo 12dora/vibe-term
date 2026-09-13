@@ -11,7 +11,7 @@ import {
   yn,
 } from '../core/cmd';
 import { UsageError } from '../core/errors';
-import { fetchRelayStatus } from '../core/nodes-relay';
+import { type RelayStatusRow, fetchRelayStatus } from '../core/nodes-relay';
 import { readmitStaleMembers, removeRelay, switchMeshRelay } from '../core/nodes-relay-ops';
 
 function formatTurn(turn: { url: string; probeOk: boolean | null } | null | undefined): string {
@@ -24,7 +24,7 @@ function formatTurn(turn: { url: string; probeOk: boolean | null } | null | unde
 const ls: SubHandler = async (ctx, _flags, positionals) => {
   rejectExtra(positionals, 0);
   const status = await fetchRelayStatus(ctx);
-  const relays = status?.relays ?? [];
+  const relays: RelayStatusRow[] = status?.relays ?? [];
   emit(ctx, status ?? { mode: 'none', relays: [] }, () => {
     ctx.out.line(`mode         ${dash(status?.mode)}`);
     ctx.out.table(relays, [

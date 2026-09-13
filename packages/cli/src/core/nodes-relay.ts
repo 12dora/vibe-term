@@ -8,7 +8,11 @@ import {
   decodeBase64url,
   encodeBase64url,
 } from '@vibeterm/shared/auth';
-import { encodeRelayJoinToken } from '@vibeterm/shared/relay';
+import {
+  type RelayStatusRow as RelayStatusRowDto,
+  type RelayUplinkMode,
+  encodeRelayJoinToken,
+} from '@vibeterm/shared/relay';
 import type { FlagValues } from './args';
 import { flagStrings } from './args';
 import type { AuthMode } from './auth';
@@ -25,22 +29,13 @@ import {
   withRootKey,
 } from './nodes-keylog';
 
-export type RelayUplinkMode = 'relay' | 'hub' | 'none';
+export type { RelayUplinkMode };
 
-export interface RelayStatusRow {
+/** 读侧宽松：旧节点 JSON 可能缺字段；`caFingerprint` 是 CLI 回退钉扎用的额外键。 */
+export type RelayStatusRow = Partial<RelayStatusRowDto> & {
   url: string;
-  attached?: boolean;
   caFingerprint?: string | null;
-  priority?: number;
-  online?: boolean;
-  role?: 'primary' | 'secondary' | null;
-  rttMs?: number | null;
-  pathBestMs?: number;
-  peersOnline?: number | null;
-  turn?: { url: string; probeOk: boolean | null } | null;
-  kicked?: boolean;
-  lastError?: string | null;
-}
+};
 
 export interface RelayStatusJson {
   mode?: RelayUplinkMode | string;

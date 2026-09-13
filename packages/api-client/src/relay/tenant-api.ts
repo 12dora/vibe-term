@@ -7,75 +7,36 @@
 // 待签记录的 payload 一律由节点侧算好（它才有 X25519 公钥表与当前 K_log/K_meta），
 // 浏览器只负责把 payload 包成密钥日志记录、签名、再走 `POST /api/auth/keylog?hub=sync` 提交。
 
+import type {
+  RelayAttachRole,
+  RelayKeyLogHealth,
+  RelayLinkErrorCode,
+  RelayQuotaUsage,
+  RelayStatusRow,
+  RelayUplinkMode,
+} from '@vibeterm/shared/relay';
 import type { HubEnrollmentStatus } from '../auth/types';
 import { type ApiClient, defaultApiClient } from '../client';
 import { type JsonRequestOptions, requestJson } from '../json-mutation';
 import { RelayApiError } from './admin-api';
 import { type RelayMetaKeyLaggingNode, normalizeMetaKeyLagging } from './meta-key-lagging';
 import { readRelayTenantError } from './tenant-error';
-import { type RelayTurnProbe, normalizeRelayTurn } from './tenant-turn';
+import { normalizeRelayTurn } from './tenant-turn';
 
 export type { RelayTurnLocalHint, RelayTurnMembers, RelayTurnProbe } from './tenant-turn';
 
-/** 本机 uplink 的形态：接中继 / 接 hub / 都没有。 */
-export type RelayUplinkMode = 'relay' | 'hub' | 'none';
+export type {
+  RelayAttachRole,
+  RelayKeyLogHealth,
+  RelayLinkErrorCode,
+  RelayQuotaUsage,
+  RelayUplinkMode,
+};
 
 export type { RelayMetaKeyLaggingNode } from './meta-key-lagging';
 
-export type RelayAttachRole = 'primary' | 'secondary';
-
 /** 中继列表里的一条链路（按 `priority` 升序即 failover 顺序）。 */
-export interface RelayLinkStatus {
-  url: string;
-  priority: number;
-  online: boolean;
-  /** 本机 uplink 当前挂在这一条上。 */
-  attached: boolean;
-  /** 多中继同时挂载时的角色；未连接为 `null`。旧节点不下发。 */
-  role?: RelayAttachRole | null;
-  rttMs?: number | null;
-  pathBestMs?: number;
-  reraces?: number;
-  peersOnline?: number | null;
-  turn?: RelayTurnProbe | null;
-  /** 当前（未恢复的）连接错误原文；在线时为 `null`。 */
-  lastError?: string | null;
-  /** `lastError` 归一化后的稳定错误码，前端据此查 i18n；在线时为 `null`。 */
-  lastErrorCode?: RelayLinkErrorCode | null;
-  /** 最近一次连接失败的时间戳（毫秒）。未失败为 `null`。 */
-  lastErrorAt?: number | null;
-  /** 中继侧作废了本租户令牌（改密踢人 / 运营者手动踢）。 */
-  kicked?: boolean;
-  /** 踢出原因；`password_rotated` 表示只是令牌换代，等新的 `set-relays` 即可恢复。 */
-  kickedReason?: string | null;
-}
-
-/** 中继链路错误的稳定分类（由网关按原始错误归一化）。 */
-export type RelayLinkErrorCode =
-  | 'connect-failed'
-  | 'connect-timeout'
-  | 'auth-timeout'
-  | 'auth-rejected'
-  | 'heartbeat-lost'
-  | 'kicked'
-  | 'revoked'
-  | 'dns'
-  | 'refused'
-  | 'tls'
-  | 'protocol'
-  | 'unknown';
-
-/** 中继按租户实时下发的用量（与 `RelayQuotaView` 同源，约 5 s 一拍）。 */
-export interface RelayQuotaUsage {
-  currentNodes: number;
-  currentStreams: number;
-  bytesInPerSec: number;
-  bytesOutPerSec: number;
-  /** 令牌桶放行的字节速率，与配额上限同口径。旧中继不下发。 */
-  bandwidthBytesPerSec?: number;
-  /** 采样时间（毫秒）。 */
-  sampledAt: number;
-}
+export type RelayLinkStatus = RelayStatusRow;
 
 /** 中继下发的配额；未接入或旧中继时为 `null`。 */
 export interface RelayQuotaView {
@@ -117,16 +78,6 @@ export interface RelayTenantStatus {
   readmitPending: number;
   /** 成员密钥（`K_meta`）还没送到的成员；旧节点不下发该字段，缺省为空。 */
   metaKeyLagging: RelayMetaKeyLaggingNode[];
-}
-
-/**
- * 中继上的密钥日志由同租户节点写入，被攻陷的成员可以塞进本机解不开的块。
- * 节点不会因此卡死同步：跳过并计数，`blockedSeq` 是第一条卡住的中继 seq。
- */
-export interface RelayKeyLogHealth {
-  skipped: number;
-  blockedSeq: string | null;
-  caughtUp: boolean;
 }
 
 /**
