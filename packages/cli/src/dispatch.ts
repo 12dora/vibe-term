@@ -93,7 +93,7 @@ function prepareCommand(argv: string[]): PreparedCommand {
 }
 
 async function executeCommand(prepared: PreparedCommand, out: Output): Promise<number> {
-  captureDiagnostics(prepared.quiet);
+  captureDiagnostics(prepared.quiet || prepared.json || !out.isStdoutTty());
   const tls = loadTlsSettings(prepared.ca, prepared.insecure);
   if (tls.insecure) {
     // 关掉证书校验必须显眼：中间人此时完全不可见。

@@ -149,14 +149,14 @@ export class Output {
  * 把第三方诊断日志（`@vibeterm/ws-client` 的连接状态等）从 stdout 挪到 stderr。
  *
  * stdout 是命令结果的专用通道，`--json` 的调用方直接管道它；库里的 `console.log`
- * 混进去就会把 JSON 搅坏。`--quiet` 时直接丢弃。
+ * 混进去就会把 JSON 搅坏。`--quiet`、`--json`、以及非 TTY（agent 默认 JSON）时直接丢弃。
  */
 export function captureDiagnostics(
-  quiet: boolean,
+  silent: boolean,
   target: NodeJS.WritableStream = process.stderr
 ): void {
   const write = (...args: unknown[]) => {
-    if (quiet) return;
+    if (silent) return;
     target.write(`${args.map((arg) => (typeof arg === 'string' ? arg : String(arg))).join(' ')}\n`);
   };
   console.log = write;
