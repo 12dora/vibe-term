@@ -1,3 +1,27 @@
+# 2.4.0
+
+_2026-09-13_
+
+## English
+
+- **Latency optimisation for the mesh.** Settings → Nodes gains a three-way route mode. *Smart* (default) measures the direct path and the relay path on every ping and moves a peer to the relay after three consecutive samples over at least 15 s show the direct path slower than max(1.5 × relay, relay + 40 ms); it comes back to direct only make-before-break, once a fresh direct link is at least max(5 ms, 20 %) faster over three pings, with a 2 → 30 min back-off between attempts. *Direct* keeps today’s behaviour (direct whenever available). *Relay* sends everything through the relay and refuses inbound direct links. `vibeterm settings mesh route-mode get|set` exposes the same switch. This fixes the laggy terminal to a node whose DataChannel path swung to hundreds of milliseconds while the relay path was ~15 ms.
+- **DataChannel re-dial actually completes.** A higher-epoch re-dial offer is no longer swallowed by the previous connection’s stale signalling listener, and accepting a peer’s offer no longer depends on the answerer’s own request budget. A node that keeps timing out as answerer for the same peer now backs off (30 s → 2 min → 10 min) instead of allocating a TURN port every 20 s.
+- **Notification “Open” no longer crashes.** Forwarded toasts built a `/n/<id>/n/<id>/…` link and hit the route error page; the node prefix is now applied once, pane ids that are not URL-encoded no longer throw, and the selection event carries the right node.
+- **Nodes table.** The connection column is localised (“LAN · direct”, “WAN · secure WS”, “Relay”); the sign-in column is folded into status (“Online · signed in / not signed in”, with the sign-in button still there). `vibeterm nodes ls` ONLINE reads `yes · signed-in/out`.
+- **Local ports card.** Strict three-state lights: green = open, red = closed, grey = not probed (no more “—” rows or red rings).
+- **Relay list.** The primary relay shows its peer count again (it was blank while the secondary showed the fleet).
+- **Codebase.** Thirteen refactor packages remove shotgun-surgery hotspots (single sources for node/relay/site-settings contracts, node display view-model, settings tab registry, messaging channels, env parsing, probe loop) and split every file that sat at the 600-line ceiling; the complexity gate is tightened (CC ≤ 12, functions ≤ 80 lines, files ≤ 500, ≤ 5 params, nesting ≤ 4, cross-file duplication check) with existing debt frozen.
+
+## 中文
+
+- **多节点互联「延迟优化」。** 设置 → 多节点互联新增三选一选路模式。**智能**（默认）每次 ping 同时比较直连与中继延迟：连续 3 次、跨度 ≥ 15 s 直连慢于 max(1.5 × 中继, 中继 + 40 ms) 即把该节点切到中继；升回直连采用先建后切，新直连连续 3 次比中继快 max(5 ms, 20%) 才切回，两次尝试之间 2 → 30 min 退避。**直连**保持原行为（能直连就直连）。**中继**全部经中继，并拒绝入站直连。CLI `vibeterm settings mesh route-mode get|set` 同样可切。此项修复了「到某节点的 DataChannel 抖到几百毫秒而中继只有 ~15 ms，终端仍死守直连」的卡顿。
+- **DataChannel 重掷真正能完成。** 更高 epoch 的重掷 offer 不再被旧连接的残留信令监听吞掉；接受对端 offer 不再受本端请求预算限制。对同一对端作为应答方连续超时的节点会退避（30 s → 2 min → 10 min），不再每 20 s 分配一个 TURN 端口。
+- **通知「打开」不再崩溃。** 转发通知的深链曾拼成 `/n/<id>/n/<id>/…` 落到路由错误页；现在节点前缀只加一次，未编码的 pane id 不再抛错，选择事件带正确节点。
+- **节点表。** 连接方式列本地化（「局域网 · 直连」「公网 · 加密 WS」「中继」）；登录状态列并入状态列（「在线 · 已登录 / 未登录」，登录按钮保留）。`vibeterm nodes ls` ONLINE 列为 `yes · signed-in/out`。
+- **本机端口卡。** 严格三态灯：绿 = 已开通，红 = 未开通，灰 = 未探测（不再有「—」行与红环）。
+- **中继列表。** 主中继重新显示在线节点数（此前主中继为空、只有副中继显示）。
+- **代码库。** 13 个重构包消除霰弹式修改热点（节点/中继/站点设置契约、节点展示口径、设置标签注册表、消息通道、环境变量解析、探测循环等单一上游），拆分所有顶到 600 行的文件；复杂度门禁收紧（CC ≤ 12、函数 ≤ 80 行、文件 ≤ 500 行、参数 ≤ 5、嵌套 ≤ 4、跨文件重复检测），存量债务冻结。
+
 # 2.3.7
 
 _2026-09-13_
