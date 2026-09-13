@@ -3296,7 +3296,6 @@ export const I18N_RESOURCES = {
           "reconnects": "Reconnects",
           "reconnectsSub": "since start",
           "reconnectsHint": "Reconnects summed across joined nodes.",
-          "throughputTotal": "{{total}} total",
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
           "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
@@ -3757,6 +3756,7 @@ export const I18N_RESOURCES = {
     "localMachine": {
       "ports": {
         "title": "Inbound ports",
+        "blocked": "Blocked",
         "notProbedTitle": "Not probed"
       }
     }
@@ -7046,7 +7046,6 @@ export const I18N_RESOURCES = {
           "reconnects": "重连",
           "reconnectsSub": "自启动累计",
           "reconnectsHint": "各接入节点重连次数之和。",
-          "throughputTotal": "累计 {{total}}",
           "traffic": "累计流量",
           "trafficSub": "自启动累计",
           "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
@@ -7507,6 +7506,7 @@ export const I18N_RESOURCES = {
     "localMachine": {
       "ports": {
         "title": "入站端口",
+        "blocked": "未开通",
         "notProbedTitle": "未探测"
       }
     }
@@ -10796,7 +10796,6 @@ export const I18N_RESOURCES = {
           "reconnects": "再接続",
           "reconnectsSub": "起動からの累計",
           "reconnectsHint": "接続中ノードの再接続回数の合計です。",
-          "throughputTotal": "累計 {{total}}",
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
           "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
@@ -11257,6 +11256,7 @@ export const I18N_RESOURCES = {
     "localMachine": {
       "ports": {
         "title": "受信ポート",
+        "blocked": "未開放",
         "notProbedTitle": "未検査"
       }
     }

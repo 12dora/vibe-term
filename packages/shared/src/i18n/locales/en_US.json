@@ -3290,7 +3290,6 @@
           "reconnects": "Reconnects",
           "reconnectsSub": "since start",
           "reconnectsHint": "Reconnects summed across joined nodes.",
-          "throughputTotal": "{{total}} total",
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
           "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
@@ -3751,6 +3750,7 @@
     "localMachine": {
       "ports": {
         "title": "Inbound ports",
+        "blocked": "Blocked",
         "notProbedTitle": "Not probed"
       }
     }

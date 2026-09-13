@@ -63,16 +63,7 @@ export function ActiveStreamsTile({ data, trends, stale }: MetricsTileProps) {
   );
 }
 
-/**
- * `showTotal` 是紧凑区的取法：那里没有单独的「累计流量」格子，
- * 累计量就挂在吞吐格的副行上，免得只剩瞬时速率、看不出转了多少。
- */
-export function ThroughputTile({
-  data,
-  trends,
-  stale,
-  showTotal = false,
-}: MetricsTileProps & { showTotal?: boolean }) {
+export function ThroughputTile({ data, trends, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const { totals } = data;
   return (
@@ -81,14 +72,10 @@ export function ThroughputTile({
       value={
         <ByteRate align="left">{formatRate(totals.bytesInPerSec + totals.bytesOutPerSec)}</ByteRate>
       }
-      sub={
-        showTotal
-          ? t('relay.metrics.tiles.throughputTotal', { total: trafficText(totals.bytesOut) })
-          : t('relay.metrics.tiles.throughputSub', {
-              out: formatRate(totals.bytesOutPerSec),
-              in: formatRate(totals.bytesInPerSec),
-            })
-      }
+      sub={t('relay.metrics.tiles.throughputSub', {
+        out: formatRate(totals.bytesOutPerSec),
+        in: formatRate(totals.bytesInPerSec),
+      })}
       stale={stale}
       sparkline={
         <Sparkline

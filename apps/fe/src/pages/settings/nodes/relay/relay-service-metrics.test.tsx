@@ -46,9 +46,19 @@ describe('RelayServiceMetrics', () => {
     expect(html).toContain('data-testid="relay-service-metrics-error-retry"');
   });
 
-  test('角色缺席：整块不渲染', () => {
+  // 指标端点不可用（旧中继 / 401）：留一个空的「运行」标签比不摆更糟，用户会以为读数没加载出来。
+  test('端点不可用：连标签一起整行不渲染', () => {
     setRelayMetricsStateForTest({ availability: 'unavailable' });
     expect(render()).toBe('');
+    expect(render({ onOpenConsole: () => undefined })).toBe('');
+  });
+
+  test('可用时整行自带「运行」标签', () => {
+    setRelayMetricsStateForTest({ data: relayMetricsFixture() });
+    expect(render()).toContain('nodes.machine.relayServiceRuntime');
+    // 骨架那一档也带标签，行高不会在数据到位时跳一下
+    resetRelayMetricsStateForTest();
+    expect(render()).toContain('nodes.machine.relayServiceRuntime');
   });
 
   test('正常：一行读数，磁贴一格都不摆', () => {

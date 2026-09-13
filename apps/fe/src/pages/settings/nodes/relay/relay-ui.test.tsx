@@ -117,6 +117,17 @@ describe('RelayRows 渲染', () => {
     expect(html).not.toContain('ring-border/60');
   });
 
+  // 令牌作废时链路可能还报着 online：点是红的，标签不能跟着说「在线」。
+  test('被踢：点是红的，标签说令牌已失效而不是「在线」', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows relays={[link({ attached: true, online: true, kicked: true })]} />
+    );
+    expect(html).toContain('aria-label="nodes.machine.status.relayKicked"');
+    expect(html).toContain('title="nodes.machine.status.relayKicked"');
+    expect(html).not.toContain('aria-label="relay.tenant.strip.online"');
+    expect(html).toContain('bg-destructive');
+  });
+
   test('状态点带可读标签：在线绿、离线红', () => {
     const online = renderToStaticMarkup(<RelayRows relays={[link({ attached: true })]} />);
     expect(online).toContain('aria-label="relay.tenant.strip.online"');
@@ -137,7 +148,7 @@ describe('RelayRows 渲染', () => {
     expect(html).toContain(`data-testid="nodes-relay-kicked-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-error-${HOST}"`);
     expect(html).toContain('data-relay-failing="true"');
-    expect(html).toContain('aria-label="relay.tenant.strip.offline"');
+    expect(html).toContain('aria-label="nodes.machine.status.relayKicked"');
     expect(html).not.toContain('boom');
   });
 

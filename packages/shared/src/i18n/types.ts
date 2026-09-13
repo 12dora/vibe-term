@@ -2957,7 +2957,6 @@ export type TranslationKey =
   | 'relay.metrics.tiles.reconnects'
   | 'relay.metrics.tiles.reconnectsSub'
   | 'relay.metrics.tiles.reconnectsHint'
-  | 'relay.metrics.tiles.throughputTotal'
   | 'relay.metrics.tiles.traffic'
   | 'relay.metrics.tiles.trafficSub'
   | 'relay.metrics.tiles.trafficHint'
@@ -3374,4 +3373,5 @@ export type TranslationKey =
   | 'localMachine'
   | 'localMachine.ports'
   | 'localMachine.ports.title'
+  | 'localMachine.ports.blocked'
   | 'localMachine.ports.notProbedTitle';
