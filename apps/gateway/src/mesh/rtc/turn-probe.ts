@@ -43,6 +43,15 @@ export function turnProbeSnapshot(): readonly TurnProbeRecord[] {
   return lastResults;
 }
 
+/** 每个 URL 取最后一条探测（含 ok / rttMs）。 */
+export function turnProbeByUrl(
+  probes: readonly TurnProbeRecord[] = lastResults
+): Map<string, TurnProbeRecord> {
+  const map = new Map<string, TurnProbeRecord>();
+  for (const row of probes) map.set(row.url, row);
+  return map;
+}
+
 export function latestTurnProbe(): TurnProbeRecord | null {
   return lastResults[lastResults.length - 1] ?? null;
 }

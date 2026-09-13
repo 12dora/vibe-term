@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import {
   encodeBase64url,
   generateEd25519KeyPair,
@@ -28,7 +28,9 @@ import {
   rtcWakeCanonicalBytes,
   verifyRtcWakeSignature,
 } from './ice';
+import { resetTurnIcePickLogForTest } from './ice-turn-pick';
 import { resetStunResolverForTest } from './stun-resolver';
+import { resetTurnProbeForTest, setTurnProbeSnapshotForTest } from './turn-probe';
 
 describe('ice helpers', () => {
   test('collects stun urls and structured TURN IceServer entries', () => {
@@ -441,6 +443,7 @@ describe('buildRtcIceConfig UDP mux vs TURN', () => {
           { url: 'turn:c.example:3478', username: 'uc', credential: 'pc' },
         ],
         turnProbeOk: true,
+        turnProbes: [],
       },
       runtime
     );
@@ -450,5 +453,189 @@ describe('buildRtcIceConfig UDP mux vs TURN', () => {
       { hostname: 'b.example', port: 3478, username: 'ub', password: 'pb', relayType: 'TurnUdp' },
     ]);
     expect(hasTurnServer(built.iceServers)).toBe(true);
+  });
+});
+
+describe('buildRtcIceConfig TURN pick by probe RTT', () => {
+  const runtime = { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null };
+  const a = { url: 'turn:a.example:3478', username: 'ua', credential: 'pa' };
+  const b = { url: 'turn:b.example:3478', username: 'ub', credential: 'pb' };
+  const c = { url: 'turn:c.example:3478', username: 'uc', credential: 'pc' };
+  const iceOf = (hostname: string, username: string, password: string) => ({
+    hostname,
+    port: 3478,
+    username,
+    password,
+    relayType: 'TurnUdp' as const,
+  });
+
+  afterEach(() => {
+    resetTurnProbeForTest();
+    resetTurnIcePickLogForTest();
+  });
+
+  test('keeps the two lowest-RTT probed TURNs of three', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:a:1'],
+        turn: [a, b, c],
+        turnProbeOk: true,
+        turnProbes: [
+          { url: a.url, ok: true, rttMs: 40 },
+          { url: b.url, ok: true, rttMs: 10 },
+          { url: c.url, ok: true, rttMs: 20 },
+        ],
+      },
+      runtime
+    );
+    expect(built.iceServers).toEqual([
+      'stun:a:1',
+      iceOf('b.example', 'ub', 'pb'),
+      iceOf('c.example', 'uc', 'pc'),
+    ]);
+  });
+
+  test('probe missing keeps primary then priority order', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:a:1'],
+        turn: [a, b, c],
+        turnProbeOk: true,
+        turnProbes: [],
+      },
+      runtime
+    );
+    expect(built.iceServers).toEqual([
+      'stun:a:1',
+      iceOf('a.example', 'ua', 'pa'),
+      iceOf('b.example', 'ub', 'pb'),
+    ]);
+  });
+
+  test('equal RTT ties stay in primary then list order', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:a:1'],
+        turn: [a, b, c],
+        turnProbeOk: true,
+        turnProbes: [
+          { url: a.url, ok: true, rttMs: 12 },
+          { url: b.url, ok: true, rttMs: 12 },
+          { url: c.url, ok: true, rttMs: 12 },
+        ],
+      },
+      runtime
+    );
+    expect(built.iceServers).toEqual([
+      'stun:a:1',
+      iceOf('a.example', 'ua', 'pa'),
+      iceOf('b.example', 'ub', 'pb'),
+    ]);
+  });
+
+  test('probeOk ranks above missing/failed; primary fills the second slot', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:a:1'],
+        turn: [a, b, c],
+        turnProbeOk: true,
+        turnProbes: [
+          { url: b.url, ok: false, rttMs: 2000 },
+          { url: c.url, ok: true, rttMs: 5 },
+        ],
+      },
+      runtime
+    );
+    expect(built.iceServers).toEqual([
+      'stun:a:1',
+      iceOf('c.example', 'uc', 'pc'),
+      iceOf('a.example', 'ua', 'pa'),
+    ]);
+  });
+
+  test('re-ranks from the live probe snapshot on each ICE build', () => {
+    setTurnProbeSnapshotForTest([
+      { url: a.url, ok: true, rttMs: 40, probedAt: 1 },
+      { url: b.url, ok: true, rttMs: 10, probedAt: 1 },
+      { url: c.url, ok: true, rttMs: 20, probedAt: 1 },
+    ]);
+    const first = buildRtcIceConfig({ stun: [], turn: [a, b, c], turnProbeOk: true }, runtime);
+    expect(first.iceServers).toEqual([
+      iceOf('b.example', 'ub', 'pb'),
+      iceOf('c.example', 'uc', 'pc'),
+    ]);
+    setTurnProbeSnapshotForTest([
+      { url: a.url, ok: true, rttMs: 8, probedAt: 2 },
+      { url: b.url, ok: true, rttMs: 10, probedAt: 2 },
+      { url: c.url, ok: true, rttMs: 20, probedAt: 2 },
+    ]);
+    const second = buildRtcIceConfig({ stun: [], turn: [a, b, c], turnProbeOk: true }, runtime);
+    expect(second.iceServers).toEqual([
+      iceOf('a.example', 'ua', 'pa'),
+      iceOf('b.example', 'ub', 'pb'),
+    ]);
+  });
+
+  test('uses turnConfigured so gated `turn` does not hide the third relay', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:a:1'],
+        turn: [b, c],
+        turnConfigured: [a, b, c],
+        turnProbeOk: true,
+        turnProbes: [
+          { url: a.url, ok: true, rttMs: 40 },
+          { url: b.url, ok: true, rttMs: 10 },
+          { url: c.url, ok: true, rttMs: 20 },
+        ],
+      },
+      runtime
+    );
+    expect(built.iceServers).toEqual([
+      'stun:a:1',
+      iceOf('b.example', 'ub', 'pb'),
+      iceOf('c.example', 'uc', 'pc'),
+    ]);
+  });
+
+  test('logs turn pick once per change', () => {
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (line?: unknown) => {
+      logs.push(String(line));
+    };
+    try {
+      const cfg = {
+        stun: ['stun:a:1'],
+        turn: [a, b, c],
+        turnProbeOk: true,
+        turnProbes: [
+          { url: a.url, ok: true, rttMs: 40 },
+          { url: b.url, ok: true, rttMs: 10 },
+          { url: c.url, ok: true, rttMs: 20 },
+        ],
+      };
+      buildRtcIceConfig(cfg, runtime);
+      buildRtcIceConfig(cfg, runtime);
+      buildRtcIceConfig(
+        {
+          ...cfg,
+          turnProbes: [
+            { url: a.url, ok: true, rttMs: 8 },
+            { url: b.url, ok: true, rttMs: 10 },
+            { url: c.url, ok: true, rttMs: 20 },
+          ],
+        },
+        runtime
+      );
+    } finally {
+      console.log = origLog;
+    }
+    const pickLogs = logs.filter((line) => line.includes('turn pick'));
+    expect(pickLogs).toHaveLength(2);
+    expect(pickLogs[0]).toContain(`urls=${b.url},${c.url}`);
+    expect(pickLogs[0]).toContain('dropped=1');
+    expect(pickLogs[0]).toContain('by=probe-rtt');
+    expect(pickLogs[1]).toContain(`urls=${a.url},${b.url}`);
   });
 });
