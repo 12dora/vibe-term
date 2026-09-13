@@ -21,6 +21,7 @@ import { eventNotifier } from './events';
 import { registerEventNotifyBroadcaster } from './events/broadcaster';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
 import { t } from './i18n';
+import { logMemoryProfileOnce } from './memory-profile';
 import { type DispatchContext, requestDispatchContext } from './mesh/types';
 import { registerMessagingRuntime, resetMessagingRuntime } from './messaging/context';
 import { createMessagingRuntimeHooks, setMessagingMeshRuntime } from './messaging/runtime-hooks';
@@ -236,6 +237,7 @@ export async function createGatewayRuntime(
   runtimeController.reset();
   primeLocalShellPath();
   sweepOrphanTransferTemps();
+  logMemoryProfileOnce(config.memoryProfile);
   await sweepReleaseCacheOnStartup();
 
   const wsServer = new WebSocketServer();
