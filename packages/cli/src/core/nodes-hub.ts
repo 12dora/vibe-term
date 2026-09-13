@@ -1,7 +1,8 @@
 // 定位 writer hub、拼 join 命令、读 mesh / hub 节点表。
 
-import type { MeshHubsResponse, MeshNode } from '@vibeterm/api-client/auth/types';
+import type { MeshHubsResponse } from '@vibeterm/api-client/auth/types';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import type { MeshNode } from '@vibeterm/shared';
 import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError, UsageError } from './errors';

@@ -1,4 +1,10 @@
-import { type VibeTermRoles, isStandaloneRoles } from '@vibeterm/shared';
+import {
+  type MeshNode,
+  type MeshNodeReach,
+  type MeshNodeTransport,
+  type VibeTermRoles,
+  isStandaloneRoles,
+} from '@vibeterm/shared';
 import type { LinkSession } from '@vibeterm/shared/link';
 import type { ShareScope } from '@vibeterm/shared/share';
 import { type DispatchContext, requestDispatchContext } from './types';
@@ -77,36 +83,28 @@ export type HubTlsInfo = {
 
 export type HubTlsInfoProvider = () => HubTlsInfo | Promise<HubTlsInfo>;
 
-export type PeerReachKind = 'lan' | 'wan' | 'relay' | null;
+export type PeerReachKind = MeshNodeReach;
 
-export type PeerTransportKind = 'ws-secure' | 'relay' | 'dc';
+export type PeerTransportKind = Exclude<MeshNodeTransport, null>;
 
 export type NodeEventStatus = 'online' | 'offline' | 'revoked';
-
-export type MeshNodeDcBreaker = {
-  cooling: boolean;
-  until: number | null;
-  failures: number;
-  level: number;
-  lastFailureKind: string | null;
-};
 
 export type NodeEventPayload = {
   nodeId: string;
   status: NodeEventStatus;
-  reach?: PeerReachKind;
-  transport?: PeerTransportKind | null;
-  rttMs?: number | null;
+  reach?: MeshNode['reach'];
+  transport?: MeshNode['transport'];
+  rttMs?: MeshNode['rttMs'];
   inventory?: string | null;
-  version?: string | null;
-  direct_capable?: boolean;
-  name?: string;
-  viaRelay?: string | null;
-  relayPresence?: string[] | null;
+  version?: MeshNode['version'];
+  direct_capable?: MeshNode['direct_capable'];
+  name?: MeshNode['name'];
+  viaRelay?: MeshNode['viaRelay'];
+  relayPresence?: MeshNode['relayPresence'] | null;
   /** 进程内诊断；WS NODE_EVENT 帧暂不编码该字段（mesh-routes 超出本变更范围）。 */
-  dcBreaker?: MeshNodeDcBreaker | null;
+  dcBreaker?: MeshNode['dcBreaker'];
   /** 入口本机暂停偏好；缺席表示本帧不改客户端已有值。 */
-  paused?: boolean;
+  paused?: MeshNode['paused'];
 };
 
 export type PeerLinkPurpose = 'user' | 'management';

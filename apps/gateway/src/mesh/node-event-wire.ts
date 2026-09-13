@@ -1,4 +1,4 @@
-import { wsBorsh } from '@vibeterm/shared';
+import { type MeshNode, wsBorsh } from '@vibeterm/shared';
 
 const STATUS_TO_U8: Record<string, number> = {
   online: wsBorsh.NODE_EVENT_STATUS_ONLINE,
@@ -9,16 +9,16 @@ const STATUS_TO_U8: Record<string, number> = {
 export type NodeEventWireInput = {
   nodeId: string;
   status: string;
-  reach?: 'lan' | 'wan' | 'relay' | null;
-  transport?: 'ws-secure' | 'relay' | 'dc' | null;
-  rttMs?: number | null;
+  reach?: MeshNode['reach'];
+  transport?: MeshNode['transport'];
+  rttMs?: MeshNode['rttMs'];
   inventory?: string | null;
-  version?: string | null;
-  direct_capable?: boolean;
-  name?: string;
-  viaRelay?: string | null;
-  relayPresence?: string[] | null;
-  paused?: boolean;
+  version?: MeshNode['version'];
+  direct_capable?: MeshNode['direct_capable'];
+  name?: MeshNode['name'];
+  viaRelay?: MeshNode['viaRelay'];
+  relayPresence?: MeshNode['relayPresence'] | null;
+  paused?: MeshNode['paused'];
 };
 
 export type NodeEventRelayLookup = {

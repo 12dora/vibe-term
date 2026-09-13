@@ -1,8 +1,16 @@
+import type {
+  MeshNode,
+  MeshNodeDcBreaker,
+  MeshNodeDirectFailure,
+  MeshNodeReach,
+  MeshNodeTransport,
+} from '@vibeterm/shared';
 import { decodeCertificate, encodeBase64url } from '@vibeterm/shared/auth';
-import type { MeshPortReachCode, PortPurpose } from '@vibeterm/shared/net';
 import { hasNodeSessionCookie } from '../auth/cookies';
 import { isPeerReachable } from './address-class';
 import { MESH_VIA_SELF } from './mesh-deps';
+
+export type { MeshNodeDcBreaker, MeshNodeDirectFailure, MeshPortReach } from '@vibeterm/shared';
 
 type Meta = {
   endpoints?: unknown;
@@ -10,25 +18,6 @@ type Meta = {
   directCapable?: boolean;
   version?: string | null;
   peerReach?: Record<string, 'ok' | 'refused' | 'timeout'>;
-};
-
-export type MeshNodeDcBreaker = {
-  cooling: boolean;
-  until: number | null;
-  failures: number;
-  level: number;
-  lastFailureKind: string | null;
-};
-
-/** 与 `peer-manager-types.ts` 的 `DirectFailureCode` 同步；此处按下发报文的形状写成字符串。 */
-export type MeshNodeDirectFailure = {
-  at: number;
-  ws?: string | null;
-  wsCode?: string | null;
-  wsParams?: { url?: string; seconds?: number } | null;
-  dc?: string | null;
-  dcCode?: string | null;
-  dcParams?: { until?: number } | null;
 };
 
 export type MeshNodeLinkDetail = {
@@ -41,45 +30,7 @@ export type MeshNodeLinkDetail = {
   relayPresence?: string[];
 };
 
-export type MeshPortReach = {
-  purpose: PortPurpose;
-  proto: 'tcp' | 'udp';
-  port?: number;
-  range?: { begin: number; end: number };
-  status: 'open' | 'blocked' | 'unknown';
-  code?: MeshPortReachCode;
-  checkedAt?: number;
-};
-
-export type MeshNodeDto = {
-  id: string;
-  name: string;
-  publicKey: string;
-  online: boolean;
-  reach: 'lan' | 'wan' | 'relay' | null;
-  transport: 'ws-secure' | 'relay' | 'dc' | null;
-  rttMs: number | null;
-  version: string | null;
-  direct_capable: boolean;
-  inventory: unknown;
-  loggedIn: boolean;
-  isHub: boolean;
-  hubMode?: 'active' | 'standby';
-  attachedHubId?: string;
-  peerAddress?: string | null;
-  linkSinceAt?: number | null;
-  endpoints?: string[];
-  directFailure?: MeshNodeDirectFailure | null;
-  dcBreaker?: MeshNodeDcBreaker | null;
-  viaRelay?: string | null;
-  relayPresence?: string[];
-  /** `peer_cache.last_seen_at`（毫秒）；self 恒为 `null`。旧入口不下发。 */
-  lastSeenAt?: number | null;
-  /** 入口本机暂停了该成员时为 true；self 与未暂停行缺省。 */
-  paused?: boolean;
-  /** 入站口可达性；self 行也下发。旧入口无此字段。 */
-  ports?: MeshPortReach[];
-};
+export type MeshNodeDto = MeshNode;
 
 export function parseJson(raw: string | null | undefined, fallback: unknown): unknown {
   if (raw == null) return fallback;
@@ -215,9 +166,9 @@ function meshLinkFields(
 function meshPathFields(
   isSelf: boolean,
   id: string,
-  transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null,
+  transportOf?: (id: string) => MeshNodeTransport,
   rttOf?: (id: string) => number | null
-): { transport: 'ws-secure' | 'relay' | 'dc' | null; rttMs: number | null } {
+): { transport: MeshNodeTransport; rttMs: number | null } {
   if (isSelf) return { transport: null, rttMs: null };
   return { transport: transportOf?.(id) ?? null, rttMs: rttOf?.(id) ?? null };
 }
@@ -225,7 +176,7 @@ function meshPathFields(
 function meshRelayFields(
   isSelf: boolean,
   id: string,
-  transport: 'ws-secure' | 'relay' | 'dc' | null,
+  transport: MeshNodeTransport,
   detail: MeshNodeLinkDetail | null,
   viaRelayOf?: (id: string) => string | null,
   relayPresenceOf?: (id: string) => string[] | undefined
@@ -255,7 +206,7 @@ export function projectMeshListNode(
   selfId: string,
   selfPk: Uint8Array,
   cookies: Map<string, string>,
-  reach: Map<string, 'lan' | 'wan' | 'relay' | null>,
+  reach: Map<string, MeshNodeReach>,
   hubOnline: ReadonlySet<string>,
   certById: Map<string, { certificateBytes: Uint8Array }>,
   peerById: Map<
@@ -272,7 +223,7 @@ export function projectMeshListNode(
   selfName: string | null,
   self: { inventory?: unknown; direct_capable: boolean; version?: string } | undefined,
   hubNodeId: string | null,
-  transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null,
+  transportOf?: (id: string) => MeshNodeTransport,
   rttOf?: (id: string) => number | null,
   linkDetailOf?: (id: string) => MeshNodeLinkDetail | null,
   hubIds?: ReadonlySet<string>,

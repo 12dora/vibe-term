@@ -1,7 +1,7 @@
 // `vibeterm nodes`：mesh 节点查看与管理。
 
-import type { MeshNode } from '@vibeterm/api-client/auth/types';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import type { MeshNode } from '@vibeterm/shared';
 import { flagBool, flagString } from '../core/args';
 import { fetchAuthMode } from '../core/auth';
 import {

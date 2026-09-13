@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@vibeterm/shared/auth';
+import {
+  DOMAIN_CERTIFICATE,
+  encodeBase64url,
+  encodeCertificate,
+  hexToBytes,
+} from '@vibeterm/shared/auth';
 import {
   meshListReadiness,
   overlayPausedMeshNodes,
@@ -509,6 +514,116 @@ describe('node-list-projection', () => {
     );
     expect(rows[0]?.paused).toBeUndefined();
     expect(rows[1]?.paused).toBe(true);
+  });
+
+  test('projectMeshListNode full row JSON is byte-stable', () => {
+    const selfId = 'aa'.repeat(16);
+    const peerId = 'cc'.repeat(16);
+    const cert = {
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(peerId),
+        ed_pk: new Uint8Array(32).fill(4),
+        x25519_pk: new Uint8Array(32).fill(5),
+        enroll_pk: new Uint8Array(32).fill(6),
+        issued_at: 1n,
+      }),
+    };
+    const dto = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map([[peerId, 'relay']]),
+      new Set(),
+      new Map([[peerId, cert]]),
+      new Map([
+        [
+          peerId,
+          {
+            inventoryJson: JSON.stringify({ version: '2.3.7', os: 'darwin' }),
+            directCapable: true,
+            endpointsJson: JSON.stringify(['ws://10.77.88.3:39001/peer']),
+            lastSeenAt: 1_700_000_222_000,
+          },
+        ],
+      ]),
+      new Map([[peerId, 'studio']]),
+      new Map(),
+      null,
+      undefined,
+      'hubhubhubhubhubhubhubhubhubhubhu',
+      () => 'relay',
+      () => 38,
+      () => ({
+        peerAddress: 'hub.example.com',
+        linkSinceAt: 1_700_000_000_000,
+        endpoints: ['ws://should.not.use.detail/peer'],
+        directFailure: {
+          at: 1_700_000_000_100,
+          ws: 'timeout ws://10.77.88.3:39001/peer',
+          wsCode: 'timeout',
+          wsParams: { url: 'ws://10.77.88.3:39001/peer', seconds: 8 },
+          dc: 'datachannel open timeout',
+          dcCode: 'dc_open_timeout',
+          dcParams: { until: 1_700_000_030_000 },
+        },
+        dcBreaker: {
+          cooling: true,
+          until: 1_700_000_030_000,
+          failures: 3,
+          level: 1,
+          lastFailureKind: 'timeout',
+        },
+        viaRelay: 'https://from-detail.example',
+        relayPresence: ['https://ignored-detail.example'],
+      }),
+      new Set([peerId]),
+      () => 'standby',
+      () => 'attached-hub-id',
+      () => 'https://sh.example',
+      () => ['https://sh.example', 'https://ty.example']
+    );
+    const expected = {
+      id: peerId,
+      name: 'studio',
+      publicKey: encodeBase64url(new Uint8Array(32).fill(4)),
+      online: true,
+      reach: 'relay',
+      transport: 'relay',
+      rttMs: 38,
+      version: '2.3.7',
+      direct_capable: true,
+      inventory: { version: '2.3.7', os: 'darwin' },
+      loggedIn: false,
+      isHub: true,
+      hubMode: 'standby',
+      attachedHubId: 'attached-hub-id',
+      peerAddress: 'hub.example.com',
+      linkSinceAt: 1_700_000_000_000,
+      endpoints: ['ws://10.77.88.3:39001/peer'],
+      directFailure: {
+        at: 1_700_000_000_100,
+        ws: 'timeout ws://10.77.88.3:39001/peer',
+        wsCode: 'timeout',
+        wsParams: { url: 'ws://10.77.88.3:39001/peer', seconds: 8 },
+        dc: 'datachannel open timeout',
+        dcCode: 'dc_open_timeout',
+        dcParams: { until: 1_700_000_030_000 },
+      },
+      dcBreaker: {
+        cooling: true,
+        until: 1_700_000_030_000,
+        failures: 3,
+        level: 1,
+        lastFailureKind: 'timeout',
+      },
+      viaRelay: 'https://sh.example',
+      relayPresence: ['https://sh.example', 'https://ty.example'],
+      lastSeenAt: 1_700_000_222_000,
+    };
+    expect(JSON.stringify(dto)).toBe(JSON.stringify(expected));
   });
 });
 

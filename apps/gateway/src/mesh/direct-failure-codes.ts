@@ -1,7 +1,7 @@
 // 直连失败码：把 ws 拨号分类与 DataChannel 的自由文本原因收敛成前端能翻译的稳定码。
 // 码是对外契约（`nodes.badge.failure.<code>`），改动必须连带改三语文案。
 
-import type { DirectFailureCode, DirectFailureDcParams } from './peer-manager-types';
+import type { DirectFailureCode, DirectFailureDcParams } from '@vibeterm/shared';
 import type { WsDialFailureKind } from './peer-ws-race';
 import { classifyRtcDialFailure } from './rtc/rtc-dial-breaker';
 
