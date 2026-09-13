@@ -38,6 +38,7 @@ packages/cli/src/
     agent.ts agent-format.ts
     nodes.ts nodes-hub-role.ts nodes-relay.ts nodes-ports.ts nodes-ops.ts
     settings.ts settings-http.ts settings-site.ts settings-local.ts
+    settings-llm.ts settings-shortcuts.ts
     settings-security.ts settings-messaging.ts
     tmux.ts tmux-layout.ts
     devices.ts files.ts …
@@ -48,6 +49,9 @@ packages/cli/src/
     http.ts              cookie 罐、Origin、会话续期、JSON/NDJSON/字节、错误翻译
     auth.ts              登录流程（浏览器版去掉 WebAuthn）
     account-security.ts  改密 / TOTP / 删 passkey 的 key-log 签名
+    settings-body.ts     LLM models/default/search、tunnel Access 旗标
+    settings-tls-body.ts TLS PUT body（对齐 GUI tls-form）
+    watch-body.ts        watch 规则旗标（含 extract/LLM）
     resolve.ts           node / device 解析与目标文法
     ws.ts                ws → WebSocketLike 适配、openGatewaySocket
     output.ts            表格 / JSON 打印、诊断日志改道
@@ -212,7 +216,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm files`
 
-子命令：`roots [ls|add|rm|order|enable|disable]`、`ls`、`stat`、`cat`、`mkdir`、`browse`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。末尾单独一个冒号（`<root>:`）表示根本身。展示名为 `/` 的根必须用 `<rootId>:<relpath>`，斜杠形式会和本地绝对路径撞车。`..` 段在客户端直接报用法错误。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。`mkdir <spec> [--recursive]` 走 `POST /api/files/mkdir`。`roots enable|disable <id|name>` 走 `PATCH /api/files/roots/:id {enabled}`。`browse --device <id> --path <p> [--hidden]` 走 `GET /api/files/browse`（`--device` / `--path` 都必填）。文件路由的 `403 outside_roots|root_disabled|permission_denied` 是权限错误（退出码 1），不要当成未登录——由 `core/http.ts` 的 `httpStatusError()` 统一判定，`files-api.ts` 只调 `http.assertOk()`。旧节点探测（mkdir 路由不存在）必须匹配响应 JSON 的 `code === 'route_not_found'`（网关全局 404 的稳定码，`apps/gateway/src/api/index.ts`），无该字段时再回退英文 `Not found` / 无业务码的裸 404 以兼容更旧节点；`error`/`code` 为业务 `not_found|root_not_found|device_not_found` 时不是缺路由。`mkdirRemote()` 直接复用 `@vibeterm/api-client` 的 `mkdirPath()`（URL 与请求体唯一来源，CLI 侧只把 `ctx.http` 包成 `ApiClient` 注入，再把 `FileApiError` 翻成 CLI 的退出码语义），避免两个客户端各写一份。
+子命令：`roots [ls|add|rm|order|set|enable|disable]`、`ls`、`stat`、`cat`、`mkdir`、`browse`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。末尾单独一个冒号（`<root>:`）表示根本身。展示名为 `/` 的根必须用 `<rootId>:<relpath>`，斜杠形式会和本地绝对路径撞车。`..` 段在客户端直接报用法错误。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。`mkdir <spec> [--recursive]` 走 `POST /api/files/mkdir`。`roots set <id|name> --path /abs [--enabled on|off]` 走 `PATCH {path, enabled?}`（path 必须绝对路径）。`roots enable|disable <id|name>` 走 `PATCH /api/files/roots/:id {enabled}`。`--enabled` 是字符串旗标（`on|off`），`roots add --enabled` 必须带值；`--disabled` 仍是布尔。`browse --device <id> --path <p> [--hidden]` 走 `GET /api/files/browse`（`--device` / `--path` 都必填）。文件路由的 `403 outside_roots|root_disabled|permission_denied` 是权限错误（退出码 1），不要当成未登录——由 `core/http.ts` 的 `httpStatusError()` 统一判定，`files-api.ts` 只调 `http.assertOk()`。旧节点探测（mkdir 路由不存在）必须匹配响应 JSON 的 `code === 'route_not_found'`（网关全局 404 的稳定码，`apps/gateway/src/api/index.ts`），无该字段时再回退英文 `Not found` / 无业务码的裸 404 以兼容更旧节点；`error`/`code` 为业务 `not_found|root_not_found|device_not_found` 时不是缺路由。`mkdirRemote()` 直接复用 `@vibeterm/api-client` 的 `mkdirPath()`（URL 与请求体唯一来源，CLI 侧只把 `ctx.http` 包成 `ApiClient` 注入，再把 `FileApiError` 翻成 CLI 的退出码语义），避免两个客户端各写一份。
 
 `--json` 形状：
 
@@ -236,25 +240,25 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm nodes`
 
-子命令：`ls`、`show`、`hubs`、`hub-role`、`rename`、`relay`、`ports`、`allow`、`disallow`、`revoke`、`enroll`、`upgrade`（含 `cancel` / `--ids`）、`op clear`、`uninstall`、`rtc-config`、`pause`、`resume`。实现拆在 `commands/nodes.ts` 与 `nodes-hub-role.ts` / `nodes-relay.ts` / `nodes-ports.ts` / `nodes-ops.ts`。`ls` 合并 `GET /api/mesh/nodes` 与 hub 待批准行（`status=pending`），另有 PAUSED 列（`--json` 透传 `paused`）。`pause` / `resume` 打 entry `POST /api/mesh/nodes/:id/pause|resume`；`CANNOT_PAUSE_SELF` / `CANNOT_PAUSE_HUB` 分别翻成 `cannot pause this machine (CODE)` / `cannot pause a hub node (CODE)`（Hub 恢复不报后者）。`show` 人读增加 PORTS 表。`rename`：hub 转发到 writer 的 `POST /n/<hub>/api/hub/nodes/:id/rename`；中继（`GET /api/mesh/relay/status` `mode==='relay'`）走 keylog `rename-node`，不再打 hub REST。`hub-role promote|demote|standby <node> [--yes] [--wait] [--force]` 打 `POST /n/<id>/api/hub/role`（未签名授权时先签 `admit-hub`），不能用本机 `hub promote` 代替。`relay ls|switch|rm|readmit` 是租户侧 status / switch / keylog；`relay ls` 多一列 ATTACHED，与本机运维 `relay list` 不是同一条命令。`ports <node> [--probe]` 读 `MeshNode.ports[]`。`upgrade cancel <node>` 打 `DELETE …/upgrade`；`--ids a,b,c` 与 `--all` 互斥、隐含 `--wait`。`op clear` 打 `DELETE …/operation`。`allow` 先查 hub 列表：`admission_status=pending` 时签 `admit-node`，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）；非 TTY 必须 `--yes`；mesh 里没有的节点可回退到 hub 列表。`enroll --password` 只打印 `vibeterm hub join <url> --password`；默认路径签 enrollment 并打印 join 命令。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`。`--all` **强制** `--wait`：按组（普通节点 → hub → 本机）等上一组全部收尾再开下一组；只升 online、已登录、未暂停、版本严格低于 latest 的节点；任一 `failed` / `timeout` / `unconfirmed` 退出码 1。`uninstall`：`POST /api/mesh/nodes/:id/uninstall` 后签 `revoke-node`（吊销失败即失败）；非 TTY 必须 `--yes`。
+子命令：`ls`、`show`、`hubs`、`hub-role`、`rename`、`relay`、`ports`、`allow`、`disallow`、`revoke`、`enroll`、`upgrade`（含 `cancel` / `--ids`）、`op clear`、`uninstall`、`rtc-config`、`pause`、`resume`。实现拆在 `commands/nodes.ts` 与 `nodes-hub-role.ts` / `nodes-relay.ts` / `nodes-ports.ts` / `nodes-ops.ts`。`ls` 合并 `GET /api/mesh/nodes` 与 hub 待批准行（`status=pending`），列含 ADDRESS（`nodeAddressOf`）与 PAUSED；ONLINE 对离线行拼相对时间（`listedOnline`，如 `no · 3h ago`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。REACH 为 `reachOf`：`lan/dc` 这类 `reach/transport`，中继收成 `relay`。`pause` / `resume` 打 entry `POST /api/mesh/nodes/:id/pause|resume`；`CANNOT_PAUSE_SELF` / `CANNOT_PAUSE_HUB` 分别翻成 `cannot pause this machine (CODE)` / `cannot pause a hub node (CODE)`（Hub 恢复不报后者）。`show` 人读增加 PORTS 表，并打印 `address`、`lastSeenAt`。`rename`：hub 转发到 writer 的 `POST /n/<hub>/api/hub/nodes/:id/rename`；中继（`GET /api/mesh/relay/status` `mode==='relay'`）走 keylog `rename-node`，不再打 hub REST。`hub-role promote|demote|standby <node> [--yes] [--wait] [--force]` 打 `POST /n/<id>/api/hub/role`（未签名授权时先签 `admit-hub`），不能用本机 `hub promote` 代替。`relay ls|switch|rm|readmit` 是租户侧 status / switch / keylog；`relay ls` 多一列 ATTACHED，与本机运维 `relay list` 不是同一条命令。`ports <node> [--probe]` 读 `MeshNode.ports[]`。`upgrade cancel <node>` 打 `DELETE …/upgrade`，非 TTY 必须 `--yes`；`--ids a,b,c` 与 `--all` 互斥、隐含 `--wait`。`op clear` 打 `DELETE …/operation`。`allow` 先查 hub 列表：`admission_status=pending` 时签 `admit-node`，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）；非 TTY 必须 `--yes`；mesh 里没有的节点可回退到 hub 列表。`enroll --password` 只打印 `vibeterm hub join <url> --password`；默认路径签 enrollment 并打印 join 命令。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`。`--all` **强制** `--wait`：按组（普通节点 → hub → 本机）等上一组全部收尾再开下一组；只升 online、已登录、未暂停、版本严格低于 latest 的节点；任一 `failed` / `timeout` / `unconfirmed` 退出码 1。`uninstall`：`POST /api/mesh/nodes/:id/uninstall` 后签 `revoke-node`（吊销失败即失败）；非 TTY 必须 `--yes`。
 
-`--json` 形状：`{ nodes }`（含 `status`、`paused`） / `MeshNode` / `MeshHubsResponse` / `{ kind, operationId, verb, node, … }`（hub-role） / `{ node, ports }` / `{ ok, node }`（op clear / pause / resume） / `{ node, action, result }`（allow） / `{ node, result }`（revoke） / `{ latest, outcomes }`（`outcome` 含 `unconfirmed`） / `{ node, cancelled: true }`（upgrade cancel） / `{ node, scheduled, revoked }`（uninstall） / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }`。
+`--json` 形状：`{ nodes }`（含 `status`、`paused`、`address`、`lastSeenAt`） / `MeshNode & { address }` / `MeshHubsResponse` / `{ kind, operationId, verb, node, … }`（hub-role） / `{ node, ports }` / `{ ok, node }`（op clear / pause / resume） / `{ node, action, result }`（allow） / `{ node, result }`（revoke） / `{ latest, outcomes }`（`outcome` 含 `unconfirmed`） / `{ node, cancelled: true }`（upgrade cancel） / `{ node, scheduled, revoked }`（uninstall） / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }`。
 
 ## `vibeterm devices`
 
-子命令：`ls|show|add|edit|rm|test|order|disconnect` 与 `folders ls|add|rm|layout|rename|reset`。`add`/`edit` 旗标镜像 GUI 表单（`--name --type local|ssh --host --port --user --auth-mode --password --private-key --passphrase --session --cwd --ssh-config`），复杂体也可 `--body`。口令 / 密钥不要写在 argv 上（会进进程列表，CLI 会往 stderr 警告）：优先 `--password-stdin`、`--password-file` / `@file`，或 `VIBETERM_DEVICE_PASSWORD`（`--private-key` / `--passphrase` 同理，`VIBETERM_DEVICE_PRIVATE_KEY` / `VIBETERM_DEVICE_PASSPHRASE`）。`rm` 非 TTY 必须 `--yes`。`order` 走 `PUT /api/devices/order`。`disconnect <device>` 只向本条 CLI WS 发 `disconnect-device` 并等 `device-disconnected`，**不**先 `openDeviceSession`（connect 仍由 `tmux` / `term` 隐式完成）；网关按 session 摘 client，不会拆掉 GUI 或其他客户端已连上的设备。分组走 `/api/device-folders`；`layout` 需要 `--body {folders,placements}`；`folders rename <id> --name <n>` 打 `PATCH`；`folders reset` 打 `POST /api/device-folders/reset`（非 TTY 必须 `--yes`）。
+子命令：`ls|show|add|edit|rm|test|order|connect|disconnect` 与 `folders ls|add|rm|layout|rename|reset`。`add`/`edit` 旗标镜像 GUI 表单（`--name --type local|ssh --host --port --user --auth-mode --password --private-key --passphrase --session --cwd --ssh-config`），复杂体也可 `--body`。口令 / 密钥不要写在 argv 上（会进进程列表，CLI 会往 stderr 警告）：优先 `--password-stdin`、`--password-file` / `@file`，或 `VIBETERM_DEVICE_PASSWORD`（`--private-key` / `--passphrase` 同理，`VIBETERM_DEVICE_PRIVATE_KEY` / `VIBETERM_DEVICE_PASSPHRASE`）。`rm` 非 TTY 必须 `--yes`。`order` 走 `PUT /api/devices/order`。`connect <device> [--once]` 发 `connect-device`，等到 `device-connected` 或第一份 `metadata-snapshot` 后默认持有这条 WS 直到 Ctrl-C（网关在最后一个客户端离开 5 s 后释放设备运行时）；`--once` 只确认一次就退出。`disconnect <device>` 只向本条 CLI WS 发 `disconnect-device` 并等 `device-disconnected`，**不**先 `openDeviceSession`；网关按 session 摘 client，不会拆掉 GUI 或其他客户端已连上的设备。分组走 `/api/device-folders`；`layout` 需要 `--body {folders,placements}`；`folders rename <id> --name <n>` 打 `PATCH`；`folders reset` 打 `POST /api/device-folders/reset`（非 TTY 必须 `--yes`）。
 
-`--json` 形状：`{ devices }` / `Device` / `TestConnectionResult` / `DeviceFolderLayout`。
+`--json` 形状：`{ devices }` / `Device` / `TestConnectionResult` / `{ ok, action, id, hold? }`（connect） / `DeviceFolderLayout`。
 
 ## `vibeterm share`
 
-子命令：`create|ls|show|password|revoke|rm|log|settings|origins`。`create` 目标为 `[<node>/]<device>:<window>`，窗口用 tmux id（`@1`）、序号或名字；也可用 `--window-id @N`。网关只按窗口 `@id` 匹配且需要热 snapshot，所以 `create` 会先 `openDeviceSession`（连设备、等会话树），再用 `@vibeterm/ws-client/canonical-tree` 的 `resolveWindow` 收成 `@id`，socket 一直开到 `POST /api/share` 返回。未给 `--origin` 时打 `GET /api/share/origins`，按 GUI 规则取 `recommended`（须在候选里）否则第一个候选，并在 stderr 打印所用地址。口令可选：省略则与 GUI 一样 `generateSharePassword()`；也可 `--password-stdin` / `--password-file` / `@file` / `VIBETERM_SHARE_PASSWORD` / TTY；`--password` 仍可用但会打 stderr 警告。`rm` 非 TTY 必须 `--yes`。分享口令 API 不能清空，只有改口令；`password --end-sessions` 在 POST 新口令的同时踢掉在线观众。日志 `--json` 原样给出网关分页（`data` 已是 base64）。
+子命令：`create|ls|show|password|revoke|rm|log|settings|origins`。`create` 目标为 `[<node>/]<device>:<window>`，窗口用 tmux id（`@1`）、序号或名字；也可用 `--window-id @N`。网关只按窗口 `@id` 匹配且需要热 snapshot，所以 `create` 会先 `openDeviceSession`（连设备、等会话树），再用 `@vibeterm/ws-client/canonical-tree` 的 `resolveWindow` 收成 `@id`，socket 一直开到 `POST /api/share` 返回。未给 `--origin` 时打 `GET /api/share/origins`，按 GUI 规则取 `recommended`（须在候选里）否则第一个候选，并在 stderr 打印所用地址。口令可选：省略则与 GUI 一样 `generateSharePassword()`；也可 `--password-stdin` / `--password-file` / `@file` / `VIBETERM_SHARE_PASSWORD` / TTY；`--password` 仍可用但会打 stderr 警告。`rm` 非 TTY 必须 `--yes`。`settings set` 先校验旗标 / `--body`，再 GET 当前四字段，旗标覆盖、`--body` 最后覆盖后 PUT 全量：`--record-logs on|off`、`--retention-days`（0–3650）、`--log-max-mb`（1–1024，乘 1 MiB 写成 `logMaxBytes`）、`--origin auto|<url>`（`auto` → `null`）。无旗标且无 `--body` 报用法错误、不打 GET。分享口令 API 不能清空，只有改口令；`password --end-sessions` 在 POST 新口令的同时踢掉在线观众。日志 `--json` 原样给出网关分页（`data` 已是 base64）。
 
 `--json` 形状：`{ share, password }` / `{ active, history }` / `ShareRecord` / `ShareLogPage` / `ShareSettings` / `ShareOriginsResponse`。
 
 ## `vibeterm watch`
 
-`rules ls|show|add|edit|rm|state` 对齐 `packages/api-client/src/watch.ts`。`ls` 必须 `--device` 与 `--pane`。`state <id> on|off` 是 `PATCH {enabled}`；不带 on/off 则 `GET …/state`。`assist-regex "<description>"` 走 `POST /api/watch/assist-regex`。
+`rules ls|show|add|edit|rm|state` 对齐 `packages/api-client/src/watch.ts`。`ls` 必须 `--device` 与 `--pane`。`add` / `edit` 的 `--extract-group` / `--confirm-with-llm` / `--summarize-with-llm` / `--provider-id` / `--model-id` 写入请求体（空串 → `null`；清空 provider 且未给 model 时一并清 model），只提交给出的字段。`state <id> on|off` 是 `PATCH {enabled}`；不带 on/off 则 `GET …/state`。`assist-regex "<description>"` 走 `POST /api/watch/assist-regex`。
 
 `--json` 形状：`{ rules }` / `{ rule, state }` / `WatchRuleStateResponse` / `AssistRegexResponse`。
 
@@ -266,7 +270,7 @@ HTTP 形状对齐 `packages/api-client/src/agent.ts` 与网关 `/api/agent/**`�
 |---|---|
 | `ls` | `GET /api/agent/sessions` |
 | `show <id>` | `GET /api/agent/sessions/:id` + `GET …/messages` |
-| `new --device --pane [--provider --model --write-mode] [--title]` | `POST /api/agent/sessions`；`--title` 再 `PATCH {title}`（创建体没有 title） |
+| `new --device --pane [--provider --model --write-mode] [--title] [--origin-title]` | `POST /api/agent/sessions`（`--origin-title` → `originPaneTitle`）；`--title` 再 `PATCH {title}`（创建体没有 title） |
 | `rm <id> [--yes]` | `DELETE /api/agent/sessions/:id` |
 | `rename <id> <title>` | `PATCH {title}` |
 | `send <id> [--stdin] "<text>"` | `POST …/messages {text}` |
@@ -276,16 +280,17 @@ HTTP 形状对齐 `packages/api-client/src/agent.ts` 与网关 `/api/agent/**`�
 | `queue rm <session> <item>` | `DELETE /api/agent/queue/:item` |
 | `stop <id>` | `POST …/stop` |
 | `confirm <id> approve\|deny [--reason]` | `POST /api/agent/confirmations/:id/decide`；409 → `{result:"conflict"}` |
+| `confirmations ls <session>` | `GET /api/agent/sessions/:id/confirmations` |
 | `model <id> --provider --model` | `PATCH {providerId, modelId}` |
-| `set <id> --write-mode confirm\|auto` / `--allow-control-chars on\|off` | `PATCH {writeMode}` / `{allowControlChars}` |
+| `set <id> --write-mode confirm\|auto` / `--allow-control-chars on\|off` / `--pane %N` | `PATCH {writeMode}` / `{allowControlChars}` / `{paneId}` |
 
 `new` 未给 `--write-mode` 时默认 `confirm`。`queue edit|rm` 的 session 仅作定位，请求只按 item id。`--json`：`{ sessions }` / `{ session, messages }` / `{ session }` / `{ message\|queued }` / `{ queued }`。
 
 ## `vibeterm settings`
 
-dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `settings-site.ts` / `settings-local.ts` / `settings-security.ts` / `settings-messaging.ts`；改密 / TOTP / 删 passkey 的签名在 `core/account-security.ts`。
+dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `settings-site.ts` / `settings-local.ts` / `settings-llm.ts` / `settings-shortcuts.ts` / `settings-security.ts` / `settings-messaging.ts`；改密 / TOTP / 删 passkey 的签名在 `core/account-security.ts`；TLS / tunnel Access / LLM 请求体在 `core/settings-tls-body.ts` 与 `core/settings-body.ts`。
 
-`site get|set <key> <value>`、`shortcuts get|set`、`restart`、`notifications mesh get|set`、`webhooks ls|add|rm|edit`（无 PATCH，edit 先拼并校验新 body 再 DELETE+POST）、`llm providers …`、`llm get|set`、`domain-access get|set`、`tls get|set|renew|ca`、`tunnel status|<action>`、`system info|addresses|update-check|upgrade status|start`、`local status|leave|direct`、`passwd [--full-reset]`、`totp enable|disable`、`passkey ls|rm`、`local-auth bootstrap|set`、`telegram …`、`weixin …`。webhook `--secret` 与 LLM `--api-key` 优先 `--*-stdin` / `--*-file` / `@file` / `VIBETERM_WEBHOOK_SECRET` / `VIBETERM_LLM_API_KEY`；写在 argv 上会打 stderr 警告。`tls set` 在 `mode: none` 或 `trustProxy: true`、以及 `tunnel … --trust-proxy on` 时必须 `--yes`（局域网可伪造 `X-Forwarded-*`）。`local leave` 先尽力自吊销（`revoke-node`，需 `VIBETERM_PASSWORD`）；没有密码时必须 `--skip-self-revoke`。`local direct` 尊重 `--node`（打 `/n/<id>/api/local/direct`）；`status` / `leave` 仍 entry-only。TLS / tunnel 只打 entry 自身。改密 / TOTP / 删 passkey 只走根钥签名（CLI 无 WebAuthn）；注册 passkey 提示去 GUI。复杂体一律 `--body <json>|@file`。
+`site get|set <key> <value>`、`shortcuts get|set|add|rm|order|use-icons`、`restart`、`notifications mesh get|set`（set 先签 `notification-sink` 再 PUT）、`webhooks ls|add|rm|edit`（无 PATCH，edit 先拼并校验新 body 再 DELETE+POST）、`llm providers ls|add|edit|rm|refresh-models|enable|disable|models`、`llm get|set|default|search set`、`domain-access get|set`、`tls get|set|renew|ca`（`--mode/--sans/--port/…` 或 `--body`）、`tunnel status|<action>`（含 `set_access_mode` / `set_access_credentials` / `configure_access`）、`system info|addresses|update-check|upgrade status|start`、`local status|leave|direct`、`passwd [--full-reset]`、`totp enable|disable`、`passkey ls|rm`、`local-auth bootstrap|set`、`telegram …`、`weixin …`。webhook `--secret` 与 LLM `--api-key` 优先 `--*-stdin` / `--*-file` / `@file` / `VIBETERM_WEBHOOK_SECRET` / `VIBETERM_LLM_API_KEY`；写在 argv 上会打 stderr 警告。`tls set` 在 `mode: none` 或 `trustProxy: true`、以及 `tunnel … --trust-proxy on` 时必须 `--yes`（局域网可伪造 `X-Forwarded-*`）。`tunnel remove|remove_access|clear_access_credentials` 与 `totp disable` 非 TTY 也必须 `--yes`。`local leave` 先尽力自吊销（`revoke-node`，需 `VIBETERM_PASSWORD`）；没有密码时必须 `--skip-self-revoke`。`local direct` 尊重 `--node`（打 `/n/<id>/api/local/direct`）；`status` / `leave` 仍 entry-only。TLS / tunnel 只打 entry 自身。改密 / TOTP / 删 passkey 只走根钥签名（CLI 无 WebAuthn）；注册 passkey 提示去 GUI。复杂体一律 `--body <json>|@file`。
 
 `--json` 打印网关响应原样。
 

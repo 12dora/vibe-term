@@ -1,3 +1,19 @@
+# 2.3.7
+
+_2026-09-13_ (unreleased)
+
+## English
+
+- **Nodes table.** Status absorbs last-seen: online stays “Online”; offline with a timestamp reads “Offline · 3 hours ago” (hover for the absolute time). The fingerprint column is gone; an Address column shows the Hub public host, the live direct peer, an advertised public endpoint, or the relay. REACH is `lan/dc`, `wan/ws-secure`, or `relay`. Fingerprint and last-seen remain in the row detail. `vibeterm nodes ls` gains ADDRESS and folds offline age into ONLINE.
+- **CLI field-level coverage.** `vibeterm settings` can toggle mesh notification sink (signs `notification-sink` first), enable/disable LLM providers, rewrite model lists, set the default model and search provider, set TLS by flags, and configure tunnel Access and terminal shortcuts. Also: `files roots set --path`, watch-rule extract/LLM flags, `agent set --pane` / `new --origin-title` / `confirmations ls`, `devices connect` (holds until Ctrl-C; `--once` just confirms), `share settings set`. Off-TTY, `settings tunnel remove|remove_access|clear_access_credentials`, `nodes upgrade cancel`, and `settings totp disable` require `--yes`.
+- Upgrade delivery: (to be filled after WPU1/WPU2/WPU3 land)
+
+## 中文
+
+- **节点表。** 状态合并最近在线：在线仍是「在线」；离线且有时间戳显示「离线 · 3 小时前」（悬停看绝对时间）。去掉公钥指纹列，改为地址列（Hub 公网、直连对端、广播公网 endpoint、中继）。REACH 为 `lan/dc`、`wan/ws-secure` 或 `relay`。指纹与最近在线仍在详情。`vibeterm nodes ls` 增加 ADDRESS，离线时间合进 ONLINE。
+- **CLI 字段级覆盖。** `vibeterm settings` 可开关 mesh 通知汇聚（先签 `notification-sink`）、启停 LLM 提供商、改模型清单、设默认模型与搜索、用旗标写 TLS、配隧道 Access 与终端快捷键。另有 `files roots set --path`、watch 规则 extract/LLM 旗标、`agent set --pane` / `new --origin-title` / `confirmations ls`、`devices connect`（默认持有到 Ctrl-C，`--once` 只确认）、`share settings set`。非 TTY 下 `settings tunnel remove|remove_access|clear_access_credentials`、`nodes upgrade cancel`、`settings totp disable` 必须 `--yes`。
+- 升级投递：（待 WPU1/WPU2/WPU3 落地后补充）
+
 # 2.3.6
 
 _2026-09-13_

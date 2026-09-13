@@ -89,6 +89,10 @@ cloudflareToken?: string   // 旧字段，等价于 dnsProvider='cloudflare' + {
 
 证书续期仍是 12 小时检查一次、提前 30 天续；续期时复用已存的提供商与凭证，不会回退到 Cloudflare。
 
+### CLI
+
+客户端 `vibeterm settings tls set` 与设置页同一 `PUT /api/tls`。`--mode none|external|selfsigned|acme`；selfsigned 要 `--sans`（缺省端口 9443、`--bind-host 0.0.0.0`）；acme 要 `--domain` `--email`，`--challenge http-01|dns-01`（dns-01 再加 `--dns-provider cloudflare|dnspod` 与 `--dns-token*` / `--dns-secret-id`）。凭证省略则沿用已存。仅 `--body` 时不要求其它旗标。`mode: none` 或 `trustProxy: true` 非 TTY 必须 `--yes`。完整旗标见 [命令行使用手册](./cli-usage.md)。
+
 ## 3. 场景：hub 的 80/443 被别人的 nginx 占着
 
 典型情形是宝塔面板上还跑着别的站点，443 让不出来，而域名托管在 DNSPod：

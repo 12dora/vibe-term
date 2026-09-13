@@ -46,6 +46,8 @@ signer = root | passkey                                // KEY_LOG_SIGNER_MATRIX
 2. 取 head → 签 `notification-sink` → `POST /api/auth/keylog?hub=sync`；
 3. 记录落地后才 `PUT /api/notifications/mesh` 翻本机开关。用户取消凭据交互时三步都不发生。
 
+CLI 对齐同一条路径：`vibeterm settings notifications mesh set on|off` 先用 `VIBETERM_PASSWORD` 签 `notification-sink`（`hubAck` 失败不 PUT），成功后再 `PUT /api/notifications/mesh {enabled}`。见 [命令行使用手册](../operations/cli-usage.md)。
+
 本机开关仍存 `gateway_kv`（键 `mesh.notification.sink.enabled`，见
 `mesh/notification-sink-state.ts`），语义收窄为「这台机器现在收不收转发件」：
 

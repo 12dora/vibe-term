@@ -104,7 +104,7 @@
 | POST | `/api/share/:id/revoke` | 终止 → `{ share }` |
 | DELETE | `/api/share/:id` | 仅 ended，连日志一起删 |
 | GET | `/api/share/:id/log` | `?after=<seq>&limit=`，默认 2000 条 / 2 MiB 一页 |
-| GET/PUT | `/api/share/settings` | `ShareSettings` |
+| GET/PUT | `/api/share/settings` | `ShareSettings`。CLI：`vibeterm share settings get\|set`（`--record-logs` / `--retention-days` / `--log-max-mb` / `--origin auto\|<url>`，先 GET 再 PUT 全量） |
 | GET | `/api/share/origins` | `{ candidates, recommended, nodePrefix }` |
 | GET | `/api/share/:id/password` | 回显口令明文 → `{ password }`（见下「口令查看与修改」） |
 | POST | `/api/share/:id/password` | `{ password, endSessions }` → `{ share, endedSessions }` |

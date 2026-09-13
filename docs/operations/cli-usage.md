@@ -165,7 +165,7 @@ vibeterm term send prod-1/app:logs C-c
 ```bash
 vibeterm agent ls
 vibeterm agent show <id>
-vibeterm agent new --device <id> --pane <id> [--provider --model --write-mode confirm|auto] [--title]
+vibeterm agent new --device <id> --pane <id> [--provider --model --write-mode confirm|auto] [--title] [--origin-title "<pane title>"]
 vibeterm agent rm <id> [--yes]
 vibeterm agent rename <id> <title>
 vibeterm agent send <id> [--stdin] "<text>"
@@ -175,12 +175,14 @@ vibeterm agent queue edit <session> <item> [--stdin] "<text>"
 vibeterm agent queue rm <session> <item>
 vibeterm agent stop <id>
 vibeterm agent confirm <id> approve|deny [--reason]
+vibeterm agent confirmations ls <session>
 vibeterm agent model <id> --provider <p> --model <m>
 vibeterm agent set <id> --write-mode confirm|auto
 vibeterm agent set <id> --allow-control-chars on|off
+vibeterm agent set <id> --pane %N
 ```
 
-`new` 未给 `--write-mode` 时默认 `confirm`。`--title` 在创建后再 `PATCH {title}`（创建体没有 title，网关固定 `New Session`）。`queue edit|rm` 语法收 `<session> <item>`，请求只按 item id。`send --stdin` 与 `term send` 相同：读完 stdin，去掉尾换行。`confirm` 遇 409 打 `{result:"conflict"}`。`--json` 打网关信封（`show` 为 `{session, messages}`）。
+`new` 未给 `--write-mode` 时默认 `confirm`。`--title` 在创建后再 `PATCH {title}`（创建体没有 title，网关固定 `New Session`）；`--origin-title` 进 POST body 的 `originPaneTitle`。`set --pane` 可与 write-mode / allow-control-chars 同发。`confirmations ls` 打 `GET /api/agent/sessions/:id/confirmations`。`queue edit|rm` 语法收 `<session> <item>`，请求只按 item id。`send --stdin` 与 `term send` 相同：读完 stdin，去掉尾换行。`confirm` 遇 409 打 `{result:"conflict"}`。`--json` 打网关信封（`show` 为 `{session, messages}`）。
 
 ## 节点管理
 
@@ -195,7 +197,7 @@ vibeterm nodes relay switch <url>
 vibeterm nodes relay rm <url> --yes
 vibeterm nodes relay readmit --yes
 vibeterm nodes ports <node> [--probe]
-vibeterm nodes upgrade cancel <node>
+vibeterm nodes upgrade cancel <node> --yes
 vibeterm nodes upgrade --ids a,b,c [--version]
 vibeterm nodes op clear <node>
 vibeterm nodes enroll --name studio
@@ -205,7 +207,7 @@ vibeterm nodes meta-key rotate [--exclude <node>...]
 vibeterm nodes revoke <node> --yes
 ```
 
-`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`；对 Hub 的暂停 → `cannot pause a hub node (CANNOT_PAUSE_HUB)`，恢复 Hub 允许（接回 2.3.5 上被暂停的 Hub）。`ls` 有 PAUSED 列；`--json` 透传 `paused`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
+`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`；对 Hub 的暂停 → `cannot pause a hub node (CANNOT_PAUSE_HUB)`，恢复 Hub 允许（接回 2.3.5 上被暂停的 Hub）。`ls` 列为 NAME ID ROLE STATUS REACH VERSION ADDRESS ONLINE PAUSED RTT。STATUS 仍是 `admitted` / `pending`；离线时间合进 ONLINE（`yes` / `no · 3h ago` / `no`），不是新列。ADDRESS 与管理页地址列同一套推导（Hub 公网 host → live `peerAddress` → 广告 endpoint → 中继）。REACH 为 `lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。`nodes show` 打印 `address`、`lastSeenAt`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
 
 `hub-role` 是远程 HTTP 切换（`POST /n/<id>/api/hub/role`），不能用本机运维 `hub promote`（写本机 env）代替。未签名授权时先签 `admit-hub`。`promote` 把指定 hub 升成 writer；`demote` 仅当该节点是 writer，挑后继再 switch，无人接管则只 standby；`standby` 只对该节点 `mode: 'standby'`。`--wait` 轮询 complete + `writerHubId`；旧节点挡住 `admit-hub` 时 `--force` 打强制头。
 
@@ -238,22 +240,24 @@ vibeterm cp office:home/app/dist ./dist -r
 
 ```bash
 vibeterm files mkdir office:home/tmp/new [--recursive]
+vibeterm files roots set <id|name> --path /abs [--enabled on|off]
 vibeterm files roots enable <id|name>
 vibeterm files roots disable <id|name>
 vibeterm files browse --device <id> --path <p> [--hidden]
 ```
 
-`--device` / `--path` 对 `browse` 都必填。`--json`：`mkdir` 为 `{ node, rootId, path, created }`；`browse` 为 `{ node, deviceId, path, parent, entries, truncated }`。
+`roots set` 的 `--path` 必须是绝对路径；可选 `--enabled on|off`。`roots add --enabled` 现在必须带 `on|off`（不再是布尔开关）；`--disabled` 仍可用。`--device` / `--path` 对 `browse` 都必填。`--json`：`mkdir` 为 `{ node, rootId, path, created }`；`roots set` / enable 为 `{ root }`；`browse` 为 `{ node, deviceId, path, parent, entries, truncated }`。
 
 ## 设备
 
 ```bash
+vibeterm devices connect <device> [--once]
 vibeterm devices disconnect <device>
 vibeterm devices folders rename <id> --name <n>
 vibeterm devices folders reset [--yes]
 ```
 
-`devices disconnect` 只向**本条** CLI WebSocket 发 `disconnect-device` 并等 `device-disconnected`，**不先** `connect-device`（连接仍由 `tmux` / `term` 隐式完成）。不会拆掉 GUI 或其他客户端已经连上的设备。`folders reset` 非 TTY 必须 `--yes`。
+`devices connect` 向本条 CLI WebSocket 发 `connect-device`，等到 `device-connected` 或第一份 `metadata-snapshot` 后默认**一直持有**这条连接（像 GUI 页签），直到 Ctrl-C / SIGTERM 或 socket 断开；`--once` 只确认一次就退出。网关在最后一个客户端离开约 5 s 后释放设备运行时，所以给后续 `tmux` / `term` 预热时不要加 `--once`。`devices disconnect` 只向**本条** CLI WebSocket 发 `disconnect-device` 并等 `device-disconnected`，**不先** `connect-device`。两者都不会拆掉 GUI 或其他客户端已经连上的设备。`folders reset` 非 TTY 必须 `--yes`。
 
 ## 端口映射
 
@@ -269,13 +273,28 @@ vibeterm port map 8080 office:127.0.0.1:8080     # 把 office 上的 8080 映到
 
 ```bash
 vibeterm settings passwd [--full-reset]
-vibeterm settings totp enable|disable
+vibeterm settings totp enable|disable [--yes]
 vibeterm settings passkey ls
 vibeterm settings passkey rm <id> [--yes]
 vibeterm settings local-auth bootstrap --user <u>
 vibeterm settings local-auth set on|off
 vibeterm settings local direct [--node <id>]
 vibeterm settings system update-check
+vibeterm settings notifications mesh get
+vibeterm settings notifications mesh set on|off
+vibeterm settings llm providers enable|disable <id>
+vibeterm settings llm providers models <id> --manual a,b --disable c,d
+vibeterm settings llm default --provider <id> --model <id>
+vibeterm settings llm search set none|tavily|brave
+vibeterm settings tls set --mode none|external|selfsigned|acme …
+vibeterm settings tunnel set_access_mode --access-mode none|login|cloudflare
+vibeterm settings tunnel set_access_credentials --api-token-stdin --account-id <id>
+vibeterm settings tunnel configure_access --rule email:x --rule domain:y [--hostname]
+vibeterm settings tunnel remove --yes
+vibeterm settings shortcuts add --label <n> --keys "<seq>"
+vibeterm settings shortcuts rm <id|label>
+vibeterm settings shortcuts order --ids a,b,c
+vibeterm settings shortcuts use-icons on|off
 vibeterm settings telegram ls|add|edit|rm
 vibeterm settings telegram chats ls <bot>
 vibeterm settings telegram chats approve|test|rm <bot> <chat>
@@ -287,10 +306,15 @@ vibeterm settings weixin users approve <account> <user>
 ```
 
 - `passwd`：当前密码 `VIBETERM_PASSWORD` 或隐藏 prompt；新密码 `--new-password*` / `VIBETERM_NEW_PASSWORD` 或 TTY 双次确认。默认 `rotate-root-keep`；`--full-reset` 写 `rotate-root`（非 TTY 要 `--yes`）。keep 路径会话仍有效；全量重置后须重新 `login`。
-- `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。
+- `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。`totp disable` 非 TTY 必须 `--yes`。
 - `passkey ls` 人类输出带「注册只能在浏览器」hint。
+- `notifications mesh set`：先签 `notification-sink`（需 `VIBETERM_PASSWORD`，`POST /api/auth/keylog?hub=sync`），`hubAck` 失败不 PUT；成功后再 `PUT /api/notifications/mesh {enabled}`。见 [多节点通知汇聚](../architecture/mesh-notification-sink.md)。
+- `llm providers enable|disable`：`PATCH {enabled}`。`models` 全量覆盖 `manualModels` / `disabledModels`（`--clear-manual` / `--clear-disabled` 写成空数组；与 `--manual` / `--disable` 互斥）。`default` 要同时给 `--provider` 与 `--model`。`search set` 的密钥走 `--tavily-key*` / `--brave-key*` / `VIBETERM_TAVILY_API_KEY` / `VIBETERM_BRAVE_API_KEY`（argv 警告）；`--clear-keys` 把两把 key 写成空串。
+- `tls set`：`--mode none|external|selfsigned|acme`。selfsigned 要 `--sans`（缺省 `--port 9443`、`--bind-host 0.0.0.0`）；acme 要 `--domain` `--email`，`--challenge http-01|dns-01`（缺省 http-01），dns-01 再加 `--dns-provider cloudflare|dnspod` 与 `--dns-token*` / `VIBETERM_TLS_DNS_TOKEN`（dnspod 还要 `--dns-secret-id`）。凭证省略则沿用已存。仅 `--body` 时不要求其它旗标。`mode: none` 或 `trustProxy: true` 非 TTY 必须 `--yes`。字段契约见 [HTTPS 与 ACME](./https-and-acme.md)。
+- `tunnel`：`set_access_mode --access-mode none|login|cloudflare`；`set_access_credentials` 要 `--api-token*` / `VIBETERM_TUNNEL_API_TOKEN` 与 `--account-id`；`configure_access --rule email:<addr> --rule domain:<name>`（`domain:` 写成 `email_domain`），先 `GET /api/tunnel/status`，仅 `mode=off` 时带 `--hostname`。`remove` / `remove_access` / `clear_access_credentials` 非 TTY 必须 `--yes`。`--trust-proxy on` 同样要 `--yes`。
+- `shortcuts add --label --keys`（`\t` / `\x1b` 等同 GUI 转义）；`--icon paste|toggleKeyboard|newAgentSession|scrollToBottom` 加 action 项。`rm` 收 id 或唯一 label。`order --ids` 未列出的项保持相对顺序接到后面。`use-icons on|off`。`set --body` 仍可用。
 - `local-auth` 与 `local direct` 走 `jsonSelf`，尊重 `--node`；远端若非本机回 `403 LOCAL_ONLY`。`local status` / `leave` 仍只打 entry。
-- telegram token 用 `--token*` / `VIBETERM_TELEGRAM_TOKEN`。
+- telegram token 用 `--token*` / `VIBETERM_TELEGRAM_TOKEN`。复杂体一律 `--body <json>|@file`，覆盖旗标。
 
 与本机运维 `vibeterm hub user passwd|totp` 的对照见 [mesh 运维「账号安全」](./mesh-operations.md)。
 
@@ -300,9 +324,22 @@ vibeterm settings weixin users approve <account> <user>
 vibeterm share create laptop:build                 # 窗口名；也可 laptop:@1 或 --window-id @1
 vibeterm share create self/laptop:smoke --origin https://vt.example.com
 vibeterm share rm <id> --yes
+vibeterm share settings get
+vibeterm share settings set --record-logs on|off --retention-days N --log-max-mb N --origin auto|<url> [--body]
 ```
 
-`create` 会先连上设备、等会话树变热，再把窗口名/序号收成 `@id`（冷启动直接 POST 会 404）。未给 `--origin` 时用 `GET /api/share/origins` 的推荐地址（须在候选里）或第一个候选，并在 stderr 打印实际使用的 origin。口令可省略（与网页端一样自动生成），也可 `--password-stdin` / `VIBETERM_SHARE_PASSWORD`。非 TTY 下 `rm` 必须 `--yes`。
+`create` 会先连上设备、等会话树变热，再把窗口名/序号收成 `@id`（冷启动直接 POST 会 404）。未给 `--origin` 时用 `GET /api/share/origins` 的推荐地址（须在候选里）或第一个候选，并在 stderr 打印实际使用的 origin。口令可省略（与网页端一样自动生成），也可 `--password-stdin` / `VIBETERM_SHARE_PASSWORD`。非 TTY 下 `rm` 必须 `--yes`。`settings set` 先校验旗标 / `--body`，再 GET 当前四字段（`recordLogs`、`logRetentionDays`、`logMaxBytes`、`defaultOrigin`），旗标覆盖、`--body` 最后覆盖后 PUT 全量。`--log-max-mb N` → `N * 1024 * 1024`（1–1024）；`--retention-days` 0–3650；`--origin auto` → `null`，其它 URL 收敛成 `url.origin`。无旗标且无 `--body` 仍是用法错误（不打 GET）。
+
+## Watch 规则
+
+```bash
+vibeterm watch rules ls --device <id> --pane <id>
+vibeterm watch rules add --name <n> --device <id> --pane <id> --trigger-type match|unchanged|llm [--pattern] [--body]
+vibeterm watch rules edit <id> --extract-group N --confirm-with-llm on|off --summarize-with-llm on|off --provider-id <id> --model-id <id>
+vibeterm watch rules state <id> [on|off]
+```
+
+`add` / `edit` 还收 `--extract-group N`（含 `0`）、`--confirm-with-llm on|off`、`--summarize-with-llm on|off`、`--provider-id` / `--model-id`（空串写成 `null`；清空 provider 且未给 model 时一并清 model）。只提交给出的字段（PATCH 语义），不按 GUI 全量草稿重建。`--body` 仍覆盖旗标。字段与 GUI watch 草稿及 [Watch 屏幕监控](../architecture/watch-monitor.md) 的 LLM 介入点同一套。
 
 ## 安全说明
 

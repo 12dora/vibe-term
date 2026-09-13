@@ -46,6 +46,7 @@ Watch 是与 agent session 无关的独立功能：对某个 tmux pane 添加规
 
 - **告警只发一次**：模型首次调用失败发 `watch_model_unavailable` 并置 `state.modelUnavailableNotified=true`，后续失败不再发；任一次模型调用成功后重置标记（恢复后再坏会再发一次）。fail-open/摘要降级路径同样适用此标记。
 - confirmWithLlm 被模型否决时不写 `lastTriggeredAt`/`triggeredSinceChange`，下个采样周期会再次确认（每周期最多一次确认调用）。
+- CLI `vibeterm watch rules add|edit` 的 `--extract-group` / `--confirm-with-llm` / `--summarize-with-llm` / `--provider-id` / `--model-id` 写入同一组字段（只提交给出的旗标，PATCH 语义；清空 provider 且未给 model 时一并清 model）。见 [命令行使用手册](../operations/cli-usage.md)。
 
 ## 采样调度与连接管理（service.ts）
 

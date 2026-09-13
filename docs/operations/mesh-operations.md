@@ -229,13 +229,13 @@ vibeterm hub join https://vibeterm.example.com --token <join 串> [--name 书房
 
 路由 `/nodes`，任意已登录的 mesh 入口可用。standalone 整页不渲染。
 
-表格：在线 / 离线（旁可挂「已暂停」标，不替换在线态）、到达路径、版本、直连能力、登录状态、公钥指纹（sha256 前 16 hex）。行内「更多」是下拉菜单（详情、暂停 / 恢复）；吊销仍是行上的破坏性按钮。待批准行「更多」禁用。self 行不能吊销当前入口。paused 是 **entry 本机偏好**：行留在管理表，侧栏 / 设备页 / 传输下拉过滤；行内升级仍可点，批量升级排除，批量移除/卸载可选。
+表格列：名称、状态、REACH、版本、地址、直连能力、登录、操作（另有选择列）。状态：在线显示「在线」；离线且有 `lastSeenAt` 显示「离线 · N 小时前」（`title` 为绝对时间，相对文案每分钟刷新），没有时间戳则「离线」；旁可挂「已暂停」标，不替换在线态。REACH 为 `lan/dc`、`wan/ws-secure` 或 `relay`（不写 `relay/relay`）；self / 离线 / pending 为「—」。地址列（monospace、截断，`title` 为完整 host）替换原公钥指纹列：pending 为「—」；Hub 用 `hubDetails.publicUrl` host；live 直连（`transport` 为 `ws-secure` / `dc`）用 `peerAddress`；否则广告 `endpoints[]`（剥 scheme/path，优先非局域网）；`transport === 'relay'` 用 `viaRelay` host，否则 `relayPresence[0]`；self 若是 Hub 走 `publicUrl`，非 Hub 且推不出则为「—」。公钥指纹（sha256 前 16 hex）与最近在线只在详情。行内「更多」是下拉菜单（详情、暂停 / 恢复）；吊销仍是行上的破坏性按钮。待批准行「更多」禁用。self 行不能吊销当前入口。paused 是 **entry 本机偏好**：行留在管理表，侧栏 / 设备页 / 传输下拉过滤；行内升级仍可点，批量升级排除，批量移除/卸载可选。
 
 暂停资格（行菜单与批量「暂停」同一套）：本机、Hub、当前 URL 为 `/n/:id/…` 的转发节点不可新暂停。恢复只拦本机与待批准；Hub 与当前转发节点若已暂停则可恢复（2.3.5 上被暂停的 Hub 升级后可点恢复）。批量菜单把暂停 / 恢复放在升级 / 吊销 / 卸载之前；合格集合为空则禁用。同一节点在途的暂停/恢复互斥（行与批量共享守卫）。`ports[].status === 'blocked'` 时名字下警告「端口不可达」；详情框有完整端口表与「重新检测」（`POST /api/mesh/nodes/:id/ports/probe`）。
 
 本机卡网络区入站端口标题随本机角色：含 `relay`（`relay` / `relay,node`）→「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余（`node` / `standalone` / 缺省）→「本机需开通端口」。节点详情框仍用「入站端口」。标题下一行图例：「绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证」。有 `MeshPortReach` 行（purpose + 端口/range 对上）才画状态点：`open` 绿、`blocked` 红且加 ring、`unknown` 灰；无对应行画「—」（不探测），不等于灰。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时本机卡显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。只有内网地址的云主机会额外广播 STUN 映射出的公网 IPv4（或 `VIBETERM_PEER_PUBLIC_HOST`），所以安全组已放行 39001 的云主机也能变绿；`refused` 一次即红，`timeout` 两击。「重新检测」让对端 30 s 内重探（经 `peer_reach_epoch`）。中继 / Hub 主机的 443 与 TURN 行由成员在线数与成员 TURN 统计派生。
 
-`GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。
+`GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`，以及 `lastSeenAt`（毫秒，来自 `peer_cache.last_seen_at`；self 恒 `null`；旧入口不下发）。前端行模型优先 mesh `lastSeenAt`，hub `last_seen_at` 兜底。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。CLI `vibeterm nodes ls` 有 ADDRESS 列，离线时间合进 ONLINE（`no · 3h ago`），`--json` 带 `lastSeenAt` / `address`；`nodes show` 打印这两项。详见 [命令行使用手册](./cli-usage.md)。
 
 node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请求只发生在较大 id 一侧时，该侧会经已认证的 hub `rtc.signal` 通道发一条签名 wake（`sdp` 内 `type=rtc.wake`，对 `{domain:vibeterm-rtc-wake, from, to, rtcSession, nonce, issued_at}` 用发送方节点 Ed25519 私钥签名）唤醒较小 id 去 `getLink`；hub 只转发、不解释、不验签。接收端用 `node_certs` 验签，拒绝坏签名、时钟偏差 > 60s、重放 nonce，以及自己并非该对 offerer 的 wake；每对端有接收冷却。发送侧 5s 冷却若挡住了仍需要的 wake，会在 `nextEligibleAt` 补发（DC 到达或本次拨号结束则取消）。已是 `dc` 的忽略。`node.list` / 对端 `direct_capable` 翻成 true 时两边都会 `maybeUpgrade()`。已打开的 node↔node stream 留在旧链路上，**不会**随 carrier-switch 迁到 DC（carrier-switch 只服务浏览器 `sess`）；新 stream 在 `waitForTransport(id, 'dc')` 成功后再开才会走 DC。
 
@@ -301,7 +301,7 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 - 防远程猜密码 / 旁观，**不是**独立于口令的第二因素（与根钥同源派生）。需要独立第二因素时用 passkey。
 - UI 两段式：先生成密钥与 otpauth URI（不写日志）→ 扫码并输入 6 位码 → 本地校验通过才追加 `set-totp`。取消或离开页面会清零密钥。
 - **启用 TOTP 只能用密码**（需要 seed）。关闭 TOTP、增删 passkey 可用 passkey 授权。
-- CLI：本机运维 `vibeterm hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。客户端 `vibeterm settings totp enable|disable` 经 HTTP 签 `set-totp` / `clear-totp`（enable 先打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再提交）。
+- CLI：本机运维 `vibeterm hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。客户端 `vibeterm settings totp enable|disable [--yes]` 经 HTTP 签 `set-totp` / `clear-totp`（enable 先打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再提交；`disable` 非 TTY 必须 `--yes`）。
 
 ### 改密
 
