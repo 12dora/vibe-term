@@ -3027,4 +3027,25 @@ describe('GhosttyTerminalController 平移视口', () => {
     expect(bindings.mouseEventCalls.length).toBeGreaterThan(0);
     terminal.dispose();
   });
+
+  test('平移模式下 resize 后画布 CSS 不再带 inset/right/bottom（左锚，避免左列被裁）', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal, screen } = await openTerminal(bindings);
+
+    terminal.setViewportPan(true);
+    terminal.resize(120, 40);
+    await (dom as FakeDom).flushAnimationFrames();
+
+    const mainCanvas = findCanvasByLayer(screen, 'main');
+    expect(mainCanvas).toBeTruthy();
+    expect(mainCanvas?.style.left).toBe('0');
+    expect(mainCanvas?.style.top).toBe('0');
+    expect(mainCanvas?.style.inset).toBe('');
+    expect(mainCanvas?.style.right).toBe('');
+    expect(mainCanvas?.style.bottom).toBe('');
+    expect(mainCanvas?.style.width.endsWith('px')).toBeTrue();
+    expect(Number.parseFloat(mainCanvas?.style.width ?? '0')).toBeGreaterThan(0);
+    terminal.dispose();
+  });
 });

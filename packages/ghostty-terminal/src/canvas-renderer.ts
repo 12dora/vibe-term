@@ -14,7 +14,9 @@ import {
   wantsScrollBlit,
 } from './canvas-renderer-draw-plan';
 import {
+  applyCanvasCssPixelSize,
   canvasSurfaceUnchanged,
+  copyCanvasCssBox,
   measureMaxTextRun,
   sameSelectionRects,
   toDeviceCell,
@@ -303,8 +305,7 @@ export class CanvasRenderer {
     ]) {
       canvas.width = width;
       canvas.height = height;
-      canvas.style.width = `${cssWidth}px`;
-      canvas.style.height = `${cssHeight}px`;
+      applyCanvasCssPixelSize(canvas.style, cssWidth, cssHeight);
     }
     this.onSurfaceSize?.(cssWidth, cssHeight);
 
@@ -611,8 +612,7 @@ export class CanvasRenderer {
       parent.insertBefore(scratch.canvas, this.mainCanvas);
     }
 
-    scratch.canvas.style.width = this.mainCanvas.style.width;
-    scratch.canvas.style.height = this.mainCanvas.style.height;
+    copyCanvasCssBox(this.mainCanvas.style, scratch.canvas.style);
     scratch.context.setTransform(1, 0, 0, 1, 0, 0);
     scratch.context.textBaseline = 'alphabetic';
     scratch.context.imageSmoothingEnabled = false;
