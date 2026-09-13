@@ -15,7 +15,7 @@ import type { UserStore } from '../auth/user-store';
 import { jsonStable } from './ctl';
 import { jsonText } from './json-text';
 import { stamp } from './mesh-log';
-import { ingestPeerReachMap, ingestTurnOk } from './port-reach';
+import { ingestPeerReachEpoch, ingestPeerReachMap, ingestTurnOk } from './port-reach';
 import type { RelaySecrets } from './relay-secrets';
 import type { UplinkStatus } from './types';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
@@ -93,6 +93,7 @@ export async function relayListToNodeList(
       version: blob.version || null,
     });
     ingestPeerReachMap(node.id, blob.peer_reach, ctx.selfNodeId);
+    ingestPeerReachEpoch(node.id, blob.peer_reach_epoch);
     if (ctx.relayUrl) ingestTurnOk(node.id, blob.turn_ok, ctx.relayUrl);
     nodes.push({
       id: node.id,
@@ -201,6 +202,7 @@ export function relayStatusBlobOf(
       ? Math.round(rttMs)
       : undefined;
   const peerReach = status.peer_reach;
+  const reachEpoch = status.peer_reach_epoch;
   return {
     name,
     version: status.version,
@@ -211,6 +213,7 @@ export function relayStatusBlobOf(
     ...(rtt !== undefined ? { rtt_ms: rtt } : {}),
     ...(peerReach && Object.keys(peerReach).length > 0 ? { peer_reach: peerReach } : {}),
     ...(extras?.turn_ok !== undefined ? { turn_ok: extras.turn_ok } : {}),
+    ...(reachEpoch ? { peer_reach_epoch: reachEpoch } : {}),
   };
 }
 

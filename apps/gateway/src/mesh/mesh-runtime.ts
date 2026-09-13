@@ -40,13 +40,7 @@ import { getDisplayVersion } from '../system/version';
 import { setTransferMeshBridge, wireTransferBridge } from '../transfer/bridge';
 import type { GatewaySession } from '../ws/gateway-session';
 import { openAdaptedWsStream } from './adapted-ws-stream';
-import {
-  hasLocalCgnatAddress,
-  isCgnatIpv4,
-  isFakeIpv4,
-  isPeerReachable,
-  parseIpv6Words,
-} from './address-class';
+import { isPeerReachable } from './address-class';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
 import { bindKeyLogProjection } from './key-log-projection';
 import { lookupRemoteNode, setMeshAgentBridge } from './mesh-agent-bridge';
@@ -96,8 +90,14 @@ import { pickSelfDisplayName } from './node-list-projection';
 import { buildMeshNotificationBridge } from './notification-bridge-wiring';
 import { setMeshNotificationBridge } from './notification-mesh-bridge';
 import { listNotificationSinkNodeIds } from './notification-sink-records';
+import { enumeratePeerEndpoints, stunMappedAddressesForAdvertise } from './peer-endpoints';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
-import { bootPortReach, notePeerTransport, peerReachPayload } from './port-reach';
+import {
+  bootPortReach,
+  notePeerTransport,
+  peerReachEpochPayload,
+  peerReachPayload,
+} from './port-reach';
 import { installRelayMultiAttach, primaryNodeListApplyPatch } from './relay-multi-attach';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import { RelayUplinkClient } from './relay-uplink-client';
@@ -255,106 +255,12 @@ export type MeshRuntime = {
 export type NetworkInterfacesFn = () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 
 export { STATUS_IFACE_CACHE_TTL_MS, attachKeyLogHeadNotify, createTtlCache };
-
-function stripZoneId(address: string): string {
-  const cut = address.indexOf('%');
-  return cut === -1 ? address : address.slice(0, cut);
-}
-
-function parseIpv4Octets(address: string): number[] | null {
-  const parts = address.split('.');
-  if (parts.length !== 4) return null;
-  const octets: number[] = [];
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null;
-    const n = Number(part);
-    if (n > 255) return null;
-    octets.push(n);
-  }
-  return octets;
-}
-
-function isAdvertisableIpv4(address: string): boolean {
-  const o = parseIpv4Octets(stripZoneId(address));
-  if (!o) return false;
-  const [a, b] = o;
-  if (a === 127) return false;
-  if (a === 0) return o.some((n) => n !== 0);
-  if (a === 169) return b !== 254;
-  return a < 224 || a > 239;
-}
-
-function isAdvertisableIpv6(address: string): boolean {
-  const w = parseIpv6Words(address);
-  if (!w) return false;
-  const w0 = w[0];
-  if ((w0 & 0xffc0) === 0xfe80) return false;
-  if ((w0 & 0xfe00) === 0xfc00) return false;
-  if ((w0 & 0xffc0) === 0xfec0) return false;
-  if ((w0 & 0xff00) === 0xff00) return false;
-  if (w.slice(0, 7).some((x) => x !== 0)) return true;
-  return w[7] > 1;
-}
-
-const CONTAINER_IFACE_PREFIXES = [
-  'docker',
-  'veth',
-  'virbr',
-  'lxdbr',
-  'lxcbr',
-  'cni',
-  'flannel',
-  'podman',
-] as const;
-
-export function isContainerOrientedIface(name: string): boolean {
-  const n = name.toLowerCase();
-  if (n.startsWith('br-')) return true;
-  return CONTAINER_IFACE_PREFIXES.some((prefix) => n === prefix || n.startsWith(prefix));
-}
-
-export type AdvertisablePeerAddressOpts = {
-  iface?: string;
-  allowCgnat?: boolean;
-};
-
-export function isAdvertisablePeerAddress(
-  addr: os.NetworkInterfaceInfo,
-  opts?: AdvertisablePeerAddressOpts
-): boolean {
-  if (addr.internal) return false;
-  if (opts?.iface && isContainerOrientedIface(opts.iface)) return false;
-  const family = addr.family as string | number;
-  if (family === 'IPv4' || family === 4) {
-    if (isFakeIpv4(addr.address) || (!opts?.allowCgnat && isCgnatIpv4(addr.address))) return false;
-    return isAdvertisableIpv4(addr.address);
-  }
-  if (family === 'IPv6' || family === 6) return isAdvertisableIpv6(addr.address);
-  return false;
-}
-
-export function enumeratePeerEndpoints(
-  port: number,
-  interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces()
-): string[] {
-  const urls: string[] = [];
-  const seen = new Set<string>();
-  const allowCgnat = hasLocalCgnatAddress(interfaces);
-  for (const [iface, addrs] of Object.entries(interfaces)) {
-    if (!addrs) continue;
-    for (const addr of addrs) {
-      if (!isAdvertisablePeerAddress(addr, { iface, allowCgnat })) continue;
-      const family = addr.family as string | number;
-      const v6 = family === 'IPv6' || family === 6;
-      const host = v6 ? `[${stripZoneId(addr.address)}]` : stripZoneId(addr.address);
-      const url = `ws://${host}:${port}/peer`;
-      if (seen.has(url)) continue;
-      seen.add(url);
-      urls.push(url);
-    }
-  }
-  return urls;
-}
+export {
+  enumeratePeerEndpoints,
+  isAdvertisablePeerAddress,
+  isContainerOrientedIface,
+  type AdvertisablePeerAddressOpts,
+} from './peer-endpoints';
 
 function peerFromDcSession(selfNodeId: string, rtcSession: string): string | null {
   if (!rtcSession.startsWith('dc:')) return null;
@@ -811,6 +717,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     const version = getDisplayVersion();
     const ids = stores.userStore.listPeers().map((row) => row.nodeId);
     const peerReach = peerReachPayload(stores.identity.nodeIdHex, ids);
+    const reachEpoch = peerReachEpochPayload();
     return {
       version,
       tmux: true,
@@ -818,10 +725,16 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
       inventory: { version },
       endpoints: enumeratePeerEndpoints(
         stores.peerHolder.manager?.listenPort ?? stores.config.peerPort,
-        ifaceCache.get()
+        ifaceCache.get(),
+        {
+          bindHosts: resolvePeerBindHost(undefined, stores.config.peerBindHost),
+          publicHost: process.env.VIBETERM_PEER_PUBLIC_HOST,
+          mappedAddresses: stunMappedAddressesForAdvertise(),
+        }
       ),
       hub: hubRoleAdvertisement(stores.config, stores.state.caFingerprint, stores.hub),
       ...(Object.keys(peerReach).length > 0 ? { peer_reach: peerReach } : {}),
+      ...(reachEpoch !== undefined ? { peer_reach_epoch: reachEpoch } : {}),
     };
   };
   const refreshLocalInterfaces = () => ifaceCache.refresh();
@@ -1396,6 +1309,27 @@ function bindPortMaps(d: MeshDeps, peerManager: PeerManager): () => void {
   });
 }
 
+function bootSelfPortReach(
+  d: MeshDeps,
+  peerManager: PeerManager,
+  uplink: { sendStatusIfChanged: () => boolean },
+  previous: (() => void) | null
+): () => void {
+  return bootPortReach({
+    startPeerServer: d.opts.startPeerServer,
+    listenPort: peerManager.listenPort,
+    selfNodeId: d.identity.nodeIdHex,
+    userStore: d.userStore,
+    pathRttMemory: peerManager.pathRttMemory,
+    now: () => d.scheduler.now(),
+    previous,
+    onSelfEpochBump: () => {
+      peerManager.refreshAdvertisedStatus();
+      uplink.sendStatusIfChanged();
+    },
+  });
+}
+
 function assembleMeshRuntime(
   d: MeshDeps,
   w: ReturnType<typeof wireMeshEventsAndSessions>,
@@ -1474,16 +1408,7 @@ function assembleMeshRuntime(
       }
       await d.relay.reconcileQuietly();
       await peerManager.start();
-      stopReach = bootPortReach({
-        startPeerServer: opts.startPeerServer,
-        listenPort: peerManager.listenPort,
-        selfNodeId: identity.nodeIdHex,
-        userStore,
-        // TCP connect 的 RTT 也是同一对主机的路径样本，喂给 DC 重掷判定用的 best。
-        pathRttMemory: peerManager.pathRttMemory,
-        now: () => d.scheduler.now(),
-        previous: stopReach,
-      });
+      stopReach = bootSelfPortReach(d, peerManager, uplink, stopReach);
       uplink.start();
       startUplinkPathSamplingFromCandidates(d.scheduler, uplink, d.relay);
       relayMultiAttachOf(d.relay)?.start();

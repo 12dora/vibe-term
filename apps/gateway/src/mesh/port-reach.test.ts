@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { MeshNodeDto } from './node-list-projection';
 import {
   PEER_REPORT_TTL_MS,
+  PORT_PROBE_CADENCE_MS,
   TURN_REPORT_TTL_MS,
+  bumpSelfPeerReachEpoch,
+  ingestPeerReachEpoch,
   ingestPeerReachMap,
   ingestTurnOk,
   isProbeablePeerEndpoint,
@@ -10,10 +13,13 @@ import {
   meshPortsForNode,
   notePeerServerBind,
   notePeerTransport,
+  notePublicHttpsUplink,
   noteRtcGather,
   overlayMeshNodePorts,
+  peerReachEpochPayload,
   probePeerEndpoints,
   resetPortReachForTest,
+  setSelfPortRolesForTest,
   setStunOkForTest,
 } from './port-reach';
 
@@ -80,20 +86,19 @@ describe('port reach aggregation', () => {
     expect(signaling(PEER, { endpoints: [PUBLIC_EP] })?.code).toBe('peer_timeout');
   });
 
-  test('peer signaling: refused code after two consecutive refusals; cadence skips', async () => {
+  test('peer signaling: refused is blocked on the first hit; cadence skips', async () => {
     let now = 1_000;
     resetPortReachForTest({
       trust: async () => true,
       now: () => now,
       probeFn: async () => ({ verdict: 'refused', connectMs: null }),
     });
-    await probePeerEndpoints(PEER, [PUBLIC_EP], { force: true });
     const first = await probePeerEndpoints(PEER, [PUBLIC_EP], { force: true });
     expect(first.status).toBe('blocked');
     expect(first.code).toBe('peer_refused');
     now += 1_000;
     const skipped = await probePeerEndpoints(PEER, [PUBLIC_EP]);
-    expect(skipped.consecutiveFails).toBe(2);
+    expect(skipped.consecutiveFails).toBe(1);
   });
 
   test('directFailure.ws refused marks blocked; no public endpoint stays unknown', async () => {
@@ -112,18 +117,30 @@ describe('port reach aggregation', () => {
     ).toBe('peer_refused');
   });
 
-  test('self peer-signaling: bind failure, reports, never blocked on one sample', () => {
+  test('self peer-signaling: bind failure, refused is immediate, timeout needs two', () => {
     expect(signaling(SELF)?.status).toBe('unknown');
     ingestPeerReachMap(PEER, { [SELF.slice(0, 8)]: 'timeout' }, SELF);
     expect(signaling(SELF)?.status).toBe('unknown');
     ingestPeerReachMap(PEER_B, { [SELF.slice(0, 8)]: 'timeout' }, SELF);
     expect(signaling(SELF)?.status).toBe('blocked');
     expect(signaling(SELF)?.code).toBe('peer_timeout');
+    resetPortReachForTest();
+    ingestPeerReachMap(PEER, { [SELF.slice(0, 8)]: 'refused' }, SELF);
+    expect(signaling(SELF)?.status).toBe('blocked');
+    expect(signaling(SELF)?.code).toBe('peer_refused');
     ingestPeerReachMap(PEER, { [SELF.slice(0, 8)]: 'ok' }, SELF);
     expect(signaling(SELF)?.status).toBe('open');
     notePeerServerBind(false);
     expect(signaling(SELF)?.status).toBe('blocked');
     expect(signaling(SELF)?.code).toBe('peer_refused');
+  });
+
+  test('self peer-signaling: same reporter timing out twice is blocked', () => {
+    ingestPeerReachMap(PEER, { [SELF.slice(0, 8)]: 'timeout' }, SELF);
+    expect(signaling(SELF)?.status).toBe('unknown');
+    ingestPeerReachMap(PEER, { [SELF.slice(0, 8)]: 'timeout' }, SELF);
+    expect(signaling(SELF)?.status).toBe('blocked');
+    expect(signaling(SELF)?.code).toBe('peer_timeout');
   });
 
   test('self peer-signaling: stale member reports expire after the TTL', () => {
@@ -199,6 +216,61 @@ describe('port reach aggregation', () => {
   test('canonical relay URL forms share a bucket', () => {
     ingestTurnOk(PEER, true, 'https://Relay.Example/');
     expect(membersProbeSnapshot('https://relay.example')).toMatchObject({ ok: 1, total: 1 });
+  });
+
+  test('peer_reach_epoch bump is advertised and resets cadence for that peer', async () => {
+    let now = 1_000;
+    let probes = 0;
+    resetPortReachForTest({
+      now: () => now,
+      probeFn: async () => {
+        probes += 1;
+        return { verdict: 'ok', connectMs: 10 };
+      },
+    });
+    expect(peerReachEpochPayload()).toBeUndefined();
+    expect(bumpSelfPeerReachEpoch()).toBe(1);
+    expect(peerReachEpochPayload()).toBe(1);
+    await probePeerEndpoints(PEER, [PUBLIC_EP], { force: true });
+    expect(probes).toBe(3);
+    now += 1_000;
+    await probePeerEndpoints(PEER, [PUBLIC_EP]);
+    expect(probes).toBe(3);
+    ingestPeerReachEpoch(PEER, 1);
+    await probePeerEndpoints(PEER, [PUBLIC_EP]);
+    expect(probes).toBe(6);
+    ingestPeerReachEpoch(PEER, 1);
+    now += PORT_PROBE_CADENCE_MS + 1;
+    await probePeerEndpoints(PEER, [PUBLIC_EP]);
+    expect(probes).toBe(9);
+  });
+
+  test('self derived public-https is open when a member is uplinked', () => {
+    setSelfPortRolesForTest({ hub: true, relay: false });
+    expect(portsOf(SELF).find((row) => row.purpose === 'public-https')?.status).toBe('unknown');
+    notePublicHttpsUplink(true);
+    expect(portsOf(SELF).find((row) => row.purpose === 'public-https')?.status).toBe('open');
+    expect(portsOf(PEER).some((row) => row.purpose === 'public-https')).toBe(false);
+  });
+
+  test('self derived TURN rows follow membersProbeSnapshot; relay range is not_probed', () => {
+    setSelfPortRolesForTest({ hub: false, relay: true });
+    const relay = 'https://relay.example';
+    ingestTurnOk(PEER, false, relay);
+    expect(portsOf(SELF).find((row) => row.purpose === 'turn-control')?.status).toBe('unknown');
+    ingestTurnOk(PEER_B, false, relay);
+    const control = portsOf(SELF).find((row) => row.purpose === 'turn-control');
+    expect(control?.status).toBe('blocked');
+    expect(control?.code).toBe('turn_probe_failed');
+    const range = portsOf(SELF).find((row) => row.purpose === 'turn-relay');
+    expect(range?.status).toBe('blocked');
+    expect(range?.code).toBe('turn_probe_failed');
+    ingestTurnOk(PEER, true, relay);
+    const openControl = portsOf(SELF).find((row) => row.purpose === 'turn-control');
+    expect(openControl?.status).toBe('open');
+    const openRange = portsOf(SELF).find((row) => row.purpose === 'turn-relay');
+    expect(openRange?.status).toBe('open');
+    expect(openRange?.code).toBe('not_probed');
   });
 
   test('overlayMeshNodePorts attaches ports to every row including self', () => {

@@ -35,6 +35,7 @@ export {
   parsePortRange,
   portPlanForRole,
   rolesIncludeRelay,
+  type MeshPortReachCode,
   type PortPlanLive,
   type PortProto,
   type PortPurpose,

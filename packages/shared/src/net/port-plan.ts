@@ -22,6 +22,13 @@ export type PortPurpose =
   | 'turn-control'
   | 'turn-relay'
   | 'public-https';
+export type MeshPortReachCode =
+  | 'peer_refused'
+  | 'peer_timeout'
+  | 'no_srflx'
+  | 'turn_unreachable'
+  | 'turn_probe_failed'
+  | 'not_probed';
 export type PortRange = { begin: number; end: number };
 export type PortSpec = {
   proto: PortProto;

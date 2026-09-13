@@ -93,6 +93,7 @@ export type MeshUplinkCtlMessage =
       endpoints: unknown;
       hub?: HubAdvertisement;
       peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
+      peer_reach_epoch?: number;
     }
   | MeshUplinkNodeList
   | { t: 'key.log.req'; from_seq: bigint; id?: string; limit?: number }

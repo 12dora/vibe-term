@@ -1,7 +1,12 @@
 import type { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF } from './mesh-deps';
 import { type MeshNodeDto, overlayPausedMeshNodes } from './node-list-projection';
-import { meshPortsForNode, overlayMeshNodePorts, probePeerEndpoints } from './port-reach';
+import {
+  bumpSelfPeerReachEpoch,
+  meshPortsForNode,
+  overlayMeshNodePorts,
+  probePeerEndpoints,
+} from './port-reach';
 import {
   type SessionMiddlewareDeps,
   jsonBody,
@@ -46,17 +51,22 @@ async function handlePortsProbe(
 ): Promise<Response> {
   const self = isSelfNode(host.selfNodeId, nodeId);
   const targetId = self ? host.selfNodeId : nodeId;
-  const node = host.collectNodes(req).find((row) => row.id === targetId);
+  const listed = host.collectNodes(req);
+  const node = listed.find((row) => row.id === targetId);
   if (!node) return jsonError('NODE_NOT_FOUND', 404);
-  if (!self) {
+  if (self) {
+    bumpSelfPeerReachEpoch();
+  } else {
     await probePeerEndpoints(targetId, node.endpoints ?? [], { force: true });
   }
+  const othersOnline = listed.some((row) => row.id !== host.selfNodeId && row.online);
   return jsonBody({
     ports: meshPortsForNode({
       nodeId: targetId,
       selfId: host.selfNodeId,
       endpoints: node.endpoints,
       directFailure: node.directFailure,
+      othersOnline,
     }),
   });
 }

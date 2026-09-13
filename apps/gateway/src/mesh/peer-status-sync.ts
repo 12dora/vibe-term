@@ -8,7 +8,7 @@ import {
   isPeerTrusted,
 } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
-import { ingestPeerReachMap } from './port-reach';
+import { ingestPeerReachEpoch, ingestPeerReachMap } from './port-reach';
 import type { KeyLogApplier, UplinkStatus } from './types';
 
 export type PeerStatusSyncDeps = {
@@ -65,6 +65,7 @@ export class PeerStatusSync {
   async applyPeerStatus(live: LivePeer, msg: Record<string, unknown>): Promise<void> {
     if (!isPeerTrusted(this.state, live.peerNodeId)) return;
     ingestPeerReachMap(live.peerNodeId, msg.peer_reach, this.state.identity.nodeId);
+    ingestPeerReachEpoch(live.peerNodeId, msg.peer_reach_epoch);
     const peerNodeId = live.peerNodeId;
     const { userStore, uplink, scheduler } = this.state;
     const existing = userStore.getPeer(peerNodeId);
@@ -163,6 +164,7 @@ export class PeerStatusSync {
         ...(status.peer_reach && Object.keys(status.peer_reach).length > 0
           ? { peer_reach: status.peer_reach }
           : {}),
+        ...(status.peer_reach_epoch ? { peer_reach_epoch: status.peer_reach_epoch } : {}),
         ...(head
           ? { key_log_head: { seq: Number(head.seq), hash: encodeBase64url(head.hash) } }
           : {}),

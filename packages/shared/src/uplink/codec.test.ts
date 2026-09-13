@@ -208,11 +208,13 @@ describe('multi-hub wire contract', () => {
   test('node.status 可选 peer_reach 往返；未知键忽略', () => {
     const msg = statusMsg({
       peer_reach: { abcdabcd: 'ok', deadbeef: 'timeout' },
+      peer_reach_epoch: 4,
     });
     const round = decodeHubUplinkCtl(encodeHubUplinkCtl(msg));
     expect(round.t).toBe('node.status');
     if (round.t === 'node.status') {
       expect(round.peer_reach).toEqual({ abcdabcd: 'ok', deadbeef: 'timeout' });
+      expect(round.peer_reach_epoch).toBe(4);
     }
     const extra = new TextEncoder().encode(
       JSON.stringify({

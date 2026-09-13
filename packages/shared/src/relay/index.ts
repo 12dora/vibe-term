@@ -51,6 +51,7 @@ export {
   PEER_REACH_PREFIX_LEN,
   nodeIdPrefix8,
   normalizePeerReach,
+  normalizePeerReachEpoch,
   normalizeTurnOk,
   decodeRelayOpenStream,
   decodeRelayRtcBlob,

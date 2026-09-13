@@ -34,6 +34,11 @@ export type RelayStatusBlob = {
   peer_reach?: Record<string, PeerReachVerdict>;
   /** 本机对「收到这块的那台中继」TURN 控制口的 Binding 结论；缺省 = 未探测。 */
   turn_ok?: boolean;
+  /**
+   * 本机请求对端重探自己的世代。对端见到更大的值就把对该节点的 5 分钟探测节拍清掉。
+   * 缺省 = 2.3.5 对端，忽略未知字段。
+   */
+  peer_reach_epoch?: number;
 };
 
 export type RelayRtcBlob = { sdp?: string; candidate?: string };
@@ -93,6 +98,7 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
   const rttMs = normalizeStatusRtt(blob.rtt_ms);
   const peerReach = normalizePeerReach(blob.peer_reach);
   const turnOk = normalizeTurnOk(blob.turn_ok);
+  const reachEpoch = normalizePeerReachEpoch(blob.peer_reach_epoch);
   return encodeJson(
     {
       name: blob.name,
@@ -104,6 +110,7 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
       ...(rttMs !== undefined ? { rtt_ms: rttMs } : {}),
       ...(peerReach !== undefined ? { peer_reach: peerReach } : {}),
       ...(turnOk !== undefined ? { turn_ok: turnOk } : {}),
+      ...(reachEpoch !== undefined ? { peer_reach_epoch: reachEpoch } : {}),
     },
     RELAY_STATUS_BLOB_MAX_BYTES,
     'status blob'
@@ -130,6 +137,7 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
   const rttMs = normalizeStatusRtt(parsed.rtt_ms);
   const peerReach = normalizePeerReach(parsed.peer_reach);
   const turnOk = normalizeTurnOk(parsed.turn_ok);
+  const reachEpoch = normalizePeerReachEpoch(parsed.peer_reach_epoch);
   return {
     name,
     version,
@@ -140,6 +148,7 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
     ...(rttMs !== undefined ? { rtt_ms: rttMs } : {}),
     ...(peerReach !== undefined ? { peer_reach: peerReach } : {}),
     ...(turnOk !== undefined ? { turn_ok: turnOk } : {}),
+    ...(reachEpoch !== undefined ? { peer_reach_epoch: reachEpoch } : {}),
   };
 }
 
@@ -171,6 +180,13 @@ export function normalizePeerReach(value: unknown): Record<string, PeerReachVerd
 
 export function normalizeTurnOk(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
+}
+
+/** 正整数世代；缺省 / 非法忽略。 */
+export function normalizePeerReachEpoch(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return undefined;
+  if (value > Number.MAX_SAFE_INTEGER) return undefined;
+  return value;
 }
 
 export function encodeRelayRtcBlob(blob: RelayRtcBlob): Uint8Array {

@@ -351,6 +351,7 @@ export class UplinkClient {
         ...(status.peer_reach && Object.keys(status.peer_reach).length > 0
           ? { peer_reach: status.peer_reach }
           : {}),
+        ...(status.peer_reach_epoch ? { peer_reach_epoch: status.peer_reach_epoch } : {}),
       })
     );
   }

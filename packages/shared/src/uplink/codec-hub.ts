@@ -40,6 +40,7 @@ export type NodeStatusMessage = {
   endpoints: unknown;
   hub?: HubAdvertisement;
   peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
+  peer_reach_epoch?: number;
 };
 export type NodeListEntry = {
   id: string;

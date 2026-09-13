@@ -63,6 +63,7 @@ export type UplinkCtlDecoded<Bytes, Seq> =
       endpoints: unknown;
       hub?: HubAdvertisement;
       peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
+      peer_reach_epoch?: number;
     }
   | { t: 'key.log.req'; from_seq: Seq; id?: string; limit?: number }
   | {
@@ -211,10 +212,18 @@ function decodeNodeStatus<B, S, NL, ER>(
   }
   const peerReach = parsePeerReachMap(parsed.peer_reach);
   if (peerReach) status.peer_reach = peerReach;
+  const reachEpoch = parsePeerReachEpoch(parsed.peer_reach_epoch);
+  if (reachEpoch !== undefined) status.peer_reach_epoch = reachEpoch;
   return status;
 }
 
 const PEER_REACH_KEY_RE = /^[0-9a-f]{8}$/;
+
+export function parsePeerReachEpoch(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return undefined;
+  if (value > Number.MAX_SAFE_INTEGER) return undefined;
+  return value;
+}
 
 export function parsePeerReachMap(
   value: unknown

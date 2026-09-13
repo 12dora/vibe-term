@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@vibeterm/shared/auth';
 import { FakePeers, NODE_ID, bootMesh, call, challengeAndLogin } from './auth-routes.test';
-import { resetPortReachForTest } from './port-reach';
+import { peerReachEpochPayload, resetPortReachForTest } from './port-reach';
 
 const PEER_ID = 'cc'.repeat(16);
 
@@ -78,6 +78,7 @@ describe('mesh ports probe route', () => {
       const selfBody = (await self.json()) as { ports: Array<{ purpose: string; status: string }> };
       expect(selfBody.ports.some((row) => row.purpose === 'peer-signaling')).toBe(true);
       expect(selfBody.ports.some((row) => row.purpose === 'rtc-ice')).toBe(true);
+      expect(peerReachEpochPayload()).toBe(1);
 
       const peer = await call(
         mesh.runtime,

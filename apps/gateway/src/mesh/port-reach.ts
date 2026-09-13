@@ -1,10 +1,9 @@
-import { canonicalHubUrl } from '@vibeterm/shared/auth';
 import { DEFAULT_PEER_PORT, DEFAULT_RTC_PORT_RANGE, type PortRange } from '@vibeterm/shared/net';
 import {
   type PeerReachVerdict,
   nodeIdPrefix8,
   normalizePeerReach,
-  normalizeTurnOk,
+  normalizePeerReachEpoch,
 } from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import { config as gatewayConfig } from '../config';
@@ -19,14 +18,23 @@ import { logLine } from './mesh-log';
 import type { MeshNodeDirectFailure, MeshNodeDto, MeshPortReach } from './node-list-projection';
 import type { PeerPathRttMemory } from './peer-path-rtt';
 import {
+  type SelfPortRoles,
+  derivedSelfPortRows,
+  localRelaySnapshotKey,
+} from './port-reach-derived';
+import {
   PORT_PROBE_DEADLINE_MS,
   type TcpProbeResult,
   type TcpProbeVerdict,
   probeTcpConnect,
 } from './port-reach-probe';
+import { membersProbeSnapshot, resetTurnReachForTest, setTurnReachNow } from './port-reach-turn';
 import { matchingTurnProbe } from './rtc/stun-effective';
 import { stunProbeSnapshot } from './rtc/stun-probe';
 import { ensureTcpSamplingTrust } from './tcp-sampling-trust';
+
+export type { MembersProbeSnapshot } from './port-reach-turn';
+export { TURN_REPORT_TTL_MS, ingestTurnOk, membersProbeSnapshot } from './port-reach-turn';
 
 export const PORT_PROBE_CADENCE_MS = 5 * 60 * 1_000;
 export const PORT_PROBE_TICK_MS = 30_000;
@@ -41,13 +49,10 @@ export function aggregateProbeVerdicts(verdicts: readonly TcpProbeVerdict[]): Tc
 }
 export const DC_HISTORY_MS = 24 * 60 * 60 * 1_000;
 export const PEER_REPORT_TTL_MS = 30 * 60 * 1_000;
-export const TURN_REPORT_TTL_MS = 30 * 60 * 1_000;
 export const GATHER_BLOCKED_WINDOW = 3;
 
 export type MeshPortReachStatus = MeshPortReach['status'];
 export type MeshPortReachCode = NonNullable<MeshPortReach['code']>;
-
-export type MembersProbeSnapshot = { ok: number; total: number; updatedAt: number };
 
 type ProbeFn = (host: string, port: number, deadlineMs?: number) => Promise<TcpProbeResult>;
 
@@ -64,21 +69,28 @@ type DcSlot = { lastUpAt: number; up: boolean };
 
 type GatherSample = { srflx: boolean; at: number };
 
-type PeerReport = { reporter: string; verdict: PeerReachVerdict; at: number };
-
-type TurnReport = { ok: boolean; at: number };
+type PeerReport = {
+  reporter: string;
+  verdict: PeerReachVerdict;
+  at: number;
+  timeoutStrikes: number;
+};
 
 type PortReachState = {
   probes: Map<string, PeerProbeSlot>;
   dc: Map<string, DcSlot>;
   reports: Map<string, PeerReport>;
-  /** relay canonical URL → reporter node id → last turn_ok */
-  turnReports: Map<string, Map<string, TurnReport>>;
   gathers: GatherSample[];
   srflxEver: boolean;
   dcEver: boolean;
   peerServerListening: boolean | null;
   stunOk: boolean | null;
+  selfEpoch: number;
+  seenEpochs: Map<string, number>;
+  forceProbe: Set<string>;
+  roles: SelfPortRoles | null;
+  httpsUplink: boolean;
+  onSelfEpochBump: (() => void) | null;
   now: () => number;
   probeFn: ProbeFn;
   trust: (host: string, now: number, probe: ProbeFn) => Promise<boolean>;
@@ -91,12 +103,17 @@ function createState(): PortReachState {
     probes: new Map(),
     dc: new Map(),
     reports: new Map(),
-    turnReports: new Map(),
     gathers: [],
     srflxEver: false,
     dcEver: false,
     peerServerListening: null,
     stunOk: null,
+    selfEpoch: 0,
+    seenEpochs: new Map(),
+    forceProbe: new Set(),
+    roles: null,
+    httpsUplink: false,
+    onSelfEpochBump: null,
     now: Date.now,
     probeFn: probeTcpConnect,
     trust: (host, now, probe) => ensureTcpSamplingTrust(host, now, probe, (line) => logLine(line)),
@@ -112,15 +129,21 @@ export function resetPortReachForTest(opts?: {
   if (opts?.now) next.now = opts.now;
   if (opts?.probeFn) next.probeFn = opts.probeFn;
   if (opts?.trust) next.trust = opts.trust;
+  resetTurnReachForTest(next.now);
   state.probes = next.probes;
   state.dc = next.dc;
   state.reports = next.reports;
-  state.turnReports = next.turnReports;
   state.gathers = next.gathers;
   state.srflxEver = next.srflxEver;
   state.dcEver = next.dcEver;
   state.peerServerListening = next.peerServerListening;
   state.stunOk = next.stunOk;
+  state.selfEpoch = next.selfEpoch;
+  state.seenEpochs = next.seenEpochs;
+  state.forceProbe = next.forceProbe;
+  state.roles = next.roles;
+  state.httpsUplink = next.httpsUplink;
+  state.onSelfEpochBump = next.onSelfEpochBump;
   state.now = next.now;
   state.probeFn = next.probeFn;
   state.trust = next.trust;
@@ -163,31 +186,11 @@ export function ingestPeerReachMap(
   const selfKey = nodeIdPrefix8(selfNodeId);
   if (parsed) {
     const verdict = parsed[selfKey];
-    if (verdict) state.reports.set(reporterId, { reporter: reporterId, verdict, at });
-  }
-}
-
-/** `relayKey` 是这份 list 来自哪条中继的规范 URL；缺席或无法归一化则丢弃。 */
-export function ingestTurnOk(reporterId: string, turnOk: unknown, relayKey: string): void {
-  const ok = normalizeTurnOk(turnOk);
-  if (ok === undefined) return;
-  const key = turnRelayKey(relayKey);
-  if (!key) return;
-  let bucket = state.turnReports.get(key);
-  if (!bucket) {
-    bucket = new Map();
-    state.turnReports.set(key, bucket);
-  }
-  bucket.set(reporterId, { ok, at: state.now() });
-}
-
-function turnRelayKey(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  try {
-    return canonicalHubUrl(trimmed);
-  } catch {
-    return trimmed.replace(/\/+$/, '');
+    if (verdict) {
+      const prev = state.reports.get(reporterId);
+      const timeoutStrikes = verdict === 'timeout' ? (prev?.timeoutStrikes ?? 0) + 1 : 0;
+      state.reports.set(reporterId, { reporter: reporterId, verdict, at, timeoutStrikes });
+    }
   }
 }
 
@@ -231,7 +234,8 @@ function applyProbeVerdict(
   }
   const consecutiveFails = slot.consecutiveFails + 1;
   const code: MeshPortReachCode = verdict === 'refused' ? 'peer_refused' : 'peer_timeout';
-  if (consecutiveFails >= 2) {
+  // refused：对端主机可达但口关闭，一次即可定论；timeout 可能是瞬时丢包，要两次。
+  if (verdict === 'refused' || consecutiveFails >= 2) {
     return {
       lastVerdict: verdict,
       consecutiveFails,
@@ -263,7 +267,7 @@ export async function probePeerEndpoints(
     status: 'unknown' as const,
     lastAt: 0,
   };
-  if (!opts?.force && prev.lastAt > 0 && at - prev.lastAt < PORT_PROBE_CADENCE_MS) return prev;
+  if (shouldSkipCadence(opts?.force, prev.lastAt, at, nodeId)) return prev;
   const target = firstProbeableTarget(endpoints);
   if (!target) {
     const skipped: PeerProbeSlot = {
@@ -345,6 +349,47 @@ function peerRtcStatus(nodeId: string): Pick<MeshPortReach, 'status' | 'code' | 
   return { status: 'unknown', checkedAt: slot.lastUpAt };
 }
 
+function shouldSkipCadence(
+  force: boolean | undefined,
+  lastAt: number,
+  at: number,
+  nodeId: string
+): boolean {
+  if (force) return false;
+  if (state.forceProbe.delete(nodeId)) return false;
+  return lastAt > 0 && at - lastAt < PORT_PROBE_CADENCE_MS;
+}
+
+export function bumpSelfPeerReachEpoch(): number {
+  state.selfEpoch += 1;
+  state.onSelfEpochBump?.();
+  return state.selfEpoch;
+}
+
+export function peerReachEpochPayload(): number | undefined {
+  return state.selfEpoch > 0 ? state.selfEpoch : undefined;
+}
+
+/** 对端 status 里的世代变大：清掉对该节点的 5 分钟节拍，下一轮 tick 立即重探。 */
+export function ingestPeerReachEpoch(nodeId: string, epoch: unknown): void {
+  const next = normalizePeerReachEpoch(epoch);
+  if (next === undefined) return;
+  const prev = state.seenEpochs.get(nodeId) ?? 0;
+  if (next <= prev) return;
+  state.seenEpochs.set(nodeId, next);
+  state.forceProbe.add(nodeId);
+  const slot = state.probes.get(nodeId);
+  if (slot) slot.lastAt = 0;
+}
+
+export function setSelfPortRolesForTest(roles: SelfPortRoles | null): void {
+  state.roles = roles;
+}
+
+export function notePublicHttpsUplink(uplinked: boolean): void {
+  state.httpsUplink = uplinked;
+}
+
 function selfPeerSignaling(): Pick<MeshPortReach, 'status' | 'code' | 'checkedAt'> {
   if (state.peerServerListening === false) {
     return { status: 'blocked', code: 'peer_refused' };
@@ -354,14 +399,13 @@ function selfPeerSignaling(): Pick<MeshPortReach, 'status' | 'code' | 'checkedAt
   const reports = [...state.reports.values()].filter((row) => row.at >= freshAfter);
   const checkedAt = reports.reduce((max, row) => Math.max(max, row.at), 0) || undefined;
   if (reports.some((row) => row.verdict === 'ok')) return { status: 'open', checkedAt };
-  const fails = reports.filter((row) => row.verdict === 'refused' || row.verdict === 'timeout');
-  if (fails.length >= 2) {
-    const refused = fails.filter((row) => row.verdict === 'refused').length;
-    return {
-      status: 'blocked',
-      code: refused >= fails.length - refused ? 'peer_refused' : 'peer_timeout',
-      checkedAt,
-    };
+  const refused = reports.filter((row) => row.verdict === 'refused');
+  if (refused.length >= 1) {
+    return { status: 'blocked', code: 'peer_refused', checkedAt };
+  }
+  const timeouts = reports.filter((row) => row.verdict === 'timeout');
+  if (timeouts.some((row) => row.timeoutStrikes >= 2) || timeouts.length >= 2) {
+    return { status: 'blocked', code: 'peer_timeout', checkedAt };
   }
   return { status: 'unknown', checkedAt };
 }
@@ -412,6 +456,7 @@ export function meshPortsForNode(input: {
   selfId: string;
   endpoints?: readonly string[];
   directFailure?: MeshNodeDirectFailure | null;
+  othersOnline?: boolean;
 }): MeshPortReach[] {
   const isSelf = input.nodeId === input.selfId;
   const endpoints = input.endpoints ?? [];
@@ -421,7 +466,7 @@ export function meshPortsForNode(input: {
     ? selfPeerSignaling()
     : peerSignalingOf(input.nodeId, input.directFailure, hasPublic);
   const rtc = isSelf ? selfRtcStatus() : peerRtcStatus(input.nodeId);
-  return [
+  const rows: MeshPortReach[] = [
     {
       purpose: 'peer-signaling',
       proto: 'tcp',
@@ -439,9 +484,34 @@ export function meshPortsForNode(input: {
       ...(rtc.checkedAt ? { checkedAt: rtc.checkedAt } : {}),
     },
   ];
+  if (isSelf) rows.push(...selfDerivedRows(input.othersOnline === true));
+  return rows;
+}
+
+function selfDerivedRows(othersOnline: boolean): MeshPortReach[] {
+  const roles = state.roles ?? {
+    hub: gatewayConfig.roles.hub,
+    relay: gatewayConfig.roles.relay,
+  };
+  const httpsUplink = state.httpsUplink || othersOnline || hasFreshPeerReports();
+  const turnKey = localRelaySnapshotKey();
+  return derivedSelfPortRows({
+    roles,
+    httpsUplink,
+    turn: membersProbeSnapshot(turnKey),
+  });
+}
+
+function hasFreshPeerReports(): boolean {
+  const freshAfter = state.now() - PEER_REPORT_TTL_MS;
+  for (const row of state.reports.values()) {
+    if (row.at >= freshAfter) return true;
+  }
+  return false;
 }
 
 export function overlayMeshNodePorts(nodes: MeshNodeDto[], selfId: string): MeshNodeDto[] {
+  const othersOnline = nodes.some((node) => node.id !== selfId && node.online);
   return nodes.map((node) => ({
     ...node,
     ports: meshPortsForNode({
@@ -449,43 +519,9 @@ export function overlayMeshNodePorts(nodes: MeshNodeDto[], selfId: string): Mesh
       selfId,
       endpoints: node.endpoints,
       directFailure: node.directFailure,
+      othersOnline,
     }),
   }));
-}
-
-export function membersProbeSnapshot(
-  relayKey?: string,
-  opts?: { excludeId?: string }
-): MembersProbeSnapshot | null {
-  const freshAfter = state.now() - TURN_REPORT_TTL_MS;
-  const buckets = turnReportBuckets(relayKey);
-  let ok = 0;
-  let total = 0;
-  let updatedAt = 0;
-  const excludeId = opts?.excludeId;
-  for (const [key, bucket] of buckets) {
-    for (const [reporterId, row] of bucket) {
-      if (row.at < freshAfter) {
-        bucket.delete(reporterId);
-        continue;
-      }
-      if (excludeId && reporterId === excludeId) continue;
-      total += 1;
-      if (row.ok) ok += 1;
-      if (row.at > updatedAt) updatedAt = row.at;
-    }
-    if (bucket.size === 0) state.turnReports.delete(key);
-  }
-  if (total === 0) return null;
-  return { ok, total, updatedAt };
-}
-
-function turnReportBuckets(relayKey?: string): Array<[string, Map<string, TurnReport>]> {
-  if (relayKey === undefined) return [...state.turnReports.entries()];
-  const key = turnRelayKey(relayKey);
-  if (!key) return [];
-  const bucket = state.turnReports.get(key);
-  return bucket ? [[key, bucket]] : [];
 }
 
 function endpointsFromPeer(raw: string | null | undefined): string[] {
@@ -507,8 +543,10 @@ export function bootPortReach(input: {
   pathRttMemory?: PeerPathRttMemory;
   now?: () => number;
   previous?: (() => void) | null;
+  onSelfEpochBump?: () => void;
 }): () => void {
   input.previous?.();
+  state.onSelfEpochBump = input.onSelfEpochBump ?? null;
   if (input.startPeerServer !== false) notePeerServerBind(input.listenPort != null);
   return attachPortReachToMesh(input);
 }
@@ -520,7 +558,10 @@ export function attachPortReachToMesh(input: {
   pathRttMemory?: PeerPathRttMemory;
   now?: () => number;
 }): () => void {
-  if (input.now) state.now = input.now;
+  if (input.now) {
+    state.now = input.now;
+    setTurnReachNow(input.now);
+  }
   const tick = () => {
     for (const peer of input.userStore.listPeers()) {
       if (peer.nodeId === input.selfNodeId) continue;

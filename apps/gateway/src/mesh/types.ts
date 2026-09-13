@@ -19,6 +19,8 @@ export type UplinkStatus = {
   inventory: unknown;
   endpoints: unknown;
   peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
+  /** 本机请求对端重探自己的世代；缺省 = 2.3.5 对端。 */
+  peer_reach_epoch?: number;
 };
 
 export type KeyLogApplier = {

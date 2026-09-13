@@ -97,6 +97,22 @@ describe('relay.status 明文块', () => {
     expect(decodeRelayStatusBlob(encoded).turn_ok).toBeUndefined();
   });
 
+  it('可选 peer_reach_epoch：正整数 round-trip，缺省/非法忽略', () => {
+    expect(decodeRelayStatusBlob(encodeRelayStatusBlob({ ...blob, peer_reach_epoch: 3 }))).toEqual({
+      ...blob,
+      peer_reach_epoch: 3,
+    });
+    expect(decodeRelayStatusBlob(encodeRelayStatusBlob(blob)).peer_reach_epoch).toBeUndefined();
+    const encoded = new TextEncoder().encode(
+      JSON.stringify({ ...blob, peer_reach_epoch: 0, extra: true })
+    );
+    expect(decodeRelayStatusBlob(encoded).peer_reach_epoch).toBeUndefined();
+    const neg = new TextEncoder().encode(JSON.stringify({ ...blob, peer_reach_epoch: -1 }));
+    expect(decodeRelayStatusBlob(neg).peer_reach_epoch).toBeUndefined();
+    const frac = new TextEncoder().encode(JSON.stringify({ ...blob, peer_reach_epoch: 1.5 }));
+    expect(decodeRelayStatusBlob(frac).peer_reach_epoch).toBeUndefined();
+  });
+
   it('拒绝超量 endpoints、超长 name 与畸形结构', () => {
     const endpoints = Array.from({ length: RELAY_STATUS_MAX_ENDPOINTS + 1 }, () => ({ host: 'h' }));
     expect(() => encodeRelayStatusBlob({ ...blob, endpoints })).toThrow(RelayCtlError);

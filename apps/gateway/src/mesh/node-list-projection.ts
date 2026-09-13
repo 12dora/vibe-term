@@ -1,4 +1,5 @@
 import { decodeCertificate, encodeBase64url } from '@vibeterm/shared/auth';
+import type { MeshPortReachCode, PortPurpose } from '@vibeterm/shared/net';
 import { hasNodeSessionCookie } from '../auth/cookies';
 import { isPeerReachable } from './address-class';
 import { MESH_VIA_SELF } from './mesh-deps';
@@ -41,18 +42,12 @@ export type MeshNodeLinkDetail = {
 };
 
 export type MeshPortReach = {
-  purpose:
-    | 'gateway-http'
-    | 'peer-signaling'
-    | 'rtc-ice'
-    | 'turn-control'
-    | 'turn-relay'
-    | 'public-https';
+  purpose: PortPurpose;
   proto: 'tcp' | 'udp';
   port?: number;
   range?: { begin: number; end: number };
   status: 'open' | 'blocked' | 'unknown';
-  code?: 'peer_refused' | 'peer_timeout' | 'no_srflx' | 'turn_unreachable';
+  code?: MeshPortReachCode;
   checkedAt?: number;
 };
 
