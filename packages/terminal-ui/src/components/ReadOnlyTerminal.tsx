@@ -20,6 +20,7 @@ export interface ReadOnlyTerminalProps {
   onReady?: (handle: ReadOnlyTerminalHandle) => void;
   onDispose?: () => void;
   testId?: string;
+  ariaLabel?: string;
 }
 
 export function ReadOnlySelectionToolbar(chrome: {
@@ -53,6 +54,7 @@ export function ReadOnlyTerminal({
   onReady,
   onDispose,
   testId = 'read-only-terminal',
+  ariaLabel,
 }: ReadOnlyTerminalProps) {
   const { containerRef, mountRef, instance, terminalTheme } = useReadOnlyTerminal({
     viewportPan,
@@ -60,9 +62,11 @@ export function ReadOnlyTerminal({
     onReady,
     onDispose,
   });
-  const chrome = useTerminalSelectionChrome(selection ? instance : null, containerRef);
+  const chrome = useTerminalSelectionChrome(selection ? instance : null, containerRef, {
+    readOnly: true,
+  });
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (!isReadOnlyCopyShortcut(event.nativeEvent)) return;
     const text = instance?.getSelection?.() ?? '';
     if (!text) return;
@@ -70,24 +74,26 @@ export function ReadOnlyTerminal({
     chrome.copySelection();
   };
 
-  const handlePointerDownCapture = (event: PointerEvent<HTMLDivElement>) => {
+  const handlePointerDownCapture = (event: PointerEvent<HTMLElement>) => {
     containerRef.current?.focus();
     chrome.handlePointerDownCapture(event);
   };
 
   return (
-    <div
+    <section
       ref={containerRef}
       className={cn('relative h-full w-full', className)}
       style={{ backgroundColor: terminalTheme.background }}
       data-testid={testId}
-      tabIndex={selection ? -1 : undefined}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: 可滚动只读区域需能 Tab 进入以复制
+      tabIndex={0}
+      aria-label={ariaLabel}
       onKeyDown={selection ? handleKeyDown : undefined}
       onPointerDownCapture={selection ? handlePointerDownCapture : undefined}
       onPointerUp={selection ? chrome.handlePointerUp : undefined}
     >
       <div ref={mountRef} className="absolute inset-0" />
       {selection ? <ReadOnlySelectionToolbar {...chrome} /> : null}
-    </div>
+    </section>
   );
 }

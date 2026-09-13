@@ -35,6 +35,7 @@ export interface TerminalScroller {
   }) => boolean;
   noteTouchHandled?: () => void;
   focus?: () => void;
+  isInputDisabled?: () => boolean;
   /** 最近一帧的光标；y 是视口内行号，null/不可见表示读不到 */
   lastCursor?: { visible: boolean; y: number | null } | null;
   buffer?: {

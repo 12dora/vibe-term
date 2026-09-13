@@ -6,6 +6,7 @@ import type { TerminalScroller } from './touch/types';
 
 export interface UseMobileTouchOptions {
   onSelectionCommitted?: () => void;
+  readOnly?: boolean;
 }
 
 export function useMobileTouch(
@@ -15,6 +16,7 @@ export function useMobileTouch(
 ) {
   const isActiveRef = useRef(false);
   const onSelectionCommittedRef = useLatestRef(options?.onSelectionCommitted);
+  const readOnly = options?.readOnly === true;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -26,6 +28,7 @@ export function useMobileTouch(
       container,
       resolveTerminal: () => getTerminal?.() ?? null,
       onSelectionCommitted: () => onSelectionCommittedRef.current?.(),
+      readOnly,
     });
 
     container.addEventListener('touchstart', machine.handleTouchStart, { passive: true });
@@ -44,7 +47,7 @@ export function useMobileTouch(
       container.removeEventListener('touchcancel', machine.handleTouchCancel);
       container.removeEventListener('contextmenu', machine.handleContextMenu);
     };
-  }, [containerRef, getTerminal, onSelectionCommittedRef]);
+  }, [containerRef, getTerminal, onSelectionCommittedRef, readOnly]);
 
   return isActiveRef;
 }

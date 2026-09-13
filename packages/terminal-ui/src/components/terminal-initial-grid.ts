@@ -44,11 +44,27 @@ export function resolveInitialTerminalGrid({
   };
 }
 
-export function measureElementRect(
-  element: { getBoundingClientRect(): { width: number; height: number } } | null
-): { width: number; height: number } | null {
+export type MeasurableElement = {
+  getBoundingClientRect(): { width: number; height: number };
+  clientWidth?: number;
+  clientHeight?: number;
+};
+
+function layoutAxis(element: MeasurableElement, axis: 'width' | 'height'): number {
+  const client = axis === 'width' ? element.clientWidth : element.clientHeight;
+  if (typeof client === 'number' && Number.isFinite(client) && client > 0) return client;
+  const box = element.getBoundingClientRect();
+  const value = axis === 'width' ? box.width : box.height;
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function measureElementRect(element: MeasurableElement | null): {
+  width: number;
+  height: number;
+} | null {
   if (!element) return null;
-  const rect = element.getBoundingClientRect();
-  if (!(rect.width > 0) || !(rect.height > 0)) return null;
-  return { width: rect.width, height: rect.height };
+  const width = layoutAxis(element, 'width');
+  const height = layoutAxis(element, 'height');
+  if (!(width > 0) || !(height > 0)) return null;
+  return { width, height };
 }

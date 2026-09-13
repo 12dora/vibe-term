@@ -1,5 +1,6 @@
 import { useUIStore } from '@vibeterm/stores/react';
 import { cn } from '@vibeterm/ui';
+import { useTranslation } from 'react-i18next';
 import { ReadOnlyTerminal, type ReadOnlyTerminalHandle } from './ReadOnlyTerminal';
 
 // 写死的预览内容：~10 行带 ANSI 颜色、含中文/符号/Nerd 图标的代码块，
@@ -26,6 +27,7 @@ export function writeTerminalPreviewContent(handle: ReadOnlyTerminalHandle): voi
 }
 
 export function TerminalPreview({ className }: { className?: string }) {
+  const { t } = useTranslation();
   const fontSize = useUIStore((state) => state.terminalFontSize);
   const lineHeight = useUIStore((state) => state.terminalLineHeight);
   const heightPx = Math.ceil(fontSize * lineHeight * 12);
@@ -42,6 +44,7 @@ export function TerminalPreview({ className }: { className?: string }) {
         selection={false}
         scrollback={100}
         onReady={writeTerminalPreviewContent}
+        ariaLabel={t('settings.terminal.preview')}
       />
     </div>
   );

@@ -12,7 +12,11 @@ import {
   createTerminalController,
   isMacPlatform,
 } from 'ghostty-terminal';
-import { measureElementRect, resolveInitialTerminalGrid } from '../terminal-initial-grid';
+import {
+  type MeasurableElement,
+  measureElementRect,
+  resolveInitialTerminalGrid,
+} from '../terminal-initial-grid';
 import { attachTerminalWithLatestTheme } from '../theme';
 
 /** 与 `useTerminalBootSurface` 的 TERMINAL_SCROLLBACK 对齐 */
@@ -74,7 +78,7 @@ export function buildReadOnlyControllerOptions(input: {
   lineHeight: number;
   scrollback: number;
   theme: TerminalThemeColors;
-  mount: { getBoundingClientRect(): { width: number; height: number } } | null;
+  mount: MeasurableElement | null;
 }): GhosttyTerminalInitOptions {
   const grid = resolveInitialTerminalGrid({
     rect: measureElementRect(input.mount),
@@ -93,11 +97,56 @@ export function buildReadOnlyControllerOptions(input: {
   };
 }
 
-export function mountHasPositiveSize(element: {
-  getBoundingClientRect(): { width: number; height: number };
-}): boolean {
-  const rect = element.getBoundingClientRect();
-  return rect.width > 0 && rect.height > 0;
+export function mountHasPositiveSize(element: MeasurableElement): boolean {
+  return measureElementRect(element) !== null;
+}
+
+type OpenAncestor = {
+  addEventListener(type: 'animationend', listener: () => void): void;
+  removeEventListener(type: 'animationend', listener: () => void): void;
+  getAnimations?: () => Array<{ playState?: string }>;
+};
+
+function openAncestorIsAnimating(host: OpenAncestor): boolean {
+  if (typeof host.getAnimations !== 'function') return true;
+  return host.getAnimations().some((item) => {
+    const state = item.playState;
+    return state === 'running' || state === 'pending';
+  });
+}
+
+/** 首次绘制后再 fit 一次：dialog `zoom-in-95` 期间 getBoundingClientRect 会偏小。 */
+export function schedulePostPaintRefit(
+  element: { closest?(selector: string): OpenAncestor | null } | null,
+  run: () => void
+): () => void {
+  const rAF = globalThis.requestAnimationFrame?.bind(globalThis);
+  const cancel = globalThis.cancelAnimationFrame?.bind(globalThis);
+  if (typeof rAF !== 'function') return () => {};
+  let cancelled = false;
+  let id1 = 0;
+  let id2 = 0;
+  let host: OpenAncestor | null = null;
+  const fire = () => {
+    if (!cancelled) run();
+  };
+  const onEnd = () => {
+    host?.removeEventListener('animationend', onEnd);
+    host = null;
+    fire();
+  };
+  id1 = rAF(() => {
+    if (cancelled) return;
+    host = element?.closest?.('[data-open]') ?? null;
+    if (host) host.addEventListener('animationend', onEnd);
+    if (!host || !openAncestorIsAnimating(host)) id2 = rAF(fire);
+  });
+  return () => {
+    cancelled = true;
+    cancel?.(id1);
+    cancel?.(id2);
+    host?.removeEventListener('animationend', onEnd);
+  };
 }
 
 export function fitThenEnablePan(
@@ -138,7 +187,7 @@ export class PanOriginPolicy {
     return !this.userHasPanned;
   }
 
-  noteResizeConsumed(): void {
+  reset(): void {
     this.userHasPanned = false;
   }
 
@@ -161,6 +210,7 @@ export class ReadOnlyTerminalSession {
   private viewport: PanViewport | null = null;
   private readonly origin = new PanOriginPolicy();
   private readonly unbindScroll: Array<() => void> = [];
+  private unbindDeferredRefit: (() => void) | null = null;
 
   constructor(
     private readonly viewportPan: boolean,
@@ -176,6 +226,7 @@ export class ReadOnlyTerminalSession {
       },
       resize: (cols, rows) => this.resizeGrid(cols, rows),
       reset: () => {
+        this.origin.reset();
         this.term?.reset();
       },
       fit: () => {
@@ -196,18 +247,40 @@ export class ReadOnlyTerminalSession {
       fitThenEnablePan(this.term, this.fit);
       this.panApplied = true;
       this.bindViewport();
+      this.armDeferredPanRefit();
       return;
     }
     this.fit.fit();
   }
 
+  /** 平移模式下首次绘制后再 fit 一次；录像尺寸一旦到达就不再动网格。 */
+  refitIfNoRecordedSize(): void {
+    if (!this.viewportPan || this.recordedSize) return;
+    if (!this.term || !this.fit || !mountHasPositiveSize(this.mount)) return;
+    this.fit.fit();
+    if (this.panApplied) return;
+    this.term.setViewportPan?.(true);
+    this.panApplied = true;
+    this.bindViewport();
+  }
+
   dispose(): void {
+    this.unbindDeferredRefit?.();
+    this.unbindDeferredRefit = null;
     for (const unbind of this.unbindScroll.splice(0)) unbind();
     this.fit?.dispose();
     this.fit = null;
     this.term?.dispose();
     this.term = null;
     this.viewport = null;
+  }
+
+  private armDeferredPanRefit(): void {
+    this.unbindDeferredRefit?.();
+    this.unbindDeferredRefit = schedulePostPaintRefit(this.mount, () => {
+      this.unbindDeferredRefit = null;
+      this.refitIfNoRecordedSize();
+    });
   }
 
   private resizeGrid(cols: number, rows: number): void {
@@ -220,7 +293,6 @@ export class ReadOnlyTerminalSession {
       this.bindViewport();
     }
     if (this.origin.shouldResetOrigin()) this.scrollToOrigin();
-    this.origin.noteResizeConsumed();
   }
 
   private bindViewport(): void {

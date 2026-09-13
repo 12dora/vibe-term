@@ -62,6 +62,8 @@ describe('TerminalPreview', () => {
     );
     expect(html).toContain('data-testid="terminal-preview"');
     expect(html).toContain('data-testid="terminal-preview-mount"');
+    expect(html).toContain('aria-label="settings.terminal.preview"');
+    expect(html).toContain('<section');
     expect(html).toContain(`height:${Math.ceil(13 * 1.2 * 12)}px`);
     runtime.dispose();
   });

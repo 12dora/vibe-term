@@ -67,4 +67,14 @@ describe('measureElementRect', () => {
       measureElementRect({ getBoundingClientRect: () => ({ width: 12.5, height: 7.5 }) })
     ).toEqual({ width: 12.5, height: 7.5 });
   });
+
+  test('优先 clientWidth/Height，忽略 transform 缩放后的 bounding rect', () => {
+    expect(
+      measureElementRect({
+        clientWidth: 2400,
+        clientHeight: 900,
+        getBoundingClientRect: () => ({ width: 2280, height: 855 }),
+      })
+    ).toEqual({ width: 2400, height: 900 });
+  });
 });
