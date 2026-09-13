@@ -230,3 +230,16 @@ describe('mergeNodes 的 lastSeenAt / address', () => {
     expect(rows[0].endpoints).toEqual([]);
   });
 });
+
+describe('mergeNodes 对 2.3.6 网关（无 lastSeenAt / peerAddress / endpoints）', () => {
+  test('旧 DTO 整行缺这些字段：lastSeenAt 为 null、地址为 —、reach 照常', () => {
+    const legacy = { ...meshNode('b'.repeat(32), 'legacy'), online: false } as unknown as MeshNode;
+    const rows = mergeNodes([meshNode(ENTRY, 'entry'), legacy], null, CONTEXT);
+    const row = rows.find((item) => item.id === legacy.id);
+    expect(row).toBeDefined();
+    expect(row?.lastSeenAt ?? null).toBeNull();
+    expect(row?.peerAddress ?? null).toBeNull();
+    expect(row?.endpoints ?? []).toEqual([]);
+    expect(row?.address ?? '—').toBe('—');
+  });
+});

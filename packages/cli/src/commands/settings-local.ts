@@ -42,6 +42,13 @@ export const tls: SubHandler = async (ctx, flags, positionals) => {
   throw new UsageError(`unknown tls action: ${action}`, 'use get|set|renew|ca');
 };
 
+// 删隧道 / 删 Access 应用 / 清凭据都不可逆，非 TTY 必须 --yes
+const DESTRUCTIVE_TUNNEL_ACTIONS: ReadonlySet<string> = new Set([
+  'remove',
+  'remove_access',
+  'clear_access_credentials',
+]);
+
 export const tunnel: SubHandler = async (ctx, flags, positionals) => {
   const action = requireArg(positionals, 0, 'status or an action name');
   if (action === 'status') {
@@ -61,6 +68,7 @@ export const tunnel: SubHandler = async (ctx, flags, positionals) => {
     await tunnelActionBody(action, flags, ctx)
   );
   if (body.trustProxy === true) await confirmOrYes(flags, LAN_SPOOF_CONFIRM);
+  if (DESTRUCTIVE_TUNNEL_ACTIONS.has(action)) await confirmOrYes(flags, `tunnel ${action}`);
   print(ctx, await jsonEntry(ctx, 'POST', '/api/tunnel/actions', body));
 };
 

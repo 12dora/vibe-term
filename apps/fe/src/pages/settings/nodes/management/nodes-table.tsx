@@ -19,7 +19,7 @@ import {
   SquareMinus,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { WideTableScroll, stickyActionColumn } from '../../components/wide-table';
@@ -144,6 +144,19 @@ function NameCell({
   );
 }
 
+const RELATIVE_TIME_TICK_MS = 60_000;
+
+/** 离线相对时间按分钟刷新；行没有其它状态更新时也要从「刚刚」走到「N 分钟前」。 */
+function useMinuteClock(enabled: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = setInterval(() => setNow(Date.now()), RELATIVE_TIME_TICK_MS);
+    return () => clearInterval(timer);
+  }, [enabled]);
+  return now;
+}
+
 function deriveNodeRow(row: NodeRow, t: Translate, now = Date.now()) {
   const relative = !row.online ? nodeRelativeTime(t, row.lastSeenAt, now) : null;
   return {
@@ -178,7 +191,8 @@ function NodeRowView({
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.hubOnline && deps.hubWritable;
   const disabledHint = writable ? undefined : rowBlockedHint(t, deps);
-  const view = deriveNodeRow(row, t);
+  const now = useMinuteClock(!row.online);
+  const view = deriveNodeRow(row, t, now);
   const selectable = !row.isSelf && !uninstalling;
   const switching = roleSwitch.switchingIds.has(row.id);
 
