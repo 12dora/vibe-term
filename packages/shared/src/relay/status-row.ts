@@ -19,6 +19,24 @@ export type RelayStatusTurnView = {
 
 export type RelayStatusRowKeyLog = { diverged: true };
 
+/** 最近一次主中继变更的原因；`manual` = 用户固定，`auto-*` = 自动优选，`startup` = 启动按 priority 挂上。 */
+export type RelaySwitchReason =
+  | 'manual'
+  | 'auto-rtt'
+  | 'auto-failover'
+  | 'pin-failback'
+  | 'enroll'
+  | 'startup';
+
+/** 自动优选（多中继时按上联 RTT 自动换主）的运行状态；旧节点不下发。 */
+export type RelayAutoSelectView = {
+  enabled: boolean;
+  lastSwitchAt: number | null;
+  switchReason: RelaySwitchReason | null;
+  /** 下次评估的时间点；关闭或无候选时为 `null`。 */
+  nextEvalAt: number | null;
+};
+
 /**
  * 中继列表里的一条链路（按 `priority` 升序即 failover 顺序）。
  * `GET /api/mesh/relay/status` 的 `relays[]` 元素；2.2.x 网关可能缺后加字段。
@@ -44,6 +62,12 @@ export type RelayStatusRow = {
   /** 踢出原因；`password_rotated` 表示令牌换代，等新的 `set-relays` 即可恢复。 */
   kickedReason?: string | null;
   keyLog?: RelayStatusRowKeyLog;
+  /** 该行是用户固定的主中继（`relay.preferredUrl` 等于本行 url）。 */
+  pinned?: boolean;
+  /** 当前主中继由自动优选提升（而非固定/启动顺序）。只在 `role === 'primary'` 上为 true。 */
+  autoSelected?: boolean;
+  /** 自动优选打分（越小越好，单位 ms）；样本不足或未连接为 `null`。 */
+  score?: number | null;
 };
 
 export type RelayKeyLogHealth = {
@@ -66,4 +90,7 @@ export type RelayStatusPayload = {
   metaKeyLagging: unknown;
   quota: RelayQuota | null;
   keyLog: RelayKeyLogHealth;
+  /** 用户固定的主中继 url；未固定为 `null`。旧节点不下发。 */
+  preferredUrl?: string | null;
+  autoSelect?: RelayAutoSelectView;
 };
