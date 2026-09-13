@@ -2,7 +2,7 @@
 // 已经统一到 `@vibeterm/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
 import { existsSync, rmSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import { coveredBytes } from '@vibeterm/transfer';
@@ -233,14 +233,26 @@ async function pinStagedTotal(
   total: number
 ): Promise<Extract<StagePackageResult, { ok: false }> | null> {
   const path = stagedTotalPath(partPath);
+  // wx 直接写目标文件时，并发的输家可能在赢家还没把内容写完时读到空文件，把 total=0
+  // 误判成 UPGRADE_TOTAL_MISMATCH。先写临时文件再 link(2) 抢占，读到的一定是完整 pin。
+  const tmp = `${path}.${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}.tmp`;
+  let created = false;
   try {
-    await writeFile(path, `${total}\n`, { flag: 'wx', mode: 0o600 });
-    return null;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
-      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    await writeFile(tmp, `${total}\n`, { mode: 0o600 });
+    try {
+      await link(tmp, path);
+      created = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+        return { ok: false, status: 500, code: 'STAGE_FAILED' };
+      }
     }
+  } catch {
+    return { ok: false, status: 500, code: 'STAGE_FAILED' };
+  } finally {
+    await rm(tmp, { force: true }).catch(() => {});
   }
+  if (created) return null;
   const pinned = await readPinnedStagedTotal(partPath);
   if (pinned === null) return { ok: false, status: 500, code: 'STAGE_FAILED' };
   if (pinned !== total) return { ok: false, status: 409, code: 'UPGRADE_TOTAL_MISMATCH' };

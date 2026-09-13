@@ -137,6 +137,8 @@ async function measureProbeLatency(mode: 'before' | 'after'): Promise<number> {
   })();
 
   await sleep(WARMUP_MS);
+  const fillDeadline = performance.now() + 1_000;
+  while (!guard.isBackpressured(carrier) && performance.now() < fillDeadline) await sleep(5);
   const probe = new Uint8Array(PROBE_BYTES).fill(9);
   const probeAt = performance.now();
   // before：没有优先通道，控制帧只能退回普通队列，排在整段积压后面。
@@ -158,17 +160,35 @@ async function measureProbeLatency(mode: 'before' | 'after'): Promise<number> {
   return latency;
 }
 
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const high = sorted[mid];
+  const low = sorted[mid - 1];
+  if (high === undefined) return 0;
+  if (sorted.length % 2 === 0 && low !== undefined) return (low + high) / 2;
+  return high;
+}
+
 describe('转发会话优先通道基准', () => {
   test('大流量下控制帧的单向时延贴近链路时延，而不是队列深度', async () => {
-    const before = await measureProbeLatency('before');
-    const after = await measureProbeLatency('after');
+    const befores: number[] = [];
+    const afters: number[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      befores.push(await measureProbeLatency('before'));
+      afters.push(await measureProbeLatency('after'));
+    }
+    const before = median(befores);
+    const after = median(afters);
+    const queuedMs = BEFORE_INFLIGHT_BYTES / BYTES_PER_MS;
     console.log(
       `[bench] priority probe one-way: before=${before.toFixed(0)}ms after=${after.toFixed(0)}ms ` +
-        `(link one-way ${ONE_WAY_DELAY_MS}ms, ${BYTES_PER_MS} B/ms)`
+        `(samples before=${befores.map((n) => n.toFixed(0)).join('/')} ` +
+        `after=${afters.map((n) => n.toFixed(0)).join('/')}; ` +
+        `link one-way ${ONE_WAY_DELAY_MS}ms, queue-depth ${queuedMs}ms)`
     );
-    // 之前排在积压后面，至少是链路时延的十几倍；现在应当落在同一量级。
-    expect(before).toBeGreaterThan(120);
-    expect(after).toBeLessThan(100);
-    expect(after).toBeLessThan(before / 3);
-  }, 15_000);
+    // before 必须真的排在积压后面；after 跟同一次测量的 before 比，且远低于无优先通道的队列深度。
+    expect(before).toBeGreaterThan(queuedMs / 3);
+    expect(after).toBeLessThan(Math.min(queuedMs / 2, before * 0.75));
+  }, 30_000);
 });

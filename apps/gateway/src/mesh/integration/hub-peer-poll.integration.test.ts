@@ -36,36 +36,14 @@ describe('hub peer status poll (in-process)', () => {
   });
 
   test('A polls promoted B and fences itself; node.list names B as writer', async () => {
-    const topo = await bootAbcdTopology();
-    fixtures.push(topo);
-    const { a, b, c } = topo;
-    if (!a.mesh.hub) throw new Error('missing hub A');
-
-    const bPromoted = new HubRuntime({
-      db: b.db,
-      userStore: b.userStore,
-      keyLogSource: stubKeyLog,
-      meshHubs: meshHubsOf(b.db),
-      config: {
-        publicUrl: HUB_B_URL,
-        stun: [],
-        nodeId: b.mesh.nodeId,
-        hubNodeId: b.mesh.nodeId,
-        mode: 'active',
-        priority: 100,
-        writerEpoch: 2,
-        authorizedHubIds: [a.mesh.nodeId],
-      },
-      authenticate: () => null,
-    });
-    fixtures.push({ stop: () => bPromoted.stop() });
-    expect(bPromoted.mode()).toBe('active');
-    expect(bPromoted.writerEpoch()).toBe(2);
-
+    // A 的 peer poller 走 globalThis.fetch（2s 后自动开探）。必须在 boot 前就把
+    // hub-b.test 拦下来，否则负载下拓扑起来超过 2s 时，未打桩的 fetch 会卡满 5s 超时。
+    let bPromoted: HubRuntime | null = null;
     const origFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith(`${HUB_B_URL}/api/hub/status`)) {
+        if (!bPromoted) return new Response('not-promoted', { status: 503 });
         const res = await bPromoted.handleRequest(new Request(url, init), dummyServer);
         if (!res) throw new Error(`unhandled ${url}`);
         return res;
@@ -74,9 +52,38 @@ describe('hub peer status poll (in-process)', () => {
     }) as typeof fetch;
 
     try {
+      const topo = await bootAbcdTopology();
+      fixtures.push(topo);
+      const { a, b, c } = topo;
+      if (!a.mesh.hub) throw new Error('missing hub A');
+
+      bPromoted = new HubRuntime({
+        db: b.db,
+        userStore: b.userStore,
+        keyLogSource: stubKeyLog,
+        meshHubs: meshHubsOf(b.db),
+        config: {
+          publicUrl: HUB_B_URL,
+          stun: [],
+          nodeId: b.mesh.nodeId,
+          hubNodeId: b.mesh.nodeId,
+          mode: 'active',
+          priority: 100,
+          writerEpoch: 2,
+          authorizedHubIds: [a.mesh.nodeId],
+        },
+        authenticate: () => null,
+      });
+      fixtures.push({ stop: () => bPromoted?.stop() ?? Promise.resolve() });
+      expect(bPromoted.mode()).toBe('active');
+      expect(bPromoted.writerEpoch()).toBe(2);
+
       expect(a.mesh.hub.mode()).toBe('active');
-      await a.mesh.hub.pollPeersNow();
-      expect(a.mesh.hub.mode()).toBe('standby');
+      const fenceDeadline = Date.now() + 8_000;
+      while (a.mesh.hub.mode() !== 'standby') {
+        if (Date.now() > fenceDeadline) throw new Error('A did not fence itself');
+        await a.mesh.hub.pollPeersNow();
+      }
       await waitUntil(() => c.mesh.lastNodeList?.writerHubId === b.mesh.nodeId, 8_000);
       expect(c.mesh.lastNodeList?.writerEpoch).toBe(2);
       expect(meshHubsOf(a.db).get(b.mesh.nodeId)?.mode).toBe('active');
@@ -84,5 +91,5 @@ describe('hub peer status poll (in-process)', () => {
     } finally {
       globalThis.fetch = origFetch;
     }
-  });
+  }, 30_000);
 });
