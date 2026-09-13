@@ -12,6 +12,7 @@ import type {
   RelayAutoSelectView,
   RelayLinkStatus,
 } from '@vibeterm/api-client/relay/tenant-api';
+import type { RelaySwitchReason } from '@vibeterm/shared/relay';
 
 /**
  * `turn:relay.example.com:3478?transport=udp` → `relay.example.com:3478`。
@@ -106,34 +107,65 @@ export interface RelayAutoSelectState {
   /** `pinned` 给出「取消固定」，`auto` 只是一句陈述，`none` 整行不出。 */
   kind: 'pinned' | 'auto' | 'none';
   hintKey: string | null;
-  /** 自动优选上次换主的时刻；未换过或已固定时为 `null`。 */
+  /** 取消固定成功后的提示语 key；`pinned` 之外为 `null`。 */
+  unpinDoneKey: string | null;
+  /** 自动优选上次换主的时刻；未自动换过或已固定时为 `null`。 */
   lastSwitchAt: number | null;
 }
 
-const AUTO_SELECT_NONE: RelayAutoSelectState = { kind: 'none', hintKey: null, lastSwitchAt: null };
+const AUTO_SELECT_NONE: RelayAutoSelectState = Object.freeze({
+  kind: 'none',
+  hintKey: null,
+  unpinDoneKey: null,
+  lastSwitchAt: null,
+});
+
+/**
+ * 网关 `isAutoSwitchReason` 的 FE 版。网关的 `noteAttached` 在任何一次 attach（含 `startup`）
+ * 都会写 `lastSwitchAt`，只看这个字段会让「刚重启」读成「刚自动换过主」。
+ */
+function isAutoSwitchReason(reason: RelaySwitchReason | null): boolean {
+  return reason === 'auto-rtt' || reason === 'auto-failover';
+}
+
+/** 固定态的两句文案：自动优选本来就没开时不能说「暂停 / 恢复」——它压根不会恢复。 */
+function pinnedState(autoEnabled: boolean): RelayAutoSelectState {
+  if (!autoEnabled) {
+    return {
+      kind: 'pinned',
+      hintKey: 'relay.tenant.autoSelect.pinnedHintAutoOff',
+      unpinDoneKey: 'relay.tenant.autoSelect.unpinDoneAutoOff',
+      lastSwitchAt: null,
+    };
+  }
+  return {
+    kind: 'pinned',
+    hintKey: 'relay.tenant.autoSelect.pinnedHint',
+    unpinDoneKey: 'relay.tenant.autoSelect.unpinDone',
+    lastSwitchAt: null,
+  };
+}
 
 /**
  * 卡片上那一行「固定 / 自动优选」的状态。
  *
  * 固定优先：`preferredUrl` 一旦有值，自动优选就是冻结的，界面必须先说清这件事，
- * 否则用户会以为「自动优选已开启」还在起作用。旧网关两个字段都缺，整行不出。
+ * 否则用户会以为「自动优选已开启」还在起作用。两者都没有时整行不出。
  */
 export function relayAutoSelectState(view: {
-  preferredUrl?: string | null;
-  autoSelect?: RelayAutoSelectView;
+  preferredUrl: string | null;
+  autoSelect: RelayAutoSelectView;
 }): RelayAutoSelectState {
-  if (typeof view.preferredUrl === 'string' && view.preferredUrl.length > 0) {
-    return { kind: 'pinned', hintKey: 'relay.tenant.autoSelect.pinnedHint', lastSwitchAt: null };
-  }
-  if (view.autoSelect?.enabled !== true) return AUTO_SELECT_NONE;
+  const autoEnabled = view.autoSelect.enabled === true;
+  if (view.preferredUrl !== null && view.preferredUrl.length > 0) return pinnedState(autoEnabled);
+  if (!autoEnabled) return AUTO_SELECT_NONE;
   return {
     kind: 'auto',
     hintKey: 'relay.tenant.autoSelect.on',
-    lastSwitchAt:
-      typeof view.autoSelect.lastSwitchAt === 'number' &&
-      Number.isFinite(view.autoSelect.lastSwitchAt)
-        ? view.autoSelect.lastSwitchAt
-        : null,
+    unpinDoneKey: null,
+    lastSwitchAt: isAutoSwitchReason(view.autoSelect.switchReason)
+      ? view.autoSelect.lastSwitchAt
+      : null,
   };
 }
 

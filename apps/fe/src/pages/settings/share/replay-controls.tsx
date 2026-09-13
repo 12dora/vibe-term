@@ -87,11 +87,13 @@ function ReplayGridBadge({ player }: { player: ReplayPlayer }) {
   if (!grid) return null;
   const label = t('settings.share.replay.recordedSize');
   return (
+    // aria-label 只对支持命名的 role 生效，裸 span（role=generic）上读屏只会念「52×43」。
     <span
       className="rounded-md border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground tabular-nums"
       data-testid="share-replay-grid"
       title={label}
-      aria-label={label}
+      role="img"
+      aria-label={`${label} ${grid.cols}×${grid.rows}`}
     >
       {grid.cols}×{grid.rows}
     </span>

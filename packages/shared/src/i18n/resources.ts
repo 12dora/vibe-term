@@ -3409,8 +3409,10 @@ export const I18N_RESOURCES = {
           "on": "Auto-selection on",
           "lastSwitch": "Last switch {{time}}",
           "pinnedHint": "Primary relay is pinned; auto-selection paused",
+          "pinnedHintAutoOff": "Primary relay is pinned",
           "unpin": "Unpin",
-          "unpinDone": "Unpinned; auto-selection resumed."
+          "unpinDone": "Unpinned; auto-selection resumed.",
+          "unpinDoneAutoOff": "Unpinned."
         },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
@@ -7185,8 +7187,10 @@ export const I18N_RESOURCES = {
           "on": "自动优选已开启",
           "lastSwitch": "上次切换 {{time}}",
           "pinnedHint": "已固定主中继，自动优选暂停",
+          "pinnedHintAutoOff": "已固定主中继",
           "unpin": "取消固定",
-          "unpinDone": "已取消固定，自动优选恢复。"
+          "unpinDone": "已取消固定，自动优选恢复。",
+          "unpinDoneAutoOff": "已取消固定。"
         },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
@@ -10961,8 +10965,10 @@ export const I18N_RESOURCES = {
           "on": "自動選択が有効",
           "lastSwitch": "前回の切り替え {{time}}",
           "pinnedHint": "主中継を固定しているため、自動選択は一時停止中です",
+          "pinnedHintAutoOff": "主中継を固定しています",
           "unpin": "固定を解除",
-          "unpinDone": "固定を解除しました。自動選択を再開します。"
+          "unpinDone": "固定を解除しました。自動選択を再開します。",
+          "unpinDoneAutoOff": "固定を解除しました。"
         },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
         "reauth": {

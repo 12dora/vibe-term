@@ -3403,8 +3403,10 @@
           "on": "Auto-selection on",
           "lastSwitch": "Last switch {{time}}",
           "pinnedHint": "Primary relay is pinned; auto-selection paused",
+          "pinnedHintAutoOff": "Primary relay is pinned",
           "unpin": "Unpin",
-          "unpinDone": "Unpinned; auto-selection resumed."
+          "unpinDone": "Unpinned; auto-selection resumed.",
+          "unpinDoneAutoOff": "Unpinned."
         },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {

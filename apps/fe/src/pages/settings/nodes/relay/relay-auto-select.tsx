@@ -18,9 +18,9 @@ import { relayAutoSelectState } from './relay-row-model';
 import { relayErrorText } from './use-relay-actions';
 
 export interface RelayAutoSelectLineProps {
-  /** 用户固定的主中继地址；未固定为 `null`。 */
-  preferredUrl?: string | null;
-  autoSelect?: RelayAutoSelectView;
+  /** 用户固定的主中继地址；未固定为 `null`（读侧已归一，不会是 `undefined`）。 */
+  preferredUrl: string | null;
+  autoSelect: RelayAutoSelectView;
   /** 只有多条同时挂载时这行才有意义：一条中继没什么可优选、也没什么可固定的。 */
   multiAttach: boolean;
   /** 测试注入。 */
@@ -42,7 +42,7 @@ export function RelayAutoSelectLine({
     setBusy(true);
     try {
       await unpinMeshRelay(relayApi);
-      toast.success(t('relay.tenant.autoSelect.unpinDone'));
+      toast.success(t(state.unpinDoneKey ?? 'relay.tenant.autoSelect.unpinDone'));
     } catch (err) {
       toast.error(relayErrorText(t, relayErrorCode(err) ?? 'RELAY_UNPIN_FAILED'));
     } finally {

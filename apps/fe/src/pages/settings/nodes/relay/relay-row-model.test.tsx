@@ -116,6 +116,13 @@ describe('固定与自动优选', () => {
     expect(relayScoreHint(row())).toBeNull();
   });
 
+  const AUTO_OFF = {
+    enabled: false,
+    lastSwitchAt: null,
+    switchReason: null,
+    nextEvalAt: null,
+  } as const;
+
   test('卡片那一行：固定优先、其次自动优选、都没有就整行不出', () => {
     expect(
       relayAutoSelectState({
@@ -125,6 +132,7 @@ describe('固定与自动优选', () => {
     ).toEqual({
       kind: 'pinned',
       hintKey: 'relay.tenant.autoSelect.pinnedHint',
+      unpinDoneKey: 'relay.tenant.autoSelect.unpinDone',
       lastSwitchAt: null,
     });
     expect(
@@ -132,21 +140,44 @@ describe('固定与自动优选', () => {
         preferredUrl: null,
         autoSelect: { enabled: true, lastSwitchAt: 5, switchReason: 'auto-rtt', nextEvalAt: 9 },
       })
-    ).toEqual({ kind: 'auto', hintKey: 'relay.tenant.autoSelect.on', lastSwitchAt: 5 });
-    expect(
-      relayAutoSelectState({
-        autoSelect: { enabled: false, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
-      })
-    ).toEqual({ kind: 'none', hintKey: null, lastSwitchAt: null });
-    expect(relayAutoSelectState({})).toMatchObject({ kind: 'none' });
+    ).toEqual({
+      kind: 'auto',
+      hintKey: 'relay.tenant.autoSelect.on',
+      unpinDoneKey: null,
+      lastSwitchAt: 5,
+    });
+    expect(relayAutoSelectState({ preferredUrl: null, autoSelect: AUTO_OFF })).toEqual({
+      kind: 'none',
+      hintKey: null,
+      unpinDoneKey: null,
+      lastSwitchAt: null,
+    });
   });
 
-  test('从未自动换过主时不给「上次切换」', () => {
+  // 自动优选被配置关掉时网关仍会下发 preferredUrl：说「暂停 / 恢复」是反的，它压根没开过。
+  test('自动优选没开时固定态另说一句，取消固定的提示也另一条', () => {
     expect(
+      relayAutoSelectState({ preferredUrl: 'https://sh.example', autoSelect: AUTO_OFF })
+    ).toEqual({
+      kind: 'pinned',
+      hintKey: 'relay.tenant.autoSelect.pinnedHintAutoOff',
+      unpinDoneKey: 'relay.tenant.autoSelect.unpinDoneAutoOff',
+      lastSwitchAt: null,
+    });
+  });
+
+  // 网关的 noteAttached 在任何一次 attach（含 startup）都会写 lastSwitchAt。
+  test('只有自动换主（auto-rtt / auto-failover）才算「上次切换」', () => {
+    const at = (switchReason: 'startup' | 'manual' | 'auto-rtt' | 'auto-failover' | null) =>
       relayAutoSelectState({
-        autoSelect: { enabled: true, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
-      }).lastSwitchAt
-    ).toBeNull();
+        preferredUrl: null,
+        autoSelect: { enabled: true, lastSwitchAt: 5, switchReason, nextEvalAt: null },
+      }).lastSwitchAt;
+    expect(at('auto-rtt')).toBe(5);
+    expect(at('auto-failover')).toBe(5);
+    expect(at('startup')).toBeNull();
+    expect(at('manual')).toBeNull();
+    expect(at(null)).toBeNull();
   });
 });
 

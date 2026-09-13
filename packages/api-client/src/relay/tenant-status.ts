@@ -9,7 +9,7 @@ import type {
   RelaySwitchReason,
 } from '@vibeterm/shared/relay';
 import { normalizeMetaKeyLagging } from './meta-key-lagging';
-import type { RelayLinkStatus, RelayTenantStatus } from './tenant-api';
+import type { RelayLinkStatus, RelayTenantStatus, RelayTenantStatusWire } from './tenant-api';
 import { normalizeRelayTurn } from './tenant-turn';
 
 const SWITCH_REASONS: readonly RelaySwitchReason[] = [
@@ -21,12 +21,22 @@ const SWITCH_REASONS: readonly RelaySwitchReason[] = [
   'startup',
 ];
 
-const AUTO_SELECT_OFF: RelayAutoSelectView = {
+/** 共享空值一律冻结：这些常量会被原样返回给多个调用方，谁就地改一下所有人都跟着变。 */
+const AUTO_SELECT_OFF: RelayAutoSelectView = Object.freeze({
   enabled: false,
   lastSwitchAt: null,
   switchReason: null,
   nextEvalAt: null,
-};
+});
+
+const EMPTY_KEY_LOG: RelayKeyLogHealth = Object.freeze({
+  skipped: 0,
+  blockedSeq: null,
+  caughtUp: false,
+});
+
+/** `never[]` 才能同时当空的 `relays` 与 `metaKeyLagging` 用。 */
+const EMPTY_LIST = Object.freeze([]) as never[];
 
 function finiteOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -91,7 +101,7 @@ function normalizeRelayRow(row: RelayLinkStatus): RelayLinkStatus {
 }
 
 /** 密钥日志同步健康度；旧节点整块不下发。 */
-function normalizeKeyLog(keyLog: RelayTenantStatus['keyLog']): RelayKeyLogHealth {
+function normalizeKeyLog(keyLog: RelayTenantStatusWire['keyLog']): RelayKeyLogHealth {
   if (!keyLog) return { skipped: 0, blockedSeq: null, caughtUp: false };
   return {
     skipped: keyLog.skipped ?? 0,
@@ -101,7 +111,9 @@ function normalizeKeyLog(keyLog: RelayTenantStatus['keyLog']): RelayKeyLogHealth
 }
 
 /** 配额：旧中继不下发实时用量。 */
-function normalizeQuota(quota: RelayTenantStatus['quota'] | undefined): RelayTenantStatus['quota'] {
+function normalizeQuota(
+  quota: RelayTenantStatusWire['quota'] | undefined
+): RelayTenantStatusWire['quota'] {
   return quota ? { ...quota, usage: quota.usage ?? null } : null;
 }
 
@@ -109,26 +121,26 @@ function pinnedUrl(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-const EMPTY_STATUS: RelayTenantStatus = {
+const EMPTY_STATUS: RelayTenantStatus = Object.freeze({
   quota: null,
   mode: 'none',
   tenantId: null,
-  relays: [],
+  relays: EMPTY_LIST,
   metaEpoch: 0,
   nodesViaRelay: 0,
   multiAttach: false,
   reauthRequired: false,
   awaitingToken: false,
-  keyLog: { skipped: 0, blockedSeq: null, caughtUp: false },
+  keyLog: EMPTY_KEY_LOG,
   readmitPending: 0,
-  metaKeyLagging: [],
+  metaKeyLagging: EMPTY_LIST,
   preferredUrl: null,
   autoSelect: AUTO_SELECT_OFF,
-};
+});
 
 /** 缺字段一律补默认值：旧节点没有这条路由，`mode` 之外的字段也可能是后加的。 */
 export function normalizeRelayStatus(
-  payload: Partial<RelayTenantStatus> | null
+  payload: Partial<RelayTenantStatusWire> | null
 ): RelayTenantStatus {
   if (!payload) return EMPTY_STATUS;
   return {

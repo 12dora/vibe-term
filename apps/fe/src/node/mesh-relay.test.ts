@@ -34,6 +34,8 @@ function status(overrides: Partial<RelayTenantStatus> = {}): RelayTenantStatus {
     readmitPending: 0,
     metaKeyLagging: [],
     quota: null,
+    preferredUrl: null,
+    autoSelect: { enabled: false, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
     ...overrides,
   };
 }

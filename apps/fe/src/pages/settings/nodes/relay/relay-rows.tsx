@@ -278,6 +278,8 @@ function RelayScore({ hint, host }: { hint: RelayScoreHint; host: string }) {
       data-testid={`nodes-relay-score-${host}`}
     >
       {t(hint.key, hint.params)}
+      {/* title 触屏与读屏都拿不到：「越小越好」再给一份 sr-only 文本。 */}
+      <span className="sr-only">{` ${t(hint.titleKey)}`}</span>
     </span>
   );
 }

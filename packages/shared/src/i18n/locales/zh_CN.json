@@ -3395,8 +3395,10 @@
           "on": "自动优选已开启",
           "lastSwitch": "上次切换 {{time}}",
           "pinnedHint": "已固定主中继，自动优选暂停",
+          "pinnedHintAutoOff": "已固定主中继",
           "unpin": "取消固定",
-          "unpinDone": "已取消固定，自动优选恢复。"
+          "unpinDone": "已取消固定，自动优选恢复。",
+          "unpinDoneAutoOff": "已取消固定。"
         },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {

@@ -1,7 +1,9 @@
 // 把上级控制器接到「连接」菜单上：状态取自 `LocalUplinkController`，动作全部复用它的对话框。
 
 import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { RELAY_RECORD_MAX_RELAYS } from '@vibeterm/shared/auth';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { type ConnectMenuItem, connectMenuItems } from './connect-menu';
 import type { LocalUplinkController } from './local-uplink-controller';
 
@@ -32,6 +34,8 @@ export function useConnectMenu(options: UseConnectMenuOptions): ConnectMenuItem[
       changeHub: onChangeHub,
       migrateToRelay: () => relayActions.openEnroll('migrate'),
       addRelay: () => relayActions.openEnroll('add'),
+      notifyRelayLimit: () =>
+        toast.error(t('relay.tenant.actions.addMax', { n: RELAY_RECORD_MAX_RELAYS })),
       reauthRelay: (url) => relayActions.openEnroll('reauth', url),
       removeRelay: (url) => relayActions.requestConfirm('remove', url),
       leaveRelay: () => relayActions.requestConfirm('leave'),
