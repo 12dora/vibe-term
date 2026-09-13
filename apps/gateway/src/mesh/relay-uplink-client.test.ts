@@ -34,6 +34,7 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
+import type { RelaySecrets } from './relay-secrets';
 import { RelayUplinkClient } from './relay-uplink-client';
 import { relayUplinkWsUrl } from './relay-uplink-http';
 import { bindRelayReconcile, createRelayWiring, relayUplinkOverrides } from './relay-wiring';
@@ -812,7 +813,50 @@ describe('RelayUplinkClient', () => {
       usage,
     });
   });
+
+  test('waitUntilClosed 在调用时 signal 已 abort 立即结束', async () => {
+    const client = hungClosedClient();
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const abort = new AbortController();
+    abort.abort();
+    const started = Date.now();
+    await client.waitUntilClosed(abort.signal);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  test('waitUntilClosed 在 closed 永不 settle 时随 offline 结束', async () => {
+    const client = hungClosedClient();
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const idle = new AbortController();
+    const closed = client.waitUntilClosed(idle.signal);
+    const timeout = new Promise<void>((_resolve, reject) => {
+      setTimeout(() => reject(new Error('waitUntilClosed hung')), 500);
+    });
+    await client.stop();
+    await Promise.race([closed, timeout]);
+  });
 });
+
+function hungClosedClient(): RelayUplinkClient {
+  const client = new RelayUplinkClient({
+    hubUrl: RELAY_URL,
+    identity: { nodeId: 'ab'.repeat(16), edSecretKey: new Uint8Array(64) },
+    userId: () => 'user-1',
+    keyLogApplier: noopApplier(0n),
+    userStore: {} as UserStore,
+    secrets: {
+      logKey: () => new Uint8Array(32),
+      store: { markKicked() {} },
+    } as unknown as RelaySecrets,
+    statusProvider: status,
+  });
+  client.link = {
+    closed: new Promise(() => {}),
+    close() {},
+  } as never;
+  client.state = 'online';
+  return client;
+}
 
 describe('relayUplinkWsUrl', () => {
   test('把 https/http 换成 wss/ws 并落到 /relay/uplink', () => {

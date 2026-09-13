@@ -90,11 +90,37 @@ class FakeSecondary implements SecondaryUplink {
     this.releaseClosed();
   }
 
+  connectGate: Promise<void> | null = null;
+
   async attemptConnect(signal?: AbortSignal): Promise<void> {
     this.connects += 1;
     if (signal?.aborted) throw new Error('aborted');
+    if (this.connectGate) {
+      const gate = this.connectGate;
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () =>
+          reject(signal?.reason instanceof Error ? signal.reason : new Error('aborted'));
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
+        void gate.then(
+          () => {
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+          },
+          (err) => {
+            signal?.removeEventListener('abort', onAbort);
+            reject(err instanceof Error ? err : new Error('aborted'));
+          }
+        );
+      });
+      if (signal?.aborted) throw new Error('aborted');
+    }
     if (this.failNext) {
       this.failNext = false;
+      this.lastConnectError = { reason: 'connect-failed', at: 1 };
       this.setState('offline');
       throw new Error('connect-failed');
     }
@@ -175,7 +201,11 @@ function row(
 function setup(
   rows: RelaySecondaryRow[],
   primary: string | null,
-  extra?: { onRelayStream?: InboundRelayHandler }
+  extra?: {
+    onRelayStream?: InboundRelayHandler;
+    onSpawn?: (client: FakeSecondary, spawned: FakeSecondary[]) => void;
+    primaryUrl?: (livePrimary: string | null) => string | null;
+  }
 ) {
   const scheduler = new ParkScheduler();
   const presence = new RelayPresence();
@@ -185,9 +215,10 @@ function setup(
   const primaryOpens: string[] = [];
   const manager = new RelaySecondaryAttach({
     rows: () => liveRows.current,
-    primaryUrl: () => livePrimary.current,
+    primaryUrl: () => extra?.primaryUrl?.(livePrimary.current) ?? livePrimary.current,
     spawn: (url) => {
       const client = new FakeSecondary(url);
+      extra?.onSpawn?.(client, spawned);
       spawned.push(client);
       return client;
     },
@@ -361,5 +392,149 @@ describe('RelaySecondaryAttach', () => {
     expect(spawned.filter((c) => c.hubUrl === TK)).toHaveLength(2);
     expect(spawned.filter((c) => c.hubUrl === SG)).toHaveLength(1);
     await manager.stop();
+  });
+
+  test('故障转移后原 primary 在退避内重挂为 secondary（事故）', async () => {
+    const { manager, spawned, livePrimary, scheduler } = setup([row(SH, 0), row(TK, 1)], SH, {
+      onSpawn: (client, already) => {
+        if (client.hubUrl === SH && already.every((row) => row.hubUrl !== SH)) {
+          client.failNext = true;
+        }
+      },
+    });
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+
+    livePrimary.current = TK;
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.hubUrl === SH));
+    await waitUntil(() => scheduler.sleeps.length > 0);
+
+    // 池 wrap 短暂把 SH 当成 primary：runLoop 看到 stillWanted=false 后退出，且不经过 drop()。
+    // 必须在 primary 仍是 SH 时让出事件循环，否则 loop 还没检查 stillWanted 就被拨回 TK。
+    livePrimary.current = SH;
+    scheduler.flushSleeps();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(spawned.filter((c) => c.hubUrl === SH)).toHaveLength(1);
+
+    livePrimary.current = TK;
+    await manager.reconcile();
+    await waitUntil(() => spawned.filter((c) => c.hubUrl === SH).length >= 2);
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    expect(manager.client(TK)).toBeNull();
+    expect(spawned.filter((c) => c.hubUrl === SH).length).toBeGreaterThanOrEqual(2);
+    await manager.stop();
+  });
+
+  test('primaryUrl 为空时拆掉全部 secondary（attached-only）', async () => {
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH);
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    livePrimary.current = null;
+    await manager.reconcile();
+    await waitUntil(() => manager.client(TK) == null);
+    expect(spawned.filter((c) => c.hubUrl === TK).every((c) => c.stopped > 0)).toBe(true);
+    await manager.stop();
+  });
+
+  test('primaryUrl 回退到 presence 时会留下 secondary（旧接线）', async () => {
+    const presenceUrl = { current: SH as string | null };
+    const { manager, spawned, livePrimary, presence } = setup([row(SH, 0), row(TK, 1)], SH, {
+      primaryUrl: (live) => live ?? presenceUrl.current,
+    });
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    presence.setPrimary(SH);
+    presenceUrl.current = presence.primaryUrl();
+    livePrimary.current = null;
+    await manager.reconcile();
+    expect(manager.client(TK)?.state).toBe('online');
+    await manager.stop();
+  });
+
+  test('runLoop 自然退出后会清掉 zombie slot 并再挂', async () => {
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], TK);
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    const first = spawned.find((c) => c.hubUrl === SH);
+    expect(first).toBeTruthy();
+    livePrimary.current = SH;
+    first!.disconnect();
+    await waitUntil(() => first!.stopped > 0);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    livePrimary.current = TK;
+    await manager.reconcile();
+    await waitUntil(() => spawned.filter((c) => c.hubUrl === SH).length >= 2);
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    await manager.stop();
+  });
+
+  test('attemptConnect 进行中 primary 抖动不会留下死 slot', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH, {
+      onSpawn: (client) => {
+        if (client.hubUrl === SH) client.connectGate = gate;
+      },
+    });
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    livePrimary.current = TK;
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.hubUrl === SH && c.connects >= 1));
+    livePrimary.current = SH;
+    await manager.reconcile();
+    await waitUntil(() => manager.client(SH) == null);
+    livePrimary.current = TK;
+    await manager.reconcile();
+    release();
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    await manager.stop();
+  });
+
+  test('secondary 连接失败打节流日志，成功打 online', async () => {
+    const lines: string[] = [];
+    const warn = console.warn;
+    const info = console.info;
+    console.warn = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const { manager, scheduler } = setup([row(SH, 0), row(TK, 1)], SH, {
+        onSpawn: (client, already) => {
+          if (client.hubUrl === TK && already.every((row) => row.hubUrl !== TK)) {
+            client.failNext = true;
+          }
+        },
+      });
+      manager.start();
+      await manager.reconcile();
+      await waitUntil(() => scheduler.sleeps.length > 0);
+      expect(
+        lines.some((row) => row.includes('[uplink] secondary connect failed hub=tk.example'))
+      ).toBe(true);
+      expect(
+        lines.some((row) => /attempt=1 reason=connect-failed next_retry_ms=\d+/.test(row))
+      ).toBe(true);
+      scheduler.flushSleeps();
+      await waitUntil(() => manager.client(TK)?.state === 'online');
+      expect(lines.some((row) => row.includes('[uplink] secondary online hub=tk.example'))).toBe(
+        true
+      );
+      await manager.stop();
+    } finally {
+      console.warn = warn;
+      console.info = info;
+    }
   });
 });

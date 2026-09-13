@@ -185,7 +185,7 @@ function openSecondaryAttach(
         kicked: row.kicked,
         credentialKey: input.wiring.secrets.credentialKeyFor?.(row.url) ?? '',
       })),
-    primaryUrl: () => input.uplink.attachedHub()?.publicUrl ?? presence.primaryUrl(),
+    primaryUrl: () => input.uplink.attachedHub()?.publicUrl ?? null,
     spawn: (url) =>
       input.spawn({
         ...input.baseClient,
@@ -301,6 +301,7 @@ function bindPrimaryLifecycle(input: {
       input.presence.markDisconnected(url, input.scheduler.now(), input.staleMs);
       input.scheduleDecay(url);
     }
+    input.presence.setPrimary(null);
     void input.opener.reconcile();
   });
 }

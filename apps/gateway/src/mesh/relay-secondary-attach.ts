@@ -1,12 +1,18 @@
+import { hubHostFromUrl } from '@vibeterm/shared/auth';
 import type { LinkStream } from '@vibeterm/shared/link';
 import type { RelayQuota, RelayRtcConfig } from '@vibeterm/shared/relay';
 import { backoffDelayMs } from './ctl';
+import { stamp } from './mesh-log';
 import { RELAY_PRESENCE_STALE_MS, type RelayPresence } from './relay-presence';
 import type { RelayStreamOpener } from './relay-presence-types';
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
-import { UPLINK_BACKOFF_MAX_MS, UPLINK_BACKOFF_MIN_MS } from './uplink-client';
+import {
+  UPLINK_BACKOFF_MAX_MS,
+  UPLINK_BACKOFF_MIN_MS,
+  UPLINK_CONNECT_LOG_INTERVAL_MS,
+} from './uplink-client';
 import { isUplinkPathRerace } from './uplink-path-sampler';
-import { normalizeHubEndpointUrl, sameHubUrl } from './uplink-pool-url';
+import { normalizeHubEndpointUrl, redactUrl, sameHubUrl } from './uplink-pool-url';
 import type { UplinkCtlMessage } from './uplink-protocol';
 
 export type SecondaryUplink = {
@@ -66,6 +72,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   private readonly opts: RelaySecondaryAttachOptions;
   private readonly slots = new Map<string, Slot>();
   private readonly decays = new Map<string, { clear: () => void }>();
+  private readonly failLogAt = new Map<string, number>();
   private running = false;
   private chain: Promise<void> = Promise.resolve();
 
@@ -193,54 +200,107 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   }
 
   private async runLoop(slot: Slot): Promise<void> {
-    while (this.running && !slot.abort.signal.aborted && this.stillWanted(slot.url)) {
-      let client: SecondaryUplink;
-      try {
-        client = this.opts.spawn(slot.url);
-      } catch {
-        const delay = backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
-        slot.attempt += 1;
-        try {
-          await this.opts.scheduler.sleep(delay, slot.abort.signal);
-        } catch {
-          break;
-        }
-        continue;
+    try {
+      while (this.running && !slot.abort.signal.aborted && this.stillWanted(slot.url)) {
+        if (await this.runSlotAttempt(slot)) break;
       }
-      slot.client = client;
-      if (this.opts.onRelayStream) {
-        const inner = this.opts.onRelayStream;
-        client.setOnRelayStream((stream, from, viaRelay) =>
-          inner(stream, from, viaRelay ?? slot.url)
-        );
-      }
-      const unsub = client.onStateChange((state) => this.onClientState(slot, client, state));
-      let closeReason = '';
-      try {
-        client.start();
-        await client.attemptConnect(slot.abort.signal);
-        if (slot.abort.signal.aborted) break;
-        slot.attempt = 0;
-        this.clearDecay(slot.url);
-        this.opts.presence.setConnected(slot.url, true, client.rttMs, this.opts.scheduler.now());
-        await client.waitUntilClosed(slot.abort.signal);
-      } catch {
-        /* 连接失败或 aborted：下面统一拆掉再退避 */
-      } finally {
-        unsub();
-        closeReason = client.lastConnectError?.reason ?? '';
-        const now = this.opts.scheduler.now();
-        this.opts.presence.markDisconnected(slot.url, now, this.staleMs());
-        slot.client = null;
-        try {
-          await client.stop();
-        } catch {
-          /* 停失败不影响下一轮 */
-        }
-      }
-      if (!this.running || slot.abort.signal.aborted || !this.stillWanted(slot.url)) break;
-      if (await this.sleepBeforeRetry(slot, closeReason)) break;
+    } finally {
+      this.releaseSlot(slot);
     }
+  }
+
+  /** slots 里只保留还活着的 loop；自然退出也要走 drop 同款删除，否则 reconcile 不会再 spawn。 */
+  private releaseSlot(slot: Slot): void {
+    if (this.slots.get(slot.url) !== slot) return;
+    this.clearDecay(slot.url);
+    this.slots.delete(slot.url);
+    if (this.running) void this.queueReconcile();
+  }
+
+  private async runSlotAttempt(slot: Slot): Promise<boolean> {
+    let client: SecondaryUplink;
+    try {
+      client = this.opts.spawn(slot.url);
+    } catch {
+      return this.sleepAfterFail(slot);
+    }
+    slot.client = client;
+    this.bindRelayStream(slot, client);
+    const unsub = client.onStateChange((state) => this.onClientState(slot, client, state));
+    let closeReason = '';
+    try {
+      client.start();
+      await client.attemptConnect(slot.abort.signal);
+      if (slot.abort.signal.aborted) return true;
+      slot.attempt = 0;
+      this.clearDecay(slot.url);
+      this.opts.presence.setConnected(slot.url, true, client.rttMs, this.opts.scheduler.now());
+      this.logSecondaryOnline(slot.url);
+      await client.waitUntilClosed(slot.abort.signal);
+    } catch (err) {
+      this.noteSecondaryConnectFail(slot, client, err);
+    } finally {
+      unsub();
+      closeReason = client.lastConnectError?.reason ?? closeReason;
+      const now = this.opts.scheduler.now();
+      this.opts.presence.markDisconnected(slot.url, now, this.staleMs());
+      slot.client = null;
+      try {
+        await client.stop();
+      } catch {
+        /* 停失败不影响下一轮 */
+      }
+    }
+    if (!this.running || slot.abort.signal.aborted || !this.stillWanted(slot.url)) return true;
+    return this.sleepBeforeRetry(slot, closeReason);
+  }
+
+  private bindRelayStream(slot: Slot, client: SecondaryUplink): void {
+    if (!this.opts.onRelayStream) return;
+    const inner = this.opts.onRelayStream;
+    client.setOnRelayStream((stream, from, viaRelay) => inner(stream, from, viaRelay ?? slot.url));
+  }
+
+  private async sleepAfterFail(slot: Slot): Promise<boolean> {
+    const delay = backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+    slot.attempt += 1;
+    try {
+      await this.opts.scheduler.sleep(delay, slot.abort.signal);
+      return false;
+    } catch {
+      return true;
+    }
+  }
+
+  private noteSecondaryConnectFail(slot: Slot, client: SecondaryUplink, err: unknown): void {
+    if (slot.abort.signal.aborted) return;
+    const reason = client.lastConnectError?.reason ?? secondaryFailReason(err);
+    if (reason === 'aborted') return;
+    const delay = isUplinkPathRerace(reason)
+      ? 0
+      : backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+    this.logSecondaryConnectFailed(slot.url, slot.attempt + 1, reason, delay);
+  }
+
+  private logSecondaryConnectFailed(
+    url: string,
+    attempt: number,
+    reason: string,
+    nextRetryMs: number
+  ): void {
+    const now = this.opts.scheduler.now();
+    const prev = this.failLogAt.get(url) ?? Number.NEGATIVE_INFINITY;
+    if (now - prev < UPLINK_CONNECT_LOG_INTERVAL_MS) return;
+    this.failLogAt.set(url, now);
+    console.warn(
+      stamp(
+        `[uplink] secondary connect failed hub=${secondaryHubLabel(url)} attempt=${attempt} reason=${reason} next_retry_ms=${nextRetryMs}`
+      )
+    );
+  }
+
+  private logSecondaryOnline(url: string): void {
+    console.info(stamp(`[uplink] secondary online hub=${secondaryHubLabel(url)}`));
   }
 
   private async sleepBeforeRetry(slot: Slot, closeReason: string): Promise<boolean> {
@@ -275,7 +335,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   private stillWanted(url: string): boolean {
     if (!this.running) return false;
     const primary = this.opts.primaryUrl();
-    if (primary && sameHubUrl(url, primary)) return false;
+    if (!primary || sameHubUrl(url, primary)) return false;
     return this.opts.rows().some((row) => !row.kicked && sameHubUrl(row.url, url));
   }
 
@@ -327,5 +387,18 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
 
   private staleMs(): number {
     return this.opts.staleMs ?? RELAY_PRESENCE_STALE_MS;
+  }
+}
+
+function secondaryFailReason(err: unknown): string {
+  const msg = err instanceof Error ? err.message.trim() : '';
+  return msg || 'connect-failed';
+}
+
+function secondaryHubLabel(url: string): string {
+  try {
+    return hubHostFromUrl(url);
+  } catch {
+    return redactUrl(url);
   }
 }

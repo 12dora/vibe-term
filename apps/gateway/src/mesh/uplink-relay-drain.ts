@@ -73,6 +73,10 @@ export class UplinkRelayDrain {
     return total;
   }
 
+  inFlight(client: PooledUplink): number {
+    return this.count(client);
+  }
+
   waitForAll(liveOf: () => PooledUplink | null, signal?: AbortSignal): Promise<void> {
     return this.waitFor(() => this.clientsWith(liveOf()), 'reconfigure', signal);
   }

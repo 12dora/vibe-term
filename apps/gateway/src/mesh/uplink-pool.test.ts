@@ -940,6 +940,7 @@ describe('UplinkPool', () => {
     pool.start();
     await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(scheduler.intervals.some((row) => !row.cleared && row.ms === 60_000)).toBe(true);
     aHealthy = true;
     await scheduler.advance(60_000);
     await waitMicro();
@@ -947,31 +948,64 @@ describe('UplinkPool', () => {
     expect(created.filter((row) => row.hubUrl === 'https://a.example').length).toBeGreaterThan(1);
   });
 
-  test('switch-back waits for relay streams on the current uplink', async () => {
+  test('failover attach starts the probe timer without node.list', async () => {
     const scheduler = new ManualScheduler();
-    let aHealthy = false;
-    const { pool, created } = boot({
+    const { pool } = boot({
       urls: ['https://a.example', 'https://b.example'],
       behavior: { 'https://a.example': { failTimes: 3 } },
       scheduler,
-      probe: async (url) => url === 'https://a.example' && aHealthy,
     });
     pool.start();
     await waitMicro();
-    const current = created.find((client) => client.hubUrl === 'https://b.example');
-    const active = controlledRelayStream();
-    current?.queueRelayStream(active.stream);
-    await pool.openRelay(ID.c);
-    aHealthy = true;
-
-    await scheduler.advance(60_000);
-    await waitMicro();
     expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
-    expect(created.filter((client) => client.hubUrl === 'https://a.example')).toHaveLength(1);
+    const probe = scheduler.intervals.find((row) => !row.cleared);
+    expect(probe?.ms).toBe(60_000);
+  });
 
-    active.finish();
-    await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+  test('switch-back waits for relay streams on the current uplink', async () => {
+    const lines: string[] = [];
+    const originalInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const scheduler = new ManualScheduler();
+      let aHealthy = false;
+      const { pool, created } = boot({
+        urls: ['https://a.example', 'https://b.example'],
+        behavior: { 'https://a.example': { failTimes: 3 } },
+        scheduler,
+        probe: async (url) => url === 'https://a.example' && aHealthy,
+      });
+      pool.start();
+      await waitMicro();
+      const current = created.find((client) => client.hubUrl === 'https://b.example');
+      const active = controlledRelayStream();
+      current?.queueRelayStream(active.stream);
+      await pool.openRelay(ID.c);
+      aHealthy = true;
+
+      await scheduler.advance(60_000);
+      await waitMicro();
+      expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+      expect(created.filter((client) => client.hubUrl === 'https://a.example')).toHaveLength(1);
+      expect(lines.some((row) => row.includes('[uplink] probe ok hub=https://a.example'))).toBe(
+        true
+      );
+      expect(
+        lines.some((row) =>
+          row.includes(
+            '[uplink] probe waiting drain reason=switch-back streams=1 hub=https://b.example'
+          )
+        )
+      ).toBe(true);
+
+      active.finish();
+      await waitMicro();
+      expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    } finally {
+      console.info = originalInfo;
+    }
   });
 
   test('fresh standby with own stored row plus hub seed dials the seed first and self only as fallback', async () => {
