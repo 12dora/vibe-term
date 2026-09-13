@@ -15,9 +15,12 @@ import {
   type PortSpec,
   formatPortSpec,
   portPlanForRole,
+  rolesIncludeRelay,
 } from '@vibeterm/shared/net';
 
 export type MeshPortReachStatus = 'open' | 'blocked' | 'unknown';
+
+export type MeshPortReachCode = 'peer_refused' | 'peer_timeout' | 'no_srflx' | 'turn_unreachable';
 
 export type MeshPortReach = {
   purpose: PortPurpose;
@@ -25,9 +28,14 @@ export type MeshPortReach = {
   port?: number;
   range?: PortRange;
   status: MeshPortReachStatus;
-  code?: 'peer_refused' | 'peer_timeout' | 'no_srflx' | 'turn_unreachable';
+  code?: MeshPortReachCode;
   checkedAt?: number;
 };
+
+export type LocalPortsTitleKey =
+  | 'localMachine.ports.titleRelay'
+  | 'localMachine.ports.titleHub'
+  | 'localMachine.ports.titleNode';
 
 export const DEFAULT_PORT_PLAN_LIVE: PortPlanLive = {
   gatewayPort: DEFAULT_GATEWAY_PORT,
@@ -59,6 +67,13 @@ const PURPOSES: ReadonlySet<string> = new Set([
   'public-https',
 ]);
 
+const REACH_CODES: ReadonlySet<string> = new Set([
+  'peer_refused',
+  'peer_timeout',
+  'no_srflx',
+  'turn_unreachable',
+]);
+
 export function asPortRole(role: string | null | undefined, fallback: PortRole): PortRole {
   return role && PORT_ROLES.has(role) ? (role as PortRole) : fallback;
 }
@@ -87,6 +102,18 @@ function parseRange(value: unknown): PortRange | undefined {
   return { begin: raw.begin, end: raw.end };
 }
 
+function applyReachOptionals(reach: MeshPortReach, raw: Record<string, unknown>): void {
+  if (typeof raw.port === 'number' && Number.isFinite(raw.port)) reach.port = raw.port;
+  const range = parseRange(raw.range);
+  if (range) reach.range = range;
+  if (typeof raw.code === 'string' && REACH_CODES.has(raw.code)) {
+    reach.code = raw.code as MeshPortReachCode;
+  }
+  if (typeof raw.checkedAt === 'number' && Number.isFinite(raw.checkedAt)) {
+    reach.checkedAt = raw.checkedAt;
+  }
+}
+
 function parsePortReach(value: unknown): MeshPortReach | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
@@ -98,9 +125,7 @@ function parsePortReach(value: unknown): MeshPortReach | null {
     proto: raw.proto,
     status: raw.status,
   };
-  if (typeof raw.port === 'number' && Number.isFinite(raw.port)) reach.port = raw.port;
-  const range = parseRange(raw.range);
-  if (range) reach.range = range;
+  applyReachOptionals(reach, raw);
   return reach;
 }
 
@@ -180,4 +205,30 @@ export function reachForPurpose(
   purpose: PortPurpose
 ): MeshPortReach | undefined {
   return ports?.find((item) => item.purpose === purpose);
+}
+
+function endpointMatches(item: MeshPortReach, spec: Pick<PortSpec, 'port' | 'range'>): boolean {
+  if (spec.port != null && item.port != null && spec.port !== item.port) return false;
+  if (
+    spec.range &&
+    item.range &&
+    (spec.range.begin !== item.range.begin || spec.range.end !== item.range.end)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** 计划行对上一条 purpose+port（或 range）才算有探测结果；对不上就当「不探测」。 */
+export function reachForSpec(
+  ports: MeshPortReach[] | undefined | null,
+  spec: Pick<PortSpec, 'purpose' | 'port' | 'range'>
+): MeshPortReach | undefined {
+  return ports?.find((item) => item.purpose === spec.purpose && endpointMatches(item, spec));
+}
+
+export function localPortsTitleKey(role: string | null | undefined): LocalPortsTitleKey {
+  if (role && rolesIncludeRelay(role)) return 'localMachine.ports.titleRelay';
+  if (role === 'hub,node') return 'localMachine.ports.titleHub';
+  return 'localMachine.ports.titleNode';
 }

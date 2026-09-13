@@ -4,6 +4,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
+import { resetMeshNodesStateForTest } from '@/node/mesh-nodes';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { ApiClient, type DomainAccessPolicy } from '@vibeterm/api-client';
 import type { AuthModeResponse, MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
@@ -72,6 +73,7 @@ const idleApi: DirectApi = {
 afterEach(() => {
   resetMeshHubsStateForTest();
   resetMeshRelayStateForTest();
+  resetMeshNodesStateForTest();
 });
 
 /** 上级链路 owner 现在建在 `NodesTab` 里，本机卡只收快照：测试里用同一个 hook 现搭一份。 */
@@ -262,9 +264,11 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(html).not.toContain('data-testid="local-uplink-tabs"');
     expect(html).not.toContain('nodes.machine.general');
     expect(html).toContain('data-testid="local-machine-ports"');
-    expect(html).toContain('localMachine.ports.title');
+    expect(html).toContain('localMachine.ports.titleNode');
+    expect(html).toContain('localMachine.ports.legend');
     expect(html).toContain('39001/tcp');
     expect(html).toContain('40000-40099/udp');
+    expect(html).not.toContain('data-testid="local-machine-ports-recheck"');
   });
 
   test('mesh：卡头给角色徽标 + 状态徽标 + 操作菜单', () => {
@@ -273,6 +277,16 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(html).toContain('nodes.machine.roleNode');
     expect(html).toContain('data-testid="local-machine-menu"');
     expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="hubDisconnected"');
+  });
+
+  test('入站端口标题随本机角色变化，mesh 下给出重新检测', () => {
+    expect(render(meshStatus('node'), MESH_MODE)).toContain('localMachine.ports.titleNode');
+    expect(render(meshStatus('hub,node'), MESH_MODE)).toContain('localMachine.ports.titleHub');
+    expect(render(meshStatus('relay'), MESH_MODE)).toContain('localMachine.ports.titleRelay');
+    expect(render(relayNodeStatus(), MESH_MODE)).toContain('localMachine.ports.titleRelay');
+    expect(render(meshStatus('node'), MESH_MODE)).toContain(
+      'data-testid="local-machine-ports-recheck"'
+    );
   });
 
   test('mesh 的 hub 形态：连接段是 Hub 面板，没有中继服务段', () => {

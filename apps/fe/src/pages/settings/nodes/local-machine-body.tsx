@@ -88,6 +88,8 @@ export function LocalMachineBody(props: LocalMachineBodyProps) {
           domainApi={props.domainApi}
           onRefresh={props.onRefresh}
           portPlan={portPlanOrFallback(portPlanFromStatus(status), asPortRole(status.role, 'node'))}
+          localRole={status.role}
+          selfNodeId={props.mode?.nodeId ?? null}
         />
       </CardSection>
     </>

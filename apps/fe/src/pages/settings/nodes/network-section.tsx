@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { DirectSection } from './direct-section';
 import { type DomainAccessApi, DomainAccessRow } from './domain-access-row';
 import type { MeshPortReach } from './port-reach';
-import { PortsSection } from './ports-section';
+import { PortsSection, type ProbeNodePorts } from './ports-section';
 import type { RestartGateway, RestartState } from './restart/use-restart-now';
 
 const RESTART_TEXT_KEY: Partial<Record<RestartState, string>> = {
@@ -31,6 +31,9 @@ export interface NetworkSectionProps {
   onRefresh: () => void;
   portPlan?: PortSpec[];
   portReach?: MeshPortReach[] | null;
+  localRole?: string | null;
+  selfNodeId?: string | null;
+  probe?: ProbeNodePorts;
 }
 
 export function NetworkSection({
@@ -46,10 +49,21 @@ export function NetworkSection({
   onRefresh,
   portPlan,
   portReach,
+  localRole,
+  selfNodeId,
+  probe,
 }: NetworkSectionProps) {
   return (
     <div className="flex flex-col gap-3">
-      {portPlan && <PortsSection plan={portPlan} reach={portReach} />}
+      {portPlan && (
+        <PortsSection
+          plan={portPlan}
+          reach={portReach}
+          localRole={localRole}
+          selfNodeId={selfNodeId}
+          probe={probe}
+        />
+      )}
       <DirectSection
         direct={direct}
         busy={busy}
