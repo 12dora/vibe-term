@@ -130,7 +130,9 @@ describe('SETTINGS_TAB_SPECS 派生结构', () => {
     expect([...PREFETCHABLE_TABS].sort()).toEqual(
       ['ai', 'general', 'nodes', 'remoteAccess', 'share', 'terminal'].sort()
     );
-    const withPrefetch = SETTINGS_TAB_SPECS.filter((spec) => spec.prefetch).map((spec) => spec.id);
+    const withPrefetch: string[] = SETTINGS_TAB_SPECS.filter((spec) => spec.prefetch).map(
+      (spec) => spec.id
+    );
     expect(withPrefetch.sort()).toEqual([...PREFETCHABLE_TABS].sort());
     expect(SETTINGS_TAB_SPECS.find((spec) => spec.id === 'general')?.prefetch).toBe(
       prefetchSiteSettings
