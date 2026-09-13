@@ -1919,6 +1919,133 @@ describe('RemoteUpgradeJob delivery tree', () => {
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('handed-off');
   });
+
+  test('staged PUT ok → start POST 500 → forced node GitHub', async () => {
+    const nodeId = 'd6'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const sha256 = 'ab'.repeat(32);
+    const bodies: unknown[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'PUT') return new Response('{}', { status: 200 });
+          if (input.method === 'GET') return offsetResponse(0);
+          if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+            bodies.push(input.body);
+            const source = (input.body as { source?: string } | undefined)?.source;
+            if (source === 'staged') {
+              return new Response(JSON.stringify({ error: 'boom' }), {
+                status: 500,
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+            return new Response('{}', { status: 200 });
+          }
+          throw new Error(`unexpected ${input.method} ${input.path}`);
+        },
+      },
+      download: async () => signed({ path, sha256, bytes: bytes.byteLength }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(done.channel).toBe('node-github-forced');
+    expect(bodies).toEqual([
+      { version: '9.9.9', source: 'staged', sha256 },
+      { version: '9.9.9', source: 'release', requireFastSource: false },
+    ]);
+  });
+
+  test('start 409 UPGRADE_IN_PROGRESS → no second start, job hands off', async () => {
+    const nodeId = 'd7'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const sha256 = 'ab'.repeat(32);
+    const bodies: unknown[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'PUT') return new Response('{}', { status: 200 });
+          if (input.method === 'GET') return offsetResponse(0);
+          if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+            bodies.push(input.body);
+            const source = (input.body as { source?: string } | undefined)?.source;
+            if (source === 'staged') {
+              return new Response(JSON.stringify({ code: 'UPGRADE_IN_PROGRESS' }), {
+                status: 409,
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+            throw new Error('forced start must not run');
+          }
+          throw new Error(`unexpected ${input.method} ${input.path}`);
+        },
+      },
+      download: async () => signed({ path, sha256, bytes: bytes.byteLength }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(done.channel).toBe('push');
+    expect(bodies).toEqual([{ version: '9.9.9', source: 'staged', sha256 }]);
+  });
+
+  test('start timeout but GET shows executing → handed off', async () => {
+    const nodeId = 'd8'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const sha256 = 'ab'.repeat(32);
+    const bodies: unknown[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
+      timeouts: { startMs: 40 },
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'PUT') return new Response('{}', { status: 200 });
+          if (input.method === 'GET' && input.path === '/api/system/upgrade') {
+            return new Response(
+              JSON.stringify({
+                state: 'executing',
+                targetVersion: '9.9.9',
+                error: null,
+                startedAt: '2026-09-01T00:00:00.000Z',
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            );
+          }
+          if (input.method === 'GET') return offsetResponse(0);
+          if (input.method === 'POST' && input.path === '/api/system/upgrade') {
+            bodies.push(input.body);
+            const source = (input.body as { source?: string } | undefined)?.source;
+            if (source === 'staged') {
+              await new Promise(() => {});
+              return new Response('never');
+            }
+            throw new Error('forced start must not run');
+          }
+          throw new Error(`unexpected ${input.method} ${input.path}`);
+        },
+      },
+      download: async () => signed({ path, sha256, bytes: bytes.byteLength }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(done.channel).toBe('push');
+    expect(bodies).toEqual([{ version: '9.9.9', source: 'staged', sha256 }]);
+  });
 });
 
 const RANGED_CAPS = [

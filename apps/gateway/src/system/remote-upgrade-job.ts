@@ -32,9 +32,10 @@ import {
   consumeBoundedBody,
   defaultReleaseDownload,
   deleteStagedBestEffort,
-  describeUpstream,
   detachRequest,
   parseStagedStatusBody,
+  postStagedUpgradeStart,
+  probeNodeUpgradeStarted,
   pushPackageManifest,
   pushPackageQuery,
   rangedPushPlan,
@@ -385,7 +386,7 @@ async function runPushPipeline(
     return stepFromSnapshot(job.state, job.channel, downloaded.snapshot, job.error);
   const pushed = await runPushPhase(job, deps, downloaded.value);
   if (pushed.done) return stepFromSnapshot(job.state, job.channel, pushed.snapshot, job.error);
-  return { kind: 'done', snapshot: (await runStartPhase(job, deps, downloaded.value)).snapshot };
+  return runStartPhase(job, deps, downloaded.value);
 }
 
 async function runDownloadPhase(
@@ -635,54 +636,48 @@ async function runStartPhase(
   job: Job,
   deps: JobDeps,
   downloaded: DownloadedRelease
-): Promise<PhaseEnd> {
+): Promise<DeliveryStepResult<RemoteUpgradeJobSnapshot>> {
   const { req, forward, timeouts, nowFn } = deps;
   job.phase = 'start';
-  if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
-  if (job.abort.signal.aborted) {
-    if (supportsUpgradeCancel(job)) {
-      await dropStaged(job, req, forward);
-      return { done: true, snapshot: markCancelled(job, nowFn) };
-    }
+  if (isCancelled(job)) return { kind: 'done', snapshot: snapshotOf(job) };
+  if (job.abort.signal.aborted && supportsUpgradeCancel(job)) {
+    await dropStaged(job, req, forward);
+    return { kind: 'done', snapshot: markCancelled(job, nowFn) };
   }
-  try {
-    const startReq = forward.forwardAuthorizedHttp(req, {
+  const started = await postStagedUpgradeStart({
+    forward,
+    req,
+    nodeId: job.nodeId,
+    version: job.version,
+    sha256: downloaded.sha256,
+    timeoutMs: timeouts.startMs,
+    track: (pending) => {
+      job.startPromise = pending;
+    },
+  });
+  if (isCancelled(job)) return { kind: 'done', snapshot: snapshotOf(job) };
+  if (started.kind === 'accepted' || started.kind === 'in-progress') {
+    job.state = 'handed-off';
+    job.error = null;
+    return { kind: 'done', snapshot: snapshotOf(job) };
+  }
+  if (started.kind === 'timeout') {
+    const busy = await probeNodeUpgradeStarted({
+      forward,
+      req,
       nodeId: job.nodeId,
-      method: 'POST',
-      path: '/api/system/upgrade',
-      body: { version: job.version, source: 'staged', sha256: downloaded.sha256 },
-      signal: AbortSignal.timeout(timeouts.startMs),
+      timeoutMs: timeouts.startMs,
+      signal: job.abort.signal,
     });
-    job.startPromise = startReq;
-    const started = await withTimeout(startReq, timeouts.startMs, 'start timeout');
-    if (isCancelled(job)) {
-      await consumeBoundedBody(started);
-      return { done: true, snapshot: snapshotOf(job) };
+    if (isCancelled(job)) return { kind: 'done', snapshot: snapshotOf(job) };
+    if (busy) {
+      job.state = 'handed-off';
+      job.error = null;
+      return { kind: 'done', snapshot: snapshotOf(job) };
     }
-    if (started.status < 200 || started.status >= 300) {
-      return {
-        done: true,
-        snapshot: fail(job, `start failed: ${await describeUpstream(started)}`, nowFn),
-      };
-    }
-    await consumeBoundedBody(started);
-  } catch (err) {
-    if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
-    const message = errorMessage(err);
-    return {
-      done: true,
-      snapshot: fail(
-        job,
-        `start failed: ${message.includes('start timeout') ? 'start timeout' : message}`,
-        nowFn
-      ),
-    };
   }
-
-  if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
-  job.state = 'handed-off';
-  job.error = null;
-  return { done: true, snapshot: snapshotOf(job) };
+  const error = `start failed: ${started.detail}`;
+  return stepFromSnapshot(job.state, job.channel, fail(job, error, nowFn), error);
 }
 
 function markCancelled(job: Job, nowFn: () => number = Date.now): RemoteUpgradeJobSnapshot {

@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
   UPSTREAM_BODY_MAX_BYTES,
+  classifyStagedStartResponse,
   consumeBoundedBody,
   describeUpstream,
   parseStagedStatusBody,
+  probeNodeUpgradeStarted,
   pushPackageManifest,
   pushPackageQuery,
 } from './remote-upgrade-io';
@@ -188,5 +190,83 @@ describe('pushPackageQuery / parseStagedStatusBody', () => {
     expect(
       parseStagedStatusBody(JSON.stringify({ receivedBytes: 20, complete: true }), 20)
     ).toEqual({ offset: 20, complete: true, ranges: [{ offset: 0, length: 20 }] });
+  });
+});
+
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+describe('classifyStagedStartResponse', () => {
+  test('2xx is accepted', async () => {
+    expect(await classifyStagedStartResponse(jsonResponse({ state: 'executing' }, 200))).toEqual({
+      kind: 'accepted',
+      detail: 'ok',
+    });
+  });
+
+  test('409 UPGRADE_IN_PROGRESS is already started', async () => {
+    expect(
+      await classifyStagedStartResponse(jsonResponse({ code: 'UPGRADE_IN_PROGRESS' }, 409))
+    ).toEqual({ kind: 'in-progress', detail: 'UPGRADE_IN_PROGRESS' });
+  });
+
+  test('409 with busy status is already started', async () => {
+    expect(
+      await classifyStagedStartResponse(
+        jsonResponse({ state: 'executing', error: '已有升级任务正在进行。' }, 409)
+      )
+    ).toEqual({ kind: 'in-progress', detail: 'UPGRADE_IN_PROGRESS' });
+  });
+
+  test('409 PACKAGE_NOT_STAGED stays rejected', async () => {
+    expect(
+      await classifyStagedStartResponse(jsonResponse({ code: 'PACKAGE_NOT_STAGED' }, 409))
+    ).toEqual({ kind: 'rejected', detail: 'HTTP 409 PACKAGE_NOT_STAGED' });
+  });
+
+  test('5xx stays rejected with the real status', async () => {
+    expect(await classifyStagedStartResponse(jsonResponse({ error: 'boom' }, 500))).toEqual({
+      kind: 'rejected',
+      detail: 'HTTP 500 boom',
+    });
+  });
+});
+
+describe('probeNodeUpgradeStarted', () => {
+  const req = new Request('http://localhost/api/mesh/nodes/x/upgrade');
+  const nodeId = 'ab'.repeat(16);
+
+  test('GET executing means the start was handed off', async () => {
+    const started = await probeNodeUpgradeStarted({
+      req,
+      nodeId,
+      timeoutMs: 50,
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          expect(input.method).toBe('GET');
+          expect(input.path).toBe('/api/system/upgrade');
+          return jsonResponse({ state: 'executing' }, 200);
+        },
+      },
+    });
+    expect(started).toBe(true);
+  });
+
+  test('GET idle is not a hand-off', async () => {
+    const started = await probeNodeUpgradeStarted({
+      req,
+      nodeId,
+      timeoutMs: 50,
+      forward: {
+        async forwardAuthorizedHttp() {
+          return jsonResponse({ state: 'idle', error: null }, 200);
+        },
+      },
+    });
+    expect(started).toBe(false);
   });
 });

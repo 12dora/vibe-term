@@ -256,6 +256,110 @@ export function retryablePushStatus(status: number, detail: string): boolean {
   return status >= 500;
 }
 
+export type StagedStartKind = 'accepted' | 'in-progress' | 'timeout' | 'rejected';
+
+export type StagedStartResult = { kind: StagedStartKind; detail: string };
+
+export function isUpgradeBusyState(state: string): boolean {
+  return state === 'executing' || state === 'downloading';
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // 非 JSON
+  }
+  return null;
+}
+
+/** 暂存启动回包：2xx 成功；409 且明确在升则已交出；其余留给决策树 fallback。 */
+export async function classifyStagedStartResponse(res: Response): Promise<StagedStartResult> {
+  if (res.status >= 200 && res.status < 300) {
+    await consumeBoundedBody(res);
+    return { kind: 'accepted', detail: 'ok' };
+  }
+  const text = (await consumeBoundedBody(res)).slice(0, 800);
+  const body = parseJsonObject(text);
+  const code = typeof body?.code === 'string' ? body.code : '';
+  const state = typeof body?.state === 'string' ? body.state : '';
+  if (res.status === 409 && (code === 'UPGRADE_IN_PROGRESS' || isUpgradeBusyState(state))) {
+    return { kind: 'in-progress', detail: 'UPGRADE_IN_PROGRESS' };
+  }
+  let extra = text;
+  if (body) {
+    const error = typeof body.error === 'string' ? body.error : '';
+    extra = [code, error].filter(Boolean).join(' ');
+  }
+  return {
+    kind: 'rejected',
+    detail: `HTTP ${res.status}${extra ? ` ${extra}` : ''}`.trim(),
+  };
+}
+
+export async function postStagedUpgradeStart(input: {
+  forward: AuthorizedUpgradeForward;
+  req: Request;
+  nodeId: string;
+  version: string;
+  sha256: string;
+  timeoutMs: number;
+  track?: (pending: Promise<Response>) => void;
+}): Promise<StagedStartResult> {
+  try {
+    const pending = input.forward.forwardAuthorizedHttp(input.req, {
+      nodeId: input.nodeId,
+      method: 'POST',
+      path: '/api/system/upgrade',
+      body: { version: input.version, source: 'staged', sha256: input.sha256 },
+      signal: AbortSignal.timeout(input.timeoutMs),
+    });
+    input.track?.(pending);
+    const started = await withTimeout(pending, input.timeoutMs, 'start timeout');
+    return await classifyStagedStartResponse(started);
+  } catch (err) {
+    const message = errorMessage(err);
+    if (message.includes('start timeout') || /timeout/i.test(message)) {
+      return { kind: 'timeout', detail: 'start timeout' };
+    }
+    return { kind: 'rejected', detail: message };
+  }
+}
+
+/** start 超时后问一次节点状态：已在执行则视为交出，而不是失败。 */
+export async function probeNodeUpgradeStarted(input: {
+  forward: AuthorizedUpgradeForward;
+  req: Request;
+  nodeId: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<boolean> {
+  try {
+    const res = await withTimeout(
+      input.forward.forwardAuthorizedHttp(input.req, {
+        nodeId: input.nodeId,
+        method: 'GET',
+        path: '/api/system/upgrade',
+        signal: input.signal,
+      }),
+      input.timeoutMs,
+      'status timeout'
+    );
+    if (res.status < 200 || res.status >= 300) {
+      await consumeBoundedBody(res);
+      return false;
+    }
+    const text = await consumeBoundedBody(res);
+    const state = parseJsonObject(text)?.state;
+    return typeof state === 'string' && isUpgradeBusyState(state);
+  } catch {
+    return false;
+  }
+}
+
 export async function classifyUpgradePushResponse(
   pushed: Response,
   ctx: { cancelled: boolean; aborted: boolean }
