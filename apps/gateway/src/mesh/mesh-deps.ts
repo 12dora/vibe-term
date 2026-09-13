@@ -5,6 +5,7 @@ import { type DispatchContext, requestDispatchContext } from './types';
 
 export { isStandaloneRoles, requestDispatchContext };
 export type { DispatchContext };
+export type { MeshRouteModeStore } from './route-mode-store';
 
 export const MESH_VIA_SELF = 'self';
 

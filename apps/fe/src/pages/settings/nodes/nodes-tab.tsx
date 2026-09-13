@@ -15,6 +15,7 @@ import { HttpsSection } from './https/https-section';
 import { LocalMachineCard } from './local-machine-card';
 import { NodesManagement } from './management/nodes-management';
 import { type SetupIntent, type SetupIntentRecord, takeSetupIntent } from './membership/intent';
+import { RouteModeCard } from './route-mode-card';
 import { takeSelfRelayFollowUp } from './setup/self-relay-followup';
 import { SetupTransitionProvider } from './setup/setup-transition';
 import { HubSplitBrainBanner } from './uplink/hub-recovery';
@@ -88,6 +89,12 @@ export function NodesTab() {
             selfRelayFollowUp={selfRelayFollowUp}
           />
         </Reveal>
+
+        {!standalone && (
+          <Reveal delayMs={60}>
+            <RouteModeCard />
+          </Reveal>
+        )}
 
         {/* HTTPS 是安装态，与角色无关：standalone 下做 hub 需要一个 https 公开地址，多给一行提示。 */}
         {standalone ? (

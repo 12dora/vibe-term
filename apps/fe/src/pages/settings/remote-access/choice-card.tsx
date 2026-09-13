@@ -13,6 +13,8 @@ export function ChoiceCard<T extends string>({
   selected,
   disabled,
   onSelect,
+  testidPrefix,
+  i18nPrefix,
 }: {
   group: string;
   keyGroup?: string;
@@ -21,11 +23,17 @@ export function ChoiceCard<T extends string>({
   selected: boolean;
   disabled: boolean;
   onSelect: (value: T) => void;
+  /** 缺省 `remote-access-${group}`，卡片与 radio 的 testid 前缀。 */
+  testidPrefix?: string;
+  /** 缺省 `settings.remoteAccess.${keyGroup}`，title / description 的 i18n 前缀。 */
+  i18nPrefix?: string;
 }) {
   const { t } = useTranslation();
+  const testid = testidPrefix ?? `remote-access-${group}`;
+  const i18n = i18nPrefix ?? `settings.remoteAccess.${keyGroup}`;
   return (
     <label
-      data-testid={`remote-access-${group}-${value}`}
+      data-testid={`${testid}-${value}`}
       data-selected={selected ? 'true' : 'false'}
       className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none ${
         selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'
@@ -33,8 +41,8 @@ export function ChoiceCard<T extends string>({
     >
       <input
         type="radio"
-        name={`remote-access-${group}`}
-        data-testid={`remote-access-${group}-${value}-input`}
+        name={testid}
+        data-testid={`${testid}-${value}-input`}
         className="sr-only"
         checked={selected}
         disabled={disabled}
@@ -42,11 +50,9 @@ export function ChoiceCard<T extends string>({
       />
       <span className="flex items-center gap-2 text-sm font-medium">
         {icon}
-        {t(`settings.remoteAccess.${keyGroup}.${value}.title`)}
+        {t(`${i18n}.${value}.title`)}
       </span>
-      <span className="text-xs text-muted-foreground">
-        {t(`settings.remoteAccess.${keyGroup}.${value}.description`)}
-      </span>
+      <span className="text-xs text-muted-foreground">{t(`${i18n}.${value}.description`)}</span>
     </label>
   );
 }

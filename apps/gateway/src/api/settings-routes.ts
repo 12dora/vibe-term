@@ -11,6 +11,7 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import { meshRouteSettingsRoutes } from '../settings/mesh-route';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
 import { normalizeSiteSettingsInput } from './site-settings';
@@ -117,4 +118,5 @@ export const settingsRoutes: ApiRoute[] = [
     path: '/api/settings/restart',
     handler: () => handleRestartGateway(),
   }),
+  ...meshRouteSettingsRoutes,
 ];

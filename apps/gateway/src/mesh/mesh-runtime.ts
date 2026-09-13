@@ -110,6 +110,7 @@ import {
   relayMultiAttachOf,
   relayUplinkOverrides,
 } from './relay-wiring';
+import { getMeshRouteModeStore } from './route-mode-store';
 import {
   type ControlSendStatus,
   type LoadNative,
@@ -746,6 +747,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     refreshTls,
     refreshLocalInterfaces,
     invalidateStatusCache: ifaceCache.invalidate,
+    routeMode: getMeshRouteModeStore(),
   };
 }
 
