@@ -112,14 +112,22 @@ error=timeout` 与 `GET /api/mesh/rtc-config` 的 `probes`。浏览器 ICE 走�
 
 iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不论 persisted）。`/mesh/ws` 在会回 PONG 的网关上前台 2.5–4 s 发现僵尸；2.3.0 网关忽略应用层 PING，仍可能要等 30 s 静默门槛。
 
-## KI-15：TUN 主机对部分中继 TURN 的探测报 timeout，但 UDP 实际可达
+## KI-15：本机代理 TUN 丢弃境外 UDP 时，TURN 探测只代表本机
 
-本机代理 TUN（Surge / mihomo 一类）下，节点对某个中继 TURN 控制口的 STUN Binding 探测可能一直 `error=timeout`，
-而同一台机上用裸 `dgram` 发 Binding 有回包、无 TUN 的节点探测 `ok`。现网例：本机（Surge）与 hub B（mihomo）探
-东京中继 `turn:4.2.2.2:40000` 超时，demo-app 探测 `ok=100 ms`；oracle 侧监听、防火墙、allocate 日志都正常。
-疑 TUN 改写回包的源地址/端口，探测器按 `rinfo` 与目标 host:port 严格比对时丢弃。影响：该节点不把这个 TURN 纳入
-ICE（`turn gate … reachable=` 少一条），走另一中继的 TURN 或中继流；不影响其它节点。处置：暂无，待抓包定位后再决定
-是否放宽 `rinfo` 校验。判定看 `[mesh][rtc] turn probe url=… ok=false error=timeout` 与手工 STUN 对比。
+本机代理 TUN（Surge / mihomo 一类）下，若命中的代理策略不转发 UDP（Surge 的 `ss` 策略未开 `udp-relay`，
+`udp-policy-not-supported-behavior` 默认 REJECT；mihomo 同理），节点对非直连目的地的所有 UDP 都会被本机丢掉：
+对该中继 TURN 控制口的 STUN Binding 探测一直 `error=timeout`，境外公共 STUN（Google / Cloudflare）同样超时，
+而国内直连目的地的探测正常。现网例：本机（Surge）与 hub B（mihomo）探东京中继 `turn:4.2.2.2:40000` 超时，
+无 TUN 的 demo-app 与 oracle 自身探测 `ok`。此前记录的「同机裸 `dgram` 有回包」是探测脚本把「已发送数」当「回包数」
+打印造成的误判，UDP 实际不可达。
+
+影响：该节点不把这个 TURN 纳入 ICE（`turn gate … reachable=` 少一条），走另一中继的 TURN 或中继流；不影响其它节点。
+界面从 2.3.6 起按「本机不可达 · N/M 节点可达」标注，并在金丝雀判定本机为 TUN 时提示「探测结果仅代表本机」；
+`vibeterm relay list` 的 TURN 列同样带节点计数。
+
+处置（在代理侧，二选一）：给该中继 IP 加直连规则（Surge：`IP-CIDR,4.2.2.2/32,DIRECT,no-resolve`；mihomo：
+`IP-CIDR,4.2.2.2/32,DIRECT`），或给代理策略开 UDP 转发（`udp-relay=true`，要求服务端支持）。判定看
+`[mesh][rtc] turn probe url=… ok=false error=timeout` 与同机 `stun:stun.l.google.com:19302` 是否同时超时。
 
 ## KI-14：混合版本网内的直连抖动
 
