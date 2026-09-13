@@ -272,15 +272,15 @@
           "saveFailed": "选路模式保存失败：{{message}}",
           "auto": {
             "title": "智能",
-            "description": "测量直连与中继延迟，多次结果一致后切换。终端、指令、端口映射跟随低延迟路径，文件传输优先直连"
+            "description": "持续比较直连与中继延迟，自动走更快的路径；文件传输优先直连"
           },
           "direct": {
             "title": "直连",
-            "description": "尽量直连，直连不可用时走中继"
+            "description": "优先直连，不可用时经中继"
           },
           "relay": {
             "title": "中继",
-            "description": "所有连接经中继"
+            "description": "全部经中继转发"
           }
         }
       },

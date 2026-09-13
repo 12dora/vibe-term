@@ -475,15 +475,15 @@
           "saveFailed": "Failed to save route mode: {{message}}",
           "auto": {
             "title": "Smart",
-            "description": "Measures direct and relay latency and switches after consistent results. Terminal, commands and port maps follow the faster path; file transfer prefers direct."
+            "description": "Keeps comparing direct and relay latency and takes the faster path; file transfers prefer direct"
           },
           "direct": {
             "title": "Direct",
-            "description": "Direct whenever available, relay as fallback."
+            "description": "Direct when available, relay as fallback"
           },
           "relay": {
             "title": "Relay",
-            "description": "All connections via relay."
+            "description": "Everything via relay"
           }
         }
       },

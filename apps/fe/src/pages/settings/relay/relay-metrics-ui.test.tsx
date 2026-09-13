@@ -380,7 +380,7 @@ describe('磁贴排', () => {
     capped.totals.bandwidthLimitBytesPerSec = 1024 * 1024;
     const html = renderToStaticMarkup(<RelayFullTiles data={capped} trends={trends} />);
     // 定宽只包住「已用」这半；上限仍走 usedOfLimit 模板（未初始化 i18n 时只回键名）
-    expect(html).toContain('tabular-nums min-w-[11ch]">4.0 KB/s</span>');
+    expect(html).toContain('tabular-nums text-left min-w-[11ch]">4.0 KB/s</span>');
     expect(html).toContain('relay.metrics.tiles.usedOfLimit');
   });
 
