@@ -1,14 +1,11 @@
-// 吊销之后那条 `meta-key` 换代：模式判定的权威来源、失败时的欠账与结论。
+// 节点行动作：重命名走 hub / key-log 两条路径，吊销走确认框而不是浏览器 confirm。
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
-import { clearPendingMetaKeysForTest, listPendingMetaKeys } from '@/node/relay-meta-key-pending';
-import { ApiClient } from '@vibeterm/api-client';
+import { resetMeshRelayStateForTest } from '@/node/mesh-relay';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
-import { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   decodeBase64url,
   decodeKeyLogRecord,
@@ -19,12 +16,7 @@ import {
 } from '@vibeterm/shared/auth';
 import type { ResolvedMode } from './types';
 import type { NodeActionDeps } from './types';
-import {
-  reportAdmitResult,
-  revokeNodeRecord,
-  useBulkRevoke,
-  useNodeRowActions,
-} from './use-node-row-actions';
+import { useBulkRevoke, useNodeRowActions } from './use-node-row-actions';
 
 const KDF_JSON = {
   salt: encodeBase64url(new Uint8Array(16).fill(0x05)),
@@ -33,7 +25,6 @@ const KDF_JSON = {
   parallelism: 1,
 };
 const NODE_ID = 'ab'.repeat(16);
-const t = (key: string) => key;
 
 async function rootSigner(): Promise<RecordSigner> {
   const seed = await deriveSeed('pw', {
@@ -58,98 +49,10 @@ function authApi(appended: Appended[], results: unknown[] = []): AuthApi {
   } as unknown as AuthApi;
 }
 
-function relayApiOf(mode: 'relay' | 'hub'): { relayApi: RelayTenantApi; prepared: () => number } {
-  let prepared = 0;
-  const client = new ApiClient('', (url) => {
-    if (url === '/api/mesh/relay/status') {
-      return Promise.resolve(Response.json({ mode, relays: [] }));
-    }
-    if (url === '/api/mesh/relay/meta-key/prepare') {
-      prepared += 1;
-      return Promise.resolve(
-        Response.json({
-          epoch: 2,
-          payload: encodeBase64url(new Uint8Array([4, 5])),
-          payloadHash: 'z',
-        })
-      );
-    }
-    return Promise.resolve(new Response('not found', { status: 404 }));
-  });
-  return { relayApi: new RelayTenantApi(client), prepared: () => prepared };
-}
-
 const MODE = { uid: 'u1', rootEpoch: 3, kdfParams: KDF_JSON } as unknown as ResolvedMode;
-
-function ctxOf(api: AuthApi, relayApi: RelayTenantApi) {
-  return { api, mode: MODE, writerPublicUrl: null, t, relayApi };
-}
 
 afterEach(() => {
   resetMeshRelayStateForTest();
-});
-
-describe('revokeNodeRecord 之后的 meta-key 换代', () => {
-  beforeEach(() => clearPendingMetaKeysForTest());
-
-  test('模式以网关为准：页面 store 说 hub，网关说 relay，照样补一条 meta-key', async () => {
-    // 轮询快照最长陈旧 30 秒；刚接入中继就吊销一台时，读快照会整条跳过换代。
-    setMeshRelayStateForTest({ mode: 'hub' });
-    const appended: Appended[] = [];
-    const relay = relayApiOf('relay');
-    const attempt = await revokeNodeRecord(
-      await rootSigner(),
-      { id: NODE_ID, name: 'n1' },
-      '',
-      ctxOf(authApi(appended), relay.relayApi)
-    );
-    expect(attempt).toEqual({ kind: 'done' });
-    expect(relay.prepared()).toBe(1);
-    expect(appended).toHaveLength(2);
-    expect(decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).type).toBe('revoke-node');
-    expect(decodeKeyLogRecord(decodeBase64url(appended[1].bytes)).type).toBe('meta-key');
-    expect(listPendingMetaKeys()).toHaveLength(0);
-  }, 20000);
-
-  test('网关说 hub 时一条 meta-key 都不发', async () => {
-    setMeshRelayStateForTest({ mode: 'relay' });
-    const appended: Appended[] = [];
-    const relay = relayApiOf('hub');
-    const attempt = await revokeNodeRecord(
-      await rootSigner(),
-      { id: NODE_ID, name: 'n1' },
-      '',
-      ctxOf(authApi(appended), relay.relayApi)
-    );
-    expect(attempt).toEqual({ kind: 'done' });
-    expect(relay.prepared()).toBe(0);
-    expect(appended).toHaveLength(1);
-  }, 20000);
-
-  test('换代没落账时不报「已移除」，欠账留着重试', async () => {
-    setMeshRelayStateForTest({ mode: 'relay' });
-    const appended: Appended[] = [];
-    const relay = relayApiOf('relay');
-    const attempt = await revokeNodeRecord(
-      await rootSigner(),
-      { id: NODE_ID, name: 'n1' },
-      '',
-      ctxOf(
-        authApi(appended, [
-          { ok: true, hubAck: true },
-          { ok: true, hubAck: false, hubError: 'RELAY_OFFLINE' },
-        ]),
-        relay.relayApi
-      )
-    );
-    expect(attempt).toEqual({ kind: 'meta-pending', code: 'RELAY_OFFLINE' });
-    const pending = listPendingMetaKeys();
-    expect(pending).toHaveLength(1);
-    expect(pending[0]?.id).toBe(`revoke:${NODE_ID}`);
-    expect(pending[0]?.op).toEqual({ op: 'rotate', exclude: [NODE_ID] });
-    // 本地 head 没动：签好的字节留着，重发即可落账。
-    expect(pending[0]?.record?.type).toBe('meta-key');
-  }, 20000);
 });
 
 // ---------------------------------------------------------------------------
@@ -368,22 +271,4 @@ describe('吊销的确认框', () => {
       expect(decodeRevokeNodePayload(decoded.payload).reason).toBe('换机');
     }
   }, 20000);
-});
-
-describe('reportAdmitResult', () => {
-  test('node_id_reused 按已加入处理：刷新列表，不再报错', () => {
-    // 上一次「确认」其实已经落账，这个标签页只是没看到结果。再报一次错只会让用户
-    // 反复点确认，而成员密钥永远补不上（round40 live incident）。
-    expect(reportAdmitResult(t, { kind: 'error', code: 'node_id_reused' }, null)).toBe(true);
-  });
-
-  test('其余错误码照常报失败，不刷新', () => {
-    expect(reportAdmitResult(t, { kind: 'error', code: 'seq_gap' }, null)).toBe(false);
-  });
-
-  test('已批准 / 未确认 / 作废各自的结论不变', () => {
-    expect(reportAdmitResult(t, { kind: 'admitted' }, null)).toBe(true);
-    expect(reportAdmitResult(t, { kind: 'unconfirmed' }, null)).toBe(false);
-    expect(reportAdmitResult(t, { kind: 'stale' }, null)).toBe(false);
-  });
 });

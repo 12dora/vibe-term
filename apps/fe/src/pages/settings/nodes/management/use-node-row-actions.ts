@@ -4,202 +4,34 @@
 // 远程卸载都要用同一段逻辑，且整批只让用户确认一次凭据。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
-import { headFromResponse } from '@/auth/key-log-actions';
-import type { RecordSigner } from '@/auth/key-log-actions';
-import { type AdmitPendingResult, admitPendingNode } from '@/node/admit-pending-node';
-import { NODE_ID_REUSED } from '@/node/admit-record';
-import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment';
-import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { fetchRelayMode } from '@/node/mesh-relay';
-import { warnRelayAckGlobal } from '@/node/relay-ack';
-import { alreadyLocked, appendMetaKey } from '@/node/relay-enroll';
-import { distributeMetaKey } from '@/node/relay-meta-key-admit';
-import { rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
 import { renameNodeViaKeyLog } from '@/node/rename-node';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
-import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
-import type { RelayMetaKeyOp, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
-import { defaultRelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
-import { encodeBase64url } from '@vibeterm/shared/auth';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { actionErrorText } from './errors';
+import {
+  reportRevokeAttempt,
+  revokeNodeRecord,
+  revokeNodesSequentially,
+} from './revoke-node-record';
 import type { NodeActionDeps, ResolvedMode, RevokeController, RevokePlan } from './types';
 
-type Translate = (key: string, options?: Record<string, unknown>) => string;
-
-/** 一次吊销的结论。`unconfirmed`：hub 没确认，服务端一条都没落库，节点**没有**被移除。 */
-export type RevokeAttempt =
-  | { kind: 'done' }
-  /** 记录已落账，但紧跟的 `meta-key` 换代没送上去：节点已移除，元数据密钥还欠一条。 */
-  | { kind: 'meta-pending'; code: string }
-  | { kind: 'unconfirmed'; error: string }
-  | { kind: 'stale' }
-  | { kind: 'failed'; message: string };
-
-/** 吊销本身有没有落账（`meta-pending` 也落账了，只是欠一条换代）。 */
-export function revokeLanded(attempt: RevokeAttempt): boolean {
-  return attempt.kind === 'done' || attempt.kind === 'meta-pending';
-}
-
-export interface RevokeContext {
-  api: AuthApi;
-  mode: ResolvedMode;
-  writerPublicUrl: string | null;
-  t: Translate;
-  /** 测试注入；缺省打本机 `/api/mesh/relay/*`。 */
-  relayApi?: RelayTenantApi;
-}
-
-/**
- * 吊销一台节点：**只有一条路径**——`POST /api/auth/keylog?hub=sync`。
- * entry 先把签好的记录送 hub 等 ack，再本地 append。
- * 老实现「本地 append + 再调 hub revoke」是两条独立通道，先到的那条会让另一条报 `seq_gap`，
- * UI 误报 hub 失败；两条都失败时本地却已经把节点从列表里摘掉（见 F4-3 评审 Major）。
- *
- * `keyLogHead → 签名 → append` 整段进引擎那条 key log 写锁：head 是全局的，
- * 一条吊销与一条 admit 并行读到同一个头就会造出两条同 seq 的记录，hub 只收得下一条，
- * 另一条永久 `seq_gap`（见 R5 #1）。等用户操作的凭据对话框必须留在锁**外**，
- * 否则用户发一会儿呆就把所有 admit 卡住了。
- */
-export async function revokeNodeRecord(
-  signer: RecordSigner,
-  row: Pick<NodeRow, 'id' | 'name'>,
-  reason: string,
-  ctx: RevokeContext
-): Promise<RevokeAttempt> {
-  try {
-    const rootEpoch = requireRootEpoch(ctx.mode);
-    const outcome = await withKeyLogLock(async () => {
-      const head = headFromResponse(await ctx.api.keyLogHead());
-      const record = await buildRevokeNodeRecord({
-        head,
-        rootEpoch,
-        uid: ctx.mode.uid,
-        nodeIdHex: row.id,
-        reason,
-        signer,
-      });
-      const appended = await ctx.api.appendKeyLog(
-        { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
-        { hubSync: true }
-      );
-      const metaPending = appended.ok ? await rotateMetaKeyAfterRevoke(ctx, row.id, signer) : null;
-      return { appended, metaPending };
-    });
-    const { appended: result, metaPending } = outcome;
-    if (!result.ok) {
-      // B2-6：hub 未确认时服务端一条都没落库（409 / 504），撤销**没有生效**。
-      const failure = classifyKeyLogFailure(result.code);
-      if (failure === 'unconfirmed') return { kind: 'unconfirmed', error: result.code };
-      if (failure === 'stale') return { kind: 'stale' };
-      return {
-        kind: 'failed',
-        message: actionErrorText(
-          ctx.t,
-          { code: result.code },
-          { writerPublicUrl: ctx.writerPublicUrl }
-        ),
-      };
-    }
-    if (result.hubAck !== true) return { kind: 'unconfirmed', error: result.hubError ?? '' };
-    // 吊销没上中继：被吊销的节点在其余成员眼里还是在线的，不能只报一句「已移除」。
-    warnRelayAckGlobal(result);
-    if (metaPending) return { kind: 'meta-pending', code: metaPending };
-    return { kind: 'done' };
-  } catch (err) {
-    return {
-      kind: 'failed',
-      message: actionErrorText(ctx.t, err, { writerPublicUrl: ctx.writerPublicUrl }),
-    };
-  }
-}
-
-/**
- * 中继模式下吊销之后**必须**紧接一条 `meta-key`（新世代，只封装给剩余节点）：不换代的话，
- * 被吊销的节点虽然连不上握手，仍能用旧 `K_meta` 解出中继转发的元数据块（plan §1.4、§1.12）。
- *
- * 「本机是不是中继模式」当场问网关（`GET /api/mesh/relay/status`），不读页面上那份轮询 store：
- * 它最长会陈旧 30 秒，刚接入中继就吊销一台，靠陈旧快照会**整条跳过换代**。
- *
- * 已经在写锁里，因此传 `alreadyLocked`。换代失败不回滚吊销（记录已经落库），但也**不报「已移除」**：
- * 欠账落进 `relay-meta-key-pending`，由节点页的重试回路继续送，送到之前一直挂着告警。
- *
- * 返回失败码；成功或不适用返回 `null`。
- */
-async function rotateMetaKeyAfterRevoke(
-  ctx: RevokeContext,
-  nodeIdHex: string,
-  signer: RecordSigner
-): Promise<string | null> {
-  const relayApi = ctx.relayApi ?? defaultRelayTenantApi;
-  if (!(await fetchRelayMode(relayApi))) return null;
-  const op: RelayMetaKeyOp = { op: 'rotate', exclude: [nodeIdHex] };
-  const result = await appendMetaKey(
-    { api: ctx.api, relayApi, mode: ctx.mode, lock: alreadyLocked },
-    op,
-    signer
-  );
-  if (result.ok) return null;
-  rememberPendingMetaKey({
-    id: `revoke:${nodeIdHex}`,
-    reason: 'revoke',
-    op,
-    record: result.record ?? null,
-  });
-  return result.code;
-}
-
-/** 单台吊销的提示；返回吊销是否落账，批量路径据此计数。 */
-export function reportRevokeAttempt(t: Translate, attempt: RevokeAttempt): boolean {
-  if (attempt.kind === 'done') {
-    toast.success(t('nodes.revoke.done'));
-    return true;
-  }
-  if (attempt.kind === 'meta-pending') {
-    // 节点确实移除了，但元数据密钥还停在旧世代——这一条不能说成「已移除」。
-    toast.warning(t('relay.tenant.metaKey.revokePending', { error: attempt.code }));
-    return true;
-  }
-  if (attempt.kind === 'unconfirmed') {
-    toast.warning(t('nodes.revoke.hubFailed', { error: attempt.error }));
-    return false;
-  }
-  toast.error(attempt.kind === 'stale' ? t('nodes.enrollment.staleRecord') : attempt.message);
-  return false;
-}
-
-export interface BulkRevokeSummary {
-  succeeded: number;
-  failedNames: string[];
-  /** 已移除但欠着 `meta-key` 换代的台数。 */
-  metaPending: number;
-}
-
-/**
- * 逐台吊销。**必须串行**：key log 是一条链，并行只会互相把对方顶成 `seq_gap`。
- * 一台失败不影响后面几台，失败的名字进汇总提示。
- */
-export async function revokeNodesSequentially(
-  signer: RecordSigner,
-  rows: NodeRow[],
-  reason: string,
-  ctx: RevokeContext
-): Promise<BulkRevokeSummary> {
-  const summary: BulkRevokeSummary = { succeeded: 0, failedNames: [], metaPending: 0 };
-  for (const row of rows) {
-    const attempt = await revokeNodeRecord(signer, row, reason, ctx);
-    if (!revokeLanded(attempt)) {
-      summary.failedNames.push(row.name);
-      continue;
-    }
-    summary.succeeded += 1;
-    if (attempt.kind === 'meta-pending') summary.metaPending += 1;
-  }
-  return summary;
-}
+export type {
+  BulkRevokeSummary,
+  RevokeAttempt,
+  RevokeContext,
+} from './revoke-node-record';
+export {
+  reportRevokeAttempt,
+  revokeLanded,
+  revokeNodeRecord,
+  revokeNodesSequentially,
+} from './revoke-node-record';
+export type { AdmitNodeDeps } from './use-admit-node';
+export { reportAdmitResult, useAdmitNode } from './use-admit-node';
 
 /**
  * 吊销确认框的开合。确认即关框：紧随其后的凭据对话框（吊销每次都要用户当场确认）
@@ -285,130 +117,6 @@ export function useNodeRowActions(
   return { busy, rename, revoke, revokeDialog: gate.controller };
 }
 
-/** 「批准加入」需要的那几项依赖（与吊销同源，只是不需要 hub 通道）。 */
-export type AdmitNodeDeps = Pick<
-  NodeActionDeps,
-  'api' | 'mode' | 'prompt' | 'writerPublicUrl' | 'onChanged'
->;
-
-/**
- * 批准的结论 → 一条提示；返回是否需要刷新列表。
- *
- * 「Hub 未确认」是**警告**不是失败：服务端一条都没落库，原样重发即可（见 `submitAdmitRecord`），
- * 提示里不能说成失败，否则用户会以为要重来一遍加入流程。
- */
-export function reportAdmitResult(
-  t: Translate,
-  result: AdmitPendingResult,
-  writerPublicUrl: string | null
-): boolean {
-  switch (result.kind) {
-    case 'admitted':
-      toast.success(t('nodes.enrollment.admitted'));
-      return true;
-    case 'cancelled':
-      return false;
-    case 'no-material':
-      toast.error(t('nodes.admit.unavailable'));
-      return false;
-    case 'unconfirmed':
-      toast.warning(t('nodes.enrollment.hubNotConfirmed'));
-      return false;
-    case 'stale':
-      toast.error(t('nodes.enrollment.staleRecord'));
-      return false;
-    case 'error':
-      // `node_id_reused` = 这台机器早就被接纳过了（多半是上一次点确认已经落账，本页没看到
-      // 结果）。按已加入收尾：刷新列表把待批准行清掉，后续的成员密钥补发照跑。
-      if (result.code === NODE_ID_REUSED) {
-        toast.success(t('nodes.enrollment.admitted'));
-        return true;
-      }
-      toast.error(
-        t('nodes.admit.failed', {
-          error: actionErrorText(t, { code: result.code }, { writerPublicUrl }),
-        })
-      );
-      return false;
-    default:
-      toast.error(t('nodes.admit.failed', { error: result.message }));
-      return false;
-  }
-}
-
-/**
- * 待批准行的「批准加入」。凭据进 5 分钟复用窗口（`purpose: 'admit'`）：与自动 admit 共用，
- * 连批几台只需确认一次。
- *
- * 凭据对话框与 key log 写锁都要等，期间 Hub 轮询可能把这一行改掉或整张表清空；因此把
- * 「最新的行 + 挂载状态」放进 ref，交给 `admitPendingNode` 在每次 await 之后复核
- * （与 enrollment 引擎复核权威 pending store 是同一条约束）。
- */
-export function useAdmitNode(
-  row: NodeRow,
-  { api, mode, prompt, writerPublicUrl, onChanged }: AdmitNodeDeps
-): { busy: boolean; admit: () => Promise<void> } {
-  const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
-  const rowRef = useRef(row);
-  rowRef.current = row;
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const stillValid = useCallback((enrollmentId: string) => {
-    if (!mountedRef.current) return false;
-    const latest = rowRef.current;
-    return latest.pending === true && latest.admitMaterial?.enrollmentId === enrollmentId;
-  }, []);
-
-  const admit = useCallback(async () => {
-    setBusy(true);
-    try {
-      const nodeIdHex = rowRef.current.id;
-      const result = await admitPendingNode(rowRef.current, { api, mode, prompt, stillValid });
-      if (!reportAdmitResult(t, result, writerPublicUrl)) return;
-      // 这条路不经 enrollment 引擎，中继模式下的成员密钥补发必须在这里显式跟上：
-      // 少了它，新节点解不开元数据块，名字与版本永远上报不了（见 relay-meta-key-admit.ts）。
-      await followUpRelayMetaKey({ api, mode, nodeIdHex, t });
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
-  }, [api, mode, onChanged, prompt, stillValid, t, writerPublicUrl]);
-
-  return { busy, admit };
-}
-
-/**
- * 「批准加入」之后的中继收尾：把当前世代的 `K_meta` 封给这台新节点。
- *
- * 签名者取自 admit 刚用过的那把（5 分钟复用窗口），窗口里没有就只落欠账——告警条会带着
- * 「补发成员密钥」一直挂着，绝不会静默消失。非中继模式什么都不做。
- */
-async function followUpRelayMetaKey(input: {
-  api: AuthApi;
-  mode: ResolvedMode;
-  nodeIdHex: string;
-  t: Translate;
-}): Promise<void> {
-  if (!(await fetchRelayMode())) return;
-  const result = await distributeMetaKey(
-    { api: input.api, relayApi: defaultRelayTenantApi, mode: input.mode, lock: withKeyLogLock },
-    input.nodeIdHex
-  );
-  if (result.ok) return;
-  toast.warning(
-    input.t('relay.tenant.metaKey.admitFailed', {
-      error: actionErrorText(input.t, { code: result.code }, { writerPublicUrl: null }),
-    })
-  );
-}
-
 export interface BulkRevokeDeps {
   api: AuthApi;
   /** 未确认（缺 uid / kdf）时整个动作不可用。 */
@@ -416,6 +124,26 @@ export interface BulkRevokeDeps {
   prompt: CredentialPromptHandle;
   writerPublicUrl: string | null;
   onChanged: () => void;
+}
+
+function reportBulkRevokeSummary(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  summary: { succeeded: number; failedNames: string[]; metaPending: number }
+): void {
+  if (summary.metaPending > 0) {
+    toast.warning(t('relay.tenant.metaKey.revokePendingBulk', { count: summary.metaPending }));
+  }
+  if (summary.failedNames.length === 0) {
+    toast.success(t('nodes.revoke.bulkDone', { count: summary.succeeded }));
+    return;
+  }
+  toast.error(
+    t('nodes.revoke.bulkFailed', {
+      count: summary.succeeded,
+      failed: summary.failedNames.length,
+      names: summary.failedNames.join('、'),
+    })
+  );
 }
 
 /**
@@ -441,22 +169,7 @@ export function useBulkRevoke({ mode, api, prompt, onChanged, writerPublicUrl }:
           { purpose: 'revoke' }
         );
         if (!summary) return;
-        if (summary.metaPending > 0) {
-          toast.warning(
-            t('relay.tenant.metaKey.revokePendingBulk', { count: summary.metaPending })
-          );
-        }
-        if (summary.failedNames.length === 0) {
-          toast.success(t('nodes.revoke.bulkDone', { count: summary.succeeded }));
-        } else {
-          toast.error(
-            t('nodes.revoke.bulkFailed', {
-              count: summary.succeeded,
-              failed: summary.failedNames.length,
-              names: summary.failedNames.join('、'),
-            })
-          );
-        }
+        reportBulkRevokeSummary(t, summary);
         onChanged();
       } finally {
         setBusy(false);
