@@ -1,16 +1,29 @@
-// become-hub / join-hub 两个表单共用的展示件：通用原语取自 settings/components。
+// 四条设置路径共用的展示件：通用原语取自 settings/components。
 
+import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
 import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Switch } from '@vibeterm/ui/switch';
 import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Notice } from '../../components/form-primitives';
+import { FormField, Notice } from '../../components/form-primitives';
 import type { AddressProbeState } from './address-probe';
 import type { RestartWaiter } from './use-restart-waiter';
 
 export { FormField, type NoticeTone } from '../../components/form-primitives';
 export { Notice as SetupNotice } from '../../components/form-primitives';
+
+const DIRECT_ENABLE_HINT = {
+  hub: {
+    supported: 'nodes.setup.fields.directEnableHint',
+    unsupported: 'nodes.setup.fields.directUnsupportedHint',
+  },
+  relay: {
+    supported: 'nodes.setup.fields.directEnableRelayHint',
+    unsupported: 'nodes.setup.fields.directUnsupportedRelayHint',
+  },
+} as const;
 
 export function SwitchRow({
   id,
@@ -46,6 +59,131 @@ export function SwitchRow({
   );
 }
 
+/** 四个设置表单共用的直连开关：平台不支持时禁用并换文案。 */
+export function DirectEnableSwitch({
+  id,
+  checked,
+  supported,
+  platform,
+  kind = 'hub',
+  onCheckedChange,
+}: {
+  id: string;
+  checked: boolean;
+  supported: boolean;
+  platform: string;
+  kind?: 'hub' | 'relay';
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const hint = DIRECT_ENABLE_HINT[kind];
+  return (
+    <SwitchRow
+      id={id}
+      label={t('nodes.setup.fields.directEnable')}
+      hint={supported ? t(hint.supported) : t(hint.unsupported, { platform })}
+      checked={checked && supported}
+      disabled={!supported}
+      onCheckedChange={onCheckedChange}
+    />
+  );
+}
+
+/** 加入路径共用的节点名字段。 */
+export function NodeNameField({
+  id,
+  value,
+  error,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  error?: string;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <FormField
+      id={id}
+      label={t('nodes.setup.fields.name')}
+      hint={t('nodes.setup.fields.nameHint')}
+      error={error && t(error)}
+    >
+      <Input
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="min-h-10"
+      />
+    </FormField>
+  );
+}
+
+/** Hub / 中继兼节点共用的账号三件套；id 由调用方给定，以保留各表单既有 testid。 */
+export function AccountCredentialFields({
+  ids,
+  values,
+  errors,
+  onChange,
+}: {
+  ids: { username: string; password: string; confirm: string };
+  values: { username: string; password: string; confirmPassword: string };
+  errors: { username?: string; password?: string; confirmPassword?: string };
+  onChange: (patch: {
+    username?: string;
+    password?: string;
+    confirmPassword?: string;
+  }) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <FormField
+        id={ids.username}
+        label={t('nodes.setup.fields.username')}
+        hint={t('nodes.setup.fields.usernameHint')}
+        error={errors.username && t(errors.username)}
+      >
+        <Input
+          id={ids.username}
+          value={values.username}
+          onChange={(event) => onChange({ username: event.target.value })}
+          autoComplete="username"
+          className="min-h-10"
+        />
+      </FormField>
+
+      <FormField
+        id={ids.password}
+        label={t('nodes.setup.fields.password')}
+        hint={t('nodes.setup.fields.passwordHint')}
+        error={errors.password && t(errors.password)}
+      >
+        <PasswordFieldWithGenerate
+          id={ids.password}
+          value={values.password}
+          onChange={(next) => onChange({ password: next })}
+        />
+      </FormField>
+
+      <FormField
+        id={ids.confirm}
+        label={t('nodes.setup.fields.confirmPassword')}
+        error={errors.confirmPassword && t(errors.confirmPassword)}
+      >
+        <Input
+          id={ids.confirm}
+          type="password"
+          value={values.confirmPassword}
+          onChange={(event) => onChange({ confirmPassword: event.target.value })}
+          autoComplete="new-password"
+          className="min-h-10"
+        />
+      </FormField>
+    </>
+  );
+}
+
 /**
  * 四个设置表单共用的提交行：提交中转圈，被别处的提交锁住时禁用并说明原因。
  * 后端只放行一条设置路径，界面必须同步锁上，否则用户只会拿到一条 409。
@@ -55,6 +193,7 @@ export function SetupSubmitRow({
   label,
   submitting,
   blocked,
+  submitError,
   pendingLabel,
 }: {
   /** 表单前缀，如 `setup-join-relay`；按钮与说明条各自补后缀。 */
@@ -62,12 +201,18 @@ export function SetupSubmitRow({
   label: string;
   submitting: boolean;
   blocked: boolean;
+  submitError?: string | null;
   /** 提交中正在做的具体事（如探测端口）；不给就用通用的「处理中…」。 */
   pendingLabel?: string;
 }) {
   const { t } = useTranslation();
   return (
     <>
+      {submitError && (
+        <Notice tone="error" testId={`${testId}-error`}>
+          {submitError}
+        </Notice>
+      )}
       {blocked && (
         <Notice tone="info" testId={`${testId}-blocked`}>
           {t('nodes.setup.transition.blocked')}

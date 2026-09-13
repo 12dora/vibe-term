@@ -17,6 +17,8 @@ import { useTranslation } from 'react-i18next';
 import { pureRelaySubmitPlan, usePureRelayGate } from './become-relay-gate';
 import { currentOrigin, navigateToLogin } from './browser-location';
 import {
+  AccountCredentialFields,
+  DirectEnableSwitch,
   FormField,
   RestartPanel,
   ResultRow,
@@ -162,17 +164,12 @@ export function BecomeRelayForm({
             </SetupNotice>
           )}
 
-          {submitError && (
-            <SetupNotice tone="error" testId="setup-become-relay-error">
-              {submitError}
-            </SetupNotice>
-          )}
-
           <SetupSubmitRow
             testId="setup-become-relay"
             label={t('nodes.setup.submit.becomeRelay')}
             submitting={submitting}
             blocked={blocked}
+            submitError={submitError}
           />
         </form>
       </CardContent>
@@ -268,62 +265,24 @@ function RelayAccountFields({
   platform: string;
   onChange: (patch: Partial<BecomeRelayValues>) => void;
 }) {
-  const { t } = useTranslation();
   return (
     <>
-      <FormField
-        id="setup-relay-username"
-        label={t('nodes.setup.fields.username')}
-        hint={t('nodes.setup.fields.usernameHint')}
-        error={shown.username && t(shown.username)}
-      >
-        <Input
-          id="setup-relay-username"
-          value={values.username}
-          onChange={(event) => onChange({ username: event.target.value })}
-          autoComplete="username"
-          className="min-h-10"
-        />
-      </FormField>
-
-      <FormField
-        id="setup-relay-account-password"
-        label={t('nodes.setup.fields.password')}
-        hint={t('nodes.setup.fields.passwordHint')}
-        error={shown.password && t(shown.password)}
-      >
-        <PasswordFieldWithGenerate
-          id="setup-relay-account-password"
-          value={values.password}
-          onChange={(next) => onChange({ password: next })}
-        />
-      </FormField>
-
-      <FormField
-        id="setup-relay-confirm-password"
-        label={t('nodes.setup.fields.confirmPassword')}
-        error={shown.confirmPassword && t(shown.confirmPassword)}
-      >
-        <Input
-          id="setup-relay-confirm-password"
-          type="password"
-          value={values.confirmPassword}
-          onChange={(event) => onChange({ confirmPassword: event.target.value })}
-          autoComplete="new-password"
-          className="min-h-10"
-        />
-      </FormField>
-
-      <SwitchRow
+      <AccountCredentialFields
+        ids={{
+          username: 'setup-relay-username',
+          password: 'setup-relay-account-password',
+          confirm: 'setup-relay-confirm-password',
+        }}
+        values={values}
+        errors={shown}
+        onChange={onChange}
+      />
+      <DirectEnableSwitch
         id="setup-relay-direct-enable"
-        label={t('nodes.setup.fields.directEnable')}
-        hint={
-          directSupported
-            ? t('nodes.setup.fields.directEnableRelayHint')
-            : t('nodes.setup.fields.directUnsupportedRelayHint', { platform })
-        }
-        checked={values.directEnable && directSupported}
-        disabled={!directSupported}
+        checked={values.directEnable}
+        supported={directSupported}
+        platform={platform}
+        kind="relay"
         onCheckedChange={(checked) => onChange({ directEnable: checked })}
       />
     </>

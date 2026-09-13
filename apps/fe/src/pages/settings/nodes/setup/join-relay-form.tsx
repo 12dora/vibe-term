@@ -13,12 +13,12 @@ import { type AddressProbeState, precheckProbe, useAddressProbe } from './addres
 import { currentHostname, navigateToLogin } from './browser-location';
 import {
   AddressProbeNotice,
+  DirectEnableSwitch,
   FormField,
+  NodeNameField,
   RestartPanel,
   ResultRow,
-  SetupNotice,
   SetupSubmitRow,
-  SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
 import { submitJoinRelayDiscovered } from './submit';
@@ -108,32 +108,21 @@ export function JoinRelayForm({
             onProbe={() => void resolveRelayUrl(values.relayUrl.trim())}
           />
 
-          <SwitchRow
+          <DirectEnableSwitch
             id="setup-relay-join-direct-enable"
-            label={t('nodes.setup.fields.directEnable')}
-            hint={
-              directSupported
-                ? t('nodes.setup.fields.directEnableRelayHint')
-                : t('nodes.setup.fields.directUnsupportedRelayHint', {
-                    platform: localStatus.direct.platform,
-                  })
-            }
-            checked={values.directEnable && directSupported}
-            disabled={!directSupported}
+            checked={values.directEnable}
+            supported={directSupported}
+            platform={localStatus.direct.platform}
+            kind="relay"
             onCheckedChange={(checked) => update({ directEnable: checked })}
           />
-
-          {submitError && (
-            <SetupNotice tone="error" testId="setup-join-relay-error">
-              {submitError}
-            </SetupNotice>
-          )}
 
           <SetupSubmitRow
             testId="setup-join-relay"
             label={t('nodes.setup.submit.joinRelay')}
             submitting={submitting}
             blocked={blocked}
+            submitError={submitError}
             {...(probe.phase === 'probing' ? { pendingLabel: t('nodes.setup.probe.probing') } : {})}
           />
         </form>
@@ -240,19 +229,12 @@ function JoinRelayFields({
         />
       </FormField>
 
-      <FormField
+      <NodeNameField
         id="setup-relay-node-name"
-        label={t('nodes.setup.fields.name')}
-        hint={t('nodes.setup.fields.nameHint')}
-        error={shown.name && t(shown.name)}
-      >
-        <Input
-          id="setup-relay-node-name"
-          value={values.name}
-          onChange={(event) => onChange({ name: event.target.value })}
-          className="min-h-10"
-        />
-      </FormField>
+        value={values.name}
+        error={shown.name}
+        onChange={(name) => onChange({ name })}
+      />
 
       <div className="space-y-2">
         <button

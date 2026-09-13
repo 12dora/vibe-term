@@ -256,6 +256,28 @@ describe('JoinHubForm', () => {
     expect(html).toContain('nodes.setup.joinHub.passwordDescription');
     expect(html).not.toContain('data-testid="setup-join-token-input"');
     expect(html).toContain('data-testid="setup-join-hub-submit"');
+    expect(html).toContain('data-testid="setup-join-direct-enable"');
+  });
+
+  test('平台不支持直连时开关禁用', () => {
+    const html = renderToStaticMarkup(
+      <JoinHubForm
+        localStatus={status({
+          direct: {
+            supported: false,
+            installed: false,
+            enabled: true,
+            capable: false,
+            version: null,
+            platform: 'freebsd-x64',
+          },
+        })}
+        hostname="studio"
+      />
+    );
+    expect(html).toContain('data-testid="setup-join-direct-enable"');
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('nodes.setup.fields.directUnsupportedHint');
   });
 });
 
@@ -270,6 +292,7 @@ describe('JoinRelayForm', () => {
     expect(html).toContain('data-testid="setup-relay-advanced-toggle"');
     expect(html).not.toContain('data-testid="setup-relay-ca-fingerprint-input"');
     expect(html).toContain('data-testid="setup-join-relay-submit"');
+    expect(html).toContain('data-testid="setup-relay-join-direct-enable"');
   });
 
   test('直连提示用中继版文案，不提 Hub 中转', () => {

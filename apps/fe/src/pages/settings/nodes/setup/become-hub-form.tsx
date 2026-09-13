@@ -3,7 +3,6 @@
 // 对应 CLI 的 `init --role hub,node` + `hub user add`（见 docs/operations/mesh-operations.md
 // 「首次搭 hub」）。HTTPS 由反代 / Cloudflare Tunnel 提供，本批次不内建。
 
-import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
 import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
 import { SetupApi } from '@vibeterm/api-client/local/setup-api';
 import type {
@@ -20,12 +19,13 @@ import { useTranslation } from 'react-i18next';
 import { currentOrigin, navigateToLogin } from './browser-location';
 import { describeSetupError } from './error-messages';
 import {
+  AccountCredentialFields,
+  DirectEnableSwitch,
   FormField,
   RestartPanel,
   ResultRow,
   SetupNotice,
   SetupSubmitRow,
-  SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
 import { PortPicker } from './port-picker';
@@ -166,75 +166,31 @@ export function BecomeHubForm({
             <PrecheckResult state={precheck} />
           </div>
 
-          <FormField
-            id="setup-username"
-            label={t('nodes.setup.fields.username')}
-            hint={t('nodes.setup.fields.usernameHint')}
-            error={shown.username && t(shown.username)}
-          >
-            <Input
-              id="setup-username"
-              value={values.username}
-              onChange={(event) => update({ username: event.target.value })}
-              autoComplete="username"
-              className="min-h-10"
-            />
-          </FormField>
-
-          <FormField
-            id="setup-password"
-            label={t('nodes.setup.fields.password')}
-            hint={t('nodes.setup.fields.passwordHint')}
-            error={shown.password && t(shown.password)}
-          >
-            <PasswordFieldWithGenerate
-              id="setup-password"
-              value={values.password}
-              onChange={(next) => update({ password: next })}
-            />
-          </FormField>
-
-          <FormField
-            id="setup-confirm-password"
-            label={t('nodes.setup.fields.confirmPassword')}
-            error={shown.confirmPassword && t(shown.confirmPassword)}
-          >
-            <Input
-              id="setup-confirm-password"
-              type="password"
-              value={values.confirmPassword}
-              onChange={(event) => update({ confirmPassword: event.target.value })}
-              autoComplete="new-password"
-              className="min-h-10"
-            />
-          </FormField>
-
-          <SwitchRow
-            id="setup-direct-enable"
-            label={t('nodes.setup.fields.directEnable')}
-            hint={
-              directSupported
-                ? t('nodes.setup.fields.directEnableHint')
-                : t('nodes.setup.fields.directUnsupportedHint', {
-                    platform: localStatus.direct.platform,
-                  })
-            }
-            checked={values.directEnable && directSupported}
-            disabled={!directSupported}
-            onCheckedChange={(checked) => update({ directEnable: checked })}
+          <AccountCredentialFields
+            ids={{
+              username: 'setup-username',
+              password: 'setup-password',
+              confirm: 'setup-confirm-password',
+            }}
+            values={values}
+            errors={shown}
+            onChange={update}
           />
 
-          {submitError && (
-            <SetupNotice tone="error" testId="setup-become-hub-error">
-              {submitError}
-            </SetupNotice>
-          )}
+          <DirectEnableSwitch
+            id="setup-direct-enable"
+            checked={values.directEnable}
+            supported={directSupported}
+            platform={localStatus.direct.platform}
+            onCheckedChange={(checked) => update({ directEnable: checked })}
+          />
 
           <SetupSubmitRow
             testId="setup-become-hub"
             label={t('nodes.setup.submit.becomeHub')}
             submitting={submitting}
             blocked={blocked}
+            submitError={submitError}
           />
         </form>
       </CardContent>

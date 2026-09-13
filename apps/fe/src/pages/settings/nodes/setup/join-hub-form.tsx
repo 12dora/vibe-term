@@ -14,10 +14,11 @@ import { type AddressProbeState, precheckProbe, useAddressProbe } from './addres
 import { currentHostname, navigateToLogin } from './browser-location';
 import {
   AddressProbeNotice,
+  DirectEnableSwitch,
   FormField,
+  NodeNameField,
   RestartPanel,
   ResultRow,
-  SetupNotice,
   SetupSubmitRow,
   SwitchRow,
   directOutcomeLabel,
@@ -121,32 +122,18 @@ export function JoinHubForm({
             onSwitch={(method) => update({ method })}
           />
 
-          <FormField
+          <NodeNameField
             id="setup-node-name"
-            label={t('nodes.setup.fields.name')}
-            hint={t('nodes.setup.fields.nameHint')}
-            error={shown.name && t(shown.name)}
-          >
-            <Input
-              id="setup-node-name"
-              value={values.name}
-              onChange={(event) => update({ name: event.target.value })}
-              className="min-h-10"
-            />
-          </FormField>
+            value={values.name}
+            error={shown.name}
+            onChange={(name) => update({ name })}
+          />
 
-          <SwitchRow
+          <DirectEnableSwitch
             id="setup-join-direct-enable"
-            label={t('nodes.setup.fields.directEnable')}
-            hint={
-              directSupported
-                ? t('nodes.setup.fields.directEnableHint')
-                : t('nodes.setup.fields.directUnsupportedHint', {
-                    platform: localStatus.direct.platform,
-                  })
-            }
-            checked={values.directEnable && directSupported}
-            disabled={!directSupported}
+            checked={values.directEnable}
+            supported={directSupported}
+            platform={localStatus.direct.platform}
             onCheckedChange={(checked) => update({ directEnable: checked })}
           />
 
@@ -160,17 +147,12 @@ export function JoinHubForm({
             />
           )}
 
-          {submitError && (
-            <SetupNotice tone="error" testId="setup-join-hub-error">
-              {submitError}
-            </SetupNotice>
-          )}
-
           <SetupSubmitRow
             testId="setup-join-hub"
             label={t('nodes.setup.submit.joinHub')}
             submitting={submitting}
             blocked={blocked}
+            submitError={submitError}
             {...(probe.phase === 'probing' ? { pendingLabel: t('nodes.setup.probe.probing') } : {})}
           />
         </form>
