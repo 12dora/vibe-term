@@ -66,6 +66,7 @@ export function useReplayTerminal(): ReplayTerminalState {
     () =>
       createElement(ReadOnlyTerminal, {
         viewportPan: true,
+        surfaceFrame: true,
         selection: true,
         onReady: binding.onReady,
         onDispose: binding.onDispose,

@@ -1,6 +1,7 @@
 import { cn } from '@vibeterm/ui';
 import type { KeyboardEvent, PointerEvent, RefObject } from 'react';
 import { SelectionToolbar } from './SelectionToolbar';
+import { readOnlySurfaceBackdrop } from './hooks/read-only-surface-frame';
 import {
   READ_ONLY_TERMINAL_SCROLLBACK,
   type ReadOnlyTerminalHandle,
@@ -15,6 +16,8 @@ export { READ_ONLY_TERMINAL_SCROLLBACK };
 export interface ReadOnlyTerminalProps {
   className?: string;
   viewportPan?: boolean;
+  /** 录像回放用：内容表面按「屏幕」画——外圈换衬底、描一圈边、小于外框时居中。 */
+  surfaceFrame?: boolean;
   selection?: boolean;
   scrollback?: number;
   onReady?: (handle: ReadOnlyTerminalHandle) => void;
@@ -49,6 +52,7 @@ export function ReadOnlySelectionToolbar(chrome: {
 export function ReadOnlyTerminal({
   className,
   viewportPan = false,
+  surfaceFrame = false,
   selection = false,
   scrollback = READ_ONLY_TERMINAL_SCROLLBACK,
   onReady,
@@ -58,6 +62,7 @@ export function ReadOnlyTerminal({
 }: ReadOnlyTerminalProps) {
   const { containerRef, mountRef, instance, terminalTheme } = useReadOnlyTerminal({
     viewportPan,
+    surfaceFrame,
     scrollback,
     onReady,
     onDispose,
@@ -83,7 +88,11 @@ export function ReadOnlyTerminal({
     <section
       ref={containerRef}
       className={cn('relative h-full w-full', className)}
-      style={{ backgroundColor: terminalTheme.background }}
+      style={{
+        backgroundColor: surfaceFrame
+          ? readOnlySurfaceBackdrop(terminalTheme)
+          : terminalTheme.background,
+      }}
       data-testid={testId}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: 可滚动只读区域需能 Tab 进入以复制
       tabIndex={0}

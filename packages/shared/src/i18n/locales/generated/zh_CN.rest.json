@@ -851,6 +851,7 @@
           "endTime": "结束时间",
           "speedValue": "{{n}}x",
           "paneValue": "窗格 {{id}}",
+          "recordedSize": "录制尺寸",
           "input": "输入",
           "inputEmpty": "无"
         }
@@ -2582,6 +2583,10 @@
           "rolePrimary": "主中继",
           "roleSecondary": "副中继",
           "roleDetached": "未连接",
+          "pinned": "已固定",
+          "autoSelected": "自动优选",
+          "score": "打分 {{ms}} ms",
+          "scoreTitle": "自动优选打分（越小越好）",
           "peersOnline": "{{n}} 台在线",
           "turn": "TURN",
           "turnReachable": "可达",
@@ -2615,6 +2620,13 @@
           "primaryDescription": "本机将改用此中继写入新记录、读取成员名册，其余中继保持连接。",
           "primaryDone": "已将 {{host}} 设为主中继。"
         },
+        "autoSelect": {
+          "on": "自动优选已开启",
+          "lastSwitch": "上次切换 {{time}}",
+          "pinnedHint": "已固定主中继，自动优选暂停",
+          "unpin": "取消固定",
+          "unpinDone": "已取消固定，自动优选恢复。"
+        },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
           "notice": "中继令牌已失效，须重新输入接入密码。",
@@ -2624,6 +2636,7 @@
           "enroll": "接入中继",
           "migrate": "改为接入中继",
           "add": "追加中继",
+          "addMax": "最多 {{n}} 条中继",
           "reauth": "重新输入接入密码",
           "leave": "离开中继",
           "removeOne": "移除 {{host}}",
@@ -2708,6 +2721,7 @@
           "RELAY_KICKED": "该中继已作废本租户的令牌，须先重新输入接入密码。",
           "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
           "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。",
+          "RELAY_UNPIN_FAILED": "取消固定失败，请稍后重试。",
           "RELAY_QUOTA_TENANTS": "中继的租户数已达上限。",
           "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。",
           "readmit_required": "还有成员的记录是旧根签的，请先执行「重新确认成员」再接入中继。"

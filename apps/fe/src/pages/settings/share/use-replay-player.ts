@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { concatBytes, decodeBase64, describeInputBase64 } from './replay-decode';
 import {
+  type ReplayGrid,
   type ReplayPane,
   type ReplaySpeed,
   type ReplayTimeline,
@@ -12,6 +13,7 @@ import {
   findReplayPane,
   nextReplaySpeed,
   planReplaySeek,
+  replayGridAt,
 } from './replay-timeline';
 import type { ReplayTerminalHandle } from './use-replay-terminal';
 
@@ -32,6 +34,8 @@ export interface ReplayPlayer {
   startAt: number;
   currentMs: number;
   durationMs: number;
+  /** 当前时刻录像的行列数；没有任何 checkpoint/resize 时为 null。 */
+  grid: ReplayGrid | null;
   playing: boolean;
   speed: ReplaySpeed;
   inputs: ReplayInputMarker[];
@@ -169,6 +173,8 @@ export function useReplayPlayer(
     return () => cancelAnimationFrame(raf);
   }, [playing, speed, apply, timeline.durationMs]);
 
+  const grid = useMemo(() => (pane ? replayGridAt(pane, currentMs) : null), [pane, currentMs]);
+
   const toggle = useCallback(() => {
     if (playing) {
       setPlaying(false);
@@ -185,6 +191,7 @@ export function useReplayPlayer(
     startAt: timeline.startAt,
     currentMs,
     durationMs: timeline.durationMs,
+    grid,
     playing,
     speed,
     inputs,

@@ -19,6 +19,7 @@ import {
   planReplaySeek,
   planReplayTicks,
   replayCrossesCalendarDay,
+  replayGridAt,
   replayScrubPositionToMs,
 } from './replay-timeline';
 
@@ -113,6 +114,29 @@ describe('countEventsUntil / findCheckpointIndex', () => {
     expect(findCheckpointIndex(pane, 0)).toBe(0);
     expect(findCheckpointIndex(pane, 3999)).toBe(0);
     expect(findCheckpointIndex(pane, 4000)).toBe(4);
+  });
+});
+
+describe('replayGridAt', () => {
+  const [pane] = buildReplayTimeline(LOG).panes;
+
+  test('取该时刻（含）之前最后一条带行列数的事件', () => {
+    expect(replayGridAt(pane, 0)).toEqual({ cols: 80, rows: 24 });
+    expect(replayGridAt(pane, 2999)).toEqual({ cols: 80, rows: 24 });
+    expect(replayGridAt(pane, 3000)).toEqual({ cols: 100, rows: 30 });
+    expect(replayGridAt(pane, 99_999)).toEqual({ cols: 100, rows: 30 });
+  });
+
+  test('第一条 checkpoint 之前没有网格', () => {
+    expect(replayGridAt(pane, -1)).toBeNull();
+  });
+
+  test('整段没有 checkpoint / resize 时为 null', () => {
+    const [plain] = buildReplayTimeline([
+      entry({ seq: 1, at: BASE, data: HI }),
+      entry({ seq: 2, at: BASE + 10, data: HI }),
+    ]).panes;
+    expect(replayGridAt(plain, 100)).toBeNull();
   });
 });
 

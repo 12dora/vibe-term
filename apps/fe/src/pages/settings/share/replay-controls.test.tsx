@@ -16,6 +16,7 @@ function player(patch: Partial<ReplayPlayer> = {}): ReplayPlayer {
     startAt: START,
     currentMs: 1_000,
     durationMs: 5_000,
+    grid: { cols: 52, rows: 43 },
     playing: false,
     speed: 1,
     inputs: [],
@@ -67,6 +68,27 @@ describe('ReplayControls', () => {
       />
     );
     expect(two).toContain('data-testid="share-replay-pane"');
+  });
+});
+
+describe('ReplayControls 录制尺寸', () => {
+  test('有网格时出 cols×rows 徽标', () => {
+    const html = renderToStaticMarkup(
+      <ReplayControls player={player()} panes={[{ paneId: '%1', bytes: 4 }]} disabled={false} />
+    );
+    expect(html).toContain('data-testid="share-replay-grid"');
+    expect(html).toContain('52×43');
+  });
+
+  test('没有网格时不出徽标', () => {
+    const html = renderToStaticMarkup(
+      <ReplayControls
+        player={player({ grid: null })}
+        panes={[{ paneId: '%1', bytes: 4 }]}
+        disabled={false}
+      />
+    );
+    expect(html).not.toContain('data-testid="share-replay-grid"');
   });
 });
 
