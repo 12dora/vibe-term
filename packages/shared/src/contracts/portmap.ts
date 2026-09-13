@@ -32,6 +32,8 @@ export interface PortMapDto {
   totalConnections: number;
   bytesIn: number;
   bytesOut: number;
+  /** 泵队列里尚未交给 mux 的字节；运行期才有。 */
+  pendingBytes?: number;
   createdAt: number;
   updatedAt: number;
 }

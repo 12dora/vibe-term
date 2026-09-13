@@ -189,6 +189,6 @@ describe('转发会话优先通道基准', () => {
     );
     // before 必须真的排在积压后面；after 跟同一次测量的 before 比，且远低于无优先通道的队列深度。
     expect(before).toBeGreaterThan(queuedMs / 3);
-    expect(after).toBeLessThan(Math.min(queuedMs / 2, before * 0.75));
+    expect(after).toBeLessThan(Math.min(ONE_WAY_DELAY_MS * 4, before / 3));
   }, 30_000);
 });

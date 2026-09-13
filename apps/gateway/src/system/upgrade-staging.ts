@@ -2,7 +2,8 @@
 // 已经统一到 `@vibeterm/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
 import { existsSync, rmSync } from 'node:fs';
-import { link, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import * as fsp from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import { coveredBytes } from '@vibeterm/transfer';
@@ -228,6 +229,25 @@ function rejectRangedBounds(
   return null;
 }
 
+const LINK_UNSUPPORTED = new Set(['EPERM', 'ENOSYS', 'EOPNOTSUPP', 'EXDEV']);
+
+function errnoCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException)?.code;
+}
+
+async function pinStagedTotalWx(
+  path: string,
+  total: number
+): Promise<'created' | 'exists' | Extract<StagePackageResult, { ok: false }>> {
+  try {
+    await writeFile(path, `${total}\n`, { flag: 'wx', mode: 0o600 });
+    return 'created';
+  } catch (error) {
+    if (errnoCode(error) === 'EEXIST') return 'exists';
+    return { ok: false, status: 500, code: 'STAGE_FAILED' };
+  }
+}
+
 async function pinStagedTotal(
   partPath: string,
   total: number
@@ -235,15 +255,23 @@ async function pinStagedTotal(
   const path = stagedTotalPath(partPath);
   // wx 直接写目标文件时，并发的输家可能在赢家还没把内容写完时读到空文件，把 total=0
   // 误判成 UPGRADE_TOTAL_MISMATCH。先写临时文件再 link(2) 抢占，读到的一定是完整 pin。
+  // exFAT/SMB 等没有硬链接时回退到 wx，并发窗口退化成改动前的行为。
   const tmp = `${path}.${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}.tmp`;
   let created = false;
   try {
     await writeFile(tmp, `${total}\n`, { mode: 0o600 });
     try {
-      await link(tmp, path);
+      await fsp.link(tmp, path);
       created = true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+      const code = errnoCode(error);
+      if (code === 'EEXIST') {
+        /* 并发输家：去读已有 pin */
+      } else if (code && LINK_UNSUPPORTED.has(code)) {
+        const fallback = await pinStagedTotalWx(path, total);
+        if (fallback !== 'created' && fallback !== 'exists') return fallback;
+        created = fallback === 'created';
+      } else {
         return { ok: false, status: 500, code: 'STAGE_FAILED' };
       }
     }

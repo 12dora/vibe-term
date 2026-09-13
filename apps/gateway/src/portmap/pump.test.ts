@@ -97,6 +97,7 @@ describe('portmap pump', () => {
     await Bun.sleep(20);
     expect(fx.counters.bytesIn).toBe(13);
     expect(fx.counters.bytesOut).toBe(13);
+    expect(fx.counters.pendingBytes).toBe(0);
   });
 
   test('carries a payload larger than the mux window', async () => {

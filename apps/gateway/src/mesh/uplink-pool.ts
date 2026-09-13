@@ -45,6 +45,7 @@ import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-di
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
 import { runPreferredProbe } from './uplink-pool-probe';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
+import { primaryTargetOf } from './uplink-pool-target';
 import {
   isSelfHubCandidate,
   normalizeHubEndpointUrl,
@@ -431,6 +432,7 @@ export class UplinkPool {
   private lastFailbackProbeAt = 0;
   private lastHubView: HubView | null = null;
   private wrapAttempt = 0;
+  private lastDialUrl: string | null = null;
   private readonly caBootstraps = new Map<string, Promise<void>>();
   private readonly caMismatches = new Map<string, { advertised: string; pinned: string }>();
   private readonly diagByUrl = new Map<string, UrlDiag>();
@@ -438,6 +440,7 @@ export class UplinkPool {
     string,
     { index: number; error: string | null; transport: string; at: number }
   >();
+  private readonly probeLogAt = new Map<string, number>();
   private wrapSleepAbort: AbortController | null = null;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
@@ -491,6 +494,15 @@ export class UplinkPool {
 
   attachedHub(): AttachedHub | null {
     return this.attached;
+  }
+
+  /** 已挂上，否则正在拨 / 上次尝试的 URL；空闲或已 stop 才为 null。 */
+  primaryTarget(): string | null {
+    return primaryTargetOf(
+      this.attached?.publicUrl,
+      this.pending?.hubUrl ?? this.lastDialUrl,
+      this.loop != null
+    );
   }
 
   /** 候选由 `opts.candidates()` 惰性读库，这里只按新候选数重算 RTT 探测节奏，不动在线客户端。 */
@@ -1359,6 +1371,8 @@ export class UplinkPool {
           const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
           this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
         },
+        now: () => this.scheduler.now(),
+        probeLogAt: this.probeLogAt,
       });
     } finally {
       this.probeInFlight = false;
@@ -1413,6 +1427,7 @@ export class UplinkPool {
   }
 
   noteAttempt(cand: UplinkCandidate): void {
+    this.lastDialUrl = cand.publicUrl;
     this.patchDiag(cand.publicUrl, { lastAttemptAt: this.scheduler.now() });
   }
 

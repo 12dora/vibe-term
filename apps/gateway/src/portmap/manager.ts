@@ -304,6 +304,7 @@ export class PortMapManager {
       totalConnections: entry.counters.totalConnections,
       bytesIn: entry.counters.bytesIn,
       bytesOut: entry.counters.bytesOut,
+      pendingBytes: entry.counters.pendingBytes,
     };
   }
 }

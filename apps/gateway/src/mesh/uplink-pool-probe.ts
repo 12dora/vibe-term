@@ -3,6 +3,9 @@ import { isCurrentUplinkSession } from './uplink-nearest-switch';
 import type { AttachedHub, UplinkCandidate, UplinkSwitchResult } from './uplink-pool';
 import { redactUrl, sameHubUrl } from './uplink-pool-url';
 
+/** 与 `UPLINK_POOL_FAIL_LOG_INTERVAL_MS` 同值：probe fail/ok 按 hub 节流。 */
+export const PROBE_LOG_INTERVAL_MS = 60_000;
+
 export type PreferredProbeHost = {
   attachedHub(): AttachedHub | null;
   liveClient(): PooledUplink | null;
@@ -16,6 +19,8 @@ export type PreferredProbeHost = {
   lastErrorOf(cand: UplinkCandidate): string | null;
   isLocalTransport(cand: UplinkCandidate): boolean;
   logSwitchBack(cand: UplinkCandidate, index: number): void;
+  now?(): number;
+  probeLogAt?: Map<string, number>;
 };
 
 /** healthz / probe 日志先于 drain；只有候选健康才等当前上行排空再 switch-back。 */
@@ -46,9 +51,12 @@ async function switchPreferredIfHealthy(
   const origin = redactUrl(pref.publicUrl);
   const ok = await host.probeHealthz(pref.publicUrl);
   if (!ok) {
-    host.log(`[uplink] probe fail hub=${origin}`);
+    if (allowProbeLog(host, `fail:${pref.publicUrl}`)) {
+      host.log(`[uplink] probe fail hub=${origin}`);
+    }
     return false;
   }
+  // 即将 drain + switch：probe ok 不节流。
   host.log(`[uplink] probe ok hub=${origin}`);
   const streams = host.drainCount(live);
   host.log(
@@ -69,4 +77,19 @@ async function switchPreferredIfHealthy(
   if (!switched.ok) return true;
   host.logSwitchBack(pref, index);
   return true;
+}
+
+function allowProbeLog(host: PreferredProbeHost, key: string): boolean {
+  const now = host.now?.() ?? Date.now();
+  const store = host.probeLogAt ?? sharedProbeLogAt;
+  const prev = store.get(key) ?? Number.NEGATIVE_INFINITY;
+  if (now - prev < PROBE_LOG_INTERVAL_MS) return false;
+  store.set(key, now);
+  return true;
+}
+
+const sharedProbeLogAt = new Map<string, number>();
+
+export function resetProbeLogThrottleForTests(): void {
+  sharedProbeLogAt.clear();
 }
