@@ -40,6 +40,7 @@ export const AUTH_COMMANDS = new Set([
   'mesh.passkey.remove-all',
   'relay.status',
   'relay.tenants',
+  'relay.metrics',
   'relay.passwd',
   'relay.kick',
   'relay.remove',

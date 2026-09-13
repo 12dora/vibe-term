@@ -46,6 +46,7 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   enroll: async (p) => await (await import('./commands/enroll')).runEnroll(p),
   'relay.status': async (p) => await (await relayAdmin()).runRelayStatus(p),
   'relay.tenants': async (p) => await (await relayAdmin()).runRelayTenants(p),
+  'relay.metrics': async (p) => await (await relayAdmin()).runRelayMetrics(p),
   'relay.passwd': async (p) => await (await relayAdmin()).runRelayPasswd(p),
   'relay.kick': async (p, n) => await (await relayAdmin()).runRelayKick(p, n.rest[0] ?? ''),
   'relay.remove': async (p, n) => await (await relayAdmin()).runRelayRemove(p, n.rest[0] ?? ''),

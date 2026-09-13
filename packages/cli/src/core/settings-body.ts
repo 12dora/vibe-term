@@ -164,6 +164,61 @@ export async function tunnelActionBody(
 
 export const LOCAL_DIRECT_ACTIONS = new Set(['install', 'remove', 'enable', 'disable']);
 
+function optionalOnOff(flags: FlagValues, name: string): boolean | undefined {
+  const raw = flagString(flags, name);
+  if (!raw) return undefined;
+  return parseOnOff(raw);
+}
+
+function messagingFlags(flags: FlagValues): Record<string, unknown> {
+  const name = flagString(flags, 'name');
+  const enabled = flagBool(flags, 'on')
+    ? true
+    : flagBool(flags, 'off')
+      ? false
+      : optionalOnOff(flags, 'enabled');
+  const allowAuth = optionalOnOff(flags, 'allow-auth');
+  const allowCommands = optionalOnOff(flags, 'allow-commands');
+  return {
+    ...(name ? { name } : {}),
+    ...(enabled !== undefined ? { enabled } : {}),
+    ...(allowAuth !== undefined ? { allowAuthRequests: allowAuth } : {}),
+    ...(allowCommands !== undefined ? { allowCommands } : {}),
+  };
+}
+
+export async function telegramBotBody(
+  ctx: CliContext,
+  flags: FlagValues,
+  required: boolean
+): Promise<Record<string, unknown>> {
+  const extra = await optionalObjectBody(flags);
+  const token = await readSecretField(ctx, flags, {
+    flag: 'token',
+    envName: 'VIBETERM_TELEGRAM_TOKEN',
+  });
+  const body = mergeBody(messagingFlags(flags), extra);
+  if (token) body.token = token;
+  if (required && (typeof body.name !== 'string' || typeof body.token !== 'string')) {
+    throw new UsageError(
+      'telegram add requires --name and --token (or --token-stdin/--token-file/VIBETERM_TELEGRAM_TOKEN/--body)'
+    );
+  }
+  return body;
+}
+
+export async function weixinAccountBody(
+  flags: FlagValues,
+  required: boolean
+): Promise<Record<string, unknown>> {
+  const extra = await optionalObjectBody(flags);
+  const body = mergeBody(messagingFlags(flags), extra);
+  if (required && typeof body.name !== 'string') {
+    throw new UsageError('weixin add requires --name (or --body {"name":"…"})');
+  }
+  return body;
+}
+
 /** TLS mode none / trustProxy 会让局域网客户端伪造 X-Forwarded-* 绕过地址判断。 */
 export const LAN_SPOOF_CONFIRM =
   'this setting disables TLS or trusts X-Forwarded-* headers; a LAN client can spoof those headers and bypass address checks';

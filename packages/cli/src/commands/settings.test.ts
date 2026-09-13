@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
-import { UsageError } from '../core/errors';
-import { routeFetch, testContext } from './cli-test-harness';
+import { encodeBase32 } from '@vibeterm/shared/auth';
+import { generateTotpSecret } from '../core/account-security';
+import { AuthError, UsageError } from '../core/errors';
+import { NODE, meshNode, routeFetch, testContext } from './cli-test-harness';
 import { command as settings } from './settings';
 
 const dirs: string[] = [];
 
 afterEach(async () => {
+  delete process.env.VIBETERM_PASSWORD;
+  delete process.env.VIBETERM_NEW_PASSWORD;
+  delete process.env.VIBETERM_TELEGRAM_TOKEN;
+  delete process.env.VIBETERM_TOTP;
+  delete process.env.VIBETERM_TOTP_SECRET;
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -186,5 +193,177 @@ describe('vibeterm settings', () => {
   test('restart requires --yes off-tty', async () => {
     const { ctx: cli } = await ctx({});
     await expect(settings.run(cli, ['restart'])).rejects.toBeInstanceOf(UsageError);
+  });
+
+  test('system update-check hits GET /api/system/update-check', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/system/update-check': () => ({
+        currentVersion: '2.3.5',
+        latestVersion: '2.3.6',
+        hasUpdate: true,
+        changelog: null,
+        publishedAt: null,
+      }),
+    });
+    await settings.run(cli, ['system', 'update-check']);
+    expect(JSON.parse(stdout.text()).hasUpdate).toBe(true);
+  });
+
+  test('local direct honours --node', async () => {
+    const remote = 'b'.repeat(32);
+    const seen: string[] = [];
+    const built = await testContext(
+      routeFetch({
+        'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
+        'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: remote, name: 'edge' })] }),
+        [`POST /n/${remote}/api/local/direct`]: (_url, init) => {
+          seen.push(String(init?.body));
+          return { ok: true };
+        },
+      }),
+      { json: true, node: remote }
+    );
+    dirs.push(built.dir);
+    await settings.run(built.ctx, ['local', 'direct', 'enable']);
+    expect(JSON.parse(seen[0])).toEqual({ action: 'enable' });
+  });
+
+  test('local-auth bootstrap and set', async () => {
+    process.env.VIBETERM_PASSWORD = 'local-pass-word';
+    let boot = '';
+    let toggle = '';
+    const { ctx: cli } = await ctx({
+      'POST /api/auth/local/bootstrap': (_url, init) => {
+        boot = String(init?.body);
+        return {
+          ok: true,
+          localAuth: {
+            supported: true,
+            enabled: false,
+            effective: false,
+            credentialsPresent: true,
+          },
+        };
+      },
+      'POST /api/auth/local': (_url, init) => {
+        toggle = String(init?.body);
+        return {
+          ok: true,
+          localAuth: { supported: true, enabled: true, effective: true, credentialsPresent: true },
+        };
+      },
+    });
+    await settings.run(cli, ['local-auth', 'bootstrap', '--user', 'ivy']);
+    await settings.run(cli, ['local-auth', 'set', 'on']);
+    expect(JSON.parse(boot)).toEqual({ username: 'ivy', password: 'local-pass-word' });
+    expect(JSON.parse(toggle)).toEqual({ enabled: true });
+  });
+
+  test('telegram bots and chats hit the GUI REST surface', async () => {
+    process.env.VIBETERM_TELEGRAM_TOKEN = 'bot-token';
+    let created = '';
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/settings/telegram/bots': () => ({ bots: [{ id: 'b1' }] }),
+      'POST /api/settings/telegram/bots': (_url, init) => {
+        created = String(init?.body);
+        return { success: true };
+      },
+      'GET /api/settings/telegram/bots/b1/chats': () => ({ chats: [] }),
+      'POST /api/settings/telegram/bots/b1/chats/-700/approve': () => ({
+        chat: { chatId: '-700' },
+      }),
+      'POST /api/settings/telegram/bots/b1/chats/chat%3A2/test': () => ({ success: true }),
+    });
+    await settings.run(cli, ['telegram', 'ls']);
+    expect(JSON.parse(stdout.text()).bots[0].id).toBe('b1');
+    await settings.run(cli, ['telegram', 'add', '--name', 'ops']);
+    expect(JSON.parse(created)).toMatchObject({ name: 'ops', token: 'bot-token' });
+    await settings.run(cli, ['telegram', 'chats', 'ls', 'b1']);
+    await settings.run(cli, ['telegram', 'chats', 'approve', 'b1', '-700']);
+    await settings.run(cli, ['telegram', 'chats', 'test', 'b1', 'chat:2']);
+  });
+
+  test('weixin accounts, login and users', async () => {
+    let created = '';
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/settings/weixin/accounts': () => ({ accounts: [] }),
+      'POST /api/settings/weixin/accounts': (_url, init) => {
+        created = String(init?.body);
+        return { success: true, accountId: 'a1' };
+      },
+      'POST /api/settings/weixin/accounts/a1/login/start': () => ({
+        qrcodeUrl: 'https://q',
+        qrcodeId: 'q1',
+      }),
+      'GET /api/settings/weixin/accounts/a1/users': () => ({ users: [] }),
+      'POST /api/settings/weixin/accounts/a1/users/u%3A2/approve': () => ({
+        user: { userId: 'u:2' },
+      }),
+    });
+    await settings.run(cli, ['weixin', 'ls']);
+    expect(JSON.parse(stdout.text()).accounts).toEqual([]);
+    await settings.run(cli, ['weixin', 'add', '--name', 'ops']);
+    expect(JSON.parse(created)).toEqual({ name: 'ops' });
+    await settings.run(cli, ['weixin', 'login', 'start', 'a1']);
+    await settings.run(cli, ['weixin', 'users', 'ls', 'a1']);
+    await settings.run(cli, ['weixin', 'users', 'approve', 'a1', 'u:2']);
+  });
+
+  test('passkey ls prints the list and a browser-only hint', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/auth/passkeys': () => ({
+        passkeys: [{ credential_id: 'cred-1', name: 'laptop', origin: 'https://vt.example' }],
+      }),
+    });
+    await settings.run(cli, ['passkey', 'ls']);
+    const payload = JSON.parse(stdout.text()) as {
+      passkeys: Array<{ credential_id: string }>;
+      hint: string;
+    };
+    expect(payload.passkeys[0].credential_id).toBe('cred-1');
+    expect(payload.hint).toContain('browser');
+  });
+
+  test('passkey rm requires --yes off-tty', async () => {
+    const { ctx: cli } = await ctx({});
+    await expect(settings.run(cli, ['passkey', 'rm', 'cred-1'])).rejects.toBeInstanceOf(UsageError);
+  });
+
+  test('totp enable --code invalid rejects before keylog', async () => {
+    process.env.VIBETERM_PASSWORD = 'old-pass-word';
+    process.env.VIBETERM_TOTP_SECRET = encodeBase32(generateTotpSecret());
+    let keylog = false;
+    const { ctx: cli } = await ctx({
+      'GET /api/auth/mode': () => ({
+        mode: 'mesh',
+        nodeId: NODE,
+        uid: 'user-1',
+        kdfParams: { salt: 'AA', memory_kib: 65536, iterations: 3, parallelism: 1 },
+        rootEpoch: 1,
+        rootPublicKey: 'AA',
+      }),
+      'POST /api/auth/keylog': () => {
+        keylog = true;
+        return { ok: true, hubAck: true };
+      },
+    });
+    await expect(settings.run(cli, ['totp', 'enable', '--code', '000000'])).rejects.toBeInstanceOf(
+      AuthError
+    );
+    expect(keylog).toBe(false);
+  });
+
+  test('totp enable without a code is a usage error off-tty', async () => {
+    const { ctx: cli } = await ctx({
+      'GET /api/auth/mode': () => ({
+        mode: 'mesh',
+        nodeId: NODE,
+        uid: 'user-1',
+        kdfParams: { salt: 'AA', memory_kib: 65536, iterations: 3, parallelism: 1 },
+        rootEpoch: 1,
+        rootPublicKey: 'AA',
+      }),
+    });
+    await expect(settings.run(cli, ['totp', 'enable'])).rejects.toBeInstanceOf(UsageError);
   });
 });

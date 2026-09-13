@@ -38,7 +38,17 @@ describe('recovery CLI wiring', () => {
   }
 
   test('every relay subcommand is routed to the auth entry', () => {
-    for (const sub of ['status', 'tenants', 'passwd', 'kick', 'remove', 'quota', 'limits', 'label']) {
+    for (const sub of [
+      'status',
+      'tenants',
+      'metrics',
+      'passwd',
+      'kick',
+      'remove',
+      'quota',
+      'limits',
+      'label',
+    ]) {
       const nested = resolveNestedCommand(parseArgs(['relay', sub]));
       expect(nested.name).toBe(`relay.${sub}`);
       expect(AUTH_COMMANDS.has(nested.name)).toBe(true);

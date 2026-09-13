@@ -10,6 +10,7 @@ import {
   runRelayKick,
   runRelayLabel,
   runRelayLimits,
+  runRelayMetrics,
   runRelayPasswd,
   runRelayQuota,
   runRelayRemove,
@@ -152,6 +153,74 @@ describe('relay status / tenants', () => {
     await expect(
       runRelayStatus(parseArgs(['relay', 'status']), { ...io, env: { GATEWAY_PORT: '19993' } })
     ).rejects.toThrow('VIBETERM_RELAY_ADMIN_TOKEN missing');
+  });
+});
+
+const METRICS = {
+  schemaVersion: 1,
+  sampledAt: 1_700_000_000_000,
+  intervalMs: 5_000,
+  uptimeMs: 3_600_000,
+  version: '2.3.5',
+  process: {
+    memory: {
+      rssBytes: 80 * 1024 * 1024,
+      heapTotalBytes: 64 * 1024 * 1024,
+      heapUsedBytes: 40 * 1024 * 1024,
+      externalBytes: 0,
+    },
+    cpu: { utilizationPct: 3.2 },
+    eventLoop: { lagMs: 1.2, maxLagMs: 4 },
+  },
+  totals: {
+    tenants: 2,
+    members: 8,
+    membersOnline: 5,
+    activeStreams: 3,
+    bytesIn: 10 * 1024 * 1024,
+    bytesOut: 20 * 1024 * 1024,
+    bytesInPerSec: 1024,
+    bytesOutPerSec: 2048,
+  },
+  members: [
+    {
+      tenantId: 'a'.repeat(32),
+      nodeId: 'c'.repeat(32),
+      name: 'edge',
+      online: true,
+      rttMs: 12.5,
+      activeStreams: 1,
+      bytesInPerSec: 100,
+      bytesOutPerSec: 200,
+    },
+  ],
+};
+
+describe('relay metrics', () => {
+  test('omits members by default (?members=0)', async () => {
+    const slim = { ...METRICS };
+    delete (slim as { members?: unknown }).members;
+    const { calls, logs, io } = recorder({ '/api/relay/metrics': slim });
+    await runRelayMetrics(parseArgs(['relay', 'metrics']), io);
+    expect(calls[0].url).toBe('http://127.0.0.1:19993/api/relay/metrics?members=0');
+    expect(logs.some((line) => line.startsWith('version: 2.3.5'))).toBe(true);
+    expect(logs.some((line) => line.includes('members: 5 online / 8'))).toBe(true);
+    expect(logs.some((line) => line.includes('TENANT'))).toBe(false);
+  });
+
+  test('--members requests members=1 and prints the table', async () => {
+    const { calls, logs, io } = recorder({ '/api/relay/metrics': METRICS });
+    await runRelayMetrics(parseArgs(['relay', 'metrics', '--members']), io);
+    expect(calls[0].url).toBe('http://127.0.0.1:19993/api/relay/metrics?members=1');
+    expect(calls[0].headers.authorization).toBe('Bearer admin-token');
+    expect(logs.some((line) => line.includes('edge'))).toBe(true);
+    expect(logs.some((line) => line.includes('online'))).toBe(true);
+  });
+
+  test('--json prints the raw body', async () => {
+    const { logs, io } = recorder({ '/api/relay/metrics': METRICS });
+    await runRelayMetrics(parseArgs(['relay', 'metrics', '--json', '--members']), io);
+    expect(JSON.parse(logs.join('\n'))).toEqual(METRICS);
   });
 });
 

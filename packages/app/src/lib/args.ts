@@ -35,6 +35,7 @@ export type NestedCommandName =
   | 'mesh.passkey.remove-all'
   | 'relay.status'
   | 'relay.tenants'
+  | 'relay.metrics'
   | 'relay.passwd'
   | 'relay.kick'
   | 'relay.remove'
@@ -142,6 +143,7 @@ const HUB_USER_SUBCOMMANDS: Record<string, NestedCommandName> = {
 const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
   status: 'relay.status',
   tenants: 'relay.tenants',
+  metrics: 'relay.metrics',
   passwd: 'relay.passwd',
   kick: 'relay.kick',
   remove: 'relay.remove',
@@ -334,6 +336,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   ]),
   'relay.status': RELAY_ADMIN_FLAGS,
   'relay.tenants': RELAY_ADMIN_FLAGS,
+  'relay.metrics': new Set([...RELAY_ADMIN_FLAGS, 'members']),
   'relay.passwd': new Set([...RELAY_ADMIN_FLAGS, 'clear', 'kick', 'keep', 'force']),
   'relay.kick': new Set([...RELAY_ADMIN_FLAGS, 'force']),
   'relay.remove': new Set([...RELAY_ADMIN_FLAGS, 'yes']),

@@ -2,5 +2,6 @@
 
 export * from './types';
 export * from './auth-api';
+export * from './account-security';
 export * from './session-interceptor';
 export * from './webauthn';

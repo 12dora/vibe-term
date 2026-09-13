@@ -12,6 +12,7 @@ describe('relay command parsing', () => {
   test('every relay subcommand resolves to its own nested name', () => {
     expect(nested(['relay', 'status']).name).toBe('relay.status');
     expect(nested(['relay', 'tenants']).name).toBe('relay.tenants');
+    expect(nested(['relay', 'metrics']).name).toBe('relay.metrics');
     expect(nested(['relay', 'passwd']).name).toBe('relay.passwd');
     expect(nested(['relay', 'kick', 'abc']).name).toBe('relay.kick');
     expect(nested(['relay', 'remove', 'abc']).name).toBe('relay.remove');
@@ -55,6 +56,9 @@ describe('relay flag allowlists', () => {
     ).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'kick', 'abc', '--force']))).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'status', '--json']))).not.toThrow();
+    expect(() =>
+      assertKnownFlags(parseArgs(['relay', 'metrics', '--members', '--json']))
+    ).not.toThrow();
     expect(() =>
       assertKnownFlags(parseArgs(['relay', 'passwd', '--clear', '--kick']))
     ).not.toThrow();
@@ -144,6 +148,7 @@ describe('relay commands run on the Bun auth runtime', () => {
     for (const name of [
       'status',
       'tenants',
+      'metrics',
       'passwd',
       'kick',
       'remove',

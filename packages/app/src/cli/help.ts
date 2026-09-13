@@ -45,6 +45,7 @@ Usage:
   vibeterm relay list [--json]
   vibeterm relay status [--json]
   vibeterm relay tenants [--json]
+  vibeterm relay metrics [--members] [--json]
   vibeterm relay passwd [--clear] [--kick|--keep] [--force]
   vibeterm relay kick <tenantId> [--force]
   vibeterm relay-admin passwd [--clear] [--kick|--keep] [--force]
@@ -55,7 +56,7 @@ Usage:
   vibeterm relay label <tenantId> <text>
 
 Client commands (talk to a gateway over HTTP/WS, same security boundary as the web UI):
-  vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings
+  vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|agent|settings
   Run vibeterm <group> --help for the options of one group.
 
 Password prompting (add / passwd / totp / reset-root / enroll / hub join --password / relay join):
@@ -113,6 +114,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm relay list [--json]
   vibeterm relay status [--json]
   vibeterm relay tenants [--json]
+  vibeterm relay metrics [--members] [--json]
   vibeterm relay passwd [--clear] [--kick|--keep] [--force]
   vibeterm relay kick <tenantId> [--force]
   vibeterm relay-admin passwd [--clear] [--kick|--keep] [--force]
@@ -123,7 +125,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm relay label <tenantId> <text>
 
 客户端命令（经 HTTP/WS 访问网关，安全边界与网页端完全一致）：
-  vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings
+  vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|agent|settings
   用 vibeterm <组名> --help 查看某一组的用法。
 
 密码输入（add / passwd / totp / reset-root / enroll / hub join --password / relay join）：

@@ -512,3 +512,81 @@ export async function runRelayQuota(
   }
   return await applyTenantQuota(call, status, requireTenantId(target, 'quota'), patch, inherit, io);
 }
+
+function formatFixed(value: unknown, suffix: string): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)}${suffix}` : '-';
+}
+
+function formatUptime(ms: unknown): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '-';
+  const sec = Math.floor(ms / 1000);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h}h${m}m` : m > 0 ? `${m}m${sec % 60}s` : `${sec}s`;
+}
+
+function printMetricsHuman(io: RelayIo, raw: Record<string, unknown>, members: boolean): void {
+  const totals = (raw.totals ?? {}) as Record<string, unknown>;
+  const process = (raw.process ?? {}) as Record<string, unknown>;
+  const memory = (process.memory ?? {}) as Record<string, unknown>;
+  const cpu = (process.cpu ?? {}) as Record<string, unknown>;
+  const loop = (process.eventLoop ?? {}) as Record<string, unknown>;
+  relayLog(io, `version: ${asText(raw.version, '-')}  uptime: ${formatUptime(raw.uptimeMs)}`);
+  relayLog(
+    io,
+    `tenants: ${asNumber(totals.tenants)}  members: ${asNumber(totals.membersOnline)} online / ${asNumber(totals.members)}  streams: ${asNumber(totals.activeStreams)}`
+  );
+  relayLog(
+    io,
+    `traffic: ${formatBytes(asNumber(totals.bytesInPerSec))}/s in (${formatBytes(asNumber(totals.bytesIn))})  ${formatBytes(asNumber(totals.bytesOutPerSec))}/s out (${formatBytes(asNumber(totals.bytesOut))})`
+  );
+  relayLog(
+    io,
+    `process: rss ${formatBytes(asNumber(memory.rssBytes))}  heap ${formatBytes(asNumber(memory.heapUsedBytes))}/${formatBytes(asNumber(memory.heapTotalBytes))}  cpu ${formatFixed(cpu.utilizationPct, '%')}  event-loop ${formatFixed(loop.lagMs, 'ms')}`
+  );
+  if (!members) return;
+  const rows = (Array.isArray(raw.members) ? raw.members : []).map((item) => {
+    const row = (item ?? {}) as Record<string, unknown>;
+    return [
+      asText(row.tenantId),
+      asText(row.nodeId),
+      asText(row.name, '-'),
+      row.online === true ? 'online' : 'offline',
+      formatFixed(row.rttMs, 'ms'),
+      String(asNumber(row.activeStreams)),
+      `${formatBytes(asNumber(row.bytesInPerSec))}/s`,
+      `${formatBytes(asNumber(row.bytesOutPerSec))}/s`,
+    ];
+  });
+  if (rows.length === 0) {
+    relayLog(io, 'members: (none)');
+    return;
+  }
+  for (const line of formatTable(
+    ['TENANT', 'NODE', 'NAME', 'STATE', 'RTT', 'STREAMS', 'IN/S', 'OUT/S'],
+    rows
+  )) {
+    relayLog(io, line);
+  }
+}
+
+/** `vibeterm relay metrics [--members] [--json]` → `GET /api/relay/metrics[?members=0|1]`. */
+export async function runRelayMetrics(
+  parsed: ParsedArgs,
+  io: RelayIo = {}
+): Promise<Record<string, unknown>> {
+  const includeMembers = parsed.flags.members === true;
+  const call = await adminCall(parsed, io);
+  const body = await requestRelayJson({
+    fetcher: call.fetcher,
+    url: joinRelayUrl(call.baseUrl, `/api/relay/metrics?members=${includeMembers ? '1' : '0'}`),
+    headers: call.headers,
+    label: 'relay metrics',
+  });
+  if (wantsJson(parsed)) {
+    printJson(io, body);
+    return body;
+  }
+  printMetricsHuman(io, body, includeMembers);
+  return body;
+}
