@@ -19,9 +19,11 @@ import {
   probeTurnServers,
   resetTurnProbeForTest,
   setTurnProbeLoopForTest,
+  setTurnProbeSnapshotForTest,
   startMeshTurnProbe,
   stopMeshTurnProbe,
   syncTurnProbe,
+  turnProbeByUrl,
   turnProbeSnapshot,
   turnUrlOf,
 } from './turn-probe';
@@ -130,6 +132,19 @@ function loopOpts(probeAll: (urls: readonly string[]) => Promise<StunProbeResult
     probeAll,
   });
 }
+
+describe('turnProbeByUrl', () => {
+  test('maps each URL to its last probe including rttMs', () => {
+    const rows = [
+      { url: 'turn:a.example:3478', ok: true, rttMs: 9, probedAt: 1 },
+      { url: 'turn:b.example:3478', ok: false, rttMs: 0, probedAt: 1 },
+      { url: 'turn:a.example:3478', ok: true, rttMs: 4, probedAt: 2 },
+    ];
+    setTurnProbeSnapshotForTest(rows);
+    expect(turnProbeByUrl().get('turn:a.example:3478')).toMatchObject({ ok: true, rttMs: 4 });
+    expect(turnProbeByUrl(rows).get('turn:b.example:3478')).toMatchObject({ ok: false, rttMs: 0 });
+  });
+});
 
 describe('turnUrlOf / parseTurnProbeTarget', () => {
   test('extracts url from the hub/local TURN object', () => {

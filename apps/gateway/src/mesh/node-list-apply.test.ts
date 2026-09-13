@@ -259,6 +259,47 @@ describe('applyUplinkNodeList STUN distribution', () => {
     }
   });
 
+  test('三中继 TURN 主中继在前，其余保持插入序（ICE 并列回落用）', () => {
+    const sh = { url: 'turn:sh:3478', username: 'a', credential: 'a' };
+    const tk = { url: 'turn:tk:3478', username: 'b', credential: 'b' };
+    const jp = { url: 'turn:jp:3478', username: 'c', credential: 'c' };
+    let rtc = mergeListedRtc(
+      null,
+      { stun: ['stun:sh'], turn: sh },
+      {
+        sourceUrl: 'https://sh.example',
+        primary: true,
+      }
+    );
+    rtc = mergeListedRtc(
+      rtc,
+      { stun: ['stun:tk'], turn: tk },
+      {
+        sourceUrl: 'https://tk.example',
+        primary: false,
+      }
+    );
+    rtc = mergeListedRtc(
+      rtc,
+      { stun: ['stun:jp'], turn: jp },
+      {
+        sourceUrl: 'https://jp.example',
+        primary: false,
+      }
+    );
+    expect(rtc.turn).toEqual([sh, tk, jp]);
+
+    rtc = mergeListedRtc(
+      rtc,
+      { stun: ['stun:jp'], turn: jp },
+      {
+        sourceUrl: 'https://jp.example',
+        primary: true,
+      }
+    );
+    expect(rtc.turn).toEqual([jp, sh, tk]);
+  });
+
   test('primary 清单不剪掉只出现在 secondary 的 peer', () => {
     const { db, close } = createMigratedAuthDb();
     try {
