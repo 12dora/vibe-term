@@ -475,7 +475,7 @@
           "saveFailed": "选路模式保存失败：{{message}}",
           "auto": {
             "title": "智能",
-            "description": "持续比较直连与中继延迟，自动走更快的路径；文件传输优先直连"
+            "description": "自动走更快的路径，文件传输优先直连"
           },
           "direct": {
             "title": "直连",
@@ -3732,8 +3732,8 @@
     "ports": {
       "purpose": {
         "peer-signaling": "节点直连",
-        "rtc-ice": "P2P 打洞",
-        "turn-control": "TURN",
+        "rtc-ice": "UDP 直连",
+        "turn-control": "TURN 中继",
         "turn-relay": "TURN 中继",
         "public-https": "公网入口",
         "gateway-http": "网关"

@@ -16,6 +16,7 @@ import {
   UNIFIED_UDP_RANGE,
   defaultRtcPortRange,
   formatPortList,
+  coalesceTurnSpecs,
   formatPortSpec,
   parsePortRange,
   portPlanForRole,
@@ -292,4 +293,49 @@ test('relay with builtin TURN disabled lists no TURN specs', () => {
     publicHttpsPort: 443,
   });
   expect(specs.map((item) => item.purpose)).toEqual(['public-https']);
+});
+
+describe('coalesceTurnSpecs', () => {
+  const control: PortSpec = {
+    proto: 'udp',
+    port: 40000,
+    purpose: 'turn-control',
+    requiredFor: 'turn-fallback',
+    envKey: 'VIBETERM_TURN_PORT',
+    required: true,
+  };
+  const relay: PortSpec = {
+    proto: 'udp',
+    range: { begin: 40001, end: 40049 },
+    purpose: 'turn-relay',
+    requiredFor: 'turn-fallback',
+    envKey: 'VIBETERM_TURN_RELAY_PORT_RANGE',
+    required: true,
+  };
+  const https: PortSpec = {
+    proto: 'tcp',
+    port: 443,
+    purpose: 'public-https',
+    requiredFor: 'public-entry',
+    required: true,
+  };
+
+  test('相邻的控制口与分配段合成一段，保住原位置', () => {
+    const out = coalesceTurnSpecs([https, control, relay]);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toBe(https);
+    expect(out[1]).toMatchObject({
+      proto: 'udp',
+      purpose: 'turn-control',
+      range: { begin: 40000, end: 40049 },
+      port: undefined,
+    });
+  });
+
+  test('不相邻或缺一边时原样返回', () => {
+    const far: PortSpec = { ...relay, range: { begin: 49160, end: 49259 } };
+    expect(coalesceTurnSpecs([control, far])).toEqual([control, far]);
+    expect(coalesceTurnSpecs([control])).toEqual([control]);
+    expect(coalesceTurnSpecs([https])).toEqual([https]);
+  });
 });

@@ -175,3 +175,24 @@ export function parsePortRange(text: string): PortRange | null {
   }
   return { begin, end };
 }
+
+/**
+ * 展示用：TURN 控制口与分配段相邻（40000 + 40001-40049）时合成一行「40000-40049/udp TURN 中继」，
+ * 状态与放行要求沿用控制口那一条。不相邻则原样返回。
+ */
+export function coalesceTurnSpecs(plan: readonly PortSpec[]): PortSpec[] {
+  const control = plan.find((spec) => spec.purpose === 'turn-control' && spec.port !== undefined);
+  const relay = plan.find((spec) => spec.purpose === 'turn-relay' && spec.range !== undefined);
+  if (!control?.port || !relay?.range || relay.range.begin !== control.port + 1) return [...plan];
+  const merged: PortSpec = {
+    ...control,
+    port: undefined,
+    range: { begin: control.port, end: relay.range.end },
+    required: control.required || relay.required,
+  };
+  return plan.flatMap((spec) => {
+    if (spec === control) return [merged];
+    if (spec === relay) return [];
+    return [spec];
+  });
+}

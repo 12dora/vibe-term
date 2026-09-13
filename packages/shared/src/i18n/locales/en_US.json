@@ -475,7 +475,7 @@
           "saveFailed": "Failed to save route mode: {{message}}",
           "auto": {
             "title": "Smart",
-            "description": "Keeps comparing direct and relay latency and takes the faster path; file transfers prefer direct"
+            "description": "Takes the faster path; file transfers prefer direct"
           },
           "direct": {
             "title": "Direct",
@@ -3740,9 +3740,9 @@
     "ports": {
       "purpose": {
         "peer-signaling": "Direct link",
-        "rtc-ice": "P2P (ICE)",
-        "turn-control": "TURN",
-        "turn-relay": "TURN relay",
+        "rtc-ice": "UDP Direct",
+        "turn-control": "TURN Relay",
+        "turn-relay": "TURN Relay",
         "public-https": "Public entry",
         "gateway-http": "Gateway"
       }

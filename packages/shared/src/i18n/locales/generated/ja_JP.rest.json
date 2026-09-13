@@ -272,7 +272,7 @@
           "saveFailed": "経路モードの保存に失敗しました：{{message}}",
           "auto": {
             "title": "スマート",
-            "description": "直接接続と中継の遅延を常に比較し、速い経路を自動選択。ファイル転送は直接接続を優先"
+            "description": "速い経路を自動選択、ファイル転送は直結優先"
           },
           "direct": {
             "title": "直接接続",
@@ -2962,9 +2962,9 @@
     "ports": {
       "purpose": {
         "peer-signaling": "ノード直接接続",
-        "rtc-ice": "P2P（ICE）",
-        "turn-control": "TURN",
-        "turn-relay": "TURN リレー",
+        "rtc-ice": "UDP 直結",
+        "turn-control": "TURN 中継",
+        "turn-relay": "TURN 中継",
         "public-https": "公開エントリ",
         "gateway-http": "ゲートウェイ"
       }

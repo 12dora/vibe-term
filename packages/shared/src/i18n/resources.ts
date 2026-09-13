@@ -481,7 +481,7 @@ export const I18N_RESOURCES = {
           "saveFailed": "Failed to save route mode: {{message}}",
           "auto": {
             "title": "Smart",
-            "description": "Keeps comparing direct and relay latency and takes the faster path; file transfers prefer direct"
+            "description": "Takes the faster path; file transfers prefer direct"
           },
           "direct": {
             "title": "Direct",
@@ -3746,9 +3746,9 @@ export const I18N_RESOURCES = {
     "ports": {
       "purpose": {
         "peer-signaling": "Direct link",
-        "rtc-ice": "P2P (ICE)",
-        "turn-control": "TURN",
-        "turn-relay": "TURN relay",
+        "rtc-ice": "UDP Direct",
+        "turn-control": "TURN Relay",
+        "turn-relay": "TURN Relay",
         "public-https": "Public entry",
         "gateway-http": "Gateway"
       }
@@ -4239,7 +4239,7 @@ export const I18N_RESOURCES = {
           "saveFailed": "选路模式保存失败：{{message}}",
           "auto": {
             "title": "智能",
-            "description": "持续比较直连与中继延迟，自动走更快的路径；文件传输优先直连"
+            "description": "自动走更快的路径，文件传输优先直连"
           },
           "direct": {
             "title": "直连",
@@ -7496,8 +7496,8 @@ export const I18N_RESOURCES = {
     "ports": {
       "purpose": {
         "peer-signaling": "节点直连",
-        "rtc-ice": "P2P 打洞",
-        "turn-control": "TURN",
+        "rtc-ice": "UDP 直连",
+        "turn-control": "TURN 中继",
         "turn-relay": "TURN 中继",
         "public-https": "公网入口",
         "gateway-http": "网关"
@@ -7989,7 +7989,7 @@ export const I18N_RESOURCES = {
           "saveFailed": "経路モードの保存に失敗しました：{{message}}",
           "auto": {
             "title": "スマート",
-            "description": "直接接続と中継の遅延を常に比較し、速い経路を自動選択。ファイル転送は直接接続を優先"
+            "description": "速い経路を自動選択、ファイル転送は直結優先"
           },
           "direct": {
             "title": "直接接続",
@@ -11246,9 +11246,9 @@ export const I18N_RESOURCES = {
     "ports": {
       "purpose": {
         "peer-signaling": "ノード直接接続",
-        "rtc-ice": "P2P（ICE）",
-        "turn-control": "TURN",
-        "turn-relay": "TURN リレー",
+        "rtc-ice": "UDP 直結",
+        "turn-control": "TURN 中継",
+        "turn-relay": "TURN 中継",
         "public-https": "公開エントリ",
         "gateway-http": "ゲートウェイ"
       }

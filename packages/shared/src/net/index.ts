@@ -42,6 +42,7 @@ export {
   type PortRange,
   type PortRole,
   type PortSpec,
+  coalesceTurnSpecs,
 } from './port-plan';
 export {
   socketCloseError,
