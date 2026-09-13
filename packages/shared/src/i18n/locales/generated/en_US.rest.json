@@ -2504,8 +2504,6 @@
           "membersOnline": "Nodes Online",
           "membersOnlineSub": "of {{total}}",
           "activeStreams": "Active Streams",
-          "throughput": "Throughput",
-          "throughputSub": "↑ {{out}} · ↓ {{in}}",
           "bytesIn": "Inbound",
           "bytesOut": "Outbound",
           "frames": "Frame Rate",

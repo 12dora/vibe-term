@@ -2496,8 +2496,6 @@
           "membersOnline": "オンラインノード",
           "membersOnlineSub": "全 {{total}} 件",
           "activeStreams": "アクティブストリーム",
-          "throughput": "スループット",
-          "throughputSub": "↑ {{out}} · ↓ {{in}}",
           "bytesIn": "受信レート",
           "bytesOut": "送信レート",
           "frames": "フレームレート",

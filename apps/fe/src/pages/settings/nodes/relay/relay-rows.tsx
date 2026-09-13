@@ -2,7 +2,7 @@
 //
 // 两种形态（判据见 `relay-row-model.ts` 的 `isMultiAttachView`）：
 // - 单条中继 / 旧网关：一个状态点加一个主机名——「在线 / 延迟多少」卡头那枚徽标已经说过了。
-//   多于一条时行本身是选择器，点哪条切哪条。
+//   多于一条时行本身是选择器，点哪条切哪条；这时每行补一句「离线」或延迟，否则没法比较着挑。
 // - 多条同时挂载：每条都连着，行不再是单选——身份 / 延迟 / 在线对端数 / TURN 交给 `Segments`
 //   （宽屏 `·` 串成一句、窄屏一段一行），行尾一个「设为主中继」，主中继那条禁用。
 
@@ -136,7 +136,14 @@ function RelayRow({
   onSelect?: (relay: RelayLinkStatus) => void;
 }) {
   const host = relayLabel(relay.url);
-  const line = <RelayLine relay={relay} host={host} current={selectable && relay.attached} />;
+  const line = (
+    <RelayLine
+      relay={relay}
+      host={host}
+      current={selectable && relay.attached}
+      selectable={selectable}
+    />
+  );
   return (
     <RelayRowShell relay={relay} host={host}>
       {selectable && !relay.attached ? (
@@ -310,15 +317,46 @@ function RelayLine({
   relay,
   host,
   current,
+  selectable,
 }: {
   relay: RelayLinkStatus;
   host: string;
   current: boolean;
+  selectable: boolean;
 }) {
   return (
     <>
       <RelayDot relay={relay} host={host} />
       <RelayHost host={host} current={current} />
+      {selectable && <RelayCandidateFact relay={relay} host={host} />}
     </>
+  );
+}
+
+/**
+ * 行是选择器时，光一个 6px 的点不足以让人挑中继：离线与延迟必须是看得见的文字。
+ * 只有一条中继（行不可选）时不摆——卡头那枚徽标已经说过同一件事。
+ */
+function RelayCandidateFact({ relay, host }: { relay: RelayLinkStatus; host: string }) {
+  const { t } = useTranslation();
+  if (!relay.online) {
+    return (
+      <span
+        className={`whitespace-nowrap ${TONE_CLASS.text.blocked}`}
+        data-testid={`nodes-relay-offline-${host}`}
+      >
+        {t('relay.tenant.strip.offline')}
+      </span>
+    );
+  }
+  const rtt = relayRttBadge(relay);
+  if (!rtt) return null;
+  return (
+    <span
+      className="whitespace-nowrap text-muted-foreground"
+      data-testid={`nodes-relay-rtt-${host}`}
+    >
+      {t(rtt.key, rtt.params)}
+    </span>
   );
 }

@@ -122,7 +122,7 @@ function MemberRow({ member, now }: { member: RelayMetricsMember; now: number })
       <Td align="right">{member.activeStreams}</Td>
       <Td align="right" className={RATE_COLUMN_CLASS}>
         {/* 出 / 入两个读数各自包一层：整句插值成一个字符串就没法让两半分别定宽。
-            ↑ ↓ · 三个符号与语言无关，沿用 relay.metrics.tiles.throughputSub 的排法；
+            ↑ ↓ · 三个符号与语言无关，直接摆在读数两侧；
             符号本身对读屏无意义，方向靠同位置的 sr-only 文案交代。 */}
         <span className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
           <span aria-hidden>↑</span>

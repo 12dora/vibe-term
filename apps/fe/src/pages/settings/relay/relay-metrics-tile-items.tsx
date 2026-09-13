@@ -63,35 +63,6 @@ export function ActiveStreamsTile({ data, trends, stale }: MetricsTileProps) {
   );
 }
 
-export function ThroughputTile({ data, trends, stale }: MetricsTileProps) {
-  const { t } = useTranslation();
-  const { totals } = data;
-  return (
-    <StatTile
-      label={t('relay.metrics.tiles.throughput')}
-      value={
-        <ByteRate align="left">{formatRate(totals.bytesInPerSec + totals.bytesOutPerSec)}</ByteRate>
-      }
-      sub={t('relay.metrics.tiles.throughputSub', {
-        out: formatRate(totals.bytesOutPerSec),
-        in: formatRate(totals.bytesInPerSec),
-      })}
-      stale={stale}
-      sparkline={
-        <Sparkline
-          series={[
-            { values: trends.bytesOut.values, tone: 'accent', fill: true },
-            { values: trends.bytesIn.values, tone: 'success' },
-          ]}
-          width={SPARK_WIDTH}
-          height={SPARK_HEIGHT}
-        />
-      }
-      data-testid="relay-metric-throughput"
-    />
-  );
-}
-
 export function BytesInTile({ data, trends, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   return (

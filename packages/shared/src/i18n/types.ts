@@ -2939,8 +2939,6 @@ export type TranslationKey =
   | 'relay.metrics.tiles.membersOnline'
   | 'relay.metrics.tiles.membersOnlineSub'
   | 'relay.metrics.tiles.activeStreams'
-  | 'relay.metrics.tiles.throughput'
-  | 'relay.metrics.tiles.throughputSub'
   | 'relay.metrics.tiles.bytesIn'
   | 'relay.metrics.tiles.bytesOut'
   | 'relay.metrics.tiles.frames'
