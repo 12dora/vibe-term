@@ -8,6 +8,7 @@ import {
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import {
   DOMAIN_AUTHORIZATION,
+  RELAY_RECORD_MAX_RELAYS,
   decodeAdmitNodePayload,
   decodeAuthorization,
   decodeBase64url,
@@ -29,6 +30,7 @@ import { deriveRootKey } from '../lib/password';
 import { RELAY_RECORD_MAX_ATTEMPTS, RELAY_ROOT_ROTATED } from '../lib/relay-session';
 import { runHubUserAdd } from './hub';
 import {
+  formatAutoCell,
   formatRelayStatusLines,
   parseRelayHealth,
   runRelayEnroll,
@@ -37,6 +39,7 @@ import {
   runRelayPackUpload,
   runRelayReauth,
   runRelayResendToken,
+  runRelayUnpin,
 } from './relay';
 import type { RelayIo } from './relay-shared';
 
@@ -91,6 +94,7 @@ type FakeOptions = {
   /** 依次作用于每一次 `GET /api/auth/keylog/head` 的 rootEpoch。 */
   headEpochs?: number[];
   readmitPrepare?: Record<string, unknown>;
+  unpin?: Record<string, unknown> | (() => Response);
 };
 
 function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
@@ -221,6 +225,11 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         statusIndex += 1;
         return json(next);
       }
+      case '/api/mesh/relay/unpin': {
+        if (typeof options.unpin === 'function') return options.unpin();
+        if (options.unpin) return json(options.unpin);
+        return json({ ok: true });
+      }
       default:
         return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } });
     }
@@ -286,7 +295,7 @@ describe('relay enroll', () => {
     const auth = await openAuth();
     const logs: string[] = [];
     const { calls, fetcher } = fakeGateway(auth, {
-      status: [{ mode: 'hub', relays: [] }, ATTACHED_STATUS],
+      status: [{ mode: 'hub', relays: [] }, { mode: 'hub', relays: [] }, ATTACHED_STATUS],
     });
     const result = await runRelayEnroll(
       parseArgs(['relay', 'enroll', RELAY_URL]),
@@ -305,7 +314,7 @@ describe('relay enroll', () => {
     expect(proofIdx).toBeLessThan(enrollIdx);
     expect(enrollIdx).toBeLessThan(appendIdx);
     expect(paths).toContain('/api/auth/keylog/head');
-    expect(paths.filter((path) => path === '/api/mesh/relay/status')).toHaveLength(2);
+    expect(paths.filter((path) => path === '/api/mesh/relay/status')).toHaveLength(3);
     expect(logs.at(-1)).toContain(RELAY_URL);
   });
 
@@ -546,6 +555,27 @@ describe('relay enroll', () => {
     await expect(
       runRelayEnroll(parseArgs(['relay', 'enroll']), '', io(auth, fetcher, []))
     ).rejects.toThrow('relay enroll requires <url>');
+  });
+
+  test('enroll of a 17th relay is refused with the 16-relay hint', async () => {
+    const auth = await openAuth();
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [
+        {
+          mode: 'relay',
+          relays: Array.from({ length: RELAY_RECORD_MAX_RELAYS }, (_, i) => ({
+            url: `https://r${i}.example`,
+            priority: i,
+            online: true,
+            attached: true,
+          })),
+        },
+      ],
+    });
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+    ).rejects.toThrow(/16/);
+    expect(calls.some((call) => call.path === '/api/mesh/relay/enroll')).toBe(false);
   });
 
   test('a still-detached relay is reported as pending instead of done', async () => {
@@ -836,6 +866,27 @@ describe('relay list', () => {
     expect(JSON.parse(logs.join('\n')).mode).toBe('relay');
   });
 
+  test('prints AUTO/SCORE when autoSelect is present; --json stays the raw payload', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const jsonLogs: string[] = [];
+    const payload = {
+      ...ATTACHED_STATUS,
+      preferredUrl: null,
+      autoSelect: { enabled: true, lastSwitchAt: null, switchReason: 'auto-rtt', nextEvalAt: null },
+      relays: [{ ...ATTACHED_STATUS.relays[0], autoSelected: true, score: 12 }],
+    };
+    const { fetcher } = fakeGateway(auth, { status: [payload] });
+    await runRelayList(parseArgs(['relay', 'list']), io(auth, fetcher, logs));
+    expect(logs.some((line) => line.includes('AUTO') && line.includes('SCORE'))).toBe(true);
+    expect(logs.some((line) => line.includes('auto') && line.includes('12'))).toBe(true);
+    await runRelayList(parseArgs(['relay', 'list', '--json']), io(auth, fetcher, jsonLogs));
+    expect(JSON.parse(jsonLogs.join('\n'))).toMatchObject({
+      autoSelect: payload.autoSelect,
+      relays: [{ autoSelected: true, score: 12 }],
+    });
+  });
+
   test('loopback list 不打开 node-session', async () => {
     const auth = await openAuth();
     const logs: string[] = [];
@@ -939,6 +990,8 @@ describe('formatting helpers', () => {
     const header = lines.find((line) => line.includes('PRI') && line.includes('ROLE'));
     expect(header).toContain('PEERS');
     expect(header).toContain('TURN');
+    expect(header).not.toContain('AUTO');
+    expect(header).not.toContain('SCORE');
     expect(lines.some((line) => line.includes('primary') && line.includes('18 ms'))).toBe(true);
     expect(lines.some((line) => line.includes('secondary') && line.includes('(down)'))).toBe(true);
     expect(lines.some((line) => line.includes('offline') && line.includes('connect-failed'))).toBe(
@@ -1061,6 +1114,161 @@ describe('formatting helpers', () => {
     });
     const header = lines.find((line) => line.includes('PRI') && line.includes('BEST'));
     expect(header).toBeTruthy();
+    expect(header).not.toContain('AUTO');
+    expect(header).not.toContain('SCORE');
     expect(lines.some((line) => line.includes('40 ms') && line.includes('90 ms'))).toBe(true);
+  });
+
+  test('formatRelayStatusLines 在有 autoSelect 时打印 AUTO / SCORE，JSON 仍走 raw', () => {
+    const raw = {
+      mode: 'relay',
+      autoSelect: { enabled: true, lastSwitchAt: 1, switchReason: 'auto-rtt', nextEvalAt: 2 },
+      preferredUrl: 'https://ty.example',
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          role: 'primary',
+          autoSelected: true,
+          score: 42.5,
+        },
+        {
+          url: 'https://ty.example',
+          priority: 1,
+          role: 'secondary',
+          pinned: true,
+          score: 80,
+        },
+        {
+          url: 'https://off.example',
+          priority: 2,
+          role: null,
+          score: null,
+        },
+      ],
+    };
+    const lines = formatRelayStatusLines({
+      mode: 'relay',
+      tenantId: 'd'.repeat(32),
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          rttMs: 18,
+          peersOnline: 4,
+          turn: null,
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+        {
+          url: 'https://ty.example',
+          priority: 1,
+          online: true,
+          attached: true,
+          role: 'secondary',
+          rttMs: 42,
+          peersOnline: 2,
+          turn: null,
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+        {
+          url: 'https://off.example',
+          priority: 2,
+          online: false,
+          attached: false,
+          role: null,
+          rttMs: null,
+          peersOnline: null,
+          turn: null,
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+      ],
+      metaEpoch: 1,
+      nodesViaRelay: 5,
+      multiAttach: true,
+      reauthRequired: false,
+      readmitPending: 0,
+      raw,
+    });
+    const header = lines.find((line) => line.includes('PRI') && line.includes('AUTO'));
+    expect(header).toBeTruthy();
+    expect(header).toContain('SCORE');
+    expect(header).toContain('ROLE');
+    expect(lines.some((line) => line.includes('primary') && line.includes('auto'))).toBe(true);
+    expect(lines.some((line) => line.includes('secondary') && line.includes('pinned'))).toBe(true);
+    expect(lines.some((line) => line.includes('42.5'))).toBe(true);
+    expect(lines.some((line) => line.includes('https://off.example') && line.includes('-'))).toBe(
+      true
+    );
+  });
+
+  test('formatAutoCell prefers pinned over auto', () => {
+    expect(formatAutoCell({ pinned: true, autoSelected: true })).toBe('pinned');
+    expect(formatAutoCell({ autoSelected: true })).toBe('auto');
+    expect(formatAutoCell({})).toBe('-');
+  });
+});
+
+describe('relay unpin', () => {
+  test('prints unpinned after POST /api/mesh/relay/unpin', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [{ ...ATTACHED_STATUS, preferredUrl: RELAY_URL }],
+      unpin: { ok: true },
+    });
+    await runRelayUnpin(parseArgs(['relay', 'unpin']), io(auth, fetcher, logs));
+    expect(
+      calls.some((call) => call.path === '/api/mesh/relay/unpin' && call.method === 'POST')
+    ).toBe(true);
+    expect(logs).toEqual(['unpinned']);
+  });
+
+  test('prints nothing pinned when preferredUrl is empty', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [{ ...ATTACHED_STATUS, preferredUrl: null }],
+    });
+    await runRelayUnpin(parseArgs(['relay', 'unpin']), io(auth, fetcher, logs));
+    expect(calls.some((call) => call.path === '/api/mesh/relay/unpin')).toBe(false);
+    expect(logs).toEqual(['nothing pinned']);
+  });
+
+  test('--json prints the raw unpin body', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { fetcher } = fakeGateway(auth, {
+      status: [{ ...ATTACHED_STATUS, preferredUrl: RELAY_URL }],
+      unpin: { ok: true },
+    });
+    await runRelayUnpin(parseArgs(['relay', 'unpin', '--json']), io(auth, fetcher, logs));
+    expect(JSON.parse(logs.join('\n'))).toEqual({ ok: true });
+  });
+
+  test('401 from unpin is not swallowed', async () => {
+    const auth = await openAuth();
+    const { fetcher } = fakeGateway(auth, {
+      status: [{ ...ATTACHED_STATUS, preferredUrl: RELAY_URL }],
+      unpin: () =>
+        new Response(JSON.stringify({ code: 'UNAUTHORIZED' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    await expect(
+      runRelayUnpin(parseArgs(['relay', 'unpin']), io(auth, fetcher, []))
+    ).rejects.toThrow(/HTTP 401/);
   });
 });

@@ -48,6 +48,7 @@ export type NestedCommandName =
   | 'relay.resend-token'
   | 'relay.leave'
   | 'relay.list'
+  | 'relay.unpin'
   | 'relay.join'
   | 'enroll'
   | 'direct'
@@ -156,6 +157,7 @@ const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
   'resend-token': 'relay.resend-token',
   leave: 'relay.leave',
   list: 'relay.list',
+  unpin: 'relay.unpin',
 };
 
 const MESH_SUBCOMMANDS: Record<string, NestedCommandName> = {
@@ -371,6 +373,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   'relay.resend-token': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
+  'relay.unpin': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
 };
 
 /**

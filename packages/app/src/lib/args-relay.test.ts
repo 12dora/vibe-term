@@ -24,6 +24,7 @@ describe('relay command parsing', () => {
     expect(nested(['relay', 'reauth', 'https://r.example']).name).toBe('relay.reauth');
     expect(nested(['relay', 'leave']).name).toBe('relay.leave');
     expect(nested(['relay', 'list']).name).toBe('relay.list');
+    expect(nested(['relay', 'unpin']).name).toBe('relay.unpin');
     expect(nested(['relay', 'pack', 'upload']).name).toBe('relay.pack.upload');
   });
 
@@ -116,6 +117,7 @@ describe('relay flag allowlists', () => {
       )
     ).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'list', '--json']))).not.toThrow();
+    expect(() => assertKnownFlags(parseArgs(['relay', 'unpin', '--json']))).not.toThrow();
   });
 
   test('flags do not leak across relay subcommands', () => {
@@ -161,6 +163,7 @@ describe('relay commands run on the Bun auth runtime', () => {
       'pack.upload',
       'leave',
       'list',
+      'unpin',
     ]) {
       expect(AUTH_COMMANDS.has(`relay.${name}`)).toBe(true);
     }

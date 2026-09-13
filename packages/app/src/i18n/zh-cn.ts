@@ -311,6 +311,8 @@ export const zhCN: Record<string, string> = {
   'relay.enroll.readmitPending': '接入后仍有 {{count}} 个成员待重新确认，已中止 set-relays',
   'relay.enroll.done': '已接入中继 {{url}}（租户 {{tenantId}}）',
   'relay.enroll.pending': 'set-relays 已提交，但中继尚未挂上：{{url}} {{error}}',
+  'relay.enroll.maxRelays':
+    '该节点已有 {{count}} 条中继（上限 {{max}}）；enroll 为追加，请先删除一条再添加',
   'relay.pack.tokenNotCurrent':
     '中继密封包上传需要当前令牌。请先在持有当前令牌的节点运行 vibeterm relay resend-token，或在本节点通过密码加入，再重试 vibeterm relay pack upload。',
   'relay.pack.materialMissing': '当前中继令牌或加密密钥不可用。',

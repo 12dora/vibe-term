@@ -43,6 +43,7 @@ Usage:
   vibeterm relay pack upload
   vibeterm relay leave
   vibeterm relay list [--json]
+  vibeterm relay unpin [--json]
   vibeterm relay status [--json]
   vibeterm relay tenants [--json]
   vibeterm relay metrics [--members] [--json]
@@ -112,6 +113,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm relay pack upload
   vibeterm relay leave
   vibeterm relay list [--json]
+  vibeterm relay unpin [--json]
   vibeterm relay status [--json]
   vibeterm relay tenants [--json]
   vibeterm relay metrics [--members] [--json]
