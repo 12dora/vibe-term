@@ -5,12 +5,15 @@ import {
   dispatchUserInitiatedSelection,
   encodePaneIdForUrl,
   hostAppPath,
+  safeDecodePaneParam,
 } from '@vibeterm/stores';
 import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { useSidebar } from '@vibeterm/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 import type { DeviceTreeNavigation } from './agent-adapter';
+
+export { safeDecodePaneParam };
 
 export const PANE_ROUTE_PATH = '/devices/:deviceId/windows/:windowId/panes/:paneId';
 export const DEVICE_ROUTE_PATH = '/devices/:deviceId';
@@ -63,18 +66,7 @@ export function buildPaneRoutePath(
 /**
  * matchPath 接收的是 location.pathname，其中 paneId 仍保留 URL 编码；只在这里解码一次，
  * 再交给 tmux URL 工具保持与 useParams 路径一致。
- * 手工敲坏的 `%` 序列（如 `/panes/%zz`）会让 decodeURIComponent 抛 URIError 并整棵侧边栏白屏，
- * 这里降级成原样返回，让选择落空而不是崩溃。
  */
-export function safeDecodePaneParam(value: string | undefined): string | undefined {
-  if (!value) return undefined;
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
 export function parseDeviceTreeSelection(
   pathname: string,
   patterns: DeviceTreeRoutePatterns

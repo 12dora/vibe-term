@@ -123,4 +123,39 @@ describe('navigateToAppUrl', () => {
     expect(dispatched).toHaveLength(0);
     expect(navCalls).toEqual([{ to: '/settings', opts: { replace: true } }]);
   });
+
+  test('跨节点 pane 路由：从 /n/<id> 解析 nodeId，paneId 还原为原始 tmux id，导航目标保持编码', () => {
+    const nodeId = 'bb'.repeat(16);
+    expect(() => navigateToAppUrl(`/n/${nodeId}/devices/d1/windows/%401/panes/%252`)).not.toThrow();
+
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0].detail).toEqual({
+      nodeId,
+      deviceId: 'd1',
+      windowId: '@1',
+      paneId: '%2',
+    });
+    expect(navCalls).toEqual([
+      { to: `/n/${nodeId}/devices/d1/windows/%401/panes/%252`, opts: { replace: true } },
+    ]);
+  });
+
+  test('pane 段为未编码 tmux id %2 或坏转义 %zz 时不抛，仍导航并保留原段', () => {
+    const nodeId = 'aa'.repeat(16);
+    expect(() => navigateToAppUrl(`/n/${nodeId}/devices/d1/windows/%401/panes/%2`)).not.toThrow();
+    expect(dispatched[0].detail).toMatchObject({
+      nodeId,
+      deviceId: 'd1',
+      windowId: '@1',
+      paneId: '%2',
+    });
+    expect(navCalls[0]?.to).toBe(`/n/${nodeId}/devices/d1/windows/%401/panes/%2`);
+
+    expect(() => navigateToAppUrl('/devices/d1/windows/@1/panes/%zz')).not.toThrow();
+    expect(dispatched[1].detail).toMatchObject({
+      nodeId: 'self',
+      paneId: '%zz',
+    });
+    expect(navCalls[1]?.to).toBe('/devices/d1/windows/@1/panes/%zz');
+  });
 });

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { NotificationOptions } from '@vibeterm/notifications';
 import type { EventDevicePayload, EventTmuxPayload, SiteSettings } from '@vibeterm/shared';
 import { createGatewayConnection } from '@vibeterm/ws-client';
-import type { HostServices } from './runtime';
+import { setNavigateBridge, setSidebarBridge } from './flow-bridges';
+import { type HostServices, createBrowserHostServices } from './runtime';
 import { installWindowStorage } from './test-utils';
 import type { TmuxDomainEventContext } from './tmux-device-events';
 import type { TmuxState } from './tmux-state';
@@ -204,9 +205,74 @@ describe('handleTmuxEvent notification', () => {
       tmuxEvent('notification', { title: 'x', paneUrl: '/devices/d/panes/%1' })
     );
     const action = h.infos[0]?.options?.action;
-    expect(action?.label).toBe('Open');
+    expect(action?.label).toBe('terminal.notificationOpen');
     action?.onClick();
     expect(h.navigations).toEqual(['/devices/d/panes/%1']);
+  });
+
+  test('gateway pane-url 格式（绝对 URL + %252）点 Open 不抛，选择落在原始 pane id', () => {
+    const dispatched: CustomEvent[] = [];
+    const navCalls: Array<{ to: string; opts?: { replace?: boolean } }> = [];
+    const win = globalThis.window as Window & { dispatchEvent?: (e: Event) => boolean };
+    const previousDispatch = win.dispatchEvent;
+    win.dispatchEvent = (e: Event) => {
+      dispatched.push(e as CustomEvent);
+      return typeof previousDispatch === 'function' ? previousDispatch.call(win, e) : true;
+    };
+    setNavigateBridge((to, opts) => {
+      navCalls.push({ to, opts });
+    });
+    setSidebarBridge({ isMobile: false, setOpenMobile: () => {} });
+
+    const connection = createGatewayConnection({ wsUrl: 'ws://device-events-paneurl.test/ws' });
+    const infos: ToastRecord[] = [];
+    const runtime = createAppRuntime({
+      connection,
+      storagePrefix: 'device-events-paneurl:',
+      features: { agentUi: false, hostManagedNotifications: false },
+      t: (key) => String(key),
+      host: createBrowserHostServices({ nodeId: 'self' }),
+      notifications: {
+        info: (title, options) => {
+          infos.push({ title, options });
+        },
+        success: () => {},
+        warning: () => {},
+        error: () => {},
+      },
+    });
+    disposers.push(() => {
+      runtime.dispose();
+      connection.dispose();
+      setNavigateBridge(null);
+      setSidebarBridge(null);
+      win.dispatchEvent = previousDispatch;
+    });
+
+    const deviceId = '550e8400-e29b-41d4-a716-446655440000';
+    const paneUrl = `http://127.0.0.1:9883/devices/${deviceId}/windows/%401/panes/%252`;
+    handleTmuxEvent(
+      {
+        core: runtime,
+        getState: runtime.stores.tmux.getState,
+        setState: runtime.stores.tmux.setState,
+        getSite: () => runtime.stores.site,
+      },
+      tmuxEvent('notification', { title: 'osc', paneUrl, paneId: '%2' })
+    );
+
+    const action = infos[0]?.options?.action;
+    expect(action).toBeDefined();
+    expect(() => action?.onClick()).not.toThrow();
+    expect(dispatched[0]?.detail).toEqual({
+      nodeId: 'self',
+      deviceId,
+      windowId: '@1',
+      paneId: '%2',
+    });
+    expect(navCalls).toEqual([
+      { to: `/devices/${deviceId}/windows/%401/panes/%252`, opts: { replace: true } },
+    ]);
   });
 
   test('缺少 paneUrl 时不挂动作', () => {

@@ -178,6 +178,14 @@ describe('nodeAppPath / parseNodeIdFromPath', () => {
     expect(parseNodeIdFromPath('/n/self/settings')).toBe('self');
   });
 
+  test('已带 node 前缀的路径不再叠加前缀（转发通知深链）', () => {
+    const prefixed = `/n/${NODE_A}/devices/d1/windows/%401/panes/%252`;
+    expect(nodeAppPath(NODE_A, prefixed)).toBe(prefixed);
+    expect(nodeAppPath(NODE_B, prefixed)).toBe(prefixed);
+    expect(nodeAppPath(NODE_A, `/n/${NODE_A}`)).toBe(`/n/${NODE_A}`);
+    expect(nodeAppPath(NODE_A, '/n/self/settings')).toBe(`/n/${NODE_A}/n/self/settings`);
+  });
+
   test('前缀不是规范 node id 时按 self 处理，不把脏值带进后续拼接', () => {
     expect(parseNodeIdFromPath('/n/../api/x')).toBe('self');
     expect(parseNodeIdFromPath('/n/%2e%2e/api/x')).toBe('self');

@@ -397,6 +397,7 @@
       "notificationFallbackTitle": "Terminal Notification",
       "notificationSourceLabel": "From {{source}}",
       "notificationFallbackDetail": "Terminal notification",
+      "notificationOpen": "Open",
       "paneTitle": "Terminal {{index}}",
       "editorSendWithEnter": "Send with Enter",
       "editorSendLineByLine": "Send Line by Line",

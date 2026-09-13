@@ -1,9 +1,11 @@
 // 入口机上「其它节点事件」的 toast 判据与订阅接线。
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { nodeAppPath } from '@vibeterm/api-client';
 import { claimToastFor, resetToastDedupeForTest } from '@vibeterm/notifications';
 import type { WebhookEvent } from '@vibeterm/shared';
 import { wsBorsh } from '@vibeterm/shared';
+import { createBrowserHostServices, setNavigateBridge, setSidebarBridge } from '@vibeterm/stores';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
@@ -137,9 +139,16 @@ describe('深链与文案', () => {
 interface Toast {
   title: string;
   description?: string;
+  action?: { label: string; onClick: () => void };
 }
 
-function fakeRuntime(toasts: Toast[]) {
+function fakeRuntime(
+  toasts: Toast[],
+  host: {
+    navigate: (to: string, opts?: { replace?: boolean }) => void;
+    closeMobileSidebar: () => void;
+  } = { navigate: () => undefined, closeMobileSidebar: () => undefined }
+) {
   let handler: ((msg: { kind: number; payload: Uint8Array }) => void) | null = null;
   const runtime = {
     client: {
@@ -153,11 +162,11 @@ function fakeRuntime(toasts: Toast[]) {
     features: { hostManagedNotifications: false },
     stores: { site: { getState: () => ({ settings: { enableBrowserNotificationToast: true } }) } },
     notifications: {
-      info(title: string, options?: { description?: string }) {
-        toasts.push({ title, description: options?.description });
+      info(title: string, options?: { description?: string; action?: Toast['action'] }) {
+        toasts.push({ title, description: options?.description, action: options?.action });
       },
     },
-    host: { navigate: () => undefined, closeMobileSidebar: () => undefined },
+    host,
   };
   return { runtime, emit: (msg: { kind: number; payload: Uint8Array }) => handler?.(msg) };
 }
@@ -294,5 +303,99 @@ describe('身份去重', () => {
       )
     );
     expect(toasts).toHaveLength(3);
+  });
+});
+
+describe('转发 toast 点 Open', () => {
+  const DEVICE = '550e8400-e29b-41d4-a716-446655440000';
+  let dispatched: CustomEvent[] = [];
+  let navCalls: Array<{ to: string; opts?: { replace?: boolean } }> = [];
+  let previousDispatch: ((e: Event) => boolean) | undefined;
+
+  beforeEach(() => {
+    dispatched = [];
+    navCalls = [];
+    const win = globalThis.window as Window & { dispatchEvent?: (e: Event) => boolean };
+    previousDispatch = win.dispatchEvent;
+    win.dispatchEvent = (e: Event) => {
+      dispatched.push(e as CustomEvent);
+      return typeof previousDispatch === 'function' ? previousDispatch.call(win, e) : true;
+    };
+    setNavigateBridge((to, opts) => {
+      navCalls.push({ to, opts });
+    });
+    setSidebarBridge({ isMobile: false, setOpenMobile: () => {} });
+  });
+
+  afterEach(() => {
+    setNavigateBridge(null);
+    setSidebarBridge(null);
+    const win = globalThis.window as Window & { dispatchEvent: (e: Event) => boolean };
+    win.dispatchEvent = previousDispatch ?? ((_e: Event) => true);
+  });
+
+  test('跨节点 terminal_notification：点 Open 不抛，选择事件带来源 nodeId / 原始 paneId', () => {
+    const toasts: Toast[] = [];
+    const host = createBrowserHostServices({ nodeId: 'self' });
+    const { runtime, emit } = fakeRuntime(toasts, host);
+    subscribeEntryNotifyToasts(runtime as never, { entryNodeId: () => ENTRY, t });
+
+    emit(
+      notifyFrame(
+        'terminal_notification',
+        event({
+          eventType: 'terminal_notification',
+          device: { id: DEVICE, name: 'laptop', type: 'local' },
+          tmux: { windowId: '@1', paneId: '%2', windowIndex: 0 },
+          payload: { nodeId: NODE_B, nodeName: 'laptop' },
+        })
+      )
+    );
+
+    const action = toasts[0]?.action;
+    expect(action).toBeDefined();
+    expect(() => action?.onClick()).not.toThrow();
+
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]?.detail).toEqual({
+      nodeId: NODE_B,
+      deviceId: DEVICE,
+      windowId: '@1',
+      paneId: '%2',
+    });
+    expect(navCalls).toEqual([
+      {
+        to: `/n/${NODE_B}/devices/${DEVICE}/windows/%401/panes/%252`,
+        opts: { replace: true },
+      },
+    ]);
+  });
+
+  test('toast 挂在来源节点运行时（宿主 appPath 带 /n/<id>）时不叠成双前缀', () => {
+    const toasts: Toast[] = [];
+    const host = createBrowserHostServices({
+      nodeId: NODE_B,
+      appPath: (path) => nodeAppPath(NODE_B, path),
+    });
+    const { runtime, emit } = fakeRuntime(toasts, host);
+    subscribeEntryNotifyToasts(runtime as never, { entryNodeId: () => ENTRY, t });
+
+    emit(
+      notifyFrame(
+        'terminal_notification',
+        event({
+          eventType: 'terminal_notification',
+          device: { id: DEVICE, name: 'laptop', type: 'local' },
+          tmux: { windowId: '@2', paneId: '%2', windowIndex: 0 },
+          payload: { nodeId: NODE_B, nodeName: 'laptop' },
+        })
+      )
+    );
+
+    expect(() => toasts[0]?.action?.onClick()).not.toThrow();
+    expect(navCalls.map((c) => c.to)).toEqual([
+      `/n/${NODE_B}/devices/${DEVICE}/windows/%402/panes/%252`,
+    ]);
+    expect(navCalls[0]?.to).not.toContain(`/n/${NODE_B}/n/`);
   });
 });

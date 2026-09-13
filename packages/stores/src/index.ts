@@ -71,6 +71,7 @@ export {
   type SiteFallbackSnapshot,
 } from './site-fallback';
 export { decodePaneIdFromUrlParam, encodePaneIdForUrl } from './tmux-url';
+export { parseNodeIdFromPath, safeDecodePaneParam } from './pane-route';
 export { decodeFileRef, encodeFileRef, fileRoute, type FileRef } from './file-url';
 export * from './terminal-meta';
 export {

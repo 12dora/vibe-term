@@ -4,6 +4,7 @@
 // 一律不再用 window.location.href，避免整页刷新 / 被服务端持久化的 siteUrl 污染 origin（issue #32）。
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { bridgeCloseMobileSidebar, bridgeNavigate } from './flow-bridges';
+import { parseNodeIdFromPath, safeDecodePaneParam } from './pane-route';
 
 export const USER_INITIATED_SELECTION_EVENT = 'vibeterm:user-initiated-selection';
 
@@ -36,14 +37,16 @@ export function toAppPath(url: string): string {
 export function navigateToAppUrl(url: string, nodeId: string = SELF_NODE_ID): void {
   const path = toAppPath(url);
   const match = PANE_URL_RE.exec(path);
+  const pathNodeId = parseNodeIdFromPath(path);
+  const eventNodeId = pathNodeId !== SELF_NODE_ID ? pathNodeId : nodeId;
   if (match) {
     const [, deviceId, windowId, encodedPaneId] = match;
-    // detail 里的 paneId 与 sidebar navigateToPane 保持一致：原始未编码值。
+    // detail 与 sidebar navigateToPane 保持一致：原始未编码值。
     dispatchUserInitiatedSelection({
-      nodeId,
-      deviceId,
-      windowId,
-      paneId: decodeURIComponent(encodedPaneId),
+      nodeId: eventNodeId,
+      deviceId: safeDecodePaneParam(deviceId) ?? deviceId,
+      windowId: safeDecodePaneParam(windowId) ?? windowId,
+      paneId: safeDecodePaneParam(encodedPaneId) ?? encodedPaneId,
     });
   }
   bridgeNavigate(path, { replace: true });

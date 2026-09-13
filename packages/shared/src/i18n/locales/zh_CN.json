@@ -397,6 +397,7 @@
       "notificationFallbackTitle": "终端通知",
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
+      "notificationOpen": "打开",
       "paneTitle": "终端 {{index}}",
       "editorSendWithEnter": "发送附带回车",
       "editorSendLineByLine": "逐行发送",

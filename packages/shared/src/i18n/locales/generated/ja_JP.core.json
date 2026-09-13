@@ -184,6 +184,7 @@
       "notificationFallbackTitle": "ターミナル通知",
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
+      "notificationOpen": "開く",
       "paneTitle": "ターミナル {{index}}",
       "editorSendWithEnter": "Enter で送信",
       "editorSendLineByLine": "1行ずつ送信",

@@ -355,6 +355,7 @@ export type TranslationKey =
   | 'terminal.notificationFallbackTitle'
   | 'terminal.notificationSourceLabel'
   | 'terminal.notificationFallbackDetail'
+  | 'terminal.notificationOpen'
   | 'terminal.paneTitle'
   | 'terminal.editorSendWithEnter'
   | 'terminal.editorSendLineByLine'

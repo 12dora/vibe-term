@@ -22,7 +22,7 @@ import { buildPaneLocationLabel, claimToastFor } from '@vibeterm/notifications';
 import type { ToastIdentity } from '@vibeterm/notifications';
 import type { WebhookEvent } from '@vibeterm/shared';
 import { wsBorsh } from '@vibeterm/shared';
-import { encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import { encodePaneIdForUrl } from '@vibeterm/stores';
 import type { AppRuntime } from '@vibeterm/stores';
 import { useRuntime } from '@vibeterm/stores/react';
 import i18next from 'i18next';
@@ -178,7 +178,8 @@ export function subscribeEntryNotifyToasts(runtime: AppRuntime, deps: EntryNotif
             action: {
               label: deps.t('watch.toast.openTerminal'),
               onClick: () => {
-                runtime.host.navigate(hostAppPath(runtime.host, path));
+                // path 已是 `/n/<来源>/...` 宿主路由形状，不能再过 hostAppPath（当前运行时若是来源节点会叠成双前缀）。
+                runtime.host.navigate(path);
                 runtime.host.closeMobileSidebar();
               },
             },

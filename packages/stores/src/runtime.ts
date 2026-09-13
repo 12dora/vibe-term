@@ -32,6 +32,7 @@ import {
 } from '@vibeterm/ws-client/pane-sink-registry';
 import i18next from 'i18next';
 import { bridgeCloseMobileSidebar, bridgeIsMobile, bridgeOpenMobileSidebar } from './flow-bridges';
+import { parseNodeIdFromPath } from './pane-route';
 import type { UIStore } from './ui';
 
 export interface SaveFileInput {
@@ -247,7 +248,11 @@ export function createBrowserHostServices(options: BrowserHostOptions = {}): Hos
     // 否则 watch / rsync 等已显式 hostAppPath 的调用点会被二次加前缀。
     navigate(to, opts) {
       void opts;
-      navigateViaAppNavigation(to, options.nodeId ?? SELF_NODE_ID);
+      const pathNodeId = parseNodeIdFromPath(to);
+      navigateViaAppNavigation(
+        to,
+        pathNodeId !== SELF_NODE_ID ? pathNodeId : (options.nodeId ?? SELF_NODE_ID)
+      );
     },
     ...(options.appPath ? { appPath: toAppPath } : {}),
     isMobile: bridgeIsMobile,

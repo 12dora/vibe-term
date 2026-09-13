@@ -4,7 +4,10 @@
 // 「记账 → 事件跟随 → 快照跟随 → 建窗跟随」，调换会改变跟随目标与 select 变体。
 
 import type { TmuxWindow } from '@vibeterm/shared';
-import { USER_INITIATED_SELECTION_EVENT } from '@vibeterm/stores';
+import {
+  USER_INITIATED_SELECTION_EVENT,
+  type UserInitiatedSelectionDetail,
+} from '@vibeterm/stores';
 import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { type PaneSelection, shouldTrackPendingRouteSelection } from '@vibeterm/terminal-ui';
 import { useEffect } from 'react';
@@ -17,6 +20,14 @@ import type { PaneSelectionDispatch } from './use-pane-selection-dispatch';
 import type { PaneSelectionRefs } from './use-pane-selection-state';
 
 const PENDING_CREATE_WINDOW_TTL_MS = 5000;
+
+/** 只认本 runtime 发出的选择；跨节点 toast Open 的事件不能改写当前控制台的 pending。 */
+export function isSelectionEventForRuntime(
+  detail: Pick<UserInitiatedSelectionDetail, 'nodeId'>,
+  runtimeNodeId: string
+): boolean {
+  return detail.nodeId === runtimeNodeId;
+}
 
 export function usePaneActiveFollow({
   deviceId,
@@ -208,9 +219,8 @@ export function usePaneActiveFollow({
 
   // 侧边栏发起的选择：登记为 pending 用户选择，压制随后的 active 回声
   useEffect(() => {
-    const handler = (
-      event: CustomEvent<{ deviceId: string; windowId: string; paneId: string }>
-    ) => {
+    const handler = (event: CustomEvent<UserInitiatedSelectionDetail>) => {
+      if (!isSelectionEventForRuntime(event.detail, runtime.nodeId)) return;
       const { deviceId: eventDeviceId, windowId: eventWindowId, paneId } = event.detail;
       // 切设备时这些 ref 由 usePaneSelectionState 统一重置，这里只认当前设备
       if (eventDeviceId === deviceId) {
@@ -222,5 +232,5 @@ export function usePaneActiveFollow({
     return () => {
       window.removeEventListener(USER_INITIATED_SELECTION_EVENT, handler as EventListener);
     };
-  }, [deviceId, userInitiatedSelectionRef]);
+  }, [deviceId, runtime.nodeId, userInitiatedSelectionRef]);
 }

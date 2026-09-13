@@ -156,7 +156,7 @@ const handleNotification: TmuxEventHandler = (ctx, payload) => {
     description,
     action: paneUrl
       ? {
-          label: 'Open',
+          label: ctx.core.t('terminal.notificationOpen'),
           onClick: () => {
             // 服务端下发的是本 node 的绝对 URL；先取 pathname 再套本 runtime 的 node 前缀。
             ctx.core.host.navigate(hostAppPath(ctx.core.host, toAppPath(paneUrl)));
