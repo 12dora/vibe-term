@@ -101,6 +101,11 @@ export interface ResolvedNode {
 
 const SELF_ALIASES: ReadonlySet<string> = new Set(['self', 'local', 'entry', '.']);
 
+/** `self` / `local` / `entry` / `.` 只在解析 **node** 时是入口别名，不能当设备名去碰名册。 */
+export function isSelfAlias(ref: string): boolean {
+  return SELF_ALIASES.has(ref.trim().toLowerCase());
+}
+
 export class Resolver {
   private nodesCache: MeshNode[] | null = null;
   private entryNodeIdCache: string | null | undefined;
@@ -150,7 +155,7 @@ export class Resolver {
   /** node id、node 名字或 `self` 都接受；不给（undefined / 空）即 entry 自身。 */
   async resolveNode(ref: string | null | undefined): Promise<ResolvedNode> {
     const raw = ref?.trim() ?? '';
-    if (!raw || SELF_ALIASES.has(raw.toLowerCase())) {
+    if (!raw || isSelfAlias(raw)) {
       return { id: SELF_NODE_ID, name: 'self', isSelf: true, row: null };
     }
     // 已经是规范 node id 的话不需要名册：名册取不到（未登录 / standalone）也照样能拼路径。
@@ -225,7 +230,7 @@ export class Resolver {
     device: DeviceWithRuntime;
   } | null> {
     const raw = ref.trim();
-    if (!raw) return null;
+    if (!raw || isSelfAlias(raw)) return null;
     let node: ResolvedNode;
     try {
       node = await this.resolveNode(raw);

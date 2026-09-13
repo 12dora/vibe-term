@@ -19,7 +19,13 @@ export function configDir(env: ConfigEnv = process.env, home: string = homedir()
   return resolve(home, '.config', 'vibeterm');
 }
 
-export function sessionFilePath(dir: string): string {
+/**
+ * 会话文件路径：`$VIBETERM_SESSION_FILE` 若设置则整文件改走该路径（覆盖默认
+ * `<config dir>/session.json`）。该文件是完整会话能力，须按 0600 保护。
+ */
+export function sessionFilePath(dir: string, env: ConfigEnv = process.env): string {
+  const override = env.VIBETERM_SESSION_FILE?.trim();
+  if (override) return resolve(override);
   return join(dir, SESSION_FILE_NAME);
 }
 

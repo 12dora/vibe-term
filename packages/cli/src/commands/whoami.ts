@@ -2,9 +2,9 @@
 
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { parseArgv } from '../core/args';
-import { fetchAuthMode, listMeshNodes, requiresLogin } from '../core/auth';
+import { fetchAuthMode, fetchMeshNodes, requiresLogin } from '../core/auth';
 import type { CliContext } from '../core/context';
-import { AuthError } from '../core/errors';
+import { AuthError, EXIT_AUTH } from '../core/errors';
 import type { Command } from './types';
 
 interface NodeStatus {
@@ -63,6 +63,14 @@ function printWhoamiTable(ctx: CliContext, statuses: NodeStatus[]): void {
   ctx.out.info(cmd);
 }
 
+function emitLoggedOut(ctx: CliContext, entry: string): number {
+  if (ctx.globals.json) {
+    ctx.out.data({ loggedIn: false, entry, hint: 'vibeterm login' });
+    return EXIT_AUTH;
+  }
+  throw new AuthError(`not logged in to ${entry}`, 'run: vibeterm login');
+}
+
 async function run(ctx: CliContext, argv: string[]): Promise<number | undefined> {
   parseArgv(argv, {});
   const entry = ctx.globals.entry;
@@ -76,17 +84,21 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   }
 
   const selfSession = ctx.http.jar.get(SELF_NODE_ID);
+  if (!selfSession) return emitLoggedOut(ctx, entry);
+
+  const mesh = await fetchMeshNodes(ctx.http);
+  if (!mesh.ok) return emitLoggedOut(ctx, entry);
+
   const stored = ctx.sessions.entry(entry);
-  const nodes = selfSession ? await listMeshNodes(ctx.http) : [];
   const statuses: NodeStatus[] = [
     asNodeStatus(
       SELF_NODE_ID,
       `${displayUser(mode.username, mode.uid, 'unknown')} @ ${mode.nodeId}`,
-      Boolean(selfSession),
+      true,
       true,
       localExpiry(ctx, SELF_NODE_ID)
     ),
-    ...nodes
+    ...mesh.nodes
       .filter((node) => node.id !== mode.nodeId)
       .map((node) =>
         asNodeStatus(node.id, node.name, node.loggedIn, node.online, localExpiry(ctx, node.id))
@@ -99,7 +111,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
       auth: 'mesh',
       user: { uid: mode.uid, username: mode.username ?? stored?.username ?? null },
       entryNodeId: mode.nodeId,
-      loggedIn: Boolean(selfSession),
+      loggedIn: true,
       nodes: statuses,
       sessionFile: ctx.sessions.path,
     });
@@ -112,10 +124,6 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     ctx.out.line('');
     printWhoamiTable(ctx, statuses);
   }
-
-  if (!selfSession) {
-    throw new AuthError(`not logged in to ${entry}`, 'run: vibeterm login');
-  }
 }
 
 export const command: Command = {
@@ -127,7 +135,12 @@ export const command: Command = {
     'READY = SESSION yes and ONLINE yes. SESSION=no ONLINE=yes means the node is',
     'reachable but this CLI has no cookie — run: vibeterm login --node <name>',
     '',
-    'Exit code 3 when the entry requires a login and no session is stored.',
+    'Not logged in (no session, or GET /api/mesh/nodes → 401): stdout is empty,',
+    'stderr is `not logged in to <entry>` plus `run: vibeterm login`, exit 3.',
+    '--json then prints { loggedIn: false, entry, hint: "vibeterm login" } on stdout',
+    '(no sessionFile, no user) and still exits 3. sessionFile is only included when',
+    'logged in. Override the jar with VIBETERM_SESSION_FILE (mode 0600; the file is',
+    'a full session capability, protect it).',
   ].join('\n'),
   run,
 };

@@ -1,7 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
 import { UsageError } from './errors';
-import { formatTarget, parsePeerTarget, parseTarget, pickFirstLocalDevice } from './resolve';
+import { HttpClient, createMemoryCookieJar } from './http';
+import {
+  Resolver,
+  formatTarget,
+  isSelfAlias,
+  parsePeerTarget,
+  parseTarget,
+  pickFirstLocalDevice,
+} from './resolve';
 
 describe('parseTarget', () => {
   test('device only', () => {
@@ -123,5 +131,65 @@ describe('pickFirstLocalDevice', () => {
 
   test('returns null when the node has no local device', () => {
     expect(pickFirstLocalDevice([device({ id: 'ssh-1', type: 'ssh' })])).toBeNull();
+  });
+});
+
+describe('isSelfAlias', () => {
+  test.each(['self', 'local', 'entry', '.', 'LOCAL', ' Self '])('%p is a self alias', (ref) => {
+    expect(isSelfAlias(ref)).toBe(true);
+  });
+
+  test('a mesh node name is not a self alias', () => {
+    expect(isSelfAlias('oracle-jp')).toBe(false);
+    expect(isSelfAlias('office')).toBe(false);
+  });
+});
+
+describe('Resolver.resolveNodeLocalDevice', () => {
+  const ENTRY = 'http://entry.example:9883';
+  const OFFICE = 'a'.repeat(32);
+
+  function deviceResolver(onFetch?: (url: string) => void): Resolver {
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 1000,
+      jar: createMemoryCookieJar(),
+      fetchImpl: async (url) => {
+        onFetch?.(url);
+        if (url.endsWith('/api/mesh/nodes')) {
+          return Response.json({
+            nodes: [{ id: OFFICE, name: 'office', publicKey: 'pk', online: true }],
+          });
+        }
+        if (url.endsWith(`/n/${OFFICE}/api/devices`)) {
+          return Response.json({
+            devices: [{ id: 'box-1', name: 'box', type: 'local', sortOrder: 0 }],
+          });
+        }
+        if (url.endsWith('/api/devices')) {
+          return Response.json({
+            devices: [{ id: 'self-1', name: 'jiefa-app', type: 'local', sortOrder: 0 }],
+          });
+        }
+        return new Response('{"error":"Not found"}', { status: 404 });
+      },
+    });
+    return new Resolver(http);
+  }
+
+  test('self aliases used as a device token do not resolve to self', async () => {
+    const urls: string[] = [];
+    const resolver = deviceResolver((url) => urls.push(url));
+    for (const alias of ['local', 'self', 'entry', '.']) {
+      expect(await resolver.resolveNodeLocalDevice(alias)).toBeNull();
+    }
+    expect(urls).toHaveLength(0);
+  });
+
+  test('a mesh node name still falls back to that node first local device', async () => {
+    const resolver = deviceResolver();
+    const fallback = await resolver.resolveNodeLocalDevice('office');
+    expect(fallback?.node.name).toBe('office');
+    expect(fallback?.device.name).toBe('box');
   });
 });

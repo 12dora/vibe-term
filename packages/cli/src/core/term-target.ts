@@ -5,6 +5,7 @@
 // 语法里 `:` 之后没有 `.` 时写的是窗口，有 `.` 时写的是 pane。
 
 import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
+import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import type { TmuxPane, TmuxSession, TmuxWindow } from '@vibeterm/shared';
 import {
   type CanonicalResolution,
@@ -15,7 +16,7 @@ import {
 } from '@vibeterm/ws-client/canonical-tree';
 import type { CliContext } from './context';
 import { NotFoundError, UsageError } from './errors';
-import { type ParsedTarget, parseTarget } from './resolve';
+import { type ParsedTarget, type ResolvedNode, parseTarget } from './resolve';
 
 export interface ResolvedTargetDevice {
   target: ParsedTarget;
@@ -24,20 +25,35 @@ export interface ResolvedTargetDevice {
   device: DeviceWithRuntime;
 }
 
+async function deviceNotFoundOnNode(
+  ctx: CliContext,
+  node: ResolvedNode,
+  deviceRef: string
+): Promise<NotFoundError> {
+  const devices = await ctx.resolver.listDevices(node.id).catch(() => [] as DeviceWithRuntime[]);
+  const names = devices.map((device) => device.name).slice(0, 5);
+  const ls =
+    node.id === SELF_NODE_ID
+      ? 'run: vibeterm devices ls'
+      : `run: vibeterm devices ls --node ${node.name}`;
+  const hint = names.length > 0 ? `devices on this node: ${names.join(', ')}` : ls;
+  return new NotFoundError(`device "${deviceRef}" not found on node ${node.name}`, hint);
+}
+
 /** 解析目标里的 node 与 device（只打 REST，不建 WS）。`--node` 只在目标没写 node 时生效。 */
 export async function resolveTargetDevice(
   ctx: CliContext,
   raw: string
 ): Promise<ResolvedTargetDevice> {
   const target = parseTarget(raw);
-  const node = target.node
-    ? await ctx.resolver.resolveNode(target.node)
-    : await ctx.resolver.resolveNode(ctx.globals.node);
+  const node = await ctx.resolver.resolveNode(target.node ?? ctx.globals.node);
   try {
     const device = await ctx.resolver.resolveDevice(node.id, target.device);
     return { target, nodeId: node.id, nodeName: node.name, device };
   } catch (error) {
-    if (error instanceof NotFoundError && !target.node) {
+    // 文档约定的回退：`exec <meshNodeName>`（无 `--node`、无 slash）→ 该节点第一台 local。
+    // `--node` 已经选定节点后，未知设备是硬错误，绝不能再把设备 token 当节点名。
+    if (error instanceof NotFoundError && !target.node && !ctx.globals.node) {
       const fallback = await ctx.resolver.resolveNodeLocalDevice(target.device);
       if (fallback) {
         ctx.out.info(`using device ${fallback.device.name} on node ${fallback.node.name}`);
@@ -48,6 +64,9 @@ export async function resolveTargetDevice(
           device: fallback.device,
         };
       }
+    }
+    if (error instanceof NotFoundError) {
+      throw await deviceNotFoundOnNode(ctx, node, target.device);
     }
     throw error;
   }

@@ -155,12 +155,35 @@ interface ChallengeResponse {
   nodePk: string;
 }
 
+/** 离线 node：传输失败，或入口转发回 503 `NODE_UNREACHABLE`。 */
+export function isNodeUnreachableError(error: unknown): boolean {
+  if (error instanceof NetworkError) return true;
+  return error instanceof CliError && error.code === 'NODE_UNREACHABLE';
+}
+
 /** 一次「取 challenge → 签 login → POST /login」。重试必须整套重来：nonce 一次性。 */
 export async function loginToNode(args: {
   http: HttpClient;
   nodeId: string;
   material: SessionMaterial;
   /** mesh 列表里的该 node 公钥（base64url）；给了就与 challenge 的 nodePk 逐字节核对。 */
+  pinnedPublicKey?: string | null;
+  totpCode?: string | null;
+}): Promise<LoginNodeResult> {
+  try {
+    return await loginToNodeOnce(args);
+  } catch (error) {
+    if (isNodeUnreachableError(error)) {
+      return { nodeId: args.nodeId, ok: false, code: 'NODE_UNREACHABLE' };
+    }
+    throw error;
+  }
+}
+
+async function loginToNodeOnce(args: {
+  http: HttpClient;
+  nodeId: string;
+  material: SessionMaterial;
   pinnedPublicKey?: string | null;
   totpCode?: string | null;
 }): Promise<LoginNodeResult> {
@@ -207,6 +230,20 @@ export async function loginToNode(args: {
   return { nodeId, ok: false, code: await readLoginErrorCode(response), nodePk: challenge.nodePk };
 }
 
+/** `/api/mesh/nodes`：404 当空表；401 表示 self 会话失效（whoami 要跟没登录同一条路）。 */
+export async function fetchMeshNodes(
+  http: HttpClient
+): Promise<{ ok: true; nodes: MeshNode[] } | { ok: false; unauthorized: true }> {
+  const response = await http.fetch(SELF_NODE_ID, '/api/mesh/nodes');
+  if (response.status === 404) return { ok: true, nodes: [] };
+  if (response.status === 401) return { ok: false, unauthorized: true };
+  if (!response.ok) {
+    throw new NetworkError(`GET /api/mesh/nodes → HTTP ${response.status}`);
+  }
+  const payload = (await response.json()) as { nodes?: MeshNode[] };
+  return { ok: true, nodes: payload.nodes ?? [] };
+}
+
 async function readLoginErrorCode(response: Response): Promise<string> {
   try {
     const payload = (await response.json()) as { code?: unknown; error?: unknown };
@@ -220,14 +257,8 @@ async function readLoginErrorCode(response: Response): Promise<string> {
 
 /** `/api/mesh/nodes`：standalone 入口没有这个路由，视为「只有 entry 自己」。 */
 export async function listMeshNodes(http: HttpClient): Promise<MeshNode[]> {
-  const response = await http.fetch(SELF_NODE_ID, '/api/mesh/nodes');
-  if (response.status === 404) return [];
-  if (response.status === 401) return [];
-  if (!response.ok) {
-    throw new NetworkError(`GET /api/mesh/nodes → HTTP ${response.status}`);
-  }
-  const payload = (await response.json()) as { nodes?: MeshNode[] };
-  return payload.nodes ?? [];
+  const result = await fetchMeshNodes(http);
+  return result.ok ? result.nodes : [];
 }
 
 /** 登录失败码 → 面向用户的错误（退出码 3）。 */

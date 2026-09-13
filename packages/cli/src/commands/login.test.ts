@@ -6,6 +6,7 @@ import { Writable } from 'node:stream';
 import { encodeBase64url, generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import { buildContext } from '../core/context';
 import { AuthError } from '../core/errors';
+import type { FetchLike } from '../core/http';
 import { type FakeGateway, createFakeGateway, createFakeUser } from '../core/test-fakes';
 import { command as login } from './login';
 import { command as logout } from './logout';
@@ -13,6 +14,7 @@ import { command as whoami } from './whoami';
 
 const ENTRY = 'http://entry.example:9883';
 const NODE_A = 'a'.repeat(32);
+const NODE_OFFLINE = 'c'.repeat(32);
 const dirs: string[] = [];
 
 afterEach(async () => {
@@ -33,7 +35,10 @@ function collector(): { stream: Writable; text: () => string } {
   };
 }
 
-async function testContext(gateway: FakeGateway, options: { node?: string; json?: boolean } = {}) {
+async function testContext(
+  gateway: FakeGateway,
+  options: { node?: string; json?: boolean; fetchImpl?: FetchLike } = {}
+) {
   const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-login-'));
   dirs.push(dir);
   const stdout = collector();
@@ -47,7 +52,7 @@ async function testContext(gateway: FakeGateway, options: { node?: string; json?
     configDir: dir,
     installEntry: null,
     env: {},
-    fetchImpl: gateway.fetch,
+    fetchImpl: options.fetchImpl ?? gateway.fetch,
     stdout: stdout.stream,
     stderr: stderr.stream,
   });
@@ -241,10 +246,14 @@ describe('vibeterm whoami / logout', () => {
   test('whoami without a session exits 3', async () => {
     const user = await createFakeUser({ password: 'pw' });
     const gateway = createFakeGateway({ user });
-    const { ctx } = await testContext(gateway, { json: true });
-    const error = (await whoami.run(ctx, []).catch((err) => err)) as AuthError;
-    expect(error).toBeInstanceOf(AuthError);
-    expect(error.exitCode).toBe(3);
+    const { ctx, stdout } = await testContext(gateway, { json: true });
+    const code = await whoami.run(ctx, []);
+    expect(code).toBe(3);
+    expect(JSON.parse(stdout.text())).toEqual({
+      loggedIn: false,
+      entry: ENTRY,
+      hint: 'vibeterm login',
+    });
   });
 
   test('logout revokes every node session and clears the local entry', async () => {
@@ -346,6 +355,95 @@ describe('fan-out failures', () => {
     expect(gateway.loginBodies.filter((entry) => entry.nodeId === NODE_A)).toHaveLength(1);
     expect(stderr.text()).toContain('passkey assertion');
     expect(stderr.text()).toContain('--totp');
+  });
+
+  test('NODE_UNREACHABLE on one node skips it, logs into the rest, exits 0', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_OFFLINE]: 'oracle' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes(`/n/${NODE_OFFLINE}/`)) {
+        return new Response(JSON.stringify({ code: 'NODE_UNREACHABLE', nodeId: NODE_OFFLINE }), {
+          status: 503,
+        });
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stdout, stderr } = await testContext(gateway, { json: true, fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const code = await login.run(ctx, []);
+
+    expect(code).toBe(0);
+    expect(gateway.issued.has('self')).toBe(true);
+    expect(gateway.issued.has(NODE_A)).toBe(true);
+    expect(gateway.issued.has(NODE_OFFLINE)).toBe(false);
+    expect(stderr.text()).toContain('skipped oracle: unreachable');
+    const payload = JSON.parse(stdout.text()) as {
+      nodes: Array<{ node: string; ok: boolean; code?: string }>;
+    };
+    expect(payload.nodes.find((row) => row.node === NODE_A)?.ok).toBe(true);
+    expect(payload.nodes.find((row) => row.node === NODE_OFFLINE)).toMatchObject({
+      ok: false,
+      code: 'NODE_UNREACHABLE',
+    });
+  });
+
+  test('unreachable skip prints a summary and still exits 0', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_OFFLINE]: 'oracle' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes(`/n/${NODE_OFFLINE}/`)) {
+        return new Response(JSON.stringify({ code: 'NODE_UNREACHABLE', nodeId: NODE_OFFLINE }), {
+          status: 503,
+        });
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stderr } = await testContext(gateway, { fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(0);
+    expect(stderr.text()).toContain('skipped oracle: unreachable');
+    expect(stderr.text()).toContain('logged in to 2 nodes, skipped 1 unreachable');
+  });
+
+  test('a network error on one node is skipped as unreachable', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_OFFLINE]: 'oracle' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes(`/n/${NODE_OFFLINE}/`)) throw new Error('ECONNREFUSED');
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stderr } = await testContext(gateway, { json: true, fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(0);
+    expect(gateway.issued.has(NODE_A)).toBe(true);
+    expect(stderr.text()).toContain('skipped oracle: unreachable');
+  });
+
+  test('a reachable node that rejects login exits non-zero', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office' },
+      forceLoginErrorFor: { [NODE_A]: 'INVALID_CREDENTIALS' },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(3);
+    expect(gateway.issued.has('self')).toBe(true);
+    expect(gateway.issued.has(NODE_A)).toBe(false);
   });
 
   test('every failed node gets its own explanation, the entry still keeps its session', async () => {

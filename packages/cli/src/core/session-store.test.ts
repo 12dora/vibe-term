@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CliError } from './errors';
 import { SessionStore, isLiveNodeSession, parseSessionFile } from './session-store';
 
 const dirs: string[] = [];
@@ -33,13 +34,13 @@ describe('isLiveNodeSession', () => {
 describe('SessionStore', () => {
   test('round-trips identity and node sessions', async () => {
     const dir = join(await tempDir(), 'config');
-    const store = SessionStore.open(dir);
+    const store = SessionStore.open(dir, {});
     store.setIdentity('http://entry:1', { uid: 'u-1', username: 'admin' });
     store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid-1', expiresAt: 42 });
     store.setNodeSession('http://entry:1', { nodeId: 'a'.repeat(32), sid: 'sid-2', expiresAt: 43 });
     store.save();
 
-    const reopened = SessionStore.open(dir);
+    const reopened = SessionStore.open(dir, {});
     const entry = reopened.entry('http://entry:1');
     expect(entry?.uid).toBe('u-1');
     expect(entry?.username).toBe('admin');
@@ -50,7 +51,7 @@ describe('SessionStore', () => {
 
   test('writes the file 0600 and the directory 0700', async () => {
     const dir = join(await tempDir(), 'nested', 'config');
-    const store = SessionStore.open(dir);
+    const store = SessionStore.open(dir, {});
     store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 0 });
     store.save();
 
@@ -60,22 +61,58 @@ describe('SessionStore', () => {
 
   test('clearEntry drops the entry and the lastEntry pointer', async () => {
     const dir = await tempDir();
-    const store = SessionStore.open(dir);
+    const store = SessionStore.open(dir, {});
     store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 0 });
     store.clearEntry('http://entry:1');
     store.save();
 
-    const reopened = SessionStore.open(dir);
+    const reopened = SessionStore.open(dir, {});
     expect(reopened.entry('http://entry:1')).toBeNull();
     expect(reopened.lastEntry()).toBeNull();
   });
 
   test('a corrupt file degrades to an empty store instead of throwing', async () => {
     const dir = await tempDir();
-    const store = SessionStore.open(dir);
-    await writeFile(store.path, '{ not json');
+    const store = SessionStore.open(dir, {});
+    await writeFile(store.path, '{ not json', { mode: 0o600 });
+    await chmod(store.path, 0o600);
     expect(store.lastEntry()).toBeNull();
     expect(store.entry('http://entry:1')).toBeNull();
+  });
+
+  test('VIBETERM_SESSION_FILE overrides the default path and keeps 0600', async () => {
+    const dir = await tempDir();
+    const file = join(dir, 'agent', 'session.json');
+    const store = SessionStore.open(dir, { VIBETERM_SESSION_FILE: file });
+    expect(store.path).toBe(file);
+    store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 0 });
+    store.save();
+
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(join(dir, 'agent'))).mode & 0o777).toBe(0o700);
+    const reopened = SessionStore.open(dir, { VIBETERM_SESSION_FILE: file });
+    expect(reopened.entry('http://entry:1')?.nodes.self.sid).toBe('sid');
+  });
+
+  test('refuses a group/world readable session file', async () => {
+    const dir = await tempDir();
+    const store = SessionStore.open(dir, {});
+    store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 0 });
+    store.save();
+    await chmod(store.path, 0o644);
+
+    const reopened = SessionStore.open(dir, {});
+    const error = (() => {
+      try {
+        reopened.lastEntry();
+        return null;
+      } catch (err) {
+        return err as CliError;
+      }
+    })();
+    expect(error).toBeInstanceOf(CliError);
+    expect(error?.message).toContain('group/world readable');
+    expect(error?.message).toContain('full session capability');
   });
 
   test('parseSessionFile drops unknown and malformed rows', () => {
@@ -100,7 +137,7 @@ describe('SessionStore', () => {
 
   test('never persists secrets beyond the session id', async () => {
     const dir = await tempDir();
-    const store = SessionStore.open(dir);
+    const store = SessionStore.open(dir, {});
     store.setIdentity('http://entry:1', { uid: 'u-1', username: 'admin' });
     store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 1 });
     store.save();
