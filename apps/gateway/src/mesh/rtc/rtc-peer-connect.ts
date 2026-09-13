@@ -22,6 +22,7 @@ import {
 } from './rtc-log';
 import {
   PEER_CHANNEL_LABEL,
+  type SignalingAttemptState,
   attachPcDiagnostics,
   bindChannelDiagnostics,
   createRtcSignalApplier,
@@ -42,6 +43,7 @@ export type BindPeerSignalingHooks = {
   onSuperseded?: (epoch?: number) => void;
   onEpoch?: (epoch: number) => void;
   onRemoteDescriptionApplied?: () => void;
+  onState?: (state: SignalingAttemptState) => void;
 };
 
 export function bindPeerSignaling(
@@ -62,6 +64,7 @@ export function bindPeerSignaling(
   const state = createSignalingAttemptState(epoch, hooks?.lastOfferEpoch);
   state.logFields = { ...hooks?.ctx, peer: to, epoch };
   state.onSuperseded = hooks?.onSuperseded;
+  hooks?.onState?.(state);
   state.onEpoch = (next) => {
     state.logFields = { ...state.logFields, epoch: next };
     hooks?.onEpoch?.(next);
@@ -222,6 +225,7 @@ export async function runPeerConnectAttempt(opts: {
   let unsubSignaling = () => {};
   let summaryNoted = false;
   let supersededSync = false;
+  let sigState: SignalingAttemptState | undefined;
   let rejectSuperseded: ((err: Error) => void) | null = null;
   const superseded = new Promise<never>((_, reject) => {
     rejectSuperseded = reject;
@@ -253,6 +257,9 @@ export async function runPeerConnectAttempt(opts: {
         onRemoteDescriptionApplied: () => {
           progress.remoteDescriptionApplied = true;
         },
+        onState: (state) => {
+          sigState = state;
+        },
       }
     );
     if (supersededSync) unsubSignaling();
@@ -269,6 +276,7 @@ export async function runPeerConnectAttempt(opts: {
     });
     void work.catch(() => undefined);
     const result = await raceWithAbort(Promise.race([work, superseded]), opts.signal);
+    if (sigState) sigState.ignoreNewerOffers = true;
     hooks.noteSummary('success', performance.now() - opts.dialStartedAt);
     summaryNoted = true;
     result.link.onClose(() => {

@@ -925,6 +925,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
     linkFactory: opts.linkFactory,
     interfacesFn: d.interfacesFn,
     refreshLocalInterfaces: d.refreshLocalInterfaces,
+    routeMode: d.routeMode,
     hubHost: () => attachedHubHost(uplink.attachedHub(), hubEndpointUrl(config)),
     onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
     onGatewaySessionClose: (session, close) => {

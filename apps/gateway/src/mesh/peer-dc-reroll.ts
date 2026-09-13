@@ -13,6 +13,11 @@ import {
 } from './dc-reroll-policy';
 import type { RtcSignalMessage } from './mesh-deps';
 import { logLine } from './mesh-log';
+import {
+  type RerollOfferIgnoreReason,
+  dropInboxMessage,
+  rerollOfferIgnoreReason,
+} from './peer-dc-reroll-offer';
 import { winningDialInitiator } from './peer-direct-attempt';
 import { type PeerManagerState, RTC_PEER_INBOX_MAX_MESSAGES } from './peer-manager-state';
 import { PEER_LINK_REROLL_REQUEST, parseLinkRerollRequest } from './peer-protocol';
@@ -52,6 +57,8 @@ export type DcRerollDeps = {
   finishRetire: (live: LivePeer, reason: string) => void;
   /** 应答侧发 `link.reroll-request`；测试可注入。缺省走 session.ctl。 */
   sendPeerCtl?: (live: LivePeer, msg: Record<string, unknown>) => void;
+  /** 应答侧 offer 忽略冷却；缺省放行。 */
+  answererAllows?: (nodeId: string) => boolean;
 };
 
 let disabledLogged = false;
@@ -188,29 +195,45 @@ export class DcRerollCoordinator {
   }
 
   /**
-   * 应答侧入口：已是 dc 时常规路径不会再建 PC（`wantsUpgrade` 为 false、`aboveDc` 不成立），
-   * 重掷 offer 因此必须在这里单独接住——入队后直接起应答拨号。只接对端在 `link.hello` 里
-   * 报过 reroll 能力的 offer（2.3.1 及更早不会发重掷 offer），并同样受每小时 3 次的预算约束。
-   * 调用方必须先把消息投给现有监听者，让旧 attempt 的残留监听自行 superseded 退订。
+   * 应答侧入口：已是 dc 时常规路径不会再建 PC。更高 epoch 的 offer 在这里入队并起应答拨号。
+   * 只接对端报过 reroll 能力的 offer。接 offer 不看本端 request 预算 / 90s 窗口。
    */
   interceptOffer(nodeId: string, msg: RtcSignalMessage): boolean {
     if (!dcRerollEnabled() || !msg.sdp) return false;
-    const live = this.state.live.get(nodeId);
-    if (!live || live.transport !== 'dc' || live.rerollCapable !== true) return false;
     const offer = decodeSdpSignal(msg.sdp);
     if (offer?.type !== 'offer') return false;
-    // 旧 attempt 的迟到 offer（epoch 不高于当前 live）不是重掷，不能耗预算、不能起 attempt。
-    if (live.rtcEpoch !== undefined && offer.epoch !== undefined && offer.epoch <= live.rtcEpoch) {
+    const reason = rerollOfferIgnoreReason({
+      live: this.state.live.get(nodeId),
+      offerEpoch: offer.epoch,
+      inflight: this.deps.hasDcInflight(nodeId),
+      isAnswerer: !this.isInitiator(nodeId),
+      answererAllows: this.deps.answererAllows?.(nodeId) !== false,
+    });
+    if (reason === 'skip') return false;
+    if (reason) {
+      rtcLog('reroll_offer_ignored', { peer: id8(nodeId), reason });
       return false;
     }
-    if (this.deps.hasDcInflight(nodeId)) return false;
-    const now = this.state.scheduler.now();
-    const rec = this.recordOf(nodeId, now);
-    if (!this.canAcceptRerollOffer(rec, now)) return false;
     if (offer.epoch !== undefined) this.dropForeignCandidates(nodeId, offer.epoch);
-    if (!this.enqueueInbox(nodeId, msg)) return false;
-    this.noteRerollOfferAccepted(rec, now);
-    void this.deps.dialReroll(nodeId, { answer: true, transport: 'dc' }).catch(() => undefined);
+    if (!this.enqueueInbox(nodeId, msg)) {
+      rtcLog('reroll_offer_ignored', { peer: id8(nodeId), reason: 'inbox-full' });
+      return false;
+    }
+    const now = this.state.scheduler.now();
+    this.noteRerollOfferAccepted(this.recordOf(nodeId, now), now);
+    void this.deps
+      .dialReroll(nodeId, { answer: true, transport: 'dc' })
+      .then((session) => {
+        if (session) return;
+        dropInboxMessage(this.state.rtcInbox, nodeId, msg);
+        rtcLog('reroll_offer_ignored', {
+          peer: id8(nodeId),
+          reason: this.dialRerollNullReason(nodeId),
+        });
+      })
+      .catch(() => {
+        dropInboxMessage(this.state.rtcInbox, nodeId, msg);
+      });
     return true;
   }
 
@@ -361,8 +384,10 @@ export class DcRerollCoordinator {
     );
   }
 
-  private canAcceptRerollOffer(rec: DcRerollRecord, now: number): boolean {
-    return this.isAnsweringOwnRequest(rec, now) || rec.count < DC_REROLL_MAX_PER_HOUR;
+  private dialRerollNullReason(nodeId: string): RerollOfferIgnoreReason {
+    if (this.deps.answererAllows?.(nodeId) === false) return 'cooldown';
+    if (this.deps.dcCapable?.(nodeId) === false) return 'not-capable';
+    return 'role';
   }
 
   private noteRerollOfferAccepted(rec: DcRerollRecord, now: number): void {

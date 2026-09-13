@@ -296,6 +296,44 @@ describe('DC 重掷（make-before-break）', () => {
     expect(nextEpoch).toBeGreaterThan(oldEpochLarge as number);
   }, 20_000);
 
+  test('满预算且超过 90s 仍应答；更高 epoch offer 不投给 live 监听', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    const seen: string[] = [];
+    const listeners = (
+      pair.managerLarge as unknown as {
+        rtcListeners: Map<string, Set<(msg: { sdp?: string | null }) => void>>;
+      }
+    ).rtcListeners;
+    let set = listeners.get(pair.small.nodeId);
+    if (!set) {
+      set = new Set();
+      listeners.set(pair.small.nodeId, set);
+    }
+    set.add((msg) => {
+      if (msg.sdp) seen.push(msg.sdp);
+    });
+    const rerolls = (
+      pair.managerLarge as unknown as {
+        state: { rerolls: Map<string, { count: number; lastAt: number | null }> };
+      }
+    ).state.rerolls;
+    rerolls.set(pair.small.nodeId, {
+      count: DC_REROLL_MAX_PER_HOUR,
+      windowStartedAt: Date.now(),
+      lastAt: Date.now() - 91_000,
+      oldMs: null,
+      prevSession: null,
+      transport: null,
+      pendingPeerRequest: false,
+    } as never);
+    const oldLarge = pair.managerLarge.getLive(pair.small.nodeId);
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(true);
+    await waitUntil(() => pair.managerLarge.getLive(pair.small.nodeId) !== oldLarge, 5_000);
+    expect(seen).toEqual([]);
+    expect(pair.managerLarge.transportOf(pair.small.nodeId)).toBe('dc');
+  }, 20_000);
+
   test('NAT 应答侧仅有 TCP 样本时请求 offerer 重掷：新 DC、旧链退役、搬流', async () => {
     const pair = await setupRerollPair(fixtures);
     await establishDc(pair);

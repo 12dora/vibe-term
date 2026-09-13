@@ -1,3 +1,8 @@
+import type {
+  RelayStatusPayload,
+  RelayStatusRow,
+  RelayStatusTurnView,
+} from '@vibeterm/shared/relay';
 import { membersProbeSnapshot } from './port-reach';
 import { classifyRelayLinkError } from './relay-link-error';
 import type { RelayPresence } from './relay-presence';
@@ -36,16 +41,7 @@ export function relayLinkError(input: {
   };
 }
 
-export type RelayTurnMembersView = { ok: number; total: number; updatedAt: number };
-
-export type RelayStatusTurnView = {
-  url: string;
-  probeOk: boolean | null;
-  members?: RelayTurnMembersView;
-  localHint?: 'tun';
-};
-
-export type RelayStatusRowKeyLog = { diverged?: boolean };
+export type { RelayStatusTurnView };
 
 export type RelayStatusRowExtras = {
   /** 该行当前已认证（primary 或 secondary）。缺省时退回「仅 attached 行」。 */
@@ -54,7 +50,7 @@ export type RelayStatusRowExtras = {
   peersOnline?: number | null;
   turn?: RelayStatusTurnView | null;
   lastError?: { reason: string; at: number } | null;
-  keyLog?: RelayStatusRowKeyLog;
+  keyLog?: { diverged?: boolean };
   pathBestMs?: number;
   reraces?: number;
 };
@@ -85,7 +81,7 @@ export function buildRelayStatusRow(
   live: Pick<PooledUplink, 'lastConnectError'> | null,
   candidates: RelayStatusCandidate[],
   extras?: RelayStatusRowExtras
-) {
+): RelayStatusRow {
   const attached = attachedUrl != null && sameHubUrl(attachedUrl, row.url);
   const online = statusRowOnline(attached, client, extras);
   const cand = candidates.find((entry) => entry.publicUrl === row.url);
@@ -171,7 +167,7 @@ export function collectRelayStatusRows(input: {
   secondaryOf: (url: string) => RelayUplinkClient | null;
   peersOnlineOn: (url: string) => number | null;
   turnOf: (client: RelayUplinkClient | null, relayUrl: string) => RelayStatusTurnView | null;
-}) {
+}): RelayStatusRow[] {
   return input.rows.map((row) => {
     const attached = input.attachedUrl != null && sameHubUrl(input.attachedUrl, row.url);
     const client = attached ? input.primary : input.secondaryOf(row.url);
@@ -203,7 +199,7 @@ export function buildRelayStatusPayload(input: {
   reauthRequired: boolean;
   readmitPending: number;
   metaKeyLagging: unknown;
-}) {
+}): RelayStatusPayload {
   const relays = collectRelayStatusRows({
     rows: input.rows,
     attachedUrl: input.attachedUrl,

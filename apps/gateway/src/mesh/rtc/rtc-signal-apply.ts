@@ -20,6 +20,8 @@ export type SignalingAttemptState = {
   onSuperseded?: (epoch?: number) => void;
   onEpoch?: (epoch: number) => void;
   onRemoteDescriptionApplied?: () => void;
+  /** 已建成的 live PC：更高 epoch 的 offer 忽略，不 superseded、不退订残留 ICE。 */
+  ignoreNewerOffers?: boolean;
 };
 
 function logSignal(
@@ -96,6 +98,20 @@ export function applyRemoteSdp(
     state.lastOfferEpoch
   );
   if (epoch === 'superseded') {
+    if (state.ignoreNewerOffers) {
+      logSignal(
+        'signal dropped',
+        {
+          peer,
+          kind: 'sdp',
+          cause: 'established',
+          expected_epoch: state.epoch,
+          received_epoch: decoded.epoch,
+        },
+        state
+      );
+      return 'dropped';
+    }
     logSignal(
       'signal dropped',
       {

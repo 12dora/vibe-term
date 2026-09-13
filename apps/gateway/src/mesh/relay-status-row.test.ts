@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { ingestTurnOk, resetPortReachForTest } from './port-reach';
 import { RelayPresence } from './relay-presence';
 import {
+  buildRelayStatusPayload,
   buildRelayStatusRow,
   collectRelayStatusRows,
   enrichRelayTurnView,
@@ -10,6 +11,7 @@ import {
 import type { RelayUplinkClient } from './relay-uplink-client';
 import { ensureTcpSamplingTrust, resetTcpSamplingTrustForTest } from './tcp-sampling-trust';
 import type { UplinkState } from './types';
+import { resetUplinkPathSamplerForTest } from './uplink-path-sampler';
 
 describe('relayLinkError', () => {
   test('attached row uses the live client error, not the pool candidate', () => {
@@ -314,5 +316,64 @@ describe('collectRelayStatusRows', () => {
       role: 'primary',
       peersOnline: 3,
     });
+  });
+});
+
+describe('buildRelayStatusPayload JSON snapshot', () => {
+  afterEach(() => {
+    resetPortReachForTest();
+    resetTcpSamplingTrustForTest();
+    resetUplinkPathSamplerForTest();
+  });
+
+  test('compact JSON is byte-identical for a mixed-row payload', () => {
+    const primary = {
+      state: 'online',
+      rttMs: 12,
+      awaitingToken: false,
+      nodesViaRelay: 2,
+      quota: { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: 1024 },
+      lastConnectError: null,
+      keyLog: { diverged: false },
+      rtc: { turn: { url: 'turn:sh.example:3478' } },
+      identity: { nodeId: 'aa'.repeat(16) },
+      keyLogHealth: () => ({ skipped: 0, blockedSeq: null, caughtUp: true }),
+    } as unknown as RelayUplinkClient;
+    const secondary = {
+      state: 'online',
+      rttMs: 33,
+      awaitingToken: false,
+      lastConnectError: null,
+      keyLog: { diverged: true },
+      rtc: null,
+      identity: { nodeId: 'aa'.repeat(16) },
+    } as unknown as RelayUplinkClient;
+
+    const payload = buildRelayStatusPayload({
+      mode: 'relay',
+      tenantId: 'ab'.repeat(16),
+      rows: [
+        { url: SH, priority: 0, kicked: false },
+        { url: TK, priority: 1, kicked: false },
+        { url: 'https://os.example', priority: 2, kicked: true, kickedReason: 'password_rotated' },
+      ],
+      attachedUrl: SH,
+      primary,
+      live: { lastConnectError: null },
+      candidates: [
+        { publicUrl: 'https://os.example', lastError: 'client-too-old', lastErrorAt: 7 },
+      ],
+      secondaryOf: (url) => (url === TK ? secondary : null),
+      presence: null,
+      multiAttach: true,
+      metaEpoch: 4,
+      reauthRequired: true,
+      readmitPending: 1,
+      metaKeyLagging: [],
+    });
+
+    expect(JSON.stringify(payload)).toBe(
+      '{"mode":"relay","tenantId":"abababababababababababababababab","relays":[{"url":"https://sh.example","priority":0,"online":true,"attached":true,"role":"primary","rttMs":12,"peersOnline":null,"turn":{"url":"turn:sh.example:3478","probeOk":null},"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null},{"url":"https://tk.example","priority":1,"online":true,"attached":false,"role":"secondary","rttMs":33,"peersOnline":null,"turn":null,"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"keyLog":{"diverged":true}},{"url":"https://os.example","priority":2,"online":false,"attached":false,"role":null,"rttMs":null,"peersOnline":null,"turn":null,"lastError":"client-too-old","lastErrorCode":"protocol","lastErrorAt":7,"kicked":true,"kickedReason":"password_rotated"}],"metaEpoch":4,"nodesViaRelay":2,"multiAttach":true,"reauthRequired":true,"awaitingToken":true,"readmitPending":1,"metaKeyLagging":[],"quota":{"maxNodes":8,"maxStreams":16,"bandwidthBytesPerSec":1024},"keyLog":{"skipped":0,"blockedSeq":null,"caughtUp":true}}'
+    );
   });
 });

@@ -1,19 +1,7 @@
-export const RELAY_LINK_ERROR_CODES = [
-  'connect-failed',
-  'connect-timeout',
-  'auth-timeout',
-  'auth-rejected',
-  'heartbeat-lost',
-  'kicked',
-  'revoked',
-  'dns',
-  'refused',
-  'tls',
-  'protocol',
-  'unknown',
-] as const;
+import { RELAY_LINK_ERROR_CODES, type RelayLinkErrorCode } from '@vibeterm/shared/relay';
 
-export type RelayLinkErrorCode = (typeof RELAY_LINK_ERROR_CODES)[number];
+export { RELAY_LINK_ERROR_CODES };
+export type { RelayLinkErrorCode };
 
 const NULL_REASONS = /^(stopped|aborted)$/i;
 

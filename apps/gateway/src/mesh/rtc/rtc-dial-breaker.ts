@@ -16,8 +16,15 @@ import {
   type DialBreakerTripEvent,
 } from '../../../../../packages/shared/src/net/dial-breaker';
 import { envInt } from '../mesh-log';
+import { AnswererOfferBackoff } from './rtc-answerer-backoff';
 import type { RtcFailureStage } from './rtc-dial-progress';
 import { flushDialFailed, rtcLog } from './rtc-log';
+
+export {
+  ANSWERER_COOLDOWN_MS,
+  ANSWERER_TIMEOUT_LIMIT,
+  AnswererOfferBackoff,
+} from './rtc-answerer-backoff';
 
 export const RTC_DIAL_BREAKER_FAILS = DIAL_BREAKER_FAILS;
 export const RTC_DIAL_BREAKER_BASE_MS_DEFAULT = DIAL_BREAKER_BASE_MS;
@@ -172,9 +179,12 @@ export class RtcDialBreaker {
   >();
   /** 应答侧未收到远端 SDP 的 timeout 不抬档，但仍让 snapshot.lastFailureKind 看到本次 kind。 */
   private readonly lastUncountedKind = new Map<string, string>();
+  /** 对端发起的连续超时：忽略该对端后续 offer，不抬 offerer 熔断。 */
+  private readonly answererBackoff: AnswererOfferBackoff;
 
   constructor(opts: RtcDialBreakerOptions = {}) {
     this.now = opts.now ?? Date.now;
+    this.answererBackoff = new AnswererOfferBackoff(this.now);
     this.disableAfter =
       opts.disableAfter ??
       envInt('VIBETERM_RTC_DIAL_DISABLE_AFTER', RTC_DIAL_DISABLE_AFTER_DEFAULT, 1);
@@ -229,6 +239,11 @@ export class RtcDialBreaker {
     return this.disabled.has(peer);
   }
 
+  /** 应答侧是否还该接这个对端的 offer。冷却中为 false。 */
+  shouldAcceptAnswer(peer: string, now = this.now()): boolean {
+    return this.answererBackoff.shouldAccept(peer, now);
+  }
+
   disabledPeers(): string[] {
     return [...this.disabled.keys()];
   }
@@ -256,6 +271,9 @@ export class RtcDialBreaker {
   ): RtcDialFailureResult {
     const classified = classifyRtcDialFailure(kind);
     const breakerKind = RTC_DIAL_BREAKER_SKIP_KINDS.has(classified) ? classified : kind;
+    if (opts?.peerInitiated === true && classified === 'timeout') {
+      this.noteAnswererTimeout(peer, now);
+    }
     if (isUncountedPeerInitiatedTimeout(classified, opts)) {
       this.lastUncountedKind.set(peer, breakerKind);
       const decision = this.inner.shouldTry(peer, now);
@@ -275,12 +293,14 @@ export class RtcDialBreaker {
   noteChannelEstablished(peer: string, attemptId?: string, now?: number): void {
     this.disabled.delete(peer);
     this.lastUncountedKind.delete(peer);
+    this.answererBackoff.noteSuccess(peer);
     this.inner.noteChannelEstablished(peer, attemptId, now);
   }
 
   noteHealthy(peer: string, now?: number): boolean {
     this.disabled.delete(peer);
     this.lastUncountedKind.delete(peer);
+    this.answererBackoff.noteSuccess(peer);
     return this.inner.noteHealthy(peer, now);
   }
 
@@ -313,7 +333,18 @@ export class RtcDialBreaker {
       this.disabled.clear();
       this.lastUncountedKind.clear();
     }
+    this.answererBackoff.reset(peer);
     this.inner.reset(peer);
+  }
+
+  private noteAnswererTimeout(peer: string, now?: number): void {
+    const trip = this.answererBackoff.noteTimeout(peer, now ?? this.now());
+    if (!trip.opened) return;
+    rtcLog('answerer_backoff', {
+      peer,
+      cooldown_ms: trip.cooldownMs,
+      consecutive: trip.consecutive,
+    });
   }
 
   private maybeDisable(peer: string, now?: number): void {

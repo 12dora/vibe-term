@@ -72,6 +72,9 @@ export type PeerDialerDeps = {
   onLocalFingerprintChanged: () => void;
   onPeerEndpointChanged: (nodeId: string) => void;
   listenPort: () => number | undefined;
+  allowsOutboundDirect?: (nodeId: string) => boolean;
+  allowsInboundDirect?: () => boolean;
+  trackRelay?: (session: LinkSession, peerNodeId: string, gen: number) => LinkSession | null;
 };
 
 export type PeerDialerOptions = {
@@ -116,6 +119,7 @@ export class PeerDialer {
   }
 
   hasWsSecureCandidate(nodeId: string): boolean {
+    if (this.deps.allowsOutboundDirect && !this.deps.allowsOutboundDirect(nodeId)) return false;
     if (this.linkFactory) return true;
     const cached = this.state.userStore.getPeer(nodeId);
     return cached ? parseEndpoints(cached.endpointsJson, this.deps.listenPort()).length > 0 : false;
@@ -128,6 +132,7 @@ export class PeerDialer {
   }
 
   shouldTryDc(nodeId: string): boolean {
+    if (this.deps.allowsOutboundDirect && !this.deps.allowsOutboundDirect(nodeId)) return false;
     return this.dcCapable(nodeId) && this.deps.dcBreaker.shouldTry(nodeId).allow;
   }
 
@@ -162,7 +167,9 @@ export class PeerDialer {
       this.state.live.get(nodeId)?.transport === 'dc' &&
       this.dcCapable(nodeId) &&
       (answer ? self > peer : self < peer) &&
-      (answer || this.deps.dcBreaker.shouldTry(nodeId).allow);
+      (answer
+        ? this.deps.dcBreaker.shouldAcceptAnswer?.(nodeId) !== false
+        : this.deps.dcBreaker.shouldTry(nodeId).allow);
     if (!ok) return Promise.resolve(null);
     const { generation, stopAbort } = this.state;
     return this.dialDc(nodeId, generation, stopAbort.signal, 'upgrade', answer);
@@ -349,16 +356,36 @@ export class PeerDialer {
     }
   }
 
+  async dialRelayOnly(nodeId: string): Promise<LinkSession> {
+    const gen = this.state.generation;
+    const existing = this.state.live.get(nodeId);
+    if (existing?.transport === 'relay') return existing.session;
+    return openPeerRelaySession({
+      host: this.state,
+      nodeId,
+      gen,
+      rememberKeys: (session, sendKey, recvKey) => this.rememberKeys(session, sendKey, recvKey),
+      track: (session, id, g) =>
+        this.deps.trackRelay
+          ? this.deps.trackRelay(session, id, g)
+          : this.deps.track(session, id, 'relay', this.state.identity.nodeId, g),
+    });
+  }
+
   async dial(
     nodeId: string,
     opts?: { foreground?: boolean; peerInitiated?: boolean }
   ): Promise<LinkSession> {
+    const peerInitiated = opts?.peerInitiated === true;
+    const allowDirect = peerInitiated
+      ? this.deps.allowsInboundDirect?.() !== false
+      : this.deps.allowsOutboundDirect?.(nodeId) !== false;
+    if (!allowDirect) return this.dialRelayOnly(nodeId);
+    const existingLive = this.state.live.get(nodeId);
+    const floor = existingLive ? PEER_TRANSPORT_RANK[existingLive.transport] : 0;
     await Promise.resolve();
     const gen = this.state.generation;
     const signal = this.state.stopAbort.signal;
-    const existingLive = this.state.live.get(nodeId);
-    const floor = existingLive ? PEER_TRANSPORT_RANK[existingLive.transport] : 0;
-    const peerInitiated = opts?.peerInitiated === true;
     const skipDcFirst = !peerInitiated && !existingLive && this.state.lostDirect.has(nodeId);
     let dcError: unknown = null;
     let dcCoolingUntil: number | null | undefined;

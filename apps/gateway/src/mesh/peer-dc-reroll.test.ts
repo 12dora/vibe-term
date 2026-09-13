@@ -81,7 +81,23 @@ type Harness = {
   breaker: { allow: boolean };
   dcCapable: { value: boolean };
   willAttempt: { value: boolean };
+  answererAllows: { value: boolean };
+  dialMode: { result: 'hang' | null };
 };
+
+function captureLogs(fn: () => void): string[] {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  try {
+    fn();
+  } finally {
+    console.log = orig;
+  }
+  return lines;
+}
 
 function harness(selfNodeId = SELF): Harness {
   const { state, scheduler } = makeState(selfNodeId);
@@ -93,6 +109,8 @@ function harness(selfNodeId = SELF): Harness {
   const breaker = { allow: true };
   const dcCapable = { value: false };
   const willAttempt = { value: false };
+  const answererAllows = { value: true };
+  const dialMode: Harness['dialMode'] = { result: 'hang' };
   let settle: (session: LinkSession | null) => void = () => {};
   const coordinator = new DcRerollCoordinator(state, {
     breakerAllows: () => breaker.allow,
@@ -100,8 +118,10 @@ function harness(selfNodeId = SELF): Harness {
     hasWsRerollInflight: (nodeId) => wsInflight.has(nodeId),
     dcCapable: () => dcCapable.value,
     willAttemptUpgrade: () => willAttempt.value,
+    answererAllows: () => answererAllows.value,
     dialReroll: (nodeId, opts) => {
       dials.push({ nodeId, answer: opts.answer, transport: opts.transport });
+      if (dialMode.result === null) return Promise.resolve(null);
       return new Promise((resolve) => {
         settle = resolve;
       });
@@ -124,6 +144,8 @@ function harness(selfNodeId = SELF): Harness {
     breaker,
     dcCapable,
     willAttempt,
+    answererAllows,
+    dialMode,
   };
 }
 
@@ -540,7 +562,7 @@ describe('DcRerollCoordinator 应答侧', () => {
     expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
   });
 
-  test('应答侧同样受每小时 3 次的预算约束，answer 不是 offer 也不接管', () => {
+  test('answer 不是 offer 不接管；接更高 epoch offer 不受 request 预算限制', () => {
     const h = harness('ff'.repeat(16));
     const peerId = '11'.repeat(16);
     makeLive(h.state, { peerNodeId: peerId });
@@ -552,8 +574,8 @@ describe('DcRerollCoordinator 应答侧', () => {
     for (let i = 0; i < DC_REROLL_MAX_PER_HOUR; i += 1) {
       expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
     }
-    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(false);
-    expect(h.dials).toHaveLength(DC_REROLL_MAX_PER_HOUR);
+    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
+    expect(h.dials).toHaveLength(DC_REROLL_MAX_PER_HOUR + 1);
   });
 
   test('发出 request 后对端 offer 不二次记预算，满预算仍接管', () => {
@@ -569,6 +591,138 @@ describe('DcRerollCoordinator 应答侧', () => {
     expect(h.state.rerolls.get(peerId)?.count).toBe(DC_REROLL_MAX_PER_HOUR);
     expect(h.state.rerolls.get(peerId)?.pendingPeerRequest).toBe(false);
     expect(h.dials).toEqual([{ nodeId: peerId, answer: true, transport: 'dc' }]);
+  });
+
+  test('满预算且超过 90s 窗口仍起 dialReroll({answer:true})', () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    makeLive(h.state, { peerNodeId: peerId });
+    h.state.rerolls.set(peerId, {
+      count: DC_REROLL_MAX_PER_HOUR,
+      windowStartedAt: h.scheduler.nowMs,
+      lastAt: h.scheduler.nowMs,
+      oldMs: null,
+      prevSession: null,
+      transport: 'dc',
+      pendingPeerRequest: false,
+    });
+    h.scheduler.nowMs += DC_REROLL_RESULT_DEADLINE_MS + 1;
+    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
+    expect(h.dials).toEqual([{ nodeId: peerId, answer: true, transport: 'dc' }]);
+  });
+
+  test('offerer inflight 忽略 request 时，answerer 仍接管随后的 offer', () => {
+    const offerer = harness();
+    const peerId = PEER;
+    const live = makeLive(offerer.state);
+    offerer.inflight.add(peerId);
+    offerer.coordinator.handlePeerRequest(live, {
+      t: 'link.reroll-request',
+      transport: 'dc',
+      currentMs: 190,
+      bestMs: 90,
+    });
+    expect(offerer.dials).toHaveLength(0);
+
+    const answerer = harness('ff'.repeat(16));
+    const from = '11'.repeat(16);
+    makeLive(answerer.state, { peerNodeId: from });
+    answerer.state.rerolls.set(from, {
+      count: DC_REROLL_MAX_PER_HOUR,
+      windowStartedAt: answerer.scheduler.nowMs,
+      lastAt: answerer.scheduler.nowMs - DC_REROLL_RESULT_DEADLINE_MS - 1,
+      oldMs: null,
+      prevSession: null,
+      transport: 'dc',
+      pendingPeerRequest: true,
+    });
+    expect(answerer.coordinator.interceptOffer(from, offer())).toBe(true);
+    expect(answerer.dials).toEqual([{ nodeId: from, answer: true, transport: 'dc' }]);
+  });
+
+  test('interceptOffer 拒绝打 info reroll_offer_ignored reason=', () => {
+    const answerer = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    const live = makeLive(answerer.state, { peerNodeId: peerId, rtcEpoch: 9 });
+    const epochLines = captureLogs(() => {
+      expect(answerer.coordinator.interceptOffer(peerId, offer(9))).toBe(false);
+    });
+    expect(epochLines.some((row) => row.includes('reason=epoch'))).toBe(true);
+
+    live.rerollCapable = false;
+    const capLines = captureLogs(() => {
+      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+    });
+    expect(capLines.some((row) => row.includes('reason=not-capable'))).toBe(true);
+    live.rerollCapable = true;
+
+    answerer.inflight.add(peerId);
+    const inflightLines = captureLogs(() => {
+      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+    });
+    expect(inflightLines.some((row) => row.includes('reason=inflight'))).toBe(true);
+    answerer.inflight.delete(peerId);
+
+    answerer.answererAllows.value = false;
+    const coolLines = captureLogs(() => {
+      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+    });
+    expect(coolLines.some((row) => row.includes('reason=cooldown'))).toBe(true);
+    answerer.answererAllows.value = true;
+
+    const offerer = harness();
+    makeLive(offerer.state);
+    const roleLines = captureLogs(() => {
+      expect(offerer.coordinator.interceptOffer(PEER, offer())).toBe(false);
+    });
+    expect(roleLines.some((row) => row.includes('reason=role'))).toBe(true);
+
+    answerer.state.rtcInbox.set(
+      peerId,
+      Array.from({ length: RTC_PEER_INBOX_MAX_MESSAGES }, () => ({
+        message: offer(10),
+        receivedAt: answerer.scheduler.now(),
+      }))
+    );
+    const fullLines = captureLogs(() => {
+      expect(answerer.coordinator.interceptOffer(peerId, offer(11))).toBe(false);
+    });
+    expect(fullLines.some((row) => row.includes('reason=inbox-full'))).toBe(true);
+    for (const row of [
+      ...epochLines,
+      ...capLines,
+      ...inflightLines,
+      ...coolLines,
+      ...roleLines,
+      ...fullLines,
+    ].filter((line) => line.includes('reroll_offer_ignored'))) {
+      expect(row).toContain('peer=');
+      expect(row).toContain('reason=');
+    }
+  });
+
+  test('dialReroll 返回 null 时丢掉刚入队的 offer 并打日志', async () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    makeLive(h.state, { peerNodeId: peerId });
+    h.dialMode.result = null;
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
+      await Promise.resolve();
+    } finally {
+      console.log = orig;
+    }
+    expect(h.state.rtcInbox.get(peerId)).toBeUndefined();
+    expect(
+      lines.some(
+        (row) => row.includes('reroll_offer_ignored') && row.includes('reason=not-capable')
+      )
+    ).toBe(true);
   });
 });
 

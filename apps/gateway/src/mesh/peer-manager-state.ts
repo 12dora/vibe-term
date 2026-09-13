@@ -140,7 +140,7 @@ function medianRtt(values: number[]): number {
   return sorted[mid] ?? 0;
 }
 
-function readUplinkRtt(uplink: UplinkClient | UplinkPool): number | null {
+export function readUplinkRtt(uplink: UplinkClient | UplinkPool): number | null {
   const pooled = uplink as UplinkPool;
   if (typeof pooled.candidates === 'function') {
     let best: number | null = null;

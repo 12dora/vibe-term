@@ -8,6 +8,8 @@ import { PeerManager } from '../peer-manager';
 import { dummyUplink, echoQuiesceCaps } from '../peer-test-fixtures';
 import { seedNodeIdentity, seedUser, waitUntil } from '../test-support';
 import {
+  ANSWERER_COOLDOWN_MS,
+  ANSWERER_TIMEOUT_LIMIT,
   DC_REARM_SOURCES,
   RTC_DIAL_BREAKER_BASE_MS_DEFAULT,
   RTC_DIAL_BREAKER_FAILS,
@@ -262,6 +264,63 @@ describe('RtcDialBreaker', () => {
     expect(third.opened).toBe(true);
     expect(breaker.shouldTry(peer).cooling).toBe(true);
     expect(trips).toHaveLength(1);
+  });
+
+  test('peer-initiated timeouts trip answerer backoff without opening the offerer breaker', () => {
+    let now = 5_000;
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    const breaker = new RtcDialBreaker({ now: () => now, breakerMs: 30_000 });
+    const peer = 'ec42f364';
+    try {
+      for (let i = 0; i < ANSWERER_TIMEOUT_LIMIT - 1; i += 1) {
+        const result = breaker.noteFailure(peer, 'datachannel open timeout', `a${i}`, undefined, {
+          peerInitiated: true,
+          stage: 'checking',
+          remoteSdpApplied: true,
+        });
+        expect(result.counted).toBe(true);
+        expect(breaker.shouldAcceptAnswer(peer)).toBe(true);
+      }
+      const third = breaker.noteFailure(peer, 'datachannel open timeout', 'a2', undefined, {
+        peerInitiated: true,
+        stage: 'checking',
+        remoteSdpApplied: true,
+      });
+      expect(third.counted).toBe(true);
+      expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
+      expect(breaker.shouldTry(peer).cooling).toBe(true);
+      expect(
+        lines.filter((row) => row.includes('answerer_backoff') && row.includes(`peer=${peer}`))
+      ).toHaveLength(1);
+
+      const uncounted = new RtcDialBreaker({ now: () => now });
+      const other = 'dead-hub';
+      for (let i = 0; i < ANSWERER_TIMEOUT_LIMIT; i += 1) {
+        expect(
+          uncounted.noteFailure(other, 'timeout', `n${i}`, undefined, {
+            peerInitiated: true,
+            stage: 'no-remote-sdp',
+            remoteSdpApplied: false,
+          }).counted
+        ).toBe(false);
+      }
+      expect(uncounted.shouldTry(other)).toMatchObject({
+        allow: true,
+        cooling: false,
+        failures: 0,
+      });
+      expect(uncounted.shouldAcceptAnswer(other)).toBe(false);
+      now += ANSWERER_COOLDOWN_MS[0];
+      expect(uncounted.shouldAcceptAnswer(other)).toBe(true);
+      uncounted.noteChannelEstablished(other, 'ok');
+      expect(uncounted.shouldAcceptAnswer(other)).toBe(true);
+    } finally {
+      console.log = orig;
+    }
   });
 
   test('peer-initiated ice failures still count toward the trip', () => {

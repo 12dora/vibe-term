@@ -89,6 +89,24 @@ describe('createRtcSignalApplier', () => {
     expect(state.epoch).toBe(3);
   });
 
+  test('established live PC ignores higher-epoch offers without superseded', () => {
+    const { pc, remote } = fakePc();
+    const state = createSignalingAttemptState(3);
+    state.ignoreNewerOffers = true;
+    const superseded: number[] = [];
+    state.onSuperseded = () => superseded.push(1);
+    const apply = createRtcSignalApplier(pc, 'peer', 'offer', state, createIceCandidateTrace());
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0-new', epoch: 4 }),
+    });
+    expect(superseded).toEqual([]);
+    expect(remote).toHaveLength(0);
+    expect(state.epoch).toBe(3);
+  });
+
   test('duplicate answers are dropped', () => {
     const { pc, remote } = fakePc();
     const state = createSignalingAttemptState(1);

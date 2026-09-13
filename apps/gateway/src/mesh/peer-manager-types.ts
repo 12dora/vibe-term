@@ -7,6 +7,7 @@ import type { RankableIfaceAddr } from './address-class';
 import type { RtcSignalMessage } from './mesh-deps';
 import type { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import type { DirectDialLimiter } from './peer-ws-race';
+import type { MeshRouteModeStore } from './route-mode-store';
 import type { RtcPeerManager } from './rtc';
 import type { RtcDialBreakerSnapshot } from './rtc/rtc-dial-breaker';
 import type {
@@ -47,6 +48,8 @@ export type PeerManagerOptions = {
   hubHost?: string | null | (() => string | null);
   endpointBackoff?: PeerEndpointBackoff;
   dialLimiter?: DirectDialLimiter;
+  /** 缺省 auto；测试可不传。生产由 mesh-runtime 注入 `deps.routeMode`。 */
+  routeMode?: Pick<MeshRouteModeStore, 'get' | 'subscribe'>;
   onGatewaySession?: (
     session: GatewaySession,
     auth: { sid: string; uid: string; via: string; cid?: string }

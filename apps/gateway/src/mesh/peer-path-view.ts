@@ -1,4 +1,5 @@
 import type { LinkSession } from '@vibeterm/shared/link';
+import { classifyPeerReach } from './address-class';
 import { encodeJsonBytes } from './ctl';
 import { directFailureView } from './peer-direct-attempt';
 import { type PeerManagerState, isPeerTrusted } from './peer-manager-state';
@@ -7,7 +8,7 @@ import type { LivePeer } from './peer-reconnect-wake';
 import { quiet } from './peer-ws-race';
 import type { RelayPresenceIndex } from './relay-presence-types';
 import type { RtcDialBreakerSnapshot } from './rtc/rtc-dial-breaker';
-import { NodeUnreachableError } from './types';
+import { NodeUnreachableError, type PeerReach } from './types';
 
 export function viaRelayOfLive(live: LivePeer | undefined): string | null {
   return live?.transport === 'relay' ? (live.viaRelay ?? null) : null;
@@ -51,6 +52,25 @@ export function relayPresenceOfIndex(
   nodeId: string
 ): string[] | undefined {
   return index?.relaysFor(nodeId);
+}
+
+export function listPeerReach(
+  state: PeerManagerState,
+  onRevoked: (nodeId: string) => void
+): Map<string, PeerReach> {
+  const out = new Map<string, PeerReach>();
+  for (const peer of state.userStore.listPeers()) {
+    if (!isPeerTrusted(state, peer.nodeId)) continue;
+    out.set(peer.nodeId, null);
+  }
+  for (const [id, live] of state.live) {
+    if (!isPeerTrusted(state, id)) {
+      if (state.userStore.getCert(id)?.revokedLogSeq != null) onRevoked(id);
+      continue;
+    }
+    out.set(id, classifyPeerReach(live.transport, live.remoteAddress));
+  }
+  return out;
 }
 
 export function peerLinkDetailFromState(

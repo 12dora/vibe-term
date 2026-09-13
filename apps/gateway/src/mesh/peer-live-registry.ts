@@ -1,6 +1,5 @@
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
-import { dispatchTcpStream } from '../portmap/dispatch';
 import type { WebSocketServer } from '../ws';
 import {
   RTT_EVENT_MIN_INTERVAL_MS,
@@ -8,7 +7,13 @@ import {
   rttChangedMaterially,
 } from './address-class';
 import type { UpgradeGate } from './peer-dc-upgrade';
-import { winningDialInitiator } from './peer-direct-attempt';
+import { type PeerInboundStreamHost, handlePeerInboundStream } from './peer-live-inbound';
+import {
+  applyExistingLive,
+  consumeForcedSession,
+  earlyTrackResult,
+  existingLiveDecision,
+} from './peer-live-rank';
 import {
   PEER_DC_IDLE_MS,
   PEER_MISSED_PONG_LIMIT,
@@ -25,6 +30,7 @@ import { parseOpenPayload } from './peer-protocol';
 import { type LivePeer, peerDropPlan } from './peer-reconnect-wake';
 import { type IncomingWakeGate, PEER_RTC_WAKE_COOLDOWN_MS } from './peer-rtc-wake';
 import { quiet } from './peer-ws-race';
+import type { TrackIntercept, TrackInterceptInput } from './route-degrade';
 import {
   type RtcDialBreaker,
   type RtcDialBreakerSnapshot,
@@ -32,7 +38,7 @@ import {
   isIntentionalDcLoss,
 } from './rtc/rtc-dial-breaker';
 import { flushDialFailed } from './rtc/rtc-log';
-import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
+import { classifyOpenPayload } from './stream-targets';
 import type { DispatchHttp, PeerReach, PeerTransportKind } from './types';
 import type { GatewaySessionClose } from './ws-stream-target';
 
@@ -69,8 +75,8 @@ export type PeerLiveRegistryDeps = {
   onPeerReconnected: (nodeId: string) => void;
   notifyTransport: (nodeId: string) => void;
   notifyLive: (nodeId: string, session: LinkSession) => void;
-  /** 每个 pong 的稳态样本：写路径 RTT 记忆并判定是否重掷直连（dc / ws-secure）。 */
   onRttSample: (live: LivePeer, sampleMs: number) => void;
+  interceptTrack?: (input: TrackInterceptInput) => TrackIntercept;
 };
 
 export type PeerLiveRegistryOptions = {
@@ -103,7 +109,6 @@ export type PeerLiveRegistryOptions = {
   deps: PeerLiveRegistryDeps;
 };
 
-/** 当前链路（live）的登记与生命周期：接纳、流计数、闲置、心跳、掉线与等待者通知。 */
 export class PeerLiveRegistry {
   private readonly state: PeerManagerState;
   private readonly deps: PeerLiveRegistryDeps;
@@ -115,7 +120,9 @@ export class PeerLiveRegistry {
   private readonly onGatewaySession: PeerLiveRegistryOptions['onGatewaySession'];
   private readonly onGatewaySessionClose: PeerLiveRegistryOptions['onGatewaySessionClose'];
   private readonly onLinkInfo: PeerLiveRegistryOptions['onLinkInfo'];
+  private readonly inboundHost: PeerInboundStreamHost;
   private linkInfoHold = 0;
+  private readonly bypassRank = new WeakSet<LinkSession>();
 
   constructor(state: PeerManagerState, opts: PeerLiveRegistryOptions) {
     this.state = state;
@@ -128,6 +135,15 @@ export class PeerLiveRegistry {
     this.onGatewaySession = opts.onGatewaySession;
     this.onGatewaySessionClose = opts.onGatewaySessionClose;
     this.onLinkInfo = opts.onLinkInfo;
+    this.inboundHost = {
+      selfNodeId: state.identity.nodeId,
+      dispatchHttp: this.dispatchHttp,
+      sessionStore: this.sessionStore,
+      wsServer: this.wsServer,
+      now: () => this.state.scheduler.now(),
+      onGatewaySession: this.onGatewaySession,
+      onGatewaySessionClose: this.onGatewaySessionClose,
+    };
   }
 
   track(
@@ -150,22 +166,52 @@ export class PeerLiveRegistry {
     const prev = this.state.live.get(peerNodeId);
     const resolvedAddress =
       remoteAddress ?? (transport === 'dc' ? (prev?.remoteAddress ?? null) : null);
-    if (prev && prev.session !== session) {
-      const rank = comparePeerTransport(transport, prev.transport);
-      if (rank < 0) return reject('lower-priority', prev.session);
-      if (rank === 0) {
-        const winner = winningDialInitiator(this.state.identity.nodeId, peerNodeId);
-        if (initiatedBy !== winner && prev.initiatedBy === winner) {
-          return reject('simultaneous-dial', prev.session);
-        }
+    if (consumeForcedSession(this.bypassRank, session)) {
+      if (prev && prev.session !== session) this.deps.retirePeer(prev, 'replaced');
+      return this.installLive(
+        session,
+        peerNodeId,
+        transport,
+        initiatedBy,
+        gen,
+        quiesceCapable,
+        resolvedAddress,
+        dcAttemptId,
+        rtcEpoch
+      );
+    }
+    const early = earlyTrackResult(
+      this.deps.interceptTrack?.({
+        session,
+        peerNodeId,
+        transport,
+        initiatedBy,
+        gen,
+        rtcEpoch,
+        prev,
+        remoteAddress: resolvedAddress,
+        dcAttemptId,
+      }),
+      prev,
+      (reason) => {
+        quiet(() => session.close(reason));
       }
-      if (!prev.quiesceCapable) {
+    );
+    if (early) return early.result;
+    const applied = applyExistingLive(
+      existingLiveDecision(prev, session, transport, initiatedBy, this.state.identity.nodeId),
+      prev,
+      () => {
+        if (!prev) return;
         this.deps.parkInbound(peerNodeId, session, transport, initiatedBy, gen, resolvedAddress);
         this.deps.probeQuiesce(prev);
-        return prev.session;
+      },
+      () => {
+        if (prev) this.deps.retirePeer(prev, 'replaced');
       }
-      this.deps.retirePeer(prev, 'replaced');
-    }
+    );
+    if ('reject' in applied) return reject(applied.reject, prev?.session ?? null);
+    if ('parked' in applied) return applied.parked;
     return this.installLive(
       session,
       peerNodeId,
@@ -176,6 +222,28 @@ export class PeerLiveRegistry {
       resolvedAddress,
       dcAttemptId,
       rtcEpoch
+    );
+  }
+
+  forceInstall(
+    session: LinkSession,
+    peerNodeId: string,
+    transport: PeerTransportKind,
+    initiatedBy: string,
+    gen: number,
+    remoteAddress: string | null = null,
+    dcAttemptId: string | null = null
+  ): LinkSession | null {
+    this.bypassRank.add(session);
+    return this.track(
+      session,
+      peerNodeId,
+      transport,
+      initiatedBy,
+      gen,
+      false,
+      remoteAddress,
+      dcAttemptId
     );
   }
 
@@ -275,7 +343,6 @@ export class PeerLiveRegistry {
         stream.reset('stale-link');
         return;
       }
-      // 对端可能尚未切到新 live：退役中的 session 仍接受其入站流。本端新出站走当前 live。
       const kind = classifyOpenPayload(stream.openPayload);
       if (kind === 'unknown' || kind === 'relay') {
         stream.reset('unknown-stream-type');
@@ -286,7 +353,7 @@ export class PeerLiveRegistry {
         return;
       }
       this.onLocalStream(live, stream);
-      this.handleInboundStream(peerNodeId, stream);
+      handlePeerInboundStream(this.inboundHost, peerNodeId, stream);
     });
     session.ctl.onMessage((bytes) => {
       if (this.handleRttCtl(live, bytes)) return;
@@ -331,48 +398,11 @@ export class PeerLiveRegistry {
     });
   }
 
-  private handleInboundStream(peerNodeId: string, stream: LinkStream): void {
-    const kind = classifyOpenPayload(stream.openPayload);
-    if (kind === 'tcp') {
-      dispatchTcpStream(stream, { peerNodeId, selfNodeId: this.state.identity.nodeId });
-      return;
-    }
-    if (kind === 'http') {
-      const dispatchHttp = this.dispatchHttp();
-      if (!dispatchHttp || !this.sessionStore) {
-        stream.reset('http-not-configured');
-        return;
-      }
-      void acceptHttpStream(stream, {
-        peerNodeId,
-        sessionStore: this.sessionStore,
-        dispatchHttp,
-        now: () => this.state.scheduler.now(),
-      });
-      return;
-    }
-    if (kind === 'ws') {
-      if (!this.wsServer || !this.sessionStore) {
-        stream.reset('ws-not-configured');
-        return;
-      }
-      void acceptWsStream(stream, {
-        peerNodeId,
-        sessionStore: this.sessionStore,
-        wsServer: this.wsServer,
-        now: () => this.state.scheduler.now(),
-        onGatewaySession: this.onGatewaySession ?? undefined,
-        onGatewaySessionClose: this.onGatewaySessionClose ?? undefined,
-      });
-    }
-  }
-
   startPing(live: LivePeer): void {
     live.pingTimer?.clear();
     live.missedPongs = 0;
     live.lastInboundFrameAt = live.session.lastFrameAt ?? live.lastInboundFrameAt;
     const sendPing = () => {
-      // sentAt 是本端 monotonic 不透明值；对端原样回显，本端在 pong 上算 RTT。
       live.pingSentAt = performance.now();
       this.deps.sendPeerCtl(live, { t: 'ping', sentAt: live.pingSentAt });
     };
@@ -401,7 +431,6 @@ export class PeerLiveRegistry {
     this.maybeEmitRtt(live);
   }
 
-  /** ping 只回显 sentAt，不在收 ping 时算 RTT（那会混入对端时钟）。pong 由发送端用本进程 monotonic 计算。 */
   private handleRttCtl(live: LivePeer, bytes: Uint8Array): boolean {
     const msg = parseOpenPayload(bytes);
     if (!msg || typeof msg.t !== 'string') return false;
@@ -517,7 +546,6 @@ export class PeerLiveRegistry {
       gate.nextEligibleAt = 0;
       gate.coalesced = false;
     }
-    // 提升完成后再发一次 link info，避免中间态 reach=null 被当成离线
     this.linkInfoHold += 1;
     try {
       this.promoteRetiring(nodeId, drainLive);
