@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
+  DIAL_IDENTITY_PATH_HUB,
   DIAL_RESOLVE_NEGATIVE_TTL_MS,
   DIAL_RESOLVE_TTL_MS,
+  checkDialIdentity,
   createDialWsFactory,
   dialTlsForHost,
   fetchWithDnsFallback,
+  hostHeaderOfDialUrl,
   hostOfDialUrl,
+  identityCheckUrl,
   isDialDnsFallbackEnabled,
   isDnsClassFailure,
   resetDialResolveForTest,
@@ -96,13 +100,17 @@ describe('rewriteDialUrl / dialTlsForHost', () => {
       'wss://[2001:db8::1]:8443/relay/uplink'
     );
     expect(hostOfDialUrl('wss://Relay.Example/relay/uplink')).toBe('relay.example');
+    expect(hostHeaderOfDialUrl('wss://Relay.Example:9883/relay/uplink')).toBe('relay.example:9883');
   });
 
-  test('tls object keeps CA, sets serverName to original host, and adds Host header', () => {
-    expect(dialTlsForHost('hub.example', { ca: ['pem'], rejectUnauthorized: true })).toEqual({
+  test('tls object keeps CA, serverName is hostname-only, Host carries the port', () => {
+    expect(
+      dialTlsForHost('hub.example', 'hub.example:9883', { ca: ['pem'], rejectUnauthorized: true })
+    ).toEqual({
       tls: { ca: ['pem'], rejectUnauthorized: true, serverName: 'hub.example' },
-      headers: { host: 'hub.example' },
+      headers: { host: 'hub.example:9883' },
     });
+    expect(dialTlsForHost('', 'hub.example')).toBeUndefined();
   });
 });
 
@@ -257,7 +265,8 @@ describe('resolveDialHost', () => {
 });
 
 describe('createDialWsFactory', () => {
-  test('redials by IP with serverName and Host after a DNS-class failure', async () => {
+  test('identity-checks with fetch before WS redial and keeps serverName + Host', async () => {
+    const identity: Array<{ url: string; init?: RequestInit }> = [];
     const calls: Array<{
       url: string;
       opts?: { tls?: { serverName?: string; ca?: string[] }; headers?: { host?: string } };
@@ -266,6 +275,10 @@ describe('createDialWsFactory', () => {
       raceCount: 1,
       enabled: true,
       resolve: async () => ({ ip: '122.51.254.148', via: 'doh' }),
+      fetchImpl: async (url, init) => {
+        identity.push({ url, init });
+        return new Response(null, { status: 503 });
+      },
       wsCtor: (url, opts) => {
         calls.push({ url, opts });
         const ws = new FakeSocket();
@@ -275,6 +288,14 @@ describe('createDialWsFactory', () => {
       },
     });
     await factory('wss://tmexhub-sh.jiefakj.com/relay/uplink');
+    expect(identity.map((row) => row.url)).toEqual(['https://122.51.254.148/healthz']);
+    expect((identity[0]?.init as { tls?: { serverName?: string; ca?: string[] } }).tls).toEqual({
+      ca: ['-----BEGIN CERTIFICATE-----'],
+      serverName: 'tmexhub-sh.jiefakj.com',
+    });
+    expect((identity[0]?.init as { headers?: { host?: string } }).headers?.host).toBe(
+      'tmexhub-sh.jiefakj.com'
+    );
     expect(calls.map((row) => row.url)).toEqual([
       'wss://tmexhub-sh.jiefakj.com/relay/uplink',
       'wss://122.51.254.148/relay/uplink',
@@ -286,9 +307,66 @@ describe('createDialWsFactory', () => {
     expect(calls[1]?.opts?.headers).toEqual({ host: 'tmexhub-sh.jiefakj.com' });
   });
 
-  test('does not redial after ECONNREFUSED or 4401', async () => {
+  test('skips WS redial when the identity check rejects', async () => {
+    const lines: string[] = [];
+    const warn = spyOn(console, 'warn').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve: async () => ({ ip: '122.51.254.148', via: 'doh' }),
+      fetchImpl: async () => {
+        throw Object.assign(new Error('ERR_TLS_CERT_ALTNAME_INVALID'), {
+          code: 'ERR_TLS_CERT_ALTNAME_INVALID',
+        });
+      },
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        ws.fail(dnsErr());
+        return ws as never;
+      },
+    });
+    try {
+      await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
+      expect(calls).toEqual(['wss://hub.example/uplink']);
+      expect(lines.some((line) => line.includes('dns fallback identity check failed'))).toBe(true);
+      expect(lines.some((line) => line.includes('host=hub.example'))).toBe(true);
+      expect(lines.some((line) => line.includes('ip=122.51.254.148'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test('Host header keeps a non-443 port on the primary path', async () => {
+    const calls: Array<{
+      url: string;
+      opts?: { tls?: { serverName?: string }; headers?: { host?: string } };
+    }> = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      wsCtor: (url, opts) => {
+        calls.push({ url, opts });
+        const ws = new FakeSocket();
+        ws.open();
+        return ws as never;
+      },
+    });
+    await factory('wss://hub.example:9883/uplink');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts?.tls?.serverName).toBe('hub.example');
+    expect(calls[0]?.opts?.headers?.host).toBe('hub.example:9883');
+  });
+
+  test('does not redial after ECONNREFUSED, ConnectionRefused, or 4401', async () => {
     for (const fail of [
       Object.assign(new Error('connect ECONNREFUSED 9.9.9.9:443'), { code: 'ECONNREFUSED' }),
+      Object.assign(new Error('Unable to connect. Is the computer able to access the url?'), {
+        code: 'ConnectionRefused',
+      }),
       Object.assign(new Error('ws-closed 4401 unauthorized'), { closeCode: 4401 }),
     ]) {
       const calls: string[] = [];
@@ -306,6 +384,28 @@ describe('createDialWsFactory', () => {
       await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
       expect(calls).toEqual(['wss://hub.example/uplink']);
     }
+  });
+
+  test('does not redial when system DNS succeeded (via=system)', async () => {
+    const calls: string[] = [];
+    let resolved = 0;
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve: async () => {
+        resolved += 1;
+        return { ip: '9.9.9.9', via: 'system' };
+      },
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        ws.fail(dnsErr());
+        return ws as never;
+      },
+    });
+    await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
+    expect(resolved).toBe(1);
+    expect(calls).toEqual(['wss://hub.example/uplink']);
   });
 
   test('system-ok first dial does not rewrite the URL', async () => {
@@ -354,6 +454,35 @@ describe('fetchWithDnsFallback', () => {
     expect((calls[1]?.init as { headers?: { host?: string } }).headers?.host).toBe('hub.example');
   });
 
+  test('retries a non-443 URL with Host including the port and preserves Headers', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const res = await fetchWithDnsFallback(
+      'https://hub.example:8443/healthz',
+      { method: 'GET', headers: new Headers({ 'x-a': '1' }) },
+      {
+        enabled: true,
+        resolve: async () => ({ ip: '1.2.3.4', via: 'doh' }),
+        fetchImpl: async (url, init) => {
+          calls.push({ url, init });
+          if (!url.includes('1.2.3.4')) throw dnsErr();
+          return new Response(null, { status: 200 });
+        },
+      }
+    );
+    expect(res.ok).toBe(true);
+    expect(calls.map((row) => row.url)).toEqual([
+      'https://hub.example:8443/healthz',
+      'https://1.2.3.4:8443/healthz',
+    ]);
+    expect((calls[1]?.init as { tls?: { serverName?: string } }).tls).toEqual({
+      serverName: 'hub.example',
+    });
+    expect((calls[1]?.init as { headers?: { host?: string; 'x-a'?: string } }).headers).toEqual({
+      'x-a': '1',
+      host: 'hub.example:8443',
+    });
+  });
+
   test('does not retry a non-DNS boom', async () => {
     let n = 0;
     await expect(
@@ -371,5 +500,84 @@ describe('fetchWithDnsFallback', () => {
       )
     ).rejects.toThrow('boom');
     expect(n).toBe(1);
+  });
+});
+
+describe('resolveDialHost extras', () => {
+  test('logs dns fallback failed once per host when system and DoH both miss', async () => {
+    const lines: string[] = [];
+    const warn = spyOn(console, 'warn').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    try {
+      await resolveDialHost('down.example', {
+        lookup: async () => {
+          throw dnsErr();
+        },
+        doh: async () => [] as string[],
+      });
+      await resolveDialHost('down.example', {
+        lookup: async () => {
+          throw dnsErr();
+        },
+        doh: async () => [] as string[],
+      });
+      const failed = lines.filter((line) => line.includes('[uplink] dns fallback failed'));
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toContain('host=down.example');
+      expect(failed[0]).toContain('reason=');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test('aborted signal skips lookup and DoH', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const result = await resolveDialHost('hub.example', {
+      signal: ac.signal,
+      lookup: async () => {
+        throw new Error('lookup should not run');
+      },
+      doh: async () => {
+        throw new Error('doh should not run');
+      },
+    });
+    expect(result).toBeNull();
+  });
+
+  test('does not call network DoH in test without dohEnabled/doh/fetchImpl', async () => {
+    const result = await resolveDialHost('hub.example', {
+      lookup: async () => {
+        throw dnsErr();
+      },
+    });
+    expect(result).toBeNull();
+  });
+});
+
+describe('checkDialIdentity', () => {
+  test('builds https://ip/path and treats any HTTP status as success', async () => {
+    expect(
+      identityCheckUrl({
+        ip: '122.51.254.148',
+        hostname: 'hub.example',
+        path: DIAL_IDENTITY_PATH_HUB,
+      })
+    ).toBe('https://122.51.254.148/healthz');
+    const ok = await checkDialIdentity({
+      ip: '1.2.3.4',
+      hostname: 'hub.example',
+      headerHost: 'hub.example:9883',
+      path: '/healthz',
+      originalUrl: 'wss://hub.example:9883/uplink',
+      fetchImpl: async (url, init) => {
+        expect(url).toBe('https://1.2.3.4:9883/healthz');
+        expect((init as { tls?: { serverName?: string } }).tls?.serverName).toBe('hub.example');
+        expect((init as { headers?: { host?: string } }).headers?.host).toBe('hub.example:9883');
+        return new Response(null, { status: 404 });
+      },
+    });
+    expect(ok).toBe(true);
   });
 });

@@ -2,7 +2,12 @@ import { promises as dnsPromises } from 'node:dns';
 import { errorMessage } from '@vibeterm/shared';
 import type { TunnelEdgeResolution } from '@vibeterm/shared';
 import { isFakeIpv4 } from '../mesh/address-class';
-import { dohEndpoints } from './doh-endpoints';
+import {
+  DOH_REQUEST_TIMEOUT_MS,
+  type DohQueryCtx,
+  dohQueryAny,
+  newDohRunState,
+} from './doh-endpoints';
 
 export const EDGE_SRV_NAME = '_v2-origintunneld._tcp.argotunnel.com';
 export const WELL_KNOWN_EDGE_HOSTS = [
@@ -12,9 +17,14 @@ export const WELL_KNOWN_EDGE_HOSTS = [
 export const DEFAULT_EDGE_PORT = 7844;
 export const EDGE_ADDRS_ENV = 'VIBETERM_TUNNEL_EDGE_ADDRS';
 export const MAX_EDGE_ADDRS = 8;
-export { DOH_ENDPOINTS, DOH_ENDPOINTS_ENV, dohEndpoints } from './doh-endpoints';
+export {
+  DOH_ENDPOINTS,
+  DOH_ENDPOINTS_ENV,
+  DOH_REQUEST_TIMEOUT_MS,
+  dohEndpoints,
+  resetDohEndpointMemoryForTest,
+} from './doh-endpoints';
 
-const DOH_REQUEST_TIMEOUT_MS = 5_000;
 const DOH_TOTAL_BUDGET_MS = 10_000;
 const DOH_RETRY_ATTEMPTS = 3;
 const DOH_RETRY_SPACING_MS = 1_500;
@@ -100,133 +110,6 @@ async function defaultLookup(hostname: string): Promise<string[]> {
   return entries.map((entry) => entry.address);
 }
 
-type ScopedSignal = { signal: AbortSignal; readonly timedOut: boolean; done: () => void };
-
-function requestSignal(outer: AbortSignal | undefined, ms: number): ScopedSignal {
-  const controller = new AbortController();
-  const state = { timedOut: false };
-  const timer = setTimeout(() => {
-    state.timedOut = true;
-    controller.abort(new Error(`timed out after ${ms}ms`));
-  }, ms);
-  const onAbort = (): void => controller.abort(outer?.reason);
-  if (outer) {
-    if (outer.aborted) controller.abort(outer.reason);
-    else outer.addEventListener('abort', onAbort, { once: true });
-  }
-  return {
-    signal: controller.signal,
-    get timedOut(): boolean {
-      return state.timedOut;
-    },
-    done: () => {
-      clearTimeout(timer);
-      outer?.removeEventListener('abort', onAbort);
-    },
-  };
-}
-
-/** 端点超时要单独认出来：同一次解析里不再拿剩余预算去撞同一个黑洞。 */
-class DohTimeoutError extends Error {}
-
-/**
- * 一次 `resolveEdgeViaDoh` 内的端点状态：记住成功过的端点优先复用，
- * 超时过的端点直接跳过，避免首选端点被黑洞时耗光后续查询的预算。
- */
-type DohRunState = { preferred: string | null; timedOut: Set<string> };
-
-function newDohRunState(): DohRunState {
-  return { preferred: null, timedOut: new Set() };
-}
-
-function endpointOrder(state: DohRunState): string[] {
-  const all: string[] = dohEndpoints();
-  const usable = all.filter((endpoint) => !state.timedOut.has(endpoint));
-  const list = usable.length > 0 ? usable : all;
-  const preferred = state.preferred;
-  if (!preferred || !list.includes(preferred)) return list;
-  return [preferred, ...list.filter((endpoint) => endpoint !== preferred)];
-}
-
-type DohAnswer = { type: number; data: string };
-
-function parseDohAnswers(body: unknown, type: number): string[] {
-  if (!body || typeof body !== 'object') return [];
-  const rec = body as { Status?: unknown; Answer?: unknown };
-  if (typeof rec.Status === 'number' && rec.Status !== 0) {
-    throw new Error(`DoH status ${rec.Status}`);
-  }
-  if (!Array.isArray(rec.Answer)) return [];
-  const out: string[] = [];
-  for (const item of rec.Answer as DohAnswer[]) {
-    if (!item || typeof item !== 'object') continue;
-    if (item.type !== type || typeof item.data !== 'string') continue;
-    out.push(item.data);
-  }
-  return out;
-}
-
-async function dohQuery(
-  fetchImpl: EdgeFetch,
-  endpoint: string,
-  name: string,
-  type: number,
-  signal: AbortSignal | undefined,
-  budgetMs: number,
-  requestTimeoutMs: number
-): Promise<string[]> {
-  const timeout = Math.max(1, Math.min(requestTimeoutMs, budgetMs));
-  const scoped = requestSignal(signal, timeout);
-  try {
-    const url = `${endpoint}?name=${encodeURIComponent(name)}&type=${type}`;
-    const res = await fetchImpl(url, {
-      headers: { accept: 'application/dns-json' },
-      signal: scoped.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return parseDohAnswers(await res.json(), type);
-  } catch (error) {
-    if (scoped.timedOut) throw new DohTimeoutError(`timed out after ${timeout}ms`);
-    throw error;
-  } finally {
-    scoped.done();
-  }
-}
-
-type DohQueryCtx = {
-  fetchImpl: EdgeFetch;
-  signal: AbortSignal | undefined;
-  deadline: number;
-  now: () => number;
-  state: DohRunState;
-  requestTimeoutMs: number;
-};
-
-async function dohQueryAny(ctx: DohQueryCtx, name: string, type: number): Promise<string[]> {
-  let lastError: unknown = new Error('no DoH endpoint attempted');
-  for (const endpoint of endpointOrder(ctx.state)) {
-    const budget = ctx.deadline - ctx.now();
-    if (budget <= 0) break;
-    try {
-      const answers = await dohQuery(
-        ctx.fetchImpl,
-        endpoint,
-        name,
-        type,
-        ctx.signal,
-        budget,
-        ctx.requestTimeoutMs
-      );
-      ctx.state.preferred = endpoint;
-      return answers;
-    } catch (error) {
-      lastError = error;
-      if (error instanceof DohTimeoutError) ctx.state.timedOut.add(endpoint);
-    }
-  }
-  throw new Error(`${name}/${type}: ${shortError(lastError)}`);
-}
-
 export type DohResolveOptions = {
   fetchImpl?: EdgeFetch;
   signal?: AbortSignal;
@@ -235,7 +118,7 @@ export type DohResolveOptions = {
   requestTimeoutMs?: number;
 };
 
-/** 用 DoH JSON 查单个主机名的 A 记录；隧道边缘解析与 STUN 解析共用。失败抛错。 */
+/** 用 DoH JSON 查单个主机名的 A 记录（不含 AAAA；IPv6-only 主机只能靠系统解析）。失败抛错。 */
 export async function resolveHostnameViaDoh(
   hostname: string,
   opts: DohResolveOptions = {}

@@ -1577,10 +1577,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 15
   },
-  "apps/gateway/src/tunnel/edge-resolver.ts:dohQuery": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "params": 7
-  },
   "apps/gateway/src/tunnel/access-rules.ts:fromCloudflareInclude": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 15

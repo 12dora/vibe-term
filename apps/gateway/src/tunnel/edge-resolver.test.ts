@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,7 @@ import {
   isUnusableEdgeIp,
   parseEdgeAddrsEnv,
   parseSrvData,
+  resetDohEndpointMemoryForTest,
   resolveEdge,
   resolveEdgeViaDoh,
   resolveHostnameViaDoh,
@@ -31,6 +32,7 @@ async function tempDir(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  resetDohEndpointMemoryForTest();
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
     if (dir) await rm(dir, { recursive: true, force: true });
@@ -129,7 +131,7 @@ describe('parseEdgeAddrsEnv', () => {
 });
 
 describe('resolveHostnameViaDoh', () => {
-  test('queries A records and fails over to the second endpoint', async () => {
+  test('queries A records and fails over to another endpoint', async () => {
     const hosts: string[] = [];
     const fetchImpl: EdgeFetch = async (input) => {
       const url = new URL(String(input));
@@ -143,7 +145,31 @@ describe('resolveHostnameViaDoh', () => {
     await expect(resolveHostnameViaDoh('stun.l.google.com', { fetchImpl })).resolves.toEqual([
       '8.8.8.8',
     ]);
-    expect(hosts).toEqual(['223.5.5.5', '120.53.53.53']);
+    expect(hosts[0]).toBe('223.5.5.5');
+    expect(hosts).toContain('120.53.53.53');
+  });
+
+  test('HTTP 4xx fails over without black-holing the endpoint', async () => {
+    const hosts: string[] = [];
+    let round = 0;
+    const fetchImpl: EdgeFetch = async (input) => {
+      const url = new URL(String(input));
+      hosts.push(url.host);
+      if (round === 0 && url.host === '223.5.5.5') return new Response('nope', { status: 400 });
+      return Response.json({
+        Status: 0,
+        Answer: [aAnswer(url.searchParams.get('name') ?? '', '8.8.8.8')],
+      });
+    };
+    await expect(resolveHostnameViaDoh('stun.l.google.com', { fetchImpl })).resolves.toEqual([
+      '8.8.8.8',
+    ]);
+    round = 1;
+    hosts.length = 0;
+    await expect(resolveHostnameViaDoh('stun.l.google.com', { fetchImpl })).resolves.toEqual([
+      '8.8.8.8',
+    ]);
+    expect(hosts[0]).toBe('223.5.5.5');
   });
 });
 
@@ -191,27 +217,29 @@ describe('resolveEdgeViaDoh', () => {
 
   test('skips the endpoint that timed out and reuses the one that answered', async () => {
     const hosts: string[] = [];
-    let clock = 1_000;
     const fetchImpl: EdgeFetch = async (input, init) => {
       const url = new URL(String(input));
       hosts.push(`${url.host}/${url.searchParams.get('type')}`);
       if (url.host === '223.5.5.5') {
-        // 黑洞：只等自己的超时信号，并按真实开销推进预算时钟
         await new Promise<void>((resolve) => {
           init?.signal?.addEventListener('abort', () => resolve(), { once: true });
         });
-        clock += 5_000;
         throw new Error('aborted');
       }
       const name = url.searchParams.get('name') ?? '';
       return HAPPY_ROUTE(name, url.searchParams.get('type') ?? '');
     };
-    const { addrs } = await resolveEdgeViaDoh(fetchImpl, undefined, () => clock, {
+    const { addrs } = await resolveEdgeViaDoh(fetchImpl, undefined, Date.now, {
       requestTimeoutMs: 20,
     });
     expect(addrs.length).toBeGreaterThan(0);
     expect(hosts.filter((h) => h.startsWith('223.5.5.5')).length).toBe(1);
     expect(hosts.filter((h) => h === '120.53.53.53/1').length).toBe(2);
+
+    hosts.length = 0;
+    await resolveEdgeViaDoh(fetchImpl, undefined, Date.now, { requestTimeoutMs: 20 });
+    expect(hosts.filter((h) => h.startsWith('223.5.5.5'))).toEqual([]);
+    expect(hosts[0]?.startsWith('120.53.53.53')).toBe(true);
   });
 
   test('throws when every answer is a fake ip', async () => {
@@ -556,5 +584,20 @@ describe('dohEndpoints', () => {
       })
     ).toEqual(['https://10.0.0.1/resolve', 'https://doh.example/dns-query']);
     expect(dohEndpoints({ VIBETERM_DOH_ENDPOINTS: 'nonsense' })).toEqual([...DOH_ENDPOINTS]);
+  });
+
+  test('drops empty https:// entries and warns when nothing usable remains', () => {
+    const lines: string[] = [];
+    const warn = spyOn(console, 'warn').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    try {
+      expect(
+        dohEndpoints({ VIBETERM_DOH_ENDPOINTS: 'https://, http://x, https://example.com' })
+      ).toEqual([...DOH_ENDPOINTS]);
+      expect(lines.some((line) => line.includes('VIBETERM_DOH_ENDPOINTS'))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { defaultFetchCaPem, defaultProbeHealthz, joinHubPath } from './uplink-pool-http';
 
 function dnsErr(): Error {
-  const err = new Error('Unable to connect. Is the computer able to access the url?');
-  (err as Error & { code: string }).code = 'ConnectionRefused';
+  const err = new Error('getaddrinfo ENOTFOUND');
+  (err as Error & { code: string }).code = 'ENOTFOUND';
   return err;
 }
 
@@ -67,6 +67,17 @@ describe('defaultProbeHealthz', () => {
       })
     ).toBe(false);
     expect(n).toBe(1);
+  });
+
+  test('cannot exceed timeoutMs even if fetch ignores abort', async () => {
+    const started = Date.now();
+    expect(
+      await defaultProbeHealthz('https://hub.example', null, 40, {
+        enabled: false,
+        fetchImpl: () => new Promise(() => undefined),
+      })
+    ).toBe(false);
+    expect(Date.now() - started).toBeLessThan(500);
   });
 });
 
