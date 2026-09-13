@@ -476,7 +476,7 @@
         "copyMode": {
           "label": "コピー方法",
           "auto": "選択時に自動コピー",
-          "button": "ボタンでコピー",
+          "button": "ボタンを押してコピー",
           "hint": "選択が終わると自動でクリップボードに書き込みます"
         },
         "preview": "プレビュー",
@@ -2511,6 +2511,7 @@
       "actions": {
         "add": "追加",
         "more": "その他",
+        "detail": "詳細",
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
@@ -2521,7 +2522,12 @@
       },
       "pause": {
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
-        "failed": "操作に失敗しました：{{error}}"
+        "failed": "操作に失敗しました：{{error}}",
+        "selfBlocked": "本機は一時停止できません",
+        "hubBlocked": "Hub は一時停止できません",
+        "forwarderBlocked": "現在このノードを使用中です",
+        "batchFailed": "{{count}} 台で失敗しました",
+        "busy": "一時停止または再開の処理中です。"
       },
       "ports": {
         "blocked": "到達不能なポート：{{list}}",
@@ -2531,6 +2537,12 @@
           "open": "到達可",
           "blocked": "到達不能",
           "unknown": "不明"
+        },
+        "code": {
+          "peer_refused": "接続拒否",
+          "peer_timeout": "接続タイムアウト",
+          "no_srflx": "公開側のマッピングなし",
+          "turn_unreachable": "TURN 未到達"
         }
       },
       "admit": {
@@ -2585,7 +2597,11 @@
         "upgradeWithSelf": "アップグレード（{{count}}、本機を含む）",
         "upgradeSelfNotice": "本機は最後にアップグレードされ、サービス再起動でこのページは一時的に切断されます。",
         "revoke": "ノードを削除",
-        "uninstall": "VibeTerm をアンインストール"
+        "uninstall": "VibeTerm をアンインストール",
+        "pause": "一時停止",
+        "resume": "再開",
+        "pauseNone": "選択したノードはいずれも一時停止できません。",
+        "resumeNone": "選択したノードはいずれも再開できません。"
       },
       "uninstall": {
         "confirmTitle": "VibeTerm をアンインストール",
@@ -3287,8 +3303,11 @@
           "peersOnline": "{{n}} 台オンライン",
           "turn": "TURN",
           "turnReachable": "到達可能",
-          "turnUnreachable": "到達不可",
-          "turnUnprobed": "未検査"
+          "turnUnreachable": "本機から到達不可",
+          "turnUnprobed": "未検査",
+          "turnMembersCount": "{{ok}}/{{total}} ノード",
+          "turnMembersReachable": "{{ok}}/{{total}} ノード到達可",
+          "turnTunHint": "本機のプロキシ/TUN が UDP を転送していないため、判定は本機のみを表します"
         },
         "linkErrors": {
           "connect-failed": "中継に接続できません",
@@ -3679,7 +3698,13 @@
     },
     "localMachine": {
       "ports": {
-        "title": "受信ポート"
+        "title": "受信ポート",
+        "titleNode": "本機で開放するポート",
+        "titleHub": "Hub で開放するポート",
+        "titleRelay": "中継で開放するポート",
+        "legend": "緑 = 他ノードから到達済み；赤 = 未開放を検出；灰 = 未検証",
+        "notProbed": "—",
+        "notProbedTitle": "検知しない"
       }
     }
   }

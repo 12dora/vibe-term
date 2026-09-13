@@ -476,7 +476,7 @@
         "copyMode": {
           "label": "复制方式",
           "auto": "选中后自动复制",
-          "button": "点击按钮复制",
+          "button": "点击按钮后复制",
           "hint": "自动复制在选区完成时写入剪贴板"
         },
         "preview": "预览",
@@ -2511,6 +2511,7 @@
       "actions": {
         "add": "添加",
         "more": "更多",
+        "detail": "详情",
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
@@ -2521,7 +2522,12 @@
       },
       "pause": {
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
-        "failed": "操作失败：{{error}}"
+        "failed": "操作失败：{{error}}",
+        "selfBlocked": "本机不能暂停",
+        "hubBlocked": "Hub 不能暂停",
+        "forwarderBlocked": "当前正在使用该节点",
+        "batchFailed": "失败 {{count}} 台",
+        "busy": "正在暂停或恢复。"
       },
       "ports": {
         "blocked": "端口不可达：{{list}}",
@@ -2531,6 +2537,12 @@
           "open": "可达",
           "blocked": "不可达",
           "unknown": "未知"
+        },
+        "code": {
+          "peer_refused": "连接被拒",
+          "peer_timeout": "连接超时",
+          "no_srflx": "未拿到公网映射",
+          "turn_unreachable": "TURN 不通"
         }
       },
       "admit": {
@@ -2585,7 +2597,11 @@
         "upgradeWithSelf": "升级（{{count}}，含本机）",
         "upgradeSelfNotice": "本机排在最后升级，届时服务重启、当前页面短暂断开。",
         "revoke": "移除节点",
-        "uninstall": "卸载 VibeTerm"
+        "uninstall": "卸载 VibeTerm",
+        "pause": "暂停",
+        "resume": "恢复",
+        "pauseNone": "所选节点均不能暂停。",
+        "resumeNone": "所选节点均不能恢复。"
       },
       "uninstall": {
         "confirmTitle": "卸载 VibeTerm",
@@ -3287,8 +3303,11 @@
           "peersOnline": "{{n}} 台在线",
           "turn": "TURN",
           "turnReachable": "可达",
-          "turnUnreachable": "不可达",
-          "turnUnprobed": "未探测"
+          "turnUnreachable": "本机不可达",
+          "turnUnprobed": "未探测",
+          "turnMembersCount": "{{ok}}/{{total}} 节点",
+          "turnMembersReachable": "{{ok}}/{{total}} 节点可达",
+          "turnTunHint": "本机代理/TUN 未转发 UDP，探测结果仅代表本机"
         },
         "linkErrors": {
           "connect-failed": "无法连接中继",
@@ -3679,7 +3698,13 @@
     },
     "localMachine": {
       "ports": {
-        "title": "入站端口"
+        "title": "入站端口",
+        "titleNode": "本机需开通端口",
+        "titleHub": "Hub 需开通端口",
+        "titleRelay": "中继需开通端口",
+        "legend": "绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证",
+        "notProbed": "—",
+        "notProbedTitle": "不探测"
       }
     }
   }

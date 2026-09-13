@@ -274,7 +274,7 @@
         "copyMode": {
           "label": "Copy mode",
           "auto": "Copy on select",
-          "button": "Copy with button",
+          "button": "Copy via button",
           "hint": "Auto copies to the clipboard when the selection ends"
         },
         "preview": "Preview",
@@ -1750,6 +1750,7 @@
       "actions": {
         "add": "Add",
         "more": "More",
+        "detail": "Details",
         "revoke": "Remove",
         "refresh": "Refresh",
         "admit": "Admit",
@@ -1758,7 +1759,12 @@
       },
       "pause": {
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
-        "failed": "Action failed: {{error}}"
+        "failed": "Action failed: {{error}}",
+        "selfBlocked": "Cannot pause this machine",
+        "hubBlocked": "Cannot pause a Hub",
+        "forwarderBlocked": "This node is currently in use",
+        "batchFailed": "Failed on {{count}}",
+        "busy": "Pause or resume is running."
       },
       "ports": {
         "blocked": "Unreachable ports: {{list}}",
@@ -1768,6 +1774,12 @@
           "open": "Open",
           "blocked": "Blocked",
           "unknown": "Unknown"
+        },
+        "code": {
+          "peer_refused": "Connection refused",
+          "peer_timeout": "Timed out",
+          "no_srflx": "No public mapping",
+          "turn_unreachable": "TURN unreachable"
         }
       },
       "admit": {
@@ -1822,7 +1834,11 @@
         "upgradeWithSelf": "Upgrade ({{count}}, incl. this machine)",
         "upgradeSelfNotice": "This machine is upgraded last; the service restarts and this page drops briefly.",
         "revoke": "Remove Nodes",
-        "uninstall": "Uninstall VibeTerm"
+        "uninstall": "Uninstall VibeTerm",
+        "pause": "Pause",
+        "resume": "Resume",
+        "pauseNone": "None of the selected nodes can be paused.",
+        "resumeNone": "None of the selected nodes can be resumed."
       },
       "uninstall": {
         "confirmTitle": "Uninstall VibeTerm",
@@ -2530,8 +2546,11 @@
           "peersOnline": "{{n}} online",
           "turn": "TURN",
           "turnReachable": "Reachable",
-          "turnUnreachable": "Unreachable",
-          "turnUnprobed": "Not probed"
+          "turnUnreachable": "Unreachable here",
+          "turnUnprobed": "Not probed",
+          "turnMembersCount": "{{ok}}/{{total}} nodes",
+          "turnMembersReachable": "{{ok}}/{{total}} nodes reachable",
+          "turnTunHint": "Local proxy/TUN drops UDP; verdict reflects this machine only"
         },
         "linkErrors": {
           "connect-failed": "Cannot reach the relay",
@@ -2922,7 +2941,13 @@
     },
     "localMachine": {
       "ports": {
-        "title": "Inbound ports"
+        "title": "Inbound ports",
+        "titleNode": "Open on this machine",
+        "titleHub": "Open on this Hub",
+        "titleRelay": "Open on this relay",
+        "legend": "Green = reached by other nodes; red = probed closed; grey = not yet verified",
+        "notProbed": "—",
+        "notProbedTitle": "Not probed"
       }
     }
   }

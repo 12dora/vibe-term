@@ -482,7 +482,7 @@ export const I18N_RESOURCES = {
         "copyMode": {
           "label": "Copy mode",
           "auto": "Copy on select",
-          "button": "Copy with button",
+          "button": "Copy via button",
           "hint": "Auto copies to the clipboard when the selection ends"
         },
         "preview": "Preview",
@@ -2517,6 +2517,7 @@ export const I18N_RESOURCES = {
       "actions": {
         "add": "Add",
         "more": "More",
+        "detail": "Details",
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
@@ -2527,7 +2528,12 @@ export const I18N_RESOURCES = {
       },
       "pause": {
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
-        "failed": "Action failed: {{error}}"
+        "failed": "Action failed: {{error}}",
+        "selfBlocked": "Cannot pause this machine",
+        "hubBlocked": "Cannot pause a Hub",
+        "forwarderBlocked": "This node is currently in use",
+        "batchFailed": "Failed on {{count}}",
+        "busy": "Pause or resume is running."
       },
       "ports": {
         "blocked": "Unreachable ports: {{list}}",
@@ -2537,6 +2543,12 @@ export const I18N_RESOURCES = {
           "open": "Open",
           "blocked": "Blocked",
           "unknown": "Unknown"
+        },
+        "code": {
+          "peer_refused": "Connection refused",
+          "peer_timeout": "Timed out",
+          "no_srflx": "No public mapping",
+          "turn_unreachable": "TURN unreachable"
         }
       },
       "admit": {
@@ -2591,7 +2603,11 @@ export const I18N_RESOURCES = {
         "upgradeWithSelf": "Upgrade ({{count}}, incl. this machine)",
         "upgradeSelfNotice": "This machine is upgraded last; the service restarts and this page drops briefly.",
         "revoke": "Remove Nodes",
-        "uninstall": "Uninstall VibeTerm"
+        "uninstall": "Uninstall VibeTerm",
+        "pause": "Pause",
+        "resume": "Resume",
+        "pauseNone": "None of the selected nodes can be paused.",
+        "resumeNone": "None of the selected nodes can be resumed."
       },
       "uninstall": {
         "confirmTitle": "Uninstall VibeTerm",
@@ -3299,8 +3315,11 @@ export const I18N_RESOURCES = {
           "peersOnline": "{{n}} online",
           "turn": "TURN",
           "turnReachable": "Reachable",
-          "turnUnreachable": "Unreachable",
-          "turnUnprobed": "Not probed"
+          "turnUnreachable": "Unreachable here",
+          "turnUnprobed": "Not probed",
+          "turnMembersCount": "{{ok}}/{{total}} nodes",
+          "turnMembersReachable": "{{ok}}/{{total}} nodes reachable",
+          "turnTunHint": "Local proxy/TUN drops UDP; verdict reflects this machine only"
         },
         "linkErrors": {
           "connect-failed": "Cannot reach the relay",
@@ -3691,7 +3710,13 @@ export const I18N_RESOURCES = {
     },
     "localMachine": {
       "ports": {
-        "title": "Inbound ports"
+        "title": "Inbound ports",
+        "titleNode": "Open on this machine",
+        "titleHub": "Open on this Hub",
+        "titleRelay": "Open on this relay",
+        "legend": "Green = reached by other nodes; red = probed closed; grey = not yet verified",
+        "notProbed": "—",
+        "notProbedTitle": "Not probed"
       }
     }
   }
@@ -4174,7 +4199,7 @@ export const I18N_RESOURCES = {
         "copyMode": {
           "label": "复制方式",
           "auto": "选中后自动复制",
-          "button": "点击按钮复制",
+          "button": "点击按钮后复制",
           "hint": "自动复制在选区完成时写入剪贴板"
         },
         "preview": "预览",
@@ -6209,6 +6234,7 @@ export const I18N_RESOURCES = {
       "actions": {
         "add": "添加",
         "more": "更多",
+        "detail": "详情",
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
@@ -6219,7 +6245,12 @@ export const I18N_RESOURCES = {
       },
       "pause": {
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
-        "failed": "操作失败：{{error}}"
+        "failed": "操作失败：{{error}}",
+        "selfBlocked": "本机不能暂停",
+        "hubBlocked": "Hub 不能暂停",
+        "forwarderBlocked": "当前正在使用该节点",
+        "batchFailed": "失败 {{count}} 台",
+        "busy": "正在暂停或恢复。"
       },
       "ports": {
         "blocked": "端口不可达：{{list}}",
@@ -6229,6 +6260,12 @@ export const I18N_RESOURCES = {
           "open": "可达",
           "blocked": "不可达",
           "unknown": "未知"
+        },
+        "code": {
+          "peer_refused": "连接被拒",
+          "peer_timeout": "连接超时",
+          "no_srflx": "未拿到公网映射",
+          "turn_unreachable": "TURN 不通"
         }
       },
       "admit": {
@@ -6283,7 +6320,11 @@ export const I18N_RESOURCES = {
         "upgradeWithSelf": "升级（{{count}}，含本机）",
         "upgradeSelfNotice": "本机排在最后升级，届时服务重启、当前页面短暂断开。",
         "revoke": "移除节点",
-        "uninstall": "卸载 VibeTerm"
+        "uninstall": "卸载 VibeTerm",
+        "pause": "暂停",
+        "resume": "恢复",
+        "pauseNone": "所选节点均不能暂停。",
+        "resumeNone": "所选节点均不能恢复。"
       },
       "uninstall": {
         "confirmTitle": "卸载 VibeTerm",
@@ -6985,8 +7026,11 @@ export const I18N_RESOURCES = {
           "peersOnline": "{{n}} 台在线",
           "turn": "TURN",
           "turnReachable": "可达",
-          "turnUnreachable": "不可达",
-          "turnUnprobed": "未探测"
+          "turnUnreachable": "本机不可达",
+          "turnUnprobed": "未探测",
+          "turnMembersCount": "{{ok}}/{{total}} 节点",
+          "turnMembersReachable": "{{ok}}/{{total}} 节点可达",
+          "turnTunHint": "本机代理/TUN 未转发 UDP，探测结果仅代表本机"
         },
         "linkErrors": {
           "connect-failed": "无法连接中继",
@@ -7377,7 +7421,13 @@ export const I18N_RESOURCES = {
     },
     "localMachine": {
       "ports": {
-        "title": "入站端口"
+        "title": "入站端口",
+        "titleNode": "本机需开通端口",
+        "titleHub": "Hub 需开通端口",
+        "titleRelay": "中继需开通端口",
+        "legend": "绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证",
+        "notProbed": "—",
+        "notProbedTitle": "不探测"
       }
     }
   }
@@ -7860,7 +7910,7 @@ export const I18N_RESOURCES = {
         "copyMode": {
           "label": "コピー方法",
           "auto": "選択時に自動コピー",
-          "button": "ボタンでコピー",
+          "button": "ボタンを押してコピー",
           "hint": "選択が終わると自動でクリップボードに書き込みます"
         },
         "preview": "プレビュー",
@@ -9895,6 +9945,7 @@ export const I18N_RESOURCES = {
       "actions": {
         "add": "追加",
         "more": "その他",
+        "detail": "詳細",
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
@@ -9905,7 +9956,12 @@ export const I18N_RESOURCES = {
       },
       "pause": {
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
-        "failed": "操作に失敗しました：{{error}}"
+        "failed": "操作に失敗しました：{{error}}",
+        "selfBlocked": "本機は一時停止できません",
+        "hubBlocked": "Hub は一時停止できません",
+        "forwarderBlocked": "現在このノードを使用中です",
+        "batchFailed": "{{count}} 台で失敗しました",
+        "busy": "一時停止または再開の処理中です。"
       },
       "ports": {
         "blocked": "到達不能なポート：{{list}}",
@@ -9915,6 +9971,12 @@ export const I18N_RESOURCES = {
           "open": "到達可",
           "blocked": "到達不能",
           "unknown": "不明"
+        },
+        "code": {
+          "peer_refused": "接続拒否",
+          "peer_timeout": "接続タイムアウト",
+          "no_srflx": "公開側のマッピングなし",
+          "turn_unreachable": "TURN 未到達"
         }
       },
       "admit": {
@@ -9969,7 +10031,11 @@ export const I18N_RESOURCES = {
         "upgradeWithSelf": "アップグレード（{{count}}、本機を含む）",
         "upgradeSelfNotice": "本機は最後にアップグレードされ、サービス再起動でこのページは一時的に切断されます。",
         "revoke": "ノードを削除",
-        "uninstall": "VibeTerm をアンインストール"
+        "uninstall": "VibeTerm をアンインストール",
+        "pause": "一時停止",
+        "resume": "再開",
+        "pauseNone": "選択したノードはいずれも一時停止できません。",
+        "resumeNone": "選択したノードはいずれも再開できません。"
       },
       "uninstall": {
         "confirmTitle": "VibeTerm をアンインストール",
@@ -10671,8 +10737,11 @@ export const I18N_RESOURCES = {
           "peersOnline": "{{n}} 台オンライン",
           "turn": "TURN",
           "turnReachable": "到達可能",
-          "turnUnreachable": "到達不可",
-          "turnUnprobed": "未検査"
+          "turnUnreachable": "本機から到達不可",
+          "turnUnprobed": "未検査",
+          "turnMembersCount": "{{ok}}/{{total}} ノード",
+          "turnMembersReachable": "{{ok}}/{{total}} ノード到達可",
+          "turnTunHint": "本機のプロキシ/TUN が UDP を転送していないため、判定は本機のみを表します"
         },
         "linkErrors": {
           "connect-failed": "中継に接続できません",
@@ -11063,7 +11132,13 @@ export const I18N_RESOURCES = {
     },
     "localMachine": {
       "ports": {
-        "title": "受信ポート"
+        "title": "受信ポート",
+        "titleNode": "本機で開放するポート",
+        "titleHub": "Hub で開放するポート",
+        "titleRelay": "中継で開放するポート",
+        "legend": "緑 = 他ノードから到達済み；赤 = 未開放を検出；灰 = 未検証",
+        "notProbed": "—",
+        "notProbedTitle": "検知しない"
       }
     }
   }
