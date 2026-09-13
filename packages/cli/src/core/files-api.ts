@@ -9,6 +9,7 @@ import {
   mkdirPath,
 } from '@vibeterm/api-client/file-resources';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import type { BrowseDirectoryResponse } from '@vibeterm/shared';
 import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError, UsageError } from './errors';
@@ -285,6 +286,39 @@ export async function reorderFileRoots(
     { rootIds }
   );
   return payload.roots ?? [];
+}
+
+export async function patchFileRoot(
+  http: HttpClient,
+  nodeId: string,
+  id: string,
+  body: { enabled?: boolean; path?: string; sortOrder?: number }
+): Promise<FileRootDto> {
+  const payload = await filesJson<{ root: FileRootDto }>(
+    http,
+    nodeId,
+    'PATCH',
+    `/api/files/roots/${encodeURIComponent(id)}`,
+    body
+  );
+  return payload.root;
+}
+
+/** `GET /api/files/browse`：query 与 api-client `browseDirectory` 一致。 */
+export async function browseDirectoryOnNode(
+  http: HttpClient,
+  nodeId: string,
+  params: { deviceId: string; path?: string; hidden?: boolean }
+): Promise<BrowseDirectoryResponse> {
+  const search = new URLSearchParams({ deviceId: params.deviceId });
+  if (params.path) search.set('path', params.path);
+  if (params.hidden) search.set('hidden', '1');
+  return filesJson<BrowseDirectoryResponse>(
+    http,
+    nodeId,
+    'GET',
+    `/api/files/browse?${search.toString()}`
+  );
 }
 
 /** entry 的真实 mesh id；standalone / 取不到时退回 runtime nodeId。 */

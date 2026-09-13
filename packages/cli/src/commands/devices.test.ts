@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { UsageError } from '../core/errors';
+import { FAKE_DEVICE_ID, createFakeTermContext, fakeSession } from '../core/term-test-fakes';
 import { NODE, routeFetch, testContext } from './cli-test-harness';
 import { command as devices } from './devices';
 
@@ -134,6 +135,67 @@ describe('vibeterm devices', () => {
     });
     await devices.run(cli, ['folders', 'ls']);
     expect(JSON.parse(stdout.text()).folders).toEqual([]);
+  });
+
+  test('folders rename patches /api/device-folders/:id', async () => {
+    let path = '';
+    let body = '';
+    const { ctx: cli, stdout } = await ctx({
+      'PATCH /api/device-folders/f-1': (url, init) => {
+        path = url.pathname;
+        body = String(init?.body);
+        return { folder: { id: 'f-1', name: 'ops' } };
+      },
+    });
+    await devices.run(cli, ['folders', 'rename', 'f-1', '--name', 'ops']);
+    expect(path).toBe('/api/device-folders/f-1');
+    expect(JSON.parse(body)).toEqual({ name: 'ops' });
+    expect(JSON.parse(stdout.text()).folder.name).toBe('ops');
+  });
+
+  test('folders reset requires --yes off-tty and posts /api/device-folders/reset', async () => {
+    const missing = await ctx({
+      'POST /api/device-folders/reset': () => ({ folders: [], placements: [] }),
+    });
+    await expect(devices.run(missing.ctx, ['folders', 'reset'])).rejects.toBeInstanceOf(UsageError);
+    let path = '';
+    const { ctx: cli, stdout } = await ctx({
+      'POST /api/device-folders/reset': (url) => {
+        path = url.pathname;
+        return { folders: [], placements: [] };
+      },
+    });
+    await devices.run(cli, ['folders', 'reset', '--yes']);
+    expect(path).toBe('/api/device-folders/reset');
+    expect(JSON.parse(stdout.text()).folders).toEqual([]);
+  });
+
+  test('disconnect sends WS disconnect-device without connect-device', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-devices-ws-'));
+    dirs.push(dir);
+    const h = createFakeTermContext({
+      session: fakeSession(),
+      configDir: dir,
+      json: true,
+      timeoutMs: 1_000,
+    });
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'disconnect-device') return;
+      queueMicrotask(() =>
+        h.transport.emit({ type: 'device-disconnected', deviceId: command.deviceId })
+      );
+    };
+    await devices.run(h.ctx, ['disconnect', 'laptop']);
+    expect(h.transport.commandsOfType('connect-device')).toHaveLength(0);
+    expect(h.transport.commandsOfType('disconnect-device')[0]).toMatchObject({
+      deviceId: FAKE_DEVICE_ID,
+    });
+    expect(JSON.parse(h.stdout.text().trim())).toEqual({
+      ok: true,
+      action: 'disconnected',
+      id: FAKE_DEVICE_ID,
+    });
+    expect(h.closed()).toBe(1);
   });
 
   test('--node prefixes /n/<id>', async () => {

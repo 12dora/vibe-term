@@ -1,16 +1,20 @@
 // `vibeterm files`：根目录与 root-relative 浏览，路径文法与 GUI 一致（rootId + 绝对路径）。
 
-import { flagBool, parseArgv } from '../core/args';
+import type { BrowseDirectoryResponse } from '@vibeterm/shared';
+import { flagBool, flagString, parseArgv } from '../core/args';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
 import {
   type FileEntryDto,
   type FileRootDto,
+  browseDirectoryOnNode,
   createFileRoot,
   deleteFileRoot,
   isHiddenName,
   listDirectory,
   listFileRoots,
+  mkdirRemote,
+  patchFileRoot,
   reorderFileRoots,
   resolveFileRoot,
   resolveRemotePath,
@@ -26,6 +30,9 @@ const FLAGS = {
   device: 'string',
   enabled: 'boolean',
   disabled: 'boolean',
+  recursive: 'boolean',
+  hidden: 'boolean',
+  path: 'string',
 } as const;
 
 function parseSpec(positionals: string[]): ReturnType<typeof parseRemoteFileRef> {
@@ -48,7 +55,12 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   if (sub === 'ls') return runLs(ctx, flags, positionals.slice(1));
   if (sub === 'stat') return runStat(ctx, positionals.slice(1));
   if (sub === 'cat') return runCat(ctx, positionals.slice(1));
-  throw new UsageError(`unknown files subcommand: ${sub}`, 'use roots, ls, stat or cat');
+  if (sub === 'mkdir') return runMkdir(ctx, flags, positionals.slice(1));
+  if (sub === 'browse') return runBrowse(ctx, flags, positionals.slice(1));
+  throw new UsageError(
+    `unknown files subcommand: ${sub}`,
+    'use roots, ls, stat, cat, mkdir or browse'
+  );
 }
 
 async function runRoots(
@@ -69,7 +81,29 @@ async function runRoots(
     if (ids.length === 0) throw new UsageError('usage: vibeterm files roots order <id> [<id>…]');
     return printRoots(ctx, await reorderFileRoots(ctx.http, nodeId, ids));
   }
-  throw new UsageError(`unknown roots subcommand: ${action}`, 'use ls, add, rm or order');
+  if (action === 'enable' || action === 'disable') {
+    if (positionals.length > 2) throw new UsageError(`unexpected argument: ${positionals[2]}`);
+    return setRootEnabled(ctx, nodeId, positionals[1], action === 'enable');
+  }
+  throw new UsageError(
+    `unknown roots subcommand: ${action}`,
+    'use ls, add, rm, order, enable or disable'
+  );
+}
+
+async function setRootEnabled(
+  ctx: CliContext,
+  nodeId: string,
+  ref: string | undefined,
+  enabled: boolean
+): Promise<undefined> {
+  if (!ref) {
+    throw new UsageError(`usage: vibeterm files roots ${enabled ? 'enable' : 'disable'} <id|name>`);
+  }
+  const root = resolveFileRoot(await listFileRoots(ctx.http, nodeId), ref);
+  const updated = await patchFileRoot(ctx.http, nodeId, root.id, { enabled });
+  if (ctx.globals.json) ctx.out.data({ root: updated });
+  else ctx.out.line(`${enabled ? 'enabled' : 'disabled'} ${updated.id}  ${updated.name}`);
 }
 
 async function addRoot(
@@ -175,6 +209,65 @@ async function runStat(ctx: CliContext, positionals: string[]): Promise<undefine
   ctx.out.line(`${stat.type}  ${stat.size}  ${stat.modifiedAt ?? '-'}  ${stat.path}`);
 }
 
+async function runMkdir(
+  ctx: CliContext,
+  flags: ReturnType<typeof parseArgv>['flags'],
+  positionals: string[]
+): Promise<undefined> {
+  const resolved = await resolveRemotePath(ctx, parseSpec(positionals));
+  const recursive = flagBool(flags, 'recursive');
+  const result = await mkdirRemote(ctx.http, resolved.nodeId, {
+    rootId: resolved.root.id,
+    path: resolved.absPath,
+    ...(recursive ? { recursive: true } : {}),
+  });
+  if (ctx.globals.json) {
+    ctx.out.data({
+      node: resolved.nodeId,
+      rootId: resolved.root.id,
+      path: result.path,
+      created: result.created,
+    });
+    return;
+  }
+  ctx.out.line(`${result.created ? 'created' : 'exists'} ${result.path}`);
+}
+
+async function runBrowse(
+  ctx: CliContext,
+  flags: ReturnType<typeof parseArgv>['flags'],
+  positionals: string[]
+): Promise<undefined> {
+  if (positionals[0]) throw new UsageError(`unexpected argument: ${positionals[0]}`);
+  const deviceRef = flagString(flags, 'device');
+  const path = flagString(flags, 'path');
+  if (!deviceRef) throw new UsageError('browse requires --device');
+  if (path === undefined) throw new UsageError('browse requires --path');
+  const nodeId = await ctx.targetNodeId();
+  const device = await ctx.resolver.resolveDevice(nodeId, deviceRef);
+  const listing = await browseDirectoryOnNode(ctx.http, nodeId, {
+    deviceId: device.id,
+    path,
+    hidden: flagBool(flags, 'hidden'),
+  });
+  if (ctx.globals.json) {
+    ctx.out.data({ node: nodeId, deviceId: device.id, ...listing });
+    return;
+  }
+  printBrowse(ctx, listing);
+}
+
+function printBrowse(ctx: CliContext, listing: BrowseDirectoryResponse): void {
+  ctx.out.line(`PATH    ${listing.path}`);
+  ctx.out.line(`PARENT  ${listing.parent ?? '-'}`);
+  if (listing.truncated) ctx.out.warn('listing truncated (server cap)');
+  ctx.out.table(listing.entries, [
+    { header: 'NAME', value: (row) => (row.symlink ? `${row.name}@` : `${row.name}/`) },
+    { header: 'PATH', value: (row) => row.path },
+    { header: 'HIDDEN', value: (row) => (row.hidden ? 'yes' : 'no') },
+  ]);
+}
+
 async function runCat(ctx: CliContext, positionals: string[]): Promise<undefined> {
   const resolved = await resolveRemotePath(ctx, parseSpec(positionals));
   const response = await ctx.http.fetch(
@@ -200,7 +293,7 @@ export const command: Command = {
   name: 'files',
   summary: 'browse files on a node',
   usage: [
-    'Usage: vibeterm files <roots|ls|stat|cat> …',
+    'Usage: vibeterm files <roots|ls|stat|cat|mkdir|browse> …',
     '',
     'Paths are root-relative, same as the GUI (rootId + absolute path under the hood):',
     '  <node>:<rootId>:<relpath>     root id (UUID) + relative or /absolute path',
@@ -216,15 +309,20 @@ export const command: Command = {
     '  roots add <device> <abs-path>          POST /api/files/roots',
     '  roots rm <id|name>                     DELETE /api/files/roots/:id',
     '  roots order <id> [<id>…]               PUT /api/files/roots/order',
+    '  roots enable|disable <id|name>         PATCH /api/files/roots/:id {enabled}',
     '  ls <spec> [--long] [--all]             GET /api/files/list (caps at 2000 entries)',
     '  stat <spec>                            GET /api/files/stat',
     '  cat <spec>                             GET /api/files/raw (binary to stdout)',
+    '  mkdir <spec> [--recursive]             POST /api/files/mkdir',
+    '  browse --device <id> --path <p>        GET /api/files/browse [--hidden]',
     '',
     '--json shapes:',
     '  roots  { "roots": [ { id, name, path, deviceId, deviceName, enabled, sortOrder } ] }',
     '  ls     { node, root, path, truncated, entries: [ { name, path, type, size, modifiedAt } ] }',
     '  stat   { node, rootId, path, name, type, size, modifiedAt, mime, isSymlink }',
     '  cat    raw bytes on stdout (ignores --json)',
+    '  mkdir  { node, rootId, path, created }',
+    '  browse { node, deviceId, path, parent, entries, truncated }',
     '',
     'Exit 3 if the node needs login, 4 if the root or path is missing.',
   ].join('\n'),

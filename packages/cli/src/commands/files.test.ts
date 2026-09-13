@@ -84,7 +84,26 @@ function filesFetch(
     if (path.startsWith('/api/files/roots/') && request.method === 'DELETE') {
       return new Response(null, { status: 204 });
     }
+    if (path.startsWith('/api/files/roots/') && request.method === 'PATCH') {
+      const body = (await request.json()) as { enabled?: boolean };
+      return json({ root: { ...ROOT, enabled: body.enabled ?? ROOT.enabled } });
+    }
     if (path === '/api/files/roots/order') return json({ roots: [ROOT] });
+    if (path === '/api/files/mkdir' && request.method === 'POST') {
+      const body = (await request.json()) as { path: string };
+      return json({ path: body.path, created: true });
+    }
+    if (path === '/api/files/browse') {
+      return json({
+        path: search.get('path') ?? '/home/me',
+        parent: '/home',
+        truncated: false,
+        entries: [
+          { name: 'docs', path: '/home/me/docs', hidden: false, symlink: false },
+          { name: '.cache', path: '/home/me/.cache', hidden: true, symlink: false },
+        ],
+      });
+    }
     if (path === '/api/files/list') {
       return json({
         path: search.get('path') ?? ROOT.path,
@@ -240,5 +259,75 @@ describe('vibeterm files', () => {
   test('rejects .. in the path', async () => {
     const { ctx } = await testContext(filesFetch());
     await expect(files.run(ctx, ['ls', 'home/../etc'])).rejects.toThrow(UsageError);
+  });
+
+  test('mkdir posts /api/files/mkdir with the resolved absolute path', async () => {
+    let body = '';
+    const { ctx, stdout } = await testContext(
+      filesFetch({
+        'POST /api/files/mkdir': async (req) => {
+          body = await req.text();
+          return json({ path: '/home/me/docs/new', created: true });
+        },
+      }),
+      { json: true }
+    );
+    await files.run(ctx, ['mkdir', 'home/docs/new', '--recursive']);
+    expect(JSON.parse(body)).toEqual({
+      rootId: ROOT_ID,
+      path: '/home/me/docs/new',
+      recursive: true,
+    });
+    expect(JSON.parse(stdout.text())).toMatchObject({
+      rootId: ROOT_ID,
+      path: '/home/me/docs/new',
+      created: true,
+    });
+  });
+
+  test('roots enable / disable patch {enabled}', async () => {
+    const seen: string[] = [];
+    const { ctx, stdout } = await testContext(
+      filesFetch({
+        'PATCH /api/files/roots/11111111-1111-4111-8111-111111111111': async (req) => {
+          seen.push(await req.text());
+          const body = JSON.parse(seen[seen.length - 1]) as { enabled: boolean };
+          return json({ root: { ...ROOT, enabled: body.enabled } });
+        },
+      }),
+      { json: true }
+    );
+    await files.run(ctx, ['roots', 'disable', 'home']);
+    expect(JSON.parse(seen[0])).toEqual({ enabled: false });
+    expect(JSON.parse(stdout.text()).root.enabled).toBe(false);
+  });
+
+  test('browse hits GET /api/files/browse with deviceId, path and hidden', async () => {
+    let url = '';
+    const { ctx, stdout } = await testContext(
+      filesFetch({
+        'GET /api/files/browse': (_req, parsed) => {
+          url = parsed.toString();
+          return json({
+            path: '/tmp',
+            parent: '/',
+            truncated: false,
+            entries: [{ name: 'a', path: '/tmp/a', hidden: false, symlink: false }],
+          });
+        },
+      }),
+      { json: true }
+    );
+    await files.run(ctx, ['browse', '--device', 'laptop', '--path', '/tmp', '--hidden']);
+    expect(url).toContain('deviceId=d-1');
+    expect(url).toContain('path=%2Ftmp');
+    expect(url).toContain('hidden=1');
+    expect(JSON.parse(stdout.text()).path).toBe('/tmp');
+  });
+
+  test('browse requires --device and --path', async () => {
+    const { ctx } = await testContext(filesFetch());
+    await expect(files.run(ctx, ['browse', '--path', '/tmp'])).rejects.toThrow(UsageError);
+    await expect(files.run(ctx, ['browse', '--device', 'laptop'])).rejects.toThrow(UsageError);
   });
 });

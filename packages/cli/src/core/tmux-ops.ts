@@ -4,8 +4,9 @@
 // 落地才算成功，等待谓词由调用方给。
 
 import type { TmuxPane, TmuxSession, TmuxWindow } from '@vibeterm/shared';
-import type { GatewayTransportCommand } from '@vibeterm/ws-client';
+import type { GatewayTransport, GatewayTransportCommand } from '@vibeterm/ws-client';
 import type { CliContext } from './context';
+import { NetworkError } from './errors';
 import type { Output } from './output';
 import { DeviceSession, type DeviceSessionEvents } from './pane-session';
 import type { ParsedTarget } from './resolve';
@@ -43,6 +44,44 @@ export async function openDeviceSession(
     socket.close();
     throw error;
   }
+}
+
+/**
+ * 向网关发 `disconnect-device`，不先 `connect-device`（连接仍由 tmux/term 隐式完成）。
+ * 等到本条 WS 收到 `device-disconnected` 再返回。
+ */
+export async function disconnectDevice(
+  ctx: CliContext,
+  raw: string
+): Promise<ResolvedTargetDevice> {
+  const resolved = await resolveTargetDevice(ctx, raw);
+  const socket = await ctx.openSocket(resolved.nodeId);
+  try {
+    await awaitDisconnect(socket.connection.transport, resolved.device.id, ctx.globals.timeoutMs);
+    return resolved;
+  } finally {
+    socket.close();
+  }
+}
+
+function awaitDisconnect(
+  transport: Pick<GatewayTransport, 'send' | 'onEvent'>,
+  deviceId: string,
+  timeoutMs: number
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      unsub();
+      reject(new NetworkError(`timed out waiting for device ${deviceId} to disconnect`));
+    }, timeoutMs);
+    const unsub = transport.onEvent((event) => {
+      if (event.type !== 'device-disconnected' || event.deviceId !== deviceId) return;
+      clearTimeout(timer);
+      unsub();
+      resolve();
+    });
+    transport.send({ type: 'disconnect-device', deviceId });
+  });
 }
 
 /** 发一条 tmux 控制命令并等它在会话树上落地。 */
@@ -88,6 +127,40 @@ export function paneRow(pane: TmuxPane): Record<string, unknown> {
     path: pane.currentPath ?? '',
     title: paneLabel(pane),
   };
+}
+
+export function windowJson(window: TmuxWindow): Record<string, unknown> {
+  return {
+    id: window.id,
+    index: window.index,
+    name: windowLabel(window),
+    active: window.active,
+    panes: window.panes.length,
+  };
+}
+
+export function reportWindow(ctx: CliContext, action: string, window: TmuxWindow): void {
+  if (ctx.out.json) {
+    ctx.out.data({ ok: true, action, window: windowJson(window) });
+    return;
+  }
+  ctx.out.line(`${action}: ${window.id} (${window.index}: ${windowLabel(window)})`);
+}
+
+export function reportPane(ctx: CliContext, action: string, pane: TmuxPane): void {
+  if (ctx.out.json) {
+    ctx.out.data({ ok: true, action, pane: paneRow(pane) });
+    return;
+  }
+  ctx.out.line(`${action}: ${pane.id} (${pane.width}x${pane.height})`);
+}
+
+export function reportGone(ctx: CliContext, action: string, id: string): void {
+  if (ctx.out.json) {
+    ctx.out.data({ ok: true, action, id });
+    return;
+  }
+  ctx.out.line(`${action}: ${id}`);
 }
 
 /** `tmux ls` 的人读视图：session → window → pane 三层缩进。 */

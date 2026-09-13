@@ -73,6 +73,24 @@ export function formatTarget(target: ParsedTarget): string {
   return target.location ? `${head}:${target.location}` : head;
 }
 
+/**
+ * 第二个 pane 参数：完整 `[<node>/]<device>[:location]`，或同一设备上的 location 简写
+ *（`%1`、`@1.0`、`build.1`）。简写会绑到 `device` 已解析出的 node/device 上。
+ */
+export function parsePeerTarget(raw: string, device: ParsedTarget): ParsedTarget {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new UsageError('target is empty');
+  if (trimmed.includes('/') || trimmed.includes(':')) return parseTarget(trimmed);
+  const head = formatTarget({
+    node: device.node,
+    device: device.device,
+    location: null,
+    window: null,
+    pane: null,
+  });
+  return parseTarget(`${head}:${trimmed}`);
+}
+
 export interface ResolvedNode {
   id: string;
   name: string;

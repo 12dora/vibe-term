@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { UsageError } from './errors';
-import { formatTarget, parseTarget } from './resolve';
+import { formatTarget, parsePeerTarget, parseTarget } from './resolve';
 
 describe('parseTarget', () => {
   test('device only', () => {
@@ -71,5 +71,25 @@ describe('parseTarget', () => {
     for (const input of ['laptop', 'office/laptop', 'laptop:2', 'office/laptop:2.1']) {
       expect(formatTarget(parseTarget(input))).toBe(input);
     }
+  });
+});
+
+describe('parsePeerTarget', () => {
+  const source = parseTarget('office/laptop:build.0');
+
+  test('binds a pane-id shorthand to the source device', () => {
+    expect(parsePeerTarget('%2', source)).toEqual(parseTarget('office/laptop:%2'));
+  });
+
+  test('binds a window.pane shorthand', () => {
+    expect(parsePeerTarget('build.1', source)).toEqual(parseTarget('office/laptop:build.1'));
+  });
+
+  test('parses a full target as-is', () => {
+    expect(parsePeerTarget('office/laptop:%2', source)).toEqual(parseTarget('office/laptop:%2'));
+  });
+
+  test('rejects an empty destination', () => {
+    expect(() => parsePeerTarget('  ', source)).toThrow(UsageError);
   });
 });

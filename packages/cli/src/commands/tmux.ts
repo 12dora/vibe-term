@@ -3,7 +3,7 @@
 // 每条子命令都是「建 WS → 连设备 → 等会话树 → 发控制命令 → 等元数据补丁落地 → 打印 → 关」。
 // 定位窗口 / pane 的规则见 core/term-target.ts，控制命令的 wire 形态见 @vibeterm/ws-client。
 
-import type { TmuxPane, TmuxSession, TmuxWindow } from '@vibeterm/shared';
+import type { TmuxPane, TmuxSession } from '@vibeterm/shared';
 import { type FlagValues, flagBool, flagString, parseArgv } from '../core/args';
 import type { CliContext } from '../core/context';
 import { NotFoundError, UsageError } from '../core/errors';
@@ -19,10 +19,20 @@ import {
   paneIds,
   paneRow,
   printSessionTree,
+  reportGone,
+  reportPane,
+  reportWindow,
   windowById,
   windowIds,
   windowLabel,
 } from '../core/tmux-ops';
+import {
+  type TmuxInput,
+  breakCommand,
+  moveCommand,
+  orderPanesCommand,
+  orderWindowsCommand,
+} from './tmux-layout';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -31,14 +41,9 @@ const FLAGS = {
   horizontal: 'boolean',
   vertical: 'boolean',
   all: 'boolean',
+  position: 'string',
+  ids: 'string',
 } as const;
-
-interface TmuxInput {
-  ctx: CliContext;
-  opened: OpenedDeviceSession;
-  rest: string[];
-  flags: FlagValues;
-}
 
 type TmuxHandler = (input: TmuxInput) => Promise<void>;
 
@@ -50,16 +55,6 @@ function timeoutOf(ctx: CliContext): number {
 
 function header(opened: OpenedDeviceSession): string {
   return `${opened.nodeName}/${opened.device.name}`;
-}
-
-function windowJson(window: TmuxWindow): Record<string, unknown> {
-  return {
-    id: window.id,
-    index: window.index,
-    name: windowLabel(window),
-    active: window.active,
-    panes: window.panes.length,
-  };
 }
 
 function requireArg(rest: readonly string[], what: string): string {
@@ -110,30 +105,6 @@ async function panesCommand({ ctx, opened, flags }: TmuxInput): Promise<void> {
     { header: 'COMMAND', value: (row) => String(row.command) },
     { header: 'PATH', value: (row) => String(row.path) },
   ]);
-}
-
-function reportWindow(ctx: CliContext, action: string, window: TmuxWindow): void {
-  if (ctx.out.json) {
-    ctx.out.data({ ok: true, action, window: windowJson(window) });
-    return;
-  }
-  ctx.out.line(`${action}: ${window.id} (${window.index}: ${windowLabel(window)})`);
-}
-
-function reportPane(ctx: CliContext, action: string, pane: TmuxPane): void {
-  if (ctx.out.json) {
-    ctx.out.data({ ok: true, action, pane: paneRow(pane) });
-    return;
-  }
-  ctx.out.line(`${action}: ${pane.id} (${pane.width}x${pane.height})`);
-}
-
-function reportGone(ctx: CliContext, action: string, id: string): void {
-  if (ctx.out.json) {
-    ctx.out.data({ ok: true, action, id });
-    return;
-  }
-  ctx.out.line(`${action}: ${id}`);
 }
 
 async function newWindowCommand({ ctx, opened, flags, rest }: TmuxInput): Promise<void> {
@@ -315,6 +286,10 @@ const HANDLERS: Readonly<Record<string, TmuxHandler>> = {
   focus: focusCommand,
   resize: resizeCommand,
   'rename-pane': renamePaneCommand,
+  move: moveCommand,
+  break: breakCommand,
+  'order-windows': orderWindowsCommand,
+  'order-panes': orderPanesCommand,
 };
 
 async function run(ctx: CliContext, argv: string[]): Promise<undefined> {
@@ -360,6 +335,10 @@ export const command: Command = {
     '  focus <target>                  make the located pane active',
     '  resize <target> <cols>x<rows>   resize the located pane',
     "  rename-pane <target> <name>     rename the located pane (--name '' clears it)",
+    '  move <src-pane> <dst-pane>      WS move-pane (--position left|right|top|bottom)',
+    '  break <pane>                    WS break-pane (pane becomes a new window)',
+    '  order-windows <device> --ids    WS reorder-windows (--ids @1,@2)',
+    '  order-panes <window> --ids      WS reorder-panes (--ids %0,%1)',
     '',
     'Options:',
     '  --name <name>      name for new-window / rename-window / rename-pane',
@@ -367,6 +346,8 @@ export const command: Command = {
     '  --horizontal       split left|right (tmux split-window -h)',
     '  --vertical         split top|bottom (default)',
     '  --all              panes: list every pane of the session',
+    '  --position <side>  move: left|right|top|bottom (default right)',
+    '  --ids <id,id,…>    order-windows / order-panes',
     '  --timeout <ms>     how long to wait for the change to land (default 30000)',
     '',
     'JSON (--json):',
@@ -379,6 +360,8 @@ export const command: Command = {
     '  vibeterm tmux ls self/laptop',
     '  vibeterm tmux new-window self/laptop --name build',
     '  vibeterm tmux split self/laptop:build.0 --horizontal',
+    '  vibeterm tmux move self/laptop:%1 %2 --position left',
+    '  vibeterm tmux order-windows laptop --ids @1,@0',
     '',
     'Exit codes: 3 when the node needs a login, 4 for an unknown node/device/window/pane,',
     '5 when the change does not land before --timeout.',

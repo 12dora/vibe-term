@@ -6,6 +6,7 @@ import type { TmuxSession } from '@vibeterm/shared';
 import { NotFoundError, UsageError } from '../core/errors';
 import { type FakeTermContext, createFakeTermContext, fakeSession } from '../core/term-test-fakes';
 import { parseGeometry, command as tmux } from './tmux';
+import { parseIdList, parseMovePosition } from './tmux-layout';
 
 const dirs: string[] = [];
 
@@ -202,5 +203,112 @@ describe('vibeterm tmux argument handling', () => {
     expect(() => parseGeometry('80')).toThrow(UsageError);
     expect(() => parseGeometry('0x10')).toThrow(UsageError);
     expect(() => parseGeometry(undefined)).toThrow(UsageError);
+  });
+});
+
+describe('vibeterm tmux move / break / reorder', () => {
+  test('move sends WS move-pane with GUI payload fields', async () => {
+    const h = await harness({ json: true });
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'move-pane') return;
+      const next = fakeSession();
+      const [first, second] = next.windows[1].panes;
+      first.index = 1;
+      second.index = 0;
+      next.windows[1].panes = [second, first];
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['move', 'laptop:build.0', 'laptop:build.1', '--position', 'left']);
+    expect(h.transport.commandsOfType('move-pane')[0]).toMatchObject({
+      srcPaneId: '%1',
+      dstPaneId: '%2',
+      position: 'left',
+    });
+    expect((jsonOf(h) as { action: string }).action).toBe('moved');
+  });
+
+  test('move accepts a pane-id shorthand on the same device and defaults position to right', async () => {
+    const h = await harness();
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'move-pane') return;
+      const next = fakeSession();
+      next.windows[1].panes[0].width = 40;
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['move', 'laptop:build.0', '%2']);
+    expect(h.transport.commandsOfType('move-pane')[0]).toMatchObject({
+      srcPaneId: '%1',
+      dstPaneId: '%2',
+      position: 'right',
+    });
+  });
+
+  test('move rejects the same pane and an unknown position', async () => {
+    const h = await harness();
+    await expect(tmux.run(h.ctx, ['move', 'laptop:build.0', '%1'])).rejects.toThrow(UsageError);
+    await expect(
+      tmux.run(h.ctx, ['move', 'laptop:build.0', '%2', '--position', 'middle'])
+    ).rejects.toThrow(UsageError);
+  });
+
+  test('break sends WS break-pane and reports the new window', async () => {
+    const h = await harness({ json: true });
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'break-pane') return;
+      const next = fakeSession();
+      const pane = next.windows[1].panes.pop();
+      if (!pane) return;
+      pane.windowId = '@9';
+      pane.index = 0;
+      next.windows.push({ id: '@9', name: 'build', index: 2, active: true, panes: [pane] });
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['break', 'laptop:build.1']);
+    expect(h.transport.commandsOfType('break-pane')[0]).toMatchObject({ paneId: '%2' });
+    expect(jsonOf(h)).toMatchObject({
+      ok: true,
+      action: 'broke',
+      window: { id: '@9' },
+    });
+  });
+
+  test('order-windows sends WS reorder-windows', async () => {
+    const h = await harness({ json: true });
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'reorder-windows') return;
+      const next = fakeSession();
+      next.windows = [next.windows[1], next.windows[0]];
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['order-windows', 'laptop', '--ids', '@1,@0']);
+    expect(h.transport.commandsOfType('reorder-windows')[0]).toMatchObject({
+      windowIds: ['@1', '@0'],
+    });
+    expect((jsonOf(h) as { windowIds: string[] }).windowIds).toEqual(['@1', '@0']);
+  });
+
+  test('order-panes sends WS reorder-panes for the located window', async () => {
+    const h = await harness();
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'reorder-panes') return;
+      const next = fakeSession();
+      next.windows[1].panes = [next.windows[1].panes[1], next.windows[1].panes[0]];
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['order-panes', 'laptop:build', '--ids', '%2,%1']);
+    expect(h.transport.commandsOfType('reorder-panes')[0]).toMatchObject({
+      windowId: '@1',
+      paneIds: ['%2', '%1'],
+    });
+    expect(h.stdout.text()).toContain('reordered panes: %2,%1');
+  });
+
+  test('parseMovePosition / parseIdList reject empty or unknown values', () => {
+    expect(parseMovePosition(undefined)).toBe('right');
+    expect(parseMovePosition('top')).toBe('top');
+    expect(() => parseMovePosition('side')).toThrow(UsageError);
+    expect(parseIdList('@1,@2', '@1,@2')).toEqual(['@1', '@2']);
+    expect(() => parseIdList(undefined, '@1,@2')).toThrow(UsageError);
+    expect(() => parseIdList(' , ', '@1,@2')).toThrow(UsageError);
   });
 });

@@ -18,6 +18,7 @@ import {
 import type { CliContext } from '../core/context';
 import { deviceMutationBody, parseOrderIds } from '../core/devices-body';
 import { UsageError } from '../core/errors';
+import { disconnectDevice } from '../core/tmux-ops';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -55,7 +56,8 @@ const USAGE = [
   '  rm <device> [--yes]              DELETE /api/devices/:id',
   '  test <device>                    POST /api/devices/:id/test-connection',
   '  order --ids a,b,c                PUT /api/devices/order',
-  '  folders ls|add|rm|layout         /api/device-folders',
+  '  disconnect <device>              WS disconnect-device (connect is implicit in tmux/term)',
+  '  folders ls|add|rm|layout|rename|reset   /api/device-folders',
   '',
   'add/edit flags: --name --type --host --port --user --auth-mode',
   '  --password --private-key --passphrase --session --cwd --ssh-config --body',
@@ -141,8 +143,17 @@ const order: SubHandler = async (ctx, flags, positionals) => {
   emit(ctx, result, () => ctx.out.data(result));
 };
 
+const disconnect: SubHandler = async (ctx, _flags, positionals) => {
+  const ref = requireArg(positionals, 0, 'device');
+  rejectExtra(positionals, 1);
+  const resolved = await disconnectDevice(ctx, ref);
+  emit(ctx, { ok: true, action: 'disconnected', id: resolved.device.id }, () => {
+    ctx.out.line(`disconnected ${resolved.device.name}`);
+  });
+};
+
 const folders: SubHandler = async (ctx, flags, positionals) => {
-  const action = requireArg(positionals, 0, 'folders action (ls|add|rm|layout)');
+  const action = requireArg(positionals, 0, 'folders action (ls|add|rm|layout|rename|reset)');
   const nodeId = await ctx.targetNodeId();
   if (action === 'ls') {
     rejectExtra(positionals, 1);
@@ -154,6 +165,15 @@ const folders: SubHandler = async (ctx, flags, positionals) => {
     const name = flagString(flags, 'name') ?? positionals[1];
     if (!name) throw new UsageError('missing folder name', 'pass --name or a positional name');
     const result = await ctx.http.json(nodeId, 'POST', '/api/device-folders', { name });
+    emit(ctx, result, () => ctx.out.data(result));
+    return;
+  }
+  if (action === 'rename') {
+    const id = requireArg(positionals, 1, 'folder id');
+    rejectExtra(positionals, 2);
+    const name = flagString(flags, 'name');
+    if (!name) throw new UsageError('missing --name', 'pass --name <new-name>');
+    const result = await ctx.http.json(nodeId, 'PATCH', `/api/device-folders/${id}`, { name });
     emit(ctx, result, () => ctx.out.data(result));
     return;
   }
@@ -173,7 +193,14 @@ const folders: SubHandler = async (ctx, flags, positionals) => {
     emit(ctx, result, () => ctx.out.data(result));
     return;
   }
-  throw new UsageError(`unknown folders action: ${action}`, 'use ls|add|rm|layout');
+  if (action === 'reset') {
+    rejectExtra(positionals, 1);
+    await confirmOrYes(flags, 'reset device folder layout');
+    const result = await ctx.http.json(nodeId, 'POST', '/api/device-folders/reset');
+    emit(ctx, result, () => ctx.out.data(result));
+    return;
+  }
+  throw new UsageError(`unknown folders action: ${action}`, 'use ls|add|rm|layout|rename|reset');
 };
 
 const HANDLERS: Record<string, SubHandler> = {
@@ -184,6 +211,7 @@ const HANDLERS: Record<string, SubHandler> = {
   rm,
   test,
   order,
+  disconnect,
   folders,
 };
 
