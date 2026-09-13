@@ -222,7 +222,13 @@ const SH = 'https://sh.example';
 const TK = 'https://tk.example';
 
 function fakeClient(state: UplinkState, rttMs: number | null = 10): RelayUplinkClient {
-  return { state, rttMs, lastConnectError: null, keyLog: { diverged: false } } as RelayUplinkClient;
+  return {
+    state,
+    rttMs,
+    lastConnectError: null,
+    keyLog: { diverged: false },
+    keyLogHealth: () => ({ skipped: 0, blockedSeq: null, caughtUp: false }),
+  } as RelayUplinkClient;
 }
 
 function fiveOnlinePeers() {
@@ -375,5 +381,77 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
     expect(JSON.stringify(payload)).toBe(
       '{"mode":"relay","tenantId":"abababababababababababababababab","relays":[{"url":"https://sh.example","priority":0,"online":true,"attached":true,"role":"primary","rttMs":12,"peersOnline":null,"turn":{"url":"turn:sh.example:3478","probeOk":null},"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null},{"url":"https://tk.example","priority":1,"online":true,"attached":false,"role":"secondary","rttMs":33,"peersOnline":null,"turn":null,"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"keyLog":{"diverged":true}},{"url":"https://os.example","priority":2,"online":false,"attached":false,"role":null,"rttMs":null,"peersOnline":null,"turn":null,"lastError":"client-too-old","lastErrorCode":"protocol","lastErrorAt":7,"kicked":true,"kickedReason":"password_rotated"}],"metaEpoch":4,"nodesViaRelay":2,"multiAttach":true,"reauthRequired":true,"awaitingToken":true,"readmitPending":1,"metaKeyLagging":[],"quota":{"maxNodes":8,"maxStreams":16,"bandwidthBytesPerSec":1024},"keyLog":{"skipped":0,"blockedSeq":null,"caughtUp":true}}'
     );
+  });
+
+  test('auto-select fields are omitted when off', () => {
+    const payload = buildRelayStatusPayload({
+      mode: 'relay',
+      tenantId: null,
+      rows: [{ url: SH, priority: 0, kicked: false }],
+      attachedUrl: SH,
+      primary: fakeClient('online', 12),
+      live: { lastConnectError: null },
+      candidates: [],
+      secondaryOf: () => null,
+      presence: null,
+      multiAttach: false,
+      metaEpoch: 1,
+      reauthRequired: false,
+      readmitPending: 0,
+      metaKeyLagging: [],
+      autoSelect: { enabled: false, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
+      scoreOf: () => 12,
+    });
+    expect(payload.preferredUrl).toBeUndefined();
+    expect(payload.autoSelect).toBeUndefined();
+    expect(payload.relays[0]?.pinned).toBeUndefined();
+    expect(payload.relays[0]?.autoSelected).toBeUndefined();
+    expect(payload.relays[0]?.score).toBeUndefined();
+  });
+
+  test('auto-select on fills preferredUrl, score, autoSelected, pinned', () => {
+    const payload = buildRelayStatusPayload({
+      mode: 'relay',
+      tenantId: null,
+      rows: [
+        { url: SH, priority: 0, kicked: false },
+        { url: TK, priority: 1, kicked: false },
+      ],
+      attachedUrl: SH,
+      primary: fakeClient('online', 12),
+      live: { lastConnectError: null },
+      candidates: [],
+      secondaryOf: (url) => (url === TK ? fakeClient('online', 20) : null),
+      presence: null,
+      multiAttach: true,
+      metaEpoch: 1,
+      reauthRequired: false,
+      readmitPending: 0,
+      metaKeyLagging: [],
+      preferredUrl: SH,
+      autoSelect: {
+        enabled: true,
+        lastSwitchAt: 9,
+        switchReason: 'auto-rtt',
+        nextEvalAt: 99,
+      },
+      scoreOf: (url) => (url === SH ? 18 : 22),
+    });
+    expect(payload.preferredUrl).toBe(SH);
+    expect(payload.autoSelect).toEqual({
+      enabled: true,
+      lastSwitchAt: 9,
+      switchReason: 'auto-rtt',
+      nextEvalAt: 99,
+    });
+    expect(payload.relays[0]).toMatchObject({
+      url: SH,
+      pinned: true,
+      autoSelected: true,
+      score: 18,
+    });
+    expect(payload.relays[1]).toMatchObject({ url: TK, score: 22 });
+    expect(payload.relays[1]?.pinned).toBeUndefined();
+    expect(payload.relays[1]?.autoSelected).toBeUndefined();
   });
 });

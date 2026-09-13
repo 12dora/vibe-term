@@ -100,7 +100,7 @@
 
 同一 URL 去重。写者由 `pickWriterHub` 决定：最高 epoch 的 active；并列则 priority 更小；再并列则 `hubNodeId` 字典序。写者选择不被 RTT 覆盖。
 
-**按 RTT 挂载（仅节点 uplink）：** `VIBETERM_UPLINK_PREFER_NEAREST` 默认在已知已授权 hub 多于一台时开启，可设 `0`/`off` 强制关闭。对 `/healthz` 的周期探测做 EWMA；至少 2 个样本后，健康且 advertised version ≥ 1.1.13 的已授权 hub 按平滑 RTT 排序。切换还要同时满足：新候选比当前快 ≥30% 且 ≥15 ms；两次 RTT 动机切换间隔 ≥10 分钟（make-before-break，generation 守卫不变）。没有足够 RTT 样本时 failover 仍走上面的 epoch/priority。不支持转发/relay 的旧版 hub 不会排到写者前面。写者始终是最后兜底。浏览器 `/mesh/ws` 与相对 URL 仍走当前页面 origin，不随节点挂载切换。
+**按 RTT 挂载（仅节点 uplink）：** `VIBETERM_UPLINK_PREFER_NEAREST` 默认在已知已授权 hub 多于一台时开启，可设 `0`/`off` 强制关闭。对 `/healthz` 的周期探测做 EWMA；至少 2 个样本后，健康且 advertised version ≥ 1.1.13 的已授权 hub 按平滑 RTT 排序。切换还要同时满足：新候选比当前快 ≥30% 且 ≥15 ms；两次 RTT 动机切换间隔 ≥10 分钟（make-before-break，generation 守卫不变）。没有足够 RTT 样本时 failover 仍走上面的 epoch/priority。不支持转发/relay 的旧版 hub 不会排到写者前面。写者始终是最后兜底。浏览器 `/mesh/ws` 与相对 URL 仍走当前页面 origin，不随节点挂载切换。中继侧另有自动优选主中继（`VIBETERM_RELAY_AUTO_SELECT`），不复用本开关，见 [公共中继](../architecture/relay.md) 与 [路径优选](../architecture/path-selection.md)。
 
 本机角色含 `hub` 时 **禁止** RTT 切换 uplink：standby 的写者 uplink 是控制面（复制、`hub.attachments` / `hub.forward` / `hub.write-forward` / `hub-relay`），必须始终挂在当前写者上。RTT 选近只作用于纯 node 进程。
 

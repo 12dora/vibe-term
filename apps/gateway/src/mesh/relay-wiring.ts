@@ -6,17 +6,22 @@ import type { NodeSessionStore } from '../auth/node-session-store';
 import type { AuthDb } from '../auth/types';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
+import { config as gatewayConfig } from '../config';
 import { setRelayQuotaProvider } from '../files/transfer-limit';
 import type { MeshRoles } from './mesh-deps';
 import { stamp } from './mesh-log';
+import { RelayAutoSelect } from './relay-auto-select';
 import { type RelayDialContext, relayDialContextFromEnv } from './relay-dial';
 import { orderRelaysByPreferred } from './relay-preferred';
 import { RelayRoutes } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
+import type { RelayUplinkView } from './relay-switch-route';
 import { RelayUplinkClient } from './relay-uplink-client';
 import { probeRelayHealth } from './relay-uplink-http';
+import type { MeshScheduler } from './types';
 import { UplinkClient } from './uplink-client';
 import {
+  UPLINK_POOL_PROBE_TIMEOUT_MS,
   type UplinkCandidate,
   type UplinkPool,
   type UplinkPoolOptions,
@@ -39,6 +44,7 @@ type RelayBinding = {
   metaEpoch: number;
   createClient: RelayUplinkOverrides['createClient'] | null;
   attach: import('./relay-multi-attach').RelayMultiAttach | null;
+  autoSelect: RelayAutoSelect | null;
 };
 
 const RELAY_BINDINGS = new WeakMap<RelayWiring, RelayBinding>();
@@ -153,6 +159,7 @@ export function bindRelayReconcile(
     metaEpoch: wiring.secrets.currentMetaEpoch(),
     createClient: null,
     attach: null,
+    autoSelect: null,
   });
 }
 
@@ -176,6 +183,10 @@ export function relayMultiAttachOf(
   wiring: RelayWiring
 ): import('./relay-multi-attach').RelayMultiAttach | null {
   return RELAY_BINDINGS.get(wiring)?.attach ?? null;
+}
+
+export function relayAutoSelectOf(wiring: RelayWiring): RelayAutoSelect | null {
+  return RELAY_BINDINGS.get(wiring)?.autoSelect ?? null;
 }
 
 export function spawnRelayUplink(
@@ -234,12 +245,8 @@ export function relayUplinkOverrides(
             ...(o.scheduler ? { scheduler: o.scheduler } : {}),
             ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
             ...(o.keyLogCatchUp ? { keyLogCatchUp: o.keyLogCatchUp } : {}),
-            onKicked: (reason) => {
-              markRelayKicked(wiring, o.hubUrl, reason);
-              RELAY_BINDINGS.get(wiring)?.attach?.opener.noteKicked(o.hubUrl);
-            },
-            onRtt: (rttMs) =>
-              RELAY_BINDINGS.get(wiring)?.attach?.presence.setSelfRtt(o.hubUrl, rttMs),
+            onKicked: (reason) => notifyRelayKicked(wiring, o.hubUrl, reason),
+            onRtt: (rttMs) => notifyRelayRtt(wiring, o.hubUrl, rttMs),
             dial,
           })
         : new UplinkClient(o),
@@ -257,6 +264,99 @@ function markRelayKicked(wiring: RelayWiring, url: string, reason: RelayKickReas
   } catch {
     // 行可能刚被新的 set-relays 换掉
   }
+}
+
+function notifyRelayRtt(wiring: RelayWiring, url: string, rttMs: number | null): void {
+  const bound = RELAY_BINDINGS.get(wiring);
+  bound?.attach?.presence.setSelfRtt(url, rttMs);
+  if (rttMs != null) bound?.autoSelect?.onRtt(url, rttMs);
+}
+
+function notifyRelayKicked(wiring: RelayWiring, url: string, reason: RelayKickReason): void {
+  markRelayKicked(wiring, url, reason);
+  const bound = RELAY_BINDINGS.get(wiring);
+  bound?.attach?.opener.noteKicked(url);
+  bound?.autoSelect?.onKicked(url);
+}
+
+export function relayUplinkView(wiring: RelayWiring, uplink: UplinkPool): RelayUplinkView {
+  return {
+    liveClient: () => uplink.liveClient(),
+    attachedHub: () => uplink.attachedHub(),
+    reconfigure: () => reconfigureUplinkPool(uplink),
+    candidates: () => uplink.candidates(),
+    switchTo: (url, signal) => uplink.switchTo(url, signal),
+    secondaryClient: (url) => {
+      const client = RELAY_BINDINGS.get(wiring)?.attach?.secondaryClient(url);
+      return client instanceof RelayUplinkClient ? client : null;
+    },
+    presence: () => RELAY_BINDINGS.get(wiring)?.attach?.presence ?? null,
+    prepareSwitch: (url) =>
+      RELAY_BINDINGS.get(wiring)?.attach?.prepareSwitch(url) ?? Promise.resolve(),
+    multiAttach: () => wiring.secrets.relayRows().filter((row) => !row.kicked).length >= 2,
+    autoSelectView: () => RELAY_BINDINGS.get(wiring)?.autoSelect?.view() ?? null,
+    scoreOf: (url) => RELAY_BINDINGS.get(wiring)?.autoSelect?.scoreOf(url) ?? null,
+    noteSwitchReason: (reason) => RELAY_BINDINGS.get(wiring)?.autoSelect?.noteSwitch(reason),
+  };
+}
+
+export function bindRelayAutoSelect(input: {
+  wiring: RelayWiring;
+  uplink: UplinkPool;
+  attach: import('./relay-multi-attach').RelayMultiAttach;
+  scheduler: MeshScheduler;
+}): void {
+  const bound = RELAY_BINDINGS.get(input.wiring);
+  if (!bound) return;
+  const auto = new RelayAutoSelect(autoSelectDeps(input));
+  bound.autoSelect = auto;
+  wrapAttachLifecycle(input.attach, auto);
+  input.uplink.onAttached((hub) => auto.noteAttached(hub.publicUrl));
+  input.uplink.onStateChange((state) => auto.onStateChange(state));
+  input.attach.opener.onSlotState(() => auto.onStateChange());
+}
+
+function wrapAttachLifecycle(
+  attach: import('./relay-multi-attach').RelayMultiAttach,
+  auto: RelayAutoSelect
+): void {
+  const start = attach.start.bind(attach);
+  attach.start = () => {
+    start();
+    auto.start();
+  };
+  const stop = attach.stop.bind(attach);
+  attach.stop = async () => {
+    auto.stop();
+    await stop();
+  };
+}
+
+function autoSelectDeps(input: {
+  wiring: RelayWiring;
+  uplink: UplinkPool;
+  attach: import('./relay-multi-attach').RelayMultiAttach;
+  scheduler: MeshScheduler;
+}) {
+  const { wiring, uplink, attach, scheduler } = input;
+  return {
+    scheduler,
+    enabledSetting: gatewayConfig.relayAutoSelect,
+    intervalMs: gatewayConfig.relayAutoSelectIntervalMs,
+    rows: () => wiring.secrets.relayRows(),
+    preferredUrl: () => wiring.secrets.preferredRelayUrl(),
+    currentUrl: () => uplink.attachedHub()?.publicUrl ?? null,
+    liveClient: () => uplink.liveClient(),
+    primaryClient: () => {
+      const live = uplink.liveClient();
+      return live instanceof RelayUplinkClient ? live : null;
+    },
+    secondaryOf: (url: string) => attach.secondaryClient(url),
+    presence: () => attach.presence,
+    probeHealthz: (url: string) => probeRelayHealth(url, null, UPLINK_POOL_PROBE_TIMEOUT_MS),
+    waitForDrain: () => uplink.waitForLiveRelayDrain('auto-select'),
+    switchDeps: () => ({ secrets: wiring.secrets, uplink: relayUplinkView(wiring, uplink) }),
+  };
 }
 
 export function createRelayRoutes(input: {
@@ -292,23 +392,6 @@ export function createRelayRoutes(input: {
     userStore: input.userStore,
     keyLogService: input.keyLogService,
     secrets: input.wiring.secrets,
-    uplink: {
-      liveClient: () => input.uplink.liveClient(),
-      attachedHub: () => input.uplink.attachedHub(),
-      reconfigure: () => reconfigureUplinkPool(input.uplink),
-      candidates: () => input.uplink.candidates(),
-      switchTo: (url, signal) => input.uplink.switchTo(url, signal),
-      secondaryClient: (url) => {
-        const client = RELAY_BINDINGS.get(input.wiring)?.attach?.secondaryClient(url);
-        return client instanceof RelayUplinkClient ? client : null;
-      },
-      presence: () => RELAY_BINDINGS.get(input.wiring)?.attach?.presence ?? null,
-      prepareSwitch: (url) =>
-        RELAY_BINDINGS.get(input.wiring)?.attach?.prepareSwitch(url) ?? Promise.resolve(),
-      multiAttach: () => {
-        const rows = input.wiring.secrets.relayRows();
-        return rows.filter((row) => !row.kicked).length >= 2;
-      },
-    },
+    uplink: relayUplinkView(input.wiring, input.uplink),
   });
 }

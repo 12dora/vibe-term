@@ -4,7 +4,12 @@ import type { InboundRelayHandler, MeshScheduler, PooledUplink } from './types';
 export const UPLINK_RELAY_DRAIN_RECHECK_MS = 3_000;
 export const UPLINK_RELAY_DRAIN_TIMEOUT_MS = 10 * 60 * 1000;
 
-export type UplinkRelayDrainReason = 'reconfigure' | 'retire' | 'nearest' | 'switch-back';
+export type UplinkRelayDrainReason =
+  | 'reconfigure'
+  | 'retire'
+  | 'nearest'
+  | 'switch-back'
+  | 'auto-select';
 
 type DrainAwareUplink = PooledUplink & {
   readonly inFlightRelayStreams?: number;

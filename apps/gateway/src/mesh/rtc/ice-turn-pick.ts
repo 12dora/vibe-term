@@ -1,7 +1,8 @@
 import type { RelayTurnConfig } from '@vibeterm/shared/relay';
 import { logAt } from '../../log/level';
 import { stamp } from '../mesh-log';
-import { type TurnProbeRecord, flattenTurnConfigs, turnProbeSnapshot } from './turn-probe';
+import { flattenTurnConfigs } from './turn-config';
+import type { TurnProbeRecord } from './turn-probe';
 
 /** libjuice `MAX_RELAY_ENTRIES_COUNT`；多出来的 TURN 进不了 ICE。 */
 export const MAX_TURN_ICE_ENTRIES = 2;
@@ -34,7 +35,7 @@ export function pickTurnForIce(
   if (turn == null) return turn;
   const entries = flattenTurnConfigs(turn);
   if (entries.length === 0) return turn;
-  const picked = rankTurnIceEntries(entries, probes ?? turnProbeSnapshot()).slice(0, max);
+  const picked = rankTurnIceEntries(entries, probes ?? []).slice(0, max);
   logTurnIcePick(
     picked.map((row) => row.url),
     Math.max(0, entries.length - picked.length)

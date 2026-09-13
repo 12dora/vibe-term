@@ -16,7 +16,12 @@ import {
   type SecondaryUplink,
 } from './relay-secondary-attach';
 import type { RelayUplinkClient } from './relay-uplink-client';
-import { type RelayWiring, bindRelayMultiAttach, spawnRelayUplink } from './relay-wiring';
+import {
+  type RelayWiring,
+  bindRelayAutoSelect,
+  bindRelayMultiAttach,
+  spawnRelayUplink,
+} from './relay-wiring';
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
 import type { UplinkClientOptions } from './uplink-client';
 import type { UplinkPool } from './uplink-pool';
@@ -375,6 +380,12 @@ export function installRelayMultiAttach(input: {
     return null;
   }
   bindRelayMultiAttach(input.wiring, attach);
+  bindRelayAutoSelect({
+    wiring: input.wiring,
+    uplink: input.uplink,
+    attach,
+    scheduler: input.scheduler,
+  });
   input.peerBind.bindRelayPresence(attach.presence, attach.opener);
   return attach;
 }

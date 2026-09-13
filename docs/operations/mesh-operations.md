@@ -390,22 +390,23 @@ UDP 40050-40099      # 仅 relay,node：本机 ICE（与 TURN 错开）
 公网 IP 变了不会重启 TURN：只换 `XOR-RELAYED-ADDRESS` 与广告地址（未设 `VIBETERM_TURN_HOST` 时广告的是 IP 字面量），已有 allocation 不断。
 中继在反代 / 隧道后面时要注意：TURN 是裸 UDP，**不经反代**，`VIBETERM_RELAY_PUBLIC_URL` 的域名只当解析入口用。
 
-### 多中继：主 + 副
+### 多中继：N 条（主一条 + 其余副）
 
-给同一个 mesh 接第二台中继，就在任一已接入节点上再跑一次 enroll（签的是同一条 `set-relays` 记录）：
+给同一个 mesh 再接中继，就在任一已接入节点上再跑一次 enroll（签的是同一条 `set-relays` 记录，新 URL 追加，上限 16）：
 
 ```bash
-vibeterm relay enroll https://<第二台中继地址>
+vibeterm relay enroll https://<另一台中继地址>
 vibeterm relay list
 ```
 
 `relay list` 的列是 `PRI URL ROLE STATE RTT PEERS TURN NOTE`；该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`。TURN 列带本机探测与成员计数：`(ok, N/M)` / `(down, N/M nodes ok)` / `(down)`。多中继时另打一行 `multi-attach: yes`。
 配了 ≥ 2 条之后，节点对每一条都保持连接：
 
-- **主中继**（`ROLE=primary`）负责写新的密钥日志记录、出成员名册、出配额。**副中继**只做在线状态、入站流、RTC 信令与日志追平。
+- **主中继**（`ROLE=primary`）负责写新的密钥日志记录、出成员名册、出配额。**其余全部是副中继**，只做在线状态、入站流、RTC 信令与日志追平。
+- ≥ 2 条未踢中继时**默认可自动换主**（`VIBETERM_RELAY_AUTO_SELECT`，`on|off|1|0|true|false`；未设 = 自动）。评估周期 `VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS`（默认 60 s）。打分看 uplink 心跳 RTT，滞环与 hub nearest-attach 相同（15 ms / 30% / 连续 2 次 / 10 分钟）。自动切换**不**写固定。
+- **「设为主中继」**（设置 → 节点，或 `POST /api/mesh/relay/switch`）换主并把该 URL **固定**（`relay.preferredUrl`）；有固定时自动优选冻结，failback 仍回到固定。`POST /api/mesh/relay/unpin`（CLI `vibeterm relay unpin`）取消固定。目标已经是在线主中继时回 409。旧主降为副。
 - 一对节点走中继时**按对选路**，挑双方都在线、往返之和最小的那台，不一定是主中继；设备徽标上会写「中转（经 <host>）」。
 - `PEERS` 是该中继花名册里在线的对端数：uplink client `online` 时有花名册即计数（**不再**二次要求 `presence.connected`），client 离线为 `-`。uplink 闪断后花名册仍按 90 s stale hold 保留。`peers via relay` 是所有中继的**并集**。
-- **「设为主中继」**（设置 → 节点，或 `POST /api/mesh/relay/switch`）只换主，副中继继续连着；旧主降为副。目标已经是在线主中继时回 409。
 - 某台被踢只影响它自己那行，其余中继照常用；`reauth` 也是按 URL 做。
 - 单文件上限取所有已连接中继里最小的那个。
 

@@ -13,6 +13,7 @@ import {
 import type { AuthDb } from '../auth/types';
 import { stamp } from './mesh-log';
 import {
+  clearPreferredRelayUrl as deletePreferredRelayUrl,
   orderRelaysByPreferred,
   readPreferredRelayUrl,
   writePreferredRelayUrl,
@@ -135,6 +136,10 @@ export class RelaySecrets {
 
   setPreferredRelayUrl(url: string): void {
     writePreferredRelayUrl(this.db, url);
+  }
+
+  clearPreferredRelayUrl(): void {
+    deletePreferredRelayUrl(this.db);
   }
 
   tenantId(): string | null {

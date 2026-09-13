@@ -74,6 +74,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   private readonly decays = new Map<string, { clear: () => void }>();
   private readonly failLogAt = new Map<string, number>();
   private readonly onlineLogAt = new Map<string, number>();
+  private readonly slotStateListeners: Array<(url: string, state: UplinkState) => void> = [];
   private running = false;
   private chain: Promise<void> = Promise.resolve();
 
@@ -131,6 +132,14 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
 
   noteKicked(url: string): void {
     void this.drop(url, 'gone').then(() => this.queueReconcile());
+  }
+
+  onSlotState(cb: (url: string, state: UplinkState) => void): () => void {
+    this.slotStateListeners.push(cb);
+    return () => {
+      const idx = this.slotStateListeners.indexOf(cb);
+      if (idx >= 0) this.slotStateListeners.splice(idx, 1);
+    };
   }
 
   private queueReconcile(): Promise<void> {
@@ -349,11 +358,10 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     if (state === 'online') {
       this.clearDecay(slot.url);
       this.opts.presence.setConnected(slot.url, true, client.rttMs, now);
-      return;
-    }
-    if (state === 'offline') {
+    } else if (state === 'offline') {
       this.opts.presence.markDisconnected(slot.url, now, this.staleMs());
     }
+    for (const cb of this.slotStateListeners) cb(slot.url, state);
   }
 
   private stillWanted(url: string): boolean {
