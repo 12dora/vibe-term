@@ -74,6 +74,7 @@ function PreferenceOptionList<T extends string>({
   value,
   onChange,
   testIdPrefix,
+  layout = 'column',
 }: {
   label: string;
   hint?: string;
@@ -81,13 +82,18 @@ function PreferenceOptionList<T extends string>({
   value: T;
   onChange: (next: T) => void;
   testIdPrefix: string;
+  layout?: 'row' | 'column';
 }) {
   const { t } = useTranslation();
   return (
     <div className="space-y-2">
       <span className="block text-sm font-medium">{label}</span>
       {hint ? <p className="text-muted-foreground text-xs">{hint}</p> : null}
-      <div className="flex flex-col gap-2">
+      <div
+        data-testid={`${testIdPrefix}-list`}
+        data-layout={layout}
+        className={layout === 'row' ? 'flex flex-row flex-wrap gap-2' : 'flex flex-col gap-2'}
+      >
         {items.map((item) => {
           const selected = value === item.value;
           return (
@@ -99,6 +105,8 @@ function PreferenceOptionList<T extends string>({
               data-testid={`${testIdPrefix}-${item.value}`}
               className={cn(
                 'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                // 11rem×2 + gap-2 ≈ 360px：更窄时折行，并排时两钮等宽。
+                layout === 'row' && 'min-w-[11rem] flex-1 basis-[calc(50%-0.25rem)]',
                 selected ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
               )}
             >
@@ -324,6 +332,7 @@ export function TerminalSettingsPanel({
         value={copyMode}
         onChange={setCopyMode}
         testIdPrefix="copy-mode-option"
+        layout="row"
       />
 
       <PreferenceOptionList

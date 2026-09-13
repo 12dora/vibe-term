@@ -51,4 +51,23 @@ describe('TerminalSettingsPanel copy mode', () => {
     const auto = html.match(/<button[^>]*data-testid="copy-mode-option-auto"[^>]*>/)?.[0] ?? '';
     expect(auto).toContain('aria-pressed="false"');
   });
+
+  test('复制方式两项横排等宽，键盘行为仍竖排', () => {
+    const html = render(<TerminalSettingsPanel showPreview={false} showShortcuts={false} />);
+    expect(html).toContain('点击按钮后复制');
+    expect(html).toContain('选中后自动复制');
+    const copyList = html.match(/<div[^>]*data-testid="copy-mode-option-list"[^>]*>/)?.[0] ?? '';
+    expect(copyList).toContain('data-layout="row"');
+    expect(copyList).toContain('flex-row');
+    expect(copyList).toContain('flex-wrap');
+    const copyButton =
+      html.match(/<button[^>]*data-testid="copy-mode-option-button"[^>]*>/)?.[0] ?? '';
+    expect(copyButton).toContain('min-w-[11rem]');
+    expect(copyButton).toContain('flex-1');
+    const keyboardList =
+      html.match(/<div[^>]*data-testid="keyboard-behavior-option-list"[^>]*>/)?.[0] ?? '';
+    expect(keyboardList).toContain('data-layout="column"');
+    expect(keyboardList).toContain('flex-col');
+    expect(keyboardList).not.toContain('flex-row');
+  });
 });

@@ -61,6 +61,7 @@ export function useTerminalSelectionChrome(
     copySelection,
     pasteClipboard,
     dismissSelection,
+    commitSelectionCopy,
     selectionAnchor,
     handlePointerDownCapture,
     handlePointerUp,
