@@ -141,3 +141,11 @@ iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不�
 - 旧对端的 ctl ping 不回显 `sentAt`，新节点只能退回本地发送时刻算 RTT，样本里仍含发送队列等待。
 
 处置只有一个：把两端都升到 ≥ 2.3.0。
+
+## KI-16：没有短时、作用域收窄的 exec 令牌
+
+`POST /api/exec` 与其它 `/api/*` 一样走完整 node-session，没有「只许跑这一条命令、过期即废」的服务端 scoped bearer。
+AI agent / CI 目前只能把完整会话能力交给调用方：默认 `~/.config/vibeterm/session.json`，或用
+`$VIBETERM_SESSION_FILE` 指到独立路径（0600，group/world 可读会拒绝加载）。拿到该文件等于拿到一个浏览器会话。
+后续若做短时 exec token，应在网关签发、按设备 / 命令 / TTL 收窄，并让 CLI 优先于会话 cookie 出示。
+见 [远程执行](./architecture/remote-exec.md)、[CLI 使用手册](./operations/cli-usage.md)。

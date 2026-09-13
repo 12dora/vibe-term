@@ -6,7 +6,7 @@
 
 在设备上跑一条非交互命令，拿到分路的 stdout/stderr 与真实退出码，不往共享 tmux pane 打键。`term run` 仍是往已有窗格注入按键；需要 argv / cwd / env / stdin / 超时杀进程时走本接口。
 
-路径可经 mesh 转发：`POST /n/<nodeId>/api/exec`、`GET /n/<nodeId>/api/system/facts`。鉴权与其它 `/api/*` 相同（会话守卫，无额外令牌）。
+路径可经 mesh 转发：`POST /n/<nodeId>/api/exec`、`GET /n/<nodeId>/api/system/facts`。鉴权与其它 `/api/*` 相同（会话守卫，**没有**短时 scoped bearer；CLI 现用完整 node-session，可用 `$VIBETERM_SESSION_FILE` 把会话文件指到独立路径，见 [KI-16](../known-issues.md)）。
 
 ## 2. `POST /api/exec`
 
@@ -89,6 +89,7 @@
 - 输出有界（8 MiB/流）且有墙上时钟超时，防止 `yes` 或挂起进程拖死网关。
 - `env` 覆盖的是服务用户环境，密钥类变量若已在服务进程里，子进程默认继承；调用方写入的键值会覆盖同名项。
 - 不在本接口转储监听套接字或其它主机侦察面。
+- 没有短时、作用域收窄的 exec 令牌；CLI 仍走完整 node-session（`$VIBETERM_SESSION_FILE` 只换路径，不缩小权限）。见 [KI-16](../known-issues.md)。
 
 ## 4. `GET /api/system/facts`
 

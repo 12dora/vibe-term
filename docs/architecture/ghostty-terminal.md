@@ -73,6 +73,12 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 5. 选区文本经全局探针 `__vibetermE2eTerminalSelectionText` 暴露给 E2E；其余 E2E 入口由
    `packages/terminal-ui` 侧的组件提供。
 
+只读场景（设置页字体预览、分享日志回放）不要再复制一份 `createTerminalController`：
+走 `packages/terminal-ui` 的 `ReadOnlyTerminal`（与普通终端同一套字体 / 字号 / 行高 / 主题 / 复制方式，
+同一套选区 chrome，禁粘贴）。`TerminalPreview` 是它的薄封装。画布显式定宽高时必须清掉
+`inset` / `right` / `bottom`（保留 `left`/`top = 0`），否则绝对定位被右锚定，平移视口会裁掉左侧列。
+回放窗的首次 `fit` 要等容器有真实尺寸（对话框 zoom 期间是 0×0）。见 [终端分享 · 录制与回放](./terminal-share.md)。
+
 其中，wasm 只会按模块级 Promise 懒加载一次，避免严格模式和多终端实例重复初始化。
 
 ## wasm 资产维护约束
@@ -182,6 +188,8 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
     [终端 Agent](./terminal-agent.md) §5）。
 - `packages/terminal-ui/src/components/Terminal.tsx`
   - 与 ws-borsh、主题、输入模式、resize hook 和页面层 contract 的连接点。
+- `packages/terminal-ui/src/components/ReadOnlyTerminal.tsx`
+  - 只读 Ghostty 组件（预览 / 回放）；`TerminalPreview` 是薄封装。
 - `packages/terminal-ui/src/components/useTerminalResize.ts`
   - 容器测量、sync/resize 防抖和尺寸上报策略。
 

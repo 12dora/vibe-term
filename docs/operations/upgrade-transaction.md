@@ -109,6 +109,8 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 - **append**（2.3.6 入口，不带 `length`/`total`）：按偏移顺序续写；偏移不符 → `409 UPGRADE_OFFSET_MISMATCH`。
 - **ranged**（成对 `length` + `total`；`total` 由首个 PUT 钉死，不一致 `409 UPGRADE_TOTAL_MISMATCH`，越界 `400`）：乱序写入 `[offset, offset+length)`，同 key 可并行。区间盖满
   `total` 后整包 sha256，失败删半成品（fail-closed），成功 rename 落位并写 sidecar。
+  `.part.total` 的钉死走**临时文件 + `link(2)` 抢占**（`pinStagedTotal`）：先把 `${total}\n` 写进 `.tmp`，再 `link` 到目标；
+  输家读到的一定是完整 pin。不要 `wx` 直写目标文件——并发输家可能在赢家写完前读到空文件，把 total 误判成 0。
 
 本机自升级仍直接从 GitHub 拉到 `staging/<txn>`，不走推包 sink。
 

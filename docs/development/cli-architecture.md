@@ -160,7 +160,7 @@ Node 上的 `--insecure` 落地方式是 TOFU：先用 `rejectUnauthorized:false
 
 默认 entry：`--entry` > `$VIBETERM_ENTRY` > 会话文件里最后用过的 entry > 本机安装的 `app.env` 里的 `VIBETERM_BASE_URL`（**只读**，CLI 从不改写安装目录） > `http://127.0.0.1:9883`。
 
-会话文件默认是 `<配置目录>/session.json`（目录 0700、文件 0600、原子写）。`$VIBETERM_SESSION_FILE` 若设置则整文件改走该路径（覆盖默认；父目录不存在时按 0700 创建，文件 0600；group/world 可读会拒绝加载）。**该文件是完整会话能力，须按密钥保护**。`whoami --json` 只在已登录时带 `sessionFile`。
+会话文件默认是 `<配置目录>/session.json`（目录 0700、文件 0600、原子写）。`$VIBETERM_SESSION_FILE` 若设置则整文件改走该路径（覆盖默认；父目录不存在时按 0700 创建，文件 0600；group/world 可读会拒绝加载）。**该文件是完整会话能力，须按密钥保护**。`whoami` 无会话或 self cookie 已 401 时 stdout 为空，stderr 一行 `not logged in to <entry>`（`--json` 为 `{ loggedIn: false, entry, hint }`，不含 `sessionFile` / user），退出码 3；已登录的 `--json` 才带 `sessionFile`。
 
 默认路径形态：
 
@@ -336,6 +336,16 @@ dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `setti
 元数据折叠**不在 CLI 里重做**：`CanonicalStateClient` 已经把 `SourceMetadataSnapshot` / `SourceMetadataPatch` 折成 `StateSnapshotPayload`，`DeviceSession` 只留最新一份。定位窗口 / pane 一律用 `@vibeterm/ws-client/canonical-tree` 的纯函数 `resolveWindow` / `resolvePane` / `activeWindow` / `activePane`，优先级与 tmux 一致：`@id`/`%id` > `窗口.pane 序号` > 序号 > 名字。`core/term-target.ts` 只决定「先按窗口解释还是先按 pane 解释」——目标里 `:` 之后没有 `.` 的写的是窗口，有 `.` 的写的是 pane，两条路都走不通时互相回落（窗口名本身含 `.` 的情况因此仍可达）。名字撞车报用法错误并列出候选。
 
 `--json`：`ls` 给 `TmuxSession[]`（本设备一条），`windows` 给 `TmuxWindow[]`，`panes` 给 `TmuxPane[]`，其余给 `{ok:true, action, window|pane|id}`。
+
+## `vibeterm exec`
+
+`POST /api/exec` 的客户端（`commands/exec.ts`），契约见 [远程执行](../architecture/remote-exec.md)，旗标与退出码见 [命令行使用手册](../operations/cli-usage.md)。与 `term run` 的边界：新子进程、分路 stdout/stderr、真实退出码。
+
+- `--timeout` 只在命令行显式给出时写入请求体 `timeoutMs`（子进程墙上时钟，网关默认 600000）；不下发时不要把全局 HTTP 缺省 30000 当成用户意图。HTTP 空闲靠网关每 10 s 一条 `{"type":"ping","t"}` 与 CLI `ndjson(..., { timeoutMs: null })` + Bun `timeout: false`。
+- `--max-bytes`（1 KiB..8 MiB）→ 请求体 `maxBytes`，服务端截断该路、子进程继续。`--tail N` 是 CLI 环形缓冲；`--stdout-file` / `--stderr-file` 落盘后 JSON 只回路径与字节数。
+- `--script <path>` 把文件当 stdin，argv 默认 `['/bin/sh','-s']`；shebang 为 `sh|bash|zsh|dash|ksh` 时改用该解释器 `-s`，`--interpreter` 覆盖。与位置 argv / `--shell` / `--stdin*` / `@path` 互斥。
+- 流在 `exit` 前断开（`terminated` / `AbortError` / 套接字关闭 / 无 `exit` 就结束）→ `ExecStreamClosedError`（`code=EXEC_STREAM_CLOSED`，退出码 5）；远端子进程收 SIGTERM。未知事件（含 `ping`）忽略；`--json --stream` 原样转发。
+- CLI 退出码 = 远端退出码；timeout → **124**；未知设备 4、未登录 3、用法 2、spawn/网络 5。没有短时 exec 令牌，会话文件见上文 `$VIBETERM_SESSION_FILE`（[KI-16](../known-issues.md)）。
 
 ## `vibeterm term`
 

@@ -120,6 +120,12 @@ FFI 取不到时退化为只看句柄，行为不比改动前差。健康连接�
 - 拨号有 15 s 时限（`PORT_MAP_DIAL_DEADLINE_MS`）。超时后迟到的流会被 `reset`，socket 先 `resume`
   再关掉，让被压住的 `close` 事件出来归还名额——名额只在 socket 真正处置掉时才还。
 
+集成测试「慢消费者背压」的上界**不要写死成固定字节数**：Linux 环回会把 `tcp_wmem` / `tcp_rmem` 自适应到数 MiB，
+`bytesOut` 会计入内核缓冲。用例把 `SO_SNDBUF` / `SO_RCVBUF` 压小，再按运行时
+`getSendBufferSize()` + `getRecvBufferSize()` 估内核余量，上界 =
+`INITIAL_STREAM_WINDOW + MAX_DATA_SEND_PAYLOAD + 两侧套接字缓冲 + 2 MiB` 与 `size/2` 的较小值
+（`apps/gateway/src/mesh/integration/portmap.integration.test.ts`）。
+
 ### 半关闭与中断
 
 - 本地 FIN → `stream.end()`；对端 END → 只关本地 socket 的**写半边**，读半边继续泵，直到目标自己
