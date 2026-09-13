@@ -1,7 +1,7 @@
 // `vibeterm nodes op clear` 与 `nodes upgrade cancel`。
 
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
-import { type SubHandler, emit, rejectExtra, requireArg } from '../core/cmd';
+import { type SubHandler, confirmOrYes, emit, rejectExtra, requireArg } from '../core/cmd';
 import { CliError, UsageError } from '../core/errors';
 import { findMeshNode } from '../core/nodes-hub';
 import { cancelNodeUpgrade } from '../core/nodes-upgrade';
@@ -22,10 +22,11 @@ export const op: SubHandler = async (ctx, _flags, positionals) => {
   );
 };
 
-export const upgradeCancel: SubHandler = async (ctx, _flags, positionals) => {
+export const upgradeCancel: SubHandler = async (ctx, flags, positionals) => {
   const ref = requireArg(positionals, 0, 'node');
   rejectExtra(positionals, 1);
   const node = await findMeshNode(ctx, ref);
+  await confirmOrYes(flags, `cancel the upgrade on ${node.name}`);
   const cancelled = await cancelNodeUpgrade(ctx, node.id);
   if (cancelled.kind !== 'cancelled') {
     throw new CliError(`upgrade cancel failed: ${cancelled.code ?? 'UPGRADE_FAILED'}`);

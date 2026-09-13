@@ -74,7 +74,7 @@ const USAGE = [
   '  system info|addresses|update-check|upgrade status|start',
   '  local status|leave|direct      GET /api/local/status; POST /api/local/leave|direct (--node honoured for direct)',
   '  passwd [--full-reset]          keylog rotate-root-keep (or rotate-root); VIBETERM_PASSWORD / VIBETERM_NEW_PASSWORD',
-  '  totp enable|disable            set-totp (prints secret + otpauth, verifies --code) / clear-totp',
+  '  totp enable|disable [--yes]    set-totp (prints secret + otpauth, verifies --code) / clear-totp',
   '  passkey ls|rm <id> [--yes]     GET /api/auth/passkeys; keylog remove-passkey (register in the browser)',
   '  local-auth bootstrap|set       POST /api/auth/local/bootstrap; POST /api/auth/local',
   '  telegram ls|add|edit|rm|chats  /api/settings/telegram/bots and …/chats',

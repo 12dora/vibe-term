@@ -87,18 +87,39 @@ describe('reachForSpec', () => {
   ];
 
   test('purpose+port 对上才返回；对不上当没有', () => {
-    expect(reachForSpec(ports, { purpose: 'peer-signaling', port: 39001 })?.status).toBe('open');
-    expect(reachForSpec(ports, { purpose: 'peer-signaling', port: 39002 })).toBeUndefined();
-    expect(reachForSpec(ports, { purpose: 'public-https', port: 443 })).toBeUndefined();
-    expect(reachForSpec(undefined, { purpose: 'peer-signaling', port: 39001 })).toBeUndefined();
+    expect(
+      reachForSpec(ports, { purpose: 'peer-signaling', proto: 'tcp', port: 39001 })?.status
+    ).toBe('open');
+    expect(
+      reachForSpec(ports, { purpose: 'peer-signaling', proto: 'tcp', port: 39002 })
+    ).toBeUndefined();
+    expect(
+      reachForSpec(ports, { purpose: 'public-https', proto: 'tcp', port: 443 })
+    ).toBeUndefined();
+    expect(
+      reachForSpec(undefined, { purpose: 'peer-signaling', proto: 'tcp', port: 39001 })
+    ).toBeUndefined();
+  });
+
+  test('proto 不同或 reach 缺端口不算对上', () => {
+    expect(
+      reachForSpec(ports, { purpose: 'peer-signaling', proto: 'udp', port: 39001 })
+    ).toBeUndefined();
+    const noPort = [
+      { purpose: 'peer-signaling' as const, proto: 'tcp' as const, status: 'blocked' as const },
+    ];
+    expect(
+      reachForSpec(noPort, { purpose: 'peer-signaling', proto: 'tcp', port: 39001 })
+    ).toBeUndefined();
   });
 
   test('range 对上才算 rtc-ice', () => {
     expect(
-      reachForSpec(ports, { purpose: 'rtc-ice', range: { begin: 40000, end: 40099 } })?.status
+      reachForSpec(ports, { purpose: 'rtc-ice', proto: 'udp', range: { begin: 40000, end: 40099 } })
+        ?.status
     ).toBe('unknown');
     expect(
-      reachForSpec(ports, { purpose: 'rtc-ice', range: { begin: 40050, end: 40099 } })
+      reachForSpec(ports, { purpose: 'rtc-ice', proto: 'udp', range: { begin: 40050, end: 40099 } })
     ).toBeUndefined();
   });
 });

@@ -207,22 +207,26 @@ export function reachForPurpose(
   return ports?.find((item) => item.purpose === purpose);
 }
 
-function endpointMatches(item: MeshPortReach, spec: Pick<PortSpec, 'port' | 'range'>): boolean {
-  if (spec.port != null && item.port != null && spec.port !== item.port) return false;
-  if (
-    spec.range &&
-    item.range &&
-    (spec.range.begin !== item.range.begin || spec.range.end !== item.range.end)
-  ) {
-    return false;
+function endpointMatches(
+  item: MeshPortReach,
+  spec: Pick<PortSpec, 'proto' | 'port' | 'range'>
+): boolean {
+  if (item.proto !== spec.proto) return false;
+  if (spec.port != null) return item.port === spec.port;
+  if (spec.range) {
+    return (
+      item.range != null &&
+      item.range.begin === spec.range.begin &&
+      item.range.end === spec.range.end
+    );
   }
-  return true;
+  return item.port == null && item.range == null;
 }
 
 /** 计划行对上一条 purpose+port（或 range）才算有探测结果；对不上就当「不探测」。 */
 export function reachForSpec(
   ports: MeshPortReach[] | undefined | null,
-  spec: Pick<PortSpec, 'purpose' | 'port' | 'range'>
+  spec: Pick<PortSpec, 'purpose' | 'proto' | 'port' | 'range'>
 ): MeshPortReach | undefined {
   return ports?.find((item) => item.purpose === spec.purpose && endpointMatches(item, spec));
 }

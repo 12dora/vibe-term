@@ -126,7 +126,7 @@ describe('vibeterm nodes upgrade cancel / --ids / op clear', () => {
         return { ok: true };
       },
     });
-    await nodes.run(cli, ['upgrade', 'cancel', 'office']);
+    await nodes.run(cli, ['upgrade', 'cancel', 'office', '--yes']);
     expect(deleted).toBe(true);
     expect(JSON.parse(stdout.text())).toEqual({ node: NODE, cancelled: true });
   });

@@ -83,6 +83,7 @@ export const totp: SubHandler = async (ctx, flags, positionals) => {
   const action = requireArg(positionals, 0, 'enable|disable');
   rejectExtra(positionals, 1);
   if (action === 'disable') {
+    await confirmOrYes(flags, 'disable TOTP two-factor authentication');
     const result = await disableTotp(ctx, await readAccountPassword());
     print(ctx, result);
     return;
@@ -100,11 +101,7 @@ export const totp: SubHandler = async (ctx, flags, positionals) => {
   const password = await readAccountPassword();
   const outcome = await enableTotp(ctx, { password, secret, code });
   secret.fill(0);
-  emit(ctx, outcome, () => {
-    ctx.out.line(`Secret (base32): ${outcome.secretBase32}`);
-    ctx.out.line(outcome.otpauthUri);
-    ctx.out.line('TOTP enabled');
-  });
+  emit(ctx, outcome, () => ctx.out.line('TOTP enabled'));
 };
 
 export const passkey: SubHandler = async (ctx, flags, positionals) => {

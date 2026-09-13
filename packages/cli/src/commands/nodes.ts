@@ -103,7 +103,7 @@ const USAGE = [
   '  meta-key rotate [--exclude <node>...]',
   '                             rotate K_meta, excluding nodes (relay)',
   '  upgrade <node>|--all|--ids a,b [--version] [--wait]',
-  '  upgrade cancel <node>      DELETE …/upgrade',
+  '  upgrade cancel <node> [--yes]  DELETE …/upgrade',
   '  op clear <node>            DELETE …/operation',
   '  uninstall <node> [--yes]   POST …/uninstall then signed revoke-node',
   '  pause <node>               POST …/pause (entry local; skips user traffic)',
