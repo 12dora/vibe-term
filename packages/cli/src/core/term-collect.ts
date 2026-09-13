@@ -69,6 +69,8 @@ export interface IdleWatcherOptions {
   /** 总时长上限。 */
   timeoutMs: number;
   now?: () => number;
+  /** 为 true 时必须先收到 `note()` 才算静默；新建 pane 等第一帧用。 */
+  requireActivity?: boolean;
 }
 
 /**
@@ -81,6 +83,7 @@ export class IdleWatcher {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private settle: ((reason: IdleReason) => void) | null = null;
   private finished: IdleReason | null = null;
+  private seen = false;
   private readonly now: () => number;
 
   constructor(private readonly options: IdleWatcherOptions) {
@@ -90,7 +93,12 @@ export class IdleWatcher {
   }
 
   note(): void {
+    this.seen = true;
     this.lastActivityAt = this.now();
+    if (!this.settle || this.finished) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.arm();
   }
 
   done(): void {
@@ -112,6 +120,12 @@ export class IdleWatcher {
     this.settle = null;
   }
 
+  private idleDelay(): number {
+    if (this.options.idleMs <= 0) return Number.POSITIVE_INFINITY;
+    if (this.options.requireActivity === true && !this.seen) return Number.POSITIVE_INFINITY;
+    return this.options.idleMs - (this.now() - this.lastActivityAt);
+  }
+
   private arm(): void {
     const elapsed = this.now() - this.startedAt;
     const remainingTotal = this.options.timeoutMs - elapsed;
@@ -119,10 +133,7 @@ export class IdleWatcher {
       this.finish('timeout');
       return;
     }
-    const idleLeft =
-      this.options.idleMs > 0
-        ? this.options.idleMs - (this.now() - this.lastActivityAt)
-        : Number.POSITIVE_INFINITY;
+    const idleLeft = this.idleDelay();
     if (idleLeft <= 0) {
       this.finish('idle');
       return;
@@ -254,21 +265,35 @@ function cutAtSentinel(lines: readonly string[], sentinel: RunSentinel): string[
   return kept;
 }
 
-const PASTE_START = '\x1b[200~';
-const PASTE_END = '\x1b[201~';
+const PASTE_ECHO_MARKERS: ReadonlyArray<readonly [string, string]> = [
+  ['\x1b[200~', '\x1b[201~'],
+  ['^[[200~', '^[[201~'],
+];
+
+function pasteEchoSpan(text: string): { from: number; after: number } | null {
+  for (const [startMark, endMark] of PASTE_ECHO_MARKERS) {
+    const start = text.indexOf(startMark);
+    if (start < 0) continue;
+    const end = text.indexOf(endMark, start + startMark.length);
+    if (end < 0) continue;
+    let from = start;
+    while (from > 0 && text[from - 1] !== '\n') from -= 1;
+    let after = end + endMark.length;
+    if (text[after] === '\r') after += 1;
+    if (text[after] === '\n') after += 1;
+    return { from, after };
+  }
+  return null;
+}
 
 function stripBracketedPasteEcho(raw: Uint8Array): { bytes: Uint8Array; stripped: boolean } {
   const text = Buffer.from(raw).toString('latin1');
-  const start = text.indexOf(PASTE_START);
-  if (start < 0) return { bytes: raw, stripped: false };
-  const end = text.indexOf(PASTE_END, start + PASTE_START.length);
-  if (end < 0) return { bytes: raw, stripped: false };
-  let from = start;
-  while (from > 0 && text[from - 1] !== '\n') from -= 1;
-  let after = end + PASTE_END.length;
-  if (text[after] === '\r') after += 1;
-  if (text[after] === '\n') after += 1;
-  return { bytes: Buffer.from(text.slice(0, from) + text.slice(after), 'latin1'), stripped: true };
+  const span = pasteEchoSpan(text);
+  if (!span) return { bytes: raw, stripped: false };
+  return {
+    bytes: Buffer.from(text.slice(0, span.from) + text.slice(span.after), 'latin1'),
+    stripped: true,
+  };
 }
 
 function dropEchoedFirstLine(raw: Uint8Array, command?: string): Uint8Array {
@@ -280,23 +305,37 @@ function dropEchoedFirstLine(raw: Uint8Array, command?: string): Uint8Array {
   return raw.subarray(newline + 1);
 }
 
-/** paste 回显行：要求跟脚本行足够像，避免把真正的短输出（`a` ⊂ `echo a`）剥掉。 */
+/** paste 回显行：整行就是脚本行，或行尾是脚本行；短输出（`a` ⊂ `echo a`）不剥。 */
 function looksPasteLineEcho(head: string, scriptLine: string): boolean {
   const left = compact(head);
   const right = compact(scriptLine);
   if (right.length === 0) return left.length === 0;
-  if (left === right || left.includes(right)) return true;
+  if (left === right || left.endsWith(right)) return true;
   return right.includes(left) && left.length * 2 >= right.length;
+}
+
+/** 提示符行尾粘着第一条脚本（`host ~ % echo a`）。 */
+function looksPromptEcho(line: string, firstScriptLine: string): boolean {
+  if (!firstScriptLine) return false;
+  const trimmed = line.trimEnd();
+  if (!trimmed.endsWith(firstScriptLine)) return false;
+  const prefix = trimmed.slice(0, trimmed.length - firstScriptLine.length);
+  return /[$%#>]\s*$/.test(prefix);
+}
+
+function isPasteEchoLine(line: string, scriptLines: readonly string[]): boolean {
+  const first = scriptLines[0];
+  if (first !== undefined && looksPromptEcho(line, first)) return true;
+  return scriptLines.some((scriptLine) => looksPasteLineEcho(line, scriptLine));
 }
 
 function dropLeadingPasteEcho(lines: string[], script: string): string[] {
   const scriptLines = script.split('\n');
-  let index = 0;
-  while (index < scriptLines.length && index < lines.length) {
-    if (!looksPasteLineEcho(lines[index], scriptLines[index])) break;
-    index += 1;
+  let offset = 0;
+  while (offset < lines.length && isPasteEchoLine(lines[offset], scriptLines)) {
+    offset += 1;
   }
-  return lines.slice(index);
+  return lines.slice(offset);
 }
 
 export function formatRunOutput(raw: Uint8Array, options: RunOutputOptions = {}): string {
@@ -305,7 +344,7 @@ export function formatRunOutput(raw: Uint8Array, options: RunOutputOptions = {})
   const peeled = paste ? stripBracketedPasteEcho(raw) : { bytes: raw, stripped: false };
   const body = paste ? peeled.bytes : dropEchoedFirstLine(peeled.bytes, command);
   let lines = stripAnsi(body).split('\n');
-  if (paste && !peeled.stripped && command !== undefined) {
+  if (paste && command !== undefined) {
     lines = dropLeadingPasteEcho(lines, command);
   }
   const sentinel = options.sentinel;

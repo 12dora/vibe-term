@@ -61,6 +61,17 @@ describe('IdleWatcher', () => {
     setTimeout(() => watcher.done(), 10);
     expect(await watcher.wait()).toBe('done');
   });
+
+  test('requireActivity times out when no note() arrives', async () => {
+    const watcher = new IdleWatcher({ idleMs: 20, timeoutMs: 60, requireActivity: true });
+    expect(await watcher.wait()).toBe('timeout');
+  });
+
+  test('requireActivity idles after the first note plus silence', async () => {
+    const watcher = new IdleWatcher({ idleMs: 20, timeoutMs: 1_000, requireActivity: true });
+    setTimeout(() => watcher.note(), 10);
+    expect(await watcher.wait()).toBe('idle');
+  });
 });
 
 describe('run sentinel', () => {
@@ -126,6 +137,20 @@ describe('formatRunOutput', () => {
     const script = 'echo a\necho b\necho c';
     const raw = encoder.encode('a\nb\nc\nuser@host $ ');
     expect(formatRunOutput(raw, { command: script, paste: true })).toBe('a\nb\nc');
+  });
+
+  test('strips caret-notation paste echo plus prompt-line ZLE echo', () => {
+    const script = 'echo a\necho b';
+    const raw = encoder.encode(
+      '^[[200~echo a\r\necho b^[[201~\r\nkonata@host ~ % echo a\necho b   echo a\na\nb'
+    );
+    expect(formatRunOutput(raw, { command: script, paste: true })).toBe('a\nb');
+  });
+
+  test('strips a prompt line that ends with the first script line', () => {
+    const script = 'echo a\necho b';
+    const raw = encoder.encode('konata@host ~ % echo a\necho b   echo a\na\nb\n');
+    expect(formatRunOutput(raw, { command: script, paste: true })).toBe('a\nb');
   });
 });
 

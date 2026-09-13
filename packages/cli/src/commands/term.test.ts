@@ -70,7 +70,11 @@ function autoScreen(
 
 function wireEphemeralWindow(
   h: FakeTermContext,
-  options: { create?: 'ok' | 'unknown-kind' | 'no-pane'; close?: 'ok' | 'fail' } = {}
+  options: {
+    create?: 'ok' | 'unknown-kind' | 'no-pane';
+    close?: 'ok' | 'fail';
+    ready?: 'auto' | 'manual';
+  } = {}
 ): void {
   const previous = h.transport.onCommand;
   h.transport.onCommand = (command) => {
@@ -127,6 +131,18 @@ function wireEphemeralWindow(
       return;
     }
     previous?.(command);
+    if (
+      command.type === 'request-pane-screen' &&
+      command.paneId === '%9' &&
+      options.ready !== 'manual'
+    ) {
+      queueMicrotask(() => {
+        h.transport.emit({
+          type: 'terminal-data',
+          frame: { deviceId: 'device-1', paneId: '%9', data: encoder.encode('prompt$ ') },
+        });
+      });
+    }
   };
 }
 
@@ -334,6 +350,37 @@ describe('vibeterm term run', () => {
       '--no-json',
     ]);
     expect(forced.stdout.text()).toContain('ok');
+  });
+
+  test('--ephemeral does not send input until the new pane emits data and goes idle', async () => {
+    const h = await harness();
+    autoScreen(h, 'prompt$ ', (data, emit) => emit(`${data.trimEnd()}\r\nok\r\n`));
+    wireEphemeralWindow(h, { ready: 'manual' });
+    const run = term.run(h.ctx, [
+      'run',
+      'laptop',
+      'echo hi',
+      '--ephemeral',
+      '--idle',
+      '30',
+      '--no-json',
+    ]);
+    const deadline = Date.now() + 500;
+    while (
+      Date.now() < deadline &&
+      !h.transport.commandsOfType('request-pane-screen').some((row) => row.paneId === '%9')
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(h.transport.commandsOfType('create-window')).toHaveLength(1);
+    expect(h.transport.commandsOfType('terminal-input')).toHaveLength(0);
+    h.transport.emit({
+      type: 'terminal-data',
+      frame: { deviceId: 'device-1', paneId: '%9', data: encoder.encode('konata@host ~ % ') },
+    });
+    await run;
+    expect(h.transport.commandsOfType('terminal-input').length).toBeGreaterThan(0);
+    expect(h.stdout.text()).toContain('ok');
   });
 
   test('--ephemeral creates a detached window and closes it', async () => {

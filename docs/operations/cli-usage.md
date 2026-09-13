@@ -128,8 +128,9 @@ vibeterm term run office --ephemeral --stdin --marker
 vibeterm term run office/dev-box @script.sh --idle 1500
 ```
 
-- 把命令打进窗格并回车，收集输出直到静默 `--idle`（默认 800）或 `--timeout`。argv 必须是**一行**；多行用 `--stdin` 或 `@file`，正文先把 CRLF/CR 归一成 LF 并剥尾换行，再作为**一次** bracketed-paste（`ESC[200~` … `ESC[201~`）打进去再 `\r`。JSON/`output` 会丢掉这段 paste 回显（CSI 块，或按脚本行数剥 leading echo），不要把回显当命令结果。
-- 目标 pane 的 `currentCommand` 不是 shell（`sh|bash|zsh|fish|dash|ksh|tcsh|login|tmux`；空命令算空闲）时拒绝，退出码 2：「目标 pane 正在运行 \<cmd\>；用 --ephemeral 开新窗口，或用 vibeterm exec」。`ssh` / `sudo` / `su` / `doas` / `docker` / `kubectl` 都算忙。`--force` 跳过。`--ephemeral`：发 `TMUX_CREATE_WINDOW_DETACHED`（`new-window -d`），在新窗口跑，然后无论成功、marker 超时、socket 断开还是 Ctrl-C 都会尝试 `close-window`；关闭失败在 stderr 警告窗口名。旧节点不认识该 kind 时退出码 5：「该节点版本过旧，不支持 --ephemeral」。
+- 把命令打进窗格并回车，收集输出直到静默 `--idle`（默认 800）或 `--timeout`。argv 必须是**一行**；多行用 `--stdin` 或 `@file`，正文先把 CRLF/CR 归一成 LF 并剥尾换行，再作为**一次** bracketed-paste（`ESC[200~` … `ESC[201~`）打进去再 `\r`。JSON/`output` 会丢掉这段 paste 回显：真实 CSI 块、caret 记法（`^[[200~` … `^[[201~`），以及「提示符行尾粘着脚本 / 整行就是脚本行」的 ZLE 回显；短输出（`a` ⊂ `echo a`）不会被剥掉。
+- 目标 pane 的 `currentCommand` 不是 shell（`sh|bash|zsh|fish|dash|ksh|tcsh|login|tmux`；空命令算空闲）时拒绝，退出码 2：「目标 pane 正在运行 \<cmd\>；用 --ephemeral 开新窗口，或用 vibeterm exec」。`ssh` / `sudo` / `su` / `doas` / `docker` / `kubectl` 都算忙。`--force` 跳过。`--ephemeral`：发 `TMUX_CREATE_WINDOW_DETACHED`（`new-window -d`），等新 pane 吐出第一帧并静默 `--idle`（上限 `--timeout`）后再打命令，然后无论成功、marker 超时、socket 断开还是 Ctrl-C 都会尝试 `close-window`；关闭失败在 stderr 警告窗口名。旧节点不认识该 kind 时退出码 5：「该节点版本过旧，不支持 --ephemeral」。
+- `--json` 或 stdout 非 TTY（agent 默认 JSON）时，`[borsh-client] State: …` 等连接诊断不出现在 stderr；人读 TTY 模式仍打印。
 - 只写节点名（没有 `/device`）：当前 node 上没有这台设备、但名字是 mesh 节点时，用该节点第一台 local 设备，人读模式 stderr 打印选了哪台。
 - stdout 不是 TTY 且未给 `--json` 时按 `--json` 输出（agent 默认）；`--no-json` 退出。
 - `--marker`、8 MiB 上限、退出码语义与原来相同。窗格仍是共享 TTY，debconf/needrestart 会吞哨兵——那种场景用 `exec`。

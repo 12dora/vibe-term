@@ -224,10 +224,36 @@ function tailText(bytes: Uint8Array, window = 4096): string {
   return stripAnsi(bytes.length > window ? bytes.subarray(bytes.length - window) : bytes);
 }
 
-function waitQuiet(stream: TermRunStream, idleMs: number, remainingMs: number): Promise<string> {
-  const watcher = new IdleWatcher({ idleMs, timeoutMs: Math.max(1, remainingMs) });
+function watchIdle(
+  stream: TermRunStream,
+  idleMs: number,
+  remainingMs: number,
+  requireActivity = false
+): Promise<string> {
+  const watcher = new IdleWatcher({
+    idleMs,
+    timeoutMs: Math.max(1, remainingMs),
+    requireActivity,
+  });
+  if (requireActivity && stream.output.byteLength > 0) watcher.note();
   stream.attachWatcher(watcher);
   return watcher.wait().finally(() => stream.attachWatcher(null));
+}
+
+function waitQuiet(stream: TermRunStream, idleMs: number, remainingMs: number): Promise<string> {
+  return watchIdle(stream, idleMs, remainingMs);
+}
+
+async function waitUntilPaneReady(
+  stream: TermRunStream,
+  idleMs: number,
+  remainingMs: number
+): Promise<void> {
+  const reason = await watchIdle(stream, idleMs, remainingMs, true);
+  stream.throwIfFailed();
+  if (reason === 'timeout' && stream.output.byteLength === 0) {
+    throw new NetworkError('临时窗口的 pane 在 --timeout 内没有输出');
+  }
 }
 
 async function waitSentinel(
@@ -336,6 +362,10 @@ export async function runTermCommand(
       assertPaneIdle(initialPane, flagBool(flags, 'force'));
     }
     await stream.screen();
+    if (ephemeral && isPaneShell(pane.currentCommand)) {
+      const idleMs = Math.max(0, flagNumber(flags, 'idle') ?? DEFAULT_RUN_IDLE_MS);
+      await waitUntilPaneReady(stream, idleMs, timeoutOf(ctx));
+    }
     const sentinel = flagBool(flags, 'marker') ? createRunSentinel() : null;
     const result = await collectRun(ctx, stream, {
       commandLine: body.commandLine,
