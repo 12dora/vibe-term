@@ -24,6 +24,27 @@ function normalizeAddress(value: string): string {
 const PILL_BASE =
   'inline-flex min-w-0 max-w-full items-center rounded-full border px-2.5 py-1 text-xs transition-colors duration-(--vibeterm-motion-fast) ease-out has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none';
 
+function visibleSiteUrlCandidates(
+  candidates: readonly ShareOriginCandidate[]
+): ShareOriginCandidate[] {
+  const claimed = new Set<string>();
+  for (const item of candidates) {
+    if (item.kind === 'site') continue;
+    const key = normalizeAddress(item.accessUrl);
+    if (key) claimed.add(key);
+  }
+  const seen = new Set<string>();
+  const visible: ShareOriginCandidate[] = [];
+  for (const candidate of candidates) {
+    const key = normalizeAddress(candidate.accessUrl);
+    if (candidate.kind === 'site' && claimed.has(key)) continue;
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    visible.push(candidate);
+  }
+  return visible;
+}
+
 function pillClassName(selected: boolean, interactive: boolean): string {
   const state = selected
     ? 'border-primary/60 bg-primary/10 font-medium text-foreground'
@@ -85,7 +106,8 @@ export interface SiteUrlCandidatesProps {
 
 export function SiteUrlCandidates({ candidates, currentValue, onSelect }: SiteUrlCandidatesProps) {
   const { t } = useTranslation();
-  if (candidates.length === 0) return null;
+  const visible = visibleSiteUrlCandidates(candidates);
+  if (visible.length === 0) return null;
   const current = normalizeAddress(currentValue);
   const title = t('settings.general.urlCandidates');
 
@@ -93,9 +115,9 @@ export function SiteUrlCandidates({ candidates, currentValue, onSelect }: SiteUr
     <div className="space-y-1.5" data-testid="settings-site-url-candidates">
       <span className="block text-xs font-medium text-muted-foreground">{title}</span>
       <div role="radiogroup" aria-label={title} className="flex flex-wrap gap-1.5">
-        {candidates.map((candidate) => (
+        {visible.map((candidate) => (
           <SiteUrlCandidateOption
-            key={candidate.accessUrl}
+            key={`${candidate.kind}:${candidate.accessUrl}`}
             candidate={candidate}
             label={originKindLabel(t, candidate)}
             selected={current !== '' && normalizeAddress(candidate.accessUrl) === current}

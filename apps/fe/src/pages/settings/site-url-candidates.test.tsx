@@ -135,6 +135,49 @@ describe('SiteUrlCandidates', () => {
     );
     expect(attrAt(html, 'data-selected', 0)).toBe('false');
   });
+
+  test('accessUrl 撞车的自建域名胶囊被丢掉，点选其它候选不增加', () => {
+    const siteDup = candidate({
+      url: 'https://relay.example/n/abc',
+      kind: 'site',
+      label: 'relay.example',
+      accessUrl: 'https://relay.example/n/abc',
+    });
+    const relay = candidate();
+    const origins = [siteDup, relay, TUNNEL];
+    let current = siteDup.accessUrl;
+    const render = () =>
+      renderToStaticMarkup(
+        <SiteUrlCandidates
+          candidates={origins}
+          currentValue={current}
+          onSelect={(url) => {
+            current = url;
+          }}
+        />
+      );
+    const click = (item: ShareOriginCandidate) => {
+      const option = SiteUrlCandidateOption({
+        candidate: item,
+        label: item.label,
+        selected: false,
+        onSelect: (url) => {
+          current = url;
+        },
+      });
+      const radio = findByTestId(option, 'settings-site-url-candidate-radio');
+      (radio?.props as { onChange: () => void }).onChange();
+    };
+
+    expect(render().split('data-kind="site"').length - 1).toBe(0);
+    expect(render().split('data-testid="settings-site-url-candidate"').length - 1).toBe(2);
+    click(relay);
+    click(TUNNEL);
+    const html = render();
+    expect(html.split('data-kind="site"').length - 1).toBeLessThanOrEqual(1);
+    expect(html.split('data-kind="site"').length - 1).toBe(0);
+    expect(html.split('data-testid="settings-site-url-candidate"').length - 1).toBe(2);
+  });
 });
 
 describe('SiteUrlField', () => {

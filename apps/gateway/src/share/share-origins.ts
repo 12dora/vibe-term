@@ -304,6 +304,31 @@ function collectRelays(sources: ShareOriginSources, prefix: string | null): RawC
   });
 }
 
+function collectInfraOrigins(sources: ShareOriginSources, tunnel: string | null): Set<string> {
+  const origins = new Set<string>();
+  const add = (url: string | null): void => {
+    const origin = originOf(url);
+    if (origin) origins.add(origin);
+  };
+  add(tunnel);
+  for (const hub of sources.hubs()) add(hub.publicUrl);
+  for (const relay of sources.relays()) add(relay.url);
+  const base = sources.baseUrl();
+  if (base && isIpHost(base)) add(base);
+  return origins;
+}
+
+function shouldOfferSite(
+  sources: ShareOriginSources,
+  site: string | null,
+  tunnel: string | null
+): site is string {
+  if (!site || sources.siteUrlManaged()) return false;
+  const origin = originOf(site);
+  if (!origin) return false;
+  return !collectInfraOrigins(sources, tunnel).has(origin);
+}
+
 function collectRaw(sources: ShareOriginSources): RawCandidate[] {
   const raw: RawCandidate[] = [];
   const localNodeId = sources.localNodeId();
@@ -311,8 +336,8 @@ function collectRaw(sources: ShareOriginSources): RawCandidate[] {
 
   const tunnel = sources.tunnelUrl();
   const site = sources.siteUrl();
-  // 站点 URL 常被填成隧道域名；由 hub 托管时它更是历史残留，两种情况都由对应 kind 的候选代表。
-  if (site && !sources.siteUrlManaged() && originOf(site) !== originOf(tunnel)) {
+  // 站点 URL 常被填成隧道 / 中继 / Hub / 公网 IP；由 hub 托管时更是历史残留，一律由对应 kind 代表。
+  if (shouldOfferSite(sources, site, tunnel)) {
     raw.push({ url: site, kind: 'site', prefix: null, listed: true });
   }
 
@@ -330,6 +355,24 @@ function collectRaw(sources: ShareOriginSources): RawCandidate[] {
   if (base && isIpHost(base)) raw.push({ url: base, kind: 'ip', prefix: null, listed: true });
 
   return raw;
+}
+
+/** 前缀补上后 accessUrl 可能撞车（site 存的是中继 `/n/<id>`，中继候选 url 却是裸 origin）。同地址只留一条，自建域名让路。 */
+function uniqueByAccessUrl(candidates: ShareOriginCandidate[]): ShareOriginCandidate[] {
+  const keyOf = (url: string) => normalizeShareOrigin(url) ?? url;
+  const claimed = new Set(
+    candidates.filter((item) => item.kind !== 'site').map((item) => keyOf(item.accessUrl))
+  );
+  const seen = new Set<string>();
+  const unique: ShareOriginCandidate[] = [];
+  for (const candidate of candidates) {
+    const key = keyOf(candidate.accessUrl);
+    if (seen.has(key)) continue;
+    if (candidate.kind === 'site' && claimed.has(key)) continue;
+    seen.add(key);
+    unique.push(candidate);
+  }
+  return unique;
 }
 
 /**
@@ -376,10 +419,12 @@ export function buildShareOriginContext(
         accessUrl: item.url,
       }))
   );
-  const candidates = ranked.map((candidate) => {
-    const prefix = prefixes.get(candidate.url) ?? null;
-    return { ...candidate, accessUrl: prefix ? `${candidate.url}${prefix}` : candidate.url };
-  });
+  const candidates = uniqueByAccessUrl(
+    ranked.map((candidate) => {
+      const prefix = prefixes.get(candidate.url) ?? null;
+      return { ...candidate, accessUrl: prefix ? `${candidate.url}${prefix}` : candidate.url };
+    })
+  );
   return { candidates, prefixes, nodePrefix };
 }
 
