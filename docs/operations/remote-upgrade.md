@@ -51,7 +51,7 @@
 
 ## 入口推送流程
 
-查偏移 → `complete: true` 则跳过推包 → 否则只补发缺失段。目标有 `staged-package-ranged`：`runPush({ streams: 4, maxRangeBytes: 4MiB })`（流数 `min(requested, 8)`），PUT 查询串始终带 `offset/length/total`，断链后 GET `ranges[]` 补缺口。否则 `streams: 1`，查询串与今日相同（仅 `offset>0` 时带 offset）。失败退避 1/2/4/8/15 s、最多 8 次（旧节点无续传能力：从零最多 3 次）、共用 15 min 推送预算；成功回包读 `text()`（消除 `forward aborted status=200 sent=0` 假告警）。满长度但 `complete: false` 的 `.part` 走空体 PUT 完成校验提交。日志：`[upgrade] push node=… streams=N bytes=… ms=…`。
+查偏移 → `complete: true` 则跳过推包 → 否则只补发缺失段。目标有 `staged-package-ranged`：`runPush({ streams: 4, maxRangeBytes: 4MiB })`（流数 `min(requested, 8)`），PUT 查询串始终带 `offset/length/total`，断链后 GET `ranges[]` 补缺口。否则 `streams: 1`，查询串与今日相同（仅 `offset>0` 时带 offset）。同一 `(version, sha256)` 的 `total` 由首个 ranged PUT 钉死（`.part.total` 旁挂 + 闸门），后续不同 → `409 UPGRADE_TOTAL_MISMATCH` 且不写盘；`offset+length > total` → `400`。推包成功后的 staged `POST /api/system/upgrade` 非 2xx 回退到强制节点 GitHub；例外：`409 UPGRADE_IN_PROGRESS`（节点已在升）与 start 超时后 GET 已 `executing` 视为已交出，不重复启动。失败退避 1/2/4/8/15 s、最多 8 次（旧节点无续传能力：从零最多 3 次）、共用 15 min 推送预算；成功回包读 `text()`（消除 `forward aborted status=200 sent=0` 假告警）。满长度但 `complete: false` 的 `.part` 走空体 PUT 完成校验提交。日志：`[upgrade] push node=… streams=N bytes=… ms=…`。
 
 ## 前端
 

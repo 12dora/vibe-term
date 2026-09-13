@@ -107,7 +107,7 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 入口推包的暂存 sink（`<installDir>/staging/` 下的 `.part`，在 journal `staging` 之前）：
 
 - **append**（2.3.6 入口，不带 `length`/`total`）：按偏移顺序续写；偏移不符 → `409 UPGRADE_OFFSET_MISMATCH`。
-- **ranged**（成对 `length` + `total`）：乱序写入 `[offset, offset+length)`，同 key 可并行。区间盖满
+- **ranged**（成对 `length` + `total`；`total` 由首个 PUT 钉死，不一致 `409 UPGRADE_TOTAL_MISMATCH`，越界 `400`）：乱序写入 `[offset, offset+length)`，同 key 可并行。区间盖满
   `total` 后整包 sha256，失败删半成品（fail-closed），成功 rename 落位并写 sidecar。
 
 本机自升级仍直接从 GitHub 拉到 `staging/<txn>`，不走推包 sink。
