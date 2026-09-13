@@ -476,7 +476,7 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 | `role` | `primary`（写新记录、出名册、`switch` 的目标）/ `secondary` / `null`（未连接） |
 | `online` | **该行**已认证。`attached` 仍只对 primary 为真（2.2.x 前端靠它画「已挂载」） |
 | `rttMs` | 每条已连接 uplink 各自最近一次 ping→pong 时延（毫秒；重连清零；未测到为 null） |
-| `peersOnline` | 该中继最近一份清单里在线的已准入对端数；未连接为 null |
+| `peersOnline` | 该中继花名册里 `online` 的对端数。行级是否出数看 uplink client 是否 `online`（离线为 null，CLI `-`）；有花名册即计数，**不再**二次要求 `presence.connected`。主中继 `applyList` 与 `setConnected` 曾脱节，二次要求会把主中继 PEERS 打成空。uplink 掉线后花名册仍按 90 s stale hold 保留（与 hub 同一 hold，见 [§9](#9-节点侧行为)） |
 | `turn` | 该中继下发的 TURN 与本机探测结论：`{ url, probeOk, members?, localHint? }`。`probeOk: null` = 还没探。`members` 为该行中继的成员 tally（排除 self；`{ ok, total, updatedAt }`）。`localHint: 'tun'` 仅当 `probeOk === false` 且 TCP 金丝雀判定本机栈就地完成握手（TUN/代理）；金丝雀未跑或已过期不下 hint。新字段全可选，旧壳可忽略 |
 | `nodesViaRelay`（顶层） | 全部已连接中继的**在线对端并集**，不是某一条的数字 |
 | `multiAttach`（顶层） | 配了 ≥ 2 条未被踢的中继（副中继已启用） |
@@ -622,7 +622,7 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
   若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。
 - **增删副中继不重启主 uplink**（2.3.2）：`set-relays` 只改动非主行时，`runReconcile()` 走轻路径——`uplink.refreshCandidates()` + `RelaySecondaryAttach.reconcile()` 增删 slot，**不碰 live client**。日志 `[relay] targets updated rows=<n> primary=<host> secondaries=<n> (no restart)`（`primary` 取 `attachedHub()` 的 host，未挂上为 `-`）。主中继被重排但仍挂在旧主上 → 排空重建；已经挂在新主上（例如手动 `switch` 先切过去）→ 仍走轻路径，只刷副中继。主中继行凭证变化、令牌需重认证、hub↔relay 翻转或中继集合清空，仍走排空重建（`attach.stop()` → `reconfigureUplinkPool()` → `attach.start()`）。同 URL 副中继的租户 / 令牌轮换按凭证摘要拆掉该 slot 并重挂，不重启主 uplink。
 
-**当前错误**：`RelayUplinkClient` / `UplinkClient` 认证成功即清空 `lastConnectError`；`UplinkPool` 在 promote 时清空该 URL 的诊断；live 链路终止原因（心跳丢失、被踢、远端关闭）在清理前写回该 URL 的诊断。`apps/gateway/src/mesh/relay-link-error.ts` 把原始错误归一化为闭集 `RelayLinkErrorCode`（`connect-failed` / `connect-timeout` / `auth-timeout` / `auth-rejected` / `heartbeat-lost` / `kicked` / `revoked` / `dns` / `refused` / `tls` / `protocol` / `unknown`），`stopped` / `aborted` 视为无错误。`GET /api/mesh/relay/status.relays[n]` 带 `lastErrorCode`；`online === true` 时 `lastError` / `lastErrorCode` / `lastErrorAt` 一律为 `null`（api-client 的 `normalizeRelayStatus` 再兜底一次）。前端只在离线时按 `relay.tenant.linkErrors.<code>` 显示。
+**当前错误**：`RelayUplinkClient` / `UplinkClient` 认证成功即清空 `lastConnectError`；`UplinkPool` 在 promote 时清空该 URL 的诊断；live 链路终止原因（心跳丢失、被踢、远端关闭）在清理前写回该 URL 的诊断。码表在 `packages/shared/src/relay/link-error.ts`（`RELAY_LINK_ERROR_CODES`）；gateway `relay-link-error.ts` 的 `classifyRelayLinkError` 把原始错误归一化为闭集 `RelayLinkErrorCode`（`connect-failed` / `connect-timeout` / `auth-timeout` / `auth-rejected` / `heartbeat-lost` / `kicked` / `revoked` / `dns` / `refused` / `tls` / `protocol` / `unknown`），`stopped` / `aborted` 视为无错误。状态行 DTO 在 `packages/shared/src/relay/status-row.ts`。`GET /api/mesh/relay/status.relays[n]` 带 `lastErrorCode`；`online === true` 时 `lastError` / `lastErrorCode` / `lastErrorAt` 一律为 `null`（api-client 的 `normalizeRelayStatus` 再兜底一次）。前端只在离线时按 `relay.tenant.linkErrors.<code>` 显示。
 
 **手动切换主中继**：`POST /api/mesh/relay/switch { url }`（node-session 鉴权，`apps/gateway/src/mesh/relay-switch-route.ts`）：规范化 URL → 未配置 404 `RELAY_UNKNOWN` / 被踢 409 `RELAY_KICKED` / 已是在线主中继 409 `RELAY_ALREADY_ATTACHED` → `UplinkPool.switchTo(url, signal)` make-before-break，10 s 超时即取消该次切换并回 502 `RELAY_SWITCH_FAILED`（body 带 `lastError` / `lastErrorCode`）；被并发切换取代的调用返回结构化失败。成功后把 URL 写入本机 `gateway_kv` 键 `relay.preferredUrl`，`relay-wiring` 启动时把首选排在候选首位；不改签名的 `set-relays` 记录。前端 `apps/fe/src/node/mesh-relay.ts` 的状态 store 带代数：切换成功后 +1，旧代的轮询结果与在途去重一律丢弃。
 

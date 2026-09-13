@@ -16,11 +16,11 @@
 ## 快速定位
 
 - 想搭一台公网入口把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md) → 需要第二台入口时 [多 hub 主/备](./operations/multi-hub-standby.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
-- 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍：[路径优选](./architecture/path-selection.md)。
+- 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
 - 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
-- 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)。
+- 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)；改共享口径先看 [单一上游](./development/code-conventions.md)。
 - 在终端里用 `vibeterm`（登录、接进别的机器、让 AI agent 跑命令）：[命令行使用手册](./operations/cli-usage.md)。
 - 给 `vibeterm` 加客户端命令：[客户端 CLI 架构](./development/cli-architecture.md)。
 
@@ -32,7 +32,7 @@
 | --- | --- |
 | [mesh-architecture.md](./architecture/mesh-architecture.md) | 多节点互联架构：拓扑、用户自持根钥与密钥日志、节点证书、链路多路复用、paused 本机可见性例外、端口计划、角色装配、失陷边界 |
 | [peer-direct-connect.md](./architecture/peer-direct-connect.md) | 节点直连：地址退避、paused 不拨号、WebRTC 熔断、信令代次、`ports` 可达性、失败码与链路信息窗 |
-| [path-selection.md](./architecture/path-selection.md) | 跨境路径优选：五元组 ECMP、WS 开链竞速、直连慢路径重掷、上行采样与 `path-rerace` |
+| [path-selection.md](./architecture/path-selection.md) | 路径优选与选路模式：智能 / 直连 / 中继、滞环与升回、重掷协议、五元组 ECMP、WS 开链竞速、上行 `path-rerace` |
 | [relay.md](./architecture/relay.md) | 公共中继角色：盲中继协议、租户密钥、密钥日志记录、加入串与密码加入、存储、HTTP / uplink 接口、CLI 与网页、运维、边界、令牌换发 |
 | [relay-limits-and-metrics.md](./architecture/relay-limits-and-metrics.md) | 中继运营限额（租户数、总带宽、公平分配、单文件上限）与 `/api/relay/metrics` |
 | [port-mapping.md](./architecture/port-mapping.md) | 端口映射：node A 的 TCP 监听经 peer 流复用器隧道到 node B |
@@ -63,7 +63,7 @@
 | --- | --- |
 | [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / Hub / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查，以及 agent 用 CLI 调试别的节点 |
 | [production-install.md](./operations/production-install.md) | 生产部署：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
-| [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
+| [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、延迟优化、节点表、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
 | [multi-hub-standby.md](./operations/multi-hub-standby.md) | 多 hub 主 / 备：同步、跨 hub relay、failover、写入围栏、promote / demote 手册 |
 | [docker-node.md](./operations/docker-node.md) | 可升级的容器节点 |
 | [nonstandard-ports.md](./operations/nonstandard-ports.md) | 按角色列出应放行的 TCP/UDP 口；80/443 不可用时的 HTTPS 候选与探测 |
@@ -92,7 +92,8 @@
 | 文档 | 内容 |
 | --- | --- |
 | [environments.md](./development/environments.md) | development / test / production 三套环境与 `loadEnv()` |
-| [cli-architecture.md](./development/cli-architecture.md) | 客户端 CLI（`packages/cli`）的模块契约：命令组怎么加、ctx 形状、退出码、会话文件、与安装版二进制的接线 |
+| [cli-architecture.md](./development/cli-architecture.md) | 客户端 CLI（`packages/cli`）的模块契约：命令组怎么加、ctx 形状、退出码、会话文件、与安装版二进制的接线、复杂度门禁 |
+| [code-conventions.md](./development/code-conventions.md) | 单一上游与派生约定：节点展示、设置标签、确认框、契约、消息通道、环境解析、探测循环 |
 | [workspace-packages.md](./development/workspace-packages.md) | 前端 workspace 包结构、两层工厂与嵌入用法 |
 | [app-error-boundary.md](./development/app-error-boundary.md) | 路由 / 面板级错误边界与 chunk 重试 |
 | [sidebar-node-first-paint.md](./development/sidebar-node-first-paint.md) | 冷启动侧栏节点首屏：占位、缓存（含 paused）、门闸认 stale `loggedIn`、前台拨号竞速 |

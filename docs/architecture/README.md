@@ -8,7 +8,7 @@
 | --- | --- |
 | [mesh-architecture.md](./mesh-architecture.md) | 拓扑、身份与鉴权、链路多路复用与载体、paused 本机可见性例外、端口计划、前端多运行时、角色装配、失陷边界 |
 | [peer-direct-connect.md](./peer-direct-connect.md) | 直连地址退避、paused 不拨号、WebRTC 熔断、信令代次、`ports` 可达性、失败码 |
-| [path-selection.md](./path-selection.md) | 跨境路径优选：五元组 ECMP、WS 开链竞速、直连重掷、上行 `path-rerace` |
+| [path-selection.md](./path-selection.md) | 路径优选与选路模式：智能 / 直连 / 中继、滞环与升回、重掷协议、五元组 ECMP、WS 开链竞速、上行 `path-rerace` |
 | [relay.md](./relay.md) | 公共中继角色的完整参考 |
 | [relay-limits-and-metrics.md](./relay-limits-and-metrics.md) | 中继级限额、带宽公平分配、指标接口 |
 | [port-mapping.md](./port-mapping.md) | 节点间 TCP 端口映射 |

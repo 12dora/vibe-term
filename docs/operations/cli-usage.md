@@ -207,7 +207,7 @@ vibeterm nodes meta-key rotate [--exclude <node>...]
 vibeterm nodes revoke <node> --yes
 ```
 
-`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`；对 Hub 的暂停 → `cannot pause a hub node (CANNOT_PAUSE_HUB)`，恢复 Hub 允许（接回 2.3.5 上被暂停的 Hub）。`ls` 列为 NAME ID ROLE STATUS REACH VERSION ADDRESS ONLINE PAUSED RTT。STATUS 仍是 `admitted` / `pending`；离线时间合进 ONLINE（`yes` / `no · 3h ago` / `no`），不是新列。ADDRESS 与管理页地址列同一套推导（Hub 公网 host → live `peerAddress` → 广告 endpoint → 中继）。REACH 为 `lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。`nodes show` 打印 `address`、`lastSeenAt`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`--version <ver>` 写入 POST body，网关必须是已发布且带 CLI tarball 的 tag，否则 400 `RELEASE_NOT_FOUND`；缺省仍走 latest。失败行 ERROR 列原文展示聚合投递串（如 `github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
+`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`；对 Hub 的暂停 → `cannot pause a hub node (CANNOT_PAUSE_HUB)`，恢复 Hub 允许（接回 2.3.5 上被暂停的 Hub）。`ls` 列为 NAME ID ROLE STATUS REACH VERSION ADDRESS ONLINE PAUSED RTT。STATUS 仍是 `admitted` / `pending`；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列。ADDRESS 与管理页地址列同一套推导（Hub 公网 host → live `peerAddress` → 广告 endpoint → 中继）。REACH 仍是机器 token：`lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。`nodes show` 打印 `address`、`lastSeenAt`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`--version <ver>` 写入 POST body，网关必须是已发布且带 CLI tarball 的 tag，否则 400 `RELEASE_NOT_FOUND`；缺省仍走 latest。失败行 ERROR 列原文展示聚合投递串（如 `github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
 
 `hub-role` 是远程 HTTP 切换（`POST /n/<id>/api/hub/role`），不能用本机运维 `hub promote`（写本机 env）代替。未签名授权时先签 `admit-hub`。`promote` 把指定 hub 升成 writer；`demote` 仅当该节点是 writer，挑后继再 switch，无人接管则只 standby；`standby` 只对该节点 `mode: 'standby'`。`--wait` 轮询 complete + `writerHubId`；旧节点挡住 `admit-hub` 时 `--force` 打强制头。
 
@@ -280,6 +280,8 @@ vibeterm settings local-auth bootstrap --user <u>
 vibeterm settings local-auth set on|off
 vibeterm settings local direct [--node <id>]
 vibeterm settings system update-check
+vibeterm settings mesh route-mode get
+vibeterm settings mesh route-mode set auto|direct|relay
 vibeterm settings notifications mesh get
 vibeterm settings notifications mesh set on|off
 vibeterm settings llm providers enable|disable <id>
@@ -308,6 +310,7 @@ vibeterm settings weixin users approve <account> <user>
 - `passwd`：当前密码 `VIBETERM_PASSWORD` 或隐藏 prompt；新密码 `--new-password*` / `VIBETERM_NEW_PASSWORD` 或 TTY 双次确认。默认 `rotate-root-keep`；`--full-reset` 写 `rotate-root`（非 TTY 要 `--yes`）。keep 路径会话仍有效；全量重置后须重新 `login`。
 - `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。`totp disable` 非 TTY 必须 `--yes`。
 - `passkey ls` 人类输出带「注册只能在浏览器」hint。
+- `mesh route-mode get|set`：读写本机选路模式（`auto` / `direct` / `relay`），打 `GET/PUT /api/settings/mesh-route`。非法值用法错误。语义见 [mesh 运维「延迟优化」](./mesh-operations.md) 与 [路径优选](../architecture/path-selection.md)。
 - `notifications mesh set`：先签 `notification-sink`（需 `VIBETERM_PASSWORD`，`POST /api/auth/keylog?hub=sync`），`hubAck` 失败不 PUT；成功后再 `PUT /api/notifications/mesh {enabled}`。见 [多节点通知汇聚](../architecture/mesh-notification-sink.md)。
 - `llm providers enable|disable`：`PATCH {enabled}`。`models` 全量覆盖 `manualModels` / `disabledModels`（`--clear-manual` / `--clear-disabled` 写成空数组；与 `--manual` / `--disable` 互斥）。`default` 要同时给 `--provider` 与 `--model`。`search set` 的密钥走 `--tavily-key*` / `--brave-key*` / `VIBETERM_TAVILY_API_KEY` / `VIBETERM_BRAVE_API_KEY`（argv 警告）；`--clear-keys` 把两把 key 写成空串。
 - `tls set`：`--mode none|external|selfsigned|acme`。selfsigned 要 `--sans`（缺省 `--port 9443`、`--bind-host 0.0.0.0`）；acme 要 `--domain` `--email`，`--challenge http-01|dns-01`（缺省 http-01），dns-01 再加 `--dns-provider cloudflare|dnspod` 与 `--dns-token*` / `VIBETERM_TLS_DNS_TOKEN`（dnspod 还要 `--dns-secret-id`）。凭证省略则沿用已存。仅 `--body` 时不要求其它旗标。`mode: none` 或 `trustProxy: true` 非 TTY 必须 `--yes`。字段契约见 [HTTPS 与 ACME](./https-and-acme.md)。

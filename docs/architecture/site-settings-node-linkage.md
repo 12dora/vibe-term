@@ -10,6 +10,8 @@ mesh 下这两项托管给节点身份：设置页只读展示有效值，改名
 
 ## 契约
 
+站点设置字段的单一真源是 `@vibeterm/shared` 的 `SITE_SETTING_FIELDS`（`packages/shared/src/contracts/site-settings.ts`）：每条含 `key` / `kind`（`string` | `bool` | `int` | `secret` | `enum` | `strings`）/ `default` / `cliFlag` / `patch`，以及校验用的 `min` / `max` / `trim` / `httpUrl` / `values` / `errorKey`。`SiteSettings` / `UpdateSiteSettingsRequest`、PATCH 归一化、gateway merge、CLI `SITE_KEYS` 与 USAGE 行均从该表派生。`theme` 的 `patch: false`，只走 WS / `updateSiteSettings({ theme })`，不进 PATCH / CLI `site set`。新增字段：改 registry + 手写 drizzle 列 + 迁移。
+
 `GET /api/settings/site` 与 `PATCH /api/settings/site` 的 2xx 响应新增四个字段（同时出现在响应顶层与 `settings` 上，见 `SiteSettingsLinkFields`）：
 
 ```ts

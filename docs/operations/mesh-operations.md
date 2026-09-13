@@ -225,19 +225,31 @@ vibeterm hub join https://vibeterm.example.com --token <join 串> [--name 书房
 
 加入后各入口侧边栏自动出现新 node，无需手动添加设备。退出 mesh：`vibeterm hub leave`（清 `hub_url`，角色改回 `standalone`，重启）。
 
+## 延迟优化
+
+设置 → 多节点互联（mesh 角色；standalone 不渲染），本机卡之后的「延迟优化」卡。三选一，同行（窄屏堆叠）：
+
+| 选项 | 落库值 | 行为 |
+|---|---|---|
+| 智能 | `auto`（默认） | 测直连与中继 RTT，连续样本过滞环后切换。终端 / 指令 / 端口映射跟低延迟路径；本轮每对端一条 live，文件传输与交互共用 |
+| 直连 | `direct` | 尽量直连（dc > ws-secure > relay）；直连不可用才走中继。不因中继更快而降级 |
+| 中继 | `relay` | 所有连接经中继；拒收并忽略入站直连（对端熔断自行退避） |
+
+CLI：`vibeterm settings mesh route-mode get|set <auto|direct|relay>`（`--json` 与兄弟命令一致）。HTTP `GET/PUT /api/settings/mesh-route`，非法值 `400 INVALID_MESH_ROUTE_MODE`。进程内立刻生效，不经 `SETTINGS_EVENT`。阈值与重掷协议见 [路径优选](../architecture/path-selection.md)。
+
 ## Nodes 页
 
 路由 `/nodes`，任意已登录的 mesh 入口可用。standalone 整页不渲染。
 
-表格列：名称、状态、REACH、版本、地址、直连能力、登录、操作（另有选择列）。状态：在线显示「在线」；离线且有 `lastSeenAt` 显示「离线 · N 小时前」（`title` 为绝对时间，相对文案每分钟刷新），没有时间戳则「离线」；旁可挂「已暂停」标，不替换在线态。REACH 为 `lan/dc`、`wan/ws-secure` 或 `relay`（不写 `relay/relay`）；self / 离线 / pending 为「—」。地址列（monospace、截断，`title` 为完整 host）替换原公钥指纹列：pending 为「—」；Hub 用 `hubDetails.publicUrl` host；live 直连（`transport` 为 `ws-secure` / `dc`）用 `peerAddress`；否则广告 `endpoints[]`（剥 scheme/path，优先非局域网）；`transport === 'relay'` 用 `viaRelay` host，否则 `relayPresence[0]`；self 若是 Hub 走 `publicUrl`，非 Hub 且推不出则为「—」。公钥指纹（sha256 前 16 hex）与最近在线只在详情。行内「更多」是下拉菜单（详情、暂停 / 恢复）；吊销仍是行上的破坏性按钮。待批准行「更多」禁用。self 行不能吊销当前入口。paused 是 **entry 本机偏好**：行留在管理表，侧栏 / 设备页 / 传输下拉过滤；行内升级仍可点，批量升级排除，批量移除/卸载可选。
+表格列：名称、状态、REACH、版本、地址、直连能力、操作（另有选择列；**无独立登录列**）。状态：在线且已登录（或本机）显示「在线 · 已登录」；在线未登录显示「在线 · 未登录」，其后保留登录按钮；离线且有 `lastSeenAt` 显示「离线 · N 小时前」（`title` 为绝对时间，相对文案每分钟刷新），没有时间戳则「离线」——离线 / pending / 主备切换 / 卸载中或失败不加登录后缀、不画登录按钮；旁可挂「已暂停」标，不替换在线态。REACH 为本地化组合：局域网 · 直连 / 局域网 · 加密 WS / 公网 · 直连 / 公网 · 加密 WS / 中继（机器 token 仍是 `lan/dc`、`wan/ws-secure`、`relay`，不写 `relay/relay`）；混合或残缺 token 按 reach · transport 拼；self / 离线 / pending 为「—」。详情与链路徽标仍用既有「中转」口径。地址列（monospace、截断，`title` 为完整 host）替换原公钥指纹列：pending 为「—」；Hub 用 `hubDetails.publicUrl` host；live 直连（`transport` 为 `ws-secure` / `dc`）用 `peerAddress`；否则广告 `endpoints[]`（剥 scheme/path，优先非局域网）；`transport === 'relay'` 用 `viaRelay` host，否则 `relayPresence[0]`；self 若是 Hub 走 `publicUrl`，非 Hub 且推不出则为「—」。公钥指纹（sha256 前 16 hex）与最近在线只在详情。行内「更多」是下拉菜单（详情、暂停 / 恢复）；吊销仍是行上的破坏性按钮。待批准行「更多」禁用。self 行不能吊销当前入口。paused 是 **entry 本机偏好**：行留在管理表，侧栏 / 设备页 / 传输下拉过滤；行内升级仍可点，批量升级排除，批量移除/卸载可选。
 
 暂停资格（行菜单与批量「暂停」同一套）：本机、Hub、当前 URL 为 `/n/:id/…` 的转发节点不可新暂停。恢复只拦本机与待批准；Hub 与当前转发节点若已暂停则可恢复（2.3.5 上被暂停的 Hub 升级后可点恢复）。批量菜单把暂停 / 恢复放在升级 / 吊销 / 卸载之前；合格集合为空则禁用。同一节点在途的暂停/恢复互斥（行与批量共享守卫）。`ports[].status === 'blocked'` 时名字下警告「端口不可达」；详情框有完整端口表与「重新检测」（`POST /api/mesh/nodes/:id/ports/probe`）。
 
 升级按钮在操作列：进行中显示「下载中」/「下载中 3.20 MB / 12.9 MB」/「推送中 3.20 MB / 12.9 MB」/「执行中」（`progress.phase` + `transfer.kind`；`channel` 可选，旧入口不上报）。下载 / 推送阶段可「停止升级」；进入安装 / 重启后按钮禁用。失败：稳定码（`NODE_UNREACHABLE`、`UPGRADE_NOT_ALLOWED`、`UPGRADE_IN_PROGRESS`、`RELEASE_UNAVAILABLE` 等）翻成中文；通道聚合串（`github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）原文展示。mesh `POST /api/mesh/nodes/:id/upgrade` 可带 `{version}`，未发布或无 CLI tarball 返回 400 `RELEASE_NOT_FOUND`。投递决策树见 [远程升级](./remote-upgrade.md)。
 
-本机卡网络区入站端口标题随本机角色：含 `relay`（`relay` / `relay,node`）→「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余（`node` / `standalone` / 缺省）→「本机需开通端口」。节点详情框仍用「入站端口」。标题下一行图例：「绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证」。有 `MeshPortReach` 行（purpose + 端口/range 对上）才画状态点：`open` 绿、`blocked` 红且加 ring、`unknown` 灰；无对应行画「—」（不探测），不等于灰。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时本机卡显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。只有内网地址的云主机会额外广播 STUN 映射出的公网 IPv4（或 `VIBETERM_PEER_PUBLIC_HOST`），所以安全组已放行 39001 的云主机也能变绿；`refused` 一次即红，`timeout` 两击。「重新检测」让对端 30 s 内重探（经 `peer_reach_epoch`）。中继 / Hub 主机的 443 与 TURN 行由成员在线数与成员 TURN 统计派生。
+本机卡网络区入站端口标题随本机角色：含 `relay`（`relay` / `relay,node`）→「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余（`node` / `standalone` / 缺省）→「本机需开通端口」。节点详情框仍用「入站端口」。标题下一行图例：「绿 = 已开通 · 红 = 未开通 · 灰 = 未探测」。三态灯：`open` 绿无环、`blocked` 红无环、`unknown` 或无 `MeshPortReach` 行灰点（无 reach 时 tooltip「未探测」）。探测中保持原灯 + 按钮 spinner。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时本机卡显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。只有内网地址的云主机会额外广播 STUN 映射出的公网 IPv4（或 `VIBETERM_PEER_PUBLIC_HOST`），所以安全组已放行 39001 的云主机也能变绿；`refused` 一次即红，`timeout` 两击。「重新检测」让对端 30 s 内重探（经 `peer_reach_epoch`）。中继 / Hub 主机的 443 与 TURN 行由成员在线数与成员 TURN 统计派生。
 
-`GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`，以及 `lastSeenAt`（毫秒，来自 `peer_cache.last_seen_at`；self 恒 `null`；旧入口不下发）。前端行模型优先 mesh `lastSeenAt`，hub `last_seen_at` 兜底。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。CLI `vibeterm nodes ls` 有 ADDRESS 列，离线时间合进 ONLINE（`no · 3h ago`），`--json` 带 `lastSeenAt` / `address`；`nodes show` 打印这两项。详见 [命令行使用手册](./cli-usage.md)。
+`GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`，以及 `lastSeenAt`（毫秒，来自 `peer_cache.last_seen_at`；self 恒 `null`；旧入口不下发）。前端行模型优先 mesh `lastSeenAt`，hub `last_seen_at` 兜底。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。CLI `vibeterm nodes ls` 有 ADDRESS 列，ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列；`--json` 带 `paused`、`lastSeenAt`、`address`；`nodes show` 仍打印 `loggedIn`。详见 [命令行使用手册](./cli-usage.md)。
 
 node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请求只发生在较大 id 一侧时，该侧会经已认证的 hub `rtc.signal` 通道发一条签名 wake（`sdp` 内 `type=rtc.wake`，对 `{domain:vibeterm-rtc-wake, from, to, rtcSession, nonce, issued_at}` 用发送方节点 Ed25519 私钥签名）唤醒较小 id 去 `getLink`；hub 只转发、不解释、不验签。接收端用 `node_certs` 验签，拒绝坏签名、时钟偏差 > 60s、重放 nonce，以及自己并非该对 offerer 的 wake；每对端有接收冷却。发送侧 5s 冷却若挡住了仍需要的 wake，会在 `nextEligibleAt` 补发（DC 到达或本次拨号结束则取消）。已是 `dc` 的忽略。`node.list` / 对端 `direct_capable` 翻成 true 时两边都会 `maybeUpgrade()`。已打开的 node↔node stream 留在旧链路上，**不会**随 carrier-switch 迁到 DC（carrier-switch 只服务浏览器 `sess`）；新 stream 在 `waitForTransport(id, 'dc')` 成功后再开才会走 DC。
 
@@ -390,7 +402,7 @@ vibeterm relay list
 
 - **主中继**（`ROLE=primary`）负责写新的密钥日志记录、出成员名册、出配额。**副中继**只做在线状态、入站流、RTC 信令与日志追平。
 - 一对节点走中继时**按对选路**，挑双方都在线、往返之和最小的那台，不一定是主中继；设备徽标上会写「中转（经 <host>）」。
-- `PEERS` 是该中继上在线的对端数，`peers via relay` 是所有中继的**并集**。
+- `PEERS` 是该中继花名册里在线的对端数：uplink client `online` 时有花名册即计数（**不再**二次要求 `presence.connected`），client 离线为 `-`。uplink 闪断后花名册仍按 90 s stale hold 保留。`peers via relay` 是所有中继的**并集**。
 - **「设为主中继」**（设置 → 节点，或 `POST /api/mesh/relay/switch`）只换主，副中继继续连着；旧主降为副。目标已经是在线主中继时回 409。
 - 某台被踢只影响它自己那行，其余中继照常用；`reauth` 也是按 URL 做。
 - 单文件上限取所有已连接中继里最小的那个。
@@ -480,6 +492,7 @@ vibeterm hub user reset
 | HTTP 504 `HUB_TIMEOUT` | `keylog?hub=sync` 等 hub ACK 超时，且对不上已提交记录 | 本地不落库；Nodes 页保留 pending，点「重试」。hub 恢复后再试 |
 | 503 `DIRECT_UNAVAILABLE` | native 未装载、authorize 登记满（64）或 RTC 不可用 | `direct enable`；看 `VIBETERM_NATIVE_DIR` 与 `native/manifest.json`；装不了的平台接受 relay |
 | 直连降级到 relay | ICE 失败、一端 `direct_capable=false`、或 `direct disable`、或 DC 存活超时 | 预期行为。功能应仍可用，徽标变为 `relay` / `turn`。UDP 被丢后 `transport` 应在约 10 s 内离开 `dc`（日志 `liveness timeout`）；若仍卡 ~35 s 才变，说明存活探测未生效 |
+| 终端卡顿、`failover from=dc to=dc`、中继 RTT 远小于 DC | 智能模式未过滞环，或模式为「直连」；旧版本没有慢 DC→中继 | 设置 → 多节点互联 → 延迟优化：智能会在 3 次 ping 且 ≥ 15 s、直连 > max(1.5×中继, 中继+40 ms) 后搬到中继；强制走中继选「中继」。日志 `[mesh][peer] route_switch … from=dc to=relay`。重掷 3/3 `no-remote-sdp` 是另一条线，见 [路径优选](../architecture/path-selection.md) |
 | 两边 `direct_capable=true` 但 `transport` 不是 `dc` | 只走了 hub relay / LAN WS，或升级尚未完成 | 日志前缀 `[mesh][rtc]`。应先有 `dial start role=offerer\|answerer`，较大 id 侧有 `kind=wake`，随后 `signal send/recv kind=sdp`。没有 `dial start` 说明没人拨号；只有 answerer 没有 wake/offer 是旧 bug。`ice failed … local_types=[host] remote_types=[…]` 且无 `srflx` → STUN 不可达；两边都有 `srflx` 仍失败 → 对称 NAT，需要一台**探测得通**的 TURN（中继角色自带，看 `[mesh][rtc] turn gate` 这行的 `reachable=`）。`datachannel open` 才算 DC 握手成功。不要把完整 SDP / ICE 密码打进日志 |
 | 设置页 / `relay list` 写「TURN 本机不可达 · N/M 节点可达」 | 本机 UDP 到该 TURN 不通，其它成员 Binding 成功 | 不是中继挂了。先查本机代理 TUN 是否丢境外 UDP（见 [KI-15](../known-issues.md)）。`N===0` 或无 members 才是舰队侧也探不通 |
 | 终端数秒停顿、日志有 `[mesh][stream] failover` | Forwarder 在重建 mux stream 并 replay | 行首 ISO 时间戳可对齐。`failover_start` 的 `cause=stream_close\|send_failed`、`close_reason`、`from`、`queued_input_bytes` 区分 RST/发送失败；`failover_attempt` 的 `getLink_ms` / `open_stream_ms` / `hello_wait_ms` / `resume_wait_ms` 区分建链慢还是 HELLO/snapshot 等待；`failover_summary` 的 `duration_ms`、`replay_bytes`、`event_loop_lag_ms` 给出总耗时。`[ws] backpressure enter\|skip\|drain` 与 `terminate reason=backpressure_gap` 带 `carrier=physical_browser_ws\|mesh_link_stream` 以及 session/cid/node，用来判断背压在浏览器 socket 还是 mesh carrier。`[mesh][mux] rst send/recv` 现含 `muxStreamId` 与 `nodeId`/`transport`。`[ws-metrics] gateway_activity` 的 `event_loop_lag_ms` / `max_lag_ms` 判断主线程是否卡住 |

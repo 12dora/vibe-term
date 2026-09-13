@@ -65,7 +65,7 @@
 
 ### 前端（vite）不加载后端 env
 
-`loadEnv` 是 Node-only（依赖 `node:fs`/`node:url`），**不从 `@vibeterm/shared` 浏览器侧主入口导出**——否则会被打进客户端 bundle，触发 `Module "node:fs" has been externalized` 运行时错误。Node 侧消费者一律相对路径 `import './env/load-env'`。
+`loadEnv` 是 Node-only（依赖 `node:fs`/`node:url`），**不从 `@vibeterm/shared` 浏览器侧主入口导出**——否则会被打进客户端 bundle，触发 `Module "node:fs" has been externalized` 运行时错误。Node 侧消费者一律相对路径 `import './env/load-env'`。端口 / 布尔解析走 `packages/shared/src/env/parse.ts` 的 `parsePort` / `parseBoolEnv`（无 `node:*`，同样不要从浏览器主入口导出）：gateway `config.ts`、app 端口计划、mesh / upgrade 命令从它派生。`parseBoolEnv` 真值为 `'1'` / `'true'` / `'yes'`（大小写不敏感），**不 trim、不含 `on`**；`parseHubAutoPromote` 另有 `on` 与空串语义，不要误换。
 
 `apps/fe/vite.config.ts` **刻意不加载任何后端 env 文件**：前端只需要 `VIBETERM_GATEWAY_URL` 与 `FE_PORT` 两个非密钥接线值，由 launcher 经 `process.env` 提供（dev-supervisor source / playwright 注入）。若让 vite 加载后端 env，会把 `VIBETERM_MASTER_KEY` 等密钥拉进 vite 进程，存在被打进前端 bundle 的风险。
 

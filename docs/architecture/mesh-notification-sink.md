@@ -155,7 +155,16 @@ POST /api/mesh-internal/notifications
 
 设置变更广播命名空间：`notifications-mesh`（前端据此失效缓存）。
 契约在 `packages/shared/src/contracts/mesh-notifications.ts`，客户端在
-`packages/api-client/src/notifications-mesh.ts`。
+`packages/api-client/src/notifications-mesh.ts`。GET 遇 404 / 501 折成 `{ supported: false, selfEnabled: false, sinks: [] }`，不当错误；其它非 2xx 走 `parseApiError`。PUT 缺席仍抛错。
+
+### 打开深链
+
+转发件的 pane URL 在汇聚机上已经是 `<汇聚机站点>/n/<来源 nodeId>/devices/…/windows/%401/panes/%252`（`%2` → `%252`）。入口点 toast「打开」时：
+
+- 路径**已带** `/n/<origin>`，不要再经宿主 `appPath` 叠一层。`nodeAppPath` 对任何已有 `/n/<段>` 前缀幂等（含 `/n/self`），否则会拼成 `/n/<id>/n/<id>/…` 打进无匹配路由。
+- `navigateToAppUrl` / Watch `host.navigate` 从路径解析 nodeId（合法 32-hex 用该 id，否则回落 runtime / `self`）。无前缀的本机 OSC toast 仍走 `/devices/…`，行为不变。
+- pane / window / device 段走 `safeDecodePaneParam`（`@vibeterm/stores` `pane-route.ts`）：`%401` → `@1`、`%252` → `%2`；残缺 `%2` / `%zz` 不抛 `URIError`，保留原段继续导航，避免整页错误卡。
+- 选择事件 `vibeterm:user-initiated-selection` 的 `detail.nodeId`：路径里的来源 id；若等于入口节点真实 id 则**折叠成 `self`**（与 `useRouteNodeId` 同口径）。`usePaneActiveFollow` 忽略 `detail.nodeId !== runtime.nodeId` 的事件，避免入口 runtime 误跟他节点选择、把 `NodeRuntimeBoundary` 重挂成白屏。Watch `CustomEvent.detail` 同样带 `nodeId`。
 
 ## 安全边界
 
@@ -201,6 +210,6 @@ POST /api/mesh-internal/notifications
 
 - 打开开关要过一次密码 / 通行密钥；取消则开关不动、记录不写；
 - 节点 B 的响铃 / watch 命中出现在汇聚机 A 的 webhook 与浏览器 toast 里，文案带「节点：B」，
-  深链为 `<A 的站点>/n/<B>/devices/...`；
+  深链为 `<A 的站点>/n/<B>/devices/...`；点「打开」进 B 的终端，不崩、不把入口当成 self；
 - A 离线 2 分钟内恢复，能收到合并后的补发；离线超过 3 分钟的丢弃并留日志；
 - 纯 standalone 部署行为完全不变。

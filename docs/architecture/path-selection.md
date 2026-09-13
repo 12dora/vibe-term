@@ -1,6 +1,6 @@
-# 跨境路径优选
+# 路径优选与选路模式
 
-本文说明运营商按五元组做 ECMP 时，同一对主机上不同连接为何会差一倍 RTT，以及 VibeTerm 用哪三条机制挑快路；面向排查跨境延迟的运维与改动 `apps/gateway/src/mesh/` 拨号路径的开发者。直连拨号保护见 [节点直连](./peer-direct-connect.md)，中继 uplink 见 [公共中继](./relay.md)。
+本文说明两件事：运营商按五元组做 ECMP 时，同一对主机上不同连接为何会差一倍 RTT、VibeTerm 用哪三条机制挑快路；以及节点间选路模式（智能 / 直连 / 中继）如何在直连与中继之间切换。面向排查跨境延迟的运维与改动 `apps/gateway/src/mesh/` 拨号路径的开发者。直连拨号保护见 [节点直连](./peer-direct-connect.md)，中继 uplink 见 [公共中继](./relay.md)。运维改模式见 [mesh 运维](../operations/mesh-operations.md)。
 
 ## 背景：五元组 ECMP
 
@@ -18,7 +18,60 @@
 
 对 VibeTerm 的含义：peer DataChannel（一条 UDP 流）、ws-secure / hub / 中继 uplink（一条 TCP 流）都可能一开链就落在慢五元组上，之后心跳再准也救不回来——必须换源端口重拨。
 
-下面三条机制都不能**创造**一条物理上不存在的路径；它们只是多掷几次五元组，把已经存在的快路捡出来。
+下面三条机制都不能**创造**一条物理上不存在的路径；它们只是多掷几次五元组，把已经存在的快路捡出来。选路模式决定**要不要继续用这条直连**：UDP 五元组再快，若稳态 RTT 仍远差于中继，智能模式会把流搬到中继。
+
+## 选路模式（延迟优化）
+
+落库键 `gateway_kv` `mesh.routeMode`，契约 `MeshRouteMode`：`auto` | `direct` | `relay`，缺省 / 非法值读成 `auto`（不回写）。进程内单例 `MeshRouteModeStore`（`get` / `set` / `subscribe`），HTTP `GET/PUT /api/settings/mesh-route` 与 CLI 共用，**不**走 `SETTINGS_EVENT`。设置页文案「延迟优化」，三选项：智能 / 直连 / 中继。
+
+| 模式 | 出站拨号 | 升直连 | 入站 dc / ws-secure |
+|---|---|---|---|
+| `direct` | 与既有顺序相同（dc > ws-secure > relay） | 开 | 按原 rank 安装 |
+| `relay` | 只拨中继（`dialRelayOnly`），无 DC / ws 腿 | 关 | **关闭、不安装**（`reason=route-relay`）；2.3.7 对端熔断自行退避 |
+| `auto` | 起步同 `direct` | 降级回退期内关 | 仅**已降级**时 measure-before-install；否则立刻装（兼容 2.3.7） |
+
+### 测量输入
+
+| 量 | 来源 |
+|---|---|
+| 直连 RTT `directMs` | live 为 dc / ws-secure → live ping EWMA（`live.rttMs`）；否则该对端 30 min 窗内 `pathRtt.bestMs(['dc','ws-secure'])` |
+| 中继 RTT `relayMs` | live 为 relay → `live.rttMs`；否则 `chooseRelay.scoreMs`；再否则本端 uplink + 对端 uplink；对端缺失则 **2× 本端 uplink**（`readUplinkRtt`） |
+
+中继 RTT 是两边 uplink 心跳之和，不是未用路径上的 mux ping。`chooseRelay` / `relaysFor` 仍要求 presence `connected`；状态行 `peersOnline` 的计数口径见 [公共中继](./relay.md)。
+
+### 降级（auto，live 为直连）
+
+同时满足才把流搬到中继：
+
+- 连续 **3** 个 ping，且首个慢样本距今 **≥ 15 s**
+- `directMs > max(1.5 × relayMs, relayMs + 40 ms)`
+
+动作：`openRelay` + `forceInstall` relay + `finishRetire(prev, 'retired')`，让 failover 搬家。日志：
+
+```
+[mesh][peer] route_switch peer=… from=dc to=relay direct_ms=… relay_ms=…
+```
+
+回退：起步 **2 min**，失败翻倍，封顶 **30 min**。进程重启或**任何 mode 变更**清零。回退期内 upgrade coordinator 不拨直连。
+
+### 升回（auto 且已降级）
+
+make-before-break：upgrade 拨出的直连**先 hold**，中继继续载流。≥ **3** 个 ping **全部**满足 `directMs < relayMs − max(5 ms, 20% × relayMs)` 才 `forceInstall`；否则关直连并加倍回退。加法项取 5 ms 是为了让 ~15 ms 的快中继上局域网直连仍能升回（20 ms 门槛会变成负数）。切到 `direct` 模式：立刻安装未测完的候选，并 `maybeUpgrade`。
+
+### 本轮限制
+
+- **每对端一条 live**：interactive / bulk 共用这条链路。`decidePath(peerId, streamClass)` 已编码 bulk 门槛（中继须同时好出 40 ms 与 20%），未接双 live。
+- auto **未降级**时，2.3.7 推入的 dc / ws-secure **立刻安装**。首次竞速中继先成、直连后到也立刻升，慢 DC 再靠 15 s 滞环降下去。
+- 无新 ctl / 协议字段。`relay` 模式靠关入站直连让对端熔断退避。
+- 重掷（下节）只在 live 仍是 dc 时发生；`relay` 模式先拆掉 DC live，重掷因 `transport≠dc` 不再起。
+
+### 现网事故（2026-09-13）
+
+`work-mac` ↔ `tmexhub-sh`：ICMP / TLS 443 正常，本机中继上行 ~14 ms、对端上行 ~1 ms，经中继合计 ~15 ms 且稳定。两端之间的 DataChannel 是 UDP 打洞（`srflx`），RTT 从数十毫秒抖到数秒（`reroll_result … better=false`）。终端流固定跟 DC（`failover from=dc to=dc`），出现 `[ws] backpressure enter carrier=mesh_link_stream` 与 `rst … head-timeout`，用户看到卡顿。
+
+当时没有「DC ≫ 中继 ⇒ 把流搬到 relay」的策略；重掷只跟本对端 pathRtt 的 DC / ws-secure / tcp-connect 最佳比，不用中继 uplink。重掷 3/3 全部失败：offerer 新 attempt `stage=no-remote-sdp remote_types=[]`；answerer 把更高 epoch 的 offer **先投给 live PC 残留监听**判 `superseded` 并退订，随后 `interceptOffer` 因应答侧 request 预算耗尽拒收。链路停在坏 DC 上直到 liveness 超时（约 16 min）。次因：应答侧对旧节点 `tmex` 循环应答 offer、占 TURN。
+
+修复分两块：本节约的选路滞环（慢 DC → 中继，不等重掷成功）；下节的重掷协议（先 intercept 再投递、接 offer 与 request 预算解耦、应答侧独立冷却）。`signal dropped cause=fake-ip` 只丢 ICE candidate 的 connection-address ∈ `198.18.0.0/15`，与本次主因无关。
 
 ## 1. WebSocket 开链竞速
 
@@ -84,7 +137,10 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 ### 兼容与开关
 
 - 2.3.1 及更早只在 `link.hello` 里报 `quiesce`，不报 `reroll`。策略因此**永不对旧节点发 DC 重掷 offer**，也**永不发 `link.reroll-request`**（旧节点即使收到未知 `link.*` ctl 也会忽略）。ws-secure 重赛不受这个位限制，但应答侧请求仍要求对端报过 `reroll`。
-- 应答侧靠 `DcRerollCoordinator.interceptOffer()` 接住 **epoch 高于 `LivePeer.rtcEpoch`** 的 offer：先投给旧 attempt 让它 `superseded` 退订，再绕开 `wantsUpgrade` / `aboveDc` 起应答拨号。旧 live session 不被关。epoch ≤ 当前 live epoch 的迟到 offer **不接管、不耗预算、不起 attempt**。
+- 信令通道：`link.reroll-request` 走**现有 DC ctl**；live 已是 `dc` 时 offer / answer / ICE 走**中继 uplink**（`transport !== 'dc'` 才 `sendPeerCtl`）。
+- 应答侧靠 `DcRerollCoordinator.interceptOffer()` 接住 **epoch 高于 `LivePeer.rtcEpoch`** 的 offer。live 已是 dc 时 `receiveRtcSignal` **先 intercept 再投给旧监听**：成功接管的更高 epoch offer 不再送给 live PC 残留 ICE 监听，因此不会被 `superseded` 吞掉并退订。握手成功后 `ignoreNewerOffers = true`，live PC 对更高 epoch offer 只 `dropped cause=established`，不 `superseded`、不退订。在途（未建成）answerer PC 仍 superseded。epoch ≤ 当前 live epoch 的迟到 offer **不接管、不起 attempt**。
+- **接 offer 与 request 预算解耦**：`count=3` 且距上次 > 90 s 仍应答更高 epoch offer。预算只限制本端 `start` / `requestReroll`。未主动 request 时接 offer 仍 `count++`（避免同一小时再去 request）；应答自己发出的 request 不二次记账。真正拒绝打 info `reroll_offer_ignored peer=… reason=<epoch|inflight|not-capable|inbox-full|role|cooldown>`；`dialDcReroll` 返回 null 时丢掉刚入队的 offer，避免 inbox 黑洞。
+- **应答冷却**（与 offerer 熔断分立）：同一对端连续 **3** 次 peer-initiated timeout（含原先不计入主熔断的 `no-remote-sdp`）后忽略其 offer，冷却 30 s → 2 min → 10 min，日志 `answerer_backoff`。建成 / healthy / reset 清零。回应**本端** `reroll-request` 的 offer 绕过该冷却。主熔断冷却时仍应能接合法重掷。
 - 重掷 offer 尚未到达时，更高 epoch 的 ICE 候选写入 `rtcInbox`（`LivePeer.rtcEpoch`，条目 30 s TTL，候选最多 16 条），避免被旧 attempt 监听吞掉；offer 落定后清掉 epoch 不匹配的候选。
 - `VIBETERM_DC_REROLL=off`：本端既不触发，也不报 `reroll` 能力位——任一端关掉，这对节点就不会 DC 重掷。采样（path RTT 记忆）不受影响。需重启。
 - 手动入口：`PeerManager.rerollDc(nodeId)`（只跳过 RTT 阈值，其余门照旧）。
@@ -96,12 +152,14 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 [mesh][rtc] reroll_request peer=<id8> transport=dc|ws-secure cur_ms=<n> best_ms=<n> try=<k>/3
 [mesh][rtc] reroll_result peer=<id8> transport=dc|ws-secure old_ms=<n> new_ms=<n> better=<true|false>
 [mesh][rtc] reroll_rehome peer=<id8> transport=dc|ws-secure streams=<n> gain_pct=<n>
+[mesh][rtc] reroll_offer_ignored peer=<id8> reason=epoch|inflight|not-capable|inbox-full|role|cooldown
+[mesh][rtc] answerer_backoff peer=<id8> cooldown_ms=<n> consecutive=3
 [mesh][rtc] dc reroll disabled by VIBETERM_DC_REROLL=off
 ```
 
 `reroll_request` 在应答侧发出请求时打（预算在此时消耗）。offerer 收到后校验（活链路、transport 一致、本端是 initiator、已协商 quiesce、无在途拨号、熔断放行、本端预算未尽、距上次重掷 ≥ 60 s）；通过则 `reroll … reason=peer-request`，`old_ms` 取请求里的 `currentMs`。两端预算各 3/小时，peer-request 也记入 offerer 的次数。接收端不论校验成败，每对端 60 s 最多处理 1 条请求（多余 debug `reroll_request_ignored reason=rate`）。
 
-配套：`[mesh][rtc] dial start … port_range=… epoch=…`（debug，看新端口对）、`signal dropped … cause=superseded|epoch-mismatch`（旧 attempt 被淘汰、旧链路仍在）、`reroll_stale`（ws-secure 重掷 track 前 live 已换人）、`[mesh][stream] failover_start … cause=stream_close close_reason=retired` / `failover_done`（搬流生效）。
+配套：`[mesh][rtc] dial start … port_range=… epoch=…`（debug，看新端口对）、`signal dropped … cause=superseded|epoch-mismatch|established`（旧 attempt 被淘汰、已建成 live 忽略更高 epoch offer、旧链路仍在）、`reroll_stale`（ws-secure 重掷 track 前 live 已换人）、`[mesh][stream] failover_start … cause=stream_close close_reason=retired` / `failover_done`（搬流生效）。
 
 `GET /api/mesh/nodes` **不**暴露 reroll 计数；看日志即可。
 
@@ -153,10 +211,11 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 
 ## 限制与关闭
 
-- **不能创造不存在的路径。** 两边都只有绕行时，竞速 / 重掷 / 重赛只会反复落到同一条慢路上，预算耗尽后停手。
+- **不能创造不存在的路径。** 两边都只有绕行时，竞速 / 重掷 / 重赛只会反复落到同一条慢路上，预算耗尽后停手。UDP 直连整体差于中继时，靠选路模式的滞环搬到中继，不要指望重掷换出一条不存在的快 UDP。
 - **NAT 表压力。** `race=2` 让每次公网拨号的出站 TCP 翻倍（最多 `endpoints × race`）。现网 NAT 表紧张时设 `VIBETERM_WS_DIAL_RACE=1` 即时回退（需重启）。
 - **关掉某一条**：
   - 开链竞速：`VIBETERM_WS_DIAL_RACE=1`
   - 直连重掷：`VIBETERM_DC_REROLL=off`（采样仍在）
   - 上行采样 + 重赛：`VIBETERM_UPLINK_PATH_SAMPLING=off`
 - 三个键都不进 `config.ts`，mesh 模块本地读 env。
+- 选路模式：设置页「延迟优化」或 `vibeterm settings mesh route-mode set auto|direct|relay`；`relay` 强制走中继，`direct` 维持只重掷 DC、不因中继更快而降级。
