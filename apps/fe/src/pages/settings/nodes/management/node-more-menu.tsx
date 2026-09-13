@@ -11,7 +11,7 @@ import {
 import { Ellipsis, Loader2, Pause, Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { pauseBlockReason, pauseBlockTitle } from './pause-eligibility';
-import { useNodePause } from './use-node-pause';
+import { defaultPauseIo, useNodePause } from './use-node-pause';
 
 export interface NodeMoreMenuListProps {
   row: Pick<NodeRow, 'id'>;
@@ -71,8 +71,8 @@ export function NodeMoreMenu({
   onDetail: () => void;
 }) {
   const { t } = useTranslation();
-  const { busy, paused, toggle } = useNodePause(row, onChanged);
-  const reason = pauseBlockReason(row, pathname);
+  const { busy, paused, toggle } = useNodePause(row, onChanged, defaultPauseIo, pathname);
+  const reason = pauseBlockReason(row, pathname, paused ? 'resume' : 'pause');
   const blocked = reason !== null;
   return (
     <DropdownMenu>
@@ -90,7 +90,13 @@ export function NodeMoreMenu({
           paused={paused}
           pauseDisabled={blocked || busy}
           pauseBusy={busy}
-          pauseTitle={blocked ? pauseBlockTitle(reason, t) : t('nodes.pause.hint')}
+          pauseTitle={
+            busy
+              ? t('nodes.pause.busy')
+              : blocked
+                ? pauseBlockTitle(reason, t)
+                : t('nodes.pause.hint')
+          }
           labels={{
             detail: t('nodes.actions.detail'),
             pause: t(paused ? 'nodes.actions.resume' : 'nodes.actions.pause'),

@@ -1152,26 +1152,63 @@ describe('行内「更多」菜单', () => {
     expect(JSON.stringify(items[1].props.children)).toContain('暂停');
   });
 
-  test('Hub / 本机：暂停项禁用并带原因；已暂停显示恢复', () => {
-    const list = NodeMoreMenuList({
+  test('Hub 暂停项禁用并带原因；已暂停 Hub 的恢复项可点', () => {
+    const blocked = NodeMoreMenuList({
       row: { id: 'hub' },
-      paused: true,
+      paused: false,
       pauseDisabled: true,
       pauseTitle: 'nodes.pause.hubBlocked',
+      labels: { detail: '详情', pause: '暂停' },
+      onDetail: () => undefined,
+      onPause: () => undefined,
+    }) as ReactElement<{ children?: ReactNode }>;
+    const blockedItems = Children.toArray(blocked.props.children) as ReactElement<{
+      disabled?: boolean;
+      title?: string;
+      'data-paused'?: string;
+      children?: ReactNode;
+    }>[];
+    expect(blockedItems[1].props.disabled).toBe(true);
+    expect(blockedItems[1].props.title).toBe('nodes.pause.hubBlocked');
+    expect(blockedItems[1].props['data-paused']).toBe('false');
+
+    const resume = NodeMoreMenuList({
+      row: { id: 'hub' },
+      paused: true,
+      pauseDisabled: false,
+      pauseTitle: 'nodes.pause.hint',
       labels: { detail: '详情', pause: '恢复' },
+      onDetail: () => undefined,
+      onPause: () => undefined,
+    }) as ReactElement<{ children?: ReactNode }>;
+    const resumeItems = Children.toArray(resume.props.children) as ReactElement<{
+      disabled?: boolean;
+      title?: string;
+      'data-paused'?: string;
+      children?: ReactNode;
+    }>[];
+    expect(resumeItems[1].props.disabled).toBe(false);
+    expect(resumeItems[1].props['data-paused']).toBe('true');
+    expect(JSON.stringify(resumeItems[1].props.children)).toContain('恢复');
+  });
+
+  test('在途时暂停项禁用并标 busy', () => {
+    const list = NodeMoreMenuList({
+      row: { id: 'qq' },
+      paused: false,
+      pauseDisabled: true,
+      pauseBusy: true,
+      pauseTitle: 'nodes.pause.busy',
+      labels: { detail: '详情', pause: '暂停' },
       onDetail: () => undefined,
       onPause: () => undefined,
     }) as ReactElement<{ children?: ReactNode }>;
     const items = Children.toArray(list.props.children) as ReactElement<{
       disabled?: boolean;
       title?: string;
-      'data-paused'?: string;
-      children?: ReactNode;
     }>[];
     expect(items[1].props.disabled).toBe(true);
-    expect(items[1].props.title).toBe('nodes.pause.hubBlocked');
-    expect(items[1].props['data-paused']).toBe('true');
-    expect(JSON.stringify(items[1].props.children)).toContain('恢复');
+    expect(items[1].props.title).toBe('nodes.pause.busy');
   });
 });
 

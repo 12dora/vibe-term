@@ -3,7 +3,7 @@ import { wsBorsh } from '@vibeterm/shared';
 import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@vibeterm/shared/auth';
 import { FakePeers, NODE_ID, bootMesh, call, challengeAndLogin } from './auth-routes.test';
 import { MESH_WS_KIND, type MeshServerWebSocket } from './mesh-deps';
-import { resetNodePauseForTests } from './node-pause';
+import { resetNodePauseForTests, setNodePaused } from './node-pause';
 
 const PEER_ID = 'cc'.repeat(16);
 
@@ -96,7 +96,7 @@ describe('mesh pause/resume routes', () => {
     }
   });
 
-  test('pause is 400 for hub-role nodes', async () => {
+  test('pause is 400 for hub-role nodes; resume of an already-paused hub is 200', async () => {
     const mesh = await bootMesh({ peers: new FakePeers() });
     try {
       enrollPeer(mesh, PEER_ID, 'studio');
@@ -124,6 +124,25 @@ describe('mesh pause/resume routes', () => {
       });
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({ code: 'CANNOT_PAUSE_HUB' });
+
+      setNodePaused(PEER_ID, true);
+      const resumed = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${PEER_ID}/resume`,
+        { method: 'POST', ...cookie }
+      );
+      expect(resumed.status).toBe(200);
+      expect(
+        ((await resumed.json()) as { node: { paused?: boolean } }).node.paused
+      ).toBeUndefined();
+
+      const pauseAgain = await call(
+        mesh.runtime,
+        `http://localhost/api/mesh/nodes/${PEER_ID}/pause`,
+        { method: 'POST', ...cookie }
+      );
+      expect(pauseAgain.status).toBe(400);
+      expect(await pauseAgain.json()).toMatchObject({ code: 'CANNOT_PAUSE_HUB' });
     } finally {
       mesh.close();
     }

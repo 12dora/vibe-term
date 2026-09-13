@@ -77,7 +77,7 @@ function handlePauseResume(
   // 先确认节点仍在列表里再落库，避免校验与收集之间节点被移除时留下孤立偏好
   const listed = host.collectNodes(req).find((row) => row.id === nodeId);
   if (!listed) return jsonError('NODE_NOT_FOUND', 404);
-  if (listed.isHub) return jsonError('CANNOT_PAUSE_HUB', 400);
+  if (listed.isHub && paused) return jsonError('CANNOT_PAUSE_HUB', 400);
   setNodePaused(nodeId, paused);
   if (paused) dropPausedPeerLink(nodeId);
   const node = { ...listed, paused: paused || undefined };

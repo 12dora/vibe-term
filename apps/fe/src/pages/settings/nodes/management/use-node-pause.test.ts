@@ -6,11 +6,15 @@ import {
   setMeshNodesStateForTest,
 } from '@/node/mesh-nodes';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import { isPauseInflight, resetPauseInflightForTest } from './pause-inflight';
 import { createPauseIo, pauseErrorText, runPauseBatch, toggleNodePause } from './use-node-pause';
 
 type PauseCall = { id: string; action: 'pause' | 'resume' };
 
-afterEach(() => resetMeshNodesStateForTest());
+afterEach(() => {
+  resetMeshNodesStateForTest();
+  resetPauseInflightForTest();
+});
 
 function mesh(id: string, paused = false): MeshNode {
   return {
@@ -135,5 +139,68 @@ describe('pauseErrorText / runPauseBatch', () => {
     expect(isMeshNodePaused(getMeshNodesState().nodes.find((n) => n.id === 'a'))).toBe(true);
     expect(isMeshNodePaused(getMeshNodesState().nodes.find((n) => n.id === 'b'))).toBe(false);
     expect(isMeshNodePaused(getMeshNodesState().nodes.find((n) => n.id === 'c'))).toBe(true);
+  });
+});
+
+describe('pause in-flight guard', () => {
+  test('行 toggle 在途时批量相反动作不再 POST', async () => {
+    setMeshNodesStateForTest({ nodes: [mesh('n1', true)] });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const posts: PauseCall[] = [];
+    const io = {
+      post: async (id: string, action: 'pause' | 'resume') => {
+        posts.push({ id, action });
+        await gate;
+      },
+    };
+    const first = toggleNodePause({ id: 'n1', paused: true }, io, () => undefined);
+    expect(isPauseInflight('n1')).toBe(true);
+    expect(posts).toEqual([{ id: 'n1', action: 'resume' }]);
+    expect(isMeshNodePaused(getMeshNodesState().nodes[0])).toBe(false);
+
+    try {
+      const batch = await runPauseBatch(
+        [{ id: 'n1', paused: false }],
+        'pause',
+        io,
+        () => undefined
+      );
+      expect(posts).toEqual([{ id: 'n1', action: 'resume' }]);
+      expect(batch).toEqual({ succeeded: 0, failed: 0 });
+    } finally {
+      release();
+      await first;
+    }
+    expect(isPauseInflight('n1')).toBe(false);
+  });
+
+  test('批量在途时行 toggle 不再 POST', async () => {
+    setMeshNodesStateForTest({ nodes: [mesh('n1')] });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const posts: PauseCall[] = [];
+    const io = {
+      post: async (id: string, action: 'pause' | 'resume') => {
+        posts.push({ id, action });
+        await gate;
+      },
+    };
+    const first = runPauseBatch([{ id: 'n1' }], 'pause', io, () => undefined);
+    expect(isPauseInflight('n1')).toBe(true);
+    expect(posts).toEqual([{ id: 'n1', action: 'pause' }]);
+
+    try {
+      await toggleNodePause({ id: 'n1', paused: true }, io, () => undefined);
+      expect(posts).toEqual([{ id: 'n1', action: 'pause' }]);
+    } finally {
+      release();
+      await first;
+    }
+    expect(isPauseInflight('n1')).toBe(false);
   });
 });

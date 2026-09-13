@@ -9,11 +9,13 @@ import { refreshMeshNodes, setNodePaused } from '@/node/mesh-nodes-store';
 import { defaultApiClient } from '@vibeterm/api-client';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { type PauseAction, pauseBlockReason } from './pause-eligibility';
+import { beginPauseInflight, endPauseInflight, useIsPauseInflight } from './pause-inflight';
 
-export type PauseAction = 'pause' | 'resume';
+export type { PauseAction };
 
 type FetchLike = (path: string, init?: RequestInit) => Promise<Response>;
 
@@ -80,14 +82,18 @@ export async function applyNodePause(
   paused: boolean,
   io: PauseIo,
   refresh: () => void = () => refreshMeshNodes()
-): Promise<void> {
+): Promise<boolean> {
+  if (!beginPauseInflight(row.id)) return false;
   setNodePaused(row.id, paused);
   try {
     await io.post(row.id, paused ? 'pause' : 'resume');
     refresh();
+    return true;
   } catch (err) {
     setNodePaused(row.id, isMeshNodePaused(row));
     throw err;
+  } finally {
+    endPauseInflight(row.id);
   }
 }
 
@@ -110,8 +116,8 @@ export async function runPauseBatch(
   const paused = action === 'pause';
   for (const row of rows) {
     try {
-      await applyNodePause(row, paused, io, () => undefined);
-      succeeded += 1;
+      const applied = await applyNodePause(row, paused, io, () => undefined);
+      if (applied) succeeded += 1;
     } catch {
       failed += 1;
     }
@@ -120,22 +126,25 @@ export async function runPauseBatch(
   return { failed, succeeded };
 }
 
-export function useNodePause(row: NodeRow, onChanged: () => void, io: PauseIo = defaultPauseIo) {
+export function useNodePause(
+  row: NodeRow,
+  onChanged: () => void,
+  io: PauseIo = defaultPauseIo,
+  pathname = '/'
+) {
   const { t } = useTranslation();
-  const [busy, setBusy] = useState(false);
+  const busy = useIsPauseInflight(row.id);
   const paused = isMeshNodePaused(row);
+  const action: PauseAction = paused ? 'resume' : 'pause';
 
   const toggle = useCallback(async () => {
-    if (row.isSelf || row.pending || row.isHub || busy) return;
-    setBusy(true);
+    if (busy || pauseBlockReason(row, pathname, action) !== null) return;
     try {
       await toggleNodePause(row, io, onChanged);
     } catch (err) {
       toast.error(pauseErrorText(t, err));
-    } finally {
-      setBusy(false);
     }
-  }, [busy, io, onChanged, row, t]);
+  }, [action, busy, io, onChanged, pathname, row, t]);
 
   return { busy, paused, toggle };
 }

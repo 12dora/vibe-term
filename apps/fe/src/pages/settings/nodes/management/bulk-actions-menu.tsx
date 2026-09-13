@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { toast } from 'sonner';
 import { eligiblePauseRows, eligibleResumeRows } from './pause-eligibility';
+import { usePauseInflightGeneration } from './pause-inflight';
 import type { NodeUninstallController, NodeUpgradeController } from './types';
 import { isBatchEligible } from './upgrade-batch';
 import { defaultPauseIo, runPauseBatch } from './use-node-pause';
@@ -81,7 +82,7 @@ export interface BulkMenuInput {
   blockedHint: string;
   uninstallRunning: boolean;
   revoking: boolean;
-  /** 选中行里可以暂停 / 恢复的台数（已排除本机、Hub、当前转发节点）。 */
+  /** 选中行里可以暂停 / 恢复的台数（暂停排除本机、Hub、当前转发节点；恢复排除本机与待批准；在途节点两边都不算）。 */
   eligiblePauseCount: number;
   eligibleResumeCount: number;
   /** 批量暂停 / 恢复正在跑。 */
@@ -309,6 +310,7 @@ export function BulkActionsMenu({
 }) {
   const { t } = useTranslation();
   const pathname = useLocation().pathname;
+  usePauseInflightGeneration();
   const [pauseBusy, setPauseBusy] = useState(false);
   const latestVersion = upgrade.latest?.latestVersion ?? null;
   const targets = bulkUpgradeTargets(rows, selfRow, latestVersion);
