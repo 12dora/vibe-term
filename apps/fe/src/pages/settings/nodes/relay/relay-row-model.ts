@@ -7,7 +7,11 @@
 //   与 TURN；「设为主中继」是行尾的一个动作，主中继那行禁用。
 
 import { relayPeersOnlineOf, relayRoleOf, relayTurnOf } from '@/node/relay-extras';
-import type { RelayAttachRole, RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
+import type {
+  RelayAttachRole,
+  RelayAutoSelectView,
+  RelayLinkStatus,
+} from '@vibeterm/api-client/relay/tenant-api';
 
 /**
  * `turn:relay.example.com:3478?transport=udp` → `relay.example.com:3478`。
@@ -59,6 +63,78 @@ export function relayRoleBadge(row: RelayLinkStatus): RelayBadgeSpec {
   const role = relayRoleOf(row);
   if (!role) return { key: 'relay.tenant.strip.roleDetached', variant: 'outline' };
   return { key: ROLE_KEYS[role], variant: role === 'primary' ? 'default' : 'outline' };
+}
+
+/**
+ * 身份徽标之后的那一枚：这条主中继是**被固定的**还是**自动优选选出来的**。
+ *
+ * 两者互斥且固定优先：固定期间自动优选整个冻结，此时再摆「自动优选」只会误导。
+ * 固定的那条即便暂时不是主中继（目标离线、已 failover 到别条）也照摆——
+ * 它解释了链路恢复后为什么会自己切回去。旧网关两个字段都不下发，一枚都不出。
+ */
+export function relayPinBadge(row: RelayLinkStatus): RelayBadgeSpec | null {
+  if (row.pinned === true) return { key: 'relay.tenant.strip.pinned', variant: 'outline' };
+  if (row.autoSelected === true && relayRoleOf(row) === 'primary') {
+    return { key: 'relay.tenant.strip.autoSelected', variant: 'outline' };
+  }
+  return null;
+}
+
+export interface RelayScoreHint {
+  key: string;
+  params: { ms: number };
+  /** 悬停解释：这个数越小越好，不是延迟。 */
+  titleKey: string;
+}
+
+/**
+ * 自动优选打分。它不是延迟——延迟只是其中一项，还叠了路径与负载——所以紧跟在延迟后面
+ * 另起一段，并带上「越小越好」的悬停解释。未连接 / 样本不足（网关不下发）时不出。
+ */
+export function relayScoreHint(row: RelayLinkStatus): RelayScoreHint | null {
+  if (!row.online) return null;
+  const score = row.score;
+  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0) return null;
+  return {
+    key: 'relay.tenant.strip.score',
+    params: { ms: Math.round(score) },
+    titleKey: 'relay.tenant.strip.scoreTitle',
+  };
+}
+
+export interface RelayAutoSelectState {
+  /** `pinned` 给出「取消固定」，`auto` 只是一句陈述，`none` 整行不出。 */
+  kind: 'pinned' | 'auto' | 'none';
+  hintKey: string | null;
+  /** 自动优选上次换主的时刻；未换过或已固定时为 `null`。 */
+  lastSwitchAt: number | null;
+}
+
+const AUTO_SELECT_NONE: RelayAutoSelectState = { kind: 'none', hintKey: null, lastSwitchAt: null };
+
+/**
+ * 卡片上那一行「固定 / 自动优选」的状态。
+ *
+ * 固定优先：`preferredUrl` 一旦有值，自动优选就是冻结的，界面必须先说清这件事，
+ * 否则用户会以为「自动优选已开启」还在起作用。旧网关两个字段都缺，整行不出。
+ */
+export function relayAutoSelectState(view: {
+  preferredUrl?: string | null;
+  autoSelect?: RelayAutoSelectView;
+}): RelayAutoSelectState {
+  if (typeof view.preferredUrl === 'string' && view.preferredUrl.length > 0) {
+    return { kind: 'pinned', hintKey: 'relay.tenant.autoSelect.pinnedHint', lastSwitchAt: null };
+  }
+  if (view.autoSelect?.enabled !== true) return AUTO_SELECT_NONE;
+  return {
+    kind: 'auto',
+    hintKey: 'relay.tenant.autoSelect.on',
+    lastSwitchAt:
+      typeof view.autoSelect.lastSwitchAt === 'number' &&
+      Number.isFinite(view.autoSelect.lastSwitchAt)
+        ? view.autoSelect.lastSwitchAt
+        : null,
+  };
 }
 
 /**

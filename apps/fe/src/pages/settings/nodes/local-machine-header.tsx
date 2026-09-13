@@ -157,6 +157,7 @@ export function LocalMachineMenuList({
                 key={item.key}
                 {...(item.destructive ? { variant: 'destructive' as const } : {})}
                 disabled={item.disabled === true}
+                title={item.title}
                 onClick={item.onSelect}
                 data-testid={item.testId}
               >

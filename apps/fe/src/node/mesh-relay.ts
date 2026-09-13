@@ -52,6 +52,8 @@ const EMPTY_STATE: MeshRelayState = {
   awaitingToken: false,
   readmitPending: 0,
   metaKeyLagging: [],
+  preferredUrl: null,
+  autoSelect: { enabled: false, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
   loading: false,
   error: null,
   loadedAt: null,
@@ -211,6 +213,18 @@ export async function switchMeshRelay(
     unsupported: false,
     loadedAt: Date.now(),
   });
+}
+
+/**
+ * 取消固定主中继（`POST /unpin`）后重拉一次状态。
+ *
+ * 与切换同样要推代数：在途的那次 `/status` 带回的仍是「已固定」，落进 store 会把刚取消的
+ * 固定徽标扳回去，一扳就是一整拍。接口只回 `{ok:true}`，状态得自己再拉。
+ */
+export async function unpinMeshRelay(api: RelayTenantApi = defaultRelayTenantApi): Promise<void> {
+  await api.unpinRelay();
+  generation += 1;
+  await refreshMeshRelay(api);
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import {
   resetMeshRelayStateForTest,
   setMeshRelayStateForTest,
   switchMeshRelay,
+  unpinMeshRelay,
 } from './mesh-relay';
 
 // store 是宿主级单例，同一进程里的其它测试文件也读它：每个用例跑完必须归零。
@@ -54,7 +55,9 @@ function apiOf(impl: () => Promise<RelayTenantStatus>): RelayTenantApi {
   return { status: impl } as unknown as RelayTenantApi;
 }
 
-function apiWith(parts: Partial<Record<'status' | 'switchRelay', unknown>>): RelayTenantApi {
+function apiWith(
+  parts: Partial<Record<'status' | 'switchRelay' | 'unpinRelay', unknown>>
+): RelayTenantApi {
   return parts as unknown as RelayTenantApi;
 }
 
@@ -187,6 +190,66 @@ describe('switchMeshRelay', () => {
 
     await expect(switchMeshRelay('https://b.example', api)).rejects.toThrow();
     expect(attachedRelay(getMeshRelayState())?.url).toBe('https://a.example');
+  });
+});
+
+describe('unpinMeshRelay', () => {
+  beforeEach(() => {
+    resetMeshRelayStateForTest();
+  });
+
+  test('取消固定后自己重拉一次状态：接口只回 {ok:true}', async () => {
+    let unpinned = 0;
+    const api = apiWith({
+      unpinRelay: () => {
+        unpinned += 1;
+        return Promise.resolve();
+      },
+      status: () =>
+        Promise.resolve(
+          status({ preferredUrl: null, relays: [link('https://a.example', { attached: true })] })
+        ),
+    });
+
+    await unpinMeshRelay(api);
+
+    expect(unpinned).toBe(1);
+    const state = getMeshRelayState();
+    expect(state.preferredUrl).toBeNull();
+    expect(state.loadedAt).not.toBeNull();
+  });
+
+  test('取消固定之前在途的那次 /status 带回的「已固定」不许落进 store', async () => {
+    const stale = deferred<RelayTenantStatus>();
+    let calls = 0;
+    const api = apiWith({
+      unpinRelay: () => Promise.resolve(),
+      status: () => {
+        calls += 1;
+        return calls === 1 ? stale.promise : Promise.resolve(status({ preferredUrl: null }));
+      },
+    });
+
+    const polling = refreshMeshRelay(api);
+    await unpinMeshRelay(api);
+    stale.resolve(status({ preferredUrl: 'https://a.example' }));
+    await polling;
+
+    expect(getMeshRelayState().preferredUrl).toBeNull();
+  });
+
+  test('POST 失败时不刷状态，错误原样抛出', async () => {
+    let statusCalls = 0;
+    const api = apiWith({
+      unpinRelay: () => Promise.reject(new RelayApiError('RELAY_UNPIN_FAILED', 'boom', 500)),
+      status: () => {
+        statusCalls += 1;
+        return Promise.resolve(status());
+      },
+    });
+
+    await expect(unpinMeshRelay(api)).rejects.toThrow();
+    expect(statusCalls).toBe(0);
   });
 });
 

@@ -108,6 +108,54 @@ describe('中继链路与操作', () => {
   });
 });
 
+describe('固定与自动优选那一行', () => {
+  const TOKYO = link({ url: 'https://tokyo.example', attached: false, priority: 2 });
+  function multi(overrides: Partial<UseMeshRelayResult> = {}): string {
+    const relays = [link(), TOKYO];
+    return render({
+      relay: { ...RELAY_MODE, relays, ordered: relays, multiAttach: true, ...overrides },
+    });
+  }
+
+  test('已固定：一句「自动优选暂停」加一个「取消固定」', () => {
+    const html = multi({ preferredUrl: 'https://relay.example.com' });
+    expect(html).toContain('data-relay-auto-select="pinned"');
+    expect(html).toContain('relay.tenant.autoSelect.pinnedHint');
+    expect(html).toContain('data-testid="nodes-relay-unpin"');
+    expect(html).toContain('relay.tenant.autoSelect.unpin');
+  });
+
+  test('未固定且自动优选开着：只有一句陈述，没有按钮', () => {
+    const html = multi({
+      autoSelect: { enabled: true, lastSwitchAt: null, switchReason: null, nextEvalAt: null },
+    });
+    expect(html).toContain('data-relay-auto-select="auto"');
+    expect(html).toContain('relay.tenant.autoSelect.on');
+    expect(html).not.toContain('data-testid="nodes-relay-unpin"');
+  });
+
+  test('换过主的话带上「上次切换」的相对时间', () => {
+    const html = multi({
+      autoSelect: {
+        enabled: true,
+        lastSwitchAt: Date.now() - 3 * 60_000,
+        switchReason: 'auto-rtt',
+        nextEvalAt: null,
+      },
+    });
+    expect(html).toContain('relay.tenant.autoSelect.lastSwitch');
+  });
+
+  test('自动优选没开、也没固定时整行不出', () => {
+    expect(multi()).not.toContain('data-testid="nodes-relay-auto-select"');
+  });
+
+  test('单条中继不摆这一行：没什么可优选、也没什么可固定的', () => {
+    const html = render({ relay: { ...RELAY_MODE, preferredUrl: 'https://relay.example.com' } });
+    expect(html).not.toContain('data-testid="nodes-relay-auto-select"');
+  });
+});
+
 describe('接入本机中继的入口', () => {
   // 中继角色（`relay` / `relay,node`）还没以租户身份接上自己的中继时，「连接」段只有这一块：
   // 一句陈述加一个预填好地址的按钮。全卡只此一处，链路面板里绝不重复。

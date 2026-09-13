@@ -5,6 +5,7 @@
 
 import type { LocalRole } from '@vibeterm/api-client/local/types';
 import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
+import { RELAY_RECORD_MAX_RELAYS } from '@vibeterm/shared/auth';
 import { isRelayRole } from '../membership/role-transition';
 import { relayActionMenu } from './relay-targets';
 
@@ -16,6 +17,8 @@ export interface ConnectMenuItem {
   testId: string;
   destructive?: boolean;
   disabled?: boolean;
+  /** 禁用时的悬停解释；没有理由可说时缺席。 */
+  title?: string;
   onSelect: () => void;
 }
 
@@ -47,11 +50,20 @@ function relayTenantItems(
   state: ConnectMenuState,
   handlers: ConnectMenuHandlers
 ): ConnectMenuItem[] {
+  // 满 16 条时先禁掉：`set-relays` 的协议上限就是这个数，再签一条也只会在中继侧
+  // 以 `malformed_payload` 告终，那时用户已经把接入密码输完了。
+  const full = state.relays.length >= RELAY_RECORD_MAX_RELAYS;
   const items: ConnectMenuItem[] = [
     {
       key: 'relay-add',
       label: t('relay.tenant.actions.add'),
       testId: 'nodes-relay-add',
+      ...(full
+        ? {
+            disabled: true,
+            title: t('relay.tenant.actions.addMax', { n: RELAY_RECORD_MAX_RELAYS }),
+          }
+        : {}),
       onSelect: handlers.addRelay,
     },
   ];

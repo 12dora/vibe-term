@@ -5,11 +5,13 @@
 //
 // 多条中继时切换不在菜单里：单挂载下链路行本身就是选择器，点哪条就切到哪条；
 // 多条同时挂载时行不再是单选，改由行尾的「设为主中继」发起（见 `relay-rows.tsx`）。
+// 「设为主中继」会把那条固定住，取消固定（恢复自动优选）是链路行下面那一行的事。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import { useTranslation } from 'react-i18next';
 import { Notice, NoticeAction } from '../card-parts';
 import { Row } from '../copy-feedback';
+import { RelayAutoSelectLine } from '../relay/relay-auto-select';
 import { relayNotices } from '../relay/relay-notices';
 import { RelayRows } from '../relay/relay-rows';
 import { RelaySwitchDialog } from '../relay/relay-switch-dialog';
@@ -32,6 +34,11 @@ export function RelayUplinkPanel({ relay, actions }: RelayUplinkPanelProps) {
       <Row label={t('nodes.machine.upstream')}>
         <RelayRows relays={relay.ordered} onSelect={switching.request} multiAttach={multiAttach} />
       </Row>
+      <RelayAutoSelectLine
+        preferredUrl={relay.preferredUrl}
+        autoSelect={relay.autoSelect}
+        multiAttach={multiAttach}
+      />
       <RelaySwitchDialog controller={switching} multiAttach={multiAttach} />
       <RelayNoticeList relay={relay} actions={actions} />
     </div>

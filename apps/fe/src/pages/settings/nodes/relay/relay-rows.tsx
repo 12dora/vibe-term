@@ -3,7 +3,8 @@
 // 两种形态（判据见 `relay-row-model.ts` 的 `isMultiAttachView`）：
 // - 单条中继 / 旧网关：一个状态点加一个主机名——「在线 / 延迟多少」卡头那枚徽标已经说过了。
 //   多于一条时行本身是选择器，点哪条切哪条；这时每行补一句「离线」或延迟，否则没法比较着挑。
-// - 多条同时挂载：每条都连着，行不再是单选——身份 / 延迟 / 在线对端数 / TURN 交给 `Segments`
+// - 多条同时挂载：每条都连着，行不再是单选——身份 / 固定或自动优选 / 延迟 / 打分 /
+//   在线对端数 / TURN 交给 `Segments`
 //   （宽屏 `·` 串成一句、窄屏一段一行），行尾一个「设为主中继」，主中继那条禁用。
 
 import { TONE_CLASS } from '@/lib/tone';
@@ -14,12 +15,15 @@ import { useTranslation } from 'react-i18next';
 import { type SegmentItem, Segments } from '../copy-feedback';
 import {
   type RelayBadgeSpec,
+  type RelayScoreHint,
   type RelayTurnChip,
   canSetPrimary,
   isMultiAttachView,
   relayPeersBadge,
+  relayPinBadge,
   relayRoleBadge,
   relayRttBadge,
+  relayScoreHint,
   relayTurnChip,
 } from './relay-row-model';
 
@@ -212,6 +216,8 @@ function attachedSegments(
   role: RelayBadgeSpec
 ): SegmentItem[] {
   const rtt = relayRttBadge(relay);
+  const pin = relayPinBadge(relay);
+  const score = relayScoreHint(relay);
   const peers = relayPeersBadge(relay);
   const turn = relayTurnChip(relay);
   const items: SegmentItem[] = [
@@ -229,8 +235,14 @@ function attachedSegments(
       node: <RelayFact spec={role} testId={`nodes-relay-role-${host}`} />,
     },
   ];
+  if (pin) {
+    items.push({ key: 'pin', node: <RelayFact spec={pin} testId={`nodes-relay-pin-${host}`} /> });
+  }
   if (rtt) {
     items.push({ key: 'rtt', node: <RelayFact spec={rtt} testId={`nodes-relay-rtt-${host}`} /> });
+  }
+  if (score) {
+    items.push({ key: 'score', node: <RelayScore hint={score} host={host} /> });
   }
   if (peers) {
     items.push({
@@ -254,6 +266,20 @@ function attachedSegments(
     });
   }
   return items;
+}
+
+/** 打分紧跟延迟：同为一串数字，靠 `title` 说明它不是往返时延。 */
+function RelayScore({ hint, host }: { hint: RelayScoreHint; host: string }) {
+  const { t } = useTranslation();
+  return (
+    <span
+      className="whitespace-nowrap text-muted-foreground"
+      title={t(hint.titleKey)}
+      data-testid={`nodes-relay-score-${host}`}
+    >
+      {t(hint.key, hint.params)}
+    </span>
+  );
 }
 
 function turnTextClass(tone: RelayTurnChip['tone']): string {
