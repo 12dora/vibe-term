@@ -1,7 +1,7 @@
 // settings 各组的请求体拼装。
 
 import type { FlagValues } from './args';
-import { flagBool, flagString } from './args';
+import { flagBool, flagString, flagStrings } from './args';
 import {
   coerceScalar,
   mergeBody,
@@ -12,6 +12,14 @@ import {
 } from './cmd';
 import type { CliContext } from './context';
 import { UsageError } from './errors';
+
+export function splitCsv(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
 
 const SITE_KEYS = new Set([
   'siteName',
@@ -120,6 +128,79 @@ export function enabledFromFlags(flags: FlagValues, positional?: string): boolea
   throw new UsageError('missing on|off', 'pass on/off or --enabled true|false');
 }
 
+const SEARCH_PROVIDERS = new Set(['none', 'tavily', 'brave']);
+
+export async function llmProviderModelsBody(flags: FlagValues): Promise<Record<string, unknown>> {
+  const extra = await optionalObjectBody(flags);
+  const manual = flagString(flags, 'manual');
+  const disabled = flagString(flags, 'disable');
+  const clearManual = flagBool(flags, 'clear-manual');
+  const clearDisabled = flagBool(flags, 'clear-disabled');
+  if (clearManual && manual) {
+    throw new UsageError('pass either --manual or --clear-manual, not both');
+  }
+  if (clearDisabled && disabled) {
+    throw new UsageError('pass either --disable or --clear-disabled, not both');
+  }
+  const body: Record<string, unknown> = {
+    ...(clearManual ? { manualModels: [] } : {}),
+    ...(manual ? { manualModels: splitCsv(manual) } : {}),
+    ...(clearDisabled ? { disabledModels: [] } : {}),
+    ...(disabled ? { disabledModels: splitCsv(disabled) } : {}),
+  };
+  const merged = mergeBody(body, extra);
+  if (!('manualModels' in merged) && !('disabledModels' in merged)) {
+    throw new UsageError(
+      'llm providers models requires --manual, --disable, --clear-manual, --clear-disabled, or --body'
+    );
+  }
+  return merged;
+}
+
+export async function llmDefaultBody(flags: FlagValues): Promise<Record<string, unknown>> {
+  const extra = await optionalObjectBody(flags);
+  const provider = flagString(flags, 'provider');
+  const model = flagString(flags, 'model');
+  const merged = mergeBody(
+    {
+      ...(provider ? { defaultProviderId: provider } : {}),
+      ...(model !== undefined ? { defaultModelId: model || null } : {}),
+    },
+    extra
+  );
+  if (merged.defaultProviderId === undefined || merged.defaultModelId === undefined) {
+    throw new UsageError('llm default requires --provider and --model (or --body)');
+  }
+  return merged;
+}
+
+export async function llmSearchBody(
+  ctx: CliContext,
+  flags: FlagValues,
+  provider: string
+): Promise<Record<string, unknown>> {
+  if (!SEARCH_PROVIDERS.has(provider)) {
+    throw new UsageError(`unknown search provider: ${provider}`, 'use none|tavily|brave');
+  }
+  const extra = await optionalObjectBody(flags);
+  const tavily = await readSecretField(ctx, flags, {
+    flag: 'tavily-key',
+    envName: 'VIBETERM_TAVILY_API_KEY',
+  });
+  const brave = await readSecretField(ctx, flags, {
+    flag: 'brave-key',
+    envName: 'VIBETERM_BRAVE_API_KEY',
+  });
+  const body: Record<string, unknown> = { searchProvider: provider };
+  if (tavily) body.tavilyApiKey = tavily;
+  if (brave) body.braveApiKey = brave;
+  if (flagBool(flags, 'clear-keys')) {
+    body.tavilyApiKey = '';
+    body.braveApiKey = '';
+  }
+  return mergeBody(body, extra);
+}
+
 export const TUNNEL_ACTIONS = [
   'install',
   'login',
@@ -142,24 +223,98 @@ export const TUNNEL_ACTIONS = [
   'set_access_mode',
 ] as const;
 
-export async function tunnelActionBody(
+const ACCESS_MODES = new Set(['none', 'login', 'cloudflare']);
+
+function parseAccessRuleFlag(raw: string): { kind: 'email' | 'email_domain'; value: string } {
+  const idx = raw.indexOf(':');
+  if (idx <= 0) {
+    throw new UsageError(`invalid --rule ${raw}`, 'use email:<addr> or domain:<name>');
+  }
+  const kindRaw = raw.slice(0, idx).trim().toLowerCase();
+  const value = raw
+    .slice(idx + 1)
+    .trim()
+    .toLowerCase();
+  if (!value) throw new UsageError(`invalid --rule ${raw}`, 'value is empty');
+  if (kindRaw === 'email') return { kind: 'email', value };
+  if (kindRaw === 'domain' || kindRaw === 'email_domain') return { kind: 'email_domain', value };
+  throw new UsageError(`unknown --rule kind: ${kindRaw}`, 'use email: or domain:');
+}
+
+async function tunnelAccessFields(
+  ctx: CliContext,
   action: string,
   flags: FlagValues
+): Promise<Record<string, unknown>> {
+  const fields: Record<string, unknown> = {};
+  if (action === 'set_access_mode') {
+    const accessMode = flagString(flags, 'access-mode');
+    if (accessMode) {
+      if (!ACCESS_MODES.has(accessMode)) {
+        throw new UsageError(`unknown --access-mode: ${accessMode}`, 'use none|login|cloudflare');
+      }
+      fields.accessMode = accessMode;
+    }
+  }
+  if (action === 'set_access_credentials') {
+    const apiToken = await readSecretField(ctx, flags, {
+      flag: 'api-token',
+      envName: 'VIBETERM_TUNNEL_API_TOKEN',
+    });
+    const accountId = flagString(flags, 'account-id');
+    if (apiToken) fields.apiToken = apiToken;
+    if (accountId) fields.accountId = accountId;
+  }
+  if (action === 'configure_access') {
+    const rules = flagStrings(flags, 'rule').map(parseAccessRuleFlag);
+    if (rules.length > 0) fields.rules = rules;
+  }
+  return fields;
+}
+
+function requireTunnelAccessFields(action: string, body: Record<string, unknown>): void {
+  if (action === 'set_access_mode' && typeof body.accessMode !== 'string') {
+    throw new UsageError(
+      'set_access_mode requires --access-mode none|login|cloudflare (or --body)'
+    );
+  }
+  if (action === 'set_access_credentials') {
+    if (typeof body.apiToken !== 'string' || typeof body.accountId !== 'string') {
+      throw new UsageError(
+        'set_access_credentials requires --api-token and --account-id (or --api-token-stdin/--api-token-file/VIBETERM_TUNNEL_API_TOKEN/--body)'
+      );
+    }
+  }
+  if (action === 'configure_access') {
+    if (!Array.isArray(body.rules) || body.rules.length === 0) {
+      throw new UsageError(
+        'configure_access requires --rule email:<addr> and/or --rule domain:<name> (or --body)'
+      );
+    }
+  }
+}
+
+export async function tunnelActionBody(
+  action: string,
+  flags: FlagValues,
+  ctx: CliContext
 ): Promise<Record<string, unknown>> {
   const extra = await optionalObjectBody(flags);
   const hostname = flagString(flags, 'hostname');
   const ack = flagBool(flags, 'acknowledge');
+  const autoStart = flagString(flags, 'auto-start');
+  const trustProxy = flagString(flags, 'trust-proxy');
   const base: Record<string, unknown> = {
     action,
-    ...((extra as Record<string, unknown> | undefined) ?? {}),
+    ...(hostname ? { hostname } : {}),
+    ...(ack ? { acknowledgeExposure: true } : {}),
+    ...(autoStart ? { autoStart: parseOnOff(autoStart) } : {}),
+    ...(trustProxy ? { trustProxy: parseOnOff(trustProxy) } : {}),
+    ...(await tunnelAccessFields(ctx, action, flags)),
   };
-  if (hostname) base.hostname = hostname;
-  if (ack) base.acknowledgeExposure = true;
-  const autoStart = flagString(flags, 'auto-start');
-  if (autoStart) base.autoStart = parseOnOff(autoStart);
-  const trustProxy = flagString(flags, 'trust-proxy');
-  if (trustProxy) base.trustProxy = parseOnOff(trustProxy);
-  return base;
+  const body = mergeBody(base, extra);
+  requireTunnelAccessFields(action, body);
+  return body;
 }
 
 export const LOCAL_DIRECT_ACTIONS = new Set(['install', 'remove', 'enable', 'disable']);

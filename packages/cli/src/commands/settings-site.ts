@@ -1,12 +1,16 @@
+import { NODE_ID_PATTERN } from '@vibeterm/api-client/node-url';
+import { buildNotificationSinkPayload, hexToBytes } from '@vibeterm/shared/auth';
 import { type SubHandler, confirmOrYes, rejectExtra, requireArg } from '../core/cmd';
-import { UsageError } from '../core/errors';
+import type { CliContext } from '../core/context';
+import { CliError, UsageError } from '../core/errors';
 import {
-  enabledFromFlags,
-  llmProviderBody,
-  requiredObjectBody,
-  sitePatch,
-  webhookCreateBody,
-} from '../core/settings-body';
+  appendKeyLog,
+  assertKeyLogAppended,
+  keyLogHead,
+  signRecord,
+  withRootKey,
+} from '../core/nodes-keylog';
+import { enabledFromFlags, sitePatch, webhookCreateBody } from '../core/settings-body';
 import { jsonSelf, print } from './settings-http';
 
 export const site: SubHandler = async (ctx, _flags, positionals) => {
@@ -26,33 +30,39 @@ export const site: SubHandler = async (ctx, _flags, positionals) => {
   throw new UsageError(`unknown site action: ${action}`, 'use get|set');
 };
 
-export const shortcuts: SubHandler = async (ctx, flags, positionals) => {
-  const action = requireArg(positionals, 0, 'get|set');
-  rejectExtra(positionals, 1);
-  if (action === 'get') {
-    print(ctx, await jsonSelf(ctx, 'GET', '/api/settings/terminal-shortcuts'));
-    return;
-  }
-  if (action === 'set') {
-    print(
-      ctx,
-      await jsonSelf(
-        ctx,
-        'PATCH',
-        '/api/settings/terminal-shortcuts',
-        await requiredObjectBody(flags, 'pass --body with { items, useIcons }')
-      )
-    );
-    return;
-  }
-  throw new UsageError(`unknown shortcuts action: ${action}`, 'use get|set');
-};
-
 export const restart: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 0);
   await confirmOrYes(flags, 'restart the gateway');
   print(ctx, await jsonSelf(ctx, 'POST', '/api/settings/restart'));
 };
+
+async function signNotificationSink(ctx: CliContext, enabled: boolean): Promise<void> {
+  const target = await ctx.targetNodeId();
+  await withRootKey(ctx, async (root, mode) => {
+    const nodeIdHex = NODE_ID_PATTERN.test(target) ? target : (mode.nodeId ?? '');
+    if (!NODE_ID_PATTERN.test(nodeIdHex)) {
+      throw new CliError(
+        'could not determine this node id to sign notification-sink',
+        1,
+        'the entry did not advertise a hex node id'
+      );
+    }
+    const head = await keyLogHead(ctx);
+    const signed = signRecord(
+      root,
+      head,
+      mode,
+      'notification-sink',
+      buildNotificationSinkPayload({
+        nodeId: hexToBytes(nodeIdHex),
+        enabled,
+        at: Date.now(),
+      })
+    );
+    const result = await appendKeyLog(ctx, signed.bytes, signed.sig);
+    assertKeyLogAppended(result, 'notification-sink');
+  });
+}
 
 export const notifications: SubHandler = async (ctx, flags, positionals) => {
   const scope = requireArg(positionals, 0, 'mesh');
@@ -65,6 +75,7 @@ export const notifications: SubHandler = async (ctx, flags, positionals) => {
   }
   if (action === 'set') {
     const enabled = enabledFromFlags(flags, positionals[2]);
+    await signNotificationSink(ctx, enabled);
     print(ctx, await jsonSelf(ctx, 'PUT', '/api/notifications/mesh', { enabled }));
     return;
   }
@@ -97,65 +108,6 @@ export const webhooks: SubHandler = async (ctx, flags, positionals) => {
     return;
   }
   throw new UsageError(`unknown webhooks action: ${action}`, 'use ls|add|rm|edit');
-};
-
-export const llm: SubHandler = async (ctx, flags, positionals) => {
-  const head = requireArg(positionals, 0, 'providers|get|set');
-  if (head === 'get') {
-    rejectExtra(positionals, 1);
-    print(ctx, await jsonSelf(ctx, 'GET', '/api/llm/settings'));
-    return;
-  }
-  if (head === 'set') {
-    print(
-      ctx,
-      await jsonSelf(
-        ctx,
-        'PATCH',
-        '/api/llm/settings',
-        await requiredObjectBody(flags, 'pass --body')
-      )
-    );
-    return;
-  }
-  if (head !== 'providers') {
-    throw new UsageError(`unknown llm action: ${head}`, 'use providers|get|set');
-  }
-  const action = requireArg(positionals, 1, 'ls|add|edit|rm|refresh-models');
-  if (action === 'ls') {
-    print(ctx, await jsonSelf(ctx, 'GET', '/api/llm/providers'));
-    return;
-  }
-  if (action === 'add') {
-    print(
-      ctx,
-      await jsonSelf(ctx, 'POST', '/api/llm/providers', await llmProviderBody(ctx, flags, true))
-    );
-    return;
-  }
-  const id = requireArg(positionals, 2, 'provider id');
-  if (action === 'edit') {
-    print(
-      ctx,
-      await jsonSelf(
-        ctx,
-        'PATCH',
-        `/api/llm/providers/${id}`,
-        await llmProviderBody(ctx, flags, false)
-      )
-    );
-    return;
-  }
-  if (action === 'rm') {
-    await confirmOrYes(flags, `delete llm provider ${id}`);
-    print(ctx, await jsonSelf(ctx, 'DELETE', `/api/llm/providers/${id}`));
-    return;
-  }
-  if (action === 'refresh-models') {
-    print(ctx, await jsonSelf(ctx, 'POST', `/api/llm/providers/${id}/refresh-models`));
-    return;
-  }
-  throw new UsageError(`unknown llm providers action: ${action}`);
 };
 
 export const domainAccess: SubHandler = async (ctx, flags, positionals) => {

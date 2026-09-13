@@ -10,10 +10,10 @@ import {
   LOCAL_DIRECT_ACTIONS,
   TUNNEL_ACTIONS,
   optionalObjectBody,
-  requiredObjectBody,
   tlsSetNeedsConfirm,
   tunnelActionBody,
 } from '../core/settings-body';
+import { tlsSetBody } from '../core/settings-tls-body';
 import { jsonEntry, jsonSelf, print } from './settings-http';
 
 export const tls: SubHandler = async (ctx, flags, positionals) => {
@@ -24,7 +24,7 @@ export const tls: SubHandler = async (ctx, flags, positionals) => {
     return;
   }
   if (action === 'set') {
-    const body = await requiredObjectBody(flags, 'pass --body');
+    const body = await tlsSetBody(ctx, flags);
     if (tlsSetNeedsConfirm(body)) await confirmOrYes(flags, LAN_SPOOF_CONFIRM);
     print(ctx, await jsonEntry(ctx, 'PUT', '/api/tls', body));
     return;
@@ -55,10 +55,32 @@ export const tunnel: SubHandler = async (ctx, flags, positionals) => {
       `use status or ${TUNNEL_ACTIONS.join('|')}`
     );
   }
-  const body = await tunnelActionBody(action, flags);
+  const body = await withConfigureAccessHostname(
+    ctx,
+    action,
+    await tunnelActionBody(action, flags, ctx)
+  );
   if (body.trustProxy === true) await confirmOrYes(flags, LAN_SPOOF_CONFIRM);
   print(ctx, await jsonEntry(ctx, 'POST', '/api/tunnel/actions', body));
 };
+
+async function withConfigureAccessHostname(
+  ctx: CliContext,
+  action: string,
+  body: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  if (action !== 'configure_access') return body;
+  const status = (await jsonEntry(ctx, 'GET', '/api/tunnel/status')) as {
+    config?: { mode?: string; hostname?: string | null };
+  };
+  const draft = typeof body.hostname === 'string' ? body.hostname : '';
+  const hostname = status.config?.hostname ?? (draft.trim() || null);
+  if (status.config?.mode === 'off' && hostname) {
+    return { ...body, hostname };
+  }
+  const { hostname: _ignored, ...rest } = body;
+  return rest;
+}
 
 export const system: SubHandler = async (ctx, flags, positionals) => {
   const action = requireArg(positionals, 0, 'info|addresses|update-check|upgrade');

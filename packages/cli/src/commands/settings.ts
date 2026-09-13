@@ -1,18 +1,12 @@
 // `vibeterm settings`：站点、快捷键、通知、webhook、LLM、TLS、隧道、本机、账号安全。
 
 import { type SubHandler, runSubs } from '../core/cmd';
+import { llm } from './settings-llm';
 import { tls, local, system, tunnel } from './settings-local';
 import { telegram, weixin } from './settings-messaging';
 import { localAuth, passkey, passwd, totp } from './settings-security';
-import {
-  domainAccess,
-  llm,
-  notifications,
-  restart,
-  shortcuts,
-  site,
-  webhooks,
-} from './settings-site';
+import { shortcuts } from './settings-shortcuts';
+import { domainAccess, notifications, restart, site, webhooks } from './settings-site';
 import type { Command } from './types';
 
 export const FLAGS = {
@@ -56,20 +50,56 @@ export const FLAGS = {
   'token-file': 'string',
   'allow-auth': 'string',
   'allow-commands': 'string',
+  manual: 'string',
+  disable: 'string',
+  'clear-manual': 'boolean',
+  'clear-disabled': 'boolean',
+  provider: 'string',
+  model: 'string',
+  'tavily-key': 'string',
+  'tavily-key-stdin': 'boolean',
+  'tavily-key-file': 'string',
+  'brave-key': 'string',
+  'brave-key-stdin': 'boolean',
+  'brave-key-file': 'string',
+  'clear-keys': 'boolean',
+  mode: 'string',
+  sans: 'string',
+  port: 'number',
+  'bind-host': 'string',
+  domain: 'string',
+  email: 'string',
+  challenge: 'string',
+  'dns-provider': 'string',
+  'dns-token': 'string',
+  'dns-token-stdin': 'boolean',
+  'dns-token-file': 'string',
+  'dns-secret-id': 'string',
+  staging: 'string',
+  'access-mode': 'string',
+  'api-token': 'string',
+  'api-token-stdin': 'boolean',
+  'api-token-file': 'string',
+  'account-id': 'string',
+  rule: 'strings',
+  label: 'string',
+  keys: 'string',
+  icon: 'string',
+  ids: 'string',
 } as const;
 
 const USAGE = [
   'Usage: vibeterm settings <group> …',
   '',
   '  site get|set <key> <value>     GET/PATCH /api/settings/site',
-  '  shortcuts get|set              GET/PATCH /api/settings/terminal-shortcuts (set needs --body)',
+  '  shortcuts get|set|add|rm|order|use-icons',
   '  restart [--yes]                POST /api/settings/restart',
-  '  notifications mesh get|set on|off',
+  '  notifications mesh get|set on|off  signs notification-sink then PUT /api/notifications/mesh',
   '  webhooks ls|add|rm|edit        edit = rm+add with --body',
-  '  llm providers ls|add|edit|rm|refresh-models',
-  '  llm get|set                    GET/PATCH /api/llm/settings (set needs --body)',
+  '  llm providers ls|add|edit|rm|refresh-models|enable|disable|models',
+  '  llm get|set|default|search set GET/PATCH /api/llm/settings (set needs --body)',
   '  domain-access get|set on|off   GET/PATCH /api/system/domain-access',
-  '  tls get|set|renew|ca           GET/PUT /api/tls, POST /api/tls/renew, GET /api/tls/ca.crt',
+  '  tls get|set|renew|ca           GET/PUT /api/tls (--mode/--sans/--port/… or --body)',
   '  tunnel status|<action>         GET /api/tunnel/status or POST /api/tunnel/actions',
   '  system info|addresses|update-check|upgrade status|start',
   '  local status|leave|direct      GET /api/local/status; POST /api/local/leave|direct (--node honoured for direct)',
@@ -81,8 +111,9 @@ const USAGE = [
   '  weixin ls|add|edit|rm|test|login|users  /api/settings/weixin/accounts',
   '',
   'Complex bodies accept --body <json>|@file like `vibeterm api`.',
-  'Secrets: --secret-stdin/--secret-file/VIBETERM_WEBHOOK_SECRET, --api-key-stdin/--api-key-file/VIBETERM_LLM_API_KEY, --token-stdin/--token-file/VIBETERM_TELEGRAM_TOKEN, --new-password-stdin/--new-password-file/VIBETERM_NEW_PASSWORD.',
-  'argv --secret/--api-key/--token/--password/--new-password warn on stderr. local leave self-revokes (VIBETERM_PASSWORD) unless --skip-self-revoke.',
+  'Secrets: --secret-stdin/--secret-file/VIBETERM_WEBHOOK_SECRET, --api-key-stdin/--api-key-file/VIBETERM_LLM_API_KEY, --token-stdin/--token-file/VIBETERM_TELEGRAM_TOKEN, --new-password-stdin/--new-password-file/VIBETERM_NEW_PASSWORD, --api-token-stdin/--api-token-file/VIBETERM_TUNNEL_API_TOKEN, --dns-token-stdin/--dns-token-file/VIBETERM_TLS_DNS_TOKEN, --tavily-key*/VIBETERM_TAVILY_API_KEY, --brave-key*/VIBETERM_BRAVE_API_KEY.',
+  'argv --secret/--api-key/--token/--password/--new-password/--api-token/--dns-token/--tavily-key/--brave-key warn on stderr. local leave self-revokes (VIBETERM_PASSWORD) unless --skip-self-revoke.',
+  'notifications mesh set signs a notification-sink keylog record first (VIBETERM_PASSWORD).',
   '--json prints the gateway payload unchanged.',
 ].join('\n');
 

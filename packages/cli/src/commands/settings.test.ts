@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { encodeBase32 } from '@vibeterm/shared/auth';
 import { generateTotpSecret } from '../core/account-security';
-import { AuthError, UsageError } from '../core/errors';
+import { AuthError, CliError, UsageError } from '../core/errors';
 import { NODE, meshNode, routeFetch, testContext } from './cli-test-harness';
 import { command as settings } from './settings';
 
@@ -46,16 +46,18 @@ describe('vibeterm settings', () => {
     );
   });
 
-  test('notifications mesh set', async () => {
-    let body = '';
+  test('notifications mesh set requires a mesh entry', async () => {
+    let put = false;
     const { ctx: cli } = await ctx({
-      'PUT /api/notifications/mesh': (_url, init) => {
-        body = String(init?.body);
+      'PUT /api/notifications/mesh': () => {
+        put = true;
         return { supported: true, selfEnabled: true, sinks: [] };
       },
     });
-    await settings.run(cli, ['notifications', 'mesh', 'set', 'on']);
-    expect(JSON.parse(body)).toEqual({ enabled: true });
+    await expect(settings.run(cli, ['notifications', 'mesh', 'set', 'on'])).rejects.toBeInstanceOf(
+      CliError
+    );
+    expect(put).toBe(false);
   });
 
   test('webhooks add', async () => {
