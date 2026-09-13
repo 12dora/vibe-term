@@ -99,6 +99,19 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 - 预启动禁用 mesh/uplink：候选进程设 `VIBETERM_ROLES=standalone`（不连 Hub、不开 peer 口）。`/healthz` 现带 `version`（构建期 `VIBETERM_MONOREPO_VERSION`）。mesh 节点未登录时的精简 `/healthz` 由 runtime `attachStartedAt` 补上 `version`。
 - Web 触发的升级把 stage 放在 `<installDir>/staging/<txn>`，并传 `--txn` 给 CLI；清理交给 journal。
 
+### 投递通道与暂存 sink
+
+包怎么到节点（节点自拉 GitHub / 入口推包 / 强制自拉）与 BIOS journal 无关：投递只决定
+`source:'release' | 'staged'`，装包开始后仍走同一套阶段表。见 [远程升级](./remote-upgrade.md)。
+
+入口推包的暂存 sink（`<installDir>/staging/` 下的 `.part`，在 journal `staging` 之前）：
+
+- **append**（2.3.6 入口，不带 `length`/`total`）：按偏移顺序续写；偏移不符 → `409 UPGRADE_OFFSET_MISMATCH`。
+- **ranged**（成对 `length` + `total`）：乱序写入 `[offset, offset+length)`，同 key 可并行。区间盖满
+  `total` 后整包 sha256，失败删半成品（fail-closed），成功 rename 落位并写 sidecar。
+
+本机自升级仍直接从 GitHub 拉到 `staging/<txn>`，不走推包 sink。
+
 ## 安装元数据损坏
 
 `current` 若指向本安装的 `versions/<v>` 且目标仍存在，可以恢复当前版本号；不能据此恢复自定义服务名、`serviceMode=none` 等部署信息。不要删除 `current` 或其目标来修复 JSON。

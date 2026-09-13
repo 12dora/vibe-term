@@ -41,6 +41,6 @@
 | [release-signing.md](./release-signing.md) | 发行包签名 |
 | [upgrade-transaction.md](./upgrade-transaction.md) | 崩溃安全的升级事务 |
 | [self-update.md](./self-update.md) | 程序内自更新与发行包缓存 |
-| [remote-upgrade.md](./remote-upgrade.md) | 远程升级推包续传 |
+| [remote-upgrade.md](./remote-upgrade.md) | 远程升级：三通道投递与推包续传 |
 | [bun-path-resolution.md](./bun-path-resolution.md) | CLI 的 bun 路径解析 |
 | [rename-migration.md](./rename-migration.md) | tmex → VibeTerm 改名迁移 |

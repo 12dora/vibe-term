@@ -48,7 +48,13 @@ VibeTerm 以 `vibeterm-cli` 包（`packages/app`）发布。除终端 `vibeterm 
 
 `apps/gateway/src/system/upgrade.ts`，全局唯一 `UpgradeController`，状态 `idle / downloading / executing`：
 
-1. `downloading`：从 GitHub Releases 下载 `vibeterm-cli-<version>.tgz`（fetch 跟随资产 302）到临时目录，
+1. `downloading`：从 GitHub Releases 下载 `vibeterm-cli-<version>.tgz` 到临时目录。入口与 CLI 共用
+   `downloadAssetRanged`：人工跟随最多 5 跳（每一跳必须 https，主机限起始 origin / `github.com` /
+   `*.githubusercontent.com`，拒绝 `redirect_rejected`）；分片打已解析最终 URL 且 `redirect:'error'`，
+   中途 302 再解析一次。默认 4 流 × 4 MiB Range，服务器忽略 Range（200 或缺 Content-Range）则把该
+   响应当单流写完。body 读绑定 abort，60 s 无字节视为 idle 超时。整包 sha256 仍 fail-closed。
+   CLI 流式写 `{dest}.part` 再 rename，整体 10 min 超时；新名 404 回退 `tmex-cli-*.tgz`。
+   成功一行 `[upgrade] download url=<host> streams=N bytes=… ms=… verdict=fast|slow`。
    校验 SHA256 后 `tar -xzf` 解出 npm pack 布局（`package/`）。CLI 是 bun bundle，无需 `npm install`。
    此阶段 gateway 仍存活，失败回 `idle` 并经 `status()` 上报 error。
 2. `executing`：`detached` 拉起解压包的 `package/bin/vibeterm.js upgrade --apply-current-package
@@ -59,7 +65,13 @@ VibeTerm 以 `vibeterm-cli` 包（`packages/app`）发布。除终端 `vibeterm 
 依赖服务 unit 的 `KillMode=process`（systemd）/ `AbandonProcessGroup=true`（launchd），使 detached 子进程
 在服务进程被停时存活，完成自升级。
 
-远程节点的升级（入口把包推给节点、断流续传）见
+本机 `POST /api/system/upgrade` / `vibeterm upgrade` **不走入口推包通道**。仅当请求带
+`requireFastSource: true` 才先探测发行资产速度（默认 3 s / 64 KiB）：慢或不可达 → 409
+`RELEASE_SLOW` / `RELEASE_UNREACHABLE` 且不改变状态。否则下载侧只打探测日志。节点通过
+`upgradeCapabilities` 的 `'release-speed-probe'` 广告此门控；`'staged-package-ranged'`
+只服务入口推包，本机不用。
+
+远程节点的升级（三通道投递：节点自拉 → 入口推 → 强制自拉）见
 [远程升级](./remote-upgrade.md)。
 
 ## 发行包缓存与清扫
@@ -137,7 +149,9 @@ rename 成 `.tgz` 并写完 sidecar、退出在途表。所以判定「缺 sidec
 - `GET /api/system/info` → `SystemInfo`
 - `GET /api/system/update-check` → `UpdateCheckResult`
 - `GET /api/system/upgrade` → `UpgradeStatus`（轮询）
-- `POST /api/system/upgrade` `{version}` → 启动；非 `canSelfUpdate` 403、忙 409、缺版本 400
+- `POST /api/system/upgrade` `{version, source?, sha256?, requireFastSource?}` → 启动；非
+  `canSelfUpdate` 403、忙 409、缺版本 400。`requireFastSource` 只认字面 `true`，未知字段忽略。
+  门控未过：409 `RELEASE_SLOW` / `RELEASE_UNREACHABLE`（含 `bytes` / `elapsedMs`）
 
 ## 前端
 

@@ -6,13 +6,13 @@ _2026-09-13_ (unreleased)
 
 - **Nodes table.** Status absorbs last-seen: online stays “Online”; offline with a timestamp reads “Offline · 3 hours ago” (hover for the absolute time). The fingerprint column is gone; an Address column shows the Hub public host, the live direct peer, an advertised public endpoint, or the relay. REACH is `lan/dc`, `wan/ws-secure`, or `relay`. Fingerprint and last-seen remain in the row detail. `vibeterm nodes ls` gains ADDRESS and folds offline age into ONLINE.
 - **CLI field-level coverage.** `vibeterm settings` can toggle mesh notification sink (signs `notification-sink` first), enable/disable LLM providers, rewrite model lists, set the default model and search provider, set TLS by flags, and configure tunnel Access and terminal shortcuts. Also: `files roots set --path`, watch-rule extract/LLM flags, `agent set --pane` / `new --origin-title` / `confirmations ls`, `devices connect` (holds until Ctrl-C; `--once` just confirms), `share settings set`. Off-TTY, `settings tunnel remove|remove_access|clear_access_credentials`, `nodes upgrade cancel`, and `settings totp disable` require `--yes`.
-- Upgrade delivery: (to be filled after WPU1/WPU2/WPU3 land)
+- **Upgrade delivery.** Remote upgrade tries three channels: the node pulls GitHub if a 3 s / 64 KiB probe is fast (`release-speed-probe`, `requireFastSource`); otherwise the entry downloads (parallel Range, 4 × 4 MiB; https-only redirects on an allowlist; Range-ignore falls back to one stream) and pushes (`staged-package-ranged` → 4 streams, else append); if that fails—or if a successful push then fails to start—the node is forced to pull GitHub. A 409 `UPGRADE_IN_PROGRESS` on start is treated as already started. All-fail errors are aggregated (`github(node): …; push: …; github(node, forced): …`) and shown verbatim. Mesh `POST …/upgrade` honours `{version}` (`400 RELEASE_NOT_FOUND`). `vibeterm nodes upgrade --version` is effective. Local `vibeterm upgrade` stays GitHub-only (CLI streams to disk, 10 min timeout).
 
 ## 中文
 
 - **节点表。** 状态合并最近在线：在线仍是「在线」；离线且有时间戳显示「离线 · 3 小时前」（悬停看绝对时间）。去掉公钥指纹列，改为地址列（Hub 公网、直连对端、广播公网 endpoint、中继）。REACH 为 `lan/dc`、`wan/ws-secure` 或 `relay`。指纹与最近在线仍在详情。`vibeterm nodes ls` 增加 ADDRESS，离线时间合进 ONLINE。
 - **CLI 字段级覆盖。** `vibeterm settings` 可开关 mesh 通知汇聚（先签 `notification-sink`）、启停 LLM 提供商、改模型清单、设默认模型与搜索、用旗标写 TLS、配隧道 Access 与终端快捷键。另有 `files roots set --path`、watch 规则 extract/LLM 旗标、`agent set --pane` / `new --origin-title` / `confirmations ls`、`devices connect`（默认持有到 Ctrl-C，`--once` 只确认）、`share settings set`。非 TTY 下 `settings tunnel remove|remove_access|clear_access_credentials`、`nodes upgrade cancel`、`settings totp disable` 必须 `--yes`。
-- 升级投递：（待 WPU1/WPU2/WPU3 落地后补充）
+- **升级投递。** 远程升级走三通道：节点探测 3 s / 64 KiB 够快则自拉 GitHub（`release-speed-probe`、`requireFastSource`）；否则入口并行 Range 下载（4 × 4 MiB，https 重定向允许名单，忽略 Range 则单流）再推包（目标有 `staged-package-ranged` 则乱序 4 流，否则追加）；推失败或推完启动失败再强制节点自拉。启动 409 `UPGRADE_IN_PROGRESS` 视为已启动。全失败聚合错误串原文展示。mesh `POST …/upgrade` 尊重 `{version}`（未发布 400 `RELEASE_NOT_FOUND`）。`vibeterm nodes upgrade --version` 生效。本机 `vibeterm upgrade` 仍只打 GitHub（CLI 流式落盘，10 min 超时）。
 
 # 2.3.6
 

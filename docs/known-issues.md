@@ -66,9 +66,10 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 
 ## KI-9：本机自升级没有下载字节进度
 
-远程升级的下载进度已在 1.1.34 补齐（原 KI-2），本机自升级仍只有阶段名：`UpgradeStatus` 的 `progress`
-面按合约只服务远程升级，`stageGithubRelease` 没有上报出口，且 `apps/gateway/src/system/upgrade.ts`
-贴着 allowlist 的行数上限，新开一条进度通道要先拆文件。
+远程升级的下载进度已在 1.1.34 补齐（原 KI-2），投递失败现为通道聚合串（`github(node): …; push: …`），
+GUI 与 CLI 原文展示。本机自升级仍只有阶段名：`UpgradeStatus` 的 `progress` 面按合约只服务远程升级，
+`stageGithubRelease` 没有上报出口，且 `apps/gateway/src/system/upgrade.ts` 贴着 allowlist 的行数上限，
+新开一条进度通道要先拆文件。
 
 ## KI-10：旧版本入口节点操作新版本节点上的远程窗格会被拒
 
@@ -82,6 +83,7 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 发行包签名自 1.1.39 起生效（见[发行包签名](./operations/release-signing.md)）。新节点只装
 「带可验签清单」的暂存包，而旧版本入口不会发 `POST /api/system/upgrade/package/manifest`：字节能推上去，
 装包一步返回 `UPGRADE_SIGNATURE_REQUIRED`，节点停在原版本（不会装上任何东西，安全侧是对的）。
+2.3.7+ 入口会交签名清单，且优先让节点自拉 GitHub；本条只剩入口仍 < 1.1.39 的混合版本网。
 处置：先把入口升到 1.1.39+，再对节点发起升级；或者在节点本机跑一次 `vibeterm upgrade`。
 
 `install.sh` 首次安装仍只校验 SHA256SUMS，没有验签——shell 里没有可依赖的 Ed25519 实现，
