@@ -19,12 +19,10 @@ import {
   ReconnectsTile,
   SocketsTile,
   TenantsTile,
-  ThroughputTile,
   TrafficTile,
 } from './relay-metrics-tile-items';
 
 export type { MetricsTileProps };
-export { ThroughputTile };
 
 /**
  * 完整排的栅格：1280px 视口下面板本身只有 ~880px，六列会把「1.20 MB/s」这类读数压掉，

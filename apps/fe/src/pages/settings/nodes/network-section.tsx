@@ -30,7 +30,6 @@ export interface NetworkSectionProps {
   onRefresh: () => void;
   portPlan?: PortSpec[];
   portReach?: MeshPortReach[] | null;
-  /** 端口行不再按角色分标题，调用方仍在传；等调用点清掉即可删。 */
   selfNodeId?: string | null;
   probe?: ProbeNodePorts;
 }

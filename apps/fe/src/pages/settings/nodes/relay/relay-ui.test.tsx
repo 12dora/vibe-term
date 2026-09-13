@@ -179,6 +179,31 @@ describe('RelayRows 渲染', () => {
     expect(html).toContain('font-medium');
   });
 
+  // 行是选择器时，光一个 6px 的点没法让人挑：离线与延迟得是看得见的文字。
+  test('选择器形态：候选行补「离线」或延迟，单条形态照旧只有点与主机名', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows
+        relays={[
+          link({ attached: true, rttMs: 12 }),
+          link({ url: 'https://b.example', priority: 2, online: false }),
+        ]}
+        onSelect={() => undefined}
+      />
+    );
+    expect(html).toContain(`data-testid="nodes-relay-rtt-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.rtt');
+    expect(html).toContain('data-testid="nodes-relay-offline-b.example"');
+    expect(html).toContain('relay.tenant.strip.offline');
+    // 离线那条不再摆延迟
+    expect(html).not.toContain('data-testid="nodes-relay-rtt-b.example"');
+
+    const single = renderToStaticMarkup(
+      <RelayRows relays={[link({ attached: true, rttMs: 12 })]} onSelect={() => undefined} />
+    );
+    expect(single).not.toContain('relay.tenant.strip.rtt');
+    expect(single).not.toContain(`data-testid="nodes-relay-offline-${HOST}"`);
+  });
+
   test('没传 onSelect 时哪条都不可选', () => {
     const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true }), OTHER]} />);
     expect(html).not.toContain('data-testid="nodes-relay-switch-b.example"');

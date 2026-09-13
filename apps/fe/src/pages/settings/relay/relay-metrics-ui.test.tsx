@@ -25,9 +25,7 @@ const {
 const { relayMetricsFixture, relayMetricsMember, relayMetricsSample } = await import(
   './relay-metrics-fixture'
 );
-const { RelayFullTiles, RelayTilesSkeleton, ThroughputTile } = await import(
-  './relay-metrics-tiles'
-);
+const { RelayFullTiles, RelayTilesSkeleton } = await import('./relay-metrics-tiles');
 const { RelayTrendsCard } = await import('./relay-metrics-trends');
 const { RelayMembersTable } = await import('./relay-metrics-members');
 const { RelayMetricsPanel, RelayMetricsHeaderStrip } = await import('./relay-metrics-panel');
@@ -306,12 +304,6 @@ describe('磁贴排', () => {
     expect(html).toContain('data-testid="relay-metric-bytes-in"');
     expect(html).toContain('data-testid="relay-metric-bytes-out"');
     expect(html).not.toContain('data-testid="relay-metric-throughput"');
-  });
-
-  test('吞吐格副行是进出速率；累计量由「累计流量」那一格单独报', () => {
-    const html = renderToStaticMarkup(<ThroughputTile data={data} trends={trends} />);
-    expect(html).toContain('relay.metrics.tiles.throughputSub');
-    expect(html).not.toContain('relay.metrics.tiles.throughputTotal');
   });
 
   test('响应式栅格：窄屏不摆多列，免得读数被截断', () => {

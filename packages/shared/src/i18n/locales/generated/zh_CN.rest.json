@@ -2496,8 +2496,6 @@
           "membersOnline": "在线节点",
           "membersOnlineSub": "共 {{total}} 个",
           "activeStreams": "活跃流",
-          "throughput": "吞吐",
-          "throughputSub": "↑ {{out}} · ↓ {{in}}",
           "bytesIn": "入站速率",
           "bytesOut": "出站速率",
           "frames": "帧速率",
