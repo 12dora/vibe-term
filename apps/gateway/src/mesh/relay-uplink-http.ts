@@ -1,9 +1,11 @@
-import {
-  type LinkSession,
-  WebSocketLink,
-  type WebSocketTransportInput,
-} from '@vibeterm/shared/link';
+import { type LinkSession, WebSocketLink } from '@vibeterm/shared/link';
 import { waitSocketOpen } from '@vibeterm/shared/net';
+import {
+  type DialWsFactoryDeps,
+  type FetchDnsFallbackOpts,
+  createDialWsFactory,
+  fetchWithDnsFallback,
+} from './dial-resolve';
 import {
   type RelayDialContext,
   relayDialContextFromEnv,
@@ -12,7 +14,6 @@ import {
 } from './relay-dial';
 import { type UplinkWsFactory, uplinkWebSocketTls } from './uplink-client';
 import { closeTransport } from './uplink-reconnect';
-import { withWsOpenRace } from './ws-open-race';
 
 export const RELAY_UPLINK_PATH = '/relay/uplink';
 export const RELAY_HEALTH_PATH = '/api/relay/health';
@@ -35,7 +36,8 @@ export async function probeRelayHealth(
   publicUrl: string,
   tlsCa: string[] | null,
   timeoutMs: number,
-  dial: RelayDialContext = relayDialContextFromEnv()
+  dial: RelayDialContext = relayDialContextFromEnv(),
+  fallback?: FetchDnsFallbackOpts
 ): Promise<boolean> {
   const dialUrl = resolveRelayDialUrl(publicUrl, dial);
   const ac = new AbortController();
@@ -44,7 +46,8 @@ export async function probeRelayHealth(
     const init: RequestInit = { method: 'GET', signal: ac.signal, redirect: 'error' };
     const tls = uplinkWebSocketTls(relayTlsCaForDial(dialUrl, tlsCa));
     if (tls) Object.assign(init, tls);
-    const res = await fetch(`${dialUrl.replace(/\/+$/, '')}${RELAY_HEALTH_PATH}`, init);
+    const url = `${dialUrl.replace(/\/+$/, '')}${RELAY_HEALTH_PATH}`;
+    const res = await fetchWithDnsFallback(url, init, fallback);
     return res.ok;
   } catch {
     return false;
@@ -85,9 +88,9 @@ export async function openRelayLink(
   }
 }
 
-export function defaultRelayWsFactory(tlsCa?: string[] | null): UplinkWsFactory {
-  return withWsOpenRace((url: string) => {
-    const tls = uplinkWebSocketTls(tlsCa);
-    return (tls ? new WebSocket(url, tls as never) : new WebSocket(url)) as WebSocketTransportInput;
-  });
+export function defaultRelayWsFactory(
+  tlsCa?: string[] | null,
+  deps?: DialWsFactoryDeps
+): UplinkWsFactory {
+  return createDialWsFactory(tlsCa, deps);
 }

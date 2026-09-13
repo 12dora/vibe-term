@@ -2,6 +2,7 @@ import { promises as dnsPromises } from 'node:dns';
 import { errorMessage } from '@vibeterm/shared';
 import type { TunnelEdgeResolution } from '@vibeterm/shared';
 import { isFakeIpv4 } from '../mesh/address-class';
+import { dohEndpoints } from './doh-endpoints';
 
 export const EDGE_SRV_NAME = '_v2-origintunneld._tcp.argotunnel.com';
 export const WELL_KNOWN_EDGE_HOSTS = [
@@ -11,10 +12,7 @@ export const WELL_KNOWN_EDGE_HOSTS = [
 export const DEFAULT_EDGE_PORT = 7844;
 export const EDGE_ADDRS_ENV = 'VIBETERM_TUNNEL_EDGE_ADDRS';
 export const MAX_EDGE_ADDRS = 8;
-export const DOH_ENDPOINTS = [
-  'https://cloudflare-dns.com/dns-query',
-  'https://dns.google/resolve',
-] as const;
+export { DOH_ENDPOINTS, DOH_ENDPOINTS_ENV, dohEndpoints } from './doh-endpoints';
 
 const DOH_REQUEST_TIMEOUT_MS = 5_000;
 const DOH_TOTAL_BUDGET_MS = 10_000;
@@ -142,7 +140,7 @@ function newDohRunState(): DohRunState {
 }
 
 function endpointOrder(state: DohRunState): string[] {
-  const all: string[] = [...DOH_ENDPOINTS];
+  const all: string[] = dohEndpoints();
   const usable = all.filter((endpoint) => !state.timedOut.has(endpoint));
   const list = usable.length > 0 ? usable : all;
   const preferred = state.preferred;

@@ -1,3 +1,4 @@
+import { type FetchDnsFallbackOpts, fetchWithDnsFallback } from './dial-resolve';
 import { uplinkWebSocketTls } from './uplink-client';
 
 export const CA_BOOTSTRAP_TIMEOUT_MS = 5_000;
@@ -40,7 +41,8 @@ export async function readResponseTextLimited(res: Response, maxBytes: number): 
 export async function defaultProbeHealthz(
   publicUrl: string,
   tlsCa: string[] | null,
-  timeoutMs: number
+  timeoutMs: number,
+  fallback?: FetchDnsFallbackOpts
 ): Promise<boolean> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
@@ -48,7 +50,7 @@ export async function defaultProbeHealthz(
     const init: RequestInit = { method: 'GET', signal: ac.signal, redirect: 'error' };
     const tls = uplinkWebSocketTls(tlsCa);
     if (tls) Object.assign(init, tls);
-    const res = await fetch(joinHubPath(publicUrl, '/healthz'), init);
+    const res = await fetchWithDnsFallback(joinHubPath(publicUrl, '/healthz'), init, fallback);
     return res.ok;
   } catch {
     return false;
@@ -63,6 +65,8 @@ export async function defaultFetchCaPem(
     fetch?: (input: string, init?: RequestInit) => Promise<Response>;
     timeoutMs?: number;
     maxBytes?: number;
+    resolve?: FetchDnsFallbackOpts['resolve'];
+    enabled?: boolean;
   }
 ): Promise<string> {
   const timeoutMs = opts?.timeoutMs ?? CA_BOOTSTRAP_TIMEOUT_MS;
@@ -77,11 +81,15 @@ export async function defaultFetchCaPem(
   try {
     const doFetch = opts?.fetch ?? fetch;
     const res = await Promise.race([
-      doFetch(joinHubPath(publicUrl, '/api/tls/ca.crt'), {
-        redirect: 'error',
-        signal: ac.signal,
-        tls: { rejectUnauthorized: false },
-      } as RequestInit),
+      fetchWithDnsFallback(
+        joinHubPath(publicUrl, '/api/tls/ca.crt'),
+        {
+          redirect: 'error',
+          signal: ac.signal,
+          tls: { rejectUnauthorized: false },
+        } as RequestInit,
+        { fetchImpl: doFetch, resolve: opts?.resolve, enabled: opts?.enabled }
+      ),
       timedOut,
     ]);
     if (!res.ok) throw new Error('ca_unavailable');
