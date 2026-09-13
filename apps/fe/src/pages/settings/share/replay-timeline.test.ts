@@ -6,14 +6,20 @@ import {
   REPLAY_SPEEDS,
   base64ByteLength,
   buildReplayTimeline,
+  clampReplayPreviewX,
   clampReplayTime,
   collectReplayOps,
   countEventsUntil,
   findCheckpointIndex,
   findReplayPane,
   formatReplayClock,
+  formatReplayWallClock,
   nextReplaySpeed,
+  planReplayMinorTicks,
   planReplaySeek,
+  planReplayTicks,
+  replayCrossesCalendarDay,
+  replayScrubPositionToMs,
 } from './replay-timeline';
 
 const BASE = 1_700_000_000_000;
@@ -192,5 +198,97 @@ describe('速度与时钟', () => {
     expect(formatReplayClock(0)).toBe('0:00');
     expect(formatReplayClock(65_400)).toBe('1:05');
     expect(formatReplayClock(3_725_000)).toBe('1:02:05');
+  });
+});
+
+describe('formatReplayWallClock', () => {
+  test('按本地时区拼 24 小时 HH:mm:ss，非法时间出空串', () => {
+    const epoch = Date.UTC(2024, 5, 1, 6, 7, 8);
+    const date = new Date(epoch);
+    const expected = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+    expect(formatReplayWallClock(epoch, 'en_US')).toBe(expected);
+    expect(formatReplayWallClock(epoch, 'zh_CN')).toBe(expected);
+    expect(formatReplayWallClock(epoch, 'zh-CN')).toBe(expected);
+    expect(formatReplayWallClock(epoch, undefined)).toBe(expected);
+    expect(formatReplayWallClock(Number.NaN, 'en_US')).toBe('');
+  });
+
+  test('与 Intl 同一时区的 hour/minute/second 一致', () => {
+    const epoch = Date.UTC(2023, 11, 31, 15, 4, 9);
+    const formatted = formatReplayWallClock(epoch, 'ja_JP');
+    const [hour, minute, second] = formatted.split(':').map(Number);
+    const date = new Date(epoch);
+    expect(hour).toBe(date.getHours());
+    expect(minute).toBe(date.getMinutes());
+    expect(second).toBe(date.getSeconds());
+  });
+});
+
+describe('planReplayTicks', () => {
+  test('空时长只在 0 打一格', () => {
+    expect(planReplayTicks(0)).toEqual({ stepMs: 1_000, ticks: [0] });
+    expect(planReplayTicks(-10)).toEqual({ stepMs: 1_000, ticks: [0] });
+  });
+
+  test('从 1s/5s/10s/30s/1min/5min/15min/1h 里挑 ~4–12 个主刻度', () => {
+    expect(planReplayTicks(5_000)).toEqual({
+      stepMs: 1_000,
+      ticks: [0, 1_000, 2_000, 3_000, 4_000, 5_000],
+    });
+    expect(planReplayTicks(10_000).ticks).toHaveLength(11);
+    expect(planReplayTicks(60_000)).toEqual({
+      stepMs: 10_000,
+      ticks: [0, 10_000, 20_000, 30_000, 40_000, 50_000, 60_000],
+    });
+    expect(planReplayTicks(300_000).stepMs).toBe(30_000);
+    expect(planReplayTicks(3_600_000).stepMs).toBe(900_000);
+    expect(planReplayTicks(3_600_000).ticks).toHaveLength(5);
+  });
+
+  test('窄轨道把刻度上限压到约 4', () => {
+    const planned = planReplayTicks(60_000, 80);
+    expect(planned.stepMs).toBe(30_000);
+    expect(planned.ticks.length).toBeLessThanOrEqual(4);
+  });
+});
+
+describe('planReplayMinorTicks', () => {
+  test('1 秒档不画次刻度，5 秒档在主刻度之间补', () => {
+    expect(planReplayMinorTicks(5_000, 1_000)).toEqual([]);
+    expect(planReplayMinorTicks(10_000, 5_000)).toEqual([
+      1_000, 2_000, 3_000, 4_000, 6_000, 7_000, 8_000, 9_000,
+    ]);
+  });
+});
+
+describe('replayScrubPositionToMs', () => {
+  const rect = { left: 100, width: 200 };
+
+  test('按轨道比例映射并夹到 [0, duration]', () => {
+    expect(replayScrubPositionToMs(100, rect, 5_000)).toBe(0);
+    expect(replayScrubPositionToMs(200, rect, 5_000)).toBe(2_500);
+    expect(replayScrubPositionToMs(300, rect, 5_000)).toBe(5_000);
+    expect(replayScrubPositionToMs(50, rect, 5_000)).toBe(0);
+    expect(replayScrubPositionToMs(400, rect, 5_000)).toBe(5_000);
+  });
+
+  test('宽度为 0 时回到起点', () => {
+    expect(replayScrubPositionToMs(150, { left: 100, width: 0 }, 5_000)).toBe(0);
+  });
+});
+
+describe('clampReplayPreviewX / replayCrossesCalendarDay', () => {
+  test('预览标签中心夹在轨道内', () => {
+    expect(clampReplayPreviewX(0, 200, 80)).toBe(40);
+    expect(clampReplayPreviewX(1, 200, 80)).toBe(160);
+    expect(clampReplayPreviewX(0.5, 200, 80)).toBe(100);
+    expect(clampReplayPreviewX(0.5, 0, 80)).toBe(0);
+    expect(clampReplayPreviewX(0.2, 60, 80)).toBe(30);
+  });
+
+  test('起止是否跨本地日历日', () => {
+    const evening = new Date(2024, 0, 15, 23, 0, 0).getTime();
+    expect(replayCrossesCalendarDay(evening, 30 * 60_000)).toBe(false);
+    expect(replayCrossesCalendarDay(evening, 2 * 60 * 60_000)).toBe(true);
   });
 });

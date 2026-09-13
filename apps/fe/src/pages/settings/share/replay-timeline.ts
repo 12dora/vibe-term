@@ -6,6 +6,7 @@
 // 回放靠 checkpoint 做随机访问：跳到 t 时先回到 t 之前最后一个 checkpoint，再把中间的
 // 事件快进一遍——所以 checkpoint 的下标要在建索引时就记下来。
 
+import { DEFAULT_LOCALE, type LocaleCode, formatDate, toBCP47 } from '@vibeterm/shared';
 import type { ShareLogEntry, ShareLogKind } from '@vibeterm/shared/share';
 
 export const REPLAY_SPEEDS = [1, 2, 4, 8] as const;
@@ -194,4 +195,111 @@ export function formatReplayClock(ms: number): string {
   const hours = Math.floor(total / 3600);
   if (hours === 0) return `${minutes}:${seconds}`;
   return `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`;
+}
+
+/** 拖动/键盘改进度后，预览标签延迟这么久再收起。 */
+export const REPLAY_PREVIEW_HIDE_MS = 800;
+
+const REPLAY_TICK_STEPS_MS = [
+  1_000, 5_000, 10_000, 30_000, 60_000, 300_000, 900_000, 3_600_000,
+] as const;
+
+function replayLocaleCode(language: string | undefined): LocaleCode {
+  if (!language) return DEFAULT_LOCALE;
+  const compact = language.replace('-', '_');
+  if (compact === 'zh_CN' || compact === 'en_US' || compact === 'ja_JP') return compact;
+  return DEFAULT_LOCALE;
+}
+
+/** 墙钟 `HH:mm:ss`（24 小时制，本地时区）。非法时间出空串。 */
+export function formatReplayWallClock(epochMs: number, language?: string): string {
+  const date = new Date(epochMs);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat(toBCP47(replayLocaleCode(language)), {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const hour = parts.find((part) => part.type === 'hour')?.value ?? '00';
+  const minute = parts.find((part) => part.type === 'minute')?.value ?? '00';
+  const second = parts.find((part) => part.type === 'second')?.value ?? '00';
+  return `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}`;
+}
+
+/** 跨日时在起点下补的日期；非法时间出空串。 */
+export function formatReplayDate(epochMs: number, language?: string): string {
+  return formatDate(epochMs, replayLocaleCode(language));
+}
+
+export function replayCrossesCalendarDay(startAt: number, durationMs: number): boolean {
+  const start = new Date(startAt);
+  const end = new Date(startAt + Math.max(0, durationMs));
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return false;
+  return start.toDateString() !== end.toDateString();
+}
+
+export function replayPreviewRatio(ms: number, durationMs: number): number {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return 0;
+  return clampReplayTime(ms, durationMs) / durationMs;
+}
+
+function replayTickCap(widthPx?: number): number {
+  if (widthPx === undefined || !Number.isFinite(widthPx) || widthPx <= 0) return 12;
+  return Math.max(4, Math.min(12, Math.floor(widthPx / 48)));
+}
+
+/** 选 ~4–12 个主刻度；`widthPx` 收窄时把上限压低。 */
+export function planReplayTicks(
+  durationMs: number,
+  widthPx?: number
+): { stepMs: number; ticks: number[] } {
+  const duration = Math.max(0, durationMs);
+  if (duration <= 0) return { stepMs: REPLAY_TICK_STEPS_MS[0], ticks: [0] };
+
+  const cap = replayTickCap(widthPx);
+  let stepMs: number = REPLAY_TICK_STEPS_MS[REPLAY_TICK_STEPS_MS.length - 1];
+  for (const step of REPLAY_TICK_STEPS_MS) {
+    if (Math.floor(duration / step) + 1 <= cap) {
+      stepMs = step;
+      break;
+    }
+  }
+
+  const ticks: number[] = [];
+  for (let t = 0; t <= duration; t += stepMs) ticks.push(t);
+  return { stepMs, ticks };
+}
+
+/** 主刻度之间的次刻度；1 秒档太密，不再画。 */
+export function planReplayMinorTicks(durationMs: number, stepMs: number): number[] {
+  if (durationMs <= 0 || stepMs < 5_000) return [];
+  const minor = stepMs / 5;
+  if (minor < 1_000) return [];
+  const ticks: number[] = [];
+  for (let t = minor; t < durationMs; t += minor) {
+    if (t % stepMs !== 0) ticks.push(t);
+  }
+  return ticks;
+}
+
+export function replayScrubPositionToMs(
+  clientX: number,
+  rect: { left: number; width: number },
+  durationMs: number
+): number {
+  if (!Number.isFinite(rect.width) || rect.width <= 0) return 0;
+  const ratio = (clientX - rect.left) / rect.width;
+  return clampReplayTime(ratio * durationMs, durationMs);
+}
+
+/** 预览标签中心的像素位置，夹在轨道内不溢出。 */
+export function clampReplayPreviewX(ratio: number, trackWidth: number, labelWidth: number): number {
+  const width = Math.max(0, trackWidth);
+  if (width <= 0) return 0;
+  const t = Number.isFinite(ratio) ? Math.min(1, Math.max(0, ratio)) : 0;
+  const half = Math.max(0, labelWidth) / 2;
+  if (width <= labelWidth) return width / 2;
+  return Math.min(width - half, Math.max(half, t * width));
 }

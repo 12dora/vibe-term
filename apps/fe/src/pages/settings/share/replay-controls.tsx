@@ -5,7 +5,8 @@ import { Button } from '@vibeterm/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { Pause, Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { formatReplayClock } from './replay-timeline';
+import { ReplayScrubber } from './replay-scrubber';
+import { formatReplayClock, formatReplayWallClock } from './replay-timeline';
 import type { ReplayPlayer } from './use-replay-player';
 
 export function ReplayControls({
@@ -17,71 +18,80 @@ export function ReplayControls({
   panes: readonly { paneId: string; bytes: number }[];
   disabled: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   return (
-    <div className="flex flex-wrap items-center gap-2" data-testid="share-replay-controls">
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="secondary"
+    <div className="flex flex-col gap-1.5" data-testid="share-replay-controls">
+      <ReplayScrubber
+        startAt={player.startAt}
+        currentMs={player.currentMs}
+        durationMs={player.durationMs}
         disabled={disabled}
-        aria-label={
-          player.playing ? t('settings.share.replay.pause') : t('settings.share.replay.play')
-        }
-        onClick={player.toggle}
-        data-testid="share-replay-toggle"
-      >
-        {player.playing ? <Pause /> : <Play />}
-      </Button>
-
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        disabled={disabled}
-        onClick={player.cycleSpeed}
-        data-testid="share-replay-speed"
-      >
-        {t('settings.share.replay.speedValue', { n: player.speed })}
-      </Button>
-
-      <input
-        type="range"
-        className="h-1.5 min-w-40 flex-1 cursor-pointer accent-primary"
-        min={0}
-        max={Math.max(1, player.durationMs)}
-        step={100}
-        value={Math.round(player.currentMs)}
-        disabled={disabled}
-        aria-label={t('settings.share.replay.seek')}
-        onChange={(event) => player.seek(Number(event.target.value))}
-        data-testid="share-replay-scrubber"
+        language={i18n.language}
+        onSeek={player.seek}
       />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="secondary"
+          disabled={disabled}
+          aria-label={
+            player.playing ? t('settings.share.replay.pause') : t('settings.share.replay.play')
+          }
+          onClick={player.toggle}
+          data-testid="share-replay-toggle"
+        >
+          {player.playing ? <Pause /> : <Play />}
+        </Button>
 
-      <span className="tabular-nums text-xs text-muted-foreground" data-testid="share-replay-clock">
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={disabled}
+          onClick={player.cycleSpeed}
+          data-testid="share-replay-speed"
+        >
+          {t('settings.share.replay.speedValue', { n: player.speed })}
+        </Button>
+        <ReplayClock player={player} language={i18n.language} />
+        {panes.length > 1 && (
+          <Select
+            value={player.paneId ?? ''}
+            onValueChange={(next) => next && player.selectPane(String(next))}
+          >
+            <SelectTrigger size="sm" className="w-36" data-testid="share-replay-pane">
+              <SelectValue>
+                {t('settings.share.replay.paneValue', { id: shortPaneId(player.paneId) })}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {panes.map((pane) => (
+                <SelectItem key={pane.paneId} value={pane.paneId}>
+                  {t('settings.share.replay.paneValue', { id: shortPaneId(pane.paneId) })}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReplayClock({ player, language }: { player: ReplayPlayer; language: string }) {
+  const { t } = useTranslation();
+  const wall = t('settings.share.replay.wallTime');
+  return (
+    <span className="tabular-nums text-xs text-muted-foreground">
+      <span data-testid="share-replay-clock">
         {formatReplayClock(player.currentMs)} / {formatReplayClock(player.durationMs)}
       </span>
-
-      {panes.length > 1 && (
-        <Select
-          value={player.paneId ?? ''}
-          onValueChange={(next) => next && player.selectPane(String(next))}
-        >
-          <SelectTrigger size="sm" className="w-36" data-testid="share-replay-pane">
-            <SelectValue>
-              {t('settings.share.replay.paneValue', { id: shortPaneId(player.paneId) })}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {panes.map((pane) => (
-              <SelectItem key={pane.paneId} value={pane.paneId}>
-                {t('settings.share.replay.paneValue', { id: shortPaneId(pane.paneId) })}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-    </div>
+      <span className="mx-1.5 text-border">·</span>
+      <span data-testid="share-replay-wall-clock" title={wall} aria-label={wall}>
+        {formatReplayWallClock(player.startAt + player.currentMs, language)}
+      </span>
+    </span>
   );
 }
 
