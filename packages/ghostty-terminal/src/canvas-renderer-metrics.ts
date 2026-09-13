@@ -67,6 +67,41 @@ export function toDeviceCell(size: number, dpr: number): number {
   return Math.max(1, Math.round(size * dpr));
 }
 
+/** 显式像素尺寸时清掉 inset/right/bottom，避免绝对定位画布被右锚裁掉左列。 */
+export type CanvasCssBox = {
+  inset: string;
+  right: string;
+  bottom: string;
+  left: string;
+  top: string;
+  width: string;
+  height: string;
+};
+
+export function applyCanvasCssPixelSize(
+  style: CanvasCssBox,
+  cssWidth: number,
+  cssHeight: number
+): void {
+  style.inset = '';
+  style.right = '';
+  style.bottom = '';
+  style.left = '0';
+  style.top = '0';
+  style.width = `${cssWidth}px`;
+  style.height = `${cssHeight}px`;
+}
+
+export function copyCanvasCssBox(from: CanvasCssBox, to: CanvasCssBox): void {
+  to.inset = from.inset;
+  to.right = from.right;
+  to.bottom = from.bottom;
+  to.left = from.left;
+  to.top = from.top;
+  to.width = from.width;
+  to.height = from.height;
+}
+
 export function colorToCss(color: GhosttyColorRgb): string {
   return `rgb(${color.r} ${color.g} ${color.b})`;
 }

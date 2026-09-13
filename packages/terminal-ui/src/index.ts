@@ -12,6 +12,14 @@ export type { TerminalProps, TerminalRef, TerminalTheme } from './components/typ
 export { SplitTerminalArea } from './components/SplitTerminalArea';
 export { TerminalPreview } from './components/TerminalPreview';
 export {
+  ReadOnlyTerminal,
+  READ_ONLY_TERMINAL_SCROLLBACK,
+} from './components/ReadOnlyTerminal';
+export type {
+  ReadOnlyTerminalHandle,
+  ReadOnlyTerminalProps,
+} from './components/ReadOnlyTerminal';
+export {
   TerminalDiagnosticsProvider,
   collectTerminalRenderDiagnostic,
   reportTerminalDiagnostic,
