@@ -48,7 +48,7 @@ describe('recovery CLI wiring', () => {
       'quota',
       'limits',
       'label',
-    ]) {
+    ] as const) {
       const nested = resolveNestedCommand(parseArgs(['relay', sub]));
       expect(nested.name).toBe(`relay.${sub}`);
       expect(AUTH_COMMANDS.has(nested.name)).toBe(true);
