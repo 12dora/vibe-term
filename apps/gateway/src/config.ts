@@ -9,7 +9,7 @@ import {
 import { DEFAULT_PEER_PORT, parsePortRange, parseStunServersEnv } from '@vibeterm/shared/net';
 import type { HubMode } from '@vibeterm/shared/uplink';
 import { parseBoolEnv, parsePort } from '../../../packages/shared/src/env/parse';
-import { logMemoryProfileOnce, resolveMemoryProfile } from './memory-profile';
+import { resolveMemoryProfile } from './memory-profile';
 import {
   parseTurnExternalIp,
   parseTurnHost,
@@ -393,8 +393,6 @@ export const config = {
   isProd: getEnv('NODE_ENV', 'development') === 'production',
   memoryProfile: resolveMemoryProfile(),
 } as const;
-
-logMemoryProfileOnce(config.memoryProfile);
 
 // 生产环境检查
 if (config.isProd && !config.masterKey) {
