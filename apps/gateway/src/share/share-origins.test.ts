@@ -159,6 +159,71 @@ describe('buildShareOriginContext', () => {
     expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
   });
 
+  test('站点 URL 等于中继 accessUrl 时不重复产出 site 候选', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://relay.example.com/n/node-a',
+        siteUrlManaged: () => false,
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['relay']);
+    expect(context.candidates.filter((item) => item.kind === 'site')).toEqual([]);
+  });
+
+  test('站点 URL 等于 Hub 公网地址且未托管时不重复产出 site 候选', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://hub.example.com',
+        siteUrlManaged: () => false,
+        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
+  });
+
+  test('站点 URL 等于 Hub accessUrl 且未托管时不重复产出 site 候选', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://hub.example.com/n/node-a',
+        siteUrlManaged: () => false,
+        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
+    expect(context.candidates[0]?.accessUrl).toBe('https://hub.example.com/n/node-a');
+  });
+
+  test('站点 URL 等于公网 IP 基址时保留 ip 候选', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'http://203.0.113.7:9663',
+        baseUrl: () => 'http://203.0.113.7:9663',
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['ip']);
+  });
+
+  test('无关的自建域名仍产出 site 候选', () => {
+    const context = buildShareOriginContext(
+      sources({
+        siteUrl: () => 'https://mine.example.com',
+        siteUrlManaged: () => false,
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
+        tunnelUrl: () => 'https://tunnel.example.com',
+      })
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['site', 'relay', 'tunnel']);
+    expect(context.candidates[0]).toMatchObject({
+      kind: 'site',
+      accessUrl: 'https://mine.example.com',
+    });
+  });
+
   test('内网 / 回环地址不进候选', () => {
     const context = buildShareOriginContext(
       sources({
