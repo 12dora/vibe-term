@@ -1,3 +1,10 @@
+import { mkdir, rename, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import {
+  type ReleaseAssetFetch,
+  downloadAssetRanged,
+  logReleaseDownload,
+} from '../../../shared/src/release/ranged-download';
 import {
   RELEASE_API_LATEST_URL,
   RELEASE_REPO_URL,
@@ -10,12 +17,13 @@ import {
 import { parseSha256Sums } from '../../../shared/src/release/verify';
 import { t } from '../i18n';
 import { errorMessage } from './error-message';
-import { writeBytesAtomic } from './fs-utils';
 
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
   'User-Agent': 'vibeterm-cli',
 };
+
+const TARBALL_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
 
 export type ReleaseFetch = (url: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -103,14 +111,62 @@ export async function downloadReleaseTarball(
   destFile: string,
   fetchFn: ReleaseFetch = fetch
 ): Promise<string> {
-  const primary = await githubFetchOrNull(releaseTarballUrl(version), fetchFn);
-  if (primary !== null) {
-    await writeBytesAtomic(destFile, Buffer.from(await primary.arrayBuffer()));
-    return releaseTarballName(version);
+  const signal = AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS);
+  const asFetch: ReleaseAssetFetch = (input, init) =>
+    fetchFn(typeof input === 'string' || input instanceof URL ? input : input.url, init);
+  const primary = await downloadTarballOrMissing(
+    releaseTarballUrl(version),
+    destFile,
+    asFetch,
+    signal
+  );
+  if (primary === 'ok') return releaseTarballName(version);
+  const legacy = await downloadTarballOrMissing(
+    legacyReleaseTarballUrl(version),
+    destFile,
+    asFetch,
+    signal
+  );
+  if (legacy === 'ok') return legacyReleaseTarballName(version);
+  throw new Error(t('upgrade.versionNotFound', { version }));
+}
+
+async function downloadTarballOrMissing(
+  url: string,
+  destFile: string,
+  fetchFn: ReleaseAssetFetch,
+  signal: AbortSignal
+): Promise<'ok' | 'missing'> {
+  await mkdir(dirname(destFile), { recursive: true });
+  const part = `${destFile}.part`;
+  await rm(part, { force: true }).catch(() => {});
+  const started = Date.now();
+  try {
+    const result = await downloadAssetRanged(url, {
+      destPath: part,
+      totalBytes: null,
+      fetch: fetchFn,
+      signal,
+      headers: GITHUB_HEADERS,
+    });
+    await rename(part, destFile);
+    logReleaseDownload({
+      url: result.finalUrl,
+      streams: result.streams,
+      bytes: result.bytes,
+      elapsedMs: Date.now() - started,
+      verdict: result.verdict,
+    });
+    return 'ok';
+  } catch (error) {
+    await rm(part, { force: true }).catch(() => {});
+    if (isNotFound(error)) return 'missing';
+    throw networkError(errorMessage(error));
   }
-  const legacy = await githubFetch(legacyReleaseTarballUrl(version), fetchFn, version);
-  await writeBytesAtomic(destFile, Buffer.from(await legacy.arrayBuffer()));
-  return legacyReleaseTarballName(version);
+}
+
+function isNotFound(error: unknown): boolean {
+  return /HTTP 404/.test(errorMessage(error));
 }
 
 export function releaseSha256SumsUrl(version: string): string {

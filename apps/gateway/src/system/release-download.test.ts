@@ -73,6 +73,20 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+}
+
+function parseRangeInit(init?: RequestInit): { start: number; end: number } | null {
+  const raw = new Headers(init?.headers).get('range');
+  if (!raw) return null;
+  const matched = /^bytes=(\d+)-(\d+)$/i.exec(raw.trim());
+  if (!matched) return null;
+  return { start: Number(matched[1]), end: Number(matched[2]) };
+}
+
 function stubReleaseFetch(
   tarball: Uint8Array,
   version: string
@@ -81,7 +95,7 @@ function stubReleaseFetch(
   const hex = sha256Hex(tarball);
   let tarballHits = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const url = requestUrl(input);
     urls.push(url);
     const sums = sumsAsset(url, version, hex);
     if (sums) return sums;
@@ -213,7 +227,7 @@ describe('downloadVerifiedRelease', () => {
     const version = '5.5.5';
     const ac = new AbortController();
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       const sums = sumsAsset(url, version, 'ab'.repeat(32));
       if (sums) return sums;
       const signal = init?.signal;
@@ -261,7 +275,7 @@ describe('downloadVerifiedRelease', () => {
   function stubSlowTarballFetch(tarball: Uint8Array, version: string): void {
     const hex = sha256Hex(tarball);
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       const sums = sumsAsset(url, version, hex);
       if (sums) return sums;
       const signal = init?.signal;
@@ -319,7 +333,7 @@ describe('downloadVerifiedRelease', () => {
   test('aborting every shared caller aborts the fetch and removes the .part', async () => {
     const version = '4.4.5';
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      const url = requestUrl(input);
       const sums = sumsAsset(url, version, 'ab'.repeat(32));
       if (sums) return sums;
       const signal = init?.signal;
@@ -387,6 +401,69 @@ describe('downloadVerifiedRelease', () => {
   });
 });
 
+describe('downloadVerifiedRelease ranged', () => {
+  test('follows a GitHub 302 then Range-GETs the CDN URL in parallel', async () => {
+    const version = '9.1.0';
+    const tarball = new Uint8Array(8 * 1024 * 1024).fill(3);
+    tarball[0] = 9;
+    tarball[tarball.byteLength - 1] = 8;
+    const hex = sha256Hex(tarball);
+    const github = resolveReleaseTarballUrl(version);
+    const cdn = 'https://objects.githubusercontent.com/github-production-release-asset/x';
+    const rangeStarts: number[] = [];
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(String(args[0] ?? ''));
+    };
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const sums = sumsAsset(url, version, hex);
+      if (sums) return sums;
+      if (url === github) {
+        return new Response(null, { status: 302, headers: { Location: cdn } });
+      }
+      expect(url).toBe(cdn);
+      const range = parseRangeInit(init);
+      if (!range) {
+        return new Response(tarball, {
+          status: 200,
+          headers: {
+            'Content-Length': String(tarball.byteLength),
+            'Accept-Ranges': 'bytes',
+          },
+        });
+      }
+      rangeStarts.push(range.start);
+      const slice = tarball.subarray(range.start, Math.min(range.end + 1, tarball.byteLength));
+      return new Response(slice, {
+        status: 206,
+        headers: {
+          'Content-Range': `bytes ${range.start}-${range.start + slice.byteLength - 1}/${tarball.byteLength}`,
+          'Accept-Ranges': 'bytes',
+        },
+      });
+    }) as typeof fetch;
+    try {
+      const cacheDir = tempDir('vibeterm-rel-ranged-');
+      const result = await downloadVerifiedRelease(version, { cacheDir });
+      expect(result.sha256).toBe(hex);
+      expect(result.bytes).toBe(tarball.byteLength);
+      expect(rangeStarts.length).toBeGreaterThan(1);
+      expect(new Set(rangeStarts).size).toBeGreaterThan(1);
+      expect(
+        logs.some((line) =>
+          /\[upgrade\] download url=objects\.githubusercontent\.com streams=\d+ bytes=\d+ ms=\d+ verdict=fast/.test(
+            line
+          )
+        )
+      ).toBe(true);
+    } finally {
+      console.log = originalLog;
+    }
+  }, 15_000);
+});
+
 /**
  * 分片下发的假发行源：`pauseAfter` 之后卡住，直到调用 `release()`，
  * 用来在下载在途时插入新的订阅者。
@@ -401,8 +478,8 @@ function stubStreamedRelease(
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(input);
     const sums = sumsAsset(url, version, hex);
     if (sums) return sums;
     let sent = 0;

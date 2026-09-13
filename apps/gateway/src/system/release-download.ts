@@ -1,17 +1,18 @@
 import { createHash } from 'node:crypto';
 import type { Stats } from 'node:fs';
-import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import {
   combineAbortSignals,
   legacyReleaseTarballName,
   releaseTarballName,
 } from '@vibeterm/shared';
+import {
+  downloadAssetRanged,
+  logReleaseDownload,
+} from '../../../../packages/shared/src/release/ranged-download';
 import { parseSha256Sums, sha256Hex } from '../../../../packages/shared/src/release/verify';
 import {
   assertReleaseSha256,
@@ -536,63 +537,48 @@ async function downloadTarballToFile(
 ): Promise<{ sha256: string; bytes: number }> {
   const timeout = AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS);
   const combined = combineAbortSignals(timeout, signal) ?? timeout;
-  const res = await fetchFn(url, {
-    cache: 'no-store',
-    redirect: 'follow',
-    signal: combined,
-  });
-  if (!res.ok) {
-    throw new Error(`GitHub release tarball HTTP ${res.status}`);
-  }
+  const started = Date.now();
   throwIfAborted(signal);
-  const total = parseContentLength(res.headers.get('content-length'));
-  const hash = createHash('sha256');
-  let bytes = 0;
-  let reportedBytes = 0;
-  let reportedAt = 0;
-  const hasher = new Transform({
-    transform(chunk, _enc, cb) {
-      hash.update(chunk);
-      bytes += chunk.byteLength;
-      const now = Date.now();
-      if (
-        onProgress &&
-        (bytes - reportedBytes >= PROGRESS_MIN_BYTES || now - reportedAt >= PROGRESS_MIN_MS)
-      ) {
-        reportedBytes = bytes;
-        reportedAt = now;
-        onProgress(bytes, total);
-      }
-      cb(null, chunk);
-    },
+  const progress = throttleProgress(onProgress);
+  const result = await downloadAssetRanged(url, {
+    destPath,
+    totalBytes: null,
+    fetch: fetchFn,
+    signal: combined,
+    onProgress: progress.emit,
   });
-  const ws = createWriteStream(destPath, { mode: 0o600 });
-  const src = res.body
-    ? Readable.fromWeb(res.body as unknown as NodeWebReadableStream)
-    : Readable.from([Buffer.from(await res.arrayBuffer())]);
-  const onAbort = (): void => {
-    src.destroy();
-    hasher.destroy();
-    ws.destroy();
-    void res.body?.cancel().catch(() => {});
-  };
-  combined.addEventListener('abort', onAbort, { once: true });
-  try {
-    await pipeline(src, hasher, ws);
-  } catch (err) {
-    ws.destroy();
-    src.destroy();
-    throw err;
-  } finally {
-    combined.removeEventListener('abort', onAbort);
-  }
-  if (onProgress && bytes !== reportedBytes) onProgress(bytes, total);
-  return { sha256: hash.digest('hex'), bytes };
+  progress.flush(result.bytes, result.totalBytes);
+  logReleaseDownload({
+    url: result.finalUrl,
+    streams: result.streams,
+    bytes: result.bytes,
+    elapsedMs: Date.now() - started,
+    verdict: result.verdict,
+  });
+  return { sha256: result.sha256, bytes: result.bytes };
 }
 
-/** 缺失 / 不合法的 `content-length` 一律按 0（总量未知）处理，不去猜。 */
-function parseContentLength(raw: string | null): number {
-  if (!raw) return 0;
-  const value = Number.parseInt(raw.trim(), 10);
-  return Number.isFinite(value) && value > 0 ? value : 0;
+function throttleProgress(onProgress?: DownloadProgressFn): {
+  emit: DownloadProgressFn;
+  flush: (bytes: number, total: number) => void;
+} {
+  if (!onProgress) {
+    return { emit: () => {}, flush: () => {} };
+  }
+  let reportedBytes = 0;
+  let reportedAt = 0;
+  return {
+    emit(bytes, total) {
+      const now = Date.now();
+      if (bytes - reportedBytes < PROGRESS_MIN_BYTES && now - reportedAt < PROGRESS_MIN_MS) {
+        return;
+      }
+      reportedBytes = bytes;
+      reportedAt = now;
+      onProgress(bytes, total);
+    },
+    flush(bytes, total) {
+      if (bytes !== reportedBytes) onProgress(bytes, total);
+    },
+  };
 }

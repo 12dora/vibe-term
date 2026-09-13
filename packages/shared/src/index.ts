@@ -190,4 +190,5 @@ export {
 } from './roles';
 export * from './release/release-signing';
 export * from './release/source';
+export * from './release/speed-probe';
 export * from './terminal-synchronized-frame';

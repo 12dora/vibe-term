@@ -101,6 +101,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'parseSha256Sums',
   'parseTmuxVersion',
   'parseWindowLayout',
+  'probeReleaseAssetSpeed',
   'releaseApiUrl',
   'releaseAssetNames',
   'releaseSignatureRequired',
