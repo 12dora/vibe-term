@@ -27,6 +27,9 @@ const {
 } = await import('./hooks/read-only-terminal-session');
 type ReadOnlyController = import('./hooks/read-only-terminal-session').ReadOnlyController;
 const { ReadOnlySelectionToolbar, ReadOnlyTerminal } = await import('./ReadOnlyTerminal');
+const { clearE2eReadOnlyTerminalProbe, setE2eReadOnlyTerminalProbe } = await import(
+  './hooks/useReadOnlyTerminal'
+);
 
 function recordingHost(writes: string[]): HostServices {
   return {
@@ -343,6 +346,31 @@ describe('ReadOnlyTerminal copy shortcut', () => {
     );
     if (previous) Object.defineProperty(globalThis, 'navigator', previous);
     else Reflect.deleteProperty(globalThis, 'navigator');
+  });
+});
+
+describe('ReadOnlyTerminal e2e probe', () => {
+  test('写入只读实例与选区，清掉时只动自己挂上的那份', () => {
+    const g = globalThis as {
+      __vibetermE2eReadOnlyTerminal?: unknown;
+      __vibetermE2eReadOnlyTerminalSelectionText?: string | null;
+    };
+    const first = {
+      hasSelection: () => true,
+      getSelection: () => 'REPLAY-LEFT-EDGE-1',
+    };
+    const other = {
+      hasSelection: () => false,
+      getSelection: () => '',
+    };
+    setE2eReadOnlyTerminalProbe(first as never);
+    expect(g.__vibetermE2eReadOnlyTerminal).toBe(first);
+    expect(g.__vibetermE2eReadOnlyTerminalSelectionText).toBe('REPLAY-LEFT-EDGE-1');
+    clearE2eReadOnlyTerminalProbe(other as never);
+    expect(g.__vibetermE2eReadOnlyTerminal).toBe(first);
+    clearE2eReadOnlyTerminalProbe(first as never);
+    expect(g.__vibetermE2eReadOnlyTerminal).toBeNull();
+    expect(g.__vibetermE2eReadOnlyTerminalSelectionText).toBeNull();
   });
 });
 
