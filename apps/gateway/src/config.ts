@@ -8,6 +8,7 @@ import {
 } from '@vibeterm/shared';
 import { DEFAULT_PEER_PORT, parsePortRange, parseStunServersEnv } from '@vibeterm/shared/net';
 import type { HubMode } from '@vibeterm/shared/uplink';
+import { parseBoolEnv, parsePort } from '../../../packages/shared/src/env/parse';
 import {
   parseTurnExternalIp,
   parseTurnHost,
@@ -25,11 +26,7 @@ function getEnv(key: string, defaultValue: string): string {
 }
 
 function getBooleanEnv(key: string, defaultValue: boolean): boolean {
-  const value = process.env[key];
-  if (value === undefined) {
-    return defaultValue;
-  }
-  return value === '1' || value.toLowerCase() === 'true' || value.toLowerCase() === 'yes';
+  return parseBoolEnv(process.env[key], defaultValue);
 }
 
 function isManagedBuild(): boolean {
@@ -47,16 +44,8 @@ export function resolveGatewayPort(
   env: NodeJS.ProcessEnv = process.env,
   allowDynamicPort = isCompanionManagedRuntime(env)
 ): number {
-  const raw = (env.GATEWAY_PORT ?? '9663').trim();
-  if (!/^\d+$/.test(raw)) {
-    throw new Error('GATEWAY_PORT must be a decimal integer');
-  }
-  const port = Number(raw);
   const minimum = allowDynamicPort ? 0 : 1;
-  if (!Number.isInteger(port) || port < minimum || port > 65535) {
-    throw new Error(`GATEWAY_PORT must be an integer in ${minimum}..65535`);
-  }
-  return port;
+  return parsePort(env.GATEWAY_PORT ?? '9663', { min: minimum, name: 'GATEWAY_PORT' });
 }
 
 export function resolveTmuxBin(
@@ -117,16 +106,7 @@ export function resolveLiveRoles(env: NodeJS.ProcessEnv = process.env): VibeTerm
 }
 
 export function parsePeerPort(raw: string | undefined): number {
-  const fallback = String(DEFAULT_PEER_PORT);
-  const value = (raw ?? fallback).trim() || fallback;
-  if (!/^\d+$/.test(value)) {
-    throw new Error('VIBETERM_PEER_PORT must be a decimal integer');
-  }
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('VIBETERM_PEER_PORT must be an integer in 1..65535');
-  }
-  return port;
+  return parsePort(raw?.trim() || String(DEFAULT_PEER_PORT), { name: 'VIBETERM_PEER_PORT' });
 }
 
 export const DEFAULT_PEER_BIND_HOSTS = ['::', '0.0.0.0'] as const;

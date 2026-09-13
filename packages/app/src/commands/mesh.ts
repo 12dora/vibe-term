@@ -1,6 +1,8 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { encodeBase64url, encodeRemovePasskeyPayload } from '../../../shared/src/auth';
+import { parsePort } from '../../../shared/src/env/parse';
+import { DEFAULT_GATEWAY_PORT } from '../../../shared/src/net';
 import { t } from '../i18n';
 import type { FetchLike } from '../lib/fetch-like';
 import { confirmDestructiveReset } from '../lib/hub-user-passwd';
@@ -191,9 +193,9 @@ export async function runMeshKeylogStatus(
       remoteAtLocal: null,
       error: 'runtime_unavailable',
     };
-    const port = Number(ctx.env.GATEWAY_PORT || 9883);
-    if (!Number.isInteger(port) || port < 1 || port > 65535)
-      throw new Error('invalid GATEWAY_PORT');
+    const port = parsePort(ctx.env.GATEWAY_PORT || String(DEFAULT_GATEWAY_PORT), {
+      name: 'GATEWAY_PORT',
+    });
     try {
       const response = await (io.fetcher ?? fetch)(
         `http://127.0.0.1:${port}/api/mesh/keylog/status`,

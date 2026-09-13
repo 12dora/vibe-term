@@ -5,7 +5,8 @@
 import type { FileErrorCode } from './files';
 
 /** 能力位：随 `SystemInfo.transferCapabilities` 下发，供对端协商是否可用分片并行写入 */
-export type TransferCapability = 'transfer-v2' | 'transfer-ranged-parallel';
+export const TRANSFER_CAPABILITIES = ['transfer-v2', 'transfer-ranged-parallel'] as const;
+export type TransferCapability = (typeof TRANSFER_CAPABILITIES)[number];
 
 export type TransferJobState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 

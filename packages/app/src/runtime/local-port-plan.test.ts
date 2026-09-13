@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  DEFAULT_GATEWAY_PORT,
   DEFAULT_PEER_PORT,
   DEFAULT_PUBLIC_HTTPS_PORT,
   DEFAULT_RTC_PORT_RANGE,
@@ -115,5 +116,16 @@ describe('portPlanFromEnv', () => {
     expect(formatPortPlanForEnv({ VIBETERM_ROLES: 'relay,node' })).toBe(
       '443/tcp, 39001/tcp, 40050-40099/udp, 40000/udp, 40001-40049/udp'
     );
+  });
+
+  test('invalid or empty ports fall back to defaults', () => {
+    const live = portPlanLiveFromEnv({
+      GATEWAY_PORT: 'not-a-port',
+      VIBETERM_PEER_PORT: '',
+      VIBETERM_TURN_PORT: '65536',
+    });
+    expect(live.gatewayPort).toBe(DEFAULT_GATEWAY_PORT);
+    expect(live.peerPort).toBe(DEFAULT_PEER_PORT);
+    expect(live.turnPort).toBe(DEFAULT_TURN_PORT);
   });
 });

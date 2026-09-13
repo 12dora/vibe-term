@@ -1,3 +1,4 @@
+import { parsePort } from '../../../shared/src/env/parse';
 import {
   DEFAULT_GATEWAY_PORT,
   DEFAULT_PEER_PORT,
@@ -44,19 +45,11 @@ export function portRoleFromEnv(env: PortPlanEnv): PortRole {
   return isVibeTermRoleName(raw) ? raw : 'standalone';
 }
 
-function parseDecimalPort(raw: string | undefined, fallback: number): number {
-  const value = raw?.trim() ?? '';
-  if (!value || !/^\d+$/.test(value)) return fallback;
-  const port = Number(value);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) return fallback;
-  return port;
-}
-
 function parseTurnPortLive(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === '') return DEFAULT_TURN_PORT;
   const value = raw.trim().toLowerCase();
   if (value === 'off' || value === '0') return 0;
-  return parseDecimalPort(raw, DEFAULT_TURN_PORT);
+  return parsePort(raw, { fallback: DEFAULT_TURN_PORT });
 }
 
 function publicUrlForRole(role: PortRole, env: PortPlanEnv): string | undefined {
@@ -70,9 +63,9 @@ export function portPlanLiveFromEnv(env: PortPlanEnv): PortPlanLive {
   const rtcRange = parsePortRange(env.VIBETERM_RTC_PORT_RANGE ?? '');
   const turnRelayRange = parsePortRange(env.VIBETERM_TURN_RELAY_PORT_RANGE ?? '');
   return {
-    gatewayPort: parseDecimalPort(env.GATEWAY_PORT, DEFAULT_GATEWAY_PORT),
+    gatewayPort: parsePort(env.GATEWAY_PORT, { fallback: DEFAULT_GATEWAY_PORT }),
     gatewayExposed: isGatewayExposed(env.VIBETERM_BIND_HOST),
-    peerPort: parseDecimalPort(env.VIBETERM_PEER_PORT, DEFAULT_PEER_PORT),
+    peerPort: parsePort(env.VIBETERM_PEER_PORT, { fallback: DEFAULT_PEER_PORT }),
     rtcRange: rtcRange ?? defaultRtcPortRange(role),
     turnPort: parseTurnPortLive(env.VIBETERM_TURN_PORT),
     turnRelayRange: turnRelayRange ?? { ...DEFAULT_TURN_RELAY_PORT_RANGE },

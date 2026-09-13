@@ -1,5 +1,7 @@
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { parsePort } from '../../../shared/src/env/parse';
+import { DEFAULT_GATEWAY_PORT } from '../../../shared/src/net';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
 import { releaseTarballName } from '../../../shared/src/release/source';
 import { defaultInstallDir } from '../constants';
@@ -196,7 +198,7 @@ function printUpgradeDone(
   env: Record<string, string>
 ): void {
   const host = rewriteWildcardBindHost(String(env.VIBETERM_BIND_HOST || '127.0.0.1'));
-  const port = String(env.GATEWAY_PORT || '9883');
+  const port = String(parsePort(env.GATEWAY_PORT, { fallback: DEFAULT_GATEWAY_PORT }));
   console.log(`[vibeterm] ${t('upgrade.done')}`);
   console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
   console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
