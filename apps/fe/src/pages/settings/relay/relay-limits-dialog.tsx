@@ -150,7 +150,10 @@ export function RelayLimitsDialog({
         if (!busy) onOpenChange(next);
       }}
     >
-      <DialogContent className="sm:max-w-md" data-testid="relay-limits-dialog">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+        data-testid="relay-limits-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t('relay.admin.limits.title')}</DialogTitle>
           <DialogDescription>{t('relay.admin.limits.description')}</DialogDescription>

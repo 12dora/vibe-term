@@ -99,7 +99,7 @@ function RelayTabHeader({
           <h2 className="text-base font-medium">{t('relay.admin.title')}</h2>
           <p className="text-xs text-muted-foreground">{t('relay.admin.description')}</p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           <Button
             size="icon-sm"
             variant="ghost"

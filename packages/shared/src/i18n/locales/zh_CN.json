@@ -424,9 +424,7 @@
         "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
         "urlHint": "用于通知链接与分享地址。",
         "urlManagedHint": "由 Hub 公开地址决定，在「多节点互联」中修改。",
-        "urlCandidates": "可用地址",
-        "urlOtherCandidates": "其它可用地址",
-        "urlUseCandidate": "填入"
+        "urlCandidates": "可用地址"
       },
       "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
@@ -2627,6 +2625,13 @@
         "directRestartFailed": "重启失败：{{error}}",
         "directRestartTimeout": "等待超时"
       },
+      "table": {
+        "mobile": {
+          "selected": "已选 {{count}} 台",
+          "direct": "支持直连",
+          "noDirect": "不支持直连"
+        }
+      },
       "selection": {
         "more": "更多",
         "selectAll": "全选",
@@ -3587,6 +3592,9 @@
           "invalidMaxFile": "单文件上限须为 1–{{max}} 的整数（MB），留空即不限。"
         },
         "tenants": {
+          "mobile": {
+            "usage": "用量"
+          },
           "title": "租户",
           "total": "共 {{n}} 个",
           "empty": "还没有租户接入。",

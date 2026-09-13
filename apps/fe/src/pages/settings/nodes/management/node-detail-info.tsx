@@ -38,8 +38,8 @@ export function nodeRelayPresenceText(row: NodeRow): string | null {
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="w-24 shrink-0 text-xs text-muted-foreground">{label}</span>
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+      <span className="w-[5.5rem] shrink-0 text-xs text-muted-foreground">{label}</span>
       <span className="min-w-0 flex-1 text-xs">{children}</span>
     </div>
   );
@@ -62,12 +62,24 @@ export function NodeDetailInfo({ row }: { row: NodeRow }) {
           <CopyButton value={row.id} testId={`nodes-detail-id-${row.id}`} />
         </span>
       </InfoRow>
+      {/* 指纹与地址都可能很长：截断 + 悬浮全文 + 复制，不让它们在手机上撑出横向滚动。 */}
       <InfoRow label={t('nodes.columns.fingerprint')}>
-        <code className="font-mono text-[11px] text-muted-foreground">{row.fingerprint}</code>
+        <span className="flex min-w-0 items-center gap-1">
+          <code
+            className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground"
+            title={row.fingerprint}
+          >
+            {row.fingerprint}
+          </code>
+          {row.fingerprint && (
+            <CopyButton value={row.fingerprint} testId={`nodes-detail-fingerprint-${row.id}`} />
+          )}
+        </span>
       </InfoRow>
       <InfoRow label={t('nodes.columns.address')}>
         <code
-          className="font-mono text-[11px] text-muted-foreground"
+          className="block truncate font-mono text-[11px] text-muted-foreground"
+          title={view.addressText}
           data-testid={`nodes-detail-address-${row.id}`}
         >
           {view.addressText}

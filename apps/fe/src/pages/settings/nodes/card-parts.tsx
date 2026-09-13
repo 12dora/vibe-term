@@ -62,7 +62,8 @@ export function Notice({
         <ShieldAlert className="size-3.5 shrink-0" />
       )}
       <span className="min-w-0 flex-1">{children}</span>
-      {action}
+      {/* 窄屏动作另起一行右对齐：挤在文字右边会把句子压成两三个字一行。 */}
+      {action && <span className="flex w-full justify-end sm:w-auto">{action}</span>}
     </p>
   );
 }

@@ -3,14 +3,15 @@
 // 两种形态（判据见 `relay-row-model.ts` 的 `isMultiAttachView`）：
 // - 单条中继 / 旧网关：一个状态点加一个主机名——「在线 / 延迟多少」卡头那枚徽标已经说过了。
 //   多于一条时行本身是选择器，点哪条切哪条。
-// - 多条同时挂载：每条都连着，行不再是单选——身份 / 延迟 / 在线对端数 / TURN 用 `·` 串成一句，
-//   行尾一个「设为主中继」，主中继那条禁用。
+// - 多条同时挂载：每条都连着，行不再是单选——身份 / 延迟 / 在线对端数 / TURN 交给 `Segments`
+//   （宽屏 `·` 串成一句、窄屏一段一行），行尾一个「设为主中继」，主中继那条禁用。
 
 import { TONE_CLASS } from '@/lib/tone';
 import type { RelayLinkErrorCode, RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { cn } from '@vibeterm/ui';
 import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
+import { type SegmentItem, Segments } from '../copy-feedback';
 import {
   type RelayBadgeSpec,
   type RelayTurnChip,
@@ -170,40 +171,20 @@ function RelayAttachedRow({
   const { t } = useTranslation();
   const host = relayLabel(relay.url);
   const role = relayRoleBadge(relay);
-  const rtt = relayRttBadge(relay);
-  const peers = relayPeersBadge(relay);
-  const turn = relayTurnChip(relay);
   return (
     <RelayRowShell relay={relay} host={host}>
       <span
-        className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 py-0.5"
+        className="flex min-w-0 flex-col gap-1 py-0.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-1.5 sm:gap-y-0.5"
         data-relay-role={role.key}
         aria-current={relay.attached ? 'true' : undefined}
       >
-        <RelayDot relay={relay} host={host} />
-        <RelayHost host={host} current={relay.attached === true} />
-        <RelayFact spec={role} testId={`nodes-relay-role-${host}`} />
-        {rtt && <RelayFact spec={rtt} testId={`nodes-relay-rtt-${host}`} />}
-        {peers && <RelayFact spec={peers} testId={`nodes-relay-peers-${host}`} />}
-        {turn && (
-          <>
-            <Separator />
-            <span
-              className={turnTextClass(turn.tone)}
-              title={turn.titleKey ? t(turn.titleKey) : undefined}
-              data-testid={`nodes-relay-turn-${host}`}
-            >
-              {`${t('relay.tenant.strip.turn')} ${turn.endpoint} ${t(turn.verdictKey)}`}
-              {turn.membersKey ? ` · ${t(turn.membersKey, turn.membersParams)}` : ''}
-            </span>
-          </>
-        )}
+        <Segments items={attachedSegments(t, relay, host, role)} />
         {onSelect && (
           <Button
             type="button"
             size="xs"
             variant="ghost"
-            className="ml-auto"
+            className="self-end sm:ml-auto sm:self-auto"
             disabled={!canSetPrimary(relay)}
             onClick={() => onSelect(relay)}
             data-testid={`nodes-relay-switch-${host}`}
@@ -216,30 +197,73 @@ function RelayAttachedRow({
   );
 }
 
+/** 一条中继的各段事实：主机名打头，随后是身份 / 延迟 / 在线对端数 / TURN。 */
+function attachedSegments(
+  t: ReturnType<typeof useTranslation>['t'],
+  relay: RelayLinkStatus,
+  host: string,
+  role: RelayBadgeSpec
+): SegmentItem[] {
+  const rtt = relayRttBadge(relay);
+  const peers = relayPeersBadge(relay);
+  const turn = relayTurnChip(relay);
+  const items: SegmentItem[] = [
+    {
+      key: 'host',
+      node: (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <RelayDot relay={relay} host={host} />
+          <RelayHost host={host} current={relay.attached === true} />
+        </span>
+      ),
+    },
+    {
+      key: 'role',
+      node: <RelayFact spec={role} testId={`nodes-relay-role-${host}`} />,
+    },
+  ];
+  if (rtt) {
+    items.push({ key: 'rtt', node: <RelayFact spec={rtt} testId={`nodes-relay-rtt-${host}`} /> });
+  }
+  if (peers) {
+    items.push({
+      key: 'peers',
+      node: <RelayFact spec={peers} testId={`nodes-relay-peers-${host}`} />,
+    });
+  }
+  if (turn) {
+    items.push({
+      key: 'turn',
+      node: (
+        <span
+          className={`min-w-0 truncate ${turnTextClass(turn.tone)}`}
+          title={turn.titleKey ? t(turn.titleKey) : undefined}
+          data-testid={`nodes-relay-turn-${host}`}
+        >
+          {`${t('relay.tenant.strip.turn')} ${turn.endpoint} ${t(turn.verdictKey)}`}
+          {turn.membersKey ? ` · ${t(turn.membersKey, turn.membersParams)}` : ''}
+        </span>
+      ),
+    });
+  }
+  return items;
+}
+
 function turnTextClass(tone: RelayTurnChip['tone']): string {
   if (tone === 'destructive') return TONE_CLASS.text.blocked;
   if (tone === 'warning') return TONE_CLASS.text.warn;
   return TONE_CLASS.text.muted;
 }
 
-/** 事实之间的分隔：`·` 只是标点，不进无障碍树。 */
-function Separator() {
-  return (
-    <span className="text-muted-foreground/60" aria-hidden>
-      ·
-    </span>
-  );
-}
-
 function RelayFact({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {
   const { t } = useTranslation();
   return (
-    <>
-      <Separator />
-      <span className={spec.variant === 'default' ? undefined : 'text-muted-foreground'}>
-        <span data-testid={testId}>{t(spec.key, spec.params)}</span>
-      </span>
-    </>
+    <span
+      className={`whitespace-nowrap${spec.variant === 'default' ? '' : ' text-muted-foreground'}`}
+      data-testid={testId}
+    >
+      {t(spec.key, spec.params)}
+    </span>
   );
 }
 

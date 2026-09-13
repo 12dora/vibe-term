@@ -10,31 +10,59 @@ import {
   membersProbeTone,
   relayTurnView,
 } from '../../relay/relay-turn-model';
-import { Row } from '../copy-feedback';
+import { Row, type SegmentItem, Segments } from '../copy-feedback';
 
 export function RelayTurnRow({ turn }: { turn: RelayTurnStatus }) {
   const { t } = useTranslation();
   const view = relayTurnView(turn);
   const probe = view.membersProbe;
-  const facts = [
-    t(view.stateKey),
-    t(view.modeKey),
-    ...(view.endpoint ? [view.endpoint] : []),
-    ...(view.externalIp ? [t('relay.admin.turn.externalIp', { ip: view.externalIp })] : []),
+  const items: SegmentItem[] = [
+    { key: 'state', node: <span className="whitespace-nowrap">{t(view.stateKey)}</span> },
+    { key: 'mode', node: <span className="whitespace-nowrap">{t(view.modeKey)}</span> },
   ];
+  if (view.endpoint) {
+    items.push({
+      key: 'endpoint',
+      node: (
+        <span
+          className="min-w-0 truncate font-mono"
+          title={view.endpoint}
+          data-testid="relay-turn-endpoint"
+        >
+          {view.endpoint}
+        </span>
+      ),
+    });
+  }
+  if (view.externalIp) {
+    items.push({
+      key: 'external-ip',
+      node: (
+        <span className="min-w-0 truncate">
+          {t('relay.admin.turn.externalIp', { ip: view.externalIp })}
+        </span>
+      ),
+    });
+  }
+  if (probe) {
+    items.push({
+      key: 'members-probe',
+      node: (
+        <span
+          className={`whitespace-nowrap ${probeClass(probe)}`}
+          data-testid="relay-turn-members-probe"
+        >
+          {t('relay.admin.turn.membersProbe', { ok: probe.ok, total: probe.total })}
+        </span>
+      ),
+    });
+  }
   return (
     <Row label={t('relay.admin.turn.title')} testId="relay-turn">
-      <span className="min-w-0 break-all" data-testid="relay-turn-endpoint">
-        {facts.join(' · ')}
-      </span>
-      {probe && (
-        <span className={probeClass(probe)} data-testid="relay-turn-members-probe">
-          {`· ${t('relay.admin.turn.membersProbe', { ok: probe.ok, total: probe.total })}`}
-        </span>
-      )}
+      <Segments items={items} className="w-full" />
       {view.error && (
         <span
-          className={`basis-full break-all ${TONE_CLASS.text.blocked}`}
+          className={`basis-full break-words ${TONE_CLASS.text.blocked}`}
           data-testid="relay-turn-error"
         >
           {t('relay.admin.turn.failed', { message: view.error })}

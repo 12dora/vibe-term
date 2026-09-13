@@ -5,7 +5,7 @@ import { TONE_CLASS } from '@/lib/tone';
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
-import { type PortSpec, formatPortSpec } from '@vibeterm/shared/net';
+import { type PortSpec, coalesceTurnSpecs, formatPortSpec } from '@vibeterm/shared/net';
 import { Button } from '@vibeterm/ui/button';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useState, useSyncExternalStore } from 'react';
@@ -15,7 +15,7 @@ import {
   type MeshPortReach,
   type MeshPortReachStatus,
   parsePortReachList,
-  reachForSpec,
+  reachForPlanSpec,
 } from './port-reach';
 
 const PORT_DOT_TONE: Record<MeshPortReachStatus, keyof typeof TONE_CLASS.dot> = {
@@ -71,12 +71,14 @@ export function PortsSection({
   const probing = busyOverride ?? busy;
   const probeError = errorOverride ?? error;
   if (plan.length === 0) return null;
+  // TURN 的控制口与中继段是连着的一段，分两行摆只是把同一件事说两遍。
+  const specs = coalesceTurnSpecs(plan);
   return (
     <Row label={t('nodes.ports.label')} testId="local-machine-ports">
-      {/* 「重新检测」钉在值列右端，不进端口列表的流：否则端口多起来它会被挤到下一行。 */}
-      <div className="flex w-full items-start justify-between gap-2">
-        <ul className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-          {plan.map((spec) => (
+      {/* 宽屏「重新检测」钉在值列右端，不进端口列表的流；窄屏端口一行一条，按钮退到列表下方。 */}
+      <div className="flex w-full flex-col items-stretch gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-2">
+        <ul className="flex min-w-0 flex-col gap-1 sm:flex-1 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-1">
+          {specs.map((spec) => (
             <PortItem key={spec.purpose} spec={spec} ports={ports} />
           ))}
         </ul>
@@ -85,7 +87,7 @@ export function PortsSection({
             type="button"
             size="xs"
             variant="ghost"
-            className="-my-1 shrink-0"
+            className="-my-1 shrink-0 self-end sm:self-auto"
             disabled={probing}
             onClick={() => void recheck()}
             data-testid="local-machine-ports-recheck"
@@ -106,17 +108,19 @@ export function PortsSection({
 
 function PortItem({ spec, ports }: { spec: PortSpec; ports: MeshPortReach[] | undefined }) {
   const { t } = useTranslation();
-  const reach = reachForSpec(ports, spec);
+  const reach = reachForPlanSpec(ports, spec);
   const status = reach?.status ?? 'unknown';
   return (
     <li
-      className="flex items-center gap-1.5 text-xs"
+      className="flex min-w-0 items-center gap-1.5 text-xs"
       data-testid={`local-port-${spec.purpose}`}
       data-port-status={status}
     >
       <PortIndicator purpose={spec.purpose} reach={reach} status={status} />
-      <code className="font-mono">{formatPortSpec(spec)}</code>
-      <span className="text-muted-foreground">{t(`ports.purpose.${spec.purpose}`)}</span>
+      <code className="whitespace-nowrap font-mono">{formatPortSpec(spec)}</code>
+      <span className="min-w-0 truncate text-muted-foreground">
+        {t(`ports.purpose.${spec.purpose}`)}
+      </span>
       {/* 只有出问题的那一档配一句可见文字：红点本身对色觉障碍与触屏用户是读不出来的。 */}
       {status === 'blocked' && (
         <span className="text-destructive" data-testid={`local-port-blocked-${spec.purpose}`}>

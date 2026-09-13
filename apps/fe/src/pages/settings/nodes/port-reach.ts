@@ -232,3 +232,22 @@ export function reachForSpec(
 ): MeshPortReach | undefined {
   return ports?.find((item) => item.purpose === spec.purpose && endpointMatches(item, spec));
 }
+
+const REACH_RANK: Record<MeshPortReachStatus, number> = { blocked: 2, unknown: 1, open: 0 };
+
+/**
+ * 屏幕上那一行的探测结果。`coalesceTurnSpecs` 把 TURN 控制口与中继段并成一行之后，
+ * 那一行对不上任何一条探测记录：改取两条里更坏的那一条——任一段不通，这一整段就不通。
+ */
+export function reachForPlanSpec(
+  ports: MeshPortReach[] | undefined | null,
+  spec: Pick<PortSpec, 'purpose' | 'proto' | 'port' | 'range'>
+): MeshPortReach | undefined {
+  const exact = reachForSpec(ports, spec);
+  if (exact || spec.purpose !== 'turn-control' || !spec.range) return exact;
+  const control = reachForPurpose(ports, 'turn-control');
+  const relay = reachForPurpose(ports, 'turn-relay');
+  if (!control) return relay;
+  if (!relay) return control;
+  return REACH_RANK[control.status] >= REACH_RANK[relay.status] ? control : relay;
+}

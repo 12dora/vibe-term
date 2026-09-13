@@ -9,6 +9,16 @@ import type { NodeActionDeps } from './types';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
+/**
+ * 卡片里的地址：`mergeNodes` 拿不到地址时给的是字面量「—」（待批准行更是恒为「—」），
+ * 不是 `null`。卡片上一个孤零零的破折号既读不出信息、还配一枚复制「—」的按钮，
+ * 因此这里把「没有地址」统一判成 `null`，调用方据此整行不出。
+ */
+export function displayAddress(address: string | null | undefined): string | null {
+  const text = address?.trim();
+  return !text || text === '—' ? null : text;
+}
+
 export function Th({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <th className={cn('whitespace-nowrap px-3 py-2 text-left font-medium', className)}>

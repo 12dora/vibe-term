@@ -114,7 +114,7 @@ function NotificationThresholds({
 }: { draft: SiteSettingsDraft; updateDraft: UpdateDraft }) {
   const { t } = useTranslation();
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {THRESHOLDS.map((item) => (
         <div key={item.field} className="space-y-2">
           <label className="block text-sm font-medium" htmlFor={item.id}>

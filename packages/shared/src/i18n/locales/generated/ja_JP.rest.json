@@ -224,9 +224,7 @@
         "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
         "urlHint": "通知リンクと共有アドレスに使用します。",
         "urlManagedHint": "Hub の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
-        "urlCandidates": "利用可能なアドレス",
-        "urlOtherCandidates": "その他のアドレス",
-        "urlUseCandidate": "入力"
+        "urlCandidates": "利用可能なアドレス"
       },
       "bellThrottle": "ベル通知の制限（秒）",
       "notificationThrottle": "通知制限（秒）",
@@ -1857,6 +1855,13 @@
         "directRestartFailed": "再起動に失敗しました：{{error}}",
         "directRestartTimeout": "タイムアウト"
       },
+      "table": {
+        "mobile": {
+          "selected": "{{count}} 件選択",
+          "direct": "ダイレクト対応",
+          "noDirect": "ダイレクト非対応"
+        }
+      },
       "selection": {
         "more": "その他",
         "selectAll": "すべて選択",
@@ -2817,6 +2822,9 @@
           "invalidMaxFile": "1 ファイルの上限は 1〜{{max}} の整数（MB）です。空欄で無制限になります。"
         },
         "tenants": {
+          "mobile": {
+            "usage": "使用状況"
+          },
           "title": "テナント",
           "total": "全 {{n}} 件",
           "empty": "参加しているテナントはまだありません。",

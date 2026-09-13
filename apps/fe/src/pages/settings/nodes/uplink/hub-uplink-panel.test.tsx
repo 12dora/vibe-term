@@ -299,7 +299,10 @@ describe('合并后的 Hub 列表', () => {
     expect(chipTag(html, 'h1')).toContain('data-hub-attached="false"');
     expect(chipTag(html, 'h2')).toContain('data-hub-attached="true"');
     expect(chipTag(html, 'h2')).toContain('data-hub-mode="standby"');
-    expect(html).not.toContain('title=');
+    // 悬浮详情撤了：chip 自身不带 title（标签列那个 title 是 `Row` 给截断标签补的）
+    expect(html.slice(html.indexOf('data-testid="local-machine-hub-list"'))).not.toContain(
+      'title='
+    );
     expect(html).not.toContain('nodes.hubs.detail');
   });
 

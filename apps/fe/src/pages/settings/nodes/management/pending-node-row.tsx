@@ -3,6 +3,7 @@
 // 它还不是 mesh 成员（`/api/mesh/nodes` 里没有它），因此没有 peer link、没有版本、
 // 也没有可吊销的证书：整行除「批准加入」外一律禁用。
 
+import { RecordCard, RecordCardMeta } from '@/components/record-card';
 import { TONE_CLASS } from '@/lib/tone';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { buildNodeView } from '@/node/node-view-model';
@@ -11,7 +12,7 @@ import { Checkbox } from '@vibeterm/ui/checkbox';
 import { Check, Ellipsis, Loader2, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { stickyActionColumn } from '../../components/wide-table';
-import { Td, rowBlockedHint } from './row-cells';
+import { Td, displayAddress, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps } from './types';
 import { useAdmitNode } from './use-node-row-actions';
 
@@ -80,6 +81,43 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
         </div>
       </Td>
     </tr>
+  );
+}
+
+/** 待批准行在 sm 以下的版式：勾选（禁用）+ 名称、状态 · 连接方式、地址、「批准加入」。 */
+export function PendingNodeCard({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
+  const { t } = useTranslation();
+  const writable = deps.hubOnline && deps.hubWritable;
+  const view = buildNodeView(row, t, 0);
+  const address = displayAddress(row.address);
+
+  return (
+    <RecordCard testId={`nodes-row-${row.id}`}>
+      <div className="flex items-start gap-2">
+        <Checkbox className="mt-0.5" checked={false} disabled aria-label={row.name} />
+        <span className="min-w-0 flex-1 truncate font-medium">{row.name}</span>
+      </div>
+      <RecordCardMeta>
+        <span
+          className={TONE_CLASS.text[view.statusTone]}
+          data-testid={`nodes-status-${row.id}`}
+          data-admission="pending"
+        >
+          {view.statusText}
+        </span>
+        <span data-testid={`nodes-reach-${row.id}`}>{view.reachText}</span>
+      </RecordCardMeta>
+      {address && (
+        <code
+          className="min-w-0 truncate font-mono text-[11px] text-muted-foreground"
+          title={address}
+          data-testid={`nodes-address-${row.id}`}
+        >
+          {address}
+        </code>
+      )}
+      <AdmitButton row={row} writable={writable} {...deps} />
+    </RecordCard>
   );
 }
 

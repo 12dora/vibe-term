@@ -14,33 +14,39 @@ import type { NodeActionDeps, NodeUninstallController } from './types';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
 import { hubRoleBlockedText } from './use-hub-role-switch';
 
-export function NameCell({
-  row,
-  hubDetails,
-  roleSwitch,
-  rowBusy,
-}: {
+export interface NodeNameTagsProps {
   row: NodeRow;
   hubDetails: NodeActionDeps['hubDetails'];
   roleSwitch: HubRoleSwitchController;
   rowBusy: boolean;
-}) {
+}
+
+/** 名字与它后面那串标记（当前 / 成员密钥滞后 / Hub + 主备切换）。表格与记录卡共用。 */
+export function NodeNameTags({ row, hubDetails, roleSwitch, rowBusy }: NodeNameTagsProps) {
   const { t } = useTranslation();
+  return (
+    <>
+      <span className="truncate font-medium">{row.name}</span>
+      {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
+      <MetaKeyLagTag nodeId={row.id} />
+      {row.isHub && (
+        <>
+          <HubTag row={row} hubDetails={hubDetails} />
+          <HubRoleSwitchButton row={row} roleSwitch={roleSwitch} rowBusy={rowBusy} />
+        </>
+      )}
+    </>
+  );
+}
+
+export function NameCell(props: NodeNameTagsProps) {
   return (
     <Td className="whitespace-normal">
       <div className="flex min-w-0 flex-col gap-0.5">
         <span className="flex items-center gap-1.5 whitespace-nowrap">
-          <span className="truncate font-medium">{row.name}</span>
-          {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
-          <MetaKeyLagTag nodeId={row.id} />
-          {row.isHub && (
-            <>
-              <HubTag row={row} hubDetails={hubDetails} />
-              <HubRoleSwitchButton row={row} roleSwitch={roleSwitch} rowBusy={rowBusy} />
-            </>
-          )}
+          <NodeNameTags {...props} />
         </span>
-        <PortsWarning nodeId={row.id} ports={resolveNodePorts(row)} />
+        <PortsWarning nodeId={props.row.id} ports={resolveNodePorts(props.row)} />
       </div>
     </Td>
   );

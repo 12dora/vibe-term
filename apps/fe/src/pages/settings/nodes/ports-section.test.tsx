@@ -112,6 +112,29 @@ describe('PortsSection', () => {
     expect(httpsRow).not.toContain('data-status="open"');
   });
 
+  test('TURN 控制口与中继段并成一行，探测取更坏的那一段', () => {
+    const relayPlan = portPlanOrFallback(undefined, 'relay');
+    const html = renderToStaticMarkup(
+      <PortsSection
+        plan={relayPlan}
+        reach={[
+          { purpose: 'turn-control', proto: 'udp', port: 40000, status: 'open' },
+          {
+            purpose: 'turn-relay',
+            proto: 'udp',
+            range: { begin: 40001, end: 40049 },
+            status: 'blocked',
+          },
+        ]}
+      />
+    );
+    expect(html).toContain('data-testid="local-port-turn-control"');
+    expect(html).not.toContain('data-testid="local-port-turn-relay"');
+    expect(html).toContain('40000-40049/udp');
+    expect(html).not.toContain('40001-40049/udp');
+    expect(html).toContain('data-testid="local-port-blocked-turn-control"');
+  });
+
   test('有 self 时给出重新检测；busy 时转圈并禁用', () => {
     const idle = renderToStaticMarkup(<PortsSection plan={plan} reach={null} selfNodeId="abc" />);
     expect(idle).toContain('data-testid="local-machine-ports-recheck"');

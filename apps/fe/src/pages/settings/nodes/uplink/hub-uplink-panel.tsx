@@ -12,7 +12,7 @@ import { cn } from '@vibeterm/ui';
 import { TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../card-parts';
-import { CopyableValue, Row } from '../copy-feedback';
+import { CopyableValue, Row, type SegmentItem, Segments } from '../copy-feedback';
 import { HubRecoveryNotices } from './hub-recovery';
 import {
   candidateFailure,
@@ -242,20 +242,7 @@ function UpstreamHubRow({
   return (
     <Row label={t('nodes.machine.upstream')}>
       {attached.kind === 'hub' && (
-        <>
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate font-medium" data-testid="local-machine-attached-hub">
-              {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
-            </span>
-            <Separator />
-            <span className="text-muted-foreground" data-testid="local-machine-attached-hub-mode">
-              {hubModeLabel(t, attached.hub.mode)}
-            </span>
-          </span>
-          {!attached.isSelf && (
-            <CopyableValue value={attached.hub.publicUrl} testId="local-machine-attached-hub-url" />
-          )}
-        </>
+        <Segments className="w-full" items={attachedHubSegments(t, attached)} />
       )}
       {attached.kind === 'url' && (
         <CopyableValue value={attached.url} testId="local-machine-attached-hub-url" />
@@ -272,6 +259,41 @@ function UpstreamHubRow({
       )}
     </Row>
   );
+}
+
+/** 名字 · 主/备 归一段（两者都短，窄屏也不拆），地址单独一段：手机上它自己占一行。 */
+function attachedHubSegments(
+  t: ReturnType<typeof useTranslation>['t'],
+  attached: Extract<AttachedHubView, { kind: 'hub' }>
+): SegmentItem[] {
+  const items: SegmentItem[] = [
+    {
+      key: 'hub',
+      node: (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-medium" data-testid="local-machine-attached-hub">
+            {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
+          </span>
+          <Separator />
+          <span
+            className="whitespace-nowrap text-muted-foreground"
+            data-testid="local-machine-attached-hub-mode"
+          >
+            {hubModeLabel(t, attached.hub.mode)}
+          </span>
+        </span>
+      ),
+    },
+  ];
+  if (!attached.isSelf) {
+    items.push({
+      key: 'url',
+      node: (
+        <CopyableValue value={attached.hub.publicUrl} testId="local-machine-attached-hub-url" />
+      ),
+    });
+  }
+  return items;
 }
 
 /**

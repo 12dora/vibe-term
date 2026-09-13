@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatPortList } from '@vibeterm/shared/net';
+import { coalesceTurnSpecs, formatPortList } from '@vibeterm/shared/net';
 import {
   asPortRole,
   blockedPortReaches,
@@ -8,6 +8,7 @@ import {
   parsePortReachList,
   portPlanFromStatus,
   portPlanOrFallback,
+  reachForPlanSpec,
   reachForSpec,
 } from './port-reach';
 
@@ -165,5 +166,57 @@ describe('portPlanFromStatus', () => {
     expect(formatPortList(portPlanOrFallback(undefined, 'node'))).toBe(
       '39001/tcp, 40000-40099/udp'
     );
+  });
+});
+
+describe('reachForPlanSpec', () => {
+  const turnReach = (status: 'open' | 'blocked' | 'unknown') => [
+    {
+      purpose: 'turn-control' as const,
+      proto: 'udp' as const,
+      port: 40000,
+      status: 'open' as const,
+    },
+    {
+      purpose: 'turn-relay' as const,
+      proto: 'udp' as const,
+      range: { begin: 40001, end: 40049 },
+      status,
+    },
+  ];
+  const merged = () => {
+    const spec = coalesceTurnSpecs(portPlanOrFallback(undefined, 'relay')).find(
+      (item) => item.purpose === 'turn-control'
+    );
+    if (!spec) throw new Error('合并后的 TURN 行不见了');
+    return spec;
+  };
+
+  test('合并后的 TURN 行对不上任何一条探测，取控制口与中继段里更坏的那一条', () => {
+    expect(merged().range).toEqual({ begin: 40000, end: 40049 });
+    expect(reachForSpec(turnReach('blocked'), merged())).toBeUndefined();
+    expect(reachForPlanSpec(turnReach('open'), merged())?.status).toBe('open');
+    expect(reachForPlanSpec(turnReach('blocked'), merged())?.status).toBe('blocked');
+    expect(reachForPlanSpec(turnReach('unknown'), merged())?.status).toBe('unknown');
+  });
+
+  test('只探到一段时就用那一段；两段都没有则为空', () => {
+    const onlyControl = [turnReach('open')[0]];
+    expect(reachForPlanSpec(onlyControl, merged())?.status).toBe('open');
+    expect(reachForPlanSpec([], merged())).toBeUndefined();
+  });
+
+  test('没合并过的行照旧按 purpose+端口精确匹配', () => {
+    const spec = { purpose: 'peer-signaling' as const, proto: 'tcp' as const, port: 39001 };
+    const ports = [
+      {
+        purpose: 'peer-signaling' as const,
+        proto: 'tcp' as const,
+        port: 39001,
+        status: 'open' as const,
+      },
+    ];
+    expect(reachForPlanSpec(ports, spec)?.status).toBe('open');
+    expect(reachForPlanSpec(ports, { ...spec, port: 39002 })).toBeUndefined();
   });
 });

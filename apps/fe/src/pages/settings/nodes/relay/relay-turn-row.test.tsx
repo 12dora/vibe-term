@@ -32,7 +32,7 @@ describe('TURN 一行', () => {
     const html = render();
     expect(html).toContain('data-testid="relay-turn"');
     expect(html).toContain('relay.admin.turn.title');
-    const line = html.slice(html.indexOf('data-testid="relay-turn-endpoint"'));
+    const line = html.slice(html.indexOf('data-testid="relay-turn"'));
     expect(line).toContain('relay.admin.turn.stateListening');
     expect(line).toContain('relay.admin.turn.sourceBuiltin');
     expect(line).toContain('turn:relay.example.com:40000');

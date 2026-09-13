@@ -53,7 +53,7 @@ export function SiteNameField({ form }: SettingsFieldProps) {
 /**
  * 访问地址：由 Hub 托管时（本机是 hub 节点，或上联到 hub）只读展示，PATCH 里也不带这一项；
  * 经中继接入与 standalone 都可自行填写。两种情况都把本机实际可用的入口列在下方——可编辑时
- * 能一键填入，只读时只能复制。
+ * 点一下即填进输入框（保存另走保存按钮），只读时只标出生效的那条。
  */
 export function SiteUrlField({ form }: SettingsFieldProps) {
   const { t } = useTranslation();
@@ -78,7 +78,7 @@ export function SiteUrlField({ form }: SettingsFieldProps) {
           <SiteUrlCandidates
             candidates={linkage.siteAccessOrigins}
             currentValue={draft.siteUrl}
-            onUse={(siteUrl) => updateDraft({ siteUrl })}
+            onSelect={(siteUrl) => updateDraft({ siteUrl })}
           />
         </>
       ) : (

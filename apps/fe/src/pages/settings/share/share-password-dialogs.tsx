@@ -241,7 +241,10 @@ function ViewSharePasswordDialog({
         if (!next) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-md" data-testid="share-password-dialog">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+        data-testid="share-password-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t('settings.share.active.viewPassword')}</DialogTitle>
           <DialogDescription>{share?.name ?? ''}</DialogDescription>
@@ -355,7 +358,10 @@ function ChangeSharePasswordDialog({
         if (!next) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-md" data-testid="share-change-password-dialog">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+        data-testid="share-change-password-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t('settings.share.active.changePasswordTitle')}</DialogTitle>
           <DialogDescription>{share?.name ?? ''}</DialogDescription>

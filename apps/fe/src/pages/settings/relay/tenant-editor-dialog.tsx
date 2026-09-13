@@ -125,7 +125,10 @@ export function TenantEditorDialog({
         if (!busy) onOpenChange(next);
       }}
     >
-      <DialogContent className="sm:max-w-md" data-testid="relay-tenant-editor-dialog">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+        data-testid="relay-tenant-editor-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t('relay.admin.tenants.editTitle')}</DialogTitle>
           <DialogDescription className="font-mono break-all">{tenant.id}</DialogDescription>

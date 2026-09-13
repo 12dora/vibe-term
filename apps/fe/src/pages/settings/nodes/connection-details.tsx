@@ -97,10 +97,10 @@ function RelayDetails({ relay }: { relay: UseMeshRelayResult }) {
 function QuotaValue({ row }: { row: RelayQuotaRow }) {
   const { t } = useTranslation();
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-2">
+    <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
       <span data-testid={row.testId}>{quotaValueText(t, row)}</span>
       {row.percent !== null && (
-        <span className="max-w-40 flex-1" data-testid={`${row.testId}-bar`}>
+        <span className="w-full min-w-0 max-w-40 sm:flex-1" data-testid={`${row.testId}-bar`}>
           <Progress value={row.percent} />
         </span>
       )}

@@ -182,7 +182,10 @@ export function PasswordDialog({ open, busy, error, onOpenChange, onSubmit }: Pa
         if (!busy) onOpenChange(next);
       }}
     >
-      <DialogContent className="sm:max-w-md" data-testid="relay-password-dialog">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
+        data-testid="relay-password-dialog"
+      >
         <DialogHeader>
           <DialogTitle>{t('relay.admin.password.dialogTitle')}</DialogTitle>
           <DialogDescription>{t('relay.admin.password.dialogDescription')}</DialogDescription>
