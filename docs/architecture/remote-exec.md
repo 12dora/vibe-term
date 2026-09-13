@@ -40,7 +40,7 @@
 
 ### 事件
 
-每行一个 JSON 对象，顺序为 `start` → 若干 `stdout`/`stderr`/`ping` → `exit`，超时再跟一条 `error`。`error` 也用于开流后的失败（尚未 `start` 也可以单独出现）。子进程存活期间每 10 秒一条 `{"type":"ping","t":<unix-ms>}`，用来重置入口 Bun.serve 与 CLI `fetch` 的空闲时钟；CLI 组装 JSON 时忽略，`--json --stream` 原样转发。
+每行一个 JSON 对象，顺序为 `start` → 若干 `stdout`/`stderr`/`ping` → `exit`，超时再跟一条 `error`。`error` 也用于开流后的失败（尚未 `start` 也可以单独出现）。子进程存活期间每 10 秒一条 `{"type":"ping","t":<unix-ms>}`，用来重置入口 Bun.serve 与 CLI `fetch` 的空闲时钟；CLI 组装 JSON 时忽略，`--json --stream` 也不转发它。
 
 ```json
 {"type":"start","pid":123,"device":{"id":"…","type":"local"}}

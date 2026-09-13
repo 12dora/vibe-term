@@ -16,7 +16,14 @@ import {
   requiresLogin,
 } from '../core/auth';
 import type { CliContext } from '../core/context';
-import { AuthError, EXIT_AUTH, UsageError, exitCodeOf } from '../core/errors';
+import {
+  AuthError,
+  EXIT_AUTH,
+  EXIT_NETWORK,
+  NetworkError,
+  UsageError,
+  exitCodeOf,
+} from '../core/errors';
 import { isInteractive, promptHidden, promptLine, readAllStdin } from '../core/prompt';
 import type { Command } from './types';
 
@@ -130,7 +137,8 @@ async function loginOne(
   ctx: CliContext,
   target: LoginTarget,
   material: SessionMaterial,
-  totp: { code: string | null }
+  totp: { code: string | null },
+  treatUnreachableAsOutcome = false
 ): Promise<TargetOutcome> {
   const attempt = () =>
     loginToNode({
@@ -139,6 +147,7 @@ async function loginOne(
       material,
       pinnedPublicKey: target.publicKey,
       totpCode: totp.code,
+      treatUnreachableAsOutcome,
     });
   let result = await attempt();
   // mode 快照说没开两步验证，服务端却要码：TTY 下当场补一次，非 TTY 交回调用方。
@@ -178,14 +187,54 @@ function report(ctx: CliContext, outcomes: TargetOutcome[]): void {
  * fan-out 里失败的 node 逐条给出与 entry 同一套解释（`PASSKEY_REQUIRED` 尤其要说清怎么办）。
  * 失败全是「要登录 / 要二次验证」时按鉴权失败退出（3），混了别的原因才退 1。
  */
-function reportFailures(ctx: CliContext, mode: AuthMode, outcomes: TargetOutcome[]): number {
+function nodeNoun(count: number): string {
+  return count === 1 ? 'node' : 'nodes';
+}
+
+function emitOpenStandalone(ctx: CliContext): void {
+  ctx.out.info(`${ctx.globals.entry} does not require a login (open standalone instance)`);
+  if (ctx.globals.json) ctx.out.data({ entry: ctx.globals.entry, login: 'not-required' });
+}
+
+function throwIfSelfFailed(outcome: TargetOutcome, policy: AuthMode['secondFactorPolicy']): void {
+  if (outcome.ok) return;
+  if (outcome.code === 'NODE_UNREACHABLE') {
+    throw new NetworkError('login to node self failed: NODE_UNREACHABLE');
+  }
+  throw loginFailure('self', outcome.code ?? 'UNKNOWN', policy);
+}
+
+function warnSkippedUnreachable(
+  ctx: CliContext,
+  target: LoginTarget,
+  outcome: TargetOutcome,
+  nodeRef: string | null
+): void {
+  if (nodeRef || outcome.ok || outcome.code !== 'NODE_UNREACHABLE') return;
+  ctx.out.warn(`skipped ${target.name}: unreachable`);
+}
+
+function reportFailures(
+  ctx: CliContext,
+  mode: AuthMode,
+  outcomes: TargetOutcome[],
+  explicitTarget: boolean
+): number {
   const failed = outcomes.filter((outcome) => !outcome.ok);
   const unreachable = failed.filter((outcome) => outcome.code === 'NODE_UNREACHABLE');
   const rejected = failed.filter((outcome) => outcome.code !== 'NODE_UNREACHABLE');
+  if (explicitTarget && unreachable.length > 0) {
+    for (const outcome of unreachable) {
+      ctx.out.warn(`node ${outcome.node} (${outcome.name}): unreachable`);
+    }
+    return EXIT_NETWORK;
+  }
   if (rejected.length === 0) {
     if (unreachable.length > 0) {
       const okCount = outcomes.filter((outcome) => outcome.ok).length;
-      ctx.out.info(`logged in to ${okCount} nodes, skipped ${unreachable.length} unreachable`);
+      ctx.out.info(
+        `logged in to ${okCount} ${nodeNoun(okCount)}, skipped ${unreachable.length} unreachable`
+      );
     }
     return 0;
   }
@@ -207,8 +256,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   }
   const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
   if (!mode || !requiresLogin(mode)) {
-    ctx.out.info(`${ctx.globals.entry} does not require a login (open standalone instance)`);
-    if (ctx.globals.json) ctx.out.data({ entry: ctx.globals.entry, login: 'not-required' });
+    emitOpenStandalone(ctx);
     return;
   }
   assertUserMatches(mode, flagString(flags, 'user'));
@@ -219,9 +267,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   try {
     const self: LoginTarget = { nodeId: SELF_NODE_ID, name: 'self (entry)', publicKey: null };
     const selfOutcome = await loginOne(ctx, self, material, totp);
-    if (!selfOutcome.ok) {
-      throw loginFailure('self', selfOutcome.code ?? 'UNKNOWN', mode.secondFactorPolicy);
-    }
+    throwIfSelfFailed(selfOutcome, mode.secondFactorPolicy);
     ctx.sessions.setIdentity(ctx.globals.entry, { uid: mode.uid, username: mode.username });
     ctx.sessions.save();
 
@@ -230,14 +276,12 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
 
     const outcomes: TargetOutcome[] = [selfOutcome];
     for (const target of await otherTargets(ctx, mode, nodeRef, roster)) {
-      const outcome = await loginOne(ctx, target, material, totp);
-      if (!outcome.ok && outcome.code === 'NODE_UNREACHABLE') {
-        ctx.out.warn(`skipped ${target.name}: unreachable`);
-      }
+      const outcome = await loginOne(ctx, target, material, totp, true);
+      warnSkippedUnreachable(ctx, target, outcome, nodeRef);
       outcomes.push(outcome);
     }
     report(ctx, outcomes);
-    return reportFailures(ctx, mode, outcomes);
+    return reportFailures(ctx, mode, outcomes, Boolean(nodeRef));
   } finally {
     material.destroy();
   }
@@ -255,8 +299,9 @@ export const command: Command = {
     'or to $VIBETERM_SESSION_FILE when set (the file is a full session capability, protect it).',
     '',
     'An offline node (HTTP 503 NODE_UNREACHABLE, or a network error) is skipped with',
-    '`skipped <node>: unreachable`; login still exits 0 if the entry succeeded and every',
-    'other failure is unreachable. A reachable node that rejects the login is non-zero.',
+    '`skipped <node>: unreachable` when `--node` is absent; login still exits 0 if the',
+    'entry succeeded and every other failure is unreachable. `--node` naming a single',
+    'unreachable target exits 5. A reachable node that rejects the login is non-zero.',
     '',
     'Options:',
     '  --user <name>       verify the entry serves this account before asking for a password',

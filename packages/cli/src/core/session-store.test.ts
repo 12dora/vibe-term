@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { symlinkSync } from 'node:fs';
 import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CliError } from './errors';
-import { SessionStore, isLiveNodeSession, parseSessionFile } from './session-store';
+import { type CliError, UsageError } from './errors';
+import {
+  SessionStore,
+  isLiveNodeSession,
+  parseSessionFile,
+  sessionFilePrivacyError,
+} from './session-store';
 
 const dirs: string[] = [];
 
@@ -110,9 +116,58 @@ describe('SessionStore', () => {
         return err as CliError;
       }
     })();
-    expect(error).toBeInstanceOf(CliError);
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error?.exitCode).toBe(2);
     expect(error?.message).toContain('group/world readable');
     expect(error?.message).toContain('full session capability');
+  });
+
+  test('does not chmod a pre-existing user-specified parent directory', async () => {
+    const parent = await tempDir();
+    await chmod(parent, 0o755);
+    const file = join(parent, 'agent.json');
+    const store = SessionStore.open(join(parent, 'unused-config'), { VIBETERM_SESSION_FILE: file });
+    store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 0 });
+    store.save();
+
+    expect((await stat(parent)).mode & 0o777).toBe(0o755);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+
+  test('still chmods the default config dir even if it already existed', async () => {
+    const dir = await tempDir();
+    await chmod(dir, 0o755);
+    const store = SessionStore.open(dir, {});
+    store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 0 });
+    store.save();
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+  });
+
+  test('refuses a session file that is a symlink', async () => {
+    const dir = await tempDir();
+    const real = join(dir, 'real.json');
+    await writeFile(real, '{}\n', { mode: 0o600 });
+    await chmod(real, 0o600);
+    const link = join(dir, 'session.json');
+    symlinkSync(real, link);
+    const store = SessionStore.open(dir, { VIBETERM_SESSION_FILE: link });
+    const error = (() => {
+      try {
+        store.lastEntry();
+        return null;
+      } catch (err) {
+        return err as UsageError;
+      }
+    })();
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error?.exitCode).toBe(2);
+    expect(error?.message).toContain('symlink');
+  });
+
+  test('sessionFilePrivacyError skips the mode check on win32', () => {
+    const info = { isSymbolicLink: () => false, mode: 0o666 };
+    expect(sessionFilePrivacyError('/x', info, 'linux')).toBeInstanceOf(UsageError);
+    expect(sessionFilePrivacyError('/x', info, 'win32')).toBeNull();
   });
 
   test('parseSessionFile drops unknown and malformed rows', () => {

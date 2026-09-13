@@ -103,7 +103,7 @@ interface CliContext {
 
 - `ctx.http.json(nodeId, method, path, body?)`：非 2xx 直接抛。401、以及 body 里 `error`/`code` 是会话判词的 403（`UNAUTHORIZED`、`via_mismatch`、`expired`、`revoked`、`SESSION_*`、`*LOGIN_REQUIRED`）→ 退出码 3 并带 `vibeterm login --node <id>` 提示；其余 403（`outside_roots`、`FORBIDDEN`、`UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，抛 `PermissionError` → 退出码 1 且 message 带上服务端的业务码；404 → 4，其余 → 1，传输失败 → 5。JSON 错误体里的 `code` 会挂到抛出的 `CliError.code`（`json` / `ndjson` 同一条路径），命令组不要再从 message 里正则抠。这套映射只有 `httpStatusError()` 一份，文件族不再有自己的翻译层。
 - `ctx.globals.timeoutExplicit`：命令行是否真的写了 `--timeout`。HTTP 客户端的等待上限仍用 `timeoutMs`（缺省 30000）；`exec` 只有显式时才把 `timeoutMs` 放进 `POST /api/exec` 请求体，否则省略，让网关走 600000 默认。该字段只是子进程墙上时钟，不关 HTTP 空闲。
-- `runExecRequest`：`AuthError` / `NetworkError` / `NotFoundError` 原样上抛（退出码 3/5/4）；其余 HTTP 失败才按业务 `code` remap（`invalid_body` → 2，`device_not_found` → 4，`exec_unsupported_device` / `exec_spawn_failed` / 无码 400 → 5）。NDJSON 迭代器在 `exit` 前抛出 `terminated` / `AbortError` / 套接字关闭，或流结束却没有 `exit` 时，抛 `ExecStreamClosedError`（`NetworkError`，退出码 5，`code=EXEC_STREAM_CLOSED`）。未知事件（含网关 `{"type":"ping","t"}`）忽略；`--json --stream` 原样转发。
+- `runExecRequest`：`AuthError` / `NetworkError` / `NotFoundError` 原样上抛（退出码 3/5/4）；其余 HTTP 失败才按业务 `code` remap（`invalid_body` → 2，`device_not_found` → 4，`exec_unsupported_device` / `exec_spawn_failed` / 无码 400 → 5）。NDJSON 迭代器在 `exit` 前抛出 `terminated` / `AbortError` / 套接字关闭，或流结束却没有 `exit` 时，抛 `ExecStreamClosedError`（`NetworkError`，退出码 5，`code=EXEC_STREAM_CLOSED`）。未知事件（含网关 `{"type":"ping","t"}`）忽略；`--json --stream` 原样转发其它事件、丢弃 `ping`。
 - `ctx.http.fetch(nodeId, path, init)`：不对状态码做判断，自己处理时用它；`ctx.http.assertOk()` 补上统一翻译。
 - `ctx.http.ndjson(nodeId, path)`：逐行 yield 已解析对象，默认不设超时（`timeoutMs: null`），并且给 Bun `fetch` 传 `timeout: false`，避免 `BUN_CONFIG_HTTP_IDLE_TIMEOUT` 掐断 body。
 - `ctx.http.bytes(nodeId, path)`：二进制。`RequestOptions.timeoutMs` 可按请求覆盖 `--timeout`，`null` 表示不设。
@@ -344,7 +344,7 @@ dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `setti
 - `--timeout` 只在命令行显式给出时写入请求体 `timeoutMs`（子进程墙上时钟，网关默认 600000）；不下发时不要把全局 HTTP 缺省 30000 当成用户意图。HTTP 空闲靠网关每 10 s 一条 `{"type":"ping","t"}` 与 CLI `ndjson(..., { timeoutMs: null })` + Bun `timeout: false`。
 - `--max-bytes`（1 KiB..8 MiB）→ 请求体 `maxBytes`，服务端截断该路、子进程继续。`--tail N` 是 CLI 环形缓冲；`--stdout-file` / `--stderr-file` 落盘后 JSON 只回路径与字节数。
 - `--script <path>` 把文件当 stdin，argv 默认 `['/bin/sh','-s']`；shebang 为 `sh|bash|zsh|dash|ksh` 时改用该解释器 `-s`，`--interpreter` 覆盖。与位置 argv / `--shell` / `--stdin*` / `@path` 互斥。
-- 流在 `exit` 前断开（`terminated` / `AbortError` / 套接字关闭 / 无 `exit` 就结束）→ `ExecStreamClosedError`（`code=EXEC_STREAM_CLOSED`，退出码 5）；远端子进程收 SIGTERM。未知事件（含 `ping`）忽略；`--json --stream` 原样转发。
+- 流在 `exit` 前断开（`terminated` / `AbortError` / 套接字关闭 / 无 `exit` 就结束）→ `ExecStreamClosedError`（`code=EXEC_STREAM_CLOSED`，退出码 5）；远端子进程收 SIGTERM。未知事件（含 `ping`）忽略；`--json --stream` 原样转发其它事件、丢弃 `ping`。
 - CLI 退出码 = 远端退出码；timeout → **124**；未知设备 4、未登录 3、用法 2、spawn/网络 5。没有短时 exec 令牌，会话文件见上文 `$VIBETERM_SESSION_FILE`（[KI-16](../known-issues.md)）。
 
 ## `vibeterm term`
