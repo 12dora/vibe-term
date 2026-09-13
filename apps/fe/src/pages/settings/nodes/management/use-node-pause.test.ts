@@ -6,7 +6,7 @@ import {
   setMeshNodesStateForTest,
 } from '@/node/mesh-nodes';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
-import { createPauseIo, toggleNodePause } from './use-node-pause';
+import { createPauseIo, pauseErrorText, runPauseBatch, toggleNodePause } from './use-node-pause';
 
 type PauseCall = { id: string; action: 'pause' | 'resume' };
 
@@ -99,5 +99,41 @@ describe('toggleNodePause', () => {
       )
     ).rejects.toThrow('boom');
     expect(isMeshNodePaused(getMeshNodesState().nodes[0])).toBe(true);
+  });
+});
+
+describe('pauseErrorText / runPauseBatch', () => {
+  const t = (key: string, options?: Record<string, unknown>) =>
+    options ? `${key}:${JSON.stringify(options)}` : key;
+
+  test('把服务端码映射成可读原因', () => {
+    expect(pauseErrorText(t, new Error('CANNOT_PAUSE_HUB'))).toBe('nodes.pause.hubBlocked');
+    expect(pauseErrorText(t, new Error('CANNOT_PAUSE_SELF'))).toBe('nodes.pause.selfBlocked');
+    expect(pauseErrorText(t, new Error('boom'))).toBe('nodes.pause.failed:{"error":"boom"}');
+  });
+
+  test('批量顺序执行，单行失败计入 failed 并在最后 refresh', async () => {
+    setMeshNodesStateForTest({ nodes: [mesh('a'), mesh('b'), mesh('c')] });
+    const posts: string[] = [];
+    let refreshes = 0;
+    const summary = await runPauseBatch(
+      [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+      'pause',
+      {
+        post: async (id) => {
+          posts.push(id);
+          if (id === 'b') throw new Error('nope');
+        },
+      },
+      () => {
+        refreshes += 1;
+      }
+    );
+    expect(posts).toEqual(['a', 'b', 'c']);
+    expect(summary).toEqual({ succeeded: 2, failed: 1 });
+    expect(refreshes).toBe(1);
+    expect(isMeshNodePaused(getMeshNodesState().nodes.find((n) => n.id === 'a'))).toBe(true);
+    expect(isMeshNodePaused(getMeshNodesState().nodes.find((n) => n.id === 'b'))).toBe(false);
+    expect(isMeshNodePaused(getMeshNodesState().nodes.find((n) => n.id === 'c'))).toBe(true);
   });
 });

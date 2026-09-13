@@ -65,20 +65,59 @@ export function createPauseIo(
 
 export const defaultPauseIo: PauseIo = createPauseIo();
 
-export async function toggleNodePause(
+export function pauseErrorText(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  err: unknown
+): string {
+  const raw = errorMessage(err);
+  if (raw.includes('CANNOT_PAUSE_HUB')) return t('nodes.pause.hubBlocked');
+  if (raw.includes('CANNOT_PAUSE_SELF')) return t('nodes.pause.selfBlocked');
+  return t('nodes.pause.failed', { error: raw });
+}
+
+export async function applyNodePause(
   row: Pick<NodeRow, 'id' | 'paused'>,
+  paused: boolean,
   io: PauseIo,
   refresh: () => void = () => refreshMeshNodes()
 ): Promise<void> {
-  const next = !isMeshNodePaused(row);
-  setNodePaused(row.id, next);
+  setNodePaused(row.id, paused);
   try {
-    await io.post(row.id, next ? 'pause' : 'resume');
+    await io.post(row.id, paused ? 'pause' : 'resume');
     refresh();
   } catch (err) {
     setNodePaused(row.id, isMeshNodePaused(row));
     throw err;
   }
+}
+
+export async function toggleNodePause(
+  row: Pick<NodeRow, 'id' | 'paused'>,
+  io: PauseIo,
+  refresh: () => void = () => refreshMeshNodes()
+): Promise<void> {
+  await applyNodePause(row, !isMeshNodePaused(row), io, refresh);
+}
+
+export async function runPauseBatch(
+  rows: readonly Pick<NodeRow, 'id' | 'paused'>[],
+  action: PauseAction,
+  io: PauseIo,
+  refresh: () => void = () => refreshMeshNodes()
+): Promise<{ failed: number; succeeded: number }> {
+  let failed = 0;
+  let succeeded = 0;
+  const paused = action === 'pause';
+  for (const row of rows) {
+    try {
+      await applyNodePause(row, paused, io, () => undefined);
+      succeeded += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  refresh();
+  return { failed, succeeded };
 }
 
 export function useNodePause(row: NodeRow, onChanged: () => void, io: PauseIo = defaultPauseIo) {
@@ -87,12 +126,12 @@ export function useNodePause(row: NodeRow, onChanged: () => void, io: PauseIo = 
   const paused = isMeshNodePaused(row);
 
   const toggle = useCallback(async () => {
-    if (row.isSelf || row.pending || busy) return;
+    if (row.isSelf || row.pending || row.isHub || busy) return;
     setBusy(true);
     try {
       await toggleNodePause(row, io, onChanged);
     } catch (err) {
-      toast.error(t('nodes.pause.failed', { error: errorMessage(err) }));
+      toast.error(pauseErrorText(t, err));
     } finally {
       setBusy(false);
     }

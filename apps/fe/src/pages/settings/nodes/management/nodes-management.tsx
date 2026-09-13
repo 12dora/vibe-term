@@ -218,6 +218,7 @@ export function NodesManagement({
             uninstall={uninstall}
             revoking={bulkRevoke.busy}
             onRevoke={() => bulkRevoke.revokeRows(selectedRows)}
+            onChanged={refreshAll}
             writable={writable}
             blockedHint={blockedHint}
           />

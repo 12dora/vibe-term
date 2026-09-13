@@ -8,6 +8,7 @@ import { installWindowStorage } from '@vibeterm/stores/test-utils';
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
+const { MemoryRouter } = await import('react-router');
 const { NodesTable } = await import('./nodes-table');
 const { selectableRows } = await import('./bulk-actions-menu');
 
@@ -66,29 +67,34 @@ const UPGRADE = {
 function render(row: NodeRow, options: { writable?: boolean } = {}): string {
   const writable = options.writable !== false;
   return renderToStaticMarkup(
-    <NodesTable
-      rows={[row]}
-      hubApi={null}
-      hubOnline={writable}
-      hubWritable={writable}
-      writerPublicUrl={null}
-      hubDetails={new Map()}
-      mode={{ uid: 'u1', kdfParams: {} } as never}
-      api={{} as never}
-      prompt={{} as never}
-      onChanged={() => undefined}
-      upgrade={UPGRADE}
-      selection={{
-        ids: new Set(),
-        selectableCount: 0,
-        toggle: () => undefined,
-        toggleAll: () => undefined,
-      }}
-      uninstall={{ scheduledIds: new Set(), clearingIds: new Set() } as never}
-      roleSwitch={
-        { switchingIds: new Set(), stateOf: () => ({ intent: 'promote', blocked: null }) } as never
-      }
-    />
+    <MemoryRouter>
+      <NodesTable
+        rows={[row]}
+        hubApi={null}
+        hubOnline={writable}
+        hubWritable={writable}
+        writerPublicUrl={null}
+        hubDetails={new Map()}
+        mode={{ uid: 'u1', kdfParams: {} } as never}
+        api={{} as never}
+        prompt={{} as never}
+        onChanged={() => undefined}
+        upgrade={UPGRADE}
+        selection={{
+          ids: new Set(),
+          selectableCount: 0,
+          toggle: () => undefined,
+          toggleAll: () => undefined,
+        }}
+        uninstall={{ scheduledIds: new Set(), clearingIds: new Set() } as never}
+        roleSwitch={
+          {
+            switchingIds: new Set(),
+            stateOf: () => ({ intent: 'promote', blocked: null }),
+          } as never
+        }
+      />
+    </MemoryRouter>
   );
 }
 
@@ -114,6 +120,7 @@ describe('待批准行', () => {
     expect(html).not.toContain(`nodes-detail-${PENDING_ID}`);
     expect(html).not.toContain(`nodes-revoke-${PENDING_ID}`);
     // 「更多」「移除」仍在，但都是禁用态。
+    expect(tagOf(html, `node-more-${PENDING_ID}`)).toContain('disabled=""');
     expect(html).toContain('nodes.actions.more');
     expect(html).toContain('nodes.actions.revoke');
     expect(html).toContain('nodes.admit.blocked');

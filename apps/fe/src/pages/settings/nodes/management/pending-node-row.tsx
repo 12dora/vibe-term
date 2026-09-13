@@ -53,7 +53,14 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
       <Td className={stickyActionColumn}>
         <div className="flex items-start gap-1">
           <AdmitButton row={row} writable={writable} {...deps} />
-          <Button type="button" size="xs" variant="outline" disabled title={blocked}>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled
+            title={blocked}
+            data-testid={`node-more-${row.id}`}
+          >
             <Ellipsis />
             {t('nodes.actions.more')}
           </Button>

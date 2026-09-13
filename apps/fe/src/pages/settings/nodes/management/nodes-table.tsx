@@ -1,4 +1,4 @@
-// 节点表：成员集 + 心跳合并后的一行一 node，升级 / 详情 / 吊销三个动作。
+// 节点表：成员集 + 心跳合并后的一行一 node，升级 / 更多（详情、暂停）/ 吊销。
 // 重命名与「允许域名访问」都收进详情框（「更多」），表里不再有行内输入框。
 // hub 不可达时详情里的改名与吊销禁用——它们走 hub 控制面；升级只依赖入口 → 目标的 peer link，
 // 因此**不**跟 hub 在线绑定，只看目标是否在线、是否已登录。
@@ -11,10 +11,7 @@ import { Checkbox } from '@vibeterm/ui/checkbox';
 import {
   ArrowLeftRight,
   Download,
-  Ellipsis,
   Loader2,
-  Pause,
-  Play,
   ShieldAlert,
   Square,
   SquareCheckBig,
@@ -23,10 +20,12 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router';
 import { WideTableScroll, stickyActionColumn } from '../../components/wide-table';
 import { resolveNodePorts } from '../port-reach';
 import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
+import { NodeMoreMenu } from './node-more-menu';
 import { PendingNodeRow } from './pending-node-row';
 import { RevokeDialog } from './revoke-dialog';
 import { MetaKeyLagTag, PausedTag, PortsWarning, Tag, Td, Th, rowBlockedHint } from './row-cells';
@@ -34,7 +33,6 @@ import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './t
 import { upgradeBlockReason } from './upgrade-batch';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
 import { hubRoleBlockedText } from './use-hub-role-switch';
-import { useNodePause } from './use-node-pause';
 import { useNodeRowActions } from './use-node-row-actions';
 import { isUninstalling } from './use-node-uninstall';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
@@ -50,6 +48,7 @@ export interface NodesTableProps extends NodeActionDeps {
 
 export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: NodesTableProps) {
   const { t } = useTranslation();
+  const pathname = useLocation().pathname;
   const allSelected =
     selection.selectableCount > 0 && selection.ids.size >= selection.selectableCount;
   const toggleLabel = t(allSelected ? 'nodes.selection.clearAll' : 'nodes.selection.selectAll');
@@ -92,6 +91,7 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
               <NodeRowView
                 key={row.id}
                 row={row}
+                pathname={pathname}
                 selection={selection}
                 uninstall={uninstall}
                 roleSwitch={roleSwitch}
@@ -157,12 +157,14 @@ function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
 
 function NodeRowView({
   row,
+  pathname,
   selection,
   uninstall,
   roleSwitch,
   ...deps
 }: {
   row: NodeRow;
+  pathname: string;
   selection: NodeSelection;
   uninstall: NodeUninstallController;
   roleSwitch: HubRoleSwitchController;
@@ -224,18 +226,13 @@ function NodeRowView({
         <div className="flex items-center gap-1">
           <UpgradeButton row={row} upgrade={deps.upgrade} blocked={uninstalling} />
           <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
-          <PauseButton row={row} onChanged={deps.onChanged} />
           {/* 详情里既有只读信息也有节点本地的域名访问策略，hub 不可写时照样能开。 */}
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => setDetailOpen(true)}
-            data-testid={`nodes-detail-${row.id}`}
-          >
-            <Ellipsis />
-            {t('nodes.actions.more')}
-          </Button>
+          <NodeMoreMenu
+            row={row}
+            pathname={pathname}
+            onChanged={deps.onChanged}
+            onDetail={() => setDetailOpen(true)}
+          />
           {/* 卸载受理后目标随即离线，证书还挂着：这个按钮必须留着，用户刷新后能补上吊销。 */}
           <Button
             type="button"
@@ -350,34 +347,6 @@ function StatusCell({
       {view.statusText}
       {row.paused === true && <PausedTag />}
     </span>
-  );
-}
-
-/** 行内暂停 / 恢复：self 与待批准行不渲染。暂停不禁用行内升级。 */
-function PauseButton({ row, onChanged }: { row: NodeRow; onChanged: () => void }) {
-  const { t } = useTranslation();
-  const { busy, paused, toggle } = useNodePause(row, onChanged);
-  if (row.isSelf || row.pending) return null;
-  return (
-    <Button
-      type="button"
-      size="xs"
-      variant="outline"
-      disabled={busy}
-      title={t('nodes.pause.hint')}
-      onClick={() => void toggle()}
-      data-testid="node-pause-toggle"
-      data-paused={paused ? 'true' : 'false'}
-    >
-      {busy ? (
-        <Loader2 className="animate-spin motion-reduce:animate-none" />
-      ) : paused ? (
-        <Play />
-      ) : (
-        <Pause />
-      )}
-      {t(paused ? 'nodes.actions.resume' : 'nodes.actions.pause')}
-    </Button>
   );
 }
 

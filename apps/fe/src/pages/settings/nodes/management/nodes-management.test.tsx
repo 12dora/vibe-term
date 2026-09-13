@@ -65,6 +65,7 @@ const { HubRoleDialogBody, HubRoleForceBody, HubRoleRecoveryBody } = await impor
   './hub-role-dialog'
 );
 const { NodesTable } = await import('./nodes-table');
+const { NodeMoreMenuList } = await import('./node-more-menu');
 const { hubRoleButtonState, planHubRoleSwitch } = await import('./use-hub-role-switch');
 const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
 const {
@@ -216,7 +217,7 @@ describe('NodesManagement', () => {
       /data-testid="nodes-revoke-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"[^>]*disabled/
     );
     // 「更多」不跟 hub 绑定：详情里的只读信息与域名访问都不经 hub 控制面
-    expect(buttonTag(html, 'nodes-detail-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).not.toContain(
+    expect(buttonTag(html, 'node-more-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).not.toContain(
       'disabled=""'
     );
   });
@@ -634,23 +635,23 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(buttonTag(html, 'node-upgrade-hh')).not.toContain('disabled=""');
   });
 
-  test('暂停行：状态列带已暂停标记，行内按钮为恢复，升级仍可点', () => {
+  test('暂停行：状态列带已暂停标记，更多菜单可开，升级仍可点', () => {
     const html = renderTable([nodeRow({ id: 'pp', version: '1.1.9', paused: true })], '1.2.0');
     expect(html).toContain('data-testid="nodes-status-pp"');
     expect(html).toContain('nodes.status.paused');
-    const pause = buttonTag(html, 'node-pause-toggle');
-    expect(pause).toContain('data-paused="true"');
-    expect(html).toContain('nodes.actions.resume');
+    expect(buttonTag(html, 'node-more-pp')).not.toContain('disabled=""');
+    expect(html).not.toContain('data-testid="node-pause-toggle"');
     expect(buttonTag(html, 'node-upgrade-pp')).not.toContain('disabled=""');
     expect(elementTag(html, 'nodes-select-pp')).not.toContain('aria-disabled="true"');
   });
 
-  test('未暂停行显示暂停按钮；self 不渲染该按钮', () => {
+  test('未暂停行与 self 都有更多触发器；暂停项在菜单内（portal，SSR 不输出）', () => {
     const remote = renderTable([nodeRow({ id: 'qq', version: '1.1.9' })], '1.2.0');
-    expect(buttonTag(remote, 'node-pause-toggle')).toContain('data-paused="false"');
-    expect(remote).toContain('nodes.actions.pause');
+    expect(buttonTag(remote, 'node-more-qq')).not.toContain('disabled=""');
+    expect(remote).not.toContain('data-testid="node-pause-toggle"');
 
     const self = renderTable([nodeRow({ id: 'self', isSelf: true, version: '1.1.9' })], '1.2.0');
+    expect(buttonTag(self, 'node-more-self')).not.toContain('disabled=""');
     expect(self).not.toContain('data-testid="node-pause-toggle"');
   });
 
@@ -1006,21 +1007,42 @@ describe('「更多」菜单的可点性', () => {
     blockedHint: 'nodes.hubOffline',
     uninstallRunning: false,
     revoking: false,
+    eligiblePauseCount: 2,
+    eligibleResumeCount: 0,
+    pauseBusy: false,
   };
 
-  test('选中了节点、hub 收写入、没有别的批量在跑：三项都可点', () => {
+  test('选中了节点、hub 收写入、没有别的批量在跑：升级 / 移除 / 卸载可点', () => {
     const states = bulkMenuStates(base, t);
     expect(states.upgrade.disabled).toBe(false);
     expect(states.revoke.disabled).toBe(false);
     expect(states.uninstall.disabled).toBe(false);
+    expect(states.pause.disabled).toBe(false);
+    expect(states.resume.disabled).toBe(true);
+    expect(states.resume.title).toBe('nodes.selection.resumeNone');
   });
 
-  test('一个都没勾：三项都禁用并说明', () => {
+  test('一个都没勾：五项都禁用并说明', () => {
     const states = bulkMenuStates({ ...base, selectedCount: 0 }, t);
-    for (const item of [states.upgrade, states.revoke, states.uninstall]) {
+    for (const item of [
+      states.pause,
+      states.resume,
+      states.upgrade,
+      states.revoke,
+      states.uninstall,
+    ]) {
       expect(item.disabled).toBe(true);
       expect(item.title).toBe('nodes.selection.none');
     }
+  });
+
+  test('选中了但没有可暂停的：暂停禁用，恢复看暂停行', () => {
+    expect(
+      bulkMenuStates({ ...base, eligiblePauseCount: 0, eligibleResumeCount: 2 }, t).pause.title
+    ).toBe('nodes.selection.pauseNone');
+    expect(
+      bulkMenuStates({ ...base, eligiblePauseCount: 0, eligibleResumeCount: 2 }, t).resume.disabled
+    ).toBe(false);
   });
 
   test('hub 不收写入：移除与卸载一并禁用，升级不受影响', () => {
@@ -1066,10 +1088,18 @@ describe('「更多」菜单的可点性', () => {
   });
 
   // 菜单内容走 portal，SSR 什么都不输出：直接对元素树断言（同 AddDeviceMenuList）。
-  test('三个菜单项：升级带选中数量，禁用原因进 title', () => {
+  test('五个菜单项：暂停 / 恢复在前，升级带选中数量，禁用原因进 title', () => {
     const list = BulkActionsMenuList({
       states: bulkMenuStates({ ...base, selectedCount: 0 }, t),
-      labels: { upgrade: '升级（3）', revoke: '移除节点', uninstall: '卸载 VibeTerm' },
+      labels: {
+        pause: '暂停',
+        resume: '恢复',
+        upgrade: '升级（3）',
+        revoke: '移除节点',
+        uninstall: '卸载 VibeTerm',
+      },
+      onPause: () => undefined,
+      onResume: () => undefined,
       onUpgrade: () => undefined,
       onRevoke: () => undefined,
       onUninstall: () => undefined,
@@ -1081,6 +1111,8 @@ describe('「更多」菜单的可点性', () => {
       children?: ReactNode;
     }>[];
     expect(items.map((item) => item.props['data-testid'])).toEqual([
+      'nodes-bulk-pause',
+      'nodes-bulk-resume',
       'nodes-bulk-upgrade',
       'nodes-bulk-revoke',
       'nodes-bulk-uninstall',
@@ -1089,7 +1121,57 @@ describe('「更多」菜单的可点性', () => {
       expect(item.props.disabled).toBe(true);
       expect(item.props.title).toBe('nodes.selection.none');
     }
-    expect(JSON.stringify(items[0].props.children)).toContain('升级（3）');
+    expect(JSON.stringify(items[2].props.children)).toContain('升级（3）');
+  });
+});
+
+describe('行内「更多」菜单', () => {
+  test('详情项带着 nodes-detail id；暂停项可点', () => {
+    const list = NodeMoreMenuList({
+      row: { id: 'qq' },
+      paused: false,
+      pauseDisabled: false,
+      pauseTitle: 'nodes.pause.hint',
+      labels: { detail: '详情', pause: '暂停' },
+      onDetail: () => undefined,
+      onPause: () => undefined,
+    }) as ReactElement<{ children?: ReactNode }>;
+    const items = Children.toArray(list.props.children) as ReactElement<{
+      'data-testid'?: string;
+      disabled?: boolean;
+      'data-paused'?: string;
+      children?: ReactNode;
+    }>[];
+    expect(items.map((item) => item.props['data-testid'])).toEqual([
+      'nodes-detail-qq',
+      'node-pause-toggle',
+    ]);
+    expect(items[0].props.disabled).toBeUndefined();
+    expect(items[1].props.disabled).toBe(false);
+    expect(items[1].props['data-paused']).toBe('false');
+    expect(JSON.stringify(items[1].props.children)).toContain('暂停');
+  });
+
+  test('Hub / 本机：暂停项禁用并带原因；已暂停显示恢复', () => {
+    const list = NodeMoreMenuList({
+      row: { id: 'hub' },
+      paused: true,
+      pauseDisabled: true,
+      pauseTitle: 'nodes.pause.hubBlocked',
+      labels: { detail: '详情', pause: '恢复' },
+      onDetail: () => undefined,
+      onPause: () => undefined,
+    }) as ReactElement<{ children?: ReactNode }>;
+    const items = Children.toArray(list.props.children) as ReactElement<{
+      disabled?: boolean;
+      title?: string;
+      'data-paused'?: string;
+      children?: ReactNode;
+    }>[];
+    expect(items[1].props.disabled).toBe(true);
+    expect(items[1].props.title).toBe('nodes.pause.hubBlocked');
+    expect(items[1].props['data-paused']).toBe('true');
+    expect(JSON.stringify(items[1].props.children)).toContain('恢复');
   });
 });
 

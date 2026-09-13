@@ -96,6 +96,39 @@ describe('mesh pause/resume routes', () => {
     }
   });
 
+  test('pause is 400 for hub-role nodes', async () => {
+    const mesh = await bootMesh({ peers: new FakePeers() });
+    try {
+      enrollPeer(mesh, PEER_ID, 'studio');
+      mesh.hubStore.replaceAll(
+        [
+          {
+            hubNodeId: PEER_ID,
+            publicUrl: 'https://hub.example',
+            name: null,
+            mode: 'active',
+            priority: 10,
+            writerEpoch: 1,
+            caFingerprint: null,
+            online: true,
+            lastSeenAt: null,
+          },
+        ],
+        1
+      );
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cookie = { headers: { cookie: `vibeterm_s_self=${sid}` } };
+      const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${PEER_ID}/pause`, {
+        method: 'POST',
+        ...cookie,
+      });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: 'CANNOT_PAUSE_HUB' });
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('resume clears paused and is idempotent; pause broadcasts NODE_EVENT', async () => {
     const peers = new FakePeers();
     const mesh = await bootMesh({ peers });
