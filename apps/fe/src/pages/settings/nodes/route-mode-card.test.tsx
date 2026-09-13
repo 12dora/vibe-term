@@ -41,7 +41,7 @@ describe('i18n copy', () => {
     expect(zh.relay.title).toBe('中继');
     expect(en.relay.title).toBe('Relay');
     expect(zh.auto.description).toContain('文件传输优先直连');
-    expect(en.auto.description).toContain('file transfer prefers direct');
+    expect(en.auto.description).toContain('file transfers prefer direct');
     expect(ja.auto.description).toContain('ファイル転送');
   });
 });

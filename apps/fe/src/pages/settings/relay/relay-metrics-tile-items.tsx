@@ -84,7 +84,9 @@ export function ThroughputTile({
   return (
     <StatTile
       label={t('relay.metrics.tiles.throughput')}
-      value={<ByteRate>{formatRate(totals.bytesInPerSec + totals.bytesOutPerSec)}</ByteRate>}
+      value={
+        <ByteRate align="left">{formatRate(totals.bytesInPerSec + totals.bytesOutPerSec)}</ByteRate>
+      }
       sub={
         showTotal
           ? t('relay.metrics.tiles.throughputTotal', { total: trafficText(totals.bytesOut) })
@@ -114,7 +116,7 @@ export function BytesInTile({ data, trends, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.bytesIn')}
-      value={<ByteRate>{formatRate(data.totals.bytesInPerSec)}</ByteRate>}
+      value={<ByteRate align="left">{formatRate(data.totals.bytesInPerSec)}</ByteRate>}
       stale={stale}
       sparkline={
         <Sparkline
@@ -135,7 +137,7 @@ export function BytesOutTile({ data, trends, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.bytesOut')}
-      value={<ByteRate>{formatRate(data.totals.bytesOutPerSec)}</ByteRate>}
+      value={<ByteRate align="left">{formatRate(data.totals.bytesOutPerSec)}</ByteRate>}
       stale={stale}
       sparkline={
         <Sparkline
@@ -232,7 +234,7 @@ export function MemoryTile({
   return (
     <StatTile
       label={t('relay.metrics.tiles.memory')}
-      value={<ByteRate>{formatBytes(memory.rssBytes)}</ByteRate>}
+      value={<ByteRate align="left">{formatBytes(memory.rssBytes)}</ByteRate>}
       sub={
         showHeapTotal
           ? t('relay.metrics.tiles.memoryHeapSub', {
@@ -272,7 +274,7 @@ export function TrafficTile({ data, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.traffic')}
-      value={<ByteRate>{trafficText(data.totals.bytesOut)}</ByteRate>}
+      value={<ByteRate align="left">{trafficText(data.totals.bytesOut)}</ByteRate>}
       sub={t('relay.metrics.tiles.trafficSub')}
       hint={t('relay.metrics.tiles.trafficHint')}
       stale={stale}
@@ -294,12 +296,12 @@ export function BandwidthTile({ data, stale }: MetricsTileProps) {
       label={t('relay.metrics.tiles.bandwidth')}
       value={
         limit === null ? (
-          <ByteRate>{used}</ByteRate>
+          <ByteRate align="left">{used}</ByteRate>
         ) : (
           // 「已用 / 上限」两段拼成一个字符串就没法分别定宽，而整串最长要 25ch、磁贴放不下。
           // 上限是配置常量、刷新时不变，只给会变的「已用」留位置：`used` 为空即取模板的分隔部分。
           <span className="whitespace-nowrap">
-            <ByteRate>{used}</ByteRate>
+            <ByteRate align="left">{used}</ByteRate>
             {t('relay.metrics.tiles.usedOfLimit', { used: '', limit: formatRate(limit) })}
           </span>
         )

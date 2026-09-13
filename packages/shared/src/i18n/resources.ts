@@ -481,15 +481,15 @@ export const I18N_RESOURCES = {
           "saveFailed": "Failed to save route mode: {{message}}",
           "auto": {
             "title": "Smart",
-            "description": "Measures direct and relay latency and switches after consistent results. Terminal, commands and port maps follow the faster path; file transfer prefers direct."
+            "description": "Keeps comparing direct and relay latency and takes the faster path; file transfers prefer direct"
           },
           "direct": {
             "title": "Direct",
-            "description": "Direct whenever available, relay as fallback."
+            "description": "Direct when available, relay as fallback"
           },
           "relay": {
             "title": "Relay",
-            "description": "All connections via relay."
+            "description": "Everything via relay"
           }
         }
       },
@@ -4237,15 +4237,15 @@ export const I18N_RESOURCES = {
           "saveFailed": "选路模式保存失败：{{message}}",
           "auto": {
             "title": "智能",
-            "description": "测量直连与中继延迟，多次结果一致后切换。终端、指令、端口映射跟随低延迟路径，文件传输优先直连"
+            "description": "持续比较直连与中继延迟，自动走更快的路径；文件传输优先直连"
           },
           "direct": {
             "title": "直连",
-            "description": "尽量直连，直连不可用时走中继"
+            "description": "优先直连，不可用时经中继"
           },
           "relay": {
             "title": "中继",
-            "description": "所有连接经中继"
+            "description": "全部经中继转发"
           }
         }
       },
@@ -7987,15 +7987,15 @@ export const I18N_RESOURCES = {
           "saveFailed": "経路モードの保存に失敗しました：{{message}}",
           "auto": {
             "title": "スマート",
-            "description": "直接接続と中継の遅延を測定し、結果が安定してから切り替えます。ターミナル、コマンド、ポートマップは低遅延の経路を使い、ファイル転送は直接接続を優先します。"
+            "description": "直接接続と中継の遅延を常に比較し、速い経路を自動選択。ファイル転送は直接接続を優先"
           },
           "direct": {
             "title": "直接接続",
-            "description": "可能な限り直接接続し、使えない場合は中継します。"
+            "description": "可能な限り直接接続、不可なら中継"
           },
           "relay": {
             "title": "中継",
-            "description": "すべての接続を中継経由にします。"
+            "description": "すべて中継経由"
           }
         }
       },
