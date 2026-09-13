@@ -1920,3 +1920,203 @@ describe('RemoteUpgradeJob delivery tree', () => {
     expect(done.state).toBe('handed-off');
   });
 });
+
+const RANGED_CAPS = [
+  'staged-package',
+  'upgrade-cancel',
+  'staged-package-resume',
+  'staged-package-ranged',
+];
+
+type RangePair = [number, number];
+
+function mergePairs(pairs: RangePair[]): RangePair[] {
+  const sorted = [...pairs].sort((a, b) => a[0] - b[0]);
+  const out: RangePair[] = [];
+  for (const [start, end] of sorted) {
+    const last = out[out.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else out.push([start, end]);
+  }
+  return out;
+}
+
+function coveredPairs(pairs: RangePair[]): number {
+  return mergePairs(pairs).reduce((sum, [start, end]) => sum + (end - start), 0);
+}
+
+function queryParams(query?: string): URLSearchParams {
+  return new URLSearchParams((query ?? '').replace(/^\?/, ''));
+}
+
+describe('RemoteUpgradeJob ranged push', () => {
+  test('advertised staged-package-ranged：多流 PUT 带 length/total，进度单调', async () => {
+    const nodeId = 'c1'.repeat(16);
+    const bytes = new Uint8Array(32).map((_, i) => i + 1);
+    const path = tempFile(bytes);
+    const puts: Array<{ query: string; sent: number }> = [];
+    const observed: number[] = [];
+    let inflight = 0;
+    let maxInflight = 0;
+    const landed: RangePair[] = [];
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map(String).join(' '));
+      origLog.apply(console, args);
+    };
+    try {
+      startRemoteUpgradeJob({
+        nodeId,
+        version: '9.9.9',
+        req: authed(nodeId),
+        upgradeCapabilities: RANGED_CAPS,
+        pushStreams: 4,
+        pushChunkBytes: 8,
+        forward: {
+          async forwardAuthorizedHttp(_req, input) {
+            if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+            if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+              const received = coveredPairs(landed);
+              return new Response(
+                JSON.stringify({
+                  receivedBytes: received,
+                  complete: received >= bytes.byteLength,
+                  ranges: mergePairs(landed),
+                }),
+                { status: 200, headers: { 'content-type': 'application/json' } }
+              );
+            }
+            if (input.method === 'PUT') {
+              inflight += 1;
+              maxInflight = Math.max(maxInflight, inflight);
+              const raw = input.rawBody
+                ? await new Response(input.rawBody).bytes()
+                : new Uint8Array();
+              const q = queryParams(input.query);
+              puts.push({ query: input.query ?? '', sent: raw.byteLength });
+              const offset = Number(q.get('offset') ?? 0);
+              landed.push([offset, offset + raw.byteLength]);
+              input.onProgress?.(raw.byteLength);
+              observed.push(getRemoteUpgradeJob(nodeId)?.pushedBytes ?? -1);
+              await Bun.sleep(8);
+              inflight -= 1;
+              return new Response('{}', { status: 200 });
+            }
+            return new Response('{}', { status: 200 });
+          },
+        },
+        download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+        sleep: noSleep,
+      });
+      const done = await waitForRemoteUpgradeJob(nodeId);
+      expect(done.state).toBe('handed-off');
+      expect(puts.length).toBeGreaterThan(1);
+      for (const put of puts) {
+        expect(put.query).toContain('offset=');
+        expect(put.query).toContain('length=');
+        expect(put.query).toContain('total=32');
+      }
+      expect(maxInflight).toBeGreaterThan(1);
+      for (let i = 1; i < observed.length; i += 1) {
+        expect(observed[i] as number).toBeGreaterThanOrEqual(observed[i - 1] as number);
+      }
+      expect(done.pushedBytes).toBe(bytes.byteLength);
+      expect(logs.some((line) => /\[upgrade\] push node=.*streams=4 bytes=32 ms=/.test(line))).toBe(
+        true
+      );
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test('旧节点无 ranged 能力：单流追加，查询串不含 length/total', async () => {
+    const nodeId = 'c2'.repeat(16);
+    const bytes = new Uint8Array(24).fill(4);
+    const path = tempFile(bytes);
+    const queries: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: RESUME_CAPS,
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'GET') return offsetResponse(0);
+          if (input.method === 'PUT') {
+            queries.push(input.query ?? '');
+            await input.rawBody?.cancel().catch(() => {});
+            return new Response('{}', { status: 200 });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(queries).toHaveLength(1);
+    expect(queries[0]).not.toContain('length=');
+    expect(queries[0]).not.toContain('total=');
+    expect(queries[0]).not.toContain('offset=');
+  });
+
+  test('链路中断后按 ranges[] 续传，只补缺口', async () => {
+    const nodeId = 'c3'.repeat(16);
+    const bytes = new Uint8Array(32).fill(8);
+    const path = tempFile(bytes);
+    const puts: Array<{ query: string; sent: number }> = [];
+    const landed: RangePair[] = [];
+    let drops = 1;
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      upgradeCapabilities: RANGED_CAPS,
+      pushStreams: 4,
+      pushChunkBytes: 8,
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            const received = coveredPairs(landed);
+            return new Response(
+              JSON.stringify({
+                receivedBytes: received,
+                complete: received >= bytes.byteLength,
+                ranges: mergePairs(landed),
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } }
+            );
+          }
+          if (input.method === 'PUT') {
+            const raw = input.rawBody
+              ? await new Response(input.rawBody).bytes()
+              : new Uint8Array();
+            const q = queryParams(input.query);
+            const offset = Number(q.get('offset') ?? 0);
+            puts.push({ query: input.query ?? '', sent: raw.byteLength });
+            if (offset === 8 && drops > 0) {
+              drops -= 1;
+              return unreachable();
+            }
+            landed.push([offset, offset + raw.byteLength]);
+            return new Response('{}', { status: 200 });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(puts.length).toBeGreaterThan(4);
+    const successful = puts.slice(1);
+    const offsets = successful.map((p) => Number(queryParams(p.query).get('offset') ?? 0));
+    expect(new Set(offsets).size).toBeGreaterThan(1);
+    expect(coveredPairs(landed)).toBe(bytes.byteLength);
+  });
+});

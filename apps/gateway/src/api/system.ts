@@ -45,6 +45,7 @@ export function handleSystemApiRequest(
         'staged-package-resume',
         'signed-package',
         'release-speed-probe',
+        'staged-package-ranged',
       ],
     });
   }
@@ -300,11 +301,22 @@ function parseStagedPackageQuery(req: Request): StagedPackageQuery {
 
 /** `offset` 缺省 / 0 = 从头写；非法值一律按 0 处理，服务端再用 409 纠偏。 */
 function parseStagedPackageOffset(req: Request): number {
-  const raw = new URL(req.url).searchParams.get('offset');
-  if (!raw) return 0;
+  return parseNonNegQuery(req, 'offset') ?? 0;
+}
+
+function parseNonNegQuery(req: Request, name: string): number | undefined {
+  const raw = new URL(req.url).searchParams.get(name);
+  if (raw == null || raw === '') return undefined;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) return 0;
+  if (!Number.isFinite(n) || n < 0) return undefined;
   return Math.trunc(n);
+}
+
+function parseStagedRangeQuery(req: Request): { length: number; total: number } | undefined {
+  const length = parseNonNegQuery(req, 'length');
+  const total = parseNonNegQuery(req, 'total');
+  if (length === undefined || total === undefined) return undefined;
+  return { length, total };
 }
 
 function emptyBodyStream(): ReadableStream<Uint8Array> {
@@ -336,6 +348,7 @@ async function handleStagedPackageStatusOpen(req: Request): Promise<Response> {
     sha256: result.sha256,
     receivedBytes: result.receivedBytes,
     complete: result.complete,
+    ranges: result.ranges,
   });
 }
 
@@ -385,34 +398,56 @@ async function handleStagePackageManifestOpen(req: Request): Promise<Response> {
   return json({ version: result.version, sha256: result.sha256, keyId: result.keyId });
 }
 
+function stagedPutCap(
+  offset: number,
+  range: { length: number; total: number } | undefined,
+  declared: number
+): boolean {
+  const hasLength = Number.isFinite(declared) && declared > 0;
+  const span = hasLength ? offset + declared : range ? offset + range.length : offset;
+  const totalCap = range?.total ?? span;
+  return span > STAGED_PACKAGE_MAX_BYTES || totalCap > STAGED_PACKAGE_MAX_BYTES;
+}
+
+function jsonStagePackageResult(result: {
+  ok: boolean;
+  status?: number;
+  code?: string;
+  receivedBytes?: number;
+  version?: string;
+  sha256?: string;
+  bytes?: number;
+}): Response {
+  if (!result.ok) {
+    const extra =
+      result.code === 'UPGRADE_OFFSET_MISMATCH' || result.code === 'PACKAGE_INCOMPLETE'
+        ? { receivedBytes: result.receivedBytes }
+        : {};
+    return json({ code: result.code, ...extra }, result.status ?? 500);
+  }
+  return json({ version: result.version, sha256: result.sha256, bytes: result.bytes });
+}
+
 async function handleStagePackageOpen(req: Request): Promise<Response> {
   const blocked = rejectStagedPackageRequest(req);
   if (blocked) return blocked;
   const parsed = parseStagedPackageQuery(req);
   if ('error' in parsed) return parsed.error;
   const offset = parseStagedPackageOffset(req);
+  const range = parseStagedRangeQuery(req);
   const declared = Number(req.headers.get('content-length') ?? '');
+  if (stagedPutCap(offset, range, declared)) return json({ code: 'PACKAGE_TOO_LARGE' }, 413);
   const hasLength = Number.isFinite(declared) && declared > 0;
-  if (hasLength && declared + offset > STAGED_PACKAGE_MAX_BYTES) {
-    return json({ code: 'PACKAGE_TOO_LARGE' }, 413);
-  }
-  // offset > 0 且没有请求体：整长度 `.part` 的收尾校验，走空流让它照常校验 sha256 并提交
-  const body = req.body ?? (offset > 0 ? emptyBodyStream() : null);
+  const body = req.body ?? (offset > 0 || range ? emptyBodyStream() : null);
   const { upgradeController } = await import('../system/upgrade');
-  const result = await upgradeController.stagePackage(parsed.version, parsed.sha256, body, {
-    offset,
-    expectedBytes: hasLength ? offset + declared : undefined,
-  });
-  if (
-    !result.ok &&
-    (result.code === 'UPGRADE_OFFSET_MISMATCH' || result.code === 'PACKAGE_INCOMPLETE')
-  ) {
-    return json({ code: result.code, receivedBytes: result.receivedBytes }, result.status);
-  }
-  if (!result.ok) {
-    return json({ code: result.code }, result.status);
-  }
-  return json({ version: result.version, sha256: result.sha256, bytes: result.bytes });
+  return jsonStagePackageResult(
+    await upgradeController.stagePackage(parsed.version, parsed.sha256, body, {
+      offset,
+      expectedBytes: hasLength ? offset + declared : undefined,
+      length: range?.length,
+      total: range?.total,
+    })
+  );
 }
 
 async function handleStartUninstallOpen(req: Request): Promise<Response> {

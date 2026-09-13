@@ -3,6 +3,7 @@
 // 单独放一处让状态机文件只剩流程。
 
 import { errorMessage, withTimeout } from '@vibeterm/shared';
+import type { PushOutcome } from '@vibeterm/transfer';
 import { getInstallInfo } from './install-info';
 import {
   type DownloadProgressFn,
@@ -11,6 +12,23 @@ import {
 } from './release-download';
 import { resolveUpgradeInstallDir } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
+import { rangesFromPairs } from './upgrade-staging';
+
+export const RANGED_PUSH_STREAMS = 4;
+export const RANGED_PUSH_STREAMS_CAP = 8;
+export const RANGED_PUSH_CHUNK_BYTES = 4 * 1024 * 1024;
+
+export function rangedPushPlan(input: {
+  capabilities: readonly string[];
+  streams?: number;
+  chunkBytes?: number;
+}): { streams: number; maxRangeBytes?: number; ranged: boolean } {
+  const ranged = input.capabilities.includes('staged-package-ranged');
+  if (!ranged) return { streams: 1, ranged: false };
+  const requested = input.streams ?? RANGED_PUSH_STREAMS;
+  const streams = Math.min(Math.max(1, requested), RANGED_PUSH_STREAMS_CAP);
+  return { streams, maxRangeBytes: input.chunkBytes ?? RANGED_PUSH_CHUNK_BYTES, ranged: true };
+}
 
 /** 交签名清单的超时：一个几百字节的 POST，慢到这个份上说明链路已经不行了。 */
 const MANIFEST_TIMEOUT_MS = 60 * 1000;
@@ -176,6 +194,90 @@ export async function defaultReleaseDownload(
     onProgress,
     assetName,
   });
+}
+
+/** 拼 `PUT /api/system/upgrade/package` 的查询串。ranged 必带 offset/length/total。 */
+export function pushPackageQuery(input: {
+  version: string;
+  sha256: string;
+  offset: number;
+  length: number;
+  total: number;
+  ranged: boolean;
+}): string {
+  const q = new URLSearchParams();
+  q.set('version', input.version);
+  q.set('sha256', input.sha256);
+  if (input.ranged) {
+    q.set('offset', String(input.offset));
+    q.set('length', String(input.length));
+    q.set('total', String(input.total));
+  } else if (input.offset > 0) {
+    q.set('offset', String(input.offset));
+  }
+  return `?${q.toString()}`;
+}
+
+export function parseStagedStatusBody(
+  text: string,
+  totalBytes: number
+): { offset: number; complete: boolean; ranges: Array<{ offset: number; length: number }> } {
+  const empty = {
+    offset: 0,
+    complete: false,
+    ranges: [] as Array<{ offset: number; length: number }>,
+  };
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object') return empty;
+    const row = parsed as { receivedBytes?: unknown; complete?: unknown; ranges?: unknown };
+    const ranges = rangesFromPairs(row.ranges);
+    if (row.complete === true) {
+      return {
+        offset: totalBytes,
+        complete: true,
+        ranges: totalBytes > 0 ? [{ offset: 0, length: totalBytes }] : [],
+      };
+    }
+    const received = typeof row.receivedBytes === 'number' ? row.receivedBytes : 0;
+    if (!Number.isFinite(received) || received < 0) return empty;
+    return {
+      offset: Math.min(Math.trunc(received), totalBytes),
+      complete: false,
+      ranges,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+export function retryablePushStatus(status: number, detail: string): boolean {
+  if (detail.includes('UPGRADE_OFFSET_MISMATCH')) return true;
+  return status >= 500;
+}
+
+export async function classifyUpgradePushResponse(
+  pushed: Response,
+  ctx: { cancelled: boolean; aborted: boolean }
+): Promise<PushOutcome> {
+  if (ctx.cancelled) {
+    await consumeBoundedBody(pushed);
+    return { kind: 'cancelled' };
+  }
+  if (pushed.status >= 200 && pushed.status < 300) {
+    // 小 JSON 回包读完再走，`body.cancel()` 会给转发层一个假的 aborted 结论。
+    await consumeBoundedBody(pushed);
+    return { kind: 'landed' };
+  }
+  if (ctx.aborted) {
+    await consumeBoundedBody(pushed);
+    return { kind: 'cancelled' };
+  }
+  const detail = await describeUpstream(pushed);
+  const error = `push failed: ${detail}`;
+  return retryablePushStatus(pushed.status, detail)
+    ? { kind: 'retry', error }
+    : { kind: 'fail', error };
 }
 
 export async function deleteStagedBestEffort(input: {

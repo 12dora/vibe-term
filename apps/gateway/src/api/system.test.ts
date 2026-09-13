@@ -189,6 +189,7 @@ describe('GET /api/system/info upgradeCapabilities', () => {
       'staged-package-resume',
       'signed-package',
       'release-speed-probe',
+      'staged-package-ranged',
     ]);
   });
 });
@@ -364,6 +365,7 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
         sha256: hex,
         receivedBytes: 0,
         complete: false,
+        ranges: [],
       });
 
       const partial = await handleSystemApiRequest(
@@ -461,6 +463,72 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
       );
       expect(bad?.status).toBe(409);
       expect(await bad?.json()).toEqual({ code: 'UPGRADE_OFFSET_MISMATCH', receivedBytes: 10 });
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('ranged PUT 写区间，GET 回报 ranges，收满后 complete', async () => {
+    const dir = installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const bytes = new Uint8Array(64).fill(3);
+      const hex = sha256Hex(bytes);
+      const tail = await handleSystemApiRequest(
+        withMeshAuth(
+          new Request(
+            `http://localhost/api/system/upgrade/package?version=1.2.3&sha256=${hex}&offset=32&length=32&total=64`,
+            {
+              method: 'PUT',
+              headers: {
+                'content-type': 'application/octet-stream',
+                'content-length': '32',
+              },
+              body: bytesStream(bytes.subarray(32)),
+            }
+          )
+        ),
+        '/api/system/upgrade/package'
+      );
+      expect(tail?.status).toBe(200);
+      const partial = await handleSystemApiRequest(
+        statusRequest('1.2.3', hex),
+        '/api/system/upgrade/package'
+      );
+      expect(await partial?.json()).toEqual({
+        version: '1.2.3',
+        sha256: hex,
+        receivedBytes: 32,
+        complete: false,
+        ranges: [[32, 64]],
+      });
+      const head = await handleSystemApiRequest(
+        withMeshAuth(
+          new Request(
+            `http://localhost/api/system/upgrade/package?version=1.2.3&sha256=${hex}&offset=0&length=32&total=64`,
+            {
+              method: 'PUT',
+              headers: {
+                'content-type': 'application/octet-stream',
+                'content-length': '32',
+              },
+              body: bytesStream(bytes.subarray(0, 32)),
+            }
+          )
+        ),
+        '/api/system/upgrade/package'
+      );
+      expect(head?.status).toBe(200);
+      const done = await handleSystemApiRequest(
+        statusRequest('1.2.3', hex),
+        '/api/system/upgrade/package'
+      );
+      expect(await done?.json()).toMatchObject({
+        receivedBytes: 64,
+        complete: true,
+        ranges: [[0, 64]],
+      });
+      expect(existsSync(join(dir, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz'))).toBe(true);
     } finally {
       infoSpy.mockRestore();
     }

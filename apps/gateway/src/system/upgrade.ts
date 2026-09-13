@@ -14,7 +14,7 @@ import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@vibeterm/shared';
 import { errorMessage, releaseSignatureRequired, releaseTarballName } from '@vibeterm/shared';
 import { processCommandLine, processStartIdentity } from '@vibeterm/shared/process';
-import { partPathOf, resumableSink } from '@vibeterm/transfer/node';
+import { partPathOf } from '@vibeterm/transfer/node';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import {
@@ -36,19 +36,19 @@ import {
 } from './upgrade-manifest';
 import { identityMatches, pidIsAlive, readNoneModePidRecord } from './upgrade-pid';
 import { type ReleaseSpeedProbeFn, evaluateReleaseSpeedGate } from './upgrade-speed-gate';
+import { StagingWriteGate } from './upgrade-stage-gate';
 import {
   type StagePackageOpts,
   type StagePackageResult,
   type StagedPackageRecord,
   type StagedPackageStatusResult,
   classifyStagedEntry,
-  fileSizeOrZero,
+  isRangedStageOpts,
+  readStagedProgress,
   removeExpiredStagedFiles,
-  stageFailureToResult,
   stagedPartExpired,
-  stagedPartPath,
   stagedRecordPath,
-  stagedSinkDescriptor,
+  writeStagedPackage,
 } from './upgrade-staging';
 
 export { parseSha256Sums, releaseSha256SumsUrl, sha256Hex } from './release-download';
@@ -158,11 +158,7 @@ export class UpgradeController {
   private startedAt: string | null = null;
   private readonly staged = new Map<string, StagedPackageRecord>();
   private stagedLoaded = false;
-  private stagingInFlight = false;
-  private stagingVersion: string | null = null;
-  private stagingKey: string | null = null;
-  private stagingPreempt: (() => void) | null = null;
-  private stagingDone: Promise<void> = Promise.resolve();
+  private readonly staging = new StagingWriteGate();
   private abort: AbortController | null = null;
   private cancelRequested = false;
   private commitStarted = false;
@@ -184,6 +180,10 @@ export class UpgradeController {
     return this.state !== 'idle';
   }
 
+  private get stagingInFlight(): boolean {
+    return this.staging.inFlight;
+  }
+
   resetForTests(): void {
     this.state = 'idle';
     this.targetVersion = null;
@@ -192,11 +192,7 @@ export class UpgradeController {
     this.pendingEarlyExit = null;
     this.staged.clear();
     this.stagedLoaded = false;
-    this.stagingInFlight = false;
-    this.stagingVersion = null;
-    this.stagingKey = null;
-    this.stagingPreempt = null;
-    this.stagingDone = Promise.resolve();
+    this.staging.reset();
     this.abort?.abort();
     this.abort = null;
     this.cancelRequested = false;
@@ -303,8 +299,8 @@ export class UpgradeController {
   }
 
   async removeStagedPackage(version: string): Promise<{ ok: true } | { ok: false; status: 404 }> {
-    if (this.stagingVersion === version) {
-      await this.stagingDone;
+    if (this.staging.version === version) {
+      await this.staging.done;
     }
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = resolveUpgradeInstallDir(install);
@@ -342,7 +338,7 @@ export class UpgradeController {
   async stagedPackageStatus(version: string, sha256: string): Promise<StagedPackageStatusResult> {
     const expected = sha256.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) return { ok: false, status: 400, code: 'BAD_REQUEST' };
-    if (this.stagingVersion === version) await this.stagingDone;
+    if (this.staging.version === version) await this.staging.done;
     const install = (this.deps.getInstallInfo ?? getInstallInfo)();
     const installDir = resolveUpgradeInstallDir(install);
     if (!installDir) return { ok: false, status: 500, code: 'STAGE_FAILED' };
@@ -354,15 +350,18 @@ export class UpgradeController {
         sha256: expected,
         receivedBytes: staged.bytes,
         complete: true,
+        ranges: staged.bytes > 0 ? [[0, staged.bytes]] : [],
       };
     }
     const stagedDir = join(installDir, 'staging', 'staged');
+    const progress = await readStagedProgress(stagedDir, version, expected);
     return {
       ok: true,
       version,
       sha256: expected,
-      receivedBytes: fileSizeOrZero(stagedPartPath(stagedDir, version, expected)),
+      receivedBytes: progress.receivedBytes,
       complete: false,
+      ranges: progress.ranges,
     };
   }
 
@@ -373,31 +372,14 @@ export class UpgradeController {
     opts?: StagePackageOpts
   ): Promise<StagePackageResult> {
     const key = `${version}:${sha256.trim().toLowerCase()}`;
-    if (this.isBusy()) return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
-    if (this.stagingInFlight) {
-      // 同一个包的续传：上一条 PUT 多半挂在已经死掉的链路上，先把它顶掉再接手。
-      if (this.stagingKey !== key) return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
-      this.stagingPreempt?.();
-      await this.stagingDone;
-      if (this.isBusy() || this.stagingInFlight) {
-        return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
-      }
-    }
-    this.stagingInFlight = true;
-    this.stagingVersion = version;
-    this.stagingKey = key;
-    let release!: () => void;
-    this.stagingDone = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const rejected = await this.staging.admitWrite(key, version, isRangedStageOpts(opts), () =>
+      this.isBusy()
+    );
+    if (rejected) return rejected;
     try {
       return await this.stagePackageLocked(version, sha256, body, opts);
     } finally {
-      this.stagingInFlight = false;
-      this.stagingVersion = null;
-      this.stagingKey = null;
-      this.stagingPreempt = null;
-      release();
+      this.staging.releaseWrite();
     }
   }
 
@@ -422,47 +404,60 @@ export class UpgradeController {
       return { ok: false, status: 409, code: 'UPGRADE_MANIFEST_MISMATCH' };
     }
 
+    const already = this.lookupStaged(version, expected);
+    if (already) return { ok: true, version, sha256: expected, bytes: already.bytes };
+
     await this.repairStagingArtifacts(installDir, version);
     const stagedDir = join(installDir, 'staging', 'staged');
     await mkdir(stagedDir, { recursive: true, mode: 0o700 });
     const maxBytes = this.deps.maxPackageBytes ?? STAGED_PACKAGE_MAX_BYTES;
-    const descriptor = stagedSinkDescriptor({ stagedDir, version, sha256: expected, maxBytes });
-    const offset = opts?.offset ?? 0;
-    const declared =
-      opts?.expectedBytes !== undefined ? Math.max(0, opts.expectedBytes - offset) : undefined;
-
-    // 同一个包的续传：上一条 PUT 多半挂在已经死掉的链路上，交出取消句柄让它被顶掉。
-    const written = await resumableSink.write(descriptor, body, {
-      offset,
-      contentLength: declared,
-      registerCancel: (cancel) => {
-        this.stagingPreempt = cancel;
-      },
+    const ranged = isRangedStageOpts(opts);
+    const written = await writeStagedPackage({
+      stagedDir,
+      version,
+      sha256: expected,
+      maxBytes,
+      body,
+      opts,
+      registerCancel: ranged
+        ? undefined
+        : (cancel) => {
+            this.staging.preempt = cancel;
+          },
     });
-    this.stagingPreempt = null;
-    if (!written.ok) return stageFailureToResult(written);
+    if (!ranged) this.staging.preempt = null;
+    if (!written.ok) return written;
+    if (!written.complete) {
+      return { ok: true, version, sha256: expected, bytes: written.receivedBytes };
+    }
     return this.commitStagedPackage(installDir, {
       version,
       sha256: expected,
       bytes: written.receivedBytes,
-      partPath: partPathOf(descriptor),
+      partPath: partPathOf(written.descriptor),
+      placed: written.descriptor.mode === 'ranged',
     });
   }
 
   private async commitStagedPackage(
     installDir: string,
-    input: { version: string; sha256: string; bytes: number; partPath: string }
+    input: { version: string; sha256: string; bytes: number; partPath: string; placed?: boolean }
   ): Promise<StagePackageResult> {
-    const { version, sha256, bytes, partPath } = input;
+    const { version, sha256, bytes, partPath, placed } = input;
     const stagedDir = join(installDir, 'staging', 'staged');
     const finalPath = join(stagedDir, releaseTarballName(version));
     const sidecarPath = stagedRecordPath(stagedDir, version);
     let renamed = false;
     try {
-      await rm(finalPath, { force: true }).catch(() => {});
-      await rename(partPath, finalPath);
-      renamed = true;
-      await chmod(finalPath, 0o600).catch(() => {});
+      if (!placed) {
+        await rm(finalPath, { force: true }).catch(() => {});
+        await rename(partPath, finalPath);
+        renamed = true;
+        await chmod(finalPath, 0o600).catch(() => {});
+      } else {
+        renamed = true;
+        await chmod(finalPath, 0o600).catch(() => {});
+      }
       const record: StagedPackageRecord = {
         version,
         sha256,

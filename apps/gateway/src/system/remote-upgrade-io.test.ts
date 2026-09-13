@@ -3,7 +3,9 @@ import {
   UPSTREAM_BODY_MAX_BYTES,
   consumeBoundedBody,
   describeUpstream,
+  parseStagedStatusBody,
   pushPackageManifest,
+  pushPackageQuery,
 } from './remote-upgrade-io';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
@@ -136,5 +138,55 @@ describe('pushPackageManifest', () => {
     expect(result).toEqual({ ok: true });
     // 读到上限就停：远没有把 4 倍上限的 body 全灌进内存
     expect(sent()).toBeLessThan(2 * UPSTREAM_BODY_MAX_BYTES);
+  });
+});
+
+describe('pushPackageQuery / parseStagedStatusBody', () => {
+  test('append only adds offset when it is past zero', () => {
+    expect(
+      pushPackageQuery({
+        version: '1.2.3',
+        sha256: 'ab'.repeat(32),
+        offset: 0,
+        length: 10,
+        total: 10,
+        ranged: false,
+      })
+    ).toBe(`?version=1.2.3&sha256=${'ab'.repeat(32)}`);
+    expect(
+      pushPackageQuery({
+        version: '1.2.3',
+        sha256: 'ab'.repeat(32),
+        offset: 4,
+        length: 6,
+        total: 10,
+        ranged: false,
+      })
+    ).toBe(`?version=1.2.3&sha256=${'ab'.repeat(32)}&offset=4`);
+  });
+
+  test('ranged always sends offset, length and total', () => {
+    expect(
+      pushPackageQuery({
+        version: '1.2.3',
+        sha256: 'cd'.repeat(32),
+        offset: 0,
+        length: 8,
+        total: 32,
+        ranged: true,
+      })
+    ).toBe(`?version=1.2.3&sha256=${'cd'.repeat(32)}&offset=0&length=8&total=32`);
+  });
+
+  test('parses GET ranges as half-open pairs', () => {
+    expect(
+      parseStagedStatusBody(
+        JSON.stringify({ receivedBytes: 12, complete: false, ranges: [[4, 12]] }),
+        20
+      )
+    ).toEqual({ offset: 12, complete: false, ranges: [{ offset: 4, length: 8 }] });
+    expect(
+      parseStagedStatusBody(JSON.stringify({ receivedBytes: 20, complete: true }), 20)
+    ).toEqual({ offset: 20, complete: true, ranges: [{ offset: 0, length: 20 }] });
   });
 });

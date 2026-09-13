@@ -48,6 +48,8 @@ export interface SystemInfo {
    * `'upgrade-cancel'`：支持 `DELETE /api/system/upgrade` 与 `DELETE /api/system/upgrade/package`。
    * `'staged-package-resume'`：推包可断点续传——`GET /api/system/upgrade/package` 查已收字节数，
    * `PUT` 带 `offset` 从该处续写，链路中断不再丢掉已收到的部分。
+   * `'staged-package-ranged'`：接受乱序区间写入——`PUT ?offset=N&length=L&total=T` 把这段写进
+   * `.part`，`GET` 回报已收 `ranges: [[start,end], …]`。旧入口不发 `length`/`total`，仍走追加。
    * `'signed-package'`：接受 `POST /api/system/upgrade/package/manifest`（已签名的 SHA256SUMS），
    * 并且只装有可验签清单的暂存包——推包方自报的 sha256 不再有权威性。
    * `'release-speed-probe'`：接受 `POST /api/system/upgrade` 的 `requireFastSource`。为 true
@@ -130,6 +132,11 @@ export interface StagedPackageStatus {
   receivedBytes: number;
   /** 整包已校验通过并暂存完毕 */
   complete: boolean;
+  /**
+   * 已收区间，半开 `[start, end)`。有 `'staged-package-ranged'` 的节点会填；
+   * 旧节点不上报，入口按 `receivedBytes` 前缀处理。
+   */
+  ranges?: Array<[number, number]>;
 }
 
 /** 触发升级请求体 */

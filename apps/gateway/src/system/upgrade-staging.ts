@@ -1,9 +1,11 @@
 // 暂存升级包的落盘细节。字节层（`.part` 命名、偏移校验、前缀重算、截断判定、落位）
 // 已经统一到 `@vibeterm/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
+import { coveredBytes } from '@vibeterm/transfer';
 import {
   PART_TTL_MS,
   type SinkDescriptor,
@@ -11,6 +13,9 @@ import {
   deterministicPartPath,
   fileExpired,
   fileSizeOrZero,
+  rangesSidecarPath,
+  readReceivedRanges,
+  resumableSink,
 } from '@vibeterm/transfer/node';
 import { stagedManifestVersion } from './upgrade-manifest';
 
@@ -41,13 +46,38 @@ export type StagePackageResult =
  * `offset` 缺省或 0 表示从头写；`expectedBytes` 是本次写完后 `.part` 应有的总长度
  * （offset + content-length）——链路被 RST 时请求体往往是「干净地结束」而不是报错，
  * 只有拿它对一下才分得清「传完了但包坏了」与「传到一半断了」。
+ * `length` 与 `total` 成对出现时走乱序区间写入；缺任一则仍是追加（2.3.6 入口）。
  */
-export type StagePackageOpts = { offset?: number; expectedBytes?: number };
+export type StagePackageOpts = {
+  offset?: number;
+  expectedBytes?: number;
+  length?: number;
+  total?: number;
+};
+
+/** 半开区间 `[start, end)`。 */
+export type ReceivedRangePair = [number, number];
 
 export type StagedPackageStatusResult =
-  | { ok: true; version: string; sha256: string; receivedBytes: number; complete: boolean }
+  | {
+      ok: true;
+      version: string;
+      sha256: string;
+      receivedBytes: number;
+      complete: boolean;
+      ranges: ReceivedRangePair[];
+    }
   | { ok: false; status: 400; code: 'BAD_REQUEST' }
   | { ok: false; status: 500; code: 'STAGE_FAILED' };
+
+export type StageWriteOk = {
+  ok: true;
+  complete: boolean;
+  receivedBytes: number;
+  descriptor: SinkDescriptor;
+};
+
+export type StageWriteOutcome = StageWriteOk | Extract<StagePackageResult, { ok: false }>;
 
 /** `.part` 名按 (version, sha256) 确定，续传才找得回上一次写到哪。 */
 export function stagedPartPath(stagedDir: string, version: string, sha256: string): string {
@@ -58,26 +88,191 @@ export function stagedPartExpired(path: string, now: number): boolean {
   return fileExpired(path, now, STAGED_PART_TTL_MS);
 }
 
+export function isRangedStageOpts(opts?: StagePackageOpts): boolean {
+  const length = opts?.length;
+  const total = opts?.total;
+  return (
+    typeof length === 'number' &&
+    Number.isFinite(length) &&
+    length >= 0 &&
+    typeof total === 'number' &&
+    Number.isFinite(total) &&
+    total >= 0
+  );
+}
+
 export function stagedSinkDescriptor(input: {
   stagedDir: string;
   version: string;
   sha256: string;
   maxBytes: number;
+  ranged?: boolean;
+  totalBytes?: number;
 }): SinkDescriptor {
+  const ranged = input.ranged === true;
   return {
     destPath: join(input.stagedDir, releaseTarballName(input.version)),
     key: input.sha256,
     sha256: input.sha256,
     maxBytes: input.maxBytes,
-    mode: 'append',
+    totalBytes: ranged ? input.totalBytes : undefined,
+    mode: ranged ? 'ranged' : 'append',
     fileMode: 0o600,
   };
+}
+
+export function rangePairsOf(
+  ranges: ReadonlyArray<{ offset: number; length: number }>
+): ReceivedRangePair[] {
+  return ranges.map((r) => [r.offset, r.offset + r.length]);
+}
+
+export function rangesFromPairs(raw: unknown): Array<{ offset: number; length: number }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ offset: number; length: number }> = [];
+  for (const item of raw) {
+    if (!Array.isArray(item) || item.length < 2) continue;
+    const start = item[0];
+    const end = item[1];
+    if (typeof start !== 'number' || typeof end !== 'number') continue;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) continue;
+    const offset = Math.max(0, Math.trunc(start));
+    const length = Math.max(0, Math.trunc(end) - offset);
+    if (length > 0) out.push({ offset, length });
+  }
+  return out;
+}
+
+/** 进行中的 `.part` 进度。已落位的正式包由调用方查 sidecar，这里一律 `complete: false`。 */
+export async function readStagedProgress(
+  stagedDir: string,
+  version: string,
+  sha256: string
+): Promise<{ receivedBytes: number; ranges: ReceivedRangePair[]; complete: false }> {
+  const partPath = stagedPartPath(stagedDir, version, sha256);
+  if (existsSync(rangesSidecarPath(partPath))) {
+    const ranges = await readReceivedRanges(partPath);
+    return { receivedBytes: coveredBytes(ranges), ranges: rangePairsOf(ranges), complete: false };
+  }
+  const size = fileSizeOrZero(partPath);
+  return {
+    receivedBytes: size,
+    ranges: size > 0 ? [[0, size]] : [],
+    complete: false,
+  };
+}
+
+function contentLengthOf(opts: StagePackageOpts | undefined, ranged: boolean): number | undefined {
+  const offset = opts?.offset ?? 0;
+  if (ranged) return opts?.length;
+  if (opts?.expectedBytes === undefined) return undefined;
+  return Math.max(0, opts.expectedBytes - offset);
+}
+
+function rangeAlreadyCovered(
+  ranges: ReadonlyArray<{ offset: number; length: number }>,
+  offset: number,
+  length: number
+): boolean {
+  if (length <= 0) return ranges.length > 0 || offset === 0;
+  const end = offset + length;
+  return ranges.some((r) => r.offset <= offset && r.offset + r.length >= end);
+}
+
+/**
+ * 把一段请求体写入暂存 `.part`。乱序模式下区间收满会校验 sha256 并 `commit` 落位；
+ * 追加模式不在这里改名，沿用调用方原来的提交路径。
+ */
+export async function writeStagedPackage(input: {
+  stagedDir: string;
+  version: string;
+  sha256: string;
+  maxBytes: number;
+  body: ReadableStream<Uint8Array>;
+  opts?: StagePackageOpts;
+  registerCancel?: (cancel: () => void) => void;
+}): Promise<StageWriteOutcome> {
+  const ranged = isRangedStageOpts(input.opts);
+  const offset = input.opts?.offset ?? 0;
+  const length = contentLengthOf(input.opts, ranged);
+  const total = ranged ? input.opts?.total : undefined;
+  if (ranged && total !== undefined) {
+    const span = offset + (length ?? 0);
+    if (total > input.maxBytes || span > input.maxBytes || offset > total) {
+      return { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' };
+    }
+  }
+  await mkdir(input.stagedDir, { recursive: true, mode: 0o700 }).catch(() => {});
+  const descriptor = stagedSinkDescriptor({
+    stagedDir: input.stagedDir,
+    version: input.version,
+    sha256: input.sha256,
+    maxBytes: input.maxBytes,
+    ranged,
+    totalBytes: total,
+  });
+  const written = await resumableSink.write(descriptor, input.body, {
+    offset,
+    contentLength: length,
+    registerCancel: input.registerCancel,
+  });
+  if (!written.ok) return resolveWriteFailure(descriptor, written, offset, length ?? 0);
+  if (written.complete && ranged) {
+    const placed = await resumableSink.commit(descriptor);
+    if (!placed.ok) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    return {
+      ok: true,
+      complete: true,
+      receivedBytes: placed.bytes,
+      descriptor,
+    };
+  }
+  return {
+    ok: true,
+    complete: written.complete,
+    receivedBytes: written.receivedBytes,
+    descriptor,
+  };
+}
+
+async function resolveWriteFailure(
+  descriptor: SinkDescriptor,
+  written: Extract<SinkWriteResult, { ok: false }>,
+  offset: number,
+  length: number
+): Promise<StageWriteOutcome> {
+  if (written.code === 'sealed') {
+    return { ok: true, complete: true, receivedBytes: descriptor.totalBytes ?? 0, descriptor };
+  }
+  if (written.code === 'conflict') {
+    const state = await resumableSink.status(descriptor);
+    if (!rangeAlreadyCovered(state.ranges, offset, length)) {
+      return {
+        ok: false,
+        status: 409,
+        code: 'UPGRADE_OFFSET_MISMATCH',
+        receivedBytes: state.receivedBytes,
+      };
+    }
+    if (state.complete && descriptor.mode === 'ranged') {
+      const placed = await resumableSink.commit(descriptor);
+      if (!placed.ok) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+      return { ok: true, complete: true, receivedBytes: placed.bytes, descriptor };
+    }
+    return {
+      ok: true,
+      complete: state.complete,
+      receivedBytes: state.receivedBytes,
+      descriptor,
+    };
+  }
+  return stageFailureToResult(written);
 }
 
 /** 引擎的失败码 → 升级接口既有的 HTTP 语义。 */
 export function stageFailureToResult(
   result: Extract<SinkWriteResult, { ok: false }>
-): StagePackageResult {
+): Extract<StagePackageResult, { ok: false }> {
   switch (result.code) {
     case 'offset_mismatch':
       return {

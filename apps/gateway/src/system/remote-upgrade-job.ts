@@ -28,12 +28,16 @@ import {
 } from './remote-upgrade-delivery';
 import {
   abortableSleep,
+  classifyUpgradePushResponse,
   consumeBoundedBody,
   defaultReleaseDownload,
   deleteStagedBestEffort,
   describeUpstream,
   detachRequest,
+  parseStagedStatusBody,
   pushPackageManifest,
+  pushPackageQuery,
+  rangedPushPlan,
   releaseCacheDir,
 } from './remote-upgrade-io';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
@@ -120,6 +124,8 @@ type Job = {
   upgradeCapabilities: string[];
   /** 推给目标节点的发行资产名：<2.0.0 的节点只认改名前的那份。 */
   assetName: string;
+  pushStreams?: number;
+  pushChunkBytes?: number;
 };
 
 type RemoteUpgradeTimeouts = {
@@ -185,6 +191,9 @@ export function startRemoteUpgradeJob(opts: {
   targetCurrentVersion?: string | null;
   /** 单测注入：跳过退避真实等待。 */
   sleep?: SleepFn;
+  /** 单测注入：覆盖乱序推包的流数 / 分片；生产默认 4 流 × 4 MiB，上限 8 流。 */
+  pushStreams?: number;
+  pushChunkBytes?: number;
 }): RemoteUpgradeStartResult {
   const existing = jobs.get(opts.nodeId);
   if (existing?.state === 'running') return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
@@ -219,6 +228,8 @@ export function startRemoteUpgradeJob(opts: {
     startPromise: null,
     upgradeCapabilities: capabilities,
     assetName: selectReleaseAssetForTarget(opts.targetCurrentVersion, opts.version),
+    pushStreams: opts.pushStreams,
+    pushChunkBytes: opts.pushChunkBytes,
   };
   jobs.set(opts.nodeId, job);
 
@@ -438,9 +449,16 @@ async function runPushPhase(
     return { done: true, snapshot: fail(job, manifest.error, deps.nowFn) };
   }
   const resume = supportsStagedResume(job);
-  const result = await runPush(pushTransport(job, deps, downloaded), {
+  const { streams, maxRangeBytes, ranged } = rangedPushPlan({
+    capabilities: job.upgradeCapabilities,
+    streams: job.pushStreams,
+    chunkBytes: job.pushChunkBytes,
+  });
+  const startedAt = deps.nowFn();
+  const result = await runPush(pushTransport(job, deps, downloaded, ranged), {
     totalBytes: downloaded.bytes,
-    streams: 1,
+    streams,
+    maxRangeBytes,
     resume,
     maxAttempts: resume ? PUSH_MAX_ATTEMPTS : LEGACY_PUSH_MAX_ATTEMPTS,
     backoffMs: PUSH_RETRY_BACKOFF_MS,
@@ -453,10 +471,14 @@ async function runPushPhase(
       job.attempt = attempt;
     },
     onProgress: (bytes) => {
-      job.pushedBytes = Math.min(bytes, downloaded.bytes);
+      const next = Math.min(Math.max(0, bytes), downloaded.bytes);
+      if (next > job.pushedBytes) job.pushedBytes = next;
     },
     shouldRestartFromZero: shouldReuploadFromZero,
   });
+  console.log(
+    `[upgrade] push node=${job.nodeId} streams=${streams} bytes=${downloaded.bytes} ms=${deps.nowFn() - startedAt}`
+  );
   if (result.kind === 'done') {
     job.pushed = true;
     job.pushedBytes = downloaded.bytes;
@@ -486,13 +508,22 @@ function sendPackageManifest(
   });
 }
 
-function pushTransport(job: Job, deps: JobDeps, downloaded: DownloadedRelease): PushTransport {
+function pushTransport(
+  job: Job,
+  deps: JobDeps,
+  downloaded: DownloadedRelease,
+  ranged: boolean
+): PushTransport {
   return {
     async status() {
       const staged = await readPushedOffset(job, deps, downloaded);
-      return { receivedBytes: staged.offset, ranges: [], complete: staged.complete };
+      return {
+        receivedBytes: staged.offset,
+        ranges: staged.ranges,
+        complete: staged.complete,
+      };
     },
-    put: (range, opts) => attemptPush(job, deps, downloaded, range, opts),
+    put: (range, opts) => attemptPush(job, deps, downloaded, range, opts, ranged),
   };
 }
 
@@ -508,9 +539,13 @@ async function cancelPush(job: Job, deps: JobDeps): Promise<RemoteUpgradeJobSnap
 }
 
 /** 目标那边的暂存进度。`complete` 只在正式暂存包已落位时为真。 */
-type StagedOffset = { offset: number; complete: boolean };
+type StagedOffset = {
+  offset: number;
+  complete: boolean;
+  ranges: Array<{ offset: number; length: number }>;
+};
 
-const NO_STAGED_OFFSET: StagedOffset = { offset: 0, complete: false };
+const NO_STAGED_OFFSET: StagedOffset = { offset: 0, complete: false, ranges: [] };
 
 /**
  * 查目标已收到多少字节；查不动就当 0（从头重传，最坏也只是多花一次带宽）。
@@ -536,13 +571,7 @@ async function readPushedOffset(
     );
     const text = await consumeBoundedBody(res);
     if (res.status < 200 || res.status >= 300) return NO_STAGED_OFFSET;
-    const parsed: unknown = JSON.parse(text);
-    if (!parsed || typeof parsed !== 'object') return NO_STAGED_OFFSET;
-    const row = parsed as { receivedBytes?: unknown; complete?: unknown };
-    if (row.complete === true) return { offset: downloaded.bytes, complete: true };
-    const received = typeof row.receivedBytes === 'number' ? row.receivedBytes : 0;
-    if (!Number.isFinite(received) || received < 0) return NO_STAGED_OFFSET;
-    return { offset: Math.min(Math.trunc(received), downloaded.bytes), complete: false };
+    return parseStagedStatusBody(text, downloaded.bytes);
   } catch {
     return NO_STAGED_OFFSET;
   }
@@ -553,7 +582,8 @@ async function attemptPush(
   deps: JobDeps,
   downloaded: DownloadedRelease,
   range: { offset: number; length: number },
-  push: PushPutOptions
+  push: PushPutOptions,
+  ranged: boolean
 ): Promise<PushOutcome> {
   const remaining = push.deadlineMs - deps.nowFn();
   if (remaining <= 0) return { kind: 'retry', error: 'push failed: push timeout' };
@@ -565,7 +595,14 @@ async function attemptPush(
       nodeId: job.nodeId,
       method: 'PUT',
       path: '/api/system/upgrade/package',
-      query: pushQuery(job.version, downloaded.sha256, range.offset),
+      query: pushPackageQuery({
+        version: job.version,
+        sha256: downloaded.sha256,
+        offset: range.offset,
+        length: range.length,
+        total: downloaded.bytes,
+        ranged,
+      }),
       rawBody: fileStream,
       headers: {
         'content-type': 'application/octet-stream',
@@ -578,7 +615,10 @@ async function attemptPush(
     const pushed = await withTimeout(pushReq, remaining, 'push timeout');
     fileStream = null;
     job.fileStream = null;
-    return await classifyPushResponse(job, pushed);
+    return await classifyUpgradePushResponse(pushed, {
+      cancelled: isCancelled(job),
+      aborted: job.abort.signal.aborted,
+    });
   } catch (err) {
     await fileStream?.cancel().catch(() => {});
     job.fileStream = null;
@@ -589,41 +629,6 @@ async function attemptPush(
       error: `push failed: ${message.includes('push timeout') ? 'push timeout' : message}`,
     };
   }
-}
-
-function pushQuery(version: string, sha256: string, offset: number): string {
-  const base = `?version=${encodeURIComponent(version)}&sha256=${sha256}`;
-  return offset > 0 ? `${base}&offset=${offset}` : base;
-}
-
-async function classifyPushResponse(job: Job, pushed: Response): Promise<PushOutcome> {
-  if (isCancelled(job)) {
-    await consumeBoundedBody(pushed);
-    return { kind: 'cancelled' };
-  }
-  if (pushed.status >= 200 && pushed.status < 300) {
-    // 小 JSON 回包读完再走，`body.cancel()` 会给转发层一个假的 aborted 结论。
-    await consumeBoundedBody(pushed);
-    return { kind: 'landed' };
-  }
-  if (job.abort.signal.aborted) {
-    await consumeBoundedBody(pushed);
-    return { kind: 'cancelled' };
-  }
-  const detail = await describeUpstream(pushed);
-  const error = `push failed: ${detail}`;
-  return retryablePushStatus(pushed.status, detail)
-    ? { kind: 'retry', error }
-    : { kind: 'fail', error };
-}
-
-/**
- * 链路类失败才重试：入口连不上目标（503 NODE_UNREACHABLE）、网关级 5xx，
- * 以及偏移对不上（目标那边的 `.part` 被清了，下一轮重新问偏移即可）。
- */
-function retryablePushStatus(status: number, detail: string): boolean {
-  if (detail.includes('UPGRADE_OFFSET_MISMATCH')) return true;
-  return status >= 500;
 }
 
 async function runStartPhase(

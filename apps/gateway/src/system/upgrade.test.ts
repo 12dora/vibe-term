@@ -1007,6 +1007,7 @@ describe('staged package', () => {
       sha256: hex,
       receivedBytes: cut,
       complete: false,
+      ranges: [[0, cut]],
     });
     const second = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(cut)), {
       offset: cut,
@@ -1026,6 +1027,7 @@ describe('staged package', () => {
       sha256: hex,
       receivedBytes: bytes.byteLength,
       complete: true,
+      ranges: [[0, bytes.byteLength]],
     });
   });
 
@@ -1050,6 +1052,7 @@ describe('staged package', () => {
       sha256: hex,
       receivedBytes: bytes.byteLength,
       complete: false,
+      ranges: [[0, bytes.byteLength]],
     });
 
     const finalize = await controller.stagePackage('1.2.3', hex, bytesStream(new Uint8Array(0)), {
@@ -1070,6 +1073,7 @@ describe('staged package', () => {
       sha256: hex,
       receivedBytes: bytes.byteLength,
       complete: true,
+      ranges: [[0, bytes.byteLength]],
     });
   });
 
@@ -1226,6 +1230,107 @@ describe('staged package', () => {
     expect(await del).toEqual({ ok: true });
     const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
     expect(leftover).toEqual([]);
+  });
+
+  test('ranged PUT 乱序写入，GET 回报 ranges，收满后校验 sha 并落位', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const cut = 50;
+    const tail = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(cut)), {
+      offset: cut,
+      length: bytes.byteLength - cut,
+      total: bytes.byteLength,
+    });
+    expect(tail).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      bytes: bytes.byteLength - cut,
+    });
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      receivedBytes: bytes.byteLength - cut,
+      complete: false,
+      ranges: [[cut, bytes.byteLength]],
+    });
+    const head = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, cut)), {
+      offset: 0,
+      length: cut,
+      total: bytes.byteLength,
+    });
+    expect(head).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      bytes: bytes.byteLength,
+    });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    expect(readFileSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      receivedBytes: bytes.byteLength,
+      complete: true,
+      ranges: [[0, bytes.byteLength]],
+    });
+  });
+
+  test('ranged overlapping retry 不破坏已收区间，并发写能收满', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const mid = Math.floor(bytes.byteLength / 2);
+    await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(mid)), {
+      offset: mid,
+      length: bytes.byteLength - mid,
+      total: bytes.byteLength,
+    });
+    const retry = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(mid)), {
+      offset: mid,
+      length: bytes.byteLength - mid,
+      total: bytes.byteLength,
+    });
+    expect(retry.ok).toBe(true);
+    const results = await Promise.all([
+      controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, mid)), {
+        offset: 0,
+        length: mid,
+        total: bytes.byteLength,
+      }),
+    ]);
+    expect(results[0]?.ok).toBe(true);
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toMatchObject({
+      complete: true,
+      receivedBytes: bytes.byteLength,
+    });
+  });
+
+  test('不带 length/total 的 PUT 仍走追加，乱序偏移 409', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, 20)), {
+      expectedBytes: bytes.byteLength,
+    });
+    const mismatched = await controller.stagePackage(
+      '1.2.3',
+      hex,
+      bytesStream(bytes.subarray(40, 60)),
+      { offset: 40, expectedBytes: bytes.byteLength }
+    );
+    expect(mismatched).toEqual({
+      ok: false,
+      status: 409,
+      code: 'UPGRADE_OFFSET_MISMATCH',
+      receivedBytes: 20,
+    });
   });
 });
 
