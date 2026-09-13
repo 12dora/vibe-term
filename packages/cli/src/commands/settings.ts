@@ -1,5 +1,6 @@
 // `vibeterm settings`：站点、快捷键、通知、webhook、LLM、TLS、隧道、本机、账号安全。
 
+import { SITE_SETTING_CLI_USAGE_LINES, SITE_SETTING_SECRET_FLAGS } from '@vibeterm/shared';
 import { type SubHandler, runSubs } from '../core/cmd';
 import { llm } from './settings-llm';
 import { tls, local, system, tunnel } from './settings-local';
@@ -11,6 +12,7 @@ import { domainAccess, notifications, restart, site, webhooks } from './settings
 import type { Command } from './types';
 
 export const FLAGS = {
+  ...SITE_SETTING_SECRET_FLAGS,
   yes: 'boolean',
   body: 'string',
   enabled: 'string',
@@ -92,7 +94,7 @@ export const FLAGS = {
 const USAGE = [
   'Usage: vibeterm settings <group> …',
   '',
-  '  site get|set <key> <value>     GET/PATCH /api/settings/site',
+  ...SITE_SETTING_CLI_USAGE_LINES,
   '  shortcuts get|set|add|rm|order|use-icons',
   '  restart [--yes]                POST /api/settings/restart',
   '  notifications mesh get|set on|off  signs notification-sink then PUT /api/notifications/mesh',

@@ -1,10 +1,41 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
+import { SITE_SETTING_SECRET_FLAGS } from '@vibeterm/shared';
 import { encodeBase32 } from '@vibeterm/shared/auth';
 import { generateTotpSecret } from '../core/account-security';
 import { AuthError, CliError, UsageError } from '../core/errors';
 import { NODE, meshNode, routeFetch, testContext } from './cli-test-harness';
-import { command as settings } from './settings';
+import { FLAGS, command as settings } from './settings';
+
+const USAGE_SNAPSHOT = [
+  'Usage: vibeterm settings <group> …',
+  '',
+  '  site get|set <key> <value>     GET/PATCH /api/settings/site',
+  '  shortcuts get|set|add|rm|order|use-icons',
+  '  restart [--yes]                POST /api/settings/restart',
+  '  notifications mesh get|set on|off  signs notification-sink then PUT /api/notifications/mesh',
+  '  webhooks ls|add|rm|edit        edit = rm+add with --body',
+  '  llm providers ls|add|edit|rm|refresh-models|enable|disable|models',
+  '  llm get|set|default|search set GET/PATCH /api/llm/settings (set needs --body)',
+  '  domain-access get|set on|off   GET/PATCH /api/system/domain-access',
+  '  mesh route-mode get|set <auto|direct|relay>  GET/PUT /api/settings/mesh-route',
+  '  tls get|set|renew|ca           GET/PUT /api/tls (--mode/--sans/--port/… or --body)',
+  '  tunnel status|<action>         GET /api/tunnel/status or POST /api/tunnel/actions',
+  '  system info|addresses|update-check|upgrade status|start',
+  '  local status|leave|direct      GET /api/local/status; POST /api/local/leave|direct (--node honoured for direct)',
+  '  passwd [--full-reset]          keylog rotate-root-keep (or rotate-root); VIBETERM_PASSWORD / VIBETERM_NEW_PASSWORD',
+  '  totp enable|disable [--yes]    set-totp (prints secret + otpauth, verifies --code) / clear-totp',
+  '  passkey ls|rm <id> [--yes]     GET /api/auth/passkeys; keylog remove-passkey (register in the browser)',
+  '  local-auth bootstrap|set       POST /api/auth/local/bootstrap; POST /api/auth/local',
+  '  telegram ls|add|edit|rm|chats  /api/settings/telegram/bots and …/chats',
+  '  weixin ls|add|edit|rm|test|login|users  /api/settings/weixin/accounts',
+  '',
+  'Complex bodies accept --body <json>|@file like `vibeterm api`.',
+  'Secrets: --secret-stdin/--secret-file/VIBETERM_WEBHOOK_SECRET, --api-key-stdin/--api-key-file/VIBETERM_LLM_API_KEY, --token-stdin/--token-file/VIBETERM_TELEGRAM_TOKEN, --new-password-stdin/--new-password-file/VIBETERM_NEW_PASSWORD, --api-token-stdin/--api-token-file/VIBETERM_TUNNEL_API_TOKEN, --dns-token-stdin/--dns-token-file/VIBETERM_TLS_DNS_TOKEN, --tavily-key*/VIBETERM_TAVILY_API_KEY, --brave-key*/VIBETERM_BRAVE_API_KEY.',
+  'argv --secret/--api-key/--token/--password/--new-password/--api-token/--dns-token/--tavily-key/--brave-key warn on stderr. local leave self-revokes (VIBETERM_PASSWORD) unless --skip-self-revoke.',
+  'notifications mesh set signs a notification-sink keylog record first (VIBETERM_PASSWORD).',
+  '--json prints the gateway payload unchanged.',
+].join('\n');
 
 const dirs: string[] = [];
 
@@ -24,6 +55,16 @@ async function ctx(routes: Parameters<typeof routeFetch>[0]) {
 }
 
 describe('vibeterm settings', () => {
+  test('USAGE text is unchanged after the field registry', () => {
+    expect(settings.usage).toBe(USAGE_SNAPSHOT);
+  });
+
+  test('FLAGS includes derived site secret triplets', () => {
+    for (const [key, kind] of Object.entries(SITE_SETTING_SECRET_FLAGS)) {
+      expect(FLAGS[key as keyof typeof FLAGS]).toBe(kind);
+    }
+  });
+
   test('site get / set', async () => {
     let patch = '';
     const { ctx: cli, stdout } = await ctx({
@@ -42,6 +83,9 @@ describe('vibeterm settings', () => {
   test('site set rejects unknown keys', async () => {
     const { ctx: cli } = await ctx({});
     await expect(settings.run(cli, ['site', 'set', 'nope', 'x'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+    await expect(settings.run(cli, ['site', 'set', 'theme', 'light'])).rejects.toBeInstanceOf(
       UsageError
     );
   });

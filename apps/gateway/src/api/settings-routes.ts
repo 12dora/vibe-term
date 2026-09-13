@@ -13,6 +13,7 @@ import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { meshRouteSettingsRoutes } from '../settings/mesh-route';
 import { json } from './http';
+import { readJsonBody } from './read-json-body';
 import { type ApiRoute, route } from './route';
 import { normalizeSiteSettingsInput } from './site-settings';
 import {
@@ -50,18 +51,14 @@ async function handleGetSiteSettings(): Promise<Response> {
 }
 
 async function handleUpdateSiteSettings(req: Request): Promise<Response> {
-  try {
-    const body = (await req.json()) as UpdateSiteSettingsRequest;
+  const parsed = await readJsonBody(req, (body: UpdateSiteSettingsRequest) => {
     const blocked = rejectManagedSiteIdentity(body);
     if (blocked) return blocked;
-    const updates = normalizeSiteSettingsInput(body);
-    const settings = updateSiteSettings(updates);
+    const settings = updateSiteSettings(normalizeSiteSettingsInput(body));
     broadcastSettingsUpdate('site');
-
     return json(toSiteSettingsHttpPayload(settings));
-  } catch (err) {
-    return json({ error: err instanceof Error ? err.message : t('apiError.invalidRequest') }, 400);
-  }
+  });
+  return parsed.ok ? parsed.value : parsed.response;
 }
 
 async function handleGetTerminalShortcuts(): Promise<Response> {
@@ -69,16 +66,12 @@ async function handleGetTerminalShortcuts(): Promise<Response> {
 }
 
 async function handleUpdateTerminalShortcuts(req: Request): Promise<Response> {
-  try {
-    const body = (await req.json()) as UpdateTerminalShortcutSettingsRequest;
-    const updates = normalizeTerminalShortcutsInput(body);
-    const settings = updateTerminalShortcutSettings(updates);
+  const parsed = await readJsonBody(req, (body: UpdateTerminalShortcutSettingsRequest) => {
+    const settings = updateTerminalShortcutSettings(normalizeTerminalShortcutsInput(body));
     broadcastSettingsUpdate('terminal-shortcuts');
-
     return json({ settings });
-  } catch (err) {
-    return json({ error: err instanceof Error ? err.message : t('apiError.invalidRequest') }, 400);
-  }
+  });
+  return parsed.ok ? parsed.value : parsed.response;
 }
 
 async function handleRestartGateway(): Promise<Response> {

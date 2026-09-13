@@ -2,8 +2,10 @@
 
 import type {
   GetSiteSettingsResponse,
+  SiteSettings,
   SiteSettingsLinkFields,
   SiteSettingsView,
+  UpdateSiteSettingsRequest,
 } from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 
@@ -30,4 +32,10 @@ export async function fetchSiteSettings(
   return mergeSiteSettingsView(payload);
 }
 
-export type { SiteSettingsLinkFields, SiteSettingsView };
+export type {
+  GetSiteSettingsResponse,
+  SiteSettings,
+  SiteSettingsLinkFields,
+  SiteSettingsView,
+  UpdateSiteSettingsRequest,
+};

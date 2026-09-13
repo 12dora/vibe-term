@@ -1,4 +1,4 @@
-import type { SiteSettings } from '@vibeterm/shared';
+import { SITE_SETTING_FIELDS, type SiteSettingField, type SiteSettings } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';
@@ -7,28 +7,34 @@ import { getDb as getOrmDb } from './client';
 import { normalizeLocale, toSiteSettings } from './mappers';
 import { siteSettings } from './schema';
 
-export function ensureSiteSettingsInitialized(): void {
-  const orm = getOrmDb();
-  const now = new Date().toISOString();
+const CONFIG_INITIALIZERS: Partial<Record<SiteSettingField['key'], () => unknown>> = {
+  siteName: () => config.siteNameDefault,
+  siteUrl: () => config.baseUrl,
+  bellThrottleSeconds: () => config.bellThrottleSecondsDefault,
+  notificationThrottleSeconds: () => config.notificationThrottleSecondsDefault,
+  sshReconnectMaxRetries: () => config.sshReconnectMaxRetriesDefault,
+  sshReconnectDelaySeconds: () => config.sshReconnectDelaySecondsDefault,
+  language: () => normalizeLocale(config.languageDefault),
+};
 
-  orm
+function initialSiteSettingValue(field: SiteSettingField, now: string): unknown {
+  if (field.key === 'updatedAt') return now;
+  const fromConfig = CONFIG_INITIALIZERS[field.key];
+  return fromConfig ? fromConfig() : field.default;
+}
+
+function initialSiteSettingsValues(now: string): typeof siteSettings.$inferInsert {
+  const values: Record<string, unknown> = { id: 1 };
+  for (const field of SITE_SETTING_FIELDS) {
+    values[field.key] = initialSiteSettingValue(field, now);
+  }
+  return values as typeof siteSettings.$inferInsert;
+}
+
+export function ensureSiteSettingsInitialized(): void {
+  getOrmDb()
     .insert(siteSettings)
-    .values({
-      id: 1,
-      siteName: config.siteNameDefault,
-      siteUrl: config.baseUrl,
-      bellThrottleSeconds: config.bellThrottleSecondsDefault,
-      notificationThrottleSeconds: config.notificationThrottleSecondsDefault,
-      enableBrowserNotificationToast: true,
-      enableNotificationPush: true,
-      enableBellPush: true,
-      enableBellSound: true,
-      sshReconnectMaxRetries: config.sshReconnectMaxRetriesDefault,
-      sshReconnectDelaySeconds: config.sshReconnectDelaySecondsDefault,
-      language: normalizeLocale(config.languageDefault),
-      disabledNotificationChannels: [],
-      updatedAt: now,
-    })
+    .values(initialSiteSettingsValues(new Date().toISOString()))
     .onConflictDoNothing({ target: siteSettings.id })
     .run();
 }
@@ -75,51 +81,42 @@ export function getSiteSettings(): SiteSettings {
   return { ...stored, siteUrl: effective };
 }
 
+function applySiteSettingUpdate(next: SiteSettings, field: SiteSettingField, value: unknown): void {
+  if (field.key === 'language') {
+    next.language = normalizeLocale(value as string);
+    return;
+  }
+  (next as Record<string, unknown>)[field.key] = value;
+}
+
+function mergeSiteSettings(
+  current: SiteSettings,
+  updates: Partial<Omit<SiteSettings, 'updatedAt'>>
+): SiteSettings {
+  const next: SiteSettings = { ...current, updatedAt: new Date().toISOString() };
+  for (const field of SITE_SETTING_FIELDS) {
+    if (field.key === 'updatedAt') continue;
+    const value = updates[field.key as keyof typeof updates];
+    if (value === undefined) continue;
+    applySiteSettingUpdate(next, field, value);
+  }
+  return next;
+}
+
+function siteSettingsRow(settings: SiteSettings): Omit<typeof siteSettings.$inferInsert, 'id'> {
+  const row: Record<string, unknown> = {};
+  for (const field of SITE_SETTING_FIELDS) {
+    row[field.key] = settings[field.key];
+  }
+  return row as Omit<typeof siteSettings.$inferInsert, 'id'>;
+}
+
 export function updateSiteSettings(
   updates: Partial<Omit<SiteSettings, 'updatedAt'>>
 ): SiteSettings {
-  const current = getStoredSiteSettings();
-  const next: SiteSettings = {
-    siteName: updates.siteName ?? current.siteName,
-    siteUrl: updates.siteUrl ?? current.siteUrl,
-    bellThrottleSeconds: updates.bellThrottleSeconds ?? current.bellThrottleSeconds,
-    notificationThrottleSeconds:
-      updates.notificationThrottleSeconds ?? current.notificationThrottleSeconds,
-    enableBrowserNotificationToast:
-      updates.enableBrowserNotificationToast ?? current.enableBrowserNotificationToast,
-    enableNotificationPush: updates.enableNotificationPush ?? current.enableNotificationPush,
-    enableBellPush: updates.enableBellPush ?? current.enableBellPush,
-    enableBellSound: updates.enableBellSound ?? current.enableBellSound,
-    sshReconnectMaxRetries: updates.sshReconnectMaxRetries ?? current.sshReconnectMaxRetries,
-    sshReconnectDelaySeconds: updates.sshReconnectDelaySeconds ?? current.sshReconnectDelaySeconds,
-    language: updates.language ? normalizeLocale(updates.language) : current.language,
-    theme: updates.theme ?? current.theme,
-    disabledNotificationChannels:
-      updates.disabledNotificationChannels ?? current.disabledNotificationChannels,
-    updatedAt: new Date().toISOString(),
-  };
+  const next = mergeSiteSettings(getStoredSiteSettings(), updates);
 
-  const orm = getOrmDb();
-  orm
-    .update(siteSettings)
-    .set({
-      siteName: next.siteName,
-      siteUrl: next.siteUrl,
-      bellThrottleSeconds: next.bellThrottleSeconds,
-      notificationThrottleSeconds: next.notificationThrottleSeconds,
-      enableBrowserNotificationToast: next.enableBrowserNotificationToast,
-      enableNotificationPush: next.enableNotificationPush,
-      enableBellPush: next.enableBellPush,
-      enableBellSound: next.enableBellSound,
-      sshReconnectMaxRetries: next.sshReconnectMaxRetries,
-      sshReconnectDelaySeconds: next.sshReconnectDelaySeconds,
-      language: next.language,
-      theme: next.theme,
-      disabledNotificationChannels: next.disabledNotificationChannels,
-      updatedAt: next.updatedAt,
-    })
-    .where(eq(siteSettings.id, 1))
-    .run();
+  getOrmDb().update(siteSettings).set(siteSettingsRow(next)).where(eq(siteSettings.id, 1)).run();
 
   siteSettingsCache = { value: next, expiresAt: Date.now() + SITE_SETTINGS_TTL_MS };
 

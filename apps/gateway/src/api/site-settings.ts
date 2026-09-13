@@ -1,8 +1,17 @@
-import type { LocaleCode, SiteSettings, UpdateSiteSettingsRequest } from '@vibeterm/shared';
-import { SUPPORTED_LOCALES } from '@vibeterm/shared';
+import {
+  SITE_SETTING_FIELDS,
+  type SiteSettingField,
+  type SiteSettingFieldDef,
+  type SiteSettings,
+  type UpdateSiteSettingsRequest,
+} from '@vibeterm/shared';
 import { t } from '../i18n';
 
 export type SiteSettingsUpdates = Partial<Omit<SiteSettings, 'updatedAt'>>;
+
+function asDef(field: SiteSettingField): SiteSettingFieldDef {
+  return field;
+}
 
 function requireBoolean(value: unknown): boolean {
   if (typeof value !== 'boolean') {
@@ -11,127 +20,73 @@ function requireBoolean(value: unknown): boolean {
   return value;
 }
 
-export function normalizeSiteIdentity(
-  body: UpdateSiteSettingsRequest,
-  updates: SiteSettingsUpdates
-): void {
-  if (body.siteName !== undefined) {
-    const value = body.siteName.trim();
-    if (!value) throw new Error(t('apiError.siteNameRequired'));
-    updates.siteName = value;
-  }
-
-  if (body.siteUrl !== undefined) {
-    const value = body.siteUrl.trim();
-    if (!/^https?:\/\//i.test(value)) {
-      throw new Error(t('apiError.siteUrlInvalid'));
-    }
-    updates.siteUrl = value;
-  }
+function errorOf(field: SiteSettingFieldDef): string {
+  return t(field.errorCode ? `apiError.${field.errorCode}` : 'apiError.invalidRequest');
 }
 
-export function normalizeThrottleSettings(
-  body: UpdateSiteSettingsRequest,
-  updates: SiteSettingsUpdates
-): void {
-  if (body.bellThrottleSeconds !== undefined) {
-    const value = Math.floor(Number(body.bellThrottleSeconds));
-    if (Number.isNaN(value) || value < 0 || value > 300) {
-      throw new Error(t('apiError.bellThrottleInvalid'));
-    }
-    updates.bellThrottleSeconds = value;
+function normalizeStringValue(field: SiteSettingFieldDef, raw: unknown): string {
+  const value = (raw as string).trim();
+  if (field.kind === 'string' && field.nonempty && !value) throw new Error(errorOf(field));
+  if (field.kind === 'string' && field.httpUrl && !/^https?:\/\//i.test(value)) {
+    throw new Error(errorOf(field));
   }
-
-  if (body.notificationThrottleSeconds !== undefined) {
-    const value = Math.floor(Number(body.notificationThrottleSeconds));
-    if (Number.isNaN(value) || value < 0 || value > 300) {
-      throw new Error(t('apiError.bellThrottleInvalid'));
-    }
-    updates.notificationThrottleSeconds = value;
-  }
+  return value;
 }
 
-export function normalizeNotificationToggles(
-  body: UpdateSiteSettingsRequest,
-  updates: SiteSettingsUpdates
-): void {
-  if (body.enableBrowserNotificationToast !== undefined) {
-    updates.enableBrowserNotificationToast = requireBoolean(body.enableBrowserNotificationToast);
+function normalizeIntValue(field: SiteSettingFieldDef, raw: unknown): number {
+  if (field.kind !== 'int') throw new Error(t('apiError.invalidRequest'));
+  const value = Math.floor(Number(raw));
+  if (Number.isNaN(value) || value < field.min || value > field.max) {
+    throw new Error(errorOf(field));
   }
-
-  if (body.enableNotificationPush !== undefined) {
-    updates.enableNotificationPush = requireBoolean(body.enableNotificationPush);
-  }
-
-  if (body.enableBellPush !== undefined) {
-    updates.enableBellPush = requireBoolean(body.enableBellPush);
-  }
-
-  if (body.enableBellSound !== undefined) {
-    updates.enableBellSound = requireBoolean(body.enableBellSound);
-  }
+  return value;
 }
 
-export function normalizeSshReconnectSettings(
-  body: UpdateSiteSettingsRequest,
-  updates: SiteSettingsUpdates
-): void {
-  if (body.sshReconnectMaxRetries !== undefined) {
-    const value = Math.floor(Number(body.sshReconnectMaxRetries));
-    if (Number.isNaN(value) || value < 0 || value > 20) {
-      throw new Error(t('apiError.sshRetriesInvalid'));
-    }
-    updates.sshReconnectMaxRetries = value;
+function normalizeEnumValue(field: SiteSettingFieldDef, raw: unknown): string {
+  const value = (raw as string).trim();
+  if (field.kind !== 'enum' || !(field.values as readonly string[]).includes(value)) {
+    throw new Error(errorOf(field));
   }
-
-  if (body.sshReconnectDelaySeconds !== undefined) {
-    const value = Math.floor(Number(body.sshReconnectDelaySeconds));
-    if (Number.isNaN(value) || value < 1 || value > 300) {
-      throw new Error(t('apiError.sshDelayInvalid'));
-    }
-    updates.sshReconnectDelaySeconds = value;
-  }
+  return value;
 }
 
-export function normalizeLanguageSetting(
-  body: UpdateSiteSettingsRequest,
-  updates: SiteSettingsUpdates
-): void {
-  if (body.language !== undefined) {
-    const value = body.language.trim();
-    if (!(SUPPORTED_LOCALES as readonly string[]).includes(value)) {
-      throw new Error(t('apiError.languageInvalid'));
-    }
-    updates.language = value as LocaleCode;
-  }
-}
-
-export function normalizeDisabledNotificationChannels(
-  body: UpdateSiteSettingsRequest,
-  updates: SiteSettingsUpdates
-): void {
-  // 宽松校验：只要求 string[]（trim 后非空、去重），不绑定「已注册 channel id」集合——
-  // 自定义 channel 在运行时注册，设置写入时可能尚未注册，绑定会造成先后次序耦合。
-  if (body.disabledNotificationChannels === undefined) return;
-
-  if (
-    !Array.isArray(body.disabledNotificationChannels) ||
-    !body.disabledNotificationChannels.every((item) => typeof item === 'string')
-  ) {
+function normalizeStringsValue(field: SiteSettingFieldDef, raw: unknown): string[] {
+  if (!Array.isArray(raw) || !raw.every((item) => typeof item === 'string')) {
     throw new Error(t('apiError.invalidRequest'));
   }
-  updates.disabledNotificationChannels = [
-    ...new Set(body.disabledNotificationChannels.map((item) => item.trim()).filter(Boolean)),
-  ];
+  const mapped = field.kind === 'strings' && field.trim ? raw.map((item) => item.trim()) : raw;
+  const nonempty = mapped.filter(Boolean);
+  return field.kind === 'strings' && field.unique ? [...new Set(nonempty)] : nonempty;
+}
+
+function normalizePatchField(field: SiteSettingField, raw: unknown): unknown {
+  const def = asDef(field);
+  switch (def.kind) {
+    case 'string':
+    case 'secret':
+      return normalizeStringValue(def, raw);
+    case 'bool':
+      return requireBoolean(raw);
+    case 'int':
+      return normalizeIntValue(def, raw);
+    case 'enum':
+      return normalizeEnumValue(def, raw);
+    case 'strings':
+      return normalizeStringsValue(def, raw);
+    default: {
+      const _never: never = def;
+      return _never;
+    }
+  }
 }
 
 export function normalizeSiteSettingsInput(body: UpdateSiteSettingsRequest): SiteSettingsUpdates {
   const updates: SiteSettingsUpdates = {};
-  normalizeSiteIdentity(body, updates);
-  normalizeThrottleSettings(body, updates);
-  normalizeNotificationToggles(body, updates);
-  normalizeSshReconnectSettings(body, updates);
-  normalizeLanguageSetting(body, updates);
-  normalizeDisabledNotificationChannels(body, updates);
+  for (const field of SITE_SETTING_FIELDS) {
+    if (!field.patch) continue;
+    const raw = (body as Record<string, unknown>)[field.key];
+    if (raw === undefined) continue;
+    (updates as Record<string, unknown>)[field.key] = normalizePatchField(field, raw);
+  }
   return updates;
 }

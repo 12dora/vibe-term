@@ -1,5 +1,6 @@
 // settings 各组的请求体拼装。
 
+import { SITE_SETTING_CLI_KEYS } from '@vibeterm/shared';
 import type { FlagValues } from './args';
 import { flagBool, flagString, flagStrings } from './args';
 import {
@@ -21,20 +22,7 @@ export function splitCsv(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
-const SITE_KEYS = new Set([
-  'siteName',
-  'siteUrl',
-  'bellThrottleSeconds',
-  'notificationThrottleSeconds',
-  'enableBrowserNotificationToast',
-  'enableNotificationPush',
-  'enableBellPush',
-  'enableBellSound',
-  'sshReconnectMaxRetries',
-  'sshReconnectDelaySeconds',
-  'language',
-  'disabledNotificationChannels',
-]);
+const SITE_KEYS = new Set(SITE_SETTING_CLI_KEYS);
 
 export function sitePatch(key: string, value: string): Record<string, unknown> {
   if (!SITE_KEYS.has(key)) {
