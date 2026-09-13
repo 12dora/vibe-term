@@ -1,8 +1,7 @@
 import 'reflect-metadata';
 import { isIP } from 'node:net';
-import * as x509 from '@peculiar/x509';
-
-x509.cryptoProvider.set(crypto);
+import type * as X509 from '@peculiar/x509';
+import { loadX509 } from './x509-lazy';
 
 const EC_ALG: EcKeyGenParams = { name: 'ECDSA', namedCurve: 'P-256' };
 const SIGN_ALG: EcdsaParams = { name: 'ECDSA', hash: 'SHA-256' };
@@ -34,6 +33,7 @@ export async function createCa(input: {
   days?: number;
   now?: number;
 }): Promise<CaMaterial> {
+  const x509 = await loadX509();
   const keys = await crypto.subtle.generateKey(EC_ALG, true, ['sign', 'verify']);
   const now = input.now ?? Date.now();
   const days = input.days ?? CA_DAYS;
@@ -68,6 +68,7 @@ export async function issueLeaf(input: {
   if (input.sans.length < 1) {
     throw new Error('leaf certificate requires at least one SAN');
   }
+  const x509 = await loadX509();
   const keys = await crypto.subtle.generateKey(EC_ALG, true, ['sign', 'verify']);
   const caCert = new x509.X509Certificate(firstPemCertificate(input.ca.certPem));
   const caKey = await importPrivateKeyPem(input.ca.keyPem);
@@ -105,12 +106,14 @@ export async function issueLeaf(input: {
 }
 
 export async function spkiFingerprint(certPem: string): Promise<string> {
+  const x509 = await loadX509();
   const cert = new x509.X509Certificate(firstPemCertificate(certPem));
   const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(cert.publicKey.rawData));
   return Buffer.from(digest).toString('hex');
 }
 
-export function parseCertificate(pem: string): ParsedCertificate {
+export async function parseCertificate(pem: string): Promise<ParsedCertificate> {
+  const x509 = await loadX509();
   const cert = new x509.X509Certificate(firstPemCertificate(pem));
   const san = cert.getExtension(x509.SubjectAlternativeNameExtension);
   const sans = san ? san.names.toJSON().map((item) => item.value) : [];
@@ -131,7 +134,7 @@ export function firstPemCertificate(pem: string): string {
   return match[0];
 }
 
-function toGeneralName(value: string): x509.JsonGeneralName {
+function toGeneralName(value: string): X509.JsonGeneralName {
   return isIP(value) !== 0 ? { type: 'ip', value } : { type: 'dns', value };
 }
 
@@ -146,11 +149,13 @@ function randomSerial(): string {
 }
 
 async function exportPrivateKeyPem(key: CryptoKey): Promise<string> {
+  const x509 = await loadX509();
   const pkcs8 = await crypto.subtle.exportKey('pkcs8', key);
   return x509.PemConverter.encode(pkcs8, 'PRIVATE KEY');
 }
 
 async function importPrivateKeyPem(pem: string): Promise<CryptoKey> {
+  const x509 = await loadX509();
   const pkcs8 = x509.PemConverter.decodeFirst(pem);
   return crypto.subtle.importKey('pkcs8', pkcs8, EC_ALG, false, ['sign']);
 }

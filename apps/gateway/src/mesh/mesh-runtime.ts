@@ -22,7 +22,7 @@ import { MeshHubStore } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import { type VibeTermRoles, config as gatewayConfig } from '../config';
 import { getSiteSettings } from '../db/site-settings';
-import { HubRuntime, type HubTurnConfig } from '../hub';
+import type { HubRuntime, HubTurnConfig } from '../hub';
 import {
   envPeerSet,
   isAuthorizedHub,
@@ -32,6 +32,7 @@ import {
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { HubPeerFetch } from '../hub/hub-peer-poller';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
+import { createDefaultHubRuntime } from '../hub/lazy';
 import { setMessagingMeshRuntime } from '../messaging/runtime-hooks';
 import { bindPortMapNode } from '../portmap/binding';
 import { PortMapExportStore } from '../portmap/store';
@@ -448,7 +449,6 @@ function sendControl(
     return 'closed';
   }
 }
-
 async function stopQuietly(parts: Array<[string, () => void | Promise<void>]>): Promise<void> {
   for (const [label, fn] of parts) {
     try {
@@ -525,7 +525,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
   const signalListeners = new Set<(signal: RtcSignalMessage) => void>();
   const hub = config.roles.hub
     ? (opts.hub ??
-      new HubRuntime({
+      (await createDefaultHubRuntime({
         db,
         userStore,
         keyLogSource: createHubKeyLogSource(keyLogService, keyLogStore),
@@ -563,7 +563,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         autoPromoteTimeoutMs:
           config.hubAutoPromoteTimeoutMs ?? gatewayConfig.hubAutoPromoteTimeoutMs,
         syncLocalSiteName: opts.onLocalNodeName,
-      }))
+      })))
     : (opts.hub ?? null);
   const relay = createRelayWiring({ db, identity, userIdOf });
   return {

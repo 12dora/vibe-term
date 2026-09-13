@@ -1,3 +1,4 @@
+import { isQueueFullError } from './input-command-window';
 import { InputSubmission } from './input-submission';
 import { MouseReportingScanner } from './mouse-reporting-scanner';
 import { type MouseSequence, splitMouseSequences } from './mouse-sequence';
@@ -322,6 +323,12 @@ export class PaneInputPacer {
     const fail = (error: unknown) => {
       entry.reject(error);
       if (!this.isCurrent(paneId, lane)) return;
+      if (isQueueFullError(error)) {
+        lane.inFlight.delete(entry);
+        if (lane.active === entry) lane.active = null;
+        this.pump(paneId, lane);
+        return;
+      }
       this.dropPane(paneId);
       this.onError(error);
     };

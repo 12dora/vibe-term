@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { ControlModeCommandQueue } from './control-mode-capture';
 import { createControlModeParser } from './control-mode-parser';
 import { sendExternalInput } from './external-input';
-import { InputCommandWindow } from './input-command-window';
+import { InputCommandWindow, InputQueueFullError } from './input-command-window';
+import { SEND_KEYS_HEX_CHUNK_BYTES } from './input-encoder';
 
 function harness() {
   let current = true;
@@ -110,6 +111,35 @@ describe('external input synchronous acknowledgement', () => {
     await completion;
     expect(h.acknowledged()).toBe(false);
     h.queue.dispose();
+  });
+
+  test('queue-full paste does not write or call onError', async () => {
+    const window = new InputCommandWindow(() => 0);
+    const writes: string[] = [];
+    const errors: Error[] = [];
+    const queue = new ControlModeCommandQueue();
+    const queued: Promise<void>[] = [];
+    for (let i = 0; i < 256; i += 1) {
+      queued.push(window.enqueue([[`c${i}`]], () => Promise.resolve()));
+    }
+    const result = sendExternalInput(
+      {
+        queue,
+        window,
+        write: (text) => writes.push(text),
+        isCurrent: () => true,
+        run: () => Promise.resolve(),
+        onError: (error) => errors.push(error),
+      },
+      '%1',
+      new Uint8Array(SEND_KEYS_HEX_CHUNK_BYTES)
+    );
+    await expect(result).rejects.toBeInstanceOf(InputQueueFullError);
+    expect(writes).toEqual([]);
+    expect(errors).toEqual([]);
+    window.dispose('done');
+    queue.dispose();
+    await Promise.allSettled(queued);
   });
 
   test('failed transform and synchronous write failure never trigger the queue acknowledgement', async () => {

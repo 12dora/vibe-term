@@ -1,6 +1,4 @@
-import * as x509 from '@peculiar/x509';
-
-x509.cryptoProvider.set(crypto);
+import { loadX509 } from '../tls/x509-lazy';
 
 export const MAX_CA_RESPONSE_BYTES = 64 * 1024;
 
@@ -38,7 +36,8 @@ export async function parseAndValidateCaPem(raw: string): Promise<{
   fingerprint: string;
 }> {
   const pem = parseStrictSinglePemCertificate(raw);
-  let cert: x509.X509Certificate;
+  const x509 = await loadX509();
+  let cert: InstanceType<typeof x509.X509Certificate>;
   try {
     cert = new x509.X509Certificate(pem);
   } catch {

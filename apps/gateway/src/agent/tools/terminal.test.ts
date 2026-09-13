@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, test } from 'bun:test';
+import { loadAiSdk } from '../../llm/ai-sdk-lazy';
 import {
   KEY_SEQUENCES,
   SEND_INPUT_KEYS,
@@ -6,6 +7,10 @@ import {
   createTerminalTools,
   encodeKeysToSequence,
 } from './terminal';
+
+beforeAll(async () => {
+  await loadAiSdk();
+});
 
 interface StubRuntimeOptions {
   screen?: string;

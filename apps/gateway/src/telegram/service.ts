@@ -1,4 +1,4 @@
-import { Bot } from 'gramio';
+import type { Bot } from 'gramio';
 import { decryptWithContext } from '../crypto';
 import {
   createOrUpdatePendingTelegramChat,
@@ -9,6 +9,7 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { createTelegramAdapter, processInboundCommand } from '../messaging';
+import { loadGramio } from './lazy';
 
 function normalizeChatType(
   raw: string | undefined
@@ -48,8 +49,17 @@ interface RunningBot {
   pollOffset: number;
 }
 
+export type TelegramBotFactory = (token: string) => Bot | Promise<Bot>;
+
+async function defaultCreateBot(token: string): Promise<Bot> {
+  const { Bot } = await loadGramio();
+  return new Bot(token);
+}
+
 export class TelegramService {
   private runningBots = new Map<string, RunningBot>();
+
+  constructor(private readonly createBot: TelegramBotFactory = defaultCreateBot) {}
 
   async sendGatewayOnlineMessage(siteName: string): Promise<void> {
     const settings = getSiteSettings();
@@ -99,7 +109,7 @@ export class TelegramService {
         await this.stopBot(config.id);
       }
 
-      const bot = new Bot(token);
+      const bot = await this.createBot(token);
 
       bot.on('message', async (context) => {
         const chat = context.chat;

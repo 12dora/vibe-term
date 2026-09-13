@@ -6,6 +6,8 @@ import type { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import { createDevice as createDeviceRow, getDeviceRuntimeStatus } from '../db';
 import { runMigrations } from '../db/migrate';
 import type { TmuxEvent, TmuxSourceMetadataEvent } from './events';
+import { InputQueueFullError } from './input-command-window';
+import { SEND_KEYS_HEX_CHUNK_BYTES } from './input-encoder';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
 import { TmuxTargetMissingError } from './target-missing';
 
@@ -1268,5 +1270,61 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
     expect(fakeClient.ended).toBe(true);
     expect(fakeClient.commandChannel.ended).toBe(true);
     expect(fakeClient.controlChannels).toHaveLength(0);
+  });
+
+  test('257-chunk paste on an empty window writes without rejecting', async () => {
+    const fakeClient = new FakeClient();
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-paste-ok', {});
+    const errors: Error[] = [];
+    const connection = new SshExternalTmuxConnection(
+      { ...createCallbacks({}), onError: (error) => errors.push(error) },
+      {
+        getDevice: () => createDevice('vibeterm-ssh-paste-ok'),
+        decrypt: async () => 'secret',
+        createClient: () => fakeClient as unknown as Client,
+      }
+    );
+    await connection.connect();
+    const control = fakeClient.controlChannels[0];
+    if (!control) throw new Error('control channel was not created');
+    const before = control.writes.filter((line) => line.includes('send-keys')).length;
+    const paste = connection.sendInputBytes('%1', new Uint8Array(257 * SEND_KEYS_HEX_CHUNK_BYTES));
+    await Bun.sleep(0);
+    expect(control.writes.filter((line) => line.includes('send-keys')).length).toBeGreaterThan(
+      before
+    );
+    expect(errors).toEqual([]);
+    connection.disconnect();
+    await Promise.allSettled([paste]);
+  });
+
+  test('queue-full paste is rejected before any write and is not a device error', async () => {
+    const fakeClient = new FakeClient();
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-paste-full', {});
+    const errors: Error[] = [];
+    const connection = new SshExternalTmuxConnection(
+      { ...createCallbacks({}), onError: (error) => errors.push(error) },
+      {
+        getDevice: () => createDevice('vibeterm-ssh-paste-full'),
+        decrypt: async () => 'secret',
+        createClient: () => fakeClient as unknown as Client,
+      }
+    );
+    await connection.connect();
+    const control = fakeClient.controlChannels[0];
+    if (!control) throw new Error('control channel was not created');
+    const queued: Promise<void>[] = [];
+    for (let i = 0; i < 260; i += 1) {
+      queued.push(connection.sendInputBytes('%1', new Uint8Array([65])));
+    }
+    await Bun.sleep(0);
+    const before = control.writes.filter((line) => line.includes('send-keys')).length;
+    await expect(
+      connection.sendInputBytes('%1', new Uint8Array(257 * SEND_KEYS_HEX_CHUNK_BYTES))
+    ).rejects.toBeInstanceOf(InputQueueFullError);
+    expect(control.writes.filter((line) => line.includes('send-keys')).length).toBe(before);
+    expect(errors).toEqual([]);
+    connection.disconnect();
+    await Promise.allSettled(queued);
   });
 });

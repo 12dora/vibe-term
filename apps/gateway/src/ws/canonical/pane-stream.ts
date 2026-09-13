@@ -1,10 +1,9 @@
-import { wsBorsh } from '@vibeterm/shared';
-
-import { endsSynchronizedFrame } from '@vibeterm/shared';
+import { endsSynchronizedFrame, wsBorsh } from '@vibeterm/shared';
 import {
   DEFAULT_MAX_REPLAY_BYTES_PER_PANE,
   type PaneDataSegment,
   type PaneReplayGap,
+  canonicalMaxHeldPaneBytes,
 } from '../../tmux-client/pane-retention';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
@@ -165,7 +164,7 @@ export class CanonicalPaneStream {
       return true;
     }
     const heldBytes = (pending?.length ?? 0) + segment.data.byteLength;
-    if (heldBytes <= CANONICAL_MAX_HELD_PANE_BYTES) return false;
+    if (heldBytes <= canonicalMaxHeldPaneBytes()) return false;
     if (pending?.timer != null) this.cancelTimer(pending.timer);
     this.paneDataBatches.delete(key);
     this.paneDataHoldOverflows.add(key);

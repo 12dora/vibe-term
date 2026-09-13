@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ControlModeCommandQueue, capturePaneFrameAtControlBarrier } from './control-mode-capture';
+import {
+  CONTROL_QUEUE_MAX_DEPTH,
+  ControlModeCommandQueue,
+  ControlQueueFullError,
+  capturePaneFrameAtControlBarrier,
+} from './control-mode-capture';
 import { createControlModeParser } from './control-mode-parser';
 
 const encoder = new TextEncoder();
@@ -462,5 +467,23 @@ describe('control command latency sampling', () => {
     expect(queue.handleBlock({ args: '1 11 0', isError: false, lines: ['80|24'] })).toBe(true);
     await expect(user).resolves.toBe('80|24');
     queue.dispose();
+  });
+
+  test('rejects the newest command when pending depth exceeds 512', async () => {
+    const queue = new ControlModeCommandQueue();
+    const pending: Promise<unknown>[] = [];
+    for (let i = 0; i < CONTROL_QUEUE_MAX_DEPTH; i += 1) {
+      pending.push(
+        queue.execute(() => {}, `display-message ${i}`, {
+          timeoutMs: 60_000,
+          transform: () => i,
+        })
+      );
+    }
+    await expect(
+      queue.execute(() => {}, 'overflow', { transform: () => 0 })
+    ).rejects.toBeInstanceOf(ControlQueueFullError);
+    queue.dispose();
+    await Promise.allSettled(pending);
   });
 });

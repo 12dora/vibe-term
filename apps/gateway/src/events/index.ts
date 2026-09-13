@@ -28,6 +28,15 @@ export function eventThrottleScope(event: WebhookEvent): string {
   return `${nodeId}:${event.device.id}:${event.tmux?.paneId ?? '-'}`;
 }
 
+export const THROTTLE_TTL_MS = 10 * 60_000;
+export const THROTTLE_PRUNE_INTERVAL_MS = 60_000;
+
+function pruneTimestampMap(map: Map<string, number>, now: number, ttlMs: number): void {
+  for (const [key, at] of map) {
+    if (now - at > ttlMs) map.delete(key);
+  }
+}
+
 export class EventNotifier {
   private bellThrottleMap = new Map<string, number>();
   private notificationThrottleMap = new Map<string, number>();
@@ -48,6 +57,7 @@ export class EventNotifier {
       }
       this.registerChannel(channel);
     }
+    setInterval(() => this.pruneThrottleMaps(), THROTTLE_PRUNE_INTERVAL_MS).unref();
   }
 
   /** 注册通知渠道；重复 id 视为编程错误，直接抛错 */
@@ -124,6 +134,11 @@ export class EventNotifier {
 
     this.notificationThrottleMap.set(key, now);
     return true;
+  }
+
+  pruneThrottleMaps(now = Date.now()): void {
+    pruneTimestampMap(this.bellThrottleMap, now, THROTTLE_TTL_MS);
+    pruneTimestampMap(this.notificationThrottleMap, now, THROTTLE_TTL_MS);
   }
 }
 

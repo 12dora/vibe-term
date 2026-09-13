@@ -17,7 +17,7 @@ import { decodeJsonBytes, isRecord, requireString } from '../ctl';
 import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
-import { FANOUT_MAX_PENDING_BYTES, type FanoutDataChannel } from './channel-fanout';
+import { type FanoutDataChannel, fanoutMaxPendingBytes } from './channel-fanout';
 import type { DataChannelLike, PeerConnectionLike } from './native';
 import { toUint8Array } from './native';
 import { rtcLog } from './rtc-log';
@@ -211,7 +211,7 @@ function recvQueue(
 
   const enqueuePayload = (msg: string | Buffer | ArrayBuffer) => {
     const size = messageByteLength(msg);
-    if (pendingPayloadBytes + size > FANOUT_MAX_PENDING_BYTES) {
+    if (pendingPayloadBytes + size > fanoutMaxPendingBytes()) {
       rtcLog('buffer overflow', {
         peer: limits.peer ?? 'unknown',
         dropped: pendingPayload.length + 1,

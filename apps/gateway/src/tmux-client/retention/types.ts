@@ -8,7 +8,36 @@ export const DEFAULT_REPLAY_TTL_MS = 15_000;
 export const DEFAULT_MAX_REPLAY_BYTES_PER_PANE = 2 * 1024 * 1024;
 export const DEFAULT_MAX_CHECKPOINT_BYTES_PER_PANE = 512 * 1024;
 export const DEFAULT_MAX_RETENTION_BYTES = 64 * 1024 * 1024;
+export const SMALL_MAX_HOT_PANES = 4;
+export const SMALL_MAX_REPLAY_BYTES_PER_PANE = 512 * 1024;
+export const SMALL_MAX_CHECKPOINT_BYTES_PER_PANE = 256 * 1024;
+export const SMALL_MAX_RETENTION_BYTES = 16 * 1024 * 1024;
 export const REPLAY_COMPACT_HEAD = 32;
+
+export function paneRetentionLimitsFor(profile: 'standard' | 'small'): PaneRetentionLimits {
+  if (profile === 'small') {
+    return {
+      maxActivePanes: DEFAULT_MAX_ACTIVE_PANES,
+      maxHotPanes: SMALL_MAX_HOT_PANES,
+      routeGraceMs: DEFAULT_ROUTE_GRACE_MS,
+      hotTtlMs: DEFAULT_HOT_TTL_MS,
+      replayTtlMs: DEFAULT_REPLAY_TTL_MS,
+      maxReplayBytesPerPane: SMALL_MAX_REPLAY_BYTES_PER_PANE,
+      maxCheckpointBytesPerPane: SMALL_MAX_CHECKPOINT_BYTES_PER_PANE,
+      maxRetentionBytes: SMALL_MAX_RETENTION_BYTES,
+    };
+  }
+  return {
+    maxActivePanes: DEFAULT_MAX_ACTIVE_PANES,
+    maxHotPanes: DEFAULT_MAX_HOT_PANES,
+    routeGraceMs: DEFAULT_ROUTE_GRACE_MS,
+    hotTtlMs: DEFAULT_HOT_TTL_MS,
+    replayTtlMs: DEFAULT_REPLAY_TTL_MS,
+    maxReplayBytesPerPane: DEFAULT_MAX_REPLAY_BYTES_PER_PANE,
+    maxCheckpointBytesPerPane: DEFAULT_MAX_CHECKPOINT_BYTES_PER_PANE,
+    maxRetentionBytes: DEFAULT_MAX_RETENTION_BYTES,
+  };
+}
 
 export type PaneRetentionMode = 'active' | 'grace' | 'hot' | 'cold';
 export type PaneSubscriptionRejectionReason = 'not_found' | 'resource_exhausted' | 'epoch_changed';
@@ -130,6 +159,7 @@ export interface PaneRetentionOptions {
   maxReplayBytesPerPane?: number;
   maxCheckpointBytesPerPane?: number;
   maxRetentionBytes?: number;
+  memoryProfile?: 'standard' | 'small';
   now?: () => number;
   scheduleTimers?: boolean;
 }

@@ -8,7 +8,7 @@ import { normalizeRelPath } from './dest';
 import { resolveAuthorizedDir, resolveAuthorizedFile } from './dest-local';
 import { ensureRemoteDir, placeFileOnRemote, probeRemoteTarget } from './dest-remote';
 import { normalizeTransferError } from './errors';
-import { MAX_SESSION_ACTIVE_WRITES, MAX_SESSION_FILES } from './limits';
+import { MAX_SESSION_FILES, maxSessionActiveWrites } from './limits';
 import {
   type ReceiverResult,
   type ReceiverVoid,
@@ -171,7 +171,7 @@ export async function writeFileRange(
     if (!prepared.ok) return prepared;
     const file = prepared.file;
     if (file.committed) return { ok: true, received: file.size, complete: true };
-    if (session.activeWrites >= MAX_SESSION_ACTIVE_WRITES) return receiverFail('limit_exceeded');
+    if (session.activeWrites >= maxSessionActiveWrites()) return receiverFail('limit_exceeded');
     session.activeWrites += 1;
     try {
       return await runWrite(session, file, input, body);

@@ -1,9 +1,9 @@
 import type { AgentEventPayloadMap, EventType, WebhookEvent } from '@vibeterm/shared';
 import { wsBorsh } from '@vibeterm/shared';
 import type { LanguageModel, Tool } from 'ai';
-import { generateText } from 'ai';
 import { deleteAllQueuedAgentMessages, listQueuedAgentMessages } from '../db/agent';
 import { eventNotifier } from '../events';
+import { loadAiSdk } from '../llm/ai-sdk-lazy';
 import {
   resolveLanguageModel,
   resolveProviderHostedTools,
@@ -25,7 +25,7 @@ export interface AgentRunDeps {
     keys: readonly string[]
   ) => Promise<Record<string, Tool>>;
   createWebSearchTool: () => Promise<Tool | null>;
-  createFetchUrlTool: () => Tool;
+  createFetchUrlTool: () => Tool | Promise<Tool>;
   hasQueuedMessages: (sessionId: string) => boolean;
   drainQueuedMessages: (sessionId: string) => string[];
   acquireRuntime: (
@@ -63,7 +63,10 @@ export const defaultAgentRunDeps: AgentRunDeps = {
   resolveProviderWebSearchTool,
   resolveProviderHostedTools,
   createWebSearchTool: () => createWebSearchTool(),
-  createFetchUrlTool: () => createFetchUrlTool(),
+  createFetchUrlTool: async () => {
+    await loadAiSdk();
+    return createFetchUrlTool();
+  },
   hasQueuedMessages: (sessionId) => listQueuedAgentMessages(sessionId).length > 0,
   drainQueuedMessages: (sessionId) => {
     const items = listQueuedAgentMessages(sessionId);
@@ -99,6 +102,7 @@ export const defaultAgentRunDeps: AgentRunDeps = {
     agentWsHub.broadcastAgentEvent(sessionId, eventType, payload, seq),
   notify: (eventType, event) => eventNotifier.notify(eventType, event),
   generateTitle: async (model, prompt) => {
+    const { generateText } = await loadAiSdk();
     const result = await generateText({ model, prompt, maxRetries: 1 });
     return result.text;
   },

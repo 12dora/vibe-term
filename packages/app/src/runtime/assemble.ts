@@ -12,10 +12,9 @@ import { getStoredSiteSettings } from '../../../../apps/gateway/src/db';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import { createMeshSiteSettingsLink } from '../../../../apps/gateway/src/mesh/effective-site-url';
 import type { MeshHttpRuntime } from '../../../../apps/gateway/src/mesh/mesh-http';
-import {
-  type CreateMeshRuntimeOptions,
-  type MeshRuntime,
-  createMeshRuntime,
+import type {
+  CreateMeshRuntimeOptions,
+  MeshRuntime,
 } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
@@ -50,6 +49,7 @@ import {
   wireTlsLifecycle,
 } from './assemble-routes';
 import { createVibeTermGatewayRuntime } from './gateway';
+import { loadMeshRuntimeModule } from './hub-lazy';
 import { handleLocalRequest } from './local-routes';
 import { type RuntimeMode, handlePreflightHttp, readRuntimeMode } from './mode';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
@@ -252,8 +252,13 @@ async function assembleCore(opts: AssembleVibeTermOptions): Promise<AssembleCore
     opts.createGatewayRuntime ??
     (() => createVibeTermGatewayRuntime(undefined, { mode: runtimeMode }));
   const inboundHttpExtensions: NonNullable<CreateMeshRuntimeOptions['inboundHttpExtensions']> = [];
-  const createMesh = (meshOpts: CreateMeshRuntimeOptions) =>
-    (opts.createMeshRuntime ?? createMeshRuntime)({ ...meshOpts, inboundHttpExtensions });
+  const createMesh = async (meshOpts: CreateMeshRuntimeOptions) => {
+    if (opts.createMeshRuntime) {
+      return opts.createMeshRuntime({ ...meshOpts, inboundHttpExtensions });
+    }
+    const { createMeshRuntime } = await loadMeshRuntimeModule();
+    return createMeshRuntime({ ...meshOpts, inboundHttpExtensions });
+  };
   const serveFrontend =
     opts.serveFrontend ?? (isRelayOnly(roles) ? relayOnlyFrontend : defaultServeFrontend);
   const gateway = await createGateway();

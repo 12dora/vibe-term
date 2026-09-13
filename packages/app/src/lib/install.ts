@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { chmod, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -172,6 +173,12 @@ export function quotePosixShellArg(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+function ghosttyWasmPathExport(runtimeDir: string): string[] {
+  const wasmPath = join(runtimeDir, 'assets', 'ghostty-vt.wasm');
+  if (!existsSync(wasmPath)) return [];
+  return [`export VIBETERM_GHOSTTY_WASM_PATH=${quotePosixShellArg(wasmPath)}`];
+}
+
 export function buildRunScriptContent(installDir: string, bunPath: string): string {
   const homeBunBin = join(homedir(), '.bun', 'bin');
   const bunDir = isAbsolute(bunPath) ? dirname(bunPath) : '';
@@ -208,6 +215,7 @@ export function buildRunScriptContent(installDir: string, bunPath: string): stri
     `export VIBETERM_FE_DIST_DIR=${quotePosixShellArg(current.feDir)}`,
     `export VIBETERM_MIGRATIONS_DIR=${quotePosixShellArg(current.drizzleDir)}`,
     `export VIBETERM_NATIVE_DIR=${quotePosixShellArg(current.nativeDir)}`,
+    ...ghosttyWasmPathExport(current.runtimeDir),
     '',
     'printf \'%s\\n\' "$$" > "$SCRIPT_DIR/vibeterm.pid"',
     `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(current.runtimeServerPath)}`,

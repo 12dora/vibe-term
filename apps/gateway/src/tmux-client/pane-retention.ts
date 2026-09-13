@@ -1,22 +1,24 @@
+import { type MemoryProfile, getMemoryProfile } from '../memory-profile';
 import { bytesEqual } from './retention/bytes';
 import { RetentionKernel } from './retention/kernel';
 import { RetentionPolicyScheduler } from './retention/policy-scheduler';
 import { PaneReplayStore } from './retention/replay-store';
 import { PaneSubscriptionCoordinator } from './retention/subscription-coordinator';
-import type {
-  ConsumerState,
-  PaneDataSegment,
-  PaneHistoryPage,
-  PaneIdentity,
-  PaneReplayPlan,
-  PaneRetentionConsumerCallbacks,
-  PaneRetentionLimits,
-  PaneRetentionOptions,
-  PaneRetentionStats,
-  PaneScreenCheckpoint,
-  PaneSubscriptionApplyResult,
-  PaneSubscriptionRequest,
-  PaneTerminalCursor,
+import {
+  type ConsumerState,
+  DEFAULT_MAX_REPLAY_BYTES_PER_PANE,
+  type PaneDataSegment,
+  type PaneHistoryPage,
+  type PaneIdentity,
+  type PaneReplayPlan,
+  type PaneRetentionConsumerCallbacks,
+  type PaneRetentionLimits,
+  type PaneRetentionOptions,
+  type PaneRetentionStats,
+  type PaneScreenCheckpoint,
+  type PaneSubscriptionApplyResult,
+  type PaneSubscriptionRequest,
+  type PaneTerminalCursor,
 } from './retention/types';
 
 export {
@@ -28,6 +30,11 @@ export {
   DEFAULT_MAX_RETENTION_BYTES,
   DEFAULT_REPLAY_TTL_MS,
   DEFAULT_ROUTE_GRACE_MS,
+  SMALL_MAX_CHECKPOINT_BYTES_PER_PANE,
+  SMALL_MAX_HOT_PANES,
+  SMALL_MAX_REPLAY_BYTES_PER_PANE,
+  SMALL_MAX_RETENTION_BYTES,
+  paneRetentionLimitsFor,
   type PaneDataSegment,
   type PaneHistoryPage,
   type PaneIdentity,
@@ -48,6 +55,14 @@ export {
   type PaneTerminalCursor,
 } from './retention/types';
 export { PaneSubscriptionGenerationConflictError } from './retention/subscription-coordinator';
+
+export const CANONICAL_MAX_HELD_PANE_BYTES_SMALL = 1024 * 1024;
+
+export function canonicalMaxHeldPaneBytes(profile: MemoryProfile = getMemoryProfile()): number {
+  return profile === 'small'
+    ? CANONICAL_MAX_HELD_PANE_BYTES_SMALL
+    : DEFAULT_MAX_REPLAY_BYTES_PER_PANE;
+}
 
 export class PaneRetentionConsumerLease {
   constructor(

@@ -1,6 +1,6 @@
 import { errorMessage, wsBorsh } from '@vibeterm/shared';
 import type { Device } from '@vibeterm/shared';
-import { Client, type ClientChannel } from 'ssh2';
+import type { Client, ClientChannel } from 'ssh2';
 import { config } from '../config';
 import { decryptWithContext } from '../crypto';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
@@ -17,6 +17,7 @@ import {
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { hostLatencySampler, probeHostLatency } from './host-latency-tracker';
+import { InputCommandWindow } from './input-command-window';
 import type { InputCompletion } from './input-submission';
 import { appendRollingTail, decodeRollingTail } from './local-external-connection';
 import {
@@ -26,6 +27,7 @@ import {
 } from './reconnect-control-channel';
 import { buildSshBootstrapScript, parseSshBootstrapOutput } from './ssh-bootstrap';
 import { resolveSshConnectConfig } from './ssh-connect-config';
+import { createSsh2Client } from './ssh2-client';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { isControlModeSupported, parseTmuxVersion } from './tmux-version';
 import { resolveTmuxWindowStyle } from './window-style';
@@ -41,7 +43,7 @@ interface PendingShellCommand {
 interface SshExternalTmuxConnectionDeps {
   getDevice: (deviceId: string) => Device | null;
   decrypt: typeof decryptWithContext;
-  createClient: () => Client;
+  createClient: () => Client | Promise<Client>;
 }
 
 interface ControlChannelHandle extends ExternalControlHandle {
@@ -63,7 +65,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   private tmuxBin = 'tmux';
   private remoteHomeDir = '.';
   private commandQueue: Promise<void> = Promise.resolve();
-
+  private inputCommands = new InputCommandWindow(() => (this.controlChannel ? 4 : 1));
   constructor(
     options: TmuxConnectionOptions,
     inputDeps: Partial<SshExternalTmuxConnectionDeps> = {}
@@ -73,12 +75,12 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.deps = {
       getDevice,
       decrypt: inputDeps.decrypt ?? decryptWithContext,
-      createClient: inputDeps.createClient ?? (() => new Client()),
+      createClient: inputDeps.createClient ?? createSsh2Client,
     };
   }
-
   async connect(): Promise<void> {
     await this.runConnectAttempt(async (generation) => {
+      if (this.inputCommands.disposed) this.inputCommands = new InputCommandWindow(() => 1);
       this.device = this.deps.getDevice(this.deviceId);
       if (!this.device) {
         throw new Error(`Device not found: ${this.deviceId}`);
@@ -86,9 +88,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       if (this.device.type !== 'ssh') {
         throw new Error(`SshExternalTmuxConnection only supports ssh device: ${this.deviceId}`);
       }
-
       this.sessionName = this.device.session?.trim() || 'vibeterm';
-
       await this.awaitConnectStep(generation, () => this.connectSshClient());
       await this.awaitConnectStep(generation, () => this.openCommandChannel());
       const { created } = await this.awaitConnectStep(generation, () => this.ensureSession());
@@ -100,6 +100,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.invalidateConnectGeneration();
     if (this.manualDisconnect) return;
     this.manualDisconnect = true;
+    this.inputCommands.dispose('tmux input disconnected');
     void this.shutdownInternal(false);
   }
 
@@ -114,6 +115,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     return sendExternalInput(
       {
         queue,
+        window: this.inputCommands,
         write: control ? (value) => control.write(value) : undefined,
         isCurrent: () =>
           this.connected && this.controlChannel === control && this.controlCommands === queue,
@@ -267,10 +269,8 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       throw new Error('SSH device not loaded');
     }
     const authConfig = await resolveSshConnectConfig(this.device, this.deps.decrypt);
-
-    const client = this.deps.createClient();
+    const client = await this.deps.createClient();
     this.sshClient = client;
-
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       const resolveOnce = () => {
@@ -389,6 +389,8 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
   private async openControlChannel(onAttachReady: () => void): Promise<ControlChannelHandle> {
     this.callbacks.onInputTransportInvalidated?.();
+    this.inputCommands.dispose('tmux input connection replaced');
+    this.inputCommands = new InputCommandWindow(() => (this.controlChannel ? 4 : 1));
     this.controlCommands.dispose('tmux control connection replaced');
     const handle: ControlChannelHandle = { stop: () => {}, write: () => {} };
     const controlCommands = new ControlModeCommandQueue(
@@ -445,9 +447,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.controlChannel = null;
     this.controlSubscription?.dispose();
     this.controlSubscription = null;
-    if (!this.connected || this.manualDisconnect) {
-      return;
-    }
+    if (!this.connected || this.manualDisconnect) return;
     void this.reconnectControlClient();
   }
 

@@ -1,5 +1,3 @@
-import { createOpenAI } from '@ai-sdk/openai';
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { errorMessage } from '@vibeterm/shared';
 import type { LanguageModel, Tool } from 'ai';
 import { HOSTED_TOOL_FACTORIES } from '../agent/tools/hosted';
@@ -7,8 +5,10 @@ import { decrypt, decryptWithContext } from '../crypto';
 import { getAgentSettings } from '../db/agent';
 import { type LlmProviderRecord, getLlmProviderById } from '../db/llm';
 import { t } from '../i18n';
+import { loadOpenAICompatibleProvider, loadOpenAIProvider } from './ai-sdk-lazy';
 
-type OpenAIClient = ReturnType<typeof createOpenAI>;
+type OpenAIModule = typeof import('@ai-sdk/openai');
+type OpenAIClient = ReturnType<OpenAIModule['createOpenAI']>;
 
 const FETCH_MODELS_TIMEOUT_MS = 15_000;
 
@@ -67,9 +67,11 @@ export async function resolveLanguageModel(
   const baseURL = resolveBaseUrl(provider.baseUrl);
 
   if (provider.protocol === 'openai-responses') {
+    const { createOpenAI } = await loadOpenAIProvider();
     return createOpenAI({ baseURL, apiKey }).responses(effectiveModelId);
   }
 
+  const { createOpenAICompatible } = await loadOpenAICompatibleProvider();
   return createOpenAICompatible({
     name: provider.name,
     baseURL,
@@ -98,6 +100,7 @@ export async function resolveOpenAIResponsesProvider(
     field: 'api_key_enc',
   });
 
+  const { createOpenAI } = await loadOpenAIProvider();
   return createOpenAI({ baseURL: resolveBaseUrl(provider.baseUrl), apiKey });
 }
 

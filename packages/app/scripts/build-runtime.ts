@@ -4,7 +4,16 @@
 // typeof 守卫被短路，安装版/容器版无需再依赖 install-meta 或仓库 package.json 即可拿到版本。
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { builtinModules } from 'node:module';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -60,17 +69,24 @@ export function unresolvedPackageRequires(bundleText: string): string[] {
   });
 }
 
+export const RUNTIME_CHUNK_NAMING = 'chunks/[name]-[hash].[ext]';
+
 export async function buildRuntimeEntry(options: {
   entrypoint: string;
   outfile: string;
   version: string;
+  splitting?: boolean;
 }): Promise<void> {
+  const splitting = options.splitting ?? true;
   const result = await Bun.build({
     entrypoints: [options.entrypoint],
     outdir: dirname(options.outfile),
-    naming: basename(options.outfile),
+    naming: splitting
+      ? { entry: basename(options.outfile), chunk: RUNTIME_CHUNK_NAMING }
+      : basename(options.outfile),
     target: 'bun',
     format: 'esm',
+    splitting,
     plugins: [cpuFeaturesStubPlugin],
     define: {
       VIBETERM_MONOREPO_VERSION: JSON.stringify(options.version),
@@ -195,6 +211,17 @@ function assertNoUnresolvedPackageRequires(filePath: string): void {
   }
 }
 
+function assertNoUnresolvedPackageRequiresTree(entryFile: string): void {
+  assertNoUnresolvedPackageRequires(entryFile);
+  const chunksDir = join(dirname(entryFile), 'chunks');
+  if (!existsSync(chunksDir)) return;
+  for (const name of readdirSync(chunksDir)) {
+    if (name.endsWith('.js')) {
+      assertNoUnresolvedPackageRequires(join(chunksDir, name));
+    }
+  }
+}
+
 async function main(): Promise<void> {
   console.log(`[build:runtime] injecting VIBETERM_MONOREPO_VERSION="${version}"`);
 
@@ -217,12 +244,17 @@ async function main(): Promise<void> {
   verifyVendoredNativeBundle();
   verifyCryptoBundles();
 
-  assertNoUnresolvedPackageRequires(serverJs);
-  assertNoUnresolvedPackageRequires(cliAuthJs);
+  assertNoUnresolvedPackageRequiresTree(serverJs);
+  assertNoUnresolvedPackageRequiresTree(cliAuthJs);
 
   try {
+    const chunksDir = join(pkgRoot, 'dist/runtime/chunks');
+    const chunkCount = existsSync(chunksDir)
+      ? readdirSync(chunksDir).filter((name) => name.endsWith('.js')).length
+      : 0;
     console.log(`[build:runtime] server.js ${statSync(serverJs).size} bytes`);
     console.log(`[build:runtime] cli-auth.js ${statSync(cliAuthJs).size} bytes`);
+    console.log(`[build:runtime] runtime chunks ${chunkCount}`);
   } catch {
     console.warn('[build:runtime] runtime bundle size unavailable');
   }

@@ -7,6 +7,7 @@
 // 跨打包器解析 wasm 资源：`new URL(rel, import.meta.url)` 是 Vite 推荐写法，Bun（运行/打包）
 // 也支持，避免 `?url` 后缀只有 Vite 能解析、bun build 报无法 resolve 的问题。
 const ghosttyWasmUrl = new URL('./assets/ghostty-vt.wasm', import.meta.url).href;
+const ghosttyWasmChunkParentUrl = new URL('../assets/ghostty-vt.wasm', import.meta.url).href;
 
 const WASM_CONTENT_TYPE = 'application/wasm';
 
@@ -18,7 +19,7 @@ type ResolvedWasm =
 // 按 plan「无法可靠嵌入时的签名相邻资源」策略回退：`VIBETERM_GHOSTTY_WASM_PATH` 显式覆盖，
 // 否则取可执行同目录的 `ghostty-vt.wasm`（managed 构建保证其随产物分发）。
 export function ghosttyWasmCandidates(): string[] {
-  const candidates = [ghosttyWasmUrl];
+  const candidates = [ghosttyWasmUrl, ghosttyWasmChunkParentUrl];
   if (typeof Bun !== 'undefined' && typeof process !== 'undefined' && process.execPath) {
     const envPath = process.env.VIBETERM_GHOSTTY_WASM_PATH;
     if (envPath) {

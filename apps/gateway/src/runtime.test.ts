@@ -27,7 +27,7 @@ describe('relay-only messaging gate', () => {
     expect(shouldStartMessagingServices(parseVibeTermRoles(undefined))).toBe(true);
   });
 
-  test('startLiveGatewayServices skips telegram/weixin/watch/online on relay-only', async () => {
+  test('startLiveGatewayServices skips telegram/weixin/watch/online/push/agent/tunnel on relay-only', async () => {
     const calls: string[] = [];
     const mark = (name: string) => async () => {
       calls.push(name);
@@ -45,7 +45,7 @@ describe('relay-only messaging gate', () => {
       startTunnel: mark('tunnel'),
       sendOnline: mark('online'),
     });
-    expect(calls).toEqual(['lag', 'push', 'agent', 'tunnel']);
+    expect(calls).toEqual(['lag']);
   });
 
   test('startLiveGatewayServices starts messaging on node/hub roles', async () => {
@@ -135,12 +135,18 @@ describe('relay-only messaging gate', () => {
       refreshWeixin: async () => {
         throw new Error('weixin must not start');
       },
-      startPush: async () => {},
-      startAgent: async () => {},
+      startPush: async () => {
+        throw new Error('push must not start');
+      },
+      startAgent: async () => {
+        throw new Error('agent must not start');
+      },
       startWatch: async () => {
         throw new Error('watch must not start');
       },
-      startTunnel: async () => {},
+      startTunnel: async () => {
+        throw new Error('tunnel must not start');
+      },
       sendOnline: async () => {
         throw new Error('online must not start');
       },

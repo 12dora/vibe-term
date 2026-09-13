@@ -1,12 +1,12 @@
 import { promises as dnsPromises } from 'node:dns';
 import { Resolver } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import acme from 'acme-client';
 import type { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type { AcmeChallengeType } from '../../../../apps/gateway/src/tls/types';
 import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import type { AcmeHttp01Challenge } from './acme-challenge';
+import { defaultAcmeClient, loadAcmeClient } from './acme-lazy';
 import { parseCertificate } from './cert-authority';
 import type { DnsCredentials, DnsProvider, DnsProviderId, DnsTxtRef } from './dns-provider';
 import { resolveStoredDnsCredentials } from './dns-provider';
@@ -94,7 +94,7 @@ function asPem(value: string | Buffer): string {
 }
 
 export function acmeDirectoryUrl(staging: boolean): string {
-  return staging ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production;
+  return `https://${staging ? 'acme-staging-v02' : 'acme-v02'}.api.letsencrypt.org/directory`;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -234,8 +234,7 @@ async function openAccount(
   email: string
 ): Promise<{ client: AcmeClientLike; accountUrl: string }> {
   const reuse = Boolean(current.acmeAccountUrl) && current.acmeAccountDirectory === directoryUrl;
-  const factory =
-    input.clientFactory ?? ((opts) => new acme.Client(opts) as unknown as AcmeClientLike);
+  const factory = input.clientFactory ?? defaultAcmeClient;
   const client = await factory({
     directoryUrl,
     accountKey,
@@ -371,6 +370,7 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
     throw new Error('acme issuance is missing domain, email, or challenge');
   }
   const secrets = await input.store.getPrivateMaterial();
+  const acme = await loadAcmeClient();
   const accountKey =
     secrets.acmeAccountKey ?? asPem(await acme.crypto.createPrivateEcdsaKey('P-256'));
   const directoryUrl = acmeDirectoryUrl(Boolean(staging));
@@ -402,7 +402,7 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
     await cleanupChallenges(input, creds, providerId, pending);
   }
   if (!certPem) throw new Error('acme auto returned an empty certificate');
-  const parsed = parseCertificate(certPem);
+  const parsed = await parseCertificate(certPem);
   return {
     certPem,
     keyPem: leafKey,
