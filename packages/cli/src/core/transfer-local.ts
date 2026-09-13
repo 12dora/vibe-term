@@ -5,10 +5,10 @@ import { open } from 'node:fs/promises';
 import { sleepOrAbort } from '@vibeterm/shared/async';
 import { ProgressTracker, type PushTransport, runPush } from '@vibeterm/transfer';
 import { CliError, InterruptError, rethrowIfAborted, throwIfAborted } from './errors';
-import { filesJson, filesQuery } from './files-api';
+import { assertFilesOk, filesJson, filesQuery, throwFilesEventError } from './files-api';
 import type { HttpClient } from './http';
 import { consumeNdjson } from './transfer-ndjson';
-import { type CopyProgress, pctOf } from './transfer-progress';
+import { type CopyProgress, emitTrackedProgress, pctOf } from './transfer-progress';
 
 const CHUNK_FALLBACK = 8 * 1024 * 1024;
 const UPLOAD_ATTEMPTS = 4;
@@ -84,13 +84,14 @@ export async function uploadLocalFile(input: {
       nodeId,
       uploadId,
       localPath,
+      name,
       size,
       step,
       ranged: init.ranged === true,
       progress,
       signal,
     });
-    await commitUpload({ http, nodeId, uploadId, size, progress, signal });
+    await commitUpload({ http, nodeId, uploadId, size, file: name, progress, signal });
   } catch (error) {
     await http
       .fetch(nodeId, `/api/files/upload/${uploadId}`, { method: 'DELETE' })
@@ -104,13 +105,14 @@ async function pushFile(input: {
   nodeId: string;
   uploadId: string;
   localPath: string;
+  name: string;
   size: number;
   step: number;
   ranged: boolean;
   progress: CopyProgress;
   signal?: AbortSignal;
 }): Promise<void> {
-  const { http, nodeId, uploadId, localPath, size, step, ranged, progress, signal } = input;
+  const { http, nodeId, uploadId, localPath, name, size, step, ranged, progress, signal } = input;
   const handle = await open(localPath, 'r');
   try {
     const tracker = new ProgressTracker({ totalBytes: size });
@@ -127,12 +129,8 @@ async function pushFile(input: {
         sleep: jitteredSleep,
         onProgress: (transferred) => {
           tracker.set(transferred);
-          progress.emit({
-            type: 'progress',
-            phase: 'upload',
-            bytes: transferred,
-            total: size,
-            pct: pctOf(transferred, size),
+          emitTrackedProgress(progress, 'upload', tracker.snapshot(), {
+            file: name,
             path: localPath,
           });
         },
@@ -215,16 +213,17 @@ async function commitUpload(input: {
   nodeId: string;
   uploadId: string;
   size: number;
+  file: string | null;
   progress: CopyProgress;
   signal?: AbortSignal;
 }): Promise<void> {
-  const { http, nodeId, uploadId, size, progress, signal } = input;
+  const { http, nodeId, uploadId, size, file, progress, signal } = input;
   const response = await http.fetch(nodeId, `/api/files/upload/${uploadId}/commit`, {
     method: 'POST',
     signal,
     timeoutMs: null,
   });
-  await http.assertOk(nodeId, response, `/api/files/upload/${uploadId}/commit`);
+  await assertFilesOk(nodeId, response, `/api/files/upload/${uploadId}/commit`);
   let done = false;
   await consumeNdjson<CommitEvent>(response, (event) => {
     if (event.type === 'progress') {
@@ -235,11 +234,14 @@ async function commitUpload(input: {
         total: size,
         pct: event.pct ?? pctOf(event.transferred ?? 0, size),
         rate: event.rate,
+        ratePerSec: null,
+        etaSec: null,
+        file,
       });
     } else if (event.type === 'done') {
       done = true;
     } else if (event.type === 'error') {
-      throw new CliError(event.detail ?? event.code ?? 'upload commit failed');
+      throwFilesEventError(event.code, event.detail ?? event.code ?? 'upload commit failed');
     }
   });
   if (!done) throw new CliError('upload commit did not finish');
@@ -274,6 +276,7 @@ export async function downloadRemoteFile(input: {
       downloadId,
       destPath,
       size: prepared.size,
+      file: name,
       progress,
       signal,
     });
@@ -307,11 +310,12 @@ async function prepareDownload(input: {
     signal,
     timeoutMs: null,
   });
-  await http.assertOk(nodeId, response, '/api/files/download/prepare');
+  await assertFilesOk(nodeId, response, '/api/files/download/prepare');
   let downloadId = '';
   let size = 0;
   let fileName = name;
-  let error: string | null = null;
+  let errorCode: string | undefined;
+  let errorMessage: string | null = null;
   await consumeNdjson<PrepareEvent>(response, (event) => {
     if (event.type === 'progress') {
       progress.emit({
@@ -321,16 +325,20 @@ async function prepareDownload(input: {
         pct: event.pct ?? 0,
         rate: event.rate,
         path: absPath,
+        file: name,
+        ratePerSec: null,
+        etaSec: null,
       });
     } else if (event.type === 'done') {
       downloadId = event.downloadId ?? '';
       size = event.size ?? 0;
       fileName = event.name ?? name;
     } else if (event.type === 'error') {
-      error = event.detail ?? event.code ?? 'prepare failed';
+      errorCode = event.code;
+      errorMessage = event.detail ?? event.code ?? 'prepare failed';
     }
   });
-  if (error) throw new CliError(error);
+  if (errorMessage) throwFilesEventError(errorCode, errorMessage);
   if (!downloadId) throw new CliError('download prepare did not return an id');
   return { downloadId, size, name: fileName };
 }
@@ -341,11 +349,13 @@ async function drainContent(input: {
   downloadId: string;
   destPath: string;
   size: number;
+  file: string | null;
   progress: CopyProgress;
   signal?: AbortSignal;
 }): Promise<void> {
-  const { http, nodeId, downloadId, destPath, size, progress, signal } = input;
+  const { http, nodeId, downloadId, destPath, size, file, progress, signal } = input;
   const handle = await open(destPath, 'w');
+  const tracker = new ProgressTracker({ totalBytes: size });
   let received = 0;
   let lastError: unknown = null;
   try {
@@ -359,6 +369,8 @@ async function drainContent(input: {
           handle,
           received,
           size,
+          file,
+          tracker,
           progress,
           signal,
         });
@@ -386,10 +398,12 @@ async function readContentOnce(input: {
   handle: Awaited<ReturnType<typeof open>>;
   received: number;
   size: number;
+  file: string | null;
+  tracker: ProgressTracker;
   progress: CopyProgress;
   signal?: AbortSignal;
 }): Promise<number> {
-  const { http, nodeId, downloadId, handle, size, progress, signal } = input;
+  const { http, nodeId, downloadId, handle, size, file, tracker, progress, signal } = input;
   let received = input.received;
   const headers: Record<string, string> = {};
   if (received > 0) headers.range = `bytes=${received}-`;
@@ -398,17 +412,21 @@ async function readContentOnce(input: {
     signal,
     timeoutMs: null,
   });
-  await http.assertOk(nodeId, response, `/api/files/download/${downloadId}/content`);
+  await assertFilesOk(nodeId, response, `/api/files/download/${downloadId}/content`);
   if (received > 0 && response.status !== 206) {
     received = 0;
     await handle.truncate(0);
   }
   const total = size > 0 ? size : Number(response.headers.get('content-length') ?? '0');
+  if (total > 0) tracker.totalBytes = total;
   const body = response.body;
   if (!body) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.byteLength) await handle.write(bytes, 0, bytes.byteLength, received);
-    return received + bytes.byteLength;
+    received += bytes.byteLength;
+    tracker.set(received);
+    emitTrackedProgress(progress, 'download', tracker.snapshot(), { file });
+    return received;
   }
   const reader = body.getReader();
   for (;;) {
@@ -417,13 +435,8 @@ async function readContentOnce(input: {
     if (!value?.byteLength) continue;
     await handle.write(value, 0, value.byteLength, received);
     received += value.byteLength;
-    progress.emit({
-      type: 'progress',
-      phase: 'download',
-      bytes: received,
-      total,
-      pct: pctOf(received, total),
-    });
+    tracker.set(received);
+    emitTrackedProgress(progress, 'download', tracker.snapshot(), { file });
   }
   return received;
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { UsageError } from './errors';
 import {
   VIRTUAL_FS_ROOT_ID,
+  VIRTUAL_HOME_ROOT_ID,
   isLocalPath,
   joinRootPath,
   parseRemoteFileRef,
@@ -64,6 +65,24 @@ describe('parseRemoteFileRef', () => {
       node: null,
       root: VIRTUAL_FS_ROOT_ID,
       relpath: '/etc',
+    });
+  });
+
+  test('home-root virtual id colon form is not a node prefix', () => {
+    expect(parseRemoteFileRef(`${VIRTUAL_HOME_ROOT_ID}:/tmp/x`)).toEqual({
+      node: null,
+      root: VIRTUAL_HOME_ROOT_ID,
+      relpath: '/tmp/x',
+    });
+    expect(parseRemoteFileRef(`office:${VIRTUAL_HOME_ROOT_ID}/tmp/x`)).toEqual({
+      node: 'office',
+      root: VIRTUAL_HOME_ROOT_ID,
+      relpath: 'tmp/x',
+    });
+    expect(parseRemoteFileRef(`${VIRTUAL_HOME_ROOT_ID}:`)).toEqual({
+      node: null,
+      root: VIRTUAL_HOME_ROOT_ID,
+      relpath: '',
     });
   });
 

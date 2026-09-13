@@ -10,7 +10,6 @@ import type {
   WatchRuleStateDto,
 } from '@vibeterm/shared';
 import type { LanguageModel } from 'ai';
-import { generateObject } from 'ai';
 import { z } from 'zod';
 import { getDeviceById } from '../db';
 import { getLlmProviderById } from '../db/llm';
@@ -25,6 +24,7 @@ import {
   updateWatchRule,
 } from '../db/watch';
 import { t } from '../i18n';
+import { loadAiSdk } from '../llm/ai-sdk-lazy';
 import { resolveLanguageModel } from '../llm/provider-registry';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { compileWatchPattern } from '../watch/evaluator';
@@ -342,6 +342,7 @@ async function generateAssistRegexObject(
 ): Promise<{ ok: true; object: z.infer<typeof assistSchema> } | { ok: false; response: Response }> {
   try {
     const model = await deps.resolveModel(parsed.providerId, parsed.modelId);
+    const { generateObject } = await loadAiSdk();
     const result = await generateObject({
       model,
       schema: assistSchema,

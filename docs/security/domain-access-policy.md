@@ -44,7 +44,7 @@
 
 路由挂在 `/api/system/*` 兜底之前，因此 hub 可以用 `/n/<id>/api/system/domain-access` 读写**远端节点**的策略——这条是 peer 入站路径，不受本策略拦截。
 
-`GET /api/local/status` 也带上同形状的 `domainAccess`（本机卡片用）。`/api/local/*` 不经 peer 入站，只能本机读。
+`GET /api/local/status` 也带上同形状的 `domainAccess`（本机卡片用）。`/api/local/*` 与其它 `/api/*` 一样可以经 `/n/<id>/api/local/*` 转发到对端节点（peer 入站路径不受本策略拦截）；不要把它理解成本机-only。
 
 `viaDomain` 只在入口节点自己的请求上有意义：它表示「你现在这个页面就是经域名进来的」。
 

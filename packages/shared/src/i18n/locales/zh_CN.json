@@ -1880,6 +1880,7 @@
         "device_not_found": "设备不存在",
         "root_not_found": "目录项不存在",
         "root_disabled": "该目录已禁用",
+        "root_virtual": "虚拟目录不可修改或删除",
         "connection_failed": "连接设备失败",
         "auth_unsupported": "该设备的认证方式不支持文件访问（请用密钥或 ssh-agent）",
         "rsync_missing_local": "服务器上未安装 rsync",

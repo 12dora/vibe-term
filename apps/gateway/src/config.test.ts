@@ -621,3 +621,19 @@ describe('hub auto-promote and nearest-uplink env', () => {
     expect(() => parseUplinkPreferNearest('maybe')).toThrow('VIBETERM_UPLINK_PREFER_NEAREST');
   });
 });
+
+describe('config.memoryProfile', () => {
+  test('import 时快照 VIBETERM_MEMORY_PROFILE', async () => {
+    const saved = process.env.VIBETERM_MEMORY_PROFILE;
+    process.env.VIBETERM_MEMORY_PROFILE = 'small';
+    try {
+      const mod = (await import(`./config.ts?memprofile=${Date.now()}`)) as {
+        config: { memoryProfile: 'standard' | 'small' };
+      };
+      expect(mod.config.memoryProfile).toBe('small');
+    } finally {
+      if (saved === undefined) delete process.env.VIBETERM_MEMORY_PROFILE;
+      else process.env.VIBETERM_MEMORY_PROFILE = saved;
+    }
+  });
+});

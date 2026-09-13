@@ -49,11 +49,27 @@ describe('paneRoots', () => {
   test('没有启用的根时合成文件系统根 /', () => {
     expect(paneRoots([])).toEqual([VIRTUAL_FS_ROOT]);
     expect(paneRoots([root('r1', false)])).toEqual([VIRTUAL_FS_ROOT]);
-    expect(VIRTUAL_FS_ROOT).toMatchObject({ id: VIRTUAL_FS_ROOT_ID, path: '/', name: '/' });
+    expect(VIRTUAL_FS_ROOT).toMatchObject({
+      id: VIRTUAL_FS_ROOT_ID,
+      path: '/',
+      name: '/',
+      virtual: true,
+    });
   });
 
   test('有启用的根时只留启用项，不掺虚拟根', () => {
     expect(paneRoots([root('r1', true), root('r2', false)]).map((item) => item.id)).toEqual(['r1']);
+  });
+
+  test('网关带回的虚拟 home 根按启用项列出，不再合成 fs-root', () => {
+    const home: FileRootDto = {
+      ...root('home-root', true),
+      path: '/home/u',
+      name: 'home',
+      virtual: true,
+    };
+    expect(paneRoots([home]).map((item) => item.id)).toEqual(['home-root']);
+    expect(paneRoots([home, root('r2', false)]).map((item) => item.id)).toEqual(['home-root']);
   });
 });
 

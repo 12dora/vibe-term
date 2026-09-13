@@ -7,6 +7,9 @@ import { UsageError } from './errors';
 
 export { VIRTUAL_FS_ROOT_ID };
 
+/** 网关虚拟 home 根（`$HOME`）；与 `fs-root` 一样可走冒号形式。 */
+export const VIRTUAL_HOME_ROOT_ID = 'home-root';
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NODE_ID_RE = /^[0-9a-f]{32}$/;
 const NODE_ALIASES = new Set(['self', 'local', 'entry', '.']);
@@ -59,7 +62,7 @@ function splitNodePrefix(input: string): { node: string | null; rest: string } {
 }
 
 function isRootToken(value: string): boolean {
-  return UUID_RE.test(value) || value === VIRTUAL_FS_ROOT_ID;
+  return UUID_RE.test(value) || value === VIRTUAL_FS_ROOT_ID || value === VIRTUAL_HOME_ROOT_ID;
 }
 
 function isNodeToken(value: string): boolean {

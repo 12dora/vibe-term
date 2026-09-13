@@ -5,8 +5,8 @@ import { type FileRootDto, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
 import type { DialogNodeOption } from '../dialog-nodes';
 
 /**
- * 节点没有配置任何启用的文件根时，合成一个指向文件系统根的选项，让面板至少能浏览起来。
- * 后端只在「零启用根」这一种情况下认这个 id；`GET /api/files/roots` 不返回它。
+ * 节点没有配置任何启用的文件根、且网关也没带回虚拟 `home-root` 时，合成一个指向 `/` 的选项。
+ * 后端只在「零启用根」时认 `fs-root`；`GET /api/files/roots` 不返回它，但会返回 `home-root`（`virtual: true`）。
  */
 export const VIRTUAL_FS_ROOT: FileRootDto = {
   id: VIRTUAL_FS_ROOT_ID,
@@ -17,9 +17,10 @@ export const VIRTUAL_FS_ROOT: FileRootDto = {
   name: '/',
   enabled: true,
   sortOrder: 0,
+  virtual: true,
 };
 
-/** `roots` 为 undefined 表示查询还没回来：此时不合成，避免把虚拟根抢先选上。 */
+/** `roots` 为 undefined 表示查询还没回来：此时不合成，避免把虚拟根抢先选上。虚拟根只列出、不在此编辑。 */
 export function paneRoots(roots: readonly FileRootDto[] | undefined): FileRootDto[] {
   if (!roots) return [];
   const enabled = roots.filter((root) => root.enabled);

@@ -16,6 +16,7 @@ const TRANSFER_ERROR_CODES: ReadonlySet<string> = new Set<TransferErrorCode>([
   'device_not_found',
   'root_not_found',
   'root_disabled',
+  'root_virtual',
   'connection_failed',
   'auth_unsupported',
   'rsync_missing_local',

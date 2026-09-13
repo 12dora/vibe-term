@@ -1,8 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type TransferJobEvent, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
+import { type TransferJobEvent, VIRTUAL_FS_ROOT_ID, VIRTUAL_HOME_ROOT_ID } from '@vibeterm/shared';
 import { dispatchRoutes } from '../api/route';
 import { getDb } from '../db/client';
 import { createDevice } from '../db/devices';
@@ -496,5 +496,70 @@ describe('transfer routes on the virtual fs root', () => {
     })) as Response;
     expect(granted.status).toBe(400);
     expect(await granted.json()).toMatchObject({ code: 'root_not_found' });
+  });
+});
+
+describe('transfer routes on the virtual home root', () => {
+  let destDir = '';
+  let deviceId = '';
+  let homePath = '';
+
+  beforeAll(() => runMigrations());
+
+  beforeEach(() => {
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    resetTransferGrantsForTests();
+    resetTransferJobsForTests();
+    destDir = tempDir();
+    homePath = realpathSync(homedir());
+    const now = new Date().toISOString();
+    deviceId = `dev-${Math.random().toString(16).slice(2)}`;
+    createDevice({
+      id: deviceId,
+      name: 'local',
+      type: 'local',
+      authMode: 'agent',
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setTransferMeshBridge({
+      selfNodeId: NODE_A,
+      transportOf: () => 'relay',
+      forwardInternalHttp: async () => new Response('{}', { status: 200 }),
+    });
+  });
+
+  afterEach(() => {
+    setTransferMeshBridge(null);
+    resetTransferJobsForTests();
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('grant 接受 home-root（即使已有其它启用根）', async () => {
+    createFileRoot({ deviceId, path: destDir });
+    const granted = (await dispatch('POST', '/api/transfer/grants', {
+      fromNodeId: NODE_A,
+      destRootId: VIRTUAL_HOME_ROOT_ID,
+      destPath: homePath,
+    })) as Response;
+    expect(granted.status).toBe(200);
+    expect(await granted.json()).toMatchObject({ grantId: expect.any(String) });
+  });
+
+  test('home-root 之外的 destPath 被拒', async () => {
+    const granted = (await dispatch('POST', '/api/transfer/grants', {
+      fromNodeId: NODE_A,
+      destRootId: VIRTUAL_HOME_ROOT_ID,
+      destPath: destDir,
+    })) as Response;
+    expect(granted.status).toBe(400);
+    expect(await granted.json()).toMatchObject({ code: 'outside_roots' });
   });
 });

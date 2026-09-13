@@ -1,5 +1,8 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { Device, FileRootDto } from '@vibeterm/shared';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { type Device, type FileRootDto, VIRTUAL_HOME_ROOT_ID } from '@vibeterm/shared';
 import { createDevice } from '../db/devices';
 import { createFileRoot, deleteFileRoot } from '../db/file-roots';
 import { runMigrations } from '../db/migrate';
@@ -122,5 +125,68 @@ describe('PUT /api/files/roots/order', () => {
       expect(status).toBe(400);
       expect(json).toEqual({ error: t('apiError.invalidRequest') });
     }
+  });
+});
+
+describe('GET/PATCH/DELETE virtual home-root', () => {
+  const extraDirs: string[] = [];
+
+  afterEach(() => {
+    while (extraDirs.length > 0) {
+      const dir = extraDirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('GET 包含 virtual home-root，PATCH/DELETE 返回 400 root_virtual', async () => {
+    const deviceId = `g1-api-home-${crypto.randomUUID().slice(0, 8)}`;
+    createDevice(makeDevice(deviceId));
+    const extra = mkdtempSync(join(tmpdir(), 'vibeterm-home-extra-'));
+    extraDirs.push(extra);
+    createdRootIds.push(createFileRoot({ deviceId, path: extra }).id);
+
+    const listed = await call('GET', '/api/files/roots');
+    expect(listed.status).toBe(200);
+    const home = (listed.json as { roots: FileRootDto[] }).roots.find(
+      (row) => row.id === VIRTUAL_HOME_ROOT_ID
+    );
+    expect(home).toMatchObject({
+      id: VIRTUAL_HOME_ROOT_ID,
+      deviceType: 'local',
+      path: realpathSync(homedir()),
+      name: 'home',
+      enabled: true,
+      virtual: true,
+    });
+
+    const patched = await call('PATCH', `/api/files/roots/${VIRTUAL_HOME_ROOT_ID}`, {
+      enabled: false,
+    });
+    expect(patched.status).toBe(400);
+    expect(patched.json).toEqual({ error: 'root_virtual', code: 'root_virtual' });
+
+    const deleted = await call('DELETE', `/api/files/roots/${VIRTUAL_HOME_ROOT_ID}`);
+    expect(deleted.status).toBe(400);
+    expect(deleted.json).toEqual({ error: 'root_virtual', code: 'root_virtual' });
+  });
+
+  test('用户启用根名为 home 时 GET 不再附带虚拟 home-root', async () => {
+    const deviceId = `g1-api-shadow-${crypto.randomUUID().slice(0, 8)}`;
+    createDevice(makeDevice(deviceId));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-home-shadow-'));
+    extraDirs.push(dir);
+    const homePath = join(dir, 'home');
+    mkdirSync(homePath);
+    const created = createFileRoot({ deviceId, path: homePath });
+    createdRootIds.push(created.id);
+
+    const listed = await call('GET', '/api/files/roots');
+    const roots = (listed.json as { roots: FileRootDto[] }).roots;
+    expect(roots.some((row) => row.id === VIRTUAL_HOME_ROOT_ID)).toBe(false);
+    expect(roots.find((row) => row.id === created.id)).toMatchObject({
+      name: 'home',
+      path: homePath,
+    });
+    expect(roots.find((row) => row.id === created.id)?.virtual).toBeUndefined();
   });
 });

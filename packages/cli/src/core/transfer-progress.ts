@@ -12,6 +12,12 @@ export interface CopyProgressEvent {
   total?: number;
   pct?: number;
   rate?: string;
+  /** 滑动窗口字节/秒；未知为 null。 */
+  ratePerSec?: number | null;
+  /** 剩余秒数；未知为 null。 */
+  etaSec?: number | null;
+  /** 当前文件的 relPath 或 basename；未知为 null。 */
+  file?: string | null;
   path?: string;
   message?: string;
   reason?: string;
@@ -19,6 +25,13 @@ export interface CopyProgressEvent {
   skipped?: number;
   errors?: number;
   truncated?: boolean;
+}
+
+export interface ProgressRateSample {
+  transferredBytes: number;
+  totalBytes: number;
+  ratePerSec: number;
+  etaSec: number | null;
 }
 
 export interface CopyProgressMode {
@@ -94,9 +107,30 @@ function formatHumanProgress(event: CopyProgressEvent): string {
   const bytes = event.bytes ?? 0;
   const total = event.total ?? 0;
   const rate = event.rate ? `  ${event.rate}` : '';
-  const path = event.path ? `  ${event.path}` : '';
+  const label = event.path ?? event.file;
+  const path = label ? `  ${label}` : '';
   const pair = total > 0 ? `${formatBytes(bytes)} / ${formatBytes(total)}` : formatBytes(bytes);
   return `${event.phase ?? 'copy'}  ${pct}%  ${pair}${rate}${path}`;
+}
+
+export function emitTrackedProgress(
+  progress: CopyProgress,
+  phase: CopyPhase,
+  snap: ProgressRateSample,
+  extra: { file?: string | null; path?: string; rate?: string } = {}
+): void {
+  progress.emit({
+    type: 'progress',
+    phase,
+    bytes: snap.transferredBytes,
+    total: snap.totalBytes,
+    pct: pctOf(snap.transferredBytes, snap.totalBytes),
+    ratePerSec: snap.ratePerSec,
+    etaSec: snap.etaSec,
+    file: extra.file ?? null,
+    path: extra.path,
+    rate: extra.rate,
+  });
 }
 
 export function pctOf(bytes: number, total: number): number {

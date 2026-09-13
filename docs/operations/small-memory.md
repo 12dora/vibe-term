@@ -30,7 +30,7 @@ relay 单跑不再启动 agent / tunnel / push / watch / portmap / 即时通讯�
 
 ### 内存档位
 
-`VIBETERM_MEMORY_PROFILE=standard|small`；未设置时 `os.totalmem() ≤ 2 GiB` 自动 `small`，启动日志一行 `[memory] profile=…`。生产 `app.env` 不必写该键。
+`VIBETERM_MEMORY_PROFILE=standard|small`；未设置时取 `min(os.totalmem(), process.constrainedMemory() || ∞) ≤ 2 GiB` 自动 `small`（cgroup 限内的容器也会落到 small），启动日志一行 `[memory] profile=…`。生产 `app.env` 不必写该键。
 
 | 项 | standard | small |
 |---|---:|---:|
@@ -42,7 +42,7 @@ relay 单跑不再启动 agent / tunnel / push / watch / portmap / 即时通讯�
 | canonical 背压 hold | 2 MiB | 1 MiB |
 | SQLite `cache_size` | 约 4 MiB | 约 2 MiB |
 
-两档共同：SQLite `mmap_size=0`、`wal_autocheckpoint=500`；静态压缩内存 LRU 64 → 8 MiB（生产 fe-dist 自带 `.br/.gz` sidecar，几乎用不到）；输入命令窗口 pending ≤ 256 条 / 1 MiB、控制口命令队列深度 ≤ 512（满则返回 `input_queue_full` / `control_queue_full`，不再无界堆积）；事件节流表 10 分钟过期清理；登录口令 Argon2id 仍是 64 MiB / 次（参数不能改，否则破坏已有哈希），但进程内串行，不会两笔叠成 128 MiB。
+两档共同：SQLite `mmap_size=0`、`wal_autocheckpoint=500`；静态压缩内存 LRU 64 → 8 MiB（生产 fe-dist 自带 `.br/.gz` sidecar，几乎用不到）；输入命令窗口 pending 深度 ≤ 256 条（只卡已排队，单次粘贴按字节预算）/ 3 MiB（覆盖 1 MiB WS 帧粘贴的 hex argv）、控制口命令队列深度 ≤ 512（满则返回 `input_queue_full` / `control_queue_full`，不再无界堆积）；事件节流表 10 分钟过期清理；登录口令 Argon2id 仍是 64 MiB / 次（参数不能改，否则破坏已有哈希），但进程内串行，不会两笔叠成 128 MiB。
 
 ### 实测（空闲、单台本地设备、无浏览器，`process.memoryUsage`）
 

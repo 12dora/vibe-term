@@ -31,6 +31,7 @@ export type FileErrorCode =
   | 'device_not_found'
   | 'root_not_found'
   | 'root_disabled'
+  | 'root_virtual'
   | 'connection_failed'
   | 'auth_unsupported'
   | 'rsync_missing_local'
@@ -54,6 +55,8 @@ export interface FileRootDto {
   /** 是否启用 */
   enabled: boolean;
   sortOrder: number;
+  /** 网关合成、不落库。PATCH / DELETE 返回 400 `root_virtual` */
+  virtual?: boolean;
 }
 
 export interface CreateFileRootRequest {
@@ -188,3 +191,9 @@ export interface BrowseDirectoryResponse {
  * 不出现在 `GET /api/files/roots` 的返回里，由前端在列表为空时自行合成。
  */
 export const VIRTUAL_FS_ROOT_ID = 'fs-root';
+
+/**
+ * 虚拟 home 根：绑定本机设备的 `$HOME`（realpath），始终可解析，除非用户已有启用根的展示名为 `home`。
+ * 出现在 `GET /api/files/roots`（`virtual: true`），不落库。
+ */
+export const VIRTUAL_HOME_ROOT_ID = 'home-root';

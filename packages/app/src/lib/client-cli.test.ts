@@ -28,9 +28,11 @@ describe('client cli dispatch table', () => {
   test('covers the groups @vibeterm/cli registers', () => {
     expect([...CLIENT_CLI_COMMANDS].sort()).toEqual(
       [
+        'agent',
         'api',
         'cp',
         'devices',
+        'exec',
         'files',
         'login',
         'logout',
@@ -38,10 +40,10 @@ describe('client cli dispatch table', () => {
         'port',
         'settings',
         'share',
+        'system',
         'term',
         'tmux',
         'watch',
-        'agent',
         'whoami',
       ].sort()
     );
