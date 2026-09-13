@@ -1,41 +1,31 @@
-import {
-  type KeyLogEffect,
-  RELAY_RECORD_TYPES,
-  applyKeyLogRecord,
-  bytesEqual,
-  computeRecordHash,
-  decodeBase64url,
-  decodeKeyLogRecord,
-  encodeBase64url,
-  verifyKeyLogRecord,
-} from '@vibeterm/shared/auth';
+import { type KeyLogEffect, encodeBase64url } from '@vibeterm/shared/auth';
 import { FORCE_KEYLOG_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
-import { readJsonObjectBody } from '../api/http';
-import { requiredStrings } from '../api/route-input';
 import { pickWriterHub } from '../auth/mesh-hub-store';
-import { makeDeferredVerifyPasskeyAssertion } from '../auth/passkey';
 import {
   applyForcedKeyLogCompat,
   filterNotRetiredHubRecords,
   inspectHubAuthRecordCompat,
 } from '../hub/hub-authorization';
 import { isLoopbackHostLiteral } from './address-class';
-import { logAuthLoginFailed, logAuthSessionRevokes } from './auth-audit-log';
+import { logAuthSessionRevokes } from './auth-audit-log';
+import { type KeyLogAppendPlan, planKeyLogAppend, readKeyLogAppend } from './auth-key-log-plan';
+import { AuthKeyLogSync } from './auth-key-log-sync';
 import { findPrimaryUser } from './auth-mode-cache';
 import type { AuthRoutesDeps } from './auth-routes';
-import { clientIpFromRequest } from './client-ip';
-import { isPeerRequest } from './client-source';
-import type { KeyLogHubAck } from './mesh-deps';
 import { exemptMetaKeyLaggingNodes, metaKeyLaggingIdsFor } from './relay-meta-lag';
 import { jsonBody, jsonError } from './session-middleware';
 import { sameHubUrl } from './uplink-pool';
 
-export type LoginFailureSink = {
-  noteUidHint: (uid: string) => void;
-  fail: (code: string, status?: number, logCode?: string) => Response;
-  precheck: (body: Record<string, unknown> | null) => Response | null;
-  rejectUid: () => Response | null;
+export type { LoginFailureSink } from './auth-key-log-login';
+export { createLoginFailureSink, loginRequestContext } from './auth-key-log-login';
+export { verifySecondFactors } from './auth-passkey-origin';
+export { definesUplink, planKeyLogAppend } from './auth-key-log-plan';
+export type { KeyLogAppendPlan } from './auth-key-log-plan';
+
+export type AuthKeyLogHost = {
+  invalidateAuthModeCache: () => void;
+  getForwardWriterWrite: () => ((req: Request, uid?: string) => Promise<Response | null>) | null;
 };
 
 /**
@@ -53,124 +43,15 @@ function usableHubUrl(url: string | null | undefined): string | null {
   return url;
 }
 
-export function loginRequestContext(req: Request): { peer: boolean; ip: string } {
-  const peer = isPeerRequest(req);
-  // 入口 forwarder 会丢掉 x-forwarded-* / CF-Connecting-IP，目标节点看到的是
-  // `peer:<入口>`。对端自带的转发头也不可信（成员节点可伪造），因此转发登录的
-  // IP 桶留空，只按 uid 计；真实客户端 IP 的限速在入口执行。
-  const ip = peer ? '' : (clientIpFromRequest(req) ?? 'local');
-  return { peer, ip };
-}
-
-export function createLoginFailureSink(
-  deps: {
-    recordFailure: (key: string) => void;
-    loginLimited: (uidHint: string, ip: string) => boolean;
-    peekUid: (body: Record<string, unknown>) => string;
-    uidTooLong: (uid: string) => boolean;
-  },
-  ctx: { peer: boolean; ip: string }
-): LoginFailureSink {
-  const { ip } = ctx;
-  let uidHint = '';
-  const noteUidHint = (uid: string) => {
-    uidHint = uid;
-  };
-  const fail = (code: string, status?: number, logCode?: string): Response => {
-    logAuthLoginFailed({ uid: uidHint, code: logCode ?? code, ip });
-    if (code === 'RATE_LIMITED') return jsonError(code, status ?? 429);
-    if (code !== 'TOTP_REQUIRED' && code !== 'PASSKEY_REQUIRED') {
-      if (ip) deps.recordFailure(`ip:${ip}`);
-      if (uidHint) deps.recordFailure(`uid:${uidHint}`);
-    }
-    return jsonError(code, status ?? 401);
-  };
-  const rejectUid = (): Response | null => {
-    if (uidHint && deps.uidTooLong(uidHint)) {
-      logAuthLoginFailed({ uid: uidHint, code: 'MALFORMED', ip });
-      return jsonError('MALFORMED', 400);
-    }
-    if (deps.loginLimited(uidHint, ip)) {
-      logAuthLoginFailed({ uid: uidHint, code: 'RATE_LIMITED', ip });
-      return jsonError('RATE_LIMITED', 429);
-    }
-    return null;
-  };
-  const precheck = (body: Record<string, unknown> | null): Response | null => {
-    if (!body) {
-      if (ip) deps.recordFailure(`ip:${ip}`);
-      logAuthLoginFailed({ uid: uidHint, code: 'MALFORMED', ip });
-      return jsonError('MALFORMED', 400);
-    }
-    noteUidHint(deps.peekUid(body));
-    return rejectUid();
-  };
-  return { noteUidHint, fail, precheck, rejectUid };
-}
-
-export { verifySecondFactors } from './auth-passkey-origin';
-
-export type AuthKeyLogHost = {
-  invalidateAuthModeCache: () => void;
-  getForwardWriterWrite: () => ((req: Request, uid?: string) => Promise<Response | null>) | null;
-};
-
-/**
- * `set-relays` / `meta-key` 定义的是上级本身：首次接中继时还没有中继可问，被踢之后旧令牌已死，
- * hub → 中继迁移更不该要求旧 hub 认得这个类型。这两类记录一律本地优先落账。
- */
-const UPLINK_DEFINING_RECORDS: ReadonlySet<string> = new Set<string>(RELAY_RECORD_TYPES);
-
-export function definesUplink(bytes: Uint8Array): boolean {
-  try {
-    return UPLINK_DEFINING_RECORDS.has(decodeKeyLogRecord(bytes).type);
-  } catch {
-    return false;
-  }
-}
-
-export type KeyLogAppendPlan = {
-  /** 本地日志权威：先落账再推给上级，上级确认不影响本地提交。 */
-  localFirst: boolean;
-  /** 是否把记录发给当前上级（迁移中的 set-relays 不能回灌旧 hub）。 */
-  publish: boolean;
-};
-
-/**
- * 中继模式下本地成员表/密钥日志是权威，先本地提交，再通过 relayAck 单独报告中继确认。
- * hub 模式只有 `set-relays` / `meta-key` 走本地优先。`readmit-node` 与 `admit-node` 一样：
- * 任意模式都 publish；hub 模式走 writer（`localFirst: false`）。
- */
-export function planKeyLogAppend(input: {
-  relayMode: boolean;
-  bytes: Uint8Array;
-}): KeyLogAppendPlan {
-  const defining = definesUplink(input.bytes);
-  return { localFirst: input.relayMode || defining, publish: input.relayMode || !defining };
-}
-
-async function readKeyLogAppend(
-  req: Request
-): Promise<{ bytes: Uint8Array; sig: Uint8Array; force: boolean } | null> {
-  const body = await readJsonObjectBody(req);
-  const fields = body && requiredStrings(body, ['bytes', 'sig']);
-  if (!fields) return null;
-  try {
-    return {
-      bytes: decodeBase64url(fields.bytes),
-      sig: decodeBase64url(fields.sig),
-      force: readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1',
-    };
-  } catch {
-    return null;
-  }
-}
-
 export class AuthKeyLogRoutes {
+  private readonly sync: AuthKeyLogSync;
+
   constructor(
     private readonly deps: AuthRoutesDeps,
     private readonly host: AuthKeyLogHost
-  ) {}
+  ) {
+    this.sync = new AuthKeyLogSync(deps);
+  }
 
   handleKeyLogHead(userId: string | null): Response {
     if (!userId) return jsonError('UNAUTHORIZED', 401);
@@ -238,7 +119,7 @@ export class AuthKeyLogRoutes {
       }
       if (relayMode) {
         const ack = opts.plan.publish
-          ? await this.publishToRelay(record)
+          ? await this.sync.publishToRelay(record)
           : { ok: false as const, error: 'not_published' };
         relayDelivery = ack.ok ? { relayAck: true } : { relayAck: false, relayError: ack.error };
       }
@@ -251,7 +132,7 @@ export class AuthKeyLogRoutes {
     };
     const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
     if (!applied.ok) {
-      const replayed = this.identicalAppliedRecord(userId, bytes, sig);
+      const replayed = this.sync.identicalAppliedRecord(userId, bytes, sig);
       if (replayed) {
         this.deps.onKeyLogEffects?.(userId, []);
         return done(replayed.seq, replayed.hash);
@@ -322,14 +203,14 @@ export class AuthKeyLogRoutes {
     sig: Uint8Array,
     force = false
   ): Promise<Response> {
-    const preview = await this.previewKeyLog(userId, bytes, sig);
+    const preview = await this.sync.previewKeyLog(userId, bytes, sig);
     if (!preview.ok) {
       if (preview.error === 'fork') {
         return jsonError('KEY_LOG_FORK', 409);
       }
       return jsonError(preview.error, 400);
     }
-    const ack = await this.syncToHub({ bytes, sig, force });
+    const ack = await this.sync.syncToHub({ bytes, sig, force });
     if (!ack.ok) {
       if (ack.error === 'HUB_TIMEOUT') {
         return jsonError('HUB_TIMEOUT', 504);
@@ -338,7 +219,7 @@ export class AuthKeyLogRoutes {
     }
     const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
     if (!applied.ok) {
-      const replayed = this.identicalAppliedRecord(userId, bytes, sig);
+      const replayed = this.sync.identicalAppliedRecord(userId, bytes, sig);
       if (replayed) {
         this.deps.onKeyLogEffects?.(userId, []);
         return this.keyLogSuccess(replayed.seq, replayed.hash, { hubSync: true, hubAck: true });
@@ -350,140 +231,6 @@ export class AuthKeyLogRoutes {
     }
     this.emitKeyLogEffects(userId, applied.effects);
     return this.keyLogSuccess(applied.seq, applied.hash, { hubSync: true, hubAck: true });
-  }
-
-  private async previewKeyLog(
-    userId: string,
-    bytes: Uint8Array,
-    sig: Uint8Array
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (this.identicalAppliedRecord(userId, bytes, sig)) {
-      return { ok: true };
-    }
-    try {
-      const state = this.deps.keyLogService.currentState(userId);
-      // 预演必须无副作用：计数器只在记录真正落库那一次推进（见 makeDeferredVerifyPasskeyAssertion），
-      // 否则计数器会自增的认证器上，紧随其后的本地落账验签必然失败。
-      const { verify: verifyPasskeyAssertion } = makeDeferredVerifyPasskeyAssertion(
-        this.deps.userStore
-      );
-      const verified = await verifyKeyLogRecord(bytes, sig, {
-        head: state.head,
-        rootEpoch: state.rootEpoch,
-        rootPublicKey: state.rootPublicKey,
-        resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
-        verifyPasskeyAssertion,
-      });
-      if (!verified.ok) {
-        return verified;
-      }
-      const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
-        verifyPasskeyAssertion,
-      });
-      if (!applied.ok) {
-        return { ok: false, error: applied.error };
-      }
-      return { ok: true };
-    } catch {
-      return { ok: false, error: 'malformed_payload' };
-    }
-  }
-
-  private async syncToHub(record: {
-    bytes: Uint8Array;
-    sig: Uint8Array;
-    force?: boolean;
-  }): Promise<KeyLogHubAck> {
-    if (!this.deps.publisher.publishAndAck) {
-      return { ok: false, error: 'unavailable' };
-    }
-    const first = await this.safePublishAndAck(record);
-    if (first.ok) return first;
-    if (first.error !== 'timeout') return first;
-    const retry = await this.safePublishAndAck(record);
-    if (retry.ok) return retry;
-    if (retry.error !== 'timeout') return retry;
-    if (await this.hubAlreadyHasRecord(record)) {
-      let seq: bigint | number = 0;
-      try {
-        seq = decodeKeyLogRecord(record.bytes).seq;
-      } catch {
-        seq = 0;
-      }
-      return { ok: true, seq };
-    }
-    return { ok: false, error: 'HUB_TIMEOUT' };
-  }
-
-  private async safePublishAndAck(record: {
-    bytes: Uint8Array;
-    sig: Uint8Array;
-    force?: boolean;
-  }): Promise<KeyLogHubAck> {
-    const publishAndAck = this.deps.publisher.publishAndAck;
-    if (!publishAndAck) {
-      return { ok: false, error: 'unavailable' };
-    }
-    try {
-      return await publishAndAck(record);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'hub_error';
-      return { ok: false, error: message === 'timeout' ? 'timeout' : message };
-    }
-  }
-
-  private async publishToRelay(record: {
-    bytes: Uint8Array;
-    sig: Uint8Array;
-  }): Promise<KeyLogHubAck> {
-    const ack = await this.safePublishAndAck(record);
-    if (ack.ok || (ack.error !== 'timeout' && ack.error !== 'SEQ_MISMATCH')) return ack;
-    try {
-      const seq = decodeKeyLogRecord(record.bytes).seq;
-      const remote = await this.deps.publisher.queryKeyLogAt?.(seq);
-      if (remote && bytesEqual(remote.bytes, record.bytes) && bytesEqual(remote.sig, record.sig)) {
-        return { ok: true, seq };
-      }
-    } catch {
-      return ack;
-    }
-    return ack;
-  }
-
-  private async hubAlreadyHasRecord(record: {
-    bytes: Uint8Array;
-    sig: Uint8Array;
-  }): Promise<boolean> {
-    try {
-      const seq = decodeKeyLogRecord(record.bytes).seq;
-      const remote = await this.deps.publisher.queryKeyLogAt?.(seq);
-      if (remote && bytesEqual(remote.bytes, record.bytes) && bytesEqual(remote.sig, record.sig)) {
-        return true;
-      }
-    } catch {
-      // fall through to head hash
-    }
-    const head = await this.deps.publisher.queryHubHead?.();
-    if (!head) return false;
-    return bytesEqual(head.hash, computeRecordHash(record.bytes, record.sig));
-  }
-
-  private identicalAppliedRecord(
-    userId: string,
-    bytes: Uint8Array,
-    sig: Uint8Array
-  ): { seq: number; hash: Uint8Array } | null {
-    try {
-      const record = decodeKeyLogRecord(bytes);
-      const state = this.deps.keyLogService.currentState(userId);
-      const hash = computeRecordHash(bytes, sig);
-      if (state.head.seq === record.seq && bytesEqual(state.head.hash, hash)) {
-        return { seq: Number(record.seq), hash };
-      }
-    } catch {
-      return null;
-    }
-    return null;
   }
 
   private keyLogSuccess(
@@ -522,7 +269,7 @@ export class AuthKeyLogRoutes {
     bytes: Uint8Array,
     sig: Uint8Array
   ): Response | null {
-    if (this.identicalAppliedRecord(userId, bytes, sig)) {
+    if (this.sync.identicalAppliedRecord(userId, bytes, sig)) {
       return null;
     }
     const relayMode = this.inRelayMode(userId);

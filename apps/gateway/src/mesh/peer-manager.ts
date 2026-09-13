@@ -1,6 +1,4 @@
-import os from 'node:os';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
-import { defaultScheduler } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
 import {
   type PeerLinkPurpose,
@@ -9,52 +7,34 @@ import {
   peerDialRetireOf,
   retirePeerDialState,
 } from './node-pause';
-import { DcRerollCoordinator } from './peer-dc-reroll';
-import { DcUpgradeCoordinator, PeerCollaboratorHost } from './peer-dc-upgrade';
-import { PeerDialer } from './peer-dialer';
+import { type PeerCtlHost, handlePeerCtl, receiveRtcSignal } from './peer-ctl';
+import type { DcRerollCoordinator } from './peer-dc-reroll';
+import { type DcUpgradeCoordinator, PeerCollaboratorHost } from './peer-dc-upgrade';
+import type { PeerDialer } from './peer-dialer';
 import { winningDialInitiator } from './peer-direct-attempt';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { getPeerLink } from './peer-get-link';
-import { PeerLinkDrain } from './peer-link-drain';
-import { PeerLinkWaiters } from './peer-link-waiters';
-import { PeerLiveRegistry } from './peer-live-registry';
-import {
-  PEER_CONNECT_TIMEOUT_MS,
-  PEER_IDLE_MS,
-  PEER_MAX_CONCURRENT_STREAMS,
-  type PeerManagerState,
-  RTC_PEER_INBOX_MAX_MESSAGES,
-  createPeerManagerState,
-  isPeerTrusted,
-} from './peer-manager-state';
-import type { PeerLinkDetail, PeerManagerOptions, TransportWaiter } from './peer-manager-types';
+import { type PeerLifecycleHost, startPeerManager, stopPeerManager } from './peer-lifecycle';
+import type { PeerLinkDrain } from './peer-link-drain';
+import type { PeerLinkWaiters } from './peer-link-waiters';
+import type { PeerLiveRegistry } from './peer-live-registry';
+import { type PeerManagerState, createPeerManagerState, isPeerTrusted } from './peer-manager-state';
+import type { PeerLinkDetail, PeerManagerOptions } from './peer-manager-types';
 import {
   listPeerReach,
   liveSessionOf,
   peerLinkDetailFromState,
   relayPresenceOfIndex,
   requirePeerAdmitted,
-  sendPeerCtlQuiet,
   viaRelayOfLive,
 } from './peer-path-view';
-import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
-import {
-  type PeerUpgradeOpts,
-  type RtcSignalInboxEntry,
-  RtcWakeGate,
-  deliverRtcSignal,
-  peerInitiatedRtcAttemptInput,
-  shouldDropUnboundRtcSignal,
-  shouldStartRtcAttempt,
-} from './peer-rtc-wake';
-import { PeerServer } from './peer-server';
-import { PeerStatusSync } from './peer-status-sync';
-import { defaultPeerWsFactory, sharedDirectDialLimiter } from './peer-ws-race';
+import type { PeerUpgradeOpts, RtcSignalInboxEntry, RtcWakeGate } from './peer-rtc-wake';
+import type { PeerServer } from './peer-server';
+import type { PeerStatusSync } from './peer-status-sync';
+import { createPeerCollaborators, wrapPeerScheduler } from './peer-wire';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
-import { RouteDegradeCoordinator, defaultRouteModeHolder } from './route-degrade';
-import { isRtcWakeSdp } from './rtc/ice';
-import { rtcLog } from './rtc/rtc-log';
+import type { RouteDegradeCoordinator } from './route-degrade';
 import type { DispatchHttp, MeshIdentity, PeerReach, PeerTransportKind } from './types';
 
 export {
@@ -115,16 +95,7 @@ export class PeerManager extends PeerCollaboratorHost {
 
   constructor(opts: PeerManagerOptions) {
     super();
-    let scheduler = opts.scheduler ?? defaultScheduler();
-    if (opts.now) {
-      const now = opts.now;
-      const inner = scheduler;
-      scheduler = {
-        now,
-        sleep: inner.sleep.bind(inner),
-        interval: inner.interval.bind(inner),
-      };
-    }
+    const scheduler = wrapPeerScheduler(opts);
     this.state = createPeerManagerState({
       identity: opts.identity,
       userStore: opts.userStore,
@@ -134,183 +105,94 @@ export class PeerManager extends PeerCollaboratorHost {
         opts.endpointBackoff ?? new PeerEndpointBackoff({ now: () => scheduler.now() }),
     });
     this.identity = opts.identity;
-    this.routes = new RouteDegradeCoordinator({
-      state: this.state,
-      mode: opts.routeMode ?? defaultRouteModeHolder(),
-      openRelay: (nodeId) => this.dialer.dialRelayOnly(nodeId),
-      forceInstall: (s, p, t, i, g, r, d) =>
-        this.registry.forceInstall(s, p, t, i, g, r ?? null, d),
-      finishRetire: (live, reason) => this.drain.finishRetire(live, reason),
-      maybeUpgrade: (nodeId) => this.maybeUpgrade(nodeId, { cooldown: false, userPath: true }),
-    });
     this.rtcInbox = this.state.rtcInbox;
     this.onBrowserSignal = opts.onBrowserSignal ?? null;
     this.ensureDcSession = opts.ensureDcSession ?? null;
     this.dispatchHttp = opts.dispatchHttp;
     const hubHost = opts.hubHost;
     this.hubHostOf = typeof hubHost === 'function' ? hubHost : () => hubHost ?? null;
-    this.dcUpgrade = new DcUpgradeCoordinator({
-      scheduler,
-      live: () => this.state.live,
-      dialDc: (nodeId) => this.dialer.dial(nodeId),
-      shouldTryDc: (nodeId) => this.dialer.shouldTryDc(nodeId),
-      dcCapable: (nodeId) => this.dialer.dcCapable(nodeId),
-      emitLinkInfo: (live) => this.registry.emitLinkInfo(live as LivePeer),
-      log: rtcLog,
-      stopped: () => this.state.stopped,
-      stopSignal: () => this.state.stopAbort.signal,
-      isTrusted: (nodeId) => this.isTrusted(nodeId),
-      pending: () => this.state.pending,
-      upgrading: () => this.state.upgrading,
-      hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
-      probeQuiesce: (live) => this.drain.probeQuiesce(live as LivePeer),
-      hasWsSecureCandidate: (nodeId) => this.dialer.hasWsSecureCandidate(nodeId),
-      lostDirect: () => this.state.lostDirect,
-    });
-    this.rtcWake = new RtcWakeGate({
+    const parts = createPeerCollaborators({
+      opts,
+      state: this.state,
       identity: this.identity,
-      userStore: opts.userStore,
       scheduler,
-      sendRtcSignal: (peerNodeId, msg) => this.rtcWake.sendRtcSignal(peerNodeId, msg),
-      dcCapable: (nodeId) => this.dialer.dcCapable(nodeId),
-      maybeUpgrade: (nodeId, upgradeOpts) => this.maybeUpgrade(nodeId, upgradeOpts),
-      stopSignal: () => this.state.stopAbort.signal,
-      stopped: () => this.state.stopped,
-      isTrusted: (nodeId) => this.isTrusted(nodeId),
-      live: () => this.state.live,
-      shouldTryDc: (nodeId) => this.dialer.shouldTryDc(nodeId),
-      pending: () => this.state.pending,
-      upgrading: () => this.state.upgrading,
-      wantsUpgrade: (live) => this.wantsUpgrade(live as LivePeer),
-      getLink: (nodeId) => this.getLink(nodeId),
-      rtcListeners: () => this.rtcListeners,
-      rtcInbox: () => this.state.rtcInbox,
-      hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
-      sendPeerCtl: (live, payload) => sendPeerCtlQuiet(live as LivePeer, payload),
-      ensureDcSession: this.ensureDcSession,
-      uplinkSendCtl: (payload) => this.state.uplink.sendCtl(payload),
-    });
-    this.statusSync = new PeerStatusSync(this.state, {
-      keyLogApplier: opts.keyLogApplier,
-      statusProvider: opts.statusProvider,
-      deps: {
-        sendPeerCtl: (live, msg) => sendPeerCtlQuiet(live, msg),
-        notifyPeerEndpointsChanged: (nodeId) => this.notifyPeerEndpointsChanged(nodeId),
-        listenPort: () => this.server?.port,
-      },
-    });
-    this.waiters = new PeerLinkWaiters(this.state, {
-      maybeUpgrade: (nodeId, upgradeOpts) => this.maybeUpgrade(nodeId, upgradeOpts),
-    });
-    this.drain = new PeerLinkDrain(this.state, {
-      clearIdle: (live) => this.registry.clearIdle(live),
-      sendPeerCtl: (live, msg) => sendPeerCtlQuiet(live, msg),
-      maybeUpgrade: (nodeId, upgradeOpts) => this.maybeUpgrade(nodeId, upgradeOpts),
-      armDcUpgradeRetry: (nodeId) => this.armDcUpgradeRetry(nodeId),
-      onPeerReconnected: (nodeId) => this.dcUpgrade.onPeerReconnected(nodeId),
-      hasCoalescedUpgrade: (nodeId) => this.dcUpgrade.upgradeGate.get(nodeId)?.coalesced === true,
-      extraHelloCaps: () => this.reroll.helloCaps(),
-      noteHelloCaps: (live, caps) => this.reroll.noteHelloCaps(live, caps),
-      onRerollRequest: (live, msg) => this.reroll.handlePeerRequest(live, msg),
-      track: (...args) => this.registry.track(...args),
-    });
-    this.reroll = new DcRerollCoordinator(this.state, {
-      breakerAllows: (nodeId) => this.dcUpgrade.dcBreaker.shouldTry(nodeId).allow,
-      hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
-      hasWsRerollInflight: (nodeId) => this.dialer.hasWsRerollInflight(nodeId),
-      dcCapable: (nodeId) => this.dialer.dcCapable(nodeId),
-      willAttemptUpgrade: (nodeId) => this.dcUpgrade.willAttemptUpgrade(nodeId),
-      dialReroll: (nodeId, rerollOpts) => this.dialer.dialDcReroll(nodeId, rerollOpts),
-      finishRetire: (live, reason) => this.drain.finishRetire(live, reason),
-      answererAllows: (nodeId) => this.dcUpgrade.dcBreaker.shouldAcceptAnswer(nodeId),
-    });
-    this.registry = new PeerLiveRegistry(this.state, {
-      idleMs: opts.idleMs ?? PEER_IDLE_MS,
-      maxConcurrentStreams: opts.maxConcurrentStreams ?? PEER_MAX_CONCURRENT_STREAMS,
-      sessionStore: opts.sessionStore,
+      rtcListeners: this.rtcListeners,
       dispatchHttp: () => this.dispatchHttp,
-      wsServer: opts.wsServer,
-      onGatewaySession: opts.onGatewaySession ?? null,
-      onGatewaySessionClose: opts.onGatewaySessionClose ?? null,
-      onLinkInfo: opts.onLinkInfo ?? null,
-      deps: {
-        dcBreaker: this.dcUpgrade.dcBreaker,
-        sendPeerCtl: (live, msg) => sendPeerCtlQuiet(live, msg),
-        handlePeerCtl: (live, bytes) => this.handlePeerCtl(live, bytes),
-        sendPeerStatus: (live) => this.statusSync.sendPeerStatus(live),
-        sendLinkHello: (live) => this.drain.sendLinkHello(live),
-        restartQuiesce: (live) => this.drain.restartQuiesce(live),
-        probeQuiesce: (live) => this.drain.probeQuiesce(live),
-        clearDirectFailure: (nodeId) => this.dialer.clearDirectFailure(nodeId),
-        parkInbound: (peerNodeId, session, transport, initiatedBy, gen, remoteAddress) =>
-          this.drain.parkInbound(peerNodeId, session, transport, initiatedBy, gen, remoteAddress),
-        dropParked: (nodeId, reason) => this.drain.dropParked(nodeId, reason),
-        activateParked: (nodeId) => this.drain.activateParked(nodeId),
-        retirePeer: (prev, reason) => this.drain.retirePeer(prev, reason),
-        finishRetire: (live, reason) => this.drain.finishRetire(live, reason),
-        armRetireTimer: (live, reason) => this.drain.armRetireTimer(live, reason),
-        maybeFinishRetire: (live, reason) => this.drain.maybeFinishRetire(live, reason),
-        nextDcAttemptId: () => this.nextDcAttemptId(),
-        armDcHealthTimer: (nodeId, attemptId) => this.armDcHealthTimer(nodeId, attemptId),
-        cancelDcHealthTimer: (nodeId) => this.cancelDcHealthTimer(nodeId),
-        armDcUpgradeRetry: (nodeId) => this.armDcUpgradeRetry(nodeId),
-        cancelDcUpgradeRetry: (nodeId) => this.cancelDcUpgradeRetry(nodeId),
-        ensureGate: (nodeId) => this.ensureGate(nodeId),
-        ensureIncomingWakeGate: (nodeId) => this.ensureIncomingWakeGate(nodeId),
-        onPeerReconnected: (nodeId) => this.dcUpgrade.onPeerReconnected(nodeId),
-        notifyTransport: (nodeId) => this.waiters.notifyTransport(nodeId),
-        notifyLive: (nodeId, session) => this.waiters.notifyLive(nodeId, session),
-        onRttSample: (live, sampleMs) => {
-          this.routes.onRttSample(live, sampleMs);
-          this.reroll.onRttSample(live, sampleMs);
-        },
-        interceptTrack: (input) => this.routes.interceptTrack(input),
-      },
+      ensureDcSession: this.ensureDcSession,
+      hooks: this.wireHooks(),
     });
-    this.dialer = new PeerDialer(this.state, {
-      rtc: opts.rtc ?? null,
-      linkFactory: opts.linkFactory ?? null,
-      wsFactory: opts.wsFactory ?? defaultPeerWsFactory(),
-      connectTimeoutMs: opts.connectTimeoutMs ?? PEER_CONNECT_TIMEOUT_MS,
-      dialLimiter: opts.dialLimiter ?? sharedDirectDialLimiter(),
-      interfacesFn: opts.interfacesFn ?? (() => os.networkInterfaces()),
-      refreshLocalInterfaces: opts.refreshLocalInterfaces ?? null,
-      deps: {
-        dcBreaker: this.dcUpgrade.dcBreaker,
-        track: (...args) => this.registry.track(...args),
-        requireTrusted: (nodeId) => this.requireTrusted(nodeId),
-        getLink: (nodeId) => this.getLink(nodeId),
-        maybeUpgrade: (nodeId, upgradeOpts) => this.maybeUpgrade(nodeId, upgradeOpts),
-        nextDcAttemptId: () => this.nextDcAttemptId(),
-        signalingFor: (peerNodeId) => this.signalingFor(peerNodeId),
-        dispatchRtcWake: (peerNodeId) => this.dispatchRtcWake(peerNodeId),
-        releaseRtcWakeAttempt: (peerNodeId) => this.releaseRtcWakeAttempt(peerNodeId),
-        onLocalFingerprintChanged: () => this.dcUpgrade.onLocalFingerprintChanged(),
-        onPeerEndpointChanged: (nodeId) => this.dcUpgrade.onPeerEndpointChanged(nodeId),
-        listenPort: () => this.server?.port,
-        allowsOutboundDirect: (nodeId) => this.routes.allowsOutboundDirect(nodeId),
-        allowsInboundDirect: () => this.routes.allowsInboundDirect(),
-        trackRelay: (session, id, g) =>
-          this.registry.forceInstall(session, id, 'relay', this.state.identity.nodeId, g),
-      },
-    });
-    this.state.uplink.setOnRelayStream((stream, from, viaRelay) => {
-      void this.dialer.acceptRelay(stream, from, viaRelay);
-    });
-    if (opts.startServer === false) {
-      this.server = null;
-    } else {
-      this.server = new PeerServer({
-        port: opts.peerPort,
-        hostname: opts.hostname,
-        scheduler,
-        onAccept: (socket, remoteIp) => {
-          void this.dialer.acceptDirect(socket, remoteIp === 'unknown' ? null : remoteIp);
-        },
-      });
-    }
+    this.routes = parts.routes;
+    this.dcUpgrade = parts.dcUpgrade;
+    this.rtcWake = parts.rtcWake;
+    this.statusSync = parts.statusSync;
+    this.waiters = parts.waiters;
+    this.drain = parts.drain;
+    this.reroll = parts.reroll;
+    this.registry = parts.registry;
+    this.dialer = parts.dialer;
+    this.server = parts.server;
     bindPausedPeerDrop((nodeId) => this.dropPausedPeer(nodeId));
   }
+
+  private wireHooks() {
+    return {
+      maybeUpgrade: (nodeId: string, upgradeOpts: PeerUpgradeOpts) =>
+        this.maybeUpgrade(nodeId, upgradeOpts),
+      requireTrusted: (nodeId: string) => this.requireTrusted(nodeId),
+      isTrusted: (nodeId: string) => this.isTrusted(nodeId),
+      getLink: (nodeId: string) => this.getLink(nodeId),
+      handlePeerCtl: (live: LivePeer, bytes: Uint8Array) => this.handlePeerCtl(live, bytes),
+      notifyPeerEndpointsChanged: (nodeId?: string) => this.notifyPeerEndpointsChanged(nodeId),
+      wantsUpgrade: (live: LivePeer) => this.wantsUpgrade(live),
+      nextDcAttemptId: () => this.nextDcAttemptId(),
+      armDcHealthTimer: (nodeId: string, attemptId: string) =>
+        this.armDcHealthTimer(nodeId, attemptId),
+      cancelDcHealthTimer: (nodeId: string) => this.cancelDcHealthTimer(nodeId),
+      armDcUpgradeRetry: (nodeId: string) => this.armDcUpgradeRetry(nodeId),
+      cancelDcUpgradeRetry: (nodeId: string) => this.cancelDcUpgradeRetry(nodeId),
+      ensureGate: (nodeId: string) => this.ensureGate(nodeId),
+      ensureIncomingWakeGate: (nodeId: string) => this.ensureIncomingWakeGate(nodeId),
+      dispatchRtcWake: (peerNodeId: string) => this.dispatchRtcWake(peerNodeId),
+      releaseRtcWakeAttempt: (peerNodeId: string) => this.releaseRtcWakeAttempt(peerNodeId),
+      signalingFor: (peerNodeId: string) => this.signalingFor(peerNodeId),
+    };
+  }
+
+  private ctlHost(): PeerCtlHost {
+    return {
+      identity: this.identity,
+      state: this.state,
+      statusSync: this.statusSync,
+      registry: this.registry,
+      drain: this.drain,
+      dialer: this.dialer,
+      reroll: this.reroll,
+      dcUpgrade: this.dcUpgrade,
+      rtcListeners: this.rtcListeners,
+      onBrowserSignal: this.onBrowserSignal,
+      isTrusted: this.isTrusted,
+      maybeUpgrade: (nodeId, upgradeOpts) => this.maybeUpgrade(nodeId, upgradeOpts),
+      handleIncomingRtcWake: (fromNodeId, msg) => this.handleIncomingRtcWake(fromNodeId, msg),
+    };
+  }
+
+  private lifecycleHost(): PeerLifecycleHost {
+    return {
+      state: this.state,
+      server: this.server,
+      dialer: this.dialer,
+      dcUpgrade: this.dcUpgrade,
+      statusSync: this.statusSync,
+      drain: this.drain,
+      registry: this.registry,
+      rtcWake: this.rtcWake,
+      routes: this.routes,
+      rtcListeners: this.rtcListeners,
+      refreshAdvertisedStatus: () => this.refreshAdvertisedStatus(),
+      notifyPeerEndpointsChanged: (nodeId) => this.notifyPeerEndpointsChanged(nodeId),
+    };
+  }
+
   private get dcBreaker() {
     return this.dcUpgrade.dcBreaker;
   }
@@ -333,47 +215,11 @@ export class PeerManager extends PeerCollaboratorHost {
   }
 
   async start(): Promise<void> {
-    await this.server?.start();
-    this.dialer.syncLocalFingerprint();
-    this.dcUpgrade.startScan(() => {
-      this.dialer.syncLocalFingerprint();
-      this.state.endpointBackoff.prune();
-      this.refreshAdvertisedStatus();
-      this.notifyPeerEndpointsChanged();
-    });
+    await startPeerManager(this.lifecycleHost());
   }
 
   async stop(): Promise<void> {
-    bindPausedPeerDrop(null);
-    if (this.state.stopped) return;
-    this.state.stopped = true;
-    this.state.generation += 1;
-    this.state.stopAbort.abort();
-    this.dcUpgrade.clearScan();
-    this.statusSync.dispose();
-    this.server?.stop();
-    for (const nodeId of [...this.state.parked.keys()]) {
-      this.drain.dropParked(nodeId, 'stopped');
-    }
-    for (const peer of [...this.state.live.values()]) {
-      this.registry.dropPeer(peer.peerNodeId, 'stopped');
-    }
-    for (const nodeId of [...this.state.retiring.keys()]) {
-      this.drain.forceCloseRetiring(nodeId, 'stopped');
-    }
-    this.rtcListeners.clear();
-    this.state.rtcInbox.clear();
-    for (const [nodeId, waiters] of this.state.transportWaiters) {
-      for (const waiter of waiters) waiter.resolve(false);
-      this.state.transportWaiters.delete(nodeId);
-    }
-    this.state.liveWaiters.clear();
-    this.state.upgrading.clear();
-    this.rtcWake.dispose();
-    this.state.lostDirect.clear();
-    this.state.peerReconnectWake.reset();
-    this.dcUpgrade.dispose();
-    this.routes.dispose();
+    await stopPeerManager(this.lifecycleHost());
   }
 
   getLive(nodeId: string): LinkSession | null {
@@ -447,44 +293,7 @@ export class PeerManager extends PeerCollaboratorHost {
   }
 
   receiveRtcSignal(fromNodeId: string, msg: RtcSignalMessage): void {
-    if (msg.from === 'browser') {
-      this.onBrowserSignal?.(msg, fromNodeId);
-      return;
-    }
-    if (!this.isTrusted(fromNodeId)) return;
-    if (isRtcWakeSdp(msg.sdp)) {
-      this.handleIncomingRtcWake(fromNodeId, msg);
-      return;
-    }
-    if (this.reroll.interceptRtc(fromNodeId, msg)) return;
-    const delivered = deliverRtcSignal(this.rtcListeners.get(fromNodeId), msg);
-    if (delivered) return;
-    const pending = this.state.pending.has(fromNodeId);
-    const upgrading = this.state.upgrading.has(fromNodeId);
-    const inflight = this.dialer.hasDcInflight(fromNodeId);
-    if (
-      shouldDropUnboundRtcSignal({
-        selfNodeId: this.identity.nodeId,
-        fromNodeId,
-        message: msg,
-        attemptExists: pending || upgrading || inflight || this.state.rtcInbox.has(fromNodeId),
-      })
-    )
-      return;
-    const inbox = this.state.rtcInbox.get(fromNodeId) ?? [];
-    if (inbox.length >= RTC_PEER_INBOX_MAX_MESSAGES) return;
-    inbox.push({ message: msg, receivedAt: this.state.scheduler.now() });
-    this.state.rtcInbox.set(fromNodeId, inbox);
-    const attempt = peerInitiatedRtcAttemptInput({
-      dcCapable:
-        this.dialer.dcCapable(fromNodeId) &&
-        this.dcUpgrade.dcBreaker.shouldAcceptAnswer(fromNodeId),
-      dcInflight: inflight,
-      upgrading,
-      live: this.state.live.get(fromNodeId),
-    });
-    if (shouldStartRtcAttempt(attempt))
-      this.maybeUpgrade(fromNodeId, { cooldown: false, userPath: true, peerInitiated: true });
+    receiveRtcSignal(this.ctlHost(), fromNodeId, msg);
   }
   protected maybeUpgrade(nodeId: string, opts: PeerUpgradeOpts): void {
     if (isNodePaused(nodeId) && !opts.peerInitiated && !opts.userPath) return;
@@ -540,45 +349,12 @@ export class PeerManager extends PeerCollaboratorHost {
     return listPeerReach(this.state, (id) => this.onRevoked(id));
   }
 
-  private runCtlAsync(kind: string, peer: string, work: () => Promise<void>): void {
-    void work().catch((err) => {
-      rtcLog('ctl failed', {
-        peer,
-        kind,
-        reason: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-
   private isTrusted = (nodeId: string): boolean => isPeerTrusted(this.state, nodeId);
 
   private requireTrusted(nodeId: string): void {
     requirePeerAdmitted(this.state, nodeId, (id) => this.onRevoked(id));
   }
   private handlePeerCtl(live: LivePeer, bytes: Uint8Array): void {
-    const msg = parseOpenPayload(bytes);
-    if (!msg || typeof msg.t !== 'string') return;
-    const t = msg.t;
-    const asyncCtl = {
-      'node.status': () => this.statusSync.applyPeerStatus(live, msg),
-      'key.log.req': () => this.statusSync.serveKeyLog(live, msg),
-      'key.log.res': () => this.statusSync.applyKeyLogRes(msg),
-    } as const;
-    const work = asyncCtl[t as keyof typeof asyncCtl];
-    if (work) this.runCtlAsync(t, live.peerNodeId, work);
-    else if (t === 'ping') sendPeerCtlQuiet(live, { t: 'pong' });
-    else if (t === 'pong') this.registry.onPeerPong(live);
-    else if (t.startsWith('link.')) this.drain.handleLinkCtl(live, t, msg);
-    else if (t === 'rtc.signal') {
-      const signal: RtcSignalMessage = {
-        rtcSession: typeof msg.rtcSession === 'string' ? msg.rtcSession : '',
-        from: msg.from === 'browser' ? 'browser' : 'node',
-        to: typeof msg.to === 'string' ? msg.to : '',
-        sdp: typeof msg.sdp === 'string' ? msg.sdp : null,
-        candidate: typeof msg.candidate === 'string' ? msg.candidate : null,
-      };
-      if (signal.from === 'browser') this.onBrowserSignal?.(signal, live.peerNodeId);
-      else this.receiveRtcSignal(live.peerNodeId, signal);
-    }
+    handlePeerCtl(this.ctlHost(), live, bytes);
   }
 }

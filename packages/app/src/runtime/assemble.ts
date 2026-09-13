@@ -4,23 +4,14 @@ import {
   setSiteSettingsLinkProvider,
 } from '../../../../apps/gateway/src/api/site-settings-link';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
-import { ChallengeStore } from '../../../../apps/gateway/src/auth/challenge-store';
 import { MeshHubStore } from '../../../../apps/gateway/src/auth/mesh-hub-store';
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
-import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
-import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
-import { runtimeController } from '../../../../apps/gateway/src/control/runtime';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
-import { getStoredSiteSettings, updateSiteSettings } from '../../../../apps/gateway/src/db';
-import {
-  LocalAuthStore,
-  readLocalAuthEffective,
-} from '../../../../apps/gateway/src/db/local-auth-settings';
-import { nodeIdentity } from '../../../../apps/gateway/src/db/schema';
+import { getStoredSiteSettings } from '../../../../apps/gateway/src/db';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import { createMeshSiteSettingsLink } from '../../../../apps/gateway/src/mesh/effective-site-url';
-import { MeshHttpRuntime } from '../../../../apps/gateway/src/mesh/mesh-http';
+import type { MeshHttpRuntime } from '../../../../apps/gateway/src/mesh/mesh-http';
 import {
   type CreateMeshRuntimeOptions,
   type MeshRuntime,
@@ -29,7 +20,6 @@ import {
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
-import { broadcastSettingsUpdate } from '../../../../apps/gateway/src/settings/broadcaster';
 import { getShareService } from '../../../../apps/gateway/src/share';
 import {
   buildShareOriginContext,
@@ -38,20 +28,21 @@ import {
   setShareOriginAttachedUplink,
   startShareRelayPriming,
 } from '../../../../apps/gateway/src/share/share-origins';
-import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
-import { decodeCertificate } from '../../../shared/src/auth';
-import { readEnvFile, writeEnvFile } from '../lib/env-file';
-import { withEnvLock } from '../lib/env-mutation';
-import { type LocalAuthContext, createAuthContextFromDb } from '../lib/local-auth';
-import { loadNodeDatachannel } from '../lib/native-datachannel';
+import type { LocalAuthContext } from '../lib/local-auth';
 import { type VibeTermRoles, isStandaloneRoles, parseVibeTermRoles } from '../lib/roles';
 import { HttpsListener } from '../tls/https-listener';
 import type { TlsService } from '../tls/tls-service';
+import {
+  MASTER_KEY_RECOVERY_HINT,
+  createAssembleAuthSurface,
+  isRelayOnly,
+  resolveLocalAuthEffective,
+  syncLocalSiteNameFromMesh,
+} from './assemble-auth';
 import { withRuntimeDiagnostics } from './assemble-diagnostics';
 import { createAssembledRelay } from './assemble-relay';
 import {
-  advertisedTlsInfo,
   buildHttpAndWs,
   buildLocalRouteDeps,
   createAssembledLifecycle,
@@ -62,16 +53,14 @@ import { createVibeTermGatewayRuntime } from './gateway';
 import { handleLocalRequest } from './local-routes';
 import { type RuntimeMode, handlePreflightHttp, readRuntimeMode } from './mode';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
-import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
+import { SETUP_RESTART_DELAY_MS } from './setup-service';
 
 export {
   SHUTDOWN_TIMEOUT_MS,
   createProcessShutdown,
   installShutdownHandlers,
 } from './assemble-shutdown';
-
-export const MASTER_KEY_RECOVERY_HINT =
-  'Restore VIBETERM_MASTER_KEY from backups/app.env.* and restart; if the key is lost, run vibeterm mesh reset-identity and re-join. Reconfigure other affected encrypted credentials locally.';
+export { MASTER_KEY_RECOVERY_HINT, isRelayOnly };
 
 export async function startTlsWithRecovery(
   tls: Pick<TlsService, 'startup' | 'stop'>
@@ -130,151 +119,6 @@ function defaultStaticRoot(): string {
     : resolve(import.meta.dir, '../../resources/fe-dist');
 }
 
-async function standaloneNodeKeys(identityStore: LocalAuthContext['identityStore']) {
-  try {
-    return await ensureNodeIdentity(identityStore);
-  } catch {
-    return { nodeIdHex: '00'.repeat(16), edPublicKey: new Uint8Array(32) };
-  }
-}
-
-async function createStandaloneAuthHttp(input: {
-  roles: VibeTermRoles;
-  gateway: GatewayRuntime;
-  auth: LocalAuthContext;
-  localAuthEffective?: () => boolean;
-  tlsSlot: { service?: TlsService };
-  keys?: { nodeIdHex: string; edPublicKey: Uint8Array };
-}): Promise<MeshHttpRuntime> {
-  const keys = input.keys ?? (await standaloneNodeKeys(input.auth.identityStore));
-  const runtime = new MeshHttpRuntime({
-    roles: input.roles,
-    nodeId: keys.nodeIdHex,
-    nodePk: keys.edPublicKey,
-    userStore: input.auth.userStore,
-    keyLogService: input.auth.userKeys,
-    challengeStore: new ChallengeStore(),
-    nodeSessionStore: input.auth.nodeSessionStore,
-    publisher: { publish() {} },
-    authSurfaceOnly: true,
-    trustProxy: gatewayConfig.trustProxy,
-    localAuth: new LocalAuthStore(input.gateway.db),
-    localAuthEffective: input.localAuthEffective,
-  });
-  runtime.auth.setTlsInfo(() => advertisedTlsInfo(input.tlsSlot.service));
-  return runtime;
-}
-
-type MeshHubAssembleOpts = CreateMeshRuntimeOptions & {
-  meshHubStore?: MeshHubStore;
-  meshHubs?: MeshHubStore;
-  config: CreateMeshRuntimeOptions['config'] & {
-    hubMode?: string;
-    hubPriority?: number;
-    hubWriterEpoch?: number;
-    hubNodeId?: string;
-  };
-};
-
-function syncLocalSiteNameFromMesh(name: string): void {
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  const current = getStoredSiteSettings();
-  if (current.siteName === trimmed) return;
-  updateSiteSettings({ siteName: trimmed });
-  broadcastSettingsUpdate('site');
-}
-
-async function createNodeMesh(input: {
-  roles: VibeTermRoles;
-  gateway: GatewayRuntime;
-  createMesh: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
-  hub?: HubRuntime;
-  loadNative?: LoadNative;
-  nativeDir?: string;
-  tlsSlot: { service?: TlsService };
-  meshHubStore?: MeshHubStore;
-  onLocalNodeName?: (name: string) => void;
-}): Promise<MeshRuntime> {
-  const nativeDir = input.nativeDir ?? process.env.VIBETERM_NATIVE_DIR ?? '';
-  const identity = await new NodeIdentityStore(input.gateway.db).load();
-  const opts: MeshHubAssembleOpts = {
-    db: input.gateway.db,
-    gateway: input.gateway,
-    config: {
-      roles: input.roles,
-      hubUrl: gatewayConfig.hubUrl,
-      hubPublicUrl: gatewayConfig.hubPublicUrl,
-      hubUrls: gatewayConfig.hubUrls,
-      hubMode: gatewayConfig.hubMode,
-      hubPriority: gatewayConfig.hubPriority,
-      hubWriterEpoch: gatewayConfig.hubWriterEpoch,
-      hubPeers: gatewayConfig.hubPeers,
-      hubNodeId: identity?.nodeId,
-      peerPort: gatewayConfig.peerPort,
-      stunServers: gatewayConfig.stunServers,
-      stunSource: gatewayConfig.stunSource,
-      turnUrl: gatewayConfig.turnUrl,
-      turnUsername: gatewayConfig.turnUsername,
-      turnCredential: gatewayConfig.turnCredential,
-      bindHost: process.env.VIBETERM_BIND_HOST || '127.0.0.1',
-      peerBindHost: gatewayConfig.peerBindHost,
-    },
-    hub: input.hub,
-    meshHubStore: input.meshHubStore,
-    meshHubs: input.meshHubStore,
-    canLoadNative: () =>
-      process.env.VIBETERM_DIRECT_ENABLED !== 'false' &&
-      (input.loadNative !== undefined || nativeDir.length > 0),
-    loadNative:
-      input.loadNative ??
-      (async () =>
-        process.env.VIBETERM_DIRECT_ENABLED === 'false' || !nativeDir
-          ? null
-          : loadNodeDatachannel({ nativeDir })),
-    userId: identity?.userId ?? undefined,
-    tlsInfo: () => advertisedTlsInfo(input.tlsSlot.service),
-    patchHubRoleEnv: async (patch) => {
-      const envPath = resolveSetupEnvPath();
-      await withEnvLock(async () => {
-        let existing: Record<string, string> = {};
-        try {
-          existing = await readEnvFile(envPath);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        }
-        await writeEnvFile(envPath, { ...existing, ...patch });
-      });
-    },
-    scheduleHubRoleRestart: (delayMs) => {
-      setTimeout(() => {
-        void runtimeController.requestRestart();
-      }, delayMs);
-    },
-    onLocalNodeName: input.onLocalNodeName,
-  };
-  return input.createMesh(opts);
-}
-
-function resolveLocalAuthEffective(
-  injected: (() => boolean) | undefined,
-  authHttp: MeshHttpRuntime | null
-): () => boolean {
-  if (injected) return injected;
-  if (!authHttp) return readLocalAuthEffective;
-  return safeAssembleLocalAuth(authHttp);
-}
-
-function safeAssembleLocalAuth(authHttp: MeshHttpRuntime): () => boolean {
-  return () => {
-    try {
-      return authHttp.auth.isLocalAuthEffective();
-    } catch {
-      return false;
-    }
-  };
-}
-
 function dummyTlsLifecycle(): { tls: TlsService; httpsListener: HttpsListener } {
   const httpsListener = new HttpsListener({
     fetch: async () => new Response('Not Found', { status: 404 }),
@@ -322,87 +166,6 @@ async function assemblePreflightVibeTerm(
       return false;
     },
   };
-}
-
-async function createAssembleAuthSurface(input: {
-  roles: VibeTermRoles;
-  gateway: GatewayRuntime;
-  opts: AssembleVibeTermOptions;
-  createMesh: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
-  tlsSlot: { service?: TlsService };
-  meshHubStore?: MeshHubStore;
-  onLocalNodeName?: (name: string) => void;
-}) {
-  const auth = await createAuthContextFromDb(input.gateway.db, {
-    installDir: resolveGatewayInstallDir(),
-    envPath: resolveSetupEnvPath(),
-    env: {
-      VIBETERM_ROLES: process.env.VIBETERM_ROLES ?? '',
-      VIBETERM_HUB_URL: process.env.VIBETERM_HUB_URL ?? '',
-      VIBETERM_HUB_PUBLIC_URL: process.env.VIBETERM_HUB_PUBLIC_URL ?? '',
-    },
-  });
-  let mesh: MeshRuntime | null = null;
-  let authHttp: MeshHttpRuntime | null = null;
-  let degraded: 'master_key_mismatch' | null = null;
-  if (isRelayOnly(input.roles)) {
-    // relay 单跑：没有用户、没有节点身份，不挂 auth surface
-  } else if (input.roles.node) {
-    try {
-      mesh = await createNodeMesh({
-        roles: input.roles,
-        gateway: input.gateway,
-        createMesh: input.createMesh,
-        hub: input.opts.hub,
-        loadNative: input.opts.loadNative,
-        nativeDir: input.opts.nativeDir,
-        tlsSlot: input.tlsSlot,
-        meshHubStore: input.meshHubStore,
-        onLocalNodeName: input.onLocalNodeName,
-      });
-    } catch (error) {
-      if (!(error instanceof CryptoDecryptError) || error.context.scope !== 'node_identity') {
-        throw error;
-      }
-      degraded = 'master_key_mismatch';
-      console.error(
-        `[vibeterm][mesh] master_key_mismatch; mesh disabled, local login remains available. ${MASTER_KEY_RECOVERY_HINT}`,
-        error
-      );
-      const row = input.gateway.db.select({ nodeId: nodeIdentity.nodeId }).from(nodeIdentity).get();
-      const cert = row ? auth.userStore.getCert(row.nodeId) : null;
-      authHttp = await createStandaloneAuthHttp({
-        roles: input.roles,
-        gateway: input.gateway,
-        auth,
-        tlsSlot: input.tlsSlot,
-        keys: {
-          nodeIdHex: row?.nodeId ?? '00'.repeat(16),
-          edPublicKey: cert ? decodeCertificate(cert.certificateBytes).ed_pk : new Uint8Array(32),
-        },
-      });
-    }
-  } else {
-    authHttp = await createStandaloneAuthHttp({
-      roles: input.roles,
-      gateway: input.gateway,
-      auth,
-      localAuthEffective: input.opts.localAuthEffective,
-      tlsSlot: input.tlsSlot,
-    });
-  }
-  return {
-    auth,
-    mesh,
-    authHttp,
-    degraded,
-    hub: degraded ? null : (mesh?.hub ?? input.opts.hub ?? null),
-  };
-}
-
-/** `relay` 单跑（不带 node）：无前端、无用户存储、无 tmux 依赖。 */
-export function isRelayOnly(roles: VibeTermRoles): boolean {
-  return roles.relay && !roles.node && !roles.hub;
 }
 
 async function relayOnlyFrontend(): Promise<Response> {
@@ -465,13 +228,26 @@ function subscribeReplicatedNodeList(
   }
 }
 
-export async function assembleVibeTerm(
-  opts: AssembleVibeTermOptions = {}
-): Promise<AssembledVibeTerm> {
-  const runtimeMode = opts.runtimeMode ?? readRuntimeMode();
-  if (runtimeMode === 'preflight') return assemblePreflightVibeTerm(opts);
+type AssembleCore = {
+  roles: VibeTermRoles;
+  gateway: GatewayRuntime;
+  mesh: MeshRuntime | null;
+  authHttp: MeshHttpRuntime | null;
+  hub: HubRuntime | null;
+  auth: LocalAuthContext;
+  degraded: 'master_key_mismatch' | null;
+  tlsSlot: { service?: TlsService };
+  meshHubStore: MeshHubStore | undefined;
+  inboundHttpExtensions: NonNullable<CreateMeshRuntimeOptions['inboundHttpExtensions']>;
+  serveFrontend: (req: Request, staticRoot: string) => Promise<Response>;
+  staticRoot: string;
+  localAuthEffective: () => boolean;
+};
+
+async function assembleCore(opts: AssembleVibeTermOptions): Promise<AssembleCore> {
   const roles = opts.roles ?? parseVibeTermRoles(process.env.VIBETERM_ROLES);
   const staticRoot = opts.staticRoot ?? defaultStaticRoot();
+  const runtimeMode = opts.runtimeMode ?? readRuntimeMode();
   const createGateway =
     opts.createGatewayRuntime ??
     (() => createVibeTermGatewayRuntime(undefined, { mode: runtimeMode }));
@@ -494,7 +270,6 @@ export async function assembleVibeTerm(
   });
   applySiteSettingsLink(roles, mesh, meshHubStore, gateway.db);
   const localAuthEffective = resolveLocalAuthEffective(opts.localAuthEffective, authHttp);
-  // 免登录（standalone 未开启本机登录）部署无法兑现分享隔离：直接禁止创建对外分享。
   getShareService().setAuthRequiredResolver(
     () => !isStandaloneRoles(roles) || localAuthEffective()
   );
@@ -503,7 +278,25 @@ export async function assembleVibeTerm(
       `[hub] mode=${gatewayConfig.hubMode} priority=${gatewayConfig.hubPriority} writerEpoch=${gatewayConfig.hubWriterEpoch} publicUrl=${gatewayConfig.hubPublicUrl ?? ''}`
     );
   }
-  const unsubscribeNodeList = subscribeReplicatedNodeList(mesh, hub);
+  return {
+    roles,
+    gateway,
+    mesh,
+    authHttp,
+    hub,
+    auth,
+    degraded,
+    tlsSlot,
+    meshHubStore,
+    inboundHttpExtensions,
+    serveFrontend,
+    staticRoot,
+    localAuthEffective,
+  };
+}
+
+async function assembleHttpAndLifecycle(core: AssembleCore): Promise<AssembledVibeTerm> {
+  const unsubscribeNodeList = subscribeReplicatedNodeList(core.mesh, core.hub);
   const shutdown = {
     processShutdown: null as (() => Promise<void>) | null,
     restartRequested: false,
@@ -516,71 +309,92 @@ export async function assembleVibeTerm(
     );
   };
   const routeDeps = buildLocalRouteDeps({
-    roles,
-    auth,
-    mesh,
-    hub,
-    tlsSlot,
+    roles: core.roles,
+    auth: core.auth,
+    mesh: core.mesh,
+    hub: core.hub,
+    tlsSlot: core.tlsSlot,
     scheduleRestart,
-    localAuthEffective,
+    localAuthEffective: core.localAuthEffective,
   });
-  inboundHttpExtensions.push(async (req) => {
+  core.inboundHttpExtensions.push(async (req) => {
     const path = new URL(req.url).pathname;
     return path === '/api/local/status' || path === '/api/local/direct'
       ? handleLocalRequest(req, routeDeps)
       : null;
   });
-  const relay = await createAssembledRelay({ roles, gateway, routeDeps });
-  const http = buildHttpAndWs({
-    gateway,
-    mesh,
-    hub,
-    relay,
-    authHttp,
+  const relay = await createAssembledRelay({
+    roles: core.roles,
+    gateway: core.gateway,
     routeDeps,
-    serveFrontend,
-    staticRoot,
   });
-  http.fetch = withRuntimeDiagnostics(http.fetch, auth, mesh, degraded);
+  const http = buildHttpAndWs({
+    gateway: core.gateway,
+    mesh: core.mesh,
+    hub: core.hub,
+    relay,
+    authHttp: core.authHttp,
+    routeDeps,
+    serveFrontend: core.serveFrontend,
+    staticRoot: core.staticRoot,
+  });
+  http.fetch = withRuntimeDiagnostics(http.fetch, core.auth, core.mesh, core.degraded);
   const tlsLife = wireTlsLifecycle({
     http,
-    gateway,
+    gateway: core.gateway,
     routeDeps,
-    tlsSlot,
-    authHttp,
-    mesh,
-    hub,
+    tlsSlot: core.tlsSlot,
+    authHttp: core.authHttp,
+    mesh: core.mesh,
+    hub: core.hub,
   });
   const lifecycle = createAssembledLifecycle({
-    mesh,
-    gateway,
-    authHttp,
-    hub,
+    mesh: core.mesh,
+    gateway: core.gateway,
+    authHttp: core.authHttp,
+    hub: core.hub,
     relay,
     unsubscribeNodeList,
     shutdown,
   });
-  // 中继入口探测必须等 HTTP 监听与 mesh 上联起来之后再做，故推迟到 start() 之后。
+  return attachRelayPriming(
+    {
+      roles: core.roles,
+      gateway: core.gateway,
+      mesh: core.mesh,
+      hub: core.hub,
+      relay,
+      tls: tlsLife.tls,
+      httpsListener: tlsLife.httpsListener,
+      fetch: http.fetch,
+      websocket: http.websocket,
+      ...lifecycle,
+    },
+    core.roles
+  );
+}
+
+function attachRelayPriming(assembled: AssembledVibeTerm, roles: VibeTermRoles): AssembledVibeTerm {
   let stopRelayPriming: (() => void) | null = null;
   return {
-    roles,
-    gateway,
-    mesh,
-    hub,
-    relay,
-    tls: tlsLife.tls,
-    httpsListener: tlsLife.httpsListener,
-    fetch: http.fetch,
-    websocket: http.websocket,
-    ...lifecycle,
+    ...assembled,
     async start() {
-      await lifecycle.start();
+      await assembled.start();
       if (roles.hub || roles.node) stopRelayPriming ??= startShareRelayPriming();
     },
     async stop() {
       stopRelayPriming?.();
       stopRelayPriming = null;
-      await lifecycle.stop();
+      await assembled.stop();
     },
   };
+}
+
+export async function assembleVibeTerm(
+  opts: AssembleVibeTermOptions = {}
+): Promise<AssembledVibeTerm> {
+  const runtimeMode = opts.runtimeMode ?? readRuntimeMode();
+  if (runtimeMode === 'preflight') return assemblePreflightVibeTerm(opts);
+  const core = await assembleCore(opts);
+  return assembleHttpAndLifecycle(core);
 }

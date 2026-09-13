@@ -1,3 +1,4 @@
+import type { MeshNodeDirectFailure } from '@vibeterm/shared';
 import type { LinkSession, WebSocketTransportInput } from '@vibeterm/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
@@ -80,49 +81,12 @@ export type LiveWaiter = {
   resolve: (session: LinkSession) => void;
 };
 
-/**
- * 直连失败的稳定分类码，与 `packages/api-client/src/auth/types.ts` 的 `DirectFailureCode`
- * 一一对应（网关不依赖 api-client，只能镜像）。前端按 `nodes.badge.failure.<code>` 翻译。
- */
-export type DirectFailureCode =
-  | 'timeout'
-  | 'refused'
-  | 'unreachable'
-  | 'reset'
-  | 'tls'
-  | 'handshake'
-  | 'revoked'
-  | 'untrusted'
-  | 'backoff'
-  | 'no_endpoints'
-  | 'ice_failed'
-  | 'no_candidates'
-  | 'dc_open_timeout'
-  | 'dc_closed'
-  | 'liveness_timeout'
-  | 'signal_dropped'
-  | 'signaling_state'
-  | 'rtc_unavailable'
-  | 'not_direct_capable'
-  | 'breaker_cooling'
-  | 'breaker_paused'
-  | 'aborted'
-  | 'no_srflx'
-  | 'stun_unconfigured'
-  | 'other';
-
-export type DirectFailureWsParams = { url?: string; seconds?: number };
-export type DirectFailureDcParams = { until?: number };
-
-export type DirectFailureView = {
-  at: number;
-  ws?: string | null;
-  wsCode?: DirectFailureCode | null;
-  wsParams?: DirectFailureWsParams | null;
-  dc?: string | null;
-  dcCode?: DirectFailureCode | null;
-  dcParams?: DirectFailureDcParams | null;
-};
+export type {
+  DirectFailureCode,
+  DirectFailureDcParams,
+  DirectFailureWsParams,
+} from '@vibeterm/shared';
+export type DirectFailureView = MeshNodeDirectFailure;
 
 export type PeerLinkDetail = {
   peerAddress: string | null;

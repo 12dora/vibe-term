@@ -4,20 +4,13 @@
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { setDefaultClientVersion } from '@vibeterm/ws-client';
-import {
-  type FlagSpec,
-  GLOBAL_FLAGS,
-  flagBool,
-  flagNumber,
-  flagString,
-  splitGlobalFlags,
-} from './core/args';
-import { buildContext } from './core/context';
-import { EXIT_OK, UsageError, errorText, exitCodeOf, hintOf } from './core/errors';
-import { Output, captureDiagnostics, shouldUseColor } from './core/output';
-import { loadTlsSettings, prepareProcessTls } from './core/tls';
-import { COMMANDS, IMPLEMENTED_COMMANDS, RESERVED_COMMANDS, findCommand } from './registry';
+import { errorText, exitCodeOf, hintOf } from './core/errors';
+import { Output, shouldUseColor } from './core/output';
+import { dispatch, findCommandToken } from './dispatch';
+import { IMPLEMENTED_COMMANDS, RESERVED_COMMANDS } from './registry';
 import { cliVersion } from './version';
+
+export { findCommandToken };
 
 const RESERVED_HELP =
   RESERVED_COMMANDS.length === 0
@@ -51,24 +44,6 @@ const GLOBAL_HELP = [
   'Run "vibeterm <command> --help" for the options of one command.',
 ].join('\n');
 
-/** 命令名是第一个不是旗标、也不是旗标取值的 token。 */
-export function findCommandToken(argv: readonly string[]): { name: string | null; index: number } {
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-    if (token === '--') break;
-    if (!token.startsWith('-')) return { name: token, index };
-    const key = token.startsWith('--') ? token.slice(2).split('=')[0] : '';
-    const kind = GLOBAL_FLAGS[key];
-    // 未知旗标先当布尔跳过：命令定下来之后由完整的 spec 报错，报错信息才准确。
-    if (kind && kind !== 'boolean' && !token.includes('=')) index += 1;
-  }
-  return { name: null, index: -1 };
-}
-
-function mergedSpec(commandFlags: FlagSpec | undefined): FlagSpec {
-  return { ...GLOBAL_FLAGS, ...commandFlags };
-}
-
 function bareOutput(argv: readonly string[]): Output {
   const noColor = argv.includes('--no-color');
   return new Output({ json: false, quiet: false, color: shouldUseColor(noColor) });
@@ -79,65 +54,13 @@ export async function runCli(argv: string[]): Promise<number> {
   setDefaultClientVersion(cliVersion());
   const out = bareOutput(argv);
   try {
-    return await dispatch(argv, out);
+    return await dispatch(argv, out, GLOBAL_HELP);
   } catch (error) {
     out.error(`vibeterm: ${errorText(error)}`);
     const hint = hintOf(error);
     if (hint) out.error(`  ${hint}`);
     return exitCodeOf(error);
   }
-}
-
-async function dispatch(argv: string[], out: Output): Promise<number> {
-  const { name, index } = findCommandToken(argv);
-  if (!name || name === 'help') {
-    const requested = name === 'help' ? argv[index + 1] : undefined;
-    const target = requested ? findCommand(requested) : null;
-    out.line(target ? target.usage : GLOBAL_HELP);
-    return EXIT_OK;
-  }
-
-  const command = findCommand(name);
-  if (!command) {
-    throw new UsageError(
-      `unknown command: ${name}`,
-      `known commands: ${COMMANDS.map((item) => item.name).join(', ')}`
-    );
-  }
-
-  const rest = [...argv.slice(0, index), ...argv.slice(index + 1)];
-  const { globals, rest: commandArgv } = splitGlobalFlags(rest, mergedSpec(command.flags));
-  if (flagBool(globals, 'help')) {
-    out.line(command.usage);
-    return EXIT_OK;
-  }
-
-  const timeout = flagNumber(globals, 'timeout');
-  if (timeout !== undefined && (!Number.isInteger(timeout) || timeout <= 0)) {
-    throw new UsageError(`--timeout must be a positive integer, got ${timeout}`);
-  }
-
-  // 库里的 console.log 不能污染 stdout：命令结果（尤其 --json）独占那条通道。
-  captureDiagnostics(flagBool(globals, 'quiet'));
-
-  const tls = loadTlsSettings(flagString(globals, 'ca'), flagBool(globals, 'insecure'));
-  if (tls.insecure) {
-    // 关掉证书校验必须显眼：中间人此时完全不可见。
-    out.error('WARNING: --insecure disables TLS certificate verification for this command');
-  }
-
-  const ctx = buildContext({
-    tls,
-    entryFlag: flagString(globals, 'entry'),
-    node: flagString(globals, 'node') ?? null,
-    json: flagBool(globals, 'json'),
-    quiet: flagBool(globals, 'quiet'),
-    noColor: flagBool(globals, 'no-color'),
-    ...(timeout === undefined ? {} : { timeoutMs: timeout }),
-  });
-  await prepareProcessTls(ctx.globals.entry, tls);
-  const code = await command.run(ctx, commandArgv);
-  return typeof code === 'number' ? code : EXIT_OK;
 }
 
 /** 直接运行（`node dist/cli.js …`）时才自动执行；被 import 时只导出 `runCli`。 */
