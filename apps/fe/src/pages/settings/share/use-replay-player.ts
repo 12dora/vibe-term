@@ -28,6 +28,8 @@ const CLOCK_STEP_MS = 100;
 export interface ReplayPlayer {
   pane: ReplayPane | null;
   paneId: string | null;
+  /** 时间轴起点（epoch ms），墙钟 = startAt + currentMs。 */
+  startAt: number;
   currentMs: number;
   durationMs: number;
   playing: boolean;
@@ -63,11 +65,8 @@ export function useReplayPlayer(
     (target: number, force: boolean) => {
       const current = paneRef.current;
       if (!current || !readyRef.current) return;
-      const plan = planReplaySeek(
-        current,
-        target,
-        force ? Number.POSITIVE_INFINITY : cursorRef.current
-      );
+      const cursor = force ? Number.POSITIVE_INFINITY : cursorRef.current;
+      const plan = planReplaySeek(current, target, cursor);
       if (plan.reset) terminal.reset();
       const markers: ReplayInputMarker[] = [];
       for (const op of collectReplayOps(current, plan.fromIndex, plan.toIndex)) {
@@ -147,6 +146,7 @@ export function useReplayPlayer(
   return {
     pane,
     paneId: pane?.paneId ?? null,
+    startAt: timeline.startAt,
     currentMs,
     durationMs: timeline.durationMs,
     playing,
