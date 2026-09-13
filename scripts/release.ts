@@ -183,6 +183,8 @@ function main(): void {
     const prev = pkg.version;
     pkg.version = args.version;
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+    // JSON.stringify 会把 files 数组展开成多行，biome 会要求折回单行，这里直接按仓库格式化器落盘
+    spawnSync('bunx', ['biome', 'format', '--write', pkgPath], { cwd: repoRoot, stdio: 'ignore' });
     console.log(`[release] bumped vibeterm-cli ${prev} -> ${args.version}`);
   }
 
