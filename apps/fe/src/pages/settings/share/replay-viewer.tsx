@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from '@vibeterm/ui/dialog';
 import { Loader2 } from 'lucide-react';
-import { useMemo, useRef } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
 import { ReplayControls, ReplayInputTicker } from './replay-controls';
@@ -44,11 +44,42 @@ export function ReplayViewer({ share, onClose }: ReplayViewerProps) {
   );
 }
 
-function ReplayBody({ shareId }: { shareId: string }) {
+/** 回放窗：22rem 外框裁剪，滚动条由 widget 内部的平移视口提供。 */
+export function ReplayTerminalFrame({
+  children,
+  loading,
+  empty,
+  loadingLabel,
+  emptyLabel,
+}: {
+  children: ReactNode;
+  loading: boolean;
+  empty: boolean;
+  loadingLabel: string;
+  emptyLabel: string;
+}) {
+  return (
+    <div className="relative h-[22rem] w-full overflow-hidden rounded-md border">
+      {children}
+      {loading ? (
+        <div className="absolute inset-0 flex items-center justify-center gap-2 bg-background/60 text-xs text-muted-foreground">
+          <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+          {loadingLabel}
+        </div>
+      ) : null}
+      {empty ? (
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+          {emptyLabel}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function ReplayBody({ shareId }: { shareId: string }) {
   const { t } = useTranslation();
-  const mountRef = useRef<HTMLDivElement>(null);
   const log = useReplayLog(shareId);
-  const terminal = useReplayTerminal(mountRef);
+  const terminal = useReplayTerminal();
   const timeline = useMemo(() => buildReplayTimeline(log.entries), [log.entries]);
   const player = useReplayPlayer(timeline, terminal.handle, terminal.ready);
 
@@ -67,26 +98,17 @@ function ReplayBody({ shareId }: { shareId: string }) {
         </Notice>
       )}
 
-      <div
-        className="relative h-[22rem] w-full overflow-hidden rounded-md border"
-        style={{ backgroundColor: terminal.background }}
+      <ReplayTerminalFrame
+        loading={log.loading || !terminal.ready}
+        empty={empty}
+        loadingLabel={t('settings.share.replay.loading', {
+          loaded: log.entries.length,
+          total: Math.max(log.total, log.entries.length),
+        })}
+        emptyLabel={t('settings.share.replay.empty')}
       >
-        <div ref={mountRef} className="absolute inset-0" data-testid="share-replay-mount" />
-        {(log.loading || !terminal.ready) && (
-          <div className="absolute inset-0 flex items-center justify-center gap-2 bg-background/60 text-xs text-muted-foreground">
-            <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-            {t('settings.share.replay.loading', {
-              loaded: log.entries.length,
-              total: Math.max(log.total, log.entries.length),
-            })}
-          </div>
-        )}
-        {empty && (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-            {t('settings.share.replay.empty')}
-          </div>
-        )}
-      </div>
+        {terminal.widget}
+      </ReplayTerminalFrame>
 
       <ReplayControls
         player={player}
