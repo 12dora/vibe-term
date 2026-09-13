@@ -342,6 +342,8 @@ export const en: Record<string, string> = {
   'relay.enroll.done': 'attached to relay {{url}} (tenant {{tenantId}})',
   'relay.enroll.pending':
     'set-relays was accepted but the relay is not attached yet: {{url}} {{error}}',
+  'relay.enroll.maxRelays':
+    'this node already lists {{count}} relays (limit {{max}}); enroll appends — remove one before adding another',
   'relay.pack.tokenNotCurrent':
     'Relay pack upload requires the current token. First run vibeterm relay resend-token on a node with the current token, or join with your password on this node; then retry vibeterm relay pack upload.',
   'relay.pack.materialMissing': 'Current relay token or encryption keys are unavailable.',

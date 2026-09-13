@@ -1,4 +1,8 @@
-import { decodeBase64url, encodeBase64url } from '../../../shared/src/auth';
+import {
+  RELAY_RECORD_MAX_RELAYS,
+  decodeBase64url,
+  encodeBase64url,
+} from '../../../shared/src/auth';
 import { normalizeRelayUrl, signRelayEnrollProof } from '../../../shared/src/relay';
 import { t } from '../i18n';
 import { errorMessage } from '../lib/error-message';
@@ -9,7 +13,6 @@ import {
   type RelayStatusResponse,
   type RelayTenantSession,
   fetchRelayStatus,
-  fetchRelayStatusLocal,
   openRelayTenantSession,
   pollRelayStatus,
   reaffirmStaleMembers,
@@ -23,15 +26,18 @@ import {
   type RelayIo,
   asNumber,
   asText,
-  formatTable,
-  gatewayBaseUrl,
   joinRelayUrl,
-  printJson,
   relayLog,
   requestRelayJson,
-  wantsJson,
 } from './relay-shared';
 import { withAuth } from './with-auth';
+
+export {
+  formatAutoCell,
+  formatRelayStatusLines,
+  runRelayList,
+  runRelayUnpin,
+} from './relay-status';
 
 export type RelayHealth = {
   ok: boolean;
@@ -206,6 +212,7 @@ async function runRelayEnrollInternal(
 
   return await withAuth(parsed, io, async (ctx) => {
     const session = await openRelayTenantSession(parsed, ctx, io);
+    assertCanAppendRelay(await fetchRelayStatus(session), relayUrl);
     const readmit = await reaffirmStaleMembers(session);
     if (readmit.count > 0) {
       relayLog(io, `re-affirmed ${readmit.count} member(s) under root epoch ${readmit.rootEpoch}`);
@@ -368,118 +375,10 @@ export async function runRelayLeave(
   });
 }
 
-function formatRelayRole(role: RelayStatusResponse['relays'][number]['role']): string {
-  return role === 'primary' || role === 'secondary' ? role : '-';
-}
-
-type TurnMembersTally = { ok: number; total: number };
-
-function turnMembersTally(value: unknown): TurnMembersTally | null {
-  if (!value || typeof value !== 'object') return null;
-  const raw = value as { ok?: unknown; total?: unknown };
-  if (typeof raw.ok !== 'number' || typeof raw.total !== 'number') return null;
-  if (!Number.isFinite(raw.ok) || !Number.isFinite(raw.total) || raw.ok < 0 || raw.total < 0) {
-    return null;
-  }
-  return { ok: Math.floor(raw.ok), total: Math.floor(raw.total) };
-}
-
-function turnMembersOf(status: RelayStatusResponse, url: string): TurnMembersTally | null {
-  const raw = Array.isArray(status.raw.relays) ? status.raw.relays : [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const row = entry as { url?: unknown; turn?: { members?: unknown } };
-    if (row.url !== url) continue;
-    return turnMembersTally(row.turn?.members);
-  }
-  return null;
-}
-
-function formatRelayTurn(
-  turn: { url: string; probeOk: boolean | null } | null | undefined,
-  members?: TurnMembersTally | null
-): string {
-  if (!turn?.url) return '-';
-  const frac = members ? `${members.ok}/${members.total}` : null;
-  if (turn.probeOk === false) {
-    return frac ? `${turn.url} (down, ${frac} nodes ok)` : `${turn.url} (down)`;
-  }
-  if (turn.probeOk === true && frac) return `${turn.url} (ok, ${frac})`;
-  return turn.url;
-}
-
-function pathBestMsOf(status: RelayStatusResponse, url: string): number | undefined {
-  const raw = Array.isArray(status.raw.relays) ? status.raw.relays : [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== 'object') continue;
-    const row = entry as { url?: unknown; pathBestMs?: unknown };
-    if (row.url === url && typeof row.pathBestMs === 'number') return row.pathBestMs;
-  }
-  return undefined;
-}
-
-export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
-  const lines = [`mode: ${status.mode}`];
-  if (status.tenantId) lines.push(`tenant: ${status.tenantId}`);
-  lines.push(`meta epoch: ${status.metaEpoch}`);
-  lines.push(`peers via relay: ${status.nodesViaRelay}`);
-  if (status.multiAttach) lines.push('multi-attach: yes');
-  if (status.reauthRequired) lines.push('reauth required: run vibeterm relay reauth <url>');
-  if (status.relays.length === 0) {
-    lines.push('no relays configured');
-    return lines;
-  }
-  const showBest = status.relays.some((relay) => pathBestMsOf(status, relay.url) != null);
-  const rows = status.relays.map((relay) => {
-    const cells = [
-      String(relay.priority),
-      relay.url,
-      formatRelayRole(relay.role),
-      relay.online ? 'online' : 'offline',
-      relay.rttMs == null ? '-' : `${relay.rttMs} ms`,
-    ];
-    if (showBest) {
-      const best = pathBestMsOf(status, relay.url);
-      cells.push(best == null ? '-' : `${best} ms`);
-    }
-    cells.push(
-      relay.peersOnline == null ? '-' : String(relay.peersOnline),
-      formatRelayTurn(relay.turn, turnMembersOf(status, relay.url)),
-      relay.kicked ? 'kicked' : (relay.lastError ?? '-')
-    );
-    return cells;
-  });
-  const headers = showBest
-    ? ['PRI', 'URL', 'ROLE', 'STATE', 'RTT', 'BEST', 'PEERS', 'TURN', 'NOTE']
-    : ['PRI', 'URL', 'ROLE', 'STATE', 'RTT', 'PEERS', 'TURN', 'NOTE'];
-  lines.push(...formatTable(headers, rows));
-  return lines;
-}
-
-export async function runRelayList(parsed: ParsedArgs, io: RelayIo = {}): Promise<void> {
-  const env = io.env ?? process.env;
-  try {
-    const status = await fetchRelayStatusLocal({
-      baseUrl: gatewayBaseUrl(env),
-      fetcher: io.fetcher,
-    });
-    printRelayList(parsed, io, status);
-    return;
-  } catch (error) {
-    if (!(error instanceof RelayApiError) || error.status !== 401) throw error;
-  }
-  await withAuth(parsed, io, async (ctx) => {
-    const session = await openRelayTenantSession(parsed, ctx, io);
-    printRelayList(parsed, io, await fetchRelayStatus(session));
-  });
-}
-
-function printRelayList(parsed: ParsedArgs, io: RelayIo, status: RelayStatusResponse): void {
-  if (wantsJson(parsed)) {
-    printJson(io, status.raw);
-    return;
-  }
-  for (const line of formatRelayStatusLines(status)) {
-    relayLog(io, line);
-  }
+function assertCanAppendRelay(status: RelayStatusResponse, relayUrl: string): void {
+  if (status.relays.some((row) => row.url === relayUrl)) return;
+  if (status.relays.length < RELAY_RECORD_MAX_RELAYS) return;
+  throw new Error(
+    t('relay.enroll.maxRelays', { count: status.relays.length, max: RELAY_RECORD_MAX_RELAYS })
+  );
 }

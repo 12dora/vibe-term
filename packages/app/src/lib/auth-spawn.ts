@@ -54,6 +54,7 @@ export const AUTH_COMMANDS = new Set([
   'relay.resend-token',
   'relay.leave',
   'relay.list',
+  'relay.unpin',
   'enroll',
 ]);
 

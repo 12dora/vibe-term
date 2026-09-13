@@ -227,6 +227,7 @@ vibeterm nodes resume <node>
 vibeterm nodes hub-role promote|demote|standby <node> --yes [--wait] [--force]
 vibeterm nodes relay ls
 vibeterm nodes relay switch <url>
+vibeterm nodes relay unpin [--node <n>]
 vibeterm nodes relay rm <url> --yes
 vibeterm nodes relay readmit --yes
 vibeterm nodes ports <node> [--probe]
@@ -244,7 +245,7 @@ vibeterm nodes revoke <node> --yes
 
 `hub-role` 是远程 HTTP 切换（`POST /n/<id>/api/hub/role`），不能用本机运维 `hub promote`（写本机 env）代替。未签名授权时先签 `admit-hub`。`promote` 把指定 hub 升成 writer；`demote` 仅当该节点是 writer，挑后继再 switch，无人接管则只 standby；`standby` 只对该节点 `mode: 'standby'`。`--wait` 轮询 complete + `writerHubId`；旧节点挡住 `admit-hub` 时 `--force` 打强制头。
 
-`nodes relay ls` 是客户端租户侧 `GET /api/mesh/relay/status`（表头对齐本机 `relay list`，多一列 ATTACHED）；本机运维 `vibeterm relay list` 仍打本机回环。`relay switch` 不签 keylog（本机换上行）。`relay rm` / `readmit` 要签名。最后一条中继回 `RELAY_LAST`，提示走本机 `relay leave`。
+`nodes relay ls` 是客户端租户侧 `GET /api/mesh/relay/status`（表头对齐本机 `relay list`，多一列 ATTACHED）；本机运维 `vibeterm relay list` 仍打本机回环。`relay switch` 不签 keylog（本机换上行，并写入 `preferredUrl` 固定主中继）。`relay unpin` 清掉固定（`POST /api/mesh/relay/unpin`，honours 全局 `--node`），人读打印 `unpinned` 或 `nothing pinned`。`relay rm` / `readmit` 要签名。最后一条中继回 `RELAY_LAST`，提示走本机 `relay leave`。`vibeterm relay enroll <url>` 是追加，不是替换；最多 `16` 条中继（`RELAY_RECORD_MAX_RELAYS`）。主中继由自动优选选出，除非用户 `switch` 固定。
 
 签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`、`hub-role` 需 admit-hub 时、`relay rm` / `readmit`、中继模式下 `rename`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。
 
@@ -257,8 +258,9 @@ CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分中继 / hub：
 `vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 租户编号 / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
 接着是中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE`——`ROLE` 是 `primary`（写记录、出名册的那台）/ `secondary` / `-`（未连接），
 `RTT` 是该条 uplink 自己的心跳时延，`PEERS` 是该中继上在线的对端数，`TURN` 是它下发的 TURN 地址并带归因：本机 ok 且有 members → `(ok, N/M)`；本机 fail 且有 members → `(down, N/M nodes ok)`；本机 fail 无 members → `(down)`。
-该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`（已知最佳路径 RTT，毫秒）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发），`relays[].turn` 可选 `members` / `localHint`。`--json` 打 `raw`，新字段原样出去。
-配了两台以上中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。路径采样语义见 [路径优选](../architecture/path-selection.md)。中继机本地看用量用 `vibeterm relay metrics [--members] [--json]`。
+该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`（已知最佳路径 RTT，毫秒）。payload 带 `autoSelect` 时再加 `AUTO`（`auto` / `pinned` / `-`）与 `SCORE`（自动优选打分，越小越好，毫秒；样本不足为 `-`）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发）、`pinned` / `autoSelected` / `score`，payload 可选 `preferredUrl` / `autoSelect`。`--json` 打 `raw`，新字段原样出去。
+`vibeterm relay unpin [--json]` 清掉手动固定的主中继，人读为 `unpinned` 或 `nothing pinned`。
+配了多条中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。路径采样语义见 [路径优选](../architecture/path-selection.md)。中继机本地看用量用 `vibeterm relay metrics [--members] [--json]`。
 
 ## 文件拷贝
 

@@ -9,7 +9,7 @@ import {
   generateKdfParams,
   rootKeyFromSeed,
 } from '@vibeterm/shared/auth';
-import { CliError, UsageError } from '../core/errors';
+import { AuthError, CliError, UsageError } from '../core/errors';
 import { NODE, meshNode, routeFetch, testContext } from './cli-test-harness';
 import { command as nodes } from './nodes';
 
@@ -24,8 +24,8 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function ctx(routes: Parameters<typeof routeFetch>[0], json = true) {
-  const built = await testContext(routeFetch(routes), { json });
+async function ctx(routes: Parameters<typeof routeFetch>[0], json = true, node?: string) {
+  const built = await testContext(routeFetch(routes), { json, ...(node ? { node } : {}) });
   dirs.push(built.dir);
   return built;
 }
@@ -358,6 +358,106 @@ describe('vibeterm nodes relay', () => {
     expect(JSON.parse(stdout.text())).toEqual(status);
   });
 
+  test('relay ls prints AUTO/SCORE when autoSelect is present', async () => {
+    const status = {
+      mode: 'relay',
+      preferredUrl: RELAY_URL,
+      autoSelect: { enabled: true, lastSwitchAt: null, switchReason: 'manual', nextEvalAt: null },
+      relays: [
+        {
+          url: RELAY_URL,
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          rttMs: 18,
+          pinned: true,
+          score: 22,
+        },
+        {
+          url: 'https://other.example',
+          priority: 1,
+          online: true,
+          attached: true,
+          role: 'secondary',
+          rttMs: 9,
+          autoSelected: false,
+          score: 11,
+        },
+      ],
+    };
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/relay/status': () => status,
+      },
+      false
+    );
+    await nodes.run(cli, ['relay', 'ls']);
+    const text = stdout.text();
+    expect(text).toContain('AUTO');
+    expect(text).toContain('SCORE');
+    expect(text).toContain('pinned');
+    expect(text).toContain('22');
+    expect(text).not.toMatch(/\bauto\b/);
+  });
+
+  test('relay ls prints auto on an autoSelected primary', async () => {
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/relay/status': () => ({
+          mode: 'relay',
+          autoSelect: { enabled: true, lastSwitchAt: 1, switchReason: 'auto-rtt', nextEvalAt: 2 },
+          relays: [
+            {
+              url: RELAY_URL,
+              priority: 0,
+              online: true,
+              attached: true,
+              role: 'primary',
+              autoSelected: true,
+              score: 15,
+            },
+          ],
+        }),
+      },
+      false
+    );
+    await nodes.run(cli, ['relay', 'ls']);
+    const text = stdout.text();
+    expect(text).toContain('AUTO');
+    expect(text).toMatch(/\bauto\b/);
+    expect(text).toContain('15');
+  });
+
+  test('relay ls omits AUTO/SCORE without autoSelect', async () => {
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/relay/status': () => ({
+          mode: 'relay',
+          relays: [
+            {
+              url: RELAY_URL,
+              priority: 0,
+              online: true,
+              attached: true,
+              role: 'primary',
+              rttMs: 18,
+              autoSelected: true,
+              score: 9,
+            },
+          ],
+        }),
+      },
+      false
+    );
+    await nodes.run(cli, ['relay', 'ls']);
+    const text = stdout.text();
+    expect(text).toContain('ROLE');
+    expect(text).not.toContain('AUTO');
+    expect(text).not.toContain('SCORE');
+    expect(text).not.toContain('auto');
+  });
+
   test('relay switch POSTs /api/mesh/relay/switch', async () => {
     let body = '';
     const { ctx: cli } = await ctx({
@@ -409,6 +509,98 @@ describe('vibeterm nodes relay', () => {
     });
     await nodes.run(cli, ['relay', 'readmit', '--yes']);
     expect(JSON.parse(stdout.text())).toMatchObject({ signed: 0, total: 0 });
+  });
+
+  test('relay unpin --json dumps the unpin body', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        preferredUrl: RELAY_URL,
+        relays: [{ url: RELAY_URL, pinned: true }],
+      }),
+      'POST /api/mesh/relay/unpin': () => ({ ok: true }),
+    });
+    await nodes.run(cli, ['relay', 'unpin']);
+    expect(JSON.parse(stdout.text())).toEqual({ ok: true });
+  });
+
+  test('relay unpin POSTs /api/mesh/relay/unpin', async () => {
+    let posted = false;
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/relay/status': () => ({
+          mode: 'relay',
+          preferredUrl: RELAY_URL,
+          relays: [{ url: RELAY_URL, pinned: true }],
+        }),
+        'POST /api/mesh/relay/unpin': () => {
+          posted = true;
+          return { ok: true };
+        },
+      },
+      false
+    );
+    await nodes.run(cli, ['relay', 'unpin']);
+    expect(posted).toBe(true);
+    expect(stdout.text()).toContain('unpinned');
+  });
+
+  test('relay unpin prints nothing pinned when preferredUrl is empty', async () => {
+    let posted = false;
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/relay/status': () => ({
+          mode: 'relay',
+          preferredUrl: null,
+          relays: [{ url: RELAY_URL }],
+        }),
+        'POST /api/mesh/relay/unpin': () => {
+          posted = true;
+          return { ok: true };
+        },
+      },
+      false
+    );
+    await nodes.run(cli, ['relay', 'unpin']);
+    expect(posted).toBe(false);
+    expect(stdout.text()).toContain('nothing pinned');
+  });
+
+  test('relay unpin 401 is an auth error', async () => {
+    const { ctx: cli } = await ctx({
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        preferredUrl: RELAY_URL,
+        relays: [{ url: RELAY_URL }],
+      }),
+      'POST /api/mesh/relay/unpin': () =>
+        new Response(JSON.stringify({ code: 'UNAUTHORIZED' }), { status: 401 }),
+    });
+    const error = (await nodes.run(cli, ['relay', 'unpin']).catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+  });
+
+  test('relay unpin --node forwards to /n/<id>', async () => {
+    const seen: string[] = [];
+    const { ctx: cli, stdout } = await ctx(
+      {
+        [`GET /n/${NODE}/api/mesh/relay/status`]: () => ({
+          mode: 'relay',
+          preferredUrl: RELAY_URL,
+          relays: [{ url: RELAY_URL, pinned: true }],
+        }),
+        [`POST /n/${NODE}/api/mesh/relay/unpin`]: () => {
+          seen.push('unpin');
+          return { ok: true };
+        },
+      },
+      false,
+      NODE
+    );
+    await nodes.run(cli, ['relay', 'unpin']);
+    expect(seen).toEqual(['unpin']);
+    expect(stdout.text()).toContain('unpinned');
   });
 
   test('relay readmit signs readmit-node for each entry', async () => {

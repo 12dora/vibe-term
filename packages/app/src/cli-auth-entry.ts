@@ -61,6 +61,7 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'relay.resend-token': async (p) => await (await relay()).runRelayResendToken(p),
   'relay.leave': async (p) => await (await relay()).runRelayLeave(p),
   'relay.list': async (p) => await (await relay()).runRelayList(p),
+  'relay.unpin': async (p) => await (await relay()).runRelayUnpin(p),
 };
 
 export async function dispatchAuthCli(parsed: ParsedArgs, lang: CliLang): Promise<void> {
