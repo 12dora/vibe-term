@@ -362,6 +362,74 @@ describe('node-list-projection', () => {
     expect(selfDto?.endpoints).toEqual([]);
     expect(selfDto?.directFailure).toBeNull();
     expect(selfDto?.dcBreaker).toBeNull();
+    expect(selfDto?.lastSeenAt).toBeNull();
+  });
+
+  test('lastSeenAt 来自 peer_cache；self 恒为 null', () => {
+    const selfId = 'aa'.repeat(16);
+    const peerId = 'cc'.repeat(16);
+    const cert = {
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(peerId),
+        ed_pk: new Uint8Array(32).fill(4),
+        x25519_pk: new Uint8Array(32).fill(5),
+        enroll_pk: new Uint8Array(32).fill(6),
+        issued_at: 1n,
+      }),
+    };
+    const seen = 1_700_000_222_000;
+    const peerDto = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map([[peerId, 'lan']]),
+      new Set(),
+      new Map([[peerId, cert]]),
+      new Map([[peerId, { inventoryJson: '{}', directCapable: false, lastSeenAt: seen }]]),
+      new Map([[peerId, 'studio']]),
+      new Map(),
+      null,
+      undefined,
+      null
+    );
+    expect(peerDto?.lastSeenAt).toBe(seen);
+
+    const missing = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map(),
+      new Set(),
+      new Map([[peerId, cert]]),
+      new Map([[peerId, { inventoryJson: '{}', directCapable: false }]]),
+      new Map([[peerId, 'studio']]),
+      new Map(),
+      null,
+      undefined,
+      null
+    );
+    expect(missing?.lastSeenAt).toBeNull();
+
+    const selfDto = projectMeshListNode(
+      selfId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map(),
+      new Set(),
+      new Map(),
+      new Map([[selfId, { inventoryJson: '{}', lastSeenAt: seen }]]),
+      new Map(),
+      new Map(),
+      'home',
+      { inventory: {}, direct_capable: false, version: '1' },
+      null
+    );
+    expect(selfDto?.lastSeenAt).toBeNull();
   });
 
   test('isHub is true for every id in hubIds and carries hubMode', () => {

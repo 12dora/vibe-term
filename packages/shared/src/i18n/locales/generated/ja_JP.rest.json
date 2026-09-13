@@ -1729,14 +1729,22 @@
         "reach": "接続経路",
         "version": "バージョン",
         "lastSeen": "最終接続",
+        "address": "アドレス",
         "direct": "ダイレクト対応",
         "login": "サインイン",
         "fingerprint": "フィンガープリント",
         "actions": "操作"
       },
+      "time": {
+        "justNow": "たった今",
+        "minutes": "{{n}} 分前",
+        "hours": "{{n}} 時間前",
+        "days": "{{n}} 日前"
+      },
       "status": {
         "online": "オンライン",
         "offline": "オフライン",
+        "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
         "pending": "承認待ち",
         "paused": "一時停止"

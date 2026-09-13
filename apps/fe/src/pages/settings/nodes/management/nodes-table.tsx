@@ -6,6 +6,7 @@
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
+import { nodeReachLabel, nodeRelativeTime } from '@/node/node-address';
 import { Button } from '@vibeterm/ui/button';
 import { Checkbox } from '@vibeterm/ui/checkbox';
 import {
@@ -76,10 +77,9 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
             <Th>{t('nodes.columns.status')}</Th>
             <Th>{t('nodes.columns.reach')}</Th>
             <Th>{t('nodes.columns.version')}</Th>
-            <Th>{t('nodes.columns.lastSeen')}</Th>
+            <Th>{t('nodes.columns.address')}</Th>
             <Th>{t('nodes.columns.direct')}</Th>
             <Th>{t('nodes.columns.login')}</Th>
-            <Th>{t('nodes.columns.fingerprint')}</Th>
             <Th className={stickyActionColumn}>{t('nodes.columns.actions')}</Th>
           </tr>
         </thead>
@@ -101,10 +101,7 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
           )}
           {rows.length === 0 && (
             <tr>
-              <td
-                colSpan={10}
-                className="vibeterm-fade px-3 py-6 text-center text-muted-foreground"
-              >
+              <td colSpan={9} className="vibeterm-fade px-3 py-6 text-center text-muted-foreground">
                 {t('nodes.empty')}
               </td>
             </tr>
@@ -147,11 +144,17 @@ function NameCell({
   );
 }
 
-function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
+function deriveNodeRow(row: NodeRow, t: Translate, now = Date.now()) {
+  const relative = !row.online ? nodeRelativeTime(t, row.lastSeenAt, now) : null;
   return {
     statusClass: row.online ? 'text-emerald-500' : 'text-muted-foreground',
-    statusText: t(row.online ? 'nodes.status.online' : 'nodes.status.offline'),
-    reachText: row.reach ? t(`nodes.reach.${row.reach}`) : '—',
+    statusText:
+      relative != null
+        ? t('nodes.status.offlineSince', { time: relative })
+        : t(row.online ? 'nodes.status.online' : 'nodes.status.offline'),
+    statusTitle:
+      !row.online && row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : undefined,
+    reachText: nodeReachLabel(row) ?? '—',
   };
 }
 
@@ -210,7 +213,15 @@ function NodeRowView({
         <span data-testid={`nodes-reach-${row.id}`}>{view.reachText}</span>
       </Td>
       <Td>{row.version ?? '—'}</Td>
-      <Td>{row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '—'}</Td>
+      <Td>
+        <code
+          className="block max-w-[14rem] truncate font-mono text-[11px] text-muted-foreground"
+          title={row.address ?? '—'}
+          data-testid={`nodes-address-${row.id}`}
+        >
+          {row.address ?? '—'}
+        </code>
+      </Td>
       <Td>{row.directCapable ? t('common.yes') : t('common.no')}</Td>
       <Td>
         {row.loggedIn || row.isSelf ? (
@@ -218,9 +229,6 @@ function NodeRowView({
         ) : (
           <NodeLoginButton nodeId={row.runtimeNodeId} nodeName={row.name} />
         )}
-      </Td>
-      <Td>
-        <code className="font-mono text-[11px] text-muted-foreground">{row.fingerprint}</code>
       </Td>
       <Td className={stickyActionColumn}>
         <div className="flex items-center gap-1">
@@ -279,7 +287,7 @@ function StatusCell({
   uninstall: NodeUninstallController;
   uninstalling: boolean;
   switching: boolean;
-  view: { statusClass: string; statusText: string };
+  view: { statusClass: string; statusText: string; statusTitle?: string };
 }) {
   const { t } = useTranslation();
   const failed = row.operation?.kind === 'uninstall' && row.operation.phase === 'failed';
@@ -343,6 +351,7 @@ function StatusCell({
     <span
       data-testid={`nodes-status-${row.id}`}
       className={`inline-flex items-center gap-1.5 ${view.statusClass}`}
+      title={view.statusTitle}
     >
       {view.statusText}
       {row.paused === true && <PausedTag />}

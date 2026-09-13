@@ -13,6 +13,7 @@ import type {
 import type { MeshNodeOperation } from '@vibeterm/shared';
 import { bytesToHex, decodeBase64url, sha256 } from '@vibeterm/shared/auth';
 import { type HubAdmissionStatus, type HubNodeRow, hubAdmissionStatus } from './hub-api';
+import { deriveNodeAddress } from './node-address';
 import { relayPresenceOf, viaRelayOf } from './relay-extras';
 
 /** 公钥指纹：sha256(pk) 的前 16 个十六进制字符（8 字节）。畸形 base64url 返回空串。 */
@@ -77,6 +78,14 @@ export interface NodeRow {
   viaRelay?: string | null;
   /** 该对端当前在线的全部中继；旧网关或 hub 模式为空数组。 */
   relayPresence?: string[];
+  /** 当前链路的对端地址；未知或 self 为 `null`。 */
+  peerAddress?: string | null;
+  /** 对端广播的 ws 接入地址；self / pending 为空数组。 */
+  endpoints?: string[];
+  /**
+   * 展示用地址（host[:port]）。`mergeNodes` 恒填；手写夹具可缺省，表里按 '—' 渲染。
+   */
+  address?: string;
   version: string | null;
   directCapable: boolean;
   loggedIn: boolean;
@@ -85,7 +94,7 @@ export interface NodeRow {
   isHub: boolean;
   /** hub 机的主 / 备身份；非 hub、旧后端不下发、以及不关心这一段的构造方为空。 */
   hubMode?: HubMode | null;
-  /** hub 侧 `last_seen_at`（毫秒）；hub 不可达时为 `null`。 */
+  /** mesh `lastSeenAt`（peer_cache）优先，hub `last_seen_at` 兜底；都没有为 `null`。 */
   lastSeenAt: number | null;
   /** hub 侧 `nodes.status`；hub 不可达时为 `null`。 */
   status: string | null;
@@ -132,6 +141,10 @@ function rttOf(rttMs: number | null | undefined): number | null {
 export interface MergeContext {
   entryNodeId: string | null;
   hubNodeId: string | null;
+  /** hub 集合按 nodeId 索引；缺省时 hub 行推不出 publicUrl。 */
+  hubDetails?: ReadonlyMap<string, { publicUrl?: string | null }>;
+  /** 本机 HTTPS / 域名；仅 self 行使用。 */
+  selfAddress?: string | null;
 }
 
 /**
@@ -155,6 +168,9 @@ export function mergeNodes(
 }
 
 function toAdmittedRow(node: MeshNode, hub: HubNodeRow | null, context: MergeContext): NodeRow {
+  const isSelf = isEntryNode(node.id, context);
+  const isHub = isHubNode(node, context);
+  const path = admittedPath(node);
   return {
     id: node.id,
     runtimeNodeId: toRuntimeNodeId(node.id, context.entryNodeId),
@@ -163,23 +179,65 @@ function toAdmittedRow(node: MeshNode, hub: HubNodeRow | null, context: MergeCon
     fingerprint: publicKeyFingerprint(node.publicKey),
     online: node.online,
     reach: reachOf(node.reach),
-    transport: transportOf(node.transport),
-    rttMs: rttOf(node.rttMs),
-    viaRelay: viaRelayOf(node.viaRelay),
-    relayPresence: relayPresenceOf(node.relayPresence),
+    ...path,
+    address: admittedAddress(node, context, isSelf, isHub, path),
     version: node.version ?? hub?.version ?? null,
-    directCapable: node.direct_capable || (hub?.direct_capable ?? false),
+    directCapable: node.direct_capable || Boolean(hub?.direct_capable),
     loggedIn: node.loggedIn,
     inventory: node.inventory ?? null,
-    isSelf: isEntryNode(node.id, context),
-    isHub: isHubNode(node, context),
+    isSelf,
+    isHub,
     hubMode: node.hubMode ?? null,
     operation: node.operation ?? null,
     ...hubColumns(hub),
+    lastSeenAt: meshOrHubLastSeen(node.lastSeenAt, hub),
     pending: false,
     admitMaterial: null,
     paused: isMeshNodePaused(node) ? true : undefined,
   };
+}
+
+function admittedPath(node: MeshNode) {
+  return {
+    transport: transportOf(node.transport),
+    rttMs: rttOf(node.rttMs),
+    viaRelay: viaRelayOf(node.viaRelay),
+    relayPresence: relayPresenceOf(node.relayPresence),
+    peerAddress: node.peerAddress ?? null,
+    endpoints: stringList(node.endpoints),
+  };
+}
+
+function admittedAddress(
+  node: MeshNode,
+  context: MergeContext,
+  isSelf: boolean,
+  isHub: boolean,
+  path: ReturnType<typeof admittedPath>
+): string {
+  return (
+    deriveNodeAddress({
+      isHub,
+      isSelf,
+      transport: path.transport,
+      peerAddress: path.peerAddress,
+      endpoints: path.endpoints,
+      viaRelay: path.viaRelay,
+      relayPresence: path.relayPresence,
+      hubPublicUrl: context.hubDetails?.get(node.id)?.publicUrl,
+      selfAddress: isSelf ? (context.selfAddress ?? null) : null,
+    }) ?? '—'
+  );
+}
+
+function meshOrHubLastSeen(mesh: number | null | undefined, hub: HubNodeRow | null): number | null {
+  if (typeof mesh === 'number') return mesh;
+  return hub?.last_seen_at ?? null;
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
 }
 
 function isEntryNode(nodeId: string, context: MergeContext): boolean {
@@ -233,6 +291,9 @@ function toPendingRow(row: HubNodeRow): NodeRow {
     rttMs: null,
     viaRelay: null,
     relayPresence: [],
+    peerAddress: null,
+    endpoints: [],
+    address: '—',
     version: null,
     directCapable: false,
     loggedIn: false,

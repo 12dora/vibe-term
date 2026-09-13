@@ -51,6 +51,50 @@ describe('vibeterm nodes', () => {
     expect(payload.nodes[0]?.paused).toBe(true);
   });
 
+  test('ls --json includes address and lastSeenAt', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/nodes': () => ({
+        nodes: [
+          meshNode({
+            peerAddress: '10.0.0.8',
+            transport: 'dc',
+            lastSeenAt: 1_700_000_000_000,
+          }),
+        ],
+      }),
+    });
+    await nodes.run(cli, ['ls']);
+    const payload = JSON.parse(stdout.text()) as {
+      nodes: Array<{ address?: string; lastSeenAt?: number | null }>;
+    };
+    expect(payload.nodes[0]?.address).toBe('10.0.0.8');
+    expect(payload.nodes[0]?.lastSeenAt).toBe(1_700_000_000_000);
+  });
+
+  test('ls table shows ADDRESS and last seen on offline ONLINE', async () => {
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/nodes': () => ({
+          nodes: [
+            meshNode({
+              online: false,
+              reach: null,
+              transport: null,
+              lastSeenAt: Date.now() - 3 * 60 * 60 * 1000,
+              endpoints: ['wss://edge.example:39001/peer'],
+            }),
+          ],
+        }),
+      },
+      false
+    );
+    await nodes.run(cli, ['ls']);
+    const text = stdout.text();
+    expect(text).toContain('ADDRESS');
+    expect(text).toContain('edge.example:39001');
+    expect(text).toMatch(/no · 3h ago/);
+  });
+
   test('pause and resume POST to the entry', async () => {
     const seen: string[] = [];
     const { ctx: cli, stdout } = await ctx({
@@ -75,12 +119,22 @@ describe('vibeterm nodes', () => {
       directFailure: { at: 1, ws: 'timeout' },
       dcBreaker: { cooling: false, until: null, failures: 0, level: 0, lastFailureKind: null },
       endpoints: ['ws://10.0.0.2:39001/peer'],
+      lastSeenAt: 1_700_000_000_000,
+      peerAddress: '10.0.0.2',
+      transport: 'ws-secure',
     });
     const { ctx: cli, stdout } = await ctx({
       'GET /api/mesh/nodes': () => ({ nodes: [row] }),
     });
     await nodes.run(cli, ['show', 'office']);
-    expect(JSON.parse(stdout.text()).endpoints).toEqual(['ws://10.0.0.2:39001/peer']);
+    const payload = JSON.parse(stdout.text()) as {
+      endpoints: string[];
+      address: string;
+      lastSeenAt: number;
+    };
+    expect(payload.endpoints).toEqual(['ws://10.0.0.2:39001/peer']);
+    expect(payload.address).toBe('10.0.0.2');
+    expect(payload.lastSeenAt).toBe(1_700_000_000_000);
   });
 
   test('hubs hits /api/mesh/hubs', async () => {

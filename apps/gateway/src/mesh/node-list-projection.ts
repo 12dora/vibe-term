@@ -73,6 +73,8 @@ export type MeshNodeDto = {
   dcBreaker?: MeshNodeDcBreaker | null;
   viaRelay?: string | null;
   relayPresence?: string[];
+  /** `peer_cache.last_seen_at`（毫秒）；self 恒为 `null`。旧入口不下发。 */
+  lastSeenAt?: number | null;
   /** 入口本机暂停了该成员时为 true；self 与未暂停行缺省。 */
   paused?: boolean;
   /** 入站口可达性；self 行也下发。旧入口无此字段。 */
@@ -258,7 +260,12 @@ export function projectMeshListNode(
   certById: Map<string, { certificateBytes: Uint8Array }>,
   peerById: Map<
     string,
-    { inventoryJson?: string | null; directCapable?: boolean; endpointsJson?: string | null }
+    {
+      inventoryJson?: string | null;
+      directCapable?: boolean;
+      endpointsJson?: string | null;
+      lastSeenAt?: number | null;
+    }
   >,
   listedById: Map<string, string>,
   registryById: Map<string, string>,
@@ -316,7 +323,13 @@ export function projectMeshListNode(
     ...(attachedHubIdOf?.(id) ? { attachedHubId: attachedHubIdOf(id) ?? undefined } : {}),
     ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson)),
     ...meshRelayFields(isSelf, id, path.transport, detail, viaRelayOf, relayPresenceOf),
+    lastSeenAt: meshLastSeenAt(isSelf, peer?.lastSeenAt),
   };
+}
+
+function meshLastSeenAt(isSelf: boolean, lastSeenAt: number | null | undefined): number | null {
+  if (isSelf) return null;
+  return typeof lastSeenAt === 'number' && Number.isFinite(lastSeenAt) ? lastSeenAt : null;
 }
 
 function endpointsFromJson(raw: string | null | undefined): string[] {

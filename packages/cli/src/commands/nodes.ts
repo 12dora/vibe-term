@@ -22,9 +22,12 @@ import {
   fetchHubs,
   findAdminNode,
   findMeshNode,
+  hubUrlByNodeId,
   isTrustedHubUrl,
   listListedNodes,
   listMeshNodesDetailed,
+  listedOnline,
+  nodeAddressOf,
   passwordJoinCommand,
   reachOf,
   resolveHubNodeId,
@@ -102,7 +105,7 @@ const USAGE = [
   '  meta-key admit <node>      wrap current K_meta for a node (relay; VIBETERM_PASSWORD or TTY)',
   '  meta-key rotate [--exclude <node>...]',
   '                             rotate K_meta, excluding nodes (relay)',
-  '  upgrade <node>|--all|--ids a,b [--version] [--wait]',
+  '  upgrade <node>|--all|--ids a,b [--version <ver>] [--wait]',
   '  upgrade cancel <node> [--yes]  DELETE …/upgrade',
   '  op clear <node>            DELETE …/operation',
   '  uninstall <node> [--yes]   POST …/uninstall then signed revoke-node',
@@ -111,8 +114,8 @@ const USAGE = [
   '  rtc-config                 GET /api/mesh/rtc-config (includes probes)',
   '',
   '--json shapes:',
-  '  ls          { nodes: (MeshNode & { status: "admitted"|"pending" })[] }',
-  '  show        MeshNode',
+  '  ls          { nodes: (MeshNode & { status: "admitted"|"pending"; address: string })[] }',
+  '  show        MeshNode & { address: string }',
   '  hubs        MeshHubsResponse',
   '  hub-role    { kind, operationId, verb, node, admitted?, phase?, writerHubId?, error? }',
   '  rename      { ok, id, name }',
@@ -138,7 +141,11 @@ function rtt(node: MeshNode): string {
 
 const ls: SubHandler = async (ctx, _flags, positionals) => {
   rejectExtra(positionals, 0);
-  const nodes = await listListedNodes(ctx);
+  const hubUrls = await hubUrlByNodeId(ctx);
+  const nodes = (await listListedNodes(ctx)).map((row) => ({
+    ...row,
+    address: nodeAddressOf(row, hubUrls),
+  }));
   emit(ctx, { nodes }, () => {
     ctx.out.table(nodes, [
       { header: 'NAME', value: (row) => row.name },
@@ -147,7 +154,8 @@ const ls: SubHandler = async (ctx, _flags, positionals) => {
       { header: 'STATUS', value: (row) => row.status },
       { header: 'REACH', value: reachOf },
       { header: 'VERSION', value: (row) => dash(row.version) },
-      { header: 'ONLINE', value: (row) => yn(row.online) },
+      { header: 'ADDRESS', value: (row) => row.address },
+      { header: 'ONLINE', value: (row) => listedOnline(row) },
       { header: 'PAUSED', value: (row) => yn(row.paused) },
       { header: 'RTT', value: rtt },
     ]);
@@ -158,7 +166,8 @@ const show: SubHandler = async (ctx, _flags, positionals) => {
   const ref = requireArg(positionals, 0, 'node');
   rejectExtra(positionals, 1);
   const node = await findMeshNode(ctx, ref);
-  emit(ctx, node, () => {
+  const address = nodeAddressOf(node, await hubUrlByNodeId(ctx));
+  emit(ctx, { ...node, address }, () => {
     ctx.out.line(`name           ${node.name}`);
     ctx.out.line(`id             ${node.id}`);
     ctx.out.line(`role           ${roleOf(node)}`);
@@ -166,6 +175,8 @@ const show: SubHandler = async (ctx, _flags, positionals) => {
     ctx.out.line(`loggedIn       ${yn(node.loggedIn)}`);
     ctx.out.line(`reach          ${reachOf(node)}`);
     ctx.out.line(`version        ${dash(node.version)}`);
+    ctx.out.line(`address        ${address}`);
+    ctx.out.line(`lastSeenAt     ${dash(node.lastSeenAt)}`);
     ctx.out.line(`rttMs          ${dash(node.rttMs)}`);
     ctx.out.line(`peerAddress    ${dash(node.peerAddress)}`);
     ctx.out.line(`directCapable  ${yn(node.direct_capable)}`);

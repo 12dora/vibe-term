@@ -2496,14 +2496,22 @@ export const I18N_RESOURCES = {
         "reach": "Connection",
         "version": "Version",
         "lastSeen": "Last seen",
+        "address": "Address",
         "direct": "Direct capable",
         "login": "Sign-in",
         "fingerprint": "Fingerprint",
         "actions": "Actions"
       },
+      "time": {
+        "justNow": "just now",
+        "minutes": "{{n}} min ago",
+        "hours": "{{n}} hours ago",
+        "days": "{{n}} days ago"
+      },
       "status": {
         "online": "Online",
         "offline": "Offline",
+        "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
         "pending": "Pending",
         "paused": "Paused"
@@ -6215,14 +6223,22 @@ export const I18N_RESOURCES = {
         "reach": "连接方式",
         "version": "版本",
         "lastSeen": "最近在线",
+        "address": "地址",
         "direct": "支持直连",
         "login": "登录状态",
         "fingerprint": "公钥指纹",
         "actions": "操作"
       },
+      "time": {
+        "justNow": "刚刚",
+        "minutes": "{{n}} 分钟前",
+        "hours": "{{n}} 小时前",
+        "days": "{{n}} 天前"
+      },
       "status": {
         "online": "在线",
         "offline": "离线",
+        "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
         "pending": "待批准",
         "paused": "已暂停"
@@ -9928,14 +9944,22 @@ export const I18N_RESOURCES = {
         "reach": "接続経路",
         "version": "バージョン",
         "lastSeen": "最終接続",
+        "address": "アドレス",
         "direct": "ダイレクト対応",
         "login": "サインイン",
         "fingerprint": "フィンガープリント",
         "actions": "操作"
       },
+      "time": {
+        "justNow": "たった今",
+        "minutes": "{{n}} 分前",
+        "hours": "{{n}} 時間前",
+        "days": "{{n}} 日前"
+      },
       "status": {
         "online": "オンライン",
         "offline": "オフライン",
+        "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
         "pending": "承認待ち",
         "paused": "一時停止"

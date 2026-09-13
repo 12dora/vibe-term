@@ -322,6 +322,8 @@ export interface MeshNode {
   peerAddress?: string | null;
   /** 当前这条链路建立的时刻（epoch 毫秒）；未知为 null。 */
   linkSinceAt?: number | null;
+  /** peer_cache.last_seen_at（毫秒）；self 恒 null。旧入口不下发。 */
+  lastSeenAt?: number | null;
   /** 对端广播的 ws 接入地址。 */
   endpoints?: string[];
   /** 最近一次直连尝试的失败原因；已直连或从未尝试为 null。 */
@@ -340,10 +342,7 @@ export interface MeshNode {
   attachedHubId?: string;
   /** 入口记录的进行中长事务（卸载 / 主备切换）；无则缺省或 null。 */
   operation?: MeshNodeOperation | null;
-  /**
-   * 入口本机暂停了该成员。缺省 / 旧网关 / self 视为 false。
-   * `true` 时本入口不再向该节点发起用户流量。
-   */
+  /** 入口本机暂停了该成员。缺省 / 旧网关 / self 视为 false。 */
   paused?: boolean;
   ports?: MeshPortReach[];
 }

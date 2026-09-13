@@ -162,3 +162,71 @@ describe('mergeNodes 的待批准行', () => {
     expect(rows[0].admissionStatus).toBeNull();
   });
 });
+
+describe('mergeNodes 的 lastSeenAt / address', () => {
+  test('lastSeenAt 优先 mesh，hub last_seen_at 兜底', () => {
+    const mesh = {
+      ...meshNode(OTHER, 'studio'),
+      lastSeenAt: 1_700_000_111_000,
+      peerAddress: '10.0.0.8',
+      transport: 'dc' as const,
+      endpoints: ['ws://10.0.0.8:39001/peer'],
+    };
+    const preferMesh = mergeNodes([mesh], [hubRow(OTHER, { last_seen_at: 1 })], CONTEXT);
+    expect(preferMesh[0].lastSeenAt).toBe(1_700_000_111_000);
+    expect(preferMesh[0].peerAddress).toBe('10.0.0.8');
+    expect(preferMesh[0].endpoints).toEqual(['ws://10.0.0.8:39001/peer']);
+
+    const fallback = mergeNodes([meshNode(OTHER, 'studio')], [hubRow(OTHER)], CONTEXT);
+    expect(fallback[0].lastSeenAt).toBe(1_700_000_000_000);
+
+    const empty = mergeNodes([meshNode(OTHER, 'studio')], null, CONTEXT);
+    expect(empty[0].lastSeenAt).toBeNull();
+  });
+
+  test('address：hub publicUrl > 直连 peerAddress > 广告 endpoint > viaRelay', () => {
+    const hubId = 'dd'.repeat(16);
+    const hub = {
+      ...meshNode(hubId, 'tokyo'),
+      isHub: true,
+      transport: 'dc' as const,
+      peerAddress: '10.0.0.2',
+    };
+    const direct = {
+      ...meshNode(OTHER, 'studio'),
+      transport: 'ws-secure' as const,
+      peerAddress: 'office.lan',
+      endpoints: ['wss://edge.example/peer'],
+    };
+    const advertised = {
+      ...meshNode(PENDING_ID, 'edge'),
+      endpoints: ['ws://10.0.0.9:39001/peer', 'wss://edge.example:39001/peer'],
+    };
+    const relay = {
+      ...meshNode('ee'.repeat(16), 'relayed'),
+      transport: 'relay' as const,
+      viaRelay: 'https://sh.example',
+    };
+    const rows = mergeNodes([hub, direct, advertised, relay], null, {
+      ...CONTEXT,
+      hubDetails: new Map([[hubId, { publicUrl: 'https://tokyo.example:8443' }]]),
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get(hubId)?.address).toBe('tokyo.example:8443');
+    expect(byId.get(OTHER)?.address).toBe('office.lan');
+    expect(byId.get(PENDING_ID)?.address).toBe('edge.example:39001');
+    expect(byId.get('ee'.repeat(16))?.address).toBe('sh.example');
+  });
+
+  test('pending 行 address 为破折号，lastSeenAt 仍抄 hub', () => {
+    const rows = mergeNodes(
+      [],
+      [hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop', ...MATERIAL })],
+      CONTEXT
+    );
+    expect(rows[0].address).toBe('—');
+    expect(rows[0].lastSeenAt).toBe(1_700_000_000_000);
+    expect(rows[0].peerAddress).toBeNull();
+    expect(rows[0].endpoints).toEqual([]);
+  });
+});

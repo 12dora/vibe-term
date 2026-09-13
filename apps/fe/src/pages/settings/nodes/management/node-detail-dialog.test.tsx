@@ -486,6 +486,21 @@ describe('详情正文', () => {
     expect(html).toContain('nodes.reach.lan');
     expect(html).toContain(`value="${REMOTE.name}"`);
     expect(html).toContain(`data-testid="nodes-detail-domain-${REMOTE.id}"`);
+    expect(html).toContain('nodes.columns.fingerprint');
+    expect(html).toContain('nodes.columns.address');
+    expect(html).toContain('nodes.columns.lastSeen');
+  });
+
+  test('详情保留指纹，并给出地址与最近在线', () => {
+    const at = 1_700_000_000_000;
+    const html = body({
+      row: { ...REMOTE, address: 'office.lan', lastSeenAt: at },
+    });
+    expect(html).toContain('ffffffffffffffff');
+    expect(html).toContain(`data-testid="nodes-detail-address-${REMOTE.id}"`);
+    expect(html).toContain('office.lan');
+    expect(html).toContain(`data-testid="nodes-detail-last-seen-${REMOTE.id}"`);
+    expect(html).toContain(new Date(at).toLocaleString());
   });
 
   test('hub 不可写时名称输入框禁用并说明原因', () => {

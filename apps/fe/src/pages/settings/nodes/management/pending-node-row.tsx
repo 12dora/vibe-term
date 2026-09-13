@@ -46,9 +46,16 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
         <span data-testid={`nodes-reach-${row.id}`}>—</span>
       </Td>
       <Td>—</Td>
-      <Td>{row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '—'}</Td>
+      <Td>
+        <code
+          className="block max-w-[14rem] truncate font-mono text-[11px] text-muted-foreground"
+          title="—"
+          data-testid={`nodes-address-${row.id}`}
+        >
+          —
+        </code>
+      </Td>
       <Td>{t('common.no')}</Td>
-      <Td>—</Td>
       <Td>—</Td>
       <Td className={stickyActionColumn}>
         <div className="flex items-start gap-1">

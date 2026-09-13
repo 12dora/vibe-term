@@ -1729,14 +1729,22 @@
         "reach": "Connection",
         "version": "Version",
         "lastSeen": "Last seen",
+        "address": "Address",
         "direct": "Direct capable",
         "login": "Sign-in",
         "fingerprint": "Fingerprint",
         "actions": "Actions"
       },
+      "time": {
+        "justNow": "just now",
+        "minutes": "{{n}} min ago",
+        "hours": "{{n}} hours ago",
+        "days": "{{n}} days ago"
+      },
       "status": {
         "online": "Online",
         "offline": "Offline",
+        "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
         "pending": "Pending",
         "paused": "Paused"

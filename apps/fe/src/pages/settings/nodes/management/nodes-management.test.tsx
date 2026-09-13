@@ -163,7 +163,7 @@ describe('NodesManagement', () => {
     expect(html).not.toContain('data-testid="nodes-table"');
   });
 
-  test('mesh 模式渲染节点表：self 在前、指纹 16 位、到达路径与登录按钮', () => {
+  test('mesh 模式渲染节点表：self 在前、地址列、到达路径与登录按钮', () => {
     setMeshNodesStateForTest({
       entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
       nodes: [
@@ -171,6 +171,8 @@ describe('NodesManagement', () => {
           id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
           name: 'studio',
           reach: 'relay',
+          transport: 'relay',
+          viaRelay: 'https://sh.example',
           online: true,
           loggedIn: false,
         }),
@@ -184,10 +186,12 @@ describe('NodesManagement', () => {
     expect(html.indexOf('nodes-row-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).toBeLessThan(
       html.indexOf('nodes-row-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c')
     );
-    // 未登录的远端 node 渲染「登录此节点」按钮
     expect(html).toContain('data-testid="node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
-    // 指纹为 sha256(pk) 前 16 hex
-    expect(html).toMatch(/<code class="font-mono[^"]*">[0-9a-f]{16}<\/code>/);
+    expect(html).toContain('nodes.columns.address');
+    expect(html).toContain('data-testid="nodes-address-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    expect(html).toContain('sh.example');
+    expect(html).toContain('data-testid="nodes-reach-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    expect(html).toContain('>relay<');
   });
 
   test('整块只有一张卡片：刷新与「添加」在卡头，加入码表单默认收起', () => {
@@ -321,6 +325,53 @@ describe('NodesManagement', () => {
     const header = elementTag(html, 'nodes-select-all');
     expect(header).toContain('data-all-selected="false"');
     expect(header).toContain('aria-label="nodes.selection.selectAll"');
+  });
+
+  test('合并后地址列：hub publicUrl 与直连 peerAddress', () => {
+    const hub = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+    const peer = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
+    const entry = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
+    setMeshNodesStateForTest({
+      entryNodeId: entry,
+      nodes: [
+        meshNode({ id: entry, name: 'entry', loggedIn: true, isHub: true, hubMode: 'active' }),
+        meshNode({
+          id: peer,
+          name: 'studio',
+          loggedIn: true,
+          transport: 'dc',
+          peerAddress: '10.0.0.8',
+        }),
+        meshNode({ id: hub, name: 'tokyo', loggedIn: true, isHub: true, hubMode: 'standby' }),
+      ],
+    });
+    setMeshHubsStateForTest({
+      hubs: [
+        {
+          nodeId: entry,
+          publicUrl: 'https://home.example',
+          mode: 'active',
+          priority: 0,
+          writerEpoch: 1,
+          online: true,
+        },
+        {
+          nodeId: hub,
+          publicUrl: 'https://tokyo.example:8443',
+          mode: 'standby',
+          priority: 1,
+          writerEpoch: 0,
+          online: true,
+        },
+      ],
+      writerHubId: entry,
+      loadedAt: 1,
+    });
+    const html = render(MODE);
+    expect(html).toContain(`data-testid="nodes-address-${entry}"`);
+    expect(html).toContain('home.example');
+    expect(html).toContain('10.0.0.8');
+    expect(html).toContain('tokyo.example:8443');
   });
 });
 
@@ -633,6 +684,76 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(restoring).toContain('title="nodes.upgrade.restoring"');
     // 别的行不受影响
     expect(buttonTag(html, 'node-upgrade-hh')).not.toContain('disabled=""');
+  });
+
+  test('列头是地址而不是最近在线 / 指纹', () => {
+    const html = renderTable([nodeRow({ id: 'aa', address: 'office.lan' })], '1.2.0');
+    expect(html).toContain('nodes.columns.address');
+    expect(html).toContain('nodes.columns.status');
+    expect(html).toContain('nodes.columns.reach');
+    expect(html).not.toContain('nodes.columns.lastSeen');
+    expect(html).not.toContain('nodes.columns.fingerprint');
+    expect(html).toContain('data-testid="nodes-address-aa"');
+    expect(html).toContain('office.lan');
+  });
+
+  test('离线状态拼相对时间，绝对时间在 title', () => {
+    const at = Date.now() - 3 * 60 * 60 * 1000;
+    const html = renderTable(
+      [nodeRow({ id: 'off', online: false, lastSeenAt: at, address: '—' })],
+      '1.2.0'
+    );
+    expect(html).toContain('nodes.status.offlineSince');
+    expect(elementTag(html, 'nodes-status-off')).toContain(
+      `title="${new Date(at).toLocaleString()}"`
+    );
+  });
+
+  test('在线状态仍是「在线」，暂停标记不动', () => {
+    const html = renderTable(
+      [nodeRow({ id: 'on', online: true, paused: true, lastSeenAt: 1 })],
+      '1.2.0'
+    );
+    expect(html).toContain('nodes.status.online');
+    expect(html).not.toContain('nodes.status.offlineSince');
+    expect(html).toContain('nodes.status.paused');
+  });
+
+  test('REACH 显示 reach/transport；self / 离线为破折号', () => {
+    const lan = renderTable(
+      [nodeRow({ id: 'dc', reach: 'lan', transport: 'dc', online: true })],
+      '1.2.0'
+    );
+    expect(lan).toContain('data-testid="nodes-reach-dc"');
+    expect(lan).toContain('>lan/dc<');
+
+    const self = renderTable(
+      [nodeRow({ id: 'me', isSelf: true, reach: 'lan', transport: 'dc', online: true })],
+      '1.2.0'
+    );
+    expect(self).toContain('>—</span>');
+
+    const offline = renderTable(
+      [nodeRow({ id: 'z', reach: 'wan', transport: 'ws-secure', online: false })],
+      '1.2.0'
+    );
+    expect(offline).toContain('data-testid="nodes-reach-z"');
+  });
+
+  test('address 优先级：hub URL、直连、广告 endpoint、中继', () => {
+    const html = renderTable(
+      [
+        nodeRow({ id: 'hub', isHub: true, address: 'tokyo.example' }),
+        nodeRow({ id: 'dc', address: '10.0.0.8' }),
+        nodeRow({ id: 'adv', address: 'edge.example:39001' }),
+        nodeRow({ id: 'rel', address: 'sh.example' }),
+      ],
+      '1.2.0'
+    );
+    expect(html).toContain('>tokyo.example</code>');
+    expect(html).toContain('>10.0.0.8</code>');
+    expect(html).toContain('>edge.example:39001</code>');
+    expect(html).toContain('>sh.example</code>');
   });
 
   test('暂停行：状态列带已暂停标记，更多菜单可开，升级仍可点', () => {

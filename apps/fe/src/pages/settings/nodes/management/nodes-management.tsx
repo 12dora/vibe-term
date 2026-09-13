@@ -77,11 +77,11 @@ export function NodesManagement({
   }, [refreshNodes]);
 
   const { hub, hubs, relay, prompt } = uplink;
-  const rows = useMemo(
-    () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId }),
-    [nodes, hub.hubNodes, hub.hubNodeId, entryNodeId]
-  );
   const hubDetails = useMemo(() => new Map(hubs.hubs.map((row) => [row.nodeId, row])), [hubs.hubs]);
+  const rows = useMemo(
+    () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId, hubDetails }),
+    [nodes, hub.hubNodes, hub.hubNodeId, entryNodeId, hubDetails]
+  );
 
   const pendings = useSyncExternalStore(
     subscribePendingEnrollments,

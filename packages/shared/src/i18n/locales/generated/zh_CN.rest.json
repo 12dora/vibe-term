@@ -1729,14 +1729,22 @@
         "reach": "连接方式",
         "version": "版本",
         "lastSeen": "最近在线",
+        "address": "地址",
         "direct": "支持直连",
         "login": "登录状态",
         "fingerprint": "公钥指纹",
         "actions": "操作"
       },
+      "time": {
+        "justNow": "刚刚",
+        "minutes": "{{n}} 分钟前",
+        "hours": "{{n}} 小时前",
+        "days": "{{n}} 天前"
+      },
       "status": {
         "online": "在线",
         "offline": "离线",
+        "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
         "pending": "待批准",
         "paused": "已暂停"

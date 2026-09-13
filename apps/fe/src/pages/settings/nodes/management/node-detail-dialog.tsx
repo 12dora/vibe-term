@@ -109,6 +109,14 @@ export function NodeDetailInfo({ row }: { row: NodeRow }) {
       <InfoRow label={t('nodes.columns.fingerprint')}>
         <code className="font-mono text-[11px] text-muted-foreground">{row.fingerprint}</code>
       </InfoRow>
+      <InfoRow label={t('nodes.columns.address')}>
+        <code
+          className="font-mono text-[11px] text-muted-foreground"
+          data-testid={`nodes-detail-address-${row.id}`}
+        >
+          {row.address ?? '—'}
+        </code>
+      </InfoRow>
       <InfoRow label={t('nodes.columns.version')}>{row.version ?? '—'}</InfoRow>
       <InfoRow label={t('nodes.columns.reach')}>
         {row.reach ? t(`nodes.reach.${row.reach}`) : '—'}
@@ -120,7 +128,12 @@ export function NodeDetailInfo({ row }: { row: NodeRow }) {
         </InfoRow>
       )}
       <InfoRow label={t('nodes.columns.lastSeen')}>
-        {row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '—'}
+        <span
+          title={row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : undefined}
+          data-testid={`nodes-detail-last-seen-${row.id}`}
+        >
+          {row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '—'}
+        </span>
       </InfoRow>
       <InfoRow label={t('nodes.columns.status')}>
         <span className="flex flex-wrap items-center gap-1">

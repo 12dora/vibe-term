@@ -165,4 +165,13 @@ describe('待批准行', () => {
     const rows = [pendingRow(), pendingRow({ id: MEMBER_ID, pending: false })];
     expect(selectableRows(rows, new Set()).map((row) => row.id)).toEqual([MEMBER_ID]);
   });
+
+  test('REACH 与地址都是破折号，没有指纹列', () => {
+    const html = render(pendingRow());
+    expect(html).toContain(`data-testid="nodes-reach-${PENDING_ID}"`);
+    expect(html).toContain(`data-testid="nodes-address-${PENDING_ID}"`);
+    expect(html).toContain('nodes.columns.address');
+    expect(html).not.toContain('nodes.columns.lastSeen');
+    expect(html).not.toContain('nodes.columns.fingerprint');
+  });
 });
