@@ -180,9 +180,17 @@ function report(ctx: CliContext, outcomes: TargetOutcome[]): void {
  */
 function reportFailures(ctx: CliContext, mode: AuthMode, outcomes: TargetOutcome[]): number {
   const failed = outcomes.filter((outcome) => !outcome.ok);
-  if (failed.length === 0) return 0;
+  const unreachable = failed.filter((outcome) => outcome.code === 'NODE_UNREACHABLE');
+  const rejected = failed.filter((outcome) => outcome.code !== 'NODE_UNREACHABLE');
+  if (rejected.length === 0) {
+    if (unreachable.length > 0) {
+      const okCount = outcomes.filter((outcome) => outcome.ok).length;
+      ctx.out.info(`logged in to ${okCount} nodes, skipped ${unreachable.length} unreachable`);
+    }
+    return 0;
+  }
   let authOnly = true;
-  for (const outcome of failed) {
+  for (const outcome of rejected) {
     const error = loginFailure(outcome.node, outcome.code ?? 'UNKNOWN', mode.secondFactorPolicy);
     ctx.out.warn(`node ${outcome.node} (${outcome.name}): ${error.message}`);
     if (error.hint) ctx.out.warn(`  ${error.hint}`);
@@ -222,7 +230,11 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
 
     const outcomes: TargetOutcome[] = [selfOutcome];
     for (const target of await otherTargets(ctx, mode, nodeRef, roster)) {
-      outcomes.push(await loginOne(ctx, target, material, totp));
+      const outcome = await loginOne(ctx, target, material, totp);
+      if (!outcome.ok && outcome.code === 'NODE_UNREACHABLE') {
+        ctx.out.warn(`skipped ${target.name}: unreachable`);
+      }
+      outcomes.push(outcome);
     }
     report(ctx, outcomes);
     return reportFailures(ctx, mode, outcomes);
@@ -239,7 +251,12 @@ export const command: Command = {
     '',
     'Logs into the entry (self) and, by default, into every node from /api/mesh/nodes',
     'using the same in-memory root seed. The seed is zeroized as soon as the delegation',
-    'is signed; only session cookies are written to <config dir>/session.json (mode 0600).',
+    'is signed; only session cookies are written to <config dir>/session.json (mode 0600),',
+    'or to $VIBETERM_SESSION_FILE when set (the file is a full session capability, protect it).',
+    '',
+    'An offline node (HTTP 503 NODE_UNREACHABLE, or a network error) is skipped with',
+    '`skipped <node>: unreachable`; login still exits 0 if the entry succeeded and every',
+    'other failure is unreachable. A reachable node that rejects the login is non-zero.',
     '',
     'Options:',
     '  --user <name>       verify the entry serves this account before asking for a password',
@@ -250,6 +267,7 @@ export const command: Command = {
     '  --ca <pem-file>     trust this extra CA; --insecure skips verification entirely',
     '',
     'Password sources: --password-stdin > VIBETERM_PASSWORD > hidden TTY prompt.',
+    'Session file: $VIBETERM_SESSION_FILE overrides <config dir>/session.json (0600).',
   ].join('\n'),
   flags: FLAGS,
   run,

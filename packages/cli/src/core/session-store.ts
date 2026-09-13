@@ -3,9 +3,18 @@
 // 只存会话 cookie（sid）与它的到期时刻，**绝不落盘密码、根种子或会话私钥**：
 // 会话过期后重新 `vibeterm login` 即可，落盘私钥换来的只是一点便利和一个长期把柄。
 
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
-import { sessionFilePath } from './config';
+import { type ConfigEnv, sessionFilePath } from './config';
+import { CliError } from './errors';
 
 export const SESSION_FILE_VERSION = 1;
 
@@ -99,15 +108,27 @@ export class SessionStore {
 
   constructor(readonly path: string) {}
 
-  static open(dir: string): SessionStore {
-    return new SessionStore(sessionFilePath(dir));
+  static open(dir: string, env: ConfigEnv = process.env): SessionStore {
+    return new SessionStore(sessionFilePath(dir, env));
+  }
+
+  /** 已有文件必须是 0600：group/world 可读就是把完整会话能力泄露出去。 */
+  private assertPrivateFile(): void {
+    const mode = statSync(this.path).mode;
+    if ((mode & 0o077) !== 0) {
+      throw new CliError(
+        `session file ${this.path} is group/world readable; chmod 0600 (this file is a full session capability, protect it)`
+      );
+    }
   }
 
   private load(): SessionFile {
     if (this.data) return this.data;
     try {
+      this.assertPrivateFile();
       this.data = parseSessionFile(readFileSync(this.path, 'utf8'));
-    } catch {
+    } catch (error) {
+      if (error instanceof CliError) throw error;
       this.data = emptyFile();
     }
     return this.data;

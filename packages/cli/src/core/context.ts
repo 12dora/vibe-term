@@ -64,7 +64,7 @@ export interface BuildContextOptions {
 export function buildContext(options: BuildContextOptions): CliContext {
   const env = options.env ?? process.env;
   const dir = options.configDir ?? defaultConfigDir(env);
-  const sessions = SessionStore.open(dir);
+  const sessions = SessionStore.open(dir, env);
   const entry = pickEntry({
     flag: options.entryFlag,
     env: env.VIBETERM_ENTRY?.trim() || undefined,

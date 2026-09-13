@@ -24,7 +24,19 @@ describe('configDir', () => {
   });
 
   test('session file lives in the config dir', () => {
-    expect(sessionFilePath('/home/u/.config/vibeterm')).toBe(
+    expect(sessionFilePath('/home/u/.config/vibeterm', {})).toBe(
+      '/home/u/.config/vibeterm/session.json'
+    );
+  });
+
+  test('VIBETERM_SESSION_FILE overrides the default session path', () => {
+    expect(
+      sessionFilePath('/home/u/.config/vibeterm', { VIBETERM_SESSION_FILE: '/tmp/agent.json' })
+    ).toBe('/tmp/agent.json');
+  });
+
+  test('blank VIBETERM_SESSION_FILE is ignored', () => {
+    expect(sessionFilePath('/home/u/.config/vibeterm', { VIBETERM_SESSION_FILE: '  ' })).toBe(
       '/home/u/.config/vibeterm/session.json'
     );
   });
