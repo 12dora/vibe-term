@@ -66,6 +66,7 @@ describe('ReplayPreviewLabel', () => {
       />
     );
     expect(html).toContain('data-testid="share-replay-preview"');
+    expect(html).toContain('aria-live="off"');
     expect(html).toContain(formatReplayWallClock(START + 1_000, 'en_US'));
     expect(html).toContain(`left:${clampReplayPreviewX(0, 200, 72)}px`);
   });

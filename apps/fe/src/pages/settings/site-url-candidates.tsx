@@ -24,7 +24,7 @@ function normalizeAddress(value: string): string {
 const PILL_BASE =
   'inline-flex min-w-0 max-w-full items-center rounded-full border px-2.5 py-1 text-xs transition-colors duration-(--vibeterm-motion-fast) ease-out has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none';
 
-function visibleSiteUrlCandidates(
+export function visibleSiteUrlCandidates(
   candidates: readonly ShareOriginCandidate[]
 ): ShareOriginCandidate[] {
   const claimed = new Set<string>();

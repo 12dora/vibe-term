@@ -23,6 +23,8 @@ import {
 } from './replay-timeline';
 
 const BASE = 1_700_000_000_000;
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
 
 function entry(partial: Partial<ShareLogEntry> & { seq: number; at: number }): ShareLogEntry {
   return {
@@ -250,6 +252,29 @@ describe('planReplayTicks', () => {
     expect(planned.stepMs).toBe(30_000);
     expect(planned.ticks.length).toBeLessThanOrEqual(4);
   });
+
+  test('26 小时录像按 6 小时档，不会按小时铺满', () => {
+    const duration = 26 * HOUR_MS;
+    const planned = planReplayTicks(duration);
+    expect(planned.stepMs).toBe(6 * HOUR_MS);
+    expect(planned.ticks).toEqual([0, 6, 12, 18, 24].map((hours) => hours * HOUR_MS));
+    expect(planned.ticks.length).toBeLessThanOrEqual(24);
+    const narrow = planReplayTicks(duration, 80);
+    expect(narrow.stepMs).toBe(12 * HOUR_MS);
+    expect(narrow.ticks.length).toBeLessThanOrEqual(4);
+    expect(narrow.ticks.length).toBeLessThanOrEqual(24);
+  });
+
+  test('30 天录像主刻度硬上限 24，档位用尽时按整小时兜底', () => {
+    const duration = 30 * DAY_MS;
+    const planned = planReplayTicks(duration);
+    expect(planned.stepMs).toBe(7 * DAY_MS);
+    expect(planned.ticks.length).toBeLessThanOrEqual(24);
+    const narrow = planReplayTicks(duration, 80);
+    expect(narrow.stepMs % HOUR_MS).toBe(0);
+    expect(narrow.stepMs).toBeGreaterThanOrEqual(7 * DAY_MS);
+    expect(narrow.ticks.length).toBeLessThanOrEqual(24);
+  });
 });
 
 describe('planReplayMinorTicks', () => {
@@ -258,6 +283,12 @@ describe('planReplayMinorTicks', () => {
     expect(planReplayMinorTicks(10_000, 5_000)).toEqual([
       1_000, 2_000, 3_000, 4_000, 6_000, 7_000, 8_000, 9_000,
     ]);
+  });
+
+  test('超过 60 个次刻度时整组不画', () => {
+    const month = 30 * DAY_MS;
+    expect(planReplayMinorTicks(month, HOUR_MS)).toEqual([]);
+    expect(planReplayMinorTicks(month, 7 * DAY_MS).length).toBeLessThanOrEqual(60);
   });
 });
 
