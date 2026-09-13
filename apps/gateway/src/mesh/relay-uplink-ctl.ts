@@ -278,6 +278,7 @@ async function applyRelayList(
     userStore: host.userStore,
     secrets: host.secrets,
     now: host.scheduler.now(),
+    relayUrl: host.hubUrl,
   });
   if (msg.version < host.listVersion) return;
   host.nodesViaRelay = list.nodes.length;

@@ -1,5 +1,7 @@
-import { describe, expect, test } from 'bun:test';
-import { buildRelayStatusRow, relayLinkError } from './relay-status-row';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { ingestTurnOk, resetPortReachForTest } from './port-reach';
+import { buildRelayStatusRow, enrichRelayTurnView, relayLinkError } from './relay-status-row';
+import { ensureTcpSamplingTrust, resetTcpSamplingTrustForTest } from './tcp-sampling-trust';
 
 describe('relayLinkError', () => {
   test('attached row uses the live client error, not the pool candidate', () => {
@@ -161,5 +163,47 @@ describe('buildRelayStatusRow', () => {
       { connected: true, pathBestMs: 42, reraces: 1 }
     );
     expect(row).toMatchObject({ pathBestMs: 42, reraces: 1, rttMs: 90 });
+  });
+});
+
+describe('enrichRelayTurnView', () => {
+  afterEach(() => {
+    resetPortReachForTest();
+    resetTcpSamplingTrustForTest();
+  });
+
+  test('叠上该中继的成员 tally（不含自己）', () => {
+    const relay = 'https://jp.example';
+    const self = 'aa'.repeat(16);
+    ingestTurnOk(self, false, relay);
+    ingestTurnOk('cc'.repeat(16), true, relay);
+    ingestTurnOk('dd'.repeat(16), true, relay);
+    ingestTurnOk('ee'.repeat(16), false, 'https://sh.example');
+    const view = enrichRelayTurnView({ url: 'turn:jp.example:40000', probeOk: false }, relay, {
+      selfId: self,
+    });
+    expect(view).toMatchObject({
+      url: 'turn:jp.example:40000',
+      probeOk: false,
+      members: { ok: 2, total: 2 },
+    });
+    expect(view?.localHint).toBeUndefined();
+  });
+
+  test('本机探测失败且 TCP 金丝雀不可信时带 localHint=tun', async () => {
+    await ensureTcpSamplingTrust('203.0.113.10', Date.now(), async () => ({
+      verdict: 'ok',
+      connectMs: 1,
+    }));
+    const view = enrichRelayTurnView(
+      { url: 'turn:jp.example:40000', probeOk: false },
+      'https://jp.example'
+    );
+    expect(view?.localHint).toBe('tun');
+    const ok = enrichRelayTurnView(
+      { url: 'turn:jp.example:40000', probeOk: true },
+      'https://jp.example'
+    );
+    expect(ok?.localHint).toBeUndefined();
   });
 });

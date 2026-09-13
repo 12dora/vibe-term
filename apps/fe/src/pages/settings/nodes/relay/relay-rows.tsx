@@ -13,6 +13,7 @@ import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   type RelayBadgeSpec,
+  type RelayTurnChipTone,
   canSetPrimary,
   isMultiAttachView,
   relayPeersBadge,
@@ -199,13 +200,17 @@ function RelayAttachedRow({
           <span
             className={cn(
               'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none',
-              turn.reachable === false ? 'border-destructive/40 text-destructive' : 'border-border'
+              turnChipClass(turn.tone)
             )}
+            title={turn.titleKey ? t(turn.titleKey) : undefined}
             data-testid={`nodes-relay-turn-${host}`}
           >
             <span className="text-muted-foreground">{t('relay.tenant.strip.turn')}</span>
             <span className="min-w-0 truncate font-mono">{turn.endpoint}</span>
-            <span className="text-muted-foreground">{t(turn.verdictKey)}</span>
+            <span className={turn.tone === 'default' ? 'text-muted-foreground' : undefined}>
+              {t(turn.verdictKey)}
+              {turn.membersKey ? ` · ${t(turn.membersKey, turn.membersParams)}` : ''}
+            </span>
           </span>
         )}
         {onSelect && (
@@ -224,6 +229,12 @@ function RelayAttachedRow({
       </span>
     </RelayRowShell>
   );
+}
+
+function turnChipClass(tone: RelayTurnChipTone): string {
+  if (tone === 'destructive') return 'border-destructive/40 text-destructive';
+  if (tone === 'warning') return 'border-amber-500/40 text-amber-700 dark:text-amber-400';
+  return 'border-border';
 }
 
 function RowBadge({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {

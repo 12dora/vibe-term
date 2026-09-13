@@ -94,7 +94,58 @@ describe('TURN 挂件', () => {
       endpoint: 'a:3478',
       verdictKey: 'relay.tenant.strip.turnUnreachable',
       reachable: false,
+      tone: 'destructive',
     });
+  });
+
+  test('本机可达时带 N/M 节点；失败时带 N/M 节点可达并按舰队改色', () => {
+    expect(
+      relayTurnChip(
+        row({
+          turn: {
+            url: 'turn:a:3478',
+            probeOk: true,
+            members: { ok: 5, total: 5, updatedAt: 1 },
+          },
+        })
+      )
+    ).toEqual({
+      endpoint: 'a:3478',
+      verdictKey: 'relay.tenant.strip.turnReachable',
+      membersKey: 'relay.tenant.strip.turnMembersCount',
+      membersParams: { ok: 5, total: 5 },
+      reachable: true,
+      tone: 'default',
+    });
+    expect(
+      relayTurnChip(
+        row({
+          turn: {
+            url: 'turn:a:3478',
+            probeOk: false,
+            members: { ok: 4, total: 5, updatedAt: 1 },
+            localHint: 'tun',
+          },
+        })
+      )
+    ).toMatchObject({
+      verdictKey: 'relay.tenant.strip.turnUnreachable',
+      membersKey: 'relay.tenant.strip.turnMembersReachable',
+      membersParams: { ok: 4, total: 5 },
+      tone: 'warning',
+      titleKey: 'relay.tenant.strip.turnTunHint',
+    });
+    expect(
+      relayTurnChip(
+        row({
+          turn: {
+            url: 'turn:a:3478',
+            probeOk: false,
+            members: { ok: 0, total: 3, updatedAt: 1 },
+          },
+        })
+      )?.tone
+    ).toBe('destructive');
   });
 });
 
@@ -143,6 +194,31 @@ describe('两种形态的分叉', () => {
     expect(html).toContain('relay.tenant.strip.turnReachable');
     // 单挂载那枚「在线 / 离线」状态徽标在这个版式里不再出现
     expect(html).not.toContain(`data-testid="nodes-relay-status-${HOST}"`);
+  });
+
+  test('多挂载：本机 TURN 失败时展示舰队 tally 与 TUN tooltip', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows
+        multiAttach
+        relays={[
+          row({
+            role: 'primary',
+            attached: true,
+            turn: {
+              url: 'turn:sh.example.com:3478',
+              probeOk: false,
+              members: { ok: 4, total: 5, updatedAt: 1 },
+              localHint: 'tun',
+            },
+          }),
+          TOKYO,
+        ]}
+      />
+    );
+    expect(html).toContain('relay.tenant.strip.turnUnreachable');
+    expect(html).toContain('relay.tenant.strip.turnMembersReachable');
+    expect(html).toContain('title="relay.tenant.strip.turnTunHint"');
+    expect(html).toContain('text-amber-700');
   });
 
   test('多挂载：主中继那行的按钮禁用，副中继可点', () => {

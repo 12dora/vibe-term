@@ -71,6 +71,26 @@ describe('relayTurnOf', () => {
       probeOk: null,
     });
   });
+
+  test('透传 members 与 localHint=tun', () => {
+    expect(
+      relayTurnOf(
+        row({
+          turn: {
+            url: 'turn:a:3478',
+            probeOk: false,
+            members: { ok: 4, total: 5, updatedAt: 1 },
+            localHint: 'tun',
+          },
+        })
+      )
+    ).toEqual({
+      url: 'turn:a:3478',
+      probeOk: false,
+      members: { ok: 4, total: 5, updatedAt: 1 },
+      localHint: 'tun',
+    });
+  });
 });
 
 describe('viaRelay / relayPresence 的归一化', () => {

@@ -1,3 +1,4 @@
+import { canonicalHubUrl } from '@vibeterm/shared/auth';
 import { DEFAULT_PEER_PORT, DEFAULT_RTC_PORT_RANGE, type PortRange } from '@vibeterm/shared/net';
 import {
   type PeerReachVerdict,
@@ -40,6 +41,7 @@ export function aggregateProbeVerdicts(verdicts: readonly TcpProbeVerdict[]): Tc
 }
 export const DC_HISTORY_MS = 24 * 60 * 60 * 1_000;
 export const PEER_REPORT_TTL_MS = 30 * 60 * 1_000;
+export const TURN_REPORT_TTL_MS = 30 * 60 * 1_000;
 export const GATHER_BLOCKED_WINDOW = 3;
 
 export type MeshPortReachStatus = MeshPortReach['status'];
@@ -64,13 +66,14 @@ type GatherSample = { srflx: boolean; at: number };
 
 type PeerReport = { reporter: string; verdict: PeerReachVerdict; at: number };
 
-type TurnReport = { ok: boolean | undefined; at: number };
+type TurnReport = { ok: boolean; at: number };
 
 type PortReachState = {
   probes: Map<string, PeerProbeSlot>;
   dc: Map<string, DcSlot>;
   reports: Map<string, PeerReport>;
-  turnReports: Map<string, TurnReport>;
+  /** relay canonical URL → reporter node id → last turn_ok */
+  turnReports: Map<string, Map<string, TurnReport>>;
   gathers: GatherSample[];
   srflxEver: boolean;
   dcEver: boolean;
@@ -153,8 +156,7 @@ export function noteRtcGather(input: { srflx: number }): void {
 export function ingestPeerReachMap(
   reporterId: string,
   peerReach: unknown,
-  selfNodeId: string,
-  turnOk?: unknown
+  selfNodeId: string
 ): void {
   const parsed = normalizePeerReach(peerReach);
   const at = state.now();
@@ -163,13 +165,30 @@ export function ingestPeerReachMap(
     const verdict = parsed[selfKey];
     if (verdict) state.reports.set(reporterId, { reporter: reporterId, verdict, at });
   }
-  ingestTurnOk(reporterId, turnOk);
 }
 
-export function ingestTurnOk(reporterId: string, turnOk: unknown): void {
+/** `relayKey` 是这份 list 来自哪条中继的规范 URL；缺席或无法归一化则丢弃。 */
+export function ingestTurnOk(reporterId: string, turnOk: unknown, relayKey: string): void {
   const ok = normalizeTurnOk(turnOk);
   if (ok === undefined) return;
-  state.turnReports.set(reporterId, { ok, at: state.now() });
+  const key = turnRelayKey(relayKey);
+  if (!key) return;
+  let bucket = state.turnReports.get(key);
+  if (!bucket) {
+    bucket = new Map();
+    state.turnReports.set(key, bucket);
+  }
+  bucket.set(reporterId, { ok, at: state.now() });
+}
+
+function turnRelayKey(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    return canonicalHubUrl(trimmed);
+  } catch {
+    return trimmed.replace(/\/+$/, '');
+  }
 }
 
 export function isProbeablePeerEndpoint(url: string): boolean {
@@ -434,15 +453,39 @@ export function overlayMeshNodePorts(nodes: MeshNodeDto[], selfId: string): Mesh
   }));
 }
 
-export function membersProbeSnapshot(): MembersProbeSnapshot | null {
-  if (state.turnReports.size === 0) return null;
+export function membersProbeSnapshot(
+  relayKey?: string,
+  opts?: { excludeId?: string }
+): MembersProbeSnapshot | null {
+  const freshAfter = state.now() - TURN_REPORT_TTL_MS;
+  const buckets = turnReportBuckets(relayKey);
   let ok = 0;
+  let total = 0;
   let updatedAt = 0;
-  for (const row of state.turnReports.values()) {
-    if (row.ok === true) ok += 1;
-    if (row.at > updatedAt) updatedAt = row.at;
+  const excludeId = opts?.excludeId;
+  for (const [key, bucket] of buckets) {
+    for (const [reporterId, row] of bucket) {
+      if (row.at < freshAfter) {
+        bucket.delete(reporterId);
+        continue;
+      }
+      if (excludeId && reporterId === excludeId) continue;
+      total += 1;
+      if (row.ok) ok += 1;
+      if (row.at > updatedAt) updatedAt = row.at;
+    }
+    if (bucket.size === 0) state.turnReports.delete(key);
   }
-  return { ok, total: state.turnReports.size, updatedAt };
+  if (total === 0) return null;
+  return { ok, total, updatedAt };
+}
+
+function turnReportBuckets(relayKey?: string): Array<[string, Map<string, TurnReport>]> {
+  if (relayKey === undefined) return [...state.turnReports.entries()];
+  const key = turnRelayKey(relayKey);
+  if (!key) return [];
+  const bucket = state.turnReports.get(key);
+  return bucket ? [[key, bucket]] : [];
 }
 
 function endpointsFromPeer(raw: string | null | undefined): string[] {

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { MeshNodeDto } from './node-list-projection';
 import {
   PEER_REPORT_TTL_MS,
+  TURN_REPORT_TTL_MS,
   ingestPeerReachMap,
   ingestTurnOk,
   isProbeablePeerEndpoint,
@@ -161,13 +162,43 @@ describe('port reach aggregation', () => {
   });
 
   test('membersProbe counts turn_ok reports; absence is not ok', () => {
+    const relay = 'https://relay.example';
     expect(membersProbeSnapshot()).toBeNull();
-    ingestTurnOk(PEER, true);
-    ingestTurnOk(PEER_B, false);
-    ingestTurnOk('ee'.repeat(16), undefined);
-    const snap = membersProbeSnapshot();
+    ingestTurnOk(PEER, true, relay);
+    ingestTurnOk(PEER_B, false, relay);
+    ingestTurnOk('ee'.repeat(16), undefined, relay);
+    const snap = membersProbeSnapshot(relay);
     expect(snap?.ok).toBe(1);
     expect(snap?.total).toBe(2);
+  });
+
+  test('turn_ok reports are keyed by relay URL and do not overwrite across relays', () => {
+    const primary = 'https://sh.example';
+    const secondary = 'https://jp.example';
+    ingestTurnOk(PEER, true, primary);
+    ingestTurnOk(PEER, false, secondary);
+    ingestTurnOk(PEER_B, true, secondary);
+    expect(membersProbeSnapshot(primary)).toMatchObject({ ok: 1, total: 1 });
+    expect(membersProbeSnapshot(secondary)).toMatchObject({ ok: 1, total: 2 });
+    const union = membersProbeSnapshot();
+    expect(union?.ok).toBe(2);
+    expect(union?.total).toBe(3);
+  });
+
+  test('membersProbe drops reports older than the TTL and can exclude self', () => {
+    let now = 1_000;
+    resetPortReachForTest({ now: () => now });
+    const relay = 'https://relay.example';
+    ingestTurnOk(SELF, true, relay);
+    ingestTurnOk(PEER, false, relay);
+    expect(membersProbeSnapshot(relay, { excludeId: SELF })).toMatchObject({ ok: 0, total: 1 });
+    now += TURN_REPORT_TTL_MS + 1;
+    expect(membersProbeSnapshot(relay)).toBeNull();
+  });
+
+  test('canonical relay URL forms share a bucket', () => {
+    ingestTurnOk(PEER, true, 'https://Relay.Example/');
+    expect(membersProbeSnapshot('https://relay.example')).toMatchObject({ ok: 1, total: 1 });
   });
 
   test('overlayMeshNodePorts attaches ports to every row including self', () => {

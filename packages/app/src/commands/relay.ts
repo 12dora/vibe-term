@@ -372,9 +372,40 @@ function formatRelayRole(role: RelayStatusResponse['relays'][number]['role']): s
   return role === 'primary' || role === 'secondary' ? role : '-';
 }
 
-function formatRelayTurn(turn: RelayStatusResponse['relays'][number]['turn']): string {
+type TurnMembersTally = { ok: number; total: number };
+
+function turnMembersTally(value: unknown): TurnMembersTally | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as { ok?: unknown; total?: unknown };
+  if (typeof raw.ok !== 'number' || typeof raw.total !== 'number') return null;
+  if (!Number.isFinite(raw.ok) || !Number.isFinite(raw.total) || raw.ok < 0 || raw.total < 0) {
+    return null;
+  }
+  return { ok: Math.floor(raw.ok), total: Math.floor(raw.total) };
+}
+
+function turnMembersOf(status: RelayStatusResponse, url: string): TurnMembersTally | null {
+  const raw = Array.isArray(status.raw.relays) ? status.raw.relays : [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as { url?: unknown; turn?: { members?: unknown } };
+    if (row.url !== url) continue;
+    return turnMembersTally(row.turn?.members);
+  }
+  return null;
+}
+
+function formatRelayTurn(
+  turn: { url: string; probeOk: boolean | null } | null | undefined,
+  members?: TurnMembersTally | null
+): string {
   if (!turn?.url) return '-';
-  return turn.probeOk === false ? `${turn.url} (down)` : turn.url;
+  const frac = members ? `${members.ok}/${members.total}` : null;
+  if (turn.probeOk === false) {
+    return frac ? `${turn.url} (down, ${frac} nodes ok)` : `${turn.url} (down)`;
+  }
+  if (turn.probeOk === true && frac) return `${turn.url} (ok, ${frac})`;
+  return turn.url;
 }
 
 function pathBestMsOf(status: RelayStatusResponse, url: string): number | undefined {
@@ -413,7 +444,7 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
     }
     cells.push(
       relay.peersOnline == null ? '-' : String(relay.peersOnline),
-      formatRelayTurn(relay.turn),
+      formatRelayTurn(relay.turn, turnMembersOf(status, relay.url)),
       relay.kicked ? 'kicked' : (relay.lastError ?? '-')
     );
     return cells;

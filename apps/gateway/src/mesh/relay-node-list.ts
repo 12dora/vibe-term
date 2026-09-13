@@ -26,6 +26,8 @@ export type RelayListContext = {
   userStore: UserStore;
   secrets: RelaySecrets;
   now: number;
+  /** 这份 `relay.list` 来自哪条中继；`turn_ok` 按此分桶。 */
+  relayUrl?: string;
 };
 
 type ListEntry = UplinkNodeList['nodes'][number];
@@ -91,7 +93,7 @@ export async function relayListToNodeList(
       version: blob.version || null,
     });
     ingestPeerReachMap(node.id, blob.peer_reach, ctx.selfNodeId);
-    ingestTurnOk(node.id, blob.turn_ok);
+    if (ctx.relayUrl) ingestTurnOk(node.id, blob.turn_ok, ctx.relayUrl);
     nodes.push({
       id: node.id,
       name: blob.name || node.id,

@@ -1,13 +1,18 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { encodeRelayStatusBlob, generateTenantKey, sealEnvelope } from '@vibeterm/shared/relay';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { applyUplinkNodeList } from './node-list-apply';
+import { membersProbeSnapshot, resetPortReachForTest } from './port-reach';
 import { relayListToNodeList } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
 
 describe('relayListToNodeList', () => {
+  afterEach(() => {
+    resetPortReachForTest();
+  });
+
   test('解不开状态块时回落 peer_cache.version', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
@@ -291,6 +296,71 @@ describe('relayListToNodeList', () => {
         () => false
       );
       expect(userStore.getPeer(nodeId)).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
+  test('turn_ok 按 relayUrl 分桶，缺席则不摄入', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const nodeId = 'ab'.repeat(16);
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const metaKey = generateTenantKey();
+      const sealed = await sealEnvelope(
+        metaKey,
+        'status',
+        encodeRelayStatusBlob({
+          name: 'peer-b',
+          version: '2.3.5',
+          tmux: true,
+          direct_capable: true,
+          inventory: null,
+          endpoints: [],
+          turn_ok: true,
+        }),
+        1
+      );
+      const ctx = {
+        selfNodeId: 'cd'.repeat(16),
+        userId: 'user-1',
+        userStore,
+        secrets: {
+          metaKey: async (epoch: number) => (epoch === 1 ? metaKey : null),
+        } as unknown as RelaySecrets,
+        now: 2,
+      };
+      const msg = {
+        t: 'relay.list' as const,
+        version: 6,
+        nodes: [{ id: nodeId, online: true, status: 'admitted' as const, epoch: 1, blob: sealed }],
+        rtc: { stun: [], turn: null },
+        key_log_head_seq: 0,
+      };
+      await relayListToNodeList(msg, ctx);
+      expect(membersProbeSnapshot('https://jp.example')).toBeNull();
+      await relayListToNodeList(msg, { ...ctx, relayUrl: 'https://jp.example' });
+      expect(membersProbeSnapshot('https://jp.example')).toMatchObject({ ok: 1, total: 1 });
+      expect(membersProbeSnapshot('https://sh.example')).toBeNull();
     } finally {
       close();
     }

@@ -37,11 +37,32 @@ export function relayPeersOnlineOf(row: RelayLinkStatus): number | null {
   return Math.floor(value);
 }
 
+function turnMembersOf(members: RelayTurnProbe['members']): RelayTurnProbe['members'] | undefined {
+  if (!members) return undefined;
+  if (typeof members.ok !== 'number' || typeof members.total !== 'number') return undefined;
+  if (!Number.isFinite(members.ok) || !Number.isFinite(members.total)) return undefined;
+  if (members.ok < 0 || members.total < 0) return undefined;
+  return {
+    ok: Math.floor(members.ok),
+    total: Math.floor(members.total),
+    updatedAt:
+      typeof members.updatedAt === 'number' && Number.isFinite(members.updatedAt)
+        ? members.updatedAt
+        : 0,
+  };
+}
+
 /** 该中继广播的 TURN；地址为空一律当作没有。 */
 export function relayTurnOf(row: RelayLinkStatus): RelayTurnProbe | null {
   const turn = row.turn;
   if (!turn || typeof turn.url !== 'string' || turn.url.length === 0) return null;
-  return { url: turn.url, probeOk: typeof turn.probeOk === 'boolean' ? turn.probeOk : null };
+  const members = turnMembersOf(turn.members);
+  return {
+    url: turn.url,
+    probeOk: typeof turn.probeOk === 'boolean' ? turn.probeOk : null,
+    ...(members ? { members } : {}),
+    ...(turn.localHint === 'tun' ? { localHint: 'tun' as const } : {}),
+  };
 }
 
 export function viaRelayOf(value: unknown): string | null {

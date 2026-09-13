@@ -1,7 +1,9 @@
+import { membersProbeSnapshot } from './port-reach';
 import { classifyRelayLinkError } from './relay-link-error';
 import type { RelayPresence } from './relay-presence';
 import type { RelayUplinkClient } from './relay-uplink-client';
 import { matchingTurnProbe } from './rtc/stun-effective';
+import { tcpSamplingTrusted } from './tcp-sampling-trust';
 import type { PooledUplink } from './types';
 import { isUplinkPathRerace, uplinkPathView } from './uplink-path-sampler';
 
@@ -33,7 +35,14 @@ export function relayLinkError(input: {
   };
 }
 
-export type RelayStatusTurnView = { url: string; probeOk: boolean | null };
+export type RelayTurnMembersView = { ok: number; total: number; updatedAt: number };
+
+export type RelayStatusTurnView = {
+  url: string;
+  probeOk: boolean | null;
+  members?: RelayTurnMembersView;
+  localHint?: 'tun';
+};
 
 export type RelayStatusRowKeyLog = { diverged?: boolean };
 
@@ -132,6 +141,26 @@ export function turnViewFromRtc(
   return { url, probeOk };
 }
 
+/** 给本机探测结论叠上舰队 tally（不含自己）与 TUN 提示；新字段全可选。 */
+export function enrichRelayTurnView(
+  base: { url: string; probeOk: boolean | null } | null,
+  relayUrl: string,
+  opts?: { selfId?: string; now?: number }
+): RelayStatusTurnView | null {
+  if (!base) return null;
+  const members = membersProbeSnapshot(relayUrl, { excludeId: opts?.selfId });
+  const localHint =
+    base.probeOk === false && tcpSamplingTrusted(opts?.now ?? Date.now()) === false
+      ? ('tun' as const)
+      : undefined;
+  return {
+    url: base.url,
+    probeOk: base.probeOk,
+    ...(members ? { members } : {}),
+    ...(localHint ? { localHint } : {}),
+  };
+}
+
 export function collectRelayStatusRows(input: {
   rows: Array<{ url: string; priority: number; kicked: boolean; kickedReason?: string | null }>;
   attachedUrl: string | null;
@@ -140,7 +169,7 @@ export function collectRelayStatusRows(input: {
   candidates: RelayStatusCandidate[];
   secondaryOf: (url: string) => RelayUplinkClient | null;
   peersOnlineOn: (url: string) => number | null;
-  turnOf: (client: RelayUplinkClient | null) => RelayStatusTurnView | null;
+  turnOf: (client: RelayUplinkClient | null, relayUrl: string) => RelayStatusTurnView | null;
 }) {
   return input.rows.map((row) => {
     const attached = input.attachedUrl === row.url;
@@ -150,7 +179,7 @@ export function collectRelayStatusRows(input: {
       connected,
       rttMs: client?.rttMs ?? null,
       peersOnline: connected ? input.peersOnlineOn(row.url) : null,
-      turn: input.turnOf(client),
+      turn: input.turnOf(client, row.url),
       ...(client && !attached ? { lastError: client.lastConnectError } : {}),
       ...(client?.keyLog.diverged === true ? { keyLog: { diverged: true as const } } : {}),
       ...uplinkPathView(row.url),
@@ -182,11 +211,13 @@ export function buildRelayStatusPayload(input: {
     candidates: input.candidates,
     secondaryOf: input.secondaryOf,
     peersOnlineOn: (url) => input.presence?.peersOnlineOn(url) ?? null,
-    turnOf: (rowClient) => {
+    turnOf: (rowClient, relayUrl) => {
       const turn = turnViewFromRtc(rowClient?.rtc);
       if (!turn) return null;
       const probe = matchingTurnProbe(rowClient?.rtc.turn ?? null);
-      return { url: turn.url, probeOk: probe ? probe.ok : null };
+      return enrichRelayTurnView({ url: turn.url, probeOk: probe ? probe.ok : null }, relayUrl, {
+        selfId: rowClient?.identity.nodeId,
+      });
     },
   });
   const secondaryAwaiting = input.rows.some(

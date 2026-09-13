@@ -101,6 +101,43 @@ describe('RelayTenantApi 状态', () => {
     });
   });
 
+  test('normalizeRelayStatus 透传 TURN members / localHint', () => {
+    const row = normalizeRelayStatus({
+      relays: [
+        {
+          url: 'https://jp.example',
+          priority: 1,
+          online: true,
+          attached: false,
+          turn: {
+            url: 'turn:jp.example:40000',
+            probeOk: false,
+            members: { ok: 2, total: 3, updatedAt: 9 },
+            localHint: 'tun',
+          },
+        },
+      ],
+    }).relays[0];
+    expect(row?.turn).toEqual({
+      url: 'turn:jp.example:40000',
+      probeOk: false,
+      members: { ok: 2, total: 3, updatedAt: 9 },
+      localHint: 'tun',
+    });
+    const legacy = normalizeRelayStatus({
+      relays: [
+        {
+          url: 'https://jp.example',
+          priority: 1,
+          online: true,
+          attached: false,
+          turn: { url: 'turn:jp.example:40000', probeOk: true },
+        },
+      ],
+    }).relays[0];
+    expect(legacy?.turn).toEqual({ url: 'turn:jp.example:40000', probeOk: true });
+  });
+
   test('normalizeRelayStatus 保留可选 pathBestMs / reraces', () => {
     const row = normalizeRelayStatus({
       relays: [

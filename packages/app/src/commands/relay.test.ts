@@ -946,6 +946,90 @@ describe('formatting helpers', () => {
     );
   });
 
+  test('formatRelayStatusLines TURN column attributes local vs fleet', () => {
+    const lines = formatRelayStatusLines({
+      mode: 'relay',
+      tenantId: 'd'.repeat(32),
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          rttMs: 18,
+          peersOnline: 4,
+          turn: { url: 'turn:sh.example:3478', probeOk: true },
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+        {
+          url: 'https://jp.example',
+          priority: 1,
+          online: true,
+          attached: false,
+          role: 'secondary',
+          rttMs: 42,
+          peersOnline: 2,
+          turn: { url: 'turn:jp.example:40000', probeOk: false },
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+        {
+          url: 'https://off.example',
+          priority: 2,
+          online: true,
+          attached: false,
+          role: 'secondary',
+          rttMs: 9,
+          peersOnline: 1,
+          turn: { url: 'turn:off.example:40000', probeOk: false },
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+      ],
+      metaEpoch: 1,
+      nodesViaRelay: 5,
+      multiAttach: true,
+      reauthRequired: false,
+      readmitPending: 0,
+      raw: {
+        relays: [
+          {
+            url: 'https://sh.example',
+            turn: {
+              url: 'turn:sh.example:3478',
+              probeOk: true,
+              members: { ok: 5, total: 5, updatedAt: 1 },
+            },
+          },
+          {
+            url: 'https://jp.example',
+            turn: {
+              url: 'turn:jp.example:40000',
+              probeOk: false,
+              members: { ok: 4, total: 5, updatedAt: 1 },
+              localHint: 'tun',
+            },
+          },
+          {
+            url: 'https://off.example',
+            turn: { url: 'turn:off.example:40000', probeOk: false },
+          },
+        ],
+      },
+    });
+    expect(lines.some((line) => line.includes('(ok, 5/5)'))).toBe(true);
+    expect(lines.some((line) => line.includes('(down, 4/5 nodes ok)'))).toBe(true);
+    expect(lines.some((line) => line.includes('turn:off.example:40000 (down)'))).toBe(true);
+  });
+
   test('formatRelayStatusLines 在有 pathBestMs 时打印 BEST 列', () => {
     const lines = formatRelayStatusLines({
       mode: 'relay',

@@ -13,6 +13,9 @@ import { type JsonRequestOptions, requestJson } from '../json-mutation';
 import { RelayApiError } from './admin-api';
 import { type RelayMetaKeyLaggingNode, normalizeMetaKeyLagging } from './meta-key-lagging';
 import { readRelayTenantError } from './tenant-error';
+import { type RelayTurnProbe, normalizeRelayTurn } from './tenant-turn';
+
+export type { RelayTurnLocalHint, RelayTurnMembers, RelayTurnProbe } from './tenant-turn';
 
 /** 本机 uplink 的形态：接中继 / 接 hub / 都没有。 */
 export type RelayUplinkMode = 'relay' | 'hub' | 'none';
@@ -20,7 +23,6 @@ export type RelayUplinkMode = 'relay' | 'hub' | 'none';
 export type { RelayMetaKeyLaggingNode } from './meta-key-lagging';
 
 export type RelayAttachRole = 'primary' | 'secondary';
-export type RelayTurnProbe = { url: string; probeOk: boolean | null };
 
 /** 中继列表里的一条链路（按 `priority` 升序即 failover 顺序）。 */
 export interface RelayLinkStatus {
@@ -369,11 +371,6 @@ const EMPTY_STATUS: RelayTenantStatus = {
   readmitPending: 0,
   metaKeyLagging: [],
 };
-
-function normalizeRelayTurn(raw: RelayLinkStatus['turn']): RelayTurnProbe | null {
-  if (!raw || typeof raw !== 'object' || typeof raw.url !== 'string' || !raw.url) return null;
-  return { url: raw.url, probeOk: typeof raw.probeOk === 'boolean' ? raw.probeOk : null };
-}
 
 /** 缺字段一律补默认值：旧节点没有这条路由，`mode` 之外的字段也可能是后加的。 */
 export function normalizeRelayStatus(

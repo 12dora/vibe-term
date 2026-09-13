@@ -33,12 +33,20 @@ export interface RelayBadgeSpec {
   variant: 'default' | 'outline';
 }
 
+export type RelayTurnChipTone = 'default' | 'warning' | 'destructive';
+
 export interface RelayTurnChip {
   /** `host:port`，不带协议与查询串。 */
   endpoint: string;
   /** 探测结论的文案 key。 */
   verdictKey: string;
+  /** 舰队 tally 后缀 key；缺席表示旧网关没下发 members。 */
+  membersKey?: string;
+  membersParams?: { ok: number; total: number };
   reachable: boolean | null;
+  tone: RelayTurnChipTone;
+  /** `localHint=tun` 时的 tooltip key。 */
+  titleKey?: string;
 }
 
 const ROLE_KEYS: Record<RelayAttachRole, string> = {
@@ -73,13 +81,45 @@ export function relayPeersBadge(row: RelayLinkStatus): RelayBadgeSpec | null {
   return { key: 'relay.tenant.strip.peersOnline', params: { n: peers }, variant: 'outline' };
 }
 
+function turnMembersSuffix(
+  probeOk: boolean | null,
+  members: { ok: number; total: number } | undefined
+): Pick<RelayTurnChip, 'membersKey' | 'membersParams'> {
+  if (!members) return {};
+  if (probeOk === true) {
+    return {
+      membersKey: 'relay.tenant.strip.turnMembersCount',
+      membersParams: { ok: members.ok, total: members.total },
+    };
+  }
+  if (probeOk === false) {
+    return {
+      membersKey: 'relay.tenant.strip.turnMembersReachable',
+      membersParams: { ok: members.ok, total: members.total },
+    };
+  }
+  return {};
+}
+
+function turnChipTone(
+  probeOk: boolean | null,
+  members: { ok: number; total: number } | undefined
+): RelayTurnChipTone {
+  if (probeOk !== false) return 'default';
+  if (members && members.ok > 0) return 'warning';
+  return 'destructive';
+}
+
 export function relayTurnChip(row: RelayLinkStatus): RelayTurnChip | null {
   const turn = relayTurnOf(row);
   if (!turn) return null;
   return {
     endpoint: turnEndpointLabel(turn.url),
     verdictKey: turnProbeKey(turn.probeOk),
+    ...turnMembersSuffix(turn.probeOk, turn.members),
     reachable: turn.probeOk,
+    tone: turnChipTone(turn.probeOk, turn.members),
+    ...(turn.localHint === 'tun' ? { titleKey: 'relay.tenant.strip.turnTunHint' } : {}),
   };
 }
 

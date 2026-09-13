@@ -1,4 +1,5 @@
 import { readJsonObjectBody } from '@vibeterm/shared/http';
+import { config as gatewayConfig } from '../config';
 import { membersProbeSnapshot } from '../mesh/port-reach';
 import type { RelayConfigStore } from './relay-config-store';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
@@ -76,8 +77,9 @@ export function relayStatusPayload(deps: RelayAdminDeps): Response {
   });
 }
 
-export function withMembersProbe(turn: RelayTurnStatus): RelayTurnStatus {
-  const membersProbe = membersProbeSnapshot();
+export function withMembersProbe(turn: RelayTurnStatus, relayKey?: string): RelayTurnStatus {
+  const key = (relayKey ?? gatewayConfig.relayPublicUrl)?.trim() || undefined;
+  const membersProbe = membersProbeSnapshot(key);
   return membersProbe ? { ...turn, membersProbe } : turn;
 }
 
