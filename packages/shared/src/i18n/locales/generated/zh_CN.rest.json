@@ -2512,7 +2512,6 @@
           "reconnects": "重连",
           "reconnectsSub": "自启动累计",
           "reconnectsHint": "各接入节点重连次数之和。",
-          "throughputTotal": "累计 {{total}}",
           "traffic": "累计流量",
           "trafficSub": "自启动累计",
           "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
@@ -2973,6 +2972,7 @@
     "localMachine": {
       "ports": {
         "title": "入站端口",
+        "blocked": "未开通",
         "notProbedTitle": "未探测"
       }
     }

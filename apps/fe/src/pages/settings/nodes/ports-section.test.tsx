@@ -73,6 +73,25 @@ describe('PortsSection', () => {
     expect(html).toContain('nodes.ports.code.peer_refused');
   });
 
+  test('只有 blocked 配一句可见的「未开通」，open 与 unknown 仍然只有灯', () => {
+    const html = renderToStaticMarkup(
+      <PortsSection
+        plan={plan}
+        reach={[
+          { purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'blocked' },
+          { purpose: 'rtc-ice', proto: 'udp', range: { begin: 40000, end: 40099 }, status: 'open' },
+        ]}
+      />
+    );
+    expect(html).toContain('data-testid="local-port-blocked-peer-signaling"');
+    expect(html).toContain('localMachine.ports.blocked');
+    expect(html).not.toContain('data-testid="local-port-blocked-rtc-ice"');
+
+    const unknown = renderToStaticMarkup(<PortsSection plan={plan} reach={null} />);
+    expect(unknown).not.toContain('data-testid="local-port-blocked-peer-signaling"');
+    expect(unknown).not.toContain('localMachine.ports.blocked');
+  });
+
   test('计划里没有 reach 行的用途画灰点 unknown，有 reach 的才按 status 着色', () => {
     const html = renderToStaticMarkup(
       <PortsSection

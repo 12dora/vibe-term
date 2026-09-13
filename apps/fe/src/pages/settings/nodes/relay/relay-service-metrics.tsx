@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { uptimeText } from '../../relay/relay-format';
 import { RelayMetricsRetryLine } from '../../relay/relay-metrics-panel';
 import { type RelayMetricsApi, useRelayMetrics } from '../../relay/relay-metrics-store';
+import { Row } from '../copy-feedback';
 
 export type RelayServiceMetricsProps = {
   publicUrl: string | null;
@@ -42,6 +43,10 @@ export function relaySummaryText(t: Translate, data: RelayMetricsResponse): stri
   ].join(' · ');
 }
 
+/**
+ * 「运行」那一行。整行（连同标签）由这里渲染：指标端点不可用时（旧中继 / 401）留一个空标签
+ * 比不摆更糟——用户会以为读数没加载出来。
+ */
 export function RelayServiceMetrics({ onOpenConsole, api }: RelayServiceMetricsProps) {
   const { t } = useTranslation();
   const metrics = useRelayMetrics({ api });
@@ -49,6 +54,36 @@ export function RelayServiceMetrics({ onOpenConsole, api }: RelayServiceMetricsP
 
   if (metrics.unavailable) return null;
 
+  return (
+    <Row label={t('nodes.machine.relayServiceRuntime')}>
+      <RuntimeValue metrics={metrics} />
+      {data !== null && lastError && (
+        <RelayMetricsRetryLine
+          message={lastError}
+          onRetry={metrics.refresh}
+          testId="relay-service-metrics-stale"
+        />
+      )}
+      {data !== null && onOpenConsole && (
+        <Button
+          size="xs"
+          variant="ghost"
+          className="ml-auto text-muted-foreground"
+          onClick={onOpenConsole}
+          data-testid="relay-service-metrics-console"
+        >
+          {t('relay.metrics.console')}
+          <ArrowRight />
+        </Button>
+      )}
+    </Row>
+  );
+}
+
+/** 行内的读数本身：首次加载摆骨架，首拉失败给一行重试，拿到过就出摘要。 */
+function RuntimeValue({ metrics }: { metrics: ReturnType<typeof useRelayMetrics> }) {
+  const { t } = useTranslation();
+  const { data, lastError } = metrics;
   if (data === null) {
     if (!lastError) {
       return (
@@ -63,35 +98,13 @@ export function RelayServiceMetrics({ onOpenConsole, api }: RelayServiceMetricsP
       />
     );
   }
-
   return (
-    <>
-      <span
-        className={lastError ? 'min-w-0 text-muted-foreground' : 'min-w-0'}
-        data-testid="relay-service-metrics"
-        data-stale={lastError ? '' : undefined}
-      >
-        {relaySummaryText(t, data)}
-      </span>
-      {lastError && (
-        <RelayMetricsRetryLine
-          message={lastError}
-          onRetry={metrics.refresh}
-          testId="relay-service-metrics-stale"
-        />
-      )}
-      {onOpenConsole && (
-        <Button
-          size="xs"
-          variant="ghost"
-          className="ml-auto text-muted-foreground"
-          onClick={onOpenConsole}
-          data-testid="relay-service-metrics-console"
-        >
-          {t('relay.metrics.console')}
-          <ArrowRight />
-        </Button>
-      )}
-    </>
+    <span
+      className={lastError ? 'min-w-0 text-muted-foreground' : 'min-w-0'}
+      data-testid="relay-service-metrics"
+      data-stale={lastError ? '' : undefined}
+    >
+      {relaySummaryText(t, data)}
+    </span>
   );
 }

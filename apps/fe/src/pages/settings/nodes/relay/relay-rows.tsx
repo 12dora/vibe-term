@@ -243,11 +243,15 @@ function RelayFact({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {
   );
 }
 
-/** 链路状态点：在线 / 离线 / 令牌已作废。`title` 与 `aria-label` 承载读屏文案。 */
+/**
+ * 链路状态点：在线 / 离线 / 令牌已失效。`title` 与 `aria-label` 承载读屏文案。
+ *
+ * 被踢先判：令牌作废时链路可能还报着 `online`，照在线那一档写标签会得到一个红点配「在线」。
+ */
 function RelayDot({ relay, host }: { relay: RelayLinkStatus; host: string }) {
   const { t } = useTranslation();
   const failing = relay.kicked === true || !relay.online;
-  const label = t(relay.online ? 'relay.tenant.strip.online' : 'relay.tenant.strip.offline');
+  const label = t(dotLabelKey(relay));
   return (
     <span
       className={cn(
@@ -260,6 +264,11 @@ function RelayDot({ relay, host }: { relay: RelayLinkStatus; host: string }) {
       data-testid={`nodes-relay-status-${host}`}
     />
   );
+}
+
+function dotLabelKey(relay: RelayLinkStatus): string {
+  if (relay.kicked === true) return 'nodes.machine.status.relayKicked';
+  return relay.online ? 'relay.tenant.strip.online' : 'relay.tenant.strip.offline';
 }
 
 function RelayHost({ host, current }: { host: string; current: boolean }) {

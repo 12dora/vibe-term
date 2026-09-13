@@ -59,13 +59,12 @@ export function RelayServiceSection({ service }: RelayServiceSectionProps) {
 
       {turn && <RelayTurnRow turn={turn} />}
 
-      <Row label={t('nodes.machine.relayServiceRuntime')}>
-        <RelayServiceMetrics
-          publicUrl={service.publicUrl}
-          hasPassword={service.hasPassword}
-          onOpenConsole={openConsole}
-        />
-      </Row>
+      {/* 「运行」整行由指标组件自己渲染：端点不可用时它连标签一起不出。 */}
+      <RelayServiceMetrics
+        publicUrl={service.publicUrl}
+        hasPassword={service.hasPassword}
+        onOpenConsole={openConsole}
+      />
     </div>
   );
 }

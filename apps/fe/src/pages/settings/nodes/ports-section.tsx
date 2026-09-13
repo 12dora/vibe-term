@@ -85,7 +85,7 @@ export function PortsSection({
             type="button"
             size="xs"
             variant="ghost"
-            className="shrink-0"
+            className="-my-1 shrink-0"
             disabled={probing}
             onClick={() => void recheck()}
             data-testid="local-machine-ports-recheck"
@@ -117,6 +117,12 @@ function PortItem({ spec, ports }: { spec: PortSpec; ports: MeshPortReach[] | un
       <PortIndicator purpose={spec.purpose} reach={reach} status={status} />
       <code className="font-mono">{formatPortSpec(spec)}</code>
       <span className="text-muted-foreground">{t(`ports.purpose.${spec.purpose}`)}</span>
+      {/* 只有出问题的那一档配一句可见文字：红点本身对色觉障碍与触屏用户是读不出来的。 */}
+      {status === 'blocked' && (
+        <span className="text-destructive" data-testid={`local-port-blocked-${spec.purpose}`}>
+          {t('localMachine.ports.blocked')}
+        </span>
+      )}
     </li>
   );
 }

@@ -308,14 +308,10 @@ describe('磁贴排', () => {
     expect(html).not.toContain('data-testid="relay-metric-throughput"');
   });
 
-  test('吞吐格默认副行是进出速率，showTotal 才换成累计量', () => {
-    const rates = renderToStaticMarkup(<ThroughputTile data={data} trends={trends} />);
-    expect(rates).toContain('relay.metrics.tiles.throughputSub');
-    expect(rates).not.toContain('relay.metrics.tiles.throughputTotal');
-
-    const total = renderToStaticMarkup(<ThroughputTile data={data} trends={trends} showTotal />);
-    expect(total).toContain('relay.metrics.tiles.throughputTotal');
-    expect(total).not.toContain('relay.metrics.tiles.throughputSub');
+  test('吞吐格副行是进出速率；累计量由「累计流量」那一格单独报', () => {
+    const html = renderToStaticMarkup(<ThroughputTile data={data} trends={trends} />);
+    expect(html).toContain('relay.metrics.tiles.throughputSub');
+    expect(html).not.toContain('relay.metrics.tiles.throughputTotal');
   });
 
   test('响应式栅格：窄屏不摆多列，免得读数被截断', () => {

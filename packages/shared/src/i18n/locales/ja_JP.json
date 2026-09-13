@@ -3282,7 +3282,6 @@
           "reconnects": "再接続",
           "reconnectsSub": "起動からの累計",
           "reconnectsHint": "接続中ノードの再接続回数の合計です。",
-          "throughputTotal": "累計 {{total}}",
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
           "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
@@ -3743,6 +3742,7 @@
     "localMachine": {
       "ports": {
         "title": "受信ポート",
+        "blocked": "未開放",
         "notProbedTitle": "未検査"
       }
     }
