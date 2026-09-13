@@ -1428,8 +1428,9 @@
         "roleRelayNode": "リレー兼ノード",
         "menu": {
           "label": "その他の操作",
+          "connect": "接続",
           "changeRole": "ロールを変更",
-          "leave": "離脱…"
+          "leave": "マルチノード接続から退出…"
         },
         "status": {
           "standalone": "スタンドアロン",
@@ -1448,15 +1449,14 @@
           "relayService": "中継サービス",
           "network": "ネットワーク"
         },
-        "localAddress": "このマシンのアドレス",
+        "localAddress": "公開アドレス",
         "localAddressUnset": "未設定",
-        "localAddressHint": "他のノードはこのマシンに参加できません。「ロールを変更 → ハブ兼ノード」で設定し直してください。",
-        "currentHub": "現在のハブ",
+        "localAddressHint": "公開アドレスが未設定のため、他のノードは本機に参加できません。",
+        "upstream": "上位",
         "hubDisconnected": "未接続",
         "writerHub": "ライター：{{name}}",
-        "hubList": "Hub 一覧",
+        "hubList": "すべての Hub",
         "self": "このマシン",
-        "relayLeaveFirst": "Hub に戻すには、先に中継から離脱してください。",
         "details": {
           "title": "接続の詳細",
           "nodesViaRelay": "到達可能ノード",
@@ -1470,14 +1470,15 @@
           "hubs": "Hub の詳細",
           "quotaMaxFile": "1 ファイルの上限"
         },
-        "direct": "直接接続プラグイン",
+        "direct": "直結プラグイン",
         "directUnsupported": "このプラットフォームでは非対応",
         "directInstalled": "インストール済み",
         "directInstalledVersion": "インストール済み v{{version}}",
+        "directVersion": "v{{version}}",
         "directNotInstalled": "未インストール",
         "directEnable": "有効",
-        "directInstall": "プラグインをインストール",
-        "directRemove": "プラグインを削除",
+        "directInstall": "インストール",
+        "directRemove": "削除",
         "directRemoveConfirm": {
           "title": "直接接続プラグインを削除しますか？",
           "description": "セッションはハブ経由で継続します。いつでも再インストールできます。",
@@ -1485,7 +1486,6 @@
           "cancel": "キャンセル",
           "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
         },
-        "directNeedsInstall": "先にプラグインをインストールしてください。",
         "directRestartRequired": "VibeTerm を再起動すると反映されます。",
         "directFailed": "直接接続プラグインを更新できませんでした。",
         "directErrorUnsupported": "このプラットフォーム向けの直接接続プラグインはありません。",
@@ -1496,14 +1496,14 @@
         "restarting": "再起動しています…",
         "restartTimeout": "VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "domainAccess": {
-          "label": "ドメインアクセスを許可",
-          "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。公開ドメイン：{{hosts}}",
-          "noHosts": "公開ドメインはまだ設定されていません。",
+          "label": "ドメインアクセス",
+          "description": "設定済み：{{hosts}}",
+          "noHosts": "公開ドメインは未設定",
           "hostSeparator": "、",
           "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
           "confirm": {
             "title": "ドメインアクセスをオフにしますか？",
-            "description": "{{hosts}} 上のウェブ画面と API は直ちに停止し、ハブ／ノード間の通信のみが残ります。元に戻すには、LAN の IP アドレスまたは localhost でこのページを開き直す必要があります。",
+            "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。{{hosts}} 上のウェブ画面と API は直ちに停止し、元に戻すには LAN の IP アドレスまたは localhost でこのページを開き直す必要があります。",
             "viaDomain": "このページはそのドメイン経由で表示されているため、オフにすると直ちに切断されます。先に LAN の IP アドレスまたは localhost で VibeTerm を開けることを確認してください。",
             "confirm": "オフにする",
             "cancel": "キャンセル"
@@ -1512,10 +1512,11 @@
         "accountSecurity": "アカウントセキュリティ",
         "loginRequired": "サインインするとこのマシンの状態を表示します。",
         "loadFailed": "本機の状態を取得できませんでした（{{detail}}）。",
-        "relayServiceAddress": "中継の公開アドレス",
-        "relayServiceAddressUnsetHint": "他のマシンは本機の中継に接続できません。「ロールを変更 → リレー兼ノード」で設定し直してください。",
+        "relayServiceAddress": "公開アドレス",
+        "relayServiceRuntime": "稼働",
+        "relayServiceAddressUnsetHint": "公開アドレスが未設定のため、他のマシンは本機の中継に接続できません。",
         "relayServiceEnroll": "本機の中継に接続",
-        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続には設定した接続パスワードをもう一度入力します。"
+        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続時に接続パスワードの再入力が必要です。"
       },
       "membership": {
         "changeHub": "ハブを変更",
@@ -1797,6 +1798,7 @@
         "busy": "一時停止または再開の処理中です。"
       },
       "ports": {
+        "label": "ポート",
         "blocked": "到達不能なポート：{{list}}",
         "hint": "ファイアウォールまたはセキュリティグループで許可してください",
         "recheck": "再チェック",
@@ -2470,6 +2472,11 @@
         "title": "稼働メトリクス",
         "description": "中継の転送量と本機の負荷を 5 秒ごとに取得します。",
         "console": "中継コンソールを開く",
+        "summaryNodes": "{{online}}/{{total}} ノードオンライン",
+        "summaryTenants": "{{count}} テナント",
+        "summaryStreams": "{{count}} アクティブストリーム",
+        "summaryRate": "↑{{out}} ↓{{in}}",
+        "summaryUptime": "稼働 {{uptime}}",
         "refreshFailed": "メトリクスの更新に失敗しました：{{message}}",
         "stale": "データが古くなっています",
         "empty": "まだサンプルがありません。",
@@ -2505,7 +2512,6 @@
           "reconnects": "再接続",
           "reconnectsSub": "起動からの累計",
           "reconnectsHint": "接続中ノードの再接続回数の合計です。",
-          "uptime": "稼働時間",
           "throughputTotal": "累計 {{total}}",
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
@@ -2563,7 +2569,7 @@
           "rtt": "遅延 {{ms}} ms",
           "kicked": "トークンが失効しました。接続パスワードを入力し直してください",
           "error": "エラー：{{message}}",
-          "empty": "中継に接続していません。",
+          "empty": "中継に接続していません",
           "tenantId": "テナント ID",
           "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。",
           "rolePrimary": "主中継",
@@ -2608,7 +2614,6 @@
           "action": "接続パスワードを再入力"
         },
         "actions": {
-          "menu": "その他",
           "enroll": "中継に接続",
           "migrate": "中継接続に切り替え",
           "add": "中継を追加",
@@ -2968,11 +2973,6 @@
     "localMachine": {
       "ports": {
         "title": "受信ポート",
-        "titleNode": "本機で開放するポート",
-        "titleHub": "Hub で開放するポート",
-        "titleRelay": "中継で開放するポート",
-        "legend": "緑 = 開放済み · 赤 = 未開放 · 灰 = 未検査",
-        "notProbed": "—",
         "notProbedTitle": "未検査"
       }
     }

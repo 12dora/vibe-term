@@ -99,7 +99,7 @@ vibeterm relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] 
 
 - `packages/ui`：`Sparkline`（内联 SVG，多序列共享刻度，空/常量序列安全）、`StatTile`（`Card size="sm"`）。
 - `apps/fe/src/pages/settings/relay/relay-metrics-store.ts`：页面可见时每 5 s 轮询，隐藏/卸载停止；401/404 进入 `unauthorized`/`unavailable` 后停止轮询，重新挂载或点重试才再探测。
-- 本机卡片「中继服务」段：4 + 3 个精简瓦片（在线节点、活跃流、吞吐、延迟；内存、CPU、运行时长）。
+- 本机卡片「中继服务」段：三行——「公网地址」（含密码已设置 / 未设置）、「TURN」（状态 · 来源 · endpoint · 外网地址 · 成员可达性，出错另起红字一行）、「运行」（同一 metrics store 的一行摘要：在线节点 / 租户 / 活跃流 / 上下行速率 / 运行时长，行末「打开中继控制台」切到「中继管理」tab）。完整瓦片只在「中继管理」tab。
 - 「中继管理」tab：瓦片分「流量 / 进程」两组，「租户」与「放行带宽」两格在配了上限时显示 `已用 / 上限`；趋势卡三条 5 分钟折线（吞吐、活跃流、事件循环延迟），成员表（RTT、流、速率、重连、接入时间）。新建的 `relay,node` 在接入自身中继前 `/api/mesh/relay/status` 返回 `mode: "hub"`，前端按角色而非该字段决定文案。
 
 ## 测试

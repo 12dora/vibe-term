@@ -1,20 +1,19 @@
 // 中继链路：一条一行。错误按稳定错误码查表，原始错误串（`ECONNRESET` 之类）从不上屏。
 //
 // 两种形态（判据见 `relay-row-model.ts` 的 `isMultiAttachView`）：
-// - 单条中继 / 旧网关：行内只留地址与一枚状态徽标；多于一条时行本身是选择器，点哪条切哪条。
-// - 多条同时挂载：每条都连着，行不再是单选——各自摆身份、延迟、在线对端数与 TURN，
+// - 单条中继 / 旧网关：一个状态点加一个主机名——「在线 / 延迟多少」卡头那枚徽标已经说过了。
+//   多于一条时行本身是选择器，点哪条切哪条。
+// - 多条同时挂载：每条都连着，行不再是单选——身份 / 延迟 / 在线对端数 / TURN 用 `·` 串成一句，
 //   行尾一个「设为主中继」，主中继那条禁用。
 
 import { TONE_CLASS } from '@/lib/tone';
 import type { RelayLinkErrorCode, RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { cn } from '@vibeterm/ui';
-import { Badge } from '@vibeterm/ui/badge';
 import { Button } from '@vibeterm/ui/button';
-import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   type RelayBadgeSpec,
-  type RelayTurnChipTone,
+  type RelayTurnChip,
   canSetPrimary,
   isMultiAttachView,
   relayPeersBadge,
@@ -74,16 +73,12 @@ export interface RelayRowsProps {
 export function RelayRows({ relays, onSelect, multiAttach }: RelayRowsProps) {
   const { t } = useTranslation();
   if (relays.length === 0) {
-    return (
-      <p className="text-xs text-muted-foreground" data-testid="nodes-relay-empty">
-        {t('relay.tenant.strip.empty')}
-      </p>
-    );
+    return <span data-testid="nodes-relay-empty">{t('relay.tenant.strip.empty')}</span>;
   }
   const multi = isMultiAttachView(multiAttach, relays);
   const selectable = relays.length > 1 && onSelect !== undefined;
   return (
-    <div className="flex flex-col gap-1" data-testid="nodes-relay-rows">
+    <div className="flex min-w-0 flex-1 flex-col gap-1" data-testid="nodes-relay-rows">
       {relays.map((relay) =>
         multi ? (
           <RelayAttachedRow key={relay.url} relay={relay} onSelect={onSelect} />
@@ -109,7 +104,7 @@ function RelayRowShell({
   const errorKey = relayLinkErrorKey(relay);
   return (
     <div
-      className="flex flex-col gap-0.5"
+      className="flex min-w-0 flex-col gap-0.5"
       data-testid={`nodes-relay-row-${host}`}
       data-relay-attached={relay.attached ? 'true' : 'false'}
       data-relay-online={relay.online ? 'true' : 'false'}
@@ -164,7 +159,7 @@ function RelayRow({
   );
 }
 
-/** 多条同时挂载时的一行：身份 / 延迟 / 在线对端数 / TURN 各一枚，行尾一个「设为主中继」。 */
+/** 多条同时挂载时的一行：身份 · 延迟 · 在线对端数 · TURN 串成一句，行尾一个「设为主中继」。 */
 function RelayAttachedRow({
   relay,
   onSelect,
@@ -181,38 +176,27 @@ function RelayAttachedRow({
   return (
     <RelayRowShell relay={relay} host={host}>
       <span
-        className="flex flex-wrap items-center gap-2 py-0.5"
+        className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 py-0.5"
         data-relay-role={role.key}
         aria-current={relay.attached ? 'true' : undefined}
       >
-        <span
-          className={cn(
-            'min-w-0 truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px]',
-            relay.attached && 'ring-1 ring-primary'
-          )}
-          data-testid={`nodes-relay-host-${host}`}
-        >
-          {host}
-        </span>
-        <RowBadge spec={role} testId={`nodes-relay-role-${host}`} />
-        {rtt && <RowBadge spec={rtt} testId={`nodes-relay-rtt-${host}`} />}
-        {peers && <RowBadge spec={peers} testId={`nodes-relay-peers-${host}`} />}
+        <RelayDot relay={relay} host={host} />
+        <RelayHost host={host} current={relay.attached === true} />
+        <RelayFact spec={role} testId={`nodes-relay-role-${host}`} />
+        {rtt && <RelayFact spec={rtt} testId={`nodes-relay-rtt-${host}`} />}
+        {peers && <RelayFact spec={peers} testId={`nodes-relay-peers-${host}`} />}
         {turn && (
-          <span
-            className={cn(
-              'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none',
-              turnChipClass(turn.tone)
-            )}
-            title={turn.titleKey ? t(turn.titleKey) : undefined}
-            data-testid={`nodes-relay-turn-${host}`}
-          >
-            <span className="text-muted-foreground">{t('relay.tenant.strip.turn')}</span>
-            <span className="min-w-0 truncate font-mono">{turn.endpoint}</span>
-            <span className={turn.tone === 'default' ? 'text-muted-foreground' : undefined}>
-              {t(turn.verdictKey)}
+          <>
+            <Separator />
+            <span
+              className={turnTextClass(turn.tone)}
+              title={turn.titleKey ? t(turn.titleKey) : undefined}
+              data-testid={`nodes-relay-turn-${host}`}
+            >
+              {`${t('relay.tenant.strip.turn')} ${turn.endpoint} ${t(turn.verdictKey)}`}
               {turn.membersKey ? ` · ${t(turn.membersKey, turn.membersParams)}` : ''}
             </span>
-          </span>
+          </>
         )}
         {onSelect && (
           <Button
@@ -232,18 +216,60 @@ function RelayAttachedRow({
   );
 }
 
-function turnChipClass(tone: RelayTurnChipTone): string {
-  if (tone === 'destructive') return TONE_CLASS.chip.blocked;
-  if (tone === 'warning') return TONE_CLASS.chip.warn;
-  return TONE_CLASS.chip.muted;
+function turnTextClass(tone: RelayTurnChip['tone']): string {
+  if (tone === 'destructive') return TONE_CLASS.text.blocked;
+  if (tone === 'warning') return TONE_CLASS.text.warn;
+  return TONE_CLASS.text.muted;
 }
 
-function RowBadge({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {
+/** 事实之间的分隔：`·` 只是标点，不进无障碍树。 */
+function Separator() {
+  return (
+    <span className="text-muted-foreground/60" aria-hidden>
+      ·
+    </span>
+  );
+}
+
+function RelayFact({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {
   const { t } = useTranslation();
   return (
-    <Badge variant={spec.variant} data-testid={testId}>
-      {t(spec.key, spec.params)}
-    </Badge>
+    <>
+      <Separator />
+      <span className={spec.variant === 'default' ? undefined : 'text-muted-foreground'}>
+        <span data-testid={testId}>{t(spec.key, spec.params)}</span>
+      </span>
+    </>
+  );
+}
+
+/** 链路状态点：在线 / 离线 / 令牌已作废。`title` 与 `aria-label` 承载读屏文案。 */
+function RelayDot({ relay, host }: { relay: RelayLinkStatus; host: string }) {
+  const { t } = useTranslation();
+  const failing = relay.kicked === true || !relay.online;
+  const label = t(relay.online ? 'relay.tenant.strip.online' : 'relay.tenant.strip.offline');
+  return (
+    <span
+      className={cn(
+        'size-1.5 shrink-0 rounded-full',
+        failing ? TONE_CLASS.dot.blocked : TONE_CLASS.dot.ok
+      )}
+      title={label}
+      aria-label={label}
+      role="img"
+      data-testid={`nodes-relay-status-${host}`}
+    />
+  );
+}
+
+function RelayHost({ host, current }: { host: string; current: boolean }) {
+  return (
+    <span
+      className={cn('min-w-0 truncate font-mono', current && 'font-medium text-foreground')}
+      data-testid={`nodes-relay-host-${host}`}
+    >
+      {host}
+    </span>
   );
 }
 
@@ -256,34 +282,10 @@ function RelayLine({
   host: string;
   current: boolean;
 }) {
-  const { t } = useTranslation();
   return (
     <>
-      <span
-        className={cn(
-          'min-w-0 truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px]',
-          current && 'ring-1 ring-primary'
-        )}
-        data-testid={`nodes-relay-host-${host}`}
-      >
-        {host}
-      </span>
-      {current && <Check className="size-3 shrink-0 text-primary" aria-hidden />}
-      <Badge
-        variant={relay.online ? 'default' : 'outline'}
-        data-testid={`nodes-relay-status-${host}`}
-      >
-        {relayStatusText(t, relay)}
-      </Badge>
+      <RelayDot relay={relay} host={host} />
+      <RelayHost host={host} current={current} />
     </>
   );
-}
-
-function relayStatusText(
-  t: (key: string, options?: Record<string, unknown>) => string,
-  relay: RelayLinkStatus
-): string {
-  if (!relay.online) return t('relay.tenant.strip.offline');
-  if (typeof relay.rttMs === 'number') return t('relay.tenant.strip.rtt', { ms: relay.rttMs });
-  return t('relay.tenant.strip.online');
 }

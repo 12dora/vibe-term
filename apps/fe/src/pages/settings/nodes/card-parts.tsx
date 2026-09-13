@@ -27,13 +27,15 @@ export function CardSection({
   );
 }
 
-export type NoticeTone = 'danger' | 'warning' | 'muted';
+export type NoticeTone = 'danger' | 'warning' | 'muted' | 'primary';
 
-const CARD_NOTICE_TONE = {
-  danger: 'blocked',
-  warning: 'warn',
-  muted: 'muted',
-} as const satisfies Record<NoticeTone, keyof typeof TONE_CLASS.cardNotice>;
+// `primary` 不是问题档：它给「刚设置完，下一步在这里」这类需要被看见的陈述用。
+const CARD_NOTICE_CLASS: Record<NoticeTone, string> = {
+  danger: TONE_CLASS.cardNotice.blocked,
+  warning: TONE_CLASS.cardNotice.warn,
+  muted: TONE_CLASS.cardNotice.muted,
+  primary: TONE_CLASS.notice.ok,
+};
 
 export function Notice({
   tone,
@@ -51,7 +53,7 @@ export function Notice({
 }) {
   return (
     <p
-      className={`flex flex-wrap items-center gap-2 rounded-lg p-2 text-xs ${TONE_CLASS.cardNotice[CARD_NOTICE_TONE[tone]]}`}
+      className={`flex flex-wrap items-center gap-2 rounded-lg p-2 text-xs ${CARD_NOTICE_CLASS[tone]}`}
       data-testid={testId}
     >
       {spinner ? (
@@ -70,11 +72,14 @@ export function NoticeAction({
   testId,
   disabled = false,
   onClick,
+  data,
 }: {
   label: string;
   testId: string;
   disabled?: boolean;
   onClick: () => void;
+  /** 额外的 `data-*` 抓手：「接入本机中继」要把预填地址带在按钮上。 */
+  data?: Record<string, string>;
 }) {
   return (
     <Button
@@ -84,6 +89,7 @@ export function NoticeAction({
       disabled={disabled}
       onClick={onClick}
       data-testid={testId}
+      {...data}
     >
       {label}
     </Button>

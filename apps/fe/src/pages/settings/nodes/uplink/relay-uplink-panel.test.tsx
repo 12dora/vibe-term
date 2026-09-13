@@ -1,15 +1,12 @@
-// 「连接」段的中继形态：链路行、提醒堆、三级操作。
-// 无 DOM 测试环境，用 react-dom/server 静态渲染；菜单走 portal，静态渲染看不到，
-// 因此菜单内容单独渲染 `RelayActionsMenuList`。
+// 「连接」段的中继形态：一行「上级」摆链路，下面是提醒堆。操作全在卡片 ⋯ 菜单里（见
+// `connect-menu.test.ts`）。无 DOM 测试环境，用 react-dom/server 静态渲染。
 
 import { describe, expect, test } from 'bun:test';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
-import { Children, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { RelayActionsController } from '../relay/use-relay-actions';
-import { type RelayMenuAction, relayActionMenu } from './relay-targets';
-import { RelayActionsMenuList, RelayUplinkPanel } from './relay-uplink-panel';
+import { RelayUplinkPanel } from './relay-uplink-panel';
 import { SelfRelayEntry } from './uplink-section';
 
 function link(overrides: Partial<RelayLinkStatus> = {}): RelayLinkStatus {
@@ -75,18 +72,17 @@ function render(props: Partial<Parameters<typeof RelayUplinkPanel>[0]> = {}): st
 }
 
 describe('中继链路与操作', () => {
-  test('链路行 + 主按钮 + 次级菜单 + 危险区，各占一处', () => {
+  test('链路摆在「上级」那一行，操作一个都不留在卡面上', () => {
     const html = render();
     expect(html).toContain('data-testid="local-uplink-relay-panel"');
     expect(html).toContain('data-testid="nodes-relay-rows"');
-    expect(html).toContain('data-testid="nodes-relay-add"');
-    expect(html).toContain('data-testid="nodes-relay-menu"');
-    expect(html).toContain('data-testid="nodes-relay-leave"');
-    // 重新输入接入密码 / 移除都收进「更多」，明面上不再摆一排按钮
-    expect(html).not.toContain('data-testid="nodes-relay-reauth-menu"');
-    // 「轮换元数据密钥」整条动作已经删掉
-    expect(html).not.toContain('data-testid="nodes-relay-rotate"');
-    expect(html).not.toContain('relay.tenant.actions.rotate');
+    expect(html).toContain('nodes.machine.upstream');
+    // 追加 / 更多 / 离开 / 「先离开中继」那句全部搬进卡片 ⋯ 菜单
+    expect(html).not.toContain('data-testid="nodes-relay-add"');
+    expect(html).not.toContain('data-testid="nodes-relay-menu"');
+    expect(html).not.toContain('data-testid="nodes-relay-leave"');
+    expect(html).not.toContain('data-testid="nodes-relay-leave-first"');
+    expect(html).not.toContain('nodes.machine.relayLeaveFirst');
   });
 
   test('只有一条中继时链路行不可选；多条时非当前那条是可点的按钮', () => {
@@ -97,14 +93,7 @@ describe('中继链路与操作', () => {
     expect(html).toContain('aria-current="true"');
   });
 
-  test('「要改回 Hub 先离开中继」只是一句灰字提示，可以关掉', () => {
-    expect(render()).toContain('data-testid="nodes-relay-leave-first"');
-    expect(render({ showLeaveFirstHint: false })).not.toContain(
-      'data-testid="nodes-relay-leave-first"'
-    );
-  });
-
-  test('旧节点没有这族路由：只留链路行，不摆任何点了必报错的按钮', () => {
+  test('旧节点没有这族路由：只留链路行', () => {
     const html = render({ relay: { ...RELAY_MODE, unsupported: true, ordered: [], relays: [] } });
     expect(html).toContain('data-testid="nodes-relay-empty"');
     expect(html).not.toContain('data-testid="nodes-relay-add"');
@@ -157,7 +146,7 @@ describe('接入本机中继的入口', () => {
     expect(entry({ publicUrl: null })).toContain('data-relay-url=""');
   });
 
-  test('刚设置完时高亮，平时是灰底', () => {
+  test('本身是一条提醒：刚设置完时高亮，平时是灰底', () => {
     expect(entry({ highlight: true })).toContain('bg-primary/10');
     expect(entry()).toContain('bg-muted/60');
   });
@@ -252,34 +241,5 @@ describe('提醒堆', () => {
     expect(html).not.toContain('data-testid="nodes-relay-readmit"');
     expect(html).not.toContain('data-testid="nodes-relay-detached"');
     expect(html).not.toContain('data-testid="nodes-relay-reauth"');
-  });
-});
-
-describe('次级菜单的渲染', () => {
-  // 菜单内容走 portal，SSR 什么都不输出：直接对元素树断言（同 `BulkActionsMenuList`）。
-  test('条目按 relayActionMenu 的次序渲染，各带自己的 testId 与回调', () => {
-    const picked: RelayMenuAction[] = [];
-    const items = relayActionMenu([
-      link({ url: 'https://a.example' }),
-      link({ url: 'https://b.example', attached: false, priority: 2 }),
-    ]);
-    const list = RelayActionsMenuList({
-      items,
-      label: (item) => `${item.kind}:${item.params?.host ?? ''}`,
-      onSelect: (item) => {
-        picked.push(item);
-      },
-    }) as ReactElement<{ children?: ReactNode }>;
-    const rendered = Children.toArray(list.props.children) as ReactElement<{
-      'data-testid'?: string;
-      onClick?: () => void;
-    }>[];
-    expect(rendered.map((item) => item.props['data-testid'])).toEqual([
-      'nodes-relay-reauth-menu',
-      'nodes-relay-remove-a.example',
-      'nodes-relay-remove-b.example',
-    ]);
-    rendered[2]?.props.onClick?.();
-    expect(picked[0]?.url).toBe('https://b.example');
   });
 });

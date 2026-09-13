@@ -19,7 +19,7 @@
 
 所有角色初始化都默认安装并启用直连插件，下载最多等待 60 秒；离线、不支持的平台或下载失败均不阻断初始化。CLI 加入 hub／relay 时会补装缺失插件，已安装则跳过；Web setup 省略 `directEnable` 时默认启用，显式 `false` 可跳过。存量安装从未安装插件时，升级不要求补装。
 
-事后管理：设置 → 节点管理 → 某节点「更多」的详情框里有一枚两态按钮——未安装时「安装直连插件」（安装即启用），已安装时「删除直连插件」（需确认）。状态取自 `GET /api/local/status`，动作走 `POST /api/local/direct`，远端节点经入口的 `/n/<id>/api/local/*` 转发到目标节点（需已登录该节点；peer 入站不享受 standalone 免密）。两种动作都要重启目标网关才生效，详情框提供「立即重启」（`POST /api/settings/restart`）并轮询 `/api/local/status` 直到目标恢复。本机卡片上的安装 / 启用 / 停用 / 删除四个控件不变。
+事后管理：设置 → 节点管理 → 某节点「更多」的详情框里有一枚两态按钮——未安装时「安装直连插件」（安装即启用），已安装时「删除直连插件」（需确认）。状态取自 `GET /api/local/status`，动作走 `POST /api/local/direct`，远端节点经入口的 `/n/<id>/api/local/*` 转发到目标节点（需已登录该节点；peer 入站不享受 standalone 免密）。两种动作都要重启目标网关才生效，详情框提供「立即重启」（`POST /api/settings/restart`）并轮询 `/api/local/status` 直到目标恢复。本机卡「网络 → 直连插件」行按状态只给一个动作：不支持的平台只显示「本平台不支持」；未安装显示「未安装」+「安装」；已安装显示「启用」开关、版本号与「删除」。
 
 中继角色详见 [公共中继（relay）角色](../architecture/relay.md)。
 
@@ -247,7 +247,7 @@ CLI：`vibeterm settings mesh route-mode get|set <auto|direct|relay>`（`--json`
 
 升级按钮在操作列：进行中显示「下载中」/「下载中 3.20 MB / 12.9 MB」/「推送中 3.20 MB / 12.9 MB」/「执行中」（`progress.phase` + `transfer.kind`；`channel` 可选，旧入口不上报）。下载 / 推送阶段可「停止升级」；进入安装 / 重启后按钮禁用。失败：稳定码（`NODE_UNREACHABLE`、`UPGRADE_NOT_ALLOWED`、`UPGRADE_IN_PROGRESS`、`RELEASE_UNAVAILABLE` 等）翻成中文；通道聚合串（`github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）原文展示。mesh `POST /api/mesh/nodes/:id/upgrade` 可带 `{version}`，未发布或无 CLI tarball 返回 400 `RELEASE_NOT_FOUND`。投递决策树见 [远程升级](./remote-upgrade.md)。
 
-本机卡网络区入站端口标题随本机角色：含 `relay`（`relay` / `relay,node`）→「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余（`node` / `standalone` / 缺省）→「本机需开通端口」。节点详情框仍用「入站端口」。标题下一行图例：「绿 = 已开通 · 红 = 未开通 · 灰 = 未探测」。三态灯：`open` 绿无环、`blocked` 红无环、`unknown` 或无 `MeshPortReach` 行灰点（无 reach 时 tooltip「未探测」）。探测中保持原灯 + 按钮 spinner。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时本机卡显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。只有内网地址的云主机会额外广播 STUN 映射出的公网 IPv4（或 `VIBETERM_PEER_PUBLIC_HOST`），所以安全组已放行 39001 的云主机也能变绿；`refused` 一次即红，`timeout` 两击。「重新检测」让对端 30 s 内重探（经 `peer_reach_epoch`）。中继 / Hub 主机的 443 与 TURN 行由成员在线数与成员 TURN 统计派生。
+本机卡「网络 → 端口」行按角色列出端口计划（`relay` / `relay,node` 含 443 与 TURN，`hub,node` 含 443，其余为 peer + RTC），标签固定为「端口」，不再按角色换标题，也没有图例行；节点详情框仍用「入站端口」。三态灯：`open` 绿、`blocked` 红、`unknown` 或无 `MeshPortReach` 行灰点，灯的 `title` / `aria-label` 即「已开通 / 未开通 / 未探测」。探测中保持原灯 + 按钮 spinner。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时行末显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。只有内网地址的云主机会额外广播 STUN 映射出的公网 IPv4（或 `VIBETERM_PEER_PUBLIC_HOST`），所以安全组已放行 39001 的云主机也能变绿；`refused` 一次即红，`timeout` 两击。「重新检测」让对端 30 s 内重探（经 `peer_reach_epoch`）。中继 / Hub 主机的 443 与 TURN 行由成员在线数与成员 TURN 统计派生。
 
 `GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`，以及 `lastSeenAt`（毫秒，来自 `peer_cache.last_seen_at`；self 恒 `null`；旧入口不下发）。前端行模型优先 mesh `lastSeenAt`，hub `last_seen_at` 兜底。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。CLI `vibeterm nodes ls` 有 ADDRESS 列，ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列；`--json` 带 `paused`、`lastSeenAt`、`address`；`nodes show` 仍打印 `loggedIn`。详见 [命令行使用手册](./cli-usage.md)。
 

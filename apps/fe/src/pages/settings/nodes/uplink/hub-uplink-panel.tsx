@@ -9,14 +9,12 @@ import { writerHub } from '@/node/mesh-hubs';
 import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
 import type { LocalRole, LocalStatusResponse } from '@vibeterm/api-client/local/types';
 import { cn } from '@vibeterm/ui';
-import { Button } from '@vibeterm/ui/button';
-import { Repeat, TriangleAlert } from 'lucide-react';
+import { TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../card-parts';
 import { CopyableValue, Row } from '../copy-feedback';
 import { HubRecoveryNotices } from './hub-recovery';
 import {
-  HubModeTag,
   candidateFailure,
   hubLabel,
   hubModeLabel,
@@ -99,8 +97,6 @@ export interface HubUplinkPanelProps {
   /** 首次探测是否仍在飞（含 401 → 静默登录 → 重试）；只用来区分「还没结论」与「连不上」。 */
   hubLoading: boolean;
   hubFailure: HubFailureReason | null;
-  changeHubDisabled: boolean;
-  onChangeHub: () => void;
 }
 
 export function HubUplinkPanel({
@@ -111,8 +107,6 @@ export function HubUplinkPanel({
   hubOnline,
   hubLoading,
   hubFailure,
-  changeHubDisabled,
-  onChangeHub,
 }: HubUplinkPanelProps) {
   const meshRole = localRole === 'node' || localRole === 'hub,node';
   const attached: AttachedHubView = meshRole
@@ -122,13 +116,7 @@ export function HubUplinkPanel({
     <div className="flex flex-col gap-3" data-testid="local-uplink-hub-panel">
       {localRole === 'hub,node' && <LocalAddressRow publicUrl={status.hubPublicUrl} />}
       {meshRole && (attached.kind !== 'none' || status.hubUrl) && (
-        <CurrentHubRow
-          attached={attached}
-          writer={writerHub(hubs)}
-          {...(localRole === 'node'
-            ? { changeHub: { disabled: changeHubDisabled, onChange: onChangeHub } }
-            : {})}
-        />
+        <UpstreamHubRow attached={attached} writer={writerHub(hubs)} />
       )}
       {meshRole && hubs.hubs.length >= 2 && (
         <MachineHubList
@@ -220,75 +208,68 @@ function LocalAddressRow({ publicUrl }: { publicUrl: string | null }) {
 export function UnsetAddress({ hint, testId }: { hint: string; testId: string }) {
   const { t } = useTranslation();
   return (
-    <span className="flex flex-wrap items-center gap-2 text-xs">
+    <>
       <span data-testid={`${testId}-unset`}>{t('nodes.machine.localAddressUnset')}</span>
       <span className="text-muted-foreground">{hint}</span>
+    </>
+  );
+}
+
+/** 事实之间的分隔：`·` 只是标点，不进无障碍树。 */
+function Separator() {
+  return (
+    <span className="text-muted-foreground/60" aria-hidden>
+      ·
     </span>
   );
 }
 
-function CurrentHubRow({
+/**
+ * 「上级」：名字 · 主/备 · 地址，一行说完。主备在这里是这一行的一部分，用正文而不是描边徽标——
+ * chip 留给「全部 Hub」那一行，它还要带离线与连不上的警示。「更换 Hub」已收进卡片 ⋯ 菜单。
+ */
+function UpstreamHubRow({
   attached,
   writer,
-  changeHub,
 }: {
   attached: AttachedHubView;
   writer: MeshHubEndpoint | null;
-  changeHub?: { disabled: boolean; onChange: () => void };
 }) {
   const { t } = useTranslation();
-  // 挂在备 hub 上时写入其实落在别处，同一行补出 writer，省得用户去 hub 管理面对照。
+  // 挂在备 hub 上时写入其实落在别处，补一行 writer，省得用户去 hub 管理面对照。
   const elsewhere =
     attached.kind === 'hub' && writer && writer.nodeId !== attached.hub.nodeId ? writer : null;
   return (
-    <Row label={t('nodes.machine.currentHub')}>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {attached.kind === 'hub' && (
-          <>
-            <span
-              className="flex items-center gap-1.5 text-xs"
-              data-testid="local-machine-attached-hub"
-            >
-              <span className="font-medium">
-                {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
-              </span>
-              <HubModeTag mode={attached.hub.mode} testId="local-machine-attached-hub-mode" />
+    <Row label={t('nodes.machine.upstream')}>
+      {attached.kind === 'hub' && (
+        <>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-medium" data-testid="local-machine-attached-hub">
+              {attached.isSelf ? t('nodes.machine.self') : hubLabel(attached.hub)}
             </span>
-            {!attached.isSelf && (
-              <CopyableValue
-                value={attached.hub.publicUrl}
-                testId="local-machine-attached-hub-url"
-              />
-            )}
-          </>
-        )}
-        {attached.kind === 'url' && (
-          <CopyableValue value={attached.url} testId="local-machine-attached-hub-url" />
-        )}
-        {attached.kind === 'none' && (
-          <span className="text-xs" data-testid="local-machine-hub-disconnected">
-            {t('nodes.machine.hubDisconnected')}
+            <Separator />
+            <span className="text-muted-foreground" data-testid="local-machine-attached-hub-mode">
+              {hubModeLabel(t, attached.hub.mode)}
+            </span>
           </span>
-        )}
-        {elsewhere && (
-          <span className="text-xs text-muted-foreground" data-testid="local-machine-writer-hub">
-            {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
-          </span>
-        )}
-        {changeHub && (
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            disabled={changeHub.disabled}
-            onClick={changeHub.onChange}
-            data-testid="local-machine-change-hub"
-          >
-            <Repeat />
-            {t('nodes.membership.changeHub')}
-          </Button>
-        )}
-      </div>
+          {!attached.isSelf && (
+            <CopyableValue value={attached.hub.publicUrl} testId="local-machine-attached-hub-url" />
+          )}
+        </>
+      )}
+      {attached.kind === 'url' && (
+        <CopyableValue value={attached.url} testId="local-machine-attached-hub-url" />
+      )}
+      {attached.kind === 'none' && (
+        <span data-testid="local-machine-hub-disconnected">
+          {t('nodes.machine.hubDisconnected')}
+        </span>
+      )}
+      {elsewhere && (
+        <span className="basis-full text-muted-foreground" data-testid="local-machine-writer-hub">
+          {t('nodes.machine.writerHub', { name: hubLabel(elsewhere) })}
+        </span>
+      )}
     </Row>
   );
 }
@@ -312,7 +293,10 @@ export function MachineHubList({
   const byUrl = indexCandidates(candidates);
   return (
     <Row label={t('nodes.machine.hubList')}>
-      <span className="flex flex-wrap items-center gap-1.5" data-testid="local-machine-hub-list">
+      <span
+        className="flex min-w-0 flex-wrap items-center gap-1.5"
+        data-testid="local-machine-hub-list"
+      >
         {hubs.map((hub) => (
           <MachineHubChip
             key={hub.nodeId}

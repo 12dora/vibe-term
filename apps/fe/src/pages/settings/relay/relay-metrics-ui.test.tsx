@@ -25,7 +25,7 @@ const {
 const { relayMetricsFixture, relayMetricsMember, relayMetricsSample } = await import(
   './relay-metrics-fixture'
 );
-const { RelayCompactTiles, RelayFullTiles, RelayTilesSkeleton, ThroughputTile } = await import(
+const { RelayFullTiles, RelayTilesSkeleton, ThroughputTile } = await import(
   './relay-metrics-tiles'
 );
 const { RelayTrendsCard } = await import('./relay-metrics-trends');
@@ -292,21 +292,6 @@ describe('磁贴排', () => {
     expect(html).not.toContain('relay.metrics.tiles.memorySub');
   });
 
-  test('紧凑排的内存格只报堆已用量，副行不塞总量', () => {
-    const html = renderToStaticMarkup(<RelayCompactTiles data={data} trends={trends} />);
-    expect(html).toContain('relay.metrics.tiles.memorySub');
-    expect(html).not.toContain('relay.metrics.tiles.memoryHeapSub');
-  });
-
-  test('紧凑排只出七格，吞吐格带折线', () => {
-    const html = renderToStaticMarkup(<RelayCompactTiles data={data} trends={trends} />);
-    expect(html).toContain('data-testid="relay-metric-throughput"');
-    expect(html).toContain('data-testid="relay-metric-uptime"');
-    expect(html).not.toContain('data-testid="relay-metric-heap"');
-    expect(html).not.toContain('data-testid="relay-metric-sockets"');
-    expect(html).toContain('data-slot="sparkline"');
-  });
-
   test('累计流量：完整排单独一格，只出一个数（收发两侧同值）', () => {
     const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
     expect(html).toContain('data-testid="relay-metric-traffic"');
@@ -314,13 +299,6 @@ describe('磁贴排', () => {
     expect(html).toContain('10.0 MB');
     expect(html).toContain('relay.metrics.tiles.trafficSub');
     expect(html).toContain('title="relay.metrics.tiles.trafficHint"');
-  });
-
-  test('紧凑排没有单独的流量格，累计量挂在吞吐格副行上', () => {
-    const html = renderToStaticMarkup(<RelayCompactTiles data={data} trends={trends} />);
-    expect(html).not.toContain('data-testid="relay-metric-traffic"');
-    expect(html).toContain('relay.metrics.tiles.throughputTotal');
-    expect(html).not.toContain('relay.metrics.tiles.throughputSub');
   });
 
   test('完整排把进出速率拆成两格，不再摆合计吞吐格', () => {
@@ -341,13 +319,6 @@ describe('磁贴排', () => {
   });
 
   test('响应式栅格：窄屏不摆多列，免得读数被截断', () => {
-    const compact = renderToStaticMarkup(<RelayCompactTiles data={data} trends={trends} />);
-    // 主排：基础断点单列 → sm 两列 → lg 四列
-    expect(compact).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');
-    // 瘦排：基础断点两列（值都很短）→ sm 三列
-    expect(compact).toContain('grid grid-cols-2 gap-2 sm:grid-cols-3');
-    expect(compact).not.toContain('grid grid-cols-3 gap-2"');
-
     // 完整排：列数只取每组格数的因数，行才不会缺角。
     // 转发量八格 → 2/4 列；本机负载六格 → 2/3/6 列。窄屏折线已隐藏，两列也放得下。
     const full = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);

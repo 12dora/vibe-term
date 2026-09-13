@@ -9,6 +9,7 @@ import type { LocalStatusResponse, SetupRelayRole } from '@vibeterm/api-client/l
 import { Button } from '@vibeterm/ui/button';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Notice, NoticeAction } from '../card-parts';
 import { ConnectionDetails } from '../connection-details';
 import type { SetupIntent } from '../membership/intent';
 import { isRelayRole } from '../membership/role-transition';
@@ -23,8 +24,6 @@ export interface UplinkSectionProps {
   selfNodeId: string | null;
   standalone: boolean;
   uplink: LocalUplinkController;
-  changeHubDisabled: boolean;
-  onChangeHub: () => void;
   /** standalone 下预选的向导路径。 */
   wizardPath: SetupIntent | null;
   /** standalone 下「本机作为中继」表单的预选角色（跨重启记号带来的）。 */
@@ -38,8 +37,6 @@ export function UplinkSection({
   selfNodeId,
   standalone,
   uplink,
-  changeHubDisabled,
-  onChangeHub,
   wizardPath,
   wizardRelayRole,
   selfRelayFollowUp,
@@ -53,8 +50,6 @@ export function UplinkSection({
         status={status}
         selfNodeId={selfNodeId}
         uplink={uplink}
-        changeHubDisabled={changeHubDisabled}
-        onChangeHub={onChangeHub}
         selfRelayFollowUp={selfRelayFollowUp}
       />
       <ConnectionDetails relay={relay} hubs={uplink.hubs} selfNodeId={selfNodeId} />
@@ -75,15 +70,11 @@ function MeshUplink({
   status,
   selfNodeId,
   uplink,
-  changeHubDisabled,
-  onChangeHub,
   selfRelayFollowUp,
 }: {
   status: LocalStatusResponse;
   selfNodeId: string | null;
   uplink: LocalUplinkController;
-  changeHubDisabled: boolean;
-  onChangeHub: () => void;
   selfRelayFollowUp: boolean;
 }) {
   const { relay } = uplink;
@@ -107,10 +98,8 @@ function MeshUplink({
         hubOnline={uplink.hub.online}
         hubLoading={uplink.hub.loading}
         hubFailure={uplink.hub.failure}
-        changeHubDisabled={changeHubDisabled}
-        onChangeHub={onChangeHub}
       />
-      <RelayEntry relay={relay} onOpen={(intent) => uplink.relayActions.openEnroll(intent)} />
+      <RelayEntry relay={relay} onOpen={() => uplink.relayActions.openEnroll('enroll')} />
     </>
   );
 }
@@ -143,38 +132,29 @@ function SetupSlot({
 }
 
 /**
- * 还没接中继的 mesh 机器：hub 模式给「改为接入中继」，没有上级时给「接入中继」。
+ * 压根没有上级的 mesh 机器：卡面必须自己要求一个动作，因此「接入中继」留在这里。
+ * hub 形态下的「改为接入中继」是低频操作，已经收进卡片 ⋯ 菜单（`connect-menu.ts`）。
  * 旧节点没有这族路由（`unsupported`）时整块不出现——摆一个点了必报错的按钮毫无意义。
  */
-function RelayEntry({
-  relay,
-  onOpen,
-}: {
-  relay: UseMeshRelayResult;
-  onOpen: (intent: 'enroll' | 'migrate') => void;
-}) {
+function RelayEntry({ relay, onOpen }: { relay: UseMeshRelayResult; onOpen: () => void }) {
   const { t } = useTranslation();
-  if (relay.unsupported) return null;
-  const migrate = relay.mode === 'hub';
+  if (relay.unsupported || relay.mode === 'hub') return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button
         type="button"
         size="xs"
-        variant="outline"
-        onClick={() => onOpen(migrate ? 'migrate' : 'enroll')}
+        variant="default"
+        onClick={onOpen}
         data-testid="nodes-relay-enroll"
       >
-        {t(migrate ? 'relay.tenant.actions.migrate' : 'relay.tenant.actions.enroll')}
+        {t('relay.tenant.actions.enroll')}
       </Button>
-      <span className="text-[11px] text-muted-foreground" data-testid="nodes-relay-entry-hint">
-        {t(migrate ? 'relay.tenant.dialog.migrateNotice' : 'relay.tenant.strip.empty')}
-      </span>
     </div>
   );
 }
 
-/** 接自己那台中继：一句陈述加一个预填好地址的按钮，全卡只此一处。 */
+/** 接自己那台中继：一条提醒加一个预填好地址的按钮，全卡只此一处。 */
 export function SelfRelayEntry({
   relay,
   publicUrl,
@@ -189,25 +169,19 @@ export function SelfRelayEntry({
   const { t } = useTranslation();
   if (relay.unsupported) return null;
   return (
-    <div
-      className={`flex flex-col gap-2 rounded-lg p-2 text-xs ${
-        highlight ? 'bg-primary/10 text-primary' : 'bg-muted/60 text-muted-foreground'
-      }`}
-      data-testid="nodes-relay-self-entry"
-    >
-      <span>{t('nodes.machine.relayServiceEnrollHint')}</span>
-      <span>
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
+    <Notice
+      tone={highlight ? 'primary' : 'muted'}
+      testId="nodes-relay-self-entry"
+      action={
+        <NoticeAction
+          label={t('nodes.machine.relayServiceEnroll')}
+          testId="nodes-relay-enroll-self"
           onClick={() => onOpen(publicUrl ?? '')}
-          data-testid="nodes-relay-enroll-self"
-          data-relay-url={publicUrl ?? ''}
-        >
-          {t('nodes.machine.relayServiceEnroll')}
-        </Button>
-      </span>
-    </div>
+          data={{ 'data-relay-url': publicUrl ?? '' }}
+        />
+      }
+    >
+      {t('nodes.machine.relayServiceEnrollHint')}
+    </Notice>
   );
 }

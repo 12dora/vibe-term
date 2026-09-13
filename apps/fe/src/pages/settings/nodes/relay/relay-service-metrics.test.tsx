@@ -1,4 +1,4 @@
-// 本机卡片上的紧凑指标区：四种收尾（骨架 / 首拉失败 / 正常 / 过期）与控制台链接。
+// 本机卡片上的运行摘要：四种收尾（骨架 / 首拉失败 / 正常 / 过期）与控制台链接。
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
@@ -6,11 +6,21 @@ import { installWindowStorage } from '@vibeterm/stores/test-utils';
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { RelayServiceMetrics } = await import('./relay-service-metrics');
+const { RelayServiceMetrics, relaySummaryText } = await import('./relay-service-metrics');
 const { relayMetricsFixture } = await import('../../relay/relay-metrics-fixture');
 const { resetRelayMetricsStateForTest, setRelayMetricsStateForTest } = await import(
   '../../relay/relay-metrics-store'
 );
+
+/** 摘要每一段实际取了哪个 key、传了哪些参数。 */
+function summaryParts(data: Parameters<typeof relaySummaryText>[1]) {
+  const seen: Array<{ key: string; params?: Record<string, unknown> }> = [];
+  relaySummaryText((key, params) => {
+    if (key.startsWith('relay.metrics.summary')) seen.push({ key, ...(params ? { params } : {}) });
+    return key;
+  }, data);
+  return seen;
+}
 
 function render(props: Partial<Parameters<typeof RelayServiceMetrics>[0]> = {}): string {
   return renderToStaticMarkup(
@@ -23,7 +33,7 @@ afterEach(() => {
 });
 
 describe('RelayServiceMetrics', () => {
-  test('还没拉到：摆磁贴骨架', () => {
+  test('还没拉到：摆一行骨架', () => {
     const html = render();
     expect(html).toContain('data-testid="relay-service-metrics-skeleton"');
     expect(html).not.toContain('data-testid="relay-service-metrics"');
@@ -41,39 +51,46 @@ describe('RelayServiceMetrics', () => {
     expect(render()).toBe('');
   });
 
-  test('正常：主排四格 + 瘦排三格，不出完整排的格子', () => {
+  test('正常：一行读数，磁贴一格都不摆', () => {
     setRelayMetricsStateForTest({ data: relayMetricsFixture() });
     const html = render();
     expect(html).toContain('data-testid="relay-service-metrics"');
-    expect(html).toContain('data-testid="relay-metric-members-online"');
-    expect(html).toContain('data-testid="relay-metric-throughput"');
-    expect(html).toContain('data-testid="relay-metric-rtt"');
-    expect(html).toContain('data-testid="relay-metric-cpu"');
-    expect(html).not.toContain('data-testid="relay-metric-sockets"');
+    expect(html).toContain('relay.metrics.summaryNodes');
+    expect(html).not.toContain('data-testid="relay-metrics-compact"');
+    expect(html).not.toContain('data-testid="relay-metric-members-online"');
     expect(html).not.toContain('data-stale=""');
   });
 
-  test('拉到过又失败：磁贴留着旧值并打「已过期」标', () => {
+  // 英文的租户 / 活跃流按数量变单复数，一条长模板做不到：逐段取文案再用 ` · ` 串起来。
+  test('一行读数由五段拼成，各段各自带自己的参数', () => {
+    const data = relayMetricsFixture();
+    const parts = summaryParts(data);
+    expect(parts.map((part) => part.key)).toEqual([
+      'relay.metrics.summaryNodes',
+      'relay.metrics.summaryTenants',
+      'relay.metrics.summaryStreams',
+      'relay.metrics.summaryRate',
+      'relay.metrics.summaryUptime',
+    ]);
+    expect(parts[0]?.params).toMatchObject({
+      online: data.totals.membersOnline,
+      total: data.totals.members,
+    });
+    // `count` 是 i18next 选复数形态的那个参数名，不能改成 tenants / streams
+    expect(parts[1]?.params).toEqual({ count: data.totals.tenants });
+    expect(parts[2]?.params).toEqual({ count: data.totals.activeStreams });
+    expect(String((parts[3]?.params as { out: string }).out).length).toBeGreaterThan(0);
+    expect(String((parts[4]?.params as { uptime: string }).uptime)).toContain(
+      'relay.admin.health.uptime'
+    );
+  });
+
+  test('拉到过又失败：读数留着旧值并打「已过期」标', () => {
     setRelayMetricsStateForTest({ data: relayMetricsFixture(), lastError: 'timeout' });
     const html = render();
     expect(html).toContain('data-testid="relay-service-metrics-stale"');
     expect(html).toContain('data-stale=""');
-    expect(html).toContain('data-testid="relay-metric-throughput"');
-  });
-
-  test('累计中转流量挂在吞吐格副行上，而不是单独占一格', () => {
-    setRelayMetricsStateForTest({ data: relayMetricsFixture() });
-    const html = render();
-    expect(html).toContain('relay.metrics.tiles.throughputTotal');
-    expect(html).not.toContain('relay.metrics.tiles.throughputSub');
-    expect(html).not.toContain('data-testid="relay-metric-traffic"');
-  });
-
-  test('窄屏栅格：主排单列起步，瘦排两列起步', () => {
-    setRelayMetricsStateForTest({ data: relayMetricsFixture() });
-    const html = render();
-    expect(html).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');
-    expect(html).toContain('grid grid-cols-2 gap-2 sm:grid-cols-3');
+    expect(html).toContain('relay.metrics.summaryNodes');
   });
 
   test('给了回调才出控制台链接', () => {

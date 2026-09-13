@@ -1,7 +1,7 @@
 // Hub chip 的共用零件：主 / 备文案、悬浮详情、候选地址诊断。
 //
 // chip 本体由本机卡「连接」段的 Hub 形态渲染（`hub-uplink-panel.tsx`），节点表与节点详情
-// 只借这里的文案函数。
+// 只借这里的文案函数；「上级」那一行的主 / 备是正文的一部分，不再套描边徽标。
 
 import type { MeshHubCandidate } from '@/node/mesh-hubs';
 import type {
@@ -10,7 +10,6 @@ import type {
   HubMode,
   MeshHubEndpoint,
 } from '@vibeterm/api-client/auth/index';
-import { useTranslation } from 'react-i18next';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -35,20 +34,6 @@ export function hubDetailText(t: Translate, hub: HubEndpointInfo, attached: bool
 /** hub 的短名：没有名字时用 nodeId 前 8 位，与指纹列的读法一致。 */
 export function hubLabel(hub: HubEndpointInfo): string {
   return hub.name || hub.nodeId.slice(0, 8);
-}
-
-/** 主 / 备的小徽标：与节点表里的 hub 徽标同一版式，供本机区块复用。 */
-export function HubModeTag({ mode, testId }: { mode: HubMode | null; testId?: string }) {
-  const { t } = useTranslation();
-  return (
-    <span
-      className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground"
-      data-testid={testId}
-      data-hub-mode={mode ?? ''}
-    >
-      {hubModeLabel(t, mode)}
-    </span>
-  );
 }
 
 /** uplink 候选地址的错误提示上限：塞一整段栈没有意义，只留够定位的一截。 */

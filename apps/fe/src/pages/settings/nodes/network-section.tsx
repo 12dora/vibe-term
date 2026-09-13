@@ -1,12 +1,11 @@
-// 「网络」段：直连插件与允许域名访问。两者都是本机的安装态 / 监听态，与角色无关，
-// 因此不再挂在原来那个只有一行内容的「通用设置」标题下面。
+// 「网络」段：端口、直连插件、允许域名访问。三行都是本机的监听态 / 安装态，与角色无关，
+// 共用同一套 `Row` 版式；重启提示是唯一的例外——它是要人动手的问题，走 `Notice`。
 
 import type { DomainAccessPolicy } from '@vibeterm/api-client';
 import type { LocalDirectAction, LocalDirectStatus } from '@vibeterm/api-client/local/types';
 import type { PortSpec } from '@vibeterm/shared/net';
-import { Button } from '@vibeterm/ui/button';
-import { Loader2, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Notice, NoticeAction } from './card-parts';
 import { DirectSection } from './direct-section';
 import { type DomainAccessApi, DomainAccessRow } from './domain-access-row';
 import type { MeshPortReach } from './port-reach';
@@ -31,7 +30,7 @@ export interface NetworkSectionProps {
   onRefresh: () => void;
   portPlan?: PortSpec[];
   portReach?: MeshPortReach[] | null;
-  localRole?: string | null;
+  /** 端口行不再按角色分标题，调用方仍在传；等调用点清掉即可删。 */
   selfNodeId?: string | null;
   probe?: ProbeNodePorts;
 }
@@ -49,20 +48,13 @@ export function NetworkSection({
   onRefresh,
   portPlan,
   portReach,
-  localRole,
   selfNodeId,
   probe,
 }: NetworkSectionProps) {
   return (
     <div className="flex flex-col gap-3">
       {portPlan && (
-        <PortsSection
-          plan={portPlan}
-          reach={portReach}
-          localRole={localRole}
-          selfNodeId={selfNodeId}
-          probe={probe}
-        />
+        <PortsSection plan={portPlan} reach={portReach} selfNodeId={selfNodeId} probe={probe} />
       )}
       <DirectSection
         direct={direct}
@@ -71,7 +63,7 @@ export function NetworkSection({
         error={directError}
         onAction={onDirectAction}
       />
-      {restartRequired && <RestartBanner restart={restart} busy={busy} />}
+      {restartRequired && <RestartNotice restart={restart} busy={busy} />}
       {domainAccess && (
         <DomainAccessRow policy={domainAccess} api={domainApi} onRefresh={onRefresh} />
       )}
@@ -79,27 +71,23 @@ export function NetworkSection({
   );
 }
 
-function RestartBanner({ restart, busy }: { restart: RestartGateway; busy: boolean }) {
+function RestartNotice({ restart, busy }: { restart: RestartGateway; busy: boolean }) {
   const { t } = useTranslation();
   return (
-    <div
-      className="flex flex-wrap items-center gap-2 rounded-lg bg-muted/50 p-2 text-xs"
-      data-testid="local-machine-restart-required"
+    <Notice
+      tone="muted"
+      testId="local-machine-restart-required"
+      spinner={restart.waiting}
+      action={
+        <NoticeAction
+          label={t('nodes.machine.restartNow')}
+          testId="local-machine-restart-now"
+          disabled={busy || restart.waiting}
+          onClick={() => void restart.run()}
+        />
+      }
     >
-      <span className="text-muted-foreground">
-        {t(RESTART_TEXT_KEY[restart.state] ?? 'nodes.machine.directRestartRequired')}
-      </span>
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        disabled={busy}
-        onClick={() => void restart.run()}
-        data-testid="local-machine-restart-now"
-      >
-        {restart.waiting ? <Loader2 className="animate-spin" /> : <RotateCcw />}
-        {t('nodes.machine.restartNow')}
-      </Button>
-    </div>
+      {t(RESTART_TEXT_KEY[restart.state] ?? 'nodes.machine.directRestartRequired')}
+    </Notice>
   );
 }

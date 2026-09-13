@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { type MachineStatusBadge, roleMenuTargets } from './machine-status';
 import { ROLE_LABEL_KEY, isMeshRole } from './membership/role-transition';
+import type { ConnectMenuItem } from './uplink/connect-menu';
 
 const STATUS_VARIANT: Record<MachineStatusBadge['tone'], 'default' | 'destructive' | 'outline'> = {
   ok: 'default',
@@ -37,6 +38,8 @@ export interface LocalMachineHeaderProps {
   meshEnabled: boolean;
   /** 退出 / 设置提交在途：角色相关的菜单项一律锁上。 */
   roleLocked: boolean;
+  /** 「连接」那一组：换 Hub / 接中继 / 追加 / 移除 / 离开中继，由卡片按当前形态算好传进来。 */
+  connectActions: ConnectMenuItem[];
   onSelectRole: (role: LocalRole) => void;
   onLeave: () => void;
 }
@@ -46,6 +49,7 @@ export function LocalMachineHeader({
   status,
   meshEnabled,
   roleLocked,
+  connectActions,
   onSelectRole,
   onLeave,
 }: LocalMachineHeaderProps) {
@@ -97,7 +101,9 @@ export function LocalMachineHeader({
             <LocalMachineMenuList
               roles={roleMenuTargets(menuRole)}
               roleLabel={(target) => t(ROLE_LABEL_KEY[target])}
+              connect={connectActions}
               labels={{
+                connect: t('nodes.machine.menu.connect'),
                 changeRole: t('nodes.machine.menu.changeRole'),
                 leave: t('nodes.machine.menu.leave'),
                 security: t('nodes.machine.accountSecurity'),
@@ -121,6 +127,7 @@ export function LocalMachineHeader({
 export function LocalMachineMenuList({
   roles,
   roleLabel,
+  connect,
   labels,
   securityHref,
   roleLocked,
@@ -129,7 +136,9 @@ export function LocalMachineMenuList({
 }: {
   roles: LocalRole[];
   roleLabel: (role: LocalRole) => string;
-  labels: { changeRole: string; leave: string; security: string };
+  /** 当前形态下的上级操作；空数组时整组不出。 */
+  connect: ConnectMenuItem[];
+  labels: { connect: string; changeRole: string; leave: string; security: string };
   securityHref: string;
   roleLocked: boolean;
   onSelectRole: (role: LocalRole) => void;
@@ -137,6 +146,25 @@ export function LocalMachineMenuList({
 }) {
   return (
     <>
+      {connect.length > 0 && (
+        <>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>{labels.connect}</DropdownMenuLabel>
+            {connect.map((item) => (
+              <DropdownMenuItem
+                key={item.key}
+                {...(item.destructive ? { variant: 'destructive' as const } : {})}
+                disabled={item.disabled === true}
+                onClick={item.onSelect}
+                data-testid={item.testId}
+              >
+                {item.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+        </>
+      )}
       <DropdownMenuGroup>
         <DropdownMenuLabel>{labels.changeRole}</DropdownMenuLabel>
         {roles.map((target) => (

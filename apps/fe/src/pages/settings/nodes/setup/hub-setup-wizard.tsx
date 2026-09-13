@@ -6,7 +6,6 @@
 
 import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
 import type { LocalStatusResponse, SetupRelayRole } from '@vibeterm/api-client/local/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Reveal } from '@vibeterm/ui/motion';
 import { Radio, Server, Share2, Waypoints } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
@@ -59,57 +58,53 @@ export function HubSetupWizard({
 
   return (
     <div className="space-y-4" data-testid="hub-setup-wizard">
-      <Card className="border-0 ring-0">
-        <CardHeader>
-          <CardTitle>{t('nodes.setup.title')}</CardTitle>
-          <CardDescription>{t('nodes.setup.intro')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-xs text-muted-foreground">{t('nodes.setup.introDetail')}</p>
-          <div
-            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-            role="radiogroup"
-            aria-label={t('nodes.setup.title')}
-          >
-            <PathCard
-              testId="setup-path-become-hub"
-              icon={<Server className="size-4" />}
-              title={t('nodes.setup.path.becomeHub.title')}
-              description={t('nodes.setup.path.becomeHub.description')}
-              selected={path === 'become-hub'}
-              disabled={committed}
-              onSelect={() => setPath('become-hub')}
-            />
-            <PathCard
-              testId="setup-path-join-hub"
-              icon={<Share2 className="size-4" />}
-              title={t('nodes.setup.path.joinHub.title')}
-              description={t('nodes.setup.path.joinHub.description')}
-              selected={path === 'join-hub'}
-              disabled={committed}
-              onSelect={() => setPath('join-hub')}
-            />
-            <PathCard
-              testId="setup-path-join-relay"
-              icon={<Waypoints className="size-4" />}
-              title={t('nodes.setup.path.joinRelay.title')}
-              description={t('nodes.setup.path.joinRelay.description')}
-              selected={path === 'join-relay'}
-              disabled={committed}
-              onSelect={() => setPath('join-relay')}
-            />
-            <PathCard
-              testId="setup-path-become-relay"
-              icon={<Radio className="size-4" />}
-              title={t('nodes.setup.path.becomeRelay.title')}
-              description={t('nodes.setup.path.becomeRelay.description')}
-              selected={path === 'become-relay'}
-              disabled={committed}
-              onSelect={() => setPath('become-relay')}
-            />
-          </div>
-        </CardContent>
-      </Card>
+      {/* 卡头已经写着「本机」，这里再套一张带标题的卡只会变成双卡头。 */}
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">{t('nodes.setup.intro')}</p>
+        <p className="text-xs text-muted-foreground">{t('nodes.setup.introDetail')}</p>
+        <div
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+          role="radiogroup"
+          aria-label={t('nodes.setup.title')}
+        >
+          <PathCard
+            testId="setup-path-become-hub"
+            icon={<Server className="size-4" />}
+            title={t('nodes.setup.path.becomeHub.title')}
+            description={t('nodes.setup.path.becomeHub.description')}
+            selected={path === 'become-hub'}
+            disabled={committed}
+            onSelect={() => setPath('become-hub')}
+          />
+          <PathCard
+            testId="setup-path-join-hub"
+            icon={<Share2 className="size-4" />}
+            title={t('nodes.setup.path.joinHub.title')}
+            description={t('nodes.setup.path.joinHub.description')}
+            selected={path === 'join-hub'}
+            disabled={committed}
+            onSelect={() => setPath('join-hub')}
+          />
+          <PathCard
+            testId="setup-path-join-relay"
+            icon={<Waypoints className="size-4" />}
+            title={t('nodes.setup.path.joinRelay.title')}
+            description={t('nodes.setup.path.joinRelay.description')}
+            selected={path === 'join-relay'}
+            disabled={committed}
+            onSelect={() => setPath('join-relay')}
+          />
+          <PathCard
+            testId="setup-path-become-relay"
+            icon={<Radio className="size-4" />}
+            title={t('nodes.setup.path.becomeRelay.title')}
+            description={t('nodes.setup.path.becomeRelay.description')}
+            selected={path === 'become-relay'}
+            disabled={committed}
+            onSelect={() => setPath('become-relay')}
+          />
+        </div>
+      </div>
 
       {/* 选完路径下方才长出表单：按 path 换 key，两条路径互切时也重放一次入场。 */}
       {path && (

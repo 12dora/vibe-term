@@ -4,7 +4,6 @@ import {
   asPortRole,
   blockedPortReaches,
   formatPortReach,
-  localPortsTitleKey,
   parsePortPlan,
   parsePortReachList,
   portPlanFromStatus,
@@ -121,17 +120,6 @@ describe('reachForSpec', () => {
     expect(
       reachForSpec(ports, { purpose: 'rtc-ice', proto: 'udp', range: { begin: 40050, end: 40099 } })
     ).toBeUndefined();
-  });
-});
-
-describe('localPortsTitleKey', () => {
-  test('含 relay 用中继标题，hub,node 用 Hub，其余用本机', () => {
-    expect(localPortsTitleKey('relay')).toBe('localMachine.ports.titleRelay');
-    expect(localPortsTitleKey('relay,node')).toBe('localMachine.ports.titleRelay');
-    expect(localPortsTitleKey('hub,node')).toBe('localMachine.ports.titleHub');
-    expect(localPortsTitleKey('node')).toBe('localMachine.ports.titleNode');
-    expect(localPortsTitleKey('standalone')).toBe('localMachine.ports.titleNode');
-    expect(localPortsTitleKey(null)).toBe('localMachine.ports.titleNode');
   });
 });
 

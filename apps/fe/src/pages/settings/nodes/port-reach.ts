@@ -15,7 +15,6 @@ import {
   type PortSpec,
   formatPortSpec,
   portPlanForRole,
-  rolesIncludeRelay,
 } from '@vibeterm/shared/net';
 
 export type MeshPortReachStatus = 'open' | 'blocked' | 'unknown';
@@ -37,11 +36,6 @@ export type MeshPortReach = {
   code?: MeshPortReachCode;
   checkedAt?: number;
 };
-
-export type LocalPortsTitleKey =
-  | 'localMachine.ports.titleRelay'
-  | 'localMachine.ports.titleHub'
-  | 'localMachine.ports.titleNode';
 
 export const DEFAULT_PORT_PLAN_LIVE: PortPlanLive = {
   gatewayPort: DEFAULT_GATEWAY_PORT,
@@ -237,10 +231,4 @@ export function reachForSpec(
   spec: Pick<PortSpec, 'purpose' | 'proto' | 'port' | 'range'>
 ): MeshPortReach | undefined {
   return ports?.find((item) => item.purpose === spec.purpose && endpointMatches(item, spec));
-}
-
-export function localPortsTitleKey(role: string | null | undefined): LocalPortsTitleKey {
-  if (role && rolesIncludeRelay(role)) return 'localMachine.ports.titleRelay';
-  if (role === 'hub,node') return 'localMachine.ports.titleHub';
-  return 'localMachine.ports.titleNode';
 }

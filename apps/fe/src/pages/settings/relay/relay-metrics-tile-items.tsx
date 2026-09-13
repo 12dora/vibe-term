@@ -6,13 +6,7 @@ import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { Sparkline } from '@vibeterm/ui/sparkline';
 import { StatTile } from '@vibeterm/ui/stat-tile';
 import { useTranslation } from 'react-i18next';
-import {
-  formatDuration,
-  formatFramesPerSec,
-  formatMs,
-  formatPercent,
-  trafficText,
-} from './relay-format';
+import { formatFramesPerSec, formatMs, formatPercent, trafficText } from './relay-format';
 import {
   type RelayTrendSeries,
   cpuLevel,
@@ -369,19 +363,6 @@ export function ReconnectsTile({ data, stale }: MetricsTileProps) {
       tone={total === 0 ? 'muted' : 'default'}
       stale={stale}
       data-testid="relay-metric-reconnects"
-    />
-  );
-}
-
-export function UptimeTile({ data, stale, className }: MetricsTileProps & { className?: string }) {
-  const { t } = useTranslation();
-  return (
-    <StatTile
-      label={t('relay.metrics.tiles.uptime')}
-      value={formatDuration(data.uptimeMs)}
-      stale={stale}
-      className={className}
-      data-testid="relay-metric-uptime"
     />
   );
 }

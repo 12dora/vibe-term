@@ -2190,8 +2190,9 @@
         "roleRelayNode": "Relay and node",
         "menu": {
           "label": "More actions",
-          "changeRole": "Change role",
-          "leave": "Leave…"
+          "connect": "Connection",
+          "changeRole": "Change Role",
+          "leave": "Leave Mesh…"
         },
         "status": {
           "standalone": "Standalone",
@@ -2210,17 +2211,16 @@
           "relayService": "Relay service",
           "network": "Network"
         },
-        "localAddress": "This Machine's Address",
+        "localAddress": "Public Address",
         "localAddressUnset": "Not set",
-        "localAddressHint": "Other nodes cannot join. Set it up again under \"Change role → Hub and node\".",
-        "currentHub": "Current Hub",
+        "localAddressHint": "No public address set; other nodes cannot join this machine.",
+        "upstream": "Upstream",
         "hubDisconnected": "Not connected",
         "writerHub": "Writer: {{name}}",
-        "hubList": "Hubs",
+        "hubList": "All Hubs",
         "self": "This Machine",
-        "relayLeaveFirst": "Leave the relay first to go back to a Hub.",
         "details": {
-          "title": "Connection details",
+          "title": "Connection Details",
           "nodesViaRelay": "Reachable Nodes",
           "quotaNodes": "Nodes",
           "quotaStreams": "Streams",
@@ -2228,18 +2228,19 @@
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "Unlimited",
           "quotaUnlimitedValue": "{{used}} (Unlimited)",
-          "nodeId": "This machine's ID",
-          "hubs": "Hub details",
-          "quotaMaxFile": "Max file size"
+          "nodeId": "This Machine's ID",
+          "hubs": "Hub Details",
+          "quotaMaxFile": "Max File Size"
         },
-        "direct": "Direct connect plugin",
+        "direct": "Direct Plugin",
         "directUnsupported": "Not supported on this platform",
         "directInstalled": "Installed",
         "directInstalledVersion": "Installed v{{version}}",
+        "directVersion": "v{{version}}",
         "directNotInstalled": "Not installed",
         "directEnable": "Enable",
-        "directInstall": "Install plugin",
-        "directRemove": "Remove plugin",
+        "directInstall": "Install",
+        "directRemove": "Remove",
         "directRemoveConfirm": {
           "title": "Remove the direct connect plugin?",
           "description": "Sessions keep working through the hub. It can be installed again at any time.",
@@ -2247,7 +2248,6 @@
           "cancel": "Cancel",
           "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
         },
-        "directNeedsInstall": "Install the plugin first.",
         "directRestartRequired": "Restart VibeTerm to apply this change.",
         "directFailed": "Could not update the direct connect plugin.",
         "directErrorUnsupported": "This platform has no direct connect plugin.",
@@ -2258,14 +2258,14 @@
         "restarting": "Restarting…",
         "restartTimeout": "VibeTerm did not come back. Start it manually, then reload this page.",
         "domainAccess": {
-          "label": "Allow Domain Access",
-          "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. Public domains: {{hosts}}",
-          "noHosts": "No public domain configured yet.",
+          "label": "Domain Access",
+          "description": "Configured: {{hosts}}",
+          "noHosts": "No public domain configured yet",
           "hostSeparator": ", ",
           "failed": "Could not save the domain access setting ({{detail}}).",
           "confirm": {
             "title": "Turn off domain access?",
-            "description": "The web UI and API on {{hosts}} stop responding right away; only hub and node traffic keeps working. Turning it back on requires opening VibeTerm over a LAN IP or localhost.",
+            "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. The web UI and API on {{hosts}} stop responding right away, and turning it back on requires opening VibeTerm over a LAN IP or localhost.",
             "viaDomain": "This page is served over that domain and will disconnect immediately. Make sure VibeTerm opens over a LAN IP or localhost first.",
             "confirm": "Turn Off",
             "cancel": "Cancel"
@@ -2274,10 +2274,11 @@
         "accountSecurity": "Account security",
         "loginRequired": "Sign in to see this machine's status.",
         "loadFailed": "Could not read this machine's status ({{detail}}).",
-        "relayServiceAddress": "Relay Public Address",
-        "relayServiceAddressUnsetHint": "Other machines cannot reach this relay. Set it up again under \"Change role → Relay and node\".",
+        "relayServiceAddress": "Public Address",
+        "relayServiceRuntime": "Runtime",
+        "relayServiceAddressUnsetHint": "No public address set; other machines cannot reach this relay.",
         "relayServiceEnroll": "Connect to This Relay",
-        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The access password just set must be entered again."
+        "relayServiceEnrollHint": "This machine has not connected to its own relay yet; connecting asks for the access password again."
       },
       "membership": {
         "changeHub": "Change hub",
@@ -2567,6 +2568,7 @@
         "busy": "Pause or resume is running."
       },
       "ports": {
+        "label": "Ports",
         "blocked": "Unreachable ports: {{list}}",
         "hint": "Allow them in the machine's firewall or security group",
         "recheck": "Re-check",
@@ -3246,6 +3248,13 @@
         "title": "Metrics",
         "description": "Relay throughput and host load, sampled every 5 seconds.",
         "console": "Open Relay Console",
+        "summaryNodes": "{{online}}/{{total}} nodes online",
+        "summaryTenants_one": "{{count}} tenant",
+        "summaryTenants_other": "{{count}} tenants",
+        "summaryStreams_one": "{{count}} active stream",
+        "summaryStreams_other": "{{count}} active streams",
+        "summaryRate": "↑{{out}} ↓{{in}}",
+        "summaryUptime": "up {{uptime}}",
         "refreshFailed": "Metrics update failed: {{message}}",
         "stale": "Data is stale",
         "empty": "No samples yet.",
@@ -3281,7 +3290,6 @@
           "reconnects": "Reconnects",
           "reconnectsSub": "since start",
           "reconnectsHint": "Reconnects summed across joined nodes.",
-          "uptime": "Uptime",
           "throughputTotal": "{{total}} total",
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
@@ -3339,7 +3347,7 @@
           "rtt": "Latency {{ms}} ms",
           "kicked": "Token revoked, re-enter the access password",
           "error": "Error: {{message}}",
-          "empty": "Not connected to a relay.",
+          "empty": "Not connected to a relay",
           "tenantId": "Tenant ID",
           "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password.",
           "rolePrimary": "Primary",
@@ -3384,7 +3392,6 @@
           "action": "Re-enter Access Password"
         },
         "actions": {
-          "menu": "More",
           "enroll": "Connect Relay",
           "migrate": "Switch to Relay",
           "add": "Add Relay",
@@ -3744,11 +3751,6 @@
     "localMachine": {
       "ports": {
         "title": "Inbound ports",
-        "titleNode": "Open on this machine",
-        "titleHub": "Open on this Hub",
-        "titleRelay": "Open on this relay",
-        "legend": "Green = open · Red = closed · Grey = not probed",
-        "notProbed": "—",
         "notProbedTitle": "Not probed"
       }
     }

@@ -10,9 +10,9 @@ import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { relayTurnStatusOf } from '../relay/relay-turn-model';
-import { RelayTurnTile } from '../relay/relay-turn-tile';
 import { CopyableValue, Row } from './copy-feedback';
 import { RelayServiceMetrics } from './relay/relay-service-metrics';
+import { RelayTurnRow } from './relay/relay-turn-row';
 import { UnsetAddress } from './uplink/hub-uplink-panel';
 
 export interface RelayServiceSectionProps {
@@ -42,34 +42,30 @@ export function RelayServiceSection({ service }: RelayServiceSectionProps) {
   // 契约 §D：旧中继不下发 `turn`，这一格整块不出现。
   const turn = relayTurnStatusOf(service.turn);
   return (
-    <div className="flex flex-col gap-3" data-testid="local-relay-service">
+    <div className="flex flex-col gap-2" data-testid="local-relay-service">
       <Row label={t('nodes.machine.relayServiceAddress')}>
-        <span className="flex min-w-0 flex-wrap items-center gap-2">
-          {service.publicUrl ? (
-            <CopyableValue value={service.publicUrl} testId="local-relay-service-url" />
-          ) : (
-            <UnsetAddress
-              hint={t('nodes.machine.relayServiceAddressUnsetHint')}
-              testId="local-relay-service"
-            />
-          )}
-          <Badge variant="outline" data-testid="local-relay-service-password">
-            {t(service.hasPassword ? 'relay.admin.password.set' : 'relay.admin.password.unset')}
-          </Badge>
-        </span>
+        {service.publicUrl ? (
+          <CopyableValue value={service.publicUrl} testId="local-relay-service-url" />
+        ) : (
+          <UnsetAddress
+            hint={t('nodes.machine.relayServiceAddressUnsetHint')}
+            testId="local-relay-service"
+          />
+        )}
+        <Badge variant="outline" data-testid="local-relay-service-password">
+          {t(service.hasPassword ? 'relay.admin.password.set' : 'relay.admin.password.unset')}
+        </Badge>
       </Row>
 
-      {turn && (
-        <div className="sm:max-w-xs">
-          <RelayTurnTile turn={turn} />
-        </div>
-      )}
+      {turn && <RelayTurnRow turn={turn} />}
 
-      <RelayServiceMetrics
-        publicUrl={service.publicUrl}
-        hasPassword={service.hasPassword}
-        onOpenConsole={openConsole}
-      />
+      <Row label={t('nodes.machine.relayServiceRuntime')}>
+        <RelayServiceMetrics
+          publicUrl={service.publicUrl}
+          hasPassword={service.hasPassword}
+          onOpenConsole={openConsole}
+        />
+      </Row>
     </div>
   );
 }

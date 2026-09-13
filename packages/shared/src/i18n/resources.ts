@@ -2196,8 +2196,9 @@ export const I18N_RESOURCES = {
         "roleRelayNode": "Relay and node",
         "menu": {
           "label": "More actions",
-          "changeRole": "Change role",
-          "leave": "Leave…"
+          "connect": "Connection",
+          "changeRole": "Change Role",
+          "leave": "Leave Mesh…"
         },
         "status": {
           "standalone": "Standalone",
@@ -2216,17 +2217,16 @@ export const I18N_RESOURCES = {
           "relayService": "Relay service",
           "network": "Network"
         },
-        "localAddress": "This Machine's Address",
+        "localAddress": "Public Address",
         "localAddressUnset": "Not set",
-        "localAddressHint": "Other nodes cannot join. Set it up again under \"Change role → Hub and node\".",
-        "currentHub": "Current Hub",
+        "localAddressHint": "No public address set; other nodes cannot join this machine.",
+        "upstream": "Upstream",
         "hubDisconnected": "Not connected",
         "writerHub": "Writer: {{name}}",
-        "hubList": "Hubs",
+        "hubList": "All Hubs",
         "self": "This Machine",
-        "relayLeaveFirst": "Leave the relay first to go back to a Hub.",
         "details": {
-          "title": "Connection details",
+          "title": "Connection Details",
           "nodesViaRelay": "Reachable Nodes",
           "quotaNodes": "Nodes",
           "quotaStreams": "Streams",
@@ -2234,18 +2234,19 @@ export const I18N_RESOURCES = {
           "quotaValue": "{{used}} / {{total}}",
           "quotaUnlimited": "Unlimited",
           "quotaUnlimitedValue": "{{used}} (Unlimited)",
-          "nodeId": "This machine's ID",
-          "hubs": "Hub details",
-          "quotaMaxFile": "Max file size"
+          "nodeId": "This Machine's ID",
+          "hubs": "Hub Details",
+          "quotaMaxFile": "Max File Size"
         },
-        "direct": "Direct connect plugin",
+        "direct": "Direct Plugin",
         "directUnsupported": "Not supported on this platform",
         "directInstalled": "Installed",
         "directInstalledVersion": "Installed v{{version}}",
+        "directVersion": "v{{version}}",
         "directNotInstalled": "Not installed",
         "directEnable": "Enable",
-        "directInstall": "Install plugin",
-        "directRemove": "Remove plugin",
+        "directInstall": "Install",
+        "directRemove": "Remove",
         "directRemoveConfirm": {
           "title": "Remove the direct connect plugin?",
           "description": "Sessions keep working through the hub. It can be installed again at any time.",
@@ -2253,7 +2254,6 @@ export const I18N_RESOURCES = {
           "cancel": "Cancel",
           "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
         },
-        "directNeedsInstall": "Install the plugin first.",
         "directRestartRequired": "Restart VibeTerm to apply this change.",
         "directFailed": "Could not update the direct connect plugin.",
         "directErrorUnsupported": "This platform has no direct connect plugin.",
@@ -2264,14 +2264,14 @@ export const I18N_RESOURCES = {
         "restarting": "Restarting…",
         "restartTimeout": "VibeTerm did not come back. Start it manually, then reload this page.",
         "domainAccess": {
-          "label": "Allow Domain Access",
-          "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. Public domains: {{hosts}}",
-          "noHosts": "No public domain configured yet.",
+          "label": "Domain Access",
+          "description": "Configured: {{hosts}}",
+          "noHosts": "No public domain configured yet",
           "hostSeparator": ", ",
           "failed": "Could not save the domain access setting ({{detail}}).",
           "confirm": {
             "title": "Turn off domain access?",
-            "description": "The web UI and API on {{hosts}} stop responding right away; only hub and node traffic keeps working. Turning it back on requires opening VibeTerm over a LAN IP or localhost.",
+            "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. The web UI and API on {{hosts}} stop responding right away, and turning it back on requires opening VibeTerm over a LAN IP or localhost.",
             "viaDomain": "This page is served over that domain and will disconnect immediately. Make sure VibeTerm opens over a LAN IP or localhost first.",
             "confirm": "Turn Off",
             "cancel": "Cancel"
@@ -2280,10 +2280,11 @@ export const I18N_RESOURCES = {
         "accountSecurity": "Account security",
         "loginRequired": "Sign in to see this machine's status.",
         "loadFailed": "Could not read this machine's status ({{detail}}).",
-        "relayServiceAddress": "Relay Public Address",
-        "relayServiceAddressUnsetHint": "Other machines cannot reach this relay. Set it up again under \"Change role → Relay and node\".",
+        "relayServiceAddress": "Public Address",
+        "relayServiceRuntime": "Runtime",
+        "relayServiceAddressUnsetHint": "No public address set; other machines cannot reach this relay.",
         "relayServiceEnroll": "Connect to This Relay",
-        "relayServiceEnrollHint": "This machine has not connected to its own relay yet. The access password just set must be entered again."
+        "relayServiceEnrollHint": "This machine has not connected to its own relay yet; connecting asks for the access password again."
       },
       "membership": {
         "changeHub": "Change hub",
@@ -2573,6 +2574,7 @@ export const I18N_RESOURCES = {
         "busy": "Pause or resume is running."
       },
       "ports": {
+        "label": "Ports",
         "blocked": "Unreachable ports: {{list}}",
         "hint": "Allow them in the machine's firewall or security group",
         "recheck": "Re-check",
@@ -3252,6 +3254,13 @@ export const I18N_RESOURCES = {
         "title": "Metrics",
         "description": "Relay throughput and host load, sampled every 5 seconds.",
         "console": "Open Relay Console",
+        "summaryNodes": "{{online}}/{{total}} nodes online",
+        "summaryTenants_one": "{{count}} tenant",
+        "summaryTenants_other": "{{count}} tenants",
+        "summaryStreams_one": "{{count}} active stream",
+        "summaryStreams_other": "{{count}} active streams",
+        "summaryRate": "↑{{out}} ↓{{in}}",
+        "summaryUptime": "up {{uptime}}",
         "refreshFailed": "Metrics update failed: {{message}}",
         "stale": "Data is stale",
         "empty": "No samples yet.",
@@ -3287,7 +3296,6 @@ export const I18N_RESOURCES = {
           "reconnects": "Reconnects",
           "reconnectsSub": "since start",
           "reconnectsHint": "Reconnects summed across joined nodes.",
-          "uptime": "Uptime",
           "throughputTotal": "{{total}} total",
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
@@ -3345,7 +3353,7 @@ export const I18N_RESOURCES = {
           "rtt": "Latency {{ms}} ms",
           "kicked": "Token revoked, re-enter the access password",
           "error": "Error: {{message}}",
-          "empty": "Not connected to a relay.",
+          "empty": "Not connected to a relay",
           "tenantId": "Tenant ID",
           "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password.",
           "rolePrimary": "Primary",
@@ -3390,7 +3398,6 @@ export const I18N_RESOURCES = {
           "action": "Re-enter Access Password"
         },
         "actions": {
-          "menu": "More",
           "enroll": "Connect Relay",
           "migrate": "Switch to Relay",
           "add": "Add Relay",
@@ -3750,11 +3757,6 @@ export const I18N_RESOURCES = {
     "localMachine": {
       "ports": {
         "title": "Inbound ports",
-        "titleNode": "Open on this machine",
-        "titleHub": "Open on this Hub",
-        "titleRelay": "Open on this relay",
-        "legend": "Green = open · Red = closed · Grey = not probed",
-        "notProbed": "—",
         "notProbedTitle": "Not probed"
       }
     }
@@ -5952,8 +5954,9 @@ export const I18N_RESOURCES = {
         "roleRelayNode": "中继兼节点",
         "menu": {
           "label": "更多操作",
+          "connect": "连接",
           "changeRole": "更改角色",
-          "leave": "离开…"
+          "leave": "退出多节点互联…"
         },
         "status": {
           "standalone": "独立运行",
@@ -5972,15 +5975,14 @@ export const I18N_RESOURCES = {
           "relayService": "中继服务",
           "network": "网络"
         },
-        "localAddress": "本机地址",
+        "localAddress": "公网地址",
         "localAddressUnset": "未设置",
-        "localAddressHint": "其它节点无法加入本机。请按「更改角色 → Hub 兼节点」重新设置。",
-        "currentHub": "当前 Hub",
+        "localAddressHint": "未设置公网地址，其它节点无法加入本机。",
+        "upstream": "上级",
         "hubDisconnected": "未连接",
         "writerHub": "写者：{{name}}",
-        "hubList": "Hub 列表",
+        "hubList": "全部 Hub",
         "self": "本机",
-        "relayLeaveFirst": "要改回 Hub，先离开中继。",
         "details": {
           "title": "连接详情",
           "nodesViaRelay": "可访问节点",
@@ -5998,10 +6000,11 @@ export const I18N_RESOURCES = {
         "directUnsupported": "本平台不支持",
         "directInstalled": "已安装",
         "directInstalledVersion": "已安装 v{{version}}",
+        "directVersion": "v{{version}}",
         "directNotInstalled": "未安装",
         "directEnable": "启用",
-        "directInstall": "安装插件",
-        "directRemove": "删除插件",
+        "directInstall": "安装",
+        "directRemove": "删除",
         "directRemoveConfirm": {
           "title": "删除直连插件？",
           "description": "会话会继续经 Hub 中转，可随时重新安装。",
@@ -6009,7 +6012,6 @@ export const I18N_RESOURCES = {
           "cancel": "取消",
           "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
         },
-        "directNeedsInstall": "须先安装插件。",
         "directRestartRequired": "重启 VibeTerm 后生效。",
         "directFailed": "直连插件操作失败。",
         "directErrorUnsupported": "本平台没有可用的直连插件。",
@@ -6020,14 +6022,14 @@ export const I18N_RESOURCES = {
         "restarting": "正在重启……",
         "restartTimeout": "VibeTerm 未能恢复。请手动启动后刷新本页。",
         "domainAccess": {
-          "label": "允许域名访问",
-          "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}",
-          "noHosts": "尚未配置公开域名。",
+          "label": "域名访问",
+          "description": "已配置：{{hosts}}",
+          "noHosts": "尚未配置公开域名",
           "hostSeparator": "、",
           "failed": "域名访问设置未能保存（{{detail}}）。",
           "confirm": {
             "title": "关闭域名访问？",
-            "description": "{{hosts}} 上的网页与 API 会立即停止服务，只保留 Hub / 节点互联。恢复须通过内网 IP 或 localhost 打开本页重新开启。",
+            "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。{{hosts}} 上的网页与 API 会立即停止服务，恢复须通过内网 IP 或 localhost 打开本页重新开启。",
             "viaDomain": "本页正通过该域名访问，关闭后会立即断开。请先确认能通过内网 IP 或 localhost 打开 VibeTerm。",
             "confirm": "关闭",
             "cancel": "取消"
@@ -6036,10 +6038,11 @@ export const I18N_RESOURCES = {
         "accountSecurity": "账号安全",
         "loginRequired": "登录后查看本机状态。",
         "loadFailed": "读取本机状态失败：{{detail}}",
-        "relayServiceAddress": "中继公网地址",
-        "relayServiceAddressUnsetHint": "其它机器无法接入本机中继。请按「更改角色 → 中继兼节点」重新设置。",
+        "relayServiceAddress": "公网地址",
+        "relayServiceRuntime": "运行",
+        "relayServiceAddressUnsetHint": "未设置公网地址，其它机器无法接入本机中继。",
         "relayServiceEnroll": "接入本机中继",
-        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入密码。"
+        "relayServiceEnrollHint": "本机尚未接入自己的中继，接入时需再次输入接入密码。"
       },
       "membership": {
         "changeHub": "更换 Hub",
@@ -6329,6 +6332,7 @@ export const I18N_RESOURCES = {
         "busy": "正在暂停或恢复。"
       },
       "ports": {
+        "label": "端口",
         "blocked": "端口不可达：{{list}}",
         "hint": "请在该机防火墙或安全组放行",
         "recheck": "重新检测",
@@ -7002,6 +7006,11 @@ export const I18N_RESOURCES = {
         "title": "运行指标",
         "description": "中继的转发量与本机负载，每 5 秒采样一次。",
         "console": "打开中继控制台",
+        "summaryNodes": "{{online}}/{{total}} 节点在线",
+        "summaryTenants": "{{count}} 租户",
+        "summaryStreams": "{{count}} 活跃流",
+        "summaryRate": "↑{{out}} ↓{{in}}",
+        "summaryUptime": "已运行 {{uptime}}",
         "refreshFailed": "指标更新失败：{{message}}",
         "stale": "数据已过期",
         "empty": "还没有采样数据。",
@@ -7037,7 +7046,6 @@ export const I18N_RESOURCES = {
           "reconnects": "重连",
           "reconnectsSub": "自启动累计",
           "reconnectsHint": "各接入节点重连次数之和。",
-          "uptime": "运行时长",
           "throughputTotal": "累计 {{total}}",
           "traffic": "累计流量",
           "trafficSub": "自启动累计",
@@ -7095,7 +7103,7 @@ export const I18N_RESOURCES = {
           "rtt": "延迟 {{ms}} ms",
           "kicked": "令牌已作废，须重新输入接入密码",
           "error": "错误：{{message}}",
-          "empty": "未接入中继。",
+          "empty": "未接入中继",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。",
           "rolePrimary": "主中继",
@@ -7140,7 +7148,6 @@ export const I18N_RESOURCES = {
           "action": "重新输入接入密码"
         },
         "actions": {
-          "menu": "更多",
           "enroll": "接入中继",
           "migrate": "改为接入中继",
           "add": "追加中继",
@@ -7500,11 +7507,6 @@ export const I18N_RESOURCES = {
     "localMachine": {
       "ports": {
         "title": "入站端口",
-        "titleNode": "本机需开通端口",
-        "titleHub": "Hub 需开通端口",
-        "titleRelay": "中继需开通端口",
-        "legend": "绿 = 已开通 · 红 = 未开通 · 灰 = 未探测",
-        "notProbed": "—",
         "notProbedTitle": "未探测"
       }
     }
@@ -9702,8 +9704,9 @@ export const I18N_RESOURCES = {
         "roleRelayNode": "リレー兼ノード",
         "menu": {
           "label": "その他の操作",
+          "connect": "接続",
           "changeRole": "ロールを変更",
-          "leave": "離脱…"
+          "leave": "マルチノード接続から退出…"
         },
         "status": {
           "standalone": "スタンドアロン",
@@ -9722,15 +9725,14 @@ export const I18N_RESOURCES = {
           "relayService": "中継サービス",
           "network": "ネットワーク"
         },
-        "localAddress": "このマシンのアドレス",
+        "localAddress": "公開アドレス",
         "localAddressUnset": "未設定",
-        "localAddressHint": "他のノードはこのマシンに参加できません。「ロールを変更 → ハブ兼ノード」で設定し直してください。",
-        "currentHub": "現在のハブ",
+        "localAddressHint": "公開アドレスが未設定のため、他のノードは本機に参加できません。",
+        "upstream": "上位",
         "hubDisconnected": "未接続",
         "writerHub": "ライター：{{name}}",
-        "hubList": "Hub 一覧",
+        "hubList": "すべての Hub",
         "self": "このマシン",
-        "relayLeaveFirst": "Hub に戻すには、先に中継から離脱してください。",
         "details": {
           "title": "接続の詳細",
           "nodesViaRelay": "到達可能ノード",
@@ -9744,14 +9746,15 @@ export const I18N_RESOURCES = {
           "hubs": "Hub の詳細",
           "quotaMaxFile": "1 ファイルの上限"
         },
-        "direct": "直接接続プラグイン",
+        "direct": "直結プラグイン",
         "directUnsupported": "このプラットフォームでは非対応",
         "directInstalled": "インストール済み",
         "directInstalledVersion": "インストール済み v{{version}}",
+        "directVersion": "v{{version}}",
         "directNotInstalled": "未インストール",
         "directEnable": "有効",
-        "directInstall": "プラグインをインストール",
-        "directRemove": "プラグインを削除",
+        "directInstall": "インストール",
+        "directRemove": "削除",
         "directRemoveConfirm": {
           "title": "直接接続プラグインを削除しますか？",
           "description": "セッションはハブ経由で継続します。いつでも再インストールできます。",
@@ -9759,7 +9762,6 @@ export const I18N_RESOURCES = {
           "cancel": "キャンセル",
           "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
         },
-        "directNeedsInstall": "先にプラグインをインストールしてください。",
         "directRestartRequired": "VibeTerm を再起動すると反映されます。",
         "directFailed": "直接接続プラグインを更新できませんでした。",
         "directErrorUnsupported": "このプラットフォーム向けの直接接続プラグインはありません。",
@@ -9770,14 +9772,14 @@ export const I18N_RESOURCES = {
         "restarting": "再起動しています…",
         "restartTimeout": "VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "domainAccess": {
-          "label": "ドメインアクセスを許可",
-          "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。公開ドメイン：{{hosts}}",
-          "noHosts": "公開ドメインはまだ設定されていません。",
+          "label": "ドメインアクセス",
+          "description": "設定済み：{{hosts}}",
+          "noHosts": "公開ドメインは未設定",
           "hostSeparator": "、",
           "failed": "ドメインアクセスの設定を保存できませんでした（{{detail}}）。",
           "confirm": {
             "title": "ドメインアクセスをオフにしますか？",
-            "description": "{{hosts}} 上のウェブ画面と API は直ちに停止し、ハブ／ノード間の通信のみが残ります。元に戻すには、LAN の IP アドレスまたは localhost でこのページを開き直す必要があります。",
+            "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。{{hosts}} 上のウェブ画面と API は直ちに停止し、元に戻すには LAN の IP アドレスまたは localhost でこのページを開き直す必要があります。",
             "viaDomain": "このページはそのドメイン経由で表示されているため、オフにすると直ちに切断されます。先に LAN の IP アドレスまたは localhost で VibeTerm を開けることを確認してください。",
             "confirm": "オフにする",
             "cancel": "キャンセル"
@@ -9786,10 +9788,11 @@ export const I18N_RESOURCES = {
         "accountSecurity": "アカウントセキュリティ",
         "loginRequired": "サインインするとこのマシンの状態を表示します。",
         "loadFailed": "本機の状態を取得できませんでした（{{detail}}）。",
-        "relayServiceAddress": "中継の公開アドレス",
-        "relayServiceAddressUnsetHint": "他のマシンは本機の中継に接続できません。「ロールを変更 → リレー兼ノード」で設定し直してください。",
+        "relayServiceAddress": "公開アドレス",
+        "relayServiceRuntime": "稼働",
+        "relayServiceAddressUnsetHint": "公開アドレスが未設定のため、他のマシンは本機の中継に接続できません。",
         "relayServiceEnroll": "本機の中継に接続",
-        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続には設定した接続パスワードをもう一度入力します。"
+        "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続時に接続パスワードの再入力が必要です。"
       },
       "membership": {
         "changeHub": "ハブを変更",
@@ -10079,6 +10082,7 @@ export const I18N_RESOURCES = {
         "busy": "一時停止または再開の処理中です。"
       },
       "ports": {
+        "label": "ポート",
         "blocked": "到達不能なポート：{{list}}",
         "hint": "ファイアウォールまたはセキュリティグループで許可してください",
         "recheck": "再チェック",
@@ -10752,6 +10756,11 @@ export const I18N_RESOURCES = {
         "title": "稼働メトリクス",
         "description": "中継の転送量と本機の負荷を 5 秒ごとに取得します。",
         "console": "中継コンソールを開く",
+        "summaryNodes": "{{online}}/{{total}} ノードオンライン",
+        "summaryTenants": "{{count}} テナント",
+        "summaryStreams": "{{count}} アクティブストリーム",
+        "summaryRate": "↑{{out}} ↓{{in}}",
+        "summaryUptime": "稼働 {{uptime}}",
         "refreshFailed": "メトリクスの更新に失敗しました：{{message}}",
         "stale": "データが古くなっています",
         "empty": "まだサンプルがありません。",
@@ -10787,7 +10796,6 @@ export const I18N_RESOURCES = {
           "reconnects": "再接続",
           "reconnectsSub": "起動からの累計",
           "reconnectsHint": "接続中ノードの再接続回数の合計です。",
-          "uptime": "稼働時間",
           "throughputTotal": "累計 {{total}}",
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
@@ -10845,7 +10853,7 @@ export const I18N_RESOURCES = {
           "rtt": "遅延 {{ms}} ms",
           "kicked": "トークンが失効しました。接続パスワードを入力し直してください",
           "error": "エラー：{{message}}",
-          "empty": "中継に接続していません。",
+          "empty": "中継に接続していません",
           "tenantId": "テナント ID",
           "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。",
           "rolePrimary": "主中継",
@@ -10890,7 +10898,6 @@ export const I18N_RESOURCES = {
           "action": "接続パスワードを再入力"
         },
         "actions": {
-          "menu": "その他",
           "enroll": "中継に接続",
           "migrate": "中継接続に切り替え",
           "add": "中継を追加",
@@ -11250,11 +11257,6 @@ export const I18N_RESOURCES = {
     "localMachine": {
       "ports": {
         "title": "受信ポート",
-        "titleNode": "本機で開放するポート",
-        "titleHub": "Hub で開放するポート",
-        "titleRelay": "中継で開放するポート",
-        "legend": "緑 = 開放済み · 赤 = 未開放 · 灰 = 未検査",
-        "notProbed": "—",
         "notProbedTitle": "未検査"
       }
     }

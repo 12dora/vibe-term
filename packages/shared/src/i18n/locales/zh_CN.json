@@ -2190,8 +2190,9 @@
         "roleRelayNode": "中继兼节点",
         "menu": {
           "label": "更多操作",
+          "connect": "连接",
           "changeRole": "更改角色",
-          "leave": "离开…"
+          "leave": "退出多节点互联…"
         },
         "status": {
           "standalone": "独立运行",
@@ -2210,15 +2211,14 @@
           "relayService": "中继服务",
           "network": "网络"
         },
-        "localAddress": "本机地址",
+        "localAddress": "公网地址",
         "localAddressUnset": "未设置",
-        "localAddressHint": "其它节点无法加入本机。请按「更改角色 → Hub 兼节点」重新设置。",
-        "currentHub": "当前 Hub",
+        "localAddressHint": "未设置公网地址，其它节点无法加入本机。",
+        "upstream": "上级",
         "hubDisconnected": "未连接",
         "writerHub": "写者：{{name}}",
-        "hubList": "Hub 列表",
+        "hubList": "全部 Hub",
         "self": "本机",
-        "relayLeaveFirst": "要改回 Hub，先离开中继。",
         "details": {
           "title": "连接详情",
           "nodesViaRelay": "可访问节点",
@@ -2236,10 +2236,11 @@
         "directUnsupported": "本平台不支持",
         "directInstalled": "已安装",
         "directInstalledVersion": "已安装 v{{version}}",
+        "directVersion": "v{{version}}",
         "directNotInstalled": "未安装",
         "directEnable": "启用",
-        "directInstall": "安装插件",
-        "directRemove": "删除插件",
+        "directInstall": "安装",
+        "directRemove": "删除",
         "directRemoveConfirm": {
           "title": "删除直连插件？",
           "description": "会话会继续经 Hub 中转，可随时重新安装。",
@@ -2247,7 +2248,6 @@
           "cancel": "取消",
           "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
         },
-        "directNeedsInstall": "须先安装插件。",
         "directRestartRequired": "重启 VibeTerm 后生效。",
         "directFailed": "直连插件操作失败。",
         "directErrorUnsupported": "本平台没有可用的直连插件。",
@@ -2258,14 +2258,14 @@
         "restarting": "正在重启……",
         "restartTimeout": "VibeTerm 未能恢复。请手动启动后刷新本页。",
         "domainAccess": {
-          "label": "允许域名访问",
-          "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}",
-          "noHosts": "尚未配置公开域名。",
+          "label": "域名访问",
+          "description": "已配置：{{hosts}}",
+          "noHosts": "尚未配置公开域名",
           "hostSeparator": "、",
           "failed": "域名访问设置未能保存（{{detail}}）。",
           "confirm": {
             "title": "关闭域名访问？",
-            "description": "{{hosts}} 上的网页与 API 会立即停止服务，只保留 Hub / 节点互联。恢复须通过内网 IP 或 localhost 打开本页重新开启。",
+            "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。{{hosts}} 上的网页与 API 会立即停止服务，恢复须通过内网 IP 或 localhost 打开本页重新开启。",
             "viaDomain": "本页正通过该域名访问，关闭后会立即断开。请先确认能通过内网 IP 或 localhost 打开 VibeTerm。",
             "confirm": "关闭",
             "cancel": "取消"
@@ -2274,10 +2274,11 @@
         "accountSecurity": "账号安全",
         "loginRequired": "登录后查看本机状态。",
         "loadFailed": "读取本机状态失败：{{detail}}",
-        "relayServiceAddress": "中继公网地址",
-        "relayServiceAddressUnsetHint": "其它机器无法接入本机中继。请按「更改角色 → 中继兼节点」重新设置。",
+        "relayServiceAddress": "公网地址",
+        "relayServiceRuntime": "运行",
+        "relayServiceAddressUnsetHint": "未设置公网地址，其它机器无法接入本机中继。",
         "relayServiceEnroll": "接入本机中继",
-        "relayServiceEnrollHint": "本机尚未接入自己的中继。接入时须再次输入刚设置的接入密码。"
+        "relayServiceEnrollHint": "本机尚未接入自己的中继，接入时需再次输入接入密码。"
       },
       "membership": {
         "changeHub": "更换 Hub",
@@ -2567,6 +2568,7 @@
         "busy": "正在暂停或恢复。"
       },
       "ports": {
+        "label": "端口",
         "blocked": "端口不可达：{{list}}",
         "hint": "请在该机防火墙或安全组放行",
         "recheck": "重新检测",
@@ -3240,6 +3242,11 @@
         "title": "运行指标",
         "description": "中继的转发量与本机负载，每 5 秒采样一次。",
         "console": "打开中继控制台",
+        "summaryNodes": "{{online}}/{{total}} 节点在线",
+        "summaryTenants": "{{count}} 租户",
+        "summaryStreams": "{{count}} 活跃流",
+        "summaryRate": "↑{{out}} ↓{{in}}",
+        "summaryUptime": "已运行 {{uptime}}",
         "refreshFailed": "指标更新失败：{{message}}",
         "stale": "数据已过期",
         "empty": "还没有采样数据。",
@@ -3275,7 +3282,6 @@
           "reconnects": "重连",
           "reconnectsSub": "自启动累计",
           "reconnectsHint": "各接入节点重连次数之和。",
-          "uptime": "运行时长",
           "throughputTotal": "累计 {{total}}",
           "traffic": "累计流量",
           "trafficSub": "自启动累计",
@@ -3333,7 +3339,7 @@
           "rtt": "延迟 {{ms}} ms",
           "kicked": "令牌已作废，须重新输入接入密码",
           "error": "错误：{{message}}",
-          "empty": "未接入中继。",
+          "empty": "未接入中继",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。",
           "rolePrimary": "主中继",
@@ -3378,7 +3384,6 @@
           "action": "重新输入接入密码"
         },
         "actions": {
-          "menu": "更多",
           "enroll": "接入中继",
           "migrate": "改为接入中继",
           "add": "追加中继",
@@ -3738,11 +3743,6 @@
     "localMachine": {
       "ports": {
         "title": "入站端口",
-        "titleNode": "本机需开通端口",
-        "titleHub": "Hub 需开通端口",
-        "titleRelay": "中继需开通端口",
-        "legend": "绿 = 已开通 · 红 = 未开通 · 灰 = 未探测",
-        "notProbed": "—",
         "notProbedTitle": "未探测"
       }
     }
