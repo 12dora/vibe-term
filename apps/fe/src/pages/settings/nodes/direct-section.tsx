@@ -11,12 +11,12 @@ import type {
 import { errorMessage } from '@vibeterm/shared';
 import { Badge } from '@vibeterm/ui/badge';
 import { Button } from '@vibeterm/ui/button';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Switch } from '@vibeterm/ui/switch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@vibeterm/ui/tooltip';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { Row } from './copy-feedback';
 
 /** 只取 `LocalApi` 的直连那一面，测试注入假实现时不必凑出整个客户端。 */
@@ -289,7 +289,7 @@ export function RemoveConfirm({
 }) {
   const { t } = useTranslation();
   return (
-    <DangerConfirmDialog
+    <ConfirmDialog
       open={open}
       title={t('nodes.machine.directRemoveConfirm.title')}
       cancelLabel={t('nodes.machine.directRemoveConfirm.cancel')}
@@ -304,6 +304,6 @@ export function RemoveConfirm({
           ? 'nodes.machine.directRemoveConfirm.descriptionRelay'
           : 'nodes.machine.directRemoveConfirm.description'
       )}
-    </DangerConfirmDialog>
+    </ConfirmDialog>
   );
 }

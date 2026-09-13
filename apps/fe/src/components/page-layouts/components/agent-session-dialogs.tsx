@@ -1,17 +1,7 @@
 // 会话重命名/删除对话框；挂在设备树根部，状态来自 SidebarAgentSessionsProvider。
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from '@vibeterm/ui/alert-dialog';
 import { Button } from '@vibeterm/ui/button';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -79,33 +69,22 @@ export function AgentSessionDialogs() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog
+      <ConfirmDialog
         open={sessionDeleteCandidate !== null}
-        onOpenChange={(open) => !open && closeDeleteDialog()}
+        onOpenChange={(open) => {
+          if (!open) closeDeleteDialog();
+        }}
+        title={t('agent.session.deleteTitle')}
+        cancelLabel={t('common.cancel')}
+        confirmLabel={t('agent.session.deleteConfirm')}
+        onCancel={closeDeleteDialog}
+        onConfirm={confirmDeleteSession}
+        confirmDisabled={!sessionDeleteCandidate}
+        confirmTestId="agent-session-delete-confirm"
+        media={<X className="h-5 w-5 text-destructive" />}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia className="bg-destructive/10">
-              <X className="h-5 w-5 text-destructive" />
-            </AlertDialogMedia>
-            <AlertDialogTitle>{t('agent.session.deleteTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('agent.session.deleteDesc', { title: sessionDeleteCandidate?.title ?? '' })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={!sessionDeleteCandidate}
-              onClick={confirmDeleteSession}
-              data-testid="agent-session-delete-confirm"
-            >
-              {t('agent.session.deleteConfirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {t('agent.session.deleteDesc', { title: sessionDeleteCandidate?.title ?? '' })}
+      </ConfirmDialog>
     </>
   );
 }

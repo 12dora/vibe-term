@@ -13,11 +13,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@vibeterm/ui/alert-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Input } from '@vibeterm/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { Notice } from '../components/form-primitives';
 import type { RelayOfflineGuard } from './use-relay-controller';
 
@@ -35,7 +35,7 @@ export function KickTenantConfirm({
   const { t } = useTranslation();
   if (tenantId === null) return null;
   return (
-    <DangerConfirmDialog
+    <ConfirmDialog
       open
       title={t('relay.admin.tenants.kickTitle')}
       cancelLabel={t('common.cancel')}
@@ -49,7 +49,7 @@ export function KickTenantConfirm({
     >
       <span className="block">{t('relay.admin.tenants.kickText')}</span>
       <span className="mt-2 block font-mono break-all">{tenantId}</span>
-    </DangerConfirmDialog>
+    </ConfirmDialog>
   );
 }
 
@@ -73,7 +73,7 @@ export function RelayOfflineForceConfirm({
   const { t } = useTranslation();
   if (request === null) return null;
   return (
-    <DangerConfirmDialog
+    <ConfirmDialog
       open
       title={t(`relay.admin.offlineGuard.${request.kind}Title`)}
       cancelLabel={t('common.cancel')}
@@ -94,7 +94,7 @@ export function RelayOfflineForceConfirm({
       </span>
       <span className="mt-2 block">{t('relay.admin.offlineGuard.consequence')}</span>
       <span className="mt-2 block">{t('relay.admin.offlineGuard.recovery')}</span>
-    </DangerConfirmDialog>
+    </ConfirmDialog>
   );
 }
 

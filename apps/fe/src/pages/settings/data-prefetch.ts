@@ -18,43 +18,21 @@
 //
 // queryKey 与 fetcher 都直接复用现成导出，不另抄一份端点字符串：
 // 抄错了会往同一个 key 里写进形状不同的数据，比慢更糟。
+//
+// 每个标签预取哪些查询，由 `settings-prefetch.ts` 给出；`settings-tabs.ts` 的 `prefetch`
+// 字段指向同一组函数。本文件被侧栏静态引入，因此不能再静态 import 带 i18n key 的注册表。
 
 import type { QueryClient } from '@tanstack/react-query';
+import { type ApiClient, SELF_NODE_ID } from '@vibeterm/api-client';
 import {
-  type ApiClient,
-  SELF_NODE_ID,
-  fetchAgentLlmSettings,
-  fetchLlmProviders,
-  fetchSiteSettings,
-  fetchTerminalShortcuts,
-  llmProvidersQueryKey,
-  llmSettingsQueryKey,
-  terminalShortcutsQueryKey,
-} from '@vibeterm/api-client';
-import { listShares, shareNodeQueryKey } from '@vibeterm/api-client/share';
-import {
-  LOCAL_STATUS_QUERY_KEY,
-  TLS_STATUS_QUERY_KEY,
-  TUNNEL_STATUS_QUERY_KEY,
-  fetchSelfLocalStatus,
-  fetchSelfTlsStatus,
-  fetchSelfTunnelStatus,
-} from './status-queries';
+  PREFETCHABLE_TABS,
+  SETTINGS_STALE_MS,
+  SITE_SETTINGS_QUERY_KEY,
+  type TabPrefetchSpec,
+  tabPrefetchSpecsFor,
+} from './settings-prefetch';
 
-/**
- * 设置类数据（站点设置、快捷键、模型、通知渠道、文件根……）的缓存窗口。
- * 这些数据只在用户自己保存时才变，全局默认的 5 秒太短：切走再切回来必然重发一轮。
- * 实时状态（隧道 / 本机运行态 / TLS）不用这个值，它们各自带轮询。
- */
-export const SETTINGS_STALE_MS = 30_000;
-export const SITE_SETTINGS_QUERY_KEY = ['site-settings'] as const;
-
-export interface TabPrefetchSpec {
-  queryKey: readonly unknown[];
-  queryFn: () => Promise<unknown>;
-  /** 缓存足够新就不重发。不填走 QueryClient 的默认值（5 秒），适合实时状态。 */
-  staleTime?: number;
-}
+export { PREFETCHABLE_TABS, SETTINGS_STALE_MS, SITE_SETTINGS_QUERY_KEY, type TabPrefetchSpec };
 
 /**
  * 该标签值得在悬停时预取的查询；没有可安全预取的返回空数组。
@@ -65,66 +43,8 @@ export function tabPrefetchSpecs(
   apiClient: ApiClient,
   nodeId: string = SELF_NODE_ID
 ): TabPrefetchSpec[] {
-  if (tab === 'general') {
-    return [
-      {
-        queryKey: SITE_SETTINGS_QUERY_KEY,
-        queryFn: () => fetchSiteSettings(apiClient),
-        staleTime: SETTINGS_STALE_MS,
-      },
-    ];
-  }
-  if (tab === 'ai') {
-    return [
-      {
-        queryKey: llmProvidersQueryKey,
-        queryFn: () => fetchLlmProviders(undefined, apiClient),
-        staleTime: SETTINGS_STALE_MS,
-      },
-      {
-        queryKey: llmSettingsQueryKey,
-        queryFn: () => fetchAgentLlmSettings(undefined, apiClient),
-        staleTime: SETTINGS_STALE_MS,
-      },
-    ];
-  }
-  if (tab === 'terminal') {
-    return [
-      {
-        queryKey: terminalShortcutsQueryKey,
-        queryFn: () => fetchTerminalShortcuts(apiClient),
-        staleTime: SETTINGS_STALE_MS,
-      },
-    ];
-  }
-  // 这两个标签的首屏都被状态接口整块挡住（远程访问要等隧道探测，节点要等本机运行态 / TLS），
-  // 也正是最值得抢在点击之前发出去的。它们问的是本机，不吃 `apiClient`（见 status-queries.ts）。
-  if (tab === 'remoteAccess') {
-    return [{ queryKey: TUNNEL_STATUS_QUERY_KEY, queryFn: fetchSelfTunnelStatus }];
-  }
-  if (tab === 'nodes') {
-    return [
-      { queryKey: LOCAL_STATUS_QUERY_KEY, queryFn: fetchSelfLocalStatus },
-      { queryKey: TLS_STATUS_QUERY_KEY, queryFn: fetchSelfTlsStatus },
-    ];
-  }
-  // 分享列表带在线人数与剩余期限，自身每 10 秒一拍：预取只为消掉首屏那一转，不给 staleTime。
-  // 键按节点分片（列表在设置页里跨节点汇总），这里预取的是当前路由节点那一条。
-  if (tab === 'share') {
-    return [{ queryKey: shareNodeQueryKey(nodeId), queryFn: () => listShares(apiClient) }];
-  }
-  return [];
+  return tabPrefetchSpecsFor(tab, apiClient, nodeId);
 }
-
-/** 能预取的标签，供测试与调用方判断（避免为没有 spec 的标签白跑一趟）。 */
-export const PREFETCHABLE_TABS: readonly string[] = [
-  'general',
-  'ai',
-  'terminal',
-  'nodes',
-  'remoteAccess',
-  'share',
-];
 
 /**
  * 预取一个标签的数据。`done` 记已经预取过的标签：鼠标扫过标签栏不该把请求发好几遍。

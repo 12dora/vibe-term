@@ -5,17 +5,7 @@
 //
 // 确认即关框：紧随其后要弹凭据对话框（吊销每次都要用户当场确认），两个框不能叠在一起。
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@vibeterm/ui/alert-dialog';
-import { Input } from '@vibeterm/ui/input';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RevokeController, RevokePlan } from './types';
@@ -61,63 +51,40 @@ function RevokeDialogBody({
   const copy = revokeDialogCopy(plan, t);
 
   return (
-    <AlertDialog
+    <ConfirmDialog
       open
       onOpenChange={(next: boolean) => {
         if (!next) controller.dismiss();
       }}
+      title={copy.title}
+      cancelLabel={t('common.cancel')}
+      confirmLabel={t('nodes.actions.revoke')}
+      onCancel={controller.dismiss}
+      onConfirm={() => controller.confirm(reason)}
+      testId="nodes-revoke-dialog"
+      cancelTestId="nodes-revoke-cancel"
+      confirmTestId="nodes-revoke-ok"
+      contentClassName="max-h-[85vh] overflow-y-auto"
+      input={{
+        id: reasonId,
+        label: t('nodes.revoke.reasonLabel'),
+        value: reason,
+        onChange: setReason,
+        testId: 'nodes-revoke-reason',
+      }}
     >
-      <AlertDialogContent
-        data-testid="nodes-revoke-dialog"
-        className="max-h-[85vh] overflow-y-auto"
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>{copy.title}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {copy.body}
-            {copy.targets.length > 0 && (
-              // 描述区是 <p>，名字只能用行内元素铺开；台数多时这一块自己滚，不撑高对话框。
-              <span
-                className="mt-2 block max-h-32 overflow-y-auto"
-                data-testid="nodes-revoke-targets"
-              >
-                {copy.targets.map((target) => (
-                  <span key={target.id} className="block truncate font-medium text-foreground">
-                    {target.name}
-                  </span>
-                ))}
-              </span>
-            )}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-
-        <div className="space-y-1.5">
-          <label className="block text-xs font-medium" htmlFor={reasonId}>
-            {t('nodes.revoke.reasonLabel')}
-          </label>
-          <Input
-            id={reasonId}
-            value={reason}
-            className="h-9"
-            onChange={(event) => setReason(event.target.value)}
-            data-testid="nodes-revoke-reason"
-          />
-        </div>
-
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={controller.dismiss} data-testid="nodes-revoke-cancel">
-            {t('common.cancel')}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            onClick={() => controller.confirm(reason)}
-            data-testid="nodes-revoke-ok"
-          >
-            {t('nodes.actions.revoke')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      {copy.body}
+      {copy.targets.length > 0 && (
+        // 描述区是 <p>，名字只能用行内元素铺开；台数多时这一块自己滚，不撑高对话框。
+        <span className="mt-2 block max-h-32 overflow-y-auto" data-testid="nodes-revoke-targets">
+          {copy.targets.map((target) => (
+            <span key={target.id} className="block truncate font-medium text-foreground">
+              {target.name}
+            </span>
+          ))}
+        </span>
+      )}
+    </ConfirmDialog>
   );
 }
 

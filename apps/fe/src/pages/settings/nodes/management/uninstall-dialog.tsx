@@ -3,17 +3,7 @@
 // 这是本页最具破坏性的动作（目标机器上的服务、程序与数据一并删掉，且不可撤销），
 // 因此确认按钮上写的是「卸载」而不是「确定」，跳过的节点也要连原因一起摆出来。
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@vibeterm/ui/alert-dialog';
-import { Loader2 } from 'lucide-react';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
 import type { NodeUninstallController, UninstallPlan, UninstallSkipReason } from './types';
 
@@ -25,7 +15,7 @@ const SKIP_KEY: Record<UninstallSkipReason, string> = {
   uninstalling: 'nodes.uninstall.skip.uninstalling',
 };
 
-/** 对话框正文。单独导出：AlertDialog 走 portal，静态渲染只看得到这一块。 */
+/** 对话框正文。单独导出：确认框走 portal，静态渲染只看得到这一块。 */
 export function UninstallDialogBody({ plan }: { plan: UninstallPlan }) {
   const { t } = useTranslation();
   return (
@@ -77,37 +67,25 @@ export function UninstallDialog({ uninstall }: { uninstall: NodeUninstallControl
   if (!plan) return null;
 
   return (
-    <AlertDialog
+    <ConfirmDialog
       open
       onOpenChange={(next) => {
         if (!next && !running) uninstall.dismiss();
       }}
+      title={t('nodes.uninstall.confirmTitle')}
+      cancelLabel={t('nodes.uninstall.cancel')}
+      confirmLabel={t('nodes.uninstall.confirm')}
+      onCancel={uninstall.dismiss}
+      onConfirm={uninstall.confirm}
+      testId="nodes-uninstall-dialog"
+      cancelTestId="nodes-uninstall-cancel"
+      confirmTestId="nodes-uninstall-confirm"
+      hideCancel={running}
+      confirmDisabled={running || plan.targets.length === 0}
+      confirmPending={running}
+      extra={<UninstallDialogBody plan={plan} />}
     >
-      <AlertDialogContent data-testid="nodes-uninstall-dialog">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t('nodes.uninstall.confirmTitle')}</AlertDialogTitle>
-          <AlertDialogDescription>{t('nodes.uninstall.confirmText')}</AlertDialogDescription>
-        </AlertDialogHeader>
-
-        <UninstallDialogBody plan={plan} />
-
-        <AlertDialogFooter>
-          {!running && (
-            <AlertDialogCancel onClick={uninstall.dismiss} data-testid="nodes-uninstall-cancel">
-              {t('nodes.uninstall.cancel')}
-            </AlertDialogCancel>
-          )}
-          <AlertDialogAction
-            variant="destructive"
-            disabled={running || plan.targets.length === 0}
-            onClick={uninstall.confirm}
-            data-testid="nodes-uninstall-confirm"
-          >
-            {running && <Loader2 className="animate-spin motion-reduce:animate-none" />}
-            {t('nodes.uninstall.confirm')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+      {t('nodes.uninstall.confirmText')}
+    </ConfirmDialog>
   );
 }

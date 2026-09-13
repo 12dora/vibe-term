@@ -5,9 +5,9 @@
 
 import type { NodeRow } from '@/node/mesh-nodes';
 import { Button } from '@vibeterm/ui/button';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { DangerConfirmDialog } from '../../components/danger-confirm-dialog';
 import { Notice, NoticeAction } from '../card-parts';
 import {
   type DirectPluginAction,
@@ -107,7 +107,7 @@ export function NodeDirectRemoveConfirm({
   const { t } = useTranslation();
   if (!open) return null;
   return (
-    <DangerConfirmDialog
+    <ConfirmDialog
       open
       title={t('nodes.machine.directRemoveConfirm.title')}
       cancelLabel={t('nodes.machine.directRemoveConfirm.cancel')}
@@ -118,6 +118,6 @@ export function NodeDirectRemoveConfirm({
       confirmTestId={`${testId}-ok`}
     >
       {t('nodes.machine.directRemoveConfirm.description')}
-    </DangerConfirmDialog>
+    </ConfirmDialog>
   );
 }

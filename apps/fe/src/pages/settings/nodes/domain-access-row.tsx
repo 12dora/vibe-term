@@ -11,10 +11,10 @@ import {
 } from '@vibeterm/api-client';
 import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
 import { errorMessage } from '@vibeterm/shared';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Switch } from '@vibeterm/ui/switch';
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { Row } from './copy-feedback';
 
 /** 旧节点（契约补齐之前）不下发这个字段：类型上必有、运行时未必有，读不到就整行不渲染。 */
@@ -213,7 +213,7 @@ function DomainAccessConfirm({
 }) {
   const { t } = useTranslation();
   return (
-    <DangerConfirmDialog
+    <ConfirmDialog
       open={open}
       title={t('nodes.machine.domainAccess.confirm.title')}
       cancelLabel={t('nodes.machine.domainAccess.confirm.cancel')}
@@ -228,6 +228,6 @@ function DomainAccessConfirm({
           {t(key, { hosts })}
         </span>
       ))}
-    </DangerConfirmDialog>
+    </ConfirmDialog>
   );
 }

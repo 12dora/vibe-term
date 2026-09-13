@@ -5,16 +5,7 @@
 // 页面其它部分已经没有意义了。
 
 import type { LocalLeaveTargetRole, LocalRole } from '@vibeterm/api-client/local/types';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@vibeterm/ui/alert-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SetupIntentRecord } from './intent';
@@ -87,79 +78,79 @@ export function LeaveDialog({
   const stranded = phase === 'timeout';
 
   return (
-    <AlertDialog
+    <ConfirmDialog
       open={phase !== 'confirming'}
       onOpenChange={(next) => {
         if (!next && !busy && !done && !stranded) onCancel();
       }}
+      title={t(leaveDialogTitleKey(request))}
+      cancelLabel={t('nodes.membership.cancel')}
+      confirmLabel={t('nodes.membership.confirm')}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      testId="membership-leave-dialog"
+      cancelTestId="membership-leave-cancel"
+      confirmTestId="membership-leave-confirm"
+      hideCancel={busy || done}
+      confirmDisabled={busy || done}
+      confirmPending={busy}
+      extra={<LeaveDialogExtra request={request} warning={warning} error={error} leave={leave} />}
+      actions={
+        stranded
+          ? [
+              {
+                label: t('nodes.membership.checkAgain'),
+                onClick: leave.recheck,
+                testId: 'membership-leave-recheck',
+                variant: 'outline',
+              },
+              {
+                label: t('nodes.membership.reload'),
+                onClick: leave.reload,
+                testId: 'membership-leave-reload',
+              },
+            ]
+          : undefined
+      }
     >
-      <AlertDialogContent data-testid="membership-leave-dialog">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t(leaveDialogTitleKey(request))}</AlertDialogTitle>
-          <AlertDialogDescription>
-            <span className="block">
-              {t(descriptionKey(request), descriptionOptions(request, t))}
-            </span>
-            <span className="mt-2 block">{t(leaveDialogConsequencesKey(request))}</span>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
+      <span className="block">{t(descriptionKey(request), descriptionOptions(request, t))}</span>
+      <span className="mt-2 block">{t(leaveDialogConsequencesKey(request))}</span>
+    </ConfirmDialog>
+  );
+}
 
-        {isLeaveToPureRelay(request) && <PureRelayWarning />}
-
-        {warning && (
-          <p
-            className="vibeterm-fade rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
-            data-testid="membership-leave-warning"
-          >
-            {warning}
-          </p>
-        )}
-        {error && (
-          <p
-            className="vibeterm-fade rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-            data-testid="membership-leave-error"
-          >
-            {error}
-          </p>
-        )}
-        <LeaveProgress leave={leave} />
-
-        <AlertDialogFooter>
-          {stranded ? (
-            <>
-              {/* `AlertDialogAction` 只是个按钮（不会关闭对话框），「再查一次」正好留在原地继续等。 */}
-              <AlertDialogAction
-                variant="outline"
-                onClick={leave.recheck}
-                data-testid="membership-leave-recheck"
-              >
-                {t('nodes.membership.checkAgain')}
-              </AlertDialogAction>
-              <AlertDialogAction onClick={leave.reload} data-testid="membership-leave-reload">
-                {t('nodes.membership.reload')}
-              </AlertDialogAction>
-            </>
-          ) : (
-            <>
-              {!busy && !done && (
-                <AlertDialogCancel onClick={onCancel} data-testid="membership-leave-cancel">
-                  {t('nodes.membership.cancel')}
-                </AlertDialogCancel>
-              )}
-              <AlertDialogAction
-                variant="destructive"
-                disabled={busy || done}
-                onClick={onConfirm}
-                data-testid="membership-leave-confirm"
-              >
-                {busy && <Loader2 className="animate-spin motion-reduce:animate-none" />}
-                {t('nodes.membership.confirm')}
-              </AlertDialogAction>
-            </>
-          )}
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+function LeaveDialogExtra({
+  request,
+  warning,
+  error,
+  leave,
+}: {
+  request: LeaveDialogRequest;
+  warning: string | null;
+  error: string | null;
+  leave: LeaveMesh;
+}) {
+  return (
+    <>
+      {isLeaveToPureRelay(request) && <PureRelayWarning />}
+      {warning && (
+        <p
+          className="vibeterm-fade rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
+          data-testid="membership-leave-warning"
+        >
+          {warning}
+        </p>
+      )}
+      {error && (
+        <p
+          className="vibeterm-fade rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
+          data-testid="membership-leave-error"
+        >
+          {error}
+        </p>
+      )}
+      <LeaveProgress leave={leave} />
+    </>
   );
 }
 

@@ -14,11 +14,11 @@ import type {
 import { Badge } from '@vibeterm/ui/badge';
 import { Button } from '@vibeterm/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Loader2, RotateCcw, Save } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { DangerConfirmDialog } from '../../components/danger-confirm-dialog';
 import { useRestartGateway } from '../restart/use-restart-now';
 import { AcmePanel } from './acme-panel';
 import { ExternalPanel } from './external-panel';
@@ -169,7 +169,7 @@ function StopListenerConfirm({
   const { t } = useTranslation();
   if (!request) return null;
   return (
-    <DangerConfirmDialog
+    <ConfirmDialog
       open
       title={t('nodes.https.confirmStop.title')}
       cancelLabel={t('nodes.https.confirmStop.cancel')}
@@ -186,7 +186,7 @@ function StopListenerConfirm({
         })}
       </span>
       <span className="mt-2 block">{t('nodes.https.confirmStop.requirement')}</span>
-    </DangerConfirmDialog>
+    </ConfirmDialog>
   );
 }
 

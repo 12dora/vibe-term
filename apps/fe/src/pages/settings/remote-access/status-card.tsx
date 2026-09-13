@@ -4,10 +4,10 @@ import type { TunnelStatusResponse } from '@vibeterm/shared';
 import { Badge } from '@vibeterm/ui/badge';
 import { Button, buttonVariants } from '@vibeterm/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { ExternalLink, Loader2, Play, Radar, Square, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { CopyButton } from '../nodes/copy-feedback';
 import { SetupNotice } from '../nodes/setup/form-parts';
 import {
@@ -485,7 +485,7 @@ function ConfirmRemoveDialog({
 }) {
   const { t } = useTranslation();
   return (
-    <DangerConfirmDialog
+    <ConfirmDialog
       open={open}
       title={t('settings.remoteAccess.confirmRemove.title')}
       cancelLabel={t('settings.remoteAccess.confirmRemove.cancel')}
@@ -497,7 +497,7 @@ function ConfirmRemoveDialog({
     >
       <span className="block">{t('settings.remoteAccess.confirmRemove.description')}</span>
       <span className="mt-2 block">{t('settings.remoteAccess.confirmRemove.irreversible')}</span>
-    </DangerConfirmDialog>
+    </ConfirmDialog>
   );
 }
 
