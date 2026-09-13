@@ -96,7 +96,9 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
 | | relay 流的内层（`SecureChannelLink`，与 hub 现状一致） |
 
 `direct_capable` 不是 `relay.status` / `relay.list` 上的明文字段，而在 K_meta 封里的状态块（`RelayStatusBlob`）中。
-同一块还可带两个**可选**字段（2.3.0 解码器忽略未知键）：`peer_reach?: { [nodeIdPrefix8]: 'ok' | 'refused' | 'timeout' }`（≤32 条，发送方对其他成员 peer 口的探测结论）与 `turn_ok?: boolean`（发送方对该中继 TURN 控制口的 Binding 结论；`undefined` = 未探测）。hub `node.status` / `node.list` 同样可选透传 `peer_reach`。`relay,node` 把成员 blob 里的布尔 `turn_ok` 聚成管理面 `turn.membersProbe: { ok, total, updatedAt }`（`total` 只计写出了布尔值的成员）；`GET /api/relay/status` 与 `GET /api/local/status` 的 TURN 快照都带它。TURN 磁贴有该字段时显示「成员可达 ok/total」。
+同一块还可带两个**可选**字段（2.3.0 解码器忽略未知键）：`peer_reach?: { [nodeIdPrefix8]: 'ok' | 'refused' | 'timeout' }`（≤32 条，发送方对其他成员 peer 口的探测结论）与 `turn_ok?: boolean`（发送方对该中继 TURN 控制口的 Binding 结论；`undefined` = 未探测）。hub `node.status` / `node.list` 同样可选透传 `peer_reach`。
+
+成员 `turn_ok` 按中继 URL 分桶（key = `canonicalHubUrl`，失败则 trim 去尾斜杠），超过 30 min 的条目在 snapshot 时删除。管理面 `withMembersProbe` 默认用 `VIBETERM_RELAY_PUBLIC_URL` 过滤，只统计本机这条 TURN，不再把副中继的报告混进本机磁贴；无公网 URL 时退回并集。`GET /api/relay/status` 与 `GET /api/local/status` 的 TURN 快照带 `membersProbe: { ok, total, updatedAt }`（`total` 只计写出了布尔值的成员）。TURN 磁贴有该字段时显示「成员可达 ok/total」。
 
 ## 3. 租户密钥
 
@@ -475,7 +477,7 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 | `online` | **该行**已认证。`attached` 仍只对 primary 为真（2.2.x 前端靠它画「已挂载」） |
 | `rttMs` | 每条已连接 uplink 各自最近一次 ping→pong 时延（毫秒；重连清零；未测到为 null） |
 | `peersOnline` | 该中继最近一份清单里在线的已准入对端数；未连接为 null |
-| `turn` | 该中继下发的 TURN 与本机探测结论（`probeOk: null` = 还没探） |
+| `turn` | 该中继下发的 TURN 与本机探测结论：`{ url, probeOk, members?, localHint? }`。`probeOk: null` = 还没探。`members` 为该行中继的成员 tally（排除 self；`{ ok, total, updatedAt }`）。`localHint: 'tun'` 仅当 `probeOk === false` 且 TCP 金丝雀判定本机栈就地完成握手（TUN/代理）；金丝雀未跑或已过期不下 hint。新字段全可选，旧壳可忽略 |
 | `nodesViaRelay`（顶层） | 全部已连接中继的**在线对端并集**，不是某一条的数字 |
 | `multiAttach`（顶层） | 配了 ≥ 2 条未被踢的中继（副中继已启用） |
 
@@ -681,6 +683,7 @@ Hub 模式收到该记录时同样写 `nodes.name` 并广播 `node.list`，所�
 |---|---|
 | `vibeterm relay status [--json]` | `GET /api/relay/status`；末尾一行 `turn: builtin\|external\|off …`（监听状态、地址、公网 IP、端口段、分配数、错误） |
 | `vibeterm relay tenants [--json]` | 同上，打印租户表 |
+| `vibeterm relay metrics [--members] [--json]` | `GET /api/relay/metrics?members=0\|1`；默认 `members=0` 省略成员数组，`--members` 发 `1` 并打成员表；`--json` 打原始 JSON |
 | `vibeterm relay passwd [--clear] [--kick\|--keep]` | `POST /api/relay/password`；默认 `keep`，先打印后果说明再隐藏输入两遍 |
 | `vibeterm relay kick <tenantId>` | `POST /api/relay/tenants/:id/kick` |
 | `vibeterm relay remove <tenantId> [--yes]` | `DELETE /api/relay/tenants/:id`；非 TTY 且无 `--yes` 直接报错 |
@@ -707,7 +710,7 @@ vibeterm relay remove abcd…ef --yes
 | `vibeterm relay enroll <url> [--password <p>] [--username <n>]` | 探 `GET <url>/api/relay/health` → 无本地用户则先建 → `GET /api/auth/mode` + 登录 → `proof-material` → 本地签 proof → `POST /api/mesh/relay/enroll` → 签 `set-relays` 提交 `?hub=sync` → 轮询 `status` 直到 `mode==='relay'` 且在线（≤30 s） |
 | `vibeterm relay reauth <url> [--password <p>]` | 与 enroll 同一条链路（按 url 去重，租户不变、令牌换新），只是提示语不同 |
 | `vibeterm relay leave` | `leave/prepare` → 签 `set-relays`（空列表）→ 提交 → 轮询直到 `mode !== 'relay'` |
-| `vibeterm relay list [--json]` | `GET /api/mesh/relay/status`，打印 mode / tenant / meta 世代 / peers（并集）/ `multi-attach` + 中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE` |
+| `vibeterm relay list [--json]` | `GET /api/mesh/relay/status`，打印 mode / tenant / meta 世代 / peers（并集）/ `multi-attach` + 中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE`。TURN 列：本机 ok 且有 members → `(ok, N/M)`；本机 fail 且有 members → `(down, N/M nodes ok)`；本机 fail 无 members → `(down)`。`--json` 打 `raw`，`members` / `localHint` 原样出去 |
 
 ```bash
 vibeterm relay enroll https://relay.example --password '<中继口令>'
@@ -744,14 +747,15 @@ vibeterm init --role relay,node --relay-public-url https://relay.example
 **租户侧（设置 → 节点）**：原 `HubStrip` 泛化成上级链路区块，中继模式下显示每条中继的
 url / 在线 / 主中继·副中继 / 该行 RTT / 在线对端数 / TURN 标签 / 优先级 / 最近错误 / 被踢标记，外加「元数据密钥第 N 代」
 「经中继可见 N 个节点」「配额」；每行都有「设为主中继」按钮，已是主中继或被踢的行置灰。节点徽标在走中继时标出「中转（经 <host>）」。
+TURN chip：本机 ok →「TURN 可达」，有 members 时追加「 · N/M 节点」；本机 fail →「TURN 本机不可达」，有 members 时追加「 · N/M 节点可达」（`N>0` 琥珀，`N===0` 或无 members 为危险色）；未探测 →「TURN 未探测」。`localHint === 'tun'` 时 chip `title` 为「本机代理/TUN 未转发 UDP，探测结果仅代表本机」。
 菜单项：接入中继、hub → 中继迁移、追加中继、移除某条中继（多于一条时逐条列出）、重新输入口令、轮换元数据密钥、离开中继。
 hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下不渲染。
 加节点向导生成 `r3.` join 串，admit 成功后自动补签 `meta-key {op:'admit'}`，吊销成功后自动补签 `{op:'rotate'}`；
 补签失败会留一条持久化的「欠账」并在挂上中继时自动重试一次，告警条上也有手动重试按钮。
 
 **运营者侧（设置 → 中继管理，`relay.admin.tabLabel`，在 `SETTINGS_TAB_BAR` 中紧随 `nodes`，属 `OPTIONAL_SETTINGS_TABS`）**：仅在探针成功时出现。页头三点菜单：修改接入密码、中继限额；未设密码时页头下一条警告。租户卡三点菜单：默认配额。租户行可选（`aria-selected`），选中后接入节点卡只显示该租户成员；接入节点卡带检索（名称 / nodeId / tenantId）、七列排序（`aria-sort` 只落在当前列）与状态筛选，纯函数在 `relay-metrics-model.ts`；中继是盲中继，成员 `name` 恒为 `null`，排序键实际是 `name ?? nodeId`。改口令对话框（清除开关 + 踢/留单选，默认「保留」），踢出与删除确认框（删除需逐字敲出租户编号）。
-页头另有一块 TURN 磁贴（内置 / 外部 / 关闭、监听状态、`turn:<host>:<port>`、公网 IP、当前分配数、错误，内置模式下该放行的端口，以及有 `membersProbe` 时的「成员可达 ok/total」：部分失败警告、全失败危险），
-数据来自 `GET /api/relay/status` 的 `turn` 段。指标瓦片见 [限额与指标](./relay-limits-and-metrics.md)。
+页头另有一块 TURN 磁贴（内置 / 外部 / 关闭、监听状态、`turn:<host>:<port>`、公网 IP、当前分配数、错误，内置模式下该放行的端口，以及有 `membersProbe` 时的「成员可达 ok/total」：部分失败警告、全失败危险；计数按本机公网 URL 分桶），
+数据来自 `GET /api/relay/status` 的 `turn` 段。指标瓦片见 [限额与指标](./relay-limits-and-metrics.md)；本机另有 `vibeterm relay metrics [--members] [--json]`。
 
 **接入向导**（`apps/fe/src/components/side-panels/connect-devices/`）覆盖「经中继 / 经 Hub / SSH 直连」三条路径，见 [接入设备面板](../development/connect-devices-panel.md)。追加中继时中继返回的 `RELAY_*` 401 由 `session-interceptor` 豁免，不当作本机会话失效。
 

@@ -72,6 +72,7 @@ vibeterm relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] 
 ## 6. 指标接口 `GET /api/relay/metrics`
 
 - 路径：`GET /api/relay/metrics`，可选 `?members=0` 省略成员数组。
+- CLI：中继机本地 `vibeterm relay metrics [--members] [--json]`（默认 `?members=0`；`--members` 发 `1` 并打成员表；`--json` 打原始 JSON）。
 - 鉴权：与 `/api/relay/status` 相同（`Authorization: Bearer <管理令牌>` 或本机已登录会话）。
 - 类型：`packages/api-client/src/relay/metrics-types.ts` 的 `RelayMetricsResponse`；客户端 `RelayAdminApi.metrics()`（`{ members: false }` 重载返回 `Omit<…, 'members'>`）。
 - 采样：`RelayMetricsCollector`（`apps/gateway/src/relay/relay-metrics.ts`）每 5 s 采样一次，`history.samples` 保留最近 60 个样本（约 5 分钟）；定时器 `unref`，运行时关闭时停止。

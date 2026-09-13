@@ -77,7 +77,7 @@
 | [self-update.md](./operations/self-update.md) | 程序内自更新：版本注入、`canSelfUpdate`、状态机、发行包缓存与租约 |
 | [remote-upgrade.md](./operations/remote-upgrade.md) | 远程升级：推包续传协议与进度 |
 | [bun-path-resolution.md](./operations/bun-path-resolution.md) | CLI 的 bun 路径解析与 `run.sh` 约束 |
-| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、目标语法、tmux 结构、像 ssh 一样接进任意节点的终端、AI agent 的 run / capture / send 流程、安全边界与退出码 |
+| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、目标语法、tmux 结构、像 ssh 一样接进任意节点的终端、AI agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
 | [rename-migration.md](./operations/rename-migration.md) | tmex → VibeTerm 改名迁移：命名表、冻结值、兼容桥、目录迁移、升级手册 |
 
 ### security/

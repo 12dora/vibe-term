@@ -229,7 +229,11 @@ vibeterm hub join https://vibeterm.example.com --token <join 串> [--name 书房
 
 路由 `/nodes`，任意已登录的 mesh 入口可用。standalone 整页不渲染。
 
-表格：在线 / 离线（旁可挂「已暂停」标，不替换在线态）、到达路径、版本、直连能力、登录状态、公钥指纹（sha256 前 16 hex）。self 行不能吊销当前入口，也没有暂停按钮。paused 是 **entry 本机偏好**：行留在管理表，侧栏 / 设备页 / 传输下拉过滤；行内升级仍可点，批量升级排除，批量移除/卸载可选。`ports[].status === 'blocked'` 时名字下警告「端口不可达」；详情框有完整端口表与「重新检测」（`POST /api/mesh/nodes/:id/ports/probe`）。本机卡网络区「入站端口」带 self 行状态点。
+表格：在线 / 离线（旁可挂「已暂停」标，不替换在线态）、到达路径、版本、直连能力、登录状态、公钥指纹（sha256 前 16 hex）。行内「更多」是下拉菜单（详情、暂停 / 恢复）；吊销仍是行上的破坏性按钮。待批准行「更多」禁用。self 行不能吊销当前入口。paused 是 **entry 本机偏好**：行留在管理表，侧栏 / 设备页 / 传输下拉过滤；行内升级仍可点，批量升级排除，批量移除/卸载可选。
+
+暂停资格（行菜单与批量「暂停」同一套）：本机、Hub、当前 URL 为 `/n/:id/…` 的转发节点不可新暂停。恢复只拦本机与待批准；Hub 与当前转发节点若已暂停则可恢复（2.3.5 上被暂停的 Hub 升级后可点恢复）。批量菜单把暂停 / 恢复放在升级 / 吊销 / 卸载之前；合格集合为空则禁用。同一节点在途的暂停/恢复互斥（行与批量共享守卫）。`ports[].status === 'blocked'` 时名字下警告「端口不可达」；详情框有完整端口表与「重新检测」（`POST /api/mesh/nodes/:id/ports/probe`）。
+
+本机卡网络区入站端口标题随本机角色：含 `relay`（`relay` / `relay,node`）→「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余（`node` / `standalone` / 缺省）→「本机需开通端口」。节点详情框仍用「入站端口」。标题下一行图例：「绿 = 其它节点已探通；红 = 探测到未放行；灰 = 尚未验证」。有 `MeshPortReach` 行（purpose + 端口/range 对上）才画状态点：`open` 绿、`blocked` 红且加 ring、`unknown` 灰；无对应行画「—」（不探测），不等于灰。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时本机卡显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。
 
 `GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。
 
@@ -241,7 +245,7 @@ node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请�
 | 自动 admit | 对端 `hub join` redeem 后，`/mesh/ws` 推 `ENROLL_REDEEMED`（只给创建该 enrollment 的会话），并按 enrollment id 轮询 `GET /api/hub/enrollments/:id` 兜底。**仅根钥签名者**会在证书到达时后台自动签 `admit-node`；passkey 必须用户点「确认」（浏览器 user activation） |
 | 待确认 / 重试 | 页面已关、窗口过期、或 `POST /api/auth/keylog?hub=sync` 未拿到 `hubAck:true` 时保留 pending。409 / 504 不当成成功 |
 | 重命名 | hub 在线时可改 `nodes.name` |
-| 暂停 / 恢复 | `POST /api/mesh/nodes/:id/pause|resume`，幂等；self → 400 `CANNOT_PAUSE_SELF`。pause 退役对本端的出站链路，resume 不主动拨号。CLI：`vibeterm nodes pause|resume` |
+| 暂停 / 恢复 | `POST /api/mesh/nodes/:id/pause|resume`，幂等；self → 400 `CANNOT_PAUSE_SELF`；Hub（`isHub`）仅暂停 → 400 `CANNOT_PAUSE_HUB`（恢复 200）。pause 退役对本端的出站链路，resume 不主动拨号。前端另拦当前 `/n/:id` 转发节点的暂停。CLI：`vibeterm nodes pause|resume`（`CANNOT_PAUSE_SELF` → `cannot pause this machine (CODE)`；`CANNOT_PAUSE_HUB` → `cannot pause a hub node (CODE)`） |
 | 吊销 | 每次都要当场确认凭据（不进复用窗口），只走 `keylog?hub=sync` 写 `revoke-node`。hub 未确认则告警、不刷新列表 |
 
 ### 中继模式：「成员密钥未送达」
@@ -297,13 +301,22 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 - 防远程猜密码 / 旁观，**不是**独立于口令的第二因素（与根钥同源派生）。需要独立第二因素时用 passkey。
 - UI 两段式：先生成密钥与 otpauth URI（不写日志）→ 扫码并输入 6 位码 → 本地校验通过才追加 `set-totp`。取消或离开页面会清零密钥。
 - **启用 TOTP 只能用密码**（需要 seed）。关闭 TOTP、增删 passkey 可用 passkey 授权。
-- CLI：`vibeterm hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。
+- CLI：本机运维 `vibeterm hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。客户端 `vibeterm settings totp enable|disable` 经 HTTP 签 `set-totp` / `clear-totp`（enable 先打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再提交）。
 
 ### 改密
 
 日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；中继模式下，未出现在 `peer_cache` 的未吊销证书也按版本未知阻断。该类型不允许 `x-vibeterm-force-keylog` 绕过，以免旧节点按未知类型丢弃记录、造成状态分裂。
 
-`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。`vibeterm hub user passwd <username>` 默认保留登录方式，只有 `--full-reset` 执行破坏性改密。全量重置会先警告通行密钥、TOTP、全部会话和中继密封包的影响；TTY 必须输入完整 `yes`，非 TTY 必须加 `--yes`。非 TTY：旧密码 `VIBETERM_PASSWORD_OLD`，新密码 `VIBETERM_PASSWORD`。灾难恢复仍用 `reset-root` / `mesh reset-root`，不要用日常改密代替。
+`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。两条 CLI 路径对照：
+
+| | 本机运维 `vibeterm hub user passwd <username>` | 客户端 `vibeterm settings passwd [--full-reset]` |
+|---|---|---|
+| 作用面 | 写本机库 | 签 keylog，经 HTTP `POST /api/auth/keylog?hub=sync` |
+| 默认 | `rotate-root-keep` | 同左；开了 TOTP 时先 `GET /api/auth/totp-record` 再重封装 |
+| 全量重置 | `--full-reset` | `--full-reset`（非 TTY 要 `--yes`） |
+| 密码 | 非 TTY：旧 `VIBETERM_PASSWORD_OLD`，新 `VIBETERM_PASSWORD` | 当前 `VIBETERM_PASSWORD`；新密码 `--new-password*` / `VIBETERM_NEW_PASSWORD` 或 TTY 双次确认 |
+
+全量重置会先警告通行密钥、TOTP、全部会话和中继密封包的影响；TTY 必须输入完整 `yes`，非 TTY 必须加 `--yes`。客户端 `settings passkey ls|rm` 可列 / 删通行密钥（注册只能在浏览器）；`settings local-auth bootstrap|set` 对齐 GUI 本机豁免（`jsonSelf`，可 `--node`；远端非本机回 `403 LOCAL_ONLY`）。灾难恢复仍用 `reset-root` / `mesh reset-root`，不要用日常改密代替。
 
 登录体验：输入一次密码（或一次 passkey）生成 18 小时 `delegation`，先登当前入口 `self`，再用 `vibeterm_s_self` 拉 `/api/mesh/nodes`，对在线未登录的 node 并行登录。cookie `vibeterm_s_<nodeId>` / `vibeterm_s_self`：`HttpOnly; SameSite=Lax; Max-Age=64800`（18 h），HTTPS 加 `Secure`。滑动续期 18 小时，绝对上限 7 天。
 
@@ -344,7 +357,7 @@ UDP 40001-40049      # VIBETERM_TURN_RELAY_PORT_RANGE，整段都要放
 UDP 40050-40099      # 仅 relay,node：本机 ICE（与 TURN 错开）
 ```
 
-云厂商安全组、面板防火墙、`ufw` 三层各放一次。统一段是 **UDP 40000-40099**。`vibeterm init` / `hub join` / `relay join` / `install.sh` 结束时打印角色完整 `formatPortList`。节点管理表在 `ports[].status === 'blocked'` 时于名字下警告；详情框可「重新检测」。TURN 磁贴有 `membersProbe` 时显示「成员可达 ok/total」。
+云厂商安全组、面板防火墙、`ufw` 三层各放一次。统一段是 **UDP 40000-40099**。`vibeterm init` / `hub join` / `relay join` / `install.sh` 结束时打印角色完整 `formatPortList`。节点管理表在 `ports[].status === 'blocked'` 时于名字下警告；详情框可「重新检测」。TURN 磁贴有 `membersProbe` 时显示「成员可达 ok/total」（按本机公网 URL 分桶，不把副中继的 TURN 报告混进来）。
 
 排查顺序：
 
@@ -356,7 +369,7 @@ UDP 40050-40099      # 仅 relay,node：本机 ICE（与 TURN 错开）
    —— 公网 IP 既没配也解析不出；`EADDRINUSE port=…` —— 端口被占，5 s → 60 s 退避重试；与 `VIBETERM_RTC_PORT_RANGE` /
    `VIBETERM_PEER_PORT` 冲突），以及每 30 min 一条 `turn allocations=N`。
 4. 租户节点侧：`GET /api/mesh/rtc-config` 的 `turnConfigured` / `turnProbes`，日志 `[mesh][rtc] turn gate configured=N reachable=M used=[…]`。
-   `reachable=0` 就是节点到 TURN 的 UDP 不通。
+   `reachable=0` 就是节点到 TURN 的 UDP 不通。设置页 TURN chip 把「本机」与「舰队」分开：本机 ok →「TURN 可达 · N/M 节点」；本机 fail →「TURN 本机不可达 · N/M 节点可达」（`N>0` 琥珀，全员失败或无 members 为危险色）；未探测 →「TURN 未探测」。`localHint=tun` 时 tooltip 提示探测结果仅代表本机。`vibeterm relay list` 的 TURN 列为 `(ok, N/M)` / `(down, N/M nodes ok)` / `(down)`。本机探测失败、其它节点仍可达时，先查本机 UDP/TUN 策略（见 [KI-15](../known-issues.md)），不要当成中继 TURN 挂了。
 
 公网 IP 变了不会重启 TURN：只换 `XOR-RELAYED-ADDRESS` 与广告地址（未设 `VIBETERM_TURN_HOST` 时广告的是 IP 字面量），已有 allocation 不断。
 中继在反代 / 隧道后面时要注意：TURN 是裸 UDP，**不经反代**，`VIBETERM_RELAY_PUBLIC_URL` 的域名只当解析入口用。
@@ -370,7 +383,7 @@ vibeterm relay enroll https://<第二台中继地址>
 vibeterm relay list
 ```
 
-`relay list` 的列是 `PRI URL ROLE STATE RTT PEERS TURN NOTE`；该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`。多中继时另打一行 `multi-attach: yes`。
+`relay list` 的列是 `PRI URL ROLE STATE RTT PEERS TURN NOTE`；该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`。TURN 列带本机探测与成员计数：`(ok, N/M)` / `(down, N/M nodes ok)` / `(down)`。多中继时另打一行 `multi-attach: yes`。
 配了 ≥ 2 条之后，节点对每一条都保持连接：
 
 - **主中继**（`ROLE=primary`）负责写新的密钥日志记录、出成员名册、出配额。**副中继**只做在线状态、入站流、RTC 信令与日志追平。
@@ -466,6 +479,7 @@ vibeterm hub user reset
 | 503 `DIRECT_UNAVAILABLE` | native 未装载、authorize 登记满（64）或 RTC 不可用 | `direct enable`；看 `VIBETERM_NATIVE_DIR` 与 `native/manifest.json`；装不了的平台接受 relay |
 | 直连降级到 relay | ICE 失败、一端 `direct_capable=false`、或 `direct disable`、或 DC 存活超时 | 预期行为。功能应仍可用，徽标变为 `relay` / `turn`。UDP 被丢后 `transport` 应在约 10 s 内离开 `dc`（日志 `liveness timeout`）；若仍卡 ~35 s 才变，说明存活探测未生效 |
 | 两边 `direct_capable=true` 但 `transport` 不是 `dc` | 只走了 hub relay / LAN WS，或升级尚未完成 | 日志前缀 `[mesh][rtc]`。应先有 `dial start role=offerer\|answerer`，较大 id 侧有 `kind=wake`，随后 `signal send/recv kind=sdp`。没有 `dial start` 说明没人拨号；只有 answerer 没有 wake/offer 是旧 bug。`ice failed … local_types=[host] remote_types=[…]` 且无 `srflx` → STUN 不可达；两边都有 `srflx` 仍失败 → 对称 NAT，需要一台**探测得通**的 TURN（中继角色自带，看 `[mesh][rtc] turn gate` 这行的 `reachable=`）。`datachannel open` 才算 DC 握手成功。不要把完整 SDP / ICE 密码打进日志 |
+| 设置页 / `relay list` 写「TURN 本机不可达 · N/M 节点可达」 | 本机 UDP 到该 TURN 不通，其它成员 Binding 成功 | 不是中继挂了。先查本机代理 TUN 是否丢境外 UDP（见 [KI-15](../known-issues.md)）。`N===0` 或无 members 才是舰队侧也探不通 |
 | 终端数秒停顿、日志有 `[mesh][stream] failover` | Forwarder 在重建 mux stream 并 replay | 行首 ISO 时间戳可对齐。`failover_start` 的 `cause=stream_close\|send_failed`、`close_reason`、`from`、`queued_input_bytes` 区分 RST/发送失败；`failover_attempt` 的 `getLink_ms` / `open_stream_ms` / `hello_wait_ms` / `resume_wait_ms` 区分建链慢还是 HELLO/snapshot 等待；`failover_summary` 的 `duration_ms`、`replay_bytes`、`event_loop_lag_ms` 给出总耗时。`[ws] backpressure enter\|skip\|drain` 与 `terminate reason=backpressure_gap` 带 `carrier=physical_browser_ws\|mesh_link_stream` 以及 session/cid/node，用来判断背压在浏览器 socket 还是 mesh carrier。`[mesh][mux] rst send/recv` 现含 `muxStreamId` 与 `nodeId`/`transport`。`[ws-metrics] gateway_activity` 的 `event_loop_lag_ms` / `max_lag_ms` 判断主线程是否卡住 |
 | `[mesh][rtc] dial failed` 刷屏、hub 入站 UDP 被滤 | 对 `direct_capable≠false` 的 peer 会反复拨 DC | 连续 3 次 DataChannel 失败（含通道打开后立刻死掉）后打一条 `[mesh][rtc] breaker trip peer=… fails=… level=… cooldown_ms=… until=…`，冷却期内跳过该 peer 的 DC（起始冷却默认 30 s，可用 `VIBETERM_RTC_DIAL_BREAKER_MS` 覆盖；之后 60 s / 120 s … 上限 30 min）。跳过时 `dial failed` 带 `cause=breaker_cooling`。`dial failed` 同一 peer 60 s 至多一条并带 `count=`。通道保持健康 ≥ 60 s 才打 `[mesh][rtc] breaker reset` 并清零；endpoints / `direct_capable` 变化不再复位。不改 transport 优先级，也不改 `directCapable !== false` 门闩。细节见 [节点直连](../architecture/peer-direct-connect.md) |
 | `[mesh][peer]` 反复对同一批 LAN 地址拨号、或 `directFailure.ws` 为 `all endpoints backing off (next eligible in Xs)` | 对端广播了不可达地址（docker 网桥、无 Tailscale 的 CGNAT、ULA），或本机确实到不了 | 失败地址按 `(node, host, port)` 退避 1 min → 6 h，日志 `endpoint backoff node=… addr=… fails=… next=…` / `endpoint recovered …`。全部候选被压制时直接回落 relay，不是故障。要让对端不再广播这些地址，需把**对端**升级到含广播过滤的版本。见 [节点直连](../architecture/peer-direct-connect.md) |

@@ -89,14 +89,14 @@ i18n：`terminal.keyboardBehavior.*`（三语）。旧版 iOS（`offsetTop>0`）
 - 按钮：touch 走 `onPointerUp` + `preventDefault`；鼠标走 `onClick`。合成 `mousedown` 不再 `preventDefault`（防 WebKit 吞 click）。
 - 空选区复制打 `terminal.copyFailed`，不再静默。`writeClipboardText` 仍在手势栈上同步调用。
 
-设置 → 终端「复制方式」（`terminalCopyMode`，持久化键 `vibeterm-ui`，默认 `'button'`，非法值归一成 `'button'`）：
+设置 → 终端「复制方式」（`terminalCopyMode`，持久化键 `vibeterm-ui`，默认 `'button'`，非法值归一成 `'button'`）。两项并排（窄屏折行、等宽）：
 
 | 值 | 行为 |
 |---|---|
-| `button` | 点工具条「复制」才写入剪贴板 |
+| `button`（文案「点击按钮后复制」） | 选区完成只出工具条，写入剪贴板要再点「复制」。桌面划选抬手 / 选区变化不写盘 |
 | `auto` | 选区 **committed** 时同步写剪贴板并 toast「已复制」；工具条仍出现但隐藏复制按钮。同一段文本不重复复制（清空选区后可再复制）。不 `clearSelection` |
 
-提交路径：鼠标 = 容器 `pointerup`（非 touch）；触摸 = 手势机 `endTouchSelection` 上的 `onSelectionCommitted`。
+提交路径：鼠标 = 容器 `pointerup`（非 touch）走 `commitSelectionCopy`（`copyMode !== 'auto'` 直接 return）；触摸 = 手势机 `endTouchSelection` 上的 `onSelectionCommitted`。`copy` 事件与 Cmd/Ctrl+C 是快捷键路径，**不看** `copyMode`。多 node 共用同一份 UI store（`storagePrefix: ''` → `vibeterm-ui`）。划选即进剪贴板时优先查用户是否按了快捷键、本机/IME 划选复制，或 tmux OSC 52（均与此开关无关）。
 
 ## 测试
 

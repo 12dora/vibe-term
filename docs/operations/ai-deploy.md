@@ -525,7 +525,7 @@ vibeterm doctor
    `VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE`（`VIBETERM_TURN_PORT=off` 关掉内置 TURN）；机器网卡上只有私网地址而
    自动解析不出公网 IP 时补 `VIBETERM_TURN_EXTERNAL_IP`。TUN 代理宿主不要把 `VIBETERM_TURN_BIND_HOST` 设回 `0.0.0.0`。`install.sh` / `vibeterm init` 结束时打印完整 plan。
 
-3. `init` 结束时会打印管理令牌所在的 `app.env` 路径。管理令牌键名 `VIBETERM_RELAY_ADMIN_TOKEN`，缺失时首启自动生成一枚写回 `app.env`，库里只存它的 sha256。所有 `relay status` / `relay tenants` / `relay quota` / `relay limits` / `relay-admin *` 命令都在**中继机本地**执行，读这个令牌打 `http://127.0.0.1:<GATEWAY_PORT>`。
+3. `init` 结束时会打印管理令牌所在的 `app.env` 路径。管理令牌键名 `VIBETERM_RELAY_ADMIN_TOKEN`，缺失时首启自动生成一枚写回 `app.env`，库里只存它的 sha256。所有 `relay status` / `relay tenants` / `relay metrics` / `relay quota` / `relay limits` / `relay-admin *` 命令都在**中继机本地**执行，读这个令牌打 `http://127.0.0.1:<GATEWAY_PORT>`。`vibeterm relay metrics [--members] [--json]` 打 `GET /api/relay/metrics?members=0|1`（默认不加 `--members` 省略成员数组）。
 
 4. 设置接入口令（强烈建议，否则任何人都能注册租户）：
 
@@ -557,6 +557,7 @@ vibeterm doctor
 
    ```bash
    vibeterm relay tenants
+   vibeterm relay metrics [--members]
    vibeterm relay label <租户编号> <说明文字>
    ```
 
@@ -796,7 +797,7 @@ vibeterm doctor
 
 ## 用 CLI 调试别的节点
 
-面向「AI 助手跑在 A 机器上，要去看 B、C 机器上的终端」的场景。这一节用的是**客户端命令**（`login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings`），只经 HTTP / WebSocket 访问入口，权限与一个浏览器会话完全等价，因此也能装在没有部署服务的机器上；和上面各节的本机运维命令（`init` / `doctor` / `hub` / `relay` 等）边界完全不同。完整手册见[命令行使用手册](./cli-usage.md)。
+面向「AI 助手跑在 A 机器上，要去看 B、C 机器上的终端」的场景。这一节用的是**客户端命令**（`login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|agent|settings`），只经 HTTP / WebSocket 访问入口，权限与一个浏览器会话完全等价，因此也能装在没有部署服务的机器上；和上面各节的本机运维命令（`init` / `doctor` / `hub` / `relay` 等）边界完全不同。完整手册见[命令行使用手册](./cli-usage.md)。
 
 ### 先登录一次
 

@@ -4,9 +4,9 @@
 
 ## 它是什么，不是什么
 
-`vibeterm login|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
+`vibeterm login|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
 
-`vibeterm init|doctor|upgrade|uninstall|hub|relay|mesh|tls|enroll|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `hub join` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。
+`vibeterm init|doctor|upgrade|uninstall|hub|relay|mesh|tls|enroll|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `hub join` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。
 
 ## 登录
 
@@ -69,9 +69,13 @@ vibeterm tmux select <target>                # 切 tmux 的活动窗口
 vibeterm tmux focus <target>                 # 切活动窗格
 vibeterm tmux resize <target> 120x40
 vibeterm tmux rename-pane <target> worker
+vibeterm tmux move <src-pane> <dst-pane> [--position left|right|top|bottom]
+vibeterm tmux break <pane>
+vibeterm tmux order-windows <device> --ids @1,@0
+vibeterm tmux order-panes <window> --ids %2,%1
 ```
 
-`resize` 请求的尺寸会被 tmux 按窗口布局夹取，拿不到原值是正常的，命令会打印实际尺寸。
+`resize` 请求的尺寸会被 tmux 按窗口布局夹取，拿不到原值是正常的，命令会打印实际尺寸。`move` 的第二参数可以是完整目标，或同一设备上的 location 简写（`%2`、`build.1`）；`--position` 缺省 `right`（与 GUI 拖到窗口标题栏同款）。`break` 把窗格拆成新窗口。`order-*` 的 id 列表按 GUI `reorderById` 语义当前缀匹配（列出的 id 排到前面）。
 
 ## 接进一个终端（交互）
 
@@ -154,12 +158,46 @@ vibeterm term send prod-1/app:logs C-c
 
 第 2 行用了 `--marker`：它会在输出安静之后单独补一行哨兵，因此既能确认命令真的跑完，也能拿到退出码；第 3 行是长跑的流式命令，只能 `send` + `capture`，不能 `run`。
 
+## Agent 会话
+
+`vibeterm agent` 对齐 GUI Agent 面板与 `/api/agent/**`。`--node` 选会话所在网关（默认 entry），不要写进 create body 的 `nodeId`（那会被当成远端 pane 去签 grant）。
+
+```bash
+vibeterm agent ls
+vibeterm agent show <id>
+vibeterm agent new --device <id> --pane <id> [--provider --model --write-mode confirm|auto] [--title]
+vibeterm agent rm <id> [--yes]
+vibeterm agent rename <id> <title>
+vibeterm agent send <id> [--stdin] "<text>"
+vibeterm agent steer <id> "<text>"
+vibeterm agent queue ls <session>
+vibeterm agent queue edit <session> <item> [--stdin] "<text>"
+vibeterm agent queue rm <session> <item>
+vibeterm agent stop <id>
+vibeterm agent confirm <id> approve|deny [--reason]
+vibeterm agent model <id> --provider <p> --model <m>
+vibeterm agent set <id> --write-mode confirm|auto
+vibeterm agent set <id> --allow-control-chars on|off
+```
+
+`new` 未给 `--write-mode` 时默认 `confirm`。`--title` 在创建后再 `PATCH {title}`（创建体没有 title，网关固定 `New Session`）。`queue edit|rm` 语法收 `<session> <item>`，请求只按 item id。`send --stdin` 与 `term send` 相同：读完 stdin，去掉尾换行。`confirm` 遇 409 打 `{result:"conflict"}`。`--json` 打网关信封（`show` 为 `{session, messages}`）。
+
 ## 节点管理
 
 ```bash
 vibeterm nodes ls
+vibeterm nodes show <node>
 vibeterm nodes pause <node>
 vibeterm nodes resume <node>
+vibeterm nodes hub-role promote|demote|standby <node> --yes [--wait] [--force]
+vibeterm nodes relay ls
+vibeterm nodes relay switch <url>
+vibeterm nodes relay rm <url> --yes
+vibeterm nodes relay readmit --yes
+vibeterm nodes ports <node> [--probe]
+vibeterm nodes upgrade cancel <node>
+vibeterm nodes upgrade --ids a,b,c [--version]
+vibeterm nodes op clear <node>
 vibeterm nodes enroll --name studio
 vibeterm nodes allow <node>
 vibeterm nodes meta-key admit <node-id>
@@ -167,21 +205,25 @@ vibeterm nodes meta-key rotate [--exclude <node>...]
 vibeterm nodes revoke <node> --yes
 ```
 
-`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。`ls` 有 PAUSED 列；`--json` 透传 `paused`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。
+`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`；对 Hub 的暂停 → `cannot pause a hub node (CANNOT_PAUSE_HUB)`，恢复 Hub 允许（接回 2.3.5 上被暂停的 Hub）。`ls` 有 PAUSED 列；`--json` 透传 `paused`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
 
-签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。
+`hub-role` 是远程 HTTP 切换（`POST /n/<id>/api/hub/role`），不能用本机运维 `hub promote`（写本机 env）代替。未签名授权时先签 `admit-hub`。`promote` 把指定 hub 升成 writer；`demote` 仅当该节点是 writer，挑后继再 switch，无人接管则只 standby；`standby` 只对该节点 `mode: 'standby'`。`--wait` 轮询 complete + `writerHubId`；旧节点挡住 `admit-hub` 时 `--force` 打强制头。
+
+`nodes relay ls` 是客户端租户侧 `GET /api/mesh/relay/status`（表头对齐本机 `relay list`，多一列 ATTACHED）；本机运维 `vibeterm relay list` 仍打本机回环。`relay switch` 不签 keylog（本机换上行）。`relay rm` / `readmit` 要签名。最后一条中继回 `RELAY_LAST`，提示走本机 `relay leave`。
+
+签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`、`hub-role` 需 admit-hub 时、`relay rm` / `readmit`、中继模式下 `rename`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。
 
 CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分中继 / hub：
 
 - **hub**：`enroll` 打 `/api/hub/enrollments`，打印 `vibeterm hub join <hubUrl> --token …`。`allow <node>` 在 hub 待批准行上签 `admit-node`，否则打开该节点的公网域名访问。
-- **中继**（`mode: 'relay'`）：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm hub join <relayUrl> --token r3.… --name <name>`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
+- **中继**（`mode: 'relay'`）：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm hub join <relayUrl> --token r3.… --name <name>`。`rename` 走 keylog `rename-node`，不再打 hub 控制面。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
 - 中继上 `allow <node>`：若 hub 仍下发了待批准行，先签 `admit-node` 再立刻补一条 `meta-key admit`（同一把根钥，不二次要密码）；若节点已在 `pendingMemberIds`（已接纳但解不开状态块），只补 `meta-key`。网页在别的标签页生成的加入码，证书材料只在那次浏览器会话里，CLI 签不出 `admit-node`——那种情况请用 `meta-key admit`。
 
 `vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 租户编号 / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
 接着是中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE`——`ROLE` 是 `primary`（写记录、出名册的那台）/ `secondary` / `-`（未连接），
-`RTT` 是该条 uplink 自己的心跳时延，`PEERS` 是该中继上在线的对端数，`TURN` 是它下发的 TURN 地址（本机探测不通时标 `(down)`）。
-该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`（已知最佳路径 RTT，毫秒）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发）。`vibeterm nodes` 不受影响。
-配了两台以上中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。路径采样语义见 [路径优选](../architecture/path-selection.md)。
+`RTT` 是该条 uplink 自己的心跳时延，`PEERS` 是该中继上在线的对端数，`TURN` 是它下发的 TURN 地址并带归因：本机 ok 且有 members → `(ok, N/M)`；本机 fail 且有 members → `(down, N/M nodes ok)`；本机 fail 无 members → `(down)`。
+该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`（已知最佳路径 RTT，毫秒）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发），`relays[].turn` 可选 `members` / `localHint`。`--json` 打 `raw`，新字段原样出去。
+配了两台以上中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。路径采样语义见 [路径优选](../architecture/path-selection.md)。中继机本地看用量用 `vibeterm relay metrics [--members] [--json]`。
 
 ## 文件拷贝
 
@@ -192,6 +234,27 @@ vibeterm cp office:home/app/dist ./dist -r
 
 节点侧路径是**相对该文件根**的：`[<node>:]<root>/<path>`。前导 `/` 会被当成文件系统绝对路径并被 `outside_roots` 拒绝，不要写成 `office:/home/u/file`。本地路径才用 `./`、`../`、`~` 或操作系统绝对路径。
 
+浏览与建目录走 `vibeterm files`：
+
+```bash
+vibeterm files mkdir office:home/tmp/new [--recursive]
+vibeterm files roots enable <id|name>
+vibeterm files roots disable <id|name>
+vibeterm files browse --device <id> --path <p> [--hidden]
+```
+
+`--device` / `--path` 对 `browse` 都必填。`--json`：`mkdir` 为 `{ node, rootId, path, created }`；`browse` 为 `{ node, deviceId, path, parent, entries, truncated }`。
+
+## 设备
+
+```bash
+vibeterm devices disconnect <device>
+vibeterm devices folders rename <id> --name <n>
+vibeterm devices folders reset [--yes]
+```
+
+`devices disconnect` 只向**本条** CLI WebSocket 发 `disconnect-device` 并等 `device-disconnected`，**不先** `connect-device`（连接仍由 `tmux` / `term` 隐式完成）。不会拆掉 GUI 或其他客户端已经连上的设备。`folders reset` 非 TTY 必须 `--yes`。
+
 ## 端口映射
 
 ```bash
@@ -199,6 +262,37 @@ vibeterm port map 8080 office:127.0.0.1:8080     # 把 office 上的 8080 映到
 ```
 
 监听节点和目标节点必须是两台不同的机器（含 `self` 与它自己的 mesh id）。网关没有同节点短路，self→self 的映射会显示 `listening`，但连上去每条都 `bad_signature`。
+
+## 设置
+
+客户端 `vibeterm settings` 经 HTTP / keylog 读写网关，与网页端同一安全边界。改密 / TOTP / 删 passkey 只走根钥签名（CLI 无 WebAuthn）。
+
+```bash
+vibeterm settings passwd [--full-reset]
+vibeterm settings totp enable|disable
+vibeterm settings passkey ls
+vibeterm settings passkey rm <id> [--yes]
+vibeterm settings local-auth bootstrap --user <u>
+vibeterm settings local-auth set on|off
+vibeterm settings local direct [--node <id>]
+vibeterm settings system update-check
+vibeterm settings telegram ls|add|edit|rm
+vibeterm settings telegram chats ls <bot>
+vibeterm settings telegram chats approve|test|rm <bot> <chat>
+vibeterm settings weixin ls|add
+vibeterm settings weixin edit|rm|test <account>
+vibeterm settings weixin login start|status <account>
+vibeterm settings weixin users ls <account>
+vibeterm settings weixin users approve <account> <user>
+```
+
+- `passwd`：当前密码 `VIBETERM_PASSWORD` 或隐藏 prompt；新密码 `--new-password*` / `VIBETERM_NEW_PASSWORD` 或 TTY 双次确认。默认 `rotate-root-keep`；`--full-reset` 写 `rotate-root`（非 TTY 要 `--yes`）。keep 路径会话仍有效；全量重置后须重新 `login`。
+- `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。
+- `passkey ls` 人类输出带「注册只能在浏览器」hint。
+- `local-auth` 与 `local direct` 走 `jsonSelf`，尊重 `--node`；远端若非本机回 `403 LOCAL_ONLY`。`local status` / `leave` 仍只打 entry。
+- telegram token 用 `--token*` / `VIBETERM_TELEGRAM_TOKEN`。
+
+与本机运维 `vibeterm hub user passwd|totp` 的对照见 [mesh 运维「账号安全」](./mesh-operations.md)。
 
 ## 终端分享
 

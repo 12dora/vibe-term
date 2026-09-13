@@ -160,6 +160,8 @@ MeshNode.dcBreaker?: {
 
 成员互报走 relay 状态块 / hub `node.status` 的可选 `peer_reach`（键为 nodeId 前 8 hex，≤32 条）。`POST /api/mesh/nodes/:id/ports/probe`（`requireSession`）立刻重探并回 `{ ports }`。进程内结果，peer TCP 探测 3 s 截止、每 peer 至多 5 min 一次。节点表只在 `status === 'blocked'` 时警告；详情框可「重新检测」。
 
+设置页本机卡按行有无决定灯还是「—」：有 `MeshPortReach` 才画点（`open` 绿、`blocked` 红且 `ring-2 ring-destructive`、`unknown` 灰，点上 `data-status`）；今天没有 reach 行的 purpose（如 `public-https` / `turn-*` / `gateway-http`）画「—」，`title` 为「不探测」，不等于灰。`blocked` 且带 `code` 时点的 `title` 追加可读原因（`peer_refused` 连接被拒 / `peer_timeout` 连接超时 / `no_srflx` 未拿到公网映射 / `turn_unreachable` TURN 不通）。本机卡标题按角色区分本机 / Hub / 中继（见 [角色入站端口](../operations/nonstandard-ports.md)）；详情框仍用「入站端口」。红灯仍受后端 blocked 门槛约束（self 要 ≥2 条失败）。本机卡在能解析到 self id 时提供「重新检测」。
+
 ## 3. 信令代次、ICE 配置、链路活性与在途流保护
 
 ### 信令

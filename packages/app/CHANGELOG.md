@@ -1,4 +1,27 @@
+# 2.3.6
+
+_2026-09-13_（未发布）
+
+## English
+
+- **TURN reachability is per-relay, not fleet-wide.** Members’ `turn_ok` reports are bucketed by relay URL. The settings chip and `vibeterm relay list` TURN column now say whether *this machine* can reach that TURN versus how many other nodes can (`N/M`). A timeout on a TUN/proxy host is the local policy dropping outbound UDP (KI-15), not a dead TURN; the chip reads “unreachable here · N/M nodes reachable”.
+- **Nodes table.** Opening the row “more” menu no longer crashes. Pause / Resume live in that menu and in the bulk menu. You cannot newly pause this machine, a hub, or the node the UI is currently forwarded through; a hub paused on 2.3.5 can be resumed after upgrade.
+- **Local-machine inbound ports.** The heading follows role (“ports this machine / Hub / relay must open”), with a legend, a red ring on blocked, “—” for rows that were not probed, and Re-check on this machine.
+- **Copy mode.** The two options sit side by side; the button item is “Copy via button” (finish the selection, then click Copy). Keyboard shortcuts are unchanged.
+- **CLI coverage.** New client group `vibeterm agent` (sessions, send / steer / queue, confirm, model). `nodes` gains hub-role, tenant relay ls/switch/rm/readmit, ports, upgrade cancel / `--ids`, op clear. `settings` gains passwd / totp / passkey / local-auth / telegram / weixin / `system update-check` (`local direct` honours `--node`). Local `relay metrics`. `tmux move|break|order-*`, `devices disconnect` / `folders rename|reset`, `files mkdir` / `roots enable|disable` / `browse`.
+- 端口可达性后端：（待 WPPB 落地后补充）
+
+## 中文
+
+- **TURN 可达性按中继分桶。** 成员 `turn_ok` 按中继 URL 统计。设置页 chip 与 `vibeterm relay list` 的 TURN 列写清「本机」与「舰队」：本机不通、其它节点仍可达时显示「本机不可达 · N/M 节点可达」。TUN/代理主机上的 timeout 是本机策略丢掉境外 UDP（KI-15），不是中继 TURN 挂了。
+- **节点表。** 行内「更多」改为下拉菜单，不再因打开详情而死循环。暂停 / 恢复收进行菜单与批量菜单。不能新暂停本机、Hub、当前正在转发的节点；2.3.5 上被暂停的 Hub 升级后可以恢复。
+- **本机卡入站端口。** 标题随角色（本机 / Hub / 中继需开通端口），带图例；红灯加 ring；未探测的行画「—」；本机可重新检测。
+- **复制方式。** 两项并排；按钮项改名为「点击按钮后复制」（选区完成后再点复制）。快捷键复制不受此开关影响。
+- **CLI 覆盖。** 新增客户端组 `vibeterm agent`（会话、send / steer / queue、confirm、model）。`nodes` 补 hub-role、租户侧 relay ls/switch/rm/readmit、ports、upgrade cancel / `--ids`、op clear。`settings` 补 passwd / totp / passkey / local-auth / telegram / weixin / `system update-check`（`local direct` 尊重 `--node`）。本机 `relay metrics`。`tmux move|break|order-*`、`devices disconnect` / `folders rename|reset`、`files mkdir` / `roots enable|disable` / `browse`。
+- 端口可达性后端：（待 WPPB 落地后补充）
+
 # 2.3.5
+
 
 _2026-09-13_
 

@@ -39,6 +39,8 @@ VibeTerm 的数据面本来就是端口透明的：`canonicalHubUrl` / `normaliz
 | `relay` | 公网 HTTPS + TURN 控制 + TURN 中继 | 443/tcp，40000/udp，40001-40049/udp |
 | `relay,node` | 并集；ICE 与 TURN 分段以免重叠 | 443/tcp，39001/tcp，40050-40099/udp（ICE），40000/udp（TURN 控制），40001-40049/udp（TURN 分配） |
 
+设置页本机卡入站端口标题按本机角色区分：含 `relay` →「中继需开通端口」；`hub,node` →「Hub 需开通端口」；其余 →「本机需开通端口」。节点详情对话框仍用「入站端口」。灯与「—」的呈现见 [节点直连](../architecture/peer-direct-connect.md)「入站端口可达性」与 [mesh 运维](./mesh-operations.md) Nodes 页。
+
 全部 VibeTerm UDP 落在统一段 **40000-40099**（`UNIFIED_UDP_RANGE`）。环境变量：
 
 | 键 | 角色缺省 | 旧默认（2.3.1） |
