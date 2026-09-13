@@ -423,8 +423,8 @@ export abstract class ExternalTmuxConnectionCore {
     this.sessionCommands.selectWindow(windowId);
   }
 
-  createWindow(name?: string, cwd?: string): void {
-    this.sessionCommands.createWindow(name, cwd);
+  createWindow(name?: string, cwd?: string, detached?: boolean): void {
+    this.sessionCommands.createWindow(name, cwd, detached);
   }
 
   closeWindow(windowId: string): void {

@@ -13,7 +13,8 @@ export class CliError extends Error {
   constructor(
     message: string,
     readonly exitCode: number = EXIT_GENERIC,
-    readonly hint?: string
+    readonly hint?: string,
+    readonly code?: string
   ) {
     super(message);
     this.name = 'CliError';
@@ -29,12 +30,8 @@ export class UsageError extends CliError {
 
 /** 需要登录 / 需要二次验证：退出码 3，message 里必须写清下一步命令。 */
 export class AuthError extends CliError {
-  constructor(
-    message: string,
-    hint?: string,
-    readonly code?: string
-  ) {
-    super(message, EXIT_AUTH, hint);
+  constructor(message: string, hint?: string, code?: string) {
+    super(message, EXIT_AUTH, hint, code);
     this.name = 'AuthError';
   }
 }
@@ -44,12 +41,8 @@ export class AuthError extends CliError {
  * `code` 保留服务端给的业务码，message 里必须带上它。重登录救不了这类错误。
  */
 export class PermissionError extends CliError {
-  constructor(
-    message: string,
-    readonly code?: string,
-    hint?: string
-  ) {
-    super(message, EXIT_GENERIC, hint);
+  constructor(message: string, code?: string, hint?: string) {
+    super(message, EXIT_GENERIC, hint, code);
     this.name = 'PermissionError';
   }
 }

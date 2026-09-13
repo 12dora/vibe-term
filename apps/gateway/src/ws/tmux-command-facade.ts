@@ -53,8 +53,14 @@ export class WebSocketServerTmuxFacade {
     tmuxCommands.handleTermPaste(this, deviceId, paneId, data);
   }
 
-  handleCreateWindow(this: TmuxCommandHost, deviceId: string, name?: string, cwd?: string): void {
-    tmuxCommands.handleCreateWindow(this, deviceId, name, cwd);
+  handleCreateWindow(
+    this: TmuxCommandHost,
+    deviceId: string,
+    name?: string,
+    cwd?: string,
+    detached?: boolean
+  ): void {
+    tmuxCommands.handleCreateWindow(this, deviceId, name, cwd, detached);
   }
 
   handleCloseWindow(this: TmuxCommandHost, deviceId: string, windowId: string): void {

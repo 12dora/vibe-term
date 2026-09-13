@@ -49,6 +49,10 @@ export class FakeTransport implements Pick<GatewayTransport, 'send' | 'onEvent'>
 
   constructor(private session: TmuxSession | null) {}
 
+  currentTree(): TmuxSession | null {
+    return this.session;
+  }
+
   send(command: GatewayTransportCommand): boolean {
     this.commands.push(command);
     if (command.type === 'connect-device') {

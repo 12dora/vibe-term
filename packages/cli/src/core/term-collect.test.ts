@@ -109,6 +109,24 @@ describe('formatRunOutput', () => {
     const raw = encoder.encode('cmd\r\nout\r\nno newline here');
     expect(formatRunOutput(raw, { command: 'cmd' })).toBe('out\nno newline here');
   });
+
+  test('strips a multi-line bracketed-paste echo block from paste output', () => {
+    const script = 'echo a\necho b\necho c';
+    const raw = encoder.encode(`\x1b[200~${script}\x1b[201~\ra\nb\nc\nuser@host $ `);
+    expect(formatRunOutput(raw, { command: script, paste: true })).toBe('a\nb\nc');
+  });
+
+  test('strips leading echoed script lines when the pane did not echo CSI', () => {
+    const script = 'echo a\necho b\necho c';
+    const raw = encoder.encode(`${script}\na\nb\nc\nuser@host $ `);
+    expect(formatRunOutput(raw, { command: script, paste: true })).toBe('a\nb\nc');
+  });
+
+  test('does not eat short real output as a paste echo', () => {
+    const script = 'echo a\necho b\necho c';
+    const raw = encoder.encode('a\nb\nc\nuser@host $ ');
+    expect(formatRunOutput(raw, { command: script, paste: true })).toBe('a\nb\nc');
+  });
 });
 
 describe('looksEchoed', () => {

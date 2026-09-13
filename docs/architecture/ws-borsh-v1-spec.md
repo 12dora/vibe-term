@@ -136,6 +136,7 @@ export const EnvelopeSchema = b.struct({
 | 0x0213 | TMUX_RENAME_PANE | C2S | pane 自定义名（gateway 内存 overlay） |
 | 0x0214 | TMUX_MOVE_PANE | C2S | 拖拽重排：move-pane 到目标 pane 某一侧 |
 | 0x0215 | TMUX_BREAK_PANE | C2S | break-pane 拆为独立 window |
+| 0x0216 | TMUX_CREATE_WINDOW_DETACHED | C2S | 后台新建 window（`new-window -d`）；载荷与 0x0203 相同 |
 
 ### 终端数据（0x0300-0x03FF）
 
@@ -376,6 +377,12 @@ EWMA 平滑后下发给已连接该设备的非分享会话：实质变化（|Δ
 - `deviceId: string`
 - `name: option(string)`
 - `cwd: option(string)`
+
+载荷布局冻结：不要加 `detached` 等字段。后台窗口走 `TMUX_CREATE_WINDOW_DETACHED`。
+
+### TMUX_CREATE_WINDOW_DETACHED（0x0216）
+
+字段与 `TMUX_CREATE_WINDOW` 相同。语义是 `new-window -d`。旧网关不认识此 kind，回 `ERROR_UNKNOWN_KIND`（只失败这一次请求）。
 
 ### TMUX_CLOSE_WINDOW（0x0204）
 

@@ -4,7 +4,7 @@
 
 ## 它是什么，不是什么
 
-`vibeterm login|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
+`vibeterm login|whoami|api|nodes|devices|tmux|term|exec|system|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
 
 `vibeterm init|doctor|upgrade|uninstall|hub|relay|mesh|tls|enroll|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `hub join` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。
 
@@ -23,6 +23,8 @@ vibeterm login --entry https://vt.example.com --user admin
 vibeterm whoami           # 当前 entry、账号与各节点会话状态
 vibeterm logout           # 对每个已登录节点各撤销一次会话，并删掉本地记录
 ```
+
+`whoami` 表增加 **READY** 列（`SESSION=yes` 且 `ONLINE=yes`；`--json` 为每行 `ready`）。`SESSION=no ONLINE=yes` 表示节点在线但本 CLI 没有该节点 cookie，stderr 提示 `vibeterm login --node <name>`。READY 才是「现在能不能打这个 node」。
 
 `logout` 撤销的是**服务端**签发的会话，和在网页端退出登录等价：本机 session.json 被删的同时，别处用同一账号拿到的会话也一并失效。丢了笔记本就在任意一台机器上 `vibeterm logout`。
 
@@ -102,22 +104,37 @@ vibeterm term attach office/dev-box:build.1 --history 65536
 
 ## 给 AI agent 用（非交互）
 
-跑在一台机器上的 coding agent（Claude Code 之类）可以用下面三条命令去调试别的节点。全部支持 `--json`，stdout 只有结果，提示都走 stderr。
+跑在一台机器上的 coding agent 可以用下面的命令去调试别的节点。stdout 是结果，提示走 stderr。要可靠的退出码、分 stdout/stderr、喂 stdin：**优先 `vibeterm exec`**，不要往共享 pane 打键。
 
-### 跑一条命令并拿到输出
+### 独立进程（`exec`）
+
+```bash
+vibeterm exec office/dev-box -- echo hello
+vibeterm exec office --shell -- 'apt-get update && apt-get install -y jq'
+echo 'payload' | vibeterm exec laptop --stdin -- cat
+vibeterm exec laptop @script.sh -- bash
+```
+
+- 目标 `[<node>/]<device>`。只写节点名、当前 node 上又没有同名设备时，落到该节点 sortOrder 最低的 **local** 设备。
+- `POST /api/exec` NDJSON。`--timeout` 是全局旗标；**只有命令行显式给出时**才写入请求体 `timeoutMs`。省略则字段不下发，由网关默认 600000 ms（10 分钟，上限 3600000）。不要把全局缺省 30000 当成「用户要 30 秒」。`shell:true` 时 argv 只能有一项，经 **`/bin/sh -c`**（不用 `bash -lc`）。CLI **不会**隐式加 `DEBIAN_FRONTEND` 之类环境变量。
+- 非 TTY 或 `--json`：一行 `{exitCode, signal, stdout, stderr, durationMs, truncated, reason}`，`reason` 为 `exit|timeout|error`。`--json --stream` 原样转发 NDJSON 事件。TTY 且未 `--json` 时 stdout/stderr 按块写回本机对应 fd。
+- CLI 退出码 = 远端退出码；timeout → **124**；未知设备 4、未登录 3、用法 2、spawn/网络 5。
+
+### 往已有窗格打命令（`term run`）
 
 ```bash
 vibeterm term run office/dev-box "bun test" --marker --timeout 120000
-vibeterm term run office/dev-box "systemctl status vibeterm" --idle 1500 --json
+vibeterm term run office --ephemeral --stdin --marker
+vibeterm term run office/dev-box @script.sh --idle 1500
 ```
 
-- 把命令打进窗格并回车，然后收集输出，直到**静默** `--idle` 毫秒（默认 800）或到 `--timeout`。命令必须是**一行**（多行请用 `term send --stdin`）。
-- `--marker`：等输出安静下来之后，再单独打一行 `(echo __VT_DONE_<随机串>_$?)`，据此确认「真跑完了」并拿到退出码（`--json` 的 `exitCode`）。命令还在跑（比如 `sleep 30`）时会一直等到它结束或 `--timeout`。只对 POSIX shell（bash/zsh/sh）成立，fish 用的是 `$status`；主动读 stdin 的命令（`cat`、交互式安装器）会把这一行吃掉，那类命令别用 `run`。裸的 `exit N` 会结束窗格里的 shell，哨兵就没机会跑——请写成 `(exit N)` 或 `sh -c 'exit N'`。
-- 输出上限 8 MiB，收满即停并把 `reason` 标成 `truncated`。
-- `--json` 形状：`{"pane","command","reason":"idle|timeout|done|truncated","exitCode":0|null,"output":"…","raw":"<base64 原始字节>"}`。
-- **退出码**：远端命令自己的成败看 `exitCode`，不影响 CLI 的退出码；但**输出没收全**（`reason` 是 `timeout` 或 `truncated`）时 CLI 退出 **1**，除非显式加 `--allow-timeout`。别把半截输出当成全部。
+- 把命令打进窗格并回车，收集输出直到静默 `--idle`（默认 800）或 `--timeout`。argv 必须是**一行**；多行用 `--stdin` 或 `@file`，正文先把 CRLF/CR 归一成 LF 并剥尾换行，再作为**一次** bracketed-paste（`ESC[200~` … `ESC[201~`）打进去再 `\r`。JSON/`output` 会丢掉这段 paste 回显（CSI 块，或按脚本行数剥 leading echo），不要把回显当命令结果。
+- 目标 pane 的 `currentCommand` 不是 shell（`sh|bash|zsh|fish|dash|ksh|tcsh|login|tmux`；空命令算空闲）时拒绝，退出码 2：「目标 pane 正在运行 \<cmd\>；用 --ephemeral 开新窗口，或用 vibeterm exec」。`ssh` / `sudo` / `su` / `doas` / `docker` / `kubectl` 都算忙。`--force` 跳过。`--ephemeral`：发 `TMUX_CREATE_WINDOW_DETACHED`（`new-window -d`），在新窗口跑，然后无论成功、marker 超时、socket 断开还是 Ctrl-C 都会尝试 `close-window`；关闭失败在 stderr 警告窗口名。旧节点不认识该 kind 时退出码 5：「该节点版本过旧，不支持 --ephemeral」。
+- 只写节点名（没有 `/device`）：当前 node 上没有这台设备、但名字是 mesh 节点时，用该节点第一台 local 设备，人读模式 stderr 打印选了哪台。
+- stdout 不是 TTY 且未给 `--json` 时按 `--json` 输出（agent 默认）；`--no-json` 退出。
+- `--marker`、8 MiB 上限、退出码语义与原来相同。窗格仍是共享 TTY，debconf/needrestart 会吞哨兵——那种场景用 `exec`。
 
-**这是尽力而为的**：窗格是一个共享的交互终端，不是一个干净的 `ssh host cmd`。输出里可能混进提示符、别人同时敲进去的字、或者被终端宽度折行打断的回显。要可靠的完成判定就加 `--marker`；长跑的流式命令（`tail -f`、`npm run dev`）不要用 `run`，它会一直等到超时——改用 `send` + `capture`。
+**`term run` 是尽力而为的**：输出里可能混进提示符。长跑流式命令不要用 `run`。要 `ssh host cmd` 那种语义，用 `exec`。
 
 ### 看当前画面
 
@@ -184,6 +201,15 @@ vibeterm agent set <id> --pane %N
 
 `new` 未给 `--write-mode` 时默认 `confirm`。`--title` 在创建后再 `PATCH {title}`（创建体没有 title，网关固定 `New Session`）；`--origin-title` 进 POST body 的 `originPaneTitle`。`set --pane` 可与 write-mode / allow-control-chars 同发。`confirmations ls` 打 `GET /api/agent/sessions/:id/confirmations`。`queue edit|rm` 语法收 `<session> <item>`，请求只按 item id。`send --stdin` 与 `term send` 相同：读完 stdin，去掉尾换行。`confirm` 遇 409 打 `{result:"conflict"}`。`--json` 打网关信封（`show` 为 `{session, messages}`）。
 
+## 主机信息
+
+```bash
+vibeterm system info
+vibeterm system info --node office --json
+```
+
+合并 `GET /api/system/info` 与 `GET /api/system/facts`（可经 `/n/<id>/` 转发）。人读为 `key  value` 行：os/arch/kernel、cpu、mem、disk /、disk `$HOME`、tmux、docker、deployment、memory profile、version。`nodes show` 仍只展示 mesh/reach，不带 RAM/磁盘。
+
 ## 节点管理
 
 ```bash
@@ -234,7 +260,11 @@ vibeterm cp ./patch.diff office:home/tmp/patch.diff
 vibeterm cp office:home/app/dist ./dist -r
 ```
 
-节点侧路径是**相对该文件根**的：`[<node>:]<root>/<path>`。前导 `/` 会被当成文件系统绝对路径并被 `outside_roots` 拒绝，不要写成 `office:/home/u/file`。本地路径才用 `./`、`../`、`~` 或操作系统绝对路径。
+节点侧路径是**相对该文件根**的：`[<node>:]<root>/<path>`。`home` 是节点上的虚拟根（id `home-root`，路径为该节点 `$HOME`），由 `GET /api/files/roots` 下发且带 `virtual: true`，无需先 `files roots add`；若用户自己建了展示名为 `home` 的启用根，则用户根优先（列表不再附带虚拟项，但 `home-root` id 仍解析到该用户根，与网关一致）。id 形式：`home-root:`、`office:home-root/rel`。虚拟 `home-root` 不使 `fs-root` 失效：节点没有用户启用根时仍可用 `fs-root:`。前导 `/` 会被当成文件系统绝对路径并被 `outside_roots` 拒绝，不要写成 `office:/home/u/file`。本地路径才用 `./`、`../`、`~` 或操作系统绝对路径。
+
+`--json` 时 stdout 为 NDJSON。`type=progress` 额外带 `ratePerSec`（number 或 null）、`etaSec`（number 或 null）、`file`（当前 relPath 或 basename，未知为 null）。
+
+目标节点返回 `rsync_missing_local`（HTTP 502，或 upload commit / download prepare 的 NDJSON `error`）时退出 5，提示「目标节点未安装 rsync（本地设备已无需 rsync；SSH 设备请在该节点安装 rsync）」。本地设备的浏览与拷贝已不再依赖 rsync；SSH 设备仍需在该节点安装 rsync。
 
 浏览与建目录走 `vibeterm files`：
 

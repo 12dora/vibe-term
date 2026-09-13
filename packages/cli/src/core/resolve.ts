@@ -215,6 +215,40 @@ export class Resolver {
       `run: vibeterm devices ls${nodeId === SELF_NODE_ID ? '' : ` --node ${nodeId}`}`
     );
   }
+
+  /**
+   * 目标只有一段、当前 node 上又没有这台设备时：若这段是 mesh 节点名，
+   * 落到该节点上 sortOrder 最低的 local 设备。
+   */
+  async resolveNodeLocalDevice(ref: string): Promise<{
+    node: ResolvedNode;
+    device: DeviceWithRuntime;
+  } | null> {
+    const raw = ref.trim();
+    if (!raw) return null;
+    let node: ResolvedNode;
+    try {
+      node = await this.resolveNode(raw);
+    } catch (error) {
+      if (error instanceof NotFoundError) return null;
+      throw error;
+    }
+    const device = pickFirstLocalDevice(await this.listDevices(node.id));
+    if (!device) return null;
+    return { node, device };
+  }
+}
+
+/** 同 node 上 type=local、sortOrder 最低的设备；没有则 null。 */
+export function pickFirstLocalDevice(
+  devices: readonly DeviceWithRuntime[]
+): DeviceWithRuntime | null {
+  let best: DeviceWithRuntime | null = null;
+  for (const device of devices) {
+    if (device.type !== 'local') continue;
+    if (!best || (device.sortOrder ?? 0) < (best.sortOrder ?? 0)) best = device;
+  }
+  return best;
 }
 
 function nodeResult(row: MeshNode): ResolvedNode {

@@ -68,11 +68,12 @@ export function handleCreateWindow(
   host: TmuxCommandHost,
   deviceId: string,
   name?: string,
-  cwd?: string
+  cwd?: string,
+  detached?: boolean
 ): void {
   const entry = host.connections.get(deviceId);
   if (!entry) return;
-  entry.runtime.createWindow(name, cwd);
+  entry.runtime.createWindow(name, cwd, detached);
 }
 
 export function handleCloseWindow(host: TmuxCommandHost, deviceId: string, windowId: string): void {

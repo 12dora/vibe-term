@@ -59,7 +59,7 @@ export interface DeviceSessionRuntimeConnection {
   selectPaneWithSize(windowId: string, paneId: string, cols: number, rows: number): void;
   selectWindow(windowId: string): void;
   updateDefaultWorkingDir(dir: string | undefined): void;
-  createWindow(name?: string, cwd?: string): void;
+  createWindow(name?: string, cwd?: string, detached?: boolean): void;
   closeWindow(windowId: string): void;
   closePane(paneId: string): void;
   splitPane(paneId: string, direction: 'h' | 'v', cwd?: string): void;
@@ -409,8 +409,8 @@ export class DeviceSessionRuntime {
     this.connection.updateDefaultWorkingDir(dir);
   }
 
-  createWindow(name?: string, cwd?: string): void {
-    this.connection.createWindow(name, cwd);
+  createWindow(name?: string, cwd?: string, detached?: boolean): void {
+    this.connection.createWindow(name, cwd, detached);
   }
 
   closeWindow(windowId: string): void {

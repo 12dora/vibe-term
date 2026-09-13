@@ -25,6 +25,8 @@ export interface CliGlobals {
   quiet: boolean;
   color: boolean;
   timeoutMs: number;
+  /** 命令行是否显式给了 `--timeout`（缺省 30000 不能当成「用户要 30s」）。 */
+  timeoutExplicit: boolean;
   /** `--ca` / `--insecure`。 */
   tls: TlsSettings;
 }
@@ -70,6 +72,7 @@ export function buildContext(options: BuildContextOptions): CliContext {
     install:
       (options.installEntry === undefined ? installBaseUrl() : options.installEntry) ?? undefined,
   });
+  const timeoutExplicit = options.timeoutMs !== undefined;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const tls = options.tls ?? DEFAULT_TLS;
   const globals: CliGlobals = {
@@ -79,6 +82,7 @@ export function buildContext(options: BuildContextOptions): CliContext {
     quiet: options.quiet,
     color: shouldUseColor(options.noColor, env),
     timeoutMs,
+    timeoutExplicit,
     tls,
   };
   const http = new HttpClient({

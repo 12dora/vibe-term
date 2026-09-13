@@ -79,7 +79,8 @@ const COMMAND_ENCODERS: CommandEncoders = {
       rows: command.rows,
       visible: command.visible,
     }),
-  'create-window': (command) => buildTmuxCreateWindow(command.deviceId, command.name, command.cwd),
+  'create-window': (command) =>
+    buildTmuxCreateWindow(command.deviceId, command.name, command.cwd, command.detached),
   'close-window': (command) => buildTmuxCloseWindow(command.deviceId, command.windowId),
   'close-pane': (command) => buildTmuxClosePane(command.deviceId, command.paneId),
   'rename-window': (command) =>

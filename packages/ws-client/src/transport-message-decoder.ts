@@ -152,7 +152,10 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
         });
         return;
       }
-      emit({ type: 'transport-error', error: new Error(decoded.message) });
+      emit({
+        type: 'transport-error',
+        error: new wsBorsh.WsBorshError(decoded.code, decoded.retryable, decoded.message),
+      });
     },
   ],
   [wsBorsh.KIND_CANONICAL_EVENT, decodeCanonicalEvent],

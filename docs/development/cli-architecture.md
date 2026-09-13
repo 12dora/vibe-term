@@ -10,7 +10,7 @@
 
 | | packages/app（原有） | packages/cli（本文） |
 | --- | --- | --- |
-| 命令 | `init` `doctor` `upgrade` `uninstall` `hub` `relay` `mesh` `tls` `enroll` `direct` | `login` `logout` `whoami` `api` `nodes` `devices` `tmux` `term` `files` `cp` `port` `share` `watch` `agent` `settings`（十五个组） |
+| 命令 | `init` `doctor` `upgrade` `uninstall` `hub` `relay` `mesh` `tls` `enroll` `direct` | `login` `logout` `whoami` `api` `nodes` `devices` `tmux` `term` `exec` `system` `files` `cp` `port` `share` `watch` `agent` `settings`（十七个组） |
 | 依赖 | 本机安装目录、SQLite、主密钥；`hub`/`relay` 那组还要 bun 运行时 | 只有 `fetch` 与 WebSocket |
 | 运行时 | Node（`init` 等）+ bun（`cli-auth-entry.ts`） | Node ≥ 20（bundle 也能在 bun 下跑） |
 | 权限 | 本机 root 级配置 | 与一个浏览器会话完全等价 |
@@ -30,7 +30,7 @@
 ```
 packages/cli/src/
   main.ts                入口：找命令、拆全局旗标、建 ctx、翻译退出码；dispatch 表驱动在 `dispatch.ts`
-  registry.ts            命令注册表（十五个已落地组）
+  registry.ts            命令注册表（十七个已落地组）
   version.ts             自报版本（网关的 canonical v1.1 版本门要用）
   commands/
     types.ts             Command 契约
@@ -81,8 +81,8 @@ export const command: Command = {
 };
 ```
 
-2. 在 `src/registry.ts` 的 `IMPLEMENTED_COMMANDS` 登记（十五个组已全部落地，`RESERVED_COMMANDS` 为空）。
-3. `packages/app/src/lib/client-cli.ts` 的 `CLIENT_CLI_COMMANDS` 已经把十五个组全部登记好了，**新增组名时两处都要改**——`registry.test.ts` 会比对两份名单。本机运维新增子命令（如 `relay metrics`）还要挂 `cli-auth-entry.ts` 的 `HANDLERS` 与 `AUTH_COMMANDS`，否则 parse 成功却 dispatch 失败。
+2. 在 `src/registry.ts` 的 `IMPLEMENTED_COMMANDS` 登记（十七个组已全部落地，`RESERVED_COMMANDS` 为空）。
+3. `packages/app/src/lib/client-cli.ts` 的 `CLIENT_CLI_COMMANDS` 已经把十七个组全部登记好了，**新增组名时两处都要改**——`registry.test.ts` 会比对两份名单。本机运维新增子命令（如 `relay metrics`）还要挂 `cli-auth-entry.ts` 的 `HANDLERS` 与 `AUTH_COMMANDS`，否则 parse 成功却 dispatch 失败。
 
 `main.ts` 已经替命令做完这些事：解析并校验全局旗标（未知旗标在这里就报用法错误）、处理 `--help`、把全局旗标从 argv 里摘掉、构造 `ctx`、把抛出的 `CliError` 翻成退出码与提示。命令拿到的 `argv` 里只剩自己的旗标与位置参数。
 
@@ -90,7 +90,7 @@ export const command: Command = {
 
 ```ts
 interface CliContext {
-  globals: { entry, node, json, quiet, color, timeoutMs };
+  globals: { entry, node, json, quiet, color, timeoutMs, timeoutExplicit };
   out: Output;          // 结果走 stdout，提示走 stderr
   http: HttpClient;     // 按 node 记账的 cookie 罐
   sessions: SessionStore;
@@ -101,7 +101,9 @@ interface CliContext {
 }
 ```
 
-- `ctx.http.json(nodeId, method, path, body?)`：非 2xx 直接抛。401、以及 body 里 `error`/`code` 是会话判词的 403（`UNAUTHORIZED`、`via_mismatch`、`expired`、`revoked`、`SESSION_*`、`*LOGIN_REQUIRED`）→ 退出码 3 并带 `vibeterm login --node <id>` 提示；其余 403（`outside_roots`、`FORBIDDEN`、`UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，抛 `PermissionError` → 退出码 1 且 message 带上服务端的业务码；404 → 4，其余 → 1，传输失败 → 5。这套映射只有 `httpStatusError()` 一份，文件族不再有自己的翻译层。
+- `ctx.http.json(nodeId, method, path, body?)`：非 2xx 直接抛。401、以及 body 里 `error`/`code` 是会话判词的 403（`UNAUTHORIZED`、`via_mismatch`、`expired`、`revoked`、`SESSION_*`、`*LOGIN_REQUIRED`）→ 退出码 3 并带 `vibeterm login --node <id>` 提示；其余 403（`outside_roots`、`FORBIDDEN`、`UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，抛 `PermissionError` → 退出码 1 且 message 带上服务端的业务码；404 → 4，其余 → 1，传输失败 → 5。JSON 错误体里的 `code` 会挂到抛出的 `CliError.code`（`json` / `ndjson` 同一条路径），命令组不要再从 message 里正则抠。这套映射只有 `httpStatusError()` 一份，文件族不再有自己的翻译层。
+- `ctx.globals.timeoutExplicit`：命令行是否真的写了 `--timeout`。HTTP 客户端的等待上限仍用 `timeoutMs`（缺省 30000）；`exec` 只有显式时才把 `timeoutMs` 放进 `POST /api/exec` 请求体，否则省略，让网关走 600000 默认。
+- `runExecRequest`：`AuthError` / `NetworkError` / `NotFoundError` 原样上抛（退出码 3/5/4）；其余 HTTP 失败才按业务 `code` remap（`invalid_body` → 2，`device_not_found` → 4，`exec_unsupported_device` / `exec_spawn_failed` / 无码 400 → 5）。
 - `ctx.http.fetch(nodeId, path, init)`：不对状态码做判断，自己处理时用它；`ctx.http.assertOk()` 补上统一翻译。
 - `ctx.http.ndjson(nodeId, path)`：逐行 yield 已解析对象，默认不设超时（长流用）。
 - `ctx.http.bytes(nodeId, path)`：二进制。`RequestOptions.timeoutMs` 可按请求覆盖 `--timeout`，`null` 表示不设。
@@ -243,9 +245,9 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm cp`
 
-`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`./`、`../`、`~`、操作系统绝对路径）。节点侧的 `<path>` 是相对该根的路径；**前导 `/` 表示文件系统绝对路径，会被 `outside_roots` 拒绝**。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 `code: route_not_found`，无该字段时回退英文 `Not found`；区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。
+`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`./`、`../`、`~`、操作系统绝对路径）。节点侧的 `<path>` 是相对该根的路径；**前导 `/` 表示文件系统绝对路径，会被 `outside_roots` 拒绝**。`home` 解析自根列表中的虚拟根 `home-root`（`$HOME`）；用户创建的启用根名为 `home` 时优先。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 `code: route_not_found`，无该字段时回退英文 `Not found`；区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。`rsync_missing_local`（HTTP 502 或 NDJSON error）映射为退出 5 与固定中文提示。
 
-`--json` 时 stdout 仅为 NDJSON 进度：`{"type":"progress"|"item"|"done", ...}`，`done` 带 `files` / `skipped` / `errors` / `truncated`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
+`--json` 时 stdout 仅为 NDJSON 进度：`type=progress` 含 `ratePerSec` / `etaSec` / `file`（未知为 null），`done` 带 `files` / `skipped` / `errors` / `truncated`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
 
 ## `vibeterm port`
 
@@ -372,7 +374,7 @@ dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `setti
 
 - `send`：按键名表在 `core/term-keys.ts`（`Enter`、`C-c`、`M-x`、`S-Up`、`F5`…，认不出的词按字面发；`--literal` 全按字面）。发完等最多 1.5 s 的回显作为「确实进了 pane」的信号，等不到也照样退出 0（很多程序不回显）。
 - `capture`：默认把截屏原始字节写 stdout（颜色保留），`--strip-ansi` 洗成纯文本，`--history <bytes>` 另取一页回滚，`--wait-idle <ms>` 先等 pane 静默再取一次画面。
-- `run`：把命令 + Enter 打进 pane，收字节直到静默 `--idle`（默认 800 ms）或 `--timeout`。
+- `run`：把命令 + Enter 打进 pane，收字节直到静默 `--idle`（默认 800 ms）或 `--timeout`。`--ephemeral` 走独立 kind `TMUX_CREATE_WINDOW_DETACHED`（不改历史 `TMUX_CREATE_WINDOW` 载荷）；结束路径（含 SIGINT）都会尝试关窗，失败写 stderr 警告。
 
 `run` 的完成判定：**网关会吞掉 OSC 133**（`apps/gateway/src/tmux-client/pane-stream/osc-handlers.ts` 的 `HANDLED_OSC_KINDS` 命中即整段不转发），不可见的 shell 集成标记根本到不了客户端。所以 `--marker` 用的是一个**肉眼可见**的哨兵 `(echo __VT_DONE_<nonce>_$?)`，并且分两阶段：
 
@@ -384,6 +386,7 @@ dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `setti
 `run` 的输出剥离是 best-effort（`core/term-collect.ts` 的 `formatRunOutput`）：
 
 - 第一个 LF 之前那段**只在确实是回显时**才丢。`looksEchoed()` 按「压掉空白后是命令的子序列」判定，既能认出被窄 pane 折行重画打散的回显（`li` ⊂ `echohello-cli`），又不会把 `stty -echo` 下命令自己的第一行输出吃掉。
+- `--stdin` / `@file`（`paste: true`）先从 raw 丢掉 `CSI 200~ … CSI 201~` 回显块；pane 没回显 CSI 时再按脚本行数剥 leading echo（短输出不会被当成 `echo a` 的子序列吃掉）。
 - 有哨兵就切到**结果行**为止，并把之前那些回显的哨兵命令用 `scrub()` 从行内抹掉（它可能糊在某个输出行中间）。
 - 结尾再丢一行「看着像提示符」的未换行残留。
 

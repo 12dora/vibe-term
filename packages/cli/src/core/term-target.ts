@@ -33,8 +33,24 @@ export async function resolveTargetDevice(
   const node = target.node
     ? await ctx.resolver.resolveNode(target.node)
     : await ctx.resolver.resolveNode(ctx.globals.node);
-  const device = await ctx.resolver.resolveDevice(node.id, target.device);
-  return { target, nodeId: node.id, nodeName: node.name, device };
+  try {
+    const device = await ctx.resolver.resolveDevice(node.id, target.device);
+    return { target, nodeId: node.id, nodeName: node.name, device };
+  } catch (error) {
+    if (error instanceof NotFoundError && !target.node) {
+      const fallback = await ctx.resolver.resolveNodeLocalDevice(target.device);
+      if (fallback) {
+        ctx.out.info(`using device ${fallback.device.name} on node ${fallback.node.name}`);
+        return {
+          target: { ...target, node: fallback.node.name, device: fallback.device.name },
+          nodeId: fallback.node.id,
+          nodeName: fallback.node.name,
+          device: fallback.device,
+        };
+      }
+    }
+    throw error;
+  }
 }
 
 export interface LocatedPane {

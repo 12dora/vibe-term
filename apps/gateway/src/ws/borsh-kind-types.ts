@@ -14,7 +14,7 @@ export interface BorshDispatchHost {
     data: wsBorsh.b.infer<typeof wsBorsh.schema.TmuxSelectSchema>
   ): void;
   handleTmuxSelectWindow(deviceId: string, windowId: string): void;
-  handleCreateWindow(deviceId: string, name?: string, cwd?: string): void;
+  handleCreateWindow(deviceId: string, name?: string, cwd?: string, detached?: boolean): void;
   handleCloseWindow(deviceId: string, windowId: string): void;
   handleClosePane(deviceId: string, paneId: string): void;
   renameWindow(deviceId: string, windowId: string, name: string): void;
