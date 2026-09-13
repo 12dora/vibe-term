@@ -2,7 +2,7 @@
 // 已经统一到 `@vibeterm/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
 import { existsSync, rmSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import { coveredBytes } from '@vibeterm/transfer';
@@ -13,6 +13,7 @@ import {
   deterministicPartPath,
   fileExpired,
   fileSizeOrZero,
+  partPathOf,
   rangesSidecarPath,
   readReceivedRanges,
   resumableSink,
@@ -35,7 +36,11 @@ export type StagedPackageRecord = {
 export type StagePackageResult =
   | { ok: true; version: string; sha256: string; bytes: number }
   | { ok: false; status: 400; code: 'PACKAGE_SHA256_MISMATCH' | 'BAD_REQUEST' }
-  | { ok: false; status: 409; code: 'UPGRADE_IN_PROGRESS' | 'UPGRADE_MANIFEST_MISMATCH' }
+  | {
+      ok: false;
+      status: 409;
+      code: 'UPGRADE_IN_PROGRESS' | 'UPGRADE_MANIFEST_MISMATCH' | 'UPGRADE_TOTAL_MISMATCH';
+    }
   | { ok: false; status: 409; code: 'UPGRADE_OFFSET_MISMATCH'; receivedBytes: number }
   | { ok: false; status: 413; code: 'PACKAGE_TOO_LARGE' }
   | { ok: false; status: 500; code: 'PACKAGE_INCOMPLETE'; receivedBytes: number }
@@ -82,6 +87,11 @@ export type StageWriteOutcome = StageWriteOk | Extract<StagePackageResult, { ok:
 /** `.part` 名按 (version, sha256) 确定，续传才找得回上一次写到哪。 */
 export function stagedPartPath(stagedDir: string, version: string, sha256: string): string {
   return deterministicPartPath(join(stagedDir, releaseTarballName(version)), sha256);
+}
+
+/** 乱序 `.part` 的 pinned `total`：首个 ranged PUT 写入，后续必须严格相等。 */
+export function stagedTotalPath(partPath: string): string {
+  return `${partPath}.total`;
 }
 
 export function stagedPartExpired(path: string, now: number): boolean {
@@ -143,6 +153,29 @@ export function rangesFromPairs(raw: unknown): Array<{ offset: number; length: n
   return out;
 }
 
+function clipRangesToTotal(
+  ranges: ReadonlyArray<{ offset: number; length: number }>,
+  total: number
+): Array<{ offset: number; length: number }> {
+  const out: Array<{ offset: number; length: number }> = [];
+  for (const range of ranges) {
+    if (range.offset >= total) continue;
+    const length = Math.min(range.length, total - range.offset);
+    if (length > 0) out.push({ offset: range.offset, length });
+  }
+  return out;
+}
+
+export async function readPinnedStagedTotal(partPath: string): Promise<number | null> {
+  try {
+    const n = Number((await readFile(stagedTotalPath(partPath), 'utf8')).trim());
+    if (!Number.isFinite(n) || n < 0) return null;
+    return Math.trunc(n);
+  } catch {
+    return null;
+  }
+}
+
 /** 进行中的 `.part` 进度。已落位的正式包由调用方查 sidecar，这里一律 `complete: false`。 */
 export async function readStagedProgress(
   stagedDir: string,
@@ -150,8 +183,10 @@ export async function readStagedProgress(
   sha256: string
 ): Promise<{ receivedBytes: number; ranges: ReceivedRangePair[]; complete: false }> {
   const partPath = stagedPartPath(stagedDir, version, sha256);
+  const pinned = await readPinnedStagedTotal(partPath);
   if (existsSync(rangesSidecarPath(partPath))) {
-    const ranges = await readReceivedRanges(partPath);
+    const raw = await readReceivedRanges(partPath);
+    const ranges = pinned === null ? raw : clipRangesToTotal(raw, pinned);
     return { receivedBytes: coveredBytes(ranges), ranges: rangePairsOf(ranges), complete: false };
   }
   const size = fileSizeOrZero(partPath);
@@ -179,6 +214,43 @@ function rangeAlreadyCovered(
   return ranges.some((r) => r.offset <= offset && r.offset + r.length >= end);
 }
 
+function rejectRangedBounds(
+  offset: number,
+  length: number,
+  total: number,
+  maxBytes: number
+): Extract<StagePackageResult, { ok: false }> | null {
+  const span = offset + length;
+  if (span > total) return { ok: false, status: 400, code: 'BAD_REQUEST' };
+  if (total > maxBytes || span > maxBytes) {
+    return { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' };
+  }
+  return null;
+}
+
+async function pinStagedTotal(
+  partPath: string,
+  total: number
+): Promise<Extract<StagePackageResult, { ok: false }> | null> {
+  const path = stagedTotalPath(partPath);
+  try {
+    await writeFile(path, `${total}\n`, { flag: 'wx', mode: 0o600 });
+    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') {
+      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    }
+  }
+  const pinned = await readPinnedStagedTotal(partPath);
+  if (pinned === null) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+  if (pinned !== total) return { ok: false, status: 409, code: 'UPGRADE_TOTAL_MISMATCH' };
+  return null;
+}
+
+async function clearPinnedTotal(descriptor: SinkDescriptor): Promise<void> {
+  await rm(stagedTotalPath(partPathOf(descriptor)), { force: true }).catch(() => {});
+}
+
 /**
  * 把一段请求体写入暂存 `.part`。乱序模式下区间收满会校验 sha256 并 `commit` 落位；
  * 追加模式不在这里改名，沿用调用方原来的提交路径。
@@ -197,10 +269,8 @@ export async function writeStagedPackage(input: {
   const length = contentLengthOf(input.opts, ranged);
   const total = ranged ? input.opts?.total : undefined;
   if (ranged && total !== undefined) {
-    const span = offset + (length ?? 0);
-    if (total > input.maxBytes || span > input.maxBytes || offset > total) {
-      return { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' };
-    }
+    const rejected = rejectRangedBounds(offset, length ?? 0, total, input.maxBytes);
+    if (rejected) return rejected;
   }
   await mkdir(input.stagedDir, { recursive: true, mode: 0o700 }).catch(() => {});
   const descriptor = stagedSinkDescriptor({
@@ -211,6 +281,10 @@ export async function writeStagedPackage(input: {
     ranged,
     totalBytes: total,
   });
+  if (ranged && total !== undefined) {
+    const pinned = await pinStagedTotal(partPathOf(descriptor), total);
+    if (pinned) return pinned;
+  }
   const written = await resumableSink.write(descriptor, input.body, {
     offset,
     contentLength: length,
@@ -220,6 +294,7 @@ export async function writeStagedPackage(input: {
   if (written.complete && ranged) {
     const placed = await resumableSink.commit(descriptor);
     if (!placed.ok) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    await clearPinnedTotal(descriptor);
     return {
       ok: true,
       complete: true,
@@ -242,6 +317,7 @@ async function resolveWriteFailure(
   length: number
 ): Promise<StageWriteOutcome> {
   if (written.code === 'sealed') {
+    await clearPinnedTotal(descriptor);
     return { ok: true, complete: true, receivedBytes: descriptor.totalBytes ?? 0, descriptor };
   }
   if (written.code === 'conflict') {
@@ -257,6 +333,7 @@ async function resolveWriteFailure(
     if (state.complete && descriptor.mode === 'ranged') {
       const placed = await resumableSink.commit(descriptor);
       if (!placed.ok) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+      await clearPinnedTotal(descriptor);
       return { ok: true, complete: true, receivedBytes: placed.bytes, descriptor };
     }
     return {

@@ -6,6 +6,7 @@ export class StagingWriteGate {
   version: string | null = null;
   key: string | null = null;
   mode: 'append' | 'ranged' | null = null;
+  total: number | null = null;
   preempt: (() => void) | null = null;
   done: Promise<void> = Promise.resolve();
   private releaseDone: (() => void) | null = null;
@@ -20,6 +21,7 @@ export class StagingWriteGate {
     this.version = null;
     this.key = null;
     this.mode = null;
+    this.total = null;
     this.preempt = null;
     this.done = Promise.resolve();
     this.releaseDone = null;
@@ -30,13 +32,14 @@ export class StagingWriteGate {
     key: string,
     version: string,
     ranged: boolean,
-    isBusy: () => boolean
+    isBusy: () => boolean,
+    total?: number
   ): Promise<StagePackageResult | null> {
-    const decision = await this.withAdmit(() => this.decide(key, version, ranged, isBusy));
+    const decision = await this.withAdmit(() => this.decide(key, version, ranged, isBusy, total));
     if (decision.kind === 'reject') return decision.result;
     if (decision.kind === 'wait') {
       await this.done;
-      return this.admitWrite(key, version, ranged, isBusy);
+      return this.admitWrite(key, version, ranged, isBusy, total);
     }
     return null;
   }
@@ -47,6 +50,7 @@ export class StagingWriteGate {
     this.version = null;
     this.key = null;
     this.mode = null;
+    this.total = null;
     this.preempt = null;
     const release = this.releaseDone;
     this.releaseDone = null;
@@ -66,7 +70,8 @@ export class StagingWriteGate {
     key: string,
     version: string,
     ranged: boolean,
-    isBusy: () => boolean
+    isBusy: () => boolean,
+    total?: number
   ): { kind: 'accept' } | { kind: 'wait' } | { kind: 'reject'; result: StagePackageResult } {
     if (isBusy()) {
       return { kind: 'reject', result: { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' } };
@@ -79,12 +84,19 @@ export class StagingWriteGate {
         this.preempt?.();
         return { kind: 'wait' };
       }
+      if (this.total !== null && this.total !== total) {
+        return {
+          kind: 'reject',
+          result: { ok: false, status: 409, code: 'UPGRADE_TOTAL_MISMATCH' },
+        };
+      }
     }
     this.writes += 1;
     this.version = version;
     this.key = key;
     this.mode = ranged ? 'ranged' : 'append';
     if (this.writes === 1) {
+      this.total = ranged && typeof total === 'number' ? total : null;
       this.done = new Promise<void>((resolve) => {
         this.releaseDone = resolve;
       });

@@ -1332,6 +1332,61 @@ describe('staged package', () => {
       receivedBytes: 20,
     });
   });
+
+  test('ranged PUT pins total; a different total is 409 and GET ranges stay', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const cut = 40;
+    const first = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, cut)), {
+      offset: 0,
+      length: cut,
+      total: bytes.byteLength,
+    });
+    expect(first).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      bytes: cut,
+    });
+    const before = await controller.stagedPackageStatus('1.2.3', hex);
+    expect(before).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      receivedBytes: cut,
+      complete: false,
+      ranges: [[0, cut]],
+    });
+    const bad = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(cut)), {
+      offset: cut,
+      length: bytes.byteLength - cut,
+      total: bytes.byteLength * 2,
+    });
+    expect(bad).toEqual({ ok: false, status: 409, code: 'UPGRADE_TOTAL_MISMATCH' });
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual(before);
+  });
+
+  test('ranged PUT with offset+length > total is 400 and GET ranges stay', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, 20)), {
+      offset: 0,
+      length: 20,
+      total: bytes.byteLength,
+    });
+    const before = await controller.stagedPackageStatus('1.2.3', hex);
+    const beyond = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, 20)), {
+      offset: bytes.byteLength - 10,
+      length: 20,
+      total: bytes.byteLength,
+    });
+    expect(beyond).toEqual({ ok: false, status: 400, code: 'BAD_REQUEST' });
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual(before);
+  });
 });
 
 describe('UpgradeController.cancel', () => {

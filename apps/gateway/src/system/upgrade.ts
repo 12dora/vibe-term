@@ -372,8 +372,12 @@ export class UpgradeController {
     opts?: StagePackageOpts
   ): Promise<StagePackageResult> {
     const key = `${version}:${sha256.trim().toLowerCase()}`;
-    const rejected = await this.staging.admitWrite(key, version, isRangedStageOpts(opts), () =>
-      this.isBusy()
+    const rejected = await this.staging.admitWrite(
+      key,
+      version,
+      isRangedStageOpts(opts),
+      () => this.isBusy(),
+      opts?.total
     );
     if (rejected) return rejected;
     try {

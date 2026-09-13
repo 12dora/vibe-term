@@ -1,13 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { partPathOf } from '@vibeterm/transfer/node';
 import {
   isRangedStageOpts,
   readStagedProgress,
+  stagedPartPath,
   stagedSinkDescriptor,
+  stagedTotalPath,
   writeStagedPackage,
 } from './upgrade-staging';
 
@@ -143,5 +145,46 @@ describe('writeStagedPackage ranged', () => {
     expect(results.every((r) => r.ok)).toBe(true);
     expect(results.some((r) => r.ok && r.complete)).toBe(true);
     expect(readFileSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
+  });
+
+  test('first ranged PUT pins total; a different total is rejected and file/ranges stay', async () => {
+    const stagedDir = tempDir();
+    const bytes = payload(8);
+    const hex = sha256Hex(bytes);
+    const first = await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(0, 4), 0, 8);
+    expect(first).toMatchObject({ ok: true, complete: false, receivedBytes: 4 });
+    const part = stagedPartPath(stagedDir, '1.2.3', hex);
+    expect(readFileSync(stagedTotalPath(part), 'utf8').trim()).toBe('8');
+    const beforeSize = statSync(part).size;
+    const before = await readStagedProgress(stagedDir, '1.2.3', hex);
+    expect(before.ranges).toEqual([[0, 4]]);
+
+    const bad = await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(4), 4, 16);
+    expect(bad).toEqual({ ok: false, status: 409, code: 'UPGRADE_TOTAL_MISMATCH' });
+    expect(await readStagedProgress(stagedDir, '1.2.3', hex)).toEqual(before);
+    expect(statSync(part).size).toBe(beforeSize);
+    expect(readFileSync(stagedTotalPath(part), 'utf8').trim()).toBe('8');
+
+    const rest = await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(4), 4, 8);
+    expect(rest).toMatchObject({ ok: true, complete: true, receivedBytes: 8 });
+    expect(readFileSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
+  });
+
+  test('range beyond total is 400 and does not write or pin', async () => {
+    const stagedDir = tempDir();
+    const bytes = payload(8);
+    const hex = sha256Hex(bytes);
+    const firstBeyond = await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(0, 4), 6, 8);
+    expect(firstBeyond).toEqual({ ok: false, status: 400, code: 'BAD_REQUEST' });
+    const part = stagedPartPath(stagedDir, '1.2.3', hex);
+    expect(existsSync(part)).toBe(false);
+    expect(existsSync(stagedTotalPath(part))).toBe(false);
+
+    await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(0, 4), 0, 8);
+    const before = await readStagedProgress(stagedDir, '1.2.3', hex);
+    const beyond = await writeRange(stagedDir, '1.2.3', hex, bytes.subarray(0, 4), 6, 8);
+    expect(beyond).toEqual({ ok: false, status: 400, code: 'BAD_REQUEST' });
+    expect(await readStagedProgress(stagedDir, '1.2.3', hex)).toEqual(before);
+    expect(readFileSync(stagedTotalPath(part), 'utf8').trim()).toBe('8');
   });
 });
