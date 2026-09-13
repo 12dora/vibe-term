@@ -104,23 +104,28 @@ describe('RelayRows 渲染', () => {
     expect(html).not.toContain('data-testid="nodes-relay-rows"');
   });
 
-  test('一行只剩地址与一枚状态徽标：延迟进徽标，「当前挂载于此中继」整句删掉', () => {
+  test('一行只剩一个状态点与一个主机名：在线与延迟都由卡头那枚徽标说', () => {
     const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true, rttMs: 42 })]} />);
     expect(html).toContain(`data-testid="nodes-relay-row-${HOST}"`);
     expect(html).toContain('data-relay-attached="true"');
     expect(html).toContain('data-relay-online="true"');
     expect(html).toContain(`data-testid="nodes-relay-host-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-status-${HOST}"`);
-    expect(html).toContain('relay.tenant.strip.rtt');
+    // 「延迟 42 ms」「在线」这类徽标不再重复出现在行里
+    expect(html).not.toContain('relay.tenant.strip.rtt');
     expect(html).not.toContain('relay.tenant.strip.attached');
-    // 外面那圈方框没有了
     expect(html).not.toContain('ring-border/60');
   });
 
-  test('在线但延迟未知时徽标说「在线」', () => {
-    const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true })]} />);
-    expect(html).toContain('relay.tenant.strip.online');
-    expect(html).not.toContain('relay.tenant.strip.rtt');
+  test('状态点带可读标签：在线绿、离线红', () => {
+    const online = renderToStaticMarkup(<RelayRows relays={[link({ attached: true })]} />);
+    expect(online).toContain('aria-label="relay.tenant.strip.online"');
+    expect(online).toContain('bg-emerald-500');
+    const offline = renderToStaticMarkup(
+      <RelayRows relays={[link({ attached: true, online: false })]} />
+    );
+    expect(offline).toContain('aria-label="relay.tenant.strip.offline"');
+    expect(offline).toContain('bg-destructive');
   });
 
   test('被踢与错误各占一行红字，错误只查表不印原串', () => {
@@ -132,7 +137,7 @@ describe('RelayRows 渲染', () => {
     expect(html).toContain(`data-testid="nodes-relay-kicked-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-error-${HOST}"`);
     expect(html).toContain('data-relay-failing="true"');
-    expect(html).toContain('relay.tenant.strip.offline');
+    expect(html).toContain('aria-label="relay.tenant.strip.offline"');
     expect(html).not.toContain('boom');
   });
 
@@ -159,7 +164,8 @@ describe('RelayRows 渲染', () => {
     expect(html).toContain('aria-current="true"');
     expect(html).toContain('data-testid="nodes-relay-switch-b.example"');
     expect(html).not.toContain(`data-testid="nodes-relay-switch-${HOST}"`);
-    expect(html).toContain('ring-primary');
+    // 当前那条靠字重区分，不再套一圈 ring
+    expect(html).toContain('font-medium');
   });
 
   test('没传 onSelect 时哪条都不可选', () => {

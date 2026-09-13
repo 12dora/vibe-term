@@ -9,12 +9,22 @@ import { Check, Copy } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-/** 「标签 + 内容」的一行：本机区块里所有条目共用这个左侧固定宽度。 */
-export function Row({ label, children }: { label: string; children: React.ReactNode }) {
+/**
+ * 「标签 + 值」的一行：本机卡里每一条事实都用这一个版式，标签列定宽、值列自适应。
+ * 窄屏（< sm）折成单列——6.5rem 的标签列在 375px 下会把地址挤成竖排。
+ */
+export function Row({
+  label,
+  children,
+  testId,
+}: { label: string; children: React.ReactNode; testId?: string }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="w-32 shrink-0 text-xs text-muted-foreground">{label}</span>
-      {children}
+    <div
+      className="grid grid-cols-1 items-baseline gap-x-3 gap-y-1 text-xs sm:grid-cols-[6.5rem_minmax(0,1fr)]"
+      data-testid={testId}
+    >
+      <span className="text-muted-foreground">{label}</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">{children}</div>
     </div>
   );
 }

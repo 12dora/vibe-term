@@ -156,21 +156,18 @@ export function DomainAccessRow({
   const allowed = applied ?? policy.allowed;
   return (
     <>
-      {/* 开关与标签同一行（与直连插件那一行同一套版式），说明另起一行占满宽度：
-          窄屏下缩进到标签右侧只会把说明压成一列。 */}
-      <div className="flex min-w-0 flex-col gap-1">
-        <Row label={t('nodes.machine.domainAccess.label')}>
-          <Switch
-            size="sm"
-            checked={allowed}
-            disabled={state.pending || policy.hosts.length === 0}
-            onCheckedChange={(next) => void controller.request(Boolean(next))}
-            data-testid="local-machine-domain-access-switch"
-            aria-label={t('nodes.machine.domainAccess.label')}
-          />
-        </Row>
+      {/* 开关与那句「已配置：…」同在值列里：说明只报当前公开域名，关闭的后果留给确认框。 */}
+      <Row label={t('nodes.machine.domainAccess.label')}>
+        <Switch
+          size="sm"
+          checked={allowed}
+          disabled={state.pending || policy.hosts.length === 0}
+          onCheckedChange={(next) => void controller.request(Boolean(next))}
+          data-testid="local-machine-domain-access-switch"
+          aria-label={t('nodes.machine.domainAccess.label')}
+        />
         <span
-          className="text-xs text-muted-foreground"
+          className="min-w-0 text-muted-foreground"
           data-testid="local-machine-domain-access-hint"
         >
           {policy.hosts.length > 0
@@ -178,14 +175,11 @@ export function DomainAccessRow({
             : t('nodes.machine.domainAccess.noHosts')}
         </span>
         {state.error !== null && (
-          <span
-            className="text-xs text-destructive"
-            data-testid="local-machine-domain-access-error"
-          >
+          <span className="w-full text-destructive" data-testid="local-machine-domain-access-error">
             {describeDomainAccessError(t, state.error)}
           </span>
         )}
-      </div>
+      </Row>
 
       <DomainAccessConfirm
         open={state.confirming}

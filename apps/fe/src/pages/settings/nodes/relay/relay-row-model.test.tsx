@@ -192,8 +192,8 @@ describe('两种形态的分叉', () => {
     expect(html).toContain(`data-testid="nodes-relay-turn-${HOST}"`);
     expect(html).toContain('sh.example.com:3478');
     expect(html).toContain('relay.tenant.strip.turnReachable');
-    // 单挂载那枚「在线 / 离线」状态徽标在这个版式里不再出现
-    expect(html).not.toContain(`data-testid="nodes-relay-status-${HOST}"`);
+    // 事实之间只用 `·` 分隔，不再是一排徽标
+    expect(html).not.toContain('data-slot="badge"');
   });
 
   test('多挂载：本机 TURN 失败时展示舰队 tally 与 TUN tooltip', () => {
@@ -218,7 +218,7 @@ describe('两种形态的分叉', () => {
     expect(html).toContain('relay.tenant.strip.turnUnreachable');
     expect(html).toContain('relay.tenant.strip.turnMembersReachable');
     expect(html).toContain('title="relay.tenant.strip.turnTunHint"');
-    expect(html).toContain('text-amber-700');
+    expect(html).toContain('text-amber-600');
   });
 
   test('多挂载：主中继那行的按钮禁用，副中继可点', () => {
@@ -243,12 +243,13 @@ describe('两种形态的分叉', () => {
     expect(html).toContain('relay.tenant.strip.rolePrimary');
   });
 
-  test('单条中继（或旧网关）时版式与今天一模一样', () => {
+  test('单条中继（或旧网关）：只剩状态点与主机名', () => {
     const html = renderToStaticMarkup(
       <RelayRows relays={[row({ attached: true, rttMs: 42 })]} onSelect={() => undefined} />
     );
     expect(html).toContain(`data-testid="nodes-relay-status-${HOST}"`);
-    expect(html).toContain('relay.tenant.strip.rtt');
+    expect(html).toContain(`data-testid="nodes-relay-host-${HOST}"`);
+    expect(html).not.toContain('relay.tenant.strip.rtt');
     expect(html).not.toContain('nodes-relay-role-');
     expect(html).not.toContain('relay.tenant.switch.setPrimary');
   });

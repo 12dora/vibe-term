@@ -137,7 +137,7 @@ describe('NodesTab standalone', () => {
     expect(html).not.toContain('data-testid="local-machine-account-security"');
   });
 
-  test('直连插件不受支持时开关禁用', () => {
+  test('直连插件不受支持时只剩一句状态，开关与按钮都不出现', () => {
     localStatus = status({
       direct: {
         supported: false,
@@ -152,7 +152,8 @@ describe('NodesTab standalone', () => {
     expect(html).toMatch(
       /data-testid="local-machine-direct-status"[^>]*data-direct-state="unsupported"/
     );
-    expect(html).toMatch(/data-testid="local-machine-direct-switch"[^>]*disabled/);
+    expect(html).not.toContain('data-testid="local-machine-direct-switch"');
+    expect(html).not.toContain('data-testid="local-machine-direct-install"');
   });
 });
 

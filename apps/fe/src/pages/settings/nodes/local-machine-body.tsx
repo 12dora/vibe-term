@@ -32,8 +32,6 @@ export interface LocalMachineBodyProps {
   wizardPath: SetupIntent | null;
   wizardRelayRole: SetupRelayRole;
   selfRelayFollowUp: boolean;
-  changeHubDisabled: boolean;
-  onChangeHub: () => void;
   directBusy: boolean;
   directPending: LocalDirectAction | null;
   directError: string | null;
@@ -58,8 +56,6 @@ export function LocalMachineBody(props: LocalMachineBodyProps) {
           selfNodeId={props.mode?.nodeId ?? null}
           standalone={props.standalone}
           uplink={uplink}
-          changeHubDisabled={props.changeHubDisabled}
-          onChangeHub={props.onChangeHub}
           wizardPath={props.wizardPath}
           wizardRelayRole={props.wizardRelayRole}
           selfRelayFollowUp={props.selfRelayFollowUp}
@@ -88,7 +84,6 @@ export function LocalMachineBody(props: LocalMachineBodyProps) {
           domainApi={props.domainApi}
           onRefresh={props.onRefresh}
           portPlan={portPlanOrFallback(portPlanFromStatus(status), asPortRole(status.role, 'node'))}
-          localRole={status.role}
           selfNodeId={props.mode?.nodeId ?? null}
         />
       </CardSection>

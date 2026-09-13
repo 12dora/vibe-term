@@ -1,5 +1,5 @@
-// 本机卡入站端口：标题按本机角色说清「谁的口」。
-// 灯三态：绿=open、红=blocked、灰=unknown 或尚未探测（无 reach 行）。
+// 本机卡「网络」段的端口行：一行标签 + 一串端口条目，灯的 title / aria-label 直接说清三态，
+// 不再单摆一句图例。灯三态：绿=open、红=blocked、灰=unknown 或尚未探测（无 reach 行）。
 
 import { TONE_CLASS } from '@/lib/tone';
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
@@ -10,10 +10,10 @@ import { Button } from '@vibeterm/ui/button';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Row } from './copy-feedback';
 import {
   type MeshPortReach,
   type MeshPortReachStatus,
-  localPortsTitleKey,
   parsePortReachList,
   reachForSpec,
 } from './port-reach';
@@ -49,7 +49,6 @@ export function portDotTitle(t: (key: string) => string, reach: MeshPortReach): 
 export function PortsSection({
   plan,
   reach,
-  localRole,
   selfNodeId,
   probe = defaultProbe,
   busy: busyOverride,
@@ -58,7 +57,6 @@ export function PortsSection({
   plan: PortSpec[];
   /** 测试注入；缺省读 mesh 列表里的 self 行。 */
   reach?: MeshPortReach[] | null;
-  localRole?: string | null;
   selfNodeId?: string | null;
   probe?: ProbeNodePorts;
   busy?: boolean;
@@ -74,14 +72,20 @@ export function PortsSection({
   const probeError = errorOverride ?? error;
   if (plan.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1.5" data-testid="local-machine-ports">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium">{t(localPortsTitleKey(localRole))}</span>
+    <Row label={t('nodes.ports.label')} testId="local-machine-ports">
+      {/* 「重新检测」钉在值列右端，不进端口列表的流：否则端口多起来它会被挤到下一行。 */}
+      <div className="flex w-full items-start justify-between gap-2">
+        <ul className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+          {plan.map((spec) => (
+            <PortItem key={spec.purpose} spec={spec} ports={ports} />
+          ))}
+        </ul>
         {selfId && (
           <Button
             type="button"
             size="xs"
-            variant="outline"
+            variant="ghost"
+            className="shrink-0"
             disabled={probing}
             onClick={() => void recheck()}
             data-testid="local-machine-ports-recheck"
@@ -91,34 +95,26 @@ export function PortsSection({
           </Button>
         )}
       </div>
-      <p className="text-[11px] text-muted-foreground" data-testid="local-machine-ports-legend">
-        {t('localMachine.ports.legend')}
-      </p>
-      <ul className="flex flex-col gap-1">
-        {plan.map((spec) => (
-          <PortRow key={spec.purpose} spec={spec} ports={ports} />
-        ))}
-      </ul>
       {probeError && (
-        <p className="text-[11px] text-destructive" data-testid="local-machine-ports-error">
+        <p className="w-full text-destructive" data-testid="local-machine-ports-error">
           {probeError}
         </p>
       )}
-    </div>
+    </Row>
   );
 }
 
-function PortRow({ spec, ports }: { spec: PortSpec; ports: MeshPortReach[] | undefined }) {
+function PortItem({ spec, ports }: { spec: PortSpec; ports: MeshPortReach[] | undefined }) {
   const { t } = useTranslation();
   const reach = reachForSpec(ports, spec);
   const status = reach?.status ?? 'unknown';
   return (
     <li
-      className="flex items-center gap-2 text-xs"
+      className="flex items-center gap-1.5 text-xs"
       data-testid={`local-port-${spec.purpose}`}
       data-port-status={status}
     >
-      <PortIndicator spec={spec} reach={reach} status={status} />
+      <PortIndicator purpose={spec.purpose} reach={reach} status={status} />
       <code className="font-mono">{formatPortSpec(spec)}</code>
       <span className="text-muted-foreground">{t(`ports.purpose.${spec.purpose}`)}</span>
     </li>
@@ -126,23 +122,25 @@ function PortRow({ spec, ports }: { spec: PortSpec; ports: MeshPortReach[] | und
 }
 
 function PortIndicator({
-  spec,
+  purpose,
   reach,
   status,
 }: {
-  spec: PortSpec;
+  purpose: PortSpec['purpose'];
   reach: MeshPortReach | undefined;
   status: MeshPortReachStatus;
 }) {
   const { t } = useTranslation();
+  // 图例撤掉之后，灯的三态只能靠自己说清楚：title 给鼠标，aria-label 给读屏。
   const title = reach ? portDotTitle(t, reach) : t('localMachine.ports.notProbedTitle');
   return (
     <span
       className={`size-1.5 shrink-0 rounded-full ${TONE_CLASS.dot[PORT_DOT_TONE[status]]}`}
       title={title}
-      data-testid={`local-port-dot-${spec.purpose}`}
+      role="img"
+      aria-label={title}
+      data-testid={`local-port-dot-${purpose}`}
       data-status={status}
-      aria-hidden
     />
   );
 }

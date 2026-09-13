@@ -36,6 +36,7 @@ import { useRestartGateway } from './restart/use-restart-now';
 import { useSetupCommitted } from './setup/setup-transition';
 import { attachedHubRtt, resolveAttachedHub } from './uplink/hub-uplink-panel';
 import type { LocalUplinkController } from './uplink/local-uplink-controller';
+import { useConnectMenu } from './uplink/use-connect-menu';
 
 export interface LocalMachineCardProps {
   mode: AuthModeResponse | null;
@@ -192,6 +193,9 @@ export function LocalMachineCard({
 
   const domainApi = useMemo(() => domainAccessApi(client), [client]);
   const badge = machineBadge(meshEnabled, status, uplink, mode?.nodeId ?? null);
+  const locked = leave.busy || setupCommitted;
+  const changeHub = () => role.setRequest(CHANGE_HUB_REQUEST);
+  const connectActions = useConnectMenu({ status, uplink, locked, onChangeHub: changeHub });
 
   return (
     <Card data-testid="local-machine-card">
@@ -200,7 +204,8 @@ export function LocalMachineCard({
           role={status?.role ?? null}
           status={badge}
           meshEnabled={meshEnabled}
-          roleLocked={leave.busy || setupCommitted}
+          roleLocked={locked}
+          connectActions={connectActions}
           onSelectRole={role.select}
           onLeave={() => role.select('standalone')}
         />
@@ -237,8 +242,6 @@ export function LocalMachineCard({
             wizardPath={wizardPath}
             wizardRelayRole={wizardRelayRole}
             selfRelayFollowUp={selfRelayFollowUp}
-            changeHubDisabled={leave.busy}
-            onChangeHub={() => role.setRequest(CHANGE_HUB_REQUEST)}
             directBusy={mutations.busy || restart.waiting}
             directPending={mutations.pending}
             directError={directError}
@@ -255,6 +258,26 @@ export function LocalMachineCard({
         ) : null}
       </CardContent>
 
+      <CardDialogs mutations={mutations} uplink={uplink} role={role} leave={leave} />
+    </Card>
+  );
+}
+
+/** 卡片挂着的几个对话框：删除直连、退出 / 换角色、退出流程自己的进度、凭据提示。 */
+function CardDialogs({
+  mutations,
+  uplink,
+  role,
+  leave,
+}: {
+  mutations: ReturnType<typeof useDirectMutations>;
+  uplink: LocalUplinkController;
+  role: ReturnType<typeof useRoleSwitch>;
+  leave: ReturnType<typeof useLeaveMesh>;
+}) {
+  const request = role.request;
+  return (
+    <>
       <RemoveConfirm
         open={mutations.confirmingRemove}
         relayMode={uplink.relay.relayMode}
@@ -262,14 +285,14 @@ export function LocalMachineCard({
         onCancel={mutations.cancelRemove}
       />
       <LeaveDialog
-        request={role.request}
+        request={request}
         leave={leave}
         onConfirm={() => {
-          if (role.request) {
+          if (request) {
             leave.run({
-              from: role.request.from,
-              targetRole: role.request.targetRole,
-              intent: role.request.intent,
+              from: request.from,
+              targetRole: request.targetRole,
+              intent: request.intent,
             });
           }
         }}
@@ -280,6 +303,6 @@ export function LocalMachineCard({
       />
       {leave.dialog}
       {uplink.prompt.dialog}
-    </Card>
+    </>
   );
 }

@@ -13,9 +13,8 @@ import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
 import { Progress } from '@vibeterm/ui/progress';
 import { ChevronRight } from 'lucide-react';
-import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CopyableValue } from './copy-feedback';
+import { CopyableValue, Row } from './copy-feedback';
 import { type RelayQuotaRow, relayQuotaRows } from './relay/relay-quota';
 import {
   CANDIDATE_ERROR_MAX,
@@ -59,17 +58,17 @@ export function ConnectionDetailsContent({ relay, hubs, selfNodeId }: Connection
   return (
     <div className="flex flex-col gap-1.5 pt-2 text-xs" data-testid="local-machine-details-content">
       {relay.relayMode && relay.tenantId && (
-        <DetailRow
-          label={t('relay.tenant.strip.tenantId')}
-          hint={t('relay.tenant.strip.tenantIdHint')}
-        >
+        <Row label={t('relay.tenant.strip.tenantId')}>
           <CopyableValue value={relay.tenantId} testId="nodes-relay-tenant-id" mono />
-        </DetailRow>
+          <span className="basis-full text-[11px] text-muted-foreground">
+            {t('relay.tenant.strip.tenantIdHint')}
+          </span>
+        </Row>
       )}
       {selfNodeId && (
-        <DetailRow label={t('nodes.machine.details.nodeId')}>
+        <Row label={t('nodes.machine.details.nodeId')}>
           <CopyableValue value={selfNodeId} testId="local-machine-node-id" mono />
-        </DetailRow>
+        </Row>
       )}
       {relay.relayMode && <RelayDetails relay={relay} />}
       {hubs.hubs.length > 0 && <HubDetails hubs={hubs} />}
@@ -82,14 +81,14 @@ function RelayDetails({ relay }: { relay: UseMeshRelayResult }) {
   const quota = relay.quota;
   return (
     <>
-      <DetailRow label={t('nodes.machine.details.nodesViaRelay')}>
+      <Row label={t('nodes.machine.details.nodesViaRelay')}>
         <span data-testid="nodes-relay-peers">{relay.nodesViaRelay}</span>
-      </DetailRow>
+      </Row>
       {quota &&
         relayQuotaRows(quota).map((row) => (
-          <DetailRow key={row.kind} label={t(row.labelKey)}>
+          <Row key={row.kind} label={t(row.labelKey)}>
             <QuotaValue row={row} />
-          </DetailRow>
+          </Row>
         ))}
     </>
   );
@@ -131,7 +130,7 @@ function HubDetails({ hubs }: { hubs: MeshHubsState }) {
   const { t } = useTranslation();
   const byUrl = indexCandidates(hubs.candidates);
   return (
-    <DetailRow label={t('nodes.machine.details.hubs')}>
+    <Row label={t('nodes.machine.details.hubs')}>
       <span
         className="flex min-w-0 flex-1 flex-col gap-1.5"
         data-testid="local-machine-hub-details"
@@ -146,7 +145,7 @@ function HubDetails({ hubs }: { hubs: MeshHubsState }) {
           />
         ))}
       </span>
-    </DetailRow>
+    </Row>
   );
 }
 
@@ -189,25 +188,5 @@ function HubDetailLines({
         </span>
       )}
     </span>
-  );
-}
-
-function DetailRow({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex flex-wrap items-start gap-2">
-      <span className="w-32 shrink-0 pt-0.5 text-muted-foreground">{label}</span>
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        {children}
-        {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
-      </span>
-    </div>
   );
 }

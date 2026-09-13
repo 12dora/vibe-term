@@ -1,6 +1,6 @@
 // 直连插件区：安装（下载 `native/`）和启用（`VIBETERM_DIRECT_ENABLED`）是两件独立的事——装好的插件
-// 可以先关着，关掉也不必删文件，两者只在「未安装时开关不可用」上耦合，所以按钮管安装 / 删除，
-// 开关管启用 / 停用。四个动作都要重启网关才生效，横幅与重启入口由调用方给出。
+// 可以先关着，关掉也不必删文件，所以按钮管安装 / 删除，开关管启用 / 停用，且开关只在装好之后出现。
+// 四个动作都要重启网关才生效，横幅与重启入口由调用方给出。
 
 import { LocalApiError } from '@vibeterm/api-client/local/local-api';
 import type {
@@ -9,11 +9,9 @@ import type {
   LocalDirectStatus,
 } from '@vibeterm/api-client/local/types';
 import { errorMessage } from '@vibeterm/shared';
-import { Badge } from '@vibeterm/ui/badge';
 import { Button } from '@vibeterm/ui/button';
 import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Switch } from '@vibeterm/ui/switch';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@vibeterm/ui/tooltip';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -149,8 +147,8 @@ export function useDirectMutations(api: DirectApi, callbacks: DirectMutationCall
   };
 }
 
-/** 单枚状态徽章：不支持 → 未安装 → 已安装（带版本）。启用与否交给同一行的开关表达。 */
-export function directStatusBadge(
+/** 一句状态文本：不支持 → 未安装 → 已安装（有版本就只报版本）。启用与否交给同一行的开关。 */
+export function directStatusText(
   direct: LocalDirectStatus,
   t: Translate
 ): { state: string; text: string } {
@@ -163,7 +161,7 @@ export function directStatusBadge(
   return {
     state: 'installed',
     text: direct.version
-      ? t('nodes.machine.directInstalledVersion', { version: direct.version })
+      ? t('nodes.machine.directVersion', { version: direct.version })
       : t('nodes.machine.directInstalled'),
   };
 }
@@ -182,96 +180,88 @@ export function DirectSection({
   onAction: (action: LocalDirectAction) => void;
 }) {
   const { t } = useTranslation();
-  const { supported, installed, enabled } = direct;
-  const primary = installed ? 'remove' : 'install';
-  const PrimaryIcon = installed ? Trash2 : Download;
-  const badge = directStatusBadge(direct, t);
+  const { supported, installed } = direct;
+  const status = directStatusText(direct, t);
   return (
-    <>
-      <Row label={t('nodes.machine.direct')}>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <Badge
-            variant="outline"
-            data-testid="local-machine-direct-status"
-            data-direct-state={badge.state}
-          >
-            {badge.text}
-          </Badge>
-          <DirectSwitch
-            supported={supported}
-            installed={installed}
-            enabled={enabled}
-            busy={busy}
-            onAction={onAction}
-          />
-          <Button
-            type="button"
-            size="xs"
-            variant={installed ? 'ghost' : 'outline'}
-            disabled={!supported || busy}
-            onClick={() => onAction(primary)}
-            data-testid={`local-machine-direct-${primary}`}
-          >
-            {pending === primary ? <Loader2 className="animate-spin" /> : <PrimaryIcon />}
-            {t(installed ? 'nodes.machine.directRemove' : 'nodes.machine.directInstall')}
-          </Button>
-        </div>
-      </Row>
-
+    <Row label={t('nodes.machine.direct')}>
+      {supported && installed && (
+        <DirectSwitch enabled={direct.enabled} busy={busy} onAction={onAction} />
+      )}
+      <span
+        className={status.state === 'installed' ? 'text-muted-foreground' : undefined}
+        data-testid="local-machine-direct-status"
+        data-direct-state={status.state}
+      >
+        {status.text}
+      </span>
+      {supported && (
+        <DirectAction installed={installed} busy={busy} pending={pending} onAction={onAction} />
+      )}
       {error && (
-        <p className="text-xs text-destructive" data-testid="local-machine-direct-error">
+        <p className="w-full text-destructive" data-testid="local-machine-direct-error">
           {error}
         </p>
       )}
-    </>
+    </Row>
   );
 }
 
-/**
- * 启用开关。未安装时开关本身是禁用的，禁用态的控件不派发指针事件，说明只能挂在外层的
- * 触发器上——这也正好把原来那句常驻的「请先安装插件」从版面上撤掉。
- */
+/** 装好之后才有的启用开关：没装就只给「安装」，不摆一个拨不动的开关。 */
 function DirectSwitch({
-  supported,
-  installed,
   enabled,
   busy,
   onAction,
 }: {
-  supported: boolean;
-  installed: boolean;
   enabled: boolean;
   busy: boolean;
   onAction: (action: LocalDirectAction) => void;
 }) {
   const { t } = useTranslation();
-  const control = (
+  return (
     <label
-      className="flex items-center gap-1.5 text-xs text-muted-foreground"
+      className="flex items-center gap-1.5 text-muted-foreground"
       htmlFor="local-machine-direct-switch"
     >
       {t('nodes.machine.directEnable')}
       <Switch
         id="local-machine-direct-switch"
         size="sm"
-        checked={installed && enabled}
-        disabled={!supported || !installed || busy}
+        checked={enabled}
+        disabled={busy}
         onCheckedChange={(checked) => onAction(checked ? 'enable' : 'disable')}
         data-testid="local-machine-direct-switch"
       />
     </label>
   );
-  if (!supported || installed) return control;
+}
+
+/** 当前状态只对应一个动作：没装给「安装」，装了给「删除」。 */
+function DirectAction({
+  installed,
+  busy,
+  pending,
+  onAction,
+}: {
+  installed: boolean;
+  busy: boolean;
+  pending: LocalDirectAction | null;
+  onAction: (action: LocalDirectAction) => void;
+}) {
+  const { t } = useTranslation();
+  const action = installed ? 'remove' : 'install';
+  const Icon = installed ? Trash2 : Download;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        className="inline-flex"
-        render={<span data-testid="local-machine-direct-hint" />}
-      >
-        {control}
-      </TooltipTrigger>
-      <TooltipContent>{t('nodes.machine.directNeedsInstall')}</TooltipContent>
-    </Tooltip>
+    <Button
+      type="button"
+      size="xs"
+      variant={installed ? 'ghost' : 'outline'}
+      disabled={busy}
+      onClick={() => onAction(action)}
+      data-testid={`local-machine-direct-${action}`}
+    >
+      {pending === action ? <Loader2 className="animate-spin" /> : <Icon />}
+      {t(installed ? 'nodes.machine.directRemove' : 'nodes.machine.directInstall')}
+    </Button>
   );
 }
 

@@ -72,8 +72,6 @@ function renderPanel(role: LocalRole, hubs: MeshHubsState, selfNodeId = 'me'): s
       hubOnline
       hubLoading={false}
       hubFailure={null}
-      changeHubDisabled={false}
-      onChangeHub={() => undefined}
     />
   );
 }
@@ -193,7 +191,7 @@ describe('orderHubs', () => {
 });
 
 describe('Hub 形态的版式', () => {
-  test('纯 node：当前 Hub 一行 + 更换 Hub，不摆本机地址', () => {
+  test('纯 node：「上级」一行说完名字与地址，不摆本机地址，换 Hub 收进卡片菜单', () => {
     const row = hub({ nodeId: 'h1', name: 'hub-a' });
     const html = renderPanel(
       'node',
@@ -212,7 +210,8 @@ describe('Hub 形态的版式', () => {
     expect(html).toContain('data-testid="local-uplink-hub-panel"');
     expect(html).toContain('data-testid="local-machine-attached-hub"');
     expect(html).toContain('>hub-a<');
-    expect(html).toContain('data-testid="local-machine-change-hub"');
+    expect(html).toContain('nodes.machine.upstream');
+    expect(html).not.toContain('data-testid="local-machine-change-hub"');
     expect(html).not.toContain('nodes.machine.localAddress"');
     // 单台 hub 不摆列表
     expect(html).not.toContain('data-testid="local-machine-hub-list"');
@@ -229,7 +228,17 @@ describe('Hub 形态的版式', () => {
     expect(html).not.toContain('data-testid="local-machine-change-hub"');
   });
 
-  test('hub 兼节点但没有公开地址：说未设置并指回角色菜单', () => {
+  test('主 / 备是这一行的正文，不再是描边徽标', () => {
+    const self = hub({ nodeId: 'me', name: 'hub-self' });
+    const html = renderPanel('hub,node', hubsState({ hubs: [self], writerHubId: 'me' }));
+    const tag = html.slice(html.indexOf('data-testid="local-machine-attached-hub-mode"'));
+    expect(tag).not.toContain('data-hub-mode');
+    expect(html).not.toContain('border-border px-1 py-px text-[10px]');
+    // 名字与主 / 备之间只有一个 `·`
+    expect(html).toContain('aria-hidden="true">·</span>');
+  });
+
+  test('hub 兼节点但没有公网地址：只说未设置与后果', () => {
     const html = renderToStaticMarkup(
       <HubUplinkPanel
         localRole="hub,node"
@@ -239,19 +248,21 @@ describe('Hub 形态的版式', () => {
         hubOnline
         hubLoading={false}
         hubFailure={null}
-        changeHubDisabled={false}
-        onChangeHub={() => undefined}
       />
     );
     expect(html).toContain('data-testid="local-machine-local-address-unset"');
     expect(html).toContain('nodes.machine.localAddressHint');
-    expect(zhCN.translation.nodes.machine.localAddressHint).toContain('更改角色');
+    // 一句话说清后果就够，去哪儿改由角色菜单回答
+    expect(zhCN.translation.nodes.machine.localAddressHint).toBe(
+      '未设置公网地址，其它节点无法加入本机。'
+    );
   });
 
-  test('没挂上任何 Hub：说未连接，仍可更换 Hub', () => {
+  test('没挂上任何 Hub：值就是「未连接」，不在行里补按钮', () => {
     const html = renderPanel('node', hubsState());
     expect(html).toContain('data-testid="local-machine-hub-disconnected"');
-    expect(html).toContain('data-testid="local-machine-change-hub"');
+    expect(html).toContain('nodes.machine.hubDisconnected');
+    expect(html).not.toContain('data-testid="local-machine-change-hub"');
   });
 
   test('挂在备 Hub 上：同一行补出当前写者', () => {

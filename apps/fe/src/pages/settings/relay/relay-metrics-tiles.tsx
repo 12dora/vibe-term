@@ -1,4 +1,5 @@
-// 指标磁贴：紧凑排（本机卡片）与完整排（中继标签）共用同一批格子，差别只在摆哪几个。
+// 指标磁贴：「中继」标签的完整排。本机卡上的运行摘要是一行文字（`relay-service-metrics.tsx`），
+// 不再借这里的格子。
 
 import { Skeleton } from '@vibeterm/ui/skeleton';
 import type * as React from 'react';
@@ -20,34 +21,10 @@ import {
   TenantsTile,
   ThroughputTile,
   TrafficTile,
-  UptimeTile,
 } from './relay-metrics-tile-items';
 
 export type { MetricsTileProps };
 export { ThroughputTile };
-
-/** 第二排的瘦格子：同一个磁贴，数值字号收一档。 */
-const THIN_TILE = '[&_[data-slot=stat-tile-value]]:text-base';
-
-/** 本机卡片上的紧凑排：主排四格 + 一条瘦排。 */
-export function RelayCompactTiles(props: MetricsTileProps) {
-  return (
-    <div className="flex flex-col gap-2" data-testid="relay-metrics-compact">
-      {/* 320–375px 下两列会把「16.0 KB/s」这类读数挤掉：基础断点单列，sm 两列，lg 四列。 */}
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <MembersOnlineTile {...props} />
-        <ActiveStreamsTile {...props} />
-        <ThroughputTile {...props} showTotal />
-        <LatencyTile {...props} />
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        <MemoryTile {...props} className={THIN_TILE} />
-        <CpuTile {...props} className={THIN_TILE} />
-        <UptimeTile {...props} className={THIN_TILE} />
-      </div>
-    </div>
-  );
-}
 
 /**
  * 完整排的栅格：1280px 视口下面板本身只有 ~880px，六列会把「1.20 MB/s」这类读数压掉，

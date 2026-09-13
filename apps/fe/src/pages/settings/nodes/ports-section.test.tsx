@@ -18,8 +18,10 @@ describe('PortsSection', () => {
   test('缺探测行时画灰点 unknown，不是破折号', () => {
     const html = renderToStaticMarkup(<PortsSection plan={plan} reach={null} />);
     expect(html).toContain('data-testid="local-machine-ports"');
-    expect(html).toContain('localMachine.ports.titleNode');
-    expect(html).toContain('localMachine.ports.legend');
+    expect(html).toContain('nodes.ports.label');
+    // 图例撤了：三态只由灯自己的 title / aria-label 说明
+    expect(html).not.toContain('data-testid="local-machine-ports-legend"');
+    expect(html).not.toContain('localMachine.ports.legend');
     expect(html).toContain('data-port-status="unknown"');
     expect(html).toContain('data-status="unknown"');
     expect(html).toContain('localMachine.ports.notProbedTitle');
@@ -28,16 +30,13 @@ describe('PortsSection', () => {
     expect(html).not.toContain('ring-2');
   });
 
-  test('标题随角色变化', () => {
-    expect(
-      renderToStaticMarkup(<PortsSection plan={plan} reach={null} localRole="node" />)
-    ).toContain('localMachine.ports.titleNode');
-    expect(
-      renderToStaticMarkup(<PortsSection plan={hubPlan} reach={null} localRole="hub,node" />)
-    ).toContain('localMachine.ports.titleHub');
-    expect(
-      renderToStaticMarkup(<PortsSection plan={plan} reach={null} localRole="relay,node" />)
-    ).toContain('localMachine.ports.titleRelay');
+  test('标签不再随角色变化，端口条目跟着计划走', () => {
+    const node = renderToStaticMarkup(<PortsSection plan={plan} reach={null} />);
+    expect(node).toContain('nodes.ports.label');
+    expect(node).not.toContain('data-testid="local-port-public-https"');
+    const hub = renderToStaticMarkup(<PortsSection plan={hubPlan} reach={null} />);
+    expect(hub).toContain('nodes.ports.label');
+    expect(hub).toContain('data-testid="local-port-public-https"');
   });
 
   test('self 行 blocked / open 反映到对应点上，blocked 不带 ring', () => {
@@ -78,7 +77,6 @@ describe('PortsSection', () => {
     const html = renderToStaticMarkup(
       <PortsSection
         plan={hubPlan}
-        localRole="hub,node"
         reach={[{ purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'open' }]}
       />
     );

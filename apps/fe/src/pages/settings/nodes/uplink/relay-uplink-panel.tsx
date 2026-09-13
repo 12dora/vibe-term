@@ -1,88 +1,39 @@
-// 「连接」段的中继形态：链路行、一摞提醒、按风险分级的三组操作。
+// 「连接」段的中继形态：一行「上级」摆链路，下面是一摞提醒。
 //
-// 操作分三级：主按钮「追加中继」是常用且无损的；重新输入接入密码 / 逐条移除收进「更多」，
-// 它们低频且各自带确认；「离开中继」单独摆在右侧的危险区，它会让本机与各节点一起失去上级。
+// 追加中继 / 重新输入接入密码 / 逐条移除 / 离开中继全部收进卡片 ⋯ 菜单（`connect-menu.ts`）：
+// 它们低频且各自带确认，摆在卡面上只会和「现在连着谁」抢版面。
 //
 // 多条中继时切换不在菜单里：单挂载下链路行本身就是选择器，点哪条就切到哪条；
 // 多条同时挂载时行不再是单选，改由行尾的「设为主中继」发起（见 `relay-rows.tsx`）。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import { Button } from '@vibeterm/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@vibeterm/ui/dropdown-menu';
-import { Ellipsis } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Notice, NoticeAction } from '../card-parts';
+import { Row } from '../copy-feedback';
 import { relayNotices } from '../relay/relay-notices';
 import { RelayRows } from '../relay/relay-rows';
 import { RelaySwitchDialog } from '../relay/relay-switch-dialog';
 import type { RelayActionsController } from '../relay/use-relay-actions';
 import { useRelaySwitch } from '../relay/use-relay-switch';
-import { type RelayMenuAction, reauthTarget, relayActionMenu } from './relay-targets';
-
-/**
- * 次级菜单的内容。单独导出且**不带 hook**：Base UI 的菜单走 portal，静态渲染什么都不输出，
- * 单测只能把它当普通函数调用再对元素树断言（与 `BulkActionsMenuList` 同一套做法）。
- */
-export function RelayActionsMenuList({
-  items,
-  label,
-  onSelect,
-}: {
-  items: RelayMenuAction[];
-  label: (item: RelayMenuAction) => string;
-  onSelect: (item: RelayMenuAction) => void;
-}) {
-  return (
-    <>
-      {items.map((item) => (
-        <DropdownMenuItem
-          key={item.testId}
-          onClick={() => onSelect(item)}
-          data-testid={item.testId}
-        >
-          {label(item)}
-        </DropdownMenuItem>
-      ))}
-    </>
-  );
-}
+import { reauthTarget } from './relay-targets';
 
 export interface RelayUplinkPanelProps {
   relay: UseMeshRelayResult;
   actions: RelayActionsController;
-  /** hub 时代的机器改回 Hub 前必须先离开中继：这句提示挂在操作下方。 */
-  showLeaveFirstHint?: boolean;
 }
 
-export function RelayUplinkPanel({
-  relay,
-  actions,
-  showLeaveFirstHint = true,
-}: RelayUplinkPanelProps) {
+export function RelayUplinkPanel({ relay, actions }: RelayUplinkPanelProps) {
   const { t } = useTranslation();
   const { refresh } = relay;
   const multiAttach = relay.multiAttach === true;
   const switching = useRelaySwitch({ onChanged: refresh, multiAttach });
   return (
     <div className="flex flex-col gap-3" data-testid="local-uplink-relay-panel">
-      <RelayRows relays={relay.ordered} onSelect={switching.request} multiAttach={multiAttach} />
+      <Row label={t('nodes.machine.upstream')}>
+        <RelayRows relays={relay.ordered} onSelect={switching.request} multiAttach={multiAttach} />
+      </Row>
       <RelaySwitchDialog controller={switching} multiAttach={multiAttach} />
       <RelayNoticeList relay={relay} actions={actions} />
-      {!relay.unsupported && (
-        <>
-          <RelayActionRow relay={relay} actions={actions} />
-          {showLeaveFirstHint && (
-            <p className="text-[11px] text-muted-foreground" data-testid="nodes-relay-leave-first">
-              {t('nodes.machine.relayLeaveFirst')}
-            </p>
-          )}
-        </>
-      )}
     </div>
   );
 }
@@ -151,59 +102,5 @@ function RelayNoticeList({
         </Notice>
       )}
     </>
-  );
-}
-
-function RelayActionRow({
-  relay,
-  actions,
-}: {
-  relay: UseMeshRelayResult;
-  actions: RelayActionsController;
-}) {
-  const { t } = useTranslation();
-  const menu = relayActionMenu(relay.ordered);
-  const run = (item: RelayMenuAction) => {
-    if (item.kind === 'reauth') actions.openEnroll('reauth', item.url);
-    else actions.requestConfirm('remove', item.url);
-  };
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button
-        type="button"
-        size="xs"
-        variant="outline"
-        onClick={() => actions.openEnroll('add')}
-        data-testid="nodes-relay-add"
-      >
-        {t('relay.tenant.actions.add')}
-      </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={<Button type="button" size="xs" variant="ghost" data-testid="nodes-relay-menu" />}
-        >
-          <Ellipsis />
-          {t('relay.tenant.actions.menu')}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="min-w-44">
-          <RelayActionsMenuList
-            items={menu}
-            label={(item) => t(item.key, item.params)}
-            onSelect={run}
-          />
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <span className="ml-auto">
-        <Button
-          type="button"
-          size="xs"
-          variant="destructive"
-          onClick={() => actions.requestConfirm('leave')}
-          data-testid="nodes-relay-leave"
-        >
-          {t('relay.tenant.actions.leave')}
-        </Button>
-      </span>
-    </div>
   );
 }
