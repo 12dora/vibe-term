@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { Socket } from 'node:net';
+import { type AddressInfo, type Socket, createServer } from 'node:net';
 import {
   buildLogin,
   createDelegation,
@@ -12,7 +12,12 @@ import {
   generateEd25519KeyPair,
   signLogin,
 } from '@vibeterm/shared/auth';
-import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import {
+  INITIAL_STREAM_WINDOW,
+  type LinkSession,
+  MAX_DATA_SEND_PAYLOAD,
+  createInMemoryLinkPair,
+} from '@vibeterm/shared/link';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -35,7 +40,6 @@ import {
   type EchoServer,
   startAfterFinServer,
   startEchoServer,
-  startSlowEchoServer,
 } from '../../portmap/test-echo-server';
 import type { GatewayRuntime } from '../../runtime';
 import { WebSocketServer } from '../../ws';
@@ -403,6 +407,115 @@ async function tcpClient(port: number): Promise<TcpClient> {
   };
 }
 
+const SMALL_SOCKET_BUF = 32 * 1024;
+const KERNEL_BUF_FALLBACK = 16 * 1024 * 1024;
+
+type SocketBuffers = {
+  setRecvBufferSize?: (n: number) => void;
+  setSendBufferSize?: (n: number) => void;
+  getRecvBufferSize?: () => number;
+  getSendBufferSize?: () => number;
+};
+
+function socketBuffers(socket: Socket): SocketBuffers {
+  return socket as Socket & SocketBuffers;
+}
+
+function shrinkNetBuffers(socket: Socket, bytes = SMALL_SOCKET_BUF): void {
+  const buf = socketBuffers(socket);
+  try {
+    buf.setRecvBufferSize?.(bytes);
+    buf.setSendBufferSize?.(bytes);
+  } catch {
+    // 平台可能忽略；后面用实际 SO_* 估内核余量
+  }
+}
+
+function netBufferBytes(socket: Socket, fallback = KERNEL_BUF_FALLBACK): number {
+  const buf = socketBuffers(socket);
+  try {
+    const n = (buf.getRecvBufferSize?.() ?? 0) + (buf.getSendBufferSize?.() ?? 0);
+    if (n > 0) return n;
+  } catch {
+    // fall through
+  }
+  return fallback;
+}
+
+/**
+ * 一开始完全不读的回声服务，并把 SO_SNDBUF/SO_RCVBUF 压小。
+ * Linux 环回 tcp_wmem/tcp_rmem 会自适应到数 MiB，不压小的话 `bytesOut` 会计入内核缓冲。
+ */
+function startPausedEchoServer(): EchoServer & {
+  release: () => void;
+  lastSocket: () => Socket | null;
+} {
+  const state = { connections: 0, last: null as Socket | null };
+  const sockets = new Set<Socket>();
+  const held: Socket[] = [];
+  let released = false;
+  const server = createServer({ allowHalfOpen: true, noDelay: true });
+  server.on('error', () => {});
+  server.on('connection', (socket) => {
+    state.connections += 1;
+    state.last = socket;
+    sockets.add(socket);
+    socket.allowHalfOpen = true;
+    shrinkNetBuffers(socket);
+    socket.on('error', () => {});
+    socket.on('close', () => sockets.delete(socket));
+    socket.on('data', (chunk) => {
+      if (!socket.write(chunk)) socket.pause();
+    });
+    socket.on('drain', () => {
+      if (released) socket.resume();
+    });
+    socket.on('end', () => socket.end());
+    if (released) return;
+    socket.pause();
+    held.push(socket);
+  });
+  server.listen({ host: '127.0.0.1', port: 0 });
+  const address = server.address() as AddressInfo | null;
+  if (!address) throw new Error('failed to bind paused echo server');
+  return {
+    port: address.port,
+    get connections() {
+      return state.connections;
+    },
+    lastSocket: () => state.last,
+    release() {
+      released = true;
+      for (const socket of held.splice(0)) socket.resume();
+    },
+    stop() {
+      try {
+        server.close();
+      } catch {
+        // 已经关闭
+      }
+      for (const socket of [...sockets]) socket.destroy();
+      sockets.clear();
+    },
+  };
+}
+
+async function waitBytesOutPlateau(read: () => number, timeoutMs = 2_000): Promise<number> {
+  let stalled = 0;
+  let stableTicks = 0;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && stableTicks < 4) {
+    await Bun.sleep(50);
+    const n = read();
+    if (n === stalled && n > 0) stableTicks += 1;
+    else {
+      stalled = n;
+      stableTicks = n > 0 ? 1 : 0;
+    }
+  }
+  return stalled;
+}
+
 function freePort(): number {
   const server = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
   const port = server.port;
@@ -590,17 +703,23 @@ describe('portmap mesh integration', () => {
   });
 
   test('backs off on a slow target instead of buffering, and the link keeps working', async () => {
-    const slow = startSlowEchoServer();
+    const slow = startPausedEchoServer();
     const { manager, map } = await setup({ target: slow });
     const client = await tcpClient(map.listenPort);
-    const size = 32 * 1024 * 1024 + 999;
+    shrinkNetBuffers(client.socket);
+    const size = 64 * 1024 * 1024 + 999;
     const payload = pseudoRandom(size, 0x5107_0001);
     const pushed = client.send(payload).catch(() => {});
-    await Bun.sleep(600);
-    const stalled = manager.get(map.id).bytesOut;
-    // 目标一个字节都没读：窗口 + 内核缓冲撑满之后就该停在那儿，而不是把 32 MiB 吞进内存
+    const stalled = await waitBytesOutPlateau(() => manager.get(map.id).bytesOut);
+    const targetSock = slow.lastSocket();
+    const kernel =
+      netBufferBytes(client.socket) +
+      (targetSock ? netBufferBytes(targetSock) : KERNEL_BUF_FALLBACK);
+    // bytesOut 是 mux.write 收下的字节：应用侧只有 1 MiB 窗口 + 正在下发的一块；
+    // 其余是内核 TCP 缓冲（Linux 环回会自适应到数 MiB）。证明没把整包吞进进程内存。
+    const bound = INITIAL_STREAM_WINDOW + MAX_DATA_SEND_PAYLOAD + kernel + 2 * 1024 * 1024;
     expect(stalled).toBeGreaterThan(0);
-    expect(stalled).toBeLessThan(8 * 1024 * 1024);
+    expect(stalled).toBeLessThan(Math.min(bound, Math.floor(size / 2)));
     slow.release();
     await pushed;
     const hash = await client.waitHash(size);

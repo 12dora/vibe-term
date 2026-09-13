@@ -648,6 +648,16 @@ describe('staged package', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 
+  async function waitFor(predicate: () => boolean, timeoutMs = 5_000): Promise<void> {
+    const start = Date.now();
+    while (!predicate()) {
+      if (Date.now() - start > timeoutMs) {
+        throw new Error('waitFor timed out');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
   test('PUT happy path writes tarball, sidecar, and remembers the package', async () => {
     const install = makeInstall();
     const controller = new UpgradeController({ getInstallInfo: () => install });
@@ -732,7 +742,11 @@ describe('staged package', () => {
     child.unref = () => undefined;
     const controller = new UpgradeController({
       getInstallInfo: () => install,
-      spawn: () => child as unknown as ChildProcess,
+      spawn: () => {
+        // 等 waitForSpawnAndDetach 挂上 spawn 监听之后再发，避免解压一慢就把事件打丢。
+        queueMicrotask(() => child.emit('spawn'));
+        return child as unknown as ChildProcess;
+      },
     });
     const bytes = packFakeCliTarball('1.2.3');
     const hex = sha256Hex(bytes);
@@ -742,9 +756,7 @@ describe('staged package', () => {
     const started = await controller.tryStart('1.2.3', { source: 'staged', sha256: hex });
     expect(started).toEqual({ ok: true });
     expect(controller.status().state).toBe('downloading');
-    await settle();
-    child.emit('spawn');
-    await settle();
+    await waitFor(() => controller.status().state === 'executing');
     expect(controller.status().state).toBe('executing');
   });
 
