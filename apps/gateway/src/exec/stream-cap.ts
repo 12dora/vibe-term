@@ -6,6 +6,11 @@ export function emptyStreamCap(): StreamCap {
   return { sent: 0, truncated: false };
 }
 
+export function resolveStreamCap(maxBytes: number | undefined): number {
+  if (maxBytes === undefined) return EXEC_STREAM_CAP_BYTES;
+  return maxBytes;
+}
+
 export function takeStreamBytes(
   cap: StreamCap,
   bytes: Uint8Array,

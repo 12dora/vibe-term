@@ -15,8 +15,8 @@ vibeterm login --entry https://vt.example.com --user admin
 ```
 
 - 密码交互输入；非交互场景用 `VIBETERM_PASSWORD`。开了两步验证就再给 `--totp <6 位码>` 或 `VIBETERM_TOTP`。
-- 默认把 entry 后面**每个节点**都登一遍（`--all-nodes`），之后访问任意节点都不用再登；只想登一台就 `--node <id|名字>`。
-- 登录流程与网页端逐步一致（argon2id 派生根种子 → 临时会话密钥对 → 签名委托）。密码、根种子、会话私钥**都不落盘**，落盘的只有会话 sid 与到期时刻，文件是 `~/.config/vibeterm/session.json`（0600）。
+- 默认把 entry 后面**每个节点**都登一遍（`--all-nodes`），之后访问任意节点都不用再登；只想登一台就 `--node <id|名字>`。某台离线（HTTP 503 `NODE_UNREACHABLE` 或网络错误）会打 `skipped <node>: unreachable` 并继续，entry 登录成功且其余失败都是不可达时退出码 0，并汇总 `logged in to N nodes, skipped M unreachable`；可达节点拒绝登录才非 0。
+- 登录流程与网页端逐步一致（argon2id 派生根种子 → 临时会话密钥对 → 签名委托）。密码、根种子、会话私钥**都不落盘**，落盘的只有会话 sid 与到期时刻，默认文件是 `~/.config/vibeterm/session.json`（目录 0700、文件 0600）。`$VIBETERM_SESSION_FILE` 可改走指定路径（同样 0600；group/world 可读会拒绝）。**该文件是完整会话能力，须按密钥保护**，不要提交、不要世界可读。
 - 只在本 origin 注册了通行密钥、又没开 TOTP 的账号，CLI 登不上（不实现 WebAuthn），会退出码 3 并说明补救办法：在网页端开 TOTP。
 
 ```bash
@@ -24,7 +24,7 @@ vibeterm whoami           # 当前 entry、账号与各节点会话状态
 vibeterm logout           # 对每个已登录节点各撤销一次会话，并删掉本地记录
 ```
 
-`whoami` 表增加 **READY** 列（`SESSION=yes` 且 `ONLINE=yes`；`--json` 为每行 `ready`）。`SESSION=no ONLINE=yes` 表示节点在线但本 CLI 没有该节点 cookie，stderr 提示 `vibeterm login --node <name>`。READY 才是「现在能不能打这个 node」。
+`whoami` 表增加 **READY** 列（`SESSION=yes` 且 `ONLINE=yes`；`--json` 为每行 `ready`）。`SESSION=no ONLINE=yes` 表示节点在线但本 CLI 没有该节点 cookie，stderr 提示 `vibeterm login --node <name>`。READY 才是「现在能不能打这个 node」。需要登录却没有 self 会话、或本地 cookie 已过期（`GET /api/mesh/nodes` → 401）时：stdout 为空，stderr 一行 `not logged in to <entry>` 加提示 `run: vibeterm login`，退出码 3。`--json` 则 stdout 为 `{ "loggedIn": false, "entry": "<entry>", "hint": "vibeterm login" }`（不含 `sessionFile`、不含 user），同样退出 3。已登录的 `--json` 才带 `sessionFile`。
 
 `logout` 撤销的是**服务端**签发的会话，和在网页端退出登录等价：本机 session.json 被删的同时，别处用同一账号拿到的会话也一并失效。丢了笔记本就在任意一台机器上 `vibeterm logout`。
 
@@ -38,8 +38,8 @@ vibeterm logout           # 对每个已登录节点各撤销一次会话，并�
 [<node>/]<device>[:<window>[.<pane>]]
 ```
 
-- `<node>`：节点 id 或名字；不写就是 entry 自己（也可以用全局 `--node`）。`self` / `local` / `entry` 都表示 entry 自己。
-- `<device>`：设备 id 或名字（`vibeterm devices ls` 里的那些）。
+- `<node>`：节点 id 或名字；不写就是 entry 自己（也可以用全局 `--node`）。`self` / `local` / `entry` / `.` 作为 **node** 名表示 entry 自己；它们若出现在设备 token 里（例如 `exec --node oracle-jp local`），**不是** self 别名。
+- `<device>`：设备 id 或名字（`vibeterm devices ls` 里的那些）。`--node <n>` 已经选定节点后，该节点上没有这台设备就报 `device "<d>" not found on node <n>`（退出码 4，提示里最多列出 5 个设备名），**不会**回退到 self。无 `--node`、无 slash 的裸节点名（`exec office`）仍回退到该节点 sortOrder 最低的 local 设备。
 - `<window>`：tmux 窗口 id（`@1`）、序号（`1`）或名字；不写取活动窗口。
 - `<pane>`：窗格 id（`%7`）、窗口内序号或名字；不写取该窗口的活动窗格。
 
@@ -113,11 +113,17 @@ vibeterm exec office/dev-box -- echo hello
 vibeterm exec office --shell -- 'apt-get update && apt-get install -y jq'
 echo 'payload' | vibeterm exec laptop --stdin -- cat
 vibeterm exec laptop @script.sh -- bash
+vibeterm exec laptop --script setup.sh
+vibeterm exec laptop --max-bytes 65536 --tail 4096 -- -- ip -br addr
+vibeterm exec laptop --stdout-file /tmp/out.txt -- -- dmesg
 ```
 
 - 目标 `[<node>/]<device>`。只写节点名、当前 node 上又没有同名设备时，落到该节点 sortOrder 最低的 **local** 设备。
-- `POST /api/exec` NDJSON。`--timeout` 是全局旗标；**只有命令行显式给出时**才写入请求体 `timeoutMs`。省略则字段不下发，由网关默认 600000 ms（10 分钟，上限 3600000）。不要把全局缺省 30000 当成「用户要 30 秒」。`shell:true` 时 argv 只能有一项，经 **`/bin/sh -c`**（不用 `bash -lc`）。CLI **不会**隐式加 `DEBIAN_FRONTEND` 之类环境变量。
-- 非 TTY 或 `--json`：一行 `{exitCode, signal, stdout, stderr, durationMs, truncated, reason}`，`reason` 为 `exit|timeout|error`。`--json --stream` 原样转发 NDJSON 事件。TTY 且未 `--json` 时 stdout/stderr 按块写回本机对应 fd。
+- `POST /api/exec` NDJSON。`--timeout` **只约束远端子进程的墙上时钟**：只有命令行显式给出时才写入请求体 `timeoutMs`；省略则字段不下发，由网关默认 600000 ms（10 分钟，上限 3600000）。它不控制 Bun.serve / `fetch` 空闲超时；长静默命令靠网关每 10 秒一条 `{"type":"ping","t":…}` 续上连接。不要把全局缺省 30000 当成「用户要 30 秒」。`shell:true` 时 argv 只能有一项，经 **`/bin/sh -c`**（不用 `bash -lc`）。CLI **不会**隐式加 `DEBIAN_FRONTEND` 之类环境变量。
+- `--script <path>`：把文件当 stdin，argv 默认 `['/bin/sh','-s']`。文件以 `sh|bash|zsh|dash|ksh` shebang 开头时改用该解释器 `-s`；其它解释器回退 `/bin/sh -s` 并警告。`--interpreter <bin>` 覆盖。与位置 argv / `--shell` / `--stdin*` / `@path` 互斥。stdin 上限约 0.75 MiB，超出请先 `vibeterm cp`。`--shell` 里写 heredoc 仍要按 argv 转义，优先 `--script`。
+- `--max-bytes N`（1 KiB .. 8 MiB）：发给网关的每路输出上限，超出后 `truncated.<stream>=true`，子进程继续跑。`--tail N`：CLI 侧环形缓冲，JSON 字段只留每路最后 N 字节（若同时给 `--max-bytes`，先截服务端）。`--stdout-file` / `--stderr-file`：边收边写文件，JSON 用 `stdoutPath`/`stderrPath` + `stdoutBytes`/`stderrBytes`，不再内嵌字符串。非 TTY 默认仍是内联 JSON；某路超过 64 KiB 时 stderr 提示改用 `--tail` / `--stdout-file`。
+- 非 TTY 或 `--json`：一行 `{exitCode, signal, stdout, stderr, durationMs, truncated, reason}`，`reason` 为 `exit|timeout|error`。`--json --stream` 原样转发 NDJSON 事件（含 `ping`）。TTY 且未 `--json` 时 stdout/stderr 按块写回本机对应 fd。
+- NDJSON 在收到 `exit` 前被掐断（Bun `terminated` / AbortError / 套接字关闭）时：stderr 写 `exec stream closed before exit (reason: …); the remote child receives SIGTERM`；`--json` 另打 `{ "ok": false, "code": "EXEC_STREAM_CLOSED", "reason", "elapsedMs" }`；退出码 **5**。
 - CLI 退出码 = 远端退出码；timeout → **124**；未知设备 4、未登录 3、用法 2、spawn/网络 5。
 
 ### 往已有窗格打命令（`term run`）

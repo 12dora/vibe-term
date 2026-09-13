@@ -1,11 +1,17 @@
 import { describe, expect, test } from 'bun:test';
+import type { CliContext } from './context';
 import { type CliError, NetworkError, NotFoundError, UsageError } from './errors';
 import {
+  EXEC_STREAM_CLOSED,
   EXEC_TIMEOUT_EXIT,
+  ExecStreamClosedError,
   applyExecEvent,
+  concatTail,
+  createExecCollect,
   emptyExecResult,
   execProcessExit,
   mapExecFailure,
+  runExecRequest,
 } from './exec-client';
 
 describe('applyExecEvent', () => {
@@ -88,6 +94,73 @@ describe('applyExecEvent', () => {
     expect(stdout).toEqual(['x']);
     expect(events).toHaveLength(1);
   });
+
+  test('ignores ping and other unknown events', () => {
+    const result = emptyExecResult();
+    expect(applyExecEvent(result, { type: 'ping', t: 12 }, null, null)).toBe('continue');
+    expect(applyExecEvent(result, { type: 'start', pid: 1 }, null, null)).toBe('continue');
+    expect(result.stdout).toBe('');
+    expect(result.reason).toBe('error');
+  });
+
+  test('exit.reason exec_timeout pins CLI reason without waiting for error', () => {
+    const result = emptyExecResult();
+    applyExecEvent(
+      result,
+      {
+        type: 'exit',
+        code: null,
+        signal: 'SIGTERM',
+        durationMs: 9,
+        truncated: { stdout: false, stderr: false },
+        reason: 'exec_timeout',
+      },
+      null,
+      null
+    );
+    expect(result.reason).toBe('timeout');
+    expect(execProcessExit(result)).toBe(EXEC_TIMEOUT_EXIT);
+  });
+
+  test('tail collect keeps the last N bytes and marks truncated', () => {
+    const result = emptyExecResult();
+    const collect = createExecCollect({ tailBytes: 4 });
+    applyExecEvent(
+      result,
+      { type: 'stdout', base64: Buffer.from('hello world').toString('base64') },
+      null,
+      null,
+      collect
+    );
+    expect(result.stdout).toBe('orld');
+    expect(result.stdoutBytes).toBe(11);
+    expect(result.truncated.stdout).toBe(true);
+  });
+
+  test('omitStdout skips inline strings but still counts bytes', () => {
+    const result = emptyExecResult();
+    const collect = createExecCollect({ omitStdout: true });
+    applyExecEvent(
+      result,
+      { type: 'stdout', base64: Buffer.from('payload').toString('base64') },
+      null,
+      null,
+      collect
+    );
+    expect(result.stdout).toBe('');
+    expect(result.stdoutBytes).toBe(7);
+  });
+});
+
+describe('concatTail', () => {
+  test('keeps the last limit bytes across chunks', () => {
+    const first = concatTail(new Uint8Array(), Buffer.from('abcd'), 3);
+    expect(Buffer.from(first.bytes).toString()).toBe('bcd');
+    expect(first.dropped).toBe(true);
+    const second = concatTail(first.bytes, Buffer.from('ef'), 3);
+    expect(Buffer.from(second.bytes).toString()).toBe('def');
+    expect(second.dropped).toBe(true);
+  });
 });
 
 describe('mapExecFailure', () => {
@@ -117,5 +190,61 @@ describe('mapExecFailure', () => {
       return null;
     })();
     expect(bare?.exitCode).toBe(5);
+  });
+});
+
+function ctxWithNdjson(gen: () => AsyncGenerator<unknown>): CliContext {
+  return {
+    http: {
+      ndjson: () => gen(),
+    },
+  } as unknown as CliContext;
+}
+
+const BODY = { deviceId: 'd', argv: ['true'] };
+
+describe('runExecRequest stream death', () => {
+  test('terminated TypeError becomes EXEC_STREAM_CLOSED', async () => {
+    const ctx = ctxWithNdjson(async function* () {
+      yield { type: 'start', pid: 1, device: { id: 'd', type: 'local' } };
+      throw new TypeError('terminated');
+    });
+    const error = await runExecRequest(ctx, 'self', BODY).catch((err) => err);
+    expect(error).toBeInstanceOf(ExecStreamClosedError);
+    expect(error).toBeInstanceOf(NetworkError);
+    expect((error as ExecStreamClosedError).code).toBe(EXEC_STREAM_CLOSED);
+    expect((error as ExecStreamClosedError).reason).toBe('terminated');
+    expect((error as ExecStreamClosedError).message).toContain('the remote child receives SIGTERM');
+    expect((error as ExecStreamClosedError).elapsedMs).toBeGreaterThanOrEqual(0);
+    expect((error as ExecStreamClosedError).exitCode).toBe(5);
+  });
+
+  test('clean end without exit is EXEC_STREAM_CLOSED', async () => {
+    const ctx = ctxWithNdjson(async function* () {
+      yield { type: 'start', pid: 1, device: { id: 'd', type: 'local' } };
+    });
+    const error = await runExecRequest(ctx, 'self', BODY).catch((err) => err);
+    expect(error).toBeInstanceOf(ExecStreamClosedError);
+    expect((error as ExecStreamClosedError).reason).toBe('ended without an exit event');
+  });
+
+  test('--json --stream forwards ping as-is', async () => {
+    const forwarded: unknown[] = [];
+    const ctx = ctxWithNdjson(async function* () {
+      yield { type: 'ping', t: 99 };
+      yield {
+        type: 'exit',
+        code: 0,
+        signal: null,
+        durationMs: 1,
+        truncated: { stdout: false, stderr: false },
+        reason: 'exit',
+      };
+    });
+    const result = await runExecRequest(ctx, 'self', BODY, {
+      streamJson: (event) => forwarded.push(event),
+    });
+    expect(forwarded[0]).toEqual({ type: 'ping', t: 99 });
+    expect(result.exitCode).toBe(0);
   });
 });

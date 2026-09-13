@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { emptyStreamCap, takeStreamBytes } from './stream-cap';
+import { EXEC_STREAM_CAP_BYTES } from './constants';
+import { emptyStreamCap, resolveStreamCap, takeStreamBytes } from './stream-cap';
 
 describe('takeStreamBytes', () => {
   test('splits into <= chunk bytes and does not truncate an exact fill', () => {
@@ -26,5 +27,10 @@ describe('takeStreamBytes', () => {
     expect(parts.map((p) => p.byteLength)).toEqual([8, 2]);
     expect(cap.truncated).toBe(true);
     expect(cap.sent).toBe(10);
+  });
+
+  test('resolveStreamCap defaults to 8 MiB', () => {
+    expect(resolveStreamCap(undefined)).toBe(EXEC_STREAM_CAP_BYTES);
+    expect(resolveStreamCap(1024)).toBe(1024);
   });
 });

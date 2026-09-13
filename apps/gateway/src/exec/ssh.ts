@@ -56,6 +56,7 @@ async function spawnSsh(
     signal,
     sink,
     device: { id: device.id, type: 'ssh' },
+    maxBytes: req.maxBytes,
   };
   const argv = [...target.sshArgs, '-T', target.dest, '--', buildSshRemoteCommand(req)];
   try {

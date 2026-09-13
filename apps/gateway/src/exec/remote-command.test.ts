@@ -7,6 +7,7 @@ function req(overrides: Partial<ExecRequest> = {}): ExecRequest {
     deviceId: 'd1',
     argv: ['/bin/echo', 'hi'],
     timeoutMs: 1000,
+    maxBytes: 8 * 1024 * 1024,
     shell: false,
     ...overrides,
   };

@@ -24,7 +24,9 @@ import { DEFAULT_TLS, type TlsSettings, fetchTlsInit } from './tls';
 export const NODE_SESSION_COOKIE_PREFIX = 'vibeterm_s_';
 export const LEGACY_NODE_SESSION_COOKIE_PREFIX = 'tmex_s_';
 
-export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+/** Bun 认 `timeout: false` 关掉 `BUN_CONFIG_HTTP_IDLE_TIMEOUT`；其它运行时忽略。 */
+export type FetchInit = RequestInit & { timeout?: number | false };
+export type FetchLike = (input: string, init?: FetchInit) => Promise<Response>;
 
 export function nodeSessionCookieName(nodeId: string): string {
   return `${NODE_SESSION_COOKIE_PREFIX}${nodeId}`;
@@ -136,7 +138,7 @@ export interface HttpClientOptions {
   tls?: TlsSettings;
 }
 
-export interface RequestOptions extends Omit<RequestInit, 'signal'> {
+export interface RequestOptions extends Omit<FetchInit, 'signal'> {
   /** 覆盖全局 `--timeout`；null 表示不设超时（长连 NDJSON 流用）。 */
   timeoutMs?: number | null;
   signal?: AbortSignal;
@@ -210,14 +212,17 @@ export class HttpClient {
     const url = this.url(nodeId, path);
     let response: Response;
     try {
-      response = await this.fetchImpl(url, {
+      const init: FetchInit = {
         ...rest,
         headers: requestHeaders,
         ...(combined ? { signal: combined } : {}),
         // Bun 认 per-request TLS 选项；Node 上是多余字段（由进程信任库那条路径生效）。
         ...fetchTlsInit(this.tls),
         redirect: 'manual',
-      });
+      };
+      // NDJSON 长流：不要让 Bun fetch 的空闲超时（或 BUN_CONFIG_HTTP_IDLE_TIMEOUT）掐断 body。
+      if (effectiveTimeout === null) init.timeout = false;
+      response = await this.fetchImpl(url, init);
     } catch (error) {
       throw new NetworkError(`${describeRequest(rest.method, url)}: ${describeFetchError(error)}`);
     }

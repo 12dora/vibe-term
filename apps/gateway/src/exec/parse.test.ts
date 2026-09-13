@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { EXEC_DEFAULT_TIMEOUT_MS, EXEC_MAX_TIMEOUT_MS } from './constants';
+import {
+  EXEC_DEFAULT_TIMEOUT_MS,
+  EXEC_MAX_TIMEOUT_MS,
+  EXEC_MIN_MAX_BYTES,
+  EXEC_STREAM_CAP_BYTES,
+} from './constants';
 import { parseExecRequest } from './parse';
 
 function body(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -15,6 +20,7 @@ describe('parseExecRequest', () => {
       deviceId: 'd1',
       argv: ['/bin/echo', 'ok'],
       timeoutMs: EXEC_DEFAULT_TIMEOUT_MS,
+      maxBytes: EXEC_STREAM_CAP_BYTES,
       shell: false,
     });
   });
@@ -41,6 +47,18 @@ describe('parseExecRequest', () => {
     expect(parseExecRequest(body({ env: { FOO: 1 } })).ok).toBe(false);
     expect(parseExecRequest(body({ stdin: {} })).ok).toBe(false);
     expect(parseExecRequest(body({ stdin: { text: 'a', base64: 'YQ==' } })).ok).toBe(false);
+    expect(parseExecRequest(body({ maxBytes: EXEC_MIN_MAX_BYTES - 1 })).ok).toBe(false);
+    expect(parseExecRequest(body({ maxBytes: EXEC_STREAM_CAP_BYTES + 1 })).ok).toBe(false);
+    expect(parseExecRequest(body({ maxBytes: 'big' })).ok).toBe(false);
+  });
+
+  test('accepts maxBytes in 1 KiB .. 8 MiB and truncates fractions', () => {
+    const parsed = parseExecRequest(body({ maxBytes: 2048.9 }));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.value.maxBytes).toBe(2048);
+    const min = parseExecRequest(body({ maxBytes: EXEC_MIN_MAX_BYTES }));
+    expect(min.ok).toBe(true);
+    if (min.ok) expect(min.value.maxBytes).toBe(EXEC_MIN_MAX_BYTES);
   });
 
   test('truncates a fractional timeoutMs', () => {

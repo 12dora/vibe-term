@@ -1,4 +1,9 @@
-import { EXEC_DEFAULT_TIMEOUT_MS, EXEC_MAX_TIMEOUT_MS } from './constants';
+import {
+  EXEC_DEFAULT_TIMEOUT_MS,
+  EXEC_MAX_TIMEOUT_MS,
+  EXEC_MIN_MAX_BYTES,
+  EXEC_STREAM_CAP_BYTES,
+} from './constants';
 import type { ExecRequest } from './types';
 
 const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -20,12 +25,15 @@ export function parseExecRequest(body: Record<string, unknown>): ParseExecResult
   if (!env.ok) return env;
   const stdin = parseStdin(body.stdin);
   if (!stdin.ok) return stdin;
+  const maxBytes = parseMaxBytes(body.maxBytes);
+  if (!maxBytes.ok) return maxBytes;
   return {
     ok: true,
     value: {
       deviceId: deviceId.value,
       argv: argv.value,
       timeoutMs: timeoutMs.value,
+      maxBytes: maxBytes.value,
       shell: body.shell === true,
       ...(cwd.value !== undefined ? { cwd: cwd.value } : {}),
       ...(env.value !== undefined ? { env: env.value } : {}),
@@ -70,6 +78,20 @@ function parseTimeoutMs(
   const n = Math.trunc(raw);
   if (n < 1 || n > EXEC_MAX_TIMEOUT_MS) {
     return fail(`timeoutMs must be between 1 and ${EXEC_MAX_TIMEOUT_MS}`);
+  }
+  return { ok: true, value: n };
+}
+
+function parseMaxBytes(
+  raw: unknown
+): { ok: true; value: number } | { ok: false; code: 'invalid_body'; message: string } {
+  if (raw === undefined) return { ok: true, value: EXEC_STREAM_CAP_BYTES };
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return fail('maxBytes must be a finite number');
+  }
+  const n = Math.trunc(raw);
+  if (n < EXEC_MIN_MAX_BYTES || n > EXEC_STREAM_CAP_BYTES) {
+    return fail(`maxBytes must be between ${EXEC_MIN_MAX_BYTES} and ${EXEC_STREAM_CAP_BYTES}`);
   }
   return { ok: true, value: n };
 }

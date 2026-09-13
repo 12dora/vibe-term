@@ -3,13 +3,19 @@ import { execNdjsonResponse } from '../exec/ndjson';
 import { parseExecRequest } from '../exec/parse';
 import { runExec } from '../exec/service';
 import { json, readJsonObjectBody } from './http';
-import { type ApiRoute, route } from './route';
+import { type ApiRoute, type ApiRouteContext, route } from './route';
 
 function fail(code: string, message: string): Response {
   return json({ code, message }, 400);
 }
 
-async function handleExec(req: Request): Promise<Response> {
+function disableIdleTimeout(req: Request, ctx: ApiRouteContext): void {
+  // 0 = 本连接不受 Bun.serve idleTimeout 限制；mesh 转发靠 NDJSON ping 续入口空闲时钟。
+  ctx.server?.timeout?.(req, 0);
+}
+
+async function handleExec(req: Request, ctx: ApiRouteContext): Promise<Response> {
+  disableIdleTimeout(req, ctx);
   const body = await readJsonObjectBody(req);
   if (!body) return fail('invalid_body', 'request body must be a JSON object');
   const parsed = parseExecRequest(body);
@@ -30,5 +36,9 @@ async function handleExec(req: Request): Promise<Response> {
 }
 
 export const execRoutes: ApiRoute[] = [
-  route({ method: 'POST', path: '/api/exec', handler: (req) => handleExec(req) }),
+  route({
+    method: 'POST',
+    path: '/api/exec',
+    handler: (req, _params, ctx) => handleExec(req, ctx),
+  }),
 ];
