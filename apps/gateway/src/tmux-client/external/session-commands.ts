@@ -60,11 +60,16 @@ export interface SessionCommandHost {
   runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string>;
 }
 
-export function buildCreateWindowArgv(sessionName: string, cwd: string, name?: string): string[] {
-  const argv = ['new-window', '-t', sessionName, '-c', cwd];
-  if (name) {
-    argv.push('-n', name);
-  }
+export function buildCreateWindowArgv(
+  sessionName: string,
+  cwd: string,
+  name?: string,
+  detached?: boolean
+): string[] {
+  const argv = detached
+    ? ['new-window', '-d', '-t', sessionName, '-c', cwd]
+    : ['new-window', '-t', sessionName, '-c', cwd];
+  if (name) argv.push('-n', name);
   return argv;
 }
 
@@ -156,15 +161,10 @@ export class SessionCommands {
     this.fire(() => this.runAndRefresh(['select-window', '-t', windowId], true));
   }
 
-  createWindow(name?: string, cwd?: string): void {
+  createWindow(name?: string, cwd?: string, detached?: boolean): void {
+    const dir = cwd ?? this.host.resolveDefaultWorkingDir();
     this.fire(() =>
-      this.runAndRefresh(
-        buildCreateWindowArgv(
-          this.host.sessionName,
-          cwd ?? this.host.resolveDefaultWorkingDir(),
-          name
-        )
-      )
+      this.runAndRefresh(buildCreateWindowArgv(this.host.sessionName, dir, name, detached))
     );
   }
 

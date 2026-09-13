@@ -190,6 +190,8 @@ export interface RunOutputOptions {
   /** 我们打进去的那条命令（不含哨兵行），用来判断第一行到底是不是回显。 */
   command?: string;
   sentinel?: RunSentinel | null;
+  /** `--stdin` / `@file`：整段是一次 bracketed-paste，回显可能跨多行。 */
+  paste?: boolean;
 }
 
 function compact(text: string): string {
@@ -252,18 +254,63 @@ function cutAtSentinel(lines: readonly string[], sentinel: RunSentinel): string[
   return kept;
 }
 
-export function formatRunOutput(raw: Uint8Array, options: RunOutputOptions = {}): string {
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
+
+function stripBracketedPasteEcho(raw: Uint8Array): { bytes: Uint8Array; stripped: boolean } {
+  const text = Buffer.from(raw).toString('latin1');
+  const start = text.indexOf(PASTE_START);
+  if (start < 0) return { bytes: raw, stripped: false };
+  const end = text.indexOf(PASTE_END, start + PASTE_START.length);
+  if (end < 0) return { bytes: raw, stripped: false };
+  let from = start;
+  while (from > 0 && text[from - 1] !== '\n') from -= 1;
+  let after = end + PASTE_END.length;
+  if (text[after] === '\r') after += 1;
+  if (text[after] === '\n') after += 1;
+  return { bytes: Buffer.from(text.slice(0, from) + text.slice(after), 'latin1'), stripped: true };
+}
+
+function dropEchoedFirstLine(raw: Uint8Array, command?: string): Uint8Array {
   const newline = raw.indexOf(0x0a);
+  if (newline < 0) return raw;
+  if (command !== undefined && !looksEchoed(stripAnsi(raw.subarray(0, newline)), command)) {
+    return raw;
+  }
+  return raw.subarray(newline + 1);
+}
+
+/** paste 回显行：要求跟脚本行足够像，避免把真正的短输出（`a` ⊂ `echo a`）剥掉。 */
+function looksPasteLineEcho(head: string, scriptLine: string): boolean {
+  const left = compact(head);
+  const right = compact(scriptLine);
+  if (right.length === 0) return left.length === 0;
+  if (left === right || left.includes(right)) return true;
+  return right.includes(left) && left.length * 2 >= right.length;
+}
+
+function dropLeadingPasteEcho(lines: string[], script: string): string[] {
+  const scriptLines = script.split('\n');
+  let index = 0;
+  while (index < scriptLines.length && index < lines.length) {
+    if (!looksPasteLineEcho(lines[index], scriptLines[index])) break;
+    index += 1;
+  }
+  return lines.slice(index);
+}
+
+export function formatRunOutput(raw: Uint8Array, options: RunOutputOptions = {}): string {
   const command = options.command;
-  const echoed =
-    newline >= 0 &&
-    (command === undefined || looksEchoed(stripAnsi(raw.subarray(0, newline)), command));
-  const body = echoed ? raw.subarray(newline + 1) : raw;
+  const paste = options.paste === true;
+  const peeled = paste ? stripBracketedPasteEcho(raw) : { bytes: raw, stripped: false };
+  const body = paste ? peeled.bytes : dropEchoedFirstLine(peeled.bytes, command);
   let lines = stripAnsi(body).split('\n');
+  if (paste && !peeled.stripped && command !== undefined) {
+    lines = dropLeadingPasteEcho(lines, command);
+  }
   const sentinel = options.sentinel;
   if (sentinel) {
     return trimScreenText(dropTrailingPrompt(cutAtSentinel(lines, sentinel)).join('\n'));
   }
-  lines = dropTrailingPrompt(lines);
-  return trimScreenText(lines.join('\n'));
+  return trimScreenText(dropTrailingPrompt(lines).join('\n'));
 }

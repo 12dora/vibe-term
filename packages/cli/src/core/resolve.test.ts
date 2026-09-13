@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
 import { UsageError } from './errors';
-import { formatTarget, parsePeerTarget, parseTarget } from './resolve';
+import { formatTarget, parsePeerTarget, parseTarget, pickFirstLocalDevice } from './resolve';
 
 describe('parseTarget', () => {
   test('device only', () => {
@@ -91,5 +92,36 @@ describe('parsePeerTarget', () => {
 
   test('rejects an empty destination', () => {
     expect(() => parsePeerTarget('  ', source)).toThrow(UsageError);
+  });
+});
+
+describe('pickFirstLocalDevice', () => {
+  function device(partial: Partial<DeviceWithRuntime> & { id: string; type: 'local' | 'ssh' }) {
+    return {
+      name: partial.id,
+      sortOrder: 0,
+      authMode: 'auto',
+      createdAt: '',
+      updatedAt: '',
+      lastSeenAt: null,
+      lastError: null,
+      lastErrorType: null,
+      tmuxAvailable: true,
+      ...partial,
+    } as DeviceWithRuntime;
+  }
+
+  test('picks the local device with the lowest sortOrder', () => {
+    expect(
+      pickFirstLocalDevice([
+        device({ id: 'ssh-1', type: 'ssh', sortOrder: 0 }),
+        device({ id: 'b', type: 'local', sortOrder: 2 }),
+        device({ id: 'a', type: 'local', sortOrder: 1 }),
+      ])?.id
+    ).toBe('a');
+  });
+
+  test('returns null when the node has no local device', () => {
+    expect(pickFirstLocalDevice([device({ id: 'ssh-1', type: 'ssh' })])).toBeNull();
   });
 });

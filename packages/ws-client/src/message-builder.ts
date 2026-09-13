@@ -65,14 +65,20 @@ export function buildTmuxSelectWindow(
 export function buildTmuxCreateWindow(
   deviceId: string,
   name?: string,
-  cwd?: string
+  cwd?: string,
+  detached?: boolean
 ): { kind: number; payload: Uint8Array } {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxCreateWindowSchema, {
-    deviceId,
-    name: name ?? null,
-    cwd: cwd ?? null,
-  });
-  return { kind: wsBorsh.KIND_TMUX_CREATE_WINDOW, payload };
+  const fields = { deviceId, name: name ?? null, cwd: cwd ?? null };
+  if (detached === true) {
+    return {
+      kind: wsBorsh.KIND_TMUX_CREATE_WINDOW_DETACHED,
+      payload: wsBorsh.encodePayload(wsBorsh.schema.TmuxCreateWindowDetachedSchema, fields),
+    };
+  }
+  return {
+    kind: wsBorsh.KIND_TMUX_CREATE_WINDOW,
+    payload: wsBorsh.encodePayload(wsBorsh.schema.TmuxCreateWindowSchema, fields),
+  };
 }
 
 export function buildTmuxCloseWindow(

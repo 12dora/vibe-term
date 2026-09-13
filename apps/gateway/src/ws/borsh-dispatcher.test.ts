@@ -140,6 +140,42 @@ describe('borsh dispatcher', () => {
     expect(handled).toBe(false);
   });
 
+  test('KIND_TMUX_CREATE_WINDOW still decodes a legacy payload with no trailing byte', async () => {
+    const calls: Array<{
+      deviceId: string;
+      name?: string;
+      cwd?: string;
+      detached?: boolean;
+    }> = [];
+    const host = {
+      handleCreateWindow(deviceId: string, name?: string, cwd?: string, detached?: boolean) {
+        calls.push({ deviceId, name, cwd, detached });
+      },
+      sendError() {
+        throw new Error('sendError should not be called');
+      },
+    } as unknown as BorshDispatchHost;
+    const legacy = wsBorsh.b.struct({
+      deviceId: wsBorsh.b.string(),
+      name: wsBorsh.b.option(wsBorsh.b.string()),
+      cwd: wsBorsh.b.option(wsBorsh.b.string()),
+    });
+    const payload = legacy.serialize({
+      deviceId: 'dev-1',
+      name: 'shell',
+      cwd: '/tmp',
+    });
+    await dispatchBorshKind(
+      createBorshKindHandlers(host),
+      host,
+      createWs(),
+      wsBorsh.KIND_TMUX_CREATE_WINDOW,
+      5,
+      payload
+    );
+    expect(calls).toEqual([{ deviceId: 'dev-1', name: 'shell', cwd: '/tmp', detached: false }]);
+  });
+
   test('handler runtime errors propagate instead of being converted to decode errors', async () => {
     const host = {
       handleDeviceDisconnect() {

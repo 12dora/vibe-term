@@ -57,6 +57,16 @@ describe('session command builders', () => {
       '-n',
       'docs',
     ]);
+    expect(buildCreateWindowArgv('vibeterm', '/tmp/work', 'docs', true)).toEqual([
+      'new-window',
+      '-d',
+      '-t',
+      'vibeterm',
+      '-c',
+      '/tmp/work',
+      '-n',
+      'docs',
+    ]);
   });
 
   test('move-pane argv encodes axis and before-flag per position', () => {

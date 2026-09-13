@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
+import { wsBorsh } from '@vibeterm/shared';
 import type { GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
 import type { CliError } from '../core/errors';
-import { UsageError } from '../core/errors';
+import { InterruptError, NetworkError, UsageError } from '../core/errors';
 import { runAttach } from '../core/term-attach';
 import { parseDetachKey } from '../core/term-escape';
 import { type FakeTermContext, createFakeTermContext, fakeSession } from '../core/term-test-fakes';
@@ -64,6 +65,68 @@ function autoScreen(
       return;
     }
     if (command.type === 'terminal-input') onInput?.(command.data, emitData(command.paneId));
+  };
+}
+
+function wireEphemeralWindow(
+  h: FakeTermContext,
+  options: { create?: 'ok' | 'unknown-kind' | 'no-pane'; close?: 'ok' | 'fail' } = {}
+): void {
+  const previous = h.transport.onCommand;
+  h.transport.onCommand = (command) => {
+    if (command.type === 'create-window') {
+      if (options.create === 'unknown-kind') {
+        h.transport.emit({
+          type: 'transport-error',
+          error: new wsBorsh.WsBorshError(
+            wsBorsh.ERROR_UNKNOWN_KIND,
+            false,
+            'Unknown message kind'
+          ),
+        });
+        return;
+      }
+      const tree = structuredClone(h.transport.currentTree());
+      tree?.windows.push({
+        id: '@9',
+        name: command.name ?? 'vt',
+        index: 9,
+        active: false,
+        panes:
+          options.create === 'no-pane'
+            ? []
+            : [
+                {
+                  id: '%9',
+                  windowId: '@9',
+                  index: 0,
+                  active: true,
+                  width: 80,
+                  height: 24,
+                  currentCommand: 'zsh',
+                  currentPath: '/tmp',
+                },
+              ],
+      });
+      if (tree) h.transport.emitTree(tree);
+      return;
+    }
+    if (command.type === 'close-window') {
+      if (options.close === 'fail') {
+        h.transport.emit({
+          type: 'transport-error',
+          error: new Error('kill-window failed'),
+        });
+        return;
+      }
+      const tree = structuredClone(h.transport.currentTree());
+      if (tree) {
+        tree.windows = tree.windows.filter((window) => window.id !== command.windowId);
+        h.transport.emitTree(tree);
+      }
+      return;
+    }
+    previous?.(command);
   };
 }
 
@@ -238,8 +301,168 @@ describe('vibeterm term run', () => {
   test('without a marker it stops on silence and strips the prompt', async () => {
     const h = await harness();
     autoScreen(h, 'prompt$ ', (data, emit) => emit(`${data.trimEnd()}\r\nhello\r\nuser@host ~ % `));
-    await term.run(h.ctx, ['run', 'laptop', 'echo hello', '--idle', '30']);
+    await term.run(h.ctx, ['run', 'laptop', 'echo hello', '--idle', '30', '--no-json']);
     expect(h.stdout.text()).toBe('hello\n');
+  });
+
+  test('non-TTY stdout defaults to JSON', async () => {
+    const h = await harness();
+    autoScreen(h, 'prompt$ ', (data, emit) => emit(`${data.trimEnd()}\r\nhello\r\n`));
+    await term.run(h.ctx, ['run', 'laptop', 'echo hello', '--idle', '30']);
+    expect(JSON.parse(h.stdout.text())).toMatchObject({ command: 'echo hello', output: 'hello' });
+  });
+
+  test('refuses a busy pane unless --force', async () => {
+    const h = await harness();
+    autoScreen(h, '');
+    const failed = await term.run(h.ctx, ['run', 'laptop:build', 'echo hi', '--no-json']).then(
+      () => null,
+      (error) => error as CliError
+    );
+    expect(failed?.exitCode).toBe(2);
+    expect(failed?.message).toContain('vim');
+    expect(failed?.message).toContain('--ephemeral');
+    const forced = await harness();
+    autoScreen(forced, 'prompt$ ', (data, emit) => emit(`${data.trimEnd()}\r\nok\r\n`));
+    await term.run(forced.ctx, [
+      'run',
+      'laptop:build',
+      'echo hi',
+      '--force',
+      '--idle',
+      '30',
+      '--no-json',
+    ]);
+    expect(forced.stdout.text()).toContain('ok');
+  });
+
+  test('--ephemeral creates a detached window and closes it', async () => {
+    const h = await harness();
+    autoScreen(h, 'prompt$ ', (data, emit) => emit(`${data.trimEnd()}\r\nok\r\n`));
+    wireEphemeralWindow(h);
+    await term.run(h.ctx, ['run', 'laptop', 'echo hi', '--ephemeral', '--idle', '30', '--no-json']);
+    expect(h.transport.commandsOfType('create-window')[0]).toMatchObject({ detached: true });
+    expect(h.transport.commandsOfType('close-window')[0]).toMatchObject({ windowId: '@9' });
+    expect(
+      h.transport.commandsOfType('set-pane-subscriptions').some((row) => row.paneIds.includes('%9'))
+    ).toBe(true);
+  });
+
+  test('--ephemeral on an old gateway maps unknown kind to exit 5', async () => {
+    const h = await harness();
+    autoScreen(h, 'prompt$ ');
+    wireEphemeralWindow(h, { create: 'unknown-kind' });
+    const error = (await term
+      .run(h.ctx, ['run', 'laptop', 'echo hi', '--ephemeral', '--no-json'])
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(NetworkError);
+    expect(error.exitCode).toBe(5);
+    expect(error.message).toBe('该节点版本过旧，不支持 --ephemeral');
+  });
+
+  test('--ephemeral warns when close-window fails', async () => {
+    const h = await harness();
+    autoScreen(h, 'prompt$ ', (data, emit) => emit(`${data.trimEnd()}\r\nok\r\n`));
+    wireEphemeralWindow(h, { close: 'fail' });
+    await term.run(h.ctx, ['run', 'laptop', 'echo hi', '--ephemeral', '--idle', '30', '--no-json']);
+    expect(h.stderr.text()).toContain('failed to close ephemeral window @9');
+  });
+
+  test('--ephemeral closes the window if create succeeds but the pane is missing', async () => {
+    const h = await harness();
+    autoScreen(h, 'prompt$ ');
+    wireEphemeralWindow(h, { create: 'no-pane' });
+    const error = (await term
+      .run(h.ctx, ['run', 'laptop', 'echo hi', '--ephemeral', '--no-json'])
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error.message).toContain('no pane');
+    expect(h.transport.commandsOfType('close-window')[0]).toMatchObject({ windowId: '@9' });
+  });
+
+  test('--ephemeral closes the window on SIGINT', async () => {
+    const h = await harness();
+    autoScreen(h, 'prompt$ ');
+    wireEphemeralWindow(h);
+    const run = term.run(h.ctx, [
+      'run',
+      'laptop',
+      'sleep 99',
+      '--ephemeral',
+      '--idle',
+      '5000',
+      '--no-json',
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    process.emit('SIGINT');
+    const error = (await run.catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(InterruptError);
+    expect(h.transport.commandsOfType('close-window')[0]).toMatchObject({ windowId: '@9' });
+  });
+
+  test('@file is sent as one bracketed-paste block', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-term-run-'));
+    dirs.push(dir);
+    const file = join(dir, 's.sh');
+    await writeFile(file, 'echo a\r\necho b\r\necho c\r\n');
+    const h = await harness();
+    const seen: string[] = [];
+    autoScreen(h, 'prompt$ ', (data, emit) => {
+      seen.push(data);
+      emit(`${data}a\r\nb\r\nc\r\nuser@host ~ % `);
+    });
+    await term.run(h.ctx, ['run', 'laptop', `@${file}`, '--idle', '30']);
+    expect(seen[0]).toBe('\x1b[200~echo a\necho b\necho c\x1b[201~\r');
+    expect(JSON.parse(h.stdout.text())).toMatchObject({
+      command: 'echo a\necho b\necho c',
+      output: 'a\nb\nc',
+    });
+  });
+
+  test('a bare node name falls back to that node first local device', async () => {
+    const office = 'b'.repeat(32);
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-term-'));
+    dirs.push(dir);
+    const h = createFakeTermContext({
+      session: fakeSession(),
+      configDir: dir,
+      timeoutMs: 1_500,
+      overrides: {
+        fetchImpl: async (input) => {
+          const url = new URL(input);
+          if (url.pathname === '/api/devices') {
+            return Response.json({
+              devices: [{ id: 'device-1', name: 'laptop', type: 'local', sortOrder: 0 }],
+            });
+          }
+          if (url.pathname === '/api/mesh/nodes') {
+            return Response.json({
+              nodes: [
+                {
+                  id: office,
+                  name: 'office',
+                  publicKey: 'x',
+                  online: true,
+                  loggedIn: true,
+                },
+              ],
+            });
+          }
+          if (url.pathname === `/n/${office}/api/devices`) {
+            return Response.json({
+              devices: [
+                { id: 'device-1', name: 'box', type: 'local', sortOrder: 1 },
+                { id: 'ssh-1', name: 'remote', type: 'ssh', sortOrder: 0 },
+              ],
+            });
+          }
+          return new Response('not found', { status: 404 });
+        },
+      },
+    });
+    autoScreen(h, 'prompt$ ', (data, emit) => emit(`${data.trimEnd()}\r\nok\r\n`));
+    await term.run(h.ctx, ['run', 'office', 'echo hi', '--idle', '30', '--no-json']);
+    expect(h.stderr.text()).toContain('using device box on node office');
   });
 
   test('a command is required', async () => {

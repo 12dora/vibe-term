@@ -2,6 +2,38 @@ import { wsBorsh } from '@vibeterm/shared';
 import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-kind-types';
 import { createTmuxViewportHandlers } from './tmux-viewport-handlers';
 
+function dispatchCreateWindow(
+  host: BorshDispatchHost,
+  decoded: { deviceId: string; name: string | null; cwd: string | null },
+  detached: boolean
+): void {
+  host.handleCreateWindow(
+    decoded.deviceId,
+    decoded.name ?? undefined,
+    decoded.cwd ?? undefined,
+    detached
+  );
+}
+
+function createWindowKindHandlers(
+  host: BorshDispatchHost
+): Array<[number, BorshKindHandler<unknown>]> {
+  return [
+    [
+      wsBorsh.KIND_TMUX_CREATE_WINDOW,
+      schemaHandler(wsBorsh.schema.TmuxCreateWindowSchema, (_ws, decoded) => {
+        dispatchCreateWindow(host, decoded, false);
+      }),
+    ],
+    [
+      wsBorsh.KIND_TMUX_CREATE_WINDOW_DETACHED,
+      schemaHandler(wsBorsh.schema.TmuxCreateWindowDetachedSchema, (_ws, decoded) => {
+        dispatchCreateWindow(host, decoded, true);
+      }),
+    ],
+  ];
+}
+
 export function createTmuxKindHandlers(
   host: BorshDispatchHost
 ): Array<[number, BorshKindHandler<unknown>]> {
@@ -30,16 +62,7 @@ export function createTmuxKindHandlers(
         host.handleTmuxSelectWindow(decoded.deviceId, decoded.windowId);
       }),
     ],
-    [
-      wsBorsh.KIND_TMUX_CREATE_WINDOW,
-      schemaHandler(wsBorsh.schema.TmuxCreateWindowSchema, (_ws, decoded) => {
-        host.handleCreateWindow(
-          decoded.deviceId,
-          decoded.name ?? undefined,
-          decoded.cwd ?? undefined
-        );
-      }),
-    ],
+    ...createWindowKindHandlers(host),
     [
       wsBorsh.KIND_TMUX_CLOSE_WINDOW,
       schemaHandler(wsBorsh.schema.TmuxCloseWindowSchema, (_ws, decoded) => {

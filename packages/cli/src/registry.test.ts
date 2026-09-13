@@ -25,6 +25,8 @@ const DISPATCHED_GROUPS = [
   'watch',
   'agent',
   'settings',
+  'exec',
+  'system',
 ];
 
 describe('registry', () => {

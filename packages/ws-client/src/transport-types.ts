@@ -196,7 +196,7 @@ export type GatewayTransportCommand =
       rows: number;
       visible: boolean;
     }
-  | { type: 'create-window'; deviceId: string; name?: string; cwd?: string }
+  | { type: 'create-window'; deviceId: string; name?: string; cwd?: string; detached?: boolean }
   | { type: 'close-window'; deviceId: string; windowId: string }
   | { type: 'close-pane'; deviceId: string; paneId: string }
   | { type: 'rename-window'; deviceId: string; windowId: string; name: string }

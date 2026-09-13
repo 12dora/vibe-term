@@ -56,6 +56,7 @@ export class DeviceSession {
   private readonly treeWaiters: Array<Waiter<TmuxSession>> = [];
   private readonly connectWaiters: Array<Waiter<undefined>> = [];
   private disposed = false;
+  private pendingTransportError: Error | null = null;
 
   constructor(
     private readonly transport: GatewayTransport,
@@ -92,6 +93,7 @@ export class DeviceSession {
     timeoutMs: number,
     what: string
   ): Promise<TmuxSession> {
+    if (this.pendingTransportError) throw this.pendingTransportError;
     if (this.tree && predicate(this.tree)) return this.tree;
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -175,7 +177,14 @@ export class DeviceSession {
   }
 
   send(command: Parameters<GatewayTransport['send']>[0]): void {
+    this.pendingTransportError = null;
     this.transport.send(command);
+  }
+
+  rejectWaiters(error: Error): void {
+    this.pendingTransportError = error;
+    for (const waiter of this.treeWaiters.splice(0)) waiter.reject(error);
+    for (const waiter of this.connectWaiters.splice(0)) waiter.reject(error);
   }
 
   dispose(): void {
@@ -230,6 +239,8 @@ export class DeviceSession {
       this.events.onDetached?.('device disconnected');
     } else if (event.type === 'connection-state' && event.state === 'CLOSED') {
       this.events.onDetached?.('gateway connection closed');
+    } else if (event.type === 'transport-error') {
+      this.rejectWaiters(event.error);
     }
   }
 

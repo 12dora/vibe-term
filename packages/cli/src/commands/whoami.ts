@@ -13,6 +13,8 @@ interface NodeStatus {
   /** 服务端视角：该 node 是否认这份会话。 */
   loggedIn: boolean;
   online: boolean;
+  /** loggedIn && online：现在能不能打这个 node。 */
+  ready: boolean;
   /** 本地会话 cookie 的到期时刻（epoch 毫秒）；没有为 null。 */
   expiresAt: number | null;
 }
@@ -26,6 +28,39 @@ function localExpiry(ctx: CliContext, nodeId: string): number | null {
 function formatExpiry(value: number | null): string {
   if (!value) return '-';
   return new Date(value).toISOString();
+}
+
+function asNodeStatus(
+  node: string,
+  name: string,
+  loggedIn: boolean,
+  online: boolean,
+  expiresAt: number | null
+): NodeStatus {
+  return { node, name, loggedIn, online, ready: loggedIn && online, expiresAt };
+}
+
+function displayUser(
+  username: string | null | undefined,
+  uid: string | null | undefined,
+  fallback: string
+): string {
+  return username ?? uid ?? fallback;
+}
+
+function printWhoamiTable(ctx: CliContext, statuses: NodeStatus[]): void {
+  ctx.out.table(statuses, [
+    { header: 'NODE', value: (row) => row.node },
+    { header: 'NAME', value: (row) => row.name },
+    { header: 'SESSION', value: (row) => (row.loggedIn ? 'yes' : 'no') },
+    { header: 'ONLINE', value: (row) => (row.online ? 'yes' : 'no') },
+    { header: 'READY', value: (row) => (row.ready ? 'yes' : 'no') },
+    { header: 'EXPIRES', value: (row) => formatExpiry(row.expiresAt) },
+  ]);
+  const hint = statuses.find((row) => !row.loggedIn && row.online);
+  if (!hint) return;
+  const cmd = hint.node === SELF_NODE_ID ? 'vibeterm login' : `vibeterm login --node ${hint.name}`;
+  ctx.out.info(cmd);
 }
 
 async function run(ctx: CliContext, argv: string[]): Promise<number | undefined> {
@@ -44,22 +79,18 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   const stored = ctx.sessions.entry(entry);
   const nodes = selfSession ? await listMeshNodes(ctx.http) : [];
   const statuses: NodeStatus[] = [
-    {
-      node: SELF_NODE_ID,
-      name: `${mode.username ?? mode.uid ?? 'unknown'} @ ${mode.nodeId}`,
-      loggedIn: Boolean(selfSession),
-      online: true,
-      expiresAt: localExpiry(ctx, SELF_NODE_ID),
-    },
+    asNodeStatus(
+      SELF_NODE_ID,
+      `${displayUser(mode.username, mode.uid, 'unknown')} @ ${mode.nodeId}`,
+      Boolean(selfSession),
+      true,
+      localExpiry(ctx, SELF_NODE_ID)
+    ),
     ...nodes
       .filter((node) => node.id !== mode.nodeId)
-      .map((node) => ({
-        node: node.id,
-        name: node.name,
-        loggedIn: node.loggedIn,
-        online: node.online,
-        expiresAt: localExpiry(ctx, node.id),
-      })),
+      .map((node) =>
+        asNodeStatus(node.id, node.name, node.loggedIn, node.online, localExpiry(ctx, node.id))
+      ),
   ];
 
   if (ctx.globals.json) {
@@ -75,17 +106,11 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   } else {
     ctx.out.line(`entry     ${entry}`);
     ctx.out.line(
-      `user      ${mode.username ?? stored?.username ?? '(unknown)'} (${mode.uid ?? '-'})`
+      `user      ${displayUser(mode.username ?? stored?.username, mode.uid, '(unknown)')} (${mode.uid ?? '-'})`
     );
     ctx.out.line(`sessions  ${ctx.sessions.path}`);
     ctx.out.line('');
-    ctx.out.table(statuses, [
-      { header: 'NODE', value: (row) => row.node },
-      { header: 'NAME', value: (row) => row.name },
-      { header: 'SESSION', value: (row) => (row.loggedIn ? 'yes' : 'no') },
-      { header: 'ONLINE', value: (row) => (row.online ? 'yes' : 'no') },
-      { header: 'EXPIRES', value: (row) => formatExpiry(row.expiresAt) },
-    ]);
+    printWhoamiTable(ctx, statuses);
   }
 
   if (!selfSession) {
@@ -98,6 +123,9 @@ export const command: Command = {
   summary: 'show the current entry, account and per-node session status',
   usage: [
     'Usage: vibeterm whoami [--entry <url>] [--json]',
+    '',
+    'READY = SESSION yes and ONLINE yes. SESSION=no ONLINE=yes means the node is',
+    'reachable but this CLI has no cookie — run: vibeterm login --node <name>',
     '',
     'Exit code 3 when the entry requires a login and no session is stored.',
   ].join('\n'),

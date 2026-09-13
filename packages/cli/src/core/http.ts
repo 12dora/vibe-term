@@ -397,7 +397,12 @@ export function httpStatusError(
   }
   if (status === 403) return forbiddenError(path, code, body);
   if (status === 404) return new NotFoundError(`${path} → 404 ${body || 'not found'}`);
-  return new CliError(`${path} → HTTP ${status} ${body}`.trim(), EXIT_GENERIC);
+  return new CliError(
+    `${path} → HTTP ${status} ${body}`.trim(),
+    EXIT_GENERIC,
+    undefined,
+    code ?? undefined
+  );
 }
 
 export function loginRequiredError(nodeId: string, body: string): AuthError {

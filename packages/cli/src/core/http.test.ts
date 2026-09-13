@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { SESSION_RENEWED_HEADER, SET_SESSION_HEADER } from '@vibeterm/shared/http/mesh-headers';
-import { AuthError, NetworkError, NotFoundError, PermissionError } from './errors';
+import { AuthError, CliError, NetworkError, NotFoundError, PermissionError } from './errors';
 import {
   type FetchLike,
   HttpClient,
@@ -203,6 +203,33 @@ describe('HttpClient', () => {
     expect(error).toBeInstanceOf(PermissionError);
     expect(error.exitCode).toBe(1);
     expect(error.message).toContain('forbidden');
+  });
+
+  test('400 JSON body attaches code on the thrown error', async () => {
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ code: 'invalid_body', message: 'argv required' }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const error = (await http
+      .json('self', 'POST', '/api/exec', {})
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBe('invalid_body');
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('argv required');
+  });
+
+  test('400 non-JSON body has no code', async () => {
+    const http = client(async () => new Response('plain 400', { status: 400 }));
+    const error = (await http
+      .json('self', 'POST', '/api/exec', {})
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBeUndefined();
+    expect(error.exitCode).toBe(1);
   });
 
   test('404 becomes a not-found error (exit 4)', async () => {

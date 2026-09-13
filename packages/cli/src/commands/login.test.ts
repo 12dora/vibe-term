@@ -235,6 +235,7 @@ describe('vibeterm whoami / logout', () => {
     expect(payload.user.username).toBe('root');
     expect(payload.nodes.find((row) => row.node === 'self')?.loggedIn).toBe(true);
     expect(payload.nodes.find((row) => row.node === NODE_A)?.loggedIn).toBe(true);
+    expect(payload.nodes.find((row) => row.node === 'self')).toMatchObject({ ready: true });
   });
 
   test('whoami without a session exits 3', async () => {

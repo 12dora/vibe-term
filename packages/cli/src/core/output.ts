@@ -88,9 +88,19 @@ export class Output {
     this.stderr.write(`${this.style(text, 'red')}\n`);
   }
 
+  /** 绑定的 stdout 是否是 TTY（term run / exec 的人读流式输出看这个）。 */
+  isStdoutTty(): boolean {
+    return streamIsTty(this.stdout);
+  }
+
   /** 绑定的 stderr 是否是 TTY（进度条默认只在这上面开）。 */
   isStderrTty(): boolean {
     return streamIsTty(this.stderr);
+  }
+
+  /** 远端 stderr 原样落到本机 stderr，不加颜色。 */
+  rawErr(bytes: Uint8Array): void {
+    this.stderr.write(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
   }
 
   /** 人读进度：TTY 上回车覆盖一行，否则逐行。`--json` / `--quiet` 静默。 */

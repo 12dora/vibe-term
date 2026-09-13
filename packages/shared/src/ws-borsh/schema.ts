@@ -112,11 +112,10 @@ export const TmuxSelectWindowSchema = b.struct({
   windowId: b.string(),
 });
 
-export const TmuxCreateWindowSchema = b.struct({
-  deviceId: b.string(),
-  name: OptionStringSchema,
-  cwd: OptionStringSchema,
-});
+export {
+  TmuxCreateWindowDetachedSchema,
+  TmuxCreateWindowSchema,
+} from './tmux-create-window';
 
 export const TmuxCloseWindowSchema = b.struct({
   deviceId: b.string(),

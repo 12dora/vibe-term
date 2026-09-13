@@ -112,6 +112,38 @@ describe('canonical gateway command encoder', () => {
     ).toBe(false);
   });
 
+  test('create-window detached 走 KIND_TMUX_CREATE_WINDOW_DETACHED', () => {
+    const encoded = encodeGatewayTransportCommand({
+      type: 'create-window',
+      deviceId: 'device-a',
+      name: 'vt-run',
+      cwd: '/tmp',
+      detached: true,
+    });
+    expect(encoded.kind).toBe(wsBorsh.KIND_TMUX_CREATE_WINDOW_DETACHED);
+    expect(
+      wsBorsh.decodePayload(wsBorsh.schema.TmuxCreateWindowDetachedSchema, encoded.payload)
+    ).toEqual({
+      deviceId: 'device-a',
+      name: 'vt-run',
+      cwd: '/tmp',
+    });
+  });
+
+  test('create-window 未 detached 仍走历史 KIND_TMUX_CREATE_WINDOW', () => {
+    const encoded = encodeGatewayTransportCommand({
+      type: 'create-window',
+      deviceId: 'device-a',
+      name: 'shell',
+    });
+    expect(encoded.kind).toBe(wsBorsh.KIND_TMUX_CREATE_WINDOW);
+    expect(wsBorsh.decodePayload(wsBorsh.schema.TmuxCreateWindowSchema, encoded.payload)).toEqual({
+      deviceId: 'device-a',
+      name: 'shell',
+      cwd: null,
+    });
+  });
+
   test('canonical 覆盖的命令没有控制帧编码', () => {
     for (const command of CANONICAL_ONLY_COMMANDS) {
       expect(() => encodeGatewayTransportCommand({ type: command } as never)).toThrow(
