@@ -45,6 +45,7 @@ import {
   shouldResendRelayStatus,
 } from './relay-uplink-ctl';
 import { defaultRelayWsFactory, relayUplinkWsUrl } from './relay-uplink-http';
+import { waitUntilUplinkClosed } from './relay-uplink-wait';
 import type {
   InboundRelayHandler,
   KeyLogApplier,
@@ -296,16 +297,11 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   waitUntilClosed(signal?: AbortSignal): Promise<void> {
-    const effective = signal ?? this.stopAbort?.signal ?? new AbortController().signal;
-    const link = this.link;
-    if (!link || effective.aborted) return Promise.resolve();
-    return new Promise((resolve) => {
-      const onAbort = () => resolve();
-      effective.addEventListener('abort', onAbort, { once: true });
-      void link.closed.then(() => {
-        effective.removeEventListener('abort', onAbort);
-        resolve();
-      });
+    return waitUntilUplinkClosed({
+      signal: signal ?? this.stopAbort?.signal ?? new AbortController().signal,
+      state: () => this.state,
+      link: () => this.link,
+      onStateChange: (cb) => this.onStateChange(cb),
     });
   }
 

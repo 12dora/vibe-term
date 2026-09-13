@@ -198,6 +198,38 @@ function stubUplink(
   } as unknown as UplinkPool;
 }
 
+function stubUplinkWithLifecycle(initialUrl: string | null): {
+  pool: UplinkPool;
+  detach(): void;
+} {
+  let attached = initialUrl;
+  const attachedCbs: Array<(hub: { publicUrl: string; nodeId: string; name: string }) => void> = [];
+  const detachedCbs: Array<() => void> = [];
+  const pool = {
+    attachedHub: () => (attached ? { publicUrl: attached, nodeId: PEER_A, name: 'sh' } : null),
+    liveClient: () => (attached ? { state: 'online' as UplinkState, rttMs: 10 } : null),
+    onAttached: (cb: (hub: { publicUrl: string; nodeId: string; name: string }) => void) => {
+      attachedCbs.push(cb);
+      return () => {};
+    },
+    onDetached: (cb: () => void) => {
+      detachedCbs.push(cb);
+      return () => {};
+    },
+    openRelay: async () => {
+      throw new Error('no-primary-relay');
+    },
+    identity: { nodeId: 'cc'.repeat(16), edSecretKey: new Uint8Array(64) },
+  } as unknown as UplinkPool;
+  return {
+    pool,
+    detach() {
+      attached = null;
+      for (const cb of detachedCbs) cb();
+    },
+  };
+}
+
 function stubWiring(): RelayWiring {
   return {
     secrets: {
@@ -364,6 +396,39 @@ describe('relay multi-attach presence overlay', () => {
     attach.handlePrimaryState('offline', SH, null);
     expect(attach.presence.snapshot().find((row) => row.url === SH)?.connected).toBe(false);
     expect(attach.presence.peersOnlineOn(SH)).toBe(2);
+    await attach.stop();
+  });
+
+  test('onDetached 时 attachedHub 为空则拆掉 secondary，即使 presence 仍记着旧 primary', async () => {
+    const scheduler = new FireScheduler();
+    const uplink = stubUplinkWithLifecycle(SH);
+    const spawned: FakeSecondary[] = [];
+    const attach = createRelayMultiAttach({
+      wiring: stubWiring(),
+      uplink: uplink.pool,
+      spawn: (opts) => {
+        const client = new FakeSecondary(opts);
+        spawned.push(client);
+        return client;
+      },
+      baseClient: baseClient(scheduler),
+      scheduler,
+      onRelayStream: () => {},
+      onExclusiveOffline: () => {},
+      rtc: { lastRtc: null, lastNodeList: null },
+    });
+    attach.start();
+    attach.handlePrimaryState('online', SH, 20);
+    await attach.reconcile();
+    await waitUntil(() =>
+      spawned.some((client) => client.hubUrl === TK && client.state === 'online')
+    );
+    uplink.detach();
+    await waitUntil(() => attach.secondaryClient(TK) == null);
+    attach.presence.setPrimary(SH);
+    expect(attach.presence.primaryUrl()).toBe(SH);
+    await attach.reconcile();
+    expect(attach.secondaryClient(TK)).toBeNull();
     await attach.stop();
   });
 });

@@ -39,4 +39,15 @@ describe('UplinkRelayDrain inbound viaRelay', () => {
     client.emit('aa'.repeat(16));
     expect(seen).toEqual([{ from: 'aa'.repeat(16), viaRelay: 'https://sh.example' }]);
   });
+
+  test('inFlight 计本 client 上已跟踪的流', () => {
+    const drain = new UplinkRelayDrain({
+      scheduler: { now: () => 1, sleep: async () => undefined, interval: () => ({ clear() {} }) },
+      log: () => {},
+    });
+    const client = fakeClient('https://sh.example');
+    expect(drain.inFlight(client)).toBe(0);
+    drain.track(client, { closed: Promise.resolve() } as unknown as LinkStream);
+    expect(drain.inFlight(client)).toBe(1);
+  });
 });

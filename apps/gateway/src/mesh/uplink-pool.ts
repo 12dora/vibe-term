@@ -43,6 +43,7 @@ import {
 import { isUplinkPathRerace, sleepAfterUplinkSession } from './uplink-path-sampler';
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
+import { runPreferredProbe } from './uplink-pool-probe';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
 import {
   isSelfHubCandidate,
@@ -1342,39 +1343,24 @@ export class UplinkPool {
     if (this.probeInFlight) return;
     this.probeInFlight = true;
     try {
-      const attached = this.attached;
-      const live = this.live;
-      if (!attached || live?.state !== 'online') return;
-      const cands = this.candidates();
-      const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
-      if (idx <= 0) {
-        this.stopProbe();
-        return;
-      }
-      await this.relayDrain.waitForClient(live, 'switch-back', this.stopAbort?.signal);
-      if (
-        this.live !== live ||
-        live.state !== 'online' ||
-        !this.attached ||
-        !sameHubUrl(this.attached.publicUrl, attached.publicUrl)
-      ) {
-        return;
-      }
-      for (let i = 0; i < idx; i += 1) {
-        const pref = cands[i];
-        if (!pref) continue;
-        const ok = await this.probeHealthzTimed(pref.publicUrl);
-        if (!ok) {
-          this.logInfo(`[uplink] probe fail hub=${redactUrl(pref.publicUrl)}`);
-          continue;
-        }
-        this.logInfo(`[uplink] probe ok hub=${redactUrl(pref.publicUrl)}`);
-        const switched = await this.switchTo(pref.publicUrl);
-        if (!switched.ok) return;
-        const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
-        this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
-        return;
-      }
+      await runPreferredProbe({
+        attachedHub: () => this.attached,
+        liveClient: () => this.live,
+        candidates: () => this.candidates(),
+        stopProbe: () => this.stopProbe(),
+        probeHealthz: (url) => this.probeHealthzTimed(url),
+        drainCount: (client) => this.relayDrain.inFlight(client),
+        waitDrain: (client) =>
+          this.relayDrain.waitForClient(client, 'switch-back', this.stopAbort?.signal),
+        switchTo: (url) => this.switchTo(url),
+        log: (line) => this.logInfo(line),
+        lastErrorOf: (cand) => this.lastErrorOf(cand),
+        isLocalTransport: (cand) => this.isLocalTransport(cand),
+        logSwitchBack: (pref, i) => {
+          const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
+          this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
+        },
+      });
     } finally {
       this.probeInFlight = false;
       if (this.failbackCoalesced) {
