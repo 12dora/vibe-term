@@ -77,3 +77,14 @@ export function resetFlowBridgesForTest(): void {
   navigateStack.clear();
   sidebarStack.clear();
 }
+
+// 入口节点的真实 32 位 id：路径 `/n/<入口id>/...` 对应的运行时其实是 self，选择事件要折叠回 self。
+let entryNodeIdBridge: string | null = null;
+
+export function setEntryNodeIdBridge(id: string | null): void {
+  entryNodeIdBridge = id;
+}
+
+export function bridgeEntryNodeId(): string | null {
+  return entryNodeIdBridge;
+}

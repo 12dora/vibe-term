@@ -87,6 +87,7 @@ export {
   bridgeNavigate,
   bridgeOpenMobileSidebar,
   resetFlowBridgesForTest,
+  setEntryNodeIdBridge,
   setNavigateBridge,
   setSidebarBridge,
 } from './flow-bridges';

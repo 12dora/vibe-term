@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
 import { navigateToAppUrl } from './app-navigation';
-import { setNavigateBridge, setSidebarBridge } from './flow-bridges';
+import { setEntryNodeIdBridge, setNavigateBridge, setSidebarBridge } from './flow-bridges';
 
 // bun 测试环境无 DOM：用最小 window 桩捕获 dispatch 的 CustomEvent（CustomEvent 是 Bun 内建全局）。
 // 导航/侧边栏走 flow-bridges 公共注册接口注入 spy，无需 mock 模块。
@@ -138,6 +138,18 @@ describe('navigateToAppUrl', () => {
     expect(navCalls).toEqual([
       { to: `/n/${nodeId}/devices/d1/windows/%401/panes/%252`, opts: { replace: true } },
     ]);
+  });
+
+  test('路径前缀是入口节点自己的 id：选择事件折叠成 self（与 useRouteNodeId 同口径）', () => {
+    const entry = 'aa'.repeat(16);
+    setEntryNodeIdBridge(entry);
+    try {
+      navigateToAppUrl(`/n/${entry}/devices/d1/windows/%401/panes/%252`);
+    } finally {
+      setEntryNodeIdBridge(null);
+    }
+    expect(dispatched[0].detail).toMatchObject({ nodeId: 'self', paneId: '%2' });
+    expect(navCalls[0]?.to).toBe(`/n/${entry}/devices/d1/windows/%401/panes/%252`);
   });
 
   test('pane 段为未编码 tmux id %2 或坏转义 %zz 时不抛，仍导航并保留原段', () => {

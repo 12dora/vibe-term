@@ -183,7 +183,7 @@ describe('nodeAppPath / parseNodeIdFromPath', () => {
     expect(nodeAppPath(NODE_A, prefixed)).toBe(prefixed);
     expect(nodeAppPath(NODE_B, prefixed)).toBe(prefixed);
     expect(nodeAppPath(NODE_A, `/n/${NODE_A}`)).toBe(`/n/${NODE_A}`);
-    expect(nodeAppPath(NODE_A, '/n/self/settings')).toBe(`/n/${NODE_A}/n/self/settings`);
+    expect(nodeAppPath(NODE_A, '/n/self/settings')).toBe('/n/self/settings');
   });
 
   test('前缀不是规范 node id 时按 self 处理，不把脏值带进后续拼接', () => {

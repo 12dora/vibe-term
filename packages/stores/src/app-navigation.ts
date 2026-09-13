@@ -3,7 +3,7 @@
 // - 其它页面路由（如无 window 时降级的 /devices/:id、将来的 settings 等）：只走 router 导航。
 // 一律不再用 window.location.href，避免整页刷新 / 被服务端持久化的 siteUrl 污染 origin（issue #32）。
 import { SELF_NODE_ID } from '@vibeterm/api-client';
-import { bridgeCloseMobileSidebar, bridgeNavigate } from './flow-bridges';
+import { bridgeCloseMobileSidebar, bridgeEntryNodeId, bridgeNavigate } from './flow-bridges';
 import { parseNodeIdFromPath, safeDecodePaneParam } from './pane-route';
 
 export const USER_INITIATED_SELECTION_EVENT = 'vibeterm:user-initiated-selection';
@@ -34,11 +34,17 @@ export function toAppPath(url: string): string {
   }
 }
 
+/** 路径里的 node id → 选择事件用的运行时 id：入口节点的真实 id 折叠成 self，与 useRouteNodeId 同口径。 */
+export function routeNodeIdForEvent(pathNodeId: string, fallback: string): string {
+  if (pathNodeId === SELF_NODE_ID) return fallback;
+  const entry = bridgeEntryNodeId();
+  return entry && pathNodeId === entry ? SELF_NODE_ID : pathNodeId;
+}
+
 export function navigateToAppUrl(url: string, nodeId: string = SELF_NODE_ID): void {
   const path = toAppPath(url);
   const match = PANE_URL_RE.exec(path);
-  const pathNodeId = parseNodeIdFromPath(path);
-  const eventNodeId = pathNodeId !== SELF_NODE_ID ? pathNodeId : nodeId;
+  const eventNodeId = routeNodeIdForEvent(parseNodeIdFromPath(path), nodeId);
   if (match) {
     const [, deviceId, windowId, encodedPaneId] = match;
     // detail 与 sidebar navigateToPane 保持一致：原始未编码值。

@@ -166,10 +166,12 @@ export function createNodeApiClient(nodeId: string | null | undefined): ApiClien
  * 应用内 SPA 路径的 node 前缀（`/devices/...` → `/n/<id>/devices/...`）。
  * 与 gateway URL 同形，但语义不同：这里是前端路由，经 HostServices.appPath 生效。
  */
+const NODE_PREFIXED_PATH_RE = /^\/n\/[^/?#]+(?:[/?#]|$)/;
+
 export function nodeAppPath(nodeId: string | null | undefined, path: string): string {
   // 已带 `/n/<id>` 前缀的路径原样返回：转发通知等调用点拼好来源节点路径后再经宿主 appPath，
   // 否则会叠成 `/n/<id>/n/<id>/...` 打进 404。
-  if (parseNodeIdFromPath(path) !== SELF_NODE_ID) return path;
+  if (NODE_PREFIXED_PATH_RE.test(path)) return path;
   return resolveNodeUrl(nodeId, path);
 }
 
