@@ -156,7 +156,8 @@ describe('portPlanFromStatus', () => {
       'rtc-ice',
     ]);
     expect(asPortRole('relay,node', 'node')).toBe('relay,node');
-    expect(asPortRole('whatever', 'hub,node')).toBe('hub,node');
+    expect(asPortRole('whatever', 'node')).toBe('node');
+    expect(asPortRole('hub,node', 'node')).toBe('node');
     expect(formatPortList(portPlanOrFallback(undefined, 'relay'))).toBe(
       '443/tcp, 40000/udp, 40001-40049/udp'
     );

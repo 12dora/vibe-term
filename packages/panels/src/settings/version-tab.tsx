@@ -15,7 +15,7 @@ import {
 } from './version-tab-sections';
 
 export interface VersionTabProps {
-  /** mesh 运行模式的展示文案（独立运行 / 节点 / Hub 兼节点…）；没传就不写这一子句。 */
+  /** mesh 运行模式的展示文案（独立运行 / 节点 / 中继兼节点…）；没传就不写这一子句。 */
   runMode?: string;
 }
 

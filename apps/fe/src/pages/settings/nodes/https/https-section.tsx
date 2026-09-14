@@ -1,6 +1,6 @@
 // 设置页「节点」标签里的 HTTPS 区块：外部反代 / 自签私有 CA / Let's Encrypt 三选一（外加关闭）。
 //
-// 所有角色都要看到它——standalone 想变 hub 就得先有 https 的公开地址，node 也可能被别人访问。
+// 所有角色都要看到它——standalone / node / relay,node 都可能对外提供入口。
 // 区块只负责编排：状态查询、模式选择、保存 / 续签的挂起态与错误提示，具体表单在各 panel 里。
 
 import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
@@ -37,8 +37,6 @@ export interface HttpsSectionProps {
   client?: ApiClient;
   /** 测试注入；默认读地址栏。 */
   hostname?: string | null;
-  /** standalone 下额外提示：hub 公开地址必须是 https。 */
-  showHubUrlHint?: boolean;
   /** 纯 node 角色：本机不对外提供入口，整块置灰并跳过状态查询。 */
   disabled?: boolean;
 }
@@ -53,7 +51,6 @@ export function HttpsSection({
   api = defaultTlsApi,
   client = defaultApiClient,
   hostname,
-  showHubUrlHint = false,
   disabled = false,
 }: HttpsSectionProps) {
   const { t } = useTranslation();
@@ -134,11 +131,6 @@ export function HttpsSection({
         className={`space-y-3 ${disabled ? 'pointer-events-none opacity-60' : ''}`}
         aria-disabled={disabled || undefined}
       >
-        {showHubUrlHint && (
-          <p className="text-xs text-muted-foreground" data-testid="https-hub-url-hint">
-            {t('nodes.https.hubUrlHint')}
-          </p>
-        )}
         {body}
       </CardContent>
       <StopListenerConfirm

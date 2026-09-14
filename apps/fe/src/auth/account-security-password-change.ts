@@ -170,11 +170,13 @@ async function submitMetaKeyAfterRotate(
   const result = await appendKeyLog(api, record).catch(
     () => ({ ok: false, code: 'NETWORK' }) as const
   );
-  // 中继没确认与 hub 没确认同一档：成员拿不到新的 `K_meta`，被吊销的节点还解得开元数据。
+  // 中继没确认：成员拿不到新的 `K_meta`，被吊销的节点还解得开元数据。
+  // `hubAck` 是冻结线名，只把明确的 `false` 当失败；缺省视为本机已落账。优先看 `relayAck`。
   // 记录已在本地生效，重发同一份字节会让入口重新尝试发布，所以照样留欠账。
-  if (result.ok && result.hubAck !== false && result.relayAck !== false) return { ok: true };
+  if (result.ok && result.relayAck !== false && result.hubAck !== false) return { ok: true };
   const code = result.ok
-    ? (result.hubError ?? relayAckError(result) ?? 'RELAY_UNCONFIRMED')
+    ? (relayAckError(result) ??
+      (result.hubAck === false ? (result.hubError ?? 'RELAY_UNCONFIRMED') : 'RELAY_UNCONFIRMED'))
     : result.code;
   rememberPendingMetaKey({
     id: META_KEY_AFTER_ROTATE_ID,

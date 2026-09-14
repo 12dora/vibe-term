@@ -58,7 +58,7 @@ const defaultAssert: AssertFn = (challenge, credentialId) =>
  * 用一把 passkey 对任意字节串做一次专用断言，编码成 Borsh `PasskeyAssertion`。
  *
  * challenge 一律是 `sha256(待签字节)`：key-log 记录如此，enrollment 的 `Authorization`
- * 也如此（`hub-runtime.handleCreateEnrollment` / `applyAdmitNode` 都按这个算）。
+ * 也如此（enrollment 创建与 `applyAdmitNode` 都按这个算）。
  */
 export async function signWithPasskey(
   signer: { credentialId: string; assert?: AssertFn },

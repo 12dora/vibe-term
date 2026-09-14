@@ -51,8 +51,8 @@ describe('parseSdpFingerprint（RFC 8122 作用域）', () => {
     });
   });
 
-  test('media 级覆盖 session 级：不取 session 里那条（挡失陷 hub 的 MITM）', () => {
-    // 失陷 hub 保留合法的 fp_node 作为 session 级指纹，往 m=application 段注入自己的证书指纹。
+  test('media 级覆盖 session 级：不取 session 里那条（挡失陷信令方的 MITM）', () => {
+    // 失陷信令方保留合法的 fp_node 作为 session 级指纹，往 m=application 段注入自己的证书指纹。
     const attack = sdp([
       ...SESSION_HEAD,
       `a=fingerprint:sha-256 ${FP_A}`,

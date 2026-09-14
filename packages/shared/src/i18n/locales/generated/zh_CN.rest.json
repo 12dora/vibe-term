@@ -1446,7 +1446,8 @@
           "relayConnected": "已连接中继",
           "relayConnectedRtt": "已连接中继 · {{ms}} ms",
           "relayDisconnected": "未连接中继",
-          "relayKicked": "中继令牌已失效"
+          "relayKicked": "中继令牌已失效",
+          "unattached": "未接入中继，请加入中继"
         },
         "sections": {
           "uplink": "连接",

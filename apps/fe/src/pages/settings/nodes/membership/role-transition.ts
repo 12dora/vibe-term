@@ -9,19 +9,27 @@
 // 纯 relay 没有网页，网页里不可能从它切出去，落在 `unsupported`。
 
 import type { LocalLeaveTargetRole, LocalRole } from '@vibeterm/api-client/local/types';
-import type { SetupIntent, SetupIntentRecord } from './intent';
+import type { SetupIntentRecord } from './intent';
 
 // 纯 relay 没有网页与本机用户，不算 mesh 成员；relay,node 的 node 部分与普通 node 同路径。
 export type MeshRole = Exclude<LocalRole, 'standalone' | 'relay'>;
 
+type SelectableRole = Exclude<LocalRole, 'hub,node'>;
+
 /** 角色的展示文案 key：本机卡片的下拉与退出对话框共用一套，别各写各的。 */
-export const ROLE_LABEL_KEY: Record<LocalRole, string> = {
+export const ROLE_LABEL_KEY: Record<SelectableRole, string> = {
   standalone: 'nodes.machine.roleStandalone',
   node: 'nodes.machine.roleNode',
-  'hub,node': 'nodes.machine.roleHub',
   relay: 'nodes.machine.roleRelay',
   'relay,node': 'nodes.machine.roleRelayNode',
 };
+
+export function roleLabelKey(role: LocalRole): string {
+  if (role === 'standalone' || role === 'node' || role === 'relay' || role === 'relay,node') {
+    return ROLE_LABEL_KEY[role];
+  }
+  return ROLE_LABEL_KEY.node;
+}
 
 export type RoleTransition =
   /** 目标就是当前角色。 */
@@ -43,15 +51,10 @@ export function isRelayRole(role: LocalRole): boolean {
   return role === 'relay' || role === 'relay,node';
 }
 
-const HUB_INTENT: Record<'node' | 'hub,node', SetupIntent> = {
-  node: 'join-hub',
-  'hub,node': 'become-hub',
-};
-
 /** 目标角色对应的向导路径；中继两档额外带上角色，重启后表单直接预选。 */
 export function setupIntentForRole(role: Exclude<LocalRole, 'standalone'>): SetupIntentRecord {
   if (role === 'relay' || role === 'relay,node') return { path: 'become-relay', role };
-  return { path: HUB_INTENT[role] };
+  return { path: 'join-relay' };
 }
 
 export function classifyRoleChange(from: LocalRole, to: LocalRole): RoleTransition {

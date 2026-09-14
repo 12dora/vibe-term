@@ -1,4 +1,4 @@
-// 加入码面板的 enrollment 接线：mesh 模式、hub 通道、凭据对话框与本次会话。
+// 加入码面板的 enrollment 接线：mesh 模式、中继通道、凭据对话框与本次会话。
 
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
 import {
@@ -11,7 +11,6 @@ import {
   ensureFreshMeshNodes,
   getMeshNodesState,
   subscribeMeshNodes,
-  useHubNode,
   useSharedAuthMode,
 } from '@/node/mesh-nodes';
 import { useMeshRelay } from '@/node/mesh-relay';
@@ -22,18 +21,11 @@ import {
 } from '@/pages/settings/nodes/management/use-create-enrollment';
 import { RelayMetaLagNotice } from '@/pages/settings/nodes/relay/relay-meta-lag-notice';
 import { useRelayAdmitFollowUp } from '@/pages/settings/nodes/relay/use-relay-admit-follow-up';
-import type {
-  AuthKdfParamsJson,
-  AuthModeResponse,
-  MeshNode,
-} from '@vibeterm/api-client/auth/index';
+import type { AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { type ReactElement, useMemo, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type JoinSession, type JoinSessionIdentity, useJoinSession } from './join-session';
-
-/** hub 只靠 `/api/auth/mode` 的 `hubNodeId` 定位，不必把 mesh 列表也拉进侧滑面板。 */
-const NO_MESH_NODES: MeshNode[] = [];
 
 /**
  * admit 成功后拉一次成员集：面板自己没有列表，但侧栏与设备页共用这份 store。
@@ -44,7 +36,7 @@ const refreshAfterAdmit = () => ensureFreshMeshNodes();
 export interface JoinEnrollment {
   /** 本机是否已加入多节点互联；否则不能在此生成加入码。 */
   meshEnabled: boolean;
-  /** 上级管理面是否可用：hub 模式看探测结果，中继模式看有没有挂上中继。 */
+  /** 上级管理面是否可用：看本机有没有挂上可写中继。 */
   hubOnline: boolean;
   create: CreateEnrollmentState;
   /** 本次面板会话创建的那条 enrollment；只跟踪它，不展示全局待确认列表。 */
@@ -73,10 +65,6 @@ function toResolvedMode(
 function useJoinAuthContext() {
   const api = defaultAuthApi;
   const { mode: rawMode, loaded: modeLoaded, meshEnabled } = useSharedAuthMode(api);
-  const hub = useHubNode(NO_MESH_NODES, {
-    enabled: meshEnabled,
-    hubNodeId: rawMode?.hubNodeId ?? null,
-  });
   const hasCredentials = Boolean(rawMode?.uid && rawMode?.kdfParams);
   const mode = toResolvedMode(rawMode, hasCredentials);
   const { passkeys } = usePasskeys(api, {
@@ -88,7 +76,7 @@ function useJoinAuthContext() {
     passkeys,
     passkeyAvailable: rawMode?.passkeyAvailable ?? false,
   });
-  return { api, rawMode, modeLoaded, meshEnabled, hub, mode, prompt };
+  return { api, rawMode, modeLoaded, meshEnabled, mode, prompt };
 }
 
 function useJoinSessionIdentity(
@@ -100,6 +88,7 @@ function useJoinSessionIdentity(
     () => ({
       ready: modeLoaded && rawMode !== null,
       uid: rawMode?.uid ?? null,
+      // 冻结存储字段：sessionStorage 里仍叫 `hubNodeId`（D4）。
       hubNodeId: rawMode?.hubNodeId ?? null,
       nodeIds: meshState.loadedAt === null ? null : meshState.nodes.map((node) => node.id),
     }),
@@ -130,7 +119,7 @@ export function useJoinEnrollment(): JoinEnrollment {
   // 中继的 `enroll.redeemed` 没有 `entry_sid`，推不到浏览器，只能靠这条通道轮询。
   // standalone 下这族路由是全局 401：只在 mesh 里才问，否则 session 拦截器会把页面踢去登录页。
   const relay = useMeshRelay({ enabled: ctx.meshEnabled });
-  const enrollChannel = relay.relayMode ? defaultRelayEnrollmentApi : ctx.hub.hubApi;
+  const enrollChannel = defaultRelayEnrollmentApi;
   const { confirmManually } = useEnrollmentEngine({
     api: ctx.api,
     mode: ctx.mode,
@@ -162,7 +151,7 @@ export function useJoinEnrollment(): JoinEnrollment {
 
   return {
     meshEnabled: ctx.meshEnabled,
-    hubOnline: relay.relayMode ? relay.writable : ctx.hub.online,
+    hubOnline: relay.writable,
     create,
     session,
     engine,

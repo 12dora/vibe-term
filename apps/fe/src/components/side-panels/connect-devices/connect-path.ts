@@ -1,9 +1,9 @@
-// 「服务器或电脑」页的三条接入路径与默认选择：只按本机现状推导，与 React 无关。
+// 「服务器或电脑」页的两条接入路径与默认选择：只按本机现状推导，与 React 无关。
 
 import type { LocalRole } from '@vibeterm/api-client/local/types';
 
 /** 一级：新机器怎么接进来。 */
-export type ConnectPath = 'relay' | 'hub' | 'ssh';
+export type ConnectPath = 'relay' | 'ssh';
 
 /** 二级：加入现成的上级，还是先把本机搭成上级。 */
 export type ConnectSide = 'join' | 'host';
@@ -25,13 +25,7 @@ export function isRelayRole(role: LocalRole | null): boolean {
   return role === 'relay' || role === 'relay,node';
 }
 
-export function isHubRole(role: LocalRole | null): boolean {
-  return role === 'hub,node';
-}
-
-export function defaultConnectPath(status: ConnectStatus): ConnectPath {
-  if (isRelayRole(status.role) || status.relayMode) return 'relay';
-  if (isHubRole(status.role) || status.meshEnabled) return 'hub';
+export function defaultConnectPath(_status: ConnectStatus): ConnectPath {
   return 'relay';
 }
 
@@ -41,9 +35,6 @@ export function defaultConnectSide(path: ConnectPath, status: ConnectStatus): Co
   // attached 又会随一次断线抖成 false。
   if (path === 'relay') {
     return status.relayMode && status.tenantId !== null ? 'join' : 'host';
-  }
-  if (path === 'hub') {
-    return isHubRole(status.role) || (status.meshEnabled && !status.relayMode) ? 'join' : 'host';
   }
   return 'join';
 }

@@ -2,7 +2,7 @@
 
 import type { StatsReportLike } from './rtc-types';
 
-/** 设计 §1「网络路径诊断」：`relay` 指 hub 中转，直连场景不会由 stats 推出。 */
+/** 设计 §1「网络路径诊断」：`relay` 指 TURN/中继中转，直连场景不会由 stats 推出。 */
 export type DirectRoute = 'lan' | 'v6' | 'v4-p2p' | 'turn' | 'relay';
 
 export interface SelectedPairStats {

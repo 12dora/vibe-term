@@ -70,9 +70,9 @@ export function siteSettingsToDraft(settings: SiteSettings): SiteSettingsDraft {
 export type SiteSettingsWithLinkage = SiteSettings & Partial<SiteSettingsLinkFields>;
 
 export interface SiteSettingsLinkage {
-  /** 站点名称即节点名称：改名要经 hub 的 rename 接口，不能走 PATCH。 */
+  /** 站点名称即节点名称：改名要经 `rename-node` 记录，不能走 PATCH。 */
   siteNameLinkedToNode: boolean;
-  /** 访问地址可否在本页编辑；mesh 下由 Hub 公开地址决定，只读。 */
+  /** 访问地址可否在本页编辑。 */
   siteUrlEditable: boolean;
   /** 实际生效的访问地址；未知为 `null`。 */
   effectiveSiteUrl: string | null;
@@ -133,13 +133,13 @@ export function buildSiteSettingsPatch(
 }
 
 export interface SiteSettingsSavePlan {
-  /** 要经 hub 改的节点名（已 trim）；不改名时为 `null`。 */
+  /** 要经改名通道改的节点名（已 trim）；不改名时为 `null`。 */
   renameNodeTo: string | null;
   /** 站点设置的增量；没有字段变化时为 `null`。 */
   patch: UpdateSiteSettingsRequest | null;
 }
 
-/** 一次「保存」拆成的动作：联动的名字走 hub rename，其余字段走站点设置 PATCH。 */
+/** 一次「保存」拆成的动作：联动的名字走改名通道，其余字段走站点设置 PATCH。 */
 export function planSiteSettingsSave(
   baseline: SiteSettingsDraft,
   draft: SiteSettingsDraft,
@@ -175,7 +175,7 @@ export function pinSiteName(
   return { ...baseline, siteName: pinnedName };
 }
 
-/** 改名后回读站点设置的次数与间隔：够 hub 推一轮 `node.list` 回来，又不至于把页面拖住。 */
+/** 改名后回读站点设置的次数与间隔：够上级推一轮成员列表回来，又不至于把页面拖住。 */
 export const RENAME_REFRESH_ATTEMPTS = 5;
 export const RENAME_REFRESH_INTERVAL_MS = 500;
 
@@ -192,8 +192,8 @@ export interface RenameRefreshDeps {
 /**
  * 改名之后把站点设置拉到「新名字已回流」为止，返回是否等到了。
  *
- * 远端 node（`/n/<id>`）的名字由 hub 保管：rename 返回 200 只说明 hub 收下了，那台 node 要等
- * hub 下一次 `node.list` 才知道自己叫什么。紧接着重拉一次多半还是旧名字，直接喂给表单会把
+ * 远端 node（`/n/<id>`）的名字由上级保管：rename 返回 200 只说明上级收下了，那台 node 要等
+ * 下一次成员列表才知道自己叫什么。紧接着重拉一次多半还是旧名字，直接喂给表单会把
  * 用户刚改好的名字盖回去。这里有界重试；等不到也不算错误——名字仍钉在表单里（`pinSiteName`），
  * 下一次刷新自然对齐。
  */

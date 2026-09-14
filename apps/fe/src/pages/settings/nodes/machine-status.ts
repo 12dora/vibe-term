@@ -1,6 +1,6 @@
 // 本机卡头部的两个派生量：唯一那枚状态徽标，与「更改角色」菜单里该给哪些目标角色。
 //
-// 状态只能有一枚：以前 hub 提示、中继链路条、租户提示各说各的，同一台机器能同时显示
+// 状态只能有一枚：以前中继链路条、租户提示各说各的，同一台机器能同时显示
 // 「未连接」和「在线」。这里按上级形态收敛成一档，卡片其余部分不再自己下结论。
 
 import type { LocalRole } from '@vibeterm/api-client/local/types';
@@ -10,9 +10,6 @@ export type MachineStatusTone = 'ok' | 'warn' | 'muted';
 export type MachineStatusState =
   | 'standalone'
   | 'unknown'
-  | 'hubConnected'
-  | 'hubDisconnected'
-  | 'connecting'
   | 'relayConnected'
   | 'relayDisconnected'
   | 'relayKicked';
@@ -27,15 +24,12 @@ export interface MachineStatusBadge {
 export interface MachineStatusInput {
   standalone: boolean;
   /**
-   * 本机自己在跑中继（`relay` / `relay,node`）。这类机器的上级只可能是中继：
-   * 后端在它还没以租户身份接入时把 `mode` 报成 `hub`，照 hub 那一档判会说出「未连接 Hub」——
-   * 一句它永远不该听到的话。
+   * 本机自己在跑中继（`relay` / `relay,node`）。这类机器的上级只可能是中继。
    */
   relayRole: boolean;
   /**
    * `/api/local/status` 已经回来了。没回来（或失败）时本机角色未知：除了 `/api/auth/mode`
-   * 直接给出的 standalone，其余一律不下结论——拿上级链路的快照去猜会说出「未连接 Hub」
-   * 这种看着像故障的话。
+   * 直接给出的 standalone，其余一律不下结论。
    */
   roleKnown: boolean;
   relayMode: boolean;
@@ -43,10 +37,6 @@ export interface MachineStatusInput {
   relayAttached: boolean;
   /** 中继令牌被作废，须重新输入口令。 */
   relayKicked: boolean;
-  /** hub 模式下解析出了当前挂载的那台 hub。 */
-  hubAttached: boolean;
-  /** 首次探测仍在飞：还没有结论，不能说「未连接」。 */
-  hubLoading: boolean;
   /** 当前链路的往返延迟；未知为 `null`。 */
   rttMs: number | null;
 }
@@ -86,23 +76,15 @@ export function machineStatusBadge(input: MachineStatusInput): MachineStatusBadg
     return { state: 'unknown', tone: 'muted', key: 'nodes.machine.status.unknown' };
   }
   if (input.relayRole || input.relayMode) return relayBadge(input);
-  if (input.hubAttached) {
-    return connected('hubConnected', 'nodes.machine.status.hubConnected', input.rttMs);
-  }
-  if (input.hubLoading) {
-    return { state: 'connecting', tone: 'muted', key: 'nodes.machine.status.connecting' };
-  }
-  return { state: 'hubDisconnected', tone: 'warn', key: 'nodes.machine.status.hubDisconnected' };
+  return {
+    state: 'relayDisconnected',
+    tone: 'warn',
+    key: 'nodes.machine.status.unattached',
+  };
 }
 
-/** 后端认的五个角色串（`packages/shared/src/roles.ts`）。 */
-export const SELECTABLE_ROLES: LocalRole[] = [
-  'standalone',
-  'node',
-  'hub,node',
-  'relay,node',
-  'relay',
-];
+/** 后端认的角色串。 */
+export const SELECTABLE_ROLES: LocalRole[] = ['standalone', 'node', 'relay', 'relay,node'];
 
 /**
  * 「更改角色」菜单里的目标：当前角色不必再列，`standalone` 由单独的「离开…」承担

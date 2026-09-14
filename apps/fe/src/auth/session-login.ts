@@ -542,7 +542,7 @@ async function retryLoginWithPasskey(
 /**
  * 对单台 node 执行设计 §2「登录」的 1–3 步。
  * 第 1 步拿到的 `nodePk` 必须与 `/api/mesh/nodes` 中该 node 的公钥一致，
- * 否则（失陷 hub 掉包公钥）立即中止，不签任何东西。
+ * 否则（失陷信令方掉包公钥）立即中止，不签任何东西。
  */
 export async function loginToNode(
   nodeId: string,
@@ -661,7 +661,7 @@ interface LoginSelfOptions {
 /**
  * 只登录 entry 自身（`self`），登录成功即可进入本机 UI。
  *
- * 仍然要拉一次 `/api/mesh/nodes`：mesh 列表里的 `publicKey` 来自 hub 签发的证书，而第 1 步
+ * 仍然要拉一次 `/api/mesh/nodes`：mesh 列表里的 `publicKey` 来自节点证书，而第 1 步
  * challenge 里的 `nodePk` 来自这台机器当场持有的钥，两者必须一致——entry 出示的不是被签发过
  * 的那把钥时（掉包 / 配置错乱）立刻丢弃会话钥，不让用户带着一个不可信的会话继续。
  * 这一次请求也是唯一挡在跳转前面的等待，**不做任何 fan-out**：其余 node 由

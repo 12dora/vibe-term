@@ -11,7 +11,6 @@ import { Button, buttonVariants } from '@vibeterm/ui/button';
 import { Input } from '@vibeterm/ui/input';
 import { ArrowRight, ExternalLink, Loader2, LogIn, Pencil, Rocket } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
 import { CopyButton } from '../nodes/copy-feedback';
 import { FormField, SetupNotice } from '../nodes/setup/form-parts';
 import {
@@ -128,12 +127,10 @@ export function HostnameStep({
   status,
   actions,
   draft,
-  isHub,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
   draft: NamedDraft;
-  isHub: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -155,7 +152,6 @@ export function HostnameStep({
             <span className="font-mono">{status.config.tunnelName ?? '—'}</span>
           </DetailRow>
         </div>
-        <HubHint isHub={isHub} />
         <p className="text-xs text-muted-foreground">
           {t('settings.remoteAccess.steps.named.changeHint')}
         </p>
@@ -190,7 +186,6 @@ export function HostnameStep({
             </DetailRow>
           )}
         </div>
-        <HubHint isHub={isHub} />
         <Button
           type="button"
           size="xs"
@@ -225,8 +220,6 @@ export function HostnameStep({
           onChange={(event) => draft.setHostname(event.target.value)}
         />
       </FormField>
-
-      <HubHint isHub={isHub} />
 
       <FormField
         id="remote-access-tunnel-name"
@@ -266,13 +259,11 @@ export function CreateStep({
   status,
   actions,
   draft,
-  isHub,
   exposure,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
   draft: NamedDraft;
-  isHub: boolean;
   exposure: ExposureState;
 }) {
   const { t } = useTranslation();
@@ -294,7 +285,6 @@ export function CreateStep({
         >
           <span className="font-mono">{status.config.tunnelId ?? '—'}</span>
         </DetailRow>
-        <HubHint isHub={isHub} />
       </div>
     );
   }
@@ -350,19 +340,5 @@ export function CreateStep({
         </Button>
       </div>
     </div>
-  );
-}
-
-/** 本机即 Hub 时，创建出来的主机名同样要写进 Hub 公开地址，否则 join 串仍指向内网。 */
-function HubHint({ isHub }: { isHub: boolean }) {
-  const { t } = useTranslation();
-  if (!isHub) return null;
-  return (
-    <p className="text-xs text-muted-foreground" data-testid="remote-access-hub-hint">
-      {t('settings.remoteAccess.steps.named.hubHint')}{' '}
-      <Link className="text-primary underline-offset-4 hover:underline" to="?tab=nodes">
-        {t('settings.remoteAccess.steps.named.hubHintLink')}
-      </Link>
-    </p>
   );
 }

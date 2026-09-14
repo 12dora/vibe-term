@@ -51,13 +51,13 @@ async function rootKeyOf(password: string): Promise<RootKey> {
 function passkey(overrides: Partial<PasskeySummary> & { credential_id: string }): PasskeySummary {
   return {
     name: overrides.credential_id,
-    rp_id: 'hub.example',
-    origin: 'https://hub.example',
+    rp_id: 'node.example',
+    origin: 'https://node.example',
     ...overrides,
   };
 }
 
-const HUB_PASSKEY = passkey({ credential_id: 'a' });
+const ORIGIN_PASSKEY = passkey({ credential_id: 'a' });
 const OTHER_PASSKEY = passkey({
   credential_id: 'b',
   rp_id: 'other.example',
@@ -68,9 +68,9 @@ describe('usablePasskeys', () => {
   test('后端说本环境用不了 passkey 时一律为空', () => {
     expect(
       usablePasskeys({
-        passkeys: [HUB_PASSKEY],
+        passkeys: [ORIGIN_PASSKEY],
         passkeyAvailable: false,
-        origin: 'https://hub.example',
+        origin: 'https://node.example',
       })
     ).toEqual([]);
   });
@@ -78,9 +78,9 @@ describe('usablePasskeys', () => {
   test('只留注册 origin 与当前 origin 一致的凭证', () => {
     expect(
       usablePasskeys({
-        passkeys: [HUB_PASSKEY, OTHER_PASSKEY],
+        passkeys: [ORIGIN_PASSKEY, OTHER_PASSKEY],
         passkeyAvailable: true,
-        origin: 'https://hub.example',
+        origin: 'https://node.example',
       }).map((row) => row.credential_id)
     ).toEqual(['a']);
   });
@@ -90,7 +90,7 @@ describe('usablePasskeys', () => {
       usablePasskeys({
         passkeys: [OTHER_PASSKEY],
         passkeyAvailable: true,
-        origin: 'https://hub.example',
+        origin: 'https://node.example',
       })
     ).toEqual([]);
     expect(usablePasskeys({ passkeys: [], passkeyAvailable: true })).toEqual([]);
@@ -120,11 +120,11 @@ describe('对话框', () => {
   });
 
   test('有可用 passkey 时才出现 passkey 按钮；多把才出现选择器', () => {
-    const single = render([HUB_PASSKEY]);
+    const single = render([ORIGIN_PASSKEY]);
     expect(single).toContain('data-testid="credential-prompt-passkey"');
     expect(single).not.toContain('data-testid="credential-prompt-passkey-select"');
 
-    const many = render([HUB_PASSKEY, passkey({ credential_id: 'c' })]);
+    const many = render([ORIGIN_PASSKEY, passkey({ credential_id: 'c' })]);
     expect(many).toContain('data-testid="credential-prompt-passkey-select"');
   });
 

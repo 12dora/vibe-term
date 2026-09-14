@@ -35,7 +35,6 @@ function selfGroup(name: string): NodeDeviceGroupEntry {
     online: true,
     loggedIn: true,
     isSelf: true,
-    isHub: false,
     version: null,
     inventory: null,
   };

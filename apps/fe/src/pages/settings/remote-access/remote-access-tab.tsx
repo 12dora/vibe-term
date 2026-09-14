@@ -6,7 +6,6 @@
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { isSelfNode } from '@vibeterm/api-client';
-import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import type { LocalAuthStatus, TunnelStatusResponse } from '@vibeterm/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Loader2 } from 'lucide-react';
@@ -158,7 +157,6 @@ function SelfRemoteAccess() {
         chosenMode={chosenMode}
         onChooseMode={setChosenMode}
         draft={draft}
-        isHub={isSelfHub(mode)}
         exposure={exposure}
         onRestarted={refresh}
         localAuth={localAuthOverride ?? mode?.localAuth ?? null}
@@ -194,9 +192,4 @@ function useResetOnTunnelRemoved(configuredMode: string | null, reset: () => voi
     previousModeRef.current = configuredMode;
     if (previous !== null && previous !== 'off' && configuredMode === 'off') resetRef.current();
   }, [configuredMode]);
-}
-
-/** 本机即 hub：`/api/auth/mode` 下发的 `hubNodeId` 与自身 nodeId 相同。 */
-function isSelfHub(mode: AuthModeResponse | null): boolean {
-  return mode?.mode === 'mesh' && !!mode.hubNodeId && mode.hubNodeId === mode.nodeId;
 }

@@ -1,8 +1,5 @@
-// 「连接」段：按上级形态分派。standalone 是设置向导，mesh 分中继形态、中继角色待接入与
-// Hub 形态，三种形态最后都接一段默认收起的「连接详情」。
-//
-// 以前这里是「接入 Hub / 接入中继」两个 tab 加一份 localStorage 偏好：一台机器不可能同时
-// 挂 Hub 和中继，摆两个 tab 只会让另一边永远是一句「先离开中继」。
+// 「连接」段：按上级形态分派。standalone 是设置向导，mesh 分中继形态与待接入。
+// 两种形态最后都接一段默认收起的「连接详情」。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import type { LocalStatusResponse, SetupRelayRole } from '@vibeterm/api-client/local/types';
@@ -14,8 +11,7 @@ import { ConnectionDetails } from '../connection-details';
 import type { SetupIntent } from '../membership/intent';
 import { isRelayRole } from '../membership/role-transition';
 import { RelayConfirmDialog, RelayEnrollDialog } from '../relay/relay-dialogs';
-import { HubSetupWizard } from '../setup/hub-setup-wizard';
-import { HubUplinkPanel } from './hub-uplink-panel';
+import { SetupWizard } from '../setup/setup-wizard';
 import type { LocalUplinkController } from './local-uplink-controller';
 import { RelayUplinkPanel } from './relay-uplink-panel';
 
@@ -46,13 +42,8 @@ export function UplinkSection({
     return <SetupSlot status={status} wizardPath={wizardPath} relayRole={wizardRelayRole} />;
   return (
     <>
-      <MeshUplink
-        status={status}
-        selfNodeId={selfNodeId}
-        uplink={uplink}
-        selfRelayFollowUp={selfRelayFollowUp}
-      />
-      <ConnectionDetails relay={relay} hubs={uplink.hubs} selfNodeId={selfNodeId} />
+      <MeshUplink status={status} uplink={uplink} selfRelayFollowUp={selfRelayFollowUp} />
+      <ConnectionDetails relay={relay} selfNodeId={selfNodeId} />
       <RelayEnrollDialog actions={uplink.relayActions} />
       <RelayConfirmDialog actions={uplink.relayActions} />
     </>
@@ -60,20 +51,17 @@ export function UplinkSection({
 }
 
 /**
- * mesh 机器的上级：三种形态互斥。
+ * mesh 机器的上级：中继形态与待接入互斥。
  *
- * 中继角色（`relay` / `relay,node`）还没接上自己的中继时**只给一条路**——接自己的中继。
- * 后端在这个状态下把 `mode` 报成 `hub`，照 hub 形态摆版会给出「改为接入中继 / 不再连接 Hub」，
- * 把用户引向接别人的中继，还平白说了一句它这辈子都用不上的 Hub。
+ * 中继角色（`relay` / `relay,node`）还没接上自己的中继时只给一条路——接自己的中继。
+ * 普通节点还没挂上任何中继时走链路面板的空态 + 加入中继 CTA。
  */
 function MeshUplink({
   status,
-  selfNodeId,
   uplink,
   selfRelayFollowUp,
 }: {
   status: LocalStatusResponse;
-  selfNodeId: string | null;
   uplink: LocalUplinkController;
   selfRelayFollowUp: boolean;
 }) {
@@ -90,15 +78,7 @@ function MeshUplink({
     );
   return (
     <>
-      <HubUplinkPanel
-        localRole={status.role}
-        selfNodeId={selfNodeId}
-        status={status}
-        hubs={uplink.hubs}
-        hubOnline={uplink.hub.online}
-        hubLoading={uplink.hub.loading}
-        hubFailure={uplink.hub.failure}
-      />
+      <RelayUplinkPanel relay={relay} actions={uplink.relayActions} />
       <RelayEntry relay={relay} onOpen={() => uplink.relayActions.openEnroll('enroll')} />
     </>
   );
@@ -120,8 +100,7 @@ function SetupSlot({
   }, [wizardPath]);
   return (
     <div ref={ref}>
-      {/* `initialPath` 只在首次挂载时生效，改路径必须换 key 重新挂一次。 */}
-      <HubSetupWizard
+      <SetupWizard
         key={wizardPath ?? 'default'}
         localStatus={status}
         initialPath={wizardPath}
@@ -133,12 +112,11 @@ function SetupSlot({
 
 /**
  * 压根没有上级的 mesh 机器：卡面必须自己要求一个动作，因此「接入中继」留在这里。
- * hub 形态下的「改为接入中继」是低频操作，已经收进卡片 ⋯ 菜单（`connect-menu.ts`）。
  * 旧节点没有这族路由（`unsupported`）时整块不出现——摆一个点了必报错的按钮毫无意义。
  */
 function RelayEntry({ relay, onOpen }: { relay: UseMeshRelayResult; onOpen: () => void }) {
   const { t } = useTranslation();
-  if (relay.unsupported || relay.mode === 'hub') return null;
+  if (relay.unsupported) return null;
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button

@@ -13,7 +13,6 @@ import { relayTurnStatusOf } from '../relay/relay-turn-model';
 import { CopyableValue, Row } from './copy-feedback';
 import { RelayServiceMetrics } from './relay/relay-service-metrics';
 import { RelayTurnRow } from './relay/relay-turn-row';
-import { UnsetAddress } from './uplink/hub-uplink-panel';
 
 export interface RelayServiceSectionProps {
   service: LocalRelayStatus;
@@ -47,10 +46,14 @@ export function RelayServiceSection({ service }: RelayServiceSectionProps) {
         {service.publicUrl ? (
           <CopyableValue value={service.publicUrl} testId="local-relay-service-url" />
         ) : (
-          <UnsetAddress
-            hint={t('nodes.machine.relayServiceAddressUnsetHint')}
-            testId="local-relay-service"
-          />
+          <>
+            <span data-testid="local-relay-service-unset">
+              {t('nodes.machine.localAddressUnset')}
+            </span>
+            <span className="text-muted-foreground">
+              {t('nodes.machine.relayServiceAddressUnsetHint')}
+            </span>
+          </>
         )}
         <Badge variant="outline" data-testid="local-relay-service-password">
           {t(service.hasPassword ? 'relay.admin.password.set' : 'relay.admin.password.unset')}

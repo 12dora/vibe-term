@@ -1,4 +1,4 @@
-// 「服务器或电脑」页：先选接入方式（经中继 / 经 Hub / SSH 直连），再按所选路径给分步指引。
+// 「服务器或电脑」页：先选接入方式（经中继 / SSH 直连），再按所选路径给分步指引。
 // 默认选中的路径由本机现状推导，用户改过之后就以他的选择为准。
 // 每条路径的步骤自成一套编号：一级选择永远是第 1 步。
 
@@ -16,7 +16,6 @@ import {
 } from './connect-path';
 import { GuideStep } from './guide-step';
 import { GuideTabList } from './guide-tabs';
-import { HostSteps } from './hub-host-steps';
 import { InstallStep } from './install-step';
 import { PortsStep } from './ports-step';
 import { RelayHostSteps } from './relay-host-steps';
@@ -24,7 +23,7 @@ import { SshSteps } from './ssh-steps';
 import { type ConnectMachine, useConnectMachine } from './use-connect-machine';
 
 const PREFIX = 'connectDevices.computer';
-const PATHS: ConnectPath[] = ['relay', 'hub', 'ssh'];
+const PATHS: ConnectPath[] = ['relay', 'ssh'];
 /** 选择接入方式固定占第 1 步，需要装 VibeTerm 的路径把安装排在第 2 步。 */
 const INSTALL_STEP_INDEX = 2;
 
@@ -67,12 +66,10 @@ function PathChoiceStep() {
 
 /** 二级选择：加入现成的上级，还是先把本机搭成上级。 */
 function SideTabs({
-  path,
   side,
   onSide,
   children,
 }: {
-  path: 'relay' | 'hub';
   side: ConnectSide;
   onSide: (next: ConnectSide) => void;
   children: React.ReactNode;
@@ -85,8 +82,8 @@ function SideTabs({
         variant="line"
         options={sides.map((value) => ({
           value,
-          label: t(`${PREFIX}.side.${path}.${value}`),
-          testId: `connect-side-${path}-${value}`,
+          label: t(`${PREFIX}.side.relay.${value}`),
+          testId: `connect-side-relay-${value}`,
         }))}
       />
       {children}
@@ -98,31 +95,14 @@ export function RelayPath({ machine }: { machine: ConnectMachine }) {
   const [chosen, setChosen] = useState<ConnectSide | null>(null);
   const side = chosen ?? defaultConnectSide('relay', machine);
   return (
-    <SideTabs path="relay" side={side} onSide={setChosen}>
+    <SideTabs side={side} onSide={setChosen}>
       <TabsContent value="join" className="space-y-2">
         <InstallStep index={INSTALL_STEP_INDEX} />
         <PortsStep index={INSTALL_STEP_INDEX + 1} fallbackRole="node" portPlan={machine.portPlan} />
-        <JoinSteps variant="relay" machine={machine} />
+        <JoinSteps machine={machine} />
       </TabsContent>
       <TabsContent value="host" className="space-y-2">
         <RelayHostSteps machine={machine} onSwitchToJoin={() => setChosen('join')} />
-      </TabsContent>
-    </SideTabs>
-  );
-}
-
-export function HubPath({ machine }: { machine: ConnectMachine }) {
-  const [chosen, setChosen] = useState<ConnectSide | null>(null);
-  const side = chosen ?? defaultConnectSide('hub', machine);
-  return (
-    <SideTabs path="hub" side={side} onSide={setChosen}>
-      <TabsContent value="join" className="space-y-2">
-        <InstallStep index={INSTALL_STEP_INDEX} />
-        <PortsStep index={INSTALL_STEP_INDEX + 1} fallbackRole="node" portPlan={machine.portPlan} />
-        <JoinSteps variant="hub" machine={machine} />
-      </TabsContent>
-      <TabsContent value="host" className="space-y-2">
-        <HostSteps onSwitchToJoin={() => setChosen('join')} portPlan={machine.portPlan} />
       </TabsContent>
     </SideTabs>
   );
@@ -146,9 +126,6 @@ export function ComputerGuide() {
         <PathChoiceStep />
         <TabsContent value="relay" className="space-y-2">
           <RelayPath machine={machine} />
-        </TabsContent>
-        <TabsContent value="hub" className="space-y-2">
-          <HubPath machine={machine} />
         </TabsContent>
         <TabsContent value="ssh" className="space-y-2">
           <SshSteps />

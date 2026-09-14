@@ -26,7 +26,6 @@ function memoryStorage(initial: Record<string, string> = {}): IntentStorage & {
   };
 }
 
-/** 隐私模式 / 配额满：访问 sessionStorage 直接抛。 */
 const throwingStorage: IntentStorage = {
   getItem: () => {
     throw new Error('denied');
@@ -42,20 +41,14 @@ const throwingStorage: IntentStorage = {
 describe('setup intent 记号', () => {
   test('写入后读到，并且读一次就清掉', () => {
     const storage = memoryStorage();
-    writeSetupIntent({ path: 'join-hub' }, storage, 1000);
+    writeSetupIntent({ path: 'join-relay' }, storage, 1000);
     expect(JSON.parse(storage.map.get(SETUP_INTENT_KEY) as string)).toEqual({
-      path: 'join-hub',
+      path: 'join-relay',
       at: 1000,
     });
-    expect(takeSetupIntent(storage, 1000)).toEqual({ path: 'join-hub' });
+    expect(takeSetupIntent(storage, 1000)).toEqual({ path: 'join-relay' });
     expect(storage.map.has(SETUP_INTENT_KEY)).toBe(false);
     expect(takeSetupIntent(storage)).toBeNull();
-  });
-
-  test('become-hub 同样往返', () => {
-    const storage = memoryStorage();
-    writeSetupIntent({ path: 'become-hub' }, storage);
-    expect(takeSetupIntent(storage)).toEqual({ path: 'become-hub' });
   });
 
   test('join-relay 往返', () => {
@@ -72,11 +65,13 @@ describe('setup intent 记号', () => {
     }
   });
 
-  test('老记录没有 role 字段照样能读（向后兼容）', () => {
-    const storage = memoryStorage({
-      [SETUP_INTENT_KEY]: JSON.stringify({ path: 'become-hub', at: 1000 }),
-    });
-    expect(takeSetupIntent(storage, 1000)).toEqual({ path: 'become-hub' });
+  test('陈旧的 hub 路径一律忽略', () => {
+    for (const path of ['become-hub', 'join-hub']) {
+      const storage = memoryStorage({
+        [SETUP_INTENT_KEY]: JSON.stringify({ path, at: 1000 }),
+      });
+      expect(takeSetupIntent(storage, 1000)).toBeNull();
+    }
   });
 
   test('role 是脏值时只丢 role，路径照样生效', () => {
@@ -88,18 +83,18 @@ describe('setup intent 记号', () => {
 
   test('保质期内读得到，过期就当没有（照样清掉）', () => {
     const fresh = memoryStorage();
-    writeSetupIntent({ path: 'join-hub' }, fresh, 0);
-    expect(takeSetupIntent(fresh, SETUP_INTENT_TTL_MS)).toEqual({ path: 'join-hub' });
+    writeSetupIntent({ path: 'join-relay' }, fresh, 0);
+    expect(takeSetupIntent(fresh, SETUP_INTENT_TTL_MS)).toEqual({ path: 'join-relay' });
 
     const stale = memoryStorage();
-    writeSetupIntent({ path: 'join-hub' }, stale, 0);
+    writeSetupIntent({ path: 'join-relay' }, stale, 0);
     expect(takeSetupIntent(stale, SETUP_INTENT_TTL_MS + 1)).toBeNull();
     expect(stale.map.has(SETUP_INTENT_KEY)).toBe(false);
   });
 
   test('写入时刻在未来（时钟回拨）同样不可信', () => {
     const storage = memoryStorage();
-    writeSetupIntent({ path: 'become-hub' }, storage, 10_000);
+    writeSetupIntent({ path: 'become-relay' }, storage, 10_000);
     expect(takeSetupIntent(storage, 9_000)).toBeNull();
   });
 
@@ -110,28 +105,28 @@ describe('setup intent 记号', () => {
   });
 
   test('老格式的裸字符串与缺字段的记录都当没有', () => {
-    expect(takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: 'join-hub' }))).toBeNull();
+    expect(takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: 'join-relay' }))).toBeNull();
     expect(
-      takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: '{"path":"join-hub"}' }))
+      takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: '{"path":"join-relay"}' }))
     ).toBeNull();
     expect(takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: '{"at":1}' }))).toBeNull();
   });
 
   test('clearSetupIntent 只清自己的键', () => {
-    const storage = memoryStorage({ [SETUP_INTENT_KEY]: 'join-hub', other: 'keep' });
+    const storage = memoryStorage({ [SETUP_INTENT_KEY]: 'join-relay', other: 'keep' });
     clearSetupIntent(storage);
     expect(storage.map.has(SETUP_INTENT_KEY)).toBe(false);
     expect(storage.map.get('other')).toBe('keep');
   });
 
   test('没有 storage 时不抛', () => {
-    expect(() => writeSetupIntent({ path: 'join-hub' }, null)).not.toThrow();
+    expect(() => writeSetupIntent({ path: 'join-relay' }, null)).not.toThrow();
     expect(takeSetupIntent(null)).toBeNull();
     expect(() => clearSetupIntent(null)).not.toThrow();
   });
 
   test('storage 抛异常时不影响调用方', () => {
-    expect(() => writeSetupIntent({ path: 'join-hub' }, throwingStorage)).not.toThrow();
+    expect(() => writeSetupIntent({ path: 'join-relay' }, throwingStorage)).not.toThrow();
     expect(takeSetupIntent(throwingStorage)).toBeNull();
     expect(() => clearSetupIntent(throwingStorage)).not.toThrow();
   });

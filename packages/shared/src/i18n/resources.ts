@@ -2215,7 +2215,8 @@ export const I18N_RESOURCES = {
           "relayConnected": "Connected to relay",
           "relayConnectedRtt": "Connected to relay · {{ms}} ms",
           "relayDisconnected": "Not connected to a relay",
-          "relayKicked": "Relay token expired"
+          "relayKicked": "Relay token expired",
+          "unattached": "Not attached to a relay — join a relay"
         },
         "sections": {
           "uplink": "Connection",
@@ -6001,7 +6002,8 @@ export const I18N_RESOURCES = {
           "relayConnected": "已连接中继",
           "relayConnectedRtt": "已连接中继 · {{ms}} ms",
           "relayDisconnected": "未连接中继",
-          "relayKicked": "中继令牌已失效"
+          "relayKicked": "中继令牌已失效",
+          "unattached": "未接入中继，请加入中继"
         },
         "sections": {
           "uplink": "连接",
@@ -9779,7 +9781,8 @@ export const I18N_RESOURCES = {
           "relayConnected": "中継に接続済み",
           "relayConnectedRtt": "中継に接続済み · {{ms}} ms",
           "relayDisconnected": "中継に未接続",
-          "relayKicked": "中継トークンが失効"
+          "relayKicked": "中継トークンが失効",
+          "unattached": "中継未接続 — 中継に参加してください"
         },
         "sections": {
           "uplink": "接続",

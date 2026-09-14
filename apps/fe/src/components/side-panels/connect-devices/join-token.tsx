@@ -2,7 +2,7 @@
 //
 // 创建逻辑与设置页共用 `useCreateEnrollment()`，证书监听与 admit 共用宿主级单例
 // `enrollment-engine`（两处 UI 同时开着也只有一条回路、一条 admit 流水线）。
-// 这里只负责把 mesh 模式、hub 通道与凭据对话框接上，并渲染本次会话那条 pending 的状态。
+// 这里只负责把 mesh 模式、中继 enrollment 通道与凭据对话框接上，并渲染本次会话那条 pending 的状态。
 
 import type { PendingEnrollment } from '@/node/enrollment';
 import { Button } from '@vibeterm/ui/button';
@@ -43,15 +43,13 @@ export function JoinTokenFields({ enrollment }: { enrollment: JoinEnrollment }) 
     );
   }
 
-  // 上级没给出对外地址就不能编 join 命令：用入口 origin 会把新机器指到没有 HubRuntime
-  // 的机器上，redeem 直接 404（与设置页同一条判定）。中继模式下缺的是中继地址。
+  // 中继没给出对外地址就不能编 join 命令：用入口 origin 会把新机器指到没有 uplink
+  // 的机器上，redeem 直接 404（与设置页同一条判定）。
   if (!create.hubUrl) {
     return (
       <>
         <p className="text-xs text-destructive" data-testid="connect-join-no-url">
-          {t(
-            create.relayMode ? 'nodes.enrollment.missingRelayUrl' : 'nodes.enrollment.missingHubUrl'
-          )}
+          {t('nodes.enrollment.missingRelayUrl')}
         </p>
         {settingsLink}
       </>
@@ -129,9 +127,9 @@ export function JoinConfirmStatus({ enrollment }: { enrollment: JoinEnrollment }
     );
   }
 
+  // 未确认 = 本机已落账但 `relayAck === false`；引擎仍用 `hubUnconfirmedIds` 投影这笔。
   const unconfirmed = engine.hubUnconfirmedIds.includes(id);
   const busy = engine.busyIds.includes(id);
-  // hub 未确认时手上还留着一份可重发的记录，同样要给按钮。
   const confirmable = unconfirmed || engine.certificateReadyIds.includes(id);
   return (
     <>

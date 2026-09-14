@@ -1,11 +1,10 @@
-// 退出 mesh 前对旧 hub 的「自吊销」：尽力而为，失败不挡退出。
+// 退出 mesh 前对本机节点的「自吊销」：尽力而为，失败不挡退出。
 //
 // 与节点表里的吊销是同一条路径——`POST /api/auth/keylog?hub=sync` 送一条 `revoke-node`
-// 记录，entry 先等 hub ack 再本地 append。区别只在目标是**本机自己**：本机马上就要
-// 清空全部 mesh 状态，旧 hub 上留一条已吊销的记录比留一条看似在线的幽灵节点更干净。
+// 记录。区别只在目标是**本机自己**：本机马上就要清空全部 mesh 状态，上级上留一条
+// 已吊销的记录比留一条看似在线的幽灵节点更干净。
 //
-// hub 不可达、用户取消凭据、记录被拒都只当作警告：本地退出照常进行，
-// 旧 hub 上的那条记录由管理员在 hub 侧手动吊销。
+// 上级不可达、用户取消凭据、记录被拒都只当作警告：本地退出照常进行。
 
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { headFromResponse } from '@/auth/key-log-actions';
@@ -58,12 +57,9 @@ export async function selfRevokeNode(input: SelfRevokeInput): Promise<SelfRevoke
     );
     if (!result) return { kind: 'cancelled' };
     if (!result.ok) return { kind: 'failed', reason: result.code };
-    // hub 没确认就等于没吊销：服务端一条都没落库（B2-6）。
-    if (result.hubAck !== true) {
-      return { kind: 'failed', reason: result.hubError || 'hub_unconfirmed' };
+    if (result.hubAck === false) {
+      return { kind: 'failed', reason: result.hubError || 'unconfirmed' };
     }
-    // 中继模式下本地先落库、再发布：`relayAck:false` 表示这条吊销没上中继，
-    // 其余成员看到的仍是一台在线节点，与 hub 没确认是同一档后果。
     if (result.relayAck === false) {
       return { kind: 'failed', reason: result.relayError || 'relay_unconfirmed' };
     }

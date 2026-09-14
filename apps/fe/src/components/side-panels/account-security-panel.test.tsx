@@ -220,12 +220,12 @@ describe('passwordChangeFollowUp', () => {
 });
 
 describe('securityActionErrorText', () => {
-  test('hub 相关的码给出下一步该做什么', () => {
-    expect(securityActionErrorText(t, 'HUB_TIMEOUT')).toBe('auth.security.primaryHubUnreachable');
-    expect(securityActionErrorText(t, 'HUB_NOT_WRITER')).toBe('auth.security.switchToPrimaryHub');
+  test('节点过旧单独给一句，其余落回通用错误表', () => {
     expect(securityActionErrorText(t, 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES')).toBe(
       'auth.security.nodesTooOld'
     );
+    expect(securityActionErrorText(t, 'HUB_TIMEOUT')).toBe('auth.errors.HUB_TIMEOUT');
+    expect(securityActionErrorText(t, 'HUB_NOT_WRITER')).toBe('auth.errors.HUB_NOT_WRITER');
   });
 
   test('其余码落回通用错误表', () => {

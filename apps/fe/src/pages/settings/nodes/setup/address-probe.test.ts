@@ -162,11 +162,11 @@ describe('precheckProbe', () => {
         probed: true,
       });
     });
-    expect(await precheckProbe(client, 'hub')('https://hub.example.com')).toEqual({
+    expect(await precheckProbe(client, 'relay')('https://hub.example.com')).toEqual({
       url: 'https://hub.example.com:13443',
       probed: true,
     });
-    expect(bodies).toEqual([{ url: 'https://hub.example.com', kind: 'hub' }]);
+    expect(bodies).toEqual([{ url: 'https://hub.example.com', kind: 'relay' }]);
   });
 
   test('中继探测按中继判据发问，没探测过的响应一律当作无结论', async () => {

@@ -33,7 +33,7 @@ import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@
 import { ProgressTracker } from '@vibeterm/transfer';
 import { getBulkClient } from '@vibeterm/ws-client/direct/bulk-client';
 
-/** 本次传输实际走的通道：`direct` = 浏览器↔node 直连，`relay` = 经 hub 中转的 REST。 */
+/** 本次传输实际走的通道：`direct` = 浏览器↔node 直连，`relay` = 经中继中转的 REST。 */
 export type TransferPath = 'direct' | 'relay';
 
 /** `@vibeterm/ws-client` 的 `BulkClient` 结构子集（测试可注入假件）。 */

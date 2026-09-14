@@ -1,7 +1,7 @@
 // 主密钥失配的常驻提示。
 //
 // `VIBETERM_MASTER_KEY` 解不开节点身份时网关照样起得来：HTTP、前端、本机密码登录全都在，
-// 只有 mesh 与 Hub 被整段停掉（见 `packages/app/src/runtime/assemble.ts`）。界面上的表现是
+// 只有 mesh 与中继上联被整段停掉（见 `packages/app/src/runtime/assemble.ts`）。界面上的表现是
 // 「节点全没了」而不是任何一条报错——不把真正的原因摆到眼前，运维只会去查网络。
 //
 // 判据取 `/healthz.degraded`：它是匿名接口，登录页（此时还没有会话）也读得到。
@@ -15,7 +15,7 @@ import { useTranslation } from 'react-i18next';
 
 export const MASTER_KEY_MISMATCH = 'master_key_mismatch';
 
-/** 恢复不了原密钥时重建节点身份，在**本节点**执行；账户凭据保留，须重新加入 Hub。 */
+/** 恢复不了原密钥时重建节点身份，在**本节点**执行；账户凭据保留，须重新 `vibeterm relay join`。 */
 export const MESH_RESET_IDENTITY_COMMAND = 'vibeterm mesh reset-identity';
 
 /** `/healthz` 的复查间隔。恢复必然伴随一次重启，慢一点无所谓，只要别一直挂着旧结论。 */

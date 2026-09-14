@@ -20,8 +20,8 @@ export function FieldHint({ children, testId }: { children: string; testId: stri
 }
 
 /**
- * 站点名称：mesh 下它就是本节点在多节点互联里的名字，保存时走 hub 的 rename 接口。
- * 没有可写 hub 时改不了名，字段直接禁用——让人改完再吃一条 `HUB_NOT_WRITER` 毫无意义。
+ * 站点名称：mesh 下它就是本节点在多节点互联里的名字，保存时走 `rename-node` 记录。
+ * 中继通道不通时改不了名，字段直接禁用。
  */
 export function SiteNameField({ form }: SettingsFieldProps) {
   const { t } = useTranslation();
@@ -51,8 +51,8 @@ export function SiteNameField({ form }: SettingsFieldProps) {
 }
 
 /**
- * 访问地址：由 Hub 托管时（本机是 hub 节点，或上联到 hub）只读展示，PATCH 里也不带这一项；
- * 经中继接入与 standalone 都可自行填写。两种情况都把本机实际可用的入口列在下方——可编辑时
+ * 访问地址：后端标为不可编辑时只读展示，PATCH 里也不带这一项；
+ * 可编辑时自行填写。两种情况都把本机实际可用的入口列在下方——可编辑时
  * 点一下即填进输入框（保存另走保存按钮），只读时只标出生效的那条。
  */
 export function SiteUrlField({ form }: SettingsFieldProps) {

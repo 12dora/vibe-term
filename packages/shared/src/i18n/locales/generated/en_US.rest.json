@@ -1446,7 +1446,8 @@
           "relayConnected": "Connected to relay",
           "relayConnectedRtt": "Connected to relay · {{ms}} ms",
           "relayDisconnected": "Not connected to a relay",
-          "relayKicked": "Relay token expired"
+          "relayKicked": "Relay token expired",
+          "unattached": "Not attached to a relay — join a relay"
         },
         "sections": {
           "uplink": "Connection",

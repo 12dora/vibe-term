@@ -49,16 +49,14 @@ const lan: AccessAddressesResponse = {
   ],
 };
 
-const base = { selfIsHub: false, relayMode: false };
+const base = { relayMode: false };
 
 describe('buildAccessAddresses', () => {
-  test('隧道 → Hub → 局域网 → 当前地址，去重去尾斜杠（隧道与 Hub 同址时留隧道）', () => {
+  test('隧道 → 局域网 → 当前地址，去重去尾斜杠', () => {
     const list = buildAccessAddresses({
       ...base,
-      selfIsHub: true,
       origin: 'http://192.168.1.20:9883',
       tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }),
-      hubPublicUrl: 'https://vibeterm.example.com/',
       addresses: lan,
     });
     expect(list).toEqual([
@@ -73,26 +71,9 @@ describe('buildAccessAddresses', () => {
       ...base,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({ mode: 'quick' }, { publicUrl: 'https://abc.trycloudflare.com' }),
-      hubPublicUrl: null,
       addresses: { ...lan, loopbackOnly: true, lanAddresses: [] },
     });
     expect(list).toEqual([{ kind: 'tunnel', url: 'https://abc.trycloudflare.com' }]);
-  });
-
-  test('本机就是 Hub 时公开地址按 hub 归类，排在局域网之前', () => {
-    const list = buildAccessAddresses({
-      ...base,
-      selfIsHub: true,
-      origin: 'http://127.0.0.1:9883',
-      tunnel: tunnel({}),
-      hubPublicUrl: 'https://hub.example.com',
-      addresses: lan,
-    });
-    expect(list).toEqual([
-      { kind: 'hub', url: 'https://hub.example.com' },
-      { kind: 'lan', url: 'http://192.168.1.20:9883' },
-      { kind: 'lan', url: 'http://10.0.0.5:9883' },
-    ]);
   });
 
   test('隧道进程已停：地址不摆出来，默认落到局域网', () => {
@@ -100,7 +81,6 @@ describe('buildAccessAddresses', () => {
       ...base,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }, { state: 'stopped' }),
-      hubPublicUrl: null,
       addresses: lan,
     });
     expect(list).toEqual([
@@ -109,17 +89,14 @@ describe('buildAccessAddresses', () => {
     ]);
   });
 
-  test('连接器没有边缘连接：隧道降到 Hub / 局域网之后，不当默认', () => {
+  test('连接器没有边缘连接：隧道降到局域网之后，不当默认', () => {
     const list = buildAccessAddresses({
       ...base,
-      selfIsHub: true,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }, { readyConnections: 0 }),
-      hubPublicUrl: 'https://hub.example',
       addresses: lan,
     });
     expect(list).toEqual([
-      { kind: 'hub', url: 'https://hub.example' },
       { kind: 'lan', url: 'http://192.168.1.20:9883' },
       { kind: 'lan', url: 'http://10.0.0.5:9883' },
       { kind: 'tunnel', url: 'https://vibeterm.example.com' },
@@ -131,7 +108,6 @@ describe('buildAccessAddresses', () => {
       ...base,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }, { state: 'degraded' }),
-      hubPublicUrl: null,
       addresses: lan,
     });
     expect(list.map((item) => item.kind)).toEqual(['lan', 'lan', 'tunnel']);
@@ -145,7 +121,6 @@ describe('buildAccessAddresses', () => {
         { mode: 'named', hostname: 'vibeterm.example.com' },
         { readyConnections: null, reachable: null }
       ),
-      hubPublicUrl: null,
       addresses: lan,
     });
     expect(list[0]).toEqual({ kind: 'tunnel', url: 'https://vibeterm.example.com' });
@@ -156,7 +131,6 @@ describe('buildAccessAddresses', () => {
       ...base,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({}),
-      hubPublicUrl: null,
       addresses: { ...lan, bindHost: '127.0.0.1', loopbackOnly: true, lanAddresses: [] },
     };
     const list = buildAccessAddresses(input);
@@ -169,39 +143,11 @@ describe('buildAccessAddresses', () => {
       ...base,
       origin: 'https://vibeterm.lan:9883',
       tunnel: null,
-      hubPublicUrl: null,
       addresses: null,
     };
     const list = buildAccessAddresses(input);
     expect(list).toEqual([{ kind: 'current', url: 'https://vibeterm.lan:9883' }]);
     expect(showLoopbackHint(list, input)).toBe(false);
-  });
-
-  test('成员节点或中继上联时不展示上级 Hub 地址', () => {
-    const shared = {
-      origin: 'http://127.0.0.1:9883',
-      tunnel: tunnel({}),
-      hubPublicUrl: 'https://hub.example.com',
-      addresses: lan,
-    };
-    expect(
-      buildAccessAddresses({ ...shared, selfIsHub: false, relayMode: false }).map((i) => i.kind)
-    ).toEqual(['lan', 'lan']);
-    expect(
-      buildAccessAddresses({ ...shared, selfIsHub: true, relayMode: true }).map((i) => i.kind)
-    ).toEqual(['lan', 'lan']);
-  });
-
-  test('Hub 公开地址是回环时即使本机就是 Hub 也不进列表', () => {
-    const list = buildAccessAddresses({
-      ...base,
-      selfIsHub: true,
-      origin: 'http://127.0.0.1:9883',
-      tunnel: tunnel({}),
-      hubPublicUrl: 'http://127.0.0.1:9883',
-      addresses: lan,
-    });
-    expect(list.map((item) => item.kind)).toEqual(['lan', 'lan']);
   });
 
   test('中继入口探通后填公网槽，排在局域网之前', () => {
@@ -210,7 +156,6 @@ describe('buildAccessAddresses', () => {
       relayMode: true,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({}),
-      hubPublicUrl: 'https://hub.example.com',
       addresses: { ...lan, relayAccessUrl: 'https://relay.example/n/abc' },
     });
     expect(list).toEqual([
@@ -225,7 +170,6 @@ describe('buildAccessAddresses', () => {
       ...base,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({}),
-      hubPublicUrl: null,
       addresses: {
         ...lan,
         lanAddresses: ['100.64.1.2', '10.8.0.2', '192.168.1.20'],
@@ -249,7 +193,6 @@ describe('buildAccessAddresses', () => {
       ...base,
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel({}),
-      hubPublicUrl: null,
       addresses: legacy as AccessAddressesResponse,
     });
     expect(list).toEqual([

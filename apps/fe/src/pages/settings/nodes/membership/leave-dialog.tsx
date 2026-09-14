@@ -1,4 +1,4 @@
-// 退出 mesh / 换 hub 的确认与进度对话框。
+// 退出 mesh / 换角色的确认与进度对话框。
 //
 // 这是本页最具破坏性的动作：本机的账号、node 身份、缓存的 peer 会被一次性删掉，并且重启后
 // 当前会话立刻失效。因此确认文案必须把后果讲全，进度也留在同一个对话框里——退出期间
@@ -9,10 +9,10 @@ import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SetupIntentRecord } from './intent';
-import { type MeshRole, ROLE_LABEL_KEY } from './role-transition';
+import { type MeshRole, roleLabelKey } from './role-transition';
 import type { LeaveMesh } from './use-leave-mesh';
 
-export type LeaveDialogKind = 'leave' | 'switch' | 'change-hub';
+export type LeaveDialogKind = 'leave' | 'switch';
 
 export interface LeaveDialogRequest {
   kind: LeaveDialogKind;
@@ -28,7 +28,6 @@ export interface LeaveDialogRequest {
 const TITLE_KEY: Record<LeaveDialogKind, string> = {
   leave: 'nodes.membership.leaveConfirm.title',
   switch: 'nodes.membership.switchConfirm.title',
-  'change-hub': 'nodes.membership.changeHubConfirm.title',
 };
 
 /**
@@ -53,9 +52,7 @@ export function leaveDialogConsequencesKey(request: LeaveDialogRequest): string 
       ? 'nodes.membership.consequencesRelayKeepService'
       : 'nodes.membership.consequencesRelayReset';
   }
-  return request.from === 'hub,node'
-    ? 'nodes.membership.consequencesHub'
-    : 'nodes.membership.consequencesNode';
+  return 'nodes.membership.consequencesNode';
 }
 
 export function LeaveDialog({
@@ -215,13 +212,12 @@ function descriptionKey(request: LeaveDialogRequest): string {
   if (isLeaveToPureRelay(request)) {
     return 'nodes.membership.leaveToRelayConfirm.description';
   }
-  const camel = request.kind === 'change-hub' ? 'changeHub' : request.kind;
-  return `nodes.membership.${camel}Confirm.description`;
+  return `nodes.membership.${request.kind}Confirm.description`;
 }
 
 function descriptionOptions(
   request: LeaveDialogRequest,
   t: (key: string) => string
 ): Record<string, string> | undefined {
-  return request.kind === 'switch' ? { role: t(ROLE_LABEL_KEY[request.target]) } : undefined;
+  return request.kind === 'switch' ? { role: t(roleLabelKey(request.target)) } : undefined;
 }

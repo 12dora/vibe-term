@@ -1977,6 +1977,7 @@ export type TranslationKey =
   | 'nodes.machine.status.relayConnectedRtt'
   | 'nodes.machine.status.relayDisconnected'
   | 'nodes.machine.status.relayKicked'
+  | 'nodes.machine.status.unattached'
   | 'nodes.machine.sections'
   | 'nodes.machine.sections.uplink'
   | 'nodes.machine.sections.relayService'

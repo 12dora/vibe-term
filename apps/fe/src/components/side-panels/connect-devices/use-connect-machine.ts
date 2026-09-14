@@ -1,5 +1,5 @@
 // 指引要用的本机现状：角色（`/api/local/status`）、中继链路（`/api/mesh/relay/status`）
-// 与 `/api/auth/mode` 折成一份扁平快照，三条路径共用。
+// 与 `/api/auth/mode` 折成一份扁平快照，中继与 SSH 两条路径共用。
 //
 // `/api/local/status` 在旧节点上是 404、未登录时是 401：两者对指引都只是「拿不到现状」，
 // 页面退回纯静态文案即可，所以这里用自己的查询键把它们映射成 null——既不重试、不产生
@@ -49,8 +49,6 @@ export interface ConnectMachine extends ConnectStatus {
   mode: AuthModeResponse | null;
   /** 新机器该加入的中继地址：本机挂着的那条，本机自己就是中继时用它的对外地址。 */
   relayUrl: string | null;
-  /** 新机器该加入的 Hub 地址；中继模式下没有 Hub。 */
-  hubUrl: string | null;
   /** 本机自己作为中继时的对外地址。 */
   relayPublicUrl: string | null;
   /** 本机作为中继时是否已设接入密码。 */
@@ -73,7 +71,6 @@ export function useConnectMachine(api: LocalApi = defaultLocalApi): ConnectMachi
     mode,
     relayUrl: attached?.url ?? status?.relay?.publicUrl ?? null,
     tenantId: relay.relayMode ? relay.tenantId : null,
-    hubUrl: mode?.mode === 'mesh' && !relay.relayMode ? (mode.hubPublicUrl ?? null) : null,
     relayPublicUrl: status?.relay?.publicUrl ?? null,
     relayHasPassword: status?.relay?.hasPassword ?? false,
     portPlan: portPlanFromStatus(status) ?? null,

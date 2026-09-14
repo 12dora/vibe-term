@@ -1,11 +1,10 @@
-// 「本机作为中继」分支的现状推导：把隧道状态与 `/api/auth/mode` 折成三步各自要展示的结论。
+// 隧道公网入口的现状推导：把隧道状态折成候选地址要展示的结论。
 // 与 React 无关，也不碰远程访问那套模块（一 import 就把它的 lazy chunk 拽进侧滑面板）。
 
-import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import type { TunnelStatusResponse } from '@vibeterm/shared';
 
-/** 公网入口的形态：命名隧道 / 临时隧道 / 只有 Hub 公开地址（直接连接） / 什么都没有。 */
-export type EntryKind = 'named' | 'quick' | 'hubUrl' | 'none';
+/** 公网入口的形态：命名隧道 / 临时隧道 / 什么都没有。 */
+export type EntryKind = 'named' | 'quick' | 'none';
 
 export interface EntryStatus {
   kind: EntryKind;
@@ -14,7 +13,7 @@ export interface EntryStatus {
   running: boolean;
   /** 进程在跑但没有边缘连接：地址此时不可达，与「已停止」也要分开说。 */
   degraded: boolean;
-  /** 命名隧道的主机名，用来和 Hub 公开地址比对。 */
+  /** 命名隧道的主机名。 */
   hostname: string | null;
 }
 
@@ -48,12 +47,8 @@ function tunnelDegraded(tunnel: TunnelStatusResponse): boolean {
 
 /**
  * 整包跑测试时别的用例会往同一个查询键塞形状不完整的桩数据，字段一律按缺省处理而不是崩。
- * 隧道没配（或还没拉到）时退回 Hub 公开地址：直接连接没有任何本地标记，那个地址就是唯一证据。
  */
-export function entryStatus(
-  tunnel: TunnelStatusResponse | null | undefined,
-  hubPublicUrl: string | null | undefined
-): EntryStatus {
+export function entryStatus(tunnel: TunnelStatusResponse | null | undefined): EntryStatus {
   const config = tunnel?.config;
   const degraded = tunnel ? tunnelDegraded(tunnel) : false;
   const running = tunnel ? tunnelAlive(tunnel) && !degraded : false;
@@ -68,42 +63,5 @@ export function entryStatus(
   }
   const quickUrl = config?.mode === 'quick' ? (tunnel?.process?.publicUrl ?? null) : null;
   if (quickUrl) return { kind: 'quick', url: quickUrl, running, degraded, hostname: null };
-  if (hubPublicUrl) {
-    return { kind: 'hubUrl', url: hubPublicUrl, running: false, degraded: false, hostname: null };
-  }
   return NO_ENTRY;
-}
-
-/** 本机在 mesh 里的角色：自己是 Hub / 已作为节点接入别的 Hub / 还没组网。 */
-export type HubRole = 'self' | 'node' | 'standalone';
-
-export interface HubStatus {
-  role: HubRole;
-  url: string | null;
-  /** Hub 公开地址与当前命名隧道的主机名对不上：别的机器多半接不进来。 */
-  mismatch: boolean;
-}
-
-function hostnameOf(url: string): string | null {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
-}
-
-export function hubStatus(
-  mode: AuthModeResponse | null | undefined,
-  entry: EntryStatus
-): HubStatus {
-  if (mode?.mode !== 'mesh') return { role: 'standalone', url: null, mismatch: false };
-  const url = mode.hubPublicUrl ?? null;
-  if (!mode.hubNodeId || mode.hubNodeId !== mode.nodeId) {
-    return { role: 'node', url, mismatch: false };
-  }
-  const mismatch =
-    entry.kind === 'named' && entry.hostname !== null && url !== null
-      ? hostnameOf(url) !== entry.hostname
-      : false;
-  return { role: 'self', url, mismatch };
 }

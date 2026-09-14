@@ -1,6 +1,6 @@
-// become-hub / join-hub 两个表单共用的提交流程：亮错误 → 校验闸门 → 提交 → toast → 等重启 → 跳登录页。
+// 设置表单共用的提交流程：亮错误 → 校验闸门 → 提交 → toast → 等重启 → 跳登录页。
 //
-// 两个表单只在「校验哪些字段、调哪个 setup 端点、成功文案」上不同，其余顺序完全一致。
+// 各表单只在「校验哪些字段、调哪个 setup 端点、成功文案」上不同，其余顺序完全一致。
 // 顺序本身是契约的一部分（见 submit.ts：先读 startedAt 再调端点），所以整段收在这里。
 
 import type { ApiClient } from '@vibeterm/api-client';
@@ -12,7 +12,7 @@ import { isSetupBlocked, useSetupTransition } from './setup-transition';
 import type { SubmitOutcome } from './submit';
 import { type RestartWaiter, useRestartWaiter } from './use-restart-waiter';
 
-export interface HubSetupSubmitOptions<T> {
+export interface SetupSubmitOptions<T> {
   client: ApiClient;
   /** 当前草稿还有校验错误：点提交只亮错误，不发请求。 */
   hasErrors: boolean;
@@ -25,13 +25,13 @@ export interface HubSetupSubmitOptions<T> {
    * 因此那条路径直接不等（默认等）。
    */
   waitForRestart?: boolean;
-  /** 上级形态：错误文案按 Hub / 中继分开取（默认 Hub）。 */
+  /** 错误文案按中继口径取。 */
   uplink?: SetupUplinkKind;
 }
 
-export interface HubSetupSubmitHandle<T> {
+export interface SetupSubmitHandle<T> {
   showErrors: boolean;
-  /** 提交以外也要亮错误的入口（become-hub 的地址预检）。 */
+  /** 提交以外也要亮错误的入口（地址预检）。 */
   revealErrors: () => void;
   submitting: boolean;
   submitError: string | null;
@@ -42,15 +42,15 @@ export interface HubSetupSubmitHandle<T> {
   handleSubmit: (event: FormEvent) => Promise<void>;
 }
 
-export function useHubSetupSubmit<T>({
+export function useSetupSubmit<T>({
   client,
   hasErrors,
   submit,
   successMessage,
   onRestarted,
   waitForRestart = true,
-  uplink = 'hub',
-}: HubSetupSubmitOptions<T>): HubSetupSubmitHandle<T> {
+  uplink = 'relay',
+}: SetupSubmitOptions<T>): SetupSubmitHandle<T> {
   const { t } = useTranslation();
   const owner = useId();
   const transition = useSetupTransition();
@@ -74,7 +74,6 @@ export function useHubSetupSubmit<T>({
     setSubmitError(null);
     try {
       const outcome = await submit();
-      // 后端已经落锁：其余路径从这一刻起全部禁用，无论本条要不要等重启。
       transition.commit(owner);
       setResult(outcome.result);
       toast.success(successMessage);

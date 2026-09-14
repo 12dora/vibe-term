@@ -5,7 +5,6 @@ import {
   type ConnectStatus,
   defaultConnectPath,
   defaultConnectSide,
-  isHubRole,
   isRelayRole,
 } from './connect-path';
 
@@ -29,11 +28,6 @@ describe('角色判定', () => {
     expect(isRelayRole('node')).toBe(false);
     expect(isRelayRole(null)).toBe(false);
   });
-
-  test('只有 hub,node 算 Hub', () => {
-    expect(isHubRole('hub,node')).toBe(true);
-    expect(isHubRole('node')).toBe(false);
-  });
 });
 
 describe('defaultConnectPath', () => {
@@ -43,19 +37,14 @@ describe('defaultConnectPath', () => {
     expect(defaultConnectPath(status({ relayMode: true, meshEnabled: true }))).toBe('relay');
   });
 
-  test('本机是 Hub 或已作为节点接入 Hub：默认经 Hub', () => {
-    expect(defaultConnectPath(status({ role: 'hub,node', meshEnabled: true }))).toBe('hub');
-    expect(defaultConnectPath(status({ role: 'node', meshEnabled: true }))).toBe('hub');
+  test('mesh 成员（含尚未挂上中继）默认经中继', () => {
+    expect(defaultConnectPath(status({ role: 'node', meshEnabled: true }))).toBe('relay');
+    expect(defaultConnectPath(status({ meshEnabled: true }))).toBe('relay');
   });
 
   test('未组网：默认经中继', () => {
     expect(defaultConnectPath(status())).toBe('relay');
     expect(defaultConnectPath(status({ role: 'standalone' }))).toBe('relay');
-  });
-
-  test('角色拿不到时按 mesh 现状退回', () => {
-    expect(defaultConnectPath(status({ meshEnabled: true }))).toBe('hub');
-    expect(defaultConnectPath(status({ meshEnabled: true, relayMode: true }))).toBe('relay');
   });
 });
 
@@ -86,13 +75,6 @@ describe('defaultConnectSide', () => {
     );
     // 模式对上但租户编号还没下来：命令仍拼不出来，不能先给加入。
     expect(defaultConnectSide('relay', status({ relayMode: true }))).toBe('host');
-  });
-
-  test('Hub：本机是 Hub 或已接入 Hub 就先给加入', () => {
-    expect(defaultConnectSide('hub', status({ role: 'hub,node', meshEnabled: true }))).toBe('join');
-    expect(defaultConnectSide('hub', status({ role: 'node', meshEnabled: true }))).toBe('join');
-    expect(defaultConnectSide('hub', status({ meshEnabled: true, relayMode: true }))).toBe('host');
-    expect(defaultConnectSide('hub', status())).toBe('host');
   });
 
   test('SSH 没有二级选择', () => {

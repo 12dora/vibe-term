@@ -107,7 +107,7 @@ describe('shareOriginLabel', () => {
   const t = (key: string) => key;
 
   test('每种来路各有前缀，自定义地址同样带前缀（避免与「自定义…」选项混淆）', () => {
-    const kinds = ['custom', 'site', 'hub', 'relay', 'tunnel', 'ip'] as const;
+    const kinds = ['custom', 'site', 'relay', 'tunnel', 'ip'] as const;
     expect(
       kinds.map((kind) => shareOriginLabel(t, { ...candidates[0], kind, label: 'h.example' }))
     ).toEqual(kinds.map((kind) => `common.originKind.${kind} · h.example`));

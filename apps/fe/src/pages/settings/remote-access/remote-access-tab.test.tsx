@@ -1214,16 +1214,10 @@ describe('命名隧道', () => {
     expect(html).not.toContain('data-testid="remote-access-hostname"');
   });
 
-  test('本机即 hub 时在主机名步骤给出 Hub 公开地址提示', () => {
+  test('不再给出 Hub 公开地址提示', () => {
     status = configured('named', 'stopped', { auth: { loggedIn: true, loginUrl: null } });
-
-    setMeshNodesStateForTest({ modeLoaded: true, entryNodeId: SELF_ID, mode: authMode(OTHER_ID) });
+    setMeshNodesStateForTest({ modeLoaded: true, entryNodeId: SELF_ID, mode: authMode() });
     expect(render()).not.toContain('data-testid="remote-access-hub-hint"');
-
-    setMeshNodesStateForTest({ modeLoaded: true, entryNodeId: SELF_ID, mode: authMode(SELF_ID) });
-    const html = render();
-    expect(html).toContain('data-testid="remote-access-hub-hint"');
-    expect(html).toContain('?tab=nodes');
   });
 });
 
@@ -1988,7 +1982,6 @@ function exposureState(overrides: Partial<ExposureState> = {}): ExposureState {
 function renderWizard(
   mode: TunnelMode | 'direct',
   options: {
-    isHub?: boolean;
     draft?: NamedDraft;
     actions?: ActionSnapshot;
     exposure?: Partial<ExposureState>;
@@ -2008,7 +2001,6 @@ function renderWizard(
         chosenMode={mode === 'direct' || mode === 'off' ? null : mode}
         onChooseMode={() => undefined}
         draft={options.draft ?? namedDraft()}
-        isHub={options.isHub ?? false}
         exposure={exposureState(options.exposure)}
         onRestarted={() => undefined}
         localAuth={options.localAuth ?? null}
@@ -2033,7 +2025,7 @@ function renderStatusCard(): string {
   );
 }
 
-function authMode(hubNodeId: string): AuthModeResponse {
+function authMode(): AuthModeResponse {
   return {
     mode: 'mesh',
     nodeId: SELF_ID,
@@ -2042,6 +2034,5 @@ function authMode(hubNodeId: string): AuthModeResponse {
     kdfParams: null,
     passkeysForThisOrigin: false,
     passkeyAvailable: false,
-    hubNodeId,
   };
 }

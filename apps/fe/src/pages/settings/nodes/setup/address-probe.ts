@@ -1,6 +1,6 @@
-// 地址端口探测：Hub / 中继架在高位端口上时，用户手里往往只有一个不带端口的域名。
+// 地址端口探测：中继架在高位端口上时，用户手里往往只有一个不带端口的域名。
 //
-// 浏览器不跨域拨 Hub / 中继（`/api/relay/health` 没有 CORS，HTTPS 页面也拨不动 http 候选），
+// 浏览器不跨域拨中继（`/api/relay/health` 没有 CORS，HTTPS 页面也拨不动 http 候选），
 // 探测一律由本机网关完成，这里只管界面侧的状态机：在途提示、结果回填、过期结果丢弃。
 // 显式端口永远不动——用户写了什么就用什么。
 
@@ -166,10 +166,10 @@ export function useAddressProbe(): AddressProbeHandle {
 
 /**
  * 向导只有 `/api/setup/precheck` 可用：standalone 实例没有 node-session，够不到 `/api/mesh/relay/*`。
- * `kind` 必须如实传：Hub 与中继共用一套网关端口，只看 `/healthz` 的话，443 被封时
- * 另一台非中继实例可能先答话而抢走候选端口。
+ * 探测一律按中继判据（`/api/relay/health`）：只看 `/healthz` 的话，443 被封时另一台
+ * 非中继实例可能先答话而抢走候选端口。
  */
-export function precheckProbe(client: ApiClient, kind: SetupPrecheckKind): AddressProbe {
+export function precheckProbe(client: ApiClient, kind: SetupPrecheckKind = 'relay'): AddressProbe {
   return async (url) => {
     const data = await new SetupApi(client).precheck(url, kind);
     if (data.probed !== true) return { url: null, probed: false };

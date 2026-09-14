@@ -1446,7 +1446,8 @@
           "relayConnected": "中継に接続済み",
           "relayConnectedRtt": "中継に接続済み · {{ms}} ms",
           "relayDisconnected": "中継に未接続",
-          "relayKicked": "中継トークンが失効"
+          "relayKicked": "中継トークンが失効",
+          "unattached": "中継未接続 — 中継に参加してください"
         },
         "sections": {
           "uplink": "接続",
