@@ -42,15 +42,14 @@ function snapshotWith(deviceId: string, windowIds: string[]): StateSnapshotPaylo
   };
 }
 
-function hubOriginSources(): ShareOriginSources {
+function siteOriginSources(): ShareOriginSources {
   return {
     localNodeId: () => 'node-1',
-    hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: 'hub' }],
     siteUrl: () => 'https://site.example.com',
     siteUrlManaged: () => false,
     tunnelUrl: () => 'https://tunnel.example.com',
     baseUrl: () => 'http://127.0.0.1:9663',
-    uplinkKind: () => 'hub',
+    uplinkKind: () => 'none',
     relays: () => [],
     relayProbe: () => ({ state: () => 'unknown', ensure: () => {}, invalidate: () => {} }),
   };
@@ -60,7 +59,6 @@ function hubOriginSources(): ShareOriginSources {
 function relayOriginSources(): ShareOriginSources {
   return {
     localNodeId: () => 'node-1',
-    hubs: () => [],
     siteUrl: () => 'https://tunnel.example.com',
     siteUrlManaged: () => false,
     tunnelUrl: () => 'https://tunnel.example.com',
@@ -84,7 +82,7 @@ function makeService(overrides: ShareServiceDeps = {}): ShareService {
     hashPassword: async (password) => `plain:${password}`,
     verifyPassword: async (stored, password) => stored === `plain:${password}`,
     autoStartRecorders: false,
-    originSources: hubOriginSources(),
+    originSources: siteOriginSources(),
     ...overrides,
   });
 }
@@ -133,10 +131,10 @@ describe('create', () => {
     expect(result.share.id).toHaveLength(22);
   });
 
-  test('hub 地址带节点前缀', async () => {
-    const service = makeService();
-    const result = await createShare(service, { origin: 'https://hub.example.com' });
-    expect(result.share.url).toBe(`https://hub.example.com/n/node-1/s/${result.share.id}`);
+  test('中继地址带节点前缀', async () => {
+    const service = makeService({ originSources: relayOriginSources() });
+    const result = await createShare(service, { origin: 'https://relay.example.com' });
+    expect(result.share.url).toBe(`https://relay.example.com/n/node-1/s/${result.share.id}`);
   });
 
   test('口令过短 / 窗口不存在 / 地址非法都被拒', async () => {
@@ -511,22 +509,21 @@ describe('设置与地址', () => {
   test('listOrigins 按优先级排序，内网地址被过滤', () => {
     const service = makeService();
     const view = service.listOrigins();
-    expect(view.candidates.map((item) => item.kind)).toEqual(['site', 'hub', 'tunnel']);
+    expect(view.candidates.map((item) => item.kind)).toEqual(['site', 'tunnel']);
     expect(view.candidates.map((item) => item.url)).toEqual([
       'https://site.example.com',
-      'https://hub.example.com',
       'https://tunnel.example.com',
     ]);
     expect(view.recommended).toBe('https://site.example.com');
     expect(view.nodePrefix).toBeNull();
   });
 
-  test('默认分享地址被置为 custom 且优先推荐，hub 同域时带节点前缀', () => {
-    const service = makeService();
-    service.updateSettings({ defaultOrigin: 'https://hub.example.com' });
+  test('默认分享地址被置为 custom 且优先推荐，中继同域时带节点前缀', () => {
+    const service = makeService({ originSources: relayOriginSources() });
+    service.updateSettings({ defaultOrigin: 'https://relay.example.com' });
     const view = service.listOrigins();
     expect(view.candidates[0]?.kind).toBe('custom');
-    expect(view.recommended).toBe('https://hub.example.com');
+    expect(view.recommended).toBe('https://relay.example.com');
     expect(view.nodePrefix).toBe('/n/node-1');
   });
 

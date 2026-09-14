@@ -47,25 +47,25 @@ describe('GET /api/settings/site mesh link fields', () => {
     expect(settings.nodeId).toBeNull();
   });
 
-  test('mesh hub: overlays siteUrl and marks fields managed', async () => {
+  test('mesh node: overlays siteUrl and marks fields managed', async () => {
     const nodeId = 'ab'.repeat(16);
     setSiteSettingsLinkProvider({
       linked: () => true,
       localNodeId: () => nodeId,
-      effectiveSiteUrl: () => 'https://hub.example',
+      effectiveSiteUrl: () => 'https://relay.example',
     });
     const { status, json } = await call('GET');
     expect(status).toBe(200);
     const settings = json.settings as Record<string, unknown>;
-    expect(json.effectiveSiteUrl).toBe('https://hub.example');
+    expect(json.effectiveSiteUrl).toBe('https://relay.example');
     expect(json.siteUrlEditable).toBe(false);
     expect(json.siteNameLinkedToNode).toBe(true);
     expect(json.nodeId).toBe(nodeId);
-    expect(settings.siteUrl).toBe('https://hub.example');
-    expect(getStoredSiteSettings().siteUrl).not.toBe('https://hub.example');
+    expect(settings.siteUrl).toBe('https://relay.example');
+    expect(getStoredSiteSettings().siteUrl).not.toBe('https://relay.example');
   });
 
-  test('mesh node falls back to stored URL when hub URL is unknown', async () => {
+  test('mesh node falls back to stored URL when managed URL is unknown', async () => {
     const stored = getStoredSiteSettings();
     setSiteSettingsLinkProvider({
       linked: () => true,
@@ -164,7 +164,7 @@ describe('PATCH /api/settings/site mesh managed identity', () => {
     setSiteSettingsLinkProvider({
       linked: () => true,
       localNodeId: () => 'ab'.repeat(16),
-      effectiveSiteUrl: () => 'https://hub.example',
+      effectiveSiteUrl: () => 'https://relay.example',
     });
     const { status, json } = await call('PATCH', {
       siteUrl: 'https://other.example',
@@ -180,7 +180,7 @@ describe('PATCH /api/settings/site mesh managed identity', () => {
     setSiteSettingsLinkProvider({
       linked: () => true,
       localNodeId: () => 'ab'.repeat(16),
-      effectiveSiteUrl: () => 'https://hub.example',
+      effectiveSiteUrl: () => 'https://relay.example',
     });
     const { status, json } = await call('PATCH', { siteName: 'not-the-current-name' });
     expect(status).toBe(400);
@@ -193,18 +193,18 @@ describe('PATCH /api/settings/site mesh managed identity', () => {
     setSiteSettingsLinkProvider({
       linked: () => true,
       localNodeId: () => 'ab'.repeat(16),
-      effectiveSiteUrl: () => 'https://hub.example/',
+      effectiveSiteUrl: () => 'https://relay.example/',
     });
     try {
       const { status, json } = await call('PATCH', {
         siteName: ` ${before.siteName} `,
-        siteUrl: 'https://hub.example',
+        siteUrl: 'https://relay.example',
         enableBellSound: nextBell,
       });
       expect(status).toBe(200);
       const settings = json.settings as Record<string, unknown>;
       expect(settings.enableBellSound).toBe(nextBell);
-      expect(settings.siteUrl).toBe('https://hub.example/');
+      expect(settings.siteUrl).toBe('https://relay.example/');
       expect(json.siteUrlEditable).toBe(false);
       expect(getStoredSiteSettings().siteUrl).toBe(before.siteUrl);
       expect(getStoredSiteSettings().siteName).toBe(before.siteName);

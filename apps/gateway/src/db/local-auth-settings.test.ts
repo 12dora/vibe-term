@@ -46,7 +46,7 @@ describe('buildLocalAuthStatus', () => {
     });
   });
 
-  test('hub/node 不支持本机开关', () => {
+  test('node 不支持本机开关', () => {
     expect(
       buildLocalAuthStatus({ standalone: false, enabled: true, credentialsPresent: true })
     ).toEqual({
@@ -172,7 +172,7 @@ describe('isLoopbackClientIp', () => {
 });
 
 describe('validateLocalAuthUsername / password', () => {
-  test('用户名与口令规则与 hub setup 对齐', () => {
+  test('用户名与口令规则与 setup 对齐', () => {
     expect(validateLocalAuthUsername('alice')).toEqual({ ok: true });
     expect(validateLocalAuthUsername('bad name').ok).toBe(false);
     expect(validateLocalAuthPassword('vibeterm-test')).toEqual({ ok: true });
@@ -181,13 +181,10 @@ describe('validateLocalAuthUsername / password', () => {
 });
 
 describe('defaultLoginEnforced', () => {
-  test('hub/node 恒 true；standalone 跟随 live effective', () => {
-    expect(defaultLoginEnforced({ hub: true, node: true, relay: false }, () => false)).toBe(true);
-    expect(defaultLoginEnforced({ hub: false, node: true, relay: false }, () => false)).toBe(true);
-    expect(defaultLoginEnforced({ hub: false, node: false, relay: false }, () => false)).toBe(
-      false
-    );
-    expect(defaultLoginEnforced({ hub: false, node: false, relay: false }, () => true)).toBe(true);
+  test('node 恒 true；standalone 跟随 live effective', () => {
+    expect(defaultLoginEnforced({ node: true, relay: false }, () => false)).toBe(true);
+    expect(defaultLoginEnforced({ node: false, relay: false }, () => false)).toBe(false);
+    expect(defaultLoginEnforced({ node: false, relay: false }, () => true)).toBe(true);
   });
 });
 

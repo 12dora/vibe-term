@@ -11,11 +11,11 @@ import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { getSiteSettings } from '../db';
 import { eventNotifier } from '../events';
-import { IdleLruMap, TokenBucket } from '../hub/uplink-rate-limit';
 import { getMeshAgentBridge } from './mesh-agent-bridge';
 import { getMeshNotificationBridge } from './notification-mesh-bridge';
 import { resolveMeshNodeDisplayName } from './notification-origin-name';
 import { readMeshPeerMarker } from './peer-request-marker';
+import { IdleLruMap, TokenBucket } from './rate-limit';
 
 export { MESH_INTERNAL_NOTIFICATION_ROUTE };
 

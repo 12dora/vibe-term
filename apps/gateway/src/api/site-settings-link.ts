@@ -4,9 +4,9 @@ import type { ShareOriginCandidate } from '@vibeterm/shared/share';
 export type SiteSettingsLinkProvider = {
   effectiveSiteUrl(): string | null;
   localNodeId(): string | null;
-  /** 站点名与本机 mesh 节点名同步（hub / node 角色）。 */
+  /** 站点名与本机 mesh 节点名同步（node 角色）。 */
   linked(): boolean;
-  /** 站点 URL 由运行时托管、不可编辑：hub 角色，或经 hub 上联的节点。 */
+  /** 站点 URL 由运行时托管、不可编辑：经中继上联的节点。 */
   siteUrlManaged(): boolean;
 };
 

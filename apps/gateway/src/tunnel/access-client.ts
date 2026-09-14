@@ -338,7 +338,7 @@ export class CloudflareAccessClient {
     }
     const ids: string[] = [];
     for (let i = 0; i < ACCESS_BYPASS_PATH_PREFIXES.length; i++) {
-      const prefix = ACCESS_BYPASS_PATH_PREFIXES[i] ?? '/hub/';
+      const prefix = ACCESS_BYPASS_PATH_PREFIXES[i] ?? '/relay/';
       const domain = bypassAppDomain(hostname, prefix);
       const name = bypassAppName(prefix);
       const found =

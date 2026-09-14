@@ -3,11 +3,10 @@ import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import {
   type VibeTermRoles,
   isVibeTermRoleName,
+  normalizeLegacyRoleName,
   rolesFromName,
-  validateRoles,
 } from '@vibeterm/shared';
 import { DEFAULT_PEER_PORT, parsePortRange, parseStunServersEnv } from '@vibeterm/shared/net';
-import type { HubMode } from '@vibeterm/shared/uplink';
 import { parseBoolEnv, parsePort } from '../../../packages/shared/src/env/parse';
 import { resolveMemoryProfile } from './memory-profile';
 import {
@@ -79,27 +78,26 @@ function getGatewayOwnerToken(): string | null {
   return value.toLowerCase();
 }
 
+let warnedLegacyHubNode = false;
+
 export function parseVibeTermRoles(raw: string | undefined): VibeTermRoles {
   if (raw === undefined) {
     return rolesFromName('standalone');
   }
-  const value = raw.trim();
-  if (!isVibeTermRoleName(value)) {
-    throw new Error(
-      'VIBETERM_ROLES must be one of standalone | node | hub,node | relay | relay,node'
-    );
+  const { name, legacy } = normalizeLegacyRoleName(raw);
+  if (legacy && !warnedLegacyHubNode) {
+    warnedLegacyHubNode = true;
+    console.warn('[roles] VIBETERM_ROLES=hub,node is no longer supported; running as node');
   }
-  const roles = rolesFromName(value);
-  const invalid = validateRoles(roles);
-  if (invalid) {
-    throw new Error(`VIBETERM_ROLES is invalid: ${invalid}`);
+  if (!isVibeTermRoleName(name)) {
+    throw new Error('VIBETERM_ROLES must be one of standalone | node | relay | relay,node');
   }
-  return roles;
+  return rolesFromName(name);
 }
 
 /** `relay` 单跑（不带 node）：无用户、无设备、不应拉起即时通讯轮询。 */
 export function isRelayOnly(roles: VibeTermRoles): boolean {
-  return roles.relay && !roles.node && !roles.hub;
+  return roles.relay && !roles.node;
 }
 
 export function resolveLiveRoles(env: NodeJS.ProcessEnv = process.env): VibeTermRoles {
@@ -164,106 +162,12 @@ function getOptionalEnv(key: string): string | null {
   return value ? value : null;
 }
 
-export function parseHubMode(raw: string | undefined): HubMode {
-  if (raw === undefined || raw.trim() === '') return 'active';
-  const value = raw.trim();
-  if (value === 'active' || value === 'standby') return value;
-  throw new Error('VIBETERM_HUB_MODE must be active | standby');
-}
-
-export function parseHubPriority(raw: string | undefined, mode: HubMode): number {
-  if (raw === undefined || raw.trim() === '') return mode === 'standby' ? 200 : 100;
-  const value = raw.trim();
-  if (!/^\d+$/.test(value)) {
-    throw new Error('VIBETERM_HUB_PRIORITY must be a non-negative integer');
-  }
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 0) {
-    throw new Error('VIBETERM_HUB_PRIORITY must be a non-negative integer');
-  }
-  return n;
-}
-
-export function parseHubWriterEpoch(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === '') return 1;
-  const value = raw.trim();
-  if (!/^\d+$/.test(value)) {
-    throw new Error('VIBETERM_HUB_WRITER_EPOCH must be an integer >= 1');
-  }
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 1) {
-    throw new Error('VIBETERM_HUB_WRITER_EPOCH must be an integer >= 1');
-  }
-  return n;
-}
-
-export function parseHubUrls(seed: string | null, raw: string | undefined): string[] {
-  const urls: string[] = [];
-  const seen = new Set<string>();
-  const add = (item: string) => {
-    const value = item.trim();
-    if (!value || seen.has(value)) return;
-    seen.add(value);
-    urls.push(value);
-  };
-  if (seed) add(seed);
-  if (raw) {
-    for (const part of raw.split(',')) add(part);
-  }
-  return urls;
-}
-
-const HUB_PEER_ID = /^[0-9a-f]{32}$/;
-
-export function parseHubPeers(raw: string | undefined): string[] {
-  if (raw === undefined || raw.trim() === '') return [];
-  const peers: string[] = [];
-  const seen = new Set<string>();
-  for (const part of raw.split(',')) {
-    const value = part.trim().toLowerCase();
-    if (!value) continue;
-    if (!HUB_PEER_ID.test(value)) {
-      throw new Error('VIBETERM_HUB_PEERS must be comma-separated 32-hex node ids');
-    }
-    if (seen.has(value)) continue;
-    seen.add(value);
-    peers.push(value);
-  }
-  return peers;
-}
-
-export function parseHubAutoPromote(raw: string | undefined): boolean {
-  if (raw === undefined || raw.trim() === '') return false;
-  const value = raw.trim().toLowerCase();
-  return value === '1' || value === 'true' || value === 'yes' || value === 'on';
-}
-
-export const HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS = 600_000;
-
-export function parseHubAutoPromoteTimeoutMs(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === '') return HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS;
-  const value = raw.trim();
-  if (!/^\d+$/.test(value)) {
-    throw new Error('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
-  }
-  const n = Number(value);
-  if (!Number.isInteger(n) || n < 1) {
-    throw new Error('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
-  }
-  return n;
-}
-
 function parseOnOffNullable(raw: string | undefined, envName: string): boolean | null {
   if (raw === undefined || raw.trim() === '') return null;
   const value = raw.trim().toLowerCase();
   if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
   if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
   throw new Error(`${envName} must be 0 | 1 | true | false | yes | no | on | off`);
-}
-
-/** `null` = auto: on when more than one authorized hub is known. */
-export function parseUplinkPreferNearest(raw: string | undefined): boolean | null {
-  return parseOnOffNullable(raw, 'VIBETERM_UPLINK_PREFER_NEAREST');
 }
 
 /** `null` = auto: on when ≥ 2 unkicked relays are configured. */
@@ -321,8 +225,6 @@ export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(dirname(dbPath), 'tunnel');
 }
 
-const hubMode = parseHubMode(process.env.VIBETERM_HUB_MODE);
-const hubUrl = getOptionalEnv('VIBETERM_HUB_URL');
 const stunEnv = parseStunServersEnv(process.env.VIBETERM_STUN_SERVERS);
 
 export const config = {
@@ -384,20 +286,8 @@ export const config = {
   languageDefault: getEnv('VIBETERM_DEFAULT_LANGUAGE', 'en_US'),
 
   roles: parseVibeTermRoles(process.env.VIBETERM_ROLES),
-  hubUrl,
-  hubPublicUrl: getOptionalEnv('VIBETERM_HUB_PUBLIC_URL'),
   relayPublicUrl: getOptionalEnv('VIBETERM_RELAY_PUBLIC_URL'),
   relayAdminToken: getOptionalEnv('VIBETERM_RELAY_ADMIN_TOKEN'),
-  hubMode,
-  hubPriority: parseHubPriority(process.env.VIBETERM_HUB_PRIORITY, hubMode),
-  hubWriterEpoch: parseHubWriterEpoch(process.env.VIBETERM_HUB_WRITER_EPOCH),
-  hubUrls: parseHubUrls(hubUrl, process.env.VIBETERM_HUB_URLS),
-  hubPeers: parseHubPeers(process.env.VIBETERM_HUB_PEERS),
-  hubAutoPromote: parseHubAutoPromote(process.env.VIBETERM_HUB_AUTO_PROMOTE),
-  hubAutoPromoteTimeoutMs: parseHubAutoPromoteTimeoutMs(
-    process.env.VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS
-  ),
-  uplinkPreferNearest: parseUplinkPreferNearest(process.env.VIBETERM_UPLINK_PREFER_NEAREST),
   relayAutoSelect: parseRelayAutoSelect(process.env.VIBETERM_RELAY_AUTO_SELECT),
   relayAutoSelectIntervalMs: parseRelayAutoSelectIntervalMs(
     process.env.VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS

@@ -81,8 +81,6 @@ export function standaloneClosedModeFields() {
     secondFactorPolicy: 'none' as const,
     rootEpoch: null,
     rootPublicKey: null,
-    hubNodeId: null,
-    hubPublicUrl: null,
   };
 }
 
@@ -140,7 +138,7 @@ export function defaultLoginEnforced(
   roles: VibeTermRoles = config.roles,
   localAuthEffective: () => boolean = readLocalAuthEffective
 ): boolean {
-  return roles.hub || roles.node || localAuthEffective();
+  return roles.node || localAuthEffective();
 }
 
 export function readLocalAuthEffective(): boolean {

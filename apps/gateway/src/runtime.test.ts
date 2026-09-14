@@ -14,7 +14,6 @@ describe('relay-only messaging gate', () => {
     expect(isRelayOnly(parseVibeTermRoles('relay'))).toBe(true);
     expect(isRelayOnly(parseVibeTermRoles('relay,node'))).toBe(false);
     expect(isRelayOnly(parseVibeTermRoles('node'))).toBe(false);
-    expect(isRelayOnly(parseVibeTermRoles('hub,node'))).toBe(false);
     expect(isRelayOnly(parseVibeTermRoles('standalone'))).toBe(false);
     expect(isRelayOnly(parseVibeTermRoles(undefined))).toBe(false);
   });
@@ -23,7 +22,6 @@ describe('relay-only messaging gate', () => {
     expect(shouldStartMessagingServices(parseVibeTermRoles('relay'))).toBe(false);
     expect(shouldStartMessagingServices(parseVibeTermRoles('relay,node'))).toBe(true);
     expect(shouldStartMessagingServices(parseVibeTermRoles('node'))).toBe(true);
-    expect(shouldStartMessagingServices(parseVibeTermRoles('hub,node'))).toBe(true);
     expect(shouldStartMessagingServices(parseVibeTermRoles(undefined))).toBe(true);
   });
 
@@ -48,13 +46,13 @@ describe('relay-only messaging gate', () => {
     expect(calls).toEqual(['lag']);
   });
 
-  test('startLiveGatewayServices starts messaging on node/hub roles', async () => {
+  test('startLiveGatewayServices starts messaging on node/relay,node roles', async () => {
     const calls: string[] = [];
     const mark = (name: string) => async () => {
       calls.push(name);
     };
     await startLiveGatewayServices({
-      roles: parseVibeTermRoles('hub,node'),
+      roles: parseVibeTermRoles('node'),
       startLag: () => {
         calls.push('lag');
       },

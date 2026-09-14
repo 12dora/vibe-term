@@ -16,17 +16,13 @@ import type { NodeIdentityRecord, NodeIdentityStore } from './node-identity-stor
 export type NodeIdentityKeys = {
   nodeId: Uint8Array;
   nodeIdHex: string;
-  hubUrl: string | null;
   edPrivateKey: Uint8Array;
   edPublicKey: Uint8Array;
   x25519PrivateKey: Uint8Array;
   x25519PublicKey: Uint8Array;
 };
 
-export async function ensureNodeIdentity(
-  store: NodeIdentityStore,
-  opts?: { hubUrl?: string }
-): Promise<NodeIdentityKeys> {
+export async function ensureNodeIdentity(store: NodeIdentityStore): Promise<NodeIdentityKeys> {
   const loaded = await store.load();
   if (loaded) {
     return identityFromRecord(loaded);
@@ -34,10 +30,8 @@ export async function ensureNodeIdentity(
   const nodeId = randomBytes(16);
   const ed = generateEd25519KeyPair();
   const x = generateX25519KeyPair();
-  const hubUrl = opts?.hubUrl ?? null;
   await store.save({
     nodeId: nodeIdToHex(nodeId),
-    hubUrl,
     edPrivateKey: ed.secretKey,
     x25519PrivateKey: x.secretKey,
     certificateJson: JSON.stringify({ x25519PublicKey: encodeBase64url(x.publicKey) }),
@@ -47,7 +41,6 @@ export async function ensureNodeIdentity(
   return {
     nodeId,
     nodeIdHex: nodeIdToHex(nodeId),
-    hubUrl,
     edPrivateKey: ed.secretKey,
     edPublicKey: ed.publicKey,
     x25519PrivateKey: x.secretKey,
@@ -95,7 +88,6 @@ function identityFromRecord(record: NodeIdentityRecord): NodeIdentityKeys {
   return {
     nodeId: hexToBytes(record.nodeId),
     nodeIdHex: record.nodeId,
-    hubUrl: record.hubUrl,
     edPrivateKey: record.edPrivateKey,
     edPublicKey,
     x25519PrivateKey: record.x25519PrivateKey,

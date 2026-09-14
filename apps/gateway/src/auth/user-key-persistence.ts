@@ -1,13 +1,11 @@
 import type { KdfParams, KeyLogEffect, KeyLogRecord, UserKeyState } from '@vibeterm/shared/auth';
 import {
   decodeAddPasskeyPayload,
-  decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeBase64url,
   decodeCertificate,
   decodeRemovePasskeyPayload,
   decodeRenameNodePayload,
-  decodeRetireHubPayload,
   decodeRevokeNodePayload,
   decodeRotateRootKeepPayload,
   encodeBase64url,
@@ -17,9 +15,9 @@ import {
 import { eq } from 'drizzle-orm';
 import { deleteAllPaneGrants, deletePaneGrantsForNode } from '../agent/pane-grant/store';
 import { nodeIdentity } from '../db/schema';
-import { patchNode } from '../hub/node-persistence';
 import { toBuffer } from './binary';
 import { type KeyLogStore, projectPayloadJson } from './key-log-store';
+import { patchNode } from './node-persistence';
 import type { NodeSessionStore } from './node-session-store';
 import { type PasskeyCounterUpdate, commitPasskeyCounters } from './passkey';
 import type { AuthDb } from './types';
@@ -47,7 +45,6 @@ export type AppliedKeyLogStep = {
 
 export type EncryptedIdentity = {
   nodeId: string;
-  hubUrl: string | null;
   privateKey: string;
   x25519PrivateKey: string;
   certificateJson: string;
@@ -84,7 +81,6 @@ export function createTxStores(
 export function persistEncryptedIdentity(db: AuthDb, identity: EncryptedIdentity): void {
   const row = {
     nodeId: identity.nodeId,
-    hubUrl: identity.hubUrl,
     privateKey: identity.privateKey,
     x25519PrivateKey: identity.x25519PrivateKey,
     certificateJson: identity.certificateJson,
@@ -92,7 +88,7 @@ export function persistEncryptedIdentity(db: AuthDb, identity: EncryptedIdentity
     userId: identity.userId,
   };
   db.insert(nodeIdentity)
-    .values({ id: IDENTITY_ROW_ID, ...row })
+    .values({ id: IDENTITY_ROW_ID, ...row, uplinkKind: 'none' })
     .onConflictDoUpdate({ target: nodeIdentity.id, set: row })
     .run();
 }
@@ -114,7 +110,6 @@ export function wipeUserDerivedState(
   userStore.deleteKeysByUser(userId);
   nodeSessionStore.deleteAllForUser(userId);
   userStore.deleteCertsByUser(userId);
-  userStore.deleteHubAuthorizationsByUser(userId);
   userStore.deleteNodesByUser(userId);
   userStore.deleteEnrollmentTokensByUser(userId);
 }
@@ -175,7 +170,6 @@ function projectRecord(
     userStore.setTotpRecordSeq(userId, null, now);
     if (record.type === 'reset-root') {
       userStore.deleteCertsByUser(userId);
-      userStore.deleteHubAuthorizationsByUser(userId);
       // 证书全没了，凭证书说话的窗格授权也不该留
       deleteAllPaneGrants(stores.db);
     }
@@ -217,49 +211,6 @@ function projectRecord(
       userStore.deletePeer(hex);
       // 与吊销记录同一个事务：这台节点手上的窗格授权当场作废，不依赖任何事后事件
       deletePaneGrantsForNode(hex, stores.db);
-      const existing = userStore.getHubAuthorization(userId, hex);
-      if (existing) {
-        userStore.upsertHubAuthorization({
-          userId,
-          hubNodeId: hex,
-          status: 'retired',
-          publicUrl: existing.publicUrl,
-          priority: existing.priority,
-          admitSeq: existing.admitSeq,
-          retireSeq: seq,
-          updatedSeq: seq,
-        });
-      }
-    },
-    'admit-hub': () => {
-      const payload = decodeAdmitHubPayload(record.payload);
-      const hex = nodeIdToHex(payload.hub_node_id);
-      const existing = userStore.getHubAuthorization(userId, hex);
-      userStore.upsertHubAuthorization({
-        userId,
-        hubNodeId: hex,
-        status: 'active',
-        publicUrl: payload.public_url ?? existing?.publicUrl ?? null,
-        priority: payload.priority ?? existing?.priority ?? null,
-        admitSeq: seq,
-        retireSeq: null,
-        updatedSeq: seq,
-      });
-    },
-    'retire-hub': () => {
-      const hex = nodeIdToHex(decodeRetireHubPayload(record.payload).hub_node_id);
-      const existing = userStore.getHubAuthorization(userId, hex);
-      if (!existing) return;
-      userStore.upsertHubAuthorization({
-        userId,
-        hubNodeId: hex,
-        status: 'retired',
-        publicUrl: existing.publicUrl,
-        priority: existing.priority,
-        admitSeq: existing.admitSeq,
-        retireSeq: seq,
-        updatedSeq: seq,
-      });
     },
     'rename-node': () => persistRenameNode(stores, record),
   };

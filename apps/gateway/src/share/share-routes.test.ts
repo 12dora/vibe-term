@@ -82,12 +82,11 @@ beforeEach(() => {
     autoStartRecorders: false,
     originSources: {
       localNodeId: () => 'node-1',
-      hubs: () => [],
       siteUrl: () => 'https://site.example.com',
       siteUrlManaged: () => false,
       tunnelUrl: () => null,
       baseUrl: () => null,
-      uplinkKind: () => 'hub',
+      uplinkKind: () => 'none',
       relays: () => [],
       relayProbe: () => ({ state: () => 'unknown', ensure: () => {}, invalidate: () => {} }),
     },

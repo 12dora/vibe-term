@@ -33,7 +33,7 @@ import {
 } from '@vibeterm/shared/relay';
 import { encodePasskeyAssertionSig } from '../auth/passkey';
 import { createEs256Authenticator } from '../auth/passkey-test-fixtures';
-import { encodeRedeemPopMessage } from '../hub/redeem-pop';
+import { encodeRedeemPopMessage } from './redeem-pop';
 import {
   RELAY_TEST_PUBLIC_URL,
   type RelayCtlInbox,

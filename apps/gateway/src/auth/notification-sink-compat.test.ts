@@ -13,7 +13,7 @@ import {
   genesisHead,
   hexToBytes,
 } from '@vibeterm/shared/auth';
-import { inspectHubAuthRecordCompat } from '../hub/hub-authorization';
+import { inspectKeyLogRecordCompat } from '../mesh/key-log-compat';
 import { createMigratedAuthDb } from './test-db';
 import { UserStore } from './user-store';
 
@@ -84,7 +84,7 @@ describe('notification-sink 版本门禁', () => {
       seedUser(store);
       store.createNode({ id: PEER, userId: 'user-1', name: 'old', version: '1.1.38', now: 1 });
       seedCert(store, PEER);
-      const blocked = inspectHubAuthRecordCompat(store, sinkRecord(), 'user-1');
+      const blocked = inspectKeyLogRecordCompat(store, sinkRecord(), 'user-1');
       expect(blocked.ok).toBe(false);
       if (blocked.ok) return;
       expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
@@ -105,7 +105,7 @@ describe('notification-sink 版本门禁', () => {
       seedCert(store, PEER);
       seedPeer(store, PEER, MIN_NOTIFICATION_SINK_RECORD_VERSION);
       seedCert(store, OFFLINE);
-      const blocked = inspectHubAuthRecordCompat(store, sinkRecord(), 'user-1', {
+      const blocked = inspectKeyLogRecordCompat(store, sinkRecord(), 'user-1', {
         relayMode: true,
         localNodeId: SELF,
       });
@@ -128,7 +128,7 @@ describe('notification-sink 版本门禁', () => {
       seedCert(store, PEER);
       seedPeer(store, PEER, MIN_NOTIFICATION_SINK_RECORD_VERSION);
       expect(
-        inspectHubAuthRecordCompat(store, sinkRecord(), 'user-1', {
+        inspectKeyLogRecordCompat(store, sinkRecord(), 'user-1', {
           relayMode: true,
           localNodeId: SELF,
         })
@@ -156,7 +156,7 @@ describe('notification-sink 版本门禁', () => {
         })
       );
       expect(
-        inspectHubAuthRecordCompat(store, record, 'user-1', { relayMode: true, localNodeId: SELF })
+        inspectKeyLogRecordCompat(store, record, 'user-1', { relayMode: true, localNodeId: SELF })
       ).toEqual({ ok: true });
     } finally {
       close();

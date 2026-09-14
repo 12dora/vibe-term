@@ -15,11 +15,10 @@ import {
   fakeGateway,
   loginSelf,
   selfCookie,
-  waitUntil,
 } from '../../mesh/integration/multi-hub-harness';
 import { createMeshRuntime } from '../../mesh/mesh-runtime';
 import { RelayUplinkClient } from '../../mesh/relay-uplink-client';
-import { fakeSocketPair } from '../../mesh/test-support';
+import { fakeSocketPair, waitUntil } from '../../mesh/test-support';
 import type { UplinkWsFactory } from '../../mesh/uplink-client';
 import { type RelayHarness, bootRelayHarness } from '../relay-test-harness';
 import type { RelayHarnessOptions } from '../relay-test-harness';

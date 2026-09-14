@@ -363,7 +363,6 @@ describe('user-key-persistence', () => {
     try {
       persistEncryptedIdentity(db, {
         nodeId: 'dd'.repeat(16),
-        hubUrl: 'https://hub.example',
         privateKey: 'enc-ed',
         x25519PrivateKey: 'enc-x',
         certificateJson: '{}',
@@ -372,7 +371,6 @@ describe('user-key-persistence', () => {
       });
       persistEncryptedIdentity(db, {
         nodeId: 'ee'.repeat(16),
-        hubUrl: null,
         privateKey: 'enc-ed-2',
         x25519PrivateKey: 'enc-x-2',
         certificateJson: '{"v":1}',
@@ -486,7 +484,6 @@ describe('user-key-persistence', () => {
       });
       persistEncryptedIdentity(db, {
         nodeId: selfId,
-        hubUrl: null,
         privateKey: 'enc-ed',
         x25519PrivateKey: 'enc-x',
         certificateJson: '{}',

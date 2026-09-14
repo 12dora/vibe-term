@@ -40,12 +40,11 @@ beforeEach(() => {
 function sources(overrides: Partial<ShareOriginSources> = {}): ShareOriginSources {
   return {
     localNodeId: () => 'node-a',
-    hubs: () => [],
     siteUrl: () => null,
     siteUrlManaged: () => false,
     tunnelUrl: () => null,
     baseUrl: () => null,
-    uplinkKind: () => null,
+    uplinkKind: () => 'none',
     relays: () => [],
     relayProbe: () => fakeProbe(),
     ...overrides,
@@ -53,38 +52,26 @@ function sources(overrides: Partial<ShareOriginSources> = {}): ShareOriginSource
 }
 
 describe('buildShareOriginContext', () => {
-  test('site / hub / tunnel / ip 全量候选按优先级排序', () => {
+  test('site / relay / tunnel / ip 全量候选按优先级排序', () => {
     const context = buildShareOriginContext(
       sources({
         siteUrl: () => 'https://site.example.com',
-        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
         tunnelUrl: () => 'https://tunnel.example.com',
         baseUrl: () => 'http://203.0.113.7:9663',
       })
     );
-    expect(context.candidates.map((item) => item.kind)).toEqual(['site', 'hub', 'tunnel', 'ip']);
+    expect(context.candidates.map((item) => item.kind)).toEqual(['site', 'relay', 'tunnel', 'ip']);
     expect(context.candidates[0]?.label).toBe('site.example.com');
     expect(context.candidates.map((item) => item.accessUrl)).toEqual([
       'https://site.example.com',
-      'https://hub.example.com/n/node-a',
+      'https://relay.example.com/n/node-a',
       'https://tunnel.example.com',
       'http://203.0.113.7:9663',
     ]);
     expect(context.nodePrefix).toBe('/n/node-a');
-  });
-
-  test('经他人 hub 的候选带节点前缀，本机即 hub 时无前缀', () => {
-    const context = buildShareOriginContext(
-      sources({
-        hubs: () => [
-          { hubNodeId: 'hub-1', publicUrl: 'https://hub1.example.com', name: null },
-          { hubNodeId: 'node-a', publicUrl: 'https://self-hub.example.com', name: null },
-        ],
-      })
-    );
-    expect(resolveSharePrefix(context, 'https://hub1.example.com')).toBe('/n/node-a');
-    expect(resolveSharePrefix(context, 'https://self-hub.example.com')).toBeNull();
-    expect(resolveSharePrefix(context, 'https://unknown.example.com')).toBeNull();
   });
 
   test('中继上联且探测通过：中继候选带 /n/<self> 且排在隧道之前', () => {
@@ -127,10 +114,10 @@ describe('buildShareOriginContext', () => {
     expect(bad.candidates.map((item) => item.url)).toEqual(['https://relay-b.example.com']);
   });
 
-  test('hub 上联时永远不产生中继候选', () => {
+  test('uplinkKind 为 none 时永远不产生中继候选', () => {
     const context = buildShareOriginContext(
       sources({
-        uplinkKind: () => 'hub',
+        uplinkKind: () => 'none',
         relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
         relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
       })
@@ -148,15 +135,17 @@ describe('buildShareOriginContext', () => {
     expect(context.candidates.map((item) => item.kind)).toEqual(['tunnel']);
   });
 
-  test('站点 URL 由 hub 托管时不作为 site 候选', () => {
+  test('站点 URL 由运行时托管时不作为 site 候选', () => {
     const context = buildShareOriginContext(
       sources({
-        siteUrl: () => 'https://hub.example.com/n/node-a',
+        siteUrl: () => 'https://relay.example.com/n/node-a',
         siteUrlManaged: () => true,
-        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
       })
     );
-    expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
+    expect(context.candidates.map((item) => item.kind)).toEqual(['relay']);
   });
 
   test('站点 URL 等于中继 accessUrl 时不重复产出 site 候选', () => {
@@ -171,29 +160,6 @@ describe('buildShareOriginContext', () => {
     );
     expect(context.candidates.map((item) => item.kind)).toEqual(['relay']);
     expect(context.candidates.filter((item) => item.kind === 'site')).toEqual([]);
-  });
-
-  test('站点 URL 等于 Hub 公网地址且未托管时不重复产出 site 候选', () => {
-    const context = buildShareOriginContext(
-      sources({
-        siteUrl: () => 'https://hub.example.com',
-        siteUrlManaged: () => false,
-        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
-      })
-    );
-    expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
-  });
-
-  test('站点 URL 等于 Hub accessUrl 且未托管时不重复产出 site 候选', () => {
-    const context = buildShareOriginContext(
-      sources({
-        siteUrl: () => 'https://hub.example.com/n/node-a',
-        siteUrlManaged: () => false,
-        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
-      })
-    );
-    expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
-    expect(context.candidates[0]?.accessUrl).toBe('https://hub.example.com/n/node-a');
   });
 
   test('站点 URL 等于公网 IP 基址时保留 ip 候选', () => {
@@ -238,11 +204,11 @@ describe('buildShareOriginContext', () => {
     expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
   });
 
-  test('hub 上联时历史中继行同 host 不吞掉站点 URL', () => {
+  test('uplinkKind 为 none 时历史中继行同 host 不吞掉站点 URL', () => {
     const context = buildShareOriginContext(
       sources({
         siteUrl: () => 'https://mine.example.com',
-        uplinkKind: () => 'hub',
+        uplinkKind: () => 'none',
         relays: () => [{ url: 'https://mine.example.com', priority: 0, attached: false }],
         relayProbe: () => fakeProbe({ 'https://mine.example.com': 'ok' }),
       })
@@ -264,16 +230,11 @@ describe('buildShareOriginContext', () => {
     expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
   });
 
-  test('同一次 build 只读一次 hubs / relays', () => {
-    let hubReads = 0;
+  test('同一次 build 只读一次 relays', () => {
     let relayReads = 0;
     buildShareOriginContext(
       sources({
         siteUrl: () => 'https://mine.example.com',
-        hubs: () => {
-          hubReads += 1;
-          return [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }];
-        },
         uplinkKind: () => 'relay',
         relays: () => {
           relayReads += 1;
@@ -282,7 +243,6 @@ describe('buildShareOriginContext', () => {
         relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
       })
     );
-    expect(hubReads).toBe(1);
     expect(relayReads).toBe(1);
   });
 
@@ -290,7 +250,6 @@ describe('buildShareOriginContext', () => {
     const context = buildShareOriginContext(
       sources({
         siteUrl: () => 'http://localhost:9663',
-        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'http://192.168.1.5', name: null }],
         baseUrl: () => 'http://127.0.0.1:9663',
       })
     );
@@ -302,19 +261,21 @@ describe('buildShareOriginContext', () => {
     expect(context.candidates).toEqual([]);
   });
 
-  test('自定义地址置顶为 custom，与 hub 同主机时继承节点前缀', () => {
+  test('自定义地址置顶为 custom，与中继同主机时继承节点前缀', () => {
     const context = buildShareOriginContext(
       sources({
-        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
       }),
-      'https://hub.example.com'
+      'https://relay.example.com'
     );
     expect(context.candidates[0]).toMatchObject({
       kind: 'custom',
-      url: 'https://hub.example.com',
-      accessUrl: 'https://hub.example.com/n/node-a',
+      url: 'https://relay.example.com',
+      accessUrl: 'https://relay.example.com/n/node-a',
     });
-    expect(resolveSharePrefix(context, 'https://hub.example.com')).toBe('/n/node-a');
+    expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
   });
 
   test('自定义地址与中继同主机时同样继承节点前缀', () => {
@@ -344,15 +305,14 @@ describe('buildShareOriginContext', () => {
     const context = buildShareOriginContext(
       sources({
         localNodeId: () => null,
-        hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: null }],
         uplinkKind: () => 'relay',
         relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
         relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
       })
     );
     expect(context.nodePrefix).toBeNull();
-    expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
-    expect(resolveSharePrefix(context, 'https://hub.example.com')).toBeNull();
+    expect(context.candidates).toEqual([]);
+    expect(resolveSharePrefix(context, 'https://relay.example.com')).toBeNull();
   });
 });
 
@@ -533,7 +493,7 @@ describe('relayShareAccessUrl', () => {
 });
 
 describe('primeShareRelayOrigins', () => {
-  test('中继上联时预热所有中继入口，hub 上联时不动', () => {
+  test('中继上联时预热所有中继入口，none 时不动', () => {
     const relayProbe = fakeProbe();
     primeShareRelayOrigins(
       sources({
@@ -550,14 +510,14 @@ describe('primeShareRelayOrigins', () => {
       'https://relay-b.example.com',
     ]);
 
-    const hubProbe = fakeProbe();
+    const idleProbe = fakeProbe();
     primeShareRelayOrigins(
       sources({
-        uplinkKind: () => 'hub',
+        uplinkKind: () => 'none',
         relays: () => [{ url: 'https://relay-a.example.com', priority: 0, attached: true }],
-        relayProbe: () => hubProbe,
+        relayProbe: () => idleProbe,
       })
     );
-    expect(hubProbe.ensured).toEqual([]);
+    expect(idleProbe.ensured).toEqual([]);
   });
 });

@@ -41,11 +41,9 @@ function fakeStore(origins: string[]): UserStore {
   } as unknown as UserStore;
 }
 
-const hub = { nodeId: 'hub', publicUrl: 'https://hub.example' };
-
 describe('meshAuthModeUserFields', () => {
   test('passkeySecondFactor is false when the user has no keys', () => {
-    const fields = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', fakeStore([]), hub);
+    const fields = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', fakeStore([]));
     expect(fields.passkeySecondFactor).toBe(false);
     expect(fields.passkeysForThisOrigin).toBe(false);
     expect(fields.passkeysRegisteredElsewhere).toBe(false);
@@ -55,8 +53,8 @@ describe('meshAuthModeUserFields', () => {
   // 二次验证按 origin：别处注册的钥匙在这里做不出断言，要求它等于把用户锁死在门外。
   test('passkeySecondFactor follows the current origin, not any origin', () => {
     const store = fakeStore(['https://other.example']);
-    const local = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', store, hub);
-    const other = meshAuthModeUserFields(fakeUser(), 'https://other.example', store, hub);
+    const local = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', store);
+    const other = meshAuthModeUserFields(fakeUser(), 'https://other.example', store);
     expect(local.passkeysForThisOrigin).toBe(false);
     expect(local.passkeySecondFactor).toBe(false);
     expect(local.passkeysRegisteredElsewhere).toBe(true);
@@ -69,13 +67,13 @@ describe('meshAuthModeUserFields', () => {
 
   test('waiver only applies where the origin actually has a key', () => {
     const store = fakeStore(['https://other.example']);
-    const here = meshAuthModeUserFields(fakeUser(), 'https://other.example', store, hub, {
+    const here = meshAuthModeUserFields(fakeUser(), 'https://other.example', store, {
       waivePasskeySecondFactor: true,
     });
     expect(here.passkeySecondFactor).toBe(false);
     expect(here.passkeySecondFactorWaived).toBe(true);
     expect(here.secondFactorPolicy).toBe('none');
-    const elsewhere = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', store, hub, {
+    const elsewhere = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', store, {
       waivePasskeySecondFactor: true,
     });
     expect(elsewhere.passkeySecondFactor).toBe(false);
@@ -84,7 +82,7 @@ describe('meshAuthModeUserFields', () => {
   });
 
   test('null user does not require a passkey second factor', () => {
-    const fields = meshAuthModeUserFields(null, 'http://localhost:19663', fakeStore([]), hub);
+    const fields = meshAuthModeUserFields(null, 'http://localhost:19663', fakeStore([]));
     expect(fields.passkeySecondFactor).toBe(false);
     expect(fields.uid).toBeNull();
     expect(fields.secondFactorPolicy).toBe('none');
@@ -96,7 +94,6 @@ describe('meshAuthModeUserFields', () => {
       fakeUser({ totpRecordSeq: 1 }),
       'http://localhost:19663',
       store,
-      hub,
       { totpSecretPresent: true }
     );
     expect(both.totpEnabled).toBe(true);
@@ -106,7 +103,6 @@ describe('meshAuthModeUserFields', () => {
       fakeUser({ totpRecordSeq: 1 }),
       'http://localhost:19663',
       fakeStore([]),
-      hub,
       { totpSecretPresent: true }
     );
     expect(totpOnly.secondFactorPolicy).toBe('totp');
@@ -114,7 +110,6 @@ describe('meshAuthModeUserFields', () => {
       fakeUser({ totpRecordSeq: 1 }),
       'http://localhost:19663',
       store,
-      hub,
       { waivePasskeySecondFactor: true, totpSecretPresent: true }
     );
     expect(waivedBoth.passkeySecondFactor).toBe(false);
@@ -124,10 +119,10 @@ describe('meshAuthModeUserFields', () => {
   test('totpEnabled requires both totpRecordSeq and the key-log secret', () => {
     const store = fakeStore([]);
     const user = fakeUser({ totpRecordSeq: 1 });
-    const seqOnly = meshAuthModeUserFields(user, 'http://localhost', store, hub);
+    const seqOnly = meshAuthModeUserFields(user, 'http://localhost', store);
     expect(seqOnly.totpEnabled).toBe(false);
     expect(seqOnly.secondFactorPolicy).toBe('none');
-    const both = meshAuthModeUserFields(user, 'http://localhost', store, hub, {
+    const both = meshAuthModeUserFields(user, 'http://localhost', store, {
       totpSecretPresent: true,
     });
     expect(both.totpEnabled).toBe(true);

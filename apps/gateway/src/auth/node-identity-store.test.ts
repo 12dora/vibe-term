@@ -15,7 +15,6 @@ describe('NodeIdentityStore', () => {
       expect(await store.load()).toBeNull();
       await store.save({
         nodeId: 'node-1',
-        hubUrl: 'https://hub.example',
         edPrivateKey: ED,
         x25519PrivateKey: X25519,
         certificateJson: '{"domain":"tmex/nodecert/v1"}',
@@ -34,7 +33,6 @@ describe('NodeIdentityStore', () => {
       const store = new NodeIdentityStore(db);
       await store.save({
         nodeId: 'node-1',
-        hubUrl: 'https://hub.example',
         edPrivateKey: ED,
         x25519PrivateKey: X25519,
         certificateJson: '{"node_id":"node-1"}',
@@ -42,18 +40,19 @@ describe('NodeIdentityStore', () => {
       });
 
       const row = sqlite
-        .query('SELECT private_key, x25519_private_key FROM node_identity')
+        .query('SELECT private_key, x25519_private_key, uplink_kind FROM node_identity')
         .get() as {
         private_key: string;
         x25519_private_key: string;
+        uplink_kind: string;
       };
       expect(row.private_key).not.toBe(Buffer.from(ED).toString('base64'));
       expect(row.x25519_private_key).not.toBe(Buffer.from(X25519).toString('base64'));
+      expect(row.uplink_kind).toBe('none');
 
       const loaded = await store.load();
       expect(loaded).not.toBeNull();
       expect(loaded?.nodeId).toBe('node-1');
-      expect(loaded?.hubUrl).toBe('https://hub.example');
       expect(loaded?.certificateJson).toBe('{"node_id":"node-1"}');
       expect(bytesEqual(loaded?.edPrivateKey ?? new Uint8Array(), ED)).toBe(true);
       expect(bytesEqual(loaded?.x25519PrivateKey ?? new Uint8Array(), X25519)).toBe(true);
@@ -63,7 +62,6 @@ describe('NodeIdentityStore', () => {
       const nextEd = crypto.getRandomValues(new Uint8Array(32));
       await store.save({
         nodeId: 'node-1',
-        hubUrl: null,
         edPrivateKey: nextEd,
         x25519PrivateKey: X25519,
         certificateJson: '{}',
@@ -71,21 +69,23 @@ describe('NodeIdentityStore', () => {
         userId: 'user-42',
       });
       const updated = await store.load();
-      expect(updated?.hubUrl).toBeNull();
       expect(updated?.userId).toBe('user-42');
       expect(bytesEqual(updated?.edPrivateKey ?? new Uint8Array(), nextEd)).toBe(true);
+      const kind = sqlite.query('SELECT uplink_kind FROM node_identity WHERE id = 1').get() as {
+        uplink_kind: string;
+      };
+      expect(kind.uplink_kind).toBe('none');
     } finally {
       close();
     }
   });
 
-  test('save/load round-trips userId and preserves it across hubUrl-only updates', async () => {
+  test('save/load round-trips userId and preserves it across updates', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new NodeIdentityStore(db);
       await store.save({
         nodeId: 'node-1',
-        hubUrl: 'https://hub.example',
         edPrivateKey: ED,
         x25519PrivateKey: X25519,
         certificateJson: '{}',
@@ -96,7 +96,7 @@ describe('NodeIdentityStore', () => {
       expect(loaded).not.toBeNull();
       if (!loaded) return;
       expect(loaded.userId).toBe('uid-join');
-      await store.save({ ...loaded, hubUrl: null });
+      await store.save({ ...loaded });
       expect((await store.load())?.userId).toBe('uid-join');
     } finally {
       close();

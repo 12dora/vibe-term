@@ -44,9 +44,7 @@ function portPlanLiveFromConfig(): PortPlanLive {
 }
 
 function publicHttpsPortFromConfig(): number | null {
-  const raw = (
-    config.roles.relay ? config.relayPublicUrl : (config.hubPublicUrl ?? config.hubUrl)
-  )?.trim();
+  const raw = config.relayPublicUrl?.trim();
   if (!raw) return null;
   try {
     const target = parseProbeTarget(raw);

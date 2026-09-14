@@ -1,15 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { validateRoles } from '@vibeterm/shared';
 import { BUILTIN_STUN_SERVERS } from '@vibeterm/shared/net';
 import {
-  HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS,
   LINK_STREAM_INFLIGHT_DEFAULT_BYTES,
   RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS,
   RELAY_AUTO_SELECT_INTERVAL_MAX_MS,
   RELAY_AUTO_SELECT_INTERVAL_MIN_MS,
   originUrlFromBindHost,
-  parseHubAutoPromote,
-  parseHubAutoPromoteTimeoutMs,
   parseLinkStreamInflightBytes,
   parsePeerBindHost,
   parsePeerPort,
@@ -21,7 +17,6 @@ import {
   parseTurnHost,
   parseTurnPort,
   parseTurnRelayPortRange,
-  parseUplinkPreferNearest,
   parseVibeTermRoles,
   resolveTmuxBin,
 } from './config';
@@ -35,14 +30,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   bindHost: string;
   tmuxBin: string;
   gatewayOwnerToken: string | null;
-  roles: { hub: boolean; node: boolean; relay: boolean };
-  hubUrl: string | null;
-  hubPublicUrl: string | null;
-  hubMode: 'active' | 'standby';
-  hubPriority: number;
-  hubWriterEpoch: number;
-  hubUrls: string[];
-  hubPeers: string[];
+  roles: { node: boolean; relay: boolean };
   peerPort: number;
   stunServers: string[];
   stunSource: 'builtin' | 'custom' | 'disabled';
@@ -76,14 +64,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         bindHost: string;
         tmuxBin: string;
         gatewayOwnerToken: string | null;
-        roles: { hub: boolean; node: boolean; relay: boolean };
-        hubUrl: string | null;
-        hubPublicUrl: string | null;
-        hubMode: 'active' | 'standby';
-        hubPriority: number;
-        hubWriterEpoch: number;
-        hubUrls: string[];
-        hubPeers: string[];
+        roles: { node: boolean; relay: boolean };
         peerPort: number;
         stunServers: string[];
         stunSource: 'builtin' | 'custom' | 'disabled';
@@ -229,22 +210,31 @@ describe('config.gatewayOwnerToken', () => {
 
 describe('parseVibeTermRoles', () => {
   test('defaults to standalone and accepts the legal values', () => {
-    expect(parseVibeTermRoles(undefined)).toEqual({ hub: false, node: false, relay: false });
-    expect(parseVibeTermRoles('standalone')).toEqual({ hub: false, node: false, relay: false });
-    expect(parseVibeTermRoles('node')).toEqual({ hub: false, node: true, relay: false });
-    expect(parseVibeTermRoles('hub,node')).toEqual({ hub: true, node: true, relay: false });
+    expect(parseVibeTermRoles(undefined)).toEqual({ node: false, relay: false });
+    expect(parseVibeTermRoles('standalone')).toEqual({ node: false, relay: false });
+    expect(parseVibeTermRoles('node')).toEqual({ node: true, relay: false });
   });
 
   test('accepts the relay roles', () => {
-    expect(parseVibeTermRoles('relay')).toEqual({ hub: false, node: false, relay: true });
-    expect(parseVibeTermRoles('relay,node')).toEqual({ hub: false, node: true, relay: true });
+    expect(parseVibeTermRoles('relay')).toEqual({ node: false, relay: true });
+    expect(parseVibeTermRoles('relay,node')).toEqual({ node: true, relay: true });
   });
 
-  test('rejects hub combined with relay', () => {
-    expect(validateRoles({ hub: true, node: true, relay: true })).toBe(
-      'relay cannot be combined with hub'
-    );
-    expect(validateRoles({ hub: false, node: true, relay: true })).toBeNull();
+  test('maps leftover hub,node to node and warns once', () => {
+    const warn = console.warn;
+    const messages: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      messages.push(String(args[0]));
+    };
+    try {
+      expect(parseVibeTermRoles('hub,node')).toEqual({ node: true, relay: false });
+      expect(parseVibeTermRoles('hub,node')).toEqual({ node: true, relay: false });
+    } finally {
+      console.warn = warn;
+    }
+    expect(messages).toEqual([
+      '[roles] VIBETERM_ROLES=hub,node is no longer supported; running as node',
+    ]);
   });
 
   test('rejects anything else including pure hub and reordered roles', () => {
@@ -264,8 +254,10 @@ describe('parseVibeTermRoles', () => {
     }
   });
 
-  test('names relay in the error message', () => {
-    expect(() => parseVibeTermRoles('hub')).toThrow('relay | relay,node');
+  test('names the legal role set in the error message', () => {
+    expect(() => parseVibeTermRoles('hub')).toThrow(
+      'VIBETERM_ROLES must be one of standalone | node | relay | relay,node'
+    );
   });
 });
 
@@ -364,18 +356,16 @@ describe('parseTurnBindHost', () => {
   });
 });
 
-describe('config hub/node env', () => {
+describe('config node/relay env', () => {
   test('defaults roles to standalone and peerPort to 39001', async () => {
     const config = await loadConfigWith({
       VIBETERM_ROLES: undefined,
       VIBETERM_PEER_PORT: undefined,
-      VIBETERM_HUB_URL: undefined,
       VIBETERM_STUN_SERVERS: undefined,
       VIBETERM_RTC_PORT_RANGE: undefined,
     });
-    expect(config.roles).toEqual({ hub: false, node: false, relay: false });
+    expect(config.roles).toEqual({ node: false, relay: false });
     expect(config.peerPort).toBe(39001);
-    expect(config.hubUrl).toBeNull();
     expect(config.stunServers).toEqual([...BUILTIN_STUN_SERVERS]);
     expect(config.stunSource).toBe('builtin');
     expect(config.peerBindHost).toEqual(['::', '0.0.0.0']);
@@ -392,20 +382,16 @@ describe('config hub/node env', () => {
     expect(config.rtcPortRange).toEqual({ begin: 42000, end: 42100 });
   });
 
-  test('parses hub,node role and related URLs', async () => {
+  test('parses node role and related TURN/STUN URLs', async () => {
     const config = await loadConfigWith({
-      VIBETERM_ROLES: 'hub,node',
-      VIBETERM_HUB_URL: 'https://hub.example',
-      VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
+      VIBETERM_ROLES: 'node',
       VIBETERM_PEER_PORT: '39001',
       VIBETERM_STUN_SERVERS: 'stun:stun.l.google.com:19302',
       VIBETERM_TURN_URL: 'turn:turn.example:3478',
       VIBETERM_TURN_USERNAME: 'u',
       VIBETERM_TURN_CREDENTIAL: 'p',
     });
-    expect(config.roles).toEqual({ hub: true, node: true, relay: false });
-    expect(config.hubUrl).toBe('https://hub.example');
-    expect(config.hubPublicUrl).toBe('https://hub.example');
+    expect(config.roles).toEqual({ node: true, relay: false });
     expect(config.stunServers).toEqual(['stun:stun.l.google.com:19302']);
     expect(config.stunSource).toBe('custom');
     expect(config.turnUrl).toBe('turn:turn.example:3478');
@@ -450,107 +436,6 @@ describe('config hub/node env', () => {
   test('rejects invalid VIBETERM_ROLES at config load', async () => {
     await expect(loadConfigWith({ VIBETERM_ROLES: 'hub' })).rejects.toThrow('VIBETERM_ROLES');
   });
-
-  test('hubMode/priority/epoch 默认值：active=100/1，standby 默认 priority 200', async () => {
-    const unset = await loadConfigWith({
-      VIBETERM_ROLES: 'hub,node',
-      VIBETERM_HUB_MODE: undefined,
-      VIBETERM_HUB_PRIORITY: undefined,
-      VIBETERM_HUB_WRITER_EPOCH: undefined,
-      VIBETERM_HUB_URLS: undefined,
-    });
-    expect(unset.hubMode).toBe('active');
-    expect(unset.hubPriority).toBe(100);
-    expect(unset.hubWriterEpoch).toBe(1);
-    expect(unset.hubUrls).toEqual([]);
-
-    const standby = await loadConfigWith({
-      VIBETERM_ROLES: 'hub,node',
-      VIBETERM_HUB_MODE: 'standby',
-      VIBETERM_HUB_PRIORITY: undefined,
-    });
-    expect(standby.hubMode).toBe('standby');
-    expect(standby.hubPriority).toBe(200);
-
-    const custom = await loadConfigWith({
-      VIBETERM_HUB_MODE: 'standby',
-      VIBETERM_HUB_PRIORITY: '5',
-      VIBETERM_HUB_WRITER_EPOCH: '9',
-    });
-    expect(custom.hubMode).toBe('standby');
-    expect(custom.hubPriority).toBe(5);
-    expect(custom.hubWriterEpoch).toBe(9);
-  });
-
-  test('拒绝非法 VIBETERM_HUB_MODE / PRIORITY / WRITER_EPOCH', async () => {
-    await expect(loadConfigWith({ VIBETERM_HUB_MODE: 'primary' })).rejects.toThrow(
-      'VIBETERM_HUB_MODE'
-    );
-    await expect(loadConfigWith({ VIBETERM_HUB_PRIORITY: '-1' })).rejects.toThrow(
-      'VIBETERM_HUB_PRIORITY'
-    );
-    await expect(loadConfigWith({ VIBETERM_HUB_PRIORITY: '1.5' })).rejects.toThrow(
-      'VIBETERM_HUB_PRIORITY'
-    );
-    await expect(loadConfigWith({ VIBETERM_HUB_WRITER_EPOCH: '0' })).rejects.toThrow(
-      'VIBETERM_HUB_WRITER_EPOCH'
-    );
-    await expect(loadConfigWith({ VIBETERM_HUB_WRITER_EPOCH: 'abc' })).rejects.toThrow(
-      'VIBETERM_HUB_WRITER_EPOCH'
-    );
-  });
-
-  test('VIBETERM_HUB_URLS 接在 VIBETERM_HUB_URL 之后去重', async () => {
-    const onlySeed = await loadConfigWith({
-      VIBETERM_HUB_URL: 'https://hub.example',
-      VIBETERM_HUB_URLS: undefined,
-    });
-    expect(onlySeed.hubUrl).toBe('https://hub.example');
-    expect(onlySeed.hubUrls).toEqual(['https://hub.example']);
-
-    const merged = await loadConfigWith({
-      VIBETERM_HUB_URL: 'https://hub.example',
-      VIBETERM_HUB_URLS: 'https://standby.example, https://hub.example, https://other.example',
-    });
-    expect(merged.hubUrls).toEqual([
-      'https://hub.example',
-      'https://standby.example',
-      'https://other.example',
-    ]);
-
-    const urlsOnly = await loadConfigWith({
-      VIBETERM_HUB_URL: undefined,
-      VIBETERM_HUB_URLS: 'https://a.example,, https://b.example',
-    });
-    expect(urlsOnly.hubUrls).toEqual(['https://a.example', 'https://b.example']);
-  });
-
-  test('VIBETERM_HUB_PEERS 默认空，校验 32-hex、去重、小写', async () => {
-    const unset = await loadConfigWith({ VIBETERM_HUB_PEERS: undefined });
-    expect(unset.hubPeers).toEqual([]);
-
-    const empty = await loadConfigWith({ VIBETERM_HUB_PEERS: '' });
-    expect(empty.hubPeers).toEqual([]);
-
-    const a = 'aa'.repeat(16);
-    const b = 'bb'.repeat(16);
-    const parsed = await loadConfigWith({
-      VIBETERM_HUB_PEERS: ` ${a.toUpperCase()},, ${b}, ${a} `,
-    });
-    expect(parsed.hubPeers).toEqual([a, b]);
-  });
-
-  test('拒绝非法 VIBETERM_HUB_PEERS', async () => {
-    await expect(loadConfigWith({ VIBETERM_HUB_PEERS: 'not-hex' })).rejects.toThrow(
-      'VIBETERM_HUB_PEERS'
-    );
-    await expect(loadConfigWith({ VIBETERM_HUB_PEERS: 'aa'.repeat(15) })).rejects.toThrow(
-      'VIBETERM_HUB_PEERS'
-    );
-    await expect(loadConfigWith({ VIBETERM_HUB_PEERS: `${'aa'.repeat(16)},zz` })).rejects.toThrow(
-      'VIBETERM_HUB_PEERS'
-    );
-  });
 });
 
 describe('config.trustProxy', () => {
@@ -578,30 +463,7 @@ describe('config.originUrl', () => {
   });
 });
 
-describe('hub auto-promote and nearest-uplink env', () => {
-  test('auto-promote defaults off and accepts 1/true/yes/on', () => {
-    expect(parseHubAutoPromote(undefined)).toBe(false);
-    expect(parseHubAutoPromote('')).toBe(false);
-    expect(parseHubAutoPromote('0')).toBe(false);
-    expect(parseHubAutoPromote('1')).toBe(true);
-    expect(parseHubAutoPromote('true')).toBe(true);
-    expect(parseHubAutoPromote('YES')).toBe(true);
-    expect(parseHubAutoPromote('on')).toBe(true);
-  });
-
-  test('auto-promote timeout defaults to 10 minutes', () => {
-    expect(parseHubAutoPromoteTimeoutMs(undefined)).toBe(HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS);
-    expect(parseHubAutoPromoteTimeoutMs('')).toBe(600_000);
-    expect(parseHubAutoPromoteTimeoutMs('1000')).toBe(1_000);
-    expect(() => parseHubAutoPromoteTimeoutMs('0')).toThrow('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS');
-    expect(() => parseHubAutoPromoteTimeoutMs('-1')).toThrow(
-      'VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS'
-    );
-    expect(() => parseHubAutoPromoteTimeoutMs('1.5')).toThrow(
-      'VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS'
-    );
-  });
-
+describe('relay auto-select and stream inflight env', () => {
   test('转发会话在途上限缺省 256 KiB，只收整数且不低于 32 KiB', () => {
     expect(parseLinkStreamInflightBytes(undefined)).toBe(LINK_STREAM_INFLIGHT_DEFAULT_BYTES);
     expect(parseLinkStreamInflightBytes('')).toBe(LINK_STREAM_INFLIGHT_DEFAULT_BYTES);
@@ -613,17 +475,6 @@ describe('hub auto-promote and nearest-uplink env', () => {
     expect(() => parseLinkStreamInflightBytes('1e6')).toThrow(
       'VIBETERM_LINK_STREAM_INFLIGHT_BYTES'
     );
-  });
-
-  test('prefer-nearest is auto when unset and can be forced off or on', () => {
-    expect(parseUplinkPreferNearest(undefined)).toBeNull();
-    expect(parseUplinkPreferNearest('')).toBeNull();
-    expect(parseUplinkPreferNearest('0')).toBe(false);
-    expect(parseUplinkPreferNearest('off')).toBe(false);
-    expect(parseUplinkPreferNearest('false')).toBe(false);
-    expect(parseUplinkPreferNearest('1')).toBe(true);
-    expect(parseUplinkPreferNearest('on')).toBe(true);
-    expect(() => parseUplinkPreferNearest('maybe')).toThrow('VIBETERM_UPLINK_PREFER_NEAREST');
   });
 
   test('relay auto-select is auto when unset and can be forced off or on', () => {

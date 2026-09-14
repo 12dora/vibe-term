@@ -28,13 +28,13 @@ afterEach(() => {
 });
 
 describe('isAccessGuardExemptPath', () => {
-  test('exempts healthz, hub uplink, and hub enrollment machine prefixes', () => {
+  test('exempts healthz and does not treat retired hub paths as machine prefixes', () => {
     expect(isAccessGuardExemptPath('/healthz')).toBe(true);
-    expect(isAccessGuardExemptPath('/hub/uplink')).toBe(true);
-    expect(isAccessGuardExemptPath('/hub/')).toBe(true);
-    expect(isAccessGuardExemptPath('/api/hub/enrollments/redeem')).toBe(true);
-    expect(isAccessGuardExemptPath('/api/hub/enrollments')).toBe(true);
-    expect(isAccessGuardExemptPath('/api/hub/nodes')).toBe(true);
+    expect(isAccessGuardExemptPath('/hub/uplink')).toBe(false);
+    expect(isAccessGuardExemptPath('/hub/')).toBe(false);
+    expect(isAccessGuardExemptPath('/api/hub/enrollments/redeem')).toBe(false);
+    expect(isAccessGuardExemptPath('/api/hub/enrollments')).toBe(false);
+    expect(isAccessGuardExemptPath('/api/hub/nodes')).toBe(false);
     expect(isAccessGuardExemptPath('/api/devices')).toBe(false);
     expect(isAccessGuardExemptPath('/ws')).toBe(false);
     expect(isAccessGuardExemptPath('/api/auth/login')).toBe(false);
@@ -53,7 +53,7 @@ describe('isAccessGuardExemptPath', () => {
 });
 
 describe('guardEntryAccess', () => {
-  test('header without JWT is 403; valid JWT passes; hub uplink is not blocked', async () => {
+  test('header without JWT is 403; valid JWT passes; relay uplink is not blocked', async () => {
     setAccessGuardSnapshot(() => ENFORCED);
     const denied = await guardEntryAccess(
       new Request('http://127.0.0.1/api/devices', { headers: { 'cf-connecting-ip': '1.2.3.4' } })
@@ -79,7 +79,7 @@ describe('guardEntryAccess', () => {
     expect(ok).toBeNull();
 
     const uplink = await guardEntryAccess(
-      new Request('http://127.0.0.1/hub/uplink', { headers: { 'cf-connecting-ip': '1.2.3.4' } })
+      new Request('http://127.0.0.1/relay/uplink', { headers: { 'cf-connecting-ip': '1.2.3.4' } })
     );
     expect(uplink).toBeNull();
   });
@@ -142,10 +142,10 @@ describe('guardedGatewayFetch', () => {
     expect(await res.text()).toBe('from-inner');
   });
 
-  test('direct/managed entry: /hub/uplink without JWT is not blocked', async () => {
+  test('direct/managed entry: /relay/uplink without JWT is not blocked', async () => {
     setAccessGuardSnapshot(() => ENFORCED);
     const res = await guardedGatewayFetch(
-      new Request('http://127.0.0.1/hub/uplink', { headers: { 'cf-connecting-ip': '1.2.3.4' } }),
+      new Request('http://127.0.0.1/relay/uplink', { headers: { 'cf-connecting-ip': '1.2.3.4' } }),
       async () => new Response('uplink'),
       dummyServer
     );

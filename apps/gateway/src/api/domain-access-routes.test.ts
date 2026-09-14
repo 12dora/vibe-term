@@ -131,7 +131,7 @@ describe('GET/PATCH /api/system/domain-access', () => {
 });
 
 describe('guardDomainAccess is not applied on the API route itself', () => {
-  test('GET remains reachable so the hub UI can re-enable the policy', async () => {
+  test('GET remains reachable so the UI can re-enable the policy', async () => {
     openIsolatedStore();
     setDomainAccessGuardForTests({ allowed: false, hosts: ['vibeterm.example.com'] });
     const res = await handleApiRequest(
@@ -273,12 +273,12 @@ describe('listDomainAccessHosts includes stored and projected site URL', () => {
     setSiteSettingsLinkProvider({
       linked: () => true,
       localNodeId: () => 'ab'.repeat(16),
-      effectiveSiteUrl: () => 'https://hub.example',
+      effectiveSiteUrl: () => 'https://relay.example',
     });
     try {
       const hosts = listDomainAccessHosts();
       expect(hosts).toContain('node-old.example');
-      expect(hosts).toContain('hub.example');
+      expect(hosts).toContain('relay.example');
     } finally {
       setSiteSettingsLinkProvider(null);
       updateSiteSettings({ siteUrl: prevUrl });

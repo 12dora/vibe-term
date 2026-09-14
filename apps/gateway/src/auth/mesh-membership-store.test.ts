@@ -2,9 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { RelayConfigStore } from '../relay/relay-config-store';
 import { RelayKeyLogStore } from '../relay/relay-key-log-store';
 import { RelayTenantStore } from '../relay/relay-tenant-store';
-import { HubTrustStore } from './hub-trust-store';
 import { KeyLogStore } from './key-log-store';
-import { MeshHubStore } from './mesh-hub-store';
 import { MeshMembershipStore } from './mesh-membership-store';
 import { MeshRelayStore } from './mesh-relay-store';
 import { NodeIdentityStore } from './node-identity-store';
@@ -38,15 +36,13 @@ function tableCount(
 }
 
 describe('MeshMembershipStore.clearAll', () => {
-  test('deletes users, derived rows, nodes, enrollments, peers, hub_trust, mesh_hubs, mesh_relays, mesh_secrets, and node_identity', async () => {
+  test('deletes users, derived rows, nodes, enrollments, peers, mesh_relays, mesh_secrets, and node_identity', async () => {
     const { db, sqlite, close } = createMigratedAuthDb();
     try {
       const users = new UserStore(db);
       const keyLog = new KeyLogStore(db);
       const sessions = new NodeSessionStore(db);
       const identity = new NodeIdentityStore(db);
-      const trust = new HubTrustStore(db);
-      const hubs = new MeshHubStore(db);
 
       users.create({
         id: 'user-1',
@@ -115,35 +111,14 @@ describe('MeshMembershipStore.clearAll', () => {
         lastSeenAt: 10,
         listVersion: 1,
       });
-      trust.put({
-        hubUrl: 'https://hub.example',
-        caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
-        fingerprint: 'ab'.repeat(32),
-      });
       await identity.save({
         nodeId: 'node-1',
-        hubUrl: 'https://hub.example',
         edPrivateKey: ED,
         x25519PrivateKey: X25519,
         certificateJson: '{}',
         certSig: IDENTITY_SIG,
         userId: 'user-1',
       });
-      hubs.upsert(
-        {
-          hubNodeId: 'aa'.repeat(16),
-          publicUrl: 'https://hub.example',
-          name: 'stale-hub',
-          mode: 'active',
-          priority: 1,
-          writerEpoch: 1,
-          caFingerprint: null,
-          online: true,
-          lastSeenAt: 10,
-        },
-        1_000
-      );
-      expect(hubs.list()).toHaveLength(1);
 
       // 中继模式的落库状态：租户令牌 + K_log / K_meta + uplink_kind / name
       const relays = new MeshRelayStore(db);
@@ -186,8 +161,6 @@ describe('MeshMembershipStore.clearAll', () => {
         'nodes',
         'enrollment_tokens',
         'peer_cache',
-        'hub_trust',
-        'mesh_hubs',
         'mesh_relays',
         'mesh_secrets',
         'node_identity',
@@ -197,12 +170,10 @@ describe('MeshMembershipStore.clearAll', () => {
       // uplink_kind / name 随 node_identity 整行消失，退出后不残留租户密钥
       expect(relays.listRelayRows()).toHaveLength(0);
       expect(relays.listSecretEpochs('log')).toEqual([]);
-      expect(relays.uplinkKind()).toBe('hub');
+      expect(relays.uplinkKind()).toBe('none');
       expect(relays.localName()).toBeNull();
       expect(users.listUsers()).toHaveLength(0);
       expect(await identity.load()).toBeNull();
-      expect(trust.get('https://hub.example')).toBeNull();
-      expect(hubs.list()).toHaveLength(0);
     } finally {
       close();
     }

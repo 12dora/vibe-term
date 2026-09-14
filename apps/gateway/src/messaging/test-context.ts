@@ -33,7 +33,7 @@ export function createTestContext(
     localName: 'Home',
     version: '1.1.24',
     roles: rolesFromName('node'),
-    uplink: { kind: 'hub', attached: true },
+    uplink: { kind: 'relay', attached: true },
     meshMode: 'mesh',
     listNodes: () => nodes,
     listDevices: () => devices,

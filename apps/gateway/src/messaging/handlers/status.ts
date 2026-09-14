@@ -12,7 +12,6 @@ export const statusSpec: CommandSpec = {
 };
 
 function uplinkKindLabel(t: (key: string) => string, kind: UplinkStatus['kind']): string {
-  if (kind === 'hub') return t('messaging.status.uplinkHub');
   if (kind === 'relay') return t('messaging.status.uplinkRelay');
   if (kind === 'none') return t('messaging.status.uplinkNone');
   return t('messaging.status.uplinkUnknown');

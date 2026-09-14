@@ -61,11 +61,11 @@ describe('updateSiteSettings 持久化', () => {
     setSiteSettingsLinkProvider({
       linked: () => true,
       localNodeId: () => 'ab'.repeat(16),
-      effectiveSiteUrl: () => 'https://hub.example/n/overlay',
+      effectiveSiteUrl: () => 'https://relay.example/n/overlay',
     });
-    expect(getSiteSettings().siteUrl).toBe('https://hub.example/n/overlay');
+    expect(getSiteSettings().siteUrl).toBe('https://relay.example/n/overlay');
     updateSiteSettings({ enableBellSound: dbRow().enableBellSound });
     expect(dbRow().siteUrl).toBe(storedUrl);
-    expect(getSiteSettings().siteUrl).toBe('https://hub.example/n/overlay');
+    expect(getSiteSettings().siteUrl).toBe('https://relay.example/n/overlay');
   });
 });
