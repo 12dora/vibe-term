@@ -11,7 +11,7 @@ import {
   defaultRtcPortRange,
   rolesIncludeRelay,
 } from '../../../shared/src/net/port-plan';
-import { isVibeTermRoleName } from '../../../shared/src/roles';
+import { isVibeTermRoleName, normalizeLegacyRoleName } from '../../../shared/src/roles';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from './env-file';
 import { ensureDir, pathExists, writeText } from './fs-utils';
@@ -86,7 +86,8 @@ function portRoleOf(values: Record<string, string>): PortRole {
     .map((part) => part.trim())
     .filter(Boolean)
     .join(',');
-  return isVibeTermRoleName(raw) ? raw : 'standalone';
+  const { name } = normalizeLegacyRoleName(raw);
+  return isVibeTermRoleName(name) ? name : 'standalone';
 }
 
 function equalsLegacy(value: string | undefined, legacy: string): boolean {

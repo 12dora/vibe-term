@@ -163,10 +163,22 @@ describe('cpu-features stub plugin', () => {
   test.skipIf(!existsSync(packagedServerJs))(
     'packaged dist/runtime/server.js does not leave cpu-features as an external require',
     async () => {
-      const text = await Bun.file(packagedServerJs).text();
-      expect(text).not.toMatch(/require\(["']cpu-features["']\)/);
-      expect(text).toContain('cpu-features unavailable');
-      expect(unresolvedPackageRequires(text)).toEqual([]);
+      const runtimeDir = resolve(import.meta.dir, '../dist/runtime');
+      const chunksDir = join(runtimeDir, 'chunks');
+      const files = [
+        packagedServerJs,
+        ...(existsSync(chunksDir)
+          ? readdirSync(chunksDir)
+              .filter((name) => name.endsWith('.js'))
+              .map((name) => join(chunksDir, name))
+          : []),
+      ];
+      const texts = await Promise.all(files.map((file) => Bun.file(file).text()));
+      for (const text of texts) {
+        expect(text).not.toMatch(/require\(["']cpu-features["']\)/);
+        expect(unresolvedPackageRequires(text)).toEqual([]);
+      }
+      expect(texts.some((text) => text.includes('cpu-features unavailable'))).toBe(true);
     }
   );
 });

@@ -105,7 +105,7 @@ docker exec -it <c> bun /opt/vibeterm/current/runtime/cli-auth.js \
 
 认证类命令（`user *` / `relay *` / `mesh *` / `tls *`）直接跑 `runtime/cli-auth.js`。走 `node .../cli/bin/vibeterm.js` 也能用，但它会再 spawn 一个 bun 子进程，容器里子进程的 stdout 容易被吞。
 
-join 会把 `/opt/vibeterm/app.env` 的 `VIBETERM_ROLES` 写成 `node`（本机已是中继则 `relay,node`），并清掉残留的 `VIBETERM_HUB_*` 后重启运行时；`app.env` 在 `<name>-opt` 卷上，跨容器重建存活。
+join 会把 `/opt/vibeterm/app.env` 的 `VIBETERM_ROLES` 写成 `node`（本机已是中继则 `relay,node`），并删除残留的 `VIBETERM_HUB_*` 键后重启运行时；`app.env` 在 `<name>-opt` 卷上，跨容器重建存活。
 
 ## 注意事项
 

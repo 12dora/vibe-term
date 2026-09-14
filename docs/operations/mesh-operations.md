@@ -160,13 +160,13 @@ vibeterm relay join https://relay.example.com --token r3.<加入串> --name 书�
 - 只接受 `https:`；HTTP 重定向一律拒绝；
 - `http://127.0.0.1` / `http://localhost` 仅非 production 且加 `--insecure-local`；
 - 自签中继必须 `--ca-fingerprint <64-hex>`，或使用内嵌指纹的 `r3.` 串；指纹对不上则失败，不落库、不降级；
-- 成功后写 `VIBETERM_ROLES=node`（已是 `relay,node` 则保留）、清掉残留 `VIBETERM_HUB_*` 并重启服务；`--no-restart` 可跳过重启；
+- 成功后写 `VIBETERM_ROLES=node`（已是 `relay,node` 则保留）、删除残留 `VIBETERM_HUB_*` 键并重启服务；`--no-restart` 可跳过重启；
 - 已吊销节点用同一身份再 join：HTTP 409 `node_revoked`。换钥重装须先 `revoke-node` 再 enroll **新身份**（`mesh reset-identity` 或重新 `init`）；
 - 成功后提示在内网防火墙放行 `VIBETERM_PEER_PORT`（仅内网直连需要）。
 
 加入后各入口侧边栏自动出现新 node。退出中继：`vibeterm relay leave`（要账户密码，签一条空的中继列表记录）。
 
-CA 指纹从中继本机 `GET /api/tls` 的 `caFingerprint` 读取（64 位小写 hex）。没有单独的 CA 指纹 / 信任刷新 CLI。
+CA 指纹从中继本机 `GET /api/tls` 的 `caFingerprint` 读取（64 位小写 hex）。中继轮换 CA 后，成员用 `vibeterm relay trust refresh <url> --fingerprint <sha256-spki-hex>` 重新钉扎（无校验下载 `/api/tls/ca.crt`，核对指纹后写入 `relay_ca_pins`）。已加入的节点也可 `vibeterm relay join <url> --tenant <id> --password --ca-fingerprint <hex>`（rekey 路径会保存指纹）。
 
 ## 延迟优化
 

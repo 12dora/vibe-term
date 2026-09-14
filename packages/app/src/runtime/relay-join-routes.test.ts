@@ -75,8 +75,8 @@ describe('handleRelayJoinRequest', () => {
     });
     const env = await readEnvFile(base.envPath);
     expect(env.VIBETERM_ROLES).toBe('node');
-    expect(env.VIBETERM_HUB_URL).toBe('');
-    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_HUB_URL).toBeUndefined();
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBeUndefined();
     expect(env.OTHER).toBe('keep');
   });
 

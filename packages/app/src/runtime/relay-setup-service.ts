@@ -136,8 +136,6 @@ export async function becomeRelay(
     await patchOwnedEnvKeys(deps, {
       VIBETERM_ROLES: role,
       VIBETERM_RELAY_PUBLIC_URL: relayPublicUrl,
-      VIBETERM_HUB_URL: '',
-      VIBETERM_HUB_PUBLIC_URL: '',
       VIBETERM_RELAY_ADMIN_TOKEN: adminToken,
       ...(direct.direct === 'enabled' ? { [DIRECT_ENABLED_KEY]: 'true' } : {}),
     });

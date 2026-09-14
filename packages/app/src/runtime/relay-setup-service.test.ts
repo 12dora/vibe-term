@@ -104,8 +104,8 @@ describe('becomeRelay', () => {
     expect(env.VIBETERM_ROLES).toBe('relay');
     expect(env.VIBETERM_DIRECT_ENABLED).toBe('true');
     expect(env.VIBETERM_RELAY_PUBLIC_URL).toBe('https://relay.example');
-    expect(env.VIBETERM_HUB_URL).toBe('');
-    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_HUB_URL).toBeUndefined();
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBeUndefined();
     expect(env.VIBETERM_RELAY_ADMIN_TOKEN).toBeTruthy();
     expect(env.OTHER).toBe('keep');
     expect(restarts).toEqual([1]);

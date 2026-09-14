@@ -42,7 +42,6 @@ function deps(overrides: Partial<SetupServiceDeps> = {}): SetupServiceDeps {
     envPath: '/tmp/app.env',
     installDir: '/tmp',
     scheduleRestart: () => undefined,
-    startedAt: 7,
     fetch: (async () => Response.json({ ok: true })) as FetchLike,
     readEnvFile: async () => ({ OTHER: 'keep' }),
     writeEnvFile: async () => undefined,

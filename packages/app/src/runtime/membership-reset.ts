@@ -1,7 +1,7 @@
 import { MeshMembershipStore } from '../../../../apps/gateway/src/auth/mesh-membership-store';
-import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import { resolveEnvWriteTarget, stringifyEnv } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import { rewriteLegacyHubInstallEnv } from '../lib/install';
 import { type VibeTermRoleName, roleNameFromFlags } from '../lib/roles';
 import type { SetupServiceDeps } from './setup-service';
 import {
@@ -44,11 +44,6 @@ export type LeaveMeshResult = {
   restarting: true;
 };
 
-const HUB_CLEARED_ENV = {
-  VIBETERM_HUB_URL: '',
-  VIBETERM_HUB_PUBLIC_URL: '',
-} as const;
-
 const RELAY_ENV_KEYS = ['VIBETERM_RELAY_PUBLIC_URL', 'VIBETERM_RELAY_ADMIN_TOKEN'] as const;
 
 type StagedLeave = {
@@ -65,8 +60,9 @@ function omitRelayEnvKeys(env: Record<string, string>): Record<string, string> {
 
 function applyLeaveProcessEnv(targetRole: LeaveTargetRole): void {
   process.env.VIBETERM_ROLES = targetRole === 'relay' ? 'relay' : 'standalone';
-  process.env.VIBETERM_HUB_URL = HUB_CLEARED_ENV.VIBETERM_HUB_URL;
-  process.env.VIBETERM_HUB_PUBLIC_URL = HUB_CLEARED_ENV.VIBETERM_HUB_PUBLIC_URL;
+  for (const key of ['VIBETERM_HUB_URL', 'VIBETERM_HUB_PUBLIC_URL'] as const) {
+    delete process.env[key];
+  }
   if (targetRole === 'standalone') {
     for (const key of RELAY_ENV_KEYS) delete process.env[key];
   }
@@ -76,11 +72,10 @@ function leaveEnvPatch(
   existing: Record<string, string>,
   targetRole: LeaveTargetRole
 ): Record<string, string> {
-  const next = {
+  const next = rewriteLegacyHubInstallEnv({
     ...existing,
-    ...HUB_CLEARED_ENV,
     VIBETERM_ROLES: targetRole === 'relay' ? 'relay' : 'standalone',
-  };
+  });
   return targetRole === 'standalone' ? omitRelayEnvKeys(next) : next;
 }
 
@@ -201,7 +196,6 @@ export async function leaveMesh(
           ? localRootPublicKey(deps.auth.userStore, identity?.userId ?? null)
           : null;
       clearMembershipForTarget(new MeshMembershipStore(deps.auth.db), targetRole, rootPublicKey);
-      new RelayCaPinStore(deps.auth.db).clear();
     } catch (error) {
       await removeStagedEnv(deps, staged.stagedPath);
       throw error;

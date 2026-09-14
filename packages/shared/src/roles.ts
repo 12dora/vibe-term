@@ -13,10 +13,10 @@ export function isVibeTermRoleName(value: string): value is VibeTermRoleName {
   return (VIBETERM_ROLE_NAMES as readonly string[]).includes(value);
 }
 
-/** `hub,node` 已删除：trim 后映射为 `node`（`legacy: true`）；其余原样返回。 */
+/** `hub,node` 已删除：去空白后映射为 `node`（`legacy: true`）；其余 trim 后原样返回。 */
 export function normalizeLegacyRoleName(raw: string): { name: string; legacy: boolean } {
   const name = raw.trim();
-  if (name === 'hub,node') return { name: 'node', legacy: true };
+  if (name.replace(/\s+/g, '') === 'hub,node') return { name: 'node', legacy: true };
   return { name, legacy: false };
 }
 

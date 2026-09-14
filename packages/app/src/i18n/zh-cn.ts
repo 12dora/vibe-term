@@ -151,6 +151,8 @@ export const zhCN: Record<string, string> = {
   'upgrade.repairDone': '升级修复完成（{{action}}）。',
   'upgrade.stunEnvMigrated':
     'app.env：VIBETERM_STUN_SERVERS 为旧版内置默认值，已移除以便使用本发行版内置列表（备份：{{backup}}）',
+  'upgrade.hubEnvMigrated':
+    '2.5.0 已移除 Hub 模式：VIBETERM_ROLES 已从 hub,node 改写为 node，并删除 {{count}} 个 VIBETERM_HUB_* 键（备份：{{backup}}）。每台成员现在都必须加入中继：vibeterm relay join',
   'upgrade.turnExternalNotice': '已配置外部 TURN，内置 TURN 未启动',
   'upgrade.rolledBack': '已回滚到 {{version}}：{{error}}',
   'upgrade.preflightFailed': '预启动 {{version}} 失败：{{error}}',
@@ -223,6 +225,11 @@ export const zhCN: Record<string, string> = {
   'runtime.notFound': '资源不存在',
 
   'relay.join.portsHint': '请放行入站 {{list}}',
+  'relay.trust.fingerprintInvalid': '--fingerprint 需要中继 CA 的 64 位十六进制 SHA-256 SPKI 指纹',
+  'relay.trust.pinned': '已钉扎中继 CA：{{url}} SHA256 SPKI {{fingerprint}}',
+  'relay.trust.restartHint': '请重启 VibeTerm 以使新的中继 CA 钉扎生效。',
+  'relay.join.syncing':
+    '本机已加入，同步完成后会出现在其他成员的节点页。若加入码尚未批准，请到创建该加入码的浏览器标签页完成批准。',
 
   'user.passwd.nodesTooOld': '有节点版本低于 1.1.16，须先升级全部节点。',
   'user.passwd.failed': '密码更新失败：{{error}}',

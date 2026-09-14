@@ -211,6 +211,7 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
     const { ctx: cli, stdout } = await ctx({
       'GET /api/mesh/relay/status': () => ({
         mode: 'relay',
+        tenantId: 'ab'.repeat(16),
         relays: [{ url: 'https://relay-sh.example', attached: true }],
       }),
     });
@@ -218,6 +219,7 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
     const payload = JSON.parse(stdout.text()) as { joinCommand: string; publicUrl: string };
     expect(payload.publicUrl).toBe('https://relay-sh.example');
     expect(payload.joinCommand).toContain('vibeterm relay join');
+    expect(payload.joinCommand).toContain('--tenant');
     expect(payload.joinCommand).toContain('--password');
     expect(payload.joinCommand).toContain('https://relay-sh.example');
   });

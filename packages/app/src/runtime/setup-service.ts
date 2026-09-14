@@ -1,4 +1,3 @@
-import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { type EnvName, resolveEnvName } from '../../../../packages/shared/src/env/load-env';
 import {
   type PortProbeResult,
@@ -127,9 +126,6 @@ export type DirectSetResult = {
 
 export type SetupDirectOutcome = 'enabled' | 'failed' | 'skipped';
 
-/** 端口探测与确认用哪套健康判据：中继打 `/api/relay/health`。 */
-export type PrecheckKind = 'relay';
-
 export type PrecheckResult = {
   reachable: boolean;
   isSelf: boolean;
@@ -157,7 +153,6 @@ export type SetupServiceDeps = SetupEnvHost & {
   rtcCapable?: boolean;
   platform?: string;
   now?: () => number;
-  startedAt?: number;
   quiesceMesh?: () => Promise<void> | void;
   directTimeoutMs?: number;
   relayStatus?: () => Promise<LocalRelayStatus>;
@@ -333,54 +328,40 @@ function precheckFetch(fetchImpl: FetchLike, caPem: string | null): ProbeFetch {
     fetchImpl(input, { ...init, ...(caPem ? { tls: { ca: [caPem] } } : {}) } as FetchInit);
 }
 
-const HEALTH_PROBE: Record<PrecheckKind, { path: string; label: string }> = {
-  relay: { path: '/api/relay/health', label: 'relay health' },
-};
+const HEALTH_PROBE = { path: '/api/relay/health', label: 'relay health' } as const;
 
 /** 地址没写端口且是 https 时才探候选端口；显式端口与回环 http 一律照原样确认。 */
 async function precheckProbePorts(
   url: string,
-  kind: PrecheckKind,
   fetchImpl: ProbeFetch
 ): Promise<PortProbeResult | null> {
   const target = parseProbeTarget(url);
   if (target.explicitPort !== null || target.protocol !== 'https:') return null;
   return await probeAddressPorts(url, {
-    kind,
+    kind: 'relay',
     fetchImpl,
     timeoutMs: PRECHECK_PROBE_TIMEOUT_MS,
   });
 }
 
 /** 判据与探测同源：中继看 `/api/relay/health.ok`。 */
-function healthOutcome(
-  kind: PrecheckKind,
-  status: number,
-  body: { status?: unknown; ok?: unknown; startedAt?: unknown },
-  _startedAt: number
-): HealthzOutcome {
+function healthOutcome(status: number, body: { ok?: unknown }): HealthzOutcome {
   const reachable = status === 200 && body.ok === true;
   return {
     reachable,
     isSelf: false,
     status,
-    error: reachable ? null : `${HEALTH_PROBE[kind].label} status ${status}`,
+    error: reachable ? null : `${HEALTH_PROBE.label} status ${status}`,
   };
 }
 
-async function readHealth(
-  base: string | URL,
-  kind: PrecheckKind,
-  fetchImpl: ProbeFetch,
-  startedAt: number
-): Promise<HealthzOutcome> {
-  const probe = HEALTH_PROBE[kind];
-  const response = await fetchImpl(new URL(probe.path, base).toString(), {
+async function readHealth(base: string | URL, fetchImpl: ProbeFetch): Promise<HealthzOutcome> {
+  const response = await fetchImpl(new URL(HEALTH_PROBE.path, base).toString(), {
     signal: AbortSignal.timeout(PRECHECK_TIMEOUT_MS),
     redirect: 'error',
   });
   const status = response.status;
-  let body: { status?: unknown; ok?: unknown; startedAt?: unknown };
+  let body: { ok?: unknown };
   try {
     body = (await response.json()) as typeof body;
   } catch {
@@ -388,24 +369,22 @@ async function readHealth(
       reachable: false,
       isSelf: false,
       status,
-      error: `${probe.label} response was not JSON`,
+      error: `${HEALTH_PROBE.label} response was not JSON`,
     };
   }
-  return healthOutcome(kind, status, body, startedAt);
+  return healthOutcome(status, body);
 }
 
 export async function precheckRelayUrl(
   url: string,
-  deps: SetupServiceDeps,
-  kind: PrecheckKind = 'relay'
+  deps: SetupServiceDeps
 ): Promise<PrecheckResult> {
   assertStandalone(deps.roles);
   const parsed = assertSetupUrl(url, deps.nodeEnv);
-  const startedAt = deps.startedAt ?? PROCESS_STARTED_AT;
   try {
     const caPem = deps.precheckCaPem ? await deps.precheckCaPem() : null;
     const fetchImpl = precheckFetch(deps.fetch ?? fetch, caPem);
-    const probe = await precheckProbePorts(url, kind, fetchImpl);
+    const probe = await precheckProbePorts(url, fetchImpl);
     if (probe && !probe.url) {
       return {
         reachable: false,
@@ -417,7 +396,7 @@ export async function precheckRelayUrl(
         probed: true,
       };
     }
-    const health = await readHealth(probe?.url ?? parsed, kind, fetchImpl, startedAt);
+    const health = await readHealth(probe?.url ?? parsed, fetchImpl);
     return {
       ...health,
       resolvedUrl: probe?.url ?? null,

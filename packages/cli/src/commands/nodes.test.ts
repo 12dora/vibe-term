@@ -486,11 +486,13 @@ describe('vibeterm nodes', () => {
     const { ctx: cli, stdout } = await ctx({
       'GET /api/mesh/relay/status': () => ({
         mode: 'relay',
+        tenantId: 'ab'.repeat(16),
         relays: [{ url: 'https://relay.example', attached: true }],
       }),
     });
     await nodes.run(cli, ['enroll', '--password']);
     expect(JSON.parse(stdout.text()).joinCommand).toContain('vibeterm relay join');
+    expect(JSON.parse(stdout.text()).joinCommand).toContain('--tenant');
     expect(JSON.parse(stdout.text()).joinCommand).toContain('--password');
   });
 

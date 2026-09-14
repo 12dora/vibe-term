@@ -2,6 +2,7 @@ import './test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { RELAY_LOG_KEY_EPOCH } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import {
   buildSetRelaysPayload,
@@ -26,6 +27,7 @@ import {
   unwrapKeyForNode,
 } from '../../../shared/src/relay';
 import { runMeshResetIdentity } from '../commands/mesh';
+import { createCa, spkiFingerprint } from '../tls/cert-authority';
 import { parseArgs } from './args';
 import type { FetchLike } from './fetch-like';
 import { type LocalAuthContext, openLocalAuth } from './local-auth';
@@ -124,6 +126,7 @@ async function fixture() {
     logKey,
     token,
     publish,
+    fetcher,
     join: () =>
       performRelayPasswordJoin(
         { relayUrl: RELAY_URL, tenantId, password: PASSWORD },
@@ -180,6 +183,30 @@ describe('relay password join identity membership', () => {
     expect(f.auth.userKeys.currentState(f.user.userId).head.seq).toBe((before?.seq ?? 0n) + 1n);
     const last = f.auth.keyLogStore.list(f.user.userId).at(-1);
     expect(decodeKeyLogRecord(last?.bytes ?? new Uint8Array()).type).toBe('set-relays');
+  });
+
+  test('rekey with a CA fingerprint stores the pin', async () => {
+    const f = await fixture();
+    const ca = await createCa({ name: 'relay-ca' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const fetcher: FetchLike = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/tls/ca.crt') return new Response(ca.certPem, { status: 200 });
+      return f.fetcher(input, init);
+    };
+    const result = await performRelayPasswordJoin(
+      {
+        relayUrl: RELAY_URL,
+        tenantId: f.tenantId,
+        password: PASSWORD,
+        caFingerprint: fingerprint,
+      },
+      { auth: f.auth, fetcher, now: f.relay.now }
+    );
+    expect(result.rekeyed).toBe(true);
+    const stored = new RelayCaPinStore(f.auth.db).get(RELAY_URL);
+    expect(stored?.fingerprint).toBe(fingerprint);
+    expect(await spkiFingerprint(stored?.caPem ?? '')).toBe(fingerprint);
   });
 
   test('reset identity still refuses a relay log that does not include the local head', async () => {

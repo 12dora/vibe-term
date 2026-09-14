@@ -40,6 +40,7 @@ import { readEnvFile } from '../lib/env-file';
 import type { FetchLike } from '../lib/fetch-like';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { deriveRootKey } from '../lib/password';
+import { resolveRelayJoinCaFingerprint } from '../lib/relay-ca';
 import { readRelayUplink } from '../lib/relay-store';
 import { createCa, spkiFingerprint } from '../tls/cert-authority';
 import {
@@ -716,6 +717,99 @@ describe('r3 join with a pinned CA', () => {
     expect(calls.map((call) => call.path)).toEqual(['/api/tls/ca.crt']);
     expect(new RelayCaPinStore(joiner.db).get(RELAY_A)).toBeNull();
     expect(readRelayUplink(joiner).kind).toBe('none');
+  });
+
+  test('--ca-fingerprint is used when the token has none', async () => {
+    const ca = await createCa({ name: 'relay-ca' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    const { calls, fetcher } = fakeRelay(tenant, {
+      caPemByOrigin: { [RELAY_A]: ca.certPem },
+    });
+    const result = await runRelayJoin(
+      parseArgs(['relay', 'join', '--ca-fingerprint', fingerprint]),
+      '',
+      joinTokenFor(tenant),
+      { auth: joiner, fetcher, skipRestart: true, log: () => undefined }
+    );
+    expect(result.relayUrl).toBe(RELAY_A);
+    expect(calls[0].path).toBe('/api/tls/ca.crt');
+    expect(new RelayCaPinStore(joiner.db).get(RELAY_A)?.fingerprint).toBe(fingerprint);
+  });
+
+  test('--ca-fingerprint matching the token is accepted', async () => {
+    const ca = await createCa({ name: 'relay-ca' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    const { fetcher } = fakeRelay(tenant, {
+      caPemByOrigin: { [RELAY_A]: ca.certPem },
+    });
+    const result = await runRelayJoin(
+      parseArgs(['relay', 'join', '--ca-fingerprint', fingerprint]),
+      '',
+      joinTokenFor(tenant, fingerprint),
+      { auth: joiner, fetcher, skipRestart: true, log: () => undefined }
+    );
+    expect(result.relayUrl).toBe(RELAY_A);
+    expect(new RelayCaPinStore(joiner.db).get(RELAY_A)?.fingerprint).toBe(fingerprint);
+  });
+
+  test('--ca-fingerprint that disagrees with the token is refused before any request', async () => {
+    const tokenCa = await createCa({ name: 'token-ca' });
+    const flagCa = await createCa({ name: 'flag-ca' });
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    let called = false;
+    await expect(
+      runRelayJoin(
+        parseArgs(['relay', 'join', '--ca-fingerprint', await spkiFingerprint(flagCa.certPem)]),
+        '',
+        joinTokenFor(tenant, await spkiFingerprint(tokenCa.certPem)),
+        {
+          auth: joiner,
+          fetcher: (async () => {
+            called = true;
+            return new Response('{}');
+          }) as FetchLike,
+          skipRestart: true,
+        }
+      )
+    ).rejects.toThrow('ca fingerprint mismatch between --ca-fingerprint and join token');
+    expect(called).toBe(false);
+  });
+});
+
+describe('resolveRelayJoinCaFingerprint', () => {
+  test('uses the flag when the token has none; errors when both exist and differ', () => {
+    expect(resolveRelayJoinCaFingerprint(undefined, 'ab'.repeat(32))).toBe('ab'.repeat(32));
+    expect(resolveRelayJoinCaFingerprint('cd'.repeat(32), undefined)).toBe('cd'.repeat(32));
+    expect(resolveRelayJoinCaFingerprint('AB'.repeat(32), 'ab'.repeat(32))).toBe('ab'.repeat(32));
+    expect(() => resolveRelayJoinCaFingerprint('ab'.repeat(32), 'cd'.repeat(32))).toThrow(
+      'ca fingerprint mismatch between --ca-fingerprint and join token'
+    );
+  });
+});
+
+describe('r3 join without a CA fingerprint', () => {
+  test('deletes a stale pin for the relay URL before dialing', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    new RelayCaPinStore(joiner.db).put({
+      url: RELAY_A,
+      caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+      fingerprint: 'ab'.repeat(32),
+    });
+    expect(new RelayCaPinStore(joiner.db).get(RELAY_A)).not.toBeNull();
+    const { fetcher } = fakeRelay(tenant);
+    await runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
+      auth: joiner,
+      fetcher,
+      skipRestart: true,
+      log: () => undefined,
+    });
+    expect(new RelayCaPinStore(joiner.db).get(RELAY_A)).toBeNull();
   });
 });
 

@@ -163,6 +163,8 @@ export const en: Record<string, string> = {
   'upgrade.repairDone': 'Upgrade repair finished ({{action}}).',
   'upgrade.stunEnvMigrated':
     "app.env: VIBETERM_STUN_SERVERS was the old built-in default; removed so the release's built-in list applies (backup: {{backup}})",
+  'upgrade.hubEnvMigrated':
+    'Hub mode was removed in 2.5.0: VIBETERM_ROLES rewritten hub,node → node and {{count}} VIBETERM_HUB_* keys deleted (backup: {{backup}}). Every member must now join a relay: vibeterm relay join',
   'upgrade.turnExternalNotice': 'external TURN configured; builtin TURN disabled',
   'upgrade.rolledBack': 'Upgrade rolled back to {{version}}: {{error}}',
   'upgrade.preflightFailed': 'Preflight of {{version}} failed: {{error}}',
@@ -241,6 +243,12 @@ export const en: Record<string, string> = {
   'runtime.notFound': 'Not Found',
 
   'relay.join.portsHint': 'Allow inbound {{list}}',
+  'relay.trust.fingerprintInvalid':
+    '--fingerprint requires the 64-hex SHA-256 SPKI fingerprint of the relay CA',
+  'relay.trust.pinned': 'relay CA pinned: {{url}} SHA256 SPKI {{fingerprint}}',
+  'relay.trust.restartHint': 'Restart VibeTerm to apply the new relay CA pin.',
+  'relay.join.syncing':
+    "this node will appear on other members' Nodes page once it syncs. If the join code has not been admitted yet, finish the admission in the browser tab that created the join code",
 
   'user.passwd.nodesTooOld': 'Some nodes are older than 1.1.16. Update every node first.',
   'user.passwd.failed': 'password update failed: {{error}}',

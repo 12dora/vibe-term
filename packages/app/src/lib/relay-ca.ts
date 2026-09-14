@@ -95,6 +95,19 @@ export function pinRelayCa(inner: FetchLike | undefined, pem: string): FetchLike
   return (url, init) => fetcher(url, { ...init, tls: { ca: [pem] } });
 }
 
+/** Token fingerprint wins unless `--ca-fingerprint` disagrees; flag fills in when the token has none. */
+export function resolveRelayJoinCaFingerprint(
+  tokenFingerprint: string | undefined,
+  flagFingerprint: string | undefined
+): string | undefined {
+  const token = tokenFingerprint?.trim().toLowerCase() || undefined;
+  const flag = flagFingerprint?.trim().toLowerCase() || undefined;
+  if (flag && token && flag !== token) {
+    throw new Error('ca fingerprint mismatch between --ca-fingerprint and join token');
+  }
+  return flag ?? token;
+}
+
 /**
  * 落到 `relay_ca_pins`：`UplinkPool.spawn` 按候选 url 取 pin，之后的 relay uplink
  * 会自动用同一张 CA，不必再下载。

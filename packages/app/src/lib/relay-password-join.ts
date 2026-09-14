@@ -1,10 +1,11 @@
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import { RelayPackError, normalizeRelayUrl } from '../../../shared/src/relay';
 import { RelayApiError, RelayTimeoutError } from '../commands/relay-shared';
 import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
 import type { LocalAuthContext } from './local-auth';
 import { probeAddressForCli, probeNotFoundMessage } from './probe-address';
-import { RelayCaError, fetchPinnedRelayCa, pinRelayCa } from './relay-ca';
+import { RelayCaError, fetchPinnedRelayCa, pinRelayCa, storeRelayCaPin } from './relay-ca';
 import {
   type JoinLogPhase,
   RelayPasswordJoinError,
@@ -174,11 +175,15 @@ async function pinnedFetcher(input: {
   caFingerprint: string | undefined;
   fetcher: FetchLike | undefined;
   timeoutMs: number | undefined;
+  db: LocalAuthContext['db'];
 }): Promise<{
   fetcher: FetchLike | undefined;
   pin: { caPem: string; fingerprint: string } | null;
 }> {
-  if (!input.caFingerprint) return { fetcher: input.fetcher, pin: null };
+  if (!input.caFingerprint) {
+    new RelayCaPinStore(input.db).delete(input.relayUrl);
+    return { fetcher: input.fetcher, pin: null };
+  }
   const caPem = await fetchPinnedRelayCa({
     relayUrl: input.relayUrl,
     fingerprint: input.caFingerprint,
@@ -203,6 +208,7 @@ export async function performRelayPasswordJoin(
     caFingerprint: input.caFingerprint,
     fetcher: deps.fetcher,
     timeoutMs: deps.timeoutMs,
+    db: deps.auth.db,
   });
   const transport = { relayUrl, tenantId, fetcher, timeoutMs: deps.timeoutMs };
   let pack: Awaited<ReturnType<typeof joinKdfProofAndPack>> | undefined;
@@ -225,6 +231,13 @@ export async function performRelayPasswordJoin(
         userId: mode.userId,
         now: deps.now?.() ?? Date.now(),
       });
+      if (pin) {
+        storeRelayCaPin(deps.auth.db, {
+          relayUrl,
+          caPem: pin.caPem,
+          fingerprint: pin.fingerprint,
+        });
+      }
       return { userId: done.userId, relayUrl, tenantId, rekeyed: true };
     }
     const admit = await joinSelfAdmitAndPersist({

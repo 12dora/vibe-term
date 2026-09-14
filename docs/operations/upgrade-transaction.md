@@ -55,7 +55,7 @@ shim（`~/.local/bin/vibeterm`、`~/.bun/bin/vibeterm`）指向 `<installDir>/cu
 
 ## app.env 与 STUN 迁移
 
-`upgrade` 对 `app.env` 做：`rewriteLegacyHubInstallEnv`（把残留的 `VIBETERM_ROLES=hub,node` 写成 `node`，并删除全部 `VIBETERM_HUB_*` / `TMEX_HUB_*`）、`mergeMissingEnvFileKeys` **追加缺失键**（不覆盖已有值）、STUN 键迁移，以及 RTC / TURN 默认段写入。未升级的进程启动时仍接受 `hub,node`（映射为 `node` 并打一条 `console.warn`）。
+`upgrade` 对 `app.env` 做：`rewriteLegacyHubInstallEnv`（把残留的 `VIBETERM_ROLES=hub,node` 写成 `node`，并删除全部 `VIBETERM_HUB_*` / `TMEX_HUB_*`）、`mergeMissingEnvFileKeys` **追加缺失键**（不覆盖已有值）、STUN 键迁移，以及 RTC / TURN 默认段写入。Hub 改写发生在升级事务里、`backupEnvFile`（`backups/<txnId>/app.env`）之后：失败回滚会还原 2.4.4 原文；改写前另存可读副本 `backups/app.env.<ISO>.hub`（0600），并打一条 `upgrade.hubEnvMigrated` 提示（说明角色已改写、删了多少 `VIBETERM_HUB_*` 键、成员须 `vibeterm relay join`）。未升级的进程启动时仍接受 `hub,node`（映射为 `node` 并打一条 `console.warn`）。
 
 STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operations.md)），装机时冻进 `app.env` 的旧默认串会一直压住新列表。迁移逻辑（`packages/app/src/lib/upgrade-stun-env.ts`）：
 

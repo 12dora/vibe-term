@@ -4,6 +4,7 @@ import type { ShimDirs } from './cli-shim';
 import { errorMessage } from './error-message';
 import type { PackageLayout } from './install-layout';
 import type { HealthCheckFn } from './upgrade-health';
+import { applyHubEnvMigration } from './upgrade-hub-env';
 import {
   type DirMigrationPlan,
   type DirMigrationRecord,
@@ -202,6 +203,7 @@ async function stopMigrateAndCommit(input: {
   });
   await backupRunScript(state.installDir, ctx.txnId);
   await backupEnvFile(state.installDir, ctx.txnId);
+  await applyHubEnvMigration(state.installDir, ctx.log);
   await ctx.service.stop();
   await assertStopped(ctx.service);
 

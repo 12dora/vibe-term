@@ -108,11 +108,15 @@ export function joinCommand(publicUrl: string, token: string, name?: string | nu
   return `vibeterm relay join ${shellQuote(publicUrl)} --token ${shellQuote(token)}${suffix}`;
 }
 
-export function passwordJoinCommand(publicUrl: string): string {
+export function passwordJoinCommand(publicUrl: string, tenantId: string): string {
   if (!isTrustedPublicUrl(publicUrl)) {
     throw new CliError('public url is missing or not https; cannot print a join command');
   }
-  return `vibeterm relay join ${shellQuote(publicUrl)} --password`;
+  const tenant = tenantId.trim();
+  if (!tenant) {
+    throw new CliError('relay tenant id is missing; cannot print a password join command');
+  }
+  return `vibeterm relay join ${shellQuote(publicUrl)} --tenant ${shellQuote(tenant)} --password`;
 }
 
 export function roleOf(_node: MeshNode): string {

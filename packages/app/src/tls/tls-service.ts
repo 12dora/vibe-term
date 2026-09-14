@@ -641,13 +641,13 @@ export class TlsService {
       if (remainingMs > 0) {
         if (remainingMs < CA_MIN_REMAINING_MS) {
           this.opts.log?.(
-            `WARNING: TLS CA expires in ${Math.ceil(remainingMs / 86_400_000)} days; automatic rotation is disabled to preserve relay CA pins. Run vibeterm tls reset, then have every member re-join with vibeterm relay join.`
+            `WARNING: TLS CA expires in ${Math.ceil(remainingMs / 86_400_000)} days; automatic rotation is disabled to preserve relay CA pins. Run vibeterm tls reset, then have every member refresh the pin with vibeterm relay trust refresh <url> --fingerprint <sha256-spki-hex>.`
           );
         }
         return { certPem: row.caCertPem, keyPem: secrets.caKeyPem };
       }
       this.opts.log?.(
-        'WARNING: TLS CA has expired; rotating CA. Every member must re-join with vibeterm relay join so its relay uplink can pin the new CA.'
+        'WARNING: TLS CA has expired; rotating CA. Every member must refresh the pin with vibeterm relay trust refresh <url> --fingerprint <sha256-spki-hex> so its relay uplink can pin the new CA.'
       );
     }
     const ca = await createCa({ name: 'VibeTerm local CA', now: this.now() });

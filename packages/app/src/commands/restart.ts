@@ -3,7 +3,7 @@ import { pathExists } from '../lib/fs-utils';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
-import { restartService, startService, stopService } from '../lib/service';
+import { restartService } from '../lib/service';
 import { asString } from '../lib/validate';
 import type { InstallMeta, ParsedArgs } from '../types';
 import type { CliIo } from './cli-io';
@@ -48,25 +48,4 @@ export async function maybeRestart(
   }
   const serviceName = await resolveServiceName(parsed, installDir);
   await restartService(serviceName, installDir);
-}
-
-export async function maybeStop(
-  parsed: ParsedArgs,
-  io: CliIo | undefined,
-  installDir: string,
-  skipIfAuth = false
-): Promise<void> {
-  const stop = io?.stop ?? (io?.skipRestart || (skipIfAuth && io?.auth) ? undefined : stopService);
-  if (!stop) return;
-  await stop(await resolveServiceName(parsed, installDir), installDir);
-}
-
-export async function maybeStart(
-  parsed: ParsedArgs,
-  io: CliIo | undefined,
-  installDir: string
-): Promise<void> {
-  const start = io?.start ?? (io?.skipRestart || io?.auth ? undefined : startService);
-  if (!start) return;
-  await start(await resolveServiceName(parsed, installDir), installDir);
 }

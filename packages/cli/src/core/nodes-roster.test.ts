@@ -58,9 +58,10 @@ describe('joinCommand / isTrustedPublicUrl', () => {
     expect(joinCommand('https://relay.example', 'r3.token', 'studio')).toBe(
       "vibeterm relay join 'https://relay.example' --token r3.token --name studio"
     );
-    expect(passwordJoinCommand('https://relay.example')).toBe(
-      "vibeterm relay join 'https://relay.example' --password"
+    expect(passwordJoinCommand('https://relay.example', 'ab'.repeat(16))).toBe(
+      `vibeterm relay join 'https://relay.example' --tenant ${'ab'.repeat(16)} --password`
     );
+    expect(() => passwordJoinCommand('https://relay.example', '')).toThrow('tenant');
   });
 
   test('rejects non-https public urls except loopback', () => {

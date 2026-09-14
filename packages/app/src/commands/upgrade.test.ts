@@ -502,7 +502,7 @@ describe('upgrade flag unification', () => {
     expect(applyTxn).toBe('live-txn');
   });
 
-  test('apply-current-package rewrites leftover hub,node env and strips HUB keys', async () => {
+  test('apply-current-package leaves hub,node env untouched until the upgrade transaction', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-hub-env-'));
     tempDirs.push(installDir);
     await writeInstallMetaFixture(installDir, {
@@ -521,18 +521,16 @@ describe('upgrade flag unification', () => {
     await writeFile(join(extract, 'dist', 'runtime', 'server.js'), 'export {}\n');
     await writeFile(join(extract, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
     await writeFile(join(extract, 'resources', 'gateway-drizzle', '0000.sql'), '--\n');
-    await writeFile(
-      join(installDir, 'app.env'),
-      [
-        'VIBETERM_ROLES=hub,node',
-        'VIBETERM_HUB_URL=https://hub.example',
-        'VIBETERM_HUB_PUBLIC_URL=https://pub.example',
-        'VIBETERM_HUB_MODE=active',
-        'VIBETERM_PEER_PORT=39001',
-        'OTHER=keep',
-        '',
-      ].join('\n')
-    );
+    const original = [
+      'VIBETERM_ROLES=hub,node',
+      'VIBETERM_HUB_URL=https://hub.example',
+      'VIBETERM_HUB_PUBLIC_URL=https://pub.example',
+      'VIBETERM_HUB_MODE=active',
+      'VIBETERM_PEER_PORT=39001',
+      'OTHER=keep',
+      '',
+    ].join('\n');
+    await writeFile(join(installDir, 'app.env'), original);
     await runUpgrade(
       parseArgs([
         'upgrade',
@@ -553,10 +551,10 @@ describe('upgrade flag unification', () => {
       }
     );
     const env = await readEnvFile(join(installDir, 'app.env'));
-    expect(env.VIBETERM_ROLES).toBe('node');
-    expect(env.VIBETERM_HUB_URL).toBeUndefined();
-    expect(env.VIBETERM_HUB_PUBLIC_URL).toBeUndefined();
-    expect(env.VIBETERM_HUB_MODE).toBeUndefined();
+    expect(env.VIBETERM_ROLES).toBe('hub,node');
+    expect(env.VIBETERM_HUB_URL).toBe('https://hub.example');
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('https://pub.example');
+    expect(env.VIBETERM_HUB_MODE).toBe('active');
     expect(env.VIBETERM_PEER_PORT).toBe('39001');
     expect(env.OTHER).toBe('keep');
   });

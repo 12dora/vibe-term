@@ -26,11 +26,17 @@ describe('relay command parsing', () => {
     expect(nested(['relay', 'list']).name).toBe('relay.list');
     expect(nested(['relay', 'unpin']).name).toBe('relay.unpin');
     expect(nested(['relay', 'pack', 'upload']).name).toBe('relay.pack.upload');
+    expect(nested(['relay', 'trust', 'refresh', 'https://r.example']).name).toBe(
+      'relay.trust.refresh'
+    );
   });
 
   test('positionals after the subcommand become rest', () => {
     expect(nested(['relay', 'label', 'abc', 'build', 'box']).rest).toEqual(['abc', 'build', 'box']);
     expect(nested(['relay', 'enroll', 'https://r.example']).rest).toEqual(['https://r.example']);
+    expect(nested(['relay', 'trust', 'refresh', 'https://r.example']).rest).toEqual([
+      'https://r.example',
+    ]);
   });
 
   test('an unknown relay subcommand is unknown', () => {
@@ -120,6 +126,18 @@ describe('relay flag allowlists', () => {
     ).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'list', '--json']))).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'unpin', '--json']))).not.toThrow();
+    expect(() =>
+      assertKnownFlags(
+        parseArgs([
+          'relay',
+          'trust',
+          'refresh',
+          'https://r.example',
+          '--fingerprint',
+          'ab'.repeat(32),
+        ])
+      )
+    ).not.toThrow();
   });
 
   test('flags do not leak across relay subcommands', () => {
@@ -166,6 +184,7 @@ describe('relay commands run on the Bun auth runtime', () => {
       'leave',
       'list',
       'unpin',
+      'trust.refresh',
     ]) {
       expect(AUTH_COMMANDS.has(`relay.${name}`)).toBe(true);
     }

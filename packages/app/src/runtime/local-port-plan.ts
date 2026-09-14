@@ -16,7 +16,7 @@ import {
   parseProbeTarget,
   portPlanForRole,
 } from '../../../shared/src/net';
-import { isVibeTermRoleName } from '../../../shared/src/roles';
+import { isVibeTermRoleName, normalizeLegacyRoleName } from '../../../shared/src/roles';
 
 export type PortPlanEnv = Record<string, string | undefined>;
 
@@ -41,8 +41,8 @@ export function isGatewayExposed(bindHost: string | undefined): boolean {
 }
 
 export function portRoleFromEnv(env: PortPlanEnv): PortRole {
-  const raw = env.VIBETERM_ROLES?.trim() ?? '';
-  return isVibeTermRoleName(raw) ? raw : 'standalone';
+  const { name } = normalizeLegacyRoleName(env.VIBETERM_ROLES ?? '');
+  return isVibeTermRoleName(name) ? name : 'standalone';
 }
 
 function parseTurnPortLive(raw: string | undefined): number {
@@ -50,11 +50,6 @@ function parseTurnPortLive(raw: string | undefined): number {
   const value = raw.trim().toLowerCase();
   if (value === 'off' || value === '0') return 0;
   return parsePort(raw, { fallback: DEFAULT_TURN_PORT });
-}
-
-function publicUrlForRole(role: PortRole, env: PortPlanEnv): string | undefined {
-  if (role === 'relay' || role === 'relay,node') return env.VIBETERM_RELAY_PUBLIC_URL;
-  return env.VIBETERM_RELAY_PUBLIC_URL;
 }
 
 export function portPlanLiveFromEnv(env: PortPlanEnv): PortPlanLive {
@@ -68,7 +63,7 @@ export function portPlanLiveFromEnv(env: PortPlanEnv): PortPlanLive {
     rtcRange: rtcRange ?? defaultRtcPortRange(role),
     turnPort: parseTurnPortLive(env.VIBETERM_TURN_PORT),
     turnRelayRange: turnRelayRange ?? { ...DEFAULT_TURN_RELAY_PORT_RANGE },
-    publicHttpsPort: parsePublicHttpsPort(publicUrlForRole(role, env)),
+    publicHttpsPort: parsePublicHttpsPort(env.VIBETERM_RELAY_PUBLIC_URL),
   };
 }
 
