@@ -31,11 +31,13 @@ export function RecordCard({
   testId,
   className,
   selection,
+  dataOnline,
 }: {
   children: ReactNode;
   testId?: string;
   className?: string;
   selection?: RecordCardSelection;
+  dataOnline?: boolean;
 }) {
   const onClick = (event: MouseEvent<HTMLElement>) => {
     if ((event.target as HTMLElement).closest('button, input, a')) return;
@@ -62,6 +64,7 @@ export function RecordCard({
       onClick={selection ? onClick : undefined}
       onKeyDown={selection ? onKeyDown : undefined}
       data-selected={selection?.selected ? '' : undefined}
+      data-online={dataOnline ? '' : undefined}
       data-testid={testId}
     >
       {children}

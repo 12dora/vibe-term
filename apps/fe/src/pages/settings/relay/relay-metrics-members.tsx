@@ -2,7 +2,6 @@
 // 排序与筛选由调用方（members-card）持有，本文件只摆版式并把表头点击回传。
 
 import { useNarrowLayout } from '@/components/use-narrow-layout';
-import { TONE_CLASS } from '@/lib/tone';
 import { formatRate } from '@vibeterm/api-client/format';
 import type { RelayMetricsMember } from '@vibeterm/api-client/relay/metrics-types';
 import { Badge } from '@vibeterm/ui/badge';
@@ -15,16 +14,11 @@ import { formatMs, relativeTimeText } from './relay-format';
 import {
   type MemberSort,
   type MemberSortKey,
+  RTT_TONE_CLASS,
   levelTone,
   memberTitle,
   rttLevel,
 } from './relay-metrics-model';
-
-const RTT_TONE_CLASS = {
-  default: '',
-  warning: TONE_CLASS.text.warn,
-  destructive: TONE_CLASS.text.blocked,
-} as const;
 
 /**
  * 速率列固定宽度：两个读数各自等宽还不够，列本身也要定死，否则整表随刷新重排。

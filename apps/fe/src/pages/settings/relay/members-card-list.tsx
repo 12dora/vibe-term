@@ -12,20 +12,13 @@ import {
   RecordCardMeta,
   RecordCardTitle,
 } from '@/components/record-card';
-import { TONE_CLASS } from '@/lib/tone';
 import { formatRate } from '@vibeterm/api-client/format';
 import type { RelayMetricsMember } from '@vibeterm/api-client/relay/metrics-types';
 import { Badge } from '@vibeterm/ui/badge';
 import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { useTranslation } from 'react-i18next';
 import { formatMs, relativeTimeText } from './relay-format';
-import { levelTone, memberTitle, rttLevel } from './relay-metrics-model';
-
-const RTT_TONE_CLASS = {
-  default: '',
-  warning: TONE_CLASS.text.warn,
-  destructive: TONE_CLASS.text.blocked,
-} as const;
+import { RTT_TONE_CLASS, levelTone, memberTitle, rttLevel } from './relay-metrics-model';
 
 export function RelayMembersCardList({
   members,
@@ -55,7 +48,7 @@ function MemberCard({ member, now }: { member: RelayMetricsMember; now: number }
   const { t } = useTranslation();
   const rtt = member.online ? member.rttMs : null;
   return (
-    <RecordCard testId={`relay-member-row-${member.nodeId}`}>
+    <RecordCard testId={`relay-member-row-${member.nodeId}`} dataOnline={member.online}>
       <RecordCardTitle>
         <span className="min-w-0 truncate font-medium" title={member.nodeId}>
           {memberTitle(member)}

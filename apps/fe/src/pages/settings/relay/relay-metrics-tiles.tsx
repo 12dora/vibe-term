@@ -25,12 +25,12 @@ import {
 export type { MetricsTileProps };
 
 /**
- * 完整排的栅格：1280px 视口下面板本身只有 ~880px，六列会把「1.20 MB/s」这类读数压掉，
- * 六列因此留给 2xl。列数只取 6 的因数（每组六格），否则末行会缺角。
+ * 完整排的栅格：1024 视口加侧栏后面板只有 ~620px，三列会把 11ch 速率读数挤出卡片。
+ * 三列留给 xl（1280 下约 880px），六列留给 2xl。列数只取 6 的因数，否则末行会缺角。
  */
-const FULL_TILE_GRID = 'grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6';
-/** 转发量一组八格，列数改取 8 的因数，末行才不缺角。 */
-const WIDE_TILE_GRID = 'grid grid-cols-2 gap-3 lg:grid-cols-4';
+const FULL_TILE_GRID = 'grid grid-cols-2 gap-3 xl:grid-cols-3 2xl:grid-cols-6';
+/** 转发量一组八格，列数改取 8 的因数，末行才不缺角。四列同样要等 xl，lg 加侧栏不够宽。 */
+const WIDE_TILE_GRID = 'grid grid-cols-2 gap-3 xl:grid-cols-4';
 
 function TileGroup({
   title,
@@ -88,7 +88,7 @@ export function RelayFullTiles(props: MetricsTileProps) {
 export function RelayTilesSkeleton({ count, testId }: { count: number; testId?: string }) {
   return (
     <div
-      className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4"
+      className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4"
       data-testid={testId ?? 'relay-metrics-skeleton'}
     >
       {Array.from({ length: count }, (_, index) => `tile-${index}`).map((key) => (

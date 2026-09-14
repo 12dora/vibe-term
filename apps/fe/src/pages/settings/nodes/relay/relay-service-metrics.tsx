@@ -17,8 +17,6 @@ import { Row, type SegmentItem, Segments } from '../copy-feedback';
 const SUMMARY_KEYS = ['nodes', 'tenants', 'streams', 'rate', 'uptime'] as const;
 
 export type RelayServiceMetricsProps = {
-  publicUrl: string | null;
-  hasPassword: boolean;
   onOpenConsole?: () => void;
   api?: RelayMetricsApi;
 };

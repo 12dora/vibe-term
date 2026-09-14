@@ -98,7 +98,7 @@ function TrendChart({
 export function RelayTrendsCard({ trends }: { trends: RelayTrendSeries }) {
   const { t } = useTranslation();
   return (
-    <Card data-testid="relay-metrics-trends">
+    <Card className="min-w-0" data-testid="relay-metrics-trends">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <CardTitle>{t('relay.metrics.trends.title')}</CardTitle>
         <span className="text-xs text-muted-foreground" data-testid="relay-metrics-trends-window">

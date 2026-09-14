@@ -8,7 +8,7 @@ import {
   readMeshState,
 } from './helpers/mesh-e2e';
 
-test.use({ locale: 'zh-CN', channel: 'chrome' });
+test.use({ locale: 'zh-CN' });
 
 const SITE_LANGUAGE_CACHE_KEY = 'vibeterm.site.language';
 
@@ -122,6 +122,8 @@ type ScrollBox = {
 
 type OverflowReport = {
   viewport: number;
+  overflowLimit: number;
+  tabRight: number;
   docClientWidth: number;
   docScrollWidth: number;
   pageScrollWidth: number;
@@ -144,12 +146,15 @@ async function measureRelayTabOverflow(page: Page): Promise<OverflowReport> {
     const doc = document.scrollingElement ?? document.documentElement;
     const pageScroller = document.querySelector('.overflow-auto.overscroll-auto');
     const settings = document.querySelector('[data-testid="settings-page"]');
+    const settingsRelayTab = document.querySelector('[data-testid="settings-relay-tab"]');
+    const settingsRelayTabRect = settingsRelayTab?.getBoundingClientRect();
     const viewport = document.documentElement.clientWidth;
+    const overflowLimit = Math.min(viewport, settingsRelayTabRect?.right ?? viewport);
 
     const isPageScroller = (el: Element | null) => el !== null && el === pageScroller;
 
     const insideIntentionalXScroll = (el: Element): boolean => {
-      let current: Element | null = el;
+      let current: Element | null = el.parentElement;
       while (current && current !== document.documentElement) {
         if (isPageScroller(current)) return false;
         const ox = getComputedStyle(current).overflowX;
@@ -160,9 +165,12 @@ async function measureRelayTabOverflow(page: Page): Promise<OverflowReport> {
     };
 
     const overflowingOutsideTableScroll: OverflowHit[] = [];
-    for (const el of document.querySelectorAll('*')) {
+    const overflowCandidates: Element[] = settingsRelayTab
+      ? [settingsRelayTab, ...settingsRelayTab.querySelectorAll('*')]
+      : [...document.querySelectorAll('*')];
+    for (const el of overflowCandidates) {
       const rect = el.getBoundingClientRect();
-      if (rect.right <= viewport + 1) continue;
+      if (rect.right <= overflowLimit + 1) continue;
       if (insideIntentionalXScroll(el)) continue;
       overflowingOutsideTableScroll.push({
         tag: el.tagName,
@@ -199,6 +207,8 @@ async function measureRelayTabOverflow(page: Page): Promise<OverflowReport> {
     overflowingOutsideTableScroll.sort((a, b) => b.right - a.right);
     return {
       viewport,
+      overflowLimit: Math.round(overflowLimit * 10) / 10,
+      tabRight: Math.round((settingsRelayTabRect?.right ?? 0) * 10) / 10,
       docClientWidth: doc.clientWidth,
       docScrollWidth: doc.scrollWidth,
       pageScrollWidth: pageScroller?.scrollWidth ?? 0,

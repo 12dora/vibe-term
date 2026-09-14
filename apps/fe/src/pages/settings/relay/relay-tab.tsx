@@ -78,10 +78,7 @@ export function RelayTab({ api = defaultRelayAdminApi }: RelayTabProps = {}) {
   }
 
   return (
-    <div
-      className="flex w-full min-w-0 flex-col gap-4 overflow-x-clip"
-      data-testid="settings-relay-tab"
-    >
+    <div className="flex w-full min-w-0 flex-col gap-4" data-testid="settings-relay-tab">
       <RelayTabHeader controller={controller} status={relay.status} />
       <RelayTabBody controller={controller} status={relay.status} api={api} />
       <RelayTabDialogs controller={controller} status={relay.status} />
@@ -157,17 +154,17 @@ function RelayTabBody({
 
   return (
     <>
-      <Reveal className="min-w-0">
+      <Reveal className="min-w-0 overflow-x-clip">
         <RelayMetricsPanel metrics={metrics} />
       </Reveal>
 
       {turn && (
-        <Reveal className="min-w-0" delayMs={30}>
+        <Reveal className="min-w-0 overflow-x-clip" delayMs={30}>
           <RelayTurnTile turn={turn} stale={relay.error !== null} />
         </Reveal>
       )}
 
-      <Reveal className="min-w-0" delayMs={60}>
+      <Reveal className="min-w-0 overflow-x-clip" delayMs={60}>
         <TenantsCard
           controller={controller}
           status={status}
@@ -179,7 +176,7 @@ function RelayTabBody({
       </Reveal>
 
       {metrics.data !== null && (
-        <Reveal className="min-w-0" delayMs={120}>
+        <Reveal className="min-w-0 overflow-x-clip" delayMs={120}>
           <RelayMembersCard
             members={metrics.data.members}
             now={metrics.loadedAt ?? metrics.data.sampledAt}
