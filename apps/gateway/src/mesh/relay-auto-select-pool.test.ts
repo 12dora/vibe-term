@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { orderRelaysByPreferred } from './relay-preferred';
@@ -231,7 +230,6 @@ describe('autoPreferred vs probePreferred ping-pong', () => {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
     seedUser(userStore);
-    const hubTrust = new HubTrustStore(db);
     const scheduler = new ManualScheduler();
     let autoPreferred: string | null = null;
     const failByUrl: Record<string, { times: number }> = {
@@ -253,7 +251,6 @@ describe('autoPreferred vs probePreferred ping-pong', () => {
         endpoints: [],
       }),
       candidates: () => orderRelaysByPreferred(ROWS, autoPreferred).map(cand),
-      hubTrust,
       scheduler,
       failLimit: UPLINK_POOL_FAIL_LIMIT,
       authDeadlineMs: UPLINK_POOL_AUTH_DEADLINE_MS,

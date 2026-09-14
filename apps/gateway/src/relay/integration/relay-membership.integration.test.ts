@@ -11,7 +11,6 @@ import { NodeIdentityStore } from '../../auth/node-identity-store';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { encodeRedeemPopMessage } from '../redeem-pop';
 import {
-  HUB_NODE_ROLES,
   RELAY_TEST_PUBLIC_URL,
   type RelayMeshHarness,
   type RelayTenant,
@@ -20,8 +19,6 @@ import {
   waitUntil,
 } from './relay-mesh-harness';
 import { primaryJoinRelay } from './relay-tenant-ops';
-
-const HUB_A_URL = 'http://relay-migration-hub.test';
 
 let harness: RelayMeshHarness | null = null;
 
@@ -270,38 +267,6 @@ describe('relay quotas', () => {
     );
     expect(h.relay.runtime.metering.liveAdmittedSnapshot(tenantId)).toBe(payload.byteLength);
     stream.end();
-  });
-});
-
-describe('hub to relay migration', () => {
-  test('hub,node 节点接入中继后切到中继上级，hub 集合清空', async () => {
-    const h = await boot();
-    const tenant = await h.createTenant('alpha', {
-      roles: HUB_NODE_ROLES,
-      hubPublicUrl: HUB_A_URL,
-      selfHub: true,
-    });
-    await waitUntil(() => tenant.owner.mesh.uplink.state === 'online', 8_000);
-    expect(tenant.owner.mesh.hub).not.toBeNull();
-    expect(tenant.owner.mesh.attachedHub()?.publicUrl).toBe(HUB_A_URL);
-    const before = await tenant.owner.json<RelayStatus>('/api/mesh/relay/status');
-    expect(before.mode).toBe('hub');
-
-    await tenant.enroll();
-
-    // set-relays 落账后池子重建，上级换成中继；hub 集合被清空
-    await waitUntil(
-      () => tenant.owner.mesh.attachedHub()?.publicUrl === RELAY_TEST_PUBLIC_URL,
-      8_000
-    );
-    const after = await tenant.owner.json<RelayStatus>('/api/mesh/relay/status');
-    expect(after.mode).toBe('relay');
-    expect(after.relays[0]?.attached).toBe(true);
-    expect(after.metaEpoch).toBeGreaterThan(0);
-    expect(tenant.owner.relayStore.uplinkKind()).toBe('relay');
-    const hubs = await tenant.owner.json<{ hubs: unknown[] }>('/api/mesh/hubs');
-    expect(hubs.hubs).toEqual([]);
-    expect(h.relay.runtime.registry.get(tenant.tenantId(), tenant.owner.nodeId)).toBeTruthy();
   });
 });
 

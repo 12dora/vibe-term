@@ -333,7 +333,7 @@ describe('passkey second factor is scoped to the request origin', () => {
     const previousSiteUrl = getSiteSettings().siteUrl;
     const restore = declareSiteUrl(null);
     updateSiteSettings({ siteUrl: ORIGIN_B });
-    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    const mesh = await bootMesh({ roles: { node: false, relay: false } });
     try {
       await enrollPasskeyAt(mesh.userStore, mesh.boot.userId, ORIGIN_A);
 

@@ -1,50 +1,25 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
-import {
-  buildLogin,
-  createDelegation,
-  createEnrollment,
-  createNodeCertificate,
-  decodeBase64url,
-  encodeAdmitNodePayload,
-  encodeBase64url,
-  encodeLogin,
-  generateEd25519KeyPair,
-  normalizeFingerprint,
-  signLogin,
-} from '@vibeterm/shared/auth';
+import { generateEd25519KeyPair, normalizeFingerprint } from '@vibeterm/shared/auth';
 import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { eq } from 'drizzle-orm';
 import { filesBulkHooks } from '../../api/files';
-import {
-  KeyLogStore,
-  NodeIdentityStore,
-  NodeSessionStore,
-  UserKeyService,
-  UserStore,
-  ensureNodeIdentity,
-  makeVerifyPasskeyAssertion,
-  nodeSessionCookieName,
-} from '../../auth';
+import { NodeSessionStore } from '../../auth';
 import { fromBase64Url } from '../../auth/binary';
-import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
 import { nodeSessions } from '../../db/schema';
 import { createUploadSession, removeUploadSession } from '../../files/transfer-session';
+import { bootRelayMeshHarness, waitUntil } from '../../relay/integration/relay-mesh-harness';
 import type { GatewayRuntime } from '../../runtime';
 import { WebSocketServer } from '../../ws';
 import type { GatewaySession } from '../../ws/gateway-session';
-import { MESH_VIA_SELF, MESH_WS_KIND, setMeshRequestContext } from '../mesh-deps';
-import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
+import { MESH_VIA_SELF, MESH_WS_KIND } from '../mesh-deps';
 import { SESS_CHANNEL_LABEL } from '../rtc';
 import { fragmentFrame } from '../rtc/fragmenter';
 import { type FakePeerConnection, createFakeNativeModule } from '../rtc/test-fakes';
 import { acceptWsStream, openHttpStream, openWsStream } from '../stream-targets';
-import { waitUntil } from '../test-support';
 import { requestDispatchContext } from '../types';
-
-const PASSWORD = 'vibeterm-test';
-const dummyServer = { upgrade: () => false };
+import { type BootUser, callMesh, loginSelf, selfCookie } from './mesh-http-helpers';
 
 const origGetTransferOwner = filesBulkHooks.status;
 const transferUids = new Map<string, string>();
@@ -94,68 +69,23 @@ function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
   };
 }
 
-function sidFromResponse(res: Response, nodeId = MESH_VIA_SELF): string {
-  const cookies = res.headers.getSetCookie?.() ?? [];
-  const prefix = `${nodeSessionCookieName(nodeId)}=`;
-  for (const cookie of cookies) {
-    if (cookie.startsWith(prefix)) {
-      return cookie.slice(prefix.length).split(';')[0] ?? '';
-    }
-  }
-  throw new Error('no session cookie');
+function requireGateway(g: GatewayRuntime | null): GatewayRuntime {
+  if (!g) throw new Error('missing gateway');
+  return g;
 }
 
-async function callMesh(
-  mesh: MeshRuntime,
-  url: string,
-  init?: RequestInit & { cookie?: string }
-): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  if (init?.cookie) headers.set('cookie', init.cookie);
-  const req = new Request(url, { ...init, headers });
-  setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-  const res = await mesh.handleRequest(req, dummyServer);
-  if (!(res instanceof Response)) throw new Error(`unhandled ${url}`);
-  return res;
-}
-
-async function loginSelf(
-  mesh: MeshRuntime,
-  boot: { userId: string; rootKey: Parameters<typeof createDelegation>[0] }
-): Promise<string> {
-  const sess = generateEd25519KeyPair();
-  const now = Date.now();
-  const del = createDelegation(boot.rootKey, {
-    uid: boot.userId,
-    sessPk: sess.publicKey,
-    now,
-  });
-  const ch = await callMesh(mesh, 'http://entry/api/auth/challenge', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ uid: boot.userId }),
-  });
-  const body = (await ch.json()) as { challenge_id: string; nonce: string; nodePk: string };
-  const login = buildLogin({
-    challengeId: body.challenge_id,
-    nonce: decodeBase64url(body.nonce),
-    target: mesh.nodeId,
-    targetPk: decodeBase64url(body.nodePk),
-    uid: boot.userId,
-    entry: MESH_VIA_SELF,
-  });
-  const res = await callMesh(mesh, 'http://entry/api/auth/login', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(signLogin(sess.secretKey, login)),
-      delegation: encodeBase64url(del.bytes),
-      delegation_sig: encodeBase64url(del.sig),
-    }),
-  });
-  expect(res.status).toBe(200);
-  return sidFromResponse(res);
+function bootUserOf(tenant: {
+  userId: string;
+  rootKey: BootUser['rootKey'];
+  rootPublicKey: Uint8Array;
+  rootEpoch: number;
+}): BootUser {
+  return {
+    userId: tenant.userId,
+    rootKey: tenant.rootKey,
+    rootPublicKey: tenant.rootPublicKey,
+    rootEpoch: tenant.rootEpoch,
+  };
 }
 
 describe('direct path integration', () => {
@@ -178,45 +108,25 @@ describe('direct path integration', () => {
   });
 
   test('browser authorize → signaling → sess nonce → CARRIER_SWITCH → frames and bulk', async () => {
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const userStore = new UserStore(db);
-    const keyLogStore = new KeyLogStore(db);
-    const nodeSessionStore = new NodeSessionStore(db);
-    const keys = new UserKeyService({
-      db,
-      userStore,
-      keyLogStore,
-      nodeSessionStore,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
-    });
-    const boot = await keys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: PASSWORD,
-      identity,
-    });
     const fake = createFakeNativeModule();
     const wsServer = new WebSocketServer();
-    const gateway = fakeGateway(db, wsServer);
-    const mesh = await createMeshRuntime({
-      db,
-      gateway,
-      userId: boot.userId,
-      config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://hub.example',
-        peerPort: 39001,
-        stunServers: [],
-      },
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
+    let gateway: GatewayRuntime | null = null;
+    const h = await bootRelayMeshHarness();
+    fixtures.push({ close: () => {}, stop: () => h.stop() });
+    const tenant = await h.createTenant('alice', {
       loadNative: async () => fake.module,
+      peerPort: 39001,
+      stunServers: [],
+      gatewayFactory: (db) => {
+        gateway = fakeGateway(db, wsServer);
+        return gateway;
+      },
     });
-    fixtures.push({ close, stop: () => mesh.stop() });
-    await mesh.start();
-    await waitUntil(() => mesh.uplink.state === 'online', 5_000);
+    await tenant.enroll();
+    const entryGateway = requireGateway(gateway);
+    const mesh = tenant.owner.mesh;
+    const db = tenant.owner.db;
+    const boot = bootUserOf(tenant);
     filesBulkHooks.status = (id) => {
       const owner = origGetTransferOwner(id);
       if (!owner) return null;
@@ -225,7 +135,7 @@ describe('direct path integration', () => {
     };
 
     const sid = await loginSelf(mesh, boot);
-    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
+    const cookie = selfCookie(sid);
     const sessionStore = new NodeSessionStore(db);
     const [linkA, linkB] = createInMemoryLinkPair();
     const [linkA2, linkB2] = createInMemoryLinkPair();
@@ -393,7 +303,7 @@ describe('direct path integration', () => {
     expect(bound?.cid).toBe('tab-a');
     expect(sessionStore.verify(sid, { viaNodeId: MESH_VIA_SELF, now: Date.now() }).ok).toBe(true);
 
-    const init = await gateway.dispatchHttp(
+    const init = await entryGateway.dispatchHttp(
       new Request('http://node/api/files/upload/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -410,7 +320,7 @@ describe('direct path integration', () => {
       if (bulk.isOpen()) resolve();
     });
     const nodePc = fake.connections.find((pc) => pc !== browserPc);
-    expect(nodePc?.inbound.map((dc) => dc.getLabel()) ?? []).toContain(`bulk:${uploadId}`);
+    expect(nodePc?.inbound.map((row) => row.getLabel()) ?? []).toContain(`bulk:${uploadId}`);
     expect(bulk.peer?.getLabel()).toBe(`bulk:${uploadId}`);
     const bulkReplies: string[] = [];
     bulk.onMessage((msg) => {
@@ -432,7 +342,7 @@ describe('direct path integration', () => {
       2_000
     );
 
-    const wrongOwner = await gateway.dispatchHttp(
+    const wrongOwner = await entryGateway.dispatchHttp(
       new Request('http://node/api/files/upload/init', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -478,44 +388,20 @@ describe('direct path integration', () => {
   }, 15_000);
 
   test('duplicate cid is rejected and the original session stays intact', async () => {
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const userStore = new UserStore(db);
-    const keyLogStore = new KeyLogStore(db);
-    const nodeSessionStore = new NodeSessionStore(db);
-    const keys = new UserKeyService({
-      db,
-      userStore,
-      keyLogStore,
-      nodeSessionStore,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
-    });
-    const boot = await keys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: PASSWORD,
-      identity,
-    });
     const fake = createFakeNativeModule();
     const wsServer = new WebSocketServer();
-    const gateway = fakeGateway(db, wsServer);
-    const mesh = await createMeshRuntime({
-      db,
-      gateway,
-      userId: boot.userId,
-      config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://hub.example',
-        peerPort: 39011,
-        stunServers: [],
-      },
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
+    const h = await bootRelayMeshHarness();
+    fixtures.push({ close: () => {}, stop: () => h.stop() });
+    const tenant = await h.createTenant('alice', {
       loadNative: async () => fake.module,
+      peerPort: 39011,
+      stunServers: [],
+      gatewayFactory: (db) => fakeGateway(db, wsServer),
     });
-    fixtures.push({ close, stop: () => mesh.stop() });
-    await mesh.start();
+    await tenant.enroll();
+    const mesh = tenant.owner.mesh;
+    const db = tenant.owner.db;
+    const boot = bootUserOf(tenant);
     const sid = await loginSelf(mesh, boot);
     const sessionStore = new NodeSessionStore(db);
     const [linkA, linkB] = createInMemoryLinkPair();
@@ -547,47 +433,22 @@ describe('direct path integration', () => {
   }, 10_000);
 
   test('expired session and wrong via cannot attach a direct carrier', async () => {
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const userStore = new UserStore(db);
-    const keyLogStore = new KeyLogStore(db);
-    const nodeSessionStore = new NodeSessionStore(db);
-    const keys = new UserKeyService({
-      db,
-      userStore,
-      keyLogStore,
-      nodeSessionStore,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
-    });
-    const boot = await keys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: PASSWORD,
-      identity,
-    });
     const fake = createFakeNativeModule();
     const wsServer = new WebSocketServer();
-    const gateway = fakeGateway(db, wsServer);
-    const mesh = await createMeshRuntime({
-      db,
-      gateway,
-      userId: boot.userId,
-      config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://hub.example',
-        peerPort: 39012,
-        stunServers: [],
-      },
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
+    const h = await bootRelayMeshHarness();
+    fixtures.push({ close: () => {}, stop: () => h.stop() });
+    const tenant = await h.createTenant('alice', {
       loadNative: async () => fake.module,
+      peerPort: 39012,
+      stunServers: [],
+      gatewayFactory: (db) => fakeGateway(db, wsServer),
     });
-    fixtures.push({ close, stop: () => mesh.stop() });
-    await mesh.start();
-    await waitUntil(() => mesh.uplink.state === 'online', 5_000);
+    await tenant.enroll();
+    const mesh = tenant.owner.mesh;
+    const db = tenant.owner.db;
+    const boot = bootUserOf(tenant);
     const sid = await loginSelf(mesh, boot);
-    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
+    const cookie = selfCookie(sid);
     const sessionStore = new NodeSessionStore(db);
     const [linkA, linkB] = createInMemoryLinkPair();
     const openedSessions: GatewaySession[] = [];
@@ -739,158 +600,41 @@ describe('direct path integration', () => {
     openedVia.close();
   }, 15_000);
 
-  test('node↔node DC signaling goes through real HubRuntime/UplinkServer', async () => {
+  test('node↔node DC signaling goes through the relay uplink', async () => {
     const fake = createFakeNativeModule();
     const loadNative = async () => fake.module;
 
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const userStore = new UserStore(db);
-    const keyLogStore = new KeyLogStore(db);
-    const nodeSessionStore = new NodeSessionStore(db);
-    const keys = new UserKeyService({
-      db,
-      userStore,
-      keyLogStore,
-      nodeSessionStore,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
-    });
-    const boot = await keys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: PASSWORD,
-      identity,
-    });
-    const gatewayA = fakeGateway(db);
-    const holderB: { mesh: MeshRuntime | null } = { mesh: null };
-    const meshA = await createMeshRuntime({
-      db,
-      gateway: gatewayA,
-      userId: boot.userId,
-      config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://hub.example',
-        peerPort: 39001,
-        stunServers: [],
-      },
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
+    const h = await bootRelayMeshHarness();
+    fixtures.push({ close: () => {}, stop: () => h.stop() });
+    const tenant = await h.createTenant('alice', {
       loadNative,
+      peerPort: 39001,
+      stunServers: ['stun:stun.example:3478'],
+      gatewayFactory: (db) => fakeGateway(db),
     });
-    fixtures.push({ close, stop: () => meshA.stop() });
-    await meshA.start();
-    await waitUntil(() => meshA.uplink.state === 'online', 5_000);
-
-    const { db: dbB, close: closeB } = createMigratedAuthDb();
-    const identityB = await ensureNodeIdentity(new NodeIdentityStore(dbB));
-    const now = Date.now();
-    const enrollment = await createEnrollment(boot.rootKey, {
-      uid: boot.userId,
-      rootEpoch: boot.rootEpoch,
-      now,
-      ttlMs: 60_000,
-    });
-    const sid = await loginSelf(meshA, boot);
-    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
-    const created = await meshA.hub?.handleRequest(
-      (() => {
-        const req = new Request('http://hub/api/hub/enrollments', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', cookie },
-          body: JSON.stringify({
-            enroll_pk: encodeBase64url(enrollment.enrollPk),
-            authorization: encodeBase64url(enrollment.authorizationBytes),
-            authorization_sig: encodeBase64url(enrollment.authorizationSig),
-            exp: now + 60_000,
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(created?.status).toBe(201);
-    const cert = createNodeCertificate(enrollment.enrollSk, {
-      uid: boot.userId,
-      edPk: identityB.edPublicKey,
-      x25519Pk: identityB.x25519PublicKey,
-      enrollPk: enrollment.enrollPk,
-      now,
-      nodeId: identityB.nodeId,
-    });
-    const redeemed = await meshA.hub?.handleRequest(
-      new Request('http://hub/api/hub/enrollments/redeem', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          certificate: encodeBase64url(cert.certificateBytes),
-          cert_sig: encodeBase64url(cert.certSig),
-          name: 'node-b',
-          version: 'test',
-        }),
-      }),
-      dummyServer
-    );
-    expect(redeemed?.status).toBe(200);
-    const admitted = await keys.signAndApply(boot.userId, boot.rootKey, {
-      type: 'admit-node',
-      payload: encodeAdmitNodePayload({
-        authorization_bytes: enrollment.authorizationBytes,
-        authorization_sig: enrollment.authorizationSig,
-        certificate_bytes: cert.certificateBytes,
-        cert_sig: cert.certSig,
-      }),
-    });
-    expect(admitted.ok).toBe(true);
-    const rows = keyLogStore.list(boot.userId);
-    const head = keyLogStore.head(boot.userId);
-    const bUserStore = new UserStore(dbB);
-    const bKeyLog = new KeyLogStore(dbB);
-    const bSessions = new NodeSessionStore(dbB);
-    const bKeys = new UserKeyService({
-      db: dbB,
-      userStore: bUserStore,
-      keyLogStore: bKeyLog,
-      nodeSessionStore: bSessions,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(bUserStore),
-    });
-    const joined = await bKeys.verifyChainForJoin(
-      rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
-      boot.rootPublicKey,
-      head?.hash ?? new Uint8Array(32)
-    );
-    expect(joined.ok).toBe(true);
-
-    const meshB = await createMeshRuntime({
-      db: dbB,
-      gateway: fakeGateway(dbB),
-      userId: boot.userId,
-      config: {
-        roles: { hub: false, node: true, relay: false },
-        hubUrl: 'http://hub.example',
+    await tenant.enroll();
+    const meshA = tenant.owner.mesh;
+    const meshB = (
+      await tenant.joinNode('node-b', {
+        loadNative,
         peerPort: 39002,
-        stunServers: [],
-      },
-      uplinkHub: meshA.hub ?? undefined,
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
-      loadNative,
-    });
-    fixtures.push({ close: closeB, stop: () => meshB.stop() });
-    holderB.mesh = meshB;
-    await meshB.start();
-    await waitUntil(() => meshB.uplink.state === 'online', 5_000);
+        stunServers: ['stun:stun.example:3478'],
+        gatewayFactory: (db) => fakeGateway(db),
+      })
+    ).mesh;
+
     await waitUntil(
       () => meshA.lastNodeList?.nodes.some((n) => n.id === meshB.nodeId && n.online) === true,
-      5_000
+      8_000
     );
 
-    const [linkA, linkB] = await Promise.all([
-      meshA.peers.getLink(meshB.nodeId),
-      meshB.peers.getLink(meshA.nodeId),
-    ]);
+    // getLink 可能先经中继 uplink settle 成 relay；信令仍走 MeshRtcSignalRouter，等 DC 升上去再开流
+    await Promise.all([meshA.peers.getLink(meshB.nodeId), meshB.peers.getLink(meshA.nodeId)]);
+    await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) === 'dc', 8_000);
+    await waitUntil(() => meshB.peers.transportOf(meshA.nodeId) === 'dc', 8_000);
+    const linkA = meshA.peers.getLive(meshB.nodeId);
+    const linkB = meshB.peers.getLive(meshA.nodeId);
+    if (!linkA || !linkB) throw new Error('missing dc link');
     expect(meshA.peers.transportOf(meshB.nodeId)).toBe('dc');
     expect(meshB.peers.transportOf(meshA.nodeId)).toBe('dc');
     const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
@@ -911,127 +655,22 @@ describe('direct path integration', () => {
     const fake = createFakeNativeModule();
     const loadNative = async () => fake.module;
 
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const userStore = new UserStore(db);
-    const keyLogStore = new KeyLogStore(db);
-    const nodeSessionStore = new NodeSessionStore(db);
-    const keys = new UserKeyService({
-      db,
-      userStore,
-      keyLogStore,
-      nodeSessionStore,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
-    });
-    const boot = await keys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: PASSWORD,
-      identity,
-    });
-    const meshA = await createMeshRuntime({
-      db,
-      gateway: fakeGateway(db),
-      userId: boot.userId,
-      config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://hub.example',
-        peerPort: 39021,
-        stunServers: [],
-      },
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
+    const h = await bootRelayMeshHarness();
+    fixtures.push({ close: () => {}, stop: () => h.stop() });
+    const tenant = await h.createTenant('alice', {
       loadNative,
+      peerPort: 39021,
+      stunServers: [],
+      gatewayFactory: (db) => fakeGateway(db),
     });
-    fixtures.push({ close, stop: () => meshA.stop() });
-    await meshA.start();
-    await waitUntil(() => meshA.uplink.state === 'online', 5_000);
-
-    const { db: dbB, close: closeB } = createMigratedAuthDb();
-    const identityB = await ensureNodeIdentity(new NodeIdentityStore(dbB));
-    const now = Date.now();
-    const enrollment = await createEnrollment(boot.rootKey, {
-      uid: boot.userId,
-      rootEpoch: boot.rootEpoch,
-      now,
-      ttlMs: 60_000,
-    });
-    const sid = await loginSelf(meshA, boot);
-    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
-    const created = await meshA.hub?.handleRequest(
-      (() => {
-        const req = new Request('http://hub/api/hub/enrollments', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', cookie },
-          body: JSON.stringify({
-            enroll_pk: encodeBase64url(enrollment.enrollPk),
-            authorization: encodeBase64url(enrollment.authorizationBytes),
-            authorization_sig: encodeBase64url(enrollment.authorizationSig),
-            exp: now + 60_000,
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(created?.status).toBe(201);
-    const cert = createNodeCertificate(enrollment.enrollSk, {
-      uid: boot.userId,
-      edPk: identityB.edPublicKey,
-      x25519Pk: identityB.x25519PublicKey,
-      enrollPk: enrollment.enrollPk,
-      now,
-      nodeId: identityB.nodeId,
-    });
-    const redeemed = await meshA.hub?.handleRequest(
-      new Request('http://hub/api/hub/enrollments/redeem', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          certificate: encodeBase64url(cert.certificateBytes),
-          cert_sig: encodeBase64url(cert.certSig),
-          name: 'node-b',
-          version: 'test',
-        }),
-      }),
-      dummyServer
-    );
-    expect(redeemed?.status).toBe(200);
-    const admitted = await keys.signAndApply(boot.userId, boot.rootKey, {
-      type: 'admit-node',
-      payload: encodeAdmitNodePayload({
-        authorization_bytes: enrollment.authorizationBytes,
-        authorization_sig: enrollment.authorizationSig,
-        certificate_bytes: cert.certificateBytes,
-        cert_sig: cert.certSig,
-      }),
-    });
-    expect(admitted.ok).toBe(true);
-    const rows = keyLogStore.list(boot.userId);
-    const head = keyLogStore.head(boot.userId);
-    const bUserStore = new UserStore(dbB);
-    const bKeyLog = new KeyLogStore(dbB);
-    const bSessions = new NodeSessionStore(dbB);
-    const bKeys = new UserKeyService({
-      db: dbB,
-      userStore: bUserStore,
-      keyLogStore: bKeyLog,
-      nodeSessionStore: bSessions,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(bUserStore),
-    });
-    const joined = await bKeys.verifyChainForJoin(
-      rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
-      boot.rootPublicKey,
-      head?.hash ?? new Uint8Array(32)
-    );
-    expect(joined.ok).toBe(true);
-
-    const meshB = await createMeshRuntime({
-      db: dbB,
-      gateway: {
-        ...fakeGateway(dbB),
+    await tenant.enroll();
+    const meshA = tenant.owner.mesh;
+    const nodeB = await tenant.joinNode('node-b', {
+      loadNative,
+      peerPort: 39022,
+      stunServers: [],
+      gatewayFactory: (db) => ({
+        ...fakeGateway(db),
         dispatchHttp: async () =>
           new Response(body, {
             status: 200,
@@ -1040,31 +679,14 @@ describe('direct path integration', () => {
               'content-length': String(EIGHT_MIB),
             },
           }),
-      },
-      userId: boot.userId,
-      config: {
-        roles: { hub: false, node: true, relay: false },
-        hubUrl: 'http://hub.example',
-        peerPort: 39022,
-        stunServers: [],
-      },
-      uplinkHub: meshA.hub ?? undefined,
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
-      loadNative,
+      }),
     });
-    fixtures.push({ close: closeB, stop: () => meshB.stop() });
-    await meshB.start();
-    await waitUntil(() => meshB.uplink.state === 'online', 5_000);
+    const meshB = nodeB.mesh;
+
     await waitUntil(
       () => meshA.lastNodeList?.nodes.some((n) => n.id === meshB.nodeId && n.online) === true,
-      5_000
+      8_000
     );
-
-    await Promise.all([meshA.peers.getLink(meshB.nodeId), meshB.peers.getLink(meshA.nodeId)]);
-    await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) === 'dc', 8_000);
-    expect(meshA.peers.transportOf(meshB.nodeId)).toBe('dc');
 
     meshA.rtc.connectToPeer = async () => {
       await Bun.sleep(5_000);
@@ -1080,24 +702,21 @@ describe('direct path integration', () => {
     await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) !== 'dc', 5_000);
     await waitUntil(() => meshB.peers.transportOf(meshA.nodeId) !== 'dc', 5_000);
 
-    const [relayA, relayB] = createInMemoryLinkPair();
-    expect(meshA.peers.adoptLink(meshB.nodeId, relayA, 'relay', meshA.nodeId)).toBe(relayA);
-    expect(meshB.peers.adoptLink(meshA.nodeId, relayB, 'relay', meshA.nodeId)).toBe(relayB);
+    const link = await meshA.peers.getLink(meshB.nodeId);
+    await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) === 'relay', 8_000);
+    expect(meshA.peers.transportOf(meshB.nodeId)).toBe('relay');
     await waitUntil(() => meshA.peers.quiesceCapableOf(meshB.nodeId), 2_000);
     await waitUntil(() => meshB.peers.quiesceCapableOf(meshA.nodeId), 2_000);
-    expect(meshA.peers.transportOf(meshB.nodeId)).toBe('relay');
 
     const sess = generateEd25519KeyPair();
-    const issued = new NodeSessionStore(dbB).issue({
-      userId: boot.userId,
+    const issued = new NodeSessionStore(nodeB.db).issue({
+      userId: tenant.userId,
       viaNodeId: meshA.nodeId,
       sessPublicKey: sess.publicKey,
       now: Date.now(),
       delegationMethod: 'root',
     });
 
-    const link = await meshA.peers.getLink(meshB.nodeId);
-    expect(link).toBe(relayA);
     expect(meshA.peers.transportOf(meshB.nodeId)).toBe('relay');
     const seenDuring: Array<string | null> = [];
     const poll = setInterval(() => {
@@ -1120,6 +739,5 @@ describe('direct path integration', () => {
     }
     expect(seenDuring.every((kind) => kind === 'relay')).toBe(true);
     expect(meshA.peers.transportOf(meshB.nodeId)).toBe('relay');
-    expect(await meshA.peers.getLink(meshB.nodeId)).toBe(relayA);
   }, 20_000);
 });

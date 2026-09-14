@@ -7,6 +7,7 @@ import { MeshMembershipStore } from './mesh-membership-store';
 import { MeshRelayStore } from './mesh-relay-store';
 import { NodeIdentityStore } from './node-identity-store';
 import { NodeSessionStore } from './node-session-store';
+import { RelayCaPinStore } from './relay-ca-pin-store';
 import { createMigratedAuthDb } from './test-db';
 import { UserStore } from './user-store';
 
@@ -147,6 +148,11 @@ describe('MeshMembershipStore.clearAll', () => {
       );
       relays.setUplinkKind('relay');
       relays.setLocalName('studio');
+      new RelayCaPinStore(db).put({
+        url: 'https://relay.example',
+        caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+        fingerprint: 'ab'.repeat(32),
+      });
       expect(relays.listRelayRows()).toHaveLength(1);
       expect(relays.listSecretEpochs('meta')).toEqual([1]);
 
@@ -164,6 +170,7 @@ describe('MeshMembershipStore.clearAll', () => {
         'mesh_relays',
         'mesh_secrets',
         'node_identity',
+        'relay_ca_pins',
       ]) {
         expect(tableCount(sqlite, table)).toBe(0);
       }

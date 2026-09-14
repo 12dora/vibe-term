@@ -5,11 +5,12 @@ import type { MeshRelayStore } from '../../auth/mesh-relay-store';
 import type { AuthDb } from '../../auth/types';
 import type { UserKeyService } from '../../auth/user-key-service';
 import type { UserStore } from '../../auth/user-store';
-import type { MeshRuntime } from '../../mesh/mesh-runtime';
+import type { CreateMeshRuntimeOptions, MeshRuntime } from '../../mesh/mesh-runtime';
 import type { RelayUplinkClient } from '../../mesh/relay-uplink-client';
 import { waitUntil } from '../../mesh/test-support';
 import type { MeshScheduler } from '../../mesh/types';
 import type { UplinkWsFactory } from '../../mesh/uplink-client';
+import type { GatewayRuntime } from '../../runtime';
 import {
   RELAY_TEST_PUBLIC_URL,
   type RelayHarness,
@@ -35,7 +36,6 @@ export async function waitUntilAsync(
 
 export const NODE_PASSWORD = 'relay-integration-pass';
 export const NODE_ROLES: VibeTermRoles = { node: true, relay: false };
-export const HUB_NODE_ROLES: VibeTermRoles = { node: true, relay: false };
 
 /**
  * 池子在没有可用上级时会立刻重试；`FastScheduler` 的 sleep 直接 resolve 会把测试拖成热循环。
@@ -87,7 +87,7 @@ export type RelayTenant = {
   tenantId(): string;
   enrollRaw(opts?: { password?: string }): Promise<Response>;
   enroll(opts?: { password?: string }): Promise<void>;
-  joinNode(label: string): Promise<RelayMeshNode>;
+  joinNode(label: string, bootOpts?: MeshBootOverrides): Promise<RelayMeshNode>;
   admit(node: RelayMeshNode): Promise<void>;
   revoke(node: RelayMeshNode): Promise<void>;
   rotateMetaKey(exclude?: string[]): Promise<void>;
@@ -110,26 +110,31 @@ export type RelayMeshHarness = {
   stop(): Promise<void>;
 };
 
-export type TenantOptions = {
-  password?: string;
+export type MeshBootOverrides = {
   roles?: VibeTermRoles;
-  hubUrl?: string | null;
-  hubPublicUrl?: string | null;
   wsFactory?: UplinkWsFactory;
-  selfHub?: boolean;
+  linkFactory?: CreateMeshRuntimeOptions['linkFactory'];
+  linkFactoryFor?: (nodeId: string) => CreateMeshRuntimeOptions['linkFactory'];
+  loadNative?: CreateMeshRuntimeOptions['loadNative'];
+  startPeerServer?: boolean;
+  peerPort?: number;
+  stunServers?: string[];
+  pingIntervalMs?: number;
+  networkInterfaces?: CreateMeshRuntimeOptions['networkInterfaces'];
+  gateway?: GatewayRuntime;
+  gatewayFactory?: (db: AuthDb, label: string) => GatewayRuntime;
+  omitUserId?: boolean;
 };
 
-export type NodeBoot = {
+export type TenantOptions = MeshBootOverrides & {
+  password?: string;
+};
+
+export type NodeBoot = MeshBootOverrides & {
   userId: string;
   rootKey: RootKey;
   db?: AuthDb;
   close?: () => void;
-  roles?: VibeTermRoles;
-  hubUrl?: string | null;
-  hubPublicUrl?: string | null;
-  wsFactory?: UplinkWsFactory;
-  /** hub,node 角色：让池子走 connectLocal 连自己的 HubRuntime（hub → 中继迁移用）。 */
-  selfHub?: boolean;
 };
 
 const RELAY_HOST = new URL(RELAY_TEST_PUBLIC_URL).host;

@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import type { LinkSession, LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
-import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { reconfigureUplinkPool } from './relay-wiring';
@@ -27,7 +26,7 @@ function status(): UplinkStatus {
   };
 }
 
-/** 只实现池子用到的公开面，用来验证 hub ↔ relay 切换时的构造与拆装。 */
+/** 只实现池子用到的公开面，用来验证候选切换时的构造与拆装。 */
 class FakePooledClient implements PooledUplink {
   readonly identity = { nodeId: 'ab'.repeat(16), edSecretKey: new Uint8Array(32) };
   readonly userId = 'user-1';
@@ -140,7 +139,7 @@ describe('UplinkPool 上级种类切换', () => {
     try {
       const userStore = new UserStore(db);
       seedUser(userStore);
-      let kind: 'hub' | 'relay' = 'hub';
+      let kind: 'first' | 'second' = 'first';
       const created: FakePooledClient[] = [];
       const pool = new UplinkPool({
         identity: { nodeId: 'ab'.repeat(16), edSecretKey: new Uint8Array(32) },
@@ -148,14 +147,13 @@ describe('UplinkPool 上级种类切换', () => {
         keyLogApplier: applier,
         userStore,
         statusProvider: status,
-        hubTrust: new HubTrustStore(db),
         enablePeriodicRttProbe: false,
         relayDrainRecheckMs: 5,
         relayDrainTimeoutMs: 50,
         candidates: () =>
-          kind === 'relay'
+          kind === 'second'
             ? [candidate('https://relay.example')]
-            : [candidate('https://hub.example')],
+            : [candidate('https://first.example')],
         createClient: (opts) => {
           const client = new FakePooledClient(opts.hubUrl);
           created.push(client);
@@ -164,10 +162,10 @@ describe('UplinkPool 上级种类切换', () => {
       });
       pool.start();
       await waitUntil(() => pool.attachedHub() !== null);
-      expect(pool.attachedHub()?.publicUrl).toBe('https://hub.example');
+      expect(pool.attachedHub()?.publicUrl).toBe('https://first.example');
       expect(created).toHaveLength(1);
 
-      kind = 'relay';
+      kind = 'second';
       await reconfigureUplinkPool(pool);
       expect(created[0]?.stopped).toBeGreaterThan(0);
       expect(pool.attachedHub()).toBeNull();
@@ -185,7 +183,7 @@ describe('UplinkPool 上级种类切换', () => {
     try {
       const userStore = new UserStore(db);
       seedUser(userStore);
-      let kind: 'hub' | 'relay' = 'hub';
+      let kind: 'first' | 'relay' = 'first';
       const created: FakePooledClient[] = [];
       const pool = new UplinkPool({
         identity: { nodeId: 'ab'.repeat(16), edSecretKey: new Uint8Array(32) },
@@ -193,7 +191,6 @@ describe('UplinkPool 上级种类切换', () => {
         keyLogApplier: applier,
         userStore,
         statusProvider: status,
-        hubTrust: new HubTrustStore(db),
         enablePeriodicRttProbe: false,
         relayDrainRecheckMs: 5,
         relayDrainTimeoutMs: 100,
@@ -242,7 +239,6 @@ describe('UplinkPool 上级种类切换', () => {
         keyLogApplier: applier,
         userStore,
         statusProvider: status,
-        hubTrust: new HubTrustStore(db),
         enablePeriodicRttProbe: false,
         relayDrainRecheckMs: 5,
         relayDrainTimeoutMs: 20,

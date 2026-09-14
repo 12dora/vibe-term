@@ -42,18 +42,6 @@
     "cc": 13,
     "lines": 107
   },
-  "apps/fe/src/pages/settings/nodes/management/use-hub-role-switch.ts": {
-    "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）",
-    "fileLines": 563
-  },
-  "apps/fe/src/pages/settings/nodes/management/hub-role-switch-run.ts:awaitHubRoleSwitch": {
-    "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）",
-    "cc": 16
-  },
-  "apps/fe/src/pages/settings/nodes/management/use-hub-role-switch.ts:useHubRoleSwitch": {
-    "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）",
-    "lines": 124
-  },
   "apps/fe/src/pages/settings/nodes/management/use-node-upgrade.ts": {
     "reason": "升级执行流程内聚体（POST / 轮询 / 回读 / 取消闸门）；round28 T10 把 React 编排层拆到 use-node-upgrade-controller.ts 后剩余部分",
     "fileLines": 821
@@ -62,14 +50,6 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）",
     "cc": 13,
     "lines": 184
-  },
-  "apps/fe/src/pages/settings/nodes/setup/become-hub-form.tsx:BecomeHubForm": {
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）",
-    "lines": 141
-  },
-  "apps/fe/src/pages/settings/nodes/setup/join-hub-form.tsx:JoinHubForm": {
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）",
-    "lines": 117
   },
   "apps/fe/src/pages/settings/remote-access/named-step.tsx:HostnameStep": {
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）",
@@ -105,57 +85,6 @@
     "reason": "用户存储内聚体，拆分只搬行（G8 判定）",
     "fileLines": 957
   },
-  "apps/gateway/src/auth/user-store.ts:applyEnrollmentTokenReplication": {
-    "reason": "enrollment token 复制顺序校验（G8 判定）",
-    "cc": 17
-  },
-  "apps/gateway/src/hub/attachment-router.ts:applyFromHub": {
-    "reason": "hub 附件应用顺序判定（G8 判定）",
-    "cc": 21
-  },
-  "apps/gateway/src/hub/hub-authorization.ts:applyKeyLogHubRuntime": {
-    "reason": "key-log 运行时顺序校验（G8 判定）",
-    "cc": 21
-  },
-  "apps/gateway/src/hub/hub-peer-poller.ts:parsePeerStatusBody": {
-    "reason": "对端状态解析扁平分派（G8 判定）",
-    "cc": 21
-  },
-  "apps/gateway/src/hub/hub-relay.ts:parseHubRelayOpen": {
-    "reason": "relay 开流解析（G8 判定）",
-    "cc": 16
-  },
-  "apps/gateway/src/hub/hub-replication.ts:applyReplicatedNodeList": {
-    "reason": "节点列表复制投影（G8 判定）",
-    "cc": 17,
-    "params": 7
-  },
-  "apps/gateway/src/hub/hub-role-routes.ts:handlePostHubRole": {
-    "reason": "hub 角色切换请求校验（G8 判定）",
-    "cc": 21
-  },
-  "apps/gateway/src/hub/hub-runtime.ts": {
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）",
-    "fileLines": 1317
-  },
-  "apps/gateway/src/hub/uplink-node-list.ts:buildNodeList": {
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定；第二十九轮 UplinkServer 拆分后随方法迁至本文件）",
-    "cc": 21,
-    "lines": 90
-  },
-  "apps/gateway/src/hub/hub-federation.ts:handleHubWriteForward": {
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定；第二十九轮 UplinkServer 拆分后随方法迁至本文件）",
-    "cc": 16
-  },
-  "apps/gateway/src/hub/uplink-key-log.ts:handleKeyLogAppend": {
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定；第二十九轮 UplinkServer 拆分后随方法迁至本文件）",
-    "cc": 22,
-    "lines": 115
-  },
-  "apps/gateway/src/hub/uplink-server.ts:onCtl": {
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）",
-    "cc": 20
-  },
   "apps/gateway/src/managed-entry.ts:runManagedGateway": {
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）；2.0 改名桥接（新旧名双读/双发、别名回退）+行",
     "lines": 159
@@ -172,15 +101,6 @@
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）",
     "cc": 23,
     "lines": 110
-  },
-  "apps/gateway/src/mesh/integration/multi-hub-harness.ts": {
-    "reason": "测试夹具，非生产路径（G8 判定）",
-    "fileLines": 982
-  },
-  "apps/gateway/src/mesh/integration/multi-hub-harness.ts:enrollAndStart": {
-    "reason": "测试夹具，非生产路径（G8 判定）",
-    "cc": 22,
-    "lines": 164
   },
   "apps/gateway/src/mesh/mesh-routes.ts:handle": {
     "reason": "mesh 路由分派（G8 判定）",
@@ -220,17 +140,9 @@
     "reason": "认证双向流协议事务（S1 判定）",
     "lines": 137
   },
-  "apps/gateway/src/mesh/uplink-client.ts:handleCtl": {
-    "reason": "uplink ctl 扁平分派（G8 判定）",
-    "cc": 17
-  },
   "apps/gateway/src/mesh/uplink-pool.ts": {
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）",
     "fileLines": 1597
-  },
-  "apps/gateway/src/mesh/uplink-pool.ts:parseKeyUsageFromRaw": {
-    "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）",
-    "cc": 16
   },
   "apps/gateway/src/runtime.ts:createGatewayRuntime": {
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）",
@@ -498,10 +410,6 @@
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
     "fileLines": 630
   },
-  "apps/gateway/src/mesh/uplink-key-log-sync.ts": {
-    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
-    "fileLines": 668
-  },
   "apps/gateway/src/mesh/peer-dc-upgrade.ts": {
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
     "fileLines": 622
@@ -549,10 +457,6 @@
   "apps/gateway/src/agent/supervisor.ts": {
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
     "fileLines": 705
-  },
-  "apps/gateway/src/hub/hub-peer-poller.ts": {
-    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
-    "fileLines": 807
   },
   "apps/gateway/src/ws/canonical-feed-session.ts": {
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
@@ -635,10 +539,6 @@
     "fileLines": 541
   },
   "apps/fe/src/pages/LoginPage.tsx": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "fileLines": 511
-  },
-  "apps/fe/src/pages/settings/nodes/management/hub-role-switch-run.ts": {
     "reason": "round46 收紧门禁时冻结的存量",
     "fileLines": 511
   },
@@ -733,14 +633,6 @@
   "apps/gateway/src/relay/relay-tenant-store.ts": {
     "reason": "round46 收紧门禁时冻结的存量",
     "fileLines": 527
-  },
-  "apps/gateway/src/hub/uplink-server.ts": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "fileLines": 583
-  },
-  "apps/gateway/src/hub/hub-federation.ts": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "fileLines": 558
   },
   "apps/gateway/src/ws/canonical/pane-stream.ts": {
     "reason": "round46 收紧门禁时冻结的存量",
@@ -896,19 +788,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 112
   },
-  "apps/fe/src/pages/settings/nodes/setup/hub-setup-wizard.tsx:HubSetupWizard": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13,
-    "lines": 120
-  },
-  "apps/fe/src/pages/settings/nodes/management/hub-role-switch-run.ts:loadHubRoleSwitch": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
-  "apps/fe/src/pages/settings/nodes/management/hub-role-switch-run.ts:resumeHubRoleSwitch": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
   "apps/fe/src/pages/settings/nodes/management/bulk-actions-menu.tsx:executePauseBatch": {
     "reason": "round46 收紧门禁时冻结的存量",
     "params": 6
@@ -921,10 +800,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 102
   },
-  "apps/fe/src/pages/settings/nodes/management/use-hub-role-switch.ts:useHubRoleRun": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "lines": 93
-  },
   "apps/fe/src/pages/settings/nodes/management/use-node-uninstall.ts:useNodeUninstall": {
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 97
@@ -936,10 +811,6 @@
   "apps/fe/src/pages/settings/nodes/management/node-direct-plugin.ts:useNodeDirectPlugin": {
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 115
-  },
-  "apps/fe/src/pages/settings/nodes/management/hub-role-switch-model.ts:submitAdmitHubRecord": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
   },
   "apps/fe/src/pages/settings/nodes/management/node-row-cells.tsx:StatusCell": {
     "reason": "round46 收紧门禁时冻结的存量",
@@ -964,10 +835,6 @@
   "apps/fe/src/pages/settings/nodes/relay/relay-quota.ts:relayQuotaRows": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
-  },
-  "apps/fe/src/pages/settings/nodes/uplink/hub-uplink-panel.tsx:HubUplinkPanel": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
   },
   "apps/fe/src/pages/settings/use-node-rename-channel.ts:useNodeRenameChannel": {
     "reason": "round46 收紧门禁时冻结的存量",
@@ -1139,19 +1006,11 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
   },
-  "apps/gateway/src/mesh/uplink-pool.ts:orderCandidatesByNearest": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
   "apps/gateway/src/mesh/uplink-pool.ts:run": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
   },
   "apps/gateway/src/mesh/uplink-pool.ts:tryCandidate": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
-  "apps/gateway/src/mesh/uplink-pool.ts:shouldTriggerFailbackProbe": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
   },
@@ -1211,33 +1070,9 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
   },
-  "apps/gateway/src/mesh/uplink-key-log-sync.ts:pullAndApplyPages": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
-  "apps/gateway/src/mesh/uplink-key-log-sync.ts:applyCatchUpPage": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
-  "apps/gateway/src/mesh/uplink-key-log-sync.ts:pushMissingToHub": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
   "apps/gateway/src/mesh/peer-dc-upgrade.ts:maybeUpgrade": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 15
-  },
-  "apps/gateway/src/mesh/integration/multi-hub-harness.ts:bootHubA": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "lines": 87
-  },
-  "apps/gateway/src/mesh/integration/multi-hub-harness.ts:bootAbcdTopology": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "lines": 108
-  },
-  "apps/gateway/src/mesh/uplink-client.ts:runLoop": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
   },
   "apps/gateway/src/mesh/relay-status-row.ts:buildRelayStatusRow": {
     "reason": "round46 收紧门禁时冻结的存量",
@@ -1403,10 +1238,6 @@
   "apps/gateway/src/mesh/peer-ws-race.ts:raceWsSecureEndpoints": {
     "reason": "round46 收紧门禁时冻结的存量",
     "nesting": 5
-  },
-  "apps/gateway/src/mesh/uplink-peer-persist.ts:persistHubPeer": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
   },
   "apps/gateway/src/mesh/forwarder-ws-upgrade.ts:openForwardLink": {
     "reason": "round46 收紧门禁时冻结的存量",
@@ -1771,63 +1602,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "params": 8
   },
-  "apps/gateway/src/hub/hub-test-helpers.ts:signUserRecord": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "params": 6
-  },
-  "apps/gateway/src/hub/hub-authorization.ts:resolveMeshUserId": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
-  },
-  "apps/gateway/src/hub/hub-password-enroll.ts:forwardVerifiedPasswordEnroll": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "params": 6
-  },
-  "apps/gateway/src/hub/hub-password-enroll.ts:persistAcceptedPasswordEnroll": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "params": 6
-  },
-  "apps/gateway/src/hub/hub-tokens.ts:snapshotHubTokensMessages": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
-  },
-  "apps/gateway/src/hub/uplink-rtc-sessions.ts:handleRtcSignal": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
-  },
-  "apps/gateway/src/hub/uplink-auth-session.ts:logAuthRejected": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
-  "apps/gateway/src/hub/writer-forward.ts:push": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
-  },
-  "apps/gateway/src/hub/hub-runtime.ts:handleRequest": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
-  "apps/gateway/src/hub/hub-runtime.ts:verifyEnrollmentAuthorization": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
-  },
-  "apps/gateway/src/hub/hub-runtime.ts:finishRedeem": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
-  "apps/gateway/src/hub/hub-runtime.ts:redeemInTransaction": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14,
-    "lines": 85
-  },
-  "apps/gateway/src/hub/hub-peer-poller.ts:pollOne": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
-  "apps/gateway/src/hub/hub-relay.ts:validateHubRelay": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
   "apps/gateway/src/ws/viewport-policy.ts:notifyClaimants": {
     "reason": "round46 收紧门禁时冻结的存量",
     "params": 6
@@ -1908,7 +1682,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 82
   },
-
   "packages/app/src/runtime/tls-routes.ts:parseApplyMode": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
@@ -1929,7 +1702,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
   },
-
   "packages/app/src/runtime/local-routes.ts:handleLocalRequest": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 15
@@ -2301,25 +2073,9 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 87
   },
-  "packages/shared/src/uplink/codec-hub-frames.ts:parseHubWriteForwardMessage": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
-  "packages/shared/src/uplink/codec-mesh.ts:toHubWireCtl": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
   "packages/shared/src/uplink/codec-decode.ts:decodeCoreCtl": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
-  },
-  "packages/cli/src/core/nodes-hub.ts:reachOf": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
-  "packages/cli/src/core/nodes-hub.ts:isLanHost": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13
   },
   "packages/cli/src/core/term-target.ts:locatePane": {
     "reason": "round46 收紧门禁时冻结的存量",
@@ -2348,10 +2104,6 @@
   "packages/cli/src/core/transfer-copy.ts:downloadTree": {
     "reason": "round46 收紧门禁时冻结的存量",
     "params": 6
-  },
-  "packages/cli/src/core/nodes-hub-role.ts:finishRole": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "params": 8
   },
   "packages/cli/src/core/resolve.ts:parseTarget": {
     "reason": "round46 收紧门禁时冻结的存量",

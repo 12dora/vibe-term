@@ -567,7 +567,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
       const pair = pairRateLimitedChannels();
       fixtures.push({ close: pair.close });
       const left = new DataChannelLink(pair.a, {
-        peer: 'hub',
+        peer: 'peer-b',
         intervalMs: 3_000,
         timeoutMs: 10_000,
       });
@@ -655,7 +655,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
       const pair = pairRateLimitedChannels(1);
       fixtures.push({ close: pair.close });
       const left = new DataChannelLink(pair.a, {
-        peer: 'hub',
+        peer: 'peer-b',
         intervalMs: 3_000,
         timeoutMs: 10_000,
       });
@@ -759,7 +759,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
       const pair = pairRateLimitedChannels(1);
       fixtures.push({ close: pair.close });
       const left = new DataChannelLink(pair.a, {
-        peer: 'hub',
+        peer: 'peer-b',
         intervalMs: 3_000,
         timeoutMs: 10_000,
       });

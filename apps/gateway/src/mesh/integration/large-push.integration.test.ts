@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { waitUntil } from '../test-support';
 import {
   COUNT_BYTES_PATH,
   LARGE_PUSH_BYTES,
   adoptWsSecure,
-  bootHubAndLeaf,
+  bootEntryAndLeaf,
   loginEntryToLeaf,
   makeForwarder,
   repeatingBody,
 } from './large-push-harness';
-import { waitUntil } from './multi-hub-harness';
 
 describe('large raw-body push over mesh', () => {
   const fixtures: Array<{ stop: () => Promise<void> }> = [];
@@ -23,8 +23,8 @@ describe('large raw-body push over mesh', () => {
     }
   });
 
-  test('24 MiB rawBody reaches the target over the hub relay path', async () => {
-    const pair = await bootHubAndLeaf();
+  test('24 MiB rawBody reaches the target over the relay path', async () => {
+    const pair = await bootEntryAndLeaf();
     fixtures.push(pair);
     const cookie = await loginEntryToLeaf(pair);
     const forwarder = makeForwarder(pair.a.mesh);
@@ -56,7 +56,7 @@ describe('large raw-body push over mesh', () => {
   }, 60_000);
 
   test('24 MiB rawBody reaches the target over a ws-secure direct peer path', async () => {
-    const pair = await bootHubAndLeaf();
+    const pair = await bootEntryAndLeaf();
     fixtures.push(pair);
     const cookie = await loginEntryToLeaf(pair);
     adoptWsSecure(pair);

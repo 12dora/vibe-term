@@ -1,14 +1,19 @@
 import type { LocalAuthStatus } from '@vibeterm/shared';
 import type { UserRecord, UserStore } from '../auth/user-store';
-import type { HubTlsInfo, HubTlsInfoProvider } from './mesh-deps';
 
 export const AUTH_MODE_CACHE_TTL_MS = 5_000;
 
+export type AuthTlsInfo = {
+  caFingerprint: string | null;
+  caPem: string | null;
+};
+
+export type AuthTlsInfoProvider = () => AuthTlsInfo | Promise<AuthTlsInfo>;
+
 export type AuthModeSnapshot = {
-  tls: HubTlsInfo;
+  tls: AuthTlsInfo;
   localAuth: LocalAuthStatus;
   user: UserRecord | null;
-  hub: { nodeId: string | null; publicUrl: string | null };
   closed: boolean;
 };
 
@@ -53,8 +58,8 @@ export class AuthModeCache {
 }
 
 export async function loadAuthModeTls(
-  tlsInfo: HubTlsInfoProvider | undefined
-): Promise<HubTlsInfo> {
+  tlsInfo: AuthTlsInfoProvider | undefined
+): Promise<AuthTlsInfo> {
   return (await tlsInfo?.()) ?? { caFingerprint: null, caPem: null };
 }
 

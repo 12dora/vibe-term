@@ -32,6 +32,7 @@ import { createMigratedAuthDb } from '../../auth/test-db';
 import { waitUntil } from '../../mesh/test-support';
 import { encodeRedeemPopMessage } from '../redeem-pop';
 import {
+  type MeshBootOverrides,
   RELAY_TEST_PUBLIC_URL,
   type RelayKeyLogPage,
   type RelayMeshHarness,
@@ -162,7 +163,8 @@ export function primaryJoinRelay(material: JoinMaterialWire): {
 export async function joinNode(
   harness: RelayMeshHarness,
   tenant: RelayTenant,
-  label: string
+  label: string,
+  bootOpts?: MeshBootOverrides
 ): Promise<RelayMeshNode> {
   const wire = await tenant.owner.json<JoinMaterialWire>('/api/mesh/relay/join-material');
   const material = primaryJoinRelay(wire);
@@ -245,28 +247,58 @@ export async function joinNode(
     },
   });
   if (!committed.ok) throw new Error(`commitJoin failed: ${committed.error}`);
-  const store = new MeshRelayStore(db);
-  await store.replaceRelays(
-    redeemed.relays.map((url, index) => ({
-      url,
-      tenantId: material.tenantId,
-      token: decodeBase64url(material.token),
-      priority: index,
-    })),
-    now
-  );
-  await store.putSecret('log', RELAY_LOG_KEY_EPOCH, logKey, now);
-  store.setUplinkKind('relay');
-  await admitRedeemed(tenant, enrollmentId, identity.nodeIdHex);
-  const node = await harness.bootNode(label, {
-    userId: tenant.userId,
-    rootKey: tenant.rootKey,
+  return finishJoinedNode(harness, tenant, {
+    label,
     db,
     close,
+    identity,
+    enrollmentId,
+    redeemed,
+    material,
+    logKey,
+    now,
+    bootOpts,
+  });
+}
+
+async function finishJoinedNode(
+  harness: RelayMeshHarness,
+  tenant: RelayTenant,
+  input: {
+    label: string;
+    db: ReturnType<typeof createMigratedAuthDb>['db'];
+    close: () => void;
+    identity: Awaited<ReturnType<typeof ensureNodeIdentity>>;
+    enrollmentId: string;
+    redeemed: { relays: string[] };
+    material: { tenantId: string; token: string };
+    logKey: Uint8Array;
+    now: number;
+    bootOpts?: MeshBootOverrides;
+  }
+): Promise<RelayMeshNode> {
+  const store = new MeshRelayStore(input.db);
+  await store.replaceRelays(
+    input.redeemed.relays.map((url, index) => ({
+      url,
+      tenantId: input.material.tenantId,
+      token: decodeBase64url(input.material.token),
+      priority: index,
+    })),
+    input.now
+  );
+  await store.putSecret('log', RELAY_LOG_KEY_EPOCH, input.logKey, input.now);
+  store.setUplinkKind('relay');
+  await admitRedeemed(tenant, input.enrollmentId, input.identity.nodeIdHex);
+  const node = await harness.bootNode(input.label, {
+    userId: tenant.userId,
+    rootKey: tenant.rootKey,
+    db: input.db,
+    close: input.close,
+    ...input.bootOpts,
   });
   tenant.nodes.push(node);
   await waitUntil(() => node.mesh.uplink.state === 'online', 8_000);
-  // 承认与 `meta-key` 记录都在 redeem 之后才落账，加入方要靠 uplink 补齐后才有 K_meta
   await waitUntil(() => node.metaEpochs().length > 0, 8_000);
   return node;
 }

@@ -112,7 +112,6 @@ export async function relayListToNodeList(
     key_log_head: { seq: relaySeqFromWire(msg.key_log_head_seq), hash: new Uint8Array(32) },
     rtc: { stun: msg.rtc.stun, turn: msg.rtc.turn },
     nodes,
-    hubs: [],
   };
 }
 

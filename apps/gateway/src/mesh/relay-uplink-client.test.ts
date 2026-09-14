@@ -24,7 +24,6 @@ import {
   openEnvelope,
   sealEnvelope,
 } from '@vibeterm/shared/relay';
-import { HubTrustStore } from '../auth/hub-trust-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { type NodeIdentityKeys, ensureNodeIdentity } from '../auth/node-identity-service';
 import { selfSignedNodeCertificate } from '../auth/node-identity-service';
@@ -63,7 +62,6 @@ function fakeIdentity(): NodeIdentityKeys {
   return {
     nodeId,
     nodeIdHex: nodeIdToHex(nodeId),
-    hubUrl: null,
     edPrivateKey: ed.secretKey,
     edPublicKey: ed.publicKey,
     x25519PrivateKey: x.secretKey,
@@ -156,14 +154,12 @@ function pooledRelayNode(b: Awaited<ReturnType<typeof bootRelayNode>>) {
     keyLogApplier: noopApplier(2n),
     userStore: b.userStore,
     statusProvider: status,
-    hubTrust: new HubTrustStore(b.db),
     candidates: overrides.candidates,
     createClient: overrides.createClient,
     enablePeriodicRttProbe: false,
     relayDrainRecheckMs: 5,
     relayDrainTimeoutMs: 2_000,
-    isLocalCandidate: () => true,
-    async connectLocal(client, signal) {
+    wsFactory: async () => {
       const [clientWs, serverWs] = fakeSocketPair();
       const server = fakeRelayServer(
         new WebSocketLink(serverWs, { role: 'acceptor' }),
@@ -171,15 +167,13 @@ function pooledRelayNode(b: Awaited<ReturnType<typeof bootRelayNode>>) {
         servers.length === 0 ? true : undefined
       );
       servers.push(server);
-      const connecting = client.connectWithLink(
-        new WebSocketLink(clientWs, { role: 'initiator' }),
-        signal
-      );
-      server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
-      await connecting;
+      queueMicrotask(() => {
+        server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+      });
+      return clientWs;
     },
   });
-  bindRelayReconcile(b.wiring, pool, { replaceAll() {} });
+  bindRelayReconcile(b.wiring, pool);
   b.service.onApplied = (_userId, step) => b.wiring.notifyIfRelayRecord(step.record.type);
   return { pool, servers };
 }
