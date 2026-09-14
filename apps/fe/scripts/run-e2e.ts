@@ -73,8 +73,8 @@ function flagValues(args: string[], flag: string): string[] {
   return values;
 }
 
-// mesh 用例自带 hub + node，不需要 standalone gateway/vite；这里按 --project / --grep
-// 推导出两个开关交给 playwright.config.ts（见那里的注释）。
+// mesh 用例自带 relay + node A + node B，不需要 standalone gateway/vite；这里按
+// --project / --grep 推导出两个开关交给 playwright.config.ts（见那里的注释）。
 function applyMeshFlags(args: string[]): void {
   const projects = flagValues(args, '--project');
   const greps = [...flagValues(args, '--grep'), ...flagValues(args, '-g')];

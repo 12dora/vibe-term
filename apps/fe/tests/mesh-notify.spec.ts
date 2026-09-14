@@ -1,4 +1,4 @@
-// 多节点通知（汇聚）e2e：入口机（hub）声明为汇聚点（一条用户签名的 `notification-sink`
+// 多节点通知（汇聚）e2e：入口机（node A）声明为汇聚点（一条用户签名的 `notification-sink`
 // 密钥日志记录）后，远端 node 上触发的 watch 事件要在**入口机这一页**弹出 toast，并点名来源节点。
 //
 // 两页并存是刻意的：远端设备要连上才有 watch 采样，那一页停在 `/n/<B>/...`；
@@ -16,7 +16,7 @@ import {
   meshUrl,
   readMeshState,
   signInToNodeFromDevicesPage,
-} from './helpers/mesh';
+} from './helpers/mesh-e2e';
 
 let state: MeshState;
 
@@ -61,7 +61,7 @@ test('mesh: the sink toasts events forwarded from another node', async ({ page, 
       session: sessionName,
     });
 
-    // 入口机（hub）在「设置 → 通知」里声明为汇聚点。
+    // 入口机（node A）在「设置 → 通知」里声明为汇聚点。
     await page.goto(meshUrl(state, '/settings?tab=notifications'), {
       waitUntil: 'domcontentloaded',
     });
@@ -89,7 +89,7 @@ test('mesh: the sink toasts events forwarded from another node', async ({ page, 
       .poll(
         async () =>
           (await meshNotifyState(page, nodeId)).sinks.some(
-            (sink) => sink.nodeId === state.hubNodeId
+            (sink) => sink.nodeId === state.entryNodeId
           ),
         { timeout: 60_000 }
       )

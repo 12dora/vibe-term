@@ -19,7 +19,7 @@ import {
   meshUrl,
   readMeshState,
   readTerminalBuffer,
-} from './helpers/mesh';
+} from './helpers/mesh-e2e';
 
 const SCREENSHOT_DIR =
   process.env.VIBETERM_E2E_REPLAY_SHOTS ??
@@ -77,14 +77,17 @@ async function openRecipient(browser: Browser, url: string): Promise<Page> {
 }
 
 function startOwnSession(sessionName: string): void {
-  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+  spawnSync('sh', ['-c', `tmux -L ${state.entryTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
-  meshTmux(state.hubTmuxSocket, `new-session -d -x 220 -y 50 -s ${sessionName} "sh -lc 'exec sh'"`);
+  meshTmux(
+    state.entryTmuxSocket,
+    `new-session -d -x 220 -y 50 -s ${sessionName} "sh -lc 'exec sh'"`
+  );
 }
 
 function stopOwnSession(sessionName: string): void {
-  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+  spawnSync('sh', ['-c', `tmux -L ${state.entryTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
 }
@@ -100,21 +103,21 @@ function sendReplayPayload(sessionName: string): void {
   ].join('\\n');
   // `new-session -x 220 -y 50` 挡不住 attach：客户端一连上来 tmux 就把窗口改回客户端尺寸。
   // 录像宽度是这条用例的前提（窄录像走居中、宽录像走贴左），先钉死再发载荷。
-  meshTmux(state.hubTmuxSocket, `set-window-option -t ${sessionName}:0 window-size manual`);
-  meshTmux(state.hubTmuxSocket, `resize-window -t ${sessionName}:0 -x 220 -y 50`);
+  meshTmux(state.entryTmuxSocket, `set-window-option -t ${sessionName}:0 window-size manual`);
+  meshTmux(state.entryTmuxSocket, `resize-window -t ${sessionName}:0 -x 220 -y 50`);
   if (process.env.VIBETERM_E2E_REPLAY_CLAUDE === '1') {
     meshTmux(
-      state.hubTmuxSocket,
+      state.entryTmuxSocket,
       `send-keys -t ${sessionName} "printf 'REPLAY-LEFT-EDGE-1\\n'; claude" C-m`
     );
     return;
   }
   if (process.env.VIBETERM_E2E_REPLAY_TUI === '1') {
-    meshTmux(state.hubTmuxSocket, `send-keys -t ${sessionName} "sh ${TUI_PAYLOAD}" C-m`);
+    meshTmux(state.entryTmuxSocket, `send-keys -t ${sessionName} "sh ${TUI_PAYLOAD}" C-m`);
     return;
   }
   meshTmux(
-    state.hubTmuxSocket,
+    state.entryTmuxSocket,
     `send-keys -t ${sessionName} "printf '\\033[2J\\033[H${lines}\\n'" C-m`
   );
 }

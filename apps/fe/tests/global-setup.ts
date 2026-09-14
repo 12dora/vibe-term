@@ -9,7 +9,7 @@ const DEFAULT_GATEWAY_PORT = 9665;
 // （9883，旧版 healthz 无 env 字段或为 production），立即抛错中止整轮，避免改坏生产数据。
 export default async function globalSetup(_config: FullConfig): Promise<void> {
   // 只跑 mesh 时没有 standalone gateway（playwright.config 已跳过 webServer）；
-  // mesh 的两个实例由 tests/helpers/mesh-boot.ts 自己在空闲端口上拉起，端口不会撞生产。
+  // mesh 的三个实例由 tests/helpers/relay-boot.ts 自己在空闲端口上拉起，端口不会撞生产。
   if (process.env.VIBETERM_E2E_MESH_ONLY === '1') return;
 
   const gatewayPort = Number(process.env.VIBETERM_E2E_GATEWAY_PORT) || DEFAULT_GATEWAY_PORT;
