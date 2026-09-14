@@ -96,7 +96,7 @@ export function NodesManagement({
 
   const writable = relay.writable;
   const enrollWritable = relay.relayMode && writable;
-  const blockedHint = uplinkBlockedHint(t, relay.relayMode);
+  const blockedHint = uplinkBlockedHint(t);
 
   const uninstall = useNodeUninstall({ api, mode, prompt, writable }, refreshAll);
   const bulkRevoke = useBulkRevoke({
@@ -227,7 +227,7 @@ export function NodesManagement({
           onConfirm={(pending) => void confirmManually(pending.hubEnrollmentId)}
           onCancel={cancelPending}
           busyIds={engine.busyIds}
-          unconfirmedIds={engine.hubUnconfirmedIds}
+          unconfirmedIds={engine.unconfirmedIds}
           clearedIds={engine.clearedIds}
         />
 

@@ -1,6 +1,6 @@
 // 中继运营面的宿主级单例 store：`GET /api/relay/status` + `GET /api/relay/health`。
 //
-// 与 `mesh-hubs.ts` 同一套做法（模块级 store + useSyncExternalStore + 30 秒兜底轮询）。
+// 与 `mesh-relay.ts` 同一套做法（模块级 store + useSyncExternalStore + 30 秒兜底轮询）。
 // 中继没有事件流，只能定时拉；隐藏的页面跳拍由 `startPollingLoop` 统一处理。
 //
 // 这份状态还兼着**标签入口的门禁**：`relay` 角色缺席时整族路由都不存在，status 回 404，
@@ -24,7 +24,7 @@ import {
 import { errorMessage } from '@vibeterm/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
-/** 中继状态与 hub 管理面同一档：30 秒一拍。 */
+/** 中继管理面：30 秒一拍。 */
 export const RELAY_ADMIN_POLL_MS = 30_000;
 
 /**

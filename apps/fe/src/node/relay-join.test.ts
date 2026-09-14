@@ -111,7 +111,7 @@ describe('createEnrollmentOnRelay', () => {
       { url: 'https://a.example', tenantId: 'ab'.repeat(16), token: TOKEN },
     ]);
     // join 命令用第一条地址。
-    expect(created.hubPublicUrl).toBe('https://a.example');
+    expect(created.publicUrl).toBe('https://a.example');
 
     // 送到中继通道的 enroll_pk 与 join 串里的 enroll_sk 是同一对钥匙。
     const body = calls[0] as { enroll_pk: string; exp: number };
@@ -170,7 +170,7 @@ describe('createEnrollmentOnRelay 的 fan-out 结果', () => {
     expect(decodeRelayJoinToken(created.joinToken).relays).toEqual([
       { url: RELAY_A.url, tenantId: RELAY_A.tenantId, token: TOKEN },
     ]);
-    expect(created.hubPublicUrl).toBe(RELAY_A.url);
+    expect(created.publicUrl).toBe(RELAY_A.url);
   });
 
   test('accepted 的那条没带令牌时按地址回查 join-material', async () => {

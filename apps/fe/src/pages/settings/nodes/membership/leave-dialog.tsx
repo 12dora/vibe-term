@@ -44,7 +44,7 @@ export function leaveDialogTitleKey(request: LeaveDialogRequest): string {
   return TITLE_KEY[request.kind];
 }
 
-// 后果按角色分：纯 node 关心「旧 hub 上那条记录怎么办」，hub 兼节点关心「下级节点会掉线」，
+// 后果按角色分：纯 node 关心「旧成员身份怎么办」，
 // 中继兼节点还要讲清中继服务与租户是留是删。混着讲对哪一方都是谎话。
 export function leaveDialogConsequencesKey(request: LeaveDialogRequest): string {
   if (request.from === 'relay,node') {

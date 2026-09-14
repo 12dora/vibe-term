@@ -267,13 +267,10 @@ function DirectAction({
 
 export function RemoveConfirm({
   open,
-  relayMode = false,
   onConfirm,
   onCancel,
 }: {
   open: boolean;
-  /** 走中继的机器不能被告知「会话会继续经 Hub 中转」：它根本没有 Hub。 */
-  relayMode?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -289,11 +286,7 @@ export function RemoveConfirm({
       testId="local-machine-direct-remove-confirm"
       confirmTestId="local-machine-direct-remove-confirm-ok"
     >
-      {t(
-        relayMode
-          ? 'nodes.machine.directRemoveConfirm.descriptionRelay'
-          : 'nodes.machine.directRemoveConfirm.description'
-      )}
+      {t('nodes.machine.directRemoveConfirm.descriptionRelay')}
     </ConfirmDialog>
   );
 }

@@ -111,12 +111,12 @@ function PasswordStep({ uplink, index }: { uplink: JoinUplink; index: number }) 
 function TokenAdvanced({ enrollment }: { enrollment: ReturnType<typeof useJoinEnrollment> }) {
   const { t } = useTranslation();
   const { create } = enrollment;
-  const ready = create.created !== null && create.hubUrl !== null;
+  const ready = create.created !== null && create.publicUrl !== null;
   const command =
-    create.created && create.hubUrl
-      ? joinCommand(create.hubUrl, create.created.joinToken, create.created.pending.name)
+    create.created && create.publicUrl
+      ? joinCommand(create.publicUrl, create.created.joinToken, create.created.pending.name)
       : joinCommandPreview({
-          hubPublicUrl: create.hubUrl,
+          publicUrl: create.publicUrl,
           name: create.name,
           tokenPlaceholder: t(`${PREFIX}.run.tokenPlaceholder`),
           namePlaceholder: t(`${PREFIX}.run.namePlaceholder`),

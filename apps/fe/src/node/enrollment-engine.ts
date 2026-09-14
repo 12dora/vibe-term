@@ -118,9 +118,9 @@ export interface EnrollmentEngineState {
   clearedIds: string[];
   /**
    * 上级未确认、手上还留着一份可重发记录的 pending id。
-   * 投影名 `hubUnconfirmedIds` 是冻结的 legacy 名（`hubAck === false` 或 `relayAck === false`）。
+   * 语义：`hubAck === false` 或 `relayAck === false`（`hubAck` 是冻结的 legacy 响应字段名）。
    */
-  hubUnconfirmedIds: string[];
+  unconfirmedIds: string[];
   /** 已收到**有效**证书、等待签 admit 的 pending id（passkey 用户要手动点确认）。 */
   certificateReadyIds: string[];
   /** 证书判定失败的 pending id → 提示用的 i18n key。 */
@@ -134,7 +134,7 @@ const EMPTY_STATE: EnrollmentEngineState = {
   expiredIds: [],
   cancelledIds: [],
   clearedIds: [],
-  hubUnconfirmedIds: [],
+  unconfirmedIds: [],
   certificateReadyIds: [],
   invalidById: {},
 };
@@ -178,7 +178,7 @@ export function subscribeEnrollmentEngine(listener: () => void): () => void {
 }
 
 // 未确认集合是 `admit-record.ts` 的模块级 store，直接镜像进来，消费方只订阅一处。
-subscribeUnconfirmedRecords(() => commit({ hubUnconfirmedIds: listUnconfirmedRecordIds() }));
+subscribeUnconfirmedRecords(() => commit({ unconfirmedIds: listUnconfirmedRecordIds() }));
 
 // ---------------------------------------------------------------------------
 // 生效上下文

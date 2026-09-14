@@ -1249,7 +1249,7 @@ describe('直接连接', () => {
     expect(html).not.toContain('data-testid="remote-access-step-install"');
   });
 
-  test('hub / node 角色：已由节点登录保护，不再劝启用本机登录', () => {
+  test('node 角色：已由节点登录保护，不再劝启用本机登录', () => {
     const html = renderWizard('direct', { localAuth: localAuth({ supported: false }) });
     expect(html).toContain('data-testid="remote-access-direct-node"');
     expect(html).toContain('settings.remoteAccess.direct.protection.node.title');

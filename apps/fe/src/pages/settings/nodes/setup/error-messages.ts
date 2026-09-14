@@ -23,12 +23,13 @@ const DETAIL_BEARING_CODES = new Set([
 ]);
 
 /**
- * 这几个码的通用文案写的是旧 Hub 口径，中继路径必须换一套。
+ * 这几个码的通用文案是旧口径，中继路径必须换一套。
  */
 const RELAY_SPECIFIC_CODES = new Set(['join_failed', 'node_revoked', 'node_exists']);
 
 /** 中继路径优先取专用键；没有专用文案的码回落到通用键。 */
 export function setupErrorKeyFor(code: string, _uplink: SetupUplinkKind): string | null {
+  // `hub_unreachable` 是冻结的 legacy 错误码，映射到中继不可达。
   const mapped = code === 'hub_unreachable' ? 'relay_unreachable' : code;
   const base = setupErrorKey(mapped);
   if (!base) return null;

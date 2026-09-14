@@ -137,7 +137,10 @@ export function isSessionValid(
     now: number;
   }
 ): boolean {
-  if (session.uid !== input.identity.uid || session.hubNodeId !== input.identity.hubNodeId) {
+  if (session.uid !== input.identity.uid) return false;
+  // `hubNodeId` 是冻结存储字段（D4）。AuthMode 已不再下发，身份侧为 null 时跳过对拍，
+  // 否则升级前写进 sessionStorage 的旧会话会在刷新后被误清。
+  if (input.identity.hubNodeId !== null && session.hubNodeId !== input.identity.hubNodeId) {
     return false;
   }
   if (session.admitted || input.admittedByEngine) {

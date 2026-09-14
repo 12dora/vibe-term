@@ -52,7 +52,6 @@ mock.module('./https/use-tls-status', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { resetMeshHubsStateForTest } = await import('@/node/mesh-hubs');
 const { setPendingStorage, clearPendingEnrollments, addPendingEnrollment } = await import(
   '@/node/enrollment'
 );
@@ -118,11 +117,10 @@ beforeEach(() => {
     removeItem: () => undefined,
   });
   clearPendingEnrollments();
-  resetMeshHubsStateForTest();
 });
 
 describe('NodesTab standalone', () => {
-  test('渲染本机区块与开启 hub 向导，不渲染节点表', () => {
+  test('渲染本机区块与开启设置向导，不渲染节点表', () => {
     localStatus = status();
     const html = render({ ...MESH_MODE, mode: 'none' });
     expect(html).toContain('data-testid="local-machine-card"');
@@ -228,7 +226,7 @@ describe('NodesTab HTTPS 分档', () => {
     expect(html).toContain('nodes.https.title');
     expect(html).toContain('data-testid="https-mode-chooser"');
     expect(html).not.toContain('data-testid="https-node-role-hint"');
-    expect(html).not.toContain('aria-disabled="true"');
+    expect(html).not.toContain('data-testid="https-section-pending"');
   });
 });
 

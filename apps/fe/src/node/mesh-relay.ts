@@ -1,10 +1,10 @@
 // 中继（relay）链路视图：`GET /api/mesh/relay/status` 的宿主级单例 store。
 //
-// 与 `mesh-hubs.ts` 同一套做法（模块级 store + useSyncExternalStore + 30 秒兜底轮询）：
+// 模块级 store + useSyncExternalStore + 30 秒兜底轮询：
 // 这份数据是**入口级**的（永远打本机自己），放进某个 node 的 QueryClient 会在切 node 时重复拉取。
 //
-// 中继链路同样没有专属事件流：hub / 中继本身也是节点，它上下线时 `/mesh/ws` 会推 NODE_EVENT，
-// 据此立刻补一次；旧节点没有这条路由（404），此时恒为「非中继模式」，页面退化成原来的 hub 版式。
+// 中继链路没有专属事件流：中继本身也是节点，它上下线时 `/mesh/ws` 会推 NODE_EVENT，
+// 据此立刻补一次；旧节点没有这条路由（404），此时恒为「非中继模式」。
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
 import type {
@@ -26,7 +26,7 @@ import { sharedMeshEvents } from './mesh-events';
 import type { MeshEventSubscriber } from './mesh-nodes';
 import { isPrimaryRelay } from './relay-extras';
 
-/** 与 hub 集合同一档：中继链路没有专属事件流，30 秒一拍。 */
+/** 中继链路没有专属事件流，30 秒一拍。 */
 export const MESH_RELAY_POLL_MS = 30_000;
 
 /** 事件触发的补拉节流窗口：一串节点上下线事件最多换来一次 REST。 */

@@ -14,7 +14,7 @@ import type { SetupIntentRecord } from './intent';
 // 纯 relay 没有网页与本机用户，不算 mesh 成员；relay,node 的 node 部分与普通 node 同路径。
 export type MeshRole = Exclude<LocalRole, 'standalone' | 'relay'>;
 
-type SelectableRole = Exclude<LocalRole, 'hub,node'>;
+type SelectableRole = LocalRole;
 
 /** 角色的展示文案 key：本机卡片的下拉与退出对话框共用一套，别各写各的。 */
 export const ROLE_LABEL_KEY: Record<SelectableRole, string> = {

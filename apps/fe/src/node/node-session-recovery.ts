@@ -1,6 +1,6 @@
 // 每 node 请求撞上 401 `NODE_LOGIN_REQUIRED` 之后的会话自愈。
 //
-// 背景：入口站点换过 node id（`hub leave` → `relay join`）之后，浏览器手上仍留着按旧入口
+// 背景：入口站点换过 node id（离开 mesh → `relay join`）之后，浏览器手上仍留着按旧入口
 // 签发的 `vibeterm_s_<target>` cookie（兼容期仍接受旧名 `tmex_s_<target>`）。
 // 目标 node 的 via 校验不认它，一路回 401，而
 // `/api/mesh/nodes` 的 `loggedIn` 只表示「有没有这只 cookie」，门闸（`useNodeLoginGate`）

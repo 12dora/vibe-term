@@ -114,7 +114,7 @@ export function NodeNameField({
   );
 }
 
-/** Hub / 中继兼节点共用的账号三件套；id 由调用方给定，以保留各表单既有 testid。 */
+/** 中继兼节点共用的账号三件套；id 由调用方给定，以保留各表单既有 testid。 */
 export function AccountCredentialFields({
   ids,
   values,

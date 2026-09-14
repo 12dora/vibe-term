@@ -3,7 +3,6 @@
 // 无 DOM 测试环境，渲染用 react-dom/server，交互行为直接驱动对应的可订阅控制器。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
 import { resetMeshNodesStateForTest } from '@/node/mesh-nodes';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { ApiClient, type DomainAccessPolicy } from '@vibeterm/api-client';
@@ -69,7 +68,6 @@ const idleApi: DirectApi = {
 };
 
 afterEach(() => {
-  resetMeshHubsStateForTest();
   resetMeshRelayStateForTest();
   resetMeshNodesStateForTest();
 });
@@ -135,7 +133,7 @@ function renderUnknownRole(branch: 'loading' | 'loginRequired' | 'error'): strin
   );
 }
 
-/** mesh 角色下的完整状态（hub 地址齐全）。 */
+/** mesh 角色下的完整状态。 */
 function meshStatus(role: LocalRole): LocalStatusResponse {
   return {
     ...status({ installed: true, capable: true }),
@@ -399,13 +397,7 @@ describe('LocalMachineCard 的四段版式', () => {
   });
 
   test('中继角色还没接入自己的中继：连接段只有一条陈述加一个 CTA，没有 Hub 的任何说法', () => {
-    // 现网复现：后端把这台机器的 `mode` 报成 `hub`（`relays: []`），hub 候选里还有一条
-    // `http://127.0.0.1` 的占位——旧版式据此摆出「改为接入中继」和「不再连接 Hub」。
     setMeshRelayStateForTest({ mode: 'none', relays: [], loadedAt: 1 });
-    setMeshHubsStateForTest({
-      candidates: [{ publicUrl: 'http://127.0.0.1', lastError: null, lastAttemptAt: null }],
-      loadedAt: 1,
-    });
     const html = render(relayNodeStatus(), MESH_MODE);
 
     expect(html).toContain('data-testid="nodes-relay-self-entry"');
@@ -734,9 +726,8 @@ describe('describeDirectError', () => {
   });
 });
 
-describe('删除直连插件的后果按上级形态分档', () => {
-  test('hub 与中继各有一句，不再对中继节点说「经 Hub 中转」', () => {
-    expect(zhCN.translation.nodes.machine.directRemoveConfirm.description).toContain('Hub');
+describe('删除直连插件的后果', () => {
+  test('只说经中继转发，不再提 Hub', () => {
     expect(zhCN.translation.nodes.machine.directRemoveConfirm.descriptionRelay).toContain('中继');
     expect(zhCN.translation.nodes.machine.directRemoveConfirm.descriptionRelay).not.toContain(
       'Hub'

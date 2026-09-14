@@ -83,12 +83,12 @@ describe('新鲜度', () => {
 
   test('节点表签名只认影响本卡的字段：改名 / 上下线 / 增删才算变', () => {
     const base = [
-      { id: 'a', name: 'hub', online: true },
+      { id: 'a', name: 'entry', online: true },
       { id: 'b', name: 'laptop', online: false },
     ];
     expect(meshNodesSignature(base)).toBe(meshNodesSignature([...base]));
     expect(meshNodesSignature(base)).not.toBe(
-      meshNodesSignature([{ id: 'a', name: 'hub2', online: true }, base[1]!])
+      meshNodesSignature([{ id: 'a', name: 'entry2', online: true }, base[1]!])
     );
     expect(meshNodesSignature(base)).not.toBe(
       meshNodesSignature([base[0]!, { id: 'b', name: 'laptop', online: true }])

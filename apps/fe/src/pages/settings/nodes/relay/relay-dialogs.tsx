@@ -3,7 +3,7 @@
 // 接入表单单列一个「本机登录密码」输入：接入证明是根钥对 Borsh 结构的 Ed25519 签名，
 // 通行密钥给不出这种签名（plan §1.7），所以这一步没有 passkey 分支，必须当场输密码。
 
-import { isTrustedHubUrl } from '@/node/enrollment';
+import { isTrustedPublicUrl } from '@/node/enrollment';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -67,7 +67,7 @@ export function canSubmitRelayEnroll(form: {
   url: string;
   rootPassword: string;
 }): boolean {
-  return isTrustedHubUrl(form.url.trim()) && form.rootPassword.length > 0;
+  return isTrustedPublicUrl(form.url.trim()) && form.rootPassword.length > 0;
 }
 
 export function RelayEnrollDialog({ actions }: { actions: RelayActionsController }) {

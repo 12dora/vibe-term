@@ -59,7 +59,7 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
       version: event.version ?? versionOf(event.inventory) ?? node.version,
       direct_capable: event.direct_capable ?? node.direct_capable,
       name: event.name ?? node.name,
-      // 事件没带 paused（hub roster / 老壳）时保留当前旗标，避免上下线把暂停机冲回侧栏。
+      // 事件没带 paused（老壳）时保留当前旗标，避免上下线把暂停机冲回侧栏。
       paused: pick(event.paused, isMeshNodePaused(node) ? true : undefined) === true,
     } as MeshNode;
   });

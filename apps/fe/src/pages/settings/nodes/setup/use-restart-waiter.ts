@@ -1,4 +1,4 @@
-// 向导侧的重启等待：`/api/setup/hub|join` 自己会重启网关，这里只需要等，不需要再 POST 一次。
+// 向导侧的重启等待：`/api/setup/join` 自己会重启网关，这里只需要等，不需要再 POST 一次。
 // 实现全部落在共享核心 `../restart/wait-for-restart.ts`，本文件只保留向导用的状态名。
 
 import type { ApiClient } from '@vibeterm/api-client';

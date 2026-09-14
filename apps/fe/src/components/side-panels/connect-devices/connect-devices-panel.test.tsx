@@ -39,8 +39,9 @@ const { joinCommandPreview } = await import('./join-command-preview');
 
 const ORIGIN = 'http://localhost:9663';
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
+/** sessionStorage 冻结字段 `hubNodeId` 的夹具值（D4），不是 AuthMode 字段。 */
 const HUB_NODE = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
-const HUB_URL = 'https://hub.example.com';
+const PUBLIC_URL = 'https://node.example.com';
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -51,8 +52,6 @@ const MESH_MODE: AuthModeResponse = {
   passkeyAvailable: false,
   passkeysForThisOrigin: false,
   rootEpoch: 0,
-  hubNodeId: HUB_NODE,
-  hubPublicUrl: HUB_URL,
 };
 
 afterEach(() => {
@@ -450,8 +449,8 @@ describe('加入码折叠区', () => {
     expect(html).toContain('connectDevices.computer.join.token.meshDescription');
     expect(html).toContain('relay.example.com');
     expect(html).toContain(`--token ${TOKEN_KEY} --name ${NAME_KEY}`);
-    // 中继可写性还没探测成功（静态渲染不跑 effect）：按钮禁用而不是消失。
-    expect(html).toContain('disabled=""');
+    expect(html).toContain('data-testid="connect-join-generate"');
+    expect(html).not.toContain('data-testid="connect-join-generate" disabled');
   });
 
   test('已挂中继但没有可信对外地址：只给设置入口，不给生成按钮', () => {
@@ -483,39 +482,39 @@ describe('加入码折叠区', () => {
 });
 
 describe('joinCommandPreview', () => {
-  test('形状与真实命令一致：未知 hub 地址退回示例地址，节点名为空时用占位符', () => {
+  test('形状与真实命令一致：未知对外地址退回示例地址，节点名为空时用占位符', () => {
     expect(
       joinCommandPreview({
-        hubPublicUrl: null,
+        publicUrl: null,
         name: '',
         tokenPlaceholder: '<join-token>',
         namePlaceholder: '<node-name>',
       })
     ).toBe(
-      "vibeterm hub join 'https://vibeterm.example.com' --token <join-token> --name <node-name>"
+      "vibeterm relay join 'https://vibeterm.example.com' --token <join-token> --name <node-name>"
     );
   });
 
-  test('可信 hub 地址与输入的节点名实时进命令，节点名按真实命令的规则引用', () => {
+  test('可信对外地址与输入的节点名实时进命令，节点名按真实命令的规则引用', () => {
     expect(
       joinCommandPreview({
-        hubPublicUrl: HUB_URL,
+        publicUrl: PUBLIC_URL,
         name: '  my node  ',
         tokenPlaceholder: '<join-token>',
         namePlaceholder: '<node-name>',
       })
-    ).toBe(`vibeterm hub join '${HUB_URL}' --token <join-token> --name 'my node'`);
+    ).toBe(`vibeterm relay join '${PUBLIC_URL}' --token <join-token> --name 'my node'`);
   });
 
-  test('不可信的 hub 地址一律不进命令（畸形值等于命令注入）', () => {
+  test('不可信的对外地址一律不进命令（畸形值等于命令注入）', () => {
     expect(
       joinCommandPreview({
-        hubPublicUrl: 'https://hub.example; touch /tmp/pwn',
+        publicUrl: 'https://node.example; touch /tmp/pwn',
         name: 'a',
         tokenPlaceholder: '<t>',
         namePlaceholder: '<n>',
       })
-    ).toBe("vibeterm hub join 'https://vibeterm.example.com' --token <t> --name a");
+    ).toBe("vibeterm relay join 'https://vibeterm.example.com' --token <t> --name a");
   });
 });
 
@@ -549,7 +548,7 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     setEnrollmentEngineStateForTest(patch);
     const enrollment = {
       meshEnabled: true,
-      hubOnline: true,
+      uplinkWritable: true,
       session,
       engine: getEnrollmentEngineState(),
       confirmManually: () => undefined,
@@ -570,9 +569,9 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     expect(html).toContain('nodes.enrollment.confirmPending');
   });
 
-  test('relayAck 未确认：文案与按钮都换成重试（i18n key 暂沿用）', () => {
-    const html = confirmStatus({ hubUnconfirmedIds: ['e-1'] });
-    expect(html).toContain('nodes.enrollment.hubNotConfirmed');
+  test('relayAck 未确认：文案与按钮都换成重试（retryHub key 暂沿用）', () => {
+    const html = confirmStatus({ unconfirmedIds: ['e-1'] });
+    expect(html).toContain('nodes.enrollment.relayNotConfirmed');
     expect(html).toContain('nodes.enrollment.retryHub');
   });
 

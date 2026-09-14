@@ -99,7 +99,7 @@ function report(t: Translate, result: RelayFlowResult, doneKey: string): boolean
  * 整份留账。返回是否全部封上（否则调用方挂一条非阻断告警）。
  */
 /**
- * 地址没写端口时先探一遍端口再接入：enroll proof 签的是 `hubHostFromUrl(url)`（含端口），
+ * 地址没写端口时先探一遍端口再接入：enroll proof 签的是 URL 的 host（含端口），
  * 探测必须发生在 `proof-material` 之前，否则签出来的 proof 绑在错的 host 上。
  * 探不到 / 旧节点没有这条路由，一律沿用用户输入的地址，由后续步骤给出真正的失败原因。
  */

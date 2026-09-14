@@ -254,8 +254,9 @@ export function isPendingExpired(pending: PendingEnrollment, now: number): boole
 /**
  * `POST /api/auth/keylog?hub=sync` 的失败分类（B2-6 契约）。
  *
- * 服务端在确认之前**不落库**：明确拒绝 → 409 `{code:<hubError>}`，等 ack 超时 →
- * 504 `{code:'HUB_TIMEOUT'}`，两种情况本地密钥日志都没动。因此：
+ * 服务端在确认之前**不落库**：明确拒绝 → 409 `{code:<error>}`，等 ack 超时 →
+ * 504。`HUB_TIMEOUT` / `hub_timeout` / `hub_unavailable` 是冻结的 legacy 错误码
+ * （decode only），新路径用 `timeout` / `unavailable` / `uplink_down`。因此：
  *
  * - `unconfirmed`：上级只是没答应下来（不可达 / 超时）。本地 head 没动，同一份字节仍然接得上，
  *   重试**原样重发**即可。按新 head 重签一个 seq 才是危险的：entry 到了 6、对端停在 5 时，
@@ -437,13 +438,13 @@ export function requireRootPublicKey(mode: { rootPublicKey?: string | null }): U
 
 /**
  * 创建结果：`pending` 可持久化（全是公开数据），`joinToken` **只在内存**、只显示这一次。
- * `hubPublicUrl` 是 join 命令用的对外地址（字段名沿用存储/会话侧约定）。
+ * `publicUrl` 是 join 命令用的对外地址。
  */
 export interface CreatedEnrollment {
   pending: PendingEnrollment;
   /** `r3.` 中继 join 串，含私钥，绝不落盘。 */
   joinToken: string;
-  hubPublicUrl: string | null;
+  publicUrl: string | null;
 }
 
 /**

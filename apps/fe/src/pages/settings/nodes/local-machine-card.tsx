@@ -263,7 +263,6 @@ function CardDialogs({
     <>
       <RemoveConfirm
         open={mutations.confirmingRemove}
-        relayMode={uplink.relay.relayMode}
         onConfirm={mutations.confirmRemove}
         onCancel={mutations.cancelRemove}
       />

@@ -4,7 +4,6 @@
 // 那个文件继续变厚（门禁「只降不升」）。
 
 import type { RecordSigner } from '@/auth/key-log-actions';
-import { getMeshRelayState, isRelayMode } from './mesh-relay';
 
 /**
  * 证书一到就自动签 `admit-node`——只有根钥签名者可以这么干。
@@ -22,9 +21,7 @@ export function invalidCertificateKey(reason: string): string {
   return reason === 'expired' ? 'nodes.enrollment.expired' : 'nodes.enrollment.badCertSig';
 }
 
-/** 上级没确认那一条：中继模式下上级不是 Hub，说「Hub 未确认」会把人引到错的机器上。 */
+/** 上级没确认那一条：中继 fan-out 没落账（`relayAck === false`）。 */
 export function uplinkNotConfirmedKey(): string {
-  return isRelayMode(getMeshRelayState())
-    ? 'nodes.enrollment.relayNotConfirmed'
-    : 'nodes.enrollment.hubNotConfirmed';
+  return 'nodes.enrollment.relayNotConfirmed';
 }

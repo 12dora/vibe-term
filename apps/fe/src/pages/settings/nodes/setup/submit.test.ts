@@ -173,7 +173,7 @@ describe('提交前定端口', () => {
           probed: true,
         });
       }
-      return Response.json({ ok: true, hubUrl: 'x', username: 'u', direct: 'skipped' });
+      return Response.json({ ok: true, relayUrl: 'x', username: 'u', direct: 'skipped' });
     });
     return { client, calls };
   }

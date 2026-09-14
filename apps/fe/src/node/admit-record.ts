@@ -1,4 +1,4 @@
-// hub 未确认的 admit 记录：暂存、重发计划与提交。
+// 上级未确认的 admit 记录：暂存、重发计划与提交。
 //
 // 从 `enrollment.ts` 拆出来的一整块：它自成一个模块级 store（内存里的「已签好但还没被确认的
 // 字节」）加上唯一的提交入口，跟证书解析 / pending 存储没有共用状态，只借用那边的失败分类。
@@ -49,7 +49,7 @@ export function admitDisposition(result: AdmitAppend): AdmitDisposition {
 }
 
 /**
- * hub 未确认的 admit 记录。**只在内存里**（记录本身不含秘密，但也没有落盘的必要），
+ * 上级未确认的 admit 记录。**只在内存里**（记录本身不含秘密，但也没有落盘的必要），
  * 放在模块级而不是组件 state：用户切走再回来仍然要能重发同一份字节。
  */
 const unconfirmedRecords = new Map<string, SignedRecord>();

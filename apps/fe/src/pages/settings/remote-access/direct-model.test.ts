@@ -26,9 +26,9 @@ function draft(overrides: Partial<BootstrapDraft> = {}): BootstrapDraft {
 }
 
 describe('directProtection', () => {
-  test('hub / node 角色（supported=false）由节点登录保护', () => {
+  test('node 角色（supported=false）由节点登录保护', () => {
     expect(directProtection(localAuth({ supported: false }))).toBe('node');
-    // enabled / effective 在 hub/node 上恒为 false，不能让它们盖掉 node 这一档。
+    // enabled / effective 在 node 上恒为 false，不能让它们盖掉 node 这一档。
     expect(directProtection(localAuth({ supported: false, effective: false }))).toBe('node');
   });
 

@@ -94,4 +94,8 @@ describe('isSessionValid', () => {
       check({ ...admitted, admittedAt: NOW - ADMITTED_SESSION_TTL_MS - 1 }, { pendings: [] })
     ).toBe(false);
   });
+
+  test('身份侧 hubNodeId 为 null（AuthMode 已不下发）时，仍认存储里的冻结字段', () => {
+    expect(check(SESSION, { identity: { ...IDENTITY, hubNodeId: null } })).toBe(true);
+  });
 });

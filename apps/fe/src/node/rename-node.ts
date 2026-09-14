@@ -1,7 +1,7 @@
-// 中继模式下的节点改名：签一条 `rename-node` 密钥日志记录，经 `?hub=sync` 送上级。
+// 节点改名：签一条 `rename-node` 密钥日志记录，经 `?hub=sync`（冻结 legacy 查询名）送上级。
 //
-// hub 模式有 HTTP 控制面（`POST /n/<hub>/api/hub/nodes/:id/rename`），中继没有——中继是盲的，
-// 它只转发密文，不认识「节点」这个概念。因此改名与 `set-relays` / `meta-key` 同路：
+// 中继是盲的，没有节点改名的 HTTP 控制面：它只转发密文，不认识「节点」这个概念。
+// 因此改名与 `set-relays` / `meta-key` 同路：
 // 取 head → 签名 → append，整段进 key log 写锁（head 是全局的，并行会造出两条同 seq 的记录）。
 
 import { type RecordSigner, buildSignedRecord, headFromResponse } from '@/auth/key-log-actions';

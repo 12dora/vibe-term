@@ -1232,7 +1232,7 @@ describe('createResumeQueue', () => {
 describe('launchUpgradeBatch', () => {
   const rows = [
     row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
-    row({ id: 'hub', name: 'hub', version: '1.1.9' }),
+    row({ id: 'peer', name: 'peer', version: '1.1.9' }),
     row({ id: 'a', name: 'a', version: '1.1.9' }),
     row({ id: 'latest', name: 'latest', version: '1.2.0' }),
     row({ id: 'old', name: 'old', version: '1.0.0' }),
@@ -1273,7 +1273,7 @@ describe('launchUpgradeBatch', () => {
     expect(run.confirms).toHaveLength(1);
     expect(run.confirms[0]).toBe('nodes.upgrade.confirmAll:{"count":3,"version":"1.2.0"}');
     expect(run.starts).toEqual([3]);
-    expect(run.seen.map((item) => item.name)).toEqual(['hub', 'a', 'self']);
+    expect(run.seen.map((item) => item.name)).toEqual(['peer', 'a', 'self']);
   });
 
   test('批量期间每节点 toast 被静音，只留最后那条汇总', async () => {
@@ -1321,7 +1321,7 @@ describe('launchRowUpgrade', () => {
     const confirms: string[] = [];
     const seen: string[] = [];
     const started = launchRowUpgrade({
-      row: row({ id: 'hub', name: 'hub', version: '1.1.9' }),
+      row: row({ id: 'peer', name: 'peer', version: '1.1.9' }),
       latestVersion: '1.2.0',
       batchRunning: false,
       nodeRunning: false,
@@ -1345,7 +1345,7 @@ describe('launchRowUpgrade', () => {
     expect(await run.started).toBe('done');
     expect(run.confirms).toHaveLength(1);
     expect(run.confirms[0]).toContain('nodes.upgrade.confirmRemote');
-    expect(run.seen).toEqual(['hub']);
+    expect(run.seen).toEqual(['peer']);
   });
 
   test('批量正在推进：行内升级不受理，连确认框都不弹', async () => {
@@ -1503,7 +1503,7 @@ describe('批量计划的落盘与续跑', () => {
     const running = launchUpgradeBatch({
       rows: [
         row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
-        row({ id: 'hub', name: 'hub', version: '1.1.9' }),
+        row({ id: 'peer', name: 'peer', version: '1.1.9' }),
         row({ id: 'a', name: 'a', version: '1.1.9' }),
       ],
       latestVersion: '1.2.0',
@@ -1531,7 +1531,7 @@ describe('批量计划的落盘与续跑', () => {
 
     confirmUser(true);
     await flush();
-    expect(opened).toEqual([{ order: [['hub', 'a'], ['self']], version: '1.2.0' }]);
+    expect(opened).toEqual([{ order: [['peer', 'a'], ['self']], version: '1.2.0' }]);
     expect(loadBatchPlan('self', NOW)).not.toBeNull();
 
     finishRuns();
@@ -1547,7 +1547,7 @@ describe('批量计划的落盘与续跑', () => {
     const running = launchUpgradeBatch({
       rows: [
         row({ id: 'a', name: 'a', version: '1.1.9' }),
-        row({ id: 'hub', name: 'hub', version: '1.1.9' }),
+        row({ id: 'peer', name: 'peer', version: '1.1.9' }),
       ],
       latestVersion: '1.2.0',
       rowRunning: false,
@@ -1580,10 +1580,10 @@ describe('批量计划的落盘与续跑', () => {
       row({ id: 'a', name: 'a', version: '1.1.9' }),
       row({ id: 'b', name: 'b', version: '1.1.9' }),
       row({ id: 'c', name: 'c', version: '1.1.9' }),
-      row({ id: 'hub', name: 'hub', version: '1.1.9' }),
+      row({ id: 'd', name: 'd', version: '1.1.9' }),
       row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
     ];
-    const { plan, sink } = sinkFor([['a', 'b', 'c'], ['hub'], ['self']], '1.2.0', [
+    const { plan, sink } = sinkFor([['a', 'b', 'c'], ['d'], ['self']], '1.2.0', [
       { nodeId: 'a', outcome: 'done' },
     ]);
     const rec = recorder();
@@ -1612,7 +1612,7 @@ describe('批量计划的落盘与续跑', () => {
     });
 
     await flush();
-    // 上一次已经跑完的 a 不再重发；同组的 c 立刻补上，hub / self 仍要等这一组收尾
+    // 上一次已经跑完的 a 不再重发；同组的 c 立刻补上，d / self 仍要等这一组收尾
     expect(starts).toEqual([[5, 1]]);
     expect(posted).toEqual(['c']);
     expect(rec.log).toEqual([['info', 'nodes.upgrade.allResumed']]);
@@ -1623,11 +1623,11 @@ describe('批量计划的落盘与续跑', () => {
 
     release.get('b')?.('done');
     await flush();
-    expect(posted).toEqual(['c', 'hub']);
+    expect(posted).toEqual(['c', 'd']);
 
-    release.get('hub')?.('done');
+    release.get('d')?.('done');
     await flush();
-    expect(posted).toEqual(['c', 'hub', 'self']);
+    expect(posted).toEqual(['c', 'd', 'self']);
 
     release.get('self')?.('done');
     const summary = await done;
@@ -1644,20 +1644,20 @@ describe('批量计划的落盘与续跑', () => {
       ['success', 'nodes.upgrade.allDone:{"success":5,"failed":0}'],
     ]);
     // 落定顺序即写入顺序：c 先于 b 收尾
-    expect(sink.plan().done.map((item) => item.nodeId)).toEqual(['a', 'c', 'b', 'hub', 'self']);
+    expect(sink.plan().done.map((item) => item.nodeId)).toEqual(['a', 'c', 'b', 'd', 'self']);
     expect(loadBatchPlan('self', NOW)).toBeNull();
   });
 
   test('本机在刷新前就升完了：不再发 POST，按已是最新计成功', async () => {
-    const { plan, sink } = sinkFor([['hub'], ['self']], '1.2.0', [
-      { nodeId: 'hub', outcome: 'done' },
+    const { plan, sink } = sinkFor([['peer'], ['self']], '1.2.0', [
+      { nodeId: 'peer', outcome: 'done' },
     ]);
     const rec = recorder();
     const posted: string[] = [];
     const summary = await resumeUpgradeBatch({
       plan,
       rows: [
-        row({ id: 'hub', name: 'hub', version: '1.2.0' }),
+        row({ id: 'peer', name: 'peer', version: '1.2.0' }),
         // 本机重启回来，版本已经对上：这次批量对它已经收尾
         row({ id: 'self', name: 'self', isSelf: true, version: '1.2.0' }),
       ],

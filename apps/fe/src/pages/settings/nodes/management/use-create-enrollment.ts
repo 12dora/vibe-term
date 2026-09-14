@@ -132,14 +132,14 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
 }
 
 /**
- * join 命令里的对外地址：enrollment 创建响应的 `publicUrl` / `hubPublicUrl`（W2-F1 过渡期两名并存），
- * 或调用方给出的中继地址。两者都没有、或值不是可信 https URL 就不生成命令：
- * 它会被原样拼进一条让用户粘贴执行的 shell 命令，畸形值等于命令注入（见 F4-fix 评审 Major）。
+ * join 命令里的对外地址：enrollment 创建响应的 `publicUrl`，或调用方给出的中继地址。
+ * 两者都没有、或值不是可信 https URL 就不生成命令：它会被原样拼进一条让用户粘贴执行的
+ * shell 命令，畸形值等于命令注入（见 F4-fix 评审 Major）。
  */
 export function resolvePublicUrl(
-  created: { publicUrl?: string | null; hubPublicUrl?: string | null } | null,
+  created: { publicUrl?: string | null } | null,
   fallbackUrl?: string | null
 ): string | null {
-  const url = created?.publicUrl ?? created?.hubPublicUrl ?? fallbackUrl ?? null;
+  const url = created?.publicUrl ?? fallbackUrl ?? null;
   return isTrustedPublicUrl(url) ? url : null;
 }

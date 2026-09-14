@@ -37,7 +37,7 @@ export interface JoinEnrollment {
   /** 本机是否已加入多节点互联；否则不能在此生成加入码。 */
   meshEnabled: boolean;
   /** 上级管理面是否可用：看本机有没有挂上可写中继。 */
-  hubOnline: boolean;
+  uplinkWritable: boolean;
   create: CreateEnrollmentState;
   /** 本次面板会话创建的那条 enrollment；只跟踪它，不展示全局待确认列表。 */
   session: JoinSession | null;
@@ -150,7 +150,7 @@ export function useJoinEnrollment(): JoinEnrollment {
 
   return {
     meshEnabled: ctx.meshEnabled,
-    hubOnline: relay.writable,
+    uplinkWritable: relay.writable,
     create,
     session,
     engine,

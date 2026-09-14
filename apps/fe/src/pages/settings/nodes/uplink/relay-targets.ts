@@ -69,10 +69,6 @@ export function relayActionMenu(relays: RelayLinkStatus[]): RelayMenuAction[] {
 }
 
 /** 上级不可写时的那一句。 */
-export function uplinkBlockedHint(
-  t: (key: string) => string,
-  _relayMode?: boolean,
-  _writesBlocked?: boolean
-): string {
+export function uplinkBlockedHint(t: (key: string) => string): string {
   return t('relay.tenant.notAttached');
 }
