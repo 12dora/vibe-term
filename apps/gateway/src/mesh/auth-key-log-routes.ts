@@ -1,10 +1,9 @@
 import { type KeyLogEffect, encodeBase64url } from '@vibeterm/shared/auth';
-import { FORCE_KEYLOG_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { logAuthSessionRevokes } from './auth-audit-log';
 import { type KeyLogAppendPlan, planKeyLogAppend, readKeyLogAppend } from './auth-key-log-plan';
 import { AuthKeyLogSync } from './auth-key-log-sync';
 import type { AuthRoutesDeps } from './auth-routes';
-import { applyForcedKeyLogCompat, inspectKeyLogRecordCompat } from './key-log-compat';
+import { inspectKeyLogRecordCompat } from './key-log-compat';
 import { exemptMetaKeyLaggingNodes, metaKeyLaggingIdsFor } from './relay-meta-lag';
 import { jsonBody, jsonError } from './session-middleware';
 
@@ -53,7 +52,7 @@ export class AuthKeyLogRoutes {
   private async appendKeyLog(
     req: Request,
     userId: string,
-    record: { bytes: Uint8Array; sig: Uint8Array; force: boolean }
+    record: { bytes: Uint8Array; sig: Uint8Array }
   ): Promise<Response> {
     const relayMode = this.inRelayMode(userId);
     const plan = planKeyLogAppend({ relayMode, bytes: record.bytes });
@@ -168,13 +167,10 @@ export class AuthKeyLogRoutes {
     }
     const relayMode = this.inRelayMode(userId);
     const compat = exemptMetaKeyLaggingNodes(
-      applyForcedKeyLogCompat(
-        inspectKeyLogRecordCompat(this.deps.userStore, bytes, userId, {
-          relayMode,
-          localNodeId: this.deps.nodeId,
-        }),
-        readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1'
-      ),
+      inspectKeyLogRecordCompat(this.deps.userStore, bytes, userId, {
+        relayMode,
+        localNodeId: this.deps.nodeId,
+      }),
       bytes,
       relayMode ? () => this.metaKeyLaggingIds(userId) : null
     );

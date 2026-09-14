@@ -83,7 +83,6 @@ beforeEach(() => {
     originSources: {
       localNodeId: () => 'node-1',
       siteUrl: () => 'https://site.example.com',
-      siteUrlManaged: () => false,
       tunnelUrl: () => null,
       baseUrl: () => null,
       uplinkKind: () => 'none',

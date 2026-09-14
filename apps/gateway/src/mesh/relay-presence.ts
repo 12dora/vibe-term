@@ -7,7 +7,7 @@ import type {
 } from './relay-presence-types';
 import { normalizeUplinkEndpointUrl } from './uplink-pool-url';
 
-/** 与 hub presence 相同的 90 s 陈旧窗口：uplink 掉了之后仍把该中继上的对端视为在线。 */
+/** 90 s 陈旧窗口：uplink 掉了之后仍把该中继上的对端视为在线。 */
 export const RELAY_PRESENCE_STALE_MS = 90_000;
 
 export type RelayPresencePeerInput = {

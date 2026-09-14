@@ -84,10 +84,7 @@ async function setup(opts?: {
   const uplink: RelayUplinkView = {
     liveClient: () => live,
     attachedUplink: () => ({
-      uplinkNodeId: null,
       publicUrl: current,
-      mode: 'active',
-      writerEpoch: 0,
       since: 1,
     }),
     reconfigure: async () => {},
@@ -259,10 +256,7 @@ describe('RelayAutoSelect', () => {
         uplink: {
           liveClient: () => live,
           attachedUplink: () => ({
-            uplinkNodeId: null,
             publicUrl: current,
-            mode: 'active',
-            writerEpoch: 0,
             since: 1,
           }),
           reconfigure: async () => {},

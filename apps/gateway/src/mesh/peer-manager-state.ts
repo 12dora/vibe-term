@@ -60,7 +60,7 @@ export type PeerManagerState = {
   readonly scheduler: MeshScheduler;
   readonly live: Map<string, LivePeer>;
   readonly parked: Map<string, ParkedInbound>;
-  /** 多中继同时挂载时由 relay wiring 注入；缺省（单中继/hub 模式）为 undefined。 */
+  /** 多中继同时挂载时由 relay wiring 注入；单中继时为 undefined。 */
   relayPresence?: RelayPresenceIndex;
   relayOpener?: RelayStreamOpener;
   readonly retiring: Map<string, Set<LivePeer>>;

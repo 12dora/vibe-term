@@ -76,7 +76,6 @@ describe('readmit-node 版本门禁', () => {
       if (!blocked.ok) {
         expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
         expect(blocked.minVersion).toBe(MIN_READMIT_NODE_RECORD_VERSION);
-        expect(blocked.allowForce).toBe(false);
         expect(blocked.nodes).toEqual([{ id: PEER, name: 'old', version: '1.1.24' }]);
       }
     } finally {

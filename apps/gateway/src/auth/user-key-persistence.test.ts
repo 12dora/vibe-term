@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  AdmitHubPayloadSchema,
   type KeyLogRecord,
+  RetireHubPayloadSchema,
   type UserKeyState,
+  buildKeyLogRecord,
   createEnrollment,
   createNodeCertificate,
   emptyUserKeyState,
   encodeAddPasskeyPayload,
   encodeAdmitNodePayload,
   encodeBase64url,
+  encodeKeyLogRecord,
   encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
   generateEd25519KeyPair,
@@ -16,9 +20,10 @@ import {
   hexToBytes,
   nodeIdToHex,
   rootKeyFromSeed,
+  signKeyLogRecordWithRoot,
 } from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
-import { nodeIdentity } from '../db/schema';
+import { nodeIdentity, userKeyLog } from '../db/schema';
 import { KeyLogStore } from './key-log-store';
 import { NodeSessionStore } from './node-session-store';
 import { createMigratedAuthDb } from './test-db';
@@ -31,6 +36,7 @@ import {
   persistEncryptedIdentity,
   wipeUserDerivedState,
 } from './user-key-persistence';
+import { UserKeyService } from './user-key-service';
 import { UserStore } from './user-store';
 
 function openStores(db: ReturnType<typeof createMigratedAuthDb>['db']) {
@@ -579,6 +585,74 @@ describe('user-key-persistence', () => {
       expect(row?.certificateBytes).toEqual(cert.certificateBytes);
       expect(row?.certSig).toEqual(cert.certSig);
       expect(stores.userStore.getNode(nodeId)?.name).toBe('studio');
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('legacy hub records replay on an upgraded gateway', () => {
+  test('admit-hub / retire-hub apply as no-ops and project into user_key_log', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      const keyLogStore = new KeyLogStore(db);
+      const svc = new UserKeyService({
+        db,
+        userStore,
+        keyLogStore,
+        nodeSessionStore: new NodeSessionStore(db),
+      });
+      const boot = await svc.bootstrapUser({ username: 'alice', password: 'vibeterm-test' });
+      const uid = boot.userId;
+      const append = async (type: 'admit-hub' | 'retire-hub', payload: Uint8Array) => {
+        const state = svc.currentState(uid);
+        const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+          uid,
+          type,
+          payload,
+          signer: 'root',
+          credential_id: null,
+        });
+        const bytes = encodeKeyLogRecord(record);
+        return svc.apply(uid, { bytes, sig: signKeyLogRecordWithRoot(boot.rootKey, bytes) });
+      };
+      const admitted = await append(
+        'admit-hub',
+        AdmitHubPayloadSchema.serialize({
+          hub_node_id: new Uint8Array(16).fill(1),
+          public_url: 'https://old-hub.example',
+          priority: 100,
+        })
+      );
+      const retired = await append(
+        'retire-hub',
+        RetireHubPayloadSchema.serialize({
+          hub_node_id: new Uint8Array(16).fill(1),
+        })
+      );
+      expect(admitted.ok).toBe(true);
+      expect(retired.ok).toBe(true);
+      if (admitted.ok) expect(admitted.effects).toEqual([]);
+      if (retired.ok) expect(retired.effects).toEqual([]);
+      expect(svc.currentState(uid).head.seq).toBe(3n);
+      const rows = db
+        .select({
+          seq: userKeyLog.seq,
+          type: userKeyLog.type,
+          payloadJson: userKeyLog.payloadJson,
+        })
+        .from(userKeyLog)
+        .orderBy(userKeyLog.seq)
+        .all();
+      expect(rows.map((row) => row.type)).toEqual(['reset-root', 'admit-hub', 'retire-hub']);
+      expect(JSON.parse(rows[1]?.payloadJson ?? '{}')).toMatchObject({
+        public_url: 'https://old-hub.example',
+        priority: 100,
+      });
+      expect(JSON.parse(rows[2]?.payloadJson ?? '{}')).toMatchObject({
+        hub_node_id: encodeBase64url(new Uint8Array(16).fill(1)),
+      });
     } finally {
       close();
     }

@@ -325,12 +325,12 @@ export function collectUplinkPathTargets(
 
 export function startUplinkPathSamplingFromCandidates(
   scheduler: MeshScheduler,
-  hub: { candidates(): ReadonlyArray<{ publicUrl: string }> },
+  pool: { candidates(): ReadonlyArray<{ publicUrl: string }> },
   relay?: { secrets: { relayRows(): ReadonlyArray<{ url: string }> } }
 ): UplinkPathSampler | null {
   return startUplinkPathSampling({
     scheduler,
-    targets: () => collectUplinkPathTargets(hub.candidates(), relay?.secrets.relayRows() ?? []),
+    targets: () => collectUplinkPathTargets(pool.candidates(), relay?.secrets.relayRows() ?? []),
   });
 }
 

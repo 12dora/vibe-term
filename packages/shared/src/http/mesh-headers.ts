@@ -32,7 +32,6 @@ export const CLEAR_SHARE_HEADER = headerPair('clear-share');
 export const VIA_HEADER = headerPair('via');
 export const RELAY_TOKEN_HEADER = headerPair('relay-token');
 export const RELAY_ADMIN_TOKEN_HEADER = headerPair('relay-admin-token');
-export const FORCE_KEYLOG_HEADER = headerPair('force-keylog');
 export const GATEWAY_CHALLENGE_HEADER = headerPair('gateway-challenge');
 export const FORWARDED_BY_HEADER = headerPair('forwarded-by');
 

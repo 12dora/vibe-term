@@ -29,6 +29,7 @@ import { type NodeIdentityKeys, ensureNodeIdentity } from '../auth/node-identity
 import { selfSignedNodeCertificate } from '../auth/node-identity-service';
 import { NodeIdentityStore } from '../auth/node-identity-store';
 import { NodeSessionStore } from '../auth/node-session-store';
+import { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
@@ -154,6 +155,7 @@ function pooledRelayNode(b: Awaited<ReturnType<typeof bootRelayNode>>) {
     keyLogApplier: noopApplier(2n),
     userStore: b.userStore,
     statusProvider: status,
+    caPins: new RelayCaPinStore(b.db),
     candidates: overrides.candidates,
     createClient: overrides.createClient,
     enablePeriodicRttProbe: false,

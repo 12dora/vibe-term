@@ -94,7 +94,7 @@ export type RelayUplinkClientOptions = {
 
 /**
  * 中继上行客户端；对 `UplinkPool` 暴露与 `UplinkClient` 相同的公开面
- * （`PooledUplinkClient`），内部把 hub 的明文控制面换成 `relay/v1` 密文协议。
+ * （`PooledUplinkClient`），内部走 `relay/v1` 密文协议。
  */
 export class RelayUplinkClient implements RelayUplinkCtlHost {
   readonly identity: MeshIdentity;
@@ -315,7 +315,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     this.loop = null;
   }
 
-  /** 与 hub 客户端同签名；这里把 hub 控制面消息翻译成 relay/v1。 */
+  /** 与池客户端同签名；这里把控制面消息翻译成 relay/v1。 */
   sendCtl(msg: UplinkCtlMessage): void {
     if (msg.t === 'rtc.signal') {
       void emitRelayRtcSignal(msg, this.opts.secrets, (out) => this.rawSend(out));

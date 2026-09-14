@@ -21,8 +21,10 @@ export const ACCESS_EXEMPT_EXACT_PATHS = [
 /** 只做 origin 守卫豁免、不建 Cloudflare bypass app 的前缀。 */
 export const ACCESS_EXEMPT_PATH_PREFIXES = ['/api/relay/tenants/'] as const;
 
-/** Cloudflare path app 的 domain 后缀（更具体路径优先）。旧 `/hub/` 路径已删除。 */
+/** Cloudflare path app 的 domain 后缀（更具体路径优先）。已不再新建 bypass 应用。 */
 export const ACCESS_BYPASS_PATH_PREFIXES: readonly string[] = [];
+/** 2.4.x 建过的 bypass 应用；只用于同步/拆除时回收，不再新建。 */
+export const ACCESS_LEGACY_BYPASS_PATH_PREFIXES = ['/hub/', '/api/hub/'] as const;
 
 // 新建 Cloudflare Access 资源用的名字。改名前建的资源仍叫 tmex*，读侧一律双接受：
 // 认成「我们管理的」才能就地改写，否则会被当成用户手工加的策略而拒绝同步。

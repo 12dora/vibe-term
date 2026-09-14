@@ -46,7 +46,6 @@ function siteOriginSources(): ShareOriginSources {
   return {
     localNodeId: () => 'node-1',
     siteUrl: () => 'https://site.example.com',
-    siteUrlManaged: () => false,
     tunnelUrl: () => 'https://tunnel.example.com',
     baseUrl: () => 'http://127.0.0.1:9663',
     uplinkKind: () => 'none',
@@ -60,7 +59,6 @@ function relayOriginSources(): ShareOriginSources {
   return {
     localNodeId: () => 'node-1',
     siteUrl: () => 'https://tunnel.example.com',
-    siteUrlManaged: () => false,
     tunnelUrl: () => 'https://tunnel.example.com',
     baseUrl: () => null,
     uplinkKind: () => 'relay',

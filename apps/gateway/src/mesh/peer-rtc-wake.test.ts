@@ -198,7 +198,6 @@ describe('RtcWakeGate peerInitiated flag', () => {
       rtcInbox: () => new Map(),
       hasDcInflight: () => false,
       sendPeerCtl: () => undefined,
-      ensureDcSession: null,
       uplinkSendCtl: () => undefined,
     } as unknown as RtcWakePorts;
     const gate = new RtcWakeGate(ports);

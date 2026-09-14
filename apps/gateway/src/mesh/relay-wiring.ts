@@ -221,7 +221,6 @@ export function relayUplinkOverrides(
                 uplinkNodeId: null,
                 publicUrl: row.url,
                 priority: row.priority,
-                caFingerprint: null,
               }) satisfies UplinkCandidate
           )
         : [],
@@ -327,7 +326,7 @@ export function bindRelayAutoSelect(input: {
   const auto = new RelayAutoSelect(autoSelectDeps(input));
   bound.autoSelect = auto;
   wrapAttachLifecycle(input.attach, auto);
-  input.uplink.onAttached((hub) => auto.noteAttached(hub.publicUrl));
+  input.uplink.onAttached((uplink) => auto.noteAttached(uplink.publicUrl));
   input.uplink.onStateChange((state) => auto.onStateChange(state));
   input.attach.opener.onSlotState(() => auto.onStateChange());
 }

@@ -41,7 +41,6 @@ function sources(overrides: Partial<ShareOriginSources> = {}): ShareOriginSource
   return {
     localNodeId: () => 'node-a',
     siteUrl: () => null,
-    siteUrlManaged: () => false,
     tunnelUrl: () => null,
     baseUrl: () => null,
     uplinkKind: () => 'none',
@@ -135,24 +134,10 @@ describe('buildShareOriginContext', () => {
     expect(context.candidates.map((item) => item.kind)).toEqual(['tunnel']);
   });
 
-  test('站点 URL 由运行时托管时不作为 site 候选', () => {
-    const context = buildShareOriginContext(
-      sources({
-        siteUrl: () => 'https://relay.example.com/n/node-a',
-        siteUrlManaged: () => true,
-        uplinkKind: () => 'relay',
-        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
-        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
-      })
-    );
-    expect(context.candidates.map((item) => item.kind)).toEqual(['relay']);
-  });
-
   test('站点 URL 等于中继 accessUrl 时不重复产出 site 候选', () => {
     const context = buildShareOriginContext(
       sources({
         siteUrl: () => 'https://relay.example.com/n/node-a',
-        siteUrlManaged: () => false,
         uplinkKind: () => 'relay',
         relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
         relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),
@@ -176,7 +161,6 @@ describe('buildShareOriginContext', () => {
     const context = buildShareOriginContext(
       sources({
         siteUrl: () => 'https://mine.example.com',
-        siteUrlManaged: () => false,
         uplinkKind: () => 'relay',
         relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
         relayProbe: () => fakeProbe({ 'https://relay.example.com': 'ok' }),

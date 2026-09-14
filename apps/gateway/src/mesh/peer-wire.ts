@@ -76,7 +76,6 @@ type WireCtx = {
   scheduler: MeshScheduler;
   rtcListeners: Map<string, Set<(msg: RtcSignalMessage) => void>>;
   dispatchHttp: () => import('./types').DispatchHttp | undefined;
-  ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
   hooks: PeerWireHooks;
   parts: PeerCollaborators;
 };
@@ -133,7 +132,6 @@ function wireRtcWake(ctx: WireCtx): void {
     rtcInbox: () => state.rtcInbox,
     hasDcInflight: (nodeId) => parts.dialer.hasDcInflight(nodeId),
     sendPeerCtl: (live, payload) => sendPeerCtlQuiet(live as LivePeer, payload),
-    ensureDcSession: ctx.ensureDcSession,
     uplinkSendCtl: (payload) => state.uplink.sendCtl(payload),
   });
 }
@@ -276,7 +274,6 @@ export function createPeerCollaborators(input: {
   scheduler: MeshScheduler;
   rtcListeners: Map<string, Set<(msg: RtcSignalMessage) => void>>;
   dispatchHttp: () => import('./types').DispatchHttp | undefined;
-  ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
   hooks: PeerWireHooks;
 }): PeerCollaborators {
   const ctx: WireCtx = { ...input, parts: {} as PeerCollaborators };

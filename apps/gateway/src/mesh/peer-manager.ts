@@ -85,7 +85,6 @@ export class PeerManager extends PeerCollaboratorHost {
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
   private readonly rtcInbox: Map<string, RtcSignalInboxEntry[]>;
   private readonly onBrowserSignal: ((msg: RtcSignalMessage, fromNodeId?: string) => void) | null;
-  private readonly ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
   private readonly server: PeerServer | null;
   private dispatchHttp?: DispatchHttp;
   protected readonly dcUpgrade: DcUpgradeCoordinator;
@@ -107,7 +106,6 @@ export class PeerManager extends PeerCollaboratorHost {
     this.identity = opts.identity;
     this.rtcInbox = this.state.rtcInbox;
     this.onBrowserSignal = opts.onBrowserSignal ?? null;
-    this.ensureDcSession = opts.ensureDcSession ?? null;
     this.dispatchHttp = opts.dispatchHttp;
     const uplinkHost = opts.uplinkHost;
     this.uplinkHostOf = typeof uplinkHost === 'function' ? uplinkHost : () => uplinkHost ?? null;
@@ -118,7 +116,6 @@ export class PeerManager extends PeerCollaboratorHost {
       scheduler,
       rtcListeners: this.rtcListeners,
       dispatchHttp: () => this.dispatchHttp,
-      ensureDcSession: this.ensureDcSession,
       hooks: this.wireHooks(),
     });
     this.routes = parts.routes;

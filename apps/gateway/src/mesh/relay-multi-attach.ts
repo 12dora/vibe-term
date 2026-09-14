@@ -132,7 +132,7 @@ export function createRelayMultiAttach(input: {
         void opener.reconcile();
         return;
       }
-      // path-rerace 等瞬态非 online：live 仍挂同一 hub 时不要把花名册 connected 打掉。
+      // path-rerace 等瞬态非 online：live 仍挂同一中继时不要把花名册 connected 打掉。
       const live = input.uplink.liveClient();
       const attached = input.uplink.attachedUplink()?.publicUrl;
       if (live?.state === 'online' && attached && sameUplinkUrl(attached, url)) {
@@ -287,12 +287,12 @@ function bindPrimaryLifecycle(input: {
   isLive: () => boolean;
   scheduleDecay: (url: string) => void;
 }): void {
-  input.uplink.onAttached((hub) => {
+  input.uplink.onAttached((uplink) => {
     if (!input.isLive()) return;
-    input.presence.setPrimary(hub.publicUrl);
+    input.presence.setPrimary(uplink.publicUrl);
     const live = input.uplink.liveClient() as RelayUplinkClient | null;
     input.presence.setConnected(
-      hub.publicUrl,
+      uplink.publicUrl,
       true,
       live && 'rttMs' in live ? live.rttMs : null,
       input.scheduler.now()

@@ -6,7 +6,6 @@ import {
   rankShareOrigins,
 } from '@vibeterm/shared/share';
 import { asc, eq } from 'drizzle-orm';
-import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';
 import { getStoredSiteSettings } from '../db';
 import { getDb as getOrmDb } from '../db/client';
@@ -40,8 +39,6 @@ export type ShareOriginProbe = {
 export type ShareOriginSources = {
   localNodeId(): string | null;
   siteUrl(): string | null;
-  /** 站点 URL 由运行时托管：此时存储值只是历史残留，不作为候选。 */
-  siteUrlManaged(): boolean;
   tunnelUrl(): string | null;
   baseUrl(): string | null;
   uplinkKind(): 'relay' | 'none';
@@ -76,14 +73,6 @@ function readSiteUrl(): string | null {
     return getStoredSiteSettings().siteUrl || null;
   } catch {
     return null;
-  }
-}
-
-function readSiteUrlManaged(): boolean {
-  try {
-    return getSiteSettingsLinkProvider().siteUrlManaged();
-  } catch {
-    return false;
   }
 }
 
@@ -173,7 +162,6 @@ function defaultRelayProbe(): RelayEntryProbe {
 export const defaultShareOriginSources: ShareOriginSources = {
   localNodeId: readLocalNodeId,
   siteUrl: readSiteUrl,
-  siteUrlManaged: readSiteUrlManaged,
   tunnelUrl: readTunnelUrl,
   baseUrl: () => config.baseUrl || null,
   uplinkKind: readUplinkKind,
@@ -294,9 +282,8 @@ function collectRaw(sources: ShareOriginSources): RawCandidate[] {
   const base = sources.baseUrl();
   if (base && isIpHost(base)) raw.push({ url: base, kind: 'ip', prefix: null, listed: true });
 
-  // 站点是否让路看会上榜的 infra origin，而不是库里的原始行：探测没过 / 当前不是中继上联时，
-  // 那些中继行根本不会出现在候选里，不能把用户自己的站点 URL 一起抹掉。
-  if (shouldOfferSite(site, sources.siteUrlManaged(), listedOriginsOf(raw))) {
+  // 站点 URL 按存储值原样给出（含从 hub 升级残留的地址）；与已上榜 origin 重复时才让路。
+  if (shouldOfferSite(site, listedOriginsOf(raw))) {
     raw.push({ url: site, kind: 'site', prefix: null, listed: true });
   }
   return raw;

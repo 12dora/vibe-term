@@ -679,15 +679,12 @@ describe('signer matrix', () => {
     expect(KEYLOG_RECORD_COMPAT['rotate-root-keep']?.minVersion).toBe(
       MIN_ROTATE_ROOT_KEEP_RECORD_VERSION
     );
-    expect(KEYLOG_RECORD_COMPAT['rotate-root-keep']?.allowForce).toBe(false);
     expect(KEYLOG_RECORD_COMPAT['rename-node']).toEqual({
       minVersion: MIN_RENAME_NODE_RECORD_VERSION,
-      allowForce: false,
     });
     expect(MIN_RENAME_NODE_RECORD_VERSION).toBe('1.1.24');
     expect(KEYLOG_RECORD_COMPAT['readmit-node']).toEqual({
       minVersion: MIN_READMIT_NODE_RECORD_VERSION,
-      allowForce: false,
       failClosedUncached: true,
     });
     expect(MIN_READMIT_NODE_RECORD_VERSION).toBe('1.1.26');

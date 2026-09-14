@@ -198,14 +198,6 @@ export class MeshRelayStore {
       .run();
   }
 
-  markRelayUplink(): void {
-    this.setUplinkKind('relay');
-  }
-
-  resetUplinkKind(): void {
-    this.setUplinkKind('none');
-  }
-
   localName(): string | null {
     const row = this.db
       .select()

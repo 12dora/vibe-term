@@ -57,7 +57,6 @@ export type PeerManagerOptions = {
   ) => boolean | undefined;
   onGatewaySessionClose?: (session: GatewaySession, close?: GatewaySessionClose) => void;
   onBrowserSignal?: (msg: RtcSignalMessage, fromNodeId?: string) => void;
-  ensureDcSession?: (peerNodeId: string, rtcSession: string) => void;
   onLinkInfo?: (info: {
     nodeId: string;
     reach: PeerReach;

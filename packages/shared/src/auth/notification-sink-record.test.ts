@@ -124,7 +124,6 @@ describe('notification-sink record', () => {
     // 旧节点解不开这条记录，写进去等于把它的密钥日志同步卡死。
     expect(KEYLOG_RECORD_COMPAT['notification-sink']).toEqual({
       minVersion: MIN_NOTIFICATION_SINK_RECORD_VERSION,
-      allowForce: false,
       failClosedUncached: true,
     });
     expect(MIN_NOTIFICATION_SINK_RECORD_VERSION).toBe('1.1.39');

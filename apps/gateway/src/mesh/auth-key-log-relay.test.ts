@@ -296,10 +296,7 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
 
   test('(c) hub → 中继迁移：set-relays 不发给旧 hub，也不受 attached-writer 判定阻挡', async () => {
     const attached: AttachedUplink = {
-      uplinkNodeId: 'cc'.repeat(16),
       publicUrl: 'https://hub.example',
-      mode: 'active',
-      writerEpoch: 1,
       since: 1,
     };
     const b = await boot({ publisher: livePublisher(), attachedUplink: () => attached });
@@ -323,10 +320,7 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
 
   test('中继模式下普通记录不再被 HUB_NOT_WRITER 挡住，并尽力推给中继', async () => {
     const attached: AttachedUplink = {
-      uplinkNodeId: null,
       publicUrl: RELAY_URL,
-      mode: 'active',
-      writerEpoch: 0,
       since: 1,
     };
     const b = await boot({ publisher: livePublisher(), attachedUplink: () => attached });

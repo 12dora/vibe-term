@@ -1,5 +1,4 @@
 import { RELAY_RECORD_TYPES, decodeBase64url, decodeKeyLogRecord } from '@vibeterm/shared/auth';
-import { FORCE_KEYLOG_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 
@@ -38,7 +37,7 @@ export function planKeyLogAppend(input: {
 
 export async function readKeyLogAppend(
   req: Request
-): Promise<{ bytes: Uint8Array; sig: Uint8Array; force: boolean } | null> {
+): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null> {
   const body = await readJsonObjectBody(req);
   const fields = body && requiredStrings(body, ['bytes', 'sig']);
   if (!fields) return null;
@@ -46,7 +45,6 @@ export async function readKeyLogAppend(
     return {
       bytes: decodeBase64url(fields.bytes),
       sig: decodeBase64url(fields.sig),
-      force: readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1',
     };
   } catch {
     return null;

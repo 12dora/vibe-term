@@ -272,10 +272,7 @@ describe('RelayRoutes', () => {
       uplink: {
         liveClient: () => client,
         attachedUplink: () => ({
-          uplinkNodeId: null,
           publicUrl: canonicalPublicUrl(RELAY_URL),
-          mode: 'active',
-          writerEpoch: 0,
           since: 1,
         }),
       },
@@ -320,10 +317,7 @@ describe('RelayRoutes', () => {
     const b = await boot({
       uplink: {
         attachedUplink: () => ({
-          uplinkNodeId: null,
           publicUrl: url,
-          mode: 'active',
-          writerEpoch: 0,
           since: 1,
         }),
         liveClient: () => ({ lastConnectError: { reason: 'bad-token', at: 99 } }) as never,
@@ -1222,10 +1216,7 @@ describe('POST /api/mesh/relay/switch', () => {
       state: 'online',
     };
     let attached = {
-      uplinkNodeId: null as string | null,
       publicUrl: url,
-      mode: 'active' as const,
-      writerEpoch: 0,
       since: 1,
     };
     const b = await boot({
@@ -1292,10 +1283,7 @@ describe('POST /api/mesh/relay/switch', () => {
     const b = await boot({
       uplink: {
         attachedUplink: () => ({
-          uplinkNodeId: null,
           publicUrl: url,
-          mode: 'active',
-          writerEpoch: 0,
           since: 1,
         }),
         liveClient: () => ({ state: 'online', lastConnectError: null }) as never,
@@ -1341,10 +1329,7 @@ describe('POST /api/mesh/relay/switch', () => {
   test('超时未提交则 502 且不写入首选', async () => {
     const original = canonicalPublicUrl(RELAY_URL);
     const attached = {
-      uplinkNodeId: null as string | null,
       publicUrl: original,
-      mode: 'active' as const,
-      writerEpoch: 0,
       since: 1,
     };
     const live: { state: 'online' | 'offline' } | null = { state: 'online' };
@@ -1388,10 +1373,7 @@ describe('POST /api/mesh/relay/switch', () => {
   test('提交成功后调用超时仍记首选', async () => {
     const url2 = canonicalPublicUrl(RELAY_URL_2);
     let attached = {
-      uplinkNodeId: null as string | null,
       publicUrl: canonicalPublicUrl(RELAY_URL),
-      mode: 'active' as const,
-      writerEpoch: 0,
       since: 1,
     };
     let live: { state: 'online' | 'offline' } | null = { state: 'online' };
@@ -1436,10 +1418,7 @@ describe('POST /api/mesh/relay/switch', () => {
     const b = await boot({
       uplink: {
         attachedUplink: () => ({
-          uplinkNodeId: null,
           publicUrl: attachedUrl,
-          mode: 'active' as const,
-          writerEpoch: 0,
           since: 1,
         }),
         liveClient: () => live as never,
@@ -1489,10 +1468,7 @@ describe('POST /api/mesh/relay/unpin', () => {
     const b = await boot({
       uplink: {
         attachedUplink: () => ({
-          uplinkNodeId: null,
           publicUrl: attachedUrl,
-          mode: 'active',
-          writerEpoch: 0,
           since: 1,
         }),
         liveClient: () => ({ state: 'online', lastConnectError: null }) as never,

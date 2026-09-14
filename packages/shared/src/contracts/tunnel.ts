@@ -109,7 +109,7 @@ export interface TunnelAccessStatus {
   enforceJwt: boolean;
   /** 校验实际生效：configured && enforceJwt && hostname 与当前隧道主机名一致 */
   effective: boolean;
-  /** 为中继 / 机器端点建的 bypass 应用 id（无则 null） */
+  /** 历史 bypass 应用 id（机制已退役，仅同步/拆除时回收；无则 null） */
   bypassAppId: string | null;
   /** 最近一次 Access API 错误（脱敏） */
   lastError: string | null;
@@ -265,7 +265,8 @@ export type TunnelActionRequest =
   /**
    * 为主机名创建/更新 Access 应用与 allow 策略；异步 job kind = 'access'。
    * `hostname` 缺省取 config.hostname（mode=off 时可传向导里已确认的主机名，先于建隧道配置 Access）。
-   * 会同时为中继 / 机器端点建 bypass 应用，避免节点 uplink / 加入被 Access 拦截。
+   * bypass 应用机制已退役：不再新建，只回收 2.4.x 遗留项。机器路径靠 origin 守卫豁免
+   * （`ACCESS_EXEMPT_EXACT_PATHS` / `ACCESS_EXEMPT_PATH_PREFIXES`）。
    */
   | { action: 'configure_access'; rules: TunnelAccessPolicyRule[]; hostname?: string }
   /**

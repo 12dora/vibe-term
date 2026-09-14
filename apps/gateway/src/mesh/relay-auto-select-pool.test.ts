@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { orderRelaysByPreferred } from './relay-preferred';
@@ -208,10 +209,7 @@ function cand(row: { url: string; priority: number }): UplinkCandidate {
   return {
     uplinkNodeId: null,
     publicUrl: row.url,
-    mode: 'active',
-    writerEpoch: 0,
     priority: row.priority,
-    caFingerprint: null,
   };
 }
 
@@ -243,6 +241,7 @@ describe('autoPreferred vs probePreferred ping-pong', () => {
       userId: 'user-1',
       keyLogApplier: dummyApplier(),
       userStore,
+      caPins: new RelayCaPinStore(db),
       statusProvider: () => ({
         version: '1',
         tmux: false,

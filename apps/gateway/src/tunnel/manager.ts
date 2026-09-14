@@ -2,26 +2,27 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { errorMessage } from '@vibeterm/shared';
-import type {
-  TunnelAccessMode,
-  TunnelAccessStatus,
-  TunnelActionRequest,
-  TunnelActionResponse,
-  TunnelBinaryStatus,
-  TunnelConnectorStatus,
-  TunnelEdgeResolution,
-  TunnelErrorResponse,
-  TunnelJobKind,
-  TunnelJobStatus,
-  TunnelMode,
-  TunnelProcessState,
-  TunnelStatusResponse,
+import {
+  type TunnelAccessMode,
+  type TunnelAccessStatus,
+  type TunnelActionRequest,
+  type TunnelActionResponse,
+  type TunnelBinaryStatus,
+  type TunnelConnectorStatus,
+  type TunnelEdgeResolution,
+  type TunnelErrorResponse,
+  type TunnelJobKind,
+  type TunnelJobStatus,
+  type TunnelMode,
+  type TunnelProcessState,
+  type TunnelStatusResponse,
+  errorMessage,
 } from '@vibeterm/shared';
 import { PROCESS_STARTED_AT } from '../api/system-routes';
 import { config, originUrlFromBindHost } from '../config';
 import { getDb as getOrmDb } from '../db/client';
 import { defaultLoginEnforced } from '../db/local-auth-settings';
+import { reapBypassApps, syncBypassAppIds } from './access-bypass';
 import { CloudflareAccessClient, type TunnelFetch, sanitizeAccessMessage } from './access-client';
 import { setAccessGuardSource, setAccessJwtVerifier } from './access-guard';
 import { AccessJwtVerifier } from './access-jwt';
@@ -1077,16 +1078,14 @@ export class TunnelManager {
         : await this.accessClient.createApp(accountId, apiToken, hostname);
       step('policy');
       await this.accessClient.replaceAllowPolicy(accountId, apiToken, app.id, rules);
-      let bypassAppIds: string[] = [];
-      if (this.hasMeshRole) {
-        step('bypass_app');
-        bypassAppIds = await this.accessClient.upsertBypassApps(
-          accountId,
-          apiToken,
-          hostname,
-          current.bypassAppIds
-        );
-      }
+      const bypassAppIds = await syncBypassAppIds(this.accessClient, {
+        accountId,
+        apiToken,
+        hostname,
+        step,
+        currentIds: current.bypassAppIds,
+        hasMeshRole: this.hasMeshRole,
+      });
       step('verify');
       const verified = await this.accessClient.getApp(accountId, apiToken, app.id);
       const verifiedPolicies = await this.accessClient.listPolicies(
@@ -1127,13 +1126,15 @@ export class TunnelManager {
     step('delete_app');
     const row = this.accessStore.get();
     const apiToken = await this.accessStore.getApiToken();
-    if (row.appId && apiToken && row.accountId) {
-      await this.accessClient.deleteApp(row.accountId, apiToken, row.appId);
-    }
     if (apiToken && row.accountId) {
-      for (const id of row.bypassAppIds) {
-        await this.accessClient.deleteApp(row.accountId, apiToken, id);
-      }
+      if (row.appId) await this.accessClient.deleteApp(row.accountId, apiToken, row.appId);
+      await reapBypassApps(
+        this.accessClient,
+        row.accountId,
+        apiToken,
+        row.hostname,
+        row.bypassAppIds
+      );
     }
     await this.accessStore.save({
       appId: null,
@@ -1145,7 +1146,6 @@ export class TunnelManager {
       lastError: null,
     });
   }
-
   private async jobSyncAccess(step: (name: string) => void, hostnameRaw?: string): Promise<void> {
     step('sync');
     const apiToken = await this.accessStore.getApiToken();

@@ -79,7 +79,7 @@ export class AuthKeyLogSync {
     try {
       return await publishAndAck(record);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'hub_error';
+      const message = err instanceof Error ? err.message : 'relay_error';
       return { ok: false, error: message === 'timeout' ? 'timeout' : message };
     }
   }
