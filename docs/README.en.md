@@ -60,7 +60,7 @@ VibeTerm links Macs, Linux servers, NAS boxes, and cloud VMs into one network. E
 
 <table width="100%">
   <tr><th width="50%">Standalone</th><th width="50%">Relay mode</th></tr>
-  <tr><td valign="top">Install on one device and use it; binds to localhost by default.</td><td valign="top">Without any public address, route ciphertext through a self-run or third-party relay; one relay can serve many users. The relay only ever sees ciphertext; nodes can also connect to each other directly. Sign in from any of the tenant's own nodes.</td></tr>
+  <tr><td valign="top">Install on one device and use it; binds to localhost by default.</td><td valign="top">Without any public address, route ciphertext through a self-run or third-party relay; one relay can serve many users. (The relay node is untrusted in this mode.)</td></tr>
 </table>
 
 <p align="center">
