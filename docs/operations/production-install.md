@@ -2,7 +2,7 @@
 
 本文是单机生产部署手册：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份恢复与基础排障；面向部署 VibeTerm 的运维。生产安装走 GitHub Releases 的 `vibeterm-cli` 包（launchd / systemd 用户服务 + SQLite）。多机 mesh、登录、passkey / TOTP、直连与排障见 [mesh 运维](./mesh-operations.md)。
 
-VibeTerm 没有 JWT、管理员密码或 OIDC：standalone 无应用层登录；加入 hub 后的身份是用户自持根钥。
+VibeTerm 没有 JWT、管理员密码或 OIDC：standalone 无应用层登录；加入 mesh 后的身份是用户自持根钥。
 
 ## 环境要求
 
@@ -18,13 +18,13 @@ VibeTerm 没有 JWT、管理员密码或 OIDC：standalone 无应用层登录；
 curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
 ```
 
-默认角色 `standalone`（单机、无登录页）。要做公网入口：
+默认角色 `standalone`（单机、无登录页）。要做公网中继入口：
 
 ```bash
-vibeterm init --role hub,node
+vibeterm init --role relay --relay-public-url https://<中继域名>
 ```
 
-随后 `hub user add`、`enroll`、各机 `hub join` 的完整步骤在运维指南。
+或 `relay,node`（中继兼本机设备）。随后 `vibeterm user add`、`vibeterm relay enroll` / `vibeterm relay join` 的完整步骤在运维指南。角色只能是 `standalone` | `node` | `relay` | `relay,node`。
 
 `init` 会：
 
@@ -94,7 +94,7 @@ CLI 安装且 `canSelfUpdate` 时，设置页「版本与更新」可在程序�
 
 ## SSH 设备配置
 
-加入 hub 之后，每台 node 内部仍是原来的 `local` / `ssh` 设备。在设备管理里添加 SSH 远程设备：
+加入 mesh 之后，每台 node 内部仍是原来的 `local` / `ssh` 设备。在设备管理里添加 SSH 远程设备：
 
 ### 密码认证
 
@@ -134,7 +134,7 @@ cp ~/.local/share/vibeterm/app.env ./backup/
 systemctl --user start vibeterm.service
 ```
 
-恢复时必须同时放回对应的 `VIBETERM_MASTER_KEY`。不要把测试库拷进生产目录。mesh 节点身份在库内，只恢复单机库不会自动出现在其它入口，需保持各机备份一致或重新 `hub join`。
+恢复时必须同时放回对应的 `VIBETERM_MASTER_KEY`。不要把测试库拷进生产目录。mesh 节点身份在库内，只恢复单机库不会自动出现在其它入口，需保持各机备份一致或重新 `vibeterm relay join`。
 
 ## 故障排查
 
@@ -152,7 +152,7 @@ journalctl --user -u vibeterm.service -n 200 --no-pager
 
 1. 默认只绑 `127.0.0.1`，远程访问需要改 `VIBETERM_BIND_HOST` 或走 Tunnel。
 2. 防火墙 / 安全组是否放行你实际暴露的端口（本机 9883 通常不必对公网开放）。
-3. 反代是否升级 WebSocket（`/ws`、`/n/:id/ws`、`/mesh/ws`、`/hub/uplink`）。
+3. 反代是否升级 WebSocket（`/ws`、`/n/:id/ws`、`/mesh/ws`、`/relay/uplink`）。
 
 ### WebSocket 立刻断开
 

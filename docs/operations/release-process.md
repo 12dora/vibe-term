@@ -123,8 +123,8 @@ git push origin "v<newVersion>"
 
 因此 workflow 在 `npm pack` 之后多跑一步 `scripts/release/build-legacy-asset.ts`：解包新 tarball、把 `package.json.name` 改回 `tmex-cli`、重新打成 `tmex-cli-<version>.tgz`（内容与新资产等价，`bin/tmex.js` 与 `bin/vibeterm.js` 都在包里）。两个资产都写进同一份 `SHA256SUMS`，由同一把 `r1` 私钥签一次。
 
-- **新代码读侧双接受**：下载、校验、解包都同时认 `vibeterm-cli|tmex-cli` 两种资产名与包名；hub 向旧节点推包时选旧资产名。
-- **移除条件**：确认全网节点均 ≥ 2.0.0（`vibeterm hub list` / 中继租户列表逐台核对版本）之后的某个版本，删掉 `build-legacy-asset.ts` 与 workflow 里的对应步骤，`SHA256SUMS` 回到一行。删除前不要动，否则老节点会静默停在旧版本。
+- **新代码读侧双接受**：下载、校验、解包都同时认 `vibeterm-cli|tmex-cli` 两种资产名与包名；入口向旧节点推包时选旧资产名。
+- **移除条件**：确认全网节点均 ≥ 2.0.0（`vibeterm nodes ls` / 中继租户列表逐台核对版本）之后的某个版本，删掉 `build-legacy-asset.ts` 与 workflow 里的对应步骤，`SHA256SUMS` 回到一行。删除前不要动，否则老节点会静默停在旧版本。
 
 ### 5. 发布后验证
 

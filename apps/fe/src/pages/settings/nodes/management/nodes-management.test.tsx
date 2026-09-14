@@ -1,14 +1,9 @@
-// 节点管理主体的静态渲染：单张卡片、表格列与合并结果、hub 离线时管理动作禁用。
+// 节点管理主体的静态渲染：单张卡片、表格列与合并结果。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 nodes-tab 测试同一套做法）。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type {
-  AuthModeResponse,
-  HubEndpointInfo,
-  MeshHubEndpoint,
-  MeshNode,
-} from '@vibeterm/api-client/auth/index';
+import type { AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
 import type { UpgradeStatus } from '@vibeterm/shared';
 import { encodeBase64url } from '@vibeterm/shared/auth';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
@@ -20,7 +15,6 @@ import type {
   NodeUpgradeController,
   NodeUpgradeEntry,
 } from './types';
-import type { HubRoleSwitchController } from './use-hub-role-switch';
 import type {
   UpgradeIo,
   UpgradePollOutcome,
@@ -33,7 +27,6 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
 const { resetMeshRelayStateForTest } = await import('@/node/mesh-relay');
 const { useLocalUplinkController } = await import('../uplink/local-uplink-controller');
 const { actionErrorText } = await import('./errors');
@@ -51,7 +44,7 @@ const {
 const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
   '@/node/enrollment-engine'
 );
-const { resolveHubPublicUrl } = await import('./enrollment-section');
+const { resolvePublicUrl } = await import('./enrollment-section');
 const {
   createUninstallIo,
   isUninstalling,
@@ -61,12 +54,8 @@ const {
   uninstallSummaryText,
 } = await import('./use-node-uninstall');
 const { UninstallDialogBody } = await import('./uninstall-dialog');
-const { HubRoleDialogBody, HubRoleForceBody, HubRoleRecoveryBody } = await import(
-  './hub-role-dialog'
-);
 const { NodesTable } = await import('./nodes-table');
 const { NodeMoreMenuList } = await import('./node-more-menu');
-const { hubRoleButtonState, planHubRoleSwitch } = await import('./use-hub-role-switch');
 const { IDLE_UPGRADE_ENTRY, IDLE_UPGRADE_BATCH } = await import('./types');
 const {
   classifyPollFailure,
@@ -139,7 +128,6 @@ function render(mode: AuthModeResponse): string {
 beforeEach(() => {
   resetEnrollmentEngineForTest();
   resetMeshNodesStateForTest();
-  resetMeshHubsStateForTest();
   resetMeshRelayStateForTest();
   setPendingStorage({
     getItem: () => null,
@@ -209,7 +197,7 @@ describe('NodesManagement', () => {
     expect(html).not.toContain('data-testid="nodes-account-security"');
   });
 
-  test('hub 不可达时管理动作禁用（提示行已挪到本机卡）', () => {
+  test('未挂中继时加入码禁用（提示行已挪到本机卡）；key-log 吊销仍可用', () => {
     setMeshNodesStateForTest({
       entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
       nodes: [meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true })],
@@ -217,16 +205,12 @@ describe('NodesManagement', () => {
     const html = render(MODE);
     expect(html).not.toContain('data-testid="nodes-hub-offline"');
     expect(html).toMatch(/data-testid="nodes-add"[^>]*disabled/);
-    expect(html).toMatch(
-      /data-testid="nodes-revoke-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"[^>]*disabled/
-    );
-    // 「更多」不跟 hub 绑定：详情里的只读信息与域名访问都不经 hub 控制面
     expect(buttonTag(html, 'node-more-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).not.toContain(
       'disabled=""'
     );
   });
 
-  test('升级按钮不跟 hub 在线绑定：hub 离线时本机与已登录的在线远端仍可升级', () => {
+  test('升级按钮不跟上联可写绑定：未挂中继时本机与已登录的在线远端仍可升级', () => {
     setMeshNodesStateForTest({
       entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
       nodes: [
@@ -240,17 +224,12 @@ describe('NodesManagement', () => {
       ],
     });
     const html = render(MODE);
-    // hub 离线时 revoke 被禁用，但升级按钮照常可用
-    expect(buttonTag(html, 'nodes-revoke-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).toContain(
-      'disabled=""'
-    );
     expect(buttonTag(html, 'node-upgrade-0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e')).not.toContain(
       'disabled=""'
     );
     expect(buttonTag(html, 'node-upgrade-0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d')).not.toContain(
       'disabled=""'
     );
-    // 每行都是静止态
     expect(html).toContain('data-upgrade-phase="idle"');
   });
 
@@ -327,14 +306,13 @@ describe('NodesManagement', () => {
     expect(header).toContain('aria-label="nodes.selection.selectAll"');
   });
 
-  test('合并后地址列：hub publicUrl 与直连 peerAddress', () => {
-    const hub = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  test('合并后地址列：直连 peerAddress', () => {
     const peer = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
     const entry = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
     setMeshNodesStateForTest({
       entryNodeId: entry,
       nodes: [
-        meshNode({ id: entry, name: 'entry', loggedIn: true, isHub: true, hubMode: 'active' }),
+        meshNode({ id: entry, name: 'entry', loggedIn: true }),
         meshNode({
           id: peer,
           name: 'studio',
@@ -342,126 +320,23 @@ describe('NodesManagement', () => {
           transport: 'dc',
           peerAddress: '10.0.0.8',
         }),
-        meshNode({ id: hub, name: 'tokyo', loggedIn: true, isHub: true, hubMode: 'standby' }),
       ],
-    });
-    setMeshHubsStateForTest({
-      hubs: [
-        {
-          nodeId: entry,
-          publicUrl: 'https://home.example',
-          mode: 'active',
-          priority: 0,
-          writerEpoch: 1,
-          online: true,
-        },
-        {
-          nodeId: hub,
-          publicUrl: 'https://tokyo.example:8443',
-          mode: 'standby',
-          priority: 1,
-          writerEpoch: 0,
-          online: true,
-        },
-      ],
-      writerHubId: entry,
-      loadedAt: 1,
     });
     const html = render(MODE);
     expect(html).toContain(`data-testid="nodes-address-${entry}"`);
-    expect(html).toContain('home.example');
     expect(html).toContain('10.0.0.8');
-    expect(html).toContain('tokyo.example:8443');
   });
 });
 
-describe('standby 拒写与表内 hub 徽标', () => {
-  const HUB_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
-  const HUB_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
-  const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
-
-  function hubInfo(overrides: Partial<HubEndpointInfo> & { nodeId: string }): HubEndpointInfo {
-    return {
-      publicUrl: `https://${overrides.nodeId}.example`,
-      mode: 'active',
-      priority: 0,
-      writerEpoch: 1,
-      online: true,
-      ...overrides,
-    };
-  }
-
-  function withNodes(extra: MeshNode[] = []): void {
-    setMeshNodesStateForTest({
-      entryNodeId: ENTRY,
-      nodes: [meshNode({ id: ENTRY, name: 'entry', loggedIn: true }), ...extra],
-    });
-  }
-
-  test('挂在备用 hub 上：禁用加入 / 移除，升级不受影响（说明行在本机卡）', () => {
-    withNodes([meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' })]);
-    setMeshHubsStateForTest({
-      hubs: [hubInfo({ nodeId: HUB_A }), hubInfo({ nodeId: HUB_B, mode: 'standby' })],
-      writerHubId: HUB_A,
-      attached: {
-        hubNodeId: HUB_B,
-        publicUrl: `https://${HUB_B}.example`,
-        mode: 'standby',
-        writerEpoch: 0,
-        since: 1,
-      },
-      loadedAt: 1,
-    });
-    const html = render(MODE);
-    // 上级链路的两条说明都搬到了本机卡，管理页只留「动作被禁用 + 原因写进 title」
-    expect(html).not.toContain('data-testid="nodes-hub-standby"');
-    expect(html).not.toContain('data-testid="nodes-hub-offline"');
-    expect(buttonTag(html, 'nodes-add')).toContain('disabled=""');
-    expect(buttonTag(html, 'nodes-add')).toContain('title="nodes.hubs.standbyNotice"');
-    expect(buttonTag(html, `nodes-revoke-${HUB_B}`)).toContain('title="nodes.hubs.standbyNotice"');
-    expect(buttonTag(html, `nodes-revoke-${HUB_B}`)).toContain('disabled=""');
-    expect(buttonTag(html, `node-upgrade-${ENTRY}`)).not.toContain('disabled=""');
-  });
-
-  test('表内 hub 徽标区分主 / 备；旧后端不下发 hubMode 时仍是「Hub」', () => {
-    withNodes([
-      meshNode({ id: HUB_A, name: 'tokyo', isHub: true, hubMode: 'active' }),
-      meshNode({ id: HUB_B, name: 'osaka', isHub: true, hubMode: 'standby' }),
-    ]);
-    const html = render(MODE);
-    expect(html).toContain(`data-testid="nodes-hub-tag-${HUB_A}" data-hub-mode="active"`);
-    expect(html).toContain(`data-testid="nodes-hub-tag-${HUB_B}" data-hub-mode="standby"`);
-    expect(html).toContain('nodes.hubs.active');
-    expect(html).toContain('nodes.hubs.standby');
-
-    withNodes([meshNode({ id: HUB_A, name: 'tokyo', isHub: true })]);
-    const legacy = render(MODE);
-    expect(legacy).toContain(`data-testid="nodes-hub-tag-${HUB_A}" data-hub-mode=""`);
-    expect(legacy).toContain('nodes.hub');
-  });
-});
-
-describe('actionErrorText 的 HUB_NOT_WRITER', () => {
+describe('actionErrorText', () => {
   const t = (key: string, options?: Record<string, unknown>) =>
     options ? `${key}:${JSON.stringify(options)}` : key;
 
-  test('知道 writer 地址时把地址写进提示', () => {
-    const text = actionErrorText(t, { code: 'HUB_NOT_WRITER' }, { writerPublicUrl: 'https://w' });
-    expect(text).toBe('nodes.hubs.notWriter:{"url":"https://w"}');
-  });
-
-  test('不知道 writer 地址时退回不带地址的那句', () => {
-    expect(actionErrorText(t, { code: 'HUB_NOT_WRITER' })).toContain('auth.errors.HUB_NOT_WRITER');
-  });
-
   test('其余带 code 的错误照旧走错误表', () => {
-    expect(actionErrorText(t, { code: 'MALFORMED' }, { writerPublicUrl: 'https://w' })).toContain(
-      'auth.errors.MALFORMED'
-    );
+    expect(actionErrorText(t, { code: 'MALFORMED' })).toContain('auth.errors.MALFORMED');
   });
 
   test('中继 fan-out 全败：网关的 502 与本地判定给同一句提示', () => {
-    // 真实契约走的是网关这一条（`apps/gateway/src/mesh/relay-routes.ts` 的 502）。
     expect(actionErrorText(t, { code: 'RELAY_ENROLL_FANOUT_FAILED' })).toBe(
       'nodes.enrollment.relayNoneAccepted'
     );
@@ -487,7 +362,6 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       loggedIn: true,
       inventory: null,
       isSelf: false,
-      isHub: false,
       lastSeenAt: null,
       status: null,
       certificate: null,
@@ -540,26 +414,6 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     };
   }
 
-  function roleSwitchController(
-    overrides: Partial<HubRoleSwitchController> = {}
-  ): HubRoleSwitchController {
-    return {
-      switchingIds: new Set<string>(),
-      running: false,
-      plan: null,
-      force: null,
-      recovery: null,
-      phase: null,
-      request: () => undefined,
-      confirm: () => undefined,
-      dismiss: () => undefined,
-      resolveForce: () => undefined,
-      resolveRecovery: () => undefined,
-      stateOf: () => ({ intent: 'promote', plan: null, blocked: 'unknownHub' }),
-      ...overrides,
-    };
-  }
-
   function renderTable(
     rows: NodeRow[],
     latestVersion: string | null,
@@ -567,16 +421,12 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     extra: {
       selection?: NodeSelection;
       uninstall?: NodeUninstallController;
-      roleSwitch?: HubRoleSwitchController;
       deps?: Partial<NodeActionDeps>;
     } = {}
   ): string {
     const deps: NodeActionDeps = {
-      hubApi: null,
-      hubOnline: true,
-      hubWritable: true,
-      writerPublicUrl: null,
-      hubDetails: new Map(),
+      enrollmentApi: null,
+      uplinkWritable: true,
       mode: {
         ...MODE,
         uid: 'user-1',
@@ -594,7 +444,6 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
           rows={rows}
           selection={extra.selection ?? selection()}
           uninstall={extra.uninstall ?? uninstallController()}
-          roleSwitch={extra.roleSwitch ?? roleSwitchController()}
           {...deps}
         />
       </MemoryRouter>
@@ -782,17 +631,15 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(offline).toContain('>—</span>');
   });
 
-  test('address 优先级：hub URL、直连、广告 endpoint、中继', () => {
+  test('address 优先级：直连、广告 endpoint、中继', () => {
     const html = renderTable(
       [
-        nodeRow({ id: 'hub', isHub: true, address: 'tokyo.example' }),
         nodeRow({ id: 'dc', address: '10.0.0.8' }),
         nodeRow({ id: 'adv', address: 'edge.example:39001' }),
         nodeRow({ id: 'rel', address: 'sh.example' }),
       ],
       '1.2.0'
     );
-    expect(html).toContain('>tokyo.example</code>');
     expect(html).toContain('>10.0.0.8</code>');
     expect(html).toContain('>edge.example:39001</code>');
     expect(html).toContain('>sh.example</code>');
@@ -892,168 +739,6 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(header).toContain('aria-label="nodes.selection.clearAll"');
     expect(elementTag(selected, 'nodes-select-ww')).toContain('data-checked');
   });
-
-  // hub 徽标旁的「切换」按钮：按钮态全部由 `hubRoleButtonState` 算，这里只验渲染与禁用原因。
-  const HUB_X = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
-  const HUB_A = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
-
-  function hubEndpoint(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
-    return {
-      publicUrl: `https://${overrides.nodeId}.example`,
-      mode: 'standby',
-      priority: 0,
-      writerEpoch: 3,
-      online: true,
-      authorization: 'signed',
-      ...overrides,
-    };
-  }
-
-  function renderHubRow(p: {
-    rows: NodeRow[];
-    hubs: MeshHubEndpoint[];
-    writerHubId: string | null;
-    hubWritable?: boolean;
-    switching?: boolean;
-    switchingIds?: ReadonlySet<string>;
-  }): string {
-    return renderTable(
-      p.rows,
-      '1.2.0',
-      {},
-      {
-        roleSwitch: roleSwitchController({
-          running: p.switching ?? false,
-          switchingIds: p.switchingIds ?? new Set<string>(),
-          stateOf: (row, rowBusy) =>
-            hubRoleButtonState({
-              row,
-              hubs: p.hubs,
-              writerHubId: p.writerHubId,
-              hubWritable: p.hubWritable ?? true,
-              switching: p.switching ?? false,
-              rowBusy,
-            }),
-        }),
-      }
-    );
-  }
-
-  test('备 Hub 一行：按钮写「设为主 Hub」且可点', () => {
-    const html = renderHubRow({
-      rows: [nodeRow({ id: HUB_X, isHub: true, hubMode: 'standby' })],
-      hubs: [hubEndpoint({ nodeId: HUB_X }), hubEndpoint({ nodeId: HUB_A, mode: 'active' })],
-      writerHubId: HUB_A,
-    });
-    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
-    expect(tag).toContain('data-role-intent="promote"');
-    expect(tag).not.toContain('disabled=""');
-    expect(tag).toContain('aria-label="nodes.hubs.role.promote"');
-  });
-
-  test('当前写者一行：按钮翻成「设为备 Hub」', () => {
-    const html = renderHubRow({
-      rows: [nodeRow({ id: HUB_A, isHub: true, hubMode: 'active' })],
-      hubs: [hubEndpoint({ nodeId: HUB_A, mode: 'active' }), hubEndpoint({ nodeId: HUB_X })],
-      writerHubId: HUB_A,
-    });
-    const tag = buttonTag(html, `nodes-hub-role-${HUB_A}`);
-    expect(tag).toContain('data-role-intent="demote"');
-    expect(tag).toContain('aria-label="nodes.hubs.role.demote"');
-    expect(tag).not.toContain('disabled=""');
-  });
-
-  test('旧后端不下发 authorization：按钮禁用并说明入口版本过低', () => {
-    const html = renderHubRow({
-      rows: [nodeRow({ id: HUB_X, isHub: true })],
-      hubs: [hubEndpoint({ nodeId: HUB_X, authorization: undefined })],
-      writerHubId: null,
-    });
-    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.hubs.role.blocked.unknownAuth"');
-  });
-
-  test('hub 集合里没有这一行：按钮禁用（集合还没拉到）', () => {
-    const html = renderHubRow({
-      rows: [nodeRow({ id: HUB_X, isHub: true })],
-      hubs: [],
-      writerHubId: null,
-    });
-    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.hubs.role.blocked.unknownHub"');
-  });
-
-  test('目标离线 / 已有切换在跑 / 这一行正在卸载：分别给出各自的禁用原因', () => {
-    const offline = renderHubRow({
-      rows: [nodeRow({ id: HUB_X, isHub: true, online: false })],
-      hubs: [hubEndpoint({ nodeId: HUB_X, online: false })],
-      writerHubId: null,
-    });
-    expect(buttonTag(offline, `nodes-hub-role-${HUB_X}`)).toContain(
-      'title="nodes.hubs.role.blocked.offline"'
-    );
-
-    const busy = renderHubRow({
-      rows: [nodeRow({ id: HUB_X, isHub: true })],
-      hubs: [hubEndpoint({ nodeId: HUB_X })],
-      writerHubId: null,
-      switching: true,
-      switchingIds: new Set([HUB_A]),
-    });
-    expect(buttonTag(busy, `nodes-hub-role-${HUB_X}`)).toContain(
-      'title="nodes.hubs.role.blocked.switching"'
-    );
-
-    const uninstalling = renderTable(
-      [nodeRow({ id: HUB_X, isHub: true })],
-      '1.2.0',
-      {},
-      {
-        uninstall: uninstallController({ scheduledIds: new Set([HUB_X]) }),
-        roleSwitch: roleSwitchController({
-          stateOf: (row, rowBusy) =>
-            hubRoleButtonState({
-              row,
-              hubs: [hubEndpoint({ nodeId: HUB_X })],
-              writerHubId: null,
-              hubWritable: true,
-              switching: false,
-              rowBusy,
-            }),
-        }),
-      }
-    );
-    expect(buttonTag(uninstalling, `nodes-hub-role-${HUB_X}`)).toContain(
-      'title="nodes.hubs.role.blocked.rowBusy"'
-    );
-  });
-
-  test('目标还没签名授权且主 Hub 不收写入：禁用并说明须先签授权', () => {
-    const html = renderHubRow({
-      rows: [nodeRow({ id: HUB_X, isHub: true })],
-      hubs: [hubEndpoint({ nodeId: HUB_X, authorization: 'env' })],
-      writerHubId: null,
-      hubWritable: false,
-    });
-    const tag = buttonTag(html, `nodes-hub-role-${HUB_X}`);
-    expect(tag).toContain('disabled=""');
-    expect(tag).toContain('title="nodes.hubs.role.blocked.notWritable"');
-  });
-
-  test('切换中的行：状态列改显「切换中」，压过在线态', () => {
-    const html = renderHubRow({
-      rows: [nodeRow({ id: HUB_X, isHub: true, online: false })],
-      hubs: [hubEndpoint({ nodeId: HUB_X })],
-      writerHubId: null,
-      switching: true,
-      switchingIds: new Set([HUB_X]),
-    });
-    expect(html).toContain(`data-testid="nodes-role-switch-state-${HUB_X}"`);
-    expect(html).toContain('nodes.hubs.role.stateSwitching');
-    expect(html).not.toContain(`data-testid="nodes-status-${HUB_X}"`);
-  });
 });
 
 describe('多选的纯逻辑', () => {
@@ -1073,7 +758,6 @@ describe('多选的纯逻辑', () => {
       loggedIn: true,
       inventory: null,
       isSelf: false,
-      isHub: false,
       lastSeenAt: null,
       status: null,
       certificate: null,
@@ -1167,7 +851,7 @@ describe('「更多」菜单的可点性', () => {
     upgradeBusy: false,
     restoring: false,
     writable: true,
-    blockedHint: 'nodes.hubOffline',
+    blockedHint: 'relay.tenant.notAttached',
     uninstallRunning: false,
     revoking: false,
     eligiblePauseCount: 2,
@@ -1175,7 +859,7 @@ describe('「更多」菜单的可点性', () => {
     pauseBusy: false,
   };
 
-  test('选中了节点、hub 收写入、没有别的批量在跑：升级 / 移除 / 卸载可点', () => {
+  test('选中了节点、上联收写入、没有别的批量在跑：升级 / 移除 / 卸载可点', () => {
     const states = bulkMenuStates(base, t);
     expect(states.upgrade.disabled).toBe(false);
     expect(states.revoke.disabled).toBe(false);
@@ -1208,13 +892,12 @@ describe('「更多」菜单的可点性', () => {
     ).toBe(false);
   });
 
-  test('hub 不收写入：移除与卸载一并禁用，升级不受影响', () => {
+  test('上联不收写入：移除与卸载一并禁用，升级不受影响', () => {
     const states = bulkMenuStates({ ...base, writable: false }, t);
     expect(states.revoke.disabled).toBe(true);
-    expect(states.revoke.title).toBe('nodes.hubOffline');
-    // 卸载最后要签一次 revoke-node：hub 不收写入时机器删干净了证书还留着
+    expect(states.revoke.title).toBe('relay.tenant.notAttached');
     expect(states.uninstall.disabled).toBe(true);
-    expect(states.uninstall.title).toBe('nodes.hubOffline');
+    expect(states.uninstall.title).toBe('relay.tenant.notAttached');
     expect(states.upgrade.disabled).toBe(false);
   });
 
@@ -1315,12 +998,12 @@ describe('行内「更多」菜单', () => {
     expect(JSON.stringify(items[1].props.children)).toContain('暂停');
   });
 
-  test('Hub 暂停项禁用并带原因；已暂停 Hub 的恢复项可点', () => {
+  test('转发节点暂停项禁用并带原因；已暂停转发节点的恢复项可点', () => {
     const blocked = NodeMoreMenuList({
-      row: { id: 'hub' },
+      row: { id: 'fwd' },
       paused: false,
       pauseDisabled: true,
-      pauseTitle: 'nodes.pause.hubBlocked',
+      pauseTitle: 'nodes.pause.forwarderBlocked',
       labels: { detail: '详情', pause: '暂停' },
       onDetail: () => undefined,
       onPause: () => undefined,
@@ -1332,11 +1015,11 @@ describe('行内「更多」菜单', () => {
       children?: ReactNode;
     }>[];
     expect(blockedItems[1].props.disabled).toBe(true);
-    expect(blockedItems[1].props.title).toBe('nodes.pause.hubBlocked');
+    expect(blockedItems[1].props.title).toBe('nodes.pause.forwarderBlocked');
     expect(blockedItems[1].props['data-paused']).toBe('false');
 
     const resume = NodeMoreMenuList({
-      row: { id: 'hub' },
+      row: { id: 'fwd' },
       paused: true,
       pauseDisabled: false,
       pauseTitle: 'nodes.pause.hint',
@@ -1791,30 +1474,23 @@ describe('invalidCertificateKey', () => {
   });
 });
 
-describe('resolveHubPublicUrl', () => {
-  test('优先用 enrollment 创建响应里的 public_url', () => {
+describe('resolvePublicUrl', () => {
+  test('优先用 enrollment 创建响应里的 publicUrl', () => {
     expect(
-      resolveHubPublicUrl(
-        { hubPublicUrl: 'https://hub.example' },
-        {
-          hubPublicUrl: 'https://mode.example',
-        }
-      )
-    ).toBe('https://hub.example');
+      resolvePublicUrl({ publicUrl: 'https://relay.example' }, 'https://fallback.example')
+    ).toBe('https://relay.example');
   });
 
-  test('创建响应没给时退到 /api/auth/mode 的 hubPublicUrl', () => {
-    expect(
-      resolveHubPublicUrl({ hubPublicUrl: null }, { hubPublicUrl: 'https://mode.example' })
-    ).toBe('https://mode.example');
-    expect(resolveHubPublicUrl(null, { hubPublicUrl: 'https://mode.example' })).toBe(
-      'https://mode.example'
+  test('创建响应没给时退到 fallback', () => {
+    expect(resolvePublicUrl({ publicUrl: null }, 'https://fallback.example')).toBe(
+      'https://fallback.example'
     );
+    expect(resolvePublicUrl(null, 'https://fallback.example')).toBe('https://fallback.example');
   });
 
   test('两处都没有时返回 null——绝不退化成入口 origin', () => {
-    expect(resolveHubPublicUrl(null, {})).toBeNull();
-    expect(resolveHubPublicUrl({ hubPublicUrl: null }, { hubPublicUrl: null })).toBeNull();
+    expect(resolvePublicUrl(null)).toBeNull();
+    expect(resolvePublicUrl({ publicUrl: null }, null)).toBeNull();
   });
 });
 
@@ -1838,7 +1514,6 @@ describe('远程卸载', () => {
       loggedIn: true,
       inventory: null,
       isSelf: false,
-      isHub: false,
       lastSeenAt: null,
       status: null,
       certificate: null,
@@ -1953,7 +1628,7 @@ describe('远程卸载', () => {
     expect(failures).toEqual(['b', 'c']);
   });
 
-  test('hub 中途不再收写入：剩下的一台都不碰，已受理的保留记录', async () => {
+  test('上联中途不再收写入：剩下的一台都不碰，已受理的保留记录', async () => {
     const started: string[] = [];
     let writable = true;
     const summary = await runUninstallBatch({
@@ -1961,7 +1636,7 @@ describe('远程卸载', () => {
       io: {
         start: async (nodeId: string) => {
           started.push(nodeId);
-          // 第一台卸完 hub 就掉线了
+          // 第一台卸完上联就掉线了
           writable = false;
           return { kind: 'scheduled' } as const;
         },
@@ -1977,7 +1652,7 @@ describe('远程卸载', () => {
     expect(summary.aborted).toBe(2);
   });
 
-  test('hub 一开始就不收写入：一台都不发 POST', async () => {
+  test('上联一开始就不收写入：一台都不发 POST', async () => {
     const summary = await runUninstallBatch({
       targets: [row('a')],
       io: { start: async () => ({ kind: 'scheduled' }) as const, clearOperation: async () => true },
@@ -2045,130 +1720,5 @@ describe('远程卸载', () => {
     );
     expect(html).toContain('data-testid="nodes-uninstall-none"');
     expect(html).toContain('nodes.uninstall.noTargets');
-  });
-});
-
-describe('Hub 切换确认框正文', () => {
-  const HUB_X = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
-  const HUB_A = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
-
-  function hubEndpoint(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
-    return {
-      publicUrl: `https://${overrides.nodeId}.example`,
-      mode: 'standby',
-      priority: 0,
-      writerEpoch: 3,
-      online: true,
-      authorization: 'signed',
-      ...overrides,
-    };
-  }
-
-  function hubRow(id: string, overrides: Partial<NodeRow> = {}): NodeRow {
-    return {
-      id,
-      runtimeNodeId: id,
-      name: id.slice(0, 4),
-      publicKey: '',
-      fingerprint: '',
-      online: true,
-      reach: null,
-      transport: null,
-      rttMs: null,
-      version: '1.1.13',
-      directCapable: false,
-      loggedIn: true,
-      inventory: null,
-      isSelf: false,
-      isHub: true,
-      lastSeenAt: null,
-      status: null,
-      certificate: null,
-      certSig: null,
-      ...overrides,
-    };
-  }
-
-  test('需要签授权 + 原主可达：四步齐全，没有警示行', () => {
-    const plan = planHubRoleSwitch({
-      row: hubRow(HUB_X),
-      hubs: [
-        hubEndpoint({ nodeId: HUB_X, authorization: 'env' }),
-        hubEndpoint({ nodeId: HUB_A, mode: 'active' }),
-      ],
-      writerHubId: HUB_A,
-    });
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <HubRoleDialogBody plan={plan as NonNullable<typeof plan>} />
-      </MemoryRouter>
-    );
-    for (const key of [
-      'nodes.hubs.role.stepAdmit',
-      'nodes.hubs.role.stepDemote',
-      'nodes.hubs.role.stepPromote',
-      'nodes.hubs.role.stepWait',
-    ]) {
-      expect(html).toContain(key);
-    }
-    expect(html).not.toContain('data-testid="nodes-hub-role-warning"');
-  });
-
-  test('原主不可达：少一步降备，多一行警示', () => {
-    const plan = planHubRoleSwitch({
-      row: hubRow(HUB_X),
-      hubs: [
-        hubEndpoint({ nodeId: HUB_X }),
-        hubEndpoint({ nodeId: HUB_A, mode: 'active', online: false }),
-      ],
-      writerHubId: HUB_A,
-    });
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <HubRoleDialogBody plan={plan as NonNullable<typeof plan>} />
-      </MemoryRouter>
-    );
-    expect(html).not.toContain('nodes.hubs.role.stepDemote');
-    expect(html).toContain('nodes.hubs.role.warnFromUnreachable');
-    expect(html).toContain('data-testid="nodes-hub-role-warning"');
-  });
-
-  test('旧节点挡住 admit-hub：列出名字与版本', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <HubRoleForceBody
-          force={{
-            minVersion: '1.1.13',
-            nodes: [
-              { id: 'aa', name: 'laptop', version: '1.1.9' },
-              { id: 'bb', name: 'studio', version: null },
-            ],
-          }}
-        />
-      </MemoryRouter>
-    );
-    expect(html).toContain('nodes.hubs.role.forceText');
-    expect(html).toContain('data-testid="nodes-hub-role-old-aa"');
-    expect(html).toContain('laptop');
-    expect(html).toContain('studio');
-  });
-
-  test('升主失败的恢复框：写明没有可写 Hub，并带上后端给的原因', () => {
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <HubRoleRecoveryBody
-          recovery={{
-            message: 'nodes.hubs.role.failed',
-            targetHubId: HUB_X,
-            targetName: 'studio',
-            fromHubId: HUB_A,
-            fromName: 'laptop',
-          }}
-        />
-      </MemoryRouter>
-    );
-    expect(html).toContain('data-testid="nodes-hub-role-recovery-body"');
-    expect(html).toContain('nodes.hubs.role.recovery.noWriter');
-    expect(html).toContain('nodes.hubs.role.failed');
   });
 });

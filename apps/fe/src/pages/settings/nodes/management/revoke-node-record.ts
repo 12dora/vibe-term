@@ -20,7 +20,7 @@ import type { ResolvedMode } from './types';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-/** 一次吊销的结论。`unconfirmed`：hub 没确认，服务端一条都没落库，节点**没有**被移除。 */
+/** 一次吊销的结论。`unconfirmed`：本机没确认（`hubAck === false`），服务端一条都没落库，节点**没有**被移除。 */
 export type RevokeAttempt =
   | { kind: 'done' }
   /** 记录已落账，但紧跟的 `meta-key` 换代没送上去：节点已移除，元数据密钥还欠一条。 */
@@ -37,7 +37,6 @@ export function revokeLanded(attempt: RevokeAttempt): boolean {
 export interface RevokeContext {
   api: AuthApi;
   mode: ResolvedMode;
-  writerPublicUrl: string | null;
   t: Translate;
   /** 测试注入；缺省打本机 `/api/mesh/relay/*`。 */
   relayApi?: RelayTenantApi;
@@ -49,22 +48,16 @@ function failedAttempt(result: { code: string }, ctx: RevokeContext): RevokeAtte
   if (failure === 'stale') return { kind: 'stale' };
   return {
     kind: 'failed',
-    message: actionErrorText(
-      ctx.t,
-      { code: result.code },
-      { writerPublicUrl: ctx.writerPublicUrl }
-    ),
+    message: actionErrorText(ctx.t, { code: result.code }),
   };
 }
 
 /**
- * 吊销一台节点：**只有一条路径**——`POST /api/auth/keylog?hub=sync`。
- * entry 先把签好的记录送 hub 等 ack，再本地 append。
- * 老实现「本地 append + 再调 hub revoke」是两条独立通道，先到的那条会让另一条报 `seq_gap`，
- * UI 误报 hub 失败；两条都失败时本地却已经把节点从列表里摘掉（见 F4-3 评审 Major）。
+ * 吊销一台节点：**只有一条路径**——`POST /api/auth/keylog?hub=sync`（`hub=sync` 是冻结的 legacy 查询名）。
+ * entry 先把签好的记录送本机等 ack，再按 `relayAck` 判断中继 fan-out。
  *
  * `keyLogHead → 签名 → append` 整段进引擎那条 key log 写锁：head 是全局的，
- * 一条吊销与一条 admit 并行读到同一个头就会造出两条同 seq 的记录，hub 只收得下一条，
+ * 一条吊销与一条 admit 并行读到同一个头就会造出两条同 seq 的记录，对端只收得下一条，
  * 另一条永久 `seq_gap`（见 R5 #1）。等用户操作的凭据对话框必须留在锁**外**，
  * 否则用户发一会儿呆就把所有 admit 卡住了。
  */
@@ -95,7 +88,8 @@ export async function revokeNodeRecord(
     });
     const { appended: result, metaPending } = outcome;
     if (!result.ok) return failedAttempt(result, ctx);
-    if (result.hubAck !== true) return { kind: 'unconfirmed', error: result.hubError ?? '' };
+    // `hubAck` 是冻结的 legacy 名：只在明确 `false` 时当本机落库失败。
+    if (result.hubAck === false) return { kind: 'unconfirmed', error: result.hubError ?? '' };
     // 吊销没上中继：被吊销的节点在其余成员眼里还是在线的，不能只报一句「已移除」。
     warnRelayAckGlobal(result);
     if (metaPending) return { kind: 'meta-pending', code: metaPending };
@@ -103,7 +97,7 @@ export async function revokeNodeRecord(
   } catch (err) {
     return {
       kind: 'failed',
-      message: actionErrorText(ctx.t, err, { writerPublicUrl: ctx.writerPublicUrl }),
+      message: actionErrorText(ctx.t, err),
     };
   }
 }

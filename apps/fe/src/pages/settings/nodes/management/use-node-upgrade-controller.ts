@@ -8,7 +8,7 @@
 //   useUpgradeRowActions —— 行内「升级」「停止升级」两个按钮
 //
 // 次序不是随便排的：回读必须比批量续跑先注册 effect，否则节点列表刚到的那一帧续跑会抢在前面，
-// 对仍在升级的节点重发 POST（撞 `UPGRADE_IN_PROGRESS`，还会提前去动下一组 hub）。
+// 对仍在升级的节点重发 POST（撞 `UPGRADE_IN_PROGRESS`，还会提前去动下一组）。
 //
 // 跨段共享的可变量集中在 `UpgradeRefs`（见 `upgrade-refs.ts`）。
 

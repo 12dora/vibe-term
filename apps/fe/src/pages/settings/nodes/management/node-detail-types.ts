@@ -112,7 +112,6 @@ export function hasNodeDetailChanges(plan: NodeDetailPlan): boolean {
 
 export interface NodeDetailSaveContext {
   t: Translate;
-  writerPublicUrl: string | null;
 }
 
 export interface NodeDetailSaveResult {
@@ -129,7 +128,7 @@ export async function saveNodeDetail(
   row: NodeRow,
   plan: NodeDetailPlan,
   io: NodeDetailIo,
-  { t, writerPublicUrl }: NodeDetailSaveContext
+  { t }: NodeDetailSaveContext
 ): Promise<NodeDetailSaveResult> {
   const errors: string[] = [];
   let renamed = false;
@@ -139,9 +138,7 @@ export async function saveNodeDetail(
       await io.rename(plan.renameTo);
       renamed = true;
     } catch (err) {
-      errors.push(
-        t('nodes.detail.renameFailed', { error: actionErrorText(t, err, { writerPublicUrl }) })
-      );
+      errors.push(t('nodes.detail.renameFailed', { error: actionErrorText(t, err) }));
     }
   }
   if (plan.allowed !== null) {

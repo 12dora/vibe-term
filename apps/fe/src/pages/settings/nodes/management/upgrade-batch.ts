@@ -1,8 +1,8 @@
 // 批量升级的编排：可升级性判定、执行顺序、带并发上限的调度，以及刷新后的续跑。
 //
 // 这里不碰网络、不碰 React：单次升级由调用方注入（`run`），便于单测断言调度顺序。
-// 顺序是硬约束——hub 一重启，经中继到达的节点全部失联；本机一重启，当前页面直接断开。
-// 因此：普通节点（并发 3）→ 远端 hub → 本机，前一组**完全收尾**后才开下一组。
+// 顺序是硬约束——本机一重启，当前页面直接断开。
+// 因此：普通节点（并发 3）→ 本机，前一组**完全收尾**后才开下一组。
 //
 // 本机重启必然带来一次页面刷新，编排却只活在页面里：所以每台机器落定都把结论写进持久化的
 // 计划（`upgrade-batch-storage`），刷新后按同一份 `order` 接着跑，最后仍然只弹一条汇总。
@@ -76,17 +76,15 @@ export function eligibleUpgradeRows(rows: NodeRow[], latestVersion: string | nul
   return rows.filter((row) => isBatchEligible(row, latestVersion));
 }
 
-/** 按「普通节点 → 远端 hub → 本机」切成三组；空组会被去掉。 */
+/** 按「普通节点 → 本机」切成两组；空组会被去掉。 */
 export function orderUpgradeGroups(rows: NodeRow[]): NodeRow[][] {
   const others: NodeRow[] = [];
-  const hub: NodeRow[] = [];
   const self: NodeRow[] = [];
   for (const row of rows) {
     if (row.isSelf) self.push(row);
-    else if (row.isHub) hub.push(row);
     else others.push(row);
   }
-  return [others, hub, self].filter((group) => group.length > 0);
+  return [others, self].filter((group) => group.length > 0);
 }
 
 export interface UpgradeBatchSummary {
@@ -209,7 +207,7 @@ export function reportBatchSummary(
 export interface UpgradeBatchLaunch {
   rows: NodeRow[];
   latestVersion: string | null;
-  /** 已有行内升级在跑：批量必须让路，否则它会把那台机器当成「跳过」并打乱 hub → self 的次序。 */
+  /** 已有行内升级在跑：批量必须让路，否则它会把那台机器当成「跳过」并打乱普通节点 → 本机的次序。 */
   rowRunning: boolean;
   /** 还在回读各节点的升级状态：这会儿还不知道谁在升级，批量整体让路。 */
   restoring: boolean;

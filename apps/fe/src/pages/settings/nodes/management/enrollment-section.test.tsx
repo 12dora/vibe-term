@@ -1,4 +1,4 @@
-// 待确认区块的文案口径：中继模式下不能再说「Hub」。
+// 待确认区块的文案口径：未确认一律走中继。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 nodes-management 测试同一套做法）。
 
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -26,17 +26,15 @@ function render(): string {
     <EnrollmentSection
       api={{} as never}
       mode={{ uid: 'u1', kdfParams: {} } as never}
-      hubApi={null}
       writable
       blockedHint=""
-      writerPublicUrl={null}
       open={false}
       prompt={{} as never}
       pendings={[PENDING]}
       onConfirm={() => undefined}
       onCancel={() => undefined}
       busyIds={[]}
-      hubUnconfirmedIds={[PENDING.hubEnrollmentId]}
+      unconfirmedIds={[PENDING.hubEnrollmentId]}
       clearedIds={[]}
     />
   );
@@ -47,13 +45,13 @@ afterEach(() => {
 });
 
 describe('EnrollmentSection 的上级口径', () => {
-  test('hub 模式下说「Hub 未确认」', () => {
+  test('未确认一律说中继未确认', () => {
     const html = render();
-    expect(html).toContain('nodes.enrollment.hubNotConfirmed');
-    expect(html).not.toContain('nodes.enrollment.relayNotConfirmed');
+    expect(html).toContain('nodes.enrollment.relayNotConfirmed');
+    expect(html).not.toContain('nodes.enrollment.hubNotConfirmed');
   });
 
-  test('中继模式下换成中继文案', () => {
+  test('已挂中继时仍是中继文案', () => {
     setMeshRelayStateForTest({
       mode: 'relay',
       relays: [{ url: 'https://relay.example', priority: 0, attached: true } as never],

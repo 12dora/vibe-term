@@ -1,7 +1,7 @@
-// 节点表：成员集 + 心跳合并后的一行一 node，升级 / 更多（详情、暂停）/ 吊销。
+// 节点表：成员集合并后的一行一 node，升级 / 更多（详情、暂停）/ 吊销。
 // 重命名与「允许域名访问」都收进详情框（「更多」），表里不再有行内输入框。
-// hub 不可达时详情里的改名与吊销禁用——它们走 hub 控制面；升级只依赖入口 → 目标的 peer link，
-// 因此**不**跟 hub 在线绑定，只看目标是否在线、是否已登录。
+// 未挂中继时详情里的改名与吊销禁用——它们走 key-log；升级只依赖入口 → 目标的 peer link，
+// 因此**不**跟上联可写绑定，只看目标是否在线、是否已登录。
 // 表格本体铺在「节点管理」卡片里，横向滚动壳与「操作」列的钉边都在 components/wide-table。
 // sm 以下八列摆不下，整表换成记录卡（nodes-card-list）：两套版式共用同一批 testid 与同一份状态。
 
@@ -26,7 +26,6 @@ import { NodesCardList } from './nodes-card-list';
 import { PendingNodeRow } from './pending-node-row';
 import { Td, Th } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
-import type { HubRoleSwitchController } from './use-hub-role-switch';
 import { isUpgradeBusy } from './use-node-upgrade';
 
 export type { NodesTableProps };
@@ -37,7 +36,7 @@ export function NodesTable(props: NodesTableProps) {
   return <NodesWideTable {...props} />;
 }
 
-function NodesWideTable({ rows, selection, uninstall, roleSwitch, ...deps }: NodesTableProps) {
+function NodesWideTable({ rows, selection, uninstall, ...deps }: NodesTableProps) {
   const { t } = useTranslation();
   const pathname = useLocation().pathname;
   return (
@@ -68,7 +67,6 @@ function NodesWideTable({ rows, selection, uninstall, roleSwitch, ...deps }: Nod
                 pathname={pathname}
                 selection={selection}
                 uninstall={uninstall}
-                roleSwitch={roleSwitch}
                 {...deps}
               />
             )
@@ -91,17 +89,15 @@ function NodeRowView({
   pathname,
   selection,
   uninstall,
-  roleSwitch,
   ...deps
 }: {
   row: NodeRow;
   pathname: string;
   selection: NodeSelection;
   uninstall: NodeUninstallController;
-  roleSwitch: HubRoleSwitchController;
 } & NodeActionDeps) {
   const { t } = useTranslation();
-  const shared = useNodeRowShared(row, deps, uninstall, roleSwitch);
+  const shared = useNodeRowShared(row, deps, uninstall);
   const { view } = shared;
 
   return (
@@ -118,8 +114,6 @@ function NodeRowView({
       </td>
       <NameCell
         row={row}
-        hubDetails={deps.hubDetails}
-        roleSwitch={roleSwitch}
         rowBusy={shared.uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
       />
       <Td>
@@ -127,7 +121,6 @@ function NodeRowView({
           row={row}
           uninstall={uninstall}
           uninstalling={shared.uninstalling}
-          switching={shared.switching}
           view={view}
         />
       </Td>
@@ -149,7 +142,7 @@ function NodeRowView({
         <div className="flex items-center gap-1">
           <UpgradeButton row={row} upgrade={deps.upgrade} blocked={shared.uninstalling} />
           <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
-          {/* 详情里既有只读信息也有节点本地的域名访问策略，hub 不可写时照样能开。 */}
+          {/* 详情里既有只读信息也有节点本地的域名访问策略，上联不可写时照样能开。 */}
           <NodeMoreMenu
             row={row}
             pathname={pathname}

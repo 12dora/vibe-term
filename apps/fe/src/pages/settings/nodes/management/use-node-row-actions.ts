@@ -5,7 +5,6 @@
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { fetchRelayMode } from '@/node/mesh-relay';
 import { renameNodeViaKeyLog } from '@/node/rename-node';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import { useCallback, useState } from 'react';
@@ -54,10 +53,7 @@ function useRevokePlan(run: (plan: RevokePlan, reason: string) => void): {
   return { request: setPlan, controller: { plan, confirm, dismiss } };
 }
 
-export function useNodeRowActions(
-  row: NodeRow,
-  { hubApi, mode, api, prompt, onChanged, writerPublicUrl }: NodeActionDeps
-) {
+export function useNodeRowActions(row: NodeRow, { mode, api, prompt, onChanged }: NodeActionDeps) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
 
@@ -65,26 +61,20 @@ export function useNodeRowActions(
    * 重命名：**抛错不吞**。调用方是节点详情框，它要把这条错误与「域名访问」那条并排列出来，
    * 在这里弹 toast 只会变成两套互相打架的反馈。
    *
-   * 中继模式下没有 hub 控制面，改名走 `rename-node` 记录（需要一次凭据）。
-   * 「本机是不是中继模式」当场问网关，与吊销同一条判据：那份轮询快照最长陈旧 30 秒。
+   * 改名走 `rename-node` 记录（需要一次凭据）。
    */
   const rename = useCallback(
     async (name: string) => {
-      if (await fetchRelayMode()) {
-        const result = await prompt.withSigner(
-          (signer) => renameNodeViaKeyLog({ api, mode }, { nodeIdHex: row.id, name }, signer),
-          { purpose: 'revoke' }
-        );
-        if (!result) throw new Error(t('nodes.rename.cancelled'));
-        if (!result.ok) {
-          throw new Error(actionErrorText(t, { code: result.code }, { writerPublicUrl }));
-        }
-        return;
+      const result = await prompt.withSigner(
+        (signer) => renameNodeViaKeyLog({ api, mode }, { nodeIdHex: row.id, name }, signer),
+        { purpose: 'revoke' }
+      );
+      if (!result) throw new Error(t('nodes.rename.cancelled'));
+      if (!result.ok) {
+        throw new Error(actionErrorText(t, { code: result.code }));
       }
-      if (!hubApi) throw new Error(t('nodes.hubOffline'));
-      await hubApi.rename(row.id, name);
     },
-    [api, hubApi, mode, prompt, row.id, t, writerPublicUrl]
+    [api, mode, prompt, row.id, t]
   );
 
   /**
@@ -96,7 +86,7 @@ export function useNodeRowActions(
       setBusy(true);
       try {
         const attempt = await prompt.withSigner(
-          (signer) => revokeNodeRecord(signer, row, reason, { api, mode, writerPublicUrl, t }),
+          (signer) => revokeNodeRecord(signer, row, reason, { api, mode, t }),
           { purpose: 'revoke' }
         );
         if (!attempt) return;
@@ -105,7 +95,7 @@ export function useNodeRowActions(
         setBusy(false);
       }
     },
-    [api, mode, onChanged, prompt, row, t, writerPublicUrl]
+    [api, mode, onChanged, prompt, row, t]
   );
 
   const gate = useRevokePlan(
@@ -122,7 +112,6 @@ export interface BulkRevokeDeps {
   /** 未确认（缺 uid / kdf）时整个动作不可用。 */
   mode: ResolvedMode | null;
   prompt: CredentialPromptHandle;
-  writerPublicUrl: string | null;
   onChanged: () => void;
 }
 
@@ -150,7 +139,7 @@ function reportBulkRevokeSummary(
  * 卡头「更多 → 移除节点」：一次确认列出全部名字，整批只要一次凭据，随后串行吊销。
  * 与行内吊销共用 `revokeNodeRecord`，差别只在提示是逐条还是一条汇总。
  */
-export function useBulkRevoke({ mode, api, prompt, onChanged, writerPublicUrl }: BulkRevokeDeps): {
+export function useBulkRevoke({ mode, api, prompt, onChanged }: BulkRevokeDeps): {
   busy: boolean;
   revokeRows: (rows: NodeRow[]) => void;
   revokeDialog: RevokeController;
@@ -164,8 +153,7 @@ export function useBulkRevoke({ mode, api, prompt, onChanged, writerPublicUrl }:
       setBusy(true);
       try {
         const summary = await prompt.withSigner(
-          (signer) =>
-            revokeNodesSequentially(signer, targets, reason, { api, mode, writerPublicUrl, t }),
+          (signer) => revokeNodesSequentially(signer, targets, reason, { api, mode, t }),
           { purpose: 'revoke' }
         );
         if (!summary) return;
@@ -175,7 +163,7 @@ export function useBulkRevoke({ mode, api, prompt, onChanged, writerPublicUrl }:
         setBusy(false);
       }
     },
-    [api, mode, onChanged, prompt, t, writerPublicUrl]
+    [api, mode, onChanged, prompt, t]
   );
 
   const gate = useRevokePlan(

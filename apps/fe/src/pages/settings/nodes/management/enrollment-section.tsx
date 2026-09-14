@@ -1,12 +1,11 @@
 // 新增节点 / 待确认区块：直接铺在「节点管理」卡片里，自己不再画边框与标题，
 // 展开与否由卡头的「添加」按钮（父组件的 `open`）决定。
 //
-// `enroll_sk` 只存在于浏览器与 join 串里，**不经过 hub**；join 串只显示这一次，
+// `enroll_sk` 只存在于浏览器与 join 串里；join 串只显示这一次，
 // admit / 过期后立刻从 DOM 里消失。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type PendingEnrollment, joinCommand } from '@/node/enrollment';
-import type { HubApi } from '@/node/hub-api';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import { Button } from '@vibeterm/ui/button';
@@ -17,44 +16,40 @@ import { CopyableCode } from '../copy-feedback';
 import type { ResolvedMode } from './types';
 import { useCreateEnrollment } from './use-create-enrollment';
 
-export { resolveHubPublicUrl } from './use-create-enrollment';
+export { resolvePublicUrl } from './use-create-enrollment';
 
 export function EnrollmentSection({
   api,
   mode,
-  hubApi,
   writable,
   blockedHint,
-  writerPublicUrl,
   open,
   prompt,
   pendings,
   onConfirm,
   onCancel,
   busyIds,
-  hubUnconfirmedIds,
+  unconfirmedIds,
   clearedIds,
   relay,
 }: {
   api: AuthApi;
   mode: ResolvedMode;
-  hubApi: HubApi | null;
-  /** 上级链路当前接受管理写入（hub 在线且可写，或已挂上中继）。 */
+  /** 上级链路当前接受管理写入（已挂上中继）。 */
   writable: boolean;
   /** 不可写时的原因文案。 */
   blockedHint: string;
-  /** writer hub 的对外地址；拒写提示靠它指路。 */
-  writerPublicUrl: string | null;
   /** 卡头「添加」按钮控制的展开态。 */
   open: boolean;
   prompt: CredentialPromptHandle;
   pendings: PendingEnrollment[];
   onConfirm: (pending: PendingEnrollment) => void;
-  /** 取消一条待确认记录（误点「添加」的回退路径）：仅删本地 pending，hub 侧记录会自然过期。 */
+  /** 取消一条待确认记录（误点「添加」的回退路径）：仅删本地 pending，中继侧记录会自然过期。 */
   onCancel: (pending: PendingEnrollment) => void;
   /** 正在跑 admit 的 pending id：确认与取消都要禁用——取消一条 append 未定的记录会丢字节。 */
   busyIds: string[];
-  hubUnconfirmedIds: string[];
+  /** `relayAck === false`：手上还留着一份可重发记录的 pending id。 */
+  unconfirmedIds: string[];
   /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
   clearedIds: string[];
   /** 本机卡已经在轮询的那份中继快照：给了就不再自己订一份。 */
@@ -64,13 +59,11 @@ export function EnrollmentSection({
   const create = useCreateEnrollment({
     api,
     mode,
-    hubApi,
     prompt,
     clearedIds,
-    writerPublicUrl,
     ...(relay ? { relay } : {}),
   });
-  const { created, hubUrl, relayMode } = create;
+  const { created, publicUrl } = create;
 
   return (
     <>
@@ -102,7 +95,7 @@ export function EnrollmentSection({
       )}
 
       {created &&
-        (hubUrl ? (
+        (publicUrl ? (
           <div
             className="flex flex-col gap-2 rounded-lg bg-muted/50 p-2"
             data-testid="nodes-join-info"
@@ -110,7 +103,7 @@ export function EnrollmentSection({
             <p className="text-xs text-muted-foreground">{t('nodes.enrollment.joinHint')}</p>
             <CopyableCode
               label={t('nodes.enrollment.joinCommand')}
-              value={joinCommand(hubUrl, created.joinToken, created.pending.name)}
+              value={joinCommand(publicUrl, created.joinToken, created.pending.name)}
               testId="nodes-join-command"
             />
             <CopyableCode
@@ -121,9 +114,9 @@ export function EnrollmentSection({
           </div>
         ) : (
           // 上级没给出对外地址就不能编 join 命令：用入口 origin 会把新设备指到没有
-          // HubRuntime 的机器，redeem 直接 404（见 F4-3 评审 Blocker）。
+          // 中继 enrollment 路由的机器，redeem 直接 404（见 F4-3 评审 Blocker）。
           <p className="text-xs text-destructive" data-testid="nodes-join-no-url">
-            {t(relayMode ? 'nodes.enrollment.missingRelayUrl' : 'nodes.enrollment.missingHubUrl')}
+            {t('nodes.enrollment.missingRelayUrl')}
           </p>
         ))}
 
@@ -133,8 +126,7 @@ export function EnrollmentSection({
             <PendingRow
               key={pending.hubEnrollmentId}
               pending={pending}
-              relayMode={relayMode}
-              unconfirmed={hubUnconfirmedIds.includes(pending.hubEnrollmentId)}
+              unconfirmed={unconfirmedIds.includes(pending.hubEnrollmentId)}
               busy={busyIds.includes(pending.hubEnrollmentId)}
               writable={writable}
               blockedHint={blockedHint}
@@ -151,7 +143,6 @@ export function EnrollmentSection({
 /** 一条待确认记录。上级未确认时文案与按钮都换成「重试」口径。 */
 function PendingRow({
   pending,
-  relayMode,
   unconfirmed,
   busy,
   writable,
@@ -160,7 +151,6 @@ function PendingRow({
   onCancel,
 }: {
   pending: PendingEnrollment;
-  relayMode: boolean;
   unconfirmed: boolean;
   busy: boolean;
   writable: boolean;
@@ -176,9 +166,7 @@ function PendingRow({
       data-testid={`nodes-pending-${id}`}
     >
       <span className="truncate">
-        {unconfirmed
-          ? t(relayMode ? 'nodes.enrollment.relayNotConfirmed' : 'nodes.enrollment.hubNotConfirmed')
-          : t('nodes.enrollment.pending')}
+        {unconfirmed ? t('nodes.enrollment.relayNotConfirmed') : t('nodes.enrollment.pending')}
         <span className="ml-2 font-mono text-muted-foreground">
           {pending.name ?? pending.enrollPk.slice(0, 12)}
         </span>

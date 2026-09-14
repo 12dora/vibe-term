@@ -81,9 +81,8 @@ describe('LocalMachineMenuList', () => {
     const testIds = items.map((item) => item.props['data-testid']);
     expect(testIds).toEqual([
       undefined, // 「更改角色」小标题
-      'local-machine-role-hub,node',
-      'local-machine-role-relay,node',
       'local-machine-role-relay',
+      'local-machine-role-relay,node',
       undefined, // 分隔线
       'local-machine-leave',
       'local-machine-account-security',
@@ -101,16 +100,16 @@ describe('LocalMachineMenuList', () => {
   test('点角色项与离开各自走对应回调', () => {
     const { items, picked, leftCount } = renderList('node');
     items[1]?.props.onClick?.();
-    items[5]?.props.onClick?.();
-    expect(picked).toEqual(['hub,node']);
+    items[4]?.props.onClick?.();
+    expect(picked).toEqual(['relay']);
     expect(leftCount()).toBe(1);
   });
 
   test('退出 / 设置在途时角色与离开都锁上，账号安全照旧可点', () => {
     const { items } = renderList('node', true);
     expect(items[1]?.props.disabled).toBe(true);
-    expect(items[5]?.props.disabled).toBe(true);
-    expect(items[6]?.props.disabled).toBeUndefined();
+    expect(items[4]?.props.disabled).toBe(true);
+    expect(items[5]?.props.disabled).toBeUndefined();
   });
 
   test('没有上级动作时「连接」组整组不出', () => {
@@ -137,21 +136,19 @@ describe('LocalMachineMenuList', () => {
     let picked = '';
     const { items } = renderList('node', false, [
       connectItem({
-        key: 'change-hub',
-        testId: 'local-machine-change-hub',
+        key: 'relay-add',
+        testId: 'nodes-relay-add',
         disabled: true,
         onSelect: () => {
-          picked = 'change-hub';
+          picked = 'relay-add';
         },
       }),
       connectItem({ key: 'relay-leave', testId: 'nodes-relay-leave', destructive: true }),
     ]);
-    const changeHub = items.find(
-      (item) => item.props['data-testid'] === 'local-machine-change-hub'
-    );
-    expect(changeHub?.props.disabled).toBe(true);
-    changeHub?.props.onClick?.();
-    expect(picked).toBe('change-hub');
+    const add = items.find((item) => item.props['data-testid'] === 'nodes-relay-add');
+    expect(add?.props.disabled).toBe(true);
+    add?.props.onClick?.();
+    expect(picked).toBe('relay-add');
     const leave = items.find((item) => item.props['data-testid'] === 'nodes-relay-leave');
     expect((leave?.props as { variant?: string }).variant).toBe('destructive');
   });

@@ -42,22 +42,22 @@ export function Tag({ children, title }: { children: React.ReactNode; title?: st
   );
 }
 
-/** 状态列旁的「已暂停」标记，与「当前」「Hub」同一套 Tag。 */
+/** 状态列旁的「已暂停」标记，与「当前」同一套 Tag。 */
 export function PausedTag() {
   const { t } = useTranslation();
   return <Tag>{t('nodes.status.paused')}</Tag>;
 }
 
 /**
- * 不可写时的提示。调用方给了原因就用它（中继模式下上级不是 hub，说「Hub 不可达」是错的），
- * 否则按 hub 的两种情形分档：备 Hub 拒写 / 主 Hub 不可达。
+ * 不可写时的提示。调用方给了原因就用它（未挂中继时说「不可达」），
+ * 否则退回中继未接入那一句。
  */
 export function rowBlockedHint(
   t: Translate,
-  deps: Pick<NodeActionDeps, 'hubWritable' | 'blockedHint'>
+  deps: Pick<NodeActionDeps, 'uplinkWritable' | 'blockedHint'>
 ): string {
   if (deps.blockedHint) return deps.blockedHint;
-  return t(deps.hubWritable ? 'nodes.hubOffline' : 'nodes.hubs.standbyNotice');
+  return t('relay.tenant.notAttached');
 }
 
 /**

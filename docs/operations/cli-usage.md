@@ -6,7 +6,7 @@
 
 `vibeterm login|whoami|api|nodes|devices|tmux|term|exec|system|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
 
-`vibeterm init|doctor|upgrade|uninstall|hub|relay|mesh|tls|enroll|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `hub join` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。
+`vibeterm init|doctor|upgrade|uninstall|user|relay|mesh|tls|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。本机用户用 `vibeterm user add|passwd|totp`。
 
 ## 登录
 
@@ -224,7 +224,6 @@ vibeterm nodes ls
 vibeterm nodes show <node>
 vibeterm nodes pause <node>
 vibeterm nodes resume <node>
-vibeterm nodes hub-role promote|demote|standby <node> --yes [--wait] [--force]
 vibeterm nodes relay ls
 vibeterm nodes relay switch <url>
 vibeterm nodes relay unpin [--node <n>]
@@ -241,19 +240,17 @@ vibeterm nodes meta-key rotate [--exclude <node>...]
 vibeterm nodes revoke <node> --yes
 ```
 
-`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`；对 Hub 的暂停 → `cannot pause a hub node (CANNOT_PAUSE_HUB)`，恢复 Hub 允许（接回 2.3.5 上被暂停的 Hub）。`ls` 列为 NAME ID ROLE STATUS REACH VERSION ADDRESS ONLINE PAUSED RTT。STATUS 仍是 `admitted` / `pending`；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列。ADDRESS 与管理页地址列同一套推导（Hub 公网 host → live `peerAddress` → 广告 endpoint → 中继）。REACH 仍是机器 token：`lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。`nodes show` 打印 `address`、`lastSeenAt`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`--version <ver>` 写入 POST body，网关必须是已发布且带 CLI tarball 的 tag，否则 400 `RELEASE_NOT_FOUND`；缺省仍走 latest。失败行 ERROR 列原文展示聚合投递串（如 `github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
-
-`hub-role` 是远程 HTTP 切换（`POST /n/<id>/api/hub/role`），不能用本机运维 `hub promote`（写本机 env）代替。未签名授权时先签 `admit-hub`。`promote` 把指定 hub 升成 writer；`demote` 仅当该节点是 writer，挑后继再 switch，无人接管则只 standby；`standby` 只对该节点 `mode: 'standby'`。`--wait` 轮询 complete + `writerHubId`；旧节点挡住 `admit-hub` 时 `--force` 打强制头。
+`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`。`ls` 列为 NAME ID ROLE STATUS REACH VERSION ADDRESS ONLINE PAUSED RTT。STATUS 仍是 `admitted` / `pending`；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列。ADDRESS 与管理页地址列同一套推导（live `peerAddress` → 广告 endpoint → 中继 host）。REACH 仍是机器 token：`lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。`nodes show` 打印 `address`、`lastSeenAt`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`--version <ver>` 写入 POST body，网关必须是已发布且带 CLI tarball 的 tag，否则 400 `RELEASE_NOT_FOUND`；缺省仍走 latest。失败行 ERROR 列原文展示聚合投递串（如 `github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
 
 `nodes relay ls` 是客户端租户侧 `GET /api/mesh/relay/status`（表头对齐本机 `relay list`，多一列 ATTACHED）；本机运维 `vibeterm relay list` 仍打本机回环。`relay switch` 不签 keylog（本机换上行，并写入 `preferredUrl` 固定主中继）。`relay unpin` 清掉固定（`POST /api/mesh/relay/unpin`，honours 全局 `--node`），人读打印 `unpinned` 或 `nothing pinned`。`relay rm` / `readmit` 要签名。最后一条中继回 `RELAY_LAST`，提示走本机 `relay leave`。`vibeterm relay enroll <url>` 是追加，不是替换；最多 `16` 条中继（`RELAY_RECORD_MAX_RELAYS`）。主中继由自动优选选出，除非用户 `switch` 固定。
 
-签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`、`hub-role` 需 admit-hub 时、`relay rm` / `readmit`、中继模式下 `rename`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。
+签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`、`relay rm` / `readmit`、`rename`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。成功以 `ok === true` 为准；响应里的 `hubAck` 是遗留字段（成功时恒为 `true`），客户端不得再把它当中继 fan-out 的依据，fan-out 看 `relayAck`。查询串 `POST /api/auth/keylog?hub=sync` 的名字同样冻结。
 
-CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分中继 / hub：
+CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分是否已接中继（`RelayUplinkMode`：`'relay' | 'none'`）：
 
-- **hub**：`enroll` 打 `/api/hub/enrollments`，打印 `vibeterm hub join <hubUrl> --token …`。`allow <node>` 在 hub 待批准行上签 `admit-node`，否则打开该节点的公网域名访问。
-- **中继**（`mode: 'relay'`）：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm hub join <relayUrl> --token r3.… --name <name>`。`rename` 走 keylog `rename-node`，不再打 hub 控制面。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
-- 中继上 `allow <node>`：若 hub 仍下发了待批准行，先签 `admit-node` 再立刻补一条 `meta-key admit`（同一把根钥，不二次要密码）；若节点已在 `pendingMemberIds`（已接纳但解不开状态块），只补 `meta-key`。网页在别的标签页生成的加入码，证书材料只在那次浏览器会话里，CLI 签不出 `admit-node`——那种情况请用 `meta-key admit`。
+- **`mode: 'none'`**（未接入中继）：`enroll` / 需要中继材料的命令报 `NODE_NOT_ON_RELAY`，提示 `vibeterm relay join <url> --token <r3> or vibeterm relay join <url> --tenant <id> --password`。
+- **`mode: 'relay'`**：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm relay join <relayUrl> --token r3.… --name <name>`。`rename` 走 keylog `rename-node`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
+- `allow <node>`：若节点已在 `pendingMemberIds`（已接纳但解不开状态块），补 `meta-key`；否则打开该节点的公网域名访问。网页在别的标签页生成的加入码，证书材料只在那次浏览器会话里，CLI 签不出 `admit-node`——那种情况请用 `meta-key admit`。
 
 `vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 租户编号 / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
 接着是中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE`——`ROLE` 是 `primary`（写记录、出名册的那台）/ `secondary` / `-`（未连接），
@@ -350,7 +347,7 @@ vibeterm settings weixin users approve <account> <user>
 - `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。`totp disable` 非 TTY 必须 `--yes`。
 - `passkey ls` 人类输出带「注册只能在浏览器」hint。
 - `mesh route-mode get|set`：读写本机选路模式（`auto` / `direct` / `relay`），打 `GET/PUT /api/settings/mesh-route`。非法值用法错误。语义见 [mesh 运维「延迟优化」](./mesh-operations.md) 与 [路径优选](../architecture/path-selection.md)。
-- `notifications mesh set`：先签 `notification-sink`（需 `VIBETERM_PASSWORD`，`POST /api/auth/keylog?hub=sync`），`hubAck` 失败不 PUT；成功后再 `PUT /api/notifications/mesh {enabled}`。见 [多节点通知汇聚](../architecture/mesh-notification-sink.md)。
+- `notifications mesh set`：先签 `notification-sink`（需 `VIBETERM_PASSWORD`，`POST /api/auth/keylog?hub=sync`；查询名冻结），记录未落地（`ok !== true` 或 `hubAck === false`）则不 PUT；成功后再 `PUT /api/notifications/mesh {enabled}`。见 [多节点通知汇聚](../architecture/mesh-notification-sink.md)。
 - `llm providers enable|disable`：`PATCH {enabled}`。`models` 全量覆盖 `manualModels` / `disabledModels`（`--clear-manual` / `--clear-disabled` 写成空数组；与 `--manual` / `--disable` 互斥）。`default` 要同时给 `--provider` 与 `--model`。`search set` 的密钥走 `--tavily-key*` / `--brave-key*` / `VIBETERM_TAVILY_API_KEY` / `VIBETERM_BRAVE_API_KEY`（argv 警告）；`--clear-keys` 把两把 key 写成空串。
 - `tls set`：`--mode none|external|selfsigned|acme`。selfsigned 要 `--sans`（缺省 `--port 9443`、`--bind-host 0.0.0.0`）；acme 要 `--domain` `--email`，`--challenge http-01|dns-01`（缺省 http-01），dns-01 再加 `--dns-provider cloudflare|dnspod` 与 `--dns-token*` / `VIBETERM_TLS_DNS_TOKEN`（dnspod 还要 `--dns-secret-id`）。凭证省略则沿用已存。仅 `--body` 时不要求其它旗标。`mode: none` 或 `trustProxy: true` 非 TTY 必须 `--yes`。字段契约见 [HTTPS 与 ACME](./https-and-acme.md)。
 - `tunnel`：`set_access_mode --access-mode none|login|cloudflare`；`set_access_credentials` 要 `--api-token*` / `VIBETERM_TUNNEL_API_TOKEN` 与 `--account-id`；`configure_access --rule email:<addr> --rule domain:<name>`（`domain:` 写成 `email_domain`），先 `GET /api/tunnel/status`，仅 `mode=off` 时带 `--hostname`。`remove` / `remove_access` / `clear_access_credentials` 非 TTY 必须 `--yes`。`--trust-proxy on` 同样要 `--yes`。
@@ -358,7 +355,7 @@ vibeterm settings weixin users approve <account> <user>
 - `local-auth` 与 `local direct` 走 `jsonSelf`，尊重 `--node`；远端若非本机回 `403 LOCAL_ONLY`。`local status` / `leave` 仍只打 entry。
 - telegram token 用 `--token*` / `VIBETERM_TELEGRAM_TOKEN`。复杂体一律 `--body <json>|@file`，覆盖旗标。
 
-与本机运维 `vibeterm hub user passwd|totp` 的对照见 [mesh 运维「账号安全」](./mesh-operations.md)。
+与本机运维 `vibeterm user passwd|totp` 的对照见 [mesh 运维「账号安全」](./mesh-operations.md)。
 
 ## 终端分享
 

@@ -1,4 +1,4 @@
-// 节点行动作：重命名走 hub / key-log 两条路径，吊销走确认框而不是浏览器 confirm。
+// 节点行动作：重命名走 key-log，吊销走确认框而不是浏览器 confirm。
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
@@ -56,7 +56,7 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 改名：hub 模式打控制面，中继模式签 rename-node
+// 改名：签 rename-node
 // ---------------------------------------------------------------------------
 
 const { renderToStaticMarkup } = await import('react-dom/server');
@@ -87,53 +87,21 @@ function renameOf(deps: NodeActionDeps): (name: string) => Promise<void> {
   return captured;
 }
 
-function renameDeps(
-  appended: Appended[],
-  signer: RecordSigner,
-  hubRenames: string[]
-): NodeActionDeps {
+function renameDeps(appended: Appended[], signer: RecordSigner): NodeActionDeps {
   return {
-    hubApi: {
-      rename: (id: string, name: string) => {
-        hubRenames.push(`${id}:${name}`);
-        return Promise.resolve();
-      },
-    },
+    enrollmentApi: null,
+    uplinkWritable: true,
     mode: { uid: 'user-1', rootEpoch: 0, kdfParams: KDF_JSON } as unknown as ResolvedMode,
     api: authApi(appended),
     prompt: promptStub(signer),
     onChanged: () => undefined,
-    writerPublicUrl: null,
   } as unknown as NodeActionDeps;
 }
 
 describe('useNodeRowActions 的改名', () => {
-  const realFetch = globalThis.fetch;
-
-  function stubRelayMode(mode: 'relay' | 'hub'): void {
-    globalThis.fetch = ((input: string) =>
-      String(input).includes('/api/mesh/relay/status')
-        ? Promise.resolve(Response.json({ mode, relays: [] }))
-        : Promise.resolve(new Response('{}', { status: 404 }))) as typeof fetch;
-  }
-
-  test('hub 模式仍打 hub 控制面，不签任何记录', async () => {
-    stubRelayMode('hub');
+  test('签 rename-node 记录', async () => {
     const appended: Appended[] = [];
-    const hubRenames: string[] = [];
-    await renameOf(renameDeps(appended, await rootSigner(), hubRenames))('studio');
-    globalThis.fetch = realFetch;
-    expect(hubRenames).toEqual([`${NODE_ID}:studio`]);
-    expect(appended).toHaveLength(0);
-  }, 20000);
-
-  test('中继模式签 rename-node 记录，不碰 hub 控制面', async () => {
-    stubRelayMode('relay');
-    const appended: Appended[] = [];
-    const hubRenames: string[] = [];
-    await renameOf(renameDeps(appended, await rootSigner(), hubRenames))('studio');
-    globalThis.fetch = realFetch;
-    expect(hubRenames).toEqual([]);
+    await renameOf(renameDeps(appended, await rootSigner()))('studio');
     expect(appended).toHaveLength(1);
     expect(decodeKeyLogRecord(decodeBase64url(appended[0].bytes)).type).toBe('rename-node');
   }, 20000);
@@ -166,12 +134,12 @@ function openedOf<T>(useIt: () => T, plan: (value: T) => unknown, open: (value: 
 
 function revokeDeps(appended: Appended[], signer: RecordSigner, changed: string[]): NodeActionDeps {
   return {
-    hubApi: null,
+    enrollmentApi: null,
+    uplinkWritable: true,
     mode: MODE,
     api: authApi(appended),
     prompt: promptStub(signer),
     onChanged: () => changed.push('changed'),
-    writerPublicUrl: null,
   } as unknown as NodeActionDeps;
 }
 
@@ -186,10 +154,10 @@ async function waitFor(check: () => boolean): Promise<void> {
 describe('吊销的确认框', () => {
   const realFetch = globalThis.fetch;
 
-  function stubHubMode(): void {
+  function stubNoRelay(): void {
     globalThis.fetch = ((input: string) =>
       String(input).includes('/api/mesh/relay/status')
-        ? Promise.resolve(Response.json({ mode: 'hub', relays: [] }))
+        ? Promise.resolve(Response.json({ mode: 'none', relays: [] }))
         : Promise.resolve(new Response('{}', { status: 404 }))) as typeof fetch;
   }
 
@@ -198,7 +166,7 @@ describe('吊销的确认框', () => {
   });
 
   test('确认：原因原样签进 revoke-node 记录，随后刷新列表', async () => {
-    stubHubMode();
+    stubNoRelay();
     const appended: Appended[] = [];
     const changed: string[] = [];
     const deps = revokeDeps(appended, await rootSigner(), changed);
@@ -219,7 +187,7 @@ describe('吊销的确认框', () => {
   }, 20000);
 
   test('取消：一条记录都不签', async () => {
-    stubHubMode();
+    stubNoRelay();
     const appended: Appended[] = [];
     const changed: string[] = [];
     const deps = revokeDeps(appended, await rootSigner(), changed);
@@ -236,7 +204,7 @@ describe('吊销的确认框', () => {
   }, 20000);
 
   test('批量：本机被剔除，剩下的逐台带同一个原因吊销', async () => {
-    stubHubMode();
+    stubNoRelay();
     const appended: Appended[] = [];
     const changed: string[] = [];
     const signer = await rootSigner();
@@ -251,7 +219,6 @@ describe('吊销的确认框', () => {
           api: authApi(appended),
           mode: MODE,
           prompt: promptStub(signer),
-          writerPublicUrl: null,
           onChanged: () => changed.push('changed'),
         }),
       (value) => value.revokeDialog.plan,

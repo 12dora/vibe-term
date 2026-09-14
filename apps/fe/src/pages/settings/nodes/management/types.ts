@@ -1,40 +1,23 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
-import type { HubApi } from '@/node/hub-api';
+import type { EnrollmentApi } from '@/node/enrollment-api';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type {
-  AuthApi,
-  AuthKdfParamsJson,
-  AuthModeResponse,
-  HubEndpointInfo,
-} from '@vibeterm/api-client/auth/index';
+import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 
 /** 已确认带 uid / kdf 参数的 mesh 模式：管理动作都要签名，缺一不可。 */
 export type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJson };
 
-/** 节点表与行内动作共用的依赖：hub 通道、签名凭据与刷新回调。 */
+/** 节点表与行内动作共用的依赖：中继 enrollment 通道、签名凭据与刷新回调。 */
 export interface NodeActionDeps {
-  hubApi: HubApi | null;
-  hubOnline: boolean;
-  /**
-   * 管理写入当前是否被 hub 接受。挂在 standby 上、或 writer hub 缺席 / 离线时为 `false`：
-   * 此时重命名 / 吊销 / 加入都会被 hub 以 `HUB_NOT_WRITER` 拒绝，不如先禁掉。
-   * hub 集合未知（旧入口、首屏未加载）时恒为 `true`，单 hub 用户没有任何变化。
-   */
-  hubWritable: boolean;
-  /**
-   * 不可写时的原因文案。中继模式下上级不是 hub，两条 hub 专属提示都不适用，
-   * 由页面直接给出正确的那一句；缺省（hub 模式）时由表格自己按 hub 状态分档。
-   */
+  enrollmentApi: EnrollmentApi | null;
+  /** 上级链路当前接受管理写入（已挂上中继；未接入时 key-log 本机写入仍可用）。 */
+  uplinkWritable: boolean;
+  /** 不可写时的原因文案；可写时由调用方省略。 */
   blockedHint?: string;
-  /** writer hub 的对外地址；拒写提示靠它指路。 */
-  writerPublicUrl: string | null;
-  /** hub 集合（按 nodeId 索引）：表内 hub 徽标的悬浮详情从这里取。 */
-  hubDetails: ReadonlyMap<string, HubEndpointInfo>;
   mode: ResolvedMode;
   api: AuthApi;
   prompt: CredentialPromptHandle;
   onChanged: () => void;
-  /** 升级只依赖入口 → 目标的 peer link，与 hub 管理面无关，故与 rename/revoke 分开一套状态。 */
+  /** 升级只依赖入口 → 目标的 peer link，与 enrollment / 吊销分开一套状态。 */
   upgrade: NodeUpgradeController;
 }
 
@@ -103,7 +86,7 @@ export interface NodeUpgradeController {
   latest: NodeUpgradeLatest | null;
   entryOf: (nodeId: string) => NodeUpgradeEntry;
   start: (row: NodeRow) => void;
-  /** 批量升级：内部按「普通节点 → 远端 hub → 本机」排序，逐组推进。 */
+  /** 批量升级：内部按「普通节点 → 本机」排序，逐组推进。 */
   startAll: (rows: NodeRow[]) => void;
   /** 中断这一行正在进行的升级；只有下载阶段能真正打断，安装阶段由后端拒绝。 */
   cancel: (row: NodeRow) => void;

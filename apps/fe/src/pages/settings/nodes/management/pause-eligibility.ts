@@ -1,5 +1,5 @@
-// 暂停资格：本机、待批准、Hub、当前浏览器转发路径上的节点都不能暂停。
-// 恢复：本机与待批准不可恢复；已暂停的 Hub / 当前转发节点可以恢复（升级前误暂停的 Hub 必须有出路）。
+// 暂停资格：本机、待批准、当前浏览器转发路径上的节点都不能暂停。
+// 恢复：本机与待批准不可恢复；已暂停的当前转发节点可以恢复。
 // 行菜单与批量动作共用 pause-inflight，在途节点从资格里剔除。
 
 import { isMeshNodePaused } from '@/node/merge-nodes';
@@ -7,7 +7,7 @@ import type { NodeRow } from '@/node/mesh-nodes';
 import { isPauseInflight } from './pause-inflight';
 
 export type PauseAction = 'pause' | 'resume';
-export type PauseBlockReason = 'self' | 'pending' | 'hub' | 'forwarder';
+export type PauseBlockReason = 'self' | 'pending' | 'forwarder';
 
 const FORWARDER_PREFIX = /^\/n\/([^/]+)/;
 
@@ -29,20 +29,19 @@ export function isCurrentForwarderNode(
 }
 
 export function pauseBlockReason(
-  row: Pick<NodeRow, 'id' | 'runtimeNodeId' | 'isSelf' | 'isHub' | 'pending'>,
+  row: Pick<NodeRow, 'id' | 'runtimeNodeId' | 'isSelf' | 'pending'>,
   pathname: string,
   action: PauseAction = 'pause'
 ): PauseBlockReason | null {
   if (row.isSelf) return 'self';
   if (row.pending === true) return 'pending';
   if (action === 'resume') return null;
-  if (row.isHub) return 'hub';
   if (isCurrentForwarderNode(row, pathname)) return 'forwarder';
   return null;
 }
 
 export function isPauseEligible(
-  row: Pick<NodeRow, 'id' | 'runtimeNodeId' | 'isSelf' | 'isHub' | 'pending'>,
+  row: Pick<NodeRow, 'id' | 'runtimeNodeId' | 'isSelf' | 'pending'>,
   pathname: string,
   action: PauseAction = 'pause'
 ): boolean {
@@ -51,7 +50,6 @@ export function isPauseEligible(
 
 const BLOCK_KEYS: Record<Exclude<PauseBlockReason, 'pending'>, string> = {
   self: 'nodes.pause.selfBlocked',
-  hub: 'nodes.pause.hubBlocked',
   forwarder: 'nodes.pause.forwarderBlocked',
 };
 

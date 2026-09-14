@@ -18,7 +18,6 @@ import type {
   RevokeController,
 } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
-import type { HubRoleSwitchController } from './use-hub-role-switch';
 import { useNodeRowActions } from './use-node-row-actions';
 import { isUninstalling } from './use-node-uninstall';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
@@ -29,7 +28,6 @@ export interface NodesTableProps extends NodeActionDeps {
   rows: NodeRow[];
   selection: NodeSelection;
   uninstall: NodeUninstallController;
-  roleSwitch: HubRoleSwitchController;
 }
 
 /** 全选按钮：未全选时全选，已全选时清空。表头与记录卡卡头共用。 */
@@ -64,28 +62,25 @@ export interface NodeRowShared {
   setDetailOpen: (open: boolean) => void;
   /** 这一行正在远程卸载。 */
   uninstalling: boolean;
-  /** hub 当前收得下管理写入。 */
+  /** 上级链路当前收得下管理写入。 */
   writable: boolean;
   /** 不可写时的原因；可写时为 `undefined`。 */
   disabledHint?: string;
   view: NodeView;
   /** 可勾选（非本机、没在卸载）。 */
   selectable: boolean;
-  /** 正在做 hub 主备切换。 */
-  switching: boolean;
 }
 
 export function useNodeRowShared(
   row: NodeRow,
   deps: NodeActionDeps,
-  uninstall: NodeUninstallController,
-  roleSwitch: HubRoleSwitchController
+  uninstall: NodeUninstallController
 ): NodeRowShared {
   const { t } = useTranslation();
   const { busy, rename, revoke, revokeDialog } = useNodeRowActions(row, deps);
   const [detailOpen, setDetailOpen] = useState(false);
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
-  const writable = deps.hubOnline && deps.hubWritable;
+  const writable = deps.uplinkWritable;
   const now = useMinuteClock(!row.online);
 
   return {
@@ -100,7 +95,6 @@ export function useNodeRowShared(
     disabledHint: writable ? undefined : rowBlockedHint(t, deps),
     view: buildNodeView(row, t, now),
     selectable: !row.isSelf && !uninstalling,
-    switching: roleSwitch.switchingIds.has(row.id),
   };
 }
 
@@ -119,7 +113,6 @@ export function NodeRowDialogs({
           open
           onOpenChange={shared.setDetailOpen}
           renameAvailable={shared.writable && !shared.uninstalling}
-          writerPublicUrl={deps.writerPublicUrl}
           rename={shared.rename}
           onChanged={deps.onChanged}
         />

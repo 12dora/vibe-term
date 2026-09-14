@@ -33,15 +33,12 @@ function row(overrides: Partial<NodeRow> = {}): NodeRow {
     loggedIn: true,
     inventory: null,
     isSelf: false,
-    isHub: false,
-    hubMode: null,
     lastSeenAt: null,
     address: '192.168.1.20:9883',
     status: 'active',
     certificate: null,
     certSig: null,
     operation: null,
-    admissionStatus: 'admitted',
     ...overrides,
   } as NodeRow;
 }
@@ -64,11 +61,8 @@ function render(rows: NodeRow[], selected: Set<string> = new Set()): string {
     <MemoryRouter>
       <NodesCardList
         rows={rows}
-        hubApi={null}
-        hubOnline
-        hubWritable
-        writerPublicUrl={null}
-        hubDetails={new Map()}
+        enrollmentApi={null}
+        uplinkWritable
         mode={{ uid: 'u1', kdfParams: {} } as never}
         api={{} as never}
         prompt={{} as never}
@@ -81,12 +75,6 @@ function render(rows: NodeRow[], selected: Set<string> = new Set()): string {
           toggleAll: () => undefined,
         }}
         uninstall={{ scheduledIds: new Set(), clearingIds: new Set() } as never}
-        roleSwitch={
-          {
-            switchingIds: new Set(),
-            stateOf: () => ({ intent: 'promote', blocked: null }),
-          } as never
-        }
       />
     </MemoryRouter>
   );

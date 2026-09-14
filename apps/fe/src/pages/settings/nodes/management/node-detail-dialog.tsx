@@ -1,9 +1,9 @@
 // 节点详情：只读信息 + 两个可改项（名称、允许域名访问）。
 //
-// 名称经 hub 控制面改（与节点表的旧行内重命名同一个接口），域名访问是**节点本地策略**，
+// 名称经 `rename-node` 记录改（与节点表的旧行内重命名同一个接口），域名访问是**节点本地策略**，
 // 经 `/n/<id>/api/system/domain-access` 直接问那台机器——两条通道各自成败，保存时分别报错。
 //
-// 关闭域名访问要过一道确认：经配置的公开域名随即只剩 Hub / 节点互联流量，若当前这一页正是
+// 关闭域名访问要过一道确认：经配置的公开域名随即只剩节点互联流量，若当前这一页正是
 // 从该域名进来的（`viaDomain`），点下去就会当场失联。
 //
 // 直连插件那一段（`NodeDirectBody`）不进「保存」：装 / 删是立即生效的动作，且要重启才真的
@@ -207,9 +207,8 @@ export interface NodeDetailDialogProps {
   row: NodeRow;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 改名当前可用（有可写的 hub）。 */
+  /** 改名当前可用（上联可写）。 */
   renameAvailable: boolean;
-  writerPublicUrl: string | null;
   rename: (name: string) => Promise<void>;
   onChanged: () => void;
   /** 测试注入；缺省走真实端点。 */
@@ -223,7 +222,6 @@ export function NodeDetailDialog({
   open,
   onOpenChange,
   renameAvailable,
-  writerPublicUrl,
   rename,
   onChanged,
   io,
@@ -235,7 +233,6 @@ export function NodeDetailDialog({
   const { state, patch, plan, save, onAllowedChange } = useNodeDetailState(row, open, {
     io,
     rename,
-    writerPublicUrl,
     onChanged,
     onOpenChange,
   });

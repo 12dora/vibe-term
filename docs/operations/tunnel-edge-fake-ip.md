@@ -45,18 +45,18 @@
 
 DoH 也失败时同格式一条 warn（`ip=-`）。`stunResolveSnapshot()` 返回最近几次解析记录的拷贝，目前没有调用方，不参与 `[mesh][rtc] gather summary`。
 
-浏览器 ICE 仍走 hub 下发的主机名列表（`GET /api/mesh/rtc-config`）；本解析只作用于节点侧 libdatachannel。
+浏览器 ICE 仍走中继下发的主机名列表（`GET /api/mesh/rtc-config`）；本解析只作用于节点侧 libdatachannel。
 
 ### 如何确认
 
-- `GET /api/mesh/rtc-config`：应看到内置四条 STUN（或你配置的列表），`source` 字段说明来源（`builtin` / `node-custom` / `node-disabled` / `hub-custom`）。这是下发给浏览器的原始 URL，**不是**节点侧替换后的 IP。
+- `GET /api/mesh/rtc-config`：应看到内置四条 STUN（或你配置的列表），`source` 字段说明来源（`builtin` / `node-custom` / `node-disabled` / `relay-custom`）。这是下发给浏览器的原始 URL，**不是**节点侧替换后的 IP。
 - 节点日志：上面的 `stun resolve` 行，`via=doh fake_ip=true` 表示本机 DNS 落到了 fake-IP 并已绕开。
 - 另一条 gather 诊断（`[mesh][rtc] gather summary` / ICE 失败时的 `local_types`）：跨 NAT 时应出现 `srflx`（或 TURN 的 `relay`）。只有 `[host]` 且对端不在同一局域网，仍是 STUN 不可达。
 - 代理侧替代方案：让 UDP 3478 / 19302 走 DIRECT（Surge 示例：`AND, (DST-PORT, 3478), (PROTOCOL, UDP)` → DIRECT，19302 同理），并把 `always-real-ip` 加上 `stun.miwifi.com`、`stun.chat.bilibili.com`、`stun.l.google.com`、`stun.cloudflare.com`。节点侧解析器不依赖这条规则，但浏览器 ICE 仍需要本机 UDP 出得去。
 
 ## STUN 自检
 
-gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding 探测（之后每 10 分钟 ±10% 抖动，以及列表变化时重测，变化触发最短间隔 30 秒）。有效列表按「节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 内置列表」求解（`resolveEffectiveStun`），探测结果反过来决定生效列表的顺序：新鲜可达的按 RTT 提前，失败只降权。探测走与 libdatachannel 相同的 `resolveIceServers`（系统 DNS → fake-IP 时 DoH），双栈时先 A 再在 `ENETUNREACH` 上回落 AAAA。`stuns:` / `turn:` / `turns:` 记 `skipped: unsupported-scheme`，不计入 `all=N`。
+gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding 探测（之后每 10 分钟 ±10% 抖动，以及列表变化时重测，变化触发最短间隔 30 秒）。有效列表按「节点自定义 > 节点禁用 > 中继下发的自定义列表 > 内置列表」求解（`resolveEffectiveStun`），探测结果反过来决定生效列表的顺序：新鲜可达的按 RTT 提前，失败只降权。探测走与 libdatachannel 相同的 `resolveIceServers`（系统 DNS → fake-IP 时 DoH），双栈时先 A 再在 `ENETUNREACH` 上回落 AAAA。`stuns:` / `turn:` / `turns:` 记 `skipped: unsupported-scheme`，不计入 `all=N`。
 
 单次探测拆成 DNS / Binding 两段：DNS ≤ 1.5 s，Binding 至少留 1 s，合计 ≤ 3.5 s（`stun-probe-budget.ts`）。同一 txid 在 Binding 预算内最多发 3 次（RTO 500 ms / 1000 ms）。对端 `0x0111` Binding error response 视为可达（`ok=true, errorResponse=true`）。日志里的 `mapped` 经 `maskIceAddress` 脱敏；`GET /api/mesh/rtc-config` 需 session，响应里保留完整 mapped address。
 

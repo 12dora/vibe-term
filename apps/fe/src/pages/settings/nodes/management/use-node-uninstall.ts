@@ -140,7 +140,7 @@ export interface UninstallBatchSummary {
   scheduled: number;
   /** 受理后吊销也成功的台数。 */
   revoked: number;
-  /** hub 中途不再收写入而没轮到的台数。 */
+  /** 上联中途不再收写入而没轮到的台数。 */
   aborted: number;
   failed: Array<{ name: string; message: string }>;
 }
@@ -154,7 +154,7 @@ export interface UninstallBatchParams {
   onScheduled: (nodeId: string) => void;
   /** 单台失败时立刻报一次：整批跑完才看到汇总，中途失败的那台会被埋没。 */
   onFailed?: (name: string, message: string) => void;
-  /** 每台开跑前重新确认 hub 还收得下写入；返回 `false` 时整批就地停下。 */
+  /** 每台开跑前重新确认上联还收得下写入；返回 `false` 时整批就地停下。 */
   canWrite: () => boolean;
   t: Translate;
 }
@@ -163,7 +163,7 @@ export interface UninstallBatchParams {
  * 逐台串行：POST 失败就跳过这一台的吊销（证书还得留着，用户重试或到机器上手动卸），
  * 一台失败不影响后面几台。
  *
- * 每台开跑前重新确认 hub 还收得下写入：主 hub 中途掉线或 uplink 切到 standby 时再往下卸，
+ * 每台开跑前重新确认上联还收得下写入：中继中途掉线时再往下卸，
  * 只会把机器删干净却撤不掉证书。已经受理的那几台保留 `uninstalling` 记录，用户回头再吊销。
  */
 export async function runUninstallBatch(p: UninstallBatchParams): Promise<UninstallBatchSummary> {
@@ -228,8 +228,7 @@ export interface UninstallDeps {
   api: AuthApi;
   mode: ResolvedMode | null;
   prompt: CredentialPromptHandle;
-  writerPublicUrl: string | null;
-  /** hub 当前接受管理写入；卸载以一次签名吊销收尾，不可写时这个动作没有意义。 */
+  /** 上联当前接受管理写入；卸载以一次签名吊销收尾，不可写时这个动作没有意义。 */
   writable: boolean;
 }
 
@@ -244,8 +243,8 @@ export function useNodeUninstall(
 ): NodeUninstallController {
   const { t } = useTranslation();
   const io = options.io ?? defaultUninstallIo;
-  const { api, mode, prompt, writable, writerPublicUrl } = deps;
-  // 整批跑起来后 hub 随时可能掉线：每台开跑前读的必须是最新值，而不是点确认那一刻的快照。
+  const { api, mode, prompt, writable } = deps;
+  // 整批跑起来后上联随时可能掉线：每台开跑前读的必须是最新值，而不是点确认那一刻的快照。
   const writableRef = useRef(writable);
   writableRef.current = writable;
   const [plan, setPlan] = useState<UninstallPlan | null>(null);
@@ -284,7 +283,6 @@ export function useNodeUninstall(
                 const attempt = await revokeNodeRecord(signer, row, '', {
                   api,
                   mode,
-                  writerPublicUrl,
                   t,
                 });
                 // 欠着 `meta-key` 换代也算移除成功（节点已经不在成员表里），
@@ -301,7 +299,7 @@ export function useNodeUninstall(
         onChanged();
       }
     })();
-  }, [api, io, mode, onChanged, plan, prompt, t, writerPublicUrl]);
+  }, [api, io, mode, onChanged, plan, prompt, t]);
 
   const clear = useCallback(
     (row: NodeRow) => {

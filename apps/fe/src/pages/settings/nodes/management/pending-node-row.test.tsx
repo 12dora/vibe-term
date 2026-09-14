@@ -31,14 +31,11 @@ function pendingRow(overrides: Partial<NodeRow> = {}): NodeRow {
     loggedIn: false,
     inventory: null,
     isSelf: false,
-    isHub: false,
-    hubMode: null,
     lastSeenAt: null,
     status: 'enrolled',
     certificate: 'cert',
     certSig: 'cert-sig',
     operation: null,
-    admissionStatus: 'pending',
     pending: true,
     admitMaterial: {
       enrollmentId: 'enr-1',
@@ -70,11 +67,8 @@ function render(row: NodeRow, options: { writable?: boolean } = {}): string {
     <MemoryRouter>
       <NodesTable
         rows={[row]}
-        hubApi={null}
-        hubOnline={writable}
-        hubWritable={writable}
-        writerPublicUrl={null}
-        hubDetails={new Map()}
+        enrollmentApi={null}
+        uplinkWritable={writable}
         mode={{ uid: 'u1', kdfParams: {} } as never}
         api={{} as never}
         prompt={{} as never}
@@ -87,12 +81,6 @@ function render(row: NodeRow, options: { writable?: boolean } = {}): string {
           toggleAll: () => undefined,
         }}
         uninstall={{ scheduledIds: new Set(), clearingIds: new Set() } as never}
-        roleSwitch={
-          {
-            switchingIds: new Set(),
-            stateOf: () => ({ intent: 'promote', blocked: null }),
-          } as never
-        }
       />
     </MemoryRouter>
   );
@@ -127,13 +115,13 @@ describe('待批准行', () => {
     expect(html).toContain('disabled=""');
   });
 
-  test('Hub 不收写入时批准按钮禁用并说明原因', () => {
+  test('上联不收写入时批准按钮禁用并说明原因', () => {
     const html = render(pendingRow(), { writable: false });
     expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).toContain('disabled=""');
-    expect(html).toContain('nodes.hubs.standbyNotice');
+    expect(html).toContain('relay.tenant.notAttached');
   });
 
-  test('Hub 没下发材料时批准按钮禁用', () => {
+  test('没下发材料时批准按钮禁用', () => {
     const html = render(pendingRow({ admitMaterial: null }));
     expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).toContain('disabled=""');
     expect(html).toContain('nodes.admit.unavailable');
