@@ -63,23 +63,23 @@ describe('describeSetupError', () => {
 
 describe('describeSetupError 的中继口径', () => {
   test('加入中继失败不再说 Hub', () => {
-    expect(
-      describeSetupError(t, new SetupApiError('join_failed', 'join_failed', 400), 'relay')
-    ).toBe('nodes.setup.errors.relay.join_failed');
+    expect(describeSetupError(t, new SetupApiError('join_failed', 'join_failed', 400))).toBe(
+      'nodes.setup.errors.relay.join_failed'
+    );
     for (const code of ['node_revoked', 'node_exists']) {
-      expect(describeSetupError(t, new SetupApiError(code, code, 400), 'relay')).toBe(
+      expect(describeSetupError(t, new SetupApiError(code, code, 400))).toBe(
         `nodes.setup.errors.relay.${code}`
       );
     }
     expect(
-      describeSetupError(t, new SetupApiError('hub_unreachable', 'hub_unreachable', 400), 'relay')
+      describeSetupError(t, new SetupApiError('hub_unreachable', 'hub_unreachable', 400))
     ).toBe('nodes.setup.errors.relay_unreachable');
   });
 
   test('没有中继专用文案的码回落到通用键', () => {
-    expect(
-      describeSetupError(t, new SetupApiError('invalid_url', 'invalid_url', 400), 'relay')
-    ).toBe('nodes.setup.errors.invalid_url');
+    expect(describeSetupError(t, new SetupApiError('invalid_url', 'invalid_url', 400))).toBe(
+      'nodes.setup.errors.invalid_url'
+    );
   });
 
   test('两个 409 有自己的文案，不再退化成英文原文', () => {
@@ -100,16 +100,14 @@ describe('relay-join 的稳定错误码', () => {
       'relay_not_authorized',
       'local_user_exists',
     ]) {
-      expect(describeSetupError(t, new SetupApiError(code, code, 400), 'relay')).toBe(
+      expect(describeSetupError(t, new SetupApiError(code, code, 400))).toBe(
         `nodes.setup.errors.${code}`
       );
     }
   });
 
   test('relay_unreachable 附上后端给的网络原因', () => {
-    expect(
-      describeSetupError(t, new SetupApiError('relay_unreachable', 'ECONNREFUSED', 502), 'relay')
-    ).toBe(
+    expect(describeSetupError(t, new SetupApiError('relay_unreachable', 'ECONNREFUSED', 502))).toBe(
       'nodes.setup.errors.withDetail|{"base":"nodes.setup.errors.relay_unreachable","detail":"ECONNREFUSED"}'
     );
   });

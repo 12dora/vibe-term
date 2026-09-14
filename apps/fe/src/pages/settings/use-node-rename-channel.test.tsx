@@ -120,7 +120,7 @@ describe('useNodeRenameChannel 中继模式', () => {
     expect(urls).toEqual([]);
   });
 
-  test('一条中继都没挂上：改名不可用', () => {
+  test('中继模式但没挂上：改名不可用', () => {
     setMeshNodesStateForTest({
       nodes: [meshNode(NODE)],
       mode: MESH_MODE,
@@ -130,5 +130,17 @@ describe('useNodeRenameChannel 中继模式', () => {
     setMeshRelayStateForTest({ mode: 'relay', relays: [], loadedAt: 1 });
 
     expect(channelOf().canRenameNode).toBe(false);
+  });
+
+  test('未接入中继（mode=none）：改名可用，本机落账', () => {
+    setMeshNodesStateForTest({
+      nodes: [meshNode(NODE)],
+      mode: MESH_MODE,
+      modeLoaded: true,
+      loadedAt: 1,
+    });
+    setMeshRelayStateForTest({ mode: 'none', relays: [], loadedAt: 1 });
+
+    expect(channelOf().canRenameNode).toBe(true);
   });
 });

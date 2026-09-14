@@ -10,8 +10,6 @@ import type { LocalUplinkController } from './local-uplink-controller';
 export interface UseConnectMenuOptions {
   status: LocalStatusResponse | null;
   uplink: LocalUplinkController;
-  /** 退出 / 设置提交在途。 */
-  locked: boolean;
 }
 
 export function useConnectMenu(options: UseConnectMenuOptions): ConnectMenuItem[] {

@@ -31,7 +31,6 @@ import {
 import { PendingNodeCard } from './pending-node-row';
 import { PortsWarning, displayAddress } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
-import { isUpgradeBusy } from './use-node-upgrade';
 
 /** 缺省值：连接方式 / 版本 / 地址拿不到时 `buildNodeView` 给的就是它。 */
 const DASH = '—';
@@ -53,7 +52,7 @@ export function NodesCardList({ rows, selection, uninstall, ...deps }: NodesTabl
       <RecordCardList>
         {rows.map((row) =>
           row.pending ? (
-            <PendingNodeCard key={row.id} row={row} {...deps} />
+            <PendingNodeCard key={row.id} row={row} />
           ) : (
             <NodeCardView
               key={row.id}
@@ -100,10 +99,7 @@ function NodeCardView({
           data-testid={`nodes-select-${row.id}`}
         />
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-          <NodeNameTags
-            row={row}
-            rowBusy={shared.uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
-          />
+          <NodeNameTags row={row} />
         </span>
         {/* 详情里既有只读信息也有节点本地的域名访问策略，上联不可写时照样能开。 */}
         <NodeMoreMenu

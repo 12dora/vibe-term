@@ -12,7 +12,8 @@ export type MachineStatusState =
   | 'unknown'
   | 'relayConnected'
   | 'relayDisconnected'
-  | 'relayKicked';
+  | 'relayKicked'
+  | 'unattached';
 
 export interface MachineStatusBadge {
   state: MachineStatusState;
@@ -77,8 +78,8 @@ export function machineStatusBadge(input: MachineStatusInput): MachineStatusBadg
   }
   if (input.relayRole || input.relayMode) return relayBadge(input);
   return {
-    state: 'relayDisconnected',
-    tone: 'warn',
+    state: 'unattached',
+    tone: 'muted',
     key: 'nodes.machine.status.unattached',
   };
 }

@@ -1718,7 +1718,9 @@ export const I18N_RESOURCES = {
       "paneCount": "{{count}} terminals",
       "pane": "Terminal",
       "moveToWindow": "Move into this window",
-      "breakToWindow": "Break into new window"
+      "breakToWindow": "Break into new window",
+      "noWindowSelected": "No window selected",
+      "selectWindowToStart": "Select a window to get started"
     },
     "watch": {
       "title": "Watch rules",
@@ -2112,7 +2114,8 @@ export const I18N_RESOURCES = {
           "title": "Remove the direct connect plugin?",
           "confirm": "Remove",
           "cancel": "Cancel",
-          "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
+          "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time.",
+          "descriptionNoRelay": "This machine has no relay fallback; after removal it is reachable only on the local network until the plugin is reinstalled."
         },
         "directRestartRequired": "Restart VibeTerm to apply this change.",
         "directFailed": "Could not update the direct connect plugin.",
@@ -2188,7 +2191,6 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS settings",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
-        "nodeRoleHint": "HTTPS is only needed while this machine acts as an upstream. Nodes are reached through their upstream.",
         "modeActive": "in use",
         "save": "Save",
         "saved": "HTTPS settings saved",
@@ -2389,7 +2391,7 @@ export const I18N_RESOURCES = {
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
-        "pending": "Pending",
+        "pending": "Syncing",
         "paused": "Paused"
       },
       "reach": {
@@ -2413,7 +2415,6 @@ export const I18N_RESOURCES = {
         "refresh": "Refresh",
         "copy": "Copy",
         "copied": "Copied",
-        "admit": "Admit",
         "pause": "Pause",
         "resume": "Resume"
       },
@@ -2443,11 +2444,6 @@ export const I18N_RESOURCES = {
           "turn_probe_failed": "All member TURN probes failed",
           "not_probed": "Not probed (follows control port)"
         }
-      },
-      "admit": {
-        "blocked": "Admit this node before managing it.",
-        "unavailable": "The relay did not send the material needed to admit this node. Refresh and try again.",
-        "failed": "Admit failed: {{error}}"
       },
       "detail": {
         "notifySettings": "Notification Settings",
@@ -2568,13 +2564,15 @@ export const I18N_RESOURCES = {
       "rename": {
         "cancelled": "Cancelled."
       },
+      "keylog": {
+        "notApplied": "This node did not record the change; nothing was modified. Try again."
+      },
       "revoke": {
         "confirmTitle_one": "Remove Node",
         "confirmTitle_other": "Remove Nodes",
         "confirmText": "Remove node “{{name}}”? It loses access immediately and has to be added again from scratch.",
         "reasonLabel": "Reason (optional)",
         "done": "Node removed",
-        "relayFailed": "The relay did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
         "bulkConfirm_one": "Remove the following node? It loses access immediately and has to be added again from scratch.",
         "bulkConfirm_other": "Remove the following {{count}} nodes? They lose access immediately and have to be added again from scratch.",
@@ -3216,6 +3214,7 @@ export const I18N_RESOURCES = {
           "unpinDoneAutoOff": "Unpinned."
         },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
+        "joinCodesNeedRelay": "Join codes need a connected relay.",
         "reauth": {
           "notice": "The relay token expired. Re-enter the access password.",
           "action": "Re-enter Access Password"
@@ -5305,7 +5304,9 @@ export const I18N_RESOURCES = {
       "paneCount": "{{count}} 个终端",
       "pane": "终端",
       "moveToWindow": "移入此窗口",
-      "breakToWindow": "拆为独立窗口"
+      "breakToWindow": "拆为独立窗口",
+      "noWindowSelected": "未选择窗口",
+      "selectWindowToStart": "选择一个窗口开始"
     },
     "watch": {
       "title": "监控规则",
@@ -5699,7 +5700,8 @@ export const I18N_RESOURCES = {
           "title": "删除直连插件？",
           "confirm": "删除",
           "cancel": "取消",
-          "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
+          "descriptionRelay": "会话会继续经中继转发，可随时重新安装。",
+          "descriptionNoRelay": "本机没有中继兜底，卸载后只能在局域网内被访问，直到重新安装直连插件。"
         },
         "directRestartRequired": "重启 VibeTerm 后生效。",
         "directFailed": "直连插件操作失败。",
@@ -5775,7 +5777,6 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS 设置",
         "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
-        "nodeRoleHint": "只有本机作为上级时才需要 HTTPS；节点经上级访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
         "saved": "HTTPS 设置已保存",
@@ -5976,7 +5977,7 @@ export const I18N_RESOURCES = {
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
-        "pending": "待批准",
+        "pending": "同步中",
         "paused": "已暂停"
       },
       "reach": {
@@ -6000,7 +6001,6 @@ export const I18N_RESOURCES = {
         "refresh": "刷新",
         "copy": "复制",
         "copied": "已复制",
-        "admit": "批准加入",
         "pause": "暂停",
         "resume": "恢复"
       },
@@ -6030,11 +6030,6 @@ export const I18N_RESOURCES = {
           "turn_probe_failed": "成员 TURN 探测全部失败",
           "not_probed": "不探测（随控制口）"
         }
-      },
-      "admit": {
-        "blocked": "须先批准加入，才能管理这台节点。",
-        "unavailable": "中继未下发批准所需材料，请刷新后重试。",
-        "failed": "批准失败：{{error}}"
       },
       "detail": {
         "notifySettings": "通知设置",
@@ -6154,12 +6149,14 @@ export const I18N_RESOURCES = {
       "rename": {
         "cancelled": "已取消。"
       },
+      "keylog": {
+        "notApplied": "本机未能落账，未做任何改动，请重试。"
+      },
       "revoke": {
         "confirmTitle": "移除节点",
         "confirmText": "移除节点「{{name}}」？该节点会立即失去访问权限，需要重新添加。",
         "reasonLabel": "原因（可选）",
         "done": "已移除",
-        "relayFailed": "中继未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
         "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
@@ -6795,6 +6792,7 @@ export const I18N_RESOURCES = {
           "unpinDoneAutoOff": "已取消固定。"
         },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
+        "joinCodesNeedRelay": "生成加入码需要先接入中继。",
         "reauth": {
           "notice": "中继令牌已失效，须重新输入接入密码。",
           "action": "重新输入接入密码"
@@ -8884,7 +8882,9 @@ export const I18N_RESOURCES = {
       "paneCount": "{{count}} 個のターミナル",
       "pane": "ターミナル",
       "moveToWindow": "このウィンドウへ移動",
-      "breakToWindow": "新しいウィンドウに分離"
+      "breakToWindow": "新しいウィンドウに分離",
+      "noWindowSelected": "ウィンドウが選択されていません",
+      "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },
     "watch": {
       "title": "監視ルール",
@@ -9278,7 +9278,8 @@ export const I18N_RESOURCES = {
           "title": "直接接続プラグインを削除しますか？",
           "confirm": "削除",
           "cancel": "キャンセル",
-          "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
+          "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。",
+          "descriptionNoRelay": "このマシンには中継のフォールバックがありません。削除後はプラグインを再インストールするまでローカルネットワーク内からのみアクセスできます。"
         },
         "directRestartRequired": "VibeTerm を再起動すると反映されます。",
         "directFailed": "直接接続プラグインを更新できませんでした。",
@@ -9354,7 +9355,6 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS 設定",
         "description": "このマシンが HTTPS をどう提供するかを設定します。ログインとパスキーは HTTPS のアドレスでのみ利用できます。",
-        "nodeRoleHint": "HTTPS が必要なのは、このマシンが上位として動作する場合だけです。ノードへは上位経由でアクセスするため、設定は不要です。",
         "modeActive": "適用中",
         "save": "保存",
         "saved": "HTTPS 設定を保存しました",
@@ -9555,7 +9555,7 @@ export const I18N_RESOURCES = {
         "offline": "オフライン",
         "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
-        "pending": "承認待ち",
+        "pending": "同期中",
         "paused": "一時停止"
       },
       "reach": {
@@ -9579,7 +9579,6 @@ export const I18N_RESOURCES = {
         "refresh": "更新",
         "copy": "コピー",
         "copied": "コピーしました",
-        "admit": "参加を承認",
         "pause": "一時停止",
         "resume": "再開"
       },
@@ -9609,11 +9608,6 @@ export const I18N_RESOURCES = {
           "turn_probe_failed": "メンバーの TURN 検査がすべて失敗",
           "not_probed": "未検査（制御ポートに準ずる）"
         }
-      },
-      "admit": {
-        "blocked": "先に参加を承認してください。",
-        "unavailable": "承認に必要な情報が中継から届いていません。更新してからもう一度お試しください。",
-        "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
         "notifySettings": "通知設定",
@@ -9733,12 +9727,14 @@ export const I18N_RESOURCES = {
       "rename": {
         "cancelled": "キャンセルしました。"
       },
+      "keylog": {
+        "notApplied": "このノードで変更を記録できませんでした。何も変更されていません。もう一度お試しください。"
+      },
       "revoke": {
         "confirmTitle": "ノードを削除",
         "confirmText": "ノード「{{name}}」を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "reasonLabel": "理由（任意）",
         "done": "削除しました",
-        "relayFailed": "中継が確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。",
         "bulkConfirm": "次の {{count}} 個のノードを削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "bulkDone": "{{count}} 個のノードを削除しました",
@@ -10374,6 +10370,7 @@ export const I18N_RESOURCES = {
           "unpinDoneAutoOff": "固定を解除しました。"
         },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
+        "joinCodesNeedRelay": "参加コードの発行には中継への接続が必要です。",
         "reauth": {
           "notice": "中継トークンが失効しました。接続パスワードを入力し直してください。",
           "action": "接続パスワードを再入力"

@@ -1,7 +1,7 @@
 // 节点表里的「待同步」行：中继 `pendingMemberIds` 里还不在 mesh 列表的占位。
 //
-// 它还没有名字 / inventory（状态块未解开），因此没有 peer link、没有版本、
-// 也没有可吊销的证书：整行除「批准加入」外一律禁用。
+// 已 admit 但名字 / inventory 仍为空（状态块未解开），因此没有 peer link、没有版本、
+// 也没有可吊销的证书：整行禁用，只展示名称 / 状态 / 地址。
 
 import { RecordCard, RecordCardMeta } from '@/components/record-card';
 import { TONE_CLASS } from '@/lib/tone';
@@ -9,24 +9,20 @@ import type { NodeRow } from '@/node/mesh-nodes';
 import { buildNodeView } from '@/node/node-view-model';
 import { Button } from '@vibeterm/ui/button';
 import { Checkbox } from '@vibeterm/ui/checkbox';
-import { Check, Ellipsis, Loader2, ShieldAlert } from 'lucide-react';
+import { Ellipsis, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { stickyActionColumn } from '../../components/wide-table';
 import { Td, displayAddress, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps } from './types';
-import { useAdmitNode } from './use-node-row-actions';
-
-type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /**
- * 待同步行：已 admit 但名字 / inventory 仍为空，或仍待签 `admit-node`。
- * 因此没有 peer link、没有版本、也没有可吊销的证书，除「批准加入」外一律禁用；
+ * 待同步行：已 admit 但名字 / inventory 仍为空。
+ * 没有 peer link、没有版本、也没有可吊销的证书，整行禁用；
  * 勾选框同样禁用，批量升级 / 移除都碰不到它。
  */
 export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
   const { t } = useTranslation();
-  const writable = deps.uplinkWritable;
-  const blocked = writable ? t('nodes.admit.blocked') : rowBlockedHint(t, deps);
+  const blocked = deps.uplinkWritable ? t('nodes.status.pending') : rowBlockedHint(t, deps);
   const view = buildNodeView(row, t, 0);
 
   return (
@@ -62,7 +58,6 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
       <Td>{t('common.no')}</Td>
       <Td className={stickyActionColumn}>
         <div className="flex items-start gap-1">
-          <AdmitButton row={row} writable={writable} {...deps} />
           <Button
             type="button"
             size="xs"
@@ -84,10 +79,9 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
   );
 }
 
-/** 待批准行在 sm 以下的版式：勾选（禁用）+ 名称、状态 · 连接方式、地址、「批准加入」。 */
-export function PendingNodeCard({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
+/** 待同步行在 sm 以下的版式：勾选（禁用）+ 名称、状态 · 连接方式、地址。 */
+export function PendingNodeCard({ row }: { row: NodeRow }) {
   const { t } = useTranslation();
-  const writable = deps.uplinkWritable;
   const view = buildNodeView(row, t, 0);
   const address = displayAddress(row.address);
 
@@ -116,62 +110,6 @@ export function PendingNodeCard({ row, ...deps }: { row: NodeRow } & NodeActionD
           {address}
         </code>
       )}
-      <AdmitButton row={row} writable={writable} {...deps} />
     </RecordCard>
   );
-}
-
-/**
- * 「批准加入」：签一条 `admit-node`。上联不收写入、或材料不全时禁用并说明原因。
- *
- * 原因**必须可见**：禁用按钮既聚焦不了（`focusableWhenDisabled=false`）也接不住悬浮
- * （`disabled:pointer-events-none`），只挂 `title` 等于谁都读不到。因此在按钮下方渲染一行
- * 弱化说明，并用 `aria-describedby` 关联给屏幕阅读器。
- */
-function AdmitButton({
-  row,
-  writable,
-  ...deps
-}: { row: NodeRow; writable: boolean } & NodeActionDeps) {
-  const { t } = useTranslation();
-  const { busy, admit } = useAdmitNode(row, deps);
-  const label = t('nodes.actions.admit');
-  const blocked = admitBlockedHint(t, row, writable, deps);
-  const hintId = blocked === null ? undefined : `nodes-admit-hint-${row.id}`;
-
-  return (
-    <div className="flex flex-col items-start gap-1">
-      <Button
-        type="button"
-        size="xs"
-        disabled={busy || blocked !== null}
-        title={blocked ?? label}
-        aria-describedby={hintId}
-        onClick={() => void admit()}
-        data-testid={`nodes-admit-${row.id}`}
-      >
-        {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Check />}
-        {label}
-      </Button>
-      {blocked !== null && (
-        <span
-          id={hintId}
-          data-testid="pending-node-admit-hint"
-          className="max-w-56 text-[11px] leading-snug text-muted-foreground"
-        >
-          {blocked}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function admitBlockedHint(
-  t: Translate,
-  row: NodeRow,
-  writable: boolean,
-  deps: Pick<NodeActionDeps, 'uplinkWritable' | 'blockedHint'>
-): string | null {
-  if (!writable) return rowBlockedHint(t, deps);
-  return row.admitMaterial ? null : t('nodes.admit.unavailable');
 }

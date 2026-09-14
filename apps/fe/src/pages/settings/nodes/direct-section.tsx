@@ -265,14 +265,23 @@ function DirectAction({
   );
 }
 
+export function directRemoveConfirmDescriptionKey(hasRelay: boolean): string {
+  return hasRelay
+    ? 'nodes.machine.directRemoveConfirm.descriptionRelay'
+    : 'nodes.machine.directRemoveConfirm.descriptionNoRelay';
+}
+
 export function RemoveConfirm({
   open,
   onConfirm,
   onCancel,
+  hasRelay,
 }: {
   open: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** 本机当前挂着中继：卸载后会话还能走中继。 */
+  hasRelay: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -286,7 +295,7 @@ export function RemoveConfirm({
       testId="local-machine-direct-remove-confirm"
       confirmTestId="local-machine-direct-remove-confirm-ok"
     >
-      {t('nodes.machine.directRemoveConfirm.descriptionRelay')}
+      {t(directRemoveConfirmDescriptionKey(hasRelay))}
     </ConfirmDialog>
   );
 }

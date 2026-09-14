@@ -1347,7 +1347,8 @@
           "title": "直接接続プラグインを削除しますか？",
           "confirm": "削除",
           "cancel": "キャンセル",
-          "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
+          "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。",
+          "descriptionNoRelay": "このマシンには中継のフォールバックがありません。削除後はプラグインを再インストールするまでローカルネットワーク内からのみアクセスできます。"
         },
         "directRestartRequired": "VibeTerm を再起動すると反映されます。",
         "directFailed": "直接接続プラグインを更新できませんでした。",
@@ -1423,7 +1424,6 @@
       "https": {
         "title": "HTTPS 設定",
         "description": "このマシンが HTTPS をどう提供するかを設定します。ログインとパスキーは HTTPS のアドレスでのみ利用できます。",
-        "nodeRoleHint": "HTTPS が必要なのは、このマシンが上位として動作する場合だけです。ノードへは上位経由でアクセスするため、設定は不要です。",
         "modeActive": "適用中",
         "save": "保存",
         "saved": "HTTPS 設定を保存しました",
@@ -1618,7 +1618,7 @@
         "offline": "オフライン",
         "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
-        "pending": "承認待ち",
+        "pending": "同期中",
         "paused": "一時停止"
       },
       "reach": {
@@ -1640,7 +1640,6 @@
         "detail": "詳細",
         "revoke": "削除",
         "refresh": "更新",
-        "admit": "参加を承認",
         "pause": "一時停止",
         "resume": "再開"
       },
@@ -1670,11 +1669,6 @@
           "turn_probe_failed": "メンバーの TURN 検査がすべて失敗",
           "not_probed": "未検査（制御ポートに準ずる）"
         }
-      },
-      "admit": {
-        "blocked": "先に参加を承認してください。",
-        "unavailable": "承認に必要な情報が中継から届いていません。更新してからもう一度お試しください。",
-        "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
         "notifySettings": "通知設定",
@@ -1794,12 +1788,14 @@
       "rename": {
         "cancelled": "キャンセルしました。"
       },
+      "keylog": {
+        "notApplied": "このノードで変更を記録できませんでした。何も変更されていません。もう一度お試しください。"
+      },
       "revoke": {
         "confirmTitle": "ノードを削除",
         "confirmText": "ノード「{{name}}」を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "reasonLabel": "理由（任意）",
         "done": "削除しました",
-        "relayFailed": "中継が確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。",
         "bulkConfirm": "次の {{count}} 個のノードを削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "bulkDone": "{{count}} 個のノードを削除しました",
@@ -2435,6 +2431,7 @@
           "unpinDoneAutoOff": "固定を解除しました。"
         },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
+        "joinCodesNeedRelay": "参加コードの発行には中継への接続が必要です。",
         "reauth": {
           "notice": "中継トークンが失効しました。接続パスワードを入力し直してください。",
           "action": "接続パスワードを再入力"

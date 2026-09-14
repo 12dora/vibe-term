@@ -13,7 +13,6 @@ import type { NodeUninstallController } from './types';
 
 export interface NodeNameTagsProps {
   row: NodeRow;
-  rowBusy: boolean;
 }
 
 /** 名字与它后面那串标记（当前 / 成员密钥滞后）。表格与记录卡共用。 */

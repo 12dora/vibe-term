@@ -1,4 +1,4 @@
-// 待批准行：显示「待批准」与「批准加入」，其余动作一律禁用。
+// 待同步行：显示「同步中」，没有批准按钮，其余动作一律禁用。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 nodes-management 测试同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
@@ -37,13 +37,6 @@ function pendingRow(overrides: Partial<NodeRow> = {}): NodeRow {
     certSig: 'cert-sig',
     operation: null,
     pending: true,
-    admitMaterial: {
-      enrollmentId: 'enr-1',
-      authorization: 'auth',
-      authorizationSig: 'auth-sig',
-      certificate: 'cert',
-      certSig: 'cert-sig',
-    },
     ...overrides,
   };
 }
@@ -67,8 +60,8 @@ function render(row: NodeRow, options: { writable?: boolean } = {}): string {
     <MemoryRouter>
       <NodesTable
         rows={[row]}
-        enrollmentApi={null}
         uplinkWritable={writable}
+        blockedHint="relay.tenant.notAttached"
         mode={{ uid: 'u1', kdfParams: {} } as never}
         api={{} as never}
         prompt={{} as never}
@@ -93,13 +86,14 @@ function tagOf(html: string, testId: string): string {
   return html.slice(html.lastIndexOf('<', at), html.indexOf('>', at) + 1);
 }
 
-describe('待批准行', () => {
-  test('状态列显示「待批准」，并给出批准按钮', () => {
+describe('待同步行', () => {
+  test('状态列显示「同步中」，没有批准按钮', () => {
     const html = render(pendingRow());
     expect(html).toContain('nodes.status.pending');
     expect(tagOf(html, `nodes-status-${PENDING_ID}`)).toContain('data-admission="pending"');
-    expect(html).toContain('nodes.actions.admit');
-    expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).not.toContain('disabled=""');
+    expect(html).not.toContain('nodes.actions.admit');
+    expect(html).not.toContain(`nodes-admit-${PENDING_ID}`);
+    expect(html).not.toContain('nodes.admit.unavailable');
   });
 
   test('升级 / 详情 / 移除都不可用：升级按钮根本不出现，其余两个禁用', () => {
@@ -107,41 +101,16 @@ describe('待批准行', () => {
     expect(html).not.toContain(`node-upgrade-${PENDING_ID}`);
     expect(html).not.toContain(`nodes-detail-${PENDING_ID}`);
     expect(html).not.toContain(`nodes-revoke-${PENDING_ID}`);
-    // 「更多」「移除」仍在，但都是禁用态。
     expect(tagOf(html, `node-more-${PENDING_ID}`)).toContain('disabled=""');
     expect(html).toContain('nodes.actions.more');
     expect(html).toContain('nodes.actions.revoke');
-    expect(html).toContain('nodes.admit.blocked');
     expect(html).toContain('disabled=""');
   });
 
-  test('上联不收写入时批准按钮禁用并说明原因', () => {
+  test('上联不收写入时禁用按钮说明原因', () => {
     const html = render(pendingRow(), { writable: false });
-    expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).toContain('disabled=""');
+    expect(tagOf(html, `node-more-${PENDING_ID}`)).toContain('disabled=""');
     expect(html).toContain('relay.tenant.notAttached');
-  });
-
-  test('没下发材料时批准按钮禁用', () => {
-    const html = render(pendingRow({ admitMaterial: null }));
-    expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).toContain('disabled=""');
-    expect(html).toContain('nodes.admit.unavailable');
-  });
-
-  test('禁用原因渲染成可见说明，并用 aria-describedby 关联到按钮', () => {
-    const html = render(pendingRow({ admitMaterial: null }));
-    const hint = tagOf(html, 'pending-node-admit-hint');
-    expect(hint).toContain(`id="nodes-admit-hint-${PENDING_ID}"`);
-    expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).toContain(
-      `aria-describedby="nodes-admit-hint-${PENDING_ID}"`
-    );
-    // 说明文字本身可见（不是只挂在 title 上）。
-    expect(html.slice(html.indexOf(hint))).toContain('nodes.admit.unavailable</span>');
-  });
-
-  test('可以批准时不渲染多余的说明，也不留下空的 aria-describedby', () => {
-    const html = render(pendingRow());
-    expect(html).not.toContain('pending-node-admit-hint');
-    expect(tagOf(html, `nodes-admit-${PENDING_ID}`)).not.toContain('aria-describedby');
   });
 
   test('名字为空时不至于渲染出空标题', () => {
@@ -149,7 +118,7 @@ describe('待批准行', () => {
     expect(html).toContain(PENDING_ID.slice(0, 8));
   });
 
-  test('待批准行不可勾选：批量升级 / 移除都碰不到它', () => {
+  test('待同步行不可勾选：批量升级 / 移除都碰不到它', () => {
     const rows = [pendingRow(), pendingRow({ id: MEMBER_ID, pending: false })];
     expect(selectableRows(rows, new Set()).map((row) => row.id)).toEqual([MEMBER_ID]);
   });

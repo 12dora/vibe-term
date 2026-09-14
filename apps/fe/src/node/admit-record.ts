@@ -137,10 +137,11 @@ export function admitPlan(pendingId: string, canSign: boolean): 'resend' | 'sign
  * 重试路径拿的就是这里存下的对象（`unconfirmedRecord()`），字节完全相同——重试**绝不**重新
  * 取 head、重新签名。
  *
- * **先暂存再发送**：请求抛异常（连接断开、超时、响应畸形）时，服务端到底落没落库是未知的，
+ * **先暂存再发送**：请求抛异常（连接断开、超时、响应畸形）时，本机到底落没落库是未知的，
  * 只有原样重发这份字节才安全；若等响应回来才暂存，异常路径下记录就丢了，下一次推送 / 轮询
  * 会按新 head 再签一条，对端缺了中间那条便永久 `seq_gap`（见 R4 #3）。
  * 因此只有拿到**明确**的处置（已确认 / 作废 / 终态拒绝）才丢弃暂存。
+ * 中继 fan-out 失败走 `relayAck` toast，不把记录当成未落账。
  */
 export async function submitAdmitRecord(
   api: { appendKeyLog(body: SignedRecord, opts?: { hubSync?: boolean }): Promise<AdmitAppend> },

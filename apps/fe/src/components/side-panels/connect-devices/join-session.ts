@@ -138,7 +138,7 @@ export function isSessionValid(
   }
 ): boolean {
   if (session.uid !== input.identity.uid) return false;
-  // `hubNodeId` 是冻结存储字段（D4）。AuthMode 已不再下发，身份侧为 null 时跳过对拍，
+  // `hubNodeId` 是冻结存储字段（D4）。新会话写入本机 nodeId；身份侧为 null 时跳过对拍，
   // 否则升级前写进 sessionStorage 的旧会话会在刷新后被误清。
   if (input.identity.hubNodeId !== null && session.hubNodeId !== input.identity.hubNodeId) {
     return false;

@@ -4,9 +4,6 @@ import { setupErrorKey } from './validation';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-/** 设置路径连的是中继。 */
-export type SetupUplinkKind = 'relay';
-
 /**
  * 这些错误码的 `message` 才是真正的诊断信息，本地化文案只是它的抬头：
  * `join_failed` 会带上 `ca_fingerprint_mismatch` 之类的原因，`relay_unreachable` 带网络错误，
@@ -28,7 +25,7 @@ const DETAIL_BEARING_CODES = new Set([
 const RELAY_SPECIFIC_CODES = new Set(['join_failed', 'node_revoked', 'node_exists']);
 
 /** 中继路径优先取专用键；没有专用文案的码回落到通用键。 */
-export function setupErrorKeyFor(code: string, _uplink: SetupUplinkKind): string | null {
+export function setupErrorKeyFor(code: string): string | null {
   // `hub_unreachable` 是冻结的 legacy 错误码，映射到中继不可达。
   const mapped = code === 'hub_unreachable' ? 'relay_unreachable' : code;
   const base = setupErrorKey(mapped);
@@ -40,14 +37,10 @@ export function setupErrorKeyFor(code: string, _uplink: SetupUplinkKind): string
 }
 
 /** 后端错误码优先走本地化文案；未知码退化成「未知错误 + 原始 message」。 */
-export function describeSetupError(
-  t: Translate,
-  error: unknown,
-  uplink: SetupUplinkKind = 'relay'
-): string {
+export function describeSetupError(t: Translate, error: unknown): string {
   if (error instanceof SetupApiError) {
     const mapped = error.code === 'hub_unreachable' ? 'relay_unreachable' : error.code;
-    const key = setupErrorKeyFor(mapped, uplink);
+    const key = setupErrorKeyFor(mapped);
     if (!key) return t('nodes.setup.errors.unknown', { message: error.message || error.code });
     const base = t(key);
     const detail = error.message.trim();

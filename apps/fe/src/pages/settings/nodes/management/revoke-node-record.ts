@@ -54,7 +54,7 @@ function failedAttempt(result: { code: string }, ctx: RevokeContext): RevokeAtte
 
 /**
  * 吊销一台节点：**只有一条路径**——`POST /api/auth/keylog?hub=sync`（`hub=sync` 是冻结的 legacy 查询名）。
- * entry 先把签好的记录送本机等 ack，再按 `relayAck` 判断中继 fan-out。
+ * 本机先落库，再按 `relayAck` 判断中继 fan-out。`hubAck === false` 只作为旧网关的防御性失败。
  *
  * `keyLogHead → 签名 → append` 整段进引擎那条 key log 写锁：head 是全局的，
  * 一条吊销与一条 admit 并行读到同一个头就会造出两条同 seq 的记录，对端只收得下一条，
@@ -149,7 +149,7 @@ export function reportRevokeAttempt(t: Translate, attempt: RevokeAttempt): boole
     return true;
   }
   if (attempt.kind === 'unconfirmed') {
-    toast.warning(t('nodes.revoke.relayFailed', { error: attempt.error }));
+    toast.warning(t('nodes.keylog.notApplied'));
     return false;
   }
   toast.error(attempt.kind === 'stale' ? t('nodes.enrollment.staleRecord') : attempt.message);

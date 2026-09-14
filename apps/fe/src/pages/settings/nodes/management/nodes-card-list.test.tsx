@@ -61,7 +61,6 @@ function render(rows: NodeRow[], selected: Set<string> = new Set()): string {
     <MemoryRouter>
       <NodesCardList
         rows={rows}
-        enrollmentApi={null}
         uplinkWritable
         mode={{ uid: 'u1', kdfParams: {} } as never}
         api={{} as never}
@@ -130,13 +129,13 @@ describe('窄屏节点记录卡', () => {
     expect(render([row()])).toContain('nodes.selection.selectAll');
   });
 
-  test('待批准节点同样是一张卡，「批准加入」还在，地址「—」不占一行', () => {
+  test('待同步节点同样是一张卡，没有批准按钮，地址「—」不占一行', () => {
     const html = render([
       row({ id: PENDING_ID, runtimeNodeId: PENDING_ID, pending: true, address: '—' }),
     ]);
     expect(html).not.toContain(`data-testid="nodes-address-${PENDING_ID}"`);
     expect(html).toContain(`data-testid="nodes-row-${PENDING_ID}"`);
-    expect(html).toContain(`data-testid="nodes-admit-${PENDING_ID}"`);
+    expect(html).not.toContain(`data-testid="nodes-admit-${PENDING_ID}"`);
     expect(html).toContain('data-admission="pending"');
   });
 

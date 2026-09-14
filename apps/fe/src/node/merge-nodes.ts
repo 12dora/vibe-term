@@ -45,15 +45,6 @@ function compareNames(a: string, b: string): number {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-/** 签一条 `admit-node` 所需的全套材料（都是 base64url，且都不是秘密）。 */
-export interface PendingAdmitMaterial {
-  enrollmentId: string;
-  authorization: string;
-  authorizationSig: string;
-  certificate: string;
-  certSig: string;
-}
-
 /** 合并后的一行：mesh 视图（在线/到达/登录）+ 待同步占位。 */
 export interface NodeRow {
   id: string;
@@ -97,8 +88,6 @@ export interface NodeRow {
   operation?: MeshNodeOperation | null;
   /** 待同步占位行。 */
   pending?: boolean;
-  /** 待批准行的 admit 材料；`pendingMemberIds` 占位没有材料。 */
-  admitMaterial?: PendingAdmitMaterial | null;
   /**
    * entry 本机偏好：暂停后不再向该成员发起用户面连接，聚合列表（侧栏 / 设备页 / 弹窗）
    * 把它藏起来；管理表仍显示。缺省 / self / pending 视为未暂停。
@@ -172,7 +161,6 @@ function toAdmittedRow(node: MeshNode, context: MergeContext): NodeRow {
     certificate: null,
     certSig: null,
     pending: false,
-    admitMaterial: null,
     paused: isMeshNodePaused(node) ? true : undefined,
   };
 }
@@ -261,6 +249,5 @@ function toPendingRow(id: string): NodeRow {
     certSig: null,
     operation: null,
     pending: true,
-    admitMaterial: null,
   };
 }

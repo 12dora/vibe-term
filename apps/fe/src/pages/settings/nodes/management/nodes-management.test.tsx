@@ -425,7 +425,6 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     } = {}
   ): string {
     const deps: NodeActionDeps = {
-      enrollmentApi: null,
       uplinkWritable: true,
       mode: {
         ...MODE,

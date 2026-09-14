@@ -36,7 +36,7 @@ const identityTranslate: Translate = (key) => key;
  * 联动改名的通道。非联动（standalone / 老服务端）下这几个 hook 全部空转，不发任何
  * `/api/mesh/*` 请求。
  *
- * 改名只走中继：一条都没挂上时提交必然超时，此时通道不可用。
+ * 改名走本机密钥日志：未接入中继时本机仍可写（D1）；已接入中继但不收写入时通道不可用。
  */
 export function useNodeRenameChannel(
   linkage: SiteSettingsLinkage,
@@ -78,11 +78,11 @@ export function useNodeRenameChannel(
     [api, signMode, t, withSigner]
   );
 
-  const viaRelay = Boolean(relay.relayMode && signMode && relay.writable);
+  const canWrite = Boolean(signMode && (!relay.relayMode || relay.writable));
 
   return {
     renameNode: renameViaRelay,
-    canRenameNode: Boolean(linked && linkage.nodeId) && viaRelay,
+    canRenameNode: Boolean(linked && linkage.nodeId) && canWrite,
     dialog: prompt.dialog,
   };
 }

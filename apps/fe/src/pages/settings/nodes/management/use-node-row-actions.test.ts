@@ -89,7 +89,6 @@ function renameOf(deps: NodeActionDeps): (name: string) => Promise<void> {
 
 function renameDeps(appended: Appended[], signer: RecordSigner): NodeActionDeps {
   return {
-    enrollmentApi: null,
     uplinkWritable: true,
     mode: { uid: 'user-1', rootEpoch: 0, kdfParams: KDF_JSON } as unknown as ResolvedMode,
     api: authApi(appended),
@@ -134,7 +133,6 @@ function openedOf<T>(useIt: () => T, plan: (value: T) => unknown, open: (value: 
 
 function revokeDeps(appended: Appended[], signer: RecordSigner, changed: string[]): NodeActionDeps {
   return {
-    enrollmentApi: null,
     uplinkWritable: true,
     mode: MODE,
     api: authApi(appended),

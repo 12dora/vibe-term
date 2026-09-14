@@ -1347,7 +1347,8 @@
           "title": "删除直连插件？",
           "confirm": "删除",
           "cancel": "取消",
-          "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
+          "descriptionRelay": "会话会继续经中继转发，可随时重新安装。",
+          "descriptionNoRelay": "本机没有中继兜底，卸载后只能在局域网内被访问，直到重新安装直连插件。"
         },
         "directRestartRequired": "重启 VibeTerm 后生效。",
         "directFailed": "直连插件操作失败。",
@@ -1423,7 +1424,6 @@
       "https": {
         "title": "HTTPS 设置",
         "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
-        "nodeRoleHint": "只有本机作为上级时才需要 HTTPS；节点经上级访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
         "saved": "HTTPS 设置已保存",
@@ -1618,7 +1618,7 @@
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
-        "pending": "待批准",
+        "pending": "同步中",
         "paused": "已暂停"
       },
       "reach": {
@@ -1640,7 +1640,6 @@
         "detail": "详情",
         "revoke": "移除",
         "refresh": "刷新",
-        "admit": "批准加入",
         "pause": "暂停",
         "resume": "恢复"
       },
@@ -1670,11 +1669,6 @@
           "turn_probe_failed": "成员 TURN 探测全部失败",
           "not_probed": "不探测（随控制口）"
         }
-      },
-      "admit": {
-        "blocked": "须先批准加入，才能管理这台节点。",
-        "unavailable": "中继未下发批准所需材料，请刷新后重试。",
-        "failed": "批准失败：{{error}}"
       },
       "detail": {
         "notifySettings": "通知设置",
@@ -1794,12 +1788,14 @@
       "rename": {
         "cancelled": "已取消。"
       },
+      "keylog": {
+        "notApplied": "本机未能落账，未做任何改动，请重试。"
+      },
       "revoke": {
         "confirmTitle": "移除节点",
         "confirmText": "移除节点「{{name}}」？该节点会立即失去访问权限，需要重新添加。",
         "reasonLabel": "原因（可选）",
         "done": "已移除",
-        "relayFailed": "中继未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
         "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
@@ -2435,6 +2431,7 @@
           "unpinDoneAutoOff": "已取消固定。"
         },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
+        "joinCodesNeedRelay": "生成加入码需要先接入中继。",
         "reauth": {
           "notice": "中继令牌已失效，须重新输入接入密码。",
           "action": "重新输入接入密码"

@@ -68,7 +68,12 @@ export function relayActionMenu(relays: RelayLinkStatus[]): RelayMenuAction[] {
   return items;
 }
 
-/** 上级不可写时的那一句。 */
+/** 上级已接入但不收写入时的那一句。 */
 export function uplinkBlockedHint(t: (key: string) => string): string {
   return t('relay.tenant.notAttached');
+}
+
+/** 未接入中继时不能发加入码。 */
+export function joinCodesNeedRelayHint(t: (key: string) => string): string {
+  return t('relay.tenant.joinCodesNeedRelay');
 }

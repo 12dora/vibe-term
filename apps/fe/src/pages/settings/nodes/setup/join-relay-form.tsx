@@ -64,7 +64,6 @@ export function JoinRelayForm({
     useSetupSubmit<SetupRelayJoinResponse>({
       client,
       hasErrors: hasErrors(errors),
-      uplink: 'relay',
       submit: () => submitJoinRelayDiscovered(values, resolveRelayUrl, client),
       successMessage: t('nodes.setup.toast.relayJoined'),
       onRestarted,

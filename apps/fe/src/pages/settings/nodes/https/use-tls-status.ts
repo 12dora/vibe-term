@@ -32,7 +32,6 @@ export function useTlsStatus(
   api: TlsApi = defaultTlsApi,
   options: { enabled?: boolean } = {}
 ): TlsStatusState {
-  // 纯 node 角色下整块 HTTPS 都是灰的，连状态都不该去问（mesh 下这一发还要带上会话）。
   return useProtectedStatusQuery<TlsStatusResponse>({
     queryKey: TLS_STATUS_QUERY_KEY,
     queryFn: () => api.status(),

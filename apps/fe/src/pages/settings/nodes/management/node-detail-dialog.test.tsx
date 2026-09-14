@@ -26,7 +26,9 @@ const {
   nodeRelayPresenceText,
   nodeTransportText,
 } = await import('./node-detail-dialog');
-const { NodeDirectBody, NodeDirectRemoveConfirm } = await import('./node-direct-section');
+const { NodeDirectBody, NodeDirectRemoveConfirm, nodeHasRelayFallback } = await import(
+  './node-direct-section'
+);
 const {
   applyDirectResult,
   createNodeDirectIo,
@@ -1004,9 +1006,19 @@ describe('直连插件正文', () => {
           onConfirm={() => undefined}
           onCancel={() => undefined}
           testId="c"
+          hasRelay
         />
       )
     ).toBe('');
+  });
+
+  test('远程节点的中继兜底看 transport / relayPresence', () => {
+    expect(nodeHasRelayFallback({ transport: 'relay', relayPresence: [] })).toBe(true);
+    expect(nodeHasRelayFallback({ transport: 'dc', relayPresence: ['https://r.example'] })).toBe(
+      true
+    );
+    expect(nodeHasRelayFallback({ transport: 'dc', relayPresence: [] })).toBe(false);
+    expect(nodeHasRelayFallback({ transport: null, relayPresence: undefined })).toBe(false);
   });
 });
 

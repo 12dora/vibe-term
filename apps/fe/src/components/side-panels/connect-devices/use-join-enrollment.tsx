@@ -88,8 +88,9 @@ function useJoinSessionIdentity(
     () => ({
       ready: modeLoaded && rawMode !== null,
       uid: rawMode?.uid ?? null,
-      // 冻结存储字段：sessionStorage 里仍叫 `hubNodeId`（D4）。AuthMode 已不再下发该字段。
-      hubNodeId: null,
+      // 冻结存储字段：sessionStorage 里仍叫 `hubNodeId`（D4）。新会话绑本机 nodeId；
+      // 身份侧为 null 时 join-session 跳过对拍，兼容升级前写入的旧记录。
+      hubNodeId: rawMode?.nodeId ?? null,
       nodeIds: meshState.loadedAt === null ? null : meshState.nodes.map((node) => node.id),
     }),
     [modeLoaded, rawMode, meshState.loadedAt, meshState.nodes]

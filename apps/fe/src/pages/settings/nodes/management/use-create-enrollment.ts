@@ -85,7 +85,7 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
       return;
     }
     if (!relay.relayMode) {
-      setError(t('relay.tenant.notAttached'));
+      setError(t('relay.tenant.joinCodesNeedRelay'));
       return;
     }
     setBusy(true);

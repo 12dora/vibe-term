@@ -102,7 +102,6 @@ export function BecomeRelayForm({
   } = useSetupSubmit<SetupRelayResponse>({
     client,
     hasErrors: hasErrors(errors) || portError !== null,
-    uplink: 'relay',
     submit: async () => {
       const outcome = await submitBecomeRelay(values, client);
       // 中继起来之后本机还要以租户身份接一次自己的中继：留个记号，重启后把入口顶到眼前。

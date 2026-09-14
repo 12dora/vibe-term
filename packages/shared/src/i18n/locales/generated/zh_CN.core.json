@@ -451,7 +451,9 @@
       "paneCount": "{{count}} 个终端",
       "pane": "终端",
       "moveToWindow": "移入此窗口",
-      "breakToWindow": "拆为独立窗口"
+      "breakToWindow": "拆为独立窗口",
+      "noWindowSelected": "未选择窗口",
+      "selectWindowToStart": "选择一个窗口开始"
     },
     "watch": {
       "title": "监控规则",
