@@ -76,7 +76,7 @@ function harness(result: RelayReconcileResult) {
       { url: SECONDARY_URL, tenantId: 'ab'.repeat(16), priority: 1, kicked: false },
     ],
   } as unknown as RelaySecrets;
-  bindRelayReconcile(wiring, pool, { replaceAll() {} });
+  bindRelayReconcile(wiring, pool);
   bindRelayMultiAttach(wiring, attach);
   return { wiring, calls };
 }

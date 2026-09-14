@@ -36,7 +36,6 @@ export type UplinkSwitchHost = {
     idx: number,
     transport: string
   ): void;
-  logMissingCaPin(cand: UplinkCandidate, err: unknown): void;
 };
 
 export async function runUplinkSwitch(
@@ -129,14 +128,13 @@ function noteSwitchFailure(
   host: UplinkSwitchHost,
   target: UplinkCandidate,
   reason: string,
-  err: unknown,
+  _err: unknown,
   idx: number,
   transport: string
 ): void {
   if (reason === 'superseded' || reason === 'aborted' || reason === 'stopped') return;
   host.noteFailure(target, reason);
   host.logCandidateFailed(target, reason, 1, idx, transport);
-  host.logMissingCaPin(target, err);
 }
 
 function switchAttachedTo(

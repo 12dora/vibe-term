@@ -14,8 +14,8 @@ import {
   type MeshScheduler,
   NodeUnreachableError,
   type PeerTransportKind,
+  type PooledUplink,
 } from './types';
-import type { UplinkClient } from './uplink-client';
 import type { UplinkPool } from './uplink-pool';
 
 export const PEER_IDLE_MS = 5 * 60 * 1000;
@@ -56,7 +56,7 @@ export type PeerManagerState = {
   stopAbort: AbortController;
   readonly identity: MeshIdentity;
   readonly userStore: UserStore;
-  readonly uplink: UplinkClient | UplinkPool;
+  readonly uplink: (PooledUplink & { resetBackoff(): void }) | UplinkPool;
   readonly scheduler: MeshScheduler;
   readonly live: Map<string, LivePeer>;
   readonly parked: Map<string, ParkedInbound>;
@@ -140,7 +140,7 @@ function medianRtt(values: number[]): number {
   return sorted[mid] ?? 0;
 }
 
-export function readUplinkRtt(uplink: UplinkClient | UplinkPool): number | null {
+export function readUplinkRtt(uplink: PooledUplink | UplinkPool): number | null {
   const pooled = uplink as UplinkPool;
   if (typeof pooled.candidates === 'function') {
     let best: number | null = null;
@@ -178,7 +178,7 @@ export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
 export function createPeerManagerState(opts: {
   identity: MeshIdentity;
   userStore: UserStore;
-  uplink: UplinkClient | UplinkPool;
+  uplink: (PooledUplink & { resetBackoff(): void }) | UplinkPool;
   scheduler: MeshScheduler;
   endpointBackoff: PeerEndpointBackoff;
 }): PeerManagerState {

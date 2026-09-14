@@ -40,7 +40,7 @@ export const RTC_DIAL_BREAKER_SKIP_KINDS = new Set(['signaling-state', 'signal-d
 export const DC_REARM_SOURCES = [
   'local-fingerprint',
   'peer-endpoint',
-  'hub-switch',
+  'uplink-switch',
   'peer-reconnect',
   'manual',
 ] as const;

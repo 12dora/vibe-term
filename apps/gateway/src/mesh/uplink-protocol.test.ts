@@ -6,7 +6,6 @@ import {
   UPLINK_CTL_MAX_CERT_BYTES,
   decodeUplinkCtl,
   encodeUplinkCtl,
-  uplinkWsUrl,
 } from './uplink-protocol';
 
 function paddedCtlJson(fields: Record<string, unknown>, size: number): string {
@@ -54,7 +53,6 @@ describe('uplink-protocol', () => {
     if (list.t !== 'node.list') throw new Error('expected node.list');
     expect(list.key_log_head.seq).toBe(7n);
     expect(list.nodes[0]?.name).toBe('node-a');
-    expect(list.hub).toBeUndefined();
 
     const listed = decodeUplinkCtl(
       encodeUplinkCtl({
@@ -63,43 +61,11 @@ describe('uplink-protocol', () => {
         key_log_head: { seq: 7n, hash },
         rtc: { stun: ['stun:example'], turn: null },
         nodes: [],
-        hub: { nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example', name: 'hub-site' },
       })
     );
     expect(listed.t).toBe('node.list');
     if (listed.t !== 'node.list') throw new Error('expected node.list');
-    expect(listed.hub).toEqual({
-      nodeId: 'aa'.repeat(16),
-      publicUrl: 'https://hub.example',
-      name: 'hub-site',
-    });
-
-    const hubWire = decodeUplinkCtl(
-      new TextEncoder().encode(
-        JSON.stringify({
-          t: 'node.list',
-          version: 4,
-          key_log_head: { seq: 2, hash: encodeBase64url(hash) },
-          rtc: { stun: [], turn: null },
-          hub: { nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example' },
-          nodes: [
-            {
-              id: 'bb'.repeat(16),
-              name: 'node-b',
-              online: true,
-              endpoints: [],
-              inventory: {},
-              direct_capable: false,
-              version: null,
-            },
-          ],
-        })
-      )
-    );
-    expect(hubWire.t).toBe('node.list');
-    if (hubWire.t !== 'node.list') throw new Error('expected node.list');
-    expect(hubWire.nodes[0]?.version).toBeNull();
-    expect(hubWire.hub).toEqual({ nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example' });
+    expect(listed.nodes).toEqual([]);
 
     const res = decodeUplinkCtl(
       encodeUplinkCtl({
@@ -242,10 +208,5 @@ describe('uplink-protocol', () => {
         new TextEncoder().encode(paddedCtlJson({ t: 'ping' }, UPLINK_CTL_MAX_BYTES + 1))
       )
     ).toThrow(/too large/);
-  });
-
-  test('maps http(s) hub url onto /hub/uplink', () => {
-    expect(uplinkWsUrl('https://hub.example.com')).toBe('wss://hub.example.com/hub/uplink');
-    expect(uplinkWsUrl('http://127.0.0.1:9883/foo')).toBe('ws://127.0.0.1:9883/hub/uplink');
   });
 });

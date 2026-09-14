@@ -190,7 +190,6 @@ describe('runUplinkSwitch 连接失败归一化', () => {
         failures.push(msg);
       },
       logCandidateFailed: () => {},
-      logMissingCaPin: () => {},
     };
     let release = () => {};
     let started = false;

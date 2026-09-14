@@ -4,6 +4,15 @@ DROP TABLE IF EXISTS user_hub_authorizations;
 --> statement-breakpoint
 DROP TABLE IF EXISTS mesh_hubs;
 --> statement-breakpoint
+CREATE TABLE `relay_ca_pins` (
+	`relay_url` text PRIMARY KEY NOT NULL,
+	`ca_pem` text NOT NULL,
+	`fingerprint` text NOT NULL,
+	`created_at` integer NOT NULL
+);
+--> statement-breakpoint
+INSERT INTO `relay_ca_pins`("relay_url", "ca_pem", "fingerprint", "created_at") SELECT "hub_url", "ca_pem", "fingerprint", "created_at" FROM `hub_trust`;
+--> statement-breakpoint
 DROP TABLE IF EXISTS hub_trust;
 --> statement-breakpoint
 DROP TABLE IF EXISTS enrollment_token_repl;

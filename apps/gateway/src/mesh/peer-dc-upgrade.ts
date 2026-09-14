@@ -96,8 +96,8 @@ export class DcUpgradeCoordinator {
     this.rearmDisabled(nodeId, 'peer-endpoint');
   }
 
-  onHubSwitched(): void {
-    this.rearmAllDisabled('hub-switch');
+  onUplinkSwitched(): void {
+    this.rearmAllDisabled('uplink-switch');
   }
 
   onPeerReconnected(nodeId: string): void {

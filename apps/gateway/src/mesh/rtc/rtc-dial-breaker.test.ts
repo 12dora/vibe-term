@@ -418,7 +418,7 @@ describe('RtcDialBreaker', () => {
     for (const source of DC_REARM_SOURCES) {
       for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'timeout', `${source}-${i}`);
       expect(breaker.isDisabled(peer)).toBe(true);
-      if (source === 'local-fingerprint' || source === 'hub-switch') {
+      if (source === 'local-fingerprint' || source === 'uplink-switch') {
         expect(breaker.rearmAllDisabled(source)).toEqual([peer]);
       } else {
         expect(breaker.rearmDisabled(peer, source)).toBe(true);
@@ -430,7 +430,7 @@ describe('RtcDialBreaker', () => {
       'local-fingerprint',
       'local-fingerprint',
       'peer-endpoint',
-      'hub-switch',
+      'uplink-switch',
       'peer-reconnect',
       'manual',
     ]);

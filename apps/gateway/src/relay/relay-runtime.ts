@@ -71,7 +71,7 @@ export type RelayRuntimeOptions = {
   turnDeps?: Omit<RelayTurnServiceOptions, 'db' | 'config' | 'log' | 'now' | 'sleep'>;
 };
 
-/** 与 hub 的 BunServerWsAdapter 等价，只是挂在 relay 的 socket data 上。 */
+/** 与 mesh 侧 BunServerWsAdapter 等价，挂在 relay 的 socket data 上。 */
 export class RelayServerWsAdapter implements ServerSocketAdapter {
   private messageCb: ((bytes: Uint8Array) => void) | null = null;
   private closeCb: ((reason?: string) => void) | null = null;

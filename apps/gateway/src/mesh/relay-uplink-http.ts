@@ -12,7 +12,7 @@ import {
   relayTlsCaForDial,
   resolveRelayDialUrl,
 } from './relay-dial';
-import { type UplinkWsFactory, uplinkWebSocketTls } from './uplink-client';
+import { type UplinkWsFactory, uplinkWebSocketTls } from './uplink-constants';
 import { closeTransport } from './uplink-reconnect';
 
 export const RELAY_UPLINK_PATH = '/relay/uplink';

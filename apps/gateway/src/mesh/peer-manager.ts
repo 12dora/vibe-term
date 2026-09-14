@@ -81,7 +81,7 @@ export class PeerManager extends PeerCollaboratorHost {
   private readonly drain: PeerLinkDrain;
   private readonly waiters: PeerLinkWaiters;
   private readonly statusSync: PeerStatusSync;
-  private readonly hubHostOf: () => string | null;
+  private readonly uplinkHostOf: () => string | null;
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
   private readonly rtcInbox: Map<string, RtcSignalInboxEntry[]>;
   private readonly onBrowserSignal: ((msg: RtcSignalMessage, fromNodeId?: string) => void) | null;
@@ -109,8 +109,8 @@ export class PeerManager extends PeerCollaboratorHost {
     this.onBrowserSignal = opts.onBrowserSignal ?? null;
     this.ensureDcSession = opts.ensureDcSession ?? null;
     this.dispatchHttp = opts.dispatchHttp;
-    const hubHost = opts.hubHost;
-    this.hubHostOf = typeof hubHost === 'function' ? hubHost : () => hubHost ?? null;
+    const uplinkHost = opts.uplinkHost ?? opts.hubHost;
+    this.uplinkHostOf = typeof uplinkHost === 'function' ? uplinkHost : () => uplinkHost ?? null;
     const parts = createPeerCollaborators({
       opts,
       state: this.state,
@@ -241,13 +241,13 @@ export class PeerManager extends PeerCollaboratorHost {
     return peerLinkDetailFromState(
       this.state,
       nodeId,
-      this.hubHostOf(),
+      this.uplinkHostOf(),
       this.dcBreaker.snapshot(nodeId)
     );
   }
-  onHubSwitched(): void {
+  onUplinkSwitched(): void {
     if (this.state.stopped) return;
-    this.dcUpgrade.onHubSwitched();
+    this.dcUpgrade.onUplinkSwitched();
   }
   forceDcProbe(nodeId: string): void {
     if (!isNodePaused(nodeId)) this.dialer.forceDcProbe(nodeId);

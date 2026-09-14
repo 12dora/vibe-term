@@ -1,17 +1,5 @@
-import { X509Certificate, createHash } from 'node:crypto';
 import { combineAbortSignals } from '@vibeterm/shared/async';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
-import type {
-  HubAdvertisement,
-  HubAttachmentsMessage,
-  HubForwardMessage,
-  HubMode,
-  HubTokensMessage,
-  HubWriteForwardMessage,
-} from '@vibeterm/shared/uplink';
-import type { HubTrustStore } from '../auth/hub-trust-store';
-import type { MeshHubRecord } from '../auth/mesh-hub-store';
-import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler } from './ctl';
 import { createDialWsFactory } from './dial-resolve';
@@ -29,29 +17,16 @@ import type {
 import {
   UPLINK_BACKOFF_MAX_MS,
   UPLINK_BACKOFF_MIN_MS,
-  UplinkClient,
   type UplinkClientOptions,
   type UplinkWsFactory,
-} from './uplink-client';
-import {
-  UPLINK_RTT_MIN_SAMPLES,
-  hubSupportsNearestAttach,
-  isCurrentUplinkSession,
-  selectNearestUplink,
-  writerHubIdOf,
-} from './uplink-nearest-switch';
+} from './uplink-constants';
 import { isUplinkPathRerace, sleepAfterUplinkSession } from './uplink-path-sampler';
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
-import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
+import { defaultProbeHealthz } from './uplink-pool-http';
 import { runPreferredProbe } from './uplink-pool-probe';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
 import { primaryTargetOf } from './uplink-pool-target';
-import {
-  isSelfHubCandidate,
-  normalizeHubEndpointUrl,
-  redactUrl,
-  sameHubUrl,
-} from './uplink-pool-url';
+import { normalizeHubEndpointUrl, redactUrl, sameHubUrl } from './uplink-pool-url';
 import { UplinkRelayDrain, type UplinkRelayDrainReason } from './uplink-relay-drain';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
@@ -66,19 +41,10 @@ export {
   UPLINK_RTT_MIN_SAMPLES,
   UPLINK_RTT_SWITCH_MIN_MS,
   UPLINK_RTT_SWITCH_MIN_RATIO,
-  hubSupportsNearestAttach,
   isRttSwitchWorth,
-  writerHubIdOf,
 } from './uplink-nearest-switch';
 
-export {
-  CA_BOOTSTRAP_MAX_BYTES,
-  CA_BOOTSTRAP_TIMEOUT_MS,
-  defaultFetchCaPem,
-  defaultProbeHealthz,
-  joinHubPath,
-  readResponseTextLimited,
-} from './uplink-pool-http';
+export { defaultProbeHealthz, joinHubPath } from './uplink-pool-http';
 import type {
   UplinkCtlMessage,
   UplinkEnrollRedeemed,
@@ -102,11 +68,10 @@ export const UPLINK_POOL_FAIL_LOG_INTERVAL_MS = 60_000;
 export type UplinkCandidate = {
   hubNodeId: string | null;
   publicUrl: string;
-  mode: HubMode;
-  writerEpoch: number;
+  mode?: string;
+  writerEpoch?: number;
   priority: number;
   caFingerprint: string | null;
-  caMismatch?: { advertised: string; pinned: string };
   lastError?: string | null;
   lastErrorAt?: number | null;
   lastAttemptAt?: number | null;
@@ -118,18 +83,13 @@ export type UplinkCandidate = {
 export type AttachedHub = {
   hubNodeId: string | null;
   publicUrl: string;
-  mode: HubMode | null;
+  mode: string | null;
   writerEpoch: number | null;
   since: number;
 };
 
 export type UplinkPoolNodeListMeta = {
   hubNodeId: string | null;
-  generation: number;
-};
-
-export type UplinkPoolCtlSource = {
-  hubNodeId: string;
   generation: number;
 };
 
@@ -140,36 +100,22 @@ export type UplinkPoolOptions = {
   userId: string | (() => string);
   keyLogApplier: KeyLogApplier;
   userStore: UserStore;
-  statusProvider: () => UplinkStatus & { hub?: HubAdvertisement };
+  statusProvider: () => UplinkStatus;
   candidates: () => UplinkCandidate[];
-  hubTrust: HubTrustStore;
   wsFactory?: UplinkWsFactory;
   scheduler?: MeshScheduler;
   pingIntervalMs?: number;
-  createClient?: CreatePooledUplink;
+  createClient: CreatePooledUplink;
   probeHealthz?: (publicUrl: string, tlsCa: string[] | null, timeoutMs: number) => Promise<boolean>;
-  fetchCaPem?: (publicUrl: string) => Promise<string>;
-  fingerprintPem?: (pem: string) => string;
-  isLocalCandidate?: (cand: UplinkCandidate) => boolean;
-  connectLocal?: (client: PooledUplink, signal: AbortSignal) => Promise<void>;
   probeJitter?: number;
   failbackDebounceMs?: number;
   probeNowDebounceMs?: number;
   rttProbeIntervalMs?: number;
   enablePeriodicRttProbe?: boolean;
-  /** `null` = auto (on when >1 authorized hub is known). `false` forces off. */
-  preferNearest?: boolean | null;
-  localRoles?: { hub?: boolean; node?: boolean; relay?: boolean };
-  rttSwitchDwellMs?: number;
   onNodeList?: (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
   onKeyLogFork?: (event: KeyLogForkEvent) => void;
-  onHubTokens?: (msg: HubTokensMessage, source: UplinkPoolCtlSource) => void;
-  onHubAttachments?: (msg: HubAttachmentsMessage, source: UplinkPoolCtlSource) => void;
-  onHubForward?: (msg: HubForwardMessage, source: UplinkPoolCtlSource) => void;
-  onHubWriteForward?: (msg: HubWriteForwardMessage, source: UplinkPoolCtlSource) => void;
-  onHubRelayStream?: (stream: LinkStream, source: UplinkPoolCtlSource) => void;
   failLimit?: number;
   authDeadlineMs?: number;
   probeIntervalMs?: number;
@@ -178,219 +124,16 @@ export type UplinkPoolOptions = {
   relayDrainTimeoutMs?: number;
 };
 
-export function isCaFingerprintHex(value: string): boolean {
-  return /^[0-9a-f]{64}$/i.test(value.trim());
-}
-
-const KEY_USAGE_OID = Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x0f]);
-const KEY_USAGE_NAMES = [
-  'digitalSignature',
-  'nonRepudiation',
-  'keyEncipherment',
-  'dataEncipherment',
-  'keyAgreement',
-  'keyCertSign',
-  'cRLSign',
-  'encipherOnly',
-  'decipherOnly',
-] as const;
-
-function parseKeyUsageFromRaw(raw: ArrayBuffer | Uint8Array): string[] | undefined {
-  const buf = Buffer.from(raw instanceof ArrayBuffer ? new Uint8Array(raw) : raw);
-  const idx = buf.indexOf(KEY_USAGE_OID);
-  if (idx < 0) return undefined;
-  let i = idx + KEY_USAGE_OID.length;
-  if (buf[i] === 0x01 && buf[i + 1] === 0x01) i += 3;
-  if (buf[i] !== 0x04) return undefined;
-  const octLen = buf[i + 1];
-  if (octLen == null || octLen > 127) return undefined;
-  i += 2;
-  if (buf[i] !== 0x03) return undefined;
-  const bitStrLen = buf[i + 1];
-  const unused = buf[i + 2];
-  if (bitStrLen == null || unused == null || bitStrLen < 2) return undefined;
-  const value = buf.subarray(i + 3, i + 2 + bitStrLen);
-  const totalBits = value.length * 8 - unused;
-  const out: string[] = [];
-  for (let b = 0; b < totalBits && b < KEY_USAGE_NAMES.length; b += 1) {
-    const byte = value[b >> 3] ?? 0;
-    const bit = 7 - (b & 7);
-    if ((byte & (1 << bit)) !== 0) out.push(KEY_USAGE_NAMES[b]);
-  }
-  return out;
-}
-
-function certificateKeyUsage(cert: X509Certificate): string[] | undefined {
-  if (cert.keyUsage && cert.keyUsage.length > 0) return [...cert.keyUsage];
-  return parseKeyUsageFromRaw(cert.raw);
-}
-
-export function parseSingleCaCertificate(pem: string): X509Certificate {
-  const matches = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
-  if (matches.length !== 1) throw new Error('ca_pem_count');
-  const cert = new X509Certificate(matches[0]);
-  const usages = certificateKeyUsage(cert);
-  if (usages && !usages.includes('keyCertSign')) throw new Error('ca_no_key_cert_sign');
-  if (cert.ca !== true) throw new Error('ca_not_ca');
-  return cert;
-}
-
-export function spkiFingerprintFromPem(pem: string): string {
-  const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
-  if (!match) throw new Error('PEM does not contain a certificate');
-  const cert = new X509Certificate(match[0]);
-  const spki = cert.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
-  return createHash('sha256').update(spki).digest('hex');
-}
-
 export function jitteredIntervalMs(baseMs: number, jitter = UPLINK_POOL_PROBE_JITTER): number {
   const ratio = Math.min(Math.max(jitter, 0), 1);
   const delta = baseMs * ratio;
   return Math.max(1, Math.floor(baseMs - delta + Math.random() * (2 * delta)));
 }
 
-export function mergeUplinkCandidates(
-  stored: Array<{
-    hubNodeId: string;
-    publicUrl: string;
-    mode: HubMode;
-    writerEpoch: number;
-    priority: number;
-    caFingerprint: string | null;
-  }>,
-  seeds: string[]
-): UplinkCandidate[] {
-  const seen = new Set<string>();
-  const out: UplinkCandidate[] = [];
-  for (const row of stored) {
-    const key = normalizeHubEndpointUrl(row.publicUrl);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      hubNodeId: row.hubNodeId,
-      publicUrl: row.publicUrl,
-      mode: row.mode,
-      writerEpoch: row.writerEpoch,
-      priority: row.priority,
-      caFingerprint: row.caFingerprint,
-    });
-  }
-  let seedIndex = 0;
-  for (const raw of seeds) {
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    const key = normalizeHubEndpointUrl(trimmed);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      hubNodeId: null,
-      publicUrl: trimmed,
-      mode: 'active',
-      writerEpoch: 0,
-      priority: UPLINK_SEED_PRIORITY_BASE + seedIndex,
-      caFingerprint: null,
-    });
-    seedIndex += 1;
-  }
-  out.sort(compareUplinkCandidates);
-  return out;
-}
-
-function modeRank(mode: HubMode | string): number {
-  if (mode === 'active') return 0;
-  if (mode === 'standby') return 1;
-  return 2;
-}
-
 function compareUplinkCandidates(a: UplinkCandidate, b: UplinkCandidate): number {
-  const rank = modeRank(a.mode) - modeRank(b.mode);
-  if (rank !== 0) return rank;
-  if (a.mode === 'active' && a.writerEpoch !== b.writerEpoch) return b.writerEpoch - a.writerEpoch;
   if (a.priority !== b.priority) return a.priority - b.priority;
   return 0;
 }
-
-export function orderCandidatesByNearest(
-  cands: UplinkCandidate[],
-  opts: {
-    rttOf: (publicUrl: string) => { ewma: number; samples: number } | null;
-    writerHubId: string | null;
-    versionOf: (cand: UplinkCandidate) => string | null | undefined;
-  }
-): UplinkCandidate[] {
-  if (cands.length <= 1) return cands;
-  const eligible: UplinkCandidate[] = [];
-  const rest: UplinkCandidate[] = [];
-  for (const cand of cands) {
-    const rtt = opts.rttOf(cand.publicUrl);
-    const isWriter = Boolean(cand.hubNodeId) && cand.hubNodeId === opts.writerHubId;
-    const supports = isWriter || hubSupportsNearestAttach(opts.versionOf(cand));
-    if (rtt && rtt.samples >= UPLINK_RTT_MIN_SAMPLES && supports) eligible.push(cand);
-    else rest.push(cand);
-  }
-  if (eligible.length === 0) return cands;
-  eligible.sort((a, b) => {
-    const ar = opts.rttOf(a.publicUrl)?.ewma ?? Number.POSITIVE_INFINITY;
-    const br = opts.rttOf(b.publicUrl)?.ewma ?? Number.POSITIVE_INFINITY;
-    if (ar !== br) return ar - br;
-    return compareUplinkCandidates(a, b);
-  });
-  const writerIdx = rest.findIndex((row) => row.hubNodeId === opts.writerHubId);
-  if (writerIdx > 0) {
-    const writer = rest[writerIdx];
-    const before = rest.slice(0, writerIdx);
-    const after = rest.slice(writerIdx + 1);
-    const keep: UplinkCandidate[] = [];
-    const demote: UplinkCandidate[] = [];
-    for (const row of before) {
-      const isWriter = row.hubNodeId === opts.writerHubId;
-      if (isWriter || hubSupportsNearestAttach(opts.versionOf(row))) keep.push(row);
-      else demote.push(row);
-    }
-    rest.length = 0;
-    rest.push(...keep);
-    if (writer) rest.push(writer);
-    rest.push(...demote, ...after);
-  }
-  return [...eligible, ...rest];
-}
-
-export function recordsFromNodeList(list: UplinkNodeList): Array<Omit<MeshHubRecord, 'updatedAt'>> {
-  if (list.hubs && list.hubs.length > 0) return hubListToRecords(list.hubs);
-  if (!list.hub) return [];
-  return [
-    {
-      hubNodeId: list.hub.nodeId,
-      publicUrl: list.hub.publicUrl,
-      name: list.hub.name ?? null,
-      mode: 'active',
-      priority: 100,
-      writerEpoch: list.writerEpoch ?? 1,
-      caFingerprint: null,
-      online: true,
-      lastSeenAt: null,
-    },
-  ];
-}
-
-function fallbackCandidate(): UplinkCandidate {
-  return {
-    hubNodeId: null,
-    publicUrl: 'http://127.0.0.1',
-    mode: 'active',
-    writerEpoch: 0,
-    priority: UPLINK_SEED_PRIORITY_BASE,
-    caFingerprint: null,
-  };
-}
-
-type HubView = {
-  byUrl: Map<string, { online: boolean }>;
-  writerHubId: string | null;
-  writerEpoch: number | null;
-  bestKey: string | null;
-  attachedIsBest: boolean;
-};
 
 export class UplinkPool {
   readonly identity: MeshIdentity;
@@ -408,10 +151,7 @@ export class UplinkPool {
   private readonly failbackDebounceMs: number;
   private readonly probeNowDebounceMs: number;
   private readonly rttProbeIntervalMs: number;
-  private readonly preferNearestSetting: boolean | null;
-  private readonly rttSwitchDwellMs: number;
   private readonly relayDrain: UplinkRelayDrain;
-  private lastRttSwitchAt = 0;
   private lastSessionReason = '';
 
   private live: PooledUplink | null = null;
@@ -430,11 +170,8 @@ export class UplinkPool {
   private coalescedDebounceMs: number;
   private failbackProbeDeadlineAt = 0;
   private lastFailbackProbeAt = 0;
-  private lastHubView: HubView | null = null;
   private wrapAttempt = 0;
   private lastDialUrl: string | null = null;
-  private readonly caBootstraps = new Map<string, Promise<void>>();
-  private readonly caMismatches = new Map<string, { advertised: string; pinned: string }>();
   private readonly diagByUrl = new Map<string, UrlDiag>();
   private readonly candLogAt = new Map<
     string,
@@ -456,7 +193,7 @@ export class UplinkPool {
     const uid = opts.userId;
     this.userIdOf = typeof uid === 'function' ? uid : () => uid;
     this.scheduler = opts.scheduler ?? defaultScheduler();
-    this.createClient = opts.createClient ?? ((clientOpts) => new UplinkClient(clientOpts));
+    this.createClient = opts.createClient;
     this.failLimit = opts.failLimit ?? UPLINK_POOL_FAIL_LIMIT;
     this.authDeadlineMs = opts.authDeadlineMs ?? UPLINK_POOL_AUTH_DEADLINE_MS;
     this.probeIntervalMs = opts.probeIntervalMs ?? UPLINK_POOL_PROBE_INTERVAL_MS;
@@ -466,8 +203,6 @@ export class UplinkPool {
     this.probeNowDebounceMs = opts.probeNowDebounceMs ?? UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS;
     this.coalescedDebounceMs = this.failbackDebounceMs;
     this.rttProbeIntervalMs = opts.rttProbeIntervalMs ?? UPLINK_POOL_RTT_PROBE_INTERVAL_MS;
-    this.preferNearestSetting = opts.preferNearest === undefined ? null : opts.preferNearest;
-    this.rttSwitchDwellMs = opts.rttSwitchDwellMs ?? UPLINK_RTT_SWITCH_DWELL_MS;
     this.relayDrain = new UplinkRelayDrain({
       scheduler: this.scheduler,
       recheckMs: opts.relayDrainRecheckMs,
@@ -512,35 +247,17 @@ export class UplinkPool {
   }
 
   candidates(): UplinkCandidate[] {
-    const list = this.opts.candidates();
-    const base = list.length > 0 ? list : [fallbackCandidate()];
-    const withDiag = base.map((row) => {
-      const caMismatch = this.caMismatchOf(row.publicUrl, row.caFingerprint);
+    const list = [...this.opts.candidates()].sort(compareUplinkCandidates);
+    return list.map((row) => {
       const diag = this.diagByUrl.get(normalizeHubEndpointUrl(row.publicUrl));
-      let version = row.version ?? null;
-      if (version == null && row.hubNodeId) {
-        try {
-          version = this.opts.userStore.getNode(row.hubNodeId)?.version ?? null;
-        } catch {
-          version = null;
-        }
-      }
       return {
         ...row,
-        ...(caMismatch ? { caMismatch } : {}),
-        lastError: caMismatch ? 'hub_ca_changed' : (diag?.lastError ?? row.lastError ?? null),
+        lastError: diag?.lastError ?? row.lastError ?? null,
         lastErrorAt: diag?.lastErrorAt ?? row.lastErrorAt ?? null,
         lastAttemptAt: diag?.lastAttemptAt ?? row.lastAttemptAt ?? null,
         rttMs: diag?.rttMs ?? row.rttMs ?? null,
         rttAt: diag?.rttAt ?? row.rttAt ?? null,
-        version,
       };
-    });
-    if (!this.preferNearestActive(withDiag)) return withDiag;
-    return orderCandidatesByNearest(withDiag, {
-      rttOf: (publicUrl) => this.rttState(publicUrl),
-      writerHubId: writerHubIdOf(withDiag),
-      versionOf: (cand) => cand.version,
     });
   }
 
@@ -696,6 +413,18 @@ export class UplinkPool {
     this.syncRttProbe();
     while (!signal.aborted) {
       const cands = this.candidates();
+      if (cands.length === 0) {
+        this.wrapSleepAbort = new AbortController();
+        const combined = combineAbortSignals(signal, this.wrapSleepAbort.signal);
+        try {
+          await this.scheduler.sleep(UPLINK_BACKOFF_MAX_MS, combined);
+        } catch {
+          if (signal.aborted) return;
+        } finally {
+          this.wrapSleepAbort = null;
+        }
+        continue;
+      }
       let session = false;
       for (let i = 0; i < cands.length; i += 1) {
         const cand = cands[i];
@@ -743,19 +472,15 @@ export class UplinkPool {
     return token === this.switchToken && !this.stopAbort?.signal.aborted;
   }
 
-  isLocalTransport(cand: UplinkCandidate): boolean {
-    return this.opts.isLocalCandidate?.(cand) === true && Boolean(this.opts.connectLocal);
+  isLocalTransport(_cand: UplinkCandidate): boolean {
+    return false;
   }
 
   async connectCandidate(
     client: PooledUplink,
-    cand: UplinkCandidate,
+    _cand: UplinkCandidate,
     signal: AbortSignal
   ): Promise<void> {
-    if (this.isLocalTransport(cand) && this.opts.connectLocal) {
-      await this.opts.connectLocal(client, signal);
-      return;
-    }
     await client.attemptConnect(signal);
   }
 
@@ -824,26 +549,14 @@ export class UplinkPool {
     index: number,
     transport: string
   ): void {
-    const msg = this.caMismatchOf(cand.publicUrl) ? 'hub_ca_changed' : errMessage(err);
+    const msg = errMessage(err);
     this.lastConnectError = { reason: msg, at: this.scheduler.now() };
     this.noteFailure(cand, msg);
     this.logCandidateFailed(cand, msg, failures, index, transport);
-    this.logMissingCaPin(cand, err);
   }
 
   spawn(cand: UplinkCandidate): PooledUplink {
-    const pin = this.opts.hubTrust.get(cand.publicUrl);
-    const tlsCa = pin?.caPem ? [pin.caPem] : null;
-    const wsFactory = this.opts.wsFactory ?? defaultWsFactory(tlsCa);
-    const slot: { client: PooledUplink | null } = { client: null };
-    const sourceOf = (): UplinkPoolCtlSource => ({
-      hubNodeId: this.attached?.hubNodeId ?? cand.hubNodeId ?? '',
-      generation: this.generation,
-    });
-    const ifLive = <T>(fn: (source: UplinkPoolCtlSource) => T): T | undefined => {
-      if (!slot.client || this.live !== slot.client) return undefined;
-      return fn(sourceOf());
-    };
+    const wsFactory = this.opts.wsFactory ?? defaultWsFactory(null);
     const client = this.createClient({
       hubUrl: cand.publicUrl,
       identity: this.opts.identity,
@@ -852,7 +565,7 @@ export class UplinkPool {
       userStore: this.opts.userStore,
       statusProvider: this.opts.statusProvider,
       wsFactory,
-      tlsCa,
+      tlsCa: null,
       scheduler: this.scheduler,
       pingIntervalMs: this.opts.pingIntervalMs,
       onNodeList: (list) => this.dispatchNodeList(client, list, cand.hubNodeId),
@@ -868,27 +581,7 @@ export class UplinkPool {
         if (this.live !== client) return;
         this.opts.onKeyLogFork?.(event);
       },
-      onHubTokens: (msg) => {
-        ifLive((source) => this.opts.onHubTokens?.(msg, source));
-      },
-      onHubAttachments: (msg) => {
-        ifLive((source) => this.opts.onHubAttachments?.(msg, source));
-      },
-      onHubForward: (msg) => {
-        ifLive((source) => this.opts.onHubForward?.(msg, source));
-      },
-      onHubWriteForward: (msg) => {
-        ifLive((source) => this.opts.onHubWriteForward?.(msg, source));
-      },
-      onHubRelayStream: (stream) => {
-        if (!slot.client || this.live !== slot.client) {
-          stream.reset('stale');
-          return;
-        }
-        this.opts.onHubRelayStream?.(this.relayDrain.track(slot.client, stream), sourceOf());
-      },
     });
-    slot.client = client;
     return client;
   }
 
@@ -906,8 +599,8 @@ export class UplinkPool {
     this.attached = {
       hubNodeId: cand.hubNodeId,
       publicUrl: cand.publicUrl,
-      mode: cand.mode,
-      writerEpoch: cand.writerEpoch,
+      mode: cand.mode ?? null,
+      writerEpoch: cand.writerEpoch ?? null,
       since: this.scheduler.now(),
     };
     this.emitAttached(this.attached);
@@ -933,7 +626,6 @@ export class UplinkPool {
       hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
       generation: this.generation,
     });
-    this.refreshAttachedFromList(list);
     this.refreshAttachedFromCandidates();
     const meta = {
       hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
@@ -946,13 +638,8 @@ export class UplinkPool {
         /* listener errors must not break the pool */
       }
     }
-    const shouldFailback = this.shouldTriggerFailbackProbe(list);
-    this.lastHubView = this.captureHubView(list);
-    if (shouldFailback) this.requestFailbackProbeFromNodeList();
     this.syncProbe();
     this.syncRttProbe();
-    void this.pinAdvertisedCas(list);
-    void this.pinCandidateFingerprints();
   }
 
   private applyAttachedMatch(match: Pick<AttachedHub, 'hubNodeId' | 'mode' | 'writerEpoch'>): void {
@@ -961,92 +648,17 @@ export class UplinkPool {
     this.attached.mode = match.mode;
     this.attached.writerEpoch = match.writerEpoch;
   }
-  private refreshAttachedFromList(list: UplinkNodeList): void {
-    const attached = this.attached;
-    if (!attached) return;
-    const recs = recordsFromNodeList(list);
-    const match = recs.find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
-    if (match) this.applyAttachedMatch(match);
-  }
 
   private refreshAttachedFromCandidates(): void {
     const attached = this.attached;
     if (!attached) return;
     const match = this.candidates().find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
-    if (match) this.applyAttachedMatch(match);
-  }
-
-  private async pinAdvertisedCas(list: UplinkNodeList): Promise<void> {
-    const hubs = list.hubs ?? [];
-    await Promise.all(hubs.map((hub) => this.pinAdvertisedCa(hub)));
-  }
-
-  private pinAdvertisedCa(hub: {
-    publicUrl: string;
-    caFingerprint?: string | null;
-  }): Promise<void> {
-    const advertised = hub.caFingerprint?.trim().toLowerCase() ?? '';
-    if (!advertised || !isCaFingerprintHex(advertised)) return Promise.resolve();
-    const key = normalizeHubEndpointUrl(hub.publicUrl);
-    const stored = this.opts.hubTrust.get(hub.publicUrl);
-    if (stored) {
-      const pinned = stored.fingerprint.toLowerCase();
-      if (pinned !== advertised) {
-        const previous = this.caMismatches.get(key);
-        this.caMismatches.set(key, { advertised, pinned });
-        if (previous?.advertised !== advertised || previous.pinned !== pinned) {
-          this.logInfo(
-            `[uplink] hub_ca_changed url=${redactUrl(hub.publicUrl)} advertised=${advertised} pinned=${pinned}; verify the Hub CA fingerprint and run vibeterm hub trust refresh`
-          );
-        }
-      } else {
-        this.caMismatches.delete(key);
-      }
-      return Promise.resolve();
-    }
-    const existing = this.caBootstraps.get(key);
-    if (existing) return existing;
-    const work = this.doPinAdvertisedCa(hub.publicUrl, advertised).finally(() => {
-      if (this.caBootstraps.get(key) === work) this.caBootstraps.delete(key);
-    });
-    this.caBootstraps.set(key, work);
-    return work;
-  }
-
-  private async pinCandidateFingerprints(): Promise<void> {
-    await Promise.all(
-      this.candidates().map((cand) =>
-        this.pinAdvertisedCa({ publicUrl: cand.publicUrl, caFingerprint: cand.caFingerprint })
-      )
-    );
-  }
-
-  private async doPinAdvertisedCa(publicUrl: string, advertised: string): Promise<void> {
-    try {
-      const pem = await (this.opts.fetchCaPem ?? defaultFetchCaPem)(publicUrl);
-      if (!this.opts.fingerprintPem) parseSingleCaCertificate(pem);
-      const fingerprint = (this.opts.fingerprintPem ?? spkiFingerprintFromPem)(pem).toLowerCase();
-      if (fingerprint !== advertised) {
-        this.logInfo(
-          `[uplink] ca bootstrap failed url=${redactUrl(publicUrl)} err=fingerprint_mismatch`
-        );
-        return;
-      }
-      if (this.opts.hubTrust.get(publicUrl)) {
-        await this.pinAdvertisedCa({ publicUrl, caFingerprint: advertised });
-        return;
-      }
-      this.opts.hubTrust.put({
-        hubUrl: publicUrl,
-        caPem: pem,
-        fingerprint,
+    if (match) {
+      this.applyAttachedMatch({
+        hubNodeId: match.hubNodeId,
+        mode: match.mode ?? null,
+        writerEpoch: match.writerEpoch ?? null,
       });
-      this.logInfo(`[uplink] ca pin stored url=${redactUrl(publicUrl)} fp=${fingerprint}`);
-      this.wakeWrapSleep();
-    } catch (err) {
-      this.logInfo(
-        `[uplink] ca bootstrap failed url=${redactUrl(publicUrl)} err=${errMessage(err)}`
-      );
     }
   }
 
@@ -1183,104 +795,9 @@ export class UplinkPool {
         if (this.stopAbort?.signal.aborted) return;
         await this.probeHealthzTimed(cand.publicUrl);
       }
-      await this.considerNearestSwitch();
     } finally {
       this.rttProbeInFlight = false;
     }
-  }
-
-  private preferNearestActive(cands?: UplinkCandidate[]): boolean {
-    if (this.opts.localRoles?.hub) return false;
-    if (this.preferNearestSetting === false) return false;
-    const list = cands ?? this.opts.candidates();
-    return list.filter((row) => row.hubNodeId).length > 1;
-  }
-
-  private rttState(publicUrl: string): { ewma: number; samples: number } | null {
-    const diag = this.diagByUrl.get(normalizeHubEndpointUrl(publicUrl));
-    if (!diag || diag.rttMs == null || diag.rttSamples < 1) return null;
-    return { ewma: diag.rttMs, samples: diag.rttSamples };
-  }
-
-  private async considerNearestSwitch(): Promise<void> {
-    const plan = selectNearestUplink({
-      enabled: this.preferNearestActive(),
-      attached: this.attached,
-      live: this.live,
-      now: this.scheduler.now(),
-      lastSwitchAt: this.lastRttSwitchAt,
-      dwellMs: this.rttSwitchDwellMs,
-      candidates: this.candidates(),
-      rttOf: (url) => this.rttState(url),
-      sameUrl: sameHubUrl,
-    });
-    if (!plan) return;
-    await this.relayDrain.waitForClient(plan.live, 'nearest', this.stopAbort?.signal);
-    if (!isCurrentUplinkSession(this.live, this.attached, plan, sameHubUrl)) return;
-    const ok = await this.probeHealthzTimed(plan.best.publicUrl);
-    if (!ok) return;
-    const switched = await this.switchTo(plan.best.publicUrl);
-    if (!switched.ok) return;
-    this.lastRttSwitchAt = this.scheduler.now();
-    this.logInfo(`[uplink] nearest → hub=${redactUrl(plan.best.publicUrl)}`);
-  }
-
-  private captureHubView(list: UplinkNodeList): HubView {
-    const recs = recordsFromNodeList(list);
-    const byUrl = new Map<string, { online: boolean }>();
-    for (const rec of recs) {
-      byUrl.set(normalizeHubEndpointUrl(rec.publicUrl), { online: rec.online === true });
-    }
-    const writerHubId = list.writerHubId ?? pickWriterHub(recs);
-    const writerEpoch =
-      list.writerEpoch ?? recs.find((row) => row.hubNodeId === writerHubId)?.writerEpoch ?? null;
-    const cands = this.candidates();
-    const attached = this.attached;
-    const attachedIdx = attached
-      ? cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl))
-      : -1;
-    return {
-      byUrl,
-      writerHubId,
-      writerEpoch,
-      bestKey: cands[0] ? normalizeHubEndpointUrl(cands[0].publicUrl) : null,
-      attachedIsBest: attachedIdx === 0,
-    };
-  }
-
-  private shouldTriggerFailbackProbe(list: UplinkNodeList): boolean {
-    const attached = this.attached;
-    if (!attached) return false;
-    const next = this.captureHubView(list);
-    const prev = this.lastHubView;
-    const cands = this.candidates();
-    const attachedIdx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
-    let aheadCameOnline = false;
-    if (attachedIdx > 0) {
-      for (let i = 0; i < attachedIdx; i += 1) {
-        const cand = cands[i];
-        if (!cand) continue;
-        const key = normalizeHubEndpointUrl(cand.publicUrl);
-        const nowOnline = next.byUrl.get(key)?.online === true;
-        const wasOnline = prev?.byUrl.get(key)?.online === true;
-        if (nowOnline && !wasOnline) {
-          aheadCameOnline = true;
-          break;
-        }
-      }
-    }
-    const writerChanged =
-      prev != null &&
-      (prev.writerHubId !== next.writerHubId || prev.writerEpoch !== next.writerEpoch);
-    const lostBest =
-      !next.attachedIsBest &&
-      (prev == null || prev.attachedIsBest || prev.bestKey !== next.bestKey);
-    return aheadCameOnline || writerChanged || lostBest;
-  }
-
-  private requestFailbackProbeFromNodeList(): void {
-    this.logFailbackFromNodeList();
-    this.scheduleProbe(this.failbackDebounceMs);
   }
 
   private probeDelayRemaining(debounceMs: number): number {
@@ -1345,15 +862,6 @@ export class UplinkPool {
     await this.probePreferred();
   }
 
-  private logFailbackFromNodeList(): void {
-    const now = this.scheduler.now();
-    const key = 'failback\0node.list';
-    const prev = this.candLogAt.get(key);
-    if (prev && now - prev.at < UPLINK_POOL_FAIL_LOG_INTERVAL_MS) return;
-    this.candLogAt.set(key, { index: 0, error: null, transport: '', at: now });
-    this.logInfo('[uplink] failback probe triggered by node.list');
-  }
-
   private async probePreferred(): Promise<void> {
     if (this.probeInFlight) return;
     this.probeInFlight = true;
@@ -1391,18 +899,11 @@ export class UplinkPool {
 
   private async probeHealthzTimed(publicUrl: string): Promise<boolean> {
     if (this.stopAbort?.signal.aborted) return false;
-    let tlsCa: string[] | null = null;
-    try {
-      const pin = this.opts.hubTrust.get(publicUrl);
-      tlsCa = pin?.caPem ? [pin.caPem] : null;
-    } catch {
-      tlsCa = null;
-    }
     const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
     const started = performance.now();
     let ok = false;
     try {
-      ok = await probe(publicUrl, tlsCa, this.probeTimeoutMs);
+      ok = await probe(publicUrl, null, this.probeTimeoutMs);
     } catch {
       ok = false;
     }
@@ -1446,30 +947,7 @@ export class UplinkPool {
   }
 
   lastErrorOf(cand: UplinkCandidate): string | null {
-    if (this.caMismatchOf(cand.publicUrl)) return 'hub_ca_changed';
     return this.diagByUrl.get(normalizeHubEndpointUrl(cand.publicUrl))?.lastError ?? null;
-  }
-
-  private caMismatchOf(
-    publicUrl: string,
-    advertisedFingerprint?: string | null
-  ): UplinkCandidate['caMismatch'] {
-    const key = normalizeHubEndpointUrl(publicUrl);
-    const stored = this.opts.hubTrust.get(publicUrl);
-    const advertised = advertisedFingerprint?.trim().toLowerCase();
-    if (stored && advertised && isCaFingerprintHex(advertised)) {
-      this.caMismatches.set(key, { advertised, pinned: stored.fingerprint.toLowerCase() });
-    }
-    const mismatch = this.caMismatches.get(key);
-    if (!mismatch) return undefined;
-    if (!stored || stored.fingerprint.toLowerCase() === mismatch.advertised) {
-      this.caMismatches.delete(key);
-      if (this.diagByUrl.get(key)?.lastError === 'hub_ca_changed') {
-        this.patchDiag(publicUrl, { lastError: null, lastErrorAt: null });
-      }
-      return undefined;
-    }
-    return { advertised: mismatch.advertised, pinned: stored.fingerprint.toLowerCase() };
   }
 
   logCandidateFailed(
@@ -1507,7 +985,7 @@ export class UplinkPool {
     this.candLogAt.set(key, { index, error: stateError, transport, at: now });
     if (kind === 'try') {
       this.logInfo(
-        `[uplink] try hub=${origin} mode=${cand.mode} epoch=${cand.writerEpoch} idx=${index + 1}/${extra?.total ?? this.candidates().length} transport=${transport}`
+        `[uplink] try hub=${origin} idx=${index + 1}/${extra?.total ?? this.candidates().length} transport=${transport}`
       );
       return;
     }
@@ -1521,16 +999,6 @@ export class UplinkPool {
     }
     this.logInfo(
       `[uplink] candidate failed hub=${origin} err=${error ?? ''} fails=${extra?.fails ?? 1}`
-    );
-  }
-
-  logMissingCaPin(cand: UplinkCandidate, err: unknown): void {
-    if (!isTlsCertificateError(err)) return;
-    if (this.opts.hubTrust.get(cand.publicUrl)) return;
-    const advertised = cand.caFingerprint?.trim() ?? '';
-    if (advertised && isCaFingerprintHex(advertised)) return;
-    this.logInfo(
-      `[uplink] no CA pin for ${redactUrl(cand.publicUrl)} and no advertised fingerprint`
     );
   }
 
@@ -1583,12 +1051,6 @@ export class UplinkPool {
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function isTlsCertificateError(err: unknown): boolean {
-  return /tls|certificate|cert_|unable to verify|self[- ]signed|untrusted|err_cert|ssl|hostname/.test(
-    errMessage(err).toLowerCase()
-  );
 }
 
 function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {

@@ -155,7 +155,7 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
 
     disablePeer(coordinator, peer);
-    coordinator.onHubSwitched();
+    coordinator.onUplinkSwitched();
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
 
     disablePeer(coordinator, peer);
