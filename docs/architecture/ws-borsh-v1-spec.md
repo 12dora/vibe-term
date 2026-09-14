@@ -745,7 +745,7 @@ metadata 记录折叠成 tmux 会话树的实现只有一份：`packages/ws-clie
 ### 首屏意图（能力 `canonical-screen-intent-v1`）
 
 首屏过去要两次往返：客户端必须先等 `SourceMetadataSnapshot` 才解析得出 `serverEpoch`，才能发
-`RequestScreen`。手机到公网 hub 的 RTT 300–800 ms 时，这一跳是首屏最贵的一段。意图命令把
+`RequestScreen`。手机到公网入口（中继或隧道）的 RTT 300–800 ms 时，这一跳是首屏最贵的一段。意图命令把
 「要哪一屏」这件事交给网关解析，于是首屏请求可以和 `connect-device` 一起进第一批。
 
 #### RequestScreenIntent（命令 discriminator = 6）
@@ -768,7 +768,7 @@ device / `serverEpoch` / pane 任一解析不出来，一律回 `Error(ERROR_TMU
 #### 能力与兼容
 
 - 网关在 `HELLO_S2C.capabilities` 播报 `canonical-screen-intent-v1`，客户端**只有看到它才允许发送**该命令。
-  判定是**按节点**的：远端设备的 HELLO 由该节点自己答，hub 只转发，所以混版本 mesh 下每条连接各自判定。
+  判定是**按节点**的：远端设备的 HELLO 由该节点自己答，入口 / 中继只转发，所以混版本 mesh 下每条连接各自判定。
 - 未播报时客户端回退旧时序（等 metadata → `RequestScreen`），一个新命令都不发。
 - HELLO 内嵌：客户端还可在 `HELLO_C2S` 尾部带同一形状的 `screenIntent` 并声明 `hello-screen-intent-v1`。
   网关消费成功才在 `HELLO_S2C` 回显该串；客户端看到回显就不再发 post-HELLO `RequestScreenIntent`。

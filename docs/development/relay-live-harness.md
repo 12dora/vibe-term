@@ -1,9 +1,9 @@
 # 中继三进程实测主管（relay-boot）
 
-本文说明从源码拉起「中继 + 两台租户节点」三进程拓扑的主管脚本：拓扑、启动序列、坑与 state JSON；面向做中继实测的开发者。hub 拓扑用同形的 `mesh-boot.ts`。
+本文说明从源码拉起「中继 + 两台租户节点」三进程拓扑的主管脚本：拓扑、启动序列、坑与 state JSON；面向做中继实测的开发者。
 
 `apps/fe/tests/helpers/relay-boot.ts`（配套 `relay-boot-auth.ts` 鉴权助手、`relay-boot-state.ts`
-state 组装）是中继拓扑的进程主管，与 hub 拓扑的 `mesh-boot.ts` 同形：
+state 组装）是中继拓扑的进程主管：
 从源码拉起若干 VibeTerm runtime，走真实 CLI 与真实 HTTP 接口把它们并成一套 mesh，
 把连接信息写进 state JSON，收到 `SIGTERM` / `SIGINT` 时回收全部子进程、tmux socket 与临时目录。
 
@@ -12,32 +12,26 @@ state 组装）是中继拓扑的进程主管，与 hub 拓扑的 `mesh-boot.ts`
 | 实例 | 角色 | 说明 |
 |---|---|---|
 | R | `relay,node` | 公共中继 + 本机 node。`VIBETERM_RELAY_PUBLIC_URL=http://127.0.0.1:<portR>`，管理令牌由 `VIBETERM_RELAY_ADMIN_TOKEN` 写死在 `app.env` 里 |
-| A | `node`（`VIBETERM_HUB_URL` 为空） | 用 `vibeterm relay enroll` 在 R 上开租户，成为该租户的主节点 |
-| B | `standalone` → `node` | 用 A 生成的 `r3.` 加入码经 `vibeterm hub join --token` 并入同一租户 |
+| A | `node` | 用 `vibeterm relay enroll` 在 R 上开租户，成为该租户的主节点 |
+| B | `standalone` → `node` | 用 A 生成的 `r3.` 加入码经 `vibeterm relay join --token` 并入同一租户 |
 
 三台都绑 `127.0.0.1`，端口从 19851（gateway）与 39851（peer）起顺次探空，
 tmux socket 固定为 `vibeterm-relay-e2e-r` / `-a` / `-b`，`NODE_ENV=test`，
 `VIBETERM_MASTER_KEY` 取自 `env/test.env`，`VIBETERM_MIGRATIONS_DIR` 指向 `apps/gateway/drizzle`，
-`VIBETERM_FE_DIST_DIR` 指向 `apps/fe/dist`（缺 `index.html` 时按 mesh-boot 的做法先构建）。
+`VIBETERM_FE_DIST_DIR` 指向 `apps/fe/dist`（缺 `index.html` 时先构建）。
 
 ## 用法
 
 ```bash
 # 中继拓扑（常驻，SIGTERM 回收）
 bun apps/fe/tests/helpers/relay-boot.ts --state /tmp/vibeterm-relay-e2e.json
-
-# hub 拓扑怎么起（只打印，不在本文件里重复实现）
-bun apps/fe/tests/helpers/relay-boot.ts --mode hub
 ```
-
-`--mode hub` 只是把 `mesh-boot.ts` 的用法打出来：hub 拓扑（`hub,node` + `node`）仍然用
-`bun apps/fe/tests/helpers/mesh-boot.ts --state <path>`，relay-boot 不复制那套流程。
 
 环境变量 `VIBETERM_RELAY_E2E_BUILD_FE=1` 可强制重建 `apps/fe/dist`。
 
 ## 启动序列
 
-1. `vibeterm hub user add relayop --install-dir <R>` / `vibeterm hub user add alice --install-dir <A>`
+1. `vibeterm user add relayop --install-dir <R>` / `vibeterm user add alice --install-dir <A>`
    （`VIBETERM_PASSWORD` 走环境变量，非 TTY 时 CLI 只认它）。
 2. 起 R → 等 `/healthz` 与 `GET /api/relay/health`。
 3. `POST /api/relay/password`（`Authorization: Bearer <adminToken>`，body `{password, mode:'keep'}`）
@@ -49,7 +43,7 @@ bun apps/fe/tests/helpers/relay-boot.ts --mode hub
 6. 主管以密码登录 A（Argon2 seed → Ed25519 root → delegation → challenge/login），
    轮询 `GET /api/mesh/relay/status` 直到 `mode==='relay'` 且该中继 `online && attached`。
 7. 生成 `r3.` 加入码（见下节），在 B 上跑
-   `vibeterm hub join --token r3.<…> --name relay-node-b --no-restart --install-dir <B>`。
+   `vibeterm relay join --token r3.<…> --name relay-node-b --no-restart --install-dir <B>`。
 8. 轮询 `GET /api/mesh/relay/enrollments/:id` 到 `redeemed`，在 A 上签 `admit-node`，
    再 `POST /api/mesh/relay/meta-key/prepare {op:'admit',node_id}` 签一条换代 `meta-key`。
 9. 起 B → 等 `/healthz` → 轮询 A 的 `/api/mesh/nodes` 直到 B `online`。
@@ -59,14 +53,13 @@ bun apps/fe/tests/helpers/relay-boot.ts --mode hub
 
 ## 坑
 
-- **`vibeterm enroll` 不支持中继**：它只走 hub 的 enrollment 路径。`r3.` 加入码目前只有网页
-  「加节点向导」会生成（`apps/fe/src/node/relay-join.ts`），所以 `relay-boot-auth.ts` 按同一套
-  shared 助手复刻了它：`GET /api/mesh/relay/join-material` → `createEnrollment(rootKey, …)` →
-  `POST /api/mesh/relay/enrollments` → `encodeRelayJoinToken`。`admit-node` + `meta-key` 同理。
-  改动这几个接口时记得同步这个文件。
+- **`r3.` 加入码**由网页「加节点向导」或 `vibeterm nodes enroll` 生成（`apps/fe/src/node/relay-join.ts`），
+  所以 `relay-boot-auth.ts` 按同一套 shared 助手复刻了它：`GET /api/mesh/relay/join-material` →
+  `createEnrollment(rootKey, …)` → `POST /api/mesh/relay/enrollments` → `encodeRelayJoinToken`。
+  `admit-node` + `meta-key` 同理。改动这几个接口时记得同步这个文件。
 - **A 不能是 `standalone`**：standalone 只挂 `authSurfaceOnly` 的鉴权面
   （`packages/app/src/runtime/assemble.ts`），没有 `/api/mesh/relay/*`，`relay enroll` 会 404。
-  租户主节点必须是 `node`（`VIBETERM_HUB_URL` / `VIBETERM_HUB_PUBLIC_URL` 留空，正是 `relay join` 之后的状态）。
+  租户主节点必须是 `node`（`relay join` / `relay enroll` 之后的状态）。
 - **`transport` 不打流就是 `null`**：`/api/mesh/nodes` 的 `transport` 取自 peer manager 当前链路，
   刚上线时还没建流。主管先打一次 `/n/<B>` 代理逼出链路再读，实测稳定拿到 `relay`
   （回环环境下 WebRTC 直连拨不通：`endpoint backoff … 192.168.31.36 / 198.18.0.1`，不会升级成 `dc`）。

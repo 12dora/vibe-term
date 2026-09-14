@@ -6,8 +6,8 @@
 
 通知在 VibeTerm 里一直是**严格按机器**发的：`EventNotifier`（`apps/gateway/src/events/index.ts`）
 把事件扇出给 webhook / telegram / 微信 / ws 广播四个渠道，四者读的全是**本机**表。
-hub 只复制节点表、证书和密钥日志，通知配置不在其中。结果是 hub A + 节点 B/C 的部署里，
-用户只在 A 上配了 bot，就永远收不到 B/C 的响铃、watch 命中和设备掉线。
+中继只转发盲字节、并复制密钥日志与节点名册，通知渠道配置不在其中。结果是中继 R + 节点 B/C 的部署里，
+用户只在某一台上配了 bot，就永远收不到其它节点的响铃、watch 命中和设备掉线。
 
 唯一的例外是远端 agent 会话：它由**发起机**的 `AgentSupervisor` 拥有，`agent_*` 事件走发起机
 的渠道，并在 `payload.nodeId/nodeName` 上打了来源节点；`events/channels/pane-url.ts` 据此把深链
@@ -34,7 +34,7 @@ payload = { node_id: 16 B, enabled: bool, at: u64 }   // packages/shared/src/aut
 signer = root | passkey                                // KEY_LOG_SIGNER_MATRIX
 ```
 
-密钥日志本来就全网复制（hub 下发 / 中继同步 / join 回放同一条链），因此每台节点都能独立
+密钥日志本来就全网复制（中继同步 / join 回放同一条链），因此每台节点都能独立
 回放出同一份汇聚集合：`mesh/notification-sink-records.ts` 按 `type='notification-sink'`
 过滤、按 `seq` 递增回放，**同一节点后写的赢**（`enabled: false` 即撤销）。
 **不需要新表**，只加了一条迁移 `0052_notification_sink_keylog.sql` 放宽 `user_key_log`
@@ -43,10 +43,10 @@ signer = root | passkey                                // KEY_LOG_SIGNER_MATRIX
 浏览器侧翻转开关的动作（`pages/settings/notifications/mesh-sink-toggle.ts`）：
 
 1. `useCredentialPrompt` 当场取一次密码 / 通行密钥（与 `rename-node` 同一套仪式）；
-2. 取 head → 签 `notification-sink` → `POST /api/auth/keylog?hub=sync`；
+2. 取 head → 签 `notification-sink` → `POST /api/auth/keylog?hub=sync`（查询名 `hub` 是冻结的历史拼写，语义是「把记录同步出去」；中继模式下副本打到已接入的中继）；
 3. 记录落地后才 `PUT /api/notifications/mesh` 翻本机开关。用户取消凭据交互时三步都不发生。
 
-CLI 对齐同一条路径：`vibeterm settings notifications mesh set on|off` 先用 `VIBETERM_PASSWORD` 签 `notification-sink`（`hubAck` 失败不 PUT），成功后再 `PUT /api/notifications/mesh {enabled}`。见 [命令行使用手册](../operations/cli-usage.md)。
+CLI 对齐同一条路径：`vibeterm settings notifications mesh set on|off` 先用 `VIBETERM_PASSWORD` 签 `notification-sink`（`hubAck === false` 视为本地未落账、不 PUT；中继 fan-out 看 `relayAck`），成功后再 `PUT /api/notifications/mesh {enabled}`。见 [命令行使用手册](../operations/cli-usage.md)。`hubAck` 是兼容字段：成功时网关仍回 `hubAck: true`，客户端不要再按它分支，只把 `false` 当失败。
 
 本机开关仍存 `gateway_kv`（键 `mesh.notification.sink.enabled`，见
 `mesh/notification-sink-state.ts`），语义收窄为「这台机器现在收不收转发件」：
@@ -150,7 +150,7 @@ POST /api/mesh-internal/notifications
 | --- | --- |
 | `GET /api/notifications/mesh` | 返回 `MeshNotificationState`：`supported`（无 mesh 时 false）、`selfNodeId`（前端签记录用）、`selfEnabled`、`sinks[]`、`forwardQueue` |
 | `PUT /api/notifications/mesh` | body `{ enabled: boolean }`，只落本机开关 + 广播设置变更，返回最新 `MeshNotificationState`；汇聚声明由浏览器另签一条 `notification-sink` 记录 |
-| `POST /api/auth/keylog?hub=sync` | 浏览器提交签好的 `notification-sink` 记录（与 `rename-node` 同一条路） |
+| `POST /api/auth/keylog?hub=sync` | 浏览器提交签好的 `notification-sink` 记录（与 `rename-node` 同一条路）。查询名 `hub` 为遗留拼写，中继模式下副本打到中继 |
 | `POST /api/mesh-internal/notifications` | 节点→汇聚机内部投递，对端标记保护，浏览器不可达；成功回 202（已收下，扇出异步） |
 
 设置变更广播命名空间：`notifications-mesh`（前端据此失效缓存）。
@@ -174,7 +174,7 @@ POST /api/mesh-internal/notifications
 - 通知文案里的节点名由汇聚机按对端标记自己查，`origin.nodeName` 不采信：发送方伪造不了
   别人的名字，也塞不进任意文本。
 - 汇聚集合只认用户签名的 `notification-sink` 记录：被攻陷的节点既不能自称汇聚机（自述的
-  inventory 不再被读），也不能替别人撤销声明；被攻陷的 hub / 中继同样伪造不出记录——
+  inventory 不再被读），也不能替别人撤销声明；被攻陷的中继同样伪造不出记录——
   链是 prev_hash 串起来的，签名者只能是 root 或 passkey，改一条就整链验不过。
 - 转发件的来源同样不可伪造：`origin.nodeId` 必须与已认证的对端标记一致，否则 400。
 - 声明撤销即时生效于**发送侧**：队列每次投递前复核，桥的 `deliver()` 再兜一道（未授权就地

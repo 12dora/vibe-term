@@ -9,7 +9,7 @@
 设计目标：
 
 1. **隔离要真**：分享连接与常规会话走两套凭证、两套作用域；越界帧在服务端拒绝，出站数据按 window 过滤。
-2. **终止要快**：撤销后 1 s 内断开，且要穿透 Hub 转发与中继链路。
+2. **终止要快**：撤销后 1 s 内断开，且要穿透入口 `/n/<nodeId>` 转发与中继链路。
 3. **不新开入口**：分享面只在站长已经暴露的入口上可用，不给 Cloudflare Access / 域名访问开关打洞。
 
 ## 产品规则
@@ -47,21 +47,22 @@
 - `share-recorder.ts` —— 单分享录制器：`attachPaneConsumer` 订阅 window 内 pane，先给每个 pane 写
   `captureCanonicalScreen()` 的 `checkpoint`（并按 `baseSeq` 精确裁掉 checkpoint 之前的字节），之后追加
   `out`；输入 / 尺寸由 ws 层回调写 `in` / `resize`；250 ms 批量落库；每 2 s 按设备快照跟随 pane 进出 window。
-- `share-origins.ts` —— 候选构造：`site`（`site_settings.site_url`）、`hub`（每个 `mesh_hubs.publicUrl`，
-  他人 hub 带 `/n/<本机 nodeId>`）、`relay`（中继上联时的 `mesh_relays.url`，带 `/n/<本机 nodeId>`，见下）、
+- `share-origins.ts` —— 候选构造：`site`（`site_settings.site_url`）、
+  `relay`（中继上联时的 `mesh_relays.url`，带 `/n/<本机 nodeId>`，见下）、
   `tunnel`（cloudflared 公开地址）、`ip`（`config.baseUrl` 且 host 为 IP）。
-  排序由 `rankShareOrigins()` 做：`custom > site > hub > relay > tunnel > ip`，同 kind 保序去重；
+  没有 `hub` kind（`ShareOriginKind = 'custom' | 'site' | 'relay' | 'tunnel' | 'ip'`）。
+  排序由 `rankShareOrigins()` 做：`custom > site > relay > tunnel > ip`，同 kind 保序去重；
   **自动候选过滤非公网地址，用户显式填的 `custom` 不过滤**（内网演示分享要能用）。
   每个候选都带 `accessUrl = origin + 转发前缀`，即浏览器实际要打开的地址（如 `https://relay/n/<nodeId>`）；
   设置页的「本机可被访问的地址」直接用这份候选（`GET /api/settings/site` 的 `siteAccessOrigins`，不含 `custom`）。
   另外几条去重规则（`shouldOfferSite` / `uniqueByAccessUrl`）：
-  - **站点 URL 由 hub 托管时（`siteUrlManaged()`）不产出 `site`**，它已经等于 `hub` 候选。
-  - **origin 级**：站点 URL 的 origin 若等于任一基础设施候选（隧道 / Hub / 中继 / 公网 IP）的 origin，
-    不再单独产出「自建域名」`site`。用户点选中继 / Hub 胶囊保存的是带 `/n/<nodeId>` 的 `accessUrl`，
+  - **`siteUrlManaged()` 恒为 false**（站点 URL 不再由基础设施托管），存储值本身是公网地址才产出 `site`。
+  - **origin 级**：站点 URL 的 origin 若等于任一基础设施候选（隧道 / 中继 / 公网 IP）的 origin，
+    不再单独产出「自建域名」`site`。用户点选中继胶囊保存的是带 `/n/<nodeId>` 的 `accessUrl`，
     若只按 origin 与隧道去重，下次 GET 会多出一颗同主机的 site 候选，并与中继胶囊撞 React key。
   - **accessUrl 级（防御）**：前缀补上后 `accessUrl` 可能撞车（site 存的是中继 `/n/<id>`，中继候选却是裸 origin）。
     同地址只留一条，**自建域名让路**。前端 key 加 `kind` 前缀，展示层再滤一遍。
-  手填的「默认分享地址」若与某个转发型候选（`hub` / `relay`）同主机，
+  手填的「默认分享地址」若与某个转发型候选（`relay`）同主机，
   会继承该候选的 `/n/<nodeId>` 前缀，否则生成的是打不开的死链。
 - `share-rate-limit.ts` —— `ShareLoginLimiter`：按（shareId, IP）15 min 窗口 10 次失败锁 15 min。
 - 巡检：开机全扫一遍，之后每 5 s 判到期（`expired`）、设备消失（`device_removed`）、window 关闭
@@ -74,8 +75,7 @@
 （`/s/<shareId>`、`/api/share-access/*`、`/ws?share=` 全部覆盖）。纯 `relay` 角色的主机只有
 `/relay/uplink` 与 `/api/relay/*`，给出去就是死链。两者从节点侧看不出区别，因此中继候选由可达性探测放行：
 
-- 只在 `node_identity.uplink_kind = 'relay'` 时考虑中继（hub 上联下永远不产出 `relay` 候选；
-  切到中继后 `mesh_hubs` 会被清空，`hub` 候选自然消失）。
+- 只在 `node_identity.uplink_kind = 'relay'` 时考虑中继（未挂中继时 `uplink_kind = 'none'`，不产出 `relay` 候选）。
 - `RelayEntryProbe.ensure(url)` 发即忘地 GET `${url}/n/${localNodeId}/api/auth/mode`（5 s 超时），
   HTTP 200 且 JSON 的 `nodeId` 等于本机 node id 才记 `ok`；同一地址单飞，`ok` 缓存 10 min、
   `bad`/异常缓存 2 min，过期后下次读取自动重探。
@@ -100,7 +100,7 @@
 
 ## 接口
 
-### 分享方（需常规会话；经 Hub 时走 `/n/<nodeId>/api/...`）
+### 分享方（需常规会话；经入口转发时走 `/n/<nodeId>/api/...`）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -184,21 +184,21 @@ hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进�
 1. **登录**：节点侧 login 成功不直接写 `Set-Cookie`，而是回内部响应头 `x-vibeterm-set-share: <token>` +
    `x-vibeterm-set-share-max-age: <秒>`（登出为 `x-vibeterm-clear-share: 1`）。token 格式 `<shareId>.<32 字节 base64url>`，
    服务端只存 SHA-256，TTL 7 天并滑动续期。
-2. **翻成 cookie**：本机由 `session-middleware.consumeSetSessionForBrowser`、Hub 由
+2. **翻成 cookie**：本机由 `session-middleware.consumeSetSessionForBrowser`、入口转发由
    `forwarder-auth-policy.applyAuthPolicy` 转成 `vibeterm_sh_<via>=<token>; Path=/; HttpOnly; SameSite=Lax[; Secure]`
    （via = `self` 或节点 id）。三个内部头归入 `INTERNAL_CREDENTIAL_HEADERS`，绝不外传。
    续期同样走这条路：`GET /api/share-access/:id` 校验时若发生续期就重新下发这两个头，永久分享的 cookie
    不会在 7 天后无声消失。
-3. **经 Hub 的流**：`forwardHttp` 对 `/api/share-access/*` 用 `share:<token>` 作为流 auth；节点侧
+3. **经入口转发的流**：`forwardHttp` 对 `/api/share-access/*` 用 `share:<token>` 作为流 auth；节点侧
    `stream-auth.verifyStreamAuth` 识别 `share:` 前缀，并把 token 合成回 `cookie: vibeterm_sh_<peerNodeId>=<token>`。
-   Hub 侧 `skip401Rewrite` 对分享路径置真，节点的 401 不会被改写成 `NODE_LOGIN_REQUIRED`，也不会误清 cookie。
+   入口侧 `skip401Rewrite` 对分享路径置真，节点的 401 不会被改写成 `NODE_LOGIN_REQUIRED`，也不会误清 cookie。
    **失效的分享 cookie 在分享公开 HTTP 路径上降级为匿名请求**（并清掉该 cookie），否则 A 被撤销后残留的
    HttpOnly cookie 会让同节点分享 B 的查询与登录全部 401，页面永远回不来；WS 仍严格拒绝。
    常规 cookie 失效时不再遮蔽有效的分享凭证：两套候选都带给节点，常规验证失败再试分享凭证。
 4. **WS 绑定**：分享页的每一次握手（初连与重连）都带 `?share=<shareId>`。带这个参数的握手**一律按分享凭证
    鉴权，不回退常规会话**；凭证缺失 / 失效 / 绑的是别的 shareId → 关闭码 4401 `SHARE_LOGIN_REQUIRED`。
    没有这个参数的普通运行时行为不变。前端常量 `SHARE_WS_QUERY_PARAM`（`apps/fe/src/share/share-runtime.ts`）。
-   本机路径由 `mesh-http.guardGatewayWebSocket` 以 `MESH_SHARE_WS_KIND` 升级并带上 scope；Hub 路径由
+   本机路径由 `mesh-http.guardGatewayWebSocket` 以 `MESH_SHARE_WS_KIND` 升级并带上 scope；入口转发路径由
    `acceptWsStream` → `attachStreamSession(carrier, { shareScope })`。分享连接不进 `SessionRegistry`，
    在 `WebSocketServer` 内按 shareId 索引；复验周期 60 s。
 
@@ -225,7 +225,7 @@ hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进�
   generation 契约冲突；撤销路径不回放，以免重复推送。
 - **关闭码**：4410 `SHARE_ENDED`（终止 / 到期 / window 关闭 / 设备删除）、4401 `SHARE_LOGIN_REQUIRED`（凭证无效）。
 - **撤销可达**：终止性关闭码白名单 `{4401, 4410}` 由 `stream-close-code.ts` 编进 mux RST 的 reason，
-  Hub 侧解码后直接透给浏览器，不再当链路抖动去 failover。分享 ws 初次鉴权失败同样用
+  入口侧解码后直接透给浏览器，不再当链路抖动去 failover。分享 ws 初次鉴权失败同样用
   `encodeTerminalStreamClose(4401, 'SHARE_LOGIN_REQUIRED')`，否则前端只会看到 1011 并无限重连。
 
 ## 录制与回放
@@ -260,7 +260,7 @@ resize 后回到原点；大尺寸录像可平移到右下角而不是被容器�
 - **节点侧**：`ShareLoginLimiter.begin()` 在 argon2 验证**之前**预占额度（在途尝试计入上限），`settle()`
   结算——成功清空、失败落账；同（分享, IP）并发验证上限 2，超出直接 429。第 10 次失败单独记
   `lockedUntil = now + 15 min`，与滑动窗口分开维护（否则解锁时间从最早一次失败算，可能只锁 1 ms）。
-- **Hub 侧**：节点看到的 clientIp 是 `peer:<hubNodeId>`，真实浏览器 IP 不过 mesh。因此
+- **入口转发侧**：节点看到的 clientIp 是 `peer:<入口 nodeId>`，真实浏览器 IP 不过 mesh。因此
   `mesh/share-login-quota.ts` 在 `Forwarder.gateForwardedAuth()` 里对
   `POST /api/share-access/:id/login` 复用同一个 `ShareLoginLimiter`，分桶键是（真实来源 IP, shareId）：
   锁定则**转发前**返回 429 + `retry-after`，上游 401 记一次失败、2xx 清桶。
@@ -302,22 +302,22 @@ resize 后回到原点；大尺寸录像可平移到右下角而不是被容器�
 - 单测：`packages/shared/src/share/*.test.ts`；`apps/gateway/src/db/share.migration.test.ts`；
   `apps/gateway/src/share/*.test.ts`；`apps/gateway/src/ws/share-*.test.ts`；
   `apps/gateway/src/mesh/{mesh-http,session-middleware,forwarder,forwarder-auth-policy,stream-targets,link-stream-carrier,share-login-quota}.test.ts`
-  与 `mesh/integration/mesh.integration.test.ts`（真实 hub A + 节点 B，终止后浏览器收到 4410）；
+  与 `mesh/integration/mesh.integration.test.ts`（中继拓扑下入口转发 + 节点 B，终止后浏览器收到 4410）；
   前端 `apps/fe/src/share/`、`apps/fe/src/pages/settings/share/`、`packages/panels/src/share/`、
   `packages/api-client/src/share*.test.ts`。
-- mesh e2e：`apps/fe/tests/mesh-share.spec.ts`（Hub 转发路径、口令、只见该 window、终止 4410、日志有内容）。
+- mesh e2e：`apps/fe/tests/mesh-share.spec.ts`（入口 `/n/<id>` 转发路径、口令、只见该 window、终止 4410、日志有内容）。
 
 ```bash
 cd apps/fe && VIBETERM_E2E_MESH=1 VIBETERM_E2E_MESH_ONLY=1 bun run scripts/run-e2e.ts tests/mesh-share.spec.ts
 ```
 
-e2e 环境里 hub 只有 localhost 地址、自动候选为空，用例先 `PUT /api/share/settings` 显式指定「默认分享地址」
+e2e 环境里中继 / 节点只有 localhost 地址、自动候选为空，用例先 `PUT /api/share/settings` 显式指定「默认分享地址」
 再创建分享——这也是 `custom` 地址不做公网校验的原因。
 
 ## 已知限制与风险
 
-1. **Hub 转发不传浏览器来源 IP**：节点侧限速在 Hub 路径上仍把所有访客算成同一个来源，由 Hub 侧配额兜住。
-   彻底解法是给 peer 上下文加一条 Hub 可信填写、浏览器不可覆盖的来源 IP 元数据。
+1. **入口转发不传浏览器来源 IP**：节点侧限速在 `/n/<id>` 路径上仍把所有访客算成同一个来源，由入口侧配额兜住。
+   彻底解法是给 peer 上下文加一条入口可信填写、浏览器不可覆盖的来源 IP 元数据。
 2. **录制器跟随 pane 靠 2 s 轮询设备快照**（没有事件驱动的 pane 变更钩子）；输入 / 尺寸不再因 pane 尚未同步
    而丢弃——见到陌生 pane 会先触发一次同步再记账。
 3. **日志保留按日志行的 `at` 裁剪**，长命分享会先丢头部，不是按分享结束时间整条删。

@@ -1,6 +1,6 @@
 # 侧栏节点首屏：冷启动后远端节点如何尽快出现
 
-本文描述冷启动（重开 PWA）时侧栏远端节点分节的渲染策略：pending 占位、mesh 节点首帧缓存、有界重试、静默登录、mesh WS 重连唤醒，以及后端的前台拨号竞速与 hub presence 陈旧窗口；面向改动 `apps/fe/src/node/` 与 `apps/gateway/src/mesh/peer-manager*.ts` 的开发者。
+本文描述冷启动（重开 PWA）时侧栏远端节点分节的渲染策略：pending 占位、mesh 节点首帧缓存、有界重试、静默登录、mesh WS 重连唤醒，以及后端的前台拨号竞速与中继 presence 陈旧窗口；面向改动 `apps/fe/src/node/` 与 `apps/gateway/src/mesh/peer-manager*.ts` 的开发者。
 
 ## 背景
 
@@ -11,7 +11,7 @@
 |---|---|
 | H1 | 设备列表 pending 期间 `shouldHideSidebarNodeSection` 对非 self 返回 true，整节 `return null`，连骨架都没有 |
 | H2 | `dial()` 先 `await tryDc`，DC 超时 15 s；熔断因网络指纹变化 rearm 后立刻又 15 s；forwarder 的 GET 重试 4 次无总 deadline |
-| H3 | uplink 不在线时 `listHubOnline()` 返回空集，节点整批判离线；uplink 20 s 超时 + 60 s 退避会留下分钟级空档 |
+| H3 | 中继 uplink 不在线时 presence 立刻空集会把节点整批判离线；uplink 20 s 超时 + 60 s 退避会留下分钟级空档 |
 | H4 | 无首屏缓存，且 `/api/auth/mode` 与 `/api/mesh/nodes` 串行两次往返；`ensureAuthMode` 失败被永久记住 |
 | H5 | 首次 `/api/mesh/nodes` 失败后 5 min 内不重试 |
 | H6 | 18 h 会话过期后分节退化成手动「登录此节点」按钮 |
@@ -89,11 +89,10 @@ await——否则「只有 DC 可达、没有中继」的对端会永远连不�
 `peers.getLink()` 封顶，超时抛 `ForwardDeadlineError` 并**不再重试**，直接 503 `NODE_UNREACHABLE`
 （`reason` 判为 `timeout` 而非 `no_link`）。`handleRemoteWs()` 同样受限。
 
-**H3 hub presence 陈旧窗口**：`HUB_PRESENCE_STALE_MS = 90_000`。uplink 掉线时 `hubPresenceLive` 照旧立刻置
-false，但**不再立刻补发离线事件**，而是记 `hubPresenceStaleUntil = now + 90 s`；`listHubOnline()` 改为
-「本代 node.list 已到达 → 用；否则仍在陈旧窗口内 → 继续用最后一次 presence；出窗口 → 空集」。
-定时器到点若本代 node.list 已回来就什么都不做，否则退化成只认 peer 可达性并补发合成离线事件。
-日志各一条：`[mesh] hub presence stale hold_ms=…` / `[mesh] hub presence decayed to peer reachability`。
+**H3 中继 presence 陈旧窗口**：`RELAY_PRESENCE_STALE_MS = 90_000`（`apps/gateway/src/mesh/relay-presence.ts`）。
+中继 uplink 掉线时该行立刻 `connected = false`，但**不再立刻把对端标离线**，而是记 `staleUntil = now + 90 s`；
+`RelayPresence.onlineUnion()` 在窗口内仍并入该行最后一次 `relay.list`。定时器到点调用 `decay()`：
+只把「只在这一台上线」的对端标离线（其它中继或仍在 hold 的行上看得到的对端保持 online），并补发合成离线事件。
 
 **H3-b 指纹变化重置 uplink 退避**：`UplinkClient.resetBackoff()` / `UplinkPool.resetBackoff()`，
 由 `PeerManager.syncLocalFingerprint()` 在 `endpointBackoff.resetAll()` 旁调用。
@@ -105,7 +104,7 @@ false，但**不再立刻补发离线事件**，而是记 `hubPresenceStaleUntil
 ## 陈旧窗口与验证
 
 - 首帧缓存：7 天过期、entry nodeId 变化即作废；显示的是**身份、上次在线态与 paused**，链路徽标一律「测量中」。paused 行不进侧栏聚合。
-- hub presence：uplink 抖动 90 s 内维持原判，超时才降级到 peer 可达性。
+- 中继 presence：uplink 抖动 90 s 内维持原判，超时才把仅在该中继上线的对端标离线。
 - 设备行占位：只在 `/n/<id>/api/devices` pending 期间出现，落地即替换；占位数据不会触发 `ensureDeviceSubscribed`。
 
 **怎么验**
@@ -116,7 +115,7 @@ false，但**不再立刻补发离线事件**，而是记 `hubPresenceStaleUntil
 3. 断网重连：断网 → 等 mesh WS 断 → 恢复网络，重连应在 5 s 内发生（而不是 60 s）。
 4. 拨号预算：`bun test src/mesh/peer-dial-race.test.ts src/mesh/peer-manager.test.ts`；实机看
    `[mesh][rtc] dial race won`。无样本前台 DC 独跑约 2.4 s，不要按 2.5 s 常量对拍。
-5. hub 抖动：`bun test src/mesh/mesh-runtime.test.ts`（陈旧窗口内仍 online，超窗才转 offline）。
+5. 中继抖动：`bun test src/mesh/relay-presence.test.ts`（陈旧窗口内仍 online，超窗才把 exclusive 对端转 offline）。
 
 ## 遗留
 

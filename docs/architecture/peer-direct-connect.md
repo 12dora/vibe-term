@@ -4,7 +4,7 @@
 
 ## 1. 直连地址的负向缓存与退避
 
-节点通过 hub 的 `node.list`（或中继的 `relay.list`）拿到对端广播的 LAN 地址，直连时把这些地址并行 race 一遍。没有记忆时，一批**永远不可达**的地址（docker 网桥 `172.17.x`、CGNAT `100.64/10`、IPv6 ULA）会在每次升级尝试时被全量重打，日志刷屏且拖慢回落 relay。为此有四层刹车：广播端少发、拨号端记住失败、LAN 候选设总预算、进程级限制并发。
+节点通过中继的 `relay.list` 拿到对端广播的 LAN 地址，直连时把这些地址并行 race 一遍。没有记忆时，一批**永远不可达**的地址（docker 网桥 `172.17.x`、CGNAT `100.64/10`、IPv6 ULA）会在每次升级尝试时被全量重打，日志刷屏且拖慢回落 relay。为此有四层刹车：广播端少发、拨号端记住失败、LAN 候选设总预算、进程级限制并发。
 
 ### 广播端过滤（`enumeratePeerEndpoints`）
 
@@ -83,7 +83,7 @@ endpoint recovered node=<id> addr=<host:port>
 ### 冷却期间
 
 不自动拨 DC，保持 ws-secure / relay。`armDcUpgradeRetry` 只在 `until` 时刻排**一次**探测；熔断处于 `disabled` 时不再排周期探测，
-要等显式 rearm（peer 重连、指纹 / endpoint 变化、hub 切换、手动探测）。
+要等显式 rearm（peer 重连、指纹 / endpoint 变化、中继 uplink 切换、手动探测）。
 
 **后台升级扫描的门闩**（`peer-dc-upgrade-gate.ts`）：熔断 `disabled`，或最近一次失败码属于重试也打不穿的永久码
 （`no_srflx` / `no_candidates` / `stun_unconfigured` / `not_direct_capable` / `rtc_unavailable`）时，15 s 的 endpoint 扫描
@@ -159,9 +159,9 @@ MeshNode.dcBreaker?: {
 | self | `peer-signaling` | 任一成员报 `ok` | 本机 PeerServer bind 失败；或 ≥2 人报 refused/timeout 且无人 ok | `unknown`（单样本不够） |
 | self | `rtc-ice` | 本进程曾有 srflx 或曾 DC | STUN 探针成功且最近 3 次 gather 都无 srflx → `no_srflx` | `unknown` |
 
-成员互报走 relay 状态块 / hub `node.status` 的可选 `peer_reach`（键为 nodeId 前 8 hex，≤32 条）。`POST /api/mesh/nodes/:id/ports/probe`（`requireSession`）立刻重探并回 `{ ports }`。进程内结果，peer TCP 探测 3 s 截止、每 peer 至多 5 min 一次。节点表只在 `status === 'blocked'` 时警告；详情框可「重新检测」。
+成员互报走中继状态块的可选 `peer_reach`（键为 nodeId 前 8 hex，≤32 条）。`POST /api/mesh/nodes/:id/ports/probe`（`requireSession`）立刻重探并回 `{ ports }`。进程内结果，peer TCP 探测 3 s 截止、每 peer 至多 5 min 一次。节点表只在 `status === 'blocked'` 时警告；详情框可「重新检测」。
 
-设置页本机卡「端口」行每个端口前都画点（`open` 绿、`blocked` 红、`unknown` 或没有 `MeshPortReach` 行灰，点上 `data-status`，`title` / `aria-label` 为已开通 / 未开通 / 未探测）。`blocked` 且带 `code` 时点的 `title` 追加可读原因（`peer_refused` 连接被拒 / `peer_timeout` 连接超时 / `no_srflx` 未拿到公网映射 / `turn_unreachable` TURN 不通）。端口计划按角色（见 [角色入站端口](../operations/nonstandard-ports.md)）；标签固定「端口」，详情框仍用「入站端口」。红灯门槛：对端探测到 `refused` 一次即 `blocked`（`peer_refused`），`timeout` 需两击（同一探测槽连续两次，或 self 收到两名 reporter / 同一 reporter 两个周期）；任一 `ok` 立即 `open`。本机卡的「重新检测」抬高 `peer_reach_epoch`（随中继 status blob / uplink `node.status` / 直连 peer ctl 下发，可选字段，旧端忽略），对端看到世代变大即清掉该节点的 5 min 周期并在 30 s tick 内重探。中继 / Hub 主机的 self 行还派生 `public-https`（任一成员在线 / 有效 peer_reach 报告 → `open`，否则 `unknown`）与 `turn-control` / `turn-relay`（按本机公网 URL 分桶的成员 TURN 统计：`ok>0` → `open`；`total≥2 && ok===0` → `blocked/turn_probe_failed`；分配段探不了，跟随控制口并标 `not_probed`）。
+设置页本机卡「端口」行每个端口前都画点（`open` 绿、`blocked` 红、`unknown` 或没有 `MeshPortReach` 行灰，点上 `data-status`，`title` / `aria-label` 为已开通 / 未开通 / 未探测）。`blocked` 且带 `code` 时点的 `title` 追加可读原因（`peer_refused` 连接被拒 / `peer_timeout` 连接超时 / `no_srflx` 未拿到公网映射 / `turn_unreachable` TURN 不通）。端口计划按角色（见 [角色入站端口](../operations/nonstandard-ports.md)）；标签固定「端口」，详情框仍用「入站端口」。红灯门槛：对端探测到 `refused` 一次即 `blocked`（`peer_refused`），`timeout` 需两击（同一探测槽连续两次，或 self 收到两名 reporter / 同一 reporter 两个周期）；任一 `ok` 立即 `open`。本机卡的「重新检测」抬高 `peer_reach_epoch`（随中继 status blob / 直连 peer ctl 下发，可选字段，旧端忽略），对端看到世代变大即清掉该节点的 5 min 周期并在 30 s tick 内重探。中继主机的 self 行还派生 `public-https`（任一成员在线 / 有效 peer_reach 报告 → `open`，否则 `unknown`）与 `turn-control` / `turn-relay`（按本机公网 URL 分桶的成员 TURN 统计：`ok>0` → `open`；`total≥2 && ok===0` → `blocked/turn_probe_failed`；分配段探不了，跟随控制口并标 `not_probed`）。
 
 ## 3. 信令代次、ICE 配置、链路活性与在途流保护
 
@@ -169,7 +169,7 @@ MeshNode.dcBreaker?: {
 
 陈旧信令重放曾是直连建不起来的主因：`rtcSession = dc:<lo>:<hi>` 对同一对节点恒定，offerer 拨号失败后注销监听，answerer 仍按重试产生新 answer 进入 `rtcInbox`；冷却结束后新 PeerConnection 在 `bindSignaling` 时同步重放 inbox，把 answer 打在 `stable` 状态的 PC 上抛错，或同一次尝试收到两个 answer 导致 PC 绑错 ufrag → `datachannel open timeout`。现在：
 
-- SDP / candidate 的 JSON 信封带可选 `epoch`（offerer 每次拨号生成，answerer 从 offer 回显）；`rtcSession` 字符串不变（hub 路由按 `dc:<a>:<b>` 解析）。收到 `epoch` 已定义且不匹配的消息直接丢弃；`epoch` 未定义视为旧节点，退回按类型过滤。
+- SDP / candidate 的 JSON 信封带可选 `epoch`（offerer 每次拨号生成，answerer 从 offer 回显）；`rtcSession` 字符串不变（信令按 `dc:<a>:<b>` 解析）。收到 `epoch` 已定义且不匹配的消息直接丢弃；`epoch` 未定义视为旧节点，退回按类型过滤。
 - Answerer 已绑定 epoch N 时，若再收到 offer N+1：打 `signal dropped cause=superseded`，关掉当前 PC（计为有意关闭，不记熔断），inbox 这条 offer 并立刻开一台新的 answerer PC。更旧的 epoch、`duplicate-answer` 仍直接丢弃。已有 live DC 时：`receiveRtcSignal` **先 `interceptOffer` 再投给残留监听**；`interceptOffer` 对 epoch ≤ `LivePeer.rtcEpoch` 的迟到 offer 直接忽略（不起 attempt）。接更高 epoch offer **不受** answerer 的 request 预算限制。连续 3 次 peer-initiated timeout 后应答冷却（30 s → 2 min → 10 min），与 offerer 熔断分立。详见 [路径优选](./path-selection.md)。
 - Offerer 的 epoch 以**秒级时间基**分配：`rtcAttemptEpochBase(now) = floor(now/1000) * 4096`，进程启动时取一次，之后 `base + 本进程第 n 次拨号`（`rtcAttemptEpochBase` / `nextRtcAttemptEpoch`）。这样 epoch **跨进程重启仍单调递增**（一秒的 uptime 抵得过 4096 次拨号，现实中不可能跑满），重启前的迟到 offer 数值必然更小，不会 supersede 掉重启后新起的 attempt。结果始终是安全整数，对 2.1.x / 2.2.x 的 `isValidOptionalEpoch` 合法。
 - Answerer 记住每个 peer 见过的最高 offer epoch（`OfferEpochMemory`），用来丢弃被取代的旧 attempt 留下的在途信令。**这份记忆有 30 s 有效期**（`RTC_OFFER_EPOCH_TTL_MS`），且只有不低于已记住值的 epoch 才续期。TTL 是兜底：给 epoch 计数器从 0 重来的旧版本对端（≤2.2.2）留恢复路径——否则一旦记住旧高位，对端重启后的每个 offer 都会被判 `epoch-mismatch` 永久拒收，现象是应答侧 `dial timeout … stage=gathering local_types=[] remote_types=[]`、offerer 侧同时 `stage=no-remote-sdp`，该 peer 再也建不起 DC（round40 现网实测）。
@@ -197,15 +197,15 @@ hello 全落进 fanout 的 8 槽 dump 缓冲，跨 NAT、offerer 先 connected �
 
 ### ICE / 拨号
 
-- ICE 服务器列表按「节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。
-- **TURN 按条门控**：hub / 中继下发的 TURN 可能有多条（每台中继至多一条，中继角色自带 TURN）。每个 URL 各做一次 STUN Binding 可达探测（并发 2），**只有探测 `ok` 的条目**按 RTT 升序取前两条进 `iceServers`；探测失败、尚未探测、`turns:` / `?transport=tcp`（libjuice 不支持）一律排除。日志 `[mesh][rtc] turn gate configured=N reachable=M used=[…]`（used 集合变化才打）。`GET /api/mesh/rtc-config` 的 `turn` 是实际进 ICE 的数组，`turnConfigured` 是全部已知条目，`turnProbes` 每条 configured URL 一份探测记录（`turnProbe` 保留第一条，兼容旧前端）。
+- ICE 服务器列表按「节点自定义 > 节点禁用 > 中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档（`node-custom` / `node-disabled` / `relay-custom` / `builtin`）；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。
+- **TURN 按条门控**：中继下发的 TURN 可能有多条（每台中继至多一条，中继角色自带 TURN）。每个 URL 各做一次 STUN Binding 可达探测（并发 2），**只有探测 `ok` 的条目**按 RTT 升序取前两条进 `iceServers`；探测失败、尚未探测、`turns:` / `?transport=tcp`（libjuice 不支持）一律排除。日志 `[mesh][rtc] turn gate configured=N reachable=M used=[…]`（used 集合变化才打）。`GET /api/mesh/rtc-config` 的 `turn` 是实际进 ICE 的数组，`turnConfigured` 是全部已知条目，`turnProbes` 每条 configured URL 一份探测记录（`turnProbe` 保留第一条，兼容旧前端）。
 - **丢弃 fake-IP 候选**：地址落在 `198.18.0.0/15`（Surge / Clash 增强模式的 fake-IP）的 host 候选**收发两侧**都丢弃，日志 `signal dropped … cause=fake-ip`；RFC1918（`10/8`、`192.168/16` 等）保留，局域网直连不受影响。单边升级即生效。
 - `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**仅当列表里真有可达 TURN 时才为 false**：libjuice mux 不支持 TURN。没有可达 TURN 就保持 mux 并把 TURN 全部从 `iceServers` 剥掉——早期「先纳入、探测后再说」会让 gathering 挂死、srflx 一起消失。Binding 探测只证明 UDP 通，不能代替带凭证的 Allocate，见 [KI-4](../known-issues.md)）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（非中继缺省 `40000-40099`，中继主机 `40050-40099`，见 `@vibeterm/shared/net`；**未设该键时 ICE 仍走系统临时口**。`init` / `upgrade` 按角色写入。node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
-- **ws-secure 开链竞速**：公网目标同时开 `VIBETERM_WS_DIAL_RACE` 条（默认 2，夹紧 1..4），取最先 `open` 的一条，其余不发字节即关（`close(1000, 'ws-race-loser')`）。局域网不竞速。日志 `[mesh][dial] ws race url=<host> winner_ms=… others_ms=… count=…`。入站握手限流因此从 10 提到 **30**/IP/min。hub / 中继上行同一套。详见 [路径优选](./path-selection.md)。
+- **ws-secure 开链竞速**：公网目标同时开 `VIBETERM_WS_DIAL_RACE` 条（默认 2，夹紧 1..4），取最先 `open` 的一条，其余不发字节即关（`close(1000, 'ws-race-loser')`）。局域网不竞速。日志 `[mesh][dial] ws race url=<host> winner_ms=… others_ms=… count=…`。入站握手限流因此从 10 提到 **30**/IP/min。中继上行同一套。详见 [路径优选](./path-selection.md)。
 - **慢路径重掷**：live DC / ws-secure 的稳态 RTT 明显高于该对端 30 min 窗内的 best 时，offerer 再拨一条新链（DC 需对端报 `reroll` 能力位，2.3.1 不报则不发起），make-before-break 换链，提升 ≥ 30 % 时把在途流搬过去。NAT 后的应答侧采得到 offerer 公网口、offerer 采不到应答侧时，应答侧按同一策略发 `link.reroll-request`（对端必须报过 `reroll`；2.3.1 收不到），offerer 校验后 `reason=peer-request` 重拨，两端预算各 3/小时。`link.reroll-request` 走现有 DC ctl，SDP / ICE 在 live 已是 dc 时走中继 uplink。ws-secure 重掷只在 DC 拨号真正在途 / `state.upgrading` / 升级协调器已 coalesced-scheduled 时让路（**熔断健康不算**），并与前台 ws 拨号共享在途槽；live 已换人则以 `reroll-stale` 关闭、不二次记预算。应答侧拒绝 epoch ≤ `LivePeer.rtcEpoch` 的迟到 offer；更高 epoch 的 ICE 候选若先于重掷 offer 到达，入 `rtcInbox`（30 s TTL、候选最多 16 条），offer 落定后丢掉 foreign-epoch。日志 `reroll` / `reroll_request` / `reroll_result` / `reroll_rehome` / `reroll_offer_ignored` / `answerer_backoff`。`VIBETERM_DC_REROLL=off` 关闭。重掷只换五元组，**不会**因为中继更快而离开 DC——那是选路模式（`auto` 滞环）的事。详见 [路径优选](./path-selection.md)。
 
 - `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算（`nestedDialBudgetsMs(rtt).directMs`），见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。已知该 peer 在中继 presence 上时，前台无 live 链路会**并行**开中继：直连先成则 abort 中继；中继先成则让直连继续，晚到 DC/ws-secure 走 `track()` 升级。无 presence 时仍「直连竞速 → 再 `completeRelayDial`」。`waitLocalFingerprint` 为回调扇出。
-- node↔node 由 nodeId 字典序较小的一侧发 offer；业务请求只发生在较大 id 一侧时，该侧经 hub `rtc.signal` 发签名 wake（详见 [mesh 运维](../operations/mesh-operations.md)「Nodes 页」）。
+- node↔node 由 nodeId 字典序较小的一侧发 offer；业务请求只发生在较大 id 一侧时，该侧经中继 uplink 的 `rtc.signal` 发签名 wake（详见 [mesh 运维](../operations/mesh-operations.md)「Nodes 页」）。
 
 ### 活性与在途流
 
@@ -213,7 +213,7 @@ hello 全落进 fanout 的 8 槽 dump 缓冲，跨 NAT、offerer 先 connected �
 - node↔node DataChannel 空闲时每 `RTC_LIVENESS_INTERVAL_MS`（默认 3 s）发 ping/pong，任意入站流量重置计时；连续 `RTC_LIVENESS_TIMEOUT_MS`（默认 10 s）无入站则关闭该 DC/PeerConnection 并回落，日志 `[mesh][rtc] liveness timeout peer=… idle_ms=…`。不能只等 ICE `disconnected`→`closed`（约 35 s）。
 - `dropPeer` 的 `missed-pong` / `idle` 在 `live.streams > 0` 时走退休宽限（保留原因），`revoked` / `stopped` 仍立即关闭。
 - **DC 取代中继 / ws-secure 是 make-before-break**：新 session 立刻成为 live（新流走新链路），旧 session 标 `retiring` 并排空。
-  旧实现同一毫秒就 `stream.reset('replaced')`，而 `replaced` 会让 hub / 中继侧 `abortBoth`，正在跑的终端流当场断——「一升级直连就掉」
+  旧实现同一毫秒就 `stream.reset('replaced')`，而 `replaced` 会让中继侧 `abortBoth`，正在跑的终端流当场断——「一升级直连就掉」
   的直接成因。现在只要 `streams > 0` 就不结束退役，按 quiet / min / max 规则等排空；防泄漏硬上限
   `PEER_RETIRE_STREAM_LEAK_MS = 30 min`，到点强制关闭且原因改成 `retired`（不再用 `replaced` 砸整条 uplink）。
   心跳失活 / 闲置这类退役仍有 `PEER_RETIRE_MAX_MS = 30 s` 的硬截止，先于流数判断。

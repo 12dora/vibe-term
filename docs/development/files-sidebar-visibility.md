@@ -7,7 +7,7 @@
 文件侧栏要避免两个问题：
 
 1. **没开过开关的设备也出现在文件页**。`isSidebarFilesVisible()` 的缺省是「配了目录就显示」，
-   本机与远端 node 一视同仁。hub 下挂若干 node 时，每台 node 自己配的目录会一股脑灌进文件树，
+   本机与远端 node 一视同仁。mesh 里有若干远端 node 时，每台 node 自己配的目录会一股脑灌进文件树，
    而终端页的缺省（`isSidebarDeviceVisible()`）是「本机显示、远端隐藏」，两页行为不一致。
    同时，一个可见目录都没有的 node 仍会渲染一个空的分节头，几十台 node 就是几十行空标题。
 2. **拖动根目录时整条侧栏往右滚**。`SortableVerticalList` 没有配 dnd-kit 的 `modifiers`，
@@ -59,7 +59,7 @@ isSidebarFilesVisible = stored ?? (runtimeNodeId === SELF_NODE_ID && hasRoots)
 
 ## 预期行为
 
-- hub + 若干远端 node：文件页只显示本机目录，以及被显式打开的远端设备目录；没有可见目录的
+- mesh 里有若干远端 node：文件页只显示本机目录，以及被显式打开的远端设备目录；没有可见目录的
   node 不出现分节头；设备卡片的「文件」开关与侧栏所见一致。
 - 拖动根目录 / 节点分节：只能上下移动；侧栏 `scrollLeft` 始终为 0，`scrollWidth` 不超过
   `clientWidth`；纵向重排照常提交并落库。

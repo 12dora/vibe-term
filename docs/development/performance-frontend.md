@@ -39,7 +39,7 @@ mesh 事件 WS（`/mesh/ws`）的可见时退避与页面恢复唤醒见 [侧栏
 后端：
 
 - 外部隧道检测 stale-while-revalidate（`apps/gateway/src/tunnel/external-detect.ts`：过期先返旧值、单飞后台刷新、冷启动最多等 1.5s 返 `probing:true`，`force` 供 adopt/sync），启动预热不阻塞；Cloudflare 请求 3s 超时、`listApps` 6s 总预算（截断→unknown，绝不当「未覆盖」）。
-- `/api/local/status` 并行取本机状态与 TLS；`TlsService.status()` 10s 投影缓存随写操作失效；`/api/auth/mode` 与请求无关的部分 5s 缓存（passkey 标志按 origin 实时），本机登录开关 / 引导、key-log apply、`setTlsInfo` / `setLocalAuthStore` 失效。`admit/revoke`、hub enrollment 等 `UserStore` 写路径未调用 `invalidateAuthModeCache()`，靠 5s TTL 兜底。
+- `/api/local/status` 并行取本机状态与 TLS；`TlsService.status()` 10s 投影缓存随写操作失效；`/api/auth/mode` 与请求无关的部分 5s 缓存（passkey 标志按 origin 实时），本机登录开关 / 引导、key-log apply、`setTlsInfo` / `setLocalAuthStore` 失效。`admit/revoke`、enrollment 等 `UserStore` 写路径未调用 `invalidateAuthModeCache()`，靠 5s TTL 兜底。
 
 前端：悬停 / 空闲预取 tunnel / local / tls 状态（`status-queries.ts` 共享 key/fetcher）；只读设置数据 `SETTINGS_STALE_MS=30s`；**general** tab 预取 `['site-settings']`；侧栏设置图标 `onPointerEnter` / `onTouchStart` 预取 general chunk + site-settings。终端预览 lazy + 等高骨架；节点页骨架屏；微信登录弹窗与 qrcode 按需加载。前端尚未消费 `external.probing`。挂载/切 tab 时 `warmTab(activeTab)`，chunk 与数据并行。
 
@@ -87,7 +87,7 @@ iOS 主屏 PWA 在后台会被系统回收，每次回到前台都是一次冷�
 
 SW 自身仍**没有 `skipWaiting`、没有 `clients.claim`**：新版本发布后，浏览器在下次导航时发现 `/sw.js` 变了 → 新 SW 安装自己那一代缓存 → 等旧客户端全部退出才激活 → 激活时删掉其它 `vibeterm-shell-*` 代。正在运行的页面始终拿到同一代的壳与 chunk。
 
-但「等旧客户端退出」在 iOS 主屏 PWA 上等于永不发生：切出去只是挂起，旧 SW 一直在控制，加上导航是 600 ms 预算的网络优先（手机到公网 hub 的 RTT 300–800 ms，基本每次都超预算回放上一代缓存壳），用户会无限期停在装机那天的 UI 上。**换代接管**（`sw-update.ts`）因此在两个「安全时刻」主动握手 + 整页刷新一次：
+但「等旧客户端退出」在 iOS 主屏 PWA 上等于永不发生：切出去只是挂起，旧 SW 一直在控制，加上导航是 600 ms 预算的网络优先（手机到公网入口的 RTT 300–800 ms，基本每次都超预算回放上一代缓存壳），用户会无限期停在装机那天的 UI 上。**换代接管**（`sw-update.ts`）因此在两个「安全时刻」主动握手 + 整页刷新一次：
 
 1. **页面刚加载完就发现 `registration.waiting`**：这一帧本来什么都没做，直接接管。**前提是本页已被某一代 SW 控制**；没有 controller（首次安装、SW 被系统杀掉后重装）说明这一页拿到的本来就是新壳，不刷。
 2. **运行期装好新一代**（`updatefound → installed`）或 SW 报 `shell-stale`（本次导航回放的是旧壳）：先记账，等下一次**真正的回归**——在后台待够 `SW_TAKEOVER_MIN_HIDDEN_MS = 30 s` 后回到前台，或 bfcache 恢复（`pageshow{persisted}`）——才接管。切出去看一眼验证码再切回来不算回归。不够格就继续排队。

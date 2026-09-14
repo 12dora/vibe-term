@@ -16,7 +16,7 @@
 
 去程路径在 CMI 出口分叉：一部分上海→东京（~90 ms），一部分经美西圣何塞再回东京（~180–205 ms）。ICMP 全部落在绕行；TCP / UDP 业务按流哈希，大约三分之一的流会走到慢路。中继绕行（本机→上海 22 ms + 上海→东京 ~160 ms）并不比直连绕行更快。
 
-对 VibeTerm 的含义：peer DataChannel（一条 UDP 流）、ws-secure / hub / 中继 uplink（一条 TCP 流）都可能一开链就落在慢五元组上，之后心跳再准也救不回来——必须换源端口重拨。
+对 VibeTerm 的含义：peer DataChannel（一条 UDP 流）、ws-secure / 中继 uplink（一条 TCP 流）都可能一开链就落在慢五元组上，之后心跳再准也救不回来——必须换源端口重拨。
 
 下面三条机制都不能**创造**一条物理上不存在的路径；它们只是多掷几次五元组，把已经存在的快路捡出来。选路模式决定**要不要继续用这条直连**：UDP 五元组再快，若稳态 RTT 仍远差于中继，智能模式会把流搬到中继。
 
@@ -43,11 +43,10 @@
 
 | 层 | 挑什么 | 输入 | 何时动 |
 |---|---|---|---|
-| Hub `preferNearest` | 节点挂哪台 **hub** | hub `/healthz` EWMA；候选必须有 `hubNodeId` | `VIBETERM_UPLINK_PREFER_NEAREST`，多 hub 默认开。中继候选 `hubNodeId` 恒为 null，这条**自动失效** |
 | 中继自动优选 | 哪台中继当 **主**（密钥日志写者） | uplink 心跳 RTT EWMA + pathBest + 负载 + 失败罚分 | `VIBETERM_RELAY_AUTO_SELECT`，≥ 2 条未踢中继默认开；有 `preferredUrl` 固定则冻结。自动选中后写入进程内 `autoPreferredUrl`，候选序 `preferredUrl ?? autoPreferredUrl`，避免与 `probePreferred` 互踢。见 [公共中继](./relay.md) §9 |
 | 按对 `chooseRelay` | 这一对节点走哪台中继 **开流** | `rtt(本机,R)+rtt(对端,R)`，所有已连接中继 | 与谁是主中继无关，N 路都参与 |
 
-自动优选只搬家「写者 / primary」；旧主自动变成 secondary。不要用假 `hubNodeId` 去复用 hub 的 nearest-attach。
+自动优选只搬家「写者 / primary」；旧主自动变成 secondary。
 
 ### 降级（auto，live 为直连）
 
@@ -85,9 +84,9 @@ make-before-break：upgrade 拨出的直连**先 hold**，中继继续载流。�
 
 ## 1. WebSocket 开链竞速
 
-拨号时同时开 `N` 条 WebSocket（不同源端口 → 不同五元组），取最先 `open` 的一条，其余立刻 `close(1000, 'ws-race-loser')`，**不发任何字节**。输家在 hub / 中继鉴权之前就关掉，不会触发 `replaced` / `relay-replaced`，也不会进注册表。
+拨号时同时开 `N` 条 WebSocket（不同源端口 → 不同五元组），取最先 `open` 的一条，其余立刻 `close(1000, 'ws-race-loser')`，**不发任何字节**。输家在中继鉴权之前就关掉，不会触发 `replaced` / `relay-replaced`，也不会进注册表。
 
-覆盖面：peer **ws-secure**、hub uplink、中继 uplink（含副中继）的默认 factory。注入过 `wsFactory` 的调用方（测试 / harness）不竞速。
+覆盖面：peer **ws-secure**、中继 uplink（含副中继）的默认 factory。注入过 `wsFactory` 的调用方（测试 / harness）不竞速。
 
 | 项 | 值 |
 |---|---|
@@ -175,12 +174,12 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 
 ## 3. 上行路径周期采样与劣化重赛
 
-中继 / hub 上行是一条长寿 WebSocket。它可能一开链就落在慢五元组上，或中途被运营商改路。节点对已配置中继行与 hub 候选（hostname 去重，每拍懒读）做参考采样，心跳连续偏慢且链路空闲时以 `path-rerace` 关掉活链、走第 1 条的开链竞速重连。
+中继上行是一条长寿 WebSocket。它可能一开链就落在慢五元组上，或中途被运营商改路。节点对已配置中继行（hostname 去重，每拍懒读）做参考采样，心跳连续偏慢且链路空闲时以 `path-rerace` 关掉活链、走第 1 条的开链竞速重连。
 
 | 名 | 值 |
 |---|---|
 | 采样周期 | 每 5 min |
-| 每次 | 对「已配置中继行 ∪ hub 候选」里每个公网 host 并行 3 次 TCP connect（hostname 去重；目标列表每拍懒读；跳过 LAN；目标端口取 URL，https/wss 默认 443） |
+| 每次 | 对已配置中继行里每个公网 host 并行 3 次 TCP connect（hostname 去重；目标列表每拍懒读；跳过 LAN；目标端口取 URL，https/wss 默认 443） |
 | 参考 TTL | 30 min（`UPLINK_PATH_RTT_TTL_MS`） |
 | 心跳样本 | 活链 RTT 记 `ws-secure`；判定用的是**写入前**的 best，避免当前样本把自己变成参考 |
 | 慢的定义 | 与直连相同：`rtt > max(1.5 × best, best + 40 ms)` |
