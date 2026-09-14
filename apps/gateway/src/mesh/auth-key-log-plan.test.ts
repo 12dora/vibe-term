@@ -35,10 +35,10 @@ function recordBytes(type: 'readmit-node' | 'admit-node' | 'set-relays'): Uint8A
 }
 
 describe('planKeyLogAppend readmit-node', () => {
-  test('hub 模式走 writer，中继模式 local-first + publish', () => {
+  test('一律 local-first；set-relays 在尚未接入中继时不 publish', () => {
     const bytes = recordBytes('readmit-node');
     expect(planKeyLogAppend({ relayMode: false, bytes })).toEqual({
-      localFirst: false,
+      localFirst: true,
       publish: true,
     });
     expect(planKeyLogAppend({ relayMode: true, bytes })).toEqual({
@@ -46,12 +46,16 @@ describe('planKeyLogAppend readmit-node', () => {
       publish: true,
     });
     expect(planKeyLogAppend({ relayMode: false, bytes: recordBytes('admit-node') })).toEqual({
-      localFirst: false,
+      localFirst: true,
       publish: true,
     });
     expect(planKeyLogAppend({ relayMode: false, bytes: recordBytes('set-relays') })).toEqual({
       localFirst: true,
       publish: false,
+    });
+    expect(planKeyLogAppend({ relayMode: true, bytes: recordBytes('set-relays') })).toEqual({
+      localFirst: true,
+      publish: true,
     });
   });
 });

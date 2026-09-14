@@ -18,7 +18,6 @@ import {
 import { generateTenantKey } from '@vibeterm/shared/relay';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
-import { MeshHubStore } from '../auth/mesh-hub-store';
 import { ensureNodeIdentity } from '../auth/node-identity-service';
 import { NodeIdentityStore } from '../auth/node-identity-store';
 import { NodeSessionStore } from '../auth/node-session-store';
@@ -36,7 +35,7 @@ const RELAY_URL = 'https://relay.example';
 const RELAY_URL_2 = 'https://relay2.example';
 const TENANT_ID = 'ab'.repeat(16);
 const PASSWORD = 'relay-pass-1234';
-/** 首次接入仍走 hub 模式的 `nodes.version`；中继记录要求全员 ≥ 1.1.23。 */
+/** 中继记录要求全员 ≥ 1.1.23。 */
 const NODE_VERSION = '1.1.23';
 const PEER_ID = 'bb'.repeat(16);
 
@@ -82,7 +81,7 @@ function livePublisher(): PublisherSpy {
 async function boot(opts?: {
   publisher?: PublisherSpy;
   attachedHub?: () => AttachedHub | null;
-  roles?: { hub: boolean; node: boolean; relay: boolean };
+  roles?: { node: boolean; relay: boolean };
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -120,7 +119,7 @@ async function boot(opts?: {
   };
   const publisher = opts?.publisher ?? livePublisher();
   const runtime = new MeshHttpRuntime({
-    roles: opts?.roles ?? { hub: false, node: true, relay: false },
+    roles: opts?.roles ?? { node: true, relay: false },
     nodeId: identity.nodeIdHex,
     nodePk: identity.edPublicKey,
     userStore,
@@ -129,7 +128,6 @@ async function boot(opts?: {
     nodeSessionStore,
     publisher,
     primaryUserId: user.userId,
-    hubStore: new MeshHubStore(db),
     attachedHub: opts?.attachedHub,
   });
   const { sid } = await challengeAndLogin(runtime, user, {
@@ -323,24 +321,6 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
     }
   });
 
-  test('hub 模式下 attached 不是 writer 时，普通记录仍然 409 HUB_NOT_WRITER', async () => {
-    const attached: AttachedHub = {
-      hubNodeId: 'cc'.repeat(16),
-      publicUrl: 'https://hub.example',
-      mode: 'active',
-      writerEpoch: 1,
-      since: 1,
-    };
-    const b = await boot({ publisher: livePublisher(), attachedHub: () => attached });
-    try {
-      const res = await postRecord(b, { type: 'clear-totp', payload: encodeClearTotpPayload() });
-      expect(res.status).toBe(409);
-      expect(((await res.json()) as { code: string }).code).toBe('HUB_NOT_WRITER');
-    } finally {
-      b.close();
-    }
-  });
-
   test('中继模式下普通记录不再被 HUB_NOT_WRITER 挡住，并尽力推给中继', async () => {
     const attached: AttachedHub = {
       hubNodeId: null,
@@ -528,22 +508,6 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       expect(
         (await postRecord(b, { type: 'rotate-root-keep', payload: keepPayload() })).status
       ).toBe(200);
-    } finally {
-      b.close();
-    }
-  });
-
-  test('hub 模式的普通记录仍然先等 hub 确认（回归）', async () => {
-    const b = await boot({ publisher: livePublisher() });
-    try {
-      const before = headSeq(b);
-      const res = await postRecord(b, { type: 'clear-totp', payload: encodeClearTotpPayload() });
-      expect(res.status).toBe(200);
-      const body = await successBody(res);
-      expect(body.hubAck).toBe(true);
-      expect(body.localApply).toBeUndefined();
-      expect(b.publisher.acked).toHaveLength(1);
-      expect(headSeq(b)).toBe(before + 1n);
     } finally {
       b.close();
     }

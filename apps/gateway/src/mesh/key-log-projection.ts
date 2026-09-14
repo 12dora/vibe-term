@@ -6,17 +6,12 @@ import {
   normalizeNodeName,
 } from '@vibeterm/shared/auth';
 import type { UserKeyService } from '../auth';
-import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
 import { meshForwardChannel } from '../events/channels/mesh-forward';
-import type { HubRuntime } from '../hub';
-import { applyKeyLogHubRuntime } from '../hub/hub-authorization';
 import { type NodeListApplyDeps, emitRenameNodeEvent } from './node-list-apply';
 import type { RelayWiring } from './relay-wiring';
 
 export type KeyLogProjectionDeps = {
-  hubStore: MeshHubStore;
-  hub: HubRuntime | null;
   relay: RelayWiring;
   selfId: string;
   userStore: UserStore;
@@ -40,11 +35,6 @@ export function bindKeyLogProjection(
 ): NonNullable<UserKeyService['onApplied']> {
   return (userId, step) => {
     d.onKeyLogEffects?.(userId, step.effects);
-    applyKeyLogHubRuntime(d.hubStore, step.record, {
-      selfId: d.selfId,
-      now: Date.now(),
-      onRetireSelf: () => d.hub?.setMode('standby'),
-    });
     d.relay.notifyIfRelayRecord(step.record.type);
     // 汇聚声明变了：撤销掉的汇聚机队列与在途投递立刻收掉，别等下一次重试才发现。
     if (step.record.type === 'notification-sink') {
@@ -66,12 +56,10 @@ export function bindKeyLogProjection(
       return;
     }
     if (!name) return;
-    d.hub?.registry.updateMeta(nodeId, { name }, Date.now());
     emitRenameNodeEvent(
       {
         state: d.state,
         identity: { nodeIdHex: d.selfId },
-        hubStore: d.hubStore,
         scheduler: { now: () => Date.now() },
         userIdOf: d.userIdOf,
         userStore: d.userStore,

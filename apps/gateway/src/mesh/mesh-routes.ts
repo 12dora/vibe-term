@@ -3,19 +3,8 @@ import { encodeBase64url } from '@vibeterm/shared/auth';
 import { CONNECTION_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies } from '../auth/cookies';
-import type { MeshHubStore } from '../auth/mesh-hub-store';
-import { pickWriterHub } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
-import { config as gatewayConfig } from '../config';
-import {
-  envPeerSet,
-  filterNotRetiredHubRecords,
-  hubHttpAuthorization,
-  lookupSignedHubAuthorization,
-  resolveHubAuthorization,
-  resolveMeshUserId,
-} from '../hub/hub-authorization';
 import type { PublicAuthNode } from './auth-routes';
 import {
   type CachedRtcConfig,
@@ -35,7 +24,6 @@ import {
   WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
 } from './mesh-deps';
-import { serializeHubCandidate } from './mesh-hub-candidates';
 import { matchMeshPauseRoute } from './mesh-pause-routes';
 import { matchMeshPortsRoute, overlayMeshList } from './mesh-ports-routes';
 import { dispatchMeshSocketMessage } from './mesh-socket-message';
@@ -63,7 +51,6 @@ import {
   requireSession,
 } from './session-middleware';
 import type { UplinkStatus } from './types';
-import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 
 export type { MeshNodeDto };
 
@@ -87,11 +74,6 @@ export type MeshRoutesDeps = {
   selfStatus?: () => UplinkStatus;
   listedNames?: () => ReadonlyArray<{ id: string; name: string }> | null;
   selfName?: () => string | null;
-  hubStore?: MeshHubStore;
-  attachedHub?: () => AttachedHub | null;
-  attachedHubIdOf?: (nodeId: string) => string | null | undefined;
-  hubCandidates?: () => Array<string | UplinkCandidate>;
-  hubPeers?: string[];
   forwardAuthorizedHttp?: (
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
@@ -132,9 +114,6 @@ export class MeshRoutes {
     const path = new URL(req.url).pathname;
     if (path === '/api/mesh/nodes' && req.method === 'GET') {
       return requireSession(this.sessionDeps, (r) => this.handleNodes(r))(req);
-    }
-    if (path === '/api/mesh/hubs' && req.method === 'GET') {
-      return requireSession(this.sessionDeps, () => this.handleHubs())(req);
     }
     if (path === '/api/mesh/upgrade/latest' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleUpgradeLatest())(req);
@@ -197,50 +176,10 @@ export class MeshRoutes {
   private handleNodes(req: Request): Response {
     const nodes = this.collectNodes(req);
     sweepStaleNodeOperations(new Set(nodes.map((n) => n.id)));
-    const listedRows = this.deps.roles.hub ? nodes : (this.deps.listedNames?.() ?? null);
+    const listedRows = this.deps.listedNames?.() ?? null;
     return jsonBody({
       ...meshListReadiness(this.deps.userStore, this.deps.nodeId, nodes, listedRows),
       nodes: nodes.map((n) => ({ ...n, operation: readNodeOperation(n.id) })),
-    });
-  }
-
-  private handleHubs(): Response {
-    const store = this.deps.hubStore;
-    const rows = store?.list() ?? [];
-    const envPeers = envPeerSet(this.deps.hubPeers ?? gatewayConfig.hubPeers);
-    const usableRows = filterNotRetiredHubRecords(rows, {
-      userStore: this.deps.userStore,
-      selfId: this.deps.nodeId,
-    });
-    const writerHubId = pickWriterHub(usableRows);
-    const attached = this.deps.attachedHub?.() ?? null;
-    const rawCandidates = this.deps.hubCandidates?.() ?? usableRows.map((row) => row.publicUrl);
-    const uid = resolveMeshUserId(this.deps.userStore, { nodeId: this.deps.nodeId });
-    return jsonBody({
-      hubs: rows.map((row) => {
-        const source = resolveHubAuthorization({
-          hubNodeId: row.hubNodeId,
-          selfId: this.deps.nodeId,
-          envPeers,
-          signed: lookupSignedHubAuthorization(this.deps.userStore, uid, row.hubNodeId),
-        });
-        const authorization = hubHttpAuthorization(source);
-        return {
-          nodeId: row.hubNodeId,
-          publicUrl: row.publicUrl,
-          ...(row.name ? { name: row.name } : {}),
-          mode: row.mode,
-          priority: row.priority,
-          writerEpoch: row.writerEpoch,
-          caFingerprint: row.caFingerprint,
-          online: row.online,
-          lastSeenAt: row.lastSeenAt,
-          ...(authorization ? { authorization } : {}),
-        };
-      }),
-      attached,
-      writerHubId,
-      candidates: rawCandidates.map(serializeHubCandidate),
     });
   }
 
@@ -395,7 +334,7 @@ export class MeshRoutes {
   private collectNodes(req: Request | null): MeshNodeDto[] {
     const cookies = req ? parseCookies(req.headers.get('cookie')) : new Map<string, string>();
     const reach = this.deps.peers.listReach();
-    const hubOnline = this.deps.peers.listHubOnline?.() ?? new Set<string>();
+    const uplinkOnline = this.deps.peers.listHubOnline?.() ?? new Set<string>();
     const certs = this.deps.userStore.listCerts().filter((c) => c.revokedLogSeq == null);
     const certById = new Map(certs.map((c) => [c.nodeId, c]));
     const peerById = new Map(this.deps.userStore.listPeers().map((p) => [p.nodeId, p]));
@@ -403,17 +342,6 @@ export class MeshRoutes {
     const registryById = new Map(this.deps.userStore.listNodes().map((row) => [row.id, row.name]));
     const selfName = this.deps.selfName?.() ?? null;
     const self = this.deps.selfStatus?.();
-    const storedHubs = this.deps.hubStore?.list() ?? [];
-    const usableHubs = filterNotRetiredHubRecords(storedHubs, {
-      userStore: this.deps.userStore,
-      selfId: this.deps.nodeId,
-    });
-    const hubIds = new Set(usableHubs.map((row) => row.hubNodeId));
-    const hubModeById = new Map(usableHubs.map((row) => [row.hubNodeId, row.mode] as const));
-    const hubNodeId = this.deps.roles.hub
-      ? this.deps.nodeId
-      : (pickWriterHub(usableHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
-    if (hubNodeId) hubIds.add(hubNodeId);
     const nodes = [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
       .map((id) =>
         projectMeshListNode(
@@ -422,20 +350,16 @@ export class MeshRoutes {
           this.deps.nodePk,
           cookies,
           reach,
-          hubOnline,
+          uplinkOnline,
           certById,
           peerById,
           listedById,
           registryById,
           selfName,
           self,
-          hubNodeId,
           (nid) => this.deps.peers.transportOf?.(nid) ?? null,
           (nid) => this.deps.peers.rttOf?.(nid) ?? null,
           (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null,
-          hubIds,
-          (nid) => hubModeById.get(nid),
-          (nid) => this.deps.attachedHubIdOf?.(nid),
           (nid) => this.deps.peers.viaRelayOf?.(nid) ?? null,
           (nid) => this.deps.peers.relayPresenceOf?.(nid)
         )

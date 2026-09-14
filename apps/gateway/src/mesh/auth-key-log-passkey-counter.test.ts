@@ -1,7 +1,5 @@
-// `POST /api/auth/keylog?hub=sync` 会把同一条记录验两次：先预演（确认本地能接受再发给上级），
-// 上级确认后再本地落账。计数器会自增的认证器上，预演若把计数器写进库，第二次验签就会因为
-// 「新计数器不大于已存计数器」失败——记录在上级已经落库，本机却报错回退。
-//
+// `POST /api/auth/keylog?hub=sync` 本地优先落账。计数器会自增的认证器上，预演若把计数器写进库，
+// 真正落账那一次验签就会因为「新计数器不大于已存计数器」失败。
 // 因此预演必须无副作用，计数器推进只发生一次，且与记录落库同一个事务。
 
 import { describe, expect, test } from 'bun:test';
@@ -18,7 +16,6 @@ import {
 } from '@vibeterm/shared/auth';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
-import { MeshHubStore } from '../auth/mesh-hub-store';
 import { ensureNodeIdentity } from '../auth/node-identity-service';
 import { NodeIdentityStore } from '../auth/node-identity-store';
 import { NodeSessionStore } from '../auth/node-session-store';
@@ -75,7 +72,7 @@ async function boot() {
     now: 1,
   });
   const runtime = new MeshHttpRuntime({
-    roles: { hub: false, node: true, relay: false },
+    roles: { node: true, relay: false },
     nodeId: identity.nodeIdHex,
     nodePk: identity.edPublicKey,
     userStore,
@@ -84,7 +81,6 @@ async function boot() {
     nodeSessionStore,
     publisher: livePublisher(),
     primaryUserId: user.userId,
-    hubStore: new MeshHubStore(db),
   });
   const { sid } = await challengeAndLogin(runtime, user, {
     target: identity.nodeIdHex,

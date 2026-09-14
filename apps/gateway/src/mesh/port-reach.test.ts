@@ -246,7 +246,7 @@ describe('port reach aggregation', () => {
   });
 
   test('self derived public-https is open when a member is uplinked', () => {
-    setSelfPortRolesForTest({ hub: true, relay: false });
+    setSelfPortRolesForTest({ relay: true });
     expect(portsOf(SELF).find((row) => row.purpose === 'public-https')?.status).toBe('unknown');
     notePublicHttpsUplink(true);
     expect(portsOf(SELF).find((row) => row.purpose === 'public-https')?.status).toBe('open');
@@ -254,7 +254,7 @@ describe('port reach aggregation', () => {
   });
 
   test('self derived TURN rows follow membersProbeSnapshot; relay range is not_probed', () => {
-    setSelfPortRolesForTest({ hub: false, relay: true });
+    setSelfPortRolesForTest({ relay: true });
     const relay = 'https://relay.example';
     ingestTurnOk(PEER, false, relay);
     expect(portsOf(SELF).find((row) => row.purpose === 'turn-control')?.status).toBe('unknown');
@@ -288,7 +288,6 @@ describe('port reach aggregation', () => {
           direct_capable: false,
           inventory: null,
           loggedIn: true,
-          isHub: false,
         },
         {
           id: PEER,
@@ -302,7 +301,6 @@ describe('port reach aggregation', () => {
           direct_capable: true,
           inventory: null,
           loggedIn: false,
-          isHub: false,
           endpoints: [PUBLIC_EP],
         },
       ],

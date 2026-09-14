@@ -49,12 +49,10 @@ describe('rename-node keylog runtime', () => {
       db,
       gateway: fakeGateway(db),
       config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://127.0.0.1',
+        roles: { node: true, relay: false },
         peerPort: 0,
         stunServers: [],
-      },
+      } as import('./mesh-runtime').MeshRuntimeConfig,
       startPeerServer: false,
       onLocalNodeName: (name) => names.push(name),
     });

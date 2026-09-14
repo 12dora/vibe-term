@@ -10,7 +10,7 @@ import type { MeshPortReach } from './node-list-projection';
 
 type TurnMembersSnap = { ok: number; total: number; updatedAt: number };
 
-export type SelfPortRoles = { hub: boolean; relay: boolean };
+export type SelfPortRoles = { relay: boolean };
 
 export function derivedSelfPortRows(input: {
   roles: SelfPortRoles;
@@ -19,7 +19,7 @@ export function derivedSelfPortRows(input: {
   turn: TurnMembersSnap | null;
 }): MeshPortReach[] {
   const rows: MeshPortReach[] = [];
-  if (input.roles.hub || input.roles.relay) {
+  if (input.roles.relay) {
     rows.push(publicHttpsRow(input.httpsUplink, input.httpsCheckedAt));
   }
   if (input.roles.relay && gatewayConfig.turnPort !== 0) {
@@ -30,10 +30,7 @@ export function derivedSelfPortRows(input: {
 }
 
 export function selfHttpsPort(): number {
-  const url = gatewayConfig.roles.relay
-    ? gatewayConfig.relayPublicUrl
-    : (gatewayConfig.hubPublicUrl ?? gatewayConfig.hubUrl);
-  return parseHttpsPort(url) ?? DEFAULT_PUBLIC_HTTPS_PORT;
+  return parseHttpsPort(gatewayConfig.relayPublicUrl) ?? DEFAULT_PUBLIC_HTTPS_PORT;
 }
 
 export function localTurnPort(): number {

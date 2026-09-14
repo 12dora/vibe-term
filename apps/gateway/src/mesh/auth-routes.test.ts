@@ -23,10 +23,8 @@ import {
 } from '@vibeterm/shared/auth';
 import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession } from '@vibeterm/shared/link';
-import type { HubMode } from '@vibeterm/shared/uplink';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
-import { MeshHubStore } from '../auth/mesh-hub-store';
 import { NodeSessionStore } from '../auth/node-session-store';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createEs256Authenticator as createEs256AuthenticatorShared } from '../auth/passkey-test-fixtures';
@@ -215,7 +213,7 @@ export const dummyServer = { upgrade: () => true };
 
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
 export async function bootMesh(options?: {
-  roles?: { hub: boolean; node: boolean; relay: boolean };
+  roles?: { node: boolean; relay: boolean };
   now?: () => number;
   peers?: FakePeers;
   streams?: FakeStreams;
@@ -228,7 +226,6 @@ export async function bootMesh(options?: {
   streamLog?: (line: string) => void;
   skipUserBootstrap?: boolean;
   attachedHub?: () => import('./uplink-pool').AttachedHub | null;
-  hubMode?: () => HubMode | null;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -246,10 +243,9 @@ export async function bootMesh(options?: {
   const challengeStore = new ChallengeStore({ now: options?.now });
   const peers = options?.peers ?? new FakePeers();
   const streams = options?.streams ?? new FakeStreams();
-  const hubStore = new MeshHubStore(db);
   const published: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
   const runtime = new MeshHttpRuntime({
-    roles: options?.roles ?? { hub: false, node: true, relay: false },
+    roles: options?.roles ?? { node: true, relay: false },
     nodeId: NODE_ID,
     nodePk: NODE_PK,
     userStore,
@@ -266,9 +262,7 @@ export async function bootMesh(options?: {
     rtc: options?.rtc,
     now: options?.now,
     primaryUserId: boot.userId || undefined,
-    hubStore,
     attachedHub: options?.attachedHub,
-    hubMode: options?.hubMode,
     selfStatus: options?.selfStatus,
     listedNames: options?.listedNames,
     selfName: options?.selfName,
@@ -280,7 +274,6 @@ export async function bootMesh(options?: {
     db,
     runtime,
     userStore,
-    hubStore,
     keyLogService,
     nodeSessionStore,
     challengeStore,
@@ -531,8 +524,6 @@ describe('auth-routes', () => {
         secondFactorPolicy?: string;
         rootEpoch: number | null;
         rootPublicKey: string | null;
-        hubNodeId: string | null;
-        hubPublicUrl: string | null;
       };
       expect(body.mode).toBe('mesh');
       expect(body.nodeId).toBe(NODE_ID);
@@ -546,13 +537,13 @@ describe('auth-routes', () => {
       expect(body.secondFactorPolicy).toBe('none');
       expect(body.rootEpoch).toBe(mesh.boot.rootEpoch);
       expect(body.rootPublicKey).toBeNull();
-      expect(body.hubNodeId).toBeNull();
-      expect(body.hubPublicUrl).toBeNull();
+      expect('hubNodeId' in body).toBe(false);
+      expect('hubPublicUrl' in body).toBe(false);
     } finally {
       mesh.close();
     }
 
-    const standalone = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    const standalone = await bootMesh({ roles: { node: false, relay: false } });
     try {
       const res = await call(standalone.runtime, 'http://localhost/api/auth/mode');
       const body = (await res.json()) as { mode: string; localAuth?: { supported: boolean } };
@@ -590,7 +581,7 @@ describe('auth-routes', () => {
   });
 
   test('GET /api/auth/mode standalone+effective 返回 mesh 载荷与 localAuth', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    const mesh = await bootMesh({ roles: { node: false, relay: false } });
     try {
       const store = new MemoryLocalAuthStore();
       store.setEnabled(true);
@@ -643,7 +634,7 @@ describe('auth-routes', () => {
 
   test('POST /api/auth/local 无凭证拒绝开启；bootstrap 后可开；公网拒绝', async () => {
     const mesh = await bootMesh({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       skipUserBootstrap: true,
     });
     try {
@@ -797,157 +788,6 @@ describe('auth-routes', () => {
     ).toBe(false);
   });
 
-  test('GET /api/auth/mode uses the writer hub from mesh_hubs', async () => {
-    const mesh = await bootMesh();
-    try {
-      mesh.hubStore.replaceAll(
-        [
-          {
-            hubNodeId: 'bb'.repeat(16),
-            publicUrl: 'https://standby.example',
-            name: null,
-            mode: 'standby',
-            priority: 10,
-            writerEpoch: 9,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: null,
-          },
-          {
-            hubNodeId: 'cc'.repeat(16),
-            publicUrl: 'https://writer.example',
-            name: null,
-            mode: 'active',
-            priority: 20,
-            writerEpoch: 5,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: null,
-          },
-        ],
-        1
-      );
-      mesh.userStore.upsertHubAuthorization({
-        userId: mesh.boot.userId,
-        hubNodeId: 'cc'.repeat(16),
-        status: 'active',
-        admitSeq: 1,
-        updatedSeq: 1,
-      });
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
-      const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
-      expect(body.hubNodeId).toBe('cc'.repeat(16));
-      expect(body.hubPublicUrl).toBe('https://writer.example');
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('GET /api/auth/mode reports persisted hub meta and roles.hub', async () => {
-    const mesh = await bootMesh();
-    try {
-      mesh.userStore.upsertHubMeta({
-        nodeId: 'bb'.repeat(16),
-        publicUrl: 'https://hub.example',
-        now: Date.now(),
-      });
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
-      const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
-      expect(body.hubNodeId).toBe('bb'.repeat(16));
-      expect(body.hubPublicUrl).toBe('https://hub.example');
-    } finally {
-      mesh.close();
-    }
-
-    const hub = await bootMesh({ roles: { hub: true, node: true, relay: false } });
-    try {
-      const runtime = new MeshHttpRuntime({
-        roles: { hub: true, node: true, relay: false },
-        nodeId: NODE_ID,
-        nodePk: NODE_PK,
-        userStore: hub.userStore,
-        keyLogService: hub.keyLogService,
-        challengeStore: hub.challengeStore,
-        nodeSessionStore: hub.nodeSessionStore,
-        peers: hub.peers,
-        streams: hub.streams,
-        publisher: { publish() {} },
-        primaryUserId: hub.boot.userId,
-        hubPublicUrl: 'https://hub.local',
-      });
-      const res = await call(runtime, 'http://localhost/api/auth/mode');
-      const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
-      expect(body.hubNodeId).toBe(NODE_ID);
-      expect(body.hubPublicUrl).toBe('https://hub.local');
-      expect((body as { caFingerprint?: string | null }).caFingerprint).toBeNull();
-      runtime.stop();
-    } finally {
-      hub.close();
-    }
-  });
-
-  test('中继上联时 mode 不上报 Hub：残留的 hub meta 与 env 都不算', async () => {
-    const mesh = await bootMesh();
-    try {
-      mesh.userStore.upsertHubMeta({
-        nodeId: 'bb'.repeat(16),
-        publicUrl: 'https://hub.example',
-        now: Date.now(),
-      });
-      const applied = await mesh.keyLogService.signAndApply(mesh.boot.userId, mesh.boot.rootKey, {
-        type: 'set-relays',
-        payload: await buildSetRelaysPayload({
-          relays: [
-            {
-              url: 'https://relay.example',
-              tenantId: 'ef'.repeat(16),
-              token: new Uint8Array(32).fill(6),
-              priority: 0,
-            },
-          ],
-          logKey: new Uint8Array(32).fill(1),
-          metaKey: new Uint8Array(32).fill(2),
-          metaEpoch: 1,
-          nodes: listRelayNodeKeys(mesh.userStore, mesh.boot.userId),
-        }),
-      });
-      expect(applied.ok).toBe(true);
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
-      const body = (await res.json()) as { hubNodeId: string | null; hubPublicUrl: string | null };
-      expect(body.hubNodeId).toBeNull();
-      expect(body.hubPublicUrl).toBeNull();
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('非 Hub 且无 hub meta 时不把 http://127.0.0.1 兜底当成 Hub 地址', async () => {
-    const mesh = await bootMesh();
-    try {
-      const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true, relay: false },
-        nodeId: NODE_ID,
-        nodePk: NODE_PK,
-        userStore: mesh.userStore,
-        keyLogService: mesh.keyLogService,
-        challengeStore: mesh.challengeStore,
-        nodeSessionStore: mesh.nodeSessionStore,
-        peers: mesh.peers,
-        streams: mesh.streams,
-        publisher: { publish() {} },
-        primaryUserId: mesh.boot.userId,
-        hubPublicUrl: 'http://127.0.0.1',
-      });
-      const res = await call(runtime, 'http://localhost/api/auth/mode');
-      const body = (await res.json()) as { hubNodeId: string | null; hubPublicUrl: string | null };
-      expect(body.hubNodeId).toBeNull();
-      expect(body.hubPublicUrl).toBeNull();
-      runtime.stop();
-    } finally {
-      mesh.close();
-    }
-  });
-
   test('GET /api/auth/mode exposes caFingerprint from tlsInfo', async () => {
     const mesh = await bootMesh();
     try {
@@ -1016,7 +856,7 @@ describe('auth-routes', () => {
 
   test('GET /api/auth/mode invalidates cached derivation after local-auth bootstrap', async () => {
     const mesh = await bootMesh({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       skipUserBootstrap: true,
     });
     try {
@@ -1256,12 +1096,12 @@ describe('auth-routes', () => {
     }
   });
 
-  test('POST /api/auth/keylog?hub=sync acks hub first then applies locally', async () => {
+  test('POST /api/auth/keylog?hub=sync applies locally then reports hubAck', async () => {
     const mesh = await bootMesh();
     try {
-      const acked: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
+      const published: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true, relay: false },
+        roles: { node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: mesh.userStore,
@@ -1271,10 +1111,8 @@ describe('auth-routes', () => {
         peers: mesh.peers,
         streams: mesh.streams,
         publisher: {
-          publish() {},
-          async publishAndAck(record) {
-            acked.push(record);
-            return { ok: true, seq: 2n };
+          publish(record) {
+            published.push(record);
           },
         },
         primaryUserId: mesh.boot.userId,
@@ -1305,10 +1143,16 @@ describe('auth-routes', () => {
         }),
       });
       expect(ok.status).toBe(200);
-      const body = (await ok.json()) as { ok: boolean; hubAck: boolean; seq: number };
+      const body = (await ok.json()) as {
+        ok: boolean;
+        hubAck: boolean;
+        localApply?: boolean;
+        seq: number;
+      };
       expect(body.ok).toBe(true);
       expect(body.hubAck).toBe(true);
-      expect(acked).toHaveLength(1);
+      expect(body.localApply).toBe(true);
+      expect(published).toHaveLength(1);
       expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq + 1n);
       runtime.stop();
     } finally {
@@ -1316,62 +1160,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('hub=sync hub rejection does not persist a forking record', async () => {
-    const mesh = await bootMesh();
-    try {
-      const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true, relay: false },
-        nodeId: NODE_ID,
-        nodePk: NODE_PK,
-        userStore: mesh.userStore,
-        keyLogService: mesh.keyLogService,
-        challengeStore: mesh.challengeStore,
-        nodeSessionStore: mesh.nodeSessionStore,
-        peers: mesh.peers,
-        streams: mesh.streams,
-        publisher: {
-          publish() {},
-          async publishAndAck() {
-            return { ok: false, error: 'fork' };
-          },
-        },
-        primaryUserId: mesh.boot.userId,
-      });
-      const { sid } = await challengeAndLogin(runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const state = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(runtime, 'http://localhost/api/auth/keylog?hub=sync', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      expect(res.status).toBe(409);
-      expect((await res.json()).code).toBe('fork');
-      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
-      runtime.stop();
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('node role POST /api/auth/keylog defaults to hub-sync', async () => {
+  test('node role POST /api/auth/keylog defaults to hubAck without query', async () => {
     const mesh = await bootMesh();
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
@@ -1399,129 +1188,13 @@ describe('auth-routes', () => {
           sig: encodeBase64url(sig),
         }),
       });
-      expect(res.status).toBe(409);
-      expect((await res.json()).code).toBe('unavailable');
-      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
-      expect(mesh.published).toHaveLength(0);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('hub=sync timeout retries then treats matching hub head as acked', async () => {
-    const mesh = await bootMesh();
-    try {
-      const { buildKeyLogRecord, computeRecordHash, encodeKeyLogRecord, signKeyLogRecordWithRoot } =
-        await import('@vibeterm/shared/auth');
-      const state = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const hash = computeRecordHash(bytes, sig);
-      let calls = 0;
-      const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true, relay: false },
-        nodeId: NODE_ID,
-        nodePk: NODE_PK,
-        userStore: mesh.userStore,
-        keyLogService: mesh.keyLogService,
-        challengeStore: mesh.challengeStore,
-        nodeSessionStore: mesh.nodeSessionStore,
-        peers: mesh.peers,
-        streams: mesh.streams,
-        publisher: {
-          publish() {},
-          async publishAndAck() {
-            calls += 1;
-            return { ok: false, error: 'timeout' };
-          },
-          async queryHubHead() {
-            return { seq: rec.seq, hash };
-          },
-        },
-        primaryUserId: mesh.boot.userId,
-      });
-      const { sid } = await challengeAndLogin(runtime, mesh.boot);
-      const ok = await call(runtime, 'http://localhost/api/auth/keylog?hub=sync', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      expect(ok.status).toBe(200);
-      expect(calls).toBe(2);
-      expect(((await ok.json()) as { hubAck: boolean }).hubAck).toBe(true);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { ok: boolean; hubAck: boolean; localApply?: boolean };
+      expect(body.ok).toBe(true);
+      expect(body.hubAck).toBe(true);
+      expect(body.localApply).toBe(true);
       expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq + 1n);
-      runtime.stop();
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('hub=sync timeout then mismatched hub head returns 504 HUB_TIMEOUT', async () => {
-    const mesh = await bootMesh();
-    try {
-      const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true, relay: false },
-        nodeId: NODE_ID,
-        nodePk: NODE_PK,
-        userStore: mesh.userStore,
-        keyLogService: mesh.keyLogService,
-        challengeStore: mesh.challengeStore,
-        nodeSessionStore: mesh.nodeSessionStore,
-        peers: mesh.peers,
-        streams: mesh.streams,
-        publisher: {
-          publish() {},
-          async publishAndAck() {
-            return { ok: false, error: 'timeout' };
-          },
-          async queryHubHead() {
-            return { seq: 99n, hash: new Uint8Array(32).fill(9) };
-          },
-        },
-        primaryUserId: mesh.boot.userId,
-      });
-      const { sid } = await challengeAndLogin(runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const state = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(runtime, 'http://localhost/api/auth/keylog?hub=sync', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      expect(res.status).toBe(504);
-      expect((await res.json()).code).toBe('HUB_TIMEOUT');
-      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
-      runtime.stop();
+      expect(mesh.published).toHaveLength(1);
     } finally {
       mesh.close();
     }
@@ -1764,7 +1437,7 @@ describe('auth-routes', () => {
   });
 
   test('GET /api/auth/totp-record requires session and 404s when TOTP is off', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
+    const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       const denied = await call(mesh.runtime, 'http://localhost/api/auth/totp-record');
       expect(denied.status).toBe(401);
@@ -1782,7 +1455,7 @@ describe('auth-routes', () => {
   });
 
   test('rotate-root-keep keeps the session cookie and totp-record returns the nested payload', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
+    const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       const {
         deriveSeed,
@@ -1903,7 +1576,7 @@ describe('auth-routes', () => {
   });
 
   test('rotate-root-keep compat gate 409s cert-only nodes; revoked certs do not block', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
+    const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       const certOnlyId = 'bb'.repeat(16);
       mesh.userStore.upsertCert({
@@ -1984,7 +1657,7 @@ describe('auth-routes', () => {
   });
 
   test('POST /api/auth/keylog rotate-root-keep invalidates unused enrollment tokens', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
+    const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       const enrollPk = new Uint8Array(32).fill(41);
       mesh.userStore.createEnrollmentToken({
@@ -2039,7 +1712,7 @@ describe('auth-routes', () => {
   });
 
   test('rotate-root-keep compat gate 409s old nodes even with x-tmex-force-keylog', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
+    const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
         '@vibeterm/shared/auth'
@@ -2463,7 +2136,7 @@ describe('auth-routes', () => {
 
     const openStandalone = async () => {
       const mesh = await bootMesh({
-        roles: { hub: false, node: false, relay: false },
+        roles: { node: false, relay: false },
         skipUserBootstrap: true,
       });
       mesh.runtime.auth.setLocalAuthStore(new MemoryLocalAuthStore());
@@ -2698,7 +2371,7 @@ describe('auth-routes', () => {
   });
 
   test('keylog apply forwards to publisher; fork → 409', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
+    const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
@@ -2755,319 +2428,6 @@ describe('auth-routes', () => {
       });
       expect(forkRes.status).toBe(409);
       expect((await forkRes.json()).code).toBe('KEY_LOG_FORK');
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('POST /api/auth/keylog returns 409 HUB_NOT_WRITER before local apply when attached hub is not writer', async () => {
-    const writerId = 'bb'.repeat(16);
-    const standbyId = 'cc'.repeat(16);
-    const mesh = await bootMesh({
-      roles: { hub: true, node: true, relay: false },
-      attachedHub: () => ({
-        hubNodeId: standbyId,
-        publicUrl: 'https://standby.example',
-        mode: 'standby',
-        writerEpoch: 1,
-        since: 1,
-      }),
-    });
-    try {
-      mesh.hubStore.replaceAll(
-        [
-          {
-            hubNodeId: writerId,
-            publicUrl: 'https://writer.example',
-            name: 'writer',
-            mode: 'active',
-            priority: 10,
-            writerEpoch: 4,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: null,
-          },
-          {
-            hubNodeId: standbyId,
-            publicUrl: 'https://standby.example',
-            name: 'standby',
-            mode: 'standby',
-            priority: 20,
-            writerEpoch: 1,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: null,
-          },
-        ],
-        1
-      );
-      mesh.userStore.upsertHubAuthorization({
-        userId: mesh.boot.userId,
-        hubNodeId: writerId,
-        status: 'active',
-        admitSeq: 1,
-        updatedSeq: 1,
-      });
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const before = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({
-        code: 'HUB_NOT_WRITER',
-        writerHubId: writerId,
-        writerPublicUrl: 'https://writer.example',
-        writerEpoch: 4,
-      });
-      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(before.head.seq);
-      expect(mesh.published).toHaveLength(0);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('POST /api/auth/keylog still applies locally when attached hub is unknown', async () => {
-    const mesh = await bootMesh({
-      roles: { hub: true, node: true, relay: false },
-      attachedHub: () => null,
-    });
-    try {
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const state = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      expect(res.status).toBe(200);
-      expect(mesh.published).toHaveLength(1);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('dual-role standby refuses local key-log append when attached hub is null', async () => {
-    const writerId = 'bb'.repeat(16);
-    const mesh = await bootMesh({
-      roles: { hub: true, node: true, relay: false },
-      attachedHub: () => null,
-      hubMode: () => 'standby',
-    });
-    try {
-      mesh.hubStore.replaceAll(
-        [
-          {
-            hubNodeId: writerId,
-            publicUrl: 'https://writer.example',
-            name: 'writer',
-            mode: 'active',
-            priority: 10,
-            writerEpoch: 4,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: null,
-          },
-        ],
-        1
-      );
-      mesh.userStore.upsertHubAuthorization({
-        userId: mesh.boot.userId,
-        hubNodeId: writerId,
-        status: 'active',
-        admitSeq: 1,
-        updatedSeq: 1,
-      });
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const before = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      expect(res.status).toBe(409);
-      expect(await res.json()).toEqual({
-        code: 'HUB_NOT_WRITER',
-        writerHubId: writerId,
-        writerPublicUrl: 'https://writer.example',
-        writerEpoch: 4,
-      });
-      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(before.head.seq);
-      expect(mesh.published).toHaveLength(0);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('dual-role active writer applies local key-log append when attached hub is null', async () => {
-    const mesh = await bootMesh({
-      roles: { hub: true, node: true, relay: false },
-      attachedHub: () => null,
-      hubMode: () => 'active',
-    });
-    try {
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const state = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      expect(res.status).toBe(200);
-      expect(mesh.published).toHaveLength(1);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('plain node unknown attach does not return HUB_NOT_WRITER', async () => {
-    const mesh = await bootMesh({
-      roles: { hub: false, node: true, relay: false },
-      attachedHub: () => null,
-      hubMode: () => 'standby',
-    });
-    try {
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const before = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      const body = (await res.json()) as { code?: string };
-      expect(body.code).not.toBe('HUB_NOT_WRITER');
-      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(before.head.seq);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('standalone unknown attach is not gated as HUB_NOT_WRITER', async () => {
-    const mesh = await bootMesh({
-      roles: { hub: false, node: false, relay: false },
-      attachedHub: () => null,
-      hubMode: () => 'standby',
-    });
-    try {
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@vibeterm/shared/auth'
-      );
-      const before = mesh.keyLogService.currentState(mesh.boot.userId);
-      const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
-        uid: mesh.boot.userId,
-        type: 'clear-totp',
-        payload: encodeClearTotpPayload(),
-        signer: 'root',
-        credential_id: null,
-      });
-      const bytes = encodeKeyLogRecord(rec);
-      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
-      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          cookie: `vibeterm_s_self=${sid}`,
-        },
-        body: JSON.stringify({
-          bytes: encodeBase64url(bytes),
-          sig: encodeBase64url(sig),
-        }),
-      });
-      const body = (await res.json()) as { code?: string };
-      expect(body.code).not.toBe('HUB_NOT_WRITER');
     } finally {
       mesh.close();
     }

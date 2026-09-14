@@ -490,7 +490,6 @@ export function meshPortsForNode(input: {
 
 function selfDerivedRows(othersOnline: boolean): MeshPortReach[] {
   const roles = state.roles ?? {
-    hub: gatewayConfig.roles.hub,
     relay: gatewayConfig.roles.relay,
   };
   const httpsUplink = state.httpsUplink || othersOnline || hasFreshPeerReports();

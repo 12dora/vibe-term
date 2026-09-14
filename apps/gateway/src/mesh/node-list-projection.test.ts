@@ -46,8 +46,14 @@ describe('node-list-projection', () => {
       direct_capable: true,
       version: '2',
     });
-    expect(projectNode('n1', 'box', true, { version: '1' }, null, 'aa'.repeat(16))).toMatchObject({
-      attachedHubId: 'aa'.repeat(16),
+    expect(projectNode('n1', 'box', true, { version: '1' }, null)).toEqual({
+      id: 'n1',
+      name: 'box',
+      online: true,
+      endpoints: [],
+      inventory: null,
+      direct_capable: false,
+      version: '1',
     });
   });
 
@@ -154,7 +160,6 @@ describe('node-list-projection', () => {
       new Map(),
       null,
       undefined,
-      null,
       () => 'ws-secure',
       () => 80
     );
@@ -166,7 +171,7 @@ describe('node-list-projection', () => {
     expect(dto?.relayPresence).toBeUndefined();
   });
 
-  test('relay transport projects viaRelay and relayPresence; hub mode omits presence', () => {
+  test('relay transport projects viaRelay and relayPresence; ws omits viaRelay', () => {
     const selfId = 'aa'.repeat(16);
     const peerId = 'cc'.repeat(16);
     const cert = {
@@ -193,7 +198,6 @@ describe('node-list-projection', () => {
       new Map(),
       null,
       undefined,
-      null,
       () => 'relay',
       () => 90,
       () => ({
@@ -204,9 +208,6 @@ describe('node-list-projection', () => {
         viaRelay: 'https://from-detail.example',
         relayPresence: ['https://ignored-detail.example'],
       }),
-      undefined,
-      undefined,
-      undefined,
       () => 'https://sh.example',
       () => ['https://sh.example', 'https://ty.example']
     );
@@ -227,7 +228,6 @@ describe('node-list-projection', () => {
       new Map(),
       null,
       undefined,
-      null,
       () => 'relay',
       () => 12,
       () => ({
@@ -255,12 +255,8 @@ describe('node-list-projection', () => {
       new Map(),
       null,
       undefined,
-      null,
       () => 'ws-secure',
       () => 8,
-      undefined,
-      undefined,
-      undefined,
       undefined,
       () => 'https://should-omit.example',
       () => []
@@ -305,7 +301,6 @@ describe('node-list-projection', () => {
       new Map(),
       null,
       undefined,
-      null,
       () => 'relay',
       () => 38,
       () => ({
@@ -352,7 +347,6 @@ describe('node-list-projection', () => {
       new Map(),
       'home',
       { inventory: {}, direct_capable: false, version: '1' },
-      null,
       () => 'relay',
       () => 1,
       () => ({
@@ -397,8 +391,7 @@ describe('node-list-projection', () => {
       new Map([[peerId, 'studio']]),
       new Map(),
       null,
-      undefined,
-      null
+      undefined
     );
     expect(peerDto?.lastSeenAt).toBe(seen);
 
@@ -414,8 +407,7 @@ describe('node-list-projection', () => {
       new Map([[peerId, 'studio']]),
       new Map(),
       null,
-      undefined,
-      null
+      undefined
     );
     expect(missing?.lastSeenAt).toBeNull();
 
@@ -431,48 +423,9 @@ describe('node-list-projection', () => {
       new Map(),
       new Map(),
       'home',
-      { inventory: {}, direct_capable: false, version: '1' },
-      null
+      { inventory: {}, direct_capable: false, version: '1' }
     );
     expect(selfDto?.lastSeenAt).toBeNull();
-  });
-
-  test('isHub is true for every id in hubIds and carries hubMode', () => {
-    const selfId = 'aa'.repeat(16);
-    const peerId = 'cc'.repeat(16);
-    const cert = {
-      certificateBytes: encodeCertificate({
-        domain: DOMAIN_CERTIFICATE,
-        uid: 'user-1',
-        node_id: hexToBytes(peerId),
-        ed_pk: new Uint8Array(32).fill(4),
-        x25519_pk: new Uint8Array(32).fill(5),
-        enroll_pk: new Uint8Array(32).fill(6),
-        issued_at: 1n,
-      }),
-    };
-    const dto = projectMeshListNode(
-      peerId,
-      selfId,
-      new Uint8Array(32).fill(1),
-      new Map(),
-      new Map(),
-      new Set(),
-      new Map([[peerId, cert]]),
-      new Map(),
-      new Map([[peerId, 'standby']]),
-      new Map(),
-      null,
-      undefined,
-      selfId,
-      undefined,
-      undefined,
-      undefined,
-      new Set([selfId, peerId]),
-      (id) => (id === peerId ? 'standby' : 'active')
-    );
-    expect(dto?.isHub).toBe(true);
-    expect(dto?.hubMode).toBe('standby');
   });
 
   test('overlayPausedMeshNodes marks paused members and never self', () => {
@@ -492,7 +445,6 @@ describe('node-list-projection', () => {
           direct_capable: false,
           inventory: null,
           loggedIn: true,
-          isHub: false,
         },
         {
           id: peerId,
@@ -506,7 +458,6 @@ describe('node-list-projection', () => {
           direct_capable: true,
           inventory: null,
           loggedIn: false,
-          isHub: false,
         },
       ],
       selfId,
@@ -553,7 +504,6 @@ describe('node-list-projection', () => {
       new Map(),
       null,
       undefined,
-      'hubhubhubhubhubhubhubhubhubhubhu',
       () => 'relay',
       () => 38,
       () => ({
@@ -579,9 +529,6 @@ describe('node-list-projection', () => {
         viaRelay: 'https://from-detail.example',
         relayPresence: ['https://ignored-detail.example'],
       }),
-      new Set([peerId]),
-      () => 'standby',
-      () => 'attached-hub-id',
       () => 'https://sh.example',
       () => ['https://sh.example', 'https://ty.example']
     );
@@ -597,9 +544,6 @@ describe('node-list-projection', () => {
       direct_capable: true,
       inventory: { version: '2.3.7', os: 'darwin' },
       loggedIn: false,
-      isHub: true,
-      hubMode: 'standby',
-      attachedHubId: 'attached-hub-id',
       peerAddress: 'hub.example.com',
       linkSinceAt: 1_700_000_000_000,
       endpoints: ['ws://10.110.88.3:39001/peer'],

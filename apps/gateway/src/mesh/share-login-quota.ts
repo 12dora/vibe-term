@@ -8,7 +8,7 @@ export { SHARE_LOGIN_MAX_FAILURES, SHARE_LOGIN_WINDOW_MS };
 
 const SHARE_LOGIN_PATH = /^\/api\/share-access\/([^/]+)\/login$/;
 
-/** Hub 转发的分享登录路径；节点侧看到的来源恒为 `peer:<hubNodeId>`，限速必须在这一侧按真实 IP 做。 */
+/** 转发的分享登录路径；节点侧看到的来源恒为 `peer:<nodeId>`，限速必须在这一侧按真实 IP 做。 */
 export function shareLoginShareId(method: string, path: string): string | null {
   if (method !== 'POST') return null;
   const matched = SHARE_LOGIN_PATH.exec(path);

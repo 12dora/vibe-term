@@ -1,6 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { HubEndpointInfo } from '@vibeterm/shared/uplink';
-import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import {
@@ -10,43 +8,27 @@ import {
   mergeAppliedNodeList,
   mergeListedRtc,
   overlayOnlineUnion,
-  reconcileHubStoreFromNodeList,
 } from './node-list-apply';
 import type { UplinkNodeList } from './uplink-protocol';
 
 const SELF = 'aa'.repeat(16);
 const PEER = 'bb'.repeat(16);
 
-function endpoint(nodeId: string, over: Partial<HubEndpointInfo> = {}): HubEndpointInfo {
-  return {
-    nodeId,
-    publicUrl: `http://${nodeId.slice(0, 8)}.test`,
-    mode: 'standby',
-    priority: 200,
-    writerEpoch: 1,
-    online: true,
-    ...over,
-  };
-}
-
-function listOf(hubs: HubEndpointInfo[]): UplinkNodeList {
-  const writer = hubs.find((hub) => hub.mode === 'active');
+function emptyList(over: Partial<UplinkNodeList> = {}): UplinkNodeList {
   return {
     t: 'node.list',
     version: 1,
     key_log_head: { seq: 0n, hash: new Uint8Array(32) },
     rtc: { stun: [], turn: null },
     nodes: [],
-    hubs,
-    ...(writer ? { writerHubId: writer.nodeId, writerEpoch: writer.writerEpoch } : {}),
+    ...over,
   };
 }
 
-function applyDeps(hubStore: MeshHubStore, userStore: UserStore): NodeListApplyDeps {
+function applyDeps(userStore: UserStore): NodeListApplyDeps {
   return {
     state: { lastNodeList: null, hubPresenceLive: false, hubGeneration: 0, lastRtc: null },
     identity: { nodeIdHex: SELF },
-    hubStore,
     scheduler: { now: () => 1_000 },
     userIdOf: () => '',
     userStore,
@@ -56,108 +38,14 @@ function applyDeps(hubStore: MeshHubStore, userStore: UserStore): NodeListApplyD
   };
 }
 
-describe('reconcileHubStoreFromNodeList', () => {
-  test('stale node.list does not downgrade a locally promoted writer row', () => {
-    const { db, close } = createMigratedAuthDb();
-    try {
-      const hubStore = new MeshHubStore(db);
-      const userStore = new UserStore(db);
-      hubStore.upsert(
-        {
-          hubNodeId: SELF,
-          publicUrl: 'http://aaaaaaaa.test',
-          name: 'self',
-          mode: 'active',
-          priority: 200,
-          writerEpoch: 2,
-          caFingerprint: null,
-          online: true,
-          lastSeenAt: 1,
-        },
-        10
-      );
-      hubStore.upsert(
-        {
-          hubNodeId: PEER,
-          publicUrl: 'http://bbbbbbbb.test',
-          name: 'peer',
-          mode: 'active',
-          priority: 100,
-          writerEpoch: 1,
-          caFingerprint: null,
-          online: true,
-          lastSeenAt: 1,
-        },
-        10
-      );
-
-      reconcileHubStoreFromNodeList(
-        applyDeps(hubStore, userStore),
-        listOf([
-          endpoint(PEER, { mode: 'active', priority: 100, writerEpoch: 1 }),
-          endpoint(SELF, { mode: 'standby', priority: 200, writerEpoch: 1 }),
-        ])
-      );
-
-      const self = hubStore.get(SELF);
-      expect(self?.mode).toBe('active');
-      expect(self?.writerEpoch).toBe(2);
-      expect(pickWriterHub(hubStore.list())).toBe(SELF);
-    } finally {
-      close();
-    }
-  });
-
-  test('plain node still takes the writer hub set from node.list', () => {
-    const { db, close } = createMigratedAuthDb();
-    try {
-      const hubStore = new MeshHubStore(db);
-      const userStore = new UserStore(db);
-      hubStore.upsert(
-        {
-          hubNodeId: PEER,
-          publicUrl: 'http://bbbbbbbb.test',
-          name: 'peer',
-          mode: 'active',
-          priority: 100,
-          writerEpoch: 1,
-          caFingerprint: null,
-          online: true,
-          lastSeenAt: 1,
-        },
-        10
-      );
-
-      reconcileHubStoreFromNodeList(
-        applyDeps(hubStore, userStore),
-        listOf([
-          endpoint(PEER, {
-            mode: 'standby',
-            priority: 100,
-            writerEpoch: 1,
-            publicUrl: 'http://bbbbbbbb.test',
-          }),
-          endpoint('cc'.repeat(16), { mode: 'active', priority: 50, writerEpoch: 3 }),
-        ])
-      );
-
-      expect(hubStore.get(PEER)?.mode).toBe('standby');
-      expect(pickWriterHub(hubStore.list())).toBe('cc'.repeat(16));
-    } finally {
-      close();
-    }
-  });
-});
-
 describe('emitRenameNodeEvent', () => {
   test('emits name and syncs local site name for self', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
       const events: Array<{ nodeId: string; name?: string; status: string }> = [];
       const names: string[] = [];
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.identity = { nodeIdHex: SELF };
       d.emitListNodeEvent = (event) => {
         events.push({ nodeId: event.nodeId, name: event.name, status: event.status });
@@ -176,39 +64,37 @@ describe('emitRenameNodeEvent', () => {
 });
 
 describe('applyUplinkNodeList STUN distribution', () => {
-  test('empty hub STUN list stores empty distributed stun (no fallback to previous)', () => {
+  test('empty STUN list stores empty distributed stun (no fallback to previous)', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.state.lastRtc = { stun: ['stun:local:3478'], turn: null };
-      applyUplinkNodeList(d, listOf([]), () => false);
+      applyUplinkNodeList(d, emptyList(), () => false);
       expect(d.state.lastRtc).toEqual({ stun: [], turn: null });
       applyUplinkNodeList(
         d,
-        { ...listOf([]), rtc: { stun: ['stun:hub:3478'], turn: null } },
+        emptyList({ rtc: { stun: ['stun:relay:3478'], turn: null } }),
         () => false
       );
-      expect(d.state.lastRtc).toEqual({ stun: ['stun:hub:3478'], turn: null });
+      expect(d.state.lastRtc).toEqual({ stun: ['stun:relay:3478'], turn: null });
     } finally {
       close();
     }
   });
 
-  test('empty hub STUN with TURN adopts TURN and empty distributed STUN', () => {
+  test('empty STUN with TURN adopts TURN and empty distributed STUN', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.state.lastRtc = { stun: ['stun:local:3478'], turn: null };
-      const turn = { urls: ['turn:hub:3478'], username: 'u', credential: 'p' };
-      applyUplinkNodeList(d, { ...listOf([]), rtc: { stun: [], turn } }, () => false);
+      const turn = { urls: ['turn:relay:3478'], username: 'u', credential: 'p' };
+      applyUplinkNodeList(d, emptyList({ rtc: { stun: [], turn } }), () => false);
       expect(d.state.lastRtc).toEqual({ stun: [], turn });
 
-      const fresh = applyDeps(hubStore, userStore);
-      applyUplinkNodeList(fresh, { ...listOf([]), rtc: { stun: [], turn } }, () => false);
+      const fresh = applyDeps(userStore);
+      applyUplinkNodeList(fresh, emptyList({ rtc: { stun: [], turn } }), () => false);
       expect(fresh.state.lastRtc).toEqual({ stun: [], turn });
     } finally {
       close();
@@ -218,16 +104,11 @@ describe('applyUplinkNodeList STUN distribution', () => {
   test('多中继 TURN 按 URL 合并为数组，null 只撤回本行', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.rtcSourceUrl = 'https://sh.example';
       const shTurn = { url: 'turn:sh:3478', username: 'a', credential: 'a' };
-      applyUplinkNodeList(
-        d,
-        { ...listOf([]), rtc: { stun: ['stun:sh'], turn: shTurn } },
-        () => false
-      );
+      applyUplinkNodeList(d, emptyList({ rtc: { stun: ['stun:sh'], turn: shTurn } }), () => false);
       expect(d.state.lastRtc).toEqual({ stun: ['stun:sh'], turn: [shTurn] });
 
       d.rtcSourceUrl = undefined;
@@ -303,7 +184,6 @@ describe('applyUplinkNodeList STUN distribution', () => {
   test('primary 清单不剪掉只出现在 secondary 的 peer', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
       userStore.upsertPeer({
         nodeId: PEER,
@@ -315,7 +195,7 @@ describe('applyUplinkNodeList STUN distribution', () => {
         listVersion: 1,
         version: '2.2.4',
       });
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.retainPeerIds = () => [PEER];
       d.extraListedNodes = () => [
         {
@@ -328,7 +208,7 @@ describe('applyUplinkNodeList STUN distribution', () => {
           version: '2.2.4',
         },
       ];
-      applyUplinkNodeList(d, listOf([]), () => false);
+      applyUplinkNodeList(d, emptyList(), () => false);
       expect(userStore.getPeer(PEER)?.name).toBe('tokyo-only');
       expect(d.state.lastNodeList?.nodes.some((node) => node.id === PEER)).toBe(true);
     } finally {
@@ -339,10 +219,9 @@ describe('applyUplinkNodeList STUN distribution', () => {
   test('清单事件带上 viaRelay / relayPresence，仅中继选择变化也会发出', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
       const events: Array<{ viaRelay?: string | null; relayPresence?: string[] }> = [];
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.peerHolder.manager = {
         listReach: () => new Map(),
         transportOf: () => 'relay',
@@ -359,8 +238,7 @@ describe('applyUplinkNodeList STUN distribution', () => {
       };
       applyUplinkNodeList(
         d,
-        {
-          ...listOf([]),
+        emptyList({
           nodes: [
             {
               id: PEER,
@@ -372,7 +250,7 @@ describe('applyUplinkNodeList STUN distribution', () => {
               version: '2.2.4',
             },
           ],
-        },
+        }),
         () => false
       );
       expect(events).toEqual([
@@ -389,10 +267,9 @@ describe('applyUplinkNodeList STUN distribution', () => {
   test('primary 标 offline、secondary 仍在线时不发 offline，节点按 online 应用', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
       const events: Array<{ status: string; relayPresence?: string[] }> = [];
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.onlineUnionIds = () => [PEER];
       d.peerHolder.manager = {
         listReach: () => new Map(),
@@ -410,8 +287,7 @@ describe('applyUplinkNodeList STUN distribution', () => {
       };
       applyUplinkNodeList(
         d,
-        {
-          ...listOf([]),
+        emptyList({
           nodes: [
             {
               id: PEER,
@@ -423,7 +299,7 @@ describe('applyUplinkNodeList STUN distribution', () => {
               version: '2.2.4',
             },
           ],
-        },
+        }),
         () => false
       );
       expect(d.state.lastNodeList?.nodes.find((node) => node.id === PEER)?.online).toBe(true);
@@ -449,17 +325,16 @@ describe('applyUplinkNodeList STUN distribution', () => {
   test('extraListedNodes 陈旧 online 不会在并集为空时复活', () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const hubStore = new MeshHubStore(db);
       const userStore = new UserStore(db);
       const events: string[] = [];
-      const d = applyDeps(hubStore, userStore);
+      const d = applyDeps(userStore);
       d.retainPeerIds = () => [PEER];
       d.extraListedNodes = () => [listedNode(PEER, true, 'tokyo-only')];
       d.onlineUnionIds = () => [];
       d.emitListNodeEvent = (event) => {
         events.push(`${event.nodeId}:${event.status}`);
       };
-      const incoming = listOf([]);
+      const incoming = emptyList();
       const merged = mergeAppliedNodeList(incoming, d.extraListedNodes(), d.onlineUnionIds());
       expect(merged.nodes.find((node) => node.id === PEER)?.online).toBe(false);
       applyUplinkNodeList(d, incoming, () => false);

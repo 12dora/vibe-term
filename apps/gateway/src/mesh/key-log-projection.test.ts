@@ -39,13 +39,6 @@ function step(
 
 function deps(revoked: string[]): KeyLogProjectionDeps {
   return {
-    hubStore: {
-      remove: () => {},
-      upsert: () => {},
-      get: () => null,
-      list: () => [],
-    } as unknown as KeyLogProjectionDeps['hubStore'],
-    hub: null,
     relay: { notifyIfRelayRecord: () => {} } as unknown as KeyLogProjectionDeps['relay'],
     selfId: SELF,
     userStore: {} as KeyLogProjectionDeps['userStore'],

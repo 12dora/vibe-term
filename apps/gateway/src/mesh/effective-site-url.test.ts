@@ -1,136 +1,30 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  createMeshSiteSettingsLink,
-  nodeAccessUrl,
-  resolveMeshHubPublicUrl,
-} from './effective-site-url';
+import { createMeshSiteSettingsLink, nodeAccessUrl } from './effective-site-url';
 
-const WRITER = 'aa'.repeat(16);
-const STANDBY = 'bb'.repeat(16);
 const NODE = 'cc'.repeat(16);
 
-function hubStore(
-  rows: Array<{
-    hubNodeId: string;
-    publicUrl: string;
-    mode: 'active' | 'standby';
-    writerEpoch: number;
-    priority: number;
-  }>
-) {
-  const map = new Map(rows.map((row) => [row.hubNodeId, row]));
-  return {
-    list: () => rows,
-    get: (id: string) => map.get(id) ?? null,
-  };
-}
-
-describe('resolveMeshHubPublicUrl', () => {
-  test('prefers writer publicUrl, then attached, then config, then meta', () => {
-    expect(
-      resolveMeshHubPublicUrl({
-        hubStore: hubStore([
-          {
-            hubNodeId: WRITER,
-            publicUrl: 'https://writer.example',
-            mode: 'active',
-            writerEpoch: 3,
-            priority: 1,
-          },
-          {
-            hubNodeId: STANDBY,
-            publicUrl: 'https://standby.example',
-            mode: 'standby',
-            writerEpoch: 1,
-            priority: 9,
-          },
-        ]),
-        attachedPublicUrl: 'https://attached.example',
-        hubPublicUrl: 'https://config.example',
-        hubMetaPublicUrl: 'https://meta.example',
-      })
-    ).toBe('https://writer.example');
-
-    expect(
-      resolveMeshHubPublicUrl({
-        hubStore: hubStore([]),
-        attachedPublicUrl: 'https://attached.example',
-        hubPublicUrl: 'https://config.example',
-      })
-    ).toBe('https://attached.example');
-
-    expect(
-      resolveMeshHubPublicUrl({
-        hubStore: null,
-        attachedPublicUrl: null,
-        hubPublicUrl: 'https://config.example',
-        hubMetaPublicUrl: 'https://meta.example',
-      })
-    ).toBe('https://config.example');
-
-    expect(
-      resolveMeshHubPublicUrl({
-        hubStore: null,
-        attachedPublicUrl: null,
-        hubPublicUrl: null,
-        hubMetaPublicUrl: 'https://meta.example',
-      })
-    ).toBe('https://meta.example');
+describe('nodeAccessUrl', () => {
+  test('strips trailing slashes then appends /n/<id>', () => {
+    expect(nodeAccessUrl('https://relay.example/', NODE)).toBe(`https://relay.example/n/${NODE}`);
+    expect(nodeAccessUrl('https://relay.example', NODE)).toBe(`https://relay.example/n/${NODE}`);
   });
 });
 
 describe('createMeshSiteSettingsLink', () => {
-  test('hub role uses hub public URL; pure node uses /n/<id>', () => {
-    const store = hubStore([
-      {
-        hubNodeId: WRITER,
-        publicUrl: 'https://hub.example/',
-        mode: 'active',
-        writerEpoch: 1,
-        priority: 1,
-      },
-    ]);
-    const hubLink = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true, relay: false },
-      localNodeId: () => WRITER,
-      hubStore: store,
-      attachedHub: () => ({ publicUrl: 'https://attached.example' }),
-      hubPublicUrl: 'https://config.example',
-    });
-    expect(hubLink.linked()).toBe(true);
-    expect(hubLink.localNodeId()).toBe(WRITER);
-    expect(hubLink.effectiveSiteUrl()).toBe('https://hub.example/');
-
+  test('pure node without relay uplink returns null so callers fall back to stored site_url', () => {
     const nodeLink = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       localNodeId: () => NODE,
-      hubStore: store,
-      attachedHub: () => ({ publicUrl: 'https://attached.example' }),
-      hubPublicUrl: 'https://config.example',
-    });
-    expect(nodeLink.effectiveSiteUrl()).toBe(nodeAccessUrl('https://hub.example/', NODE));
-    expect(nodeLink.effectiveSiteUrl()).toBe(`https://hub.example/n/${NODE}`);
-  });
-
-  test('pure node returns null when hub URL is unknown so callers fall back to stored site_url', () => {
-    const nodeLink = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true, relay: false },
-      localNodeId: () => NODE,
-      hubStore: null,
-      attachedHub: () => null,
-      hubPublicUrl: null,
     });
     expect(nodeLink.linked()).toBe(true);
+    expect(nodeLink.siteUrlManaged()).toBe(false);
     expect(nodeLink.effectiveSiteUrl()).toBeNull();
   });
 
   test('standalone flags are unlinked', () => {
     const link = createMeshSiteSettingsLink({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       localNodeId: () => NODE,
-      hubStore: null,
-      attachedHub: () => ({ publicUrl: 'https://hub.example' }),
-      hubPublicUrl: 'https://config.example',
     });
     expect(link.linked()).toBe(false);
     expect(link.siteUrlManaged()).toBe(false);
@@ -138,40 +32,21 @@ describe('createMeshSiteSettingsLink', () => {
     expect(link.effectiveSiteUrl()).toBeNull();
   });
 
-  test('中继上联的节点：站点 URL 不托管、保持可编辑，且不看 attachedHub', () => {
-    let attachedReads = 0;
+  test('中继上联的节点：站点 URL 不托管、保持可编辑', () => {
     const relayLink = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       localNodeId: () => NODE,
-      hubStore: hubStore([
-        {
-          hubNodeId: WRITER,
-          publicUrl: 'https://hub.example',
-          mode: 'active',
-          writerEpoch: 1,
-          priority: 1,
-        },
-      ]),
-      attachedHub: () => {
-        attachedReads += 1;
-        return { publicUrl: 'https://relay.example' };
-      },
-      hubPublicUrl: 'https://config.example',
       uplinkKind: () => 'relay',
     });
     expect(relayLink.linked()).toBe(true);
     expect(relayLink.siteUrlManaged()).toBe(false);
     expect(relayLink.effectiveSiteUrl()).toBeNull();
-    expect(attachedReads).toBe(0);
   });
 
   test('中继上联：存储值是回环地址时退回中继入口 <relay>/n/<self>', () => {
     const link = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       localNodeId: () => NODE,
-      hubStore: null,
-      attachedHub: () => null,
-      hubPublicUrl: null,
       uplinkKind: () => 'relay',
       storedSiteUrl: () => 'http://127.0.0.1:9883',
       relayAccessUrl: () => `https://relay.example/n/${NODE}`,
@@ -182,11 +57,8 @@ describe('createMeshSiteSettingsLink', () => {
 
   test('中继上联：存储值本身是公网域名时以存储值为准', () => {
     const link = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       localNodeId: () => NODE,
-      hubStore: null,
-      attachedHub: () => null,
-      hubPublicUrl: null,
       uplinkKind: () => 'relay',
       storedSiteUrl: () => 'https://box.example.com',
       relayAccessUrl: () => `https://relay.example/n/${NODE}`,
@@ -196,136 +68,12 @@ describe('createMeshSiteSettingsLink', () => {
 
   test('中继上联：入口未探通时返回 null，调用方回落存储值', () => {
     const link = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       localNodeId: () => NODE,
-      hubStore: null,
-      attachedHub: () => null,
-      hubPublicUrl: null,
       uplinkKind: () => 'relay',
       storedSiteUrl: () => 'http://127.0.0.1:9883',
       relayAccessUrl: () => null,
     });
     expect(link.effectiveSiteUrl()).toBeNull();
-  });
-
-  test('hub 上联的节点：站点 URL 由 hub 托管', () => {
-    const link = createMeshSiteSettingsLink({
-      roles: { hub: false, node: true, relay: false },
-      localNodeId: () => NODE,
-      hubStore: null,
-      attachedHub: () => ({ publicUrl: 'https://hub.example' }),
-      hubPublicUrl: null,
-      uplinkKind: () => 'hub',
-    });
-    expect(link.siteUrlManaged()).toBe(true);
-    expect(link.effectiveSiteUrl()).toBe(`https://hub.example/n/${NODE}`);
-  });
-
-  test('standby hub without own public URL uses writer URL /n/<self>', () => {
-    const store = hubStore([
-      {
-        hubNodeId: WRITER,
-        publicUrl: 'https://a.example',
-        mode: 'active',
-        writerEpoch: 2,
-        priority: 1,
-      },
-      {
-        hubNodeId: STANDBY,
-        publicUrl: '',
-        mode: 'standby',
-        writerEpoch: 1,
-        priority: 9,
-      },
-    ]);
-    const standby = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true, relay: false },
-      localNodeId: () => STANDBY,
-      hubStore: store,
-      attachedHub: () => null,
-      hubPublicUrl: null,
-    });
-    expect(standby.effectiveSiteUrl()).toBe(`https://a.example/n/${STANDBY}`);
-  });
-
-  test('standby hub with own hub record publicUrl uses that root URL', () => {
-    const store = hubStore([
-      {
-        hubNodeId: WRITER,
-        publicUrl: 'https://a.example',
-        mode: 'active',
-        writerEpoch: 2,
-        priority: 1,
-      },
-      {
-        hubNodeId: STANDBY,
-        publicUrl: 'https://b.example',
-        mode: 'standby',
-        writerEpoch: 1,
-        priority: 9,
-      },
-    ]);
-    const standby = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true, relay: false },
-      localNodeId: () => STANDBY,
-      hubStore: store,
-      attachedHub: () => null,
-      hubPublicUrl: null,
-    });
-    expect(standby.effectiveSiteUrl()).toBe('https://b.example');
-  });
-
-  test('standby hub with own hubPublicUrl uses that root URL', () => {
-    const store = hubStore([
-      {
-        hubNodeId: WRITER,
-        publicUrl: 'https://a.example',
-        mode: 'active',
-        writerEpoch: 2,
-        priority: 1,
-      },
-      {
-        hubNodeId: STANDBY,
-        publicUrl: '',
-        mode: 'standby',
-        writerEpoch: 1,
-        priority: 9,
-      },
-    ]);
-    const standby = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true, relay: false },
-      localNodeId: () => STANDBY,
-      hubStore: store,
-      attachedHub: () => null,
-      hubPublicUrl: 'https://b.example',
-    });
-    expect(standby.effectiveSiteUrl()).toBe('https://b.example');
-  });
-
-  test('self as writer uses the hub root URL', () => {
-    const store = hubStore([
-      {
-        hubNodeId: WRITER,
-        publicUrl: 'https://a.example',
-        mode: 'active',
-        writerEpoch: 2,
-        priority: 1,
-      },
-      {
-        hubNodeId: STANDBY,
-        publicUrl: 'https://b.example',
-        mode: 'standby',
-        writerEpoch: 1,
-        priority: 9,
-      },
-    ]);
-    const writer = createMeshSiteSettingsLink({
-      roles: { hub: true, node: true, relay: false },
-      localNodeId: () => WRITER,
-      hubStore: store,
-      attachedHub: () => null,
-      hubPublicUrl: null,
-    });
-    expect(writer.effectiveSiteUrl()).toBe('https://a.example');
   });
 });
