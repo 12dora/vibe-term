@@ -91,6 +91,9 @@ describe('i18n', () => {
       setLang(lang);
       const migrated = t('upgrade.hubEnvMigrated', { count: 3, backup: 'backups/app.env.x.hub' });
       expect(migrated).not.toBe('upgrade.hubEnvMigrated');
+      const keysOnly = t('upgrade.hubEnvKeysDeleted', { count: 2, backup: 'backups/app.env.x.hub' });
+      expect(keysOnly).not.toBe('upgrade.hubEnvKeysDeleted');
+      expect(keysOnly).not.toContain('hub,node');
       expect(migrated).toContain('backups/app.env.x.hub');
       expect(migrated).toContain('hub,node');
       expect(migrated).toContain('vibeterm relay join');

@@ -65,12 +65,11 @@ export async function applyHubEnvMigration(
   log: (message: string) => void
 ): Promise<void> {
   const result = await migrateHubEnv(createInstallLayout(installDir).envPath);
-  if (result.migrated && result.backupPath) {
-    log(
-      t('upgrade.hubEnvMigrated', {
-        count: result.hubKeysDeleted,
-        backup: result.backupPath,
-      })
-    );
-  }
+  if (!result.migrated || !result.backupPath) return;
+  log(
+    t(result.roleRewritten ? 'upgrade.hubEnvMigrated' : 'upgrade.hubEnvKeysDeleted', {
+      count: result.hubKeysDeleted,
+      backup: result.backupPath,
+    })
+  );
 }

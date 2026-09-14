@@ -134,6 +134,22 @@ describe('applyHubEnvMigration notice', () => {
     expect(logs[0]).toContain('3');
   });
 
+  test('prints the keys-only notice when the role was already node', async () => {
+    const { dir } = await tempEnv(
+      'VIBETERM_ROLES=node\nVIBETERM_HUB_URL=https://old-hub.example\nVIBETERM_HUB_PUBLIC_URL=\n'
+    );
+    const logs: string[] = [];
+    await applyHubEnvMigration(dir, (line) => logs.push(line));
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toBe(
+      t('upgrade.hubEnvKeysDeleted', {
+        count: 2,
+        backup: `backups/${(await hubBackups(dir))[0]}`,
+      })
+    );
+    expect(logs[0]).not.toContain('hub,node');
+  });
+
   test('prints nothing when there is nothing to rewrite', async () => {
     const { dir } = await tempEnv('VIBETERM_ROLES=node\n');
     const logs: string[] = [];

@@ -165,6 +165,8 @@ export const en: Record<string, string> = {
     "app.env: VIBETERM_STUN_SERVERS was the old built-in default; removed so the release's built-in list applies (backup: {{backup}})",
   'upgrade.hubEnvMigrated':
     'Hub mode was removed in 2.5.0: VIBETERM_ROLES rewritten hub,node → node and {{count}} VIBETERM_HUB_* keys deleted (backup: {{backup}}). Every member must now join a relay: vibeterm relay join',
+  'upgrade.hubEnvKeysDeleted':
+    'Hub mode was removed in 2.5.0: {{count}} leftover VIBETERM_HUB_* keys deleted from app.env (backup: {{backup}})',
   'upgrade.turnExternalNotice': 'external TURN configured; builtin TURN disabled',
   'upgrade.rolledBack': 'Upgrade rolled back to {{version}}: {{error}}',
   'upgrade.preflightFailed': 'Preflight of {{version}} failed: {{error}}',
