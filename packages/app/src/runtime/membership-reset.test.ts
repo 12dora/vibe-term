@@ -3,13 +3,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { MeshMembershipStore } from '../../../../apps/gateway/src/auth/mesh-membership-store';
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import {
   enrollmentTokens,
-  hubTrust,
   meshRelays,
   meshSecrets,
   nodeCerts,
@@ -87,11 +86,6 @@ async function seedMembership(auth: LocalAuthContext): Promise<void> {
     directCapable: false,
     lastSeenAt: 10,
     listVersion: 1,
-  });
-  new HubTrustStore(auth.db).put({
-    hubUrl: 'https://hub.example',
-    caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
-    fingerprint: 'ab'.repeat(32),
   });
   auth.userStore.createEnrollmentToken({
     id: 'tok-leave',
@@ -212,7 +206,7 @@ async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<Setu
   const auth = overrides.auth ?? (await openAuth());
   await seedMembership(auth);
   return {
-    roles: { hub: false, node: true, relay: false },
+    roles: { node: true, relay: false },
     nodeEnv: 'test',
     auth,
     envPath,
@@ -250,7 +244,6 @@ describe('leaveMesh', () => {
     expect(deps.auth.db.select().from(nodes).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(enrollmentTokens).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(peerCache).all()).toHaveLength(0);
-    expect(deps.auth.db.select().from(hubTrust).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(nodeIdentity).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(users).all()).toHaveLength(0);
     expect(await deps.auth.identityStore.load()).toBeNull();
@@ -268,8 +261,21 @@ describe('leaveMesh', () => {
     expect(envText).not.toContain('VIBETERM_RELAY_ADMIN_TOKEN');
   });
 
+  test('leave deletes relay CA pins', async () => {
+    const deps = await baseDeps();
+    const pins = new RelayCaPinStore(deps.auth.db);
+    pins.put({
+      url: 'https://relay.example',
+      caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+      fingerprint: 'a'.repeat(64),
+    });
+    expect(pins.get('https://relay.example')).not.toBeNull();
+    await leaveMesh({ expectedRole: 'node' }, deps);
+    expect(new RelayCaPinStore(deps.auth.db).get('https://relay.example')).toBeNull();
+  });
+
   test('relay,node 可以退出：中继令牌与租户密钥一并清空', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    const deps = await baseDeps({ roles: { node: true, relay: true } });
     await seedRelayAttachment(deps.auth);
     expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(1);
     const result = await leaveMesh({ expectedRole: 'relay,node' }, deps);
@@ -289,7 +295,7 @@ describe('leaveMesh', () => {
   });
 
   test('纯 relay 没有成员身份：400 not_member 且不清库', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: false, relay: true } });
+    const deps = await baseDeps({ roles: { node: false, relay: true } });
     await seedRelayAttachment(deps.auth);
     const err = await leaveMesh({ expectedRole: 'relay,node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
@@ -301,7 +307,7 @@ describe('leaveMesh', () => {
   });
 
   test('relay,node 报成 node 时仍是 409 role_mismatch', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    const deps = await baseDeps({ roles: { node: true, relay: true } });
     await seedRelayAttachment(deps.auth);
     const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
     expect((err as SetupError).code).toBe('role_mismatch');
@@ -309,14 +315,8 @@ describe('leaveMesh', () => {
     expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(1);
   });
 
-  test('hub,node expectedRole matches and returns fromRole', async () => {
-    const deps = await baseDeps({ roles: { hub: true, node: true, relay: false } });
-    const result = await leaveMesh({ expectedRole: 'hub,node' }, deps);
-    expect(result.fromRole).toBe('hub,node');
-  });
-
   test('standalone is 400 not_member', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: false, relay: false } });
+    const deps = await baseDeps({ roles: { node: false, relay: false } });
     const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
     expect((err as SetupError).code).toBe('not_member');
@@ -325,8 +325,8 @@ describe('leaveMesh', () => {
   });
 
   test('wrong expectedRole is 409 role_mismatch and does not wipe', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: false } });
-    const err = await leaveMesh({ expectedRole: 'hub,node' }, deps).catch((error) => error);
+    const deps = await baseDeps({ roles: { node: true, relay: false } });
+    const err = await leaveMesh({ expectedRole: 'relay,node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
     expect((err as SetupError).code).toBe('role_mismatch');
     expect((err as SetupError).httpStatus).toBe(409);
@@ -406,7 +406,7 @@ describe('leaveMesh', () => {
   });
 
   test('relay,node → relay keeps operator state and relay env keys', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    const deps = await baseDeps({ roles: { node: true, relay: true } });
     await seedRelayAttachment(deps.auth);
     const localRoot = deps.auth.userStore.getByUsername('alice')?.rootPublicKey;
     if (!localRoot) throw new Error('expected alice');
@@ -459,7 +459,7 @@ describe('leaveMesh', () => {
   });
 
   test('relay,node → standalone clears operator state and relay env keys', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    const deps = await baseDeps({ roles: { node: true, relay: true } });
     seedRelayOperator(deps.auth);
     const result = await leaveMesh({ expectedRole: 'relay,node', targetRole: 'standalone' }, deps);
     expect(result.targetRole).toBe('standalone');
@@ -472,7 +472,7 @@ describe('leaveMesh', () => {
   });
 
   test('node → relay is 400 invalid_target', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: false } });
+    const deps = await baseDeps({ roles: { node: true, relay: false } });
     const err = await leaveMesh({ expectedRole: 'node', targetRole: 'relay' }, deps).catch(
       (error) => error
     );
@@ -483,26 +483,17 @@ describe('leaveMesh', () => {
     expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('node');
   });
 
-  test('hub,node → relay is 400 invalid_target', async () => {
-    const deps = await baseDeps({ roles: { hub: true, node: true, relay: false } });
-    const err = await leaveMesh({ expectedRole: 'hub,node', targetRole: 'relay' }, deps).catch(
-      (error) => error
-    );
-    expect((err as SetupError).code).toBe('invalid_target');
-    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-  });
-
   test('unknown targetRole is 400 invalid_target', async () => {
     const deps = await baseDeps();
     const err = await leaveMesh(
-      { expectedRole: 'node', targetRole: 'hub,node' as 'standalone' },
+      { expectedRole: 'node', targetRole: 'node' as 'standalone' },
       deps
     ).catch((error) => error);
     expect((err as SetupError).code).toBe('invalid_target');
   });
 
   test('leave to relay deletes the identity user tenant, not listUsers()[0]', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    const deps = await baseDeps({ roles: { node: true, relay: true } });
     await seedRelayAttachment(deps.auth);
     const aliceRoot = deps.auth.userStore.getByUsername('alice')?.rootPublicKey;
     if (!aliceRoot) throw new Error('expected alice');
@@ -539,7 +530,7 @@ describe('leaveMesh', () => {
   });
 
   test('leave to relay skips tenant deletion when identity user is missing', async () => {
-    const deps = await baseDeps({ roles: { hub: false, node: true, relay: true } });
+    const deps = await baseDeps({ roles: { node: true, relay: true } });
     await seedRelayAttachment(deps.auth);
     const aliceRoot = deps.auth.userStore.getByUsername('alice')?.rootPublicKey;
     if (!aliceRoot) throw new Error('expected alice');

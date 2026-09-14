@@ -27,7 +27,7 @@ async function deps(overrides: Partial<SetupServiceDeps> = {}): Promise<SetupSer
     'utf8'
   );
   return {
-    roles: { hub: false, node: false, relay: false },
+    roles: { node: false, relay: false },
     nodeEnv: 'test',
     auth: { userStore: { getByUsername: () => null } } as unknown as LocalAuthContext,
     envPath,

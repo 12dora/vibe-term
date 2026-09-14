@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { assertKnownFlags, parseArgs, resolveNestedCommand } from './args';
 import { AUTH_COMMANDS } from './auth-spawn';
 import { buildAppEnvValues, generateRelayAdminToken, relayEnvDefaults } from './install';
-import { parseVibeTermRoleName, parseVibeTermRoles, validateRoles } from './roles';
+import { parseVibeTermRoleName, parseVibeTermRoles } from './roles';
 
 function nested(argv: string[]) {
   return resolveNestedCommand(parseArgs(argv));
@@ -40,13 +40,10 @@ describe('relay command parsing', () => {
     expect(nested(['relay', 'pack', 'download']).name).toBe('unknown');
   });
 
-  test('hub and mesh parsing is unchanged by the relay group', () => {
-    expect(nested(['hub', 'user', 'passwd', 'ivy']).name).toBe('hub.user.passwd');
-    expect(nested(['hub', 'user', 'passwd', 'ivy']).rest).toEqual(['ivy']);
-    expect(nested(['hub', 'join', 'https://h.example']).rest).toEqual(['https://h.example']);
-    expect(nested(['hub', 'leave']).rest).toEqual([]);
+  test('mesh parsing is unchanged by the relay group; hub group is gone', () => {
     expect(nested(['mesh', 'reset-root']).name).toBe('mesh.reset-root');
     expect(nested(['hub', 'nope']).name).toBe('unknown');
+    expect(nested(['hub', 'join', 'https://h.example']).name).toBe('unknown');
   });
 });
 
@@ -116,6 +113,11 @@ describe('relay flag allowlists', () => {
         parseArgs(['relay', 'join', 'https://r.example', '--tenant', 'abc', '--password', 'p'])
       )
     ).not.toThrow();
+    expect(() =>
+      assertKnownFlags(
+        parseArgs(['relay', 'join', 'https://r.example', '--token', 'r3.abc', '--name', 'laptop'])
+      )
+    ).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'list', '--json']))).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'unpin', '--json']))).not.toThrow();
   });
@@ -174,26 +176,20 @@ describe('relay roles', () => {
   test('relay and relay,node are accepted role names', () => {
     expect(parseVibeTermRoleName('relay')).toBe('relay');
     expect(parseVibeTermRoleName('relay,node')).toBe('relay,node');
-    expect(parseVibeTermRoles('relay')).toEqual({ hub: false, node: false, relay: true });
-    expect(parseVibeTermRoles('relay,node')).toEqual({ hub: false, node: true, relay: true });
+    expect(parseVibeTermRoles('relay')).toEqual({ node: false, relay: true });
+    expect(parseVibeTermRoles('relay,node')).toEqual({ node: true, relay: true });
   });
 
   test('the error message lists the relay names', () => {
     expect(() => parseVibeTermRoleName('relay,hub')).toThrow(
-      'role must be one of standalone | node | hub,node | relay | relay,node'
+      'VIBETERM_ROLES must be one of standalone | node | relay | relay,node'
     );
-  });
-
-  test('validateRoles rejects hub together with relay', () => {
-    expect(validateRoles({ hub: true, node: true, relay: true })).toContain('relay');
-    expect(validateRoles({ hub: false, node: true, relay: true })).toBeNull();
   });
 });
 
 describe('relay env keys', () => {
   test('only relay roles get the relay keys', () => {
     expect(relayEnvDefaults({ role: 'node' })).toEqual({});
-    expect(relayEnvDefaults({ role: 'hub,node' })).toEqual({});
     expect(relayEnvDefaults()).toEqual({});
   });
 

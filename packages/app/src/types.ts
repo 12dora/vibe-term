@@ -18,8 +18,6 @@ export interface InitConfig {
   installDeps: boolean;
   skipDepCheck: boolean;
   role: VibeTermRoleName;
-  hubUrl: string;
-  hubPublicUrl: string;
   relayPublicUrl: string;
   peerPort: number;
   stunServers: string;

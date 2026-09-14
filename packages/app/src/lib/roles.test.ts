@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { parseVibeTermRoles as parseGatewayVibeTermRoles } from '../../../../apps/gateway/src/config';
 import { parseVibeTermRoleName, parseVibeTermRoles } from './roles';
 
-const STANDALONE = { hub: false, node: false, relay: false };
-const NODE = { hub: false, node: true, relay: false };
-const HUB_NODE = { hub: true, node: true, relay: false };
+const STANDALONE = { node: false, relay: false };
+const NODE = { node: true, relay: false };
+const RELAY = { node: false, relay: true };
+const RELAY_NODE = { node: true, relay: true };
+const ROLE_ERROR = 'VIBETERM_ROLES must be one of standalone | node | relay | relay,node';
 
 describe('app parseVibeTermRoles wrapper', () => {
   test('undefined / empty / whitespace normalize to standalone', () => {
@@ -13,26 +15,30 @@ describe('app parseVibeTermRoles wrapper', () => {
     expect(parseVibeTermRoles('   ')).toEqual(STANDALONE);
   });
 
-  test('accepts the three legal values', () => {
+  test('accepts the four legal values', () => {
     expect(parseVibeTermRoles('standalone')).toEqual(STANDALONE);
     expect(parseVibeTermRoles('node')).toEqual(NODE);
-    expect(parseVibeTermRoles('hub,node')).toEqual(HUB_NODE);
+    expect(parseVibeTermRoles('relay')).toEqual(RELAY);
+    expect(parseVibeTermRoles('relay,node')).toEqual(RELAY_NODE);
     expect(parseVibeTermRoles('  node  ')).toEqual(NODE);
   });
 
+  test('maps leftover hub,node to node', () => {
+    expect(parseVibeTermRoles('hub,node')).toEqual(NODE);
+    expect(parseVibeTermRoleName('  hub,node  ')).toBe('node');
+  });
+
   test('rejects invalid role names', () => {
-    expect(() => parseVibeTermRoles('hub')).toThrow(
-      'role must be one of standalone | node | hub,node'
-    );
-    expect(() => parseVibeTermRoles('node,hub')).toThrow('role must be one of');
+    expect(() => parseVibeTermRoles('hub')).toThrow(ROLE_ERROR);
+    expect(() => parseVibeTermRoles('node,hub')).toThrow(ROLE_ERROR);
   });
 });
 
 describe('app parseVibeTermRoleName wrapper', () => {
   test('undefined defaults to standalone; empty/whitespace still fail', () => {
     expect(parseVibeTermRoleName(undefined)).toBe('standalone');
-    expect(() => parseVibeTermRoleName('')).toThrow('role must be one of');
-    expect(() => parseVibeTermRoleName('   ')).toThrow('role must be one of');
+    expect(() => parseVibeTermRoleName('')).toThrow(ROLE_ERROR);
+    expect(() => parseVibeTermRoleName('   ')).toThrow(ROLE_ERROR);
   });
 });
 
@@ -50,15 +56,15 @@ describe('gateway vs app VIBETERM_ROLES wrappers', () => {
   });
 
   test('legal values agree', () => {
-    for (const raw of ['standalone', 'node', 'hub,node', '  hub,node  '] as const) {
+    for (const raw of ['standalone', 'node', 'relay', 'relay,node', '  hub,node  '] as const) {
       expect(parseGatewayVibeTermRoles(raw)).toEqual(parseVibeTermRoles(raw));
     }
   });
 
-  test('invalid values throw in both (distinct messages)', () => {
+  test('invalid values throw in both', () => {
     for (const raw of ['hub', 'node,hub', 'HUB,NODE', 'standalone,node']) {
-      expect(() => parseGatewayVibeTermRoles(raw)).toThrow('VIBETERM_ROLES must be one of');
-      expect(() => parseVibeTermRoles(raw)).toThrow('role must be one of');
+      expect(() => parseGatewayVibeTermRoles(raw)).toThrow(ROLE_ERROR);
+      expect(() => parseVibeTermRoles(raw)).toThrow(ROLE_ERROR);
     }
   });
 });

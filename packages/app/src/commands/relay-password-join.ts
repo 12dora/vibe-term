@@ -9,8 +9,9 @@ import { asString } from '../lib/validate';
 import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import { applyRelayPasswordJoinEnv, commitRelayPasswordJoinEnv } from '../runtime/setup-shared';
 import type { ParsedArgs } from '../types';
+import type { CliIo } from './cli-io';
 import { enableDirectForOnboarding } from './direct';
-import { type HubIo, maybeRestart } from './hub';
+import { maybeRestart } from './restart';
 import { withAuth } from './with-auth';
 
 export {
@@ -34,7 +35,7 @@ function joinUrlFromParsed(parsed: ParsedArgs): string {
 
 export async function runRelayPasswordJoin(
   parsed: ParsedArgs,
-  io: HubIo = {}
+  io: CliIo = {}
 ): Promise<RelayPasswordJoinResult> {
   const tenantId = asString(parsed.flags.tenant);
   if (!tenantId) {
@@ -79,8 +80,6 @@ export async function runRelayPasswordJoin(
         VIBETERM_ROLES: ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? '',
       });
       process.env.VIBETERM_ROLES = next.VIBETERM_ROLES;
-      process.env.VIBETERM_HUB_URL = '';
-      process.env.VIBETERM_HUB_PUBLIC_URL = '';
     }
     if (ctx.installDir) {
       await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);

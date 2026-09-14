@@ -22,8 +22,8 @@ import { readEnvFile } from '../lib/env-file';
 import type { FetchLike } from '../lib/fetch-like';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { performRelayPasswordJoin } from '../lib/relay-password-join';
-import { runHubUserAdd } from './hub';
 import { runRelayPasswordJoin } from './relay-password-join';
+import { runUserAdd } from './user';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const PASSWORD = 'relay-password-join-pass';
@@ -46,7 +46,7 @@ async function openAuth(username?: string): Promise<LocalAuthContext> {
   });
   handles.push(auth);
   if (username) {
-    await runHubUserAdd(parseArgs(['hub', 'user', 'add', username]), username, {
+    await runUserAdd(parseArgs(['user', 'add', username]), username, {
       auth,
       password: PASSWORD,
       log: () => undefined,
@@ -192,7 +192,7 @@ describe('performRelayPasswordJoin', () => {
 
   test('本机已有多个 mesh 用户时拒绝覆盖（不发任何请求）', async () => {
     const auth = await openAuth('ivy');
-    await runHubUserAdd(parseArgs(['hub', 'user', 'add', 'mallory']), 'mallory', {
+    await runUserAdd(parseArgs(['user', 'add', 'mallory']), 'mallory', {
       auth,
       password: PASSWORD,
       log: () => undefined,

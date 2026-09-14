@@ -28,11 +28,9 @@ import {
 } from '../lib/native-manifest';
 import {
   SetupError,
-  becomeHub,
   createSetupTransitionLock,
   getLocalStatus,
-  joinHub,
-  precheckHubUrl,
+  precheckRelayUrl,
   resetProcessSetupLockForTests,
   setLocalDirect,
 } from './setup-service';
@@ -76,11 +74,9 @@ async function baseDeps(
   await writeFile(envPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
   const auth = overrides.auth ?? (await openAuth());
   return {
-    roles: { hub: false, node: false, relay: false },
+    roles: { node: false, relay: false },
     nodeEnv: 'test',
     auth,
-    hubUrl: null,
-    hubPublicUrl: null,
     fetch: (async () => new Response('nope', { status: 404 })) as FetchLike,
     enableDirect: async () => ({
       ok: true,
@@ -103,690 +99,18 @@ async function baseDeps(
   };
 }
 
-describe('becomeHub', () => {
-  test('creates the user, writes owned env keys, and schedules restart', async () => {
-    const restarts: number[] = [];
-    const deps = await baseDeps({
-      scheduleRestart: () => {
-        restarts.push(1);
-      },
-    });
-    const result = await becomeHub(
-      {
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'vibeterm-test-pass',
-        directEnable: false,
-      },
-      deps
-    );
-    expect(result).toEqual({
-      ok: true,
-      fingerprint: result.fingerprint,
-      direct: 'skipped',
-      directError: null,
-      restarting: true,
-    });
-    expect(result.fingerprint).toHaveLength(64);
-    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-    const envText = await readFile(deps.envPath, 'utf8');
-    expect(envText).toContain('VIBETERM_ROLES=hub,node');
-    expect(envText).toContain('VIBETERM_HUB_PUBLIC_URL=https://hub.example.com');
-    expect(envText).toContain('GATEWAY_PORT=21111');
-    expect(envText).toContain('OTHER=keep');
-    expect(restarts).toEqual([1]);
-  });
-
-  test.each([undefined, true])('directEnable %s installs by default', async (directEnable) => {
-    let enabled = 0;
-    const deps = await baseDeps({
-      enableDirect: async () => {
-        enabled += 1;
-        return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: '' };
-      },
-    });
-    const result = await becomeHub(
-      {
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'vibeterm-test-pass',
-        directEnable,
-      },
-      deps
-    );
-    expect(result.direct).toBe('enabled');
-    expect(result.directError).toBeNull();
-    expect(enabled).toBe(1);
-    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
-  });
-
-  test('插件下载超时后仍完成 Hub 初始化', async () => {
-    let aborted = false;
-    let restarted = false;
-    const deps = await baseDeps({
-      directTimeoutMs: 10,
-      enableDirect: async ({ signal }) =>
-        new Promise((_resolve, reject) => {
-          const fail = () => {
-            aborted = true;
-            reject(signal?.reason);
-          };
-          if (signal?.aborted) fail();
-          else signal?.addEventListener('abort', fail, { once: true });
-        }),
-      scheduleRestart: () => {
-        restarted = true;
-      },
-    });
-    const result = await becomeHub(
-      {
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'vibeterm-test-pass',
-      },
-      deps
-    );
-    expect(result).toMatchObject({ ok: true, direct: 'failed', restarting: true });
-    expect(result.directError).toBeTruthy();
-    expect(aborted).toBe(true);
-    expect(restarted).toBe(true);
-    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('hub,node');
-  });
-
-  test('direct enable failure is non-fatal', async () => {
-    const deps = await baseDeps({
-      enableDirect: async () => ({ ok: false, reason: 'HTTP 500' }),
-    });
-    const result = await becomeHub(
-      {
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'vibeterm-test-pass',
-        directEnable: true,
-      },
-      deps
-    );
-    expect(result.direct).toBe('failed');
-    expect(result.directError).toBe('HTTP 500');
-    expect(result.restarting).toBe(true);
-    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-  });
-
-  test('rejects invalid url, username, and weak password', async () => {
-    const deps = await baseDeps();
-    await expect(
-      becomeHub(
-        {
-          hubPublicUrl: 'http://example.com',
-          username: 'alice',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'invalid_url', httpStatus: 400 });
-    await expect(
-      becomeHub(
-        {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'bad name',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'invalid_username', httpStatus: 400 });
-    await expect(
-      becomeHub(
-        {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'alice',
-          password: 'short',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'weak_password', httpStatus: 400 });
-    expect(deps.auth.userStore.getByUsername('alice')).toBeNull();
-  });
-
-  test('allows http localhost when not production', async () => {
-    const deps = await baseDeps({ nodeEnv: 'development' });
-    const result = await becomeHub(
-      {
-        hubPublicUrl: 'http://127.0.0.1:9443',
-        username: 'alice',
-        password: 'vibeterm-test-pass',
-        directEnable: false,
-      },
-      deps
-    );
-    expect(result.ok).toBe(true);
-    const envText = await readFile(deps.envPath, 'utf8');
-    expect(envText).toContain('VIBETERM_HUB_PUBLIC_URL=http://127.0.0.1:9443');
-  });
-
-  test('user_exists is 409 and does not restart', async () => {
-    const restarts: number[] = [];
-    const deps = await baseDeps({
-      scheduleRestart: () => {
-        restarts.push(1);
-      },
-    });
-    const { ensureNodeIdentity } = await import(
-      '../../../../apps/gateway/src/auth/node-identity-service'
-    );
-    const identity = await ensureNodeIdentity(deps.auth.identityStore);
-    await deps.auth.userKeys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: 'vibeterm-test-pass',
-      identity,
-      now: 1,
-    });
-    await expect(
-      becomeHub(
-        {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'alice',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'user_exists', httpStatus: 409 });
-    expect(restarts).toEqual([]);
-  });
-
-  test('UNIQUE constraint from bootstrap maps to 409 user_exists', async () => {
-    const auth = await openAuth();
-    const deps = await baseDeps({
-      auth: {
-        ...auth,
-        userStore: {
-          getByUsername: () => null,
-        } as unknown as LocalAuthContext['userStore'],
-        userKeys: {
-          bootstrapUserWithSelfAdmit: async () => {
-            throw Object.assign(new Error('UNIQUE constraint failed: users.username'), {
-              code: 'SQLITE_CONSTRAINT_UNIQUE',
-            });
-          },
-        } as unknown as LocalAuthContext['userKeys'],
-      },
-    });
-    await expect(
-      becomeHub(
-        {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'alice',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'user_exists', httpStatus: 409 });
-  });
-
-  test('concurrent becomeHub: one succeeds and the other is 409 setup_in_progress', async () => {
-    const auth = await openAuth();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let entered = 0;
-    const deps = await baseDeps({
-      auth: {
-        ...auth,
-        userKeys: {
-          bootstrapUserWithSelfAdmit: async (input) => {
-            entered += 1;
-            await held;
-            return auth.userKeys.bootstrapUserWithSelfAdmit(input);
-          },
-        } as LocalAuthContext['userKeys'],
-      },
-    });
-    const input = (username: string) => ({
-      hubPublicUrl: 'https://hub.example.com',
-      username,
-      password: 'vibeterm-test-pass',
-      directEnable: false,
-    });
-    const first = becomeHub(input('alice'), deps);
-    while (entered === 0) await Bun.sleep(1);
-    const second = await becomeHub(input('bob'), deps).catch((error) => error);
-    expect(second).toBeInstanceOf(SetupError);
-    expect((second as SetupError).code).toBe('setup_in_progress');
-    expect((second as SetupError).httpStatus).toBe(409);
-    release();
-    const result = await first;
-    expect(result.ok).toBe(true);
-    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-    expect(deps.auth.userStore.getByUsername('bob')).toBeNull();
-  });
-
-  test('post-commit becomeHub or join is 409 setup_committed', async () => {
-    const restarts: number[] = [];
-    const deps = await baseDeps({
-      scheduleRestart: () => {
-        restarts.push(1);
-      },
-      performHubJoin: async () => ({
-        userId: 'u',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-    });
-    await becomeHub(
-      {
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'vibeterm-test-pass',
-        directEnable: false,
-      },
-      deps
-    );
-    expect(restarts).toEqual([1]);
-    await expect(
-      becomeHub(
-        {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'carol',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'setup_committed', httpStatus: 409 });
-    await expect(
-      joinHub(
-        {
-          hubUrl: 'https://hub.example.com',
-          token: 'token-value',
-          name: 'studio',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'setup_committed', httpStatus: 409 });
-    expect(restarts).toEqual([1]);
-  });
-
-  test('env_write_failed leaves the user but does not restart', async () => {
-    const restarts: number[] = [];
-    const deps = await baseDeps({
-      scheduleRestart: () => {
-        restarts.push(1);
-      },
-      writeEnvFile: async () => {
-        throw new Error('disk full');
-      },
-    });
-    const err = await becomeHub(
-      {
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'vibeterm-test-pass',
-        directEnable: false,
-      },
-      deps
-    ).catch((error) => error);
-    expect(err).toBeInstanceOf(SetupError);
-    expect((err as SetupError).code).toBe('env_write_failed');
-    expect((err as SetupError).httpStatus).toBe(500);
-    expect((err as SetupError).message).toMatch(/user record may already exist/);
-    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-    expect(restarts).toEqual([]);
-  });
-});
-
-describe('joinHub', () => {
-  test('happy path with stubbed performHubJoin writes env and restarts', async () => {
-    const restarts: number[] = [];
-    const deps = await baseDeps({
-      scheduleRestart: () => {
-        restarts.push(1);
-      },
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-    });
-    await writeFile(
-      deps.envPath,
-      'GATEWAY_PORT=21111\nOTHER=keep\nVIBETERM_HUB_PUBLIC_URL=https://stale.example\n',
-      'utf8'
-    );
-    const result = await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        token: 'token-value',
-        name: 'studio',
-        directEnable: false,
-      },
-      deps
-    );
-    expect(result).toEqual({
-      ok: true,
-      hubUrl: 'https://hub.example.com',
-      username: 'bob',
-      direct: 'skipped',
-      directError: null,
-      restarting: true,
-    });
-    const envText = await readFile(deps.envPath, 'utf8');
-    expect(envText).toContain('VIBETERM_ROLES=node');
-    expect(envText).toContain('VIBETERM_HUB_URL=https://hub.example.com');
-    expect(envText).toContain('VIBETERM_HUB_PUBLIC_URL=');
-    expect((await readEnvFile(deps.envPath)).VIBETERM_HUB_PUBLIC_URL).toBe('');
-    expect(envText).toContain('OTHER=keep');
-    expect(restarts).toEqual([1]);
-  });
-
-  test.each([undefined, true])(
-    'join directEnable %s installs and enables addon',
-    async (directEnable) => {
-      const deps = await baseDeps({
-        performHubJoin: async () => ({
-          userId: 'uid-1',
-          username: 'bob',
-          hubUrl: 'https://hub.example.com',
-        }),
-        enableDirect: async () => ({
-          ok: true as const,
-          platformId: 'darwin-arm64',
-          version: '1',
-          addonPath: '',
-        }),
-      });
-      const result = await joinHub(
-        {
-          hubUrl: 'https://hub.example.com',
-          token: 'token-value',
-          name: 'studio',
-          directEnable,
-        },
-        deps
-      );
-      expect(result.direct).toBe('enabled');
-      expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
-    }
-  );
-
-  test('join env rename failure after commit returns 500 recovery and does not restart', async () => {
-    const restarts: number[] = [];
-    const deps = await baseDeps({
-      scheduleRestart: () => {
-        restarts.push(1);
-      },
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-      renameEnvFile: async () => {
-        throw new Error('EACCES rename');
-      },
-    });
-    const err = await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        token: 'token-value',
-        name: 'studio',
-        directEnable: false,
-      },
-      deps
-    ).catch((error) => error);
-    expect(err).toBeInstanceOf(SetupError);
-    expect((err as SetupError).code).toBe('env_write_failed');
-    expect((err as SetupError).httpStatus).toBe(500);
-    expect((err as SetupError).message).toMatch(/joined locally/);
-    expect((err as SetupError).message).toContain('VIBETERM_ROLES=node');
-    expect((err as SetupError).message).toContain('VIBETERM_HUB_URL=https://hub.example.com');
-    expect(restarts).toEqual([]);
-    const leftovers = (await readdir(dirname(deps.envPath))).filter((name) =>
-      name.endsWith('.tmp')
-    );
-    expect(leftovers).toEqual([]);
-  });
-
-  test('join promotion through an absolute symlink updates the target and keeps the link', async () => {
-    const dir = await tempDir();
-    const volumeDir = join(dir, 'volume');
-    const overlayDir = join(dir, 'overlay');
-    await mkdir(volumeDir);
-    await mkdir(overlayDir);
-    const realPath = join(volumeDir, 'app.env');
-    const linkPath = join(overlayDir, 'app.env');
-    await writeFile(realPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
-    await symlink(realPath, linkPath);
-    const deps = await baseDeps({
-      envPath: linkPath,
-      installDir: dir,
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-    });
-    await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        token: 'token-value',
-        name: 'studio',
-        directEnable: false,
-      },
-      deps
-    );
-    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
-    expect(await realpath(linkPath)).toBe(await realpath(realPath));
-    expect(await readEnvFile(realPath)).toMatchObject({
-      VIBETERM_ROLES: 'node',
-      VIBETERM_HUB_URL: 'https://hub.example.com',
-      OTHER: 'keep',
-    });
-  });
-
-  test('join promotion through a relative symlink updates the target and keeps the link', async () => {
-    const dir = await tempDir();
-    const volumeDir = join(dir, 'volume');
-    const overlayDir = join(dir, 'overlay');
-    await mkdir(volumeDir);
-    await mkdir(overlayDir);
-    const realPath = join(volumeDir, 'app.env');
-    const linkPath = join(overlayDir, 'app.env');
-    await writeFile(realPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
-    await symlink('../volume/app.env', linkPath);
-    const deps = await baseDeps({
-      envPath: linkPath,
-      installDir: dir,
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-    });
-    await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        token: 'token-value',
-        name: 'studio',
-        directEnable: false,
-      },
-      deps
-    );
-    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
-    expect(await readEnvFile(realPath)).toMatchObject({
-      VIBETERM_ROLES: 'node',
-      VIBETERM_HUB_URL: 'https://hub.example.com',
-    });
-  });
-
-  test('join promotion through a dangling symlink writes the missing target', async () => {
-    const dir = await tempDir();
-    const volumeDir = join(dir, 'volume');
-    const overlayDir = join(dir, 'overlay');
-    await mkdir(volumeDir);
-    await mkdir(overlayDir);
-    const realPath = join(volumeDir, 'app.env');
-    const linkPath = join(overlayDir, 'app.env');
-    await symlink(realPath, linkPath);
-    const deps = await baseDeps({
-      envPath: linkPath,
-      installDir: dir,
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-    });
-    await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        token: 'token-value',
-        name: 'studio',
-        directEnable: false,
-      },
-      deps
-    );
-    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
-    expect(await readEnvFile(realPath)).toMatchObject({
-      VIBETERM_ROLES: 'node',
-      VIBETERM_HUB_URL: 'https://hub.example.com',
-    });
-  });
-
-  test('re-reads env before promote so a concurrent TRUST_PROXY write is kept', async () => {
-    const deps = await baseDeps();
-    deps.performHubJoin = async () => {
-      await withEnvLock(async () => {
-        const current = await readEnvFile(deps.envPath);
-        await writeEnvFile(deps.envPath, { ...current, VIBETERM_TRUST_PROXY: 'true' });
-      });
-      return {
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      };
-    };
-    await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        token: 'token-value',
-        name: 'studio',
-        directEnable: false,
-      },
-      deps
-    );
-    const env = await readEnvFile(deps.envPath);
-    expect(env.VIBETERM_ROLES).toBe('node');
-    expect(env.VIBETERM_HUB_URL).toBe('https://hub.example.com');
-    expect(env.VIBETERM_TRUST_PROXY).toBe('true');
-    expect(env.OTHER).toBe('keep');
-  });
-
-  test('maps JoinError codes onto SetupError', async () => {
-    const { JoinError } = await import('../commands/hub');
-    const deps = await baseDeps({
-      performHubJoin: async () => {
-        throw new JoinError('node_revoked', 'this node identity was revoked');
-      },
-    });
-    await expect(
-      joinHub(
-        {
-          hubUrl: 'https://hub.example.com',
-          token: 'token-value',
-          name: 'studio',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'node_revoked', httpStatus: 409 });
-  });
-
-  test('maps totp_required onto HTTP 400', async () => {
-    const { JoinError } = await import('../commands/hub');
-    const { randomBytes, rootKeyFromSeed } = await import('../../../shared/src/auth');
-    const deps = await baseDeps({
-      requestEnrollmentByPassword: async () => ({
-        token: 'issued-token',
-        hubUrl: 'https://hub.example.com',
-        caFingerprint: null,
-        rootKey: rootKeyFromSeed(randomBytes(32)),
-      }),
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-      publishHubJoinSelfAdmit: async () => {
-        throw new JoinError('totp_required', 'TOTP code is required');
-      },
-    });
-    await expect(
-      joinHub(
-        {
-          hubUrl: 'https://hub.example.com',
-          method: 'password',
-          password: 'vibeterm-test-pass',
-          name: 'studio',
-          directEnable: false,
-        },
-        deps
-      )
-    ).rejects.toMatchObject({ code: 'totp_required', httpStatus: 400 });
-  });
-
-  test('password join with totpCode reaches self-admit', async () => {
-    const { randomBytes, rootKeyFromSeed } = await import('../../../shared/src/auth');
-    let seen: string | undefined;
-    const deps = await baseDeps({
-      requestEnrollmentByPassword: async () => ({
-        token: 'issued-token',
-        hubUrl: 'https://hub.example.com',
-        caFingerprint: null,
-        rootKey: rootKeyFromSeed(randomBytes(32)),
-      }),
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-      publishHubJoinSelfAdmit: async (input) => {
-        seen = input.totpCode;
-        return { appended: true, admitPending: false };
-      },
-    });
-    const result = await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        method: 'password',
-        password: 'vibeterm-test-pass',
-        name: 'studio',
-        directEnable: false,
-        totpCode: '999000',
-      },
-      deps
-    );
-    expect(seen).toBe('999000');
-    expect(result.admitPending).toBeUndefined();
-  });
-});
-
-describe('precheckHubUrl', () => {
-  test('reachable + isSelf when healthz matches startedAt', async () => {
+describe('precheckRelayUrl', () => {
+  test('reachable when relay health answers ok', async () => {
     const deps = await baseDeps({
       startedAt: 42,
-      fetch: (async () => Response.json({ status: 'ok', startedAt: 42 })) as FetchLike,
+      fetch: (async () => Response.json({ ok: true })) as FetchLike,
     });
-    expect(await precheckHubUrl('https://hub.example.com', deps)).toEqual({
+    expect(await precheckRelayUrl('https://relay.example.com', deps)).toEqual({
       reachable: true,
-      isSelf: true,
+      isSelf: false,
       status: 200,
       error: null,
-      resolvedUrl: 'https://hub.example.com',
+      resolvedUrl: 'https://relay.example.com',
       triedPorts: [443],
       probed: true,
     });
@@ -799,26 +123,26 @@ describe('precheckHubUrl', () => {
       precheckCaPem: async () => '-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----',
       fetch: (async (_input: unknown, init?: RequestInit) => {
         seenInit = init;
-        return Response.json({ status: 'ok', startedAt: 42 });
+        return Response.json({ ok: true });
       }) as FetchLike,
     });
-    await precheckHubUrl('https://hub.example.com', deps);
+    await precheckRelayUrl('https://relay.example.com', deps);
     expect((seenInit as { tls?: { ca?: string[] } }).tls?.ca?.[0]).toContain('BEGIN CERTIFICATE');
   });
 
-  test('reachable but not self when startedAt differs', async () => {
+  test('a 200 without ok is not reachable', async () => {
     const deps = await baseDeps({
       startedAt: 42,
-      fetch: (async () => Response.json({ status: 'ok', startedAt: 99 })) as FetchLike,
+      fetch: (async () => Response.json({ status: 'ok', startedAt: 42 })) as FetchLike,
     });
-    expect(await precheckHubUrl('https://hub.example.com', deps)).toEqual({
-      reachable: true,
+    expect(await precheckRelayUrl('https://relay.example.com:13443', deps)).toEqual({
+      reachable: false,
       isSelf: false,
       status: 200,
-      error: null,
-      resolvedUrl: 'https://hub.example.com',
-      triedPorts: [443],
-      probed: true,
+      error: 'relay health status 200',
+      resolvedUrl: null,
+      triedPorts: [],
+      probed: false,
     });
   });
 
@@ -828,7 +152,7 @@ describe('precheckHubUrl', () => {
         throw new Error('connection refused');
       }) as FetchLike,
     });
-    const result = await precheckHubUrl('https://hub.example.com:13443', deps);
+    const result = await precheckRelayUrl('https://hub.example.com:13443', deps);
     expect(result.reachable).toBe(false);
     expect(result.isSelf).toBe(false);
     expect(result.status).toBeNull();
@@ -843,16 +167,16 @@ describe('precheckHubUrl', () => {
         const url = new URL(String(input));
         seen.push(`${url.port || '443'}${url.pathname}`);
         if (url.port !== '13443') throw new Error('connection refused');
-        return Response.json({ status: 'ok', startedAt: 7 });
+        return Response.json({ ok: true });
       }) as FetchLike,
     });
-    const result = await precheckHubUrl('https://hub.example.com', deps);
+    const result = await precheckRelayUrl('https://relay.example.com', deps);
     expect(result.reachable).toBe(true);
-    expect(result.isSelf).toBe(true);
+    expect(result.isSelf).toBe(false);
     expect(result.probed).toBe(true);
-    expect(result.resolvedUrl).toBe('https://hub.example.com:13443');
+    expect(result.resolvedUrl).toBe('https://relay.example.com:13443');
     expect(result.triedPorts).toContain(13443);
-    expect(seen.filter((item) => item === '13443/healthz')).toHaveLength(2);
+    expect(seen.filter((item) => item === '13443/api/relay/health')).toHaveLength(2);
   });
 
   test('an explicit port is confirmed without a candidate sweep', async () => {
@@ -861,20 +185,20 @@ describe('precheckHubUrl', () => {
       startedAt: 7,
       fetch: (async (input: unknown) => {
         seen.push(String(input));
-        return Response.json({ status: 'ok', startedAt: 7 });
+        return Response.json({ ok: true });
       }) as FetchLike,
     });
-    const result = await precheckHubUrl('https://hub.example.com:13443', deps);
+    const result = await precheckRelayUrl('https://relay.example.com:13443', deps);
     expect(result).toEqual({
       reachable: true,
-      isSelf: true,
+      isSelf: false,
       status: 200,
       error: null,
       resolvedUrl: null,
       triedPorts: [],
       probed: false,
     });
-    expect(seen).toEqual(['https://hub.example.com:13443/healthz']);
+    expect(seen).toEqual(['https://relay.example.com:13443/api/relay/health']);
   });
 
   test('no candidate port answering reports every port tried', async () => {
@@ -883,7 +207,7 @@ describe('precheckHubUrl', () => {
         throw new Error('connection refused');
       }) as FetchLike,
     });
-    const result = await precheckHubUrl('https://hub.example.com', deps);
+    const result = await precheckRelayUrl('https://relay.example.com', deps);
     expect(result.reachable).toBe(false);
     expect(result.probed).toBe(true);
     expect(result.resolvedUrl).toBeNull();
@@ -902,7 +226,7 @@ describe('precheckHubUrl', () => {
         return Response.json({ ok: true, version: '1.1.37' });
       }) as FetchLike,
     });
-    const result = await precheckHubUrl('https://relay.example.com', deps, 'relay');
+    const result = await precheckRelayUrl('https://relay.example.com', deps, 'relay');
     expect(result.reachable).toBe(true);
     // 中继健康接口不下发 startedAt，本机判定只对 Hub 有意义
     expect(result.isSelf).toBe(false);
@@ -920,7 +244,7 @@ describe('precheckHubUrl', () => {
         return new Response('not found', { status: 404 });
       }) as FetchLike,
     });
-    const result = await precheckHubUrl('https://relay.example.com', deps, 'relay');
+    const result = await precheckRelayUrl('https://relay.example.com', deps, 'relay');
     expect(result.reachable).toBe(false);
     expect(result.resolvedUrl).toBeNull();
     expect(result.probed).toBe(true);
@@ -928,7 +252,7 @@ describe('precheckHubUrl', () => {
 
   test('rejects non-https remote urls', async () => {
     const deps = await baseDeps();
-    await expect(precheckHubUrl('http://example.com', deps)).rejects.toMatchObject({
+    await expect(precheckRelayUrl('http://example.com', deps)).rejects.toMatchObject({
       code: 'invalid_url',
       httpStatus: 400,
     });
@@ -938,20 +262,16 @@ describe('precheckHubUrl', () => {
 describe('direct status and setLocalDirect', () => {
   test('getLocalStatus maps supported/installed/capable/version/platform', async () => {
     const deps = await baseDeps({
-      roles: { hub: true, node: true, relay: false },
+      roles: { node: true, relay: false },
       nodeEnv: 'production',
-      hubUrl: 'https://hub.example.com',
-      hubPublicUrl: 'https://pub.example.com',
       isDirectSupported: () => true,
       readNativeManifest: async () => ({ version: '0.33.1' }),
       rtcCapable: true,
       platform: 'darwin-arm64',
     });
     expect(await getLocalStatus(deps)).toEqual({
-      role: 'hub,node',
+      role: 'node',
       nodeEnv: 'production',
-      hubUrl: 'https://hub.example.com',
-      hubPublicUrl: 'https://pub.example.com',
       direct: {
         supported: true,
         installed: true,
@@ -1178,7 +498,7 @@ describe('direct status and setLocalDirect', () => {
 
   test('getLocalStatus relay block is null unless roles.relay', async () => {
     const deps = await baseDeps({
-      roles: { hub: false, node: true, relay: true },
+      roles: { node: true, relay: true },
       relayStatus: async () => ({
         publicUrl: 'https://relay.example',
         hasPassword: true,

@@ -1,4 +1,3 @@
-import type { HubRuntime, HubServerWebSocket } from '../../../../apps/gateway/src/hub';
 import {
   MESH_FORWARD_WS_KIND,
   MESH_GATEWAY_WS_KIND,
@@ -24,7 +23,7 @@ function socketKind(ws: { data?: unknown }): string | undefined {
   return typeof kind === 'string' ? kind : undefined;
 }
 
-/** hub/relay 判定上行链路只读 `data.kind`；bun 那边是 unknown，这里只换视图不复制。 */
+/** relay 判定上行链路只读 `data.kind`；bun 那边是 unknown，这里只换视图不复制。 */
 const uplinkView = (ws: { data?: unknown }) => ws as { data?: { kind?: string } };
 
 function isMeshKind(kind: string | undefined): boolean {
@@ -79,7 +78,6 @@ function openGatewayBound(
 export function routeWebsocket(
   gateway: GatewayRuntime,
   mesh: GatewayWsAuth | null,
-  hub: HubRuntime | null,
   relay: RelayRuntime | null
 ): GatewayRuntime['websocket'] {
   const gw = gateway.websocket;
@@ -89,10 +87,6 @@ export function routeWebsocket(
     open(ws) {
       if (relay?.isUplinkSocket(uplinkView(ws))) {
         relay.handleUplinkOpen(ws as unknown as RelayServerWebSocket);
-        return;
-      }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkOpen(ws as HubServerWebSocket);
         return;
       }
       const kind = socketKind(ws);
@@ -106,10 +100,6 @@ export function routeWebsocket(
     message(ws, message) {
       if (relay?.isUplinkSocket(uplinkView(ws))) {
         relay.handleUplinkMessage(ws as unknown as RelayServerWebSocket, message);
-        return;
-      }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkMessage(ws as HubServerWebSocket, message);
         return;
       }
       const kind = socketKind(ws);
@@ -130,10 +120,6 @@ export function routeWebsocket(
         relay.handleUplinkDrain(ws as unknown as RelayServerWebSocket);
         return;
       }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkDrain(ws as HubServerWebSocket);
-        return;
-      }
       if (mesh && isMeshKind(socketKind(ws)) && !isGatewayBoundKind(socketKind(ws))) {
         mesh.websocket.drain(ws as never);
         return;
@@ -143,10 +129,6 @@ export function routeWebsocket(
     close(ws, code, reason) {
       if (relay?.isUplinkSocket(uplinkView(ws))) {
         relay.handleUplinkClose(ws as unknown as RelayServerWebSocket, code, reason);
-        return;
-      }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkClose(ws as HubServerWebSocket, code, reason);
         return;
       }
       if (mesh) {

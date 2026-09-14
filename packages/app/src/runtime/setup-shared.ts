@@ -110,14 +110,7 @@ export function wrapEnvWriteError(error: unknown): SetupError {
   );
 }
 
-export function wrapJoinEnvWriteError(error: unknown, joinedHubUrl?: string): SetupError {
-  if (joinedHubUrl) {
-    return new SetupError(
-      'env_write_failed',
-      `node has joined locally; only the env keys VIBETERM_ROLES=node, VIBETERM_HUB_URL=${joinedHubUrl} need to be written manually`,
-      500
-    );
-  }
+export function wrapJoinEnvWriteError(error: unknown): SetupError {
   return new SetupError(
     'env_write_failed',
     `failed to write environment (${errorCause(error)})`,
@@ -258,40 +251,6 @@ export async function removeStagedEnv(
   await remove(stagedPath).catch(() => undefined);
 }
 
-export function parseJoinHubCredentials(input: {
-  token?: string;
-  password?: string;
-  method?: 'token' | 'password';
-}): {
-  method: 'token' | 'password';
-  token: string;
-  password: string;
-} {
-  const token = typeof input.token === 'string' ? input.token : '';
-  const password = typeof input.password === 'string' ? input.password : '';
-  if (token && password) {
-    throw new SetupError('invalid_body', 'token and password are mutually exclusive', 400);
-  }
-  if (!token && !password) {
-    throw new SetupError('invalid_body', 'token or password is required', 400);
-  }
-  const method: 'token' | 'password' =
-    input.method === 'password'
-      ? 'password'
-      : input.method === 'token'
-        ? 'token'
-        : password && !token
-          ? 'password'
-          : 'token';
-  if (method === 'password' && !password) {
-    throw new SetupError('invalid_password', 'mesh account password is required', 400);
-  }
-  if (method === 'token' && !token) {
-    throw new SetupError('invalid_token', 'join token is required', 400);
-  }
-  return { method, token, password };
-}
-
 export function newStagedEnvPath(envPath: string): string {
   return join(
     dirname(envPath),
@@ -305,9 +264,9 @@ export function relayPasswordJoinRoleName(current: string | undefined): string {
   try {
     roles = parseVibeTermRoles(current);
   } catch {
-    roles = { hub: false, node: false, relay: false };
+    roles = { node: false, relay: false };
   }
-  return roleNameFromFlags({ hub: false, node: true, relay: roles.relay });
+  return roleNameFromFlags({ node: true, relay: roles.relay });
 }
 
 export function applyRelayPasswordJoinEnv(

@@ -28,12 +28,11 @@ describe('i18n', () => {
   test('cli.help is sourced from cliHelpText', () => {
     setLang('en');
     expect(t('cli.help')).toBe(cliHelpText('en'));
-    expect(t('cli.help')).toContain('vibeterm hub user add <username>');
-    expect(t('cli.help')).toContain('vibeterm hub user passwd <username> [--full-reset]');
+    expect(t('cli.help')).toContain('vibeterm user add <username>');
+    expect(t('cli.help')).toContain('vibeterm user passwd <username> [--full-reset]');
     expect(t('cli.help')).toContain('vibeterm direct enable|disable');
     setLang('zh-CN');
     expect(t('cli.help')).toBe(cliHelpText('zh-CN'));
-    expect(t('cli.help')).toContain('vibeterm hub join');
     expect(t('cli.help')).toContain('vibeterm relay join');
     expect(t('cli.help')).toContain('--no-restart');
     expect(t('cli.help')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
@@ -49,36 +48,19 @@ describe('i18n', () => {
     expect(zh).not.toContain('你');
   });
 
-  test('hub.join.admitPending exists in both languages and zh-CN avoids 你', () => {
-    setLang('en');
-    expect(t('hub.join.admitPending')).toMatch(/waiting for approval/i);
-    setLang('zh-CN');
-    const zh = t('hub.join.admitPending');
-    expect(zh).toContain('已加入');
-    expect(zh).toContain('批准');
-    expect(zh).not.toContain('你');
-    expect(zh).not.toContain('您');
-  });
-
-  test('passwd hub errors exist in both languages and zh-CN avoids 你/您', () => {
+  test('passwd user messages exist in both languages and zh-CN avoids 你/您', () => {
     const keys = [
-      'hub.user.passwd.hubTimeout',
-      'hub.user.passwd.hubNotWriter',
-      'hub.user.passwd.nodesTooOld',
-      'hub.user.passwd.doneKeep',
-      'hub.user.passwd.doneFullReset',
+      'user.passwd.nodesTooOld',
+      'user.passwd.doneKeep',
+      'user.passwd.doneFullReset',
     ] as const;
     setLang('en');
-    expect(t('hub.user.passwd.hubTimeout')).toMatch(/unreachable|not submitted/i);
-    expect(t('hub.user.passwd.nodesTooOld')).toContain('1.1.16');
-    expect(t('hub.user.passwd.doneKeep', { username: 'bob' })).toContain('bob');
-    expect(t('hub.user.passwd.doneKeep', { username: 'bob' })).toMatch(/keep/i);
-    expect(t('hub.user.passwd.doneFullReset', { username: 'bob' })).toMatch(/full-reset/i);
+    expect(t('user.passwd.nodesTooOld')).toContain('1.1.16');
+    expect(t('user.passwd.doneKeep', { username: 'bob' })).toContain('bob');
+    expect(t('user.passwd.doneKeep', { username: 'bob' })).toMatch(/keep/i);
+    expect(t('user.passwd.doneFullReset', { username: 'bob' })).toMatch(/full-reset/i);
     setLang('zh-CN');
-    expect(t('hub.user.passwd.hubTimeout')).toBe(
-      '主 Hub 不可达，修改未提交；请先切换 Hub 角色后重试。'
-    );
-    expect(t('hub.user.passwd.nodesTooOld')).toBe('有节点版本低于 1.1.16，须先升级全部节点。');
+    expect(t('user.passwd.nodesTooOld')).toBe('有节点版本低于 1.1.16，须先升级全部节点。');
     for (const key of keys) {
       const zh = t(key, { username: 'bob' });
       expect(zh).not.toBe(key);
@@ -134,7 +116,7 @@ describe('i18n', () => {
       );
       expect(t('init.summary.ports')).not.toBe('init.summary.ports');
       expect(t('init.summary.portsHint')).not.toBe('init.summary.portsHint');
-      expect(t('hub.join.portsHint', { list: '39001/tcp' })).toContain('39001/tcp');
+      expect(t('relay.join.portsHint', { list: '39001/tcp' })).toContain('39001/tcp');
       expect(t('relay.join.portsHint', { list: '443/tcp, 3478/udp' })).toContain('3478/udp');
       expect(t('doctor.ports.plan', { list: '39001/tcp' })).toContain('39001/tcp');
       expect(t('doctor.ports.peerListening', { port: 39001 })).toContain('39001');

@@ -7,20 +7,12 @@ export const zhCN: Record<string, string> = {
   'mesh.reset.requiresYes': '非交互模式必须显式传入 --yes。',
   'mesh.reset.cancelled': '操作已取消。',
   'mesh.identity.warning':
-    '此操作将更换本机节点身份、清除中继连接密钥与节点缓存，并撤销本机会话。保留账户凭据；完成后须重新加入 Hub 或中继。',
+    '此操作将更换本机节点身份、清除中继连接密钥与节点缓存，并撤销本机会话。保留账户凭据；完成后须重新加入中继。',
   'mesh.identity.done':
-    '节点身份已重建：{{nodeId}}。请重新加入 Hub 或中继，然后重启服务；若 TLS 密钥也已丢失，请重新配置 HTTPS。',
+    '节点身份已重建：{{nodeId}}。请重新加入中继，然后重启服务；若 TLS 密钥也已丢失，请重新配置 HTTPS。',
   'mesh.keylog.fork':
     '检测到分叉。不要重放日志；执行 vibeterm mesh reset-root 后重新加入选定的可信链。',
   'mesh.keylog.unknown': '无法确认远端日志头；请启动或恢复本机网关的上行连接后重试。',
-
-  'hub.urls.restartHint':
-    '重启 VibeTerm 后种子地址生效。VIBETERM_HUB_URL 保持不变；全部成员迁移前应保留旧地址可访问。',
-  'hub.trust.restartHint': '重启 VibeTerm，以新 CA 固定值重新连接。',
-  'hub.ca.rotateWarning':
-    '警告：CA 轮换将断开所有固定旧 CA 的节点，并清除停用的 ACME 账户及 DNS 凭据。继续前须确保可以在各成员上操作本机终端；轮换后须逐台执行 vibeterm hub trust refresh 并核对新指纹。',
-  'hub.ca.rotateDone':
-    'CA 已轮换。重启 Hub 后，在各成员上执行：vibeterm hub trust refresh <hubUrl> --fingerprint {{fingerprint}}，随后重启该成员。',
 
   'cli.error.unknownCommand': '未知命令：{{command}}',
   'cli.error.unknownFlag': '未知参数：--{{flag}}',
@@ -109,7 +101,7 @@ export const zhCN: Record<string, string> = {
   'doctor.env.exists': '发现配置文件：{{envPath}}',
   'doctor.env.missing': '未发现配置文件：{{envPath}}',
   'doctor.env.keyMissing': '配置缺失：{{key}}',
-  'doctor.stun.builtin': 'app.env 未设置：使用发行版内置列表（hub/中继下发自定义列表时以其为准）',
+  'doctor.stun.builtin': 'app.env 未设置：使用发行版内置列表（中继下发自定义列表时以其为准）',
   'doctor.stun.custom': 'STUN 服务器：自定义（app.env）',
   'doctor.stun.disabled': 'STUN 服务器：已禁用',
   'doctor.turn.external': 'TURN：外部（已配置 VIBETERM_TURN_URL 三元组，内置 TURN 未启动）',
@@ -230,61 +222,16 @@ export const zhCN: Record<string, string> = {
   'runtime.forbidden': '禁止访问',
   'runtime.notFound': '资源不存在',
 
-  'hub.join.replacedStale':
-    '已替换本机账号「{{username}}」的旧 hub 状态；密钥日志、通行密钥、TOTP、会话与旧节点证书已清除。',
-  'hub.join.admitPending': '已加入，等待已登录的浏览器批准',
-  'hub.join.portsHint': '请放行入站 {{list}} 以便直连',
   'relay.join.portsHint': '请放行入站 {{list}}',
 
-  'hub.standby.missingPublicUrl': 'hub standby 需要 --public-url',
-  'hub.standby.notJoined': '本机尚未加入 mesh（缺少 node_identity）。请先执行 vibeterm hub join。',
-  'hub.standby.alreadyActive':
-    '本机已是 active hub。请先执行 vibeterm hub demote，再设为 standby。',
-  'hub.standby.missingHubUrl':
-    '缺少 VIBETERM_HUB_URL（当前主 hub 地址）。standby 仍需以 node 身份连上主 hub。',
-  'hub.standby.invalidPriority': '--priority 必须是 ≥ 0 的整数',
-  'hub.standby.done': '已将本机设为 standby hub（priority={{priority}}，publicUrl={{url}}）',
-  'hub.standby.nodeId': '本机 node id：{{nodeId}}',
-  'hub.standby.allowHint':
-    '当前 active hub 会忽略本机 standby，直到执行：vibeterm hub allow {{nodeId}}',
-  'hub.standby.authorizedPrimary': '已授权当前主 hub {{nodeId}}；VIBETERM_HUB_PEERS={{peers}}',
-  'hub.standby.noPrimary':
-    '警告：找不到当前主 hub 可授权（mesh_hubs 无 active 行，peer_cache 也无 hub 哨兵）。请用 vibeterm hub allow 手动写入 VIBETERM_HUB_PEERS',
-  'hub.peers.current': '当前 VIBETERM_HUB_PEERS={{peers}}',
-  'hub.promote.notHub': 'hub promote 仅适用于 hub,node 安装',
-  'hub.promote.needConfirm': '提升写者有脑裂风险。请加 --yes 确认，或在交互终端确认。',
-  'hub.promote.warning':
-    '警告：提升写者前必须先将原主 hub demote 或停机，否则会出现脑裂（split-brain）。',
-  'hub.promote.emptyPeers':
-    '警告：VIBETERM_HUB_PEERS 为空；本机未授权任何对端 hub（旧写者无法 fencing 本机）。请在原写者上执行：vibeterm hub allow {{nodeId}}',
-  'hub.promote.allowReminder': '请在原写者上授权本机：vibeterm hub allow {{nodeId}}',
-  'hub.promote.done': '已提升为 active hub（writerEpoch={{epoch}}）',
-  'hub.demote.notHub': 'hub demote 仅适用于 hub,node 安装',
-  'hub.demote.done': '已降为 standby hub',
-  'hub.allow.notHub': 'hub allow 仅适用于 hub,node 安装',
-  'hub.allow.missingNodeId': 'hub allow 需要 <nodeId>',
-  'hub.allow.invalidNodeId': '非法 hub node id {{nodeId}}：必须是 32 位十六进制',
-  'hub.allow.done': '已授权 hub peers：{{peers}}',
-  'hub.disallow.notHub': 'hub disallow 仅适用于 hub,node 安装',
-  'hub.disallow.missingNodeId': 'hub disallow 需要 <nodeId>',
-  'hub.disallow.invalidNodeId': '非法 hub node id {{nodeId}}：必须是 32 位十六进制',
-  'hub.disallow.done': '已授权 hub peers：{{peers}}',
-  'hub.peers.empty': '（空）',
-  'hub.list.empty': '本地 mesh_hubs 为空（尚未从 node.list 学到其它 hub）',
-  'hub.list.header':
-    'NODE       NAME            MODE     PRI  EPOCH  AUTH  ONLINE  LAST SEEN             PUBLIC URL',
-
-  'hub.user.passwd.hubTimeout': '主 Hub 不可达，修改未提交；请先切换 Hub 角色后重试。',
-  'hub.user.passwd.hubNotWriter': '当前 Hub 为备用，不接受账号变更；请先切换 Hub 角色后重试。',
-  'hub.user.passwd.nodesTooOld': '有节点版本低于 1.1.16，须先升级全部节点。',
-  'hub.user.passwd.failed': '密码更新失败：{{error}}',
-  'hub.user.passwd.doneKeep': '已更新 {{username}} 的密码（保留）：现有登录方式保持不变。',
-  'hub.user.passwd.doneFullReset':
+  'user.passwd.nodesTooOld': '有节点版本低于 1.1.16，须先升级全部节点。',
+  'user.passwd.failed': '密码更新失败：{{error}}',
+  'user.passwd.doneKeep': '已更新 {{username}} 的密码（保留）：现有登录方式保持不变。',
+  'user.passwd.doneFullReset':
     '已更新 {{username}} 的密码（全量重置）：已移除通行密钥、两步验证并注销全部会话。',
 
   'port.probe.searching': '地址未写端口，正在探测 443 及内置候选端口……',
   'port.probe.foundRelay': '已在 {{port}} 端口探测到中继，使用 {{url}}',
-  'port.probe.foundHub': '已在 {{port}} 端口探测到 Hub，使用 {{url}}',
   'port.probe.notFound':
     '443 及内置候选端口（{{ports}}）均无响应，请放行端口或直接填写带端口的地址',
   'init.prompt.publicPort': '公网 HTTPS 端口（443 为标准端口，{{suggested}} 为建议的高位端口）',
@@ -321,6 +268,6 @@ export const zhCN: Record<string, string> = {
   'relay.resendToken.failed': '中继未确认 set-relays：{{reason}} 重试：vibeterm relay resend-token',
   'relay.resendToken.unconfirmed': '未收到确认。',
   'relay.resendToken.done': '已按当前令牌重新下发 set-relays，覆盖 {{count}} 个成员节点',
-  'relay.leave.done': '已离开中继；在接入 hub 或中继前该节点没有上级',
+  'relay.leave.done': '已离开中继；在接入中继前该节点没有上级',
   'relay.leave.pending': 'set-relays 已提交，但中继上行仍处于挂载状态',
 };

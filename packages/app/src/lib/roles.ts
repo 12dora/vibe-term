@@ -3,21 +3,29 @@ import {
   type VibeTermRoles,
   isStandaloneRoles,
   isVibeTermRoleName,
+  normalizeLegacyRoleName,
   roleNameFromFlags,
   rolesFromName,
-  validateRoles,
 } from '../../../../packages/shared/src/roles';
 
 export type { VibeTermRoleName, VibeTermRoles };
-export { isStandaloneRoles, roleNameFromFlags, rolesFromName, validateRoles };
+export { isStandaloneRoles, roleNameFromFlags, rolesFromName };
 export { DEFAULT_PEER_PORT } from '../../../shared/src/net';
 
+const ROLE_ERROR = 'VIBETERM_ROLES must be one of standalone | node | relay | relay,node';
+
+let warnedLegacyHubNode = false;
+
 export function parseVibeTermRoleName(raw: string | undefined): VibeTermRoleName {
-  const value = (raw ?? 'standalone').trim();
-  if (!isVibeTermRoleName(value)) {
-    throw new Error('role must be one of standalone | node | hub,node | relay | relay,node');
+  const { name, legacy } = normalizeLegacyRoleName(raw ?? 'standalone');
+  if (legacy && !warnedLegacyHubNode) {
+    warnedLegacyHubNode = true;
+    console.warn('[roles] VIBETERM_ROLES=hub,node is no longer supported; running as node');
   }
-  return value;
+  if (!isVibeTermRoleName(name)) {
+    throw new Error(ROLE_ERROR);
+  }
+  return name;
 }
 
 export function parseVibeTermRoles(raw: string | undefined): VibeTermRoles {

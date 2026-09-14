@@ -371,7 +371,6 @@ export async function joinSelfAdmitAndPersist(input: {
     expectedUserId: log.genesisUid,
     identity: {
       nodeId: identity.nodeIdHex,
-      hubUrl: null,
       edPrivateKey: identity.edPrivateKey,
       x25519PrivateKey: identity.x25519PrivateKey,
       certificateJson: JSON.stringify({

@@ -50,16 +50,7 @@ describe('client cli dispatch table', () => {
   });
 
   test('does not swallow the packages/app commands', () => {
-    for (const own of [
-      'init',
-      'doctor',
-      'upgrade',
-      'uninstall',
-      'hub',
-      'relay',
-      'mesh',
-      'enroll',
-    ]) {
+    for (const own of ['init', 'doctor', 'upgrade', 'uninstall', 'user', 'relay', 'mesh']) {
       expect(isClientCliCommand(own)).toBe(false);
     }
     expect(isClientCliCommand(null)).toBe(false);

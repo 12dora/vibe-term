@@ -58,14 +58,14 @@ describe('portPlanFromEnv', () => {
     expect(formatPortList(specs)).toBe('39002/tcp, 41000-41099/udp');
   });
 
-  test('hub,node reads public https from the hub URL', () => {
+  test('node has no public-https from a leftover hub URL', () => {
     const specs = portPlanFromEnv({
-      VIBETERM_ROLES: 'hub,node',
+      VIBETERM_ROLES: 'node',
       VIBETERM_HUB_PUBLIC_URL: 'https://hub.example.com:8443',
       VIBETERM_PEER_PORT: String(DEFAULT_PEER_PORT),
     });
-    expect(specs[0]).toMatchObject({ purpose: 'public-https', port: 8443 });
-    expect(formatPortList(specs)).toBe('8443/tcp, 39001/tcp, 40000-40099/udp');
+    expect(specs.some((spec) => spec.purpose === 'public-https')).toBe(false);
+    expect(formatPortList(specs)).toBe('39001/tcp, 40000-40099/udp');
   });
 
   test('relay reads TURN live values and https from the relay URL', () => {

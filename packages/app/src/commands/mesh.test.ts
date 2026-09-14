@@ -10,7 +10,6 @@ import {
 import { encodeBase64url } from '../../../shared/src/auth';
 import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
-import { runHubUserAdd } from './hub';
 import {
   type MeshKeyLogStatus,
   keyLogStatusVerdict,
@@ -19,6 +18,7 @@ import {
   runMeshResetIdentity,
   runMeshResetRoot,
 } from './mesh';
+import { runUserAdd } from './user';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const parsed = parseArgs([]);
@@ -50,11 +50,11 @@ describe('mesh reset-root', () => {
       migrationsFolder: MIGRATIONS,
       env: {
         VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
-        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'node',
       },
     });
     handles.push(auth);
-    const added = await runHubUserAdd(parsed, 'erin', {
+    const added = await runUserAdd(parsed, 'erin', {
       auth,
       password: 'first-pass-word',
       log: () => undefined,
@@ -87,7 +87,7 @@ describe('mesh passkey remove-all', () => {
       migrationsFolder: MIGRATIONS,
       env: {
         VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
-        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'node',
       },
     });
     handles.push(auth);
@@ -111,7 +111,7 @@ describe('mesh passkey remove-all', () => {
 
   test('removes every passkey and keeps the root key', async () => {
     const auth = await openAuth();
-    const added = await runHubUserAdd(parsed, 'frank', {
+    const added = await runUserAdd(parsed, 'frank', {
       auth,
       password: 'first-pass-word',
       log: () => undefined,
@@ -138,7 +138,7 @@ describe('mesh passkey remove-all', () => {
   // remove-passkey 的副作用是按凭证注销会话：密码会话不受影响，通行密钥会话必须掉线。
   test('password sessions survive, passkey sessions are revoked', async () => {
     const auth = await openAuth();
-    const added = await runHubUserAdd(parsed, 'judy', {
+    const added = await runUserAdd(parsed, 'judy', {
       auth,
       password: 'first-pass-word',
       log: () => undefined,
@@ -186,7 +186,7 @@ describe('mesh passkey remove-all', () => {
 
   test('a wrong password changes nothing', async () => {
     const auth = await openAuth();
-    const added = await runHubUserAdd(parsed, 'grace', {
+    const added = await runUserAdd(parsed, 'grace', {
       auth,
       password: 'first-pass-word',
       log: () => undefined,
@@ -205,7 +205,7 @@ describe('mesh passkey remove-all', () => {
 
   test('an unknown username is refused', async () => {
     const auth = await openAuth();
-    await runHubUserAdd(parsed, 'heidi', {
+    await runUserAdd(parsed, 'heidi', {
       auth,
       password: 'first-pass-word',
       log: () => undefined,
@@ -221,7 +221,7 @@ describe('mesh passkey remove-all', () => {
 
   test('no username falls back to the only local user and is a no-op without passkeys', async () => {
     const auth = await openAuth();
-    const added = await runHubUserAdd(parsed, 'ivan', {
+    const added = await runUserAdd(parsed, 'ivan', {
       auth,
       password: 'first-pass-word',
       log: () => undefined,
@@ -244,7 +244,7 @@ describe('mesh recovery commands', () => {
       env: { VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '', VIBETERM_ROLES: 'node' },
     });
     handles.push(auth);
-    const user = await runHubUserAdd(parsed, 'recovery', {
+    const user = await runUserAdd(parsed, 'recovery', {
       auth,
       password: 'first-pass-word',
       log() {},
@@ -318,11 +318,11 @@ describe('mesh recovery commands', () => {
     const reset = await runMeshResetIdentity(parseArgs(['--yes']), { auth, log() {} });
     const identity = await ensureNodeIdentity(auth.identityStore);
     expect(identity.nodeIdHex).toBe(reset.nodeId);
-    const hubUser = healthy.userStore.getById(user.userId)!;
-    const root = await deriveRootKey('first-pass-word', kdfParamsFromJson(hubUser.kdfParamsJson));
+    const owner = healthy.userStore.getById(user.userId)!;
+    const root = await deriveRootKey('first-pass-word', kdfParamsFromJson(owner.kdfParamsJson));
     const admit = await selfSignedNodeCertificate(identity, root, {
       uid: user.userId,
-      rootEpoch: hubUser.rootEpoch,
+      rootEpoch: owner.rootEpoch,
       now: Date.now(),
     });
     const admitted = await healthy.userKeys.signAndApply(user.userId, root, {
@@ -333,13 +333,12 @@ describe('mesh recovery commands', () => {
     const head = healthy.keyLogStore.head(user.userId)!;
     const committed = await auth.userKeys.commitJoin({
       records: healthy.keyLogStore.list(user.userId),
-      expectedRootPublicKey: hubUser.rootPublicKey,
+      expectedRootPublicKey: owner.rootPublicKey,
       anchorHash: head.hash,
-      username: hubUser.username,
+      username: owner.username,
       expectedUserId: user.userId,
       identity: {
         nodeId: identity.nodeIdHex,
-        hubUrl: 'https://hub.invalid',
         edPrivateKey: identity.edPrivateKey,
         x25519PrivateKey: identity.x25519PrivateKey,
         certificateJson: JSON.stringify({
@@ -422,7 +421,7 @@ describe('keylog verdict', () => {
     userId: 'user',
     local: { seq: 2, hash },
     remote: { seq: 2, hash },
-    remoteKind: 'hub',
+    remoteKind: 'relay',
     localAtRemote: null,
     remoteAtLocal: null,
   };

@@ -302,15 +302,6 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）",
     "lines": 138
   },
-  "packages/app/src/commands/enroll.ts:pollAndAdmit": {
-    "reason": "顺序轮询/SIGINT/准入流程（S2 判定）",
-    "cc": 16,
-    "params": 6
-  },
-  "packages/app/src/commands/hub.ts": {
-    "reason": "CLI 参数/命令分派（G8 判定）；VibeTerm 改名后标识符变长，biome 重排多出 9 行",
-    "fileLines": 1288
-  },
   "packages/app/src/lib/native-manifest.ts:detectLibcFamily": {
     "reason": "平台回退链（S2 判定）",
     "cc": 17
@@ -770,10 +761,6 @@
   "packages/app/src/commands/init.ts": {
     "reason": "round46 收紧门禁时冻结的存量",
     "fileLines": 560
-  },
-  "packages/app/src/commands/enroll.ts": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "fileLines": 522
   },
   "packages/app/src/commands/relay-admin.ts": {
     "reason": "round46 收紧门禁时冻结的存量",
@@ -1921,10 +1908,7 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 82
   },
-  "packages/app/src/runtime/setup-service.ts:joinHub": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "lines": 119
-  },
+
   "packages/app/src/runtime/tls-routes.ts:parseApplyMode": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
@@ -1945,10 +1929,7 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
   },
-  "packages/app/src/runtime/setup-shared.ts:parseJoinHubCredentials": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
-  },
+
   "packages/app/src/runtime/local-routes.ts:handleLocalRequest": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 15
@@ -1961,7 +1942,7 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
   },
-  "packages/app/src/lib/hub-client.ts:loginWithRootKey": {
+  "packages/app/src/lib/node-client.ts:loginWithRootKey": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
   },
@@ -2021,23 +2002,6 @@
   "packages/app/src/commands/uninstall.ts:runUninstall": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
-  },
-  "packages/app/src/commands/enroll.ts:enrollOnRemoteHub": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "params": 7
-  },
-  "packages/app/src/commands/upgrade.ts:runLockedUpgrade": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "lines": 81
-  },
-  "packages/app/src/commands/hub.ts:runHubJoin": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 13,
-    "lines": 109
-  },
-  "packages/app/src/commands/hub.ts:commitVerifiedJoin": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 15
   },
   "packages/app/src/commands/relay-admin.ts:applyTenantQuota": {
     "reason": "round46 收紧门禁时冻结的存量",

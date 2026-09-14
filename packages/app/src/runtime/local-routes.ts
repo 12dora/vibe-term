@@ -41,7 +41,6 @@ function livePortPlan(deps: LocalRouteDeps): PortSpec[] {
   return portPlanFromEnv({
     ...(deps.portPlanEnv ?? process.env),
     VIBETERM_ROLES: roleNameFromFlags(deps.roles),
-    ...(deps.hubPublicUrl ? { VIBETERM_HUB_PUBLIC_URL: deps.hubPublicUrl } : {}),
   });
 }
 

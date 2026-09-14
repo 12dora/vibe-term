@@ -28,7 +28,7 @@ describe('cli-node entry', () => {
 });
 
 describe('auth command bun spawn', () => {
-  test('Node dispatch forwards hub user add argv to the bun auth entry', async () => {
+  test('Node dispatch forwards user add argv to the bun auth entry', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-spawn-'));
     tempDirs.push(installDir);
     await writeFile(
@@ -37,7 +37,7 @@ describe('auth command bun spawn', () => {
         NODE_ENV: 'test',
         VIBETERM_MASTER_KEY: MASTER_KEY,
         DATABASE_URL: join(installDir, 'vibeterm.db'),
-        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'node',
       })
     );
     const fakeBun = join(installDir, 'fake-bun');
@@ -53,16 +53,7 @@ echo "FAKE_BUN_ARGV=$(printf '%q ' "$@")"
     );
     await chmod(fakeBun, 0o755);
     const cliAuthPath = join(installDir, 'runtime', 'cli-auth.js');
-    const argv = [
-      'hub',
-      'user',
-      'add',
-      '--help',
-      '--install-dir',
-      installDir,
-      '--bun-path',
-      fakeBun,
-    ];
+    const argv = ['user', 'add', '--help', '--install-dir', installDir, '--bun-path', fakeBun];
     const parsed = parseArgs(argv);
     const plan = await resolveAuthSpawnPlan(parsed, argv, {
       bunBin: fakeBun,
@@ -74,7 +65,6 @@ echo "FAKE_BUN_ARGV=$(printf '%q ' "$@")"
     expect(plan.env.VIBETERM_MASTER_KEY).toBe(MASTER_KEY);
     const result = await spawnAuthCli(plan, { stdio: 'pipe' });
     expect(result.code).toBe(0);
-    expect(result.stdout).toContain('hub');
     expect(result.stdout).toContain('user');
     expect(result.stdout).toContain('add');
     expect(result.stdout).toContain('--help');
@@ -90,7 +80,7 @@ echo "FAKE_BUN_ARGV=$(printf '%q ' "$@")"
         NODE_ENV: 'test',
         VIBETERM_MASTER_KEY: MASTER_KEY,
         DATABASE_URL: join(installDir, 'vibeterm.db'),
-        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'node',
       })
     );
     const fakeBun = join(installDir, 'fake-bun');
@@ -137,16 +127,7 @@ main().catch((error) => {
 `
     );
 
-    const argv = [
-      'hub',
-      'user',
-      'add',
-      '--help',
-      '--install-dir',
-      installDir,
-      '--bun-path',
-      fakeBun,
-    ];
+    const argv = ['user', 'add', '--help', '--install-dir', installDir, '--bun-path', fakeBun];
     const proc = Bun.spawn(['node', wrapper, ...argv], {
       cwd: installDir,
       env: { ...process.env, NODE_ENV: 'test' },
@@ -160,7 +141,6 @@ main().catch((error) => {
       proc.exited,
     ]);
     expect(exitCode, `stderr=${stderr}\nstdout=${stdout}`).toBe(0);
-    expect(stdout).toContain('hub');
     expect(stdout).toContain('user');
     expect(stdout).toContain('add');
     expect(stdout).toContain('--help');
@@ -168,7 +148,7 @@ main().catch((error) => {
 });
 
 describe('dispatchAuthCli auth env load', () => {
-  test('hub user add loads install env before gateway config captures VIBETERM_MASTER_KEY', async () => {
+  test('user add loads install env before gateway config captures VIBETERM_MASTER_KEY', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-auth-'));
     tempDirs.push(installDir);
     const databaseUrl = join(installDir, 'vibeterm.db');
@@ -179,7 +159,7 @@ describe('dispatchAuthCli auth env load', () => {
         VIBETERM_MASTER_KEY: MASTER_KEY,
         DATABASE_URL: databaseUrl,
         VIBETERM_MIGRATIONS_DIR: MIGRATIONS,
-        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'node',
         GATEWAY_PORT: '17991',
         VIBETERM_BIND_HOST: '127.0.0.1',
       })
@@ -193,7 +173,6 @@ import { dispatchAuthCli } from ${JSON.stringify(join(SRC_DIR, 'cli-auth-entry.t
 import { parseArgs } from ${JSON.stringify(join(SRC_DIR, 'lib/args.ts'))};
 
 const parsed = parseArgs([
-  'hub',
   'user',
   'add',
   'alice',
@@ -263,10 +242,10 @@ console.log(
     expect(probe.dispatchError).toBeNull();
   }, 30_000);
 
-  test('dispatchCli accepts parsed hub user add argv', () => {
-    const parsed = parseArgs(['hub', 'user', 'add', 'alice', '--install-dir', '/tmp/vibeterm-x']);
-    expect(parsed.command).toBe('hub');
-    expect(parsed.positionals).toEqual(['user', 'add', 'alice']);
+  test('dispatchCli accepts parsed user add argv', () => {
+    const parsed = parseArgs(['user', 'add', 'alice', '--install-dir', '/tmp/vibeterm-x']);
+    expect(parsed.command).toBe('user');
+    expect(parsed.positionals).toEqual(['add', 'alice']);
     expect(parsed.flags['install-dir']).toBe('/tmp/vibeterm-x');
   });
 
@@ -275,6 +254,9 @@ console.log(
     [['mesh', 'passkey', 'remove-all'], 'mesh.passkey.remove-all'],
     [['mesh', 'reset-root'], 'mesh.reset-root'],
     [['relay', 'resend-token'], 'relay.resend-token'],
+    [['user', 'add', 'alice'], 'user.add'],
+    [['user', 'passwd', 'bob'], 'user.passwd'],
+    [['user', 'totp', 'bob'], 'user.totp'],
   ];
   test.each(authDispatchCases)('%p dispatches through the auth runtime', (argv, expected) => {
     const nested = resolveNestedCommand(parseArgs(argv));

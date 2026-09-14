@@ -33,133 +33,50 @@ describe('parseArgs', () => {
 });
 
 describe('resolveNestedCommand', () => {
-  test('resolves hub user add <username>', () => {
-    const nested = resolveNestedCommand(parseArgs(['hub', 'user', 'add', 'alice']));
-    expect(nested.name).toBe('hub.user.add');
+  test('resolves user add <username>', () => {
+    const nested = resolveNestedCommand(parseArgs(['user', 'add', 'alice']));
+    expect(nested.name).toBe('user.add');
     expect(nested.rest).toEqual(['alice']);
   });
 
-  test('resolves hub user passwd/totp/reset', () => {
-    expect(resolveNestedCommand(parseArgs(['hub', 'user', 'passwd', 'bob'])).name).toBe(
-      'hub.user.passwd'
+  test('resolves user passwd/totp', () => {
+    expect(resolveNestedCommand(parseArgs(['user', 'passwd', 'bob'])).name).toBe('user.passwd');
+    expect(resolveNestedCommand(parseArgs(['user', 'totp', 'bob'])).name).toBe('user.totp');
+  });
+
+  test('rejects the deleted hub and enroll groups', () => {
+    expect(resolveNestedCommand(parseArgs(['hub', 'user', 'add', 'alice'])).name).toBe('unknown');
+    expect(resolveNestedCommand(parseArgs(['hub', 'join', 'https://example'])).name).toBe(
+      'unknown'
     );
-    expect(resolveNestedCommand(parseArgs(['hub', 'user', 'totp', 'bob'])).name).toBe(
-      'hub.user.totp'
-    );
-    expect(resolveNestedCommand(parseArgs(['hub', 'user', 'reset'])).name).toBe('hub.user.reset');
+    expect(resolveNestedCommand(parseArgs(['enroll', '--ttl', '10m'])).name).toBe('unknown');
+    expect(resolveNestedCommand(parseArgs(['user', 'reset'])).name).toBe('unknown');
   });
 
-  test('resolves hub join with token flag', () => {
-    const parsed = parseArgs([
-      'hub',
-      'join',
-      'https://hub.example',
-      '--token',
-      'abc',
-      '--name',
-      'n1',
-    ]);
-    const nested = resolveNestedCommand(parsed);
-    expect(nested.name).toBe('hub.join');
-    expect(nested.rest).toEqual(['https://hub.example']);
-    expect(parsed.flags.token).toBe('abc');
-    expect(parsed.flags.name).toBe('n1');
-  });
-
-  test('accepts hub join --password', () => {
-    const parsed = parseArgs(['hub', 'join', 'https://hub.example', '--password', 'secret']);
-    expect(resolveNestedCommand(parsed).name).toBe('hub.join');
-    expect(parsed.flags.password).toBe('secret');
-    expect(() => assertKnownFlags(parsed)).not.toThrow();
-    expect(() =>
-      assertKnownFlags(parseArgs(['hub', 'join', 'https://hub.example', '--password']))
-    ).not.toThrow();
-  });
-
-  test('accepts hub join --totp', () => {
-    const parsed = parseArgs([
-      'hub',
-      'join',
-      'https://hub.example',
-      '--password',
-      'secret',
-      '--totp',
-      '123456',
-    ]);
-    expect(parsed.flags.totp).toBe('123456');
-    expect(() => assertKnownFlags(parsed)).not.toThrow();
-  });
-
-  test('parses hub join/leave --no-restart as a boolean flag', () => {
+  test('parses relay join --no-restart as a boolean flag', () => {
     const join = parseArgs([
-      'hub',
+      'relay',
       'join',
-      'https://hub.example',
-      '--token',
-      'abc',
+      'https://relay.example',
+      '--tenant',
+      't1',
       '--no-restart',
     ]);
     expect(join.flags['no-restart']).toBe(true);
-    const leave = parseArgs(['hub', 'leave', '--no-restart', '--install-dir', '/tmp/vibeterm']);
-    expect(leave.flags['no-restart']).toBe(true);
-    expect(leave.flags['install-dir']).toBe('/tmp/vibeterm');
+    expect(resolveNestedCommand(join).name).toBe('relay.join');
   });
 
-  test('resolves hub leave, mesh reset-root, enroll, direct', () => {
-    expect(resolveNestedCommand(parseArgs(['hub', 'leave'])).name).toBe('hub.leave');
+  test('resolves mesh reset-root and direct', () => {
     expect(resolveNestedCommand(parseArgs(['mesh', 'reset-root'])).name).toBe('mesh.reset-root');
-    expect(resolveNestedCommand(parseArgs(['enroll', '--ttl', '10m'])).name).toBe('enroll');
     const direct = resolveNestedCommand(parseArgs(['direct', 'enable']));
     expect(direct.name).toBe('direct');
     expect(direct.rest).toEqual(['enable']);
   });
 
-  test('resolves hub standby/promote/demote/list', () => {
-    const standby = parseArgs([
-      'hub',
-      'standby',
-      '--public-url',
-      'https://standby.example',
-      '--priority',
-      '50',
-      '--insecure-local',
-      '--no-restart',
-    ]);
-    expect(resolveNestedCommand(standby).name).toBe('hub.standby');
-    expect(standby.flags['public-url']).toBe('https://standby.example');
-    expect(standby.flags.priority).toBe('50');
-    expect(standby.flags['insecure-local']).toBe(true);
-    expect(standby.flags['no-restart']).toBe(true);
-
-    const promote = parseArgs(['hub', 'promote', '--yes', '--no-restart']);
-    expect(resolveNestedCommand(promote).name).toBe('hub.promote');
-    expect(promote.flags.yes).toBe(true);
-    expect(promote.flags['no-restart']).toBe(true);
-
-    expect(resolveNestedCommand(parseArgs(['hub', 'demote', '--no-restart'])).name).toBe(
-      'hub.demote'
-    );
-    expect(resolveNestedCommand(parseArgs(['hub', 'list'])).name).toBe('hub.list');
-  });
-
-  test('resolves hub allow/disallow node ids', () => {
-    const allow = parseArgs(['hub', 'allow', 'aa'.repeat(16), 'bb'.repeat(16), '--no-restart']);
-    const allowNested = resolveNestedCommand(allow);
-    expect(allowNested.name).toBe('hub.allow');
-    expect(allowNested.rest).toEqual(['aa'.repeat(16), 'bb'.repeat(16)]);
-    expect(allow.flags['no-restart']).toBe(true);
-
-    const disallow = parseArgs(['hub', 'disallow', 'cc'.repeat(16), '--no-restart']);
-    const disallowNested = resolveNestedCommand(disallow);
-    expect(disallowNested.name).toBe('hub.disallow');
-    expect(disallowNested.rest).toEqual(['cc'.repeat(16)]);
-    expect(disallow.flags['no-restart']).toBe(true);
-  });
-
-  test('resolves init --role hub,node', () => {
-    const parsed = parseArgs(['init', '--role', 'hub,node']);
+  test('resolves init --role node', () => {
+    const parsed = parseArgs(['init', '--role', 'node']);
     expect(resolveNestedCommand(parsed).name).toBe('init');
-    expect(parsed.flags.role).toBe('hub,node');
+    expect(parsed.flags.role).toBe('node');
   });
 
   test('parses init --stun-servers and documents the built-in default', () => {
@@ -198,50 +115,16 @@ describe('assertKnownFlags', () => {
     );
   });
 
-  test('accepts hub standby/promote flags and rejects unknown ones', () => {
-    expect(() =>
-      assertKnownFlags(
-        parseArgs([
-          'hub',
-          'standby',
-          '--public-url',
-          'https://standby.example',
-          '--priority',
-          '200',
-          '--insecure-local',
-          '--no-restart',
-          '--install-dir',
-          '/tmp',
-        ])
-      )
-    ).not.toThrow();
-    expect(() =>
-      assertKnownFlags(parseArgs(['hub', 'promote', '--yes', '--no-restart']))
-    ).not.toThrow();
-    expect(() => assertKnownFlags(parseArgs(['hub', 'demote', '--no-restart']))).not.toThrow();
-    expect(() =>
-      assertKnownFlags(parseArgs(['hub', 'list', '--install-dir', '/tmp']))
-    ).not.toThrow();
-    expect(() =>
-      assertKnownFlags(
-        parseArgs(['hub', 'allow', 'aa'.repeat(16), '--no-restart', '--install-dir', '/tmp'])
-      )
-    ).not.toThrow();
-    expect(() =>
-      assertKnownFlags(parseArgs(['hub', 'disallow', 'aa'.repeat(16), '--no-restart']))
-    ).not.toThrow();
-    expect(() => assertKnownFlags(parseArgs(['hub', 'standby', '--not-a-real-flag']))).toThrow(
-      /Unknown flag|未知参数/
-    );
-    expect(() => assertKnownFlags(parseArgs(['hub', 'allow', '--not-a-real-flag']))).toThrow(
-      /Unknown flag|未知参数/
-    );
-  });
-
-  test('accepts hub user passwd --full-reset', () => {
-    const parsed = parseArgs(['hub', 'user', 'passwd', 'bob', '--full-reset']);
+  test('accepts user passwd --full-reset', () => {
+    const parsed = parseArgs(['user', 'passwd', 'bob', '--full-reset']);
     expect(parsed.flags['full-reset']).toBe(true);
     expect(() => assertKnownFlags(parsed)).not.toThrow();
+  });
+
+  test('rejects unknown user flags', () => {
+    expect(() => assertKnownFlags(parseArgs(['user', 'add', '--not-a-real-flag']))).toThrow(
+      /Unknown flag|未知参数/
+    );
   });
 
   test('accepts documented upgrade flags', () => {
@@ -271,30 +154,23 @@ describe('assertKnownFlags', () => {
 });
 
 describe('cli help', () => {
-  test('lists nested hub commands and existing init/doctor', () => {
+  test('lists user/relay commands and existing init/doctor', () => {
     const help = cliHelpText('en');
     expect(help).toContain('vibeterm init');
     expect(help).toContain('vibeterm doctor');
-    expect(help).toContain('vibeterm hub user add <username>');
-    expect(help).toContain('vibeterm hub user passwd <username> [--full-reset]');
+    expect(help).toContain('vibeterm user add <username>');
+    expect(help).toContain('vibeterm user passwd <username> [--full-reset]');
+    expect(help).not.toContain('vibeterm hub ');
+    expect(help).not.toContain('vibeterm enroll');
+    expect(help).not.toContain('vibeterm user reset');
     expect(help).toContain(
       'also remove all passkeys and two-step verification and sign out everywhere'
     );
     expect(cliHelpText('zh-CN')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
-    expect(help).toContain('vibeterm hub join');
-    expect(help).toContain('--password');
-    expect(help).toContain('--totp');
-    expect(help).toContain('VIBETERM_TOTP');
     expect(help).toContain('vibeterm relay join');
-    expect(help).toContain('vibeterm hub standby --public-url');
-    expect(help).toContain('vibeterm hub promote');
-    expect(help).toContain('vibeterm hub demote');
-    expect(help).toContain('vibeterm hub list');
-    expect(help).toContain('vibeterm hub allow');
-    expect(help).toContain('vibeterm hub disallow');
+    expect(help).toContain('--token <r3.…>');
     expect(help).toContain('--no-restart');
     expect(help).toContain('vibeterm mesh reset-root');
-    expect(help).toContain('vibeterm enroll');
     expect(help).toContain('VIBETERM_PASSWORD');
   });
 });

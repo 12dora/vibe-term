@@ -9,46 +9,22 @@ import {
 } from '../../../shared/src/auth';
 import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
+import { confirmDestructiveReset } from './destructive-confirm';
 import type { LocalAuthContext } from './local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
-import { isInteractiveStdin, promptText } from './prompt';
 import { uploadRelayPackFromLocal } from './relay-pack-upload';
 
 export type PasswdMode = 'keep' | 'full-reset';
 
-const HUB_TIMEOUT = 'HUB_TIMEOUT';
-const HUB_NOT_WRITER = 'HUB_NOT_WRITER';
 const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
 
 export function mapPasswdApplyError(error: string): string {
-  if (error === HUB_TIMEOUT) return t('hub.user.passwd.hubTimeout');
-  if (error === HUB_NOT_WRITER) return t('hub.user.passwd.hubNotWriter');
-  if (error === KEYLOG_TYPE_UNSUPPORTED_BY_NODES) return t('hub.user.passwd.nodesTooOld');
-  return t('hub.user.passwd.failed', { error });
+  if (error === KEYLOG_TYPE_UNSUPPORTED_BY_NODES) return t('user.passwd.nodesTooOld');
+  return t('user.passwd.failed', { error });
 }
 
 export function isPasswdFullReset(parsed: ParsedArgs): boolean {
   return parsed.flags['full-reset'] === true;
-}
-
-export async function confirmDestructiveReset(
-  parsed: ParsedArgs,
-  io: {
-    log?: (message: string) => void;
-    isTTY?: boolean;
-    readConfirmation?: () => Promise<string>;
-  },
-  warning = t('mesh.reset.warning')
-): Promise<void> {
-  (io.log ?? console.log)(warning);
-  if (!(io.isTTY ?? isInteractiveStdin())) {
-    if (parsed.flags.yes === true) return;
-    throw new Error(t('mesh.reset.requiresYes'));
-  }
-  const answer = io.readConfirmation
-    ? await io.readConfirmation()
-    : await promptText({ nonInteractive: false }, t('mesh.reset.confirm'));
-  if (answer.trim() !== 'yes') throw new Error(t('mesh.reset.cancelled'));
 }
 
 async function rewrapTotpForKeep(input: {
@@ -97,7 +73,7 @@ function buildPasswdRecord(input: {
   };
 }
 
-export async function applyHubUserPasswd(
+export async function applyUserPasswd(
   parsed: ParsedArgs,
   username: string,
   ctx: LocalAuthContext,
@@ -167,7 +143,7 @@ export async function applyHubUserPasswd(
     newKey.seed.fill(0);
   }
   const next = ctx.userStore.getById(user.id);
-  const doneKey = fullReset ? 'hub.user.passwd.doneFullReset' : 'hub.user.passwd.doneKeep';
+  const doneKey = fullReset ? 'user.passwd.doneFullReset' : 'user.passwd.doneKeep';
   (io.log ?? console.log)(t(doneKey, { username }));
   return { rootEpoch: next?.rootEpoch ?? user.rootEpoch + 1, mode };
 }

@@ -18,7 +18,7 @@ type DiagnosticKeyLogStatus = {
   userId: string | null;
   local: DiagnosticKeyLogHead | null;
   remote: DiagnosticKeyLogHead | null;
-  remoteKind: 'hub' | 'relay' | null;
+  remoteKind: 'relay' | 'none' | null;
   localAtRemote: string | null;
   remoteAtLocal: string | null;
   error?: string;

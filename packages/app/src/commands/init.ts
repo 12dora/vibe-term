@@ -4,7 +4,6 @@ import { canonicalHubUrl } from '../../../shared/src/auth';
 import {
   DEFAULT_PUBLIC_HTTPS_PORT,
   DEFAULT_TLS_PORT,
-  isLoopbackHostname,
   parseProbeTarget,
   pickSuggestedPortAvoiding,
 } from '../../../shared/src/net';
@@ -46,12 +45,7 @@ import {
 import { detectInstallSource } from '../lib/install-source';
 import { detectServiceManager } from '../lib/platform';
 import { promptConfirm, promptText } from '../lib/prompt';
-import {
-  DEFAULT_PEER_PORT,
-  parseVibeTermRoleName,
-  rolesFromName,
-  validateRoles,
-} from '../lib/roles';
+import { DEFAULT_PEER_PORT, parseVibeTermRoleName } from '../lib/roles';
 import { installService, serviceHint } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
 import { repairUpgrade, withUpgradeLock } from '../lib/upgrade-apply';
@@ -174,10 +168,7 @@ type AskFlag = (
   required?: boolean
 ) => Promise<string>;
 
-type UplinkConfig = Pick<
-  InitConfig,
-  'role' | 'hubUrl' | 'hubPublicUrl' | 'relayPublicUrl' | 'peerPort'
->;
+type UplinkConfig = Pick<InitConfig, 'role' | 'relayPublicUrl' | 'peerPort'>;
 
 async function buildUplinkConfig(
   parsed: ParsedArgs,
@@ -187,34 +178,21 @@ async function buildUplinkConfig(
 ): Promise<UplinkConfig> {
   const flags = parsed.flags;
   const role = parseVibeTermRoleName(
-    (await ask('role', 'Role (standalone|node|hub,node|relay|relay,node)', 'standalone', false)) ||
+    (await ask('role', 'Role (standalone|node|relay|relay,node)', 'standalone', false)) ||
       'standalone'
   );
-  const invalidRole = validateRoles(rolesFromName(role));
-  if (invalidRole) {
-    throw new Error(invalidRole);
-  }
   const isRelay = role === 'relay' || role === 'relay,node';
-  const hubUrl = isRelay
-    ? ''
-    : await ask('hub-url', 'Hub URL (VIBETERM_HUB_URL, empty allowed)', '', false);
   const peerPort = parsePort(
     (await ask('peer-port', 'Peer port (VIBETERM_PEER_PORT)', String(DEFAULT_PEER_PORT), false)) ||
       String(DEFAULT_PEER_PORT)
   );
-  const hubPublicUrlFlag = asString(flags['hub-public-url']) || '';
-  const needsPublicUrl = isRelay || role === 'hub,node';
-  const publicPort = needsPublicUrl
+  const publicPort = isRelay
     ? await resolvePublicHttpsPort(parsed, ni, [gatewayPort, peerPort, DEFAULT_TLS_PORT])
     : DEFAULT_PUBLIC_HTTPS_PORT;
-  const hubPublicUrl =
-    role === 'hub,node'
-      ? await resolveHubPublicUrl(ni, hubPublicUrlFlag, publicPort)
-      : hubPublicUrlFlag;
   const relayPublicUrl = isRelay
     ? await resolveRelayPublicUrl(ni, asString(flags['relay-public-url']) || '', publicPort)
     : '';
-  return { role, hubUrl, hubPublicUrl, relayPublicUrl, peerPort };
+  return { role, relayPublicUrl, peerPort };
 }
 
 /**
@@ -309,45 +287,6 @@ export function normalizeRelayPublicUrl(raw: string): string {
   } catch (error) {
     throw new Error(`invalid relay public URL: ${errorMessage(error)}`);
   }
-}
-
-/** Hub 公网地址与中继同一套规则：https（回环允许 http），写坏了没有节点能加入。 */
-export function normalizeHubPublicUrl(raw: string): string {
-  const value = raw.trim();
-  if (!value) {
-    throw new Error('hub public URL cannot be empty');
-  }
-  let canonical: string;
-  try {
-    canonical = canonicalHubUrl(value);
-  } catch (error) {
-    throw new Error(`invalid hub public URL: ${errorMessage(error)}`);
-  }
-  const url = new URL(canonical);
-  if (url.protocol === 'https:') return canonical;
-  if (url.protocol === 'http:' && isLoopbackHostname(url.hostname)) return canonical;
-  throw new Error('invalid hub public URL: must be https (http allowed for loopback only)');
-}
-
-async function resolveHubPublicUrl(
-  nonInteractive: boolean,
-  current: string,
-  publicPort: number
-): Promise<string> {
-  if (nonInteractive) {
-    if (!current) {
-      throw new Error('init --role hub,node requires --hub-public-url in non-interactive mode');
-    }
-    return normalizeHubPublicUrl(applyPublicPort(current, publicPort));
-  }
-  const answer = await promptPublicUrl({
-    label: 'Hub public URL (VIBETERM_HUB_PUBLIC_URL)',
-    current,
-    publicPort,
-    normalize: normalizeHubPublicUrl,
-  });
-  if (answer !== null) return answer;
-  throw new Error('init --role hub,node requires a valid https --hub-public-url');
 }
 
 async function handleDepFailure(
@@ -458,17 +397,13 @@ function printInitSummary(
 }
 
 export function initPortPlanList(
-  config: Pick<
-    InitConfig,
-    'role' | 'host' | 'port' | 'peerPort' | 'hubPublicUrl' | 'relayPublicUrl'
-  >
+  config: Pick<InitConfig, 'role' | 'host' | 'port' | 'peerPort' | 'relayPublicUrl'>
 ): string {
   return formatPortPlanForEnv({
     VIBETERM_ROLES: config.role,
     GATEWAY_PORT: String(config.port),
     VIBETERM_BIND_HOST: config.host,
     VIBETERM_PEER_PORT: String(config.peerPort),
-    VIBETERM_HUB_PUBLIC_URL: config.hubPublicUrl,
     VIBETERM_RELAY_PUBLIC_URL: config.relayPublicUrl,
   });
 }
@@ -532,9 +467,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
     databasePath: config.databasePath,
     masterKey,
     role: config.role,
-    hubUrl: config.hubUrl,
     peerPort: config.peerPort,
-    hubPublicUrl: config.hubPublicUrl,
     relayPublicUrl: config.relayPublicUrl,
     stunServers: config.stunServers,
   });

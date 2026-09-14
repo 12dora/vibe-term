@@ -9,7 +9,6 @@ import {
 } from '../../../../apps/gateway/src/api/system-routes';
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
-import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import {
   MESH_VIA_SELF,
   type MeshRewritten,
@@ -31,7 +30,6 @@ import { guardEntryAccess } from '../../../../apps/gateway/src/tunnel/access-gua
 import { tunnelManager } from '../../../../apps/gateway/src/tunnel/manager';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { disableDirect, enableDirect } from '../commands/direct';
-import { performHubJoin } from '../commands/hub';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import type { LocalAuthContext } from '../lib/local-auth';
@@ -276,9 +274,7 @@ function buildTlsLifecycle(
       authorize: async (req) =>
         routeDeps.authenticate(req).ok ? null : jsonErr('UNAUTHORIZED', 'login required', 401),
       onApplied: hooks?.onTlsApplied,
-      configuredPublicUrl: routeDeps.roles.hub
-        ? (gatewayConfig.hubPublicUrl ?? gatewayConfig.baseUrl)
-        : gatewayConfig.baseUrl,
+      configuredPublicUrl: gatewayConfig.baseUrl,
     }),
   };
 }
@@ -300,7 +296,6 @@ export function buildLocalRouteDeps(input: {
   roles: VibeTermRoles;
   auth: LocalAuthContext;
   mesh: MeshRuntime | null;
-  hub: HubRuntime | null;
   tlsSlot: { service?: TlsService };
   scheduleRestart: () => void;
   localAuthEffective: () => boolean;
@@ -312,8 +307,6 @@ export function buildLocalRouteDeps(input: {
     precheckCaPem: async () => (await input.tlsSlot.service?.caPem()) ?? null,
     envPath: input.auth.envPath,
     installDir: input.auth.installDir,
-    hubUrl: gatewayConfig.hubUrl,
-    hubPublicUrl: gatewayConfig.hubPublicUrl,
     enableDirect,
     disableDirect,
     isDirectSupported: () => detectCurrentNativePin() != null,
@@ -321,11 +314,9 @@ export function buildLocalRouteDeps(input: {
       return Boolean(input.mesh?.rtc?.available);
     },
     platform: `${process.platform}-${process.arch}`,
-    performHubJoin,
     scheduleRestart: input.scheduleRestart,
     quiesceMesh: async () => {
       await tryStop(() => input.mesh?.stop());
-      await tryStop(() => input.hub?.stop());
     },
     startedAt: PROCESS_STARTED_AT,
     authenticate: createRouteAuthenticate(
@@ -345,7 +336,6 @@ export function buildLocalRouteDeps(input: {
 export function buildHttpAndWs(input: {
   gateway: GatewayRuntime;
   mesh: MeshRuntime | null;
-  hub: HubRuntime | null;
   relay?: RelayRuntime | null;
   authHttp: MeshHttpRuntime | null;
   routeDeps: LocalRouteDeps;
@@ -363,20 +353,11 @@ export function buildHttpAndWs(input: {
       relay
         ? relay.handleRequest(req, server).then((r) => (r instanceof Response ? r : null))
         : null,
-    (req, server) =>
-      input.hub
-        ? input.hub.handleRequest(req, server).then((r) => (r instanceof Response ? r : null))
-        : null,
     (req, server) => meshHttp(authSurface, req, server),
     (req, server) => gatewayHttp(input.gateway, Boolean(authSurface), req, server),
     (req) => input.serveFrontend(req, input.staticRoot),
   ]);
-  const websocket = routeWebsocket(
-    input.gateway,
-    input.mesh ?? wsAuthFrom(input.authHttp),
-    input.hub,
-    relay
-  );
+  const websocket = routeWebsocket(input.gateway, input.mesh ?? wsAuthFrom(input.authHttp), relay);
   return {
     fetch,
     websocket,
@@ -393,7 +374,6 @@ export function wireTlsLifecycle(input: {
   tlsSlot: { service?: TlsService };
   authHttp: MeshHttpRuntime | null;
   mesh: MeshRuntime | null;
-  hub: HubRuntime | null;
 }) {
   const invalidateTlsCaches = () => {
     input.authHttp?.auth.invalidateAuthModeCache();
@@ -403,10 +383,7 @@ export function wireTlsLifecycle(input: {
     invalidateTlsCaches();
     void (async () => {
       try {
-        const tls = await advertisedTlsInfo(input.tlsSlot.service);
-        if (input.hub && typeof input.hub.updateSelfCaFingerprint === 'function') {
-          input.hub.updateSelfCaFingerprint(tls.caFingerprint);
-        }
+        await advertisedTlsInfo(input.tlsSlot.service);
       } catch {
         /* fake db in unit tests has no tls_config table */
       }
@@ -437,12 +414,9 @@ export function createAssembledLifecycle(input: {
   mesh: MeshRuntime | null;
   gateway: GatewayRuntime;
   authHttp: MeshHttpRuntime | null;
-  hub: HubRuntime | null;
   relay?: RelayRuntime | null;
-  unsubscribeNodeList: (() => void) | undefined;
   shutdown: AssembleShutdownState;
 }): AssembledLifecycle {
-  let unsubscribe = input.unsubscribeNodeList;
   let stopPromise: Promise<void> | null = null;
   return {
     async start() {
@@ -451,15 +425,12 @@ export function createAssembledLifecycle(input: {
     },
     async stop() {
       stopPromise ??= (async () => {
-        unsubscribe?.();
-        unsubscribe = undefined;
         setHealthzTlsProvider(null);
         setSiteSettingsLinkProvider(null);
         await tryStop(() => input.relay?.stop(), 'relay');
         await tryStop(() => input.gateway.stopAgentSessions?.(), 'agent-supervisor');
         await tryStop(() => input.mesh?.stop(), 'mesh');
         await tryStop(() => input.authHttp?.stop(), 'auth');
-        await tryStop(() => input.hub?.stop(), 'hub');
         await tryStop(() => input.gateway.stop(), 'gateway');
       })();
       return stopPromise;

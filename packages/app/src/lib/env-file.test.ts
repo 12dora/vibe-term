@@ -20,7 +20,7 @@ import {
   stringifyEnv,
   writeEnvFile,
 } from './env-file';
-import { hubEnvDefaults } from './install';
+import { peerEnvDefaults } from './install';
 
 const tempDirs: string[] = [];
 
@@ -42,13 +42,13 @@ describe('env-file', () => {
   test('mergeMissingKeys only adds absent keys', () => {
     const { next, added } = mergeMissingKeys(
       { VIBETERM_ROLES: 'node', GATEWAY_PORT: '9883' },
-      hubEnvDefaults()
+      peerEnvDefaults()
     );
     expect(next.VIBETERM_ROLES).toBe('node');
-    expect(next.VIBETERM_HUB_URL).toBe('');
+    expect(next.VIBETERM_HUB_URL).toBeUndefined();
     expect(next.VIBETERM_PEER_PORT).toBe('39001');
     expect(next.VIBETERM_STUN_SERVERS).toBeUndefined();
-    expect(added).toContain('VIBETERM_HUB_URL');
+    expect(added).toContain('VIBETERM_PEER_PORT');
     expect(added).not.toContain('VIBETERM_ROLES');
     expect(added).not.toContain('VIBETERM_STUN_SERVERS');
   });
@@ -209,15 +209,8 @@ describe('env-file', () => {
     try {
       const path = join(dir, 'app.env');
       await writeEnvFile(path, { VIBETERM_MASTER_KEY: 'k', GATEWAY_PORT: '9883' });
-      const added = await mergeMissingEnvFileKeys(path, hubEnvDefaults());
-      expect(added.sort()).toEqual(
-        [
-          'VIBETERM_HUB_PUBLIC_URL',
-          'VIBETERM_HUB_URL',
-          'VIBETERM_PEER_PORT',
-          'VIBETERM_ROLES',
-        ].sort()
-      );
+      const added = await mergeMissingEnvFileKeys(path, peerEnvDefaults());
+      expect(added.sort()).toEqual(['VIBETERM_PEER_PORT', 'VIBETERM_ROLES'].sort());
       const env = await readEnvFile(path);
       expect(env.VIBETERM_MASTER_KEY).toBe('k');
       expect(env.GATEWAY_PORT).toBe('9883');

@@ -9,10 +9,10 @@ import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
 import { defaultShimDirs } from '../lib/cli-shim';
 import { getInstallHint } from '../lib/dep-install';
-import { mergeMissingEnvFileKeys, readEnvFile } from '../lib/env-file';
+import { mergeMissingKeys, readEnvFile, writeEnvFile } from '../lib/env-file';
 import { errorMessage } from '../lib/error-message';
 import { ensureDir, pathExists } from '../lib/fs-utils';
-import { hubEnvDefaults } from '../lib/install';
+import { peerEnvDefaults, rewriteLegacyHubInstallEnv } from '../lib/install';
 import {
   type InstallLayout,
   createInstallLayout,
@@ -296,6 +296,18 @@ async function requireUpgradeBun(parsed: ParsedArgs, meta: InstallMeta): Promise
   throw new Error(`${reason}\n${t('deps.install.hint', { command: hint })}`);
 }
 
+async function rewriteInstallEnvForUpgrade(envPath: string): Promise<void> {
+  if (!(await pathExists(envPath))) return;
+  const existing = await readEnvFile(envPath);
+  const rewritten = rewriteLegacyHubInstallEnv(existing);
+  const { next, added } = mergeMissingKeys(rewritten, peerEnvDefaults());
+  const changed =
+    added.length > 0 ||
+    Object.keys(next).length !== Object.keys(existing).length ||
+    Object.entries(next).some(([key, value]) => existing[key] !== value);
+  if (changed) await writeEnvFile(envPath, next);
+}
+
 async function runLockedUpgrade(opts: {
   parsed: ParsedArgs;
   installDir: string;
@@ -357,9 +369,7 @@ async function runLockedUpgrade(opts: {
   const cliVersion = await readPackageVersion(packageLayout.packageRoot);
   const toVersion = asString(opts.parsed.flags.version) || cliVersion;
 
-  if (await pathExists(installLayout.envPath)) {
-    await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
-  }
+  await rewriteInstallEnvForUpgrade(installLayout.envPath);
 
   await apply(
     {

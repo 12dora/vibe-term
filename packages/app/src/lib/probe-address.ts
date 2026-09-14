@@ -9,7 +9,7 @@ import type { FetchInit, FetchLike } from './fetch-like';
 /** CLI 侧单个候选端口的探测超时。 */
 export const CLI_PROBE_TIMEOUT_MS = 4_000;
 
-export type ProbeAddressKind = 'relay' | 'hub';
+export type ProbeAddressKind = 'relay';
 
 export type ProbeAddressOptions = {
   kind: ProbeAddressKind;
@@ -94,7 +94,7 @@ export async function probeAddressForCli(
     return { url: raw, probed: true, found: false, triedPorts: result.triedPorts };
   }
   log?.(
-    t(options.kind === 'relay' ? 'port.probe.foundRelay' : 'port.probe.foundHub', {
+    t('port.probe.foundRelay', {
       port: result.port,
       url: result.url,
     })

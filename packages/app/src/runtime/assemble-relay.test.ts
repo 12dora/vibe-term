@@ -47,7 +47,7 @@ function gatewayWith(db: GatewayRuntime['db']): GatewayRuntime {
   } as GatewayRuntime;
 }
 
-async function assembleRelay(roles: { hub: boolean; node: boolean; relay: boolean }) {
+async function assembleRelay(roles: { node: boolean; relay: boolean }) {
   const { db, close } = createMigratedAuthDb();
   const assembled = await assembleVibeTerm({
     roles,
@@ -68,7 +68,7 @@ async function assembleRelay(roles: { hub: boolean; node: boolean; relay: boolea
 
 describe('assembleVibeTerm relay role', () => {
   test('relay alone mounts the relay runtime with no mesh and no frontend', async () => {
-    const { assembled, close } = await assembleRelay({ hub: false, node: false, relay: true });
+    const { assembled, close } = await assembleRelay({ node: false, relay: true });
     try {
       expect(assembled.relay).not.toBeNull();
       expect(assembled.mesh).toBeNull();
@@ -88,7 +88,7 @@ describe('assembleVibeTerm relay role', () => {
   });
 
   test('relay admin routes require the admin token', async () => {
-    const { assembled, close } = await assembleRelay({ hub: false, node: false, relay: true });
+    const { assembled, close } = await assembleRelay({ node: false, relay: true });
     try {
       const denied = await assembled.fetch(
         new Request('http://127.0.0.1/api/relay/status'),
@@ -110,7 +110,7 @@ describe('assembleVibeTerm relay role', () => {
   test('standalone assembles without a relay runtime', async () => {
     const { db, close } = createMigratedAuthDb();
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       staticRoot: '/tmp/vibeterm-relay-no-frontend',
       createGatewayRuntime: async () => gatewayWith(db),
     });
@@ -123,9 +123,9 @@ describe('assembleVibeTerm relay role', () => {
   });
 
   test('role helpers treat relay as a shutdown-needing role', () => {
-    expect(meshShutdownNeeded({ hub: false, node: false, relay: true })).toBe(true);
-    expect(isRelayOnly({ hub: false, node: false, relay: true })).toBe(true);
-    expect(isRelayOnly({ hub: false, node: true, relay: true })).toBe(false);
-    expect(isRelayOnly({ hub: false, node: false, relay: false })).toBe(false);
+    expect(meshShutdownNeeded({ node: false, relay: true })).toBe(true);
+    expect(isRelayOnly({ node: false, relay: true })).toBe(true);
+    expect(isRelayOnly({ node: true, relay: true })).toBe(false);
+    expect(isRelayOnly({ node: false, relay: false })).toBe(false);
   });
 });

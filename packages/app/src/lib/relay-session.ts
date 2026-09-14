@@ -25,8 +25,8 @@ import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
 import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
-import { cliPasswordLoginBlockedByPasskey, fetchAuthMode, loginWithRootKey } from './hub-client';
 import type { LocalAuthContext } from './local-auth';
+import { cliPasswordLoginBlockedByPasskey, fetchAuthMode, loginWithRootKey } from './node-client';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
 import { promptPassword, promptText } from './prompt';
 import { asString } from './validate';
@@ -47,7 +47,7 @@ export type RelayStatusRelay = {
 };
 
 export type RelayStatusResponse = {
-  mode: 'relay' | 'hub' | 'none';
+  mode: 'relay' | 'none';
   tenantId: string | null;
   relays: RelayStatusRelay[];
   metaEpoch: number;
@@ -237,7 +237,7 @@ export type RelayRecordSubmission = {
 };
 
 /**
- * 用根钥签一条 set-relays / meta-key 记录并经本机 gateway 走 hub=sync 提交。
+ * 用根钥签一条 set-relays / meta-key 记录并经本机 gateway 走 ?hub=sync（legacy 查询名）提交。
  *
  * head 是「读-签-写」的乐观锁：并发追加会让 seq/prev_hash 对不上，这里有界重试；
  * 但根 epoch 变了说明根钥已经换过，手里这把（本次命令开头由密码派生）再也签不出有效记录，
@@ -317,7 +317,7 @@ function relayRowFromJson(value: unknown): RelayStatusRelay {
 export function parseRelayStatus(body: Record<string, unknown>): RelayStatusResponse {
   const mode = asText(body.mode, 'none');
   return {
-    mode: mode === 'relay' || mode === 'hub' ? mode : 'none',
+    mode: mode === 'relay' ? 'relay' : 'none',
     tenantId: typeof body.tenantId === 'string' ? body.tenantId : null,
     relays: Array.isArray(body.relays) ? body.relays.map(relayRowFromJson) : [],
     metaEpoch: asNumber(body.metaEpoch),

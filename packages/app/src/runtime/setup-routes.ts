@@ -2,48 +2,24 @@ import { isStandaloneRoles } from '../lib/roles';
 import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
 import { handleRelayJoinRequest } from './relay-join-routes';
 import { becomeRelay } from './relay-setup-service';
-import {
-  type PrecheckKind,
-  type SetupServiceDeps,
-  becomeHub,
-  joinHub,
-  precheckHubUrl,
-} from './setup-service';
+import { type PrecheckKind, type SetupServiceDeps, precheckRelayUrl } from './setup-service';
 import { SetupError } from './setup-shared';
 
-const SETUP_PATHS = new Set([
-  '/api/setup/precheck',
-  '/api/setup/hub',
-  '/api/setup/join',
-  '/api/setup/relay',
-  '/api/setup/relay-join',
-]);
+const SETUP_PATHS = new Set(['/api/setup/precheck', '/api/setup/relay', '/api/setup/relay-join']);
 
 function readString(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   return typeof value === 'string' ? value : '';
 }
 
-/** 缺省 hub；非法值直接拒，别让打错的 kind 静默按 Hub 判据探到一台不是中继的机器。 */
+/** 缺省 relay；非法值直接拒，别让打错的 kind 静默按错误判据探测。 */
 function readPrecheckKind(body: Record<string, unknown>): PrecheckKind {
   const kind = body.kind;
-  if (kind === undefined || kind === null || kind === '') return 'hub';
-  if (kind !== 'hub' && kind !== 'relay') {
-    throw new SetupError('invalid_body', "kind must be 'hub' or 'relay'", 400);
+  if (kind === undefined || kind === null || kind === '') return 'relay';
+  if (kind !== 'relay') {
+    throw new SetupError('invalid_body', "kind must be 'relay'", 400);
   }
   return kind;
-}
-
-const TOTP_CODE_RE = /^\d{6,10}$/;
-
-function readOptionalTotpCode(body: Record<string, unknown>): string | undefined {
-  if (!Object.hasOwn(body, 'totpCode') || body.totpCode == null || body.totpCode === '') {
-    return undefined;
-  }
-  if (typeof body.totpCode !== 'string' || !TOTP_CODE_RE.test(body.totpCode)) {
-    throw new SetupError('invalid_body', 'totpCode must be 6-10 digits', 400);
-  }
-  return body.totpCode;
 }
 
 async function dispatchSetupAction(
@@ -52,20 +28,7 @@ async function dispatchSetupAction(
   deps: SetupServiceDeps
 ): Promise<Response> {
   if (path === '/api/setup/precheck') {
-    return jsonOk(await precheckHubUrl(readString(body, 'url'), deps, readPrecheckKind(body)));
-  }
-  if (path === '/api/setup/hub') {
-    return jsonOk(
-      await becomeHub(
-        {
-          hubPublicUrl: readString(body, 'hubPublicUrl'),
-          username: readString(body, 'username'),
-          password: readString(body, 'password'),
-          directEnable: body.directEnable !== false,
-        },
-        deps
-      )
-    );
+    return jsonOk(await precheckRelayUrl(readString(body, 'url'), deps, readPrecheckKind(body)));
   }
   if (path === '/api/setup/relay') {
     const relayPassword = body.relayPassword;
@@ -88,26 +51,7 @@ async function dispatchSetupAction(
       )
     );
   }
-  if (path === '/api/setup/relay-join') {
-    return await handleRelayJoinRequest(body, deps);
-  }
-  const method =
-    body.method === 'password' ? 'password' : body.method === 'token' ? 'token' : undefined;
-  return jsonOk(
-    await joinHub(
-      {
-        hubUrl: readString(body, 'hubUrl'),
-        token: readString(body, 'token') || undefined,
-        password: readString(body, 'password') || undefined,
-        method,
-        name: readString(body, 'name'),
-        directEnable: body.directEnable !== false,
-        insecureLocal: body.insecureLocal === true,
-        totpCode: readOptionalTotpCode(body),
-      },
-      deps
-    )
-  );
+  return await handleRelayJoinRequest(body, deps);
 }
 
 export async function handleSetupRequest(

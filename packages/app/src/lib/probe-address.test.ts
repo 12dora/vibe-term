@@ -49,13 +49,13 @@ describe('probeAddressForCli', () => {
 
   test('an explicit :443 is treated as explicit and never swept', async () => {
     const seen: string[] = [];
-    const result = await probeAddressForCli('https://hub.example.com:443', {
-      kind: 'hub',
+    const result = await probeAddressForCli('https://relay.example.com:443', {
+      kind: 'relay',
       fetcher: healthOn([443], seen),
       timeoutMs: 150,
     });
     expect(result).toEqual({
-      url: 'https://hub.example.com:443',
+      url: 'https://relay.example.com:443',
       probed: false,
       found: false,
       triedPorts: [],
@@ -66,13 +66,13 @@ describe('probeAddressForCli', () => {
   test('loopback and skip both bypass probing', async () => {
     const seen: string[] = [];
     const local = await probeAddressForCli('https://localhost', {
-      kind: 'hub',
+      kind: 'relay',
       fetcher: healthOn([443], seen),
       timeoutMs: 150,
     });
     expect(local.probed).toBe(false);
-    const skipped = await probeAddressForCli('https://hub.example.com', {
-      kind: 'hub',
+    const skipped = await probeAddressForCli('https://relay.example.com', {
+      kind: 'relay',
       fetcher: healthOn([443], seen),
       skip: true,
       timeoutMs: 150,
@@ -82,26 +82,19 @@ describe('probeAddressForCli', () => {
   });
 
   test('nothing answering keeps the original address and lists the ports', async () => {
-    const result = await probeAddressForCli('https://hub.example.com', {
-      kind: 'hub',
+    const result = await probeAddressForCli('https://relay.example.com', {
+      kind: 'relay',
       fetcher: healthOn([]),
       timeoutMs: 100,
     });
-    expect(result.url).toBe('https://hub.example.com');
+    expect(result.url).toBe('https://relay.example.com');
     expect(result.probed).toBe(true);
     expect(result.found).toBe(false);
     expect(result.triedPorts).toContain(443);
     expect(probeNotFoundMessage(result.triedPorts)).toContain('443');
   });
 
-  test('hub probing uses /healthz and relay probing uses /api/relay/health', async () => {
-    const hubSeen: string[] = [];
-    await probeAddressForCli('https://hub.example.com', {
-      kind: 'hub',
-      fetcher: healthOn([443], hubSeen),
-      timeoutMs: 150,
-    });
-    expect(hubSeen).toEqual(['443/healthz']);
+  test('relay probing uses /api/relay/health', async () => {
     const relaySeen: string[] = [];
     await probeAddressForCli('https://relay.example.com', {
       kind: 'relay',

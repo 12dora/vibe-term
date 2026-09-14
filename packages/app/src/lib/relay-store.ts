@@ -12,7 +12,7 @@ export type RelayTargetRow = {
 };
 
 /**
- * `hub join` 走 r3 串时的节点侧落库：整表替换 `mesh_relays`、写入 K_log、把上级切成 relay。
+ * `relay join` 走 r3 串时的节点侧落库：整表替换 `mesh_relays`、写入 K_log、把上级切成 relay。
  * K_meta 要等承认本节点的那条 `meta-key` 记录到达才有，这里不写。
  */
 export async function persistRelayUplink(
@@ -42,7 +42,7 @@ export async function persistRelayUplink(
 }
 
 export function readRelayUplink(ctx: LocalAuthContext): {
-  kind: 'hub' | 'relay';
+  kind: 'relay' | 'none';
   relays: ReturnType<MeshRelayStore['listRelayRows']>;
   name: string | null;
 } {
