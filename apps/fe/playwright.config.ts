@@ -26,14 +26,14 @@ const DEFAULT_FE_PORT = 9885;
 const gatewayPort = Number(process.env.VIBETERM_E2E_GATEWAY_PORT) || DEFAULT_GATEWAY_PORT;
 const fePort = Number(process.env.VIBETERM_E2E_FE_PORT) || DEFAULT_FE_PORT;
 
-// mesh 用例自带一套 hub + node（tests/helpers/mesh-boot.ts 从源码起两个 runtime，
-// 前端由 hub 直接托管 apps/fe/dist），与这里的 standalone gateway/vite 无关。
+// mesh 用例自带一套 relay + node A + node B（tests/helpers/relay-boot.ts 从源码起三个
+// runtime，前端由入口节点 A 托管 apps/fe/dist），与这里的 standalone gateway/vite 无关。
 // 两个开关由 scripts/run-e2e.ts 按 --project / --grep 推导后注入：
 //   VIBETERM_E2E_MESH=1       注册 mesh-setup / mesh / mesh-teardown 三个 project；
 //   VIBETERM_E2E_MESH_ONLY=1  本轮只跑 mesh，跳过 standalone 的 webServer 与 globalSetup。
 const meshEnabled = process.env.VIBETERM_E2E_MESH === '1';
 const meshOnly = process.env.VIBETERM_E2E_MESH_ONLY === '1';
-const MESH_TEST_FILES = /mesh[-.].*\.(spec|setup|teardown)\.ts$/;
+const MESH_TEST_FILES = /(?:mesh-.*\.spec|relay\.(?:setup|teardown))\.ts$/;
 const bunExecutable = resolveBunExecutable();
 const forceFreshServers = Boolean(
   process.env.VIBETERM_E2E_DATABASE_URL || process.env.VIBETERM_E2E_SSH_DEVICE_NAME
@@ -102,12 +102,12 @@ export default defineConfig({
       ? [
           {
             name: 'mesh-setup',
-            testMatch: /mesh\.setup\.ts$/,
+            testMatch: /relay\.setup\.ts$/,
             teardown: 'mesh-teardown',
           },
           {
             name: 'mesh-teardown',
-            testMatch: /mesh\.teardown\.ts$/,
+            testMatch: /relay\.teardown\.ts$/,
           },
           {
             name: 'mesh',

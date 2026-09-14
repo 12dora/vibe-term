@@ -1,5 +1,5 @@
-// relay-boot 写给调用方的 state JSON：schema 与 `--mode hub` 的说明都收在这里，
-// 让 relay-boot.ts 只留编排逻辑。字段含义见 docs/development/relay-live-harness.md。
+// relay-boot 写给调用方的 state JSON：schema 收在这里，让 relay-boot.ts 只留编排逻辑。
+// 字段含义见 docs/development/relay-live-harness.md。
 
 import { type Session, cookieHeader } from './relay-boot-auth.ts';
 
@@ -117,17 +117,4 @@ export function buildState(input: BuildStateInput): Record<string, unknown> {
     },
     tmuxSockets,
   };
-}
-
-export function hubModeHelp(): string {
-  return [
-    'hub 拓扑（hub,node + node）用既有的 mesh-boot.ts，本文件不复制它：',
-    '',
-    '  bun apps/fe/tests/helpers/mesh-boot.ts --state /tmp/vibeterm-mesh-e2e.json',
-    '',
-    'mesh-boot 会拉起 hub(19771+) + node，enroll/hub join 并入 mesh，把 baseUrl / hubNodeId /',
-    'remoteNodeId / username / password 写进 state JSON，SIGTERM 回收全部进程与 tmux socket。',
-    'relay 拓扑（relay,node + node + standalone）用本文件的 --state 模式。',
-    '',
-  ].join('\n');
 }

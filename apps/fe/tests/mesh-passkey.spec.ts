@@ -8,7 +8,7 @@ import {
   meshUrl,
   readMeshState,
   signInToNodeFromDevicesPage,
-} from './helpers/mesh';
+} from './helpers/mesh-e2e';
 
 // 文案断言按浏览器语言二选一：e2e 的 Chromium 是 en-US，本地跑成中文时也不该挂。
 const INVALID_CREDENTIALS_COPY = /Incorrect username or password\.|用户名或密码错误。/;
@@ -21,7 +21,7 @@ const PASSKEY_NOT_HERE_COPY = /No passkey is registered for this address|此地�
  *
  * entry 把来源判成 trusted-local（loopback / 私网 / CGNAT）的登录一律豁免通行密钥二次验证，
  * 而 Playwright 的浏览器正是从 loopback 连过来的。mesh 实例因此以 `VIBETERM_TRUST_PROXY=true` 启动
- * （见 helpers/mesh-boot.ts），用例给自己的 context 挂上 `x-forwarded-for` 就能把来源声明成公网，
+ * （见 helpers/relay-boot.ts），用例给自己的 context 挂上 `x-forwarded-for` 就能把来源声明成公网，
  * 强制走严格路径。TEST-NET-3（RFC 5737）地址，永远不会撞上真实网段。
  */
 const FORWARDED_PUBLIC_IP = '203.0.113.9';
@@ -57,8 +57,8 @@ test.afterAll(async () => {
   await context?.close();
 });
 
-// WebAuthn 只接受域名或 localhost origin，mesh e2e 的 entry 因此固定为
-// http://localhost:<hubPort>（见 helpers/mesh-boot.ts）。
+// WebAuthn 只接受域名或 localhost origin，mesh e2e 的 entry（node A）因此固定为
+// http://localhost:<entryPort>（见 helpers/relay-boot.ts）。
 test('mesh: register a passkey on the entry node and log in with it', async () => {
   await loginWithPassword(page, state);
 
@@ -116,7 +116,7 @@ test('mesh: after a passkey is registered, password login requires the passkey',
  * loopback 连 entry，密码登录必须一次过，且全程不能触发任何 WebAuthn 仪式
  * （`navigator.credentials.get` 的调用次数是硬证据）。
  *
- * 只登 entry 证不了多少事：entry 就是 hub，`/n/<hubNodeId>` 会在本机自重写，走的还是本地那条路。
+ * 只登 entry 证不了多少事：`/n/<entryNodeId>` 会在本机自重写，走的还是本地那条路。
  * 因此还要按需登录**远端 node**——这条链路是 entry → forwarder → 已认证 peer link →
  * 远端的 `/api/auth/login`，豁免完全依赖入口给转发请求盖上 `x-vibeterm-client-source: local`（兼容旧名 `x-tmex-client-source`）
  * （`forwarder.ts` 的 `filterRequestHeaders`）且目标认这枚章
@@ -167,18 +167,15 @@ test('mesh: a loopback client source waives the passkey second factor', async ({
     // 整条链路依旧一次仪式都没有（SPA 内部跳转，计数器跨这一步不会被重置）。
     expect(await passkeyGetCalls(localPage)).toBe(0);
 
-    // 设置 →「多节点互联」：entry 就是 hub，节点表能列出两台就说明 hub 侧也接受了这次登录
-    // （豁免要在 entry 与 hub 两端一致，只要有一端仍然强制断言，这里就会退化成横幅）。
+    // 设置 →「多节点互联」：节点表能列出入口机与远端两台，说明这次登录被 mesh 侧接受。
     await localPage.goto(meshUrl(state, '/settings?tab=nodes'), { waitUntil: 'domcontentloaded' });
     await expect(localPage.getByTestId('nodes-management')).toBeVisible({ timeout: 60_000 });
-    await expect(localPage.getByTestId(`nodes-row-${state.hubNodeId}`)).toBeVisible({
+    await expect(localPage.getByTestId(`nodes-row-${state.entryNodeId}`)).toBeVisible({
       timeout: 60_000,
     });
     await expect(localPage.getByTestId(`nodes-row-${state.remoteNodeId}`)).toBeVisible({
       timeout: 60_000,
     });
-    await expect(localPage.getByTestId('nodes-hub-offline')).toHaveCount(0);
-    await expect(localPage.getByTestId('nodes-hub-login-rejected')).toHaveCount(0);
   } finally {
     await local.close();
   }
@@ -201,13 +198,13 @@ test('mesh: a forwarded public source still enforces the passkey second factor',
 });
 
 /**
- * 换一个入口地址（同一实例、不同 origin）：那把通行密钥绑在 `localhost:<hubPort>` 上，
- * 在 `127.0.0.1:<hubPort>` 既弹不出来也做不完断言。
+ * 换一个入口地址（同一实例、不同 origin）：那把通行密钥绑在 `localhost:<entryPort>` 上，
+ * 在 `127.0.0.1:<entryPort>` 既弹不出来也做不完断言。
  *
  * `Origin` 头不可验证，所以「这里没有凭证」不能直接换来放行：这个地址既不在服务端配置的入口
- * 里（`VIBETERM_BASE_URL` 是 `localhost:<hubPort>`），账号也没开两步验证，因此必须被拦下，
+ * 里（`VIBETERM_BASE_URL` 是 `localhost:<entryPort>`），账号也没开两步验证，因此必须被拦下，
  * 并且给出「此地址未注册通行密钥」那句而不是一句泛泛的登录失败。
- * 服务端认得的入口（站点 URL / 隧道域名 / hub / 中继）能只凭密码登录，那条由网关单测覆盖
+ * 服务端认得的入口（站点 URL / 隧道域名 / 中继）能只凭密码登录，那条由网关单测覆盖
  * （`apps/gateway/src/mesh/auth-passkey-origin.test.ts`）。
  *
  * 同样带 `x-forwarded-for` 声明公网来源：否则本机豁免会先一步放行，证不了这条。
@@ -229,7 +226,7 @@ test('mesh: an unrecognized origin cannot trade a missing passkey for a password
   });
   const otherPage = await other.newPage();
   try {
-    await otherPage.goto(`http://127.0.0.1:${state.hubPort}/login`, {
+    await otherPage.goto(`http://127.0.0.1:${state.entryPort}/login`, {
       waitUntil: 'domcontentloaded',
     });
     await expect(otherPage.getByTestId('login-page')).toBeVisible({ timeout: 30_000 });

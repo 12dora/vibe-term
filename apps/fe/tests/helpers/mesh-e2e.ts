@@ -3,23 +3,36 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { type Page, expect } from '@playwright/test';
 
+/** mesh Playwright 项目读到的拓扑：入口是 relay-boot 的 node A，远端是 node B。 */
 export interface MeshState {
   baseUrl: string;
-  hubPort: number;
-  nodePort: number;
+  entryPort: number;
   username: string;
   password: string;
   uid: string;
-  hubNodeId: string;
+  entryNodeId: string;
   remoteNodeId: string;
   remoteNodeName: string;
-  hubTmuxSocket: string;
+  entryTmuxSocket: string;
   nodeTmuxSocket: string;
+  /** 中继公网地址：远端节点上的分享链接走 `<relay>/n/<id>/s/<share>`。 */
+  relayPublicUrl: string;
   supervisorPid: number;
   tmpDir: string;
 }
 
-const BOOT_SCRIPT = join('apps', 'fe', 'tests', 'helpers', 'mesh-boot.ts');
+interface RelayBootStateFile {
+  supervisorPid: number;
+  tmpDir: string;
+  username: string;
+  password: string;
+  uid: string;
+  a: { port: number; nodeId: string; tmuxSocket: string };
+  b: { nodeId: string; name: string; tmuxSocket: string };
+  relay: { publicUrl: string };
+}
+
+const BOOT_SCRIPT = join('apps', 'fe', 'tests', 'helpers', 'relay-boot.ts');
 
 export function meshStatePath(): string {
   return process.env.VIBETERM_MESH_E2E_STATE || '/tmp/vibeterm-mesh-e2e-state.json';
@@ -48,6 +61,28 @@ function bunExecutable(): string {
   return 'bun';
 }
 
+function mapRelayState(raw: RelayBootStateFile): MeshState {
+  if (!raw.a?.port || !raw.a.nodeId || !raw.b?.nodeId || !raw.relay?.publicUrl) {
+    throw new Error('relay-boot state is missing node A/B or relay fields');
+  }
+  return {
+    // WebAuthn 只接受 localhost origin；A 的 VIBETERM_BASE_URL 也是这个。
+    baseUrl: `http://localhost:${raw.a.port}`,
+    entryPort: raw.a.port,
+    username: raw.username,
+    password: raw.password,
+    uid: raw.uid,
+    entryNodeId: raw.a.nodeId,
+    remoteNodeId: raw.b.nodeId,
+    remoteNodeName: raw.b.name,
+    entryTmuxSocket: raw.a.tmuxSocket,
+    nodeTmuxSocket: raw.b.tmuxSocket,
+    relayPublicUrl: raw.relay.publicUrl,
+    supervisorPid: raw.supervisorPid,
+    tmpDir: raw.tmpDir,
+  };
+}
+
 export function readMeshState(): MeshState {
   const path = meshStatePath();
   if (!existsSync(path)) {
@@ -55,15 +90,15 @@ export function readMeshState(): MeshState {
       `mesh state not found at ${path}; run the mesh e2e via \`bun run scripts/run-e2e.ts --project mesh\``
     );
   }
-  return JSON.parse(readFileSync(path, 'utf8')) as MeshState;
+  return mapRelayState(JSON.parse(readFileSync(path, 'utf8')) as RelayBootStateFile);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((done) => setTimeout(done, ms));
 }
 
-/** 拉起 hub + node 主管进程（detached），等 state 文件落盘。 */
-export async function bootMesh(timeoutMs = 240_000): Promise<MeshState> {
+/** 拉起 relay + node A + node B 主管进程（detached），等 state 文件落盘。 */
+export async function bootMesh(timeoutMs = 300_000): Promise<MeshState> {
   const statePath = meshStatePath();
   const logPath = `${statePath.replace(/\.json$/, '')}.log`;
   rmSync(statePath, { force: true });
@@ -97,12 +132,12 @@ export async function bootMesh(timeoutMs = 240_000): Promise<MeshState> {
       return readMeshState();
     }
     if (exited) {
-      throw new Error(`mesh-boot exited before writing state:\n${output}`);
+      throw new Error(`relay-boot exited before writing state:\n${output}`);
     }
     await sleep(500);
   }
   child.kill('SIGTERM');
-  throw new Error(`mesh-boot timed out after ${timeoutMs}ms:\n${output}`);
+  throw new Error(`relay-boot timed out after ${timeoutMs}ms:\n${output}`);
 }
 
 export async function stopMesh(): Promise<void> {

@@ -1,16 +1,13 @@
 #!/usr/bin/env bun
 // relay e2e 的进程主管：从源码拉起三个 VibeTerm runtime——
 //   R = `relay,node`（公共中继 + 本机 node）
-//   A = `node`（无 hub），用 `vibeterm relay enroll` 在 R 上开租户，成为该租户的主节点
-//   B = `standalone`，用 A 生成的 `r3.` 加入码经 `vibeterm hub join --token` 并入同一租户
+//   A = `node`（未接入时无上级），用 `vibeterm relay enroll` 在 R 上开租户，成为该租户的主节点
+//   B = `standalone`，用 A 生成的 `r3.` 加入码经 `vibeterm relay join <url> --token` 并入同一租户
 // 然后把连接信息（端口、节点编号、租户编号、管理令牌、可直接给 curl 用的 Cookie 头）
 // 写进 state JSON。收到 SIGTERM/SIGINT 时回收全部子进程、tmux socket 与临时目录。
 //
 // 用法：
 //   bun apps/fe/tests/helpers/relay-boot.ts --state /tmp/vibeterm-relay-e2e-<pid>.json
-//   bun apps/fe/tests/helpers/relay-boot.ts --mode hub          # 只打印 hub 拓扑怎么起
-//
-// hub 拓扑（hub,node + node）不在本文件范围内，用既有的 mesh-boot.ts，别在这里复制一份。
 
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
@@ -28,7 +25,7 @@ import {
   mintRelayJoinToken,
   openSession,
 } from './relay-boot-auth.ts';
-import { buildState, hubModeHelp } from './relay-boot-state.ts';
+import { buildState } from './relay-boot-state.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '../../../..');
 const CLI_AUTH = resolve(REPO_ROOT, 'packages/app/src/cli-auth-entry.ts');
@@ -76,8 +73,11 @@ function isListening(port: number): Promise<boolean> {
   });
 }
 
+const FORBIDDEN_PORTS = new Set([9663, 9883, 19663, 19883]);
+
 async function findFreePort(start: number): Promise<number> {
   for (let port = start; port < start + 200; port += 1) {
+    if (FORBIDDEN_PORTS.has(port)) continue;
     if (!(await isListening(port)) && (await canBind(port))) return port;
   }
   throw new Error(`no free port from ${start}`);
@@ -101,6 +101,7 @@ interface InstanceSpec {
   port: number;
   peerPort: number;
   tmuxSocket: string;
+  baseUrl?: string;
   relayPublicUrl?: string;
   relayAdminToken?: string;
 }
@@ -113,10 +114,7 @@ function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
     `GATEWAY_PORT=${spec.port}`,
     'VIBETERM_BIND_HOST=127.0.0.1',
     `DATABASE_URL=${spec.dir}/vibeterm.db`,
-    `VIBETERM_BASE_URL=http://127.0.0.1:${spec.port}`,
-    // 中继模式下上级不再是 hub：两个键都必须为空，否则 uplink 会去拨不存在的 hub。
-    'VIBETERM_HUB_URL=',
-    'VIBETERM_HUB_PUBLIC_URL=',
+    `VIBETERM_BASE_URL=${spec.baseUrl ?? `http://127.0.0.1:${spec.port}`}`,
     `VIBETERM_PEER_PORT=${spec.peerPort}`,
     'VIBETERM_PEER_BIND_HOST=127.0.0.1',
     'VIBETERM_STUN_SERVERS=none',
@@ -131,13 +129,21 @@ function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
 
 const children = new Set<Bun.Subprocess>();
 
+function withoutHubEnv(env: Record<string, string>): Record<string, string> {
+  const next = { ...env };
+  for (const key of Object.keys(next)) {
+    if (key.startsWith('VIBETERM_HUB_')) delete next[key];
+  }
+  return next;
+}
+
 function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
-  return {
+  return withoutHubEnv({
     ...(process.env as Record<string, string>),
     NODE_ENV: 'test',
     VIBETERM_MIGRATIONS_DIR: MIGRATIONS_DIR,
     ...extra,
-  };
+  });
 }
 
 async function runCli(args: string[], extraEnv: Record<string, string> = {}): Promise<string> {
@@ -164,13 +170,13 @@ async function startInstance(dir: string): Promise<Bun.Subprocess> {
   const env = await readAppEnv(dir);
   const proc = Bun.spawn([process.execPath, RUNTIME_SERVER], {
     cwd: REPO_ROOT,
-    env: {
+    env: withoutHubEnv({
       ...(process.env as Record<string, string>),
       ...env,
       NODE_ENV: 'test',
       VIBETERM_MIGRATIONS_DIR: MIGRATIONS_DIR,
       VIBETERM_FE_DIST_DIR: FE_DIST_DIR,
-    },
+    }),
     stdout: 'inherit',
     stderr: 'inherit',
   });
@@ -206,7 +212,7 @@ async function waitHealthy(port: number): Promise<void> {
 }
 
 interface RelayStatus {
-  mode: 'relay' | 'hub' | 'none';
+  mode: 'relay' | 'none';
   tenantId: string | null;
   relays: Array<{ url: string; online: boolean; attached: boolean; lastError: string | null }>;
   metaEpoch: number;
@@ -251,10 +257,6 @@ function cleanup(tmpDir: string | null = tmpDirRef): void {
   }
   for (const socket of Object.values(TMUX_SOCKETS)) killTmuxSocket(socket);
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
-}
-
-function printHubMode(): void {
-  process.stdout.write(hubModeHelp());
 }
 
 interface Ports {
@@ -306,6 +308,8 @@ async function writeEnvFiles(
         port: ports.a,
         peerPort: ports.aPeer,
         tmuxSocket: TMUX_SOCKETS.a,
+        // WebAuthn 只接受域名或 localhost origin；浏览器从 localhost 连入口机 A。
+        baseUrl: `http://localhost:${ports.a}`,
       },
       masterKey
     )
@@ -376,13 +380,15 @@ async function joinNodeB(input: {
   bDir: string;
   session: Session;
   meshPassword: string;
+  publicUrl: string;
 }): Promise<{ pending: PendingRelayJoin; nodeId: string }> {
   const pending = await mintRelayJoinToken(input.session);
   log(`r3 join token minted (len=${pending.token.length})`);
   await runCli(
     [
-      'hub',
+      'relay',
       'join',
+      input.publicUrl,
       '--token',
       pending.token,
       '--name',
@@ -452,10 +458,6 @@ async function waitTransport(session: Session, nodeId: string): Promise<MeshNode
 }
 
 async function main(): Promise<void> {
-  if (arg('mode') === 'hub') {
-    printHubMode();
-    return;
-  }
   const statePath = arg('state');
   if (!statePath) throw new Error('missing --state <path>');
 
@@ -485,10 +487,10 @@ async function main(): Promise<void> {
   for (const socket of Object.values(TMUX_SOCKETS)) killTmuxSocket(socket);
   log(`relay=${ports.relay} a=${ports.a} b=${ports.b} tmp=${tmpDir}`);
 
-  await runCli(['hub', 'user', 'add', RELAY_USERNAME, '--install-dir', dirs.relay], {
+  await runCli(['user', 'add', RELAY_USERNAME, '--install-dir', dirs.relay], {
     VIBETERM_PASSWORD: relayNodePassword,
   });
-  await runCli(['hub', 'user', 'add', USERNAME, '--install-dir', dirs.a], {
+  await runCli(['user', 'add', USERNAME, '--install-dir', dirs.a], {
     VIBETERM_PASSWORD: meshPassword,
   });
 
@@ -507,7 +509,12 @@ async function main(): Promise<void> {
   const status = await waitTenantAttached(sessionA, publicUrl);
   log(`tenant attached id=${status.tenantId} metaEpoch=${status.metaEpoch}`);
 
-  const joined = await joinNodeB({ bDir: dirs.b, session: sessionA, meshPassword });
+  const joined = await joinNodeB({
+    bDir: dirs.b,
+    session: sessionA,
+    meshPassword,
+    publicUrl,
+  });
   await startInstance(dirs.b);
   await waitHealthy(ports.b);
   log('node B healthy');

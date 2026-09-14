@@ -12,7 +12,7 @@ import {
   readMeshState,
   readTerminalBuffer,
   signInToNodeFromDevicesPage,
-} from './helpers/mesh';
+} from './helpers/mesh-e2e';
 
 let state: MeshState;
 
@@ -39,7 +39,7 @@ async function openRecipient(browser: Browser, url: string): Promise<Page> {
   return page;
 }
 
-test('mesh: a shared window is reachable through the hub with only that window visible', async ({
+test('mesh: a shared window is reachable through the entry with only that window visible', async ({
   page,
   browser,
 }) => {
@@ -57,9 +57,9 @@ test('mesh: a shared window is reachable through the hub with only that window v
       name: sessionName,
       session: sessionName,
     });
-    // e2e 里 hub 只有 localhost 地址，预设候选为空；用「默认分享地址」显式指定。
+    // 远端分享链接要走中继公网地址才会带 `/n/<id>` 前缀；loopback 中继不会自动进候选。
     const settings = await page.request.put(meshUrl(state, `/n/${nodeId}/api/share/settings`), {
-      data: { defaultOrigin: state.baseUrl },
+      data: { defaultOrigin: state.relayPublicUrl },
     });
     expect(settings.ok(), await settings.text()).toBeTruthy();
 
@@ -81,8 +81,10 @@ test('mesh: a shared window is reachable through the hub with only that window v
     expect(created.active).toHaveLength(1);
     const share = created.active[0];
     expect(share.url).toContain(`/n/${nodeId}/s/${share.id}`);
+    expect(share.url.startsWith(state.relayPublicUrl)).toBe(true);
 
-    recipient = await openRecipient(browser, share.url);
+    // 公开链接的 host 是中继；e2e 收件人走入口机 A 的 `/n/<id>` 转发（与登录/终端同一条路径）。
+    recipient = await openRecipient(browser, meshUrl(state, `/n/${nodeId}/s/${share.id}`));
     await expect(recipient.getByTestId('share-name')).toHaveText('e2e share');
     await recipient.getByTestId('share-password-input').fill('wrong-password');
     await recipient.getByTestId('share-password-submit').click();
@@ -103,7 +105,7 @@ test('mesh: a shared window is reachable through the hub with only that window v
     expect(meshTmux(state.nodeTmuxSocket, `capture-pane -p -t ${sessionName}`)).toContain(marker);
     await expect.poll(() => readTerminalBuffer(page), { timeout: 30_000 }).toContain(marker);
 
-    // 分享凭证不能触达常规 API；hub 转发与本机路径都只放行 share-access。
+    // 分享凭证不能触达常规 API；入口转发与本机路径都只放行 share-access。
     const statuses = await recipient.evaluate(async (id) => {
       const paths = [`/n/${id}/api/devices`, `/n/${id}/api/mesh/nodes`, '/api/devices'];
       return Promise.all(
@@ -145,7 +147,9 @@ test('mesh: a shared window is reachable through the hub with only that window v
 
     // 已结束的分享直接显示结束页，不再要口令。
     const reopened = await (await browser.newContext()).newPage();
-    await reopened.goto(share.url, { waitUntil: 'domcontentloaded' });
+    await reopened.goto(meshUrl(state, `/n/${nodeId}/s/${share.id}`), {
+      waitUntil: 'domcontentloaded',
+    });
     await expect(reopened.getByTestId('share-ended')).toBeVisible({ timeout: 30_000 });
     await reopened.context().close();
     const info = await page.request.get(
@@ -165,10 +169,10 @@ test('mesh: a window on the entry node itself is shared over the direct path', a
 }) => {
   const sessionName = `vibeterm-self-share-${Date.now()}`;
   const marker = `VIBETERM_SELF_SHARE_${Date.now()}`;
-  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+  spawnSync('sh', ['-c', `tmux -L ${state.entryTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
-  meshTmux(state.hubTmuxSocket, `new-session -d -s ${sessionName} "sh -lc 'exec sh'"`);
+  meshTmux(state.entryTmuxSocket, `new-session -d -s ${sessionName} "sh -lc 'exec sh'"`);
   let deviceId: string | undefined;
   let recipient: Page | undefined;
 
@@ -206,7 +210,7 @@ test('mesh: a window on the entry node itself is shared over the direct path', a
     await expect
       .poll(() => readTerminalBuffer(recipient as Page), { timeout: 30_000 })
       .toContain(marker);
-    expect(meshTmux(state.hubTmuxSocket, `capture-pane -p -t ${sessionName}`)).toContain(marker);
+    expect(meshTmux(state.entryTmuxSocket, `capture-pane -p -t ${sessionName}`)).toContain(marker);
 
     const status = await recipient.evaluate(() =>
       fetch('/api/devices', { credentials: 'include' }).then((res) => res.status)
@@ -220,7 +224,7 @@ test('mesh: a window on the entry node itself is shared over the direct path', a
     await recipient?.context().close();
     if (deviceId)
       await page.request.delete(meshUrl(state, `/api/devices/${deviceId}`)).catch(() => undefined);
-    spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+    spawnSync('sh', ['-c', `tmux -L ${state.entryTmuxSocket} kill-session -t ${sessionName}`], {
       stdio: 'ignore',
     });
   }
@@ -258,14 +262,14 @@ async function shareOwnWindow(
 }
 
 function startOwnSession(sessionName: string): void {
-  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+  spawnSync('sh', ['-c', `tmux -L ${state.entryTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
-  meshTmux(state.hubTmuxSocket, `new-session -d -s ${sessionName} "sh -lc 'exec sh'"`);
+  meshTmux(state.entryTmuxSocket, `new-session -d -s ${sessionName} "sh -lc 'exec sh'"`);
 }
 
 function stopOwnSession(sessionName: string): void {
-  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+  spawnSync('sh', ['-c', `tmux -L ${state.entryTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
 }
@@ -382,7 +386,7 @@ test('mesh: a share on a remote node shows up in the entry node settings and can
       session: sessionName,
     });
     const settings = await page.request.put(meshUrl(state, `/n/${nodeId}/api/share/settings`), {
-      data: { defaultOrigin: state.baseUrl },
+      data: { defaultOrigin: state.relayPublicUrl },
     });
     expect(settings.ok(), await settings.text()).toBeTruthy();
 

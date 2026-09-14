@@ -12,7 +12,7 @@ import {
   readMeshState,
   readTerminalBuffer,
   signInToNodeFromDevicesPage,
-} from './helpers/mesh';
+} from './helpers/mesh-e2e';
 
 let state: MeshState;
 
@@ -43,7 +43,7 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
   const nodeList = page.getByTestId('sidebar-node-list');
   await expect(nodeList).toBeVisible({ timeout: 30_000 });
 
-  // entry（hub）在侧边栏用 `self` 作为 runtime node id；远端 node 的设备缺省不显示，
+  // entry（node A）在侧边栏用 `self` 作为 runtime node id；远端 node 的设备缺省不显示，
   // 整节（含登录入口）都不出现——登录别的节点统一走「管理设备」。
   await expect(page.getByTestId('sidebar-node-header-self')).toBeVisible();
   await expect(page.getByTestId(`sidebar-node-header-${state.remoteNodeId}`)).toHaveCount(0);
@@ -56,7 +56,9 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
       .then((res) => res.json())
       .then((body: { nodes: { id: string; online: boolean; loggedIn: boolean }[] }) => body.nodes)
   );
-  expect(nodes.map((node) => node.id).sort()).toEqual([state.hubNodeId, state.remoteNodeId].sort());
+  expect(nodes.map((node) => node.id).sort()).toEqual(
+    [state.entryNodeId, state.remoteNodeId].sort()
+  );
   const remote = nodes.find((node) => node.id === state.remoteNodeId);
   expect(remote?.online).toBe(true);
 
@@ -82,8 +84,8 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
     await expect(page.getByTestId(`sidebar-node-header-${state.remoteNodeId}`)).toBeVisible({
       timeout: 30_000,
     });
-    // 徽标 title 是 `<展示名> · <nodeId>`。以 hub 为 entry 时 /api/mesh/nodes 的 name 取自
-    // peers 表，刚 join 完那一段时间里会退化成 nodeId，所以断言只锚定 nodeId。
+    // 徽标 title 是 `<展示名> · <nodeId>`。刚 join 完那一段时间里 name 会退化成 nodeId，
+    // 所以断言只锚定 nodeId。
     await expect(
       page.getByTestId('sidebar-node-list').getByTestId(`node-badge-${state.remoteNodeId}`).first()
     ).toHaveAttribute('title', new RegExp(`${state.remoteNodeId}$`));
