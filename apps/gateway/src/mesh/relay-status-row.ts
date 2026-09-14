@@ -217,8 +217,12 @@ function statusSelectExtras(
   return {
     ...(input.preferredUrl && sameHubUrl(input.preferredUrl, url) ? { pinned: true } : {}),
     ...(input.autoSelected && attached && connected ? { autoSelected: true } : {}),
-    ...(connected && input.scoreOf ? { score: input.scoreOf(url) ?? null } : {}),
+    ...(connected && input.scoreOf ? { score: roundRelayScore(input.scoreOf(url)) } : {}),
   };
+}
+
+function roundRelayScore(score: number | null | undefined): number | null {
+  return score == null || !Number.isFinite(score) ? null : Math.round(score);
 }
 
 function isAutoSwitchReason(reason: RelaySwitchReason | null | undefined): boolean {

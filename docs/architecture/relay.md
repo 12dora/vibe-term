@@ -632,17 +632,18 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 - **在线名册取并集**：中继模式下 mesh 的「在线」= 各中继清单的并集；某条 uplink 掉线后它那份在线状态保留 90 s（与 hub 同一 hold），
   到期只把**仅在该中继上可见**的对端置离线。
 - **TURN / STUN 合并**：每条中继各贡献至多一条 TURN，按主中继优先去重成数组；某条中继下发 `turn: null` 或断开，
-  只撤回**它自己**那条。STUN 取并集。libjuice 最多纳入 2 条 TURN（`MAX_TURN_ICE_ENTRIES`）：每次拨号重建 ICE 时按探测成功优先、RTT 升序、主中继、priority 取前两条；未探测则维持主中继 + priority 序。选集变化打一条 `[mesh][rtc] turn pick urls=… dropped=… by=probe-rtt`。
+  只撤回**它自己**那条。STUN 取并集。libjuice 最多纳入 2 条 TURN（`MAX_TURN_ICE_ENTRIES`）：每次拨号重建 ICE 时，若有探测记录则**只纳入 `ok` 的条目**，再按 RTT 升序、主中继、原序取前两条；没有任何探测记录时回落到已按探测过滤的 gated `turn` 列表，而不是未过滤的 `turnConfigured`。未探测成功的 TURN 不会进入 ICE（mux 打开时 libjuice gathering 会卡住）。选集变化打一条 `[mesh][rtc] turn pick urls=… dropped=… by=probe-rtt`。
 - **被踢**：`relay.kicked` 只标它自己那一行，其余中继不受影响。
 - `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继并固定**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
   若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。成功后写入 `gateway_kv` 键 `relay.preferredUrl`。
-- `POST /api/mesh/relay/unpin` 清除该固定，`{ ok: true }`；本来就没固定也是 200。
+- `POST /api/mesh/relay/unpin` 清除该固定，`{ ok: true, unpinned: boolean }`；本来就没固定也是 200（`unpinned: false`）。
 - **自动优选主中继**（`VIBETERM_RELAY_AUTO_SELECT`，未设时 ≥ 2 条未踢中继默认开）：按 uplink 心跳 RTT 的 EWMA 打分，
   `scoreMs = ewmaRtt + 0.15×pathBestMs + 0.05×(peersOnline/maxNodes)×1000 + 失败罚分`，
-  候选需在线、未踢、≥ 2 个 RTT 样本；相对当前好出 `max(15 ms, 30%)` 且连续 2 次评估、距上次自动切换 ≥ 10 分钟、
+  候选需在线、未踢、≥ 2 个真实心跳 RTT 样本；相对当前好出 `max(15 ms, 30%)` 且连续 2 次评估（两次计入间隔 ≥ 评估周期）、距上次挂上主中继 ≥ 10 分钟、
   `healthz` 立刻通过、当前主中继排空在途流（`reason=auto-select`）后，走与 HTTP switch 同一条 `runRelaySwitch(..., { persistPin: false })`，
-  **不写** `preferredUrl`。有固定且该行未踢/未消失时冻结自动切换（failback 仍会回到固定）。
-  评估周期 `VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS`（默认 60 s），心跳 RTT / 上线离线 / 被踢也会触发（合并）。
+  **不写** `preferredUrl`。成功后写入进程内、不落库的 `autoPreferredUrl`，`candidates()` 按 `preferredUrl ?? autoPreferredUrl` 排序，让自动选中的主中继排在候选首位，从而停掉 `probePreferred` 的 failback 探测；手动 pin 优先于 autoPreferred；unpin 后把当前主中继留在 autoPreferred，避免立刻被探测拽回 priority 0。autoPreferred 对应行被踢或从列表删除时清除。有固定且该行未踢/未消失时冻结自动切换（failback 仍会回到固定）。
+  评估周期 `VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS`（默认 60 s，范围 1 s…24 h），心跳 RTT / 上线离线 / 被踢也会触发（合并，但滞环计数仍锚在评估周期上）。
+  排空醒来后会重跑打分与 pin 检查，决策变了或期间出现固定则放弃本次切换。
   日志 `[relay][auto] switch from=… to=… reason=auto-rtt score_from=… score_to=…`；门挡住时 `[relay][auto] hold …`（60 s 节流）。
   按对选路 `chooseRelay` 仍独立于谁是主中继。
 - **增删副中继不重启主 uplink**（2.3.2）：`set-relays` 只改动非主行时，`runReconcile()` 走轻路径——`uplink.refreshCandidates()` + `RelaySecondaryAttach.reconcile()` 增删 slot，**不碰 live client**。日志 `[relay] targets updated rows=<n> primary=<host> secondaries=<n> (no restart)`（`primary` 取 `attachedHub()` 的 host，未挂上为 `-`）。主中继被重排但仍挂在旧主上 → 排空重建；已经挂在新主上（例如手动 `switch` 先切过去）→ 仍走轻路径，只刷副中继。主中继行凭证变化、令牌需重认证、hub↔relay 翻转或中继集合清空，仍走排空重建（`attach.stop()` → `reconfigureUplinkPool()` → `attach.start()`）。同 URL 副中继的租户 / 令牌轮换按凭证摘要拆掉该 slot 并重挂，不重启主 uplink。

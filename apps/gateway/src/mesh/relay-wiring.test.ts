@@ -63,6 +63,35 @@ afterEach(() => {
   restoreEnv();
 });
 
+describe('relayUplinkOverrides candidates', () => {
+  test('orders by preferredUrl then autoPreferredUrl', () => {
+    const sh = 'https://sh.example';
+    const tk = 'https://tk.example';
+    const jp = 'https://jp.example';
+    let preferred: string | null = null;
+    let autoPreferred: string | null = jp;
+    const wiring = {
+      secrets: {
+        uplinkKind: () => 'relay',
+        relayRows: () => [
+          { url: sh, priority: 0 },
+          { url: tk, priority: 1 },
+          { url: jp, priority: 2 },
+        ],
+        preferredRelayUrl: () => preferred,
+      },
+      autoPreferredUrl: () => autoPreferred,
+    } as unknown as RelayWiring;
+    const overrides = relayUplinkOverrides(wiring, { nameProvider: () => 'n' });
+    expect(overrides.candidates().map((row) => row.publicUrl)).toEqual([jp, sh, tk]);
+    preferred = tk;
+    expect(overrides.candidates().map((row) => row.publicUrl)).toEqual([tk, sh, jp]);
+    preferred = null;
+    autoPreferred = null;
+    expect(overrides.candidates().map((row) => row.publicUrl)).toEqual([sh, tk, jp]);
+  });
+});
+
 describe('relayUplinkOverrides dial', () => {
   test('把构造时的 RelayDialContext 传给客户端，不读后续 env', async () => {
     saveEnv();

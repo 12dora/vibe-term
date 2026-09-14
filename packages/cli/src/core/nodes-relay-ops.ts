@@ -40,7 +40,8 @@ export interface RelayReadmitPrepare {
 }
 
 export async function switchMeshRelay(ctx: CliContext, url: string): Promise<unknown> {
-  return ctx.http.json(SELF_NODE_ID, 'POST', '/api/mesh/relay/switch', { url });
+  const nodeId = await ctx.targetNodeId();
+  return ctx.http.json(nodeId, 'POST', '/api/mesh/relay/switch', { url });
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {

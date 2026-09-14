@@ -36,6 +36,9 @@ export type RelayWiring = {
   notifyIfRelayRecord(type: KeyLogType): void;
   /** 启动时的一次落库：只写库、不重建连接循环（池还没起）。 */
   reconcileQuietly(): Promise<void>;
+  /** 自动优选写入的进程内首选；不落库。手动 pin 优先于它。 */
+  autoPreferredUrl(): string | null;
+  setAutoPreferredUrl(url: string | null): void;
 };
 
 type RelayBinding = {
@@ -56,12 +59,17 @@ export function createRelayWiring(input: {
   userIdOf: () => string;
 }): RelayWiring {
   const secrets = new RelaySecrets(input);
+  let autoPreferredUrl: string | null = null;
   const wiring: RelayWiring = {
     secrets,
     notifyIfRelayRecord(type) {
       if (RELAY_RECORD_TYPES.has(type)) void runReconcile(wiring, true);
     },
     reconcileQuietly: () => runReconcile(wiring, false),
+    autoPreferredUrl: () => autoPreferredUrl,
+    setAutoPreferredUrl: (url) => {
+      autoPreferredUrl = url;
+    },
   };
   return wiring;
 }
@@ -94,6 +102,7 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
 }
 
 function applyRelayRowsInPlace(wiring: RelayWiring, bound: RelayBinding): void {
+  dropStaleAutoPreferred(wiring);
   bound.uplink.refreshCandidates();
   void bound.attach?.reconcile();
   const rows = wiring.secrets.relayRows();
@@ -215,10 +224,7 @@ export function relayUplinkOverrides(
   return {
     relayMode,
     candidates: () =>
-      orderRelaysByPreferred(
-        wiring.secrets.relayRows(),
-        wiring.secrets.preferredRelayUrl?.() ?? null
-      ).map((row) => ({
+      orderRelaysByPreferred(wiring.secrets.relayRows(), preferredOrderUrl(wiring)).map((row) => ({
         hubNodeId: null,
         publicUrl: row.url,
         mode: 'active' as HubMode,
@@ -277,6 +283,21 @@ function notifyRelayKicked(wiring: RelayWiring, url: string, reason: RelayKickRe
   const bound = RELAY_BINDINGS.get(wiring);
   bound?.attach?.opener.noteKicked(url);
   bound?.autoSelect?.onKicked(url);
+  if (dropStaleAutoPreferred(wiring)) bound?.uplink.refreshCandidates();
+}
+
+function preferredOrderUrl(wiring: RelayWiring): string | null {
+  return wiring.secrets.preferredRelayUrl?.() ?? wiring.autoPreferredUrl?.() ?? null;
+}
+
+/** autoPreferred 对应行被踢或从列表删除时清掉，避免候选序钉在已失效的 URL 上。 */
+function dropStaleAutoPreferred(wiring: RelayWiring): boolean {
+  const auto = wiring.autoPreferredUrl?.() ?? null;
+  if (!auto) return false;
+  const still = wiring.secrets.relayRows().some((row) => !row.kicked && sameHubUrl(row.url, auto));
+  if (still) return false;
+  wiring.setAutoPreferredUrl?.(null);
+  return true;
 }
 
 export function relayUplinkView(wiring: RelayWiring, uplink: UplinkPool): RelayUplinkView {
@@ -297,6 +318,10 @@ export function relayUplinkView(wiring: RelayWiring, uplink: UplinkPool): RelayU
     autoSelectView: () => RELAY_BINDINGS.get(wiring)?.autoSelect?.view() ?? null,
     scoreOf: (url) => RELAY_BINDINGS.get(wiring)?.autoSelect?.scoreOf(url) ?? null,
     noteSwitchReason: (reason) => RELAY_BINDINGS.get(wiring)?.autoSelect?.noteSwitch(reason),
+    noteAutoPreferred: (url) => {
+      wiring.setAutoPreferredUrl?.(url);
+      uplink.refreshCandidates();
+    },
   };
 }
 

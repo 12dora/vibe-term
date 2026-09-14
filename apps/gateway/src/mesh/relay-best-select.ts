@@ -39,6 +39,7 @@ export type RelayConsiderResult = {
   decision: RelaySwitchDecision;
   hysteresis: RelayHysteresis;
   scores: RelayScoreMap;
+  lastConsiderAt: number;
 };
 
 const CONNECT_AUTH_CODES: ReadonlySet<RelayLinkErrorCode> = new Set([
@@ -98,13 +99,17 @@ export function considerAutoSwitch(input: {
   now: number;
   hysteresis: RelayHysteresis;
   dwellMs?: number;
+  lastConsiderAt?: number;
+  intervalMs?: number;
 }): RelayConsiderResult {
   const scores = scoreRelays(input.rows, input.now);
+  const lastConsiderAt = input.lastConsiderAt ?? 0;
   if (pinIsFrozen(input.preferredUrl, input.rows)) {
     return {
       decision: { type: 'hold', reason: 'pinned' },
       hysteresis: resetRelayHysteresis(),
       scores,
+      lastConsiderAt,
     };
   }
   const currentScore = input.currentUrl ? scores.get(input.currentUrl) : null;
@@ -114,22 +119,53 @@ export function considerAutoSwitch(input: {
     !best ||
     (input.currentUrl && sameHubUrl(best.url, input.currentUrl))
   ) {
-    return { decision: { type: 'none' }, hysteresis: resetRelayHysteresis(), scores };
+    return {
+      decision: { type: 'none' },
+      hysteresis: resetRelayHysteresis(),
+      scores,
+      lastConsiderAt,
+    };
   }
   if (!isRttSwitchWorth(currentScore, best.score)) {
-    return { decision: { type: 'none' }, hysteresis: resetRelayHysteresis(), scores };
+    return {
+      decision: { type: 'none' },
+      hysteresis: resetRelayHysteresis(),
+      scores,
+      lastConsiderAt,
+    };
   }
   if (inDwell(input.lastAutoSwitchAt, input.now, input.dwellMs ?? RELAY_AUTO_SWITCH_DWELL_MS)) {
-    return holdResult(scores, input.hysteresis, 'dwell', best, currentScore);
+    return holdResult({
+      scores,
+      hysteresis: input.hysteresis,
+      reason: 'dwell',
+      best,
+      currentScore,
+      lastConsiderAt,
+    });
   }
-  const hysteresis = advanceHysteresis(input.hysteresis, best.url);
-  if (hysteresis.consecutiveCount < RELAY_AUTO_SWITCH_CONSECUTIVE) {
-    return holdResult(scores, hysteresis, 'consecutive', best, currentScore);
+  const advanced = advanceHysteresis(
+    input.hysteresis,
+    best.url,
+    input.now,
+    lastConsiderAt,
+    input.intervalMs
+  );
+  if (advanced.hysteresis.consecutiveCount < RELAY_AUTO_SWITCH_CONSECUTIVE) {
+    return holdResult({
+      scores,
+      hysteresis: advanced.hysteresis,
+      reason: 'consecutive',
+      best,
+      currentScore,
+      lastConsiderAt: advanced.lastConsiderAt,
+    });
   }
   return {
     decision: { type: 'switch', url: best.url, score: best.score, currentScore },
-    hysteresis,
+    hysteresis: advanced.hysteresis,
     scores,
+    lastConsiderAt: advanced.lastConsiderAt,
   };
 }
 
@@ -178,29 +214,46 @@ function inDwell(lastAutoSwitchAt: number, now: number, dwellMs: number): boolea
   return lastAutoSwitchAt > 0 && now - lastAutoSwitchAt < dwellMs;
 }
 
-function advanceHysteresis(prev: RelayHysteresis, url: string): RelayHysteresis {
-  if (prev.consecutiveUrl && sameHubUrl(prev.consecutiveUrl, url)) {
-    return { consecutiveUrl: prev.consecutiveUrl, consecutiveCount: prev.consecutiveCount + 1 };
+function advanceHysteresis(
+  prev: RelayHysteresis,
+  url: string,
+  now: number,
+  lastConsiderAt: number,
+  intervalMs: number | undefined
+): { hysteresis: RelayHysteresis; lastConsiderAt: number } {
+  if (!prev.consecutiveUrl || !sameHubUrl(prev.consecutiveUrl, url)) {
+    return { hysteresis: { consecutiveUrl: url, consecutiveCount: 1 }, lastConsiderAt: now };
   }
-  return { consecutiveUrl: url, consecutiveCount: 1 };
+  if (intervalMs != null && lastConsiderAt > 0 && now - lastConsiderAt < intervalMs) {
+    return { hysteresis: prev, lastConsiderAt };
+  }
+  return {
+    hysteresis: {
+      consecutiveUrl: prev.consecutiveUrl,
+      consecutiveCount: prev.consecutiveCount + 1,
+    },
+    lastConsiderAt: now,
+  };
 }
 
-function holdResult(
-  scores: RelayScoreMap,
-  hysteresis: RelayHysteresis,
-  reason: string,
-  best: { url: string; score: number },
-  currentScore: number
-): RelayConsiderResult {
+function holdResult(input: {
+  scores: RelayScoreMap;
+  hysteresis: RelayHysteresis;
+  reason: string;
+  best: { url: string; score: number };
+  currentScore: number;
+  lastConsiderAt: number;
+}): RelayConsiderResult {
   return {
     decision: {
       type: 'hold',
-      reason,
-      url: best.url,
-      score: best.score,
-      currentScore,
+      reason: input.reason,
+      url: input.best.url,
+      score: input.best.score,
+      currentScore: input.currentScore,
     },
-    hysteresis,
-    scores,
+    hysteresis: input.hysteresis,
+    scores: input.scores,
+    lastConsiderAt: input.lastConsiderAt,
   };
 }

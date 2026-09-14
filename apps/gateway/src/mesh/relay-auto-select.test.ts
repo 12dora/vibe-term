@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { RelayAutoSelect } from './relay-auto-select';
+import { RELAY_AUTO_SWITCH_DWELL_MS } from './relay-best-select';
 import type { SecondaryUplink } from './relay-secondary-attach';
 import type { RelaySecrets } from './relay-secrets';
 import type { RelaySwitchDeps, RelayUplinkView } from './relay-switch-route';
@@ -58,6 +59,7 @@ async function setup(opts?: {
   probeHealthz?: (url: string) => Promise<boolean>;
   waitForDrain?: () => Promise<void>;
   preferredUrl?: string | null;
+  seedRtt?: boolean;
 }) {
   const scheduler = new FakeScheduler();
   const switched: string[] = [];
@@ -116,14 +118,22 @@ async function setup(opts?: {
     switchDeps: (): RelaySwitchDeps => ({ secrets, uplink }),
   });
   auto.noteAttached(SH);
-  auto.onRtt(SH, 100);
-  auto.onRtt(SH, 100);
-  auto.onRtt(JP, 40);
-  auto.onRtt(JP, 40);
-  auto.onRtt(TK, 80);
-  auto.onRtt(TK, 80);
+  scheduler.nowMs += RELAY_AUTO_SWITCH_DWELL_MS;
+  if (opts?.seedRtt !== false) {
+    auto.onRtt(SH, 100);
+    auto.onRtt(SH, 100);
+    auto.onRtt(JP, 40);
+    auto.onRtt(JP, 40);
+    auto.onRtt(TK, 80);
+    auto.onRtt(TK, 80);
+  }
   auto.start();
   return { auto, scheduler, switched, preferred, prepared, live, secrets, uplink };
+}
+
+async function evalAfterInterval(b: Awaited<ReturnType<typeof setup>>): Promise<void> {
+  b.scheduler.nowMs += 60_000;
+  await b.auto.evaluate();
 }
 
 describe('RelayAutoSelect', () => {
@@ -134,7 +144,7 @@ describe('RelayAutoSelect', () => {
     await b.auto.evaluate();
     expect(b.switched).toEqual([]);
     b.auto.onRtt(JP, 40);
-    await b.auto.evaluate();
+    await evalAfterInterval(b);
     expect(b.switched).toEqual([JP]);
     expect(b.preferred).toEqual([]);
     expect(b.prepared).toEqual([JP]);
@@ -159,6 +169,7 @@ describe('RelayAutoSelect', () => {
     });
     await b.auto.evaluate();
     expect(b.switched).toEqual([]);
+    b.scheduler.nowMs += 60_000;
     const pending = b.auto.evaluate();
     await Promise.resolve();
     expect(drained).toBe(true);
@@ -177,7 +188,7 @@ describe('RelayAutoSelect', () => {
       },
     });
     await b.auto.evaluate();
-    await b.auto.evaluate();
+    await evalAfterInterval(b);
     expect(probed).toContain(JP);
     expect(b.switched).toEqual([]);
     expect(b.preferred).toEqual([]);
@@ -187,7 +198,7 @@ describe('RelayAutoSelect', () => {
     const b = await setup();
     expect(b.auto.view().switchReason).toBe('startup');
     await b.auto.evaluate();
-    await b.auto.evaluate();
+    await evalAfterInterval(b);
     expect(b.auto.view().switchReason).toBe('auto-rtt');
     b.auto.noteSwitch('manual');
     b.auto.noteAttached(TK);
@@ -204,5 +215,101 @@ describe('RelayAutoSelect', () => {
     const b = await setup({ preferredUrl: JP });
     b.auto.noteAttached(JP);
     expect(b.auto.view().switchReason).toBe('pin-failback');
+  });
+
+  test('same-interval re-eval does not count as a second consecutive', async () => {
+    const b = await setup();
+    await b.auto.evaluate();
+    await b.auto.evaluate();
+    expect(b.switched).toEqual([]);
+    await evalAfterInterval(b);
+    expect(b.switched).toEqual([JP]);
+  });
+
+  test('startup attach dwell blocks an immediate switch', async () => {
+    const scheduler = new FakeScheduler();
+    const switched: string[] = [];
+    const secrets = {
+      setPreferredRelayUrl: () => {},
+      clearPreferredRelayUrl: () => {},
+      preferredRelayUrl: () => null,
+      relayRows: () => [
+        { url: SH, kicked: false },
+        { url: JP, kicked: false },
+      ],
+    } as unknown as RelaySecrets;
+    const live: PooledUplink = { state: 'online', hubUrl: SH } as PooledUplink;
+    let current = SH;
+    const auto = new RelayAutoSelect({
+      scheduler,
+      enabledSetting: true,
+      intervalMs: 60_000,
+      rows: () => secrets.relayRows(),
+      preferredUrl: () => null,
+      currentUrl: () => current,
+      liveClient: () => live,
+      primaryClient: () =>
+        ({ state: 'online', rttMs: 100, quota: { maxNodes: 16 }, lastConnectError: null }) as never,
+      secondaryOf: () => secondary(JP, 40),
+      presence: () => null,
+      probeHealthz: async () => true,
+      waitForDrain: async () => {},
+      switchDeps: () => ({
+        secrets,
+        uplink: {
+          liveClient: () => live,
+          attachedHub: () => ({
+            hubNodeId: null,
+            publicUrl: current,
+            mode: 'active',
+            writerEpoch: 0,
+            since: 1,
+          }),
+          reconfigure: async () => {},
+          candidates: () => [],
+          switchTo: async (url) => {
+            switched.push(url);
+            current = url;
+            return { ok: true as const };
+          },
+        },
+      }),
+    });
+    auto.noteAttached(SH);
+    auto.onRtt(SH, 100);
+    auto.onRtt(SH, 100);
+    auto.onRtt(JP, 40);
+    auto.onRtt(JP, 40);
+    auto.start();
+    await auto.evaluate();
+    scheduler.nowMs += 60_000;
+    await auto.evaluate();
+    expect(switched).toEqual([]);
+  });
+
+  test('secondary rttMs is not re-fed on each eval', async () => {
+    const b = await setup({ seedRtt: false });
+    b.auto.onRtt(SH, 100);
+    b.auto.onRtt(SH, 100);
+    b.auto.onRtt(JP, 40);
+    b.auto.onRtt(TK, 80);
+    b.auto.onRtt(TK, 80);
+    await b.auto.evaluate();
+    await evalAfterInterval(b);
+    expect(b.switched).toEqual([]);
+  });
+
+  test('drain 结束后出现 pin 则放弃切换', async () => {
+    const pin = { url: null as string | null };
+    const b = await setup({
+      waitForDrain: async () => {
+        pin.url = SH;
+      },
+    });
+    b.secrets.preferredRelayUrl = () => pin.url;
+    await b.auto.evaluate();
+    b.scheduler.nowMs += 60_000;
+    await b.auto.evaluate();
+    expect(b.switched).toEqual([]);
   });
 });

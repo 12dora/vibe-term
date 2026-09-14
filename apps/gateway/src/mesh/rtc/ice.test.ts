@@ -537,7 +537,7 @@ describe('buildRtcIceConfig TURN pick by probe RTT', () => {
     ]);
   });
 
-  test('probeOk ranks above missing/failed; primary fills the second slot', () => {
+  test('probeOk ranks above missing/failed; unprobed TURN is excluded', () => {
     const built = buildRtcIceConfig(
       {
         stun: ['stun:a:1'],
@@ -550,10 +550,37 @@ describe('buildRtcIceConfig TURN pick by probe RTT', () => {
       },
       runtime
     );
+    expect(built.iceServers).toEqual(['stun:a:1', iceOf('c.example', 'uc', 'pc')]);
+  });
+
+  test('turnConfigured without turnProbes does not admit unprobed TURN', () => {
+    const built = buildRtcIceConfig(
+      { stun: ['stun:a:1'], turnConfigured: [a, b, c], turnProbeOk: true },
+      runtime
+    );
+    expect(hasTurnServer(built.iceServers)).toBe(false);
+    expect(built.enableIceUdpMux).toBe(true);
+  });
+
+  test('only probe-ok entries are ranked when probes exist', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:a:1'],
+        turn: [a],
+        turnConfigured: [a, b, c],
+        turnProbeOk: true,
+        turnProbes: [
+          { url: a.url, ok: false, rttMs: 3 },
+          { url: b.url, ok: true, rttMs: 40 },
+          { url: c.url, ok: true, rttMs: 10 },
+        ],
+      },
+      runtime
+    );
     expect(built.iceServers).toEqual([
       'stun:a:1',
       iceOf('c.example', 'uc', 'pc'),
-      iceOf('a.example', 'ua', 'pa'),
+      iceOf('b.example', 'ub', 'pb'),
     ]);
   });
 

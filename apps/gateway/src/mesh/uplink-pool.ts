@@ -505,9 +505,10 @@ export class UplinkPool {
     );
   }
 
-  /** 候选由 `opts.candidates()` 惰性读库，这里只按新候选数重算 RTT 探测节奏，不动在线客户端。 */
+  /** 候选由 `opts.candidates()` 惰性读库；重算 RTT / failback 探测节奏，不动在线客户端。 */
   refreshCandidates(): void {
     this.syncRttProbe();
+    this.syncProbe();
   }
 
   candidates(): UplinkCandidate[] {
@@ -1585,9 +1586,8 @@ function errMessage(err: unknown): string {
 }
 
 function isTlsCertificateError(err: unknown): boolean {
-  const msg = errMessage(err).toLowerCase();
   return /tls|certificate|cert_|unable to verify|self[- ]signed|untrusted|err_cert|ssl|hostname/.test(
-    msg
+    errMessage(err).toLowerCase()
   );
 }
 

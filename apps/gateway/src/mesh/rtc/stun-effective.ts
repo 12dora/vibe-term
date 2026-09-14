@@ -45,6 +45,7 @@ export type ResolvedMeshRtcConfig = {
   turn: RelayTurnConfig[];
   turnConfigured: RelayTurnConfig[];
   turnProbeOk: boolean;
+  turnProbes: TurnProbeRecord[];
   source: StunEffectiveSource;
 };
 
@@ -168,6 +169,7 @@ export function resolveMeshRtcConfig(
     turn: gated.turn,
     turnConfigured,
     turnProbeOk: gated.turnProbeOk,
+    turnProbes: turnProbesForConfigured(turnConfigured),
     source: resolved.source,
   };
 }

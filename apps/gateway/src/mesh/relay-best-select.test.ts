@@ -145,6 +145,43 @@ describe('considerAutoSwitch', () => {
     });
   });
 
+  test('consecutive count only advances after intervalMs', () => {
+    const first = considerAutoSwitch({
+      rows: [far, near],
+      currentUrl: SH,
+      preferredUrl: null,
+      lastAutoSwitchAt: 0,
+      now: NOW,
+      hysteresis: resetRelayHysteresis(),
+      lastConsiderAt: 0,
+      intervalMs: 60_000,
+    });
+    expect(first.decision).toMatchObject({ type: 'hold', reason: 'consecutive' });
+    const tooSoon = considerAutoSwitch({
+      rows: [far, near],
+      currentUrl: SH,
+      preferredUrl: null,
+      lastAutoSwitchAt: 0,
+      now: NOW + 1_000,
+      hysteresis: first.hysteresis,
+      lastConsiderAt: first.lastConsiderAt,
+      intervalMs: 60_000,
+    });
+    expect(tooSoon.hysteresis.consecutiveCount).toBe(1);
+    expect(tooSoon.decision).toMatchObject({ type: 'hold', reason: 'consecutive' });
+    const later = considerAutoSwitch({
+      rows: [far, near],
+      currentUrl: SH,
+      preferredUrl: null,
+      lastAutoSwitchAt: 0,
+      now: NOW + 60_000,
+      hysteresis: tooSoon.hysteresis,
+      lastConsiderAt: tooSoon.lastConsiderAt,
+      intervalMs: 60_000,
+    });
+    expect(later.decision).toMatchObject({ type: 'switch', url: JP });
+  });
+
   test('a different candidate resets the consecutive counter', () => {
     const first = considerAutoSwitch({
       rows: [far, near],

@@ -557,6 +557,25 @@ describe('relay enroll', () => {
     ).rejects.toThrow('relay enroll requires <url>');
   });
 
+  test('enroll of an already-listed URL is allowed at the 16-relay cap after normalize', async () => {
+    const auth = await openAuth();
+    const listed = Array.from({ length: RELAY_RECORD_MAX_RELAYS }, (_, i) => ({
+      url: i === 0 ? `${RELAY_URL}/` : `https://r${i}.example`,
+      priority: i,
+      online: true,
+      attached: true,
+    }));
+    const { calls, fetcher } = fakeGateway(auth, {
+      status: [{ mode: 'relay', relays: listed }, ATTACHED_STATUS],
+    });
+    await runRelayEnroll(
+      parseArgs(['relay', 'enroll', RELAY_URL]),
+      RELAY_URL,
+      io(auth, fetcher, [])
+    );
+    expect(calls.some((call) => call.path === '/api/mesh/relay/enroll')).toBe(true);
+  });
+
   test('enroll of a 17th relay is refused with the 16-relay hint', async () => {
     const auth = await openAuth();
     const { calls, fetcher } = fakeGateway(auth, {
@@ -1119,6 +1138,41 @@ describe('formatting helpers', () => {
     expect(lines.some((line) => line.includes('40 ms') && line.includes('90 ms'))).toBe(true);
   });
 
+  test('formatRelayStatusLines 仅有 preferredUrl 时也打印 AUTO', () => {
+    const lines = formatRelayStatusLines({
+      mode: 'relay',
+      tenantId: null,
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          rttMs: 18,
+          peersOnline: 1,
+          turn: null,
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+      ],
+      metaEpoch: 1,
+      nodesViaRelay: 1,
+      multiAttach: false,
+      reauthRequired: false,
+      readmitPending: 0,
+      raw: {
+        preferredUrl: 'https://sh.example',
+        relays: [{ url: 'https://sh.example', pinned: true }],
+      },
+    });
+    const header = lines.find((line) => line.includes('PRI') && line.includes('AUTO'));
+    expect(header).toBeTruthy();
+    expect(lines.some((line) => line.includes('pinned'))).toBe(true);
+  });
+
   test('formatRelayStatusLines 在有 autoSelect 时打印 AUTO / SCORE，JSON 仍走 raw', () => {
     const raw = {
       mode: 'relay',
@@ -1254,7 +1308,7 @@ describe('relay unpin', () => {
       unpin: { ok: true },
     });
     await runRelayUnpin(parseArgs(['relay', 'unpin', '--json']), io(auth, fetcher, logs));
-    expect(JSON.parse(logs.join('\n'))).toEqual({ ok: true });
+    expect(JSON.parse(logs.join('\n'))).toEqual({ ok: true, unpinned: true });
   });
 
   test('401 from unpin is not swallowed', async () => {

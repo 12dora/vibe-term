@@ -403,8 +403,8 @@ vibeterm relay list
 配了 ≥ 2 条之后，节点对每一条都保持连接：
 
 - **主中继**（`ROLE=primary`）负责写新的密钥日志记录、出成员名册、出配额。**其余全部是副中继**，只做在线状态、入站流、RTC 信令与日志追平。
-- ≥ 2 条未踢中继时**默认可自动换主**（`VIBETERM_RELAY_AUTO_SELECT`，`on|off|1|0|true|false`；未设 = 自动）。评估周期 `VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS`（默认 60 s）。打分看 uplink 心跳 RTT，滞环与 hub nearest-attach 相同（15 ms / 30% / 连续 2 次 / 10 分钟）。自动切换**不**写固定。
-- **「设为主中继」**（设置 → 节点，或 `POST /api/mesh/relay/switch`）换主并把该 URL **固定**（`relay.preferredUrl`）；有固定时自动优选冻结，failback 仍回到固定。`POST /api/mesh/relay/unpin`（CLI `vibeterm relay unpin`）取消固定。目标已经是在线主中继时回 409。旧主降为副。
+- ≥ 2 条未踢中继时**默认可自动换主**（`VIBETERM_RELAY_AUTO_SELECT`，`on|off|1|0|true|false`；未设 = 自动）。评估周期 `VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS`（默认 60 s，1 s…24 h）。打分看 uplink 心跳 RTT，滞环与 hub nearest-attach 相同（15 ms / 30% / 连续 2 次评估且两次间隔 ≥ 周期 / 10 分钟 dwell，任何挂上主中继的原因都重启 dwell）。自动切换**不**写固定，但会把目标排进进程内 `autoPreferredUrl`，候选序为 `preferredUrl ?? autoPreferredUrl`，因此不会被 `probePreferred` 每 60 s 拽回 priority 0。
+- **「设为主中继」**（设置 → 节点，或 `POST /api/mesh/relay/switch`）换主并把该 URL **固定**（`relay.preferredUrl`）；有固定时自动优选冻结，failback 仍回到固定。`POST /api/mesh/relay/unpin`（CLI `vibeterm relay unpin`）取消固定，返回 `{ ok: true, unpinned: boolean }`，并把当前主中继留在 autoPreferred。目标已经是在线主中继时回 409。旧主降为副。
 - 一对节点走中继时**按对选路**，挑双方都在线、往返之和最小的那台，不一定是主中继；设备徽标上会写「中转（经 <host>）」。
 - `PEERS` 是该中继花名册里在线的对端数：uplink client `online` 时有花名册即计数（**不再**二次要求 `presence.connected`），client 离线为 `-`。uplink 闪断后花名册仍按 90 s stale hold 保留。`peers via relay` 是所有中继的**并集**。
 - 某台被踢只影响它自己那行，其余中继照常用；`reauth` 也是按 URL 做。

@@ -27,6 +27,10 @@ function hasAutoSelect(status: RelayStatusJson | null): boolean {
   return Boolean(view && typeof view === 'object');
 }
 
+function showAutoColumn(status: RelayStatusJson | null): boolean {
+  return hasAutoSelect(status) || preferredUrlOf(status) != null;
+}
+
 function autoCell(row: RelayStatusRow): string {
   if (row.pinned) return 'pinned';
   if (row.autoSelected) return 'auto';
@@ -65,7 +69,7 @@ const ls: SubHandler = async (ctx, _flags, positionals) => {
   }
   emit(ctx, status ?? { mode: 'none', relays: [] }, () => {
     ctx.out.line(`mode         ${dash(status?.mode)}`);
-    ctx.out.table(relays, relayLsColumns(hasAutoSelect(status)));
+    ctx.out.table(relays, relayLsColumns(showAutoColumn(status)));
   });
 };
 
@@ -124,9 +128,7 @@ const unpin: SubHandler = async (ctx, _flags, positionals) => {
     return;
   }
   await ctx.http.assertOk(nodeId, unpinResponse, '/api/mesh/relay/unpin');
-  const result =
-    unpinResponse.status === 204 ? { ok: true } : ((await unpinResponse.json()) as unknown);
-  emit(ctx, result, () => ctx.out.line('unpinned'));
+  emit(ctx, { ok: true, unpinned: true }, () => ctx.out.line('unpinned'));
 };
 
 export const relay: SubHandler = async (ctx, flags, positionals) => {
