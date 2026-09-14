@@ -46,7 +46,7 @@ export function RelayTurnTile({ turn, loading = false, stale = false }: RelayTur
   return (
     <TurnSection>
       <div
-        className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start"
+        className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start"
         data-testid="relay-turn"
       >
         <div className="w-full min-w-0 sm:max-w-xs">

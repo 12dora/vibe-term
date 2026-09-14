@@ -23,9 +23,7 @@ function summaryParts(data: Parameters<typeof relaySummaryParts>[1]) {
 }
 
 function render(props: Partial<Parameters<typeof RelayServiceMetrics>[0]> = {}): string {
-  return renderToStaticMarkup(
-    <RelayServiceMetrics publicUrl="https://relay.example.com" hasPassword {...props} />
-  );
+  return renderToStaticMarkup(<RelayServiceMetrics {...props} />);
 }
 
 afterEach(() => {

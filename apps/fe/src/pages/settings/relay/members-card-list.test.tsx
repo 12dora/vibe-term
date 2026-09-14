@@ -17,6 +17,7 @@ describe('窄屏接入节点记录卡', () => {
     expect(html).not.toContain('<table');
     expect(html).toContain('data-testid="relay-members-table"');
     expect(html).toContain('data-testid="relay-member-row-aabbccddeeff0011"');
+    expect(html).toContain('data-online=""');
     expect(html).toContain('上海节点');
     expect(html).toContain('8.0 KB/s');
     expect(html).toContain('4.0 KB/s');
@@ -30,6 +31,14 @@ describe('窄屏接入节点记录卡', () => {
     expect(html).not.toContain('w-[15rem] min-w-[15rem]');
     expect(html).toContain('<span class="sr-only">common.direction.out</span>');
     expect(html).toContain('<span class="sr-only">common.direction.in</span>');
+  });
+
+  test('离线成员不写 data-online，与宽表行一致', () => {
+    const html = renderToStaticMarkup(
+      <RelayMembersCardList members={[relayMetricsMember({ online: false })]} now={0} />
+    );
+    expect(html).toContain('data-testid="relay-member-row-aabbccddeeff0011"');
+    expect(html).not.toContain('data-online');
   });
 
   test('空态与筛没了的 testid 与宽表一致', () => {

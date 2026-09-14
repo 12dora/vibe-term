@@ -1,6 +1,7 @@
 // 指标面板的取数层：从一份 `RelayMetricsResponse` 里派生序列、中位数与成员排序。
 // 全是纯函数，组件只负责摆版式。
 
+import { TONE_CLASS } from '@/lib/tone';
 import type {
   RelayMetricsMember,
   RelayMetricsResponse,
@@ -108,6 +109,12 @@ const LEVEL_TONE = { ok: 'default', warn: 'warning', bad: 'destructive' } as con
 export function levelTone(level: MetricLevel): 'default' | 'warning' | 'destructive' {
   return LEVEL_TONE[level];
 }
+
+export const RTT_TONE_CLASS = {
+  default: '',
+  warning: TONE_CLASS.text.warn,
+  destructive: TONE_CLASS.text.blocked,
+} as const;
 
 // ---------------------------------------------------------------------------
 // 接入节点表的检索 / 排序

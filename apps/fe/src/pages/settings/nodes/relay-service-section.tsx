@@ -54,24 +54,19 @@ export function RelayServiceSection({ service }: RelayServiceSectionProps) {
             </span>
           </>
         )}
-        {service.hasPassword === false && (
-          <span
-            className="basis-full text-muted-foreground"
-            data-testid="local-relay-service-password-unset"
-          >
+      </Row>
+      {service.hasPassword === false && (
+        <Row label={t('relay.admin.password.title')}>
+          <span className="text-muted-foreground" data-testid="local-relay-service-password-unset">
             {t('relay.admin.password.unsetWarning')}
           </span>
-        )}
-      </Row>
+        </Row>
+      )}
 
       {turn && <RelayTurnRow turn={turn} />}
 
       {/* 「运行」整行由指标组件自己渲染：端点不可用时它连标签一起不出。 */}
-      <RelayServiceMetrics
-        publicUrl={service.publicUrl}
-        hasPassword={service.hasPassword}
-        onOpenConsole={openConsole}
-      />
+      <RelayServiceMetrics onOpenConsole={openConsole} />
     </div>
   );
 }

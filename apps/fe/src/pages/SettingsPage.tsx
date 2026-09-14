@@ -84,7 +84,7 @@ const SettingsTabBar = memo(function SettingsTabBar({
     <Tabs value={activeTab} onValueChange={(value) => onSelect(value as SettingsTab)}>
       <TabsList
         ref={listRef}
-        className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="w-full min-w-0 gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {items.map((item) => {
           const Icon = item.icon;

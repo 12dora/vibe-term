@@ -308,15 +308,17 @@ describe('磁贴排', () => {
 
   test('响应式栅格：窄屏不摆多列，免得读数被截断', () => {
     // 完整排：列数只取每组格数的因数，行才不会缺角。
-    // 转发量八格 → 2/4 列；本机负载六格 → 2/3/6 列。窄屏折线已隐藏，两列也放得下。
+    // 转发量八格 → 2/4 列；本机负载六格 → 2/3/6 列。四列/三列从 xl 起，lg 加侧栏会挤出 11ch 读数。
     const full = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
-    expect(full).toContain('grid grid-cols-2 gap-3 lg:grid-cols-4');
-    expect(full).toContain('grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6');
+    expect(full).toContain('grid grid-cols-2 gap-3 xl:grid-cols-4');
+    expect(full).toContain('grid grid-cols-2 gap-3 xl:grid-cols-3 2xl:grid-cols-6');
     expect(full).not.toContain(' xl:grid-cols-6');
     expect(full).not.toContain('md:grid-cols-3');
+    expect(full).not.toContain('lg:grid-cols-4');
+    expect(full).not.toContain('lg:grid-cols-3');
 
     const skeleton = renderToStaticMarkup(<RelayTilesSkeleton count={4} />);
-    expect(skeleton).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');
+    expect(skeleton).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4');
   });
 
   test('数值走格式化后的读数而不是裸字节', () => {
@@ -420,7 +422,9 @@ describe('接入节点表', () => {
     // 表头与单元格用同一个列宽，排序切换也不重排
     expect(html.match(/w-\[15rem\] min-w-\[15rem\]/g)?.length).toBeGreaterThan(1);
     // 宽表壳必须能在 flex 里收缩，否则 min-w-[50rem] 会撑开设置页
-    expect(html).toContain('min-w-0 overflow-x-auto');
+    const sectionClass = html.match(/<section class="([^"]*)"/)?.[1] ?? '';
+    expect(sectionClass).toMatch(/\bmin-w-0\b/);
+    expect(sectionClass).toMatch(/\boverflow-x-auto\b/);
   });
 
   test('方向符号对读屏无意义，出 / 入各配一条 sr-only 文案', () => {
