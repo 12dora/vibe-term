@@ -55,6 +55,7 @@ describe('relayTurnStatusOf', () => {
       externalIp: null,
       listening: false,
       allocations: 0,
+      maxAlloc: null,
       error: null,
       relayPortRange: null,
       membersProbe: null,
@@ -70,6 +71,7 @@ describe('relayTurnView', () => {
       stateKey: 'relay.admin.turn.stateListening',
       tone: 'default',
       allocations: 2,
+      maxAlloc: null,
       endpoint: 'turn:sh.example.com:40000',
       externalIp: '203.0.113.7',
       error: null,
@@ -82,6 +84,13 @@ describe('relayTurnView', () => {
     const view = relayTurnView(status({ listening: false }));
     expect(view.tone).toBe('warning');
     expect(view.stateKey).toBe('relay.admin.turn.stateStopped');
+  });
+
+  test('知道分配上限时带上 maxAlloc', () => {
+    expect(relayTurnView(status({ maxAlloc: 49 })).maxAlloc).toBe(49);
+    expect(
+      relayTurnView(status({ maxAlloc: 49, source: 'off', enabled: false })).maxAlloc
+    ).toBeNull();
   });
 
   test('关闭时不摆分配数，也不提放行端口', () => {
@@ -142,13 +151,24 @@ describe('RelayTurnTile', () => {
     expect(renderToStaticMarkup(<RelayTurnTile turn={undefined} />)).toBe('');
   });
 
-  test('地址、外网地址、放行提示各占一行', () => {
+  test('地址、外网地址、放行提示各占一行，用途说明可见', () => {
     const html = renderToStaticMarkup(<RelayTurnTile turn={status()} />);
     expect(html).toContain('data-testid="relay-metric-turn"');
+    expect(html).toContain('relay.admin.turn.section');
+    expect(html).toContain('relay.admin.turn.hint');
+    expect(html).toContain('relay.admin.turn.unitAllocations');
     expect(html).toContain('turn:sh.example.com:40000');
     expect(html).toContain('relay.admin.turn.externalIp');
     expect(html).toContain('data-testid="relay-turn-firewall"');
     expect(html).not.toContain('data-testid="relay-turn-error"');
+  });
+
+  test('知道上限时数值写成「当前 / 上限」', () => {
+    const html = renderToStaticMarkup(
+      <RelayTurnTile turn={status({ maxAlloc: 49, allocations: 12 })} />
+    );
+    expect(html).toContain('>12 / 49<');
+    expect(html).toContain('relay.admin.turn.unitAllocations');
   });
 
   test('报错时多出一行红字', () => {

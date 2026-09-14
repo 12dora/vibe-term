@@ -2081,7 +2081,7 @@
         "localAddress": "公网地址",
         "localAddressUnset": "未设置",
         "localAddressHint": "未设置公网地址，其它节点无法加入本机。",
-        "upstream": "上级",
+        "upstream": "中继",
         "self": "本机",
         "details": {
           "title": "连接详情",
@@ -2861,7 +2861,7 @@
           "blocked": "另一条设置路径已提交，请等待本机重启完成。"
         }
       },
-      "uplinkOffline": "上级链路未连接，暂时不能生成加入码。",
+      "uplinkOffline": "中继未连接，暂时不能生成加入码。",
       "readmit": {
         "notice": "有 {{count}} 台节点的成员记录是旧根签的，需要重新确认。",
         "action": "重新确认成员",
@@ -3150,20 +3150,25 @@
           "empty": "未接入中继",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。",
-          "rolePrimary": "主中继",
-          "roleSecondary": "副中继",
+          "enrollPassword": "接入密码",
+          "enrollPasswordUnknown": "本机未记录",
+          "enrollPasswordChange": "修改",
+          "rolePrimary": "主",
+          "roleSecondary": "副",
           "roleDetached": "未连接",
           "pinned": "已固定",
           "autoSelected": "自动优选",
-          "score": "打分 {{ms}} ms",
-          "scoreTitle": "自动优选打分（越小越好）",
-          "peersOnline": "{{n}} 台在线",
-          "turn": "TURN",
+          "more": "更多",
+          "tip": {
+            "score": "优选指数 {{value}}（越低越好）",
+            "peers": "本中继在线对端 {{n}} 台",
+            "turn": "TURN {{state}}",
+            "turnMembers": "成员探测 {{ok}}/{{total}} 可达（30 分钟内上报，不含本机）",
+            "pathBest": "路径探测 {{ms}} ms"
+          },
           "turnReachable": "可达",
           "turnUnreachable": "本机不可达",
           "turnUnprobed": "未探测",
-          "turnMembersCount": "{{ok}}/{{total}} 节点",
-          "turnMembersReachable": "{{ok}}/{{total}} 节点可达",
           "turnTunHint": "本机代理/TUN 未转发 UDP，探测结果仅代表本机"
         },
         "linkErrors": {
@@ -3226,7 +3231,7 @@
           "passwordHint": "中继未设接入密码时留空。",
           "rootPassword": "当前密码（本机账号密码）",
           "rootPasswordHint": "接入必须用密码签名，通行密钥无法代签。",
-          "migrateNotice": "接入后本机改走该中继，不再连接原来的上级。",
+          "migrateNotice": "接入后本机改走该中继。",
           "reauthNotice": "接入密码已变更，重新输入以恢复接入。",
           "submit": "接入",
           "submitReauth": "重新接入",
@@ -3234,7 +3239,7 @@
         },
         "leave": {
           "title": "离开中继？",
-          "description": "离开后本机与各节点失去上级链路，须重新接入中继。",
+          "description": "离开后本机与各节点失去中继链路，须重新接入中继。",
           "confirm": "离开",
           "done": "已离开中继。"
         },
@@ -3263,6 +3268,28 @@
           "retryFailed": "密码加入凭据更新失败，请稍后重试。",
           "needsPassword": "更新密码加入凭据须用密码，通行密钥无法代签。",
           "staleWarning": "密码加入凭据未更新，其它机器用密码加入前须重新输入密码。"
+        },
+        "enrollPassword": {
+          "title": "修改接入密码",
+          "description": "修改后新接入须用新密码。默认保留已接入节点。",
+          "current": "当前接入密码",
+          "currentHint": "本机未记录该中继的接入密码，须填写当前密码。中继未设密码时留空。",
+          "next": "新接入密码",
+          "nextHint": "至少 8 个字符；留空即清除接入密码。",
+          "kick": "踢出旧令牌",
+          "kickHint": "所有节点的旧令牌立即失效，须重新输入接入密码。",
+          "done": "接入密码已修改。",
+          "cleared": "接入密码已清除。",
+          "show": "显示接入密码",
+          "hide": "隐藏接入密码",
+          "select": "中继",
+          "errors": {
+            "relay_password_invalid": "当前接入密码不正确。",
+            "relay_password_too_short": "新密码至少 8 个字符。",
+            "relay_members_offline": "仍有成员离线，无法作废旧令牌。",
+            "relay_unreachable": "无法连接该中继。",
+            "relay_not_attached": "本机未接入该中继。"
+          }
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "当前密码不正确。",
@@ -3476,8 +3503,9 @@
           "failed": "限额更新失败：{{message}}"
         },
         "turn": {
-          "title": "TURN",
-          "hint": "直连打不通时，浏览器与节点经这台中继的 TURN 转发媒体流。",
+          "section": "内网穿透",
+          "title": "TURN 服务器",
+          "hint": "直连失败时，浏览器与节点经此 TURN 转发。",
           "sub": "{{mode}} · {{state}}",
           "sourceBuiltin": "内置",
           "sourceExternal": "外部",
@@ -3486,8 +3514,9 @@
           "stateStopped": "未监听",
           "stateOff": "已关闭",
           "externalIp": "外网地址 {{ip}}",
-          "firewall": "需在云安全组或防火墙放行 UDP {{port}} 与 UDP {{range}}。",
-          "membersProbe": "成员可达 {{ok}}/{{total}}",
+          "unitAllocations": "分配",
+          "firewall": "需放行 UDP {{port}}、UDP {{range}}",
+          "membersProbe": "成员探测 {{ok}}/{{total}} 可达（30 分钟内上报）",
           "failed": "TURN 未能启动：{{message}}"
         }
       }

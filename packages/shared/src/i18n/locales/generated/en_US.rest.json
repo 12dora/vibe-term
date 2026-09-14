@@ -1320,7 +1320,7 @@
         "localAddress": "Public Address",
         "localAddressUnset": "Not set",
         "localAddressHint": "No public address set; other nodes cannot join this machine.",
-        "upstream": "Upstream",
+        "upstream": "Relay",
         "self": "This Machine",
         "details": {
           "title": "Connection Details",
@@ -2097,7 +2097,7 @@
           "blocked": "Another setup path has been submitted. Wait for this machine to restart."
         }
       },
-      "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back.",
+      "uplinkOffline": "The relay is not connected. Join codes are unavailable until it is back.",
       "readmit": {
         "notice": "{{count}} node(s) still have member records signed by an old root key and must be re-affirmed.",
         "action": "Re-affirm Members",
@@ -2389,20 +2389,25 @@
           "empty": "Not connected to a relay",
           "tenantId": "Tenant ID",
           "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password.",
+          "enrollPassword": "Access Password",
+          "enrollPasswordUnknown": "Not recorded on this machine",
+          "enrollPasswordChange": "Change",
           "rolePrimary": "Primary",
           "roleSecondary": "Secondary",
           "roleDetached": "Not connected",
           "pinned": "Pinned",
           "autoSelected": "Auto-selected",
-          "score": "Score {{ms}} ms",
-          "scoreTitle": "Score (lower is better)",
-          "peersOnline": "{{n}} online",
-          "turn": "TURN",
+          "more": "More",
+          "tip": {
+            "score": "Preference index {{value}} (lower is better)",
+            "peers": "{{n}} peers online on this relay",
+            "turn": "TURN {{state}}",
+            "turnMembers": "Member probes {{ok}}/{{total}} reachable (reported within 30 min, excluding this machine)",
+            "pathBest": "Path probe {{ms}} ms"
+          },
           "turnReachable": "Reachable",
           "turnUnreachable": "Unreachable here",
           "turnUnprobed": "Not probed",
-          "turnMembersCount": "{{ok}}/{{total}} nodes",
-          "turnMembersReachable": "{{ok}}/{{total}} nodes reachable",
           "turnTunHint": "Local proxy/TUN drops UDP; verdict reflects this machine only"
         },
         "linkErrors": {
@@ -2465,7 +2470,7 @@
           "passwordHint": "Leave empty if the relay has no access password.",
           "rootPassword": "Current password (this machine's account password)",
           "rootPasswordHint": "Joining must be signed with the password; a passkey cannot sign it.",
-          "migrateNotice": "After connecting, this machine uses this relay and no longer uses the previous uplink.",
+          "migrateNotice": "After connecting, this machine uses this relay.",
           "reauthNotice": "The access password changed. Enter the new one to restore the link.",
           "submit": "Connect",
           "submitReauth": "Reconnect",
@@ -2473,7 +2478,7 @@
         },
         "leave": {
           "title": "Leave the relay?",
-          "description": "After leaving, this machine and its nodes have no uplink until a relay is set up again.",
+          "description": "After leaving, this machine and its nodes lose the relay link and must rejoin a relay.",
           "confirm": "Leave",
           "done": "Left the relay."
         },
@@ -2502,6 +2507,28 @@
           "retryFailed": "Could not update the password-join credential. Try again later.",
           "needsPassword": "Updating the password-join credential requires the password; a passkey cannot sign it.",
           "staleWarning": "The password-join credential was not updated. Re-enter the password before another machine joins with a password."
+        },
+        "enrollPassword": {
+          "title": "Change Access Password",
+          "description": "New enrollments will need the new password. Existing nodes stay connected by default.",
+          "current": "Current access password",
+          "currentHint": "This machine has no stored access password for this relay. Enter the current one. Leave empty if the relay has none.",
+          "next": "New access password",
+          "nextHint": "At least 8 characters; leave empty to clear.",
+          "kick": "Revoke old tokens",
+          "kickHint": "All nodes' old tokens become invalid immediately; they must re-enter the access password.",
+          "done": "Access password updated.",
+          "cleared": "Access password cleared.",
+          "show": "Show access password",
+          "hide": "Hide access password",
+          "select": "Relay",
+          "errors": {
+            "relay_password_invalid": "Current access password is incorrect.",
+            "relay_password_too_short": "The new password must be at least 8 characters.",
+            "relay_members_offline": "Some members are offline; old tokens cannot be revoked.",
+            "relay_unreachable": "Cannot reach this relay.",
+            "relay_not_attached": "This machine is not attached to this relay."
+          }
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
@@ -2715,8 +2742,9 @@
           "failed": "Could not update limits: {{message}}"
         },
         "turn": {
-          "title": "TURN",
-          "hint": "When a direct link fails, browsers and nodes relay media through this relay’s TURN server.",
+          "section": "NAT Traversal",
+          "title": "TURN Server",
+          "hint": "When a direct link fails, browsers and nodes relay through this TURN server.",
           "sub": "{{mode}} · {{state}}",
           "sourceBuiltin": "Built-in",
           "sourceExternal": "External",
@@ -2725,8 +2753,9 @@
           "stateStopped": "Not listening",
           "stateOff": "Off",
           "externalIp": "External address {{ip}}",
-          "firewall": "Allow UDP {{port}} and UDP {{range}} in the cloud security group or firewall.",
-          "membersProbe": "Reachable from {{ok}}/{{total}} members",
+          "unitAllocations": "allocations",
+          "firewall": "Open UDP {{port}} and UDP {{range}}",
+          "membersProbe": "Member probes {{ok}}/{{total}} reachable (reported within 30 min)",
           "failed": "TURN failed to start: {{message}}"
         }
       }

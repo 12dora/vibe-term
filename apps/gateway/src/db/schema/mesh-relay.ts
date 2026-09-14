@@ -6,6 +6,7 @@ export const meshRelays = sqliteTable('mesh_relays', {
   url: text('url').primaryKey(),
   tenantId: text('tenant_id').notNull(),
   tokenEnc: text('token_enc').notNull(),
+  enrollPasswordEnc: text('enroll_password_enc'),
   priority: integer('priority').notNull(),
   kicked: integer('kicked', { mode: 'boolean' }).notNull().default(false),
   kickedReason: text('kicked_reason'),

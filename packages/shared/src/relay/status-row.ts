@@ -68,6 +68,8 @@ export type RelayStatusRow = {
   autoSelected?: boolean;
   /** 自动优选打分（越小越好，单位 ms）；样本不足或未连接为 `null`。 */
   score?: number | null;
+  /** 本机是否记下了该中继的接入密码；旧节点不下发。 */
+  enrollPassword?: { known: boolean };
 };
 
 export type RelayKeyLogHealth = {

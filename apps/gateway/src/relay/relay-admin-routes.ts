@@ -7,7 +7,8 @@ import type { RelayKeyLogStore } from './relay-key-log-store';
 import { normalizeRelayLimits } from './relay-limits';
 import type { RelayMetering } from './relay-metering';
 import type { RelayMetricsCollector, RelayMetricsResponse } from './relay-metrics';
-import { hashRelayPassword, relayPasswordTooShort } from './relay-password';
+import { relayPasswordTooShort } from './relay-password';
+import { applyRelayPasswordRotation, offlineMembersGuard } from './relay-password-rotate';
 import { normalizeRelayQuota } from './relay-quota';
 import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
@@ -95,24 +96,6 @@ export function handleRelayMetrics(deps: RelayAdminDeps, req: Request): Response
   return relayJson(rest);
 }
 
-function offlineMembersGuard(
-  deps: RelayAdminDeps,
-  tenantIds: string[],
-  force: unknown
-): Response | null {
-  if (force === true) return null;
-  let online = 0;
-  let admitted = 0;
-  for (const tenantId of tenantIds) {
-    const members = deps.tenants.listNodes(tenantId).filter((node) => node.status === 'admitted');
-    admitted += members.length;
-    online += members.filter((node) => deps.registry.get(tenantId, node.nodeId)).length;
-  }
-  return online < admitted
-    ? relayError(RelayErrorCode.membersOffline, 409, { online, admitted })
-    : null;
-}
-
 export async function handleRelayPassword(deps: RelayAdminDeps, req: Request): Promise<Response> {
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
@@ -128,22 +111,11 @@ export async function handleRelayPassword(deps: RelayAdminDeps, req: Request): P
   if (typeof password === 'string' && relayPasswordTooShort(password)) {
     return relayError(RelayErrorCode.invalidBody, 400);
   }
-  const passwordHash = password === null ? null : await hashRelayPassword(password);
-  if (mode === 'kick') {
-    const blocked = offlineMembersGuard(
-      deps,
-      deps.tenants.list().map((tenant) => tenant.id),
-      body.force
-    );
-    if (blocked) return blocked;
-  }
-  const next = deps.configStore.rotatePassword({
-    passwordHash,
-    kick: mode === 'kick',
-    now: deps.now(),
+  return applyRelayPasswordRotation(deps, {
+    next: password === null ? null : password,
+    mode,
+    force: body.force,
   });
-  if (mode === 'kick') deps.uplink.enforceMinTokenEpoch(next.minTokenEpoch);
-  return relayJson({ ok: true, passwordEpoch: next.passwordEpoch });
 }
 
 /** `{ defaultQuota }` 与 `{ limits }` 各自可选，但至少要给一个——空 PATCH 是调用方写错了。 */

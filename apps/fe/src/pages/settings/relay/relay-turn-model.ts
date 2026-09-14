@@ -35,6 +35,8 @@ export interface RelayTurnView {
   tone: StatTileTone;
   /** 当前分配数；关闭时为 `null`（没有数可报，摆 0 会像「在跑但没人用」）。 */
   allocations: number | null;
+  /** 分配上限；旧中继 / 关闭时为 `null`。 */
+  maxAlloc: number | null;
   /** `turn:<host>:<port>`，去掉查询串。 */
   endpoint: string | null;
   externalIp: string | null;
@@ -89,6 +91,7 @@ export function relayTurnStatusOf(value: unknown): RelayTurnStatus | null {
     externalIp: textOf(raw.externalIp),
     listening: raw.listening === true,
     allocations: countOf(raw.allocations),
+    maxAlloc: nonNegInt(raw.maxAlloc),
     error: textOf(raw.error),
     relayPortRange: textOf(raw.relayPortRange),
     membersProbe: membersProbeOf(raw.membersProbe),
@@ -149,6 +152,7 @@ export function relayTurnView(turn: RelayTurnStatus): RelayTurnView {
     stateKey: stateKeyOf(turn),
     tone: toneOf(turn),
     allocations: off ? null : turn.allocations,
+    maxAlloc: off ? null : (turn.maxAlloc ?? null),
     endpoint: turn.url ? turnEndpointText(turn.url) : null,
     externalIp: turn.externalIp,
     error: turn.error,

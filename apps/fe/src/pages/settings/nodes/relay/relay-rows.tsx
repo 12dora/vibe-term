@@ -1,31 +1,29 @@
 // 中继链路：一条一行。错误按稳定错误码查表，原始错误串（`ECONNRESET` 之类）从不上屏。
 //
 // 两种形态（判据见 `relay-row-model.ts` 的 `isMultiAttachView`）：
-// - 单条中继 / 旧网关：一个状态点加一个主机名——「在线 / 延迟多少」卡头那枚徽标已经说过了。
-//   多于一条时行本身是选择器，点哪条切哪条；这时每行补一句「离线」或延迟，否则没法比较着挑。
-// - 多条同时挂载：每条都连着，行不再是单选——身份 / 固定或自动优选 / 延迟 / 打分 /
-//   在线对端数 / TURN 交给 `Segments`
-//   （宽屏 `·` 串成一句、窄屏一段一行），行尾一个「设为主中继」，主中继那条禁用。
+// - 单条中继 / 旧网关：一个状态点加一个主机名。多于一条时行本身是选择器，点哪条切哪条。
+// - 多条同时挂载：每条都连着，行不再是单选——默认只摆身份与延迟，「更多」收其余事实，
+//   行尾一个「设为主中继」，主中继那条禁用。
 
 import { TONE_CLASS } from '@/lib/tone';
-import type { RelayLinkErrorCode, RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
-import { cn } from '@vibeterm/ui';
+import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
+import { Tooltip, cn } from '@vibeterm/ui';
 import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { type SegmentItem, Segments } from '../copy-feedback';
 import {
   type RelayBadgeSpec,
-  type RelayScoreHint,
-  type RelayTurnChip,
+  type RelayTipLine,
   canSetPrimary,
   isMultiAttachView,
-  relayPeersBadge,
-  relayPinBadge,
+  relayFailing,
+  relayLinkErrorKey,
+  relayMoreTipLines,
   relayRoleBadge,
   relayRttBadge,
-  relayScoreHint,
-  relayTurnChip,
 } from './relay-row-model';
+
+export { relayFailing, relayLinkErrorKey };
 
 /** 行首正文：主机名（带端口）；地址畸形时退回原串。 */
 export function relayLabel(url: string): string {
@@ -34,37 +32,6 @@ export function relayLabel(url: string): string {
   } catch {
     return url;
   }
-}
-
-const LINK_ERROR_CODES = new Set<string>([
-  'connect-failed',
-  'connect-timeout',
-  'auth-timeout',
-  'auth-rejected',
-  'heartbeat-lost',
-  'kicked',
-  'revoked',
-  'dns',
-  'refused',
-  'tls',
-  'protocol',
-  'unknown',
-] satisfies RelayLinkErrorCode[]);
-
-/**
- * 这一行该显示的错误文案 key；在线或没有未恢复的错误时为 `null`。
- * 只有原始错误串（旧网关不下发错误码）时一律归到 `unknown`：那串东西对用户没有意义。
- */
-export function relayLinkErrorKey(relay: RelayLinkStatus): string | null {
-  if (relay.online) return null;
-  const code = relay.lastErrorCode;
-  if (code && LINK_ERROR_CODES.has(code)) return `relay.tenant.linkErrors.${code}`;
-  return code || relay.lastError ? 'relay.tenant.linkErrors.unknown' : null;
-}
-
-/** 这条中继当前是否需要提醒（令牌被作废 / 掉线且有错）。 */
-export function relayFailing(relay: RelayLinkStatus): boolean {
-  return relay.kicked === true || relayLinkErrorKey(relay) !== null;
 }
 
 export interface RelayRowsProps {
@@ -140,6 +107,7 @@ function RelayRow({
   onSelect?: (relay: RelayLinkStatus) => void;
 }) {
   const host = relayLabel(relay.url);
+  const more = <RelayMoreTip relay={relay} host={host} />;
   const line = (
     <RelayLine
       relay={relay}
@@ -151,27 +119,31 @@ function RelayRow({
   return (
     <RelayRowShell relay={relay} host={host}>
       {selectable && !relay.attached ? (
-        <button
-          type="button"
-          className="flex w-fit items-center gap-2 rounded-md py-0.5 text-left transition-opacity duration-(--vibeterm-motion-fast) hover:opacity-70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
-          onClick={() => onSelect?.(relay)}
-          data-testid={`nodes-relay-switch-${host}`}
-        >
-          {line}
-        </button>
+        <span className="flex w-fit items-center gap-2">
+          <button
+            type="button"
+            className="flex w-fit items-center gap-2 rounded-md py-0.5 text-left transition-opacity duration-(--vibeterm-motion-fast) hover:opacity-70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
+            onClick={() => onSelect?.(relay)}
+            data-testid={`nodes-relay-switch-${host}`}
+          >
+            {line}
+          </button>
+          {more}
+        </span>
       ) : (
         <span
           className="flex w-fit items-center gap-2 py-0.5"
           aria-current={selectable ? 'true' : undefined}
         >
           {line}
+          {more}
         </span>
       )}
     </RelayRowShell>
   );
 }
 
-/** 多条同时挂载时的一行：身份 · 延迟 · 在线对端数 · TURN 串成一句，行尾一个「设为主中继」。 */
+/** 多条同时挂载时的一行：身份 · 延迟 · 更多，行尾一个「设为主中继」。 */
 function RelayAttachedRow({
   relay,
   onSelect,
@@ -189,7 +161,7 @@ function RelayAttachedRow({
         data-relay-role={role.key}
         aria-current={relay.attached ? 'true' : undefined}
       >
-        <Segments items={attachedSegments(t, relay, host, role)} />
+        <Segments items={attachedSegments(relay, host, role)} />
         {onSelect && (
           <Button
             type="button"
@@ -208,18 +180,13 @@ function RelayAttachedRow({
   );
 }
 
-/** 一条中继的各段事实：主机名打头，随后是身份 / 延迟 / 在线对端数 / TURN。 */
+/** 一条中继的默认段：主机名打头，随后是身份 / 延迟 / 更多。 */
 function attachedSegments(
-  t: ReturnType<typeof useTranslation>['t'],
   relay: RelayLinkStatus,
   host: string,
   role: RelayBadgeSpec
 ): SegmentItem[] {
   const rtt = relayRttBadge(relay);
-  const pin = relayPinBadge(relay);
-  const score = relayScoreHint(relay);
-  const peers = relayPeersBadge(relay);
-  const turn = relayTurnChip(relay);
   const items: SegmentItem[] = [
     {
       key: 'host',
@@ -235,59 +202,51 @@ function attachedSegments(
       node: <RelayFact spec={role} testId={`nodes-relay-role-${host}`} />,
     },
   ];
-  if (pin) {
-    items.push({ key: 'pin', node: <RelayFact spec={pin} testId={`nodes-relay-pin-${host}`} /> });
-  }
   if (rtt) {
     items.push({ key: 'rtt', node: <RelayFact spec={rtt} testId={`nodes-relay-rtt-${host}`} /> });
   }
-  if (score) {
-    items.push({ key: 'score', node: <RelayScore hint={score} host={host} /> });
-  }
-  if (peers) {
-    items.push({
-      key: 'peers',
-      node: <RelayFact spec={peers} testId={`nodes-relay-peers-${host}`} />,
-    });
-  }
-  if (turn) {
-    items.push({
-      key: 'turn',
-      node: (
-        <span
-          className={`min-w-0 truncate ${turnTextClass(turn.tone)}`}
-          title={turn.titleKey ? t(turn.titleKey) : undefined}
-          data-testid={`nodes-relay-turn-${host}`}
-        >
-          {`${t('relay.tenant.strip.turn')} ${turn.endpoint} ${t(turn.verdictKey)}`}
-          {turn.membersKey ? ` · ${t(turn.membersKey, turn.membersParams)}` : ''}
-        </span>
-      ),
-    });
-  }
+  items.push({ key: 'more', node: <RelayMoreTip relay={relay} host={host} /> });
   return items;
 }
 
-/** 打分紧跟延迟：同为一串数字，靠 `title` 说明它不是往返时延。 */
-function RelayScore({ hint, host }: { hint: RelayScoreHint; host: string }) {
+function RelayMoreTip({ relay, host }: { relay: RelayLinkStatus; host: string }) {
   const { t } = useTranslation();
+  const lines = relayMoreTipLines(relay, host);
+  if (lines.length === 0) return null;
   return (
-    <span
-      className="whitespace-nowrap text-muted-foreground"
-      title={t(hint.titleKey)}
-      data-testid={`nodes-relay-score-${host}`}
+    <Tooltip
+      side="bottom"
+      content={
+        <span
+          className="flex flex-col gap-0.5 text-left"
+          data-testid={`nodes-relay-more-tip-${host}`}
+        >
+          {lines.map((line) => (
+            <span key={line.key} className={tipLineClass(line)} data-testid={line.testId}>
+              {tipLineText(t, line)}
+            </span>
+          ))}
+        </span>
+      }
     >
-      {t(hint.key, hint.params)}
-      {/* title 触屏与读屏都拿不到：「越小越好」再给一份 sr-only 文本。 */}
-      <span className="sr-only">{` ${t(hint.titleKey)}`}</span>
-    </span>
+      <Button type="button" size="xs" variant="ghost" data-testid={`nodes-relay-more-${host}`}>
+        {t('relay.tenant.strip.more')}
+      </Button>
+    </Tooltip>
   );
 }
 
-function turnTextClass(tone: RelayTurnChip['tone']): string {
-  if (tone === 'destructive') return TONE_CLASS.text.blocked;
-  if (tone === 'warning') return TONE_CLASS.text.warn;
-  return TONE_CLASS.text.muted;
+function tipLineText(t: ReturnType<typeof useTranslation>['t'], line: RelayTipLine): string {
+  const translated = line.translatedParams
+    ? Object.fromEntries(Object.entries(line.translatedParams).map(([name, key]) => [name, t(key)]))
+    : {};
+  return t(line.i18nKey, { ...line.params, ...translated });
+}
+
+function tipLineClass(line: RelayTipLine): string {
+  if (line.tone === 'destructive') return TONE_CLASS.text.blocked;
+  if (line.tone === 'warning') return TONE_CLASS.text.warn;
+  return '';
 }
 
 function RelayFact({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {

@@ -1,10 +1,11 @@
-// 中继内置 TURN 的磁贴：与相邻的指标格同一版式，多出一段地址/报错/放行提示的明细。
+// 中继内置 TURN 的磁贴：与相邻的指标格同一版式，右侧摆地址 / 探测 / 放行提示。
 //
 // 直连打不通时浏览器与节点都会退到 TURN，因此这一格的重点是「有没有在听」与「端口放行了没有」，
-// 而不是 allocation 这个数字本身——数字只用来确认它真的在干活。
+// 分配数用来确认它真的在干活；知道上限时写成 `12 / 49`。
 
 import { Skeleton } from '@vibeterm/ui/skeleton';
 import { StatTile } from '@vibeterm/ui/stat-tile';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   type RelayTurnMembersProbe,
@@ -26,36 +27,64 @@ export interface RelayTurnTileProps {
 export function RelayTurnTile({ turn, loading = false, stale = false }: RelayTurnTileProps) {
   const { t } = useTranslation();
   if (loading) {
-    return <Skeleton className="h-[4.5rem] w-full rounded-xl" data-testid="relay-turn-skeleton" />;
+    return (
+      <TurnSection>
+        <Skeleton className="h-[4.5rem] w-full rounded-xl" data-testid="relay-turn-skeleton" />
+      </TurnSection>
+    );
   }
   const status = relayTurnStatusOf(turn);
   if (!status) return null;
   const view = relayTurnView(status);
+  const allocations = view.allocations;
+  const value =
+    allocations === null
+      ? t(view.stateKey)
+      : view.maxAlloc != null
+        ? `${allocations} / ${view.maxAlloc}`
+        : allocations;
   return (
-    <div className="flex flex-col gap-1.5" data-testid="relay-turn">
-      <StatTile
-        label={t('relay.admin.turn.title')}
-        value={view.allocations ?? t(view.stateKey)}
-        sub={
-          view.allocations === null
-            ? t(view.modeKey)
-            : t('relay.admin.turn.sub', { mode: t(view.modeKey), state: t(view.stateKey) })
-        }
-        hint={t('relay.admin.turn.hint')}
-        tone={view.tone}
-        stale={stale}
-        data-testid="relay-metric-turn"
-      />
-      <RelayTurnDetails view={view} />
-    </div>
+    <TurnSection>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start" data-testid="relay-turn">
+        <div className="w-full sm:max-w-xs sm:shrink-0">
+          <StatTile
+            label={t('relay.admin.turn.title')}
+            value={value}
+            unit={allocations === null ? undefined : t('relay.admin.turn.unitAllocations')}
+            sub={
+              allocations === null
+                ? t(view.modeKey)
+                : t('relay.admin.turn.sub', { mode: t(view.modeKey), state: t(view.stateKey) })
+            }
+            tone={view.tone}
+            stale={stale}
+            data-testid="relay-metric-turn"
+          />
+        </div>
+        <RelayTurnDetails view={view} />
+      </div>
+    </TurnSection>
   );
 }
 
-/** 磁贴下的明细行。单独导出，供静态渲染的单测直接断言。 */
+function TurnSection({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        {t('relay.admin.turn.section')}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+/** 磁贴右侧（窄屏在下方）的明细行。单独导出，供静态渲染的单测直接断言。 */
 export function RelayTurnDetails({ view }: { view: RelayTurnView }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
+    <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-[11px] text-muted-foreground">
+      <span>{t('relay.admin.turn.hint')}</span>
       {view.endpoint && (
         <span className="truncate font-mono" data-testid="relay-turn-endpoint">
           {view.endpoint}

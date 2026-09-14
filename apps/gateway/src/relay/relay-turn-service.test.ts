@@ -140,6 +140,7 @@ describe('RelayTurnService builtin', () => {
       bindHost: 'auto',
       externalIp: '203.0.113.9',
       relayPortRange: '40001-40049',
+      maxAlloc: 49,
       error: null,
     });
     expect(logs.some((line) => line.includes('[relay][turn] builtin turn listening'))).toBe(true);

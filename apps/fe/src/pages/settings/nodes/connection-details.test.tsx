@@ -157,6 +157,48 @@ describe('连接详情', () => {
     const html = render();
     expect(html).not.toContain('data-testid="nodes-relay-tenant-id"');
     expect(html).not.toContain('data-testid="nodes-relay-peers"');
+    expect(html).not.toContain('data-testid="nodes-relay-enroll-password"');
+  });
+
+  test('已挂上中继时接入密码行紧跟租户编号', () => {
+    const html = render({
+      ...RELAY_MODE,
+      relays: [
+        {
+          url: 'https://sh.example.com:8443',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          enrollPassword: { known: true },
+        },
+      ],
+    });
+    const tenant = html.indexOf('data-testid="nodes-relay-tenant-id"');
+    const password = html.indexOf('data-testid="nodes-relay-enroll-password"');
+    const node = html.indexOf('data-testid="local-machine-node-id"');
+    expect(password).toBeGreaterThan(tenant);
+    expect(password).toBeLessThan(node);
+    expect(html).toContain('••••••••');
+    expect(html).toContain('data-testid="nodes-relay-enroll-password-change"');
+  });
+
+  test('已挂上但本机未记录：接入密码显示未记录', () => {
+    const html = render({
+      ...RELAY_MODE,
+      relays: [
+        {
+          url: 'https://sh.example.com:8443',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          enrollPassword: { known: false },
+        },
+      ],
+    });
+    expect(html).toContain('relay.tenant.strip.enrollPasswordUnknown');
+    expect(html).not.toContain('••••••••');
   });
 
   test('不再渲染 Hub 明细', () => {

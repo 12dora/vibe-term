@@ -80,6 +80,10 @@ function rowPath(row: RelayLinkStatus): Pick<RelayLinkStatus, 'pathBestMs' | 're
   };
 }
 
+function rowEnrollPassword(row: RelayLinkStatus): RelayLinkStatus['enrollPassword'] {
+  return { known: row.enrollPassword?.known === true };
+}
+
 /** 一条链路：未知的角色一律 `null`，固定 / 自动优选 / 打分按缺席落成确定值。 */
 function normalizeRelayRow(row: RelayLinkStatus): RelayLinkStatus {
   return {
@@ -97,6 +101,7 @@ function normalizeRelayRow(row: RelayLinkStatus): RelayLinkStatus {
     pinned: row.pinned === true,
     autoSelected: row.autoSelected === true,
     score: finiteOrNull(row.score),
+    enrollPassword: rowEnrollPassword(row),
   };
 }
 

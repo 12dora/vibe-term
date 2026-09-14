@@ -34,6 +34,7 @@ export type RelayTurnStatus = {
   bindHost?: string | null;
   listening: boolean;
   allocations: number;
+  maxAlloc: number | null;
   error: string | null;
   relayPortRange: string | null;
   membersProbe?: { ok: number; total: number; updatedAt: number } | null;
@@ -47,6 +48,7 @@ export const EMPTY_RELAY_TURN_STATUS: RelayTurnStatus = {
   externalIp: null,
   listening: false,
   allocations: 0,
+  maxAlloc: null,
   error: null,
   relayPortRange: null,
 };

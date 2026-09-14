@@ -218,6 +218,7 @@ describe('RelayRoutes', () => {
           lastErrorAt: null,
           kicked: false,
           kickedReason: null,
+          enrollPassword: { known: false },
         },
       ] as never);
       expect(after.reauthRequired).toBe(false);
@@ -604,6 +605,10 @@ describe('RelayRoutes', () => {
       const result = await b.secrets.reconcile();
       expect(result.kind).toBe('relay');
       expect(await b.secrets.metaKey(1)).toEqual(metaKey);
+      expect(b.secrets.store.hasEnrollPassword(canonicalPublicUrl(RELAY_URL))).toBe(true);
+      expect(await b.secrets.store.getEnrollPassword(canonicalPublicUrl(RELAY_URL))).toBe(
+        'hunter2'
+      );
     } finally {
       b.close();
     }

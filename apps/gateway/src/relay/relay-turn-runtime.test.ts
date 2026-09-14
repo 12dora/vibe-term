@@ -59,6 +59,7 @@ describe('relay runtime TURN wiring', () => {
       url: 'turn:relay.example:40000?transport=udp',
       listening: true,
       allocations: 2,
+      maxAlloc: 49,
     });
     const res = await harness.adminFetch('/api/relay/status');
     const body = (await res.json()) as {

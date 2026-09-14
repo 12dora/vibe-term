@@ -160,9 +160,7 @@ function RelayTabBody({
 
       {turn && (
         <Reveal delayMs={30}>
-          <div className="sm:max-w-xs">
-            <RelayTurnTile turn={turn} stale={relay.error !== null} />
-          </div>
+          <RelayTurnTile turn={turn} stale={relay.error !== null} />
         </Reveal>
       )}
 

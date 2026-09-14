@@ -113,6 +113,26 @@ describe('buildRelayStatusRow', () => {
     });
   });
 
+  test('enrollPassword.known 来自 extras，缺省为 false', () => {
+    const unknown = buildRelayStatusRow(
+      { url: 'https://a.example', priority: 0, kicked: false },
+      'https://a.example',
+      { state: 'online', rttMs: 1 },
+      null,
+      []
+    );
+    expect(unknown.enrollPassword).toEqual({ known: false });
+    const known = buildRelayStatusRow(
+      { url: 'https://a.example', priority: 0, kicked: false },
+      'https://a.example',
+      { state: 'online', rttMs: 1 },
+      null,
+      [],
+      { enrollPasswordKnown: true }
+    );
+    expect(known.enrollPassword).toEqual({ known: true });
+  });
+
   test('online row 强制清空 lastError / lastErrorCode', () => {
     const row = buildRelayStatusRow(
       { url: 'https://a.example', priority: 0, kicked: false },
@@ -379,7 +399,7 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
     });
 
     expect(JSON.stringify(payload)).toBe(
-      '{"mode":"relay","tenantId":"abababababababababababababababab","relays":[{"url":"https://sh.example","priority":0,"online":true,"attached":true,"role":"primary","rttMs":12,"peersOnline":null,"turn":{"url":"turn:sh.example:3478","probeOk":null},"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null},{"url":"https://tk.example","priority":1,"online":true,"attached":false,"role":"secondary","rttMs":33,"peersOnline":null,"turn":null,"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"keyLog":{"diverged":true}},{"url":"https://os.example","priority":2,"online":false,"attached":false,"role":null,"rttMs":null,"peersOnline":null,"turn":null,"lastError":"client-too-old","lastErrorCode":"protocol","lastErrorAt":7,"kicked":true,"kickedReason":"password_rotated"}],"metaEpoch":4,"nodesViaRelay":2,"multiAttach":true,"reauthRequired":true,"awaitingToken":true,"readmitPending":1,"metaKeyLagging":[],"quota":{"maxNodes":8,"maxStreams":16,"bandwidthBytesPerSec":1024},"keyLog":{"skipped":0,"blockedSeq":null,"caughtUp":true}}'
+      '{"mode":"relay","tenantId":"abababababababababababababababab","relays":[{"url":"https://sh.example","priority":0,"online":true,"attached":true,"role":"primary","rttMs":12,"peersOnline":null,"turn":{"url":"turn:sh.example:3478","probeOk":null},"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"enrollPassword":{"known":false}},{"url":"https://tk.example","priority":1,"online":true,"attached":false,"role":"secondary","rttMs":33,"peersOnline":null,"turn":null,"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"keyLog":{"diverged":true},"enrollPassword":{"known":false}},{"url":"https://os.example","priority":2,"online":false,"attached":false,"role":null,"rttMs":null,"peersOnline":null,"turn":null,"lastError":"client-too-old","lastErrorCode":"protocol","lastErrorAt":7,"kicked":true,"kickedReason":"password_rotated","enrollPassword":{"known":false}}],"metaEpoch":4,"nodesViaRelay":2,"multiAttach":true,"reauthRequired":true,"awaitingToken":true,"readmitPending":1,"metaKeyLagging":[],"quota":{"maxNodes":8,"maxStreams":16,"bandwidthBytesPerSec":1024},"keyLog":{"skipped":0,"blockedSeq":null,"caughtUp":true}}'
     );
   });
 

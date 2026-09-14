@@ -9,6 +9,7 @@ import {
   handleRelayKeyLogPage,
   handleRelayTenantKdf,
 } from './relay-pack-http';
+import { handleRelayPasswordRotate } from './relay-password-rotate';
 import {
   RELAY_TOKEN_HEADER,
   type RelayPublicRoutesDeps,
@@ -107,6 +108,11 @@ const RELAY_PUBLIC_ROUTES: readonly PublicRoute[] = [
     pattern: '/api/relay/enroll',
     methods: 'POST',
     handle: (ctx, req) => handleRelayEnroll(ctx.deps, req),
+  },
+  {
+    pattern: '/api/relay/password/rotate',
+    methods: 'POST',
+    handle: (ctx, req) => handleRelayPasswordRotate(ctx.deps, req),
   },
   {
     pattern: '/api/relay/tenants/:tenantId/kdf',

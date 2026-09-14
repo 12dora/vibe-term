@@ -2087,7 +2087,7 @@ export const I18N_RESOURCES = {
         "localAddress": "Public Address",
         "localAddressUnset": "Not set",
         "localAddressHint": "No public address set; other nodes cannot join this machine.",
-        "upstream": "Upstream",
+        "upstream": "Relay",
         "self": "This Machine",
         "details": {
           "title": "Connection Details",
@@ -2872,7 +2872,7 @@ export const I18N_RESOURCES = {
           "blocked": "Another setup path has been submitted. Wait for this machine to restart."
         }
       },
-      "uplinkOffline": "The uplink is not connected. Join codes are unavailable until it is back.",
+      "uplinkOffline": "The relay is not connected. Join codes are unavailable until it is back.",
       "readmit": {
         "notice": "{{count}} node(s) still have member records signed by an old root key and must be re-affirmed.",
         "action": "Re-affirm Members",
@@ -3164,20 +3164,25 @@ export const I18N_RESOURCES = {
           "empty": "Not connected to a relay",
           "tenantId": "Tenant ID",
           "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password.",
+          "enrollPassword": "Access Password",
+          "enrollPasswordUnknown": "Not recorded on this machine",
+          "enrollPasswordChange": "Change",
           "rolePrimary": "Primary",
           "roleSecondary": "Secondary",
           "roleDetached": "Not connected",
           "pinned": "Pinned",
           "autoSelected": "Auto-selected",
-          "score": "Score {{ms}} ms",
-          "scoreTitle": "Score (lower is better)",
-          "peersOnline": "{{n}} online",
-          "turn": "TURN",
+          "more": "More",
+          "tip": {
+            "score": "Preference index {{value}} (lower is better)",
+            "peers": "{{n}} peers online on this relay",
+            "turn": "TURN {{state}}",
+            "turnMembers": "Member probes {{ok}}/{{total}} reachable (reported within 30 min, excluding this machine)",
+            "pathBest": "Path probe {{ms}} ms"
+          },
           "turnReachable": "Reachable",
           "turnUnreachable": "Unreachable here",
           "turnUnprobed": "Not probed",
-          "turnMembersCount": "{{ok}}/{{total}} nodes",
-          "turnMembersReachable": "{{ok}}/{{total}} nodes reachable",
           "turnTunHint": "Local proxy/TUN drops UDP; verdict reflects this machine only"
         },
         "linkErrors": {
@@ -3240,7 +3245,7 @@ export const I18N_RESOURCES = {
           "passwordHint": "Leave empty if the relay has no access password.",
           "rootPassword": "Current password (this machine's account password)",
           "rootPasswordHint": "Joining must be signed with the password; a passkey cannot sign it.",
-          "migrateNotice": "After connecting, this machine uses this relay and no longer uses the previous uplink.",
+          "migrateNotice": "After connecting, this machine uses this relay.",
           "reauthNotice": "The access password changed. Enter the new one to restore the link.",
           "submit": "Connect",
           "submitReauth": "Reconnect",
@@ -3248,7 +3253,7 @@ export const I18N_RESOURCES = {
         },
         "leave": {
           "title": "Leave the relay?",
-          "description": "After leaving, this machine and its nodes have no uplink until a relay is set up again.",
+          "description": "After leaving, this machine and its nodes lose the relay link and must rejoin a relay.",
           "confirm": "Leave",
           "done": "Left the relay."
         },
@@ -3277,6 +3282,28 @@ export const I18N_RESOURCES = {
           "retryFailed": "Could not update the password-join credential. Try again later.",
           "needsPassword": "Updating the password-join credential requires the password; a passkey cannot sign it.",
           "staleWarning": "The password-join credential was not updated. Re-enter the password before another machine joins with a password."
+        },
+        "enrollPassword": {
+          "title": "Change Access Password",
+          "description": "New enrollments will need the new password. Existing nodes stay connected by default.",
+          "current": "Current access password",
+          "currentHint": "This machine has no stored access password for this relay. Enter the current one. Leave empty if the relay has none.",
+          "next": "New access password",
+          "nextHint": "At least 8 characters; leave empty to clear.",
+          "kick": "Revoke old tokens",
+          "kickHint": "All nodes' old tokens become invalid immediately; they must re-enter the access password.",
+          "done": "Access password updated.",
+          "cleared": "Access password cleared.",
+          "show": "Show access password",
+          "hide": "Hide access password",
+          "select": "Relay",
+          "errors": {
+            "relay_password_invalid": "Current access password is incorrect.",
+            "relay_password_too_short": "The new password must be at least 8 characters.",
+            "relay_members_offline": "Some members are offline; old tokens cannot be revoked.",
+            "relay_unreachable": "Cannot reach this relay.",
+            "relay_not_attached": "This machine is not attached to this relay."
+          }
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "Current password is incorrect.",
@@ -3490,8 +3517,9 @@ export const I18N_RESOURCES = {
           "failed": "Could not update limits: {{message}}"
         },
         "turn": {
-          "title": "TURN",
-          "hint": "When a direct link fails, browsers and nodes relay media through this relay’s TURN server.",
+          "section": "NAT Traversal",
+          "title": "TURN Server",
+          "hint": "When a direct link fails, browsers and nodes relay through this TURN server.",
           "sub": "{{mode}} · {{state}}",
           "sourceBuiltin": "Built-in",
           "sourceExternal": "External",
@@ -3500,8 +3528,9 @@ export const I18N_RESOURCES = {
           "stateStopped": "Not listening",
           "stateOff": "Off",
           "externalIp": "External address {{ip}}",
-          "firewall": "Allow UDP {{port}} and UDP {{range}} in the cloud security group or firewall.",
-          "membersProbe": "Reachable from {{ok}}/{{total}} members",
+          "unitAllocations": "allocations",
+          "firewall": "Open UDP {{port}} and UDP {{range}}",
+          "membersProbe": "Member probes {{ok}}/{{total}} reachable (reported within 30 min)",
           "failed": "TURN failed to start: {{message}}"
         }
       }
@@ -5673,7 +5702,7 @@ export const I18N_RESOURCES = {
         "localAddress": "公网地址",
         "localAddressUnset": "未设置",
         "localAddressHint": "未设置公网地址，其它节点无法加入本机。",
-        "upstream": "上级",
+        "upstream": "中继",
         "self": "本机",
         "details": {
           "title": "连接详情",
@@ -6453,7 +6482,7 @@ export const I18N_RESOURCES = {
           "blocked": "另一条设置路径已提交，请等待本机重启完成。"
         }
       },
-      "uplinkOffline": "上级链路未连接，暂时不能生成加入码。",
+      "uplinkOffline": "中继未连接，暂时不能生成加入码。",
       "readmit": {
         "notice": "有 {{count}} 台节点的成员记录是旧根签的，需要重新确认。",
         "action": "重新确认成员",
@@ -6742,20 +6771,25 @@ export const I18N_RESOURCES = {
           "empty": "未接入中继",
           "tenantId": "租户编号",
           "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。",
-          "rolePrimary": "主中继",
-          "roleSecondary": "副中继",
+          "enrollPassword": "接入密码",
+          "enrollPasswordUnknown": "本机未记录",
+          "enrollPasswordChange": "修改",
+          "rolePrimary": "主",
+          "roleSecondary": "副",
           "roleDetached": "未连接",
           "pinned": "已固定",
           "autoSelected": "自动优选",
-          "score": "打分 {{ms}} ms",
-          "scoreTitle": "自动优选打分（越小越好）",
-          "peersOnline": "{{n}} 台在线",
-          "turn": "TURN",
+          "more": "更多",
+          "tip": {
+            "score": "优选指数 {{value}}（越低越好）",
+            "peers": "本中继在线对端 {{n}} 台",
+            "turn": "TURN {{state}}",
+            "turnMembers": "成员探测 {{ok}}/{{total}} 可达（30 分钟内上报，不含本机）",
+            "pathBest": "路径探测 {{ms}} ms"
+          },
           "turnReachable": "可达",
           "turnUnreachable": "本机不可达",
           "turnUnprobed": "未探测",
-          "turnMembersCount": "{{ok}}/{{total}} 节点",
-          "turnMembersReachable": "{{ok}}/{{total}} 节点可达",
           "turnTunHint": "本机代理/TUN 未转发 UDP，探测结果仅代表本机"
         },
         "linkErrors": {
@@ -6818,7 +6852,7 @@ export const I18N_RESOURCES = {
           "passwordHint": "中继未设接入密码时留空。",
           "rootPassword": "当前密码（本机账号密码）",
           "rootPasswordHint": "接入必须用密码签名，通行密钥无法代签。",
-          "migrateNotice": "接入后本机改走该中继，不再连接原来的上级。",
+          "migrateNotice": "接入后本机改走该中继。",
           "reauthNotice": "接入密码已变更，重新输入以恢复接入。",
           "submit": "接入",
           "submitReauth": "重新接入",
@@ -6826,7 +6860,7 @@ export const I18N_RESOURCES = {
         },
         "leave": {
           "title": "离开中继？",
-          "description": "离开后本机与各节点失去上级链路，须重新接入中继。",
+          "description": "离开后本机与各节点失去中继链路，须重新接入中继。",
           "confirm": "离开",
           "done": "已离开中继。"
         },
@@ -6855,6 +6889,28 @@ export const I18N_RESOURCES = {
           "retryFailed": "密码加入凭据更新失败，请稍后重试。",
           "needsPassword": "更新密码加入凭据须用密码，通行密钥无法代签。",
           "staleWarning": "密码加入凭据未更新，其它机器用密码加入前须重新输入密码。"
+        },
+        "enrollPassword": {
+          "title": "修改接入密码",
+          "description": "修改后新接入须用新密码。默认保留已接入节点。",
+          "current": "当前接入密码",
+          "currentHint": "本机未记录该中继的接入密码，须填写当前密码。中继未设密码时留空。",
+          "next": "新接入密码",
+          "nextHint": "至少 8 个字符；留空即清除接入密码。",
+          "kick": "踢出旧令牌",
+          "kickHint": "所有节点的旧令牌立即失效，须重新输入接入密码。",
+          "done": "接入密码已修改。",
+          "cleared": "接入密码已清除。",
+          "show": "显示接入密码",
+          "hide": "隐藏接入密码",
+          "select": "中继",
+          "errors": {
+            "relay_password_invalid": "当前接入密码不正确。",
+            "relay_password_too_short": "新密码至少 8 个字符。",
+            "relay_members_offline": "仍有成员离线，无法作废旧令牌。",
+            "relay_unreachable": "无法连接该中继。",
+            "relay_not_attached": "本机未接入该中继。"
+          }
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "当前密码不正确。",
@@ -7068,8 +7124,9 @@ export const I18N_RESOURCES = {
           "failed": "限额更新失败：{{message}}"
         },
         "turn": {
-          "title": "TURN",
-          "hint": "直连打不通时，浏览器与节点经这台中继的 TURN 转发媒体流。",
+          "section": "内网穿透",
+          "title": "TURN 服务器",
+          "hint": "直连失败时，浏览器与节点经此 TURN 转发。",
           "sub": "{{mode}} · {{state}}",
           "sourceBuiltin": "内置",
           "sourceExternal": "外部",
@@ -7078,8 +7135,9 @@ export const I18N_RESOURCES = {
           "stateStopped": "未监听",
           "stateOff": "已关闭",
           "externalIp": "外网地址 {{ip}}",
-          "firewall": "需在云安全组或防火墙放行 UDP {{port}} 与 UDP {{range}}。",
-          "membersProbe": "成员可达 {{ok}}/{{total}}",
+          "unitAllocations": "分配",
+          "firewall": "需放行 UDP {{port}}、UDP {{range}}",
+          "membersProbe": "成员探测 {{ok}}/{{total}} 可达（30 分钟内上报）",
           "failed": "TURN 未能启动：{{message}}"
         }
       }
@@ -9251,7 +9309,7 @@ export const I18N_RESOURCES = {
         "localAddress": "公開アドレス",
         "localAddressUnset": "未設定",
         "localAddressHint": "公開アドレスが未設定のため、他のノードは本機に参加できません。",
-        "upstream": "上位",
+        "upstream": "中継",
         "self": "このマシン",
         "details": {
           "title": "接続の詳細",
@@ -10031,7 +10089,7 @@ export const I18N_RESOURCES = {
           "blocked": "別の設定経路が送信済みです。本機の再起動が終わるまでお待ちください。"
         }
       },
-      "uplinkOffline": "上位リンクに接続していません。復帰するまで参加コードは作成できません。",
+      "uplinkOffline": "中継に接続していません。復帰するまで参加コードは作成できません。",
       "readmit": {
         "notice": "{{count}} 台のノードのメンバー記録が古いルート鍵で署名されています。再確認が必要です。",
         "action": "メンバーを再確認",
@@ -10320,20 +10378,25 @@ export const I18N_RESOURCES = {
           "empty": "中継に接続していません",
           "tenantId": "テナント ID",
           "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。",
-          "rolePrimary": "主中継",
-          "roleSecondary": "副中継",
+          "enrollPassword": "接続パスワード",
+          "enrollPasswordUnknown": "本機に記録なし",
+          "enrollPasswordChange": "変更",
+          "rolePrimary": "主",
+          "roleSecondary": "副",
           "roleDetached": "未接続",
           "pinned": "固定中",
           "autoSelected": "自動選択",
-          "score": "スコア {{ms}} ms",
-          "scoreTitle": "自動選択のスコア（小さいほど良い）",
-          "peersOnline": "{{n}} 台オンライン",
-          "turn": "TURN",
+          "more": "その他",
+          "tip": {
+            "score": "優先度指数 {{value}}（低いほど良い）",
+            "peers": "この中継でオンラインの対向 {{n}} 台",
+            "turn": "TURN {{state}}",
+            "turnMembers": "メンバー探査 {{ok}}/{{total}} 到達可（30 分以内の報告、本機を除く）",
+            "pathBest": "経路探査 {{ms}} ms"
+          },
           "turnReachable": "到達可能",
           "turnUnreachable": "本機から到達不可",
           "turnUnprobed": "未検査",
-          "turnMembersCount": "{{ok}}/{{total}} ノード",
-          "turnMembersReachable": "{{ok}}/{{total}} ノード到達可",
           "turnTunHint": "本機のプロキシ/TUN が UDP を転送していないため、判定は本機のみを表します"
         },
         "linkErrors": {
@@ -10396,7 +10459,7 @@ export const I18N_RESOURCES = {
           "passwordHint": "中継に接続パスワードがない場合は空欄のままにします。",
           "rootPassword": "現在のパスワード（本機アカウントのパスワード）",
           "rootPasswordHint": "参加はパスワードで署名する必要があり、パスキーでは代替できません。",
-          "migrateNotice": "接続後は本機がこの中継を使い、以前の上位リンクには接続しなくなります。",
+          "migrateNotice": "接続後は本機がこの中継を使います。",
           "reauthNotice": "接続パスワードが変更されました。再入力して接続を回復してください。",
           "submit": "接続",
           "submitReauth": "再接続",
@@ -10404,7 +10467,7 @@ export const I18N_RESOURCES = {
         },
         "leave": {
           "title": "中継から離脱しますか？",
-          "description": "離脱すると本機と各ノードは上位リンクを失い、中継に接続し直す必要があります。",
+          "description": "離脱すると本機と各ノードは中継リンクを失い、中継に接続し直す必要があります。",
           "confirm": "離脱",
           "done": "中継から離脱しました。"
         },
@@ -10433,6 +10496,28 @@ export const I18N_RESOURCES = {
           "retryFailed": "パスワード参加用資格情報の更新に失敗しました。しばらくしてから再試行してください。",
           "needsPassword": "パスワード参加用資格情報の更新にはパスワードが必要です。パスキーでは署名できません。",
           "staleWarning": "パスワード参加用資格情報が未更新です。他のマシンがパスワードで参加する前にパスワードを再入力してください。"
+        },
+        "enrollPassword": {
+          "title": "接続パスワードを変更",
+          "description": "変更後、新規接続には新しいパスワードが必要です。既存ノードは既定で接続を維持します。",
+          "current": "現在の接続パスワード",
+          "currentHint": "本機はこの中継の接続パスワードを記録していません。現在のパスワードを入力してください。中継にパスワードがない場合は空欄のままにします。",
+          "next": "新しい接続パスワード",
+          "nextHint": "8 文字以上。空欄にすると接続パスワードを解除します。",
+          "kick": "旧トークンを失効",
+          "kickHint": "すべてのノードの旧トークンは直ちに無効になり、接続パスワードの再入力が必要です。",
+          "done": "接続パスワードを変更しました。",
+          "cleared": "接続パスワードを解除しました。",
+          "show": "接続パスワードを表示",
+          "hide": "接続パスワードを隠す",
+          "select": "中継",
+          "errors": {
+            "relay_password_invalid": "現在の接続パスワードが正しくありません。",
+            "relay_password_too_short": "新しいパスワードは 8 文字以上にしてください。",
+            "relay_members_offline": "オフラインのメンバーがいるため、旧トークンを失効できません。",
+            "relay_unreachable": "この中継に接続できません。",
+            "relay_not_attached": "本機はこの中継に接続していません。"
+          }
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "現在のパスワードが正しくありません。",
@@ -10646,8 +10731,9 @@ export const I18N_RESOURCES = {
           "failed": "上限の更新に失敗しました：{{message}}"
         },
         "turn": {
-          "title": "TURN",
-          "hint": "直接接続できない場合、ブラウザとノードはこの中継の TURN 経由でメディアを転送します。",
+          "section": "NAT 越え",
+          "title": "TURN サーバー",
+          "hint": "直接接続に失敗した場合、ブラウザとノードはこの TURN を経由します。",
           "sub": "{{mode}} · {{state}}",
           "sourceBuiltin": "内蔵",
           "sourceExternal": "外部",
@@ -10656,8 +10742,9 @@ export const I18N_RESOURCES = {
           "stateStopped": "待ち受けなし",
           "stateOff": "無効",
           "externalIp": "外部アドレス {{ip}}",
-          "firewall": "クラウドのセキュリティグループまたはファイアウォールで UDP {{port}} と UDP {{range}} を許可してください。",
-          "membersProbe": "メンバー到達 {{ok}}/{{total}}",
+          "unitAllocations": "割り当て",
+          "firewall": "UDP {{port}} と UDP {{range}} を開放",
+          "membersProbe": "メンバー探査 {{ok}}/{{total}} 到達可（30 分以内の報告）",
           "failed": "TURN を起動できません：{{message}}"
         }
       }

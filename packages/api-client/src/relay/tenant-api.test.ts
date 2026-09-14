@@ -68,6 +68,7 @@ describe('RelayTenantApi 状态', () => {
         pinned: false,
         autoSelected: false,
         score: null,
+        enrollPassword: { known: false },
       },
     ]);
     expect(status.metaEpoch).toBe(0);
@@ -192,6 +193,7 @@ describe('RelayTenantApi 状态', () => {
       pinned: false,
       autoSelected: false,
       score: null,
+      enrollPassword: { known: false },
     });
     expect(normalizeRelayStatus({ quota }).quota).toEqual({ ...quota, usage: null });
     expect(normalizeRelayStatus({}).multiAttach).toBe(false);
@@ -239,6 +241,7 @@ describe('RelayTenantApi 状态', () => {
         pinned: false,
         autoSelected: false,
         score: null,
+        enrollPassword: { known: false },
       },
       {
         url: 'https://ty.example',
@@ -257,6 +260,7 @@ describe('RelayTenantApi 状态', () => {
         pinned: false,
         autoSelected: false,
         score: null,
+        enrollPassword: { known: false },
       },
     ]);
     expect(
@@ -385,6 +389,38 @@ describe('RelayTenantApi 状态', () => {
     expect(status.autoSelect?.switchReason).toBeNull();
     expect(status.autoSelect?.lastSwitchAt).toBeNull();
     expect(status.relays[0]?.score).toBeNull();
+  });
+
+  test('normalizeRelayStatus 归一 enrollPassword：缺席与非法值一律 known=false', () => {
+    expect(
+      normalizeRelayStatus({
+        relays: [{ url: 'https://r.example', online: true, attached: true } as never],
+      }).relays[0]?.enrollPassword
+    ).toEqual({ known: false });
+    expect(
+      normalizeRelayStatus({
+        relays: [
+          {
+            url: 'https://r.example',
+            online: true,
+            attached: true,
+            enrollPassword: { known: true },
+          } as never,
+        ],
+      }).relays[0]?.enrollPassword
+    ).toEqual({ known: true });
+    expect(
+      normalizeRelayStatus({
+        relays: [
+          {
+            url: 'https://r.example',
+            online: true,
+            attached: true,
+            enrollPassword: { known: 'yes' },
+          } as never,
+        ],
+      }).relays[0]?.enrollPassword
+    ).toEqual({ known: false });
   });
 
   test('unpinRelay 走 POST /api/mesh/relay/unpin', async () => {
@@ -616,6 +652,64 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
     const status = await api.getEnrollment('enr 1');
     expect(calls[1].url).toBe('/api/mesh/relay/enrollments/enr%201');
     expect(status.status).toBe('redeemed');
+  });
+});
+
+describe('RelayTenantApi 接入密码', () => {
+  test('enrollPassword 走 GET /api/mesh/relay/password?url=', async () => {
+    const { api, calls } = recorder([ok({ known: true, password: 'secret' })]);
+    expect(await api.enrollPassword('https://r.example:8443')).toEqual({
+      known: true,
+      password: 'secret',
+    });
+    expect(calls[0].url).toBe('/api/mesh/relay/password?url=https%3A%2F%2Fr.example%3A8443');
+    expect(calls[0].init?.method ?? 'GET').toBe('GET');
+  });
+
+  test('enrollPassword 未知时 password 为 null', async () => {
+    const { api } = recorder([ok({ known: false, password: null })]);
+    expect(await api.enrollPassword('https://r.example')).toEqual({
+      known: false,
+      password: null,
+    });
+  });
+
+  test('rotateEnrollPassword 走 POST /api/mesh/relay/password', async () => {
+    const { api, calls } = recorder([ok({ ok: true, passwordEpoch: 4 })]);
+    const body = {
+      url: 'https://r.example',
+      current: 'old',
+      next: 'new-secret',
+      mode: 'keep' as const,
+    };
+    expect(await api.rotateEnrollPassword(body)).toEqual({ ok: true, passwordEpoch: 4 });
+    expect(calls[0].url).toBe('/api/mesh/relay/password');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(bodyOf(calls[0])).toEqual(body);
+  });
+
+  test('rotateEnrollPassword 可省略 current、next 为 null、mode 为 kick', async () => {
+    const { api, calls } = recorder([ok({ ok: true, passwordEpoch: 5 })]);
+    await api.rotateEnrollPassword({ url: 'https://r.example', next: null, mode: 'kick' });
+    expect(bodyOf(calls[0])).toEqual({ url: 'https://r.example', next: null, mode: 'kick' });
+  });
+
+  test('rotateEnrollPassword 把契约错误码透传成类型化错误', async () => {
+    const codes = [
+      [401, 'relay_password_invalid'],
+      [400, 'relay_password_too_short'],
+      [409, 'relay_members_offline'],
+      [502, 'relay_unreachable'],
+      [409, 'relay_not_attached'],
+    ] as const;
+    const { api } = recorder(codes.map(([status, code]) => fail(status, code)));
+    for (const [, code] of codes) {
+      const error = await api
+        .rotateEnrollPassword({ url: 'https://r.example', next: 'abcdefgh' })
+        .catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(RelayApiError);
+      expect((error as RelayApiError).code).toBe(code);
+    }
   });
 });
 

@@ -9,6 +9,7 @@ import { Progress } from '@vibeterm/ui/progress';
 import { ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CopyableValue, Row } from './copy-feedback';
+import { RelayPasswordRow } from './relay/relay-password-row';
 import { type RelayQuotaRow, relayQuotaRows } from './relay/relay-quota';
 
 export interface ConnectionDetailsProps {
@@ -50,6 +51,7 @@ export function ConnectionDetailsContent({ relay, selfNodeId }: ConnectionDetail
           </span>
         </Row>
       )}
+      <RelayPasswordRow relay={relay} />
       {selfNodeId && (
         <Row label={t('nodes.machine.details.nodeId')}>
           <CopyableValue value={selfNodeId} testId="local-machine-node-id" mono />

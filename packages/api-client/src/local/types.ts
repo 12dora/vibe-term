@@ -31,6 +31,8 @@ export interface LocalRelayTurnStatus {
   externalIp: string | null;
   listening: boolean;
   allocations: number;
+  /** 分配上限；旧中继不下发。 */
+  maxAlloc?: number | null;
   error: string | null;
   relayPortRange: string | null;
   membersProbe?: { ok: number; total: number; updatedAt: number } | null;
