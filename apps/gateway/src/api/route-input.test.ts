@@ -15,7 +15,7 @@ describe('route-input', () => {
     expect(requiredStrings({ a: 1, b: 'y' }, ['a', 'b'])).toBeNull();
   });
 
-  test('requireBodyString / b64url / validationError match hub messages', async () => {
+  test('requireBodyString / b64url / validationError match validation messages', async () => {
     const bytes = new Uint8Array([1, 2, 3, 4]);
     const encoded = encodeBase64url(bytes);
     expect(requireBodyString({ k: 'v' }, 'k')).toBe('v');

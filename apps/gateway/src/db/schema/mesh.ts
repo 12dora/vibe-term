@@ -4,7 +4,6 @@ import {
   check,
   index,
   integer,
-  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -39,13 +38,12 @@ export const nodeIdentity = sqliteTable(
   {
     id: integer('id').primaryKey(),
     nodeId: text('node_id').notNull(),
-    hubUrl: text('hub_url'),
     privateKey: text('private_key').notNull(),
     x25519PrivateKey: text('x25519_private_key').notNull(),
     certificateJson: text('certificate_json').notNull(),
     certSig: blob('cert_sig', { mode: 'buffer' }).notNull(),
     userId: text('user_id'),
-    uplinkKind: text('uplink_kind').$type<'hub' | 'relay'>().notNull().default('hub'),
+    uplinkKind: text('uplink_kind').$type<'relay' | 'none'>().notNull().default('none'),
     name: text('name'),
   },
   (table) => [check('node_identity_singleton_check', sql`${table.id} = 1`)]
@@ -66,6 +64,7 @@ export const peerCache = sqliteTable(
   (table) => [uniqueIndex('peer_cache_node_id_unique').on(table.nodeId)]
 );
 
+/** dropped by 0057; kept only until store deletion */
 export const hubTrust = sqliteTable('hub_trust', {
   hubUrl: text('hub_url').primaryKey(),
   caPem: text('ca_pem').notNull(),
@@ -73,6 +72,7 @@ export const hubTrust = sqliteTable('hub_trust', {
   createdAt: integer('created_at').notNull(),
 });
 
+/** dropped by 0057; kept only until store deletion */
 export const meshHubs = sqliteTable('mesh_hubs', {
   hubNodeId: text('hub_node_id').primaryKey(),
   publicUrl: text('public_url').notNull(),
@@ -86,6 +86,7 @@ export const meshHubs = sqliteTable('mesh_hubs', {
   updatedAt: integer('updated_at').notNull(),
 });
 
+/** dropped by 0057; kept only until store deletion */
 export const hubRoleTransitions = sqliteTable(
   'hub_role_transitions',
   {
@@ -110,31 +111,7 @@ export const hubRoleTransitions = sqliteTable(
   ]
 );
 
-export const userHubAuthorizations = sqliteTable(
-  'user_hub_authorizations',
-  {
-    userId: text('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
-    hubNodeId: text('hub_node_id').notNull(),
-    status: text('status').$type<'active' | 'retired'>().notNull(),
-    publicUrl: text('public_url'),
-    priority: integer('priority'),
-    admitSeq: integer('admit_seq').notNull(),
-    retireSeq: integer('retire_seq'),
-    updatedSeq: integer('updated_seq').notNull(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.userId, table.hubNodeId] }),
-    uniqueIndex('user_hub_authorizations_user_id_hub_node_id_unique').on(
-      table.userId,
-      table.hubNodeId
-    ),
-    check('user_hub_authorizations_status_check', sql`${table.status} in ('active', 'retired')`),
-  ]
-);
-
-/** 入口本机对成员的偏好；不进 `peer_cache` / hub roster，避免被 node.list 覆盖。 */
+/** 入口本机对成员的偏好；不进 `peer_cache` / 成员 roster，避免被 node.list 覆盖。 */
 export const nodeLocalPrefs = sqliteTable('node_local_prefs', {
   nodeId: text('node_id').primaryKey(),
   paused: integer('paused', { mode: 'boolean' }).notNull().default(false),

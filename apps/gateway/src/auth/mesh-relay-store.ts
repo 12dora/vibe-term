@@ -13,7 +13,7 @@ const IDENTITY_ROW_ID = 1;
 export const RELAY_LOG_KEY_EPOCH = 0;
 const RELAY_RECORD_TYPES = ['set-relays', 'meta-key'] as const;
 
-export type UplinkKind = 'hub' | 'relay';
+export type UplinkKind = 'relay' | 'none';
 export type MeshSecretKind = 'log' | 'meta';
 
 export type StoredMeshRelayRow = {
@@ -187,7 +187,7 @@ export class MeshRelayStore {
       .from(nodeIdentity)
       .where(eq(nodeIdentity.id, IDENTITY_ROW_ID))
       .get();
-    return row?.uplinkKind === 'relay' ? 'relay' : 'hub';
+    return row?.uplinkKind === 'relay' ? 'relay' : 'none';
   }
 
   setUplinkKind(kind: UplinkKind): void {
@@ -196,6 +196,14 @@ export class MeshRelayStore {
       .set({ uplinkKind: kind })
       .where(eq(nodeIdentity.id, IDENTITY_ROW_ID))
       .run();
+  }
+
+  markRelayUplink(): void {
+    this.setUplinkKind('relay');
+  }
+
+  resetUplinkKind(): void {
+    this.setUplinkKind('none');
   }
 
   localName(): string | null {

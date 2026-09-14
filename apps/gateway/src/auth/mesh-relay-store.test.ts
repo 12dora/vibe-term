@@ -89,12 +89,14 @@ describe('MeshRelayStore', () => {
   test('node_identity 的 uplink_kind 与 name 缺省与写入', async () => {
     const f = await open();
     try {
-      expect(f.store.uplinkKind()).toBe('hub');
+      expect(f.store.uplinkKind()).toBe('none');
       expect(f.store.localName()).toBeNull();
-      f.store.setUplinkKind('relay');
+      f.store.markRelayUplink();
       f.store.setLocalName('  node-a  ');
       expect(f.store.uplinkKind()).toBe('relay');
       expect(f.store.localName()).toBe('node-a');
+      f.store.resetUplinkKind();
+      expect(f.store.uplinkKind()).toBe('none');
       f.store.setLocalName('   ');
       expect(f.store.localName()).toBeNull();
     } finally {

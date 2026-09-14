@@ -1,8 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  buildAdmitHubPayload,
   buildKeyLogRecord,
-  buildRetireHubPayload,
   bytesEqual,
   computeRecordHash,
   encodeAddPasskeyPayload,
@@ -282,7 +280,7 @@ describe('UserKeyService', () => {
       const { service, userStore, nodeSessionStore } = createService(db);
       const boot = await service.bootstrapUser({ username: 'dave', password: 'pw' });
       const identityStore = new NodeIdentityStore(db);
-      const identity = await ensureNodeIdentity(identityStore, { hubUrl: 'https://hub.test' });
+      const identity = await ensureNodeIdentity(identityStore);
       const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
         uid: boot.userId,
         rootEpoch: boot.rootEpoch,
@@ -382,53 +380,6 @@ describe('UserKeyService', () => {
       expect(after?.admitRecordSeq).toBeGreaterThan(2);
       expect(after?.authorizationSig).toEqual(newAuthSig);
       expect(after?.certificateBytes).toEqual(admit.certificate_bytes);
-    } finally {
-      close();
-    }
-  });
-
-  test('admit-hub persists projection; retire-hub marks retired; revoke-node retires hub', async () => {
-    const { db, close } = createMigratedAuthDb();
-    try {
-      const { service, userStore } = createService(db);
-      const boot = await service.bootstrapUser({ username: 'hubs', password: 'pw' });
-      const identityStore = new NodeIdentityStore(db);
-      const identity = await ensureNodeIdentity(identityStore, { hubUrl: 'https://hub.test' });
-      const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
-        uid: boot.userId,
-        rootEpoch: boot.rootEpoch,
-        now: Date.now(),
-      });
-      const admitted = await service.signAndApply(boot.userId, boot.rootKey, {
-        type: 'admit-node',
-        payload: encodeAdmitNodePayload(admit),
-      });
-      expect(admitted.ok).toBe(true);
-      const hub = await service.signAndApply(boot.userId, boot.rootKey, {
-        type: 'admit-hub',
-        payload: buildAdmitHubPayload({
-          hubNodeId: identity.nodeId,
-          publicUrl: 'https://standby.example',
-          priority: 200,
-        }),
-      });
-      expect(hub.ok).toBe(true);
-      const row = userStore.getHubAuthorization(boot.userId, identity.nodeIdHex);
-      expect(row?.status).toBe('active');
-      expect(row?.publicUrl).toBe('https://standby.example');
-      expect(row?.priority).toBe(200);
-      expect(
-        service.currentState(boot.userId).hubAuthorizations.get(identity.nodeIdHex)?.status
-      ).toBe('active');
-
-      const retiredOk = await service.signAndApply(boot.userId, boot.rootKey, {
-        type: 'retire-hub',
-        payload: buildRetireHubPayload({ hubNodeId: identity.nodeId }),
-      });
-      expect(retiredOk.ok).toBe(true);
-      expect(userStore.getHubAuthorization(boot.userId, identity.nodeIdHex)?.status).toBe(
-        'retired'
-      );
     } finally {
       close();
     }
@@ -762,7 +713,6 @@ describe('UserKeyService', () => {
         expectedUserId: boot.userId,
         identity: {
           nodeId: destIdentity.nodeIdHex,
-          hubUrl: 'https://hub.example',
           edPrivateKey: destIdentity.edPrivateKey,
           x25519PrivateKey: destIdentity.x25519PrivateKey,
           certificateJson: JSON.stringify({
@@ -777,7 +727,6 @@ describe('UserKeyService', () => {
       expect(b.keyLogStore.list(boot.userId)).toHaveLength(2);
       expect(b.userStore.listCertsByUser(boot.userId).length).toBe(1);
       const loaded = await new NodeIdentityStore(dst.db).load();
-      expect(loaded?.hubUrl).toBe('https://hub.example');
       expect(loaded?.nodeId).toBe(destIdentity.nodeIdHex);
       expect(loaded?.userId).toBe(boot.userId);
     } finally {
@@ -786,7 +735,7 @@ describe('UserKeyService', () => {
     }
   });
 
-  test('commitJoin replaces same username with a different uid from a rebuilt hub', async () => {
+  test('commitJoin replaces same username with a different uid from a rebuilt node', async () => {
     const src = createMigratedAuthDb();
     const dst = createMigratedAuthDb();
     try {
@@ -870,7 +819,6 @@ describe('UserKeyService', () => {
         expectedUserId: fresh.userId,
         identity: {
           nodeId: destIdentity.nodeIdHex,
-          hubUrl: 'https://hub-new.example',
           edPrivateKey: destIdentity.edPrivateKey,
           x25519PrivateKey: destIdentity.x25519PrivateKey,
           certificateJson: JSON.stringify({
@@ -904,7 +852,6 @@ describe('UserKeyService', () => {
       const loaded = await new NodeIdentityStore(dst.db).load();
       expect(loaded?.nodeId).toBe(destIdentity.nodeIdHex);
       expect(loaded?.userId).toBe(fresh.userId);
-      expect(loaded?.hubUrl).toBe('https://hub-new.example');
     } finally {
       src.close();
       dst.close();
@@ -930,7 +877,6 @@ describe('UserKeyService', () => {
       const srcState = a.service.currentState(boot.userId);
       const identity = {
         nodeId: destIdentity.nodeIdHex,
-        hubUrl: 'https://hub.example',
         edPrivateKey: destIdentity.edPrivateKey,
         x25519PrivateKey: destIdentity.x25519PrivateKey,
         certificateJson: JSON.stringify({

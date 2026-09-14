@@ -24,21 +24,19 @@ describe('node-identity-service', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new NodeIdentityStore(db);
-      const first = await ensureNodeIdentity(store, { hubUrl: 'https://hub.example' });
+      const first = await ensureNodeIdentity(store);
       expect(first.nodeId.length).toBe(16);
       expect(first.edPrivateKey.length).toBe(32);
       expect(first.edPublicKey.length).toBe(32);
       expect(first.x25519PrivateKey.length).toBe(32);
       expect(first.x25519PublicKey.length).toBe(32);
-      expect(first.hubUrl).toBe('https://hub.example');
 
-      const second = await ensureNodeIdentity(store, { hubUrl: 'https://other' });
+      const second = await ensureNodeIdentity(store);
       expect(second.nodeIdHex).toBe(first.nodeIdHex);
       expect(bytesEqual(second.edPrivateKey, first.edPrivateKey)).toBe(true);
       expect(bytesEqual(second.x25519PrivateKey, first.x25519PrivateKey)).toBe(true);
       expect(bytesEqual(second.edPublicKey, first.edPublicKey)).toBe(true);
       expect(bytesEqual(second.x25519PublicKey, first.x25519PublicKey)).toBe(true);
-      expect(second.hubUrl).toBe('https://hub.example');
     } finally {
       close();
     }

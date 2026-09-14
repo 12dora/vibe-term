@@ -81,9 +81,8 @@ function fakeRuntime(overrides: Partial<MessagingDeviceRuntime> = {}): Messaging
 function fakeMesh(overrides: Partial<MeshPresenceSource> = {}): MeshPresenceSource {
   return {
     nodeId: 'aa'.repeat(16),
-    hub: null,
     uplink: { state: 'online' },
-    attachedHub: () => ({ hubNodeId: 'hub-1' }),
+    attachedHub: () => ({ hubNodeId: 'relay-1' }),
     lastNodeList: {
       nodes: [
         {
@@ -245,7 +244,7 @@ describe('createMessagingRuntimeHooks', () => {
     ]);
   });
 
-  test('getUplinkStatus is none for standalone and follows hub/relay attached state', () => {
+  test('getUplinkStatus is none for standalone and follows relay attached state', () => {
     const standalone = createMessagingRuntimeHooks({
       isStandalone: () => true,
       roles: () => rolesFromName('standalone'),
@@ -254,27 +253,18 @@ describe('createMessagingRuntimeHooks', () => {
     });
     expect(standalone.getUplinkStatus?.()).toEqual({ kind: 'none', attached: false });
 
-    const hubOnline = createMessagingRuntimeHooks({
-      isStandalone: () => false,
-      roles: () => rolesFromName('hub,node'),
-      loadIdentity: () => ({ nodeId: 'n1', name: 'Home', uplinkKind: 'hub' }),
-      getMesh: () => fakeMesh({ hub: { serving: true }, uplink: { state: 'online' } }),
-    });
-    expect(hubOnline.getUplinkStatus?.()).toEqual({ kind: 'hub', attached: true });
-
-    const hubDetached = createMessagingRuntimeHooks({
+    const unattached = createMessagingRuntimeHooks({
       isStandalone: () => false,
       roles: () => rolesFromName('node'),
-      loadIdentity: () => ({ nodeId: 'n1', name: 'Home', uplinkKind: 'hub' }),
+      loadIdentity: () => ({ nodeId: 'n1', name: 'Home', uplinkKind: 'none' }),
       getMesh: () =>
         fakeMesh({
-          hub: null,
           uplink: { state: 'offline' },
           attachedHub: () => null,
           lastNodeList: null,
         }),
     });
-    expect(hubDetached.getUplinkStatus?.()).toEqual({ kind: 'hub', attached: false });
+    expect(unattached.getUplinkStatus?.()).toEqual({ kind: 'none', attached: false });
 
     const relayAttached = createMessagingRuntimeHooks({
       isStandalone: () => false,
@@ -309,7 +299,7 @@ describe('createMessagingRuntimeHooks', () => {
     expect(unknown.getUplinkStatus?.()).toEqual({ kind: 'unknown', attached: 'unknown' });
   });
 
-  test('listMeshNodes uses hub presence and peer reach as /api/mesh/nodes online flags', () => {
+  test('listMeshNodes uses listed presence and peer reach as /api/mesh/nodes online flags', () => {
     const mesh = fakeMesh({
       lastNodeList: {
         nodes: [

@@ -29,8 +29,8 @@ import {
 } from '../../auth';
 import { MeshRelayStore, RELAY_LOG_KEY_EPOCH } from '../../auth/mesh-relay-store';
 import { createMigratedAuthDb } from '../../auth/test-db';
-import { encodeRedeemPopMessage } from '../../hub/redeem-pop';
-import { waitUntil } from '../../mesh/integration/multi-hub-harness';
+import { waitUntil } from '../../mesh/test-support';
+import { encodeRedeemPopMessage } from '../redeem-pop';
 import {
   RELAY_TEST_PUBLIC_URL,
   type RelayKeyLogPage,
@@ -234,7 +234,6 @@ export async function joinNode(
     expectedUserId: tenant.userId,
     identity: {
       nodeId: identity.nodeIdHex,
-      hubUrl: null,
       edPrivateKey: identity.edPrivateKey,
       x25519PrivateKey: identity.x25519PrivateKey,
       certificateJson: JSON.stringify({

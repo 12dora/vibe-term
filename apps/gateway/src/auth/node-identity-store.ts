@@ -8,7 +8,6 @@ const IDENTITY_ROW_ID = 1;
 
 export interface NodeIdentityRecord {
   nodeId: string;
-  hubUrl: string | null;
   edPrivateKey: Uint8Array;
   x25519PrivateKey: Uint8Array;
   certificateJson: string;
@@ -18,7 +17,6 @@ export interface NodeIdentityRecord {
 
 export interface SaveNodeIdentityInput {
   nodeId: string;
-  hubUrl: string | null;
   edPrivateKey: Uint8Array;
   x25519PrivateKey: Uint8Array;
   certificateJson: string;
@@ -44,7 +42,6 @@ export class NodeIdentityStore {
     ]);
     return {
       nodeId: row.nodeId,
-      hubUrl: row.hubUrl,
       edPrivateKey,
       x25519PrivateKey,
       certificateJson: row.certificateJson,
@@ -64,18 +61,17 @@ export class NodeIdentityStore {
       .values({
         id: IDENTITY_ROW_ID,
         nodeId: input.nodeId,
-        hubUrl: input.hubUrl,
         privateKey,
         x25519PrivateKey,
         certificateJson: input.certificateJson,
         certSig: toBuffer(input.certSig),
         userId,
+        uplinkKind: 'none',
       })
       .onConflictDoUpdate({
         target: nodeIdentity.id,
         set: {
           nodeId: input.nodeId,
-          hubUrl: input.hubUrl,
           privateKey,
           x25519PrivateKey,
           certificateJson: input.certificateJson,

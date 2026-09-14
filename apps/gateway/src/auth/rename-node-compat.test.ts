@@ -7,7 +7,7 @@ import {
   encodeRenameNodePayload,
   genesisHead,
 } from '@vibeterm/shared/auth';
-import { inspectHubAuthRecordCompat } from '../hub/hub-authorization';
+import { inspectKeyLogRecordCompat } from '../mesh/key-log-compat';
 import { createMigratedAuthDb } from './test-db';
 import { UserStore } from './user-store';
 
@@ -69,7 +69,7 @@ describe('rename-node 版本门禁', () => {
         now: 1,
       });
       seedCert(store, 'user-1', PEER);
-      const blocked = inspectHubAuthRecordCompat(store, renameRecord(), 'user-1');
+      const blocked = inspectKeyLogRecordCompat(store, renameRecord(), 'user-1');
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {
         expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
@@ -95,7 +95,7 @@ describe('rename-node 版本门禁', () => {
         now: 1,
       });
       seedCert(store, 'user-1', SELF);
-      expect(inspectHubAuthRecordCompat(store, renameRecord(), 'user-1')).toEqual({ ok: true });
+      expect(inspectKeyLogRecordCompat(store, renameRecord(), 'user-1')).toEqual({ ok: true });
     } finally {
       close();
     }

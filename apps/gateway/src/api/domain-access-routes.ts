@@ -1,9 +1,7 @@
-import { eq } from 'drizzle-orm';
 import { config } from '../config';
 import { getSiteSettings, getStoredSiteSettings } from '../db';
 import { getDb as getOrmDb } from '../db/client';
 import { type DomainAccessStore, domainAccessStore } from '../db/domain-access';
-import { meshHubs, nodeIdentity } from '../db/schema';
 import {
   collectConfiguredHosts,
   decideDomainAccess,
@@ -61,26 +59,6 @@ function readAllowed(): boolean {
   }
 }
 
-function selfMeshHubPublicUrl(): string | null {
-  try {
-    const db = getOrmDb();
-    const identity = db
-      .select({ nodeId: nodeIdentity.nodeId })
-      .from(nodeIdentity)
-      .where(eq(nodeIdentity.id, 1))
-      .get();
-    if (!identity?.nodeId) return null;
-    const hub = db
-      .select({ publicUrl: meshHubs.publicUrl })
-      .from(meshHubs)
-      .where(eq(meshHubs.hubNodeId, identity.nodeId))
-      .get();
-    return hub?.publicUrl ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export function listDomainAccessHosts(): string[] {
   if (guardOverride?.hosts) return [...guardOverride.hosts];
   const sources: Array<string | null | undefined> = [config.baseUrl];
@@ -89,10 +67,6 @@ export function listDomainAccessHosts(): string[] {
     sources.push(getSiteSettings().siteUrl);
   } catch {
     /* site_settings may be missing in unit tests */
-  }
-  if (config.roles.hub) {
-    sources.push(config.hubPublicUrl);
-    sources.push(selfMeshHubPublicUrl());
   }
   try {
     const persisted = new TunnelConfigStore(getOrmDb()).get();

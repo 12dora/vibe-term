@@ -14,7 +14,7 @@ import {
   verifyRelayEnrollProof,
 } from '@vibeterm/shared/relay';
 import { decodeB64url, requireB64url } from '../api/route-input';
-import { encodeRedeemPopMessage } from '../hub/redeem-pop';
+import { encodeRedeemPopMessage } from './redeem-pop';
 import type { RelayConfigStore } from './relay-config-store';
 import type { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';

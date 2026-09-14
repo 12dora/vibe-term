@@ -236,7 +236,7 @@ export class TunnelManager {
     this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
     this.probeVersionOnStart = opts.probeVersionOnStart ?? false;
     this.loginEnforcedFn = opts.loginEnforced ?? (() => defaultLoginEnforced());
-    this.hasMeshRole = opts.hasMeshRole ?? (config.roles.hub || config.roles.node);
+    this.hasMeshRole = opts.hasMeshRole ?? config.roles.node;
     this.ackDetectMs = opts.ackDetectMs ?? 3_000;
     this.connectorPollMs = opts.connectorPollMs ?? (config.isTest ? 0 : 30_000);
     this.scanDefaultMetrics = opts.scanDefaultMetrics ?? !config.isTest;

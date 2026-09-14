@@ -13,7 +13,7 @@ import type { CommandRegistry } from './registry';
 
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 
-export type UplinkKind = 'hub' | 'relay' | 'none' | 'unknown';
+export type UplinkKind = 'relay' | 'none' | 'unknown';
 
 export interface UplinkStatus {
   kind: UplinkKind;
@@ -134,7 +134,7 @@ const IDENTITY_ROW_ID = 1;
 export function loadLocalIdentity(): {
   nodeId: string | null;
   name: string | null;
-  uplinkKind: 'hub' | 'relay' | null;
+  uplinkKind: 'relay' | 'none' | null;
 } {
   const row = getOrmDb()
     .select({
@@ -149,14 +149,14 @@ export function loadLocalIdentity(): {
   return {
     nodeId: row.nodeId,
     name: row.name ?? null,
-    uplinkKind: row.uplinkKind ?? null,
+    uplinkKind: row.uplinkKind === 'relay' ? 'relay' : 'none',
   };
 }
 
-function defaultUplinkStatus(standalone: boolean, kind: 'hub' | 'relay' | null): UplinkStatus {
+function defaultUplinkStatus(standalone: boolean, kind: 'relay' | 'none' | null): UplinkStatus {
   if (hooks.getUplinkStatus) return hooks.getUplinkStatus();
   if (standalone) return { kind: 'none', attached: false };
-  if (kind === 'hub' || kind === 'relay') return { kind, attached: 'unknown' };
+  if (kind === 'relay' || kind === 'none') return { kind, attached: 'unknown' };
   return { kind: 'unknown', attached: 'unknown' };
 }
 

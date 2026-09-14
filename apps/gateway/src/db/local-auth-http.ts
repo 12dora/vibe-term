@@ -67,7 +67,6 @@ export function meshAuthModeUserFields(
   user: UserRecord | null,
   origin: string,
   userStore: UserStore,
-  hub: { nodeId: string | null; publicUrl: string | null },
   opts?: { waivePasskeySecondFactor?: boolean; totpSecretPresent?: boolean }
 ) {
   const keys = user ? userStore.listKeysByUser(user.id) : [];
@@ -91,8 +90,6 @@ export function meshAuthModeUserFields(
     secondFactorPolicy: secondFactorPolicyForMode({ totpEnabled, passkeySecondFactor }),
     rootEpoch: user?.rootEpoch ?? null,
     rootPublicKey: user ? encodeBase64url(user.rootPublicKey) : null,
-    hubNodeId: hub.nodeId,
-    hubPublicUrl: hub.publicUrl,
   };
 }
 

@@ -241,7 +241,7 @@ export type DeferredPasskeyVerification = {
 };
 
 /**
- * 验签但不写计数器。同一条记录会被验多次（`hub=sync` 先预演、hub 确认后再本地落账，
+ * 验签但不写计数器。同一条记录会被验多次（`?hub=sync` 先预演、确认后再本地落账，
  * 落账内部又要验一次 authorization），写计数器必须只发生一次、且与记录落库同一个事务。
  */
 export function makeDeferredVerifyPasskeyAssertion(

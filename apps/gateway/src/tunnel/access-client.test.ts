@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { CloudflareAccessClient, sanitizeAccessMessage } from './access-client';
+import { isManagedAppName, isManagedBypassAppName } from './access-paths';
 import { parseAccessRules, toCloudflareInclude } from './access-rules';
 
 function jsonRes(body: unknown, status = 200): Response {
@@ -153,9 +154,9 @@ describe('CloudflareAccessClient', () => {
     });
     const apps = await client.listApps('acc1', 'tok');
     expect(client.findAppForHostname(apps, 'legacy.example.com')?.id).toBe('app-legacy');
-    expect(client.findBypassApps(apps, 'other.example.com').map((a) => a.id)).toEqual([
-      'bypass-legacy',
-    ]);
+    expect(client.findBypassApps(apps, 'other.example.com')).toEqual([]);
+    expect(isManagedAppName('tmex')).toBe(true);
+    expect(isManagedBypassAppName('tmex-bypass-hub')).toBe(true);
   });
 
   test('fails replaceAllowPolicy when a foreign allow policy exists', async () => {
@@ -197,7 +198,7 @@ describe('CloudflareAccessClient', () => {
     }
   });
 
-  test('creates bypass apps for /hub/ and /api/hub/ with everyone bypass', async () => {
+  test('creates no bypass apps when machine-path prefixes are empty', async () => {
     const created: unknown[] = [];
     const client = new CloudflareAccessClient(async (input, init) => {
       const url = String(input);
@@ -212,42 +213,16 @@ describe('CloudflareAccessClient', () => {
       }
       if (url.endsWith('/access/apps') && method === 'POST') {
         created.push(body);
-        const id = body.domain.includes('/api/hub/') ? 'bypass-api' : 'bypass-hub';
         return jsonRes({
           success: true,
-          result: { id, aud: `aud-${id}`, name: body.name, domain: body.domain },
+          result: { id: 'bypass', aud: 'aud-bypass', name: body.name, domain: body.domain },
         });
-      }
-      if (url.includes('/policies') && method === 'GET') {
-        return jsonRes({ success: true, result: [] });
-      }
-      if (url.includes('/policies') && method === 'POST') {
-        created.push(body);
-        return jsonRes({ success: true, result: { id: 'pol-b', name: body.name } });
       }
       return jsonRes({ success: false, errors: [{ message: `${method} ${url}` }] }, 400);
     });
     const ids = await client.upsertBypassApps('acc1', 'tok', 'vibeterm.example.com', []);
-    expect(ids).toEqual(['bypass-hub', 'bypass-api']);
-    expect(created).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'self_hosted',
-          domain: 'vibeterm.example.com/hub/',
-          name: 'vibeterm-bypass-hub',
-        }),
-        expect.objectContaining({
-          type: 'self_hosted',
-          domain: 'vibeterm.example.com/api/hub/',
-          name: 'vibeterm-bypass-api-hub',
-        }),
-        expect.objectContaining({
-          name: 'vibeterm-bypass',
-          decision: 'bypass',
-          include: [{ everyone: {} }],
-        }),
-      ])
-    );
+    expect(ids).toEqual([]);
+    expect(created).toEqual([]);
   });
 
   test('maps Cloudflare error envelopes without leaking tokens', async () => {

@@ -62,7 +62,7 @@ function readSiteNameFallback(): string | null {
 function defaultNotificationNodeName(): string | null {
   try {
     const roles = resolveLiveRoles();
-    if (isRelayOnly(roles) || (!roles.hub && !roles.node)) {
+    if (isRelayOnly(roles) || !roles.node) {
       return null;
     }
     return readNodeIdentityName() ?? readSiteNameFallback();

@@ -10,7 +10,7 @@ import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';
 import { getStoredSiteSettings } from '../db';
 import { getDb as getOrmDb } from '../db/client';
-import { meshHubs, meshRelays, nodeIdentity } from '../db/schema';
+import { meshRelays, nodeIdentity } from '../db/schema';
 import { TunnelConfigStore } from '../tunnel/config-store';
 import { tunnelManager } from '../tunnel/manager';
 import { RelayEntryProbe, type RelayProbeState } from './relay-entry-probe';
@@ -39,13 +39,12 @@ export type ShareOriginProbe = {
 
 export type ShareOriginSources = {
   localNodeId(): string | null;
-  hubs(): Array<{ hubNodeId: string; publicUrl: string; name: string | null }>;
   siteUrl(): string | null;
-  /** 站点 URL 由 hub 托管：此时存储值只是历史残留，不作为候选。 */
+  /** 站点 URL 由运行时托管：此时存储值只是历史残留，不作为候选。 */
   siteUrlManaged(): boolean;
   tunnelUrl(): string | null;
   baseUrl(): string | null;
-  uplinkKind(): 'hub' | 'relay' | null;
+  uplinkKind(): 'relay' | 'none';
   relays(): ShareOriginRelayRow[];
   relayProbe(): ShareOriginProbe;
 };
@@ -72,21 +71,6 @@ function readLocalNodeId(): string | null {
   }
 }
 
-function readHubs(): Array<{ hubNodeId: string; publicUrl: string; name: string | null }> {
-  try {
-    return getOrmDb()
-      .select({
-        hubNodeId: meshHubs.hubNodeId,
-        publicUrl: meshHubs.publicUrl,
-        name: meshHubs.name,
-      })
-      .from(meshHubs)
-      .all();
-  } catch {
-    return [];
-  }
-}
-
 function readSiteUrl(): string | null {
   try {
     return getStoredSiteSettings().siteUrl || null;
@@ -103,24 +87,24 @@ function readSiteUrlManaged(): boolean {
   }
 }
 
-function readUplinkKind(): 'hub' | 'relay' | null {
+function readUplinkKind(): 'relay' | 'none' {
   try {
     const row = getOrmDb()
       .select({ uplinkKind: nodeIdentity.uplinkKind })
       .from(nodeIdentity)
       .where(eq(nodeIdentity.id, 1))
       .get();
-    if (!row) return null;
-    return row.uplinkKind === 'relay' ? 'relay' : 'hub';
+    if (!row) return 'none';
+    return row.uplinkKind === 'relay' ? 'relay' : 'none';
   } catch {
-    return null;
+    return 'none';
   }
 }
 
 let attachedUplinkUrl: (() => string | null) | null = null;
 let lastAttachedRelay: { url: string; node: boolean } | null = null;
 
-/** 由装配层注入：当前 uplink 实际连上的中继 / hub 公网地址（用于把在用中继排到候选前面）。 */
+/** 由装配层注入：当前 uplink 实际连上的中继公网地址（用于把在用中继排到候选前面）。 */
 export function setShareOriginAttachedUplink(resolver: (() => string | null) | null): void {
   attachedUplinkUrl = resolver;
   lastAttachedRelay = null;
@@ -188,7 +172,6 @@ function defaultRelayProbe(): RelayEntryProbe {
 
 export const defaultShareOriginSources: ShareOriginSources = {
   localNodeId: readLocalNodeId,
-  hubs: readHubs,
   siteUrl: readSiteUrl,
   siteUrlManaged: readSiteUrlManaged,
   tunnelUrl: readTunnelUrl,
@@ -299,32 +282,14 @@ function collectRelays(
   });
 }
 
-function collectHubs(
-  hubs: Array<{ hubNodeId: string; publicUrl: string; name: string | null }>,
-  localNodeId: string | null,
-  prefix: string | null
-): RawCandidate[] {
-  const raw: RawCandidate[] = [];
-  for (const hub of hubs) {
-    if (!hub.publicUrl) continue;
-    const ownHub = Boolean(localNodeId) && hub.hubNodeId === localNodeId;
-    raw.push({ url: hub.publicUrl, kind: 'hub', prefix: ownHub ? null : prefix, listed: true });
-  }
-  return raw;
-}
-
 function collectRaw(sources: ShareOriginSources): RawCandidate[] {
   const localNodeId = sources.localNodeId();
   const prefix = localNodeId ? nodeSharePrefix(localNodeId) : null;
-  const hubs = sources.hubs();
   const relays = sources.relays();
   const tunnel = sources.tunnelUrl();
   const site = sources.siteUrl();
 
-  const raw: RawCandidate[] = [
-    ...collectHubs(hubs, localNodeId, prefix),
-    ...collectRelays(sources, prefix, relays),
-  ];
+  const raw: RawCandidate[] = [...collectRelays(sources, prefix, relays)];
   if (tunnel) raw.push({ url: tunnel, kind: 'tunnel', prefix: null, listed: true });
   const base = sources.baseUrl();
   if (base && isIpHost(base)) raw.push({ url: base, kind: 'ip', prefix: null, listed: true });
@@ -350,11 +315,9 @@ export function buildShareOriginContext(
   const localNodeId = sources.localNodeId();
   const nodePrefix = localNodeId ? nodeSharePrefix(localNodeId) : null;
   if (customOrigin) {
-    // 手填的地址若与某个转发型候选（hub / 中继）同主机，必须继承它的 `/n/<nodeId>` 前缀，否则是死链。
+    // 手填的地址若与某个转发型候选（中继）同主机，必须继承它的 `/n/<nodeId>` 前缀，否则是死链。
     const forwardPrefixes = new Map(
-      raw
-        .filter((item) => item.kind === 'hub' || item.kind === 'relay')
-        .map((item) => [labelOf(item.url), item.prefix])
+      raw.filter((item) => item.kind === 'relay').map((item) => [labelOf(item.url), item.prefix])
     );
     raw.unshift({
       url: customOrigin,

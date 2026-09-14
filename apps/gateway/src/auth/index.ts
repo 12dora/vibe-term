@@ -78,24 +78,15 @@ export {
 } from './user-key-service';
 export { MeshMembershipStore } from './mesh-membership-store';
 export {
-  MeshHubStore,
-  hubListToRecords,
-  pickWriterHub,
-  type MeshHubRecord,
-} from './mesh-hub-store';
-export {
   UserStore,
   type CreateEnrollmentTokenInput,
   type CreateNodeInput,
   type CreateUserInput,
   type EnrollmentTokenRecord,
-  type HubAuthorizationRecord,
-  type HubAuthorizationStatus,
   type InsertUserKeyInput,
   type NodeCertRecord,
   type NodeRecord,
   type PeerCacheRecord,
-  type UpsertHubAuthorizationInput,
   type UpsertNodeCertInput,
   type UpsertPeerCacheInput,
   type UserKeyRecord,

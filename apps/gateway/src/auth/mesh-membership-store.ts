@@ -1,8 +1,6 @@
 import { eq } from 'drizzle-orm';
 import {
   enrollmentTokens,
-  hubTrust,
-  meshHubs,
   meshRelays,
   meshSecrets,
   nodeCerts,
@@ -35,8 +33,6 @@ function wipeMeshMembership(db: AuthDb): void {
   db.delete(nodes).run();
   db.delete(enrollmentTokens).run();
   db.delete(peerCache).run();
-  db.delete(hubTrust).run();
-  db.delete(meshHubs).run();
   // 中继租户令牌与 K_log / K_meta 不能在退出后留在盘上
   db.delete(meshRelays).run();
   db.delete(meshSecrets).run();

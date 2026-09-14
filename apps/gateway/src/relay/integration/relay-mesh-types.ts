@@ -5,9 +5,9 @@ import type { MeshRelayStore } from '../../auth/mesh-relay-store';
 import type { AuthDb } from '../../auth/types';
 import type { UserKeyService } from '../../auth/user-key-service';
 import type { UserStore } from '../../auth/user-store';
-import { waitUntil } from '../../mesh/integration/multi-hub-harness';
 import type { MeshRuntime } from '../../mesh/mesh-runtime';
 import type { RelayUplinkClient } from '../../mesh/relay-uplink-client';
+import { waitUntil } from '../../mesh/test-support';
 import type { MeshScheduler } from '../../mesh/types';
 import type { UplinkWsFactory } from '../../mesh/uplink-client';
 import {
@@ -34,8 +34,8 @@ export async function waitUntilAsync(
 }
 
 export const NODE_PASSWORD = 'relay-integration-pass';
-export const NODE_ROLES: VibeTermRoles = { hub: false, node: true, relay: false };
-export const HUB_NODE_ROLES: VibeTermRoles = { hub: true, node: true, relay: false };
+export const NODE_ROLES: VibeTermRoles = { node: true, relay: false };
+export const HUB_NODE_ROLES: VibeTermRoles = { node: true, relay: false };
 
 /**
  * 池子在没有可用上级时会立刻重试；`FastScheduler` 的 sleep 直接 resolve 会把测试拖成热循环。

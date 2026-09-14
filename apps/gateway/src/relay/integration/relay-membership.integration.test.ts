@@ -9,7 +9,7 @@ import { RelayCipherError, openEnvelope } from '@vibeterm/shared/relay';
 import { ensureNodeIdentity } from '../../auth';
 import { NodeIdentityStore } from '../../auth/node-identity-store';
 import { createMigratedAuthDb } from '../../auth/test-db';
-import { encodeRedeemPopMessage } from '../../hub/redeem-pop';
+import { encodeRedeemPopMessage } from '../redeem-pop';
 import {
   HUB_NODE_ROLES,
   RELAY_TEST_PUBLIC_URL,

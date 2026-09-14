@@ -781,7 +781,7 @@ describe('TunnelManager', () => {
     expect(access.bypassAppId).toBeNull();
   });
 
-  test('configure_access with mesh role also creates bypass apps for machine paths', async () => {
+  test('configure_access with mesh role does not create retired hub bypass apps', async () => {
     const createdDomains: string[] = [];
     const policies = new Map<string, unknown[]>();
     const ctx = await setup({
@@ -805,12 +805,7 @@ describe('TunnelManager', () => {
         }
         if (url.endsWith('/access/apps') && method === 'POST') {
           createdDomains.push(body.domain);
-          const id =
-            body.domain === 'remote.example.com'
-              ? 'app-1'
-              : body.domain.endsWith('/api/hub/')
-                ? 'bypass-api'
-                : 'bypass-hub';
+          const id = 'app-1';
           policies.set(id, []);
           return Response.json({
             success: true,
@@ -862,14 +857,8 @@ describe('TunnelManager', () => {
     });
     const job = await waitJob(ctx.manager);
     expect(job?.state).toBe('done');
-    expect(createdDomains).toEqual(
-      expect.arrayContaining([
-        'remote.example.com',
-        'remote.example.com/hub/',
-        'remote.example.com/api/hub/',
-      ])
-    );
-    expect(ctx.manager.status().access.bypassAppId).toBe('bypass-hub');
+    expect(createdDomains).toEqual(['remote.example.com']);
+    expect(ctx.manager.status().access.bypassAppId).toBeNull();
   });
 
   test('configure_access with explicit hostname works when mode is off', async () => {

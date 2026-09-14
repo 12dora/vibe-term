@@ -38,7 +38,6 @@ export type MeshListedNode = {
 
 export type MeshPresenceSource = {
   nodeId: string;
-  hub: object | null;
   uplink: { readonly state: string };
   attachedHub(): { hubNodeId: string | null } | null;
   lastNodeList: { nodes: ReadonlyArray<MeshListedNode> } | null;
@@ -61,7 +60,7 @@ export type MessagingRuntimeHookDeps = {
   loadIdentity?: () => {
     nodeId: string | null;
     name: string | null;
-    uplinkKind: 'hub' | 'relay' | null;
+    uplinkKind: 'relay' | 'none' | null;
   };
   getMesh?: () => MeshPresenceSource | null;
   getLocalName?: () => string;
@@ -118,12 +117,11 @@ function defaultLocalName(): string {
 
 function resolveUplinkKind(
   standalone: boolean,
-  uplinkKind: 'hub' | 'relay' | null,
+  uplinkKind: 'relay' | 'none' | null,
   roles: VibeTermRoles
 ): UplinkKind {
   if (standalone) return 'none';
-  if (uplinkKind === 'hub' || uplinkKind === 'relay') return uplinkKind;
-  if (roles.hub) return 'hub';
+  if (uplinkKind === 'relay' || uplinkKind === 'none') return uplinkKind;
   if (roles.relay) return 'relay';
   return 'unknown';
 }
@@ -132,11 +130,10 @@ function resolveAttached(kind: UplinkKind, mesh: MeshPresenceSource | null): boo
   if (kind === 'none') return false;
   if (!mesh) return 'unknown';
   if (mesh.uplink.state === 'online' || mesh.attachedHub() != null) return true;
-  if (kind === 'hub' && mesh.hub != null) return true;
   return false;
 }
 
-function hubOnlineIds(mesh: MeshPresenceSource): Set<string> {
+function listedOnlineIds(mesh: MeshPresenceSource): Set<string> {
   const ids = new Set<string>();
   if (mesh.uplink.state !== 'online' || !mesh.lastNodeList) return ids;
   for (const node of mesh.lastNodeList.nodes) {
@@ -165,7 +162,7 @@ function toMeshNodeView(
   mesh: MeshPresenceSource,
   listed: ReturnType<typeof listedNodesById>,
   registry: Map<string, { name: string; version: string | null }>,
-  hubOnline: ReadonlySet<string>,
+  onlineIds: ReadonlySet<string>,
   reach: Map<string, 'lan' | 'wan' | 'relay' | null>,
   localName: string,
   localVersion: string
@@ -182,7 +179,7 @@ function toMeshNodeView(
       registryName: stored?.name,
       selfName: localName,
     }),
-    online: isSelf || hubOnline.has(id) || isPeerReachable(reach.get(id)),
+    online: isSelf || onlineIds.has(id) || isPeerReachable(reach.get(id)),
     version: listedNode?.version ?? stored?.version ?? (isSelf ? localVersion : null),
     current: isSelf,
   };
@@ -195,12 +192,12 @@ function listMeshNodesFromMesh(
 ): MeshNodeView[] {
   const listed = listedNodesById(mesh);
   const registry = new Map(mesh.userStore.listNodes().map((node) => [node.id, node]));
-  const hubOnline = hubOnlineIds(mesh);
+  const onlineIds = listedOnlineIds(mesh);
   const reach = mesh.peers.listReach();
   return collectMeshNodeIds(mesh)
     .filter((id) => id === mesh.nodeId || !isNodePaused(id))
     .map((id) =>
-      toMeshNodeView(id, mesh, listed, registry, hubOnline, reach, localName, localVersion)
+      toMeshNodeView(id, mesh, listed, registry, onlineIds, reach, localName, localVersion)
     );
 }
 

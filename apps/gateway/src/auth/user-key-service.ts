@@ -5,7 +5,6 @@ import type {
   KeyLogEffect,
   KeyLogType,
   RootKey,
-  StoredHubAuthorization,
   StoredNodeCert,
   UserKeyState,
   VerifyKeyLogError,
@@ -217,15 +216,6 @@ export class UserKeyService {
         } catch {}
       }
     }
-    const hubAuthorizations = new Map<string, StoredHubAuthorization>();
-    for (const row of this.userStore.listHubAuthorizationsByUser(userId)) {
-      hubAuthorizations.set(row.hubNodeId, {
-        status: row.status,
-        publicUrl: row.publicUrl,
-        priority: row.priority,
-        seq: BigInt(row.updatedSeq),
-      });
-    }
     const nodeCerts = new Map<string, StoredNodeCert>();
     for (const cert of this.userStore.listCertsByUser(userId)) {
       let nodeId: Uint8Array;
@@ -250,7 +240,6 @@ export class UserKeyService {
       passkeys,
       totp,
       nodeCerts,
-      hubAuthorizations,
       head: { seq: BigInt(user.keyLogHeadSeq), hash: user.keyLogHeadHash },
       ...projectRelayKeyLogState(this.db, userId),
     };
@@ -833,7 +822,6 @@ async function encryptIdentity(input: SaveNodeIdentityInput): Promise<EncryptedI
   ]);
   return {
     nodeId: input.nodeId,
-    hubUrl: input.hubUrl,
     privateKey,
     x25519PrivateKey,
     certificateJson: input.certificateJson,

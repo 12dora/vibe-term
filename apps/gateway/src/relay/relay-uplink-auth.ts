@@ -7,7 +7,7 @@ import {
   relaySeqToWire,
 } from '@vibeterm/shared/relay';
 import { decodeB64url } from '../api/route-input';
-import { nodeVersionMeets } from '../hub/hub-authorization';
+import { nodeVersionMeets } from '../mesh/node-version';
 import type { RelayConfigStore } from './relay-config-store';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { verifyRelayMemberProof } from './relay-member';

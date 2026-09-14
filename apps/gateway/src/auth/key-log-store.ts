@@ -130,15 +130,27 @@ function decodePayload(type: string, payload: Uint8Array): unknown {
     case 'revoke-node':
       return decodeRevokeNodePayload(payload);
     case 'admit-hub':
-      return decodeAdmitHubPayload(payload);
+      return decodeLegacyHubPayload(decodeAdmitHubPayload, payload);
     case 'retire-hub':
-      return decodeRetireHubPayload(payload);
+      return decodeLegacyHubPayload(decodeRetireHubPayload, payload);
     case 'rename-node':
       return decodeRenameNodePayload(payload);
     case 'notification-sink':
       return decodeNotificationSinkPayload(payload);
     default:
       return {};
+  }
+}
+
+function decodeLegacyHubPayload(
+  decode: ((payload: Uint8Array) => unknown) | undefined,
+  payload: Uint8Array
+): unknown {
+  if (typeof decode !== 'function') return { legacy: true };
+  try {
+    return decode(payload);
+  } catch {
+    return { legacy: true };
   }
 }
 
