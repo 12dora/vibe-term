@@ -13,7 +13,7 @@ function input(overrides: Partial<SinkSetInput> = {}): SinkSetInput {
     peers: [],
     nodes: [],
     reach: new Map(),
-    hubOnline: new Set(),
+    listedOnline: new Set(),
     ...overrides,
   };
 }
@@ -44,7 +44,7 @@ describe('collectMeshNotificationSinks', () => {
         declared: new Set(['bb']),
         listed: [{ id: 'bb', name: 'B' }],
         certs: [{ nodeId: 'bb', revokedLogSeq: null }],
-        hubOnline: new Set(['bb']),
+        listedOnline: new Set(['bb']),
       })
     );
     expect(sinks).toEqual([{ nodeId: 'bb', name: 'B', self: false, online: true }]);
@@ -124,7 +124,7 @@ describe('collectMeshNotificationSinks', () => {
         declared: new Set(['aa', 'bb']),
         certs: [{ nodeId: 'bb', revokedLogSeq: null }],
         listed: [{ id: 'bb', name: 'B' }],
-        hubOnline: new Set(['bb']),
+        listedOnline: new Set(['bb']),
       })
     );
     expect(sinks.map((s) => s.nodeId)).toEqual(['aa']);

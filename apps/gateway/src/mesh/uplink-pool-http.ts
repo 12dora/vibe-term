@@ -1,7 +1,7 @@
 import { type FetchDnsFallbackOpts, fetchWithDnsFallback } from './dial-resolve';
 import { uplinkWebSocketTls } from './uplink-constants';
 
-export function joinHubPath(publicUrl: string, path: string): string {
+export function joinUplinkPath(publicUrl: string, path: string): string {
   return `${publicUrl.replace(/\/+$/, '')}${path}`;
 }
 
@@ -23,7 +23,7 @@ export async function defaultProbeHealthz(
     const tls = uplinkWebSocketTls(tlsCa);
     if (tls) Object.assign(init, tls);
     const res = await Promise.race([
-      fetchWithDnsFallback(joinHubPath(publicUrl, '/healthz'), init, fallback),
+      fetchWithDnsFallback(joinUplinkPath(publicUrl, '/healthz'), init, fallback),
       timedOut,
     ]);
     return res.ok;

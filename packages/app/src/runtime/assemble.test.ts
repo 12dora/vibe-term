@@ -101,7 +101,7 @@ function fakeMesh(overrides?: Partial<MeshRuntime>): MeshRuntime {
   return {
     nodeId: 'ab'.repeat(16),
     handleRequest: async () => null,
-    attachedHub: () => null,
+    attachedUplink: () => null,
     localUiGuard: () => null,
     guardGatewayWebSocket: () => null,
     rewriteSelf: () => null,
@@ -1536,7 +1536,7 @@ describe('local keylog diagnostics', () => {
         createMeshRuntime: async () =>
           fakeMesh({
             uplink: {
-              queryHubHead: async () => {
+              queryKeyLogHead: async () => {
                 if (fail) throw new Error('offline');
                 return remote;
               },

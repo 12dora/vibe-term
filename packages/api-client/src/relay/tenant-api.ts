@@ -117,7 +117,7 @@ export interface RelayResolveResult {
 export interface RelayProofMaterial {
   /** 归一化后的中继地址。 */
   url: string;
-  /** `hubHostFromUrl(url)` 的结果，签名绑定到它。 */
+  /** `hostFromUrl(url)` 的结果，签名绑定到它。 */
   relayHost: string;
   /** 服务端给出的时间戳（毫秒）；中继按 ±`maxSkewMs` 判窗口。 */
   ts: number;

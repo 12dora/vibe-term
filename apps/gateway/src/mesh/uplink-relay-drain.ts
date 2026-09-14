@@ -46,7 +46,7 @@ export class UplinkRelayDrain {
         stream.reset('relay-unhandled');
         return;
       }
-      handler(this.track(client, stream), fromNodeId, viaRelay ?? client.hubUrl);
+      handler(this.track(client, stream), fromNodeId, viaRelay ?? client.uplinkUrl);
     });
   }
 

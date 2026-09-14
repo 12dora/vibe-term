@@ -13,7 +13,7 @@ export type MeshNotificationBridgeInput = {
   selfName: () => string | null;
   userStore: UserStore;
   listReach: () => ReadonlyMap<string, PeerReach>;
-  listHubOnline: () => ReadonlySet<string>;
+  listUplinkOnline: () => ReadonlySet<string>;
   listedNodes: () => ReadonlyArray<{ id: string; name: string }>;
   /** 用户签过 `notification-sink` 声明的节点集合（从密钥日志回放，见 notification-sink-records）。 */
   declaredSinks: () => ReadonlySet<string>;
@@ -51,7 +51,7 @@ export function buildMeshNotificationBridge(
         peers: input.userStore.listPeers(),
         nodes: input.userStore.listNodes(),
         reach: input.listReach(),
-        hubOnline: input.listHubOnline(),
+        listedOnline: input.listUplinkOnline(),
       });
     },
     /**

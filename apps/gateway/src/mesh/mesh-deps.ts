@@ -107,7 +107,7 @@ export type PeerLinkGetOpts = { purpose?: PeerLinkPurpose };
 export type PeerLinkProvider = {
   getLink(nodeId: string, opts?: PeerLinkGetOpts): Promise<LinkSession>;
   listReach(): Map<string, PeerReachKind>;
-  listHubOnline?(): ReadonlySet<string>;
+  listUplinkOnline?(): ReadonlySet<string>;
   transportOf?(nodeId: string): PeerTransportKind | null;
   rttOf?(nodeId: string): number | null;
   viaRelayOf?(nodeId: string): string | null;
@@ -148,12 +148,12 @@ export type StreamOpener = {
   ): Promise<OpenedWsStream>;
 };
 
-export type KeyLogHubAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
+export type KeyLogPublishAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
 
 export type KeyLogPublisher = {
   publish(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<void> | void;
-  publishAndAck?(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<KeyLogHubAck>;
-  queryHubHead?(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
+  publishAndAck?(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<KeyLogPublishAck>;
+  queryKeyLogHead?(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
   queryKeyLogAt?(seq: bigint): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null>;
 };
 

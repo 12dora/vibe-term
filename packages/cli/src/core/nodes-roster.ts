@@ -119,13 +119,19 @@ export function roleOf(_node: MeshNode): string {
   return 'node';
 }
 
+function relayOnlyLabel(reach: string, transport: string): string | null {
+  if (reach === 'relay' && (!transport || transport === 'relay')) return 'relay';
+  if (transport === 'relay' && (!reach || reach === 'relay')) return 'relay';
+  return null;
+}
+
 export function reachOf(node: MeshNode): string {
   if (node.online === false) return '-';
   const transport = node.transport ?? '';
   const reach = node.reach ?? '';
   if (!reach && !transport) return '-';
-  if (reach === 'relay' && (!transport || transport === 'relay')) return 'relay';
-  if (transport === 'relay' && (!reach || reach === 'relay')) return 'relay';
+  const relay = relayOnlyLabel(reach, transport);
+  if (relay) return relay;
   if (reach && transport) return `${reach}/${transport}`;
   return reach || transport;
 }
@@ -168,17 +174,23 @@ function hostOnly(hostPort: string): string {
   return value.toLowerCase();
 }
 
-function isLanHost(hostPort: string): boolean {
-  const host = hostOnly(hostPort);
-  if (host === 'localhost' || host === '::1' || host.startsWith('127.')) return true;
+function isLoopbackHost(host: string): boolean {
+  return host === 'localhost' || host === '::1' || host.startsWith('127.');
+}
+
+function isPrivateV4Host(host: string): boolean {
   if (host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('169.254.')) {
     return true;
   }
   const m = /^172\.(\d+)\./.exec(host);
-  if (m) {
-    const n = Number(m[1]);
-    if (n >= 16 && n <= 31) return true;
-  }
+  if (!m) return false;
+  const n = Number(m[1]);
+  return n >= 16 && n <= 31;
+}
+
+function isLanHost(hostPort: string): boolean {
+  const host = hostOnly(hostPort);
+  if (isLoopbackHost(host) || isPrivateV4Host(host)) return true;
   if (!host.includes(':')) return false;
   return host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80:');
 }

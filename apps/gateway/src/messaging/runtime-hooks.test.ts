@@ -82,7 +82,7 @@ function fakeMesh(overrides: Partial<MeshPresenceSource> = {}): MeshPresenceSour
   return {
     nodeId: 'aa'.repeat(16),
     uplink: { state: 'online' },
-    attachedHub: () => ({ hubNodeId: 'relay-1' }),
+    attachedUplink: () => ({ uplinkNodeId: 'relay-1' }),
     lastNodeList: {
       nodes: [
         {
@@ -260,7 +260,7 @@ describe('createMessagingRuntimeHooks', () => {
       getMesh: () =>
         fakeMesh({
           uplink: { state: 'offline' },
-          attachedHub: () => null,
+          attachedUplink: () => null,
           lastNodeList: null,
         }),
     });
@@ -273,7 +273,7 @@ describe('createMessagingRuntimeHooks', () => {
       getMesh: () =>
         fakeMesh({
           uplink: { state: 'offline' },
-          attachedHub: () => ({ hubNodeId: 'relay-1' }),
+          attachedUplink: () => ({ uplinkNodeId: 'relay-1' }),
         }),
     });
     expect(relayAttached.getUplinkStatus?.()).toEqual({ kind: 'relay', attached: true });
@@ -285,7 +285,7 @@ describe('createMessagingRuntimeHooks', () => {
       getMesh: () =>
         fakeMesh({
           uplink: { state: 'connecting' },
-          attachedHub: () => null,
+          attachedUplink: () => null,
         }),
     });
     expect(relayDetached.getUplinkStatus?.()).toEqual({ kind: 'relay', attached: false });

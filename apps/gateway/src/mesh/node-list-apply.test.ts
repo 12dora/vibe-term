@@ -27,7 +27,7 @@ function emptyList(over: Partial<UplinkNodeList> = {}): UplinkNodeList {
 
 function applyDeps(userStore: UserStore): NodeListApplyDeps {
   return {
-    state: { lastNodeList: null, hubPresenceLive: false, hubGeneration: 0, lastRtc: null },
+    state: { lastNodeList: null, uplinkPresenceLive: false, uplinkGeneration: 0, lastRtc: null },
     identity: { nodeIdHex: SELF },
     scheduler: { now: () => 1_000 },
     userIdOf: () => '',

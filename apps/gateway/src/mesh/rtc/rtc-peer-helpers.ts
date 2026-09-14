@@ -28,7 +28,7 @@ export const SESS_CHANNEL_LABEL = 'sess';
 
 export type LocalDescriptionEvent = { sdp: string; type: string };
 
-export type LocalDescriptionHub = {
+export type LocalDescriptionFanout = {
   latest: LocalDescriptionEvent | null;
   listeners: Set<(description: LocalDescriptionEvent) => void>;
 };

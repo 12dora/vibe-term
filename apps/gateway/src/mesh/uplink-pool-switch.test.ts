@@ -114,7 +114,7 @@ describe('terminalErrorOf', () => {
 
 function cand(url: string): UplinkCandidate {
   return {
-    hubNodeId: null,
+    uplinkNodeId: null,
     publicUrl: url,
     mode: 'standby',
     writerEpoch: 1,
@@ -125,7 +125,7 @@ function cand(url: string): UplinkCandidate {
 
 function fakeClient(url: string, state: PooledUplink['state'] = 'offline'): PooledUplink {
   return {
-    hubUrl: url,
+    uplinkUrl: url,
     state,
     identity: { nodeId: 'aa'.repeat(16), edSecretKey: new Uint8Array(32) },
     userId: 'user-1',
@@ -144,7 +144,7 @@ function fakeClient(url: string, state: PooledUplink['state'] = 'offline'): Pool
     openRelay: async () => {
       throw new Error('no relay');
     },
-    queryHubHead: async () => null,
+    queryKeyLogHead: async () => null,
     queryKeyLogAt: async () => null,
     appendAndAck: async () => ({ ok: false }),
     requestCatchUpNow: () => {},
@@ -160,8 +160,8 @@ describe('runUplinkSwitch 连接失败归一化', () => {
     let connect: (client: PooledUplink) => Promise<void> = async () => {};
     const host: UplinkSwitchHost = {
       candidates: () => [cand('https://a.example'), cand('https://b.example')],
-      attachedHub: () => ({
-        hubNodeId: null,
+      attachedUplink: () => ({
+        uplinkNodeId: null,
         publicUrl: 'https://b.example',
         mode: 'standby',
         writerEpoch: 1,

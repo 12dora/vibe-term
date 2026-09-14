@@ -27,16 +27,16 @@ import { defaultProbeHealthz } from './uplink-pool-http';
 import { runPreferredProbe } from './uplink-pool-probe';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
 import { primaryTargetOf } from './uplink-pool-target';
-import { normalizeHubEndpointUrl, redactUrl, sameHubUrl } from './uplink-pool-url';
+import { normalizeUplinkEndpointUrl, redactUrl, sameUplinkUrl } from './uplink-pool-url';
 import { UplinkRelayDrain, type UplinkRelayDrainReason } from './uplink-relay-drain';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
 export {
-  attachedHubHost,
-  isSelfHubCandidate,
-  normalizeHubEndpointUrl,
+  attachedUplinkHost,
+  isSelfUplinkCandidate,
+  normalizeUplinkEndpointUrl,
   redactUrl,
-  sameHubUrl,
+  sameUplinkUrl,
 } from './uplink-pool-url';
 export {
   UPLINK_RTT_MIN_SAMPLES,
@@ -45,7 +45,7 @@ export {
   isRttSwitchWorth,
 } from './uplink-nearest-switch';
 
-export { defaultProbeHealthz, joinHubPath } from './uplink-pool-http';
+export { defaultProbeHealthz, joinUplinkPath } from './uplink-pool-http';
 import type {
   UplinkCtlMessage,
   UplinkEnrollRedeemed,
@@ -67,7 +67,7 @@ export const UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS = 2_000;
 export const UPLINK_POOL_FAIL_LOG_INTERVAL_MS = 60_000;
 
 export type UplinkCandidate = {
-  hubNodeId: string | null;
+  uplinkNodeId: string | null;
   publicUrl: string;
   mode?: string;
   writerEpoch?: number;
@@ -81,8 +81,8 @@ export type UplinkCandidate = {
   version?: string | null;
 };
 
-export type AttachedHub = {
-  hubNodeId: string | null;
+export type AttachedUplink = {
+  uplinkNodeId: string | null;
   publicUrl: string;
   mode: string | null;
   writerEpoch: number | null;
@@ -90,7 +90,7 @@ export type AttachedHub = {
 };
 
 export type UplinkPoolNodeListMeta = {
-  hubNodeId: string | null;
+  uplinkNodeId: string | null;
   generation: number;
 };
 
@@ -153,7 +153,7 @@ export class UplinkPool {
 
   private live: PooledUplink | null = null;
   pending: PooledUplink | null = null;
-  private attached: AttachedHub | null = null;
+  private attached: AttachedUplink | null = null;
   private generation = 0;
   private switchToken = 0;
   private loop: Promise<void> | null = null;
@@ -177,7 +177,7 @@ export class UplinkPool {
   private readonly probeLogAt = new Map<string, number>();
   private wrapSleepAbort: AbortController | null = null;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
-  private readonly attachedListeners: Array<(hub: AttachedHub) => void> = [];
+  private readonly attachedListeners: Array<(hub: AttachedUplink) => void> = [];
   private readonly detachedListeners: Array<() => void> = [];
   private readonly nodeListListeners: Array<
     (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void
@@ -224,7 +224,7 @@ export class UplinkPool {
     return this.live?.lastKeyLogHead ?? this.pending?.lastKeyLogHead ?? null;
   }
 
-  attachedHub(): AttachedHub | null {
+  attachedUplink(): AttachedUplink | null {
     return this.attached;
   }
 
@@ -232,7 +232,7 @@ export class UplinkPool {
   primaryTarget(): string | null {
     return primaryTargetOf(
       this.attached?.publicUrl,
-      this.pending?.hubUrl ?? this.lastDialUrl,
+      this.pending?.uplinkUrl ?? this.lastDialUrl,
       this.loop != null
     );
   }
@@ -245,7 +245,7 @@ export class UplinkPool {
 
   candidates(): UplinkCandidate[] {
     return this.opts.candidates().map((row) => {
-      const diag = this.diagByUrl.get(normalizeHubEndpointUrl(row.publicUrl));
+      const diag = this.diagByUrl.get(normalizeUplinkEndpointUrl(row.publicUrl));
       return {
         ...row,
         lastError: diag?.lastError ?? row.lastError ?? null,
@@ -265,7 +265,7 @@ export class UplinkPool {
     return this.live;
   }
 
-  onAttached(cb: (hub: AttachedHub) => void): () => void {
+  onAttached(cb: (hub: AttachedUplink) => void): () => void {
     this.attachedListeners.push(cb);
     return () => {
       const idx = this.attachedListeners.indexOf(cb);
@@ -371,8 +371,8 @@ export class UplinkPool {
     if (!this.live) return Promise.resolve();
     return this.relayDrain.waitForClient(this.live, reason, this.stopAbort?.signal);
   }
-  queryHubHead() {
-    return this.requireLive().queryHubHead();
+  queryKeyLogHead() {
+    return this.requireLive().queryKeyLogHead();
   }
 
   queryKeyLogAt(seq: bigint, timeoutMs?: number) {
@@ -555,7 +555,7 @@ export class UplinkPool {
     const tlsCa = this.tlsCaFor(cand.publicUrl);
     const wsFactory = this.opts.wsFactory ?? defaultWsFactory(tlsCa);
     const client = this.createClient({
-      hubUrl: cand.publicUrl,
+      uplinkUrl: cand.publicUrl,
       identity: this.opts.identity,
       userId: this.userIdOf,
       keyLogApplier: this.opts.keyLogApplier,
@@ -565,7 +565,7 @@ export class UplinkPool {
       tlsCa,
       scheduler: this.scheduler,
       pingIntervalMs: this.opts.pingIntervalMs,
-      onNodeList: (list) => this.dispatchNodeList(client, list, cand.hubNodeId),
+      onNodeList: (list) => this.dispatchNodeList(client, list, cand.uplinkNodeId),
       onRtcSignal: (msg) => {
         if (this.live !== client) return;
         this.opts.onRtcSignal?.(msg);
@@ -594,7 +594,7 @@ export class UplinkPool {
     this.bindLiveState(client);
     this.relayDrain.bind(client, () => this.live === client);
     this.attached = {
-      hubNodeId: cand.hubNodeId,
+      uplinkNodeId: cand.uplinkNodeId,
       publicUrl: cand.publicUrl,
       mode: cand.mode ?? null,
       writerEpoch: cand.writerEpoch ?? null,
@@ -616,16 +616,16 @@ export class UplinkPool {
   private dispatchNodeList(
     client: PooledUplink,
     list: UplinkNodeList,
-    hubNodeId: string | null
+    uplinkNodeId: string | null
   ): void {
     if (this.live !== client) return;
     this.opts.onNodeList?.(list, {
-      hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
+      uplinkNodeId: this.attached?.uplinkNodeId ?? uplinkNodeId,
       generation: this.generation,
     });
     this.refreshAttachedFromCandidates();
     const meta = {
-      hubNodeId: this.attached?.hubNodeId ?? hubNodeId,
+      uplinkNodeId: this.attached?.uplinkNodeId ?? uplinkNodeId,
       generation: this.generation,
     };
     for (const cb of this.nodeListListeners) {
@@ -639,9 +639,11 @@ export class UplinkPool {
     this.syncRttProbe();
   }
 
-  private applyAttachedMatch(match: Pick<AttachedHub, 'hubNodeId' | 'mode' | 'writerEpoch'>): void {
+  private applyAttachedMatch(
+    match: Pick<AttachedUplink, 'uplinkNodeId' | 'mode' | 'writerEpoch'>
+  ): void {
     if (!this.attached) return;
-    this.attached.hubNodeId = match.hubNodeId;
+    this.attached.uplinkNodeId = match.uplinkNodeId;
     this.attached.mode = match.mode;
     this.attached.writerEpoch = match.writerEpoch;
   }
@@ -649,10 +651,10 @@ export class UplinkPool {
   private refreshAttachedFromCandidates(): void {
     const attached = this.attached;
     if (!attached) return;
-    const match = this.candidates().find((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    const match = this.candidates().find((row) => sameUplinkUrl(row.publicUrl, attached.publicUrl));
     if (match) {
       this.applyAttachedMatch({
-        hubNodeId: match.hubNodeId,
+        uplinkNodeId: match.uplinkNodeId,
         mode: match.mode ?? null,
         writerEpoch: match.writerEpoch ?? null,
       });
@@ -676,8 +678,8 @@ export class UplinkPool {
       await this.waitWhileLive(current, signal);
       const reason = terminalErrorOf(current);
       if (reason) {
-        this.persistTerminalError(current, current.hubUrl);
-        ended = { publicUrl: current.hubUrl, reason };
+        this.persistTerminalError(current, current.uplinkUrl);
+        ended = { publicUrl: current.uplinkUrl, reason };
       }
       if (this.live === current) break;
     }
@@ -744,7 +746,9 @@ export class UplinkPool {
     this.stopProbe();
     const attached = this.attached;
     if (!attached) return;
-    const idx = this.candidates().findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+    const idx = this.candidates().findIndex((row) =>
+      sameUplinkUrl(row.publicUrl, attached.publicUrl)
+    );
     if (idx <= 0) return;
     this.probe = this.scheduler.interval(
       () => {
@@ -864,7 +868,7 @@ export class UplinkPool {
     this.probeInFlight = true;
     try {
       await runPreferredProbe({
-        attachedHub: () => this.attached,
+        attachedUplink: () => this.attached,
         liveClient: () => this.live,
         candidates: () => this.candidates(),
         stopProbe: () => this.stopProbe(),
@@ -923,12 +927,12 @@ export class UplinkPool {
   }
 
   private patchDiag(publicUrl: string, patch: Partial<UrlDiag>): void {
-    const key = normalizeHubEndpointUrl(publicUrl);
+    const key = normalizeUplinkEndpointUrl(publicUrl);
     this.diagByUrl.set(key, mergeUplinkDiag(this.diagByUrl.get(key) ?? emptyUplinkDiag(), patch));
   }
 
   private noteRtt(publicUrl: string, rttMs: number): void {
-    const prev = this.diagByUrl.get(normalizeHubEndpointUrl(publicUrl)) ?? emptyUplinkDiag();
+    const prev = this.diagByUrl.get(normalizeUplinkEndpointUrl(publicUrl)) ?? emptyUplinkDiag();
     const samples = prev.rttSamples + 1;
     const ewma =
       samples === 1 || prev.rttMs == null
@@ -953,7 +957,7 @@ export class UplinkPool {
   }
 
   lastErrorOf(cand: UplinkCandidate): string | null {
-    return this.diagByUrl.get(normalizeHubEndpointUrl(cand.publicUrl))?.lastError ?? null;
+    return this.diagByUrl.get(normalizeUplinkEndpointUrl(cand.publicUrl))?.lastError ?? null;
   }
 
   logCandidateFailed(
@@ -975,7 +979,7 @@ export class UplinkPool {
     extra?: { fails?: number; total?: number }
   ): void {
     const origin = redactUrl(cand.publicUrl);
-    const key = `${normalizeHubEndpointUrl(cand.publicUrl)}\0${kind}`;
+    const key = `${normalizeUplinkEndpointUrl(cand.publicUrl)}\0${kind}`;
     const now = this.scheduler.now();
     const stateError = kind === 'failed' ? error : null;
     const prev = this.candLogAt.get(key);
@@ -991,20 +995,20 @@ export class UplinkPool {
     this.candLogAt.set(key, { index, error: stateError, transport, at: now });
     if (kind === 'try') {
       this.logInfo(
-        `[uplink] try hub=${origin} idx=${index + 1}/${extra?.total ?? this.candidates().length} transport=${transport}`
+        `[uplink] try url=${origin} idx=${index + 1}/${extra?.total ?? this.candidates().length} transport=${transport}`
       );
       return;
     }
     if (kind === 'failover') {
-      this.logInfo(`[uplink] failover → hub=${origin}`);
+      this.logInfo(`[uplink] failover → url=${origin}`);
       return;
     }
     if (kind === 'switch-back') {
-      this.logInfo(`[uplink] switch-back → hub=${origin}`);
+      this.logInfo(`[uplink] switch-back → url=${origin}`);
       return;
     }
     this.logInfo(
-      `[uplink] candidate failed hub=${origin} err=${error ?? ''} fails=${extra?.fails ?? 1}`
+      `[uplink] candidate failed url=${origin} err=${error ?? ''} fails=${extra?.fails ?? 1}`
     );
   }
 
@@ -1034,7 +1038,7 @@ export class UplinkPool {
     }
   }
 
-  private emitAttached(hub: AttachedHub): void {
+  private emitAttached(hub: AttachedUplink): void {
     for (const cb of this.attachedListeners) {
       try {
         cb(hub);

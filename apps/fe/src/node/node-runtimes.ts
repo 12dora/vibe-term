@@ -74,7 +74,7 @@ function entryNodeIdNow(): string | null {
  * `send` 如实返回 `sendRtcSignal` 的结果，并透出 `isReady` / `onReady`：`/mesh/ws` 未连上时
  * 控制器把 offer 排进 outbox，不把 attempt 判失败；连上后泵出信令。
  */
-class MeshRtcSignalHub {
+class MeshRtcSignalFanout {
   private readonly handlers = new Set<(signal: DirectSignalMessage) => void>();
   private bound: MeshEventSource | null = null;
 
@@ -114,7 +114,7 @@ class MeshRtcSignalHub {
   }
 }
 
-const meshRtcSignals = new MeshRtcSignalHub(() => sharedMeshEvents());
+const meshRtcSignals = new MeshRtcSignalFanout(() => sharedMeshEvents());
 
 /** 懒加载的直连栈里，宿主真正要用到的三个符号。 */
 export type DirectLinkModule = Pick<

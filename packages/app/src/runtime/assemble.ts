@@ -177,7 +177,7 @@ function applySiteSettingsLink(
   setSiteAccessOriginsProvider(
     () => buildShareOriginContext(defaultShareOriginSources, null).candidates
   );
-  setShareOriginAttachedUplink(() => mesh?.attachedHub()?.publicUrl ?? null);
+  setShareOriginAttachedUplink(() => mesh?.attachedUplink()?.publicUrl ?? null);
   if (roles.node) {
     const relayStore = new MeshRelayStore(db);
     setSiteSettingsLinkProvider(

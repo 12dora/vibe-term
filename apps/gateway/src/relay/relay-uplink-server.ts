@@ -1,4 +1,4 @@
-import { encodeBase64url, hubHostFromUrl, randomBytes } from '@vibeterm/shared/auth';
+import { encodeBase64url, hostFromUrl, randomBytes } from '@vibeterm/shared/auth';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import {
   MIN_RELAY_CLIENT_VERSION,
@@ -132,7 +132,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
       this.now,
       this.sleep
     );
-    this.relayHost = hubHostFromUrl(opts.config.publicUrl);
+    this.relayHost = hostFromUrl(opts.config.publicUrl);
     this.listDeps = {
       tenants: this.tenants,
       registry: this.registry,

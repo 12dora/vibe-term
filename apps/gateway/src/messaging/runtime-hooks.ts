@@ -39,7 +39,7 @@ export type MeshListedNode = {
 export type MeshPresenceSource = {
   nodeId: string;
   uplink: { readonly state: string };
-  attachedHub(): { hubNodeId: string | null } | null;
+  attachedUplink(): { uplinkNodeId: string | null } | null;
   lastNodeList: { nodes: ReadonlyArray<MeshListedNode> } | null;
   peers: {
     listReach(): Map<string, 'lan' | 'wan' | 'relay' | null>;
@@ -129,7 +129,7 @@ function resolveUplinkKind(
 function resolveAttached(kind: UplinkKind, mesh: MeshPresenceSource | null): boolean | 'unknown' {
   if (kind === 'none') return false;
   if (!mesh) return 'unknown';
-  if (mesh.uplink.state === 'online' || mesh.attachedHub() != null) return true;
+  if (mesh.uplink.state === 'online' || mesh.attachedUplink() != null) return true;
   return false;
 }
 

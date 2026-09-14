@@ -99,7 +99,7 @@ class ManualScheduler implements MeshScheduler {
 class FakeUplink {
   state: UplinkState = 'offline';
   link: { closed: Promise<{ reason?: string }> } | null = null;
-  hubUrl: string;
+  uplinkUrl: string;
   userId: string;
   identity: MeshIdentity;
   lastConnectError: { reason: string; at: number } | null = null;
@@ -109,7 +109,7 @@ class FakeUplink {
   private closeResolve: ((info: { reason?: string }) => void) | null = null;
 
   constructor(opts: UplinkClientOptions, fail: { times: number }) {
-    this.hubUrl = opts.hubUrl;
+    this.uplinkUrl = opts.uplinkUrl;
     this.identity = opts.identity;
     this.userId = typeof opts.userId === 'function' ? opts.userId() : opts.userId;
     this.fail = fail;
@@ -181,7 +181,7 @@ class FakeUplink {
   async openRelay(): Promise<never> {
     throw new Error('no relay');
   }
-  async queryHubHead() {
+  async queryKeyLogHead() {
     return null;
   }
   async queryKeyLogAt() {
@@ -206,7 +206,7 @@ async function waitMicro(): Promise<void> {
 
 function cand(row: { url: string; priority: number }): UplinkCandidate {
   return {
-    hubNodeId: null,
+    uplinkNodeId: null,
     publicUrl: row.url,
     mode: 'active',
     writerEpoch: 0,
@@ -260,7 +260,7 @@ describe('autoPreferred vs probePreferred ping-pong', () => {
       enablePeriodicRttProbe: false,
       probeHealthz: async () => true,
       createClient: ((opts: UplinkClientOptions) => {
-        const fake = new FakeUplink(opts, failByUrl[opts.hubUrl] ?? { times: 0 });
+        const fake = new FakeUplink(opts, failByUrl[opts.uplinkUrl] ?? { times: 0 });
         created.push(fake);
         return fake as unknown as PooledUplink;
       }) as never,
@@ -268,10 +268,10 @@ describe('autoPreferred vs probePreferred ping-pong', () => {
     fixtures.push({ close, stop: () => pool.stop() });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe(SH);
+    expect(pool.attachedUplink()?.publicUrl).toBe(SH);
 
     expect(await pool.switchTo(JP)).toEqual({ ok: true });
-    expect(pool.attachedHub()?.publicUrl).toBe(JP);
+    expect(pool.attachedUplink()?.publicUrl).toBe(JP);
     autoPreferred = JP;
     pool.refreshCandidates();
     expect(pool.candidates()[0]?.publicUrl).toBe(JP);
@@ -280,16 +280,16 @@ describe('autoPreferred vs probePreferred ping-pong', () => {
       await scheduler.advance(60_000);
       await waitMicro();
     }
-    expect(pool.attachedHub()?.publicUrl).toBe(JP);
+    expect(pool.attachedUplink()?.publicUrl).toBe(JP);
 
     failByUrl[JP].times = 3;
     created
-      .filter((row) => row.hubUrl === JP)
+      .filter((row) => row.uplinkUrl === JP)
       .at(-1)
       ?.drop();
     await waitMicro();
     await scheduler.advance(1_000);
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe(SH);
+    expect(pool.attachedUplink()?.publicUrl).toBe(SH);
   });
 });

@@ -396,7 +396,7 @@
   },
   "apps/fe/src/node/enrollment-engine.ts": {
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
-    "fileLines": 880
+    "fileLines": 821
   },
   "apps/fe/src/node/mesh-nodes.ts": {
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告",
@@ -2001,7 +2001,7 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "lines": 119
   },
-  "packages/shared/src/auth/hub-url.ts:canonicalHubUrl": {
+  "packages/shared/src/auth/public-url.ts:canonicalPublicUrl": {
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 14
   },

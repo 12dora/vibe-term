@@ -33,20 +33,23 @@ export function getMeshAgentBridge(): MeshAgentBridge | null {
   return bridge;
 }
 
-/** 与 /api/mesh/nodes 投影一致：hub presence 或直连可达即为在线。 */
-export function isRemoteNodePresent(hubOnline: boolean, reach: PeerReachKind | undefined): boolean {
-  return hubOnline || isPeerReachable(reach);
+/** 与 /api/mesh/nodes 投影一致：uplink 名册在线或直连可达即为在线。 */
+export function isRemoteNodePresent(
+  listedOnline: boolean,
+  reach: PeerReachKind | undefined
+): boolean {
+  return listedOnline || isPeerReachable(reach);
 }
 
 export function lookupRemoteNode(
   nodeId: string,
   reachByPeer: ReadonlyMap<string, PeerReachKind | undefined>,
-  hubOnlineIds: ReadonlySet<string>
+  listedOnlineIds: ReadonlySet<string>
 ): RemoteNodeLookupResult {
   if (!reachByPeer.has(nodeId)) {
     return 'unknown';
   }
-  return isRemoteNodePresent(hubOnlineIds.has(nodeId), reachByPeer.get(nodeId))
+  return isRemoteNodePresent(listedOnlineIds.has(nodeId), reachByPeer.get(nodeId))
     ? 'online'
     : 'offline';
 }

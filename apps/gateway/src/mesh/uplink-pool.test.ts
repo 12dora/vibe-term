@@ -20,9 +20,9 @@ import {
   type UplinkCandidate,
   UplinkPool,
   isRttSwitchWorth,
-  isSelfHubCandidate,
+  isSelfUplinkCandidate,
   redactUrl,
-  sameHubUrl,
+  sameUplinkUrl,
 } from './uplink-pool';
 import type { UplinkNodeList } from './uplink-protocol';
 
@@ -165,7 +165,7 @@ function controlledRelayStream(id = 1): {
 class FakeUplink {
   state: UplinkState = 'offline';
   link: { closed: Promise<{ reason?: string }> } | null = null;
-  hubUrl: string;
+  uplinkUrl: string;
   userId: string;
   identity: MeshIdentity;
   tlsCa: string[] | null;
@@ -189,7 +189,7 @@ class FakeUplink {
 
   constructor(opts: UplinkClientOptions, behavior: FakeBehavior) {
     this.opts = opts;
-    this.hubUrl = opts.hubUrl;
+    this.uplinkUrl = opts.uplinkUrl;
     this.identity = opts.identity;
     this.userId = typeof opts.userId === 'function' ? opts.userId() : opts.userId;
     this.tlsCa = opts.tlsCa ?? null;
@@ -213,7 +213,7 @@ class FakeUplink {
   start(): void {}
 
   emitRelay(fromNodeId = ID.c): void {
-    this.relayHandler?.({} as never, fromNodeId, this.hubUrl);
+    this.relayHandler?.({} as never, fromNodeId, this.uplinkUrl);
   }
 
   queueRelayStream(stream: LinkStream): void {
@@ -356,7 +356,7 @@ class FakeUplink {
     await this.relayOpenGate;
     return stream;
   }
-  async queryHubHead() {
+  async queryKeyLogHead() {
     return null;
   }
   async queryKeyLogAt() {
@@ -432,7 +432,7 @@ describe('UplinkPool', () => {
         input.candidates ??
         (() =>
           input.urls.map((publicUrl, index) => ({
-            hubNodeId: index === 0 ? ID.b : index === 1 ? ID.c : null,
+            uplinkNodeId: index === 0 ? ID.b : index === 1 ? ID.c : null,
             publicUrl,
             priority: 10 + index,
             caFingerprint: null,
@@ -458,7 +458,7 @@ describe('UplinkPool', () => {
         : undefined,
       onKeyLogFork: input.onKeyLogFork,
       createClient: (opts: UplinkClientOptions) => {
-        const fake = new FakeUplink(opts, input.behavior?.[opts.hubUrl] ?? {});
+        const fake = new FakeUplink(opts, input.behavior?.[opts.uplinkUrl] ?? {});
         created.push(fake);
         return fake as unknown as import('./types').PooledUplink;
       },
@@ -474,8 +474,8 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(created.map((row) => row.hubUrl)).toEqual(['https://a.example']);
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(created.map((row) => row.uplinkUrl)).toEqual(['https://a.example']);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     expect(pool.state).toBe('online');
     expect(created[0]?.statusSends).toBeGreaterThanOrEqual(1);
   });
@@ -506,7 +506,7 @@ describe('UplinkPool', () => {
       }),
       candidates: () => [
         {
-          hubNodeId: null,
+          uplinkNodeId: null,
           publicUrl: 'https://relay.example',
           priority: 1,
           caFingerprint: null,
@@ -525,7 +525,7 @@ describe('UplinkPool', () => {
     await waitMicro();
     expect(created[0]?.tlsCa).toEqual([pem]);
     const spawned = pool.spawn({
-      hubNodeId: null,
+      uplinkNodeId: null,
       publicUrl: 'https://relay.example',
       priority: 1,
       caFingerprint: null,
@@ -539,7 +539,7 @@ describe('UplinkPool', () => {
     await waitMicro();
     expect(created).toHaveLength(0);
     expect(pool.candidates()).toEqual([]);
-    expect(pool.attachedHub()).toBeNull();
+    expect(pool.attachedUplink()).toBeNull();
     expect(pool.state).toBe('offline');
   });
 
@@ -551,8 +551,8 @@ describe('UplinkPool', () => {
     pool.start();
     await waitMicro();
     expect(created[0]?.connectCalls).toBe(3);
-    expect(created.some((row) => row.hubUrl === 'https://b.example')).toBe(true);
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(created.some((row) => row.uplinkUrl === 'https://b.example')).toBe(true);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
   });
 
   test('primaryTarget 在拨号窗口指向正在拨的 URL，挂上后跟 attached，stop 后为 null', async () => {
@@ -565,11 +565,11 @@ describe('UplinkPool', () => {
     expect(pool.primaryTarget()).toBeNull();
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()).toBeNull();
+    expect(pool.attachedUplink()).toBeNull();
     expect(pool.primaryTarget()).toBe('https://a.example');
     await scheduler.advance(UPLINK_POOL_AUTH_DEADLINE_MS);
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     expect(pool.primaryTarget()).toBe('https://b.example');
     await pool.stop();
     expect(pool.primaryTarget()).toBeNull();
@@ -584,11 +584,11 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(created[0]?.hubUrl).toBe('https://a.example');
-    expect(pool.attachedHub()).toBeNull();
+    expect(created[0]?.uplinkUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()).toBeNull();
     await scheduler.advance(UPLINK_POOL_AUTH_DEADLINE_MS);
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
   });
 
   test('wraps around with exponential backoff after every candidate fails', async () => {
@@ -605,7 +605,7 @@ describe('UplinkPool', () => {
     await waitMicro();
     expect(created.length).toBeGreaterThanOrEqual(2);
     expect(scheduler.sleeps.some((ms) => ms >= 1_000)).toBe(true);
-    expect(pool.attachedHub()).toBeNull();
+    expect(pool.attachedUplink()).toBeNull();
   });
 
   test('反复重连不会在长寿 stop signal 上攒 abort 监听器', async () => {
@@ -651,8 +651,8 @@ describe('UplinkPool', () => {
     pool.onDetached(() => order.push('detach'));
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
-    const standby = created.find((row) => row.hubUrl === 'https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
+    const standby = created.find((row) => row.uplinkUrl === 'https://b.example');
     const origStop = standby?.stop.bind(standby);
     if (standby && origStop) {
       standby.stop = async () => {
@@ -661,8 +661,8 @@ describe('UplinkPool', () => {
       };
     }
     await pool.switchTo('https://a.example');
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
-    const preferred = created.filter((row) => row.hubUrl === 'https://a.example').at(-1);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
+    const preferred = created.filter((row) => row.uplinkUrl === 'https://a.example').at(-1);
     expect(preferred?.statusSends).toBeGreaterThanOrEqual(1);
     expect(order.indexOf('attach:https://a.example')).toBeGreaterThanOrEqual(0);
     expect(order.indexOf('stop:b')).toBeGreaterThan(order.indexOf('attach:https://a.example') - 1);
@@ -753,7 +753,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     expect(pool.candidates().find((row) => row.publicUrl === 'https://a.example')?.lastError).toBe(
       'connect-failed'
     );
@@ -770,13 +770,13 @@ describe('UplinkPool', () => {
       behavior: { 'https://a.example': { failTimes: 3 } },
     });
     pool.onNodeList((_list, meta) => {
-      lists.push({ url: pool.attachedHub()?.publicUrl ?? '', generation: meta.generation });
+      lists.push({ url: pool.attachedUplink()?.publicUrl ?? '', generation: meta.generation });
     });
     pool.start();
     await waitMicro();
     const gen = pool.currentGeneration();
     expect(gen).toBeGreaterThan(0);
-    const stale = created.find((row) => row.hubUrl === 'https://a.example');
+    const stale = created.find((row) => row.uplinkUrl === 'https://a.example');
     stale?.emitStaleList({
       t: 'node.list',
       version: 9,
@@ -801,13 +801,15 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     expect(scheduler.intervals.some((row) => !row.cleared && row.ms === 60_000)).toBe(true);
     aHealthy = true;
     await scheduler.advance(60_000);
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
-    expect(created.filter((row) => row.hubUrl === 'https://a.example').length).toBeGreaterThan(1);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
+    expect(created.filter((row) => row.uplinkUrl === 'https://a.example').length).toBeGreaterThan(
+      1
+    );
   });
 
   test('failover attach starts the probe timer without node.list', async () => {
@@ -819,7 +821,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     const probe = scheduler.intervals.find((row) => !row.cleared);
     expect(probe?.ms).toBe(60_000);
   });
@@ -841,7 +843,7 @@ describe('UplinkPool', () => {
       });
       pool.start();
       await waitMicro();
-      const current = created.find((client) => client.hubUrl === 'https://b.example');
+      const current = created.find((client) => client.uplinkUrl === 'https://b.example');
       const active = controlledRelayStream();
       current?.queueRelayStream(active.stream);
       await pool.openRelay(ID.c);
@@ -849,34 +851,34 @@ describe('UplinkPool', () => {
 
       await scheduler.advance(60_000);
       await waitMicro();
-      expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
-      expect(created.filter((client) => client.hubUrl === 'https://a.example')).toHaveLength(1);
-      expect(lines.some((row) => row.includes('[uplink] probe ok hub=https://a.example'))).toBe(
+      expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
+      expect(created.filter((client) => client.uplinkUrl === 'https://a.example')).toHaveLength(1);
+      expect(lines.some((row) => row.includes('[uplink] probe ok url=https://a.example'))).toBe(
         true
       );
       expect(
         lines.some((row) =>
           row.includes(
-            '[uplink] probe waiting drain reason=switch-back streams=1 hub=https://b.example'
+            '[uplink] probe waiting drain reason=switch-back streams=1 url=https://b.example'
           )
         )
       ).toBe(true);
 
       active.finish();
       await waitMicro();
-      expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+      expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     } finally {
       console.info = originalInfo;
     }
   });
 
-  test('onNodeList meta.hubNodeId is the authenticated attached hub, not list.hub (writer)', async () => {
-    const metas: Array<{ hubNodeId: string | null; generation: number }> = [];
+  test('onNodeList meta.uplinkNodeId is the authenticated attached hub, not list.hub (writer)', async () => {
+    const metas: Array<{ uplinkNodeId: string | null; generation: number }> = [];
     const { pool, created } = boot({
       urls: ['https://standby.example'],
       candidates: () => [
         {
-          hubNodeId: ID.c,
+          uplinkNodeId: ID.c,
           publicUrl: 'https://standby.example',
           mode: 'standby',
           writerEpoch: 1,
@@ -890,7 +892,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.hubNodeId).toBe(ID.c);
+    expect(pool.attachedUplink()?.uplinkNodeId).toBe(ID.c);
     created[0]?.emitStaleList({
       t: 'node.list',
       version: 2,
@@ -900,7 +902,7 @@ describe('UplinkPool', () => {
     });
     await waitMicro();
     expect(metas.length).toBeGreaterThan(0);
-    expect(metas.every((row) => row.hubNodeId === ID.c)).toBe(true);
+    expect(metas.every((row) => row.uplinkNodeId === ID.c)).toBe(true);
   });
 
   test('older switchTo must not promote over a newer live link', async () => {
@@ -917,7 +919,7 @@ describe('UplinkPool', () => {
       behavior,
       candidates: () => [
         {
-          hubNodeId: ID.b,
+          uplinkNodeId: ID.b,
           publicUrl: 'https://a.example',
           mode: 'active',
           writerEpoch: 3,
@@ -925,7 +927,7 @@ describe('UplinkPool', () => {
           caFingerprint: null,
         },
         {
-          hubNodeId: ID.c,
+          uplinkNodeId: ID.c,
           publicUrl: 'https://b.example',
           mode: 'standby',
           writerEpoch: 1,
@@ -933,7 +935,7 @@ describe('UplinkPool', () => {
           caFingerprint: null,
         },
         {
-          hubNodeId: 'dd'.repeat(16),
+          uplinkNodeId: 'dd'.repeat(16),
           publicUrl: 'https://c.example',
           mode: 'standby',
           writerEpoch: 1,
@@ -944,19 +946,21 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     behavior['https://a.example'] = { gate: { wait: () => gateA } };
     const first = pool.switchTo('https://a.example');
     await waitMicro();
     const second = pool.switchTo('https://c.example');
     await second;
-    expect(pool.attachedHub()?.publicUrl).toBe('https://c.example');
-    const firstClient = created.filter((row) => row.hubUrl === 'https://a.example').at(-1);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://c.example');
+    const firstClient = created.filter((row) => row.uplinkUrl === 'https://a.example').at(-1);
     expect(firstClient?.stopped).toBe(true);
     expect(await first).toEqual({ ok: false, reason: 'superseded' });
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://c.example');
-    expect(created.filter((row) => row.hubUrl === 'https://c.example').at(-1)?.stopped).toBe(false);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://c.example');
+    expect(created.filter((row) => row.uplinkUrl === 'https://c.example').at(-1)?.stopped).toBe(
+      false
+    );
   });
 
   test('switchTo 超时后迟到的连接不得 promote', async () => {
@@ -973,7 +977,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     behavior['https://a.example'] = { lateConnect: { wait: () => late } };
     const ac = new AbortController();
     const pending = pool.switchTo('https://a.example', ac.signal);
@@ -983,7 +987,7 @@ describe('UplinkPool', () => {
     releaseLate();
     expect(await pending).toEqual({ ok: false, reason: 'connect-timeout' });
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
   });
 
   test('promote 提交后旧客户端 stop 延迟，中止仍算切换成功', async () => {
@@ -997,8 +1001,8 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
-    const standby = created.find((row) => row.hubUrl === 'https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
+    const standby = created.find((row) => row.uplinkUrl === 'https://b.example');
     const origStop = standby?.stop.bind(standby);
     if (standby && origStop) {
       standby.stop = async () => {
@@ -1009,10 +1013,10 @@ describe('UplinkPool', () => {
     const ac = new AbortController();
     const pending = pool.switchTo('https://a.example', ac.signal);
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     ac.abort();
     expect(await pending).toEqual({ ok: true });
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     expect(standby?.stopped).toBe(false);
     releaseStop();
     await waitMicro();
@@ -1026,16 +1030,16 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     expect(await pool.switchTo('https://a.example')).toEqual({ ok: true });
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     expect(
       pool.candidates().find((row) => row.publicUrl === 'https://a.example')?.lastError
     ).toBeNull();
     expect(
       pool.candidates().find((row) => row.publicUrl === 'https://b.example')?.lastError
     ).toBeNull();
-    const liveA = created.filter((row) => row.hubUrl === 'https://a.example').at(-1);
+    const liveA = created.filter((row) => row.uplinkUrl === 'https://a.example').at(-1);
     liveA?.terminate('missed-pong');
     await waitMicro();
     expect(pool.candidates().find((row) => row.publicUrl === 'https://a.example')?.lastError).toBe(
@@ -1059,7 +1063,7 @@ describe('UplinkPool', () => {
       behavior,
       candidates: () => [
         {
-          hubNodeId: ID.b,
+          uplinkNodeId: ID.b,
           publicUrl: 'https://a.example',
           mode: 'active',
           writerEpoch: 3,
@@ -1067,7 +1071,7 @@ describe('UplinkPool', () => {
           caFingerprint: null,
         },
         {
-          hubNodeId: ID.c,
+          uplinkNodeId: ID.c,
           publicUrl: 'https://b.example',
           mode: 'standby',
           writerEpoch: 1,
@@ -1075,7 +1079,7 @@ describe('UplinkPool', () => {
           caFingerprint: null,
         },
         {
-          hubNodeId: 'dd'.repeat(16),
+          uplinkNodeId: 'dd'.repeat(16),
           publicUrl: 'https://c.example',
           mode: 'standby',
           writerEpoch: 1,
@@ -1086,7 +1090,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     expect(await pool.switchTo('https://a.example')).toEqual({ ok: true });
     expect(await pool.switchTo('https://b.example')).toEqual({ ok: true });
     expect(
@@ -1103,7 +1107,7 @@ describe('UplinkPool', () => {
     expect(await first).toEqual({ ok: false, reason: 'superseded' });
     releaseA();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://c.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://c.example');
     expect(
       pool.candidates().find((row) => row.publicUrl === 'https://a.example')?.lastError
     ).toBeNull();
@@ -1116,7 +1120,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     const stop = pool.stopSignal();
     if (!stop) throw new Error('missing stop signal');
     let added = 0;
@@ -1148,11 +1152,11 @@ describe('UplinkPool', () => {
     const { pool, created } = boot({ urls: ['https://a.example'], behavior });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     behavior['https://a.example'] = { hang: true };
     created[0]?.terminate('missed-pong');
     await waitMicro();
-    expect(pool.attachedHub()).toBeNull();
+    expect(pool.attachedUplink()).toBeNull();
     expect(pool.candidates().find((row) => row.publicUrl === 'https://a.example')?.lastError).toBe(
       'missed-pong'
     );
@@ -1180,7 +1184,7 @@ describe('UplinkPool', () => {
     pool.start();
     await waitMicro();
     expect(created).toHaveLength(1);
-    expect(pool.attachedHub()?.publicUrl).toBe('https://relay.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://relay.example');
     created[0]?.terminate('path-rerace');
     await waitMicro();
     expect(
@@ -1210,7 +1214,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     const intervalMs = scheduler.intervals.find((row) => !row.cleared)?.ms ?? 0;
     expect(intervalMs).toBeGreaterThanOrEqual(Math.floor(60_000 * 0.8));
     expect(intervalMs).toBeLessThanOrEqual(Math.ceil(60_000 * 1.2));
@@ -1242,8 +1246,8 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()).toBeNull();
-    expect(created[0]?.hubUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()).toBeNull();
+    expect(created[0]?.uplinkUrl).toBe('https://a.example');
     created[0]?.emitRelay(ID.c);
     created[0]?.emitFork();
     expect(relays).toEqual([]);
@@ -1254,33 +1258,33 @@ describe('UplinkPool', () => {
     const { pool, created } = boot({ urls: ['https://a.example'] });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     expect(created[0]?.statusIfChangedCalls).toBeGreaterThanOrEqual(1);
   });
 
-  test('isSelfHubCandidate matches own node id or normalized public URL', () => {
+  test('isSelfUplinkCandidate matches own node id or normalized public URL', () => {
     expect(
-      isSelfHubCandidate(
+      isSelfUplinkCandidate(
         {
-          hubNodeId: ID.a,
+          uplinkNodeId: ID.a,
           publicUrl: 'https://hub.example',
         },
         { nodeId: ID.a, publicUrl: 'https://other.example' }
       )
     ).toBe(true);
     expect(
-      isSelfHubCandidate(
+      isSelfUplinkCandidate(
         {
-          hubNodeId: ID.b,
+          uplinkNodeId: ID.b,
           publicUrl: 'HTTPS://Hub.Example:443/',
         },
         { nodeId: ID.a, publicUrl: 'https://hub.example' }
       )
     ).toBe(true);
     expect(
-      isSelfHubCandidate(
+      isSelfUplinkCandidate(
         {
-          hubNodeId: ID.b,
+          uplinkNodeId: ID.b,
           publicUrl: 'https://remote.example',
         },
         { nodeId: ID.a, publicUrl: 'https://hub.example' }
@@ -1301,7 +1305,7 @@ describe('UplinkPool', () => {
       });
       pool.start();
       await waitMicro();
-      expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+      expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
       const a = pool.candidates().find((row) => row.publicUrl === 'https://a.example');
       const b = pool.candidates().find((row) => row.publicUrl === 'https://b.example');
       expect(a?.lastError).toBe('connect-failed');
@@ -1311,20 +1315,20 @@ describe('UplinkPool', () => {
       expect(b?.lastErrorAt).toBeNull();
       expect(b?.lastAttemptAt).toBeGreaterThan(0);
       expect(
-        lines.some((row) => row.includes('[uplink] try hub=https://a.example idx=1/2 transport=ws'))
+        lines.some((row) => row.includes('[uplink] try url=https://a.example idx=1/2 transport=ws'))
       ).toBe(true);
       expect(
         lines.some((row) =>
-          /\[uplink] candidate failed hub=https:\/\/a\.example err=connect-failed fails=\d+/.test(
+          /\[uplink] candidate failed url=https:\/\/a\.example err=connect-failed fails=\d+/.test(
             row
           )
         )
       ).toBe(true);
-      expect(lines.some((row) => row.includes('[uplink] failover → hub=https://b.example'))).toBe(
+      expect(lines.some((row) => row.includes('[uplink] failover → url=https://b.example'))).toBe(
         true
       );
       expect(
-        lines.some((row) => row.includes('[uplink] try hub=https://b.example idx=2/2 transport=ws'))
+        lines.some((row) => row.includes('[uplink] try url=https://b.example idx=2/2 transport=ws'))
       ).toBe(true);
     } finally {
       console.info = originalInfo;
@@ -1348,7 +1352,7 @@ describe('UplinkPool', () => {
       await waitMicro();
       const failed = () =>
         lines.filter((row) =>
-          row.includes('[uplink] candidate failed hub=https://a.example err=connect-failed')
+          row.includes('[uplink] candidate failed url=https://a.example err=connect-failed')
         );
       expect(failed().length).toBe(1);
       await scheduler.advance(1_000);
@@ -1381,16 +1385,16 @@ describe('UplinkPool', () => {
       });
       pool.start();
       await waitMicro();
-      expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+      expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
       aHealthy = true;
       await scheduler.advance(60_000);
       await waitMicro();
-      expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
-      expect(lines.some((row) => row.includes('[uplink] probe ok hub=https://a.example'))).toBe(
+      expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
+      expect(lines.some((row) => row.includes('[uplink] probe ok url=https://a.example'))).toBe(
         true
       );
       expect(
-        lines.some((row) => row.includes('[uplink] switch-back → hub=https://a.example'))
+        lines.some((row) => row.includes('[uplink] switch-back → url=https://a.example'))
       ).toBe(true);
     } finally {
       console.info = originalInfo;
@@ -1410,7 +1414,7 @@ describe('UplinkPool', () => {
         behavior: { [dirty]: { failTimes: 3 } },
         candidates: () => [
           {
-            hubNodeId: ID.b,
+            uplinkNodeId: ID.b,
             publicUrl: dirty,
             mode: 'active',
             writerEpoch: 3,
@@ -1423,11 +1427,11 @@ describe('UplinkPool', () => {
       await waitMicro();
       expect(lines.some((row) => row.includes('secret') || row.includes('token=abc'))).toBe(false);
       expect(
-        lines.some((row) => row.includes('[uplink] try hub=https://hub.example:8443 idx='))
+        lines.some((row) => row.includes('[uplink] try url=https://hub.example:8443 idx='))
       ).toBe(true);
       expect(
         lines.some((row) =>
-          row.includes('[uplink] candidate failed hub=https://hub.example:8443 err=connect-failed')
+          row.includes('[uplink] candidate failed url=https://hub.example:8443 err=connect-failed')
         )
       ).toBe(true);
     } finally {
@@ -1449,7 +1453,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://b.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
     probed.length = 0;
 
     pool.requestProbeNow();
@@ -1545,7 +1549,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     expect(probed).toEqual([]);
     const rttHandle = scheduler.intervals.find((row) => !row.cleared && row.ms === 300_000);
     expect(rttHandle).toBeTruthy();
@@ -1566,7 +1570,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
     expect(scheduler.intervals.filter((row) => !row.cleared)).toEqual([]);
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { defaultProbeHealthz, joinHubPath } from './uplink-pool-http';
+import { defaultProbeHealthz, joinUplinkPath } from './uplink-pool-http';
 
 function dnsErr(): Error {
   const err = new Error('getaddrinfo ENOTFOUND');
@@ -7,9 +7,9 @@ function dnsErr(): Error {
   return err;
 }
 
-describe('joinHubPath', () => {
+describe('joinUplinkPath', () => {
   test('strips trailing slashes before appending', () => {
-    expect(joinHubPath('https://hub.example/', '/healthz')).toBe('https://hub.example/healthz');
+    expect(joinUplinkPath('https://hub.example/', '/healthz')).toBe('https://hub.example/healthz');
   });
 });
 

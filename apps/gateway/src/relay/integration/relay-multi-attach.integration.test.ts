@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { encodeBase64url } from '@vibeterm/shared/auth';
-import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { canonicalPublicUrl } from '@vibeterm/shared/auth';
 import { signRelayEnrollProof } from '@vibeterm/shared/relay';
 import {
   RELAY_TEST_PUBLIC_URL,
@@ -77,10 +77,11 @@ describe('multi-relay attach', () => {
     const b = await tenant.joinNode('alpha-b');
     await waitUntil(() => owner.userStore.getPeer(b.nodeId)?.name === 'alpha-b', 8_000);
 
-    const firstUrl = b.relayStore.listRelayRows()[0]?.url ?? canonicalHubUrl(RELAY_TEST_PUBLIC_URL);
+    const firstUrl =
+      b.relayStore.listRelayRows()[0]?.url ?? canonicalPublicUrl(RELAY_TEST_PUBLIC_URL);
     const secondUrl =
       b.relayStore.listRelayRows().find((row) => row.url !== firstUrl)?.url ??
-      canonicalHubUrl(RELAY_TEST_PUBLIC_URL_2);
+      canonicalPublicUrl(RELAY_TEST_PUBLIC_URL_2);
     b.relayStore.markKicked(firstUrl, true, 'kicked');
     await b.mesh.reconfigureUplink();
     await waitUntil(() => b.mesh.uplink.state === 'online', 8_000);

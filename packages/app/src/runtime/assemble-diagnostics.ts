@@ -41,7 +41,7 @@ async function readDiagnosticKeyLogStatus(
   if (!local || !user) return { ...status, error: 'local_head_unavailable' };
   if (!mesh) return { ...status, error: 'mesh_unavailable' };
   try {
-    const remote = await mesh.uplink.queryHubHead();
+    const remote = await mesh.uplink.queryKeyLogHead();
     if (!remote) return { ...status, error: 'remote_head_unavailable' };
     status.remote = { seq: Number(remote.seq), hash: encodeBase64url(remote.hash) };
     if (BigInt(remote.seq) < local.seq) {

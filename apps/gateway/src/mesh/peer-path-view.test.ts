@@ -76,7 +76,7 @@ describe('peer path view', () => {
   test('peerLinkDetailOf copies viaRelay and relayPresence', () => {
     const detail = peerLinkDetailOf({
       live: live({ transport: 'relay', viaRelay: 'https://ty.example' }),
-      hubHost: 'hub.example',
+      uplinkHost: 'hub.example',
       lastDirectAttempt: undefined,
       dcBreaker: {
         cooling: false,

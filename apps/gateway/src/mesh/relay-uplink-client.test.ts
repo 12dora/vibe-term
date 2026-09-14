@@ -5,7 +5,7 @@ import {
   encodeBase64url,
   generateEd25519KeyPair,
   generateX25519KeyPair,
-  hubHostFromUrl,
+  hostFromUrl,
   nodeIdToHex,
   randomBytes,
   uplinkAuthMessage,
@@ -247,7 +247,7 @@ describe('RelayUplinkClient', () => {
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const nonce = randomBytes(32);
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: realApplier(b.service),
@@ -276,7 +276,7 @@ describe('RelayUplinkClient', () => {
     expect(
       verifyEd25519(
         decodeBase64url(auth.sig),
-        uplinkAuthMessage(nonce, hubHostFromUrl(RELAY_URL)),
+        uplinkAuthMessage(nonce, hostFromUrl(RELAY_URL)),
         b.identity.edPublicKey
       )
     ).toBe(true);
@@ -302,7 +302,7 @@ describe('RelayUplinkClient', () => {
         tokenRotated
       );
       const client = new RelayUplinkClient({
-        hubUrl: RELAY_URL,
+        uplinkUrl: RELAY_URL,
         identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
         userId: () => b.user.userId,
         keyLogApplier: noopApplier(2n),
@@ -336,7 +336,7 @@ describe('RelayUplinkClient', () => {
     const [clientWs, serverWs] = fakeSocketPair();
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -371,7 +371,7 @@ describe('RelayUplinkClient', () => {
       nodes: Array<{ id: string; name: string; direct_capable: boolean }>;
     }> = [];
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -450,7 +450,7 @@ describe('RelayUplinkClient', () => {
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const signals: Array<{ sdp?: string; to: string }> = [];
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -510,7 +510,7 @@ describe('RelayUplinkClient', () => {
     const [clientWs, serverWs] = fakeSocketPair();
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -549,7 +549,7 @@ describe('RelayUplinkClient', () => {
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const kicks: string[] = [];
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -584,7 +584,7 @@ describe('RelayUplinkClient', () => {
     const [clientWs, serverWs] = fakeSocketPair();
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -612,7 +612,7 @@ describe('RelayUplinkClient', () => {
     const serverLink = new WebSocketLink(serverWs, { role: 'acceptor' });
     const server = fakeRelayServer(serverLink, 2);
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -639,7 +639,7 @@ describe('RelayUplinkClient', () => {
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const dialed: string[] = [];
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -664,7 +664,7 @@ describe('RelayUplinkClient', () => {
     expect(
       verifyEd25519(
         decodeBase64url(auth.sig),
-        uplinkAuthMessage(nonce, hubHostFromUrl(RELAY_URL)),
+        uplinkAuthMessage(nonce, hostFromUrl(RELAY_URL)),
         b.identity.edPublicKey
       )
     ).toBe(true);
@@ -679,7 +679,7 @@ describe('RelayUplinkClient', () => {
     const prevPort = process.env.GATEWAY_PORT;
     const dialed: string[] = [];
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -719,7 +719,7 @@ describe('RelayUplinkClient', () => {
     const [clientWs, serverWs] = fakeSocketPair();
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -767,7 +767,7 @@ describe('RelayUplinkClient', () => {
     const [clientWs, serverWs] = fakeSocketPair();
     const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
     const client = new RelayUplinkClient({
-      hubUrl: RELAY_URL,
+      uplinkUrl: RELAY_URL,
       identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
       userId: () => b.user.userId,
       keyLogApplier: noopApplier(2n),
@@ -833,7 +833,7 @@ describe('RelayUplinkClient', () => {
 
 function hungClosedClient(): RelayUplinkClient {
   const client = new RelayUplinkClient({
-    hubUrl: RELAY_URL,
+    uplinkUrl: RELAY_URL,
     identity: { nodeId: 'ab'.repeat(16), edSecretKey: new Uint8Array(64) },
     userId: () => 'user-1',
     keyLogApplier: noopApplier(0n),

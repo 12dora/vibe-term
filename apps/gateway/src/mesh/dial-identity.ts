@@ -1,7 +1,7 @@
 import { isIP } from 'node:net';
 import { stamp } from './mesh-log';
 
-export const DIAL_IDENTITY_PATH_HUB = '/healthz';
+export const DIAL_IDENTITY_PATH_HEALTHZ = '/healthz';
 export const DIAL_IDENTITY_PATH_RELAY = '/api/relay/health';
 
 export type CheckDialIdentityOpts = {

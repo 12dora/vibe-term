@@ -76,12 +76,12 @@ export function listPeerReach(
 export function peerLinkDetailFromState(
   state: PeerManagerState,
   nodeId: string,
-  hubHost: string | null,
+  uplinkHost: string | null,
   dcBreaker: RtcDialBreakerSnapshot
 ): PeerLinkDetail {
   return peerLinkDetailOf({
     live: state.live.get(nodeId),
-    hubHost,
+    uplinkHost,
     lastDirectAttempt: state.lastDirectAttempt.get(nodeId),
     dcBreaker,
     relayPresence: state.relayPresence,
@@ -91,7 +91,7 @@ export function peerLinkDetailFromState(
 
 export function peerLinkDetailOf(input: {
   live: LivePeer | undefined;
-  hubHost: string | null;
+  uplinkHost: string | null;
   lastDirectAttempt: Parameters<typeof directFailureView>[0];
   dcBreaker: RtcDialBreakerSnapshot;
   relayPresence?: RelayPresenceIndex;
@@ -99,7 +99,7 @@ export function peerLinkDetailOf(input: {
 }): PeerLinkDetail {
   return {
     peerAddress:
-      input.live?.transport === 'relay' ? input.hubHost : (input.live?.remoteAddress ?? null),
+      input.live?.transport === 'relay' ? input.uplinkHost : (input.live?.remoteAddress ?? null),
     linkSinceAt: input.live?.linkSinceAt ?? null,
     endpoints: [],
     directFailure: directFailureView(input.lastDirectAttempt),

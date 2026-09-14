@@ -43,7 +43,7 @@ bun apps/fe/tests/helpers/relay-boot.ts --state /tmp/vibeterm-relay-e2e.json
 6. 主管以密码登录 A（Argon2 seed → Ed25519 root → delegation → challenge/login），
    轮询 `GET /api/mesh/relay/status` 直到 `mode==='relay'` 且该中继 `online && attached`。
 7. 生成 `r3.` 加入码（见下节），在 B 上跑
-   `vibeterm relay join --token r3.<…> --name relay-node-b --no-restart --install-dir <B>`。
+   `vibeterm relay join <url> --token r3.<…> --name relay-node-b --no-restart --install-dir <B>`。
 8. 轮询 `GET /api/mesh/relay/enrollments/:id` 到 `redeemed`，在 A 上签 `admit-node`，
    再 `POST /api/mesh/relay/meta-key/prepare {op:'admit',node_id}` 签一条换代 `meta-key`。
 9. 起 B → 等 `/healthz` → 轮询 A 的 `/api/mesh/nodes` 直到 B `online`。

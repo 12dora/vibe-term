@@ -3598,7 +3598,7 @@ describe('PeerManager', () => {
       hostname: '127.0.0.1',
       startServer: false,
       idleMs: 60_000,
-      hubHost: 'hub.example.com',
+      uplinkHost: 'hub.example.com',
     });
     fixtures.push({ close, stop: () => managerB.stop() });
     const t0 = performance.now();
@@ -3651,7 +3651,7 @@ describe('PeerManager', () => {
       peerPort: 0,
       startServer: false,
       connectTimeoutMs: 200,
-      hubHost: 'hub.example.com',
+      uplinkHost: 'hub.example.com',
     });
     fixtures.push({ close, stop: () => manager.stop() });
     const acceptP = incoming.then((stream) =>
@@ -3673,7 +3673,7 @@ describe('PeerManager', () => {
     link.close();
   });
 
-  test('relay diagnostics follow a hubHost getter, not a captured config host', async () => {
+  test('relay diagnostics follow an uplinkHost getter, not a captured config host', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
     const store = new UserStore(db);
@@ -3707,7 +3707,7 @@ describe('PeerManager', () => {
       peerPort: 0,
       startServer: false,
       connectTimeoutMs: 200,
-      hubHost: () => host,
+      uplinkHost: () => host,
     });
     fixtures.push({ close, stop: () => manager.stop() });
     const acceptP = incoming.then((stream) =>

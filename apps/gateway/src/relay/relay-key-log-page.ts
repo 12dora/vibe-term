@@ -6,7 +6,7 @@ import {
 import { parseRelayEnvelopeJson } from './relay-key-log-store';
 import type { RelayKeyLogRow } from './types';
 
-/** 与 hub 的 key-log 分页同规矩：整帧 ≤64 KiB，超限就少发几条并置 has_more。 */
+/** 与 peer uplink 的 key-log 分页同规矩：整帧 ≤64 KiB，超限就少发几条并置 has_more。 */
 export const RELAY_KEY_LOG_PAGE_MAX_BYTES = RELAY_CTL_MAX_BYTES;
 
 const te = new TextEncoder();

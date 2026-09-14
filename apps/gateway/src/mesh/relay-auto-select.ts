@@ -1,4 +1,4 @@
-import { hubHostFromUrl } from '@vibeterm/shared/auth';
+import { hostFromUrl } from '@vibeterm/shared/auth';
 import type { RelayAutoSelectView, RelaySwitchReason } from '@vibeterm/shared/relay';
 import { stamp } from './mesh-log';
 import {
@@ -19,7 +19,7 @@ import type { RelaySwitchDeps } from './relay-switch-route';
 import type { RelayUplinkClient } from './relay-uplink-client';
 import type { MeshScheduler, PooledUplink, UplinkState } from './types';
 import { uplinkPathView } from './uplink-path-sampler';
-import { normalizeHubEndpointUrl, sameHubUrl } from './uplink-pool-url';
+import { normalizeUplinkEndpointUrl, sameUplinkUrl } from './uplink-pool-url';
 
 export const RELAY_AUTO_HOLD_LOG_MS = 60_000;
 
@@ -111,7 +111,7 @@ export class RelayAutoSelect {
   }
 
   onKicked(url: string): void {
-    this.failureAt.set(normalizeHubEndpointUrl(url), this.now());
+    this.failureAt.set(normalizeUplinkEndpointUrl(url), this.now());
     this.scheduleEval();
   }
 
@@ -178,7 +178,8 @@ export class RelayAutoSelect {
     if (this.deps.liveClient() !== live || live.state !== 'online') return;
     const again = this.snapshotConsider();
     this.applyConsidered(again);
-    if (again.decision.type !== 'switch' || !sameHubUrl(again.decision.url, decision.url)) return;
+    if (again.decision.type !== 'switch' || !sameUplinkUrl(again.decision.url, decision.url))
+      return;
     const healthy = await this.deps.probeHealthz(decision.url);
     if (!healthy) {
       this.logHold({
@@ -244,7 +245,7 @@ export class RelayAutoSelect {
 
   private collectClientFailures(current: string | null, primary: RelayUplinkClient | null): void {
     for (const row of this.deps.rows()) {
-      const attached = current != null && sameHubUrl(current, row.url);
+      const attached = current != null && sameUplinkUrl(current, row.url);
       const client = attached ? primary : this.deps.secondaryOf(row.url);
       this.noteClientFailure(row.url, client);
     }
@@ -255,9 +256,9 @@ export class RelayAutoSelect {
     current: string | null,
     primary: RelayUplinkClient | null
   ): RelayScoreInput {
-    const attached = current != null && sameHubUrl(current, row.url);
+    const attached = current != null && sameUplinkUrl(current, row.url);
     const client = attached ? primary : this.deps.secondaryOf(row.url);
-    const ewma = this.ewma.get(normalizeHubEndpointUrl(row.url));
+    const ewma = this.ewma.get(normalizeUplinkEndpointUrl(row.url));
     const path = uplinkPathView(row.url);
     return {
       url: row.url,
@@ -268,7 +269,7 @@ export class RelayAutoSelect {
       pathBestMs: path.pathBestMs ?? null,
       peersOnline: this.deps.presence()?.peersOnlineOn(row.url) ?? null,
       maxNodes: client?.quota?.maxNodes ?? null,
-      lastFailureAt: this.failureAt.get(normalizeHubEndpointUrl(row.url)) ?? null,
+      lastFailureAt: this.failureAt.get(normalizeUplinkEndpointUrl(row.url)) ?? null,
     };
   }
 
@@ -276,16 +277,16 @@ export class RelayAutoSelect {
     const current = this.deps.currentUrl();
     const primary = this.deps.primaryClient();
     for (const row of this.deps.rows()) {
-      const key = normalizeHubEndpointUrl(row.url);
+      const key = normalizeUplinkEndpointUrl(row.url);
       if (this.ewma.has(key)) continue;
-      const attached = current != null && sameHubUrl(current, row.url);
+      const attached = current != null && sameUplinkUrl(current, row.url);
       const rtt = attached ? primary?.rttMs : this.deps.secondaryOf(row.url)?.rttMs;
       if (rtt != null && rtt >= 0) this.feedRtt(row.url, rtt);
     }
   }
 
   private feedRtt(url: string, sample: number): void {
-    const key = normalizeHubEndpointUrl(url);
+    const key = normalizeUplinkEndpointUrl(url);
     this.ewma.set(key, updateRttEwma(this.ewma.get(key) ?? null, sample));
   }
 
@@ -295,20 +296,20 @@ export class RelayAutoSelect {
   ): void {
     const err = client?.lastConnectError;
     if (!err || !isConnectAuthFailure(classifyRelayLinkError(err.reason))) return;
-    this.failureAt.set(normalizeHubEndpointUrl(url), err.at);
+    this.failureAt.set(normalizeUplinkEndpointUrl(url), err.at);
   }
 
   private effectivePreferred(rows: readonly RelayScoreInput[]): string | null {
     const preferred = this.deps.preferredUrl();
     if (!preferred) return null;
-    const pin = rows.find((row) => sameHubUrl(row.url, preferred));
+    const pin = rows.find((row) => sameUplinkUrl(row.url, preferred));
     return pin && !pin.kicked ? preferred : null;
   }
 
   private unsolicitedReason(url: string): RelaySwitchReason {
     if (!this.attachedOnce) return 'startup';
     const preferred = this.deps.preferredUrl();
-    if (preferred && sameHubUrl(preferred, url)) return 'pin-failback';
+    if (preferred && sameUplinkUrl(preferred, url)) return 'pin-failback';
     return 'auto-failover';
   }
 
@@ -364,7 +365,7 @@ export class RelayAutoSelect {
 function hostOf(url: string | null): string {
   if (!url) return '-';
   try {
-    return hubHostFromUrl(url);
+    return hostFromUrl(url);
   } catch {
     return url;
   }

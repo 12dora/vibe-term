@@ -1,4 +1,4 @@
-import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { canonicalPublicUrl } from '@vibeterm/shared/auth';
 import { normalizeTurnOk } from '@vibeterm/shared/relay';
 
 export const TURN_REPORT_TTL_MS = 30 * 60 * 1_000;
@@ -64,7 +64,7 @@ function turnRelayKey(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   try {
-    return canonicalHubUrl(trimmed);
+    return canonicalPublicUrl(trimmed);
   } catch {
     return trimmed.replace(/\/+$/, '');
   }

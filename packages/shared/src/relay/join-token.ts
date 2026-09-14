@@ -1,5 +1,5 @@
 import { bytesToHex, decodeBase64url, encodeBase64url, hexToBytes } from '../auth/encoding';
-import { canonicalHubUrl } from '../auth/hub-url';
+import { canonicalPublicUrl } from '../auth/public-url';
 
 export const RELAY_JOIN_TOKEN_PREFIX = 'r3.';
 /** `enroll_sk 32 ‖ root_pk 32 ‖ head_hash 32 ‖ K_log 32`，地址表之前的定长头部。 */
@@ -60,7 +60,7 @@ export function normalizeRelayUrl(raw: string): string {
   }
   let canonical: string;
   try {
-    canonical = canonicalHubUrl(raw);
+    canonical = canonicalPublicUrl(raw);
   } catch (error) {
     throw new RelayJoinTokenError(error instanceof Error ? error.message : 'invalid relay url');
   }

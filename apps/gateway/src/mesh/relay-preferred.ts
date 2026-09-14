@@ -1,11 +1,11 @@
-import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { canonicalPublicUrl } from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { gatewayKv } from '../db/schema';
 
 function sameRelayUrl(a: string, b: string): boolean {
   try {
-    return canonicalHubUrl(a) === canonicalHubUrl(b);
+    return canonicalPublicUrl(a) === canonicalPublicUrl(b);
   } catch {
     return a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
   }

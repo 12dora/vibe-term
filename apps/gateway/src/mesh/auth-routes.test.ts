@@ -86,10 +86,10 @@ export class FakePeers implements PeerLinkProvider {
     return this.rtt.get(nodeId) ?? null;
   }
 
-  hubOnline = new Set<string>();
+  listedOnline = new Set<string>();
 
-  listHubOnline(): Set<string> {
-    return this.hubOnline;
+  listUplinkOnline(): Set<string> {
+    return this.listedOnline;
   }
 
   onNodeEvent(cb: (e: import('./mesh-deps').NodeEventPayload) => void): () => void {
@@ -225,7 +225,7 @@ export async function bootMesh(options?: {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   streamLog?: (line: string) => void;
   skipUserBootstrap?: boolean;
-  attachedHub?: () => import('./uplink-pool').AttachedHub | null;
+  attachedUplink?: () => import('./uplink-pool').AttachedUplink | null;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -262,7 +262,7 @@ export async function bootMesh(options?: {
     rtc: options?.rtc,
     now: options?.now,
     primaryUserId: boot.userId || undefined,
-    attachedHub: options?.attachedHub,
+    attachedUplink: options?.attachedUplink,
     selfStatus: options?.selfStatus,
     listedNames: options?.listedNames,
     selfName: options?.selfName,

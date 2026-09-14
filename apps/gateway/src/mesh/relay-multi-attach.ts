@@ -25,7 +25,7 @@ import {
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
 import type { UplinkClientOptions } from './uplink-client';
 import type { UplinkPool } from './uplink-pool';
-import { normalizeHubEndpointUrl, sameHubUrl } from './uplink-pool-url';
+import { normalizeUplinkEndpointUrl, sameUplinkUrl } from './uplink-pool-url';
 import type { UplinkNodeList } from './uplink-protocol';
 
 export type RelayRtcHolder = {
@@ -41,7 +41,7 @@ export type RelayMultiAttach = {
   reconcile(): Promise<void>;
   handlePrimaryState(state: UplinkState, url: string | null, rttMs: number | null): void;
   applyPrimaryList(list: UplinkNodeList): void;
-  listHubOnline(now: number): Set<string> | null;
+  listUplinkOnline(now: number): Set<string> | null;
   sendRtc(
     peerId: string,
     sendPrimary: () => void,
@@ -69,7 +69,7 @@ export function createRelayMultiAttach(input: {
   wiring: RelayWiring;
   uplink: UplinkPool;
   spawn: (opts: UplinkClientOptions) => SecondaryUplink;
-  baseClient: Omit<UplinkClientOptions, 'hubUrl' | 'onNodeList'>;
+  baseClient: Omit<UplinkClientOptions, 'uplinkUrl' | 'onNodeList'>;
   scheduler: MeshScheduler;
   onRelayStream: InboundRelayHandler;
   onExclusiveOffline: (peerIds: string[]) => void;
@@ -134,8 +134,8 @@ export function createRelayMultiAttach(input: {
       }
       // path-rerace 等瞬态非 online：live 仍挂同一 hub 时不要把花名册 connected 打掉。
       const live = input.uplink.liveClient();
-      const attached = input.uplink.attachedHub()?.publicUrl;
-      if (live?.state === 'online' && attached && sameHubUrl(attached, url)) {
+      const attached = input.uplink.attachedUplink()?.publicUrl;
+      if (live?.state === 'online' && attached && sameUplinkUrl(attached, url)) {
         void opener.reconcile();
         return;
       }
@@ -144,13 +144,13 @@ export function createRelayMultiAttach(input: {
       void opener.reconcile();
     },
     applyPrimaryList(list) {
-      const url = input.uplink.attachedHub()?.publicUrl;
+      const url = input.uplink.attachedUplink()?.publicUrl;
       if (!url) return;
       presence.setPrimary(url);
       markPrimaryConnectedIfLive(input.uplink, presence, input.scheduler.now());
       presence.applyList(url, presencePeersFromList(list), list.version, input.scheduler.now());
     },
-    listHubOnline(now) {
+    listUplinkOnline(now) {
       if (input.wiring.secrets.uplinkKind() !== 'relay') return null;
       return presence.onlineUnion(now);
     },
@@ -194,7 +194,7 @@ function openSecondaryAttach(
     spawn: (url) =>
       input.spawn({
         ...input.baseClient,
-        hubUrl: url,
+        uplinkUrl: url,
         keyLogCatchUp: 'prefix-verified',
         onNodeList: (list) => {
           mergeSecondaryRoster(presence, input.rtc, url, list, input.scheduler.now());
@@ -219,7 +219,7 @@ function mergeSecondaryRoster(
 ): void {
   presence.applyList(url, presencePeersFromList(list), list.version, now);
   rtc.lastRtc = mergeListedRtc(rtc.lastRtc, list.rtc, {
-    sourceUrl: normalizeHubEndpointUrl(url),
+    sourceUrl: normalizeUplinkEndpointUrl(url),
     primary: false,
   });
   const unioned = rtc.lastNodeList
@@ -236,7 +236,7 @@ function markPrimaryConnectedIfLive(
   presence: RelayPresence,
   now: number
 ): void {
-  const url = uplink.attachedHub()?.publicUrl;
+  const url = uplink.attachedUplink()?.publicUrl;
   const live = uplink.liveClient() as RelayUplinkClient | null;
   if (!url || live?.state !== 'online') return;
   presence.setPrimary(url);
@@ -312,7 +312,7 @@ function bindPrimaryLifecycle(input: {
 }
 
 export function withdrawRelayRtcOnDrop(rtc: RelayRtcHolder, url: string): void {
-  rtc.lastRtc = withdrawListedRtc(rtc.lastRtc, normalizeHubEndpointUrl(url));
+  rtc.lastRtc = withdrawListedRtc(rtc.lastRtc, normalizeUplinkEndpointUrl(url));
 }
 
 /** secondary/primary decay 到期：缓存清单里只经该中继在线的节点立刻落 offline。 */

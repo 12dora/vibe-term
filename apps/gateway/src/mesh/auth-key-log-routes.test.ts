@@ -156,7 +156,7 @@ describe('relay append acknowledgement', () => {
           remote[changed][0] ^= 1;
           return remote;
         },
-        queryHubHead: async () => ({
+        queryKeyLogHead: async () => ({
           seq: decodeKeyLogRecord(sent.bytes).seq,
           hash: computeRecordHash(sent.bytes, sent.sig),
         }),

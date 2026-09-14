@@ -64,7 +64,7 @@ function entryFromCache(node: RelayListNode, ctx: RelayListContext): ListEntry {
 }
 
 /**
- * `relay.list` → 与 hub `node.list` 同形状的列表，顺带把解出的状态块写进 `peer_cache`。
+ * `relay.list` → 与 peer `node.list` 同形状的列表，顺带把解出的状态块写进 `peer_cache`。
  * 解不开（世代未知/被排除）的节点只保留在线标志。
  */
 export async function relayListToNodeList(

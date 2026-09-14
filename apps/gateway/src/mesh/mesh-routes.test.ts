@@ -646,7 +646,7 @@ describe('mesh-routes', () => {
 
   test('GET /api/mesh/nodes keeps uplink-list online without inventing reach', async () => {
     const peers = new FakePeers();
-    peers.hubOnline.add(PEER_ID);
+    peers.listedOnline.add(PEER_ID);
     const mesh = await bootMesh({ peers });
     try {
       mesh.userStore.upsertCert({

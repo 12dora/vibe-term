@@ -2,8 +2,8 @@ import { b } from '@zorsh/zorsh';
 import type { WrapEntry } from '../relay/tenant-cipher';
 import { bytesToHex, decodeBase64url, encodeBase64url, hexToBytes } from './encoding';
 import type { KeyLogRecord } from './encoding';
-import { canonicalHubUrl } from './hub-url';
 import type { ApplyKeyLogError, ApplyKeyLogResult, UserKeyState } from './key-log';
+import { canonicalPublicUrl } from './public-url';
 
 /** 写入 `set-relays` / `meta-key` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
 export const MIN_RELAY_RECORD_VERSION = '1.1.23';
@@ -117,7 +117,7 @@ function toStoredTargets(payload: SetRelaysPayload): StoredRelayTarget[] | null 
     if (relay.url.length > RELAY_RECORD_MAX_URL_LEN) return null;
     let url: string;
     try {
-      url = canonicalHubUrl(relay.url);
+      url = canonicalPublicUrl(relay.url);
     } catch {
       return null;
     }

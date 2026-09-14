@@ -1,7 +1,7 @@
 // `POST /api/mesh/relay/resolve`：地址没写端口时替浏览器探候选端口。
 //
 // 浏览器不能直接探中继（跨域 + 混合内容），一律由本机 gateway 代探；enroll proof 绑的是
-// `hubHostFromUrl(url)`（含端口），所以端口必须在 `proof-material` 之前定下来。
+// `hostFromUrl(url)`（含端口），所以端口必须在 `proof-material` 之前定下来。
 
 import { type PortProbeResult, parseProbeTarget, probeAddressPorts } from '@vibeterm/shared/net';
 import { normalizeRelayUrl } from '@vibeterm/shared/relay';

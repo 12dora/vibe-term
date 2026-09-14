@@ -1,6 +1,6 @@
-import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { canonicalPublicUrl } from '@vibeterm/shared/auth';
 import type { PooledUplink } from './types';
-import type { AttachedHub, UplinkCandidate } from './uplink-pool';
+import type { AttachedUplink, UplinkCandidate } from './uplink-pool';
 
 export type UplinkSwitchResult = { ok: true } | { ok: false; reason: string };
 
@@ -8,7 +8,7 @@ export type CombinedAbort = { signal: AbortSignal; cleanup: () => void };
 
 export type UplinkSwitchHost = {
   candidates(): UplinkCandidate[];
-  attachedHub(): AttachedHub | null;
+  attachedUplink(): AttachedUplink | null;
   liveClient(): PooledUplink | null;
   stopSignal(): AbortSignal | null;
   pending: PooledUplink | null;
@@ -43,7 +43,7 @@ export async function runUplinkSwitch(
   publicUrl: string,
   signal?: AbortSignal
 ): Promise<UplinkSwitchResult> {
-  const target = host.candidates().find((row) => sameHubUrl(row.publicUrl, publicUrl));
+  const target = host.candidates().find((row) => sameUplinkUrl(row.publicUrl, publicUrl));
   if (!target) return { ok: false, reason: `unknown hub url: ${publicUrl}` };
   if (alreadyAttachedTo(host, publicUrl)) return { ok: true };
   const poolSignal = host.stopSignal();
@@ -51,7 +51,7 @@ export async function runUplinkSwitch(
   const combined = signal ? composeAbortSignals(poolSignal, signal) : null;
   const combinedSignal = combined?.signal ?? poolSignal;
   const cands = host.candidates();
-  const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, publicUrl));
+  const idx = cands.findIndex((row) => sameUplinkUrl(row.publicUrl, publicUrl));
   const transport = host.isLocalTransport(target) ? 'memory' : 'ws';
   host.noteAttempt(target);
   host.logCandidateEvent(target, idx, transport, host.lastErrorOf(target), 'try', {
@@ -77,9 +77,11 @@ export async function runUplinkSwitch(
 }
 
 function alreadyAttachedTo(host: UplinkSwitchHost, publicUrl: string): boolean {
-  const attached = host.attachedHub();
+  const attached = host.attachedUplink();
   return Boolean(
-    attached && sameHubUrl(attached.publicUrl, publicUrl) && host.liveClient()?.state === 'online'
+    attached &&
+      sameUplinkUrl(attached.publicUrl, publicUrl) &&
+      host.liveClient()?.state === 'online'
   );
 }
 
@@ -143,12 +145,12 @@ function switchAttachedTo(
   publicUrl: string
 ): boolean {
   const live = host.liveClient();
-  const attached = host.attachedHub();
+  const attached = host.attachedUplink();
   return Boolean(
     live === client &&
       live.state === 'online' &&
       attached &&
-      sameHubUrl(attached.publicUrl, publicUrl)
+      sameUplinkUrl(attached.publicUrl, publicUrl)
   );
 }
 
@@ -166,7 +168,7 @@ function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function sameHubUrl(a: string, b: string): boolean {
+function sameUplinkUrl(a: string, b: string): boolean {
   return normalizeUrl(a) === normalizeUrl(b);
 }
 
@@ -174,7 +176,7 @@ function normalizeUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
   try {
-    return canonicalHubUrl(trimmed);
+    return canonicalPublicUrl(trimmed);
   } catch {
     return trimmed.replace(/\/+$/, '');
   }

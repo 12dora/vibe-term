@@ -1,6 +1,6 @@
 import { readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { canonicalHubUrl } from '../../../shared/src/auth';
+import { canonicalPublicUrl } from '../../../shared/src/auth';
 import {
   DEFAULT_PUBLIC_HTTPS_PORT,
   DEFAULT_TLS_PORT,
@@ -225,7 +225,7 @@ export function applyPublicPort(raw: string, port: number): string {
     if (target.explicitPort !== null) return value;
     const url = new URL(target.base);
     url.port = String(port);
-    return canonicalHubUrl(url.toString());
+    return canonicalPublicUrl(url.toString());
   } catch {
     return value;
   }

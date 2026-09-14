@@ -131,11 +131,11 @@ class FakeSecondary implements SecondaryUplink {
   private closedPromise: Promise<void> | null = null;
 
   constructor(opts: UplinkClientOptions) {
-    this.hubUrl = opts.hubUrl;
+    this.uplinkUrl = opts.uplinkUrl;
     this.onNodeList = opts.onNodeList;
   }
 
-  readonly hubUrl: string;
+  readonly uplinkUrl: string;
   start(): void {}
   async stop(): Promise<void> {
     this.setState('offline');
@@ -157,7 +157,7 @@ class FakeSecondary implements SecondaryUplink {
   sendStatus(): void {}
   sendCtl(): void {}
   async openRelay(_to: string): Promise<LinkStream> {
-    return { id: this.hubUrl } as unknown as LinkStream;
+    return { id: this.uplinkUrl } as unknown as LinkStream;
   }
   onStateChange(cb: (state: UplinkState) => void): () => void {
     this.listeners.push(cb);
@@ -187,7 +187,7 @@ function stubUplink(
   live: { state: UplinkState; rttMs?: number | null } | null = null
 ): UplinkPool {
   return {
-    attachedHub: () => ({ publicUrl: url, nodeId: PEER_A, name: 'sh' }),
+    attachedUplink: () => ({ publicUrl: url, nodeId: PEER_A, name: 'sh' }),
     primaryTarget: () => url,
     liveClient: () => live,
     onAttached: () => () => {},
@@ -209,7 +209,7 @@ function stubUplinkWithLifecycle(initialUrl: string | null): {
   const attachedCbs: Array<(hub: { publicUrl: string; nodeId: string; name: string }) => void> = [];
   const detachedCbs: Array<() => void> = [];
   const pool = {
-    attachedHub: () => (attached ? { publicUrl: attached, nodeId: PEER_A, name: 'sh' } : null),
+    attachedUplink: () => (attached ? { publicUrl: attached, nodeId: PEER_A, name: 'sh' } : null),
     primaryTarget: () => attached ?? dialling,
     liveClient: () => (attached ? { state: 'online' as UplinkState, rttMs: 10 } : null),
     onAttached: (cb: (hub: { publicUrl: string; nodeId: string; name: string }) => void) => {
@@ -256,7 +256,9 @@ function stubWiring(
   } as unknown as RelayWiring;
 }
 
-function baseClient(scheduler: MeshScheduler): Omit<UplinkClientOptions, 'hubUrl' | 'onNodeList'> {
+function baseClient(
+  scheduler: MeshScheduler
+): Omit<UplinkClientOptions, 'uplinkUrl' | 'onNodeList'> {
   return {
     identity: { nodeId: 'cc'.repeat(16), edSecretKey: new Uint8Array(64) },
     userId: 'user-1',
@@ -318,7 +320,7 @@ describe('relay multi-attach presence overlay', () => {
     expect(attach.presence.peersOnlineOn(SH)).toBe(1);
     await attach.reconcile();
     await waitUntil(() => spawned.some((client) => client.state === 'online'));
-    const secondary = spawned.find((client) => client.hubUrl === TK);
+    const secondary = spawned.find((client) => client.uplinkUrl === TK);
     expect(secondary).toBeDefined();
     secondary?.onNodeList?.(nodeList([listed(PEER_B, true)], 2));
     expect(rtc.lastNodeList?.nodes.find((node) => node.id === PEER_A)?.online).toBe(true);
@@ -439,8 +441,8 @@ describe('relay multi-attach presence overlay', () => {
     await attach.reconcile();
     await waitUntil(
       () =>
-        spawned.some((client) => client.hubUrl === TK && client.state === 'online') &&
-        spawned.some((client) => client.hubUrl === JP && client.state === 'online')
+        spawned.some((client) => client.uplinkUrl === TK && client.state === 'online') &&
+        spawned.some((client) => client.uplinkUrl === JP && client.state === 'online')
     );
     uplink.detach();
     await attach.reconcile();
@@ -477,8 +479,8 @@ describe('relay multi-attach presence overlay', () => {
     await attach.reconcile();
     await waitUntil(
       () =>
-        spawned.some((client) => client.hubUrl === TK && client.state === 'online') &&
-        spawned.some((client) => client.hubUrl === JP && client.state === 'online')
+        spawned.some((client) => client.uplinkUrl === TK && client.state === 'online') &&
+        spawned.some((client) => client.uplinkUrl === JP && client.state === 'online')
     );
     await attach.prepareSwitch(JP);
     uplink.attachTo(JP);

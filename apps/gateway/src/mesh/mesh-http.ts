@@ -55,7 +55,7 @@ import {
   verifyShareAccessToken,
 } from './share-credential';
 import type { UplinkStatus } from './types';
-import type { AttachedHub } from './uplink-pool';
+import type { AttachedUplink } from './uplink-pool';
 
 export type MeshHttpRuntimeOptions = {
   roles: MeshRoles;
@@ -71,7 +71,7 @@ export type MeshHttpRuntimeOptions = {
   rtc?: MeshRtcDeps;
   now?: () => number;
   primaryUserId?: string;
-  attachedHub?: () => AttachedHub | null;
+  attachedUplink?: () => AttachedUplink | null;
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;
