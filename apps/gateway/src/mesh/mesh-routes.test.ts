@@ -137,8 +137,8 @@ describe('mesh-routes', () => {
       expect(peer?.loggedIn).toBe(true);
       expect(peer?.direct_capable).toBe(true);
       expect(peer?.version).toBe('1.2.3');
-      expect((self as { isHub?: boolean })?.isHub).toBe(false);
-      expect((peer as { isHub?: boolean })?.isHub).toBe(false);
+      expect('isHub' in (self ?? {})).toBe(false);
+      expect('isHub' in (peer ?? {})).toBe(false);
       expect(
         (self as { ports?: Array<{ purpose: string }> }).ports?.some(
           (row) => row.purpose === 'peer-signaling'
@@ -432,7 +432,7 @@ describe('mesh-routes', () => {
   });
 
   test('GET /api/mesh/nodes uses nodes registry names when peer_cache is empty', async () => {
-    const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
+    const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       mesh.userStore.upsertCert({
         nodeId: PEER_ID,
@@ -644,7 +644,7 @@ describe('mesh-routes', () => {
     }
   });
 
-  test('GET /api/mesh/nodes keeps hub-list online without inventing reach', async () => {
+  test('GET /api/mesh/nodes keeps uplink-list online without inventing reach', async () => {
     const peers = new FakePeers();
     peers.hubOnline.add(PEER_ID);
     const mesh = await bootMesh({ peers });
@@ -681,22 +681,11 @@ describe('mesh-routes', () => {
     }
   });
 
-  test('GET /api/mesh/nodes marks the persisted hub and broadcasts ENROLL_REDEEMED', async () => {
+  test('GET /api/mesh/nodes broadcasts ENROLL_REDEEMED to the matching mesh socket', async () => {
     const peers = new FakePeers();
     const mesh = await bootMesh({ peers });
     try {
-      mesh.userStore.upsertHubMeta({
-        nodeId: NODE_ID,
-        publicUrl: 'https://hub.example',
-        now: 1,
-      });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `vibeterm_s_self=${sid}` },
-      });
-      const body = (await list.json()) as { nodes: Array<{ id: string; isHub: boolean }> };
-      expect(body.nodes.find((n) => n.id === NODE_ID)?.isHub).toBe(true);
-
       const frames: Uint8Array[] = [];
       const ws = {
         data: { kind: MESH_WS_KIND, sid, uid: mesh.boot.userId },
@@ -746,264 +735,6 @@ describe('mesh-routes', () => {
       });
       expect(frames).toHaveLength(1);
       expect(otherFrames).toHaveLength(0);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('GET /api/mesh/hubs requires a session and returns the persisted hub set', async () => {
-    const mesh = await bootMesh();
-    try {
-      const denied = await call(mesh.runtime, 'http://localhost/api/mesh/hubs');
-      expect(denied.status).toBe(401);
-      mesh.hubStore.replaceAll(
-        [
-          {
-            hubNodeId: NODE_ID,
-            publicUrl: 'https://writer.example',
-            name: 'writer',
-            mode: 'active',
-            priority: 10,
-            writerEpoch: 4,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: 9,
-          },
-          {
-            hubNodeId: PEER_ID,
-            publicUrl: 'https://standby.example',
-            name: 'standby',
-            mode: 'standby',
-            priority: 20,
-            writerEpoch: 1,
-            caFingerprint: null,
-            online: false,
-            lastSeenAt: null,
-          },
-        ],
-        1
-      );
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
-        headers: { cookie: `vibeterm_s_self=${sid}` },
-      });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        hubs: Array<{ nodeId: string; mode: string; online: boolean }>;
-        writerHubId: string | null;
-        attached: { publicUrl: string } | null;
-        candidates: Array<{
-          publicUrl: string;
-          lastError: string | null;
-          lastAttemptAt: number | null;
-          rttMs: number | null;
-          rttAt: number | null;
-        }>;
-      };
-      expect(body.writerHubId).toBe(NODE_ID);
-      expect(body.hubs.map((h) => h.nodeId)).toEqual([NODE_ID, PEER_ID]);
-      expect(body.hubs.find((h) => h.nodeId === PEER_ID)?.mode).toBe('standby');
-      expect(body.attached).toBeNull();
-      expect(body.candidates).toEqual([
-        {
-          publicUrl: 'https://writer.example',
-          lastError: null,
-          lastAttemptAt: null,
-          rttMs: null,
-          rttAt: null,
-        },
-        {
-          publicUrl: 'https://standby.example',
-          lastError: null,
-          lastAttemptAt: null,
-          rttMs: null,
-          rttAt: null,
-        },
-      ]);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('GET /api/mesh/hubs writer 忽略 signed-retired 的 hub', async () => {
-    const mesh = await bootMesh();
-    try {
-      const retired = PEER_ID;
-      mesh.hubStore.replaceAll(
-        [
-          {
-            hubNodeId: NODE_ID,
-            publicUrl: 'https://self.example',
-            name: 'self',
-            mode: 'standby',
-            priority: 10,
-            writerEpoch: 1,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: 1,
-          },
-          {
-            hubNodeId: retired,
-            publicUrl: 'https://retired.example',
-            name: 'retired',
-            mode: 'active',
-            priority: 1,
-            writerEpoch: 99,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: 1,
-          },
-        ],
-        1
-      );
-      mesh.userStore.upsertHubAuthorization({
-        userId: mesh.boot.userId,
-        hubNodeId: retired,
-        status: 'retired',
-        publicUrl: 'https://retired.example',
-        admitSeq: 1,
-        retireSeq: 2,
-        updatedSeq: 2,
-      });
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
-        headers: { cookie: `vibeterm_s_self=${sid}` },
-      });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as { writerHubId: string | null };
-      expect(body.writerHubId).not.toBe(retired);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('GET /api/mesh/hubs candidates serialize CA mismatch alongside diagnostics and preserve older candidates', async () => {
-    const mesh = await bootMesh();
-    try {
-      const routes = mesh.runtime.mesh as unknown as {
-        deps: { hubCandidates?: () => unknown };
-      };
-      routes.deps.hubCandidates = () => [
-        {
-          publicUrl: 'https://writer.example',
-          lastError: 'unable to verify the first certificate',
-          lastAttemptAt: 42,
-          rttMs: 17,
-          rttAt: 99,
-        },
-        {
-          publicUrl: 'https://rotated.example',
-          lastError: 'hub_ca_changed',
-          caMismatch: { advertised: 'a'.repeat(64), pinned: 'b'.repeat(64) },
-        },
-        'https://seed.example',
-      ];
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
-        headers: { cookie: `vibeterm_s_self=${sid}` },
-      });
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        candidates: Array<{
-          publicUrl: string;
-          caMismatch?: { advertised: string; pinned: string };
-          lastError: string | null;
-          lastAttemptAt: number | null;
-          rttMs: number | null;
-          rttAt: number | null;
-        }>;
-      };
-      expect(body.candidates).toEqual([
-        {
-          publicUrl: 'https://writer.example',
-          lastError: 'unable to verify the first certificate',
-          lastAttemptAt: 42,
-          rttMs: 17,
-          rttAt: 99,
-        },
-        {
-          publicUrl: 'https://rotated.example',
-          lastError: 'hub_ca_changed',
-          caMismatch: { advertised: 'a'.repeat(64), pinned: 'b'.repeat(64) },
-          lastAttemptAt: null,
-          rttMs: null,
-          rttAt: null,
-        },
-        {
-          publicUrl: 'https://seed.example',
-          lastError: null,
-          lastAttemptAt: null,
-          rttMs: null,
-          rttAt: null,
-        },
-      ]);
-    } finally {
-      mesh.close();
-    }
-  });
-
-  test('GET /api/mesh/nodes marks every MeshHubStore id as isHub with hubMode', async () => {
-    const mesh = await bootMesh();
-    try {
-      mesh.userStore.upsertCert({
-        nodeId: PEER_ID,
-        userId: mesh.boot.userId,
-        admitRecordSeq: 2,
-        certificateBytes: encodeCertificate({
-          domain: DOMAIN_CERTIFICATE,
-          uid: mesh.boot.userId,
-          node_id: hexToBytes(PEER_ID),
-          ed_pk: new Uint8Array(32).fill(4),
-          x25519_pk: new Uint8Array(32).fill(5),
-          enroll_pk: new Uint8Array(32).fill(6),
-          issued_at: 1n,
-        }),
-        certSig: new Uint8Array(64),
-        authorizationBytes: new Uint8Array(8),
-        authorizationSig: new Uint8Array(64),
-      });
-      mesh.hubStore.replaceAll(
-        [
-          {
-            hubNodeId: NODE_ID,
-            publicUrl: 'https://writer.example',
-            name: null,
-            mode: 'active',
-            priority: 10,
-            writerEpoch: 2,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: null,
-          },
-          {
-            hubNodeId: PEER_ID,
-            publicUrl: 'https://standby.example',
-            name: null,
-            mode: 'standby',
-            priority: 20,
-            writerEpoch: 1,
-            caFingerprint: null,
-            online: true,
-            lastSeenAt: null,
-          },
-        ],
-        1
-      );
-      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `vibeterm_s_self=${sid}` },
-      });
-      const body = (await list.json()) as {
-        nodes: Array<{ id: string; isHub: boolean; hubMode?: 'active' | 'standby' }>;
-      };
-      expect(body.nodes.find((n) => n.id === NODE_ID)).toMatchObject({
-        isHub: true,
-        hubMode: 'active',
-      });
-      expect(body.nodes.find((n) => n.id === PEER_ID)).toMatchObject({
-        isHub: true,
-        hubMode: 'standby',
-      });
     } finally {
       mesh.close();
     }
@@ -1143,7 +874,7 @@ describe('mesh-routes', () => {
     const withFp = await bootMesh();
     try {
       const runtime = new (await import('./mesh-http')).MeshHttpRuntime({
-        roles: { hub: false, node: true, relay: false },
+        roles: { node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: withFp.userStore,
@@ -1202,7 +933,7 @@ describe('mesh-routes', () => {
       }> = [];
       let mode: 'one' | 'many' | 'none' | 'match' = 'one';
       const runtime = new MeshHttpRuntime({
-        roles: { hub: false, node: true, relay: false },
+        roles: { node: true, relay: false },
         nodeId: NODE_ID,
         nodePk: NODE_PK,
         userStore: mesh.userStore,
@@ -2432,7 +2163,7 @@ describe('mesh uninstall routes', () => {
   });
 
   test('POST uninstall without a user session is UNAUTHORIZED', async () => {
-    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    const mesh = await bootMesh({ roles: { node: false, relay: false } });
     try {
       const res = await call(
         mesh.runtime,

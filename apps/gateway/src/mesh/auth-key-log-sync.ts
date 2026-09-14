@@ -67,32 +67,6 @@ export class AuthKeyLogSync {
     }
   }
 
-  async syncToHub(record: {
-    bytes: Uint8Array;
-    sig: Uint8Array;
-    force?: boolean;
-  }): Promise<KeyLogHubAck> {
-    if (!this.deps.publisher.publishAndAck) {
-      return { ok: false, error: 'unavailable' };
-    }
-    const first = await this.safePublishAndAck(record);
-    if (first.ok) return first;
-    if (first.error !== 'timeout') return first;
-    const retry = await this.safePublishAndAck(record);
-    if (retry.ok) return retry;
-    if (retry.error !== 'timeout') return retry;
-    if (await this.hubAlreadyHasRecord(record)) {
-      let seq: bigint | number = 0;
-      try {
-        seq = decodeKeyLogRecord(record.bytes).seq;
-      } catch {
-        seq = 0;
-      }
-      return { ok: true, seq };
-    }
-    return { ok: false, error: 'HUB_TIMEOUT' };
-  }
-
   async safePublishAndAck(record: {
     bytes: Uint8Array;
     sig: Uint8Array;
@@ -126,20 +100,5 @@ export class AuthKeyLogSync {
       return ack;
     }
     return ack;
-  }
-
-  async hubAlreadyHasRecord(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<boolean> {
-    try {
-      const seq = decodeKeyLogRecord(record.bytes).seq;
-      const remote = await this.deps.publisher.queryKeyLogAt?.(seq);
-      if (remote && bytesEqual(remote.bytes, record.bytes) && bytesEqual(remote.sig, record.sig)) {
-        return true;
-      }
-    } catch {
-      // fall through to head hash
-    }
-    const head = await this.deps.publisher.queryHubHead?.();
-    if (!head) return false;
-    return bytesEqual(head.hash, computeRecordHash(record.bytes, record.sig));
   }
 }

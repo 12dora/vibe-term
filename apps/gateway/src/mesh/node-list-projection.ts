@@ -52,8 +52,7 @@ export function projectNode(
   name: string,
   online: boolean,
   stored: Meta,
-  live?: Meta | null,
-  attachedHubId?: string | null
+  live?: Meta | null
 ) {
   return {
     id,
@@ -63,7 +62,6 @@ export function projectNode(
     inventory: live?.inventory ?? stored.inventory ?? null,
     direct_capable: live?.directCapable ?? stored.directCapable ?? false,
     version: live?.version ?? stored.version ?? null,
-    ...(attachedHubId ? { attachedHubId } : {}),
     ...((live?.peerReach ?? stored.peerReach)
       ? { peer_reach: live?.peerReach ?? stored.peerReach }
       : {}),
@@ -81,7 +79,7 @@ function usableMeshName(name: string | null | undefined, id: string): string | n
   return !t || t === id || t === 'self' ? null : t;
 }
 
-/** 本机展示名：listed → hub `nodes` 行 → `node_identity.name` → 站点名。占位 `self` / 节点 id 一律跳过。 */
+/** 本机展示名：listed → `nodes` 行 → `node_identity.name` → 站点名。占位 `self` / 节点 id 一律跳过。 */
 export function pickSelfDisplayName(input: {
   id: string;
   listedName?: string | null;
@@ -207,7 +205,7 @@ export function projectMeshListNode(
   selfPk: Uint8Array,
   cookies: Map<string, string>,
   reach: Map<string, MeshNodeReach>,
-  hubOnline: ReadonlySet<string>,
+  uplinkOnline: ReadonlySet<string>,
   certById: Map<string, { certificateBytes: Uint8Array }>,
   peerById: Map<
     string,
@@ -222,13 +220,9 @@ export function projectMeshListNode(
   registryById: Map<string, string>,
   selfName: string | null,
   self: { inventory?: unknown; direct_capable: boolean; version?: string } | undefined,
-  hubNodeId: string | null,
   transportOf?: (id: string) => MeshNodeTransport,
   rttOf?: (id: string) => number | null,
   linkDetailOf?: (id: string) => MeshNodeLinkDetail | null,
-  hubIds?: ReadonlySet<string>,
-  hubModeOf?: (id: string) => 'active' | 'standby' | undefined,
-  attachedHubIdOf?: (id: string) => string | null | undefined,
   viaRelayOf?: (id: string) => string | null,
   relayPresenceOf?: (id: string) => string[] | undefined
 ): MeshNodeDto | null {
@@ -248,7 +242,7 @@ export function projectMeshListNode(
       registryName: registryById.get(id),
       selfName,
     }),
-    isSelf || hubOnline.has(id) || isPeerReachable(r),
+    isSelf || uplinkOnline.has(id) || isPeerReachable(r),
     {
       inventory: inv,
       directCapable: peer?.directCapable ?? false,
@@ -269,9 +263,6 @@ export function projectMeshListNode(
     direct_capable: core.direct_capable,
     inventory: core.inventory,
     loggedIn: hasNodeSessionCookie(cookies, isSelf ? MESH_VIA_SELF : id),
-    isHub: hubIds ? hubIds.has(id) : hubNodeId === id,
-    ...(hubModeOf?.(id) ? { hubMode: hubModeOf(id) } : {}),
-    ...(attachedHubIdOf?.(id) ? { attachedHubId: attachedHubIdOf(id) ?? undefined } : {}),
     ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson)),
     ...meshRelayFields(isSelf, id, path.transport, detail, viaRelayOf, relayPresenceOf),
     lastSeenAt: meshLastSeenAt(isSelf, peer?.lastSeenAt),
@@ -315,7 +306,7 @@ type ReadinessStore = {
  *
  * `listed` 为 `null` 才是「本进程还没应用过任何列表」（刚重启的那几秒），此时一律算同步中；
  * **空数组是已应用过的空列表**（中继列表不含本机，单节点租户就是这一档），本地残留的证书
- * 该按离线渲染而不是永远同步中。hub 自己就是成员集的权威，调用方直接把整份投影当 `listed`。
+ * 该按离线渲染而不是永远同步中。
  */
 export function meshListReadiness(
   store: ReadinessStore,

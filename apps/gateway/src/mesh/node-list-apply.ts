@@ -1,14 +1,13 @@
 import type { UserKeyService } from '../auth';
-import type { MeshHubRecord, MeshHubStore } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
-import { HUB_META_PEER_ID } from '../auth/user-store';
-import { lookupSignedHubAuthorization, resolveMeshUserId } from '../hub/hub-authorization';
 import { isRemoteNodePresent } from './mesh-agent-bridge';
 import type { NodeEventProjection } from './node-event-dedupe';
 import type { PeerReach, PeerTransportKind } from './types';
 import { persistUplinkPeerCache } from './uplink-peer-persist';
-import { recordsFromNodeList } from './uplink-pool';
 import type { UplinkNodeList } from './uplink-protocol';
+
+/** D2 删除的 `peer_cache` sentinel；残留行仍跳过。 */
+const HUB_META_PEER_ID = 'hub';
 
 export const STATUS_IFACE_CACHE_TTL_MS = 8_000;
 
@@ -55,7 +54,7 @@ export type ListedRtcConfig = { stun: string[]; turn: unknown };
 export type RelayTurnEntry = { url: string; username: string; credential: string };
 
 export type MergeListedRtcOpts = {
-  /** 有值时按中继 URL 合并 TURN/STUN；缺省（hub）仍是整表覆盖。 */
+  /** 有值时按中继 URL 合并 TURN/STUN；缺省仍是整表覆盖。 */
   sourceUrl?: string;
   primary?: boolean;
 };
@@ -109,7 +108,7 @@ function composeRelayRtc(bag: RtcSourceBag): ListedRtcConfig {
   return { stun, turn: turn.length > 0 ? turn : null };
 }
 
-/** 记下 hub/中继下发的 STUN（空列表表示没有自定义列表）；TURN 始终采用下发值。 */
+/** 记下中继下发的 STUN（空列表表示没有自定义列表）；TURN 始终采用下发值。 */
 export function mergeListedRtc(
   prev: ListedRtcConfig | null,
   listed: { stun: string[]; turn?: unknown },
@@ -156,7 +155,7 @@ export type NodeListRejectPeerFn = (nodeId: string, alwaysDelete: boolean) => bo
 export type NodeListApplyDeps = {
   state: {
     lastNodeList: UplinkNodeList | null;
-    hubPresenceLive: boolean;
+    hubPresenceLive?: boolean;
     hubGeneration: number;
     lastRtc: { stun: string[]; turn: unknown } | null;
   };
@@ -167,7 +166,6 @@ export type NodeListApplyDeps = {
   /** 多中继在线并集：primary 标 offline 但 secondary 仍在线的节点按 online 应用。 */
   onlineUnionIds?: () => Iterable<string>;
   identity: { nodeIdHex: string };
-  hubStore: Pick<MeshHubStore, 'remove' | 'replaceAll' | 'list'>;
   scheduler: { now: () => number };
   userIdOf: () => string;
   userStore: UserStore;
@@ -184,72 +182,6 @@ export type NodeListApplyDeps = {
   emitListNodeEvent: (event: NodeEventProjection) => void;
   opts: { onLocalNodeName?: (name: string) => void };
 };
-
-export function meshHubNotRetired(d: NodeListApplyDeps, hubNodeId: string): boolean {
-  const uid = resolveMeshUserId(d.userStore, {
-    nodeId: d.identity.nodeIdHex,
-    explicit: d.userIdOf(),
-  });
-  return lookupSignedHubAuthorization(d.userStore, uid, hubNodeId)?.status !== 'retired';
-}
-
-export function listedHubNodeIds(list: UplinkNodeList): string[] {
-  if (list.hubs && list.hubs.length > 0) return list.hubs.map((hub) => hub.nodeId);
-  return list.hub?.nodeId ? [list.hub.nodeId] : [];
-}
-
-type HubWrite = Omit<MeshHubRecord, 'updatedAt'>;
-
-function asHubWrite(row: MeshHubRecord): HubWrite {
-  return {
-    hubNodeId: row.hubNodeId,
-    publicUrl: row.publicUrl,
-    name: row.name,
-    mode: row.mode,
-    priority: row.priority,
-    writerEpoch: row.writerEpoch,
-    caFingerprint: row.caFingerprint,
-    online: row.online,
-    lastSeenAt: row.lastSeenAt,
-  };
-}
-
-function localHubRowOutranks(own: HubWrite, incoming: HubWrite): boolean {
-  if (own.writerEpoch !== incoming.writerEpoch) return own.writerEpoch > incoming.writerEpoch;
-  return own.mode === 'active' && incoming.mode === 'standby';
-}
-
-function preferLocalHubRecords(d: NodeListApplyDeps, recs: HubWrite[]): HubWrite[] {
-  const selfId = d.identity.nodeIdHex;
-  const own = d.hubStore.list().find((row) => row.hubNodeId === selfId);
-  if (!own) return recs;
-  const ownWrite = asHubWrite(own);
-  const idx = recs.findIndex((row) => row.hubNodeId === selfId);
-  if (idx < 0) return [...recs, ownWrite];
-  const incoming = recs[idx];
-  if (!incoming || !localHubRowOutranks(ownWrite, incoming)) return recs;
-  const next = recs.slice();
-  next[idx] = ownWrite;
-  return next;
-}
-
-export function reconcileHubStoreFromNodeList(d: NodeListApplyDeps, list: UplinkNodeList): void {
-  const sourceId = list.writerHubId ?? list.hub?.nodeId ?? null;
-  if (sourceId && !meshHubNotRetired(d, sourceId)) {
-    d.hubStore.remove(sourceId);
-  } else {
-    const recs = preferLocalHubRecords(
-      d,
-      recordsFromNodeList(list).filter((row) => meshHubNotRetired(d, row.hubNodeId))
-    );
-    if (recs.length > 0) d.hubStore.replaceAll(recs, d.scheduler.now());
-  }
-  if (d.userIdOf()) {
-    for (const row of d.hubStore.list()) {
-      if (!meshHubNotRetired(d, row.hubNodeId)) d.hubStore.remove(row.hubNodeId);
-    }
-  }
-}
 
 export function emitListedNodeEvents(
   d: NodeListApplyDeps,
@@ -305,41 +237,8 @@ export function emitRenameNodeEvent(d: NodeListApplyDeps, nodeId: string, name: 
   }
 }
 
-export function emitUnlistedHubEvents(
-  d: NodeListApplyDeps,
-  list: UplinkNodeList,
-  reach: Map<string, PeerReach>
-): void {
-  const emitHubIfUnlisted = (hubId: string, name?: string) => {
-    if (
-      hubId &&
-      hubId !== d.identity.nodeIdHex &&
-      hubId !== HUB_META_PEER_ID &&
-      !list.nodes.some((node) => node.id === hubId)
-    ) {
-      const cert = d.userStore.getCert(hubId);
-      const uid = d.userIdOf();
-      if (cert && uid && cert.userId === uid && cert.revokedLogSeq == null) {
-        d.emitListNodeEvent({
-          nodeId: hubId,
-          status: 'online',
-          reach: reach.get(hubId) ?? null,
-          ...listedLinkFields(d, hubId),
-          name,
-        });
-      }
-    }
-  };
-  if (list.hubs && list.hubs.length > 0) {
-    for (const hub of list.hubs) emitHubIfUnlisted(hub.nodeId, hub.name);
-  } else if (list.hub) {
-    emitHubIfUnlisted(list.hub.nodeId, list.hub.name);
-  }
-}
-
 export function pruneStaleListedPeers(
   d: NodeListApplyDeps,
-  hubIds: ReadonlySet<string>,
   rejectPeer: NodeListRejectPeerFn
 ): void {
   const retain = new Set(d.retainPeerIds?.() ?? []);
@@ -347,7 +246,6 @@ export function pruneStaleListedPeers(
     if (
       peer.nodeId === d.identity.nodeIdHex ||
       peer.nodeId === HUB_META_PEER_ID ||
-      hubIds.has(peer.nodeId) ||
       retain.has(peer.nodeId)
     ) {
       continue;
@@ -441,12 +339,7 @@ export function applyUplinkNodeList(
     list: applied,
     now: d.scheduler.now(),
   });
-  reconcileHubStoreFromNodeList(d, list);
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
-  const hubIds = new Set([
-    ...listedHubNodeIds(list),
-    ...d.hubStore.list().map((row) => row.hubNodeId),
-  ]);
   emitListedNodeEvents(d, applied, reach, rejectPeer);
   const selfListed = applied.nodes.find((node) => node.id === identity.nodeIdHex);
   if (selfListed?.name) {
@@ -454,6 +347,5 @@ export function applyUplinkNodeList(
       d.opts.onLocalNodeName?.(selfListed.name);
     } catch {}
   }
-  emitUnlistedHubEvents(d, list, reach);
-  pruneStaleListedPeers(d, hubIds, rejectPeer);
+  pruneStaleListedPeers(d, rejectPeer);
 }

@@ -135,14 +135,14 @@ describe('x-forwarded-host via publicRequestUrl', () => {
 
 describe('isServicePath / isJsonDeniedPath', () => {
   test('service allowlist', () => {
-    expect(isServicePath('GET', '/hub/uplink')).toBe(true);
-    expect(isServicePath('POST', '/hub/uplink')).toBe(true);
+    expect(isServicePath('GET', '/hub/uplink')).toBe(false);
+    expect(isServicePath('POST', '/hub/uplink')).toBe(false);
     expect(isServicePath('GET', '/healthz')).toBe(true);
     expect(isServicePath('GET', '/.well-known/acme-challenge/tok')).toBe(true);
-    expect(isServicePath('POST', '/api/hub/enrollments/redeem')).toBe(true);
-    expect(isServicePath('GET', '/api/hub/status')).toBe(true);
-    expect(isServicePath('GET', '/api/hub/enrollments/abc')).toBe(true);
-    expect(isServicePath('GET', '/api/hub/enrollments/redeem')).toBe(true);
+    expect(isServicePath('POST', '/api/hub/enrollments/redeem')).toBe(false);
+    expect(isServicePath('GET', '/api/hub/status')).toBe(false);
+    expect(isServicePath('GET', '/api/hub/enrollments/abc')).toBe(false);
+    expect(isServicePath('GET', '/api/hub/enrollments/redeem')).toBe(false);
     expect(isServicePath('POST', '/api/hub/status')).toBe(false);
     expect(isServicePath('GET', '/api/hub/enrollments/abc/extra')).toBe(false);
     expect(isServicePath('GET', '/')).toBe(false);
@@ -253,7 +253,7 @@ describe('decideDomainAccess', () => {
       decideDomainAccess({ ...base, clientIp: publicIp, method: 'GET', pathname: '/healthz' })
     ).toBe('allow');
     expect(
-      decideDomainAccess({ ...base, clientIp: publicIp, method: 'POST', pathname: '/hub/uplink' })
+      decideDomainAccess({ ...base, clientIp: publicIp, method: 'POST', pathname: '/relay/uplink' })
     ).toBe('allow');
   });
 

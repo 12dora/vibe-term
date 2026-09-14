@@ -11,11 +11,9 @@ import {
 } from '@vibeterm/shared/auth';
 import type { KeyLogEffect, VerifyDelegationPasskey } from '@vibeterm/shared/auth';
 import { SET_SESSION_HEADER, setHeaderPair } from '@vibeterm/shared/http/mesh-headers';
-import type { HubMode } from '@vibeterm/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import type { ChallengeStore } from '../auth/challenge-store';
-import type { MeshHubStore } from '../auth/mesh-hub-store';
 import { NODE_SESSION_TTL_MS, type NodeSessionStore } from '../auth/node-session-store';
 import {
   createAuthenticationOptions,
@@ -95,8 +93,6 @@ import {
   publicRequestUrl,
   requireSession,
 } from './session-middleware';
-import type { AttachedHub } from './uplink-pool';
-
 export type { KeyLogHubAck };
 export { AUTH_LOGIN_PUBLIC_PATHS, findPrimaryUser, isPasskeyAvailable };
 export { createLoginFailureSink, verifySecondFactors };
@@ -144,16 +140,11 @@ export type AuthRoutesDeps = {
   now?: () => number;
   verifyDelegationPasskey?: VerifyDelegationPasskey;
   primaryUserId?: string;
-  hubPublicUrl?: string | null;
-  hubStore?: MeshHubStore;
-  attachedHub?: () => AttachedHub | null;
-  hubMode?: () => HubMode | null;
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
   tlsInfo?: HubTlsInfoProvider;
   localAuth?: LocalAuthStoreLike;
-  forwardWriterWrite?: (req: Request, uid?: string) => Promise<Response | null>;
 };
 
 export const AUTH_LOCAL_PRESESSION_PATHS = new Set([
@@ -178,8 +169,6 @@ export class AuthRoutes {
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
   private localAuth: LocalAuthStoreLike;
   private readonly modeCache = new AuthModeCache();
-  private forwardWriterWrite: ((req: Request, uid?: string) => Promise<Response | null>) | null =
-    null;
   private readonly keyLog: AuthKeyLogRoutes;
   readonly rateLimits: AuthRateLimits;
 
@@ -194,7 +183,6 @@ export class AuthRoutes {
     this.verifyPasskey =
       deps.verifyDelegationPasskey ?? makeVerifyDelegationPasskey(deps.userStore);
     this.tlsInfoProvider = deps.tlsInfo;
-    this.forwardWriterWrite = deps.forwardWriterWrite ?? null;
     this.rateLimits = {
       consumeChallengeQuota: (req) => this.consumeChallengeQuota(req),
       isLoginRateLimited: (uidHint, ip) => this.limiter.isRateLimited(uidHint, ip),
@@ -205,12 +193,7 @@ export class AuthRoutes {
     };
     this.keyLog = new AuthKeyLogRoutes(deps, {
       invalidateAuthModeCache: () => this.invalidateAuthModeCache(),
-      getForwardWriterWrite: () => this.forwardWriterWrite,
     });
-  }
-
-  setWriterForward(fn: ((req: Request, uid?: string) => Promise<Response | null>) | null): void {
-    this.forwardWriterWrite = fn;
   }
 
   setTlsInfo(provider: HubTlsInfoProvider | undefined): void {
@@ -274,7 +257,6 @@ export class AuthRoutes {
         tls,
         localAuth,
         user: closed ? null : findPrimaryUser(this.deps.userStore, this.deps.primaryUserId),
-        hub: closed ? { nodeId: null, publicUrl: null } : this.keyLog.resolveHub(),
         closed,
       };
     });
@@ -287,18 +269,12 @@ export class AuthRoutes {
     if (snapshot.closed) {
       return jsonBody({ ...shared, ...standaloneClosedModeFields() });
     }
-    const fields = meshAuthModeUserFields(
-      snapshot.user,
-      origin,
-      this.deps.userStore,
-      snapshot.hub,
-      {
-        waivePasskeySecondFactor: waivesPasskeySecondFactor(req),
-        totpSecretPresent: Boolean(
-          snapshot.user && this.deps.keyLogService.currentState(snapshot.user.id).totp
-        ),
-      }
-    );
+    const fields = meshAuthModeUserFields(snapshot.user, origin, this.deps.userStore, {
+      waivePasskeySecondFactor: waivesPasskeySecondFactor(req),
+      totpSecretPresent: Boolean(
+        snapshot.user && this.deps.keyLogService.currentState(snapshot.user.id).totp
+      ),
+    });
     const auth = authenticateRequest(req, this.sessionDeps);
     return jsonBody({
       ...shared,

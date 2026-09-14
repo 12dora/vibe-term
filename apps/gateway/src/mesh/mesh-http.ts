@@ -1,8 +1,6 @@
 import type { KeyLogEffect } from '@vibeterm/shared/auth';
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
-import type { HubMode } from '@vibeterm/shared/uplink';
 import type { ChallengeStore } from '../auth/challenge-store';
-import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
@@ -57,7 +55,7 @@ import {
   verifyShareAccessToken,
 } from './share-credential';
 import type { UplinkStatus } from './types';
-import type { AttachedHub, UplinkCandidate } from './uplink-pool';
+import type { AttachedHub } from './uplink-pool';
 
 export type MeshHttpRuntimeOptions = {
   roles: MeshRoles;
@@ -73,12 +71,7 @@ export type MeshHttpRuntimeOptions = {
   rtc?: MeshRtcDeps;
   now?: () => number;
   primaryUserId?: string;
-  hubPublicUrl?: string | null;
-  hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
-  attachedHubIdOf?: (nodeId: string) => string | null | undefined;
-  hubMode?: () => HubMode | null;
-  hubCandidates?: () => Array<string | UplinkCandidate>;
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;
@@ -194,10 +187,6 @@ export class MeshHttpRuntime {
       selfStatus: opts.selfStatus,
       listedNames: opts.listedNames,
       selfName: opts.selfName,
-      hubStore: opts.hubStore,
-      attachedHub: opts.attachedHub,
-      attachedHubIdOf: opts.attachedHubIdOf,
-      hubCandidates: opts.hubCandidates,
       forwardAuthorizedHttp: (req, input) => this.forwarder.forwardAuthorizedHttp(req, input),
     });
     this.auth = new AuthRoutes({
@@ -211,10 +200,6 @@ export class MeshHttpRuntime {
       publisher: opts.publisher,
       now: this.now,
       primaryUserId: opts.primaryUserId,
-      hubPublicUrl: opts.hubPublicUrl,
-      hubStore: opts.hubStore,
-      attachedHub: opts.attachedHub,
-      hubMode: opts.hubMode,
       listPublicNodes: this.authSurfaceOnly
         ? () => [{ id: opts.nodeId, name: 'self', online: true }]
         : () => this.mesh.publicNodes(),

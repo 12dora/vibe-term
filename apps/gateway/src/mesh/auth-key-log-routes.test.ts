@@ -62,7 +62,7 @@ async function boot(publisher: AuthKeyLogPublisher) {
   });
   const routes = new AuthKeyLogRoutes(
     {
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       nodeId: identity.nodeIdHex,
       nodePk: identity.edPublicKey,
       userStore,
@@ -71,7 +71,7 @@ async function boot(publisher: AuthKeyLogPublisher) {
       nodeSessionStore,
       publisher,
     },
-    { invalidateAuthModeCache: () => {}, getForwardWriterWrite: () => null }
+    { invalidateAuthModeCache: () => {} }
   );
   const sign = () => {
     const state = service.currentState(user.userId);

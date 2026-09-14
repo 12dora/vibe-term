@@ -503,7 +503,7 @@ export class Forwarder {
     return { response: null, uidHint, ip };
   }
 
-  /** 分享登录：节点侧只看得到 `peer:<hubNodeId>`，配额必须在 Hub 这一侧按真实来源 IP 计。 */
+  /** 分享登录：节点侧只看得到 `peer:<nodeId>`，配额必须在入口这一侧按真实来源 IP 计。 */
   private gateShareLogin(shareId: string, ip: string): Response | null {
     const retryAfterMs = this.shareLoginQuota.lockedFor(shareId, ip);
     if (retryAfterMs <= 0) return null;

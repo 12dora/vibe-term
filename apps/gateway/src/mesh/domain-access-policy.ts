@@ -70,22 +70,14 @@ export function isViaDomain(effectiveUrl: URL, hosts: readonly string[]): boolea
   return normalized !== hostname && set.has(hostname);
 }
 
-const SERVICE_EXACT_PATHS = new Set([
-  '/hub/uplink',
-  '/relay/uplink',
-  '/healthz',
-  '/api/relay/health',
-]);
+const SERVICE_EXACT_PATHS = new Set(['/relay/uplink', '/healthz', '/api/relay/health']);
 /** 中继 enrollment 创建（POST 集合）、redeem（POST）与 authorization 查询（GET）：凭租户令牌，无浏览器会话。 */
 const RELAY_ENROLLMENT_PATH = /^\/api\/relay\/tenants\/[^/]+\/enrollments(?:\/[^/]+)?$/;
-const HUB_ENROLLMENT_PATH = /^\/api\/hub\/enrollments\/[^/]+$/;
 // 密码加入的第一步：加入方尚未登录就要取租户的 KDF 参数。
 const RELAY_TENANT_KDF_PATH = /^\/api\/relay\/tenants\/[^/]+\/kdf$/;
 
 function isServiceGetPath(pathname: string): boolean {
-  if (pathname === '/api/hub/status') return true;
-  if (RELAY_TENANT_KDF_PATH.test(pathname)) return true;
-  return HUB_ENROLLMENT_PATH.test(pathname);
+  return RELAY_TENANT_KDF_PATH.test(pathname);
 }
 
 export function isServicePath(method: string, pathname: string): boolean {
@@ -100,11 +92,7 @@ export function isServicePath(method: string, pathname: string): boolean {
   if (verb !== 'GET' && verb !== 'POST') return false;
   if (RELAY_ENROLLMENT_PATH.test(pathname)) return true;
   if (verb === 'GET') return isServiceGetPath(pathname);
-  return (
-    pathname === '/api/relay/enroll' ||
-    pathname === '/api/hub/enrollments/redeem' ||
-    pathname === '/api/hub/enrollments/by-password'
-  );
+  return pathname === '/api/relay/enroll';
 }
 
 export function isJsonDeniedPath(pathname: string): boolean {
