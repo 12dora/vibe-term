@@ -2,7 +2,7 @@
 //
 // 为什么必须是单例：`admit-node` 是签在本地 key log 头上的记录。若两个 UI（设置页的节点管理
 // 与「接入更多设备」侧滑面板）各自跑一套监听 + admit，同一张证书会被两处同时签出两条 seq
-// 相邻的记录，hub 只收得下其中一条，另一条永远 `seq_gap`——这是不可恢复的分叉
+// 相邻的记录，对端只收得下其中一条，另一条永远 `seq_gap`——这是不可恢复的分叉
 // （见 `enrollment.ts` 的 `admitPlan` 与 `key-log-actions.ts`）。
 //
 // 因此：
@@ -10,7 +10,7 @@
 //   - `keyLogHead → 构造签名 → append` 整段走**引擎级**的一条 FIFO 写锁（key log 的头是全局的，
 //     按 enrollment 上锁挡不住两条不同 enrollment 并行读到同一个头）；
 //   - 每次 await 之后都按权威 pending store 复核，陈旧结果一律静默丢弃；
-//   - 每条 admit 是一次带**不可变上下文快照**的事务：只认快照里的 api / hub 通道 / 用户身份，
+//   - 每条 admit 是一次带**不可变上下文快照**的事务：只认快照里的 api / enrollment 通道 / 用户身份，
 //     槽位换人或引擎重置都不会让它写进新状态；
 //   - 取消在事务期间只记意向，等处置明朗再兑现，绝不在 append 未定之前扔掉可重发字节；
 //   - 手动确认绑定发起它的那个消费方槽位，后台自动签则挑一个凭据齐备的槽位。
@@ -54,6 +54,7 @@ import {
   removePendingEnrollment,
   subscribePendingEnrollments,
 } from './enrollment';
+import type { EnrollmentApi } from './enrollment-api';
 import {
   canAutoSignAdmit,
   invalidCertificateKey,
@@ -66,7 +67,6 @@ import {
   offerCertificate,
   outcomesForCandidates,
 } from './enrollment-watch';
-import type { HubApi } from './hub-api';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
 export { canAutoSignAdmit, invalidCertificateKey } from './enrollment-policy';
@@ -89,7 +89,7 @@ export interface AdmitContext {
   api: AuthApi;
   /** 缺 uid / kdf 参数（还没有主用户）时为 `null`：这个消费方不参与签名。 */
   mode: AdmitMode | null;
-  hubApi: HubApi | null;
+  enrollmentApi: EnrollmentApi | null;
   prompt: CredentialPromptHandle;
   /** admit 成功后刷新列表。 */
   onDone: () => void;
@@ -116,7 +116,10 @@ export interface EnrollmentEngineState {
   cancelledIds: string[];
   /** 上面三者的并集：对应的 join 串必须立刻从 DOM 里消失。引用稳定。 */
   clearedIds: string[];
-  /** hub 未确认、手上还留着一份可重发记录的 pending id。 */
+  /**
+   * 上级未确认、手上还留着一份可重发记录的 pending id。
+   * 投影名 `hubUnconfirmedIds` 是冻结的 legacy 名（`hubAck === false` 或 `relayAck === false`）。
+   */
   hubUnconfirmedIds: string[];
   /** 已收到**有效**证书、等待签 admit 的 pending id（passkey 用户要手动点确认）。 */
   certificateReadyIds: string[];
@@ -174,7 +177,7 @@ export function subscribeEnrollmentEngine(listener: () => void): () => void {
   };
 }
 
-// hub 未确认集合是 `enrollment.ts` 的模块级 store，直接镜像进来，消费方只订阅一处。
+// 未确认集合是 `admit-record.ts` 的模块级 store，直接镜像进来，消费方只订阅一处。
 subscribeUnconfirmedRecords(() => commit({ hubUnconfirmedIds: listUnconfirmedRecordIds() }));
 
 // ---------------------------------------------------------------------------
@@ -183,7 +186,7 @@ subscribeUnconfirmedRecords(() => commit({ hubUnconfirmedIds: listUnconfirmedRec
 
 interface ContextSlot {
   value: AdmitContext | null;
-  /** 槽位身份代次：api / hub 通道 / 用户身份换了就 +1，飞行中的操作据此作废自己。 */
+  /** 槽位身份代次：api / enrollment 通道 / 用户身份换了就 +1，飞行中的操作据此作废自己。 */
   generation: number;
 }
 
@@ -194,7 +197,7 @@ function sameSlotIdentity(a: AdmitContext | null, b: AdmitContext | null): boole
   if (!a || !b) return a === b;
   return (
     a.api === b.api &&
-    a.hubApi === b.hubApi &&
+    a.enrollmentApi === b.enrollmentApi &&
     a.mode?.uid === b.mode?.uid &&
     a.mode?.rootEpoch === b.mode?.rootEpoch
   );
@@ -227,14 +230,13 @@ function signingSlot(): ContextSlot | null {
 }
 
 /**
- * 轮询用的 hub 通道单独取最近一个**非空**的：生效上下文可能还没定位到 hub
- * （侧滑面板只认 `/api/auth/mode` 的 `hubNodeId`，设置页还会认 mesh 列表的 `isHub`），
+ * 轮询用的 enrollment 通道单独取最近一个**非空**的：生效上下文可能还没接上通道，
  * 直接跟着生效上下文走会让轮询在面板打开期间失效。
  */
-function activeHubApi(): HubApi | null {
+function activeEnrollmentApi(): EnrollmentApi | null {
   for (let i = slots.length - 1; i >= 0; i -= 1) {
-    const hubApi = slots[i].value?.hubApi;
-    if (hubApi) return hubApi;
+    const enrollmentApi = slots[i].value?.enrollmentApi;
+    if (enrollmentApi) return enrollmentApi;
   }
   return null;
 }
@@ -267,7 +269,7 @@ function attachSlot(slot: ContextSlot): () => void {
   };
 }
 
-/** 注册一个 admit 上下文；`release()` 注销，`update()` 换一份（换 hub / 换用户）。 */
+/** 注册一个 admit 上下文；`release()` 注销，`update()` 换一份（换通道 / 换用户）。 */
 export function registerAdmitContext(
   context: AdmitContext
 ): EnrollmentEngineHandle & { release: () => void; update: (next: AdmitContext) => void } {
@@ -283,11 +285,11 @@ export function registerAdmitContext(
 /**
  * 一次 admit 操作的**不可变**上下文快照。一条 admit 跨好几段 await（凭据交互、取 head、
  * 签名、append），期间槽位可能被重新赋值、引擎可能被重置：整条操作只认这份快照，
- * hub 通道也只用快照里的，不再中途回头取 `activeHubApi()`（见 R5「拼接两个上下文」）。
+ * enrollment 通道也只用快照里的，不再中途回头取 `activeEnrollmentApi()`（见 R5「拼接两个上下文」）。
  */
 interface OperationContext {
   api: AuthApi;
-  hubApi: HubApi | null;
+  enrollmentApi: EnrollmentApi | null;
   mode: AdmitMode;
   prompt: CredentialPromptHandle;
   t: AdmitContext['t'];
@@ -306,8 +308,8 @@ function openOperation(
   if (!value?.mode || !slots.includes(slot)) return null;
   return {
     api: value.api,
-    // 槽位自己还没定位到 hub 时只在**这一刻**回落一次，此后整条操作都认这一个通道。
-    hubApi: value.hubApi ?? activeHubApi(),
+    // 槽位自己还没定位到通道时只在**这一刻**回落一次，此后整条操作都认这一个通道。
+    enrollmentApi: value.enrollmentApi ?? activeEnrollmentApi(),
     mode: value.mode,
     prompt: value.prompt,
     t: value.t,
@@ -403,7 +405,7 @@ function syncWatch(): void {
 function startWatch(): void {
   const source = overrides.events ?? sharedMeshEvents();
   source.start();
-  // 推送：hub → entry → `/mesh/ws`。与轮询汇进同一个 `handleOutcome`。
+  // 推送：中继 redeem → entry → `/mesh/ws`。与轮询汇进同一个 `handleOutcome`。
   unsubscribePush = source.onEnrollRedeemed((event) => {
     void handleOutcome(
       offerCertificate(
@@ -425,7 +427,7 @@ function stopWatch(): void {
 }
 
 /**
- * 轮询兜底：逐条 pending 查 `GET /n/<hub>/api/hub/enrollments/:id`。
+ * 轮询兜底：逐条 pending 查 `GET /api/mesh/relay/enrollments/:id`。
  * 查的是本次 enrollment 的 id，因此 `unknown` 是真正的异常信号，照常上报。
  *
  * 结果按**拉取时**的 pending 快照判定（这样才知道证书属于谁），随后由 `handleOutcome`
@@ -435,12 +437,12 @@ async function tick(): Promise<void> {
   if (ticking) return;
   const pendings = listPendingEnrollments();
   if (pendings.length === 0) return;
-  const hubApi = activeHubApi();
+  const enrollmentApi = activeEnrollmentApi();
   ticking = true;
   let candidates: CertificateCandidate[] = [];
   try {
     if (overrides.collect) candidates = await overrides.collect(pendings);
-    else if (hubApi) candidates = await collectRedeemedCertificates(hubApi, pendings);
+    else if (enrollmentApi) candidates = await collectRedeemedCertificates(enrollmentApi, pendings);
   } catch {
     return;
   } finally {
@@ -531,7 +533,7 @@ function commitBusy(): void {
  * key log 写锁：**引擎级**一条 FIFO 链。
  *
  * head 是全局的，`keyLogHead → 构造签名 → append` 必须整段串行：两条不同 enrollment 的 admit
- * 若并行读到同一个 head，就会造出两条同 seq 的记录，hub 只收得下一条，另一条永久 `seq_gap`
+ * 若并行读到同一个 head，就会造出两条同 seq 的记录，对端只收得下一条，另一条永久 `seq_gap`
  * （见 R4 #1）。按 enrollment 上锁挡不住这种情况。
  *
  * 导出给 `node/` 之外的写入方（吊销在 `use-node-row-actions.ts`）：它们与 admit 抢同一个
@@ -571,8 +573,8 @@ async function runAdmit(op: OperationContext, id: string, run: () => Promise<voi
 /**
  * 事务期间按下的取消，等处置明朗了才兑现：
  * - 已 admit 成功：这条 enrollment 已经成了，按已加入处理，不做回退；
- * - 还留着未确认记录（请求抛异常 / hub 没答应）：pending 与字节都留着交给重发路径对账，
- *   现在删掉就再也送不进 hub（见 R5 Blocker）；
+ * - 还留着未确认记录（请求抛异常 / 上级没答应）：pending 与字节都留着交给重发路径对账，
+ *   现在删掉就再也送不出去（见 R5 Blocker）；
  * - 其余（终态拒绝、根本没送出去）：照常取消并清干净。
  */
 function applyDeferredCancel(id: string): void {
@@ -588,7 +590,7 @@ async function submitAdmit(
   record: SignedRecord,
   nodeIdHex?: string
 ): Promise<void> {
-  // hub=sync：entry 先把记录送 hub 并等 ack，确认之前本地什么都不写。
+  // `?hub=sync`（legacy 查询名）：确认之前本地什么都不写。
   const disposition = await submitAdmitRecord(op.api, id, record);
   // 引擎被重置 / 槽位换了人：结果照常由 `submitAdmitRecord` 记账，但不再投影到新状态。
   if (!opAlive(op)) return;
@@ -725,11 +727,11 @@ async function admitInLock(op: OperationContext, id: string, outcome: AdmitOutco
 
 /**
  * 「待确认 / 重试」按钮。**绑定发起它的那个槽位**：设置页点的按钮必须用设置页的凭据对话框、
- * hub 通道与翻译，不能撞上侧滑面板的（见 R4 #4）。这些字段在操作一开始就冻成快照（见 R5 #4）。
+ * enrollment 通道与翻译，不能撞上侧滑面板的（见 R4 #4）。这些字段在操作一开始就冻成快照（见 R5 #4）。
  *
- * 该 pending 还留着一条 hub 未确认的记录时，**只重发这份字节**：不要凭据、不取新 head、
+ * 该 pending 还留着一条未确认的记录时，**只重发这份字节**：不要凭据、不取新 head、
  * 不重签，也不占租约。B2-6 保证未确认时服务端没落库，原记录仍然接得上；而重签会按
- * （可能已推进的）本地 head 产生新 seq，一旦 hub 缺中间那条就永久拒绝。
+ * （可能已推进的）本地 head 产生新 seq，一旦对端缺中间那条就永久拒绝。
  */
 async function confirmFromSlot(slot: ContextSlot, id: string): Promise<void> {
   // 权威 pending 由 id 现取：调用方手里的那份可能已经是上一轮的残影。
@@ -751,7 +753,7 @@ async function confirmFromSlot(slot: ContextSlot, id: string): Promise<void> {
     return;
   }
   if (!signer) return;
-  // 凭据交互期间可能已被后台自动 admit / 被取消，槽位也可能换了 hub 或换了用户。
+  // 凭据交互期间可能已被后台自动 admit / 被取消，槽位也可能换了通道或换了用户。
   if (!opAlive(op) || !livePending(id, enrollPk)) return;
   await runAdmit(op, id, () => confirmInLock(op, id, enrollPk));
 }
@@ -765,8 +767,10 @@ async function resendInLock(op: OperationContext, id: string, enrollPk: string):
 async function confirmInLock(op: OperationContext, id: string, enrollPk: string): Promise<void> {
   const pending = opAlive(op) ? livePending(id, enrollPk) : null;
   if (!pending) return;
-  // hub 通道用快照里的那个，不回头取全局「最近一个」（见 R5 #4）。
-  const candidates = op.hubApi ? await collectRedeemedCertificates(op.hubApi, [pending]) : [];
+  // enrollment 通道用快照里的那个，不回头取全局「最近一个」（见 R5 #4）。
+  const candidates = op.enrollmentApi
+    ? await collectRedeemedCertificates(op.enrollmentApi, [pending])
+    : [];
   const fresh = opAlive(op) ? livePending(id, enrollPk) : null;
   if (!fresh) return;
   for (const candidate of candidates) {
@@ -785,7 +789,7 @@ async function confirmInLock(op: OperationContext, id: string, enrollPk: string)
 }
 
 /**
- * 取消只删本地 pending（hub 侧记录会自然过期），同时让对应的 join 串立刻消失。
+ * 取消只删本地 pending（对端记录会自然过期），同时让对应的 join 串立刻消失。
  * 这条 pending 正在跑事务时**只记意向**：字节可能正在 append 途中，现在删掉，
  * 一旦请求抛异常就再也重发不出去（见 R5 Blocker）。
  */

@@ -132,7 +132,7 @@ export function nodeWsUrl(nodeId: string | null | undefined, options?: NodeWsUrl
  *
  * `BorshWebSocketClient` 重连时复用 `options.url` 字符串，所以 nonce 的轮换只能挂在建 socket
  * 这一步（`GatewayConnectionOptions.wsUrlFactory`）。合约要求每条 WS 一个新 nonce：node 侧
- * `{sid, via}` 作用域内 nonce 冲突会把新 WS 直接 RST，而旧连接的关闭在经 hub 转发时未必先到。
+ * `{sid, via}` 作用域内 nonce 冲突会把新 WS 直接 RST，而旧连接的关闭在经入口转发时未必先到。
  */
 export interface NodeWsUrlSource {
   /** 建新 socket（含重连）时调用：换一个 nonce，返回带 `?cid=` 的 URL。 */

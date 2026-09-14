@@ -23,7 +23,6 @@ function row(overrides: Partial<NodeRow> & { id: string }): NodeRow {
     loggedIn: true,
     inventory: null,
     isSelf: false,
-    isHub: false,
     lastSeenAt: null,
     status: null,
     certificate: null,

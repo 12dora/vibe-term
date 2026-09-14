@@ -124,7 +124,7 @@ describe('session interceptor', () => {
     expect(navigated).toEqual([]);
   });
 
-  test('body 里的外来 nodeId（hub 自己）被忽略，事件记在路径上的 node', async () => {
+  test('body 里的外来 nodeId（入口自己）被忽略，事件记在路径上的 node', async () => {
     const { events, navigated } = setup();
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     const client = clientReturning(
@@ -143,7 +143,7 @@ describe('session interceptor', () => {
   });
 
   // 直连协商（`/api/mesh/connection`、`/api/rtc/authorize`）的 401 与别的转发 401 同一套语义：
-  // 中转 / hub 会把自己的 nodeId 盖在一条如假包换的「会话过期」401 上，光看 nodeId 分不出
+  // 入口转发会把自己的 nodeId 盖在一条如假包换的「会话过期」401 上，光看 nodeId 分不出
   // 「这条入口给不出直连」和「会话真的没了」，拦截器不做这个区分（前者由 fe 的负缓存记账）。
   test('直连协商 401 照旧按路径 node 派事件', async () => {
     const { events, navigated } = setup();

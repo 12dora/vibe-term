@@ -1,4 +1,4 @@
-// 本机运行态：角色、hub 地址、直连插件状态、TLS 状态。
+// 本机运行态：角色、直连插件状态、TLS 状态。
 //
 // 缺省走 entry 的 ApiClient（baseUrl 为空），问的就是浏览器直连的那台机器；传入
 // `createNodeApiClient(id)` 则同一组端点经 `/n/<id>` 转发到那台远端节点。

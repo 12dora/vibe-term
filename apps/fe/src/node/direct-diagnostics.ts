@@ -39,7 +39,7 @@ export interface NodeLink {
   transport: MeshNodeTransport;
   /** entry ↔ node 的往返毫秒数；未测得为 `null`。 */
   rttMs: number | null;
-  /** 对端地址：`ws-secure` / `dc` 为对端主机，`relay` 为 hub 主机；未知为 `null`。 */
+  /** 对端地址：`ws-secure` / `dc` 为对端主机，`relay` 为中继主机；未知为 `null`。 */
   peerAddress: string | null;
   /** 当前链路建立时刻（epoch 毫秒）；未知为 `null`。 */
   linkSinceAt: number | null;
@@ -47,7 +47,7 @@ export interface NodeLink {
   directFailure: MeshNodeDirectFailure | null;
   /** `transport === 'relay'` 时这条链路走的那台中继；其余情况（含旧网关）为 `null`。 */
   viaRelay: string | null;
-  /** 该对端当前在线的全部中继；旧网关或 hub 模式为空数组。 */
+  /** 该对端当前在线的全部中继；旧网关为空数组。 */
   relayPresence: string[];
 }
 

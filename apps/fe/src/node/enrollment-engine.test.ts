@@ -129,7 +129,7 @@ function context(api: AuthApi, prompt = promptSpy().prompt): AdmitContext {
   return {
     api,
     mode: { uid: UID, rootEpoch: 1 },
-    hubApi: null,
+    enrollmentApi: null,
     prompt,
     onDone: () => undefined,
     t: (key: string) => key,
@@ -273,7 +273,7 @@ describe('单例回路', () => {
     const { pending, candidate } = await fixture('e-12');
     rememberSigner({ kind: 'root', rootKey }, NOW);
     const spy = apiSpy({ ok: true, hubAck: true });
-    const hubApi = {
+    const enrollmentApi = {
       getEnrollment: () =>
         Promise.resolve({
           status: 'redeemed',
@@ -281,13 +281,13 @@ describe('单例回路', () => {
           certificate: candidate.certificate,
           cert_sig: candidate.certSig,
         }),
-    } as unknown as AdmitContext['hubApi'];
+    } as unknown as AdmitContext['enrollmentApi'];
     // 真实轮询路径：不注入 collect。
     configureEnrollmentEngineForTest({ collect: undefined });
 
     addPendingEnrollment(pending);
     // 先注册带 hub 通道的设置页，再注册还没定位到 hub 的面板。
-    const page = registerAdmitContext({ ...context(spy.api), hubApi });
+    const page = registerAdmitContext({ ...context(spy.api), enrollmentApi });
     const panel = registerAdmitContext(context(spy.api));
     await settle();
 
@@ -733,13 +733,13 @@ describe('事务期间取消', () => {
     addPendingEnrollment(pending);
     const spy = apiSpy({ ok: true, hubAck: true });
     const prompt = promptSpy({ kind: 'root', rootKey });
-    const hubApi = {
+    const enrollmentApi = {
       getEnrollment: async () => {
         for (let i = 0; i < 4; i += 1) await flush();
         return { status: 'pending' };
       },
-    } as unknown as AdmitContext['hubApi'];
-    const ctx = registerAdmitContext({ ...context(spy.api, prompt.prompt), hubApi });
+    } as unknown as AdmitContext['enrollmentApi'];
+    const ctx = registerAdmitContext({ ...context(spy.api, prompt.prompt), enrollmentApi });
 
     const confirming = ctx.confirmManually('e-cancel-idle');
     await flush();
@@ -773,22 +773,22 @@ describe('操作上下文快照', () => {
           cert_sig: candidate.certSig,
         });
       },
-    } as unknown as AdmitContext['hubApi'];
+    } as unknown as AdmitContext['enrollmentApi'];
     const hubOfPanel = {
       getEnrollment: () => {
         calls.push('panel');
         return Promise.resolve({ status: 'pending' });
       },
-    } as unknown as AdmitContext['hubApi'];
+    } as unknown as AdmitContext['enrollmentApi'];
 
     const spy = apiSpy({ ok: true, hubAck: true });
     const prompt = promptSpy({ kind: 'root', rootKey });
     const page = registerAdmitContext({
       ...context(spy.api, prompt.prompt),
-      hubApi: hubOfPage,
+      enrollmentApi: hubOfPage,
     });
     // 后注册的面板带着另一个 hub 通道：旧实现会让它抢走这次查询。
-    const panel = registerAdmitContext({ ...context(spy.api), hubApi: hubOfPanel });
+    const panel = registerAdmitContext({ ...context(spy.api), enrollmentApi: hubOfPanel });
 
     await page.confirmManually('e-hub-snap');
     await settle();
@@ -811,9 +811,9 @@ describe('操作上下文快照', () => {
     await flush();
     ctx.update({
       ...base,
-      hubApi: {
+      enrollmentApi: {
         getEnrollment: () => Promise.resolve({ status: 'pending' }),
-      } as unknown as AdmitContext['hubApi'],
+      } as unknown as AdmitContext['enrollmentApi'],
     });
     await confirming;
     await settle();

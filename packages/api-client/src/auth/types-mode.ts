@@ -52,10 +52,6 @@ export interface AuthModeResponse {
   rootEpoch?: number | null;
   /** base64url，32 字节：当前根公钥。join 串第二段用它。 */
   rootPublicKey?: string | null;
-  /** hub 机所在 node 的 id（本机即 hub 时为自身 id）。 */
-  hubNodeId?: string | null;
-  /** hub 的对外可达地址；join 命令只能用它，绝不能退化成入口 origin。 */
-  hubPublicUrl?: string | null;
   /** self-signed CA 的 SPKI sha256 hex；无 CA 时为 null。 */
   caFingerprint?: string | null;
   /**
@@ -74,7 +70,7 @@ export interface LocalAuthMutationResponse {
 /**
  * 本机登录接口的 `{code}`：`LOCAL_ONLY` 是 403（只允许从本机调用），
  * `CREDENTIALS_REQUIRED` / `CREDENTIALS_EXIST` / `LOCAL_AUTH_ENABLED` 是 409，
- * `not_standalone` 是 404（hub/node 上没有这个开关）。
+ * `not_standalone` 是 404（node / relay 上没有这个开关）。
  */
 export type LocalAuthErrorCode =
   | 'not_standalone'

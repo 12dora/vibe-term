@@ -28,29 +28,32 @@ describe('SetupApi.precheck', () => {
         isSelf: false,
         status: 200,
         error: null,
-        resolvedUrl: 'https://hub.example.com:13443',
+        resolvedUrl: 'https://relay.example.com:13443',
         triedPorts: [443, 2053, 13443],
         probed: true,
       }),
     ]);
-    const out = await new SetupApi(client).precheck('https://hub.example.com');
+    const out = await new SetupApi(client).precheck('https://relay.example.com');
     expect(out).toEqual({
       reachable: true,
       isSelf: false,
       status: 200,
       error: null,
-      resolvedUrl: 'https://hub.example.com:13443',
+      resolvedUrl: 'https://relay.example.com:13443',
       triedPorts: [443, 2053, 13443],
       probed: true,
     });
     expect(calls[0].url).toBe('/api/setup/precheck');
     expect(calls[0].init?.method).toBe('POST');
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ url: 'https://hub.example.com' });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      url: 'https://relay.example.com',
+      kind: 'relay',
+    });
   });
 
   test('非 2xx 抛出带 code 与 message 的 SetupApiError', async () => {
     const { client } = recorder([errorBody('not_standalone', 'already in a mesh', 409)]);
-    const err = await new SetupApi(client).precheck('https://hub.example.com').catch((e) => e);
+    const err = await new SetupApi(client).precheck('https://relay.example.com').catch((e) => e);
     expect(err).toBeInstanceOf(SetupApiError);
     expect((err as SetupApiError).code).toBe('not_standalone');
     expect((err as SetupApiError).message).toBe('already in a mesh');
@@ -58,157 +61,23 @@ describe('SetupApi.precheck', () => {
   });
 });
 
-describe('SetupApi.becomeHub', () => {
-  test('POST /api/setup/hub 原样透传请求体', async () => {
-    const { client, calls } = recorder([
-      Response.json({
-        ok: true,
-        fingerprint: 'abc123',
-        direct: 'enabled',
-        directError: null,
-        restarting: true,
-      }),
-    ]);
-    const out = await new SetupApi(client).becomeHub({
-      hubPublicUrl: 'https://hub.example.com',
-      username: 'alice',
-      password: 'hunter2hunter2',
-      directEnable: true,
-    });
-    expect(out.fingerprint).toBe('abc123');
-    expect(out.direct).toBe('enabled');
-    expect(calls[0].url).toBe('/api/setup/hub');
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
-      hubPublicUrl: 'https://hub.example.com',
-      username: 'alice',
-      password: 'hunter2hunter2',
-      directEnable: true,
-    });
-  });
-
-  test('400 weak_password 映射成 code', async () => {
-    const { client } = recorder([errorBody('weak_password', 'password too short', 400)]);
-    const err = await new SetupApi(client)
-      .becomeHub({
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'x',
-        directEnable: false,
-      })
-      .catch((e) => e);
-    expect((err as SetupApiError).code).toBe('weak_password');
-    expect((err as SetupApiError).status).toBe(400);
-  });
-
-  test('非 JSON 错误体退化成 fallback code', async () => {
-    const { client } = recorder([new Response('<html>502</html>', { status: 502 })]);
-    const err = await new SetupApi(client)
-      .becomeHub({
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'hunter2hunter2',
-        directEnable: false,
-      })
-      .catch((e) => e);
-    expect((err as SetupApiError).code).toBe('setup_hub_failed');
-  });
-});
-
-describe('SetupApi.joinHub', () => {
-  test('POST /api/setup/join 透传 insecureLocal', async () => {
-    const { client, calls } = recorder([
-      Response.json({
-        ok: true,
-        hubUrl: 'https://hub.example.com',
-        username: 'alice',
-        direct: 'skipped',
-        directError: null,
-        restarting: true,
-      }),
-    ]);
-    const out = await new SetupApi(client).joinHub({
-      hubUrl: 'https://hub.example.com',
-      token: 'token-value',
-      name: 'studio',
-      directEnable: false,
-      insecureLocal: true,
-    });
-    expect(out.username).toBe('alice');
-    expect(calls[0].url).toBe('/api/setup/join');
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
-      hubUrl: 'https://hub.example.com',
-      token: 'token-value',
-      name: 'studio',
-      directEnable: false,
-      insecureLocal: true,
-    });
-  });
-
-  test('`{error:"code"}` 形态也能解出 code', async () => {
-    const { client } = recorder([
-      new Response(JSON.stringify({ error: 'node_revoked' }), { status: 409 }),
-    ]);
-    const err = await new SetupApi(client)
-      .joinHub({ hubUrl: 'https://h', token: 't', name: 'n', directEnable: false })
-      .catch((e) => e);
-    expect((err as SetupApiError).code).toBe('node_revoked');
-  });
-
-  test('password method 透传 method 与 password', async () => {
-    const { client, calls } = recorder([
-      Response.json({
-        ok: true,
-        hubUrl: 'https://hub.example.com',
-        username: 'alice',
-        direct: 'skipped',
-        directError: null,
-        restarting: true,
-      }),
-    ]);
-    await new SetupApi(client).joinHub({
-      hubUrl: 'https://hub.example.com',
-      method: 'password',
-      password: 'vibeterm-test-pass',
-      name: 'studio',
-      directEnable: false,
-    });
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
-      hubUrl: 'https://hub.example.com',
-      method: 'password',
-      password: 'vibeterm-test-pass',
-      name: 'studio',
-      directEnable: false,
-    });
-  });
-});
-
 describe('SetupApi readError 折叠', () => {
   test('JSON 契约错误体解出 code/message，非 JSON 退化为 fallbackCode', async () => {
-    const { client } = recorder([errorBody('setup_hub_failed', 'boom', 500)]);
+    const { client } = recorder([errorBody('setup_relay_failed', 'boom', 500)]);
     const jsonErr = await new SetupApi(client)
-      .becomeHub({
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'hunter2hunter2',
-        directEnable: false,
-      })
+      .setupRelay({ role: 'relay', relayPublicUrl: 'https://relay.example' })
       .catch((e) => e);
     expect(jsonErr).toBeInstanceOf(SetupApiError);
-    expect((jsonErr as SetupApiError).code).toBe('setup_hub_failed');
+    expect((jsonErr as SetupApiError).code).toBe('setup_relay_failed');
     expect((jsonErr as SetupApiError).message).toBe('boom');
     expect((jsonErr as SetupApiError).status).toBe(500);
 
     const { client: client2 } = recorder([new Response('<html>502</html>', { status: 502 })]);
     const nonJsonErr = await new SetupApi(client2)
-      .becomeHub({
-        hubPublicUrl: 'https://hub.example.com',
-        username: 'alice',
-        password: 'hunter2hunter2',
-        directEnable: false,
-      })
+      .setupRelay({ role: 'relay', relayPublicUrl: 'https://relay.example' })
       .catch((e) => e);
-    expect((nonJsonErr as SetupApiError).code).toBe('setup_hub_failed');
-    expect((nonJsonErr as SetupApiError).message).toBe('setup_hub_failed');
+    expect((nonJsonErr as SetupApiError).code).toBe('setup_relay_failed');
+    expect((nonJsonErr as SetupApiError).message).toBe('setup_relay_failed');
     expect((nonJsonErr as SetupApiError).status).toBe(502);
   });
 });

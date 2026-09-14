@@ -4,7 +4,7 @@
 // 字节」）加上唯一的提交入口，跟证书解析 / pending 存储没有共用状态，只借用那边的失败分类。
 //
 // 这块的性质决定了它不能被简化：`submitAdmitRecord` **先暂存再发送**，任何「等响应回来再存」
-// 的写法都会在超时 / 断网时丢掉字节，下一次轮询按新 head 重签一条，hub 就永久 `seq_gap`。
+// 的写法都会在超时 / 断网时丢掉字节，下一次轮询按新 head 重签一条，对端就永久 `seq_gap`。
 
 import {
   decodeAdmitNodePayload,
@@ -35,11 +35,12 @@ export type AdmitDisposition =
 /** `POST /api/auth/keylog?hub=sync` 的响应；准入这条路径只关心这几个字段。 */
 type AdmitAppend = ({ ok: true; hubAck?: boolean } & RelayAckFields) | { ok: false; code: string };
 
-/** hub=sync 的响应 → UI 该做什么。页面与测试共用同一份判定。 */
+/** `?hub=sync` 的响应 → UI 该做什么。页面与测试共用同一份判定。 */
 export function admitDisposition(result: AdmitAppend): AdmitDisposition {
   if (result.ok) {
-    // B2-6 之后 200 不再带 `hubAck:false`；万一遇到（旧版 entry），一律当未确认。
-    return result.hubAck === true ? { kind: 'admitted' } : { kind: 'unconfirmed' };
+    // `hubAck` 是冻结的 legacy 名：只把 `false` 当失败，缺失 / true 都算本机已落库。
+    if (result.hubAck === false) return { kind: 'unconfirmed' };
+    return { kind: 'admitted' };
   }
   const failure = classifyKeyLogFailure(result.code);
   if (failure === 'unconfirmed') return { kind: 'unconfirmed' };
@@ -121,9 +122,9 @@ export function nodeIdFromAdmitRecord(record: SignedRecord): string | null {
 /**
  * 这条 pending 现在该做什么。
  *
- * **`resend` 永远优先于 `sign`**：只要手上还有一份 hub 未确认的记录，就原样重发它。
+ * **`resend` 永远优先于 `sign`**：只要手上还有一份未确认的记录，就原样重发它。
  * 轮询每 5 s 会重新看到同一张证书，若那时按新 head 再签一条，就会造出另一个 seq，
- * hub 缺了中间那条便永久 `seq_gap`（评审 Major 里那条不可恢复的分叉）。
+ * 对端缺了中间那条便永久 `seq_gap`。
  */
 export function admitPlan(pendingId: string, canSign: boolean): 'resend' | 'sign' | 'wait' {
   if (unconfirmedRecords.has(pendingId)) return 'resend';
@@ -138,7 +139,7 @@ export function admitPlan(pendingId: string, canSign: boolean): 'resend' | 'sign
  *
  * **先暂存再发送**：请求抛异常（连接断开、超时、响应畸形）时，服务端到底落没落库是未知的，
  * 只有原样重发这份字节才安全；若等响应回来才暂存，异常路径下记录就丢了，下一次推送 / 轮询
- * 会按新 head 再签一条，hub 缺了中间那条便永久 `seq_gap`（见 R4 #3）。
+ * 会按新 head 再签一条，对端缺了中间那条便永久 `seq_gap`（见 R4 #3）。
  * 因此只有拿到**明确**的处置（已确认 / 作废 / 终态拒绝）才丢弃暂存。
  */
 export async function submitAdmitRecord(

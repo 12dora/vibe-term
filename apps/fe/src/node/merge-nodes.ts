@@ -1,18 +1,12 @@
-// 节点表的合并视图：`GET /api/mesh/nodes`（成员集）+ `GET /n/<hub>/api/hub/nodes`（心跳 / 接纳态）。
+// 节点表的合并视图：`GET /api/mesh/nodes` 成员集 + `pendingMemberIds` 占位行。
 //
 // 从 `mesh-nodes.ts` 拆出来的纯函数段（store 与轮询留在原文件）：这里只有输入输出确定的映射，
 // 没有任何请求与订阅，测试可以直接喂两个数组。
 
 import { SELF_NODE_ID } from '@vibeterm/api-client';
-import type {
-  HubMode,
-  MeshNode,
-  MeshNodeReach,
-  MeshNodeTransport,
-} from '@vibeterm/api-client/auth/index';
+import type { MeshNode, MeshNodeReach, MeshNodeTransport } from '@vibeterm/api-client/auth/index';
 import type { MeshNodeOperation } from '@vibeterm/shared';
 import { bytesToHex, decodeBase64url, sha256 } from '@vibeterm/shared/auth';
-import { type HubAdmissionStatus, type HubNodeRow, hubAdmissionStatus } from './hub-api';
 import { deriveNodeAddress } from './node-address';
 import { relayPresenceOf, viaRelayOf } from './relay-extras';
 
@@ -60,7 +54,7 @@ export interface PendingAdmitMaterial {
   certSig: string;
 }
 
-/** 合并后的一行：mesh 视图（在线/到达/登录）+ hub 视图（心跳、状态、证书）。 */
+/** 合并后的一行：mesh 视图（在线/到达/登录）+ 待同步占位。 */
 export interface NodeRow {
   id: string;
   /** 路由 / 运行时用的 id：entry 自身为 `self`。 */
@@ -76,7 +70,7 @@ export interface NodeRow {
   rttMs: number | null;
   /** `transport === 'relay'` 时这条链路走的那台中继；其余情况（含旧网关）为 `null`。 */
   viaRelay?: string | null;
-  /** 该对端当前在线的全部中继；旧网关或 hub 模式为空数组。 */
+  /** 该对端当前在线的全部中继；旧网关为空数组。 */
   relayPresence?: string[];
   /** 当前链路的对端地址；未知或 self 为 `null`。 */
   peerAddress?: string | null;
@@ -91,25 +85,19 @@ export interface NodeRow {
   loggedIn: boolean;
   inventory: unknown;
   isSelf: boolean;
-  isHub: boolean;
-  /** hub 机的主 / 备身份；非 hub、旧后端不下发、以及不关心这一段的构造方为空。 */
-  hubMode?: HubMode | null;
-  /** mesh `lastSeenAt`（peer_cache）优先，hub `last_seen_at` 兜底；都没有为 `null`。 */
+  /** mesh `lastSeenAt`（peer_cache）；没有为 `null`。 */
   lastSeenAt: number | null;
-  /** hub 侧 `nodes.status`；hub 不可达时为 `null`。 */
   status: string | null;
   certificate: string | null;
   certSig: string | null;
   /**
-   * 入口记录的进行中长事务（远程卸载 / 主备切换）；`mergeNodes` 恒填，缺省为 `null`。
+   * 入口记录的进行中长事务（远程卸载）；`mergeNodes` 恒填，缺省为 `null`。
    * 声明成可选是为了不逼着每个手写 `NodeRow` 的测试夹具补这一项。
    */
   operation?: MeshNodeOperation | null;
-  /** hub 侧的接纳状态；hub 不可达时为 `null`。 */
-  admissionStatus?: HubAdmissionStatus | null;
-  /** 待批准行：只存在于 hub 列表，还不是 mesh 成员，任何依赖证书的动作都不可用。 */
+  /** 待同步占位行。 */
   pending?: boolean;
-  /** 待批准行的 admit 材料；材料不全时为 `null`（此时只显示状态，批不了）。 */
+  /** 待批准行的 admit 材料；`pendingMemberIds` 占位没有材料。 */
   admitMaterial?: PendingAdmitMaterial | null;
   /**
    * entry 本机偏好：暂停后不再向该成员发起用户面连接，聚合列表（侧栏 / 设备页 / 弹窗）
@@ -140,57 +128,49 @@ function rttOf(rttMs: number | null | undefined): number | null {
 
 export interface MergeContext {
   entryNodeId: string | null;
-  hubNodeId: string | null;
-  /** hub 集合按 nodeId 索引；缺省时 hub 行推不出 publicUrl。 */
-  hubDetails?: ReadonlyMap<string, { publicUrl?: string | null }>;
+  /** 已 admit、状态块还没解开的成员 id；不在 mesh 列表里的补占位行。 */
+  pendingMemberIds?: readonly string[] | null;
   /** 本机 HTTPS / 域名；仅 self 行使用。 */
   selfAddress?: string | null;
 }
 
 /**
- * 合并 mesh 列表与 hub 列表。mesh 列表是**已接纳成员**的权威集，hub 只补充心跳与状态；
- * hub 不可达时全部补充字段为 `null`，UI 据此禁用管理动作。
+ * 合并 mesh 列表与待同步占位。mesh 列表是**已接纳成员**的权威集。
  *
- * 除此之外还补上一类 mesh 里没有的行：hub 说 `admission_status === 'pending'` 的节点。
- * 它们已经拿到证书却还没被本地密钥日志 `admit-node` 接纳（密码加入 passkey 账号的常态），
- * 不列出来用户就完全看不到「有一台机器在等批准」。
+ * `pendingMemberIds` 里还不在 mesh 列表的 id 补一行占位：已 admit 但名字 / inventory
+ * 仍为空（状态块未解开），不列出来用户会以为「只有本机」。
  */
-export function mergeNodes(
-  meshNodes: MeshNode[],
-  hubNodes: HubNodeRow[] | null,
-  context: MergeContext
-): NodeRow[] {
-  const hubById = new Map((hubNodes ?? []).map((row) => [row.id, row]));
+export function mergeNodes(meshNodes: MeshNode[], context: MergeContext): NodeRow[] {
   const admitted = sortNodes(meshNodes, context.entryNodeId).map((node) =>
-    toAdmittedRow(node, hubById.get(node.id) ?? null, context)
+    toAdmittedRow(node, context)
   );
-  return [...admitted, ...pendingRows(hubNodes, new Set(meshNodes.map((node) => node.id)))];
+  const meshIds = new Set(meshNodes.map((node) => node.id));
+  return [...admitted, ...pendingRows(context.pendingMemberIds, meshIds)];
 }
 
-function toAdmittedRow(node: MeshNode, hub: HubNodeRow | null, context: MergeContext): NodeRow {
+function toAdmittedRow(node: MeshNode, context: MergeContext): NodeRow {
   const isSelf = isEntryNode(node.id, context);
-  const isHub = isHubNode(node, context);
   const path = admittedPath(node);
   return {
     id: node.id,
     runtimeNodeId: toRuntimeNodeId(node.id, context.entryNodeId),
-    name: hub?.name ?? node.name,
+    name: node.name,
     publicKey: node.publicKey,
     fingerprint: publicKeyFingerprint(node.publicKey),
     online: node.online,
     reach: reachOf(node.reach),
     ...path,
-    address: admittedAddress(node, context, isSelf, isHub, path),
-    version: node.version ?? hub?.version ?? null,
-    directCapable: node.direct_capable || Boolean(hub?.direct_capable),
+    address: admittedAddress(context, isSelf, path),
+    version: node.version ?? null,
+    directCapable: node.direct_capable,
     loggedIn: node.loggedIn,
     inventory: node.inventory ?? null,
     isSelf,
-    isHub,
-    hubMode: node.hubMode ?? null,
     operation: node.operation ?? null,
-    ...hubColumns(hub),
-    lastSeenAt: meshOrHubLastSeen(node.lastSeenAt, hub),
+    lastSeenAt: typeof node.lastSeenAt === 'number' ? node.lastSeenAt : null,
+    status: null,
+    certificate: null,
+    certSig: null,
     pending: false,
     admitMaterial: null,
     paused: isMeshNodePaused(node) ? true : undefined,
@@ -209,30 +189,21 @@ function admittedPath(node: MeshNode) {
 }
 
 function admittedAddress(
-  node: MeshNode,
   context: MergeContext,
   isSelf: boolean,
-  isHub: boolean,
   path: ReturnType<typeof admittedPath>
 ): string {
   return (
     deriveNodeAddress({
-      isHub,
       isSelf,
       transport: path.transport,
       peerAddress: path.peerAddress,
       endpoints: path.endpoints,
       viaRelay: path.viaRelay,
       relayPresence: path.relayPresence,
-      hubPublicUrl: context.hubDetails?.get(node.id)?.publicUrl,
       selfAddress: isSelf ? (context.selfAddress ?? null) : null,
     }) ?? '—'
   );
-}
-
-function meshOrHubLastSeen(mesh: number | null | undefined, hub: HubNodeRow | null): number | null {
-  if (typeof mesh === 'number') return mesh;
-  return hub?.last_seen_at ?? null;
 }
 
 function stringList(value: unknown): string[] {
@@ -244,45 +215,30 @@ function isEntryNode(nodeId: string, context: MergeContext): boolean {
   return context.entryNodeId != null && nodeId === context.entryNodeId;
 }
 
-function isHubNode(node: MeshNode, context: MergeContext): boolean {
-  return node.isHub === true || (context.hubNodeId != null && node.id === context.hubNodeId);
-}
-
-/** hub 列表补充的那几列；hub 不可达（`null`）时全部为 `null`，UI 据此禁用管理动作。 */
-function hubColumns(
-  hub: HubNodeRow | null
-): Pick<NodeRow, 'lastSeenAt' | 'status' | 'certificate' | 'certSig' | 'admissionStatus'> {
-  return {
-    lastSeenAt: hub?.last_seen_at ?? null,
-    status: hub?.status ?? null,
-    certificate: hub?.certificate ?? null,
-    certSig: hub?.cert_sig ?? null,
-    admissionStatus: hub ? hubAdmissionStatus(hub) : null,
-  };
-}
-
 /**
- * 只有 hub 列表里才有的待批准行；mesh 里已经有的同一台绝不重复列出。
- * 同 ID 只保留第一条：异常 / 过渡期的 hub 响应里出现两条同 ID pending 时，
- * 渲染出重复 React key 会让 busy 状态串行复用，还会给出两个可点的批准按钮。
+ * `pendingMemberIds` 里还不在 mesh 列表的占位行。
+ * 同 ID 只保留第一条：异常 / 过渡期的响应里出现两条同 ID 时，
+ * 渲染出重复 React key 会让 busy 状态串行复用。
  */
-function pendingRows(hubNodes: HubNodeRow[] | null, meshIds: ReadonlySet<string>): NodeRow[] {
+function pendingRows(
+  pendingMemberIds: readonly string[] | null | undefined,
+  meshIds: ReadonlySet<string>
+): NodeRow[] {
   const seen = new Set<string>();
   const rows: NodeRow[] = [];
-  for (const row of hubNodes ?? []) {
-    if (hubAdmissionStatus(row) !== 'pending' || meshIds.has(row.id) || seen.has(row.id)) continue;
-    seen.add(row.id);
-    rows.push(toPendingRow(row));
+  for (const id of pendingMemberIds ?? []) {
+    if (!id || meshIds.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    rows.push(toPendingRow(id));
   }
   return rows.sort((a, b) => compareNames(a.name, b.name));
 }
 
-function toPendingRow(row: HubNodeRow): NodeRow {
+function toPendingRow(id: string): NodeRow {
   return {
-    id: row.id,
-    // 还没接纳的节点不可路由：运行时 id 只能是它自己，绝不会退化成 `self`。
-    runtimeNodeId: row.id,
-    name: row.name?.trim() || row.id.slice(0, 8),
+    id,
+    runtimeNodeId: id,
+    name: id.slice(0, 8),
     publicKey: '',
     fingerprint: '',
     online: false,
@@ -299,27 +255,12 @@ function toPendingRow(row: HubNodeRow): NodeRow {
     loggedIn: false,
     inventory: null,
     isSelf: false,
-    isHub: false,
-    hubMode: null,
-    lastSeenAt: row.last_seen_at ?? null,
-    status: row.status ?? null,
-    certificate: row.certificate ?? null,
-    certSig: row.cert_sig ?? null,
+    lastSeenAt: null,
+    status: null,
+    certificate: null,
+    certSig: null,
     operation: null,
-    admissionStatus: 'pending',
     pending: true,
-    admitMaterial: admitMaterialOf(row),
-  };
-}
-
-function admitMaterialOf(row: HubNodeRow): PendingAdmitMaterial | null {
-  if (!row.enrollment_id || !row.authorization || !row.authorization_sig) return null;
-  if (!row.certificate || !row.cert_sig) return null;
-  return {
-    enrollmentId: row.enrollment_id,
-    authorization: row.authorization,
-    authorizationSig: row.authorization_sig,
-    certificate: row.certificate,
-    certSig: row.cert_sig,
+    admitMaterial: null,
   };
 }

@@ -76,6 +76,7 @@ export async function renameNodeViaKeyLog(
         { hubSync: true }
       );
       if (!appended.ok) return { ok: false as const, code: appended.code };
+      // `hubAck` 是冻结的 legacy 名：只把 `false` 当失败，否则靠 `relayAck`。
       if (appended.hubAck === false) {
         return { ok: false as const, code: appended.hubError || RENAME_UNCONFIRMED };
       }

@@ -85,7 +85,7 @@ export function isRelayMode(snapshot: MeshRelayState): boolean {
  * 当场问网关本机走的是不是中继，**不读这份 30 秒轮询的快照**。
  *
  * 「要不要紧跟一条 `meta-key`」这种判定不能吃陈旧值：刚接入中继就吊销一台节点时，
- * 快照还停在 `hub`，整条换代会被静默跳过。路由不存在（旧版本）或问不到一律当作不是。
+ * 快照还停在 `none`，整条换代会被静默跳过。路由不存在（旧版本）或问不到一律当作不是。
  */
 export async function fetchRelayMode(
   api: RelayTenantApi = defaultRelayTenantApi

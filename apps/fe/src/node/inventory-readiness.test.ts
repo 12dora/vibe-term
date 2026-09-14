@@ -93,7 +93,7 @@ describe('nodesViaRelayOf', () => {
   });
 
   test('非中继模式不参与判定', () => {
-    expect(nodesViaRelayOf({ mode: 'hub', loadedAt: 1, nodesViaRelay: 3 })).toBeNull();
+    expect(nodesViaRelayOf({ mode: 'none', loadedAt: 1, nodesViaRelay: 3 })).toBeNull();
   });
 
   test('中继模式且已读到：用它的成员数', () => {

@@ -1,4 +1,4 @@
-// 终端分享（分享方）REST 端点：挂在终端所在节点，经 Hub 时由 ApiClient 的 `/n/<nodeId>` baseUrl 前缀承担。
+// 终端分享（分享方）REST 端点：挂在终端所在节点，经 `/n/<nodeId>` 转发时由 ApiClient 的 baseUrl 前缀承担。
 //
 // 设置 / 日志 / 删除历史三族端点由设置页自带客户端消费，不在此文件。
 

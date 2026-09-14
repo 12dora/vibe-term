@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ApiError } from '@vibeterm/api-client';
-import { HubApiError } from './hub-api';
+import { EnrollmentApiError } from './enrollment-api';
 import {
   BACKOFF_FIRST_MS,
   BACKOFF_HARD_FIRST_MS,
@@ -86,11 +86,11 @@ describe('isUnreachableFailure', () => {
     expect(isUnreachableFailure(new ApiError(404, 'nope'))).toBe(false);
   });
 
-  test('带 status 的自定义错误（HubApiError 那类）同样不算', () => {
-    expect(isUnreachableFailure(new HubApiError('hub_nodes_failed', 500))).toBe(false);
-    expect(isUnreachableFailure(new HubApiError('NODE_LOGIN_REQUIRED', 401))).toBe(false);
+  test('带 status 的自定义错误（EnrollmentApiError 那类）同样不算', () => {
+    expect(isUnreachableFailure(new EnrollmentApiError('enrollment_failed', 500))).toBe(false);
+    expect(isUnreachableFailure(new EnrollmentApiError('NODE_LOGIN_REQUIRED', 401))).toBe(false);
     // 除非它明确说了「打不通」
-    expect(isUnreachableFailure(new HubApiError('NODE_UNREACHABLE', 503))).toBe(true);
+    expect(isUnreachableFailure(new EnrollmentApiError('NODE_UNREACHABLE', 503))).toBe(true);
   });
 
   test('传输层异常与超时算，主动取消不算，空值不算', () => {

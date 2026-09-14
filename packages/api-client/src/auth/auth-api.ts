@@ -16,7 +16,6 @@ import type {
   KeyLogHeadResponse,
   MeshConnectionResponse,
   MeshConnectionResult,
-  MeshHubsResponse,
   MeshNode,
   MeshNodesResponse,
   PasskeyRegistrationVerified,
@@ -98,7 +97,7 @@ export class AuthApi {
     return (await res.json()) as AuthModeResponse;
   }
 
-  /** `GET /api/mesh/nodes`（**需会话**）：含公钥 / inventory / loggedIn / isHub。 */
+  /** `GET /api/mesh/nodes`（**需会话**）：含公钥 / inventory / loggedIn。 */
   async listNodes(): Promise<MeshNode[]> {
     return (await this.listNodesDetailed()).nodes;
   }
@@ -122,32 +121,6 @@ export class AuthApi {
       ...(Array.isArray(payload.pendingMemberIds)
         ? { pendingMemberIds: payload.pendingMemberIds }
         : {}),
-    };
-  }
-
-  /**
-   * `GET /api/mesh/hubs`（**需会话**）：hub 集合、本机 uplink 当前挂载的那台、writer 是谁。
-   *
-   * 缺字段一律补成空集合而不是抛错：旧入口（1.1.10 及以前）没有这条路由，此时调用方
-   * 只会拿到「一台 hub 都不知道」，UI 退化成单 hub 形态，不该整页报错。
-   */
-  async listHubs(): Promise<MeshHubsResponse> {
-    const res = await this.client.fetch('/api/mesh/hubs');
-    if (!res.ok) {
-      throw new Error(await parseApiError(res, 'Failed to load mesh hubs'));
-    }
-    const payload = (await res.json()) as Partial<MeshHubsResponse>;
-    return {
-      hubs: payload.hubs ?? [],
-      attached: payload.attached ?? null,
-      writerHubId: payload.writerHubId ?? null,
-      candidates: (payload.candidates ?? []).map((row) => ({
-        publicUrl: row.publicUrl,
-        lastError: row.lastError ?? null,
-        lastAttemptAt: row.lastAttemptAt ?? null,
-        ...(row.rttMs !== undefined ? { rttMs: row.rttMs } : {}),
-        ...(row.rttAt !== undefined ? { rttAt: row.rttAt } : {}),
-      })),
     };
   }
 
@@ -339,8 +312,9 @@ export class AuthApi {
   /**
    * 409 `{code:'KEY_LOG_FORK'}` 是业务结果不是异常，必须让 UI 显式报「密钥日志分叉」。
    *
-   * `hubSync` → `POST /api/auth/keylog?hub=sync`：entry 先把记录发给 hub 并等 ack 再本地 append，
-   * 响应带 `hubAck`。admit / revoke **只有** `hubAck === true` 才能清掉 pending / 认为撤销生效。
+   * `hubSync` → `POST /api/auth/keylog?hub=sync`（查询名 `hub` 是冻结的 legacy 名）。
+   * 成功时网关仍返回 `hubAck: true`（表示本机已落库）；调用方只把 `hubAck === false` 当失败，
+   * 中继 fan-out 看 `relayAck`。
    */
   async appendKeyLog(
     body: KeyLogAppendRequest,
@@ -366,7 +340,7 @@ export class AuthApi {
         ok: true,
         seq: payload.seq,
         hash: payload.hash,
-        // 非 hub=sync 模式没有 hubAck 字段，保持 undefined（调用方只在 hubSync 下判定）。
+        // 非 `?hub=sync` 没有 hubAck 字段，保持 undefined。hubAck 是冻结的 legacy 名。
         hubAck: payload.hubAck,
         hubError: payload.hubError,
         // 只有中继模式下发；`hubAck:true` 不代表中继收到了，两者必须分开判。

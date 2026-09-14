@@ -1,9 +1,9 @@
 // 待确认 enrollment 的证书检测。
 //
 // 证书有两条到达路径，二者都汇进**唯一**的判定入口 `offerCertificate()`：
-//   1. 推送：hub 收到 redeem 后经 uplink 通知发起 enrollment 的 entry，entry 再以
+//   1. 推送：中继收到 redeem 后经 uplink 通知发起 enrollment 的 entry，entry 再以
 //      `ENROLL_REDEEMED` 帧转发到 `/mesh/ws`（`mesh-events.ts` 解码后多播）。
-//   2. 轮询：`GET /n/<hub>/api/hub/enrollments/:id` 按 enrollment id 查 redeem 结果。
+//   2. 轮询：`GET /api/mesh/relay/enrollments/:id` 按 enrollment id 查 redeem 结果。
 //      页面刚打开、WS 断线或推送丢失时由它兜底。
 //
 // 两条路径的证书都必须过 `enroll_pk` 匹配 + `cert_sig` 验签 + pending 未过期三关。
@@ -12,7 +12,7 @@
 
 import type { CertificateCandidate, PendingEnrollment } from './enrollment';
 import { findPendingForCertificate } from './enrollment';
-import type { HubApi } from './hub-api';
+import type { EnrollmentApi } from './enrollment-api';
 
 export const ENROLLMENT_POLL_INTERVAL_MS = 5000;
 
@@ -55,7 +55,7 @@ export function offerCertificate(
 
 /**
  * 一批候选证书 → 要上报的 outcome。**推送与轮询共用同一份**，`unknown` 同样上报：
- * 轮询查的是本次 enrollment 的 id，hub 却回了一份对不上任何 pending 的证书，
+ * 轮询查的是本次 enrollment 的 id，对端却回了一份对不上任何 pending 的证书，
  * 这是真正的异常信号，静默丢弃等于隐藏「收到未知节点证书」告警（见 F4-fix 评审 Minor）。
  */
 export function outcomesForCandidates(
@@ -66,15 +66,15 @@ export function outcomesForCandidates(
   return candidates.map((candidate) => offerCertificate(pendings, candidate, now));
 }
 
-/** 逐条 pending 向 hub 查 redeem 结果，返回已 redeem 的证书候选。 */
+/** 逐条 pending 向 enrollment 通道查 redeem 结果，返回已 redeem 的证书候选。 */
 export async function collectRedeemedCertificates(
-  hubApi: HubApi,
+  enrollmentApi: EnrollmentApi,
   pendings: PendingEnrollment[]
 ): Promise<CertificateCandidate[]> {
   const rows = await Promise.all(
     pendings.map(async (pending) => {
       try {
-        const status = await hubApi.getEnrollment(pending.hubEnrollmentId);
+        const status = await enrollmentApi.getEnrollment(pending.hubEnrollmentId);
         if (status.status !== 'redeemed' || !status.certificate || !status.cert_sig) return null;
         return { certificate: status.certificate, certSig: status.cert_sig };
       } catch {

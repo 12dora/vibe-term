@@ -21,11 +21,11 @@ const STATUS: TlsStatusResponse = {
   trustProxy: false,
   tlsPort: 9443,
   bindHost: '0.0.0.0',
-  sans: ['hub.lan', '192.168.1.10'],
+  sans: ['node.lan', '192.168.1.10'],
   caFingerprint: 'a'.repeat(64),
   certificate: {
-    subject: 'CN=hub.lan',
-    sans: ['hub.lan', '192.168.1.10'],
+    subject: 'CN=node.lan',
+    sans: ['node.lan', '192.168.1.10'],
     notBefore: 1_700_000_000_000,
     notAfter: 1_734_000_000_000,
     issuer: 'CN=VibeTerm local CA',
@@ -85,13 +85,13 @@ describe('TlsApi.update', () => {
     const { api, calls } = recorder([new Response(JSON.stringify(STATUS), { status: 200 })]);
     await api.update({
       mode: 'selfsigned',
-      sans: ['hub.lan', '192.168.1.10'],
+      sans: ['node.lan', '192.168.1.10'],
       tlsPort: 9443,
       bindHost: '0.0.0.0',
     });
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       mode: 'selfsigned',
-      sans: ['hub.lan', '192.168.1.10'],
+      sans: ['node.lan', '192.168.1.10'],
       tlsPort: 9443,
       bindHost: '0.0.0.0',
     });
@@ -101,7 +101,7 @@ describe('TlsApi.update', () => {
     const { api, calls } = recorder([new Response(JSON.stringify(STATUS), { status: 200 })]);
     await api.update({
       mode: 'acme',
-      domain: 'hub.example.com',
+      domain: 'node.example.com',
       email: 'ops@example.com',
       challenge: 'dns-01',
       dnsProvider: 'dnspod',
@@ -112,7 +112,7 @@ describe('TlsApi.update', () => {
     });
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       mode: 'acme',
-      domain: 'hub.example.com',
+      domain: 'node.example.com',
       email: 'ops@example.com',
       challenge: 'dns-01',
       dnsProvider: 'dnspod',
@@ -127,7 +127,7 @@ describe('TlsApi.update', () => {
     const { api, calls } = recorder([new Response(JSON.stringify(STATUS), { status: 200 })]);
     await api.update({
       mode: 'acme',
-      domain: 'hub.example.com',
+      domain: 'node.example.com',
       email: 'ops@example.com',
       challenge: 'http-01',
       staging: false,
@@ -152,7 +152,7 @@ describe('TlsApi.update', () => {
   test('409 port_in_use 也走类型化错误', async () => {
     const { api } = recorder([errorBody('port_in_use', 'address already in use :9443', 409)]);
     const err = (await api
-      .update({ mode: 'selfsigned', sans: ['hub.lan'], tlsPort: 9443, bindHost: '0.0.0.0' })
+      .update({ mode: 'selfsigned', sans: ['node.lan'], tlsPort: 9443, bindHost: '0.0.0.0' })
       .catch((e) => e)) as TlsApiError;
     expect(err.code).toBe('port_in_use');
     expect(err.status).toBe(409);

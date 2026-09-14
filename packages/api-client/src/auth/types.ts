@@ -3,11 +3,11 @@
 // 主题模块拆在 types-*.ts；本文件只做 re-export，调用方 import 路径不变。
 
 export type { AuthTotpRecordResponse } from '@vibeterm/shared';
-export type { HubEndpointInfo, HubMode } from '@vibeterm/shared/uplink';
 
 export * from './types-mode';
 export * from './types-login';
 export * from './types-mesh';
-export * from './types-hub';
+export * from './types-mesh-connection';
+export * from './types-enrollment';
 export * from './types-keylog';
 export * from './types-passkey';

@@ -1,4 +1,4 @@
-// 节点表 ADDRESS 列：从 hub URL / 直连对端 / 广告 endpoint / 中继主机推导展示用 host。
+// 节点表 ADDRESS 列：从直连对端 / 广告 endpoint / 中继主机推导展示用 host。
 // 纯函数，不读 store；缺值一律 `null`，由调用方换成 '—' / '-'。
 
 import { type Translate, formatRelative } from '@/lib/format-relative';
@@ -8,7 +8,6 @@ const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 const IPV4_HOSTPORT_RE = /^\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?$/;
 
 export interface NodeAddressInput {
-  isHub?: boolean;
   isSelf?: boolean;
   pending?: boolean;
   transport?: MeshNodeTransport | string | null;
@@ -16,7 +15,6 @@ export interface NodeAddressInput {
   endpoints?: readonly string[] | null;
   viaRelay?: string | null;
   relayPresence?: readonly string[] | null;
-  hubPublicUrl?: string | null;
   selfAddress?: string | null;
 }
 
@@ -56,15 +54,11 @@ export function advertisedEndpointHost(
 }
 
 /**
- * ADDRESS 优先级：hub publicUrl → 直连 peerAddress → 广告 endpoint（偏公网）
+ * ADDRESS 优先级：直连 peerAddress → 广告 endpoint（偏公网）
  * → 当前 viaRelay / relayPresence → self 本机 HTTPS/域名 → 空。
  */
 export function deriveNodeAddress(input: NodeAddressInput): string | null {
   if (input.pending) return null;
-  if (input.isHub) {
-    const hub = displayHost(input.hubPublicUrl);
-    if (hub) return hub;
-  }
   return (
     liveDirectHost(input) ??
     advertisedEndpointHost(input.endpoints) ??

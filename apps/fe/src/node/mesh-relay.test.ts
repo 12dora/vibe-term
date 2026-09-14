@@ -97,7 +97,7 @@ describe('mesh-relay 纯函数', () => {
   test('一条都没挂上时不可写；非中继模式恒可写', () => {
     const detached = { ...getMeshRelayState(), ...status({ relays: [link('https://a.example')] }) };
     expect(relayWritable(detached)).toBe(false);
-    expect(relayWritable({ ...detached, mode: 'hub' })).toBe(true);
+    expect(relayWritable({ ...detached, mode: 'none' })).toBe(true);
   });
 
   test('任一条被踢即视为要重新输入口令', () => {

@@ -131,8 +131,8 @@ const warnedForeignNodeIds = new Set<string>();
 /**
  * 决定 NODE_LOGIN_REQUIRED 该记到哪个 node 上。
  *
- * 路径带 `/n/:id` 时以路径为准：hub 转发的 401 可能把 hub 自己的 nodeId 写进 body
- * （实测 `/n/<A>/api/rtc/authorize` 回 `{nodeId: <hub>}`），认 body 会把「需要登录」
+ * 路径带 `/n/:id` 时以路径为准：入口转发的 401 可能把入口自己的 nodeId 写进 body
+ * （实测 `/n/<A>/api/rtc/authorize` 回 `{nodeId: <entry>}`），认 body 会把「需要登录」
  * 记到无关的 node 行上，进而拆掉那棵 runtime 子树。
  * 路径不带前缀时才信 body：那是 entry 本地端点代某个 node 作答（如升级服务的转发调用）。
  */

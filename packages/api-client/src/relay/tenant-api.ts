@@ -17,7 +17,7 @@ import type {
   RelaySwitchReason,
   RelayUplinkMode,
 } from '@vibeterm/shared/relay';
-import type { HubEnrollmentStatus } from '../auth/types';
+import type { EnrollmentStatus } from '../auth/types';
 import { type ApiClient, defaultApiClient } from '../client';
 import { type JsonRequestOptions, requestJson } from '../json-mutation';
 import { RelayApiError } from './admin-api';
@@ -256,7 +256,7 @@ export interface RelayPackUploadResult {
   results?: { url: string; ok: boolean; status: number; code?: string }[];
 }
 
-/** `POST /api/mesh/relay/enrollments` 的 201（字段与 hub 的 `/api/hub/enrollments` 对齐）。 */
+/** `POST /api/mesh/relay/enrollments` 的 201。 */
 export interface RelayEnrollmentCreated {
   id: string;
   /** 节点侧路由返回的是 camelCase 的 `expiresAt`。 */
@@ -272,11 +272,10 @@ export interface RelayEnrollmentCreated {
 /**
  * `GET /api/mesh/relay/enrollments/:id`。
  *
- * 与 hub 的同名接口**不完全同形**：证书字段一致，但节点侧这条路由用 camelCase 的 `nodeId`
- * 与 `alreadyAdmitted`（hub 是 `node_id` / `already_admitted`）。引擎只从证书里解 node id，
- * 两个字段目前谁都没读；写在类型里是为了别再有人照着 hub 的字段名去取。
+ * 证书字段与 `EnrollmentStatus` 一致；节点侧这条路由还带 camelCase 的 `nodeId`
+ * 与 `alreadyAdmitted`。引擎只从证书里解 node id。
  */
-export interface RelayEnrollmentStatus extends HubEnrollmentStatus {
+export interface RelayEnrollmentStatus extends EnrollmentStatus {
   nodeId?: string;
   alreadyAdmitted?: boolean;
 }
@@ -401,7 +400,6 @@ export class RelayTenantApi {
 
   /**
    * `GET /api/mesh/relay/readmit/prepare`：列出成员记录还是旧根签的节点。
-   * hub 模式与中继模式都可用——迁移时要在还挂着 hub 的时候先补签。
    */
   readmitPrepare(): Promise<RelayReadmitPrepare> {
     return this.json<RelayReadmitPrepare>(`${BASE}/readmit/prepare`, 'relay_readmit_failed');

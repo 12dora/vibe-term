@@ -46,7 +46,7 @@ export interface RtcSignalPayload {
   candidate: string | null;
 }
 
-/** hub 收到 redeem 后经 entry 转发给发起页面的证书（设计 §2 步骤 3）。 */
+/** 中继收到 redeem 后经 entry 转发给发起页面的证书（设计 §2 步骤 3）。 */
 export interface EnrollRedeemedPayload {
   /** base64url，32 字节：本次 enrollment 的公钥，页面据此匹配 pending。 */
   enrollPk: string;
@@ -142,7 +142,7 @@ function pausedFromDecoded(payload: { paused?: unknown }, raw: Uint8Array): bool
 
 /**
  * 中继那两段（契约 §C）。线上是 `Option`，**没报告**与「报告了空」都编成 `null`——
- * 老 node 的帧、hub 模式、以及新 node 一时说不清走哪台，解出来是同一个值。分不开就一律按
+ * 老 node 的帧、以及新 node 一时说不清走哪台，解出来是同一个值。分不开就一律按
  * 「没报告」处理：整个键不出现，投影侧的 `carry` / `pick` 据此留用列表里已有的值，
  * 而不是把一台好好的机器的中继信息抹成未知。
  *

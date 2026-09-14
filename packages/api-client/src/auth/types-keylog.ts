@@ -21,8 +21,10 @@ export interface KeyLogAppendRequest {
 /**
  * `POST /api/auth/keylog` 结果。
  *
- * `hub=sync` 模式下 entry 先把记录送 hub 并等 ack，再本地 append，响应带 `hubAck`：
- * 只有 `hubAck === true` 才代表 hub 已持久化该记录，admit / revoke 必须据此决定是否清 pending。
+ * 查询 `?hub=sync` 与响应字段 `hubAck` / `hubError` 是冻结的 legacy 名（D4）：
+ * `hubAck === true` 表示记录已在**本机**落库（成功路径上网关始终返回 true）；
+ * 调用方不得要求 `hubAck === true` 才算成功，只把 `hubAck === false` 当失败。
+ * 中继 fan-out 看 `relayAck`。
  */
 export type KeyLogAppendResult =
   | {
