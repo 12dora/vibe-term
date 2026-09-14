@@ -30,7 +30,7 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 
 中继角色**自带 TURN**（`VIBETERM_TURN_PORT`，默认 `40000`/UDP；中继端口段 `VIBETERM_TURN_RELAY_PORT_RANGE`，默认
 `40001-40049`），长期凭据首启生成后落 `gateway_kv`，随 `auth.ok` / `relay.list` 下发给租户节点，不再需要手配三个环境变量。中继主机 ICE 缺省 `40050-40099`，与 TURN 错开；全部 UDP 落在 40000-40099。
-配齐 `VIBETERM_TURN_URL` / `_USERNAME` / `_CREDENTIAL` 则改用外部 TURN、内置不启动；**hub 角色仍只支持这套外部三元组**。
+配齐 `VIBETERM_TURN_URL` / `_USERNAME` / `_CREDENTIAL` 则改用外部 TURN、内置不启动。
 部署与排查见 [mesh 运维](./operations/mesh-operations.md)，协议与状态字段见 [公共中继角色](./architecture/relay.md)。剩下的边界：
 
 - **只有 UDP**：节点侧 ICE 由 node-datachannel（libjuice）实现，`turns:` 与 `?transport=tcp` 不产生 relay 候选；内置 TURN
@@ -56,12 +56,12 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
 2. 直连的 ICE-TCP 与 `VIBETERM_RTC_PORT_RANGE`（`init` / upgrade 按角色写入统一段 40000-40099）目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。UI 不承诺 ICE-TCP 单独可达。
 
-## KI-8：Hub 转发不把浏览器来源 IP 带给节点
+## KI-8：入口转发不把浏览器来源 IP 带给目标节点
 
-节点侧看到的 clientIp 恒为 `peer:<hubNodeId>`（`dispatchInboundHttp` 写入），`x-forwarded-*` 两端都被剥。
-因此节点自己的分享登录限速在 Hub 路径上会把所有访客算成同一个来源。当前由 Hub 侧按（真实来源 IP, shareId）
-的配额兜住（`apps/gateway/src/mesh/share-login-quota.ts`），实际不会误锁别人；但节点端限速在这条路径上
-仍是空转。彻底解法是给 peer 上下文加一条 Hub 可信填写、浏览器不可覆盖的来源 IP 元数据。
+节点侧看到的 clientIp 恒为 `peer:<entryNodeId>`（`dispatchInboundHttp` 写入），`x-forwarded-*` 两端都被剥。
+因此目标节点自己的分享登录限速会把所有经该入口转发的访客算成同一个来源。当前由入口按（真实来源 IP, shareId）
+的配额兜住（`apps/gateway/src/mesh/share-login-quota.ts`），实际不会误锁别人；但目标节点端限速在这条路径上
+仍是空转。彻底解法是给 peer 上下文加一条入口可信填写、浏览器不可覆盖的来源 IP 元数据。
 见[终端分享](./architecture/terminal-share.md)。
 
 ## KI-9：本机自升级没有下载字节进度
@@ -89,7 +89,7 @@ GUI 与 CLI 原文展示。本机自升级仍只有阶段名：`UpgradeStatus` �
 `install.sh` 首次安装仍只校验 SHA256SUMS，没有验签——shell 里没有可依赖的 Ed25519 实现，
 首次安装本来也要信任下载源。
 
-另一侧的限制：远程发起的升级（入口 / hub 转发过来的 `POST /api/system/upgrade`）一律要求目标版本
+另一侧的限制：远程发起的升级（入口转发过来的 `POST /api/system/upgrade`）一律要求目标版本
 ≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `vibeterm upgrade --version <ver>`；且**升到 2.0.0 完成安装目录迁移之后不支持降回 1.x**（旧 CLI 只认旧目录、旧 label 与 `TMEX_*` 键），见 [改名迁移](./operations/rename-migration.md)。
 
 ## KI-12：混合版本网内旧目标节点仍把所有转发流收尾报成 4401
@@ -119,7 +119,7 @@ iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不�
 本机代理 TUN（Surge / mihomo 一类）下，若命中的代理策略不转发 UDP（Surge 的 `ss` 策略未开 `udp-relay`，
 `udp-policy-not-supported-behavior` 默认 REJECT；mihomo 同理），节点对非直连目的地的所有 UDP 都会被本机丢掉：
 对该中继 TURN 控制口的 STUN Binding 探测一直 `error=timeout`，境外公共 STUN（Google / Cloudflare）同样超时，
-而国内直连目的地的探测正常。现网例：本机（Surge）与 hub B（mihomo）探东京中继 `turn:152.70.84.203:40000` 超时，
+而国内直连目的地的探测正常。现网例：本机（Surge）与一台跑 mihomo 的节点探东京中继 `turn:152.70.84.203:40000` 超时，
 无 TUN 的 jiefa-app 与 oracle 自身探测 `ok`。此前记录的「同机裸 `dgram` 有回包」是探测脚本把「已发送数」当「回包数」
 打印造成的误判，UDP 实际不可达。
 

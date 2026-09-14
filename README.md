@@ -59,22 +59,13 @@ VibeTerm 将 Mac、Linux 服务器、NAS 和云主机组网。所有接入节点
 ## 部署模式
 
 <table width="100%">
-  <tr><th width="33%">独立</th><th width="33%">Hub模式</th><th width="33%">中继模式</th></tr>
-  <tr><td valign="top">单机安装即用，默认只监听本机。</td><td valign="top">一台有公网地址的设备做入口，其余可联网设备作为节点加入。支持高可用部署。（该模式默认 Hub 节点可信）</td><td valign="top">无公网地址时，借用他人或自建的中继转发密文，多人可共用一台中继。（该模式默认中继节点不可信）</td></tr>
+  <tr><th width="50%">独立</th><th width="50%">中继模式</th></tr>
+  <tr><td valign="top">单机安装即用，默认只监听本机。</td><td valign="top">无公网地址时，借用他人或自建的中继转发密文，多人可共用一台中继。中继只见密文，节点之间也可直连。登录入口在租户自己的任意一台节点上。</td></tr>
 </table>
 
-**两种模式的差异**
-
-| | Hub | 中继 |
-|---|---|---|
-| 归属 | 用户可信的设备，可兼任节点 | 专门转发流量的公共服务器，可由第三方运营 |
-| 可见信息 | 节点清单、在线状态、连接信令；终端内容仍是节点间 E2EE | 仅节点编号与流量字节；节点名、设备清单、终端内容均为密文 |
-| 登录入口 | Hub节点公网地址打开网页登录 | 无网页，从租户自己的任意一台节点登录 |
-| 适用场景 | 单人使用，有任意公网 IP 或域名的设备（云主机或端口转发） | 多人使用，接入设备均无公网 IP，或提供公共中继服务，允许其他用户接入 |
-
 <p align="center">
-  <img src="docs/images/nodes.png" width="880" alt="VibeTerm 节点管理：多台设备通过 Hub 组成 mesh，显示在线状态与直连方式" /><br/>
-  <sub>设置 → 多节点互联：HTTPS 方式与节点管理，两台设备经 Hub 在线</sub>
+  <img src="docs/images/nodes.png" width="880" alt="VibeTerm 节点管理：多台设备组成 mesh，显示在线状态与直连方式" /><br/>
+  <sub>设置 → 多节点互联：HTTPS 方式与节点管理，两台设备在线</sub>
 </p>
 
 ## 部署方式
@@ -86,10 +77,6 @@ VibeTerm 将 Mac、Linux 服务器、NAS 和云主机组网。所有接入节点
 | 场景 | 提示词 |
 |---|---|
 | 独立部署 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「独立部署」一节在这台设备上部署 VibeTerm。` |
-| 建立 Hub · 有公网域名 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「Hub：公网域名」一节部署 Hub。域名是 <域名>，80/443 端口 <可用/不可用>。` |
-| 建立 Hub · 无公网 IP，路由器端口转发 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「Hub：端口转发」一节部署 Hub。路由器会把公网端口 <端口> 转发到这台设备，公网地址是 <IP 或 DDNS 域名>。` |
-| 建立 Hub · 无公网 IP，Cloudflare Tunnel | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「Hub：Cloudflare Tunnel」一节部署 Hub。隧道域名是 <域名>。` |
-| 加入 Hub | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「加入 Hub」一节把这台设备加入 Hub。加入码是 <加入码>。` |
 | 建立中继 · 有公网域名 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「中继：公网域名」一节部署中继。域名是 <域名>，80/443 端口 <可用/不可用>。` |
 | 建立中继 · 无公网 IP，路由器端口转发 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「中继：端口转发」一节部署中继。路由器会把公网端口 <端口> 转发到这台设备，公网地址是 <IP 或 DDNS 域名>。` |
 | 建立中继 · 无公网 IP，Cloudflare Tunnel | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「中继：Cloudflare Tunnel」一节部署中继。隧道域名是 <域名>。` |

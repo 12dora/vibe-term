@@ -13,7 +13,7 @@ Commands:
 - `vibeterm doctor`
 - `vibeterm upgrade`
 - `vibeterm uninstall`
-- `vibeterm hub …` / `vibeterm relay …` (mesh and relay management)
+- `vibeterm user …` / `vibeterm relay …` / `vibeterm mesh …` (local user, relay, and mesh management)
 
 Install directory: `~/Library/Application Support/vibeterm` (macOS) or `~/.local/share/vibeterm` (Linux);
 database at `data/vibeterm.db`, configuration in `app.env` (`VIBETERM_*` keys).
