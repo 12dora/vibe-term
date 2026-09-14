@@ -605,7 +605,7 @@ describe('TlsService', () => {
     expect(status.caFingerprint).toBe(oldFingerprint);
     expect(logs.join(' ')).toContain('expires in 10 days');
     expect(logs.join(' ')).toContain('vibeterm tls reset');
-    expect(logs.join(' ')).toContain('vibeterm relay join');
+    expect(logs.join(' ')).toContain('vibeterm relay trust refresh');
   });
 
   test('automatically replaces an already expired CA', async () => {

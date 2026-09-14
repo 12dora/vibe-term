@@ -40,6 +40,7 @@ export const AUTH_COMMANDS = new Set([
   'relay.leave',
   'relay.list',
   'relay.unpin',
+  'relay.trust.refresh',
 ]);
 
 export type AuthSpawnPlan = {

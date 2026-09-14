@@ -102,6 +102,11 @@ describe('portPlanFromEnv', () => {
     expect(exposed.at(-1)).toMatchObject({ purpose: 'gateway-http', port: 19663 });
   });
 
+  test('legacy hub,node (including internal spaces) is node for the port plan', () => {
+    expect(portRoleFromEnv({ VIBETERM_ROLES: 'hub,node' })).toBe('node');
+    expect(portRoleFromEnv({ VIBETERM_ROLES: 'hub, node' })).toBe('node');
+  });
+
   test('missing role is standalone; missing rtc uses the default range in the spec', () => {
     expect(portRoleFromEnv({})).toBe('standalone');
     const rtc = portPlanFromEnv({}).find((spec) => spec.purpose === 'rtc-ice');

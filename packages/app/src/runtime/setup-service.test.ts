@@ -90,7 +90,6 @@ async function baseDeps(
     rtcCapable: false,
     platform: 'darwin-arm64',
     scheduleRestart: () => undefined,
-    startedAt: 111,
     now: () => 1_700_000_000_000,
     setupLock: createSetupTransitionLock(),
     ...overrides,
@@ -102,7 +101,6 @@ async function baseDeps(
 describe('precheckRelayUrl', () => {
   test('reachable when relay health answers ok', async () => {
     const deps = await baseDeps({
-      startedAt: 42,
       fetch: (async () => Response.json({ ok: true })) as FetchLike,
     });
     expect(await precheckRelayUrl('https://relay.example.com', deps)).toEqual({
@@ -119,7 +117,6 @@ describe('precheckRelayUrl', () => {
   test('passes the local self-signed CA to fetch when available', async () => {
     let seenInit: RequestInit | undefined;
     const deps = await baseDeps({
-      startedAt: 42,
       precheckCaPem: async () => '-----BEGIN CERTIFICATE-----\nabc\n-----END CERTIFICATE-----',
       fetch: (async (_input: unknown, init?: RequestInit) => {
         seenInit = init;
@@ -132,7 +129,6 @@ describe('precheckRelayUrl', () => {
 
   test('a 200 without ok is not reachable', async () => {
     const deps = await baseDeps({
-      startedAt: 42,
       fetch: (async () => Response.json({ status: 'ok', startedAt: 42 })) as FetchLike,
     });
     expect(await precheckRelayUrl('https://relay.example.com:13443', deps)).toEqual({
@@ -162,7 +158,6 @@ describe('precheckRelayUrl', () => {
   test('probes candidate ports when the url has no port and 443 is dead', async () => {
     const seen: string[] = [];
     const deps = await baseDeps({
-      startedAt: 7,
       fetch: (async (input: unknown) => {
         const url = new URL(String(input));
         seen.push(`${url.port || '443'}${url.pathname}`);
@@ -182,7 +177,6 @@ describe('precheckRelayUrl', () => {
   test('an explicit port is confirmed without a candidate sweep', async () => {
     const seen: string[] = [];
     const deps = await baseDeps({
-      startedAt: 7,
       fetch: (async (input: unknown) => {
         seen.push(String(input));
         return Response.json({ ok: true });
@@ -218,7 +212,6 @@ describe('precheckRelayUrl', () => {
   test("kind:'relay' probes and confirms with /api/relay/health", async () => {
     const seen: string[] = [];
     const deps = await baseDeps({
-      startedAt: 7,
       fetch: (async (input: unknown) => {
         const url = new URL(String(input));
         seen.push(`${url.port || '443'}${url.pathname}`);
@@ -226,7 +219,7 @@ describe('precheckRelayUrl', () => {
         return Response.json({ ok: true, version: '1.1.37' });
       }) as FetchLike,
     });
-    const result = await precheckRelayUrl('https://relay.example.com', deps, 'relay');
+    const result = await precheckRelayUrl('https://relay.example.com', deps);
     expect(result.reachable).toBe(true);
     // 中继健康接口不下发 startedAt，本机判定只对 Hub 有意义
     expect(result.isSelf).toBe(false);
@@ -244,7 +237,7 @@ describe('precheckRelayUrl', () => {
         return new Response('not found', { status: 404 });
       }) as FetchLike,
     });
-    const result = await precheckRelayUrl('https://relay.example.com', deps, 'relay');
+    const result = await precheckRelayUrl('https://relay.example.com', deps);
     expect(result.reachable).toBe(false);
     expect(result.resolvedUrl).toBeNull();
     expect(result.probed).toBe(true);

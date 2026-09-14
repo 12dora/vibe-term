@@ -257,6 +257,7 @@ CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分是否已接中继（`Rela
 `RTT` 是该条 uplink 自己的心跳时延，`PEERS` 是该中继上在线的对端数，`TURN` 是它下发的 TURN 地址并带归因：本机 ok 且有 members → `(ok, N/M)`；本机 fail 且有 members → `(down, N/M nodes ok)`；本机 fail 无 members → `(down)`。
 该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`（已知最佳路径 RTT，毫秒）。payload 带 `autoSelect` 时再加 `AUTO`（`auto` / `pinned` / `-`）与 `SCORE`（自动优选打分，越小越好，毫秒；样本不足为 `-`）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发）、`pinned` / `autoSelected` / `score`，payload 可选 `preferredUrl` / `autoSelect`。`--json` 打 `raw`，新字段原样出去。
 `vibeterm relay unpin [--json]` 清掉手动固定的主中继，人读为 `unpinned` 或 `nothing pinned`。
+中继自签 CA 轮换后，成员用 `vibeterm relay trust refresh <url> --fingerprint <sha256-spki-hex>` 重新钉扎（先无校验下载 `/api/tls/ca.crt`，核对 SHA-256 SPKI 指纹，再写入 `relay_ca_pins`）。已加入的节点也可 `vibeterm relay join <url> --tenant <id> --password --ca-fingerprint <hex>`（rekey 路径会保存指纹）。
 配了多条中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。路径采样语义见 [路径优选](../architecture/path-selection.md)。中继机本地看用量用 `vibeterm relay metrics [--members] [--json]`。
 
 ## 文件拷贝

@@ -9,10 +9,8 @@ import type { FetchInit, FetchLike } from './fetch-like';
 /** CLI 侧单个候选端口的探测超时。 */
 export const CLI_PROBE_TIMEOUT_MS = 4_000;
 
-export type ProbeAddressKind = 'relay';
-
 export type ProbeAddressOptions = {
-  kind: ProbeAddressKind;
+  kind: 'relay';
   fetcher?: FetchLike;
   log?: (message: string) => void;
   /** 显式跳过探测（`--insecure-local` 等）。 */

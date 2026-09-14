@@ -45,6 +45,8 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'relay.leave': async (p) => await (await relay()).runRelayLeave(p),
   'relay.list': async (p) => await (await relay()).runRelayList(p),
   'relay.unpin': async (p) => await (await relay()).runRelayUnpin(p),
+  'relay.trust.refresh': async (p, n) =>
+    await (await import('./commands/relay-trust')).runRelayTrustRefresh(p, n.rest[0] ?? ''),
 };
 
 export async function dispatchAuthCli(parsed: ParsedArgs, lang: CliLang): Promise<void> {

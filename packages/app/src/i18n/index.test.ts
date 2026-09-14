@@ -86,6 +86,20 @@ describe('i18n', () => {
     expect(zh).not.toContain('您');
   });
 
+  test('upgrade.hubEnvMigrated exists in both languages', () => {
+    for (const lang of ['en', 'zh-CN'] as const) {
+      setLang(lang);
+      const migrated = t('upgrade.hubEnvMigrated', { count: 3, backup: 'backups/app.env.x.hub' });
+      expect(migrated).not.toBe('upgrade.hubEnvMigrated');
+      expect(migrated).toContain('backups/app.env.x.hub');
+      expect(migrated).toContain('hub,node');
+      expect(migrated).toContain('vibeterm relay join');
+    }
+    setLang('zh-CN');
+    expect(t('upgrade.hubEnvMigrated', { count: 1, backup: 'x' })).not.toContain('你');
+    expect(t('upgrade.hubEnvMigrated', { count: 1, backup: 'x' })).not.toContain('您');
+  });
+
   test('upgrade.stunEnvMigrated and doctor.stun keys exist in both languages', () => {
     for (const lang of ['en', 'zh-CN'] as const) {
       setLang(lang);

@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import {
   deriveSeed,
   encodeBase64url,
@@ -257,6 +258,24 @@ describe('performRelayPasswordJoin', () => {
         { auth, fetcher }
       )
     ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'relay_tenant_unknown' });
+  });
+
+  test('join without a CA fingerprint deletes a stale pin before dialing', async () => {
+    const auth = await openAuth();
+    new RelayCaPinStore(auth.db).put({
+      url: RELAY_URL,
+      caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n',
+      fingerprint: 'ab'.repeat(32),
+    });
+    expect(new RelayCaPinStore(auth.db).get(RELAY_URL)).not.toBeNull();
+    const fetcher: FetchLike = async () => new Response('nope', { status: 404 });
+    await expect(
+      performRelayPasswordJoin(
+        { relayUrl: `${RELAY_URL}:443`, tenantId: TENANT_ID, password: PASSWORD },
+        { auth, fetcher, timeoutMs: 100 }
+      )
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError' });
+    expect(new RelayCaPinStore(auth.db).get(RELAY_URL)).toBeNull();
   });
 
   test('rejects an invalid relay url', async () => {

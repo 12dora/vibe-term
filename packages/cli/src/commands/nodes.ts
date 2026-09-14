@@ -282,7 +282,11 @@ const enroll: SubHandler = async (ctx, flags, positionals) => {
       throw new CliError(
         'relay public url is unknown or not https; cannot print a password join command'
       );
-    const command = passwordJoinCommand(publicUrl);
+    const tenantId = status?.tenantId?.trim() ?? '';
+    if (!tenantId) {
+      throw new CliError('relay tenant id is unknown; cannot print a password join command');
+    }
+    const command = passwordJoinCommand(publicUrl, tenantId);
     emit(ctx, { mode: 'password', joinCommand: command, publicUrl }, () => ctx.out.line(command));
     return;
   }

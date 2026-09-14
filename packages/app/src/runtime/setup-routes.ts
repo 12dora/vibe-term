@@ -2,7 +2,7 @@ import { isStandaloneRoles } from '../lib/roles';
 import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
 import { handleRelayJoinRequest } from './relay-join-routes';
 import { becomeRelay } from './relay-setup-service';
-import { type PrecheckKind, type SetupServiceDeps, precheckRelayUrl } from './setup-service';
+import { type SetupServiceDeps, precheckRelayUrl } from './setup-service';
 import { SetupError } from './setup-shared';
 
 const SETUP_PATHS = new Set(['/api/setup/precheck', '/api/setup/relay', '/api/setup/relay-join']);
@@ -13,13 +13,12 @@ function readString(body: Record<string, unknown>, key: string): string {
 }
 
 /** 缺省 relay；非法值直接拒，别让打错的 kind 静默按错误判据探测。 */
-function readPrecheckKind(body: Record<string, unknown>): PrecheckKind {
+function assertRelayPrecheckKind(body: Record<string, unknown>): void {
   const kind = body.kind;
-  if (kind === undefined || kind === null || kind === '') return 'relay';
+  if (kind === undefined || kind === null || kind === '') return;
   if (kind !== 'relay') {
     throw new SetupError('invalid_body', "kind must be 'relay'", 400);
   }
-  return kind;
 }
 
 async function dispatchSetupAction(
@@ -28,7 +27,8 @@ async function dispatchSetupAction(
   deps: SetupServiceDeps
 ): Promise<Response> {
   if (path === '/api/setup/precheck') {
-    return jsonOk(await precheckRelayUrl(readString(body, 'url'), deps, readPrecheckKind(body)));
+    assertRelayPrecheckKind(body);
+    return jsonOk(await precheckRelayUrl(readString(body, 'url'), deps));
   }
   if (path === '/api/setup/relay') {
     const relayPassword = body.relayPassword;

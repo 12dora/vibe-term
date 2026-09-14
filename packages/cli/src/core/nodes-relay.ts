@@ -39,6 +39,7 @@ export type RelayStatusRow = Partial<RelayStatusRowDto> & {
 
 export interface RelayStatusJson {
   mode?: RelayUplinkMode | string;
+  tenantId?: string | null;
   relays?: RelayStatusRow[];
   metaEpoch?: number;
   caFingerprint?: string | null;

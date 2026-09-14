@@ -11,6 +11,7 @@ import {
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
+import { rewriteLegacyHubInstallEnv } from '../lib/install';
 import {
   type VibeTermRoles,
   isStandaloneRoles,
@@ -188,7 +189,7 @@ export async function patchOwnedEnvKeys(
       }
     }
     try {
-      await write(deps.envPath, { ...existing, ...patch });
+      await write(deps.envPath, rewriteLegacyHubInstallEnv({ ...existing, ...patch }));
     } catch (error) {
       throw wrapEnvWriteError(error);
     }
@@ -258,8 +259,8 @@ export function newStagedEnvPath(envPath: string): string {
   );
 }
 
-/** 密码加入中继后的角色：本机已是 relay 则 `relay,node`，否则 `node`。 */
-export function relayPasswordJoinRoleName(current: string | undefined): string {
+/** 本机可能同时是中继（`relay,node`）：加入别人的中继不该把自己的 relay 角色关掉。 */
+export function relayJoinRoleName(current: string | undefined): string {
   let roles: VibeTermRoles;
   try {
     roles = parseVibeTermRoles(current);
@@ -272,12 +273,9 @@ export function relayPasswordJoinRoleName(current: string | undefined): string {
 export function applyRelayPasswordJoinEnv(
   existing: Record<string, string>
 ): Record<string, string> {
-  return {
-    ...existing,
-    VIBETERM_ROLES: relayPasswordJoinRoleName(existing.VIBETERM_ROLES),
-    VIBETERM_HUB_URL: '',
-    VIBETERM_HUB_PUBLIC_URL: '',
-  };
+  const next = rewriteLegacyHubInstallEnv(existing);
+  next.VIBETERM_ROLES = relayJoinRoleName(next.VIBETERM_ROLES);
+  return next;
 }
 
 export async function commitRelayPasswordJoinEnv(deps: SetupEnvHost): Promise<void> {

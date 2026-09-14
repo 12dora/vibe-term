@@ -318,7 +318,6 @@ export function buildLocalRouteDeps(input: {
     quiesceMesh: async () => {
       await tryStop(() => input.mesh?.stop());
     },
-    startedAt: PROCESS_STARTED_AT,
     authenticate: createRouteAuthenticate(
       input.roles,
       input.auth.nodeSessionStore,

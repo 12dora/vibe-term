@@ -108,6 +108,7 @@ describe('buildAppEnvValues', () => {
       VIBETERM_PEER_PORT: '39001',
       OTHER: 'keep',
     });
+    expect(rewriteLegacyHubInstallEnv({ VIBETERM_ROLES: 'hub, node' }).VIBETERM_ROLES).toBe('node');
   });
 });
 

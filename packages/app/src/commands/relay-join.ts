@@ -1,4 +1,5 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/relay/redeem-pop';
 import {
   createNodeCertificate,
@@ -26,12 +27,18 @@ import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import { joinUserKeyService, makeReplayPasskeyVerifier } from '../lib/keylog-passkey-replay';
 import type { LocalAuthContext } from '../lib/local-auth';
-import { RelayCaError, fetchPinnedRelayCa, pinRelayCa, storeRelayCaPin } from '../lib/relay-ca';
+import {
+  RelayCaError,
+  fetchPinnedRelayCa,
+  pinRelayCa,
+  resolveRelayJoinCaFingerprint,
+  storeRelayCaPin,
+} from '../lib/relay-ca';
 import { openRelayKeyLogPage, parseRelayKeyLogPage } from '../lib/relay-keylog';
 import { persistRelayUplink } from '../lib/relay-store';
-import { type VibeTermRoles, parseVibeTermRoles, roleNameFromFlags } from '../lib/roles';
 import { asString } from '../lib/validate';
 import { formatPortPlanForEnv } from '../runtime/local-port-plan';
+import { applyRelayPasswordJoinEnv, relayJoinRoleName } from '../runtime/setup-shared';
 import type { ParsedArgs } from '../types';
 import type { CliIo } from './cli-io';
 import { enableDirectForOnboarding } from './direct';
@@ -45,6 +52,8 @@ import {
 } from './relay-shared';
 import { maybeRestart } from './restart';
 import { withAuth } from './with-auth';
+
+export { relayJoinRoleName };
 
 export type RelayJoinResult = {
   userId: string;
@@ -258,11 +267,15 @@ async function relayFetcherFor(input: {
   entry: RelayJoinTokenEntry;
   caFingerprint: string | undefined;
   io: CliIo;
+  db: LocalAuthContext['db'];
 }): Promise<{
   fetcher: FetchLike | undefined;
   pin: { caPem: string; fingerprint: string } | null;
 }> {
-  if (!input.caFingerprint) return { fetcher: input.io.fetcher, pin: null };
+  if (!input.caFingerprint) {
+    new RelayCaPinStore(input.db).delete(input.entry.url);
+    return { fetcher: input.io.fetcher, pin: null };
+  }
   const caPem = await fetchPinnedRelayCa({
     relayUrl: input.entry.url,
     fingerprint: input.caFingerprint,
@@ -280,14 +293,16 @@ async function redeemAgainstRelays(input: {
   decoded: RelayJoinToken;
   entries: RelayJoinTokenEntry[];
   io: CliIo;
+  caFingerprint: string | undefined;
 }): Promise<RelayAttempt> {
   let lastError: unknown;
   for (const entry of input.entries) {
     try {
       const { fetcher, pin } = await relayFetcherFor({
         entry,
-        caFingerprint: input.decoded.caFingerprint,
+        caFingerprint: input.caFingerprint,
         io: input.io,
+        db: input.ctx.db,
       });
       const prepared = await prepareRelayJoin({
         ctx: input.ctx,
@@ -382,24 +397,9 @@ async function commitRelayJoin(input: {
   return { userId: genesisUid, admitted: Boolean(admittedCert) };
 }
 
-/** 本机可能同时是中继（`relay,node`）：加入别人的中继不该把自己的 relay 角色关掉。 */
-export function relayJoinRoleName(current: string | undefined): string {
-  let roles: VibeTermRoles;
-  try {
-    roles = parseVibeTermRoles(current);
-  } catch {
-    roles = { node: false, relay: false };
-  }
-  return roleNameFromFlags({ node: true, relay: roles.relay });
-}
-
 async function writeRelayNodeEnv(envPath: string): Promise<void> {
   await withEnvLock(async () => {
-    const env = await readEnvFile(envPath);
-    env.VIBETERM_ROLES = relayJoinRoleName(env.VIBETERM_ROLES);
-    env.VIBETERM_HUB_URL = '';
-    env.VIBETERM_HUB_PUBLIC_URL = '';
-    await writeEnvFile(envPath, env);
+    await writeEnvFile(envPath, applyRelayPasswordJoinEnv(await readEnvFile(envPath)));
   });
 }
 
@@ -420,9 +420,13 @@ export async function runRelayJoin(
   }
   const entries = orderRelayEntries(decoded, urlRaw, (message) => log(io, message));
   const name = asString(parsed.flags.name) || 'node';
+  const caFingerprint = resolveRelayJoinCaFingerprint(
+    decoded.caFingerprint,
+    requireFlagValue(parsed.flags, 'ca-fingerprint')
+  );
 
   return await withAuth(parsed, io, async (ctx) => {
-    const attempt = await redeemAgainstRelays({ ctx, decoded, entries, io });
+    const attempt = await redeemAgainstRelays({ ctx, decoded, entries, io, caFingerprint });
     const committed = await commitRelayJoin({ ctx, decoded, attempt, entries, name });
     if (ctx.envPath) {
       await writeRelayNodeEnv(ctx.envPath);
@@ -430,8 +434,9 @@ export async function runRelayJoin(
       process.env.VIBETERM_ROLES = relayJoinRoleName(
         ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? undefined
       );
-      process.env.VIBETERM_HUB_URL = '';
-      process.env.VIBETERM_HUB_PUBLIC_URL = '';
+      for (const key of ['VIBETERM_HUB_URL', 'VIBETERM_HUB_PUBLIC_URL'] as const) {
+        delete process.env[key];
+      }
     }
     if (ctx.installDir) {
       await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
@@ -439,7 +444,7 @@ export async function runRelayJoin(
     }
     log(io, `joined relay ${attempt.entry.url} (tenant ${attempt.entry.tenantId})`);
     if (!committed.admitted) {
-      log(io, 'this node is pending; confirm it from the Nodes page of an existing node');
+      log(io, t('relay.join.syncing'));
     }
     const list = formatPortPlanForEnv({
       ...ctx.env,

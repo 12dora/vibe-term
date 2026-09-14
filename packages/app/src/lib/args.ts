@@ -35,6 +35,7 @@ export type NestedCommandName =
   | 'relay.list'
   | 'relay.unpin'
   | 'relay.join'
+  | 'relay.trust.refresh'
   | 'direct'
   | 'unknown';
 
@@ -168,6 +169,7 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
 
   const nestedGroups: Record<string, Record<string, NestedCommandName>> = {
     'relay.pack': { upload: 'relay.pack.upload' },
+    'relay.trust': { refresh: 'relay.trust.refresh' },
     'mesh.keylog': { status: 'mesh.keylog.status' },
     'mesh.passkey': MESH_PASSKEY_SUBCOMMANDS,
   };
@@ -299,6 +301,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   'relay.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
   'relay.unpin': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
+  'relay.trust.refresh': new Set([...GLOBAL_FLAGS, 'install-dir', 'fingerprint']),
 };
 
 /**

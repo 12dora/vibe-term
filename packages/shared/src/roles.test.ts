@@ -39,6 +39,8 @@ describe('normalizeLegacyRoleName', () => {
   it('把 leftover hub,node 映射为 node', () => {
     expect(normalizeLegacyRoleName('hub,node')).toEqual({ name: 'node', legacy: true });
     expect(normalizeLegacyRoleName('  hub,node  ')).toEqual({ name: 'node', legacy: true });
+    expect(normalizeLegacyRoleName('hub, node')).toEqual({ name: 'node', legacy: true });
+    expect(normalizeLegacyRoleName('hub ,node')).toEqual({ name: 'node', legacy: true });
   });
 
   it('其余字符串 trim 后原样返回', () => {
@@ -46,7 +48,6 @@ describe('normalizeLegacyRoleName', () => {
     expect(normalizeLegacyRoleName(' relay,node ')).toEqual({ name: 'relay,node', legacy: false });
     expect(normalizeLegacyRoleName('hub')).toEqual({ name: 'hub', legacy: false });
     expect(normalizeLegacyRoleName('HUB,NODE')).toEqual({ name: 'HUB,NODE', legacy: false });
-    expect(normalizeLegacyRoleName('hub, node')).toEqual({ name: 'hub, node', legacy: false });
     expect(normalizeLegacyRoleName('')).toEqual({ name: '', legacy: false });
   });
 });

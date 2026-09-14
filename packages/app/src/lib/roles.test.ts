@@ -26,6 +26,8 @@ describe('app parseVibeTermRoles wrapper', () => {
   test('maps leftover hub,node to node', () => {
     expect(parseVibeTermRoles('hub,node')).toEqual(NODE);
     expect(parseVibeTermRoleName('  hub,node  ')).toBe('node');
+    expect(parseVibeTermRoles('hub, node')).toEqual(NODE);
+    expect(parseVibeTermRoleName('hub , node')).toBe('node');
   });
 
   test('rejects invalid role names', () => {
@@ -56,7 +58,14 @@ describe('gateway vs app VIBETERM_ROLES wrappers', () => {
   });
 
   test('legal values agree', () => {
-    for (const raw of ['standalone', 'node', 'relay', 'relay,node', '  hub,node  '] as const) {
+    for (const raw of [
+      'standalone',
+      'node',
+      'relay',
+      'relay,node',
+      '  hub,node  ',
+      'hub, node',
+    ] as const) {
       expect(parseGatewayVibeTermRoles(raw)).toEqual(parseVibeTermRoles(raw));
     }
   });

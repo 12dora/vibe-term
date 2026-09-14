@@ -755,8 +755,8 @@ describe('POST /api/local/leave', () => {
     expect(ctx.userStore.listUsers()).toHaveLength(0);
     expect(await ctx.identityStore.load()).toBeNull();
     expect(env.VIBETERM_ROLES).toBe('standalone');
-    expect(env.VIBETERM_HUB_URL).toBe('');
-    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_HUB_URL).toBeUndefined();
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBeUndefined();
   });
 
   test('relay,node 被接受（不再 409 role_mismatch）', async () => {
