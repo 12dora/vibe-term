@@ -204,7 +204,7 @@ export default function SettingsPage() {
 
   return (
     <div
-      className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:gap-6 sm:p-5"
+      className="mx-auto flex w-full min-w-0 max-w-6xl flex-col gap-4 p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:gap-6 sm:p-5"
       data-testid="settings-page"
     >
       <SettingsTabBar

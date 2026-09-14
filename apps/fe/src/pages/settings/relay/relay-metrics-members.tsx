@@ -1,6 +1,7 @@
 // 接入节点表：一行一个成员。租户表管「谁被允许接入」，这张表管「此刻谁在转发」。
 // 排序与筛选由调用方（members-card）持有，本文件只摆版式并把表头点击回传。
 
+import { useNarrowLayout } from '@/components/use-narrow-layout';
 import { TONE_CLASS } from '@/lib/tone';
 import { formatRate } from '@vibeterm/api-client/format';
 import type { RelayMetricsMember } from '@vibeterm/api-client/relay/metrics-types';
@@ -9,6 +10,7 @@ import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll } from '../components/wide-table';
+import { RelayMembersCardList } from './members-card-list';
 import { formatMs, relativeTimeText } from './relay-format';
 import {
   type MemberSort,
@@ -51,7 +53,16 @@ export interface RelayMembersTableProps {
   filtered?: boolean;
 }
 
-export function RelayMembersTable({
+export function RelayMembersTable(props: RelayMembersTableProps) {
+  const narrow = useNarrowLayout();
+  if (narrow)
+    return (
+      <RelayMembersCardList members={props.members} now={props.now} filtered={props.filtered} />
+    );
+  return <RelayMembersWideTable {...props} />;
+}
+
+function RelayMembersWideTable({
   members,
   now,
   sort,

@@ -28,7 +28,7 @@ export function TenantsCard({
 }: TenantsCardProps) {
   const { t } = useTranslation();
   return (
-    <Card data-testid="relay-tenants-card">
+    <Card className="min-w-0" data-testid="relay-tenants-card">
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <CardTitle>{t('relay.admin.tenants.title')}</CardTitle>
@@ -51,7 +51,7 @@ export function TenantsCard({
           <TenantsMenu onDefaultQuota={controller.openQuota} />
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="min-w-0">
         <TenantTable
           tenants={status.tenants}
           defaultQuota={status.config.defaultQuota}
