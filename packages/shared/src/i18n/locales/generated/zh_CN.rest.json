@@ -17,7 +17,6 @@
         },
         "address": {
           "tunnel": "隧道",
-          "hub": "Hub",
           "lan": "局域网",
           "tailscale": "Tailscale",
           "vpn": "VPN",
@@ -70,16 +69,13 @@
         "path": {
           "title": "选择接入方式",
           "relay": "经中继",
-          "hub": "经 Hub",
           "ssh": "SSH 直连",
           "hint": {
             "relay": "中继：节点在 NAT 后，只需一个公网汇合点。",
-            "hub": "Hub：需要集中管理账号与节点。",
             "ssh": "SSH 直连：本机可通过 SSH 访问新机器，无需安装 VibeTerm。"
           },
           "tip": {
             "relay": "中继只转发加密流量，不保存账号与密钥。适合都在 NAT 或防火墙后的机器。",
-            "hub": "Hub 是信任中心，保存账号与节点成员，需要固定的公网 HTTPS 地址。",
             "ssh": "新机器不运行 VibeTerm，由本机经 SSH 连接，作为设备出现在设备列表。"
           }
         },
@@ -87,10 +83,6 @@
           "relay": {
             "join": "加入已有中继",
             "host": "本机自建中继"
-          },
-          "hub": {
-            "join": "加入已有 Hub",
-            "host": "本机设为 Hub"
           }
         },
         "install": {
@@ -103,19 +95,15 @@
           "uplink": {
             "title": "准备接入信息",
             "relayDescription": "新机器需要中继地址、租户编号与接入密码。",
-            "hubDescription": "新机器需要 Hub 地址与账号密码。",
             "relayUrl": "中继地址",
-            "hubUrl": "Hub 地址",
             "tenantId": "租户编号",
             "relayMissing": "向中继运营者索取中继地址与接入密码。",
-            "hubMissing": "向 Hub 管理员索取 Hub 地址。",
             "tenantMissing": "租户编号在本机接入中继后生成。",
             "link": "前往多节点互联设置"
           },
           "password": {
             "title": "在新机器上加入",
             "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」。",
-            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」。",
             "command": "也可以在新机器的终端执行",
             "tenantPlaceholder": "<租户编号>"
           },
@@ -180,27 +168,11 @@
             "description": "打开「设置 → 远程访问」，为本机配置固定的公网 HTTPS 入口。",
             "link": "前往远程访问设置",
             "status": {
-              "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
-              "quick": "当前是临时隧道 {{url}}，地址会变化，不能作为 Hub 地址。",
-              "hubUrl": "已有公开地址：{{url}}"
+              "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）"
             }
-          },
-          "hub": {
-            "title": "本机设为 Hub",
-            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」。",
-            "warning": "Hub 公开地址设定后不可修改，先确定最终域名。",
-            "link": "前往多节点互联设置",
-            "status": {
-              "self": "本机已是 Hub，公开地址：{{url}}",
-              "node": "本机已作为节点加入 {{url}}，不能再作为 Hub。",
-              "mismatch": "Hub 公开地址与当前隧道主机名不一致，其他机器可能无法接入。"
-            },
-            "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」，创建首个账号后重启。"
           },
           "invite": {
             "title": "让新机器加入",
-            "description": "在新机器上安装 VibeTerm，按「加入已有 Hub」的步骤接入。",
-            "ready": "本机已是 Hub，切到「加入已有 Hub」继续。",
             "gotoJoin": "查看加入步骤"
           }
         },
@@ -221,9 +193,9 @@
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
         "nameLinkedHint": "将同步修改「多节点互联」里的节点名称。",
-        "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
+        "nameLinkedLocked": "当前中继不可写入，暂时无法改名。",
         "urlHint": "用于通知链接与分享地址。",
-        "urlManagedHint": "由 Hub 公开地址决定，在「多节点互联」中修改。",
+        "urlManagedHint": "由中继公开地址决定，在「多节点互联」中修改。",
         "urlCandidates": "可用地址"
       },
       "bellThrottle": "响铃通知频控（秒）",
@@ -510,8 +482,6 @@
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "vibeterm",
             "tunnelNameHint": "可留空（由 VibeTerm 生成）。只能使用小写字母、数字、连字符与下划线。",
-            "hubHint": "本机为 Hub：把 Hub 的公开地址设为该主机名，其他节点才能经隧道接入。",
-            "hubHintLink": "前往多节点互联设置",
             "tunnelId": "隧道 ID",
             "configured": "命名隧道已创建。",
             "changeHint": "要更换主机名或隧道，请先在上方移除当前隧道。",
@@ -1032,7 +1002,6 @@
         "roles": "角色",
         "uplink": "上行",
         "uplinkNone": "无",
-        "uplinkHub": "Hub",
         "uplinkRelay": "中继",
         "uplinkUnknown": "未知",
         "attached": "已连接",
@@ -1319,115 +1288,12 @@
       },
       "empty": "暂无节点",
       "self": "当前",
-      "hub": "Hub",
       "loggedIn": "已登录",
-      "hubConnecting": "正在连接 Hub…",
-      "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
-      "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
-      "hubs": {
-        "active": "主 Hub",
-        "standby": "备 Hub",
-        "writer": "当前接受管理写入",
-        "attached": "当前入口挂载于此 Hub",
-        "online": "在线",
-        "offline": "离线",
-        "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
-        "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
-        "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "lastAttempt": "最近尝试：{{time}}",
-        "lastError": "最近错误：{{error}}",
-        "authorization": {
-          "label": "授权：{{value}}",
-          "signed": "已签名",
-          "env": "环境变量",
-          "self": "本机",
-          "none": "未授权"
-        },
-        "role": {
-          "promote": "设为主 Hub",
-          "demote": "设为备 Hub",
-          "stateSwitching": "切换中",
-          "confirmPromote": "设为主 Hub",
-          "confirmDemote": "设为备 Hub",
-          "confirmText": "「{{target}}」将接管写入，切换期间管理操作短暂不可用。",
-          "confirmTextNoWriter": "「{{from}}」降为备 Hub，没有其它 Hub 可接管写入。",
-          "confirm": "切换",
-          "cancel": "取消",
-          "stepAdmit": "为「{{target}}」签发 Hub 授权（需验证凭据）。",
-          "stepDemote": "把「{{from}}」降为备 Hub。",
-          "stepPromote": "把「{{target}}」升为主 Hub，目标随后自动重启。",
-          "stepWait": "等待「{{target}}」重启并接管写入。",
-          "stepDemoteOnly": "把「{{from}}」降为备 Hub，目标随后自动重启。",
-          "warnFromUnreachable": "原主 Hub 不可达，将依靠更高纪元围栏它。",
-          "warnNoWriter": "之后将没有可写 Hub，加入、重命名、移除等管理操作都不可用。",
-          "started": "已开始切换 Hub 主备。",
-          "done": "「{{target}}」已成为主 Hub。",
-          "failed": "Hub 切换失败：{{error}}",
-          "forceTitle": "有节点版本过低",
-          "forceDescription": "强制继续后，这些节点将无法再同步 Hub 授权记录。",
-          "forceText": "以下节点版本低于 {{minVersion}}，须先升级：",
-          "forceAccept": "仍然继续（旧节点将无法再同步）",
-          "forceConfirm": "仍然继续",
-          "recovery": {
-            "title": "当前没有可写 Hub",
-            "description": "原主 Hub 已降为备，新主 Hub 未确认接管，须选择下一步。",
-            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未确认接管写入。",
-            "retry": "重试升级目标",
-            "rollback": "回滚：重新升级原主 Hub",
-            "dismiss": "稍后处理"
-          },
-          "blocked": {
-            "unknownHub": "Hub 集合尚未加载，稍后重试。",
-            "unknownAuth": "入口版本过低，无法读取 Hub 授权来源。",
-            "offline": "该 Hub 离线，无法切换。",
-            "switching": "已有一次 Hub 切换在进行。",
-            "rowBusy": "该节点正在升级或卸载。",
-            "notWritable": "须先签发 Hub 授权，当前主 Hub 不接受写入。"
-          },
-          "errors": {
-            "HUB_NOT_HUB": "目标未启用 Hub 角色。",
-            "HUB_NOT_AUTHORIZED": "目标 Hub 未获授权。",
-            "HUB_EPOCH_STALE": "写入 Epoch 已过期，请刷新后重试。",
-            "HUB_ROLE_BUSY": "目标已有一次角色切换在进行。",
-            "HUB_ROLE_UNSUPPORTED": "目标版本不支持远程切换，须先升级。",
-            "INVALID_REQUEST": "请求无效。",
-            "unknown": "原因未知。",
-            "unreachable": "目标 Hub 不可达。",
-            "authTimeout": "Hub 授权未在预期时间内生效。",
-            "resumeAdmit": "Hub 授权尚未签发完成，请重新发起切换。",
-            "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
-            "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。",
-            "hubsUnreachable": "读不到 Hub 列表，入口暂时不可达。",
-            "unexpected": "切换中断，请刷新核对。"
-          }
-        },
-        "priority": "优先级",
-        "epoch": "写入纪元",
-        "caChanged": {
-          "title": "Hub 证书已变更",
-          "description": "「{{hub}}」广播的 CA 指纹与本机固定的指纹不一致，连接已停止。",
-          "advertised": "对方广播",
-          "pinned": "本机固定",
-          "verify": "先在该 Hub 上执行下面这条命令核对指纹：",
-          "commandLabel": "指纹无误后，在本节点执行："
-        },
-        "notAdmitted": {
-          "title": "Hub 未准入本节点（Hub 身份可能已重建）",
-          "description": "「{{hub}}」拒绝了本节点的证书。Hub 重装或换过身份后，旧证书不再有效。",
-          "commandLabel": "在本节点执行，用新的加入码或密码重新加入："
-        },
-        "splitBrain": {
-          "title": "检测到两个活动 Hub（epoch 相同），写入可能分叉",
-          "description": "{{hubs}} 同为主 Hub，写入纪元都是 {{epoch}}，管理写入可能落在不同的 Hub 上。",
-          "commandLabel": "在其中一台 Hub 上执行，让它退为备 Hub："
-        }
-      },
       "machine": {
         "title": "本机",
         "role": "角色",
         "roleStandalone": "独立运行",
         "roleNode": "节点",
-        "roleHub": "Hub 兼节点",
         "roleRelay": "纯中继（无网页）",
         "roleRelayNode": "中继兼节点",
         "menu": {
@@ -1439,9 +1305,6 @@
         "status": {
           "standalone": "独立运行",
           "unknown": "状态未知",
-          "hubConnected": "已连接 Hub",
-          "hubConnectedRtt": "已连接 Hub · {{ms}} ms",
-          "hubDisconnected": "未连接 Hub",
           "connecting": "连接中",
           "relayConnected": "已连接中继",
           "relayConnectedRtt": "已连接中继 · {{ms}} ms",
@@ -1458,9 +1321,6 @@
         "localAddressUnset": "未设置",
         "localAddressHint": "未设置公网地址，其它节点无法加入本机。",
         "upstream": "上级",
-        "hubDisconnected": "未连接",
-        "writerHub": "写者：{{name}}",
-        "hubList": "全部 Hub",
         "self": "本机",
         "details": {
           "title": "连接详情",
@@ -1472,7 +1332,6 @@
           "quotaUnlimited": "不限",
           "quotaUnlimitedValue": "{{used}}（不限）",
           "nodeId": "本机编号",
-          "hubs": "Hub 明细",
           "quotaMaxFile": "单文件上限"
         },
         "direct": "直连插件",
@@ -1486,7 +1345,6 @@
         "directRemove": "删除",
         "directRemoveConfirm": {
           "title": "删除直连插件？",
-          "description": "会话会继续经 Hub 中转，可随时重新安装。",
           "confirm": "删除",
           "cancel": "取消",
           "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
@@ -1524,22 +1382,16 @@
         "relayServiceEnrollHint": "本机尚未接入自己的中继，接入时需再次输入接入密码。"
       },
       "membership": {
-        "changeHub": "更换 Hub",
         "confirm": "退出并重启",
         "cancel": "取消",
-        "consequencesNode": "退出后，本机的多节点互联状态将全部删除，VibeTerm 将重启，当前会话随之失效。退出前将自动在 Hub 上吊销本机。",
-        "consequencesHub": "本机为 Hub。退出后本机的多节点互联状态将全部删除，VibeTerm 会重启，当前会话随之失效。所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。",
+        "consequencesNode": "退出后，本机的多节点互联状态将全部删除，VibeTerm 将重启，当前会话随之失效。退出前将自动在中继上吊销本机。",
         "leaveConfirm": {
-          "title": "退出 Hub？",
+          "title": "退出多节点互联？",
           "description": "本机将变回独立运行。"
         },
         "switchConfirm": {
           "title": "切换角色？",
-          "description": "本机会先退出当前 Hub，重启后再按「{{role}}」继续设置。"
-        },
-        "changeHubConfirm": {
-          "title": "更换 Hub？",
-          "description": "本机会先退出当前 Hub，重启后用新的加入码加入另一个 Hub。加入码需要重新输入。"
+          "description": "本机会先退出当前多节点互联，重启后再按「{{role}}」继续设置。"
         },
         "confirming": "正在确认身份……",
         "leaving": "正在退出……",
@@ -1548,12 +1400,12 @@
         "restartTimeout": "VibeTerm 未能恢复。请手动启动后刷新本页。",
         "reload": "刷新页面",
         "checkAgain": "再查一次",
-        "revokeFailed": "未能在旧 Hub 上吊销本机（{{error}}），退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
-        "revokeSkipped": "已跳过在旧 Hub 上吊销本机，退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
-        "leaveFailed": "退出 Hub 失败。",
+        "revokeFailed": "未能在旧中继上吊销本机（{{error}}），退出继续。请稍后在旧中继的节点列表里手动吊销。",
+        "revokeSkipped": "已跳过在旧中继上吊销本机，退出继续。请稍后在旧中继的节点列表里手动吊销。",
+        "leaveFailed": "退出多节点互联失败。",
         "errorDetail": "{{base}}（{{detail}}）",
         "errors": {
-          "notMember": "本机不在任何 Hub 中。",
+          "notMember": "本机不在多节点互联中。",
           "roleMismatch": "角色已变化，请刷新本页后重试。",
           "setupInProgress": "另一项设置正在进行，请稍后重试。",
           "envWriteFailed": "写入配置失败。",
@@ -1571,7 +1423,6 @@
       "https": {
         "title": "HTTPS 设置",
         "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
-        "hubUrlHint": "Hub 的公开地址必须是 HTTPS：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
         "nodeRoleHint": "只有本机作为上级时才需要 HTTPS；节点经上级访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
@@ -1648,7 +1499,7 @@
           "intro": "适用于没有公网域名的局域网或隧道。私有证书颁发机构（CA）保存在本机，证书有效期 398 天。",
           "sans": "证书包含的名称",
           "sansHint": "浏览器里实际会输入的主机名或 IP，最多 20 个。未列出的地址仍会报证书错误。",
-          "sansPlaceholder": "hub.lan 或 192.168.1.10",
+          "sansPlaceholder": "example.lan 或 192.168.1.10",
           "sansAdd": "添加",
           "sansRemove": "移除 {{name}}",
           "sansEmpty": "尚未添加名称。",
@@ -1797,7 +1648,6 @@
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
         "failed": "操作失败：{{error}}",
         "selfBlocked": "本机不能暂停",
-        "hubBlocked": "Hub 不能暂停",
         "forwarderBlocked": "当前正在使用该节点",
         "batchFailed": "失败 {{count}} 台",
         "busy": "正在暂停或恢复。"
@@ -1823,7 +1673,7 @@
       },
       "admit": {
         "blocked": "须先批准加入，才能管理这台节点。",
-        "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
+        "unavailable": "中继未下发批准所需材料，请刷新后重试。",
         "failed": "批准失败：{{error}}"
       },
       "detail": {
@@ -1833,17 +1683,17 @@
         "name": "名称",
         "namePlaceholder": "节点名称",
         "domainAccess": "允许域名访问",
-        "domainAccessDescription": "关闭后，来自公网的网页与 API 访问会被拒绝，仅保留 Hub / 节点互联服务；来自局域网与本机的访问不受影响。",
+        "domainAccessDescription": "关闭后，来自公网的网页与 API 访问会被拒绝，仅保留节点互联服务；来自局域网与本机的访问不受影响。",
         "domainAccessLoading": "读取中……",
         "domainAccessFailed": "读取失败：{{error}}",
         "domainAccessUnsupported": "该节点版本不支持。",
         "domainAccessUnreachable": "节点当前不可达。",
         "domainAccessHosts": "公开域名：{{hosts}}",
         "disableTitle": "关闭域名访问？",
-        "disableText": "关闭后，经配置的公开域名将不再提供网页与 API，只保留 Hub / 节点互联服务。",
+        "disableText": "关闭后，经配置的公开域名将不再提供网页与 API，只保留节点互联服务。",
         "disableSelfWarning": "当前正通过该域名访问 VibeTerm，关闭后本页会立即失联；请确认还能通过内网 IP 或 localhost 访问。",
         "disableConfirm": "关闭",
-        "renameUnavailable": "当前 Hub 不可写入，暂时无法改名。",
+        "renameUnavailable": "当前中继不可写入，暂时无法改名。",
         "renameFailed": "重命名失败：{{error}}",
         "domainAccessSaveFailed": "域名访问设置保存失败：{{error}}",
         "saved": "已保存",
@@ -1910,7 +1760,7 @@
         "revokeFailed": "已卸载，但未能从多节点互联中移除",
         "summary": "已卸载 {{count}} 个节点",
         "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
-        "summaryAborted": "Hub 不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
+        "summaryAborted": "中继不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
         "errors": {
           "loginRequired": "须先登录该节点。",
           "unreachable": "连不上该节点。",
@@ -1935,10 +1785,8 @@
         "badCertSig": "节点响应的签名校验失败，已忽略。",
         "expired": "加入码已过期，请重新生成。",
         "noCertificateYet": "新节点尚未响应，请稍后重试。",
-        "hubNotConfirmed": "Hub 未确认，本次没有写入任何内容，可直接重试。",
         "relayNotConfirmed": "中继未确认，本次没有写入任何内容，可直接重试。",
-        "retryHub": "重试",
-        "missingHubUrl": "Hub 未设置公开地址，无法生成加入命令。",
+        "retry": "重试",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
         "staleRecord": "账号信息已变化，请重新确认。",
         "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
@@ -1951,7 +1799,7 @@
         "confirmText": "移除节点「{{name}}」？该节点会立即失去访问权限，需要重新添加。",
         "reasonLabel": "原因（可选）",
         "done": "已移除",
-        "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
+        "relayFailed": "中继未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
         "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
@@ -2098,14 +1946,6 @@
         "intro": "本机尚未与其他机器互联，请选择设置方式。",
         "introDetail": "任选一种，保存配置后 VibeTerm 会重启一次。",
         "path": {
-          "becomeHub": {
-            "title": "把本机设为 Hub",
-            "description": "其他节点加入本机。需要一个公开的 HTTPS 地址。"
-          },
-          "joinHub": {
-            "title": "加入已有 Hub",
-            "description": "本机成为一个节点。需要 Hub 提供的加入码。"
-          },
           "becomeRelay": {
             "title": "本机作为中继",
             "description": "本机为各节点提供公网入口。需要一个公开的 HTTPS 地址。"
@@ -2115,37 +1955,17 @@
             "description": "本机作为节点接入已有中继。需要中继地址与租户编号。"
           }
         },
-        "becomeHub": {
-          "title": "把本机设为 Hub",
-          "description": "在本机创建第一个账号，然后以 Hub 身份重启 VibeTerm。"
-        },
-        "joinHub": {
-          "title": "加入已有 Hub",
-          "description": "把本机注册到 Hub，然后以节点身份重启 VibeTerm。",
-          "passwordDescription": "用 Hub 地址与账号密码把本机注册到 Hub，然后以节点身份重启 VibeTerm。",
-          "useToken": "改用加入码",
-          "usePassword": "改用密码"
-        },
         "fields": {
-          "hubPublicUrl": "Hub 公开地址",
-          "hubPublicUrlHint": "外部可访问的 https 地址，例如 https://vibeterm.example.com。所有拟加入的节点均须可正常访问。",
           "username": "用户名",
           "usernameHint": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "password": "密码",
           "passwordHint": "至少 8 位。服务端无法重置，请妥善保管。",
           "confirmPassword": "确认密码",
-          "hubUrl": "Hub 地址",
-          "hubUrlHint": "Hub 的 https 地址，例如 https://vibeterm.example.com。",
           "urlPlaceholder": "https://vibeterm.example.com",
           "token": "加入码",
-          "tokenHint": "在 Hub 的「节点」页生成，10 分钟内有效。请完整粘贴。",
-          "tokenPlaceholder": "粘贴 Hub 生成的加入码",
           "name": "节点名称",
           "nameHint": "显示在侧边栏与节点页。",
           "directEnable": "启用直连",
-          "directEnableHint": "让节点之间直接通信，而不经 Hub 中转。即使失败也不影响本次设置。",
-          "directUnsupportedHint": "{{platform}} 不支持直连，流量将经 Hub 中转。",
-          "insecureLocal": "允许本机使用 http:// 的 Hub",
           "insecureLocalHint": "仅用于开发与测试。",
           "relayPublicUrl": "中继公网地址",
           "relayPublicUrlHint": "外部可访问的 https 地址，例如 https://relay.example.com。所有拟接入的节点均须可正常访问。",
@@ -2173,7 +1993,6 @@
         },
         "probe": {
           "probing": "正在探测常用端口…",
-          "resolvedHub": "已在 {{port}} 端口探测到 Hub，地址已更新。",
           "resolvedRelay": "已在 {{port}} 端口探测到中继，地址已更新。",
           "failed": "443 及内置候选端口均无响应。请确认端口已放行，或直接填写带端口的地址。"
         },
@@ -2185,25 +2004,19 @@
           "httpsHint": "可以在「节点」标签页配置 HTTPS，也可以在本机前面加反向代理或 Cloudflare Tunnel。"
         },
         "submit": {
-          "becomeHub": "创建账号并重启",
-          "joinHub": "加入并重启",
           "pending": "处理中…",
           "becomeRelay": "保存并重启",
           "joinRelay": "加入并重启"
         },
         "result": {
           "title": "设置完成",
-          "becomeHubDescription": "账号已创建，VibeTerm 正在以 Hub 身份重启。",
-          "joinDescription": "本机已加入 Hub，VibeTerm 正在重启。",
           "fingerprint": "账号指纹",
-          "hubPublicUrl": "Hub 公开地址",
-          "hubUrl": "Hub 地址",
           "username": "用户名",
           "directLabel": "直连",
           "direct": {
             "enabled": "已启用",
             "skipped": "已跳过",
-            "failed": "失败（{{error}}）——流量将经 Hub 中转，可稍后重试"
+            "failed": "失败（{{error}}）——流量将经中继转发，可稍后重试"
           },
           "relayDescription": "中继已设置，VibeTerm 正在重启。重启后本机不再提供网页。",
           "relayNodeDescription": "中继已设置，VibeTerm 正在以中继兼节点身份重启。",
@@ -2220,8 +2033,6 @@
           "timeout": "60 秒内 VibeTerm 未恢复。请手动启动后刷新本页："
         },
         "toast": {
-          "hubCreated": "Hub 已创建，VibeTerm 正在重启",
-          "joined": "已加入 Hub，VibeTerm 正在重启",
           "relayCreated": "中继已设置，VibeTerm 正在重启",
           "relayJoined": "已加入中继，VibeTerm 正在重启"
         },
@@ -2229,17 +2040,12 @@
           "not_standalone": "本机已完成设置。",
           "invalid_url": "请输入合法的 https:// 地址。",
           "invalid_port": "端口须在 1 到 65535 之间。",
-          "insecure_local_required": "http:// 只能用于本机的 Hub，请先勾选「允许本机使用 http:// 的 Hub」。",
           "invalid_username": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "weak_password": "密码至少 8 位。",
           "password_mismatch": "两次输入的密码不一致。",
           "invalid_name": "请输入 1-64 个字符的名称。",
           "user_exists": "本机已存在同名用户。",
-          "invalid_token": "加入码不合法。请完整粘贴 Hub 生成的加入码。",
-          "node_revoked": "本机已被 Hub 移除。请先重置本机，再重新加入。",
-          "node_exists": "Hub 上已有另一台机器占用了本机的身份。",
-          "hub_unreachable": "无法连接到 Hub。请检查地址，并确认 Hub 正在运行。",
-          "join_failed": "Hub 拒绝了本次加入请求。",
+          "invalid_token": "加入码不合法。请完整粘贴中继生成的加入码。",
           "env_write_failed": "配置文件写入失败，本次没有任何改动。请检查文件权限后重试。",
           "direct_unsupported": "本平台不支持直连。",
           "direct_download_failed": "直连插件下载失败。",
@@ -2255,7 +2061,6 @@
           "setup_in_progress": "另一项设置正在进行，请稍后重试。",
           "relay": {
             "join_failed": "中继拒绝了本次加入请求。",
-            "hub_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
             "node_revoked": "本机已被中继移除。请先重置本机，再重新加入。",
             "node_exists": "中继上已有另一台机器占用了本机的身份。"
           },
@@ -2311,8 +2116,7 @@
         "status": {
           "online": "在线",
           "offline": "离线",
-          "signedOut": "未登录",
-          "hub": "Hub"
+          "signedOut": "未登录"
         },
         "version": "版本 {{version}}",
         "signInToManage": "登录该节点后才能管理它的设备。",
@@ -2656,7 +2460,7 @@
           "passwordHint": "中继未设接入密码时留空。",
           "rootPassword": "当前密码（本机账号密码）",
           "rootPasswordHint": "接入必须用密码签名，通行密钥无法代签。",
-          "migrateNotice": "接入后本机改走中继，不再连接 Hub。",
+          "migrateNotice": "接入后本机改走该中继，不再连接原来的上级。",
           "reauthNotice": "接入密码已变更，重新输入以恢复接入。",
           "submit": "接入",
           "submitReauth": "重新接入",
@@ -2664,7 +2468,7 @@
         },
         "leave": {
           "title": "离开中继？",
-          "description": "离开后本机与各节点失去上级链路，须重新接入中继或 Hub。",
+          "description": "离开后本机与各节点失去上级链路，须重新接入中继。",
           "confirm": "离开",
           "done": "已离开中继。"
         },

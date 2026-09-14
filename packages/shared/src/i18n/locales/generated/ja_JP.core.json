@@ -36,7 +36,6 @@
       },
       "originKind": {
         "site": "独自ドメイン",
-        "hub": "Hub",
         "relay": "中継",
         "tunnel": "トンネル",
         "ip": "パブリック IP",
@@ -45,7 +44,7 @@
     },
     "app": {
       "masterKeyMismatch": {
-        "title": "マスターキーでノード識別情報を復号できないため、マルチノード機能を停止しました。",
+        "title": "マスターキーでノード識別情報を復号できないため、マルチノード機能を停止しました。復旧後は `vibeterm relay join` で中継に再加入してください。",
         "commandLabel": "復旧：backups/app.env.* から VIBETERM_MASTER_KEY を復元するか、次を実行します："
       }
     },
@@ -629,7 +628,7 @@
         "pathDirect": "直接接続",
         "pathRelay": "中継",
         "pathDirectHint": "デバイスとの P2P 直接転送",
-        "pathRelayHint": "hub 経由の中継転送"
+        "pathRelayHint": "中継経由で転送"
       },
       "agentLaunch": {
         "connectFailed": "デバイスへの接続に失敗しました",
@@ -704,7 +703,6 @@
         "ROOT_KEY_MISMATCH": "パスワードが正しくありません。",
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
-        "HUB_NOT_WRITER": "予備ハブは管理操作を受け付けません。メインハブから操作してください。",
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
         "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。"
@@ -747,8 +745,6 @@
         "reloginTotpHint": "変更後の再サインインにはコードが必要です。空欄ならスキップします。",
         "sessionResumeFailed": "パスワードを更新しました。再サインインは完了していません。他のノードでは再度サインインが必要です。",
         "sessionResumeSkipped": "パスワードを更新しました。コード未入力のため、他のノードでは再度サインインが必要です。",
-        "primaryHubUnreachable": "メインハブがこの変更を確認できず、結果は不明です。メインハブとの接続を復旧し、状態を更新してから再試行を判断してください。",
-        "switchToPrimaryHub": "このハブは予備のため、アカウントの変更を受け付けません。メインハブに切り替えてから再試行してください。",
         "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。"
       },
       "credential": {

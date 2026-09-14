@@ -149,7 +149,7 @@ export function reportRevokeAttempt(t: Translate, attempt: RevokeAttempt): boole
     return true;
   }
   if (attempt.kind === 'unconfirmed') {
-    toast.warning(t('nodes.revoke.hubFailed', { error: attempt.error }));
+    toast.warning(t('nodes.revoke.relayFailed', { error: attempt.error }));
     return false;
   }
   toast.error(attempt.kind === 'stale' ? t('nodes.enrollment.staleRecord') : attempt.message);

@@ -569,10 +569,10 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     expect(html).toContain('nodes.enrollment.confirmPending');
   });
 
-  test('relayAck 未确认：文案与按钮都换成重试（retryHub key 暂沿用）', () => {
+  test('relayAck 未确认：文案与按钮都换成重试', () => {
     const html = confirmStatus({ unconfirmedIds: ['e-1'] });
     expect(html).toContain('nodes.enrollment.relayNotConfirmed');
-    expect(html).toContain('nodes.enrollment.retryHub');
+    expect(html).toContain('nodes.enrollment.retry');
   });
 
   test('已加入：只剩「已加入」提示', () => {
