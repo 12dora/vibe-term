@@ -1,6 +1,6 @@
 import type { TlsMode } from './tls-types';
 
-export type LocalRole = 'standalone' | 'node' | 'hub,node' | 'relay' | 'relay,node';
+export type LocalRole = 'standalone' | 'node' | 'relay' | 'relay,node';
 
 export interface LocalDirectStatus {
   supported: boolean;
@@ -48,8 +48,6 @@ export interface LocalRelayStatus {
 export interface LocalStatusResponse {
   role: LocalRole;
   nodeEnv: 'development' | 'test' | 'production';
-  hubUrl: string | null;
-  hubPublicUrl: string | null;
   direct: LocalDirectStatus;
   tls: LocalTlsStatus;
   domainAccess: LocalDomainAccessStatus;
@@ -83,12 +81,12 @@ export interface LocalLeaveResponse {
   restarting: true;
 }
 
-/** 端口探测的服务形态：Hub 打 `/healthz`，中继打 `/api/relay/health`。 */
-export type SetupPrecheckKind = 'hub' | 'relay';
+/** 端口探测的服务形态：中继打 `/api/relay/health`。 */
+export type SetupPrecheckKind = 'relay';
 
 export interface SetupPrecheckRequest {
   url: string;
-  /** 缺省为 `hub`；旧网关忽略该字段，按 Hub 处理。 */
+  /** 缺省为 `relay`。 */
   kind?: SetupPrecheckKind;
 }
 
@@ -106,40 +104,6 @@ export interface SetupPrecheckResponse {
 }
 
 export type SetupDirectOutcome = 'enabled' | 'failed' | 'skipped';
-
-export interface SetupHubRequest {
-  hubPublicUrl: string;
-  username: string;
-  password: string;
-  directEnable?: boolean;
-}
-
-export interface SetupHubResponse {
-  ok: true;
-  fingerprint: string;
-  direct: SetupDirectOutcome;
-  directError: string | null;
-  restarting: true;
-}
-
-export interface SetupJoinRequest {
-  hubUrl: string;
-  token?: string;
-  password?: string;
-  method?: 'token' | 'password';
-  name: string;
-  directEnable?: boolean;
-  insecureLocal?: boolean;
-}
-
-export interface SetupJoinResponse {
-  ok: true;
-  hubUrl: string;
-  username: string;
-  direct: SetupDirectOutcome;
-  directError: string | null;
-  restarting: true;
-}
 
 export type SetupRelayRole = 'relay' | 'relay,node';
 

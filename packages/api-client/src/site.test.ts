@@ -26,7 +26,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 
 const stored = {
   siteName: 'VibeTerm',
-  siteUrl: 'https://hub.example',
+  siteUrl: 'https://node.example',
   bellThrottleSeconds: 6,
   notificationThrottleSeconds: 3,
   enableBrowserNotificationToast: true,
@@ -45,8 +45,8 @@ describe('fetchSiteSettings', () => {
   test('merges sibling mesh link fields onto the returned settings view', async () => {
     const client = new StubApiClient([
       jsonResponse({
-        settings: { ...stored, siteUrl: 'https://hub.example/n/aabb' },
-        effectiveSiteUrl: 'https://hub.example/n/aabb',
+        settings: { ...stored, siteUrl: 'https://node.example/n/aabb' },
+        effectiveSiteUrl: 'https://node.example/n/aabb',
         siteUrlEditable: false,
         siteNameLinkedToNode: true,
         nodeId: 'aa'.repeat(16),
@@ -54,8 +54,8 @@ describe('fetchSiteSettings', () => {
     ]);
     const settings = await fetchSiteSettings(client);
     expect(client.calls).toEqual([{ path: '/api/settings/site', init: undefined }]);
-    expect(settings.siteUrl).toBe('https://hub.example/n/aabb');
-    expect(settings.effectiveSiteUrl).toBe('https://hub.example/n/aabb');
+    expect(settings.siteUrl).toBe('https://node.example/n/aabb');
+    expect(settings.effectiveSiteUrl).toBe('https://node.example/n/aabb');
     expect(settings.siteUrlEditable).toBe(false);
     expect(settings.siteNameLinkedToNode).toBe(true);
     expect(settings.nodeId).toBe('aa'.repeat(16));

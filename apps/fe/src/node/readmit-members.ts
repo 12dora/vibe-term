@@ -143,8 +143,8 @@ async function signOne(
       { hubSync: true }
     );
     if (!result.ok) return result.code;
+    // `hubAck` 是冻结的 legacy 名：只把 `false` 当失败，否则靠 `relayAck`。
     if (result.hubAck === false) return result.hubError || READMIT_UNCONFIRMED;
-    // 中继模式下本地落库不等于成员收得到：没送上中继就挂告警，别报成一次干净的补签。
     warnRelayAckGlobal(result);
     return null;
   } catch (err) {

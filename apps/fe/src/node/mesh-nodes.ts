@@ -1,29 +1,17 @@
-// mesh 节点视图的 React 绑定：宿主级单例轮询回路、`useMeshNodes`，以及 hub 机 node 的
-// 发现与 `GET /n/<hub>/api/hub/nodes` 合并。
+// mesh 节点视图的 React 绑定：宿主级单例轮询回路、`useMeshNodes`。
 //
 // 状态本体（store、`/api/auth/mode`、`/api/mesh/nodes`、首帧缓存与有界重试）在
 // `./mesh-nodes-store`；这里原样再导出一遍，调用方仍然只 import 本模块。
 
-import type { AuthApi, AuthRequiredDetail, MeshNode } from '@vibeterm/api-client/auth/index';
+import type { AuthApi, AuthRequiredDetail } from '@vibeterm/api-client/auth/index';
 import { defaultAuthApi, onAuthRequired } from '@vibeterm/api-client/auth/index';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
   type PollingControls,
   type PollingTimingOptions,
   createPollingHandle,
   startPollingLoop,
 } from './create-polling-store';
-import { HubApi, HubApiError, type HubNodeRow } from './hub-api';
-import {
-  type HubCandidateFailure,
-  type HubFailureReason,
-  HubLoadCoordinator,
-  type HubRequest,
-  attachHubCandidateFailures,
-  hubCandidateFailures,
-  isHubAuthCode,
-} from './hub-load-coordinator';
-import { HUB_POLL_MS, startHubPolling } from './hub-polling';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
 import {
   applyMeshNodeEvent,
@@ -36,14 +24,7 @@ import {
 } from './mesh-nodes-store';
 
 import type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
-import {
-  clearAllNodeBackoff,
-  clearNodeBackoff,
-  isNodeRequestBlocked,
-  isUnreachableFailure,
-  noteNodeReachable,
-  noteNodeUnreachable,
-} from './node-unreachable-backoff';
+import { clearAllNodeBackoff } from './node-unreachable-backoff';
 
 export type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
 export {
@@ -92,145 +73,6 @@ export {
   toRuntimeNodeId,
 } from './merge-nodes';
 export type { MergeContext, NodeRow, PendingAdmitMaterial } from './merge-nodes';
-
-/**
- * hub 机 node 的 id。**只认契约字段**：`/api/mesh/nodes` 的 `isHub`（hub 经 `node.list`
- * 下发、node 侧持久化），以及 `/api/auth/mode` 的 `hubNodeId`。
- *
- * 之前那套「inventory 猜角色 → entry 自身 → 任意在线 node」的启发式已删除：逐个探测
- * `/n/<id>/api/hub/nodes` 会把管理面请求发给不是 hub 的机器，第一个恰好返回 200 的还会被
- * 当成 hub。
- */
-export function findHubNodeId(nodes: MeshNode[], modeHubNodeId?: string | null): string | null {
-  // 多 hub 下 `isHub` 会命中任意一台（很可能是 standby，管理写入一律被拒），而
-  // `/api/auth/mode` 的 `hubNodeId` 指的就是当前 writer：列表里认得出它时以它为准。
-  const writer = modeHubNodeId
-    ? nodes.find((node) => node.id === modeHubNodeId && node.isHub === true)
-    : undefined;
-  if (writer) return writer.id;
-  const flagged = nodes.find((node) => node.isHub === true);
-  if (flagged) return flagged.id;
-  return modeHubNodeId || null;
-}
-
-/**
- * 管理面可用的 hub 机顺序：写者优先，其余 hub 机兜底——standby 会把管理写入转发给写者，
- * 写者暂时打不通（或还没登录）时不该整页判「hub 不可达」。
- */
-export function hubCandidateIds(nodes: MeshNode[], modeHubNodeId?: string | null): string[] {
-  const primary = findHubNodeId(nodes, modeHubNodeId);
-  const ids: string[] = primary ? [primary] : [];
-  for (const node of nodes) {
-    if (node.isHub === true && node.online !== false && !ids.includes(node.id)) ids.push(node.id);
-  }
-  return ids;
-}
-
-export interface HubLoadDeps {
-  list: (hubNodeId: string) => Promise<HubNodeRow[]>;
-  /** 对该 hub 机做静默节点登录；成功才重试一次。失败码用于区分「hub 拒登」与「打不通」。 */
-  login: (hubNodeId: string) => Promise<{ ok: boolean; code?: string }>;
-}
-
-export interface HubLoadResult {
-  hubNodeId: string;
-  rows: HubNodeRow[];
-}
-
-function isNodeLoginRequired(error: unknown): boolean {
-  return error instanceof HubApiError && error.status === 401;
-}
-
-/**
- * 依次尝试候选 hub 机：401 `NODE_LOGIN_REQUIRED` 先补一次节点登录再重试（浏览器此前可能
- * 从未登录过新升上来的写者），仍失败才换下一台；全部失败抛最后一个错误。
- *
- * 静默登录被 hub 以鉴权码拒掉时，**抛出去的必须是那次登录失败**：列表那条 401 只说明
- * 「还没登录」，把它一路抛到界面只会显示成一句「Hub 不可达」，掩盖掉真正的原因
- * （通行密钥 / TOTP 没过）。
- *
- * 全部候选都失败时抛**最可操作**的那一个：拒登（用户能去补验证）优先于打不通，否则
- * 「写者拒登 → 备机 503」会被后一条盖成「Hub 不可达」。多台都拒登时以第一台（写者）为准。
- */
-export async function loadHubNodes(
-  candidates: string[],
-  deps: HubLoadDeps
-): Promise<HubLoadResult> {
-  let lastError: unknown = new Error('hub_unreachable');
-  let authError: HubApiError | null = null;
-  // 逐台记下**它自己**是怎么失败的：抛出去的只有最可操作的那一个，而退避记账不能按它
-  // 把无辜的候选一起罚了（A 答 500、B 传输层挂掉时只有 B 该退避）。
-  const failures: HubCandidateFailure[] = [];
-  for (const hubNodeId of candidates) {
-    try {
-      return { hubNodeId, rows: await deps.list(hubNodeId) };
-    } catch (error) {
-      lastError = error;
-      failures.push({ nodeId: hubNodeId, error });
-      if (!isNodeLoginRequired(error)) continue;
-      const login = await deps
-        .login(hubNodeId)
-        .catch((): { ok: boolean; code?: string } => ({ ok: false }));
-      if (!login.ok) {
-        if (isHubAuthCode(login.code)) {
-          const rejected = new HubApiError(login.code, 401);
-          lastError = rejected;
-          authError ??= rejected;
-          failures[failures.length - 1] = { nodeId: hubNodeId, error: rejected };
-        }
-        continue;
-      }
-      try {
-        return { hubNodeId, rows: await deps.list(hubNodeId) };
-      } catch (retryError) {
-        lastError = retryError;
-        failures[failures.length - 1] = { nodeId: hubNodeId, error: retryError };
-      }
-    }
-  }
-  const thrown = authError ?? lastError;
-  attachHubCandidateFailures(thrown, failures);
-  throw thrown;
-}
-
-/**
- * 给**自己那次失败确实是打不通**的候选各记一次退避，轮询不再每 30 秒白撞一次转发超时。
- *
- * 逐台判定（`hubCandidateFailures`）：抛出去的那个错误是「最可操作的那一个」，按它一刀切
- * 会把答了 500 的候选也一起罚进退避。逐台信息拿不到时（非对象错误）退回按抛出的错误判，
- * 至少不会记错方向。
- *
- * 判据是 `isUnreachableFailure`（传输层异常 / 超时 / 转发器的 `NODE_UNREACHABLE`）而不是
- * `classifyHubFailure`：后者是给**界面文案**用的粗分类，会把 404、500、被取消的请求
- * 一并算成「不可达」，拿来加倍退避只会把能修的问题拖成打不通。
- */
-export function noteHubLoadFailure(
-  candidates: readonly string[],
-  error: unknown,
-  note: (nodeId: string) => void = noteNodeUnreachable
-): void {
-  const failures = hubCandidateFailures(error);
-  if (failures.length > 0) {
-    for (const failure of failures) {
-      if (isUnreachableFailure(failure.error)) note(failure.nodeId);
-    }
-    return;
-  }
-  if (!isUnreachableFailure(error)) return;
-  for (const id of candidates) note(id);
-}
-
-/** 这一拍要不要跳过：候选全在退避窗口里就跳过（首次加载与手动刷新不受影响）。 */
-export function shouldSkipHubPoll(
-  candidates: readonly string[],
-  blocked: (nodeId: string) => boolean = isNodeRequestBlocked
-): boolean {
-  return candidates.length > 0 && candidates.every(blocked);
-}
-
-function silentNodeLogin(hubNodeId: string): Promise<{ ok: boolean }> {
-  return import('@/auth/session-key-store').then((mod) => mod.ensureNodeLogin(hubNodeId));
-}
 
 // ---------------------------------------------------------------------------
 // React 绑定
@@ -418,161 +260,4 @@ export function useMeshNodes(options: UseMeshNodesOptions = {}): UseMeshNodesRes
   }, [enabled, options.events]);
 
   return { ...snapshot, refresh };
-}
-
-export interface HubNodeState {
-  hubNodeId: string | null;
-  hubApi: HubApi | null;
-  hubNodes: HubNodeRow[] | null;
-  /** hub 管理面是否可用（探测成功且最近一次 list 成功）。 */
-  online: boolean;
-  loading: boolean;
-  /** 最近一次失败的性质；从未失败或已恢复为 `null`。 */
-  failure: HubFailureReason | null;
-  refresh: () => void;
-}
-
-export interface UseHubNodeOptions {
-  enabled?: boolean;
-  /** 覆盖列表请求（测试注入）。 */
-  probe?: (nodeId: string) => Promise<HubNodeRow[]>;
-  /** `/api/auth/mode` 下发的 hub nodeId；mesh 列表还没到时用它。 */
-  hubNodeId?: string | null;
-  pollIntervalMs?: number;
-  /** 覆盖节点登录（测试注入）；缺省懒加载 `ensureNodeLogin`。 */
-  login?: (hubNodeId: string) => Promise<{ ok: boolean }>;
-}
-
-interface HubStateSetters {
-  setHubNodes: (rows: HubNodeRow[] | null) => void;
-  setLoading: (value: boolean) => void;
-  setFailure: (reason: HubFailureReason | null) => void;
-}
-
-/** 协调器只建一次（`useState` 的 setter 恒等），挂载/卸载切它的写状态开关。 */
-function useHubLoadCoordinator(
-  setters: HubStateSetters,
-  /** 当前候选集；失败记账要按它逐台记（现读，协调器只建一次）。 */
-  candidatesRef: { current: readonly string[] }
-): HubLoadCoordinator {
-  const { setHubNodes, setLoading, setFailure } = setters;
-  const ref = useRef<HubLoadCoordinator | null>(null);
-  if (ref.current === null) {
-    ref.current = new HubLoadCoordinator({
-      // 换目标（切 hub / 启停）开跑时清掉上一台的失败：A 的拒登提示不该挂在 B 的加载上。
-      loading: (value, switched) => {
-        setLoading(value);
-        if (value && switched) setFailure(null);
-      },
-      reset: () => {
-        setHubNodes(null);
-        setLoading(false);
-        setFailure(null);
-      },
-      rows: (rows) => {
-        setHubNodes(rows);
-        setFailure(null);
-      },
-      failed: (reason, error) => {
-        setHubNodes(null);
-        setFailure(reason);
-        // 记账挂在 sink 上而不是请求闭包里：被更新的一代取代的过期响应根本走不到这里，
-        // 换 hub / 卸载之后的迟到失败不该再给谁记一笔退避。
-        noteHubLoadFailure(candidatesRef.current, error);
-      },
-    });
-  }
-  const coordinator = ref.current;
-  useEffect(() => {
-    coordinator.activate();
-    return () => coordinator.dispose();
-  }, [coordinator]);
-  return coordinator;
-}
-
-/**
- * 定位 hub 机的 node（`isHub` / `mode.hubNodeId`）并拉取 `GET /n/<hub>/api/hub/nodes`。
- * 定位不到就直接判定 hub 不可达，**不再**逐个探测其它 node。
- *
- * 初次加载 / 轮询 / 手动刷新三条来源共用 `HubLoadCoordinator`：并发调用合并成一次请求，
- * 慢的旧响应按代号丢弃，卸载后不再写状态。
- */
-export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): HubNodeState {
-  const enabled = options.enabled ?? true;
-  const pollIntervalMs = options.pollIntervalMs ?? HUB_POLL_MS;
-  const [hubNodes, setHubNodes] = useState<HubNodeRow[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [failure, setFailure] = useState<HubFailureReason | null>(null);
-
-  const resolved = useMemo(
-    () => findHubNodeId(nodes, options.hubNodeId),
-    [nodes, options.hubNodeId]
-  );
-  const candidatesKey = useMemo(
-    () => hubCandidateIds(nodes, options.hubNodeId).join(','),
-    [nodes, options.hubNodeId]
-  );
-  const probe = options.probe;
-  const login = options.login ?? silentNodeLogin;
-  // 真正应答的那台 hub 机（写者打不通时可能是 standby），管理动作也发给它。
-  const [activeHubId, setActiveHubId] = useState<string | null>(null);
-
-  // 请求闭包同时充当单飞的身份：目标（enabled / 候选集 / probe）一变就是新的一次加载。
-  const candidates = useMemo(
-    () => (candidatesKey ? candidatesKey.split(',') : []),
-    [candidatesKey]
-  );
-  const request = useMemo<HubRequest | null>(() => {
-    if (!enabled || candidates.length === 0) return null;
-    return async () => {
-      const result = await loadHubNodes(candidates, {
-        list: (id) => (probe ? probe(id) : new HubApi(id).listNodes()),
-        login,
-      });
-      noteNodeReachable(result.hubNodeId);
-      setActiveHubId(result.hubNodeId);
-      return result.rows;
-    };
-  }, [enabled, probe, login, candidates]);
-
-  const candidatesRef = useRef<readonly string[]>(candidates);
-  candidatesRef.current = candidates;
-  const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setFailure }, candidatesRef);
-
-  useEffect(() => {
-    void coordinator.load(request);
-  }, [coordinator, request]);
-
-  useEffect(() => {
-    if (!request || pollIntervalMs <= 0) return;
-    return startHubPolling({
-      intervalMs: pollIntervalMs,
-      load: () => {
-        if (shouldSkipHubPoll(candidates)) return;
-        void coordinator.load(request);
-      },
-    });
-  }, [coordinator, request, pollIntervalMs, candidates]);
-
-  // 变更之后的刷新必须比当前在飞的那一次更新，否则批准 / 吊销的结果会被旧响应盖回去。
-  // hub 管理面的手动刷新（含批准 / 吊销 / 切换之后的回源）：同样是明确的「现在就要新数据」。
-  const refresh = useCallback(() => {
-    for (const id of candidates) clearNodeBackoff(id);
-    void coordinator.refresh(request);
-  }, [coordinator, request, candidates]);
-  const effectiveHubId = activeHubId ?? resolved;
-  const hubApi = useMemo(
-    () => (effectiveHubId ? new HubApi(effectiveHubId) : null),
-    [effectiveHubId]
-  );
-
-  return {
-    hubNodeId: effectiveHubId,
-    hubApi,
-    hubNodes,
-    online: hubNodes !== null,
-    loading,
-    failure,
-    refresh,
-  };
 }

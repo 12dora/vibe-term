@@ -1,12 +1,12 @@
 // 加入码面板的 enrollment 接线：mesh 模式、中继通道、凭据对话框与本次会话。
 
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
+import { defaultRelayEnrollmentApi } from '@/node/enrollment-api';
 import {
   type EnrollmentEngineState,
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
-import { defaultRelayEnrollmentApi } from '@/node/hub-api';
 import {
   ensureFreshMeshNodes,
   getMeshNodesState,
@@ -88,8 +88,8 @@ function useJoinSessionIdentity(
     () => ({
       ready: modeLoaded && rawMode !== null,
       uid: rawMode?.uid ?? null,
-      // 冻结存储字段：sessionStorage 里仍叫 `hubNodeId`（D4）。
-      hubNodeId: rawMode?.hubNodeId ?? null,
+      // 冻结存储字段：sessionStorage 里仍叫 `hubNodeId`（D4）。AuthMode 已不再下发该字段。
+      hubNodeId: null,
       nodeIds: meshState.loadedAt === null ? null : meshState.nodes.map((node) => node.id),
     }),
     [modeLoaded, rawMode, meshState.loadedAt, meshState.nodes]
@@ -123,7 +123,7 @@ export function useJoinEnrollment(): JoinEnrollment {
   const { confirmManually } = useEnrollmentEngine({
     api: ctx.api,
     mode: ctx.mode,
-    hubApi: enrollChannel,
+    enrollmentApi: enrollChannel,
     prompt: ctx.prompt,
     onDone: refreshAfterAdmit,
     t,
@@ -139,7 +139,6 @@ export function useJoinEnrollment(): JoinEnrollment {
   const create = useCreateEnrollment({
     api: ctx.api,
     mode: ctx.mode,
-    hubApi: enrollChannel,
     prompt: ctx.prompt,
     clearedIds: engine.clearedIds,
     relay,

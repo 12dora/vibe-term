@@ -18,10 +18,8 @@ function recorder(responses: Response[], baseUrl = ''): { api: LocalApi; calls: 
 const NODE_ID = '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d';
 
 const STATUS: LocalStatusResponse = {
-  role: 'hub,node',
+  role: 'node',
   nodeEnv: 'production',
-  hubUrl: null,
-  hubPublicUrl: 'https://hub.example',
   direct: {
     supported: true,
     installed: true,
@@ -154,7 +152,7 @@ describe('LocalApi.leave', () => {
 
   test('401 unauthorized 带出契约 code', async () => {
     const { api } = recorder([errorBody('unauthorized', 'login required', 401)]);
-    const err = (await api.leave({ expectedRole: 'hub,node' }).catch((e) => e)) as LocalApiError;
+    const err = (await api.leave({ expectedRole: 'node' }).catch((e) => e)) as LocalApiError;
     expect(err).toBeInstanceOf(LocalApiError);
     expect(err.code).toBe('unauthorized');
     expect(err.status).toBe(401);

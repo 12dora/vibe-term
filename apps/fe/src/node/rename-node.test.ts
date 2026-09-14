@@ -79,11 +79,11 @@ describe('renameNodeViaKeyLog', () => {
 
   test('append 失败原样带回错误码', async () => {
     const result = await renameNodeViaKeyLog(
-      { api: authApi([], { ok: false, code: 'HUB_NOT_WRITER' }), mode: MODE, lock: noLock },
+      { api: authApi([], { ok: false, code: 'KEY_LOG_REJECTED' }), mode: MODE, lock: noLock },
       { nodeIdHex: NODE_ID, name: 'studio' },
       await rootSigner()
     );
-    expect(result).toEqual({ ok: false, code: 'HUB_NOT_WRITER' });
+    expect(result).toEqual({ ok: false, code: 'KEY_LOG_REJECTED' });
   });
 
   test('节点 id 不是 16 字节 / 名字为空：不发请求，折成失败', async () => {

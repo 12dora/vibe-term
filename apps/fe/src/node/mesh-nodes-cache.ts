@@ -57,8 +57,8 @@ function toCachedNode(node: MeshNode): MeshNode {
     direct_capable: node.direct_capable === true,
     inventory: node.inventory ?? null,
     loggedIn: node.loggedIn === true,
-    isHub: node.isHub === true ? true : undefined,
   };
+  // 旧缓存可能带着已删除的 `isHub`：这里只抄已知字段，读/写都不会把它写回去。
   // 暂停是本机偏好，冷启动第一帧就必须带着，否则侧栏会闪出再被 REST 摘掉。
   if (isMeshNodePaused(node)) cached.paused = true;
   return cached;

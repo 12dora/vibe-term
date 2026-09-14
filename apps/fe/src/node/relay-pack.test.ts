@@ -222,7 +222,7 @@ describe('refreshRelayPackForSigner', () => {
   });
 
   test('非中继模式不发任何请求', async () => {
-    setMeshRelayStateForTest({ mode: 'hub' });
+    setMeshRelayStateForTest({ mode: 'none' });
     const uploads: RelayPackUpload[] = [];
     const outcome = await refreshRelayPackForSigner(rootSigner(), {
       api: authApi(),

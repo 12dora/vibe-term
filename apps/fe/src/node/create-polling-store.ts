@@ -1,10 +1,25 @@
-// 宿主级单例轮询 store 的公共骨架：`mesh-nodes` 与 `mesh-hubs` 两份 store 共用。
+// 宿主级单例轮询 store 的公共骨架：`mesh-nodes` 与 `mesh-relay` 等 store 共用。
 //
-// 两边真正的分歧只有三处——刷新做什么、订阅哪些事件源、回到前台补不补，其余（模块级状态 +
+// 真正的分歧只有三处——刷新做什么、订阅哪些事件源、回到前台补不补，其余（模块级状态 +
 // useSyncExternalStore 订阅面、事件补拉的节流窗口、隐藏页跳拍的可见性门、单例引用计数）
 // 逐处相同，抽到这里一份实现。
 
-import { type PageVisibility, browserVisibility } from './hub-polling';
+export interface PageVisibility {
+  hidden: () => boolean;
+  subscribe: (listener: () => void) => () => void;
+}
+
+/** 取不到 document（SSR / 单测）时一律按「可见」处理。 */
+export function browserVisibility(): PageVisibility {
+  return {
+    hidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
+    subscribe: (listener) => {
+      if (typeof document === 'undefined') return () => undefined;
+      document.addEventListener('visibilitychange', listener);
+      return () => document.removeEventListener('visibilitychange', listener);
+    },
+  };
+}
 
 /** 定时器注入口：装上返回取消函数（`setInterval` / `setTimeout` 两种都是这个形状）。 */
 export type CancelableSchedule = (fn: () => void, ms: number) => () => void;

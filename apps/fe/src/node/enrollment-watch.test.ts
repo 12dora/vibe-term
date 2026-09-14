@@ -10,12 +10,12 @@ import {
   rootKeyFromSeed,
 } from '@vibeterm/shared/auth';
 import type { PendingEnrollment } from './enrollment';
+import type { EnrollmentApi, EnrollmentStatus } from './enrollment-api';
 import {
   collectRedeemedCertificates,
   offerCertificate,
   outcomesForCandidates,
 } from './enrollment-watch';
-import type { HubApi, HubEnrollmentStatus } from './hub-api';
 import { decodeMeshFrame } from './mesh-events';
 
 const UID = 'user-1';
@@ -45,7 +45,7 @@ async function fixture() {
   return { pending, cert };
 }
 
-function hubApiReturning(byId: Record<string, HubEnrollmentStatus | Error>): HubApi {
+function enrollmentApiReturning(byId: Record<string, EnrollmentStatus | Error>): EnrollmentApi {
   return {
     getEnrollment: (id: string) => {
       const row = byId[id];
@@ -53,13 +53,13 @@ function hubApiReturning(byId: Record<string, HubEnrollmentStatus | Error>): Hub
       if (row instanceof Error) return Promise.reject(row);
       return Promise.resolve(row);
     },
-  } as unknown as HubApi;
+  } as unknown as EnrollmentApi;
 }
 
 describe('collectRedeemedCertificates', () => {
   test('按 enrollment id 查到 redeemed 证书后交给 offerCertificate 判定为 admit', async () => {
     const { pending, cert } = await fixture();
-    const hubApi = hubApiReturning({
+    const enrollmentApi = enrollmentApiReturning({
       'e-1': {
         status: 'redeemed',
         enroll_pk: pending.enrollPk,
@@ -68,7 +68,7 @@ describe('collectRedeemedCertificates', () => {
         node_id: 'a'.repeat(32),
       },
     });
-    const candidates = await collectRedeemedCertificates(hubApi, [pending]);
+    const candidates = await collectRedeemedCertificates(enrollmentApi, [pending]);
     expect(candidates).toHaveLength(1);
     const outcome = offerCertificate([pending], candidates[0], NOW);
     expect(outcome.kind).toBe('admit');
@@ -76,16 +76,16 @@ describe('collectRedeemedCertificates', () => {
 
   test('还没 redeem 的 enrollment 不产生候选', async () => {
     const { pending } = await fixture();
-    const hubApi = hubApiReturning({
+    const enrollmentApi = enrollmentApiReturning({
       'e-1': { status: 'pending', enroll_pk: pending.enrollPk },
     });
-    expect(await collectRedeemedCertificates(hubApi, [pending])).toEqual([]);
+    expect(await collectRedeemedCertificates(enrollmentApi, [pending])).toEqual([]);
   });
 
-  test('hub 查询失败只是没有候选，不抛（轮询要能继续）', async () => {
+  test('enrollment 查询失败只是没有候选，不抛（轮询要能继续）', async () => {
     const { pending } = await fixture();
-    const hubApi = hubApiReturning({ 'e-1': new Error('hub down') });
-    expect(await collectRedeemedCertificates(hubApi, [pending])).toEqual([]);
+    const enrollmentApi = enrollmentApiReturning({ 'e-1': new Error('relay down') });
+    expect(await collectRedeemedCertificates(enrollmentApi, [pending])).toEqual([]);
   });
 });
 

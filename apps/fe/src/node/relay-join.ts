@@ -1,8 +1,8 @@
 // 中继模式下的「加入码」：join 串 v3（`r3.`）与它的 enrollment 创建（plan-00 §1.5、§1.9）。
 //
-// 与 hub 模式的差别只有两处：enrollment 建在中继上（经本机 uplink 转发），join 串里除了
+// enrollment 建在中继上（经本机 uplink 转发），join 串里除了
 // `enroll_sk ‖ root_pk ‖ head_hash` 还带上 `K_log` 与中继表（每条自带 `tenant_id ‖ token`）——
-// 新节点没有 hub 可问，必须自带解密密钥日志与连中继的全部材料。
+// 新节点必须自带解密密钥日志与连中继的全部材料。
 //
 // join 串里的中继表**只列真的收下了这条 enrollment 的那几台**：节点侧会把 enrollment fan-out
 // 到全部已授权中继，部分失败是常态，把没接受的写进去只会让新机器在那台上撞 404。
@@ -18,7 +18,7 @@ import { createEnrollment, decodeBase64url, encodeBase64url } from '@vibeterm/sh
 import { encodeRelayJoinToken } from '@vibeterm/shared/relay';
 import type { CreatedEnrollment, PendingEnrollment } from './enrollment';
 import { addPendingEnrollment } from './enrollment';
-import type { EnrollmentRelayResult, HubApi } from './hub-api';
+import type { EnrollmentApi, EnrollmentRelayResult } from './enrollment-api';
 
 /** 建好的 enrollment 一台中继都没收下：加入码发不出去，界面按这个码给提示。 */
 export const RELAY_ENROLLMENT_NO_RELAY = 'RELAY_ENROLLMENT_NO_RELAY';
@@ -32,7 +32,7 @@ export const RELAY_ENROLL_FANOUT_FAILED = 'RELAY_ENROLL_FANOUT_FAILED';
 
 export interface CreateRelayEnrollmentInput {
   /** enrollment 通道：中继模式下是 `RelayEnrollmentApi`（路径指向 `/api/mesh/relay/*`）。 */
-  channel: HubApi;
+  channel: EnrollmentApi;
   /** 中继控制面：join 串材料（`K_log` / 租户令牌 / 地址表）从这里取。 */
   relayApi: RelayTenantApi;
   uid: string;

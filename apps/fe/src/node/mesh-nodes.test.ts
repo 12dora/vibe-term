@@ -1,4 +1,4 @@
-// mesh 节点列表的纯函数：指纹、NODE_EVENT 投影、排序、hub 合并与 hub 候选顺序；
+// mesh 节点列表的纯函数：指纹、NODE_EVENT 投影、排序；
 // 以及宿主级唯一那条轮询回路（单例引用计数 + 后台暂停）。
 
 import { describe, expect, test } from 'bun:test';
@@ -10,8 +10,6 @@ import {
   isDirectLinkUnavailable,
   markDirectLinkUnavailable,
 } from './direct-link-availability';
-import { HubApiError, type HubNodeRow } from './hub-api';
-import { HUB_STALE_MS, startHubPolling } from './hub-polling';
 import { isMeshNodePaused } from './merge-nodes';
 import { type NodeEventPayload, decodeMeshFrame } from './mesh-events';
 import {
@@ -20,19 +18,14 @@ import {
   type MeshEventSubscriber,
   acquireMeshNodesPolling,
   ensureFreshMeshNodes,
-  findHubNodeId,
   getMeshNodesState,
-  hubCandidateIds,
-  loadHubNodes,
   markLoggedIn,
   mergeNodes,
-  noteHubLoadFailure,
   patchNodesWithEvent,
   publicKeyFingerprint,
   refreshMeshNodes,
   resetMeshNodesStateForTest,
   setMeshNodesStateForTest,
-  shouldSkipHubPoll,
   sortNodes,
   toRuntimeNodeId,
 } from './mesh-nodes';
@@ -412,45 +405,29 @@ describe('mergeNodes', () => {
     node({ id: 'entry', name: 'entry', loggedIn: true }),
     node({ id: '远端', name: 'studio', online: false, reach: null, loggedIn: false }),
   ];
-  const hubNodes: HubNodeRow[] = [
-    {
-      id: 'entry',
-      name: 'hub-machine',
-      status: 'active',
-      online: true,
-      version: '1.2.3',
-      last_seen_at: 1700000000000,
-      direct_capable: true,
-    },
-  ];
 
-  test('mesh 是成员集权威，hub 补充心跳/状态/名称', () => {
-    const rows = mergeNodes(meshNodes, hubNodes, { entryNodeId: 'entry', hubNodeId: 'entry' });
+  test('mesh 是成员集权威；entry 排第一', () => {
+    const rows = mergeNodes(meshNodes, { entryNodeId: 'entry' });
     expect(rows).toHaveLength(2);
     expect(rows[0].id).toBe('entry');
     expect(rows[0].runtimeNodeId).toBe('self');
     expect(rows[0].isSelf).toBe(true);
-    expect(rows[0].isHub).toBe(true);
-    expect(rows[0].name).toBe('hub-machine');
-    expect(rows[0].lastSeenAt).toBe(1700000000000);
-    expect(rows[0].status).toBe('active');
-    expect(rows[0].directCapable).toBe(true);
+    expect(rows[0].name).toBe('entry');
+    expect(rows[0].directCapable).toBe(false);
     expect(rows[0].fingerprint).toHaveLength(16);
   });
 
-  test('hub 不可达时补充字段为 null，mesh 字段照常', () => {
-    const rows = mergeNodes(meshNodes, null, { entryNodeId: 'entry', hubNodeId: null });
+  test('mesh 字段照常，补充字段为 null', () => {
+    const rows = mergeNodes(meshNodes, { entryNodeId: 'entry' });
     expect(rows[1].id).toBe('远端');
     expect(rows[1].runtimeNodeId).toBe('远端');
     expect(rows[1].lastSeenAt).toBeNull();
     expect(rows[1].status).toBeNull();
-    expect(rows[1].isHub).toBe(false);
     expect(rows[1].online).toBe(false);
     expect(rows[1].reach).toBeNull();
   });
 
   test('transport 与 rttMs 原样带进行；未知取值归一成 null', () => {
-    // 线上可能来自更新的 node，出现前端还不认识的枚举值，一律归一成 null 而不是照单全收
     const weird = {
       ...node({ id: 'weird' }),
       reach: 'nonsense',
@@ -463,8 +440,7 @@ describe('mergeNodes', () => {
         node({ id: 'dc', reach: 'lan', transport: 'dc', rttMs: null }),
         weird,
       ],
-      null,
-      { entryNodeId: 'entry', hubNodeId: null }
+      { entryNodeId: 'entry' }
     );
     const byId = new Map(rows.map((row) => [row.id, row]));
     expect(byId.get('entry')).toMatchObject({ reach: 'wan', transport: 'ws-secure', rttMs: 12.4 });
@@ -473,10 +449,7 @@ describe('mergeNodes', () => {
   });
 
   test('mesh 行不带 transport / rttMs 时补 null', () => {
-    const rows = mergeNodes([node({ id: 'legacy' })], null, {
-      entryNodeId: null,
-      hubNodeId: null,
-    });
+    const rows = mergeNodes([node({ id: 'legacy' })], { entryNodeId: null });
     expect(rows[0].transport).toBeNull();
     expect(rows[0].rttMs).toBeNull();
   });
@@ -496,72 +469,12 @@ describe('mergeNodes', () => {
         }),
         node({ id: 'b' }),
       ],
-      null,
-      { entryNodeId: null, hubNodeId: null }
+      { entryNodeId: null }
     );
     const byId = new Map(rows.map((row) => [row.id, row]));
     expect(byId.get('a')?.operation?.kind).toBe('uninstall');
     expect(byId.get('a')?.operation?.phase).toBe('uninstalling');
     expect(byId.get('b')?.operation).toBeNull();
-  });
-
-  test('hub 列表里多出来的 node 不会凭空出现在表里', () => {
-    const rows = mergeNodes(meshNodes, [...hubNodes, { ...hubNodes[0], id: 'ghost' }], {
-      entryNodeId: 'entry',
-      hubNodeId: 'entry',
-    });
-    expect(rows.map((row) => row.id)).toEqual(['entry', '远端']);
-  });
-});
-
-describe('findHubNodeId', () => {
-  test('只认 mesh 列表里的 isHub 标志位', () => {
-    const rows = [node({ id: 'a' }), node({ id: 'b', isHub: true }), node({ id: 'entry' })];
-    expect(findHubNodeId(rows, null)).toBe('b');
-  });
-
-  test('列表还没到时用 /api/auth/mode 的 hubNodeId', () => {
-    expect(findHubNodeId([], 'hub-1')).toBe('hub-1');
-  });
-
-  test('inventory 里的 hub 角色不再被当成标志位（启发式已删除）', () => {
-    const rows = [node({ id: 'h', inventory: { roles: 'hub,node' } }), node({ id: 'entry' })];
-    expect(findHubNodeId(rows, null)).toBeNull();
-  });
-
-  test('isHub 优先于 mode 里那个列表中不存在的 hubNodeId', () => {
-    const rows = [node({ id: 'b', isHub: true })];
-    expect(findHubNodeId(rows, 'stale')).toBe('b');
-  });
-
-  test('多 hub：列表里认得出 mode 的 hubNodeId（writer）时以它为准', () => {
-    const rows = [
-      node({ id: 'standby', isHub: true, hubMode: 'standby' }),
-      node({ id: 'writer', isHub: true, hubMode: 'active' }),
-    ];
-    expect(findHubNodeId(rows, 'writer')).toBe('writer');
-    // 不是 hub 的 id 不作数，仍退回 isHub 扫描
-    expect(findHubNodeId(rows, 'plain')).toBe('standby');
-  });
-});
-
-describe('mergeNodes 的 isHub', () => {
-  test('mesh 行自带 isHub 时不依赖上下文的 hubNodeId', () => {
-    const rows = mergeNodes([node({ id: 'x', isHub: true })], null, {
-      entryNodeId: null,
-      hubNodeId: null,
-    });
-    expect(rows[0].isHub).toBe(true);
-  });
-
-  test('多 hub：`hubMode` 原样带出，旧后端不下发时为 null', () => {
-    const rows = mergeNodes(
-      [node({ id: 'a', isHub: true, hubMode: 'standby' }), node({ id: 'b', isHub: true })],
-      null,
-      { entryNodeId: null, hubNodeId: null }
-    );
-    expect(rows.find((row) => row.id === 'a')?.hubMode).toBe('standby');
-    expect(rows.find((row) => row.id === 'b')?.hubMode).toBeNull();
   });
 });
 
@@ -970,171 +883,6 @@ describe('ensureFreshMeshNodes', () => {
   });
 });
 
-describe('hubCandidateIds / loadHubNodes', () => {
-  const rows = (ids: string[]) => ids.map((id) => ({ id }) as unknown as HubNodeRow);
-
-  test('写者优先，其余在线 hub 机兜底，去重', () => {
-    const nodes = [
-      node({ id: 'a', isHub: true }),
-      node({ id: 'b', isHub: true }),
-      node({ id: 'c', isHub: true, online: false }),
-      node({ id: 'n' }),
-    ];
-    expect(hubCandidateIds(nodes, 'b')).toEqual(['b', 'a']);
-    expect(hubCandidateIds(nodes, null)).toEqual(['a', 'b']);
-    expect(hubCandidateIds([node({ id: 'n' })], 'zz')).toEqual(['zz']);
-  });
-
-  test('401 先补节点登录再重试同一台，成功即返回该台', async () => {
-    const calls: string[] = [];
-    let loggedIn = false;
-    const result = await loadHubNodes(['b', 'a'], {
-      list: async (id) => {
-        calls.push(`list:${id}`);
-        if (id === 'b' && !loggedIn) throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
-        return rows([id]);
-      },
-      login: async (id) => {
-        calls.push(`login:${id}`);
-        loggedIn = true;
-        return { ok: true };
-      },
-    });
-    expect(result.hubNodeId).toBe('b');
-    expect(calls).toEqual(['list:b', 'login:b', 'list:b']);
-  });
-
-  test('写者登录不了就换下一台 hub 机（standby 会转发写入）', async () => {
-    const calls: string[] = [];
-    const result = await loadHubNodes(['b', 'a'], {
-      list: async (id) => {
-        calls.push(`list:${id}`);
-        if (id === 'b') throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
-        return rows(['x']);
-      },
-      login: async () => ({ ok: false }),
-    });
-    expect(result.hubNodeId).toBe('a');
-    expect(calls).toEqual(['list:b', 'list:a']);
-  });
-
-  test('静默登录被鉴权码拒掉时，抛的是那次登录失败而不是列表的 401', async () => {
-    await expect(
-      loadHubNodes(['b'], {
-        list: async () => {
-          throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
-        },
-        login: async () => ({ ok: false, code: 'PASSKEY_REQUIRED' }),
-      })
-    ).rejects.toMatchObject({ code: 'PASSKEY_REQUIRED', status: 401 });
-  });
-
-  test('拒登不会被后一台的连不上盖掉：抛的是写者那次鉴权失败', async () => {
-    const calls: string[] = [];
-    await expect(
-      loadHubNodes(['b', 'a'], {
-        list: async (id) => {
-          calls.push(`list:${id}`);
-          throw id === 'b'
-            ? new HubApiError('NODE_LOGIN_REQUIRED', 401)
-            : new HubApiError('hub_nodes_failed', 503);
-        },
-        login: async () => ({ ok: false, code: 'PASSKEY_REQUIRED' }),
-      })
-    ).rejects.toMatchObject({ code: 'PASSKEY_REQUIRED', status: 401 });
-    expect(calls).toEqual(['list:b', 'list:a']);
-  });
-
-  test('服务端新增的拒登码（TOTP_INVALID / RATE_LIMITED）同样按鉴权失败抛出', async () => {
-    for (const code of ['TOTP_INVALID', 'RATE_LIMITED']) {
-      await expect(
-        loadHubNodes(['b'], {
-          list: async () => {
-            throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
-          },
-          login: async () => ({ ok: false, code }),
-        })
-      ).rejects.toMatchObject({ code, status: 401 });
-    }
-  });
-
-  test('登录失败码不是鉴权类（如 NETWORK_ERROR）时保留列表原错误', async () => {
-    await expect(
-      loadHubNodes(['b'], {
-        list: async () => {
-          throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
-        },
-        login: async () => ({ ok: false, code: 'NETWORK_ERROR' }),
-      })
-    ).rejects.toMatchObject({ code: 'NODE_LOGIN_REQUIRED' });
-  });
-
-  test('登录被拒仍然继续试下一台 hub 机', async () => {
-    const calls: string[] = [];
-    const result = await loadHubNodes(['b', 'a'], {
-      list: async (id) => {
-        calls.push(`list:${id}`);
-        if (id === 'b') throw new HubApiError('NODE_LOGIN_REQUIRED', 401);
-        return rows([id]);
-      },
-      login: async () => ({ ok: false, code: 'TOTP_REQUIRED' }),
-    });
-    expect(result.hubNodeId).toBe('a');
-    expect(calls).toEqual(['list:b', 'list:a']);
-  });
-
-  test('非 401 错误不登录，直接换下一台；全部失败抛最后一个错误', async () => {
-    let logins = 0;
-    await expect(
-      loadHubNodes(['b', 'a'], {
-        list: async (id) => {
-          throw new HubApiError(id === 'b' ? 'boom' : 'last', 503);
-        },
-        login: async () => {
-          logins += 1;
-          return { ok: true };
-        },
-      })
-    ).rejects.toMatchObject({ code: 'last' });
-    expect(logins).toBe(0);
-  });
-});
-
-function hubPollingHarness() {
-  const state = {
-    loads: 0,
-    intervalMs: 0,
-    tick: null as (() => void) | null,
-    onVisibilityChange: null as (() => void) | null,
-    hidden: false,
-    now: 5_000_000,
-  };
-  const options = {
-    intervalMs: 30_000,
-    load: () => {
-      state.loads += 1;
-    },
-    schedule: (fn: () => void, ms: number) => {
-      state.intervalMs = ms;
-      state.tick = fn;
-      return () => {
-        state.tick = null;
-      };
-    },
-    visibility: {
-      hidden: () => state.hidden,
-      subscribe: (listener: () => void) => {
-        state.onVisibilityChange = listener;
-        return () => {
-          state.onVisibilityChange = null;
-        };
-      },
-    },
-    now: () => state.now,
-  };
-  return { state, options };
-}
-
 describe('setNodePaused', () => {
   test('只改已知行的旗标，未知 id 返回 false', () => {
     setMeshNodesStateForTest({ nodes: [node({ id: 'a' }), node({ id: 'b' })] });
@@ -1152,165 +900,12 @@ describe('markLoggedIn 与直连负缓存', () => {
   const NODE = 'f'.repeat(32);
 
   test('该 node 重新登录成功即清掉「这条入口给不出直连」的负结论', () => {
-    // 负结论有可能是误判：中转 / hub 会把自己的 nodeId 盖在真正的会话过期 401 上。
+    // 负结论有可能是误判：入口转发会把自己的 nodeId 盖在真正的会话过期 401 上。
     markDirectLinkUnavailable(NODE, ENTRY);
     expect(isDirectLinkUnavailable(NODE, ENTRY)).toBe(true);
 
     markLoggedIn(NODE);
     expect(isDirectLinkUnavailable(NODE, ENTRY)).toBe(false);
     clearDirectLinkAvailability();
-  });
-});
-
-describe('hub 打不通时的退避', () => {
-  const CAND_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
-  const CAND_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
-
-  test('拿不到逐台信息时按抛出的错误一刀切', () => {
-    const noted: string[] = [];
-    noteHubLoadFailure([CAND_A, CAND_B], new TypeError('Failed to fetch'), (id) => noted.push(id));
-    expect(noted).toEqual([CAND_A, CAND_B]);
-  });
-
-  test('逐台判定：只罚自己那次失败确实打不通的候选', async () => {
-    const noted: string[] = [];
-    // A 答了 500（服务端在），B 传输层挂掉：只有 B 该进退避。
-    const error = await loadHubNodes([CAND_A, CAND_B], {
-      list: (id) => {
-        if (id === CAND_A) return Promise.reject(new HubApiError('hub_nodes_failed', 500));
-        return Promise.reject(new TypeError('Failed to fetch'));
-      },
-      login: () => Promise.resolve({ ok: false }),
-    }).catch((err: unknown) => err);
-
-    noteHubLoadFailure([CAND_A, CAND_B], error, (id) => noted.push(id));
-    expect(noted).toEqual([CAND_B]);
-  });
-
-  test('逐台判定认的是重登之后那一次的结果', async () => {
-    const noted: string[] = [];
-    // A 先 401、重登成功后再打就是传输层失败：这才是它自己的最终失败。
-    const error = await loadHubNodes([CAND_A], {
-      list: (() => {
-        let calls = 0;
-        return () => {
-          calls += 1;
-          return calls === 1
-            ? Promise.reject(new HubApiError('NODE_LOGIN_REQUIRED', 401))
-            : Promise.reject(new TypeError('Failed to fetch'));
-        };
-      })(),
-      login: () => Promise.resolve({ ok: true }),
-    }).catch((err: unknown) => err);
-
-    noteHubLoadFailure([CAND_A], error, (id) => noted.push(id));
-    expect(noted).toEqual([CAND_A]);
-  });
-
-  test('转发器的 NODE_UNREACHABLE 同样记', () => {
-    const noted: string[] = [];
-    noteHubLoadFailure([CAND_A], new HubApiError('NODE_UNREACHABLE', 503), (id) => noted.push(id));
-    expect(noted).toEqual([CAND_A]);
-  });
-
-  test('hub 拒登（登录失败）时一台都不记：那是要用户去补验证，不是打不通', async () => {
-    const noted: string[] = [];
-    const error = await loadHubNodes([CAND_A], {
-      list: () => Promise.reject(new HubApiError('NODE_LOGIN_REQUIRED', 401)),
-      login: () => Promise.resolve({ ok: false, code: 'PASSKEY_REQUIRED' }),
-    }).catch((err: unknown) => err);
-
-    noteHubLoadFailure([CAND_A], error, (id) => noted.push(id));
-    expect(noted).toEqual([]);
-  });
-
-  test('服务端答过话的失败一律不记（拒登、500、被取消）', () => {
-    const noted: string[] = [];
-    const aborted = new Error('aborted');
-    aborted.name = 'AbortError';
-    for (const error of [
-      new HubApiError('NODE_LOGIN_REQUIRED', 401),
-      new HubApiError('hub_nodes_failed', 500),
-      new HubApiError('hub_nodes_failed', 404),
-      aborted,
-    ]) {
-      noteHubLoadFailure([CAND_A], error, (id) => noted.push(id));
-    }
-    expect(noted).toEqual([]);
-  });
-
-  test('候选全在退避窗口里才跳过这一拍', () => {
-    expect(shouldSkipHubPoll([CAND_A, CAND_B], () => true)).toBe(true);
-    expect(shouldSkipHubPoll([CAND_A, CAND_B], (id) => id === CAND_A)).toBe(false);
-    expect(shouldSkipHubPoll([], () => true)).toBe(false);
-  });
-});
-
-describe('startHubPolling', () => {
-  test('可见时按间隔拉取', () => {
-    const { state, options } = hubPollingHarness();
-    const stop = startHubPolling(options);
-
-    expect(state.intervalMs).toBe(30_000);
-    state.now += 30_000;
-    state.tick?.();
-    expect(state.loads).toBe(1);
-    stop();
-    expect(state.tick).toBeNull();
-    expect(state.onVisibilityChange).toBeNull();
-  });
-
-  test('页面隐藏期间跳过这一拍', () => {
-    const { state, options } = hubPollingHarness();
-    const stop = startHubPolling(options);
-
-    state.hidden = true;
-    state.now += 30_000;
-    state.tick?.();
-    state.now += 30_000;
-    state.tick?.();
-
-    expect(state.loads).toBe(0);
-    stop();
-  });
-
-  test('回到前台且数据已过期时立刻补拉', () => {
-    const { state, options } = hubPollingHarness();
-    const stop = startHubPolling(options);
-
-    state.hidden = true;
-    state.onVisibilityChange?.();
-    state.now += HUB_STALE_MS;
-    state.hidden = false;
-    state.onVisibilityChange?.();
-
-    expect(state.loads).toBe(1);
-    stop();
-  });
-
-  test('刚拉过就切回前台不重复拉', () => {
-    const { state, options } = hubPollingHarness();
-    const stop = startHubPolling(options);
-
-    state.hidden = true;
-    state.onVisibilityChange?.();
-    state.now += 1_000;
-    state.hidden = false;
-    state.onVisibilityChange?.();
-
-    expect(state.loads).toBe(0);
-    stop();
-  });
-
-  test('切走（仍隐藏）的那次 visibilitychange 不拉', () => {
-    const { state, options } = hubPollingHarness();
-    const stop = startHubPolling(options);
-
-    state.now += HUB_STALE_MS * 2;
-    state.hidden = true;
-    state.onVisibilityChange?.();
-
-    expect(state.loads).toBe(0);
-    stop();
   });
 });

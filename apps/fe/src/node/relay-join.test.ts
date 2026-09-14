@@ -12,7 +12,7 @@ import {
 import { decodeRelayJoinToken, isRelayJoinToken } from '@vibeterm/shared/relay';
 import type { PendingStorage } from './enrollment';
 import { listPendingEnrollments, setPendingStorage } from './enrollment';
-import { type HubApi, HubApiError } from './hub-api';
+import { type EnrollmentApi, EnrollmentApiError } from './enrollment-api';
 import {
   RELAY_ENROLLMENT_NO_RELAY,
   RELAY_ENROLL_FANOUT_FAILED,
@@ -56,7 +56,7 @@ function relayApiOf(
   return api as unknown as RelayTenantApi & { scopes: string[] };
 }
 
-function channelOf(calls: unknown[], created: Record<string, unknown> = {}): HubApi {
+function channelOf(calls: unknown[], created: Record<string, unknown> = {}): EnrollmentApi {
   return {
     createEnrollment: (body: unknown) => {
       calls.push(body);
@@ -67,7 +67,7 @@ function channelOf(calls: unknown[], created: Record<string, unknown> = {}): Hub
         ...created,
       });
     },
-  } as unknown as HubApi;
+  } as unknown as EnrollmentApi;
 }
 
 const SHARED = {
@@ -188,8 +188,9 @@ describe('createEnrollmentOnRelay 的 fan-out 结果', () => {
 
   test('真实契约：网关 fan-out 全败时直接 502，错误码原样传出去', async () => {
     const channel = {
-      createEnrollment: () => Promise.reject(new HubApiError(RELAY_ENROLL_FANOUT_FAILED, 502)),
-    } as unknown as HubApi;
+      createEnrollment: () =>
+        Promise.reject(new EnrollmentApiError(RELAY_ENROLL_FANOUT_FAILED, 502)),
+    } as unknown as EnrollmentApi;
 
     const failure = await createEnrollmentOnRelay({
       channel,
@@ -197,9 +198,9 @@ describe('createEnrollmentOnRelay 的 fan-out 结果', () => {
       ...SHARED,
     }).catch((error: unknown) => error);
 
-    expect(failure).toBeInstanceOf(HubApiError);
-    expect((failure as HubApiError).code).toBe(RELAY_ENROLL_FANOUT_FAILED);
-    expect((failure as HubApiError).status).toBe(502);
+    expect(failure).toBeInstanceOf(EnrollmentApiError);
+    expect((failure as EnrollmentApiError).code).toBe(RELAY_ENROLL_FANOUT_FAILED);
+    expect((failure as EnrollmentApiError).status).toBe(502);
   });
 
   // 旧网关会以 201 带回全部 `accepted: false`；新网关走不到这里（上面那条 502）。

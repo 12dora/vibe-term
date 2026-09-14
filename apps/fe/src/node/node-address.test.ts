@@ -17,7 +17,7 @@ const t = (key: string, options?: Record<string, unknown>) =>
 describe('displayHost', () => {
   test('剥 scheme 与 path，保留端口', () => {
     expect(displayHost('wss://office.example:39001/peer')).toBe('office.example:39001');
-    expect(displayHost('https://hub.example.com')).toBe('hub.example.com');
+    expect(displayHost('https://node.example.com')).toBe('node.example.com');
     expect(displayHost('10.0.0.8:39001')).toBe('10.0.0.8:39001');
     expect(displayHost('  ')).toBeNull();
     expect(displayHost(null)).toBeNull();
@@ -36,18 +36,7 @@ describe('advertisedEndpointHost', () => {
 
 describe('deriveNodeAddress', () => {
   test('pending 恒为空', () => {
-    expect(deriveNodeAddress({ pending: true, hubPublicUrl: 'https://hub.example' })).toBeNull();
-  });
-
-  test('hub 用 publicUrl', () => {
-    expect(
-      deriveNodeAddress({
-        isHub: true,
-        hubPublicUrl: 'https://tokyo.example:8443',
-        peerAddress: '10.0.0.2',
-        transport: 'dc',
-      })
-    ).toBe('tokyo.example:8443');
+    expect(deriveNodeAddress({ pending: true, peerAddress: '10.0.0.2' })).toBeNull();
   });
 
   test('live 直连用 peerAddress', () => {

@@ -1,8 +1,7 @@
-// mergeNodes：mesh 成员集 + hub 心跳，外加 hub 独有的「待批准」行。
+// mergeNodes：mesh 成员集 + pendingMemberIds 占位行。
 
 import { describe, expect, test } from 'bun:test';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
-import type { HubNodeRow } from './hub-api';
 import { mergeNodes } from './merge-nodes';
 
 const ENTRY = 'aa'.repeat(16);
@@ -20,151 +19,77 @@ function meshNode(id: string, name: string): MeshNode {
   } as unknown as MeshNode;
 }
 
-function hubRow(id: string, extra: Partial<HubNodeRow> = {}): HubNodeRow {
-  return {
-    id,
-    name: `hub-${id.slice(0, 4)}`,
-    status: 'enrolled',
-    online: true,
-    version: '1.1.24',
-    last_seen_at: 1_700_000_000_000,
-    direct_capable: true,
-    ...extra,
-  };
-}
+const CONTEXT = { entryNodeId: ENTRY };
 
-const MATERIAL = {
-  enrollment_id: 'enr-1',
-  authorization: 'auth',
-  authorization_sig: 'auth-sig',
-  certificate: 'cert',
-  cert_sig: 'cert-sig',
-};
-
-const CONTEXT = { entryNodeId: ENTRY, hubNodeId: null };
-
-describe('mergeNodes 的待批准行', () => {
-  test('hub 说 pending 而 mesh 里没有：追加一行离线的待批准，带上 admit 材料', () => {
-    const rows = mergeNodes(
-      [meshNode(ENTRY, 'entry')],
-      [
-        hubRow(ENTRY),
-        hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop', ...MATERIAL }),
-      ],
-      CONTEXT
-    );
+describe('mergeNodes 的待同步占位行', () => {
+  test('pendingMemberIds 里 mesh 没有的 id：追加一行离线占位', () => {
+    const rows = mergeNodes([meshNode(ENTRY, 'entry')], {
+      ...CONTEXT,
+      pendingMemberIds: [PENDING_ID],
+    });
 
     expect(rows.map((row) => row.id)).toEqual([ENTRY, PENDING_ID]);
     const pending = rows[1];
     expect(pending.pending).toBe(true);
     expect(pending.online).toBe(false);
-    expect(pending.name).toBe('laptop');
+    expect(pending.name).toBe(PENDING_ID.slice(0, 8));
     expect(pending.runtimeNodeId).toBe(PENDING_ID);
     expect(pending.version).toBeNull();
     expect(pending.loggedIn).toBe(false);
-    expect(pending.admissionStatus).toBe('pending');
-    expect(pending.admitMaterial).toEqual({
-      enrollmentId: 'enr-1',
-      authorization: 'auth',
-      authorizationSig: 'auth-sig',
-      certificate: 'cert',
-      certSig: 'cert-sig',
-    });
-  });
-
-  test('名字为空时退回 id 前缀', () => {
-    const rows = mergeNodes(
-      [],
-      [hubRow(PENDING_ID, { admission_status: 'pending', name: '  ', ...MATERIAL })],
-      CONTEXT
-    );
-    expect(rows[0].name).toBe(PENDING_ID.slice(0, 8));
-  });
-
-  test('材料不全的待批准行照样列出，但没有 admit 材料', () => {
-    const rows = mergeNodes(
-      [],
-      [hubRow(PENDING_ID, { admission_status: 'pending', certificate: 'cert' })],
-      CONTEXT
-    );
-    expect(rows[0].pending).toBe(true);
-    expect(rows[0].admitMaterial).toBeNull();
+    expect(pending.admitMaterial).toBeNull();
   });
 
   test('mesh 里已经有的同一台绝不重复列出', () => {
-    const rows = mergeNodes(
-      [meshNode(ENTRY, 'entry'), meshNode(OTHER, 'other')],
-      [hubRow(ENTRY), hubRow(OTHER, { admission_status: 'pending', ...MATERIAL })],
-      CONTEXT
-    );
+    const rows = mergeNodes([meshNode(ENTRY, 'entry'), meshNode(OTHER, 'other')], {
+      ...CONTEXT,
+      pendingMemberIds: [OTHER],
+    });
     expect(rows.map((row) => row.id)).toEqual([ENTRY, OTHER]);
     expect(rows[1].pending).toBe(false);
-    expect(rows[1].admissionStatus).toBe('pending');
   });
 
   test('mesh 行的 paused 透传到 NodeRow；pending 行没有该字段', () => {
     const paused = { ...meshNode(OTHER, 'other'), paused: true } as MeshNode;
-    const rows = mergeNodes(
-      [meshNode(ENTRY, 'entry'), paused],
-      [
-        hubRow(ENTRY),
-        hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop', ...MATERIAL }),
-      ],
-      CONTEXT
-    );
+    const rows = mergeNodes([meshNode(ENTRY, 'entry'), paused], {
+      ...CONTEXT,
+      pendingMemberIds: [PENDING_ID],
+    });
     expect(rows.find((row) => row.id === OTHER)?.paused).toBe(true);
     expect(rows.find((row) => row.id === ENTRY)?.paused).toBeUndefined();
     expect(rows.find((row) => row.id === PENDING_ID)?.paused).toBeUndefined();
   });
 
-  test('旧 Hub 不下发 admission_status：一行都不追加，行为与从前一致', () => {
-    const rows = mergeNodes([meshNode(ENTRY, 'entry')], [hubRow(ENTRY), hubRow(OTHER)], CONTEXT);
+  test('pendingMemberIds 缺失或为空时不产生占位行', () => {
+    const rows = mergeNodes([meshNode(ENTRY, 'entry')], CONTEXT);
     expect(rows.map((row) => row.id)).toEqual([ENTRY]);
-    expect(rows[0].admissionStatus).toBe('admitted');
     expect(rows[0].pending).toBe(false);
+
+    expect(
+      mergeNodes([meshNode(ENTRY, 'entry')], { ...CONTEXT, pendingMemberIds: [] }).map(
+        (row) => row.id
+      )
+    ).toEqual([ENTRY]);
   });
 
-  test('revoked 的 hub 行不会被当成待批准', () => {
-    const rows = mergeNodes([], [hubRow(OTHER, { admission_status: 'revoked' })], CONTEXT);
-    expect(rows).toEqual([]);
+  test('多条占位按名称（id 前缀）排序，且排在已接纳成员之后', () => {
+    const zulu = 'zz'.repeat(16);
+    const alpha = '11'.repeat(16);
+    const rows = mergeNodes([meshNode(ENTRY, 'entry')], {
+      ...CONTEXT,
+      pendingMemberIds: [zulu, alpha],
+    });
+    expect(rows.map((row) => row.name)).toEqual(['entry', alpha.slice(0, 8), zulu.slice(0, 8)]);
   });
 
-  test('多条待批准按名称排序，且排在已接纳成员之后', () => {
-    const rows = mergeNodes(
-      [meshNode(ENTRY, 'entry')],
-      [
-        hubRow(ENTRY),
-        hubRow(PENDING_ID, { admission_status: 'pending', name: 'zulu' }),
-        hubRow(OTHER, { admission_status: 'pending', name: 'alpha' }),
-      ],
-      CONTEXT
-    );
-    expect(rows.map((row) => row.name)).toEqual(['hub-aaaa', 'alpha', 'zulu']);
-  });
-
-  test('hub 返回两条同 ID 的待批准：只留第一条，不产生重复 React key', () => {
-    const rows = mergeNodes(
-      [],
-      [
-        hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop', ...MATERIAL }),
-        hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop-dup' }),
-      ],
-      CONTEXT
-    );
+  test('pendingMemberIds 两条同 ID：只留第一条，不产生重复 React key', () => {
+    const rows = mergeNodes([], { entryNodeId: null, pendingMemberIds: [PENDING_ID, PENDING_ID] });
     expect(rows).toHaveLength(1);
-    expect(rows[0].name).toBe('laptop');
-    expect(rows[0].admitMaterial).not.toBeNull();
-  });
-
-  test('hub 列表为 null（不可达）时不产生任何待批准行', () => {
-    const rows = mergeNodes([meshNode(ENTRY, 'entry')], null, CONTEXT);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].admissionStatus).toBeNull();
+    expect(rows[0].id).toBe(PENDING_ID);
   });
 });
 
 describe('mergeNodes 的 lastSeenAt / address', () => {
-  test('lastSeenAt 优先 mesh，hub last_seen_at 兜底', () => {
+  test('lastSeenAt 来自 mesh；缺失为 null', () => {
     const mesh = {
       ...meshNode(OTHER, 'studio'),
       lastSeenAt: 1_700_000_111_000,
@@ -172,26 +97,16 @@ describe('mergeNodes 的 lastSeenAt / address', () => {
       transport: 'dc' as const,
       endpoints: ['ws://10.0.0.8:39001/peer'],
     };
-    const preferMesh = mergeNodes([mesh], [hubRow(OTHER, { last_seen_at: 1 })], CONTEXT);
+    const preferMesh = mergeNodes([mesh], CONTEXT);
     expect(preferMesh[0].lastSeenAt).toBe(1_700_000_111_000);
     expect(preferMesh[0].peerAddress).toBe('10.0.0.8');
     expect(preferMesh[0].endpoints).toEqual(['ws://10.0.0.8:39001/peer']);
 
-    const fallback = mergeNodes([meshNode(OTHER, 'studio')], [hubRow(OTHER)], CONTEXT);
-    expect(fallback[0].lastSeenAt).toBe(1_700_000_000_000);
-
-    const empty = mergeNodes([meshNode(OTHER, 'studio')], null, CONTEXT);
+    const empty = mergeNodes([meshNode(OTHER, 'studio')], CONTEXT);
     expect(empty[0].lastSeenAt).toBeNull();
   });
 
-  test('address：hub publicUrl > 直连 peerAddress > 广告 endpoint > viaRelay', () => {
-    const hubId = 'dd'.repeat(16);
-    const hub = {
-      ...meshNode(hubId, 'tokyo'),
-      isHub: true,
-      transport: 'dc' as const,
-      peerAddress: '10.0.0.2',
-    };
+  test('address：直连 peerAddress > 广告 endpoint > viaRelay', () => {
     const direct = {
       ...meshNode(OTHER, 'studio'),
       transport: 'ws-secure' as const,
@@ -207,25 +122,17 @@ describe('mergeNodes 的 lastSeenAt / address', () => {
       transport: 'relay' as const,
       viaRelay: 'https://sh.example',
     };
-    const rows = mergeNodes([hub, direct, advertised, relay], null, {
-      ...CONTEXT,
-      hubDetails: new Map([[hubId, { publicUrl: 'https://tokyo.example:8443' }]]),
-    });
+    const rows = mergeNodes([direct, advertised, relay], CONTEXT);
     const byId = new Map(rows.map((row) => [row.id, row]));
-    expect(byId.get(hubId)?.address).toBe('tokyo.example:8443');
     expect(byId.get(OTHER)?.address).toBe('office.lan');
     expect(byId.get(PENDING_ID)?.address).toBe('edge.example:39001');
     expect(byId.get('ee'.repeat(16))?.address).toBe('sh.example');
   });
 
-  test('pending 行 address 为破折号，lastSeenAt 仍抄 hub', () => {
-    const rows = mergeNodes(
-      [],
-      [hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop', ...MATERIAL })],
-      CONTEXT
-    );
+  test('pending 行 address 为破折号', () => {
+    const rows = mergeNodes([], { entryNodeId: null, pendingMemberIds: [PENDING_ID] });
     expect(rows[0].address).toBe('—');
-    expect(rows[0].lastSeenAt).toBe(1_700_000_000_000);
+    expect(rows[0].lastSeenAt).toBeNull();
     expect(rows[0].peerAddress).toBeNull();
     expect(rows[0].endpoints).toEqual([]);
   });
@@ -234,7 +141,7 @@ describe('mergeNodes 的 lastSeenAt / address', () => {
 describe('mergeNodes 对 2.3.6 网关（无 lastSeenAt / peerAddress / endpoints）', () => {
   test('旧 DTO 整行缺这些字段：lastSeenAt 为 null、地址为 —、reach 照常', () => {
     const legacy = { ...meshNode('b'.repeat(32), 'legacy'), online: false } as unknown as MeshNode;
-    const rows = mergeNodes([meshNode(ENTRY, 'entry'), legacy], null, CONTEXT);
+    const rows = mergeNodes([meshNode(ENTRY, 'entry'), legacy], CONTEXT);
     const row = rows.find((item) => item.id === legacy.id);
     expect(row).toBeDefined();
     expect(row?.lastSeenAt ?? null).toBeNull();

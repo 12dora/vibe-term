@@ -63,7 +63,7 @@ describe('mesh-nodes-cache', () => {
             directFailure: { at: NOW, ws: 'timeout' },
             loggedIn: true,
             isHub: true,
-          }),
+          } as unknown as MeshNode),
         ],
         savedAt: NOW,
       },
@@ -78,7 +78,7 @@ describe('mesh-nodes-cache', () => {
     expect(row?.name).toBe('书房');
     expect(row?.online).toBe(true);
     expect(row?.loggedIn).toBe(true);
-    expect(row?.isHub).toBe(true);
+    expect(row && 'isHub' in row).toBe(false);
     // 上一次会话里那条链路的现场不可能还成立，落盘时就被裁掉
     expect(row?.reach).toBeNull();
     expect(row?.transport).toBeUndefined();
@@ -118,6 +118,32 @@ describe('mesh-nodes-cache', () => {
 
     storage.entries.set(KEY, '{oops');
     expect(readMeshNodesCache(storage, NOW)).toBeNull();
+  });
+
+  test('旧缓存里的 isHub 读回来被剥掉', () => {
+    const storage = memoryStorage();
+    storage.entries.set(
+      KEY,
+      JSON.stringify({
+        v: 1,
+        mesh: true,
+        entryNodeId: 'entry',
+        savedAt: NOW,
+        nodes: [
+          {
+            id: 'n1',
+            name: '书房',
+            publicKey: 'AAAA',
+            online: true,
+            loggedIn: true,
+            isHub: true,
+          },
+        ],
+      })
+    );
+    const row = readMeshNodesCache(storage, NOW)?.nodes[0];
+    expect(row?.id).toBe('n1');
+    expect(row && 'isHub' in row).toBe(false);
   });
 
   test('缺字段的行被丢掉，不会把半截数据当成节点渲染', () => {

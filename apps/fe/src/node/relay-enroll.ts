@@ -109,8 +109,8 @@ export function relayFlowFailure(err: unknown): RelayFlowResult {
 /**
  * 把一段待签 payload 包成密钥日志记录并提交，`取 head → 签名 → append` 全程在写锁里。
  *
- * `hub=sync`：入口先把记录送上级（中继）并等 ack，确认之前本地什么都不写。明确回 `hubAck:false`
- * 时按「未确认」上报——此时服务端一条都没落库，用户重试即可，不会造成分叉。
+ * `?hub=sync`（查询名是冻结的 legacy 名）：入口先把记录送上级并等 ack，确认之前本地什么都不写。
+ * `hubAck` 也是 legacy 名：明确回 `false` 时按「未确认」上报——此时服务端一条都没落库，用户重试即可。
  */
 export function appendRelayRecord(
   deps: RelayFlowDeps,

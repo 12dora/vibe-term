@@ -103,7 +103,7 @@ function errorCode(error: Error): string | null {
  * 这次失败属于「根本没问到」吗。
  *
  * 判定用**白名单**：转发器的 `NODE_UNREACHABLE`、超时，以及连 `status` 都没有的传输层异常。
- * 带 `status` 的一律不算——`ApiError`、`HubApiError` 那些是服务端答过话的结论（401 要登录、
+ * 带 `status` 的一律不算——`ApiError`、`EnrollmentApiError` 那些是服务端答过话的结论（401 要登录、
  * 500 是对端出错），拿来加倍退避只会把能修的问题拖成打不通。
  */
 export function isUnreachableFailure(error: unknown): boolean {
