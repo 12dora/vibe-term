@@ -16,7 +16,6 @@ import {
   relayRttBadge,
   relayScoreHint,
   relayTurnChip,
-  turnEndpointLabel,
   turnProbeKey,
 } from './relay-row-model';
 import { RelayRows } from './relay-rows';
@@ -76,7 +75,7 @@ describe('延迟与在线对端数', () => {
   test('在线对端数为 0 也照出，未知才不出', () => {
     expect(relayPeersBadge(row({ peersOnline: 0 }))).toEqual({
       key: 'relay.tenant.strip.tip.peers',
-      params: { n: 0 },
+      params: { n: 0, count: 0 },
       variant: 'outline',
     });
     expect(relayPeersBadge(row())).toBeNull();
@@ -183,21 +182,20 @@ describe('固定与自动优选', () => {
 });
 
 describe('TURN 挂件', () => {
-  test('地址去掉协议与查询串，探测结论三态各有 key', () => {
-    expect(turnEndpointLabel('turn:sh.example.com:3478?transport=udp')).toBe('sh.example.com:3478');
-    expect(turnEndpointLabel('turns:sh.example.com:5349')).toBe('sh.example.com:5349');
-    expect(turnEndpointLabel('绝不是地址')).toBe('绝不是地址');
+  test('探测结论三态各有 key；endpoint 剥掉查询串保留 turn:host:port', () => {
     expect(turnProbeKey(true)).toBe('relay.tenant.strip.turnReachable');
     expect(turnProbeKey(false)).toBe('relay.tenant.strip.turnUnreachable');
     expect(turnProbeKey(null)).toBe('relay.tenant.strip.turnUnprobed');
+    expect(
+      relayTurnChip(row({ turn: { url: 'turn:a:3478?transport=udp', probeOk: true } }))?.endpoint
+    ).toBe('turn:a:3478');
   });
 
   test('没有 TURN 时整个挂件不出', () => {
     expect(relayTurnChip(row())).toBeNull();
     expect(relayTurnChip(row({ turn: { url: 'turn:a:3478', probeOk: false } }))).toEqual({
-      endpoint: 'a:3478',
+      endpoint: 'turn:a:3478',
       verdictKey: 'relay.tenant.strip.turnUnreachable',
-      reachable: false,
       tone: 'destructive',
     });
   });
@@ -214,11 +212,10 @@ describe('TURN 挂件', () => {
         })
       )
     ).toEqual({
-      endpoint: 'a:3478',
+      endpoint: 'turn:a:3478',
       verdictKey: 'relay.tenant.strip.turnReachable',
       membersKey: 'relay.tenant.strip.tip.turnMembers',
       membersParams: { ok: 5, total: 5 },
-      reachable: true,
       tone: 'default',
     });
     expect(
@@ -359,7 +356,7 @@ describe('两种形态的分叉', () => {
     expect(html).toContain('relay.tenant.strip.tip.turn');
     expect(html).toContain('relay.tenant.strip.tip.turnMembers');
     expect(html).toContain('relay.tenant.strip.turnTunHint');
-    expect(html).toContain('text-amber-600');
+    expect(html).toContain('text-amber-300');
   });
 
   test('多挂载：主中继那行的按钮禁用，副中继可点', () => {
@@ -384,14 +381,19 @@ describe('两种形态的分叉', () => {
     expect(html).toContain('relay.tenant.strip.rolePrimary');
   });
 
-  test('单条中继（或旧网关）：只剩状态点与主机名', () => {
+  test('单条中继：状态点、主机名、身份徽标与延迟', () => {
     const html = renderToStaticMarkup(
-      <RelayRows relays={[row({ attached: true, rttMs: 42 })]} onSelect={() => undefined} />
+      <RelayRows
+        relays={[row({ attached: true, role: 'primary', rttMs: 42 })]}
+        onSelect={() => undefined}
+      />
     );
     expect(html).toContain(`data-testid="nodes-relay-status-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-host-${HOST}"`);
-    expect(html).not.toContain('relay.tenant.strip.rtt');
-    expect(html).not.toContain('nodes-relay-role-');
+    expect(html).toContain(`data-testid="nodes-relay-role-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.rolePrimary');
+    expect(html).toContain(`data-testid="nodes-relay-rtt-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.rtt');
     expect(html).not.toContain('relay.tenant.switch.setPrimary');
   });
 
@@ -431,15 +433,15 @@ describe('「更多」气泡的行', () => {
       'pin',
     ]);
     expect(lines[0]?.params).toEqual({ value: 18 });
+    expect(lines[2]?.params).toEqual({ endpoint: 'turn:a:3478' });
     expect(lines[2]?.translatedParams).toEqual({ state: 'relay.tenant.strip.turnReachable' });
     expect(relayPathBestLine(row({ pathBestMs: 41.6 }))?.params).toEqual({ ms: 42 });
     expect(relayPathBestLine(row())).toBeNull();
   });
 
-  test('离线行补错误与「未连接」', () => {
+  test('离线行在「更多」里只补「未连接」（错误行在卡片上）', () => {
     const lines = relayMoreTipLines(row({ online: false, lastErrorCode: 'dns', role: null }), HOST);
-    expect(lines.map((line) => line.key)).toEqual(['error', 'role']);
-    expect(lines[0]?.translatedParams).toEqual({ message: 'relay.tenant.linkErrors.dns' });
-    expect(lines[1]?.i18nKey).toBe('relay.tenant.strip.roleDetached');
+    expect(lines.map((line) => line.key)).toEqual(['role']);
+    expect(lines[0]?.i18nKey).toBe('relay.tenant.strip.roleDetached');
   });
 });

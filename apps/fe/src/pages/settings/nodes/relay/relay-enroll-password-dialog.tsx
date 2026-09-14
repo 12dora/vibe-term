@@ -1,4 +1,4 @@
-// 租户侧修改中继接入密码：须知道当前密码（本机已记录则可省略），新密码可留空以清除。
+// 租户侧修改中继接入密码：须知道当前密码（本机已记录则可省略）；空的新密码只有勾选清除后才提交。
 
 import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
 import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
@@ -26,29 +26,51 @@ import { FormField, Notice } from '../../components/form-primitives';
 
 export const ENROLL_PASSWORD_MIN_LENGTH = 8;
 
-const ERROR_CODES = [
-  'relay_password_invalid',
-  'relay_password_too_short',
-  'relay_members_offline',
-  'relay_unreachable',
-  'relay_not_attached',
-] as const;
+const ERROR_KEY_PREFIX = 'relay.tenant.enrollPassword.errors.';
+
+const ERROR_CODE_KEYS: Record<string, string> = {
+  relay_password_invalid: 'relay_password_invalid',
+  relay_password_too_short: 'relay_password_too_short',
+  relay_members_offline: 'relay_members_offline',
+  relay_unreachable: 'relay_unreachable',
+  relay_not_attached: 'relay_not_attached',
+  relay_rate_limited: 'relay_rate_limited',
+  unauthorized: 'unauthorized',
+  relay_unauthorized: 'unauthorized',
+  malformed: 'malformed',
+  invalid_url: 'malformed',
+};
+
+export type EnrollPasswordError = {
+  key: string;
+  params?: Record<string, string>;
+};
 
 export type EnrollPasswordDraft = {
   current: string;
   next: string;
   kick: boolean;
+  clear: boolean;
 };
 
 export function emptyEnrollPasswordDraft(): EnrollPasswordDraft {
-  return { current: '', next: '', kick: false };
+  return { current: '', next: '', kick: false, clear: false };
+}
+
+export function enrollPasswordError(error: unknown): EnrollPasswordError {
+  const raw = error instanceof RelayApiError ? error.code : relayErrorCode(error);
+  const code = (raw ?? '').toLowerCase();
+  const mapped = ERROR_CODE_KEYS[code];
+  if (mapped) return { key: `${ERROR_KEY_PREFIX}${mapped}` };
+  const status = error instanceof RelayApiError ? error.status : 0;
+  if (status >= 500 || status === 0) {
+    return { key: `${ERROR_KEY_PREFIX}relay_unreachable` };
+  }
+  return { key: `${ERROR_KEY_PREFIX}unknown`, params: { code: raw ?? String(status) } };
 }
 
 export function enrollPasswordErrorKey(error: unknown): string {
-  const raw = error instanceof RelayApiError ? error.code : relayErrorCode(error);
-  const code = (raw ?? 'relay_unreachable').toLowerCase();
-  const matched = ERROR_CODES.find((item) => item === code);
-  return `relay.tenant.enrollPassword.errors.${matched ?? 'relay_unreachable'}`;
+  return enrollPasswordError(error).key;
 }
 
 export type ParsedEnrollPassword =
@@ -64,14 +86,27 @@ export function parseEnrollPasswordDraft(
   draft: EnrollPasswordDraft,
   known: boolean
 ): ParsedEnrollPassword {
-  const next = draft.next.length === 0 ? null : draft.next;
-  if (next !== null && next.length < ENROLL_PASSWORD_MIN_LENGTH) {
-    return { ok: false, errorKey: 'relay.tenant.enrollPassword.errors.relay_password_too_short' };
+  if (!known && draft.current.length === 0) {
+    return { ok: false, errorKey: `${ERROR_KEY_PREFIX}current_required` };
+  }
+  if (draft.next.length === 0) {
+    if (!draft.clear) {
+      return { ok: false, errorKey: `${ERROR_KEY_PREFIX}next_required` };
+    }
+    return {
+      ok: true,
+      ...(known ? {} : { current: draft.current }),
+      next: null,
+      mode: draft.kick ? 'kick' : 'keep',
+    };
+  }
+  if (draft.next.length < ENROLL_PASSWORD_MIN_LENGTH) {
+    return { ok: false, errorKey: `${ERROR_KEY_PREFIX}relay_password_too_short` };
   }
   return {
     ok: true,
     ...(known ? {} : { current: draft.current }),
-    next,
+    next: draft.next,
     mode: draft.kick ? 'kick' : 'keep',
   };
 }
@@ -81,9 +116,9 @@ export async function rotateEnrollPasswordDraft(
   draft: EnrollPasswordDraft,
   known: boolean,
   api: RelayTenantApi = defaultRelayTenantApi
-): Promise<{ ok: true; cleared: boolean } | { ok: false; errorKey: string }> {
+): Promise<{ ok: true; cleared: boolean } | ({ ok: false } & EnrollPasswordError)> {
   const parsed = parseEnrollPasswordDraft(draft, known);
-  if (!parsed.ok) return parsed;
+  if (!parsed.ok) return { ok: false, key: parsed.errorKey };
   try {
     await api.rotateEnrollPassword({
       url,
@@ -93,7 +128,8 @@ export async function rotateEnrollPasswordDraft(
     });
     return { ok: true, cleared: parsed.next === null };
   } catch (error) {
-    return { ok: false, errorKey: enrollPasswordErrorKey(error) };
+    const mapped = enrollPasswordError(error);
+    return { ok: false, key: mapped.key, ...(mapped.params ? { params: mapped.params } : {}) };
   }
 }
 
@@ -127,16 +163,51 @@ function CurrentPasswordField({
   );
 }
 
+function EnrollPasswordCheck({
+  id,
+  checked,
+  disabled,
+  titleKey,
+  hintKey,
+  onChange,
+}: {
+  id: string;
+  checked: boolean;
+  disabled: boolean;
+  titleKey: string;
+  hintKey?: string;
+  onChange: (checked: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <label className="flex cursor-pointer items-start gap-2 text-xs" htmlFor={id}>
+      <input
+        id={id}
+        type="checkbox"
+        className="mt-0.5 accent-primary"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        data-testid={id}
+      />
+      <span className="flex min-w-0 flex-col gap-0.5">
+        <span className="font-medium">{t(titleKey)}</span>
+        {hintKey && <span className="text-muted-foreground">{t(hintKey)}</span>}
+      </span>
+    </label>
+  );
+}
+
 export function RelayEnrollPasswordDialogBody({
   draft,
   known,
-  errorKey,
+  error,
   busy,
   onChange,
 }: {
   draft: EnrollPasswordDraft;
   known: boolean;
-  errorKey: string | null;
+  error: EnrollPasswordError | null;
   busy: boolean;
   onChange: (patch: Partial<EnrollPasswordDraft>) => void;
 }) {
@@ -159,31 +230,28 @@ export function RelayEnrollPasswordDialogBody({
         <PasswordFieldWithGenerate
           id="nodes-relay-enroll-password-next"
           value={draft.next}
-          disabled={busy}
+          disabled={busy || draft.clear}
           onChange={(next) => onChange({ next })}
         />
       </FormField>
-      <label
-        className="flex cursor-pointer items-start gap-2 text-xs"
-        htmlFor="nodes-relay-enroll-password-kick"
-      >
-        <input
-          id="nodes-relay-enroll-password-kick"
-          type="checkbox"
-          className="mt-0.5 accent-primary"
-          checked={draft.kick}
-          disabled={busy}
-          onChange={(event) => onChange({ kick: event.target.checked })}
-          data-testid="nodes-relay-enroll-password-kick"
-        />
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="font-medium">{t('relay.tenant.enrollPassword.kick')}</span>
-          <span className="text-muted-foreground">{t('relay.tenant.enrollPassword.kickHint')}</span>
-        </span>
-      </label>
-      {errorKey && (
+      <EnrollPasswordCheck
+        id="nodes-relay-enroll-password-clear"
+        checked={draft.clear}
+        disabled={busy}
+        titleKey="relay.tenant.enrollPassword.clear"
+        onChange={(clear) => onChange(clear ? { clear, next: '' } : { clear })}
+      />
+      <EnrollPasswordCheck
+        id="nodes-relay-enroll-password-kick"
+        checked={draft.kick}
+        disabled={busy}
+        titleKey="relay.tenant.enrollPassword.kick"
+        hintKey="relay.tenant.enrollPassword.kickHint"
+        onChange={(kick) => onChange({ kick })}
+      />
+      {error && (
         <Notice tone="error" testId="nodes-relay-enroll-password-error">
-          {t(errorKey)}
+          {t(error.key, error.params)}
         </Notice>
       )}
     </div>
@@ -249,15 +317,8 @@ export function RelayEnrollPasswordDialog({
 }: RelayEnrollPasswordDialogProps) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<EnrollPasswordDraft>(emptyEnrollPasswordDraft);
-  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [error, setError] = useState<EnrollPasswordError | null>(null);
   const [busy, setBusy] = useState(false);
-  const [lastOpen, setLastOpen] = useState(open);
-  if (lastOpen !== open) {
-    setLastOpen(open);
-    setDraft(emptyEnrollPasswordDraft());
-    setErrorKey(null);
-    setBusy(false);
-  }
 
   const submit = () => {
     if (busy) return;
@@ -265,7 +326,7 @@ export function RelayEnrollPasswordDialog({
     void rotateEnrollPasswordDraft(url, draft, known, api).then((result) => {
       setBusy(false);
       if (!result.ok) {
-        setErrorKey(result.errorKey);
+        setError({ key: result.key, params: result.params });
         return;
       }
       setDraft(emptyEnrollPasswordDraft());
@@ -293,7 +354,7 @@ export function RelayEnrollPasswordDialog({
         <RelayEnrollPasswordDialogBody
           draft={draft}
           known={known}
-          errorKey={errorKey}
+          error={error}
           busy={busy}
           onChange={(patch) => setDraft((prev) => ({ ...prev, ...patch }))}
         />

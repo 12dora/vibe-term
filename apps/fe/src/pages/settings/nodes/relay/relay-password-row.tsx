@@ -14,8 +14,9 @@ import { Button } from '@vibeterm/ui/button';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { CopyableValue, Row } from '../copy-feedback';
-import { RelayEnrollPasswordDialog } from './relay-enroll-password-dialog';
+import { RelayEnrollPasswordDialog, enrollPasswordError } from './relay-enroll-password-dialog';
 import { relayLabel } from './relay-rows';
 
 export const ENROLL_PASSWORD_MASK = '••••••••';
@@ -29,7 +30,25 @@ export async function loadEnrollPassword(
   api: RelayTenantApi = defaultRelayTenantApi
 ): Promise<string | null> {
   const view = await api.enrollPassword(url);
-  return view.known ? (view.password ?? '') : null;
+  return view.known && view.password ? view.password : null;
+}
+
+export type EnrollPasswordReveal =
+  | { kind: 'value'; password: string }
+  | { kind: 'missing' }
+  | { kind: 'error'; key: string; params?: Record<string, string> };
+
+export async function fetchEnrollPasswordReveal(
+  url: string,
+  api: RelayTenantApi = defaultRelayTenantApi
+): Promise<EnrollPasswordReveal> {
+  try {
+    const password = await loadEnrollPassword(url, api);
+    return password === null ? { kind: 'missing' } : { kind: 'value', password };
+  } catch (error) {
+    const mapped = enrollPasswordError(error);
+    return { kind: 'error', key: mapped.key, ...(mapped.params ? { params: mapped.params } : {}) };
+  }
 }
 
 export function RelayPasswordValue({
@@ -122,15 +141,18 @@ function usePasswordTarget(targets: RelayLinkStatus[]) {
   return { selected, setSelectedUrl };
 }
 
-function usePasswordReveal(url: string, api: RelayTenantApi) {
+function usePasswordReveal(url: string, api: RelayTenantApi, onMissing?: () => void) {
+  const { t } = useTranslation();
   const [revealed, setRevealed] = useState(false);
   const [plaintext, setPlaintext] = useState<string | null>(null);
+  const [absent, setAbsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lastUrl, setLastUrl] = useState(url);
   if (lastUrl !== url) {
     setLastUrl(url);
     setRevealed(false);
     setPlaintext(null);
+    setAbsent(false);
   }
   const reveal = () => {
     if (revealed) {
@@ -142,20 +164,30 @@ function usePasswordReveal(url: string, api: RelayTenantApi) {
       return;
     }
     setBusy(true);
-    void loadEnrollPassword(url, api).then(
-      (value) => {
-        setBusy(false);
-        setPlaintext(value ?? '');
-        setRevealed(true);
-      },
-      () => setBusy(false)
-    );
+    void fetchEnrollPasswordReveal(url, api).then((result) => {
+      setBusy(false);
+      if (result.kind === 'error') {
+        toast.error(t(result.key, result.params));
+        return;
+      }
+      if (result.kind === 'missing') {
+        setAbsent(true);
+        setRevealed(false);
+        setPlaintext(null);
+        onMissing?.();
+        return;
+      }
+      setAbsent(false);
+      setPlaintext(result.password);
+      setRevealed(true);
+    });
   };
   const reset = () => {
     setRevealed(false);
     setPlaintext(null);
+    setAbsent(false);
   };
-  return { revealed, plaintext, busy, reveal, reset };
+  return { revealed, plaintext, absent, busy, reveal, reset };
 }
 
 function RelaySelect({
@@ -197,7 +229,7 @@ export function RelayPasswordRow({
   const targets = relay.relayMode ? enrollPasswordRelays(relay) : [];
   const { selected, setSelectedUrl } = usePasswordTarget(targets);
   const url = selected?.url ?? '';
-  const revealState = usePasswordReveal(url, api);
+  const revealState = usePasswordReveal(url, api, () => relay.refresh());
   const [dialogOpen, setDialogOpen] = useState(false);
   if (!selected) return null;
   return (
@@ -205,7 +237,7 @@ export function RelayPasswordRow({
       <Row label={t('relay.tenant.strip.enrollPassword')} testId="nodes-relay-enroll-password-row">
         <RelaySelect targets={targets} url={url} onChange={setSelectedUrl} />
         <RelayPasswordValue
-          known={enrollPasswordKnown(selected)}
+          known={enrollPasswordKnown(selected) && !revealState.absent}
           revealed={revealState.revealed}
           plaintext={revealState.plaintext}
           loading={revealState.busy}
@@ -217,7 +249,7 @@ export function RelayPasswordRow({
         <RelayEnrollPasswordDialog
           open
           url={url}
-          known={enrollPasswordKnown(selected)}
+          known={enrollPasswordKnown(selected) && !revealState.absent}
           api={api}
           onOpenChange={setDialogOpen}
           onDone={() => {
