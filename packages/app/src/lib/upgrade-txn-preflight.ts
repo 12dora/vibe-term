@@ -113,7 +113,6 @@ export async function runPreflight(
     DATABASE_URL: preflightDb,
     VIBETERM_ROLES: 'standalone',
     [RUNTIME_MODE_ENV]: 'preflight',
-    VIBETERM_HUB_URL: '',
     VIBETERM_PEER_PORT: String(await allocateEphemeralPort()),
     VIBETERM_FE_DIST_DIR: join(versionDir, 'resources', 'fe-dist'),
     VIBETERM_MIGRATIONS_DIR: join(versionDir, 'resources', 'gateway-drizzle'),

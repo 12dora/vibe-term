@@ -9,15 +9,15 @@ import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-ident
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
-import type { HubRuntime } from '../../../../apps/gateway/src/hub';
-import type { HubTlsInfoProvider } from '../../../../apps/gateway/src/hub/hub-runtime';
 import {
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
   setMeshRequestContext,
 } from '../../../../apps/gateway/src/mesh/mesh-deps';
-import { createMeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
-import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
+import type {
+  CreateMeshRuntimeOptions,
+  MeshRuntime,
+} from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import { acceptHttpStream, openHttpStream } from '../../../../apps/gateway/src/mesh/stream-targets';
 import { seedUser } from '../../../../apps/gateway/src/mesh/test-support';
@@ -97,27 +97,11 @@ function fakeGateway(overrides?: Partial<GatewayRuntime>): GatewayRuntime {
   };
 }
 
-function fakeHub(overrides?: Partial<HubRuntime>): HubRuntime {
-  return {
-    attachLocalNode() {},
-    handleRequest: async () => undefined,
-    isUplinkSocket: () => false,
-    handleUplinkOpen() {},
-    handleUplinkMessage() {},
-    handleUplinkClose() {},
-    handleUplinkDrain() {},
-    stop() {},
-    ...overrides,
-  } as HubRuntime;
-}
-
-function fakeMesh(overrides?: Partial<MeshRuntime> & { hub?: HubRuntime | null }): MeshRuntime {
+function fakeMesh(overrides?: Partial<MeshRuntime>): MeshRuntime {
   return {
     nodeId: 'ab'.repeat(16),
-    hub: overrides?.hub ?? null,
     handleRequest: async () => null,
     attachedHub: () => null,
-    userStore: { getHubMeta: () => null },
     localUiGuard: () => null,
     guardGatewayWebSocket: () => null,
     rewriteSelf: () => null,
@@ -170,7 +154,7 @@ describe('assembleVibeTerm role matrix', () => {
       let loadNative: LoadNative | undefined;
       let canLoadNative: (() => boolean) | undefined;
       await assembleVibeTerm({
-        roles: { hub: false, node: true, relay: false },
+        roles: { node: true, relay: false },
         nativeDir: '/tmp/vibeterm-native-should-not-load',
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async (opts) => {
@@ -202,9 +186,9 @@ describe('assembleVibeTerm role matrix', () => {
   });
 
   test('standalone does not install mesh shutdown handlers', () => {
-    expect(meshShutdownNeeded({ hub: false, node: false, relay: false })).toBe(false);
-    expect(meshShutdownNeeded({ hub: false, node: true, relay: false })).toBe(true);
-    expect(meshShutdownNeeded({ hub: true, node: true, relay: false })).toBe(true);
+    expect(meshShutdownNeeded({ node: false, relay: false })).toBe(false);
+    expect(meshShutdownNeeded({ node: true, relay: false })).toBe(true);
+    expect(meshShutdownNeeded({ node: false, relay: true })).toBe(true);
     expect(SHUTDOWN_TIMEOUT_MS).toBe(20_000);
   });
 
@@ -221,7 +205,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -249,7 +233,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -270,7 +254,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -287,7 +271,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
         const tls = await opts.tlsInfo?.();
@@ -300,9 +284,9 @@ describe('assembleVibeTerm role matrix', () => {
   });
 
   test('tlsInfo withholds CA fingerprint while the HTTPS listener is not running', async () => {
-    let tlsInfo: HubTlsInfoProvider | undefined;
+    let tlsInfo: CreateMeshRuntimeOptions['tlsInfo'];
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
         tlsInfo = opts.tlsInfo;
@@ -353,7 +337,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -401,7 +385,6 @@ describe('assembleVibeTerm role matrix', () => {
 
       expect(meshBuilt).toBe(0);
       expect(assembled.mesh).toBeNull();
-      expect(assembled.hub).toBeNull();
 
       const mode = await assembled.fetch(
         new Request('http://127.0.0.1/api/auth/mode'),
@@ -460,7 +443,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
       serveFrontend: async () => {
@@ -474,64 +457,11 @@ describe('assembleVibeTerm role matrix', () => {
     expect(order).toEqual(['guard', 'mesh', 'gateway', 'spa']);
   });
 
-  test('hub,node fetch order is hub → mesh guard → mesh → gateway, and start attaches local node', async () => {
-    const order: string[] = [];
-    let attached = 0;
-    const hub = fakeHub({
-      async handleRequest() {
-        order.push('hub');
-        return undefined;
-      },
-      attachLocalNode() {
-        attached += 1;
-      },
-    });
-    const mesh = fakeMesh({
-      hub,
-      localUiGuard() {
-        order.push('guard');
-        return null;
-      },
-      async handleRequest() {
-        order.push('mesh');
-        return null;
-      },
-      async start() {
-        hub.attachLocalNode({} as never);
-      },
-    });
-    const gateway = fakeGateway({
-      handleRequest() {
-        order.push('gateway');
-        return new Response('gw');
-      },
-    });
-    let seenHub: HubRuntime | undefined;
-    const assembled = await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
-      createGatewayRuntime: async () => gateway,
-      createMeshRuntime: async (opts) => {
-        seenHub = opts.hub;
-        return mesh;
-      },
-      serveFrontend: async () => new Response('spa'),
-    });
-
-    expect(assembled.hub).toBe(hub);
-    await assembled.start();
-    expect(attached).toBe(1);
-
-    const res = await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer);
-    expect(await res?.text()).toBe('gw');
-    expect(order).toEqual(['hub', 'guard', 'mesh', 'gateway']);
-    expect(seenHub === hub || seenHub === undefined).toBe(true);
-  });
-
   test('SPA deep links /login /nodes /n/:id fall through to frontend', async () => {
     const assembled = await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
-      createMeshRuntime: async () => fakeMesh({ hub: fakeHub() }),
+      createMeshRuntime: async () => fakeMesh(),
       serveFrontend: async (req) => new Response(`spa:${new URL(req.url).pathname}`),
     });
     for (const path of ['/login', '/nodes', '/n/abcd/devices/1']) {
@@ -540,27 +470,9 @@ describe('assembleVibeTerm role matrix', () => {
     }
   });
 
-  test('websocket dispatches hub-uplink to hub, mesh kinds to mesh, otherwise gateway', async () => {
+  test('websocket dispatches mesh kinds to mesh, otherwise gateway', async () => {
     const hits: string[] = [];
-    const hub = fakeHub({
-      isUplinkSocket(ws) {
-        return (ws as { data?: { kind?: string } }).data?.kind === 'hub-uplink';
-      },
-      handleUplinkOpen() {
-        hits.push('hub-open');
-      },
-      handleUplinkMessage() {
-        hits.push('hub-message');
-      },
-      handleUplinkClose() {
-        hits.push('hub-close');
-      },
-      handleUplinkDrain() {
-        hits.push('hub-drain');
-      },
-    });
     const mesh = fakeMesh({
-      hub,
       websocket: {
         open() {
           hits.push('mesh-open');
@@ -596,16 +508,10 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
-
-    const hubWs = { data: { kind: 'hub-uplink' } } as Bun.ServerWebSocket<unknown>;
-    assembled.websocket.open(hubWs);
-    assembled.websocket.message(hubWs, 'x');
-    assembled.websocket.drain(hubWs);
-    assembled.websocket.close(hubWs, 1000, 'done');
 
     const meshWs = { data: { kind: 'mesh-event' } } as Bun.ServerWebSocket<unknown>;
     assembled.websocket.open(meshWs);
@@ -620,10 +526,6 @@ describe('assembleVibeTerm role matrix', () => {
     assembled.websocket.close(gwWs, 1000, 'done');
 
     expect(hits).toEqual([
-      'hub-open',
-      'hub-message',
-      'hub-drain',
-      'hub-close',
       'mesh-open',
       'mesh-message',
       'mesh-drain',
@@ -636,16 +538,9 @@ describe('assembleVibeTerm role matrix', () => {
     ]);
   });
 
-  test('stop continues hub and gateway when mesh.stop throws', async () => {
+  test('stop continues gateway when mesh.stop throws', async () => {
     const order: string[] = [];
-    const hub = fakeHub({
-      stop() {
-        order.push('hub');
-        throw new Error('hub-fail');
-      },
-    });
     const mesh = fakeMesh({
-      hub,
       async stop() {
         order.push('mesh');
         throw new Error('mesh-fail');
@@ -657,23 +552,17 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
     await assembled.stop();
-    expect(order).toEqual(['mesh', 'hub', 'gateway']);
+    expect(order).toEqual(['mesh', 'gateway']);
   });
 
-  test('shutdown order is mesh (peer+uplink) → hub → gateway', async () => {
+  test('shutdown order is mesh (peer+uplink) → gateway', async () => {
     const order: string[] = [];
-    const hub = fakeHub({
-      async stop() {
-        order.push('hub');
-      },
-    });
     const mesh = fakeMesh({
-      hub,
       async stop() {
         order.push('mesh');
       },
@@ -684,12 +573,12 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
     await assembled.stop();
-    expect(order).toEqual(['mesh', 'hub', 'gateway']);
+    expect(order).toEqual(['mesh', 'gateway']);
   });
 
   test('assembler injects clientIp, rewrites /n/self, and guards /ws', async () => {
@@ -722,7 +611,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -773,7 +662,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
@@ -791,7 +680,6 @@ describe('assembleVibeTerm role matrix', () => {
       const certSig = crypto.getRandomValues(new Uint8Array(64));
       await store.save({
         nodeId: 'ab'.repeat(16),
-        hubUrl: 'https://hub.example',
         edPrivateKey: ed,
         x25519PrivateKey: x25519,
         certificateJson: '{}',
@@ -800,7 +688,7 @@ describe('assembleVibeTerm role matrix', () => {
       });
       let seen: string | undefined;
       await assembleVibeTerm({
-        roles: { hub: false, node: true, relay: false },
+        roles: { node: true, relay: false },
         createGatewayRuntime: async () => fakeGateway({ db }),
         createMeshRuntime: async (opts) => {
           seen = opts.userId;
@@ -815,7 +703,7 @@ describe('assembleVibeTerm role matrix', () => {
 
   test('fake Bun.serve captures fetch and websocket from the assembly', async () => {
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
         throw new Error('no mesh');
@@ -850,16 +738,20 @@ describe('assembleVibeTerm role matrix', () => {
       now: Date.now(),
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       localAuthEffective: () => false,
       createGatewayRuntime: async () => fakeGateway({ db }),
-      createMeshRuntime: (opts) =>
-        createMeshRuntime({
+      createMeshRuntime: async (opts) => {
+        const { createMeshRuntime } = await import(
+          '../../../../apps/gateway/src/mesh/mesh-runtime'
+        );
+        return createMeshRuntime({
           ...opts,
           startPeerServer: false,
           loadNative: async () => null,
-          config: { ...opts.config, hubUrl: 'http://127.0.0.1:9', hubUrls: [], peerPort: 0 },
-        }),
+          config: { ...opts.config, peerPort: 0 },
+        });
+      },
     });
     const dispatchHttp = (assembled.mesh?.peers as unknown as { dispatchHttp: DispatchHttp })
       .dispatchHttp;
@@ -931,7 +823,7 @@ describe('assembleVibeTerm role matrix', () => {
   test('standalone /api/local/status is served before gateway dispatch', async () => {
     process.env.VIBETERM_ROLES = 'standalone';
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
         throw new Error('no mesh');
@@ -956,7 +848,7 @@ describe('assembleVibeTerm role matrix', () => {
   test('standalone GET /api/tls is served through assembled.fetch and returns mode none', async () => {
     process.env.VIBETERM_ROLES = 'standalone';
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           handleRequest(req) {
@@ -979,7 +871,7 @@ describe('assembleVibeTerm role matrix', () => {
 
   test('mesh GET /api/tls without a session is 401 UNAUTHORIZED', async () => {
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => fakeMesh(),
     });
@@ -993,7 +885,7 @@ describe('assembleVibeTerm role matrix', () => {
   test('standalone localAuth 生效时 GET /api/tls 与 node 一样要求会话', async () => {
     process.env.VIBETERM_ROLES = 'standalone';
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       localAuthEffective: () => true,
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
@@ -1011,7 +903,7 @@ describe('assembleVibeTerm role matrix', () => {
     process.env.VIBETERM_ROLES = 'standalone';
     let effective = false;
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       localAuthEffective: () => effective,
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
@@ -1038,7 +930,7 @@ describe('assembleVibeTerm role matrix', () => {
     try {
       let effective = false;
       await assembleVibeTerm({
-        roles: { hub: false, node: false, relay: false },
+        roles: { node: false, relay: false },
         localAuthEffective: () => effective,
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async () => {
@@ -1062,7 +954,7 @@ describe('assembleVibeTerm role matrix', () => {
     } as unknown as ShareService);
     try {
       await assembleVibeTerm({
-        roles: { hub: false, node: true, relay: false },
+        roles: { node: true, relay: false },
         localAuthEffective: () => false,
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async () => fakeMesh(),
@@ -1075,7 +967,7 @@ describe('assembleVibeTerm role matrix', () => {
 
   test('node GET /api/tls 不因 localAuthEffective=false 而放行', async () => {
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       localAuthEffective: () => false,
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => fakeMesh(),
@@ -1086,7 +978,7 @@ describe('assembleVibeTerm role matrix', () => {
 
   test('unknown ACME challenge token is 404, not SPA fallback', async () => {
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
         throw new Error('no mesh');
@@ -1125,7 +1017,7 @@ describe('assembleVibeTerm role matrix', () => {
       certNotAfter: parsed.notAfter,
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           db,
@@ -1172,7 +1064,7 @@ describe('assembleVibeTerm role matrix', () => {
     }
   });
 
-  test('mesh /api/setup/hub is 404 not_standalone before localUiGuard', async () => {
+  test('mesh /api/setup/relay is 404 not_standalone before localUiGuard', async () => {
     let guarded = 0;
     const mesh = fakeMesh({
       localUiGuard() {
@@ -1181,18 +1073,17 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
     });
     const res = await assembled.fetch(
-      new Request('http://127.0.0.1/api/setup/hub', {
+      new Request('http://127.0.0.1/api/setup/relay', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          hubPublicUrl: 'https://hub.example',
-          username: 'alice',
-          password: 'vibeterm-test-pass',
+          role: 'relay',
+          relayPublicUrl: 'https://relay.example',
           directEnable: false,
         }),
       }),
@@ -1212,7 +1103,7 @@ describe('assembleVibeTerm role matrix', () => {
       },
     });
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
     });
@@ -1228,7 +1119,7 @@ describe('assembleVibeTerm role matrix', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const assembled = await assembleVibeTerm({
-        roles: { hub: false, node: false, relay: false },
+        roles: { node: false, relay: false },
         localAuthEffective: () => true,
         createGatewayRuntime: async () =>
           fakeGateway({
@@ -1274,7 +1165,7 @@ describe('assembleVibeTerm standalone auth surface', () => {
   async function assembleStandalone(db: GatewayRuntime['db']) {
     process.env.VIBETERM_ROLES = 'standalone';
     return assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           db,
@@ -1469,9 +1360,9 @@ describe('assembleVibeTerm standalone auth surface', () => {
         errors.push(args.map(String).join(' '));
       };
       let meshCalls = 0;
-      for (const hub of [false, true]) {
+      {
         assembled = await assembleVibeTerm({
-          roles: { hub, node: true, relay: false },
+          roles: { node: true, relay: false },
           createGatewayRuntime: async () =>
             fakeGateway({
               db,
@@ -1489,7 +1380,6 @@ describe('assembleVibeTerm standalone auth surface', () => {
         await assembled.start();
         expect(meshCalls).toBe(0);
         expect(assembled.mesh).toBeNull();
-        expect(assembled.hub).toBeNull();
         const health = await json(assembled, new Request('http://127.0.0.1/healthz'));
         expect(health.res.status).toBe(200);
         expect(health.body).toMatchObject({ status: 'ok', degraded: 'master_key_mismatch' });
@@ -1567,7 +1457,7 @@ describe('assembleVibeTerm standalone auth surface', () => {
     ]) {
       await expect(
         assembleVibeTerm({
-          roles: { hub: false, node: true, relay: false },
+          roles: { node: true, relay: false },
           createGatewayRuntime: async () => fakeGateway(),
           createMeshRuntime: async () => {
             throw error;
@@ -1641,7 +1531,7 @@ describe('local keylog diagnostics', () => {
       let commonMissing = false;
       const queries: bigint[] = [];
       assembled = await assembleVibeTerm({
-        roles: { hub: false, node: true, relay: false },
+        roles: { node: true, relay: false },
         createGatewayRuntime: async () => fakeGateway({ db }),
         createMeshRuntime: async () =>
           fakeMesh({
@@ -1669,7 +1559,7 @@ describe('local keylog diagnostics', () => {
       expect(same).toMatchObject({
         userId: boot.userId,
         local: { seq: Number(head.seq), hash: encodeBase64url(head.hash) },
-        remoteKind: 'hub',
+        remoteKind: 'none',
       });
       expect(same.remote).toEqual(same.local);
       expect(queries).toEqual([]);
@@ -1833,11 +1723,11 @@ describe('assembleVibeTerm Access guard at outermost fetch', () => {
     aud: 'aud-1',
   };
 
-  test('header without JWT is 403 before TLS/local/hub handlers', async () => {
+  test('header without JWT is 403 before TLS/local handlers', async () => {
     setAccessGuardSnapshot(() => ENFORCED);
     let gatewayHits = 0;
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           handleRequest: () => {
@@ -1868,7 +1758,7 @@ describe('assembleVibeTerm Access guard at outermost fetch', () => {
       }
     );
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           handleRequest: () => new Response('from-gateway'),
@@ -1886,23 +1776,6 @@ describe('assembleVibeTerm Access guard at outermost fetch', () => {
     expect(res?.status).toBe(200);
     expect(await res?.text()).toBe('from-gateway');
   });
-
-  test('/hub/uplink without JWT is not blocked by the guard', async () => {
-    setAccessGuardSnapshot(() => ENFORCED);
-    const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
-      hub: fakeHub({
-        handleRequest: async () => new Response('uplink-ok'),
-      }),
-      createGatewayRuntime: async () => fakeGateway(),
-    });
-    const res = await assembled.fetch(
-      new Request('http://localhost/hub/uplink', { headers: { 'cf-connecting-ip': '1.2.3.4' } }),
-      dummyServer
-    );
-    expect(res?.status).toBe(200);
-    expect(await res?.text()).toBe('uplink-ok');
-  });
 });
 
 describe('assembleVibeTerm domain access guard', () => {
@@ -1912,20 +1785,11 @@ describe('assembleVibeTerm domain access guard', () => {
 
   const HOSTS = ['vibeterm.example.com'];
 
-  async function assembleDisabled(overrides?: {
-    hub?: HubRuntime;
-    gateway?: GatewayRuntime;
-  }) {
+  async function assembleDisabled(overrides?: { gateway?: GatewayRuntime }) {
     setDomainAccessGuardForTests({ allowed: false, hosts: HOSTS });
     return assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       serveFrontend: async () => new Response('spa'),
-      hub:
-        overrides?.hub ??
-        fakeHub({
-          handleRequest: async (req) =>
-            new URL(req.url).pathname === '/hub/uplink' ? new Response('uplink-ok') : undefined,
-        }),
       createGatewayRuntime: async () =>
         overrides?.gateway ??
         fakeGateway({
@@ -1946,7 +1810,7 @@ describe('assembleVibeTerm domain access guard', () => {
 
   test('default allowed does not change public dispatch', async () => {
     const assembled = await assembleVibeTerm({
-      roles: { hub: false, node: false, relay: false },
+      roles: { node: false, relay: false },
       serveFrontend: async () => new Response('spa'),
       createGatewayRuntime: async () => fakeGateway(),
     });
@@ -1985,18 +1849,7 @@ describe('assembleVibeTerm domain access guard', () => {
   });
 
   test('disabled domain: /n/:id/api is 403 JSON; service paths and LAN pass', async () => {
-    let hubHits = 0;
-    const assembled = await assembleDisabled({
-      hub: fakeHub({
-        handleRequest: async (req) => {
-          if (new URL(req.url).pathname === '/hub/uplink') {
-            hubHits += 1;
-            return new Response('uplink-ok');
-          }
-          return undefined;
-        },
-      }),
-    });
+    const assembled = await assembleDisabled();
     const nodeApi = await assembled.fetch(
       new Request('https://vibeterm.example.com/n/abc/api/x'),
       dummyServer
@@ -2012,38 +1865,11 @@ describe('assembleVibeTerm domain access guard', () => {
     );
     expect(health?.status).toBe(200);
 
-    const uplink = await assembled.fetch(
-      new Request('https://vibeterm.example.com/hub/uplink'),
-      dummyServer
-    );
-    expect(uplink?.status).toBe(200);
-    expect(await uplink?.text()).toBe('uplink-ok');
-    expect(hubHits).toBe(1);
-
     const acme = await assembled.fetch(
       new Request('https://vibeterm.example.com/.well-known/acme-challenge/tok'),
       dummyServer
     );
     expect(acme?.status).not.toBe(403);
-
-    const redeem = await assembled.fetch(
-      new Request('https://vibeterm.example.com/api/hub/enrollments/redeem', { method: 'POST' }),
-      dummyServer
-    );
-    expect(redeem?.status).toBe(200);
-    expect(await redeem?.text()).toBe('api-ok');
-
-    const hubStatus = await assembled.fetch(
-      new Request('https://vibeterm.example.com/api/hub/status'),
-      dummyServer
-    );
-    expect(hubStatus?.status).toBe(200);
-
-    const enroll = await assembled.fetch(
-      new Request('https://vibeterm.example.com/api/hub/enrollments/tok-1'),
-      dummyServer
-    );
-    expect(enroll?.status).toBe(200);
 
     const lan = await assembled.fetch(
       new Request('https://vibeterm.example.com/'),
@@ -2116,7 +1942,7 @@ describe('assembleVibeTerm preflight', () => {
     let restored = 0;
     const assembled = await assembleVibeTerm({
       runtimeMode: 'preflight',
-      roles: { hub: false, node: true, relay: false },
+      roles: { node: true, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
           restoreRemoteAgentSessions() {
@@ -2149,106 +1975,5 @@ describe('assembleVibeTerm preflight', () => {
     expect(frontendCalls).toBe(0);
     await assembled.tls.startup();
     await assembled.stop();
-  });
-});
-
-describe('assembleVibeTerm multi-hub wiring', () => {
-  test('passes a shared MeshHubStore and hub config into createMeshRuntime', async () => {
-    const { MeshHubStore } = await import('../../../../apps/gateway/src/auth/mesh-hub-store');
-    const { config } = await import('../../../../apps/gateway/src/config');
-    let seen: {
-      meshHubStore?: unknown;
-      hubMode?: unknown;
-      hubPriority?: unknown;
-      hubWriterEpoch?: unknown;
-      hubNodeId?: unknown;
-    } = {};
-    const hub = fakeHub();
-    await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
-      createGatewayRuntime: async () => fakeGateway(),
-      createMeshRuntime: async (opts) => {
-        const extra = opts as typeof opts & {
-          meshHubStore?: unknown;
-          meshHubs?: unknown;
-          config: typeof opts.config & {
-            hubMode?: unknown;
-            hubPriority?: unknown;
-            hubWriterEpoch?: unknown;
-            hubNodeId?: unknown;
-          };
-        };
-        seen = {
-          meshHubStore: extra.meshHubStore,
-          hubMode: extra.config.hubMode,
-          hubPriority: extra.config.hubPriority,
-          hubWriterEpoch: extra.config.hubWriterEpoch,
-          hubNodeId: extra.config.hubNodeId,
-        };
-        expect(extra.meshHubs).toBe(extra.meshHubStore);
-        expect(typeof extra.onLocalNodeName).toBe('function');
-        return fakeMesh({ hub });
-      },
-    });
-    expect(seen.meshHubStore).toBeInstanceOf(MeshHubStore);
-    expect(seen.hubMode).toBe(config.hubMode);
-    expect(seen.hubPriority).toBe(config.hubPriority);
-    expect(seen.hubWriterEpoch).toBe(config.hubWriterEpoch);
-  });
-
-  test('wires mesh onNodeList to hub applyReplicatedNodeList and unsubscribes on stop', async () => {
-    const applied: Array<{ list: unknown; meta: unknown }> = [];
-    let unsubscribed = 0;
-    let subscribed = 0;
-    const hub = fakeHub({
-      applyReplicatedNodeList(list: unknown, meta: unknown) {
-        applied.push({ list, meta });
-      },
-    } as Partial<HubRuntime>);
-    const list = { t: 'node.list', version: 1, nodes: [] };
-    const meta = { hubNodeId: 'aa'.repeat(16), generation: 3 };
-    const mesh = fakeMesh({
-      hub,
-      onNodeList(cb: (nextList: unknown, nextMeta: unknown) => void) {
-        subscribed += 1;
-        cb(list, meta);
-        return () => {
-          unsubscribed += 1;
-        };
-      },
-    } as Partial<MeshRuntime> & { hub: HubRuntime });
-    const assembled = await assembleVibeTerm({
-      roles: { hub: true, node: true, relay: false },
-      createGatewayRuntime: async () => fakeGateway(),
-      createMeshRuntime: async () => mesh,
-    });
-    expect(subscribed).toBe(1);
-    expect(applied).toEqual([{ list, meta }]);
-    await assembled.stop();
-    expect(unsubscribed).toBe(1);
-    await assembled.stop();
-    expect(unsubscribed).toBe(1);
-  });
-
-  test('logs [hub] mode/priority/writerEpoch/publicUrl at startup', async () => {
-    const { config } = await import('../../../../apps/gateway/src/config');
-    const lines: string[] = [];
-    const originalLog = console.log;
-    console.log = (...args: unknown[]) => {
-      lines.push(args.map(String).join(' '));
-    };
-    try {
-      await assembleVibeTerm({
-        roles: { hub: true, node: true, relay: false },
-        createGatewayRuntime: async () => fakeGateway(),
-        createMeshRuntime: async () => fakeMesh({ hub: fakeHub() }),
-      });
-    } finally {
-      console.log = originalLog;
-    }
-    const line = lines.find((item) => item.startsWith('[hub] mode='));
-    expect(line).toBe(
-      `[hub] mode=${config.hubMode} priority=${config.hubPriority} writerEpoch=${config.hubWriterEpoch} publicUrl=${config.hubPublicUrl ?? ''}`
-    );
   });
 });

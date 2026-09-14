@@ -28,7 +28,6 @@ import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { deriveRootKey } from '../lib/password';
 import { RELAY_RECORD_MAX_ATTEMPTS, RELAY_ROOT_ROTATED } from '../lib/relay-session';
-import { runHubUserAdd } from './hub';
 import {
   formatAutoCell,
   formatRelayStatusLines,
@@ -42,6 +41,7 @@ import {
   runRelayUnpin,
 } from './relay';
 import type { RelayIo } from './relay-shared';
+import { runUserAdd } from './user';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const PASSWORD = 'relay-pass-word';
@@ -65,7 +65,7 @@ async function openAuth(): Promise<LocalAuthContext> {
     },
   });
   handles.push(auth);
-  await runHubUserAdd(parseArgs(['hub', 'user', 'add', 'ivy']), 'ivy', {
+  await runUserAdd(parseArgs(['user', 'add', 'ivy']), 'ivy', {
     auth,
     password: PASSWORD,
     log: () => undefined,
@@ -295,7 +295,7 @@ describe('relay enroll', () => {
     const auth = await openAuth();
     const logs: string[] = [];
     const { calls, fetcher } = fakeGateway(auth, {
-      status: [{ mode: 'hub', relays: [] }, { mode: 'hub', relays: [] }, ATTACHED_STATUS],
+      status: [{ mode: 'none', relays: [] }, { mode: 'none', relays: [] }, ATTACHED_STATUS],
     });
     const result = await runRelayEnroll(
       parseArgs(['relay', 'enroll', RELAY_URL]),
@@ -602,7 +602,7 @@ describe('relay enroll', () => {
     const logs: string[] = [];
     const { fetcher } = fakeGateway(auth, {
       status: [
-        { mode: 'hub', relays: [{ url: RELAY_URL, priority: 0, lastError: 'ECONNREFUSED' }] },
+        { mode: 'none', relays: [{ url: RELAY_URL, priority: 0, lastError: 'ECONNREFUSED' }] },
       ],
     });
     const result = await runRelayEnroll(

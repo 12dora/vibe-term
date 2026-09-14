@@ -18,15 +18,14 @@ afterEach(() => {
 describe('portPlanDoctorChecks', () => {
   test('prints the live plan for the role', () => {
     const checks = portPlanDoctorChecks({
-      VIBETERM_ROLES: 'hub,node',
-      VIBETERM_HUB_PUBLIC_URL: 'https://hub.example.com',
+      VIBETERM_ROLES: 'node',
       VIBETERM_PEER_PORT: '39001',
     });
     expect(checks).toEqual([
       {
         id: 'ports.plan',
         level: 'pass',
-        message: t('doctor.ports.plan', { list: '443/tcp, 39001/tcp, 40000-40099/udp' }),
+        message: t('doctor.ports.plan', { list: '39001/tcp, 40000-40099/udp' }),
       },
     ]);
   });

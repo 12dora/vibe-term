@@ -4,7 +4,6 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import {
   encodePasskeyAssertionSig,
@@ -12,6 +11,7 @@ import {
   verifyRegistration,
 } from '../../../../apps/gateway/src/auth/passkey';
 import { createEs256Authenticator } from '../../../../apps/gateway/src/auth/passkey-test-fixtures';
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import {
   UserKeyService,
   kdfParamsFromJson,
@@ -42,13 +42,14 @@ import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { deriveRootKey } from '../lib/password';
 import { readRelayUplink } from '../lib/relay-store';
 import { createCa, spkiFingerprint } from '../tls/cert-authority';
-import { runHubJoin, runHubUserAdd } from './hub';
 import {
   RELAY_ENROLLMENT_LOOKUP_MISSING,
   orderRelayEntries,
   relayJoinRoleName,
   runRelayJoin,
+  runRelayJoinCommand,
 } from './relay-join';
+import { runUserAdd } from './user';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const PASSWORD = 'relay-join-password';
@@ -74,7 +75,7 @@ async function openAuth(username?: string, roles = 'node'): Promise<LocalAuthCon
   });
   handles.push(auth);
   if (username) {
-    await runHubUserAdd(parseArgs(['hub', 'user', 'add', username]), username, {
+    await runUserAdd(parseArgs(['user', 'add', username]), username, {
       auth,
       password: PASSWORD,
       log: () => undefined,
@@ -352,8 +353,13 @@ describe('orderRelayEntries', () => {
     expect(ordered[0].token).toEqual(TOKEN_B);
   });
 
-  test('refuses a url that is not in the token', () => {
-    expect(() => orderRelayEntries(decoded, 'https://other.example')).toThrow('not listed');
+  test('ignores a url that is not in the token', () => {
+    const warnings: string[] = [];
+    const ordered = orderRelayEntries(decoded, 'https://other.example', (message) =>
+      warnings.push(message)
+    );
+    expect(ordered.map((entry) => entry.url)).toEqual([RELAY_A, RELAY_B]);
+    expect(warnings.join(' ')).toContain('ignored');
   });
 });
 
@@ -368,7 +374,7 @@ describe('relayJoinRoleName', () => {
   });
 });
 
-describe('hub join with an r3 token', () => {
+describe('relay join with an r3 token', () => {
   for (const failure of [false, true]) {
     test(`中继令牌加入在提交配置后安装直连插件，失败不影响加入（failure=${failure}）`, async () => {
       const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-direct-'));
@@ -425,7 +431,7 @@ describe('hub join with an r3 token', () => {
     const { calls, fetcher } = fakeRelay(tenant);
     const logs: string[] = [];
     const result = await runRelayJoin(
-      parseArgs(['hub', 'join', '--token', token, '--name', 'laptop']),
+      parseArgs(['relay', 'join', '--token', token, '--name', 'laptop']),
       '',
       token,
       { auth: joiner, fetcher, skipRestart: true, log: (line) => logs.push(line) }
@@ -459,18 +465,17 @@ describe('hub join with an r3 token', () => {
     );
   });
 
-  test('the node identity keeps no hub url and carries the joined certificate', async () => {
+  test('the node identity carries the joined certificate', async () => {
     const tenant = await makeTenant([ENTRY_A]);
     const joiner = await openAuth();
     const { fetcher } = fakeRelay(tenant);
-    await runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+    await runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
       auth: joiner,
       fetcher,
       skipRestart: true,
       log: () => undefined,
     });
     const identity = await joiner.identityStore.load();
-    expect(identity?.hubUrl).toBeNull();
     expect(identity?.userId).toBe(tenant.userId);
     const cert = JSON.parse(identity?.certificateJson ?? '{}') as { certificate?: string };
     const decoded = decodeCertificate(
@@ -488,7 +493,7 @@ describe('hub join with an r3 token', () => {
     const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
     const joiner = await openAuth();
     const { calls, fetcher } = fakeRelay(tenant, { failFirstRelay: true });
-    const result = await runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+    const result = await runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
       auth: joiner,
       fetcher,
       skipRestart: true,
@@ -513,7 +518,7 @@ describe('hub join with an r3 token', () => {
     const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
     const joiner = await openAuth();
     const { calls, fetcher } = fakeRelay(tenant, { hangOrigins: [RELAY_A] });
-    const result = await runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+    const result = await runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
       auth: joiner,
       fetcher,
       skipRestart: true,
@@ -529,20 +534,20 @@ describe('hub join with an r3 token', () => {
     const joiner = await openAuth();
     const { fetcher } = fakeRelay(tenant, { oversizeRedeem: true });
     await expect(
-      runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+      runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
         auth: joiner,
         fetcher,
         skipRestart: true,
       })
     ).rejects.toThrow('exceeds');
-    expect(readRelayUplink(joiner).kind).toBe('hub');
+    expect(readRelayUplink(joiner).kind).toBe('none');
   });
 
   test('lookup 404 RELAY_ENROLLMENT_UNKNOWN on the first relay continues to the next', async () => {
     const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
     const joiner = await openAuth();
     const { calls, fetcher } = fakeRelay(tenant, { unknownEnrollmentOrigins: [RELAY_A] });
-    const result = await runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+    const result = await runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
       auth: joiner,
       fetcher,
       skipRestart: true,
@@ -561,7 +566,7 @@ describe('hub join with an r3 token', () => {
     const joiner = await openAuth();
     const { fetcher } = fakeRelay(tenant, { lookupStatus: 404 });
     await expect(
-      runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+      runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
         auth: joiner,
         fetcher,
         skipRestart: true,
@@ -574,14 +579,14 @@ describe('hub join with an r3 token', () => {
     const joiner = await openAuth();
     const { calls, fetcher } = fakeRelay(tenant, { redeemStatus: 400 });
     await expect(
-      runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+      runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
         auth: joiner,
         fetcher,
         skipRestart: true,
       })
     ).rejects.toThrow('RELAY_ENROLLMENT_USED');
     expect(calls.filter((call) => call.path.endsWith('/redeem'))).toHaveLength(1);
-    expect(readRelayUplink(joiner).kind).toBe('hub');
+    expect(readRelayUplink(joiner).kind).toBe('none');
   });
 
   test('a key log missing the anchor record is rejected', async () => {
@@ -590,13 +595,13 @@ describe('hub join with an r3 token', () => {
     const truncated = tenant.keyLog.slice(0, tenant.keyLog.length - 1);
     const { fetcher } = fakeRelay(tenant, { keyLogOverride: truncated });
     await expect(
-      runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+      runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
         auth: joiner,
         fetcher,
         skipRestart: true,
       })
     ).rejects.toThrow('key log rejected');
-    expect(readRelayUplink(joiner).kind).toBe('hub');
+    expect(readRelayUplink(joiner).kind).toBe('none');
   });
 
   test('records appended after the join code was created are accepted', async () => {
@@ -606,7 +611,7 @@ describe('hub join with an r3 token', () => {
     await appendRootMetaKey(tenant, 2);
     const joiner = await openAuth();
     const { fetcher } = fakeRelay(tenant);
-    const result = await runRelayJoin(parseArgs(['hub', 'join']), '', token, {
+    const result = await runRelayJoin(parseArgs(['relay', 'join']), '', token, {
       auth: joiner,
       fetcher,
       skipRestart: true,
@@ -623,7 +628,7 @@ describe('hub join with an r3 token', () => {
     expect(tenant.keyLog.length).toBeGreaterThan(3);
     const joiner = await openAuth();
     const { fetcher } = fakeRelay(tenant);
-    const result = await runRelayJoin(parseArgs(['hub', 'join']), '', token, {
+    const result = await runRelayJoin(parseArgs(['relay', 'join']), '', token, {
       auth: joiner,
       fetcher,
       skipRestart: true,
@@ -639,7 +644,7 @@ describe('hub join with an r3 token', () => {
     const wrongKeyTenant = { ...tenant, logKey: generateTenantKey() };
     const { fetcher } = fakeRelay(wrongKeyTenant);
     await expect(
-      runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+      runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
         auth: joiner,
         fetcher,
         skipRestart: true,
@@ -651,7 +656,7 @@ describe('hub join with an r3 token', () => {
     const joiner = await openAuth();
     let called = false;
     await expect(
-      runRelayJoin(parseArgs(['hub', 'join']), '', 'r3.not-base64url!!', {
+      runRelayJoin(parseArgs(['relay', 'join']), '', 'r3.not-base64url!!', {
         auth: joiner,
         fetcher: (async () => {
           called = true;
@@ -674,7 +679,7 @@ describe('r3 join with a pinned CA', () => {
       caPemByOrigin: { [RELAY_A]: ca.certPem },
     });
     const result = await runRelayJoin(
-      parseArgs(['hub', 'join']),
+      parseArgs(['relay', 'join']),
       '',
       joinTokenFor(tenant, fingerprint),
       { auth: joiner, fetcher, skipRestart: true, log: () => undefined }
@@ -687,7 +692,7 @@ describe('r3 join with a pinned CA', () => {
     for (const call of calls.slice(1)) {
       expect(call.tls).toEqual({ ca: [ca.certPem] });
     }
-    const trusted = new HubTrustStore(joiner.db).get(RELAY_A);
+    const trusted = new RelayCaPinStore(joiner.db).get(RELAY_A);
     expect(trusted?.fingerprint).toBe(fingerprint);
     expect(await spkiFingerprint(trusted?.caPem ?? '')).toBe(fingerprint);
   });
@@ -702,15 +707,15 @@ describe('r3 join with a pinned CA', () => {
       caPemByOrigin: { [RELAY_A]: attacker.certPem },
     });
     await expect(
-      runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant, fingerprint), {
+      runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant, fingerprint), {
         auth: joiner,
         fetcher,
         skipRestart: true,
       })
     ).rejects.toThrow('fingerprint');
     expect(calls.map((call) => call.path)).toEqual(['/api/tls/ca.crt']);
-    expect(new HubTrustStore(joiner.db).get(RELAY_A)).toBeNull();
-    expect(readRelayUplink(joiner).kind).toBe('hub');
+    expect(new RelayCaPinStore(joiner.db).get(RELAY_A)).toBeNull();
+    expect(readRelayUplink(joiner).kind).toBe('none');
   });
 });
 
@@ -721,7 +726,7 @@ describe('r3 join and the local roles', () => {
     const joiner = await openAuth(undefined, 'relay,node');
     const { fetcher } = fakeRelay(tenant);
     try {
-      await runRelayJoin(parseArgs(['hub', 'join']), '', joinTokenFor(tenant), {
+      await runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
         auth: joiner,
         fetcher,
         skipRestart: true,
@@ -735,28 +740,47 @@ describe('r3 join and the local roles', () => {
   });
 });
 
-describe('hub join dispatch', () => {
-  test('an r3 token reaches the relay path without needing a url or VIBETERM_HUB_URL', async () => {
+describe('relay join --token dispatch', () => {
+  test('an r3 token reaches the relay path without needing a url', async () => {
     const tenant = await makeTenant([ENTRY_A]);
     const joiner = await openAuth();
     const { calls, fetcher } = fakeRelay(tenant);
     const token = joinTokenFor(tenant);
-    const joined = await runHubJoin(parseArgs(['hub', 'join', '--token', token]), '', {
+    const joined = await runRelayJoinCommand(parseArgs(['relay', 'join', '--token', token]), {
       auth: joiner,
       fetcher,
       skipRestart: true,
       log: () => undefined,
     });
-    expect(joined.hubUrl).toBe(RELAY_A);
+    expect(joined.relayUrl).toBe(RELAY_A);
     expect(joined.userId).toBe(tenant.userId);
     expect(calls.some((call) => call.path.endsWith('/redeem'))).toBe(true);
     expect(readRelayUplink(joiner).kind).toBe('relay');
   });
 
-  test('a hub token still requires the url', async () => {
+  test('a non-r3 token is refused', async () => {
     const joiner = await openAuth();
     await expect(
-      runHubJoin(parseArgs(['hub', 'join', '--token', 'AAAA']), '', { auth: joiner })
-    ).rejects.toThrow('hub join requires <https-url>');
+      runRelayJoinCommand(parseArgs(['relay', 'join', '--token', 'AAAA']), { auth: joiner })
+    ).rejects.toThrow('r3.');
+  });
+
+  test('a positional url that is not in the token is ignored with a warning', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    const { fetcher } = fakeRelay(tenant);
+    const token = joinTokenFor(tenant);
+    const logs: string[] = [];
+    const joined = await runRelayJoinCommand(
+      parseArgs(['relay', 'join', 'https://other.example', '--token', token]),
+      {
+        auth: joiner,
+        fetcher,
+        skipRestart: true,
+        log: (line) => logs.push(line),
+      }
+    );
+    expect(joined.relayUrl).toBe(RELAY_A);
+    expect(logs.some((line) => line.includes('ignored'))).toBe(true);
   });
 });

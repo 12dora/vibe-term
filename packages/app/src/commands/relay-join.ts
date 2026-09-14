@@ -1,5 +1,5 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
-import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
+import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/relay/redeem-pop';
 import {
   createNodeCertificate,
   decodeAuthorization,
@@ -15,9 +15,11 @@ import {
   type RelayJoinToken,
   type RelayJoinTokenEntry,
   decodeRelayJoinToken,
+  isRelayJoinToken,
   normalizeRelayUrl,
 } from '../../../shared/src/relay';
 import { t } from '../i18n';
+import { requireFlagValue } from '../lib/args';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
@@ -31,15 +33,17 @@ import { type VibeTermRoles, parseVibeTermRoles, roleNameFromFlags } from '../li
 import { asString } from '../lib/validate';
 import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import type { ParsedArgs } from '../types';
+import type { CliIo } from './cli-io';
 import { enableDirectForOnboarding } from './direct';
-import { type HubIo, JoinError, maybeRestart } from './hub';
-import { assertChainUids } from './hub-join-verify';
+import { JoinError, NODE_REVOKED_REJOIN_ERROR } from './join-error';
+import { assertChainUids } from './join-verify';
 import {
   RELAY_REDEEM_RESPONSE_MAX_BYTES,
   RelayApiError,
   joinRelayUrl,
   requestRelayJson,
 } from './relay-shared';
+import { maybeRestart } from './restart';
 import { withAuth } from './with-auth';
 
 export type RelayJoinResult = {
@@ -50,14 +54,15 @@ export type RelayJoinResult = {
   admitted: boolean;
 };
 
-function log(io: HubIo | undefined, message: string): void {
+function log(io: CliIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
 }
 
 /** join 串里的中继表就是 failover 顺序；命令行给的 url 只能用来把其中一条提前。 */
 export function orderRelayEntries(
   decoded: RelayJoinToken,
-  preferredRaw: string
+  preferredRaw: string,
+  warn?: (message: string) => void
 ): RelayJoinTokenEntry[] {
   if (!preferredRaw) return [...decoded.relays];
   let preferred: string;
@@ -71,7 +76,10 @@ export function orderRelayEntries(
   }
   const match = decoded.relays.find((entry) => entry.url === preferred);
   if (!match) {
-    throw new JoinError('invalid_url', `relay url is not listed in the join token: ${preferred}`);
+    (warn ?? console.warn)(
+      `relay url is not listed in the join token and will be ignored: ${preferred}`
+    );
+    return [...decoded.relays];
   }
   return [match, ...decoded.relays.filter((entry) => entry.url !== preferred)];
 }
@@ -198,7 +206,7 @@ async function prepareRelayJoin(input: {
   decoded: RelayJoinToken;
   entry: RelayJoinTokenEntry;
   fetcher?: FetchLike;
-  io: HubIo;
+  io: CliIo;
 }): Promise<PreparedJoin> {
   const identity = await ensureNodeIdentity(input.ctx.identityStore);
   const enrollPk = rootKeyFromSeed(input.decoded.enrollSk).publicKey;
@@ -249,7 +257,7 @@ type RelayAttempt = {
 async function relayFetcherFor(input: {
   entry: RelayJoinTokenEntry;
   caFingerprint: string | undefined;
-  io: HubIo;
+  io: CliIo;
 }): Promise<{
   fetcher: FetchLike | undefined;
   pin: { caPem: string; fingerprint: string } | null;
@@ -271,7 +279,7 @@ async function redeemAgainstRelays(input: {
   ctx: LocalAuthContext;
   decoded: RelayJoinToken;
   entries: RelayJoinTokenEntry[];
-  io: HubIo;
+  io: CliIo;
 }): Promise<RelayAttempt> {
   let lastError: unknown;
   for (const entry of input.entries) {
@@ -304,10 +312,7 @@ async function redeemAgainstRelays(input: {
     }
   }
   const message = errorMessage(lastError);
-  throw new JoinError(
-    isRelayTransportError(lastError) ? 'hub_unreachable' : 'join_failed',
-    `relay join failed: ${message}`
-  );
+  throw new JoinError('relay_unreachable', `relay join failed: ${message}`);
 }
 
 async function commitRelayJoin(input: {
@@ -334,7 +339,7 @@ async function commitRelayJoin(input: {
   assertChainUids(records, genesisUid);
   const admittedCert = verified.state.nodeCerts.get(prepared.identity.nodeIdHex);
   if (admittedCert?.revoked) {
-    throw new JoinError('node_revoked', 'this node identity was revoked by the tenant');
+    throw new JoinError('node_revoked', NODE_REVOKED_REJOIN_ERROR);
   }
   const committed = await joinUserKeyService(input.ctx, records).commitJoin({
     records,
@@ -344,7 +349,6 @@ async function commitRelayJoin(input: {
     expectedUserId: genesisUid,
     identity: {
       nodeId: prepared.identity.nodeIdHex,
-      hubUrl: null,
       edPrivateKey: prepared.identity.edPrivateKey,
       x25519PrivateKey: prepared.identity.x25519PrivateKey,
       certificateJson: JSON.stringify({
@@ -384,9 +388,9 @@ export function relayJoinRoleName(current: string | undefined): string {
   try {
     roles = parseVibeTermRoles(current);
   } catch {
-    roles = { hub: false, node: false, relay: false };
+    roles = { node: false, relay: false };
   }
-  return roleNameFromFlags({ hub: false, node: true, relay: roles.relay });
+  return roleNameFromFlags({ node: true, relay: roles.relay });
 }
 
 async function writeRelayNodeEnv(envPath: string): Promise<void> {
@@ -403,7 +407,7 @@ export async function runRelayJoin(
   parsed: ParsedArgs,
   urlRaw: string,
   token: string,
-  io: HubIo = {}
+  io: CliIo = {}
 ): Promise<RelayJoinResult> {
   let decoded: RelayJoinToken;
   try {
@@ -414,7 +418,7 @@ export async function runRelayJoin(
       error instanceof Error ? error.message : 'invalid relay join token'
     );
   }
-  const entries = orderRelayEntries(decoded, urlRaw);
+  const entries = orderRelayEntries(decoded, urlRaw, (message) => log(io, message));
   const name = asString(parsed.flags.name) || 'node';
 
   return await withAuth(parsed, io, async (ctx) => {
@@ -452,4 +456,36 @@ export async function runRelayJoin(
       admitted: committed.admitted,
     };
   });
+}
+
+export function relayJoinUrlFromParsed(parsed: ParsedArgs): string {
+  const rest = parsed.positionals.filter((item) => item !== 'relay' && item !== 'join');
+  return rest[0] ?? '';
+}
+
+/** CLI entry: `--token r3.…` or `--tenant` + password. */
+export async function runRelayJoinCommand(
+  parsed: ParsedArgs,
+  io: CliIo = {}
+): Promise<RelayJoinResult> {
+  const token = requireFlagValue(parsed.flags, 'token');
+  const tenant = asString(parsed.flags.tenant);
+  if (token && (Object.hasOwn(parsed.flags, 'password') || tenant)) {
+    throw new Error('relay join --token and --tenant/--password are mutually exclusive');
+  }
+  if (!token) {
+    const { runRelayPasswordJoin } = await import('./relay-password-join');
+    const joined = await runRelayPasswordJoin(parsed, io);
+    return {
+      userId: joined.userId,
+      relayUrl: joined.relayUrl,
+      relayUrls: [joined.relayUrl],
+      tenantId: joined.tenantId,
+      admitted: true,
+    };
+  }
+  if (!isRelayJoinToken(token)) {
+    throw new JoinError('invalid_token', 'relay join --token must be an r3. join token');
+  }
+  return await runRelayJoin(parsed, relayJoinUrlFromParsed(parsed), token, io);
 }

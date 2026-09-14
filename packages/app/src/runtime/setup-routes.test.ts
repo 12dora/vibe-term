@@ -2,8 +2,6 @@ import type { FetchLike } from '../lib/fetch-like';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import { randomBytes, rootKeyFromSeed } from '../../../shared/src/auth';
-import { JoinError } from '../commands/hub';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
 import { handleSetupRequest } from './setup-routes';
@@ -36,7 +34,7 @@ async function openAuth(): Promise<LocalAuthContext> {
 
 function deps(overrides: Partial<SetupServiceDeps> = {}): SetupServiceDeps {
   return {
-    roles: { hub: false, node: false, relay: false },
+    roles: { node: false, relay: false },
     nodeEnv: 'test',
     auth: {
       userStore: { getByUsername: () => null },
@@ -45,12 +43,7 @@ function deps(overrides: Partial<SetupServiceDeps> = {}): SetupServiceDeps {
     installDir: '/tmp',
     scheduleRestart: () => undefined,
     startedAt: 7,
-    fetch: (async () => Response.json({ status: 'ok', startedAt: 7 })) as FetchLike,
-    performHubJoin: async () => ({
-      userId: 'uid',
-      username: 'alice',
-      hubUrl: 'https://hub.example.com',
-    }),
+    fetch: (async () => Response.json({ ok: true })) as FetchLike,
     readEnvFile: async () => ({ OTHER: 'keep' }),
     writeEnvFile: async () => undefined,
     writeStagedEnvFile: async () => undefined,
@@ -82,14 +75,8 @@ function post(path: string, body: unknown): Request {
 
 describe('setup routes gating', () => {
   test('mesh returns 404 not_standalone for all setup paths', async () => {
-    const mesh = deps({ roles: { hub: true, node: true, relay: false } });
-    for (const path of [
-      '/api/setup/precheck',
-      '/api/setup/hub',
-      '/api/setup/join',
-      '/api/setup/relay',
-      '/api/setup/relay-join',
-    ]) {
+    const mesh = deps({ roles: { node: true, relay: false } });
+    for (const path of ['/api/setup/precheck', '/api/setup/relay', '/api/setup/relay-join']) {
       const { status, body } = await jsonOf(
         await handleSetupRequest(post(path, { url: 'https://h.example' }), mesh)
       );
@@ -109,17 +96,17 @@ describe('POST /api/setup/precheck', () => {
   test('returns reachable/isSelf per contract', async () => {
     const { status, body } = await jsonOf(
       await handleSetupRequest(
-        post('/api/setup/precheck', { url: 'https://hub.example.com' }),
+        post('/api/setup/precheck', { url: 'https://relay.example.com' }),
         deps()
       )
     );
     expect(status).toBe(200);
     expect(body).toEqual({
       reachable: true,
-      isSelf: true,
+      isSelf: false,
       status: 200,
       error: null,
-      resolvedUrl: 'https://hub.example.com',
+      resolvedUrl: 'https://relay.example.com',
       triedPorts: [443],
       probed: true,
     });
@@ -147,7 +134,7 @@ describe('POST /api/setup/precheck', () => {
   test('an unknown kind is 400', async () => {
     const { status, body } = await jsonOf(
       await handleSetupRequest(
-        post('/api/setup/precheck', { url: 'https://hub.example.com', kind: 'proxy' }),
+        post('/api/setup/precheck', { url: 'https://relay.example.com', kind: 'hub' }),
         deps()
       )
     );
@@ -159,370 +146,6 @@ describe('POST /api/setup/precheck', () => {
     const { status, body } = await jsonOf(
       await handleSetupRequest(
         post('/api/setup/precheck', { url: 'ftp://hub.example.com' }),
-        deps()
-      )
-    );
-    expect(status).toBe(400);
-    expect((body as { error: { code: string } }).error.code).toBe('invalid_url');
-  });
-});
-
-describe('POST /api/setup/hub', () => {
-  test('validation errors map to contract codes', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/hub', {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'alice',
-          password: 'short',
-          directEnable: false,
-        }),
-        deps()
-      )
-    );
-    expect(status).toBe(400);
-    expect((body as { error: { code: string } }).error.code).toBe('weak_password');
-  });
-
-  test('user_exists is 409', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/hub', {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'alice',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        }),
-        deps({
-          auth: {
-            userStore: { getByUsername: () => ({ id: 'u' }) },
-          } as unknown as LocalAuthContext,
-        })
-      )
-    );
-    expect(status).toBe(409);
-    expect((body as { error: { code: string } }).error.code).toBe('user_exists');
-  });
-
-  test('concurrent becomeHub yields one 200 and one 409 setup_in_progress', async () => {
-    const auth = await openAuth();
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let entered = 0;
-    const shared = deps({
-      auth: {
-        ...auth,
-        userKeys: {
-          bootstrapUserWithSelfAdmit: async (input) => {
-            entered += 1;
-            await held;
-            return auth.userKeys.bootstrapUserWithSelfAdmit(input);
-          },
-        } as LocalAuthContext['userKeys'],
-      },
-    });
-    const bodyOf = (username: string) =>
-      post('/api/setup/hub', {
-        hubPublicUrl: 'https://hub.example.com',
-        username,
-        password: 'vibeterm-test-pass',
-        directEnable: false,
-      });
-    const first = handleSetupRequest(bodyOf('alice'), shared);
-    while (entered === 0) await Bun.sleep(1);
-    const second = await jsonOf(await handleSetupRequest(bodyOf('bob'), shared));
-    expect(second.status).toBe(409);
-    expect((second.body as { error: { code: string } }).error.code).toBe('setup_in_progress');
-    release();
-    const firstRes = await jsonOf(await first);
-    expect(firstRes.status).toBe(200);
-    expect((firstRes.body as { ok: boolean; restarting: boolean }).ok).toBe(true);
-  });
-
-  test('post-commit hub request is 409 setup_committed', async () => {
-    const auth = await openAuth();
-    const shared = deps({ auth });
-    const first = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/hub', {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'alice',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        }),
-        shared
-      )
-    );
-    expect(first.status).toBe(200);
-    const second = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/hub', {
-          hubPublicUrl: 'https://hub.example.com',
-          username: 'bob',
-          password: 'vibeterm-test-pass',
-          directEnable: false,
-        }),
-        shared
-      )
-    );
-    expect(second.status).toBe(409);
-    expect((second.body as { error: { code: string } }).error.code).toBe('setup_committed');
-  });
-});
-
-describe('POST /api/setup/join', () => {
-  test('happy path with stubbed join', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          token: 'token',
-          name: 'studio',
-          directEnable: false,
-        }),
-        deps()
-      )
-    );
-    expect(status).toBe(200);
-    expect(body).toEqual({
-      ok: true,
-      hubUrl: 'https://hub.example.com',
-      username: 'alice',
-      direct: 'skipped',
-      directError: null,
-      restarting: true,
-    });
-  });
-
-  test('join env rename failure is 500 with recovery message and does not restart', async () => {
-    const restarts: number[] = [];
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          token: 'token',
-          name: 'studio',
-          directEnable: false,
-        }),
-        deps({
-          scheduleRestart: () => {
-            restarts.push(1);
-          },
-          renameEnvFile: async () => {
-            throw new Error('EACCES rename');
-          },
-        })
-      )
-    );
-    expect(status).toBe(500);
-    expect((body as { error: { code: string; message: string } }).error.code).toBe(
-      'env_write_failed'
-    );
-    expect((body as { error: { message: string } }).error.message).toMatch(/joined locally/);
-    expect((body as { error: { message: string } }).error.message).toContain('VIBETERM_ROLES=node');
-    expect((body as { error: { message: string } }).error.message).toContain(
-      'VIBETERM_HUB_URL=https://hub.example.com'
-    );
-    expect(restarts).toEqual([]);
-  });
-
-  test('join errors map to HTTP statuses', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          token: 'token',
-          name: 'studio',
-          directEnable: false,
-        }),
-        deps({
-          performHubJoin: async () => {
-            throw new JoinError('hub_unreachable', 'down');
-          },
-        })
-      )
-    );
-    expect(status).toBe(502);
-    expect((body as { error: { code: string; message: string } }).error).toEqual({
-      code: 'hub_unreachable',
-      message: 'down',
-    });
-  });
-
-  test('password method exchanges then joins', async () => {
-    let issued = '';
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          method: 'password',
-          password: 'vibeterm-test-pass',
-          name: 'studio',
-          directEnable: false,
-        }),
-        deps({
-          requestEnrollmentByPassword: async () => ({
-            token: 'issued-token',
-            hubUrl: 'https://hub.example.com',
-            caFingerprint: null,
-          }),
-          performHubJoin: async (input) => {
-            issued = input.token;
-            return {
-              userId: 'uid',
-              username: 'alice',
-              hubUrl: 'https://hub.example.com',
-            };
-          },
-        })
-      )
-    );
-    expect(status).toBe(200);
-    expect(issued).toBe('issued-token');
-    expect((body as { ok: boolean; username: string }).username).toBe('alice');
-  });
-
-  test('password join forwards totpCode to self-admit', async () => {
-    let seen: string | undefined;
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          method: 'password',
-          password: 'vibeterm-test-pass',
-          name: 'studio',
-          totpCode: '123456',
-          directEnable: false,
-        }),
-        deps({
-          requestEnrollmentByPassword: async () => ({
-            token: 'issued-token',
-            hubUrl: 'https://hub.example.com',
-            caFingerprint: null,
-            rootKey: rootKeyFromSeed(randomBytes(32)),
-          }),
-          publishHubJoinSelfAdmit: async (input) => {
-            seen = input.totpCode;
-            return { appended: true, admitPending: false };
-          },
-        })
-      )
-    );
-    expect(status).toBe(200);
-    expect(seen).toBe('123456');
-    expect((body as { admitPending?: boolean }).admitPending).toBeUndefined();
-  });
-
-  test('password join returns admitPending when self-admit is skipped', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          method: 'password',
-          password: 'vibeterm-test-pass',
-          name: 'studio',
-          directEnable: false,
-        }),
-        deps({
-          requestEnrollmentByPassword: async () => ({
-            token: 'issued-token',
-            hubUrl: 'https://hub.example.com',
-            caFingerprint: null,
-            rootKey: rootKeyFromSeed(randomBytes(32)),
-          }),
-          publishHubJoinSelfAdmit: async () => ({ appended: false, admitPending: true }),
-        })
-      )
-    );
-    expect(status).toBe(200);
-    expect((body as { admitPending?: boolean }).admitPending).toBe(true);
-  });
-
-  test('invalid totpCode is 400', async () => {
-    for (const totpCode of ['12', 'abcdef', '12345678901', 123456]) {
-      const { status, body } = await jsonOf(
-        await handleSetupRequest(
-          post('/api/setup/join', {
-            hubUrl: 'https://hub.example.com',
-            method: 'password',
-            password: 'vibeterm-test-pass',
-            name: 'studio',
-            totpCode,
-            directEnable: false,
-          }),
-          deps()
-        )
-      );
-      expect(status).toBe(400);
-      expect((body as { error: { code: string } }).error.code).toBe('invalid_body');
-    }
-  });
-
-  test('token and password together are 400', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          token: 'tok',
-          password: 'pw',
-          name: 'studio',
-          directEnable: false,
-        }),
-        deps()
-      )
-    );
-    expect(status).toBe(400);
-    expect((body as { error: { code: string } }).error.code).toBe('invalid_body');
-  });
-
-  test('token and password both empty are 400', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/join', {
-          hubUrl: 'https://hub.example.com',
-          name: 'studio',
-          directEnable: false,
-        }),
-        deps()
-      )
-    );
-    expect(status).toBe(400);
-    expect((body as { error: { code: string } }).error.code).toBe('invalid_body');
-  });
-});
-
-describe('POST /api/setup/relay', () => {
-  test('standalone relay role returns contract body without admin token', async () => {
-    const auth = await openAuth();
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/relay', {
-          role: 'relay',
-          relayPublicUrl: 'https://relay.example',
-          relayPassword: 'tenant-pass',
-        }),
-        deps({ auth })
-      )
-    );
-    expect(status).toBe(200);
-    expect(body).toEqual({
-      ok: true,
-      role: 'relay',
-      relayPublicUrl: 'https://relay.example',
-      hasPassword: true,
-      direct: 'enabled',
-      directError: null,
-      restarting: true,
-    });
-    expect(JSON.stringify(body)).not.toMatch(/admin/i);
-  });
-
-  test('invalid url is 400', async () => {
-    const { status, body } = await jsonOf(
-      await handleSetupRequest(
-        post('/api/setup/relay', { role: 'relay', relayPublicUrl: 'ftp://relay.example' }),
         deps()
       )
     );
@@ -568,33 +191,26 @@ describe('POST /api/setup/relay-join', () => {
 });
 
 describe('setup 默认安装直连插件', () => {
-  test.each(['/api/setup/hub', '/api/setup/join'])(
-    '%s 未传 directEnable 时启用插件',
-    async (path) => {
-      const auth = await openAuth();
-      let calls = 0;
-      const { status, body } = await jsonOf(
-        await handleSetupRequest(
-          post(path, {
-            hubUrl: 'https://hub.example.com',
-            hubPublicUrl: 'https://hub.example.com',
-            username: 'alice',
-            password: path === '/api/setup/hub' ? 'vibeterm-test-pass' : undefined,
-            token: 'token-value',
-            name: 'studio',
-          }),
-          deps({
-            auth,
-            enableDirect: async () => {
-              calls += 1;
-              return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: 'x' };
-            },
-          })
-        )
-      );
-      expect(status).toBe(200);
-      expect(body).toMatchObject({ direct: 'enabled', directError: null });
-      expect(calls).toBe(1);
-    }
-  );
+  test('/api/setup/relay 未传 directEnable 时启用插件', async () => {
+    const auth = await openAuth();
+    let calls = 0;
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/relay', {
+          role: 'relay',
+          relayPublicUrl: 'https://relay.example',
+        }),
+        deps({
+          auth,
+          enableDirect: async () => {
+            calls += 1;
+            return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: 'x' };
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ direct: 'enabled', directError: null });
+    expect(calls).toBe(1);
+  });
 });

@@ -15,24 +15,9 @@ import type { runCommand } from './process';
 import { asString } from './validate';
 
 export const AUTH_COMMANDS = new Set([
-  'hub.user.add',
-  'hub.user.passwd',
-  'hub.user.totp',
-  'hub.user.reset',
-  'hub.join',
-  'hub.leave',
-  'hub.standby',
-  'hub.promote',
-  'hub.demote',
-  'hub.list',
-  'hub.allow',
-  'hub.disallow',
-  'hub.trust.refresh',
-  'hub.ca.fingerprint',
-  'hub.ca.rotate',
-  'hub.urls.list',
-  'hub.urls.add',
-  'hub.urls.remove',
+  'user.add',
+  'user.passwd',
+  'user.totp',
   'mesh.reset-identity',
   'tls.reset',
   'mesh.keylog.status',
@@ -55,7 +40,6 @@ export const AUTH_COMMANDS = new Set([
   'relay.leave',
   'relay.list',
   'relay.unpin',
-  'enroll',
 ]);
 
 export type AuthSpawnPlan = {

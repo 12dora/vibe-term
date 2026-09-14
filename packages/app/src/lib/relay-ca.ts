@@ -1,9 +1,9 @@
-import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import type { AuthDb } from '../../../../apps/gateway/src/auth/types';
 import { RELAY_REQUEST_TIMEOUT_MS } from '../commands/relay-shared';
 import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
-import { isNetworkFetchError } from './hub-client';
+import { isNetworkFetchError } from './node-client';
 import { parseAndValidateCaPem, readBoundedResponseText } from './pem';
 
 export type RelayCaErrorCode =
@@ -27,7 +27,7 @@ export class RelayCaError extends Error {
 
 /**
  * 自签中继的 CA：先用**不校验**的连接取 `/api/tls/ca.crt`，按 join 串里的指纹核对后才认。
- * 与 hub join 同一套流程（`fetchPinnedHubCa`），指纹不符一律拒绝，绝不退回系统 CA。
+ * 指纹不符一律拒绝，绝不退回系统 CA。
  */
 export async function fetchPinnedRelayCa(input: {
   relayUrl: string;
@@ -96,15 +96,15 @@ export function pinRelayCa(inner: FetchLike | undefined, pem: string): FetchLike
 }
 
 /**
- * 落到 `hub_trust`：`UplinkPool.spawn` 就是按候选 url 在这张表里取 pin 的，所以之后的
- * relay uplink 会自动用同一张 CA，不必再下载。
+ * 落到 `relay_ca_pins`：`UplinkPool.spawn` 按候选 url 取 pin，之后的 relay uplink
+ * 会自动用同一张 CA，不必再下载。
  */
 export function storeRelayCaPin(
   db: AuthDb,
   input: { relayUrl: string; caPem: string; fingerprint: string }
 ): void {
-  new HubTrustStore(db).put({
-    hubUrl: input.relayUrl,
+  new RelayCaPinStore(db).put({
+    url: input.relayUrl,
     caPem: input.caPem,
     fingerprint: input.fingerprint,
   });

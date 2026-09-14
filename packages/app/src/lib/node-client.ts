@@ -5,7 +5,6 @@ import {
 import {
   type RootKey,
   buildLogin,
-  canonicalHubUrl,
   createDelegation,
   decodeBase64url,
   encodeBase64url,
@@ -20,7 +19,7 @@ import type { FetchLike } from './fetch-like';
 
 export type SecondFactorPolicy = 'either' | 'totp' | 'passkey' | 'none';
 
-export type HubAuthMode = {
+export type NodeAuthMode = {
   mode: string;
   nodeId: string | null;
   uid: string | null;
@@ -61,100 +60,21 @@ export function cliPasswordLoginBlockedByPasskey(mode: {
   return mode.passkeySecondFactor && !mode.totpEnabled;
 }
 
-export type HubLoginResult = {
+export type NodeLoginResult = {
   sid: string;
   expiresAt: number;
   cookieHeader: string;
   nodeId: string;
 };
 
-export type RedeemResponse = {
-  user: {
-    id: string;
-    username: string;
-    root_public_key: string;
-    root_epoch: number;
-    kdf_params: unknown;
-  };
-  user_key_log: Array<{ seq: number | string; bytes: string; sig: string }>;
-  node_certs: Array<{
-    node_id: string;
-    user_id: string;
-    admit_record_seq: number;
-    certificate: string;
-    cert_sig: string;
-    authorization: string;
-    authorization_sig: string;
-    revoked_log_seq: number | null;
-  }>;
-};
+export type NodeFetch = FetchLike;
 
-export type HubFetch = FetchLike;
-
-export type HubTrustLookup = {
-  get(hubUrl: string): { caPem: string } | null;
-};
-
-export function createHubFetcher(
-  hubTrustStore: HubTrustLookup,
-  hubUrl: string,
-  inner: HubFetch = fetch
-): HubFetch {
-  let key = hubUrl;
-  try {
-    key = canonicalHubUrl(hubUrl);
-  } catch {
-    return inner;
-  }
-  const trusted = hubTrustStore.get(key);
-  if (!trusted?.caPem) return inner;
-  const ca = [trusted.caPem];
-  const pinned: HubFetch = (input, init) => inner(input, { ...init, tls: { ca } });
-  return pinned;
-}
-
-export type HubNodeListItem = {
-  id: string;
-  name?: string;
-  certificate?: string;
-  cert_sig?: string;
-  enrollment_token_id?: string;
-};
-
-export const REDEEM_NETWORK_RETRY_LIMIT = 3;
-
-function joinUrl(base: string, path: string): string {
+export function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}${path}`;
 }
 
-function withRedirectError(init?: RequestInit): RequestInit {
+export function withRedirectError(init?: RequestInit): RequestInit {
   return { ...init, redirect: 'error' };
-}
-
-export function assertHubJoinUrl(
-  raw: string,
-  insecureLocal = false,
-  nodeEnv = process.env.NODE_ENV
-): URL {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error(`invalid hub url: ${raw}`);
-  }
-  if (url.protocol === 'https:') {
-    return new URL(canonicalHubUrl(url.toString()));
-  }
-  const localHost = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
-  if (url.protocol === 'http:' && insecureLocal && localHost) {
-    if (nodeEnv === 'production') {
-      throw new Error('--insecure-local is not allowed when NODE_ENV=production');
-    }
-    return new URL(canonicalHubUrl(url.toString()));
-  }
-  throw new Error(
-    'hub join requires https: (use --insecure-local only for http://127.0.0.1 or http://localhost)'
-  );
 }
 
 export function isNetworkFetchError(error: unknown): boolean {
@@ -166,7 +86,7 @@ export function isNetworkFetchError(error: unknown): boolean {
   return true;
 }
 
-async function readJson(response: Response): Promise<Record<string, unknown>> {
+export async function readJson(response: Response): Promise<Record<string, unknown>> {
   const text = await response.text();
   if (!text) return {};
   try {
@@ -178,8 +98,8 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 
 export async function fetchAuthMode(
   baseUrl: string,
-  fetcher: HubFetch = fetch
-): Promise<HubAuthMode> {
+  fetcher: NodeFetch = fetch
+): Promise<NodeAuthMode> {
   const response = await fetcher(joinUrl(baseUrl, '/api/auth/mode'), withRedirectError());
   const body = await readJson(response);
   if (!response.ok) {
@@ -195,7 +115,7 @@ export async function fetchAuthMode(
     secondFactorPolicy: parseSecondFactorPolicy(body.secondFactorPolicy),
     kdfParams:
       body.kdfParams && typeof body.kdfParams === 'object'
-        ? (body.kdfParams as HubAuthMode['kdfParams'])
+        ? (body.kdfParams as NodeAuthMode['kdfParams'])
         : null,
     caFingerprint: typeof body.caFingerprint === 'string' ? body.caFingerprint : null,
   };
@@ -205,9 +125,9 @@ export async function loginWithRootKey(options: {
   baseUrl: string;
   rootKey: RootKey;
   uid: string;
-  fetcher?: HubFetch;
+  fetcher?: NodeFetch;
   totp?: { code: string; kTotp: Uint8Array };
-}): Promise<HubLoginResult> {
+}): Promise<NodeLoginResult> {
   const fetcher = options.fetcher ?? fetch;
   const mode = await fetchAuthMode(options.baseUrl, fetcher);
   const uid = options.uid;
@@ -297,7 +217,7 @@ function authLoginError(status: number, body: Record<string, unknown>): Error {
   return new Error(mapped.startsWith('cli.') ? t(mapped) : mapped);
 }
 
-/** 会话 cookie 前缀：新名在前，旧名供混合版本期的老 hub 使用。 */
+/** 会话 cookie 前缀：新名在前，旧名供混合版本期的老节点使用。 */
 const SESSION_COOKIE_PREFIXES = [
   NODE_SESSION_COOKIE_PREFIX,
   LEGACY_NODE_SESSION_COOKIE_PREFIX,
@@ -358,105 +278,4 @@ function collectSetCookies(response: Response): Map<string, string> {
     if (name) cookies.set(name, value);
   }
   return cookies;
-}
-
-export async function postEnrollment(options: {
-  baseUrl: string;
-  cookieHeader: string;
-  enrollPk: Uint8Array;
-  authorization: Uint8Array;
-  authorizationSig: Uint8Array;
-  exp: number;
-  fetcher?: HubFetch;
-}): Promise<{ ok: boolean; id?: string; expires_at?: number }> {
-  const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(
-    joinUrl(options.baseUrl, '/api/hub/enrollments'),
-    withRedirectError({
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        cookie: options.cookieHeader,
-      },
-      body: JSON.stringify({
-        enroll_pk: encodeBase64url(options.enrollPk),
-        authorization: encodeBase64url(options.authorization),
-        authorization_sig: encodeBase64url(options.authorizationSig),
-        exp: options.exp,
-      }),
-    })
-  );
-  const body = await readJson(response);
-  if (!response.ok) {
-    throw new Error(
-      `create enrollment failed: HTTP ${response.status} ${String(body.error ?? body.code ?? '')}`
-    );
-  }
-  return {
-    ok: true,
-    id: typeof body.id === 'string' ? body.id : undefined,
-    expires_at: typeof body.expires_at === 'number' ? body.expires_at : undefined,
-  };
-}
-
-export async function redeemEnrollment(options: {
-  baseUrl: string;
-  certificate: Uint8Array;
-  certSig: Uint8Array;
-  name?: string;
-  version?: string;
-  fetcher?: HubFetch;
-}): Promise<RedeemResponse> {
-  const fetcher = options.fetcher ?? fetch;
-  const init = withRedirectError({
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      certificate: encodeBase64url(options.certificate),
-      cert_sig: encodeBase64url(options.certSig),
-      name: options.name ?? 'node',
-      version: options.version ?? '',
-    }),
-  });
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= REDEEM_NETWORK_RETRY_LIMIT; attempt++) {
-    try {
-      const response = await fetcher(joinUrl(options.baseUrl, '/api/hub/enrollments/redeem'), init);
-      const body = await readJson(response);
-      if (!response.ok) {
-        throw new Error(
-          `redeem failed: HTTP ${response.status} ${String(body.error ?? body.code ?? '')}`
-        );
-      }
-      return body as unknown as RedeemResponse;
-    } catch (error) {
-      lastError = error;
-      if (!isNetworkFetchError(error) || attempt >= REDEEM_NETWORK_RETRY_LIMIT) {
-        throw error;
-      }
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
-}
-
-export async function listHubNodes(options: {
-  baseUrl: string;
-  cookieHeader: string;
-  fetcher?: HubFetch;
-}): Promise<HubNodeListItem[]> {
-  const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(
-    joinUrl(options.baseUrl, '/api/hub/nodes'),
-    withRedirectError({
-      headers: { cookie: options.cookieHeader },
-    })
-  );
-  const body = await readJson(response);
-  if (!response.ok) {
-    throw new Error(`list nodes failed: HTTP ${response.status}`);
-  }
-  const nodes = Array.isArray(body.nodes) ? body.nodes : [];
-  return nodes.filter((item): item is HubNodeListItem => {
-    return Boolean(item) && typeof (item as { id?: unknown }).id === 'string';
-  });
 }

@@ -10,24 +10,9 @@ export type NestedCommandName =
   | 'upgrade'
   | 'uninstall'
   | 'help'
-  | 'hub.user.add'
-  | 'hub.user.passwd'
-  | 'hub.user.totp'
-  | 'hub.user.reset'
-  | 'hub.join'
-  | 'hub.leave'
-  | 'hub.standby'
-  | 'hub.promote'
-  | 'hub.demote'
-  | 'hub.list'
-  | 'hub.allow'
-  | 'hub.disallow'
-  | 'hub.trust.refresh'
-  | 'hub.ca.fingerprint'
-  | 'hub.ca.rotate'
-  | 'hub.urls.list'
-  | 'hub.urls.add'
-  | 'hub.urls.remove'
+  | 'user.add'
+  | 'user.passwd'
+  | 'user.totp'
   | 'mesh.reset-identity'
   | 'tls.reset'
   | 'mesh.keylog.status'
@@ -50,7 +35,6 @@ export type NestedCommandName =
   | 'relay.list'
   | 'relay.unpin'
   | 'relay.join'
-  | 'enroll'
   | 'direct'
   | 'unknown';
 
@@ -119,26 +103,13 @@ const TOP_LEVEL_COMMANDS: Record<string, NestedCommandName> = {
   doctor: 'doctor',
   upgrade: 'upgrade',
   uninstall: 'uninstall',
-  enroll: 'enroll',
   direct: 'direct',
 };
 
-const HUB_SUBCOMMANDS: Record<string, NestedCommandName> = {
-  join: 'hub.join',
-  leave: 'hub.leave',
-  standby: 'hub.standby',
-  promote: 'hub.promote',
-  demote: 'hub.demote',
-  list: 'hub.list',
-  allow: 'hub.allow',
-  disallow: 'hub.disallow',
-};
-
-const HUB_USER_SUBCOMMANDS: Record<string, NestedCommandName> = {
-  add: 'hub.user.add',
-  passwd: 'hub.user.passwd',
-  totp: 'hub.user.totp',
-  reset: 'hub.user.reset',
+const USER_SUBCOMMANDS: Record<string, NestedCommandName> = {
+  add: 'user.add',
+  passwd: 'user.passwd',
+  totp: 'user.totp',
 };
 
 const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
@@ -196,10 +167,6 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
   if (topLevel) return { name: topLevel, rest: parsed.positionals, raw: command };
 
   const nestedGroups: Record<string, Record<string, NestedCommandName>> = {
-    'hub.user': HUB_USER_SUBCOMMANDS,
-    'hub.trust': { refresh: 'hub.trust.refresh' },
-    'hub.ca': { fingerprint: 'hub.ca.fingerprint', rotate: 'hub.ca.rotate' },
-    'hub.urls': { list: 'hub.urls.list', add: 'hub.urls.add', remove: 'hub.urls.remove' },
     'relay.pack': { upload: 'relay.pack.upload' },
     'mesh.keylog': { status: 'mesh.keylog.status' },
     'mesh.passkey': MESH_PASSKEY_SUBCOMMANDS,
@@ -207,7 +174,7 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
   const nestedGroup = nestedGroups[`${command}.${parsed.positionals[0]}`];
   if (nestedGroup) return group(nestedGroup, parsed, command, 2);
   const groups: Record<string, Record<string, NestedCommandName>> = {
-    hub: HUB_SUBCOMMANDS,
+    user: USER_SUBCOMMANDS,
     relay: RELAY_SUBCOMMANDS,
     'relay-admin': { passwd: 'relay.passwd', kick: 'relay.kick' },
     mesh: MESH_SUBCOMMANDS,
@@ -250,8 +217,6 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'install-deps',
     'skip-dep-check',
     'role',
-    'hub-url',
-    'hub-public-url',
     'relay-public-url',
     'public-port',
     'peer-port',
@@ -269,42 +234,8 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   upgrade: UPGRADE_FLAGS,
   uninstall: new Set([...GLOBAL_FLAGS, 'install-dir', 'yes', 'purge', 'service-name', 'delay-ms']),
   direct: new Set([...GLOBAL_FLAGS, 'install-dir']),
-  enroll: new Set([...GLOBAL_FLAGS, 'install-dir', 'ttl', 'service-name']),
-  'hub.join': new Set([
-    ...GLOBAL_FLAGS,
-    'install-dir',
-    'token',
-    'password',
-    'totp',
-    'name',
-    'insecure-local',
-    'no-restart',
-    'service-name',
-  ]),
-  'hub.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
-  'hub.standby': new Set([
-    ...GLOBAL_FLAGS,
-    'install-dir',
-    'public-url',
-    'priority',
-    'insecure-local',
-    'no-restart',
-    'service-name',
-  ]),
-  'hub.promote': new Set([
-    ...GLOBAL_FLAGS,
-    'install-dir',
-    'yes',
-    'no-restart',
-    'no-interactive',
-    'service-name',
-  ]),
-  'hub.demote': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
-  'hub.list': new Set([...GLOBAL_FLAGS, 'install-dir']),
-  'hub.allow': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
-  'hub.disallow': new Set([...GLOBAL_FLAGS, 'install-dir', 'no-restart', 'service-name']),
-  'hub.user.add': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
-  'hub.user.passwd': new Set([
+  'user.add': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'user.passwd': new Set([
     ...GLOBAL_FLAGS,
     'install-dir',
     'service-name',
@@ -312,8 +243,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'full-reset',
     'yes',
   ]),
-  'hub.user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
-  'hub.user.reset': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'mesh.reset-root': new Set([
     ...GLOBAL_FLAGS,
     'install-dir',
@@ -321,12 +251,6 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'no-interactive',
     'yes',
   ]),
-  'hub.trust.refresh': new Set([...GLOBAL_FLAGS, 'install-dir', 'fingerprint']),
-  'hub.ca.fingerprint': new Set([...GLOBAL_FLAGS, 'install-dir']),
-  'hub.ca.rotate': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes']),
-  'hub.urls.list': new Set([...GLOBAL_FLAGS, 'install-dir']),
-  'hub.urls.add': new Set([...GLOBAL_FLAGS, 'install-dir']),
-  'hub.urls.remove': new Set([...GLOBAL_FLAGS, 'install-dir']),
   'mesh.reset-identity': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes', 'reset-tls']),
   'tls.reset': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes']),
   'mesh.keylog.status': new Set([...GLOBAL_FLAGS, 'install-dir']),
@@ -362,6 +286,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     ...GLOBAL_FLAGS,
     'install-dir',
     'service-name',
+    'token',
     'tenant',
     'password',
     'name',

@@ -1,7 +1,6 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import { MeshHubStore } from '../../../../apps/gateway/src/auth/mesh-hub-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import { authenticateRequest } from '../../../../apps/gateway/src/mesh/session-middleware';
@@ -37,7 +36,7 @@ function failAuth(): AuthenticateResult {
 function deps(overrides: Partial<LocalRouteDeps> = {}): LocalRouteDeps {
   const env: Record<string, string> = {};
   const base: SetupServiceDeps = {
-    roles: { hub: false, node: false, relay: false },
+    roles: { node: false, relay: false },
     nodeEnv: 'test',
     auth: {} as SetupServiceDeps['auth'],
     envPath: '/tmp/app.env',
@@ -46,8 +45,6 @@ function deps(overrides: Partial<LocalRouteDeps> = {}): LocalRouteDeps {
     readNativeManifest: async () => null,
     rtcCapable: false,
     platform: 'darwin-arm64',
-    hubUrl: null,
-    hubPublicUrl: null,
     readEnvFile: async () => ({ ...env }),
     writeEnvFile: async (_path, values) => {
       for (const key of Object.keys(env)) delete env[key];
@@ -77,8 +74,6 @@ describe('GET /api/local/status', () => {
     expect(body).toEqual({
       role: 'standalone',
       nodeEnv: 'test',
-      hubUrl: null,
-      hubPublicUrl: null,
       direct: {
         supported: true,
         installed: false,
@@ -146,7 +141,7 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: false, node: true, relay: false },
+          roles: { node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -160,17 +155,13 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: true, node: true, relay: false },
-          hubPublicUrl: 'https://hub.example',
+          roles: { node: true, relay: false },
           authenticate: okAuth,
         })
       )
     );
     expect(status).toBe(200);
-    expect((body as { role: string }).role).toBe('hub,node');
-    expect(
-      (body as { portPlan: Array<{ purpose: string; port?: number }> }).portPlan[0]
-    ).toMatchObject({ purpose: 'public-https', port: 443 });
+    expect((body as { role: string }).role).toBe('node');
   });
 
   test('portPlan uses live env values including an exposed gateway', async () => {
@@ -178,7 +169,7 @@ describe('GET /api/local/status', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: false, node: true, relay: false },
+          roles: { node: true, relay: false },
           portPlanEnv: {
             VIBETERM_BIND_HOST: '0.0.0.0',
             GATEWAY_PORT: '19663',
@@ -548,7 +539,7 @@ describe('POST /api/local/direct', () => {
           body: JSON.stringify({ action: 'remove' }),
         }),
         deps({
-          roles: { hub: false, node: true, relay: false },
+          roles: { node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -568,7 +559,7 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       migrationsFolder: MIGRATIONS,
       env: {
         VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
-        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'node',
       },
     });
     authHandles.push(ctx);
@@ -588,12 +579,11 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       delegationMethod: 'root',
       now: Date.now(),
     });
-    const roles = { hub: true, node: true, relay: false };
+    const roles = { node: true, relay: false };
     return {
       sid: issued.sid,
       routeDeps: deps({
         roles,
-        hubPublicUrl: 'https://hub.example',
         authenticate: (req) =>
           authenticateRequest(req, {
             roles,
@@ -620,7 +610,7 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       )
     );
     expect(allowed.status).toBe(200);
-    expect((allowed.body as { role: string }).role).toBe('hub,node');
+    expect((allowed.body as { role: string }).role).toBe('node');
   });
 
   test('relay roles include the relay status block', async () => {
@@ -628,7 +618,7 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/status'),
         deps({
-          roles: { hub: false, node: true, relay: true },
+          roles: { node: true, relay: true },
           authenticate: okAuth,
           relayStatus: async () => ({
             publicUrl: 'https://relay.example',
@@ -698,7 +688,7 @@ describe('POST /api/local/leave', () => {
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'node' }),
         deps({
-          roles: { hub: false, node: true, relay: false },
+          roles: { node: true, relay: false },
           authenticate: failAuth,
         })
       )
@@ -724,22 +714,6 @@ describe('POST /api/local/leave', () => {
       identity,
       now: Date.now(),
     });
-    const hubs = new MeshHubStore(ctx.db);
-    hubs.upsert(
-      {
-        hubNodeId: 'aa'.repeat(16),
-        publicUrl: 'https://hub.example',
-        name: 'stale-hub',
-        mode: 'active',
-        priority: 1,
-        writerEpoch: 1,
-        caFingerprint: null,
-        online: true,
-        lastSeenAt: 1,
-      },
-      Date.now()
-    );
-    expect(hubs.list()).toHaveLength(1);
     const env: Record<string, string> = {
       VIBETERM_ROLES: 'node',
       VIBETERM_HUB_URL: 'https://hub.example',
@@ -751,7 +725,7 @@ describe('POST /api/local/leave', () => {
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'node' }),
         deps({
-          roles: { hub: false, node: true, relay: false },
+          roles: { node: true, relay: false },
           auth: ctx,
           authenticate: okAuth,
           scheduleRestart: () => {
@@ -780,7 +754,6 @@ describe('POST /api/local/leave', () => {
     expect(restarts).toEqual([1]);
     expect(ctx.userStore.listUsers()).toHaveLength(0);
     expect(await ctx.identityStore.load()).toBeNull();
-    expect(hubs.list()).toHaveLength(0);
     expect(env.VIBETERM_ROLES).toBe('standalone');
     expect(env.VIBETERM_HUB_URL).toBe('');
     expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
@@ -790,7 +763,7 @@ describe('POST /api/local/leave', () => {
     const { status, body } = await jsonOf(
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'relay,node' }),
-        deps({ roles: { hub: false, node: true, relay: true }, authenticate: failAuth })
+        deps({ roles: { node: true, relay: true }, authenticate: failAuth })
       )
     );
     // 走到鉴权才停下 = expectedRole 这一关已经过了
@@ -804,7 +777,7 @@ describe('POST /api/local/leave', () => {
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'relay,node' }),
         deps({
-          roles: { hub: false, node: false, relay: true },
+          roles: { node: false, relay: true },
           authenticate: () => {
             authenticated += 1;
             return failAuth();
@@ -821,7 +794,7 @@ describe('POST /api/local/leave', () => {
     const { status, body } = await jsonOf(
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'relay' }),
-        deps({ roles: { hub: false, node: true, relay: true }, authenticate: okAuth })
+        deps({ roles: { node: true, relay: true }, authenticate: okAuth })
       )
     );
     expect(status).toBe(409);
@@ -832,7 +805,7 @@ describe('POST /api/local/leave', () => {
     const { status, body } = await jsonOf(
       await handleLocalRequest(
         leaveRequest({ expectedRole: 'node', targetRole: 'relay' }),
-        deps({ roles: { hub: false, node: true, relay: false }, authenticate: okAuth })
+        deps({ roles: { node: true, relay: false }, authenticate: okAuth })
       )
     );
     expect(status).toBe(400);

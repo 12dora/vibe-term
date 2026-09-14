@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseArgs } from './args';
-import { confirmDestructiveReset } from './hub-user-passwd';
+import { confirmDestructiveReset } from './destructive-confirm';
 
 describe('destructive reset confirmation', () => {
   test('non-TTY refuses without --yes and prints warning first', async () => {

@@ -4,23 +4,23 @@ import { encodeBase64url, encodeRemovePasskeyPayload } from '../../../shared/src
 import { parsePort } from '../../../shared/src/env/parse';
 import { DEFAULT_GATEWAY_PORT } from '../../../shared/src/net';
 import { t } from '../i18n';
+import { confirmDestructiveReset } from '../lib/destructive-confirm';
 import type { FetchLike } from '../lib/fetch-like';
-import { confirmDestructiveReset } from '../lib/hub-user-passwd';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { isStandaloneRoles, parseVibeTermRoles } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
 import { resetTlsConfig } from '../tls/tls-recovery';
 import type { ParsedArgs } from '../types';
-import type { HubIo } from './hub';
+import type { CliIo } from './cli-io';
 import { withAuth } from './with-auth';
 
-function log(io: HubIo | undefined, message: string): void {
+function log(io: CliIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
 }
 
 export async function runMeshResetRoot(
   parsed: ParsedArgs,
-  io: HubIo = {}
+  io: CliIo = {}
 ): Promise<{ userId: string; rootEpoch: number; fingerprint: string }> {
   const roles = parseVibeTermRoles(io.auth?.env.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES);
   if (isStandaloneRoles(roles)) {
@@ -42,7 +42,7 @@ export async function runMeshResetRoot(
       .all();
     const first = existing[0];
     if (!first) {
-      throw new Error('no local user to reset; run hub user add first');
+      throw new Error('no local user to reset; run `vibeterm user add` first');
     }
     const username = first.username;
     const identity = await ensureNodeIdentity(ctx.identityStore);
@@ -64,12 +64,12 @@ export async function runMeshResetRoot(
  *
  * 逃生舱：二次验证按 origin 生效（见 docs/security/login-security.md），认证器丢了
  * 之后，注册过通行密钥的那个地址就再也登不进去。这条命令只签 `remove-passkey`，不动根钥，
- * 不比 `hub user passwd --full-reset` 多撤销任何东西。
+ * 不比 `user passwd --full-reset` 多撤销任何东西。
  */
 export async function runMeshPasskeyRemoveAll(
   parsed: ParsedArgs,
   username: string,
-  io: HubIo = {}
+  io: CliIo = {}
 ): Promise<{ userId: string; removed: number }> {
   const password = await resolvePassword({
     password: io.password,
@@ -104,14 +104,15 @@ export async function runMeshPasskeyRemoveAll(
 
 export async function runMeshResetIdentity(
   parsed: ParsedArgs,
-  io: HubIo = {}
+  io: CliIo = {}
 ): Promise<{ nodeId: string }> {
   const resetTls = parsed.flags['reset-tls'] === true;
   const warning = [t('mesh.identity.warning'), ...(resetTls ? [t('tls.reset.warning')] : [])];
   await confirmDestructiveReset(parsed, io, warning.join('\n'));
   return await withAuth(parsed, io, async (ctx) => {
-    const { nodeIdentity, meshRelays, meshSecrets, peerCache, meshHubs, nodeSessions } =
-      await import('../../../../apps/gateway/src/db/schema');
+    const { nodeIdentity, meshRelays, meshSecrets, peerCache, nodeSessions } = await import(
+      '../../../../apps/gateway/src/db/schema'
+    );
     // 先完成新密钥的加密，再原子替换旧身份，避免主密钥本身无效时丢失旧记录。
     const { generateEd25519KeyPair, generateX25519KeyPair, randomBytes, nodeIdToHex } =
       await import('../../../shared/src/auth');
@@ -133,13 +134,12 @@ export async function runMeshResetIdentity(
             certificateJson: JSON.stringify({ x25519PublicKey: encodeBase64url(x.publicKey) }),
             certSig: Buffer.alloc(0),
             userId: null,
-            hubUrl: null,
+            uplinkKind: 'none',
           })
           .run();
         tx.delete(meshRelays).run();
         tx.delete(meshSecrets).run();
         tx.delete(peerCache).run();
-        tx.delete(meshHubs).run();
         tx.delete(nodeSessions).run();
         if (resetTls) resetTlsConfig(tx);
       });
@@ -157,7 +157,7 @@ export type MeshKeyLogStatus = {
   userId: string | null;
   local: { seq: number; hash: string } | null;
   remote: { seq: number; hash: string } | null;
-  remoteKind: 'hub' | 'relay' | null;
+  remoteKind: 'relay' | 'none' | null;
   localAtRemote: string | null;
   remoteAtLocal: string | null;
   error?: string;
@@ -179,7 +179,7 @@ export function keyLogStatusVerdict(
 
 export async function runMeshKeylogStatus(
   parsed: ParsedArgs,
-  io: HubIo & { fetcher?: FetchLike; setExitCode?: (code: number) => void } = {}
+  io: CliIo & { fetcher?: FetchLike; setExitCode?: (code: number) => void } = {}
 ): Promise<MeshKeyLogStatus & { verdict: ReturnType<typeof keyLogStatusVerdict> }> {
   return await withAuth(parsed, io, async (ctx) => {
     const user = ctx.userStore.listUsers()[0];
@@ -215,7 +215,7 @@ export async function runMeshKeylogStatus(
     );
     log(
       io,
-      `${status.remoteKind ?? 'hub/relay'}: ${status.remote ? `seq=${status.remote.seq} hash=${status.remote.hash}` : 'unknown'}`
+      `${status.remoteKind ?? 'relay'}: ${status.remote ? `seq=${status.remote.seq} hash=${status.remote.hash}` : 'unknown'}`
     );
     log(io, verdict);
     if (verdict === 'FORK') log(io, t('mesh.keylog.fork'));
@@ -241,7 +241,7 @@ function isKeyLogStatus(value: MeshKeyLogStatus): boolean {
   return (
     validHead(value.local) &&
     validHead(value.remote) &&
-    [null, 'hub', 'relay'].includes(value.remoteKind) &&
+    [null, 'relay', 'none'].includes(value.remoteKind) &&
     [value.localAtRemote, value.remoteAtLocal].every(
       (hash) => hash === null || (typeof hash === 'string' && /^[A-Za-z0-9_-]{43}$/.test(hash))
     )

@@ -7,36 +7,21 @@ export const STUN_SERVERS_FLAG_HELP =
 const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 
 Usage:
-  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
-  vibeterm hub user add <username>
-  vibeterm hub user passwd <username> [--full-reset] [--yes]
-  vibeterm hub user totp <username>
-  vibeterm hub user reset
-  vibeterm hub join <https-url> --token <t> | --password [<p>] [--totp <code>] [--name <n>] [--insecure-local] [--no-restart]
-  vibeterm hub leave [--no-restart]
-  vibeterm hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
-  vibeterm hub promote [--yes] [--no-restart]
-  vibeterm hub demote [--no-restart]
-  vibeterm hub list
-  vibeterm hub allow <nodeId> [<nodeId>...] [--no-restart]
-  vibeterm hub disallow <nodeId> [--no-restart]
-  vibeterm hub trust refresh <hubUrl> --fingerprint <sha256-spki>
-  vibeterm hub ca fingerprint
-  vibeterm hub ca rotate [--yes]
-  vibeterm hub urls list
-  vibeterm hub urls add <url>
-  vibeterm hub urls remove <url>
+  vibeterm user add <username>
+  vibeterm user passwd <username> [--full-reset] [--yes]
+  vibeterm user totp <username>
   vibeterm mesh reset-identity [--reset-tls] [--yes]
   vibeterm tls reset [--yes]
   vibeterm mesh keylog status
   vibeterm mesh reset-root [--yes]
   vibeterm mesh passkey remove-all [<username>]
-  vibeterm enroll [--ttl 10m]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
+  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
   vibeterm relay resend-token
@@ -60,9 +45,9 @@ Client commands (talk to a gateway over HTTP/WS, same security boundary as the w
   vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|agent|settings|exec|system
   Run vibeterm <group> --help for the options of one group.
 
-Password prompting (add / passwd / totp / reset-root / enroll / hub join --password / relay join):
+Password prompting (add / passwd / totp / reset-root / relay join):
   TTY: hidden input with confirmation where required; empty rejected.
-  Non-TTY: VIBETERM_PASSWORD (VIBETERM_PASSWORD_OLD for passwd; VIBETERM_TOTP for hub join TOTP). NFKC is applied by deriveSeed.
+  Non-TTY: VIBETERM_PASSWORD (VIBETERM_PASSWORD_OLD for passwd). NFKC is applied by deriveSeed.
   Destructive recovery confirmation: TTY requires typing yes; non-TTY requires --yes.
   --full-reset (passwd): also remove all passkeys and two-step verification and sign out everywhere
 
@@ -77,36 +62,21 @@ Global flags:
 const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 
 用法：
-  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
-  vibeterm hub user add <username>
-  vibeterm hub user passwd <username> [--full-reset] [--yes]
-  vibeterm hub user totp <username>
-  vibeterm hub user reset
-  vibeterm hub join <https-url> --token <t> | --password [<p>] [--totp <code>] [--name <n>] [--insecure-local] [--no-restart]
-  vibeterm hub leave [--no-restart]
-  vibeterm hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
-  vibeterm hub promote [--yes] [--no-restart]
-  vibeterm hub demote [--no-restart]
-  vibeterm hub list
-  vibeterm hub allow <nodeId> [<nodeId>...] [--no-restart]
-  vibeterm hub disallow <nodeId> [--no-restart]
-  vibeterm hub trust refresh <hubUrl> --fingerprint <sha256-spki>
-  vibeterm hub ca fingerprint
-  vibeterm hub ca rotate [--yes]
-  vibeterm hub urls list
-  vibeterm hub urls add <url>
-  vibeterm hub urls remove <url>
+  vibeterm user add <username>
+  vibeterm user passwd <username> [--full-reset] [--yes]
+  vibeterm user totp <username>
   vibeterm mesh reset-identity [--reset-tls] [--yes]
   vibeterm tls reset [--yes]
   vibeterm mesh keylog status
   vibeterm mesh reset-root [--yes]
   vibeterm mesh passkey remove-all [<username>]
-  vibeterm enroll [--ttl 10m]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
+  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
   vibeterm relay resend-token
@@ -130,9 +100,9 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|agent|settings|exec|system
   用 vibeterm <组名> --help 查看某一组的用法。
 
-密码输入（add / passwd / totp / reset-root / enroll / hub join --password / relay join）：
+密码输入（add / passwd / totp / reset-root / relay join）：
   TTY：隐藏输入，需要时二次确认；拒绝空密码。
-  非 TTY：VIBETERM_PASSWORD（passwd 的旧密码用 VIBETERM_PASSWORD_OLD；hub join 的 TOTP 用 VIBETERM_TOTP）。NFKC 由 deriveSeed 处理。
+  非 TTY：VIBETERM_PASSWORD（passwd 的旧密码用 VIBETERM_PASSWORD_OLD）。NFKC 由 deriveSeed 处理。
   破坏性恢复确认：TTY 必须输入完整 yes；非 TTY 必须传 --yes。
   --full-reset（passwd）：同时移除所有通行密钥、两步验证并注销全部会话
 

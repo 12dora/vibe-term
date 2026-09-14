@@ -9,21 +9,13 @@ export const en: Record<string, string> = {
   'mesh.reset.requiresYes': 'Non-interactive use requires --yes.',
   'mesh.reset.cancelled': 'Operation cancelled.',
   'mesh.identity.warning':
-    'This replaces the local node identity, clears relay keys and peer caches, and revokes local sessions. Account credentials are retained; re-join the hub or relay afterward.',
+    'This replaces the local node identity, clears relay keys and peer caches, and revokes local sessions. Account credentials are retained; re-join the relay afterward.',
   'mesh.identity.done':
-    'Node identity rebuilt: {{nodeId}}. Re-join the hub or relay, then restart the service. Reconfigure HTTPS if its private key was also lost.',
+    'Node identity rebuilt: {{nodeId}}. Re-join the relay, then restart the service. Reconfigure HTTPS if its private key was also lost.',
   'mesh.keylog.fork':
     'Fork detected. Do not replay records; run vibeterm mesh reset-root and re-join the chosen trusted chain.',
   'mesh.keylog.unknown':
     'Remote head unavailable; start or restore the local gateway uplink and retry.',
-
-  'hub.urls.restartHint':
-    'Restart VibeTerm to apply the seed URLs. VIBETERM_HUB_URL is unchanged; keep the old URL reachable until all members migrate.',
-  'hub.trust.restartHint': 'Restart VibeTerm to reconnect with the new CA pin.',
-  'hub.ca.rotateWarning':
-    'WARNING: CA rotation disconnects every node pinned to the old CA and clears inactive ACME account and DNS credentials. Arrange local OS access to all members before continuing; each must run vibeterm hub trust refresh with the new fingerprint.',
-  'hub.ca.rotateDone':
-    'CA rotated. Restart the hub, then on each member run: vibeterm hub trust refresh <hubUrl> --fingerprint {{fingerprint}}. Restart each member afterwards.',
 
   'cli.error.unknownCommand': 'Unknown command: {{command}}',
   'cli.error.unknownFlag': 'Unknown flag: --{{flag}}',
@@ -118,7 +110,7 @@ export const en: Record<string, string> = {
   'doctor.env.missing': 'Config file not found: {{envPath}}',
   'doctor.env.keyMissing': 'Missing config key: {{key}}',
   'doctor.stun.builtin':
-    'app.env not set: using the release built-in list (a custom list from hub/relay takes precedence)',
+    'app.env not set: using the release built-in list (a custom list from the relay takes precedence)',
   'doctor.stun.custom': 'STUN servers: custom (app.env)',
   'doctor.stun.disabled': 'STUN servers: disabled',
   'doctor.turn.external': 'TURN: external (VIBETERM_TURN_URL triple; builtin disabled)',
@@ -248,68 +240,17 @@ export const en: Record<string, string> = {
   'runtime.forbidden': 'Forbidden',
   'runtime.notFound': 'Not Found',
 
-  'hub.join.replacedStale':
-    'Replaced local account "{{username}}" from a previous hub; key log, passkeys, TOTP, sessions, and old node certs were wiped.',
-  'hub.join.admitPending': 'Joined; waiting for approval from a signed-in browser',
-  'hub.join.portsHint': 'Allow inbound {{list}} for direct links',
   'relay.join.portsHint': 'Allow inbound {{list}}',
 
-  'hub.standby.missingPublicUrl': 'hub standby requires --public-url',
-  'hub.standby.notJoined':
-    'this node is not joined (no node_identity); run vibeterm hub join first',
-  'hub.standby.alreadyActive':
-    'this install is already an active hub; run vibeterm hub demote first',
-  'hub.standby.missingHubUrl':
-    'VIBETERM_HUB_URL is empty; a standby hub still uplinks to the current primary',
-  'hub.standby.invalidPriority': 'invalid --priority: must be a non-negative integer',
-  'hub.standby.done': 'standby hub enabled (priority={{priority}}, publicUrl={{url}})',
-  'hub.standby.nodeId': 'this node id: {{nodeId}}',
-  'hub.standby.allowHint':
-    'the active hub ignores this standby until it runs: vibeterm hub allow {{nodeId}}',
-  'hub.standby.authorizedPrimary':
-    'authorized current primary hub {{nodeId}}; VIBETERM_HUB_PEERS={{peers}}',
-  'hub.standby.noPrimary':
-    'WARNING: could not find the current primary hub to authorize (no active mesh_hubs row and no peer_cache hub sentinel); set VIBETERM_HUB_PEERS manually with vibeterm hub allow',
-  'hub.peers.current': 'current VIBETERM_HUB_PEERS={{peers}}',
-  'hub.promote.notHub': 'hub promote requires a hub,node install',
-  'hub.promote.needConfirm':
-    'promoting the writer risks split-brain; pass --yes or confirm interactively',
-  'hub.promote.warning':
-    'WARNING: demote or stop the previous writer before this node starts, or the mesh will split-brain.',
-  'hub.promote.emptyPeers':
-    'WARNING: VIBETERM_HUB_PEERS is empty; this hub authorizes no peers (the old writer cannot fence it). The previous writer must still run: vibeterm hub allow {{nodeId}}',
-  'hub.promote.allowReminder':
-    'the previous writer must authorize this hub with: vibeterm hub allow {{nodeId}}',
-  'hub.promote.done': 'promoted to active hub (writerEpoch={{epoch}})',
-  'hub.demote.notHub': 'hub demote requires a hub,node install',
-  'hub.demote.done': 'demoted to standby hub',
-  'hub.allow.notHub': 'hub allow requires a hub,node install',
-  'hub.allow.missingNodeId': 'hub allow requires <nodeId>',
-  'hub.allow.invalidNodeId': 'invalid hub node id {{nodeId}}: must be 32 hex characters',
-  'hub.allow.done': 'authorized hub peers: {{peers}}',
-  'hub.disallow.notHub': 'hub disallow requires a hub,node install',
-  'hub.disallow.missingNodeId': 'hub disallow requires <nodeId>',
-  'hub.disallow.invalidNodeId': 'invalid hub node id {{nodeId}}: must be 32 hex characters',
-  'hub.disallow.done': 'authorized hub peers: {{peers}}',
-  'hub.peers.empty': '(none)',
-  'hub.list.empty': 'mesh_hubs is empty (no hub set learned from node.list yet)',
-  'hub.list.header':
-    'NODE       NAME            MODE     PRI  EPOCH  AUTH  ONLINE  LAST SEEN             PUBLIC URL',
-
-  'hub.user.passwd.hubTimeout':
-    'Primary hub is unreachable; the change was not submitted. Switch hub roles, then retry.',
-  'hub.user.passwd.hubNotWriter':
-    'This hub is a standby and does not accept account changes. Switch hub roles, then retry.',
-  'hub.user.passwd.nodesTooOld': 'Some nodes are older than 1.1.16. Update every node first.',
-  'hub.user.passwd.failed': 'password update failed: {{error}}',
-  'hub.user.passwd.doneKeep':
+  'user.passwd.nodesTooOld': 'Some nodes are older than 1.1.16. Update every node first.',
+  'user.passwd.failed': 'password update failed: {{error}}',
+  'user.passwd.doneKeep':
     'password updated for {{username}} (keep): existing sign-in methods remain',
-  'hub.user.passwd.doneFullReset':
+  'user.passwd.doneFullReset':
     'password updated for {{username}} (full-reset): passkeys, two-step verification, and sessions were removed',
 
   'port.probe.searching': 'no port given; probing 443 and the built-in candidate ports…',
   'port.probe.foundRelay': 'relay found on port {{port}}; using {{url}}',
-  'port.probe.foundHub': 'hub found on port {{port}}; using {{url}}',
   'port.probe.notFound':
     'no response on 443 or the built-in candidate ports ({{ports}}); open the port or give an address with an explicit port',
   'init.prompt.publicPort':
@@ -354,6 +295,6 @@ export const en: Record<string, string> = {
   'relay.resendToken.unconfirmed': 'Acknowledgment unavailable.',
   'relay.resendToken.done':
     'set-relays re-published with the current relay token for {{count}} member node(s)',
-  'relay.leave.done': 'left the relay; this node has no upstream until you join a hub or a relay',
+  'relay.leave.done': 'left the relay; this node has no upstream until you join a relay',
   'relay.leave.pending': 'set-relays was accepted but the relay uplink is still attached',
 };

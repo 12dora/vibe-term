@@ -3,7 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { buildAppEnvValues, hubEnvDefaults, quotePosixShellArg, writeRunScript } from './install';
+import {
+  buildAppEnvValues,
+  peerEnvDefaults,
+  quotePosixShellArg,
+  rewriteLegacyHubInstallEnv,
+  writeRunScript,
+} from './install';
 import { createInstallLayout } from './install-layout';
 
 function posixQuote(value: string): string {
@@ -28,19 +34,18 @@ describe('buildAppEnvValues', () => {
     expect(values.VIBETERM_BIND_HOST).toBe('2001:db8::1');
   });
 
-  test('writes hub env keys with defaults', () => {
+  test('writes peer env keys without hub keys', () => {
     const values = buildAppEnvValues({
       host: '127.0.0.1',
       port: 9883,
       databasePath: '/tmp/vibeterm.db',
       masterKey: 'key',
-      role: 'hub,node',
-      hubPublicUrl: 'https://hub.example',
+      role: 'node',
     });
-    expect(values.VIBETERM_ROLES).toBe('hub,node');
-    expect(values.VIBETERM_HUB_URL).toBe('');
+    expect(values.VIBETERM_ROLES).toBe('node');
+    expect(values.VIBETERM_HUB_URL).toBeUndefined();
     expect(values.VIBETERM_PEER_PORT).toBe('39001');
-    expect(values.VIBETERM_HUB_PUBLIC_URL).toBe('https://hub.example');
+    expect(values.VIBETERM_HUB_PUBLIC_URL).toBeUndefined();
     expect(values.VIBETERM_STUN_SERVERS).toBeUndefined();
     expect(values.VIBETERM_DIRECT_ENABLED).toBe('true');
     expect(values.VIBETERM_RTC_PORT_RANGE).toBe('40000-40099');
@@ -78,7 +83,7 @@ describe('buildAppEnvValues', () => {
       masterKey: 'key',
     };
     expect(buildAppEnvValues(base).VIBETERM_STUN_SERVERS).toBeUndefined();
-    expect(hubEnvDefaults().VIBETERM_STUN_SERVERS).toBeUndefined();
+    expect(peerEnvDefaults().VIBETERM_STUN_SERVERS).toBeUndefined();
     expect(
       buildAppEnvValues({ ...base, stunServers: '   ' }).VIBETERM_STUN_SERVERS
     ).toBeUndefined();
@@ -86,6 +91,23 @@ describe('buildAppEnvValues', () => {
     expect(
       buildAppEnvValues({ ...base, stunServers: 'stun:custom.example:3478' }).VIBETERM_STUN_SERVERS
     ).toBe('stun:custom.example:3478');
+  });
+
+  test('rewriteLegacyHubInstallEnv maps hub,node to node and strips HUB keys', () => {
+    expect(
+      rewriteLegacyHubInstallEnv({
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_URL: 'https://hub.example',
+        VIBETERM_HUB_PUBLIC_URL: 'https://pub.example',
+        VIBETERM_HUB_MODE: 'active',
+        VIBETERM_PEER_PORT: '39001',
+        OTHER: 'keep',
+      })
+    ).toEqual({
+      VIBETERM_ROLES: 'node',
+      VIBETERM_PEER_PORT: '39001',
+      OTHER: 'keep',
+    });
   });
 });
 

@@ -4,11 +4,7 @@ import { tlsConfig } from '../../../../apps/gateway/src/db/schema';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
-import { AcmeHttp01Challenge } from '../tls/acme-challenge';
 import { createCa } from '../tls/cert-authority';
-import type { HttpsListenerConfig } from '../tls/https-listener';
-import { TlsService } from '../tls/tls-service';
-import { runHubCaRotate } from './hub';
 import { runMeshResetIdentity } from './mesh';
 import { runTlsReset } from './tls';
 
@@ -84,49 +80,6 @@ describe('TLS recovery commands', () => {
     await expect(
       runTlsReset(parseArgs(['--install-dir', '/tmp/vibeterm-missing-tls-install', '--yes']), quiet)
     ).rejects.toThrow('config file not found');
-  });
-
-  test('CA rotation replaces CA and leaf without decrypting any old TLS secret', async () => {
-    const { auth, store } = await brokenTls();
-    await expect(store.getPrivateMaterial()).rejects.toThrow();
-    const fingerprint = await runHubCaRotate(yes, { auth, ...quiet });
-    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
-    const row = auth.db.select().from(tlsConfig).get()!;
-    expect(row.caKeyEnc).not.toBe('unreadable-ca');
-    expect(row.keyEnc).not.toBe('unreadable-leaf');
-    expect(row.acmeAccountKeyEnc).toBeNull();
-    expect(row.sans).toEqual(['localhost']);
-    const { decrypt } = await import('../../../../apps/gateway/src/crypto');
-    expect(await decrypt(row.caKeyEnc!)).toContain('PRIVATE KEY');
-    expect(await decrypt(row.keyEnc!)).toContain('PRIVATE KEY');
-    const secrets = await store.getPrivateMaterial();
-    expect(secrets.caKeyPem).toContain('PRIVATE KEY');
-    expect(secrets.keyPem).toContain('PRIVATE KEY');
-    expect(secrets.acmeAccountKey).toBeNull();
-    expect(secrets.acmeCfToken).toBeNull();
-    expect(secrets.acmeDnsSecret).toBeNull();
-    const applied: HttpsListenerConfig[] = [];
-    const service = new TlsService({
-      store,
-      envPath: '',
-      challenge: new AcmeHttp01Challenge(),
-      listener: {
-        async apply(config) {
-          if (config) applied.push(config);
-        },
-        state: () => ({ running: applied.length > 0, port: 9443, error: null }),
-        async stop() {},
-      },
-      setTimeoutFn: () => 1,
-      clearTimeoutFn() {},
-    });
-    try {
-      await service.startup();
-      expect(applied).toHaveLength(1);
-      expect(applied[0]?.keyPem).toBe(secrets.keyPem!);
-    } finally {
-      service.stop();
-    }
   });
 
   test('reset-identity preserves broken TLS unless --reset-tls is explicitly confirmed', async () => {

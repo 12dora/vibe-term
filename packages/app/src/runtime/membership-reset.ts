@@ -1,4 +1,5 @@
 import { MeshMembershipStore } from '../../../../apps/gateway/src/auth/mesh-membership-store';
+import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import { resolveEnvWriteTarget, stringifyEnv } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { type VibeTermRoleName, roleNameFromFlags } from '../lib/roles';
@@ -22,7 +23,7 @@ export type MeshRoleName = Exclude<VibeTermRoleName, 'standalone' | 'relay'>;
 export type LeaveTargetRole = 'standalone' | 'relay';
 
 export function isLeavableRoleName(value: unknown): value is MeshRoleName {
-  return value === 'node' || value === 'hub,node' || value === 'relay,node';
+  return value === 'node' || value === 'relay,node';
 }
 
 export function parseLeaveTargetRole(value: unknown): LeaveTargetRole {
@@ -130,7 +131,7 @@ async function quiesceBestEffort(deps: SetupServiceDeps): Promise<void> {
   try {
     await deps.quiesceMesh?.();
   } catch {
-    // best-effort: restart will drop in-memory uplink/hub anyway
+    // best-effort: restart will drop in-memory uplink anyway
   }
 }
 
@@ -200,6 +201,7 @@ export async function leaveMesh(
           ? localRootPublicKey(deps.auth.userStore, identity?.userId ?? null)
           : null;
       clearMembershipForTarget(new MeshMembershipStore(deps.auth.db), targetRole, rootPublicKey);
+      new RelayCaPinStore(deps.auth.db).clear();
     } catch (error) {
       await removeStagedEnv(deps, staged.stagedPath);
       throw error;

@@ -6,7 +6,6 @@ import {
   applyPublicPort,
   enableDirectAfterInit,
   initPortPlanList,
-  normalizeHubPublicUrl,
   normalizeRelayPublicUrl,
   resolveInitStunServers,
 } from './init';
@@ -61,38 +60,24 @@ describe('normalizeRelayPublicUrl', () => {
   });
 });
 
-describe('normalizeHubPublicUrl', () => {
-  test('归一化 https 地址并保留非标端口', () => {
-    expect(normalizeHubPublicUrl(' https://Hub.Example.com:443/ ')).toBe('https://hub.example.com');
-    expect(normalizeHubPublicUrl('https://hub.example.com:13443')).toBe(
-      'https://hub.example.com:13443'
-    );
-    expect(normalizeHubPublicUrl('http://127.0.0.1:19883')).toBe('http://127.0.0.1:19883');
-  });
-
-  test('拒绝空值与非 https 的公网地址', () => {
-    expect(() => normalizeHubPublicUrl('   ')).toThrow('cannot be empty');
-    expect(() => normalizeHubPublicUrl('http://hub.example.com')).toThrow('invalid hub public URL');
-    expect(() => normalizeHubPublicUrl('hub.example.com')).toThrow('invalid hub public URL');
-  });
-});
-
 describe('applyPublicPort', () => {
   test('地址没写端口时补上选定的公网端口', () => {
-    expect(applyPublicPort('https://hub.example.com', 13443)).toBe('https://hub.example.com:13443');
-    expect(applyPublicPort(' hub.example.com ', 13443)).toBe('https://hub.example.com:13443');
+    expect(applyPublicPort('https://relay.example.com', 13443)).toBe(
+      'https://relay.example.com:13443'
+    );
+    expect(applyPublicPort(' relay.example.com ', 13443)).toBe('https://relay.example.com:13443');
   });
 
   test('显式端口与 443 都原样返回', () => {
-    expect(applyPublicPort('https://hub.example.com:8443', 13443)).toBe(
-      'https://hub.example.com:8443'
+    expect(applyPublicPort('https://relay.example.com:8443', 13443)).toBe(
+      'https://relay.example.com:8443'
     );
-    expect(applyPublicPort('https://hub.example.com', 443)).toBe('https://hub.example.com');
+    expect(applyPublicPort('https://relay.example.com', 443)).toBe('https://relay.example.com');
     expect(applyPublicPort('', 13443)).toBe('');
   });
 
   test('无法解析的地址原样交给后面的校验', () => {
-    expect(applyPublicPort('ftp://hub.example.com', 13443)).toBe('ftp://hub.example.com');
+    expect(applyPublicPort('ftp://relay.example.com', 13443)).toBe('ftp://relay.example.com');
   });
 });
 
@@ -104,7 +89,6 @@ describe('initPortPlanList', () => {
         host: '127.0.0.1',
         port: 9883,
         peerPort: 39001,
-        hubPublicUrl: '',
         relayPublicUrl: 'https://relay.example.com',
       })
     ).toBe('443/tcp, 40000/udp, 40001-40049/udp');
@@ -117,23 +101,21 @@ describe('initPortPlanList', () => {
         host: '127.0.0.1',
         port: 9883,
         peerPort: 39001,
-        hubPublicUrl: '',
         relayPublicUrl: 'https://relay.example.com',
       })
     ).toBe('443/tcp, 39001/tcp, 40050-40099/udp, 40000/udp, 40001-40049/udp');
   });
 
-  test('hub,node includes public https from the URL and the peer/rtc plan', () => {
+  test('node includes the peer/rtc plan without a public https port', () => {
     expect(
       initPortPlanList({
-        role: 'hub,node',
+        role: 'node',
         host: '127.0.0.1',
         port: 9883,
         peerPort: 39002,
-        hubPublicUrl: 'https://hub.example.com:13443',
         relayPublicUrl: '',
       })
-    ).toBe('13443/tcp, 39002/tcp, 40000-40099/udp');
+    ).toBe('39002/tcp, 40000-40099/udp');
   });
 
   test('exposed bind host appends the gateway port', () => {
@@ -143,7 +125,6 @@ describe('initPortPlanList', () => {
         host: '0.0.0.0',
         port: 19663,
         peerPort: 39001,
-        hubPublicUrl: '',
         relayPublicUrl: '',
       })
     ).toBe('39001/tcp, 40000-40099/udp, 19663/tcp');
@@ -168,7 +149,7 @@ describe('enableDirectAfterInit', () => {
     expect(logs.join('\n')).toContain('fake registry down');
   });
 
-  test('calls enableDirect for hub,node and logs success', async () => {
+  test('calls enableDirect for node and logs success', async () => {
     const logs: string[] = [];
     const ok: DirectEnableResult = {
       ok: true,
@@ -177,7 +158,7 @@ describe('enableDirectAfterInit', () => {
       addonPath: '/tmp/native/node_datachannel.node',
     };
     await enableDirectAfterInit(
-      { role: 'hub,node', installDir: '/tmp/vibeterm-init-hub' },
+      { role: 'node', installDir: '/tmp/vibeterm-init-node-ok' },
       {
         enableDirect: async () => ok,
         log: (message) => logs.push(message),
@@ -186,7 +167,7 @@ describe('enableDirectAfterInit', () => {
     expect(logs.join('\n')).toContain('darwin-arm64');
   });
 
-  test.each(['standalone', 'node', 'hub,node', 'relay', 'relay,node'])(
+  test.each(['standalone', 'node', 'relay', 'relay,node'] as const)(
     '角色 %s 默认安装并传入超时信号',
     async (role) => {
       let called = false;

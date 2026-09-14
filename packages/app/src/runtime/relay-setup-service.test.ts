@@ -53,11 +53,9 @@ async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<Setu
   await writeFile(envPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
   const auth = overrides.auth ?? (await openAuth());
   return {
-    roles: { hub: false, node: false, relay: false },
+    roles: { node: false, relay: false },
     nodeEnv: 'test',
     auth,
-    hubUrl: null,
-    hubPublicUrl: null,
     scheduleRestart: () => undefined,
     now: () => 1_700_000_000_000,
     setupLock: createSetupTransitionLock(),
@@ -135,7 +133,7 @@ describe('becomeRelay', () => {
     expect(result.fingerprint).toHaveLength(64);
     expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
     const env = await readEnvFile(deps.envPath);
-    expect(parseVibeTermRoles(env.VIBETERM_ROLES)).toEqual({ hub: false, node: true, relay: true });
+    expect(parseVibeTermRoles(env.VIBETERM_ROLES)).toEqual({ node: true, relay: true });
     const status = await getLocalStatus({
       ...deps,
       roles: parseVibeTermRoles(env.VIBETERM_ROLES),
@@ -260,7 +258,7 @@ describe('becomeRelay', () => {
   });
 
   test('not_standalone is 409', async () => {
-    const deps = await baseDeps({ roles: { hub: true, node: true, relay: false } });
+    const deps = await baseDeps({ roles: { node: true, relay: false } });
     await expect(
       becomeRelay({ role: 'relay', relayPublicUrl: 'https://relay.example' }, deps)
     ).rejects.toMatchObject({ code: 'not_standalone', httpStatus: 409 });

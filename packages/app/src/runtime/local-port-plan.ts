@@ -54,8 +54,7 @@ function parseTurnPortLive(raw: string | undefined): number {
 
 function publicUrlForRole(role: PortRole, env: PortPlanEnv): string | undefined {
   if (role === 'relay' || role === 'relay,node') return env.VIBETERM_RELAY_PUBLIC_URL;
-  if (role === 'hub,node') return env.VIBETERM_HUB_PUBLIC_URL;
-  return env.VIBETERM_HUB_PUBLIC_URL || env.VIBETERM_RELAY_PUBLIC_URL;
+  return env.VIBETERM_RELAY_PUBLIC_URL;
 }
 
 export function portPlanLiveFromEnv(env: PortPlanEnv): PortPlanLive {

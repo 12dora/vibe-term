@@ -502,6 +502,65 @@ describe('upgrade flag unification', () => {
     expect(applyTxn).toBe('live-txn');
   });
 
+  test('apply-current-package rewrites leftover hub,node env and strips HUB keys', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-hub-env-'));
+    tempDirs.push(installDir);
+    await writeInstallMetaFixture(installDir, {
+      serviceName: 'tmex',
+      cliVersion: '1.0.0',
+      serviceMode: 'none',
+    });
+    const extract = join(installDir, 'staging', 'live-txn', 'extract', 'package');
+    await mkdir(join(extract, 'bin'), { recursive: true });
+    await mkdir(join(extract, 'dist', 'runtime'), { recursive: true });
+    await mkdir(join(extract, 'resources', 'fe-dist'), { recursive: true });
+    await mkdir(join(extract, 'resources', 'gateway-drizzle'), { recursive: true });
+    await writeFile(join(extract, 'package.json'), '{"name":"tmex-cli","version":"2.0.0"}\n');
+    await writeFile(join(extract, 'bin', 'tmex.js'), 'export {}\n');
+    await writeFile(join(extract, 'dist', 'cli-node.js'), 'export {}\n');
+    await writeFile(join(extract, 'dist', 'runtime', 'server.js'), 'export {}\n');
+    await writeFile(join(extract, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+    await writeFile(join(extract, 'resources', 'gateway-drizzle', '0000.sql'), '--\n');
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'VIBETERM_ROLES=hub,node',
+        'VIBETERM_HUB_URL=https://hub.example',
+        'VIBETERM_HUB_PUBLIC_URL=https://pub.example',
+        'VIBETERM_HUB_MODE=active',
+        'VIBETERM_PEER_PORT=39001',
+        'OTHER=keep',
+        '',
+      ].join('\n')
+    );
+    await runUpgrade(
+      parseArgs([
+        'upgrade',
+        '--apply-current-package',
+        '--install-dir',
+        installDir,
+        '--txn',
+        'live-txn',
+        '--version',
+        '2.0.0',
+        '--no-service',
+        '--bun-path',
+        process.execPath,
+      ]),
+      {
+        repair: async (dir) => ({ action: 'cleanup' as const, installDir: dir }),
+        apply: async () => undefined,
+      }
+    );
+    const env = await readEnvFile(join(installDir, 'app.env'));
+    expect(env.VIBETERM_ROLES).toBe('node');
+    expect(env.VIBETERM_HUB_URL).toBeUndefined();
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBeUndefined();
+    expect(env.VIBETERM_HUB_MODE).toBeUndefined();
+    expect(env.VIBETERM_PEER_PORT).toBe('39001');
+    expect(env.OTHER).toBe('keep');
+  });
+
   test('the full repair+apply entry backs up the pre-conversion run.sh before converting', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-legacy-layout-'));
     tempDirs.push(installDir);

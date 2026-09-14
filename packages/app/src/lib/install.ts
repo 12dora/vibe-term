@@ -11,6 +11,7 @@ import {
   rolesIncludeRelay,
 } from '../../../shared/src/net/port-plan';
 import { formatHttpEndpoint } from '../../../shared/src/network';
+import { normalizeLegacyRoleName } from '../../../shared/src/roles';
 import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, readText, writeTextAtomic } from './fs-utils';
 import { type InstallLayout, type PackageLayout, currentRuntimePaths } from './install-layout';
@@ -27,69 +28,39 @@ export interface AppEnvInput {
   databasePath: string;
   masterKey: string;
   role?: VibeTermRoleName;
-  hubUrl?: string;
   peerPort?: number;
-  hubPublicUrl?: string;
   relayPublicUrl?: string;
   relayAdminToken?: string;
   stunServers?: string;
 }
 
-const HUB_PEER_ID_RE = /^[0-9a-f]{32}$/;
-
-export function parseHubPeerIds(raw: string | undefined): string[] {
-  if (!raw?.trim()) return [];
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const part of raw.split(',')) {
-    const id = part.trim().toLowerCase();
-    if (!id || !HUB_PEER_ID_RE.test(id) || seen.has(id)) continue;
-    seen.add(id);
-    out.push(id);
-  }
-  return out;
-}
-
-export function applyHubModeEnvKeys(
-  env: Record<string, string>,
-  patch: {
-    roles?: string;
-    mode?: string;
-    publicUrl?: string;
-    priority?: number | string;
-    writerEpoch?: number | string;
-    hubPeers?: string | readonly string[];
-  }
-): Record<string, string> {
-  const next = { ...env };
-  if (patch.roles !== undefined) next.VIBETERM_ROLES = patch.roles;
-  if (patch.mode !== undefined) next.VIBETERM_HUB_MODE = patch.mode;
-  if (patch.publicUrl !== undefined) next.VIBETERM_HUB_PUBLIC_URL = patch.publicUrl;
-  if (patch.priority !== undefined) next.VIBETERM_HUB_PRIORITY = String(patch.priority);
-  if (patch.writerEpoch !== undefined) next.VIBETERM_HUB_WRITER_EPOCH = String(patch.writerEpoch);
-  if (patch.hubPeers !== undefined) {
-    next.VIBETERM_HUB_PEERS =
-      typeof patch.hubPeers === 'string' ? patch.hubPeers : patch.hubPeers.join(',');
-  }
-  return next;
-}
-
-export function hubEnvDefaults(input?: {
+export function peerEnvDefaults(input?: {
   role?: VibeTermRoleName;
-  hubUrl?: string;
   peerPort?: number;
-  hubPublicUrl?: string;
   stunServers?: string;
 }): Record<string, string> {
   const role = input?.role ?? 'standalone';
   const stun = input?.stunServers?.trim();
   return {
     VIBETERM_ROLES: role,
-    VIBETERM_HUB_URL: input?.hubUrl ?? '',
     VIBETERM_PEER_PORT: String(input?.peerPort ?? DEFAULT_PEER_PORT),
-    VIBETERM_HUB_PUBLIC_URL: input?.hubPublicUrl ?? '',
     ...(stun ? { VIBETERM_STUN_SERVERS: stun } : {}),
   };
+}
+
+/** 升级时把残留 `hub,node` 写成 `node`，并丢掉全部 `VIBETERM_HUB_*` / `TMEX_HUB_*`。 */
+export function rewriteLegacyHubInstallEnv(env: Record<string, string>): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith('VIBETERM_HUB_') || key.startsWith('TMEX_HUB_')) continue;
+    if (key === 'VIBETERM_ROLES' || key === 'TMEX_ROLES') {
+      const { name, legacy } = normalizeLegacyRoleName(value);
+      next[key] = legacy ? name : value;
+      continue;
+    }
+    next[key] = value;
+  }
+  return next;
 }
 
 export function generateRelayAdminToken(): string {
@@ -132,7 +103,7 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
     VIBETERM_BASE_URL: formatHttpEndpoint(input.host, input.port),
     VIBETERM_SITE_NAME: 'VibeTerm',
     VIBETERM_DIRECT_ENABLED: 'true',
-    ...hubEnvDefaults(input),
+    ...peerEnvDefaults(input),
     ...relayEnvDefaults(input),
     ...portEnvDefaults(input.role),
   };
