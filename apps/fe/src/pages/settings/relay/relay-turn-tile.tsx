@@ -45,8 +45,11 @@ export function RelayTurnTile({ turn, loading = false, stale = false }: RelayTur
         : allocations;
   return (
     <TurnSection>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start" data-testid="relay-turn">
-        <div className="w-full sm:max-w-xs sm:shrink-0">
+      <div
+        className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start"
+        data-testid="relay-turn"
+      >
+        <div className="w-full min-w-0 sm:max-w-xs">
           <StatTile
             label={t('relay.admin.turn.title')}
             value={value}

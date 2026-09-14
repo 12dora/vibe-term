@@ -15,7 +15,7 @@ export const stickyActionColumn =
 
 export function WideTableScroll({ children }: { children: ReactNode }) {
   return (
-    <section className="overflow-x-auto rounded-lg border border-border/60 [scrollbar-color:var(--border)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:bg-transparent">
+    <section className="min-w-0 overflow-x-auto rounded-lg border border-border/60 [scrollbar-color:var(--border)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:bg-transparent">
       {children}
     </section>
   );

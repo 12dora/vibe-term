@@ -110,7 +110,7 @@ export function RelayMetricsPanel({ metrics }: RelayMetricsPanelProps) {
   const trends = relayTrendSeries(data);
 
   return (
-    <div className="flex flex-col gap-4" data-testid="relay-metrics-panel">
+    <div className="flex min-w-0 flex-col gap-4" data-testid="relay-metrics-panel">
       <RelayMetricsHeaderStrip
         version={data.version}
         uptimeMs={data.uptimeMs}

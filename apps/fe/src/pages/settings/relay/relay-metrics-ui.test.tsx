@@ -419,6 +419,8 @@ describe('接入节点表', () => {
     expect(html).toContain('min-w-[11ch]');
     // 表头与单元格用同一个列宽，排序切换也不重排
     expect(html.match(/w-\[15rem\] min-w-\[15rem\]/g)?.length).toBeGreaterThan(1);
+    // 宽表壳必须能在 flex 里收缩，否则 min-w-[50rem] 会撑开设置页
+    expect(html).toContain('min-w-0 overflow-x-auto');
   });
 
   test('方向符号对读屏无意义，出 / 入各配一条 sr-only 文案', () => {

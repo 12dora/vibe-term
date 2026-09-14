@@ -112,7 +112,7 @@ export function RelayTrendsCard({ trends }: { trends: RelayTrendSeries }) {
           series={[trends.bytesOut, trends.bytesIn]}
           tones={['accent', 'success']}
           format={formatRate}
-          rangeWidthClass="min-w-[30ch]"
+          rangeWidthClass="min-w-0 sm:min-w-[30ch]"
           legend={[
             { label: t('relay.metrics.trends.legendOut'), tone: 'accent' },
             { label: t('relay.metrics.trends.legendIn'), tone: 'success' },

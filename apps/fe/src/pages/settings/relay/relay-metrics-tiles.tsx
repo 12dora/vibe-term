@@ -44,7 +44,7 @@ function TileGroup({
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-2" data-testid={testId}>
+    <section className="flex min-w-0 flex-col gap-2" data-testid={testId}>
       <h4 className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
         {title}
       </h4>
@@ -57,7 +57,7 @@ function TileGroup({
 export function RelayFullTiles(props: MetricsTileProps) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-4" data-testid="relay-metrics-tiles">
+    <div className="flex min-w-0 flex-col gap-4" data-testid="relay-metrics-tiles">
       <TileGroup
         title={t('relay.metrics.groups.traffic')}
         testId="relay-metrics-group-traffic"

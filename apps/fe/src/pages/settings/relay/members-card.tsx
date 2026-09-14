@@ -85,8 +85,8 @@ export function RelayMembersCard({ members, now, tenant, onClearTenant }: RelayM
   const filtered = members.length > 0 && rows.length === 0;
 
   return (
-    <Card data-testid="relay-members-card">
-      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <Card className="min-w-0" data-testid="relay-members-card">
+      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <CardTitle>{t('relay.metrics.members.title')}</CardTitle>
           <span className="text-xs text-muted-foreground" data-testid="relay-members-total">
@@ -106,14 +106,14 @@ export function RelayMembersCard({ members, now, tenant, onClearTenant }: RelayM
             </Button>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="relative min-w-0">
             <Search
               className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
               aria-hidden
             />
             <Input
-              className="h-7 w-44 pl-7 text-xs"
+              className="h-7 w-full min-w-0 max-w-44 pl-7 text-xs"
               value={query}
               placeholder={t('relay.metrics.members.searchPlaceholder')}
               aria-label={t('relay.metrics.members.searchPlaceholder')}
@@ -124,7 +124,7 @@ export function RelayMembersCard({ members, now, tenant, onClearTenant }: RelayM
           <MemberStateFilterGroup value={state} onChange={setState} />
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="min-w-0">
         <RelayMembersTable
           members={rows}
           now={now}
