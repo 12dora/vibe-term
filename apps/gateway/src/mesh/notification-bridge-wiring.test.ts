@@ -27,7 +27,7 @@ function bridgeWith(declared: Set<string>) {
     selfName: () => 'A',
     userStore: {} as UserStore,
     listReach: () => new Map(),
-    listHubOnline: () => new Set(),
+    listUplinkOnline: () => new Set(),
     listedNodes: () => [],
     declaredSinks: () => declared,
     forwardInternalHttp: (nodeId, path) => {

@@ -1,4 +1,4 @@
-import { hubHostFromUrl } from '@vibeterm/shared/auth';
+import { hostFromUrl } from '@vibeterm/shared/auth';
 import type { LinkStream } from '@vibeterm/shared/link';
 import type { RelayQuota, RelayRtcConfig } from '@vibeterm/shared/relay';
 import { backoffDelayMs } from './ctl';
@@ -12,11 +12,11 @@ import {
   UPLINK_CONNECT_LOG_INTERVAL_MS,
 } from './uplink-client';
 import { isUplinkPathRerace } from './uplink-path-sampler';
-import { normalizeHubEndpointUrl, redactUrl, sameHubUrl } from './uplink-pool-url';
+import { normalizeUplinkEndpointUrl, redactUrl, sameUplinkUrl } from './uplink-pool-url';
 import type { UplinkCtlMessage } from './uplink-protocol';
 
 export type SecondaryUplink = {
-  readonly hubUrl: string;
+  readonly uplinkUrl: string;
   state: UplinkState;
   readonly rttMs: number | null;
   readonly quota: RelayQuota | null;
@@ -102,8 +102,8 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
 
   async openRelayVia(url: string, peerNodeId: string): Promise<LinkStream> {
     const primary = this.opts.primaryUrl();
-    if (primary && sameHubUrl(url, primary)) return this.opts.openPrimary(peerNodeId);
-    const slot = this.slots.get(normalizeHubEndpointUrl(url));
+    if (primary && sameUplinkUrl(url, primary)) return this.opts.openPrimary(peerNodeId);
+    const slot = this.slots.get(normalizeUplinkEndpointUrl(url));
     const client = slot?.client;
     if (!client || client.state !== 'online') throw new Error('uplink is not online');
     return client.openRelay(peerNodeId);
@@ -115,7 +115,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   }
 
   client(url: string): SecondaryUplink | null {
-    return this.slots.get(normalizeHubEndpointUrl(url))?.client ?? null;
+    return this.slots.get(normalizeUplinkEndpointUrl(url))?.client ?? null;
   }
 
   connected(): SecondaryUplink[] {
@@ -170,8 +170,8 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
       return wanted;
     }
     for (const row of rows) {
-      if (sameHubUrl(row.url, primary)) continue;
-      wanted.set(normalizeHubEndpointUrl(row.url), row.credentialKey);
+      if (sameUplinkUrl(row.url, primary)) continue;
+      wanted.set(normalizeUplinkEndpointUrl(row.url), row.credentialKey);
     }
     return wanted;
   }
@@ -200,7 +200,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   }
 
   private spawnLoop(url: string, credentialKey: string): void {
-    const key = normalizeHubEndpointUrl(url);
+    const key = normalizeUplinkEndpointUrl(url);
     if (this.slots.has(key)) return;
     const abort = new AbortController();
     const slot: Slot = {
@@ -317,7 +317,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     this.failLogAt.set(url, now);
     console.warn(
       stamp(
-        `[uplink] secondary connect failed hub=${secondaryHubLabel(url)} attempt=${attempt} reason=${reason} next_retry_ms=${nextRetryMs}`
+        `[uplink] secondary connect failed url=${secondaryUrlLabel(url)} attempt=${attempt} reason=${reason} next_retry_ms=${nextRetryMs}`
       )
     );
   }
@@ -328,7 +328,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     const prev = this.onlineLogAt.get(url) ?? Number.NEGATIVE_INFINITY;
     if (now - prev < UPLINK_CONNECT_LOG_INTERVAL_MS) return;
     this.onlineLogAt.set(url, now);
-    console.info(stamp(`[uplink] secondary online hub=${secondaryHubLabel(url)}`));
+    console.info(stamp(`[uplink] secondary online url=${secondaryUrlLabel(url)}`));
   }
 
   private async sleepBeforeRetry(
@@ -367,12 +367,12 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   private stillWanted(url: string): boolean {
     if (!this.running) return false;
     const primary = this.opts.primaryUrl();
-    if (primary && sameHubUrl(url, primary)) return false;
-    return this.opts.rows().some((row) => !row.kicked && sameHubUrl(row.url, url));
+    if (primary && sameUplinkUrl(url, primary)) return false;
+    return this.opts.rows().some((row) => !row.kicked && sameUplinkUrl(row.url, url));
   }
 
   private async drop(url: string, reason: 'gone' | 'promoted' | 'stop'): Promise<void> {
-    const key = normalizeHubEndpointUrl(url);
+    const key = normalizeUplinkEndpointUrl(url);
     const slot = this.slots.get(key);
     this.clearDecay(key);
     this.clearFailLogs(key);
@@ -435,8 +435,8 @@ function staleDropReason(
   primary: string | null,
   rows: readonly RelaySecondaryRow[]
 ): 'gone' | 'promoted' | 'stop' {
-  if (nextKey === undefined && primary && sameHubUrl(key, primary)) return 'promoted';
-  const stillConfigured = rows.some((row) => !row.kicked && sameHubUrl(row.url, key));
+  if (nextKey === undefined && primary && sameUplinkUrl(key, primary)) return 'promoted';
+  const stillConfigured = rows.some((row) => !row.kicked && sameUplinkUrl(row.url, key));
   return stillConfigured ? 'stop' : 'gone';
 }
 
@@ -445,9 +445,9 @@ function secondaryFailReason(err: unknown): string {
   return msg || 'connect-failed';
 }
 
-function secondaryHubLabel(url: string): string {
+function secondaryUrlLabel(url: string): string {
   try {
-    return hubHostFromUrl(url);
+    return hostFromUrl(url);
   } catch {
     return redactUrl(url);
   }

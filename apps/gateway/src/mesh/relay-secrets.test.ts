@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { canonicalPublicUrl } from '@vibeterm/shared/auth';
 import { generateTenantKey } from '@vibeterm/shared/relay';
 import { KeyLogStore } from '../auth/key-log-store';
 import { ensureNodeIdentity } from '../auth/node-identity-service';
@@ -94,7 +94,7 @@ describe('RelaySecrets', () => {
       expect(b.secrets.uplinkKind()).toBe('relay');
       expect(b.secrets.relayRows()).toEqual([
         {
-          url: canonicalHubUrl(RELAY_URL),
+          url: canonicalPublicUrl(RELAY_URL),
           tenantId: TENANT_ID,
           priority: 0,
           kicked: false,
@@ -103,7 +103,7 @@ describe('RelaySecrets', () => {
       ]);
       expect(await b.secrets.logKey()).toEqual(logKey);
       expect(await b.secrets.metaKey(1)).toEqual(metaKey);
-      const stored = await b.secrets.store.getRelay(canonicalHubUrl(RELAY_URL));
+      const stored = await b.secrets.store.getRelay(canonicalPublicUrl(RELAY_URL));
       expect(stored?.token).toEqual(token);
       expect(b.secrets.tenantId()).toBe(TENANT_ID);
     } finally {
@@ -236,7 +236,7 @@ describe('RelaySecrets', () => {
       expect(state.metaKeyEpoch).toBe(4);
       expect(state.metaKeyEntries.map((entry) => entry.node_id)).toEqual([b.identity.nodeIdHex]);
       expect(state.relays?.relays).toEqual([
-        { url: canonicalHubUrl(RELAY_URL), tenantId: TENANT_ID, token, priority: 3 },
+        { url: canonicalPublicUrl(RELAY_URL), tenantId: TENANT_ID, token, priority: 3 },
       ]);
       expect(state.relays?.logKeyEntries).toHaveLength(1);
     } finally {
@@ -361,7 +361,7 @@ describe('RelaySecrets reconcile 粒度', () => {
           { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 0 },
           { url: RELAY_URL, tenantId: TENANT_ID, token, priority: 1 },
         ],
-        canonicalHubUrl(RELAY_URL)
+        canonicalPublicUrl(RELAY_URL)
       );
       expect(result.primaryChanged).toBe(true);
       expect(result.rowsChanged).toBe(true);
@@ -385,7 +385,7 @@ describe('RelaySecrets reconcile 粒度', () => {
           { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 0 },
           { url: RELAY_URL, tenantId: TENANT_ID, token, priority: 1 },
         ],
-        canonicalHubUrl(RELAY_URL_B)
+        canonicalPublicUrl(RELAY_URL_B)
       );
       expect(result.primaryChanged).toBe(false);
       expect(result.rowsChanged).toBe(true);
@@ -405,8 +405,8 @@ describe('RelaySecrets reconcile 粒度', () => {
         { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 1 },
       ];
       await applyRelays(b, rows);
-      b.secrets.setPreferredRelayUrl(canonicalHubUrl(RELAY_URL_B));
-      const result = await applyRelays(b, rows, canonicalHubUrl(RELAY_URL));
+      b.secrets.setPreferredRelayUrl(canonicalPublicUrl(RELAY_URL_B));
+      const result = await applyRelays(b, rows, canonicalPublicUrl(RELAY_URL));
       expect(result.primaryChanged).toBe(true);
     } finally {
       b.close();
@@ -423,8 +423,8 @@ describe('RelaySecrets reconcile 粒度', () => {
         { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 1 },
       ];
       await applyRelays(b, rows);
-      b.secrets.setPreferredRelayUrl(canonicalHubUrl(RELAY_URL_B));
-      const result = await applyRelays(b, rows, canonicalHubUrl(RELAY_URL_B));
+      b.secrets.setPreferredRelayUrl(canonicalPublicUrl(RELAY_URL_B));
+      const result = await applyRelays(b, rows, canonicalPublicUrl(RELAY_URL_B));
       expect(result.primaryChanged).toBe(false);
       expect(result.rowsChanged).toBe(true);
     } finally {

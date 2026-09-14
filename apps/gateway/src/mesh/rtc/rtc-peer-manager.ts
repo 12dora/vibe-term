@@ -39,7 +39,7 @@ import { OfferEpochMemory, rtcAttemptEpochBase } from './rtc-offer-epoch';
 import { bindPeerSignaling, runPeerConnectAttempt } from './rtc-peer-connect';
 import {
   type LocalDescriptionEvent,
-  type LocalDescriptionHub,
+  type LocalDescriptionFanout,
   PEER_CHANNEL_LABEL,
   type RtcDialAggregate,
   SESS_CHANNEL_LABEL,
@@ -155,7 +155,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private nativeMissing = false;
   private readonly browser = new Map<string, BrowserRecord>();
   private readonly livePcs = new Set<PeerConnectionLike>();
-  private readonly localDescriptionHubs = new WeakMap<PeerConnectionLike, LocalDescriptionHub>();
+  private readonly sdpFanouts = new WeakMap<PeerConnectionLike, LocalDescriptionFanout>();
   private readonly dialAggregates = new Map<string, RtcDialAggregate>();
   private readonly lastOfferEpochByPeer: OfferEpochMemory;
   private readonly rtcEpochBase: number;
@@ -606,26 +606,26 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     this.livePcs.add(pc);
   }
 
-  private prepareLocalDescriptions(pc: PeerConnectionLike): LocalDescriptionHub {
-    const existing = this.localDescriptionHubs.get(pc);
+  private prepareLocalDescriptions(pc: PeerConnectionLike): LocalDescriptionFanout {
+    const existing = this.sdpFanouts.get(pc);
     if (existing) return existing;
-    const hub: LocalDescriptionHub = { latest: null, listeners: new Set() };
-    this.localDescriptionHubs.set(pc, hub);
+    const fanout: LocalDescriptionFanout = { latest: null, listeners: new Set() };
+    this.sdpFanouts.set(pc, fanout);
     pc.onLocalDescription((sdp, type) => {
       const description = { sdp, type };
-      hub.latest = description;
-      for (const listener of hub.listeners) listener(description);
+      fanout.latest = description;
+      for (const listener of fanout.listeners) listener(description);
     });
-    return hub;
+    return fanout;
   }
 
   private onLocalDescription(
     pc: PeerConnectionLike,
     listener: (description: LocalDescriptionEvent) => void
   ): () => void {
-    const hub = this.prepareLocalDescriptions(pc);
-    hub.listeners.add(listener);
-    return () => hub.listeners.delete(listener);
+    const fanout = this.prepareLocalDescriptions(pc);
+    fanout.listeners.add(listener);
+    return () => fanout.listeners.delete(listener);
   }
 
   private untrackAndClose(pc: PeerConnectionLike): void {

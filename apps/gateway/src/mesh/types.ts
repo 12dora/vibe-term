@@ -137,7 +137,7 @@ export type InboundRelayHandler = (
 export type PooledUplink = {
   readonly identity: MeshIdentity;
   readonly userId: string;
-  readonly hubUrl: string;
+  readonly uplinkUrl: string;
   readonly lastKeyLogHead: { seq: bigint; hash: Uint8Array } | null;
   state: UplinkState;
   link: LinkSession | null;
@@ -152,7 +152,7 @@ export type PooledUplink = {
   sendStatus(): void;
   sendStatusIfChanged(): boolean;
   openRelay(toNodeId: string): Promise<LinkStream>;
-  queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null>;
+  queryKeyLogHead(): Promise<{ seq: bigint; hash: Uint8Array } | null>;
   queryKeyLogAt(
     seq: bigint,
     timeoutMs?: number

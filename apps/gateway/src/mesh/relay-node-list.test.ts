@@ -212,7 +212,12 @@ describe('relayListToNodeList', () => {
       const primaryUrl = 'https://relay.example';
       applyUplinkNodeList(
         {
-          state: { lastNodeList: null, hubPresenceLive: false, hubGeneration: 0, lastRtc: null },
+          state: {
+            lastNodeList: null,
+            uplinkPresenceLive: false,
+            uplinkGeneration: 0,
+            lastRtc: null,
+          },
           rtcSourceUrl: primaryUrl,
           retainPeerIds: () => [nodeId],
           extraListedNodes: () => [],
@@ -275,7 +280,12 @@ describe('relayListToNodeList', () => {
       );
       applyUplinkNodeList(
         {
-          state: { lastNodeList: null, hubPresenceLive: false, hubGeneration: 0, lastRtc: null },
+          state: {
+            lastNodeList: null,
+            uplinkPresenceLive: false,
+            uplinkGeneration: 0,
+            lastRtc: null,
+          },
           rtcSourceUrl: 'https://relay.example',
           retainPeerIds: () => [],
           extraListedNodes: () => [],

@@ -75,7 +75,7 @@ import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
 import {
   AUTH_UID_MAX_BYTES,
   CHALLENGE_RATE_LIMIT,
-  type KeyLogHubAck,
+  type KeyLogPublishAck,
   type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
   LOGIN_RATE_LIMIT,
@@ -93,7 +93,7 @@ import {
   publicRequestUrl,
   requireSession,
 } from './session-middleware';
-export type { KeyLogHubAck };
+export type { KeyLogPublishAck };
 export { AUTH_LOGIN_PUBLIC_PATHS, findPrimaryUser, isPasskeyAvailable };
 export { createLoginFailureSink, verifySecondFactors };
 

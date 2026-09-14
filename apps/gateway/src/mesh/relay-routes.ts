@@ -4,7 +4,7 @@ import {
   decodeAuthorization,
   decodeBase64url,
   encodeBase64url,
-  hubHostFromUrl,
+  hostFromUrl,
   sha256,
   verifyEd25519,
 } from '@vibeterm/shared/auth';
@@ -148,7 +148,7 @@ export class RelayRoutes {
     const mode = this.mode();
     const client = this.relayClient();
     const live = this.deps.uplink.liveClient();
-    const attached = this.deps.uplink.attachedHub();
+    const attached = this.deps.uplink.attachedUplink();
     const rows = this.deps.secrets.relayRows();
     const uid = userId || this.deps.secrets.userId();
     const readmitPending = uid ? (await this.readmitPrepareFor(uid)).entries.length : 0;
@@ -216,7 +216,7 @@ export class RelayRoutes {
     if (!user) return jsonError('UNKNOWN_USER', 404);
     return jsonBody({
       url,
-      relayHost: hubHostFromUrl(url),
+      relayHost: hostFromUrl(url),
       ts: this.now(),
       maxSkewMs: RELAY_ENROLL_PROOF_MAX_SKEW_MS,
       rootPublicKey: encodeBase64url(user.rootPublicKey),
@@ -235,7 +235,7 @@ export class RelayRoutes {
     const verified = verifyRelayEnrollProof({
       bytes: proof.bytes,
       sig: proof.sig,
-      relayHost: hubHostFromUrl(url),
+      relayHost: hostFromUrl(url),
       rootPublicKey: user.rootPublicKey,
       now: this.now(),
     });
@@ -411,7 +411,7 @@ export class RelayRoutes {
   private async joinMaterial(req: Request): Promise<Response> {
     if (this.mode() !== 'relay') return jsonError('RELAY_NOT_CONFIGURED', 409);
     const rows = this.deps.secrets.relayRows();
-    const attachedUrl = this.deps.uplink.attachedHub()?.publicUrl ?? null;
+    const attachedUrl = this.deps.uplink.attachedUplink()?.publicUrl ?? null;
     const all = new URL(req.url).searchParams.get('scope') === 'all';
     const attached = rows.find((row) => row.url === attachedUrl) ?? rows[0];
     if (!attached) return jsonError('RELAY_NOT_CONFIGURED', 409);
@@ -432,7 +432,7 @@ export class RelayRoutes {
     const prepared = await this.prepareLocalEnrollment(req, userId);
     if (prepared instanceof Response) return prepared;
     const client = this.relayClient();
-    const attachedUrl = this.deps.uplink.attachedHub()?.publicUrl ?? null;
+    const attachedUrl = this.deps.uplink.attachedUplink()?.publicUrl ?? null;
     const relays = await fanOutEnrollmentCreate({
       secrets: this.deps.secrets,
       rows,

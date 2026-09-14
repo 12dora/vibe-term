@@ -23,7 +23,7 @@ import {
   type UplinkPool,
   type UplinkPoolOptions,
 } from './uplink-pool';
-import { sameHubUrl } from './uplink-pool-url';
+import { sameUplinkUrl } from './uplink-pool-url';
 
 const RELAY_RECORD_TYPES: ReadonlySet<string> = new Set(['set-relays', 'meta-key']);
 
@@ -72,7 +72,9 @@ export function createRelayWiring(input: {
 async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise<void> {
   const bound = RELAY_BINDINGS.get(wiring);
   try {
-    const result = await wiring.secrets.reconcile(bound?.uplink.attachedHub()?.publicUrl ?? null);
+    const result = await wiring.secrets.reconcile(
+      bound?.uplink.attachedUplink()?.publicUrl ?? null
+    );
     if (allowRestart && bound && (result.primaryChanged || (await relayTokenChanged(bound)))) {
       bound.metaEpoch = result.metaEpoch;
       await bound.attach?.stop();
@@ -99,9 +101,9 @@ function applyRelayRowsInPlace(wiring: RelayWiring, bound: RelayBinding): void {
   bound.uplink.refreshCandidates();
   void bound.attach?.reconcile();
   const rows = wiring.secrets.relayRows();
-  const primaryUrl = bound.uplink.attachedHub()?.publicUrl ?? null;
+  const primaryUrl = bound.uplink.attachedUplink()?.publicUrl ?? null;
   const secondaries = rows.filter(
-    (row) => !row.kicked && !(primaryUrl && sameHubUrl(row.url, primaryUrl))
+    (row) => !row.kicked && !(primaryUrl && sameUplinkUrl(row.url, primaryUrl))
   ).length;
   console.info(
     stamp(
@@ -216,7 +218,7 @@ export function relayUplinkOverrides(
         ? orderRelaysByPreferred(wiring.secrets.relayRows(), preferredOrderUrl(wiring)).map(
             (row) =>
               ({
-                hubNodeId: null,
+                uplinkNodeId: null,
                 publicUrl: row.url,
                 priority: row.priority,
                 caFingerprint: null,
@@ -225,7 +227,7 @@ export function relayUplinkOverrides(
         : [],
     createClient: (o) =>
       new RelayUplinkClient({
-        hubUrl: o.hubUrl,
+        uplinkUrl: o.uplinkUrl,
         identity: o.identity,
         userId: o.userId,
         keyLogApplier: o.keyLogApplier,
@@ -241,8 +243,8 @@ export function relayUplinkOverrides(
         ...(o.scheduler ? { scheduler: o.scheduler } : {}),
         ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
         ...(o.keyLogCatchUp ? { keyLogCatchUp: o.keyLogCatchUp } : {}),
-        onKicked: (reason) => notifyRelayKicked(wiring, o.hubUrl, reason),
-        onRtt: (rttMs) => notifyRelayRtt(wiring, o.hubUrl, rttMs),
+        onKicked: (reason) => notifyRelayKicked(wiring, o.uplinkUrl, reason),
+        onRtt: (rttMs) => notifyRelayRtt(wiring, o.uplinkUrl, rttMs),
         dial,
       }),
     probeHealthz: (publicUrl, tlsCa, timeoutMs) =>
@@ -281,7 +283,9 @@ function preferredOrderUrl(wiring: RelayWiring): string | null {
 function dropStaleAutoPreferred(wiring: RelayWiring): boolean {
   const auto = wiring.autoPreferredUrl?.() ?? null;
   if (!auto) return false;
-  const still = wiring.secrets.relayRows().some((row) => !row.kicked && sameHubUrl(row.url, auto));
+  const still = wiring.secrets
+    .relayRows()
+    .some((row) => !row.kicked && sameUplinkUrl(row.url, auto));
   if (still) return false;
   wiring.setAutoPreferredUrl?.(null);
   return true;
@@ -290,7 +294,7 @@ function dropStaleAutoPreferred(wiring: RelayWiring): boolean {
 export function relayUplinkView(wiring: RelayWiring, uplink: UplinkPool): RelayUplinkView {
   return {
     liveClient: () => uplink.liveClient(),
-    attachedHub: () => uplink.attachedHub(),
+    attachedUplink: () => uplink.attachedUplink(),
     reconfigure: () => reconfigureUplinkPool(uplink),
     candidates: () => uplink.candidates(),
     switchTo: (url, signal) => uplink.switchTo(url, signal),
@@ -357,7 +361,7 @@ function autoSelectDeps(input: {
     intervalMs: gatewayConfig.relayAutoSelectIntervalMs,
     rows: () => wiring.secrets.relayRows(),
     preferredUrl: () => wiring.secrets.preferredRelayUrl(),
-    currentUrl: () => uplink.attachedHub()?.publicUrl ?? null,
+    currentUrl: () => uplink.attachedUplink()?.publicUrl ?? null,
     liveClient: () => uplink.liveClient(),
     primaryClient: () => {
       const live = uplink.liveClient();

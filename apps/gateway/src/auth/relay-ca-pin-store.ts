@@ -1,4 +1,4 @@
-import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { canonicalPublicUrl } from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
 import { relayCaPins } from '../db/schema';
 import type { AuthDb } from './types';
@@ -33,7 +33,7 @@ function toRecord(row: {
 
 function tryCanonicalUrl(url: string): string | null {
   try {
-    return canonicalHubUrl(url);
+    return canonicalPublicUrl(url);
   } catch {
     return null;
   }
@@ -55,7 +55,7 @@ export class RelayCaPinStore {
   }
 
   put(input: PutRelayCaPinInput): RelayCaPinRecord {
-    const url = canonicalHubUrl(input.url);
+    const url = canonicalPublicUrl(input.url);
     const createdAt = input.createdAt ?? Date.now();
     this.db
       .insert(relayCaPins)

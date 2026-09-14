@@ -26,7 +26,9 @@ test('relay keylog diagnostics decrypts the in-memory relay head and reports IN_
     expect(status.remote).toEqual(status.local);
     expect(status.error).toBeUndefined();
     expect(keyLogStatusVerdict(status)).toBe('IN_SYNC');
-    expect(await node.relayClient()!.queryHubHead()).toEqual(auth.keyLogStore.head(tenant.userId));
+    expect(await node.relayClient()!.queryKeyLogHead()).toEqual(
+      auth.keyLogStore.head(tenant.userId)
+    );
   } finally {
     await h.stop();
   }

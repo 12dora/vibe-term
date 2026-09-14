@@ -334,7 +334,7 @@ export class MeshRoutes {
   private collectNodes(req: Request | null): MeshNodeDto[] {
     const cookies = req ? parseCookies(req.headers.get('cookie')) : new Map<string, string>();
     const reach = this.deps.peers.listReach();
-    const uplinkOnline = this.deps.peers.listHubOnline?.() ?? new Set<string>();
+    const uplinkOnline = this.deps.peers.listUplinkOnline?.() ?? new Set<string>();
     const certs = this.deps.userStore.listCerts().filter((c) => c.revokedLogSeq == null);
     const certById = new Map(certs.map((c) => [c.nodeId, c]));
     const peerById = new Map(this.deps.userStore.listPeers().map((p) => [p.nodeId, p]));

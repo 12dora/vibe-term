@@ -40,7 +40,7 @@ class FakePooledClient implements PooledUplink {
   private readonly listeners: Array<(state: UplinkState) => void> = [];
   private closeWaiters: Array<() => void> = [];
 
-  constructor(readonly hubUrl: string) {}
+  constructor(readonly uplinkUrl: string) {}
 
   onStateChange(cb: (state: UplinkState) => void): () => void {
     this.listeners.push(cb);
@@ -82,7 +82,7 @@ class FakePooledClient implements PooledUplink {
     const stream = this.relayStreams.shift();
     return stream ? Promise.resolve(stream) : Promise.reject(new Error('not supported'));
   }
-  async queryHubHead(): Promise<null> {
+  async queryKeyLogHead(): Promise<null> {
     return null;
   }
   async queryKeyLogAt(): Promise<null> {
@@ -124,7 +124,7 @@ function controlledRelayStream(): { stream: LinkStream; finish: () => void } {
 
 function candidate(publicUrl: string): UplinkCandidate {
   return {
-    hubNodeId: null,
+    uplinkNodeId: null,
     publicUrl,
     mode: 'active',
     writerEpoch: 0,
@@ -155,23 +155,23 @@ describe('UplinkPool 上级种类切换', () => {
             ? [candidate('https://relay.example')]
             : [candidate('https://first.example')],
         createClient: (opts) => {
-          const client = new FakePooledClient(opts.hubUrl);
+          const client = new FakePooledClient(opts.uplinkUrl);
           created.push(client);
           return client;
         },
       });
       pool.start();
-      await waitUntil(() => pool.attachedHub() !== null);
-      expect(pool.attachedHub()?.publicUrl).toBe('https://first.example');
+      await waitUntil(() => pool.attachedUplink() !== null);
+      expect(pool.attachedUplink()?.publicUrl).toBe('https://first.example');
       expect(created).toHaveLength(1);
 
       kind = 'second';
       await reconfigureUplinkPool(pool);
       expect(created[0]?.stopped).toBeGreaterThan(0);
-      expect(pool.attachedHub()).toBeNull();
+      expect(pool.attachedUplink()).toBeNull();
 
-      await waitUntil(() => pool.attachedHub()?.publicUrl === 'https://relay.example', 5_000);
-      expect(created.at(-1)?.hubUrl).toBe('https://relay.example');
+      await waitUntil(() => pool.attachedUplink()?.publicUrl === 'https://relay.example', 5_000);
+      expect(created.at(-1)?.uplinkUrl).toBe('https://relay.example');
       await pool.stop();
     } finally {
       close();
@@ -196,13 +196,13 @@ describe('UplinkPool 上级种类切换', () => {
         relayDrainTimeoutMs: 100,
         candidates: () => [candidate(`https://${kind}.example`)],
         createClient: (opts) => {
-          const client = new FakePooledClient(opts.hubUrl);
+          const client = new FakePooledClient(opts.uplinkUrl);
           created.push(client);
           return client;
         },
       });
       pool.start();
-      await waitUntil(() => pool.attachedHub() !== null);
+      await waitUntil(() => pool.attachedUplink() !== null);
       const old = created[0];
       const active = controlledRelayStream();
       old?.relayStreams.push(active.stream);
@@ -220,7 +220,7 @@ describe('UplinkPool 上级种类切换', () => {
       active.finish();
       await pending;
       expect(old?.stopped).toBeGreaterThan(0);
-      await waitUntil(() => pool.attachedHub()?.publicUrl === 'https://relay.example');
+      await waitUntil(() => pool.attachedUplink()?.publicUrl === 'https://relay.example');
       await pool.stop();
     } finally {
       close();
@@ -244,13 +244,13 @@ describe('UplinkPool 上级种类切换', () => {
         relayDrainTimeoutMs: 20,
         candidates: () => [candidate('https://relay.example')],
         createClient: (opts) => {
-          const client = new FakePooledClient(opts.hubUrl);
+          const client = new FakePooledClient(opts.uplinkUrl);
           created.push(client);
           return client;
         },
       });
       pool.start();
-      await waitUntil(() => pool.attachedHub() !== null);
+      await waitUntil(() => pool.attachedUplink() !== null);
       const active = controlledRelayStream();
       created[0]?.relayStreams.push(active.stream);
       await pool.openRelay('cd'.repeat(16));

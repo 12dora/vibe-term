@@ -14,7 +14,7 @@ import {
   resolveHostnameViaDoh,
 } from '../tunnel/edge-resolver';
 import { classifyRemoteAddress, isIpAddressLiteral } from './address-class';
-import { DIAL_IDENTITY_PATH_HUB, checkDialIdentity } from './dial-identity';
+import { DIAL_IDENTITY_PATH_HEALTHZ, checkDialIdentity } from './dial-identity';
 import { stamp } from './mesh-log';
 import { classifyUplinkConnectError } from './uplink-reconnect';
 import { wsDialRaceCount } from './ws-dial-race-config';
@@ -32,7 +32,7 @@ export const DIAL_RESOLVE_NEGATIVE_TTL_MS = 15_000;
 export const DIAL_DOH_BUDGET_MS = 5_000;
 export const DIAL_RESOLVE_CACHE_MAX = 64;
 export {
-  DIAL_IDENTITY_PATH_HUB,
+  DIAL_IDENTITY_PATH_HEALTHZ,
   DIAL_IDENTITY_PATH_RELAY,
   type CheckDialIdentityOpts,
   checkDialIdentity,
@@ -258,7 +258,7 @@ async function openDialSocket(
       ip,
       hostname,
       headerHost,
-      path: state.deps.identityPath ?? DIAL_IDENTITY_PATH_HUB,
+      path: state.deps.identityPath ?? DIAL_IDENTITY_PATH_HEALTHZ,
       originalUrl: url,
       tls: state.baseTls,
       fetchImpl: state.deps.fetchImpl,

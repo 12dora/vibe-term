@@ -3,19 +3,19 @@ import type { LinkStream } from '@vibeterm/shared/link';
 import type { InboundRelayHandler, PooledUplink } from './types';
 import { UplinkRelayDrain } from './uplink-relay-drain';
 
-function fakeClient(hubUrl: string): PooledUplink & {
+function fakeClient(uplinkUrl: string): PooledUplink & {
   handler: InboundRelayHandler | null;
   emit(from: string): void;
 } {
   const client = {
-    hubUrl,
+    uplinkUrl,
     handler: null as InboundRelayHandler | null,
     setOnRelayStream(handler: InboundRelayHandler | null) {
       client.handler = handler;
     },
     emit(from: string) {
       const stream = { closed: Promise.resolve() } as unknown as LinkStream;
-      client.handler?.(stream, from, hubUrl);
+      client.handler?.(stream, from, uplinkUrl);
     },
   };
   return client as unknown as PooledUplink & {
@@ -25,7 +25,7 @@ function fakeClient(hubUrl: string): PooledUplink & {
 }
 
 describe('UplinkRelayDrain inbound viaRelay', () => {
-  test('bind 把 live client 的 hubUrl 传给入站 handler', () => {
+  test('bind 把 live client 的 uplinkUrl 传给入站 handler', () => {
     const drain = new UplinkRelayDrain({
       scheduler: { now: () => 1, sleep: async () => undefined, interval: () => ({ clear() {} }) },
       log: () => {},

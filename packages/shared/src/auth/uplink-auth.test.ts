@@ -4,7 +4,7 @@ import { generateEd25519KeyPair, signEd25519, verifyEd25519 } from './root-key';
 import {
   DOMAIN_UPLINK_AUTH,
   decodeUplinkAuth,
-  hubHostFromUrl,
+  hostFromUrl,
   uplinkAuthMessage,
 } from './uplink-auth';
 
@@ -28,9 +28,9 @@ describe('uplink-auth', () => {
     );
   });
 
-  it('extracts hub_host from hubUrl including non-default port', () => {
-    expect(hubHostFromUrl('https://hub.example.com')).toBe('hub.example.com');
-    expect(hubHostFromUrl('http://127.0.0.1:9883/')).toBe('127.0.0.1:9883');
+  it('extracts hub_host from a URL including non-default port', () => {
+    expect(hostFromUrl('https://hub.example.com')).toBe('hub.example.com');
+    expect(hostFromUrl('http://127.0.0.1:9883/')).toBe('127.0.0.1:9883');
   });
 
   it('Ed25519 over uplinkAuthMessage is not a raw-nonce signature', () => {

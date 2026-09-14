@@ -3,7 +3,7 @@
 // 用法（在 apps/fe 下执行，playwright 才能解析）：
 //   bun run bench/scroll-bench.ts --device <deviceId> [--events 100] [--delta 16] [--gap 8] [--dir up|down]
 //     [--synthetic] [--flick] [--warmDown N] [--rounds 1] [--headed] [--base http://localhost:19883]
-//   mesh 拓扑：--mesh <mesh-boot state.json> --session <远端 tmux session>
+//   mesh 拓扑：--mesh <relay-boot state.json> --session <远端 tmux session>
 // 慢速 TUI 探针：tmux -L <socket> new-session -d -s r37slow "python3 scripts/slow-mouse-tui.py 30"
 // 详见 docs/development/performance-hot-paths.md「终端滚动」。
 import { chromium } from 'playwright';
@@ -107,7 +107,7 @@ let targetUrl = `${base}/devices/${deviceId}`;
 if (args.mesh) {
   // mesh mode: --mesh <state.json> --session <remote tmux session>; deviceId is ignored/created
   const state = JSON.parse(await Bun.file(String(args.mesh)).text());
-  const meshBase = state.baseUrl as string;
+  const meshBase = (state.a?.baseUrl as string | undefined) ?? (state.baseUrl as string);
   await page.goto(`${meshBase}/login`, { waitUntil: 'domcontentloaded' });
   await page.getByTestId('login-username').fill(state.username);
   await page.getByTestId('login-password').fill(state.password);
@@ -115,7 +115,7 @@ if (args.mesh) {
   await page.getByTestId('sidebar').waitFor({ timeout: 90_000 });
   await page.locator('a[href="/devices"]').first().click();
   await page.getByTestId('devices-page-container').waitFor({ timeout: 30_000 });
-  const nodeId = state.remoteNodeId as string;
+  const nodeId = (state.b?.nodeId as string | undefined) ?? (state.remoteNodeId as string);
   const panel = page.getByTestId(`devices-node-panel-${nodeId}`);
   const manualLogin = page.getByTestId(`devices-node-login-${nodeId}`);
   await panel.or(manualLogin).first().waitFor({ timeout: 60_000 });

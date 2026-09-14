@@ -47,7 +47,7 @@ class FakeScheduler implements MeshScheduler {
 
 function secondary(url: string, rttMs: number, state: UplinkState = 'online'): SecondaryUplink {
   return {
-    hubUrl: url,
+    uplinkUrl: url,
     state,
     rttMs,
     quota: { maxNodes: 16, maxStreams: 64, bandwidthBytesPerSec: null },
@@ -66,7 +66,7 @@ async function setup(opts?: {
   const preferred: string[] = [];
   const prepared: string[] = [];
   let current = SH;
-  const live: PooledUplink = { state: 'online', hubUrl: SH } as PooledUplink;
+  const live: PooledUplink = { state: 'online', uplinkUrl: SH } as PooledUplink;
   const secondaries = new Map<string, SecondaryUplink>([
     [JP, secondary(JP, 40)],
     [TK, secondary(TK, 80)],
@@ -83,8 +83,8 @@ async function setup(opts?: {
   } as unknown as RelaySecrets;
   const uplink: RelayUplinkView = {
     liveClient: () => live,
-    attachedHub: () => ({
-      hubNodeId: null,
+    attachedUplink: () => ({
+      uplinkNodeId: null,
       publicUrl: current,
       mode: 'active',
       writerEpoch: 0,
@@ -238,7 +238,7 @@ describe('RelayAutoSelect', () => {
         { url: JP, kicked: false },
       ],
     } as unknown as RelaySecrets;
-    const live: PooledUplink = { state: 'online', hubUrl: SH } as PooledUplink;
+    const live: PooledUplink = { state: 'online', uplinkUrl: SH } as PooledUplink;
     let current = SH;
     const auto = new RelayAutoSelect({
       scheduler,
@@ -258,8 +258,8 @@ describe('RelayAutoSelect', () => {
         secrets,
         uplink: {
           liveClient: () => live,
-          attachedHub: () => ({
-            hubNodeId: null,
+          attachedUplink: () => ({
+            uplinkNodeId: null,
             publicUrl: current,
             mode: 'active',
             writerEpoch: 0,

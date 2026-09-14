@@ -80,7 +80,7 @@ class FakeSecondary implements SecondaryUplink {
   private closedPromise: Promise<void> | null = null;
   relayHandler: InboundRelayHandler | null = null;
 
-  constructor(readonly hubUrl: string) {}
+  constructor(readonly uplinkUrl: string) {}
 
   start(): void {
     this.started += 1;
@@ -158,7 +158,7 @@ class FakeSecondary implements SecondaryUplink {
   sendStatus(): void {}
   sendCtl(): void {}
   async openRelay(_to: string): Promise<LinkStream> {
-    return { id: this.hubUrl } as unknown as LinkStream;
+    return { id: this.uplinkUrl } as unknown as LinkStream;
   }
 
   onStateChange(cb: (state: UplinkState) => void): () => void {
@@ -268,13 +268,13 @@ describe('RelaySecondaryAttach', () => {
     const { manager, spawned, liveRows, presence } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
-    expect(spawned.map((c) => c.hubUrl)).toEqual([TK]);
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
+    expect(spawned.map((c) => c.uplinkUrl)).toEqual([TK]);
     expect(presence.snapshot().find((entry) => entry.url === TK)?.connected).toBe(true);
 
     liveRows.current = [row(SH, 0), row(TK, 1), row(SG, 2)];
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === SG && c.state === 'online'));
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === SG && c.state === 'online'));
 
     liveRows.current = [row(SH, 0), row(SG, 2)];
     await manager.reconcile();
@@ -287,8 +287,8 @@ describe('RelaySecondaryAttach', () => {
     const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
-    const tokyo = spawned.find((c) => c.hubUrl === TK);
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
+    const tokyo = spawned.find((c) => c.uplinkUrl === TK);
     livePrimary.current = TK;
     await manager.reconcile();
     await waitUntil(() => manager.client(TK) == null);
@@ -320,7 +320,7 @@ describe('RelaySecondaryAttach', () => {
     liveRows.current = [row(SH, 0), row(TK, 1, { kicked: true })];
     manager.noteKicked(TK);
     await waitUntil(() => manager.client(TK) == null);
-    expect(spawned.filter((c) => c.hubUrl === TK).length).toBe(1);
+    expect(spawned.filter((c) => c.uplinkUrl === TK).length).toBe(1);
     await manager.stop();
   });
 
@@ -345,8 +345,8 @@ describe('RelaySecondaryAttach', () => {
     });
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
-    const tokyo = spawned.find((c) => c.hubUrl === TK);
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
+    const tokyo = spawned.find((c) => c.uplinkUrl === TK);
     tokyo?.emitInbound(PEER);
     expect(inbound).toEqual([{ from: PEER, viaRelay: TK }]);
     await manager.stop();
@@ -356,14 +356,14 @@ describe('RelaySecondaryAttach', () => {
     const { manager, spawned, scheduler } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
-    const first = spawned.find((c) => c.hubUrl === TK);
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
+    const first = spawned.find((c) => c.uplinkUrl === TK);
     expect(first).toBeTruthy();
     first!.lastConnectError = { reason: 'path-rerace', at: 1 };
     first!.disconnect();
-    await waitUntil(() => spawned.filter((c) => c.hubUrl === TK).length >= 2);
+    await waitUntil(() => spawned.filter((c) => c.uplinkUrl === TK).length >= 2);
     expect(scheduler.sleeps).toEqual([]);
-    expect(spawned.filter((c) => c.hubUrl === TK).at(-1)?.state).toBe('online');
+    expect(spawned.filter((c) => c.uplinkUrl === TK).at(-1)?.state).toBe('online');
     await manager.stop();
   });
 
@@ -379,8 +379,8 @@ describe('RelaySecondaryAttach', () => {
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.filter((c) => c.state === 'online').length >= 2);
-    const tokyo = spawned.find((c) => c.hubUrl === TK);
-    const singapore = spawned.find((c) => c.hubUrl === SG);
+    const tokyo = spawned.find((c) => c.uplinkUrl === TK);
+    const singapore = spawned.find((c) => c.uplinkUrl === SG);
     if (!tokyo || !singapore) throw new Error('missing secondary');
     expect(tokyo.state).toBe('online');
     expect(singapore.state).toBe('online');
@@ -393,32 +393,32 @@ describe('RelaySecondaryAttach', () => {
     await manager.reconcile();
     await waitUntil(() => tokyo.stopped > 0);
     await waitUntil(() =>
-      spawned.some((c) => c.hubUrl === TK && c !== tokyo && c.state === 'online')
+      spawned.some((c) => c.uplinkUrl === TK && c !== tokyo && c.state === 'online')
     );
     expect(manager.client(TK)).not.toBe(tokyo);
     expect(manager.client(TK)?.state).toBe('online');
     expect(manager.client(SG)).toBe(singapore);
     expect(singapore.stopped).toBe(0);
-    expect(spawned.filter((c) => c.hubUrl === TK)).toHaveLength(2);
-    expect(spawned.filter((c) => c.hubUrl === SG)).toHaveLength(1);
+    expect(spawned.filter((c) => c.uplinkUrl === TK)).toHaveLength(2);
+    expect(spawned.filter((c) => c.uplinkUrl === SG)).toHaveLength(1);
     await manager.stop();
   });
 
   test('故障转移后原 primary 在退避内重挂为 secondary（事故）', async () => {
     const { manager, spawned, livePrimary, scheduler } = setup([row(SH, 0), row(TK, 1)], SH, {
       onSpawn: (client, already) => {
-        if (client.hubUrl === SH && already.every((row) => row.hubUrl !== SH)) {
+        if (client.uplinkUrl === SH && already.every((row) => row.uplinkUrl !== SH)) {
           client.failNext = true;
         }
       },
     });
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
 
     livePrimary.current = TK;
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === SH));
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === SH));
     await waitUntil(() => scheduler.sleeps.length > 0);
 
     // 池 wrap 短暂把 SH 当成 primary：runLoop 看到 stillWanted=false 后退出，且不经过 drop()。
@@ -426,14 +426,14 @@ describe('RelaySecondaryAttach', () => {
     livePrimary.current = SH;
     scheduler.flushSleeps();
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(spawned.filter((c) => c.hubUrl === SH)).toHaveLength(1);
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(1);
 
     livePrimary.current = TK;
     await manager.reconcile();
-    await waitUntil(() => spawned.filter((c) => c.hubUrl === SH).length >= 2);
+    await waitUntil(() => spawned.filter((c) => c.uplinkUrl === SH).length >= 2);
     await waitUntil(() => manager.client(SH)?.state === 'online');
     expect(manager.client(TK)).toBeNull();
-    expect(spawned.filter((c) => c.hubUrl === SH).length).toBeGreaterThanOrEqual(2);
+    expect(spawned.filter((c) => c.uplinkUrl === SH).length).toBeGreaterThanOrEqual(2);
     await manager.stop();
   });
 
@@ -446,8 +446,8 @@ describe('RelaySecondaryAttach', () => {
     });
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
-    const tokyo = spawned.find((c) => c.hubUrl === TK);
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
+    const tokyo = spawned.find((c) => c.uplinkUrl === TK);
     livePrimary.current = null;
     await manager.reconcile();
     expect(manager.client(TK)?.state).toBe('online');
@@ -476,8 +476,8 @@ describe('RelaySecondaryAttach', () => {
     expect(presence.snapshot().some((entry) => entry.url === TK)).toBe(true);
     expect(presence.snapshot().some((entry) => entry.url === JP)).toBe(true);
     expect(presence.onlineUnion(scheduler.now())).toEqual(new Set([PEER, PEER_JP]));
-    expect(spawned.filter((c) => c.hubUrl === TK).every((c) => c.stopped === 0)).toBe(true);
-    expect(spawned.filter((c) => c.hubUrl === JP).every((c) => c.stopped === 0)).toBe(true);
+    expect(spawned.filter((c) => c.uplinkUrl === TK).every((c) => c.stopped === 0)).toBe(true);
+    expect(spawned.filter((c) => c.uplinkUrl === JP).every((c) => c.stopped === 0)).toBe(true);
     await manager.stop();
   });
 
@@ -486,12 +486,12 @@ describe('RelaySecondaryAttach', () => {
     manager.start();
     await manager.reconcile();
     await waitUntil(() => manager.client(SH)?.state === 'online');
-    const shanghai = spawned.find((c) => c.hubUrl === SH);
+    const shanghai = spawned.find((c) => c.uplinkUrl === SH);
     livePrimary.current = SH;
     await manager.reconcile();
     await waitUntil(() => manager.client(SH) == null);
     expect(shanghai?.stopped).toBeGreaterThan(0);
-    expect(spawned.filter((c) => c.hubUrl === SH && c.state === 'online')).toHaveLength(0);
+    expect(spawned.filter((c) => c.uplinkUrl === SH && c.state === 'online')).toHaveLength(0);
     await manager.stop();
   });
 
@@ -502,7 +502,7 @@ describe('RelaySecondaryAttach', () => {
     });
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
     presence.setPrimary(SH);
     presenceUrl.current = presence.primaryUrl();
     livePrimary.current = null;
@@ -516,7 +516,7 @@ describe('RelaySecondaryAttach', () => {
     manager.start();
     await manager.reconcile();
     await waitUntil(() => manager.client(SH)?.state === 'online');
-    const first = spawned.find((c) => c.hubUrl === SH);
+    const first = spawned.find((c) => c.uplinkUrl === SH);
     expect(first).toBeTruthy();
     livePrimary.current = SH;
     first!.disconnect();
@@ -524,7 +524,7 @@ describe('RelaySecondaryAttach', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     livePrimary.current = TK;
     await manager.reconcile();
-    await waitUntil(() => spawned.filter((c) => c.hubUrl === SH).length >= 2);
+    await waitUntil(() => spawned.filter((c) => c.uplinkUrl === SH).length >= 2);
     await waitUntil(() => manager.client(SH)?.state === 'online');
     await manager.stop();
   });
@@ -536,15 +536,15 @@ describe('RelaySecondaryAttach', () => {
     });
     const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH, {
       onSpawn: (client) => {
-        if (client.hubUrl === SH) client.connectGate = gate;
+        if (client.uplinkUrl === SH) client.connectGate = gate;
       },
     });
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
     livePrimary.current = TK;
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.hubUrl === SH && c.connects >= 1));
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === SH && c.connects >= 1));
     livePrimary.current = SH;
     await manager.reconcile();
     await waitUntil(() => manager.client(SH) == null);
@@ -568,7 +568,7 @@ describe('RelaySecondaryAttach', () => {
     try {
       const { manager, scheduler } = setup([row(SH, 0), row(TK, 1)], SH, {
         onSpawn: (client, already) => {
-          if (client.hubUrl === TK && already.every((row) => row.hubUrl !== TK)) {
+          if (client.uplinkUrl === TK && already.every((row) => row.uplinkUrl !== TK)) {
             client.failNext = true;
           }
         },
@@ -577,7 +577,7 @@ describe('RelaySecondaryAttach', () => {
       await manager.reconcile();
       await waitUntil(() => scheduler.sleeps.length > 0);
       expect(
-        lines.some((row) => row.includes('[uplink] secondary connect failed hub=tk.example'))
+        lines.some((row) => row.includes('[uplink] secondary connect failed url=tk.example'))
       ).toBe(true);
       expect(
         lines.some((row) => /attempt=1 reason=connect-failed next_retry_ms=\d+/.test(row))
@@ -587,7 +587,7 @@ describe('RelaySecondaryAttach', () => {
       expect(scheduler.sleeps[0]?.ms).toBe(loggedMs);
       scheduler.flushSleeps();
       await waitUntil(() => manager.client(TK)?.state === 'online');
-      expect(lines.some((row) => row.includes('[uplink] secondary online hub=tk.example'))).toBe(
+      expect(lines.some((row) => row.includes('[uplink] secondary online url=tk.example'))).toBe(
         true
       );
       await manager.stop();
@@ -607,13 +607,13 @@ describe('RelaySecondaryAttach', () => {
       const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], SH);
       manager.start();
       await manager.reconcile();
-      await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
-      const first = spawned.find((c) => c.hubUrl === TK);
+      await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.state === 'online'));
+      const first = spawned.find((c) => c.uplinkUrl === TK);
       first!.lastConnectError = { reason: 'path-rerace', at: 1 };
       first!.disconnect();
-      await waitUntil(() => spawned.filter((c) => c.hubUrl === TK).length >= 2);
+      await waitUntil(() => spawned.filter((c) => c.uplinkUrl === TK).length >= 2);
       expect(
-        lines.filter((row) => row.includes('[uplink] secondary online hub=tk.example'))
+        lines.filter((row) => row.includes('[uplink] secondary online url=tk.example'))
       ).toHaveLength(1);
       await manager.stop();
     } finally {

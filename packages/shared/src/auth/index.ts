@@ -249,12 +249,12 @@ export {
   DOMAIN_UPLINK_AUTH,
   UplinkAuthSchema,
   decodeUplinkAuth,
-  hubHostFromUrl,
+  hostFromUrl,
   uplinkAuthMessage,
 } from './uplink-auth';
 export type { UplinkAuth } from './uplink-auth';
 
-export { canonicalHubUrl } from './hub-url';
+export { canonicalPublicUrl } from './public-url';
 
 export {
   MIN_RELAY_RECORD_VERSION,

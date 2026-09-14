@@ -18,7 +18,7 @@ import {
   readPreferredRelayUrl,
   writePreferredRelayUrl,
 } from './relay-preferred';
-import { sameHubUrl } from './uplink-pool-url';
+import { sameUplinkUrl } from './uplink-pool-url';
 
 export const RELAY_PENDING_KEY_TTL_MS = 10 * 60 * 1000;
 export const RELAY_PENDING_KEY_LIMIT = 8;
@@ -66,7 +66,11 @@ function classifyPrimaryShift(
   const rowsChanged = print.rows !== lastRowsKey;
   if (print.primary === lastPrimaryKey) return { primaryChanged: false, rowsChanged };
   // 已经挂在新主上（手动 /relay/switch 先切过去了）→ 只刷 secondary；否则走重启。
-  if (print.primaryUrl && attachedPrimaryUrl && sameHubUrl(attachedPrimaryUrl, print.primaryUrl)) {
+  if (
+    print.primaryUrl &&
+    attachedPrimaryUrl &&
+    sameUplinkUrl(attachedPrimaryUrl, print.primaryUrl)
+  ) {
     return { primaryChanged: false, rowsChanged: true };
   }
   return { primaryChanged: true, rowsChanged };

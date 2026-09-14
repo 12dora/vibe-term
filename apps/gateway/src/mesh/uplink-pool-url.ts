@@ -1,5 +1,5 @@
-import { canonicalHubUrl, hubHostFromUrl } from '@vibeterm/shared/auth';
-import type { AttachedHub, UplinkCandidate } from './uplink-pool';
+import { canonicalPublicUrl, hostFromUrl } from '@vibeterm/shared/auth';
+import type { AttachedUplink, UplinkCandidate } from './uplink-pool';
 
 export function redactUrl(raw: string): string {
   try {
@@ -16,37 +16,37 @@ export function redactUrl(raw: string): string {
   }
 }
 
-export function normalizeHubEndpointUrl(raw: string): string {
+export function normalizeUplinkEndpointUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
   try {
-    return canonicalHubUrl(trimmed);
+    return canonicalPublicUrl(trimmed);
   } catch {
     return trimmed.replace(/\/+$/, '');
   }
 }
 
-export function sameHubUrl(a: string, b: string): boolean {
-  return normalizeHubEndpointUrl(a) === normalizeHubEndpointUrl(b);
+export function sameUplinkUrl(a: string, b: string): boolean {
+  return normalizeUplinkEndpointUrl(a) === normalizeUplinkEndpointUrl(b);
 }
 
-export function isSelfHubCandidate(
-  cand: Pick<UplinkCandidate, 'hubNodeId' | 'publicUrl'>,
+export function isSelfUplinkCandidate(
+  cand: Pick<UplinkCandidate, 'uplinkNodeId' | 'publicUrl'>,
   self: { nodeId?: string | null; publicUrl?: string | null }
 ): boolean {
-  if (self.nodeId && cand.hubNodeId && cand.hubNodeId === self.nodeId) return true;
-  if (self.publicUrl && sameHubUrl(cand.publicUrl, self.publicUrl)) return true;
+  if (self.nodeId && cand.uplinkNodeId && cand.uplinkNodeId === self.nodeId) return true;
+  if (self.publicUrl && sameUplinkUrl(cand.publicUrl, self.publicUrl)) return true;
   return false;
 }
 
-export function attachedHubHost(
-  attached: AttachedHub | null,
+export function attachedUplinkHost(
+  attached: AttachedUplink | null,
   fallbackUrl?: string | null
 ): string | null {
   const url = attached?.publicUrl ?? fallbackUrl;
   if (!url) return null;
   try {
-    return hubHostFromUrl(url);
+    return hostFromUrl(url);
   } catch {
     return null;
   }

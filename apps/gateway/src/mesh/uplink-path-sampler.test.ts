@@ -349,24 +349,24 @@ describe('re-race budget', () => {
   });
 });
 
-describe('relay + hub sampling targets', () => {
-  test('两个中继行、无 hub 时每个公网 host 每拍 3 次 connect，行变更下一拍才生效', async () => {
+describe('relay sampling targets', () => {
+  test('两个中继行、无 uplink 候选时每个公网 host 每拍 3 次 connect，行变更下一拍才生效', async () => {
     const scheduler = new ManualScheduler();
     const fake = pendingProbe();
     const rows: Array<{ url: string }> = [
       { url: 'https://relay-a.example' },
       { url: 'https://relay-b.example' },
     ];
-    const hub = { candidates: () => [] as Array<{ publicUrl: string }> };
+    const uplink = { candidates: () => [] as Array<{ publicUrl: string }> };
     const relay = { secrets: { relayRows: () => rows } };
-    expect(collectUplinkPathTargets(hub.candidates(), relay.secrets.relayRows())).toEqual([
+    expect(collectUplinkPathTargets(uplink.candidates(), relay.secrets.relayRows())).toEqual([
       'https://relay-a.example',
       'https://relay-b.example',
     ]);
     const sampler = new UplinkPathSampler({
       trust: TRUSTED,
       scheduler,
-      targets: () => collectUplinkPathTargets(hub.candidates(), relay.secrets.relayRows()),
+      targets: () => collectUplinkPathTargets(uplink.candidates(), relay.secrets.relayRows()),
       probe: fake.probe,
     });
     const takeTick = async (expectedHosts: string[]) => {

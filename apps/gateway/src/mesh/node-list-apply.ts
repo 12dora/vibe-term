@@ -6,8 +6,8 @@ import type { PeerReach, PeerTransportKind } from './types';
 import { persistUplinkPeerCache } from './uplink-peer-persist';
 import type { UplinkNodeList } from './uplink-protocol';
 
-/** D2 删除的 `peer_cache` sentinel；残留行仍跳过。 */
-const HUB_META_PEER_ID = 'hub';
+/** D2 删除的 `peer_cache` sentinel `node_id = 'hub'`；残留行仍跳过。 */
+const LEGACY_SENTINEL_PEER_ID = 'hub';
 
 export const STATUS_IFACE_CACHE_TTL_MS = 8_000;
 
@@ -155,8 +155,8 @@ export type NodeListRejectPeerFn = (nodeId: string, alwaysDelete: boolean) => bo
 export type NodeListApplyDeps = {
   state: {
     lastNodeList: UplinkNodeList | null;
-    hubPresenceLive?: boolean;
-    hubGeneration: number;
+    uplinkPresenceLive?: boolean;
+    uplinkGeneration: number;
     lastRtc: { stun: string[]; turn: unknown } | null;
   };
   /** 中继 URL：primary 清单按此合并 TURN/STUN，而不是覆盖。 */
@@ -190,7 +190,7 @@ export function emitListedNodeEvents(
   rejectPeer: NodeListRejectPeerFn
 ): void {
   for (const node of list.nodes) {
-    if (node.id === HUB_META_PEER_ID) continue;
+    if (node.id === LEGACY_SENTINEL_PEER_ID) continue;
     if (rejectPeer(node.id, true)) continue;
     d.emitListNodeEvent({
       nodeId: node.id,
@@ -245,7 +245,7 @@ export function pruneStaleListedPeers(
   for (const peer of d.userStore.listPeers()) {
     if (
       peer.nodeId === d.identity.nodeIdHex ||
-      peer.nodeId === HUB_META_PEER_ID ||
+      peer.nodeId === LEGACY_SENTINEL_PEER_ID ||
       retain.has(peer.nodeId)
     ) {
       continue;
@@ -325,8 +325,8 @@ export function applyUplinkNodeList(
   const { state, identity } = d;
   const applied = mergeAppliedNodeList(list, d.extraListedNodes?.() ?? [], d.onlineUnionIds?.());
   state.lastNodeList = applied;
-  if (!state.hubPresenceLive) state.hubGeneration += 1;
-  state.hubPresenceLive = true;
+  if (!state.uplinkPresenceLive) state.uplinkGeneration += 1;
+  state.uplinkPresenceLive = true;
   state.lastRtc = mergeListedRtc(
     state.lastRtc,
     list.rtc,

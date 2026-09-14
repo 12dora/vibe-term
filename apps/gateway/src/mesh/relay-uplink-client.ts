@@ -1,4 +1,4 @@
-import { encodeBase64url, hubHostFromUrl } from '@vibeterm/shared/auth';
+import { encodeBase64url, hostFromUrl } from '@vibeterm/shared/auth';
 import {
   type LinkSession,
   type LinkStream,
@@ -66,7 +66,7 @@ import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './u
 import { closeTransport } from './uplink-reconnect';
 
 export type RelayUplinkClientOptions = {
-  hubUrl: string;
+  uplinkUrl: string;
   identity: MeshIdentity;
   userId: string | (() => string);
   keyLogApplier: KeyLogApplier;
@@ -98,7 +98,7 @@ export type RelayUplinkClientOptions = {
  */
 export class RelayUplinkClient implements RelayUplinkCtlHost {
   readonly identity: MeshIdentity;
-  readonly hubUrl: string;
+  readonly uplinkUrl: string;
   link: LinkSession | null = null;
   state: UplinkState = 'offline';
   lastConnectError: { reason: string; at: number } | null = null;
@@ -137,8 +137,8 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
 
   constructor(opts: RelayUplinkClientOptions) {
     this.opts = opts;
-    this.hubUrl = opts.hubUrl;
-    this.relayHost = hubHostFromUrl(opts.hubUrl);
+    this.uplinkUrl = opts.uplinkUrl;
+    this.relayHost = hostFromUrl(opts.uplinkUrl);
     this.identity = opts.identity;
     const uid = opts.userId;
     this.userIdOf = typeof uid === 'function' ? uid : () => uid;
@@ -150,7 +150,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       tearDown: (reason) => this.tearDownLink(reason),
       onTick: () => this.sendStatusIfChanged(),
       onSample: (rttMs) => this.opts.onRtt?.(rttMs),
-      url: () => this.hubUrl,
+      url: () => this.uplinkUrl,
       linkAgeMs: () => (this.onlineAt > 0 ? this.scheduler.now() - this.onlineAt : 0),
       inFlight: () => this.relayGate.count(this.keyLog.pendingOps()),
       generation: () => this.connectGeneration,
@@ -165,7 +165,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         send: (msg) => this.rawSend(msg),
         logKey: () => this.opts.secrets.logKey(),
         memberFor: (record) => relayMemberFromRecord(record),
-        url: () => this.hubUrl,
+        url: () => this.uplinkUrl,
       },
       applier: opts.keyLogApplier,
       pushMode: opts.keyLogCatchUp === 'prefix-verified' ? 'prefix-verified' : 'publish',
@@ -231,7 +231,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
 
   markUnkicked(): void {
     try {
-      this.opts.secrets.store.markKicked(this.hubUrl, false);
+      this.opts.secrets.store.markKicked(this.uplinkUrl, false);
     } catch {
       /* 行可能刚被 set-relays 换掉 */
     }
@@ -362,7 +362,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     );
   }
 
-  async queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
+  async queryKeyLogHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
     return this.keyLog.queryHead();
   }
 
@@ -411,7 +411,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   async needsReauthentication(): Promise<boolean> {
     if (!this.isAuthenticated() || !this.connectionToken) return false;
     const generation = this.connectGeneration;
-    const relay = await this.opts.secrets.store.getRelay(this.hubUrl);
+    const relay = await this.opts.secrets.store.getRelay(this.uplinkUrl);
     return (
       generation === this.connectGeneration &&
       relay !== null &&
@@ -440,7 +440,10 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   private async connectOnce(signal: AbortSignal): Promise<void> {
-    const dialUrl = resolveRelayDialUrl(this.hubUrl, this.opts.dial ?? relayDialContextFromEnv());
+    const dialUrl = resolveRelayDialUrl(
+      this.uplinkUrl,
+      this.opts.dial ?? relayDialContextFromEnv()
+    );
     const wsFactory =
       this.opts.wsFactory ?? defaultRelayWsFactory(relayTlsCaForDial(dialUrl, this.opts.tlsCa));
     const timeoutMs = this.opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS;
@@ -459,7 +462,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         throw new Error('connect-timeout');
       }
       await waitSocketOpen(ws, timeoutMs, timeout.signal);
-      const logContext = { transport: 'relay-uplink', url: this.hubUrl };
+      const logContext = { transport: 'relay-uplink', url: this.uplinkUrl };
       await this.connectWithLink(
         new WebSocketLink(ws, { role: 'initiator', logContext }),
         timeout.signal
@@ -501,7 +504,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         stream.reset('relay-unhandled');
         return;
       }
-      handler(this.trackRelayStream(stream), from, this.hubUrl);
+      handler(this.trackRelayStream(stream), from, this.uplinkUrl);
     });
     void link.closed.then((info) => {
       if (generation !== this.connectGeneration) return;

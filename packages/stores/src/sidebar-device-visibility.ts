@@ -23,7 +23,7 @@ export function isSidebarDeviceVisible(
  * 侧边栏「文件」页的设备可见性，与终端页分开记（同一套复合键，另一张表）。
  *
  * 缺省规则与终端页对齐：本机（`self`）且配了目录的设备默认显示，远端 node 的设备一律默认隐藏
- * ——hub 下挂几十台 node 时，别人配的目录会把文件树灌满，用户在「管理设备」里逐台开启；
+ * ——mesh 下挂几十台 node 时，别人配的目录会把文件树灌满，用户在「管理设备」里逐台开启；
  * 没配目录时无从显示，缺省即关。显式写入的值永远优先。
  */
 export function isSidebarFilesVisible(

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
-  DIAL_IDENTITY_PATH_HUB,
+  DIAL_IDENTITY_PATH_HEALTHZ,
   DIAL_RESOLVE_NEGATIVE_TTL_MS,
   DIAL_RESOLVE_TTL_MS,
   checkDialIdentity,
@@ -562,7 +562,7 @@ describe('checkDialIdentity', () => {
       identityCheckUrl({
         ip: '203.0.113.10',
         hostname: 'hub.example',
-        path: DIAL_IDENTITY_PATH_HUB,
+        path: DIAL_IDENTITY_PATH_HEALTHZ,
       })
     ).toBe('https://203.0.113.10/healthz');
     const ok = await checkDialIdentity({

@@ -1,4 +1,4 @@
-import { hubHostFromUrl } from '@vibeterm/shared/auth';
+import { hostFromUrl } from '@vibeterm/shared/auth';
 import { parseVibeTermRoles, resolveGatewayPort } from '../config';
 
 export type RelayDialContext = {
@@ -69,8 +69,8 @@ export function resolveRelayDialUrl(url: string, ctx: RelayDialContext): string 
   let targetHost: string;
   let publicHost: string;
   try {
-    targetHost = hubHostFromUrl(url);
-    publicHost = hubHostFromUrl(publicUrl);
+    targetHost = hostFromUrl(url);
+    publicHost = hostFromUrl(publicUrl);
   } catch {
     return url;
   }

@@ -1,7 +1,7 @@
 import type { RelayLinkErrorCode } from '@vibeterm/shared/relay';
 import { UPLINK_RTT_MIN_SAMPLES, isRttSwitchWorth } from './uplink-nearest-switch';
 import { UPLINK_RTT_EWMA_ALPHA, UPLINK_RTT_SWITCH_DWELL_MS } from './uplink-pool';
-import { sameHubUrl } from './uplink-pool-url';
+import { sameUplinkUrl } from './uplink-pool-url';
 
 export const RELAY_SCORE_PATH_WEIGHT = 0.15;
 export const RELAY_SCORE_LOAD_WEIGHT = 0.05;
@@ -87,7 +87,7 @@ export function pinIsFrozen(
   rows: readonly RelayScoreInput[]
 ): boolean {
   if (!preferredUrl) return false;
-  const pin = rows.find((row) => sameHubUrl(row.url, preferredUrl));
+  const pin = rows.find((row) => sameUplinkUrl(row.url, preferredUrl));
   return Boolean(pin && !pin.kicked);
 }
 
@@ -117,7 +117,7 @@ export function considerAutoSwitch(input: {
   if (
     currentScore == null ||
     !best ||
-    (input.currentUrl && sameHubUrl(best.url, input.currentUrl))
+    (input.currentUrl && sameUplinkUrl(best.url, input.currentUrl))
   ) {
     return {
       decision: { type: 'none' },
@@ -207,7 +207,9 @@ function lowestScored(
 }
 
 function isPreferredTie(url: string, currentUrl: string | null, bestUrl: string): boolean {
-  return Boolean(currentUrl && sameHubUrl(url, currentUrl) && !sameHubUrl(bestUrl, currentUrl));
+  return Boolean(
+    currentUrl && sameUplinkUrl(url, currentUrl) && !sameUplinkUrl(bestUrl, currentUrl)
+  );
 }
 
 function inDwell(lastAutoSwitchAt: number, now: number, dwellMs: number): boolean {
@@ -221,7 +223,7 @@ function advanceHysteresis(
   lastConsiderAt: number,
   intervalMs: number | undefined
 ): { hysteresis: RelayHysteresis; lastConsiderAt: number } {
-  if (!prev.consecutiveUrl || !sameHubUrl(prev.consecutiveUrl, url)) {
+  if (!prev.consecutiveUrl || !sameUplinkUrl(prev.consecutiveUrl, url)) {
     return { hysteresis: { consecutiveUrl: url, consecutiveCount: 1 }, lastConsiderAt: now };
   }
   if (intervalMs != null && lastConsiderAt > 0 && now - lastConsiderAt < intervalMs) {

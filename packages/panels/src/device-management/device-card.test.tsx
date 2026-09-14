@@ -342,7 +342,7 @@ describe('DeviceCard 的侧栏可见性开关', () => {
     ).toBe('checked');
   });
 
-  // 与终端开关同一条缺省：hub 下几十台 node，别人配的目录不该自动灌进文件树
+  // 与终端开关同一条缺省：mesh 下几十台 node，别人配的目录不该自动灌进文件树
   test('文件开关：远端 node 的设备默认关，但配过目录就可开', () => {
     const html = renderCard({ nodeContext: REMOTE_CONTEXT, roots: [DEVICE_ROOT] });
     expect(switchState(html, 'device-card-sidebar-files-dev-1')).toBe('unchecked');

@@ -4,7 +4,7 @@
 // 模块必须保持浏览器安全（不引 `node:*`）：前端 bundle 会带上 `@vibeterm/shared/net`。
 // 探测本身仍只在 Bun 侧执行——浏览器跨域打不到 `/api/relay/health`。
 
-import { canonicalHubUrl } from '../auth/hub-url';
+import { canonicalPublicUrl } from '../auth/public-url';
 
 /**
  * 建议的高位端口。前五个是 Cloudflare 橙云代理 HTTPS 时放行的端口（套 CDN 时不必再换端口），
@@ -33,7 +33,7 @@ export function isLoopbackHostname(hostname: string): boolean {
 export type ProbeKind = 'relay';
 
 export interface ProbeTarget {
-  /** 规范化后的地址（`canonicalHubUrl`），默认端口不出现在里面。 */
+  /** 规范化后的地址（`canonicalPublicUrl`），默认端口不出现在里面。 */
   base: string;
   protocol: string;
   /** 用户显式写出的端口；没写为 `null`。 */
@@ -68,12 +68,12 @@ export interface ProbeAddressPortsOptions {
   resolveDialUrl?: (url: string) => string;
 }
 
-/** 裸主机名按回环与否补 scheme，随后一律过 `canonicalHubUrl`，与全系统同一把尺子。 */
+/** 裸主机名按回环与否补 scheme，随后一律过 `canonicalPublicUrl`，与全系统同一把尺子。 */
 export function parseProbeTarget(hostOrUrl: string): ProbeTarget {
   const trimmed = hostOrUrl.trim();
   if (!trimmed) throw new Error('invalid probe target: empty address');
   const withScheme = SCHEME_RE.test(trimmed) ? trimmed : `${bareHostScheme(trimmed)}://${trimmed}`;
-  const base = canonicalHubUrl(withScheme);
+  const base = canonicalPublicUrl(withScheme);
   const protocol = new URL(base).protocol;
   const explicitPort = readExplicitPort(withScheme);
   return {
@@ -100,7 +100,7 @@ function readExplicitPort(withScheme: string): number | null {
 function withPort(base: string, port: number): string {
   const url = new URL(base);
   url.port = String(port);
-  return canonicalHubUrl(url.toString());
+  return canonicalPublicUrl(url.toString());
 }
 
 /** 显式端口与回环只有一个候选；其余是「默认端口 + 候选表」。 */

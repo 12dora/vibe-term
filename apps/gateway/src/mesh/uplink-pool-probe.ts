@@ -1,13 +1,13 @@
 import type { PooledUplink } from './types';
 import { isCurrentUplinkSession } from './uplink-nearest-switch';
-import type { AttachedHub, UplinkCandidate, UplinkSwitchResult } from './uplink-pool';
-import { redactUrl, sameHubUrl } from './uplink-pool-url';
+import type { AttachedUplink, UplinkCandidate, UplinkSwitchResult } from './uplink-pool';
+import { redactUrl, sameUplinkUrl } from './uplink-pool-url';
 
 /** 与 `UPLINK_POOL_FAIL_LOG_INTERVAL_MS` 同值：probe fail/ok 按 hub 节流。 */
 export const PROBE_LOG_INTERVAL_MS = 60_000;
 
 export type PreferredProbeHost = {
-  attachedHub(): AttachedHub | null;
+  attachedUplink(): AttachedUplink | null;
   liveClient(): PooledUplink | null;
   candidates(): UplinkCandidate[];
   stopProbe(): void;
@@ -25,11 +25,11 @@ export type PreferredProbeHost = {
 
 /** healthz / probe 日志先于 drain；只有候选健康才等当前上行排空再 switch-back。 */
 export async function runPreferredProbe(host: PreferredProbeHost): Promise<void> {
-  const attached = host.attachedHub();
+  const attached = host.attachedUplink();
   const live = host.liveClient();
   if (!attached || live?.state !== 'online') return;
   const cands = host.candidates();
-  const idx = cands.findIndex((row) => sameHubUrl(row.publicUrl, attached.publicUrl));
+  const idx = cands.findIndex((row) => sameUplinkUrl(row.publicUrl, attached.publicUrl));
   if (idx <= 0) {
     host.stopProbe();
     return;
@@ -44,7 +44,7 @@ export async function runPreferredProbe(host: PreferredProbeHost): Promise<void>
 async function switchPreferredIfHealthy(
   host: PreferredProbeHost,
   live: PooledUplink,
-  attached: AttachedHub,
+  attached: AttachedUplink,
   pref: UplinkCandidate,
   index: number
 ): Promise<boolean> {
@@ -52,23 +52,23 @@ async function switchPreferredIfHealthy(
   const ok = await host.probeHealthz(pref.publicUrl);
   if (!ok) {
     if (allowProbeLog(host, `fail:${pref.publicUrl}`)) {
-      host.log(`[uplink] probe fail hub=${origin}`);
+      host.log(`[uplink] probe fail url=${origin}`);
     }
     return false;
   }
   // 即将 drain + switch：probe ok 不节流。
-  host.log(`[uplink] probe ok hub=${origin}`);
+  host.log(`[uplink] probe ok url=${origin}`);
   const streams = host.drainCount(live);
   host.log(
-    `[uplink] probe waiting drain reason=switch-back streams=${streams} hub=${redactUrl(attached.publicUrl)}`
+    `[uplink] probe waiting drain reason=switch-back streams=${streams} url=${redactUrl(attached.publicUrl)}`
   );
   await host.waitDrain(live);
   if (
     !isCurrentUplinkSession(
       host.liveClient(),
-      host.attachedHub(),
+      host.attachedUplink(),
       { attached, live, best: pref },
-      sameHubUrl
+      sameUplinkUrl
     )
   ) {
     return true;

@@ -22,9 +22,9 @@ function deps(over: {
     } as unknown as RelaySecrets,
     uplink: {
       liveClient: () => ({ state: 'online' }) as never,
-      attachedHub: () => ({
+      attachedUplink: () => ({
         publicUrl: SH,
-        hubNodeId: null,
+        uplinkNodeId: null,
         mode: 'active',
         writerEpoch: 0,
         since: 1,

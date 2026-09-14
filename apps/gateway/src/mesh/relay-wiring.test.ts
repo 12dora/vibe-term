@@ -19,7 +19,7 @@ function stubWiring(): RelayWiring {
 
 function baseClientOpts(wsFactory: UplinkClientOptions['wsFactory']): UplinkClientOptions {
   return {
-    hubUrl: RELAY_URL,
+    uplinkUrl: RELAY_URL,
     identity: { nodeId: 'aa'.repeat(16), edSecretKey: new Uint8Array(64) },
     userId: 'user-1',
     keyLogApplier: {

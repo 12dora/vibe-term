@@ -257,8 +257,25 @@ function meshEnrollRedeemedToWire(msg: MeshUplinkEnrollRedeemed): PeerUplinkCtlM
   };
 }
 
+function toPeerKeyLogCtl(msg: MeshUplinkCtlMessage): PeerUplinkCtlMessage | null {
+  switch (msg.t) {
+    case 'key.log.req':
+      return meshKeyLogReqToWire(msg);
+    case 'key.log.res':
+      return meshKeyLogResToWire(msg);
+    case 'key.log.append':
+      return meshKeyLogAppendToWire(msg);
+    case 'key.log.ack':
+      return meshKeyLogAckToWire(msg);
+    default:
+      return null;
+  }
+}
+
 /** mesh 侧消息先归一到 peer 线的线上表示，再复用 peer 的编码 / legacy 剥字段实现。 */
 function toPeerWireCtl(msg: MeshUplinkCtlMessage): PeerUplinkCtlMessage {
+  const keyLog = toPeerKeyLogCtl(msg);
+  if (keyLog) return keyLog;
   switch (msg.t) {
     case 'auth.challenge':
     case 'auth.response':
@@ -270,16 +287,10 @@ function toPeerWireCtl(msg: MeshUplinkCtlMessage): PeerUplinkCtlMessage {
       return msg;
     case 'node.list':
       return meshNodeListToWire(msg);
-    case 'key.log.req':
-      return meshKeyLogReqToWire(msg);
-    case 'key.log.res':
-      return meshKeyLogResToWire(msg);
-    case 'key.log.append':
-      return meshKeyLogAppendToWire(msg);
-    case 'key.log.ack':
-      return meshKeyLogAckToWire(msg);
     case 'enroll.redeemed':
       return meshEnrollRedeemedToWire(msg);
+    default:
+      throw new Error(`unreachable uplink ctl t: ${msg.t}`);
   }
 }
 

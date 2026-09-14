@@ -7,7 +7,7 @@ import {
 } from '@vibeterm/shared/auth';
 import { makeDeferredVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthRoutesDeps } from './auth-routes';
-import type { KeyLogHubAck } from './mesh-deps';
+import type { KeyLogPublishAck } from './mesh-deps';
 
 export class AuthKeyLogSync {
   constructor(private readonly deps: AuthRoutesDeps) {}
@@ -71,7 +71,7 @@ export class AuthKeyLogSync {
     bytes: Uint8Array;
     sig: Uint8Array;
     force?: boolean;
-  }): Promise<KeyLogHubAck> {
+  }): Promise<KeyLogPublishAck> {
     const publishAndAck = this.deps.publisher.publishAndAck;
     if (!publishAndAck) {
       return { ok: false, error: 'unavailable' };
@@ -87,7 +87,7 @@ export class AuthKeyLogSync {
   async publishToRelay(record: {
     bytes: Uint8Array;
     sig: Uint8Array;
-  }): Promise<KeyLogHubAck> {
+  }): Promise<KeyLogPublishAck> {
     const ack = await this.safePublishAndAck(record);
     if (ack.ok || (ack.error !== 'timeout' && ack.error !== 'SEQ_MISMATCH')) return ack;
     try {

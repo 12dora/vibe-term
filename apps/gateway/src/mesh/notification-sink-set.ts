@@ -23,7 +23,7 @@ export type SinkSetInput = {
   /** hub 侧 `user_nodes` 行；只用来取显示名。 */
   nodes: ReadonlyArray<{ id: string; name: string }>;
   reach: ReadonlyMap<string, PeerReach | undefined>;
-  hubOnline: ReadonlySet<string>;
+  listedOnline: ReadonlySet<string>;
 };
 
 export function collectMeshNotificationSinks(input: SinkSetInput): MeshNotificationSink[] {
@@ -55,7 +55,7 @@ export function collectMeshNotificationSinks(input: SinkSetInput): MeshNotificat
         selfName: input.selfName,
       }),
       self: isSelf,
-      online: isSelf || input.hubOnline.has(id) || isPeerReachable(input.reach.get(id)),
+      online: isSelf || input.listedOnline.has(id) || isPeerReachable(input.reach.get(id)),
     });
   }
   sinks.sort((a, b) => (a.self === b.self ? a.name.localeCompare(b.name) : a.self ? -1 : 1));

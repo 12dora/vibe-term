@@ -109,7 +109,7 @@ export class PeerManager extends PeerCollaboratorHost {
     this.onBrowserSignal = opts.onBrowserSignal ?? null;
     this.ensureDcSession = opts.ensureDcSession ?? null;
     this.dispatchHttp = opts.dispatchHttp;
-    const uplinkHost = opts.uplinkHost ?? opts.hubHost;
+    const uplinkHost = opts.uplinkHost;
     this.uplinkHostOf = typeof uplinkHost === 'function' ? uplinkHost : () => uplinkHost ?? null;
     const parts = createPeerCollaborators({
       opts,

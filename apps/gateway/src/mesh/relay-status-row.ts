@@ -13,7 +13,7 @@ import { matchingTurnProbe } from './rtc/stun-effective';
 import { tcpSamplingTrusted } from './tcp-sampling-trust';
 import type { PooledUplink } from './types';
 import { isUplinkPathRerace, uplinkPathView } from './uplink-path-sampler';
-import { sameHubUrl } from './uplink-pool-url';
+import { sameUplinkUrl } from './uplink-pool-url';
 
 export type RelayCandidateError = {
   lastError: string | null;
@@ -87,7 +87,7 @@ export function buildRelayStatusRow(
   candidates: RelayStatusCandidate[],
   extras?: RelayStatusRowExtras
 ): RelayStatusRow {
-  const attached = attachedUrl != null && sameHubUrl(attachedUrl, row.url);
+  const attached = attachedUrl != null && sameUplinkUrl(attachedUrl, row.url);
   const online = statusRowOnline(attached, client, extras);
   const cand = candidates.find((entry) => entry.publicUrl === row.url);
   const errors = statusRowErrors(online, attached, extras, live, cand);
@@ -188,7 +188,7 @@ export function collectRelayStatusRows(input: {
   scoreOf?: (url: string) => number | null;
 }): RelayStatusRow[] {
   return input.rows.map((row) => {
-    const attached = input.attachedUrl != null && sameHubUrl(input.attachedUrl, row.url);
+    const attached = input.attachedUrl != null && sameUplinkUrl(input.attachedUrl, row.url);
     const client = attached ? input.primary : input.secondaryOf(row.url);
     const connected = client?.state === 'online';
     return buildRelayStatusRow(row, input.attachedUrl, client, input.live, input.candidates, {
@@ -215,7 +215,7 @@ function statusSelectExtras(
   connected: boolean
 ): Pick<RelayStatusRowExtras, 'pinned' | 'autoSelected' | 'score'> {
   return {
-    ...(input.preferredUrl && sameHubUrl(input.preferredUrl, url) ? { pinned: true } : {}),
+    ...(input.preferredUrl && sameUplinkUrl(input.preferredUrl, url) ? { pinned: true } : {}),
     ...(input.autoSelected && attached && connected ? { autoSelected: true } : {}),
     ...(connected && input.scoreOf ? { score: roundRelayScore(input.scoreOf(url)) } : {}),
   };

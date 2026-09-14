@@ -5,7 +5,7 @@ import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   buildKeyLogRecord,
-  canonicalHubUrl,
+  canonicalPublicUrl,
   encodeBase64url,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
@@ -29,7 +29,7 @@ import { challengeAndLogin } from './auth-routes.test';
 import { MeshHttpRuntime } from './mesh-http';
 import { buildMetaKeyPayload, buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
 import { createRelayWiring } from './relay-wiring';
-import type { AttachedHub } from './uplink-pool';
+import type { AttachedUplink } from './uplink-pool';
 
 const RELAY_URL = 'https://relay.example';
 const RELAY_URL_2 = 'https://relay2.example';
@@ -80,7 +80,7 @@ function livePublisher(): PublisherSpy {
 
 async function boot(opts?: {
   publisher?: PublisherSpy;
-  attachedHub?: () => AttachedHub | null;
+  attachedUplink?: () => AttachedUplink | null;
   roles?: { node: boolean; relay: boolean };
 }) {
   const { db, close } = createMigratedAuthDb();
@@ -128,7 +128,7 @@ async function boot(opts?: {
     nodeSessionStore,
     publisher,
     primaryUserId: user.userId,
-    attachedHub: opts?.attachedHub,
+    attachedUplink: opts?.attachedUplink,
   });
   const { sid } = await challengeAndLogin(runtime, user, {
     target: identity.nodeIdHex,
@@ -245,14 +245,14 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       expect(b.wiring.secrets.uplinkKind()).toBe('relay');
       expect(b.wiring.secrets.relayRows()).toEqual([
         {
-          url: canonicalHubUrl(RELAY_URL),
+          url: canonicalPublicUrl(RELAY_URL),
           tenantId: TENANT_ID,
           priority: 0,
           kicked: false,
           kickedReason: null,
         },
       ]);
-      const stored = await b.wiring.secrets.store.getRelay(canonicalHubUrl(RELAY_URL));
+      const stored = await b.wiring.secrets.store.getRelay(canonicalPublicUrl(RELAY_URL));
       expect(stored?.token).toEqual(token);
     } finally {
       b.close();
@@ -274,7 +274,7 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       ).toBe(200);
       await b.settle();
       expect(b.wiring.secrets.uplinkKind()).toBe('relay');
-      b.wiring.secrets.store.markKicked(canonicalHubUrl(RELAY_URL), true);
+      b.wiring.secrets.store.markKicked(canonicalPublicUrl(RELAY_URL), true);
 
       // 重新输入中继口令拿到新令牌 → 再签一条 set-relays
       const newToken = new Uint8Array(32).fill(2);
@@ -285,7 +285,7 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       expect(res.status).toBe(200);
       expect((await successBody(res)).hubAck).toBe(true);
       await b.settle();
-      const stored = await b.wiring.secrets.store.getRelay(canonicalHubUrl(RELAY_URL));
+      const stored = await b.wiring.secrets.store.getRelay(canonicalPublicUrl(RELAY_URL));
       expect(stored?.token).toEqual(newToken);
       // replaceRelays 会把 kicked 归零，池子下一轮拨号即用新令牌
       expect(b.wiring.secrets.relayRows()[0]?.kicked).toBe(false);
@@ -295,14 +295,14 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
   });
 
   test('(c) hub → 中继迁移：set-relays 不发给旧 hub，也不受 attached-writer 判定阻挡', async () => {
-    const attached: AttachedHub = {
-      hubNodeId: 'cc'.repeat(16),
+    const attached: AttachedUplink = {
+      uplinkNodeId: 'cc'.repeat(16),
       publicUrl: 'https://hub.example',
       mode: 'active',
       writerEpoch: 1,
       since: 1,
     };
-    const b = await boot({ publisher: livePublisher(), attachedHub: () => attached });
+    const b = await boot({ publisher: livePublisher(), attachedUplink: () => attached });
     try {
       const before = headSeq(b);
       const res = await postRecord(b, {
@@ -322,14 +322,14 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
   });
 
   test('中继模式下普通记录不再被 HUB_NOT_WRITER 挡住，并尽力推给中继', async () => {
-    const attached: AttachedHub = {
-      hubNodeId: null,
+    const attached: AttachedUplink = {
+      uplinkNodeId: null,
       publicUrl: RELAY_URL,
       mode: 'active',
       writerEpoch: 0,
       since: 1,
     };
-    const b = await boot({ publisher: livePublisher(), attachedHub: () => attached });
+    const b = await boot({ publisher: livePublisher(), attachedUplink: () => attached });
     try {
       await attachRelay(b);
       const before = headSeq(b);
@@ -416,8 +416,8 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       expect((await postRecord(b, { type: 'set-relays', payload })).status).toBe(200);
       await b.settle();
       expect(b.wiring.secrets.relayRows().map((row) => row.url)).toEqual([
-        canonicalHubUrl(RELAY_URL),
-        canonicalHubUrl(RELAY_URL_2),
+        canonicalPublicUrl(RELAY_URL),
+        canonicalPublicUrl(RELAY_URL_2),
       ]);
     } finally {
       b.close();

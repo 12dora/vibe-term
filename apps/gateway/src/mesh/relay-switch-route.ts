@@ -8,14 +8,14 @@ import type { RelayStatusCandidate } from './relay-status-row';
 import type { RelayUplinkClient } from './relay-uplink-client';
 import { jsonBody, jsonError } from './session-middleware';
 import type { PooledUplink } from './types';
-import { type AttachedHub, sameHubUrl } from './uplink-pool';
+import { type AttachedUplink, sameUplinkUrl } from './uplink-pool';
 import type { UplinkSwitchResult } from './uplink-pool-switch';
 
 export const RELAY_SWITCH_TIMEOUT_MS = 10_000;
 
 export type RelayUplinkView = {
   liveClient(): PooledUplink | null;
-  attachedHub(): AttachedHub | null;
+  attachedUplink(): AttachedUplink | null;
   reconfigure(): Promise<void>;
   candidates(): RelayStatusCandidate[];
   switchTo(url: string, signal?: AbortSignal): Promise<UplinkSwitchResult>;
@@ -50,12 +50,12 @@ export async function handleRelaySwitch(
   const body = await readJsonObjectBody(req);
   const url = normalizeUrlOrNull(body?.url);
   if (!url) return jsonError('INVALID_URL', 400);
-  const row = deps.secrets.relayRows().find((entry) => sameHubUrl(entry.url, url));
+  const row = deps.secrets.relayRows().find((entry) => sameUplinkUrl(entry.url, url));
   if (!row) return jsonError('RELAY_UNKNOWN', 404);
   if (row.kicked) return jsonError('RELAY_KICKED', 409);
-  const attached = deps.uplink.attachedHub();
+  const attached = deps.uplink.attachedUplink();
   const live = deps.uplink.liveClient();
-  if (attached && sameHubUrl(attached.publicUrl, url) && live?.state === 'online') {
+  if (attached && sameUplinkUrl(attached.publicUrl, url) && live?.state === 'online') {
     return jsonError('RELAY_ALREADY_ATTACHED', 409);
   }
   const switched = await runRelaySwitch(deps, url, { persistPin: true });
@@ -76,7 +76,7 @@ export function handleRelayUnpin(deps: RelaySwitchDeps): Response {
     /* 未固定时也当成功 */
   }
   // unpin 后把当前主中继留在 autoPreferred，避免候选序回到 priority 0 被探测拽走
-  deps.uplink.noteAutoPreferred?.(deps.uplink.attachedHub()?.publicUrl ?? null);
+  deps.uplink.noteAutoPreferred?.(deps.uplink.attachedUplink()?.publicUrl ?? null);
   return jsonBody({ ok: true, unpinned });
 }
 

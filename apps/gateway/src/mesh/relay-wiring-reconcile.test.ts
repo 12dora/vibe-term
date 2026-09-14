@@ -44,7 +44,7 @@ function harness(result: RelayReconcileResult) {
     refreshCandidates: () => {
       calls.refresh += 1;
     },
-    attachedHub: () => ({ publicUrl: PRIMARY_URL }),
+    attachedUplink: () => ({ publicUrl: PRIMARY_URL }),
     liveClient: () => null,
   } as unknown as UplinkPool;
   const attach = {

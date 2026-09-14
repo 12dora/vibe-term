@@ -7,7 +7,7 @@ import type { UplinkWsFactory } from './uplink-constants';
 class DummyPooledUplink implements PooledUplink {
   readonly identity: { nodeId: string; edSecretKey: Uint8Array };
   readonly userId = 'user-1';
-  readonly hubUrl = 'https://relay.example.com';
+  readonly uplinkUrl = 'https://relay.example.com';
   lastKeyLogHead: { seq: bigint; hash: Uint8Array } | null = null;
   state: UplinkState = 'offline';
   link: LinkSession | null = null;
@@ -48,7 +48,7 @@ class DummyPooledUplink implements PooledUplink {
     if (!this.openRelayImpl) throw new Error('dummy uplink has no relay');
     return this.openRelayImpl();
   }
-  async queryHubHead() {
+  async queryKeyLogHead() {
     return this.lastKeyLogHead;
   }
   async queryKeyLogAt() {

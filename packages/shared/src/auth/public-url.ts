@@ -1,21 +1,21 @@
-export function canonicalHubUrl(raw: string): string {
+export function canonicalPublicUrl(raw: string): string {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`invalid hub url: ${raw}`);
+    throw new Error(`invalid public url: ${raw}`);
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`invalid hub url: ${raw}`);
+    throw new Error(`invalid public url: ${raw}`);
   }
   if (!url.hostname) {
-    throw new Error(`invalid hub url: ${raw}`);
+    throw new Error(`invalid public url: ${raw}`);
   }
   if (url.username !== '' || url.password !== '') {
-    throw new Error('invalid hub url: credentials are not allowed');
+    throw new Error('invalid public url: credentials are not allowed');
   }
   if (url.search !== '' || url.hash !== '') {
-    throw new Error('invalid hub url: query and fragment are not allowed');
+    throw new Error('invalid public url: query and fragment are not allowed');
   }
   const scheme = url.protocol.slice(0, -1).toLowerCase();
   const hostname = url.hostname.toLowerCase();

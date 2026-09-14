@@ -1,19 +1,19 @@
 import type { PooledUplink } from './types';
-import type { AttachedHub, UplinkCandidate } from './uplink-pool';
+import type { AttachedUplink, UplinkCandidate } from './uplink-pool';
 
 export const UPLINK_RTT_SWITCH_MIN_RATIO = 0.3;
 export const UPLINK_RTT_SWITCH_MIN_MS = 15;
 export const UPLINK_RTT_MIN_SAMPLES = 2;
 
 export type NearestSwitchPlan = {
-  attached: AttachedHub;
+  attached: AttachedUplink;
   live: PooledUplink;
   best: UplinkCandidate;
 };
 
 export function isCurrentUplinkSession(
   live: PooledUplink | null,
-  attached: AttachedHub | null,
+  attached: AttachedUplink | null,
   plan: NearestSwitchPlan,
   sameUrl: (a: string, b: string) => boolean
 ): boolean {

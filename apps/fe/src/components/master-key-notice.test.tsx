@@ -65,7 +65,8 @@ describe('MasterKeyMismatchNotice', () => {
 describe('文案', () => {
   test('中文文案点出「多节点已停用」与找回主密钥的位置', () => {
     const copy = zhCN.translation.app.masterKeyMismatch;
-    expect(copy.title).toBe('主密钥无法解密节点身份，多节点功能已停用。');
+    expect(copy.title).toContain('主密钥无法解密节点身份，多节点功能已停用。');
+    expect(copy.title).toContain('vibeterm relay join');
     expect(copy.commandLabel).toContain('backups/app.env.*');
     expect(copy.commandLabel).toContain('VIBETERM_MASTER_KEY');
   });

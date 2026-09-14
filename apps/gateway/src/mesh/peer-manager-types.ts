@@ -47,8 +47,6 @@ export type PeerManagerOptions = {
   interfacesFn?: () => Record<string, RankableIfaceAddr[] | undefined>;
   refreshLocalInterfaces?: () => Record<string, RankableIfaceAddr[] | undefined>;
   uplinkHost?: string | null | (() => string | null);
-  /** @deprecated use `uplinkHost`; kept until callers in other waves rename. */
-  hubHost?: string | null | (() => string | null);
   endpointBackoff?: PeerEndpointBackoff;
   dialLimiter?: DirectDialLimiter;
   /** 缺省 auto；测试可不传。生产由 mesh-runtime 注入 `deps.routeMode`。 */

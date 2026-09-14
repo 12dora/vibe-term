@@ -19,7 +19,7 @@ export type TunnelAccessPersisted = {
   rules: TunnelAccessPolicyRule[];
   enforceJwt: boolean;
   lastError: string | null;
-  /** 全部 bypass 应用 id；契约 bypassAppId 取第一项（/hub/） */
+  /** 全部 bypass 应用 id；契约 bypassAppId 取第一项（旧 `/hub/` 路径已删除） */
   bypassAppIds: string[];
   updatedAt: string;
 };

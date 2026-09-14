@@ -104,7 +104,7 @@ import { openHttpStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
 import type { UplinkWsFactory } from './uplink-constants';
 import { startUplinkPathSamplingFromCandidates } from './uplink-path-sampler';
-import { type AttachedHub, UplinkPool, attachedHubHost } from './uplink-pool';
+import { type AttachedUplink, UplinkPool, attachedUplinkHost } from './uplink-pool';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 import type { GatewaySessionClose } from './ws-stream-target';
 
@@ -183,9 +183,9 @@ export type MeshRuntime = {
   stop(): Promise<void>;
   onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
   onNodeList(
-    cb: (list: UplinkNodeList, meta: { hubNodeId: string | null; generation: number }) => void
+    cb: (list: UplinkNodeList, meta: { uplinkNodeId: string | null; generation: number }) => void
   ): () => void;
-  attachedHub(): AttachedHub | null;
+  attachedUplink(): AttachedUplink | null;
   /** 上级种类或中继目标变化后重建 uplink 池（`set-relays` 应用后自动触发）。 */
   reconfigureUplink(): Promise<void>;
   refreshTlsAndAdvertise(): Promise<void>;
@@ -250,7 +250,7 @@ export type KeyLogUplinkPort = {
     sig: Uint8Array;
     force?: boolean;
   }): Promise<{ ok: boolean; seq?: bigint | number; error?: string }>;
-  queryHubHead(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
+  queryKeyLogHead(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
   queryKeyLogAt(seq: bigint): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null>;
 };
 
@@ -277,7 +277,7 @@ export function createKeyLogPublisher(
       if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
       return { ok: false, error: ack.error ?? 'hub_error' };
     },
-    queryHubHead: () => uplink.queryHubHead(),
+    queryKeyLogHead: () => uplink.queryKeyLogHead(),
     queryKeyLogAt: (seq) => uplink.queryKeyLogAt(seq),
   };
 }
@@ -362,7 +362,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     lastRtc: { stun: [] as string[], turn: turnConfig(config) } as CachedRtcConfig | null,
     lastStunLogKey: null as string | null,
     lastNodeList: null as UplinkNodeList | null,
-    hubGeneration: 0,
+    uplinkGeneration: 0,
     caFingerprint: null as string | null,
   };
   const emitNodeEvent = (event: NodeEventPayload) => {
@@ -379,7 +379,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     emitNodeEvent(event);
   };
   const emitSyntheticOffline = (nodeId: string) => {
-    if (!nodeEventDedupe.shouldEmitSyntheticOffline(nodeId, state.hubGeneration)) return;
+    if (!nodeEventDedupe.shouldEmitSyntheticOffline(nodeId, state.uplinkGeneration)) return;
     emitNodeEvent({ nodeId, status: 'offline' });
   };
   const emitRevoked = (nodeId: string) => {
@@ -685,7 +685,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
     interfacesFn: d.interfacesFn,
     refreshLocalInterfaces: d.refreshLocalInterfaces,
     routeMode: d.routeMode,
-    uplinkHost: () => attachedHubHost(uplink.attachedHub()),
+    uplinkHost: () => attachedUplinkHost(uplink.attachedUplink()),
     onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
     onGatewaySessionClose: (session, close) => {
       const entry = sessions.getBySession(session);
@@ -701,11 +701,11 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
       notePeerTransport(info.nodeId, info.transport);
       const listed = state.lastNodeList?.nodes.find((node) => node.id === info.nodeId);
       const peer = userStore.listPeers().find((row) => row.nodeId === info.nodeId);
-      const hubOnline = listed?.online === true;
+      const listedOnline = listed?.online === true;
       const mgr = d.peerHolder.manager;
       d.emitListNodeEvent({
         nodeId: info.nodeId,
-        status: isPeerReachable(info.reach) || hubOnline ? 'online' : 'offline',
+        status: isPeerReachable(info.reach) || listedOnline ? 'online' : 'offline',
         reach: info.reach,
         transport: info.transport,
         rttMs: info.rttMs,
@@ -722,7 +722,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
   d.peerHolder.manager = peerManager;
   const attach = installNodeRelayAttach(d, uplink, peerManager);
   const unsubscribeUplinkState = uplink.onStateChange((liveState) => {
-    const url = uplink.attachedHub()?.publicUrl ?? attach?.presence.primaryUrl() ?? null;
+    const url = uplink.attachedUplink()?.publicUrl ?? attach?.presence.primaryUrl() ?? null;
     const live = uplink.liveClient();
     const rtt = live instanceof RelayUplinkClient ? live.rttMs : null;
     attach?.handlePrimaryState(liveState, url, rtt);
@@ -936,8 +936,8 @@ function wireMeshHttp(
     rttOf: (nodeId: string) => peerManager.rttOf(nodeId),
     linkSinceAtOf: (nodeId: string) => peerManager.linkDetailOf(nodeId).linkSinceAt,
     linkDetailOf: (nodeId: string) => peerManager.linkDetailOf(nodeId),
-    listHubOnline: () =>
-      relayMultiAttachOf(d.relay)?.listHubOnline(d.scheduler.now()) ?? new Set<string>(),
+    listUplinkOnline: () =>
+      relayMultiAttachOf(d.relay)?.listUplinkOnline(d.scheduler.now()) ?? new Set<string>(),
     onNodeEvent: (cb: (event: NodeEventPayload) => void) => {
       d.nodeEvents.add(cb);
       return () => {
@@ -980,7 +980,7 @@ function wireMeshHttp(
     },
     selfName: () => selfDisplayNameOf(d),
     primaryUserId: d.userIdOf() || undefined,
-    attachedHub: () => w.uplink.attachedHub(),
+    attachedUplink: () => w.uplink.attachedUplink(),
     trustProxy: gatewayConfig.trustProxy,
     connectionLookup: (input) =>
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
@@ -997,7 +997,7 @@ function wireMeshHttp(
       return lookupRemoteNode(
         nodeId,
         peers.listReach(),
-        peers.listHubOnline?.() ?? new Set<string>()
+        peers.listUplinkOnline?.() ?? new Set<string>()
       );
     },
     forwardInternalHttp: (nodeId, path, body, signal) =>
@@ -1010,7 +1010,7 @@ function wireMeshHttp(
       selfName: () => selfDisplayNameOf(d),
       userStore,
       listReach: () => peers.listReach(),
-      listHubOnline: () => peers.listHubOnline(),
+      listUplinkOnline: () => peers.listUplinkOnline(),
       listedNodes: () => state.lastNodeList?.nodes ?? [],
       declaredSinks: () => listNotificationSinkNodeIds(d.userIdOf()),
       forwardInternalHttp: (nodeId, path, body, signal) =>
@@ -1115,7 +1115,7 @@ function assembleMeshRuntime(
       return () => d.nodeEvents.delete(cb);
     },
     onNodeList: (cb) => uplink.onNodeList(cb),
-    attachedHub: () => uplink.attachedHub(),
+    attachedUplink: () => uplink.attachedUplink(),
     relayPresence: relayMultiAttachOf(d.relay)?.presence ?? null,
     relayOpener: relayMultiAttachOf(d.relay)?.opener ?? null,
     reconfigureUplink: () => reconfigureRelayUplink(d.relay, uplink),

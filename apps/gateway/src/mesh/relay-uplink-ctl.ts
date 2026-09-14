@@ -61,7 +61,7 @@ export type RelayUplinkCtlHost = {
   state: UplinkState;
   link: LinkSession | null;
   readonly identity: MeshIdentity;
-  readonly hubUrl: string;
+  readonly uplinkUrl: string;
   readonly relayHost: string;
   readonly userId: string;
   readonly scheduler: MeshScheduler;
@@ -240,7 +240,7 @@ export function authenticateRelayLink(
 export function relayAuthContext(host: RelayUplinkCtlHost): RelayAuthContext {
   return {
     identity: host.identity,
-    relayUrl: host.hubUrl,
+    relayUrl: host.uplinkUrl,
     relayHost: host.relayHost,
     clientVersion: host.clientVersion,
     secrets: host.secrets,
@@ -278,7 +278,7 @@ async function applyRelayList(
     userStore: host.userStore,
     secrets: host.secrets,
     now: host.scheduler.now(),
-    relayUrl: host.hubUrl,
+    relayUrl: host.uplinkUrl,
   });
   if (msg.version < host.listVersion) return;
   host.nodesViaRelay = list.nodes.length;

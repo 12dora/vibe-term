@@ -374,7 +374,7 @@ describe('key-log head notify wiring', () => {
         async appendAndAck() {
           return { ok: true, seq: 3n };
         },
-        async queryHubHead() {
+        async queryKeyLogHead() {
           return null;
         },
         async queryKeyLogAt() {
@@ -398,7 +398,7 @@ describe('key-log head notify wiring', () => {
         async appendAndAck() {
           return { ok: false, error: 'unused' };
         },
-        async queryHubHead() {
+        async queryKeyLogHead() {
           return null;
         },
         async queryKeyLogAt() {
@@ -424,7 +424,7 @@ describe('key-log head notify wiring', () => {
           calls.push('appendAndAck');
           return { ok: true, seq: 4n };
         },
-        async queryHubHead() {
+        async queryKeyLogHead() {
           return null;
         },
         async queryKeyLogAt() {

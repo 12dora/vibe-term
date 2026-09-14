@@ -11,9 +11,9 @@ describe('mesh-log', () => {
   });
 
   test('stamp prefixes lines that lack a timestamp and leaves stamped lines unchanged', () => {
-    const stamped = stamp('[uplink] candidate failed hub=x err=y fails=1');
+    const stamped = stamp('[uplink] candidate failed url=x err=y fails=1');
     expect(stamped).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[uplink\] candidate failed hub=x err=y fails=1$/
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[uplink\] candidate failed url=x err=y fails=1$/
     );
     expect(stamp(stamped)).toBe(stamped);
   });

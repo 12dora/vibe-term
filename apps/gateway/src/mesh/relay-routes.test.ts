@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   bytesToHex,
-  canonicalHubUrl,
+  canonicalPublicUrl,
   createEnrollment,
   createNodeCertificate,
   decodeBase64url,
@@ -13,7 +13,7 @@ import {
   generateEd25519KeyPair,
   generateKdfParams,
   generateX25519KeyPair,
-  hubHostFromUrl,
+  hostFromUrl,
   rootKeyFromSeed,
   wrapEntryFromBytes,
 } from '@vibeterm/shared/auth';
@@ -88,7 +88,7 @@ async function boot(
     secrets,
     uplink: {
       liveClient: () => null,
-      attachedHub: () => null,
+      attachedUplink: () => null,
       reconfigure: async () => {},
       candidates: () => [],
       switchTo: async () => ({ ok: true as const }),
@@ -205,7 +205,7 @@ describe('RelayRoutes', () => {
       expect(after.metaEpoch).toBe(1);
       expect(after.relays).toEqual([
         {
-          url: canonicalHubUrl(RELAY_URL),
+          url: canonicalPublicUrl(RELAY_URL),
           priority: 0,
           online: false,
           attached: false,
@@ -271,9 +271,9 @@ describe('RelayRoutes', () => {
     const b = await boot({
       uplink: {
         liveClient: () => client,
-        attachedHub: () => ({
-          hubNodeId: null,
-          publicUrl: canonicalHubUrl(RELAY_URL),
+        attachedUplink: () => ({
+          uplinkNodeId: null,
+          publicUrl: canonicalPublicUrl(RELAY_URL),
           mode: 'active',
           writerEpoch: 0,
           since: 1,
@@ -299,7 +299,7 @@ describe('RelayRoutes', () => {
     const b = await boot();
     try {
       await configureRelay(b);
-      b.secrets.store.markKicked(canonicalHubUrl(RELAY_URL), true, 'password_rotated');
+      b.secrets.store.markKicked(canonicalPublicUrl(RELAY_URL), true, 'password_rotated');
       const response = await b.call('/api/mesh/relay/status');
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
@@ -315,12 +315,12 @@ describe('RelayRoutes', () => {
   });
 
   test('status 未挂上的中继行暴露 candidate lastError', async () => {
-    const url = canonicalHubUrl(RELAY_URL);
-    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const url = canonicalPublicUrl(RELAY_URL);
+    const url2 = canonicalPublicUrl(RELAY_URL_2);
     const b = await boot({
       uplink: {
-        attachedHub: () => ({
-          hubNodeId: null,
+        attachedUplink: () => ({
+          uplinkNodeId: null,
           publicUrl: url,
           mode: 'active',
           writerEpoch: 0,
@@ -360,11 +360,11 @@ describe('RelayRoutes', () => {
   });
 
   test('status 对未挂上的行把 heartbeat-lost / kicked 标成稳定码', async () => {
-    const url = canonicalHubUrl(RELAY_URL);
-    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const url = canonicalPublicUrl(RELAY_URL);
+    const url2 = canonicalPublicUrl(RELAY_URL_2);
     const b = await boot({
       uplink: {
-        attachedHub: () => null,
+        attachedUplink: () => null,
         liveClient: () => null,
         candidates: () => [
           { publicUrl: url, lastError: 'missed-pong', lastErrorAt: 5 },
@@ -551,7 +551,7 @@ describe('RelayRoutes', () => {
           body: JSON.stringify({ url: RELAY_URL }),
         })
       ).json()) as { relayHost: string; ts: number; rootPublicKey: string };
-      expect(material.relayHost).toBe(hubHostFromUrl(RELAY_URL));
+      expect(material.relayHost).toBe(hostFromUrl(RELAY_URL));
       expect(decodeBase64url(material.rootPublicKey)).toEqual(b.user.rootPublicKey);
 
       const proof = signRelayEnrollProof(b.user.rootKey, {
@@ -589,7 +589,7 @@ describe('RelayRoutes', () => {
       expect(payload.mode).toBe('ordered');
       expect(payload.relays).toHaveLength(1);
       expect(bytesToHex(payload.relays[0]?.tenant_id ?? new Uint8Array())).toBe(TENANT_ID);
-      expect(payload.relays[0]?.url).toBe(canonicalHubUrl(RELAY_URL));
+      expect(payload.relays[0]?.url).toBe(canonicalPublicUrl(RELAY_URL));
       expect(payload.log_key).toHaveLength(1);
       expect(payload.meta_key.epoch).toBe(1);
 
@@ -631,7 +631,7 @@ describe('RelayRoutes', () => {
     try {
       await configureRelay(b);
       const proof = signRelayEnrollProof(b.user.rootKey, {
-        relayHost: hubHostFromUrl(RELAY_URL),
+        relayHost: hostFromUrl(RELAY_URL),
         ts: Date.now(),
       });
       const res = await b.call('/api/mesh/relay/enroll', {
@@ -670,7 +670,7 @@ describe('RelayRoutes', () => {
       expect(body.requireRelayAck).toBe(true);
       const payload = decodeSetRelaysPayload(decodeBase64url(body.payload));
       expect(payload.relays).toHaveLength(1);
-      expect(payload.relays[0]?.url).toBe(canonicalHubUrl(RELAY_URL));
+      expect(payload.relays[0]?.url).toBe(canonicalPublicUrl(RELAY_URL));
       expect(payload.relays[0]?.token).toEqual(new Uint8Array(32).fill(6));
       expect(payload.meta_key.epoch).toBe(1);
     } finally {
@@ -737,8 +737,8 @@ describe('RelayRoutes', () => {
       expect(body.metaEpoch).toBe(1);
       const payload = decodeSetRelaysPayload(decodeBase64url(body.payload));
       expect(payload.relays.map((relay) => relay.url)).toEqual([
-        canonicalHubUrl(RELAY_URL),
-        canonicalHubUrl(RELAY_URL_3),
+        canonicalPublicUrl(RELAY_URL),
+        canonicalPublicUrl(RELAY_URL_3),
       ]);
       expect(payload.relays.map((relay) => relay.priority)).toEqual([0, 1]);
       expect(payload.meta_key.epoch).toBe(1);
@@ -756,23 +756,23 @@ describe('RelayRoutes', () => {
       expect(applied.ok).toBe(true);
       await b.secrets.reconcile();
       expect(b.secrets.relayRows().map((row) => row.url)).toEqual([
-        canonicalHubUrl(RELAY_URL),
-        canonicalHubUrl(RELAY_URL_3),
+        canonicalPublicUrl(RELAY_URL),
+        canonicalPublicUrl(RELAY_URL_3),
       ]);
     } finally {
       b.close();
     }
   });
 
-  test('remove/prepare 不认的地址 404，最后一条 409，hub 模式 409', async () => {
+  test('remove/prepare 不认的地址 404，最后一条 409，未配置中继 409', async () => {
     const b = await boot();
     try {
-      const hubMode = await b.call('/api/mesh/relay/remove/prepare', {
+      const unconfigured = await b.call('/api/mesh/relay/remove/prepare', {
         method: 'POST',
         body: JSON.stringify({ url: RELAY_URL }),
       });
-      expect(hubMode.status).toBe(409);
-      expect((await hubMode.json()) as { code: string }).toMatchObject({
+      expect(unconfigured.status).toBe(409);
+      expect((await unconfigured.json()) as { code: string }).toMatchObject({
         code: 'RELAY_NOT_CONFIGURED',
       });
 
@@ -934,15 +934,15 @@ describe('RelayRoutes', () => {
     }
   });
 
-  test('meta-key/prepare 对未知节点报 404，hub 模式报 409', async () => {
+  test('meta-key/prepare 对未知节点报 404，未配置中继报 409', async () => {
     const b = await boot();
     try {
-      const hubMode = await b.call('/api/mesh/relay/meta-key/prepare', {
+      const unconfigured = await b.call('/api/mesh/relay/meta-key/prepare', {
         method: 'POST',
         body: JSON.stringify({ op: 'rotate' }),
       });
-      expect(hubMode.status).toBe(409);
-      expect((await hubMode.json()) as { code: string }).toMatchObject({
+      expect(unconfigured.status).toBe(409);
+      expect((await unconfigured.json()) as { code: string }).toMatchObject({
         code: 'RELAY_NOT_CONFIGURED',
       });
 
@@ -973,7 +973,7 @@ describe('RelayRoutes', () => {
       expect(decodeBase64url(body.logKey)).toEqual(logKey);
       // 只带持有 enrollment 的那台中继，且带上它自己的租户凭据。
       expect(body.relays).toHaveLength(1);
-      expect(body.relays[0].url).toBe(canonicalHubUrl(RELAY_URL));
+      expect(body.relays[0].url).toBe(canonicalPublicUrl(RELAY_URL));
       expect(body.relays[0].tenantId).toBe(TENANT_ID);
       expect(decodeBase64url(body.relays[0].token)).toEqual(new Uint8Array(32).fill(6));
     } finally {
@@ -1029,14 +1029,14 @@ describe('RelayRoutes', () => {
       expect(body.relays).toHaveLength(2);
       expect(body.relays.every((row) => row.accepted && row.token)).toBe(true);
       expect(body.relays.map((row) => row.url)).toEqual([
-        canonicalHubUrl(RELAY_URL),
-        canonicalHubUrl(RELAY_URL_2),
+        canonicalPublicUrl(RELAY_URL),
+        canonicalPublicUrl(RELAY_URL_2),
       ]);
       expect(calls).toHaveLength(2);
       expect(calls.map((call) => call.url).sort()).toEqual(
         [
-          `${canonicalHubUrl(RELAY_URL)}/api/relay/tenants/${TENANT_ID}/enrollments`,
-          `${canonicalHubUrl(RELAY_URL_2)}/api/relay/tenants/${TENANT_ID}/enrollments`,
+          `${canonicalPublicUrl(RELAY_URL)}/api/relay/tenants/${TENANT_ID}/enrollments`,
+          `${canonicalPublicUrl(RELAY_URL_2)}/api/relay/tenants/${TENANT_ID}/enrollments`,
         ].sort()
       );
       expect(calls.every((call) => call.body.id === body.id)).toBe(true);
@@ -1087,9 +1087,9 @@ describe('RelayRoutes', () => {
       };
       const accepted = body.relays.find((row) => row.accepted);
       const timedOut = body.relays.find((row) => !row.accepted);
-      expect(accepted?.url).toBe(canonicalHubUrl(RELAY_URL));
+      expect(accepted?.url).toBe(canonicalPublicUrl(RELAY_URL));
       expect(accepted?.token).toBeTruthy();
-      expect(timedOut?.url).toBe(canonicalHubUrl(RELAY_URL_2));
+      expect(timedOut?.url).toBe(canonicalPublicUrl(RELAY_URL_2));
       expect(timedOut?.error).toBe('timeout');
       expect(timedOut && 'token' in timedOut && timedOut.token).toBeFalsy();
       expect(b.userStore.getEnrollmentTokenById(body.id)?.expiresAt).toBeGreaterThan(Date.now());
@@ -1193,7 +1193,7 @@ describe('RelayRoutes', () => {
           body: JSON.stringify({ url: RELAY_URL }),
         })
       ).json()) as { relayHost: string; ts: number };
-      expect(material.relayHost).toBe(hubHostFromUrl(RELAY_URL));
+      expect(material.relayHost).toBe(hostFromUrl(RELAY_URL));
       const proof = signRelayEnrollProof(b.user.rootKey, {
         relayHost: material.relayHost,
         ts: material.ts,
@@ -1215,14 +1215,14 @@ describe('RelayRoutes', () => {
 
 describe('POST /api/mesh/relay/switch', () => {
   test('切到已配置的另一条中继并记下首选', async () => {
-    const url = canonicalHubUrl(RELAY_URL);
-    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const url = canonicalPublicUrl(RELAY_URL);
+    const url2 = canonicalPublicUrl(RELAY_URL_2);
     const switched: string[] = [];
     let live: { state: 'online' | 'offline' } | null = {
       state: 'online',
     };
     let attached = {
-      hubNodeId: null as string | null,
+      uplinkNodeId: null as string | null,
       publicUrl: url,
       mode: 'active' as const,
       writerEpoch: 0,
@@ -1230,7 +1230,7 @@ describe('POST /api/mesh/relay/switch', () => {
     };
     const b = await boot({
       uplink: {
-        attachedHub: () => attached,
+        attachedUplink: () => attached,
         liveClient: () => live as never,
         switchTo: async (target) => {
           switched.push(target);
@@ -1275,7 +1275,7 @@ describe('POST /api/mesh/relay/switch', () => {
     const b = await boot();
     try {
       await configureRelays(b, [RELAY_URL, RELAY_URL_2]);
-      b.secrets.store.markKicked(canonicalHubUrl(RELAY_URL_2), true);
+      b.secrets.store.markKicked(canonicalPublicUrl(RELAY_URL_2), true);
       const res = await b.call('/api/mesh/relay/switch', {
         method: 'POST',
         body: JSON.stringify({ url: RELAY_URL_2 }),
@@ -1288,11 +1288,11 @@ describe('POST /api/mesh/relay/switch', () => {
   });
 
   test('已经挂在目标上时回 409 RELAY_ALREADY_ATTACHED', async () => {
-    const url = canonicalHubUrl(RELAY_URL);
+    const url = canonicalPublicUrl(RELAY_URL);
     const b = await boot({
       uplink: {
-        attachedHub: () => ({
-          hubNodeId: null,
+        attachedUplink: () => ({
+          uplinkNodeId: null,
           publicUrl: url,
           mode: 'active',
           writerEpoch: 0,
@@ -1339,9 +1339,9 @@ describe('POST /api/mesh/relay/switch', () => {
   });
 
   test('超时未提交则 502 且不写入首选', async () => {
-    const original = canonicalHubUrl(RELAY_URL);
+    const original = canonicalPublicUrl(RELAY_URL);
     const attached = {
-      hubNodeId: null as string | null,
+      uplinkNodeId: null as string | null,
       publicUrl: original,
       mode: 'active' as const,
       writerEpoch: 0,
@@ -1351,7 +1351,7 @@ describe('POST /api/mesh/relay/switch', () => {
     const b = await boot({
       switchTimeoutMs: 20,
       uplink: {
-        attachedHub: () => attached,
+        attachedUplink: () => attached,
         liveClient: () => live as never,
         switchTo: async (_target, signal) => {
           await new Promise<void>((resolve) => {
@@ -1386,10 +1386,10 @@ describe('POST /api/mesh/relay/switch', () => {
   });
 
   test('提交成功后调用超时仍记首选', async () => {
-    const url2 = canonicalHubUrl(RELAY_URL_2);
+    const url2 = canonicalPublicUrl(RELAY_URL_2);
     let attached = {
-      hubNodeId: null as string | null,
-      publicUrl: canonicalHubUrl(RELAY_URL),
+      uplinkNodeId: null as string | null,
+      publicUrl: canonicalPublicUrl(RELAY_URL),
       mode: 'active' as const,
       writerEpoch: 0,
       since: 1,
@@ -1398,7 +1398,7 @@ describe('POST /api/mesh/relay/switch', () => {
     const b = await boot({
       switchTimeoutMs: 15,
       uplink: {
-        attachedHub: () => attached,
+        attachedUplink: () => attached,
         liveClient: () => live as never,
         switchTo: async (target) => {
           attached = { ...attached, publicUrl: target };
@@ -1423,9 +1423,9 @@ describe('POST /api/mesh/relay/switch', () => {
   });
 
   test('被并发切换取代的请求不得写成首选', async () => {
-    const url = canonicalHubUrl(RELAY_URL);
-    const url2 = canonicalHubUrl(RELAY_URL_2);
-    const url3 = canonicalHubUrl(RELAY_URL_3);
+    const url = canonicalPublicUrl(RELAY_URL);
+    const url2 = canonicalPublicUrl(RELAY_URL_2);
+    const url3 = canonicalPublicUrl(RELAY_URL_3);
     let attachedUrl = url;
     let live: { state: 'online' | 'offline' } | null = { state: 'online' };
     let releaseFirst: () => void = () => {};
@@ -1435,8 +1435,8 @@ describe('POST /api/mesh/relay/switch', () => {
     let firstStarted = false;
     const b = await boot({
       uplink: {
-        attachedHub: () => ({
-          hubNodeId: null,
+        attachedUplink: () => ({
+          uplinkNodeId: null,
           publicUrl: attachedUrl,
           mode: 'active' as const,
           writerEpoch: 0,
@@ -1485,11 +1485,11 @@ describe('POST /api/mesh/relay/switch', () => {
 
 describe('POST /api/mesh/relay/unpin', () => {
   test('clears the pin and returns { ok: true, unpinned: true }', async () => {
-    let attachedUrl = canonicalHubUrl(RELAY_URL);
+    let attachedUrl = canonicalPublicUrl(RELAY_URL);
     const b = await boot({
       uplink: {
-        attachedHub: () => ({
-          hubNodeId: null,
+        attachedUplink: () => ({
+          uplinkNodeId: null,
           publicUrl: attachedUrl,
           mode: 'active',
           writerEpoch: 0,
@@ -1509,7 +1509,7 @@ describe('POST /api/mesh/relay/unpin', () => {
         body: JSON.stringify({ url: RELAY_URL_2 }),
       });
       expect(switched.status).toBe(200);
-      expect(b.secrets.preferredRelayUrl()).toBe(canonicalHubUrl(RELAY_URL_2));
+      expect(b.secrets.preferredRelayUrl()).toBe(canonicalPublicUrl(RELAY_URL_2));
       const res = await b.call('/api/mesh/relay/unpin', { method: 'POST' });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ ok: true, unpinned: true });

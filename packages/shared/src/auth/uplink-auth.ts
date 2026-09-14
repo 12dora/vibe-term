@@ -33,6 +33,6 @@ export function decodeUplinkAuth(bytes: Uint8Array): UplinkAuth {
   return value;
 }
 
-export function hubHostFromUrl(hubUrl: string): string {
-  return new URL(hubUrl).host;
+export function hostFromUrl(url: string): string {
+  return new URL(url).host;
 }

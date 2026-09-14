@@ -33,7 +33,7 @@ export type UplinkWsFactory = (
 ) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
 
 export type UplinkClientOptions = {
-  hubUrl: string;
+  uplinkUrl: string;
   identity: MeshIdentity;
   userId: string | (() => string);
   keyLogApplier: KeyLogApplier;

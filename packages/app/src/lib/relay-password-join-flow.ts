@@ -7,7 +7,7 @@ import {
   decodeBase64url,
   decodeKeyLogRecord,
   encodeBase64url,
-  hubHostFromUrl,
+  hostFromUrl,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
 import type { KdfParams, RootKey, UserKeyState } from '../../../shared/src/auth';
@@ -228,7 +228,7 @@ export async function joinKdfProofAndPack(
       throw new RelayPasswordJoinError('join_failed', 'failed to derive root key');
     }
     const proof = signRelayEnrollProof(rootKey, {
-      relayHost: hubHostFromUrl(input.relayUrl),
+      relayHost: hostFromUrl(input.relayUrl),
       ts: input.now,
     });
     const joined = await requestRelayJson({

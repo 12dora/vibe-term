@@ -27,19 +27,19 @@ function host(over: Partial<PreferredProbeHost> & { probeOk?: boolean } = {}): {
   const switched = { value: false };
   const attached = {
     publicUrl: TK,
-    hubNodeId: null,
+    uplinkNodeId: null,
     mode: 'active' as const,
     writerEpoch: 1,
     since: 0,
   };
   const live = { state: 'online' } as PooledUplink;
   const h: PreferredProbeHost = {
-    attachedHub: () => attached,
+    attachedUplink: () => attached,
     liveClient: () => live,
     candidates: () => [
       {
         publicUrl: SH,
-        hubNodeId: null,
+        uplinkNodeId: null,
         mode: 'active',
         writerEpoch: 1,
         priority: 0,
@@ -47,7 +47,7 @@ function host(over: Partial<PreferredProbeHost> & { probeOk?: boolean } = {}): {
       },
       {
         publicUrl: TK,
-        hubNodeId: null,
+        uplinkNodeId: null,
         mode: 'active',
         writerEpoch: 1,
         priority: 1,
