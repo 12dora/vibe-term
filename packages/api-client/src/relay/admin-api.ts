@@ -101,7 +101,7 @@ export interface RelayStatusResponse {
   config: RelayConfigSummary;
   tenants: RelayTenantSummary[];
   totals: RelayTotals;
-  /** 内置/外部 TURN 状态；旧中继无此字段。 */
+  /** 内置/外部 TURN 状态（含可选 `maxAlloc`）；旧中继无此字段。 */
   turn?: LocalRelayTurnStatus;
 }
 

@@ -5,6 +5,15 @@ import { readRelayErrorCode } from './relay-routes-input';
 
 export const RELAY_ENROLL_FETCH_TIMEOUT_MS = 15_000;
 
+export async function persistAcceptedEnrollPassword(
+  store: { setEnrollPassword(url: string, plaintext: string | null): Promise<void> },
+  url: string,
+  password: string | undefined
+): Promise<void> {
+  if (typeof password !== 'string') return;
+  await store.setEnrollPassword(url, password || null);
+}
+
 export type RelayEnrollCallInput = {
   password?: string;
   rootPublicKey: Uint8Array;

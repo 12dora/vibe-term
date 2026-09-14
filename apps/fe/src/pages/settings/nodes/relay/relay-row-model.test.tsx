@@ -8,6 +8,8 @@ import {
   canSetPrimary,
   isMultiAttachView,
   relayAutoSelectState,
+  relayMoreTipLines,
+  relayPathBestLine,
   relayPeersBadge,
   relayPinBadge,
   relayRoleBadge,
@@ -73,7 +75,7 @@ describe('延迟与在线对端数', () => {
 
   test('在线对端数为 0 也照出，未知才不出', () => {
     expect(relayPeersBadge(row({ peersOnline: 0 }))).toEqual({
-      key: 'relay.tenant.strip.peersOnline',
+      key: 'relay.tenant.strip.tip.peers',
       params: { n: 0 },
       variant: 'outline',
     });
@@ -104,11 +106,10 @@ describe('固定与自动优选', () => {
     expect(relayPinBadge(row({ role: 'primary', attached: true }))).toBeNull();
   });
 
-  test('打分取整、带「越小越好」的悬停解释；未连接或没有打分时不出', () => {
+  test('优选指数取整、不带 ms；未连接或没有打分时不出', () => {
     expect(relayScoreHint(row({ score: 42.4 }))).toEqual({
-      key: 'relay.tenant.strip.score',
-      params: { ms: 42 },
-      titleKey: 'relay.tenant.strip.scoreTitle',
+      key: 'relay.tenant.strip.tip.score',
+      params: { value: 42 },
     });
     expect(relayScoreHint(row({ online: false, score: 42 }))).toBeNull();
     expect(relayScoreHint(row({ score: null }))).toBeNull();
@@ -201,7 +202,7 @@ describe('TURN 挂件', () => {
     });
   });
 
-  test('本机可达时带 N/M 节点；失败时带 N/M 节点可达并按舰队改色', () => {
+  test('成员探测用同一条文案；失败时按舰队改色，TUN 提示另起一行', () => {
     expect(
       relayTurnChip(
         row({
@@ -215,7 +216,7 @@ describe('TURN 挂件', () => {
     ).toEqual({
       endpoint: 'a:3478',
       verdictKey: 'relay.tenant.strip.turnReachable',
-      membersKey: 'relay.tenant.strip.turnMembersCount',
+      membersKey: 'relay.tenant.strip.tip.turnMembers',
       membersParams: { ok: 5, total: 5 },
       reachable: true,
       tone: 'default',
@@ -233,7 +234,7 @@ describe('TURN 挂件', () => {
       )
     ).toMatchObject({
       verdictKey: 'relay.tenant.strip.turnUnreachable',
-      membersKey: 'relay.tenant.strip.turnMembersReachable',
+      membersKey: 'relay.tenant.strip.tip.turnMembers',
       membersParams: { ok: 4, total: 5 },
       tone: 'warning',
       titleKey: 'relay.tenant.strip.turnTunHint',
@@ -269,7 +270,7 @@ describe('两种形态的分叉', () => {
     expect(isMultiAttachView(undefined, [1, 2])).toBe(false);
   });
 
-  test('多挂载：每行各自摆身份 / 延迟 / 在线数 / TURN，行不再是单选', () => {
+  test('多挂载：每行默认只摆身份 / 延迟 / 更多，行不再是单选', () => {
     const html = renderToStaticMarkup(
       <RelayRows
         multiAttach
@@ -291,15 +292,16 @@ describe('两种形态的分叉', () => {
     expect(html).toContain('relay.tenant.strip.roleSecondary');
     expect(html).toContain(`data-testid="nodes-relay-rtt-${HOST}"`);
     expect(html).toContain('data-testid="nodes-relay-rtt-tokyo.example.com:8443"');
+    expect(html).toContain(`data-testid="nodes-relay-more-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.more');
+    expect(html).toContain(`data-testid="nodes-relay-more-tip-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-peers-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-turn-${HOST}"`);
-    expect(html).toContain('sh.example.com:3478');
-    expect(html).toContain('relay.tenant.strip.turnReachable');
-    // 事实之间只用 `·` 分隔，不再是一排徽标
+    expect(html).toContain('relay.tenant.strip.tip.turn');
     expect(html).not.toContain('data-slot="badge"');
   });
 
-  test('多挂载：主中继摆「自动优选」，各行的打分跟在延迟后面', () => {
+  test('多挂载：优选指数与固定态收进「更多」，不跟在延迟后面', () => {
     const html = renderToStaticMarkup(
       <RelayRows
         multiAttach
@@ -309,12 +311,13 @@ describe('两种形态的分叉', () => {
         ]}
       />
     );
+    expect(html).toContain(`data-testid="nodes-relay-more-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-pin-${HOST}"`);
     expect(html).toContain('relay.tenant.strip.autoSelected');
     expect(html).toContain(`data-testid="nodes-relay-score-${HOST}"`);
     expect(html).toContain('data-testid="nodes-relay-score-tokyo.example.com:8443"');
-    expect(html).toContain('title="relay.tenant.strip.scoreTitle"');
-    expect(html).toContain('relay.tenant.strip.score');
+    expect(html).toContain('relay.tenant.strip.tip.score');
+    expect(html).not.toContain('relay.tenant.strip.scoreTitle');
   });
 
   test('多挂载：固定的那条摆「已固定」，没有固定也没有优选时一枚都不出', () => {
@@ -333,7 +336,7 @@ describe('两种形态的分叉', () => {
     expect(plain).not.toContain('data-testid="nodes-relay-score-');
   });
 
-  test('多挂载：本机 TURN 失败时展示舰队 tally 与 TUN tooltip', () => {
+  test('多挂载：本机 TURN 失败时「更多」里展示舰队 tally 与 TUN 提示', () => {
     const html = renderToStaticMarkup(
       <RelayRows
         multiAttach
@@ -352,9 +355,10 @@ describe('两种形态的分叉', () => {
         ]}
       />
     );
-    expect(html).toContain('relay.tenant.strip.turnUnreachable');
-    expect(html).toContain('relay.tenant.strip.turnMembersReachable');
-    expect(html).toContain('title="relay.tenant.strip.turnTunHint"');
+    expect(html).toContain(`data-testid="nodes-relay-more-tip-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.tip.turn');
+    expect(html).toContain('relay.tenant.strip.tip.turnMembers');
+    expect(html).toContain('relay.tenant.strip.turnTunHint');
     expect(html).toContain('text-amber-600');
   });
 
@@ -389,5 +393,53 @@ describe('两种形态的分叉', () => {
     expect(html).not.toContain('relay.tenant.strip.rtt');
     expect(html).not.toContain('nodes-relay-role-');
     expect(html).not.toContain('relay.tenant.switch.setPrimary');
+  });
+
+  test('单条中继：有额外事实时出「更多」，没有则不出', () => {
+    const withScore = renderToStaticMarkup(
+      <RelayRows relays={[row({ attached: true, score: 18 })]} />
+    );
+    expect(withScore).toContain(`data-testid="nodes-relay-more-${HOST}"`);
+    expect(withScore).toContain('relay.tenant.strip.tip.score');
+    const plain = renderToStaticMarkup(<RelayRows relays={[row({ attached: true })]} />);
+    expect(plain).not.toContain(`data-testid="nodes-relay-more-${HOST}"`);
+  });
+});
+
+describe('「更多」气泡的行', () => {
+  test('有数据才出：优选指数、对端、TURN、路径、固定态', () => {
+    const lines = relayMoreTipLines(
+      row({
+        score: 18.2,
+        peersOnline: 3,
+        pathBestMs: 41.6,
+        pinned: true,
+        turn: {
+          url: 'turn:a:3478',
+          probeOk: true,
+          members: { ok: 2, total: 3, updatedAt: 1 },
+        },
+      }),
+      HOST
+    );
+    expect(lines.map((line) => line.key)).toEqual([
+      'score',
+      'peers',
+      'turn',
+      'turnMembers',
+      'path',
+      'pin',
+    ]);
+    expect(lines[0]?.params).toEqual({ value: 18 });
+    expect(lines[2]?.translatedParams).toEqual({ state: 'relay.tenant.strip.turnReachable' });
+    expect(relayPathBestLine(row({ pathBestMs: 41.6 }))?.params).toEqual({ ms: 42 });
+    expect(relayPathBestLine(row())).toBeNull();
+  });
+
+  test('离线行补错误与「未连接」', () => {
+    const lines = relayMoreTipLines(row({ online: false, lastErrorCode: 'dns', role: null }), HOST);
+    expect(lines.map((line) => line.key)).toEqual(['error', 'role']);
+    expect(lines[0]?.translatedParams).toEqual({ message: 'relay.tenant.linkErrors.dns' });
+    expect(lines[1]?.i18nKey).toBe('relay.tenant.strip.roleDetached');
   });
 });

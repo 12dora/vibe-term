@@ -64,6 +64,7 @@ describe('MeshRelayStore', () => {
           kickedReason: null,
         },
       ]);
+      expect(f.store.hasEnrollPassword('https://a.example')).toBe(false);
     } finally {
       f.close();
     }
@@ -99,6 +100,57 @@ describe('MeshRelayStore', () => {
       expect(f.store.uplinkKind()).toBe('none');
       f.store.setLocalName('   ');
       expect(f.store.localName()).toBeNull();
+    } finally {
+      f.close();
+    }
+  });
+
+  test('enroll password 加密落库，replaceRelays 保留，空串清掉', async () => {
+    const f = await open();
+    try {
+      await f.store.setEnrollPassword('https://pending.example', 'before-row');
+      expect(f.store.hasEnrollPassword('https://pending.example')).toBe(true);
+      expect(await f.store.getEnrollPassword('https://pending.example')).toBe('before-row');
+
+      await f.store.replaceRelays(
+        [
+          {
+            url: 'https://pending.example',
+            tenantId: 'aa'.repeat(16),
+            token: new Uint8Array(32).fill(1),
+            priority: 0,
+          },
+          {
+            url: 'https://other.example',
+            tenantId: 'bb'.repeat(16),
+            token: new Uint8Array(32).fill(2),
+            priority: 1,
+          },
+        ],
+        1_000
+      );
+      expect(await f.store.getEnrollPassword('https://pending.example')).toBe('before-row');
+      expect(f.store.hasEnrollPassword('https://other.example')).toBe(false);
+
+      await f.store.setEnrollPassword('https://other.example', 'hunter2x');
+      expect(await f.store.getEnrollPassword('https://other.example')).toBe('hunter2x');
+      await f.store.replaceRelays(
+        [
+          {
+            url: 'https://other.example',
+            tenantId: 'bb'.repeat(16),
+            token: new Uint8Array(32).fill(9),
+            priority: 0,
+          },
+        ],
+        2_000
+      );
+      expect(await f.store.getEnrollPassword('https://other.example')).toBe('hunter2x');
+      expect(f.store.hasEnrollPassword('https://pending.example')).toBe(false);
+
+      await f.store.setEnrollPassword('https://other.example', '');
+      expect(f.store.hasEnrollPassword('https://other.example')).toBe(false);
+      expect(await f.store.getEnrollPassword('https://other.example')).toBeNull();
     } finally {
       f.close();
     }

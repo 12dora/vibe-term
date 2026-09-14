@@ -44,6 +44,7 @@ describe('isAccessGuardExemptPath', () => {
     expect(isAccessGuardExemptPath('/relay/uplink')).toBe(true);
     expect(isAccessGuardExemptPath('/api/relay/health')).toBe(true);
     expect(isAccessGuardExemptPath('/api/relay/enroll')).toBe(true);
+    expect(isAccessGuardExemptPath('/api/relay/password/rotate')).toBe(true);
     expect(
       isAccessGuardExemptPath(`/api/relay/tenants/${'ab'.repeat(16)}/enrollments/redeem`)
     ).toBe(true);

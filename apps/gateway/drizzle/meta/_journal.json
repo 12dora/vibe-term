@@ -407,6 +407,13 @@
       "when": 1790338800000,
       "tag": "0057_remove_hub",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1790342400000,
+      "tag": "0058_relay_enroll_password",
+      "breakpoints": true
     }
   ]
 }

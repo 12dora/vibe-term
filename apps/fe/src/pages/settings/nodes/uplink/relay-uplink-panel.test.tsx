@@ -1,4 +1,4 @@
-// 「连接」段的中继形态：一行「上级」摆链路，下面是提醒堆。操作全在卡片 ⋯ 菜单里（见
+// 「连接」段的中继形态：一行「中继」摆链路，下面是提醒堆。操作全在卡片 ⋯ 菜单里（见
 // `connect-menu.test.ts`）。无 DOM 测试环境，用 react-dom/server 静态渲染。
 
 import { describe, expect, test } from 'bun:test';
@@ -74,7 +74,7 @@ function render(props: Partial<Parameters<typeof RelayUplinkPanel>[0]> = {}): st
 }
 
 describe('中继链路与操作', () => {
-  test('链路摆在「上级」那一行，操作一个都不留在卡面上', () => {
+  test('链路摆在「中继」那一行，操作一个都不留在卡面上', () => {
     const html = render();
     expect(html).toContain('data-testid="local-uplink-relay-panel"');
     expect(html).toContain('data-testid="nodes-relay-rows"');

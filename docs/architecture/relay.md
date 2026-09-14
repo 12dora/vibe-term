@@ -91,7 +91,7 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
 `direct_capable` 不是 `relay.status` / `relay.list` 上的明文字段，而在 K_meta 封里的状态块（`RelayStatusBlob`）中。
 同一块还可带两个**可选**字段（2.3.0 解码器忽略未知键）：`peer_reach?: { [nodeIdPrefix8]: 'ok' | 'refused' | 'timeout' }`（≤32 条，发送方对其他成员 peer 口的探测结论）与 `turn_ok?: boolean`（发送方对该中继 TURN 控制口的 Binding 结论；`undefined` = 未探测）。
 
-成员 `turn_ok` 按中继 URL 分桶（key = 归一化后的公开地址，失败则 trim 去尾斜杠），超过 30 min 的条目在 snapshot 时删除。管理面 `withMembersProbe` 默认用 `VIBETERM_RELAY_PUBLIC_URL` 过滤，只统计本机这条 TURN，不再把副中继的报告混进本机磁贴；无公网 URL 时退回并集。`GET /api/relay/status` 与 `GET /api/local/status` 的 TURN 快照带 `membersProbe: { ok, total, updatedAt }`（`total` 只计写出了布尔值的成员）。TURN 磁贴有该字段时显示「成员可达 ok/total」。
+成员 `turn_ok` 按中继 URL 分桶（key = 归一化后的公开地址，失败则 trim 去尾斜杠），超过 30 min 的条目在 snapshot 时删除。管理面 `withMembersProbe` 默认用 `VIBETERM_RELAY_PUBLIC_URL` 过滤，只统计本机这条 TURN，不再把副中继的报告混进本机磁贴；无公网 URL 时退回并集。`GET /api/relay/status` 与 `GET /api/local/status` 的 TURN 快照带 `membersProbe: { ok, total, updatedAt }`（`total` 只计写出了布尔值的成员）以及 `maxAlloc`（内置 TURN 的分配上限；外部/关闭为 `null`）。TURN 磁贴有该字段时显示「成员可达 ok/total」。
 
 ## 3. 租户密钥
 
@@ -341,13 +341,15 @@ relay_key_log     PK(tenant_id, seq), blob TEXT（Envelope 的 JSON 原样，中
 ### 节点侧（迁移 `0040_mesh_relay.sql`）
 
 ```
-mesh_relays   url TEXT PK, tenant_id TEXT, token_enc TEXT, priority INT, kicked INT=0, updated_at INT
+mesh_relays   url TEXT PK, tenant_id TEXT, token_enc TEXT, enroll_password_enc TEXT NULL,
+              priority INT, kicked INT=0, updated_at INT
 mesh_secrets  PK(kind, epoch), kind CHECK in ('log','meta'), key_enc TEXT, created_at INT
 node_identity + uplink_kind TEXT DEFAULT 'none' NOT NULL, + name TEXT
 user_key_log  type CHECK 追加 'set-relays'、'meta-key'、`rename-node`、`readmit-node`（重建表）
 ```
 
-`token_enc` / `key_enc` 都是 `VIBETERM_MASTER_KEY` 加密后的 base64。
+`token_enc` / `key_enc` / `enroll_password_enc` 都是 `VIBETERM_MASTER_KEY` 加密后的 base64。
+`enroll_password_enc`（迁移 `0058_relay_enroll_password.sql`）保存本机最近一次被中继接受的**接入密码**明文，供链接详情回显与改密时自动填 `current`；空/未记录为 SQL NULL。`set-relays` 整表替换时按 url 保留已有密文。
 `uplink_kind` 取值 `'relay' | 'none'`，非 `'relay'` 一律视为未挂载。迁移 `0057_remove_hub.sql` 重建 `node_identity`：去掉 `hub_url` 列，把原 `'hub'` 行改成 `'none'`，默认改为 `'none'`。
 退出 mesh（`POST /api/local/leave`）时 `MeshMembershipStore.clearAll()` 会一并删掉 `mesh_relays` 与 `mesh_secrets`。
 
@@ -365,6 +367,7 @@ user_key_log  type CHECK 追加 'set-relays'、'meta-key'、`rename-node`、`rea
 |---|---|
 | `GET /api/relay/health` | → `{ ok, version, tenants, nodesOnline, uptimeMs }` |
 | `POST /api/relay/enroll` | body `{ password?, root_public_key: b64url32, root_epoch: int, proof: { bytes, sig } }` → `{ tenant_id, token, password_epoch }` |
+| `POST /api/relay/password/rotate` | 租户令牌（`x-vibeterm-relay-token`）。body `{ tenantId, current?: string, next: string \| null, mode?: 'keep' \| 'kick', force?: boolean }`（`mode` 默认 `keep`）。校验令牌属于 `tenantId`，再 `verifyRelayPassword(current)`（中继未设口令时 `current` 须空）；`next` 非空短于 8 → 400 `relay_password_too_short`；口令不对 → 401 `relay_password_invalid` 并计入 enroll 同源限流。成功则 `configStore.rotatePassword`，响应 `{ ok: true, passwordEpoch }`。`kick` 的离线守卫与管理口相同（409 `relay_members_offline`，`force: true` 可覆盖） |
 
 `proof` 是 `tmex/relay-enroll/v1` 的 Borsh 签名：
 `domain(string) ‖ relay_host(string) ‖ root_public_key(32) ‖ ts(u64)`，用根钥 Ed25519 签，时间窗 ±5 分钟。
@@ -410,7 +413,7 @@ lookup 找不到（含 b64url 非法、跨租户）一律 404 `RELAY_NOT_FOUND`�
 
 | 方法 路由 | 说明 |
 |---|---|
-| `GET /api/relay/status` | `{ config: { hasPassword, passwordEpoch, minTokenEpoch, defaultQuota, limits }, tenants: [...], totals: { tenants, nodes, nodesOnline, streams, bytesIn, bytesOut } }`；`bytesIn/Out` = 落库值 + 未刷新的内存增量；`totals.nodes` 是全部租户 pending+admitted 之和（与配额占用同口径）；`limits` 见 §11.2 |
+| `GET /api/relay/status` | `{ config: { hasPassword, passwordEpoch, minTokenEpoch, defaultQuota, limits }, tenants: [...], totals: { tenants, nodes, nodesOnline, streams, bytesIn, bytesOut }, turn }`；`turn.maxAlloc` 为内置 TURN 分配上限（默认 min(64, 中继段端口数)，缺省段 49），外部/关闭为 `null`。`bytesIn/Out` = 落库值 + 未刷新的内存增量；`totals.nodes` 是全部租户 pending+admitted 之和（与配额占用同口径）；`limits` 见 §11.2 |
 | `POST /api/relay/password` | `{ password: string \| null, mode: 'kick' \| 'keep', force?: boolean }` → `password_epoch += 1`；`kick` 时 `min_token_epoch = password_epoch` 并立刻断开 `token_epoch` 过旧的链路 |
 | `PATCH /api/relay/config` | `{ defaultQuota? , limits? }`，二者至少给一个（都不给 400 `RELAY_INVALID_BODY`）。`defaultQuota` 落库并把新配额推给所有「跟随默认」的在线租户（非法 400 `RELAY_BAD_QUOTA`）；`limits` 落库并热更新中继级带宽闸（非法 400 `RELAY_BAD_LIMITS`） |
 | `PATCH /api/relay/tenants/:id` | `{ quota?: RelayQuota \| null, label?: string \| null }`；`quota: null` 回到默认，`label` 空串或 null 清空（≤128 字符） |
@@ -434,7 +437,9 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 | `POST /switch` | body `{ url }`，换主中继并写入 `relay.preferredUrl` 固定；见 §9 |
 | `POST /unpin` | 清除 `relay.preferredUrl`，`{ ok: true }`。未固定也是 200，不 404 |
 | `POST /enroll/proof-material` | body `{url}` → `{ url, relayHost, ts, maxSkewMs, rootPublicKey, rootEpoch }`；调用方据此本地签 proof。错误 `400 INVALID_URL`、`404 UNKNOWN_USER` |
-| `POST /enroll` | body `{ url, password?, proof: {bytes, sig} }` → `{ tenantId, token, passwordEpoch, metaEpoch, payload, payloadHash }`。错误 `400 INVALID_URL\|MALFORMED\|BAD_PROOF`、`401 <中继返回的 code>`、`409 NO_ADMITTED_NODES`、`502 RELAY_UNREACHABLE\|RELAY_BAD_RESPONSE\|RELAY_ENROLL_FAILED` |
+| `POST /enroll` | body `{ url, password?, proof: {bytes, sig} }` → `{ tenantId, token, passwordEpoch, metaEpoch, payload, payloadHash }`。错误 `400 INVALID_URL\|MALFORMED\|BAD_PROOF`、`401 <中继返回的 code>`、`409 NO_ADMITTED_NODES`、`502 RELAY_UNREACHABLE\|RELAY_BAD_RESPONSE\|RELAY_ENROLL_FAILED`。中继接受后若 body 带了 `password`（含空串），写入该 url 的 `enroll_password_enc` |
+| `GET /password?url=` | → `{ known: boolean, password: string \| null }`。明文只回给已鉴权本机会话。未接入该 url → 404 `relay_not_attached` |
+| `POST /password` | body `{ url, current?: string, next: string \| null, mode?: 'keep'\|'kick' }` → 转发到该中继 `POST /api/relay/password/rotate`（带本机租户令牌）；省略 `current` 时用已存接入密码。成功后 `setEnrollPassword(url, next)`。错误原样映射 `relay_password_invalid` / `relay_password_too_short` / `relay_members_offline` / `relay_unreachable` / `relay_not_attached` |
 | `POST /leave/prepare` | 仅 relay 模式 → `{ metaEpoch, payload, payloadHash }`（空 `relays` 的 `set-relays`） |
 | `POST /resend-token/prepare` | 按当前中继表生成 `{ metaEpoch, nodes, payload, payloadHash, requireRelayAck: true }`；这里只准备待签记录，提交后须检查 `relayAck` |
 | `POST /remove/prepare` | body `{url}`，摘掉多中继里的某一条，**世代不变**、密钥重新封装给全部未吊销节点。错误 `400 INVALID_URL`、`404 RELAY_NOT_FOUND`、`409 RELAY_LAST\|RELAY_NOT_CONFIGURED\|NO_ADMITTED_NODES\|RELAY_KEY_MISSING` |
@@ -454,7 +459,8 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
                "rttMs": null, "peersOnline": null,
                "turn": { "url": "turn:…", "probeOk": true } | null,
                "lastError": null, "kicked": false,
-               "pinned": true, "autoSelected": true, "score": 42 }],
+               "pinned": true, "autoSelected": true, "score": 42,
+               "enrollPassword": { "known": false } }],
   "preferredUrl": "https://…" | null,
   "autoSelect": { "enabled": true, "lastSwitchAt": 0, "switchReason": "auto-rtt", "nextEvalAt": 0 },
   "metaEpoch": 1,
@@ -484,6 +490,7 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 | `pinned` | 该行等于 `preferredUrl` |
 | `autoSelected` | 当前主中继由 `auto-rtt` / `auto-failover` 提升（只在 primary） |
 | `score` | 自动优选打分（越小越好，毫秒）；只在已连接行、自动优选开启时下发 |
+| `enrollPassword` | `{ known }`：本机 `mesh_relays.enroll_password_enc` 是否非空。明文不在 status 里，按需 `GET /password` |
 
 `quota` / `keyLog` 仍是 primary 的原值，`awaitingToken` 在任一副中继待换令牌时也为真。
 文件传输**实际生效**的 `maxFileBytes` 另取全部已连接中继里的最小值（`setRelayQuotaProvider`，见 [§11](#11-配额与计量)）。
@@ -951,8 +958,9 @@ bun packages/app/src/runtime/server.ts
 否则调用方会把那份即将过期的旧令牌再写进 `set-relays` / 密封包，等宽限期一到全网又一起断。
 
 清空历史环与旧单槽的两条路：`POST /api/relay/tenants/:id/kick`（踢租户）与
-`POST /api/relay/password` `mode: 'kick'`（`enforceMinTokenEpoch`）。也就是说 **kick 语义一字未变**：
-运营者要作废旧令牌时，宽限不给任何后门。
+`POST /api/relay/password` / `POST /api/relay/password/rotate` `mode: 'kick'`（`enforceMinTokenEpoch`）。也就是说 **kick 语义一字未变**：
+运营者或**任一已接入租户**（凭当前接入密码 + 租户令牌）要作废旧令牌时，宽限不给任何后门。
+租户改接入密码走 `POST /api/mesh/relay/password` → `POST /api/relay/password/rotate`，默认 `keep`；须出示当前口令（本机已记录则可省略 `current`）。
 
 ### 成员侧
 

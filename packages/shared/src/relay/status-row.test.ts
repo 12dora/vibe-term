@@ -43,4 +43,9 @@ describe('RelayStatusRow JSON', () => {
     expect(parsed.relays[0]?.url).toBe(ROW.url);
     expect(parsed.relays[0]?.lastErrorCode).toBeNull();
   });
+
+  test('enrollPassword.known is optional on the row', () => {
+    const withKnown: RelayStatusRow = { ...ROW, enrollPassword: { known: true } };
+    expect(JSON.parse(JSON.stringify(withKnown)).enrollPassword).toEqual({ known: true });
+  });
 });

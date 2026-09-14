@@ -28,7 +28,7 @@ function render(overrides: Partial<RelayTurnStatus> = {}): string {
 }
 
 describe('TURN 一行', () => {
-  test('状态 · 来源 · 地址 · 外网 IP 串成一句，成员可达跟在后面', () => {
+  test('状态 · 来源 · 地址 · 外网 IP 串成一句，成员探测跟在后面', () => {
     const html = render();
     expect(html).toContain('data-testid="relay-turn"');
     expect(html).toContain('relay.admin.turn.title');
@@ -38,6 +38,7 @@ describe('TURN 一行', () => {
     expect(line).toContain('turn:relay.example.com:40000');
     expect(line).toContain('relay.admin.turn.externalIp');
     expect(html).toContain('data-testid="relay-turn-members-probe"');
+    expect(html).toContain('relay.admin.turn.membersProbe');
   });
 
   test('端口放行那句不再出现：端口由「网络」段的端口行负责', () => {

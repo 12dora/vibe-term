@@ -26,6 +26,7 @@ describe('RelayRuntime.snapshotForLocalStatus', () => {
         externalIp: null,
         listening: false,
         allocations: 0,
+        maxAlloc: null,
         error: null,
         relayPortRange: null,
       },

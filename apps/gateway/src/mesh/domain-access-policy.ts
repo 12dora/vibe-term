@@ -92,7 +92,7 @@ export function isServicePath(method: string, pathname: string): boolean {
   if (verb !== 'GET' && verb !== 'POST') return false;
   if (RELAY_ENROLLMENT_PATH.test(pathname)) return true;
   if (verb === 'GET') return isServiceGetPath(pathname);
-  return pathname === '/api/relay/enroll';
+  return pathname === '/api/relay/enroll' || pathname === '/api/relay/password/rotate';
 }
 
 export function isJsonDeniedPath(pathname: string): boolean {

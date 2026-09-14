@@ -138,6 +138,18 @@ export function orderedRelays(snapshot: MeshRelayState): RelayLinkStatus[] {
 }
 
 /**
+ * 接入密码行适用的中继：已挂上或主中继。多挂载时可选，默认主中继。
+ * 每行的 `enrollPassword.known` 来自 `/status`，由 `normalizeRelayStatus` 补成确定值。
+ */
+export function enrollPasswordRelays(snapshot: MeshRelayState): RelayLinkStatus[] {
+  return orderedRelays(snapshot).filter((row) => row.attached || isPrimaryRelay(row));
+}
+
+export function defaultEnrollPasswordRelay(rows: RelayLinkStatus[]): RelayLinkStatus | null {
+  return rows.find((row) => isPrimaryRelay(row)) ?? rows[0] ?? null;
+}
+
+/**
  * 状态里有没有明说「多条同时挂载」。store 是就地合并的，这一位必须每次显式落回：
  * 否则网关退回单挂载（或换了台旧网关）之后，界面还会按多挂载的版式画下去。
  */

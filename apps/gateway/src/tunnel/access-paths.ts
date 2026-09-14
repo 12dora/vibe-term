@@ -5,6 +5,7 @@
  * - `/relay/uplink` — 租户节点常驻 WS
  * - `/api/relay/health` — 匿名健康检查（节点拨号前探测）
  * - `/api/relay/enroll` — 根签名 proof + 中继口令，无浏览器会话
+ * - `/api/relay/password/rotate` — 租户凭令牌 + 当前接入密码改全站口令
  * - `/api/relay/tenants/:id/enrollments/*` — redeem 与 authorization 查询，凭租户令牌
  *   管理面 `/api/relay/status|password|config|tenants/:id` **不豁免**：它们本就该走浏览器/管理令牌。
  *
@@ -16,6 +17,7 @@ export const ACCESS_EXEMPT_EXACT_PATHS = [
   '/relay/uplink',
   '/api/relay/health',
   '/api/relay/enroll',
+  '/api/relay/password/rotate',
 ] as const;
 
 /** 只做 origin 守卫豁免、不建 Cloudflare bypass app 的前缀。 */

@@ -2081,7 +2081,7 @@
         "localAddress": "公開アドレス",
         "localAddressUnset": "未設定",
         "localAddressHint": "公開アドレスが未設定のため、他のノードは本機に参加できません。",
-        "upstream": "上位",
+        "upstream": "中継",
         "self": "このマシン",
         "details": {
           "title": "接続の詳細",
@@ -2861,7 +2861,7 @@
           "blocked": "別の設定経路が送信済みです。本機の再起動が終わるまでお待ちください。"
         }
       },
-      "uplinkOffline": "上位リンクに接続していません。復帰するまで参加コードは作成できません。",
+      "uplinkOffline": "中継に接続していません。復帰するまで参加コードは作成できません。",
       "readmit": {
         "notice": "{{count}} 台のノードのメンバー記録が古いルート鍵で署名されています。再確認が必要です。",
         "action": "メンバーを再確認",
@@ -3150,20 +3150,25 @@
           "empty": "中継に接続していません",
           "tenantId": "テナント ID",
           "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。",
-          "rolePrimary": "主中継",
-          "roleSecondary": "副中継",
+          "enrollPassword": "接続パスワード",
+          "enrollPasswordUnknown": "本機に記録なし",
+          "enrollPasswordChange": "変更",
+          "rolePrimary": "主",
+          "roleSecondary": "副",
           "roleDetached": "未接続",
           "pinned": "固定中",
           "autoSelected": "自動選択",
-          "score": "スコア {{ms}} ms",
-          "scoreTitle": "自動選択のスコア（小さいほど良い）",
-          "peersOnline": "{{n}} 台オンライン",
-          "turn": "TURN",
+          "more": "その他",
+          "tip": {
+            "score": "優先度指数 {{value}}（低いほど良い）",
+            "peers": "この中継でオンラインの対向 {{n}} 台",
+            "turn": "TURN {{state}}",
+            "turnMembers": "メンバー探査 {{ok}}/{{total}} 到達可（30 分以内の報告、本機を除く）",
+            "pathBest": "経路探査 {{ms}} ms"
+          },
           "turnReachable": "到達可能",
           "turnUnreachable": "本機から到達不可",
           "turnUnprobed": "未検査",
-          "turnMembersCount": "{{ok}}/{{total}} ノード",
-          "turnMembersReachable": "{{ok}}/{{total}} ノード到達可",
           "turnTunHint": "本機のプロキシ/TUN が UDP を転送していないため、判定は本機のみを表します"
         },
         "linkErrors": {
@@ -3226,7 +3231,7 @@
           "passwordHint": "中継に接続パスワードがない場合は空欄のままにします。",
           "rootPassword": "現在のパスワード（本機アカウントのパスワード）",
           "rootPasswordHint": "参加はパスワードで署名する必要があり、パスキーでは代替できません。",
-          "migrateNotice": "接続後は本機がこの中継を使い、以前の上位リンクには接続しなくなります。",
+          "migrateNotice": "接続後は本機がこの中継を使います。",
           "reauthNotice": "接続パスワードが変更されました。再入力して接続を回復してください。",
           "submit": "接続",
           "submitReauth": "再接続",
@@ -3234,7 +3239,7 @@
         },
         "leave": {
           "title": "中継から離脱しますか？",
-          "description": "離脱すると本機と各ノードは上位リンクを失い、中継に接続し直す必要があります。",
+          "description": "離脱すると本機と各ノードは中継リンクを失い、中継に接続し直す必要があります。",
           "confirm": "離脱",
           "done": "中継から離脱しました。"
         },
@@ -3263,6 +3268,28 @@
           "retryFailed": "パスワード参加用資格情報の更新に失敗しました。しばらくしてから再試行してください。",
           "needsPassword": "パスワード参加用資格情報の更新にはパスワードが必要です。パスキーでは署名できません。",
           "staleWarning": "パスワード参加用資格情報が未更新です。他のマシンがパスワードで参加する前にパスワードを再入力してください。"
+        },
+        "enrollPassword": {
+          "title": "接続パスワードを変更",
+          "description": "変更後、新規接続には新しいパスワードが必要です。既存ノードは既定で接続を維持します。",
+          "current": "現在の接続パスワード",
+          "currentHint": "本機はこの中継の接続パスワードを記録していません。現在のパスワードを入力してください。中継にパスワードがない場合は空欄のままにします。",
+          "next": "新しい接続パスワード",
+          "nextHint": "8 文字以上。空欄にすると接続パスワードを解除します。",
+          "kick": "旧トークンを失効",
+          "kickHint": "すべてのノードの旧トークンは直ちに無効になり、接続パスワードの再入力が必要です。",
+          "done": "接続パスワードを変更しました。",
+          "cleared": "接続パスワードを解除しました。",
+          "show": "接続パスワードを表示",
+          "hide": "接続パスワードを隠す",
+          "select": "中継",
+          "errors": {
+            "relay_password_invalid": "現在の接続パスワードが正しくありません。",
+            "relay_password_too_short": "新しいパスワードは 8 文字以上にしてください。",
+            "relay_members_offline": "オフラインのメンバーがいるため、旧トークンを失効できません。",
+            "relay_unreachable": "この中継に接続できません。",
+            "relay_not_attached": "本機はこの中継に接続していません。"
+          }
         },
         "errors": {
           "ROOT_PASSWORD_INVALID": "現在のパスワードが正しくありません。",
@@ -3476,8 +3503,9 @@
           "failed": "上限の更新に失敗しました：{{message}}"
         },
         "turn": {
-          "title": "TURN",
-          "hint": "直接接続できない場合、ブラウザとノードはこの中継の TURN 経由でメディアを転送します。",
+          "section": "NAT 越え",
+          "title": "TURN サーバー",
+          "hint": "直接接続に失敗した場合、ブラウザとノードはこの TURN を経由します。",
           "sub": "{{mode}} · {{state}}",
           "sourceBuiltin": "内蔵",
           "sourceExternal": "外部",
@@ -3486,8 +3514,9 @@
           "stateStopped": "待ち受けなし",
           "stateOff": "無効",
           "externalIp": "外部アドレス {{ip}}",
-          "firewall": "クラウドのセキュリティグループまたはファイアウォールで UDP {{port}} と UDP {{range}} を許可してください。",
-          "membersProbe": "メンバー到達 {{ok}}/{{total}}",
+          "unitAllocations": "割り当て",
+          "firewall": "UDP {{port}} と UDP {{range}} を開放",
+          "membersProbe": "メンバー探査 {{ok}}/{{total}} 到達可（30 分以内の報告）",
           "failed": "TURN を起動できません：{{message}}"
         }
       }

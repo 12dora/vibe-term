@@ -28,6 +28,7 @@ import {
   sha256Hex,
   verifyRelayPassword,
 } from './relay-password';
+import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
 import { relayTokenHashAccepted } from './relay-token-grace';
 import type { RelayUplinkServer } from './relay-uplink-server';
@@ -41,6 +42,7 @@ export type RelayPublicRoutesDeps = {
   configStore: RelayConfigStore;
   limiter: RelayEnrollLimiter;
   uplink: RelayUplinkServer;
+  registry: RelayRegistry;
   publicUrl: string;
   relayHost: string;
   now: () => number;

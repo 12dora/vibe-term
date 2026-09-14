@@ -179,6 +179,7 @@ export class RelayRuntime {
       configStore: this.configStore,
       limiter: this.limiter,
       uplink: this.uplink,
+      registry: this.registry,
       publicUrl: opts.config.publicUrl,
       relayHost: this.uplink.relayHost,
       now: this.now,

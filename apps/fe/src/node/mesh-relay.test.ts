@@ -5,6 +5,8 @@ import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
 import type { RelayTenantApi, RelayTenantStatus } from '@vibeterm/api-client/relay/tenant-api';
 import {
   attachedRelay,
+  defaultEnrollPasswordRelay,
+  enrollPasswordRelays,
   getMeshRelayState,
   isRelayMode,
   orderedRelays,
@@ -109,6 +111,37 @@ describe('mesh-relay 纯函数', () => {
     expect(relayAwaitingToken(kicked)).toBe(false);
   });
 
+  test('接入密码行只收已挂上或主中继，默认主中继', () => {
+    const snapshot = {
+      ...getMeshRelayState(),
+      ...status({
+        relays: [
+          link('https://sec.example', {
+            priority: 1,
+            attached: true,
+            role: 'secondary',
+            enrollPassword: { known: false },
+          }),
+          link('https://pri.example', {
+            priority: 0,
+            attached: true,
+            role: 'primary',
+            enrollPassword: { known: true },
+          }),
+          link('https://off.example', { priority: 2, attached: false, role: null }),
+        ],
+      }),
+    };
+    expect(enrollPasswordRelays(snapshot).map((row) => row.url)).toEqual([
+      'https://pri.example',
+      'https://sec.example',
+    ]);
+    expect(defaultEnrollPasswordRelay(enrollPasswordRelays(snapshot))?.url).toBe(
+      'https://pri.example'
+    );
+    expect(enrollPasswordRelays(snapshot)[0]?.enrollPassword).toEqual({ known: true });
+  });
+
   test('令牌换代按「等待新令牌」判，不当成要重新输入口令', () => {
     const rotated = {
       ...getMeshRelayState(),
@@ -139,6 +172,24 @@ describe('refreshMeshRelay', () => {
     expect(state.loading).toBe(false);
     expect(state.error).toBeNull();
     expect(state.loadedAt).not.toBeNull();
+  });
+
+  test('status 行上的 enrollPassword 原样落入 store', async () => {
+    await refreshMeshRelay(
+      apiOf(() =>
+        Promise.resolve(
+          status({
+            relays: [
+              link('https://a.example', {
+                attached: true,
+                enrollPassword: { known: true },
+              }),
+            ],
+          })
+        )
+      )
+    );
+    expect(getMeshRelayState().relays[0]?.enrollPassword).toEqual({ known: true });
   });
 
   test('404 记成 unsupported，不当作加载失败', async () => {

@@ -1,15 +1,15 @@
 // 中继链路行的语义层：一行该摆哪些徽标、哪些行可以「设为主中继」。纯函数，供行组件与单测共用。
 //
 // 两种形态：
-// - 单条中继 / 旧网关（`multiAttach === false`）：与今天一模一样——地址 + 一枚状态徽标，
-//   多于一条时行本身是选择器。
-// - 多条同时挂载（`multiAttach === true`）：行不再是单选，每行各自摆身份、延迟、在线对端数
-//   与 TURN；「设为主中继」是行尾的一个动作，主中继那行禁用。
+// - 单条中继 / 旧网关（`multiAttach === false`）：地址 + 状态点，多于一条时行本身是选择器。
+// - 多条同时挂载（`multiAttach === true`）：行不再是单选，默认只摆身份与延迟，「更多」里
+//   收优选指数 / 对端 / TURN / 路径 / 固定态；「设为主中继」是行尾的一个动作。
 
 import { relayPeersOnlineOf, relayRoleOf, relayTurnOf } from '@/node/relay-extras';
 import type {
   RelayAttachRole,
   RelayAutoSelectView,
+  RelayLinkErrorCode,
   RelayLinkStatus,
 } from '@vibeterm/api-client/relay/tenant-api';
 import type { RelaySwitchReason } from '@vibeterm/shared/relay';
@@ -83,23 +83,19 @@ export function relayPinBadge(row: RelayLinkStatus): RelayBadgeSpec | null {
 
 export interface RelayScoreHint {
   key: string;
-  params: { ms: number };
-  /** 悬停解释：这个数越小越好，不是延迟。 */
-  titleKey: string;
+  params: { value: number };
 }
 
 /**
- * 自动优选打分。它不是延迟——延迟只是其中一项，还叠了路径与负载——所以紧跟在延迟后面
- * 另起一段，并带上「越小越好」的悬停解释。未连接 / 样本不足（网关不下发）时不出。
+ * 自动优选打分（「优选指数」）。未连接 / 样本不足（网关不下发）时不出。
  */
 export function relayScoreHint(row: RelayLinkStatus): RelayScoreHint | null {
   if (!row.online) return null;
   const score = row.score;
   if (typeof score !== 'number' || !Number.isFinite(score) || score < 0) return null;
   return {
-    key: 'relay.tenant.strip.score',
-    params: { ms: Math.round(score) },
-    titleKey: 'relay.tenant.strip.scoreTitle',
+    key: 'relay.tenant.strip.tip.score',
+    params: { value: Math.round(score) },
   };
 }
 
@@ -182,31 +178,21 @@ export function relayRttBadge(row: RelayLinkStatus): RelayBadgeSpec | null {
   };
 }
 
-/** 「N 台在线」：该中继最近一次成员列表里在线的对端数；未连接或旧网关不下发时不出。 */
+/** 该中继最近一次成员列表里在线的对端数；未连接或旧网关不下发时不出。 */
 export function relayPeersBadge(row: RelayLinkStatus): RelayBadgeSpec | null {
   const peers = relayPeersOnlineOf(row);
   if (peers === null) return null;
-  return { key: 'relay.tenant.strip.peersOnline', params: { n: peers }, variant: 'outline' };
+  return { key: 'relay.tenant.strip.tip.peers', params: { n: peers }, variant: 'outline' };
 }
 
 function turnMembersSuffix(
-  probeOk: boolean | null,
   members: { ok: number; total: number } | undefined
 ): Pick<RelayTurnChip, 'membersKey' | 'membersParams'> {
   if (!members) return {};
-  if (probeOk === true) {
-    return {
-      membersKey: 'relay.tenant.strip.turnMembersCount',
-      membersParams: { ok: members.ok, total: members.total },
-    };
-  }
-  if (probeOk === false) {
-    return {
-      membersKey: 'relay.tenant.strip.turnMembersReachable',
-      membersParams: { ok: members.ok, total: members.total },
-    };
-  }
-  return {};
+  return {
+    membersKey: 'relay.tenant.strip.tip.turnMembers',
+    membersParams: { ok: members.ok, total: members.total },
+  };
 }
 
 function turnChipTone(
@@ -224,11 +210,126 @@ export function relayTurnChip(row: RelayLinkStatus): RelayTurnChip | null {
   return {
     endpoint: turnEndpointLabel(turn.url),
     verdictKey: turnProbeKey(turn.probeOk),
-    ...turnMembersSuffix(turn.probeOk, turn.members),
+    ...turnMembersSuffix(turn.members),
     reachable: turn.probeOk,
     tone: turnChipTone(turn.probeOk, turn.members),
     ...(turn.localHint === 'tun' ? { titleKey: 'relay.tenant.strip.turnTunHint' } : {}),
   };
+}
+
+export function relayPathBestLine(
+  row: RelayLinkStatus
+): { key: string; params: { ms: number } } | null {
+  if (typeof row.pathBestMs !== 'number' || !Number.isFinite(row.pathBestMs)) return null;
+  return {
+    key: 'relay.tenant.strip.tip.pathBest',
+    params: { ms: Math.round(row.pathBestMs) },
+  };
+}
+
+export type RelayTipLine = {
+  key: string;
+  i18nKey: string;
+  params?: Record<string, string | number>;
+  translatedParams?: Record<string, string>;
+  testId?: string;
+  tone?: RelayTurnChipTone;
+};
+
+const LINK_ERROR_CODES = new Set<string>([
+  'connect-failed',
+  'connect-timeout',
+  'auth-timeout',
+  'auth-rejected',
+  'heartbeat-lost',
+  'kicked',
+  'revoked',
+  'dns',
+  'refused',
+  'tls',
+  'protocol',
+  'unknown',
+] satisfies RelayLinkErrorCode[]);
+
+/**
+ * 这一行该显示的错误文案 key；在线或没有未恢复的错误时为 `null`。
+ * 只有原始错误串（旧网关不下发错误码）时一律归到 `unknown`。
+ */
+export function relayLinkErrorKey(relay: RelayLinkStatus): string | null {
+  if (relay.online) return null;
+  const code = relay.lastErrorCode;
+  if (code && LINK_ERROR_CODES.has(code)) return `relay.tenant.linkErrors.${code}`;
+  return code || relay.lastError ? 'relay.tenant.linkErrors.unknown' : null;
+}
+
+/** 这条中继当前是否需要提醒（令牌被作废 / 掉线且有错）。 */
+export function relayFailing(relay: RelayLinkStatus): boolean {
+  return relay.kicked === true || relayLinkErrorKey(relay) !== null;
+}
+
+/** 「更多」气泡里的各行；没有可说的事实时为空。 */
+export function relayMoreTipLines(row: RelayLinkStatus, host: string): RelayTipLine[] {
+  const lines: RelayTipLine[] = [];
+  const score = relayScoreHint(row);
+  if (score) {
+    lines.push({
+      key: 'score',
+      i18nKey: score.key,
+      params: score.params,
+      testId: `nodes-relay-score-${host}`,
+    });
+  }
+  const peers = relayPeersBadge(row);
+  if (peers) {
+    lines.push({
+      key: 'peers',
+      i18nKey: peers.key,
+      params: peers.params,
+      testId: `nodes-relay-peers-${host}`,
+    });
+  }
+  const turn = relayTurnChip(row);
+  if (turn) {
+    lines.push({
+      key: 'turn',
+      i18nKey: 'relay.tenant.strip.tip.turn',
+      translatedParams: { state: turn.verdictKey },
+      testId: `nodes-relay-turn-${host}`,
+      tone: turn.tone,
+    });
+    if (turn.membersKey && turn.membersParams) {
+      lines.push({
+        key: 'turnMembers',
+        i18nKey: turn.membersKey,
+        params: turn.membersParams,
+      });
+    }
+    if (turn.titleKey) lines.push({ key: 'tun', i18nKey: turn.titleKey });
+  }
+  const path = relayPathBestLine(row);
+  if (path) {
+    lines.push({ key: 'path', i18nKey: path.key, params: path.params });
+  }
+  const pin = relayPinBadge(row);
+  if (pin) {
+    lines.push({
+      key: 'pin',
+      i18nKey: pin.key,
+      testId: `nodes-relay-pin-${host}`,
+    });
+  }
+  if (!row.online) {
+    const errorKey = relayLinkErrorKey(row);
+    if (errorKey) {
+      lines.push({
+        key: 'error',
+        i18nKey: 'relay.tenant.strip.error',
+        translatedParams: { message: errorKey },
+      });
+    }
+    lines.push({ key: 'role', i18nKey: relayRoleBadge(row).key });
+  }
+  return lines;
 }
 
 /**

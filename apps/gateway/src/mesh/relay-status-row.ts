@@ -58,6 +58,7 @@ export type RelayStatusRowExtras = {
   pinned?: boolean;
   autoSelected?: boolean;
   score?: number | null;
+  enrollPasswordKnown?: boolean;
 };
 
 function statusRowOnline(
@@ -107,6 +108,7 @@ export function buildRelayStatusRow(
     ...(extras?.pathBestMs != null ? { pathBestMs: extras.pathBestMs } : {}),
     ...(extras?.reraces != null ? { reraces: extras.reraces } : {}),
     ...selectRowFlags(extras),
+    enrollPassword: { known: extras?.enrollPasswordKnown === true },
   };
 }
 
@@ -186,6 +188,7 @@ export function collectRelayStatusRows(input: {
   preferredUrl?: string | null;
   autoSelected?: boolean;
   scoreOf?: (url: string) => number | null;
+  enrollPasswordKnownOf?: (url: string) => boolean;
 }): RelayStatusRow[] {
   return input.rows.map((row) => {
     const attached = input.attachedUrl != null && sameUplinkUrl(input.attachedUrl, row.url);
@@ -200,6 +203,7 @@ export function collectRelayStatusRows(input: {
       ...(client?.keyLog.diverged === true ? { keyLog: { diverged: true as const } } : {}),
       ...uplinkPathView(row.url),
       ...statusSelectExtras(input, row.url, attached, connected),
+      enrollPasswordKnown: input.enrollPasswordKnownOf?.(row.url) === true,
     });
   });
 }
@@ -247,6 +251,7 @@ export function buildRelayStatusPayload(input: {
   preferredUrl?: string | null;
   autoSelect?: RelayAutoSelectView | null;
   scoreOf?: (url: string) => number | null;
+  enrollPasswordKnownOf?: (url: string) => boolean;
 }): RelayStatusPayload {
   const autoOn = input.autoSelect?.enabled === true;
   const preferredUrl = input.preferredUrl ?? null;
@@ -269,6 +274,7 @@ export function buildRelayStatusPayload(input: {
     preferredUrl,
     autoSelected: autoOn && isAutoSwitchReason(input.autoSelect?.switchReason),
     scoreOf: autoOn ? input.scoreOf : undefined,
+    enrollPasswordKnownOf: input.enrollPasswordKnownOf,
   });
   const secondaryAwaiting = input.rows.some(
     (row) => input.secondaryOf(row.url)?.awaitingToken === true

@@ -41,7 +41,19 @@ export type {
 export type { RelayMetaKeyLaggingNode } from './meta-key-lagging';
 
 /** 中继列表里的一条链路（按 `priority` 升序即 failover 顺序）。 */
-export type RelayLinkStatus = RelayStatusRow;
+export type RelayEnrollPasswordKnown = { known: boolean };
+export type RelayLinkStatus = RelayStatusRow & { enrollPassword?: RelayEnrollPasswordKnown };
+/** `GET /api/mesh/relay/password?url=`：明文只回给已鉴权的本机会话。 */
+export type RelayEnrollPasswordView = { known: boolean; password: string | null };
+export type RelayPasswordRotateMode = 'keep' | 'kick';
+/** `POST /api/mesh/relay/password`。省略 `current` 时网关用本机已存的接入密码。 */
+export type RelayRotateEnrollPasswordRequest = {
+  url: string;
+  current?: string;
+  next: string | null;
+  mode?: RelayPasswordRotateMode;
+};
+export type RelayRotateEnrollPasswordResponse = { ok: true; passwordEpoch: number };
 
 /** 中继下发的配额；未接入或旧中继时为 `null`。 */
 export interface RelayQuotaView {
@@ -507,6 +519,18 @@ export class RelayTenantApi {
       `${BASE}/enrollments/${encodeURIComponent(id)}`,
       'relay_enrollment_status_failed'
     );
+  }
+
+  /** `GET /api/mesh/relay/password?url=`：本机是否存有该中继接入密码，以及明文。 */
+  enrollPassword(url: string): Promise<RelayEnrollPasswordView> {
+    return this.json(`${BASE}/password?url=${encodeURIComponent(url)}`, 'relay_password_failed');
+  }
+
+  /** `POST /api/mesh/relay/password`：转发到中继 rotate，成功后本机改存 `next`。 */
+  rotateEnrollPassword(
+    body: RelayRotateEnrollPasswordRequest
+  ): Promise<RelayRotateEnrollPasswordResponse> {
+    return this.json(`${BASE}/password`, 'relay_password_failed', { method: 'POST', body });
   }
 }
 

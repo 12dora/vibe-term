@@ -120,27 +120,36 @@ export class RelayTurnService {
   }
 
   status(): RelayTurnStatus {
-    if (this.source === 'off') {
-      return {
-        ...EMPTY_RELAY_TURN_STATUS,
-        port: this.config.turnPort === 0 ? 0 : null,
-        error: this.error,
-      };
-    }
-    if (this.source === 'external') {
-      const turn = this.advertised;
-      return {
-        enabled: turn != null,
-        source: 'external',
-        url: turn?.url ?? null,
-        port: turn?.url ? parsePortFromTurnUrl(turn.url) : null,
-        externalIp: null,
-        listening: false,
-        allocations: 0,
-        error: this.error,
-        relayPortRange: null,
-      };
-    }
+    if (this.source === 'off') return this.statusOff();
+    if (this.source === 'external') return this.statusExternal();
+    return this.statusBuiltin();
+  }
+
+  private statusOff(): RelayTurnStatus {
+    return {
+      ...EMPTY_RELAY_TURN_STATUS,
+      port: this.config.turnPort === 0 ? 0 : null,
+      error: this.error,
+    };
+  }
+
+  private statusExternal(): RelayTurnStatus {
+    const turn = this.advertised;
+    return {
+      enabled: turn != null,
+      source: 'external',
+      url: turn?.url ?? null,
+      port: turn?.url ? parsePortFromTurnUrl(turn.url) : null,
+      externalIp: null,
+      listening: false,
+      allocations: 0,
+      maxAlloc: null,
+      error: this.error,
+      relayPortRange: null,
+    };
+  }
+
+  private statusBuiltin(): RelayTurnStatus {
     const snap = this.server?.snapshot();
     const listening = snap?.listening === true;
     return {
@@ -152,6 +161,7 @@ export class RelayTurnService {
       bindHost: snap?.bindHost ?? null,
       listening,
       allocations: snap?.allocations ?? 0,
+      maxAlloc: this.relayRange ? clampTurnAllocations(this.relayRange).maxAllocations : null,
       error: this.error,
       relayPortRange: this.relayRange ? formatTurnPortRange(this.relayRange) : null,
     };

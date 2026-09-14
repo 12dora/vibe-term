@@ -105,6 +105,34 @@ describe('RelayTab 的收尾状态', () => {
 });
 
 describe('RelayTab 的正文', () => {
+  test('下发 TURN 时出「内网穿透」段，不再把磁贴收成单列窄卡', () => {
+    const base = status([tenant()]);
+    setRelayAdminStateForTest({
+      availability: 'available',
+      status: {
+        ...base,
+        turn: {
+          enabled: true,
+          source: 'builtin',
+          url: 'turn:relay.example:40000',
+          port: 40000,
+          externalIp: '203.0.113.7',
+          listening: true,
+          allocations: 2,
+          maxAlloc: 49,
+          error: null,
+          relayPortRange: '40001-40049',
+        },
+      },
+    });
+    const html = render();
+    expect(html).toContain('relay.admin.turn.section');
+    expect(html).toContain('data-testid="relay-turn"');
+    expect(html).toContain('relay.admin.turn.hint');
+    expect(html).toContain('>2 / 49<');
+    expect(html).toContain('relay.admin.turn.unitAllocations');
+  });
+
   test('指标面板 + 页头菜单 + 租户卡都在，口令卡与配额卡已撤掉', () => {
     setRelayAdminStateForTest({
       availability: 'available',
