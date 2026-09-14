@@ -8,6 +8,8 @@ import {
   readMeshState,
 } from './helpers/mesh-e2e';
 
+test.use({ locale: 'zh-CN' });
+
 let state: MeshState;
 let raw: {
   relay: { port: number; username: string; password: string; relayPassword?: string };
@@ -18,16 +20,39 @@ test.beforeAll(() => {
   raw = JSON.parse(readFileSync(meshStatePath(), 'utf8'));
 });
 
-async function openNodesTab(page: Page, base: string): Promise<void> {
+function captureErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}\n${err.stack ?? ''}`));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error' && !msg.text().includes('404'))
+      errors.push(`console: ${msg.text()}`);
+  });
+  return errors;
+}
+
+async function openNodesTab(page: Page, base: string, errors: string[]): Promise<void> {
   await page.goto(`${base}/settings?tab=nodes`, { waitUntil: 'domcontentloaded' });
-  await expect(page.getByTestId('local-machine-card')).toBeVisible({ timeout: 30_000 });
+  const card = page.getByTestId('local-machine-card');
+  try {
+    await expect(card).toBeVisible({ timeout: 30_000 });
+  } catch (error) {
+    const details = page.getByText('Technical details');
+    if (await details.count()) {
+      await details.click();
+      await page.waitForTimeout(300);
+      errors.push(`details: ${await page.locator('body').innerText()}`);
+    }
+    throw new Error(`settings did not render:\n${errors.join('\n----\n')}`, { cause: error });
+  }
+  await page.waitForTimeout(800);
 }
 
 test('shots: local card relay panel, connection details and 更多 tooltip on node A', async ({
   page,
 }) => {
+  const errors = captureErrors(page);
   await loginWithPassword(page, state);
-  await openNodesTab(page, meshUrl(state, ''));
+  await openNodesTab(page, meshUrl(state, '').replace(/\/$/, ''), errors);
   await page.getByTestId('local-machine-details-toggle').click();
   await expect(page.getByTestId('local-machine-details-content')).toBeVisible();
   await page.getByTestId('local-machine-card').screenshot({
@@ -44,9 +69,12 @@ test('shots: local card relay panel, connection details and 更多 tooltip on no
   expect(text).not.toContain('打分');
   expect(text).not.toContain('主中继');
   expect(text).not.toContain('副中继');
+  await expect(page.getByTestId('nodes-relay-enroll-password')).toBeVisible();
 });
 
 test('shots: relay operator TURN tile on the relay host', async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors = captureErrors(page);
   const base = `http://localhost:${raw.relay.port}`;
   await page.goto(`${base}/login`, { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('login-page')).toBeVisible({ timeout: 30_000 });
@@ -57,17 +85,17 @@ test('shots: relay operator TURN tile on the relay host', async ({ page }) => {
   await page.goto(`${base}/settings?tab=relay`, { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('settings-relay-tab')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('relay-turn')).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId('settings-relay-tab').screenshot({
-    path: 'test-results/r51-relay-operator.png',
-  });
-  await openNodesTab(page, base);
+  await page.waitForTimeout(1200);
+  await page.getByTestId('relay-turn').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: 'test-results/r51-relay-operator.png', animations: 'disabled' });
+  const operatorText = await page.getByTestId('settings-relay-tab').innerText();
+  expect(operatorText).not.toContain('安全组');
+  expect(operatorText).not.toContain('成员可达');
+  await expect(page.getByTestId('relay-metric-turn')).toContainText(/allocations|分配/);
+  await expect(page.getByTestId('relay-turn-firewall')).toContainText(/UDP 40000/);
+  await openNodesTab(page, base, errors);
   await page.getByTestId('local-machine-card').screenshot({
     path: 'test-results/r51-relay-host-local-card.png',
   });
-  const text = await page
-    .getByTestId('settings-relay-tab')
-    .innerText()
-    .catch(() => '');
-  expect(text).not.toContain('安全组');
-  expect(text).not.toContain('成员可达');
 });
