@@ -153,6 +153,8 @@ export const zhCN: Record<string, string> = {
     'app.env：VIBETERM_STUN_SERVERS 为旧版内置默认值，已移除以便使用本发行版内置列表（备份：{{backup}}）',
   'upgrade.hubEnvMigrated':
     '2.5.0 已移除 Hub 模式：VIBETERM_ROLES 已从 hub,node 改写为 node，并删除 {{count}} 个 VIBETERM_HUB_* 键（备份：{{backup}}）。每台成员现在都必须加入中继：vibeterm relay join',
+  'upgrade.hubEnvKeysDeleted':
+    '2.5.0 已移除 Hub 模式：已从 app.env 删除 {{count}} 个残留的 VIBETERM_HUB_* 键（备份：{{backup}}）',
   'upgrade.turnExternalNotice': '已配置外部 TURN，内置 TURN 未启动',
   'upgrade.rolledBack': '已回滚到 {{version}}：{{error}}',
   'upgrade.preflightFailed': '预启动 {{version}} 失败：{{error}}',
