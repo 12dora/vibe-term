@@ -1,4 +1,4 @@
-# 可升级的 vibeterm 节点容器。与 scripts/hub-e2e/Dockerfile 同源：ubuntu:24.04 +
+# 可升级的 vibeterm 节点容器。基底：ubuntu:24.04 +
 # Node 22 官方 tarball + 钉死版本的 Bun，运行时由 vibeterm-cli 自己铺装到 /opt/vibeterm。
 # 多架构：TARGETARCH=amd64|arm64（Apple Silicon 上原生构建 arm64，不走 qemu）。
 FROM ubuntu:24.04

@@ -15,7 +15,7 @@
 
 ## 快速定位
 
-- 想搭一台公网入口把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md) → 需要第二台入口时 [多 hub 主/备](./operations/multi-hub-standby.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
+- 想搭一台公网入口把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
 - 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
 - 装在 ≤ 2 GiB 的小内存机上：[小内存主机](./operations/small-memory.md)。
 - 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
@@ -66,7 +66,6 @@
 | [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / Hub / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查，以及 agent 用 CLI 调试别的节点 |
 | [production-install.md](./operations/production-install.md) | 生产部署：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
 | [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、延迟优化、节点表、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
-| [multi-hub-standby.md](./operations/multi-hub-standby.md) | 多 hub 主 / 备：同步、跨 hub relay、failover、写入围栏、promote / demote 手册 |
 | [docker-node.md](./operations/docker-node.md) | 可升级的容器节点 |
 | [nonstandard-ports.md](./operations/nonstandard-ports.md) | 按角色列出应放行的 TCP/UDP 口；80/443 不可用时的 HTTPS 候选与探测 |
 | [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
@@ -106,4 +105,3 @@
 | [performance-frontend.md](./development/performance-frontend.md) | 前端流畅度、WS 重连、设置页加载、静态资源缓存 |
 | [live-integration-tests.md](./development/live-integration-tests.md) | 打真实 endpoint 的实测约定 |
 | [relay-live-harness.md](./development/relay-live-harness.md) | 中继三进程实测主管 |
-| [hub-docker-e2e.md](./development/hub-docker-e2e.md) | Docker 多容器 hub/node 实测 harness |

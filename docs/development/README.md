@@ -17,4 +17,3 @@
 | [performance-frontend.md](./performance-frontend.md) | 前端流畅度、WS 重连、设置页加载、静态资源缓存 |
 | [live-integration-tests.md](./live-integration-tests.md) | 打真实 endpoint 的实测约定 |
 | [relay-live-harness.md](./relay-live-harness.md) | 中继三进程实测主管 |
-| [hub-docker-e2e.md](./hub-docker-e2e.md) | Docker 多容器 hub/node 实测 harness |
