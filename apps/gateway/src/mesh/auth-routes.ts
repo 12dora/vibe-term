@@ -53,6 +53,7 @@ import {
 import { LoginFailureLimiter } from './auth-login-limiter';
 import {
   AuthModeCache,
+  type AuthTlsInfoProvider,
   findPrimaryUser,
   isPasskeyAvailable,
   loadAuthModeTls,
@@ -74,7 +75,6 @@ import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
 import {
   AUTH_UID_MAX_BYTES,
   CHALLENGE_RATE_LIMIT,
-  type HubTlsInfoProvider,
   type KeyLogHubAck,
   type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
@@ -143,7 +143,7 @@ export type AuthRoutesDeps = {
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
-  tlsInfo?: HubTlsInfoProvider;
+  tlsInfo?: AuthTlsInfoProvider;
   localAuth?: LocalAuthStoreLike;
 };
 
@@ -166,7 +166,7 @@ export class AuthRoutes {
   private readonly totpGuard = new TotpLoginGuard(() => this.now());
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly verifyPasskey: VerifyDelegationPasskey;
-  private tlsInfoProvider: HubTlsInfoProvider | undefined;
+  private tlsInfoProvider: AuthTlsInfoProvider | undefined;
   private localAuth: LocalAuthStoreLike;
   private readonly modeCache = new AuthModeCache();
   private readonly keyLog: AuthKeyLogRoutes;
@@ -196,7 +196,7 @@ export class AuthRoutes {
     });
   }
 
-  setTlsInfo(provider: HubTlsInfoProvider | undefined): void {
+  setTlsInfo(provider: AuthTlsInfoProvider | undefined): void {
     this.tlsInfoProvider = provider;
     this.invalidateAuthModeCache();
   }

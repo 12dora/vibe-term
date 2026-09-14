@@ -7,7 +7,7 @@ import type { LivePeer } from './peer-reconnect-wake';
 import { RouteDegradeCoordinator, type RouteModeHolder } from './route-degrade';
 import { ImmediateScheduler } from './test-support';
 import type { MeshIdentity, PeerTransportKind } from './types';
-import type { UplinkClient } from './uplink-client';
+import type { PooledUplink } from './types';
 
 const PEER = 'bb'.repeat(16);
 
@@ -73,7 +73,11 @@ function makeHarness(
   const scheduler = new ImmediateScheduler();
   const mode = fakeMode(opts.mode ?? 'auto');
   const identity = { nodeId: 'aa'.repeat(16), edSecretKey: new Uint8Array(64) } as MeshIdentity;
-  const uplink = { rttMs: opts.uplinkMs ?? 14 } as unknown as UplinkClient;
+  const uplinkRtt = opts.uplinkMs ?? 14;
+  const uplink = {
+    rttMs: uplinkRtt,
+    resetBackoff() {},
+  } as unknown as PooledUplink & { resetBackoff(): void };
   const state = createPeerManagerState({
     identity,
     userStore: { getCert: () => ({ userId: 'user-1' }) } as never,
@@ -94,7 +98,7 @@ function makeHarness(
         const session = stubSession();
         relays.push(session);
         const prev = state.live.get(PEER);
-        const live = liveOf(PEER, 'relay', session, uplink.rttMs ?? 14);
+        const live = liveOf(PEER, 'relay', session, uplinkRtt);
         state.live.set(PEER, live);
         if (prev) retired.push(prev.session);
         installed.push({ transport: 'relay', session });

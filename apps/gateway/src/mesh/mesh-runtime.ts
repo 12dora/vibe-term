@@ -14,6 +14,7 @@ import {
   ensureNodeIdentity,
   makeDeferredVerifyPasskeyAssertion,
 } from '../auth';
+import { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import type { AuthDb } from '../auth/types';
 import { type VibeTermRoles, config as gatewayConfig } from '../config';
 import { getSiteSettings } from '../db/site-settings';
@@ -618,6 +619,7 @@ function createUplinkWiring(d: MeshDeps) {
     scheduler: d.scheduler,
     pingIntervalMs: opts.pingIntervalMs,
     createClient: relayOverrides.createClient,
+    caPins: new RelayCaPinStore(d.db),
     probeHealthz: relayOverrides.probeHealthz,
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({

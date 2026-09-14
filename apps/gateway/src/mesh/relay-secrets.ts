@@ -32,7 +32,7 @@ export type PendingRelayKeys = {
 
 export type RelayReconcileResult = {
   kind: UplinkKind;
-  /** 池会选中的那条主中继变了且当前并未挂在新主上，或 hub↔relay 翻转，必须重建 uplink 池。 */
+  /** 池会选中的那条主中继变了且当前并未挂在新主上，或 relay↔none 翻转，必须重建 uplink 池。 */
   primaryChanged: boolean;
   /** secondary 增删/重排，或已经挂在新主上只需刷挂载；主链路不重启。 */
   rowsChanged: boolean;
@@ -192,7 +192,7 @@ export class RelaySecrets {
     const projection = this.projection();
     const now = this.now();
     await this.absorbKeys(projection, now);
-    const kind: UplinkKind = projection.relays ? 'relay' : 'hub';
+    const kind: UplinkKind = projection.relays ? 'relay' : 'none';
     await this.writeTargets(projection.relays, now);
     if (this.store.uplinkKind() !== kind) this.store.setUplinkKind(kind);
     const print = this.targetsFingerprint(projection.relays, kind);

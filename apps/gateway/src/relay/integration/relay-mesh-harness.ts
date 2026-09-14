@@ -10,12 +10,13 @@ import {
 } from '../../auth';
 import { MeshRelayStore } from '../../auth/mesh-relay-store';
 import { createMigratedAuthDb } from '../../auth/test-db';
+import type { AuthDb } from '../../auth/types';
 import {
   callMesh,
   fakeGateway,
   loginSelf,
   selfCookie,
-} from '../../mesh/integration/multi-hub-harness';
+} from '../../mesh/integration/mesh-http-helpers';
 import { createMeshRuntime } from '../../mesh/mesh-runtime';
 import { RelayUplinkClient } from '../../mesh/relay-uplink-client';
 import { fakeSocketPair, waitUntil } from '../../mesh/test-support';
@@ -45,6 +46,16 @@ import {
   waitRelayKeyLogSynced,
 } from './relay-tenant-ops';
 
+export {
+  callMesh,
+  dummyServer,
+  fakeGateway,
+  jarFor,
+  loginRemote,
+  loginSelf,
+  selfCookie,
+  sidFromResponse,
+} from '../../mesh/integration/mesh-http-helpers';
 export * from './relay-mesh-types';
 export {
   openRelayKeyLogPage,
@@ -137,34 +148,11 @@ async function bootNode(
   if (!db || !close) throw new Error('missing node db');
   const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
   const userStore = new UserStore(db);
-  // 节点名由 `hub join --name` 写进 node_identity，状态块据此展示；测试里直接用 label
+  // 节点名由 `relay join --name` 写进 node_identity，状态块据此展示；测试里直接用 label
   new MeshRelayStore(db).setLocalName(label);
-  const mesh = await createMeshRuntime({
-    db,
-    gateway: fakeGateway(db, label),
-    userId: boot.userId,
-    config: {
-      roles: boot.roles ?? NODE_ROLES,
-      hubUrl: boot.hubUrl ?? null,
-      hubPublicUrl: boot.hubPublicUrl ?? null,
-      peerPort: 0,
-      stunServers: [],
-    },
-    ...(boot.selfHub ? {} : { uplinkHub: null }),
-    ...(boot.selfHub
-      ? {
-          patchHubRoleEnv: async () => {},
-          scheduleHubRoleRestart: () => {},
-          hubFetch: () => Promise.reject(new Error('no-hub-peers')),
-        }
-      : {}),
-    wsFactory: boot.wsFactory ?? harness.wsFactory,
-    startPeerServer: false,
-    pingIntervalMs: 2_000,
-    networkInterfaces: () => ({}),
-    loadNative: async () => null,
-    scheduler: new ShortBackoffScheduler(),
-  });
+  const mesh = await createMeshRuntime(
+    nodeRuntimeOpts(harness, boot, db, label, identity.nodeIdHex)
+  );
   const relayStore = new MeshRelayStore(db);
   const node: RelayMeshNode = {
     label,
@@ -188,11 +176,8 @@ async function bootNode(
     metaEpochs: () => relayStore.listSecretEpochs('meta'),
     async close() {
       await quietly(() => mesh.stop());
-      // MeshRuntime.stop() 不管 HubRuntime（生产由 assemble 单独停），selfHub 节点要自己收
-      await quietly(() => mesh.hub?.stop());
       // 记录应用触发的 reconcile 是异步的；直接关库会让飞行中的写入炸在 closed database
       await new Promise((resolve) => setTimeout(resolve, 50));
-      await quietly(() => mesh.hub?.stop());
       close();
     },
   };
@@ -206,6 +191,63 @@ async function bootNode(
   });
   node.cookie = selfCookie(sid);
   return node;
+}
+
+const MESH_BOOT_KEYS = [
+  'roles',
+  'wsFactory',
+  'linkFactory',
+  'linkFactoryFor',
+  'loadNative',
+  'startPeerServer',
+  'peerPort',
+  'stunServers',
+  'pingIntervalMs',
+  'networkInterfaces',
+  'gateway',
+  'gatewayFactory',
+  'omitUserId',
+] as const;
+
+function meshBootOf(opts: TenantOptions): import('./relay-mesh-types').MeshBootOverrides {
+  const out: import('./relay-mesh-types').MeshBootOverrides = {};
+  for (const key of MESH_BOOT_KEYS) {
+    const value = opts[key];
+    if (value !== undefined) (out as Record<string, unknown>)[key] = value;
+  }
+  return out;
+}
+
+function nodeGateway(boot: NodeBoot, db: AuthDb, label: string) {
+  return boot.gateway ?? boot.gatewayFactory?.(db, label) ?? fakeGateway(db, label);
+}
+
+function nodeRuntimeOpts(
+  harness: RelayMeshHarness,
+  boot: NodeBoot,
+  db: AuthDb,
+  label: string,
+  nodeId: string
+): Parameters<typeof createMeshRuntime>[0] {
+  const linkFactory = boot.linkFactory ?? boot.linkFactoryFor?.(nodeId);
+  const extras = boot.omitUserId ? {} : { userId: boot.userId };
+  return {
+    db,
+    gateway: nodeGateway(boot, db, label),
+    ...extras,
+    config: {
+      roles: boot.roles ?? NODE_ROLES,
+      peerPort: boot.peerPort ?? 0,
+      stunServers: boot.stunServers ?? [],
+    },
+    wsFactory: boot.wsFactory ?? harness.wsFactory,
+    startPeerServer: boot.startPeerServer ?? false,
+    pingIntervalMs: boot.pingIntervalMs ?? 2_000,
+    networkInterfaces: boot.networkInterfaces ?? (() => ({})),
+    loadNative: boot.loadNative ?? (async () => null),
+    ...(linkFactory ? { linkFactory } : {}),
+    scheduler: new ShortBackoffScheduler(),
+  };
 }
 
 async function quietly(fn: () => Promise<void> | undefined): Promise<void> {
@@ -241,11 +283,7 @@ async function createTenant(
     rootKey: boot.rootKey,
     db,
     close,
-    ...(opts.roles ? { roles: opts.roles } : {}),
-    ...(opts.hubUrl !== undefined ? { hubUrl: opts.hubUrl } : {}),
-    ...(opts.hubPublicUrl !== undefined ? { hubPublicUrl: opts.hubPublicUrl } : {}),
-    ...(opts.wsFactory ? { wsFactory: opts.wsFactory } : {}),
-    ...(opts.selfHub ? { selfHub: true } : {}),
+    ...meshBootOf(opts),
   });
   const tenant: RelayTenant = {
     label,
@@ -265,7 +303,7 @@ async function createTenant(
       await waitUntil(() => owner.metaEpochs().length > 0, 8_000);
       await waitRelayKeyLogSynced(harness, tenant);
     },
-    joinNode: (nodeLabel) => joinNode(harness, tenant, nodeLabel),
+    joinNode: (nodeLabel, bootOpts) => joinNode(harness, tenant, nodeLabel, bootOpts),
     admit: (node) => admitNode(tenant, node),
     revoke: (node) => revokeNode(tenant, node),
     rotateMetaKey: (exclude) => rotateMetaKey(tenant, exclude),

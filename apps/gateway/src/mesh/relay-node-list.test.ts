@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { encodeRelayStatusBlob, generateTenantKey, sealEnvelope } from '@vibeterm/shared/relay';
-import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { applyUplinkNodeList } from './node-list-apply';
@@ -210,7 +209,6 @@ describe('relayListToNodeList', () => {
       expect(listed.nodes[0]?.version).toBe('2.2.4');
       expect(userStore.getPeer(nodeId)?.version).toBe('2.2.4');
 
-      const hubStore = new MeshHubStore(db);
       const primaryUrl = 'https://relay.example';
       applyUplinkNodeList(
         {
@@ -219,7 +217,6 @@ describe('relayListToNodeList', () => {
           retainPeerIds: () => [nodeId],
           extraListedNodes: () => [],
           identity: { nodeIdHex: 'cd'.repeat(16) },
-          hubStore,
           scheduler: { now: () => 3 },
           userIdOf: () => 'user-1',
           userStore,
@@ -276,7 +273,6 @@ describe('relayListToNodeList', () => {
           now: 2,
         }
       );
-      const hubStore = new MeshHubStore(db);
       applyUplinkNodeList(
         {
           state: { lastNodeList: null, hubPresenceLive: false, hubGeneration: 0, lastRtc: null },
@@ -284,7 +280,6 @@ describe('relayListToNodeList', () => {
           retainPeerIds: () => [],
           extraListedNodes: () => [],
           identity: { nodeIdHex: 'cd'.repeat(16) },
-          hubStore,
           scheduler: { now: () => 3 },
           userIdOf: () => 'user-1',
           userStore,

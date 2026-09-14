@@ -20,6 +20,7 @@ const KEEPER_TABLES = [
   'mesh_relays',
   'mesh_secrets',
   'node_local_prefs',
+  'relay_ca_pins',
 ] as const;
 
 const DROPPED_HUB_TABLES = [
@@ -292,6 +293,17 @@ describe('auth schema migration', () => {
       }
       expect(tables.has('peer_cache')).toBe(true);
       expect(tables.has('node_identity')).toBe(true);
+      expect(tables.has('relay_ca_pins')).toBe(true);
+      const pin = sqlite.query('SELECT * FROM relay_ca_pins').get() as {
+        relay_url: string;
+        ca_pem: string;
+        fingerprint: string;
+        created_at: number;
+      };
+      expect(pin.relay_url).toBe('https://hub.example');
+      expect(pin.ca_pem).toContain('BEGIN CERTIFICATE');
+      expect(pin.fingerprint).toBe('ab'.repeat(32));
+      expect(pin.created_at).toBe(1);
 
       const columns = sqlite.query('PRAGMA table_info(node_identity)').all() as Array<{
         name: string;

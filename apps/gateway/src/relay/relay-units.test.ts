@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { MIN_RELAY_CLIENT_VERSION, RELAY_KEYLOG_SEQ_MISMATCH } from '@vibeterm/shared/relay';
-import { nodeVersionMeets } from '../hub/hub-authorization';
+import { nodeVersionMeets } from '../mesh/node-version';
 import { RelayBandwidthLimiter, SMALL_FRAME_BYPASS_BURST_BYTES } from './relay-bandwidth';
 import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';

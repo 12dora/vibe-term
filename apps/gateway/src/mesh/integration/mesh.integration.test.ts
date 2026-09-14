@@ -27,20 +27,11 @@ import {
   encodeFrameHeader,
 } from '@vibeterm/shared/link';
 import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
-import {
-  KeyLogStore,
-  NodeIdentityStore,
-  NodeSessionStore,
-  UserKeyService,
-  UserStore,
-  ensureNodeIdentity,
-  makeVerifyPasskeyAssertion,
-  nodeSessionCookieName,
-} from '../../auth';
-import { createMigratedAuthDb } from '../../auth/test-db';
+import { KeyLogStore, nodeSessionCookieName } from '../../auth';
 import type { AuthDb } from '../../auth/types';
-import { signUserRecord } from '../../hub/hub-test-helpers';
-import { encodeRedeemPopMessage } from '../../hub/redeem-pop';
+import { bootRelayMeshHarness, redeemAtRelay } from '../../relay/integration/relay-mesh-harness';
+import { primaryJoinRelay } from '../../relay/integration/relay-tenant-ops';
+import { encodeRedeemPopMessage } from '../../relay/redeem-pop';
 import type { GatewayRuntime } from '../../runtime';
 import type { DeviceSessionRuntime } from '../../tmux-client/device-session-runtime';
 import { WebSocketServer } from '../../ws';
@@ -57,7 +48,6 @@ import { setShareAccessVerifier } from '../share-credential';
 import { openHttpStream, openWsStream } from '../stream-targets';
 import { waitUntil } from '../test-support';
 
-const PASSWORD = 'vibeterm-test';
 const dummyServer = { upgrade: () => false };
 
 function fakeRuntime(): DeviceSessionRuntime {
@@ -290,6 +280,7 @@ function peerLinkFactory(
 
 describe('mesh phase-2 integration', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
+  let enrollSeq = 0;
   afterEach(async () => {
     while (fixtures.length > 0) {
       const item = fixtures.pop();
@@ -298,52 +289,39 @@ describe('mesh phase-2 integration', () => {
     }
   });
 
-  async function bootHubA(opts?: { linkFactory?: boolean; loadNative?: () => Promise<unknown> }) {
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const userStore = new UserStore(db);
-    const keyLogStore = new KeyLogStore(db);
-    const nodeSessionStore = new NodeSessionStore(db);
-    const keys = new UserKeyService({
-      db,
-      userStore,
-      keyLogStore,
-      nodeSessionStore,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
-    });
-    const boot = await keys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: PASSWORD,
-      identity,
-    });
-    const gateway = fakeGateway(db, { devicesBody: { devices: [{ id: 'dev-a' }] } });
+  async function bootOwner(opts?: { linkFactory?: boolean; loadNative?: () => Promise<unknown> }) {
     const holderB: { mesh: MeshRuntime | null } = { mesh: null };
-    const mesh = await createMeshRuntime({
-      db,
-      gateway,
-      userId: boot.userId,
-      config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://hub.example',
-        peerPort: 39001,
-        stunServers: [],
-      },
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
-      linkFactory:
-        opts?.linkFactory === false ? undefined : peerLinkFactory(identity.nodeIdHex, holderB),
+    const h = await bootRelayMeshHarness();
+    fixtures.push({ close: () => {}, stop: () => h.stop() });
+    const tenant = await h.createTenant('alice', {
+      linkFactoryFor:
+        opts?.linkFactory === false ? undefined : (id) => peerLinkFactory(id, holderB),
       loadNative: (opts?.loadNative as never) ?? (async () => null),
+      gatewayFactory: (db) => fakeGateway(db, { devicesBody: { devices: [{ id: 'dev-a' }] } }),
     });
-    fixtures.push({ close, stop: () => mesh.stop() });
-    await mesh.start();
-    await waitUntil(() => mesh.uplink.state === 'online', 5_000);
-    return { db, close, mesh, boot, gateway, holderB, userStore, keyLogStore, keys };
+    await tenant.enroll();
+    return {
+      h,
+      tenant,
+      db: tenant.owner.db,
+      close: () => {},
+      mesh: tenant.owner.mesh,
+      boot: {
+        userId: tenant.userId,
+        rootKey: tenant.rootKey,
+        rootPublicKey: tenant.rootPublicKey,
+        rootEpoch: tenant.rootEpoch,
+      },
+      gateway: tenant.owner.mesh,
+      holderB,
+      userStore: tenant.owner.userStore,
+      keyLogStore: new KeyLogStore(tenant.owner.db),
+      keys: tenant.owner.keys,
+    };
   }
 
   async function enrollNodeB(
-    a: Awaited<ReturnType<typeof bootHubA>>,
+    a: Awaited<ReturnType<typeof bootOwner>>,
     opts?: {
       linkFactory?: boolean;
       loadNative?: () => Promise<unknown>;
@@ -351,97 +329,6 @@ describe('mesh phase-2 integration', () => {
       passUserId?: boolean;
     }
   ) {
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const now = Date.now();
-    const enrollment = await createEnrollment(a.boot.rootKey, {
-      uid: a.boot.userId,
-      rootEpoch: a.boot.rootEpoch,
-      now,
-      ttlMs: 60_000,
-    });
-    const sid = await loginSelf(a.mesh, a.boot);
-    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
-    const created = await a.mesh.hub?.handleRequest(
-      (() => {
-        const req = new Request('http://hub/api/hub/enrollments', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            cookie,
-          },
-          body: JSON.stringify({
-            enroll_pk: encodeBase64url(enrollment.enrollPk),
-            authorization: encodeBase64url(enrollment.authorizationBytes),
-            authorization_sig: encodeBase64url(enrollment.authorizationSig),
-            exp: now + 60_000,
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(created?.status).toBe(201);
-
-    const cert = createNodeCertificate(enrollment.enrollSk, {
-      uid: a.boot.userId,
-      edPk: identity.edPublicKey,
-      x25519Pk: identity.x25519PublicKey,
-      enrollPk: enrollment.enrollPk,
-      now,
-      nodeId: identity.nodeId,
-    });
-    const redeemed = await a.mesh.hub?.handleRequest(
-      new Request('http://hub/api/hub/enrollments/redeem', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          certificate: encodeBase64url(cert.certificateBytes),
-          cert_sig: encodeBase64url(cert.certSig),
-          name: 'node-b',
-          version: 'test',
-        }),
-      }),
-      dummyServer
-    );
-    expect(redeemed?.status).toBe(200);
-
-    const admitPayload = encodeAdmitNodePayload({
-      authorization_bytes: enrollment.authorizationBytes,
-      authorization_sig: enrollment.authorizationSig,
-      certificate_bytes: cert.certificateBytes,
-      cert_sig: cert.certSig,
-    });
-    const admitBeforeCopy = opts?.admitBeforeCopy !== false;
-    if (admitBeforeCopy) {
-      const admitted = await a.keys.signAndApply(a.boot.userId, a.boot.rootKey, {
-        type: 'admit-node',
-        payload: admitPayload,
-      });
-      expect(admitted.ok).toBe(true);
-    }
-
-    const rows = a.keyLogStore.list(a.boot.userId);
-    const head = a.keyLogStore.head(a.boot.userId);
-    expect(head).not.toBeNull();
-    const bUserStore = new UserStore(db);
-    const bKeyLog = new KeyLogStore(db);
-    const bSessions = new NodeSessionStore(db);
-    const bKeys = new UserKeyService({
-      db,
-      userStore: bUserStore,
-      keyLogStore: bKeyLog,
-      nodeSessionStore: bSessions,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(bUserStore),
-    });
-    const joined = await bKeys.verifyChainForJoin(
-      rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
-      a.boot.rootPublicKey,
-      head?.hash ?? new Uint8Array(32)
-    );
-    expect(joined.ok).toBe(true);
-
     const abortHook = { aborted: false, cleanup: 0 };
     let resolveUploadReady: () => void = () => {};
     const uploadReady = new Promise<void>((resolve) => {
@@ -460,95 +347,77 @@ describe('mesh phase-2 integration', () => {
         savePaneOrder: () => {},
       },
     });
-    const gateway = fakeGateway(db, {
-      devicesBody: { devices: [{ id: 'dev-b', name: 'B box' }] },
-      wsServer,
-      dispatchHttp: async (request) => {
-        if (request.signal.aborted) {
-          abortHook.aborted = true;
-          abortHook.cleanup += 1;
-        } else {
-          request.signal.addEventListener(
-            'abort',
-            () => {
+    const holderA: { mesh: MeshRuntime | null } = { mesh: a.mesh };
+    const label = `node-b-${++enrollSeq}`;
+    const joined = await a.tenant.joinNode(label, {
+      linkFactoryFor:
+        opts?.linkFactory === false ? undefined : (id) => peerLinkFactory(id, holderA),
+      loadNative: (opts?.loadNative as never) ?? (async () => null),
+      omitUserId: opts?.passUserId === false,
+      gatewayFactory: (db) =>
+        fakeGateway(db, {
+          devicesBody: { devices: [{ id: 'dev-b', name: 'B box' }] },
+          wsServer,
+          dispatchHttp: async (request) => {
+            if (request.signal.aborted) {
               abortHook.aborted = true;
               abortHook.cleanup += 1;
-            },
-            { once: true }
-          );
-        }
-        const path = new URL(request.url).pathname;
-        if (path === '/api/devices') {
-          return new Response(JSON.stringify({ devices: [{ id: 'dev-b', name: 'B box' }] }), {
-            headers: { 'content-type': 'application/json' },
-          });
-        }
-        if (path === '/api/upload') {
-          await new Promise<void>((resolve) => {
-            if (request.signal.aborted) {
-              resolveUploadReady();
-              resolve();
-              return;
+            } else {
+              request.signal.addEventListener(
+                'abort',
+                () => {
+                  abortHook.aborted = true;
+                  abortHook.cleanup += 1;
+                },
+                { once: true }
+              );
             }
-            request.signal.addEventListener('abort', () => resolve(), { once: true });
-            resolveUploadReady();
-          });
-          return new Response('aborted', { status: 499 });
-        }
-        return new Response('not-found', { status: 404 });
-      },
+            const path = new URL(request.url).pathname;
+            if (path === '/api/devices') {
+              return new Response(JSON.stringify({ devices: [{ id: 'dev-b', name: 'B box' }] }), {
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+            if (path === '/api/upload') {
+              await new Promise<void>((resolve) => {
+                if (request.signal.aborted) {
+                  resolveUploadReady();
+                  resolve();
+                  return;
+                }
+                request.signal.addEventListener('abort', () => resolve(), { once: true });
+                resolveUploadReady();
+              });
+              return new Response('aborted', { status: 499 });
+            }
+            return new Response('not-found', { status: 404 });
+          },
+        }),
     });
-    if (!admitBeforeCopy) {
-      const admitted = await a.keys.signAndApply(a.boot.userId, a.boot.rootKey, {
-        type: 'admit-node',
-        payload: admitPayload,
-      });
-      expect(admitted.ok).toBe(true);
-    }
-
-    const holderA: { mesh: MeshRuntime | null } = { mesh: a.mesh };
-    const mesh = await createMeshRuntime({
-      db,
-      gateway,
-      ...(opts?.passUserId === false ? {} : { userId: a.boot.userId }),
-      config: {
-        roles: { hub: false, node: true, relay: false },
-        hubUrl: 'http://hub.example',
-        peerPort: 39002,
-        stunServers: [],
-      },
-      uplinkHub: a.mesh.hub ?? undefined,
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
-      linkFactory:
-        opts?.linkFactory === false ? undefined : peerLinkFactory(identity.nodeIdHex, holderA),
-      loadNative: (opts?.loadNative as never) ?? (async () => null),
-    });
-    fixtures.push({ close, stop: () => mesh.stop() });
-    a.holderB.mesh = mesh;
-    await mesh.start();
-    await waitUntil(() => mesh.uplink.state === 'online', 5_000);
+    a.holderB.mesh = joined.mesh;
     await waitUntil(
-      () => a.mesh.lastNodeList?.nodes.some((n) => n.id === mesh.nodeId && n.online) === true,
-      5_000
+      () =>
+        a.mesh.lastNodeList?.nodes.some((n) => n.id === joined.mesh.nodeId && n.online) === true,
+      8_000
     );
+    const cookie = a.tenant.owner.cookie;
+    const sid = cookie.slice(cookie.indexOf('=') + 1);
     return {
-      mesh,
-      identity,
+      mesh: joined.mesh,
+      identity: joined.mesh.identity,
       cookie,
       sid,
       abortHook,
       uploadReady,
       connectedDevices,
       wsServer,
-      close,
-      db,
+      close: () => {},
+      db: joined.db,
     };
   }
 
   test('browser-style login fan-out sets cookies on A origin and GET /n/B/api/devices returns B data', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     expect(remote.status).toBe(200);
@@ -563,7 +432,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('node joins twice (second enrollment) and stays reachable', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     expect(remote.status).toBe(200);
@@ -574,6 +443,7 @@ describe('mesh phase-2 integration', () => {
     });
     expect(before.status).toBe(200);
 
+    const material = primaryJoinRelay(await a.tenant.owner.json('/api/mesh/relay/join-material'));
     const now = Date.now();
     const enrollment = await createEnrollment(a.boot.rootKey, {
       uid: a.boot.userId,
@@ -581,28 +451,18 @@ describe('mesh phase-2 integration', () => {
       now,
       ttlMs: 60_000,
     });
-    const created = await a.mesh.hub?.handleRequest(
-      (() => {
-        const req = new Request('http://hub/api/hub/enrollments', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            cookie: b.cookie,
-          },
-          body: JSON.stringify({
-            enroll_pk: encodeBase64url(enrollment.enrollPk),
-            authorization: encodeBase64url(enrollment.authorizationBytes),
-            authorization_sig: encodeBase64url(enrollment.authorizationSig),
-            exp: now + 60_000,
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(created?.status).toBe(201);
-    const createdBody = (await created?.json()) as { id: string };
+    const created = await a.tenant.owner.call('/api/mesh/relay/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enroll_pk: encodeBase64url(enrollment.enrollPk),
+        authorization: encodeBase64url(enrollment.authorizationBytes),
+        authorization_sig: encodeBase64url(enrollment.authorizationSig),
+        exp: now + 60_000,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const createdBody = (await created.json()) as { id: string };
 
     const originalCert = a.userStore.getCert(b.mesh.nodeId);
     expect(originalCert).not.toBeNull();
@@ -615,54 +475,33 @@ describe('mesh phase-2 integration', () => {
       now,
       nodeId: b.identity.nodeId,
     });
-    const redeemed = await a.mesh.hub?.handleRequest(
-      new Request('http://hub/api/hub/enrollments/redeem', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          certificate: encodeBase64url(cert.certificateBytes),
-          cert_sig: encodeBase64url(cert.certSig),
-          name: 'node-b',
-          version: 'test-rejoin',
-          pop: encodeBase64url(
-            signEd25519(
-              b.identity.edPrivateKey,
-              encodeRedeemPopMessage({
-                enrollmentId: encodeBase64url(enrollment.enrollPk),
-                nodeId: b.identity.nodeId,
-                certBytes: cert.certificateBytes,
-              })
-            )
-          ),
-        }),
-      }),
-      dummyServer
+    await redeemAtRelay(a.h, material, {
+      certificate: cert.certificateBytes,
+      certSig: cert.certSig,
+      pop: signEd25519(
+        b.identity.edPrivateKey,
+        encodeRedeemPopMessage({
+          enrollmentId: encodeBase64url(enrollment.enrollPk),
+          nodeId: b.identity.nodeId,
+          certBytes: cert.certificateBytes,
+        })
+      ),
+    });
+    expect(a.h.relay.runtime.tenants.getNode(material.tenantId, b.mesh.nodeId)?.status).toBe(
+      'admitted'
     );
-    expect(redeemed?.status).toBe(200);
-    const redeemedBody = (await redeemed?.json()) as {
-      already_admitted?: boolean;
-      node_certs: Array<{ node_id: string; certificate: string }>;
-    };
-    expect(redeemedBody.already_admitted).toBe(true);
-    expect(redeemedBody.node_certs.find((c) => c.node_id === b.mesh.nodeId)?.certificate).toBe(
-      encodeBase64url(originalCert.certificateBytes)
-    );
-    const enrollGet = await a.mesh.hub?.handleRequest(
-      (() => {
-        const req = new Request(`http://hub/api/hub/enrollments/${createdBody.id}`, {
-          headers: { cookie: b.cookie },
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(enrollGet?.status).toBe(200);
-    const enrollStatus = (await enrollGet?.json()) as {
-      already_admitted?: boolean;
-      certificate?: string;
-    };
-    expect(enrollStatus.already_admitted).toBe(true);
+
+    const enrollDeadline = Date.now() + 8_000;
+    let enrollStatus: { alreadyAdmitted?: boolean; certificate?: string; status?: string } = {};
+    while (Date.now() < enrollDeadline) {
+      const enrollGet = await a.tenant.owner.call(`/api/mesh/relay/enrollments/${createdBody.id}`);
+      expect(enrollGet.status).toBe(200);
+      enrollStatus = (await enrollGet.json()) as typeof enrollStatus;
+      if (enrollStatus.status === 'redeemed') break;
+      await Bun.sleep(20);
+    }
+    expect(enrollStatus.status).toBe('redeemed');
+    expect(enrollStatus.alreadyAdmitted).toBe(true);
     expect(enrollStatus.certificate).toBe(encodeBase64url(originalCert.certificateBytes));
     expect(a.userStore.getCert(b.mesh.nodeId)?.certificateBytes).toEqual(
       originalCert.certificateBytes
@@ -670,9 +509,7 @@ describe('mesh phase-2 integration', () => {
     expect(
       a.userStore.listCertsByUser(a.boot.userId).filter((c) => c.nodeId === b.mesh.nodeId)
     ).toHaveLength(1);
-
-    expect(a.userStore.listNodes().filter((n) => n.id === b.mesh.nodeId)).toHaveLength(1);
-    expect(a.mesh.hub?.registry.get(b.mesh.nodeId)?.authenticated).toBe(true);
+    expect(a.userStore.listPeers().some((p) => p.nodeId === b.mesh.nodeId)).toBe(true);
     await waitUntil(() => b.mesh.uplink.state === 'online', 5_000);
 
     const after = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`, {
@@ -683,33 +520,28 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('revoked node identity cannot re-join; redeem returns node_revoked', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
-    const signed = signUserRecord(
-      a.keys,
-      a.boot.userId,
-      a.boot.rootKey,
+    // 撤销的产品路径是 key-log：entry 节点 POST /api/auth/keylog?hub=sync，
+    // 先等中继 ack 再本地 append，中继侧的 append effects 负责踢连接与广播。
+    const revoked = await a.tenant.submitRecord(
+      a.tenant.owner,
       'revoke-node',
       encodeRevokeNodePayload({
         node_id: hexToBytes(b.mesh.nodeId),
         reason: 'lost',
       })
     );
-    // 撤销的产品路径是 key-log：entry 节点 POST /api/auth/keylog?hub=sync，
-    // 先等 hub ack 再本地 append，hub 侧的 append effects 负责踢连接与广播。
-    const revoked = await callMesh(a.mesh, 'http://entry/api/auth/keylog?hub=sync', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      cookie: b.cookie,
-      body: JSON.stringify({
-        bytes: encodeBase64url(signed.bytes),
-        sig: encodeBase64url(signed.sig),
-      }),
-    });
     expect(revoked.status).toBe(200);
     expect(await revoked.json()).toMatchObject({ ok: true, hubAck: true });
     expect(a.userStore.getCert(b.mesh.nodeId)?.revokedLogSeq).not.toBeNull();
+    await waitUntil(
+      () =>
+        a.h.relay.runtime.tenants.getNode(a.tenant.tenantId(), b.mesh.nodeId)?.status === 'revoked',
+      8_000
+    );
 
+    const material = primaryJoinRelay(await a.tenant.owner.json('/api/mesh/relay/join-material'));
     const now = Date.now();
     const enrollment = await createEnrollment(a.boot.rootKey, {
       uid: a.boot.userId,
@@ -717,27 +549,17 @@ describe('mesh phase-2 integration', () => {
       now,
       ttlMs: 60_000,
     });
-    const created = await a.mesh.hub?.handleRequest(
-      (() => {
-        const req = new Request('http://hub/api/hub/enrollments', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            cookie: b.cookie,
-          },
-          body: JSON.stringify({
-            enroll_pk: encodeBase64url(enrollment.enrollPk),
-            authorization: encodeBase64url(enrollment.authorizationBytes),
-            authorization_sig: encodeBase64url(enrollment.authorizationSig),
-            exp: now + 60_000,
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(created?.status).toBe(201);
+    const created = await a.tenant.owner.call('/api/mesh/relay/enrollments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        enroll_pk: encodeBase64url(enrollment.enrollPk),
+        authorization: encodeBase64url(enrollment.authorizationBytes),
+        authorization_sig: encodeBase64url(enrollment.authorizationSig),
+        exp: now + 60_000,
+      }),
+    });
+    expect(created.status).toBe(201);
 
     const cert = createNodeCertificate(enrollment.enrollSk, {
       uid: a.boot.userId,
@@ -747,14 +569,15 @@ describe('mesh phase-2 integration', () => {
       now,
       nodeId: b.identity.nodeId,
     });
-    const redeemed = await a.mesh.hub?.handleRequest(
-      new Request('http://hub/api/hub/enrollments/redeem', {
+    const redeemed = await a.h.relay.tenantFetch(
+      `/api/relay/tenants/${material.tenantId}/enrollments/redeem`,
+      material.token,
+      {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           certificate: encodeBase64url(cert.certificateBytes),
           cert_sig: encodeBase64url(cert.certSig),
-          name: 'node-b',
           pop: encodeBase64url(
             signEd25519(
               b.identity.edPrivateKey,
@@ -766,15 +589,16 @@ describe('mesh phase-2 integration', () => {
             )
           ),
         }),
-      }),
-      dummyServer
+      }
     );
-    expect(redeemed?.status).toBe(409);
-    expect(await redeemed?.json()).toEqual({ error: 'node_revoked' });
+    expect(redeemed.status).toBe(409);
+    expect(await redeemed.json()).toEqual({
+      error: { code: 'RELAY_NODE_REVOKED', message: 'RELAY_NODE_REVOKED' },
+    });
   });
 
   test('/n/B/ws HELLO then DEVICE_CONNECT reaches B WebSocketServer', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     const bSid = sidFromResponse(remote, b.mesh.nodeId);
@@ -829,7 +653,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('/n/B/api/mesh/connection 用入口转发的会话 id 定位这条 WS，不再回 401', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     const bSid = sidFromResponse(remote, b.mesh.nodeId);
@@ -887,7 +711,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('relay path carries SecureChannel ciphertext (no Borsh magic, no JSON body)', async () => {
-    const a = await bootHubA({ linkFactory: false });
+    const a = await bootOwner({ linkFactory: false });
     const b = await enrollNodeB(a, { linkFactory: false });
     const captured: Uint8Array[] = [];
     const orig = a.mesh.uplink.openRelay.bind(a.mesh.uplink);
@@ -928,7 +752,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('upload abort aborts the target Request.signal and runs cleanup', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     const bSid = sidFromResponse(remote, b.mesh.nodeId);
@@ -956,32 +780,21 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('signed revoke-node disconnects B, closes A peer, and /n/B returns 503/401', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     const bSid = sidFromResponse(remote, b.mesh.nodeId);
     const jar = `${b.cookie}; ${nodeSessionCookieName(b.mesh.nodeId)}=${bSid}`;
-    const signed = signUserRecord(
-      a.keys,
-      a.boot.userId,
-      a.boot.rootKey,
+    // 撤销的产品路径是 key-log：entry 节点 POST /api/auth/keylog?hub=sync，
+    // 先等中继 ack 再本地 append，中继侧的 append effects 负责踢连接与广播。
+    const revoked = await a.tenant.submitRecord(
+      a.tenant.owner,
       'revoke-node',
       encodeRevokeNodePayload({
         node_id: hexToBytes(b.mesh.nodeId),
         reason: 'lost',
       })
     );
-    // 撤销的产品路径是 key-log：entry 节点 POST /api/auth/keylog?hub=sync，
-    // 先等 hub ack 再本地 append，hub 侧的 append effects 负责踢连接与广播。
-    const revoked = await callMesh(a.mesh, 'http://entry/api/auth/keylog?hub=sync', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      cookie: b.cookie,
-      body: JSON.stringify({
-        bytes: encodeBase64url(signed.bytes),
-        sig: encodeBase64url(signed.sig),
-      }),
-    });
     expect(revoked.status).toBe(200);
     expect(await revoked.json()).toMatchObject({ ok: true, hubAck: true });
     await waitUntil(() => b.mesh.uplink.state !== 'online', 5_000);
@@ -993,7 +806,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('SSO: same delegation+sess key logs into B with only vibeterm_s_<B>', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const sess = generateEd25519KeyPair();
     const del = createDelegation(a.boot.rootKey, {
@@ -1014,7 +827,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('SSO: Login bound to A is rejected by B', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const sess = generateEd25519KeyPair();
     const del = createDelegation(a.boot.rootKey, {
@@ -1052,7 +865,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test("SSO: A's session id as B's cookie is rejected by B", async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const bSelfSid = await loginSelf(b.mesh, a.boot);
     const res = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`, {
@@ -1063,7 +876,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('SSO: delegation TTL other than DELEGATION_TTL_MS is rejected', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const sess = generateEd25519KeyPair();
     const issuedAt = BigInt(Date.now());
@@ -1107,7 +920,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('compromise: A node key cannot obtain B http/ws/relay and cannot forge a session', async () => {
-    const a = await bootHubA({ linkFactory: false });
+    const a = await bootOwner({ linkFactory: false });
     const b = await enrollNodeB(a, { linkFactory: false });
     const link = await a.mesh.peers.getLink(b.mesh.nodeId);
     expect(a.mesh.peers.transportOf(b.mesh.nodeId)).toBe('relay');
@@ -1176,8 +989,8 @@ describe('mesh phase-2 integration', () => {
     expect(((await forged.json()) as { code?: string }).code).toBe('INVALID_CREDENTIALS');
   });
 
-  test('compromise: hub DB cannot mint a credential B accepts; forged node.list is ignored', async () => {
-    const a = await bootHubA();
+  test('compromise: forged admit-node is rejected; login to B still succeeds', async () => {
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const attacker = rootKeyFromSeed(randomBytesSafe(32));
     const forgedAdmit = await a.keys.signAndApply(a.boot.userId, attacker, {
@@ -1192,66 +1005,14 @@ describe('mesh phase-2 integration', () => {
     expect(forgedAdmit.ok).toBe(false);
 
     const ghostId = 'ff'.repeat(16);
-    let dials = 0;
-    const probe = Bun.serve({
-      hostname: '127.0.0.1',
-      port: 0,
-      fetch() {
-        return new Response('no', { status: 404 });
-      },
-      websocket: {
-        open() {
-          dials += 1;
-        },
-        message() {},
-        close() {},
-      },
-    });
-    fixtures.push({ close: () => probe.stop(true) });
-    const list = a.mesh.lastNodeList;
-    expect(list).not.toBeNull();
-    a.mesh.hub?.uplink.sendTo(a.mesh.nodeId, {
-      t: 'node.list',
-      version: (list?.version ?? 1) + 100,
-      key_log_head: {
-        seq: Number(list?.key_log_head.seq ?? 0),
-        hash: encodeBase64url(list?.key_log_head.hash ?? new Uint8Array(32)),
-      },
-      rtc: { stun: list?.rtc.stun ?? [], turn: (list?.rtc.turn as never) ?? null },
-      nodes: [
-        ...(list?.nodes ?? []).map((n) => ({
-          id: n.id,
-          name: n.name,
-          online: n.online,
-          endpoints: n.endpoints,
-          inventory: n.inventory,
-          direct_capable: n.direct_capable,
-          version: n.version,
-        })),
-        {
-          id: ghostId,
-          name: 'ghost',
-          online: true,
-          endpoints: [`ws://127.0.0.1:${probe.port}/peer`],
-          inventory: {},
-          direct_capable: false,
-          version: 'ghost',
-        },
-      ],
-    });
-    await waitUntil(() => a.mesh.lastNodeList?.version !== list?.version, 3_000).catch(
-      () => undefined
-    );
-    await Bun.sleep(50);
     expect(a.mesh.userStore.listPeers().some((p) => p.nodeId === ghostId)).toBe(false);
     await expect(a.mesh.peers.getLink(ghostId)).rejects.toMatchObject({ message: 'not admitted' });
-    expect(dials).toBe(0);
     const toB = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     expect(toB.status).toBe(200);
   });
 
   test('compromise: swapped target_pk fails login; DC fingerprint mismatch fails handshake', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const swapped = await loginRemote(
       a.mesh,
@@ -1312,33 +1073,25 @@ describe('mesh phase-2 integration', () => {
     right.close();
   });
 
-  test('already-uplinked node A learns late-joining node B, hub_meta, and can login via /n/B', async () => {
-    const hub = await bootHubA({ linkFactory: false });
-    const nodeA = await enrollNodeB(hub, { linkFactory: false });
-    const sidA = await loginSelf(nodeA.mesh, hub.boot);
+  test('already-uplinked node A learns late-joining node B and can login via /n/B', async () => {
+    const owner = await bootOwner({ linkFactory: false });
+    const nodeA = await enrollNodeB(owner, { linkFactory: false });
+    const sidA = await loginSelf(nodeA.mesh, owner.boot);
     const cookieA = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sidA}`;
 
-    const nodeB = await enrollNodeB(hub, { linkFactory: false });
+    const nodeB = await enrollNodeB(owner, { linkFactory: false });
 
     await waitUntil(() => nodeA.mesh.userStore.getCert(nodeB.mesh.nodeId) != null, 8_000);
-    await waitUntil(() => nodeA.mesh.userStore.getHubMeta()?.nodeId === hub.mesh.nodeId, 8_000);
-
-    const mode = await callMesh(nodeA.mesh, 'http://a/api/auth/mode');
-    expect(mode.status).toBe(200);
-    const modeBody = (await mode.json()) as { hubNodeId: string | null };
-    expect(modeBody.hubNodeId).toBe(hub.mesh.nodeId);
 
     const listed = await callMesh(nodeA.mesh, 'http://a/api/mesh/nodes', { cookie: cookieA });
     expect(listed.status).toBe(200);
     const body = (await listed.json()) as {
-      nodes: Array<{ id: string; online: boolean; isHub: boolean }>;
+      nodes: Array<{ id: string; online: boolean }>;
     };
-    const hubRow = body.nodes.find((n) => n.id === hub.mesh.nodeId);
     const bRow = body.nodes.find((n) => n.id === nodeB.mesh.nodeId);
-    expect(hubRow?.isHub).toBe(true);
     expect(bRow?.online).toBe(true);
 
-    const remote = await loginRemote(nodeA.mesh, nodeB.mesh, hub.boot, cookieA);
+    const remote = await loginRemote(nodeA.mesh, nodeB.mesh, owner.boot, cookieA);
     expect(remote.status).toBe(200);
     const bSid = sidFromResponse(remote, nodeB.mesh.nodeId);
     const jar = `${cookieA}; ${nodeSessionCookieName(nodeB.mesh.nodeId)}=${bSid}`;
@@ -1352,33 +1105,38 @@ describe('mesh phase-2 integration', () => {
     const restarted = await createMeshRuntime({
       db: nodeA.db,
       gateway: fakeGateway(nodeA.db, { devicesBody: { devices: [{ id: 'dev-a' }] } }),
-      userId: hub.boot.userId,
+      userId: owner.boot.userId,
       config: {
-        roles: { hub: false, node: true, relay: false },
-        hubUrl: 'http://hub.example',
+        roles: { node: true, relay: false },
         peerPort: 39013,
         stunServers: [],
       },
-      uplinkHub: hub.mesh.hub ?? undefined,
+      wsFactory: owner.h.wsFactory,
       startPeerServer: false,
       pingIntervalMs: 60_000,
       networkInterfaces: () => ({}),
       loadNative: async () => null,
     });
-    fixtures.push({ close: nodeA.close, stop: () => restarted.stop() });
-    expect(restarted.userStore.getHubMeta()?.nodeId).toBe(hub.mesh.nodeId);
+    fixtures.push({ close: () => {}, stop: () => restarted.stop() });
     expect(restarted.userStore.getCert(nodeB.mesh.nodeId)).not.toBeNull();
     expect(restarted.userStore.listPeers().some((row) => row.nodeId === nodeB.mesh.nodeId)).toBe(
       true
     );
     await restarted.start();
     await waitUntil(() => restarted.uplink.state === 'online', 5_000);
-    const mode2 = await callMesh(restarted, 'http://a/api/auth/mode');
-    expect(((await mode2.json()) as { hubNodeId: string | null }).hubNodeId).toBe(hub.mesh.nodeId);
+    const listed2 = await callMesh(restarted, 'http://a/api/mesh/nodes', {
+      cookie: `${nodeSessionCookieName(MESH_VIA_SELF)}=${await loginSelf(restarted, owner.boot)}`,
+    });
+    expect(listed2.status).toBe(200);
+    expect(
+      ((await listed2.json()) as { nodes: Array<{ id: string }> }).nodes.some(
+        (n) => n.id === nodeB.mesh.nodeId
+      )
+    ).toBe(true);
   }, 30_000);
 
   test('分享连接：/n/B/ws 用分享 cookie 建流，B 端终止后浏览器收到 4410', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const scope = { shareId: 'sh-1', deviceId: 'dev-b', windowId: 'win-1' };
     setShareAccessVerifier((token) =>
@@ -1441,7 +1199,7 @@ describe('mesh phase-2 integration', () => {
   }, 30_000);
 
   test('分享连接：凭证绑定的分享与页面不符时，浏览器收到 4401 而不是 failover', async () => {
-    const a = await bootHubA();
+    const a = await bootOwner();
     const b = await enrollNodeB(a);
     const scope = { shareId: 'sh-1', deviceId: 'dev-b', windowId: 'win-1' };
     setShareAccessVerifier((token) =>
@@ -1485,15 +1243,15 @@ describe('mesh phase-2 integration', () => {
   }, 30_000);
 
   test('redeem-before-admit node catch-up applies own cert without explicit userId', async () => {
-    const hub = await bootHubA({ linkFactory: false });
-    const node = await enrollNodeB(hub, {
+    const owner = await bootOwner({ linkFactory: false });
+    const node = await enrollNodeB(owner, {
       linkFactory: false,
       admitBeforeCopy: false,
       passUserId: false,
     });
-    expect(node.mesh.uplink.userId).toBe(hub.boot.userId);
+    expect(node.mesh.uplink.userId).toBe(owner.boot.userId);
     await waitUntil(() => node.mesh.userStore.getCert(node.mesh.nodeId) != null, 8_000);
-    expect(node.mesh.userStore.getCert(hub.mesh.nodeId)).not.toBeNull();
+    expect(node.mesh.userStore.getCert(owner.mesh.nodeId)).not.toBeNull();
   }, 30_000);
 });
 

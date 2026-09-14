@@ -78,9 +78,7 @@ async function boot(
   });
   const routes = new RelayRoutes({
     session: {
-      roles: opts.standalone
-        ? { hub: false, node: false, relay: false }
-        : { hub: false, node: true, relay: false },
+      roles: opts.standalone ? { node: false, relay: false } : { node: true, relay: false },
       nodeSessionStore,
       ...(opts.standalone ? { localAuthEffective: () => opts.localAuthEffective !== false } : {}),
     },
@@ -182,14 +180,14 @@ async function configureRelay(b: Awaited<ReturnType<typeof boot>>) {
 }
 
 describe('RelayRoutes', () => {
-  test('status 在 hub 模式也回答，接入后变 relay', async () => {
+  test('status 在未接入时回答 none，接入后变 relay', async () => {
     const b = await boot();
     try {
       const before = (await (await b.call('/api/mesh/relay/status')).json()) as {
         mode: string;
         relays: unknown[];
       };
-      expect(before.mode).toBe('hub');
+      expect(before.mode).toBe('none');
       expect(before.relays).toEqual([]);
 
       await configureRelay(b);
@@ -719,7 +717,7 @@ describe('RelayRoutes', () => {
         payload: decodeBase64url(body.payload),
       });
       expect(applied.ok).toBe(true);
-      expect((await b.secrets.reconcile()).kind).toBe('hub');
+      expect((await b.secrets.reconcile()).kind).toBe('none');
     } finally {
       b.close();
     }

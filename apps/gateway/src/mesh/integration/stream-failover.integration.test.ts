@@ -1,29 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { type StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
-import {
-  buildLogin,
-  createDelegation,
-  createEnrollment,
-  createNodeCertificate,
-  decodeBase64url,
-  encodeAdmitNodePayload,
-  encodeBase64url,
-  encodeLogin,
-  generateEd25519KeyPair,
-  signLogin,
-} from '@vibeterm/shared/auth';
-import {
-  KeyLogStore,
-  NodeIdentityStore,
-  NodeSessionStore,
-  UserKeyService,
-  UserStore,
-  ensureNodeIdentity,
-  makeVerifyPasskeyAssertion,
-  nodeSessionCookieName,
-} from '../../auth';
-import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
+import { bootRelayMeshHarness, waitUntil } from '../../relay/integration/relay-mesh-harness';
 import type { GatewayRuntime } from '../../runtime';
 import type {
   DeviceSessionRuntime,
@@ -34,18 +12,17 @@ import {
   type PaneRetentionConsumerCallbacks,
 } from '../../tmux-client/pane-retention';
 import { WebSocketServer } from '../../ws';
-import {
-  MESH_FORWARD_WS_KIND,
-  MESH_VIA_SELF,
-  type MeshServerWebSocket,
-  setMeshRequestContext,
-} from '../mesh-deps';
-import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
+import { MESH_FORWARD_WS_KIND, type MeshServerWebSocket } from '../mesh-deps';
 import { createFakeNativeModule } from '../rtc/test-fakes';
-import { waitUntil } from '../test-support';
 import { requestDispatchContext } from '../types';
-
-const PASSWORD = 'vibeterm-test';
+import {
+  type BootUser,
+  jarFor,
+  loginRemote,
+  loginSelf,
+  selfCookie,
+  sidFromResponse,
+} from './mesh-http-helpers';
 
 function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
   const server = wsServer ?? new WebSocketServer();
@@ -70,119 +47,6 @@ function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
     onRestartRequested() {},
     stop: async () => {},
   };
-}
-
-function sidFromResponse(res: Response, nodeId = MESH_VIA_SELF): string {
-  const cookies = res.headers.getSetCookie?.() ?? [];
-  const prefix = `${nodeSessionCookieName(nodeId)}=`;
-  for (const cookie of cookies) {
-    if (cookie.startsWith(prefix)) {
-      return cookie.slice(prefix.length).split(';')[0] ?? '';
-    }
-  }
-  throw new Error('no session cookie');
-}
-
-async function callMesh(
-  mesh: MeshRuntime,
-  url: string,
-  init?: RequestInit & { cookie?: string }
-): Promise<Response | undefined> {
-  const headers = new Headers(init?.headers);
-  if (init?.cookie) headers.set('cookie', init.cookie);
-  const { cookie: _cookie, ...rest } = init ?? {};
-  const req = new Request(url, { ...rest, headers });
-  setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-  const res = await mesh.handleRequest(req, { upgrade: () => false });
-  if (res === undefined) return undefined;
-  if (!(res instanceof Response)) throw new Error(`unhandled ${url}`);
-  return res;
-}
-
-async function loginSelf(
-  mesh: MeshRuntime,
-  boot: { userId: string; rootKey: Parameters<typeof createDelegation>[0] }
-): Promise<string> {
-  const sess = generateEd25519KeyPair();
-  const now = Date.now();
-  const del = createDelegation(boot.rootKey, {
-    uid: boot.userId,
-    sessPk: sess.publicKey,
-    now,
-  });
-  const ch = await callMesh(mesh, 'http://entry/api/auth/challenge', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ uid: boot.userId }),
-  });
-  if (!ch) throw new Error('challenge failed');
-  const body = (await ch.json()) as { challenge_id: string; nonce: string; nodePk: string };
-  const login = buildLogin({
-    challengeId: body.challenge_id,
-    nonce: decodeBase64url(body.nonce),
-    target: mesh.nodeId,
-    targetPk: decodeBase64url(body.nodePk),
-    uid: boot.userId,
-    entry: MESH_VIA_SELF,
-  });
-  const res = await callMesh(mesh, 'http://entry/api/auth/login', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(signLogin(sess.secretKey, login)),
-      delegation: encodeBase64url(del.bytes),
-      delegation_sig: encodeBase64url(del.sig),
-    }),
-  });
-  if (!res) throw new Error('login failed');
-  expect(res.status).toBe(200);
-  return sidFromResponse(res);
-}
-
-async function loginRemote(
-  entry: MeshRuntime,
-  target: MeshRuntime,
-  boot: { userId: string; rootKey: Parameters<typeof createDelegation>[0] },
-  cookie: string
-): Promise<string> {
-  const sess = generateEd25519KeyPair();
-  const now = Date.now();
-  const del = createDelegation(boot.rootKey, {
-    uid: boot.userId,
-    sessPk: sess.publicKey,
-    now,
-  });
-  const ch = await callMesh(entry, `http://entry/n/${target.nodeId}/api/auth/challenge`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    cookie,
-    body: JSON.stringify({ uid: boot.userId }),
-  });
-  if (!ch) throw new Error('remote challenge failed');
-  const body = (await ch.json()) as { challenge_id: string; nonce: string; nodePk: string };
-  const login = buildLogin({
-    challengeId: body.challenge_id,
-    nonce: decodeBase64url(body.nonce),
-    target: target.nodeId,
-    targetPk: decodeBase64url(body.nodePk),
-    uid: boot.userId,
-    entry: entry.nodeId,
-  });
-  const res = await callMesh(entry, `http://entry/n/${target.nodeId}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    cookie,
-    body: JSON.stringify({
-      login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(signLogin(sess.secretKey, login)),
-      delegation: encodeBase64url(del.bytes),
-      delegation_sig: encodeBase64url(del.sig),
-    }),
-  });
-  if (!res) throw new Error('remote login failed');
-  expect(res.status).toBe(200);
-  return sidFromResponse(res, target.nodeId);
 }
 
 const DEVICE_ID = 'local';
@@ -437,156 +301,51 @@ describe('stream failover integration', () => {
   test('pane stream over dc stays contiguous at entry WS after the dc link dies', async () => {
     const fake = createFakeNativeModule();
     const loadNative = async () => fake.module;
-    const { db, close } = createMigratedAuthDb();
-    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
-    const userStore = new UserStore(db);
-    const keyLogStore = new KeyLogStore(db);
-    const nodeSessionStore = new NodeSessionStore(db);
-    const keys = new UserKeyService({
-      db,
-      userStore,
-      keyLogStore,
-      nodeSessionStore,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
-    });
-    const boot = await keys.bootstrapUserWithSelfAdmit({
-      username: 'alice',
-      password: PASSWORD,
-      identity,
-    });
-    const wsServerA = new WebSocketServer();
-    const meshA = await createMeshRuntime({
-      db,
-      gateway: fakeGateway(db, wsServerA),
-      userId: boot.userId,
-      config: {
-        roles: { hub: true, node: true, relay: false },
-        hubUrl: null,
-        hubPublicUrl: 'http://hub.example',
-        peerPort: 39001,
-        stunServers: [],
-      },
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
-      loadNative,
-    });
-    fixtures.push({ close, stop: () => meshA.stop() });
-    await meshA.start();
-    await waitUntil(() => meshA.uplink.state === 'online', 5_000);
-
-    const { db: dbB, close: closeB } = createMigratedAuthDb();
-    const identityB = await ensureNodeIdentity(new NodeIdentityStore(dbB));
-    const now = Date.now();
-    const enrollment = await createEnrollment(boot.rootKey, {
-      uid: boot.userId,
-      rootEpoch: boot.rootEpoch,
-      now,
-      ttlMs: 60_000,
-    });
-    const sid = await loginSelf(meshA, boot);
-    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
-    const created = await meshA.hub?.handleRequest(
-      (() => {
-        const req = new Request('http://hub/api/hub/enrollments', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', cookie },
-          body: JSON.stringify({
-            enroll_pk: encodeBase64url(enrollment.enrollPk),
-            authorization: encodeBase64url(enrollment.authorizationBytes),
-            authorization_sig: encodeBase64url(enrollment.authorizationSig),
-            exp: now + 60_000,
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      { upgrade: () => false }
-    );
-    expect(created?.status).toBe(201);
-    const cert = createNodeCertificate(enrollment.enrollSk, {
-      uid: boot.userId,
-      edPk: identityB.edPublicKey,
-      x25519Pk: identityB.x25519PublicKey,
-      enrollPk: enrollment.enrollPk,
-      now,
-      nodeId: identityB.nodeId,
-    });
-    const redeemed = await meshA.hub?.handleRequest(
-      new Request('http://hub/api/hub/enrollments/redeem', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          certificate: encodeBase64url(cert.certificateBytes),
-          cert_sig: encodeBase64url(cert.certSig),
-          name: 'node-b',
-          version: 'test',
-        }),
-      }),
-      { upgrade: () => false }
-    );
-    expect(redeemed?.status).toBe(200);
-    const admitted = await keys.signAndApply(boot.userId, boot.rootKey, {
-      type: 'admit-node',
-      payload: encodeAdmitNodePayload({
-        authorization_bytes: enrollment.authorizationBytes,
-        authorization_sig: enrollment.authorizationSig,
-        certificate_bytes: cert.certificateBytes,
-        cert_sig: cert.certSig,
-      }),
-    });
-    expect(admitted.ok).toBe(true);
-    const rows = keyLogStore.list(boot.userId);
-    const head = keyLogStore.head(boot.userId);
-    const bUserStore = new UserStore(dbB);
-    const bKeyLog = new KeyLogStore(dbB);
-    const bSessions = new NodeSessionStore(dbB);
-    const bKeys = new UserKeyService({
-      db: dbB,
-      userStore: bUserStore,
-      keyLogStore: bKeyLog,
-      nodeSessionStore: bSessions,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(bUserStore),
-    });
-    const joined = await bKeys.verifyChainForJoin(
-      rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
-      boot.rootPublicKey,
-      head?.hash ?? new Uint8Array(32)
-    );
-    expect(joined.ok).toBe(true);
 
     const runtimeB = new FailoverPaneRuntime();
     fixtures.push({ close: () => runtimeB.retention.dispose() });
+    const wsServerA = new WebSocketServer();
     const wsServerB = new WebSocketServer({ deps: runtimeDeps(runtimeB) });
-    const meshB = await createMeshRuntime({
-      db: dbB,
-      gateway: fakeGateway(dbB, wsServerB),
-      userId: boot.userId,
-      config: {
-        roles: { hub: false, node: true, relay: false },
-        hubUrl: 'http://hub.example',
-        peerPort: 39002,
-        stunServers: [],
-      },
-      uplinkHub: meshA.hub ?? undefined,
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
+
+    const h = await bootRelayMeshHarness();
+    fixtures.push({ close: () => {}, stop: () => h.stop() });
+    const tenant = await h.createTenant('alice', {
       loadNative,
+      peerPort: 39001,
+      stunServers: ['stun:stun.example:3478'],
+      gatewayFactory: (db) => fakeGateway(db, wsServerA),
     });
-    fixtures.push({ close: closeB, stop: () => meshB.stop() });
-    await meshB.start();
-    await waitUntil(() => meshB.uplink.state === 'online', 5_000);
+    await tenant.enroll();
+    const meshA = tenant.owner.mesh;
+    const boot: BootUser = {
+      userId: tenant.userId,
+      rootKey: tenant.rootKey,
+      rootPublicKey: tenant.rootPublicKey,
+      rootEpoch: tenant.rootEpoch,
+    };
+    const meshB = (
+      await tenant.joinNode('node-b', {
+        loadNative,
+        peerPort: 39002,
+        stunServers: ['stun:stun.example:3478'],
+        gatewayFactory: (db) => fakeGateway(db, wsServerB),
+      })
+    ).mesh;
+
     await waitUntil(
       () => meshA.lastNodeList?.nodes.some((n) => n.id === meshB.nodeId && n.online) === true,
-      5_000
+      8_000
     );
     await meshA.peers.getLink(meshB.nodeId);
     await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) === 'dc', 8_000);
     expect(meshA.peers.transportOf(meshB.nodeId)).toBe('dc');
 
-    const remoteSid = await loginRemote(meshA, meshB, boot, cookie);
-    const jar = `${cookie}; ${nodeSessionCookieName(meshB.nodeId)}=${remoteSid}`;
+    const sid = await loginSelf(meshA, boot);
+    const cookie = selfCookie(sid);
+    const remote = await loginRemote(meshA, meshB, boot, cookie);
+    expect(remote.status).toBe(200);
+    const remoteSid = sidFromResponse(remote, meshB.nodeId);
+    const jar = jarFor(sid, meshB.nodeId, remoteSid);
     let upgradeData: { kind?: string; token?: string } | undefined;
     const upgrade = await meshA.handleRequest(
       new Request(`http://entry/n/${meshB.nodeId}/ws`, {

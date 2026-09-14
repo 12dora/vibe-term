@@ -33,7 +33,10 @@ describe('peer RTT EWMA and lookup', () => {
 
   test('lookupPeerRttMs(undefined) uses the median of live samples, not the max', () => {
     const scheduler = new ImmediateScheduler();
-    const uplink = { rttMs: 90 } as unknown as import('./uplink-client').UplinkClient;
+    const uplink = {
+      rttMs: 90,
+      resetBackoff() {},
+    } as unknown as import('./types').PooledUplink & { resetBackoff(): void };
     const state = createPeerManagerState({
       identity: identity(),
       userStore: { getCert: () => null } as never,

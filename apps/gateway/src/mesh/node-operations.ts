@@ -27,7 +27,7 @@ function parseOperation(raw: string): MeshNodeOperation | null {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const value = parsed as Record<string, unknown>;
-    if (value.kind !== 'uninstall' && value.kind !== 'role-switch') return null;
+    if (value.kind !== 'uninstall') return null;
     if (typeof value.phase !== 'string') return null;
     if (typeof value.startedAt !== 'number' || typeof value.updatedAt !== 'number') return null;
     if (value.error !== null && typeof value.error !== 'string') return null;

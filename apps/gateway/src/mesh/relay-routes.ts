@@ -88,9 +88,8 @@ type RelayRouteHandler = (req: Request, userId: string) => Promise<Response> | R
 export class RelayRoutes {
   constructor(private readonly deps: RelayRoutesDeps) {}
 
-  mode(): 'relay' | 'hub' | 'none' {
-    if (this.deps.secrets.uplinkKind() === 'relay') return 'relay';
-    return this.deps.session.roles.hub || this.deps.session.roles.node ? 'hub' : 'none';
+  mode(): 'relay' | 'none' {
+    return this.deps.secrets.uplinkKind() === 'relay' ? 'relay' : 'none';
   }
 
   handle(req: Request, path: string): Promise<Response> | null {

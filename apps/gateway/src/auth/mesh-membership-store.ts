@@ -8,6 +8,7 @@ import {
   nodeSessions,
   nodes,
   peerCache,
+  relayCaPins,
   relayConfig,
   relayEnrollments,
   relayKeyLog,
@@ -36,6 +37,7 @@ function wipeMeshMembership(db: AuthDb): void {
   // 中继租户令牌与 K_log / K_meta 不能在退出后留在盘上
   db.delete(meshRelays).run();
   db.delete(meshSecrets).run();
+  db.delete(relayCaPins).run();
   db.delete(nodeIdentity).run();
   db.delete(users).run();
 }

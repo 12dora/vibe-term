@@ -179,7 +179,7 @@ describe('RelaySecrets', () => {
     }
   });
 
-  test('空 relays 的 set-relays 回到 hub 模式并清空目标', async () => {
+  test('空 relays 的 set-relays 回到 none 并清空目标', async () => {
     const b = await boot();
     try {
       const nodes = listRelayNodeKeys(b.userStore, b.user.userId);
@@ -207,11 +207,11 @@ describe('RelaySecrets', () => {
         }),
       });
       const result = await b.secrets.reconcile();
-      expect(result.kind).toBe('hub');
+      expect(result.kind).toBe('none');
       expect(result.targetsChanged).toBe(true);
       expect(result.primaryChanged).toBe(true);
       expect(b.secrets.relayRows()).toEqual([]);
-      expect(b.secrets.uplinkKind()).toBe('hub');
+      expect(b.secrets.uplinkKind()).toBe('none');
     } finally {
       b.close();
     }
@@ -333,11 +333,11 @@ describe('RelaySecrets reconcile 粒度', () => {
     }
   });
 
-  test('hub → relay 翻转算 primaryChanged', async () => {
+  test('none → relay 翻转算 primaryChanged', async () => {
     const b = await boot();
     try {
-      const hubFirst = await b.secrets.reconcile();
-      expect(hubFirst.kind).toBe('hub');
+      const idle = await b.secrets.reconcile();
+      expect(idle.kind).toBe('none');
       const result = await applyRelays(b, [relayTarget(new Uint8Array(32).fill(5))]);
       expect(result.kind).toBe('relay');
       expect(result.primaryChanged).toBe(true);

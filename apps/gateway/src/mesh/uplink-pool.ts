@@ -1,5 +1,6 @@
 import { combineAbortSignals } from '@vibeterm/shared/async';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
+import type { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler } from './ctl';
 import { createDialWsFactory } from './dial-resolve';
@@ -106,6 +107,7 @@ export type UplinkPoolOptions = {
   scheduler?: MeshScheduler;
   pingIntervalMs?: number;
   createClient: CreatePooledUplink;
+  caPins?: RelayCaPinStore;
   probeHealthz?: (publicUrl: string, tlsCa: string[] | null, timeoutMs: number) => Promise<boolean>;
   probeJitter?: number;
   failbackDebounceMs?: number;
@@ -128,11 +130,6 @@ export function jitteredIntervalMs(baseMs: number, jitter = UPLINK_POOL_PROBE_JI
   const ratio = Math.min(Math.max(jitter, 0), 1);
   const delta = baseMs * ratio;
   return Math.max(1, Math.floor(baseMs - delta + Math.random() * (2 * delta)));
-}
-
-function compareUplinkCandidates(a: UplinkCandidate, b: UplinkCandidate): number {
-  if (a.priority !== b.priority) return a.priority - b.priority;
-  return 0;
 }
 
 export class UplinkPool {
@@ -247,8 +244,7 @@ export class UplinkPool {
   }
 
   candidates(): UplinkCandidate[] {
-    const list = [...this.opts.candidates()].sort(compareUplinkCandidates);
-    return list.map((row) => {
+    return this.opts.candidates().map((row) => {
       const diag = this.diagByUrl.get(normalizeHubEndpointUrl(row.publicUrl));
       return {
         ...row,
@@ -409,34 +405,28 @@ export class UplinkPool {
     return live;
   }
 
+  private async sleepWrap(signal: AbortSignal, ms: number): Promise<'stop' | 'wake'> {
+    this.wrapSleepAbort = new AbortController();
+    const combined = combineAbortSignals(signal, this.wrapSleepAbort.signal);
+    try {
+      await this.scheduler.sleep(ms, combined);
+      return 'wake';
+    } catch {
+      return signal.aborted ? 'stop' : 'wake';
+    } finally {
+      this.wrapSleepAbort = null;
+    }
+  }
+
   private async run(signal: AbortSignal): Promise<void> {
     this.syncRttProbe();
     while (!signal.aborted) {
       const cands = this.candidates();
       if (cands.length === 0) {
-        this.wrapSleepAbort = new AbortController();
-        const combined = combineAbortSignals(signal, this.wrapSleepAbort.signal);
-        try {
-          await this.scheduler.sleep(UPLINK_BACKOFF_MAX_MS, combined);
-        } catch {
-          if (signal.aborted) return;
-        } finally {
-          this.wrapSleepAbort = null;
-        }
+        if ((await this.sleepWrap(signal, UPLINK_BACKOFF_MAX_MS)) === 'stop') return;
         continue;
       }
-      let session = false;
-      for (let i = 0; i < cands.length; i += 1) {
-        const cand = cands[i];
-        if (!cand || signal.aborted) return;
-        session = await this.tryCandidate(cand, signal, i, cands.length);
-        if (session) break;
-        const next = cands[i + 1];
-        if (next) {
-          const nextTransport = this.isLocalTransport(next) ? 'memory' : 'ws';
-          this.logCandidateEvent(next, i + 1, nextTransport, this.lastErrorOf(next), 'failover');
-        }
-      }
+      const session = await this.tryCandidates(cands, signal);
       if (signal.aborted) return;
       if (session) {
         this.wrapAttempt = 0;
@@ -448,16 +438,22 @@ export class UplinkPool {
       }
       const delay = backoffDelayMs(this.wrapAttempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
       this.wrapAttempt += 1;
-      this.wrapSleepAbort = new AbortController();
-      const combined = combineAbortSignals(signal, this.wrapSleepAbort.signal);
-      try {
-        await this.scheduler.sleep(delay, combined);
-      } catch {
-        if (signal.aborted) return;
-      } finally {
-        this.wrapSleepAbort = null;
+      if ((await this.sleepWrap(signal, delay)) === 'stop') return;
+    }
+  }
+
+  private async tryCandidates(cands: UplinkCandidate[], signal: AbortSignal): Promise<boolean> {
+    for (let i = 0; i < cands.length; i += 1) {
+      const cand = cands[i];
+      if (!cand || signal.aborted) return false;
+      if (await this.tryCandidate(cand, signal, i, cands.length)) return true;
+      const next = cands[i + 1];
+      if (next) {
+        const nextTransport = this.isLocalTransport(next) ? 'memory' : 'ws';
+        this.logCandidateEvent(next, i + 1, nextTransport, this.lastErrorOf(next), 'failover');
       }
     }
+    return false;
   }
 
   beginSwitch(): number {
@@ -556,7 +552,8 @@ export class UplinkPool {
   }
 
   spawn(cand: UplinkCandidate): PooledUplink {
-    const wsFactory = this.opts.wsFactory ?? defaultWsFactory(null);
+    const tlsCa = this.tlsCaFor(cand.publicUrl);
+    const wsFactory = this.opts.wsFactory ?? defaultWsFactory(tlsCa);
     const client = this.createClient({
       hubUrl: cand.publicUrl,
       identity: this.opts.identity,
@@ -565,7 +562,7 @@ export class UplinkPool {
       userStore: this.opts.userStore,
       statusProvider: this.opts.statusProvider,
       wsFactory,
-      tlsCa: null,
+      tlsCa,
       scheduler: this.scheduler,
       pingIntervalMs: this.opts.pingIntervalMs,
       onNodeList: (list) => this.dispatchNodeList(client, list, cand.hubNodeId),
@@ -897,13 +894,22 @@ export class UplinkPool {
     }
   }
 
+  private tlsCaFor(publicUrl: string): string[] | null {
+    try {
+      const pin = this.opts.caPins?.get(publicUrl);
+      return pin?.caPem ? [pin.caPem] : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async probeHealthzTimed(publicUrl: string): Promise<boolean> {
     if (this.stopAbort?.signal.aborted) return false;
     const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
     const started = performance.now();
     let ok = false;
     try {
-      ok = await probe(publicUrl, null, this.probeTimeoutMs);
+      ok = await probe(publicUrl, this.tlsCaFor(publicUrl), this.probeTimeoutMs);
     } catch {
       ok = false;
     }

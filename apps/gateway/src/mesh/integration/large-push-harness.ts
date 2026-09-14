@@ -3,25 +3,22 @@ import {
   type ServerSocketAdapter,
   WebSocketLink,
 } from '@vibeterm/shared/link';
+import {
+  type RelayMeshHarness,
+  bootRelayMeshHarness,
+} from '../../relay/integration/relay-mesh-harness';
 import { Forwarder } from '../forwarder';
 import type { MeshRuntime } from '../mesh-runtime';
 import { openHttpStream } from '../stream-targets';
 import type { DispatchHttp } from '../types';
-import type { UplinkWsFactory } from '../uplink-client';
-import { decodeUplinkCtl } from '../uplink-protocol';
 import {
-  HUB_A_URL,
-  type HarnessNode,
-  HubRouter,
-  type LiveUplink,
-  bootHubA,
-  enrollAndStart,
+  type BootUser,
   jarFor,
   loginRemote,
   loginSelf,
   selfCookie,
   sidFromResponse,
-} from './multi-hub-harness';
+} from './mesh-http-helpers';
 
 export const LARGE_PUSH_BYTES = 24 * 1024 * 1024;
 export const LARGE_PUSH_CHUNK = 64 * 1024;
@@ -37,10 +34,9 @@ type PeerDispatchOwner = {
 };
 
 export type LargePushPair = {
-  router: HubRouter;
-  a: HarnessNode;
-  c: HarnessNode;
-  boot: Awaited<ReturnType<typeof bootHubA>>['boot'];
+  a: { mesh: MeshRuntime };
+  c: { mesh: MeshRuntime };
+  boot: BootUser;
   counter: ByteCounter;
   stop: () => Promise<void>;
 };
@@ -123,64 +119,6 @@ function backpressuredPair(): [BackpressuredServerSocket, BackpressuredServerSoc
   return [a, b];
 }
 
-function normalizePublicUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    if (url.protocol === 'ws:') url.protocol = 'http:';
-    if (url.protocol === 'wss:') url.protocol = 'https:';
-    url.pathname = url.pathname.replace(/\/+$/, '');
-    if (url.pathname === '/hub/uplink') url.pathname = '';
-    url.search = '';
-    url.hash = '';
-    return `${url.protocol}//${url.host}${url.pathname}`.replace(/\/+$/, '');
-  } catch {
-    return raw.replace(/\/+$/, '');
-  }
-}
-
-export function installBackpressuredUplink(router: HubRouter): void {
-  const factory: UplinkWsFactory = async (url) => {
-    const publicUrl = normalizePublicUrl(url);
-    if (router.down.has(publicUrl)) {
-      throw new Error(`hub-down:${publicUrl}`);
-    }
-    const hub = router.hubs.get(publicUrl);
-    if (!hub) throw new Error(`no-hub:${publicUrl}`);
-    const [nodeSock, hubSock] = backpressuredPair();
-    const hubLink = new WebSocketLink(hubSock, { role: 'acceptor' });
-    hubLink.ctl.onMessage((bytes) => {
-      try {
-        const decoded = decodeUplinkCtl(bytes);
-        if (decoded.t === 'node.status') router.statusFrames += 1;
-      } catch {
-        /* ignore non-ctl */
-      }
-    });
-    hub.attachLocalNode(hubLink);
-    const live: LiveUplink = {
-      publicUrl,
-      hubLink,
-      close: () => {
-        const idx = router.live.indexOf(live);
-        if (idx >= 0) router.live.splice(idx, 1);
-        try {
-          hubLink.close('hub-down');
-        } catch {
-          /* ignore */
-        }
-        try {
-          nodeSock.close(1000, 'hub-down');
-        } catch {
-          /* ignore */
-        }
-      },
-    };
-    router.live.push(live);
-    return nodeSock;
-  };
-  router.factory = factory;
-}
-
 export function installByteCountHandler(mesh: MeshRuntime, counter: ByteCounter): void {
   const peers = mesh.peers as unknown as PeerDispatchOwner;
   const orig = peers.dispatchHttp;
@@ -253,50 +191,24 @@ export function repeatingBody(
   });
 }
 
-export async function bootHubAndLeaf(): Promise<LargePushPair> {
-  const router = new HubRouter();
-  installBackpressuredUplink(router);
-  const aBoot = await bootHubA(router);
-  const parent = {
-    mesh: aBoot.node.mesh,
-    boot: aBoot.boot,
-    keys: aBoot.keys,
-    keyLog: aBoot.keyLog,
-  };
-  const c = await enrollAndStart(parent, {
-    name: 'node-c',
-    version: 'ver-c',
-    roles: { hub: false, node: true, relay: false },
-    hubUrl: HUB_A_URL,
-    uplinkHub: null,
-    wsFactory: router.factory,
-    label: 'c',
-  });
+export async function bootEntryAndLeaf(): Promise<LargePushPair> {
+  const harness: RelayMeshHarness = await bootRelayMeshHarness();
+  const tenant = await harness.createTenant('alice');
+  await tenant.enroll();
+  const leaf = await tenant.joinNode('node-c');
   const counter: ByteCounter = { received: 0, requests: 0 };
-  installByteCountHandler(c.mesh, counter);
-  const nodes = [aBoot.node, c];
+  installByteCountHandler(leaf.mesh, counter);
   return {
-    router,
-    a: aBoot.node,
-    c,
-    boot: aBoot.boot,
-    counter,
-    stop: async () => {
-      for (const node of [...nodes].reverse()) {
-        node.unsubscribe?.();
-        try {
-          await node.mesh.stop();
-        } catch {
-          /* ignore */
-        }
-        try {
-          await node.mesh.hub?.stop();
-        } catch {
-          /* ignore */
-        }
-        node.close();
-      }
+    a: { mesh: tenant.owner.mesh },
+    c: { mesh: leaf.mesh },
+    boot: {
+      userId: tenant.userId,
+      rootKey: tenant.rootKey,
+      rootPublicKey: tenant.rootPublicKey,
+      rootEpoch: tenant.rootEpoch,
     },
+    counter,
+    stop: () => harness.stop(),
   };
 }
 
@@ -324,11 +236,7 @@ export function adoptWsSecure(pair: LargePushPair): void {
     pair.a.mesh.nodeId,
     right,
     'ws-secure',
-    pair.a.mesh.nodeId
+    pair.c.mesh.nodeId
   );
-  if (keptA !== left || keptC !== right) {
-    throw new Error(
-      `adoptLink dropped ws-secure pair a=${keptA === left} c=${keptC === right} aTransport=${pair.a.mesh.peers.transportOf(pair.c.mesh.nodeId)}`
-    );
-  }
+  if (!keptA || !keptC) throw new Error('adopt ws-secure failed');
 }

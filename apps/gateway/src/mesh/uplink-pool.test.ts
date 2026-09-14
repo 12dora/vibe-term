@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
+import { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { seedUser } from './test-support';
@@ -408,6 +409,7 @@ describe('UplinkPool', () => {
     relayDrainRecheckMs?: number;
     relayDrainTimeoutMs?: number;
     versions?: Record<string, string>;
+    caPins?: RelayCaPinStore;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -447,6 +449,7 @@ describe('UplinkPool', () => {
       failbackDebounceMs: input.failbackDebounceMs,
       relayDrainRecheckMs: input.relayDrainRecheckMs,
       relayDrainTimeoutMs: input.relayDrainTimeoutMs,
+      ...(input.caPins ? { caPins: input.caPins } : {}),
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       onNodeList: input.onNodeList
         ? (list) => {
@@ -475,6 +478,59 @@ describe('UplinkPool', () => {
     expect(pool.attachedHub()?.publicUrl).toBe('https://a.example');
     expect(pool.state).toBe('online');
     expect(created[0]?.statusSends).toBeGreaterThanOrEqual(1);
+  });
+
+  test('spawn and healthz probe use pinned relay CA as tls.ca', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const caPins = new RelayCaPinStore(db);
+    const pem = '-----BEGIN CERTIFICATE-----\nPIN\n-----END CERTIFICATE-----';
+    caPins.put({
+      url: 'https://relay.example',
+      caPem: pem,
+      fingerprint: 'ab'.repeat(32),
+    });
+    const created: FakeUplink[] = [];
+    const pool = new UplinkPool({
+      identity: identity(),
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => ({
+        version: '1',
+        tmux: false,
+        direct_capable: false,
+        inventory: {},
+        endpoints: [],
+      }),
+      candidates: () => [
+        {
+          hubNodeId: null,
+          publicUrl: 'https://relay.example',
+          priority: 1,
+          caFingerprint: null,
+        },
+      ],
+      caPins,
+      createClient: (opts) => {
+        const fake = new FakeUplink(opts, {});
+        created.push(fake);
+        return fake as unknown as import('./types').PooledUplink;
+      },
+      enablePeriodicRttProbe: false,
+    });
+    fixtures.push({ close, stop: () => pool.stop() });
+    pool.start();
+    await waitMicro();
+    expect(created[0]?.tlsCa).toEqual([pem]);
+    const spawned = pool.spawn({
+      hubNodeId: null,
+      publicUrl: 'https://relay.example',
+      priority: 1,
+      caFingerprint: null,
+    });
+    expect((spawned as unknown as FakeUplink).tlsCa).toEqual([pem]);
   });
 
   test('empty candidates stay idle and never construct a client', async () => {
