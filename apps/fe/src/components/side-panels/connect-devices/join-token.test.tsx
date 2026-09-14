@@ -38,8 +38,6 @@ const LEGACY_KEY = 'tmex.connectDevices.joinSession';
 const CURRENT_KEY = 'vibeterm.connectDevices.joinSession';
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
-/** sessionStorage 冻结字段 `hubNodeId` 的夹具值（D4）。 */
-const HUB_NODE = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
 const RELAY_URL = 'https://relay.example.com';
 const TENANT = 'aabbccddeeff00112233445566778899';
 
@@ -74,7 +72,7 @@ function admittedSession(over: Partial<JoinSession> = {}): JoinSession {
     createdAt: 1_700_000_000_000,
     exp: 1_700_000_600_000,
     uid: MESH_MODE.uid ?? null,
-    hubNodeId: HUB_NODE,
+    hubNodeId: ENTRY,
     admitted: true,
     admittedAt: Date.now(),
     nodeId: null,

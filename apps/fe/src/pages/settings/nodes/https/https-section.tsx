@@ -37,8 +37,6 @@ export interface HttpsSectionProps {
   client?: ApiClient;
   /** 测试注入；默认读地址栏。 */
   hostname?: string | null;
-  /** 纯 node 角色：本机不对外提供入口，整块置灰并跳过状态查询。 */
-  disabled?: boolean;
 }
 
 function browserHostname(): string | null {
@@ -51,10 +49,9 @@ export function HttpsSection({
   api = defaultTlsApi,
   client = defaultApiClient,
   hostname,
-  disabled = false,
 }: HttpsSectionProps) {
   const { t } = useTranslation();
-  const tls = useTlsStatus(api, { enabled: !disabled });
+  const tls = useTlsStatus(api);
   const [draftMode, setDraftMode] = useState<TlsMode | null>(null);
   const restart = useRestartGateway(client, tls.refresh);
 
@@ -71,13 +68,6 @@ export function HttpsSection({
   });
 
   const body = (() => {
-    if (disabled) {
-      return (
-        <p className="text-xs text-muted-foreground" data-testid="https-node-role-hint">
-          {t('nodes.https.nodeRoleHint')}
-        </p>
-      );
-    }
     if (tls.loginRequired) {
       return (
         <p className="text-xs text-muted-foreground" data-testid="https-login-required">
@@ -127,12 +117,7 @@ export function HttpsSection({
         <CardTitle>{t('nodes.https.title')}</CardTitle>
         <CardDescription>{t('nodes.https.description')}</CardDescription>
       </CardHeader>
-      <CardContent
-        className={`space-y-3 ${disabled ? 'pointer-events-none opacity-60' : ''}`}
-        aria-disabled={disabled || undefined}
-      >
-        {body}
-      </CardContent>
+      <CardContent className="space-y-3">{body}</CardContent>
       <StopListenerConfirm
         request={mutations.confirming}
         status={tls.status}

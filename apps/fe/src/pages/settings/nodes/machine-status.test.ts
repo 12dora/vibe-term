@@ -60,16 +60,16 @@ describe('machineStatusBadge', () => {
     expect(machineStatusBadge({ ...BASE, relayMode: true }).state).toBe('relayDisconnected');
   });
 
-  test('mesh 节点没挂中继：未接入，复用未连接中继徽标并提示加入中继', () => {
+  test('mesh 节点没挂中继：未接入，灰字而不是红字', () => {
     expect(machineStatusBadge(BASE)).toEqual({
-      state: 'relayDisconnected',
-      tone: 'warn',
+      state: 'unattached',
+      tone: 'muted',
       key: 'nodes.machine.status.unattached',
     });
   });
 
-  test('未连接一律是警示档', () => {
-    expect(machineStatusBadge(BASE).tone).toBe('warn');
+  test('未接入是灰字；中继模式掉线才是警示档', () => {
+    expect(machineStatusBadge(BASE).tone).toBe('muted');
     expect(machineStatusBadge({ ...BASE, relayMode: true }).tone).toBe('warn');
   });
 });

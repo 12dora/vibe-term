@@ -72,7 +72,7 @@ export {
   sortNodes,
   toRuntimeNodeId,
 } from './merge-nodes';
-export type { MergeContext, NodeRow, PendingAdmitMaterial } from './merge-nodes';
+export type { MergeContext, NodeRow } from './merge-nodes';
 
 // ---------------------------------------------------------------------------
 // React 绑定

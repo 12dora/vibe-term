@@ -9,6 +9,7 @@ import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Notice, NoticeAction } from '../card-parts';
+import { directRemoveConfirmDescriptionKey } from '../direct-section';
 import {
   type DirectPluginAction,
   type DirectPluginUi,
@@ -93,16 +94,23 @@ export function NodeDirectBody({ row, ui, onAction, onRestart }: NodeDirectSecti
   );
 }
 
+export function nodeHasRelayFallback(row: Pick<NodeRow, 'transport' | 'relayPresence'>): boolean {
+  return row.transport === 'relay' || (row.relayPresence?.length ?? 0) > 0;
+}
+
 export function NodeDirectRemoveConfirm({
   open,
   onConfirm,
   onCancel,
   testId,
+  hasRelay,
 }: {
   open: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   testId: string;
+  /** 目标节点当前有中继兜底。 */
+  hasRelay: boolean;
 }) {
   const { t } = useTranslation();
   if (!open) return null;
@@ -117,7 +125,7 @@ export function NodeDirectRemoveConfirm({
       testId={testId}
       confirmTestId={`${testId}-ok`}
     >
-      {t('nodes.machine.directRemoveConfirm.descriptionRelay')}
+      {t(directRemoveConfirmDescriptionKey(hasRelay))}
     </ConfirmDialog>
   );
 }

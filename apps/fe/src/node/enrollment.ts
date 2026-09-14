@@ -254,13 +254,13 @@ export function isPendingExpired(pending: PendingEnrollment, now: number): boole
 /**
  * `POST /api/auth/keylog?hub=sync` 的失败分类（B2-6 契约）。
  *
- * 服务端在确认之前**不落库**：明确拒绝 → 409 `{code:<error>}`，等 ack 超时 →
- * 504。`HUB_TIMEOUT` / `hub_timeout` / `hub_unavailable` 是冻结的 legacy 错误码
+ * 本机先落库，再 best-effort 向中继 fan-out。明确拒绝 → 409 `{code:<error>}`。
+ * `HUB_TIMEOUT` / `hub_timeout` / `hub_unavailable` 是冻结的 legacy 错误码
  * （decode only），新路径用 `timeout` / `unavailable` / `uplink_down`。因此：
  *
- * - `unconfirmed`：上级只是没答应下来（不可达 / 超时）。本地 head 没动，同一份字节仍然接得上，
- *   重试**原样重发**即可。按新 head 重签一个 seq 才是危险的：entry 到了 6、对端停在 5 时，
- *   重签出来的 7 会永久 `seq_gap`。
+ * - `unconfirmed`：没拿到本机落账确认（不可达 / 超时，或旧网关 `hubAck === false`）。
+ *   同一份字节仍然接得上，重试**原样重发**即可。按新 head 重签一个 seq 才是危险的：
+ *   entry 到了 6、对端停在 5 时，重签出来的 7 会永久 `seq_gap`。
  * - `stale`：这条记录的位置不对（fork / seq_gap）。同一份字节永远不会被接受，必须重新取 head
  *   重签，因此要把暂存的记录丢掉。
  * - `rejected`：记录本身有问题（签名、权限等），重发重签都没用。

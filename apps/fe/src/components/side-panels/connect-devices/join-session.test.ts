@@ -95,7 +95,12 @@ describe('isSessionValid', () => {
     ).toBe(false);
   });
 
-  test('身份侧 hubNodeId 为 null（AuthMode 已不下发）时，仍认存储里的冻结字段', () => {
+  test('身份侧 hubNodeId 为 null 时，仍认存储里的冻结字段', () => {
     expect(check(SESSION, { identity: { ...IDENTITY, hubNodeId: null } })).toBe(true);
+  });
+
+  test('身份侧 hubNodeId 有值时必须对拍', () => {
+    expect(check(SESSION)).toBe(true);
+    expect(check(SESSION, { identity: { ...IDENTITY, hubNodeId: 'other-node' } })).toBe(false);
   });
 });

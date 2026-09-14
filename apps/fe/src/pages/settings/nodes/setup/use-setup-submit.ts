@@ -7,7 +7,7 @@ import type { ApiClient } from '@vibeterm/api-client';
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { type SetupUplinkKind, describeSetupError } from './error-messages';
+import { describeSetupError } from './error-messages';
 import { isSetupBlocked, useSetupTransition } from './setup-transition';
 import type { SubmitOutcome } from './submit';
 import { type RestartWaiter, useRestartWaiter } from './use-restart-waiter';
@@ -25,8 +25,6 @@ export interface SetupSubmitOptions<T> {
    * 因此那条路径直接不等（默认等）。
    */
   waitForRestart?: boolean;
-  /** 错误文案按中继口径取。 */
-  uplink?: SetupUplinkKind;
 }
 
 export interface SetupSubmitHandle<T> {
@@ -49,7 +47,6 @@ export function useSetupSubmit<T>({
   successMessage,
   onRestarted,
   waitForRestart = true,
-  uplink = 'relay',
 }: SetupSubmitOptions<T>): SetupSubmitHandle<T> {
   const { t } = useTranslation();
   const owner = useId();
@@ -79,7 +76,7 @@ export function useSetupSubmit<T>({
       toast.success(successMessage);
       if (waitForRestart) waiter.start(outcome.previousStartedAt);
     } catch (error) {
-      const message = describeSetupError(t, error, uplink);
+      const message = describeSetupError(t, error);
       setSubmitError(message);
       toast.error(message);
     } finally {

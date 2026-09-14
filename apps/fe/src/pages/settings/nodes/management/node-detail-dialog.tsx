@@ -45,7 +45,11 @@ import {
   hasNodeDetailChanges,
 } from './node-detail-types';
 import { type NodeDirectIo, useNodeDirectPlugin } from './node-direct-plugin';
-import { NodeDirectBody, NodeDirectRemoveConfirm } from './node-direct-section';
+import {
+  NodeDirectBody,
+  NodeDirectRemoveConfirm,
+  nodeHasRelayFallback,
+} from './node-direct-section';
 import { useNodeDetailState } from './use-node-detail-state';
 import { useNodePorts } from './use-node-ports';
 
@@ -294,6 +298,7 @@ export function NodeDetailDialog({
           onConfirm={direct.confirmRemove}
           onCancel={direct.cancelRemove}
           testId={`nodes-detail-direct-remove-confirm-${row.id}`}
+          hasRelay={nodeHasRelayFallback(row)}
         />
         <DomainAccessConfirm
           open={state.confirming}

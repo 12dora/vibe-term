@@ -31,20 +31,8 @@ describe('角色判定', () => {
 });
 
 describe('defaultConnectPath', () => {
-  test('本机是中继或走中继：默认经中继', () => {
-    expect(defaultConnectPath(status({ role: 'relay,node' }))).toBe('relay');
-    expect(defaultConnectPath(status({ role: 'relay' }))).toBe('relay');
-    expect(defaultConnectPath(status({ relayMode: true, meshEnabled: true }))).toBe('relay');
-  });
-
-  test('mesh 成员（含尚未挂上中继）默认经中继', () => {
-    expect(defaultConnectPath(status({ role: 'node', meshEnabled: true }))).toBe('relay');
-    expect(defaultConnectPath(status({ meshEnabled: true }))).toBe('relay');
-  });
-
-  test('未组网：默认经中继', () => {
-    expect(defaultConnectPath(status())).toBe('relay');
-    expect(defaultConnectPath(status({ role: 'standalone' }))).toBe('relay');
+  test('默认经中继', () => {
+    expect(defaultConnectPath()).toBe('relay');
   });
 });
 

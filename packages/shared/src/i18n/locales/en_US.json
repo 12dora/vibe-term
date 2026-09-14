@@ -1712,7 +1712,9 @@
       "paneCount": "{{count}} terminals",
       "pane": "Terminal",
       "moveToWindow": "Move into this window",
-      "breakToWindow": "Break into new window"
+      "breakToWindow": "Break into new window",
+      "noWindowSelected": "No window selected",
+      "selectWindowToStart": "Select a window to get started"
     },
     "watch": {
       "title": "Watch rules",
@@ -2106,7 +2108,8 @@
           "title": "Remove the direct connect plugin?",
           "confirm": "Remove",
           "cancel": "Cancel",
-          "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
+          "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time.",
+          "descriptionNoRelay": "This machine has no relay fallback; after removal it is reachable only on the local network until the plugin is reinstalled."
         },
         "directRestartRequired": "Restart VibeTerm to apply this change.",
         "directFailed": "Could not update the direct connect plugin.",
@@ -2182,7 +2185,6 @@
       "https": {
         "title": "HTTPS settings",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
-        "nodeRoleHint": "HTTPS is only needed while this machine acts as an upstream. Nodes are reached through their upstream.",
         "modeActive": "in use",
         "save": "Save",
         "saved": "HTTPS settings saved",
@@ -2383,7 +2385,7 @@
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
-        "pending": "Pending",
+        "pending": "Syncing",
         "paused": "Paused"
       },
       "reach": {
@@ -2407,7 +2409,6 @@
         "refresh": "Refresh",
         "copy": "Copy",
         "copied": "Copied",
-        "admit": "Admit",
         "pause": "Pause",
         "resume": "Resume"
       },
@@ -2437,11 +2438,6 @@
           "turn_probe_failed": "All member TURN probes failed",
           "not_probed": "Not probed (follows control port)"
         }
-      },
-      "admit": {
-        "blocked": "Admit this node before managing it.",
-        "unavailable": "The relay did not send the material needed to admit this node. Refresh and try again.",
-        "failed": "Admit failed: {{error}}"
       },
       "detail": {
         "notifySettings": "Notification Settings",
@@ -2562,13 +2558,15 @@
       "rename": {
         "cancelled": "Cancelled."
       },
+      "keylog": {
+        "notApplied": "This node did not record the change; nothing was modified. Try again."
+      },
       "revoke": {
         "confirmTitle_one": "Remove Node",
         "confirmTitle_other": "Remove Nodes",
         "confirmText": "Remove node “{{name}}”? It loses access immediately and has to be added again from scratch.",
         "reasonLabel": "Reason (optional)",
         "done": "Node removed",
-        "relayFailed": "The relay did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
         "bulkConfirm_one": "Remove the following node? It loses access immediately and has to be added again from scratch.",
         "bulkConfirm_other": "Remove the following {{count}} nodes? They lose access immediately and have to be added again from scratch.",
@@ -3210,6 +3208,7 @@
           "unpinDoneAutoOff": "Unpinned."
         },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
+        "joinCodesNeedRelay": "Join codes need a connected relay.",
         "reauth": {
           "notice": "The relay token expired. Re-enter the access password.",
           "action": "Re-enter Access Password"

@@ -26,7 +26,6 @@ import { NodesCardList } from './nodes-card-list';
 import { PendingNodeRow } from './pending-node-row';
 import { Td, Th } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
-import { isUpgradeBusy } from './use-node-upgrade';
 
 export type { NodesTableProps };
 
@@ -112,10 +111,7 @@ function NodeRowView({
           data-testid={`nodes-select-${row.id}`}
         />
       </td>
-      <NameCell
-        row={row}
-        rowBusy={shared.uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
-      />
+      <NameCell row={row} />
       <Td>
         <StatusCell
           row={row}

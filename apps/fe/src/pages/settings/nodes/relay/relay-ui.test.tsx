@@ -7,6 +7,7 @@ import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
 import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  joinCodesNeedRelayHint,
   kickedRelays,
   reauthTarget,
   relayActionMenu,
@@ -407,6 +408,10 @@ describe('文案查表', () => {
 
   test('不可写提示只说中继未接入', () => {
     expect(uplinkBlockedHint(t)).toBe('relay.tenant.notAttached');
+  });
+
+  test('加入码被挡时只说需要先接入中继', () => {
+    expect(joinCodesNeedRelayHint(t)).toBe('relay.tenant.joinCodesNeedRelay');
   });
 });
 

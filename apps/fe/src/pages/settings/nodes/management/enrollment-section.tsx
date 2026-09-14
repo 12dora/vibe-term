@@ -48,7 +48,7 @@ export function EnrollmentSection({
   onCancel: (pending: PendingEnrollment) => void;
   /** 正在跑 admit 的 pending id：确认与取消都要禁用——取消一条 append 未定的记录会丢字节。 */
   busyIds: string[];
-  /** `relayAck === false`：手上还留着一份可重发记录的 pending id。 */
+  /** `hubAck === false` 或分类失败：手上还留着一份可重发记录的 pending id。`relayAck` 走 toast。 */
   unconfirmedIds: string[];
   /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
   clearedIds: string[];

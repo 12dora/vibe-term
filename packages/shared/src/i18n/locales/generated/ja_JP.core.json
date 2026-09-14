@@ -451,7 +451,9 @@
       "paneCount": "{{count}} 個のターミナル",
       "pane": "ターミナル",
       "moveToWindow": "このウィンドウへ移動",
-      "breakToWindow": "新しいウィンドウに分離"
+      "breakToWindow": "新しいウィンドウに分離",
+      "noWindowSelected": "ウィンドウが選択されていません",
+      "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },
     "watch": {
       "title": "監視ルール",

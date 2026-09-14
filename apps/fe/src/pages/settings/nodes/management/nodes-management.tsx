@@ -24,7 +24,7 @@ import { useTranslation } from 'react-i18next';
 import { RelayMetaLagNotice } from '../relay/relay-meta-lag-notice';
 import { useRelayAdmitFollowUp } from '../relay/use-relay-admit-follow-up';
 import type { LocalUplinkController } from '../uplink/local-uplink-controller';
-import { uplinkBlockedHint } from '../uplink/relay-targets';
+import { joinCodesNeedRelayHint, uplinkBlockedHint } from '../uplink/relay-targets';
 import {
   BulkActionsMenu,
   pruneSelection,
@@ -97,6 +97,7 @@ export function NodesManagement({
   const writable = relay.writable;
   const enrollWritable = relay.relayMode && writable;
   const blockedHint = uplinkBlockedHint(t);
+  const joinBlockedHint = joinCodesNeedRelayHint(t);
 
   const uninstall = useNodeUninstall({ api, mode, prompt, writable }, refreshAll);
   const bulkRevoke = useBulkRevoke({
@@ -196,7 +197,7 @@ export function NodesManagement({
             type="button"
             size="sm"
             disabled={!enrollWritable}
-            title={enrollWritable ? undefined : blockedHint}
+            title={enrollWritable ? undefined : joinBlockedHint}
             onClick={() => setEnrollOpen((value) => !value)}
             data-testid="nodes-add"
           >
@@ -220,7 +221,7 @@ export function NodesManagement({
           mode={mode}
           relay={relay}
           writable={enrollWritable}
-          blockedHint={blockedHint}
+          blockedHint={joinBlockedHint}
           open={enrollOpen}
           prompt={prompt}
           pendings={pendings}
@@ -234,7 +235,6 @@ export function NodesManagement({
         <NodesSyncGate>
           <NodesTable
             rows={rows}
-            enrollmentApi={enrollChannel}
             uplinkWritable={writable}
             blockedHint={blockedHint}
             mode={mode}

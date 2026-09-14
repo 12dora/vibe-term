@@ -29,8 +29,6 @@ export {
   revokeNodeRecord,
   revokeNodesSequentially,
 } from './revoke-node-record';
-export type { AdmitNodeDeps } from './use-admit-node';
-export { reportAdmitResult, useAdmitNode } from './use-admit-node';
 
 /**
  * 吊销确认框的开合。确认即关框：紧随其后的凭据对话框（吊销每次都要用户当场确认）

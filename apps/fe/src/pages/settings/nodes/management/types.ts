@@ -1,14 +1,12 @@
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
-import type { EnrollmentApi } from '@/node/enrollment-api';
 import type { NodeRow } from '@/node/mesh-nodes';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 
 /** 已确认带 uid / kdf 参数的 mesh 模式：管理动作都要签名，缺一不可。 */
 export type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJson };
 
-/** 节点表与行内动作共用的依赖：中继 enrollment 通道、签名凭据与刷新回调。 */
+/** 节点表与行内动作共用的依赖：签名凭据与刷新回调。 */
 export interface NodeActionDeps {
-  enrollmentApi: EnrollmentApi | null;
   /** 上级链路当前接受管理写入（已挂上中继；未接入时 key-log 本机写入仍可用）。 */
   uplinkWritable: boolean;
   /** 不可写时的原因文案；可写时由调用方省略。 */

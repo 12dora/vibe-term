@@ -112,7 +112,7 @@ export function ComputerGuide() {
   const { t } = useTranslation();
   const machine = useConnectMachine();
   const [chosen, setChosen] = useState<ConnectPath | null>(null);
-  const path = chosen ?? defaultConnectPath(machine);
+  const path = chosen ?? defaultConnectPath();
 
   return (
     <div className="space-y-3">

@@ -178,7 +178,7 @@ export function LocalMachineCard({
   const domainApi = useMemo(() => domainAccessApi(client), [client]);
   const badge = machineBadge(meshEnabled, status, uplink);
   const locked = leave.busy || setupCommitted;
-  const connectActions = useConnectMenu({ status, uplink, locked });
+  const connectActions = useConnectMenu({ status, uplink });
 
   return (
     <Card data-testid="local-machine-card">
@@ -265,6 +265,7 @@ function CardDialogs({
         open={mutations.confirmingRemove}
         onConfirm={mutations.confirmRemove}
         onCancel={mutations.cancelRemove}
+        hasRelay={Boolean(uplink.relay.relayMode && uplink.relay.attached)}
       />
       <LeaveDialog
         request={request}

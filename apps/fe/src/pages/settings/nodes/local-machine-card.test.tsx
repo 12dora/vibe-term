@@ -23,6 +23,7 @@ import {
   type DirectMutationCallbacks,
   DirectMutationController,
   describeDirectError,
+  directRemoveConfirmDescriptionKey,
 } from './direct-section';
 import {
   type DomainAccessApi,
@@ -265,7 +266,7 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(html).toContain('data-testid="local-machine-role"');
     expect(html).toContain('nodes.machine.roleNode');
     expect(html).toContain('data-testid="local-machine-menu"');
-    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayDisconnected"');
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="unattached"');
   });
 
   test('端口行标签不随角色变化，端口条目随角色变，mesh 下给出重新检测', () => {
@@ -481,7 +482,7 @@ describe('LocalMachineCard 的状态徽标', () => {
   }
 
   test('mesh 节点没挂中继是未接入', () => {
-    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('relayDisconnected');
+    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('unattached');
     expect(render(meshStatus('node'), MESH_MODE)).toContain('nodes.machine.status.unattached');
   });
 
@@ -731,6 +732,21 @@ describe('删除直连插件的后果', () => {
     expect(zhCN.translation.nodes.machine.directRemoveConfirm.descriptionRelay).toContain('中继');
     expect(zhCN.translation.nodes.machine.directRemoveConfirm.descriptionRelay).not.toContain(
       'Hub'
+    );
+  });
+
+  test('无中继时说明只剩局域网', () => {
+    expect(zhCN.translation.nodes.machine.directRemoveConfirm.descriptionNoRelay).toContain(
+      '没有中继兜底'
+    );
+  });
+
+  test('确认框按是否挂中继挑选文案', () => {
+    expect(directRemoveConfirmDescriptionKey(true)).toBe(
+      'nodes.machine.directRemoveConfirm.descriptionRelay'
+    );
+    expect(directRemoveConfirmDescriptionKey(false)).toBe(
+      'nodes.machine.directRemoveConfirm.descriptionNoRelay'
     );
   });
 });

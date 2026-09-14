@@ -36,7 +36,6 @@ describe('mergeNodes 的待同步占位行', () => {
     expect(pending.runtimeNodeId).toBe(PENDING_ID);
     expect(pending.version).toBeNull();
     expect(pending.loggedIn).toBe(false);
-    expect(pending.admitMaterial).toBeNull();
   });
 
   test('mesh 里已经有的同一台绝不重复列出', () => {

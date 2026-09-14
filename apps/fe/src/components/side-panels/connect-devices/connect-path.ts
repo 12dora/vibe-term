@@ -25,7 +25,7 @@ export function isRelayRole(role: LocalRole | null): boolean {
   return role === 'relay' || role === 'relay,node';
 }
 
-export function defaultConnectPath(_status: ConnectStatus): ConnectPath {
+export function defaultConnectPath(): ConnectPath {
   return 'relay';
 }
 
