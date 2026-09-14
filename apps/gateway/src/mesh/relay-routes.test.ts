@@ -534,6 +534,7 @@ describe('RelayRoutes', () => {
           tenant_id: TENANT_ID,
           token: encodeBase64url(new Uint8Array(32).fill(8)),
           password_epoch: 3,
+          passwordVerified: true,
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }
       );
@@ -609,6 +610,40 @@ describe('RelayRoutes', () => {
       expect(await b.secrets.store.getEnrollPassword(canonicalPublicUrl(RELAY_URL))).toBe(
         'hunter2'
       );
+      expect(b.secrets.store.getEnrollPasswordEpoch(canonicalPublicUrl(RELAY_URL))).toBe(3);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('enroll 仅在 passwordVerified 时落库；未设口令则存 null', async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({
+          tenant_id: TENANT_ID,
+          token: encodeBase64url(new Uint8Array(32).fill(8)),
+          password_epoch: 0,
+          passwordVerified: false,
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )) as unknown as typeof fetch;
+    const b = await boot({ fetchImpl });
+    try {
+      const proof = signRelayEnrollProof(b.user.rootKey, {
+        relayHost: hostFromUrl(RELAY_URL),
+        ts: Date.now(),
+      });
+      const res = await b.call('/api/mesh/relay/enroll', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: RELAY_URL,
+          password: 'bogus-secret',
+          proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(b.secrets.store.hasEnrollPassword(canonicalPublicUrl(RELAY_URL))).toBe(false);
+      expect(await b.secrets.store.getEnrollPassword(canonicalPublicUrl(RELAY_URL))).toBeNull();
     } finally {
       b.close();
     }

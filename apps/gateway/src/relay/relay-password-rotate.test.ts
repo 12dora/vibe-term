@@ -25,7 +25,7 @@ async function rotate(
 }
 
 describe('POST /api/relay/password/rotate', () => {
-  test('no-password relay accepts empty current and returns passwordEpoch', async () => {
+  test('no-password relay refuses tenant rotate with 409 relay_password_unset', async () => {
     harness = await bootRelayHarness();
     const tenant = await harness.createTenant();
     const res = await rotate(
@@ -33,9 +33,13 @@ describe('POST /api/relay/password/rotate', () => {
       { tenantId: tenant.id, current: '', next: 'new-password', mode: 'keep' },
       tenant.token
     );
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, passwordEpoch: 1 });
-    expect(harness.runtime.configStore.read()?.passwordHash).toBeTruthy();
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('relay_password_unset');
+    expect(body.error.message).toBe(
+      'the relay has no access password; the operator sets the first one'
+    );
+    expect(harness.runtime.configStore.read()?.passwordHash).toBeNull();
   });
 
   test('wrong current is 401 relay_password_invalid', async () => {
@@ -81,7 +85,7 @@ describe('POST /api/relay/password/rotate', () => {
     expect(harness.runtime.registry.listTenant(tenant.id)).toHaveLength(1);
   });
 
-  test('kick with offline admitted members is 409 unless force', async () => {
+  test('kick with offline admitted members is 409; tenant force cannot bypass', async () => {
     harness = await bootRelayHarness({ password: 'correct-password' });
     const tenant = await harness.createTenant({ password: 'correct-password' });
     const live = await tenant.connect(tenant.addNode());
@@ -93,9 +97,12 @@ describe('POST /api/relay/password/rotate', () => {
       tenant.token
     );
     expect(denied.status).toBe(409);
-    expect(((await denied.json()) as { error: { code: string } }).error.code).toBe(
-      'relay_members_offline'
-    );
+    const deniedBody = (await denied.json()) as {
+      error: { code: string; online: number; admitted: number };
+    };
+    expect(deniedBody.error.code).toBe('relay_members_offline');
+    expect(deniedBody.error.online).toBe(0);
+    expect(deniedBody.error.admitted).toBe(1);
     const forced = await rotate(
       harness,
       {
@@ -107,7 +114,10 @@ describe('POST /api/relay/password/rotate', () => {
       },
       tenant.token
     );
-    expect(forced.status).toBe(200);
+    expect(forced.status).toBe(409);
+    expect(((await forced.json()) as { error: { code: string } }).error.code).toBe(
+      'relay_members_offline'
+    );
   });
 
   test('missing token is 401; token/tenant mismatch is 401', async () => {
@@ -151,5 +161,9 @@ describe('POST /api/relay/password/rotate', () => {
       tenant.token
     );
     expect(limited.status).toBe(429);
+    expect(((await limited.json()) as { error: { code: string } }).error.code).toBe(
+      'RELAY_RATE_LIMITED'
+    );
+    expect(limited.headers.get('retry-after')).toBeTruthy();
   });
 });

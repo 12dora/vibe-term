@@ -105,6 +105,22 @@ describe('RelayTenantApi 状态', () => {
     });
   });
 
+  test('rotateEnrollPassword 409 透传 online / admitted / retryAfterMs 到 details', async () => {
+    const { api } = recorder([
+      fail(409, 'relay_members_offline', { online: 2, admitted: 5 }),
+      fail(429, 'RELAY_RATE_LIMITED', { retryAfterMs: 3000 }),
+    ]);
+    const offline = (await api
+      .rotateEnrollPassword({ url: 'https://r.example', next: 'abcdefgh', mode: 'kick' })
+      .catch((err: unknown) => err)) as RelayApiError;
+    expect(offline).toBeInstanceOf(RelayApiError);
+    expect(offline.details).toEqual({ online: 2, admitted: 5 });
+    const limited = (await api
+      .rotateEnrollPassword({ url: 'https://r.example', next: 'abcdefgh', mode: 'keep' })
+      .catch((err: unknown) => err)) as RelayApiError;
+    expect(limited.details).toEqual({ retryAfterMs: 3000 });
+  });
+
   test('normalizeRelayStatus 透传 TURN members / localHint', () => {
     const row = normalizeRelayStatus({
       relays: [
@@ -657,20 +673,22 @@ describe('RelayTenantApi enrollment 与 join 材料', () => {
 
 describe('RelayTenantApi 接入密码', () => {
   test('enrollPassword 走 GET /api/mesh/relay/password?url=', async () => {
-    const { api, calls } = recorder([ok({ known: true, password: 'secret' })]);
+    const { api, calls } = recorder([ok({ known: true, password: 'secret', passwordEpoch: 3 })]);
     expect(await api.enrollPassword('https://r.example:8443')).toEqual({
       known: true,
       password: 'secret',
+      passwordEpoch: 3,
     });
     expect(calls[0].url).toBe('/api/mesh/relay/password?url=https%3A%2F%2Fr.example%3A8443');
     expect(calls[0].init?.method ?? 'GET').toBe('GET');
   });
 
   test('enrollPassword 未知时 password 为 null', async () => {
-    const { api } = recorder([ok({ known: false, password: null })]);
+    const { api } = recorder([ok({ known: false, password: null, passwordEpoch: null })]);
     expect(await api.enrollPassword('https://r.example')).toEqual({
       known: false,
       password: null,
+      passwordEpoch: null,
     });
   });
 

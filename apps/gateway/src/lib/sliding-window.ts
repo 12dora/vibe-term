@@ -55,6 +55,13 @@ export class SlidingWindowCounter {
     this.buckets.delete(key);
   }
 
+  /** 该 key 最早一次仍有效命中距窗口结束的剩余毫秒；无命中为 0。 */
+  retryAfterMs(key: string, now = this.clock()): number {
+    const first = this.live(key, now)[0];
+    if (first === undefined) return 0;
+    return Math.max(0, first + this.windowMs - now);
+  }
+
   clear(): void {
     this.buckets.clear();
   }

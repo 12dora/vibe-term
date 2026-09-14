@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { eq } from 'drizzle-orm';
+import { meshRelays } from '../db/schema';
+import { MeshMembershipStore } from './mesh-membership-store';
 import { MeshRelayStore } from './mesh-relay-store';
 import { ensureNodeIdentity } from './node-identity-service';
 import { NodeIdentityStore } from './node-identity-store';
@@ -62,6 +65,7 @@ describe('MeshRelayStore', () => {
           priority: 0,
           kicked: false,
           kickedReason: null,
+          enrollPasswordKnown: false,
         },
       ]);
       expect(f.store.hasEnrollPassword('https://a.example')).toBe(false);
@@ -151,6 +155,64 @@ describe('MeshRelayStore', () => {
       await f.store.setEnrollPassword('https://other.example', '');
       expect(f.store.hasEnrollPassword('https://other.example')).toBe(false);
       expect(await f.store.getEnrollPassword('https://other.example')).toBeNull();
+
+      await f.store.setEnrollPassword('https://other.example', 'epoch-pw', 7);
+      expect(f.store.getEnrollPasswordEpoch('https://other.example')).toBe(7);
+      await f.store.replaceRelays(
+        [
+          {
+            url: 'https://other.example',
+            tenantId: 'bb'.repeat(16),
+            token: new Uint8Array(32).fill(4),
+            priority: 0,
+          },
+        ],
+        3_000
+      );
+      expect(f.store.getEnrollPasswordEpoch('https://other.example')).toBe(7);
+    } finally {
+      f.close();
+    }
+  });
+
+  test('getEnrollPassword returns null on decrypt failure', async () => {
+    const f = await open();
+    try {
+      await f.store.replaceRelays(
+        [
+          {
+            url: 'https://a.example',
+            tenantId: 'aa'.repeat(16),
+            token: new Uint8Array(32).fill(1),
+            priority: 0,
+          },
+        ],
+        1_000
+      );
+      await f.store.setEnrollPassword('https://a.example', 'secret-pw', 3);
+      f.db
+        .update(meshRelays)
+        .set({ enrollPasswordEnc: 'not-valid-ciphertext' })
+        .where(eq(meshRelays.url, 'https://a.example'))
+        .run();
+      expect(await f.store.getEnrollPassword('https://a.example')).toBeNull();
+      expect(f.store.getEnrollPasswordEpoch('https://a.example')).toBe(3);
+    } finally {
+      f.close();
+    }
+  });
+
+  test('pending enroll password is cleared on leave and uplink none', async () => {
+    const f = await open();
+    try {
+      await f.store.setEnrollPassword('https://pending.example', 'before-row', 1);
+      expect(await f.store.getEnrollPassword('https://pending.example')).toBe('before-row');
+      f.store.setUplinkKind('none');
+      expect(await f.store.getEnrollPassword('https://pending.example')).toBeNull();
+
+      await f.store.setEnrollPassword('https://pending.example', 'again', 2);
+      new MeshMembershipStore(f.db).clearAll();
+      expect(await f.store.getEnrollPassword('https://pending.example')).toBeNull();
     } finally {
       f.close();
     }

@@ -250,6 +250,7 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
           priority: 0,
           kicked: false,
           kickedReason: null,
+          enrollPasswordKnown: false,
         },
       ]);
       const stored = await b.wiring.secrets.store.getRelay(canonicalPublicUrl(RELAY_URL));

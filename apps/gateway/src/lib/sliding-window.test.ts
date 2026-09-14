@@ -34,6 +34,17 @@ describe('SlidingWindowCounter', () => {
     expect(counter.release('a')).toBe(false);
   });
 
+  test('retryAfterMs is remaining window from the oldest live hit', () => {
+    let now = 1_000;
+    const counter = new SlidingWindowCounter({ windowMs: 100, now: () => now });
+    expect(counter.retryAfterMs('a')).toBe(0);
+    counter.hit('a');
+    now = 1_040;
+    expect(counter.retryAfterMs('a')).toBe(60);
+    now = 1_100;
+    expect(counter.retryAfterMs('a')).toBe(0);
+  });
+
   test('reset and clear drop buckets', () => {
     const counter = new SlidingWindowCounter({ windowMs: 100, now: () => 1_000 });
     counter.hit('a');

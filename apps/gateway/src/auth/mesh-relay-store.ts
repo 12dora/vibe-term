@@ -23,6 +23,7 @@ export type StoredMeshRelayRow = {
   kicked: boolean;
   /** 中继给出的踢出原因；`password_rotated` 表示只是令牌换代，等新的 `set-relays` 即可。 */
   kickedReason: string | null;
+  enrollPasswordKnown?: boolean;
 };
 
 export type StoredMeshRelay = StoredMeshRelayRow & { token: Uint8Array };
@@ -34,15 +35,35 @@ export type ReplaceMeshRelayInput = {
   priority: number;
 };
 
+type PendingEnrollPassword = { password: string | null; epoch: number | null };
+
+const storesByDb = new WeakMap<AuthDb, MeshRelayStore>();
+const enrollPasswordDecryptLogged = new Set<string>();
+
+export function clearPendingEnrollPasswordsForDb(db: AuthDb): void {
+  storesByDb.get(db)?.clearPendingEnrollPasswords();
+}
+
+function logEnrollPasswordDecryptFailure(url: string, error: unknown): void {
+  if (enrollPasswordDecryptLogged.has(url)) return;
+  enrollPasswordDecryptLogged.add(url);
+  console.error('[mesh-relay] enroll password decrypt failed:', url, error);
+}
+
 /**
  * 节点侧中继目标与租户密钥的落库层。token / 密钥都用主密钥加密后存储，
  * 与 `node_identity` 的私钥同一套 `crypto` 助手。
  */
 export class MeshRelayStore {
-  constructor(private readonly db: AuthDb) {}
+  constructor(private readonly db: AuthDb) {
+    storesByDb.set(db, this);
+  }
 
-  /** enroll 成功但 `set-relays` 尚未落行时暂存明文，随 `replaceRelays` 写入。 */
-  private readonly pendingEnrollPasswords = new Map<string, string | null>();
+  /**
+   * enroll 成功但 `set-relays` 尚未落行时暂存明文，随 `replaceRelays` 写入。
+   * 仅在内存：这段窗口里 gateway 重启则 known 变 false，只能再 enroll 一次。
+   */
+  private readonly pendingEnrollPasswords = new Map<string, PendingEnrollPassword>();
 
   /** 同步读；`UplinkPool.candidates()` 是同步接口，只需要 url/priority。 */
   listRelayRows(): StoredMeshRelayRow[] {
@@ -57,6 +78,7 @@ export class MeshRelayStore {
         priority: row.priority,
         kicked: row.kicked,
         kickedReason: row.kickedReason,
+        enrollPasswordKnown: this.enrollPasswordKnownFor(row.url, row.enrollPasswordEnc),
       }));
   }
 
@@ -80,27 +102,51 @@ export class MeshRelayStore {
 
   async getEnrollPassword(url: string): Promise<string | null> {
     if (this.pendingEnrollPasswords.has(url)) {
-      return this.pendingEnrollPasswords.get(url) ?? null;
+      return this.pendingEnrollPasswords.get(url)?.password ?? null;
     }
     const row = this.db.select().from(meshRelays).where(eq(meshRelays.url, url)).get();
     if (!row?.enrollPasswordEnc) return null;
-    return decryptWithContext(row.enrollPasswordEnc, {
-      scope: 'mesh_relay',
-      entityId: url,
-      field: 'enroll_password',
-    });
+    try {
+      return await decryptWithContext(row.enrollPasswordEnc, {
+        scope: 'mesh_relay',
+        entityId: url,
+        field: 'enroll_password',
+      });
+    } catch (error) {
+      logEnrollPasswordDecryptFailure(url, error);
+      return null;
+    }
   }
 
-  async setEnrollPassword(url: string, plaintext: string | null): Promise<void> {
+  getEnrollPasswordEpoch(url: string): number | null {
+    if (this.pendingEnrollPasswords.has(url)) {
+      return this.pendingEnrollPasswords.get(url)?.epoch ?? null;
+    }
+    const row = this.db.select().from(meshRelays).where(eq(meshRelays.url, url)).get();
+    return row?.enrollPasswordEpoch ?? null;
+  }
+
+  async setEnrollPassword(
+    url: string,
+    plaintext: string | null,
+    passwordEpoch: number | null = null
+  ): Promise<void> {
     const value = plaintext && plaintext.length > 0 ? plaintext : null;
+    const epoch =
+      typeof passwordEpoch === 'number' && Number.isFinite(passwordEpoch) ? passwordEpoch : null;
     const existing = this.db.select().from(meshRelays).where(eq(meshRelays.url, url)).get();
     if (!existing) {
-      this.pendingEnrollPasswords.set(url, value);
+      this.pendingEnrollPasswords.set(url, { password: value, epoch });
       return;
     }
     this.pendingEnrollPasswords.delete(url);
+    enrollPasswordDecryptLogged.delete(url);
     const enrollPasswordEnc = value ? await encrypt(value) : null;
-    this.db.update(meshRelays).set({ enrollPasswordEnc }).where(eq(meshRelays.url, url)).run();
+    this.db
+      .update(meshRelays)
+      .set({ enrollPasswordEnc, enrollPasswordEpoch: epoch })
+      .where(eq(meshRelays.url, url))
+      .run();
   }
 
   async replaceRelays(relays: readonly ReplaceMeshRelayInput[], now: number): Promise<void> {
@@ -109,22 +155,26 @@ export class MeshRelayStore {
         .select()
         .from(meshRelays)
         .all()
-        .map((row) => [row.url, row.enrollPasswordEnc] as const)
+        .map(
+          (row) =>
+            [row.url, { enc: row.enrollPasswordEnc, epoch: row.enrollPasswordEpoch }] as const
+        )
     );
     const rows = await Promise.all(
-      relays.map(async (relay) => ({
-        url: relay.url,
-        tenantId: relay.tenantId,
-        tokenEnc: await encryptBytes(relay.token),
-        enrollPasswordEnc: await this.enrollPasswordEncForReplace(
-          relay.url,
-          previous.get(relay.url)
-        ),
-        priority: relay.priority,
-        kicked: false,
-        kickedReason: null,
-        updatedAt: now,
-      }))
+      relays.map(async (relay) => {
+        const stored = await this.enrollPasswordForReplace(relay.url, previous.get(relay.url));
+        return {
+          url: relay.url,
+          tenantId: relay.tenantId,
+          tokenEnc: await encryptBytes(relay.token),
+          enrollPasswordEnc: stored.enrollPasswordEnc,
+          enrollPasswordEpoch: stored.enrollPasswordEpoch,
+          priority: relay.priority,
+          kicked: false,
+          kickedReason: null,
+          updatedAt: now,
+        };
+      })
     );
     // 整表替换：新的 set-relays 意味着令牌重新签发，被踢标记随之清零
     this.db.delete(meshRelays).run();
@@ -145,13 +195,15 @@ export class MeshRelayStore {
     const existing = this.db.select().from(meshRelays).where(eq(meshRelays.url, input.url)).get();
     if (!existing) {
       const priority = this.listRelayRows().length;
+      const stored = await this.enrollPasswordForReplace(input.url, undefined);
       this.db
         .insert(meshRelays)
         .values({
           url: input.url,
           tenantId: input.tenantId,
           tokenEnc,
-          enrollPasswordEnc: await this.enrollPasswordEncForReplace(input.url, null),
+          enrollPasswordEnc: stored.enrollPasswordEnc,
+          enrollPasswordEpoch: stored.enrollPasswordEpoch,
           priority,
           kicked: false,
           kickedReason: null,
@@ -182,28 +234,39 @@ export class MeshRelayStore {
   }
 
   clearRelays(): void {
-    this.pendingEnrollPasswords.clear();
+    this.clearPendingEnrollPasswords();
     this.db.delete(meshRelays).run();
+  }
+
+  clearPendingEnrollPasswords(): void {
+    this.pendingEnrollPasswords.clear();
   }
 
   private enrollPasswordKnownFor(url: string, storedEnc: string | null | undefined): boolean {
     if (this.pendingEnrollPasswords.has(url)) {
-      const pending = this.pendingEnrollPasswords.get(url);
+      const pending = this.pendingEnrollPasswords.get(url)?.password;
       return pending != null && pending.length > 0;
     }
     return storedEnc != null && storedEnc.length > 0;
   }
 
-  private async enrollPasswordEncForReplace(
+  private async enrollPasswordForReplace(
     url: string,
-    previousEnc: string | null | undefined
-  ): Promise<string | null> {
+    previous: { enc: string | null | undefined; epoch: number | null | undefined } | undefined
+  ): Promise<{ enrollPasswordEnc: string | null; enrollPasswordEpoch: number | null }> {
     if (this.pendingEnrollPasswords.has(url)) {
-      const pending = this.pendingEnrollPasswords.get(url) ?? null;
+      const pending = this.pendingEnrollPasswords.get(url);
       this.pendingEnrollPasswords.delete(url);
-      return pending ? encrypt(pending) : null;
+      const password = pending?.password ?? null;
+      return {
+        enrollPasswordEnc: password ? await encrypt(password) : null,
+        enrollPasswordEpoch: pending?.epoch ?? null,
+      };
     }
-    return previousEnc ?? null;
+    return {
+      enrollPasswordEnc: previous?.enc ?? null,
+      enrollPasswordEpoch: previous?.epoch ?? null,
+    };
   }
 
   async putSecret(
@@ -257,6 +320,7 @@ export class MeshRelayStore {
   }
 
   setUplinkKind(kind: UplinkKind): void {
+    if (kind === 'none') this.clearPendingEnrollPasswords();
     this.db
       .update(nodeIdentity)
       .set({ uplinkKind: kind })

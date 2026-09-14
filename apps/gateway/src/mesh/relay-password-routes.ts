@@ -1,10 +1,11 @@
-import { encodeBase64url } from '@vibeterm/shared/auth';
-import { RELAY_TOKEN_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { readJsonObjectBody } from '../api/http';
+import type { StoredMeshRelay } from '../auth/mesh-relay-store';
+import { CryptoDecryptError } from '../crypto/errors';
 import { RelayErrorCode } from '../relay/relay-http';
 import { readRotateMode, readRotateNext } from '../relay/relay-password-rotate';
-import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
-import { RELAY_ENROLL_FETCH_TIMEOUT_MS } from './relay-enroll-call';
+import { isPeerRequest } from './client-source';
+import { type RelayDialContext, relayDialContextFromEnv } from './relay-dial';
+import { relayTenantPost } from './relay-enroll-call';
 import { normalizeUrlOrNull, readRelayErrorCode } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
 import { jsonBody, jsonError } from './session-middleware';
@@ -15,17 +16,49 @@ export type MeshRelayPasswordDeps = {
   dial?: RelayDialContext;
 };
 
+export function meshRelayPasswordHandlers(
+  deps: MeshRelayPasswordDeps
+): Record<string, (req: Request) => Promise<Response>> {
+  return {
+    'GET /password': (req) => handleMeshRelayPasswordGet(deps, req),
+    'POST /password': (req) => handleMeshRelayPasswordPost(deps, req),
+  };
+}
+
+async function attachedRelayOrError(
+  store: RelaySecrets['store'],
+  url: string
+): Promise<StoredMeshRelay | Response> {
+  try {
+    const row = await store.getRelay(url);
+    if (!row) return jsonError(RelayErrorCode.notAttached, 404);
+    return row;
+  } catch (error) {
+    if (error instanceof CryptoDecryptError) return jsonError(RelayErrorCode.notAttached, 404);
+    return jsonError('MALFORMED', 400);
+  }
+}
+
 export async function handleMeshRelayPasswordGet(
   deps: MeshRelayPasswordDeps,
   req: Request
 ): Promise<Response> {
+  if (isPeerRequest(req)) return jsonError('UNAUTHORIZED', 401);
   const url = normalizeUrlOrNull(new URL(req.url).searchParams.get('url'));
   if (!url) return jsonError('INVALID_URL', 400);
-  const row = await deps.secrets.store.getRelay(url);
-  if (!row) return jsonError(RelayErrorCode.notAttached, 404);
-  const known = deps.secrets.store.hasEnrollPassword(url);
-  const password = known ? await deps.secrets.store.getEnrollPassword(url) : null;
-  return jsonBody({ known, password }, 200, { 'cache-control': 'no-store' });
+  const row = await attachedRelayOrError(deps.secrets.store, url);
+  if (row instanceof Response) return row;
+  const password = await deps.secrets.store.getEnrollPassword(url);
+  const known = password != null && password.length > 0;
+  return jsonBody(
+    {
+      known,
+      password: known ? password : null,
+      passwordEpoch: deps.secrets.store.getEnrollPasswordEpoch(url),
+    },
+    200,
+    { 'cache-control': 'no-store' }
+  );
 }
 
 type RotateBody = {
@@ -57,14 +90,14 @@ export async function handleMeshRelayPasswordPost(
   deps: MeshRelayPasswordDeps,
   req: Request
 ): Promise<Response> {
+  if (isPeerRequest(req)) return jsonError('UNAUTHORIZED', 401);
   const parsed = parseRotateBody(await readJsonObjectBody(req));
   if (!parsed) return jsonError('MALFORMED', 400);
-  const stored = await deps.secrets.store.getRelay(parsed.url);
-  if (!stored) return jsonError(RelayErrorCode.notAttached, 404);
-  const current =
-    parsed.current !== undefined
-      ? parsed.current
-      : ((await deps.secrets.store.getEnrollPassword(parsed.url)) ?? '');
+  const stored = await attachedRelayOrError(deps.secrets.store, parsed.url);
+  if (stored instanceof Response) return stored;
+  const storedPassword = await deps.secrets.store.getEnrollPassword(parsed.url);
+  const usedStored = parsed.current === undefined;
+  const current = usedStored ? (storedPassword ?? '') : (parsed.current ?? '');
   const remote = await callRelayPasswordRotate({
     url: parsed.url,
     tenantId: stored.tenantId,
@@ -75,14 +108,34 @@ export async function handleMeshRelayPasswordPost(
     fetchImpl: deps.fetchImpl,
     dial: deps.dial,
   });
-  if (!remote.ok) return jsonError(remote.error, remote.status);
-  await deps.secrets.store.setEnrollPassword(parsed.url, parsed.next);
+  if (!remote.ok) {
+    if (remote.error === RelayErrorCode.enrollPasswordInvalid && usedStored && storedPassword) {
+      await deps.secrets.store.setEnrollPassword(parsed.url, null, null);
+    }
+    return jsonError(remote.error, remote.status, rotateErrorExtra(remote));
+  }
+  await deps.secrets.store.setEnrollPassword(parsed.url, parsed.next, remote.passwordEpoch);
   return jsonBody({ ok: true, passwordEpoch: remote.passwordEpoch });
 }
 
-type RotateCallResult =
-  | { ok: true; passwordEpoch: number }
-  | { ok: false; error: string; status: number };
+type RotateCallOk = { ok: true; passwordEpoch: number };
+type RotateCallFail = {
+  ok: false;
+  error: string;
+  status: number;
+  online?: number;
+  admitted?: number;
+  retryAfterMs?: number;
+};
+type RotateCallResult = RotateCallOk | RotateCallFail;
+
+function rotateErrorExtra(remote: RotateCallFail): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = {};
+  if (typeof remote.online === 'number') extra.online = remote.online;
+  if (typeof remote.admitted === 'number') extra.admitted = remote.admitted;
+  if (typeof remote.retryAfterMs === 'number') extra.retryAfterMs = remote.retryAfterMs;
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
 
 async function callRelayPasswordRotate(input: {
   url: string;
@@ -94,44 +147,59 @@ async function callRelayPasswordRotate(input: {
   fetchImpl?: typeof fetch;
   dial?: RelayDialContext;
 }): Promise<RotateCallResult> {
-  const doFetch = input.fetchImpl ?? fetch;
-  const dialUrl = resolveRelayDialUrl(input.url, input.dial ?? relayDialContextFromEnv());
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), RELAY_ENROLL_FETCH_TIMEOUT_MS);
-  try {
-    const res = await doFetch(`${dialUrl.replace(/\/+$/, '')}/api/relay/password/rotate`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(input.token)),
-      },
-      signal: ac.signal,
-      body: JSON.stringify({
-        tenantId: input.tenantId,
-        current: input.current,
-        next: input.next,
-        mode: input.mode,
-      }),
-    });
-    const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!res.ok) {
-      const code = readRelayErrorCode(payload) ?? RelayErrorCode.unreachable;
-      return { ok: false, error: code, status: mapRotateStatus(res.status, code) };
-    }
-    const passwordEpoch = typeof payload?.passwordEpoch === 'number' ? payload.passwordEpoch : 0;
-    return { ok: true, passwordEpoch };
-  } catch {
+  const posted = await relayTenantPost({
+    url: input.url,
+    path: '/api/relay/password/rotate',
+    token: input.token,
+    fetchImpl: input.fetchImpl,
+    dial: input.dial ?? relayDialContextFromEnv(),
+    body: {
+      tenantId: input.tenantId,
+      current: input.current,
+      next: input.next,
+      mode: input.mode,
+    },
+  });
+  if (posted.status === 0) {
     return { ok: false, error: RelayErrorCode.unreachable, status: 502 };
-  } finally {
-    clearTimeout(timer);
   }
+  if (!posted.ok) {
+    const code = readRelayErrorCode(posted.payload) ?? RelayErrorCode.unreachable;
+    return {
+      ok: false,
+      error: code,
+      status: mapRotateStatus(posted.status, code),
+      ...readRotateErrorDetail(posted.payload, posted.retryAfterMs),
+    };
+  }
+  const passwordEpoch =
+    typeof posted.payload?.passwordEpoch === 'number' ? posted.payload.passwordEpoch : 0;
+  return { ok: true, passwordEpoch };
+}
+
+function readRotateErrorDetail(
+  payload: Record<string, unknown> | null,
+  retryAfterMs?: number
+): Pick<RotateCallFail, 'online' | 'admitted' | 'retryAfterMs'> {
+  const nested = payload?.error;
+  const src =
+    nested && typeof nested === 'object' && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : payload;
+  const extra: Pick<RotateCallFail, 'online' | 'admitted' | 'retryAfterMs'> = {};
+  if (typeof src?.online === 'number') extra.online = src.online;
+  if (typeof src?.admitted === 'number') extra.admitted = src.admitted;
+  const retry = typeof src?.retryAfterMs === 'number' ? src.retryAfterMs : retryAfterMs;
+  if (typeof retry === 'number') extra.retryAfterMs = retry;
+  return extra;
 }
 
 function mapRotateStatus(httpStatus: number, code: string): number {
   if (code === RelayErrorCode.enrollPasswordInvalid) return 401;
   if (code === RelayErrorCode.enrollPasswordTooShort) return 400;
   if (code === RelayErrorCode.membersOffline) return 409;
-  if (httpStatus === 429) return 429;
+  if (code === RelayErrorCode.enrollPasswordUnset) return 409;
+  if (code === RelayErrorCode.rateLimited || httpStatus === 429) return 429;
   if (httpStatus >= 400 && httpStatus < 500) return httpStatus;
   return 502;
 }

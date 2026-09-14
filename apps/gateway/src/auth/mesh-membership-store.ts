@@ -19,6 +19,7 @@ import {
   users,
 } from '../db/schema';
 import { toBuffer } from './binary';
+import { clearPendingEnrollPasswordsForDb } from './mesh-relay-store';
 import type { AuthDb } from './types';
 
 export type ClearMeshMembershipOptions = {
@@ -60,6 +61,7 @@ export class MeshMembershipStore {
   constructor(private readonly db: AuthDb) {}
 
   clearMeshMembership(options?: ClearMeshMembershipOptions): void {
+    clearPendingEnrollPasswordsForDb(this.db);
     this.db.transaction((tx) => {
       wipeMeshMembership(tx);
       const root = options?.removeRelayTenantRootPublicKey;
@@ -74,6 +76,7 @@ export class MeshMembershipStore {
   }
 
   clearAll(): void {
+    clearPendingEnrollPasswordsForDb(this.db);
     this.db.transaction((tx) => {
       wipeMeshMembership(tx);
       wipeRelayOperatorState(tx);

@@ -87,7 +87,6 @@ type TenantRotateBody = {
   current: string;
   next: string | null;
   mode: 'keep' | 'kick';
-  force?: boolean;
 };
 
 function parseTenantRotateBody(body: Record<string, unknown> | null): TenantRotateBody | null {
@@ -98,13 +97,11 @@ function parseTenantRotateBody(body: Record<string, unknown> | null): TenantRota
   const next = readRotateNext(body.next);
   const mode = readRotateMode(body.mode);
   if (next === undefined || !mode) return null;
-  if ('force' in body && typeof body.force !== 'boolean') return null;
   return {
     tenantId: body.tenantId,
     current: current ?? '',
     next,
     mode,
-    ...(body.force === true ? { force: true } : {}),
   };
 }
 
@@ -125,7 +122,11 @@ export async function handleRelayPasswordRotate(
   req: Request
 ): Promise<Response> {
   const ip = deps.clientIp(req);
-  if (deps.limiter.isLimited(ip)) return relayError(RelayErrorCode.rateLimited, 429);
+  if (deps.limiter.isLimited(ip)) {
+    return relayError(RelayErrorCode.rateLimited, 429, {
+      retryAfterMs: deps.limiter.retryAfterMs(ip),
+    });
+  }
   const parsed = parseTenantRotateBody(await readJsonObjectBody(req));
   if (!parsed) return relayError(RelayErrorCode.invalidBody, 400);
   const tenant = authenticateRelayTenant(deps, req, parsed.tenantId);
@@ -134,6 +135,11 @@ export async function handleRelayPasswordRotate(
     return relayError(RelayErrorCode.enrollPasswordTooShort, 400);
   }
   const config = deps.configStore.ensure(deps.now());
+  if (config.passwordHash === null) {
+    return relayError(RelayErrorCode.enrollPasswordUnset, 409, {
+      message: 'the relay has no access password; the operator sets the first one',
+    });
+  }
   if (!(await currentPasswordMatches(config.passwordHash, parsed.current))) {
     deps.limiter.recordFailure(ip);
     return relayError(RelayErrorCode.enrollPasswordInvalid, 401);
@@ -142,6 +148,5 @@ export async function handleRelayPasswordRotate(
   return applyRelayPasswordRotation(deps, {
     next: parsed.next,
     mode: parsed.mode,
-    force: parsed.force,
   });
 }

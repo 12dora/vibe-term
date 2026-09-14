@@ -99,6 +99,7 @@ describe('RelaySecrets', () => {
           priority: 0,
           kicked: false,
           kickedReason: null,
+          enrollPasswordKnown: false,
         },
       ]);
       expect(await b.secrets.logKey()).toEqual(logKey);

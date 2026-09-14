@@ -10,7 +10,8 @@ import { NodeSessionStore } from '../auth/node-session-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
-import { MESH_VIA_SELF } from './mesh-deps';
+import { SHARE_COOKIE_PREFIX } from '../share/share-token';
+import { MESH_VIA_SELF, setMeshRequestContext } from './mesh-deps';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
 import { RelayRoutes } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
@@ -18,7 +19,10 @@ import { RelaySecrets } from './relay-secrets';
 const RELAY_URL = 'https://relay.example';
 const TENANT_ID = 'ef'.repeat(16);
 
-async function boot(fetchImpl?: typeof fetch) {
+async function boot(
+  fetchImpl?: typeof fetch,
+  opts?: { standalone?: boolean; localAuthEffective?: boolean }
+) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
   const nodeSessionStore = new NodeSessionStore(db);
@@ -40,7 +44,11 @@ async function boot(fetchImpl?: typeof fetch) {
     userIdOf: () => user.userId,
   });
   const routes = new RelayRoutes({
-    session: { roles: { node: true, relay: false }, nodeSessionStore },
+    session: {
+      roles: opts?.standalone ? { node: false, relay: false } : { node: true, relay: false },
+      nodeSessionStore,
+      ...(opts?.standalone ? { localAuthEffective: () => opts.localAuthEffective !== false } : {}),
+    },
     nodeId: identity.nodeIdHex,
     userStore,
     keyLogService: service,
@@ -71,7 +79,7 @@ async function boot(fetchImpl?: typeof fetch) {
     if (!res) throw new Error(`no route for ${path}`);
     return res;
   };
-  return { close, secrets, service, user, userStore, call };
+  return { close, secrets, service, user, userStore, call, routes, cookie };
 }
 
 async function attach(b: Awaited<ReturnType<typeof boot>>) {
@@ -103,7 +111,8 @@ describe('GET/POST /api/mesh/relay/password', () => {
       await attach(b);
       const res = await b.call(`/api/mesh/relay/password?url=${encodeURIComponent(RELAY_URL)}`);
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ known: false, password: null });
+      expect(await res.json()).toEqual({ known: false, password: null, passwordEpoch: null });
+      expect(res.headers.get('cache-control')).toBe('no-store');
     } finally {
       b.close();
     }
@@ -113,9 +122,9 @@ describe('GET/POST /api/mesh/relay/password', () => {
     const b = await boot();
     try {
       await attach(b);
-      await b.secrets.store.setEnrollPassword(RELAY_URL, 'hunter2x');
+      await b.secrets.store.setEnrollPassword(RELAY_URL, 'hunter2x', 2);
       const res = await b.call(`/api/mesh/relay/password?url=${encodeURIComponent(RELAY_URL)}`);
-      expect(await res.json()).toEqual({ known: true, password: 'hunter2x' });
+      expect(await res.json()).toEqual({ known: true, password: 'hunter2x', passwordEpoch: 2 });
       const status = (await (await b.call('/api/mesh/relay/status')).json()) as {
         relays: Array<{ enrollPassword?: { known: boolean } }>;
       };
@@ -171,6 +180,7 @@ describe('GET/POST /api/mesh/relay/password', () => {
         mode: 'keep',
       });
       expect(await b.secrets.store.getEnrollPassword(RELAY_URL)).toBe('new-password');
+      expect(b.secrets.store.getEnrollPasswordEpoch(RELAY_URL)).toBe(4);
     } finally {
       b.close();
     }
@@ -200,6 +210,77 @@ describe('GET/POST /api/mesh/relay/password', () => {
     }
   });
 
+  test('POST using stored current that the relay rejects clears the local copy', async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ error: { code: 'relay_password_invalid' } }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+    const b = await boot(fetchImpl);
+    try {
+      await attach(b);
+      await b.secrets.store.setEnrollPassword(RELAY_URL, 'stale-password', 1);
+      const res = await b.call('/api/mesh/relay/password', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL, next: 'new-password' }),
+      });
+      expect(res.status).toBe(401);
+      expect(b.secrets.store.hasEnrollPassword(RELAY_URL)).toBe(false);
+      expect(await b.secrets.store.getEnrollPassword(RELAY_URL)).toBeNull();
+      const view = await b.call(`/api/mesh/relay/password?url=${encodeURIComponent(RELAY_URL)}`);
+      expect(await view.json()).toEqual({ known: false, password: null, passwordEpoch: null });
+    } finally {
+      b.close();
+    }
+  });
+
+  test('POST maps RELAY_RATE_LIMITED to 429 with retryAfterMs', async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({ error: { code: 'RELAY_RATE_LIMITED', retryAfterMs: 15_000 } }),
+        {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '15' },
+        }
+      )) as unknown as typeof fetch;
+    const b = await boot(fetchImpl);
+    try {
+      await attach(b);
+      const res = await b.call('/api/mesh/relay/password', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL, current: 'x', next: 'new-password' }),
+      });
+      expect(res.status).toBe(429);
+      expect(await res.json()).toEqual({ code: 'RELAY_RATE_LIMITED', retryAfterMs: 15_000 });
+    } finally {
+      b.close();
+    }
+  });
+
+  test('POST forwards relay_members_offline online/admitted', async () => {
+    const fetchImpl = (async () =>
+      new Response(
+        JSON.stringify({ error: { code: 'relay_members_offline', online: 1, admitted: 4 } }),
+        { status: 409, headers: { 'content-type': 'application/json' } }
+      )) as unknown as typeof fetch;
+    const b = await boot(fetchImpl);
+    try {
+      await attach(b);
+      const res = await b.call('/api/mesh/relay/password', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL, current: 'x', next: 'new-password', mode: 'kick' }),
+      });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        code: 'relay_members_offline',
+        online: 1,
+        admitted: 4,
+      });
+    } finally {
+      b.close();
+    }
+  });
+
   test('POST network failure is 502 relay_unreachable', async () => {
     const fetchImpl = (async () => {
       throw new Error('offline');
@@ -215,6 +296,45 @@ describe('GET/POST /api/mesh/relay/password', () => {
       expect(await res.json()).toEqual({ code: 'relay_unreachable' });
     } finally {
       b.close();
+    }
+  });
+
+  test('GET password auth boundary: no session / local bypass / remote / share / standalone', async () => {
+    const b = await boot();
+    const path = `/api/mesh/relay/password?url=${encodeURIComponent(RELAY_URL)}`;
+    try {
+      await attach(b);
+
+      const noCookie = await b.routes.handle(
+        new Request(`http://localhost${path}`),
+        path.split('?')[0]!
+      );
+      expect(noCookie?.status).toBe(401);
+
+      const local = new Request(`http://localhost${path}`);
+      setMeshRequestContext(local, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      expect((await b.routes.handle(local, '/api/mesh/relay/password'))?.status).toBe(401);
+
+      const remote = new Request(`http://localhost${path}`, {
+        headers: { cookie: b.cookie },
+      });
+      setMeshRequestContext(remote, { via: 'ab'.repeat(16), clientIp: 'peer:entry' });
+      expect((await b.routes.handle(remote, '/api/mesh/relay/password'))?.status).toBe(401);
+
+      const share = new Request(`http://localhost${path}`, {
+        headers: { cookie: `${SHARE_COOKIE_PREFIX}self=not-a-node-session` },
+      });
+      expect((await b.routes.handle(share, '/api/mesh/relay/password'))?.status).toBe(401);
+    } finally {
+      b.close();
+    }
+
+    const open = await boot(undefined, { standalone: true, localAuthEffective: false });
+    try {
+      const req = new Request(`http://localhost${path}`);
+      expect((await open.routes.handle(req, '/api/mesh/relay/password'))?.status).toBe(401);
+    } finally {
+      open.close();
     }
   });
 });

@@ -35,6 +35,7 @@ const ERROR_CODE_KEYS: Record<string, string> = {
   relay_unreachable: 'relay_unreachable',
   relay_not_attached: 'relay_not_attached',
   relay_rate_limited: 'relay_rate_limited',
+  relay_password_unset: 'relay_password_unset',
   unauthorized: 'unauthorized',
   relay_unauthorized: 'unauthorized',
   malformed: 'malformed',
@@ -61,7 +62,21 @@ export function enrollPasswordError(error: unknown): EnrollPasswordError {
   const raw = error instanceof RelayApiError ? error.code : relayErrorCode(error);
   const code = (raw ?? '').toLowerCase();
   const mapped = ERROR_CODE_KEYS[code];
-  if (mapped) return { key: `${ERROR_KEY_PREFIX}${mapped}` };
+  if (mapped) {
+    const key = `${ERROR_KEY_PREFIX}${mapped}`;
+    const details = error instanceof RelayApiError ? error.details : undefined;
+    if (
+      mapped === 'relay_members_offline' &&
+      details?.online !== undefined &&
+      details.admitted !== undefined
+    ) {
+      return {
+        key: `${key}_counted`,
+        params: { online: String(details.online), admitted: String(details.admitted) },
+      };
+    }
+    return { key };
+  }
   const status = error instanceof RelayApiError ? error.status : 0;
   if (status >= 500 || status === 0) {
     return { key: `${ERROR_KEY_PREFIX}relay_unreachable` };
@@ -116,7 +131,9 @@ export async function rotateEnrollPasswordDraft(
   draft: EnrollPasswordDraft,
   known: boolean,
   api: RelayTenantApi = defaultRelayTenantApi
-): Promise<{ ok: true; cleared: boolean } | ({ ok: false } & EnrollPasswordError)> {
+): Promise<
+  { ok: true; cleared: boolean } | ({ ok: false; storedRejected?: boolean } & EnrollPasswordError)
+> {
   const parsed = parseEnrollPasswordDraft(draft, known);
   if (!parsed.ok) return { ok: false, key: parsed.errorKey };
   try {
@@ -129,7 +146,12 @@ export async function rotateEnrollPasswordDraft(
     return { ok: true, cleared: parsed.next === null };
   } catch (error) {
     const mapped = enrollPasswordError(error);
-    return { ok: false, key: mapped.key, ...(mapped.params ? { params: mapped.params } : {}) };
+    return {
+      ok: false,
+      key: mapped.key,
+      storedRejected: known && mapped.key === `${ERROR_KEY_PREFIX}relay_password_invalid`,
+      ...(mapped.params ? { params: mapped.params } : {}),
+    };
   }
 }
 
@@ -265,6 +287,8 @@ export interface RelayEnrollPasswordDialogProps {
   api?: RelayTenantApi;
   onOpenChange: (open: boolean) => void;
   onDone: () => void;
+  /** 用本机存的旧密码改密被中继拒绝：节点已清掉副本，调用方应刷新状态让用户手输当前密码。 */
+  onStoredRejected?: () => void;
 }
 
 function toastRotateDone(t: (key: string) => string, cleared: boolean): void {
@@ -314,6 +338,7 @@ export function RelayEnrollPasswordDialog({
   api = defaultRelayTenantApi,
   onOpenChange,
   onDone,
+  onStoredRejected,
 }: RelayEnrollPasswordDialogProps) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<EnrollPasswordDraft>(emptyEnrollPasswordDraft);
@@ -327,6 +352,7 @@ export function RelayEnrollPasswordDialog({
       setBusy(false);
       if (!result.ok) {
         setError({ key: result.key, params: result.params });
+        if (result.storedRejected) onStoredRejected?.();
         return;
       }
       setDraft(emptyEnrollPasswordDraft());

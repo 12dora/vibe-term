@@ -256,6 +256,10 @@ export function RelayPasswordRow({
             revealState.reset();
             relay.refresh();
           }}
+          onStoredRejected={() => {
+            revealState.reset();
+            relay.refresh();
+          }}
         />
       )}
     </>
