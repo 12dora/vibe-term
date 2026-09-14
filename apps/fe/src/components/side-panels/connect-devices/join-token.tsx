@@ -146,7 +146,7 @@ export function JoinConfirmStatus({ enrollment }: { enrollment: JoinEnrollment }
             data-testid="connect-join-confirm"
           >
             {busy ? <Loader2 className="animate-spin" /> : <Check />}
-            {unconfirmed ? t('nodes.enrollment.retryHub') : t('nodes.enrollment.confirmPending')}
+            {unconfirmed ? t('nodes.enrollment.retry') : t('nodes.enrollment.confirmPending')}
           </Button>
         </div>
       )}

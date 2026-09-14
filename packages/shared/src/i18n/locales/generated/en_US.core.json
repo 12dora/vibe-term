@@ -36,7 +36,6 @@
       },
       "originKind": {
         "site": "Custom Domain",
-        "hub": "Hub",
         "relay": "Relay",
         "tunnel": "Tunnel",
         "ip": "Public IP",
@@ -45,7 +44,7 @@
     },
     "app": {
       "masterKeyMismatch": {
-        "title": "The master key cannot decrypt the node identity, so multi-node features are disabled.",
+        "title": "The master key cannot decrypt the node identity, so multi-node features are disabled. After recovery, re-join the relay with `vibeterm relay join`.",
         "commandLabel": "Recovery: restore VIBETERM_MASTER_KEY from backups/app.env.*, or run:"
       }
     },
@@ -629,7 +628,7 @@
         "pathDirect": "Direct",
         "pathRelay": "Relay",
         "pathDirectHint": "Peer-to-peer transfer with the device",
-        "pathRelayHint": "Relayed through the hub"
+        "pathRelayHint": "Transferred via relay"
       },
       "agentLaunch": {
         "connectFailed": "Failed to connect to the device",
@@ -704,7 +703,6 @@
         "ROOT_KEY_MISMATCH": "Wrong password.",
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
-        "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
         "invalidCredentials": "Incorrect username or password.",
         "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again."
@@ -747,8 +745,6 @@
         "reloginTotpHint": "Signing back in after the change needs a code. Leave empty to skip.",
         "sessionResumeFailed": "Password updated. Signing back in did not finish; other nodes need a new sign-in.",
         "sessionResumeSkipped": "Password updated. No code entered; other nodes need a new sign-in.",
-        "primaryHubUnreachable": "The primary hub did not confirm this change; the result is unknown. Restore the connection to the primary hub and refresh before retrying.",
-        "switchToPrimaryHub": "This hub is a standby and does not accept account changes. Switch to the primary hub, then retry.",
         "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first."
       },
       "credential": {

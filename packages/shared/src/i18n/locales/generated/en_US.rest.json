@@ -17,7 +17,6 @@
         },
         "address": {
           "tunnel": "Tunnel",
-          "hub": "Hub",
           "lan": "LAN",
           "tailscale": "Tailscale",
           "vpn": "VPN",
@@ -70,16 +69,13 @@
         "path": {
           "title": "Choose a connection method",
           "relay": "Via relay",
-          "hub": "Via Hub",
           "ssh": "Direct SSH",
           "hint": {
             "relay": "Relay: nodes sit behind NAT and only need a public meeting point.",
-            "hub": "Hub: accounts and nodes are managed centrally.",
             "ssh": "Direct SSH: this machine reaches the new machine over SSH; VibeTerm is not installed."
           },
           "tip": {
             "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. It suits machines behind NAT or a firewall.",
-            "hub": "The Hub is the trust center for accounts and node membership, and needs a fixed public HTTPS address.",
             "ssh": "The new machine does not run VibeTerm. This machine connects over SSH and it appears in the device list."
           }
         },
@@ -87,10 +83,6 @@
           "relay": {
             "join": "Join an existing relay",
             "host": "Run a relay here"
-          },
-          "hub": {
-            "join": "Join an existing Hub",
-            "host": "Make this machine the Hub"
           }
         },
         "install": {
@@ -103,19 +95,15 @@
           "uplink": {
             "title": "Gather the connection details",
             "relayDescription": "The new machine needs the relay address, the tenant ID and the access password.",
-            "hubDescription": "The new machine needs the Hub address and the account password.",
             "relayUrl": "Relay address",
-            "hubUrl": "Hub address",
             "tenantId": "Tenant ID",
             "relayMissing": "Ask the relay operator for the relay address and access password.",
-            "hubMissing": "Ask the Hub administrator for the Hub address.",
             "tenantMissing": "The tenant ID is issued once this machine connects to the relay.",
             "link": "Open multi-node mesh settings"
           },
           "password": {
             "title": "Join from the new machine",
             "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\".",
-            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\".",
             "command": "Or run this in the new machine's terminal",
             "tenantPlaceholder": "<tenant-id>"
           },
@@ -180,27 +168,11 @@
             "description": "Open Settings → Remote access and set up a fixed public HTTPS entry for this machine.",
             "link": "Open remote access settings",
             "status": {
-              "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
-              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it cannot serve as the Hub address.",
-              "hubUrl": "Public address already available: {{url}}"
+              "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})"
             }
-          },
-          "hub": {
-            "title": "Make this machine the Hub",
-            "description": "Open Settings → Multi-node Mesh and choose \"Make this the hub\".",
-            "warning": "The Hub public URL cannot be changed later. Decide on the final domain first.",
-            "link": "Open multi-node mesh settings",
-            "status": {
-              "self": "This machine is the Hub. Public address: {{url}}",
-              "node": "This machine joined {{url}} as a node, so it cannot be a Hub.",
-              "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
-            },
-            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL, create the first account and restart."
           },
           "invite": {
             "title": "Connect the new machine",
-            "description": "Install VibeTerm on the new machine, then follow the \"Join an existing Hub\" steps.",
-            "ready": "This machine is the Hub. Switch to \"Join an existing Hub\" to continue.",
             "gotoJoin": "See the join steps"
           }
         },
@@ -221,9 +193,9 @@
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
         "nameLinkedHint": "Also renames this node in Mesh.",
-        "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
+        "nameLinkedLocked": "The current relay is not accepting writes; renaming is unavailable.",
         "urlHint": "Used in notification links and share addresses.",
-        "urlManagedHint": "Set by the Hub public address. Change it under Mesh.",
+        "urlManagedHint": "Set by the relay public address. Change it under Mesh.",
         "urlCandidates": "Available Addresses"
       },
       "bellThrottle": "Bell Notification Throttle (seconds)",
@@ -510,8 +482,6 @@
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "vibeterm",
             "tunnelNameHint": "Optional (VibeTerm generates one). Lowercase letters, digits, hyphens and underscores only.",
-            "hubHint": "This machine is a Hub: set the Hub's public URL to this hostname so other nodes can connect through the tunnel.",
-            "hubHintLink": "Open multi-node settings",
             "tunnelId": "Tunnel ID",
             "configured": "The named tunnel has been created.",
             "changeHint": "To use a different hostname or tunnel, remove the current one above first.",
@@ -1032,7 +1002,6 @@
         "roles": "Roles",
         "uplink": "Uplink",
         "uplinkNone": "none",
-        "uplinkHub": "Hub",
         "uplinkRelay": "relay",
         "uplinkUnknown": "unknown",
         "attached": "attached",
@@ -1319,115 +1288,12 @@
       },
       "empty": "No nodes yet",
       "self": "Current",
-      "hub": "Hub",
       "loggedIn": "Signed in",
-      "hubConnecting": "Connecting to Hub…",
-      "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
-      "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
-      "hubs": {
-        "active": "Primary Hub",
-        "standby": "Standby Hub",
-        "writer": "Currently accepting management writes",
-        "attached": "This entry is attached to this hub",
-        "online": "Online",
-        "offline": "Offline",
-        "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
-        "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
-        "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
-        "lastAttempt": "Last attempt: {{time}}",
-        "lastError": "Last error: {{error}}",
-        "authorization": {
-          "label": "Authorization: {{value}}",
-          "signed": "Signed",
-          "env": "Environment",
-          "self": "This machine",
-          "none": "Not Authorized"
-        },
-        "role": {
-          "promote": "Set as Primary Hub",
-          "demote": "Set as Standby Hub",
-          "stateSwitching": "Switching",
-          "confirmPromote": "Set as Primary Hub",
-          "confirmDemote": "Set as Standby Hub",
-          "confirmText": "\"{{target}}\" takes over writes; management is briefly unavailable during the switch.",
-          "confirmTextNoWriter": "\"{{from}}\" becomes a standby hub, and no other hub can take over writes.",
-          "confirm": "Switch",
-          "cancel": "Cancel",
-          "stepAdmit": "Sign a hub authorization for \"{{target}}\" (credentials required).",
-          "stepDemote": "Demote \"{{from}}\" to a standby hub.",
-          "stepPromote": "Promote \"{{target}}\" to primary hub; it restarts afterwards.",
-          "stepWait": "Wait for \"{{target}}\" to restart and take over writes.",
-          "stepDemoteOnly": "Demote \"{{from}}\" to a standby hub; it restarts afterwards.",
-          "warnFromUnreachable": "The current primary hub is unreachable and will be fenced by the higher epoch.",
-          "warnNoWriter": "No hub will accept writes afterwards; adding, renaming and removing nodes become unavailable.",
-          "started": "Hub role switch started.",
-          "done": "\"{{target}}\" is now the primary hub.",
-          "failed": "Hub role switch failed: {{error}}",
-          "forceTitle": "Some nodes are too old",
-          "forceDescription": "If you continue, these nodes can no longer sync hub authorization records.",
-          "forceText": "These nodes are older than {{minVersion}} and need an upgrade first:",
-          "forceAccept": "Continue anyway (old nodes stop syncing)",
-          "forceConfirm": "Continue Anyway",
-          "recovery": {
-            "title": "No Hub Accepts Writes",
-            "description": "The old primary hub is already a standby and the new one has not confirmed the takeover. Choose what to do next.",
-            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" has not confirmed it took over writes.",
-            "retry": "Retry Promoting Target",
-            "rollback": "Roll Back: Promote Old Primary Again",
-            "dismiss": "Handle Later"
-          },
-          "blocked": {
-            "unknownHub": "The hub list is not loaded yet. Try again shortly.",
-            "unknownAuth": "This entry is too old to read the hub authorization source.",
-            "offline": "This hub is offline and cannot be switched.",
-            "switching": "A hub role switch is already running.",
-            "rowBusy": "This node is upgrading or being uninstalled.",
-            "notWritable": "A hub authorization must be signed first, but the primary hub does not accept writes."
-          },
-          "errors": {
-            "HUB_NOT_HUB": "The target does not run the hub role.",
-            "HUB_NOT_AUTHORIZED": "The target hub is not authorized.",
-            "HUB_EPOCH_STALE": "The write epoch is stale. Refresh and try again.",
-            "HUB_ROLE_BUSY": "The target already has a role switch running.",
-            "HUB_ROLE_UNSUPPORTED": "The target version does not support remote switching. Upgrade it first.",
-            "INVALID_REQUEST": "Invalid request.",
-            "unknown": "Reason unknown.",
-            "unreachable": "The target hub is unreachable.",
-            "authTimeout": "The hub authorization did not take effect in time.",
-            "resumeAdmit": "The hub authorization was never signed. Start the switch again.",
-            "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
-            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check.",
-            "hubsUnreachable": "Could not read the hub list. The entry is temporarily unreachable.",
-            "unexpected": "The switch was interrupted. Refresh to check."
-          }
-        },
-        "priority": "Priority",
-        "epoch": "Writer epoch",
-        "caChanged": {
-          "title": "Hub certificate changed",
-          "description": "The CA fingerprint advertised by \"{{hub}}\" does not match the one pinned on this node, so the connection was stopped.",
-          "advertised": "Advertised",
-          "pinned": "Pinned",
-          "verify": "First run this on that hub and compare the fingerprint:",
-          "commandLabel": "Once the fingerprint checks out, run this on this node:"
-        },
-        "notAdmitted": {
-          "title": "The hub has not admitted this node (its identity may have been rebuilt)",
-          "description": "\"{{hub}}\" rejected this node’s certificate. After a hub is reinstalled or given a new identity, the old certificate no longer works.",
-          "commandLabel": "Run this on this node and rejoin with a fresh join code or password:"
-        },
-        "splitBrain": {
-          "title": "Two active hubs detected (same epoch), writes may diverge",
-          "description": "{{hubs}} are both active hubs at writer epoch {{epoch}}, so management writes may land on different hubs.",
-          "commandLabel": "Run this on one of them to demote it to standby:"
-        }
-      },
       "machine": {
         "title": "This machine",
         "role": "Role",
         "roleStandalone": "Standalone",
         "roleNode": "Node",
-        "roleHub": "Hub and node",
         "roleRelay": "Relay only (no web UI)",
         "roleRelayNode": "Relay and node",
         "menu": {
@@ -1439,9 +1305,6 @@
         "status": {
           "standalone": "Standalone",
           "unknown": "Status unknown",
-          "hubConnected": "Connected to Hub",
-          "hubConnectedRtt": "Connected to Hub · {{ms}} ms",
-          "hubDisconnected": "Not connected to a Hub",
           "connecting": "Connecting",
           "relayConnected": "Connected to relay",
           "relayConnectedRtt": "Connected to relay · {{ms}} ms",
@@ -1458,9 +1321,6 @@
         "localAddressUnset": "Not set",
         "localAddressHint": "No public address set; other nodes cannot join this machine.",
         "upstream": "Upstream",
-        "hubDisconnected": "Not connected",
-        "writerHub": "Writer: {{name}}",
-        "hubList": "All Hubs",
         "self": "This Machine",
         "details": {
           "title": "Connection Details",
@@ -1472,7 +1332,6 @@
           "quotaUnlimited": "Unlimited",
           "quotaUnlimitedValue": "{{used}} (Unlimited)",
           "nodeId": "This Machine's ID",
-          "hubs": "Hub Details",
           "quotaMaxFile": "Max File Size"
         },
         "direct": "Direct Plugin",
@@ -1486,7 +1345,6 @@
         "directRemove": "Remove",
         "directRemoveConfirm": {
           "title": "Remove the direct connect plugin?",
-          "description": "Sessions keep working through the hub. It can be installed again at any time.",
           "confirm": "Remove",
           "cancel": "Cancel",
           "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
@@ -1524,22 +1382,16 @@
         "relayServiceEnrollHint": "This machine has not connected to its own relay yet; connecting asks for the access password again."
       },
       "membership": {
-        "changeHub": "Change hub",
         "confirm": "Leave and restart",
         "cancel": "Cancel",
-        "consequencesNode": "After leaving, all mesh state on this machine is removed, VibeTerm restarts and the current session ends. This machine is revoked on the hub automatically before leaving.",
-        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state, VibeTerm restarts and the current session ends. Every node loses its hub and has to join another hub to come back.",
+        "consequencesNode": "After leaving, all mesh state on this machine is removed, VibeTerm restarts and the current session ends. This machine is revoked on the relay automatically before leaving.",
         "leaveConfirm": {
-          "title": "Leave the hub?",
+          "title": "Leave the mesh?",
           "description": "This machine goes back to running standalone."
         },
         "switchConfirm": {
           "title": "Switch role?",
-          "description": "This machine leaves the current hub first, then continues as “{{role}}” after the restart."
-        },
-        "changeHubConfirm": {
-          "title": "Change hub?",
-          "description": "This machine leaves the current hub first, then joins another one after the restart. The new join code has to be entered again."
+          "description": "This machine leaves the current mesh first, then continues as “{{role}}” after the restart."
         },
         "confirming": "Confirming your identity…",
         "leaving": "Leaving…",
@@ -1548,12 +1400,12 @@
         "restartTimeout": "VibeTerm did not come back. Start it manually, then reload this page.",
         "reload": "Reload page",
         "checkAgain": "Check again",
-        "revokeFailed": "Could not revoke this machine on the old hub ({{error}}). Leaving anyway — revoke it from the old hub's node list later.",
-        "revokeSkipped": "Skipped revoking this machine on the old hub. Leaving anyway — revoke it from the old hub's node list later.",
-        "leaveFailed": "Could not leave the hub.",
+        "revokeFailed": "Could not revoke this machine on the old relay ({{error}}). Leaving anyway — revoke it from the old relay's node list later.",
+        "revokeSkipped": "Skipped revoking this machine on the old relay. Leaving anyway — revoke it from the old relay's node list later.",
+        "leaveFailed": "Could not leave the mesh.",
         "errorDetail": "{{base}} ({{detail}})",
         "errors": {
-          "notMember": "This machine is not part of a hub.",
+          "notMember": "This machine is not part of a mesh.",
           "roleMismatch": "The role changed. Reload this page and try again.",
           "setupInProgress": "Another setup change is in progress. Try again in a moment.",
           "envWriteFailed": "Could not write the configuration.",
@@ -1571,7 +1423,6 @@
       "https": {
         "title": "HTTPS settings",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
-        "hubUrlHint": "A hub's public address must use HTTPS: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
         "nodeRoleHint": "HTTPS is only needed while this machine acts as an upstream. Nodes are reached through their upstream.",
         "modeActive": "in use",
         "save": "Save",
@@ -1648,7 +1499,7 @@
           "intro": "For a LAN or tunnel with no public domain. The private certificate authority (CA) is kept on this machine, and certificates are valid for 398 days.",
           "sans": "Names on the certificate",
           "sansHint": "Hostnames or IP addresses you will type in the browser, up to 20. Anything not listed keeps showing a certificate error.",
-          "sansPlaceholder": "hub.lan or 192.168.1.10",
+          "sansPlaceholder": "example.lan or 192.168.1.10",
           "sansAdd": "Add",
           "sansRemove": "Remove {{name}}",
           "sansEmpty": "No names yet.",
@@ -1797,7 +1648,6 @@
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
         "failed": "Action failed: {{error}}",
         "selfBlocked": "Cannot pause this machine",
-        "hubBlocked": "Cannot pause a Hub",
         "forwarderBlocked": "This node is currently in use",
         "batchFailed": "Failed on {{count}}",
         "busy": "Pause or resume is running."
@@ -1823,7 +1673,7 @@
       },
       "admit": {
         "blocked": "Admit this node before managing it.",
-        "unavailable": "Hub did not send the material needed to admit this node. Refresh and try again.",
+        "unavailable": "The relay did not send the material needed to admit this node. Refresh and try again.",
         "failed": "Admit failed: {{error}}"
       },
       "detail": {
@@ -1833,17 +1683,17 @@
         "name": "Name",
         "namePlaceholder": "Node name",
         "domainAccess": "Allow Domain Access",
-        "domainAccessDescription": "When off, web and API access from the public internet is refused and only hub/node mesh services stay reachable; access from the local network and this machine is unaffected.",
+        "domainAccessDescription": "When off, web and API access from the public internet is refused and only mesh services stay reachable; access from the local network and this machine is unaffected.",
         "domainAccessLoading": "Loading…",
         "domainAccessFailed": "Failed to load: {{error}}",
         "domainAccessUnsupported": "Not supported by this node's version.",
         "domainAccessUnreachable": "Node is currently unreachable.",
         "domainAccessHosts": "Public domains: {{hosts}}",
         "disableTitle": "Turn off domain access?",
-        "disableText": "The configured public domain will stop serving the web UI and API, keeping only Hub and mesh traffic.",
+        "disableText": "The configured public domain will stop serving the web UI and API, keeping only mesh traffic.",
         "disableSelfWarning": "VibeTerm is currently being accessed through this domain; this page will disconnect immediately. Make sure a LAN IP or localhost still works.",
         "disableConfirm": "Turn Off",
-        "renameUnavailable": "The current Hub is not accepting writes; renaming is unavailable.",
+        "renameUnavailable": "The current relay is not accepting writes; renaming is unavailable.",
         "renameFailed": "Rename failed: {{error}}",
         "domainAccessSaveFailed": "Could not save the domain access setting: {{error}}",
         "saved": "Saved",
@@ -1911,7 +1761,7 @@
         "summary_one": "{{count}} node uninstalled",
         "summary_other": "{{count}} nodes uninstalled",
         "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
-        "summaryAborted": "Hub unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
+        "summaryAborted": "Relay unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
         "errors": {
           "loginRequired": "Sign in to that node first.",
           "unreachable": "That node cannot be reached.",
@@ -1936,10 +1786,8 @@
         "badCertSig": "Ignored a node response that failed its signature check.",
         "expired": "This join code expired. Create a new one.",
         "noCertificateYet": "The new node has not answered yet. Try again in a moment.",
-        "hubNotConfirmed": "The hub did not confirm, so nothing was saved. Retry to send it again.",
         "relayNotConfirmed": "The relay did not confirm, so nothing was saved. Retry to send it again.",
-        "retryHub": "Retry",
-        "missingHubUrl": "The hub has no public address, so the join command cannot be built.",
+        "retry": "Retry",
         "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
         "staleRecord": "Your account changed in the meantime. Approve again.",
         "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
@@ -1953,7 +1801,7 @@
         "confirmText": "Remove node “{{name}}”? It loses access immediately and has to be added again from scratch.",
         "reasonLabel": "Reason (optional)",
         "done": "Node removed",
-        "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
+        "relayFailed": "The relay did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
         "bulkConfirm_one": "Remove the following node? It loses access immediately and has to be added again from scratch.",
         "bulkConfirm_other": "Remove the following {{count}} nodes? They lose access immediately and have to be added again from scratch.",
@@ -2103,14 +1951,6 @@
         "intro": "This machine is not connected to any other yet. Choose how to set it up.",
         "introDetail": "Whichever you pick, the configuration is saved and VibeTerm restarts once.",
         "path": {
-          "becomeHub": {
-            "title": "Make this the hub",
-            "description": "Other nodes join this one. Needs a public HTTPS address."
-          },
-          "joinHub": {
-            "title": "Join an existing hub",
-            "description": "This machine becomes a node. You need a join code from the hub."
-          },
           "becomeRelay": {
             "title": "Use This Machine as the Relay",
             "description": "This machine gives nodes a public entry point. A public HTTPS address is required."
@@ -2120,37 +1960,17 @@
             "description": "This machine joins an existing relay as a node. Needs the relay address and tenant ID."
           }
         },
-        "becomeHub": {
-          "title": "Make this the hub",
-          "description": "Creates the first account here, then restarts VibeTerm as the hub."
-        },
-        "joinHub": {
-          "title": "Join an existing hub",
-          "description": "Registers this machine with the hub, then restarts VibeTerm as a node.",
-          "passwordDescription": "Register this machine with the Hub using its address and the account password, then restart VibeTerm as a node.",
-          "useToken": "Use a join token instead",
-          "usePassword": "Use a password instead"
-        },
         "fields": {
-          "hubPublicUrl": "Public hub address",
-          "hubPublicUrlHint": "An externally reachable https address, for example https://vibeterm.example.com. Every node that joins must be able to reach it.",
           "username": "Username",
           "usernameHint": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "password": "Password",
           "passwordHint": "At least 8 characters. It cannot be reset from the server, so store it safely.",
           "confirmPassword": "Confirm password",
-          "hubUrl": "Hub address",
-          "hubUrlHint": "The hub's https address, for example https://vibeterm.example.com.",
           "urlPlaceholder": "https://vibeterm.example.com",
           "token": "Join code",
-          "tokenHint": "Create it on the hub, on its Nodes page. It is valid for 10 minutes — paste the whole code.",
-          "tokenPlaceholder": "Paste the join code from the hub",
           "name": "Node name",
           "nameHint": "Shown in the sidebar and on the Nodes page.",
           "directEnable": "Enable direct connections",
-          "directEnableHint": "Lets nodes talk to each other directly instead of through the hub. Setup continues even if this fails.",
-          "directUnsupportedHint": "Direct connections are not available on {{platform}}; traffic goes through the hub.",
-          "insecureLocal": "Allow an http:// hub on this machine",
           "insecureLocalHint": "Development and testing only.",
           "relayPublicUrl": "Relay Public Address",
           "relayPublicUrlHint": "An externally reachable https address, e.g. https://relay.example.com. Every node that will connect must be able to reach it.",
@@ -2178,7 +1998,6 @@
         },
         "probe": {
           "probing": "Probing common ports…",
-          "resolvedHub": "Hub found on port {{port}}; the address has been updated.",
           "resolvedRelay": "Relay found on port {{port}}; the address has been updated.",
           "failed": "No response on 443 or any built-in candidate port. Confirm the port is open, or enter an address that includes the port."
         },
@@ -2190,25 +2009,19 @@
           "httpsHint": "Set up HTTPS on the Nodes tab, or put a reverse proxy or Cloudflare Tunnel in front of this machine."
         },
         "submit": {
-          "becomeHub": "Create account and restart",
-          "joinHub": "Join and restart",
           "pending": "Working…",
           "becomeRelay": "Save and Restart",
           "joinRelay": "Join and restart"
         },
         "result": {
           "title": "Setup complete",
-          "becomeHubDescription": "The account is created and VibeTerm is restarting as the hub.",
-          "joinDescription": "This machine joined the hub and VibeTerm is restarting.",
           "fingerprint": "Account fingerprint",
-          "hubPublicUrl": "Public hub address",
-          "hubUrl": "Hub address",
           "username": "Username",
           "directLabel": "Direct connections",
           "direct": {
             "enabled": "on",
             "skipped": "skipped",
-            "failed": "failed ({{error}}) — traffic goes through the hub; you can retry later"
+            "failed": "failed ({{error}}) — traffic goes through the relay; you can retry later"
           },
           "relayDescription": "The relay is configured and VibeTerm is restarting. The web UI is gone after the restart.",
           "relayNodeDescription": "The relay is configured and VibeTerm is restarting as relay and node.",
@@ -2225,8 +2038,6 @@
           "timeout": "VibeTerm did not come back within 60 seconds. Start it manually, then reload this page:"
         },
         "toast": {
-          "hubCreated": "Hub created — VibeTerm is restarting",
-          "joined": "Joined the hub — VibeTerm is restarting",
           "relayCreated": "Relay configured, VibeTerm is restarting",
           "relayJoined": "Joined the relay; VibeTerm is restarting"
         },
@@ -2234,17 +2045,12 @@
           "not_standalone": "This machine is already set up.",
           "invalid_url": "Enter a valid https:// address.",
           "invalid_port": "The port must be between 1 and 65535.",
-          "insecure_local_required": "http:// is only allowed for a hub on this machine. Turn on “Allow an http:// hub on this machine”.",
           "invalid_username": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "weak_password": "Use at least 8 characters.",
           "password_mismatch": "The passwords do not match.",
           "invalid_name": "Enter a name of 1-64 characters.",
           "user_exists": "That username is already taken on this machine.",
-          "invalid_token": "That join code is not valid. Paste the whole code exactly as the hub issued it.",
-          "node_revoked": "This machine was removed from the hub. Reset it before joining again.",
-          "node_exists": "Another machine is already registered on the hub under this identity.",
-          "hub_unreachable": "Could not reach the hub. Check the address and make sure the hub is running.",
-          "join_failed": "The hub rejected this request.",
+          "invalid_token": "That join code is not valid. Paste the whole code exactly as the relay issued it.",
           "env_write_failed": "Could not write the configuration file, so nothing changed. Check the file permissions and try again.",
           "direct_unsupported": "Direct connections are not available on this platform.",
           "direct_download_failed": "Could not download the direct connect plugin.",
@@ -2260,7 +2066,6 @@
           "setup_in_progress": "Another setup is already running. Try again in a moment.",
           "relay": {
             "join_failed": "The relay rejected this request.",
-            "hub_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
             "node_revoked": "This machine was removed from the relay. Reset it before joining again.",
             "node_exists": "Another machine is already registered on the relay under this identity."
           },
@@ -2316,8 +2121,7 @@
         "status": {
           "online": "Online",
           "offline": "Offline",
-          "signedOut": "Not signed in",
-          "hub": "Hub"
+          "signedOut": "Not signed in"
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",
@@ -2664,7 +2468,7 @@
           "passwordHint": "Leave empty if the relay has no access password.",
           "rootPassword": "Current password (this machine's account password)",
           "rootPasswordHint": "Joining must be signed with the password; a passkey cannot sign it.",
-          "migrateNotice": "After connecting, this machine uses the relay and no longer connects to a Hub.",
+          "migrateNotice": "After connecting, this machine uses this relay and no longer uses the previous uplink.",
           "reauthNotice": "The access password changed. Enter the new one to restore the link.",
           "submit": "Connect",
           "submitReauth": "Reconnect",
@@ -2672,7 +2476,7 @@
         },
         "leave": {
           "title": "Leave the relay?",
-          "description": "After leaving, this machine and its nodes have no uplink until a relay or Hub is set up again.",
+          "description": "After leaving, this machine and its nodes have no uplink until a relay is set up again.",
           "confirm": "Leave",
           "done": "Left the relay."
         },

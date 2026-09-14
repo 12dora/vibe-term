@@ -181,7 +181,7 @@ function PendingRow({
           data-testid={`nodes-pending-confirm-${id}`}
         >
           {busy ? <Loader2 className="animate-spin" /> : <Check />}
-          {unconfirmed ? t('nodes.enrollment.retryHub') : t('nodes.enrollment.confirmPending')}
+          {unconfirmed ? t('nodes.enrollment.retry') : t('nodes.enrollment.confirmPending')}
         </Button>
         <Button
           type="button"

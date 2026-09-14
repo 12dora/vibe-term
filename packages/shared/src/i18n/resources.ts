@@ -42,7 +42,6 @@ export const I18N_RESOURCES = {
       },
       "originKind": {
         "site": "Custom Domain",
-        "hub": "Hub",
         "relay": "Relay",
         "tunnel": "Tunnel",
         "ip": "Public IP",
@@ -51,7 +50,7 @@ export const I18N_RESOURCES = {
     },
     "app": {
       "masterKeyMismatch": {
-        "title": "The master key cannot decrypt the node identity, so multi-node features are disabled.",
+        "title": "The master key cannot decrypt the node identity, so multi-node features are disabled. After recovery, re-join the relay with `vibeterm relay join`.",
         "commandLabel": "Recovery: restore VIBETERM_MASTER_KEY from backups/app.env.*, or run:"
       }
     },
@@ -99,7 +98,6 @@ export const I18N_RESOURCES = {
         },
         "address": {
           "tunnel": "Tunnel",
-          "hub": "Hub",
           "lan": "LAN",
           "tailscale": "Tailscale",
           "vpn": "VPN",
@@ -152,16 +150,13 @@ export const I18N_RESOURCES = {
         "path": {
           "title": "Choose a connection method",
           "relay": "Via relay",
-          "hub": "Via Hub",
           "ssh": "Direct SSH",
           "hint": {
             "relay": "Relay: nodes sit behind NAT and only need a public meeting point.",
-            "hub": "Hub: accounts and nodes are managed centrally.",
             "ssh": "Direct SSH: this machine reaches the new machine over SSH; VibeTerm is not installed."
           },
           "tip": {
             "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. It suits machines behind NAT or a firewall.",
-            "hub": "The Hub is the trust center for accounts and node membership, and needs a fixed public HTTPS address.",
             "ssh": "The new machine does not run VibeTerm. This machine connects over SSH and it appears in the device list."
           }
         },
@@ -169,10 +164,6 @@ export const I18N_RESOURCES = {
           "relay": {
             "join": "Join an existing relay",
             "host": "Run a relay here"
-          },
-          "hub": {
-            "join": "Join an existing Hub",
-            "host": "Make this machine the Hub"
           }
         },
         "install": {
@@ -185,19 +176,15 @@ export const I18N_RESOURCES = {
           "uplink": {
             "title": "Gather the connection details",
             "relayDescription": "The new machine needs the relay address, the tenant ID and the access password.",
-            "hubDescription": "The new machine needs the Hub address and the account password.",
             "relayUrl": "Relay address",
-            "hubUrl": "Hub address",
             "tenantId": "Tenant ID",
             "relayMissing": "Ask the relay operator for the relay address and access password.",
-            "hubMissing": "Ask the Hub administrator for the Hub address.",
             "tenantMissing": "The tenant ID is issued once this machine connects to the relay.",
             "link": "Open multi-node mesh settings"
           },
           "password": {
             "title": "Join from the new machine",
             "relayDescription": "On the new machine open Settings → Multi-node Mesh → \"Join a relay\".",
-            "hubDescription": "On the new machine open Settings → Multi-node Mesh → \"Join an existing hub\".",
             "command": "Or run this in the new machine's terminal",
             "tenantPlaceholder": "<tenant-id>"
           },
@@ -262,27 +249,11 @@ export const I18N_RESOURCES = {
             "description": "Open Settings → Remote access and set up a fixed public HTTPS entry for this machine.",
             "link": "Open remote access settings",
             "status": {
-              "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})",
-              "quick": "This is a temporary tunnel ({{url}}). Its address changes, so it cannot serve as the Hub address.",
-              "hubUrl": "Public address already available: {{url}}"
+              "named": "Cloudflare Tunnel is configured: {{url}} ({{state}})"
             }
-          },
-          "hub": {
-            "title": "Make this machine the Hub",
-            "description": "Open Settings → Multi-node Mesh and choose \"Make this the hub\".",
-            "warning": "The Hub public URL cannot be changed later. Decide on the final domain first.",
-            "link": "Open multi-node mesh settings",
-            "status": {
-              "self": "This machine is the Hub. Public address: {{url}}",
-              "node": "This machine joined {{url}} as a node, so it cannot be a Hub.",
-              "mismatch": "The Hub public URL does not match the current tunnel hostname; other machines may fail to connect."
-            },
-            "hintUseEntry": "Enter the address from the previous step, {{url}}, as the Hub public URL, create the first account and restart."
           },
           "invite": {
             "title": "Connect the new machine",
-            "description": "Install VibeTerm on the new machine, then follow the \"Join an existing Hub\" steps.",
-            "ready": "This machine is the Hub. Switch to \"Join an existing Hub\" to continue.",
             "gotoJoin": "See the join steps"
           }
         },
@@ -427,9 +398,9 @@ export const I18N_RESOURCES = {
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
         "nameLinkedHint": "Also renames this node in Mesh.",
-        "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
+        "nameLinkedLocked": "The current relay is not accepting writes; renaming is unavailable.",
         "urlHint": "Used in notification links and share addresses.",
-        "urlManagedHint": "Set by the Hub public address. Change it under Mesh.",
+        "urlManagedHint": "Set by the relay public address. Change it under Mesh.",
         "urlCandidates": "Available Addresses"
       },
       "bellThrottle": "Bell Notification Throttle (seconds)",
@@ -723,8 +694,6 @@ export const I18N_RESOURCES = {
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "vibeterm",
             "tunnelNameHint": "Optional (VibeTerm generates one). Lowercase letters, digits, hyphens and underscores only.",
-            "hubHint": "This machine is a Hub: set the Hub's public URL to this hostname so other nodes can connect through the tunnel.",
-            "hubHintLink": "Open multi-node settings",
             "tunnelId": "Tunnel ID",
             "configured": "The named tunnel has been created.",
             "changeHint": "To use a different hostname or tunnel, remove the current one above first.",
@@ -1245,7 +1214,6 @@ export const I18N_RESOURCES = {
         "roles": "Roles",
         "uplink": "Uplink",
         "uplinkNone": "none",
-        "uplinkHub": "Hub",
         "uplinkRelay": "relay",
         "uplinkUnknown": "unknown",
         "attached": "attached",
@@ -1933,7 +1901,7 @@ export const I18N_RESOURCES = {
         "pathDirect": "Direct",
         "pathRelay": "Relay",
         "pathDirectHint": "Peer-to-peer transfer with the device",
-        "pathRelayHint": "Relayed through the hub"
+        "pathRelayHint": "Transferred via relay"
       },
       "agentLaunch": {
         "connectFailed": "Failed to connect to the device",
@@ -2016,7 +1984,6 @@ export const I18N_RESOURCES = {
         "ROOT_KEY_MISMATCH": "Wrong password.",
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
-        "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
         "invalidCredentials": "Incorrect username or password.",
         "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again."
@@ -2059,8 +2026,6 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "Signing back in after the change needs a code. Leave empty to skip.",
         "sessionResumeFailed": "Password updated. Signing back in did not finish; other nodes need a new sign-in.",
         "sessionResumeSkipped": "Password updated. No code entered; other nodes need a new sign-in.",
-        "primaryHubUnreachable": "The primary hub did not confirm this change; the result is unknown. Restore the connection to the primary hub and refresh before retrying.",
-        "switchToPrimaryHub": "This hub is a standby and does not accept account changes. Switch to the primary hub, then retry.",
         "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first."
       },
       "credential": {
@@ -2088,115 +2053,12 @@ export const I18N_RESOURCES = {
       },
       "empty": "No nodes yet",
       "self": "Current",
-      "hub": "Hub",
       "loggedIn": "Signed in",
-      "hubConnecting": "Connecting to Hub…",
-      "hubOffline": "The hub is unreachable. Node management is unavailable until it is back.",
-      "hubLoginRejected": "The hub rejected this sign-in ({{code}}). Sign in again, then retry.",
-      "hubs": {
-        "active": "Primary Hub",
-        "standby": "Standby Hub",
-        "writer": "Currently accepting management writes",
-        "attached": "This entry is attached to this hub",
-        "online": "Online",
-        "offline": "Offline",
-        "detail": "{{url}} | priority {{priority}} | epoch {{epoch}} | {{state}}",
-        "standbyNotice": "The primary hub is unreachable, running on a standby hub. Adding, renaming and removing nodes are unavailable.",
-        "notWriter": "A standby hub does not accept management changes. Use the primary hub {{url}}.",
-        "lastAttempt": "Last attempt: {{time}}",
-        "lastError": "Last error: {{error}}",
-        "authorization": {
-          "label": "Authorization: {{value}}",
-          "signed": "Signed",
-          "env": "Environment",
-          "self": "This machine",
-          "none": "Not Authorized"
-        },
-        "role": {
-          "promote": "Set as Primary Hub",
-          "demote": "Set as Standby Hub",
-          "stateSwitching": "Switching",
-          "confirmPromote": "Set as Primary Hub",
-          "confirmDemote": "Set as Standby Hub",
-          "confirmText": "\"{{target}}\" takes over writes; management is briefly unavailable during the switch.",
-          "confirmTextNoWriter": "\"{{from}}\" becomes a standby hub, and no other hub can take over writes.",
-          "confirm": "Switch",
-          "cancel": "Cancel",
-          "stepAdmit": "Sign a hub authorization for \"{{target}}\" (credentials required).",
-          "stepDemote": "Demote \"{{from}}\" to a standby hub.",
-          "stepPromote": "Promote \"{{target}}\" to primary hub; it restarts afterwards.",
-          "stepWait": "Wait for \"{{target}}\" to restart and take over writes.",
-          "stepDemoteOnly": "Demote \"{{from}}\" to a standby hub; it restarts afterwards.",
-          "warnFromUnreachable": "The current primary hub is unreachable and will be fenced by the higher epoch.",
-          "warnNoWriter": "No hub will accept writes afterwards; adding, renaming and removing nodes become unavailable.",
-          "started": "Hub role switch started.",
-          "done": "\"{{target}}\" is now the primary hub.",
-          "failed": "Hub role switch failed: {{error}}",
-          "forceTitle": "Some nodes are too old",
-          "forceDescription": "If you continue, these nodes can no longer sync hub authorization records.",
-          "forceText": "These nodes are older than {{minVersion}} and need an upgrade first:",
-          "forceAccept": "Continue anyway (old nodes stop syncing)",
-          "forceConfirm": "Continue Anyway",
-          "recovery": {
-            "title": "No Hub Accepts Writes",
-            "description": "The old primary hub is already a standby and the new one has not confirmed the takeover. Choose what to do next.",
-            "noWriter": "\"{{from}}\" is now a standby hub, and \"{{target}}\" has not confirmed it took over writes.",
-            "retry": "Retry Promoting Target",
-            "rollback": "Roll Back: Promote Old Primary Again",
-            "dismiss": "Handle Later"
-          },
-          "blocked": {
-            "unknownHub": "The hub list is not loaded yet. Try again shortly.",
-            "unknownAuth": "This entry is too old to read the hub authorization source.",
-            "offline": "This hub is offline and cannot be switched.",
-            "switching": "A hub role switch is already running.",
-            "rowBusy": "This node is upgrading or being uninstalled.",
-            "notWritable": "A hub authorization must be signed first, but the primary hub does not accept writes."
-          },
-          "errors": {
-            "HUB_NOT_HUB": "The target does not run the hub role.",
-            "HUB_NOT_AUTHORIZED": "The target hub is not authorized.",
-            "HUB_EPOCH_STALE": "The write epoch is stale. Refresh and try again.",
-            "HUB_ROLE_BUSY": "The target already has a role switch running.",
-            "HUB_ROLE_UNSUPPORTED": "The target version does not support remote switching. Upgrade it first.",
-            "INVALID_REQUEST": "Invalid request.",
-            "unknown": "Reason unknown.",
-            "unreachable": "The target hub is unreachable.",
-            "authTimeout": "The hub authorization did not take effect in time.",
-            "resumeAdmit": "The hub authorization was never signed. Start the switch again.",
-            "restartTimeout": "The target did not restart in time, so the result is unconfirmed: {{error}}",
-            "writerTimeout": "Could not confirm the new primary hub took over writes. Refresh to check.",
-            "hubsUnreachable": "Could not read the hub list. The entry is temporarily unreachable.",
-            "unexpected": "The switch was interrupted. Refresh to check."
-          }
-        },
-        "priority": "Priority",
-        "epoch": "Writer epoch",
-        "caChanged": {
-          "title": "Hub certificate changed",
-          "description": "The CA fingerprint advertised by \"{{hub}}\" does not match the one pinned on this node, so the connection was stopped.",
-          "advertised": "Advertised",
-          "pinned": "Pinned",
-          "verify": "First run this on that hub and compare the fingerprint:",
-          "commandLabel": "Once the fingerprint checks out, run this on this node:"
-        },
-        "notAdmitted": {
-          "title": "The hub has not admitted this node (its identity may have been rebuilt)",
-          "description": "\"{{hub}}\" rejected this node’s certificate. After a hub is reinstalled or given a new identity, the old certificate no longer works.",
-          "commandLabel": "Run this on this node and rejoin with a fresh join code or password:"
-        },
-        "splitBrain": {
-          "title": "Two active hubs detected (same epoch), writes may diverge",
-          "description": "{{hubs}} are both active hubs at writer epoch {{epoch}}, so management writes may land on different hubs.",
-          "commandLabel": "Run this on one of them to demote it to standby:"
-        }
-      },
       "machine": {
         "title": "This machine",
         "role": "Role",
         "roleStandalone": "Standalone",
         "roleNode": "Node",
-        "roleHub": "Hub and node",
         "roleRelay": "Relay only (no web UI)",
         "roleRelayNode": "Relay and node",
         "menu": {
@@ -2208,9 +2070,6 @@ export const I18N_RESOURCES = {
         "status": {
           "standalone": "Standalone",
           "unknown": "Status unknown",
-          "hubConnected": "Connected to Hub",
-          "hubConnectedRtt": "Connected to Hub · {{ms}} ms",
-          "hubDisconnected": "Not connected to a Hub",
           "connecting": "Connecting",
           "relayConnected": "Connected to relay",
           "relayConnectedRtt": "Connected to relay · {{ms}} ms",
@@ -2227,9 +2086,6 @@ export const I18N_RESOURCES = {
         "localAddressUnset": "Not set",
         "localAddressHint": "No public address set; other nodes cannot join this machine.",
         "upstream": "Upstream",
-        "hubDisconnected": "Not connected",
-        "writerHub": "Writer: {{name}}",
-        "hubList": "All Hubs",
         "self": "This Machine",
         "details": {
           "title": "Connection Details",
@@ -2241,7 +2097,6 @@ export const I18N_RESOURCES = {
           "quotaUnlimited": "Unlimited",
           "quotaUnlimitedValue": "{{used}} (Unlimited)",
           "nodeId": "This Machine's ID",
-          "hubs": "Hub Details",
           "quotaMaxFile": "Max File Size"
         },
         "direct": "Direct Plugin",
@@ -2255,7 +2110,6 @@ export const I18N_RESOURCES = {
         "directRemove": "Remove",
         "directRemoveConfirm": {
           "title": "Remove the direct connect plugin?",
-          "description": "Sessions keep working through the hub. It can be installed again at any time.",
           "confirm": "Remove",
           "cancel": "Cancel",
           "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
@@ -2293,22 +2147,16 @@ export const I18N_RESOURCES = {
         "relayServiceEnrollHint": "This machine has not connected to its own relay yet; connecting asks for the access password again."
       },
       "membership": {
-        "changeHub": "Change hub",
         "confirm": "Leave and restart",
         "cancel": "Cancel",
-        "consequencesNode": "After leaving, all mesh state on this machine is removed, VibeTerm restarts and the current session ends. This machine is revoked on the hub automatically before leaving.",
-        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state, VibeTerm restarts and the current session ends. Every node loses its hub and has to join another hub to come back.",
+        "consequencesNode": "After leaving, all mesh state on this machine is removed, VibeTerm restarts and the current session ends. This machine is revoked on the relay automatically before leaving.",
         "leaveConfirm": {
-          "title": "Leave the hub?",
+          "title": "Leave the mesh?",
           "description": "This machine goes back to running standalone."
         },
         "switchConfirm": {
           "title": "Switch role?",
-          "description": "This machine leaves the current hub first, then continues as “{{role}}” after the restart."
-        },
-        "changeHubConfirm": {
-          "title": "Change hub?",
-          "description": "This machine leaves the current hub first, then joins another one after the restart. The new join code has to be entered again."
+          "description": "This machine leaves the current mesh first, then continues as “{{role}}” after the restart."
         },
         "confirming": "Confirming your identity…",
         "leaving": "Leaving…",
@@ -2317,12 +2165,12 @@ export const I18N_RESOURCES = {
         "restartTimeout": "VibeTerm did not come back. Start it manually, then reload this page.",
         "reload": "Reload page",
         "checkAgain": "Check again",
-        "revokeFailed": "Could not revoke this machine on the old hub ({{error}}). Leaving anyway — revoke it from the old hub's node list later.",
-        "revokeSkipped": "Skipped revoking this machine on the old hub. Leaving anyway — revoke it from the old hub's node list later.",
-        "leaveFailed": "Could not leave the hub.",
+        "revokeFailed": "Could not revoke this machine on the old relay ({{error}}). Leaving anyway — revoke it from the old relay's node list later.",
+        "revokeSkipped": "Skipped revoking this machine on the old relay. Leaving anyway — revoke it from the old relay's node list later.",
+        "leaveFailed": "Could not leave the mesh.",
         "errorDetail": "{{base}} ({{detail}})",
         "errors": {
-          "notMember": "This machine is not part of a hub.",
+          "notMember": "This machine is not part of a mesh.",
           "roleMismatch": "The role changed. Reload this page and try again.",
           "setupInProgress": "Another setup change is in progress. Try again in a moment.",
           "envWriteFailed": "Could not write the configuration.",
@@ -2340,7 +2188,6 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS settings",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over an HTTPS address.",
-        "hubUrlHint": "A hub's public address must use HTTPS: issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
         "nodeRoleHint": "HTTPS is only needed while this machine acts as an upstream. Nodes are reached through their upstream.",
         "modeActive": "in use",
         "save": "Save",
@@ -2417,7 +2264,7 @@ export const I18N_RESOURCES = {
           "intro": "For a LAN or tunnel with no public domain. The private certificate authority (CA) is kept on this machine, and certificates are valid for 398 days.",
           "sans": "Names on the certificate",
           "sansHint": "Hostnames or IP addresses you will type in the browser, up to 20. Anything not listed keeps showing a certificate error.",
-          "sansPlaceholder": "hub.lan or 192.168.1.10",
+          "sansPlaceholder": "example.lan or 192.168.1.10",
           "sansAdd": "Add",
           "sansRemove": "Remove {{name}}",
           "sansEmpty": "No names yet.",
@@ -2574,7 +2421,6 @@ export const I18N_RESOURCES = {
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
         "failed": "Action failed: {{error}}",
         "selfBlocked": "Cannot pause this machine",
-        "hubBlocked": "Cannot pause a Hub",
         "forwarderBlocked": "This node is currently in use",
         "batchFailed": "Failed on {{count}}",
         "busy": "Pause or resume is running."
@@ -2600,7 +2446,7 @@ export const I18N_RESOURCES = {
       },
       "admit": {
         "blocked": "Admit this node before managing it.",
-        "unavailable": "Hub did not send the material needed to admit this node. Refresh and try again.",
+        "unavailable": "The relay did not send the material needed to admit this node. Refresh and try again.",
         "failed": "Admit failed: {{error}}"
       },
       "detail": {
@@ -2610,17 +2456,17 @@ export const I18N_RESOURCES = {
         "name": "Name",
         "namePlaceholder": "Node name",
         "domainAccess": "Allow Domain Access",
-        "domainAccessDescription": "When off, web and API access from the public internet is refused and only hub/node mesh services stay reachable; access from the local network and this machine is unaffected.",
+        "domainAccessDescription": "When off, web and API access from the public internet is refused and only mesh services stay reachable; access from the local network and this machine is unaffected.",
         "domainAccessLoading": "Loading…",
         "domainAccessFailed": "Failed to load: {{error}}",
         "domainAccessUnsupported": "Not supported by this node's version.",
         "domainAccessUnreachable": "Node is currently unreachable.",
         "domainAccessHosts": "Public domains: {{hosts}}",
         "disableTitle": "Turn off domain access?",
-        "disableText": "The configured public domain will stop serving the web UI and API, keeping only Hub and mesh traffic.",
+        "disableText": "The configured public domain will stop serving the web UI and API, keeping only mesh traffic.",
         "disableSelfWarning": "VibeTerm is currently being accessed through this domain; this page will disconnect immediately. Make sure a LAN IP or localhost still works.",
         "disableConfirm": "Turn Off",
-        "renameUnavailable": "The current Hub is not accepting writes; renaming is unavailable.",
+        "renameUnavailable": "The current relay is not accepting writes; renaming is unavailable.",
         "renameFailed": "Rename failed: {{error}}",
         "domainAccessSaveFailed": "Could not save the domain access setting: {{error}}",
         "saved": "Saved",
@@ -2688,7 +2534,7 @@ export const I18N_RESOURCES = {
         "summary_one": "{{count}} node uninstalled",
         "summary_other": "{{count}} nodes uninstalled",
         "summaryFailed": "{{count}} uninstalled, {{failed}} failed ({{names}})",
-        "summaryAborted": "Hub unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
+        "summaryAborted": "Relay unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
         "errors": {
           "loginRequired": "Sign in to that node first.",
           "unreachable": "That node cannot be reached.",
@@ -2713,10 +2559,8 @@ export const I18N_RESOURCES = {
         "badCertSig": "Ignored a node response that failed its signature check.",
         "expired": "This join code expired. Create a new one.",
         "noCertificateYet": "The new node has not answered yet. Try again in a moment.",
-        "hubNotConfirmed": "The hub did not confirm, so nothing was saved. Retry to send it again.",
         "relayNotConfirmed": "The relay did not confirm, so nothing was saved. Retry to send it again.",
-        "retryHub": "Retry",
-        "missingHubUrl": "The hub has no public address, so the join command cannot be built.",
+        "retry": "Retry",
         "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
         "staleRecord": "Your account changed in the meantime. Approve again.",
         "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
@@ -2730,7 +2574,7 @@ export const I18N_RESOURCES = {
         "confirmText": "Remove node “{{name}}”? It loses access immediately and has to be added again from scratch.",
         "reasonLabel": "Reason (optional)",
         "done": "Node removed",
-        "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
+        "relayFailed": "The relay did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
         "bulkConfirm_one": "Remove the following node? It loses access immediately and has to be added again from scratch.",
         "bulkConfirm_other": "Remove the following {{count}} nodes? They lose access immediately and have to be added again from scratch.",
@@ -2880,14 +2724,6 @@ export const I18N_RESOURCES = {
         "intro": "This machine is not connected to any other yet. Choose how to set it up.",
         "introDetail": "Whichever you pick, the configuration is saved and VibeTerm restarts once.",
         "path": {
-          "becomeHub": {
-            "title": "Make this the hub",
-            "description": "Other nodes join this one. Needs a public HTTPS address."
-          },
-          "joinHub": {
-            "title": "Join an existing hub",
-            "description": "This machine becomes a node. You need a join code from the hub."
-          },
           "becomeRelay": {
             "title": "Use This Machine as the Relay",
             "description": "This machine gives nodes a public entry point. A public HTTPS address is required."
@@ -2897,37 +2733,17 @@ export const I18N_RESOURCES = {
             "description": "This machine joins an existing relay as a node. Needs the relay address and tenant ID."
           }
         },
-        "becomeHub": {
-          "title": "Make this the hub",
-          "description": "Creates the first account here, then restarts VibeTerm as the hub."
-        },
-        "joinHub": {
-          "title": "Join an existing hub",
-          "description": "Registers this machine with the hub, then restarts VibeTerm as a node.",
-          "passwordDescription": "Register this machine with the Hub using its address and the account password, then restart VibeTerm as a node.",
-          "useToken": "Use a join token instead",
-          "usePassword": "Use a password instead"
-        },
         "fields": {
-          "hubPublicUrl": "Public hub address",
-          "hubPublicUrlHint": "An externally reachable https address, for example https://vibeterm.example.com. Every node that joins must be able to reach it.",
           "username": "Username",
           "usernameHint": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "password": "Password",
           "passwordHint": "At least 8 characters. It cannot be reset from the server, so store it safely.",
           "confirmPassword": "Confirm password",
-          "hubUrl": "Hub address",
-          "hubUrlHint": "The hub's https address, for example https://vibeterm.example.com.",
           "urlPlaceholder": "https://vibeterm.example.com",
           "token": "Join code",
-          "tokenHint": "Create it on the hub, on its Nodes page. It is valid for 10 minutes — paste the whole code.",
-          "tokenPlaceholder": "Paste the join code from the hub",
           "name": "Node name",
           "nameHint": "Shown in the sidebar and on the Nodes page.",
           "directEnable": "Enable direct connections",
-          "directEnableHint": "Lets nodes talk to each other directly instead of through the hub. Setup continues even if this fails.",
-          "directUnsupportedHint": "Direct connections are not available on {{platform}}; traffic goes through the hub.",
-          "insecureLocal": "Allow an http:// hub on this machine",
           "insecureLocalHint": "Development and testing only.",
           "relayPublicUrl": "Relay Public Address",
           "relayPublicUrlHint": "An externally reachable https address, e.g. https://relay.example.com. Every node that will connect must be able to reach it.",
@@ -2955,7 +2771,6 @@ export const I18N_RESOURCES = {
         },
         "probe": {
           "probing": "Probing common ports…",
-          "resolvedHub": "Hub found on port {{port}}; the address has been updated.",
           "resolvedRelay": "Relay found on port {{port}}; the address has been updated.",
           "failed": "No response on 443 or any built-in candidate port. Confirm the port is open, or enter an address that includes the port."
         },
@@ -2967,25 +2782,19 @@ export const I18N_RESOURCES = {
           "httpsHint": "Set up HTTPS on the Nodes tab, or put a reverse proxy or Cloudflare Tunnel in front of this machine."
         },
         "submit": {
-          "becomeHub": "Create account and restart",
-          "joinHub": "Join and restart",
           "pending": "Working…",
           "becomeRelay": "Save and Restart",
           "joinRelay": "Join and restart"
         },
         "result": {
           "title": "Setup complete",
-          "becomeHubDescription": "The account is created and VibeTerm is restarting as the hub.",
-          "joinDescription": "This machine joined the hub and VibeTerm is restarting.",
           "fingerprint": "Account fingerprint",
-          "hubPublicUrl": "Public hub address",
-          "hubUrl": "Hub address",
           "username": "Username",
           "directLabel": "Direct connections",
           "direct": {
             "enabled": "on",
             "skipped": "skipped",
-            "failed": "failed ({{error}}) — traffic goes through the hub; you can retry later"
+            "failed": "failed ({{error}}) — traffic goes through the relay; you can retry later"
           },
           "relayDescription": "The relay is configured and VibeTerm is restarting. The web UI is gone after the restart.",
           "relayNodeDescription": "The relay is configured and VibeTerm is restarting as relay and node.",
@@ -3002,8 +2811,6 @@ export const I18N_RESOURCES = {
           "timeout": "VibeTerm did not come back within 60 seconds. Start it manually, then reload this page:"
         },
         "toast": {
-          "hubCreated": "Hub created — VibeTerm is restarting",
-          "joined": "Joined the hub — VibeTerm is restarting",
           "relayCreated": "Relay configured, VibeTerm is restarting",
           "relayJoined": "Joined the relay; VibeTerm is restarting"
         },
@@ -3011,17 +2818,12 @@ export const I18N_RESOURCES = {
           "not_standalone": "This machine is already set up.",
           "invalid_url": "Enter a valid https:// address.",
           "invalid_port": "The port must be between 1 and 65535.",
-          "insecure_local_required": "http:// is only allowed for a hub on this machine. Turn on “Allow an http:// hub on this machine”.",
           "invalid_username": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "weak_password": "Use at least 8 characters.",
           "password_mismatch": "The passwords do not match.",
           "invalid_name": "Enter a name of 1-64 characters.",
           "user_exists": "That username is already taken on this machine.",
-          "invalid_token": "That join code is not valid. Paste the whole code exactly as the hub issued it.",
-          "node_revoked": "This machine was removed from the hub. Reset it before joining again.",
-          "node_exists": "Another machine is already registered on the hub under this identity.",
-          "hub_unreachable": "Could not reach the hub. Check the address and make sure the hub is running.",
-          "join_failed": "The hub rejected this request.",
+          "invalid_token": "That join code is not valid. Paste the whole code exactly as the relay issued it.",
           "env_write_failed": "Could not write the configuration file, so nothing changed. Check the file permissions and try again.",
           "direct_unsupported": "Direct connections are not available on this platform.",
           "direct_download_failed": "Could not download the direct connect plugin.",
@@ -3037,7 +2839,6 @@ export const I18N_RESOURCES = {
           "setup_in_progress": "Another setup is already running. Try again in a moment.",
           "relay": {
             "join_failed": "The relay rejected this request.",
-            "hub_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
             "node_revoked": "This machine was removed from the relay. Reset it before joining again.",
             "node_exists": "Another machine is already registered on the relay under this identity."
           },
@@ -3093,8 +2894,7 @@ export const I18N_RESOURCES = {
         "status": {
           "online": "Online",
           "offline": "Offline",
-          "signedOut": "Not signed in",
-          "hub": "Hub"
+          "signedOut": "Not signed in"
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",
@@ -3441,7 +3241,7 @@ export const I18N_RESOURCES = {
           "passwordHint": "Leave empty if the relay has no access password.",
           "rootPassword": "Current password (this machine's account password)",
           "rootPasswordHint": "Joining must be signed with the password; a passkey cannot sign it.",
-          "migrateNotice": "After connecting, this machine uses the relay and no longer connects to a Hub.",
+          "migrateNotice": "After connecting, this machine uses this relay and no longer uses the previous uplink.",
           "reauthNotice": "The access password changed. Enter the new one to restore the link.",
           "submit": "Connect",
           "submitReauth": "Reconnect",
@@ -3449,7 +3249,7 @@ export const I18N_RESOURCES = {
         },
         "leave": {
           "title": "Leave the relay?",
-          "description": "After leaving, this machine and its nodes have no uplink until a relay or Hub is set up again.",
+          "description": "After leaving, this machine and its nodes have no uplink until a relay is set up again.",
           "confirm": "Leave",
           "done": "Left the relay."
         },
@@ -3829,7 +3629,6 @@ export const I18N_RESOURCES = {
       },
       "originKind": {
         "site": "自建域名",
-        "hub": "Hub",
         "relay": "中继",
         "tunnel": "隧道",
         "ip": "公网 IP",
@@ -3838,7 +3637,7 @@ export const I18N_RESOURCES = {
     },
     "app": {
       "masterKeyMismatch": {
-        "title": "主密钥无法解密节点身份，多节点功能已停用。",
+        "title": "主密钥无法解密节点身份，多节点功能已停用。恢复后请用 `vibeterm relay join` 重新加入中继。",
         "commandLabel": "恢复：从 backups/app.env.* 找回 VIBETERM_MASTER_KEY，或执行："
       }
     },
@@ -3886,7 +3685,6 @@ export const I18N_RESOURCES = {
         },
         "address": {
           "tunnel": "隧道",
-          "hub": "Hub",
           "lan": "局域网",
           "tailscale": "Tailscale",
           "vpn": "VPN",
@@ -3939,16 +3737,13 @@ export const I18N_RESOURCES = {
         "path": {
           "title": "选择接入方式",
           "relay": "经中继",
-          "hub": "经 Hub",
           "ssh": "SSH 直连",
           "hint": {
             "relay": "中继：节点在 NAT 后，只需一个公网汇合点。",
-            "hub": "Hub：需要集中管理账号与节点。",
             "ssh": "SSH 直连：本机可通过 SSH 访问新机器，无需安装 VibeTerm。"
           },
           "tip": {
             "relay": "中继只转发加密流量，不保存账号与密钥。适合都在 NAT 或防火墙后的机器。",
-            "hub": "Hub 是信任中心，保存账号与节点成员，需要固定的公网 HTTPS 地址。",
             "ssh": "新机器不运行 VibeTerm，由本机经 SSH 连接，作为设备出现在设备列表。"
           }
         },
@@ -3956,10 +3751,6 @@ export const I18N_RESOURCES = {
           "relay": {
             "join": "加入已有中继",
             "host": "本机自建中继"
-          },
-          "hub": {
-            "join": "加入已有 Hub",
-            "host": "本机设为 Hub"
           }
         },
         "install": {
@@ -3972,19 +3763,15 @@ export const I18N_RESOURCES = {
           "uplink": {
             "title": "准备接入信息",
             "relayDescription": "新机器需要中继地址、租户编号与接入密码。",
-            "hubDescription": "新机器需要 Hub 地址与账号密码。",
             "relayUrl": "中继地址",
-            "hubUrl": "Hub 地址",
             "tenantId": "租户编号",
             "relayMissing": "向中继运营者索取中继地址与接入密码。",
-            "hubMissing": "向 Hub 管理员索取 Hub 地址。",
             "tenantMissing": "租户编号在本机接入中继后生成。",
             "link": "前往多节点互联设置"
           },
           "password": {
             "title": "在新机器上加入",
             "relayDescription": "在新机器上打开「设置 → 多节点互联 → 加入中继」。",
-            "hubDescription": "在新机器上打开「设置 → 多节点互联 → 加入已有 Hub」。",
             "command": "也可以在新机器的终端执行",
             "tenantPlaceholder": "<租户编号>"
           },
@@ -4049,27 +3836,11 @@ export const I18N_RESOURCES = {
             "description": "打开「设置 → 远程访问」，为本机配置固定的公网 HTTPS 入口。",
             "link": "前往远程访问设置",
             "status": {
-              "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）",
-              "quick": "当前是临时隧道 {{url}}，地址会变化，不能作为 Hub 地址。",
-              "hubUrl": "已有公开地址：{{url}}"
+              "named": "已配置 Cloudflare Tunnel：{{url}}（{{state}}）"
             }
-          },
-          "hub": {
-            "title": "本机设为 Hub",
-            "description": "打开「设置 → 多节点互联」，选择「把本机设为 Hub」。",
-            "warning": "Hub 公开地址设定后不可修改，先确定最终域名。",
-            "link": "前往多节点互联设置",
-            "status": {
-              "self": "本机已是 Hub，公开地址：{{url}}",
-              "node": "本机已作为节点加入 {{url}}，不能再作为 Hub。",
-              "mismatch": "Hub 公开地址与当前隧道主机名不一致，其他机器可能无法接入。"
-            },
-            "hintUseEntry": "把上一步的地址 {{url}} 填入「Hub 公开地址」，创建首个账号后重启。"
           },
           "invite": {
             "title": "让新机器加入",
-            "description": "在新机器上安装 VibeTerm，按「加入已有 Hub」的步骤接入。",
-            "ready": "本机已是 Hub，切到「加入已有 Hub」继续。",
             "gotoJoin": "查看加入步骤"
           }
         },
@@ -4214,9 +3985,9 @@ export const I18N_RESOURCES = {
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
         "nameLinkedHint": "将同步修改「多节点互联」里的节点名称。",
-        "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
+        "nameLinkedLocked": "当前中继不可写入，暂时无法改名。",
         "urlHint": "用于通知链接与分享地址。",
-        "urlManagedHint": "由 Hub 公开地址决定，在「多节点互联」中修改。",
+        "urlManagedHint": "由中继公开地址决定，在「多节点互联」中修改。",
         "urlCandidates": "可用地址"
       },
       "bellThrottle": "响铃通知频控（秒）",
@@ -4510,8 +4281,6 @@ export const I18N_RESOURCES = {
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "vibeterm",
             "tunnelNameHint": "可留空（由 VibeTerm 生成）。只能使用小写字母、数字、连字符与下划线。",
-            "hubHint": "本机为 Hub：把 Hub 的公开地址设为该主机名，其他节点才能经隧道接入。",
-            "hubHintLink": "前往多节点互联设置",
             "tunnelId": "隧道 ID",
             "configured": "命名隧道已创建。",
             "changeHint": "要更换主机名或隧道，请先在上方移除当前隧道。",
@@ -5032,7 +4801,6 @@ export const I18N_RESOURCES = {
         "roles": "角色",
         "uplink": "上行",
         "uplinkNone": "无",
-        "uplinkHub": "Hub",
         "uplinkRelay": "中继",
         "uplinkUnknown": "未知",
         "attached": "已连接",
@@ -5720,7 +5488,7 @@ export const I18N_RESOURCES = {
         "pathDirect": "直连",
         "pathRelay": "中转",
         "pathDirectHint": "与设备点对点直连传输",
-        "pathRelayHint": "经 hub 中转传输"
+        "pathRelayHint": "经中继传输"
       },
       "agentLaunch": {
         "connectFailed": "连接设备失败",
@@ -5803,7 +5571,6 @@ export const I18N_RESOURCES = {
         "ROOT_KEY_MISMATCH": "密码不正确。",
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
-        "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
         "invalidCredentials": "用户名或密码错误。",
         "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。"
@@ -5846,8 +5613,6 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "改密后重新登录需要验证码；留空则跳过。",
         "sessionResumeFailed": "密码已更新；重新登录未完成，其他节点需重新登录。",
         "sessionResumeSkipped": "密码已更新；未输入验证码，其他节点需重新登录。",
-        "primaryHubUnreachable": "主 Hub 未确认本次修改，结果未知。请恢复与主 Hub 的连接并刷新状态后再决定是否重试。",
-        "switchToPrimaryHub": "当前 Hub 为备用，不接受账号变更；请切换到主 Hub 后重试。",
         "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。"
       },
       "credential": {
@@ -5875,115 +5640,12 @@ export const I18N_RESOURCES = {
       },
       "empty": "暂无节点",
       "self": "当前",
-      "hub": "Hub",
       "loggedIn": "已登录",
-      "hubConnecting": "正在连接 Hub…",
-      "hubOffline": "无法连接到 Hub，节点管理暂不可用。",
-      "hubLoginRejected": "Hub 拒绝了本次登录（{{code}}）：请重新登录后再试。",
-      "hubs": {
-        "active": "主 Hub",
-        "standby": "备 Hub",
-        "writer": "当前接受管理写入",
-        "attached": "当前入口挂载于此 Hub",
-        "online": "在线",
-        "offline": "离线",
-        "detail": "{{url}}｜优先级 {{priority}}｜纪元 {{epoch}}｜{{state}}",
-        "standbyNotice": "主 Hub 不可达，正在使用备用 Hub；加入、重命名、移除等管理操作暂不可用。",
-        "notWriter": "备用 Hub 不接受管理操作，请通过主 Hub {{url}} 操作。",
-        "lastAttempt": "最近尝试：{{time}}",
-        "lastError": "最近错误：{{error}}",
-        "authorization": {
-          "label": "授权：{{value}}",
-          "signed": "已签名",
-          "env": "环境变量",
-          "self": "本机",
-          "none": "未授权"
-        },
-        "role": {
-          "promote": "设为主 Hub",
-          "demote": "设为备 Hub",
-          "stateSwitching": "切换中",
-          "confirmPromote": "设为主 Hub",
-          "confirmDemote": "设为备 Hub",
-          "confirmText": "「{{target}}」将接管写入，切换期间管理操作短暂不可用。",
-          "confirmTextNoWriter": "「{{from}}」降为备 Hub，没有其它 Hub 可接管写入。",
-          "confirm": "切换",
-          "cancel": "取消",
-          "stepAdmit": "为「{{target}}」签发 Hub 授权（需验证凭据）。",
-          "stepDemote": "把「{{from}}」降为备 Hub。",
-          "stepPromote": "把「{{target}}」升为主 Hub，目标随后自动重启。",
-          "stepWait": "等待「{{target}}」重启并接管写入。",
-          "stepDemoteOnly": "把「{{from}}」降为备 Hub，目标随后自动重启。",
-          "warnFromUnreachable": "原主 Hub 不可达，将依靠更高纪元围栏它。",
-          "warnNoWriter": "之后将没有可写 Hub，加入、重命名、移除等管理操作都不可用。",
-          "started": "已开始切换 Hub 主备。",
-          "done": "「{{target}}」已成为主 Hub。",
-          "failed": "Hub 切换失败：{{error}}",
-          "forceTitle": "有节点版本过低",
-          "forceDescription": "强制继续后，这些节点将无法再同步 Hub 授权记录。",
-          "forceText": "以下节点版本低于 {{minVersion}}，须先升级：",
-          "forceAccept": "仍然继续（旧节点将无法再同步）",
-          "forceConfirm": "仍然继续",
-          "recovery": {
-            "title": "当前没有可写 Hub",
-            "description": "原主 Hub 已降为备，新主 Hub 未确认接管，须选择下一步。",
-            "noWriter": "「{{from}}」已降为备 Hub，「{{target}}」未确认接管写入。",
-            "retry": "重试升级目标",
-            "rollback": "回滚：重新升级原主 Hub",
-            "dismiss": "稍后处理"
-          },
-          "blocked": {
-            "unknownHub": "Hub 集合尚未加载，稍后重试。",
-            "unknownAuth": "入口版本过低，无法读取 Hub 授权来源。",
-            "offline": "该 Hub 离线，无法切换。",
-            "switching": "已有一次 Hub 切换在进行。",
-            "rowBusy": "该节点正在升级或卸载。",
-            "notWritable": "须先签发 Hub 授权，当前主 Hub 不接受写入。"
-          },
-          "errors": {
-            "HUB_NOT_HUB": "目标未启用 Hub 角色。",
-            "HUB_NOT_AUTHORIZED": "目标 Hub 未获授权。",
-            "HUB_EPOCH_STALE": "写入 Epoch 已过期，请刷新后重试。",
-            "HUB_ROLE_BUSY": "目标已有一次角色切换在进行。",
-            "HUB_ROLE_UNSUPPORTED": "目标版本不支持远程切换，须先升级。",
-            "INVALID_REQUEST": "请求无效。",
-            "unknown": "原因未知。",
-            "unreachable": "目标 Hub 不可达。",
-            "authTimeout": "Hub 授权未在预期时间内生效。",
-            "resumeAdmit": "Hub 授权尚未签发完成，请重新发起切换。",
-            "restartTimeout": "目标重启超时，未能确认切换结果：{{error}}",
-            "writerTimeout": "未能确认新的主 Hub 已接管写入，请刷新核对。",
-            "hubsUnreachable": "读不到 Hub 列表，入口暂时不可达。",
-            "unexpected": "切换中断，请刷新核对。"
-          }
-        },
-        "priority": "优先级",
-        "epoch": "写入纪元",
-        "caChanged": {
-          "title": "Hub 证书已变更",
-          "description": "「{{hub}}」广播的 CA 指纹与本机固定的指纹不一致，连接已停止。",
-          "advertised": "对方广播",
-          "pinned": "本机固定",
-          "verify": "先在该 Hub 上执行下面这条命令核对指纹：",
-          "commandLabel": "指纹无误后，在本节点执行："
-        },
-        "notAdmitted": {
-          "title": "Hub 未准入本节点（Hub 身份可能已重建）",
-          "description": "「{{hub}}」拒绝了本节点的证书。Hub 重装或换过身份后，旧证书不再有效。",
-          "commandLabel": "在本节点执行，用新的加入码或密码重新加入："
-        },
-        "splitBrain": {
-          "title": "检测到两个活动 Hub（epoch 相同），写入可能分叉",
-          "description": "{{hubs}} 同为主 Hub，写入纪元都是 {{epoch}}，管理写入可能落在不同的 Hub 上。",
-          "commandLabel": "在其中一台 Hub 上执行，让它退为备 Hub："
-        }
-      },
       "machine": {
         "title": "本机",
         "role": "角色",
         "roleStandalone": "独立运行",
         "roleNode": "节点",
-        "roleHub": "Hub 兼节点",
         "roleRelay": "纯中继（无网页）",
         "roleRelayNode": "中继兼节点",
         "menu": {
@@ -5995,9 +5657,6 @@ export const I18N_RESOURCES = {
         "status": {
           "standalone": "独立运行",
           "unknown": "状态未知",
-          "hubConnected": "已连接 Hub",
-          "hubConnectedRtt": "已连接 Hub · {{ms}} ms",
-          "hubDisconnected": "未连接 Hub",
           "connecting": "连接中",
           "relayConnected": "已连接中继",
           "relayConnectedRtt": "已连接中继 · {{ms}} ms",
@@ -6014,9 +5673,6 @@ export const I18N_RESOURCES = {
         "localAddressUnset": "未设置",
         "localAddressHint": "未设置公网地址，其它节点无法加入本机。",
         "upstream": "上级",
-        "hubDisconnected": "未连接",
-        "writerHub": "写者：{{name}}",
-        "hubList": "全部 Hub",
         "self": "本机",
         "details": {
           "title": "连接详情",
@@ -6028,7 +5684,6 @@ export const I18N_RESOURCES = {
           "quotaUnlimited": "不限",
           "quotaUnlimitedValue": "{{used}}（不限）",
           "nodeId": "本机编号",
-          "hubs": "Hub 明细",
           "quotaMaxFile": "单文件上限"
         },
         "direct": "直连插件",
@@ -6042,7 +5697,6 @@ export const I18N_RESOURCES = {
         "directRemove": "删除",
         "directRemoveConfirm": {
           "title": "删除直连插件？",
-          "description": "会话会继续经 Hub 中转，可随时重新安装。",
           "confirm": "删除",
           "cancel": "取消",
           "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
@@ -6080,22 +5734,16 @@ export const I18N_RESOURCES = {
         "relayServiceEnrollHint": "本机尚未接入自己的中继，接入时需再次输入接入密码。"
       },
       "membership": {
-        "changeHub": "更换 Hub",
         "confirm": "退出并重启",
         "cancel": "取消",
-        "consequencesNode": "退出后，本机的多节点互联状态将全部删除，VibeTerm 将重启，当前会话随之失效。退出前将自动在 Hub 上吊销本机。",
-        "consequencesHub": "本机为 Hub。退出后本机的多节点互联状态将全部删除，VibeTerm 会重启，当前会话随之失效。所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。",
+        "consequencesNode": "退出后，本机的多节点互联状态将全部删除，VibeTerm 将重启，当前会话随之失效。退出前将自动在中继上吊销本机。",
         "leaveConfirm": {
-          "title": "退出 Hub？",
+          "title": "退出多节点互联？",
           "description": "本机将变回独立运行。"
         },
         "switchConfirm": {
           "title": "切换角色？",
-          "description": "本机会先退出当前 Hub，重启后再按「{{role}}」继续设置。"
-        },
-        "changeHubConfirm": {
-          "title": "更换 Hub？",
-          "description": "本机会先退出当前 Hub，重启后用新的加入码加入另一个 Hub。加入码需要重新输入。"
+          "description": "本机会先退出当前多节点互联，重启后再按「{{role}}」继续设置。"
         },
         "confirming": "正在确认身份……",
         "leaving": "正在退出……",
@@ -6104,12 +5752,12 @@ export const I18N_RESOURCES = {
         "restartTimeout": "VibeTerm 未能恢复。请手动启动后刷新本页。",
         "reload": "刷新页面",
         "checkAgain": "再查一次",
-        "revokeFailed": "未能在旧 Hub 上吊销本机（{{error}}），退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
-        "revokeSkipped": "已跳过在旧 Hub 上吊销本机，退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
-        "leaveFailed": "退出 Hub 失败。",
+        "revokeFailed": "未能在旧中继上吊销本机（{{error}}），退出继续。请稍后在旧中继的节点列表里手动吊销。",
+        "revokeSkipped": "已跳过在旧中继上吊销本机，退出继续。请稍后在旧中继的节点列表里手动吊销。",
+        "leaveFailed": "退出多节点互联失败。",
         "errorDetail": "{{base}}（{{detail}}）",
         "errors": {
-          "notMember": "本机不在任何 Hub 中。",
+          "notMember": "本机不在多节点互联中。",
           "roleMismatch": "角色已变化，请刷新本页后重试。",
           "setupInProgress": "另一项设置正在进行，请稍后重试。",
           "envWriteFailed": "写入配置失败。",
@@ -6127,7 +5775,6 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS 设置",
         "description": "决定本机如何提供 HTTPS。登录与通行密钥只能在 HTTPS 地址下使用。",
-        "hubUrlHint": "Hub 的公开地址必须是 HTTPS：在这里签发证书，或在前面加反向代理并选「外部反向代理」。",
         "nodeRoleHint": "只有本机作为上级时才需要 HTTPS；节点经上级访问，无需配置。",
         "modeActive": "生效中",
         "save": "保存",
@@ -6204,7 +5851,7 @@ export const I18N_RESOURCES = {
           "intro": "适用于没有公网域名的局域网或隧道。私有证书颁发机构（CA）保存在本机，证书有效期 398 天。",
           "sans": "证书包含的名称",
           "sansHint": "浏览器里实际会输入的主机名或 IP，最多 20 个。未列出的地址仍会报证书错误。",
-          "sansPlaceholder": "hub.lan 或 192.168.1.10",
+          "sansPlaceholder": "example.lan 或 192.168.1.10",
           "sansAdd": "添加",
           "sansRemove": "移除 {{name}}",
           "sansEmpty": "尚未添加名称。",
@@ -6361,7 +6008,6 @@ export const I18N_RESOURCES = {
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
         "failed": "操作失败：{{error}}",
         "selfBlocked": "本机不能暂停",
-        "hubBlocked": "Hub 不能暂停",
         "forwarderBlocked": "当前正在使用该节点",
         "batchFailed": "失败 {{count}} 台",
         "busy": "正在暂停或恢复。"
@@ -6387,7 +6033,7 @@ export const I18N_RESOURCES = {
       },
       "admit": {
         "blocked": "须先批准加入，才能管理这台节点。",
-        "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
+        "unavailable": "中继未下发批准所需材料，请刷新后重试。",
         "failed": "批准失败：{{error}}"
       },
       "detail": {
@@ -6397,17 +6043,17 @@ export const I18N_RESOURCES = {
         "name": "名称",
         "namePlaceholder": "节点名称",
         "domainAccess": "允许域名访问",
-        "domainAccessDescription": "关闭后，来自公网的网页与 API 访问会被拒绝，仅保留 Hub / 节点互联服务；来自局域网与本机的访问不受影响。",
+        "domainAccessDescription": "关闭后，来自公网的网页与 API 访问会被拒绝，仅保留节点互联服务；来自局域网与本机的访问不受影响。",
         "domainAccessLoading": "读取中……",
         "domainAccessFailed": "读取失败：{{error}}",
         "domainAccessUnsupported": "该节点版本不支持。",
         "domainAccessUnreachable": "节点当前不可达。",
         "domainAccessHosts": "公开域名：{{hosts}}",
         "disableTitle": "关闭域名访问？",
-        "disableText": "关闭后，经配置的公开域名将不再提供网页与 API，只保留 Hub / 节点互联服务。",
+        "disableText": "关闭后，经配置的公开域名将不再提供网页与 API，只保留节点互联服务。",
         "disableSelfWarning": "当前正通过该域名访问 VibeTerm，关闭后本页会立即失联；请确认还能通过内网 IP 或 localhost 访问。",
         "disableConfirm": "关闭",
-        "renameUnavailable": "当前 Hub 不可写入，暂时无法改名。",
+        "renameUnavailable": "当前中继不可写入，暂时无法改名。",
         "renameFailed": "重命名失败：{{error}}",
         "domainAccessSaveFailed": "域名访问设置保存失败：{{error}}",
         "saved": "已保存",
@@ -6474,7 +6120,7 @@ export const I18N_RESOURCES = {
         "revokeFailed": "已卸载，但未能从多节点互联中移除",
         "summary": "已卸载 {{count}} 个节点",
         "summaryFailed": "已卸载 {{count}} 个，{{failed}} 个失败（{{names}}）",
-        "summaryAborted": "Hub 不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
+        "summaryAborted": "中继不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
         "errors": {
           "loginRequired": "须先登录该节点。",
           "unreachable": "连不上该节点。",
@@ -6499,10 +6145,8 @@ export const I18N_RESOURCES = {
         "badCertSig": "节点响应的签名校验失败，已忽略。",
         "expired": "加入码已过期，请重新生成。",
         "noCertificateYet": "新节点尚未响应，请稍后重试。",
-        "hubNotConfirmed": "Hub 未确认，本次没有写入任何内容，可直接重试。",
         "relayNotConfirmed": "中继未确认，本次没有写入任何内容，可直接重试。",
-        "retryHub": "重试",
-        "missingHubUrl": "Hub 未设置公开地址，无法生成加入命令。",
+        "retry": "重试",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
         "staleRecord": "账号信息已变化，请重新确认。",
         "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
@@ -6515,7 +6159,7 @@ export const I18N_RESOURCES = {
         "confirmText": "移除节点「{{name}}」？该节点会立即失去访问权限，需要重新添加。",
         "reasonLabel": "原因（可选）",
         "done": "已移除",
-        "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
+        "relayFailed": "中继未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
         "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
@@ -6662,14 +6306,6 @@ export const I18N_RESOURCES = {
         "intro": "本机尚未与其他机器互联，请选择设置方式。",
         "introDetail": "任选一种，保存配置后 VibeTerm 会重启一次。",
         "path": {
-          "becomeHub": {
-            "title": "把本机设为 Hub",
-            "description": "其他节点加入本机。需要一个公开的 HTTPS 地址。"
-          },
-          "joinHub": {
-            "title": "加入已有 Hub",
-            "description": "本机成为一个节点。需要 Hub 提供的加入码。"
-          },
           "becomeRelay": {
             "title": "本机作为中继",
             "description": "本机为各节点提供公网入口。需要一个公开的 HTTPS 地址。"
@@ -6679,37 +6315,17 @@ export const I18N_RESOURCES = {
             "description": "本机作为节点接入已有中继。需要中继地址与租户编号。"
           }
         },
-        "becomeHub": {
-          "title": "把本机设为 Hub",
-          "description": "在本机创建第一个账号，然后以 Hub 身份重启 VibeTerm。"
-        },
-        "joinHub": {
-          "title": "加入已有 Hub",
-          "description": "把本机注册到 Hub，然后以节点身份重启 VibeTerm。",
-          "passwordDescription": "用 Hub 地址与账号密码把本机注册到 Hub，然后以节点身份重启 VibeTerm。",
-          "useToken": "改用加入码",
-          "usePassword": "改用密码"
-        },
         "fields": {
-          "hubPublicUrl": "Hub 公开地址",
-          "hubPublicUrlHint": "外部可访问的 https 地址，例如 https://vibeterm.example.com。所有拟加入的节点均须可正常访问。",
           "username": "用户名",
           "usernameHint": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "password": "密码",
           "passwordHint": "至少 8 位。服务端无法重置，请妥善保管。",
           "confirmPassword": "确认密码",
-          "hubUrl": "Hub 地址",
-          "hubUrlHint": "Hub 的 https 地址，例如 https://vibeterm.example.com。",
           "urlPlaceholder": "https://vibeterm.example.com",
           "token": "加入码",
-          "tokenHint": "在 Hub 的「节点」页生成，10 分钟内有效。请完整粘贴。",
-          "tokenPlaceholder": "粘贴 Hub 生成的加入码",
           "name": "节点名称",
           "nameHint": "显示在侧边栏与节点页。",
           "directEnable": "启用直连",
-          "directEnableHint": "让节点之间直接通信，而不经 Hub 中转。即使失败也不影响本次设置。",
-          "directUnsupportedHint": "{{platform}} 不支持直连，流量将经 Hub 中转。",
-          "insecureLocal": "允许本机使用 http:// 的 Hub",
           "insecureLocalHint": "仅用于开发与测试。",
           "relayPublicUrl": "中继公网地址",
           "relayPublicUrlHint": "外部可访问的 https 地址，例如 https://relay.example.com。所有拟接入的节点均须可正常访问。",
@@ -6737,7 +6353,6 @@ export const I18N_RESOURCES = {
         },
         "probe": {
           "probing": "正在探测常用端口…",
-          "resolvedHub": "已在 {{port}} 端口探测到 Hub，地址已更新。",
           "resolvedRelay": "已在 {{port}} 端口探测到中继，地址已更新。",
           "failed": "443 及内置候选端口均无响应。请确认端口已放行，或直接填写带端口的地址。"
         },
@@ -6749,25 +6364,19 @@ export const I18N_RESOURCES = {
           "httpsHint": "可以在「节点」标签页配置 HTTPS，也可以在本机前面加反向代理或 Cloudflare Tunnel。"
         },
         "submit": {
-          "becomeHub": "创建账号并重启",
-          "joinHub": "加入并重启",
           "pending": "处理中…",
           "becomeRelay": "保存并重启",
           "joinRelay": "加入并重启"
         },
         "result": {
           "title": "设置完成",
-          "becomeHubDescription": "账号已创建，VibeTerm 正在以 Hub 身份重启。",
-          "joinDescription": "本机已加入 Hub，VibeTerm 正在重启。",
           "fingerprint": "账号指纹",
-          "hubPublicUrl": "Hub 公开地址",
-          "hubUrl": "Hub 地址",
           "username": "用户名",
           "directLabel": "直连",
           "direct": {
             "enabled": "已启用",
             "skipped": "已跳过",
-            "failed": "失败（{{error}}）——流量将经 Hub 中转，可稍后重试"
+            "failed": "失败（{{error}}）——流量将经中继转发，可稍后重试"
           },
           "relayDescription": "中继已设置，VibeTerm 正在重启。重启后本机不再提供网页。",
           "relayNodeDescription": "中继已设置，VibeTerm 正在以中继兼节点身份重启。",
@@ -6784,8 +6393,6 @@ export const I18N_RESOURCES = {
           "timeout": "60 秒内 VibeTerm 未恢复。请手动启动后刷新本页："
         },
         "toast": {
-          "hubCreated": "Hub 已创建，VibeTerm 正在重启",
-          "joined": "已加入 Hub，VibeTerm 正在重启",
           "relayCreated": "中继已设置，VibeTerm 正在重启",
           "relayJoined": "已加入中继，VibeTerm 正在重启"
         },
@@ -6793,17 +6400,12 @@ export const I18N_RESOURCES = {
           "not_standalone": "本机已完成设置。",
           "invalid_url": "请输入合法的 https:// 地址。",
           "invalid_port": "端口须在 1 到 65535 之间。",
-          "insecure_local_required": "http:// 只能用于本机的 Hub，请先勾选「允许本机使用 http:// 的 Hub」。",
           "invalid_username": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "weak_password": "密码至少 8 位。",
           "password_mismatch": "两次输入的密码不一致。",
           "invalid_name": "请输入 1-64 个字符的名称。",
           "user_exists": "本机已存在同名用户。",
-          "invalid_token": "加入码不合法。请完整粘贴 Hub 生成的加入码。",
-          "node_revoked": "本机已被 Hub 移除。请先重置本机，再重新加入。",
-          "node_exists": "Hub 上已有另一台机器占用了本机的身份。",
-          "hub_unreachable": "无法连接到 Hub。请检查地址，并确认 Hub 正在运行。",
-          "join_failed": "Hub 拒绝了本次加入请求。",
+          "invalid_token": "加入码不合法。请完整粘贴中继生成的加入码。",
           "env_write_failed": "配置文件写入失败，本次没有任何改动。请检查文件权限后重试。",
           "direct_unsupported": "本平台不支持直连。",
           "direct_download_failed": "直连插件下载失败。",
@@ -6819,7 +6421,6 @@ export const I18N_RESOURCES = {
           "setup_in_progress": "另一项设置正在进行，请稍后重试。",
           "relay": {
             "join_failed": "中继拒绝了本次加入请求。",
-            "hub_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
             "node_revoked": "本机已被中继移除。请先重置本机，再重新加入。",
             "node_exists": "中继上已有另一台机器占用了本机的身份。"
           },
@@ -6875,8 +6476,7 @@ export const I18N_RESOURCES = {
         "status": {
           "online": "在线",
           "offline": "离线",
-          "signedOut": "未登录",
-          "hub": "Hub"
+          "signedOut": "未登录"
         },
         "version": "版本 {{version}}",
         "signInToManage": "登录该节点后才能管理它的设备。",
@@ -7220,7 +6820,7 @@ export const I18N_RESOURCES = {
           "passwordHint": "中继未设接入密码时留空。",
           "rootPassword": "当前密码（本机账号密码）",
           "rootPasswordHint": "接入必须用密码签名，通行密钥无法代签。",
-          "migrateNotice": "接入后本机改走中继，不再连接 Hub。",
+          "migrateNotice": "接入后本机改走该中继，不再连接原来的上级。",
           "reauthNotice": "接入密码已变更，重新输入以恢复接入。",
           "submit": "接入",
           "submitReauth": "重新接入",
@@ -7228,7 +6828,7 @@ export const I18N_RESOURCES = {
         },
         "leave": {
           "title": "离开中继？",
-          "description": "离开后本机与各节点失去上级链路，须重新接入中继或 Hub。",
+          "description": "离开后本机与各节点失去上级链路，须重新接入中继。",
           "confirm": "离开",
           "done": "已离开中继。"
         },
@@ -7608,7 +7208,6 @@ export const I18N_RESOURCES = {
       },
       "originKind": {
         "site": "独自ドメイン",
-        "hub": "Hub",
         "relay": "中継",
         "tunnel": "トンネル",
         "ip": "パブリック IP",
@@ -7617,7 +7216,7 @@ export const I18N_RESOURCES = {
     },
     "app": {
       "masterKeyMismatch": {
-        "title": "マスターキーでノード識別情報を復号できないため、マルチノード機能を停止しました。",
+        "title": "マスターキーでノード識別情報を復号できないため、マルチノード機能を停止しました。復旧後は `vibeterm relay join` で中継に再加入してください。",
         "commandLabel": "復旧：backups/app.env.* から VIBETERM_MASTER_KEY を復元するか、次を実行します："
       }
     },
@@ -7665,7 +7264,6 @@ export const I18N_RESOURCES = {
         },
         "address": {
           "tunnel": "トンネル",
-          "hub": "ハブ",
           "lan": "LAN アドレス",
           "tailscale": "Tailscale",
           "vpn": "VPN",
@@ -7718,16 +7316,13 @@ export const I18N_RESOURCES = {
         "path": {
           "title": "接続方法を選択",
           "relay": "中継経由",
-          "hub": "Hub 経由",
           "ssh": "SSH 直結",
           "hint": {
             "relay": "中継：ノードが NAT 内にあり、公開の合流点だけが必要な場合。",
-            "hub": "Hub：アカウントとノードを集中管理する場合。",
             "ssh": "SSH 直結：本機が SSH で新しいマシンに接続し、VibeTerm の導入が不要な場合。"
           },
           "tip": {
             "relay": "中継は暗号化された通信を転送するだけで、アカウントや鍵は保持しません。NAT やファイアウォールの内側にあるマシンに向いています。",
-            "hub": "Hub は信頼の中心で、アカウントとノードの所属を保持します。固定の公開 HTTPS アドレスが必要です。",
             "ssh": "新しいマシンでは VibeTerm を動かさず、本機が SSH で接続してデバイス一覧に表示されます。"
           }
         },
@@ -7735,10 +7330,6 @@ export const I18N_RESOURCES = {
           "relay": {
             "join": "既存の中継に参加",
             "host": "本機を中継にする"
-          },
-          "hub": {
-            "join": "既存の Hub に参加",
-            "host": "本機を Hub にする"
           }
         },
         "install": {
@@ -7751,19 +7342,15 @@ export const I18N_RESOURCES = {
           "uplink": {
             "title": "接続情報を用意",
             "relayDescription": "新しいマシンには中継アドレス、テナント ID、中継の接続パスワードが必要です。",
-            "hubDescription": "新しいマシンには Hub のアドレスとアカウントのパスワードが必要です。",
             "relayUrl": "中継アドレス",
-            "hubUrl": "Hub のアドレス",
             "tenantId": "テナント ID",
             "relayMissing": "中継の運営者に中継アドレスと接続パスワードを問い合わせます。",
-            "hubMissing": "Hub の管理者に Hub のアドレスを問い合わせます。",
             "tenantMissing": "テナント ID は本機が中継に接続すると発行されます。",
             "link": "マルチノード連携設定を開く"
           },
           "password": {
             "title": "新しいマシンで参加",
             "relayDescription": "新しいマシンで「設定 → マルチノード連携 → 中継に参加する」を開きます。",
-            "hubDescription": "新しいマシンで「設定 → マルチノード連携 → 既存のハブに参加する」を開きます。",
             "command": "新しいマシンのターミナルで次を実行することもできます",
             "tenantPlaceholder": "<テナント ID>"
           },
@@ -7828,27 +7415,11 @@ export const I18N_RESOURCES = {
             "description": "「設定 → リモートアクセス」を開き、本機に固定の公開 HTTPS 入口を用意します。",
             "link": "リモートアクセス設定を開く",
             "status": {
-              "named": "Cloudflare Tunnel を設定済みです：{{url}}（{{state}}）",
-              "quick": "現在は一時トンネル {{url}} です。アドレスが変わるため Hub のアドレスには使えません。",
-              "hubUrl": "公開アドレスがあります：{{url}}"
+              "named": "Cloudflare Tunnel を設定済みです：{{url}}（{{state}}）"
             }
-          },
-          "hub": {
-            "title": "本機を Hub にする",
-            "description": "「設定 → マルチノード連携」を開き、「このマシンをハブにする」を選択します。",
-            "warning": "Hub の公開アドレスは後から変更できません。最終的なドメインを先に確定します。",
-            "link": "マルチノード連携設定を開く",
-            "status": {
-              "self": "本機は Hub です。公開アドレス：{{url}}",
-              "node": "本機はノードとして {{url}} に参加しているため、Hub にはできません。",
-              "mismatch": "Hub の公開アドレスが現在のトンネルのホスト名と一致しません。他のマシンが接続できない可能性があります。"
-            },
-            "hintUseEntry": "前の手順のアドレス {{url}} を「ハブの公開アドレス」に入力し、最初のアカウントを作成して再起動します。"
           },
           "invite": {
             "title": "新しいマシンを参加させる",
-            "description": "新しいマシンに VibeTerm をインストールし、「既存の Hub に参加」の手順で接続します。",
-            "ready": "本機は Hub です。「既存の Hub に参加」に切り替えて続けます。",
             "gotoJoin": "参加手順を見る"
           }
         },
@@ -7993,9 +7564,9 @@ export const I18N_RESOURCES = {
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
         "nameLinkedHint": "「マルチノード連携」のノード名も同時に変わります。",
-        "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
+        "nameLinkedLocked": "現在の中継が書き込みを受け付けないため、名前を変更できません。",
         "urlHint": "通知リンクと共有アドレスに使用します。",
-        "urlManagedHint": "Hub の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
+        "urlManagedHint": "中継の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
         "urlCandidates": "利用可能なアドレス"
       },
       "bellThrottle": "ベル通知の制限（秒）",
@@ -8289,8 +7860,6 @@ export const I18N_RESOURCES = {
             "tunnelName": "トンネル名",
             "tunnelNamePlaceholder": "vibeterm",
             "tunnelNameHint": "空欄可（VibeTerm が生成します）。使用できるのは小文字・数字・ハイフン・アンダースコアのみです。",
-            "hubHint": "このマシンは Hub です。Hub の公開アドレスをこのホスト名に設定すると、他のノードがトンネル経由で接続できます。",
-            "hubHintLink": "マルチノード設定を開く",
             "tunnelId": "トンネル ID",
             "configured": "名前付きトンネルを作成しました。",
             "changeHint": "ホスト名やトンネルを変更するには、先に上で現在のトンネルを削除してください。",
@@ -8811,7 +8380,6 @@ export const I18N_RESOURCES = {
         "roles": "ロール",
         "uplink": "アップリンク",
         "uplinkNone": "なし",
-        "uplinkHub": "Hub",
         "uplinkRelay": "中継",
         "uplinkUnknown": "不明",
         "attached": "接続済み",
@@ -9499,7 +9067,7 @@ export const I18N_RESOURCES = {
         "pathDirect": "直接接続",
         "pathRelay": "中継",
         "pathDirectHint": "デバイスとの P2P 直接転送",
-        "pathRelayHint": "hub 経由の中継転送"
+        "pathRelayHint": "中継経由で転送"
       },
       "agentLaunch": {
         "connectFailed": "デバイスへの接続に失敗しました",
@@ -9582,7 +9150,6 @@ export const I18N_RESOURCES = {
         "ROOT_KEY_MISMATCH": "パスワードが正しくありません。",
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
-        "HUB_NOT_WRITER": "予備ハブは管理操作を受け付けません。メインハブから操作してください。",
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
         "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。"
@@ -9625,8 +9192,6 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "変更後の再サインインにはコードが必要です。空欄ならスキップします。",
         "sessionResumeFailed": "パスワードを更新しました。再サインインは完了していません。他のノードでは再度サインインが必要です。",
         "sessionResumeSkipped": "パスワードを更新しました。コード未入力のため、他のノードでは再度サインインが必要です。",
-        "primaryHubUnreachable": "メインハブがこの変更を確認できず、結果は不明です。メインハブとの接続を復旧し、状態を更新してから再試行を判断してください。",
-        "switchToPrimaryHub": "このハブは予備のため、アカウントの変更を受け付けません。メインハブに切り替えてから再試行してください。",
         "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。"
       },
       "credential": {
@@ -9654,115 +9219,12 @@ export const I18N_RESOURCES = {
       },
       "empty": "ノードがありません",
       "self": "現在",
-      "hub": "ハブ",
       "loggedIn": "サインイン済み",
-      "hubConnecting": "ハブに接続しています…",
-      "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
-      "hubLoginRejected": "ハブがこのサインインを拒否しました（{{code}}）。サインインし直してからお試しください。",
-      "hubs": {
-        "active": "メインハブ",
-        "standby": "予備ハブ",
-        "writer": "現在、管理操作の書き込みを受け付けています",
-        "attached": "この入口は現在このハブに接続しています",
-        "online": "オンライン",
-        "offline": "オフライン",
-        "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
-        "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
-        "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
-        "lastAttempt": "最終試行：{{time}}",
-        "lastError": "最終エラー：{{error}}",
-        "authorization": {
-          "label": "認可：{{value}}",
-          "signed": "署名済み",
-          "env": "環境変数",
-          "self": "本機",
-          "none": "未承認"
-        },
-        "role": {
-          "promote": "メインハブにする",
-          "demote": "予備ハブにする",
-          "stateSwitching": "切り替え中",
-          "confirmPromote": "メインハブにする",
-          "confirmDemote": "予備ハブにする",
-          "confirmText": "「{{target}}」が書き込みを引き継ぎます。切り替え中は管理操作を一時的に利用できません。",
-          "confirmTextNoWriter": "「{{from}}」を予備ハブにします。書き込みを引き継げるハブはありません。",
-          "confirm": "切り替え",
-          "cancel": "キャンセル",
-          "stepAdmit": "「{{target}}」にハブ認可を発行します（認証情報が必要です）。",
-          "stepDemote": "「{{from}}」を予備ハブにします。",
-          "stepPromote": "「{{target}}」をメインハブにします。その後自動的に再起動します。",
-          "stepWait": "「{{target}}」の再起動と書き込みの引き継ぎを待ちます。",
-          "stepDemoteOnly": "「{{from}}」を予備ハブにします。その後自動的に再起動します。",
-          "warnFromUnreachable": "現在のメインハブに接続できないため、より高いエポックで隔離します。",
-          "warnNoWriter": "この後は書き込み可能なハブがなくなり、追加・名前変更・削除などの管理操作はできません。",
-          "started": "ハブの切り替えを開始しました。",
-          "done": "「{{target}}」がメインハブになりました。",
-          "failed": "ハブの切り替えに失敗しました：{{error}}",
-          "forceTitle": "バージョンが古いノードがあります",
-          "forceDescription": "続行すると、これらのノードはハブ認可レコードを同期できなくなります。",
-          "forceText": "以下のノードは {{minVersion}} より古いため、先にアップグレードが必要です：",
-          "forceAccept": "それでも続行する（古いノードは同期できなくなります）",
-          "forceConfirm": "続行する",
-          "recovery": {
-            "title": "書き込み可能なハブがありません",
-            "description": "元のメインハブは予備になり、新しいメインハブの引き継ぎは未確認です。次の操作を選んでください。",
-            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」の書き込み引き継ぎは未確認です。",
-            "retry": "対象の昇格を再試行",
-            "rollback": "ロールバック：元のメインハブを再び昇格",
-            "dismiss": "後で対応"
-          },
-          "blocked": {
-            "unknownHub": "ハブ一覧が未読み込みです。しばらくしてから再試行してください。",
-            "unknownAuth": "入口のバージョンが古く、ハブ認可の種別を読み取れません。",
-            "offline": "このハブはオフラインのため切り替えできません。",
-            "switching": "ハブの切り替えがすでに実行中です。",
-            "rowBusy": "このノードはアップグレードまたはアンインストール中です。",
-            "notWritable": "先にハブ認可の発行が必要ですが、メインハブが書き込みを受け付けません。"
-          },
-          "errors": {
-            "HUB_NOT_HUB": "対象はハブとして動作していません。",
-            "HUB_NOT_AUTHORIZED": "対象ハブは認可されていません。",
-            "HUB_EPOCH_STALE": "書き込みエポックが古くなっています。更新してから再試行してください。",
-            "HUB_ROLE_BUSY": "対象では役割の切り替えがすでに実行中です。",
-            "HUB_ROLE_UNSUPPORTED": "対象のバージョンはリモート切り替えに未対応です。先にアップグレードしてください。",
-            "INVALID_REQUEST": "リクエストが不正です。",
-            "unknown": "原因は不明です。",
-            "unreachable": "対象ハブに接続できません。",
-            "authTimeout": "ハブ認可が時間内に反映されませんでした。",
-            "resumeAdmit": "ハブ認可の発行が完了していません。切り替えをやり直してください。",
-            "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
-            "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。",
-            "hubsUnreachable": "ハブ一覧を取得できません。入口に一時的に接続できません。",
-            "unexpected": "切り替えが中断しました。更新して確認してください。"
-          }
-        },
-        "priority": "優先度",
-        "epoch": "書き込みエポック",
-        "caChanged": {
-          "title": "ハブの証明書が変更されました",
-          "description": "「{{hub}}」が広告する CA フィンガープリントが、このマシンに固定された値と一致しないため接続を停止しました。",
-          "advertised": "広告値",
-          "pinned": "固定値",
-          "verify": "まず該当ハブで次を実行し、フィンガープリントを照合してください：",
-          "commandLabel": "フィンガープリントを確認したら、このノードで次を実行します："
-        },
-        "notAdmitted": {
-          "title": "ハブがこのノードを受け入れていません（ハブの識別情報が再作成された可能性があります）",
-          "description": "「{{hub}}」がこのノードの証明書を拒否しました。ハブを再インストールしたり識別情報を作り直したりすると、旧証明書は使えなくなります。",
-          "commandLabel": "このノードで次を実行し、新しい参加コードまたはパスワードで参加し直します："
-        },
-        "splitBrain": {
-          "title": "アクティブなハブが 2 台検出されました（epoch が同一）。書き込みが分岐する可能性があります",
-          "description": "{{hubs}} はいずれもアクティブなハブで、書き込みエポックはどちらも {{epoch}} です。管理操作の書き込みが別々のハブに届くおそれがあります。",
-          "commandLabel": "いずれか一方のハブで次を実行し、予備ハブに降格させます："
-        }
-      },
       "machine": {
         "title": "このマシン",
         "role": "ロール",
         "roleStandalone": "スタンドアロン",
         "roleNode": "ノード",
-        "roleHub": "ハブ兼ノード",
         "roleRelay": "中継のみ（Web なし）",
         "roleRelayNode": "リレー兼ノード",
         "menu": {
@@ -9774,9 +9236,6 @@ export const I18N_RESOURCES = {
         "status": {
           "standalone": "スタンドアロン",
           "unknown": "状態不明",
-          "hubConnected": "Hub に接続済み",
-          "hubConnectedRtt": "Hub に接続済み · {{ms}} ms",
-          "hubDisconnected": "Hub に未接続",
           "connecting": "接続中",
           "relayConnected": "中継に接続済み",
           "relayConnectedRtt": "中継に接続済み · {{ms}} ms",
@@ -9793,9 +9252,6 @@ export const I18N_RESOURCES = {
         "localAddressUnset": "未設定",
         "localAddressHint": "公開アドレスが未設定のため、他のノードは本機に参加できません。",
         "upstream": "上位",
-        "hubDisconnected": "未接続",
-        "writerHub": "ライター：{{name}}",
-        "hubList": "すべての Hub",
         "self": "このマシン",
         "details": {
           "title": "接続の詳細",
@@ -9807,7 +9263,6 @@ export const I18N_RESOURCES = {
           "quotaUnlimited": "無制限",
           "quotaUnlimitedValue": "{{used}}（無制限）",
           "nodeId": "本機の ID",
-          "hubs": "Hub の詳細",
           "quotaMaxFile": "1 ファイルの上限"
         },
         "direct": "直結プラグイン",
@@ -9821,7 +9276,6 @@ export const I18N_RESOURCES = {
         "directRemove": "削除",
         "directRemoveConfirm": {
           "title": "直接接続プラグインを削除しますか？",
-          "description": "セッションはハブ経由で継続します。いつでも再インストールできます。",
           "confirm": "削除",
           "cancel": "キャンセル",
           "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
@@ -9859,22 +9313,16 @@ export const I18N_RESOURCES = {
         "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続時に接続パスワードの再入力が必要です。"
       },
       "membership": {
-        "changeHub": "ハブを変更",
         "confirm": "退出して再起動",
         "cancel": "キャンセル",
-        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。退出前にハブ側でこのマシンを自動的に失効させます。",
-        "consequencesHub": "このマシンがハブです。退出するとマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。配下のノードはハブを失い、復旧には別のハブへ参加し直す必要があります。",
+        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。退出前に中継側でこのマシンを自動的に失効させます。",
         "leaveConfirm": {
-          "title": "ハブから退出しますか？",
+          "title": "マルチノード連携を退出しますか？",
           "description": "このマシンはスタンドアロン動作に戻ります。"
         },
         "switchConfirm": {
           "title": "ロールを切り替えますか？",
-          "description": "現在のハブから退出し、再起動後に「{{role}}」として設定を続けます。"
-        },
-        "changeHubConfirm": {
-          "title": "ハブを変更しますか？",
-          "description": "現在のハブから退出し、再起動後に別のハブへ参加します。参加コードは再入力が必要です。"
+          "description": "現在のマルチノード連携から退出し、再起動後に「{{role}}」として設定を続けます。"
         },
         "confirming": "本人確認中…",
         "leaving": "退出しています…",
@@ -9883,12 +9331,12 @@ export const I18N_RESOURCES = {
         "restartTimeout": "VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "reload": "ページを再読み込み",
         "checkAgain": "もう一度確認",
-        "revokeFailed": "以前のハブでこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
-        "revokeSkipped": "以前のハブでのこのマシンの失効をスキップしました。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
-        "leaveFailed": "ハブから退出できませんでした。",
+        "revokeFailed": "以前の中継でこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前の中継のノード一覧から失効させてください。",
+        "revokeSkipped": "以前の中継でのこのマシンの失効をスキップしました。退出は続行します。後で以前の中継のノード一覧から失効させてください。",
+        "leaveFailed": "マルチノード連携から退出できませんでした。",
         "errorDetail": "{{base}}（{{detail}}）",
         "errors": {
-          "notMember": "このマシンはどのハブにも参加していません。",
+          "notMember": "このマシンはマルチノード連携に参加していません。",
           "roleMismatch": "ロールが変更されました。ページを再読み込みしてやり直してください。",
           "setupInProgress": "別の設定変更が進行中です。しばらくしてからやり直してください。",
           "envWriteFailed": "設定を書き込めませんでした。",
@@ -9906,7 +9354,6 @@ export const I18N_RESOURCES = {
       "https": {
         "title": "HTTPS 設定",
         "description": "このマシンが HTTPS をどう提供するかを設定します。ログインとパスキーは HTTPS のアドレスでのみ利用できます。",
-        "hubUrlHint": "ハブの公開アドレスは HTTPS である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
         "nodeRoleHint": "HTTPS が必要なのは、このマシンが上位として動作する場合だけです。ノードへは上位経由でアクセスするため、設定は不要です。",
         "modeActive": "適用中",
         "save": "保存",
@@ -9983,7 +9430,7 @@ export const I18N_RESOURCES = {
           "intro": "公開ドメインがない LAN やトンネル向けです。プライベート認証局（CA）はこのマシンに保存され、証明書の有効期間は 398 日です。",
           "sans": "証明書に含める名前",
           "sansHint": "ブラウザーで実際に入力するホスト名または IP アドレス（最大 20 件）。ここにないアドレスは証明書エラーになります。",
-          "sansPlaceholder": "hub.lan または 192.168.1.10",
+          "sansPlaceholder": "example.lan または 192.168.1.10",
           "sansAdd": "追加",
           "sansRemove": "{{name}} を削除",
           "sansEmpty": "名前がまだありません。",
@@ -10140,7 +9587,6 @@ export const I18N_RESOURCES = {
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
         "failed": "操作に失敗しました：{{error}}",
         "selfBlocked": "本機は一時停止できません",
-        "hubBlocked": "Hub は一時停止できません",
         "forwarderBlocked": "現在このノードを使用中です",
         "batchFailed": "{{count}} 台で失敗しました",
         "busy": "一時停止または再開の処理中です。"
@@ -10166,7 +9612,7 @@ export const I18N_RESOURCES = {
       },
       "admit": {
         "blocked": "先に参加を承認してください。",
-        "unavailable": "承認に必要な情報が Hub から届いていません。更新してからもう一度お試しください。",
+        "unavailable": "承認に必要な情報が中継から届いていません。更新してからもう一度お試しください。",
         "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
@@ -10176,17 +9622,17 @@ export const I18N_RESOURCES = {
         "name": "名前",
         "namePlaceholder": "ノード名",
         "domainAccess": "ドメインアクセスを許可",
-        "domainAccessDescription": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され、ハブ / ノード連携サービスのみが利用できます。ローカルネットワークとこのマシンからのアクセスは影響を受けません。",
+        "domainAccessDescription": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され、ノード連携サービスのみが利用できます。ローカルネットワークとこのマシンからのアクセスは影響を受けません。",
         "domainAccessLoading": "読み込み中…",
         "domainAccessFailed": "読み込みに失敗しました：{{error}}",
         "domainAccessUnsupported": "このノードのバージョンでは対応していません。",
         "domainAccessUnreachable": "ノードに現在接続できません。",
         "domainAccessHosts": "公開ドメイン：{{hosts}}",
         "disableTitle": "ドメインアクセスをオフにしますか？",
-        "disableText": "オフにすると、設定した公開ドメインではウェブ画面と API を提供しなくなり、ハブ／ノード間の通信のみが残ります。",
+        "disableText": "オフにすると、設定した公開ドメインではウェブ画面と API を提供しなくなり、ノード間の通信のみが残ります。",
         "disableSelfWarning": "現在このドメイン経由で VibeTerm にアクセスしています。オフにするとこのページは直ちに接続を失います。LAN の IP アドレスまたは localhost からアクセスできることを確認してください。",
         "disableConfirm": "オフにする",
-        "renameUnavailable": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
+        "renameUnavailable": "現在の中継が書き込みを受け付けないため、名前を変更できません。",
         "renameFailed": "名前の変更に失敗しました：{{error}}",
         "domainAccessSaveFailed": "ドメインアクセス設定の保存に失敗しました：{{error}}",
         "saved": "保存しました",
@@ -10253,7 +9699,7 @@ export const I18N_RESOURCES = {
         "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
         "summary": "{{count}} 個のノードをアンインストールしました",
         "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
-        "summaryAborted": "Hub が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
+        "summaryAborted": "中継が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
         "errors": {
           "loginRequired": "先にそのノードにログインしてください。",
           "unreachable": "そのノードに接続できません。",
@@ -10278,10 +9724,8 @@ export const I18N_RESOURCES = {
         "badCertSig": "署名の検証に失敗したノードの応答を無視しました。",
         "expired": "参加コードの有効期限が切れました。新しく作成してください。",
         "noCertificateYet": "新しいノードからまだ応答がありません。しばらくしてからお試しください。",
-        "hubNotConfirmed": "ハブが確認しなかったため、何も保存されていません。もう一度お試しください。",
         "relayNotConfirmed": "中継が確認しなかったため、何も保存されていません。もう一度お試しください。",
-        "retryHub": "再試行",
-        "missingHubUrl": "ハブに公開アドレスが設定されていないため、参加コマンドを作成できません。",
+        "retry": "再試行",
         "missingRelayUrl": "中継アドレスを取得できないため、参加コマンドを作成できません。",
         "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。",
         "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
@@ -10294,7 +9738,7 @@ export const I18N_RESOURCES = {
         "confirmText": "ノード「{{name}}」を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "reasonLabel": "理由（任意）",
         "done": "削除しました",
-        "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
+        "relayFailed": "中継が確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。",
         "bulkConfirm": "次の {{count}} 個のノードを削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "bulkDone": "{{count}} 個のノードを削除しました",
@@ -10441,14 +9885,6 @@ export const I18N_RESOURCES = {
         "intro": "このマシンはまだ他のマシンと接続していません。セットアップ方法を選んでください。",
         "introDetail": "いずれの方法でも設定を保存し、VibeTerm が一度再起動します。",
         "path": {
-          "becomeHub": {
-            "title": "このマシンをハブにする",
-            "description": "他のノードがこのマシンに参加します。公開 HTTPS アドレスが必要です。"
-          },
-          "joinHub": {
-            "title": "既存のハブに参加する",
-            "description": "このマシンはノードになります。ハブが発行した参加コードが必要です。"
-          },
           "becomeRelay": {
             "title": "本機を中継にする",
             "description": "本機が各ノードの公開入口になります。公開 HTTPS アドレスが必要です。"
@@ -10458,37 +9894,17 @@ export const I18N_RESOURCES = {
             "description": "本機がノードとして既存の中継に接続します。中継アドレスとテナント ID が必要です。"
           }
         },
-        "becomeHub": {
-          "title": "このマシンをハブにする",
-          "description": "このマシンに最初のアカウントを作成し、ハブとして VibeTerm を再起動します。"
-        },
-        "joinHub": {
-          "title": "既存のハブに参加する",
-          "description": "このマシンをハブに登録し、ノードとして VibeTerm を再起動します。",
-          "passwordDescription": "Hub のアドレスとアカウントのパスワードで本機を登録し、ノードとして VibeTerm を再起動します。",
-          "useToken": "参加コードを使う",
-          "usePassword": "パスワードを使う"
-        },
         "fields": {
-          "hubPublicUrl": "ハブの公開アドレス",
-          "hubPublicUrlHint": "外部から到達できる https アドレス（例：https://vibeterm.example.com）。参加するすべてのノードから到達できる必要があります。",
           "username": "ユーザー名",
           "usernameHint": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "password": "パスワード",
           "passwordHint": "8 文字以上。サーバー側ではリセットできないため、大切に保管してください。",
           "confirmPassword": "パスワードの確認",
-          "hubUrl": "ハブのアドレス",
-          "hubUrlHint": "ハブの https アドレス（例：https://vibeterm.example.com）。",
           "urlPlaceholder": "https://vibeterm.example.com",
           "token": "参加コード",
-          "tokenHint": "ハブの「ノード」ページで作成します。有効期間は 10 分です。コード全体を貼り付けてください。",
-          "tokenPlaceholder": "ハブで作成した参加コードを貼り付け",
           "name": "ノード名",
           "nameHint": "サイドバーとノードページに表示されます。",
           "directEnable": "ダイレクト接続を有効にする",
-          "directEnableHint": "ハブを経由せず、ノード同士が直接通信します。失敗してもセットアップは続行します。",
-          "directUnsupportedHint": "{{platform}} ではダイレクト接続を利用できません。通信はハブ経由になります。",
-          "insecureLocal": "このマシンで http:// のハブを許可する",
           "insecureLocalHint": "開発・テスト用途のみです。",
           "relayPublicUrl": "中継の公開アドレス",
           "relayPublicUrlHint": "外部から到達できる https アドレス（例: https://relay.example.com）。接続するすべてのノードから到達できる必要があります。",
@@ -10516,7 +9932,6 @@ export const I18N_RESOURCES = {
         },
         "probe": {
           "probing": "一般的なポートを探索中…",
-          "resolvedHub": "ポート {{port}} で Hub を検出し、アドレスを更新しました。",
           "resolvedRelay": "ポート {{port}} で中継を検出し、アドレスを更新しました。",
           "failed": "443 および内蔵候補ポートのいずれも応答しません。ポートの開放を確認するか、ポート付きのアドレスを直接入力してください。"
         },
@@ -10528,25 +9943,19 @@ export const I18N_RESOURCES = {
           "httpsHint": "「ノード」タブで HTTPS を設定するか、このマシンの前段にリバースプロキシまたは Cloudflare Tunnel を配置してください。"
         },
         "submit": {
-          "becomeHub": "アカウントを作成して再起動",
-          "joinHub": "参加して再起動",
           "pending": "処理中…",
           "becomeRelay": "保存して再起動",
           "joinRelay": "参加して再起動"
         },
         "result": {
           "title": "セットアップ完了",
-          "becomeHubDescription": "アカウントを作成しました。VibeTerm がハブとして再起動しています。",
-          "joinDescription": "このマシンはハブに参加しました。VibeTerm が再起動しています。",
           "fingerprint": "アカウントのフィンガープリント",
-          "hubPublicUrl": "ハブの公開アドレス",
-          "hubUrl": "ハブのアドレス",
           "username": "ユーザー名",
           "directLabel": "ダイレクト接続",
           "direct": {
             "enabled": "有効",
             "skipped": "スキップ",
-            "failed": "失敗（{{error}}）——通信はハブ経由になります。後で再試行できます"
+            "failed": "失敗（{{error}}）——通信は中継経由になります。後で再試行できます"
           },
           "relayDescription": "中継を設定し、VibeTerm を再起動しています。再起動後は Web が利用できません。",
           "relayNodeDescription": "中継を設定し、中継兼ノードとして VibeTerm を再起動しています。",
@@ -10563,8 +9972,6 @@ export const I18N_RESOURCES = {
           "timeout": "60 秒以内に VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください："
         },
         "toast": {
-          "hubCreated": "ハブを作成しました。VibeTerm が再起動しています",
-          "joined": "ハブに参加しました。VibeTerm が再起動しています",
           "relayCreated": "中継を設定しました。VibeTerm を再起動しています",
           "relayJoined": "中継に参加しました。VibeTerm が再起動しています"
         },
@@ -10572,17 +9979,12 @@ export const I18N_RESOURCES = {
           "not_standalone": "このマシンは設定済みです。",
           "invalid_url": "有効な https:// アドレスを入力してください。",
           "invalid_port": "ポートは 1 から 65535 の間で指定してください。",
-          "insecure_local_required": "http:// はこのマシン上のハブにのみ使えます。「このマシンで http:// のハブを許可する」をオンにしてください。",
           "invalid_username": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "weak_password": "8 文字以上で入力してください。",
           "password_mismatch": "パスワードが一致しません。",
           "invalid_name": "1〜64 文字の名前を入力してください。",
           "user_exists": "このマシンには同じユーザー名が既に存在します。",
-          "invalid_token": "参加コードが正しくありません。ハブが発行したコードをそのまま貼り付けてください。",
-          "node_revoked": "このマシンはハブから削除されています。再度参加する前にリセットしてください。",
-          "node_exists": "このマシンの識別情報は、ハブ上で別のマシンに使われています。",
-          "hub_unreachable": "ハブに接続できません。アドレスと、ハブが動作しているかを確認してください。",
-          "join_failed": "ハブが参加要求を拒否しました。",
+          "invalid_token": "参加コードが正しくありません。中継が発行したコードをそのまま貼り付けてください。",
           "env_write_failed": "設定ファイルを書き込めなかったため、変更は行われていません。ファイルの権限を確認してからやり直してください。",
           "direct_unsupported": "このプラットフォームではダイレクト接続を利用できません。",
           "direct_download_failed": "直接接続プラグインをダウンロードできませんでした。",
@@ -10598,7 +10000,6 @@ export const I18N_RESOURCES = {
           "setup_in_progress": "別の設定が進行中です。しばらくしてからやり直してください。",
           "relay": {
             "join_failed": "中継が参加要求を拒否しました。",
-            "hub_unreachable": "中継に接続できません。アドレスと、中継が動作しているかを確認してください。",
             "node_revoked": "この機体は中継から削除されています。再度参加する前にリセットしてください。",
             "node_exists": "この機体の識別情報は、中継上で別のマシンに使われています。"
           },
@@ -10654,8 +10055,7 @@ export const I18N_RESOURCES = {
         "status": {
           "online": "オンライン",
           "offline": "オフライン",
-          "signedOut": "未サインイン",
-          "hub": "ハブ"
+          "signedOut": "未サインイン"
         },
         "version": "バージョン {{version}}",
         "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",
@@ -10999,7 +10399,7 @@ export const I18N_RESOURCES = {
           "passwordHint": "中継に接続パスワードがない場合は空欄のままにします。",
           "rootPassword": "現在のパスワード（本機アカウントのパスワード）",
           "rootPasswordHint": "参加はパスワードで署名する必要があり、パスキーでは代替できません。",
-          "migrateNotice": "接続後は本機が中継を使い、Hub には接続しなくなります。",
+          "migrateNotice": "接続後は本機がこの中継を使い、以前の上位リンクには接続しなくなります。",
           "reauthNotice": "接続パスワードが変更されました。再入力して接続を回復してください。",
           "submit": "接続",
           "submitReauth": "再接続",
@@ -11007,7 +10407,7 @@ export const I18N_RESOURCES = {
         },
         "leave": {
           "title": "中継から離脱しますか？",
-          "description": "離脱すると本機と各ノードは上位リンクを失い、中継か Hub に接続し直す必要があります。",
+          "description": "離脱すると本機と各ノードは上位リンクを失い、中継に接続し直す必要があります。",
           "confirm": "離脱",
           "done": "中継から離脱しました。"
         },

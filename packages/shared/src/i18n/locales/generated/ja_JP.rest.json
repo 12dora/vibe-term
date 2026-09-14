@@ -17,7 +17,6 @@
         },
         "address": {
           "tunnel": "トンネル",
-          "hub": "ハブ",
           "lan": "LAN アドレス",
           "tailscale": "Tailscale",
           "vpn": "VPN",
@@ -70,16 +69,13 @@
         "path": {
           "title": "接続方法を選択",
           "relay": "中継経由",
-          "hub": "Hub 経由",
           "ssh": "SSH 直結",
           "hint": {
             "relay": "中継：ノードが NAT 内にあり、公開の合流点だけが必要な場合。",
-            "hub": "Hub：アカウントとノードを集中管理する場合。",
             "ssh": "SSH 直結：本機が SSH で新しいマシンに接続し、VibeTerm の導入が不要な場合。"
           },
           "tip": {
             "relay": "中継は暗号化された通信を転送するだけで、アカウントや鍵は保持しません。NAT やファイアウォールの内側にあるマシンに向いています。",
-            "hub": "Hub は信頼の中心で、アカウントとノードの所属を保持します。固定の公開 HTTPS アドレスが必要です。",
             "ssh": "新しいマシンでは VibeTerm を動かさず、本機が SSH で接続してデバイス一覧に表示されます。"
           }
         },
@@ -87,10 +83,6 @@
           "relay": {
             "join": "既存の中継に参加",
             "host": "本機を中継にする"
-          },
-          "hub": {
-            "join": "既存の Hub に参加",
-            "host": "本機を Hub にする"
           }
         },
         "install": {
@@ -103,19 +95,15 @@
           "uplink": {
             "title": "接続情報を用意",
             "relayDescription": "新しいマシンには中継アドレス、テナント ID、中継の接続パスワードが必要です。",
-            "hubDescription": "新しいマシンには Hub のアドレスとアカウントのパスワードが必要です。",
             "relayUrl": "中継アドレス",
-            "hubUrl": "Hub のアドレス",
             "tenantId": "テナント ID",
             "relayMissing": "中継の運営者に中継アドレスと接続パスワードを問い合わせます。",
-            "hubMissing": "Hub の管理者に Hub のアドレスを問い合わせます。",
             "tenantMissing": "テナント ID は本機が中継に接続すると発行されます。",
             "link": "マルチノード連携設定を開く"
           },
           "password": {
             "title": "新しいマシンで参加",
             "relayDescription": "新しいマシンで「設定 → マルチノード連携 → 中継に参加する」を開きます。",
-            "hubDescription": "新しいマシンで「設定 → マルチノード連携 → 既存のハブに参加する」を開きます。",
             "command": "新しいマシンのターミナルで次を実行することもできます",
             "tenantPlaceholder": "<テナント ID>"
           },
@@ -180,27 +168,11 @@
             "description": "「設定 → リモートアクセス」を開き、本機に固定の公開 HTTPS 入口を用意します。",
             "link": "リモートアクセス設定を開く",
             "status": {
-              "named": "Cloudflare Tunnel を設定済みです：{{url}}（{{state}}）",
-              "quick": "現在は一時トンネル {{url}} です。アドレスが変わるため Hub のアドレスには使えません。",
-              "hubUrl": "公開アドレスがあります：{{url}}"
+              "named": "Cloudflare Tunnel を設定済みです：{{url}}（{{state}}）"
             }
-          },
-          "hub": {
-            "title": "本機を Hub にする",
-            "description": "「設定 → マルチノード連携」を開き、「このマシンをハブにする」を選択します。",
-            "warning": "Hub の公開アドレスは後から変更できません。最終的なドメインを先に確定します。",
-            "link": "マルチノード連携設定を開く",
-            "status": {
-              "self": "本機は Hub です。公開アドレス：{{url}}",
-              "node": "本機はノードとして {{url}} に参加しているため、Hub にはできません。",
-              "mismatch": "Hub の公開アドレスが現在のトンネルのホスト名と一致しません。他のマシンが接続できない可能性があります。"
-            },
-            "hintUseEntry": "前の手順のアドレス {{url}} を「ハブの公開アドレス」に入力し、最初のアカウントを作成して再起動します。"
           },
           "invite": {
             "title": "新しいマシンを参加させる",
-            "description": "新しいマシンに VibeTerm をインストールし、「既存の Hub に参加」の手順で接続します。",
-            "ready": "本機は Hub です。「既存の Hub に参加」に切り替えて続けます。",
             "gotoJoin": "参加手順を見る"
           }
         },
@@ -221,9 +193,9 @@
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
         "nameLinkedHint": "「マルチノード連携」のノード名も同時に変わります。",
-        "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
+        "nameLinkedLocked": "現在の中継が書き込みを受け付けないため、名前を変更できません。",
         "urlHint": "通知リンクと共有アドレスに使用します。",
-        "urlManagedHint": "Hub の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
+        "urlManagedHint": "中継の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
         "urlCandidates": "利用可能なアドレス"
       },
       "bellThrottle": "ベル通知の制限（秒）",
@@ -510,8 +482,6 @@
             "tunnelName": "トンネル名",
             "tunnelNamePlaceholder": "vibeterm",
             "tunnelNameHint": "空欄可（VibeTerm が生成します）。使用できるのは小文字・数字・ハイフン・アンダースコアのみです。",
-            "hubHint": "このマシンは Hub です。Hub の公開アドレスをこのホスト名に設定すると、他のノードがトンネル経由で接続できます。",
-            "hubHintLink": "マルチノード設定を開く",
             "tunnelId": "トンネル ID",
             "configured": "名前付きトンネルを作成しました。",
             "changeHint": "ホスト名やトンネルを変更するには、先に上で現在のトンネルを削除してください。",
@@ -1032,7 +1002,6 @@
         "roles": "ロール",
         "uplink": "アップリンク",
         "uplinkNone": "なし",
-        "uplinkHub": "Hub",
         "uplinkRelay": "中継",
         "uplinkUnknown": "不明",
         "attached": "接続済み",
@@ -1319,115 +1288,12 @@
       },
       "empty": "ノードがありません",
       "self": "現在",
-      "hub": "ハブ",
       "loggedIn": "サインイン済み",
-      "hubConnecting": "ハブに接続しています…",
-      "hubOffline": "ハブに接続できません。復帰するまでノードの管理はできません。",
-      "hubLoginRejected": "ハブがこのサインインを拒否しました（{{code}}）。サインインし直してからお試しください。",
-      "hubs": {
-        "active": "メインハブ",
-        "standby": "予備ハブ",
-        "writer": "現在、管理操作の書き込みを受け付けています",
-        "attached": "この入口は現在このハブに接続しています",
-        "online": "オンライン",
-        "offline": "オフライン",
-        "detail": "{{url}}｜優先度 {{priority}}｜エポック {{epoch}}｜{{state}}",
-        "standbyNotice": "メインハブに接続できないため予備ハブを使用中です。追加・名前変更・削除などの管理操作はできません。",
-        "notWriter": "予備ハブは管理操作を受け付けません。メインハブ {{url}} から操作してください。",
-        "lastAttempt": "最終試行：{{time}}",
-        "lastError": "最終エラー：{{error}}",
-        "authorization": {
-          "label": "認可：{{value}}",
-          "signed": "署名済み",
-          "env": "環境変数",
-          "self": "本機",
-          "none": "未承認"
-        },
-        "role": {
-          "promote": "メインハブにする",
-          "demote": "予備ハブにする",
-          "stateSwitching": "切り替え中",
-          "confirmPromote": "メインハブにする",
-          "confirmDemote": "予備ハブにする",
-          "confirmText": "「{{target}}」が書き込みを引き継ぎます。切り替え中は管理操作を一時的に利用できません。",
-          "confirmTextNoWriter": "「{{from}}」を予備ハブにします。書き込みを引き継げるハブはありません。",
-          "confirm": "切り替え",
-          "cancel": "キャンセル",
-          "stepAdmit": "「{{target}}」にハブ認可を発行します（認証情報が必要です）。",
-          "stepDemote": "「{{from}}」を予備ハブにします。",
-          "stepPromote": "「{{target}}」をメインハブにします。その後自動的に再起動します。",
-          "stepWait": "「{{target}}」の再起動と書き込みの引き継ぎを待ちます。",
-          "stepDemoteOnly": "「{{from}}」を予備ハブにします。その後自動的に再起動します。",
-          "warnFromUnreachable": "現在のメインハブに接続できないため、より高いエポックで隔離します。",
-          "warnNoWriter": "この後は書き込み可能なハブがなくなり、追加・名前変更・削除などの管理操作はできません。",
-          "started": "ハブの切り替えを開始しました。",
-          "done": "「{{target}}」がメインハブになりました。",
-          "failed": "ハブの切り替えに失敗しました：{{error}}",
-          "forceTitle": "バージョンが古いノードがあります",
-          "forceDescription": "続行すると、これらのノードはハブ認可レコードを同期できなくなります。",
-          "forceText": "以下のノードは {{minVersion}} より古いため、先にアップグレードが必要です：",
-          "forceAccept": "それでも続行する（古いノードは同期できなくなります）",
-          "forceConfirm": "続行する",
-          "recovery": {
-            "title": "書き込み可能なハブがありません",
-            "description": "元のメインハブは予備になり、新しいメインハブの引き継ぎは未確認です。次の操作を選んでください。",
-            "noWriter": "「{{from}}」は予備ハブになり、「{{target}}」の書き込み引き継ぎは未確認です。",
-            "retry": "対象の昇格を再試行",
-            "rollback": "ロールバック：元のメインハブを再び昇格",
-            "dismiss": "後で対応"
-          },
-          "blocked": {
-            "unknownHub": "ハブ一覧が未読み込みです。しばらくしてから再試行してください。",
-            "unknownAuth": "入口のバージョンが古く、ハブ認可の種別を読み取れません。",
-            "offline": "このハブはオフラインのため切り替えできません。",
-            "switching": "ハブの切り替えがすでに実行中です。",
-            "rowBusy": "このノードはアップグレードまたはアンインストール中です。",
-            "notWritable": "先にハブ認可の発行が必要ですが、メインハブが書き込みを受け付けません。"
-          },
-          "errors": {
-            "HUB_NOT_HUB": "対象はハブとして動作していません。",
-            "HUB_NOT_AUTHORIZED": "対象ハブは認可されていません。",
-            "HUB_EPOCH_STALE": "書き込みエポックが古くなっています。更新してから再試行してください。",
-            "HUB_ROLE_BUSY": "対象では役割の切り替えがすでに実行中です。",
-            "HUB_ROLE_UNSUPPORTED": "対象のバージョンはリモート切り替えに未対応です。先にアップグレードしてください。",
-            "INVALID_REQUEST": "リクエストが不正です。",
-            "unknown": "原因は不明です。",
-            "unreachable": "対象ハブに接続できません。",
-            "authTimeout": "ハブ認可が時間内に反映されませんでした。",
-            "resumeAdmit": "ハブ認可の発行が完了していません。切り替えをやり直してください。",
-            "restartTimeout": "対象の再起動がタイムアウトし、結果を確認できません：{{error}}",
-            "writerTimeout": "新しいメインハブが書き込みを引き継いだか確認できません。更新して確認してください。",
-            "hubsUnreachable": "ハブ一覧を取得できません。入口に一時的に接続できません。",
-            "unexpected": "切り替えが中断しました。更新して確認してください。"
-          }
-        },
-        "priority": "優先度",
-        "epoch": "書き込みエポック",
-        "caChanged": {
-          "title": "ハブの証明書が変更されました",
-          "description": "「{{hub}}」が広告する CA フィンガープリントが、このマシンに固定された値と一致しないため接続を停止しました。",
-          "advertised": "広告値",
-          "pinned": "固定値",
-          "verify": "まず該当ハブで次を実行し、フィンガープリントを照合してください：",
-          "commandLabel": "フィンガープリントを確認したら、このノードで次を実行します："
-        },
-        "notAdmitted": {
-          "title": "ハブがこのノードを受け入れていません（ハブの識別情報が再作成された可能性があります）",
-          "description": "「{{hub}}」がこのノードの証明書を拒否しました。ハブを再インストールしたり識別情報を作り直したりすると、旧証明書は使えなくなります。",
-          "commandLabel": "このノードで次を実行し、新しい参加コードまたはパスワードで参加し直します："
-        },
-        "splitBrain": {
-          "title": "アクティブなハブが 2 台検出されました（epoch が同一）。書き込みが分岐する可能性があります",
-          "description": "{{hubs}} はいずれもアクティブなハブで、書き込みエポックはどちらも {{epoch}} です。管理操作の書き込みが別々のハブに届くおそれがあります。",
-          "commandLabel": "いずれか一方のハブで次を実行し、予備ハブに降格させます："
-        }
-      },
       "machine": {
         "title": "このマシン",
         "role": "ロール",
         "roleStandalone": "スタンドアロン",
         "roleNode": "ノード",
-        "roleHub": "ハブ兼ノード",
         "roleRelay": "中継のみ（Web なし）",
         "roleRelayNode": "リレー兼ノード",
         "menu": {
@@ -1439,9 +1305,6 @@
         "status": {
           "standalone": "スタンドアロン",
           "unknown": "状態不明",
-          "hubConnected": "Hub に接続済み",
-          "hubConnectedRtt": "Hub に接続済み · {{ms}} ms",
-          "hubDisconnected": "Hub に未接続",
           "connecting": "接続中",
           "relayConnected": "中継に接続済み",
           "relayConnectedRtt": "中継に接続済み · {{ms}} ms",
@@ -1458,9 +1321,6 @@
         "localAddressUnset": "未設定",
         "localAddressHint": "公開アドレスが未設定のため、他のノードは本機に参加できません。",
         "upstream": "上位",
-        "hubDisconnected": "未接続",
-        "writerHub": "ライター：{{name}}",
-        "hubList": "すべての Hub",
         "self": "このマシン",
         "details": {
           "title": "接続の詳細",
@@ -1472,7 +1332,6 @@
           "quotaUnlimited": "無制限",
           "quotaUnlimitedValue": "{{used}}（無制限）",
           "nodeId": "本機の ID",
-          "hubs": "Hub の詳細",
           "quotaMaxFile": "1 ファイルの上限"
         },
         "direct": "直結プラグイン",
@@ -1486,7 +1345,6 @@
         "directRemove": "削除",
         "directRemoveConfirm": {
           "title": "直接接続プラグインを削除しますか？",
-          "description": "セッションはハブ経由で継続します。いつでも再インストールできます。",
           "confirm": "削除",
           "cancel": "キャンセル",
           "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
@@ -1524,22 +1382,16 @@
         "relayServiceEnrollHint": "本機はまだ自身の中継に接続していません。接続時に接続パスワードの再入力が必要です。"
       },
       "membership": {
-        "changeHub": "ハブを変更",
         "confirm": "退出して再起動",
         "cancel": "キャンセル",
-        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。退出前にハブ側でこのマシンを自動的に失効させます。",
-        "consequencesHub": "このマシンがハブです。退出するとマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。配下のノードはハブを失い、復旧には別のハブへ参加し直す必要があります。",
+        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。退出前に中継側でこのマシンを自動的に失効させます。",
         "leaveConfirm": {
-          "title": "ハブから退出しますか？",
+          "title": "マルチノード連携を退出しますか？",
           "description": "このマシンはスタンドアロン動作に戻ります。"
         },
         "switchConfirm": {
           "title": "ロールを切り替えますか？",
-          "description": "現在のハブから退出し、再起動後に「{{role}}」として設定を続けます。"
-        },
-        "changeHubConfirm": {
-          "title": "ハブを変更しますか？",
-          "description": "現在のハブから退出し、再起動後に別のハブへ参加します。参加コードは再入力が必要です。"
+          "description": "現在のマルチノード連携から退出し、再起動後に「{{role}}」として設定を続けます。"
         },
         "confirming": "本人確認中…",
         "leaving": "退出しています…",
@@ -1548,12 +1400,12 @@
         "restartTimeout": "VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "reload": "ページを再読み込み",
         "checkAgain": "もう一度確認",
-        "revokeFailed": "以前のハブでこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
-        "revokeSkipped": "以前のハブでのこのマシンの失効をスキップしました。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
-        "leaveFailed": "ハブから退出できませんでした。",
+        "revokeFailed": "以前の中継でこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前の中継のノード一覧から失効させてください。",
+        "revokeSkipped": "以前の中継でのこのマシンの失効をスキップしました。退出は続行します。後で以前の中継のノード一覧から失効させてください。",
+        "leaveFailed": "マルチノード連携から退出できませんでした。",
         "errorDetail": "{{base}}（{{detail}}）",
         "errors": {
-          "notMember": "このマシンはどのハブにも参加していません。",
+          "notMember": "このマシンはマルチノード連携に参加していません。",
           "roleMismatch": "ロールが変更されました。ページを再読み込みしてやり直してください。",
           "setupInProgress": "別の設定変更が進行中です。しばらくしてからやり直してください。",
           "envWriteFailed": "設定を書き込めませんでした。",
@@ -1571,7 +1423,6 @@
       "https": {
         "title": "HTTPS 設定",
         "description": "このマシンが HTTPS をどう提供するかを設定します。ログインとパスキーは HTTPS のアドレスでのみ利用できます。",
-        "hubUrlHint": "ハブの公開アドレスは HTTPS である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
         "nodeRoleHint": "HTTPS が必要なのは、このマシンが上位として動作する場合だけです。ノードへは上位経由でアクセスするため、設定は不要です。",
         "modeActive": "適用中",
         "save": "保存",
@@ -1648,7 +1499,7 @@
           "intro": "公開ドメインがない LAN やトンネル向けです。プライベート認証局（CA）はこのマシンに保存され、証明書の有効期間は 398 日です。",
           "sans": "証明書に含める名前",
           "sansHint": "ブラウザーで実際に入力するホスト名または IP アドレス（最大 20 件）。ここにないアドレスは証明書エラーになります。",
-          "sansPlaceholder": "hub.lan または 192.168.1.10",
+          "sansPlaceholder": "example.lan または 192.168.1.10",
           "sansAdd": "追加",
           "sansRemove": "{{name}} を削除",
           "sansEmpty": "名前がまだありません。",
@@ -1797,7 +1648,6 @@
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
         "failed": "操作に失敗しました：{{error}}",
         "selfBlocked": "本機は一時停止できません",
-        "hubBlocked": "Hub は一時停止できません",
         "forwarderBlocked": "現在このノードを使用中です",
         "batchFailed": "{{count}} 台で失敗しました",
         "busy": "一時停止または再開の処理中です。"
@@ -1823,7 +1673,7 @@
       },
       "admit": {
         "blocked": "先に参加を承認してください。",
-        "unavailable": "承認に必要な情報が Hub から届いていません。更新してからもう一度お試しください。",
+        "unavailable": "承認に必要な情報が中継から届いていません。更新してからもう一度お試しください。",
         "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
@@ -1833,17 +1683,17 @@
         "name": "名前",
         "namePlaceholder": "ノード名",
         "domainAccess": "ドメインアクセスを許可",
-        "domainAccessDescription": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され、ハブ / ノード連携サービスのみが利用できます。ローカルネットワークとこのマシンからのアクセスは影響を受けません。",
+        "domainAccessDescription": "オフにすると、公開インターネットからのウェブと API アクセスは拒否され、ノード連携サービスのみが利用できます。ローカルネットワークとこのマシンからのアクセスは影響を受けません。",
         "domainAccessLoading": "読み込み中…",
         "domainAccessFailed": "読み込みに失敗しました：{{error}}",
         "domainAccessUnsupported": "このノードのバージョンでは対応していません。",
         "domainAccessUnreachable": "ノードに現在接続できません。",
         "domainAccessHosts": "公開ドメイン：{{hosts}}",
         "disableTitle": "ドメインアクセスをオフにしますか？",
-        "disableText": "オフにすると、設定した公開ドメインではウェブ画面と API を提供しなくなり、ハブ／ノード間の通信のみが残ります。",
+        "disableText": "オフにすると、設定した公開ドメインではウェブ画面と API を提供しなくなり、ノード間の通信のみが残ります。",
         "disableSelfWarning": "現在このドメイン経由で VibeTerm にアクセスしています。オフにするとこのページは直ちに接続を失います。LAN の IP アドレスまたは localhost からアクセスできることを確認してください。",
         "disableConfirm": "オフにする",
-        "renameUnavailable": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
+        "renameUnavailable": "現在の中継が書き込みを受け付けないため、名前を変更できません。",
         "renameFailed": "名前の変更に失敗しました：{{error}}",
         "domainAccessSaveFailed": "ドメインアクセス設定の保存に失敗しました：{{error}}",
         "saved": "保存しました",
@@ -1910,7 +1760,7 @@
         "revokeFailed": "アンインストールしましたが、マルチノード接続から除外できませんでした",
         "summary": "{{count}} 個のノードをアンインストールしました",
         "summaryFailed": "{{count}} 個をアンインストール、{{failed}} 個が失敗しました（{{names}}）",
-        "summaryAborted": "Hub が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
+        "summaryAborted": "中継が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
         "errors": {
           "loginRequired": "先にそのノードにログインしてください。",
           "unreachable": "そのノードに接続できません。",
@@ -1935,10 +1785,8 @@
         "badCertSig": "署名の検証に失敗したノードの応答を無視しました。",
         "expired": "参加コードの有効期限が切れました。新しく作成してください。",
         "noCertificateYet": "新しいノードからまだ応答がありません。しばらくしてからお試しください。",
-        "hubNotConfirmed": "ハブが確認しなかったため、何も保存されていません。もう一度お試しください。",
         "relayNotConfirmed": "中継が確認しなかったため、何も保存されていません。もう一度お試しください。",
-        "retryHub": "再試行",
-        "missingHubUrl": "ハブに公開アドレスが設定されていないため、参加コマンドを作成できません。",
+        "retry": "再試行",
         "missingRelayUrl": "中継アドレスを取得できないため、参加コマンドを作成できません。",
         "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。",
         "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
@@ -1951,7 +1799,7 @@
         "confirmText": "ノード「{{name}}」を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "reasonLabel": "理由（任意）",
         "done": "削除しました",
-        "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
+        "relayFailed": "中継が確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。",
         "bulkConfirm": "次の {{count}} 個のノードを削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "bulkDone": "{{count}} 個のノードを削除しました",
@@ -2098,14 +1946,6 @@
         "intro": "このマシンはまだ他のマシンと接続していません。セットアップ方法を選んでください。",
         "introDetail": "いずれの方法でも設定を保存し、VibeTerm が一度再起動します。",
         "path": {
-          "becomeHub": {
-            "title": "このマシンをハブにする",
-            "description": "他のノードがこのマシンに参加します。公開 HTTPS アドレスが必要です。"
-          },
-          "joinHub": {
-            "title": "既存のハブに参加する",
-            "description": "このマシンはノードになります。ハブが発行した参加コードが必要です。"
-          },
           "becomeRelay": {
             "title": "本機を中継にする",
             "description": "本機が各ノードの公開入口になります。公開 HTTPS アドレスが必要です。"
@@ -2115,37 +1955,17 @@
             "description": "本機がノードとして既存の中継に接続します。中継アドレスとテナント ID が必要です。"
           }
         },
-        "becomeHub": {
-          "title": "このマシンをハブにする",
-          "description": "このマシンに最初のアカウントを作成し、ハブとして VibeTerm を再起動します。"
-        },
-        "joinHub": {
-          "title": "既存のハブに参加する",
-          "description": "このマシンをハブに登録し、ノードとして VibeTerm を再起動します。",
-          "passwordDescription": "Hub のアドレスとアカウントのパスワードで本機を登録し、ノードとして VibeTerm を再起動します。",
-          "useToken": "参加コードを使う",
-          "usePassword": "パスワードを使う"
-        },
         "fields": {
-          "hubPublicUrl": "ハブの公開アドレス",
-          "hubPublicUrlHint": "外部から到達できる https アドレス（例：https://vibeterm.example.com）。参加するすべてのノードから到達できる必要があります。",
           "username": "ユーザー名",
           "usernameHint": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "password": "パスワード",
           "passwordHint": "8 文字以上。サーバー側ではリセットできないため、大切に保管してください。",
           "confirmPassword": "パスワードの確認",
-          "hubUrl": "ハブのアドレス",
-          "hubUrlHint": "ハブの https アドレス（例：https://vibeterm.example.com）。",
           "urlPlaceholder": "https://vibeterm.example.com",
           "token": "参加コード",
-          "tokenHint": "ハブの「ノード」ページで作成します。有効期間は 10 分です。コード全体を貼り付けてください。",
-          "tokenPlaceholder": "ハブで作成した参加コードを貼り付け",
           "name": "ノード名",
           "nameHint": "サイドバーとノードページに表示されます。",
           "directEnable": "ダイレクト接続を有効にする",
-          "directEnableHint": "ハブを経由せず、ノード同士が直接通信します。失敗してもセットアップは続行します。",
-          "directUnsupportedHint": "{{platform}} ではダイレクト接続を利用できません。通信はハブ経由になります。",
-          "insecureLocal": "このマシンで http:// のハブを許可する",
           "insecureLocalHint": "開発・テスト用途のみです。",
           "relayPublicUrl": "中継の公開アドレス",
           "relayPublicUrlHint": "外部から到達できる https アドレス（例: https://relay.example.com）。接続するすべてのノードから到達できる必要があります。",
@@ -2173,7 +1993,6 @@
         },
         "probe": {
           "probing": "一般的なポートを探索中…",
-          "resolvedHub": "ポート {{port}} で Hub を検出し、アドレスを更新しました。",
           "resolvedRelay": "ポート {{port}} で中継を検出し、アドレスを更新しました。",
           "failed": "443 および内蔵候補ポートのいずれも応答しません。ポートの開放を確認するか、ポート付きのアドレスを直接入力してください。"
         },
@@ -2185,25 +2004,19 @@
           "httpsHint": "「ノード」タブで HTTPS を設定するか、このマシンの前段にリバースプロキシまたは Cloudflare Tunnel を配置してください。"
         },
         "submit": {
-          "becomeHub": "アカウントを作成して再起動",
-          "joinHub": "参加して再起動",
           "pending": "処理中…",
           "becomeRelay": "保存して再起動",
           "joinRelay": "参加して再起動"
         },
         "result": {
           "title": "セットアップ完了",
-          "becomeHubDescription": "アカウントを作成しました。VibeTerm がハブとして再起動しています。",
-          "joinDescription": "このマシンはハブに参加しました。VibeTerm が再起動しています。",
           "fingerprint": "アカウントのフィンガープリント",
-          "hubPublicUrl": "ハブの公開アドレス",
-          "hubUrl": "ハブのアドレス",
           "username": "ユーザー名",
           "directLabel": "ダイレクト接続",
           "direct": {
             "enabled": "有効",
             "skipped": "スキップ",
-            "failed": "失敗（{{error}}）——通信はハブ経由になります。後で再試行できます"
+            "failed": "失敗（{{error}}）——通信は中継経由になります。後で再試行できます"
           },
           "relayDescription": "中継を設定し、VibeTerm を再起動しています。再起動後は Web が利用できません。",
           "relayNodeDescription": "中継を設定し、中継兼ノードとして VibeTerm を再起動しています。",
@@ -2220,8 +2033,6 @@
           "timeout": "60 秒以内に VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください："
         },
         "toast": {
-          "hubCreated": "ハブを作成しました。VibeTerm が再起動しています",
-          "joined": "ハブに参加しました。VibeTerm が再起動しています",
           "relayCreated": "中継を設定しました。VibeTerm を再起動しています",
           "relayJoined": "中継に参加しました。VibeTerm が再起動しています"
         },
@@ -2229,17 +2040,12 @@
           "not_standalone": "このマシンは設定済みです。",
           "invalid_url": "有効な https:// アドレスを入力してください。",
           "invalid_port": "ポートは 1 から 65535 の間で指定してください。",
-          "insecure_local_required": "http:// はこのマシン上のハブにのみ使えます。「このマシンで http:// のハブを許可する」をオンにしてください。",
           "invalid_username": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "weak_password": "8 文字以上で入力してください。",
           "password_mismatch": "パスワードが一致しません。",
           "invalid_name": "1〜64 文字の名前を入力してください。",
           "user_exists": "このマシンには同じユーザー名が既に存在します。",
-          "invalid_token": "参加コードが正しくありません。ハブが発行したコードをそのまま貼り付けてください。",
-          "node_revoked": "このマシンはハブから削除されています。再度参加する前にリセットしてください。",
-          "node_exists": "このマシンの識別情報は、ハブ上で別のマシンに使われています。",
-          "hub_unreachable": "ハブに接続できません。アドレスと、ハブが動作しているかを確認してください。",
-          "join_failed": "ハブが参加要求を拒否しました。",
+          "invalid_token": "参加コードが正しくありません。中継が発行したコードをそのまま貼り付けてください。",
           "env_write_failed": "設定ファイルを書き込めなかったため、変更は行われていません。ファイルの権限を確認してからやり直してください。",
           "direct_unsupported": "このプラットフォームではダイレクト接続を利用できません。",
           "direct_download_failed": "直接接続プラグインをダウンロードできませんでした。",
@@ -2255,7 +2061,6 @@
           "setup_in_progress": "別の設定が進行中です。しばらくしてからやり直してください。",
           "relay": {
             "join_failed": "中継が参加要求を拒否しました。",
-            "hub_unreachable": "中継に接続できません。アドレスと、中継が動作しているかを確認してください。",
             "node_revoked": "この機体は中継から削除されています。再度参加する前にリセットしてください。",
             "node_exists": "この機体の識別情報は、中継上で別のマシンに使われています。"
           },
@@ -2311,8 +2116,7 @@
         "status": {
           "online": "オンライン",
           "offline": "オフライン",
-          "signedOut": "未サインイン",
-          "hub": "ハブ"
+          "signedOut": "未サインイン"
         },
         "version": "バージョン {{version}}",
         "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",
@@ -2656,7 +2460,7 @@
           "passwordHint": "中継に接続パスワードがない場合は空欄のままにします。",
           "rootPassword": "現在のパスワード（本機アカウントのパスワード）",
           "rootPasswordHint": "参加はパスワードで署名する必要があり、パスキーでは代替できません。",
-          "migrateNotice": "接続後は本機が中継を使い、Hub には接続しなくなります。",
+          "migrateNotice": "接続後は本機がこの中継を使い、以前の上位リンクには接続しなくなります。",
           "reauthNotice": "接続パスワードが変更されました。再入力して接続を回復してください。",
           "submit": "接続",
           "submitReauth": "再接続",
@@ -2664,7 +2468,7 @@
         },
         "leave": {
           "title": "中継から離脱しますか？",
-          "description": "離脱すると本機と各ノードは上位リンクを失い、中継か Hub に接続し直す必要があります。",
+          "description": "離脱すると本機と各ノードは上位リンクを失い、中継に接続し直す必要があります。",
           "confirm": "離脱",
           "done": "中継から離脱しました。"
         },
