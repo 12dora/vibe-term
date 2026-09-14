@@ -1,45 +1,39 @@
-# 2.5.0
+# 2.5.1
 
 _2026-09-14_
 
 ## English
 
-### Removed
+### New
 
-- **Hub mode is gone.** VibeTerm now has four roles: `standalone`, `node`, `relay`, `relay,node`. Multi-node setups connect through relays (blind forwarders) plus direct node-to-node links; there is no longer a trusted "hub" that reads your node list, key log or signalling. Everything hub-specific was removed: the `hub,node` role, `vibeterm hub …` commands, `vibeterm enroll`, the Hub setup wizard paths, the Hub uplink panel, multi-hub standby/promote/demote, hub badges, `/api/hub/*`, `/hub/uplink`, `GET /api/mesh/hubs`, `POST /api/setup/hub|join`, and the `VIBETERM_HUB_*` settings.
+- Access password on the connection details: any node in the tenant now shows the relay access password (masked, with reveal and copy) and can change it right there — enter the current password and a new one; the relay verifies the current password before rotating, and existing member tokens stay valid unless you choose to sign old links out. The node keeps its own encrypted copy after enrolling or re-entering the password, so the row reads "not recorded" on machines that never sent it.
 
 ### Changes
 
-- `vibeterm user add | passwd | totp` replaces `vibeterm hub user …` for managing the local account from the terminal.
-- `vibeterm relay join <url> --token <r3.…>` is the only way to join with a join code (it used to be `vibeterm hub join --token`). Join commands shown in the app and by `vibeterm nodes enroll` now print this form, and `--ca-fingerprint` is honoured on the token path too.
-- New `vibeterm relay trust refresh <url> --fingerprint <sha256>` re-pins the CA of a self-signed relay after it rotates its certificate; a join without a fingerprint clears any stale pin for that relay so a relay that moved to a public certificate connects again.
-- A node that belongs to no relay shows a "join a relay" prompt instead of Hub status; HTTPS settings are now available on `node` machines too.
-- Nodes that never left Hub mode keep starting: a leftover `VIBETERM_ROLES=hub,node` is read as `node` with a warning, and `vibeterm upgrade` rewrites `app.env` accordingly and removes the old `VIBETERM_HUB_*` keys (inside the upgrade transaction, with a copy kept under `backups/` and a notice printed). Such a machine no longer serves other nodes; every member must join a relay.
-- Database: hub-only tables are dropped, `node_identity` loses its `hub_url` column, and pinned CAs of self-signed relays move from `hub_trust` to `relay_ca_pins` (data is copied). Historical `admit-hub` / `retire-hub` key-log records still verify but no longer have any effect.
-- STUN source label `hub-custom` is now `relay-custom`; the relay uplink mode reported by `vibeterm relay status` is `relay` or `none`.
+- This machine → Relay: the panel is now labelled "Relay" instead of "Upstream", the role badges read "Primary / Secondary", and a relay row shows only its latency by default; the preference index, peers online, TURN probe results and path probe sit behind "More" (hover, focus or tap). The score is now explained as a preference index (lower is better) instead of a misleading millisecond value, and member probe counts say what they count (reports within 30 minutes, excluding this machine).
+- Relay operations: the TURN tile is now "TURN Server" under a "NAT Traversal" heading, shows allocations with a unit and the allocation limit (for example `12 / 49 allocations`), and its explanation, endpoint, member probe results and the exact UDP ports to open are listed beside the tile instead of underneath it.
 
 ### Fixes
 
-- Relay join now reports `relay_unreachable` (HTTP 502) instead of a hub-worded error when the relay cannot be reached.
+- Tooltips no longer wrap word by word when anchored to a narrow control.
+- Access password rotation from a node: a relay that has no access password yet refuses the change with a clear message (the operator sets the first one); rate-limited attempts return a retry hint; when the relay rejects the password this machine had stored, the stored copy is dropped and the dialog asks for the current password; the "members offline" refusal shows how many members are online.
+- The upgrade notice for leftover Hub settings no longer claims the role was rewritten when only stale `VIBETERM_HUB_*` keys were removed.
 
 ---
 
 ## 中文
 
-### 移除
+### 新增
 
-- **Hub 模式已彻底移除。** 现在只有四种角色：`standalone`、`node`、`relay`、`relay,node`。多节点互联一律经中继（盲转发）与节点直连，不再有能读取节点清单、密钥日志与信令的「Hub」上级。与之相关的一切都已删除：`hub,node` 角色、`vibeterm hub …` 命令、`vibeterm enroll`、设置向导的 Hub 路径、Hub 上联面板、多 hub 主备 / 提升 / 降级、Hub 徽标、`/api/hub/*`、`/hub/uplink`、`GET /api/mesh/hubs`、`POST /api/setup/hub|join` 以及 `VIBETERM_HUB_*` 配置。
+- 链接详情新增「接入密码」：租户内任意节点都能看到中继接入密码（掩码显示，可查看、复制）并直接修改——输入当前密码与新密码，中继核对当前密码后轮换；除非选择「踢出旧令牌」，已有成员保持在线。节点在接入或重新输入密码后会用主密钥加密留存一份，从未发送过密码的机器显示「本机未记录」。
 
 ### 变更
 
-- 终端里管理本机账号改用 `vibeterm user add | passwd | totp`（原 `vibeterm hub user …`）。
-- 用加入码加入只剩 `vibeterm relay join <url> --token <r3.…>`（原 `vibeterm hub join --token`）；界面与 `vibeterm nodes enroll` 打印的加入命令同步改为该形式，`--ca-fingerprint` 在加入码路径同样生效。
-- 新增 `vibeterm relay trust refresh <url> --fingerprint <sha256>`，自签中继换证书后用它重新钉扎 CA；不带指纹加入会清掉该中继的旧钉扎，换成公网证书的中继因此能重新连上。
-- 尚未加入任何中继的节点显示「加入中继」提示而不是 Hub 状态；`node` 角色的机器现在也能配置 HTTPS。
-- 仍停留在 Hub 模式的机器不会起不来：残留的 `VIBETERM_ROLES=hub,node` 按 `node` 读取并打一条警告，`vibeterm upgrade` 会在升级事务内改写 `app.env` 并删除旧的 `VIBETERM_HUB_*` 键（`backups/` 下留有副本并打印提示）。这台机器不再为其他节点提供服务，所有成员都需要接入中继。
-- 数据库：删除 hub 专用表，`node_identity` 去掉 `hub_url` 列，自签中继的 CA 钉扎从 `hub_trust` 迁到 `relay_ca_pins`（数据自动搬迁）。历史 `admit-hub` / `retire-hub` 密钥日志记录仍可校验但不再产生任何效果。
-- STUN 来源标识 `hub-custom` 改为 `relay-custom`；`vibeterm relay status` 报告的上联模式为 `relay` 或 `none`。
+- 多节点互联 → 本机：「上级」改为「中继」，角色徽标改为「主 / 副」；中继行默认只显示延迟，优选指数、在线对端、TURN 成员探测与路径探测折进「更多」（悬停、聚焦或点击查看）。「打分 xx ms」改为「优选指数（越低越好）」，成员探测计数说明清楚统计口径（30 分钟内上报、不含本机）。
+- 中继运营：TURN 磁贴改为「内网穿透 · TURN 服务器」，分配数带单位并显示上限（如 `12 / 49 分配`）；说明、地址、成员探测与需放行的 UDP 端口列在磁贴右侧。
 
 ### 修复
 
-- 加入中继失败时报 `relay_unreachable`（HTTP 502），不再出现 Hub 口径的错误文案。
+- tooltip 在窄锚点上不再逐字换行。
+- 节点侧修改接入密码：中继尚未设置接入密码时明确拒绝（首个密码由运营者设置）；触发限频时返回重试提示；本机留存的旧密码被中继拒绝后自动清掉并改为手输当前密码；「成员离线」的拒绝会显示在线人数。
+- 升级时若只是清理残留的 `VIBETERM_HUB_*` 键，提示不再声称改写了角色。
