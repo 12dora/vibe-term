@@ -389,7 +389,7 @@ export const EventNotifyS2CSchema = b.struct({
   timestamp: b.u64(),
 });
 
-// ========== Mesh / hub (KIND 0x0Axx) ==========
+// ========== Mesh (KIND 0x0Axx) ==========
 // 枚举走 u8 下标，不使用 b.enum（与 SITE_THEME / 协议规范一致）。
 
 export const NODE_EVENT_STATUS_ONLINE = 0;

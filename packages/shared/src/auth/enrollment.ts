@@ -2,9 +2,7 @@ import type { Authorization, Certificate } from './encoding';
 import {
   DOMAIN_AUTHORIZATION,
   DOMAIN_CERTIFICATE,
-  decodeBase64url,
   encodeAuthorization,
-  encodeBase64url,
   encodeCertificate,
   randomBytes,
 } from './encoding';
@@ -12,10 +10,6 @@ import type { RootKey } from './root-key';
 import { generateEd25519KeyPair, signEd25519, verifyEd25519 } from './root-key';
 
 export const ENROLLMENT_TTL_MS = 10 * 60 * 1000;
-export const JOIN_TOKEN_BYTES = 96;
-export const JOIN_TOKEN_CHARS = 128;
-export const JOIN_TOKEN_CA_FINGERPRINT_CHARS = 64;
-const CA_FINGERPRINT_HEX = /^[0-9a-f]{64}$/;
 
 export type PasskeySigner = {
   credentialId: string;
@@ -29,13 +23,6 @@ export type Enrollment = {
   enrollPk: Uint8Array;
   authorizationBytes: Uint8Array;
   authorizationSig: Uint8Array;
-};
-
-export type JoinToken = {
-  enrollSk: Uint8Array;
-  rootPublicKey: Uint8Array;
-  keyLogHeadHash: Uint8Array;
-  caFingerprint?: string;
 };
 
 export type NodeCertificate = {
@@ -77,68 +64,6 @@ export async function createEnrollment(
     enrollPk: enroll.publicKey,
     authorizationBytes,
     authorizationSig,
-  };
-}
-
-function normalizeCaFingerprint(caFingerprint: string): string {
-  const fingerprint = caFingerprint.toLowerCase();
-  if (
-    fingerprint.length !== JOIN_TOKEN_CA_FINGERPRINT_CHARS ||
-    !CA_FINGERPRINT_HEX.test(fingerprint)
-  ) {
-    throw new Error('CA fingerprint must be 64 hex characters');
-  }
-  return fingerprint;
-}
-
-export function encodeJoinToken(
-  enrollSk: Uint8Array,
-  rootPublicKey: Uint8Array,
-  keyLogHeadHash: Uint8Array,
-  caFingerprint?: string | null
-): string {
-  if (enrollSk.length !== 32 || rootPublicKey.length !== 32 || keyLogHeadHash.length !== 32) {
-    throw new Error('join token fields must each be 32 bytes');
-  }
-  const raw = new Uint8Array(JOIN_TOKEN_BYTES);
-  raw.set(enrollSk, 0);
-  raw.set(rootPublicKey, 32);
-  raw.set(keyLogHeadHash, 64);
-  const token = encodeBase64url(raw);
-  raw.fill(0);
-  if (token.length !== JOIN_TOKEN_CHARS) {
-    throw new Error(`join token must be ${JOIN_TOKEN_CHARS} chars`);
-  }
-  if (!caFingerprint) {
-    return token;
-  }
-  return `${token}.${normalizeCaFingerprint(caFingerprint)}`;
-}
-
-export function decodeJoinToken(token: string): JoinToken {
-  const dot = token.indexOf('.');
-  let body = token;
-  let caFingerprint: string | undefined;
-  if (dot !== -1) {
-    const rest = token.slice(dot + 1);
-    if (rest.includes('.')) {
-      throw new Error('join token must have at most one CA fingerprint segment');
-    }
-    if (rest.length !== JOIN_TOKEN_CA_FINGERPRINT_CHARS || !CA_FINGERPRINT_HEX.test(rest)) {
-      throw new Error('join token CA fingerprint must be 64 lowercase hex characters');
-    }
-    caFingerprint = rest;
-    body = token.slice(0, dot);
-  }
-  const raw = decodeBase64url(body);
-  if (raw.length !== JOIN_TOKEN_BYTES) {
-    throw new Error(`join token must decode to ${JOIN_TOKEN_BYTES} bytes`);
-  }
-  return {
-    enrollSk: raw.slice(0, 32),
-    rootPublicKey: raw.slice(32, 64),
-    keyLogHeadHash: raw.slice(64, 96),
-    ...(caFingerprint ? { caFingerprint } : {}),
   };
 }
 

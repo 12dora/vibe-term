@@ -70,7 +70,7 @@ export const KIND_NOTIFY_EVENT = 0x0803;
 export const KIND_CANONICAL_COMMAND = 0x0901;
 export const KIND_CANONICAL_EVENT = 0x0902;
 
-// ========== Mesh / hub (0x0A00-0x0AFF) ==========
+// ========== Mesh (0x0A00-0x0AFF) ==========
 export const KIND_NODE_EVENT = 0x0a01;
 export const KIND_RTC_SIGNAL = 0x0a02;
 export const KIND_CARRIER_SWITCH = 0x0a03;

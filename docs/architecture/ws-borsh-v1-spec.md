@@ -185,7 +185,7 @@ export const EnvelopeSchema = b.struct({
 
 协商能力：`canonical-state-v1` 与 `canonical-state-v1.1`。客户端只有在 `HELLO_S2C.capabilities` 包含对应值时才能发送该级别的 canonical command；1.1.23 起两端都要求 v1.1（见下文「1.1.23 移除的 kind」的版本门）。
 
-### Mesh / hub（0x0A00-0x0AFF）
+### Mesh（0x0A00-0x0AFF）
 
 | kind | 名称 | 方向 | 说明 |
 |---:|---|---|---|

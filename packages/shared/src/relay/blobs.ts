@@ -4,7 +4,7 @@ const te = new TextEncoder();
 const td = new TextDecoder();
 const HEX_16 = /^[0-9a-f]{32}$/;
 
-/** relay 流的 OPEN 首帧与 hub 一致：`{"to":"<nodeId>"}`。 */
+/** relay 流的 OPEN 首帧：`{"to":"<nodeId>"}`。 */
 export const RELAY_OPEN_STREAM_MAX_BYTES = 256;
 export const RELAY_STATUS_BLOB_MAX_BYTES = 32 * 1024;
 export const RELAY_RTC_BLOB_MAX_BYTES = 16 * 1024;

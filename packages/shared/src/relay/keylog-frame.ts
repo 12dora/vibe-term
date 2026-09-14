@@ -3,7 +3,7 @@ import { type RelayEnvelope, openEnvelope, sealEnvelope } from './tenant-cipher'
 
 /**
  * 中继密钥日志块的明文帧。plan 1.4 字面写的是 `recordBytes ‖ sig`，但 passkey 签名是变长的
- * Borsh 断言，拼接后无法切分；因此统一用与 hub `key.log.res` 同形的 `{bytes, sig}` b64url JSON。
+ * Borsh 断言，拼接后无法切分；因此统一用与 mesh `key.log.res` 同形的 `{bytes, sig}` b64url JSON。
  * 节点侧（`apps/gateway/src/mesh/relay-key-log-sync.ts`）与 CLI 侧
  * （`packages/app/src/lib/relay-keylog.ts`）共用本模块，两侧逐字节一致。
  */

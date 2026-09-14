@@ -1,8 +1,8 @@
 import type { RelayQuota } from './codec';
 import type { RelayLinkErrorCode } from './link-error';
 
-/** 本机 uplink 的形态：接中继 / 接 hub / 都没有。 */
-export type RelayUplinkMode = 'relay' | 'hub' | 'none';
+/** 本机 uplink 的形态：接中继 / 都没有。 */
+export type RelayUplinkMode = 'relay' | 'none';
 
 export type RelayAttachRole = 'primary' | 'secondary';
 

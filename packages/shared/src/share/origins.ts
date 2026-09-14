@@ -3,10 +3,9 @@ import type { ShareOriginCandidate, ShareOriginKind } from './types';
 const KIND_PRIORITY: Record<ShareOriginKind, number> = {
   custom: 0,
   site: 1,
-  hub: 2,
-  relay: 3,
-  tunnel: 4,
-  ip: 5,
+  relay: 2,
+  tunnel: 3,
+  ip: 4,
 };
 
 const IPV4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;

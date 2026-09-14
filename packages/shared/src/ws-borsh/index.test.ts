@@ -734,7 +734,7 @@ describe('errors', () => {
   });
 });
 
-describe('mesh / hub 协议消息', () => {
+describe('mesh 协议消息', () => {
   it('KIND_NODE_EVENT / RTC_SIGNAL / CARRIER_SWITCH / ACK / ENROLL_REDEEMED 有效且可读名', () => {
     expect(KIND_NODE_EVENT).toBe(0x0a01);
     expect(KIND_RTC_SIGNAL).toBe(0x0a02);
