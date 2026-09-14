@@ -18,40 +18,31 @@ import {
 } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { CliError, NotFoundError, UsageError } from '../core/errors';
+import { renameNodeViaKeyLog, revokeNode } from '../core/nodes-keylog';
+import { printPortsTable } from '../core/nodes-ports';
 import {
-  fetchHubs,
+  appendRelayMetaKey,
+  attachedRelayUrl,
+  createRelayEnrollment,
+  detectRelayUplink,
+  fetchRelayStatus,
+  findRelayAllowTarget,
+  isRelayUplink,
+  resolveExcludeNodeIds,
+  resolveNodeHexId,
+} from '../core/nodes-relay';
+import {
   findAdminNode,
   findMeshNode,
-  hubUrlByNodeId,
-  isTrustedHubUrl,
+  isTrustedPublicUrl,
   listListedNodes,
   listMeshNodesDetailed,
   listedOnline,
   nodeAddressOf,
   passwordJoinCommand,
   reachOf,
-  resolveHubNodeId,
   roleOf,
-} from '../core/nodes-hub';
-import {
-  admitPendingNode,
-  createSignedEnrollment,
-  renameNodeViaKeyLog,
-  revokeNode,
-} from '../core/nodes-keylog';
-import { printPortsTable } from '../core/nodes-ports';
-import {
-  type MetaKeyResult,
-  appendRelayMetaKey,
-  appendRelayMetaKeyWithRoot,
-  attachedRelayUrl,
-  createRelayEnrollment,
-  detectRelayUplink,
-  fetchRelayStatus,
-  findRelayAllowTarget,
-  resolveExcludeNodeIds,
-  resolveNodeHexId,
-} from '../core/nodes-relay';
+} from '../core/nodes-roster';
 import {
   fetchUpgradeLatest,
   parseUpgradeInvocation,
@@ -60,7 +51,6 @@ import {
   uninstallPath,
   upgradeExitCode,
 } from '../core/nodes-upgrade';
-import { hubRole } from './nodes-hub-role';
 import { op, upgradeCancel } from './nodes-ops';
 import { ports } from './nodes-ports';
 import { relay } from './nodes-relay';
@@ -87,22 +77,18 @@ const USAGE = [
   'Subcommands:',
   '  ls                         list mesh nodes',
   '  show <node>                full projection (directFailure, dcBreaker, endpoints, ports)',
-  '  hubs                       GET /api/mesh/hubs',
-  '  hub-role promote|demote|standby <node> [--yes] [--wait] [--force]',
-  '                             POST /n/<hub>/api/hub/role; admit-hub when unsigned',
-  '  rename <node> <name>       hub: POST /n/<hub>/api/hub/nodes/:id/rename; relay: keylog rename-node',
+  '  rename <node> <name>       signed keylog rename-node (needs a relay uplink)',
   '  relay ls                   GET /api/mesh/relay/status',
   '  relay switch <url>         POST /api/mesh/relay/switch (honours --node)',
   '  relay unpin                POST /api/mesh/relay/unpin (honours --node)',
   '  relay rm <url> [--yes]     remove/prepare + keylog set-relays',
   '  relay readmit [--yes]      GET …/readmit/prepare + keylog readmit-node',
   '  ports <node> [--probe]     print MeshNode.ports; --probe POST …/ports/probe first',
-  '  allow <node>               admit a pending hub node, else enable public-domain access',
-  '                             relay: admit-node + meta-key, or wrap K_meta for a pending member',
+  '  allow <node>               wrap K_meta for a pending member, else enable public-domain access',
   '  disallow <node>            disable public-domain access on the node',
   '  revoke <node> [--reason] [--yes]   signed key-log revoke-node (needs VIBETERM_PASSWORD)',
   '  enroll [--ttl 10m] [--password] [--name]',
-  '                             hub: /api/hub/enrollments; relay: r3. join token via /api/mesh/relay/*',
+  '                             r3. join token via /api/mesh/relay/* (needs a relay uplink)',
   '  meta-key admit <node>      wrap current K_meta for a node (relay; VIBETERM_PASSWORD or TTY)',
   '  meta-key rotate [--exclude <node>...]',
   '                             rotate K_meta, excluding nodes (relay)',
@@ -116,8 +102,6 @@ const USAGE = [
   '--json shapes:',
   '  ls          { nodes: (MeshNode & { status: "admitted"|"pending"; address: string })[] }',
   '  show        MeshNode & { address: string }',
-  '  hubs        MeshHubsResponse',
-  '  hub-role    { kind, operationId, verb, node, admitted?, phase?, writerHubId?, error? }',
   '  rename      { ok, id, name }',
   '  relay ls    RelayTenantStatus',
   '  relay switch|rm|readmit|unpin  result',
@@ -139,12 +123,25 @@ function rtt(node: MeshNode): string {
   return typeof node.rttMs === 'number' ? String(Math.round(node.rttMs)) : '-';
 }
 
+const NODE_NOT_ON_RELAY = 'NODE_NOT_ON_RELAY';
+const RELAY_JOIN_HINT =
+  'run: vibeterm relay join <url> --token <r3> or vibeterm relay join <url> --tenant <id> --password';
+
+function requireRelayUplink(isRelay: boolean): void {
+  if (isRelay) return;
+  throw new CliError(
+    `this node is not attached to a relay (${NODE_NOT_ON_RELAY})`,
+    1,
+    RELAY_JOIN_HINT,
+    NODE_NOT_ON_RELAY
+  );
+}
+
 const ls: SubHandler = async (ctx, _flags, positionals) => {
   rejectExtra(positionals, 0);
-  const hubUrls = await hubUrlByNodeId(ctx);
   const nodes = (await listListedNodes(ctx)).map((row) => ({
     ...row,
-    address: nodeAddressOf(row, hubUrls),
+    address: nodeAddressOf(row),
   }));
   emit(ctx, { nodes }, () => {
     ctx.out.table(nodes, [
@@ -166,7 +163,7 @@ const show: SubHandler = async (ctx, _flags, positionals) => {
   const ref = requireArg(positionals, 0, 'node');
   rejectExtra(positionals, 1);
   const node = await findMeshNode(ctx, ref);
-  const address = nodeAddressOf(node, await hubUrlByNodeId(ctx));
+  const address = nodeAddressOf(node);
   emit(ctx, { ...node, address }, () => {
     ctx.out.line(`name           ${node.name}`);
     ctx.out.line(`id             ${node.id}`);
@@ -186,43 +183,16 @@ const show: SubHandler = async (ctx, _flags, positionals) => {
   });
 };
 
-const hubs: SubHandler = async (ctx, _flags, positionals) => {
-  rejectExtra(positionals, 0);
-  const payload = await fetchHubs(ctx);
-  emit(ctx, payload, () => {
-    ctx.out.line(`writerHubId  ${dash(payload.writerHubId)}`);
-    ctx.out.line(
-      `attached     ${payload.attached ? `${payload.attached.publicUrl} (${dash(payload.attached.mode)})` : '-'}`
-    );
-    ctx.out.table(payload.hubs, [
-      { header: 'NODE', value: (row) => dash(row.nodeId) },
-      { header: 'URL', value: (row) => row.publicUrl },
-      { header: 'MODE', value: (row) => dash(row.mode) },
-      { header: 'AUTH', value: (row) => dash(row.authorization) },
-    ]);
-  });
-};
-
 const rename: SubHandler = async (ctx, _flags, positionals) => {
   const ref = requireArg(positionals, 0, 'node');
   const name = requireArg(positionals, 1, 'name');
   rejectExtra(positionals, 2);
+  requireRelayUplink(await detectRelayUplink(ctx));
   const node = await findMeshNode(ctx, ref);
-  if (await detectRelayUplink(ctx)) {
-    const result = await renameNodeViaKeyLog(ctx, node.id, name);
-    emit(ctx, { ok: true, id: node.id, name, result }, () =>
-      ctx.out.line(`renamed ${node.id} → ${name}`)
-    );
-    return;
-  }
-  const hubId = await resolveHubNodeId(ctx);
-  const result = await ctx.http.json(
-    hubId,
-    'POST',
-    `/api/hub/nodes/${encodeURIComponent(node.id)}/rename`,
-    { name }
+  const result = await renameNodeViaKeyLog(ctx, node.id, name);
+  emit(ctx, { ok: true, id: node.id, name, result }, () =>
+    ctx.out.line(`renamed ${node.id} → ${name}`)
   );
-  emit(ctx, result, () => ctx.out.line(`renamed ${node.id} → ${name}`));
 };
 
 async function setDomainAccess(
@@ -245,23 +215,6 @@ const allow: SubHandler = async (ctx, _flags, positionals) => {
   rejectExtra(positionals, 1);
   const relay = await detectRelayUplink(ctx);
   const target = await findRelayAllowTarget(ctx, ref, relay);
-  if (target.hub?.admission_status === 'pending') {
-    let metaKey: MetaKeyResult | undefined;
-    const result = await admitPendingNode(ctx, target.hub, {
-      after: relay
-        ? async (root, mode) => {
-            metaKey = await appendRelayMetaKeyWithRoot(ctx, root, mode, {
-              op: 'admit',
-              node_id: target.id,
-            });
-          }
-        : undefined,
-    });
-    emit(ctx, { node: target.id, action: 'admit', result, ...(metaKey ? { metaKey } : {}) }, () =>
-      ctx.out.line(`admitted pending node ${target.name} (${target.id})`)
-    );
-    return;
-  }
   if (relay) {
     const pending = new Set((await listMeshNodesDetailed(ctx)).pendingMemberIds);
     if (pending.has(target.id) || !target.mesh) {
@@ -320,34 +273,22 @@ function printEnrollment(
 const enroll: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 0);
   const ttl = parseDurationMs(flagString(flags, 'ttl') ?? '10m');
-  const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
   const status = await fetchRelayStatus(ctx);
+  requireRelayUplink(isRelayUplink(status));
   const relayUrl = attachedRelayUrl(status);
-  const publicUrl =
-    (status?.mode === 'relay' && relayUrl && isTrustedHubUrl(relayUrl) ? relayUrl : null) ??
-    mode?.hubPublicUrl ??
-    null;
+  const publicUrl = relayUrl && isTrustedPublicUrl(relayUrl) ? relayUrl : null;
   if (flagBool(flags, 'password')) {
     if (!publicUrl)
-      throw new CliError('hub public url is unknown; cannot print a password join command');
+      throw new CliError(
+        'relay public url is unknown or not https; cannot print a password join command'
+      );
     const command = passwordJoinCommand(publicUrl);
     emit(ctx, { mode: 'password', joinCommand: command, publicUrl }, () => ctx.out.line(command));
     return;
   }
-  if (status?.mode === 'relay') {
-    printEnrollment(
-      ctx,
-      await createRelayEnrollment(ctx, { ttlMs: ttl, name: flagString(flags, 'name') })
-    );
-    return;
-  }
   printEnrollment(
     ctx,
-    await createSignedEnrollment(ctx, {
-      ttlMs: ttl,
-      name: flagString(flags, 'name'),
-      hubPublicUrl: publicUrl,
-    })
+    await createRelayEnrollment(ctx, { ttlMs: ttl, name: flagString(flags, 'name') })
   );
 };
 
@@ -442,7 +383,6 @@ const uninstall: SubHandler = async (ctx, flags, positionals) => {
 
 const PAUSE_ERROR_TEXT: Record<string, string> = {
   CANNOT_PAUSE_SELF: 'cannot pause this machine',
-  CANNOT_PAUSE_HUB: 'cannot pause a hub node',
 };
 
 function rethrowPauseError(error: unknown): never {
@@ -490,7 +430,6 @@ const rtcConfig: SubHandler = async (ctx, _flags, positionals) => {
 const HANDLERS: Record<string, SubHandler> = {
   ls,
   show,
-  hubs,
   rename,
   allow,
   disallow,
@@ -502,7 +441,6 @@ const HANDLERS: Record<string, SubHandler> = {
   pause,
   resume,
   'rtc-config': rtcConfig,
-  'hub-role': hubRole,
   relay,
   ports,
   op,

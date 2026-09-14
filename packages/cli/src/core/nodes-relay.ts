@@ -18,7 +18,6 @@ import { flagStrings } from './args';
 import type { AuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError } from './errors';
-import { type AdminNode, findAdminNode, isTrustedHubUrl, joinCommand } from './nodes-hub';
 import {
   type CreatedEnrollmentResult,
   type KeyLogAppendResult,
@@ -28,6 +27,7 @@ import {
   signRecord,
   withRootKey,
 } from './nodes-keylog';
+import { type AdminNode, findAdminNode, isTrustedPublicUrl, joinCommand } from './nodes-roster';
 
 export type { RelayUplinkMode };
 
@@ -338,7 +338,7 @@ export async function createRelayEnrollment(
         expiresAt: created.expiresAt ?? created.expires_at ?? now + options.ttlMs,
         joinToken: token,
         joinCommand:
-          publicUrl && isTrustedHubUrl(publicUrl)
+          publicUrl && isTrustedPublicUrl(publicUrl)
             ? joinCommand(publicUrl, token, options.name)
             : null,
         publicUrl,
@@ -354,7 +354,7 @@ export async function createRelayEnrollment(
 
 export function relayAllowHint(ref: string): string {
   return [
-    'relay meshes have no /api/hub/nodes pending list;',
+    'this id is not in the mesh roster;',
     `if ${ref} is already admitted, run: vibeterm nodes meta-key admit <node-id>`,
   ].join(' ');
 }
@@ -370,7 +370,7 @@ export async function findRelayAllowTarget(
     if (!(error instanceof NotFoundError)) throw error;
     const trimmed = ref.trim();
     if (relay && NODE_ID_PATTERN.test(trimmed)) {
-      return { id: trimmed, name: trimmed, mesh: null, hub: null };
+      return { id: trimmed, name: trimmed, mesh: null };
     }
     if (relay) throw new NotFoundError(`unknown node: ${ref}`, relayAllowHint(ref));
     throw error;

@@ -390,7 +390,7 @@ describe('vibeterm settings', () => {
       }),
       'POST /api/auth/keylog': () => {
         keylog = true;
-        return { ok: true, hubAck: true };
+        return { ok: true };
       },
     });
     await expect(settings.run(cli, ['totp', 'enable', '--code', '000000'])).rejects.toBeInstanceOf(

@@ -115,7 +115,7 @@ async function otherTargets(
 
 /**
  * 与浏览器的 `loginSelf` / `verifySelfPublicKey` 同一道检查：challenge 里 entry 当场出示的
- * 公钥，必须与 hub 签发、记在 `/api/mesh/nodes` 里的那把逐字节一致。对不上说明入口被掉包或
+ * 公钥，必须与账户根钥签发、记在 `/api/mesh/nodes` 里的那把逐字节一致。对不上说明入口被掉包或
  * 配置错乱——立刻丢掉刚拿到的会话，不让用户带着一个不可信的会话继续。
  */
 function verifySelfPublicKey(

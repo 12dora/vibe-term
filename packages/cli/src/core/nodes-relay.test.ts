@@ -70,7 +70,7 @@ async function ctx(
 describe('relay status helpers', () => {
   test('isRelayUplink only matches mode=relay', () => {
     expect(isRelayUplink(null)).toBe(false);
-    expect(isRelayUplink({ mode: 'hub' })).toBe(false);
+    expect(isRelayUplink({ mode: 'none' })).toBe(false);
     expect(isRelayUplink({ mode: 'relay' })).toBe(true);
   });
 
@@ -157,7 +157,7 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
     await expect(nodes.run(cli, ['meta-key', 'admit'])).rejects.toBeInstanceOf(UsageError);
   });
 
-  test('enroll on relay hits join-material + relay enrollments, not hub', async () => {
+  test('enroll on relay hits join-material + relay enrollments', async () => {
     const hits: string[] = [];
     process.env.VIBETERM_PASSWORD = 'x';
     const { ctx: cli } = await ctx({
@@ -176,10 +176,6 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
           relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32 }],
         };
       },
-      'POST /api/hub/enrollments': () => {
-        hits.push('hub-enroll');
-        return { id: 'nope' };
-      },
       'POST /api/mesh/relay/enrollments': () => {
         hits.push('relay-enroll');
         return { id: 'e1', expiresAt: 1 };
@@ -188,50 +184,42 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
     await expect(nodes.run(cli, ['enroll'])).rejects.toBeInstanceOf(CliError);
     expect(hits).toContain('status');
     expect(hits).toContain('join-material');
-    expect(hits).not.toContain('hub-enroll');
     expect(hits).not.toContain('relay-enroll');
   });
 
-  test('enroll on hub does not mint r3 material', async () => {
+  test('enroll without a relay uplink is NODE_NOT_ON_RELAY', async () => {
     const hits: string[] = [];
     process.env.VIBETERM_PASSWORD = 'x';
     const { ctx: cli } = await ctx({
-      'GET /api/auth/mode': () => {
-        hits.push('mode');
-        return { mode: 'mesh', nodeId: NODE, hubPublicUrl: 'https://hub.example' };
-      },
       'GET /api/mesh/relay/status': () => {
         hits.push('status');
-        return { mode: 'hub' };
+        return { mode: 'none' };
       },
       'GET /api/mesh/relay/join-material': () => {
         hits.push('join-material');
         return { logKey: KEY32, relays: [] };
       },
     });
-    await expect(nodes.run(cli, ['enroll'])).rejects.toBeInstanceOf(CliError);
+    const error = (await nodes.run(cli, ['enroll']).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBe('NODE_NOT_ON_RELAY');
     expect(hits).toContain('status');
     expect(hits).not.toContain('join-material');
   });
 
   test('enroll --password on relay uses the attached relay url', async () => {
     const { ctx: cli, stdout } = await ctx({
-      'GET /api/auth/mode': () => ({
-        mode: 'mesh',
-        nodeId: NODE,
-        hubPublicUrl: 'https://hub.example',
-      }),
       'GET /api/mesh/relay/status': () => ({
         mode: 'relay',
-        relays: [{ url: 'https://tmexhub-sh.example', attached: true }],
+        relays: [{ url: 'https://relay-sh.example', attached: true }],
       }),
     });
     await nodes.run(cli, ['enroll', '--password']);
     const payload = JSON.parse(stdout.text()) as { joinCommand: string; publicUrl: string };
-    expect(payload.publicUrl).toBe('https://tmexhub-sh.example');
-    expect(payload.joinCommand).toContain('vibeterm hub join');
+    expect(payload.publicUrl).toBe('https://relay-sh.example');
+    expect(payload.joinCommand).toContain('vibeterm relay join');
     expect(payload.joinCommand).toContain('--password');
-    expect(payload.joinCommand).toContain('https://tmexhub-sh.example');
+    expect(payload.joinCommand).toContain('https://relay-sh.example');
   });
 
   test('allow on a relay pendingMemberId wraps K_meta instead of domain-access', async () => {
@@ -243,14 +231,13 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
         return { mode: 'relay' };
       },
       'GET /api/mesh/nodes': () => ({
-        nodes: [meshNode({ isHub: false })],
+        nodes: [meshNode()],
         pendingMemberIds: [NODE],
       }),
       'GET /api/auth/mode': () => {
         hits.push('mode');
         return { mode: 'mesh', nodeId: NODE };
       },
-      'GET /api/hub/nodes': () => ({ nodes: [] }),
       [`PATCH /n/${NODE}/api/system/domain-access`]: () => {
         hits.push('domain-access');
         return { allowed: true };
@@ -267,8 +254,7 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
     const { ctx: cli } = await ctx({
       'GET /api/mesh/relay/status': () => ({ mode: 'relay' }),
       'GET /api/mesh/nodes': () => ({ nodes: [meshNode()], pendingMemberIds: [] }),
-      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE, hubNodeId: 'self' }),
-      'GET /api/hub/nodes': () => ({ nodes: [] }),
+      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
       [`PATCH /n/${NODE}/api/system/domain-access`]: (_url, init) => {
         body = String(init?.body);
         return { allowed: true };
@@ -375,10 +361,6 @@ describe('signed relay commands', () => {
           ],
         };
       },
-      'POST /api/hub/enrollments': () => {
-        hits.push('hub-enroll');
-        return { id: 'nope' };
-      },
     });
     await nodes.run(cli, ['enroll', '--name', 'studio']);
     const payload = JSON.parse(stdout.text()) as {
@@ -394,7 +376,7 @@ describe('signed relay commands', () => {
     expect(payload.caFingerprint).toBeNull();
     expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBeUndefined();
     expect(payload.joinCommand).toBe(
-      `vibeterm hub join 'https://relay.example' --token ${payload.joinToken} --name studio`
+      `vibeterm relay join 'https://relay.example' --token ${payload.joinToken} --name studio`
     );
     expect(payload.publicUrl).toBe('https://relay.example');
     expect(hits).toEqual(['relay-enroll']);
@@ -534,68 +516,31 @@ describe('signed relay commands', () => {
     expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBe(fromMaterial);
   });
 
-  test('meta-key rotate --exclude rejects a name that maps to different hub and mesh ids', async () => {
-    const signed = await signingMode();
-    process.env.VIBETERM_PASSWORD = signed.password;
-    const { ctx: cli } = await ctx({
-      'GET /api/auth/mode': () => ({ ...signed.json, hubNodeId: 'self' }),
-      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: NODE, name: 'office' })] }),
-      'GET /api/hub/nodes': () => ({
-        nodes: [{ id: PEER, name: 'office', admission_status: 'pending' }],
-      }),
-    });
-    const error = await nodes
-      .run(cli, ['meta-key', 'rotate', '--exclude', 'office'])
-      .catch((err) => err);
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as UsageError).hint).toContain('32-hex');
-  });
-
-  test('meta-key rotate --exclude accepts a name present in both rosters with the same id', async () => {
+  test('meta-key rotate --exclude accepts a mesh roster name', async () => {
     const signed = await signingMode();
     process.env.VIBETERM_PASSWORD = signed.password;
     let prepare: unknown;
     const { ctx: cli, stdout } = await ctx({
-      'GET /api/auth/mode': () => ({ ...signed.json, hubNodeId: 'self' }),
+      'GET /api/auth/mode': () => signed.json,
       'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: PEER, name: 'wait-box' })] }),
-      'GET /api/hub/nodes': () => ({
-        nodes: [{ id: PEER, name: 'wait-box', admission_status: 'admitted' }],
-      }),
       'POST /api/mesh/relay/meta-key/prepare': (_url, init) => {
         prepare = JSON.parse(String(init?.body));
         return { payload: PAYLOAD, epoch: 8 };
       },
       'GET /api/auth/keylog/head': () => ({ seq: 1, hash: HASH }),
-      'POST /api/auth/keylog': () => ({ ok: true, hubAck: true, seq: 2 }),
+      'POST /api/auth/keylog': () => ({ ok: true, seq: 2 }),
     });
     await nodes.run(cli, ['meta-key', 'rotate', '--exclude', 'wait-box']);
     expect(prepare).toEqual({ op: 'rotate', exclude: [PEER] });
     expect(JSON.parse(stdout.text())).toEqual({ op: 'rotate', epoch: 8, seq: 2 });
   });
 
-  test('relay allow rejects a name that maps to different hub and mesh ids', async () => {
-    const { ctx: cli } = await ctx({
-      'GET /api/mesh/relay/status': () => ({ mode: 'relay' }),
-      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE, hubNodeId: 'self' }),
-      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: NODE, name: 'office' })] }),
-      'GET /api/hub/nodes': () => ({
-        nodes: [{ id: PEER, name: 'office', admission_status: 'pending' }],
-      }),
-    });
-    const error = await nodes.run(cli, ['allow', 'office']).catch((err) => err);
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as UsageError).hint).toContain('32-hex');
-  });
-
-  test('relay allow accepts a name present in both rosters with the same id', async () => {
+  test('relay allow accepts a mesh roster name', async () => {
     let body = '';
     const { ctx: cli } = await ctx({
       'GET /api/mesh/relay/status': () => ({ mode: 'relay' }),
       'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: NODE, name: 'office' })] }),
-      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE, hubNodeId: 'self' }),
-      'GET /api/hub/nodes': () => ({
-        nodes: [{ id: NODE, name: 'office', admission_status: 'admitted' }],
-      }),
+      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
       [`PATCH /n/${NODE}/api/system/domain-access`]: (_url, init) => {
         body = String(init?.body);
         return { allowed: true };

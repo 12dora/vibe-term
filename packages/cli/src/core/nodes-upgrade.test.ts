@@ -59,14 +59,13 @@ describe('nodes-upgrade batch policy', () => {
     ).toBe(true);
   });
 
-  test('orderUpgradeGroups is others → hub → self', () => {
+  test('orderUpgradeGroups is others → self', () => {
     const self = row({ id: NODE, name: 'self' });
-    const hub = row({ id: 'c'.repeat(32), name: 'hub', isHub: true });
+    const first = row({ id: 'c'.repeat(32), name: 'first' });
     const other = row({ id: 'b'.repeat(32), name: 'peer' });
-    const groups = orderUpgradeGroups([self, hub, other], NODE);
+    const groups = orderUpgradeGroups([self, first, other], NODE);
     expect(groups.map((group) => group.map((row) => row.name))).toEqual([
-      ['peer'],
-      ['hub'],
+      ['first', 'peer'],
       ['self'],
     ]);
   });
@@ -143,7 +142,7 @@ describe('nodes-upgrade entry cookies', () => {
   });
 
   test('poll surfaces aggregated delivery error verbatim', async () => {
-    const error = 'github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed';
+    const error = 'gh(node): slow 12KB/3s; push: timeout; gh(node, forced): fetch failed';
     const { ctx } = await seeded(async () =>
       jsonResponse({ state: 'idle', targetVersion: null, error })
     );

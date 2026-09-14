@@ -3,7 +3,7 @@
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { type SubHandler, confirmOrYes, emit, rejectExtra, requireArg } from '../core/cmd';
 import { CliError, UsageError } from '../core/errors';
-import { findMeshNode } from '../core/nodes-hub';
+import { findMeshNode } from '../core/nodes-roster';
 import { cancelNodeUpgrade } from '../core/nodes-upgrade';
 
 export const op: SubHandler = async (ctx, _flags, positionals) => {
