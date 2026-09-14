@@ -339,7 +339,7 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(html).toContain('aria-current="true"');
   });
 
-  test('中继兼节点：多出一段「中继服务」，地址可复制、口令状态成徽标', () => {
+  test('中继兼节点：多出一段「中继服务」，地址可复制、不展示口令徽标', () => {
     const local: LocalStatusResponse = {
       ...meshStatus('relay,node'),
       relay: {
@@ -353,7 +353,8 @@ describe('LocalMachineCard 的四段版式', () => {
     const html = render(local, MESH_MODE);
     expect(html).toContain('data-testid="local-machine-relay-service"');
     expect(html).toContain('data-testid="local-relay-service-url"');
-    expect(html).toContain('relay.admin.password.set');
+    expect(html).not.toContain('data-testid="local-relay-service-password"');
+    expect(html).not.toContain('data-testid="local-relay-service-password-unset"');
     // 运行摘要是一行读数，磁贴留给中继控制台
     expect(html).toContain('nodes.machine.relayServiceRuntime');
     expect(html).not.toContain('data-testid="relay-metrics-compact"');
@@ -374,7 +375,9 @@ describe('LocalMachineCard 的四段版式', () => {
     const html = render(local, MESH_MODE);
     expect(html).toContain('data-testid="nodes-relay-self-entry"');
     expect(html).toContain('data-testid="nodes-relay-enroll-self"');
-    expect(html).toContain('relay.admin.password.unset');
+    expect(html).not.toContain('data-testid="local-relay-service-password"');
+    expect(html).toContain('data-testid="local-relay-service-password-unset"');
+    expect(html).toContain('relay.admin.password.unsetWarning');
   });
 
   test('中继角色但没有公网地址：只说未设置与后果，不复用 Hub 的说法', () => {
