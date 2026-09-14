@@ -161,7 +161,8 @@ export class RelayTurnService {
       bindHost: snap?.bindHost ?? null,
       listening,
       allocations: snap?.allocations ?? 0,
-      maxAlloc: this.relayRange ? clampTurnAllocations(this.relayRange).maxAllocations : null,
+      maxAlloc:
+        listening && this.relayRange ? clampTurnAllocations(this.relayRange).maxAllocations : null,
       error: this.error,
       relayPortRange: this.relayRange ? formatTurnPortRange(this.relayRange) : null,
     };

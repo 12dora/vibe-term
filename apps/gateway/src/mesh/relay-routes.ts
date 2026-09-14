@@ -21,7 +21,6 @@ import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } f
 import {
   RELAY_ENROLL_FETCH_TIMEOUT_MS,
   callRelayEnroll,
-  persistAcceptedEnrollPassword,
   relayTokenHashHex,
 } from './relay-enroll-call';
 import {
@@ -31,7 +30,7 @@ import {
 } from './relay-enrollment-fanout';
 import { listMetaKeyLagging, metaKeyAdmitCoverage } from './relay-meta-lag';
 import { handleMeshRelayPack } from './relay-pack-routes';
-import { handleMeshRelayPasswordGet, handleMeshRelayPasswordPost } from './relay-password-routes';
+import { meshRelayPasswordHandlers } from './relay-password-routes';
 import {
   buildMetaKeyPayload,
   buildSetRelaysPayload,
@@ -117,8 +116,7 @@ export class RelayRoutes {
         handleRelayResolve(r, { fetchImpl: this.deps.fetchImpl, dial: this.deps.dial }),
       'POST /enroll/proof-material': (r, uid) => this.proofMaterial(r, uid),
       'POST /enroll': (r, uid) => this.enroll(r, uid),
-      'GET /password': (r) => handleMeshRelayPasswordGet(this.deps, r),
-      'POST /password': (r) => handleMeshRelayPasswordPost(this.deps, r),
+      ...meshRelayPasswordHandlers(this.deps),
       'POST /leave/prepare': (_r, uid) => this.leavePrepare(uid),
       'POST /resend-token/prepare': (_r, uid) => this.resendTokenPrepare(uid),
       'POST /remove/prepare': (r, uid) => this.removePrepare(r, uid),
@@ -138,9 +136,10 @@ export class RelayRoutes {
     const id = decodeURIComponent(match[1] ?? '');
     return (_r, uid) => this.getEnrollment(id, uid);
   }
-  private now(): number {
-    return this.deps.now?.() ?? Date.now();
-  }
+
+  // biome-ignore format: keep fileLines at the frozen allowlist
+  private now(): number { return this.deps.now?.() ?? Date.now(); }
+
   private relayClient(): RelayUplinkClient | null {
     const live = this.deps.uplink.liveClient();
     return live instanceof RelayUplinkClient ? live : null;
@@ -174,7 +173,6 @@ export class RelayRoutes {
         preferredUrl: this.deps.secrets.preferredRelayUrl(),
         autoSelect: this.deps.uplink.autoSelectView?.() ?? null,
         scoreOf: this.deps.uplink.scoreOf,
-        enrollPasswordKnownOf: (u) => this.deps.secrets.store.hasEnrollPassword(u),
       })
     );
   }
@@ -248,18 +246,19 @@ export class RelayRoutes {
       return jsonError('readmit_required', 409, { count: readmitRequired });
     }
     const password = typeof body?.password === 'string' ? body.password : undefined;
+    // 本机已持有的那份令牌：与中继当前令牌一致时中继不再换发，成员节点因此不掉线
     const stored = await this.deps.secrets.store.getRelay(url).catch(() => null);
     const remote = await callRelayEnroll(url, {
       fetchImpl: this.deps.fetchImpl,
       dial: this.deps.dial,
       password,
+      persistStore: this.deps.secrets.store,
       rootPublicKey: user.rootPublicKey,
       rootEpoch: user.rootEpoch,
       proof,
       ...(stored ? { knownTokenHash: relayTokenHashHex(stored.token) } : {}),
     });
     if (!remote.ok) return jsonError(remote.error, remote.status);
-    await persistAcceptedEnrollPassword(this.deps.secrets.store, url, password);
     const token =
       remote.token ?? (stored && stored.tenantId === remote.tenantId ? stored.token : null);
     if (!token) return jsonError('RELAY_BAD_RESPONSE', 502);
@@ -578,6 +577,7 @@ export class RelayRoutes {
     });
     return ok ? null : 'BAD_AUTHORIZATION_SIG';
   }
+
   private stash(
     payload: Uint8Array,
     keys: { logKey?: Uint8Array; metaKey: Uint8Array; epoch: number } | null

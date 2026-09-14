@@ -21,6 +21,10 @@ describe('0058 relay enroll password', () => {
       expect(column).toBeTruthy();
       expect(column?.notnull).toBe(0);
       expect(column?.type.toLowerCase()).toBe('text');
+      const epoch = columns.find((row) => row.name === 'enroll_password_epoch');
+      expect(epoch).toBeTruthy();
+      expect(epoch?.notnull).toBe(0);
+      expect(epoch?.type.toLowerCase()).toBe('integer');
     } finally {
       sqlite.close();
     }

@@ -178,7 +178,7 @@ describe('rotateEnrollPasswordDraft', () => {
     expect(called).toBe(0);
   });
 
-  test('服务端错误映射到 errors.*', async () => {
+  test('服务端错误映射到 errors.*；用本机副本改密被拒时标记 storedRejected', async () => {
     const api = {
       rotateEnrollPassword: () =>
         Promise.reject(new RelayApiError('relay_password_invalid', 'bad', 401)),
@@ -188,6 +188,47 @@ describe('rotateEnrollPasswordDraft', () => {
     ).toEqual({
       ok: false,
       key: 'relay.tenant.enrollPassword.errors.relay_password_invalid',
+      storedRejected: true,
+    });
+    expect(
+      await rotateEnrollPasswordDraft(
+        'https://r.example',
+        draft({ current: 'oldpass', next: 'abcdefgh' }),
+        false,
+        api
+      )
+    ).toEqual({
+      ok: false,
+      key: 'relay.tenant.enrollPassword.errors.relay_password_invalid',
+      storedRejected: false,
+    });
+  });
+
+  test('relay_password_unset 与带人数的 relay_members_offline', async () => {
+    const unset = {
+      rotateEnrollPassword: () =>
+        Promise.reject(new RelayApiError('relay_password_unset', 'unset', 409)),
+    } as unknown as RelayTenantApi;
+    expect(
+      await rotateEnrollPasswordDraft('https://r.example', draft({ next: 'abcdefgh' }), true, unset)
+    ).toMatchObject({ ok: false, key: 'relay.tenant.enrollPassword.errors.relay_password_unset' });
+    const offline = {
+      rotateEnrollPassword: () =>
+        Promise.reject(
+          new RelayApiError('relay_members_offline', 'offline', 409, { online: 2, admitted: 5 })
+        ),
+    } as unknown as RelayTenantApi;
+    expect(
+      await rotateEnrollPasswordDraft(
+        'https://r.example',
+        draft({ next: 'abcdefgh', kick: true }),
+        true,
+        offline
+      )
+    ).toMatchObject({
+      ok: false,
+      key: 'relay.tenant.enrollPassword.errors.relay_members_offline_counted',
+      params: { online: '2', admitted: '5' },
     });
   });
 });

@@ -139,6 +139,7 @@ export type RelayApiErrorDetails = {
   online?: number;
   admitted?: number;
   count?: number;
+  retryAfterMs?: number;
 };
 
 /** 契约错误体 `{ error: { code, message } }` 解出来的类型化错误。 */

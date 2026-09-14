@@ -1,5 +1,5 @@
 import { readCodedError } from '../json-mutation';
-import { RelayApiError } from './admin-api';
+import { RelayApiError, type RelayApiErrorDetails } from './admin-api';
 
 /**
  * `/api/mesh/relay/*` 的错误体是 `{ code, ... }`（`session-middleware.ts` 的 `jsonError`），
@@ -18,6 +18,9 @@ export function readRelayTenantError(res: Response, fallback: string): Promise<R
             lastError?: unknown;
             lastErrorCode?: unknown;
             count?: unknown;
+            online?: unknown;
+            admitted?: unknown;
+            retryAfterMs?: unknown;
           }
         | undefined;
       if (own && typeof own.code === 'string') {
@@ -29,14 +32,33 @@ export function readRelayTenantError(res: Response, fallback: string): Promise<R
   );
 }
 
-function detailsFromBody(body: { lastError?: unknown; lastErrorCode?: unknown; count?: unknown }) {
+type DetailBody = {
+  lastError?: unknown;
+  lastErrorCode?: unknown;
+  count?: unknown;
+  online?: unknown;
+  admitted?: unknown;
+  retryAfterMs?: unknown;
+};
+
+function detailsFromBody(body: DetailBody): RelayApiErrorDetails | undefined {
   const lastError = readOptionalString(body.lastError);
   const lastErrorCode = readOptionalString(body.lastErrorCode);
-  const count =
-    typeof body.count === 'number' && Number.isFinite(body.count) ? body.count : undefined;
-  if (lastError === undefined && lastErrorCode === undefined && count === undefined)
-    return undefined;
-  return { lastError, lastErrorCode, ...(count === undefined ? {} : { count }) };
+  const numbers = readFiniteNumbers(body, ['count', 'online', 'admitted', 'retryAfterMs']);
+  if (lastError === undefined && lastErrorCode === undefined && !numbers) return undefined;
+  return { lastError, lastErrorCode, ...numbers };
+}
+
+function readFiniteNumbers(
+  body: DetailBody,
+  keys: ReadonlyArray<'count' | 'online' | 'admitted' | 'retryAfterMs'>
+): Partial<Record<'count' | 'online' | 'admitted' | 'retryAfterMs', number>> | undefined {
+  const out: Partial<Record<'count' | 'online' | 'admitted' | 'retryAfterMs', number>> = {};
+  for (const key of keys) {
+    const value = body[key];
+    if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function readOptionalString(value: unknown): string | null | undefined {

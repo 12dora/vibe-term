@@ -171,6 +171,7 @@ describe('RelayTurnService builtin', () => {
     await svc.start();
     expect(svc.advertisement()).toBeNull();
     expect(svc.status().error).toContain('VIBETERM_RTC_PORT_RANGE');
+    expect(svc.status().maxAlloc).toBeNull();
     expect(logs.some((line) => line.includes('builtin turn disabled reason='))).toBe(true);
     await svc.stop();
   });
@@ -188,7 +189,12 @@ describe('RelayTurnService builtin', () => {
     });
     await svc.start();
     expect(svc.advertisement()).toBeNull();
-    expect(svc.status()).toMatchObject({ source: 'builtin', enabled: false, listening: false });
+    expect(svc.status()).toMatchObject({
+      source: 'builtin',
+      enabled: false,
+      listening: false,
+      maxAlloc: null,
+    });
     expect(svc.status().error).toContain('unable to resolve TURN external IPv4');
     await svc.stop();
   });

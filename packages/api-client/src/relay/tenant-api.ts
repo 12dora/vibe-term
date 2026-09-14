@@ -43,7 +43,11 @@ export type { RelayMetaKeyLaggingNode } from './meta-key-lagging';
 /** 中继列表里的一条链路（按 `priority` 升序即 failover 顺序）。 */
 export type RelayLinkStatus = RelayStatusRow;
 /** `GET /api/mesh/relay/password?url=`：明文只回给已鉴权的本机会话。 */
-export type RelayEnrollPasswordView = { known: boolean; password: string | null };
+export type RelayEnrollPasswordView = {
+  known: boolean;
+  password: string | null;
+  passwordEpoch: number | null;
+};
 export type RelayPasswordRotateMode = 'keep' | 'kick';
 /** `POST /api/mesh/relay/password`。省略 `current` 时网关用本机已存的接入密码。 */
 export type RelayRotateEnrollPasswordRequest = {

@@ -1,3 +1,8 @@
+/**
+ * 中继错误码默认 UPPER_SNAKE。租户 rotate / 节点转发的接入口令一组
+ *（`relay_password_*` / `relay_members_offline` / `relay_unreachable` / `relay_not_attached`）
+ * 按契约用 lowercase_snake，与前端映射一致；新码保持该组的命名。
+ */
 export const RelayErrorCode = {
   methodNotAllowed: 'RELAY_METHOD_NOT_ALLOWED',
   notFound: 'RELAY_NOT_FOUND',
@@ -13,6 +18,7 @@ export const RelayErrorCode = {
   membersOffline: 'relay_members_offline',
   enrollPasswordInvalid: 'relay_password_invalid',
   enrollPasswordTooShort: 'relay_password_too_short',
+  enrollPasswordUnset: 'relay_password_unset',
   unreachable: 'relay_unreachable',
   notAttached: 'relay_not_attached',
   tenantNotFound: 'RELAY_TENANT_NOT_FOUND',
@@ -52,7 +58,18 @@ export function relayError(
   status: number,
   extra?: Record<string, unknown>
 ): Response {
-  return relayJson({ error: { code, message: code, ...extra } }, status);
+  const retryAfterMs =
+    extra && typeof extra.retryAfterMs === 'number' && Number.isFinite(extra.retryAfterMs)
+      ? extra.retryAfterMs
+      : undefined;
+  const headers = new Headers({ 'content-type': 'application/json' });
+  if (retryAfterMs !== undefined && retryAfterMs >= 0) {
+    headers.set('retry-after', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
+  }
+  return new Response(JSON.stringify({ error: { code, message: code, ...extra } }), {
+    status,
+    headers,
+  });
 }
 
 export function relayNoStore(data: unknown, status = 200): Response {

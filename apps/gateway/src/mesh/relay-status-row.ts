@@ -177,7 +177,13 @@ export function enrichRelayTurnView(
 }
 
 export function collectRelayStatusRows(input: {
-  rows: Array<{ url: string; priority: number; kicked: boolean; kickedReason?: string | null }>;
+  rows: Array<{
+    url: string;
+    priority: number;
+    kicked: boolean;
+    kickedReason?: string | null;
+    enrollPasswordKnown?: boolean;
+  }>;
   attachedUrl: string | null;
   primary: RelayUplinkClient | null;
   live: Pick<PooledUplink, 'lastConnectError'> | null;
@@ -203,7 +209,8 @@ export function collectRelayStatusRows(input: {
       ...(client?.keyLog.diverged === true ? { keyLog: { diverged: true as const } } : {}),
       ...uplinkPathView(row.url),
       ...statusSelectExtras(input, row.url, attached, connected),
-      enrollPasswordKnown: input.enrollPasswordKnownOf?.(row.url) === true,
+      enrollPasswordKnown:
+        row.enrollPasswordKnown === true || input.enrollPasswordKnownOf?.(row.url) === true,
     });
   });
 }
@@ -236,7 +243,13 @@ function isAutoSwitchReason(reason: RelaySwitchReason | null | undefined): boole
 export function buildRelayStatusPayload(input: {
   mode: string;
   tenantId: string | null;
-  rows: Array<{ url: string; priority: number; kicked: boolean; kickedReason?: string | null }>;
+  rows: Array<{
+    url: string;
+    priority: number;
+    kicked: boolean;
+    kickedReason?: string | null;
+    enrollPasswordKnown?: boolean;
+  }>;
   attachedUrl: string | null;
   primary: RelayUplinkClient | null;
   live: Pick<PooledUplink, 'lastConnectError'> | null;

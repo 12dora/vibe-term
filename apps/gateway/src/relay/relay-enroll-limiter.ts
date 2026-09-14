@@ -46,6 +46,10 @@ export class RelayEnrollLimiter {
     if (tenantId) this.failures.reset(tenantKey(tenantId));
   }
 
+  retryAfterMs(ip: string): number {
+    return this.failures.retryAfterMs(ip);
+  }
+
   clear(): void {
     this.failures.clear();
   }

@@ -242,12 +242,14 @@ export async function handleRelayEnroll(
     return relayError(RelayErrorCode.quotaTenants, 409);
   }
   const issued = issueTenantToken(deps, parsed, config.passwordEpoch, config.minTokenEpoch);
+  const passwordVerified = config.passwordHash !== null;
   return relayJson({
     tenant_id: issued.tenantId,
     // 令牌未换发时不回令牌原文——中继只存哈希，调用方手上那份仍然有效
     token: issued.token,
     token_unchanged: issued.token === null,
     password_epoch: config.passwordEpoch,
+    passwordVerified,
   });
 }
 

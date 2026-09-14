@@ -78,6 +78,12 @@ describe('relay enroll', () => {
     expect(tenant.id).toMatch(/^[0-9a-f]{32}$/);
     expect(tenant.token.length).toBeGreaterThan(20);
     expect(tenant.passwordEpoch).toBe(0);
+    const raw = await relay.fetch('/api/relay/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enrollBody(relay, rootKeyFromSeed(randomBytes(32))),
+    });
+    expect(((await raw.json()) as { passwordVerified: boolean }).passwordVerified).toBe(false);
   });
 
   test('re-enrolling the same root key keeps the tenant id and rotates the token', async () => {
@@ -216,8 +222,14 @@ describe('relay enroll', () => {
 
   test('accepts the correct password', async () => {
     const relay = await boot({ password: 'let-me-in' });
-    const tenant = await relay.createTenant({ password: 'let-me-in' });
-    expect(tenant.id).toMatch(/^[0-9a-f]{32}$/);
+    const root = rootKeyFromSeed(randomBytes(32));
+    const res = await relay.fetch('/api/relay/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enrollBody(relay, root, { password: 'let-me-in' }),
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { passwordVerified: boolean }).passwordVerified).toBe(true);
   });
 
   test('rejects malformed bodies', async () => {
