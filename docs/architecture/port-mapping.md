@@ -5,7 +5,7 @@
 ## 背景
 
 mesh 里已经有一套成熟的流复用器（`packages/shared/src/link/`）：直连 ws-secure、WebRTC DataChannel、
-hub/中继三条链路最终都收敛成同一个 `LinkSession`，`openStream(payload)` 就能开一条带信用额度流控的
+中继三条链路最终都收敛成同一个 `LinkSession`，`openStream(payload)` 就能开一条带信用额度流控的
 双向字节流。此前缺的只是两端的原生 TCP：A 上的监听器与 B 上的拨号器。
 
 端口映射解决的场景：把 B 上只监听 `127.0.0.1` 的服务（数据库、调试端口、内网 http）映射到 A 的本机端口，

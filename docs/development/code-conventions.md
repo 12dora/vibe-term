@@ -23,7 +23,7 @@
 
 ## 接入向导表单
 
-单一上游：`apps/fe/src/pages/settings/nodes/setup/form-parts.tsx`。`DirectEnableSwitch`（`kind: 'hub' \| 'relay'`）、`NodeNameField`、`AccountCredentialFields`、`SetupSubmitRow`（可选 `submitError`）。testid 由调用方传入，保持 `setup-direct-enable` / `setup-join-direct-enable` / `setup-relay-join-direct-enable`。
+单一上游：`apps/fe/src/pages/settings/nodes/setup/form-parts.tsx`。`DirectEnableSwitch`（加入中继 / 成为中继共用，无 kind）、`NodeNameField`、`AccountCredentialFields`、`SetupSubmitRow`（可选 `submitError`）。testid 由调用方传入，保持 `setup-direct-enable` / `setup-join-direct-enable` / `setup-relay-join-direct-enable`。
 
 ## 契约（`@vibeterm/shared`）
 

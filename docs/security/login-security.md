@@ -96,7 +96,7 @@
 3. 本次登录已过 TOTP（登录体带了校验通过的 `totp`）→ 放行并记审计，**包括当前 origin 有凭证**。这是 OR 策略的核心：本 origin 的钥匙不再强制断言。
 4. 当前 origin 有凭证 → 必须带断言，且断言绑定的凭证属于这批（否则 `PASSKEY_INVALID`）。
 5. 账户名下压根没有通行密钥 → 这一关本来就不存在，放行（外层若开了 TOTP 且未交码，回 `TOTP_REQUIRED`）。
-6. 请求 origin 就是服务端自己配置的入口地址 → 放行并记审计。入口来自 `auth-passkey-origin-entry.ts`：`VIBETERM_BASE_URL`、生效的站点 URL（`getSiteSettings().siteUrl`）、已配置的 Cloudflare 隧道域名（`tunnel_config.hostname`，`mode==='off'` 不算）、hub 公网地址、已接入的中继地址；按规范化 origin 判等。
+6. 请求 origin 就是服务端自己配置的入口地址 → 放行并记审计。入口来自 `auth-passkey-origin-entry.ts`：`VIBETERM_BASE_URL`、生效的站点 URL（`getSiteSettings().siteUrl`）、已配置的 Cloudflare 隧道域名（`tunnel_config.hostname`，`mode==='off'` 不算）、已接入的中继公网地址（`mesh_relays.url`）；按规范化 origin 判等。不再读 Hub 公网地址。
 7. 其余（伪造的 / 陌生的 origin）→ `PASSKEY_REQUIRED`；若账户开了 TOTP 且本次未交码，外层改写成 `TOTP_REQUIRED`（CLI 知道交验证码即可）。登录页给 `auth.login.passkeySecondFactorNotRegistered`，其中带 CLI 逃生口。
 
 放宽的情形：**本次登录已过 TOTP**（规范或缺失 Origin），或**请求 origin 是服务端自己配置的入口**（未开 TOTP 时）。形态规范但服务端不认得的 Origin（如 `https://attacker.example`）在 TOTP 已校验时放行——这是既有行为，也覆盖 CLI。已知入口 + 没开 TOTP 时，那个入口的密码登录确实只剩密码把关——这是用可达性换可恢复性，避免「换了自己的域名就再也登不进去」。**多入口部署建议开启两步验证。** 两种放行都打审计行：
@@ -135,16 +135,16 @@ vibeterm mesh passkey remove-all [<username>]
 ```
 
 - 在本机安装目录上执行，提示输入账户密码，密码不对即拒绝（比对根公钥）。
-- 逐把签 `remove-passkey` 记录，只删通行密钥：**不动根钥世代、不清 TOTP、不注销密码会话**，比 `hub user passwd --full-reset` 窄得多。
+- 逐把签 `remove-passkey` 记录，只删通行密钥：**不动根钥世代、不清 TOTP、不注销密码会话**，比 `vibeterm user passwd --full-reset` 窄得多。
 - 用被删凭证建立的会话会随记录效果注销（`revokeSessionsByCredential`）。
 - `vibeterm doctor` 在「对外地址是域名、该域名上没有通行密钥、别处有」时提示这条命令。
 
-更重的手段是主 hub 上 `vibeterm hub user passwd <user> --full-reset`（`rotate-root` 全量重置会移除全部通行密钥与 TOTP）。
+更重的手段是本机 `vibeterm user passwd <user> --full-reset`（`rotate-root` 全量重置会移除全部通行密钥与 TOTP）。
 
 ### 滚动升级注意
 
 - 二次验证按**节点**各自执行：未升级的节点仍只验密码，知道密码的人经 `/n/<旧节点>/api/auth/login` 可以拿到该旧节点的会话；旧入口也会把新节点的 `PASSKEY_REQUIRED` 改写成 `NODE_LOGIN_REQUIRED`。注册通行密钥前把全部节点升到最新（节点管理里可批量升级）。
-- CLI `vibeterm enroll` 用密码登录 hub 后再创建 enrollment。`GET /api/auth/mode` 的 `secondFactorPolicy === 'passkey'`（旧节点没有该字段时回退到 `passkeySecondFactor && !totpEnabled`）时该路径仍不可用（CLI 做不了 WebAuthn），会在提示输入密码前直接给出说明。`'either'` / `'totp'` 走密码 + TOTP。加入节点请在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」后使用加入命令。
+- CLI 加入走 `vibeterm relay join`（`r3.` 令牌或 `--tenant` + 口令），不再有顶层 `vibeterm enroll`。`GET /api/auth/mode` 的 `secondFactorPolicy === 'passkey'`（旧节点没有该字段时回退到 `passkeySecondFactor && !totpEnabled`）时密码登录路径仍不可用（CLI 做不了 WebAuthn），会在提示输入密码前直接给出说明。`'either'` / `'totp'` 走密码 + TOTP。加入节点请在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」后使用 `vibeterm relay join`。
 - `passkeysRegisteredElsewhere` / `secondFactorPolicy` 都是加性字段，旧前端忽略即可；新节点在旧前端下 `passkeySecondFactor` 变 false，登录流程更短，不会出错。旧前端若仍按 AND 同时交 TOTP 与断言，服务端照收。
 
 ## 5. 公网暴露的安全评估

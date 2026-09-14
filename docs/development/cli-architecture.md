@@ -4,14 +4,14 @@
 
 ## 背景
 
-`packages/app`（发布名 `vibeterm-cli`）里原有的命令都是**本机运维**命令：`init` / `upgrade` / `hub …` / `relay …`，它们直接读本机安装目录、库与主密钥。`packages/cli`（`@vibeterm/cli`）是另一类东西——**只经 HTTP / WebSocket 访问网关的客户端**，安全边界与网页端逐条对齐，因此可以指向任意 entry，也可以在没有本机安装的机器上用。
+`packages/app`（发布名 `vibeterm-cli`）里原有的命令都是**本机运维**命令：`init` / `upgrade` / `user …` / `relay …` / `mesh …`，它们直接读本机安装目录、库与主密钥。`packages/cli`（`@vibeterm/cli`）是另一类东西——**只经 HTTP / WebSocket 访问网关的客户端**，安全边界与网页端逐条对齐，因此可以指向任意 entry，也可以在没有本机安装的机器上用。
 
 两者的分界：
 
 | | packages/app（原有） | packages/cli（本文） |
 | --- | --- | --- |
-| 命令 | `init` `doctor` `upgrade` `uninstall` `hub` `relay` `mesh` `tls` `enroll` `direct` | `login` `logout` `whoami` `api` `nodes` `devices` `tmux` `term` `exec` `system` `files` `cp` `port` `share` `watch` `agent` `settings`（十七个组） |
-| 依赖 | 本机安装目录、SQLite、主密钥；`hub`/`relay` 那组还要 bun 运行时 | 只有 `fetch` 与 WebSocket |
+| 命令 | `init` `doctor` `upgrade` `uninstall` `user` `relay` `mesh` `tls` `direct` | `login` `logout` `whoami` `api` `nodes` `devices` `tmux` `term` `exec` `system` `files` `cp` `port` `share` `watch` `agent` `settings`（十七个组） |
+| 依赖 | 本机安装目录、SQLite、主密钥；`user`/`relay`/`mesh` 那组还要 bun 运行时 | 只有 `fetch` 与 WebSocket |
 | 运行时 | Node（`init` 等）+ bun（`cli-auth-entry.ts`） | Node ≥ 20（bundle 也能在 bun 下跑） |
 | 权限 | 本机 root 级配置 | 与一个浏览器会话完全等价 |
 
@@ -36,7 +36,7 @@ packages/cli/src/
     types.ts             Command 契约
     login.ts logout.ts whoami.ts api.ts
     agent.ts agent-format.ts
-    nodes.ts nodes-hub-role.ts nodes-relay.ts nodes-ports.ts nodes-ops.ts
+    nodes.ts nodes-relay.ts nodes-ports.ts nodes-ops.ts
     settings.ts settings-http.ts settings-site.ts settings-local.ts
     settings-llm.ts settings-shortcuts.ts
     settings-security.ts settings-messaging.ts settings-mesh.ts
@@ -56,6 +56,7 @@ packages/cli/src/
     ws.ts                ws → WebSocketLike 适配、openGatewaySocket
     output.ts            表格 / JSON 打印、诊断日志改道
     prompt.ts            隐藏密码输入、读 stdin
+    nodes-roster.ts      mesh 名册（pendingMemberIds / join 命令 / 公开 URL 信任）
     test-fakes.ts        单测用的假网关（不进 bundle）
 ```
 
@@ -191,7 +192,7 @@ Node 上的 `--insecure` 落地方式是 TOFU：先用 `rejectUnauthorized:false
 
 ## 与 packages/app 的接线
 
-`vibeterm <group>` 由 `packages/app/src/index.ts` 的 `dispatchCli` 在**当前进程内** `import()` 客户端 bundle 并调 `runCli(argv)`（保住 TTY，也省一次进程启动），退出码原样透出。与 `hub`/`relay` 那组不同：那些命令要 bun 运行时，所以走 `auth-spawn.ts` 起子进程。
+`vibeterm <group>` 由 `packages/app/src/index.ts` 的 `dispatchCli` 在**当前进程内** `import()` 客户端 bundle 并调 `runCli(argv)`（保住 TTY，也省一次进程启动），退出码原样透出。与 `user`/`relay`/`mesh` 那组不同：那些命令要 bun 运行时，所以走 `auth-spawn.ts` 起子进程。
 
 bundle 的查找顺序（`packages/app/src/lib/client-cli.ts`）：
 
@@ -225,7 +226,7 @@ bun scripts/complexity/gate.ts
 | 嵌套深度 | 4 | 只计 `if` / `for` / `while` / `switch` / `try` 与匿名箭头回调块；不计裸 `Block`，`else if` 不加层 |
 | 跨文件重复 | ≥ 15 行规范化窗口，≥ 2 个文件 | 去掉注释 / 字符串 / 数字后做 token-hash；忽略 import 块、纯字面量窗、色板与类型字段噪声 |
 
-存量超标写在 `scripts/complexity/allowlist.json`（键为相对路径或 `相对路径:函数名`），只许缩小不许升高；降回默认阈值内的字段 / 条目直接删除。`--tighten` 按当前实测值收紧，并把新阈值下已有超标冻结成新条目。故意同构的文件对写在 `scripts/complexity/duplication-allowlist.json`（无序对，例如 `en.ts` ↔ `zh-cn.ts`、hub-runtime ↔ relay-runtime）。`--report` 打印各指标计数与 top-10，不判定失败。新代码必须落在默认阈值内，不要往 allowlist 加条目。单测：`bun test scripts/complexity/gate.test.ts`（已编进 `test:unit`）。
+存量超标写在 `scripts/complexity/allowlist.json`（键为相对路径或 `相对路径:函数名`），只许缩小不许升高；降回默认阈值内的字段 / 条目直接删除。`--tighten` 按当前实测值收紧，并把新阈值下已有超标冻结成新条目。故意同构的文件对写在 `scripts/complexity/duplication-allowlist.json`（无序对，例如 `en.ts` ↔ `zh-cn.ts`）。`--report` 打印各指标计数与 top-10，不判定失败。新代码必须落在默认阈值内，不要往 allowlist 加条目。单测：`bun test scripts/complexity/gate.test.ts`（已编进 `test:unit`）。
 
 ## 注意事项
 
@@ -259,9 +260,9 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm nodes`
 
-子命令：`ls`、`show`、`hubs`、`hub-role`、`rename`、`relay`、`ports`、`allow`、`disallow`、`revoke`、`enroll`、`upgrade`（含 `cancel` / `--ids`）、`op clear`、`uninstall`、`rtc-config`、`pause`、`resume`。实现拆在 `commands/nodes.ts` 与 `nodes-hub-role.ts` / `nodes-relay.ts` / `nodes-ports.ts` / `nodes-ops.ts`。`ls` 合并 `GET /api/mesh/nodes` 与 hub 待批准行（`status=pending`），列含 ADDRESS（`nodeAddressOf`）与 PAUSED；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线拼相对时间（`listedOnline`，如 `no · 3h ago`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。REACH 为 `reachOf`：`lan/dc` 这类 `reach/transport`，中继收成 `relay`（机器 token，不本地化）。行类型 `MeshNode` 从 `@vibeterm/shared` 的 `contracts/mesh-node` 读，不在 CLI 自镜像。`pause` / `resume` 打 entry `POST /api/mesh/nodes/:id/pause|resume`；`CANNOT_PAUSE_SELF` / `CANNOT_PAUSE_HUB` 分别翻成 `cannot pause this machine (CODE)` / `cannot pause a hub node (CODE)`（Hub 恢复不报后者）。`show` 人读增加 PORTS 表，并打印 `address`、`lastSeenAt`。`rename`：hub 转发到 writer 的 `POST /n/<hub>/api/hub/nodes/:id/rename`；中继（`GET /api/mesh/relay/status` `mode==='relay'`）走 keylog `rename-node`，不再打 hub REST。`hub-role promote|demote|standby <node> [--yes] [--wait] [--force]` 打 `POST /n/<id>/api/hub/role`（未签名授权时先签 `admit-hub`），不能用本机 `hub promote` 代替。`relay ls|switch|rm|readmit` 是租户侧 status / switch / keylog；`relay ls` 多一列 ATTACHED，与本机运维 `relay list` 不是同一条命令。`ports <node> [--probe]` 读 `MeshNode.ports[]`。`upgrade cancel <node>` 打 `DELETE …/upgrade`，非 TTY 必须 `--yes`；`--ids a,b,c` 与 `--all` 互斥、隐含 `--wait`。`--version <ver>` 写入 `POST /api/mesh/nodes/:id/upgrade` body（未发布 tag → `400 RELEASE_NOT_FOUND`）。`op clear` 打 `DELETE …/operation`。`allow` 先查 hub 列表：`admission_status=pending` 时签 `admit-node`，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）；非 TTY 必须 `--yes`；mesh 里没有的节点可回退到 hub 列表。`enroll --password` 只打印 `vibeterm hub join <url> --password`；默认路径签 enrollment 并打印 join 命令。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`。`--all` **强制** `--wait`：按组（普通节点 → hub → 本机）等上一组全部收尾再开下一组；只升 online、已登录、未暂停、版本严格低于 latest 的节点；任一 `failed` / `timeout` / `unconfirmed` 退出码 1。`uninstall`：`POST /api/mesh/nodes/:id/uninstall` 后签 `revoke-node`（吊销失败即失败）；非 TTY 必须 `--yes`。
+子命令：`ls`、`show`、`rename`、`relay`、`ports`、`allow`、`disallow`、`revoke`、`enroll`、`meta-key`、`upgrade`（含 `cancel` / `--ids`）、`op clear`、`uninstall`、`rtc-config`、`pause`、`resume`。实现拆在 `commands/nodes.ts` 与 `nodes-relay.ts` / `nodes-ports.ts` / `nodes-ops.ts`；名册助手在 `core/nodes-roster.ts`（原 `nodes-hub.ts` 已改名，没有 `nodes-hub-role.ts`）。`ls` 合并 `GET /api/mesh/nodes` 与 `pendingMemberIds` 待批准行（`status=pending`），列含 ADDRESS（`nodeAddressOf`）与 PAUSED；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线拼相对时间（`listedOnline`，如 `no · 3h ago`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。REACH 为 `reachOf`：`lan/dc` 这类 `reach/transport`，中继收成 `relay`（机器 token，不本地化）。行类型 `MeshNode` 从 `@vibeterm/shared` 的 `contracts/mesh-node` 读，不在 CLI 自镜像。`pause` / `resume` 打 entry `POST /api/mesh/nodes/:id/pause|resume`；`CANNOT_PAUSE_SELF` 翻成 `cannot pause this machine (CODE)`。`show` 人读增加 PORTS 表，并打印 `address`、`lastSeenAt`。`rename` 走 keylog `rename-node`（需中继上联）。`relay ls|switch|unpin|rm|readmit` 是租户侧 status / switch / keylog；`relay ls` 多一列 ATTACHED，与本机运维 `relay list` 不是同一条命令。`ports <node> [--probe]` 读 `MeshNode.ports[]`。`upgrade cancel <node>` 打 `DELETE …/upgrade`，非 TTY 必须 `--yes`；`--ids a,b,c` 与 `--all` 互斥、隐含 `--wait`。`--version <ver>` 写入 `POST /api/mesh/nodes/:id/upgrade` body（未发布 tag → `400 RELEASE_NOT_FOUND`）。`op clear` 打 `DELETE …/operation`。`allow` 看 `pendingMemberIds`：待批准则给该节点 wrap `K_meta`，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）；非 TTY 必须 `--yes`。`enroll --password` 只打印 `vibeterm relay join <url> --password`；默认路径签 enrollment 并打印 `vibeterm relay join … --token`。未挂中继时 enroll / rename 报 `NODE_NOT_ON_RELAY`。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`。`--all` **强制** `--wait`：按组（其它节点 → 本机）等上一组全部收尾再开下一组；只升 online、已登录、未暂停、版本严格低于 latest 的节点；任一 `failed` / `timeout` / `unconfirmed` 退出码 1。`uninstall`：`POST /api/mesh/nodes/:id/uninstall` 后签 `revoke-node`（吊销失败即失败）；非 TTY 必须 `--yes`。
 
-`--json` 形状：`{ nodes }`（含 `status`、`paused`、`address`、`lastSeenAt`） / `MeshNode & { address }` / `MeshHubsResponse` / `{ kind, operationId, verb, node, … }`（hub-role） / `{ node, ports }` / `{ ok, node }`（op clear / pause / resume） / `{ node, action, result }`（allow） / `{ node, result }`（revoke） / `{ latest, outcomes }`（`outcome` 含 `unconfirmed`） / `{ node, cancelled: true }`（upgrade cancel） / `{ node, scheduled, revoked }`（uninstall） / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }`。
+`--json` 形状：`{ nodes }`（含 `status`、`paused`、`address`、`lastSeenAt`） / `MeshNode & { address }` / `{ node, ports }` / `{ ok, node }`（op clear / pause / resume） / `{ node, action, result }`（allow） / `{ node, result }`（revoke） / `{ latest, outcomes }`（`outcome` 含 `unconfirmed`） / `{ node, cancelled: true }`（upgrade cancel） / `{ node, scheduled, revoked }`（uninstall） / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }`。
 
 ## `vibeterm devices`
 
