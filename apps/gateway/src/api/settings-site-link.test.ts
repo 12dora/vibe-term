@@ -58,7 +58,7 @@ describe('GET /api/settings/site mesh link fields', () => {
     expect(status).toBe(200);
     const settings = json.settings as Record<string, unknown>;
     expect(json.effectiveSiteUrl).toBe('https://relay.example');
-    expect(json.siteUrlEditable).toBe(false);
+    expect(json.siteUrlEditable).toBe(true);
     expect(json.siteNameLinkedToNode).toBe(true);
     expect(json.nodeId).toBe(nodeId);
     expect(settings.siteUrl).toBe('https://relay.example');
@@ -75,7 +75,7 @@ describe('GET /api/settings/site mesh link fields', () => {
     const { json } = await call('GET');
     expect(json.effectiveSiteUrl).toBe(stored.siteUrl);
     expect((json.settings as Record<string, unknown>).siteUrl).toBe(stored.siteUrl);
-    expect(json.siteUrlEditable).toBe(false);
+    expect(json.siteUrlEditable).toBe(true);
     expect(json.siteNameLinkedToNode).toBe(true);
   });
 });
@@ -113,7 +113,6 @@ describe('GET /api/settings/site 本机可访问地址候选', () => {
 describe('中继上联的节点：站点 URL 可编辑、站点名仍与节点同步', () => {
   const relayLink = {
     linked: () => true,
-    siteUrlManaged: () => false,
     localNodeId: () => 'ab'.repeat(16),
     effectiveSiteUrl: () => null,
   };
@@ -159,21 +158,25 @@ describe('中继上联的节点：站点 URL 可编辑、站点名仍与节点�
 });
 
 describe('PATCH /api/settings/site mesh managed identity', () => {
-  test('rejects a different siteUrl with site_url_managed and does not save other fields', async () => {
+  test('PATCH can change siteUrl when linked', async () => {
     const before = getStoredSiteSettings();
+    const nextLang = before.language === 'zh_CN' ? 'en_US' : 'zh_CN';
     setSiteSettingsLinkProvider({
       linked: () => true,
       localNodeId: () => 'ab'.repeat(16),
       effectiveSiteUrl: () => 'https://relay.example',
     });
-    const { status, json } = await call('PATCH', {
-      siteUrl: 'https://other.example',
-      language: before.language === 'zh_CN' ? 'en_US' : 'zh_CN',
-    });
-    expect(status).toBe(400);
-    expect(json).toEqual({ error: 'site_url_managed' });
-    expect(getStoredSiteSettings().language).toBe(before.language);
-    expect(getStoredSiteSettings().siteUrl).toBe(before.siteUrl);
+    try {
+      const { status } = await call('PATCH', {
+        siteUrl: 'https://other.example',
+        language: nextLang,
+      });
+      expect(status).toBe(200);
+      expect(getStoredSiteSettings().siteUrl).toBe('https://other.example');
+      expect(getStoredSiteSettings().language).toBe(nextLang);
+    } finally {
+      updateSiteSettings({ siteUrl: before.siteUrl, language: before.language });
+    }
   });
 
   test('rejects a different siteName with site_name_managed', async () => {
@@ -205,11 +208,11 @@ describe('PATCH /api/settings/site mesh managed identity', () => {
       const settings = json.settings as Record<string, unknown>;
       expect(settings.enableBellSound).toBe(nextBell);
       expect(settings.siteUrl).toBe('https://relay.example/');
-      expect(json.siteUrlEditable).toBe(false);
-      expect(getStoredSiteSettings().siteUrl).toBe(before.siteUrl);
+      expect(json.siteUrlEditable).toBe(true);
+      expect(getStoredSiteSettings().siteUrl).toBe('https://relay.example');
       expect(getStoredSiteSettings().siteName).toBe(before.siteName);
     } finally {
-      updateSiteSettings({ enableBellSound: before.enableBellSound });
+      updateSiteSettings({ enableBellSound: before.enableBellSound, siteUrl: before.siteUrl });
     }
   });
 });

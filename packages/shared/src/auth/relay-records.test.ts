@@ -154,11 +154,10 @@ describe('relay 记录的签名矩阵与版本门禁', () => {
     }
   });
 
-  it('门禁要求 1.1.23 且不允许 force', () => {
+  it('门禁要求 1.1.23', () => {
     for (const type of RELAY_RECORD_TYPES) {
       expect(KEYLOG_RECORD_COMPAT[type]).toEqual({
         minVersion: MIN_RELAY_RECORD_VERSION,
-        allowForce: false,
       });
     }
     expect(MIN_RELAY_RECORD_VERSION).toBe('1.1.23');

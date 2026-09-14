@@ -27,9 +27,6 @@ function host(over: Partial<PreferredProbeHost> & { probeOk?: boolean } = {}): {
   const switched = { value: false };
   const attached = {
     publicUrl: TK,
-    uplinkNodeId: null,
-    mode: 'active' as const,
-    writerEpoch: 1,
     since: 0,
   };
   const live = { state: 'online' } as PooledUplink;
@@ -38,20 +35,14 @@ function host(over: Partial<PreferredProbeHost> & { probeOk?: boolean } = {}): {
     liveClient: () => live,
     candidates: () => [
       {
-        publicUrl: SH,
         uplinkNodeId: null,
-        mode: 'active',
-        writerEpoch: 1,
+        publicUrl: SH,
         priority: 0,
-        caFingerprint: null,
       },
       {
-        publicUrl: TK,
         uplinkNodeId: null,
-        mode: 'active',
-        writerEpoch: 1,
+        publicUrl: TK,
         priority: 1,
-        caFingerprint: null,
       },
     ],
     stopProbe: () => {},
@@ -64,7 +55,6 @@ function host(over: Partial<PreferredProbeHost> & { probeOk?: boolean } = {}): {
     },
     log: (line) => logs.push(line),
     lastErrorOf: () => null,
-    isLocalTransport: () => false,
     logSwitchBack: () => {},
     now: () => nowMs.current,
     probeLogAt: new Map<string, number>(),
@@ -78,7 +68,7 @@ describe('runPreferredProbe logging', () => {
     expect(PROBE_LOG_INTERVAL_MS).toBe(UPLINK_POOL_FAIL_LOG_INTERVAL_MS);
   });
 
-  test('probe fail 按 hub 节流', async () => {
+  test('probe fail 按中继 URL 节流', async () => {
     const fx = host({ probeOk: false });
     await fx.run();
     await fx.run();

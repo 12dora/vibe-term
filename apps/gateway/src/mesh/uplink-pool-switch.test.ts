@@ -116,10 +116,7 @@ function cand(url: string): UplinkCandidate {
   return {
     uplinkNodeId: null,
     publicUrl: url,
-    mode: 'standby',
-    writerEpoch: 1,
     priority: 10,
-    caFingerprint: null,
   };
 }
 
@@ -161,10 +158,7 @@ describe('runUplinkSwitch 连接失败归一化', () => {
     const host: UplinkSwitchHost = {
       candidates: () => [cand('https://a.example'), cand('https://b.example')],
       attachedUplink: () => ({
-        uplinkNodeId: null,
         publicUrl: 'https://b.example',
-        mode: 'standby',
-        writerEpoch: 1,
         since: 1,
       }),
       liveClient: () => live,
@@ -173,7 +167,6 @@ describe('runUplinkSwitch 连接失败归一化', () => {
       noteAttempt: () => {},
       logCandidateEvent: () => {},
       lastErrorOf: () => null,
-      isLocalTransport: () => false,
       beginSwitch: () => {
         token += 1;
         return token;

@@ -781,6 +781,75 @@ describe('TunnelManager', () => {
     expect(access.bypassAppId).toBeNull();
   });
 
+  test('sync_access discovers a leftover tmex-bypass-hub app and remove_access deletes it', async () => {
+    const deleted: string[] = [];
+    const ctx = await setup({
+      loginEnforced: () => true,
+      fetchImpl: async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        if (url.includes('/access/organizations')) {
+          return Response.json({
+            success: true,
+            result: { auth_domain: 'acme.cloudflareaccess.com' },
+          });
+        }
+        if (url.includes('/access/apps?') && method === 'GET') {
+          return Response.json({
+            success: true,
+            result: [
+              { id: 'app-9', aud: 'aud-9', domain: 'remote.example.com', name: 'VibeTerm' },
+              {
+                id: 'bypass-hub',
+                aud: 'aud-bh',
+                domain: 'remote.example.com/hub/',
+                name: 'tmex-bypass-hub',
+              },
+            ],
+            result_info: { page: 1, per_page: 100, total_count: 2, total_pages: 1 },
+          });
+        }
+        if (url.includes('/access/apps/app-9/policies')) {
+          return Response.json({
+            success: true,
+            result: [
+              {
+                id: 'pol-1',
+                decision: 'allow',
+                include: [{ email: { email: 'owner@example.com' } }],
+              },
+            ],
+          });
+        }
+        if (method === 'DELETE' && url.includes('/access/apps/')) {
+          const id = url.split('/access/apps/').pop() ?? url;
+          deleted.push(id);
+          return Response.json({ success: true, result: {} });
+        }
+        return Response.json({ success: false, errors: [{ message: url }] }, { status: 400 });
+      },
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'tok',
+      accountId: 'acc',
+    });
+    ctx.store.save({ mode: 'named', hostname: 'remote.example.com' });
+    const synced = await ctx.manager.handleAction({ action: 'sync_access' });
+    expect(synced.httpStatus).toBe(202);
+    const syncJob = await waitJob(ctx.manager);
+    expect(syncJob?.state).toBe('done');
+    expect(ctx.manager.status().access.bypassAppId).toBe('bypass-hub');
+
+    const removed = await ctx.manager.handleAction({ action: 'remove_access' });
+    expect(removed.httpStatus).toBe(202);
+    const removeJob = await waitJob(ctx.manager);
+    expect(removeJob?.state).toBe('done');
+    expect(deleted).toContain('bypass-hub');
+    expect(ctx.manager.status().access.bypassAppId).toBeNull();
+  });
+
   test('configure_access with mesh role does not create retired hub bypass apps', async () => {
     const createdDomains: string[] = [];
     const policies = new Map<string, unknown[]>();

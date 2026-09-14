@@ -22,7 +22,6 @@ export type UplinkSwitchHost = {
     extra?: { fails?: number; total?: number }
   ): void;
   lastErrorOf(cand: UplinkCandidate): string | null;
-  isLocalTransport(cand: UplinkCandidate): boolean;
   beginSwitch(): number;
   isSwitchCurrent(token: number): boolean;
   spawn(cand: UplinkCandidate): PooledUplink;
@@ -44,7 +43,7 @@ export async function runUplinkSwitch(
   signal?: AbortSignal
 ): Promise<UplinkSwitchResult> {
   const target = host.candidates().find((row) => sameUplinkUrl(row.publicUrl, publicUrl));
-  if (!target) return { ok: false, reason: `unknown hub url: ${publicUrl}` };
+  if (!target) return { ok: false, reason: `unknown relay url: ${publicUrl}` };
   if (alreadyAttachedTo(host, publicUrl)) return { ok: true };
   const poolSignal = host.stopSignal();
   if (!poolSignal || poolSignal.aborted) return { ok: false, reason: 'aborted' };
@@ -52,9 +51,8 @@ export async function runUplinkSwitch(
   const combinedSignal = combined?.signal ?? poolSignal;
   const cands = host.candidates();
   const idx = cands.findIndex((row) => sameUplinkUrl(row.publicUrl, publicUrl));
-  const transport = host.isLocalTransport(target) ? 'memory' : 'ws';
   host.noteAttempt(target);
-  host.logCandidateEvent(target, idx, transport, host.lastErrorOf(target), 'try', {
+  host.logCandidateEvent(target, idx, 'ws', host.lastErrorOf(target), 'try', {
     total: cands.length,
   });
   const token = host.beginSwitch();
@@ -67,7 +65,7 @@ export async function runUplinkSwitch(
     return { ok: true };
   } catch (err) {
     const reason = classifySwitchFailure(host, token, signal, err);
-    noteSwitchFailure(host, target, reason, err, idx, transport);
+    noteSwitchFailure(host, target, reason, err, idx, 'ws');
     await abandonSwitchClient(host, client);
     return { ok: false, reason };
   } finally {

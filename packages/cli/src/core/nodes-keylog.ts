@@ -19,7 +19,6 @@ import {
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
 } from '@vibeterm/shared/auth';
-import { FORCE_KEYLOG_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { type AuthMode, fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { AuthError, CliError, UsageError } from './errors';
@@ -138,21 +137,12 @@ export interface KeyLogAppendResult {
 export async function appendKeyLog(
   ctx: CliContext,
   bytes: Uint8Array,
-  sig: Uint8Array,
-  options?: { force?: boolean }
+  sig: Uint8Array
 ): Promise<KeyLogAppendResult> {
-  const headers = new Headers();
-  if (options?.force) {
-    headers.set(FORCE_KEYLOG_HEADER.name, '1');
-    headers.set(FORCE_KEYLOG_HEADER.legacy, '1');
-  }
-  return ctx.http.json(
-    SELF_NODE_ID,
-    'POST',
-    '/api/auth/keylog?hub=sync',
-    { bytes: encodeBase64url(bytes), sig: encodeBase64url(sig) },
-    { headers }
-  );
+  return ctx.http.json(SELF_NODE_ID, 'POST', '/api/auth/keylog?hub=sync', {
+    bytes: encodeBase64url(bytes),
+    sig: encodeBase64url(sig),
+  });
 }
 
 export function assertKeyLogAppended(result: KeyLogAppendResult, action: string): void {

@@ -13,11 +13,7 @@ import {
 } from '@vibeterm/shared/auth';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
-import {
-  type KeyLogRecordCompatResult,
-  applyForcedKeyLogCompat,
-  inspectKeyLogRecordCompat,
-} from './key-log-compat';
+import { inspectKeyLogRecordCompat } from './key-log-compat';
 
 function seedUser(store: UserStore, id = 'user-1'): void {
   store.create({
@@ -169,7 +165,6 @@ describe('key-log record compat gate', () => {
       if (!blocked.ok) {
         expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
         expect(blocked.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
-        expect(blocked.allowForce).toBe(false);
         expect(blocked.nodes).toEqual([{ id: PEER, name: 'old', version: '1.1.15' }]);
       }
     } finally {
@@ -222,7 +217,6 @@ describe('key-log record compat gate', () => {
       expect(readmitEmpty.ok).toBe(false);
       if (!readmitEmpty.ok) {
         expect(readmitEmpty.minVersion).toBe(MIN_READMIT_NODE_RECORD_VERSION);
-        expect(readmitEmpty.allowForce).toBe(false);
         expect(readmitEmpty.nodes).toEqual([{ id: SELF, name: SELF, version: null }]);
       }
       expect(inspectKeyLogRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay).ok).toBe(
@@ -263,7 +257,6 @@ describe('key-log record compat gate', () => {
       if (!blocked.ok) {
         expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
         expect(blocked.minVersion).toBe(MIN_READMIT_NODE_RECORD_VERSION);
-        expect(blocked.allowForce).toBe(false);
         expect(blocked.nodes.map((n) => n.id).sort()).toEqual([PEER, SELF].sort());
         expect(blocked.nodes.every((n) => n.version === null)).toBe(true);
       }
@@ -294,7 +287,6 @@ describe('key-log record compat gate', () => {
       if (!blocked.ok) {
         expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
         expect(blocked.minVersion).toBe(MIN_READMIT_NODE_RECORD_VERSION);
-        expect(blocked.allowForce).toBe(false);
         expect(blocked.nodes).toEqual([{ id: SELF, name: SELF, version: null }]);
       }
 
@@ -322,7 +314,6 @@ describe('key-log record compat gate', () => {
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {
         expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
-        expect(blocked.allowForce).toBe(false);
         expect(blocked.nodes).toEqual([{ id: OTHER, name: OTHER, version: null }]);
       }
       seedPeer(store, OTHER, 'recovered', '1.1.16');
@@ -348,7 +339,6 @@ describe('key-log record compat gate', () => {
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {
         expect(blocked.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
-        expect(blocked.allowForce).toBe(false);
         expect(blocked.nodes).toEqual([{ id: PEER, name: 'old', version: '1.1.15' }]);
       }
 
@@ -398,7 +388,6 @@ describe('key-log record compat gate', () => {
       if (!blockedKeep.ok) {
         expect(blockedKeep.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
         expect(blockedKeep.minVersion).toBe(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION);
-        expect(blockedKeep.allowForce).toBe(false);
         expect(blockedKeep.nodes).toEqual([{ id: SELF, name: SELF, version: null }]);
       }
 
@@ -440,21 +429,5 @@ describe('key-log record compat gate', () => {
     } finally {
       close();
     }
-  });
-
-  test('applyForcedKeyLogCompat only bypasses allowForce failures', () => {
-    const blocked: KeyLogRecordCompatResult = {
-      ok: false,
-      code: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-      minVersion: '1.1.16',
-      nodes: [{ id: PEER, name: 'old', version: '1.1.15' }],
-      allowForce: false,
-    };
-    expect(applyForcedKeyLogCompat(blocked, true)).toEqual(blocked);
-    expect(applyForcedKeyLogCompat({ ok: true }, true)).toEqual({ ok: true });
-
-    const forceable: KeyLogRecordCompatResult = { ...blocked, allowForce: true };
-    expect(applyForcedKeyLogCompat(forceable, false)).toEqual(forceable);
-    expect(applyForcedKeyLogCompat(forceable, true)).toEqual({ ok: true });
   });
 });

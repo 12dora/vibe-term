@@ -16,26 +16,14 @@ import { json } from './http';
 import { readJsonBody } from './read-json-body';
 import { type ApiRoute, route } from './route';
 import { normalizeSiteSettingsInput } from './site-settings';
-import {
-  getSiteSettingsLinkProvider,
-  sameManagedSiteUrl,
-  toSiteSettingsHttpPayload,
-} from './site-settings-link';
+import { getSiteSettingsLinkProvider, toSiteSettingsHttpPayload } from './site-settings-link';
 import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 
 function rejectManagedSiteIdentity(body: UpdateSiteSettingsRequest): Response | null {
   const link = getSiteSettingsLinkProvider();
   const linked = link.linked();
-  const urlManaged = link.siteUrlManaged();
-  if (!linked && !urlManaged) return null;
+  if (!linked) return null;
   const current = toSiteSettingsHttpPayload(getStoredSiteSettings()).settings;
-  if (urlManaged && body.siteUrl !== undefined) {
-    const value = typeof body.siteUrl === 'string' ? body.siteUrl.trim() : '';
-    if (!sameManagedSiteUrl(value, current.siteUrl)) {
-      return json({ error: 'site_url_managed' }, 400);
-    }
-    body.siteUrl = undefined;
-  }
   if (linked && body.siteName !== undefined) {
     const value = typeof body.siteName === 'string' ? body.siteName.trim() : '';
     if (value !== current.siteName) {

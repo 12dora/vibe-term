@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type StateSnapshotPayload, rolesFromName } from '@vibeterm/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,
@@ -247,7 +247,6 @@ describe('createMessagingRuntimeHooks', () => {
   test('getUplinkStatus is none for standalone and follows relay attached state', () => {
     const standalone = createMessagingRuntimeHooks({
       isStandalone: () => true,
-      roles: () => rolesFromName('standalone'),
       loadIdentity: () => ({ nodeId: null, name: 'Home', uplinkKind: null }),
       getMesh: () => null,
     });
@@ -255,7 +254,6 @@ describe('createMessagingRuntimeHooks', () => {
 
     const unattached = createMessagingRuntimeHooks({
       isStandalone: () => false,
-      roles: () => rolesFromName('node'),
       loadIdentity: () => ({ nodeId: 'n1', name: 'Home', uplinkKind: 'none' }),
       getMesh: () =>
         fakeMesh({
@@ -268,7 +266,6 @@ describe('createMessagingRuntimeHooks', () => {
 
     const relayAttached = createMessagingRuntimeHooks({
       isStandalone: () => false,
-      roles: () => rolesFromName('relay,node'),
       loadIdentity: () => ({ nodeId: 'n1', name: 'Home', uplinkKind: 'relay' }),
       getMesh: () =>
         fakeMesh({
@@ -280,7 +277,6 @@ describe('createMessagingRuntimeHooks', () => {
 
     const relayDetached = createMessagingRuntimeHooks({
       isStandalone: () => false,
-      roles: () => rolesFromName('relay,node'),
       loadIdentity: () => ({ nodeId: 'n1', name: 'Home', uplinkKind: 'relay' }),
       getMesh: () =>
         fakeMesh({
@@ -290,13 +286,12 @@ describe('createMessagingRuntimeHooks', () => {
     });
     expect(relayDetached.getUplinkStatus?.()).toEqual({ kind: 'relay', attached: false });
 
-    const unknown = createMessagingRuntimeHooks({
+    const missingIdentity = createMessagingRuntimeHooks({
       isStandalone: () => false,
-      roles: () => rolesFromName('node'),
       loadIdentity: () => ({ nodeId: 'n1', name: 'Home', uplinkKind: null }),
       getMesh: () => null,
     });
-    expect(unknown.getUplinkStatus?.()).toEqual({ kind: 'unknown', attached: 'unknown' });
+    expect(missingIdentity.getUplinkStatus?.()).toEqual({ kind: 'none', attached: false });
   });
 
   test('listMeshNodes uses listed presence and peer reach as /api/mesh/nodes online flags', () => {

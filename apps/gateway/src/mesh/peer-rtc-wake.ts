@@ -171,7 +171,6 @@ export type RtcWakePorts = {
   rtcInbox: () => Map<string, RtcSignalInboxEntry[]>;
   hasDcInflight?: (nodeId: string) => boolean;
   sendPeerCtl: (live: RtcWakeLivePeer, payload: Record<string, unknown>) => void;
-  ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
   uplinkSendCtl: (payload: UplinkRtcSignal) => void;
 };
 
@@ -240,7 +239,6 @@ export class RtcWakeGate {
       this.ports.sendPeerCtl(live, payload);
       return;
     }
-    this.ports.ensureDcSession?.(peerNodeId, msg.rtcSession);
     try {
       this.ports.uplinkSendCtl(payload);
     } catch {

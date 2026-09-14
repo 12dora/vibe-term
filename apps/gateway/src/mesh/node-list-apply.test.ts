@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
+import { NodeEventDedupe } from './node-event-dedupe';
 import {
   type NodeListApplyDeps,
   applyUplinkNodeList,
@@ -57,6 +58,54 @@ describe('emitRenameNodeEvent', () => {
       emitRenameNodeEvent(d, PEER, 'peer');
       expect(events[1]).toEqual({ nodeId: PEER, name: 'peer', status: 'offline' });
       expect(names).toEqual(['studio']);
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('uplink presence generation', () => {
+  test('offline → online → offline emits synthetic offline twice', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      const d = applyDeps(userStore);
+      const dedupe = new NodeEventDedupe();
+      const emitted: string[] = [];
+      applyUplinkNodeList(d, emptyList(), () => false);
+      expect(d.state.uplinkGeneration).toBe(1);
+      expect(d.state.uplinkPresenceLive).toBe(true);
+      expect(dedupe.shouldEmitSyntheticOffline(PEER, d.state.uplinkGeneration)).toBe(true);
+      emitted.push('offline-1');
+      expect(dedupe.shouldEmitSyntheticOffline(PEER, d.state.uplinkGeneration)).toBe(false);
+
+      applyUplinkNodeList(
+        d,
+        emptyList({
+          nodes: [
+            {
+              id: PEER,
+              name: 'peer',
+              online: true,
+              endpoints: [],
+              inventory: {},
+              direct_capable: false,
+              version: null,
+            },
+          ],
+        }),
+        () => false
+      );
+      expect(d.state.uplinkGeneration).toBe(1);
+      expect(dedupe.shouldEmitList({ nodeId: PEER, status: 'online' })).toBe(true);
+
+      d.state.uplinkPresenceLive = false;
+      applyUplinkNodeList(d, emptyList(), () => false);
+      expect(d.state.uplinkGeneration).toBe(2);
+      expect(d.state.uplinkPresenceLive).toBe(true);
+      expect(dedupe.shouldEmitSyntheticOffline(PEER, d.state.uplinkGeneration)).toBe(true);
+      emitted.push('offline-2');
+      expect(emitted).toEqual(['offline-1', 'offline-2']);
     } finally {
       close();
     }

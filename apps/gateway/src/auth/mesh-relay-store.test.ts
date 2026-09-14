@@ -91,11 +91,11 @@ describe('MeshRelayStore', () => {
     try {
       expect(f.store.uplinkKind()).toBe('none');
       expect(f.store.localName()).toBeNull();
-      f.store.markRelayUplink();
+      f.store.setUplinkKind('relay');
       f.store.setLocalName('  node-a  ');
       expect(f.store.uplinkKind()).toBe('relay');
       expect(f.store.localName()).toBe('node-a');
-      f.store.resetUplinkKind();
+      f.store.setUplinkKind('none');
       expect(f.store.uplinkKind()).toBe('none');
       f.store.setLocalName('   ');
       expect(f.store.localName()).toBeNull();

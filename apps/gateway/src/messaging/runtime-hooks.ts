@@ -1,4 +1,4 @@
-import { type StateSnapshotPayload, type VibeTermRoles, isStandaloneRoles } from '@vibeterm/shared';
+import { type StateSnapshotPayload, isStandaloneRoles } from '@vibeterm/shared';
 import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,
@@ -39,7 +39,7 @@ export type MeshListedNode = {
 export type MeshPresenceSource = {
   nodeId: string;
   uplink: { readonly state: string };
-  attachedUplink(): { uplinkNodeId: string | null } | null;
+  attachedUplink(): object | null;
   lastNodeList: { nodes: ReadonlyArray<MeshListedNode> } | null;
   peers: {
     listReach(): Map<string, 'lan' | 'wan' | 'relay' | null>;
@@ -56,7 +56,6 @@ export type MessagingRuntimeHookDeps = {
   releaseRuntime?: (deviceId: string, runtime: MessagingDeviceRuntime) => Promise<void>;
   resolveConfirmation?: (confirmationId: string, approved: boolean, reason?: string) => void;
   isStandalone?: () => boolean;
-  roles?: () => VibeTermRoles;
   loadIdentity?: () => {
     nodeId: string | null;
     name: string | null;
@@ -115,15 +114,10 @@ function defaultLocalName(): string {
   return loadLocalIdentity().name?.trim() || getSiteSettings().siteName;
 }
 
-function resolveUplinkKind(
-  standalone: boolean,
-  uplinkKind: 'relay' | 'none' | null,
-  roles: VibeTermRoles
-): UplinkKind {
+function resolveUplinkKind(standalone: boolean, uplinkKind: 'relay' | 'none' | null): UplinkKind {
   if (standalone) return 'none';
-  if (uplinkKind === 'relay' || uplinkKind === 'none') return uplinkKind;
-  if (roles.relay) return 'relay';
-  return 'unknown';
+  if (uplinkKind === 'relay') return 'relay';
+  return 'none';
 }
 
 function resolveAttached(kind: UplinkKind, mesh: MeshPresenceSource | null): boolean | 'unknown' {
@@ -228,16 +222,11 @@ function mapConfirmationError(error: unknown): DecideConfirmationResult {
 
 function buildGetUplinkStatus(deps: {
   isStandalone: () => boolean;
-  roles: () => VibeTermRoles;
   loadIdentity: () => LocalIdentity;
   getMesh: () => MeshPresenceSource | null;
 }): () => UplinkStatus {
   return () => {
-    const kind = resolveUplinkKind(
-      deps.isStandalone(),
-      deps.loadIdentity().uplinkKind,
-      deps.roles()
-    );
+    const kind = resolveUplinkKind(deps.isStandalone(), deps.loadIdentity().uplinkKind);
     return { kind, attached: resolveAttached(kind, deps.getMesh()) };
   };
 }
@@ -319,14 +308,13 @@ export function createMessagingRuntimeHooks(
       agentSupervisor.resolveConfirmation(confirmationId, approved, reason);
     });
   const isStandalone = overrides.isStandalone ?? (() => isStandaloneRoles(config.roles));
-  const roles = overrides.roles ?? (() => config.roles);
   const loadIdentity = overrides.loadIdentity ?? loadLocalIdentity;
   const getMesh = overrides.getMesh ?? defaultGetMesh;
   const getLocalName = overrides.getLocalName ?? defaultLocalName;
   const getVersion = overrides.getVersion ?? getDisplayVersion;
 
   return {
-    getUplinkStatus: buildGetUplinkStatus({ isStandalone, roles, loadIdentity, getMesh }),
+    getUplinkStatus: buildGetUplinkStatus({ isStandalone, loadIdentity, getMesh }),
     listMeshNodes: buildListMeshNodes({ getMesh, getLocalName, getVersion }),
     getDeviceTree: buildDeviceTreeHook(getSnapshot),
     capturePane: buildCapturePaneHook(getSnapshot, acquireRuntime, releaseRuntime),

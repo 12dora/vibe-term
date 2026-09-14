@@ -1,5 +1,6 @@
 import { errorMessage } from '@vibeterm/shared';
 import type { TunnelAccessPolicyRule } from '@vibeterm/shared';
+import { findManagedBypassApps } from './access-bypass';
 import {
   ACCESS_BYPASS_PATH_PREFIXES,
   VIBETERM_ALLOW_POLICY_NAME,
@@ -9,7 +10,6 @@ import {
   bypassAppName,
   isManagedAllowPolicyName,
   isManagedAppName,
-  isManagedBypassAppName,
   isManagedBypassPolicyName,
 } from './access-paths';
 import { fromCloudflareInclude, toCloudflareInclude } from './access-rules';
@@ -329,6 +329,7 @@ export class CloudflareAccessClient {
     hostname: string,
     existingIds: string[]
   ): Promise<string[]> {
+    if (ACCESS_BYPASS_PATH_PREFIXES.length === 0) return [];
     const apps = await this.listApps(accountId, apiToken);
     if (apps.truncated) {
       throw new TunnelError(
@@ -375,16 +376,7 @@ export class CloudflareAccessClient {
   }
 
   findBypassApps(apps: CloudflareApp[], hostname: string): CloudflareApp[] {
-    const host = hostname.toLowerCase();
-    const wanted = ACCESS_BYPASS_PATH_PREFIXES.map((p) => bypassAppDomain(host, p).toLowerCase());
-    const out: CloudflareApp[] = [];
-    for (const domain of wanted) {
-      const hit =
-        apps.find((a) => a.domain.toLowerCase() === domain) ??
-        apps.find((a) => isManagedBypassAppName(a.name) && a.domain.toLowerCase() === domain);
-      if (hit) out.push(hit);
-    }
-    return out;
+    return findManagedBypassApps(apps, hostname);
   }
 
   async getTunnel(

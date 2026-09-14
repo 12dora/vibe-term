@@ -31,7 +31,6 @@ export function createMeshSiteSettingsLink(
   };
   return {
     linked,
-    siteUrlManaged: () => false,
     localNodeId: () => (linked() ? input.localNodeId() : null),
     effectiveSiteUrl() {
       if (!linked()) return null;

@@ -89,7 +89,6 @@ describe('notification-sink 版本门禁', () => {
       if (blocked.ok) return;
       expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
       expect(blocked.minVersion).toBe(MIN_NOTIFICATION_SINK_RECORD_VERSION);
-      expect(blocked.allowForce).toBe(false);
       expect(blocked.nodes).toEqual([{ id: PEER, name: 'old', version: '1.1.38' }]);
     } finally {
       close();

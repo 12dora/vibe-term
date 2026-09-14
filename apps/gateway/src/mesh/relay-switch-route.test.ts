@@ -24,9 +24,6 @@ function deps(over: {
       liveClient: () => ({ state: 'online' }) as never,
       attachedUplink: () => ({
         publicUrl: SH,
-        uplinkNodeId: null,
-        mode: 'active',
-        writerEpoch: 0,
         since: 1,
       }),
       reconfigure: async () => {},

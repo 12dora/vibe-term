@@ -143,10 +143,9 @@ function decodePayload(type: string, payload: Uint8Array): unknown {
 }
 
 function decodeLegacyHubPayload(
-  decode: ((payload: Uint8Array) => unknown) | undefined,
+  decode: (payload: Uint8Array) => unknown,
   payload: Uint8Array
 ): unknown {
-  if (typeof decode !== 'function') return { legacy: true };
   try {
     return decode(payload);
   } catch {

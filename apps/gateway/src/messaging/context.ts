@@ -156,8 +156,9 @@ export function loadLocalIdentity(): {
 function defaultUplinkStatus(standalone: boolean, kind: 'relay' | 'none' | null): UplinkStatus {
   if (hooks.getUplinkStatus) return hooks.getUplinkStatus();
   if (standalone) return { kind: 'none', attached: false };
-  if (kind === 'relay' || kind === 'none') return { kind, attached: 'unknown' };
-  return { kind: 'unknown', attached: 'unknown' };
+  if (kind === 'none') return { kind: 'none', attached: false };
+  if (kind === 'relay') return { kind: 'relay', attached: 'unknown' };
+  return { kind: 'none', attached: false };
 }
 
 function defaultListNodes(localNodeId: string | null, localName: string): MeshNodeView[] {

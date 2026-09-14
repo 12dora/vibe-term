@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { LinkSession, LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
+import { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { reconfigureUplinkPool } from './relay-wiring';
@@ -126,10 +127,7 @@ function candidate(publicUrl: string): UplinkCandidate {
   return {
     uplinkNodeId: null,
     publicUrl,
-    mode: 'active',
-    writerEpoch: 0,
     priority: 0,
-    caFingerprint: null,
   };
 }
 
@@ -147,6 +145,7 @@ describe('UplinkPool 上级种类切换', () => {
         keyLogApplier: applier,
         userStore,
         statusProvider: status,
+        caPins: new RelayCaPinStore(db),
         enablePeriodicRttProbe: false,
         relayDrainRecheckMs: 5,
         relayDrainTimeoutMs: 50,
@@ -191,6 +190,7 @@ describe('UplinkPool 上级种类切换', () => {
         keyLogApplier: applier,
         userStore,
         statusProvider: status,
+        caPins: new RelayCaPinStore(db),
         enablePeriodicRttProbe: false,
         relayDrainRecheckMs: 5,
         relayDrainTimeoutMs: 100,
@@ -239,6 +239,7 @@ describe('UplinkPool 上级种类切换', () => {
         keyLogApplier: applier,
         userStore,
         statusProvider: status,
+        caPins: new RelayCaPinStore(db),
         enablePeriodicRttProbe: false,
         relayDrainRecheckMs: 5,
         relayDrainTimeoutMs: 20,

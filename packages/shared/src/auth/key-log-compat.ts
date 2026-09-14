@@ -4,20 +4,19 @@
 import type { KeyLogType } from './encoding';
 import { MIN_RELAY_RECORD_VERSION } from './relay-records';
 
-/** 写入 `rotate-root-keep` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
+/** 写入 `rotate-root-keep` 前，所有未吊销节点须达到该版本。 */
 export const MIN_ROTATE_ROOT_KEEP_RECORD_VERSION = '1.1.16';
-/** 写入 `rename-node` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
+/** 写入 `rename-node` 前，所有未吊销节点须达到该版本。 */
 export const MIN_RENAME_NODE_RECORD_VERSION = '1.1.24';
-/** 写入 `readmit-node` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
+/** 写入 `readmit-node` 前，所有未吊销节点须达到该版本。 */
 export const MIN_READMIT_NODE_RECORD_VERSION = '1.1.26';
-/** 写入 `notification-sink` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
+/** 写入 `notification-sink` 前，所有未吊销节点须达到该版本。 */
 export const MIN_NOTIFICATION_SINK_RECORD_VERSION = '1.1.39';
 export const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
 export const ROTATE_ROOT_KEEP_RECORD_TYPES = ['rotate-root-keep'] as const;
 
 export type KeyLogRecordCompatSpec = {
   minVersion: string;
-  allowForce: boolean;
   /**
    * 版本未知的成员也要挡住。
    *
@@ -33,22 +32,19 @@ export const RELAY_RECORD_TYPES = ['set-relays', 'meta-key'] as const;
 export const RENAME_NODE_RECORD_TYPES = ['rename-node'] as const;
 
 export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRecordCompatSpec>>> = {
-  'set-relays': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
-  'meta-key': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
-  'rename-node': { minVersion: MIN_RENAME_NODE_RECORD_VERSION, allowForce: false },
+  'set-relays': { minVersion: MIN_RELAY_RECORD_VERSION },
+  'meta-key': { minVersion: MIN_RELAY_RECORD_VERSION },
+  'rename-node': { minVersion: MIN_RENAME_NODE_RECORD_VERSION },
   'readmit-node': {
     minVersion: MIN_READMIT_NODE_RECORD_VERSION,
-    allowForce: false,
     failClosedUncached: true,
   },
   'notification-sink': {
     minVersion: MIN_NOTIFICATION_SINK_RECORD_VERSION,
-    allowForce: false,
     failClosedUncached: true,
   },
   'rotate-root-keep': {
     minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
-    allowForce: false,
     failClosedUncached: true,
   },
 };

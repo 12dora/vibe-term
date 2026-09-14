@@ -6,10 +6,8 @@ import {
   RENAME_NODE_RECORD_TYPES,
   decodeKeyLogRecord,
 } from '@vibeterm/shared/auth';
-import type { UserStore } from '../auth/user-store';
+import { LEGACY_HUB_PEER_ID, type UserStore } from '../auth/user-store';
 import { nodeVersionMeets } from './node-version';
-
-const SENTINEL_PEER_ID = 'hub';
 
 export type UnsupportedKeyLogNode = { id: string; name: string; version: string | null };
 
@@ -20,7 +18,6 @@ export type KeyLogRecordCompatResult =
       code: typeof KEYLOG_TYPE_UNSUPPORTED_BY_NODES;
       minVersion: string;
       nodes: UnsupportedKeyLogNode[];
-      allowForce: boolean;
     };
 
 export type KeyLogCompatOptions = {
@@ -40,7 +37,7 @@ function isNodeSideRecordType(type: string): boolean {
 }
 
 function listActivePeers(userStore: UserStore) {
-  return userStore.listPeers().filter((peer) => peer.nodeId !== SENTINEL_PEER_ID);
+  return userStore.listPeers().filter((peer) => peer.nodeId !== LEGACY_HUB_PEER_ID);
 }
 
 function lookupCompatNode(
@@ -119,21 +116,5 @@ export function inspectKeyLogRecordCompat(
     code: KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
     minVersion: spec.minVersion,
     nodes,
-    allowForce: spec.allowForce,
   };
-}
-
-/** force-keylog 内部头仅对 allowForce 的记录类型生效；`rotate-root-keep` 不可绕过。 */
-export function applyForcedKeyLogCompat(
-  compat: KeyLogRecordCompatResult,
-  forced: boolean
-): KeyLogRecordCompatResult {
-  if (compat.ok) return compat;
-  if (!forced || !compat.allowForce) return compat;
-  console.warn(
-    `[auth] forcing key-log append despite ${compat.code} minVersion=${compat.minVersion} nodes=${compat.nodes
-      .map((n) => n.id)
-      .join(',')}`
-  );
-  return { ok: true };
 }

@@ -16,11 +16,11 @@ export type SinkSetInput = {
   selfEnabled: boolean;
   /** 密钥日志投影：已声明为汇聚机的节点编号。 */
   declared: ReadonlySet<string>;
-  /** `state.lastNodeList?.nodes`：hub / 中继广播的最新一代列表，只用来取显示名。 */
+  /** `state.lastNodeList?.nodes`：中继广播的最新一代列表，只用来取显示名。 */
   listed: ReadonlyArray<{ id: string; name?: string }>;
   certs: ReadonlyArray<{ nodeId: string; revokedLogSeq: number | null }>;
   peers: ReadonlyArray<{ nodeId: string; name: string }>;
-  /** hub 侧 `user_nodes` 行；只用来取显示名。 */
+  /** 本机 `nodes` 行；只用来取显示名。 */
   nodes: ReadonlyArray<{ id: string; name: string }>;
   reach: ReadonlyMap<string, PeerReach | undefined>;
   listedOnline: ReadonlySet<string>;

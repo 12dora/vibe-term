@@ -1,13 +1,10 @@
 import type { UserKeyService } from '../auth';
-import type { UserStore } from '../auth/user-store';
+import { LEGACY_HUB_PEER_ID, type UserStore } from '../auth/user-store';
 import { isRemoteNodePresent } from './mesh-agent-bridge';
 import type { NodeEventProjection } from './node-event-dedupe';
 import type { PeerReach, PeerTransportKind } from './types';
 import { persistUplinkPeerCache } from './uplink-peer-persist';
 import type { UplinkNodeList } from './uplink-protocol';
-
-/** D2 删除的 `peer_cache` sentinel `node_id = 'hub'`；残留行仍跳过。 */
-const LEGACY_SENTINEL_PEER_ID = 'hub';
 
 export const STATUS_IFACE_CACHE_TTL_MS = 8_000;
 
@@ -190,7 +187,7 @@ export function emitListedNodeEvents(
   rejectPeer: NodeListRejectPeerFn
 ): void {
   for (const node of list.nodes) {
-    if (node.id === LEGACY_SENTINEL_PEER_ID) continue;
+    if (node.id === LEGACY_HUB_PEER_ID) continue;
     if (rejectPeer(node.id, true)) continue;
     d.emitListNodeEvent({
       nodeId: node.id,
@@ -245,7 +242,7 @@ export function pruneStaleListedPeers(
   for (const peer of d.userStore.listPeers()) {
     if (
       peer.nodeId === d.identity.nodeIdHex ||
-      peer.nodeId === LEGACY_SENTINEL_PEER_ID ||
+      peer.nodeId === LEGACY_HUB_PEER_ID ||
       retain.has(peer.nodeId)
     ) {
       continue;

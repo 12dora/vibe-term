@@ -20,7 +20,6 @@ import {
   type UplinkCandidate,
   UplinkPool,
   isRttSwitchWorth,
-  isSelfUplinkCandidate,
   redactUrl,
   sameUplinkUrl,
 } from './uplink-pool';
@@ -435,7 +434,6 @@ describe('UplinkPool', () => {
             uplinkNodeId: index === 0 ? ID.b : index === 1 ? ID.c : null,
             publicUrl,
             priority: 10 + index,
-            caFingerprint: null,
             version: input.versions?.[publicUrl] ?? '1.1.13',
           }))),
       scheduler,
@@ -449,7 +447,7 @@ describe('UplinkPool', () => {
       failbackDebounceMs: input.failbackDebounceMs,
       relayDrainRecheckMs: input.relayDrainRecheckMs,
       relayDrainTimeoutMs: input.relayDrainTimeoutMs,
-      ...(input.caPins ? { caPins: input.caPins } : {}),
+      caPins: input.caPins ?? new RelayCaPinStore(db),
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       onNodeList: input.onNodeList
         ? (list) => {
@@ -509,7 +507,6 @@ describe('UplinkPool', () => {
           uplinkNodeId: null,
           publicUrl: 'https://relay.example',
           priority: 1,
-          caFingerprint: null,
         },
       ],
       caPins,
@@ -528,7 +525,6 @@ describe('UplinkPool', () => {
       uplinkNodeId: null,
       publicUrl: 'https://relay.example',
       priority: 1,
-      caFingerprint: null,
     });
     expect((spawned as unknown as FakeUplink).tlsCa).toEqual([pem]);
   });
@@ -880,10 +876,7 @@ describe('UplinkPool', () => {
         {
           uplinkNodeId: ID.c,
           publicUrl: 'https://standby.example',
-          mode: 'standby',
-          writerEpoch: 1,
           priority: 20,
-          caFingerprint: null,
         },
       ],
     });
@@ -892,7 +885,7 @@ describe('UplinkPool', () => {
     });
     pool.start();
     await waitMicro();
-    expect(pool.attachedUplink()?.uplinkNodeId).toBe(ID.c);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://standby.example');
     created[0]?.emitStaleList({
       t: 'node.list',
       version: 2,
@@ -921,26 +914,17 @@ describe('UplinkPool', () => {
         {
           uplinkNodeId: ID.b,
           publicUrl: 'https://a.example',
-          mode: 'active',
-          writerEpoch: 3,
           priority: 10,
-          caFingerprint: null,
         },
         {
           uplinkNodeId: ID.c,
           publicUrl: 'https://b.example',
-          mode: 'standby',
-          writerEpoch: 1,
           priority: 20,
-          caFingerprint: null,
         },
         {
           uplinkNodeId: 'dd'.repeat(16),
           publicUrl: 'https://c.example',
-          mode: 'standby',
-          writerEpoch: 1,
           priority: 30,
-          caFingerprint: null,
         },
       ],
     });
@@ -1065,26 +1049,17 @@ describe('UplinkPool', () => {
         {
           uplinkNodeId: ID.b,
           publicUrl: 'https://a.example',
-          mode: 'active',
-          writerEpoch: 3,
           priority: 10,
-          caFingerprint: null,
         },
         {
           uplinkNodeId: ID.c,
           publicUrl: 'https://b.example',
-          mode: 'standby',
-          writerEpoch: 1,
           priority: 20,
-          caFingerprint: null,
         },
         {
           uplinkNodeId: 'dd'.repeat(16),
           publicUrl: 'https://c.example',
-          mode: 'standby',
-          writerEpoch: 1,
           priority: 30,
-          caFingerprint: null,
         },
       ],
     });
@@ -1262,36 +1237,6 @@ describe('UplinkPool', () => {
     expect(created[0]?.statusIfChangedCalls).toBeGreaterThanOrEqual(1);
   });
 
-  test('isSelfUplinkCandidate matches own node id or normalized public URL', () => {
-    expect(
-      isSelfUplinkCandidate(
-        {
-          uplinkNodeId: ID.a,
-          publicUrl: 'https://hub.example',
-        },
-        { nodeId: ID.a, publicUrl: 'https://other.example' }
-      )
-    ).toBe(true);
-    expect(
-      isSelfUplinkCandidate(
-        {
-          uplinkNodeId: ID.b,
-          publicUrl: 'HTTPS://Hub.Example:443/',
-        },
-        { nodeId: ID.a, publicUrl: 'https://hub.example' }
-      )
-    ).toBe(true);
-    expect(
-      isSelfUplinkCandidate(
-        {
-          uplinkNodeId: ID.b,
-          publicUrl: 'https://remote.example',
-        },
-        { nodeId: ID.a, publicUrl: 'https://hub.example' }
-      )
-    ).toBe(false);
-  });
-
   test('logs every candidate attempt, failure, failover and records lastError', async () => {
     const lines: string[] = [];
     const originalInfo = console.info;
@@ -1416,10 +1361,7 @@ describe('UplinkPool', () => {
           {
             uplinkNodeId: ID.b,
             publicUrl: dirty,
-            mode: 'active',
-            writerEpoch: 3,
             priority: 10,
-            caFingerprint: null,
           },
         ],
       });

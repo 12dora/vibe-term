@@ -17,7 +17,6 @@ describe('createMeshSiteSettingsLink', () => {
       localNodeId: () => NODE,
     });
     expect(nodeLink.linked()).toBe(true);
-    expect(nodeLink.siteUrlManaged()).toBe(false);
     expect(nodeLink.effectiveSiteUrl()).toBeNull();
   });
 
@@ -27,7 +26,6 @@ describe('createMeshSiteSettingsLink', () => {
       localNodeId: () => NODE,
     });
     expect(link.linked()).toBe(false);
-    expect(link.siteUrlManaged()).toBe(false);
     expect(link.localNodeId()).toBeNull();
     expect(link.effectiveSiteUrl()).toBeNull();
   });
@@ -39,7 +37,6 @@ describe('createMeshSiteSettingsLink', () => {
       uplinkKind: () => 'relay',
     });
     expect(relayLink.linked()).toBe(true);
-    expect(relayLink.siteUrlManaged()).toBe(false);
     expect(relayLink.effectiveSiteUrl()).toBeNull();
   });
 
@@ -51,7 +48,6 @@ describe('createMeshSiteSettingsLink', () => {
       storedSiteUrl: () => 'http://127.0.0.1:9883',
       relayAccessUrl: () => `https://relay.example/n/${NODE}`,
     });
-    expect(link.siteUrlManaged()).toBe(false);
     expect(link.effectiveSiteUrl()).toBe(`https://relay.example/n/${NODE}`);
   });
 

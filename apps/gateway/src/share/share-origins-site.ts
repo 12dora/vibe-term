@@ -22,10 +22,9 @@ export function listedOriginsOf(items: readonly { url: string; listed: boolean }
 
 export function shouldOfferSite(
   site: string | null,
-  managed: boolean,
   listedOrigins: ReadonlySet<string>
 ): site is string {
-  if (!site || managed) return false;
+  if (!site) return false;
   const origin = originOf(site);
   if (!origin) return false;
   return !listedOrigins.has(origin);

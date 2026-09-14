@@ -1,5 +1,5 @@
 import { canonicalPublicUrl, hostFromUrl } from '@vibeterm/shared/auth';
-import type { AttachedUplink, UplinkCandidate } from './uplink-pool';
+import type { AttachedUplink } from './uplink-pool';
 
 export function redactUrl(raw: string): string {
   try {
@@ -28,15 +28,6 @@ export function normalizeUplinkEndpointUrl(raw: string): string {
 
 export function sameUplinkUrl(a: string, b: string): boolean {
   return normalizeUplinkEndpointUrl(a) === normalizeUplinkEndpointUrl(b);
-}
-
-export function isSelfUplinkCandidate(
-  cand: Pick<UplinkCandidate, 'uplinkNodeId' | 'publicUrl'>,
-  self: { nodeId?: string | null; publicUrl?: string | null }
-): boolean {
-  if (self.nodeId && cand.uplinkNodeId && cand.uplinkNodeId === self.nodeId) return true;
-  if (self.publicUrl && sameUplinkUrl(cand.publicUrl, self.publicUrl)) return true;
-  return false;
 }
 
 export function attachedUplinkHost(

@@ -33,7 +33,6 @@ import { UplinkRelayDrain, type UplinkRelayDrainReason } from './uplink-relay-dr
 export type { UplinkSwitchResult } from './uplink-pool-switch';
 export {
   attachedUplinkHost,
-  isSelfUplinkCandidate,
   normalizeUplinkEndpointUrl,
   redactUrl,
   sameUplinkUrl,
@@ -62,17 +61,13 @@ export const UPLINK_POOL_FAILBACK_DEBOUNCE_MS = 5_000;
 export const UPLINK_POOL_RTT_PROBE_INTERVAL_MS = 300_000;
 export const UPLINK_RTT_EWMA_ALPHA = 0.3;
 export const UPLINK_RTT_SWITCH_DWELL_MS = 10 * 60 * 1000;
-export const UPLINK_SEED_PRIORITY_BASE = 1_000;
 export const UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS = 2_000;
 export const UPLINK_POOL_FAIL_LOG_INTERVAL_MS = 60_000;
 
 export type UplinkCandidate = {
   uplinkNodeId: string | null;
   publicUrl: string;
-  mode?: string;
-  writerEpoch?: number;
   priority: number;
-  caFingerprint: string | null;
   lastError?: string | null;
   lastErrorAt?: number | null;
   lastAttemptAt?: number | null;
@@ -82,10 +77,7 @@ export type UplinkCandidate = {
 };
 
 export type AttachedUplink = {
-  uplinkNodeId: string | null;
   publicUrl: string;
-  mode: string | null;
-  writerEpoch: number | null;
   since: number;
 };
 
@@ -107,7 +99,7 @@ export type UplinkPoolOptions = {
   scheduler?: MeshScheduler;
   pingIntervalMs?: number;
   createClient: CreatePooledUplink;
-  caPins?: RelayCaPinStore;
+  caPins: RelayCaPinStore;
   probeHealthz?: (publicUrl: string, tlsCa: string[] | null, timeoutMs: number) => Promise<boolean>;
   probeJitter?: number;
   failbackDebounceMs?: number;
@@ -177,7 +169,7 @@ export class UplinkPool {
   private readonly probeLogAt = new Map<string, number>();
   private wrapSleepAbort: AbortController | null = null;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
-  private readonly attachedListeners: Array<(hub: AttachedUplink) => void> = [];
+  private readonly attachedListeners: Array<(uplink: AttachedUplink) => void> = [];
   private readonly detachedListeners: Array<() => void> = [];
   private readonly nodeListListeners: Array<
     (list: UplinkNodeList, meta: UplinkPoolNodeListMeta) => void
@@ -265,7 +257,7 @@ export class UplinkPool {
     return this.live;
   }
 
-  onAttached(cb: (hub: AttachedUplink) => void): () => void {
+  onAttached(cb: (uplink: AttachedUplink) => void): () => void {
     this.attachedListeners.push(cb);
     return () => {
       const idx = this.attachedListeners.indexOf(cb);
@@ -449,8 +441,7 @@ export class UplinkPool {
       if (await this.tryCandidate(cand, signal, i, cands.length)) return true;
       const next = cands[i + 1];
       if (next) {
-        const nextTransport = this.isLocalTransport(next) ? 'memory' : 'ws';
-        this.logCandidateEvent(next, i + 1, nextTransport, this.lastErrorOf(next), 'failover');
+        this.logCandidateEvent(next, i + 1, 'ws', this.lastErrorOf(next), 'failover');
       }
     }
     return false;
@@ -466,10 +457,6 @@ export class UplinkPool {
 
   isSwitchCurrent(token: number): boolean {
     return token === this.switchToken && !this.stopAbort?.signal.aborted;
-  }
-
-  isLocalTransport(_cand: UplinkCandidate): boolean {
-    return false;
   }
 
   async connectCandidate(
@@ -499,9 +486,8 @@ export class UplinkPool {
     const token = this.beginSwitch();
     const client = this.spawn(cand);
     this.pending = client;
-    const transport = this.isLocalTransport(cand) ? 'memory' : 'ws';
     this.noteAttempt(cand);
-    this.logCandidateEvent(cand, index, transport, this.lastErrorOf(cand), 'try', { total });
+    this.logCandidateEvent(cand, index, 'ws', this.lastErrorOf(cand), 'try', { total });
     let failures = 0;
     try {
       while (failures < this.failLimit && !combined.aborted) {
@@ -515,7 +501,7 @@ export class UplinkPool {
         } catch (err) {
           if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
           failures += 1;
-          this.noteCandidateFailure(cand, err, failures, index, transport);
+          this.noteCandidateFailure(cand, err, failures, index, 'ws');
           if (combined.aborted || failures >= this.failLimit) break;
         }
       }
@@ -594,10 +580,7 @@ export class UplinkPool {
     this.bindLiveState(client);
     this.relayDrain.bind(client, () => this.live === client);
     this.attached = {
-      uplinkNodeId: cand.uplinkNodeId,
       publicUrl: cand.publicUrl,
-      mode: cand.mode ?? null,
-      writerEpoch: cand.writerEpoch ?? null,
       since: this.scheduler.now(),
     };
     this.emitAttached(this.attached);
@@ -620,12 +603,11 @@ export class UplinkPool {
   ): void {
     if (this.live !== client) return;
     this.opts.onNodeList?.(list, {
-      uplinkNodeId: this.attached?.uplinkNodeId ?? uplinkNodeId,
+      uplinkNodeId,
       generation: this.generation,
     });
-    this.refreshAttachedFromCandidates();
     const meta = {
-      uplinkNodeId: this.attached?.uplinkNodeId ?? uplinkNodeId,
+      uplinkNodeId,
       generation: this.generation,
     };
     for (const cb of this.nodeListListeners) {
@@ -637,28 +619,6 @@ export class UplinkPool {
     }
     this.syncProbe();
     this.syncRttProbe();
-  }
-
-  private applyAttachedMatch(
-    match: Pick<AttachedUplink, 'uplinkNodeId' | 'mode' | 'writerEpoch'>
-  ): void {
-    if (!this.attached) return;
-    this.attached.uplinkNodeId = match.uplinkNodeId;
-    this.attached.mode = match.mode;
-    this.attached.writerEpoch = match.writerEpoch;
-  }
-
-  private refreshAttachedFromCandidates(): void {
-    const attached = this.attached;
-    if (!attached) return;
-    const match = this.candidates().find((row) => sameUplinkUrl(row.publicUrl, attached.publicUrl));
-    if (match) {
-      this.applyAttachedMatch({
-        uplinkNodeId: match.uplinkNodeId,
-        mode: match.mode ?? null,
-        writerEpoch: match.writerEpoch ?? null,
-      });
-    }
   }
 
   private async followLiveSession(signal: AbortSignal): Promise<boolean> {
@@ -879,10 +839,8 @@ export class UplinkPool {
         switchTo: (url) => this.switchTo(url),
         log: (line) => this.logInfo(line),
         lastErrorOf: (cand) => this.lastErrorOf(cand),
-        isLocalTransport: (cand) => this.isLocalTransport(cand),
         logSwitchBack: (pref, i) => {
-          const transport = this.isLocalTransport(pref) ? 'memory' : 'ws';
-          this.logCandidateEvent(pref, i, transport, this.lastErrorOf(pref), 'switch-back');
+          this.logCandidateEvent(pref, i, 'ws', this.lastErrorOf(pref), 'switch-back');
         },
         now: () => this.scheduler.now(),
         probeLogAt: this.probeLogAt,
@@ -900,7 +858,7 @@ export class UplinkPool {
 
   private tlsCaFor(publicUrl: string): string[] | null {
     try {
-      const pin = this.opts.caPins?.get(publicUrl);
+      const pin = this.opts.caPins.get(publicUrl);
       return pin?.caPem ? [pin.caPem] : null;
     } catch {
       return null;
@@ -1038,10 +996,10 @@ export class UplinkPool {
     }
   }
 
-  private emitAttached(hub: AttachedUplink): void {
+  private emitAttached(uplink: AttachedUplink): void {
     for (const cb of this.attachedListeners) {
       try {
-        cb(hub);
+        cb(uplink);
       } catch {
         /* ignore */
       }

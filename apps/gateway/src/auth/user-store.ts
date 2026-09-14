@@ -3,6 +3,9 @@ import { enrollmentTokens, nodeCerts, nodes, peerCache, userKeys, users } from '
 import { toBuffer, toBytes } from './binary';
 import type { AuthDb, NodeStatus } from './types';
 
+/** D2 删除的 `peer_cache` sentinel `node_id = 'hub'`；残留行仍跳过。 */
+export const LEGACY_HUB_PEER_ID = 'hub';
+
 export interface UserRecord {
   id: string;
   username: string;

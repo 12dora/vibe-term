@@ -275,7 +275,7 @@ export function createKeyLogPublisher(
       const force = (record as { force?: boolean }).force === true;
       const ack = await uplink.appendAndAck({ ...record, force });
       if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
-      return { ok: false, error: ack.error ?? 'hub_error' };
+      return { ok: false, error: ack.error ?? 'relay_error' };
     },
     queryKeyLogHead: () => uplink.queryKeyLogHead(),
     queryKeyLogAt: (seq) => uplink.queryKeyLogAt(seq),
@@ -363,6 +363,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     lastStunLogKey: null as string | null,
     lastNodeList: null as UplinkNodeList | null,
     uplinkGeneration: 0,
+    uplinkPresenceLive: false,
     caFingerprint: null as string | null,
   };
   const emitNodeEvent = (event: NodeEventPayload) => {
@@ -570,7 +571,6 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
 
 type MeshDeps = Awaited<ReturnType<typeof constructMeshDeps>>;
 type RejectPeerFn = (nodeId: string, alwaysDelete: boolean) => boolean;
-type EnsureDcFn = (peerNodeId: string, rtcSession: string) => void;
 
 function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: RejectPeerFn): void {
   applyUplinkNodeList(
@@ -604,7 +604,6 @@ function createUplinkWiring(d: MeshDeps) {
     }
     return true;
   };
-  const ensureDc = (_peerNodeId: string, _rtcSession: string) => {};
   const relayOverrides = relayUplinkOverrides(d.relay, {
     nameProvider: () => selfDisplayNameOf(d) ?? '',
   });
@@ -636,7 +635,7 @@ function createUplinkWiring(d: MeshDeps) {
   });
   bindRelayReconcile(d.relay, uplink);
   bindRelayUplinkFactory(d.relay, relayOverrides.createClient);
-  return { uplink, ensureDc };
+  return { uplink };
 }
 
 function startTlsFingerprintPoll(
@@ -651,7 +650,7 @@ function startTlsFingerprintPoll(
   }, intervalMs);
 }
 
-function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn) {
+function createPeerWiring(d: MeshDeps, uplink: UplinkPool) {
   const { opts, config, identity, userStore, state, rtc, sessions } = d;
   const noopUpgrade: MeshUpgradeServer = { upgrade: () => false };
   const dispatchInboundHttp = async (request: Request, ctx: DispatchContext): Promise<Response> => {
@@ -696,7 +695,6 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
       d.innerSignalsHolder.router?.deliverLocal(signal, fromNodeId);
       d.startBrowserAcceptHolder.fn(signal.rtcSession);
     },
-    ensureDcSession: ensureDc,
     onLinkInfo: (info) => {
       notePeerTransport(info.nodeId, info.transport);
       const listed = state.lastNodeList?.nodes.find((node) => node.id === info.nodeId);
@@ -747,6 +745,7 @@ function installNodeRelayAttach(d: MeshDeps, uplink: UplinkPool, peerManager: Pe
     pingIntervalMs: d.opts.pingIntervalMs,
     onRtcSignal: (msg) => dispatchUplinkRtcSignal(d, d.identity.nodeIdHex, msg, peerFromDcSession),
     onExclusiveOffline: (ids) => {
+      d.state.uplinkPresenceLive = false;
       for (const id of ids) d.emitSyntheticOffline(id);
     },
     rtc: d.state,
@@ -757,12 +756,7 @@ function installNodeRelayAttach(d: MeshDeps, uplink: UplinkPool, peerManager: Pe
   });
 }
 
-function createRtcBrowserWiring(
-  d: MeshDeps,
-  uplink: UplinkPool,
-  peerManager: PeerManager,
-  ensureDc: EnsureDcFn
-) {
+function createRtcBrowserWiring(d: MeshDeps, uplink: UplinkPool, peerManager: PeerManager) {
   const { identity, rtc, sessions, bulk } = d;
   const innerSignals = new MeshRtcSignalRouter({
     selfNodeId: identity.nodeIdHex,
@@ -780,7 +774,6 @@ function createRtcBrowserWiring(
       return true;
     },
     sendCtl(nodeId, msg) {
-      ensureDc(nodeId, msg.rtcSession);
       const live = peerManager.getLive(nodeId);
       if (live) {
         live.ctl.send(encodeJsonBytes(rtcSignalCtl(msg)));
@@ -877,13 +870,13 @@ function createRtcBrowserWiring(
   return { fingerprint, signals };
 }
 function wireMeshEventsAndSessions(d: MeshDeps) {
-  const { uplink, ensureDc } = createUplinkWiring(d);
-  const { peerManager, unsubscribeUplinkState } = createPeerWiring(d, uplink, ensureDc);
+  const { uplink } = createUplinkWiring(d);
+  const { peerManager, unsubscribeUplinkState } = createPeerWiring(d, uplink);
   return {
     uplink,
     peerManager,
     unsubscribeUplinkState,
-    ...createRtcBrowserWiring(d, uplink, peerManager, ensureDc),
+    ...createRtcBrowserWiring(d, uplink, peerManager),
   };
 }
 

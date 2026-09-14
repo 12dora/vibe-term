@@ -154,7 +154,9 @@ describe('CloudflareAccessClient', () => {
     });
     const apps = await client.listApps('acc1', 'tok');
     expect(client.findAppForHostname(apps, 'legacy.example.com')?.id).toBe('app-legacy');
-    expect(client.findBypassApps(apps, 'other.example.com')).toEqual([]);
+    expect(client.findBypassApps(apps, 'other.example.com').map((a) => a.id)).toEqual([
+      'bypass-legacy',
+    ]);
     expect(isManagedAppName('tmex')).toBe(true);
     expect(isManagedBypassAppName('tmex-bypass-hub')).toBe(true);
   });
@@ -386,9 +388,11 @@ describe('CloudflareAccessClient', () => {
     expect(apps).toHaveLength(50);
   });
 
-  test('upsertBypassApps refuses a truncated app list', async () => {
+  test('upsertBypassApps skips listApps when prefixes are empty', async () => {
+    let listed = 0;
     const client = new CloudflareAccessClient(
       async (input, init): Promise<Response> => {
+        listed += 1;
         const url = String(input);
         if (url.includes('/access/apps?')) {
           if (/[?&]page=1(?:&|$)/.test(url)) {
@@ -404,13 +408,9 @@ describe('CloudflareAccessClient', () => {
       },
       { requestTimeoutMs: 5_000, listAppsDeadlineMs: 15 }
     );
-    try {
-      await client.upsertBypassApps('acc1', 'tok', 'vibeterm.example.com', []);
-      throw new Error('expected failure');
-    } catch (error) {
-      expect((error as { code?: string }).code).toBe('access_api_failed');
-      expect((error as Error).message).toMatch(/incomplete/i);
-    }
+    const ids = await client.upsertBypassApps('acc1', 'tok', 'vibeterm.example.com', []);
+    expect(ids).toEqual([]);
+    expect(listed).toBe(0);
   });
 
   test('mutations use a longer timeout budget than reads', async () => {

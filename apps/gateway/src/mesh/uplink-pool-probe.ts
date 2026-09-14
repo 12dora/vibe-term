@@ -3,7 +3,7 @@ import { isCurrentUplinkSession } from './uplink-nearest-switch';
 import type { AttachedUplink, UplinkCandidate, UplinkSwitchResult } from './uplink-pool';
 import { redactUrl, sameUplinkUrl } from './uplink-pool-url';
 
-/** 与 `UPLINK_POOL_FAIL_LOG_INTERVAL_MS` 同值：probe fail/ok 按 hub 节流。 */
+/** 与 `UPLINK_POOL_FAIL_LOG_INTERVAL_MS` 同值：probe fail/ok 按中继 URL 节流。 */
 export const PROBE_LOG_INTERVAL_MS = 60_000;
 
 export type PreferredProbeHost = {
@@ -17,7 +17,6 @@ export type PreferredProbeHost = {
   switchTo(publicUrl: string): Promise<UplinkSwitchResult>;
   log(line: string): void;
   lastErrorOf(cand: UplinkCandidate): string | null;
-  isLocalTransport(cand: UplinkCandidate): boolean;
   logSwitchBack(cand: UplinkCandidate, index: number): void;
   now?(): number;
   probeLogAt?: Map<string, number>;
