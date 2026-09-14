@@ -23,14 +23,16 @@
 | DB / pid / log | `data/vibeterm.db`、`vibeterm.pid`、`vibeterm.log` |
 | CSS 变量 / 类 | `--vibeterm-*`、`.vibeterm-*` |
 | 浏览器持久化 key | `vibeterm-ui`、`vibeterm.site.language`、`vibeterm:*`、IndexedDB `vibeterm-auth` |
-| 测试 harness | tmux socket `vibeterm-e2e*`、docker 项目 `vibeterm-e2e`、域名 `hub.vibeterm.test` / `entry.vibeterm.test`、容器内 `/opt/vibeterm`、`/var/lib/vibeterm` |
+| 测试 harness | tmux socket `vibeterm-e2e*`、docker 项目 `vibeterm-e2e`、域名 `entry.vibeterm.test`、容器内 `/opt/vibeterm`、`/var/lib/vibeterm` |
 | 版本 | `2.0.0` |
 
 ## 冻结值（永久不改）
 
 只有**签名 / HKDF 域串**是永久冻结的。它们已经进了持久化的 `user_key_log`、节点证书与已发布的签名文件；改一个字节，历史记录就验不过，等于让全网重置身份。
 
-`tmex/delegation/v1`、`tmex/login/v1`、`tmex/enroll/v1`、`tmex/nodecert/v1`、`tmex/keylog/v1`、`tmex/peer/v1`、`tmex/hub-enroll/v1`、`tmex/uplink-auth/v1`、`tmex/relay-enroll/v1`、`tmex/redeem-pop/v1`、`tmex-sc/v1/`、`tmex-relay-wrap/v1`、`tmex-relay/`、`tmex-relay-pack/v1`、`tmex-totp`、`tmex-release-sig`。
+`tmex/delegation/v1`、`tmex/login/v1`、`tmex/enroll/v1`、`tmex/nodecert/v1`、`tmex/keylog/v1`、`tmex/peer/v1`、`tmex/uplink-auth/v1`、`tmex/relay-enroll/v1`、`tmex/redeem-pop/v1`、`tmex-sc/v1/`、`tmex-relay-wrap/v1`、`tmex-relay/`、`tmex-relay-pack/v1`、`tmex-totp`、`tmex-release-sig`。
+
+`tmex/hub-enroll/v1` 是已删除的瞬时域（从未落库），不再属于冻结列表。Borsh 字段名 `UplinkAuth.hub_host` 仍冻结（遗留拼写）。
 
 代码里持有这些字面量的 TS 常量已改成 VibeTerm 命名，值不变，定义处带注释说明原因。
 
@@ -42,7 +44,7 @@
 
 ### 1. 发行资产 `tmex-cli-<v>.tgz`
 
-≤ 1.1.40 的节点自升级时按旧资产名拼 URL、按旧文件名在 `SHA256SUMS` 里找摘要、解包后断言 `package.json.name === 'tmex-cli'` 且 `bin/tmex.js` 存在。因此 CI 在 `npm pack` 产出 `vibeterm-cli-<v>.tgz` 之后，用 `scripts/release/build-legacy-asset.ts` 解包、把 `package.json.name` 改回 `tmex-cli`、重打成 `tmex-cli-<v>.tgz`；两个资产写进同一份 `SHA256SUMS`，由同一把 `r1` 私钥签一次。新代码读侧同时接受两种资产名与包名，hub 向旧节点推包时选旧资产名。详见 [发布流程](./release-process.md#兼容资产-tmex-cli-versiontgz)。
+≤ 1.1.40 的节点自升级时按旧资产名拼 URL、按旧文件名在 `SHA256SUMS` 里找摘要、解包后断言 `package.json.name === 'tmex-cli'` 且 `bin/tmex.js` 存在。因此 CI 在 `npm pack` 产出 `vibeterm-cli-<v>.tgz` 之后，用 `scripts/release/build-legacy-asset.ts` 解包、把 `package.json.name` 改回 `tmex-cli`、重打成 `tmex-cli-<v>.tgz`；两个资产写进同一份 `SHA256SUMS`，由同一把 `r1` 私钥签一次。新代码读侧同时接受两种资产名与包名，入口向旧节点推包时选旧资产名。详见 [发布流程](./release-process.md#兼容资产-tmex-cli-versiontgz)。
 
 ### 2. 环境变量别名
 
@@ -94,7 +96,7 @@ localStorage / sessionStorage 一次性 `getItem(old) → setItem(new) → remov
 
 ## 运维手册：升级一片 1.1.x 的节点
 
-1. **先升 hub / 入口**。入口向节点推包时要能选旧资产名，旧入口推给新节点会因缺清单而在装包一步被拒。
+1. **先升入口**。入口向节点推包时要能选旧资产名，旧入口推给新节点会因缺清单而在装包一步被拒。
 2. 逐台升级：终端 `vibeterm upgrade`，或设置页「版本与更新」，或从入口批量推包。命令别名 `tmex upgrade` 等价。
 3. 每台升完核对：
    - `vibeterm doctor` 通过；`curl -sS http://127.0.0.1:9883/healthz` 返回 `ok`；
@@ -102,7 +104,7 @@ localStorage / sessionStorage 一次性 `getItem(old) → setItem(new) → remov
    - Linux：`systemctl --user status <服务名>.service` 为 running，旧 `tmex.service` 已消失；
    - 安装目录已在 `.../vibeterm/`，`data/vibeterm.db` 存在，`app.env` 的键全是 `VIBETERM_*`，`backups/app.env.<txnId>` 有备份；
    - 页面品牌显示 VibeTerm，登录 / passkey / TOTP / 主题 / 布局设置均未丢。
-4. 全网升完之后，用 `vibeterm hub list` 与中继租户列表逐台核对版本 ≥ 2.0.0，再考虑拆桥。
+4. 全网升完之后，用 `vibeterm nodes ls` 与中继租户列表逐台核对版本 ≥ 2.0.0，再考虑拆桥。
 5. **拆桥**（后续版本，一次一项，各自发一版观察）：删 `build-legacy-asset.ts` 与 workflow 里的兼容资产步骤 → 删旧头 / 旧 cookie 的发送侧、再删读取侧 → 删 `applyLegacyEnvAliases()` 与 `run.sh` 的 `TMEX_*` 导出 → 删旧安装目录识别、旧 shim 标记与 `bin/tmex.js`。签名 / HKDF 域串永远不动。
 
 ## 已知限制

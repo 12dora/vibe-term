@@ -1,6 +1,6 @@
 # 可升级的 VibeTerm 节点容器
 
-本文说明 `scripts/docker-node/` 的容器化节点：容器内用 vibeterm-cli 自装、事务式升级、看护循环、常用命令与接入 Hub / 中继的方式；面向用容器跑节点做实测或部署的运维。
+本文说明 `scripts/docker-node/` 的容器化节点：容器内用 vibeterm-cli 自装、事务式升级、看护循环、常用命令与接入中继的方式；面向用容器跑节点做实测或部署的运维。
 
 ## 背景
 
@@ -47,7 +47,7 @@ node /opt/vibeterm-pkg/package/bin/vibeterm.js init \
 - `VIBETERM_PEER_BIND_HOST=0.0.0.0`：`init` 不写，容器里必须监听全网卡；
 - `VIBETERM_BASE_URL`：容器环境变量给了就覆盖（默认是 `http://0.0.0.0:9883`，端口映射后不可用）。
 
-这三项**只在首启覆盖**，之后 `hub join` / `relay join` 或手改的值一律保留。`VIBETERM_TMUX_SOCKET` 有意不设：容器里的 tmux server 本就与宿主隔离，用默认 socket 即可。
+这三项**只在首启覆盖**，之后 `relay join` 或手改的值一律保留。`VIBETERM_TMUX_SOCKET` 有意不设：容器里的 tmux server 本就与宿主隔离，用默认 socket 即可。
 
 ## 升级怎么走
 
@@ -94,24 +94,24 @@ scripts/docker-node/run.sh down -v  # 连卷一起删
 
 可覆盖的环境变量：`VIBETERM_DOCKER_NAME`（默认 `vibeterm-node-docker`，卷名为 `<name>-opt` / `<name>-data`）、`VIBETERM_DOCKER_IMAGE`、`VIBETERM_DOCKER_TAG`、`VIBETERM_HTTP_PORT`、`VIBETERM_DOCKER_HTTP_BIND`（默认 `127.0.0.1`）、`VIBETERM_PEER_HOST_PORT`、`VIBETERM_SITE_NAME`、`VIBETERM_BASE_URL`。
 
-### 接入中继 / Hub
+### 接入中继
 
 ```bash
 docker exec -it <c> bun /opt/vibeterm/current/runtime/cli-auth.js \
-  relay join <relayUrl> --tenant <id> --password --install-dir /opt/vibeterm
+  user add <username> --install-dir /opt/vibeterm
 docker exec -it <c> bun /opt/vibeterm/current/runtime/cli-auth.js \
-  hub join <hubUrl> --token <token> --name <name> --install-dir /opt/vibeterm
+  relay join <relayUrl> --tenant <id> --password --install-dir /opt/vibeterm
 ```
 
-认证类命令（`hub *` / `relay *` / `enroll`）直接跑 `runtime/cli-auth.js`。走 `node .../cli/bin/vibeterm.js` 也能用，但它会再 spawn 一个 bun 子进程，容器里子进程的 stdout 容易被吞（`enroll` 打印的 join token 会看不到）。
+认证类命令（`user *` / `relay *` / `mesh *` / `tls *`）直接跑 `runtime/cli-auth.js`。走 `node .../cli/bin/vibeterm.js` 也能用，但它会再 spawn 一个 bun 子进程，容器里子进程的 stdout 容易被吞。
 
-join 会改写 `/opt/vibeterm/app.env` 里的 `VIBETERM_ROLES` / `VIBETERM_HUB_URL` 等键并重启运行时；`app.env` 在 `<name>-opt` 卷上，跨容器重建存活。
+join 会把 `/opt/vibeterm/app.env` 的 `VIBETERM_ROLES` 写成 `node`（本机已是中继则 `relay,node`），并清掉残留的 `VIBETERM_HUB_*` 后重启运行时；`app.env` 在 `<name>-opt` 卷上，跨容器重建存活。
 
 ## 注意事项
 
 - **两个卷必须成对保留**。`VIBETERM_MASTER_KEY` 在 `/opt/vibeterm/app.env`（`-opt` 卷），库在 `/var/lib/vibeterm`（`-data` 卷），只删一个会导致库解不开。entrypoint 发现 `/opt/vibeterm` 非空却没有 `install-meta.json` 时会直接报错退出，不会自动重装。
 - **网页升级要能出网**。网关走 GitHub Releases 下载安装包，容器内没有出口或被墙时升级会失败；这种环境用上面第 3 条本地包路径。
 - **升级后的运行时日志不再进 `docker logs`**。升级器以 detached + `stdio: 'ignore'` 拉起新进程，stdout 不再挂在 PID 1 上；重启容器后恢复。升级过程本身写在容器内 `/opt/vibeterm/upgrade.log`。
-- 首次启动的 `init --role standalone` 默认安装并启用 WebRTC 直连插件，下载最多等待 60 秒；离线、平台不支持或下载失败不阻断初始化。后续 `hub join`／`relay join` 会补装缺失插件，已安装则跳过。下载需要访问 npm。
+- 首次启动的 `init --role standalone` 默认安装并启用 WebRTC 直连插件，下载最多等待 60 秒；离线、平台不支持或下载失败不阻断初始化。后续 `relay join` 会补装缺失插件，已安装则跳过。下载需要访问 npm。
 - **多架构**：`Dockerfile` 按 `TARGETARCH` 取 Node/Bun 产物，Apple Silicon 上原生构建 arm64。跨架构构建传 `VIBETERM_DOCKER_PLATFORM=linux/amd64`。目标机访问 github 不稳时，把 `bun-linux-aarch64.zip` / `bun-linux-x64.zip` 预放到 `scripts/docker-node/build/`。
 - **默认容器名占用 29883**。历史上手工部署的 `vibeterm-node-docker` 也用这个端口，替换前先 `docker rm -f vibeterm-node-docker`，或用 `VIBETERM_DOCKER_NAME` + `VIBETERM_HTTP_PORT` 起另一个。

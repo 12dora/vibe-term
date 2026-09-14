@@ -1,6 +1,6 @@
-// 节点表里的「待批准」行：Hub 已发出证书、本地密钥日志还没有 `admit-node` 的那一台。
+// 节点表里的「待同步」行：中继 `pendingMemberIds` 里还不在 mesh 列表的占位。
 //
-// 它还不是 mesh 成员（`/api/mesh/nodes` 里没有它），因此没有 peer link、没有版本、
+// 它还没有名字 / inventory（状态块未解开），因此没有 peer link、没有版本、
 // 也没有可吊销的证书：整行除「批准加入」外一律禁用。
 
 import { RecordCard, RecordCardMeta } from '@/components/record-card';
@@ -19,13 +19,13 @@ import { useAdmitNode } from './use-node-row-actions';
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /**
- * 待批准行：Hub 已发出证书，本地密钥日志还没有 `admit-node`——它还不是 mesh 成员。
+ * 待同步行：已 admit 但名字 / inventory 仍为空，或仍待签 `admit-node`。
  * 因此没有 peer link、没有版本、也没有可吊销的证书，除「批准加入」外一律禁用；
  * 勾选框同样禁用，批量升级 / 移除都碰不到它。
  */
 export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
   const { t } = useTranslation();
-  const writable = deps.hubOnline && deps.hubWritable;
+  const writable = deps.uplinkWritable;
   const blocked = writable ? t('nodes.admit.blocked') : rowBlockedHint(t, deps);
   const view = buildNodeView(row, t, 0);
 
@@ -87,7 +87,7 @@ export function PendingNodeRow({ row, ...deps }: { row: NodeRow } & NodeActionDe
 /** 待批准行在 sm 以下的版式：勾选（禁用）+ 名称、状态 · 连接方式、地址、「批准加入」。 */
 export function PendingNodeCard({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
   const { t } = useTranslation();
-  const writable = deps.hubOnline && deps.hubWritable;
+  const writable = deps.uplinkWritable;
   const view = buildNodeView(row, t, 0);
   const address = displayAddress(row.address);
 
@@ -122,7 +122,7 @@ export function PendingNodeCard({ row, ...deps }: { row: NodeRow } & NodeActionD
 }
 
 /**
- * 「批准加入」：签一条 `admit-node`。Hub 不收写入、或材料不全时禁用并说明原因。
+ * 「批准加入」：签一条 `admit-node`。上联不收写入、或材料不全时禁用并说明原因。
  *
  * 原因**必须可见**：禁用按钮既聚焦不了（`focusableWhenDisabled=false`）也接不住悬浮
  * （`disabled:pointer-events-none`），只挂 `title` 等于谁都读不到。因此在按钮下方渲染一行
@@ -170,7 +170,7 @@ function admitBlockedHint(
   t: Translate,
   row: NodeRow,
   writable: boolean,
-  deps: Pick<NodeActionDeps, 'hubWritable' | 'blockedHint'>
+  deps: Pick<NodeActionDeps, 'uplinkWritable' | 'blockedHint'>
 ): string | null {
   if (!writable) return rowBlockedHint(t, deps);
   return row.admitMaterial ? null : t('nodes.admit.unavailable');

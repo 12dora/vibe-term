@@ -17,14 +17,13 @@ import type { RenameNodeFn } from './use-node-rename-channel';
 
 export interface SiteSettingsSaveOptions {
   plan: SiteSettingsSavePlan | null;
-  /** 改名通道（hub 控制面或 `rename-node` 记录）；通道不通时它自己抛已本地化的原因。 */
+  /** 改名通道（`rename-node` 记录）；通道不通时它自己抛已本地化的原因。 */
   renameNode: RenameNodeFn;
   linkage: SiteSettingsLinkage;
   languagePreview: LanguagePreviewController;
   draft: SiteSettingsDraft;
   applySettings: (settings: SiteSettings) => void;
   refreshSettings: () => Promise<SiteSettings>;
-  refreshHub: () => void;
   /** 钉住已改成功、但站点设置还没回流的名字（同步宿主的 ref 与 state）。 */
   setPinnedName: (name: string | null) => void;
 }
@@ -42,7 +41,6 @@ export function useSiteSettingsSave({
   draft,
   applySettings,
   refreshSettings,
-  refreshHub,
   setPinnedName,
 }: SiteSettingsSaveOptions): SiteSettingsSave {
   const { t } = useTranslation();
@@ -86,9 +84,8 @@ export function useSiteSettingsSave({
         if (!error) applySettings(await refreshSettings());
         return;
       }
-      // 改名落在上级（hub 或中继）那侧，mesh 列表与 hub 视图都要跟上
+      // 改名落在上级那侧，mesh 列表要跟上
       void refreshMeshNodes();
-      refreshHub();
       const settled = await refreshUntilRenamed(renamed, {
         refresh: refreshSettings,
         apply: applySettings,

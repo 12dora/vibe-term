@@ -6,7 +6,6 @@ import { buildNodeView, useMinuteClock } from '@/node/node-view-model';
 import { relayHostLabel, relayHostList } from '@/node/relay-extras';
 import { useTranslation } from 'react-i18next';
 import { CopyButton } from '../copy-feedback';
-import { hubModeLabel } from '../uplink/hub-strip';
 
 const TRANSPORT_KEYS: Record<string, string> = {
   'ws-secure': 'nodes.badge.transportWs',
@@ -107,7 +106,6 @@ export function NodeDetailInfo({ row }: { row: NodeRow }) {
         <span className="flex flex-wrap items-center gap-1">
           <span className={TONE_CLASS.text[view.statusTone]}>{view.statusText}</span>
           {row.isSelf && <DetailTag>{t('nodes.self')}</DetailTag>}
-          {row.isHub && <DetailTag>{hubModeLabel(t, row.hubMode ?? null)}</DetailTag>}
         </span>
       </InfoRow>
     </div>

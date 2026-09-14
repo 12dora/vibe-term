@@ -49,7 +49,7 @@ function authApi(appended: Appended[], results: unknown[] = []): AuthApi {
   } as unknown as AuthApi;
 }
 
-function relayApiOf(mode: 'relay' | 'hub'): { relayApi: RelayTenantApi; prepared: () => number } {
+function relayApiOf(mode: 'relay' | 'none'): { relayApi: RelayTenantApi; prepared: () => number } {
   let prepared = 0;
   const client = new ApiClient('', (url) => {
     if (url === '/api/mesh/relay/status') {
@@ -73,7 +73,7 @@ function relayApiOf(mode: 'relay' | 'hub'): { relayApi: RelayTenantApi; prepared
 const MODE = { uid: 'u1', rootEpoch: 3, kdfParams: KDF_JSON } as unknown as ResolvedMode;
 
 function ctxOf(api: AuthApi, relayApi: RelayTenantApi) {
-  return { api, mode: MODE, writerPublicUrl: null, t, relayApi };
+  return { api, mode: MODE, t, relayApi };
 }
 
 afterEach(() => {
@@ -83,9 +83,9 @@ afterEach(() => {
 describe('revokeNodeRecord 之后的 meta-key 换代', () => {
   beforeEach(() => clearPendingMetaKeysForTest());
 
-  test('模式以网关为准：页面 store 说 hub，网关说 relay，照样补一条 meta-key', async () => {
+  test('模式以网关为准：页面 store 说 none，网关说 relay，照样补一条 meta-key', async () => {
     // 轮询快照最长陈旧 30 秒；刚接入中继就吊销一台时，读快照会整条跳过换代。
-    setMeshRelayStateForTest({ mode: 'hub' });
+    setMeshRelayStateForTest({ mode: 'none' });
     const appended: Appended[] = [];
     const relay = relayApiOf('relay');
     const attempt = await revokeNodeRecord(
@@ -102,10 +102,10 @@ describe('revokeNodeRecord 之后的 meta-key 换代', () => {
     expect(listPendingMetaKeys()).toHaveLength(0);
   }, 20000);
 
-  test('网关说 hub 时一条 meta-key 都不发', async () => {
+  test('网关说 none 时一条 meta-key 都不发', async () => {
     setMeshRelayStateForTest({ mode: 'relay' });
     const appended: Appended[] = [];
-    const relay = relayApiOf('hub');
+    const relay = relayApiOf('none');
     const attempt = await revokeNodeRecord(
       await rootSigner(),
       { id: NODE_ID, name: 'n1' },

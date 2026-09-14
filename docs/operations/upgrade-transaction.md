@@ -55,7 +55,7 @@ shim（`~/.local/bin/vibeterm`、`~/.bun/bin/vibeterm`）指向 `<installDir>/cu
 
 ## app.env 与 STUN 迁移
 
-`upgrade` 对 `app.env` 做：`mergeMissingEnvFileKeys` **追加缺失键**（不覆盖已有值）、STUN 键迁移，以及 RTC / TURN 默认段写入。
+`upgrade` 对 `app.env` 做：`rewriteLegacyHubInstallEnv`（把残留的 `VIBETERM_ROLES=hub,node` 写成 `node`，并删除全部 `VIBETERM_HUB_*` / `TMEX_HUB_*`）、`mergeMissingEnvFileKeys` **追加缺失键**（不覆盖已有值）、STUN 键迁移，以及 RTC / TURN 默认段写入。未升级的进程启动时仍接受 `hub,node`（映射为 `node` 并打一条 `console.warn`）。
 
 STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operations.md)），装机时冻进 `app.env` 的旧默认串会一直压住新列表。迁移逻辑（`packages/app/src/lib/upgrade-stun-env.ts`）：
 
@@ -82,7 +82,7 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 ### 外部 TURN 三元组：只提示，不改
 
 中继角色自带 TURN（见 [mesh 运维](./mesh-operations.md)）。升级**不删**遗留的 `VIBETERM_TURN_URL` / `_USERNAME` /
-`_CREDENTIAL`——它们可能是有意配的外部 TURN，而且 hub 角色只有这一种。三个键齐全时 `applyTurnEnvNotice`
+`_CREDENTIAL`——它们可能是有意配的外部 TURN，配齐这三个键时中继不启动内置 TURN。三个键齐全时 `applyTurnEnvNotice`
 打一行提示：`external TURN configured; builtin TURN disabled`。想改用内置 TURN 就自己把这三个键删掉再重启。
 
 ## 旧布局迁移
@@ -96,7 +96,7 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 - 手工回滚（journal 损坏时）：停服务 → 把 `backups/<txn>/vibeterm.db{,-wal,-shm}` 拷回 `data/` → `ln -sfn versions/<fromVersion> current` → 启动服务。不要 `rm -rf` `current` 指向的目录。
 - 跨进程锁：`upgrade.lock`。记录 pid + 启动身份（`ps -o lstart=` / `/proc/<pid>/stat` starttime）。pid 已死或身份不符视为 stale，可被 `--repair` 回收。
 - 未知 CLI 参数（含误把 `--help` 当升级）会被拒绝；`--help` / `-h` 显示帮助。
-- 预启动禁用 mesh/uplink：候选进程设 `VIBETERM_ROLES=standalone`（不连 Hub、不开 peer 口）。`/healthz` 现带 `version`（构建期 `VIBETERM_MONOREPO_VERSION`）。mesh 节点未登录时的精简 `/healthz` 由 runtime `attachStartedAt` 补上 `version`。
+- 预启动禁用 mesh/uplink：候选进程设 `VIBETERM_ROLES=standalone`（不连中继、不开 peer 口）。`/healthz` 现带 `version`（构建期 `VIBETERM_MONOREPO_VERSION`）。mesh 节点未登录时的精简 `/healthz` 由 runtime `attachStartedAt` 补上 `version`。
 - Web 触发的升级把 stage 放在 `<installDir>/staging/<txn>`，并传 `--txn` 给 CLI；清理交给 journal。
 
 ### 投递通道与暂存 sink

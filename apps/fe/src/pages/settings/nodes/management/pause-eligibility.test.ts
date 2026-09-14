@@ -25,7 +25,6 @@ function row(overrides: Partial<NodeRow> & { id: string }): NodeRow {
     loggedIn: true,
     inventory: null,
     isSelf: false,
-    isHub: false,
     lastSeenAt: null,
     status: null,
     certificate: null,
@@ -43,26 +42,22 @@ describe('pause eligibility', () => {
     expect(forwarderNodeIdFromPath('/settings')).toBeNull();
   });
 
-  test('本机、待批准、Hub、当前转发节点都不能暂停', () => {
+  test('本机、待批准、当前转发节点都不能暂停', () => {
     expect(pauseBlockReason(row({ id: 'a', isSelf: true }), '/')).toBe('self');
     expect(pauseBlockReason(row({ id: 'a', pending: true }), '/')).toBe('pending');
-    expect(pauseBlockReason(row({ id: 'a', isHub: true }), '/')).toBe('hub');
     expect(pauseBlockReason(row({ id: 'abcd' }), '/n/abcd/settings')).toBe('forwarder');
     expect(pauseBlockReason(row({ id: 'abcd' }), '/settings')).toBeNull();
   });
 
-  test('恢复：本机与待批准仍不可；已暂停的 Hub / 当前转发节点可以恢复', () => {
+  test('恢复：本机与待批准仍不可；已暂停的当前转发节点可以恢复', () => {
     expect(pauseBlockReason(row({ id: 'a', isSelf: true }), '/', 'resume')).toBe('self');
     expect(pauseBlockReason(row({ id: 'a', pending: true }), '/', 'resume')).toBe('pending');
-    expect(pauseBlockReason(row({ id: 'a', isHub: true }), '/', 'resume')).toBeNull();
     expect(pauseBlockReason(row({ id: 'abcd' }), '/n/abcd/settings', 'resume')).toBeNull();
-    expect(isPauseEligible(row({ id: 'a', isHub: true }), '/', 'resume')).toBe(true);
   });
 
-  test('禁用文案：本机 / Hub / 当前使用', () => {
+  test('禁用文案：本机 / 当前使用', () => {
     const t = (key: string) => key;
     expect(pauseBlockTitle('self', t)).toBe('nodes.pause.selfBlocked');
-    expect(pauseBlockTitle('hub', t)).toBe('nodes.pause.hubBlocked');
     expect(pauseBlockTitle('forwarder', t)).toBe('nodes.pause.forwarderBlocked');
     expect(pauseBlockTitle('pending', t)).toBeUndefined();
     expect(pauseBlockTitle(null, t)).toBeUndefined();
@@ -72,15 +67,12 @@ describe('pause eligibility', () => {
     const rows = [
       row({ id: 'ok' }),
       row({ id: 'paused', paused: true }),
-      row({ id: 'hub', isHub: true }),
-      row({ id: 'paused-hub', isHub: true, paused: true }),
       row({ id: 'fwd' }),
       row({ id: 'paused-fwd', paused: true }),
     ];
     expect(eligiblePauseRows(rows, '/n/fwd/settings').map((item) => item.id)).toEqual(['ok']);
     expect(eligibleResumeRows(rows, '/n/fwd/settings').map((item) => item.id)).toEqual([
       'paused',
-      'paused-hub',
       'paused-fwd',
     ]);
     expect(isPauseEligible(row({ id: 'ok' }), '/')).toBe(true);

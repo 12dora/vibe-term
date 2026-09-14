@@ -1,7 +1,7 @@
 // 批量升级的断点续跑：把「分组顺序 + 已收尾的结论」写进 localStorage，刷新页面后据此接着跑。
 //
 // 升级跑在目标机器上，而「全部升级」的编排只活在这一个页面里：一次刷新（本机升级必然带来一次）
-// 就会把「还没开始的组」「hub → 本机的次序」「最后那条汇总」全部丢掉。计划落盘正是为了补上这段。
+// 就会把「还没开始的组」「普通节点 → 本机的次序」「最后那条汇总」全部丢掉。计划落盘正是为了补上这段。
 //
 // 只存节点 id 与结论，不存节点快照——刷新后节点列表会重新拉一遍，名字与版本一律以新列表为准。
 // 每次写入都刷新 `updatedAt`：它同时是 TTL 基准与「持有者还活着」的心跳。
@@ -50,7 +50,7 @@ export interface UpgradeBatchPlan {
   /** 发起这次批量的入口节点（本机行的 id）：换入口即换计划。 */
   entryNodeId: string;
   targetVersion: string;
-  /** 执行顺序：普通节点 → 远端 hub → 本机，组内可并发，组间严格串行。 */
+  /** 执行顺序：普通节点 → 本机，组内可并发，组间严格串行。 */
   order: string[][];
   done: UpgradeBatchDone[];
   startedAt: number;
@@ -248,7 +248,7 @@ export function canAdoptBatchPlan(plan: UpgradeBatchPlan, tabId: string, now: nu
 
 /**
  * 别的标签页正握着一份还在心跳的计划：此刻不能另开一批。两页同时跑会互相覆盖计划，
- * 后开的那页还会把普通节点的 `UPGRADE_IN_PROGRESS` 当失败，在它们真升完之前就去动 hub。
+ * 后开的那页还会把普通节点的 `UPGRADE_IN_PROGRESS` 当失败，在它们真升完之前就去动本机。
  */
 export function batchOwnedByOtherTab(
   entryNodeId: string | null,

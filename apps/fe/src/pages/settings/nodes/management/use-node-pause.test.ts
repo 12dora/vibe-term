@@ -111,7 +111,6 @@ describe('pauseErrorText / runPauseBatch', () => {
     options ? `${key}:${JSON.stringify(options)}` : key;
 
   test('把服务端码映射成可读原因', () => {
-    expect(pauseErrorText(t, new Error('CANNOT_PAUSE_HUB'))).toBe('nodes.pause.hubBlocked');
     expect(pauseErrorText(t, new Error('CANNOT_PAUSE_SELF'))).toBe('nodes.pause.selfBlocked');
     expect(pauseErrorText(t, new Error('boom'))).toBe('nodes.pause.failed:{"error":"boom"}');
   });

@@ -101,12 +101,7 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
   );
 
   const { t } = useTranslation();
-  const {
-    renameNode,
-    canRenameNode,
-    refreshHub,
-    dialog: renameDialog,
-  } = useNodeRenameChannel(linkage, { t });
+  const { renameNode, canRenameNode, dialog: renameDialog } = useNodeRenameChannel(linkage, { t });
 
   // 已改成功、但站点设置还没回流的名字。ref 与 state 各有用途：ref 供注水效应读到最新值
   // （它不该因为钉住名字而重跑，否则会把用户其它未保存的改动一起冲掉），state 供基线重算。
@@ -122,7 +117,7 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
     if (!baseline) {
       return;
     }
-    // 远端 node 的新名字要等 hub 下一次 node.list 才回流：重拉回来的旧名字不许盖掉它
+    // 远端 node 的新名字要等下一次 node.list 才回流：重拉回来的旧名字不许盖掉它
     setDraft(pinSiteName(baseline, pinnedNameRef.current));
     languagePreview.hydrate(baseline.language);
   }, [baseline, languagePreview]);
@@ -153,7 +148,6 @@ export function useSiteSettingsForm(options: SiteSettingsFormOptions = {}): Site
     draft,
     applySettings,
     refreshSettings,
-    refreshHub,
     setPinnedName: pinName,
   });
 

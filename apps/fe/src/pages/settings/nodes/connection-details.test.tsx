@@ -2,9 +2,7 @@
 // 静态渲染看不到：直接渲染导出的内容组件。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectionDetailsContent } from './connection-details';
 
@@ -79,36 +77,11 @@ const RELAY_WITH_USAGE = {
   },
 } satisfies UseMeshRelayResult;
 
-function hub(overrides: Partial<MeshHubEndpoint> & { nodeId: string }): MeshHubEndpoint {
-  return {
-    publicUrl: `https://${overrides.nodeId}.example`,
-    name: overrides.nodeId,
-    mode: 'active',
-    priority: 0,
-    writerEpoch: 1,
-    online: true,
-    ...overrides,
-  };
-}
-
-const NO_HUBS: MeshHubsState = {
-  hubs: [],
-  attached: null,
-  writerHubId: null,
-  candidates: [],
-  loading: false,
-  error: null,
-  loadedAt: 1,
-};
-
 function render(
   relay: UseMeshRelayResult = NO_RELAY,
-  hubs: MeshHubsState = NO_HUBS,
   selfNodeId: string | null = 'node-1'
 ): string {
-  return renderToStaticMarkup(
-    <ConnectionDetailsContent relay={relay} hubs={hubs} selfNodeId={selfNodeId} />
-  );
+  return renderToStaticMarkup(<ConnectionDetailsContent relay={relay} selfNodeId={selfNodeId} />);
 }
 
 describe('连接详情', () => {
@@ -186,66 +159,8 @@ describe('连接详情', () => {
     expect(html).not.toContain('data-testid="nodes-relay-peers"');
   });
 
-  test('Hub 明细：优先级 / 写入纪元 / 授权 / 挂载与写者标记', () => {
-    const html = render(NO_RELAY, {
-      ...NO_HUBS,
-      hubs: [
-        hub({ nodeId: 'h1', authorization: 'signed' }),
-        hub({ nodeId: 'h2', mode: 'standby' }),
-      ],
-      attached: {
-        hubNodeId: 'h2',
-        publicUrl: 'https://h2.example',
-        mode: 'standby',
-        writerEpoch: 1,
-        since: 1,
-      },
-      writerHubId: 'h1',
-    });
-    expect(html).toContain('data-testid="local-machine-hub-details"');
-    expect(html).toContain('data-testid="local-machine-hub-detail-h1"');
-    expect(html).toContain('nodes.hubs.priority');
-    expect(html).toContain('nodes.hubs.epoch');
-    expect(html).toContain('nodes.hubs.authorization.label');
-    expect(html).toContain('nodes.hubs.writer');
-    expect(html).toContain('nodes.hubs.attached');
-  });
-
-  test('连不上的 Hub 补出最近错误与最近尝试', () => {
-    const html = render(NO_RELAY, {
-      ...NO_HUBS,
-      hubs: [hub({ nodeId: 'h1' })],
-      candidates: [
-        {
-          publicUrl: 'https://h1.example',
-          lastError: 'ECONNREFUSED',
-          lastAttemptAt: 1700000000000,
-        },
-      ],
-    });
-    expect(html).toContain('nodes.hubs.lastError');
-    expect(html).toContain('nodes.hubs.lastAttempt');
-  });
-
-  test('没有 Hub 集合时整块不出现', () => {
+  test('不再渲染 Hub 明细', () => {
     expect(render()).not.toContain('data-testid="local-machine-hub-details"');
-  });
-
-  test('中继角色还没接入：mode 报成 hub、只剩一条占位候选，也不摆 Hub 的优先级与纪元', () => {
-    // 现网的 `relay,node` 刚建好时就是这副样子：`/api/mesh/relay/status` 说 `hub`，
-    // `/api/mesh/hubs` 给一条 `http://127.0.0.1` 的占位候选，集合本身是空的。
-    const html = render(
-      { ...NO_RELAY, mode: 'hub' },
-      {
-        ...NO_HUBS,
-        candidates: [{ publicUrl: 'http://127.0.0.1', lastError: null, lastAttemptAt: null }],
-      }
-    );
-    expect(html).not.toContain('data-testid="local-machine-hub-details"');
-    expect(html).not.toContain('nodes.hubs.priority');
-    expect(html).not.toContain('nodes.hubs.epoch');
-    expect(html).not.toContain('127.0.0.1');
-    // 剩下的只有本机节点编号
-    expect(html).toContain('data-testid="local-machine-node-id"');
+    expect(render()).not.toContain('nodes.hubs.priority');
   });
 });

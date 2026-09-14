@@ -1,4 +1,4 @@
-// 批量升级：候选筛选、执行顺序（普通节点 → 远端 hub → 本机）、并发上限与汇总提示；
+// 批量升级：候选筛选、执行顺序（普通节点 → 本机）、并发上限与汇总提示；
 // 刷新后的状态恢复、批量的断点续跑与「停止升级」也在这里，
 // 全部走注入的 `run` / `io`，不碰网络也不碰计时器。
 
@@ -73,7 +73,6 @@ function row(overrides: Partial<NodeRow> & { id: string }): NodeRow {
     loggedIn: true,
     inventory: null,
     isSelf: false,
-    isHub: false,
     lastSeenAt: null,
     status: null,
     certificate: null,
@@ -209,26 +208,18 @@ describe('批量候选', () => {
 });
 
 describe('orderUpgradeGroups', () => {
-  test('普通节点 → 远端 hub → 本机，空组不占位', () => {
+  test('普通节点 → 本机，空组不占位', () => {
     const groups = orderUpgradeGroups([
       row({ id: 'self', isSelf: true }),
-      row({ id: 'hub', isHub: true }),
       row({ id: 'a' }),
       row({ id: 'b' }),
     ]);
-    expect(groups.map((group) => group.map((item) => item.id))).toEqual([
-      ['a', 'b'],
-      ['hub'],
-      ['self'],
-    ]);
+    expect(groups.map((group) => group.map((item) => item.id))).toEqual([['a', 'b'], ['self']]);
     expect(orderUpgradeGroups([row({ id: 'a' })])).toHaveLength(1);
   });
 
-  test('本机同时是 hub 时归到最后一组，不会被排两次', () => {
-    const groups = orderUpgradeGroups([
-      row({ id: 'me', isSelf: true, isHub: true }),
-      row({ id: 'a' }),
-    ]);
+  test('本机归到最后一组，不会被排两次', () => {
+    const groups = orderUpgradeGroups([row({ id: 'me', isSelf: true }), row({ id: 'a' })]);
     expect(groups.map((group) => group.map((item) => item.id))).toEqual([['a'], ['me']]);
   });
 });
@@ -251,11 +242,10 @@ describe('runUpgradeBatch', () => {
     return { started, settled, release, run };
   }
 
-  test('hub 与本机严格排在普通节点之后，且要等前一组全部收尾', async () => {
+  test('本机严格排在普通节点之后，且要等前一组全部收尾', async () => {
     const g = gate();
     const rows = [
       row({ id: 'self', name: 'self', isSelf: true }),
-      row({ id: 'hub', name: 'hub', isHub: true }),
       row({ id: 'a', name: 'a' }),
       row({ id: 'b', name: 'b' }),
     ];
@@ -269,7 +259,6 @@ describe('runUpgradeBatch', () => {
     });
 
     await Promise.resolve();
-    // 普通节点两台同时开跑，hub / self 还没动
     expect(g.started).toEqual(['a', 'b']);
 
     g.release.get('a')?.();
@@ -278,23 +267,19 @@ describe('runUpgradeBatch', () => {
 
     g.release.get('b')?.();
     await flush();
-    expect(g.started).toEqual(['a', 'b', 'hub']);
-
-    g.release.get('hub')?.();
-    await flush();
-    expect(g.started).toEqual(['a', 'b', 'hub', 'self']);
+    expect(g.started).toEqual(['a', 'b', 'self']);
 
     g.release.get('self')?.();
     const summary = await done;
-    expect(g.settled).toEqual(['a', 'b', 'hub', 'self']);
+    expect(g.settled).toEqual(['a', 'b', 'self']);
     expect(summary).toEqual({
-      succeeded: 4,
+      succeeded: 3,
       failed: 0,
       failedNames: [],
       cancelledCount: 0,
       cancelled: false,
     });
-    expect(progress).toEqual([1, 2, 3, 4]);
+    expect(progress).toEqual([1, 2, 3]);
   });
 
   test('普通节点并发上限为 3', async () => {
@@ -366,14 +351,13 @@ describe('runUpgradeBatch', () => {
     expect(summary.cancelled).toBe(true);
   });
 
-  test('单个节点抛异常只算它自己失败：同组其余节点跑完，hub / self 照常接上', async () => {
+  test('单个节点抛异常只算它自己失败：同组其余节点跑完，本机照常接上', async () => {
     const controller = new AbortController();
     const started: string[] = [];
     const progress: number[] = [];
     const summary = await runUpgradeBatch({
       rows: [
         row({ id: 'self', name: 'self', isSelf: true }),
-        row({ id: 'hub', name: 'hub', isHub: true }),
         row({ id: 'boom', name: 'boom' }),
         row({ id: 'a', name: 'a' }),
       ],
@@ -386,16 +370,15 @@ describe('runUpgradeBatch', () => {
       },
       onProgress: (completed) => progress.push(completed),
     });
-    expect(started).toEqual(['boom', 'a', 'hub', 'self']);
+    expect(started).toEqual(['boom', 'a', 'self']);
     expect(summary).toEqual({
-      succeeded: 3,
+      succeeded: 2,
       failed: 1,
       failedNames: ['boom'],
       cancelledCount: 0,
       cancelled: false,
     });
-    // 进度不会因为异常断档，四台机器都记了账
-    expect(progress).toEqual([1, 2, 3, 4]);
+    expect(progress).toEqual([1, 2, 3]);
   });
 });
 
@@ -1249,7 +1232,7 @@ describe('createResumeQueue', () => {
 describe('launchUpgradeBatch', () => {
   const rows = [
     row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
-    row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+    row({ id: 'hub', name: 'hub', version: '1.1.9' }),
     row({ id: 'a', name: 'a', version: '1.1.9' }),
     row({ id: 'latest', name: 'latest', version: '1.2.0' }),
     row({ id: 'old', name: 'old', version: '1.0.0' }),
@@ -1290,7 +1273,7 @@ describe('launchUpgradeBatch', () => {
     expect(run.confirms).toHaveLength(1);
     expect(run.confirms[0]).toBe('nodes.upgrade.confirmAll:{"count":3,"version":"1.2.0"}');
     expect(run.starts).toEqual([3]);
-    expect(run.seen.map((item) => item.name)).toEqual(['a', 'hub', 'self']);
+    expect(run.seen.map((item) => item.name)).toEqual(['hub', 'a', 'self']);
   });
 
   test('批量期间每节点 toast 被静音，只留最后那条汇总', async () => {
@@ -1338,7 +1321,7 @@ describe('launchRowUpgrade', () => {
     const confirms: string[] = [];
     const seen: string[] = [];
     const started = launchRowUpgrade({
-      row: row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+      row: row({ id: 'hub', name: 'hub', version: '1.1.9' }),
       latestVersion: '1.2.0',
       batchRunning: false,
       nodeRunning: false,
@@ -1520,7 +1503,7 @@ describe('批量计划的落盘与续跑', () => {
     const running = launchUpgradeBatch({
       rows: [
         row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
-        row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+        row({ id: 'hub', name: 'hub', version: '1.1.9' }),
         row({ id: 'a', name: 'a', version: '1.1.9' }),
       ],
       latestVersion: '1.2.0',
@@ -1548,7 +1531,7 @@ describe('批量计划的落盘与续跑', () => {
 
     confirmUser(true);
     await flush();
-    expect(opened).toEqual([{ order: [['a'], ['hub'], ['self']], version: '1.2.0' }]);
+    expect(opened).toEqual([{ order: [['hub', 'a'], ['self']], version: '1.2.0' }]);
     expect(loadBatchPlan('self', NOW)).not.toBeNull();
 
     finishRuns();
@@ -1564,7 +1547,7 @@ describe('批量计划的落盘与续跑', () => {
     const running = launchUpgradeBatch({
       rows: [
         row({ id: 'a', name: 'a', version: '1.1.9' }),
-        row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+        row({ id: 'hub', name: 'hub', version: '1.1.9' }),
       ],
       latestVersion: '1.2.0',
       rowRunning: false,
@@ -1597,7 +1580,7 @@ describe('批量计划的落盘与续跑', () => {
       row({ id: 'a', name: 'a', version: '1.1.9' }),
       row({ id: 'b', name: 'b', version: '1.1.9' }),
       row({ id: 'c', name: 'c', version: '1.1.9' }),
-      row({ id: 'hub', name: 'hub', isHub: true, version: '1.1.9' }),
+      row({ id: 'hub', name: 'hub', version: '1.1.9' }),
       row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
     ];
     const { plan, sink } = sinkFor([['a', 'b', 'c'], ['hub'], ['self']], '1.2.0', [
@@ -1674,7 +1657,7 @@ describe('批量计划的落盘与续跑', () => {
     const summary = await resumeUpgradeBatch({
       plan,
       rows: [
-        row({ id: 'hub', name: 'hub', isHub: true, version: '1.2.0' }),
+        row({ id: 'hub', name: 'hub', version: '1.2.0' }),
         // 本机重启回来，版本已经对上：这次批量对它已经收尾
         row({ id: 'self', name: 'self', isSelf: true, version: '1.2.0' }),
       ],

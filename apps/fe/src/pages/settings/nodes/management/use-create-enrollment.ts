@@ -1,17 +1,16 @@
 // 「生成加入码」的唯一实现：设置页的节点管理区块与「接入更多设备」面板共用同一份逻辑。
 //
-// `enroll_sk` 只存在于浏览器与 join 串里，**不经过 hub**；join 串只显示这一次，
+// `enroll_sk` 只存在于浏览器与 join 串里；join 串只显示这一次，
 // admit / 取消 / 过期后立刻从 state 里消失，消费方据此把它移出 DOM。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { headFromResponse } from '@/auth/key-log-actions';
 import {
   type CreatedEnrollment,
-  createEnrollmentOnHub,
-  isTrustedHubUrl,
+  isTrustedPublicUrl,
   requireRootPublicKey,
 } from '@/node/enrollment';
-import { type HubApi, defaultRelayEnrollmentApi } from '@/node/hub-api';
+import { defaultRelayEnrollmentApi } from '@/node/enrollment-api';
 import { type UseMeshRelayResult, useMeshRelay } from '@/node/mesh-relay';
 import { createEnrollmentOnRelay } from '@/node/relay-join';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
@@ -29,12 +28,9 @@ export interface UseCreateEnrollmentInput {
   api: AuthApi;
   /** 缺 uid / kdf 参数（还没有主用户）时为 `null`：不发起创建，直接报未知用户。 */
   mode: ResolvedMode | null;
-  hubApi: HubApi | null;
   prompt: CredentialPromptHandle;
   /** 已 admit / 已过期 / 已取消的 pending id：对应的 join 串必须立刻消失。 */
   clearedIds?: string[];
-  /** writer hub 的对外地址；hub 以 `HUB_NOT_WRITER` 拒写时靠它指路。 */
-  writerPublicUrl?: string | null;
   /**
    * 已解析好的中继快照。调用方多半已经有一份（设置页的本机卡、侧滑面板的 `JoinSteps`），
    * 传进来就少一份订阅；不传则自己订一份，**standalone 下一律不发请求**——
@@ -50,20 +46,17 @@ export interface CreateEnrollmentState {
   error: string | null;
   /** 刚创建出来的 enrollment；join 串只在内存里、只显示这一次。 */
   created: CreatedEnrollment | null;
-  /** join 命令里的 hub 对外地址；缺失或不可信时为 `null`，此时不能编命令。 */
-  hubUrl: string | null;
-  /** 本机走中继：上级相关的提示文案要换成中继口径。 */
+  /** join 命令里的对外地址；缺失或不可信时为 `null`，此时不能编命令。 */
+  publicUrl: string | null;
+  /** 本机走中继：上级相关的提示文案走中继口径。 */
   relayMode: boolean;
   submit: () => Promise<void>;
 }
 
 export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnrollmentState {
-  const { api, mode, hubApi, prompt, writerPublicUrl = null } = input;
-  // 中继模式下加入码走 `/api/mesh/relay/*` 并拼 join 串 v3：调用方给了快照就用它，
-  // 否则自己订一份（只在 mesh 下才真的去问网关）。
+  const { api, mode, prompt } = input;
   const owned = useMeshRelay({ enabled: !input.relay && mode?.mode === 'mesh' });
   const relay = input.relay ?? owned;
-  const hubChannel = relay.relayMode ? null : hubApi;
   const clearedIds = input.clearedIds ?? NO_CLEARED_IDS;
   const { t } = useTranslation();
   const [name, setName] = useState('');
@@ -91,8 +84,8 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
       setError(t('auth.errors.UNKNOWN_USER'));
       return;
     }
-    if (!relay.relayMode && !hubChannel) {
-      setError(t('nodes.hubOffline'));
+    if (!relay.relayMode) {
+      setError(t('relay.tenant.notAttached'));
       return;
     }
     setBusy(true);
@@ -104,32 +97,27 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
       const signer = await prompt.request({ purpose: 'enroll' });
       if (!signer) return;
       const head = await api.keyLogHead();
-      const shared = {
+      const outcome = await createEnrollmentOnRelay({
         uid: mode.uid,
         rootEpoch,
         signer,
         rootPublicKey,
         keyLogHeadHash: headFromResponse(head).hash,
         name,
-      };
-      const outcome = hubChannel
-        ? await createEnrollmentOnHub({ ...shared, hubApi: hubChannel })
-        : await createEnrollmentOnRelay({
-            ...shared,
-            channel: defaultRelayEnrollmentApi,
-            relayApi: defaultRelayTenantApi,
-          });
+        channel: defaultRelayEnrollmentApi,
+        relayApi: defaultRelayTenantApi,
+      });
       setCreated(outcome);
       setName('');
     } catch (err) {
-      // 走到这里说明 enrollment 没建成（多半是 hub 请求失败）：复用窗口里的根钥没有任何
-      // 后续动作会用到，立刻清零，不要等 5 分钟定时器（见 F4-fix 评审 Major「所有权式清零」）。
+      // 走到这里说明 enrollment 没建成：复用窗口里的根钥没有任何后续动作会用到，立刻清零，
+      // 不要等 5 分钟定时器（见 F4-fix 评审 Major「所有权式清零」）。
       prompt.forget();
-      setError(actionErrorText(t, err, { writerPublicUrl }));
+      setError(actionErrorText(t, err));
     } finally {
       setBusy(false);
     }
-  }, [api, hubChannel, mode, name, prompt, relay.relayMode, t, writerPublicUrl]);
+  }, [api, mode, name, prompt, relay.relayMode, t]);
 
   return {
     name,
@@ -137,26 +125,21 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
     busy,
     error,
     created,
-    // 中继模式下 join 命令里的地址是**中继**地址：`/api/auth/mode` 的 `hubPublicUrl` 此时为空，
-    // 拿它判定会让「接入更多设备」面板一直停在「缺少 Hub 地址」。
-    hubUrl: resolveHubPublicUrl(
-      created,
-      relay.relayMode ? { hubPublicUrl: relay.ordered[0]?.url ?? null } : (mode ?? {})
-    ),
+    publicUrl: resolvePublicUrl(created, relay.ordered[0]?.url ?? null),
     relayMode: relay.relayMode,
     submit,
   };
 }
 
 /**
- * join 命令里的 hub 地址：**只**来自 hub —— enrollment 创建响应的 `public_url`，
- * 或 `/api/auth/mode` 的 `hubPublicUrl`。两者都没有、或值不是可信 https URL 就不生成命令：
+ * join 命令里的对外地址：enrollment 创建响应的 `publicUrl` / `hubPublicUrl`（W2-F1 过渡期两名并存），
+ * 或调用方给出的中继地址。两者都没有、或值不是可信 https URL 就不生成命令：
  * 它会被原样拼进一条让用户粘贴执行的 shell 命令，畸形值等于命令注入（见 F4-fix 评审 Major）。
  */
-export function resolveHubPublicUrl(
-  created: { hubPublicUrl: string | null } | null,
-  mode: { hubPublicUrl?: string | null }
+export function resolvePublicUrl(
+  created: { publicUrl?: string | null; hubPublicUrl?: string | null } | null,
+  fallbackUrl?: string | null
 ): string | null {
-  const url = created?.hubPublicUrl ?? mode.hubPublicUrl ?? null;
-  return isTrustedHubUrl(url) ? url : null;
+  const url = created?.publicUrl ?? created?.hubPublicUrl ?? fallbackUrl ?? null;
+  return isTrustedPublicUrl(url) ? url : null;
 }

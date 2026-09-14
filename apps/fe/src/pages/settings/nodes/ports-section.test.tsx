@@ -9,7 +9,7 @@ afterEach(() => resetMeshNodesStateForTest());
 
 describe('PortsSection', () => {
   const plan = portPlanOrFallback(undefined, 'node');
-  const hubPlan = portPlanOrFallback(undefined, 'hub,node');
+  const relayNodePlan = portPlanOrFallback(undefined, 'relay,node');
 
   test('空计划不渲染', () => {
     expect(renderToStaticMarkup(<PortsSection plan={[]} />)).toBe('');
@@ -34,9 +34,9 @@ describe('PortsSection', () => {
     const node = renderToStaticMarkup(<PortsSection plan={plan} reach={null} />);
     expect(node).toContain('nodes.ports.label');
     expect(node).not.toContain('data-testid="local-port-public-https"');
-    const hub = renderToStaticMarkup(<PortsSection plan={hubPlan} reach={null} />);
-    expect(hub).toContain('nodes.ports.label');
-    expect(hub).toContain('data-testid="local-port-public-https"');
+    const relayNode = renderToStaticMarkup(<PortsSection plan={relayNodePlan} reach={null} />);
+    expect(relayNode).toContain('nodes.ports.label');
+    expect(relayNode).toContain('data-testid="local-port-public-https"');
   });
 
   test('self 行 blocked / open 反映到对应点上，blocked 不带 ring', () => {
@@ -95,7 +95,7 @@ describe('PortsSection', () => {
   test('计划里没有 reach 行的用途画灰点 unknown，有 reach 的才按 status 着色', () => {
     const html = renderToStaticMarkup(
       <PortsSection
-        plan={hubPlan}
+        plan={relayNodePlan}
         reach={[{ purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'open' }]}
       />
     );

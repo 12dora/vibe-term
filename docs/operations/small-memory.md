@@ -4,7 +4,7 @@
 
 ## 背景
 
-2.4.1 之前的 runtime 是一份静态 import 图打成的单文件 bundle：无论角色如何，启动即解析 AI SDK、gramio、weixin iLink、ssh2、ACME/x509、ghostty JS 绑定、Hub / Relay runtime；ssh2 的 poly1305 WASM 在 import 时就分配 16 MiB 线性内存。实测空闲 standalone 进程 RSS 约 192 MB（堆 73 MB、ArrayBuffer 18 MB），带 mesh 与多设备的生产实例约 340 MB。回放、传输分片、直连 fanout 等缓冲上限也按工作站预算设定（每设备回放硬顶 64 MiB、传输分片 8 MiB × 16 并发写、fanout 待发 65 MiB）。
+2.4.1 之前的 runtime 是一份静态 import 图打成的单文件 bundle：无论角色如何，启动即解析 AI SDK、gramio、weixin iLink、ssh2、ACME/x509、ghostty JS 绑定、Mesh / Relay runtime；ssh2 的 poly1305 WASM 在 import 时就分配 16 MiB 线性内存。实测空闲 standalone 进程 RSS 约 192 MB（堆 73 MB、ArrayBuffer 18 MB），带 mesh 与多设备的生产实例约 340 MB。回放、传输分片、直连 fanout 等缓冲上限也按工作站预算设定（每设备回放硬顶 64 MiB、传输分片 8 MiB × 16 并发写、fanout 待发 65 MiB）。
 
 ## 现状（2.4.2 起）
 
@@ -19,7 +19,7 @@
 | tunnel manager | 非 relay-only 的 live 启动 |
 | ssh2（含 poly1305 WASM） | SSH 设备 `connect()` |
 | ghostty JS 绑定 + wasm | 首次 `PaneEmulator.create` |
-| HubRuntime / MeshRuntime / RelayRuntime | 对应角色构造时 |
+| MeshRuntime / RelayRuntime | 对应角色构造时 |
 | ACME / x509 | 开启 TLS、签发或解析证书时 |
 
 relay 单跑不再启动 agent / tunnel / push / watch / portmap / 即时通讯，仍保留 messaging hooks 与事件循环延迟采样（中继指标依赖）。

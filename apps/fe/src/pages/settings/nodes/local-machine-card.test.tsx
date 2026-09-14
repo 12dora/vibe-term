@@ -7,7 +7,7 @@ import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-
 import { resetMeshNodesStateForTest } from '@/node/mesh-nodes';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { ApiClient, type DomainAccessPolicy } from '@vibeterm/api-client';
-import type { AuthModeResponse, MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import { LocalApiError } from '@vibeterm/api-client/local/local-api';
 import type {
   LocalDirectAction,
@@ -49,8 +49,6 @@ function status(direct: Partial<LocalDirectStatus> = {}): LocalStatusResponse {
   return {
     role: 'standalone',
     nodeEnv: 'production',
-    hubUrl: null,
-    hubPublicUrl: null,
     direct: {
       supported: true,
       installed: false,
@@ -142,8 +140,6 @@ function meshStatus(role: LocalRole): LocalStatusResponse {
   return {
     ...status({ installed: true, capable: true }),
     role,
-    hubUrl: role === 'node' ? 'https://hub.example' : null,
-    hubPublicUrl: role === 'hub,node' ? 'https://hub.example' : null,
   };
 }
 
@@ -253,7 +249,7 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(html).not.toContain('data-testid="local-machine-menu"');
     // 连接段就是四条路径的设置向导
     expect(html).toContain('data-testid="local-machine-uplink"');
-    expect(html).toContain('data-testid="hub-setup-wizard"');
+    expect(html).toContain('data-testid="setup-wizard"');
     expect(html).toContain('data-testid="local-machine-network"');
     // 两个上级 tab 与「通用设置」标题都没有了
     expect(html).not.toContain('data-testid="local-uplink-tabs"');
@@ -271,7 +267,7 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(html).toContain('data-testid="local-machine-role"');
     expect(html).toContain('nodes.machine.roleNode');
     expect(html).toContain('data-testid="local-machine-menu"');
-    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="hubDisconnected"');
+    expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayDisconnected"');
   });
 
   test('端口行标签不随角色变化，端口条目随角色变，mesh 下给出重新检测', () => {
@@ -279,31 +275,26 @@ describe('LocalMachineCard 的四段版式', () => {
     expect(node).toContain('nodes.ports.label');
     expect(node).not.toContain('data-testid="local-port-public-https"');
     expect(node).toContain('data-testid="local-machine-ports-recheck"');
-    expect(render(meshStatus('hub,node'), MESH_MODE)).toContain(
-      'data-testid="local-port-public-https"'
-    );
+    expect(render(relayNodeStatus(), MESH_MODE)).toContain('data-testid="local-port-public-https"');
     expect(render(relayNodeStatus(), MESH_MODE)).toContain('data-testid="local-port-turn-control"');
   });
 
-  test('mesh 的 hub 形态：连接段是 Hub 面板，没有中继服务段', () => {
+  test('mesh 节点未接入中继：连接段是中继空态 + 加入 CTA，没有中继服务段', () => {
     const html = render(meshStatus('node'), MESH_MODE);
-    expect(html).toContain('data-testid="local-uplink-hub-panel"');
-    expect(html).toContain('nodes.machine.upstream');
+    expect(html).toContain('data-testid="nodes-relay-enroll"');
+    expect(html).toContain('relay.tenant.actions.enroll');
     expect(html).not.toContain('data-testid="local-machine-relay-service"');
-    expect(html).not.toContain('data-testid="local-uplink-relay-panel"');
-    // 「更换 Hub」不再摆在行里
+    expect(html).not.toContain('data-testid="local-uplink-hub-panel"');
     expect(html).not.toContain('data-testid="local-machine-change-hub"');
   });
 
-  test('压根没有上级时，连接段留一个主按钮；hub 形态下它收进 ⋯ 菜单', () => {
-    // 默认快照（`mode: 'none'`）就是「还没有上级」那一档
+  test('压根没有上级时，连接段留一个加入中继主按钮', () => {
     expect(render(meshStatus('node'), MESH_MODE)).toContain('data-testid="nodes-relay-enroll"');
     expect(render(meshStatus('node'), MESH_MODE)).toContain('relay.tenant.actions.enroll');
 
-    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
-    const onHub = render(meshStatus('node'), MESH_MODE);
-    expect(onHub).not.toContain('data-testid="nodes-relay-enroll"');
-    expect(onHub).not.toContain('data-testid="nodes-relay-entry-hint"');
+    setMeshRelayStateForTest({ mode: 'none', relays: [], loadedAt: 1 });
+    const unattached = render(meshStatus('node'), MESH_MODE);
+    expect(unattached).toContain('data-testid="nodes-relay-enroll"');
   });
 
   test('中继模式：连接段换成中继面板，Hub 面板整块不出现', () => {
@@ -410,7 +401,7 @@ describe('LocalMachineCard 的四段版式', () => {
   test('中继角色还没接入自己的中继：连接段只有一条陈述加一个 CTA，没有 Hub 的任何说法', () => {
     // 现网复现：后端把这台机器的 `mode` 报成 `hub`（`relays: []`），hub 候选里还有一条
     // `http://127.0.0.1` 的占位——旧版式据此摆出「改为接入中继」和「不再连接 Hub」。
-    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    setMeshRelayStateForTest({ mode: 'none', relays: [], loadedAt: 1 });
     setMeshHubsStateForTest({
       candidates: [{ publicUrl: 'http://127.0.0.1', lastError: null, lastAttemptAt: null }],
       loadedAt: 1,
@@ -435,7 +426,7 @@ describe('LocalMachineCard 的四段版式', () => {
   });
 
   test('中继角色的状态徽标只说中继，且未接入是灰字不是红字', () => {
-    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    setMeshRelayStateForTest({ mode: 'none', relays: [], loadedAt: 1 });
     const html = render(relayNodeStatus(), MESH_MODE);
     const tag = tagOf(html, 'local-machine-status');
     expect(tag).toContain('data-status-state="relayDisconnected"');
@@ -447,7 +438,7 @@ describe('LocalMachineCard 的四段版式', () => {
   });
 
   test('纯中继同样不摆 Hub 的话', () => {
-    setMeshRelayStateForTest({ mode: 'hub', relays: [], loadedAt: 1 });
+    setMeshRelayStateForTest({ mode: 'none', relays: [], loadedAt: 1 });
     const html = render({ ...relayNodeStatus(), role: 'relay' }, MESH_MODE);
     expect(tagOf(html, 'local-machine-status')).toContain('data-status-state="relayDisconnected"');
     expect(html).toContain('data-testid="nodes-relay-self-entry"');
@@ -497,31 +488,9 @@ describe('LocalMachineCard 的状态徽标', () => {
     return /data-status-state="([a-zA-Z]+)"/.exec(tagOf(html, 'local-machine-status'))?.[1] ?? '';
   }
 
-  test('挂上 Hub 就是「已连接 Hub」，没挂上是「未连接 Hub」', () => {
-    const hub: MeshHubEndpoint = {
-      nodeId: 'h1',
-      publicUrl: 'https://h1.example',
-      name: 'hub-a',
-      mode: 'active',
-      priority: 0,
-      writerEpoch: 1,
-      online: true,
-    };
-    setMeshHubsStateForTest({
-      hubs: [hub],
-      attached: {
-        hubNodeId: 'h1',
-        publicUrl: hub.publicUrl,
-        mode: 'active',
-        writerEpoch: 1,
-        since: 1,
-      },
-      writerHubId: 'h1',
-      loadedAt: 1,
-    });
-    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('hubConnected');
-    resetMeshHubsStateForTest();
-    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('hubDisconnected');
+  test('mesh 节点没挂中继是未接入', () => {
+    expect(stateOf(render(meshStatus('node'), MESH_MODE))).toBe('relayDisconnected');
+    expect(render(meshStatus('node'), MESH_MODE)).toContain('nodes.machine.status.unattached');
   });
 
   test('中继令牌失效时状态徽标直接说失效', () => {
@@ -779,7 +748,7 @@ describe('LocalMachineCard 的允许域名访问', () => {
   const ROW = 'data-testid="local-machine-domain-access-switch"';
 
   function withDomainAccess(policy: DomainAccessPolicy | undefined): LocalStatusResponse {
-    const base = meshStatus('hub,node');
+    const base = meshStatus('node');
     if (policy) return { ...base, domainAccess: policy };
     // 旧节点根本不下发该字段
     const { domainAccess: _omitted, ...rest } = base;

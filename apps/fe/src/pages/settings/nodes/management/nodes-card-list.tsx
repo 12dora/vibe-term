@@ -31,19 +31,12 @@ import {
 import { PendingNodeCard } from './pending-node-row';
 import { PortsWarning, displayAddress } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
-import type { HubRoleSwitchController } from './use-hub-role-switch';
 import { isUpgradeBusy } from './use-node-upgrade';
 
 /** 缺省值：连接方式 / 版本 / 地址拿不到时 `buildNodeView` 给的就是它。 */
 const DASH = '—';
 
-export function NodesCardList({
-  rows,
-  selection,
-  uninstall,
-  roleSwitch,
-  ...deps
-}: NodesTableProps) {
+export function NodesCardList({ rows, selection, uninstall, ...deps }: NodesTableProps) {
   const { t } = useTranslation();
   const pathname = useLocation().pathname;
   const selected = selection.ids.size;
@@ -68,7 +61,6 @@ export function NodesCardList({
               pathname={pathname}
               selection={selection}
               uninstall={uninstall}
-              roleSwitch={roleSwitch}
               {...deps}
             />
           )
@@ -84,17 +76,15 @@ function NodeCardView({
   pathname,
   selection,
   uninstall,
-  roleSwitch,
   ...deps
 }: {
   row: NodeRow;
   pathname: string;
   selection: NodeSelection;
   uninstall: NodeUninstallController;
-  roleSwitch: HubRoleSwitchController;
 } & NodeActionDeps) {
   const { t } = useTranslation();
-  const shared = useNodeRowShared(row, deps, uninstall, roleSwitch);
+  const shared = useNodeRowShared(row, deps, uninstall);
   const { view } = shared;
 
   return (
@@ -112,12 +102,10 @@ function NodeCardView({
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
           <NodeNameTags
             row={row}
-            hubDetails={deps.hubDetails}
-            roleSwitch={roleSwitch}
             rowBusy={shared.uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
           />
         </span>
-        {/* 详情里既有只读信息也有节点本地的域名访问策略，hub 不可写时照样能开。 */}
+        {/* 详情里既有只读信息也有节点本地的域名访问策略，上联不可写时照样能开。 */}
         <NodeMoreMenu
           row={row}
           pathname={pathname}
@@ -131,7 +119,6 @@ function NodeCardView({
           row={row}
           uninstall={uninstall}
           uninstalling={shared.uninstalling}
-          switching={shared.switching}
           view={view}
         />
         {view.reachText !== DASH && (

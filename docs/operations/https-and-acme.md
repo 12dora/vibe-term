@@ -1,6 +1,6 @@
 # HTTPS：对外有效状态、ACME dns-01 提供商与 80/443 被占场景
 
-本文描述设置页 HTTPS 区的「对外有效 HTTPS」判定、内置 Let's Encrypt 签发的 dns-01 提供商抽象（Cloudflare / DNSPod），以及 hub 的 80/443 被别的服务占用时的配置方法；面向运维与改动 `packages/app/src/tls/` 的开发者。非标端口的整体部署形态见 [非标端口部署](./nonstandard-ports.md)。
+本文描述设置页 HTTPS 区的「对外有效 HTTPS」判定、内置 Let's Encrypt 签发的 dns-01 提供商抽象（Cloudflare / DNSPod），以及中继公开地址的 80/443 被别的服务占用时的配置方法；面向运维与改动 `packages/app/src/tls/` 的开发者。非标端口的整体部署形态见 [非标端口部署](./nonstandard-ports.md)。
 
 ## 1. 对外有效 HTTPS 的判定与展示
 
@@ -14,18 +14,18 @@ https: { source: 'builtin' | 'reverse-proxy' | 'none'; verified: boolean; public
 
 1. 内置监听器在运行 → `builtin`（verified=true）。
 2. 当前请求经 `publicRequestUrl(req)` 解析为 https → `reverse-proxy`，verified=true。该函数只在 `VIBETERM_TRUST_PROXY` 开启且 `via = self` 时采信 `X-Forwarded-Proto/Host`。
-3. 配置的公开地址（hub 取 `hubPublicUrl ?? hubUrl`，否则 `baseUrl`）为 https → `reverse-proxy`，verified=false（仅推断）。
+3. 配置的公开地址（`VIBETERM_BASE_URL`；中继角色另以 `VIBETERM_RELAY_PUBLIC_URL` 为对外地址）为 https → `reverse-proxy`，verified=false（仅推断）。
 4. 否则 `none`。
 
-前端「HTTPS 设置」状态块固定三行：**对外访问**（内置 / 反向代理：已通过当前请求确认 | 按公开地址推断 / 未启用）、**配置模式**（`tls_config.mode`）、**内置监听器**（仅 `selfsigned` / `acme` 显示，运行中带端口 / 已停止 / 失败带原因）。`data-testid`：`https-effective`、`https-current-mode`、`https-listener-state`。`mode = none` 但检测到反代 HTTPS 时提示切换到「外部反向代理」并开启「信任代理请求头」——否则 Cookie `Secure`、通行密钥 origin、公开地址都按 http 处理。旧节点不返回该字段时不渲染该行。
+前端「HTTPS 设置」状态块固定三行：**对外访问**（内置 / 反向代理：已通过当前请求确认 | 按公开地址推断 / 未启用）、**配置模式**（`tls_config.mode`）、**内置监听器**（仅 `selfsigned` / `acme` 显示，运行中带端口 / 已停止 / 失败带原因）。`data-testid`：`https-effective`、`https-current-mode`、`https-listener-state`。`mode = none` 但检测到反代 HTTPS 时提示切换到「外部反向代理」并开启「信任代理请求头」——否则 Cookie `Secure`、通行密钥 origin、公开地址都按 http 处理。旧节点不返回该字段时不渲染该行。`node` 角色同样显示 HTTPS 区。
 
-这只是显示与提示，不改变任何安全判定；Cookie / passkey 仍以 `publicRequestUrl` 为准。hub 既没配 https 公开地址又没开信任代理时显示「未启用」，是提醒运维补配置。
+这只是显示与提示，不改变任何安全判定；Cookie / passkey 仍以 `publicRequestUrl` 为准。既没配 https 公开地址又没开信任代理时显示「未启用」，是提醒运维补配置。
 
-内置监听器运行时给出的对外地址：**配置了公网地址（`VIBETERM_HUB_PUBLIC_URL` / `VIBETERM_RELAY_PUBLIC_URL`）就原样显示它**——监听端口是本机内部的，NAT / 端口转发进来的公网端口往往并不相同。只有在完全不知道对外地址时，才用证书域名（ACME 域名或可对外解析的 SAN）加监听端口拼一个。
+内置监听器运行时给出的对外地址：**配置了公网地址就原样显示它**（中继用 `VIBETERM_RELAY_PUBLIC_URL`，其它角色用 `VIBETERM_BASE_URL`）——监听端口是本机内部的，NAT / 端口转发进来的公网端口往往并不相同。只有在完全不知道对外地址时，才用证书域名（ACME 域名或可对外解析的 SAN）加监听端口拼一个。
 
 ## 2. ACME dns-01 的 DNS 提供商抽象
 
-dns-01 不写死 Cloudflare：国内域名大量托管在 DNSPod，且很多 hub 的 80/443 已被别的 nginx 占着，只能走 dns-01 + 非标端口监听。
+dns-01 不写死 Cloudflare：国内域名大量托管在 DNSPod，且很多中继的 80/443 已被别的 nginx 占着，只能走 dns-01 + 非标端口监听。
 
 ### 接口
 
@@ -93,13 +93,13 @@ cloudflareToken?: string   // 旧字段，等价于 dnsProvider='cloudflare' + {
 
 客户端 `vibeterm settings tls set` 与设置页同一 `PUT /api/tls`。`--mode none|external|selfsigned|acme`；selfsigned 要 `--sans`（缺省端口 9443、`--bind-host 0.0.0.0`）；acme 要 `--domain` `--email`，`--challenge http-01|dns-01`（dns-01 再加 `--dns-provider cloudflare|dnspod` 与 `--dns-token*` / `--dns-secret-id`）。凭证省略则沿用已存。仅 `--body` 时不要求其它旗标。`mode: none` 或 `trustProxy: true` 非 TTY 必须 `--yes`。完整旗标见 [命令行使用手册](./cli-usage.md)。
 
-## 3. 场景：hub 的 80/443 被别人的 nginx 占着
+## 3. 场景：中继的 80/443 被别人的 nginx 占着
 
 典型情形是宝塔面板上还跑着别的站点，443 让不出来，而域名托管在 DNSPod：
 
-1. 设置 → 节点 → HTTPS 设置：模式 **Let's Encrypt**，域名填 hub 的公开域名，验证方式 **DNS-01**，提供商 **DNSPod**，填 ID + Token；内置监听 `0.0.0.0`，端口 `9443`（`tls_config.tls_port` 默认值）。dns-01 完全不碰 80，不需要 nginx 配合。
+1. 设置 → 节点 → HTTPS 设置：模式 **Let's Encrypt**，域名填中继的公开域名，验证方式 **DNS-01**，提供商 **DNSPod**，填 ID + Token；内置监听 `0.0.0.0`，端口 `9443`（`tls_config.tls_port` 默认值）。dns-01 完全不碰 80，不需要 nginx 配合。纯 `relay` 没有前端，只能靠反代或事先配好 TLS。
 2. 签发成功后 `https://<域名>:9443` 即为内置监听器直出的 HTTPS 入口。
-3. 把 hub 公开地址（`VIBETERM_HUB_PUBLIC_URL`）改成这个带端口的地址并重启；各节点通过 hub 列表刷新到新地址。此时流量不再经反代，`VIBETERM_TRUST_PROXY` 应关掉。
+3. 把中继公开地址（`VIBETERM_RELAY_PUBLIC_URL`）改成这个带端口的地址并重启。此时流量不再经反代，`VIBETERM_TRUST_PROXY` 应关掉。中继地址写进加入串并参与 uplink 认证签名，改完后已接入的租户需要重新 `relay enroll` / `relay join`。
 4. 面板侧只拆该域名的 vhost / 证书目录，全局续期 cron 不动。
 
 **通行密钥按 origin 注册**：端口变了就是新 origin。旧地址上注册过的 passkey 在新地址不可用，需要先从局域网 / localhost 登录后在新地址补注册（见 [登录面安全](../security/login-security.md)）。

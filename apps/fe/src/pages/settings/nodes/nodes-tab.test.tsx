@@ -52,7 +52,7 @@ mock.module('./https/use-tls-status', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
+const { resetMeshHubsStateForTest } = await import('@/node/mesh-hubs');
 const { setPendingStorage, clearPendingEnrollments, addPendingEnrollment } = await import(
   '@/node/enrollment'
 );
@@ -73,8 +73,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
   return {
     role: 'standalone',
     nodeEnv: 'production',
-    hubUrl: null,
-    hubPublicUrl: null,
+
     direct: {
       supported: true,
       installed: false,
@@ -127,10 +126,9 @@ describe('NodesTab standalone', () => {
     localStatus = status();
     const html = render({ ...MESH_MODE, mode: 'none' });
     expect(html).toContain('data-testid="local-machine-card"');
-    expect(html).toContain('data-testid="hub-setup-wizard"');
+    expect(html).toContain('data-testid="setup-wizard"');
     expect(html).toContain('data-testid="https-section"');
-    // standalone 才提示「hub 公开地址必须是 https」
-    expect(html).toContain('data-testid="https-hub-url-hint"');
+    expect(html).not.toContain('data-testid="https-hub-url-hint"');
     expect(html).not.toContain('data-testid="nodes-table"');
     expect(html).not.toContain('data-testid="mesh-route-mode-card"');
     // standalone 没有账号安全 / 节点页入口
@@ -159,15 +157,14 @@ describe('NodesTab standalone', () => {
 
 describe('NodesTab mesh', () => {
   test('渲染本机区块 + 节点管理，账号安全收进本机卡的操作菜单', () => {
-    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    localStatus = status({ role: 'relay,node' });
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="local-machine-card"');
-    expect(html).toContain('data-testid="local-machine-local-address"');
     expect(html).toContain('data-testid="mesh-route-mode-card"');
     expect(html).toContain('data-testid="nodes-table"');
     expect(html).toContain('data-testid="https-section"');
     expect(html).not.toContain('data-testid="https-hub-url-hint"');
-    expect(html).not.toContain('data-testid="hub-setup-wizard"');
+    expect(html).not.toContain('data-testid="setup-wizard"');
     // 菜单走 portal，静态渲染只看得到触发器（菜单内容见 local-machine-header.test.tsx）
     expect(html).toContain('data-testid="local-machine-menu"');
     expect(html).not.toContain('href="/account/security"');
@@ -177,7 +174,7 @@ describe('NodesTab mesh', () => {
   });
 
   test('成员列表还在同步时用骨架顶着，不画一张只有本机的空表', () => {
-    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    localStatus = status({ role: 'node' });
     const html = render(MESH_MODE, { loadedAt: null, pendingMembers: null });
     expect(html).toContain('data-testid="nodes-syncing"');
     expect(html).not.toContain('data-testid="nodes-table"');
@@ -192,74 +189,15 @@ describe('NodesTab mesh', () => {
 });
 
 describe('NodesTab 控制面告警', () => {
-  /** 双主横幅只认 hub 集合，与本机角色无关；这里只验证它挂在了页顶。 */
-  function hub(nodeId: string, writerEpoch: number) {
-    return {
-      nodeId,
-      publicUrl: `https://${nodeId}.example`,
-      name: nodeId,
-      mode: 'active' as const,
-      priority: 0,
-      writerEpoch,
-      online: true,
-    };
-  }
-
-  test('两台同纪元 active：节点页顶部出双主横幅', () => {
-    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
-    setMeshHubsStateForTest({ hubs: [hub('h1', 3), hub('h2', 3)], loadedAt: 1 });
-    const html = render(MESH_MODE);
-    expect(html).toContain('data-testid="nodes-hub-split-brain"');
-    expect(html).toContain('vibeterm hub demote');
-  });
-
-  test('纪元不同（正常主备切换）不出横幅', () => {
-    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
-    setMeshHubsStateForTest({ hubs: [hub('h1', 3), hub('h2', 4)], loadedAt: 1 });
+  test('不再渲染 Hub 双主横幅', () => {
+    localStatus = status({ role: 'node' });
     expect(render(MESH_MODE)).not.toContain('data-testid="nodes-hub-split-brain"');
-  });
-
-  test('standalone 不读 hub 集合，横幅不出现', () => {
-    localStatus = status();
-    setMeshHubsStateForTest({ hubs: [hub('h1', 3), hub('h2', 3)], loadedAt: 1 });
-    expect(render({ ...MESH_MODE, mode: 'none' })).not.toContain(
-      'data-testid="nodes-hub-split-brain"'
-    );
-  });
-
-  test('CA 变更的候选：本机卡里出恢复提示与已代入指纹的命令', () => {
-    localStatus = status({ role: 'node', hubUrl: 'https://hub.example' });
-    const fingerprint = 'a'.repeat(64);
-    setMeshHubsStateForTest({
-      hubs: [hub('h1', 3)],
-      candidates: [
-        {
-          publicUrl: 'https://h1.example',
-          lastError: 'hub_ca_changed',
-          lastAttemptAt: null,
-          caMismatch: { advertised: fingerprint, pinned: 'b'.repeat(64) },
-        },
-      ],
-      attached: {
-        hubNodeId: 'h1',
-        publicUrl: 'https://h1.example',
-        mode: 'active',
-        writerEpoch: 3,
-        since: 1,
-      },
-      loadedAt: 1,
-    });
-    const html = render(MESH_MODE);
-    expect(html).toContain('data-testid="nodes-hub-ca-changed"');
-    expect(html).toContain(
-      `vibeterm hub trust refresh https://h1.example --fingerprint ${fingerprint}`
-    );
   });
 });
 
 describe('NodesTab HTTPS 分档', () => {
-  test('hub 兼节点：HTTPS 正常可用', () => {
-    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+  test('relay,node：HTTPS 正常可用', () => {
+    localStatus = status({ role: 'relay,node' });
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="https-section"');
     expect(html).toContain('data-testid="https-mode-chooser"');
@@ -283,17 +221,14 @@ describe('NodesTab HTTPS 分档', () => {
     expect(html).not.toContain('data-testid="https-section"');
   });
 
-  test('纯 node：卡片头还在，内容置灰并只留一句说明', () => {
-    localStatus = status({ role: 'node', hubUrl: 'https://hub.example' });
+  test('纯 node：HTTPS 同样可用', () => {
+    localStatus = status({ role: 'node' });
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="https-section"');
     expect(html).toContain('nodes.https.title');
-    expect(html).toContain('data-testid="https-node-role-hint"');
-    expect(html).toContain('aria-disabled="true"');
-    expect(html).toContain('pointer-events-none opacity-60');
-    // 置灰时不渲染任何可操作的 TLS 表单
-    expect(html).not.toContain('data-testid="https-mode-chooser"');
-    expect(html).not.toContain('data-testid="https-status-header"');
+    expect(html).toContain('data-testid="https-mode-chooser"');
+    expect(html).not.toContain('data-testid="https-node-role-hint"');
+    expect(html).not.toContain('aria-disabled="true"');
   });
 });
 
@@ -301,10 +236,10 @@ describe('NodesTab 角色切换向导', () => {
   test('standalone 默认不预选路径，两条路径都摆着', () => {
     localStatus = status();
     const html = render({ ...MESH_MODE, mode: 'none' });
-    expect(html).toContain('data-testid="hub-setup-wizard"');
+    expect(html).toContain('data-testid="setup-wizard"');
     expect(html).toContain('data-selected="false"');
-    expect(html).not.toContain('data-testid="setup-join-hub-form"');
-    expect(html).not.toContain('data-testid="setup-become-hub-form"');
+    expect(html).not.toContain('data-testid="setup-join-relay-form"');
+    expect(html).not.toContain('data-testid="setup-become-relay-form"');
   });
 });
 
@@ -313,9 +248,7 @@ describe('routeSetupIntent', () => {
     expect(routeSetupIntent(null)).toEqual({ wizardPath: null, relayRole: 'relay,node' });
   });
 
-  test('四条路径都进同一个向导', () => {
-    expect(routeSetupIntent({ path: 'become-hub' }).wizardPath).toBe('become-hub');
-    expect(routeSetupIntent({ path: 'join-hub' }).wizardPath).toBe('join-hub');
+  test('两条路径都进同一个向导', () => {
     expect(routeSetupIntent({ path: 'join-relay' }).wizardPath).toBe('join-relay');
     expect(routeSetupIntent({ path: 'become-relay' }).wizardPath).toBe('become-relay');
   });
@@ -345,14 +278,14 @@ describe('NodesTab standalone 的中继路径', () => {
   test('mesh 下不摆任何设置向导', () => {
     localStatus = status({ role: 'relay,node' });
     const html = render(MESH_MODE);
-    expect(html).not.toContain('data-testid="hub-setup-wizard"');
+    expect(html).not.toContain('data-testid="setup-wizard"');
     expect(html).not.toContain('data-testid="setup-become-relay-form"');
   });
 });
 
 describe('待确认记录的取消按钮', () => {
   test('pending 行同时渲染确认与取消按钮', () => {
-    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    localStatus = status({ role: 'node' });
     addPendingEnrollment({
       hubEnrollmentId: 'enr-cancel-1',
       enrollPk: 'pk_base64url',
@@ -370,7 +303,7 @@ describe('待确认记录的取消按钮', () => {
 
 describe('NodesTab 模式未落定', () => {
   test('先按版式摆骨架，模式相关区块一概不挂', () => {
-    localStatus = status({ role: 'hub,node' });
+    localStatus = status({ role: 'node' });
     resetMeshNodesStateForTest();
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -381,7 +314,7 @@ describe('NodesTab 模式未落定', () => {
     expect(html).not.toContain('data-testid="settings-nodes-tab"');
     expect(html).not.toContain('data-testid="local-machine-card"');
     expect(html).not.toContain('data-testid="https-section"');
-    expect(html).not.toContain('data-testid="hub-setup-wizard"');
+    expect(html).not.toContain('data-testid="setup-wizard"');
     expect(html).not.toContain('data-testid="nodes-table"');
   });
 });

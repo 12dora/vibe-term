@@ -72,7 +72,6 @@ export function pauseErrorText(
   err: unknown
 ): string {
   const raw = errorMessage(err);
-  if (raw.includes('CANNOT_PAUSE_HUB')) return t('nodes.pause.hubBlocked');
   if (raw.includes('CANNOT_PAUSE_SELF')) return t('nodes.pause.selfBlocked');
   return t('nodes.pause.failed', { error: raw });
 }

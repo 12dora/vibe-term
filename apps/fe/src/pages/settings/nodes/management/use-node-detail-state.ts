@@ -38,7 +38,6 @@ function initialState(row: NodeRow): NodeDetailState {
 }
 
 export interface NodeDetailStateOptions {
-  writerPublicUrl: string | null;
   rename: (name: string) => Promise<void>;
   onChanged: () => void;
   onOpenChange: (open: boolean) => void;
@@ -57,7 +56,7 @@ export interface NodeDetailStateHandle {
 export function useNodeDetailState(
   row: NodeRow,
   open: boolean,
-  { io, rename, writerPublicUrl, onChanged, onOpenChange }: NodeDetailStateOptions
+  { io, rename, onChanged, onOpenChange }: NodeDetailStateOptions
 ): NodeDetailStateHandle {
   const { t } = useTranslation();
   const [state, setState] = useState<NodeDetailState>(() => initialState(row));
@@ -102,7 +101,7 @@ export function useNodeDetailState(
   const save = async () => {
     patch({ saving: true, errors: [] });
     const effective = io ?? createNodeDetailIo(rename);
-    const result = await saveNodeDetail(row, plan, effective, { t, writerPublicUrl });
+    const result = await saveNodeDetail(row, plan, effective, { t });
     // 成功的那一条先认账：只错了一半时再点保存，只会重发失败的那一条
     setState((prev) => ({
       ...prev,

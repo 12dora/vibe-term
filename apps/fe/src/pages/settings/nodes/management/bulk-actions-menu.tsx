@@ -77,12 +77,12 @@ export interface BulkMenuInput {
   upgradeBusy: boolean;
   /** 刷新后正在回读各节点升级状态。 */
   restoring: boolean;
-  /** hub 当前接受管理写入。 */
+  /** 上联当前接受管理写入。 */
   writable: boolean;
   blockedHint: string;
   uninstallRunning: boolean;
   revoking: boolean;
-  /** 选中行里可以暂停 / 恢复的台数（暂停排除本机、Hub、当前转发节点；恢复排除本机与待批准；在途节点两边都不算）。 */
+  /** 选中行里可以暂停 / 恢复的台数（暂停排除本机、当前转发节点；恢复排除本机与待批准；在途节点两边都不算）。 */
   eligiblePauseCount: number;
   eligibleResumeCount: number;
   /** 批量暂停 / 恢复正在跑。 */
@@ -91,7 +91,7 @@ export interface BulkMenuInput {
 
 /**
  * 菜单项的可点性与禁用原因。共同的前置条件是「选中了东西」与「没有别的批量在跑」，
- * 各自再叠自己的条件：升级看 latest 与可升级台数，移除与卸载都要 hub 收得下写入，
+ * 各自再叠自己的条件：升级看 latest 与可升级台数，移除与卸载都要上联收得下写入，
  * 暂停 / 恢复看资格过滤后的台数。
  */
 export function bulkMenuStates(
@@ -141,7 +141,7 @@ export function bulkMenuStates(
 
   const uninstall = (): BulkItemState => {
     if (input.selectedCount === 0) return empty;
-    // 卸载以一次签名 `revoke-node` 收尾：hub 不收写入时机器会被删干净，证书却撤不掉。
+    // 卸载以一次签名 `revoke-node` 收尾：上联不收写入时机器会被删干净，证书却撤不掉。
     if (!input.writable) return { disabled: true, title: input.blockedHint };
     if (anyBusy) return busy;
     return { disabled: false };
@@ -249,7 +249,7 @@ export function BulkActionsMenuList({
 
 /**
  * 批量升级的实际目标：勾选的行**再加上本机**。本机那一行不可勾选（移除 / 卸载都轮不到它），
- * 但升级必须带得上它——持久化的「普通节点 → hub → 本机」次序与入口重启后的续跑，只有本机
+ * 但升级必须带得上它——持久化的「普通节点 → 本机」次序与入口重启后的续跑，只有本机
  * 真的进了批量才走得到。一个都没勾时不追加：菜单仍然停在「须先勾选节点」。
  */
 export function bulkUpgradeTargets(

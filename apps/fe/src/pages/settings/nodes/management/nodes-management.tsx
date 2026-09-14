@@ -1,18 +1,18 @@
 // mesh 节点管理主体（设计 §4「Nodes 管理页」）。
 //
-// 列表 = `GET /api/mesh/nodes`（成员集权威）合并 `GET /n/<hub>/api/hub/nodes`（心跳 / 状态）。
-// 动作：新增节点（enrollment）、重命名、吊销。hub 不可达时全部管理动作禁用。
+// 列表 = `GET /api/mesh/nodes`（成员集权威）加上 `pendingMemberIds` 占位行。
+// 动作：新增节点（中继 enrollment）、重命名、吊销。未挂中继时加入码不可用。
 //
 // 整体是设置页「节点」标签里的一张卡片：卡头放刷新与「添加」，卡体依次是加入码表单、
-// 待确认列表与节点表。上级链路（接 Hub 还是接中继）与它的操作都在本机卡上，这里只读它的状态。
+// 待确认列表与节点表。上级链路与它的操作都在本机卡上，这里只读它的状态。
 
 import { listPendingEnrollments, subscribePendingEnrollments } from '@/node/enrollment';
+import { defaultRelayEnrollmentApi } from '@/node/enrollment-api';
 import {
   cancelPending,
   useEnrollmentEngine,
   useEnrollmentEngineState,
 } from '@/node/enrollment-engine';
-import { defaultRelayEnrollmentApi } from '@/node/hub-api';
 import { mergeNodes, setEntryNodeId, useMeshNodes } from '@/node/mesh-nodes';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
@@ -33,23 +33,18 @@ import {
   toggleSelection,
 } from './bulk-actions-menu';
 import { EnrollmentSection } from './enrollment-section';
-import { HubRoleDialog } from './hub-role-dialog';
 import { NodesSyncGate } from './nodes-sync-gate';
 import { NodesTable } from './nodes-table';
 import { RevokeDialog } from './revoke-dialog';
 import type { NodeSelection, ResolvedMode } from './types';
 import { UninstallDialog } from './uninstall-dialog';
 import { UpgradeConfirmDialog } from './upgrade-confirm-dialog';
-import { useHubRoleSwitch } from './use-hub-role-switch';
 import { useBulkRevoke } from './use-node-row-actions';
 import { useNodeUninstall } from './use-node-uninstall';
 import { useNodeUpgrade } from './use-node-upgrade-controller';
 
-/** 上级链路的只读视图：本页不再自己轮询 hub 集合与中继，一律取本机卡建好的那一份。 */
-export type NodesManagementUplink = Pick<
-  LocalUplinkController,
-  'hubs' | 'hub' | 'relay' | 'prompt' | 'refreshAll'
->;
+/** 上级链路的只读视图：本页不再自己轮询中继，一律取本机卡建好的那一份。 */
+export type NodesManagementUplink = Pick<LocalUplinkController, 'relay' | 'prompt' | 'refreshAll'>;
 
 export interface NodesManagementProps {
   mode: AuthModeResponse;
@@ -63,24 +58,23 @@ export function NodesManagement({
   api = defaultAuthApi,
 }: NodesManagementProps) {
   const { t } = useTranslation();
-  const { nodes, loading: nodesLoading, refresh: refreshNodes } = useMeshNodes();
+  const { nodes, pendingMemberIds, loading: nodesLoading, refresh: refreshNodes } = useMeshNodes();
   const entryNodeId = rawMode.nodeId || null;
 
   useEffect(() => {
     setEntryNodeId(entryNodeId);
   }, [entryNodeId]);
 
-  // 兜底轮询只有 5 分钟一拍，进管理页时 store 里的列表可能已经很旧（版本号、hub 标志、
+  // 兜底轮询只有 5 分钟一拍，进管理页时 store 里的列表可能已经很旧（版本号、
   // 登录态都只走 REST）：挂载先补一次，单飞会与常驻 owner 正在进行的那次合并。
   useEffect(() => {
     refreshNodes();
   }, [refreshNodes]);
 
-  const { hub, hubs, relay, prompt } = uplink;
-  const hubDetails = useMemo(() => new Map(hubs.hubs.map((row) => [row.nodeId, row])), [hubs.hubs]);
+  const { relay, prompt } = uplink;
   const rows = useMemo(
-    () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId, hubDetails }),
-    [nodes, hub.hubNodes, hub.hubNodeId, entryNodeId, hubDetails]
+    () => mergeNodes(nodes, { entryNodeId, pendingMemberIds }),
+    [nodes, entryNodeId, pendingMemberIds]
   );
 
   const pendings = useSyncExternalStore(
@@ -94,43 +88,21 @@ export function NodesManagement({
     ? { ...rawMode, uid: rawMode.uid as string, kdfParams: rawMode.kdfParams as AuthKdfParamsJson }
     : null;
 
-  // 节点列表 + hub 管理面 + hub 集合 + 中继链路一起重拉，由上级链路 owner 统一负责。
   const refreshAll = uplink.refreshAll;
 
-  // 升级状态机独立于 enrollment / rename / revoke：它走入口 → 目标的 peer link，hub 离线也能用。
+  // 升级状态机独立于 enrollment / rename / revoke：它走入口 → 目标的 peer link。
   // 传 rows 是为了刷新后能按行回读升级状态——状态只活在 React 里，页面一刷新就得重新问一遍。
   const upgrade = useNodeUpgrade(rows, refreshAll);
 
-  // 挂在 standby 上（或一台 writer 都没有）时，管理写入会被 hub 以 `HUB_NOT_WRITER` 拒绝：
-  // 先禁掉动作并给一行说明，比让用户点完再吃一条报错强。升级不走 hub 控制面，保持可用。
-  // 主 hub 掉线时「hub 不可达」与这一条说的是同一件事，只留更具体的那一条。
-  // 中继模式下上级不是 hub：可写与否只看有没有挂上中继，hub 的主备 / writer 一概不适用。
-  const writable = relay.relayMode ? relay.writable : hub.online && !hubs.writesBlocked;
-  const blockedHint = uplinkBlockedHint(t, relay.relayMode, hubs.writesBlocked);
+  const writable = relay.writable;
+  const enrollWritable = relay.relayMode && writable;
+  const blockedHint = uplinkBlockedHint(t, relay.relayMode);
 
-  const uninstall = useNodeUninstall(
-    { api, mode, prompt, writerPublicUrl: hubs.writerPublicUrl, writable },
-    refreshAll
-  );
-  // 主备切换与卸载共用一套「行内长事务」的观感，但它只走 hub 自己的角色接口，
-  // 不经过 key log 之外的任何管理写入，因此单独一套状态。
-  const roleSwitch = useHubRoleSwitch(
-    {
-      hubs: hubs.hubs,
-      writerHubId: hubs.writerHubId,
-      rows,
-      api,
-      mode,
-      prompt,
-      hubWritable: !hubs.writesBlocked,
-    },
-    refreshAll
-  );
+  const uninstall = useNodeUninstall({ api, mode, prompt, writable }, refreshAll);
   const bulkRevoke = useBulkRevoke({
     api,
     mode,
     prompt,
-    writerPublicUrl: hubs.writerPublicUrl,
     onChanged: refreshAll,
   });
 
@@ -160,12 +132,12 @@ export function NodesManagement({
   const [enrollOpen, setEnrollOpen] = useState(false);
   // 监听回路、admit 流水线与过期清理都在宿主级单例引擎里：侧滑面板同时开着时也只有一份，
   // 同一张证书绝不会被签成两条 `admit-node`（见 `enrollment-engine.ts` 顶部）。
-  // 中继模式下 enrollment 建在中继上，证书也从 `/api/mesh/relay/enrollments/:id` 回读。
-  const enrollChannel = relay.relayMode ? defaultRelayEnrollmentApi : hub.hubApi;
+  // enrollment 建在中继上，证书也从 `/api/mesh/relay/enrollments/:id` 回读。
+  const enrollChannel = defaultRelayEnrollmentApi;
   const { confirmManually } = useEnrollmentEngine({
     api,
     mode,
-    hubApi: enrollChannel,
+    enrollmentApi: enrollChannel,
     prompt,
     onDone: refreshAll,
     t,
@@ -206,9 +178,7 @@ export function NodesManagement({
             data-testid="nodes-refresh"
           >
             <RefreshCw
-              className={
-                nodesLoading || hub.loading ? 'animate-spin motion-reduce:animate-none' : undefined
-              }
+              className={nodesLoading ? 'animate-spin motion-reduce:animate-none' : undefined}
             />
           </Button>
           <BulkActionsMenu
@@ -225,8 +195,8 @@ export function NodesManagement({
           <Button
             type="button"
             size="sm"
-            disabled={!writable}
-            title={writable ? undefined : blockedHint}
+            disabled={!enrollWritable}
+            title={enrollWritable ? undefined : blockedHint}
             onClick={() => setEnrollOpen((value) => !value)}
             data-testid="nodes-add"
           >
@@ -249,29 +219,24 @@ export function NodesManagement({
           api={api}
           mode={mode}
           relay={relay}
-          hubApi={enrollChannel}
-          writable={writable}
+          writable={enrollWritable}
           blockedHint={blockedHint}
-          writerPublicUrl={hubs.writerPublicUrl}
           open={enrollOpen}
           prompt={prompt}
           pendings={pendings}
           onConfirm={(pending) => void confirmManually(pending.hubEnrollmentId)}
           onCancel={cancelPending}
           busyIds={engine.busyIds}
-          hubUnconfirmedIds={engine.hubUnconfirmedIds}
+          unconfirmedIds={engine.hubUnconfirmedIds}
           clearedIds={engine.clearedIds}
         />
 
         <NodesSyncGate>
           <NodesTable
             rows={rows}
-            hubApi={hub.hubApi}
-            hubOnline={writable}
-            hubWritable={relay.relayMode || !hubs.writesBlocked}
+            enrollmentApi={enrollChannel}
+            uplinkWritable={writable}
             blockedHint={blockedHint}
-            writerPublicUrl={hubs.writerPublicUrl}
-            hubDetails={hubDetails}
             mode={mode}
             api={api}
             prompt={prompt}
@@ -279,12 +244,10 @@ export function NodesManagement({
             upgrade={upgrade}
             selection={selection}
             uninstall={uninstall}
-            roleSwitch={roleSwitch}
           />
         </NodesSyncGate>
 
         <UninstallDialog uninstall={uninstall} />
-        <HubRoleDialog roleSwitch={roleSwitch} />
         <UpgradeConfirmDialog upgrade={upgrade} />
         <RevokeDialog controller={bulkRevoke.revokeDialog} />
       </CardContent>

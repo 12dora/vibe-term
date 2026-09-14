@@ -69,7 +69,6 @@ function nodeRow(overrides: Partial<NodeRow> & { id: string }): NodeRow {
     loggedIn: true,
     inventory: null,
     isSelf: false,
-    isHub: false,
     lastSeenAt: null,
     status: null,
     certificate: null,
@@ -245,7 +244,7 @@ describe('保存', () => {
     };
   }
 
-  const ctx = { t, writerPublicUrl: null };
+  const ctx = { t };
 
   test('名字没变：一条 rename 都不发', async () => {
     const { io: fake, calls } = io();
@@ -344,7 +343,7 @@ describe('一半成功一半失败后的重试', () => {
     };
   }
 
-  const ctx = { t, writerPublicUrl: null };
+  const ctx = { t };
 
   test('改名成功、域名访问失败：再点保存不会把名字又改一遍', async () => {
     const { io: fake, calls } = io({ domain: 1 });
@@ -505,7 +504,7 @@ describe('详情正文', () => {
     expect(html).toContain('nodes.time.');
   });
 
-  test('hub 不可写时名称输入框禁用并说明原因', () => {
+  test('上联不可写时名称输入框禁用并说明原因', () => {
     const html = body({ renameAvailable: false });
     expect(html).toContain('nodes.detail.renameUnavailable');
     const at = html.indexOf(`data-testid="nodes-detail-name-input-${REMOTE.id}"`);
