@@ -76,13 +76,6 @@ export const MESH_ALLOWED_MIME = new Set([
 
 export type MeshRoles = VibeTermRoles;
 
-export type HubTlsInfo = {
-  caFingerprint: string | null;
-  caPem: string | null;
-};
-
-export type HubTlsInfoProvider = () => HubTlsInfo | Promise<HubTlsInfo>;
-
 export type PeerReachKind = MeshNodeReach;
 
 export type PeerTransportKind = Exclude<MeshNodeTransport, null>;
@@ -210,7 +203,7 @@ export type RtcSignalRouter = {
 export type CachedRtcConfig = {
   stun: string[];
   turn: unknown;
-  source?: 'node-custom' | 'node-disabled' | 'hub-custom' | 'builtin';
+  source?: 'node-custom' | 'node-disabled' | 'relay-custom' | 'builtin';
   probes?: unknown;
 };
 

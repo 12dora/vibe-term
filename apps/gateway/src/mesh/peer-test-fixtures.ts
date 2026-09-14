@@ -1,47 +1,73 @@
 import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import type { MeshUplinkCtlMessage } from '@vibeterm/shared/uplink';
 import type { UserStore } from '../auth/user-store';
-import { fakeSocketPair } from './test-support';
-import type { KeyLogApplier, UplinkStatus } from './types';
-import { UplinkClient, type UplinkWsFactory } from './uplink-client';
+import type { InboundRelayHandler, PooledUplink, UplinkState } from './types';
+import type { UplinkWsFactory } from './uplink-constants';
 
-function dummyApplier(): KeyLogApplier {
-  return {
-    async head() {
-      return { seq: 0n, hash: new Uint8Array(32) };
-    },
-    async applyMany() {
-      return { applied: 0 };
-    },
-  };
+class DummyPooledUplink implements PooledUplink {
+  readonly identity: { nodeId: string; edSecretKey: Uint8Array };
+  readonly userId = 'user-1';
+  readonly hubUrl = 'https://relay.example.com';
+  lastKeyLogHead: { seq: bigint; hash: Uint8Array } | null = null;
+  state: UplinkState = 'offline';
+  link: LinkSession | null = null;
+  lastConnectError: { reason: string; at: number } | null = null;
+  openRelayImpl: (() => Promise<LinkStream>) | null = null;
+  private _relayHandler: InboundRelayHandler | null = null;
+
+  constructor(
+    identity: { nodeId: string; edSecretKey: Uint8Array },
+    openRelay?: () => Promise<LinkStream>
+  ) {
+    this.identity = identity;
+    this.openRelayImpl = openRelay ?? null;
+    if (openRelay) {
+      this.state = 'online';
+      this.link = createInMemoryLinkPair()[0];
+    }
+  }
+
+  onStateChange(_cb: (state: UplinkState) => void): () => void {
+    return () => {};
+  }
+  setOnRelayStream(handler: InboundRelayHandler | null): void {
+    this._relayHandler = handler;
+  }
+  async attemptConnect(): Promise<void> {}
+  async connectWithLink(): Promise<void> {}
+  async waitUntilClosed(): Promise<void> {}
+  async stop(): Promise<void> {
+    this.state = 'offline';
+  }
+  sendCtl(_msg: MeshUplinkCtlMessage): void {}
+  sendStatus(): void {}
+  sendStatusIfChanged(): boolean {
+    return false;
+  }
+  async openRelay(_toNodeId: string): Promise<LinkStream> {
+    if (!this.openRelayImpl) throw new Error('dummy uplink has no relay');
+    return this.openRelayImpl();
+  }
+  async queryHubHead() {
+    return this.lastKeyLogHead;
+  }
+  async queryKeyLogAt() {
+    return null;
+  }
+  async appendAndAck() {
+    return { ok: false, error: 'dummy' };
+  }
+  requestCatchUpNow(): void {}
+  resetBackoff(): void {}
 }
 
 export function dummyUplink(
   identity: { nodeId: string; edSecretKey: Uint8Array },
-  userStore: UserStore,
+  _userStore: UserStore,
   openRelay?: () => Promise<LinkStream>,
-  options?: { wsFactory?: UplinkWsFactory }
-): UplinkClient {
-  const client = new UplinkClient({
-    hubUrl: 'https://hub.example.com',
-    identity,
-    userId: 'user-1',
-    keyLogApplier: dummyApplier(),
-    userStore,
-    statusProvider: (): UplinkStatus => ({
-      version: '1',
-      tmux: false,
-      direct_capable: false,
-      inventory: {},
-      endpoints: [],
-    }),
-    wsFactory: options?.wsFactory ?? (() => fakeSocketPair()[0]),
-  });
-  if (openRelay) {
-    client.openRelay = async () => openRelay();
-    client.state = 'online';
-    client.link = createInMemoryLinkPair()[0];
-  }
-  return client;
+  _options?: { wsFactory?: UplinkWsFactory }
+): DummyPooledUplink {
+  return new DummyPooledUplink(identity, openRelay);
 }
 
 export function echoQuiesceCaps(session: LinkSession): void {

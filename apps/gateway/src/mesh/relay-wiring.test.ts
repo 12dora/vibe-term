@@ -4,7 +4,7 @@ import { RelayUplinkClient } from './relay-uplink-client';
 import { type RelayWiring, relayUplinkOverrides } from './relay-wiring';
 import { fakeSocketPair, waitUntil } from './test-support';
 import type { KeyLogApplier, UplinkStatus } from './types';
-import type { UplinkClientOptions } from './uplink-client';
+import type { UplinkClientOptions } from './uplink-constants';
 
 const RELAY_URL = 'https://relay.example';
 

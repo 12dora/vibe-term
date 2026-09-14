@@ -131,8 +131,8 @@ export type InboundRelayHandler = (
 ) => void;
 
 /**
- * `UplinkPool` 消费的上行客户端公开面。`UplinkClient`（hub）与 `RelayUplinkClient`（中继）
- * 都满足它，池子据此在两种上级之间切换而不改造 failover 机制。
+ * `UplinkPool` 消费的上行客户端公开面。中继客户端（`RelayUplinkClient`）满足它，
+ * 池子据此做 failover / probe / switch 而不绑死具体拨号实现。
  */
 export type PooledUplink = {
   readonly identity: MeshIdentity;

@@ -3,13 +3,7 @@ import { jsonText } from './json-text';
 import { ingestPeerReachMap } from './port-reach';
 import type { UplinkNodeList } from './uplink-protocol';
 
-function usablePeerName(name: string | null | undefined, nodeId: string): string | null {
-  const trimmed = name?.trim() ?? '';
-  if (!trimmed || trimmed === nodeId) return null;
-  return trimmed;
-}
-
-/** 把 `node.list` 里已 admit 的对端（含 hub 自己）写入 `peer_cache`，带上 version。 */
+/** 把 `node.list` 里已 admit 的对端写入 `peer_cache`，带上 version。 */
 export function persistUplinkPeerCache(input: {
   userStore: UserStore;
   userId: string;
@@ -39,7 +33,6 @@ export function persistUplinkPeerCache(input: {
     });
     ingestPeerReachMap(node.id, node.peer_reach, selfNodeId);
   }
-  persistHubPeer(input);
 }
 
 function hasDecryptablePeerPayload(node: UplinkNodeList['nodes'][number]): boolean {
@@ -47,32 +40,4 @@ function hasDecryptablePeerPayload(node: UplinkNodeList['nodes'][number]): boole
   if (node.name && node.name !== node.id) return true;
   if (Array.isArray(node.endpoints) && node.endpoints.length > 0) return true;
   return node.inventory != null;
-}
-
-function persistHubPeer(input: {
-  userStore: UserStore;
-  userId: string;
-  selfNodeId: string;
-  list: UplinkNodeList;
-  now: number;
-}): void {
-  const { userStore, userId, selfNodeId, list, now } = input;
-  const hub = list.hub;
-  if (!hub || hub.nodeId === selfNodeId) return;
-  const fromNodes = list.nodes.find((node) => node.id === hub.nodeId);
-  const name = usablePeerName(fromNodes?.name, hub.nodeId) ?? usablePeerName(hub.name, hub.nodeId);
-  if (!name) return;
-  const cert = userStore.getCert(hub.nodeId);
-  if (!cert || cert.userId !== userId || cert.revokedLogSeq != null) return;
-  const existing = userStore.listPeers().find((row) => row.nodeId === hub.nodeId);
-  userStore.upsertPeer({
-    nodeId: hub.nodeId,
-    name,
-    endpointsJson: existing?.endpointsJson ?? '[]',
-    inventoryJson: existing?.inventoryJson ?? '{}',
-    directCapable: existing?.directCapable ?? false,
-    lastSeenAt: now,
-    listVersion: list.version,
-    version: fromNodes?.version ?? existing?.version ?? null,
-  });
 }

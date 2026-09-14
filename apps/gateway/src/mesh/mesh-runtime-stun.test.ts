@@ -71,12 +71,12 @@ describe('mesh-runtime STUN resolution', () => {
     expect(resolveMeshRtcConfig(local, { stun: [], turn: null }).turnConfigured).toEqual([]);
   });
 
-  test('hub custom ⇒ hub list', () => {
+  test('relay custom ⇒ relay list', () => {
     const resolved = resolveMeshRtcConfig(
       { stunServers: [...BUILTIN_STUN_SERVERS], stunSource: 'builtin' },
-      { stun: ['stun:hub:3478'], turn: null }
+      { stun: ['stun:relay:3478'], turn: null }
     );
-    expect(resolved).toMatchObject({ stun: ['stun:hub:3478'], source: 'hub-custom' });
+    expect(resolved).toMatchObject({ stun: ['stun:relay:3478'], source: 'relay-custom' });
   });
 
   test('node custom ⇒ node list even if hub custom', () => {
@@ -117,8 +117,7 @@ describe('mesh-runtime STUN resolution', () => {
         db,
         gateway: fakeGateway(db),
         config: {
-          roles: { hub: false, node: true, relay: false },
-          hubUrl: 'http://127.0.0.1:9',
+          roles: { node: true, relay: false },
           peerPort: 0,
           stunServers: row.stunServers,
           stunSource: row.stunSource,

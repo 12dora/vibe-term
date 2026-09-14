@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { defaultFetchCaPem, defaultProbeHealthz, joinHubPath } from './uplink-pool-http';
+import { defaultProbeHealthz, joinHubPath } from './uplink-pool-http';
 
 function dnsErr(): Error {
   const err = new Error('getaddrinfo ENOTFOUND');
@@ -78,32 +78,5 @@ describe('defaultProbeHealthz', () => {
       })
     ).toBe(false);
     expect(Date.now() - started).toBeLessThan(500);
-  });
-});
-
-describe('defaultFetchCaPem', () => {
-  test('DNS failure still fetches CA with rejectUnauthorized=false and original serverName', async () => {
-    const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const pem = await defaultFetchCaPem('https://hub.example', {
-      enabled: true,
-      resolve: async () => ({ ip: '8.8.8.8', via: 'doh' }),
-      fetch: async (url, init) => {
-        calls.push({ url, init });
-        if (!url.includes('8.8.8.8')) throw dnsErr();
-        return new Response('-----BEGIN CERTIFICATE-----\n');
-      },
-    });
-    expect(pem).toContain('BEGIN CERTIFICATE');
-    expect(calls.map((row) => row.url)).toEqual([
-      'https://hub.example/api/tls/ca.crt',
-      'https://8.8.8.8/api/tls/ca.crt',
-    ]);
-    expect(
-      (calls[1]?.init as { tls?: { rejectUnauthorized?: boolean; serverName?: string } }).tls
-    ).toEqual({
-      rejectUnauthorized: false,
-      serverName: 'hub.example',
-    });
-    expect((calls[1]?.init as { headers?: { host?: string } }).headers?.host).toBe('hub.example');
   });
 });

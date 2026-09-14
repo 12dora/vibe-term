@@ -18,16 +18,16 @@ import type {
   MeshScheduler,
   PeerReach,
   PeerTransportKind,
+  PooledUplink,
   UplinkStatus,
 } from './types';
-import type { UplinkClient } from './uplink-client';
 import type { UplinkPool } from './uplink-pool';
 import type { GatewaySessionClose } from './ws-stream-target';
 
 export type PeerManagerOptions = {
   identity: MeshIdentity;
   userStore: UserStore;
-  uplink: UplinkClient | UplinkPool;
+  uplink: (PooledUplink & { resetBackoff(): void }) | UplinkPool;
   peerPort: number;
   now?: () => number;
   scheduler?: MeshScheduler;
@@ -46,6 +46,8 @@ export type PeerManagerOptions = {
   linkFactory?: PeerLinkFactory;
   interfacesFn?: () => Record<string, RankableIfaceAddr[] | undefined>;
   refreshLocalInterfaces?: () => Record<string, RankableIfaceAddr[] | undefined>;
+  uplinkHost?: string | null | (() => string | null);
+  /** @deprecated use `uplinkHost`; kept until callers in other waves rename. */
   hubHost?: string | null | (() => string | null);
   endpointBackoff?: PeerEndpointBackoff;
   dialLimiter?: DirectDialLimiter;

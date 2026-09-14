@@ -17,13 +17,3 @@ export {
   type MeshUplinkNodeList as UplinkNodeList,
   type MeshUplinkRtcSignal as UplinkRtcSignal,
 } from '@vibeterm/shared/uplink';
-
-export function uplinkWsUrl(hubUrl: string): string {
-  const url = new URL(hubUrl);
-  if (url.protocol === 'https:') url.protocol = 'wss:';
-  else if (url.protocol === 'http:') url.protocol = 'ws:';
-  url.pathname = '/hub/uplink';
-  url.search = '';
-  url.hash = '';
-  return url.toString();
-}

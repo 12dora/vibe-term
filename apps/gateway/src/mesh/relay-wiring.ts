@@ -1,7 +1,5 @@
 import type { KeyLogType } from '@vibeterm/shared/auth';
 import type { RelayKickReason } from '@vibeterm/shared/relay';
-import type { HubMode } from '@vibeterm/shared/uplink';
-import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { AuthDb } from '../auth/types';
 import type { UserKeyService } from '../auth/user-key-service';
@@ -19,13 +17,11 @@ import type { RelayUplinkView } from './relay-switch-route';
 import { RelayUplinkClient } from './relay-uplink-client';
 import { probeRelayHealth } from './relay-uplink-http';
 import type { MeshScheduler } from './types';
-import { UplinkClient } from './uplink-client';
 import {
   UPLINK_POOL_PROBE_TIMEOUT_MS,
   type UplinkCandidate,
   type UplinkPool,
   type UplinkPoolOptions,
-  defaultProbeHealthz,
 } from './uplink-pool';
 import { sameHubUrl } from './uplink-pool-url';
 
@@ -43,7 +39,6 @@ export type RelayWiring = {
 
 type RelayBinding = {
   uplink: UplinkPool;
-  hubStore: Pick<MeshHubStore, 'replaceAll'>;
   metaEpoch: number;
   createClient: RelayUplinkOverrides['createClient'] | null;
   attach: import('./relay-multi-attach').RelayMultiAttach | null;
@@ -78,8 +73,6 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
   const bound = RELAY_BINDINGS.get(wiring);
   try {
     const result = await wiring.secrets.reconcile(bound?.uplink.attachedHub()?.publicUrl ?? null);
-    // 切到中继后不再保留 hub 集合，`/api/mesh/hubs` 自然返回空表
-    if (result.kind === 'relay') bound?.hubStore.replaceAll([], Date.now());
     if (allowRestart && bound && (result.primaryChanged || (await relayTokenChanged(bound)))) {
       bound.metaEpoch = result.metaEpoch;
       await bound.attach?.stop();
@@ -157,14 +150,9 @@ export async function reconfigureRelayUplink(
   await reconfigureUplinkPool(uplink);
 }
 
-export function bindRelayReconcile(
-  wiring: RelayWiring,
-  uplink: UplinkPool,
-  hubStore: Pick<MeshHubStore, 'replaceAll'>
-): void {
+export function bindRelayReconcile(wiring: RelayWiring, uplink: UplinkPool): void {
   RELAY_BINDINGS.set(wiring, {
     uplink,
-    hubStore,
     metaEpoch: wiring.secrets.currentMetaEpoch(),
     createClient: null,
     attach: null,
@@ -224,42 +212,41 @@ export function relayUplinkOverrides(
   return {
     relayMode,
     candidates: () =>
-      orderRelaysByPreferred(wiring.secrets.relayRows(), preferredOrderUrl(wiring)).map((row) => ({
-        hubNodeId: null,
-        publicUrl: row.url,
-        mode: 'active' as HubMode,
-        writerEpoch: 0,
-        priority: row.priority,
-        caFingerprint: null,
-      })),
+      relayMode()
+        ? orderRelaysByPreferred(wiring.secrets.relayRows(), preferredOrderUrl(wiring)).map(
+            (row) =>
+              ({
+                hubNodeId: null,
+                publicUrl: row.url,
+                priority: row.priority,
+                caFingerprint: null,
+              }) satisfies UplinkCandidate
+          )
+        : [],
     createClient: (o) =>
-      relayMode()
-        ? new RelayUplinkClient({
-            hubUrl: o.hubUrl,
-            identity: o.identity,
-            userId: o.userId,
-            keyLogApplier: o.keyLogApplier,
-            userStore: o.userStore,
-            secrets: wiring.secrets,
-            statusProvider: o.statusProvider,
-            nameProvider: opts.nameProvider,
-            ...(o.onNodeList ? { onNodeList: o.onNodeList } : {}),
-            ...(o.onRtcSignal ? { onRtcSignal: o.onRtcSignal } : {}),
-            ...(o.onEnrollRedeemed ? { onEnrollRedeemed: o.onEnrollRedeemed } : {}),
-            ...(o.wsFactory ? { wsFactory: o.wsFactory } : {}),
-            tlsCa: o.tlsCa ?? null,
-            ...(o.scheduler ? { scheduler: o.scheduler } : {}),
-            ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
-            ...(o.keyLogCatchUp ? { keyLogCatchUp: o.keyLogCatchUp } : {}),
-            onKicked: (reason) => notifyRelayKicked(wiring, o.hubUrl, reason),
-            onRtt: (rttMs) => notifyRelayRtt(wiring, o.hubUrl, rttMs),
-            dial,
-          })
-        : new UplinkClient(o),
+      new RelayUplinkClient({
+        hubUrl: o.hubUrl,
+        identity: o.identity,
+        userId: o.userId,
+        keyLogApplier: o.keyLogApplier,
+        userStore: o.userStore,
+        secrets: wiring.secrets,
+        statusProvider: o.statusProvider,
+        nameProvider: opts.nameProvider,
+        ...(o.onNodeList ? { onNodeList: o.onNodeList } : {}),
+        ...(o.onRtcSignal ? { onRtcSignal: o.onRtcSignal } : {}),
+        ...(o.onEnrollRedeemed ? { onEnrollRedeemed: o.onEnrollRedeemed } : {}),
+        ...(o.wsFactory ? { wsFactory: o.wsFactory } : {}),
+        tlsCa: o.tlsCa ?? null,
+        ...(o.scheduler ? { scheduler: o.scheduler } : {}),
+        ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
+        ...(o.keyLogCatchUp ? { keyLogCatchUp: o.keyLogCatchUp } : {}),
+        onKicked: (reason) => notifyRelayKicked(wiring, o.hubUrl, reason),
+        onRtt: (rttMs) => notifyRelayRtt(wiring, o.hubUrl, rttMs),
+        dial,
+      }),
     probeHealthz: (publicUrl, tlsCa, timeoutMs) =>
-      relayMode()
-        ? probeRelayHealth(publicUrl, tlsCa, timeoutMs, dial)
-        : defaultProbeHealthz(publicUrl, tlsCa, timeoutMs),
+      probeRelayHealth(publicUrl, tlsCa, timeoutMs, dial),
   };
 }
 

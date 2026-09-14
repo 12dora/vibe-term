@@ -64,52 +64,12 @@ export const peerCache = sqliteTable(
   (table) => [uniqueIndex('peer_cache_node_id_unique').on(table.nodeId)]
 );
 
-/** dropped by 0057; kept only until store deletion */
-export const hubTrust = sqliteTable('hub_trust', {
-  hubUrl: text('hub_url').primaryKey(),
+export const relayCaPins = sqliteTable('relay_ca_pins', {
+  relayUrl: text('relay_url').primaryKey(),
   caPem: text('ca_pem').notNull(),
   fingerprint: text('fingerprint').notNull(),
   createdAt: integer('created_at').notNull(),
 });
-
-/** dropped by 0057; kept only until store deletion */
-export const meshHubs = sqliteTable('mesh_hubs', {
-  hubNodeId: text('hub_node_id').primaryKey(),
-  publicUrl: text('public_url').notNull(),
-  name: text('name'),
-  mode: text('mode').$type<'active' | 'standby'>().notNull(),
-  priority: integer('priority').notNull(),
-  writerEpoch: integer('writer_epoch').notNull(),
-  caFingerprint: text('ca_fingerprint'),
-  online: integer('online', { mode: 'boolean' }).notNull().default(false),
-  lastSeenAt: integer('last_seen_at'),
-  updatedAt: integer('updated_at').notNull(),
-});
-
-/** dropped by 0057; kept only until store deletion */
-export const hubRoleTransitions = sqliteTable(
-  'hub_role_transitions',
-  {
-    operationId: text('operation_id').primaryKey(),
-    targetHubId: text('target_hub_id').notNull(),
-    mode: text('mode').$type<'active' | 'standby'>().notNull(),
-    writerEpoch: integer('writer_epoch'),
-    phase: text('phase')
-      .$type<'accepted' | 'persisting' | 'restarting' | 'complete' | 'failed'>()
-      .notNull(),
-    error: text('error'),
-    startedAt: integer('started_at').notNull(),
-    updatedAt: integer('updated_at').notNull(),
-  },
-  (table) => [
-    check('hub_role_transitions_mode_check', sql`${table.mode} in ('active', 'standby')`),
-    check(
-      'hub_role_transitions_phase_check',
-      sql`${table.phase} in ('accepted', 'persisting', 'restarting', 'complete', 'failed')`
-    ),
-    index('hub_role_transitions_updated_at_idx').on(table.updatedAt),
-  ]
-);
 
 /** 入口本机对成员的偏好；不进 `peer_cache` / 成员 roster，避免被 node.list 覆盖。 */
 export const nodeLocalPrefs = sqliteTable('node_local_prefs', {

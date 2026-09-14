@@ -1,13 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeBase64url, generateEd25519KeyPair, randomBytes } from '@vibeterm/shared/auth';
-import { createInMemoryLinkPair } from '@vibeterm/shared/link';
-import { createMigratedAuthDb } from '../../auth/test-db';
-import { UserStore } from '../../auth/user-store';
+import { describe, expect, test } from 'bun:test';
 import { enumeratePeerEndpoints } from '../mesh-runtime';
-import { ImmediateScheduler, seedUser, waitUntil } from '../test-support';
-import type { KeyLogApplier } from '../types';
-import { UplinkClient } from '../uplink-client';
-import { encodeUplinkCtl } from '../uplink-protocol';
 
 describe('enumeratePeerEndpoints', () => {
   test('advertises non-internal IPv4 and IPv6 and skips loopback', () => {
@@ -182,64 +174,5 @@ describe('enumeratePeerEndpoints', () => {
       docker0: [v4('172.17.0.1', '172.17.0.1/16')],
     });
     expect(urls).toEqual(['ws://192.168.1.1:39001/peer', 'ws://100.64.12.34:39001/peer']);
-  });
-});
-
-describe('UplinkClient.connectWithLink', () => {
-  const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
-  afterEach(async () => {
-    while (fixtures.length > 0) {
-      const item = fixtures.pop();
-      await item?.stop?.();
-      item?.close();
-    }
-  });
-
-  test('authenticates over an in-memory pair without private-member casts', async () => {
-    const { db, close } = createMigratedAuthDb();
-    fixtures.push({ close });
-    const userStore = new UserStore(db);
-    seedUser(userStore);
-    const applier: KeyLogApplier = {
-      async head() {
-        return { seq: 0n, hash: new Uint8Array(32) };
-      },
-      async applyMany() {
-        return { applied: 0 };
-      },
-    };
-    const [nodeLink, hubLink] = createInMemoryLinkPair();
-    const received: string[] = [];
-    hubLink.ctl.onMessage((bytes) => {
-      received.push(new TextDecoder().decode(bytes));
-    });
-    const keys = generateEd25519KeyPair();
-    const client = new UplinkClient({
-      hubUrl: 'https://hub.example.com',
-      identity: { nodeId: 'ab'.repeat(16), edSecretKey: keys.secretKey },
-      userId: 'user-1',
-      keyLogApplier: applier,
-      userStore,
-      statusProvider: () => ({
-        version: '1',
-        tmux: false,
-        direct_capable: false,
-        inventory: {},
-        endpoints: [],
-      }),
-      scheduler: new ImmediateScheduler(),
-      pingIntervalMs: 60_000,
-    });
-    fixtures.push({ close, stop: () => client.stop() });
-
-    const connecting = client.connectWithLink(nodeLink);
-    hubLink.ctl.send(
-      encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) })
-    );
-    await waitUntil(() => received.some((row) => row.includes('auth.response')));
-    hubLink.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
-    await connecting;
-    expect(client.state).toBe('online');
-    expect(client.link).toBe(nodeLink);
   });
 });

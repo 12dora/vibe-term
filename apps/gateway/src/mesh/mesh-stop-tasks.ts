@@ -7,7 +7,6 @@ import type { UplinkPool } from './uplink-pool';
 
 export function meshStopTasks(input: {
   wiring: RelayWiring;
-  hubStop: () => Promise<void>;
   peerManager: PeerManager;
   uplink: UplinkPool;
   http: MeshHttpRuntime;
@@ -20,7 +19,6 @@ export function meshStopTasks(input: {
     ['path-sample', () => stopUplinkPathSampling()],
     ['relay-secondaries', () => relayMultiAttachOf(input.wiring)?.stop() ?? Promise.resolve()],
     ['uplink', () => input.uplink.stop()],
-    ['hub', () => input.hubStop()],
     ['mesh http', () => input.http.stop()],
     ['rtc', () => input.stopRtc()],
     ['bulk', () => input.closeBulk()],
@@ -31,7 +29,6 @@ export function meshStopTasks(input: {
 export function meshStopTasksFor(
   d: {
     relay: RelayWiring;
-    hub?: { stop(): Promise<void> } | null;
     rtc: { close(): Promise<void> | void };
     bulk: { close(): Promise<void> | void };
   },
@@ -42,7 +39,6 @@ export function meshStopTasksFor(
 ): Array<[string, () => Promise<void> | void]> {
   return meshStopTasks({
     wiring: d.relay,
-    hubStop: () => d.hub?.stop() ?? Promise.resolve(),
     peerManager,
     uplink,
     http,

@@ -60,7 +60,7 @@ import {
   UPLINK_KEY_LOG_ACK_TIMEOUT_MS,
   UPLINK_PING_INTERVAL_MS,
   type UplinkWsFactory,
-} from './uplink-client';
+} from './uplink-constants';
 import { UplinkStreamGate, createUplinkPathHeartbeat } from './uplink-path-sampler';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
 import { closeTransport } from './uplink-reconnect';
