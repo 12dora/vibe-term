@@ -20,7 +20,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
  * 光存 id 不够：恢复回来的会话必须能证明自己讲的是**同一条 enrollment、同一套身份**，
  * 否则一个 id 相同的新 enrollment、甚至换了账号之后，都会认领这条陈旧的「已加入」
  * （见 R5「恢复的面板会话缺少绑定」）。因此还带 `enrollPk`/`createdAt`（对拍 pending）、
- * `uid`/`hubNodeId`（对拍当前身份）与 `admittedAt`（标记 24 小时后自然过期）。
+ * `uid`/`hubNodeId`（对拍当前身份；`hubNodeId` 是冻结存储字段名，D4）与 `admittedAt`（标记 24 小时后自然过期）。
  */
 export interface JoinSession {
   id: string;

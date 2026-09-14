@@ -96,9 +96,12 @@ function harness(
 }
 
 describe('runLeaveWorkflow 成功路径', () => {
-  test('纯 node 换 hub：自吊销 → 采基线 → 写记号 → 置位鉴权切换 → leave → 等重启 → 跳转', async () => {
+  test('纯 node 换上级：自吊销 → 采基线 → 写记号 → 置位鉴权切换 → leave → 等重启 → 跳转', async () => {
     const h = harness({ revoke: { kind: 'revoked' } });
-    const outcome = await runLeaveWorkflow(h.deps, { from: 'node', intent: { path: 'join-hub' } });
+    const outcome = await runLeaveWorkflow(h.deps, {
+      from: 'node',
+      intent: { path: 'join-relay' },
+    });
 
     expect(outcome).toBe('restarted');
     expect(h.calls).toEqual([
@@ -113,7 +116,7 @@ describe('runLeaveWorkflow 成功路径', () => {
     ]);
     expect(h.phases).toEqual(['confirming', 'leaving', 'restarting', 'restarted']);
     expect(h.leaveBodies).toEqual([{ expectedRole: 'node' }]);
-    expect(h.intent).toEqual({ path: 'join-hub' });
+    expect(h.intent).toEqual({ path: 'join-relay' });
     // 硬跳转会换掉整个 JS 环境，标记必须一直保持到那时。
     expect(h.authTransition).toBe(true);
   });
@@ -128,15 +131,15 @@ describe('runLeaveWorkflow 成功路径', () => {
 
   test('纯粹退出不写记号，反而把可能残留的旧记号清掉', async () => {
     const h = harness();
-    await runLeaveWorkflow(h.deps, { from: 'hub,node', intent: null });
+    await runLeaveWorkflow(h.deps, { from: 'node', intent: null });
     expect(h.calls).toContain('clearIntent');
     expect(h.calls).not.toContain('writeIntent');
-    expect(h.leaveBodies).toEqual([{ expectedRole: 'hub,node' }]);
+    expect(h.leaveBodies).toEqual([{ expectedRole: 'node' }]);
   });
 
-  test('hub 兼节点不做自吊销（本机就是自己的 hub）', async () => {
+  test('没有自吊销依赖时不调用 revoke', async () => {
     const h = harness();
-    await runLeaveWorkflow(h.deps, { from: 'hub,node', intent: { path: 'become-hub' } });
+    await runLeaveWorkflow(h.deps, { from: 'node', intent: { path: 'join-relay' } });
     expect(h.calls).not.toContain('revoke');
   });
 });
@@ -169,7 +172,7 @@ describe('runLeaveWorkflow 失败与终态', () => {
     const h = harness({ leaveError: new Error('role_mismatch') });
     const outcome = await runLeaveWorkflow(h.deps, {
       from: 'node',
-      intent: { path: 'become-hub' },
+      intent: { path: 'become-relay' },
     });
 
     expect(outcome).toBe('failed');
@@ -231,7 +234,7 @@ describe('createInFlightGuard', () => {
   test('重复调用 run 时第二次拿不到守卫，整条流程一次都不会跑第二遍', async () => {
     const guard = createInFlightGuard();
     const h = harness({ restart: 'timeout' });
-    const run = (from: 'node' | 'hub,node') =>
+    const run = (from: 'node') =>
       guard.tryEnter()
         ? runLeaveWorkflow({ ...h.deps, release: guard.release }, { from, intent: null })
         : Promise.resolve('ignored' as const);
@@ -265,7 +268,7 @@ describe('targetRole', () => {
   test('切到中继角色：记号带上目标角色，重启后表单直接预选', async () => {
     const h = harness();
     await runLeaveWorkflow(h.deps, {
-      from: 'hub,node',
+      from: 'node',
       intent: { path: 'become-relay', role: 'relay' },
     });
     expect(h.intent).toEqual({ path: 'become-relay', role: 'relay' });

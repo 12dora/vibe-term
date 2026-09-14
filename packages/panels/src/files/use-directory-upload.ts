@@ -58,7 +58,7 @@ export function useDirectoryUpload(
           t('files.transfer.tooLarge', { name: file.name, max: formatBytes(transferMaxBytes) })
         );
       }
-      // 回落到 REST 的那一段：本机是同机直传，远端节点要经 hub / 中继，按中继配额压流数
+      // 回落到 REST 的那一段：本机是同机直传，远端节点要经中继，按中继配额压流数
       const streams = pickUploadStreams(runtime.nodeId !== SELF_NODE_ID);
       for (const file of accepted) {
         const controller = new AbortController();

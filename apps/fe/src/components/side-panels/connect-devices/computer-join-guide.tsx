@@ -1,14 +1,12 @@
-// 「加入已有中继 / 加入已有 Hub」两条子路径共用的步骤：准备接入信息 → 在新机器上加入，
+// 「加入已有中继」子路径：准备接入信息 → 在新机器上加入，
 // 加入码收进折叠的「高级」区——它需要在本机先签发一次，且 10 分钟就过期。
-//
-// 摆什么由用户选的路径决定：中继给中继地址 + 租户编号，Hub 给 Hub 地址。
 
 import { joinCommand } from '@/node/enrollment';
 import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
 import { isRelayRole } from './connect-path';
 import { GuideLink, GuideNote, GuideStep } from './guide-step';
-import { joinCommandPreview, passwordJoinCommand, relayJoinCommand } from './join-command-preview';
+import { joinCommandPreview, relayJoinCommand } from './join-command-preview';
 import { JoinConfirmStatus, JoinTokenFields, useJoinEnrollment } from './join-token';
 import type { ConnectMachine } from './use-connect-machine';
 
@@ -17,23 +15,17 @@ const PREFIX = 'connectDevices.computer.join';
 /** 一级选择占第 1 步，安装占第 2 步，放行端口占第 3 步，加入步骤从 4 开始。 */
 export const JOIN_STEP_OFFSET = 4;
 
-export type JoinVariant = 'relay' | 'hub';
-
-/** 新机器该往哪儿加入：中继给地址 + 租户编号，Hub 只给地址。 */
+/** 新机器该往哪儿加入：中继给地址 + 租户编号。 */
 export interface JoinUplink {
-  kind: JoinVariant;
   url: string | null;
   tenantId: string | null;
   /** 本机既没加入 mesh 也不是中继：地址得先把本机自己配好才有。 */
   standalone: boolean;
 }
 
-export function resolveJoinUplink(variant: JoinVariant, machine: ConnectMachine): JoinUplink {
+export function resolveJoinUplink(machine: ConnectMachine): JoinUplink {
   const standalone = !machine.meshEnabled && !isRelayRole(machine.role);
-  if (variant === 'relay') {
-    return { kind: 'relay', url: machine.relayUrl, tenantId: machine.tenantId, standalone };
-  }
-  return { kind: 'hub', url: machine.hubUrl, tenantId: null, standalone };
+  return { url: machine.relayUrl, tenantId: machine.tenantId, standalone };
 }
 
 function UplinkMissing({ uplink }: { uplink: JoinUplink }) {
@@ -41,9 +33,7 @@ function UplinkMissing({ uplink }: { uplink: JoinUplink }) {
   return (
     <>
       <GuideNote tone="warning" testId="connect-join-uplink-missing">
-        {t(
-          uplink.kind === 'relay' ? `${PREFIX}.uplink.relayMissing` : `${PREFIX}.uplink.hubMissing`
-        )}
+        {t(`${PREFIX}.uplink.relayMissing`)}
       </GuideNote>
       {uplink.standalone && (
         <GuideLink to="/settings?tab=nodes" testId="connect-join-uplink-link">
@@ -56,33 +46,29 @@ function UplinkMissing({ uplink }: { uplink: JoinUplink }) {
 
 /** 中继路径要地址和租户编号齐了才算备齐：`vibeterm relay join` 两个都是必填。 */
 export function uplinkReady(uplink: JoinUplink): boolean {
-  return uplink.url !== null && (uplink.kind === 'hub' || uplink.tenantId !== null);
+  return uplink.url !== null && uplink.tenantId !== null;
 }
 
 function UplinkStep({ uplink, index }: { uplink: JoinUplink; index: number }) {
   const { t } = useTranslation();
-  const relay = uplink.kind === 'relay';
   return (
     <GuideStep
       index={index}
       state={uplinkReady(uplink) ? 'done' : 'todo'}
       testId="connect-step-join-uplink"
       title={t(`${PREFIX}.uplink.title`)}
-      description={t(
-        relay ? `${PREFIX}.uplink.relayDescription` : `${PREFIX}.uplink.hubDescription`
-      )}
+      description={t(`${PREFIX}.uplink.relayDescription`)}
     >
       {uplink.url ? (
         <CommandBlock
           value={uplink.url}
           testId="join-uplink-url"
-          label={t(relay ? `${PREFIX}.uplink.relayUrl` : `${PREFIX}.uplink.hubUrl`)}
+          label={t(`${PREFIX}.uplink.relayUrl`)}
         />
       ) : (
         <UplinkMissing uplink={uplink} />
       )}
-      {relay &&
-        uplink.url &&
+      {uplink.url &&
         (uplink.tenantId ? (
           <CommandBlock
             value={uplink.tenantId}
@@ -100,22 +86,17 @@ function UplinkStep({ uplink, index }: { uplink: JoinUplink; index: number }) {
 
 function PasswordStep({ uplink, index }: { uplink: JoinUplink; index: number }) {
   const { t } = useTranslation();
-  const relay = uplink.kind === 'relay';
-  const command = relay
-    ? relayJoinCommand({
-        relayUrl: uplink.url,
-        tenantId: uplink.tenantId,
-        tenantPlaceholder: t(`${PREFIX}.password.tenantPlaceholder`),
-      })
-    : passwordJoinCommand(uplink.url);
+  const command = relayJoinCommand({
+    relayUrl: uplink.url,
+    tenantId: uplink.tenantId,
+    tenantPlaceholder: t(`${PREFIX}.password.tenantPlaceholder`),
+  });
   return (
     <GuideStep
       index={index}
       testId="connect-step-join-password"
       title={t(`${PREFIX}.password.title`)}
-      description={t(
-        relay ? `${PREFIX}.password.relayDescription` : `${PREFIX}.password.hubDescription`
-      )}
+      description={t(`${PREFIX}.password.relayDescription`)}
     >
       <CommandBlock
         value={command}
@@ -190,30 +171,27 @@ function TokenAdvanced({ enrollment }: { enrollment: ReturnType<typeof useJoinEn
 }
 
 /**
- * 加入码只能由本机当前的上级签发：签发通道认的是本机真实的 uplink 模式，
- * 与所选路径对不上时签出来的凭据指向另一条链路，这块整个不出现。
+ * 加入码只能由本机当前挂着的中继签发：还没接上中继时签不出来，这块整个不出现。
  */
-export function canIssueJoinToken(variant: JoinVariant, machine: ConnectMachine): boolean {
-  return variant === 'relay' ? machine.relayMode : !machine.relayMode;
+export function canIssueJoinToken(machine: ConnectMachine): boolean {
+  return machine.relayMode;
 }
 
 export function JoinSteps({
-  variant,
   machine,
   startIndex = JOIN_STEP_OFFSET,
 }: {
-  variant: JoinVariant;
   machine: ConnectMachine;
   startIndex?: number;
 }) {
   const enrollment = useJoinEnrollment();
-  const uplink = resolveJoinUplink(variant, machine);
+  const uplink = resolveJoinUplink(machine);
 
   return (
     <>
       <UplinkStep uplink={uplink} index={startIndex} />
       <PasswordStep uplink={uplink} index={startIndex + 1} />
-      {canIssueJoinToken(variant, machine) && <TokenAdvanced enrollment={enrollment} />}
+      {canIssueJoinToken(machine) && <TokenAdvanced enrollment={enrollment} />}
       {enrollment.dialog}
     </>
   );

@@ -22,8 +22,8 @@ import {
   directOutcomeLabel,
 } from './form-parts';
 import { submitJoinRelayDiscovered } from './submit';
-import { useHubSetupSubmit } from './use-hub-setup-submit';
 import type { RestartWaiter } from './use-restart-waiter';
+import { useSetupSubmit } from './use-setup-submit';
 import {
   type JoinRelayErrors,
   type JoinRelayValues,
@@ -61,7 +61,7 @@ export function JoinRelayForm({
   const probe = useAddressProbe();
   const errors = validateJoinRelay(values, nodeEnv);
   const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
-    useHubSetupSubmit<SetupRelayJoinResponse>({
+    useSetupSubmit<SetupRelayJoinResponse>({
       client,
       hasErrors: hasErrors(errors),
       uplink: 'relay',
@@ -113,7 +113,6 @@ export function JoinRelayForm({
             checked={values.directEnable}
             supported={directSupported}
             platform={localStatus.direct.platform}
-            kind="relay"
             onCheckedChange={(checked) => update({ directEnable: checked })}
           />
 
@@ -194,7 +193,7 @@ function JoinRelayFields({
         />
       </FormField>
 
-      <AddressProbeNotice state={probe} kind="relay" testId="setup-join-relay-probe" />
+      <AddressProbeNotice state={probe} testId="setup-join-relay-probe" />
 
       <FormField
         id="setup-relay-tenant-id"

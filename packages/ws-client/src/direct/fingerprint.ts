@@ -1,6 +1,6 @@
 // DTLS 指纹的解析与规范化（设计 §3「直连授权」）。
 //
-// 这是挡「失陷 hub 做 DTLS 中间人」的那道绑定，解析必须按 [RFC 8122] 的作用域规则来：
+// 这是挡「失陷信令方做 DTLS 中间人」的那道绑定，解析必须按 [RFC 8122] 的作用域规则来：
 // `a=fingerprint` 既可出现在 session 级（第一条 `m=` 之前），也可出现在 media 级，
 // **media 级覆盖同名 session 级**。只取 SDP 里第一条 `a=fingerprint` 会被这样绕过：
 // session 级放合法的 `fp_node`、`m=application` 段里塞攻击者证书的指纹，比较通过而

@@ -34,7 +34,6 @@ import { classifyRoleChange, isRelayRole } from './membership/role-transition';
 import { useLeaveMesh } from './membership/use-leave-mesh';
 import { useRestartGateway } from './restart/use-restart-now';
 import { useSetupCommitted } from './setup/setup-transition';
-import { attachedHubRtt, resolveAttachedHub } from './uplink/hub-uplink-panel';
 import type { LocalUplinkController } from './uplink/local-uplink-controller';
 import { useConnectMenu } from './uplink/use-connect-menu';
 
@@ -47,7 +46,7 @@ export interface LocalMachineCardProps {
   error?: string | null;
   api?: DirectApi;
   client?: ApiClient;
-  /** 上级链路（hub 集合 / 中继链路 / 中继动作）的唯一所有者，由 `NodesTab` 建好传下来。 */
+  /** 上级链路（中继链路 / 中继动作）的唯一所有者，由 `NodesTab` 建好传下来。 */
   uplink: LocalUplinkController;
   /** 直连状态变更 / 重启完成后重新拉 `local-status`。 */
   onRefresh: () => void;
@@ -59,31 +58,18 @@ export interface LocalMachineCardProps {
   selfRelayFollowUp?: boolean;
 }
 
-/** 「更换 Hub」：角色不变，退出后直接展开加入向导。 */
-const CHANGE_HUB_REQUEST: LeaveDialogRequest = {
-  kind: 'change-hub',
-  from: 'node',
-  target: 'node',
-  targetRole: 'standalone',
-  intent: { path: 'join-hub' },
-};
-
 /**
  * 卡头那枚徽标：本机角色与上级链路快照拼出来的一档。
  *
- * 中继角色（`relay` / `relay,node`）的上级只可能是中继：后端在它还没以租户身份接入时把
- * `mode` 报成 `hub`，hub 候选里还带一条本机占位地址——照 hub 那一档判会说出「未连接 Hub」，
- * 一句它永远不该听到的话。因此延迟与「连上没有」一律只看中继链路。
+ * 延迟与「连上没有」一律只看中继链路。mesh 节点还没挂上任何中继时走未接入档。
  */
 function machineBadge(
   meshEnabled: boolean,
   status: LocalStatusResponse | null,
-  uplink: LocalUplinkController,
-  selfNodeId: string | null
+  uplink: LocalUplinkController
 ): MachineStatusBadge {
   const relayRole = status !== null && isRelayRole(status.role);
   const attachedRelay = uplink.relay.attached;
-  const relayLink = relayRole || uplink.relay.relayMode;
   return machineStatusBadge({
     standalone: !meshEnabled,
     relayRole,
@@ -91,9 +77,7 @@ function machineBadge(
     relayMode: uplink.relay.relayMode,
     relayAttached: attachedRelay?.online === true,
     relayKicked: uplink.relay.kicked,
-    hubAttached: resolveAttachedHub(uplink.hubs, selfNodeId).kind !== 'none',
-    hubLoading: uplink.hub.loading,
-    rttMs: relayLink ? (attachedRelay?.rttMs ?? null) : attachedHubRtt(uplink.hubs),
+    rttMs: attachedRelay?.rttMs ?? null,
   });
 }
 
@@ -192,10 +176,9 @@ export function LocalMachineCard({
   });
 
   const domainApi = useMemo(() => domainAccessApi(client), [client]);
-  const badge = machineBadge(meshEnabled, status, uplink, mode?.nodeId ?? null);
+  const badge = machineBadge(meshEnabled, status, uplink);
   const locked = leave.busy || setupCommitted;
-  const changeHub = () => role.setRequest(CHANGE_HUB_REQUEST);
-  const connectActions = useConnectMenu({ status, uplink, locked, onChangeHub: changeHub });
+  const connectActions = useConnectMenu({ status, uplink, locked });
 
   return (
     <Card data-testid="local-machine-card">

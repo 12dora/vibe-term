@@ -21,13 +21,10 @@ function request(overrides: Partial<LeaveDialogRequest> = {}): LeaveDialogReques
 }
 
 describe('leaveDialogTitleKey', () => {
-  test('退到 standalone / 切角色 / 换 hub 各用自己的标题', () => {
+  test('退到 standalone / 切角色各用自己的标题', () => {
     expect(leaveDialogTitleKey(request())).toBe('nodes.membership.leaveConfirm.title');
-    expect(leaveDialogTitleKey(request({ kind: 'switch', target: 'hub,node' }))).toBe(
+    expect(leaveDialogTitleKey(request({ kind: 'switch', target: 'relay,node' }))).toBe(
       'nodes.membership.switchConfirm.title'
-    );
-    expect(leaveDialogTitleKey(request({ kind: 'change-hub' }))).toBe(
-      'nodes.membership.changeHubConfirm.title'
     );
   });
 
@@ -39,11 +36,8 @@ describe('leaveDialogTitleKey', () => {
 });
 
 describe('leaveDialogConsequencesKey', () => {
-  test('纯 node 与 hub 兼节点各说各的', () => {
+  test('纯 node 用节点后果文案', () => {
     expect(leaveDialogConsequencesKey(request())).toBe('nodes.membership.consequencesNode');
-    expect(leaveDialogConsequencesKey(request({ from: 'hub,node' }))).toBe(
-      'nodes.membership.consequencesHub'
-    );
   });
 
   test('relay,node → relay：中继服务与租户保留', () => {
@@ -55,7 +49,7 @@ describe('leaveDialogConsequencesKey', () => {
   });
 
   test('relay,node → standalone / 其它角色：中继服务一并清除', () => {
-    for (const target of ['standalone', 'node', 'hub,node'] as const) {
+    for (const target of ['standalone', 'node'] as const) {
       expect(
         leaveDialogConsequencesKey(
           request({
@@ -94,7 +88,7 @@ describe('isLeaveToPureRelay', () => {
     ).toBe(true);
     expect(isLeaveToPureRelay(request())).toBe(false);
     expect(
-      isLeaveToPureRelay(request({ kind: 'switch', from: 'relay,node', target: 'hub,node' }))
+      isLeaveToPureRelay(request({ kind: 'switch', from: 'relay,node', target: 'node' }))
     ).toBe(false);
   });
 });

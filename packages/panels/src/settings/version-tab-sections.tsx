@@ -45,7 +45,7 @@ function installSourceOf(info: SystemInfo): InstallSource {
 }
 
 /**
- * 中文/日文子句里插值的英文词（Hub、npx）两侧要留半角空格，但插值前不知道相邻是不是汉字，
+ * 中文/日文子句里插值的英文词（npx）两侧要留半角空格，但插值前不知道相邻是不是汉字，
  * 所以拼好整句后统一补：汉字与拉丁字母/数字相邻处加一个空格。英文句子没有汉字，原样返回。
  */
 function spaceCjkLatin(text: string): string {

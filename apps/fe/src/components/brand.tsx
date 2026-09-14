@@ -31,7 +31,7 @@ export function useBrandName(): string {
 
 /**
  * 本机 node 名：mesh 下取 `/api/mesh/nodes` 里 entry 自身那一行的 `name`（gateway 的
- * `selfName` 已把 hub 下发的名字/本地 node 行/站点名依次兜好）。
+ * `selfName` 已把 mesh 下发的名字/本地 node 行/站点名依次兜好）。
  *
  * **只被动读宿主级 store，不发任何请求**：Brand 会在登录页渲染，那里 `/api/mesh/nodes`
  * 必然 401；列表的加载归外壳（侧栏的 `SideBarDeviceList` / 设置页）。因此登录页与

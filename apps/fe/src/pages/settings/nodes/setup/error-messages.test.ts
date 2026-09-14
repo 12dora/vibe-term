@@ -15,13 +15,13 @@ describe('describeSetupError', () => {
       new SetupApiError('join_failed', 'ca_fingerprint_mismatch', 400)
     );
     expect(message).toBe(
-      'nodes.setup.errors.withDetail|{"base":"nodes.setup.errors.join_failed","detail":"ca_fingerprint_mismatch"}'
+      'nodes.setup.errors.withDetail|{"base":"nodes.setup.errors.relay.join_failed","detail":"ca_fingerprint_mismatch"}'
     );
   });
 
-  test('hub_unreachable / env_write_failed / direct_* 同样附原因', () => {
+  test('relay_unreachable / env_write_failed / direct_* 同样附原因', () => {
     for (const code of [
-      'hub_unreachable',
+      'relay_unreachable',
       'env_write_failed',
       'direct_unsupported',
       'direct_download_failed',
@@ -35,10 +35,10 @@ describe('describeSetupError', () => {
 
   test('message 就是错误码本身时不重复拼接', () => {
     expect(describeSetupError(t, new SetupApiError('join_failed', 'join_failed', 400))).toBe(
-      'nodes.setup.errors.join_failed'
+      'nodes.setup.errors.relay.join_failed'
     );
     expect(describeSetupError(t, new SetupApiError('join_failed', '   ', 400))).toBe(
-      'nodes.setup.errors.join_failed'
+      'nodes.setup.errors.relay.join_failed'
     );
   });
 
@@ -66,11 +66,14 @@ describe('describeSetupError 的中继口径', () => {
     expect(
       describeSetupError(t, new SetupApiError('join_failed', 'join_failed', 400), 'relay')
     ).toBe('nodes.setup.errors.relay.join_failed');
-    for (const code of ['hub_unreachable', 'node_revoked', 'node_exists']) {
+    for (const code of ['node_revoked', 'node_exists']) {
       expect(describeSetupError(t, new SetupApiError(code, code, 400), 'relay')).toBe(
         `nodes.setup.errors.relay.${code}`
       );
     }
+    expect(
+      describeSetupError(t, new SetupApiError('hub_unreachable', 'hub_unreachable', 400), 'relay')
+    ).toBe('nodes.setup.errors.relay_unreachable');
   });
 
   test('没有中继专用文案的码回落到通用键', () => {

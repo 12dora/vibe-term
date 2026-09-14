@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SiteNameField, SiteUrlField } from './general-fields';
-import { ROLE_LABEL_KEY } from './nodes/membership/role-transition';
+import { roleLabelKey } from './nodes/membership/role-transition';
 import { SettingsSaveButton } from './settings-save-button';
 import { LOCAL_STATUS_QUERY_KEY, fetchSelfLocalStatus } from './status-queries';
 import type { SiteSettingsForm } from './use-site-settings-form';
@@ -25,7 +25,7 @@ const About = memo(function About() {
   });
   const role = status.data?.role;
   // 查不到本机运行态就不传，关于卡的那句话会省掉运行模式子句。
-  return <VersionTab runMode={role ? t(ROLE_LABEL_KEY[role]) : undefined} />;
+  return <VersionTab runMode={role ? t(roleLabelKey(role)) : undefined} />;
 });
 
 interface GeneralSettingsTabProps {

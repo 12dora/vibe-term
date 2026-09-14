@@ -68,12 +68,11 @@ export function relayActionMenu(relays: RelayLinkStatus[]): RelayMenuAction[] {
   return items;
 }
 
-/** 上级不可写时的那一句：中继模式说中继，hub 模式区分「备 Hub 拒写」与「主 Hub 不可达」。 */
+/** 上级不可写时的那一句。 */
 export function uplinkBlockedHint(
   t: (key: string) => string,
-  relayMode: boolean,
-  writesBlocked: boolean
+  _relayMode?: boolean,
+  _writesBlocked?: boolean
 ): string {
-  if (relayMode) return t('relay.tenant.notAttached');
-  return t(writesBlocked ? 'nodes.hubs.standbyNotice' : 'nodes.hubOffline');
+  return t('relay.tenant.notAttached');
 }

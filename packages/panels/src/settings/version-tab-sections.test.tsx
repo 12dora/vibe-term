@@ -93,8 +93,8 @@ describe('「关于」卡的运行状态一句话', () => {
     html.match(/data-testid="settings-version-runtime"[^>]*>([^<]*)</)?.[1];
 
   test('安装方式、服务、运行模式拼成一句，英文两侧留空格', () => {
-    expect(runtime(render({ info: INFO, runMode: 'Hub 兼节点' }))).toBe(
-      '通过安装脚本安装，由 launchd（macOS）托管，当前为 Hub 兼节点。'
+    expect(runtime(render({ info: INFO, runMode: '中继兼节点' }))).toBe(
+      '通过安装脚本安装，由 launchd（macOS）托管，当前为中继兼节点。'
     );
   });
 

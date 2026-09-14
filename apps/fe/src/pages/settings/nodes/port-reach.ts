@@ -50,13 +50,7 @@ export const DEFAULT_PORT_PLAN_LIVE: PortPlanLive = {
   publicHttpsPort: DEFAULT_PUBLIC_HTTPS_PORT,
 };
 
-const PORT_ROLES: ReadonlySet<string> = new Set([
-  'standalone',
-  'node',
-  'hub,node',
-  'relay',
-  'relay,node',
-]);
+const PORT_ROLES: ReadonlySet<string> = new Set(['standalone', 'node', 'relay', 'relay,node']);
 
 const PURPOSES: ReadonlySet<string> = new Set([
   'gateway-http',

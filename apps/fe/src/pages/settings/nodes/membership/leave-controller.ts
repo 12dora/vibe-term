@@ -40,7 +40,7 @@ export interface LeaveRequest {
 }
 
 export interface LeaveWorkflowDeps {
-  /** 纯 node 的自吊销；`null` 表示不需要（hub 兼节点就是自己的 hub）。永不抛。 */
+  /** 纯 node 的自吊销；`null` 表示不需要。永不抛。 */
   revoke: (() => Promise<SelfRevokeOutcome>) | null;
   /** 重启基线：读 `/healthz.startedAt`，读不到给 null。必须自带超时。 */
   readStartedAt: () => Promise<number | null>;

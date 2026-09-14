@@ -51,7 +51,7 @@ function api(
 }
 
 describe('selfRevokeNode', () => {
-  test('hub 确认：签的是本机 node id 的 revoke-node', async () => {
+  test('上级确认：签的是本机 node id 的 revoke-node', async () => {
     const h = api(() => ({ ok: true, hubAck: true }));
     const outcome = await selfRevokeNode({
       api: h.api,
@@ -71,8 +71,8 @@ describe('selfRevokeNode', () => {
     expect(payload.reason).toBe(SELF_REVOKE_REASON);
   });
 
-  test('hub 没确认等于没吊销', async () => {
-    const h = api(() => ({ ok: true, hubAck: false, hubError: 'hub_unreachable' }));
+  test('hubAck === false 视为失败', async () => {
+    const h = api(() => ({ ok: true, hubAck: false, hubError: 'unreachable' }));
     expect(
       await selfRevokeNode({
         api: h.api,
@@ -81,7 +81,20 @@ describe('selfRevokeNode', () => {
         nodeIdHex: NODE_ID,
         withSigner,
       })
-    ).toEqual({ kind: 'failed', reason: 'hub_unreachable' });
+    ).toEqual({ kind: 'failed', reason: 'unreachable' });
+  });
+
+  test('hubAck 缺省时只要 ok 就当成功', async () => {
+    const h = api(() => ({ ok: true }));
+    expect(
+      await selfRevokeNode({
+        api: h.api,
+        uid: UID,
+        rootEpoch: ROOT_EPOCH,
+        nodeIdHex: NODE_ID,
+        withSigner,
+      })
+    ).toEqual({ kind: 'revoked' });
   });
 
   test('中继没确认等于其余成员看不到这条吊销', async () => {

@@ -65,7 +65,7 @@ function tls(overrides: Partial<TlsStatusResponse> = {}): TlsStatusResponse {
   };
 }
 
-function render(props: { showHubUrlHint?: boolean; hostname?: string | null } = {}): string {
+function render(props: { hostname?: string | null } = {}): string {
   return renderToStaticMarkup(
     <HttpsSection api={api} hostname={props.hostname ?? 'hub.lan'} {...props} />
   );
@@ -102,9 +102,8 @@ describe('HttpsSection 加载与权限', () => {
     expect(html).toContain('boom');
   });
 
-  test('standalone 提示 hub 公开地址必须是 https', () => {
+  test('不再提示 hub 公开地址', () => {
     status = tls();
-    expect(render({ showHubUrlHint: true })).toContain('data-testid="https-hub-url-hint"');
     expect(render()).not.toContain('data-testid="https-hub-url-hint"');
   });
 });

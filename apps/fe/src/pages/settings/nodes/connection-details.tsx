@@ -1,37 +1,22 @@
 // 「连接详情」：默认收起的那一段内部标识与用量。
 //
-// 这些字段（租户编号、本机编号、可访问节点、三档配额、Hub 的优先级 / 纪元 / 授权 / 最近错误）
-// 排查时缺一不可，平时一个都不该占版面。**卡片其余部分不再重复其中任何一项**：
-// 以前同一个地址会在四五处露脸，谁也说不清哪一处才是当前生效的。
-//
-// 元数据密钥代数与密钥日志游标已经删掉：它们是引擎的内部游标，看得懂的人不看这里，
-// 看不懂的人只会误以为出了问题。
+// 这些字段（租户编号、本机编号、可访问节点、三档配额）排查时缺一不可，平时一个都不该占版面。
+// **卡片其余部分不再重复其中任何一项**。
 
-import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
 import { Progress } from '@vibeterm/ui/progress';
 import { ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CopyableValue, Row } from './copy-feedback';
 import { type RelayQuotaRow, relayQuotaRows } from './relay/relay-quota';
-import {
-  CANDIDATE_ERROR_MAX,
-  candidateFailure,
-  hubAuthorizationText,
-  hubLabel,
-  hubModeLabel,
-  indexCandidates,
-} from './uplink/hub-strip';
 
 export interface ConnectionDetailsProps {
   relay: UseMeshRelayResult;
-  hubs: MeshHubsState;
   selfNodeId: string | null;
 }
 
-export function ConnectionDetails({ relay, hubs, selfNodeId }: ConnectionDetailsProps) {
+export function ConnectionDetails({ relay, selfNodeId }: ConnectionDetailsProps) {
   const { t } = useTranslation();
   return (
     <Collapsible data-testid="local-machine-details">
@@ -43,7 +28,7 @@ export function ConnectionDetails({ relay, hubs, selfNodeId }: ConnectionDetails
         {t('nodes.machine.details.title')}
       </CollapsibleTrigger>
       <CollapsibleContent>
-        <ConnectionDetailsContent relay={relay} hubs={hubs} selfNodeId={selfNodeId} />
+        <ConnectionDetailsContent relay={relay} selfNodeId={selfNodeId} />
       </CollapsibleContent>
     </Collapsible>
   );
@@ -53,7 +38,7 @@ export function ConnectionDetails({ relay, hubs, selfNodeId }: ConnectionDetails
  * 折叠区里的内容。单独导出且不自带 hook：Base UI 的 Collapsible 收起时压根不挂载面板，
  * 静态渲染什么都不输出，单测只能直接对内容做断言（与菜单那几处同一套做法）。
  */
-export function ConnectionDetailsContent({ relay, hubs, selfNodeId }: ConnectionDetailsProps) {
+export function ConnectionDetailsContent({ relay, selfNodeId }: ConnectionDetailsProps) {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-1.5 pt-2 text-xs" data-testid="local-machine-details-content">
@@ -71,7 +56,6 @@ export function ConnectionDetailsContent({ relay, hubs, selfNodeId }: Connection
         </Row>
       )}
       {relay.relayMode && <RelayDetails relay={relay} />}
-      {hubs.hubs.length > 0 && <HubDetails hubs={hubs} />}
     </div>
   );
 }
@@ -124,69 +108,4 @@ function quotaValueText(
     used: row.usedText,
     total: row.limitText ?? '',
   });
-}
-
-function HubDetails({ hubs }: { hubs: MeshHubsState }) {
-  const { t } = useTranslation();
-  const byUrl = indexCandidates(hubs.candidates);
-  return (
-    <Row label={t('nodes.machine.details.hubs')}>
-      <span
-        className="flex min-w-0 flex-1 flex-col gap-1.5"
-        data-testid="local-machine-hub-details"
-      >
-        {hubs.hubs.map((hub) => (
-          <HubDetailLines
-            key={hub.nodeId}
-            hub={hub}
-            attached={hub.nodeId === hubs.attached?.hubNodeId}
-            writer={hub.nodeId === hubs.writerHubId}
-            failure={candidateFailure(hub, byUrl)}
-          />
-        ))}
-      </span>
-    </Row>
-  );
-}
-
-function HubDetailLines({
-  hub,
-  attached,
-  writer,
-  failure,
-}: {
-  hub: MeshHubEndpoint;
-  attached: boolean;
-  writer: boolean;
-  failure: ReturnType<typeof candidateFailure>;
-}) {
-  const { t } = useTranslation();
-  const authorization = hubAuthorizationText(t, hub);
-  return (
-    <span className="flex flex-col gap-0.5" data-testid={`local-machine-hub-detail-${hub.nodeId}`}>
-      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-        <span className="font-medium">{hubLabel(hub)}</span>
-        <span className="text-muted-foreground">{hubModeLabel(t, hub.mode)}</span>
-        {attached && <span className="text-primary">{t('nodes.hubs.attached')}</span>}
-        {writer && <span className="text-muted-foreground">{t('nodes.hubs.writer')}</span>}
-      </span>
-      <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground">
-        <span>{`${t('nodes.hubs.priority')} ${hub.priority}`}</span>
-        <span>{`${t('nodes.hubs.epoch')} ${hub.writerEpoch}`}</span>
-        {authorization && <span>{authorization}</span>}
-      </span>
-      {failure && (
-        <span className="break-all text-destructive">
-          {t('nodes.hubs.lastError', {
-            error: (failure.lastError ?? '').slice(0, CANDIDATE_ERROR_MAX),
-          })}
-          {failure.lastAttemptAt
-            ? ` · ${t('nodes.hubs.lastAttempt', {
-                time: new Date(failure.lastAttemptAt).toLocaleString(),
-              })}`
-            : ''}
-        </span>
-      )}
-    </span>
-  );
 }

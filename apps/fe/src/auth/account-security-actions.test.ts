@@ -71,7 +71,7 @@ const RELAY_URL = 'https://r.example';
  * `join-material` / `pack` 支撑改密之后的密封包重封。
  */
 function mockRelayApi(
-  options: { mode?: 'relay' | 'hub'; prepareStatus?: number; packStatus?: number } = {}
+  options: { mode?: 'relay' | 'none'; prepareStatus?: number; packStatus?: number } = {}
 ): {
   relayApi: RelayTenantApi;
   prepareCalls: number;
@@ -394,7 +394,7 @@ describe('changePassword', () => {
   test('非中继模式一条 meta-key 都不发', async () => {
     clearPendingMetaKeysForTest();
     const { api, posted } = mockApi();
-    const relay = mockRelayApi({ mode: 'hub' });
+    const relay = mockRelayApi({ mode: 'none' });
     const result = await changePassword({
       api,
       relayApi: relay.relayApi,
@@ -407,7 +407,7 @@ describe('changePassword', () => {
     expect((result as { metaKey?: unknown }).metaKey).toBeUndefined();
     expect(relay.prepareCalls).toBe(0);
     expect(posted).toHaveLength(1);
-    // hub 模式没有密封包这回事。
+    // 非中继模式没有密封包这回事。
     expect(relay.packs).toHaveLength(0);
     expect(relayPackDebt()).toBe(false);
   }, 20000);

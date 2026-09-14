@@ -12,12 +12,11 @@ export interface UseConnectMenuOptions {
   uplink: LocalUplinkController;
   /** 退出 / 设置提交在途。 */
   locked: boolean;
-  onChangeHub: () => void;
 }
 
 export function useConnectMenu(options: UseConnectMenuOptions): ConnectMenuItem[] {
   const { t } = useTranslation();
-  const { status, uplink, locked, onChangeHub } = options;
+  const { status, uplink } = options;
   const { relay, relayActions } = uplink;
   if (!status) return [];
   return connectMenuItems(
@@ -25,14 +24,10 @@ export function useConnectMenu(options: UseConnectMenuOptions): ConnectMenuItem[
     {
       role: status.role,
       relayMode: relay.relayMode,
-      uplinkMode: relay.mode,
       unsupported: relay.unsupported === true,
       relays: relay.ordered,
-      changeHubDisabled: locked,
     },
     {
-      changeHub: onChangeHub,
-      migrateToRelay: () => relayActions.openEnroll('migrate'),
       addRelay: () => relayActions.openEnroll('add'),
       notifyRelayLimit: () =>
         toast.error(t('relay.tenant.actions.addMax', { n: RELAY_RECORD_MAX_RELAYS })),

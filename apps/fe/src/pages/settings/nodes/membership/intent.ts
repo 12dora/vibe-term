@@ -18,7 +18,7 @@ const LEGACY_SETUP_INTENT_KEY = 'tmex.setup.intent';
 /** 记号保质期：一次退出 + 重启的量级是几十秒，10 分钟已经足够宽松。 */
 export const SETUP_INTENT_TTL_MS = 10 * 60 * 1000;
 
-export type SetupIntent = 'become-hub' | 'join-hub' | 'join-relay' | 'become-relay';
+export type SetupIntent = 'join-relay' | 'become-relay';
 
 /** `become-relay` 还要记住目标是纯中继还是中继兼节点，重启后表单直接预选。 */
 export interface SetupIntentRecord {
@@ -47,12 +47,7 @@ export function browserIntentStorage(): IntentStorage | null {
 }
 
 function isSetupIntent(value: unknown): value is SetupIntent {
-  return (
-    value === 'become-hub' ||
-    value === 'join-hub' ||
-    value === 'join-relay' ||
-    value === 'become-relay'
-  );
+  return value === 'join-relay' || value === 'become-relay';
 }
 
 function isRelayRole(value: unknown): value is SetupRelayRole {

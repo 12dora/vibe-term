@@ -1,11 +1,8 @@
-// 「通用」标签里改站点名 = 改本节点名。两条通道按上级形态二选一：
-//   - hub 模式：hub 控制面（`POST /n/<hub>/api/hub/nodes/:id/rename`）；
-//   - 中继模式：签一条 `rename-node` 密钥日志记录，经 `?hub=sync` 送上级（中继没有控制面）。
-// 这里只负责挑出该走哪条通道，以及这条通道当前是否可用。
+// 「通用」标签里改站点名 = 改本节点名。mesh 下签一条 `rename-node` 密钥日志记录，
+// 经 `?hub=sync` 送上级。这里只负责这条通道当前是否可用。
 
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
-import { useMeshHubs } from '@/node/mesh-hubs';
-import { useHubNode, useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
+import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useMeshRelay } from '@/node/mesh-relay';
 import { renameNodeViaKeyLog } from '@/node/rename-node';
 import type { AuthApi, AuthKdfParamsJson } from '@vibeterm/api-client/auth/index';
@@ -23,7 +20,6 @@ export interface NodeRenameChannel {
   /** 改名通道；通道当前不通时调用会抛出已本地化的原因。 */
   renameNode: RenameNodeFn;
   canRenameNode: boolean;
-  refreshHub: () => void;
   /** 中继模式下改名要一次凭据；对话框由「通用」标签挂出来。 */
   dialog: ReactElement | null;
 }
@@ -38,11 +34,9 @@ const identityTranslate: Translate = (key) => key;
 
 /**
  * 联动改名的通道。非联动（standalone / 老服务端）下这几个 hook 全部空转，不发任何
- * `/api/mesh/*` 请求；hub 集合的轮询归节点管理页所有，这里只要一份快照。
+ * `/api/mesh/*` 请求。
  *
- * hub 模式的目标 hub 必须是**写者**：多 hub 下 mesh 列表里的 `isHub` 会命中任意一台，挑中
- * 备 hub 的话 rename 会被 `HUB_NOT_WRITER` 拒掉。`/api/mesh/hubs` 的 `writerHubId` 就是当前收
- * 写入的那台。中继模式没有 writer 这回事，改判「有没有挂上中继」——一条都没挂上时提交必然超时。
+ * 改名只走中继：一条都没挂上时提交必然超时，此时通道不可用。
  */
 export function useNodeRenameChannel(
   linkage: SiteSettingsLinkage,
@@ -51,13 +45,6 @@ export function useNodeRenameChannel(
   const linked = linkage.siteNameLinkedToNode;
   const api = options.api ?? defaultAuthApi;
   const t = options.t ?? identityTranslate;
-  const { nodes } = useMeshNodes({ enabled: linked });
-  const hubs = useMeshHubs({ enabled: linked });
-  const hub = useHubNode(nodes, {
-    enabled: linked,
-    hubNodeId: hubs.writerHubId,
-    pollIntervalMs: 0,
-  });
   const relay = useMeshRelay({ enabled: linked });
   const { mode: rawMode } = useSharedAuthMode();
 
@@ -76,8 +63,6 @@ export function useNodeRenameChannel(
   });
 
   const { withSigner } = prompt;
-  const hubApi = hub.hubApi;
-  const relayMode = relay.relayMode;
 
   const renameViaRelay = useCallback(
     async (nodeId: string, name: string) => {
@@ -93,21 +78,11 @@ export function useNodeRenameChannel(
     [api, signMode, t, withSigner]
   );
 
-  const renameViaHub = useCallback(
-    async (nodeId: string, name: string) => {
-      if (!hubApi) throw new Error(t('settings.general.nameLinkedLocked'));
-      await hubApi.rename(nodeId, name);
-    },
-    [hubApi, t]
-  );
-
-  const viaRelay = Boolean(relayMode && signMode && relay.writable);
-  const viaHub = Boolean(!relayMode && hubApi && hub.online && !hubs.writesBlocked);
+  const viaRelay = Boolean(relay.relayMode && signMode && relay.writable);
 
   return {
-    renameNode: relayMode ? renameViaRelay : renameViaHub,
-    canRenameNode: Boolean(linked && linkage.nodeId) && (viaRelay || viaHub),
-    refreshHub: hub.refresh,
+    renameNode: renameViaRelay,
+    canRenameNode: Boolean(linked && linkage.nodeId) && viaRelay,
     dialog: prompt.dialog,
   };
 }

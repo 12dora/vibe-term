@@ -21,7 +21,7 @@ import { Ellipsis } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { type MachineStatusBadge, roleMenuTargets } from './machine-status';
-import { ROLE_LABEL_KEY, isMeshRole } from './membership/role-transition';
+import { isMeshRole, roleLabelKey } from './membership/role-transition';
 import type { ConnectMenuItem } from './uplink/connect-menu';
 
 const STATUS_VARIANT: Record<MachineStatusBadge['tone'], 'default' | 'destructive' | 'outline'> = {
@@ -38,7 +38,7 @@ export interface LocalMachineHeaderProps {
   meshEnabled: boolean;
   /** 退出 / 设置提交在途：角色相关的菜单项一律锁上。 */
   roleLocked: boolean;
-  /** 「连接」那一组：换 Hub / 接中继 / 追加 / 移除 / 离开中继，由卡片按当前形态算好传进来。 */
+  /** 「连接」那一组：接中继 / 追加 / 移除 / 离开中继，由卡片按当前形态算好传进来。 */
   connectActions: ConnectMenuItem[];
   onSelectRole: (role: LocalRole) => void;
   onLeave: () => void;
@@ -71,7 +71,7 @@ export function LocalMachineHeader({
             title={t('nodes.machine.role')}
             data-testid="local-machine-role"
           >
-            {t(ROLE_LABEL_KEY[role])}
+            {t(roleLabelKey(role))}
           </Badge>
         )}
         <Badge
@@ -102,7 +102,7 @@ export function LocalMachineHeader({
           <DropdownMenuContent align="end" className="min-w-44">
             <LocalMachineMenuList
               roles={roleMenuTargets(menuRole)}
-              roleLabel={(target) => t(ROLE_LABEL_KEY[target])}
+              roleLabel={(target) => t(roleLabelKey(target))}
               connect={connectActions}
               labels={{
                 connect: t('nodes.machine.menu.connect'),

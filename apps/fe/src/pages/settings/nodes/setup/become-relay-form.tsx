@@ -30,8 +30,8 @@ import { PortPicker } from './port-picker';
 import { PureRelayConfirm } from './pure-relay-confirm';
 import { writeSelfRelayFollowUp } from './self-relay-followup';
 import { submitBecomeRelay } from './submit';
-import { useHubSetupSubmit } from './use-hub-setup-submit';
 import type { RestartWaiter } from './use-restart-waiter';
+import { useSetupSubmit } from './use-setup-submit';
 import {
   type BecomeRelayValues,
   defaultRelayPublicUrl,
@@ -99,7 +99,7 @@ export function BecomeRelayForm({
     waiter,
     blocked,
     handleSubmit,
-  } = useHubSetupSubmit<SetupRelayResponse>({
+  } = useSetupSubmit<SetupRelayResponse>({
     client,
     hasErrors: hasErrors(errors) || portError !== null,
     uplink: 'relay',
@@ -282,7 +282,6 @@ function RelayAccountFields({
         checked={values.directEnable}
         supported={directSupported}
         platform={platform}
-        kind="relay"
         onCheckedChange={(checked) => onChange({ directEnable: checked })}
       />
     </>

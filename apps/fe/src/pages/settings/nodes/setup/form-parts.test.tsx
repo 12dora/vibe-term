@@ -10,7 +10,7 @@ import {
 } from './form-parts';
 
 describe('DirectEnableSwitch', () => {
-  test('平台支持时开关可用，文案走 hub 提示', () => {
+  test('平台支持时开关可用，文案走中继提示', () => {
     const html = renderToStaticMarkup(
       <DirectEnableSwitch
         id="setup-direct-enable"
@@ -22,7 +22,7 @@ describe('DirectEnableSwitch', () => {
     );
     expect(html).toContain('data-testid="setup-direct-enable"');
     expect(html).toContain('nodes.setup.fields.directEnable');
-    expect(html).toContain('nodes.setup.fields.directEnableHint');
+    expect(html).toContain('nodes.setup.fields.directEnableRelayHint');
     expect(html).not.toContain('disabled=""');
   });
 
@@ -38,41 +38,7 @@ describe('DirectEnableSwitch', () => {
     );
     expect(html).toContain('data-testid="setup-join-direct-enable"');
     expect(html).toContain('disabled=""');
-    expect(html).toContain('nodes.setup.fields.directUnsupportedHint');
-    expect(html).not.toContain('nodes.setup.fields.directEnableHint');
-  });
-
-  test('kind=relay 用中继版文案，不提 Hub 中转', () => {
-    const html = renderToStaticMarkup(
-      <DirectEnableSwitch
-        id="setup-relay-join-direct-enable"
-        checked
-        supported
-        platform="darwin-arm64"
-        kind="relay"
-        onCheckedChange={() => {}}
-      />
-    );
-    expect(html).toContain('data-testid="setup-relay-join-direct-enable"');
-    expect(html).toContain('nodes.setup.fields.directEnableRelayHint');
-    expect(html).not.toContain('nodes.setup.fields.directEnableHint');
-  });
-
-  test('kind=relay 且不支持时用中继版禁用文案', () => {
-    const html = renderToStaticMarkup(
-      <DirectEnableSwitch
-        id="setup-relay-direct-enable"
-        checked={false}
-        supported={false}
-        platform="freebsd-x64"
-        kind="relay"
-        onCheckedChange={() => {}}
-      />
-    );
-    expect(html).toContain('data-testid="setup-relay-direct-enable"');
-    expect(html).toContain('disabled=""');
     expect(html).toContain('nodes.setup.fields.directUnsupportedRelayHint');
-    expect(html).not.toContain('nodes.setup.fields.directUnsupportedHint');
   });
 });
 
@@ -151,29 +117,29 @@ describe('SetupSubmitRow', () => {
   test('submitError 时在按钮前渲染错误条', () => {
     const html = renderToStaticMarkup(
       <SetupSubmitRow
-        testId="setup-join-hub"
+        testId="setup-join-relay"
         label="Join"
         submitting={false}
         blocked={false}
         submitError="boom"
       />
     );
-    expect(html).toContain('data-testid="setup-join-hub-error"');
+    expect(html).toContain('data-testid="setup-join-relay-error"');
     expect(html).toContain('boom');
-    expect(html).toContain('data-testid="setup-join-hub-submit"');
+    expect(html).toContain('data-testid="setup-join-relay-submit"');
   });
 
   test('无 submitError 时不渲染错误条', () => {
     const html = renderToStaticMarkup(
       <SetupSubmitRow
-        testId="setup-become-hub"
+        testId="setup-become-relay"
         label="Create"
         submitting={false}
         blocked={false}
         submitError={null}
       />
     );
-    expect(html).not.toContain('data-testid="setup-become-hub-error"');
-    expect(html).toContain('data-testid="setup-become-hub-submit"');
+    expect(html).not.toContain('data-testid="setup-become-relay-error"');
+    expect(html).toContain('data-testid="setup-become-relay-submit"');
   });
 });

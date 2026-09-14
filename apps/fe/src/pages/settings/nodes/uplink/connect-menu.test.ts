@@ -27,10 +27,8 @@ function state(overrides: Partial<ConnectMenuState> = {}): ConnectMenuState {
   return {
     role: 'node' as LocalRole,
     relayMode: false,
-    uplinkMode: 'hub',
     unsupported: false,
     relays: [],
-    changeHubDisabled: false,
     ...overrides,
   };
 }
@@ -38,8 +36,6 @@ function state(overrides: Partial<ConnectMenuState> = {}): ConnectMenuState {
 function run(overrides: Partial<ConnectMenuState> = {}) {
   const calls: string[] = [];
   const items = connectMenuItems(t, state(overrides), {
-    changeHub: () => calls.push('change-hub'),
-    migrateToRelay: () => calls.push('migrate'),
     addRelay: () => calls.push('add'),
     notifyRelayLimit: () => calls.push('add-max'),
     reauthRelay: (url) => calls.push(`reauth:${url}`),
@@ -49,45 +45,19 @@ function run(overrides: Partial<ConnectMenuState> = {}) {
   return { items, calls, ids: items.map((item) => item.testId) };
 }
 
-describe('Hub 形态', () => {
-  test('纯节点：换 Hub + 改为接入中继', () => {
-    const { ids } = run();
-    expect(ids).toEqual(['local-machine-change-hub', 'nodes-relay-enroll']);
+describe('未接入中继', () => {
+  test('纯节点还没挂中继：连接菜单为空，CTA 在卡面上', () => {
+    expect(run().ids).toEqual([]);
   });
 
-  test('Hub 兼节点没有「换 Hub」：它的上级就是自己', () => {
-    expect(run({ role: 'hub,node' }).ids).toEqual(['nodes-relay-enroll']);
-  });
-
-  test('退出 / 设置在途时「换 Hub」禁用，但仍然摆出来', () => {
-    const { items } = run({ changeHubDisabled: true });
-    expect(items[0]?.disabled).toBe(true);
-  });
-
-  test('压根没有上级时不给「改为接入中继」：入口是连接段里的主按钮', () => {
-    expect(run({ uplinkMode: 'none' }).ids).toEqual(['local-machine-change-hub']);
-  });
-
-  test('旧节点没有这族路由：一个中继动作都不给', () => {
-    expect(run({ unsupported: true }).ids).toEqual(['local-machine-change-hub']);
-  });
-
-  // 后端在中继角色尚未接入时把 `mode` 报成 `hub`，照 hub 那一档给菜单会把用户引去接别人的中继。
-  test('中继角色即便被报成 hub 形态，也不给「改为接入中继」', () => {
+  test('中继角色还没接入：同样不给菜单项', () => {
     expect(run({ role: 'relay,node' }).ids).toEqual([]);
     expect(run({ role: 'relay' }).ids).toEqual([]);
-  });
-
-  test('点「换 Hub」走对应回调', () => {
-    const { items, calls } = run();
-    items[0]?.onSelect();
-    items[1]?.onSelect();
-    expect(calls).toEqual(['change-hub', 'migrate']);
   });
 });
 
 describe('中继租户形态', () => {
-  const tenant = { relayMode: true, uplinkMode: 'relay', relays: [link()] };
+  const tenant = { relayMode: true, relays: [link()] };
 
   test('追加 → 重新输入接入密码 → 离开，离开是危险档', () => {
     const { items, ids } = run(tenant);
@@ -124,8 +94,6 @@ describe('中继租户形态', () => {
     expect(run({ ...tenant, unsupported: true }).ids).toEqual([]);
   });
 
-  // 协议上限就是 16 条，第 17 条会在中继侧以 malformed_payload 告终——那时接入密码已经输完了。
-  // 禁用项不收指针事件，title 与点击都到不了用户手里，所以满了也留着可点、点了只说原因。
   test('满 16 条时「追加中继」仍可点，点了只说明原因；15 条照常开对话框', () => {
     const many = (n: number) =>
       Array.from({ length: n }, (_, i) => link({ url: `https://r${i}.example`, priority: i }));

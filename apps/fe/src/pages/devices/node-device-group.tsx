@@ -1,4 +1,4 @@
-// 设备管理页里的「一个 node」分组：分组头（把手 / 名称 / 在线态 / Hub / 版本）+ 该节点的设备卡片网格。
+// 设备管理页里的「一个 node」分组：分组头（把手 / 名称 / 在线态 / 版本）+ 该节点的设备卡片网格。
 //
 // 三种形态：
 //   - 在线且已登录：挂该 node 的运行时，在里面渲染完整的设备管理面板；
@@ -46,7 +46,6 @@ export interface NodeDeviceGroupEntry {
   online: boolean;
   loggedIn: boolean;
   isSelf: boolean;
-  isHub: boolean;
   version: string | null;
   inventory: unknown;
   /** 网关说这台的状态块还没解开：名字与设备都还不作数，先画占位。 */
@@ -84,7 +83,6 @@ export function toNodeDeviceGroups(
         // self 永远视为已登录：本地 UI 已经过 localUiGuard，再显示登录按钮是死循环。
         loggedIn: isSelf ? true : node.loggedIn,
         isSelf,
-        isHub: node.isHub === true,
         version: node.version ?? null,
         inventory: node.inventory ?? null,
         pending: !isSelf && pendingIds?.has(node.id) === true,
@@ -148,14 +146,6 @@ function GroupHeader({
         }}
       />
       <StatusChip node={node} />
-      {node.isHub && (
-        <span
-          data-testid={`devices-node-hub-${node.runtimeNodeId}`}
-          className={`${CHIP_CLASS} text-muted-foreground`}
-        >
-          {t('devices.nodes.status.hub')}
-        </span>
-      )}
       {node.version && (
         <span
           data-testid={`devices-node-version-${node.runtimeNodeId}`}

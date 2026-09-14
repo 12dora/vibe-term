@@ -15,14 +15,8 @@ export { FormField, type NoticeTone } from '../../components/form-primitives';
 export { Notice as SetupNotice } from '../../components/form-primitives';
 
 const DIRECT_ENABLE_HINT = {
-  hub: {
-    supported: 'nodes.setup.fields.directEnableHint',
-    unsupported: 'nodes.setup.fields.directUnsupportedHint',
-  },
-  relay: {
-    supported: 'nodes.setup.fields.directEnableRelayHint',
-    unsupported: 'nodes.setup.fields.directUnsupportedRelayHint',
-  },
+  supported: 'nodes.setup.fields.directEnableRelayHint',
+  unsupported: 'nodes.setup.fields.directUnsupportedRelayHint',
 } as const;
 
 export function SwitchRow({
@@ -59,29 +53,30 @@ export function SwitchRow({
   );
 }
 
-/** 四个设置表单共用的直连开关：平台不支持时禁用并换文案。 */
+/** 设置表单共用的直连开关：平台不支持时禁用并换文案。 */
 export function DirectEnableSwitch({
   id,
   checked,
   supported,
   platform,
-  kind = 'hub',
   onCheckedChange,
 }: {
   id: string;
   checked: boolean;
   supported: boolean;
   platform: string;
-  kind?: 'hub' | 'relay';
   onCheckedChange: (checked: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const hint = DIRECT_ENABLE_HINT[kind];
   return (
     <SwitchRow
       id={id}
       label={t('nodes.setup.fields.directEnable')}
-      hint={supported ? t(hint.supported) : t(hint.unsupported, { platform })}
+      hint={
+        supported
+          ? t(DIRECT_ENABLE_HINT.supported)
+          : t(DIRECT_ENABLE_HINT.unsupported, { platform })
+      }
       checked={checked && supported}
       disabled={!supported}
       onCheckedChange={onCheckedChange}
@@ -185,7 +180,7 @@ export function AccountCredentialFields({
 }
 
 /**
- * 四个设置表单共用的提交行：提交中转圈，被别处的提交锁住时禁用并说明原因。
+ * 设置表单共用的提交行：提交中转圈，被别处的提交锁住时禁用并说明原因。
  * 后端只放行一条设置路径，界面必须同步锁上，否则用户只会拿到一条 409。
  */
 export function SetupSubmitRow({
@@ -229,11 +224,9 @@ export function SetupSubmitRow({
 /** 端口探测的三态：在途 / 探到非默认端口并已改写地址 / 全军覆没。 */
 export function AddressProbeNotice({
   state,
-  kind,
   testId,
 }: {
   state: AddressProbeState;
-  kind: 'hub' | 'relay';
   testId: string;
 }) {
   const { t } = useTranslation();
@@ -254,9 +247,7 @@ export function AddressProbeNotice({
   }
   return (
     <Notice tone="success" testId={`${testId}-resolved`}>
-      {t(kind === 'hub' ? 'nodes.setup.probe.resolvedHub' : 'nodes.setup.probe.resolvedRelay', {
-        port: state.port,
-      })}
+      {t('nodes.setup.probe.resolvedRelay', { port: state.port })}
     </Notice>
   );
 }

@@ -11,9 +11,7 @@ const { PortPicker, customPortChange, modeChange, modeOf, parsePort } = await im
   './port-picker'
 );
 const { AddressProbeNotice } = await import('./form-parts');
-const { BecomeHubForm } = await import('./become-hub-form');
 const { BecomeRelayForm } = await import('./become-relay-form');
-const { JoinHubForm } = await import('./join-hub-form');
 const { JoinRelayForm } = await import('./join-relay-form');
 
 const SUGGESTED = 23443;
@@ -32,8 +30,6 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
   return {
     role: 'standalone',
     nodeEnv: 'production',
-    hubUrl: null,
-    hubPublicUrl: null,
     direct: {
       supported: true,
       installed: false,
@@ -141,50 +137,31 @@ describe('自定义端口的判定', () => {
 describe('AddressProbeNotice', () => {
   test('三态各有各的提示，idle 什么都不渲染', () => {
     const idle = renderToStaticMarkup(
-      <AddressProbeNotice state={{ phase: 'idle', port: null }} kind="hub" testId="p" />
+      <AddressProbeNotice state={{ phase: 'idle', port: null }} testId="p" />
     );
     expect(idle).toBe('');
 
     const probing = renderToStaticMarkup(
-      <AddressProbeNotice state={{ phase: 'probing', port: null }} kind="hub" testId="p" />
+      <AddressProbeNotice state={{ phase: 'probing', port: null }} testId="p" />
     );
     expect(probing).toContain('data-testid="p-probing"');
     expect(probing).toContain('nodes.setup.probe.probing');
 
     const resolved = renderToStaticMarkup(
-      <AddressProbeNotice state={{ phase: 'resolved', port: 13443 }} kind="relay" testId="p" />
+      <AddressProbeNotice state={{ phase: 'resolved', port: 13443 }} testId="p" />
     );
     expect(resolved).toContain('data-testid="p-resolved"');
     expect(resolved).toContain('nodes.setup.probe.resolvedRelay');
 
     const failed = renderToStaticMarkup(
-      <AddressProbeNotice state={{ phase: 'failed', port: null }} kind="hub" testId="p" />
+      <AddressProbeNotice state={{ phase: 'failed', port: null }} testId="p" />
     );
     expect(failed).toContain('data-testid="p-failed"');
     expect(failed).toContain('nodes.setup.probe.failed');
   });
-
-  test('Hub 与中继的探到文案分开', () => {
-    const hub = renderToStaticMarkup(
-      <AddressProbeNotice state={{ phase: 'resolved', port: 13443 }} kind="hub" testId="p" />
-    );
-    expect(hub).toContain('nodes.setup.probe.resolvedHub');
-  });
 });
 
 describe('表单接线', () => {
-  test('「本机作为 Hub」带端口选择器，且按预填地址选中档位', () => {
-    const html = renderToStaticMarkup(
-      <BecomeHubForm
-        localStatus={status()}
-        origin={`https://hub.example.com:${SUGGESTED}`}
-        suggestedPort={SUGGESTED}
-      />
-    );
-    expect(html).toContain('data-testid="setup-hub-port-mode"');
-    expect(html).toContain('data-testid="setup-hub-port-suggested" data-selected="true"');
-  });
-
   test('「本机作为中继」带端口选择器', () => {
     const html = renderToStaticMarkup(
       <BecomeRelayForm
@@ -197,11 +174,7 @@ describe('表单接线', () => {
     expect(html).toContain('data-testid="setup-relay-port-standard" data-selected="true"');
   });
 
-  test('两个加入表单初始不显示探测提示', () => {
-    const hub = renderToStaticMarkup(<JoinHubForm localStatus={status()} hostname="studio" />);
-    expect(hub).toContain('id="setup-hub-url"');
-    expect(hub).not.toContain('setup-join-hub-probe');
-
+  test('加入中继表单初始不显示探测提示', () => {
     const relay = renderToStaticMarkup(<JoinRelayForm localStatus={status()} hostname="studio" />);
     expect(relay).toContain('id="setup-relay-url"');
     expect(relay).not.toContain('setup-join-relay-probe');

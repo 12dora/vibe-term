@@ -178,7 +178,7 @@ describe('接入本机中继的入口', () => {
       <SelfRelayEntry
         relay={{
           ...RELAY_MODE,
-          mode: 'hub',
+          mode: 'none',
           relayMode: false,
           relays: [],
           ordered: [],

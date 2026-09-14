@@ -39,7 +39,8 @@ const CURRENT_KEY = 'vibeterm.connectDevices.joinSession';
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
 const HUB_NODE = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
-const HUB_URL = 'https://hub.example.com';
+const RELAY_URL = 'https://relay.example.com';
+const TENANT = 'aabbccddeeff00112233445566778899';
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -51,19 +52,17 @@ const MESH_MODE: AuthModeResponse = {
   passkeysForThisOrigin: false,
   rootEpoch: 0,
   hubNodeId: HUB_NODE,
-  hubPublicUrl: HUB_URL,
 };
 
 const MACHINE: ConnectMachine = {
   role: null,
-  relayAttached: false,
-  relayMode: false,
+  relayAttached: true,
+  relayMode: true,
   meshEnabled: true,
   mode: MESH_MODE,
-  relayUrl: null,
-  tenantId: null,
-  hubUrl: HUB_URL,
-  relayPublicUrl: null,
+  relayUrl: RELAY_URL,
+  tenantId: TENANT,
+  relayPublicUrl: RELAY_URL,
   relayHasPassword: false,
 };
 
@@ -91,7 +90,7 @@ function render(): string {
       <RuntimeProvider runtime={runtime}>
         <QueryClientProvider client={queryClient}>
           <SidebarProvider>
-            <JoinSteps variant="hub" machine={MACHINE} />
+            <JoinSteps machine={MACHINE} />
           </SidebarProvider>
         </QueryClientProvider>
       </RuntimeProvider>

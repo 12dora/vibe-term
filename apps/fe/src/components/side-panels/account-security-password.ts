@@ -14,20 +14,14 @@ import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import { type RelayAckFields, relayAckError, relayAckErrorText } from '@/node/relay-ack';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
-import { HUB_NOT_WRITER } from '@vibeterm/api-client/auth/index';
 import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@vibeterm/shared/auth';
-
-const HUB_TIMEOUT = 'HUB_TIMEOUT';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /**
- * key-log 动作失败的文案。多 hub 下三个码必须给出下一步该去哪台机器操作，
- * 通用错误表里那句「请通过主 Hub 操作」在账号安全这条路径上说不清楚要先做什么。
+ * key-log 动作失败的文案。节点版本过低单独给一句，其余落回通用错误表。
  */
 export function securityActionErrorText(t: Translate, code: string): string {
-  if (code === HUB_TIMEOUT) return t('auth.security.primaryHubUnreachable');
-  if (code === HUB_NOT_WRITER) return t('auth.security.switchToPrimaryHub');
   if (code === KEYLOG_TYPE_UNSUPPORTED_BY_NODES) return t('auth.security.nodesTooOld');
   return t(`auth.errors.${code}`, { defaultValue: code });
 }

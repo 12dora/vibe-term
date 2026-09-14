@@ -171,7 +171,7 @@ export function useLeaveMesh(options: UseLeaveMeshOptions): LeaveMesh {
 
       void runLeaveWorkflow(
         {
-          // hub 兼节点的机器就是自己的 hub，没有「向别人报备」这一说：只有纯 node 需要自吊销。
+          // 只有纯 node 需要向中继报备自吊销；中继兼节点退 mesh 走另一条路径。
           revoke:
             request.from === 'node' && canRevoke && uid && rootEpoch !== null && nodeId
               ? () =>

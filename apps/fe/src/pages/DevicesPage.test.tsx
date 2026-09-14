@@ -189,12 +189,10 @@ describe('toNodeDeviceGroups', () => {
     expect(groups.find((group) => group.id === REMOTE_ID)?.pending).toBe(true);
   });
 
-  test('带出 isHub 与 version 供分组头展示', () => {
-    const groups = toNodeDeviceGroups(
-      [meshNode({ id: REMOTE_ID, isHub: true, version: '1.2.3' })],
-      null
-    );
-    expect(groups[0]).toMatchObject({ isHub: true, version: '1.2.3' });
+  test('带出 version 供分组头展示', () => {
+    const groups = toNodeDeviceGroups([meshNode({ id: REMOTE_ID, version: '1.2.3' })], null);
+    expect(groups[0]).toMatchObject({ version: '1.2.3' });
+    expect(groups[0]).not.toHaveProperty('isHub');
   });
 
   test('paused 节点不进设备页分组，含 pending 占位', () => {
@@ -217,7 +215,6 @@ describe('nodeDeviceGroupState', () => {
     runtimeNodeId: REMOTE_ID,
     name: 'studio',
     isSelf: false,
-    isHub: false,
     version: null,
     inventory: null,
   };
@@ -376,18 +373,17 @@ describe('DevicesPage', () => {
         id: ENTRY_ID,
         name: 'entry',
         loggedIn: false,
-        isHub: true,
         version: '1.2.3',
       }),
     ]);
 
     expect(html).toContain('data-testid="devices-folders-view"');
-    // self 在最前，且带 Hub 标与版本号
+    // self 在最前，且带版本号
     expect(html.indexOf('devices-node-group-self')).toBeGreaterThan(-1);
     expect(html.indexOf('devices-node-group-self')).toBeLessThan(
       html.indexOf(`devices-node-group-${OFFLINE_ID}`)
     );
-    expect(html).toContain('data-testid="devices-node-hub-self"');
+    expect(html).not.toContain('data-testid="devices-node-hub-self"');
     expect(html).toContain('1.2.3');
 
     // self：在线已登录 → 挂面板，并保留全局事件（外壳右上角的 + 作用于 self）

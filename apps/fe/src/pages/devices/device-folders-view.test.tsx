@@ -72,7 +72,6 @@ function group(overrides: Partial<Group> & { runtimeNodeId: string }): Group {
     online: true,
     loggedIn: true,
     isSelf: false,
-    isHub: false,
     version: null,
     inventory: null,
     ...overrides,

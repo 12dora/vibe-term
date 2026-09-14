@@ -40,7 +40,6 @@ export interface TunnelWizardProps {
   chosenMode: WizardMode | null;
   onChooseMode: (mode: WizardMode) => void;
   draft: NamedDraft;
-  isHub: boolean;
   exposure: ExposureState;
   onRestarted: () => void;
   /** 「直接连接」路径用的本机登录状态，来自 `/api/auth/mode`。 */
@@ -56,7 +55,6 @@ export function TunnelWizard({
   chosenMode,
   onChooseMode,
   draft,
-  isHub,
   exposure,
   onRestarted,
   localAuth,
@@ -111,7 +109,6 @@ export function TunnelWizard({
               status={status}
               actions={actions}
               draft={draft}
-              isHub={isHub}
               exposure={exposure}
               chosenPath={chosenPath}
               onChoosePath={onChoosePath}
@@ -165,7 +162,6 @@ interface StepContentProps {
   status: TunnelStatusResponse;
   actions: TunnelActions;
   draft: NamedDraft;
-  isHub: boolean;
   exposure: ExposureState;
   chosenPath: ConnectionPath | null;
   onChoosePath: (path: ConnectionPath) => void;
@@ -205,9 +201,7 @@ const STEP_CONTENT: { [K in WizardStepId]: (p: StepContentProps) => ReactNode } 
   tunnel: () => <TunnelIdleHint />,
   quick: (p) => <QuickTunnelStep status={p.status} actions={p.actions} exposure={p.exposure} />,
   login: (p) => <LoginStep status={p.status} actions={p.actions} />,
-  hostname: (p) => (
-    <HostnameStep status={p.status} actions={p.actions} draft={p.draft} isHub={p.isHub} />
-  ),
+  hostname: (p) => <HostnameStep status={p.status} actions={p.actions} draft={p.draft} />,
   access: (p) => (
     <AccessStep
       status={p.status}
@@ -219,13 +213,7 @@ const STEP_CONTENT: { [K in WizardStepId]: (p: StepContentProps) => ReactNode } 
     />
   ),
   create: (p) => (
-    <CreateStep
-      status={p.status}
-      actions={p.actions}
-      draft={p.draft}
-      isHub={p.isHub}
-      exposure={p.exposure}
-    />
+    <CreateStep status={p.status} actions={p.actions} draft={p.draft} exposure={p.exposure} />
   ),
   proxy: (p) => (
     <ProxyStep

@@ -190,7 +190,7 @@ describe('SiteUrlField', () => {
     expect(attrAt(html, 'data-selected', 1)).toBe('false');
   });
 
-  test('由 Hub 托管：只读输入 + 生效地址被标选中，整组不可点', () => {
+  test('不可编辑：只读输入 + 生效地址被标选中，整组不可点', () => {
     const html = renderToStaticMarkup(
       <SiteUrlField
         form={form({
