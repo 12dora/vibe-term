@@ -164,7 +164,7 @@ export function Tooltip({
         role="tooltip"
         hidden={!open}
         className={cn(
-          'absolute z-50 w-fit max-w-xs rounded-md bg-foreground px-3 py-1.5 text-xs text-background',
+          'absolute z-50 w-max max-w-[20rem] rounded-md bg-foreground px-3 py-1.5 text-left text-xs whitespace-normal text-background',
           sideClass,
           contentClassName
         )}
