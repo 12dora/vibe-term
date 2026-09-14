@@ -3,6 +3,7 @@ import type { RelayAutoSelectView, RelaySwitchReason } from '@vibeterm/shared/re
 import { stamp } from './mesh-log';
 import {
   RELAY_AUTO_SWITCH_DWELL_MS,
+  type RelayConsiderResult,
   type RelayHysteresis,
   type RelayScoreInput,
   considerAutoSwitch,
@@ -49,6 +50,7 @@ export class RelayAutoSelect {
   private readonly failureAt = new Map<string, number>();
   private hysteresis: RelayHysteresis = resetRelayHysteresis();
   private lastAutoSwitchAt = 0;
+  private lastConsiderAt = 0;
   private lastSwitchAt: number | null = null;
   private switchReason: RelaySwitchReason | null = null;
   private pendingReason: RelaySwitchReason | null = null;
@@ -127,7 +129,7 @@ export class RelayAutoSelect {
     this.attachedOnce = true;
     this.lastSwitchAt = this.now();
     this.switchReason = reason;
-    if (reason === 'auto-rtt') this.lastAutoSwitchAt = this.lastSwitchAt;
+    this.lastAutoSwitchAt = this.lastSwitchAt;
   }
 
   evaluate(): Promise<void> {
@@ -153,18 +155,8 @@ export class RelayAutoSelect {
   }
 
   private async evaluateOnce(): Promise<void> {
-    this.feedSecondaryRtts();
-    const rows = this.scoreInputs();
-    const considered = considerAutoSwitch({
-      rows,
-      currentUrl: this.deps.currentUrl(),
-      preferredUrl: this.effectivePreferred(rows),
-      lastAutoSwitchAt: this.lastAutoSwitchAt,
-      now: this.now(),
-      hysteresis: this.hysteresis,
-    });
-    this.hysteresis = considered.hysteresis;
-    this.lastScores = considered.scores;
+    const considered = this.snapshotConsider();
+    this.applyConsidered(considered);
     const decision = considered.decision;
     if (decision.type === 'none') return;
     if (decision.type === 'hold') {
@@ -184,6 +176,9 @@ export class RelayAutoSelect {
     if (!live || live.state !== 'online' || !fromUrl) return;
     await this.deps.waitForDrain();
     if (this.deps.liveClient() !== live || live.state !== 'online') return;
+    const again = this.snapshotConsider();
+    this.applyConsidered(again);
+    if (again.decision.type !== 'switch' || !sameHubUrl(again.decision.url, decision.url)) return;
     const healthy = await this.deps.probeHealthz(decision.url);
     if (!healthy) {
       this.logHold({
@@ -219,10 +214,40 @@ export class RelayAutoSelect {
     );
   }
 
+  private snapshotConsider(): RelayConsiderResult {
+    this.seedMissingEwma();
+    const rows = this.scoreInputs();
+    return considerAutoSwitch({
+      rows,
+      currentUrl: this.deps.currentUrl(),
+      preferredUrl: this.effectivePreferred(rows),
+      lastAutoSwitchAt: this.lastAutoSwitchAt,
+      now: this.now(),
+      hysteresis: this.hysteresis,
+      lastConsiderAt: this.lastConsiderAt,
+      intervalMs: this.deps.intervalMs,
+    });
+  }
+
+  private applyConsidered(considered: RelayConsiderResult): void {
+    this.hysteresis = considered.hysteresis;
+    this.lastScores = considered.scores;
+    this.lastConsiderAt = considered.lastConsiderAt;
+  }
+
   private scoreInputs(): RelayScoreInput[] {
     const primary = this.deps.primaryClient();
     const current = this.deps.currentUrl();
+    this.collectClientFailures(current, primary);
     return this.deps.rows().map((row) => this.scoreInputFor(row, current, primary));
+  }
+
+  private collectClientFailures(current: string | null, primary: RelayUplinkClient | null): void {
+    for (const row of this.deps.rows()) {
+      const attached = current != null && sameHubUrl(current, row.url);
+      const client = attached ? primary : this.deps.secondaryOf(row.url);
+      this.noteClientFailure(row.url, client);
+    }
   }
 
   private scoreInputFor(
@@ -233,7 +258,6 @@ export class RelayAutoSelect {
     const attached = current != null && sameHubUrl(current, row.url);
     const client = attached ? primary : this.deps.secondaryOf(row.url);
     const ewma = this.ewma.get(normalizeHubEndpointUrl(row.url));
-    this.noteClientFailure(row.url, client);
     const path = uplinkPathView(row.url);
     return {
       url: row.url,
@@ -248,11 +272,14 @@ export class RelayAutoSelect {
     };
   }
 
-  private feedSecondaryRtts(): void {
+  private seedMissingEwma(): void {
     const current = this.deps.currentUrl();
+    const primary = this.deps.primaryClient();
     for (const row of this.deps.rows()) {
-      if (current && sameHubUrl(current, row.url)) continue;
-      const rtt = this.deps.secondaryOf(row.url)?.rttMs;
+      const key = normalizeHubEndpointUrl(row.url);
+      if (this.ewma.has(key)) continue;
+      const attached = current != null && sameHubUrl(current, row.url);
+      const rtt = attached ? primary?.rttMs : this.deps.secondaryOf(row.url)?.rttMs;
       if (rtt != null && rtt >= 0) this.feedRtt(row.url, rtt);
     }
   }

@@ -23,6 +23,18 @@ export function resetTurnIcePickLogForTest(): void {
   lastPickKey = null;
 }
 
+/** 有探测记录时用完整 `turnConfigured`；否则回落到已过滤的 gated `turn`。 */
+export function turnListForIce(cfg: {
+  turn?: unknown;
+  turnConfigured?: unknown;
+  turnProbes?: ReadonlyArray<{ url: string; ok: boolean; rttMs: number }>;
+}): unknown {
+  if (cfg.turnProbes != null && cfg.turnProbes.length > 0) {
+    return cfg.turnConfigured !== undefined ? cfg.turnConfigured : cfg.turn;
+  }
+  return cfg.turn;
+}
+
 /**
  * 拨号时按探测结果挑 ≤2 条 TURN。列表顺序约定来自 `mergeListedRtc`：
  * 主中继在前，其余按 priority / 插入序；未探测时保持该序。
@@ -49,8 +61,10 @@ export function rankTurnIceEntries(
 ): RelayTurnConfig[] {
   const latest = new Map<string, TurnIceProbe>();
   for (const row of probes) latest.set(row.url, row);
+  const requireOk = probes.length > 0;
   return entries
     .map((entry, index) => rankRow(entry, index, latest.get(entry.url)))
+    .filter((row) => !requireOk || row.probeOk === 1)
     .sort(compareTurnIceRank)
     .map((row) => row.entry);
 }

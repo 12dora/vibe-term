@@ -108,6 +108,25 @@ describe('gateTurnByProbe / resolveMeshRtcConfig', () => {
     expect(resolved.turnConfigured).toEqual([a, b]);
     expect(resolved.turn).toEqual([a]);
     expect(resolved.turnProbeOk).toBe(true);
+    expect(resolved.turnProbes.map((row) => row.url)).toEqual([a.url]);
+  });
+
+  test('production provider shape: resolveMeshRtcConfig → buildRtcIceConfig excludes failed TURN', () => {
+    setTurnProbeSnapshotForTest([
+      { url: a.url, ok: false, rttMs: 2000, probedAt: 1 },
+      { url: b.url, ok: true, rttMs: 10, probedAt: 1 },
+      { url: c.url, ok: true, rttMs: 20, probedAt: 1 },
+    ]);
+    const iceConfigProvider = () => resolveMeshRtcConfig(local, { stun: [], turn: [a, b, c] });
+    const resolved = iceConfigProvider();
+    expect(resolved.turnProbes).toHaveLength(3);
+    const ice = buildRtcIceConfig(resolved, runtime);
+    expect(ice.iceServers).toEqual([
+      'stun:a.example:3478',
+      { hostname: 'b.example', port: 3478, username: 'ub', password: 'pb', relayType: 'TurnUdp' },
+      { hostname: 'c.example', port: 3478, username: 'uc', password: 'pc', relayType: 'TurnUdp' },
+    ]);
+    expect(ice.enableIceUdpMux).toBe(false);
   });
 
   test('meshRtcConfigResponse exposes arrays plus compat turnProbe', () => {

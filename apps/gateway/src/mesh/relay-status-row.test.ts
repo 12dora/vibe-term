@@ -435,7 +435,7 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
         switchReason: 'auto-rtt',
         nextEvalAt: 99,
       },
-      scoreOf: (url) => (url === SH ? 18 : 22),
+      scoreOf: (url) => (url === SH ? 18.4 : 22.6),
     });
     expect(payload.preferredUrl).toBe(SH);
     expect(payload.autoSelect).toEqual({
@@ -450,7 +450,7 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
       autoSelected: true,
       score: 18,
     });
-    expect(payload.relays[1]).toMatchObject({ url: TK, score: 22 });
+    expect(payload.relays[1]).toMatchObject({ url: TK, score: 23 });
     expect(payload.relays[1]?.pinned).toBeUndefined();
     expect(payload.relays[1]?.autoSelected).toBeUndefined();
   });

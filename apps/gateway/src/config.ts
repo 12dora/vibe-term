@@ -272,16 +272,23 @@ export function parseRelayAutoSelect(raw: string | undefined): boolean | null {
 }
 
 export const RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS = 60_000;
+export const RELAY_AUTO_SELECT_INTERVAL_MIN_MS = 1_000;
+export const RELAY_AUTO_SELECT_INTERVAL_MAX_MS = 24 * 60 * 60 * 1000;
 
 export function parseRelayAutoSelectIntervalMs(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === '') return RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS;
   const value = raw.trim();
-  if (!/^\d+$/.test(value)) {
-    throw new Error('VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS must be an integer >= 1');
-  }
+  const invalid = new Error(
+    `VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS must be an integer ${RELAY_AUTO_SELECT_INTERVAL_MIN_MS}..${RELAY_AUTO_SELECT_INTERVAL_MAX_MS}`
+  );
+  if (!/^\d+$/.test(value)) throw invalid;
   const n = Number(value);
-  if (!Number.isInteger(n) || n < 1) {
-    throw new Error('VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS must be an integer >= 1');
+  if (
+    !Number.isInteger(n) ||
+    n < RELAY_AUTO_SELECT_INTERVAL_MIN_MS ||
+    n > RELAY_AUTO_SELECT_INTERVAL_MAX_MS
+  ) {
+    throw invalid;
   }
   return n;
 }

@@ -8,7 +8,7 @@ import {
 } from '@vibeterm/shared/auth';
 import { type RtcPortRange, config } from '../../config';
 import type { RtcSignalMessage } from '../mesh-deps';
-import { MAX_TURN_ICE_ENTRIES, pickTurnForIce } from './ice-turn-pick';
+import { MAX_TURN_ICE_ENTRIES, pickTurnForIce, turnListForIce } from './ice-turn-pick';
 import type { IceRelayType, IceServer, IceServerConfig, RtcIceConfig } from './native';
 import { type StunResolveOptions, resolveIceServers } from './stun-resolver';
 
@@ -167,7 +167,8 @@ function concreteBindAddress(hosts: readonly string[]): string | undefined {
   return host;
 }
 
-export type IceConfigBuildInput = IceServerConfig & {
+export type IceConfigBuildInput = Omit<IceServerConfig, 'turn'> & {
+  turn?: unknown;
   turnProbeOk?: boolean;
   /** 探测前完整 TURN 列表；缺省时用 `turn`。每次拨号重建时再排序。 */
   turnConfigured?: unknown;
@@ -186,10 +187,6 @@ function stripTurnServers(servers: ReadonlyArray<string | IceServer>): Array<str
   return servers.filter((server) => !isTurnServer(server));
 }
 
-function turnInputOf(cfg: IceConfigBuildInput): unknown {
-  return cfg.turnConfigured !== undefined ? cfg.turnConfigured : cfg.turn;
-}
-
 export function turnProbeOkOf(cfg: IceConfigBuildInput): boolean {
   return cfg.turnProbeOk === true;
 }
@@ -204,7 +201,7 @@ export function buildRtcIceConfig(
   const bindAddress = concreteBindAddress(runtime.peerBindHost);
   const portRange = runtime.rtcPortRange;
   const turnProbeOk = turnProbeOkOf(cfg);
-  const turn = pickTurnForIce(turnInputOf(cfg), cfg.turnProbes, MAX_TURN_ICE_ENTRIES);
+  const turn = pickTurnForIce(turnListForIce(cfg), cfg.turnProbes, MAX_TURN_ICE_ENTRIES);
   let iceServers = collectIceServers({ stun: cfg.stun, turn });
   // 未探测成功绝不把 TURN 交给 ICE：mux 开着时 libjuice gathering 会卡住。
   if (!turnProbeOk && hasTurnServer(iceServers)) iceServers = stripTurnServers(iceServers);

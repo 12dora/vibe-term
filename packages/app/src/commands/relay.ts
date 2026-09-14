@@ -376,9 +376,17 @@ export async function runRelayLeave(
 }
 
 function assertCanAppendRelay(status: RelayStatusResponse, relayUrl: string): void {
-  if (status.relays.some((row) => row.url === relayUrl)) return;
+  if (status.relays.some((row) => sameNormalizedRelayUrl(row.url, relayUrl))) return;
   if (status.relays.length < RELAY_RECORD_MAX_RELAYS) return;
   throw new Error(
     t('relay.enroll.maxRelays', { count: status.relays.length, max: RELAY_RECORD_MAX_RELAYS })
   );
+}
+
+function sameNormalizedRelayUrl(left: string, right: string): boolean {
+  try {
+    return normalizeRelayUrl(left) === normalizeRelayUrl(right);
+  } catch {
+    return left === right;
+  }
 }

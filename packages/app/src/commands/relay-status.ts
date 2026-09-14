@@ -111,7 +111,7 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
     lines.push('no relays configured');
     return lines;
   }
-  const showAuto = hasAutoSelectPayload(status);
+  const showAuto = hasAutoSelectPayload(status) || preferredUrlOf(status) != null;
   const showBest = status.relays.some((relay) => pathBestMsOf(status, relay.url) != null);
   const rows = status.relays.map((relay) => {
     const raw = rawRelayRow(status, relay.url);
@@ -170,11 +170,11 @@ function printUnpinResult(parsed: ParsedArgs, io: RelayIo, body: Record<string, 
     printJson(io, body);
     return;
   }
-  relayLog(io, preferredUrlCleared(body) ? 'nothing pinned' : 'unpinned');
+  relayLog(io, nothingWasPinned(body) ? 'nothing pinned' : 'unpinned');
 }
 
-function preferredUrlCleared(body: Record<string, unknown>): boolean {
-  return body.unpinned === false || body.cleared === false;
+function nothingWasPinned(body: Record<string, unknown>): boolean {
+  return body.unpinned === false;
 }
 
 async function postRelayUnpin(input: {
@@ -224,7 +224,8 @@ async function executeRelayUnpin(
     printUnpinResult(parsed, io, { ok: true, unpinned: false });
     return;
   }
-  printUnpinResult(parsed, io, await postUnpin());
+  const body = await postUnpin();
+  printUnpinResult(parsed, io, { ok: true, unpinned: body.unpinned !== false });
 }
 
 export async function runRelayUnpin(parsed: ParsedArgs, io: RelayIo = {}): Promise<void> {

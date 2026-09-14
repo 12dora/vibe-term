@@ -26,6 +26,8 @@ export type RelayUplinkView = {
   autoSelectView?(): RelayAutoSelectView | null;
   scoreOf?(url: string): number | null;
   noteSwitchReason?(reason: RelaySwitchReason | null): void;
+  /** 进程内首选：自动切换写入、手动 pin 覆盖、unpin 留当前主中继。 */
+  noteAutoPreferred?(url: string | null): void;
 };
 
 export type RelaySwitchDeps = {
@@ -66,13 +68,16 @@ export async function handleRelaySwitch(
   return status();
 }
 
-export function handleRelayUnpin(deps: Pick<RelaySwitchDeps, 'secrets'>): Response {
+export function handleRelayUnpin(deps: RelaySwitchDeps): Response {
+  const unpinned = Boolean(deps.secrets.preferredRelayUrl());
   try {
     deps.secrets.clearPreferredRelayUrl();
   } catch {
     /* 未固定时也当成功 */
   }
-  return jsonBody({ ok: true });
+  // unpin 后把当前主中继留在 autoPreferred，避免候选序回到 priority 0 被探测拽走
+  deps.uplink.noteAutoPreferred?.(deps.uplink.attachedHub()?.publicUrl ?? null);
+  return jsonBody({ ok: true, unpinned });
 }
 
 export async function runRelaySwitch(
@@ -93,6 +98,7 @@ export async function runRelaySwitch(
       return switchFailed(new Error(result.reason));
     }
     if (persistPin) persistPreferred(deps, url);
+    deps.uplink.noteAutoPreferred?.(url);
     return { ok: true };
   } catch (err) {
     deps.uplink.noteSwitchReason?.(null);

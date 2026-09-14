@@ -470,6 +470,49 @@ describe('vibeterm nodes relay', () => {
     expect(JSON.parse(body)).toEqual({ url: RELAY_URL });
   });
 
+  test('relay switch --node forwards to /n/<id>', async () => {
+    const seen: string[] = [];
+    const { ctx: cli } = await ctx(
+      {
+        [`POST /n/${NODE}/api/mesh/relay/switch`]: (_url, init) => {
+          seen.push(String(init?.body));
+          return { mode: 'relay', relays: [{ url: RELAY_URL, attached: true }] };
+        },
+      },
+      true,
+      NODE
+    );
+    await nodes.run(cli, ['relay', 'switch', RELAY_URL]);
+    expect(seen).toHaveLength(1);
+    expect(JSON.parse(seen[0] ?? '')).toEqual({ url: RELAY_URL });
+  });
+
+  test('relay ls prints AUTO when preferredUrl is set without autoSelect', async () => {
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/relay/status': () => ({
+          mode: 'relay',
+          preferredUrl: RELAY_URL,
+          relays: [
+            {
+              url: RELAY_URL,
+              priority: 0,
+              online: true,
+              attached: true,
+              role: 'primary',
+              pinned: true,
+            },
+          ],
+        }),
+      },
+      false
+    );
+    await nodes.run(cli, ['relay', 'ls']);
+    const text = stdout.text();
+    expect(text).toContain('AUTO');
+    expect(text).toContain('pinned');
+  });
+
   test('relay rm prepare + signed set-relays', async () => {
     const signed = await signingMode();
     process.env.VIBETERM_PASSWORD = signed.password;
@@ -521,7 +564,7 @@ describe('vibeterm nodes relay', () => {
       'POST /api/mesh/relay/unpin': () => ({ ok: true }),
     });
     await nodes.run(cli, ['relay', 'unpin']);
-    expect(JSON.parse(stdout.text())).toEqual({ ok: true });
+    expect(JSON.parse(stdout.text())).toEqual({ ok: true, unpinned: true });
   });
 
   test('relay unpin POSTs /api/mesh/relay/unpin', async () => {

@@ -67,13 +67,19 @@ describe('runRelaySwitch persistPin', () => {
     const persist: string[] = [];
     const switched: string[] = [];
     const reasons: Array<string | null> = [];
-    const result = await runRelaySwitch(deps({ persist, switched, reasons }), JP, {
+    const autoPreferred: string[] = [];
+    const input = deps({ persist, switched, reasons });
+    input.uplink.noteAutoPreferred = (url) => {
+      if (url) autoPreferred.push(url);
+    };
+    const result = await runRelaySwitch(input, JP, {
       persistPin: false,
     });
     expect(result).toEqual({ ok: true });
     expect(switched).toEqual([JP]);
     expect(persist).toEqual([]);
     expect(reasons).toEqual(['auto-rtt']);
+    expect(autoPreferred).toEqual([JP]);
   });
 
   test('failed switch does not persist pin', async () => {

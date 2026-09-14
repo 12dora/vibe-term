@@ -5,6 +5,8 @@ import {
   HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS,
   LINK_STREAM_INFLIGHT_DEFAULT_BYTES,
   RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS,
+  RELAY_AUTO_SELECT_INTERVAL_MAX_MS,
+  RELAY_AUTO_SELECT_INTERVAL_MIN_MS,
   originUrlFromBindHost,
   parseHubAutoPromote,
   parseHubAutoPromoteTimeoutMs,
@@ -645,6 +647,18 @@ describe('hub auto-promote and nearest-uplink env', () => {
     expect(() => parseRelayAutoSelectIntervalMs('nope')).toThrow(
       'VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS'
     );
+    expect(parseRelayAutoSelectIntervalMs(String(RELAY_AUTO_SELECT_INTERVAL_MIN_MS))).toBe(
+      RELAY_AUTO_SELECT_INTERVAL_MIN_MS
+    );
+    expect(parseRelayAutoSelectIntervalMs(String(RELAY_AUTO_SELECT_INTERVAL_MAX_MS))).toBe(
+      RELAY_AUTO_SELECT_INTERVAL_MAX_MS
+    );
+    expect(() => parseRelayAutoSelectIntervalMs('999')).toThrow(
+      'VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS'
+    );
+    expect(() =>
+      parseRelayAutoSelectIntervalMs(String(RELAY_AUTO_SELECT_INTERVAL_MAX_MS + 1))
+    ).toThrow('VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS');
   });
 });
 
