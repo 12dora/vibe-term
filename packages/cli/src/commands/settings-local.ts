@@ -167,14 +167,14 @@ async function maybeSelfRevokeBeforeLeave(
 ): Promise<void> {
   if (flagBool(flags, 'skip-self-revoke')) {
     ctx.out.warn(
-      'leaving the mesh without a self-revoke; this node stays enrolled on the hub until an admin revokes it'
+      'leaving the mesh without a self-revoke; this node stays enrolled on the relay until an admin revokes it'
     );
     return;
   }
   if (!process.env.VIBETERM_PASSWORD) {
     throw new UsageError(
       'local leave signs a self-revoke first and VIBETERM_PASSWORD is not set',
-      "set VIBETERM_PASSWORD, or pass --skip-self-revoke (the hub will keep this node's cert)"
+      "set VIBETERM_PASSWORD, or pass --skip-self-revoke (the relay will keep this node's cert)"
     );
   }
   const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);

@@ -193,7 +193,7 @@ describe('settings WPC5 field-level commands', () => {
       '--mode',
       'selfsigned',
       '--sans',
-      'hub.lan,192.168.1.10',
+      'node.lan,192.168.1.10',
       '--port',
       '9443',
       '--bind-host',
@@ -201,7 +201,7 @@ describe('settings WPC5 field-level commands', () => {
     ]);
     expect(JSON.parse(body)).toEqual({
       mode: 'selfsigned',
-      sans: ['hub.lan', '192.168.1.10'],
+      sans: ['node.lan', '192.168.1.10'],
       tlsPort: 9443,
       bindHost: '0.0.0.0',
     });
@@ -216,7 +216,7 @@ describe('settings WPC5 field-level commands', () => {
       '--mode',
       'acme',
       '--domain',
-      'hub.example.com',
+      'node.example.com',
       '--email',
       'ops@example.com',
       '--challenge',
@@ -226,7 +226,7 @@ describe('settings WPC5 field-level commands', () => {
     ]);
     expect(JSON.parse(body)).toEqual({
       mode: 'acme',
-      domain: 'hub.example.com',
+      domain: 'node.example.com',
       email: 'ops@example.com',
       challenge: 'dns-01',
       staging: false,
@@ -255,7 +255,7 @@ describe('settings WPC5 field-level commands', () => {
       '--mode',
       'acme',
       '--domain',
-      'hub.example.com',
+      'node.example.com',
       '--email',
       'ops@example.com',
       '--challenge',

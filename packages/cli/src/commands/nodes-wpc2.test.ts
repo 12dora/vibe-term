@@ -55,19 +55,6 @@ async function signingMode(password = 'pw') {
   };
 }
 
-function hubRow(id: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    nodeId: id,
-    publicUrl: `https://${id.slice(0, 8)}.example`,
-    mode: extra.mode ?? 'standby',
-    priority: extra.priority ?? 1,
-    writerEpoch: extra.writerEpoch ?? 0,
-    online: extra.online ?? true,
-    authorization: extra.authorization ?? 'signed',
-    ...extra,
-  };
-}
-
 const SAMPLE_PORT = {
   purpose: 'peer-signaling',
   proto: 'tcp' as const,
@@ -188,151 +175,6 @@ describe('vibeterm nodes upgrade cancel / --ids / op clear', () => {
     await nodes.run(cli, ['op', 'clear', 'office']);
     expect(deleted).toBe(true);
     expect(JSON.parse(stdout.text())).toEqual({ ok: true });
-  });
-});
-
-describe('vibeterm nodes hub-role', () => {
-  test('promote POSTs standby on the writer then active on the target', async () => {
-    const bodies: Array<{ path: string; body: unknown }> = [];
-    const { ctx: cli, stdout } = await ctx({
-      'GET /api/mesh/nodes': () => ({
-        nodes: [
-          meshNode({ isHub: true, hubMode: 'active' }),
-          meshNode({ id: SPARE, name: 'spare', isHub: true, hubMode: 'standby' }),
-        ],
-      }),
-      'GET /api/mesh/hubs': () => ({
-        writerHubId: NODE,
-        attached: null,
-        candidates: [],
-        hubs: [
-          hubRow(NODE, { mode: 'active', priority: 0, writerEpoch: 2 }),
-          hubRow(SPARE, { mode: 'standby', priority: 1, writerEpoch: 0 }),
-        ],
-      }),
-      [`POST /n/${NODE}/api/hub/role`]: (_url, init) => {
-        bodies.push({ path: 'writer', body: JSON.parse(String(init?.body)) });
-        return { phase: 'accepted', operationId: 'op', mode: 'standby' };
-      },
-      [`POST /n/${SPARE}/api/hub/role`]: (_url, init) => {
-        bodies.push({ path: 'target', body: JSON.parse(String(init?.body)) });
-        return { phase: 'accepted', operationId: 'op', mode: 'active' };
-      },
-    });
-    await nodes.run(cli, ['hub-role', 'promote', 'spare', '--yes']);
-    expect(bodies.map((row) => row.path)).toEqual(['writer', 'target']);
-    expect(bodies[0].body).toMatchObject({ mode: 'standby' });
-    expect(bodies[1].body).toMatchObject({ mode: 'active' });
-    expect(JSON.parse(stdout.text()).kind).toBe('done');
-  });
-
-  test('standby POSTs mode=standby to the named hub', async () => {
-    let body = '';
-    const { ctx: cli } = await ctx({
-      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ isHub: true, hubMode: 'active' })] }),
-      'GET /api/mesh/hubs': () => ({
-        writerHubId: NODE,
-        attached: null,
-        candidates: [],
-        hubs: [hubRow(NODE, { mode: 'active', priority: 0, writerEpoch: 1 })],
-      }),
-      [`POST /n/${NODE}/api/hub/role`]: (_url, init) => {
-        body = String(init?.body);
-        return { phase: 'accepted', mode: 'standby' };
-      },
-    });
-    await nodes.run(cli, ['hub-role', 'standby', 'office', '--yes']);
-    expect(JSON.parse(body).mode).toBe('standby');
-  });
-
-  test('promote --wait polls role/status then writerHubId', async () => {
-    let promoted = false;
-    const { ctx: cli, stdout } = await ctx({
-      'GET /api/mesh/nodes': () => ({
-        nodes: [
-          meshNode({ isHub: true, hubMode: 'active' }),
-          meshNode({ id: SPARE, name: 'spare', isHub: true, hubMode: 'standby' }),
-        ],
-      }),
-      'GET /api/mesh/hubs': () => ({
-        writerHubId: promoted ? SPARE : NODE,
-        attached: null,
-        candidates: [],
-        hubs: [
-          hubRow(NODE, { mode: promoted ? 'standby' : 'active', priority: 0, writerEpoch: 2 }),
-          hubRow(SPARE, {
-            mode: promoted ? 'active' : 'standby',
-            priority: 1,
-            writerEpoch: promoted ? 3 : 0,
-          }),
-        ],
-      }),
-      [`POST /n/${NODE}/api/hub/role`]: () => ({ phase: 'accepted', mode: 'standby' }),
-      [`POST /n/${SPARE}/api/hub/role`]: () => {
-        promoted = true;
-        return { phase: 'accepted', mode: 'active' };
-      },
-      [`GET /n/${SPARE}/api/hub/role/status`]: () => ({ phase: 'complete', mode: 'active' }),
-    });
-    await nodes.run(cli, ['hub-role', 'promote', 'spare', '--yes', '--wait']);
-    expect(JSON.parse(stdout.text())).toMatchObject({ kind: 'done', writerHubId: SPARE });
-  });
-
-  test('promote of an unsigned hub signs admit-hub first', async () => {
-    const signed = await signingMode();
-    process.env.VIBETERM_PASSWORD = signed.password;
-    let admitted = false;
-    const types: string[] = [];
-    const { ctx: cli } = await ctx({
-      'GET /api/auth/mode': () => signed.json,
-      'GET /api/mesh/nodes': () => ({
-        nodes: [
-          meshNode({ isHub: true, hubMode: 'active' }),
-          meshNode({ id: SPARE, name: 'spare', isHub: true, hubMode: 'standby' }),
-        ],
-      }),
-      'GET /api/mesh/hubs': () => ({
-        writerHubId: NODE,
-        attached: null,
-        candidates: [],
-        hubs: [
-          hubRow(NODE, { mode: 'active', priority: 0, writerEpoch: 2 }),
-          hubRow(SPARE, {
-            mode: 'standby',
-            priority: 1,
-            writerEpoch: 0,
-            authorization: admitted ? 'signed' : 'env',
-          }),
-        ],
-      }),
-      'GET /api/auth/keylog/head': () => ({ seq: 3, hash: HASH }),
-      'POST /api/auth/keylog': (_url, init) => {
-        const body = JSON.parse(String(init?.body)) as { bytes: string };
-        types.push(decodeKeyLogRecord(decodeBase64url(body.bytes)).type);
-        admitted = true;
-        return { ok: true, hubAck: true, seq: 4 };
-      },
-      [`POST /n/${NODE}/api/hub/role`]: () => ({ phase: 'accepted', mode: 'standby' }),
-      [`POST /n/${SPARE}/api/hub/role`]: () => ({ phase: 'accepted', mode: 'active' }),
-    });
-    await nodes.run(cli, ['hub-role', 'promote', 'spare', '--yes']);
-    expect(types).toEqual(['admit-hub']);
-    expect(admitted).toBe(true);
-  });
-
-  test('hub-role without --yes is a usage error off-tty', async () => {
-    const { ctx: cli } = await ctx({
-      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ isHub: true })] }),
-      'GET /api/mesh/hubs': () => ({
-        writerHubId: NODE,
-        attached: null,
-        candidates: [],
-        hubs: [hubRow(NODE)],
-      }),
-    });
-    await expect(nodes.run(cli, ['hub-role', 'standby', 'office'])).rejects.toBeInstanceOf(
-      UsageError
-    );
   });
 });
 
@@ -689,7 +531,7 @@ describe('vibeterm nodes relay', () => {
 });
 
 describe('vibeterm nodes rename in relay mode', () => {
-  test('rename on a relay uplink signs rename-node instead of hub REST', async () => {
+  test('rename on a relay uplink signs rename-node', async () => {
     const signed = await signingMode();
     process.env.VIBETERM_PASSWORD = signed.password;
     const hits: string[] = [];
@@ -705,31 +547,25 @@ describe('vibeterm nodes rename in relay mode', () => {
       'POST /api/auth/keylog': (_url, init) => {
         const body = JSON.parse(String(init?.body)) as { bytes: string };
         types.push(decodeKeyLogRecord(decodeBase64url(body.bytes)).type);
-        return { ok: true, hubAck: true, seq: 6 };
-      },
-      [`POST /n/${NODE}/api/hub/nodes/${NODE}/rename`]: () => {
-        hits.push('hub-rename');
-        return { ok: true };
+        return { ok: true, seq: 6 };
       },
     });
     await nodes.run(cli, ['rename', 'office', 'desk']);
     expect(hits).toContain('status');
-    expect(hits).not.toContain('hub-rename');
     expect(types).toEqual(['rename-node']);
     expect(JSON.parse(stdout.text())).toMatchObject({ ok: true, id: NODE, name: 'desk' });
   });
 
-  test('rename on hub still POSTs the hub control plane', async () => {
-    const seen: string[] = [];
+  test('rename without a relay uplink is NODE_NOT_ON_RELAY', async () => {
     const { ctx: cli } = await ctx({
-      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ isHub: true, hubMode: 'active' })] }),
-      'GET /api/mesh/relay/status': () => ({ mode: 'hub' }),
-      [`POST /n/${NODE}/api/hub/nodes/${NODE}/rename`]: (_url, init) => {
-        seen.push(String(init?.body));
-        return { ok: true, id: NODE, name: 'desk' };
-      },
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode()] }),
+      'GET /api/mesh/relay/status': () => ({ mode: 'none' }),
     });
-    await nodes.run(cli, ['rename', 'office', 'desk']);
-    expect(seen[0]).toContain('desk');
+    const error = (await nodes
+      .run(cli, ['rename', 'office', 'desk'])
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBe('NODE_NOT_ON_RELAY');
+    expect(error.exitCode).toBe(1);
   });
 });

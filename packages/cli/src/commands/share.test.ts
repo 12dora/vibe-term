@@ -48,10 +48,10 @@ const ORIGINS = {
   candidates: [
     { url: ORIGIN, kind: 'site', label: 'share.example.com', accessUrl: ORIGIN },
     {
-      url: 'https://hub.example.com',
-      kind: 'hub',
-      label: 'hub.example.com',
-      accessUrl: 'https://hub.example.com',
+      url: 'https://relay.example.com',
+      kind: 'relay',
+      label: 'relay.example.com',
+      accessUrl: 'https://relay.example.com',
     },
   ],
   recommended: ORIGIN,

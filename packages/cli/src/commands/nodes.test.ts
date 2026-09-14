@@ -154,32 +154,17 @@ describe('vibeterm nodes', () => {
     expect(payload.lastSeenAt).toBe(1_700_000_000_000);
   });
 
-  test('hubs hits /api/mesh/hubs', async () => {
-    const { ctx: cli, stdout } = await ctx({
-      'GET /api/mesh/hubs': () => ({
-        hubs: [{ nodeId: NODE, publicUrl: 'https://hub.example', mode: 'active' }],
-        attached: null,
-        writerHubId: NODE,
-        candidates: [],
-      }),
-    });
-    await nodes.run(cli, ['hubs']);
-    expect(JSON.parse(stdout.text()).writerHubId).toBe(NODE);
-  });
-
-  test('rename posts to the hub node', async () => {
-    const seen: string[] = [];
+  test('rename without a relay uplink is NODE_NOT_ON_RELAY', async () => {
     const { ctx: cli } = await ctx({
-      'GET /api/mesh/nodes': () => ({
-        nodes: [meshNode({ isHub: true, hubMode: 'active' })],
-      }),
-      [`POST /n/${NODE}/api/hub/nodes/${NODE}/rename`]: (_url, init) => {
-        seen.push(String(init?.body));
-        return { ok: true, id: NODE, name: 'desk' };
-      },
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode()] }),
+      'GET /api/mesh/relay/status': () => ({ mode: 'none' }),
     });
-    await nodes.run(cli, ['rename', 'office', 'desk']);
-    expect(seen[0]).toContain('desk');
+    const error = (await nodes
+      .run(cli, ['rename', 'office', 'desk'])
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBe('NODE_NOT_ON_RELAY');
+    expect(error.exitCode).toBe(1);
   });
 
   test('disallow patches domain-access', async () => {
@@ -235,7 +220,7 @@ describe('vibeterm nodes', () => {
     process.env.VIBETERM_PASSWORD = 'x';
     const { ctx: cli } = await ctx({
       'GET /api/mesh/nodes': () => ({
-        nodes: [meshNode({ id: peer, name: 'hub-sh' })],
+        nodes: [meshNode({ id: peer, name: 'node-sh' })],
       }),
       [`POST /api/mesh/nodes/${peer}/uninstall`]: (_url, init) => {
         cookie = new Headers(init?.headers).get('cookie') ?? '';
@@ -245,7 +230,9 @@ describe('vibeterm nodes', () => {
     });
     cli.http.jar.set('self', 'sid-self', 0);
     cli.http.jar.set(peer, 'sid-peer', 0);
-    await expect(nodes.run(cli, ['uninstall', 'hub-sh', '--yes'])).rejects.toBeInstanceOf(CliError);
+    await expect(nodes.run(cli, ['uninstall', 'node-sh', '--yes'])).rejects.toBeInstanceOf(
+      CliError
+    );
     expect(cookie).toContain('vibeterm_s_self=sid-self');
     expect(cookie).toContain(`vibeterm_s_${peer}=sid-peer`);
     delete process.env.VIBETERM_PASSWORD;
@@ -260,23 +247,12 @@ describe('vibeterm nodes', () => {
     expect(error.hint).toContain('--yes');
   });
 
-  test('ls merges pending hub rows', async () => {
+  test('ls lists pendingMemberIds that are not yet in the mesh roster', async () => {
     const pendingId = 'b'.repeat(32);
     const { ctx: cli, stdout } = await ctx({
-      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ isHub: true })] }),
-      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE, hubNodeId: 'self' }),
-      'GET /api/hub/nodes': () => ({
-        nodes: [
-          { id: NODE, name: 'office', admission_status: 'admitted', online: true },
-          {
-            id: pendingId,
-            name: 'wait-box',
-            admission_status: 'pending',
-            online: false,
-            version: null,
-            direct_capable: false,
-          },
-        ],
+      'GET /api/mesh/nodes': () => ({
+        nodes: [meshNode()],
+        pendingMemberIds: [pendingId],
       }),
     });
     await nodes.run(cli, ['ls']);
@@ -285,50 +261,23 @@ describe('vibeterm nodes', () => {
     };
     expect(payload.nodes).toHaveLength(2);
     expect(payload.nodes[0].status).toBe('admitted');
-    expect(payload.nodes[1]).toMatchObject({ id: pendingId, name: 'wait-box', status: 'pending' });
+    expect(payload.nodes[1]).toMatchObject({
+      id: pendingId,
+      name: pendingId.slice(0, 8),
+      status: 'pending',
+    });
   });
 
-  test('allow looks up pending hub rows before mesh', async () => {
-    const pendingId = 'b'.repeat(32);
-    const methods: string[] = [];
-    process.env.VIBETERM_PASSWORD = 'x';
+  test('allow of an unknown name is not found', async () => {
     const { ctx: cli } = await ctx({
       'GET /api/mesh/nodes': () => ({ nodes: [] }),
-      'GET /api/auth/mode': () => {
-        methods.push('GET mode');
-        return { mode: 'mesh', nodeId: NODE, hubNodeId: 'self' };
-      },
-      'GET /api/hub/nodes': () => {
-        methods.push('GET hub');
-        return {
-          nodes: [
-            {
-              id: pendingId,
-              name: 'wait-box',
-              admission_status: 'pending',
-              online: false,
-              authorization: 'YQ',
-              authorization_sig: 'YQ',
-              certificate: 'YQ',
-              cert_sig: 'YQ',
-            },
-          ],
-        };
-      },
-      [`PATCH /n/${pendingId}/api/system/domain-access`]: () => {
-        methods.push('PATCH domain-access');
-        return { allowed: true };
-      },
+      'GET /api/mesh/relay/status': () => ({ mode: 'none' }),
     });
     await expect(nodes.run(cli, ['allow', 'wait-box'])).rejects.toBeInstanceOf(CliError);
-    expect(methods).toContain('GET hub');
-    expect(methods).toContain('GET mode');
-    expect(methods).not.toContain('PATCH domain-access');
-    delete process.env.VIBETERM_PASSWORD;
   });
 
   test('upgrade --all waits, filters, maps unconfirmed, exits 1', async () => {
-    const hubId = 'c'.repeat(32);
+    const peerId = 'c'.repeat(32);
     const offlineId = 'd'.repeat(32);
     const { ctx: cli, stdout } = await ctx({
       'GET /api/mesh/upgrade/latest': () => ({
@@ -340,9 +289,8 @@ describe('vibeterm nodes', () => {
         nodes: [
           meshNode({ version: '2.0.8', online: true, loggedIn: true }),
           meshNode({
-            id: hubId,
-            name: 'hub',
-            isHub: true,
+            id: peerId,
+            name: 'peer',
             version: '2.0.8',
             online: true,
             loggedIn: true,
@@ -367,16 +315,16 @@ describe('vibeterm nodes', () => {
       'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
       [`POST /api/mesh/nodes/${NODE}/upgrade`]: () =>
         new Response(JSON.stringify({ code: 'NODE_UNREACHABLE' }), { status: 409 }),
-      [`POST /api/mesh/nodes/${hubId}/upgrade`]: () =>
+      [`POST /api/mesh/nodes/${peerId}/upgrade`]: () =>
         new Response(JSON.stringify({ code: 'UPGRADE_ALREADY_LATEST' }), { status: 409 }),
     });
     const code = await nodes.run(cli, ['upgrade', '--all']);
     const payload = JSON.parse(stdout.text()) as {
       outcomes: Array<{ node: string; outcome: string }>;
     };
-    expect(payload.outcomes.map((row) => row.node)).toEqual([hubId, NODE]);
+    expect(payload.outcomes.map((row) => row.node)).toEqual([peerId, NODE]);
     expect(payload.outcomes.find((row) => row.node === NODE)?.outcome).toBe('unconfirmed');
-    expect(payload.outcomes.find((row) => row.node === hubId)?.outcome).toBe('alreadyLatest');
+    expect(payload.outcomes.find((row) => row.node === peerId)?.outcome).toBe('alreadyLatest');
     expect(code).toBe(1);
   });
 
@@ -393,7 +341,7 @@ describe('vibeterm nodes', () => {
         nodes: [
           meshNode({
             id: peer,
-            name: 'hub-sh',
+            name: 'node-sh',
             version: '2.0.8',
             online: true,
             loggedIn: false,
@@ -429,7 +377,7 @@ describe('vibeterm nodes', () => {
         publishedAt: null,
       }),
       'GET /api/mesh/nodes': () => ({
-        nodes: [meshNode({ id: peer, name: 'hub-sh', version: '2.0.8' })],
+        nodes: [meshNode({ id: peer, name: 'node-sh', version: '2.0.8' })],
       }),
       'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
       [`POST /api/mesh/nodes/${peer}/upgrade`]: () =>
@@ -437,7 +385,7 @@ describe('vibeterm nodes', () => {
           status: 401,
         }),
     });
-    const error = (await nodes.run(cli, ['upgrade', 'hub-sh']).catch((err) => err)) as AuthError;
+    const error = (await nodes.run(cli, ['upgrade', 'node-sh']).catch((err) => err)) as AuthError;
     expect(error).toBeInstanceOf(AuthError);
     expect(error.exitCode).toBe(3);
     expect(error.hint).toBe(`run: vibeterm login --node ${peer}`);
@@ -534,17 +482,26 @@ describe('vibeterm nodes', () => {
     expect(JSON.parse(stdout.text()).probes).toHaveLength(1);
   });
 
-  test('enroll --password prints a join command', async () => {
+  test('enroll --password prints a relay join command', async () => {
     const { ctx: cli, stdout } = await ctx({
-      'GET /api/auth/mode': () => ({
-        mode: 'mesh',
-        nodeId: NODE,
-        hubPublicUrl: 'https://hub.example',
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        relays: [{ url: 'https://relay.example', attached: true }],
       }),
     });
     await nodes.run(cli, ['enroll', '--password']);
-    expect(JSON.parse(stdout.text()).joinCommand).toContain('vibeterm hub join');
+    expect(JSON.parse(stdout.text()).joinCommand).toContain('vibeterm relay join');
     expect(JSON.parse(stdout.text()).joinCommand).toContain('--password');
+  });
+
+  test('enroll without a relay uplink is NODE_NOT_ON_RELAY', async () => {
+    const { ctx: cli } = await ctx({
+      'GET /api/mesh/relay/status': () => ({ mode: 'none' }),
+    });
+    const error = (await nodes.run(cli, ['enroll']).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBe('NODE_NOT_ON_RELAY');
+    expect(error.exitCode).toBe(1);
   });
 
   test('missing subcommand is a usage error', async () => {

@@ -65,7 +65,7 @@ async function signedCtx(password: string, extra: Parameters<typeof routeFetch>[
         new Response(JSON.stringify({ code: 'TOTP_NOT_ENABLED' }), { status: 404 }),
       'POST /api/auth/keylog': (_url, init) => {
         keylog = String(init?.body);
-        return { ok: true, seq: 5, hubAck: true, relayAck: true };
+        return { ok: true, seq: 5, relayAck: true };
       },
       ...extra,
     }),

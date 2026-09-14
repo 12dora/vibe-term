@@ -199,7 +199,7 @@ async function loginToNodeOnce(args: {
 
   const targetPk = decodeBase64url(challenge.nodePk);
   if (args.pinnedPublicKey && !bytesEqual(targetPk, decodeBase64url(args.pinnedPublicKey))) {
-    // 失陷 hub 掉包目标公钥：立即中止，一个字节都不签。
+    // 失陷入口掉包目标公钥：立即中止，一个字节都不签。
     return { nodeId, ok: false, code: 'NODE_PK_MISMATCH' };
   }
 
@@ -327,7 +327,7 @@ function passkeyHint(policy?: SecondFactorPolicy): string {
   if (policy === 'passkey') {
     return [
       'this account has no TOTP, so only a passkey can satisfy the second factor here.',
-      'Enable two-step verification (vibeterm hub user totp <user>), sign in from a browser on this',
+      'Enable two-step verification (vibeterm user totp <user>), sign in from a browser on this',
       'origin, or use an entry address with no passkey registered for it.',
     ].join(' ');
   }

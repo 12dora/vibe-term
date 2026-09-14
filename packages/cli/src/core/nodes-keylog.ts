@@ -5,20 +5,14 @@ import {
   ARGON2ID_ITERATIONS,
   ARGON2ID_MEMORY_KIB,
   ARGON2ID_PARALLELISM,
-  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   type KeyLogType,
-  MIN_HUB_AUTH_RECORD_VERSION,
   type RootKey,
-  buildAdmitHubPayload,
   buildKeyLogRecord,
   buildRenameNodePayload,
   bytesEqual,
-  createEnrollment,
   decodeBase64url,
   deriveSeed,
-  encodeAdmitNodePayload,
   encodeBase64url,
-  encodeJoinToken,
   encodeKeyLogRecord,
   encodeRevokeNodePayload,
   hexToBytes,
@@ -29,7 +23,6 @@ import { FORCE_KEYLOG_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { type AuthMode, fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { AuthError, CliError, UsageError } from './errors';
-import { type HubNodeRow, isTrustedHubUrl, joinCommand, resolveHubNodeId } from './nodes-hub';
 import { isInteractive, promptHidden } from './prompt';
 
 export async function readAccountPassword(): Promise<string> {
@@ -166,8 +159,8 @@ export function assertKeyLogAppended(result: KeyLogAppendResult, action: string)
   if (!result.ok) {
     throw new CliError(`${action} failed: ${result.code ?? 'rejected'}`);
   }
-  if (result.hubAck !== true) {
-    throw new CliError(`${action} was not confirmed by hub (${result.hubError ?? 'no ack'})`);
+  if (result.hubAck === false) {
+    throw new CliError(`${action} failed: ${result.hubError ?? 'not applied'}`);
   }
 }
 
@@ -196,91 +189,6 @@ export interface CreatedEnrollmentResult {
   joinCommand: string | null;
   publicUrl: string | null;
   caFingerprint: string | null;
-}
-
-export async function createSignedEnrollment(
-  ctx: CliContext,
-  options: { ttlMs: number; name?: string; hubPublicUrl?: string | null }
-): Promise<CreatedEnrollmentResult> {
-  return withRootKey(ctx, async (root, mode) => {
-    const now = Date.now();
-    const enrollment = await createEnrollment(root, {
-      uid: mode.uid as string,
-      rootEpoch: mode.rootEpoch as number,
-      now,
-      ttlMs: options.ttlMs,
-    });
-    try {
-      const head = await keyLogHead(ctx);
-      const hubId = await resolveHubNodeId(ctx);
-      const created = await ctx.http.json<{
-        ok?: boolean;
-        id: string;
-        expires_at: number;
-        public_url?: string | null;
-        ca_fingerprint?: string | null;
-      }>(hubId, 'POST', '/api/hub/enrollments', {
-        enroll_pk: encodeBase64url(enrollment.enrollPk),
-        authorization: encodeBase64url(enrollment.authorizationBytes),
-        authorization_sig: encodeBase64url(enrollment.authorizationSig),
-        exp: now + options.ttlMs,
-      });
-      const rootPk = mode.rootPublicKey ? decodeBase64url(mode.rootPublicKey) : root.publicKey;
-      const token = encodeJoinToken(
-        enrollment.enrollSk,
-        rootPk,
-        head.hash,
-        created.ca_fingerprint ?? null
-      );
-      const publicUrl = created.public_url ?? options.hubPublicUrl ?? mode.hubPublicUrl ?? null;
-      return {
-        id: created.id,
-        expiresAt: created.expires_at,
-        joinToken: token,
-        joinCommand:
-          publicUrl && isTrustedHubUrl(publicUrl)
-            ? joinCommand(publicUrl, token, options.name)
-            : null,
-        publicUrl,
-        caFingerprint: created.ca_fingerprint ?? null,
-      };
-    } finally {
-      enrollment.enrollSk.fill(0);
-    }
-  });
-}
-
-export async function admitPendingNode(
-  ctx: CliContext,
-  row: HubNodeRow,
-  options?: { after?: (root: RootKey, mode: AuthMode) => Promise<void> }
-): Promise<unknown> {
-  if (!row.authorization || !row.authorization_sig || !row.certificate || !row.cert_sig) {
-    throw new CliError(
-      `node ${row.id} is pending but hub did not send admit material`,
-      1,
-      'refresh later or admit from the GUI'
-    );
-  }
-  return withRootKey(ctx, async (root, mode) => {
-    const head = await keyLogHead(ctx);
-    const signed = signRecord(
-      root,
-      head,
-      mode,
-      'admit-node',
-      encodeAdmitNodePayload({
-        authorization_bytes: decodeBase64url(row.authorization as string),
-        authorization_sig: decodeBase64url(row.authorization_sig as string),
-        certificate_bytes: decodeBase64url(row.certificate as string),
-        cert_sig: decodeBase64url(row.cert_sig as string),
-      })
-    );
-    const result = await appendKeyLog(ctx, signed.bytes, signed.sig);
-    assertKeyLogAppended(result, 'admit');
-    if (options?.after) await options.after(root, mode);
-    return result;
-  });
 }
 
 export async function revokeNode(
@@ -323,116 +231,5 @@ export async function renameNodeViaKeyLog(
     const result = await appendKeyLog(ctx, signed.bytes, signed.sig);
     assertKeyLogAppended(result, 'rename');
     return result;
-  });
-}
-
-export interface UnsupportedKeyLogNode {
-  id: string;
-  name: string;
-  version: string | null;
-}
-
-export type AdmitHubAppendOutcome =
-  | { kind: 'ok'; result: KeyLogAppendResult }
-  | { kind: 'unsupportedNodes'; minVersion: string; nodes: UnsupportedKeyLogNode[] }
-  | { kind: 'failed'; code: string };
-
-function parseUnsupportedNodes(value: unknown): UnsupportedKeyLogNode[] {
-  if (!Array.isArray(value)) return [];
-  const nodes: UnsupportedKeyLogNode[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== 'object') continue;
-    const node = item as Partial<UnsupportedKeyLogNode>;
-    if (typeof node.id !== 'string') continue;
-    nodes.push({
-      id: node.id,
-      name: typeof node.name === 'string' ? node.name : node.id.slice(0, 8),
-      version: typeof node.version === 'string' ? node.version : null,
-    });
-  }
-  return nodes;
-}
-
-function envelopeCode(body: Record<string, unknown>, fallback: string): string {
-  if (typeof body.code === 'string') return body.code;
-  if (typeof body.error === 'string') return body.error;
-  return fallback;
-}
-
-async function appendKeyLogRaw(
-  ctx: CliContext,
-  bytes: Uint8Array,
-  sig: Uint8Array,
-  force: boolean
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (force) {
-    headers[FORCE_KEYLOG_HEADER.name] = '1';
-    headers[FORCE_KEYLOG_HEADER.legacy] = '1';
-  }
-  const response = await ctx.http.fetch(SELF_NODE_ID, '/api/auth/keylog?hub=sync', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ bytes: encodeBase64url(bytes), sig: encodeBase64url(sig) }),
-  });
-  let body: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = await response.json();
-    if (parsed && typeof parsed === 'object') body = parsed as Record<string, unknown>;
-  } catch {
-    // 非 JSON
-  }
-  return { status: response.status, body };
-}
-
-export async function admitHubViaKeyLog(
-  ctx: CliContext,
-  input: { hubNodeId: string; publicUrl: string | null; priority?: number | null; force?: boolean }
-): Promise<AdmitHubAppendOutcome> {
-  assertNodeHexId(input.hubNodeId);
-  return withRootKey(ctx, async (root, mode) => {
-    const head = await keyLogHead(ctx);
-    const signed = signRecord(
-      root,
-      head,
-      mode,
-      'admit-hub',
-      buildAdmitHubPayload({
-        hubNodeId: hexToBytes(input.hubNodeId),
-        publicUrl: input.publicUrl,
-        priority: input.priority ?? null,
-      })
-    );
-    const { status, body } = await appendKeyLogRaw(
-      ctx,
-      signed.bytes,
-      signed.sig,
-      input.force === true
-    );
-    if (status >= 200 && status < 300) {
-      const result: KeyLogAppendResult = {
-        ok: body.ok !== false,
-        seq: typeof body.seq === 'number' || typeof body.seq === 'string' ? body.seq : undefined,
-        hubAck: typeof body.hubAck === 'boolean' ? body.hubAck : undefined,
-        hubError: typeof body.hubError === 'string' ? body.hubError : undefined,
-        relayAck: typeof body.relayAck === 'boolean' ? body.relayAck : undefined,
-        relayError: typeof body.relayError === 'string' ? body.relayError : undefined,
-        code: typeof body.code === 'string' ? body.code : undefined,
-      };
-      if (result.hubAck !== true) {
-        return { kind: 'failed', code: result.hubError || 'HUB_UNCONFIRMED' };
-      }
-      return { kind: 'ok', result };
-    }
-    const code = envelopeCode(body, 'KEY_LOG_REJECTED');
-    if (code === KEYLOG_TYPE_UNSUPPORTED_BY_NODES) {
-      return {
-        kind: 'unsupportedNodes',
-        minVersion:
-          typeof body.minVersion === 'string' ? body.minVersion : MIN_HUB_AUTH_RECORD_VERSION,
-        nodes: parseUnsupportedNodes(body.nodes),
-      };
-    }
-    return { kind: 'failed', code };
   });
 }

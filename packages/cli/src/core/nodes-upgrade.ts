@@ -8,7 +8,7 @@ import { dash, rejectExtra, sleep } from './cmd';
 import type { CliContext } from './context';
 import { AuthError, UsageError } from './errors';
 import { type CookieJar, loginRequiredError } from './http';
-import { findMeshNode, listMeshNodesFull } from './nodes-hub';
+import { findMeshNode, listMeshNodesFull } from './nodes-roster';
 import { isLiveNodeSession } from './session-store';
 
 export interface UpgradeLatest {
@@ -187,14 +187,12 @@ export async function waitNodeUpgrade(
 
 export function orderUpgradeGroups(rows: MeshNode[], selfId?: string): MeshNode[][] {
   const others: MeshNode[] = [];
-  const hubs: MeshNode[] = [];
   const self: MeshNode[] = [];
   for (const row of rows) {
     if (selfId && row.id === selfId) self.push(row);
-    else if (row.isHub) hubs.push(row);
     else others.push(row);
   }
-  return [others, hubs, self].filter((group) => group.length > 0);
+  return [others, self].filter((group) => group.length > 0);
 }
 
 export function orderUpgradeTargets(rows: MeshNode[], selfId?: string): MeshNode[] {
