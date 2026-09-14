@@ -60,7 +60,7 @@ VibeTerm 将 Mac、Linux 服务器、NAS 和云主机组网。所有接入节点
 
 <table width="100%">
   <tr><th width="50%">独立</th><th width="50%">中继模式</th></tr>
-  <tr><td valign="top">单机安装即用，默认只监听本机。</td><td valign="top">无公网地址时，借用他人或自建的中继转发密文，多人可共用一台中继。中继只见密文，节点之间也可直连。登录入口在租户自己的任意一台节点上。</td></tr>
+  <tr><td valign="top">单机安装即用，默认只监听本机。</td><td valign="top">无公网地址时，借用他人或自建的中继转发密文，多人可共用一台中继。（该模式默认中继节点不可信）</td></tr>
 </table>
 
 <p align="center">
