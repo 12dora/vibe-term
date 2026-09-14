@@ -1,4 +1,4 @@
-// 非标端口探测：80/443 被封锁时，Hub / 中继会架在高位端口上，而用户手里往往只有一个不带端口的地址。
+// 非标端口探测：80/443 被封锁时，中继会架在高位端口上，而用户手里往往只有一个不带端口的地址。
 //
 // 这里只做两件事：给出内置的高位端口候选表，以及按候选表探一遍找出真正在监听的那个端口。
 // 模块必须保持浏览器安全（不引 `node:*`）：前端 bundle 会带上 `@vibeterm/shared/net`。
@@ -30,7 +30,7 @@ export function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTS.has(hostname.trim().toLowerCase());
 }
 
-export type ProbeKind = 'relay' | 'hub';
+export type ProbeKind = 'relay';
 
 export interface ProbeTarget {
   /** 规范化后的地址（`canonicalHubUrl`），默认端口不出现在里面。 */
@@ -119,14 +119,13 @@ function isSingleCandidate(target: ProbeTarget): boolean {
 
 const HEALTH_PATH: Record<ProbeKind, string> = {
   relay: '/api/relay/health',
-  hub: '/healthz',
 };
 
-/** 健康判据与各自的既有调用方一致：中继看 `ok`，Hub 看 `status`。 */
-function isHealthyBody(kind: ProbeKind, body: unknown): boolean {
-  const payload = body as { ok?: unknown; status?: unknown } | null;
+/** 健康判据与既有调用方一致：中继看 `ok === true`。 */
+function isHealthyBody(body: unknown): boolean {
+  const payload = body as { ok?: unknown } | null;
   if (!payload || typeof payload !== 'object') return false;
-  return kind === 'relay' ? payload.ok === true : payload.status === 'ok';
+  return payload.ok === true;
 }
 
 async function checkOne(
@@ -141,7 +140,7 @@ async function checkOne(
   try {
     const res = await (options.fetchImpl ?? fetch)(request, { signal, redirect: 'error' });
     if (!res.ok) return false;
-    return isHealthyBody(options.kind, await res.json());
+    return isHealthyBody(await res.json());
   } catch {
     return false;
   }

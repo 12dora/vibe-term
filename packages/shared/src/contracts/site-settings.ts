@@ -240,7 +240,7 @@ export function siteSettingCliFlagSpec(): Record<string, CliFlagKind> {
 export interface SiteSettingsLinkFields {
   /** 用户实际应使用的访问 URL；standalone 等于存储的 siteUrl。 */
   effectiveSiteUrl: string | null;
-  /** mesh（hub 或 node）下为 false，站点 URL 由运行时决定。 */
+  /** mesh（node 或 relay,node）下为 false，站点 URL 由运行时决定。 */
   siteUrlEditable: boolean;
   /** mesh 下为 true：站点名与本机 mesh 节点名同步。 */
   siteNameLinkedToNode: boolean;

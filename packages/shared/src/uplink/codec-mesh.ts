@@ -1,10 +1,5 @@
 import { encodeBase64url } from '../auth/encoding';
-import {
-  type CtlDecodeProfile,
-  decodeUplinkCtl,
-  isHubFrameCtlType,
-  parsePeerReachMap,
-} from './codec-decode';
+import { type CtlDecodeProfile, decodeUplinkCtl, parsePeerReachMap } from './codec-decode';
 import {
   type EncodeUplinkCtlOptions,
   KEY_LOG_PAGE_MAX_BYTES,
@@ -12,20 +7,7 @@ import {
   isRecord,
   seqToWire,
 } from './codec-fields';
-import { type HubUplinkCtlMessage, encodeHubUplinkCtl } from './codec-hub';
-import {
-  type HubAdvertisement,
-  type HubAttachmentsMessage,
-  type HubEndpointInfo,
-  type HubForwardMessage,
-  type HubTokensMessage,
-  type HubWriteForwardMessage,
-  applyNodeListExtras,
-  encodeHubAttachmentsMessage,
-  encodeHubForwardMessage,
-  encodeHubTokensMessage,
-  encodeHubWriteForwardMessage,
-} from './codec-hub-frames';
+import { type PeerUplinkCtlMessage, encodePeerUplinkCtl } from './codec-peer';
 
 type MeshNodeInfo = {
   id: string;
@@ -35,11 +17,8 @@ type MeshNodeInfo = {
   inventory: unknown;
   direct_capable: boolean;
   version: string | null;
-  attachedHubId?: string;
   peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
-
-type MeshHubInfo = { nodeId: string; publicUrl: string; name?: string };
 
 export type MeshUplinkNodeList = {
   t: 'node.list';
@@ -47,10 +26,6 @@ export type MeshUplinkNodeList = {
   key_log_head: { seq: bigint; hash: Uint8Array };
   rtc: { stun: string[]; turn: unknown };
   nodes: MeshNodeInfo[];
-  hub?: MeshHubInfo;
-  hubs?: HubEndpointInfo[];
-  writerHubId?: string;
-  writerEpoch?: number;
 };
 
 export type MeshUplinkKeyLogRecord = { seq: bigint; bytes: Uint8Array; sig: Uint8Array };
@@ -91,7 +66,6 @@ export type MeshUplinkCtlMessage =
       direct_capable: boolean;
       inventory: unknown;
       endpoints: unknown;
-      hub?: HubAdvertisement;
       peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
       peer_reach_epoch?: number;
     }
@@ -108,11 +82,7 @@ export type MeshUplinkCtlMessage =
   | { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array; id?: string; force?: boolean }
   | MeshUplinkKeyLogAck
   | MeshUplinkRtcSignal
-  | MeshUplinkEnrollRedeemed
-  | HubTokensMessage
-  | HubAttachmentsMessage
-  | HubForwardMessage
-  | HubWriteForwardMessage;
+  | MeshUplinkEnrollRedeemed;
 
 function parseMeshNode(value: unknown): MeshNodeInfo {
   if (!isRecord(value)) throw new Error('node.list node must be an object');
@@ -125,23 +95,9 @@ function parseMeshNode(value: unknown): MeshNodeInfo {
     direct_capable: ctlRead.bool(value.direct_capable, 'nodes[].direct_capable'),
     version: ctlRead.optStr(value.version, 'nodes[].version') ?? null,
   };
-  if (value.attachedHubId !== undefined && value.attachedHubId !== null) {
-    node.attachedHubId = ctlRead.nodeId(value.attachedHubId, 'nodes[].attachedHubId');
-  }
   const peerReach = parsePeerReachMap(value.peer_reach);
   if (peerReach) node.peer_reach = peerReach;
   return node;
-}
-
-function parseMeshHub(value: unknown): MeshHubInfo {
-  if (!isRecord(value)) throw new Error('node.list hub must be an object');
-  const info: MeshHubInfo = {
-    nodeId: ctlRead.nodeId(value.nodeId, 'hub.nodeId'),
-    publicUrl: ctlRead.str(value.publicUrl, 'hub.publicUrl'),
-  };
-  const name = ctlRead.optStr(value.name, 'hub.name');
-  if (name) info.name = name;
-  return info;
 }
 
 function decodeMeshNodeList(parsed: Record<string, unknown>): MeshUplinkNodeList {
@@ -149,7 +105,7 @@ function decodeMeshNodeList(parsed: Record<string, unknown>): MeshUplinkNodeList
   if (!isRecord(parsed.rtc)) throw new Error('node.list rtc must be an object');
   if (!Array.isArray(parsed.nodes)) throw new Error('node.list nodes must be an array');
   const stun = parsed.rtc.stun;
-  const list: MeshUplinkNodeList = {
+  return {
     t: 'node.list',
     version: ctlRead.num(parsed.version, 'version'),
     key_log_head: {
@@ -162,8 +118,6 @@ function decodeMeshNodeList(parsed: Record<string, unknown>): MeshUplinkNodeList
     },
     nodes: parsed.nodes.map(parseMeshNode),
   };
-  if (parsed.hub !== undefined && parsed.hub !== null) list.hub = parseMeshHub(parsed.hub);
-  return applyNodeListExtras(list, parsed);
 }
 
 const meshProfile: CtlDecodeProfile<
@@ -218,7 +172,6 @@ const meshProfile: CtlDecodeProfile<
     if (fields.entrySid !== undefined) msg.entrySid = fields.entrySid;
     return msg;
   },
-  frame: (_fallback, fn) => fn(),
 };
 
 export function decodeMeshUplinkCtl(
@@ -231,31 +184,7 @@ export function decodeMeshUplinkCtl(
   });
 }
 
-type HubFrameCtlMessage =
-  | HubTokensMessage
-  | HubAttachmentsMessage
-  | HubForwardMessage
-  | HubWriteForwardMessage;
-type MeshCoreCtlMessage = Exclude<MeshUplinkCtlMessage, HubFrameCtlMessage>;
-
-function isHubFrameCtl(msg: MeshUplinkCtlMessage): msg is HubFrameCtlMessage {
-  return isHubFrameCtlType(msg.t);
-}
-
-function encodeMeshHubFrame(msg: HubFrameCtlMessage, legacy: boolean): Uint8Array {
-  switch (msg.t) {
-    case 'hub.tokens':
-      return encodeHubTokensMessage(msg, legacy);
-    case 'hub.attachments':
-      return encodeHubAttachmentsMessage(msg, legacy);
-    case 'hub.forward':
-      return encodeHubForwardMessage(msg, legacy);
-    case 'hub.write-forward':
-      return encodeHubWriteForwardMessage(msg, legacy);
-  }
-}
-
-function meshNodeListToWire(msg: MeshUplinkNodeList): HubUplinkCtlMessage {
+function meshNodeListToWire(msg: MeshUplinkNodeList): PeerUplinkCtlMessage {
   return {
     t: 'node.list',
     version: msg.version,
@@ -265,16 +194,12 @@ function meshNodeListToWire(msg: MeshUplinkNodeList): HubUplinkCtlMessage {
     },
     rtc: msg.rtc as { stun: string[]; turn: null },
     nodes: msg.nodes,
-    ...(msg.hub ? { hub: msg.hub } : {}),
-    ...(msg.hubs ? { hubs: msg.hubs } : {}),
-    ...(msg.writerHubId ? { writerHubId: msg.writerHubId } : {}),
-    ...(msg.writerEpoch !== undefined ? { writerEpoch: msg.writerEpoch } : {}),
   };
 }
 
 function meshKeyLogReqToWire(
   msg: Extract<MeshUplinkCtlMessage, { t: 'key.log.req' }>
-): HubUplinkCtlMessage {
+): PeerUplinkCtlMessage {
   return {
     t: 'key.log.req',
     from_seq: seqToWire(msg.from_seq),
@@ -285,7 +210,7 @@ function meshKeyLogReqToWire(
 
 function meshKeyLogResToWire(
   msg: Extract<MeshUplinkCtlMessage, { t: 'key.log.res' }>
-): HubUplinkCtlMessage {
+): PeerUplinkCtlMessage {
   return {
     t: 'key.log.res',
     records: msg.records.map((row) => ({
@@ -302,7 +227,7 @@ function meshKeyLogResToWire(
 
 function meshKeyLogAppendToWire(
   msg: Extract<MeshUplinkCtlMessage, { t: 'key.log.append' }>
-): HubUplinkCtlMessage {
+): PeerUplinkCtlMessage {
   return {
     t: 'key.log.append',
     bytes: encodeBase64url(msg.bytes),
@@ -312,7 +237,7 @@ function meshKeyLogAppendToWire(
   };
 }
 
-function meshKeyLogAckToWire(msg: MeshUplinkKeyLogAck): HubUplinkCtlMessage {
+function meshKeyLogAckToWire(msg: MeshUplinkKeyLogAck): PeerUplinkCtlMessage {
   return {
     t: 'key.log.ack',
     id: msg.id,
@@ -321,7 +246,7 @@ function meshKeyLogAckToWire(msg: MeshUplinkKeyLogAck): HubUplinkCtlMessage {
   };
 }
 
-function meshEnrollRedeemedToWire(msg: MeshUplinkEnrollRedeemed): HubUplinkCtlMessage {
+function meshEnrollRedeemedToWire(msg: MeshUplinkEnrollRedeemed): PeerUplinkCtlMessage {
   return {
     t: 'enroll.redeemed',
     certificate: encodeBase64url(msg.certificate),
@@ -332,8 +257,8 @@ function meshEnrollRedeemedToWire(msg: MeshUplinkEnrollRedeemed): HubUplinkCtlMe
   };
 }
 
-/** mesh 侧消息先归一到 hub 线的线上表示，再复用 hub 的编码 / legacy 剥字段实现。 */
-function toHubWireCtl(msg: MeshCoreCtlMessage): HubUplinkCtlMessage {
+/** mesh 侧消息先归一到 peer 线的线上表示，再复用 peer 的编码 / legacy 剥字段实现。 */
+function toPeerWireCtl(msg: MeshUplinkCtlMessage): PeerUplinkCtlMessage {
   switch (msg.t) {
     case 'auth.challenge':
     case 'auth.response':
@@ -362,6 +287,5 @@ export function encodeMeshUplinkCtl(
   msg: MeshUplinkCtlMessage,
   opts?: EncodeUplinkCtlOptions
 ): Uint8Array {
-  if (isHubFrameCtl(msg)) return encodeMeshHubFrame(msg, opts?.legacy === true);
-  return encodeHubUplinkCtl(toHubWireCtl(msg), opts);
+  return encodePeerUplinkCtl(toPeerWireCtl(msg), opts);
 }

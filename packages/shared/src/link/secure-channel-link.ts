@@ -183,7 +183,7 @@ export function byteTransportFromStream(stream: LinkStream): ByteTransport {
 }
 
 /**
- * Encrypts/decrypts mux frames over an inner byte transport (typically a hub relay stream).
+ * Encrypts/decrypts mux frames over an inner byte transport (typically a relay/peer forwarder stream).
  *
  * Interop / wire format (per encrypted mux frame):
  *   `[streamId u32 LE][op u8][flags u8][len u32 LE][ciphertext][tag 16]`

@@ -36,8 +36,6 @@ export {
   compareBytes,
   concatBytes,
   MAX_NODE_NAME_LENGTH,
-  buildAdmitHubPayload,
-  buildRetireHubPayload,
   buildRenameNodePayload,
   decodeAddPasskeyPayload,
   decodeAdmitHubPayload,
@@ -63,7 +61,6 @@ export {
   decodeSetTotpPayload,
   decodeTotpAad,
   encodeAddPasskeyPayload,
-  encodeAdmitHubPayload,
   encodeAdmitNodePayload,
   encodeAuthorization,
   encodeBase32,
@@ -78,7 +75,6 @@ export {
   encodePeerTranscript,
   encodeRemovePasskeyPayload,
   encodeResetRootPayload,
-  encodeRetireHubPayload,
   encodeRevokeNodePayload,
   encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
@@ -165,13 +161,11 @@ export {
 export type { WebCryptoEd25519KeyPair } from './webcrypto-ed25519';
 
 export {
-  HUB_AUTH_RECORD_TYPES,
   KEYLOG_RECORD_COMPAT,
   RELAY_RECORD_TYPES,
   RENAME_NODE_RECORD_TYPES,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   KEY_LOG_SIGNER_MATRIX,
-  MIN_HUB_AUTH_RECORD_VERSION,
   MIN_RENAME_NODE_RECORD_VERSION,
   MIN_READMIT_NODE_RECORD_VERSION,
   MIN_NOTIFICATION_SINK_RECORD_VERSION,
@@ -192,13 +186,11 @@ export type {
   ApplyKeyLogCtx,
   ApplyKeyLogError,
   ApplyKeyLogResult,
-  HubAuthorizationStatus,
   KeyLogEffect,
   KeyLogHead,
   KeyLogRecordCompatSpec,
   KeyLogSignedRecord,
   PasskeyRecord,
-  StoredHubAuthorization,
   StoredNodeCert,
   UserKeyState,
   VerifyKeyLogChainError,
@@ -211,18 +203,13 @@ export type {
 
 export {
   ENROLLMENT_TTL_MS,
-  JOIN_TOKEN_BYTES,
-  JOIN_TOKEN_CHARS,
   createEnrollment,
   createNodeCertificate,
-  decodeJoinToken,
-  encodeJoinToken,
   verifyNodeCertificate,
 } from './enrollment';
 export type {
   Enrollment,
   EnrollmentSigner,
-  JoinToken,
   NodeCertificate,
   PasskeySigner,
 } from './enrollment';
@@ -308,20 +295,3 @@ export {
 } from './notification-sink-record';
 export type { NotificationSinkPayload } from './notification-sink-record';
 export { applyReadmitNode, buildRootReadmitAuthorization } from './readmit-node-record';
-
-export {
-  DOMAIN_HUB_ENROLL,
-  HUB_ENROLL_PROOF_MAX_SKEW_MS,
-  HubEnrollProofSchema,
-  decodeHubEnrollProof,
-  encodeHubEnrollProof,
-  signHubEnrollProof,
-  verifyHubEnrollProof,
-} from './hub-enroll-proof';
-export type {
-  HubEnrollProof,
-  HubEnrollProofSigner,
-  SignedHubEnrollProof,
-  VerifyHubEnrollProofError,
-  VerifyHubEnrollProofResult,
-} from './hub-enroll-proof';

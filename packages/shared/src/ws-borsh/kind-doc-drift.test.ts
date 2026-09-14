@@ -59,6 +59,12 @@ function describeDiff(label: string, hexes: string[], source: Map<string, string
 }
 
 describe('kind 注册表与 ws-borsh 规范文档一致', () => {
+  test('Mesh kind 段标题不含 hub', () => {
+    const markdown = readFileSync(SPEC_PATH, 'utf8');
+    expect(markdown).toContain('### Mesh（0x0A00-0x0AFF）');
+    expect(markdown).not.toContain('### Mesh / hub（0x0A00-0x0AFF）');
+  });
+
   test('kind 编号表覆盖 kind.ts 的全部 KIND_* 且无多余项', () => {
     const code = readCodeKinds();
     const doc = readDocKinds();

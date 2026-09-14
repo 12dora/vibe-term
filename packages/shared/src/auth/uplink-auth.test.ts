@@ -12,7 +12,7 @@ const VECTOR_HEX =
   '13000000746d65782f75706c696e6b2d617574682f763111111111111111111111111111111111111111111111111111111111111111110f0000006875622e6578616d706c652e636f6d';
 
 describe('uplink-auth', () => {
-  it('pins Borsh domain + nonce[32] + hub_host so hub and node agree', () => {
+  it('pins Borsh domain + nonce[32] + hub_host (legacy field name)', () => {
     const nonce = new Uint8Array(32).fill(0x11);
     const bytes = uplinkAuthMessage(nonce, 'hub.example.com');
     expect(bytesToHex(bytes)).toBe(VECTOR_HEX);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  AdmitHubPayloadSchema,
   DOMAIN_AUTHORIZATION,
   DOMAIN_CERTIFICATE,
   DOMAIN_DELEGATION,
@@ -8,9 +9,8 @@ import {
   DOMAIN_PEER,
   DelegationSchema,
   MAX_NODE_NAME_LENGTH,
-  buildAdmitHubPayload,
+  RetireHubPayloadSchema,
   buildRenameNodePayload,
-  buildRetireHubPayload,
   bytesEqual,
   bytesToHex,
   concatBytes,
@@ -37,7 +37,6 @@ import {
   decodeSetTotpPayload,
   decodeTotpAad,
   encodeAddPasskeyPayload,
-  encodeAdmitHubPayload,
   encodeAdmitNodePayload,
   encodeAuthorization,
   encodeBase32,
@@ -52,7 +51,6 @@ import {
   encodeRemovePasskeyPayload,
   encodeRenameNodePayload,
   encodeResetRootPayload,
-  encodeRetireHubPayload,
   encodeRevokeNodePayload,
   encodeRotateRootKeepPayload,
   encodeRotateRootPayload,
@@ -423,32 +421,32 @@ describe('key-log payload schemas', () => {
     expect(revoke.reason).toBe('lost');
   });
 
-  it('admit-hub / retire-hub round-trip optional fields', () => {
+  it('legacy hub records: decode only', () => {
     const full = decodeAdmitHubPayload(
-      encodeAdmitHubPayload({
+      AdmitHubPayloadSchema.serialize({
         hub_node_id: fill(16, 0xab),
-        public_url: 'https://hub.example',
+        public_url: 'https://example.com',
         priority: 200,
       })
     );
     expect(bytesEqual(full.hub_node_id, fill(16, 0xab))).toBe(true);
-    expect(full.public_url).toBe('https://hub.example');
+    expect(full.public_url).toBe('https://example.com');
     expect(full.priority).toBe(200);
 
     const empty = decodeAdmitHubPayload(
-      buildAdmitHubPayload({ hubNodeId: fill(16, 1), publicUrl: null, priority: null })
+      AdmitHubPayloadSchema.serialize({
+        hub_node_id: fill(16, 1),
+        public_url: null,
+        priority: null,
+      })
     );
     expect(empty.public_url).toBeNull();
     expect(empty.priority).toBeNull();
 
-    const retired = decodeRetireHubPayload(buildRetireHubPayload({ hubNodeId: fill(16, 0xcd) }));
+    const retired = decodeRetireHubPayload(
+      RetireHubPayloadSchema.serialize({ hub_node_id: fill(16, 0xcd) })
+    );
     expect(bytesEqual(retired.hub_node_id, fill(16, 0xcd))).toBe(true);
-    expect(
-      bytesEqual(
-        retired.hub_node_id,
-        decodeRetireHubPayload(encodeRetireHubPayload({ hub_node_id: fill(16, 0xcd) })).hub_node_id
-      )
-    ).toBe(true);
   });
 });
 

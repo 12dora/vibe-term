@@ -230,6 +230,7 @@ export const RevokeNodePayloadSchema = b.struct({
 });
 export type RevokeNodePayload = b.infer<typeof RevokeNodePayloadSchema>;
 
+/** legacy hub records: decode only */
 export const AdmitHubPayloadSchema = b.struct({
   hub_node_id: b.bytes(16),
   public_url: b.option(b.string()),
@@ -237,6 +238,7 @@ export const AdmitHubPayloadSchema = b.struct({
 });
 export type AdmitHubPayload = b.infer<typeof AdmitHubPayloadSchema>;
 
+/** legacy hub records: decode only */
 export const RetireHubPayloadSchema = b.struct({
   hub_node_id: b.bytes(16),
 });
@@ -396,34 +398,14 @@ export function decodeRevokeNodePayload(bytes: Uint8Array): RevokeNodePayload {
   return RevokeNodePayloadSchema.deserialize(bytes);
 }
 
-export function encodeAdmitHubPayload(value: AdmitHubPayload): Uint8Array {
-  return AdmitHubPayloadSchema.serialize(value);
-}
+/** legacy hub records: decode only */
 export function decodeAdmitHubPayload(bytes: Uint8Array): AdmitHubPayload {
   return AdmitHubPayloadSchema.deserialize(bytes);
 }
 
-export function encodeRetireHubPayload(value: RetireHubPayload): Uint8Array {
-  return RetireHubPayloadSchema.serialize(value);
-}
+/** legacy hub records: decode only */
 export function decodeRetireHubPayload(bytes: Uint8Array): RetireHubPayload {
   return RetireHubPayloadSchema.deserialize(bytes);
-}
-
-export function buildAdmitHubPayload(input: {
-  hubNodeId: Uint8Array;
-  publicUrl?: string | null;
-  priority?: number | null;
-}): Uint8Array {
-  return encodeAdmitHubPayload({
-    hub_node_id: input.hubNodeId,
-    public_url: input.publicUrl ?? null,
-    priority: input.priority ?? null,
-  });
-}
-
-export function buildRetireHubPayload(input: { hubNodeId: Uint8Array }): Uint8Array {
-  return encodeRetireHubPayload({ hub_node_id: input.hubNodeId });
 }
 
 export function encodeRenameNodePayload(value: RenameNodePayload): Uint8Array {

@@ -70,8 +70,8 @@ describe('normalizeShareOrigin', () => {
   test('去掉尾部斜杠，保留端口与路径前缀', () => {
     expect(normalizeShareOrigin('https://a.example.com/')).toBe('https://a.example.com');
     expect(normalizeShareOrigin('https://a.example.com:8443//')).toBe('https://a.example.com:8443');
-    expect(normalizeShareOrigin('https://hub.example.com/n/abc/')).toBe(
-      'https://hub.example.com/n/abc'
+    expect(normalizeShareOrigin('https://relay.example.com/n/abc/')).toBe(
+      'https://relay.example.com/n/abc'
     );
     expect(normalizeShareOrigin('nope')).toBeNull();
   });
@@ -85,33 +85,25 @@ describe('rankShareOrigins', () => {
     accessUrl: url,
   });
 
-  test('按 custom > site > hub > relay > tunnel > ip 排序', () => {
+  test('按 custom > site > relay > tunnel > ip 排序', () => {
     const ranked = rankShareOrigins([
       candidate('https://ip.example.com', 'ip'),
       candidate('https://tunnel.example.com', 'tunnel'),
       candidate('https://relay.example.com', 'relay'),
-      candidate('https://hub.example.com', 'hub'),
       candidate('https://site.example.com', 'site'),
       candidate('https://custom.example.com', 'custom'),
     ]);
-    expect(ranked.map((entry) => entry.kind)).toEqual([
-      'custom',
-      'site',
-      'hub',
-      'relay',
-      'tunnel',
-      'ip',
-    ]);
+    expect(ranked.map((entry) => entry.kind)).toEqual(['custom', 'site', 'relay', 'tunnel', 'ip']);
   });
 
   test('同 kind 保持传入顺序', () => {
     const ranked = rankShareOrigins([
-      candidate('https://h2.example.com', 'hub'),
-      candidate('https://h1.example.com', 'hub'),
+      candidate('https://r2.example.com', 'relay'),
+      candidate('https://r1.example.com', 'relay'),
     ]);
     expect(ranked.map((entry) => entry.url)).toEqual([
-      'https://h2.example.com',
-      'https://h1.example.com',
+      'https://r2.example.com',
+      'https://r1.example.com',
     ]);
   });
 
@@ -120,7 +112,7 @@ describe('rankShareOrigins', () => {
       candidate('http://192.168.1.9:9663', 'ip'),
       candidate('http://localhost:9663', 'site'),
       candidate('https://a.example.com/', 'site'),
-      candidate('https://a.example.com', 'hub'),
+      candidate('https://a.example.com', 'relay'),
     ]);
     expect(ranked).toEqual([
       {

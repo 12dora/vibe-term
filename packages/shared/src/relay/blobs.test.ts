@@ -13,7 +13,7 @@ import { RelayCtlError } from './codec';
 const NODE = 'ab'.repeat(16);
 
 describe('relay 流 OPEN 首帧', () => {
-  it('与 hub 的 {to} 完全一致', () => {
+  it('编码为 {"to":"<nodeId>"}', () => {
     const bytes = encodeRelayOpenStream({ to: NODE });
     expect(new TextDecoder().decode(bytes)).toBe(`{"to":"${NODE}"}`);
     expect(decodeRelayOpenStream(bytes)).toEqual({ to: NODE });

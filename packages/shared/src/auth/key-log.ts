@@ -24,7 +24,6 @@ import {
   nodeIdToHex,
   sha256,
 } from './encoding';
-import { applyAdmitHub, applyRetireHub, retireHubIfAdmitted } from './key-log-hub';
 import { applyNotificationSink } from './notification-sink-record';
 import { applyReadmitNode } from './readmit-node-record';
 import type { StoredRelayList } from './relay-records';
@@ -49,15 +48,6 @@ export type StoredNodeCert = {
   revoked: boolean;
 };
 
-export type HubAuthorizationStatus = 'active' | 'retired';
-
-export type StoredHubAuthorization = {
-  status: HubAuthorizationStatus;
-  publicUrl: string | null;
-  priority: number | null;
-  seq: bigint;
-};
-
 export type UserKeyState = {
   rootPublicKey: Uint8Array;
   rootEpoch: number;
@@ -65,7 +55,6 @@ export type UserKeyState = {
   passkeys: Map<string, PasskeyRecord>;
   totp: SetTotpPayload | null;
   nodeCerts: Map<string, StoredNodeCert>;
-  hubAuthorizations: Map<string, StoredHubAuthorization>;
   relays: StoredRelayList | null;
   metaKeyEpoch: number;
   metaKeyEntries: WrapEntry[];
@@ -77,10 +66,8 @@ export type UserKeyState = {
 };
 
 export {
-  HUB_AUTH_RECORD_TYPES,
   KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
-  MIN_HUB_AUTH_RECORD_VERSION,
   MIN_NOTIFICATION_SINK_RECORD_VERSION,
   MIN_READMIT_NODE_RECORD_VERSION,
   MIN_RENAME_NODE_RECORD_VERSION,
@@ -202,7 +189,6 @@ export function emptyUserKeyState(
     passkeys: new Map(),
     totp: null,
     nodeCerts: new Map(),
-    hubAuthorizations: new Map(),
     relays: null,
     metaKeyEpoch: 0,
     metaKeyEntries: [],
@@ -376,7 +362,6 @@ function cloneState(state: UserKeyState): UserKeyState {
     passkeys: new Map(state.passkeys),
     totp: state.totp,
     nodeCerts: new Map(state.nodeCerts),
-    hubAuthorizations: new Map(state.hubAuthorizations),
     relays: cloneRelayList(state.relays),
     metaKeyEpoch: state.metaKeyEpoch,
     metaKeyEntries: state.metaKeyEntries.map((entry) => ({ ...entry })),
@@ -424,7 +409,6 @@ function applyRootChange(
   const effects: KeyLogEffect[] = [{ type: 'revokeAllSessions' }];
   if (clearNodeCerts) {
     state.nodeCerts = new Map();
-    state.hubAuthorizations = new Map();
     state.nodeNames = new Map();
     state.notificationSinks = new Map();
     effects.push({ type: 'clearPeerCache' });
@@ -541,7 +525,6 @@ function applyRevokeNode(state: UserKeyState, record: KeyLogRecord): ApplyKeyLog
     return { ok: false, error: 'unknown_node' };
   }
   state.nodeCerts.set(hex, { ...existing, revoked: true });
-  retireHubIfAdmitted(state, hex, record.seq);
   return {
     ok: true,
     state,
@@ -583,8 +566,8 @@ const KEY_LOG_APPLIERS: Record<KeyLogType, KeyLogApplier> = {
   },
   'admit-node': applyAdmitNode,
   'revoke-node': applyRevokeNode,
-  'admit-hub': applyAdmitHub,
-  'retire-hub': applyRetireHub,
+  'admit-hub': (state) => ({ ok: true, state, effects: [] }),
+  'retire-hub': (state) => ({ ok: true, state, effects: [] }),
   'set-relays': applyRelayKeyLogRecord,
   'meta-key': applyRelayKeyLogRecord,
   'rename-node': applyRenameNode,
@@ -629,7 +612,7 @@ export type VerifyKeyLogChainResult =
 
 /**
  * 链是自描述的：首条记录必须是自签的 `reset-root`（genesis），其 payload 给出 epoch-0 根公钥；
- * 之后每条 `rotate-root` / `rotate-root-keep` 切换验签钥。调用方（hub join）传 `expectedRootPublicKey` = join 串中的当前根公钥，
+ * 之后每条 `rotate-root` / `rotate-root-keep` 切换验签钥。调用方（relay join）传 `expectedRootPublicKey` = join 串中的当前根公钥，
  * 回放到头后必须与 `state.rootPublicKey` 一致。
  */
 export async function verifyKeyLogChain(

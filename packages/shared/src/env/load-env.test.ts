@@ -76,11 +76,11 @@ describe('applyLegacyEnvAliases', () => {
   it('把 TMEX_X 镜像到未设置的 VIBETERM_X', () => {
     const env: Record<string, string | undefined> = {
       TMEX_MASTER_KEY: 'key',
-      TMEX_ROLES: 'hub,node',
+      TMEX_ROLES: 'relay,node',
     };
     applyLegacyEnvAliases(env);
     expect(env.VIBETERM_MASTER_KEY).toBe('key');
-    expect(env.VIBETERM_ROLES).toBe('hub,node');
+    expect(env.VIBETERM_ROLES).toBe('relay,node');
     expect(env.TMEX_MASTER_KEY).toBe('key'); // 旧键保留，回滚到旧版仍可读
   });
 

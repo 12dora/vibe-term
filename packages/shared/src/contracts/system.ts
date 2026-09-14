@@ -211,9 +211,8 @@ export type MeshUninstallErrorCode =
  * 入口记录的节点长事务，随 `GET /api/mesh/nodes` 每行下发（`operation`），页面刷新后据此
  * 恢复行状态。`uninstall`：requested → uninstalling（目标已受理，随后离线）→ 由入口在该
  * 节点被吊销 / 消失时清除，或 `DELETE /api/mesh/nodes/:id/operation` 手动清除，超时自清。
- * `role-switch`：由 hub 主备切换写入，phase 由该接口定义。
  */
-export type MeshNodeOperationKind = 'uninstall' | 'role-switch';
+export type MeshNodeOperationKind = 'uninstall';
 
 export interface MeshNodeOperation {
   kind: MeshNodeOperationKind;

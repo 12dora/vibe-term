@@ -14,7 +14,7 @@ export const DEFAULT_TLS_PORT = 9443;
 export const DEFAULT_PUBLIC_HTTPS_PORT = 443;
 
 export type PortProto = 'tcp' | 'udp';
-export type PortRole = 'standalone' | 'node' | 'hub,node' | 'relay' | 'relay,node';
+export type PortRole = 'standalone' | 'node' | 'relay' | 'relay,node';
 export type PortPurpose =
   | 'gateway-http'
   | 'peer-signaling'
@@ -49,8 +49,8 @@ export type PortPlanLive = {
   publicHttpsPort: number | null;
 };
 
-const NODE_ROLES: ReadonlySet<PortRole> = new Set(['standalone', 'node', 'hub,node', 'relay,node']);
-const PUBLIC_HTTPS_ROLES: ReadonlySet<PortRole> = new Set(['hub,node', 'relay', 'relay,node']);
+const NODE_ROLES: ReadonlySet<PortRole> = new Set(['standalone', 'node', 'relay,node']);
+const PUBLIC_HTTPS_ROLES: ReadonlySet<PortRole> = new Set(['relay', 'relay,node']);
 const TURN_ROLES: ReadonlySet<PortRole> = new Set(['relay', 'relay,node']);
 
 function copyRange(range: PortRange): PortRange {

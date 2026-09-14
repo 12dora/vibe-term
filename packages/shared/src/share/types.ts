@@ -34,7 +34,7 @@ export interface ShareSettings {
   defaultOrigin: string | null;
 }
 
-export type ShareOriginKind = 'custom' | 'site' | 'hub' | 'relay' | 'tunnel' | 'ip';
+export type ShareOriginKind = 'custom' | 'site' | 'relay' | 'tunnel' | 'ip';
 
 export interface ShareOriginCandidate {
   url: string;

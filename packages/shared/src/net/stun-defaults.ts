@@ -1,5 +1,5 @@
 // 随发行版分发的内置 STUN 列表与 env 覆盖语义。安装器不再把默认值写进 app.env，
-// 节点/hub/中继在 env 未设置时直接取这里的列表，升级即生效；历史默认串用于升级时识别
+// 节点/中继在 env 未设置时直接取这里的列表，升级即生效；历史默认串用于升级时识别
 // 「装机时冻结的旧默认」并从 app.env 中移除。
 
 export const BUILTIN_STUN_SERVERS: readonly string[] = [
@@ -20,7 +20,7 @@ export type StunEnvSource = 'builtin' | 'custom' | 'disabled';
 
 export type StunEnvConfig = { servers: string[]; source: StunEnvSource };
 
-export type StunEffectiveSource = 'node-custom' | 'node-disabled' | 'hub-custom' | 'builtin';
+export type StunEffectiveSource = 'node-custom' | 'node-disabled' | 'relay-custom' | 'builtin';
 
 const DISABLE_WORDS = new Set(['none', 'off']);
 
@@ -45,7 +45,7 @@ export function isLegacyDefaultStunList(raw: string): boolean {
   return LEGACY_DEFAULT_STUN_LISTS.some((legacy) => splitStunList(legacy).join(',') === normalized);
 }
 
-/** 优先级：节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 内置列表。 */
+/** 优先级：节点自定义 > 节点禁用 > 中继下发的自定义列表 > 内置列表。 */
 export function resolveEffectiveStun(input: {
   local: StunEnvConfig;
   distributed: readonly string[] | null | undefined;
@@ -54,6 +54,6 @@ export function resolveEffectiveStun(input: {
     return { stun: [...input.local.servers], source: 'node-custom' };
   if (input.local.source === 'disabled') return { stun: [], source: 'node-disabled' };
   const distributed = input.distributed ?? [];
-  if (distributed.length > 0) return { stun: [...distributed], source: 'hub-custom' };
+  if (distributed.length > 0) return { stun: [...distributed], source: 'relay-custom' };
   return { stun: [...BUILTIN_STUN_SERVERS], source: 'builtin' };
 }

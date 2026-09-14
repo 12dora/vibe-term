@@ -61,7 +61,6 @@ describe('port-plan defaults', () => {
 
   test('defaultRtcPortRange splits ICE away from TURN on relay hosts', () => {
     expect(defaultRtcPortRange('node')).toEqual({ begin: 40000, end: 40099 });
-    expect(defaultRtcPortRange('hub,node')).toEqual({ begin: 40000, end: 40099 });
     expect(defaultRtcPortRange('standalone')).toEqual({ begin: 40000, end: 40099 });
     expect(defaultRtcPortRange('relay')).toEqual({ begin: 40050, end: 40099 });
     expect(defaultRtcPortRange('relay,node')).toEqual({ begin: 40050, end: 40099 });
@@ -72,7 +71,7 @@ describe('port-plan defaults', () => {
     expect(rolesIncludeRelay('relay,node')).toBe(true);
     expect(rolesIncludeRelay(' node, relay ')).toBe(true);
     expect(rolesIncludeRelay('node')).toBe(false);
-    expect(rolesIncludeRelay('hub,node')).toBe(false);
+    expect(rolesIncludeRelay('standalone')).toBe(false);
     expect(rolesIncludeRelay('')).toBe(false);
   });
 });
@@ -93,21 +92,6 @@ describe('portPlanForRole', () => {
       range: { begin: 40000, end: 40099 },
       envKey: 'VIBETERM_RTC_PORT_RANGE',
       requiredFor: 'wan-direct',
-    });
-  });
-
-  test('hub,node is node plus required public-https (443 when live port is null)', () => {
-    const specs = portPlanForRole('hub,node', live());
-    expect(purposes(specs)).toEqual(['public-https', 'peer-signaling', 'rtc-ice']);
-    expect(requiredByPurpose(specs)).toEqual({
-      'public-https': true,
-      'peer-signaling': true,
-      'rtc-ice': true,
-    });
-    expect(specs[0]).toMatchObject({
-      proto: 'tcp',
-      port: DEFAULT_PUBLIC_HTTPS_PORT,
-      requiredFor: 'public-entry',
     });
   });
 
@@ -240,9 +224,7 @@ describe('formatPortSpec / formatPortList', () => {
   });
 
   test('joins specs in order', () => {
-    expect(formatPortList(portPlanForRole('hub,node', live()))).toBe(
-      '443/tcp, 39001/tcp, 40000-40099/udp'
-    );
+    expect(formatPortList(portPlanForRole('node', live()))).toBe('39001/tcp, 40000-40099/udp');
     expect(formatPortList(portPlanForRole('relay', live()))).toBe(
       '443/tcp, 40000/udp, 40001-40049/udp'
     );

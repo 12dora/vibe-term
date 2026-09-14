@@ -7,24 +7,10 @@ import {
   UplinkCtlError,
   b64urlToBytes,
   bytesToB64url,
-  ctlRead,
   encodeJsonBytes,
-  hubRead,
   isRecord,
+  peerRead,
 } from './codec-fields';
-import {
-  type HubAdvertisement,
-  type HubAttachmentsMessage,
-  type HubEndpointInfo,
-  type HubForwardMessage,
-  type HubTokensMessage,
-  type HubWriteForwardMessage,
-  applyNodeListExtras,
-  encodeHubWriteForwardMessage,
-  parseHubAdvertisement,
-  parseHubs,
-  stripAttachedHubId,
-} from './codec-hub-frames';
 
 export type AuthChallengeMessage = { t: 'auth.challenge'; nonce: string };
 export type AuthResponseMessage = { t: 'auth.response'; node_id: string; sig: string };
@@ -38,7 +24,6 @@ export type NodeStatusMessage = {
   direct_capable: boolean;
   inventory: unknown;
   endpoints: unknown;
-  hub?: HubAdvertisement;
   peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
   peer_reach_epoch?: number;
 };
@@ -50,20 +35,14 @@ export type NodeListEntry = {
   inventory: unknown;
   direct_capable: boolean;
   version: string | null;
-  attachedHubId?: string;
   peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
-type NodeListHubInfo = { nodeId: string; publicUrl: string; name?: string };
 export type NodeListMessage = {
   t: 'node.list';
   version: number;
   key_log_head: { seq: number | string; hash: string };
   rtc: { stun: string[]; turn: { url: string; username: string; credential: string } | null };
   nodes: NodeListEntry[];
-  hub?: NodeListHubInfo;
-  hubs?: HubEndpointInfo[];
-  writerHubId?: string;
-  writerEpoch?: number;
 };
 export type KeyLogReqMessage = {
   t: 'key.log.req';
@@ -111,7 +90,7 @@ export type EnrollRedeemedMessage = {
   entry_sid?: string;
   already_admitted?: boolean;
 };
-export type HubUplinkCtlMessage =
+export type PeerUplinkCtlMessage =
   | AuthChallengeMessage
   | AuthResponseMessage
   | AuthOkMessage
@@ -124,13 +103,9 @@ export type HubUplinkCtlMessage =
   | KeyLogAppendMessage
   | KeyLogAckMessage
   | RtcSignalMessage
-  | EnrollRedeemedMessage
-  | HubTokensMessage
-  | HubAttachmentsMessage
-  | HubForwardMessage
-  | HubWriteForwardMessage;
+  | EnrollRedeemedMessage;
 
-function wrapHub<T>(fn: () => T): T {
+function wrapPeer<T>(fn: () => T): T {
   try {
     return fn();
   } catch (e) {
@@ -139,15 +114,7 @@ function wrapHub<T>(fn: () => T): T {
   }
 }
 
-function wrapFrame<T>(fallback: string, fn: () => T): T {
-  try {
-    return fn();
-  } catch (err) {
-    throw new UplinkCtlError(err instanceof Error ? err.message : fallback);
-  }
-}
-
-function hEndpoints(value: unknown): unknown {
+function pEndpoints(value: unknown): unknown {
   if (value === undefined || value === null) return null;
   if (Array.isArray(value) && value.length > UPLINK_CTL_MAX_ENDPOINTS) {
     throw new UplinkCtlError('too many endpoints');
@@ -155,78 +122,63 @@ function hEndpoints(value: unknown): unknown {
   return value;
 }
 
-function hTurn(value: unknown): NodeListMessage['rtc']['turn'] {
+function pTurn(value: unknown): NodeListMessage['rtc']['turn'] {
   if (value === null || value === undefined) return null;
   if (!isRecord(value)) throw new UplinkCtlError('invalid rtc.turn');
   return {
-    url: hubRead.nonEmptyStr(value.url, 'url'),
-    username: hubRead.str(value.username, 'username'),
-    credential: hubRead.str(value.credential, 'credential'),
+    url: peerRead.nonEmptyStr(value.url, 'url'),
+    username: peerRead.str(value.username, 'username'),
+    credential: peerRead.str(value.credential, 'credential'),
   };
 }
 
-function decodeHubNodeEntry(value: unknown): NodeListEntry {
+function decodePeerNodeEntry(value: unknown): NodeListEntry {
   if (!isRecord(value)) throw new UplinkCtlError('invalid node entry');
   const version = value.version;
   if (version !== null && version !== undefined && typeof version !== 'string') {
     throw new UplinkCtlError('invalid node.version');
   }
   const entry: NodeListEntry = {
-    id: hubRead.nonEmptyStr(value.id, 'id'),
-    name: hubRead.str(value.name, 'name'),
-    online: hubRead.bool(value.online, 'online'),
-    endpoints: hEndpoints(value.endpoints),
+    id: peerRead.nonEmptyStr(value.id, 'id'),
+    name: peerRead.str(value.name, 'name'),
+    online: peerRead.bool(value.online, 'online'),
+    endpoints: pEndpoints(value.endpoints),
     inventory: value.inventory ?? null,
-    direct_capable: hubRead.bool(value.direct_capable, 'direct_capable'),
+    direct_capable: peerRead.bool(value.direct_capable, 'direct_capable'),
     version: typeof version === 'string' ? version : null,
   };
-  if (value.attachedHubId !== undefined && value.attachedHubId !== null) {
-    entry.attachedHubId = hubRead.nodeId(value.attachedHubId, 'attachedHubId');
-  }
   const peerReach = parsePeerReachMap(value.peer_reach);
   if (peerReach) entry.peer_reach = peerReach;
   return entry;
 }
 
-function decodeHubNodeList(obj: Record<string, unknown>): NodeListMessage {
+function decodePeerNodeList(obj: Record<string, unknown>): NodeListMessage {
   if (!isRecord(obj.key_log_head)) throw new UplinkCtlError('invalid key_log_head');
-  const hashBytes = b64urlToBytes(hubRead.str(obj.key_log_head.hash, 'hash'), 32);
+  const hashBytes = b64urlToBytes(peerRead.str(obj.key_log_head.hash, 'hash'), 32);
   if (!isRecord(obj.rtc)) throw new UplinkCtlError('invalid rtc');
   if (!Array.isArray(obj.rtc.stun) || obj.rtc.stun.some((s) => typeof s !== 'string')) {
     throw new UplinkCtlError('invalid rtc.stun');
   }
   if (!Array.isArray(obj.nodes)) throw new UplinkCtlError('invalid nodes');
-  const msg: NodeListMessage = {
+  return {
     t: 'node.list',
-    version: hubRead.int(obj.version, 'version'),
+    version: peerRead.int(obj.version, 'version'),
     key_log_head: {
-      seq: hubRead.seqWire(obj.key_log_head.seq, 'seq'),
+      seq: peerRead.seqWire(obj.key_log_head.seq, 'seq'),
       hash: bytesToB64url(hashBytes),
     },
-    rtc: { stun: obj.rtc.stun as string[], turn: hTurn(obj.rtc.turn) },
-    nodes: obj.nodes.map(decodeHubNodeEntry),
+    rtc: { stun: obj.rtc.stun as string[], turn: pTurn(obj.rtc.turn) },
+    nodes: obj.nodes.map(decodePeerNodeEntry),
   };
-  if (obj.hub !== undefined && obj.hub !== null) {
-    if (!isRecord(obj.hub)) throw new UplinkCtlError('invalid hub');
-    const info: NodeListHubInfo = {
-      nodeId: hubRead.nonEmptyStr(obj.hub.nodeId, 'nodeId'),
-      publicUrl: hubRead.nonEmptyStr(obj.hub.publicUrl, 'publicUrl'),
-    };
-    if (obj.hub.name !== undefined && obj.hub.name !== null) {
-      info.name = hubRead.nonEmptyStr(obj.hub.name, 'name');
-    }
-    msg.hub = info;
-  }
-  return applyNodeListExtras(msg, obj);
 }
 
-const hubProfile: CtlDecodeProfile<
+const peerProfile: CtlDecodeProfile<
   string,
   number | string,
   NodeListMessage,
   EnrollRedeemedMessage
 > = {
-  readers: hubRead,
+  readers: peerRead,
   fail: (message) => new UplinkCtlError(message),
   hardMaxBytes: UPLINK_CTL_MAX_BYTES,
   onJsonError: () => new UplinkCtlError('invalid json'),
@@ -234,21 +186,21 @@ const hubProfile: CtlDecodeProfile<
   unknownType: (t) => new UplinkCtlError(`unknown t: ${t}`),
   notStringType: (value) => new UplinkCtlError(`unknown t: ${String(value)}`),
   bytes(value, field, expectedLen, maxLen) {
-    const raw = b64urlToBytes(hubRead.str(value, field), expectedLen);
+    const raw = b64urlToBytes(peerRead.str(value, field), expectedLen);
     if (maxLen !== undefined && raw.byteLength > maxLen) {
       throw new UplinkCtlError(`${field} too large`);
     }
     return bytesToB64url(raw);
   },
   text: (value, field, expectedLen) =>
-    bytesToB64url(b64urlToBytes(hubRead.str(value, field), expectedLen)),
-  nodeIdText: (value, field) => hubRead.nodeId(value, field),
+    bytesToB64url(b64urlToBytes(peerRead.str(value, field), expectedLen)),
+  nodeIdText: (value, field) => peerRead.nodeId(value, field),
   optText: (value, field) =>
-    value === undefined || value === null ? undefined : hubRead.nonEmptyStr(value, field),
-  reqText: (value, field) => hubRead.nonEmptyStr(value, field),
-  seq: (value, field) => hubRead.seqWire(value, field),
+    value === undefined || value === null ? undefined : peerRead.nonEmptyStr(value, field),
+  reqText: (value, field) => peerRead.nonEmptyStr(value, field),
+  seq: (value, field) => peerRead.seqWire(value, field),
   inventory: (value) => value ?? null,
-  endpoints: hEndpoints,
+  endpoints: pEndpoints,
   keyLogSigLen: 64,
   keepAlreadyAdmitted: true,
   keyLogRes: {
@@ -265,7 +217,7 @@ const hubProfile: CtlDecodeProfile<
     if (typeof value !== 'string') throw new UplinkCtlError(`invalid rtc.${field}`);
     return value;
   },
-  nodeList: decodeHubNodeList,
+  nodeList: decodePeerNodeList,
   enrollRedeemed(fields) {
     const msg: EnrollRedeemedMessage = {
       t: 'enroll.redeemed',
@@ -278,33 +230,16 @@ const hubProfile: CtlDecodeProfile<
     if (fields.alreadyAdmitted !== undefined) msg.already_admitted = fields.alreadyAdmitted;
     return msg;
   },
-  frame: wrapFrame,
 };
 
-export function decodeHubUplinkCtl(
+export function decodePeerUplinkCtl(
   input: Uint8Array | string,
   opts?: { allowKeyLogRes?: boolean }
-): HubUplinkCtlMessage {
-  return wrapHub(() => decodeUplinkCtl(input, hubProfile, opts));
+): PeerUplinkCtlMessage {
+  return wrapPeer(() => decodeUplinkCtl(input, peerProfile, opts));
 }
 
-function encodeHubLegacy(msg: HubUplinkCtlMessage): Uint8Array | null {
-  if (msg.t === 'node.list') {
-    const { hubs: _hubs, writerHubId: _id, writerEpoch: _epoch, ...rest } = msg;
-    return encodeJsonBytes({ ...rest, nodes: rest.nodes.map(stripAttachedHubId) });
-  }
-  if (msg.t === 'node.status') {
-    const { hub: _hub, ...rest } = msg;
-    return encodeJsonBytes(rest);
-  }
-  if (
-    msg.t === 'hub.tokens' ||
-    msg.t === 'hub.attachments' ||
-    msg.t === 'hub.forward' ||
-    msg.t === 'hub.write-forward'
-  ) {
-    return encodeJsonBytes({ t: msg.t });
-  }
+function encodePeerLegacy(msg: PeerUplinkCtlMessage): Uint8Array | null {
   if (msg.t === 'key.log.append') {
     const { force: _force, ...rest } = msg;
     return encodeJsonBytes(rest);
@@ -312,22 +247,13 @@ function encodeHubLegacy(msg: HubUplinkCtlMessage): Uint8Array | null {
   return null;
 }
 
-export function encodeHubUplinkCtl(
-  msg: HubUplinkCtlMessage,
+export function encodePeerUplinkCtl(
+  msg: PeerUplinkCtlMessage,
   opts?: EncodeUplinkCtlOptions
 ): Uint8Array {
   if (opts?.legacy === true) {
-    const legacy = encodeHubLegacy(msg);
+    const legacy = encodePeerLegacy(msg);
     if (legacy) return legacy;
-  }
-  if (msg.t === 'node.list') {
-    if (msg.hubs) parseHubs(msg.hubs);
-    if (msg.writerHubId) ctlRead.nodeId(msg.writerHubId, 'writerHubId');
-    if (msg.writerEpoch !== undefined) ctlRead.nonNegInt(msg.writerEpoch, 'writerEpoch');
-  } else if (msg.t === 'node.status' && msg.hub) {
-    parseHubAdvertisement(msg.hub);
-  } else if (msg.t === 'hub.write-forward') {
-    return encodeHubWriteForwardMessage(msg, false);
   }
   return encodeJsonBytes(msg);
 }

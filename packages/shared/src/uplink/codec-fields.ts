@@ -14,10 +14,6 @@ export const UPLINK_CTL_TYPES = [
   'key.log.ack',
   'rtc.signal',
   'enroll.redeemed',
-  'hub.tokens',
-  'hub.attachments',
-  'hub.forward',
-  'hub.write-forward',
 ] as const;
 
 export type UplinkCtlType = (typeof UPLINK_CTL_TYPES)[number];
@@ -32,32 +28,19 @@ export const UPLINK_CTL_MAX_DEPTH = 8;
 export const UPLINK_CTL_MAX_ARRAY_LEN = 1024;
 export const UPLINK_CTL_MAX_STRING_LEN = 4 * 1024;
 export const UPLINK_CTL_MAX_ENDPOINTS = 32;
-export const UPLINK_CTL_MAX_HUBS = 16;
-export const UPLINK_CTL_MAX_HUB_URL_LEN = 512;
+export const UPLINK_CTL_MAX_URL_LEN = 512;
 export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
 export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
-export const MIN_HUB_TOKENS_VERSION = '1.1.13';
-export const UPLINK_CTL_MAX_ATTACHMENT_ENTRIES = 256;
-export const HUB_ATTACHMENTS_FRAME_MAX_BYTES = 48 * 1024;
-export const HUB_WRITE_FORWARD_FRAME_MAX_BYTES = 48 * 1024;
 
-export const UPLINK_CTL_MAX_TOKEN_JSON_LEN = 16 * 1024;
 export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_BYTES = 1024 * 1024;
 
-export type HubMode = 'active' | 'standby';
 export type RtcSignalFrom = 'browser' | 'node';
 export type EncodeUplinkCtlOptions = { legacy?: boolean };
 
 export function skipsCtlBounds(t: unknown): boolean {
-  return (
-    t === 'key.log.res' ||
-    t === 'hub.tokens' ||
-    t === 'hub.attachments' ||
-    t === 'hub.forward' ||
-    t === 'hub.write-forward'
-  );
+  return t === 'key.log.res';
 }
 
 export class UplinkCtlError extends Error {
@@ -151,12 +134,11 @@ type CtlFailKind =
   | 'seq'
   | 'nodeId'
   | 'bytes'
-  | 'hubMode'
   | 'httpUrl'
   | 'tooLong'
   | 'invalid';
 
-/** 两条线共用同一套读取器，只有报错文案不同：mesh 抛裸 Error，hub 抛 UplinkCtlError。 */
+/** 两条线共用同一套读取器，只有报错文案不同：mesh 抛裸 Error，peer 抛 UplinkCtlError。 */
 export type CtlFail = (field: string, kind: CtlFailKind, detail?: string) => Error;
 
 const CTL_EXPECT: Record<CtlFailKind, string> = {
@@ -170,7 +152,6 @@ const CTL_EXPECT: Record<CtlFailKind, string> = {
   seq: 'must be a seq',
   nodeId: 'must be 32-hex',
   bytes: 'has an unexpected byte length',
-  hubMode: 'must be active|standby',
   httpUrl: 'must be an http(s) URL',
   tooLong: 'too long',
   invalid: 'is invalid',
@@ -182,11 +163,11 @@ const ctlFail: CtlFail = (field, kind, detail) => {
   return new Error(`ctl field ${field} ${CTL_EXPECT[kind]}`);
 };
 
-const HUB_MISSING_KINDS = new Set<CtlFailKind>(['string', 'boolean']);
+const PEER_MISSING_KINDS = new Set<CtlFailKind>(['string', 'boolean']);
 
-const hubFail: CtlFail = (field, kind) => {
+const peerFail: CtlFail = (field, kind) => {
   if (kind === 'nonEmpty') return new UplinkCtlError(`empty ${field}`);
-  if (HUB_MISSING_KINDS.has(kind)) return new UplinkCtlError(`missing ${field}`);
+  if (PEER_MISSING_KINDS.has(kind)) return new UplinkCtlError(`missing ${field}`);
   return new UplinkCtlError(`invalid ${field}`);
 };
 
@@ -202,11 +183,10 @@ export type CtlReaders = {
   posInt(value: unknown, field: string): number;
   /** mesh 线上 seq 用 bigint 表示。 */
   seq(value: unknown, field: string): bigint;
-  /** hub 线上 seq 保留 number|string 原始表示，只做合法性校验。 */
+  /** peer 线上 seq 保留 number|string 原始表示，只做合法性校验。 */
   seqWire(value: unknown, field: string): number | string;
   b64(value: unknown, field: string, expectedLen?: number): Uint8Array;
   nodeId(value: unknown, field: string): string;
-  hubMode(value: unknown, field: string): HubMode;
   httpUrl(value: unknown, field: string): string;
   fail: CtlFail;
 };
@@ -280,13 +260,9 @@ export function createCtlReaders(fail: CtlFail): CtlReaders {
       if (!NODE_ID_HEX.test(id)) throw fail(field, 'nodeId');
       return id.toLowerCase();
     },
-    hubMode(value, field) {
-      if (value !== 'active' && value !== 'standby') throw fail(field, 'hubMode');
-      return value;
-    },
     httpUrl(value, field) {
       const raw = str(value, field);
-      if (raw.length > UPLINK_CTL_MAX_HUB_URL_LEN) throw fail(field, 'tooLong');
+      if (raw.length > UPLINK_CTL_MAX_URL_LEN) throw fail(field, 'tooLong');
       let url: URL;
       try {
         url = new URL(raw);
@@ -301,5 +277,5 @@ export function createCtlReaders(fail: CtlFail): CtlReaders {
 
 /** mesh 解码器与跨线共享结构解析共用：报错文案为 `ctl field <字段> ...`。 */
 export const ctlRead = createCtlReaders(ctlFail);
-/** hub 解码器专用：报错文案为 `missing/empty/invalid <字段>`，且类型为 UplinkCtlError。 */
-export const hubRead = createCtlReaders(hubFail);
+/** peer 解码器专用：报错文案为 `missing/empty/invalid <字段>`，且类型为 UplinkCtlError。 */
+export const peerRead = createCtlReaders(peerFail);

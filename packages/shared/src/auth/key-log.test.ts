@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
-  buildAdmitHubPayload,
-  buildRetireHubPayload,
+  AdmitHubPayloadSchema,
+  RetireHubPayloadSchema,
   bytesEqual,
   bytesToHex,
   encodeAddPasskeyPayload,
@@ -21,7 +21,6 @@ import { createEnrollment, createNodeCertificate } from './enrollment';
 import {
   KEYLOG_RECORD_COMPAT,
   KEY_LOG_SIGNER_MATRIX,
-  MIN_HUB_AUTH_RECORD_VERSION,
   MIN_READMIT_NODE_RECORD_VERSION,
   MIN_RENAME_NODE_RECORD_VERSION,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
@@ -443,126 +442,33 @@ describe('key-log chain', () => {
     expect(revoked.effects[0]).toEqual({ type: 'revokeSessionsVia', nodeId: cert.nodeId });
   });
 
-  it('admit-hub stores authorization; retire-hub marks retired; unknown node is rejected', async () => {
+  it('admit-hub / retire-hub verify and apply as no-ops that still advance seq', async () => {
     const r = root(1);
-    let state = emptyUserKeyState(r.publicKey);
-    const enroll = await createEnrollment(r, { uid: UID, rootEpoch: 0, now: 1 });
-    const ed = generateEd25519KeyPair();
-    const x = generateX25519KeyPair();
-    const cert = createNodeCertificate(enroll.enrollSk, {
-      uid: UID,
-      edPk: ed.publicKey,
-      x25519Pk: x.publicKey,
-      enrollPk: enroll.enrollPk,
-      now: 1,
-    });
-    const missing = await commitFail(
-      state,
-      r,
-      'admit-hub',
-      buildAdmitHubPayload({
-        hubNodeId: cert.nodeId,
-        publicUrl: 'https://hub.example',
-        priority: 200,
-      })
-    );
-    expect(missing).toEqual({ ok: false, error: 'unknown_node' });
-
-    state = (
-      await commit(
-        state,
-        r,
-        'admit-node',
-        encodeAdmitNodePayload({
-          authorization_bytes: enroll.authorizationBytes,
-          authorization_sig: enroll.authorizationSig,
-          certificate_bytes: cert.certificateBytes,
-          cert_sig: cert.certSig,
-        })
-      )
-    ).state;
-
+    const state = emptyUserKeyState(r.publicKey);
+    const before = state.head.seq;
     const admitted = await commit(
       state,
       r,
       'admit-hub',
-      buildAdmitHubPayload({
-        hubNodeId: cert.nodeId,
-        publicUrl: 'https://hub.example',
+      AdmitHubPayloadSchema.serialize({
+        hub_node_id: new Uint8Array(16).fill(1),
+        public_url: 'https://example.com',
         priority: 200,
       })
     );
-    state = admitted.state;
-    const hex = nodeIdToHex(cert.nodeId);
-    expect(state.hubAuthorizations.get(hex)).toEqual({
-      status: 'active',
-      publicUrl: 'https://hub.example',
-      priority: 200,
-      seq: state.head.seq,
-    });
-
-    const updated = await commit(
-      state,
-      r,
-      'admit-hub',
-      buildAdmitHubPayload({ hubNodeId: cert.nodeId, publicUrl: 'https://hub-b.example' })
-    );
-    state = updated.state;
-    expect(state.hubAuthorizations.get(hex)?.publicUrl).toBe('https://hub-b.example');
-    expect(state.hubAuthorizations.get(hex)?.priority).toBe(200);
+    expect(admitted.state.head.seq).toBe(before + 1n);
+    expect(admitted.effects).toEqual([]);
+    expect('hubAuthorizations' in admitted.state).toBe(false);
 
     const retired = await commit(
-      state,
+      admitted.state,
       r,
       'retire-hub',
-      buildRetireHubPayload({ hubNodeId: cert.nodeId })
+      RetireHubPayloadSchema.serialize({ hub_node_id: new Uint8Array(16).fill(1) })
     );
-    expect(retired.state.hubAuthorizations.get(hex)?.status).toBe('retired');
-
-    const unknownRetire = await commitFail(
-      emptyUserKeyState(r.publicKey),
-      r,
-      'retire-hub',
-      buildRetireHubPayload({ hubNodeId: new Uint8Array(16).fill(9) })
-    );
-    expect(unknownRetire).toEqual({ ok: false, error: 'unknown_node' });
-  });
-
-  it('revoke-node of an admitted hub also retires the authorization', async () => {
-    const r = root(1);
-    let state = emptyUserKeyState(r.publicKey);
-    const enroll = await createEnrollment(r, { uid: UID, rootEpoch: 0, now: 1 });
-    const ed = generateEd25519KeyPair();
-    const x = generateX25519KeyPair();
-    const cert = createNodeCertificate(enroll.enrollSk, {
-      uid: UID,
-      edPk: ed.publicKey,
-      x25519Pk: x.publicKey,
-      enrollPk: enroll.enrollPk,
-      now: 1,
-    });
-    state = (
-      await commit(
-        state,
-        r,
-        'admit-node',
-        encodeAdmitNodePayload({
-          authorization_bytes: enroll.authorizationBytes,
-          authorization_sig: enroll.authorizationSig,
-          certificate_bytes: cert.certificateBytes,
-          cert_sig: cert.certSig,
-        })
-      )
-    ).state;
-    state = (await commit(state, r, 'admit-hub', buildAdmitHubPayload({ hubNodeId: cert.nodeId })))
-      .state;
-    const revoked = await commit(
-      state,
-      r,
-      'revoke-node',
-      encodeRevokeNodePayload({ node_id: cert.nodeId, reason: 'lost' })
-    );
-    expect(revoked.state.hubAuthorizations.get(nodeIdToHex(cert.nodeId))?.status).toBe('retired');
+    expect(retired.state.head.seq).toBe(before + 2n);
+    expect(retired.effects).toEqual([]);
+    expect('hubAuthorizations' in retired.state).toBe(false);
   });
 
   it('verifyKeyLogChain walks from genesis and switches keys on rotate-root', async () => {
@@ -767,15 +673,13 @@ describe('signer matrix', () => {
     expect(KEY_LOG_SIGNER_MATRIX['retire-hub']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['rename-node']).toEqual(['root', 'passkey']);
     expect(KEY_LOG_SIGNER_MATRIX['readmit-node']).toEqual(['root', 'passkey']);
-    expect(MIN_HUB_AUTH_RECORD_VERSION).toBe('1.1.13');
     expect(MIN_ROTATE_ROOT_KEEP_RECORD_VERSION).toBe('1.1.16');
-    expect(KEYLOG_RECORD_COMPAT['admit-hub']?.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
-    expect(KEYLOG_RECORD_COMPAT['retire-hub']?.minVersion).toBe(MIN_HUB_AUTH_RECORD_VERSION);
+    expect(KEYLOG_RECORD_COMPAT['admit-hub']).toBeUndefined();
+    expect(KEYLOG_RECORD_COMPAT['retire-hub']).toBeUndefined();
     expect(KEYLOG_RECORD_COMPAT['rotate-root-keep']?.minVersion).toBe(
       MIN_ROTATE_ROOT_KEEP_RECORD_VERSION
     );
     expect(KEYLOG_RECORD_COMPAT['rotate-root-keep']?.allowForce).toBe(false);
-    expect(KEYLOG_RECORD_COMPAT['admit-hub']?.allowForce).toBe(true);
     expect(KEYLOG_RECORD_COMPAT['rename-node']).toEqual({
       minVersion: MIN_RENAME_NODE_RECORD_VERSION,
       allowForce: false,
@@ -903,10 +807,7 @@ describe('reset-root vs rotate-root membership', () => {
         })
       )
     ).state;
-    state = (await commit(state, r, 'admit-hub', buildAdmitHubPayload({ hubNodeId: cert.nodeId })))
-      .state;
     expect(state.nodeCerts.size).toBe(1);
-    expect(state.hubAuthorizations.size).toBe(1);
 
     const rotated = await commit(
       state,
@@ -915,7 +816,6 @@ describe('reset-root vs rotate-root membership', () => {
       encodeRotateRootPayload({ root_public_key: newRoot.publicKey, kdf_params: KDF })
     );
     expect(rotated.state.nodeCerts.size).toBe(1);
-    expect(rotated.state.hubAuthorizations.size).toBe(1);
     expect(rotated.effects).toEqual([{ type: 'revokeAllSessions' }]);
 
     const resetRecord = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -933,7 +833,6 @@ describe('reset-root vs rotate-root membership', () => {
     expect(reset.ok).toBe(true);
     if (reset.ok) {
       expect(reset.state.nodeCerts.size).toBe(0);
-      expect(reset.state.hubAuthorizations.size).toBe(0);
       expect(reset.state.passkeys.size).toBe(0);
       expect(reset.effects).toEqual([{ type: 'revokeAllSessions' }, { type: 'clearPeerCache' }]);
     }
@@ -948,7 +847,7 @@ const SAMPLE_TOTP = {
 };
 
 describe('rotate-root-keep', () => {
-  it('keeps passkeys, totp, certs and hub auths; emits no effects', async () => {
+  it('keeps passkeys, totp and certs; emits no effects', async () => {
     const oldRoot = root(1);
     const newRoot = root(2);
     let state = emptyUserKeyState(oldRoot.publicKey);
@@ -977,10 +876,6 @@ describe('rotate-root-keep', () => {
         })
       )
     ).state;
-    state = (
-      await commit(state, oldRoot, 'admit-hub', buildAdmitHubPayload({ hubNodeId: cert.nodeId }))
-    ).state;
-
     const nextSeq = state.head.seq + 1n;
     const wrapped = {
       alg: 'A256GCM',
@@ -1005,7 +900,6 @@ describe('rotate-root-keep', () => {
     expect(rotated.state.totp?.alg).toBe('A256GCM');
     expect(bytesEqual(rotated.state.totp?.tag ?? new Uint8Array(), wrapped.tag)).toBe(true);
     expect(rotated.state.nodeCerts.size).toBe(1);
-    expect(rotated.state.hubAuthorizations.size).toBe(1);
     expect(rotated.effects).toEqual([]);
 
     const stale = buildKeyLogRecord(rotated.state.head, rotated.state.rootEpoch, {

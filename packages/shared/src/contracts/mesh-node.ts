@@ -2,7 +2,6 @@
 // 直连失败码是对外契约（`nodes.badge.failure.<code>`），改动必须连带改三语文案。
 
 import type { MeshPortReachCode, PortPurpose, PortRange } from '../net/port-plan';
-import type { HubMode } from '../uplink/codec-fields';
 import type { MeshNodeOperation } from './system';
 
 export type MeshNodeReach = 'lan' | 'wan' | 'relay' | null;
@@ -94,7 +93,7 @@ export interface MeshNode {
   online: boolean;
   /**
    * entry ↔ node 的到达路径：`lan`（对端地址为私网/本机）、`wan`（公网直连）、
-   * `relay`（经 hub 中转）、null（不可达）。
+   * `relay`（relayed / forwarded）、null（不可达）。
    */
   reach: MeshNodeReach;
   /** 实际 peer link 承载。 */
@@ -103,9 +102,9 @@ export interface MeshNode {
   rttMs?: number | null;
   /** `transport==='relay'` 时实际经过的中继公网 URL；直连或未知为缺省 / null。 */
   viaRelay?: string | null;
-  /** 对端当前在线的中继 URL；hub 模式不下发，多中继下可能为空数组。 */
+  /** 对端当前在线的中继 URL；多中继下可能为空数组。 */
   relayPresence?: string[];
-  /** 当前链路的对端地址：`ws-secure` / `dc` 为对端主机，`relay` 为 hub 主机；未知为 null。 */
+  /** 当前链路的对端地址：`ws-secure` / `dc` 为对端主机，`relay` 为中继主机；未知为 null。 */
   peerAddress?: string | null;
   /** 当前这条链路建立的时刻（epoch 毫秒）；未知为 null。 */
   linkSinceAt?: number | null;
@@ -121,13 +120,7 @@ export interface MeshNode {
   direct_capable: boolean;
   inventory?: unknown;
   loggedIn: boolean;
-  /** 该 node 是否是 hub 机（来自 hub 下发的 `node.list`，node 侧持久化）。 */
-  isHub?: boolean;
-  /** hub 机的主 / 备身份；非 hub 或旧后端不下发。 */
-  hubMode?: HubMode;
-  /** 该 node 当前挂载的 hub；旧后端不下发。 */
-  attachedHubId?: string;
-  /** 入口记录的进行中长事务（卸载 / 主备切换）；无则缺省或 null。 */
+  /** 入口记录的进行中长事务（卸载）；无则缺省或 null。 */
   operation?: MeshNodeOperation | null;
   /** 入口本机暂停了该成员。缺省 / 旧网关 / self 视为 false。 */
   paused?: boolean;

@@ -11,43 +11,8 @@ import {
   skipsCtlBounds,
   utf8ByteLength,
 } from './codec-fields';
-import {
-  type HubAdvertisement,
-  type HubAttachmentsMessage,
-  type HubForwardMessage,
-  type HubTokensMessage,
-  type HubWriteForwardMessage,
-  parseHubAdvertisement,
-  parseHubAttachmentsMessage,
-  parseHubForwardMessage,
-  parseHubTokensMessage,
-  parseHubWriteForwardMessage,
-} from './codec-hub-frames';
 
-export type HubFrameCtlType =
-  | 'hub.tokens'
-  | 'hub.attachments'
-  | 'hub.forward'
-  | 'hub.write-forward';
-export type CoreCtlType = Exclude<UplinkCtlType, HubFrameCtlType>;
-export type HubFrameCtlMessage =
-  | HubTokensMessage
-  | HubAttachmentsMessage
-  | HubForwardMessage
-  | HubWriteForwardMessage;
-
-const HUB_FRAME_TYPES = new Set<string>([
-  'hub.tokens',
-  'hub.attachments',
-  'hub.forward',
-  'hub.write-forward',
-]);
-
-export function isHubFrameCtlType(t: UplinkCtlType): t is HubFrameCtlType {
-  return HUB_FRAME_TYPES.has(t);
-}
-
-/** hub 线以 b64url 字符串 + number|string seq 承载，mesh 线以 Uint8Array + bigint 承载。 */
+/** peer 线以 b64url 字符串 + number|string seq 承载，mesh 线以 Uint8Array + bigint 承载。 */
 export type UplinkCtlDecoded<Bytes, Seq> =
   | { t: 'auth.challenge'; nonce: string }
   | { t: 'auth.response'; node_id: string; sig: string }
@@ -61,7 +26,6 @@ export type UplinkCtlDecoded<Bytes, Seq> =
       direct_capable: boolean;
       inventory: unknown;
       endpoints: unknown;
-      hub?: HubAdvertisement;
       peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
       peer_reach_epoch?: number;
     }
@@ -83,8 +47,7 @@ export type UplinkCtlDecoded<Bytes, Seq> =
       to: string;
       sdp?: string;
       candidate?: string;
-    }
-  | HubFrameCtlMessage;
+    };
 
 export type EnrollRedeemedFields<Bytes> = {
   certificate: Bytes;
@@ -96,31 +59,31 @@ export type EnrollRedeemedFields<Bytes> = {
 };
 
 /**
- * 两条线（hub / mesh）唯一的 ctl 解码实现，差异全部收敛到这份 profile：
+ * 两条线（peer / mesh）唯一的 ctl 解码实现，差异全部收敛到这份 profile：
  * 报错类型、字节/序号的线上表示、node.list 与 enroll.redeemed 的落地形状。
  */
 export type CtlDecodeProfile<Bytes, Seq, NodeList, Enroll> = {
   readers: CtlReaders;
   fail(message: string): Error;
-  /** 超过即直接判定过大；hub 线为 UPLINK_CTL_MAX_BYTES，mesh 线为 key log 分页上限。 */
+  /** 超过即直接判定过大；peer 线为 UPLINK_CTL_MAX_BYTES，mesh 线为 key log 分页上限。 */
   hardMaxBytes: number;
   onJsonError(err: unknown): Error;
   notObject: string;
   unknownType(t: string): Error;
-  /** `t` 不是字符串时的报错：hub 线并入 unknown t，mesh 线视作「不是带 t 的对象」。 */
+  /** `t` 不是字符串时的报错：peer 线并入 unknown t，mesh 线视作「不是带 t 的对象」。 */
   notStringType(value: unknown): Error;
   bytes(value: unknown, field: string, expectedLen?: number, maxLen?: number): Bytes;
   /** b64url 字段但本线以字符串承载（auth.challenge / auth.response）。 */
   text(value: unknown, field: string, expectedLen?: number): string;
   nodeIdText(value: unknown, field: string): string;
-  /** 可选字符串字段（id / error / entry_sid）：hub 线拒空串，mesh 线丢弃空串。 */
+  /** 可选字符串字段（id / error / entry_sid）：peer 线拒空串，mesh 线丢弃空串。 */
   optText(value: unknown, field: string): string | undefined;
-  /** 必填字符串字段：hub 线要求非空，mesh 线原样接受。 */
+  /** 必填字符串字段：peer 线要求非空，mesh 线原样接受。 */
   reqText(value: unknown, field: string): string;
   seq(value: unknown, field: string): Seq;
   inventory(value: unknown): unknown;
   endpoints(value: unknown): unknown;
-  /** hub 线额外校验 key log 签名长度。 */
+  /** peer 线额外校验 key log 签名长度。 */
   keyLogSigLen?: number;
   /** key.log.res 记录的报错文案与字段标签两条线不同。 */
   keyLogRes: {
@@ -130,17 +93,16 @@ export type CtlDecodeProfile<Bytes, Seq, NodeList, Enroll> = {
   };
   rtcFrom(value: unknown): 'browser' | 'node';
   optSignalText(value: unknown, field: 'sdp' | 'candidate'): string | undefined;
-  /** 只有 hub 线落地 enroll.redeemed 的 already_admitted。 */
+  /** 只有 peer 线落地 enroll.redeemed 的 already_admitted。 */
   keepAlreadyAdmitted?: boolean;
   nodeList(parsed: Record<string, unknown>): NodeList;
   enrollRedeemed(fields: EnrollRedeemedFields<Bytes>): Enroll;
-  frame<T>(fallback: string, fn: () => T): T;
 };
 
 type AnyProfile<B, S, NL, ER> = CtlDecodeProfile<B, S, NL, ER>;
 
 export type DecodeUplinkCtlOptions = {
-  /** hub 线默认拒收 key.log.res，只有主动发起过请求的连接才放行。 */
+  /** peer 线默认拒收 key.log.res，只有主动发起过请求的连接才放行。 */
   allowKeyLogRes?: boolean;
   /** mesh 线放行超尺寸 key.log.res 的唯一凭据：请求 id 必须匹配。 */
   pendingKeyLogId?: string;
@@ -207,9 +169,6 @@ function decodeNodeStatus<B, S, NL, ER>(
     inventory: p.inventory(parsed.inventory),
     endpoints: p.endpoints(parsed.endpoints),
   };
-  if (parsed.hub !== undefined && parsed.hub !== null) {
-    status.hub = parseHubAdvertisement(parsed.hub);
-  }
   const peerReach = parsePeerReachMap(parsed.peer_reach);
   if (peerReach) status.peer_reach = peerReach;
   const reachEpoch = parsePeerReachEpoch(parsed.peer_reach_epoch);
@@ -359,26 +318,9 @@ function decodeEnrollRedeemed<B, S, NL, ER>(
   return p.enrollRedeemed(fields);
 }
 
-function decodeHubFrameCtl<B, S, NL, ER>(
-  t: HubFrameCtlType,
-  parsed: Record<string, unknown>,
-  p: AnyProfile<B, S, NL, ER>
-): HubFrameCtlMessage {
-  switch (t) {
-    case 'hub.tokens':
-      return p.frame('invalid hub.tokens', () => parseHubTokensMessage(parsed));
-    case 'hub.attachments':
-      return p.frame('invalid hub.attachments', () => parseHubAttachmentsMessage(parsed));
-    case 'hub.forward':
-      return p.frame('invalid hub.forward', () => parseHubForwardMessage(parsed));
-    case 'hub.write-forward':
-      return p.frame('invalid hub.write-forward', () => parseHubWriteForwardMessage(parsed));
-  }
-}
-
 /** 穷举 switch 是刻意的：新增 ctl 类型必须在此显式落地，表驱动会掩盖顺序语义。 */
 function decodeCoreCtl<B, S, NL, ER>(
-  t: CoreCtlType,
+  t: UplinkCtlType,
   parsed: Record<string, unknown>,
   p: AnyProfile<B, S, NL, ER>
 ): UplinkCtlDecoded<B, S> | NL | ER {
@@ -423,6 +365,5 @@ export function decodeUplinkCtl<B, S, NL, ER>(
 ): UplinkCtlDecoded<B, S> | NL | ER {
   const parsed = prepareCtl(input, profile, opts);
   const t = parsed.t as UplinkCtlType;
-  if (isHubFrameCtlType(t)) return decodeHubFrameCtl(t, parsed, profile);
   return decodeCoreCtl(t, parsed, profile);
 }

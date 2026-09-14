@@ -270,7 +270,13 @@ describe('relay ctl 防御性校验', () => {
   it('拒绝非法 from / status / reason 枚举', () => {
     expect(() =>
       decodeRelayCtl(
-        JSON.stringify({ t: 'relay.rtc', rtcSession: 's', from: 'hub', to: NODE_A, enc: ENVELOPE })
+        JSON.stringify({
+          t: 'relay.rtc',
+          rtcSession: 's',
+          from: 'ghost',
+          to: NODE_A,
+          enc: ENVELOPE,
+        })
       )
     ).toThrow(RelayCtlError);
     expect(() =>

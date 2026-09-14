@@ -4,8 +4,6 @@
 import type { KeyLogType } from './encoding';
 import { MIN_RELAY_RECORD_VERSION } from './relay-records';
 
-/** 写入 `admit-hub` / `retire-hub` 前，所有未吊销节点须达到该版本，否则旧节点无法解码新记录。 */
-export const MIN_HUB_AUTH_RECORD_VERSION = '1.1.13';
 /** 写入 `rotate-root-keep` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
 export const MIN_ROTATE_ROOT_KEEP_RECORD_VERSION = '1.1.16';
 /** 写入 `rename-node` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
@@ -15,7 +13,6 @@ export const MIN_READMIT_NODE_RECORD_VERSION = '1.1.26';
 /** 写入 `notification-sink` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
 export const MIN_NOTIFICATION_SINK_RECORD_VERSION = '1.1.39';
 export const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
-export const HUB_AUTH_RECORD_TYPES = ['admit-hub', 'retire-hub'] as const;
 export const ROTATE_ROOT_KEEP_RECORD_TYPES = ['rotate-root-keep'] as const;
 
 export type KeyLogRecordCompatSpec = {
@@ -49,8 +46,6 @@ export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRec
     allowForce: false,
     failClosedUncached: true,
   },
-  'admit-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
-  'retire-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
   'rotate-root-keep': {
     minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
     allowForce: false,

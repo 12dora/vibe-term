@@ -63,7 +63,7 @@ export function releaseApiUrl(version: string): string {
 }
 
 /**
- * hub 向远端节点推包时选择资产名：目标节点版本低于 2.0.0 的只认旧名
+ * 向远端节点推包时选择资产名：目标节点版本低于 2.0.0 的只认旧名
  * （旧代码硬校验 `package.json.name === 'tmex-cli'`、`bin/tmex.js`、按精确文件名查 SHA256SUMS）。
  * 版本未知时保守使用旧名——旧名资产新旧节点都能处理。
  */

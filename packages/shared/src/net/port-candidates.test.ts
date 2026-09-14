@@ -143,17 +143,17 @@ describe('probeAddressPorts', () => {
   });
 
   test('443 wins inside the grace window without touching candidates', async () => {
-    const { fetchImpl, seen } = fakeFetch([{ port: 443, body: { status: 'ok' } }]);
-    const result = await probeAddressPorts('hub.example.com', {
-      kind: 'hub',
+    const { fetchImpl, seen } = fakeFetch([{ port: 443, body: { ok: true } }]);
+    const result = await probeAddressPorts('relay.example.com', {
+      kind: 'relay',
       fetchImpl,
       ...FAST,
     });
-    expect(result.url).toBe('https://hub.example.com');
+    expect(result.url).toBe('https://relay.example.com');
     expect(result.port).toBe(443);
     expect(result.explicit).toBe(false);
     expect(result.triedPorts).toEqual([443]);
-    expect(seen).toEqual(['443/healthz']);
+    expect(seen).toEqual(['443/api/relay/health']);
   });
 
   test('dead 443 falls through to a suggested candidate port', async () => {
@@ -183,19 +183,13 @@ describe('probeAddressPorts', () => {
     expect(result.port).toBe(8443);
   });
 
-  test('hub probe rejects a relay-shaped body', async () => {
-    const { fetchImpl } = fakeFetch([{ port: 443, body: { ok: true } }]);
-    const result = await probeAddressPorts('hub.example.com', {
-      kind: 'hub',
+  test('non-2xx never wins', async () => {
+    const { fetchImpl } = fakeFetch([{ port: 443, body: { ok: true }, status: 503 }]);
+    const result = await probeAddressPorts('relay.example.com', {
+      kind: 'relay',
       fetchImpl,
       ...FAST,
     });
-    expect(result.url).toBeNull();
-  });
-
-  test('non-2xx never wins', async () => {
-    const { fetchImpl } = fakeFetch([{ port: 443, body: { status: 'ok' }, status: 503 }]);
-    const result = await probeAddressPorts('hub.example.com', { kind: 'hub', fetchImpl, ...FAST });
     expect(result.url).toBeNull();
   });
 
@@ -215,15 +209,15 @@ describe('probeAddressPorts', () => {
   });
 
   test('443 answering after the grace window still wins over silent candidates', async () => {
-    const { fetchImpl } = fakeFetch([{ port: 443, delayMs: 40, body: { status: 'ok' } }]);
-    const result = await probeAddressPorts('hub.example.com', {
-      kind: 'hub',
+    const { fetchImpl } = fakeFetch([{ port: 443, delayMs: 40, body: { ok: true } }]);
+    const result = await probeAddressPorts('relay.example.com', {
+      kind: 'relay',
       fetchImpl,
       timeoutMs: 200,
       graceMs: 10,
       staggerMs: 2,
     });
-    expect(result.url).toBe('https://hub.example.com');
+    expect(result.url).toBe('https://relay.example.com');
     expect(result.port).toBe(443);
   });
 

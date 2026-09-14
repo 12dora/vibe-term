@@ -18,14 +18,14 @@ describe('share url', () => {
   });
 
   test('buildShareUrl 带节点前缀，前缀自动补斜杠并去尾斜杠', () => {
-    expect(buildShareUrl('https://hub.example.com', '/n/node1', 'sid')).toBe(
-      'https://hub.example.com/n/node1/s/sid'
+    expect(buildShareUrl('https://share.example.com', '/n/node1', 'sid')).toBe(
+      'https://share.example.com/n/node1/s/sid'
     );
-    expect(buildShareUrl('https://hub.example.com/', 'n/node1/', 'sid')).toBe(
-      'https://hub.example.com/n/node1/s/sid'
+    expect(buildShareUrl('https://share.example.com/', 'n/node1/', 'sid')).toBe(
+      'https://share.example.com/n/node1/s/sid'
     );
-    expect(buildShareUrl('https://hub.example.com', '', 'sid')).toBe(
-      'https://hub.example.com/s/sid'
+    expect(buildShareUrl('https://share.example.com', '', 'sid')).toBe(
+      'https://share.example.com/s/sid'
     );
   });
 });

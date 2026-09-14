@@ -83,26 +83,26 @@ describe('resolveEffectiveStun', () => {
   const builtin = { servers: [...BUILTIN_STUN_SERVERS], source: 'builtin' as const };
   const custom = { servers: ['stun:node:3478'], source: 'custom' as const };
   const disabled = { servers: [], source: 'disabled' as const };
-  const hub = ['stun:hub:3478'];
+  const distributed = ['stun:relay:3478'];
 
-  test('node custom wins over hub list', () => {
-    expect(resolveEffectiveStun({ local: custom, distributed: hub })).toEqual({
+  test('node custom wins over distributed list', () => {
+    expect(resolveEffectiveStun({ local: custom, distributed })).toEqual({
       stun: ['stun:node:3478'],
       source: 'node-custom',
     });
   });
 
-  test('node disabled yields an empty list even if hub sent servers', () => {
-    expect(resolveEffectiveStun({ local: disabled, distributed: hub })).toEqual({
+  test('node disabled yields an empty list even if a relay sent servers', () => {
+    expect(resolveEffectiveStun({ local: disabled, distributed })).toEqual({
       stun: [],
       source: 'node-disabled',
     });
   });
 
-  test('non-empty distributed list is hub-custom when local is builtin', () => {
-    expect(resolveEffectiveStun({ local: builtin, distributed: hub })).toEqual({
-      stun: ['stun:hub:3478'],
-      source: 'hub-custom',
+  test('non-empty distributed list is relay-custom when local is builtin', () => {
+    expect(resolveEffectiveStun({ local: builtin, distributed })).toEqual({
+      stun: ['stun:relay:3478'],
+      source: 'relay-custom',
     });
   });
 
