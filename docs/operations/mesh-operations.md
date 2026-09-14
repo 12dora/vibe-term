@@ -262,7 +262,7 @@ node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请�
 
 ### 改密
 
-日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；中继模式下，未出现在 `peer_cache` 的未吊销证书也按版本未知阻断。该类型不允许 `x-vibeterm-force-keylog` 绕过，以免旧节点按未知类型丢弃记录、造成状态分裂。
+日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；中继模式下，未出现在 `peer_cache` 的未吊销证书也按版本未知阻断。该版本门没有绕过手段，以免旧节点按未知类型丢弃记录、造成状态分裂。
 
 `rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。两条 CLI 路径对照：
 
