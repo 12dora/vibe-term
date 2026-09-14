@@ -8,6 +8,7 @@ import {
   type EnrollPasswordDraft,
   RelayEnrollPasswordDialogBody,
   emptyEnrollPasswordDraft,
+  enrollPasswordError,
   enrollPasswordErrorKey,
   parseEnrollPasswordDraft,
   rotateEnrollPasswordDraft,
@@ -20,8 +21,15 @@ function draft(patch: Partial<EnrollPasswordDraft> = {}): EnrollPasswordDraft {
 }
 
 describe('parseEnrollPasswordDraft', () => {
-  test('已知：省略 current；空 next 即清除；默认 keep', () => {
+  test('已知：空 next 且未勾选清除是校验错误', () => {
     expect(parseEnrollPasswordDraft(draft(), true)).toEqual({
+      ok: false,
+      errorKey: 'relay.tenant.enrollPassword.errors.next_required',
+    });
+  });
+
+  test('已知：勾选清除后空 next 才是清除', () => {
+    expect(parseEnrollPasswordDraft(draft({ clear: true }), true)).toEqual({
       ok: true,
       next: null,
       mode: 'keep',
@@ -33,17 +41,15 @@ describe('parseEnrollPasswordDraft', () => {
     });
   });
 
-  test('未知：带上 current（可空）', () => {
+  test('未知：当前密码必填', () => {
+    expect(parseEnrollPasswordDraft(draft({ current: '', next: 'newpassw' }), false)).toEqual({
+      ok: false,
+      errorKey: 'relay.tenant.enrollPassword.errors.current_required',
+    });
     expect(parseEnrollPasswordDraft(draft({ current: 'old', next: 'newpassw' }), false)).toEqual({
       ok: true,
       current: 'old',
       next: 'newpassw',
-      mode: 'keep',
-    });
-    expect(parseEnrollPasswordDraft(draft({ current: '' }), false)).toEqual({
-      ok: true,
-      current: '',
-      next: null,
       mode: 'keep',
     });
   });
@@ -73,9 +79,28 @@ describe('enrollPasswordErrorKey', () => {
     expect(enrollPasswordErrorKey(new RelayApiError('relay_not_attached', 'x', 409))).toBe(
       'relay.tenant.enrollPassword.errors.relay_not_attached'
     );
+    expect(enrollPasswordErrorKey(new RelayApiError('RELAY_RATE_LIMITED', 'x', 429))).toBe(
+      'relay.tenant.enrollPassword.errors.relay_rate_limited'
+    );
+    expect(enrollPasswordErrorKey(new RelayApiError('UNAUTHORIZED', 'x', 401))).toBe(
+      'relay.tenant.enrollPassword.errors.unauthorized'
+    );
+    expect(enrollPasswordErrorKey(new RelayApiError('RELAY_UNAUTHORIZED', 'x', 401))).toBe(
+      'relay.tenant.enrollPassword.errors.unauthorized'
+    );
+    expect(enrollPasswordErrorKey(new RelayApiError('MALFORMED', 'x', 400))).toBe(
+      'relay.tenant.enrollPassword.errors.malformed'
+    );
+    expect(enrollPasswordErrorKey(new RelayApiError('INVALID_URL', 'x', 400))).toBe(
+      'relay.tenant.enrollPassword.errors.malformed'
+    );
     expect(enrollPasswordErrorKey(new RelayApiError('whatever', 'x', 500))).toBe(
       'relay.tenant.enrollPassword.errors.relay_unreachable'
     );
+    expect(enrollPasswordError(new RelayApiError('whatever', 'x', 400))).toEqual({
+      key: 'relay.tenant.enrollPassword.errors.unknown',
+      params: { code: 'whatever' },
+    });
   });
 });
 
@@ -98,7 +123,23 @@ describe('rotateEnrollPasswordDraft', () => {
     expect(calls).toEqual([{ url: 'https://r.example', next: 'newpassw', mode: 'kick' }]);
   });
 
-  test('未知时带 current；空 next 为清除', async () => {
+  test('未勾选清除的空 next 不发请求', async () => {
+    let called = 0;
+    const api = {
+      rotateEnrollPassword: () => {
+        called += 1;
+        return Promise.resolve({ ok: true, passwordEpoch: 1 });
+      },
+    } as unknown as RelayTenantApi;
+    const result = await rotateEnrollPasswordDraft('https://r.example', draft(), true, api);
+    expect(result).toEqual({
+      ok: false,
+      key: 'relay.tenant.enrollPassword.errors.next_required',
+    });
+    expect(called).toBe(0);
+  });
+
+  test('未知时带 current；勾选清除后空 next 为清除', async () => {
     const calls: unknown[] = [];
     const api = {
       rotateEnrollPassword: (body: unknown) => {
@@ -108,7 +149,7 @@ describe('rotateEnrollPasswordDraft', () => {
     } as unknown as RelayTenantApi;
     const result = await rotateEnrollPasswordDraft(
       'https://r.example',
-      draft({ current: 'old' }),
+      draft({ current: 'old', clear: true }),
       false,
       api
     );
@@ -132,7 +173,7 @@ describe('rotateEnrollPasswordDraft', () => {
     );
     expect(result).toEqual({
       ok: false,
-      errorKey: 'relay.tenant.enrollPassword.errors.relay_password_too_short',
+      key: 'relay.tenant.enrollPassword.errors.relay_password_too_short',
     });
     expect(called).toBe(0);
   });
@@ -146,7 +187,7 @@ describe('rotateEnrollPasswordDraft', () => {
       await rotateEnrollPasswordDraft('https://r.example', draft({ next: 'abcdefgh' }), true, api)
     ).toEqual({
       ok: false,
-      errorKey: 'relay.tenant.enrollPassword.errors.relay_password_invalid',
+      key: 'relay.tenant.enrollPassword.errors.relay_password_invalid',
     });
   });
 });
@@ -157,7 +198,7 @@ describe('RelayEnrollPasswordDialogBody', () => {
       <RelayEnrollPasswordDialogBody
         draft={draft()}
         known={false}
-        errorKey={null}
+        error={null}
         busy={false}
         onChange={noop}
       />
@@ -165,6 +206,7 @@ describe('RelayEnrollPasswordDialogBody', () => {
     expect(html).toContain('data-testid="nodes-relay-enroll-password-body"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-current"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-next"');
+    expect(html).toContain('data-testid="nodes-relay-enroll-password-clear"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-kick"');
     expect(html).not.toContain('data-testid="nodes-relay-enroll-password-error"');
   });
@@ -174,7 +216,7 @@ describe('RelayEnrollPasswordDialogBody', () => {
       <RelayEnrollPasswordDialogBody
         draft={draft()}
         known
-        errorKey={null}
+        error={null}
         busy={false}
         onChange={noop}
       />
@@ -182,6 +224,7 @@ describe('RelayEnrollPasswordDialogBody', () => {
     expect(html).not.toContain('data-testid="nodes-relay-enroll-password-current"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-next"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-next-generate"');
+    expect(html).toContain('data-testid="nodes-relay-enroll-password-clear"');
   });
 
   test('提交失败时正文摆错误', () => {
@@ -189,7 +232,7 @@ describe('RelayEnrollPasswordDialogBody', () => {
       <RelayEnrollPasswordDialogBody
         draft={draft()}
         known
-        errorKey="relay.tenant.enrollPassword.errors.relay_password_invalid"
+        error={{ key: 'relay.tenant.enrollPassword.errors.relay_password_invalid' }}
         busy={false}
         onChange={noop}
       />

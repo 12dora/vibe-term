@@ -2393,7 +2393,7 @@
           "tip": {
             "score": "优选指数 {{value}}（越低越好）",
             "peers": "本中继在线对端 {{n}} 台",
-            "turn": "TURN {{state}}",
+            "turn": "TURN {{endpoint}} · {{state}}",
             "turnMembers": "成员探测 {{ok}}/{{total}} 可达（30 分钟内上报，不含本机）",
             "pathBest": "路径探测 {{ms}} ms"
           },
@@ -2504,9 +2504,10 @@
           "title": "修改接入密码",
           "description": "修改后新接入须用新密码。默认保留已接入节点。",
           "current": "当前接入密码",
-          "currentHint": "本机未记录该中继的接入密码，须填写当前密码。中继未设密码时留空。",
+          "currentHint": "本机未记录该中继的接入密码，须填写当前密码。",
           "next": "新接入密码",
-          "nextHint": "至少 8 个字符；留空即清除接入密码。",
+          "nextHint": "至少 8 个字符。要清除接入密码，请勾选下方选项。",
+          "clear": "清除接入密码（任何人都能接入）",
           "kick": "踢出旧令牌",
           "kickHint": "所有节点的旧令牌立即失效，须重新输入接入密码。",
           "done": "接入密码已修改。",
@@ -2519,7 +2520,13 @@
             "relay_password_too_short": "新密码至少 8 个字符。",
             "relay_members_offline": "仍有成员离线，无法作废旧令牌。",
             "relay_unreachable": "无法连接该中继。",
-            "relay_not_attached": "本机未接入该中继。"
+            "relay_not_attached": "本机未接入该中继。",
+            "relay_rate_limited": "操作过于频繁，请稍后再试。",
+            "unauthorized": "登录已失效，请重新登录。",
+            "malformed": "请求无效，请刷新页面后重试。",
+            "next_required": "请输入新接入密码，或勾选「清除接入密码」。",
+            "current_required": "请输入当前接入密码。",
+            "unknown": "修改失败：{{code}}"
           }
         },
         "errors": {

@@ -1,8 +1,8 @@
 // 中继链路行的语义层：一行该摆哪些徽标、哪些行可以「设为主中继」。纯函数，供行组件与单测共用。
 //
 // 两种形态：
-// - 单条中继 / 旧网关（`multiAttach === false`）：地址 + 状态点，多于一条时行本身是选择器。
-// - 多条同时挂载（`multiAttach === true`）：行不再是单选，默认只摆身份与延迟，「更多」里
+// - 单条中继 / 旧网关（`multiAttach === false`）：状态点 · 主机名 · 身份 · 延迟；多于一条时行是选择器。
+// - 多条同时挂载（`multiAttach === true`）：行不再是单选，默认摆身份与延迟，「更多」里
 //   收优选指数 / 对端 / TURN / 路径 / 固定态；「设为主中继」是行尾的一个动作。
 
 import { relayPeersOnlineOf, relayRoleOf, relayTurnOf } from '@/node/relay-extras';
@@ -13,16 +13,7 @@ import type {
   RelayLinkStatus,
 } from '@vibeterm/api-client/relay/tenant-api';
 import type { RelaySwitchReason } from '@vibeterm/shared/relay';
-
-/**
- * `turn:relay.example.com:3478?transport=udp` → `relay.example.com:3478`。
- * 协议与查询串对用户没有意义，认不出的地址原样展示。
- */
-export function turnEndpointLabel(url: string): string {
-  const withoutScheme = url.replace(/^turns?:/i, '');
-  const [endpoint] = withoutScheme.split('?');
-  return (endpoint ?? '').length > 0 ? (endpoint as string) : url;
-}
+import { turnEndpointText } from '../../relay/relay-turn-model';
 
 /** TURN 探测结论的文案 key：可达 / 不可达 / 未探测。 */
 export function turnProbeKey(probeOk: boolean | null): string {
@@ -41,14 +32,13 @@ export interface RelayBadgeSpec {
 export type RelayTurnChipTone = 'default' | 'warning' | 'destructive';
 
 export interface RelayTurnChip {
-  /** `host:port`，不带协议与查询串。 */
+  /** `turn:host:port`，查询串已剥掉。 */
   endpoint: string;
   /** 探测结论的文案 key。 */
   verdictKey: string;
   /** 舰队 tally 后缀 key；缺席表示旧网关没下发 members。 */
   membersKey?: string;
   membersParams?: { ok: number; total: number };
-  reachable: boolean | null;
   tone: RelayTurnChipTone;
   /** `localHint=tun` 时的 tooltip key。 */
   titleKey?: string;
@@ -182,7 +172,11 @@ export function relayRttBadge(row: RelayLinkStatus): RelayBadgeSpec | null {
 export function relayPeersBadge(row: RelayLinkStatus): RelayBadgeSpec | null {
   const peers = relayPeersOnlineOf(row);
   if (peers === null) return null;
-  return { key: 'relay.tenant.strip.tip.peers', params: { n: peers }, variant: 'outline' };
+  return {
+    key: 'relay.tenant.strip.tip.peers',
+    params: { n: peers, count: peers },
+    variant: 'outline',
+  };
 }
 
 function turnMembersSuffix(
@@ -208,10 +202,9 @@ export function relayTurnChip(row: RelayLinkStatus): RelayTurnChip | null {
   const turn = relayTurnOf(row);
   if (!turn) return null;
   return {
-    endpoint: turnEndpointLabel(turn.url),
+    endpoint: turnEndpointText(turn.url),
     verdictKey: turnProbeKey(turn.probeOk),
     ...turnMembersSuffix(turn.members),
-    reachable: turn.probeOk,
     tone: turnChipTone(turn.probeOk, turn.members),
     ...(turn.localHint === 'tun' ? { titleKey: 'relay.tenant.strip.turnTunHint' } : {}),
   };
@@ -293,6 +286,7 @@ export function relayMoreTipLines(row: RelayLinkStatus, host: string): RelayTipL
     lines.push({
       key: 'turn',
       i18nKey: 'relay.tenant.strip.tip.turn',
+      params: { endpoint: turn.endpoint },
       translatedParams: { state: turn.verdictKey },
       testId: `nodes-relay-turn-${host}`,
       tone: turn.tone,
@@ -319,14 +313,6 @@ export function relayMoreTipLines(row: RelayLinkStatus, host: string): RelayTipL
     });
   }
   if (!row.online) {
-    const errorKey = relayLinkErrorKey(row);
-    if (errorKey) {
-      lines.push({
-        key: 'error',
-        i18nKey: 'relay.tenant.strip.error',
-        translatedParams: { message: errorKey },
-      });
-    }
     lines.push({ key: 'role', i18nKey: relayRoleBadge(row).key });
   }
   return lines;

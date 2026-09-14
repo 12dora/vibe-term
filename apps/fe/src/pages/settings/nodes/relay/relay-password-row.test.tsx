@@ -10,6 +10,7 @@ import {
   RelayPasswordRow,
   RelayPasswordValue,
   enrollPasswordKnown,
+  fetchEnrollPasswordReveal,
   loadEnrollPassword,
 } from './relay-password-row';
 
@@ -192,6 +193,17 @@ describe('loadEnrollPassword', () => {
     expect(await loadEnrollPassword('https://r.example', unknown)).toBeNull();
   });
 
+  test('known 但 password 为 null 或空串视为未记录', async () => {
+    const missing = {
+      enrollPassword: () => Promise.resolve({ known: true, password: null }),
+    } as unknown as RelayTenantApi;
+    expect(await loadEnrollPassword('https://r.example', missing)).toBeNull();
+    const empty = {
+      enrollPassword: () => Promise.resolve({ known: true, password: '' }),
+    } as unknown as RelayTenantApi;
+    expect(await loadEnrollPassword('https://r.example', empty)).toBeNull();
+  });
+
   test('失败原样抛出', async () => {
     const api = {
       enrollPassword: () => Promise.reject(new RelayApiError('relay_unreachable', 'down', 502)),
@@ -199,5 +211,30 @@ describe('loadEnrollPassword', () => {
     await expect(loadEnrollPassword('https://r.example', api)).rejects.toBeInstanceOf(
       RelayApiError
     );
+  });
+});
+
+describe('fetchEnrollPasswordReveal', () => {
+  test('明文 / 未记录 / 错误三态', async () => {
+    const known = {
+      enrollPassword: () => Promise.resolve({ known: true, password: 'plain' }),
+    } as unknown as RelayTenantApi;
+    expect(await fetchEnrollPasswordReveal('https://r.example', known)).toEqual({
+      kind: 'value',
+      password: 'plain',
+    });
+    const gone = {
+      enrollPassword: () => Promise.resolve({ known: true, password: null }),
+    } as unknown as RelayTenantApi;
+    expect(await fetchEnrollPasswordReveal('https://r.example', gone)).toEqual({
+      kind: 'missing',
+    });
+    const failed = {
+      enrollPassword: () => Promise.reject(new RelayApiError('RELAY_UNAUTHORIZED', 'x', 401)),
+    } as unknown as RelayTenantApi;
+    expect(await fetchEnrollPasswordReveal('https://r.example', failed)).toEqual({
+      kind: 'error',
+      key: 'relay.tenant.enrollPassword.errors.unauthorized',
+    });
   });
 });

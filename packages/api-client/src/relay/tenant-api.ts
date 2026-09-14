@@ -41,8 +41,7 @@ export type {
 export type { RelayMetaKeyLaggingNode } from './meta-key-lagging';
 
 /** 中继列表里的一条链路（按 `priority` 升序即 failover 顺序）。 */
-export type RelayEnrollPasswordKnown = { known: boolean };
-export type RelayLinkStatus = RelayStatusRow & { enrollPassword?: RelayEnrollPasswordKnown };
+export type RelayLinkStatus = RelayStatusRow;
 /** `GET /api/mesh/relay/password?url=`：明文只回给已鉴权的本机会话。 */
 export type RelayEnrollPasswordView = { known: boolean; password: string | null };
 export type RelayPasswordRotateMode = 'keep' | 'kick';

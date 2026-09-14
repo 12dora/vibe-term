@@ -1,4 +1,11 @@
 export { cn } from './utils';
 export { useIsMobile } from './hooks/use-mobile';
-export { Tooltip, applyTooltipEvent } from './tooltip';
-export type { TooltipEvent, TooltipOpenState, TooltipProps } from './tooltip';
+export { TOOLTIP_TONE_CLASS, Tooltip, applyTooltipEvent, placeTooltipPanel } from './tooltip';
+export type {
+  TooltipEvent,
+  TooltipOpenState,
+  TooltipPlacement,
+  TooltipProps,
+  TooltipRect,
+  TooltipSize,
+} from './tooltip';

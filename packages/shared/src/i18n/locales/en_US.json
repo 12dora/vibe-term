@@ -3169,8 +3169,9 @@
           "more": "More",
           "tip": {
             "score": "Preference index {{value}} (lower is better)",
-            "peers": "{{n}} peers online on this relay",
-            "turn": "TURN {{state}}",
+            "peers_one": "1 peer online on this relay",
+            "peers_other": "{{count}} peers online on this relay",
+            "turn": "TURN {{endpoint}} · {{state}}",
             "turnMembers": "Member probes {{ok}}/{{total}} reachable (reported within 30 min, excluding this machine)",
             "pathBest": "Path probe {{ms}} ms"
           },
@@ -3281,9 +3282,10 @@
           "title": "Change Access Password",
           "description": "New enrollments will need the new password. Existing nodes stay connected by default.",
           "current": "Current access password",
-          "currentHint": "This machine has no stored access password for this relay. Enter the current one. Leave empty if the relay has none.",
+          "currentHint": "This machine has no stored access password for this relay. Enter the current one.",
           "next": "New access password",
-          "nextHint": "At least 8 characters; leave empty to clear.",
+          "nextHint": "At least 8 characters. To clear the access password, tick the option below.",
+          "clear": "Clear the access password (anyone can join)",
           "kick": "Revoke old tokens",
           "kickHint": "All nodes' old tokens become invalid immediately; they must re-enter the access password.",
           "done": "Access password updated.",
@@ -3296,7 +3298,13 @@
             "relay_password_too_short": "The new password must be at least 8 characters.",
             "relay_members_offline": "Some members are offline; old tokens cannot be revoked.",
             "relay_unreachable": "Cannot reach this relay.",
-            "relay_not_attached": "This machine is not attached to this relay."
+            "relay_not_attached": "This machine is not attached to this relay.",
+            "relay_rate_limited": "Too many attempts. Try again later.",
+            "unauthorized": "Your session expired. Sign in again.",
+            "malformed": "The request is invalid. Refresh the page and try again.",
+            "next_required": "Enter a new access password, or tick “Clear the access password”.",
+            "current_required": "Enter the current access password.",
+            "unknown": "Change failed: {{code}}"
           }
         },
         "errors": {

@@ -105,15 +105,19 @@ describe('RelayRows 渲染', () => {
     expect(html).not.toContain('data-testid="nodes-relay-rows"');
   });
 
-  test('一行只剩一个状态点与一个主机名：在线与延迟都由卡头那枚徽标说', () => {
-    const html = renderToStaticMarkup(<RelayRows relays={[link({ attached: true, rttMs: 42 })]} />);
+  test('一行默认摆状态点、主机名、身份与延迟', () => {
+    const html = renderToStaticMarkup(
+      <RelayRows relays={[link({ attached: true, role: 'primary', rttMs: 42 })]} />
+    );
     expect(html).toContain(`data-testid="nodes-relay-row-${HOST}"`);
     expect(html).toContain('data-relay-attached="true"');
     expect(html).toContain('data-relay-online="true"');
     expect(html).toContain(`data-testid="nodes-relay-host-${HOST}"`);
     expect(html).toContain(`data-testid="nodes-relay-status-${HOST}"`);
-    // 「延迟 42 ms」「在线」这类徽标不再重复出现在行里
-    expect(html).not.toContain('relay.tenant.strip.rtt');
+    expect(html).toContain(`data-testid="nodes-relay-role-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.rolePrimary');
+    expect(html).toContain(`data-testid="nodes-relay-rtt-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.rtt');
     expect(html).not.toContain('relay.tenant.strip.attached');
     expect(html).not.toContain('ring-border/60');
   });
@@ -180,29 +184,33 @@ describe('RelayRows 渲染', () => {
     expect(html).toContain('font-medium');
   });
 
-  // 行是选择器时，光一个 6px 的点没法让人挑：离线与延迟得是看得见的文字。
-  test('选择器形态：候选行补「离线」或延迟，单条形态照旧只有点与主机名', () => {
+  test('选择器形态：每行都有身份徽标；在线摆延迟，离线为未连接', () => {
     const html = renderToStaticMarkup(
       <RelayRows
         relays={[
-          link({ attached: true, rttMs: 12 }),
-          link({ url: 'https://b.example', priority: 2, online: false }),
+          link({ attached: true, role: 'primary', rttMs: 12 }),
+          link({ url: 'https://b.example', priority: 2, online: false, role: null }),
         ]}
         onSelect={() => undefined}
       />
     );
+    expect(html).toContain(`data-testid="nodes-relay-role-${HOST}"`);
+    expect(html).toContain('relay.tenant.strip.rolePrimary');
     expect(html).toContain(`data-testid="nodes-relay-rtt-${HOST}"`);
     expect(html).toContain('relay.tenant.strip.rtt');
-    expect(html).toContain('data-testid="nodes-relay-offline-b.example"');
-    expect(html).toContain('relay.tenant.strip.offline');
-    // 离线那条不再摆延迟
+    expect(html).toContain('data-testid="nodes-relay-role-b.example"');
+    expect(html).toContain('relay.tenant.strip.roleDetached');
     expect(html).not.toContain('data-testid="nodes-relay-rtt-b.example"');
 
     const single = renderToStaticMarkup(
-      <RelayRows relays={[link({ attached: true, rttMs: 12 })]} onSelect={() => undefined} />
+      <RelayRows
+        relays={[link({ attached: true, role: 'primary', rttMs: 12 })]}
+        onSelect={() => undefined}
+      />
     );
-    expect(single).not.toContain('relay.tenant.strip.rtt');
-    expect(single).not.toContain(`data-testid="nodes-relay-offline-${HOST}"`);
+    expect(single).toContain(`data-testid="nodes-relay-rtt-${HOST}"`);
+    expect(single).toContain('relay.tenant.strip.rtt');
+    expect(single).toContain(`data-testid="nodes-relay-role-${HOST}"`);
   });
 
   test('没传 onSelect 时哪条都不可选', () => {

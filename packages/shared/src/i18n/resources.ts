@@ -3175,8 +3175,9 @@ export const I18N_RESOURCES = {
           "more": "More",
           "tip": {
             "score": "Preference index {{value}} (lower is better)",
-            "peers": "{{n}} peers online on this relay",
-            "turn": "TURN {{state}}",
+            "peers_one": "1 peer online on this relay",
+            "peers_other": "{{count}} peers online on this relay",
+            "turn": "TURN {{endpoint}} · {{state}}",
             "turnMembers": "Member probes {{ok}}/{{total}} reachable (reported within 30 min, excluding this machine)",
             "pathBest": "Path probe {{ms}} ms"
           },
@@ -3287,9 +3288,10 @@ export const I18N_RESOURCES = {
           "title": "Change Access Password",
           "description": "New enrollments will need the new password. Existing nodes stay connected by default.",
           "current": "Current access password",
-          "currentHint": "This machine has no stored access password for this relay. Enter the current one. Leave empty if the relay has none.",
+          "currentHint": "This machine has no stored access password for this relay. Enter the current one.",
           "next": "New access password",
-          "nextHint": "At least 8 characters; leave empty to clear.",
+          "nextHint": "At least 8 characters. To clear the access password, tick the option below.",
+          "clear": "Clear the access password (anyone can join)",
           "kick": "Revoke old tokens",
           "kickHint": "All nodes' old tokens become invalid immediately; they must re-enter the access password.",
           "done": "Access password updated.",
@@ -3302,7 +3304,13 @@ export const I18N_RESOURCES = {
             "relay_password_too_short": "The new password must be at least 8 characters.",
             "relay_members_offline": "Some members are offline; old tokens cannot be revoked.",
             "relay_unreachable": "Cannot reach this relay.",
-            "relay_not_attached": "This machine is not attached to this relay."
+            "relay_not_attached": "This machine is not attached to this relay.",
+            "relay_rate_limited": "Too many attempts. Try again later.",
+            "unauthorized": "Your session expired. Sign in again.",
+            "malformed": "The request is invalid. Refresh the page and try again.",
+            "next_required": "Enter a new access password, or tick “Clear the access password”.",
+            "current_required": "Enter the current access password.",
+            "unknown": "Change failed: {{code}}"
           }
         },
         "errors": {
@@ -6783,7 +6791,7 @@ export const I18N_RESOURCES = {
           "tip": {
             "score": "优选指数 {{value}}（越低越好）",
             "peers": "本中继在线对端 {{n}} 台",
-            "turn": "TURN {{state}}",
+            "turn": "TURN {{endpoint}} · {{state}}",
             "turnMembers": "成员探测 {{ok}}/{{total}} 可达（30 分钟内上报，不含本机）",
             "pathBest": "路径探测 {{ms}} ms"
           },
@@ -6894,9 +6902,10 @@ export const I18N_RESOURCES = {
           "title": "修改接入密码",
           "description": "修改后新接入须用新密码。默认保留已接入节点。",
           "current": "当前接入密码",
-          "currentHint": "本机未记录该中继的接入密码，须填写当前密码。中继未设密码时留空。",
+          "currentHint": "本机未记录该中继的接入密码，须填写当前密码。",
           "next": "新接入密码",
-          "nextHint": "至少 8 个字符；留空即清除接入密码。",
+          "nextHint": "至少 8 个字符。要清除接入密码，请勾选下方选项。",
+          "clear": "清除接入密码（任何人都能接入）",
           "kick": "踢出旧令牌",
           "kickHint": "所有节点的旧令牌立即失效，须重新输入接入密码。",
           "done": "接入密码已修改。",
@@ -6909,7 +6918,13 @@ export const I18N_RESOURCES = {
             "relay_password_too_short": "新密码至少 8 个字符。",
             "relay_members_offline": "仍有成员离线，无法作废旧令牌。",
             "relay_unreachable": "无法连接该中继。",
-            "relay_not_attached": "本机未接入该中继。"
+            "relay_not_attached": "本机未接入该中继。",
+            "relay_rate_limited": "操作过于频繁，请稍后再试。",
+            "unauthorized": "登录已失效，请重新登录。",
+            "malformed": "请求无效，请刷新页面后重试。",
+            "next_required": "请输入新接入密码，或勾选「清除接入密码」。",
+            "current_required": "请输入当前接入密码。",
+            "unknown": "修改失败：{{code}}"
           }
         },
         "errors": {
@@ -10390,7 +10405,7 @@ export const I18N_RESOURCES = {
           "tip": {
             "score": "優先度指数 {{value}}（低いほど良い）",
             "peers": "この中継でオンラインの対向 {{n}} 台",
-            "turn": "TURN {{state}}",
+            "turn": "TURN {{endpoint}} · {{state}}",
             "turnMembers": "メンバー探査 {{ok}}/{{total}} 到達可（30 分以内の報告、本機を除く）",
             "pathBest": "経路探査 {{ms}} ms"
           },
@@ -10501,9 +10516,10 @@ export const I18N_RESOURCES = {
           "title": "接続パスワードを変更",
           "description": "変更後、新規接続には新しいパスワードが必要です。既存ノードは既定で接続を維持します。",
           "current": "現在の接続パスワード",
-          "currentHint": "本機はこの中継の接続パスワードを記録していません。現在のパスワードを入力してください。中継にパスワードがない場合は空欄のままにします。",
+          "currentHint": "本機はこの中継の接続パスワードを記録していません。現在のパスワードを入力してください。",
           "next": "新しい接続パスワード",
-          "nextHint": "8 文字以上。空欄にすると接続パスワードを解除します。",
+          "nextHint": "8 文字以上。接続パスワードを解除する場合は下の項目をチェックしてください。",
+          "clear": "接続パスワードを解除（誰でも参加可能）",
           "kick": "旧トークンを失効",
           "kickHint": "すべてのノードの旧トークンは直ちに無効になり、接続パスワードの再入力が必要です。",
           "done": "接続パスワードを変更しました。",
@@ -10516,7 +10532,13 @@ export const I18N_RESOURCES = {
             "relay_password_too_short": "新しいパスワードは 8 文字以上にしてください。",
             "relay_members_offline": "オフラインのメンバーがいるため、旧トークンを失効できません。",
             "relay_unreachable": "この中継に接続できません。",
-            "relay_not_attached": "本機はこの中継に接続していません。"
+            "relay_not_attached": "本機はこの中継に接続していません。",
+            "relay_rate_limited": "操作が頻繁すぎます。しばらくしてから再試行してください。",
+            "unauthorized": "ログインの有効期限が切れました。再ログインしてください。",
+            "malformed": "リクエストが無効です。ページを再読み込みしてから再試行してください。",
+            "next_required": "新しい接続パスワードを入力するか、「接続パスワードを解除」をチェックしてください。",
+            "current_required": "現在の接続パスワードを入力してください。",
+            "unknown": "変更に失敗しました：{{code}}"
           }
         },
         "errors": {

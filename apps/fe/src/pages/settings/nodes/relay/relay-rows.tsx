@@ -1,13 +1,13 @@
 // 中继链路：一条一行。错误按稳定错误码查表，原始错误串（`ECONNRESET` 之类）从不上屏。
 //
 // 两种形态（判据见 `relay-row-model.ts` 的 `isMultiAttachView`）：
-// - 单条中继 / 旧网关：一个状态点加一个主机名。多于一条时行本身是选择器，点哪条切哪条。
-// - 多条同时挂载：每条都连着，行不再是单选——默认只摆身份与延迟，「更多」收其余事实，
+// - 单条中继 / 旧网关：状态点 · 主机名 · 身份 · 延迟 · 「更多」。多于一条时行本身是选择器。
+// - 多条同时挂载：每条都连着，行不再是单选——默认摆身份与延迟，「更多」收其余事实，
 //   行尾一个「设为主中继」，主中继那条禁用。
 
 import { TONE_CLASS } from '@/lib/tone';
 import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
-import { Tooltip, cn } from '@vibeterm/ui';
+import { TOOLTIP_TONE_CLASS, Tooltip, cn } from '@vibeterm/ui';
 import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { type SegmentItem, Segments } from '../copy-feedback';
@@ -108,14 +108,7 @@ function RelayRow({
 }) {
   const host = relayLabel(relay.url);
   const more = <RelayMoreTip relay={relay} host={host} />;
-  const line = (
-    <RelayLine
-      relay={relay}
-      host={host}
-      current={selectable && relay.attached}
-      selectable={selectable}
-    />
-  );
+  const line = <RelayLine relay={relay} host={host} current={selectable && relay.attached} />;
   return (
     <RelayRowShell relay={relay} host={host}>
       {selectable && !relay.attached ? (
@@ -244,8 +237,8 @@ function tipLineText(t: ReturnType<typeof useTranslation>['t'], line: RelayTipLi
 }
 
 function tipLineClass(line: RelayTipLine): string {
-  if (line.tone === 'destructive') return TONE_CLASS.text.blocked;
-  if (line.tone === 'warning') return TONE_CLASS.text.warn;
+  if (line.tone === 'destructive') return TOOLTIP_TONE_CLASS.blocked;
+  if (line.tone === 'warning') return TOOLTIP_TONE_CLASS.warn;
   return '';
 }
 
@@ -304,46 +297,19 @@ function RelayLine({
   relay,
   host,
   current,
-  selectable,
 }: {
   relay: RelayLinkStatus;
   host: string;
   current: boolean;
-  selectable: boolean;
 }) {
+  const role = relayRoleBadge(relay);
+  const rtt = relayRttBadge(relay);
   return (
     <>
       <RelayDot relay={relay} host={host} />
       <RelayHost host={host} current={current} />
-      {selectable && <RelayCandidateFact relay={relay} host={host} />}
+      <RelayFact spec={role} testId={`nodes-relay-role-${host}`} />
+      {rtt && <RelayFact spec={rtt} testId={`nodes-relay-rtt-${host}`} />}
     </>
-  );
-}
-
-/**
- * 行是选择器时，光一个 6px 的点不足以让人挑中继：离线与延迟必须是看得见的文字。
- * 只有一条中继（行不可选）时不摆——卡头那枚徽标已经说过同一件事。
- */
-function RelayCandidateFact({ relay, host }: { relay: RelayLinkStatus; host: string }) {
-  const { t } = useTranslation();
-  if (!relay.online) {
-    return (
-      <span
-        className={`whitespace-nowrap ${TONE_CLASS.text.blocked}`}
-        data-testid={`nodes-relay-offline-${host}`}
-      >
-        {t('relay.tenant.strip.offline')}
-      </span>
-    );
-  }
-  const rtt = relayRttBadge(relay);
-  if (!rtt) return null;
-  return (
-    <span
-      className="whitespace-nowrap text-muted-foreground"
-      data-testid={`nodes-relay-rtt-${host}`}
-    >
-      {t(rtt.key, rtt.params)}
-    </span>
   );
 }
