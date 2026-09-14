@@ -107,7 +107,7 @@ export async function createEnrollmentOnRelay(
       createdAt: now,
     };
     addPendingEnrollment(pending);
-    return { pending, joinToken, hubPublicUrl: relays[0].url };
+    return { pending, joinToken, publicUrl: relays[0].url };
   } finally {
     enrollment.enrollSk.fill(0);
     logKey.fill(0);

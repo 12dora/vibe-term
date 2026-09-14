@@ -38,6 +38,7 @@ const LEGACY_KEY = 'tmex.connectDevices.joinSession';
 const CURRENT_KEY = 'vibeterm.connectDevices.joinSession';
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
+/** sessionStorage 冻结字段 `hubNodeId` 的夹具值（D4）。 */
 const HUB_NODE = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
 const RELAY_URL = 'https://relay.example.com';
 const TENANT = 'aabbccddeeff00112233445566778899';
@@ -51,7 +52,6 @@ const MESH_MODE: AuthModeResponse = {
   passkeyAvailable: false,
   passkeysForThisOrigin: false,
   rootEpoch: 0,
-  hubNodeId: HUB_NODE,
 };
 
 const MACHINE: ConnectMachine = {

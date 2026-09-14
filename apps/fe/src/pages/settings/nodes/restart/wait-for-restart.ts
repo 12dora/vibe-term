@@ -1,6 +1,6 @@
 // 等待网关重启完成的唯一实现（向导、本机区块、HTTPS 区块共用）。
 //
-// `/api/setup/hub|join`、`/api/settings/restart` 返回后网关会退出，由 launchd / systemd 拉起新进程。
+// `/api/setup/join`、`/api/settings/restart` 返回后网关会退出，由 launchd / systemd 拉起新进程。
 // 轮询期间「连不上」是正常态，不能当成失败；判定重启成功的唯一依据是 `/healthz.startedAt` 变了
 // （进程换了）。提交前没读到 startedAt 时（老网关 / 读失败）退化为「先看到一次不可达，再看到一次健康」。
 //

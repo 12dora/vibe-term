@@ -225,7 +225,7 @@ function detailRows(
     return addressRow('nodes.badge.peerAddress', link.peerAddress);
   }
   if (kind === 'relay') {
-    // 「中转地址」是 hub / 中继那一跳的对端地址；「在线于」说的是这台机器还能从哪几条中继摸到，
+    // 「中转地址」是中继那一跳的对端地址；「在线于」说的是这台机器还能从哪几条中继摸到，
     // 两者不是一回事：前者解释当前这条路，后者解释还剩几条退路。
     const presence = relayPresenceLabel(link);
     return [

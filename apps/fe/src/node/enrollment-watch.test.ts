@@ -1,4 +1,4 @@
-// redeem 证书的两条到达路径：`GET /n/<hub>/api/hub/enrollments/:id` 轮询，
+// redeem 证书的两条到达路径：`GET /api/mesh/relay/enrollments/:id` 轮询，
 // 与 `/mesh/ws` 的 `ENROLL_REDEEMED` 推送。两者都汇进 `offerCertificate()`。
 
 import { describe, expect, test } from 'bun:test';

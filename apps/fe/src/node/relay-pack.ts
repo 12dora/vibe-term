@@ -241,7 +241,7 @@ export interface RelayPackSignerOptions {
  *
  * 只认根钥：KEK 由根种子派生，通行密钥断言给不出种子，因此 passkey 签的记录一律跳过——
  * 密封包停在上一次的日志头，加入方仍能验过并追上后续记录（与 `r3.` 加入码同一档保证）。
- * 只在中继模式下动手；hub 模式没有密封包这回事。
+ * 只在中继模式下动手。
  */
 export async function refreshRelayPackForSigner(
   signer: RecordSigner,

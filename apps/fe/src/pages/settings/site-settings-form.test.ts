@@ -432,7 +432,7 @@ describe('refreshUntilRenamed', () => {
     };
   }
 
-  test('改名响应先于 hub 的 node.list：一直重拉到新名字回流为止', async () => {
+  test('改名响应先于 mesh node.list：一直重拉到新名字回流为止', async () => {
     const h = harness(['old', 'old', 'studio']);
 
     expect(await refreshUntilRenamed('studio', h.deps)).toBe(true);

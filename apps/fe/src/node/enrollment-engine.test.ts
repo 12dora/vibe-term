@@ -2,7 +2,7 @@
 //
 // 核心不变量：无论挂了几个消费方（设置页 + 侧滑面板），同一张证书都只能签出**一条**
 // `admit-node`；且任意两条 admit 的 `keyLogHead → 签名 → append` 之间不许交叠——
-// 交叠就是同一个 head 上的两个 seq，hub 只收得下一条，另一条永久 `seq_gap`。
+// 交叠就是同一个 head 上的两个 seq，对端只收得下一条，另一条永久 `seq_gap`。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
@@ -269,7 +269,7 @@ describe('单例回路', () => {
     expect(pushHandlers.size).toBe(0);
   });
 
-  test('生效上下文没有 hub 通道时，轮询回落到最近一个有 hub 通道的上下文', async () => {
+  test('生效上下文没有 enrollment 通道时，轮询回落到最近一个有通道的上下文', async () => {
     const { pending, candidate } = await fixture('e-12');
     rememberSigner({ kind: 'root', rootKey }, NOW);
     const spy = apiSpy({ ok: true, hubAck: true });
@@ -286,7 +286,7 @@ describe('单例回路', () => {
     configureEnrollmentEngineForTest({ collect: undefined });
 
     addPendingEnrollment(pending);
-    // 先注册带 hub 通道的设置页，再注册还没定位到 hub 的面板。
+    // 先注册带 enrollment 通道的设置页，再注册还没定位到通道的面板。
     const page = registerAdmitContext({ ...context(spy.api), enrollmentApi });
     const panel = registerAdmitContext(context(spy.api));
     await settle();
@@ -505,13 +505,13 @@ describe('陈旧结果复核', () => {
 });
 
 describe('手动确认', () => {
-  test('hub 未确认时原样重发同一份字节，不再要凭据、不重新签名', async () => {
+  test('上级未确认时原样重发同一份字节，不再要凭据、不重新签名', async () => {
     const { pending } = await fixture('e-7');
     addPendingEnrollment(pending);
     const record = { bytes: 'YWJj', sig: 'ZGVm' };
     const stash = apiSpy({ ok: false, code: 'HUB_TIMEOUT' });
     expect(await submitAdmitRecord(stash.api, 'e-7', record)).toEqual({ kind: 'unconfirmed' });
-    expect(getEnrollmentEngineState().hubUnconfirmedIds).toEqual(['e-7']);
+    expect(getEnrollmentEngineState().unconfirmedIds).toEqual(['e-7']);
 
     const prompt = promptSpy();
     const spy = apiSpy({ ok: true, hubAck: true });
@@ -581,7 +581,7 @@ describe('手动确认', () => {
 
     expect(listPendingEnrollments()).toHaveLength(0);
     expect(listUnconfirmedRecordIds()).toEqual([]);
-    expect(getEnrollmentEngineState().hubUnconfirmedIds).toEqual([]);
+    expect(getEnrollmentEngineState().unconfirmedIds).toEqual([]);
     expect(getEnrollmentEngineState().cancelledIds).toEqual(['e-9']);
     expect(getEnrollmentEngineState().clearedIds).toContain('e-9');
     ctx.release();
@@ -640,7 +640,7 @@ describe('过期清理', () => {
     expect(listPendingEnrollments()).toHaveLength(0);
     expect(getEnrollmentEngineState().expiredIds).toEqual(['e-10']);
     expect(getEnrollmentEngineState().clearedIds).toContain('e-10');
-    // 过期同样要丢掉可重发记录，否则它会一直挂在「hub 未确认」上。
+    // 过期同样要丢掉可重发记录，否则它会一直挂在「未确认」上。
     expect(listUnconfirmedRecordIds()).toEqual([]);
     // pending 没了，回路不该开着。
     expect(enrollmentEngineDebugForTest().watching).toBe(false);
@@ -673,7 +673,7 @@ describe('事务期间取消', () => {
     };
   }
 
-  test('append 在飞时按取消：先记意向，hub 确认之后按「已加入」收场', async () => {
+  test('append 在飞时按取消：先记意向，本机确认之后按「已加入」收场', async () => {
     const { pending, candidate } = await fixture('e-cancel-ok');
     rememberSigner({ kind: 'root', rootKey }, NOW);
     const spy = pendingAppendApi();
@@ -712,11 +712,11 @@ describe('事务期间取消', () => {
     spy.settleAppend(new Error('network down'));
     await settle();
 
-    // 结果未知：删掉就再也送不进 hub 了，取消意向只能作废。
+    // 结果未知：删掉就再也送不进 key log 了，取消意向只能作废。
     expect(unconfirmedRecord('e-cancel-throw')).toEqual(spy.appended[0]);
     expect(listPendingEnrollments()).toHaveLength(1);
     expect(getEnrollmentEngineState().cancelledIds).toEqual([]);
-    expect(getEnrollmentEngineState().hubUnconfirmedIds).toEqual(['e-cancel-throw']);
+    expect(getEnrollmentEngineState().unconfirmedIds).toEqual(['e-cancel-throw']);
     expect(getEnrollmentEngineState().busyIds).toEqual([]);
 
     // 重发路径照常接得上：同一份字节，不重新签。
@@ -744,7 +744,7 @@ describe('事务期间取消', () => {
     const confirming = ctx.confirmManually('e-cancel-idle');
     await flush();
     await flush();
-    // 已进临界区，卡在 hub 查询上：这时候的取消同样只能先记意向。
+    // 已进临界区，卡在 enrollment 查询上：这时候的取消同样只能先记意向。
     expect(getEnrollmentEngineState().busyIds).toEqual(['e-cancel-idle']);
     cancelPending(pending);
     expect(listPendingEnrollments()).toHaveLength(1);
@@ -759,11 +759,11 @@ describe('事务期间取消', () => {
 });
 
 describe('操作上下文快照', () => {
-  test('手动确认只查发起槽位快照里的 hub 通道', async () => {
-    const { pending, candidate } = await fixture('e-hub-snap');
+  test('手动确认只查发起槽位快照里的 enrollment 通道', async () => {
+    const { pending, candidate } = await fixture('e-enroll-snap');
     addPendingEnrollment(pending);
     const calls: string[] = [];
-    const hubOfPage = {
+    const apiOfPage = {
       getEnrollment: () => {
         calls.push('page');
         return Promise.resolve({
@@ -774,7 +774,7 @@ describe('操作上下文快照', () => {
         });
       },
     } as unknown as AdmitContext['enrollmentApi'];
-    const hubOfPanel = {
+    const apiOfPanel = {
       getEnrollment: () => {
         calls.push('panel');
         return Promise.resolve({ status: 'pending' });
@@ -785,12 +785,12 @@ describe('操作上下文快照', () => {
     const prompt = promptSpy({ kind: 'root', rootKey });
     const page = registerAdmitContext({
       ...context(spy.api, prompt.prompt),
-      enrollmentApi: hubOfPage,
+      enrollmentApi: apiOfPage,
     });
-    // 后注册的面板带着另一个 hub 通道：旧实现会让它抢走这次查询。
-    const panel = registerAdmitContext({ ...context(spy.api), enrollmentApi: hubOfPanel });
+    // 后注册的面板带着另一个 enrollment 通道：旧实现会让它抢走这次查询。
+    const panel = registerAdmitContext({ ...context(spy.api), enrollmentApi: apiOfPanel });
 
-    await page.confirmManually('e-hub-snap');
+    await page.confirmManually('e-enroll-snap');
     await settle();
 
     expect(calls).toEqual(['page']);
@@ -799,7 +799,7 @@ describe('操作上下文快照', () => {
     page.release();
   });
 
-  test('凭据交互期间槽位换了 hub：这次确认整条作废', async () => {
+  test('凭据交互期间槽位换了 enrollment 通道：这次确认整条作废', async () => {
     const { pending } = await fixture('e-regen');
     addPendingEnrollment(pending);
     const spy = apiSpy({ ok: true, hubAck: true });
@@ -931,7 +931,7 @@ describe('resetEnrollmentEngineForTest', () => {
       expiredIds: [],
       cancelledIds: [],
       clearedIds: [],
-      hubUnconfirmedIds: [],
+      unconfirmedIds: [],
       certificateReadyIds: [],
       invalidById: {},
     });

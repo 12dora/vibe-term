@@ -54,7 +54,7 @@ function plan(overrides: Partial<UpgradeBatchPlan> = {}): UpgradeBatchPlan {
     ...createBatchPlan({
       entryNodeId: 'entry',
       targetVersion: '1.2.0',
-      order: [['a', 'b'], ['hub'], ['entry']],
+      order: [['a', 'b'], ['peer'], ['entry']],
       now: 1000,
       tabId: 'tab-1',
     }),
@@ -175,8 +175,8 @@ describe('planRemaining', () => {
         { nodeId: 'b', outcome: 'failed' },
       ],
     });
-    expect(planRemaining(source)).toEqual([['hub'], ['entry']]);
-    expect(planRemaining(plan())).toEqual([['a', 'b'], ['hub'], ['entry']]);
+    expect(planRemaining(source)).toEqual([['peer'], ['entry']]);
+    expect(planRemaining(plan())).toEqual([['a', 'b'], ['peer'], ['entry']]);
   });
 });
 

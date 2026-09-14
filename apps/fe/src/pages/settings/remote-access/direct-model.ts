@@ -5,7 +5,7 @@ import type { LocalAuthStatus } from '@vibeterm/shared';
 
 /**
  * 直连场景下这台机器的访问保护档位：
- * `node`  —— hub/node 角色，登录门由 mesh 提供，本机登录开关不适用（`supported === false`）；
+ * `node`  —— mesh 节点角色，登录门由 mesh 提供，本机登录开关不适用（`supported === false`）；
  * `local` —— standalone 且本机登录已生效；
  * `unprotected` —— standalone 但门没生效，公网直连等于裸奔；
  * `unknown` —— 后端没下发 `localAuth`（旧版本 / 状态还没加载完），

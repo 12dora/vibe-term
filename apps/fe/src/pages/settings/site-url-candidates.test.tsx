@@ -1,5 +1,5 @@
-// 站点访问 URL 的候选地址单选组：可编辑（点选写草稿）、由 Hub 托管（只读，只标出生效地址）、
-// 无候选三种形态。无 DOM 测试环境：版式用 react-dom/server 静态渲染断言。`t` 的产出在这里一概
+// 站点访问 URL 的候选地址单选组：可编辑（点选写草稿）、只读、无候选三种形态。
+// 无 DOM 测试环境：版式用 react-dom/server 静态渲染断言。`t` 的产出在这里一概
 // 不断言——同进程里别的测试文件（如 `FilePage.test.tsx`）会用 `mock.module` 把 `useTranslation`
 // 换成原样返回 key 的桩，单跑与合跑的文案因此并不一致；能稳的只有结构：testId、`data-kind`、
 // `data-selected` 与候选的 accessUrl。点选是回调，直接调用无 hook 的选项组件并驱动 radio 的 onChange。

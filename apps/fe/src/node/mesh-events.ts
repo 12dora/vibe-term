@@ -451,7 +451,7 @@ export class MeshEventSource {
     };
   }
 
-  /** 订阅 hub 转发过来的 redeem 证书（Nodes 页据此自动 admit）。 */
+  /** 订阅 uplink 转发过来的 redeem 证书（Nodes 页据此自动 admit）。 */
   onEnrollRedeemed(listener: (event: EnrollRedeemedPayload) => void): () => void {
     this.enrollListeners.add(listener);
     return () => {

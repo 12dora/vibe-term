@@ -3,10 +3,10 @@
 // 预览不自己拼字符串，而是拿哨兵值走真正的 `joinCommand()`，再把哨兵换成本地化占位符：
 // 引号规则、参数顺序、`--name` 的取舍全部与真实命令逐字一致，不会两处各写一套。
 
-import { isTrustedHubUrl, joinCommand } from '@/node/enrollment';
+import { isTrustedPublicUrl, joinCommand } from '@/node/enrollment';
 
 /** 加入命令里对外地址未知时的示例地址。 */
-export const EXAMPLE_HUB_URL = 'https://vibeterm.example.com';
+export const EXAMPLE_PUBLIC_URL = 'https://vibeterm.example.com';
 
 /** 中继地址未知时的示例地址。 */
 export const EXAMPLE_RELAY_URL = 'https://relay.example.com';
@@ -16,8 +16,8 @@ const TOKEN_SENTINEL = '__VIBETERM_JOIN_TOKEN__';
 const NAME_SENTINEL = '__VIBETERM_NODE_NAME__';
 
 export interface JoinCommandPreviewInput {
-  /** `/api/auth/mode` 或 enrollment 响应给出的 hub 对外地址；不可信时退回示例地址。 */
-  hubPublicUrl: string | null;
+  /** enrollment 响应给出的对外地址；不可信时退回示例地址。 */
+  publicUrl: string | null;
   /** 用户当前输入的节点名；为空时用占位符。 */
   name: string;
   tokenPlaceholder: string;
@@ -25,11 +25,11 @@ export interface JoinCommandPreviewInput {
 }
 
 export function joinCommandPreview(input: JoinCommandPreviewInput): string {
-  const hubUrl = isTrustedHubUrl(input.hubPublicUrl)
-    ? (input.hubPublicUrl as string)
-    : EXAMPLE_HUB_URL;
+  const publicUrl = isTrustedPublicUrl(input.publicUrl)
+    ? (input.publicUrl as string)
+    : EXAMPLE_PUBLIC_URL;
   const name = input.name.trim();
-  const command = joinCommand(hubUrl, TOKEN_SENTINEL, name || NAME_SENTINEL).replace(
+  const command = joinCommand(publicUrl, TOKEN_SENTINEL, name || NAME_SENTINEL).replace(
     TOKEN_SENTINEL,
     input.tokenPlaceholder
   );
@@ -47,13 +47,13 @@ export function relayJoinCommand(input: {
   tenantId: string | null;
   tenantPlaceholder: string;
 }): string {
-  const url = isTrustedHubUrl(input.relayUrl) ? (input.relayUrl as string) : EXAMPLE_RELAY_URL;
+  const url = isTrustedPublicUrl(input.relayUrl) ? (input.relayUrl as string) : EXAMPLE_RELAY_URL;
   const tenant = input.tenantId ?? input.tenantPlaceholder;
   return `vibeterm relay join ${shellQuote(url)} --tenant ${shellQuote(tenant)}`;
 }
 
 /** 本机以租户身份接进一条中继的命令；地址未知时填示例地址，形状仍然正确。 */
 export function relayEnrollCommand(relayUrl: string | null): string {
-  const url = isTrustedHubUrl(relayUrl) ? (relayUrl as string) : EXAMPLE_RELAY_URL;
+  const url = isTrustedPublicUrl(relayUrl) ? (relayUrl as string) : EXAMPLE_RELAY_URL;
   return `vibeterm relay enroll ${shellQuote(url)}`;
 }

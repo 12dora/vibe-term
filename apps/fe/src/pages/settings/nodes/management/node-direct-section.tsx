@@ -117,7 +117,7 @@ export function NodeDirectRemoveConfirm({
       testId={testId}
       confirmTestId={`${testId}-ok`}
     >
-      {t('nodes.machine.directRemoveConfirm.description')}
+      {t('nodes.machine.directRemoveConfirm.descriptionRelay')}
     </ConfirmDialog>
   );
 }

@@ -27,7 +27,7 @@ function setMesh(enabled: boolean): void {
     modeLoaded: true,
     entryNodeId: ENTRY,
     nodes: [
-      { id: ENTRY, name: 'hub', online: true },
+      { id: ENTRY, name: 'entry', online: true },
       { id: NODE_B, name: 'laptop', online: true },
     ] as never,
   });

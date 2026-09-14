@@ -261,7 +261,7 @@ describe('decodeMeshFrame', () => {
     expect(decodeMeshFrame(frame)).toBeNull();
   });
 
-  test('ENROLL_REDEEMED 解出 hub 转发的证书（字节转 base64url）', () => {
+  test('ENROLL_REDEEMED 解出 uplink 转发的证书（字节转 base64url）', () => {
     const enrollPk = new Uint8Array(32).fill(3);
     const certificate = new Uint8Array(20).fill(4);
     const certSig = new Uint8Array(64).fill(5);

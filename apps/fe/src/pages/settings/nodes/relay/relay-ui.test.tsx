@@ -405,10 +405,8 @@ describe('文案查表', () => {
     expect(readmitErrorText(table, 'WHATEVER')).toBe('WHATEVER');
   });
 
-  test('不可写提示按上级形态分档', () => {
-    expect(uplinkBlockedHint(t, true, false)).toBe('relay.tenant.notAttached');
-    expect(uplinkBlockedHint(t, false, true)).toBe('nodes.hubs.standbyNotice');
-    expect(uplinkBlockedHint(t, false, false)).toBe('nodes.hubOffline');
+  test('不可写提示只说中继未接入', () => {
+    expect(uplinkBlockedHint(t)).toBe('relay.tenant.notAttached');
   });
 });
 

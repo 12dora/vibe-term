@@ -1,6 +1,6 @@
 // 中继模式下 admit 之后的收尾：给刚加入的节点补发当前世代的 `K_meta`（plan §1.4）。
 //
-// 为什么不做在 enrollment 引擎里：引擎是 hub / 中继通吃的那条流水线，中继的密钥分发是租户侧
+// 为什么不做在 enrollment 引擎里：引擎是 enrollment 通吃的那条流水线，中继的密钥分发是租户侧
 // 的事。这里只订阅引擎已经暴露出来的「刚 admit 成功的 enrollment id」，再按 id 取回证书里的
 // node id，补一条 `meta-key {op:'admit'}`。
 //

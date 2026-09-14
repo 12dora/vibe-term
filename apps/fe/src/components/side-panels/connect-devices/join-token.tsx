@@ -45,7 +45,7 @@ export function JoinTokenFields({ enrollment }: { enrollment: JoinEnrollment }) 
 
   // 中继没给出对外地址就不能编 join 命令：用入口 origin 会把新机器指到没有 uplink
   // 的机器上，redeem 直接 404（与设置页同一条判定）。
-  if (!create.hubUrl) {
+  if (!create.publicUrl) {
     return (
       <>
         <p className="text-xs text-destructive" data-testid="connect-join-no-url">
@@ -73,8 +73,8 @@ export function JoinTokenFields({ enrollment }: { enrollment: JoinEnrollment }) 
         <Button
           type="button"
           size="sm"
-          disabled={create.busy || !enrollment.hubOnline}
-          title={enrollment.hubOnline ? undefined : t('nodes.uplinkOffline')}
+          disabled={create.busy || !enrollment.uplinkWritable}
+          title={enrollment.uplinkWritable ? undefined : t('nodes.uplinkOffline')}
           onClick={() => void create.submit()}
           data-testid="connect-join-generate"
         >
@@ -127,14 +127,14 @@ export function JoinConfirmStatus({ enrollment }: { enrollment: JoinEnrollment }
     );
   }
 
-  // 未确认 = 本机已落账但 `relayAck === false`；引擎仍用 `hubUnconfirmedIds` 投影这笔。
-  const unconfirmed = engine.hubUnconfirmedIds.includes(id);
+  // 未确认 = 本机已落账但 `relayAck === false`（`hubAck === false` 同口径；`hubAck` 是冻结 legacy 名）。
+  const unconfirmed = engine.unconfirmedIds.includes(id);
   const busy = engine.busyIds.includes(id);
   const confirmable = unconfirmed || engine.certificateReadyIds.includes(id);
   return (
     <>
       <p className="text-xs text-muted-foreground" data-testid="connect-join-pending">
-        {unconfirmed ? t('nodes.enrollment.hubNotConfirmed') : t('nodes.enrollment.pending')}
+        {unconfirmed ? t('nodes.enrollment.relayNotConfirmed') : t('nodes.enrollment.pending')}
       </p>
       {confirmable && (
         <div>

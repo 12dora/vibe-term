@@ -52,7 +52,7 @@ describe('projectProtectedStatus', () => {
   });
 
   test('拿到数据后原样透出', () => {
-    const data = { role: 'hub' };
+    const data = { role: 'node' };
     const projected = projectProtectedStatus({ ...base, data, isPending: false });
     expect(projected.status).toBe(data);
     expect(projected.loading).toBe(false);

@@ -12,7 +12,7 @@
 //   * **入口自己是谁还不知道（`/api/auth/mode` 没落地）时既不记也不查**。记在
 //     `unknown→node` 上、之后又按 `entry→node` 去查，等于记了一条永远命中不了的账；
 //     反过来把 `unknown` 当通配符，则会把一次冷启动的偶发失败按到后来的任意入口头上。
-//   * 中转 / hub 也可能把**自己的 nodeId** 盖在一条如假包换的「会话过期」401 上，光看
+//   * 中继也可能把**自己的 nodeId** 盖在一条如假包换的「会话过期」401 上，光看
 //     nodeId 分不出这两种情况。所以该 node 一旦重新登录成功就把负结论清掉
 //     （`markLoggedIn` 是唯一入口），不让一次误判把直连按住半小时。
 //
@@ -60,7 +60,7 @@ export function isDirectLinkUnavailable(
 /**
  * 该 node 重新登录成功：把它在**所有入口**上的负结论清掉。
  *
- * 负结论有可能是误判——中转 / hub 会把自己的 nodeId 盖在真正的「会话过期」401 上。
+ * 负结论有可能是误判——中继会把自己的 nodeId 盖在真正的「会话过期」401 上。
  * 会话一换新，那条 401 的成因就不复存在，直连该重新试一次。
  */
 export function clearDirectLinkUnavailableFor(nodeId: string): void {

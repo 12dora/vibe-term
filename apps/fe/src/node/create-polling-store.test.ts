@@ -1,5 +1,5 @@
 // 轮询 store 骨架本身的单测：订阅面 / 重置钩子、节流与可见性门、单例引用计数。
-// `mesh-nodes` / `mesh-hubs` 两份 store 的行为断言仍留在各自的 spec 里。
+// `mesh-nodes` / `mesh-relay` 两份 store 的行为断言仍留在各自的 spec 里。
 
 import { describe, expect, test } from 'bun:test';
 import {

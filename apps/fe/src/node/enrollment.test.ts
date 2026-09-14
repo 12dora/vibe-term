@@ -745,8 +745,8 @@ describe('joinCommand', () => {
   });
 });
 
-describe('hub=sync 失败分类', () => {
-  test('超时 / hub 不可达 = 未确认（本地未落库，可原样重试）', () => {
+describe('hub=sync 失败分类（查询名是冻结的 legacy 名）', () => {
+  test('超时 / 上级不可达 = 未确认（本地未落库，可原样重试）', () => {
     expect(classifyKeyLogFailure('HUB_TIMEOUT')).toBe('unconfirmed');
     expect(classifyKeyLogFailure('unavailable')).toBe('unconfirmed');
     expect(classifyKeyLogFailure('uplink_down')).toBe('unconfirmed');
@@ -842,7 +842,7 @@ describe('submitAdmitRecord', () => {
     expect(listUnconfirmedRecordIds()).toEqual([]);
   });
 
-  test('409 hub 拒绝（unavailable）同样保留记录', async () => {
+  test('409 上级拒绝（unavailable）同样保留记录', async () => {
     const api = fakeApi([{ ok: false, code: 'unavailable' }]);
     expect(await submitAdmitRecord(api, 'e-2', RECORD)).toEqual({ kind: 'unconfirmed' });
     expect(unconfirmedRecord('e-2')).toEqual(RECORD);

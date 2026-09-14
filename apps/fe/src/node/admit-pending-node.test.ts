@@ -77,7 +77,7 @@ describe('admitPendingNode', () => {
     expect(encodeBase64url(payload.certificate_bytes)).toBe(MATERIAL.certificate);
   });
 
-  test('Hub 未确认：留住字节，第二次只重发同一份，不再要凭据', async () => {
+  test('上级未确认：留住字节，第二次只重发同一份，不再要凭据', async () => {
     const { api, sent } = fakeApi([
       { ok: false, code: 'HUB_TIMEOUT' },
       { ok: true, hubAck: true },
@@ -96,7 +96,7 @@ describe('admitPendingNode', () => {
     expect(listUnconfirmedRecordIds()).toEqual([]);
   });
 
-  test('Hub 终态拒绝：原样带出错误码', async () => {
+  test('终态拒绝：原样带出错误码', async () => {
     const { api } = fakeApi([{ ok: false, code: 'BAD_SIGNATURE' }]);
     const { prompt } = fakePrompt('root');
     expect(
@@ -141,7 +141,7 @@ describe('admitPendingNode', () => {
     ).toEqual({ kind: 'failed', message: 'connection reset' });
   });
 
-  test('提交阶段断网：字节已暂存，按 Hub 未确认处理而不是失败', async () => {
+  test('提交阶段断网：字节已暂存，按上级未确认处理而不是失败', async () => {
     const { prompt } = fakePrompt('root');
     const api = {
       keyLogHead: () =>
@@ -183,7 +183,7 @@ describe('admitPendingNode', () => {
 describe('admitPendingNode 的行复核', () => {
   beforeEach(() => clearUnconfirmedRecords());
 
-  test('凭据对话框期间这一行被 Hub 轮询改掉：静默取消，什么都不写', async () => {
+  test('凭据对话框期间这一行被成员列表刷新改掉：静默取消，什么都不写', async () => {
     const { api, sent } = fakeApi([]);
     const { prompt } = fakePrompt('root');
 
