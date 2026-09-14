@@ -6,8 +6,8 @@
 
 | 目录 | 放什么 |
 | --- | --- |
-| [`architecture/`](./architecture/README.md) | 系统如何工作：多节点互联（mesh / hub / 中继 / 直连 / 端口映射）、WebSocket 协议与状态机、终端底座与视口、文件传输、远程执行、分享、Agent、Watch、通知与消息指令 |
-| [`operations/`](./operations/README.md) | 部署与运维手册：安装、mesh 与多 hub 运维、容器节点、HTTPS / 端口 / 隧道、进程存活、发版 / 签名 / 升级 / 改名迁移 |
+| [`architecture/`](./architecture/README.md) | 系统如何工作：多节点互联（mesh / 中继 / 直连 / 端口映射）、WebSocket 协议与状态机、终端底座与视口、文件传输、远程执行、分享、Agent、Watch、通知与消息指令 |
+| [`operations/`](./operations/README.md) | 部署与运维手册：安装、mesh 与中继运维、容器节点、HTTPS / 端口 / 隧道、进程存活、发版 / 签名 / 升级 / 改名迁移 |
 | [`security/`](./security/README.md) | 登录面安全模型与访问策略（mesh 的威胁模型在 `architecture/mesh-architecture.md`） |
 | [`development/`](./development/README.md) | 开发与测试：环境变量、前端包结构与外壳行为、性能基准、字体流水线、实测 harness |
 | `images/` | 根 README 引用的截图 |
@@ -15,7 +15,7 @@
 
 ## 快速定位
 
-- 想搭一台公网入口把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
+- 想把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
 - 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
 - 装在 ≤ 2 GiB 的小内存机上：[小内存主机](./operations/small-memory.md)。
 - 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
@@ -63,9 +63,9 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / Hub / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查，以及 agent 用 CLI 调试别的节点 |
+| [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查，以及 agent 用 CLI 调试别的节点 |
 | [production-install.md](./operations/production-install.md) | 生产部署：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
-| [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、延迟优化、节点表、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
+| [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、延迟优化、节点表、环境变量、接入中继、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
 | [docker-node.md](./operations/docker-node.md) | 可升级的容器节点 |
 | [nonstandard-ports.md](./operations/nonstandard-ports.md) | 按角色列出应放行的 TCP/UDP 口；80/443 不可用时的 HTTPS 候选与探测 |
 | [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
