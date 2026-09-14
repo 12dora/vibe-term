@@ -5,7 +5,6 @@
 // 因此「接入本机中继」属于「连接」段（`uplink/uplink-section.tsx` 的 `SelfRelayEntry`），不在这里。
 
 import type { LocalRelayStatus } from '@vibeterm/api-client/local/types';
-import { Badge } from '@vibeterm/ui/badge';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
@@ -55,9 +54,14 @@ export function RelayServiceSection({ service }: RelayServiceSectionProps) {
             </span>
           </>
         )}
-        <Badge variant="outline" data-testid="local-relay-service-password">
-          {t(service.hasPassword ? 'relay.admin.password.set' : 'relay.admin.password.unset')}
-        </Badge>
+        {service.hasPassword === false && (
+          <span
+            className="basis-full text-muted-foreground"
+            data-testid="local-relay-service-password-unset"
+          >
+            {t('relay.admin.password.unsetWarning')}
+          </span>
+        )}
       </Row>
 
       {turn && <RelayTurnRow turn={turn} />}
