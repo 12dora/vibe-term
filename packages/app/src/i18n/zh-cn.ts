@@ -126,6 +126,10 @@ export const zhCN: Record<string, string> = {
   'doctor.ports.peerListening': 'PEER：已在 {{port}}/tcp 监听',
   'doctor.ports.peerNotListening': 'PEER：未在 {{port}}/tcp 监听',
   'doctor.ports.blocked': '端口不可达：{{list}}',
+  'doctor.health.loopStall':
+    '服务进程仍在运行，但 HTTP 无响应（{{url}}）：网关主线程可能已卡住；事件循环看门狗会自动重启（参见 `journalctl --user -u vibeterm` / `{{installDir}}/loop-watchdog.log`）；立即恢复可执行 `systemctl --user restart vibeterm` / `launchctl kickstart -k gui/$UID/com.vibeterm.vibeterm`',
+  'doctor.loopWatchdog.killed':
+    'loop-watchdog.log 最近 64 KiB 内至少 {{count}} 次终止；最近一次于 {{ts}}（卡住 {{stalledSec}} 秒，阶段 {{phase}}，版本 {{version}}）',
 
   'mesh.passkey.removed':
     '已移除 {{username}} 的 {{count}} 把通行密钥；两步验证与密码会话保持不变，用这些通行密钥建立的会话已注销。',

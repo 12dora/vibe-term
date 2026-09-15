@@ -1,3 +1,5 @@
+import { open, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { DEFAULT_SERVICE_NAME, defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { readExplicitBunPath } from '../lib/bun';
@@ -37,6 +39,7 @@ export interface DoctorRunContext {
   installLayout: InstallLayout;
   meta: InstallMeta | null;
   environment?: DoctorEnvironmentResult;
+  serviceRunning?: boolean;
 }
 
 export interface DoctorCheckStep<T = DoctorRunContext> {
@@ -76,6 +79,137 @@ const defaultFixPlanners: DoctorFixPlanners = {
   tmux: planTmuxInstall,
 };
 
+export const LOOP_WATCHDOG_LOG_NAME = 'loop-watchdog.log';
+export const LOOP_WATCHDOG_LOG_READ_CAP = 64 * 1024;
+
+export interface LoopWatchdogLogEntry {
+  ts: string;
+  pid: number;
+  version: string;
+  phase: string;
+  stalledSec: number;
+  thresholdSec: number;
+  signal: string;
+  rssBytes: number;
+  uptimeSec: number;
+  staleTicks?: number;
+}
+
+function requiredString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function requiredNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function requiredTs(value: unknown): string | null {
+  const text = requiredString(value);
+  if (text) return text;
+  const n = requiredNumber(value);
+  return n === null ? null : String(n);
+}
+
+function pickLoopWatchdogEntry(o: Record<string, unknown>): LoopWatchdogLogEntry | null {
+  const ts = requiredTs(o.ts);
+  const version = requiredString(o.version);
+  const phase = requiredString(o.phase);
+  const signal = requiredString(o.signal);
+  const pid = requiredNumber(o.pid);
+  const stalledSec = requiredNumber(o.stalledSec);
+  const thresholdSec = requiredNumber(o.thresholdSec);
+  const rssBytes = requiredNumber(o.rssBytes);
+  const uptimeSec = requiredNumber(o.uptimeSec);
+  if (ts === null) return null;
+  if (version === null) return null;
+  if (phase === null) return null;
+  if (signal === null) return null;
+  if (pid === null) return null;
+  if (stalledSec === null) return null;
+  if (thresholdSec === null) return null;
+  if (rssBytes === null) return null;
+  if (uptimeSec === null) return null;
+  const entry: LoopWatchdogLogEntry = {
+    ts,
+    pid,
+    version,
+    phase,
+    stalledSec,
+    thresholdSec,
+    signal,
+    rssBytes,
+    uptimeSec,
+  };
+  const staleTicks = requiredNumber(o.staleTicks);
+  if (staleTicks !== null) entry.staleTicks = staleTicks;
+  return entry;
+}
+
+export function parseLoopWatchdogLine(line: string): LoopWatchdogLogEntry | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  return pickLoopWatchdogEntry(raw as Record<string, unknown>);
+}
+
+export function parseLoopWatchdogLogText(
+  text: string,
+  dropFirstLine = false
+): LoopWatchdogLogEntry[] {
+  const lines = text.split(/\r?\n/);
+  if (dropFirstLine) lines.shift();
+  const entries: LoopWatchdogLogEntry[] = [];
+  for (const line of lines) {
+    const entry = parseLoopWatchdogLine(line);
+    if (entry) entries.push(entry);
+  }
+  return entries;
+}
+
+async function readLoopWatchdogLog(logPath: string): Promise<LoopWatchdogLogEntry[]> {
+  const st = await stat(logPath);
+  const start = Math.max(0, st.size - LOOP_WATCHDOG_LOG_READ_CAP);
+  const fh = await open(logPath, 'r');
+  try {
+    const buf = Buffer.alloc(st.size - start);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+    return parseLoopWatchdogLogText(buf.subarray(0, bytesRead).toString('utf8'), start > 0);
+  } finally {
+    await fh.close();
+  }
+}
+
+export async function checkLoopWatchdogLog(installDir: string): Promise<DoctorCheck[]> {
+  try {
+    const logPath = join(installDir, LOOP_WATCHDOG_LOG_NAME);
+    if (!(await pathExists(logPath))) return [];
+    const entries = await readLoopWatchdogLog(logPath);
+    if (entries.length === 0) return [];
+    const last = entries[entries.length - 1];
+    return [
+      {
+        id: 'loop-watchdog',
+        level: 'warn',
+        message: t('doctor.loopWatchdog.killed', {
+          count: entries.length,
+          ts: last.ts,
+          stalledSec: last.stalledSec,
+          phase: last.phase,
+          version: last.version,
+        }),
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
 async function ensureEnvironment(ctx: DoctorRunContext): Promise<DoctorEnvironmentResult> {
   if (!ctx.environment) {
     ctx.environment = await checkEnvironment({
@@ -105,14 +239,17 @@ export const DOCTOR_CHECK_TABLE: DoctorCheckStep[] = [
   },
   {
     id: 'service',
-    collect: async (ctx) =>
-      checkService({
+    collect: async (ctx) => {
+      const checks = await checkService({
         serviceName:
           ctx.meta?.serviceName ||
           asString(ctx.parsed.flags['service-name']) ||
           DEFAULT_SERVICE_NAME,
         installDir: ctx.installDir,
-      }),
+      });
+      ctx.serviceRunning = checks.some((check) => check.id === 'service' && check.level === 'pass');
+      return checks;
+    },
   },
   {
     id: 'legacy-layout',
@@ -129,8 +266,15 @@ export const DOCTOR_CHECK_TABLE: DoctorCheckStep[] = [
     id: 'health',
     collect: async (ctx) => {
       const env = await ensureEnvironment(ctx);
-      return checkHealth(env.healthHost, env.healthPort);
+      return checkHealth(env.healthHost, env.healthPort, {
+        serviceRunning: ctx.serviceRunning === true,
+        installDir: ctx.installDir,
+      });
     },
+  },
+  {
+    id: 'loop-watchdog',
+    collect: async (ctx) => checkLoopWatchdogLog(ctx.installDir),
   },
   {
     id: 'passkey-origin',

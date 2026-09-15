@@ -1,26 +1,38 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setLang, t } from '../i18n';
 import { writeEnvFile } from '../lib/env-file';
+import type { FetchLike } from '../lib/fetch-like';
 import type { DoctorCheck } from '../types';
 import {
   DOCTOR_CHECK_TABLE,
   type DoctorReporter,
+  LOOP_WATCHDOG_LOG_NAME,
+  LOOP_WATCHDOG_LOG_READ_CAP,
+  type LoopWatchdogLogEntry,
   buildDepFixPlan,
+  checkLoopWatchdogLog,
   doctorRunDecision,
   filterFixableFailures,
   isInstallableDep,
+  parseLoopWatchdogLine,
+  parseLoopWatchdogLogText,
   planDoctorFix,
   reportDoctorRun,
   runCheckTable,
   shouldPrintFixHint,
 } from './doctor';
 import {
+  HEALTHZ_RETRY_DELAY_MS,
   checkEnvironment,
+  checkHealth,
   classifyPasskeyOrigin,
+  healthzUrl,
   isDomainOrigin,
+  isHealthzTimeoutError,
+  loopStallCheck,
   stunServersDoctorCheck,
 } from './doctor-checks';
 
@@ -133,7 +145,7 @@ describe('stunServersDoctorCheck', () => {
 });
 
 describe('DOCTOR_CHECK_TABLE', () => {
-  test('runs platform, dependencies, install, service, legacy-layout, health, passkey-origin', () => {
+  test('runs platform, dependencies, install, service, legacy-layout, health, loop-watchdog, passkey-origin', () => {
     expect(DOCTOR_CHECK_TABLE.map((step) => step.id)).toEqual([
       'platform',
       'dependencies',
@@ -141,6 +153,7 @@ describe('DOCTOR_CHECK_TABLE', () => {
       'service',
       'legacy-layout',
       'health',
+      'loop-watchdog',
       'passkey-origin',
     ]);
   });
@@ -370,5 +383,454 @@ describe('passkey origin check', () => {
     })[0]?.message;
     expect(plainEn).toContain('password alone');
     expect(guardedEn).toContain('two-step verification');
+  });
+});
+
+const STALL_URL = 'http://127.0.0.1:9883/healthz';
+const STALL_INSTALL_DIR = '/opt/vibeterm';
+
+const noSleep = async () => {};
+
+function timeoutError(): DOMException {
+  return new DOMException('The operation timed out.', 'TimeoutError');
+}
+
+function abortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError');
+}
+
+function refusedError(): Error {
+  return Object.assign(new Error('Unable to connect. Is the computer able to access the url?'), {
+    code: 'ConnectionRefused',
+  });
+}
+
+function failingFetch(): FetchLike {
+  return async () => {
+    throw new Error('unreachable');
+  };
+}
+
+function okFetch(): FetchLike {
+  return async () => new Response('ok', { status: 200 });
+}
+
+function sequenceFetch(results: Array<Response | Error>): FetchLike {
+  let i = 0;
+  return async () => {
+    const next = results[i] ?? results[results.length - 1];
+    i += 1;
+    if (next instanceof Error) throw next;
+    return next;
+  };
+}
+
+describe('isHealthzTimeoutError', () => {
+  test('matches Bun AbortSignal.timeout TimeoutError and AbortError, not refused', () => {
+    expect(isHealthzTimeoutError(timeoutError())).toBe(true);
+    expect(isHealthzTimeoutError(abortError())).toBe(true);
+    expect(isHealthzTimeoutError(refusedError())).toBe(false);
+    expect(isHealthzTimeoutError(Object.assign(new Error('dns'), { code: 'ENOTFOUND' }))).toBe(
+      false
+    );
+    expect(isHealthzTimeoutError(new Error('unreachable'))).toBe(false);
+  });
+});
+
+describe('loopStallCheck', () => {
+  test('running+healthy does not emit a stall', () => {
+    expect(
+      loopStallCheck({
+        serviceRunning: true,
+        timedOut: false,
+        url: STALL_URL,
+        installDir: STALL_INSTALL_DIR,
+      })
+    ).toEqual([]);
+  });
+
+  test('running+timedOut emits a fail loop-stall item', () => {
+    const checks = loopStallCheck({
+      serviceRunning: true,
+      timedOut: true,
+      url: STALL_URL,
+      installDir: STALL_INSTALL_DIR,
+    });
+    expect(checks).toEqual([
+      {
+        id: 'loop-stall',
+        level: 'fail',
+        message: t('doctor.health.loopStall', { url: STALL_URL, installDir: STALL_INSTALL_DIR }),
+      },
+    ]);
+    expect(checks[0]?.message).toContain(STALL_URL);
+    expect(checks[0]?.message).toContain(`${STALL_INSTALL_DIR}/loop-watchdog.log`);
+  });
+
+  test('running+not-timed-out does not emit a stall (boot window / refused)', () => {
+    expect(
+      loopStallCheck({
+        serviceRunning: true,
+        timedOut: false,
+        url: STALL_URL,
+        installDir: STALL_INSTALL_DIR,
+      })
+    ).toEqual([]);
+  });
+
+  test('stopped+timedOut does not emit a stall (health stays warn)', () => {
+    expect(
+      loopStallCheck({
+        serviceRunning: false,
+        timedOut: true,
+        url: STALL_URL,
+        installDir: STALL_INSTALL_DIR,
+      })
+    ).toEqual([]);
+  });
+
+  test('stopped+healthy does not emit a stall', () => {
+    expect(
+      loopStallCheck({
+        serviceRunning: false,
+        timedOut: false,
+        url: STALL_URL,
+        installDir: STALL_INSTALL_DIR,
+      })
+    ).toEqual([]);
+  });
+});
+
+describe('checkHealth correlation and retry', () => {
+  test('running+healthy is pass without loop-stall', async () => {
+    const checks = await checkHealth('127.0.0.1', '1', {
+      fetchImpl: okFetch(),
+      serviceRunning: true,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks.find((check) => check.id === 'healthz')).toMatchObject({
+      id: 'healthz',
+      level: 'pass',
+    });
+    expect(checks.some((check) => check.id === 'loop-stall')).toBe(false);
+  });
+
+  test('timeout-both while running emits healthz warn and loop-stall fail; doctor exits 1', async () => {
+    const checks = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: sequenceFetch([timeoutError(), timeoutError()]),
+      serviceRunning: true,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks.map((check) => ({ id: check.id, level: check.level }))).toEqual([
+      { id: 'healthz', level: 'warn' },
+      { id: 'loop-stall', level: 'fail' },
+    ]);
+    expect(checks[0]?.message).toBe(
+      t('doctor.health.fail', { url: healthzUrl('127.0.0.1', '9883') })
+    );
+    expect(doctorRunDecision(checks, { json: false, fix: false })).toEqual({
+      action: 'done',
+      exitCode: 1,
+    });
+    const reporter = recordingReporter();
+    expect(reportDoctorRun(checks, { json: false, fix: false }, reporter)).toBe('done');
+    expect(reporter.exitCodes).toEqual([1]);
+  });
+
+  test('refused-both while running keeps healthz warn without loop-stall', async () => {
+    const checks = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: sequenceFetch([refusedError(), refusedError()]),
+      serviceRunning: true,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks.map((check) => ({ id: check.id, level: check.level }))).toEqual([
+      { id: 'healthz', level: 'warn' },
+    ]);
+    expect(doctorRunDecision(checks, { json: false, fix: false })).toEqual({ action: 'done' });
+  });
+
+  test('timeout then 200 is pass without loop-stall', async () => {
+    let attempts = 0;
+    const fetchImpl: FetchLike = async () => {
+      attempts += 1;
+      if (attempts === 1) throw timeoutError();
+      return new Response('ok', { status: 200 });
+    };
+    const checks = await checkHealth('127.0.0.1', '1', {
+      fetchImpl,
+      serviceRunning: true,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(attempts).toBe(2);
+    expect(checks.find((check) => check.id === 'healthz')?.level).toBe('pass');
+    expect(checks.some((check) => check.id === 'loop-stall')).toBe(false);
+  });
+
+  test('refused then timeout is warn only (not both timeouts)', async () => {
+    const checks = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: sequenceFetch([refusedError(), timeoutError()]),
+      serviceRunning: true,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks.map((check) => ({ id: check.id, level: check.level }))).toEqual([
+      { id: 'healthz', level: 'warn' },
+    ]);
+    expect(doctorRunDecision(checks, { json: false, fix: false })).toEqual({ action: 'done' });
+  });
+
+  test('running+generic-throw is healthz warn without loop-stall', async () => {
+    const checks = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: failingFetch(),
+      serviceRunning: true,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks.map((check) => ({ id: check.id, level: check.level }))).toEqual([
+      { id: 'healthz', level: 'warn' },
+    ]);
+  });
+
+  test('HTTP non-2xx both attempts is healthz warn without loop-stall', async () => {
+    const checks = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: async () => new Response('no', { status: 503 }),
+      serviceRunning: true,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks.map((check) => ({ id: check.id, level: check.level }))).toEqual([
+      { id: 'healthz', level: 'warn' },
+    ]);
+  });
+
+  test('stopped+unreachable keeps healthz as warn without loop-stall', async () => {
+    const checks = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: failingFetch(),
+      serviceRunning: false,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks).toEqual([
+      {
+        id: 'healthz',
+        level: 'warn',
+        message: t('doctor.health.fail', { url: healthzUrl('127.0.0.1', '9883') }),
+      },
+    ]);
+    expect(doctorRunDecision(checks, { json: false, fix: false })).toEqual({ action: 'done' });
+  });
+
+  test('stopped+healthy is pass without loop-stall', async () => {
+    const checks = await checkHealth('127.0.0.1', '1', {
+      fetchImpl: okFetch(),
+      serviceRunning: false,
+      installDir: STALL_INSTALL_DIR,
+      sleep: noSleep,
+    });
+    expect(checks.find((check) => check.id === 'healthz')?.level).toBe('pass');
+    expect(checks.some((check) => check.id === 'loop-stall')).toBe(false);
+  });
+
+  test('retries healthz once after the first failure then passes', async () => {
+    let attempts = 0;
+    const fetchImpl: FetchLike = async () => {
+      attempts += 1;
+      if (attempts === 1) return new Response('no', { status: 503 });
+      return new Response('ok', { status: 200 });
+    };
+    const checks = await checkHealth('127.0.0.1', '1', { fetchImpl, sleep: noSleep });
+    expect(attempts).toBe(2);
+    expect(checks[0]).toMatchObject({ id: 'healthz', level: 'pass' });
+  });
+
+  test('declares unreachable after two failed attempts', async () => {
+    let attempts = 0;
+    const fetchImpl: FetchLike = async () => {
+      attempts += 1;
+      throw new Error('timeout');
+    };
+    const checks = await checkHealth('127.0.0.1', '9883', {
+      fetchImpl,
+      serviceRunning: false,
+      sleep: noSleep,
+    });
+    expect(attempts).toBe(2);
+    expect(checks).toEqual([
+      {
+        id: 'healthz',
+        level: 'warn',
+        message: t('doctor.health.fail', { url: healthzUrl('127.0.0.1', '9883') }),
+      },
+    ]);
+  });
+
+  test('sleeps 1s between the two probe attempts', async () => {
+    const slept: number[] = [];
+    await checkHealth('127.0.0.1', '9883', {
+      fetchImpl: sequenceFetch([timeoutError(), timeoutError()]),
+      serviceRunning: true,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    expect(slept).toEqual([HEALTHZ_RETRY_DELAY_MS]);
+  });
+});
+
+function watchdogEntry(over: Partial<LoopWatchdogLogEntry> = {}): LoopWatchdogLogEntry {
+  return {
+    ts: '2026-09-15T12:00:00.000Z',
+    pid: 42,
+    version: '2.4.2',
+    phase: 'running',
+    stalledSec: 31,
+    thresholdSec: 30,
+    signal: 'SIGABRT',
+    rssBytes: 123456,
+    uptimeSec: 3600,
+    ...over,
+  };
+}
+
+function watchdogLine(over: Partial<LoopWatchdogLogEntry> = {}): string {
+  return JSON.stringify(watchdogEntry(over));
+}
+
+describe('loop-watchdog log', () => {
+  test('parseLoopWatchdogLogText returns no entries for 0 lines', () => {
+    expect(parseLoopWatchdogLogText('')).toEqual([]);
+    expect(parseLoopWatchdogLogText('\n\n')).toEqual([]);
+    expect(parseLoopWatchdogLine('not json')).toBeNull();
+    expect(parseLoopWatchdogLine('{"ts":"x"}')).toBeNull();
+  });
+
+  test('parses 3 lines with one malformed and uses last valid fields', () => {
+    const first = watchdogLine({ ts: '2026-09-15T10:00:00.000Z', pid: 1, stalledSec: 40 });
+    const last = watchdogLine({
+      ts: '2026-09-15T12:00:00.000Z',
+      pid: 99,
+      version: '2.6.1',
+      phase: 'boot',
+      stalledSec: 181,
+      thresholdSec: 180,
+      signal: 'SIGKILL',
+      rssBytes: 999,
+      uptimeSec: 12,
+    });
+    const entries = parseLoopWatchdogLogText(`${first}\nnot-json\n${last}\n`);
+    expect(entries).toHaveLength(2);
+    expect(entries[1]).toEqual({
+      ts: '2026-09-15T12:00:00.000Z',
+      pid: 99,
+      version: '2.6.1',
+      phase: 'boot',
+      stalledSec: 181,
+      thresholdSec: 180,
+      signal: 'SIGKILL',
+      rssBytes: 999,
+      uptimeSec: 12,
+    });
+  });
+
+  test('optional staleTicks is kept; unknown or invalid extra fields are ignored', () => {
+    const withTicks = { ...watchdogEntry(), staleTicks: 30, extra: 'ignore-me' };
+    expect(parseLoopWatchdogLine(JSON.stringify(withTicks))).toEqual({
+      ...watchdogEntry(),
+      staleTicks: 30,
+    });
+    expect(
+      parseLoopWatchdogLine(JSON.stringify({ ...watchdogEntry(), staleTicks: 'nope' }))
+    ).toEqual(watchdogEntry());
+    expect(parseLoopWatchdogLine(JSON.stringify(watchdogEntry()))?.staleTicks).toBeUndefined();
+  });
+
+  test('missing log file is silent', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-doctor-wd-missing-'));
+    doctorTempDirs.push(installDir);
+    expect(await checkLoopWatchdogLog(installDir)).toEqual([]);
+  });
+
+  test('empty or all-malformed log is silent', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-doctor-wd-empty-'));
+    doctorTempDirs.push(installDir);
+    await writeFile(join(installDir, LOOP_WATCHDOG_LOG_NAME), '');
+    expect(await checkLoopWatchdogLog(installDir)).toEqual([]);
+    await writeFile(join(installDir, LOOP_WATCHDOG_LOG_NAME), 'nope\n{bad}\n');
+    expect(await checkLoopWatchdogLog(installDir)).toEqual([]);
+  });
+
+  test('warns with the valid line count and last-line fields', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-doctor-wd-log-'));
+    doctorTempDirs.push(installDir);
+    const last = watchdogEntry({
+      ts: '2026-09-15T13:00:00.000Z',
+      version: '2.4.2',
+      phase: 'running',
+      stalledSec: 45,
+    });
+    await writeFile(
+      join(installDir, LOOP_WATCHDOG_LOG_NAME),
+      `${watchdogLine({ ts: '2026-09-15T11:00:00.000Z' })}\nbroken\n${JSON.stringify(last)}\n`
+    );
+    const checks = await checkLoopWatchdogLog(installDir);
+    expect(checks).toEqual([
+      {
+        id: 'loop-watchdog',
+        level: 'warn',
+        message: t('doctor.loopWatchdog.killed', {
+          count: 2,
+          ts: last.ts,
+          stalledSec: last.stalledSec,
+          phase: last.phase,
+          version: last.version,
+        }),
+      },
+    ]);
+  });
+
+  test('reads only the last 64 KiB so older lines outside the window are dropped', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-doctor-wd-cap-'));
+    doctorTempDirs.push(installDir);
+    const old = watchdogLine({ ts: 'old', pid: 1 });
+    const recent = watchdogLine({ ts: 'new', pid: 2, version: '2.6.1', stalledSec: 50 });
+    const padding = 'x'.repeat(LOOP_WATCHDOG_LOG_READ_CAP);
+    await writeFile(join(installDir, LOOP_WATCHDOG_LOG_NAME), `${old}\n${padding}\n${recent}\n`);
+    const checks = await checkLoopWatchdogLog(installDir);
+    expect(checks).toHaveLength(1);
+    expect(checks[0]?.message).toContain('at least 1 kill');
+    expect(checks[0]?.message).toContain('64 KiB');
+    expect(checks[0]?.message).toContain('last at new');
+    expect(checks[0]?.message).toContain('stalled 50s');
+    expect(checks[0]?.message).not.toContain('last at old');
+  });
+
+  test('read error is silent', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-doctor-wd-eisdir-'));
+    doctorTempDirs.push(installDir);
+    await mkdir(join(installDir, LOOP_WATCHDOG_LOG_NAME));
+    expect(await checkLoopWatchdogLog(installDir)).toEqual([]);
+  });
+
+  test('zh-CN stall and watchdog messages avoid 你/您', () => {
+    setLang('zh-CN');
+    const stall = t('doctor.health.loopStall', { url: STALL_URL, installDir: STALL_INSTALL_DIR });
+    const killed = t('doctor.loopWatchdog.killed', {
+      count: 2,
+      ts: '2026-09-15T12:00:00.000Z',
+      stalledSec: 31,
+      phase: 'running',
+      version: '2.4.2',
+    });
+    expect(stall).not.toBe('doctor.health.loopStall');
+    expect(killed).not.toBe('doctor.loopWatchdog.killed');
+    expect(stall).not.toContain('你');
+    expect(stall).not.toContain('您');
+    expect(killed).not.toContain('你');
+    expect(killed).not.toContain('您');
+    setLang('en');
   });
 });
