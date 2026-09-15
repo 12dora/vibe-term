@@ -2,6 +2,7 @@ import './bootstrap-env';
 import { resolve } from 'node:path';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
+import { startLoopWatchdogFromEnv } from '../../../../apps/gateway/src/system/loop-watchdog';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
 import {
@@ -24,6 +25,7 @@ function resolveStaticRoot(): string {
 
 async function main(): Promise<void> {
   console.log(`[vibeterm] version ${getDisplayVersion()}`);
+  const watchdog = startLoopWatchdogFromEnv(getDisplayVersion());
   await warnOnStaleSystemdUnit();
   void warnOnSystemdOomPolicy().catch(() => undefined);
   const host = process.env.VIBETERM_BIND_HOST || '127.0.0.1';
@@ -40,6 +42,7 @@ async function main(): Promise<void> {
       fetch: (req) => handlePreflightHttp(req, getDisplayVersion(), PROCESS_STARTED_AT),
     });
     console.log(`[vibeterm] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
+    watchdog.markStarted();
     return;
   }
 
@@ -75,6 +78,7 @@ async function main(): Promise<void> {
   });
 
   console.log(`[vibeterm] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
+  watchdog.markStarted();
 }
 
 process.on('unhandledRejection', (reason) => {
