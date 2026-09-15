@@ -26,6 +26,8 @@ const SCREENSHOT_DIR =
   fileURLToPath(new URL('../test-results/replay/', import.meta.url));
 const TUI_PAYLOAD = fileURLToPath(new URL('./fixtures/replay-tui-payload.sh', import.meta.url));
 const MARKER = 'REPLAY-LEFT-EDGE-1';
+/** 分享之前先打两行：快照本身就带上多行正文，才验得到裸 LF 有没有补 CR。 */
+const CHECKPOINT_LINES = ['CKPT-LINE-1', 'CKPT-LINE-2'];
 const WIDE = `REPLAY-WIDE-${'W'.repeat(200)}`;
 const WALL_CLOCK = /^\d{2}:\d{2}:\d{2}$/;
 
@@ -96,6 +98,14 @@ function stopOwnSession(sessionName: string): void {
   spawnSync('sh', ['-c', `tmux -L ${state.entryTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
+}
+
+/** 分享前先往 pane 里打两行，让开分享时抓的快照里有多行正文。 */
+function sendPreShareLines(sessionName: string): void {
+  meshTmux(
+    state.entryTmuxSocket,
+    `send-keys -t ${sessionName} "printf '${CHECKPOINT_LINES.join('\\n')}\\n'" C-m`
+  );
 }
 
 function sendReplayPayload(sessionName: string): void {
@@ -370,6 +380,12 @@ async function waitForReplayTerminalSettled(page: Page): Promise<void> {
     .toBe(true);
 }
 
+/** 快照那几行里有多少行真的贴在第 0 列（命令回显那一行不算，它前面有提示符）。 */
+async function countCheckpointLinesAtColumnZero(page: Page): Promise<number> {
+  const lines = await readReplayLines(page);
+  return CHECKPOINT_LINES.filter((needle) => lines.some((line) => line.startsWith(needle))).length;
+}
+
 async function setReplaySpeed8x(page: Page): Promise<void> {
   const speed = page.getByTestId('share-replay-speed');
   for (let i = 0; i < 3; i += 1) {
@@ -509,6 +525,10 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
 
     await page.goto(meshUrl(state, `/devices/${deviceId}`), { waitUntil: 'domcontentloaded' });
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+    sendPreShareLines(sessionName);
+    await expect
+      .poll(() => readTerminalBuffer(page), { timeout: 20_000 })
+      .toContain(CHECKPOINT_LINES[1]);
     await page.getByTestId('share-open-button').click();
     await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
     const password = await page.getByTestId('share-password').inputValue();
@@ -576,6 +596,17 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
 
     // 开窗那一刻的内容表面矩形：终端只开一台、尺寸一次定死，稳定之后不该再跳。
     const openedLayout = await readReplayLayout(page);
+
+    // 快照正文是 gateway 用裸 LF 拼的多行文本：不补 CR 的话第二行会阶梯式缩进。
+    if (
+      !process.env.VIBETERM_E2E_REPLAY_LOG_FILE &&
+      process.env.VIBETERM_E2E_REPLAY_CLAUDE !== '1' &&
+      process.env.VIBETERM_E2E_REPLAY_TUI !== '1'
+    ) {
+      await expect
+        .poll(() => countCheckpointLinesAtColumnZero(page), { timeout: 20_000 })
+        .toBe(CHECKPOINT_LINES.length);
+    }
     await page.screenshot({ path: `${SCREENSHOT_DIR}/replay-opened.png` });
 
     await playReplayToEnd(page);

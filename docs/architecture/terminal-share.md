@@ -245,17 +245,20 @@ checkpoint 捕获进行中缓冲的输出会写在 checkpoint 之后那一条 `r
 （禁粘贴，`Cmd`/`Ctrl+C` 复制）。设置页的 `TerminalPreview` 是该组件的薄封装。
 
 跳转往前接着播、往回从最近的 checkpoint 重建；倍速 1x/2x/4x/8x；`in` 条目**只**进终端下方的标记条
-（`⏎ ⇥ ⌫ ⎋ ^X`），绝不写回终端。回放网格由录像决定（pty 输出不能重排），**字号由外框决定**：
-`replay-fit.ts` 按（当前网格、外框 `clientWidth/Height`、字体 advance 比例（与 ghostty 同一套 `W`×10 探针）、
-行高、dpr）算出能整格放下的最大字号（8–40 px，2 px 安全边，再按设备像素取整的 cell 复核），
-`useReplayFit` 用 ResizeObserver + 对话框 `zoom-in-95` 动画结束后重测，120 ms 去抖后以 `fontSize` 覆盖
-`ReadOnlyTerminal` 重建实例；播放机按实例代次（`generation`）而非 `ready` 翻转重置并快进到当前时刻
-（boot 链常在微任务内完成，React 会把 `ready` 的 false→true 合并成一次渲染）。手机录的 52×47 在桌面宽窗里
-按高度放大居中、两侧 letterbox；超宽录像压到 8 px 仍放不下时退回平移视口（左上贴齐、可滚动）。
-计算只依赖（网格、外框、基准度量），不回读终端自身尺寸，因此不会震荡；首个 checkpoint 之前沿用上次网格，
-避免拖到 0 时字号在基准与拟合之间来回重建。先 `fit` 再开平移视口（`setViewportPan(true)`），
-resize 后回到原点。首次 `fit` 跳过零尺寸容器（对话框还在 zoom / 尚未拿到真实布局），
-等 ResizeObserver 见到正尺寸再 fit，避免按 0×0 算出错误网格。外框 `sm` 起 44rem 并按视口高度封顶，对话框 `max-w-6xl`。
+（`⏎ ⇥ ⌫ ⎋ ^X`），绝不写回终端。**回放终端和普通终端一样铺满回放窗**：只读终端先按容器与用户字号拟合列行
+（ResizeObserver 重拟合，150 ms 去抖），再与录像的**尺寸包络**（`replayPaneEnvelope`：该 pane 时间轴上所有网格的最大列/行，
+经 `minGrid` prop 传入）逐轴取大，得到有效网格；录像流喂进这个更大的模拟器——窄屏录的 TUI 落在左上、其余是终端底色
+（tmux 客户端大于窗口时同样处理），shell 输出反而能铺开。录像里的 `resize` 不再驱动模拟器，只喂包络与 `cols×rows` 徽标；**checkpoint 例外**——它的字节是按录制行数拼的
+（主屏含历史 + 可见帧 + 绝对 CUP，见 `screen-checkpoint-builder.ts`），直接写进更高的模拟器会把历史留在屏上、光标错位，
+所以 `writeCheckpoint` 在会话内部原子地「resize 到录制网格 → 写入 → resize 回有效网格」（`write`/`resize` 都同步进 wasm，
+不触发 `onGridChange`），让 ghostty 像真终端变高那样把历史拉回滚动区、提示符留在底部，alt-screen TUI 则留在左上。checkpoint 文本是 capture-pane 按裸 `\n` 拼的，回放写入前与在线终端一样过 `normalizeLiveOutputForTerminal`（裸 LF 补 CR，CR 状态跨块携带，`reset()` 清零），否则多行 checkpoint 会呈阶梯。字号沿用设置，只在包络放不下外框时缩小（`replay-fit.ts`，最小 8 px，与 ghostty 同一套 `W`×10 探针、
+dpr 钳 ≥1），再放不下走平移视口。ghostty 的 resize 会重排已有内容而回放没有应用来重画，所以**有效网格一变**
+（用户改窗口、后到的日志页把包络撑大、字号重建）就 `onGridChange` → 实例代次 `generation`+1 → 播放机 `reset()` 后从
+checkpoint 快进到当前时刻；网格变化不会再引起网格变化，无环。首个实例要等对话框 `zoom-in-95` 动画结束、外框量到
+`clientWidth/Height`、第一页日志落地（包络已知）后才挂载，因此打开时就是最终字号与网格，不跳变；播放机按 `generation`
+而非 `ready` 翻转重放（boot 链在微任务内完成时 React 会把 false→true 合并成一次渲染）。外框高度按视口铺开
+（`h-[max(18rem,calc(100dvh-17rem))]`），对话框接近全宽。2.6.0 曾按「字号缩放 + 居中 letterbox」做过一版，被否——
+窄屏录的仍是窄屏、打开后跳变；`surfaceFrame`/`read-only-surface-frame` 已随之删除。
 
 进度条是带刻度的时间轴（`replay-timeline.ts` 纯计算：墙钟格式化、刻度规划、位置换算）：
 保留原生 `range` 做可访问性，外层画主 / 次刻度与起止墙钟（跨日补日期）；墙钟 = `startAt + t`

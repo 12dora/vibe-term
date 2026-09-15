@@ -12,6 +12,7 @@ import {
   createTerminalController,
   isMacPlatform,
 } from 'ghostty-terminal';
+import { normalizeLiveOutputForTerminal } from '../normalization';
 import {
   type MeasurableElement,
   measureElementRect,
@@ -23,6 +24,7 @@ import { attachTerminalWithLatestTheme } from '../theme';
 export const READ_ONLY_TERMINAL_SCROLLBACK = 10000;
 
 const PAN_VIEWPORT_SELECTOR = '[data-pan-viewport="true"]';
+const TEXT_ENCODER = new TextEncoder();
 
 export type ReadOnlyController = CompatibleTerminalLike & {
   dispose(): void;
@@ -238,6 +240,8 @@ export class ReadOnlyTerminalSession {
   private readonly unbindScroll: Array<() => void> = [];
   private unbindDeferredRefit: (() => void) | null = null;
   private readonly onGridChange?: (cols: number, rows: number) => void;
+  /** 上一块字节是不是以 CR 收尾：补 CR 要跨块接续，和 live 输出同一套状态机。 */
+  private endedWithCR = false;
 
   constructor(
     private readonly viewportPan: boolean,
@@ -251,12 +255,11 @@ export class ReadOnlyTerminalSession {
     this.minGrid = options?.minGrid ?? null;
     this.onGridChange = options?.onGridChange;
     this.handle = {
-      write: (data) => {
-        this.term?.write(data);
-      },
+      write: (data) => this.writeNormalized(data),
       writeCheckpoint: (data, grid) => this.writeAtRecordedGrid(data, grid),
       reset: () => {
         this.origin.reset();
+        this.endedWithCR = false;
         this.term?.reset();
         // 清屏之后内容要从左上角重写：不滚回原点的话会在旧偏移下重画，看着像丢了一截。
         this.scrollToOrigin();
@@ -332,12 +335,26 @@ export class ReadOnlyTerminalSession {
     if (!term) return;
     const effective = this.grid;
     if (sameReadOnlyGrid(effective, grid)) {
-      term.write(data);
+      this.writeNormalized(data);
       return;
     }
     term.resize(grid.cols, grid.rows);
-    term.write(data);
+    this.writeNormalized(data);
     if (effective) term.resize(effective.cols, effective.rows);
+  }
+
+  /**
+   * 裸 LF 补 CR 后再写。录像里的 checkpoint / history 都是 gateway 用 '\n' 拼的行，
+   * 直接喂给终端会阶梯式换行——live 输出走的是同一个规整器（terminal-snapshot.ts）。
+   * 返回的缓冲可能是复用的暂存区视图，必须同步交给 write 消费掉。
+   */
+  private writeNormalized(data: Uint8Array | string): void {
+    const term = this.term;
+    if (!term) return;
+    const bytes = typeof data === 'string' ? TEXT_ENCODER.encode(data) : data;
+    const result = normalizeLiveOutputForTerminal(bytes, this.endedWithCR);
+    this.endedWithCR = result.endedWithCR;
+    term.write(result.normalized);
   }
 
   private enablePan(): void {

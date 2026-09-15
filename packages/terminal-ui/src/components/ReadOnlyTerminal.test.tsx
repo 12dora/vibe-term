@@ -147,6 +147,11 @@ function createFakeController(options: GhosttyTerminalInitOptions) {
 
 type FakeController = ReturnType<typeof createFakeController>;
 
+/** 写进终端的都是补过 CR 的字节缓冲，断言前解回字符串。 */
+function decodeWrite(data: string | Uint8Array): string {
+  return typeof data === 'string' ? data : new TextDecoder().decode(data);
+}
+
 async function bootWithFake(input: {
   width: number;
   height: number;
@@ -407,7 +412,7 @@ describe('ReadOnlyTerminal grid', () => {
       [80, 24],
       [200, 50],
     ]);
-    expect(controller.writes).toEqual(['SNAP']);
+    expect(controller.writes.map(decodeWrite)).toEqual(['SNAP']);
     expect(changes).toEqual([]);
     expect(session?.effectiveGrid).toEqual({ cols: 200, rows: 50 });
     session?.dispose();
@@ -424,7 +429,34 @@ describe('ReadOnlyTerminal grid', () => {
     controller.resizeCalls.length = 0;
     session?.handle.writeCheckpoint('SNAP', { cols: 80, rows: 24 });
     expect(controller.resizeCalls).toEqual([]);
-    expect(controller.writes).toEqual(['SNAP']);
+    expect(controller.writes.map(decodeWrite)).toEqual(['SNAP']);
+    session?.dispose();
+  });
+
+  // 裸 LF 补 CR 的状态要跨块接续：块末的 CR 与下一块开头的 LF 是同一个换行，不能再补一个。
+  test('CR 跨块接续，reset 之后状态清零', async () => {
+    const fit = createFakeFit([], { cols: 100, rows: 30 });
+    const { session, controller } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: false,
+      fit,
+    });
+    const encoder = new TextEncoder();
+    session?.handle.write(encoder.encode('abc\r'));
+    session?.handle.write(encoder.encode('\ndef'));
+    expect(controller.writes.map(decodeWrite)).toEqual(['abc\r', '\ndef']);
+
+    controller.writes.length = 0;
+    session?.handle.write(encoder.encode('abc\r'));
+    session?.handle.reset();
+    session?.handle.write(encoder.encode('\ndef'));
+    // reset 清了状态：这个 LF 又是「裸」的，必须补 CR
+    expect(controller.writes.map(decodeWrite).at(-1)).toBe('\r\ndef');
+
+    controller.writes.length = 0;
+    session?.handle.write(encoder.encode('one\ntwo'));
+    expect(controller.writes.map(decodeWrite)).toEqual(['one\r\ntwo']);
     session?.dispose();
   });
 

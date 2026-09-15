@@ -29,6 +29,11 @@ function primaryCheckpoint(): string {
   };${PROMPT.length + 1}H`;
 }
 
+/** 真实录像里的快照是 gateway 用裸 '\n' 拼的行（control-mode capture 的 join），不是 CRLF。 */
+function bareLfCheckpoint(): string {
+  return '\x1b[2J\x1b[HAAA\nBBB\nCCC\x1b[3;4H';
+}
+
 /** alt 屏快照：不带 history，24 行画面贴左上，光标在左下。 */
 function alternateCheckpoint(): string {
   const rows = Array.from(
@@ -111,6 +116,15 @@ describe('writeCheckpoint 在录制网格下写快照（真 ghostty）', () => {
     session.handle.write('ZZZ');
     const lines = viewportLines(term);
     expect(lines.some((line) => line.startsWith(`${PROMPT}ZZZ`))).toBe(false);
+    session.dispose();
+  });
+
+  // 裸 LF 只下移不回到行首，写进终端会阶梯式换行；live 输出走的是同一个规整器。
+  test('裸 LF 的快照补齐 CR：三行都贴在第 0 列', async () => {
+    const { session, term } = await bootHeadlessSession();
+    session.handle.writeCheckpoint(bareLfCheckpoint(), RECORDED);
+    const lines = viewportLines(term);
+    expect(lines.slice(0, 3)).toEqual(['AAA', 'BBB', 'CCC']);
     session.dispose();
   });
 
