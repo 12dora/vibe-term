@@ -293,9 +293,9 @@ async function readReplayLayout(page: Page): Promise<ReplayLayout> {
 }
 
 /**
- * 等只读终端这一台实例稳定下来：字号自适应会按录像网格重建终端（换字号只能重建），
- * 重建那一下会清屏并从 checkpoint 重放，正赶上拖选就会把选区弄丢。
- * 给当前实例打个标记，隔一会儿再看标记还在不在——在就是没换过。
+ * 等只读终端这一台实例稳定下来。开窗时只会开一台（字号先算好再挂终端），但录像中途改尺寸
+ * 会让字号跟着变，而换字号只能重建终端：重建那一下清屏并从 checkpoint 重放，
+ * 正赶上拖选就会把选区弄丢。给当前实例打个标记，隔一会儿再看标记还在不在——在就是没换过。
  */
 async function waitForReplayTerminalSettled(page: Page): Promise<void> {
   const tag = async (): Promise<boolean> =>

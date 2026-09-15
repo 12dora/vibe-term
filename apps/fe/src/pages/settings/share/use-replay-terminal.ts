@@ -20,7 +20,8 @@ export interface ReplayTerminalState {
   booted: boolean;
   /** 实例代次，每次就绪 +1。重建太快时 ready 可能在一次渲染里就翻回 true，布尔值看不出换了一台。 */
   generation: number;
-  widget: ReactElement;
+  /** 字号还没定（外框或录像网格没齐）时为 null：先不开面，免得用户先看到一台没适配的。 */
+  widget: ReactElement | null;
 }
 
 export function createReplayTerminalBinding(onReadyChange: (ready: boolean) => void): {
@@ -56,8 +57,8 @@ export function createReplayTerminalBinding(onReadyChange: (ready: boolean) => v
   };
 }
 
-/** `fontSize` 由外框自适应算出；变了终端会重建，播放机随后按当前时刻重新快进。 */
-export function useReplayTerminal(fontSize?: number): ReplayTerminalState {
+/** `fontSize` 由外框自适应算出：null 表示还不到开面的时候；变了终端会重建，播放机随后重新快进。 */
+export function useReplayTerminal(fontSize: number | null): ReplayTerminalState {
   const { t } = useTranslation();
   const [ready, setReady] = useState(false);
   const [booted, setBooted] = useState(false);
@@ -76,16 +77,18 @@ export function useReplayTerminal(fontSize?: number): ReplayTerminalState {
 
   const widget = useMemo(
     () =>
-      createElement(ReadOnlyTerminal, {
-        viewportPan: true,
-        surfaceFrame: true,
-        selection: true,
-        fontSize,
-        onReady: binding.onReady,
-        onDispose: binding.onDispose,
-        testId: 'share-replay-mount',
-        ariaLabel,
-      }),
+      fontSize === null
+        ? null
+        : createElement(ReadOnlyTerminal, {
+            viewportPan: true,
+            surfaceFrame: true,
+            selection: true,
+            fontSize,
+            onReady: binding.onReady,
+            onDispose: binding.onDispose,
+            testId: 'share-replay-mount',
+            ariaLabel,
+          }),
     [binding, ariaLabel, fontSize]
   );
 

@@ -48,7 +48,7 @@ function fakeHandle(): ReadOnlyTerminalHandle & {
   };
 }
 
-function mountHook(fontSize?: number): { state: ReplayTerminalState; html: string } {
+function mountHook(fontSize: number | null): { state: ReplayTerminalState; html: string } {
   latestProps = null;
   const slot: { state: ReplayTerminalState | null } = { state: null };
   function Probe() {
@@ -105,7 +105,7 @@ describe('createReplayTerminalBinding', () => {
 
 describe('useReplayTerminal', () => {
   test('渲染带平移和选区的共享 widget，testid 打在根上', () => {
-    const { html, state } = mountHook();
+    const { html, state } = mountHook(13);
     expect(html).toContain('data-testid="share-replay-mount"');
     expect(latestProps?.viewportPan).toBe(true);
     expect(latestProps?.selection).toBe(true);
@@ -118,18 +118,27 @@ describe('useReplayTerminal', () => {
     expect(widget.props.testId).toBe('share-replay-mount');
     expect(state.ready).toBe(false);
     expect(state.booted).toBe(false);
-    expect(latestProps?.fontSize).toBeUndefined();
+    expect(state.generation).toBe(0);
+    expect(latestProps?.fontSize).toBe(13);
   });
 
-  test('自适应字号透传给 widget，不给则由设置决定', () => {
+  test('自适应字号透传给 widget', () => {
     const { state } = mountHook(21);
     expect(latestProps?.fontSize).toBe(21);
     const widget = state.widget as ReactElement<ReadOnlyTerminalProps>;
     expect(widget.props.fontSize).toBe(21);
   });
 
+  // 字号没定下来就开面的话，那一台必然要被适配后的替换掉：画面跳一下，选区也没了。
+  test('字号为 null 时根本不挂 widget', () => {
+    const { state, html } = mountHook(null);
+    expect(state.widget).toBeNull();
+    expect(html).toBe('');
+    expect(latestProps).toBeNull();
+  });
+
   test('把 widget 的 onReady/onDispose 接到 handle 转发', () => {
-    const { state } = mountHook();
+    const { state } = mountHook(13);
     const widget = fakeHandle();
     state.handle.write(new Uint8Array([1]));
     expect(widget.calls).toEqual([]);
