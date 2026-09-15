@@ -227,8 +227,10 @@ export interface ToolbarMoreMenuProps {
 
 /**
  * 顶栏「更多」：刷新 / 输入模式 / 分享 / 监视规则四项收进来，顶栏只留分屏与终端设置。
- * finalFocus 只对键盘关闭回焦：鼠标点「切换输入模式」后焦点该回到终端，
- * 而菜单卸载在终端回焦之后，默认的回焦会把焦点抢回触发器。
+ * finalFocus 一律关掉：菜单关闭后焦点归对话框或终端自己管。base-ui 分不清 Esc 关闭
+ * 与回车选中菜单项（两者的 closeType 都是 'keyboard'），回焦发生在菜单项 onClick 打开
+ * 对话框之后，焦点会落到被 aria-hidden 盖住的触发器上，Esc / 回车就都操作不到对话框。
+ * 代价是 Esc 关菜单不再把焦点送回触发器，这条已接受。
  */
 export function ToolbarMoreMenu({ items, label }: ToolbarMoreMenuProps) {
   return (
@@ -259,7 +261,7 @@ export function ToolbarMoreMenu({ items, label }: ToolbarMoreMenuProps) {
         backdrop
         className={MENU_CONTENT_CLASS}
         data-testid="console-more-menu"
-        finalFocus={(closeType) => closeType === 'keyboard'}
+        finalFocus={false}
       >
         {items.map((item) => {
           const Icon = item.icon;

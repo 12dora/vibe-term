@@ -116,6 +116,36 @@ function MemoryLimitsFields({
   );
 }
 
+// Switch 的 id 落在 base-ui 藏起来的 checkbox 上，label htmlFor 只管点整行切换；
+// role="switch" 那个 span 得靠 aria-labelledby 才有无障碍名（实测 Chromium AX 树：只给
+// label htmlFor 时 name 为空串，补上 aria-labelledby 才念出文案）。
+export function MemoryLimitsEnabledRow({
+  checked,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <label
+      className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5"
+      htmlFor="memory-limits-enabled"
+    >
+      <span className="min-w-0 text-sm font-medium" id="memory-limits-enabled-label">
+        {t('settings.nodes.memory.enabled')}
+      </span>
+      <Switch
+        id="memory-limits-enabled"
+        aria-labelledby="memory-limits-enabled-label"
+        checked={checked}
+        onCheckedChange={(next) => onCheckedChange(next === true)}
+        data-testid="memory-limits-enabled"
+      />
+    </label>
+  );
+}
+
 function useMemoryLimits(api: MemoryLimitsApi) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<MemoryLimitsDraft | null>(null);
@@ -185,14 +215,10 @@ export function MemoryLimitsSection({ api = defaultMemoryLimitsApi }: { api?: Me
   return (
     <div className="flex flex-col gap-3" data-testid="memory-limits-form">
       <p className="text-xs text-muted-foreground">{t('settings.nodes.memory.description')}</p>
-      <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
-        <span className="min-w-0 text-sm font-medium">{t('settings.nodes.memory.enabled')}</span>
-        <Switch
-          checked={draft.enabled}
-          onCheckedChange={(checked) => update({ enabled: checked === true })}
-          data-testid="memory-limits-enabled"
-        />
-      </div>
+      <MemoryLimitsEnabledRow
+        checked={draft.enabled}
+        onCheckedChange={(checked) => update({ enabled: checked })}
+      />
       <MemoryLimitsFields draft={draft} errors={errors} onChange={update} />
       <div className="flex justify-end pt-1">
         <Button
