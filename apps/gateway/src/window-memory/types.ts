@@ -61,6 +61,10 @@ export interface WindowOomMarkStore {
   has(deviceId: string, windowId: string): boolean;
   mark(deviceId: string, windowId: string, scope: string, oomKills: number): void;
   clear(deviceId: string, windowId: string): void;
+  /** 该设备当前持久化了标记的窗口 id（跟踪器每 tick 据此清扫快照里已不存在的窗口）。 */
+  listWindowIds(deviceId: string): string[];
+  /** 设备删除时整体清掉。 */
+  clearDevice(deviceId: string): void;
 }
 
 /** 网关侧注入给 tmux 连接的钩子。 */
