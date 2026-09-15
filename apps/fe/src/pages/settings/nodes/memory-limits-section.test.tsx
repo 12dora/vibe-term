@@ -7,7 +7,7 @@ import enUS from '@vibeterm/shared/i18n/locales/en_US.json';
 import jaJP from '@vibeterm/shared/i18n/locales/ja_JP.json';
 import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryLimitsSection } from './memory-limits-section';
+import { MemoryLimitsEnabledRow, MemoryLimitsSection } from './memory-limits-section';
 
 const API = {
   get: async () => WINDOW_MEMORY_SETTINGS_DEFAULTS,
@@ -48,6 +48,20 @@ describe('MemoryLimitsSection', () => {
     const html = renderToStaticMarkup(<MemoryLimitsSection api={API} />);
     expect(html).toContain('data-testid="memory-limits-loading"');
     expect(html).not.toContain('data-testid="memory-limits-form"');
+  });
+
+  // 开关行两件事都要在：label htmlFor 管点整行切换，aria-labelledby 管 role="switch" 的无障碍名。
+  test('开关行关联文案：label htmlFor + aria-labelledby', () => {
+    const html = renderToStaticMarkup(
+      <MemoryLimitsEnabledRow checked={false} onCheckedChange={() => {}} />
+    );
+    expect(html).toContain('for="memory-limits-enabled"');
+    expect(html).toContain('id="memory-limits-enabled"');
+    expect(html).toContain('id="memory-limits-enabled-label"');
+    expect(html).toMatch(
+      /role="switch"[^>]*aria-labelledby="memory-limits-enabled-label"|aria-labelledby="memory-limits-enabled-label"[^>]*role="switch"/
+    );
+    expect(html).toContain('data-testid="memory-limits-enabled"');
   });
 });
 

@@ -4,6 +4,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import { DropdownMenuContent } from '@vibeterm/ui/dropdown-menu';
+import { Children, type ReactElement, type ReactNode, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   type ToolbarButtonsInput,
@@ -115,4 +117,23 @@ describe('顶栏「更多」菜单', () => {
       expect(html).toContain('data-testid="console-more-indicator"');
     }
   });
+
+  // 回车选中菜单项与 Esc 关菜单在 base-ui 里是同一个 closeType，按 'keyboard' 回焦会把
+  // 焦点塞回被对话框 aria-hidden 的触发器；这里钉住 finalFocus 永远是 false。
+  test('菜单内容禁用回焦，不把焦点送回 ⋯ 触发器', () => {
+    const element = ToolbarMoreMenu({ items: buildToolbarMenuItems(toolbarInput()), label: 'x' });
+    const content = findElement(element, DropdownMenuContent);
+    expect(content).not.toBeNull();
+    expect(content?.props.finalFocus).toBe(false);
+  });
 });
+
+function findElement(node: ReactNode, type: unknown): ReactElement<any> | null {
+  for (const child of Children.toArray(node)) {
+    if (!isValidElement(child)) continue;
+    if (child.type === type) return child;
+    const found = findElement((child.props as { children?: ReactNode }).children, type);
+    if (found) return found;
+  }
+  return null;
+}
