@@ -159,3 +159,11 @@ AI agent / CI 目前只能把完整会话能力交给调用方：默认 `~/.conf
 上游修复 [libdatachannel PR #1630](https://github.com/paullouisageneau/libdatachannel/pull/1630)（`handleTimeout()` → `enqueueRecv()`）尚未合入；node-datachannel 0.33.4 / libdatachannel v0.24.5 也不含该行。产品侧用进程内事件循环看门狗把永久挂死变成约 10–20 s 的自杀重启（见 [事件循环看门狗](./operations/gateway-loop-watchdog.md)）。
 
 验证：生产启动应有 `[vibeterm][loop-watchdog] armed …`；卡死时应有 `main thread stalled …`、`<installDir>/loop-watchdog.log` 一行 JSON，随后服务被拉起。现场重启前用 `eu-stack -p <pid>` 核对 `agent_get_selected_candidate_pair` / `DtlsTransport::handleTimeout` / `agent_send`。`vibeterm doctor` 在服务 running 但 HTTP 无响应时 FAIL `loop-stall`。根因要等上游发版（或 vendor 补丁构建）才能从本文件移除。
+
+## KI-18：TUN 代理 fake-IP 把中继域名解析成假地址时上联拨号超时
+
+本机走 mihomo / Surge 一类 TUN 代理、且 DNS 回落打到一条已死的境外出口时，系统 lookup 会把中继域名「成功」解析成 fake-IP（`198.18.0.0/15`）。上联按这个地址拨号，TCP 进 TUN 后无回包，表现为 `connect-timeout`，中继本身是健康的。
+
+现有 `dial-resolve.ts` 的 DoH 重拨**只在系统 DNS 失败时**触发（见 [公共中继「系统 DNS 失败时的 DoH 重拨」](./architecture/relay.md)），lookup 成功拿到 fake-IP 不会走那条路径。隧道边缘与 STUN 的 fake-IP 绕行（[隧道边缘](./operations/tunnel-edge-fake-ip.md)、KI-13 / KI-15）也不覆盖这条 TCP 上联。
+
+处置（代理侧，二选一）：给中继域名钉国内解析（mihomo `nameserver-policy`），或加 DIRECT 规则绕开 TUN。产品侧后续：解析结果是 fake-IP 且 connect 失败时，用 DoH 解析到的真实 IP 再拨一次。

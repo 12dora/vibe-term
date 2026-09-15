@@ -30,7 +30,7 @@ macOS、没有 systemd、没有 cgroup v2 的宿主**静默不启用**，不影�
 - 最后一段匹配 `tmux-spawn-*.scope` → scope 名就是这一段，cgroup 目录为 `/sys/fs/cgroup<P>`。
 - 不在 `tmux-spawn-*.scope` 里（旧 tmux、无 systemd）→ 该 pane 不管理。
 
-本地设备用 `Bun.spawn(['sh','-c', script])`（环境与 tmux 命令相同）；SSH 设备把同一段 POSIX sh 送到远端执行。同一设备同一时刻只跑一份采样脚本，上一轮没结束就跳过本 tick。
+本地设备用 `Bun.spawn(['sh','-c', script])`（环境与 tmux 命令相同）。到时限（默认 10 s）后对 `sh` 及其子进程发 `SIGTERM`，500 ms 后再 `SIGKILL`，立刻以 `exitCode: 124`、`stderr: timeout` 返回，不等管道 EOF。SSH 设备把同一段 POSIX sh 送到远端执行（超时走 SSH exec 自己的时限）。同一设备同一时刻只跑一份采样脚本，上一轮没结束就跳过本 tick。
 
 ### 应用限额
 
@@ -38,7 +38,9 @@ macOS、没有 systemd、没有 cgroup v2 的宿主**静默不启用**，不影�
 systemctl --user set-property --runtime <scope> MemoryHigh=<n>M MemoryMax=<n>M MemorySwapMax=<n>M
 ```
 
-数值来自该节点的设置（整数 MB）。某个字段为 `0` 就不写那条属性；三个都是 `0` 等于「限额关、采样仍开」。`enabled: false` 则采样与套限额一起停。
+数值来自该节点的设置（整数 MB）。只要三个字段不全为 0，三条属性**每次都会写上**：非 0 写成 `<n>M`，为 0 写成 `infinity`（把已经套过的那一档清掉）。比较观测值与配置时，`0` 与 cgroup 的 `max` 等价。
+
+三个都是 0、或关掉 `enabled`：未管理的 scope 不动；已经套过限额的 scope 会收到一次 `MemoryHigh=infinity MemoryMax=infinity MemorySwapMax=infinity`。`enabled: false` 时先采样一轮找到这些 scope、套完 infinity 之后不再发样本 / OOM；后面的 tick 若没有仍带限额的 scope，就不再打宿主。三个都是 0 但功能仍开：同样释放一次，采样与推送继续。
 
 失败打：
 
@@ -58,7 +60,7 @@ systemctl --user set-property --runtime <scope> MemoryHigh=<n>M MemoryMax=<n>M M
 
 网关把当前快照里的 `paneId<TAB>pid` 列表经 heredoc 喂给脚本（不在脚本里自己找 tmux socket）。脚本是 dash 兼容的 POSIX sh。
 
-第一行：`VTMEM 1 <uid> <supported:0|1>`。`/sys/fs/cgroup/cgroup.controllers` 不存在，或 `systemctl --user show-environment` 失败 → `supported=0`，只打这一行。
+第一行：`VTMEM 1 <uid> <supported:0|1> <reason>`，`reason` 为 `ok` | `no-cgroup2` | `no-user-systemd`（解析器允许缺 reason）。`/sys/fs/cgroup/cgroup.controllers` 不存在 → `0 no-cgroup2`，只打这一行；`systemctl --user show-environment` 失败 → `0 no-user-systemd`，只打这一行。成功 → `1 ok`。调用 `systemctl --user` 之前脚本会 `export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"`，若 `DBUS_SESSION_BUS_ADDRESS` 未设则写成 `unix:path=$XDG_RUNTIME_DIR/bus`（SSH 会话经常缺这两项）。
 
 随后每 pane 一行，TAB 分隔：
 
@@ -86,7 +88,7 @@ paneId  pid  scope  current  high  max  swapMax  oomKill  managed
 [vibeterm][window-memory] oom_kill device=<id> window=<@id> pane=<%id> scope=<scope> kills=<n> current=<bytes> high=<bytes> max=<bytes>
 ```
 
-同时把标记写入 `gateway_kv` 键 `windowMemory.oomMarks`（JSON map，键 `"<deviceId>/<windowId>"`，值 `{ scope, oomKills, firstAt, lastAt }`）。窗口上有行则 `oomFlag = true`。采样发现窗口已不在 snapshot 里时删掉该行（关窗后的下一次 tick 会走到这里）。标记跨网关重启仍在，这是「粘性」的意义。没有单独的 SQL 表。
+同时把标记写入 `gateway_kv` 键 `windowMemory.oomMarks`（JSON map，键 `"<deviceId>/<windowId>"`，值 `{ scope, oomKills, firstAt, lastAt }`）。窗口上有行则 `oomFlag = true`。行在三种情况下删除：VibeTerm 关窗路径（`systemctl --user stop` 该窗口的 scope 之后立刻清）；连续 2 个 tick 该窗口都不在 snapshot 里（功能关闭时的 tick 也跑这一步）；删除设备时整设备清掉。标记跨网关重启仍在，这是「粘性」的意义。没有单独的 SQL 表。
 
 宿主判定为不支持时打一行 `console.info`：
 
@@ -94,7 +96,7 @@ paneId  pid  scope  current  high  max  swapMax  oomKill  managed
 [vibeterm][window-memory] unsupported device=<id>
 ```
 
-结果缓存到这次连接结束。
+`no-cgroup2` 视为永久不支持：停掉采样定时器，这条连接上不再试。`no-user-systemd`（以及其它非永久的 unsupported 头）继续按周期采样，连续 6 次 miss（默认 5 s 周期约 30 s）才把 `supported` 钉成 `false` 并打上面那行 info（只打一次）；定时器仍在，之后若收到 `supported=1` 会复位。
 
 ### 设置（每网关 / 节点一份）
 
@@ -102,7 +104,7 @@ paneId  pid  scope  current  high  max  swapMax  oomKill  managed
 
 | 字段 | 默认 | 含义 |
 | --- | ---: | --- |
-| `enabled` | `true` | 总开关；`false` 时不采样、不套限额 |
+| `enabled` | `true` | 总开关；`false` 时先把已套限额的 scope 释放成 `infinity`，然后停采样与推送 |
 | `memoryHighMb` | `8192` | `MemoryHigh`，软限额 |
 | `memoryMaxMb` | `12288` | `MemoryMax`，硬限额 |
 | `memorySwapMaxMb` | `4096` | `MemorySwapMax` |
@@ -115,9 +117,9 @@ HTTP（与其它设置路由同一套管理会话鉴权；可走 `/n/<nodeId>/` 
 - `GET /api/settings/window-memory` → 整条记录。
 - `PUT /api/settings/window-memory` → body 必须是完整五字段；失败 `400`，`{ code, error: { code, message } }`，`code` 为 `INVALID_WINDOW_MEMORY_SETTINGS`。成功后立刻 `tick` 一遍已连接设备。不广播 `SETTINGS_UPDATE`；采样器每个 tick 调 `getSettings()`，限额变了就对已管理的 scope 再 `set-property`。
 
-CLI 快照（不打宿主，读采样缓存）：
+CLI 快照（HTTP 不打宿主，读运行时缓存）：
 
-- `GET /api/sessions/memory` → `{ devices: [{ deviceId, deviceName, supported, windows: [{ windowId, windowName, panes, scopes, current, high, max, swapMax, oomKills, oomFlag, sampledAt }] }] }`。未打开的设备连接为 `supported: false, windows: []`。
+- `GET /api/sessions/memory` → `{ devices: [{ deviceId, deviceName, connected, supported, windows: [{ windowId, windowName, panes, scopes, current, high, max, swapMax, oomKills, oomFlag, sampledAt }] }] }`。设备未挂上或 tmux 连接未打开 → `connected: false, supported: false, windows: []`。已连接时窗口列表来自最近一份 snapshot（即使内存限额不支持也列出，内存字段为 0、`scopes: []`，`oomFlag` 仍可读粘性标记）；`supported` 仍是采样器判定。
 
 ## GUI
 
@@ -156,7 +158,7 @@ vibeterm settings memory get
 vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--swap-max <MB>] [--interval <sec>]
 ```
 
-- `sessions`：`GET /api/sessions/memory`。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`；`--memory` 再加 `SCOPE`（第一个 scope，多个时 `+N`，没有为 `-`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（次数；`oomFlag` 时后缀 `!`）。`supported: false` 的设备在 `--memory` 模式下于其行后打印 `(memory limits unsupported on this host)`。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 原样打网关 payload。
+- `sessions`：先 `GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的设备会再开一条设备 WS（与 `tmux ls` 同类）补窗口列表。带 `--memory` 时这条会话会等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则 `supported: false`、内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`；`--memory` 再加 `SCOPE`（第一个 scope，多个时 `+N`，没有为 `-`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（次数；`oomFlag` 时后缀 `!`）。`supported: false` 的设备在 `--memory` 模式下于其行后打印 `(memory limits unsupported on this host)`。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload（不是裸 HTTP 响应）。
 - `settings memory`：`GET/PUT /api/settings/window-memory`。`set` 先 GET 再按旗标合并后整包 PUT；非法整数 / 越界 / `high > max` 为用法错误（退出码 2）。尊重全局 `--node`。人读为 `key  value` 行。
 
 用法细节见 [命令行使用手册](./cli-usage.md)。
@@ -170,11 +172,12 @@ vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--sw
 - `systemctl --user show-environment` 失败（没有用户级 systemd 会话）
 - pane 不在 `tmux-spawn-*.scope` 里（tmux 低于 3.6 或未编 systemd 支持）
 
-判定结果缓存到这次设备连接结束。GUI 徽标不出现；`sessions --memory` 打出 unsupported 提示。连接时打一行 info 日志，见上文。
+`no-cgroup2` 缓存到这次设备连接结束（定时器停掉）。`no-user-systemd` 连续 6 次后才钉成不支持，之后仍可能恢复。GUI 徽标不出现；`sessions --memory` 打出 unsupported 提示。连接时打一行 info 日志，见上文。SSH 设备上若用户级 systemd 其实可用，但会话缺 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`，脚本会按上面的默认值补上再测。
 
 ## 注意事项
 
-- `set-property --runtime` 不持久，scope 随 pane 消亡；不要指望重启后属性还在 unit 文件里。
+- `set-property --runtime` 不持久，scope 随 pane 消亡；不要指望重启后属性还在 unit 文件里。把某一档改成 `0`、三个都改成 `0`、或关掉功能，已经套过的 scope 会收到 `infinity`，`systemctl --user show` 应回到无限。
+- 本地宿主脚本硬超时默认 10 s，超时 `exit 124`；不要把挂死的 `systemctl` 当成采样成功。
 - **`MemoryHigh`（软限额）**：内核开始回收 / 限速该 cgroup 的内存页，**不杀进程**。徽标在 ≥ 75% 时变黄，就是在逼近这一档。
 - **`MemoryMax`（硬限额）**：用量越过上限后由内核 OOM 杀掉 pane 内进程。配合 [tmux 进程存活](./tmux-process-survival.md) 里的 `DefaultOOMPolicy=continue`：被杀的是超限进程，systemd **不会**因此拆掉整个 scope、把还活着的 shell 一起停掉。没有 `continue` 时，一次 OOM 仍可能让整窗消失。
 - SSH 设备上的脚本在**远端**跑，限额套的是远端 pane 的 scope，不是跑网关的那台机器。
@@ -209,11 +212,12 @@ systemctl --user show -p DefaultOOMPolicy
 ## 验收清单
 
 - [ ] Linux + tmux ≥ 3.6 + 用户级 systemd 的本地设备：新建窗口后 `systemctl --user show <scope> -p MemoryHigh,MemoryMax` 与设置一致。
-- [ ] 三个 MB 都填 `0`：采样仍在（CLI `sessions --memory` 有读数），`MemoryHigh`/`MemoryMax` 不再被写入。
-- [ ] `enabled` 关掉：不再套限额、徽标消失、`sessions --memory` 无新样本。
+- [ ] 三个 MB 都填 `0`：采样仍在（CLI `sessions --memory` 有读数）；已管理的 scope 收到三条 `infinity`，未管理的不动。
+- [ ] 限额改为 `0` 后，`systemctl --user show <scope> -p MemoryHigh,MemoryMax,MemorySwapMax` 应回到 `infinity`。
+- [ ] `enabled` 关掉：已管理的 scope 先被释放成 `infinity`，之后不再套限额、徽标消失、`sessions --memory` 无新样本。
 - [ ] 关窗后对应 `tmux-spawn-*.scope` 消失，失控子进程不再留在后台。
 - [ ] 终端页当前窗口有样本时出现 `window-memory-badge`；用量过软限额 75% 变黄，过软限额或有 OOM 标记变红。
 - [ ] 设置页 `local-machine-memory` 保存后 `GET /api/settings/window-memory` 与表单一致；非法输入（`high > max`、非整数）拒绝且不写库。
-- [ ] `vibeterm sessions --memory` 与 GUI 徽标同一窗口的 `MEM` / `HIGH` / `MAX` / `OOM` 对得上；`--json` 为网关原样。
+- [ ] `vibeterm sessions --memory` 与 GUI 徽标同一窗口的 `MEM` / `HIGH` / `MAX` / `OOM` 对得上；未连接的设备能列出窗口（`--memory` 会等样本）；`--json` 为填过 WS 之后的 payload。
 - [ ] macOS 或无 systemd 的设备：无徽标、连接日志一行 `unsupported`、CLI 提示 unsupported，其它功能不受影响。
 - [ ] SSH 设备：限额出现在远端 `systemctl --user show`，不出现在跑网关的那台机器上。

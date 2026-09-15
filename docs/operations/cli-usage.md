@@ -87,7 +87,7 @@ vibeterm tmux stack <window> <cols>x<rows>
 vibeterm sessions [--node <node>] [--memory] [--json]
 ```
 
-`GET /api/sessions/memory`。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`。`--memory` 再加 `SCOPE`（该窗口第一个 systemd scope，多个时 `+N`，没有为 `-`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（内核 oom_kill 次数；窗口有粘性 OOM 标记时后缀 `!`）。宿主不支持内存限额的设备在 `--memory` 模式下于其行后打印 `(memory limits unsupported on this host)`。非 TTY 默认 JSON（与 `exec` 相同）；`--json` 原样打网关 payload。口径与排障见 [窗口内存限额](./window-memory-limits.md)。
+`GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的会再开一条设备 WS 补窗口列表。带 `--memory` 时这条会话等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`。`--memory` 再加 `SCOPE`（该窗口第一个 systemd scope，多个时 `+N`，没有为 `-`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（内核 oom_kill 次数；窗口有粘性 OOM 标记时后缀 `!`）。宿主不支持内存限额的设备在 `--memory` 模式下于其行后打印 `(memory limits unsupported on this host)`。非 TTY 默认 JSON（与 `exec` 相同）；`--json` 打填过 WS 之后的 payload。口径与排障见 [窗口内存限额](./window-memory-limits.md)。
 
 ## 接进一个终端（交互）
 
@@ -246,6 +246,7 @@ vibeterm nodes upgrade cancel <node> --yes
 vibeterm nodes upgrade --ids a,b,c [--version]
 vibeterm nodes op clear <node>
 vibeterm nodes enroll --name studio
+vibeterm nodes enroll --password
 vibeterm nodes allow <node>
 vibeterm nodes meta-key admit <node-id>
 vibeterm nodes meta-key rotate [--exclude <node>...]
@@ -254,14 +255,14 @@ vibeterm nodes revoke <node> --yes
 
 `pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`。`ls` 列为 NAME ID ROLE STATUS REACH VERSION ADDRESS ONLINE PAUSED RTT。STATUS 仍是 `admitted` / `pending`；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列。ADDRESS 与管理页地址列同一套推导（live `peerAddress` → 广告 endpoint → 中继 host）。REACH 仍是机器 token：`lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。`nodes show` 打印 `address`、`lastSeenAt`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`--version <ver>` 写入 POST body，网关必须是已发布且带 CLI tarball 的 tag，否则 400 `RELEASE_NOT_FOUND`；缺省仍走 latest。失败行 ERROR 列原文展示聚合投递串（如 `github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
 
-`nodes relay ls` 是客户端租户侧 `GET /api/mesh/relay/status`（表头对齐本机 `relay list`，多一列 ATTACHED）；人读在表后再打配额行 `quota <url>: nodes u/N  streams u/N  bandwidth u/N KB/s  max-file N MB`（未设限为 `∞`，缺用量为 `-`）；`--json` 仍是网关原样（配额在 payload 里）。本机运维 `vibeterm relay list` 仍打本机回环。写配额走本机 `vibeterm relay quota`，不要和租户侧 `ls` 搞混。`relay password` 读 / 改**加入密码**（`GET/POST /api/mesh/relay/password`，默认 URL 为当前已挂上的中继；未挂退出码 4）。`set` 必须给 `--password` / `--password-stdin` / `--password-file` / `VIBETERM_RELAY_JOIN_PASSWORD` 之一，或 `--clear`（`next: null`）；默认 `--keep`，`--kick` 会踢掉已用旧密码加入的成员。`--kick` / `--clear` 非 TTY 必须 `--yes`。最短 8 位。这与本机运维 `vibeterm relay passwd`（管理员改中继机密码）不是同一条命令。`relay switch` 不签 keylog（本机换上行，并写入 `preferredUrl` 固定主中继）。`relay unpin` 清掉固定（`POST /api/mesh/relay/unpin`，honours 全局 `--node`），人读打印 `unpinned` 或 `nothing pinned`。`relay rm` / `readmit` 要签名。最后一条中继回 `RELAY_LAST`，提示走本机 `relay leave`。`vibeterm relay enroll <url>` 是追加，不是替换；最多 `16` 条中继（`RELAY_RECORD_MAX_RELAYS`）。主中继由自动优选选出，除非用户 `switch` 固定。
+`nodes relay ls` 是客户端租户侧 `GET /api/mesh/relay/status`（表头对齐本机 `relay list`，多一列 ATTACHED）；人读在表后再打配额行 `quota <url>: nodes u/N  streams u/N  bandwidth u/N KB/s  max-file N MB`（未设限为 `∞`，缺用量为 `-`）；`--json` 仍是网关原样（配额在 payload 里）。本机运维 `vibeterm relay list` 仍打本机回环。写配额走本机 `vibeterm relay quota`，不要和租户侧 `ls` 搞混。`relay password` 读 / 改**加入密码**（`GET/POST /api/mesh/relay/password`，默认 URL 为当前已挂上的中继；未挂退出码 4）。`set` 必须给 `--password` / `--password-stdin` / `--password-file` / `VIBETERM_RELAY_JOIN_PASSWORD` 之一，或 `--clear`（`next: null`）；默认 `--keep`，`--kick` 会踢掉已用旧密码加入的成员。`--kick` / `--clear` 非 TTY 必须 `--yes`。最短 8 位。`set` 遇 429 `RELAY_RATE_LIMITED` 时人读 `rate limited (RELAY_RATE_LIMITED); retry after Ns`（`retryAfterMs` 向上取整到秒，不足 1 s 按 1 s）。这与本机运维 `vibeterm relay passwd`（管理员改中继机密码）不是同一条命令。`relay switch` 不签 keylog（本机换上行，并写入 `preferredUrl` 固定主中继）。`relay unpin` 清掉固定（`POST /api/mesh/relay/unpin`，honours 全局 `--node`），人读打印 `unpinned` 或 `nothing pinned`。`relay rm` / `readmit` 要签名。最后一条中继回 `RELAY_LAST`，提示走本机 `relay leave`。`vibeterm relay enroll <url>` 是追加，不是替换；最多 `16` 条中继（`RELAY_RECORD_MAX_RELAYS`）。主中继由自动优选选出，除非用户 `switch` 固定。
 
 签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`、`relay rm` / `readmit`、`rename`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。成功以 `ok === true` 为准；响应里的 `hubAck` 是遗留字段（成功时恒为 `true`），客户端不得再把它当中继 fan-out 的依据，fan-out 看 `relayAck`。查询串 `POST /api/auth/keylog?hub=sync` 的名字同样冻结。
 
 CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分是否已接中继（`RelayUplinkMode`：`'relay' | 'none'`）：
 
 - **`mode: 'none'`**（未接入中继）：`enroll` / 需要中继材料的命令报 `NODE_NOT_ON_RELAY`，提示 `vibeterm relay join <url> --token <r3> or vibeterm relay join <url> --tenant <id> --password`。
-- **`mode: 'relay'`**：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm relay join <relayUrl> --token r3.… --name <name>`。`rename` 走 keylog `rename-node`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
+- **`mode: 'relay'`**：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm relay join <relayUrl> --token r3.… --name <name>`。`enroll --password` 仍是开关（不取值）：只打印 `vibeterm relay join <url> --tenant <id> --password`，不会把后面的 `--name` 当口令吃掉。`rename` 走 keylog `rename-node`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
 - `allow <node>`：若节点已在 `pendingMemberIds`（已接纳但解不开状态块），补 `meta-key`；否则打开该节点的公网域名访问。网页在别的标签页生成的加入码，证书材料只在那次浏览器会话里，CLI 签不出 `admit-node`——那种情况请用 `meta-key admit`。
 
 `vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 租户编号 / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
@@ -387,7 +388,7 @@ vibeterm share settings set --record-logs on|off --retention-days N --log-max-mb
 
 `create` 会先连上设备、等会话树变热，再把窗口名/序号收成 `@id`（冷启动直接 POST 会 404）。未给 `--origin` 时用 `GET /api/share/origins` 的推荐地址（须在候选里）或第一个候选，并在 stderr 打印实际使用的 origin。口令可省略（与网页端一样自动生成），也可 `--password-stdin` / `VIBETERM_SHARE_PASSWORD`。非 TTY 下 `rm` 必须 `--yes`。`settings set` 先校验旗标 / `--body`，再 GET 当前四字段（`recordLogs`、`logRetentionDays`、`logMaxBytes`、`defaultOrigin`），旗标覆盖、`--body` 最后覆盖后 PUT 全量。`--log-max-mb N` → `N * 1024 * 1024`（1–1024）；`--retention-days` 0–3650；`--origin auto` → `null`，其它 URL 收敛成 `url.origin`。无旗标且无 `--body` 仍是用法错误（不打 GET）。
 
-`log` 打 `GET /api/share/:id/log` 的一页；人读每行 `ts pane kind size`。`--all` 跟随 `nextAfter` 直到耗尽（`truncated` 只在 stderr 警告，不是停页条件）。`--json` 无 `--all` 时仍是网关那一页；`--json --all` 为条目数组。`replay` 始终拉全量日志，默认 pane 是录像里出现的第一个；非法 `--pane` 会列出候选。TTY 上按时间间隔回放 VT（`--speed 0` 不等待）；非 TTY 必须 `--json` 或 `--speed 0`。`--json` 形状 `{ panes:[{paneId, cols, rows, chunks}], durationMs, entries }`。Ctrl-C 退出码 130。
+`log` 打 `GET /api/share/:id/log` 的一页；人读每行 `ts pane kind size`。`--all` 跟随 `nextAfter` 直到耗尽（`truncated` 只在 stderr 警告，不是停页条件）。`--json` 无 `--all` 时仍是网关那一页；`--json --all` 为条目数组。`replay` 始终拉全量日志，默认 pane 是录像里出现的第一个；非法 `--pane` 会列出候选。TTY 上按时间间隔回放 VT（`--speed 0` 不等待）；非 TTY 必须 `--json` 或 `--speed 0`。TTY 回放会丢掉 OSC 52（剪贴板）、CSI 设备查询（`n` / `c` / `$p`）和 DCS / APC / PM / SOS，保留 SGR、光标、擦除、备用屏与 OSC 0/1/2 标题。Ctrl-C / SIGTERM 总会把备用屏、光标、鼠标与 bracketed-paste 模式复位；正常结束仅在回放里进过这些模式时复位。`--json` 形状 `{ panes:[{paneId, cols, rows, chunks}], durationMs, entries }`。Ctrl-C 退出码 130。
 
 ## Watch 规则
 
