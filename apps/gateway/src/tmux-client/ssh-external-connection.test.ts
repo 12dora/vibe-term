@@ -105,7 +105,7 @@ function respondToPayload(
     return { stdout: '@1|0|1|ba9d,80x24,0,0,1|main\n', exitCode: 0 };
   }
   if (payload.includes(`'list-panes' '-s' '-t' '${session}'`)) {
-    return { stdout: '%1|@1|0|1|80|24|0|0|1|bash|node|/home/alice\n', exitCode: 0 };
+    return { stdout: '%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/alice\n', exitCode: 0 };
   }
   return null;
 }
@@ -500,6 +500,7 @@ describe('SshExternalTmuxConnection', () => {
                   height: 24,
                   left: 0,
                   top: 0,
+                  pid: 1000,
                 },
               ],
             },
@@ -1185,10 +1186,10 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
       overrides: (payload) => {
         if (payload.includes(`'list-panes' '-s' '-t' '${session}'`)) {
           return panesGone
-            ? { stdout: '%2|@1|1|1|80|24|0|0|1|bash|node|/home/alice\n', exitCode: 0 }
+            ? { stdout: '%2|@1|1|1|80|24|0|0|1|1000|bash|node|/home/alice\n', exitCode: 0 }
             : {
                 stdout:
-                  '%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/alice\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/alice\n',
+                  '%1|@1|0|1|80|24|0|0|1|1000|first pane|vim|/home/alice\n%2|@1|1|0|80|24|0|0|1|1000|bash|node|/home/alice\n',
                 exitCode: 0,
               };
         }

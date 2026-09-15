@@ -2,6 +2,11 @@ import type { StateSnapshotPayload } from '@vibeterm/shared';
 import type { InputCompletion } from './input-submission';
 
 import { getDeviceById } from '../db';
+import {
+  type WindowMemoryListener,
+  type WindowMemoryTracker,
+  createWindowMemoryRuntimeAdapter,
+} from '../window-memory/runtime-adapter';
 import type { PaneInfo } from './capture-history';
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from './connection-types';
 import type { AtomicPaneCapture } from './control-mode-capture';
@@ -96,6 +101,7 @@ export interface DeviceSessionRuntimeConnection {
     maxOutputBytes: number
   ): Promise<string>;
   probeHostLatency?(): Promise<undefined | 'busy'>;
+  windowMemory?: WindowMemoryTracker | null;
 }
 
 export interface DeviceSessionRuntimeOptions {
@@ -130,6 +136,7 @@ export class DeviceSessionRuntime {
   private readonly hostLatency = new HostLatencyTracker({
     probe: () => this.connection.probeHostLatency?.(),
   });
+  private readonly windowMemoryRuntime = createWindowMemoryRuntimeAdapter(() => this.connection);
   private lastSnapshot: StateSnapshotPayload | null = null;
   private connectPromise: Promise<void> | null = null;
   private connectGeneration = 0;
@@ -187,6 +194,7 @@ export class DeviceSessionRuntime {
         (paneId) => this.metadataProjection.hasPane(paneId)
       ),
       onHostLatencySample: (rttMs, hop) => this.hostLatency.record(rttMs, hop),
+      windowMemory: this.windowMemoryRuntime.hooks,
     });
     this.paneHistoryReader = new PaneHistoryReader(this.connection);
     this.screenCapture = new CanonicalScreenCapture({
@@ -284,6 +292,19 @@ export class DeviceSessionRuntime {
 
   onHostLatency(listener: HostLatencyListener): () => void {
     return this.hostLatency.subscribe(listener);
+  }
+
+  getWindowMemory() {
+    return this.windowMemoryRuntime.getWindows();
+  }
+  getWindowMemorySupported() {
+    return this.windowMemoryRuntime.supported();
+  }
+  onWindowMemory(listener: WindowMemoryListener) {
+    return this.windowMemoryRuntime.subscribe(listener);
+  }
+  tickWindowMemory() {
+    return this.windowMemoryRuntime.tick();
   }
 
   /**

@@ -29,6 +29,8 @@ export interface TmuxPane {
   left?: number;
   /** pane 左上角在 window 内的行偏移（tmux #{pane_top}） */
   top?: number;
+  /** tmux #{pane_pid}；仅 gateway 快照使用，不进 canonical metadata。 */
+  pid?: number;
 }
 
 export interface TmuxSession {

@@ -223,7 +223,7 @@ describe('ExternalTmuxConnectionCore collaborator host', () => {
         await gate;
         return {
           exitCode: 0,
-          stdout: '%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n',
+          stdout: '%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n',
           stderr: '',
         };
       }

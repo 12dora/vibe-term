@@ -303,6 +303,45 @@ describe('SessionCommands', () => {
     expect(snapshots).toEqual([1]);
   });
 
+  test('closeWindowInternal stops scopes after last-window replacement and before kill-window', async () => {
+    const order: string[] = [];
+    const { host, responses } = createHost();
+    host.stopScopesForWindow = async (windowId) => {
+      order.push(`stop:${windowId}`);
+    };
+    const inner = host.runTmuxAllowFailure;
+    host.runTmuxAllowFailure = async (argv, timeoutMs) => {
+      order.push(argv.join(' '));
+      return inner(argv, timeoutMs);
+    };
+    responses.set('display-message -p -t vibeterm #{session_windows}', ok('1\n'));
+    responses.set('new-window -d -t vibeterm -c /tmp/work', ok());
+    responses.set('kill-window -t @1', ok());
+    await new SessionCommands(host).closeWindowInternal('@1');
+    expect(order).toEqual([
+      'display-message -p -t vibeterm #{session_windows}',
+      'new-window -d -t vibeterm -c /tmp/work',
+      'stop:@1',
+      'kill-window -t @1',
+    ]);
+  });
+
+  test('closePaneInternal stops scopes before kill-pane', async () => {
+    const order: string[] = [];
+    const { host, responses } = createHost();
+    host.stopScopesForPane = async (paneId) => {
+      order.push(`stop:${paneId}`);
+    };
+    const inner = host.runTmuxAllowFailure;
+    host.runTmuxAllowFailure = async (argv, timeoutMs) => {
+      order.push(argv.join(' '));
+      return inner(argv, timeoutMs);
+    };
+    responses.set('kill-pane -t %7', ok());
+    await new SessionCommands(host).closePaneInternal('%7');
+    expect(order).toEqual(['stop:%7', 'kill-pane -t %7']);
+  });
+
   test('runTmux recovers from a missing target, silences, or classifies a gone server', async () => {
     const missing = createHost();
     missing.responses.set('select-pane -t %9', fail("can't find pane: %9"));

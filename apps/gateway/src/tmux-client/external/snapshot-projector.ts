@@ -152,6 +152,7 @@ export function parseSnapshotPanes(
       height: row.height,
       left: row.left,
       top: row.top,
+      pid: row.pid,
     };
 
     const window = windows.get(row.windowId);

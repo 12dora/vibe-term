@@ -98,10 +98,10 @@ describe('parseSnapshotPanes', () => {
 
     const { activePaneId, activeWindowId } = parseSnapshotPanes(
       [
-        '%2|@1|1|0|40|24|40|0|1|right|zsh|/tmp',
+        '%2|@1|1|0|40|24|40|0|1|1000|right|zsh|/tmp',
         '',
-        '%1|@1|0|1|40|24|0|0|1|bash|node|/home/user',
-        '%9|@99|0|0|80|24|0|0|0|orphan|sh|/tmp',
+        '%1|@1|0|1|40|24|0|0|1|1000|bash|node|/home/user',
+        '%9|@99|0|0|80|24|0|0|0|1000|orphan|sh|/tmp',
       ],
       windows,
       ctx
@@ -122,6 +122,7 @@ describe('parseSnapshotPanes', () => {
       height: 24,
       left: 0,
       top: 0,
+      pid: 1000,
     });
   });
 
@@ -129,7 +130,11 @@ describe('parseSnapshotPanes', () => {
     const windows = new Map<string, TmuxWindow>([
       ['@1', { id: '@1', index: 0, name: 'main', active: false, panes: [] }],
     ]);
-    const update = parseSnapshotPanes(['%1|@1|0|1|80|24|0|0|0|bash|node|/home/user'], windows, ctx);
+    const update = parseSnapshotPanes(
+      ['%1|@1|0|1|80|24|0|0|0|1000|bash|node|/home/user'],
+      windows,
+      ctx
+    );
     expect(update.activePaneId).toBeUndefined();
     expect(update.activeWindowId).toBeUndefined();
   });
@@ -139,7 +144,7 @@ describe('parseSnapshotPanes', () => {
     const windows = new Map<string, TmuxWindow>([
       ['@1', { id: '@1', index: 0, name: 'main', active: true, panes: [] }],
     ]);
-    parseSnapshotPanes(['not-a-pane', '%1|@1|0|1|80|24|0|0|1|||'], windows, local);
+    parseSnapshotPanes(['not-a-pane', '%1|@1|0|1|80|24|0|0|1|1000|||'], windows, local);
     expect(windows.get('@1')?.panes[0]?.title).toBe('');
     expect(local.warnings[0]).toContain('[test] ignoring invalid tmux pane snapshot row on dev-1:');
   });
@@ -250,11 +255,11 @@ describe('getExpectedPaneIds / emitSnapshot', () => {
   test('snapshot output is identical for shuffled tmux window and pane rows', () => {
     const windowLines = ['@3|2|0|layout-c|late', '@1|0|1|layout-a|main', '@2|1|0|layout-b|mid'];
     const paneLines = [
-      '%5|@2|1|0|40|24|40|0|0|right|zsh|/tmp',
-      '%2|@1|1|0|40|24|40|0|1|side|vim|/src',
-      '%4|@2|0|1|40|24|0|0|0|left|bash|/tmp',
-      '%1|@1|0|1|40|24|0|0|1|bash|node|/home',
-      '%9|@3|0|0|80|24|0|0|0|only|sh|/opt',
+      '%5|@2|1|0|40|24|40|0|0|1000|right|zsh|/tmp',
+      '%2|@1|1|0|40|24|40|0|1|1000|side|vim|/src',
+      '%4|@2|0|1|40|24|0|0|0|1000|left|bash|/tmp',
+      '%1|@1|0|1|40|24|0|0|1|1000|bash|node|/home',
+      '%9|@3|0|0|80|24|0|0|0|1000|only|sh|/opt',
     ];
 
     function project(shuffledWindows: string[], shuffledPanes: string[]) {
@@ -452,7 +457,7 @@ describe('SnapshotProjector.performSnapshot', () => {
       resolveAll() {
         sessionGate.resolve(ok('$1|vibeterm\n'));
         windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
-        panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n'));
+        panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n'));
       },
     };
   }
@@ -555,7 +560,7 @@ describe('SnapshotProjector.performSnapshot', () => {
 
     sessionGate.resolve(ok('$1|vibeterm\n'));
     windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
-    panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n'));
+    panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n'));
     await done;
 
     expect(timeline).toEqual([
@@ -607,7 +612,7 @@ describe('SnapshotProjector.performSnapshot', () => {
     host.setResponse(
       `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
       ok(
-        '%2|@1|1|0|40|24|40|0|1|side|vim|/src\n%1|@1|0|1|40|24|0|0|1|bash|node|/home\n%3|@2|0|0|80|24|0|0|0|only|sh|/opt\n'
+        '%2|@1|1|0|40|24|40|0|1|1000|side|vim|/src\n%1|@1|0|1|40|24|0|0|1|1000|bash|node|/home\n%3|@2|0|0|80|24|0|0|0|1000|only|sh|/opt\n'
       )
     );
 
@@ -716,7 +721,9 @@ describe('SnapshotProjector.performSnapshot', () => {
     );
     host.setResponse(
       `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
-      ok('%1|@1|0|1|80|24|0|0|0|bash|node|/home/user\n%9|@9|0|1|80|24|0|0|1|park|sleep|/tmp\n')
+      ok(
+        '%1|@1|0|1|80|24|0|0|0|1000|bash|node|/home/user\n%9|@9|0|1|80|24|0|0|1|1000|park|sleep|/tmp\n'
+      )
     );
 
     await new SnapshotProjector(host).performSnapshot();
@@ -750,7 +757,10 @@ describe('parking window is invisible to the frontend', () => {
       ctx
     );
     const update = parseSnapshotPanes(
-      ['%1|@1|0|1|80|24|0|0|0|bash|node|/home/user', '%9|@9|0|1|80|24|0|0|1|park|sleep|/tmp'],
+      [
+        '%1|@1|0|1|80|24|0|0|0|1000|bash|node|/home/user',
+        '%9|@9|0|1|80|24|0|0|1|1000|park|sleep|/tmp',
+      ],
       windows,
       ctx
     );

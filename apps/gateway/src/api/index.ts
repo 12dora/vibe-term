@@ -19,6 +19,7 @@ import {
   type SystemApiHandler,
   dispatchRoutes,
 } from './route';
+import { sessionsMemoryRoutes } from './sessions-memory-routes';
 import { settingsRoutes } from './settings-routes';
 import { healthRoutes, systemPrefixRoutes } from './system-routes';
 import { tunnelRoutes } from './tunnel-routes';
@@ -30,6 +31,7 @@ const apiRoutes: ApiRoute[] = [
   ...deviceRoutes,
   ...deviceFolderRoutes,
   ...settingsRoutes,
+  ...sessionsMemoryRoutes,
   ...shareRoutes,
   ...shareAccessRoutes,
   ...tunnelRoutes,

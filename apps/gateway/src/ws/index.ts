@@ -61,6 +61,7 @@ import {
   GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES,
   gatewayWebSocketSendGuard,
 } from './websocket-send-guard';
+import { WindowMemoryBroadcast, bindWindowMemoryBroadcast } from './window-memory-broadcast';
 import { carrierKindOf } from './ws-backpressure-log';
 
 export { RUNTIME_IDLE_GRACE_MS } from './types';
@@ -96,6 +97,7 @@ export class WebSocketServer
   private readonly overlays: SnapshotOverlayStore;
   private readonly feed: DeviceFeedBroadcaster;
   private readonly deviceLatency: DeviceLatencyBroadcast;
+  private readonly windowMemory: WindowMemoryBroadcast;
   private readonly borshHandlers: BorshKindHandlerMap;
 
   get connections() {
@@ -146,6 +148,8 @@ export class WebSocketServer
     this.overlays = new SnapshotOverlayStore(this);
     this.feed = new DeviceFeedBroadcaster(this);
     this.deviceLatency = new DeviceLatencyBroadcast(this);
+    this.windowMemory = new WindowMemoryBroadcast(this);
+    bindWindowMemoryBroadcast(this.windowMemory);
     this.borshHandlers = createBorshKindHandlers(this);
     this.shareIndex.bind(this);
   }
@@ -682,18 +686,10 @@ export class WebSocketServer
   attachRuntime(deviceId: string, runtime: DeviceSessionRuntime): () => void {
     this.applyDeviceOverlaysToRuntime(deviceId, runtime);
     const listener: DeviceSessionRuntimeListener = {
-      onEvent: (event) => {
-        void this.feed.broadcastTmuxEvent(deviceId, event);
-      },
-      onTerminalOutput: (paneId, data) => {
-        this.feed.noteTerminalOutput(deviceId, paneId, data);
-      },
-      onClipboardWrite: (paneId, text) => {
-        this.feed.broadcastClipboardWrite(deviceId, paneId, text);
-      },
-      onSnapshot: (payload) => {
-        this.installStateSnapshot(deviceId, payload);
-      },
+      onEvent: (event) => void this.feed.broadcastTmuxEvent(deviceId, event),
+      onTerminalOutput: (paneId, data) => this.feed.noteTerminalOutput(deviceId, paneId, data),
+      onClipboardWrite: (paneId, text) => this.feed.broadcastClipboardWrite(deviceId, paneId, text),
+      onSnapshot: (payload) => this.installStateSnapshot(deviceId, payload),
       onMetadataPatch: () => {
         const snapshot = runtime.getCurrentSnapshot();
         const entry = this.connections.get(deviceId);
@@ -703,18 +699,16 @@ export class WebSocketServer
         const snapshot = runtime.getCurrentSnapshot();
         if (snapshot) this.installStateSnapshot(deviceId, snapshot);
       },
-      onError: (error) => {
-        this.feed.broadcastError(deviceId, error);
-      },
-      onClose: () => {
-        void this.registry.handleConnectionClose(deviceId);
-      },
+      onError: (error) => this.feed.broadcastError(deviceId, error),
+      onClose: () => void this.registry.handleConnectionClose(deviceId),
     };
 
     const detachLatency = this.deviceLatency.attach(deviceId, runtime);
+    const detachMemory = this.windowMemory.attach(deviceId, runtime);
     const unsubscribe = runtime.subscribe(listener);
     return () => {
       detachLatency();
+      detachMemory();
       unsubscribe();
     };
   }
@@ -739,6 +733,7 @@ export class WebSocketServer
   async handleDeviceConnect(ws: GatewaySession, deviceId: string): Promise<void> {
     await this.registry.handleDeviceConnect(ws, deviceId);
     this.deviceLatency.handleDeviceConnected(ws, deviceId);
+    this.windowMemory.handleDeviceConnected(ws, deviceId);
   }
 
   handleDeviceDisconnect(ws: GatewaySession, deviceId: string): void {

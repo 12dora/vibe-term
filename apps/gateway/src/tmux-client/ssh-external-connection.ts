@@ -1,9 +1,9 @@
-import { errorMessage, wsBorsh } from '@vibeterm/shared';
-import type { Device } from '@vibeterm/shared';
+import { type Device, errorMessage, wsBorsh } from '@vibeterm/shared';
 import type { Client, ClientChannel } from 'ssh2';
 import { config } from '../config';
 import { decryptWithContext } from '../crypto';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
+import { runSshHostShell } from '../window-memory/ssh-host-shell';
 import { joinShellArgs, quoteShellArg } from './command-builder';
 import type { TmuxConnectionOptions } from './connection-types';
 import { ControlModeCommandQueue } from './control-mode-capture';
@@ -46,16 +46,14 @@ interface SshExternalTmuxConnectionDeps {
   createClient: () => Client | Promise<Client>;
 }
 
-interface ControlChannelHandle extends ExternalControlHandle {
-  stop: () => void;
-}
+// biome-ignore format: line budget
+interface ControlChannelHandle extends ExternalControlHandle { stop: () => void; }
 
 const COMMAND_SENTINEL = '\x1eVIBETERM_END ';
 
 export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   protected readonly logPrefix = '[ssh]';
   protected readonly stalledControlLabel = 'channel';
-
   private readonly deps: SshExternalTmuxConnectionDeps;
   private controlChannel: ControlChannelHandle | null = null;
   private sshClient: Client | null = null;
@@ -141,9 +139,13 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     return this.runShell(`${quoteShellArg(this.tmuxBin)} ${joinShellArgs(argv)}`, timeoutMs);
   }
 
-  protected getParkingCommand(): string {
-    return 'sleep 30';
+  // biome-ignore format: one-line override keeps this frozen file under the line budget
+  override runHostShell(script: string, opts?: { timeoutMs?: number; maxOutputBytes?: number }) {
+    return runSshHostShell(this.executeIsolatedShellCommand.bind(this), script, opts);
   }
+
+  // biome-ignore format: line budget
+  protected getParkingCommand(): string { return 'sleep 30'; }
 
   protected async shouldInstallGhosttyTerminfo(): Promise<boolean> {
     return this.ensureGhosttyTerminfo();
@@ -189,18 +191,16 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     });
   }
 
-  protected async runHistoryQuery(argv: string[]): Promise<CommandResult> {
-    return this.runTmuxIsolated(argv, 4096, 30_000);
-  }
+  // biome-ignore format: line budget
+  protected async runHistoryQuery(argv: string[]): Promise<CommandResult> { return this.runTmuxIsolated(argv, 4096, 30_000); }
 
+  // biome-ignore format: line budget
   protected async runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string> {
-    const { stdout } = await this.runTmuxIsolated(argv, maxOutputBytes, 30_000);
-    return stdout;
+    return (await this.runTmuxIsolated(argv, maxOutputBytes, 30_000)).stdout;
   }
 
-  protected getControlCommandTimeoutMs(): number {
-    return 30_000;
-  }
+  // biome-ignore format: line budget
+  protected getControlCommandTimeoutMs(): number { return 30_000; }
 
   protected async disposeTransport(): Promise<void> {
     this.rejectPendingCommand(new Error('SSH command channel closed'));

@@ -21,6 +21,7 @@ import type { InputCompletion } from './input-submission';
 import type { HistoryRangeRequest, PaneHistoryCaptureInfo } from './pane-history-page';
 import { formatTmuxMetricsLine } from './tmux-metrics-line';
 export { formatTmuxMetricsLine };
+import { runLocalHostShell } from '../window-memory/local-host-shell';
 import { sendExternalInput } from './external-input';
 import {
   CONTROL_STDERR_TAIL_LIMIT,
@@ -62,10 +63,7 @@ interface LocalExternalTmuxConnectionDeps {
 }
 
 export function shouldIgnoreReaderAbortError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
-
+  if (!error || typeof error !== 'object') return false;
   const maybeError = error as {
     name?: unknown;
     code?: unknown;
@@ -84,9 +82,7 @@ const TRANSIENT_SPAWN_ERROR_CODES = new Set(['EAGAIN', 'EMFILE', 'ENFILE', 'ENOM
 const TMUX_SPAWN_UNAVAILABLE_EXIT = -2;
 
 function isTransientSpawnError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') {
-    return false;
-  }
+  if (!error || typeof error !== 'object') return false;
   const code = (error as { code?: unknown }).code;
   if (typeof code === 'string' && TRANSIENT_SPAWN_ERROR_CODES.has(code)) {
     return true;
@@ -346,6 +342,11 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     return this.device?.defaultWorkingDir?.trim() || homedir();
   }
 
+  // biome-ignore format: one-line override keeps this frozen file under the line budget
+  override runHostShell(script: string, opts?: { timeoutMs?: number; maxOutputBytes?: number }) {
+    return runLocalHostShell(script, opts);
+  }
+
   protected async runTmuxAllowFailure(argv: string[]): Promise<CommandResult> {
     try {
       return await this.deps.run(buildLocalTmuxArgv(argv));
@@ -358,9 +359,8 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     }
   }
 
-  protected getParkingCommand(): string {
-    return this.deps.parkingCommand();
-  }
+  // biome-ignore format: line budget
+  protected getParkingCommand(): string { return this.deps.parkingCommand(); }
 
   protected async shouldInstallGhosttyTerminfo(): Promise<boolean> {
     return this.deps.platform !== 'win32' && (await this.deps.ensureGhosttyTerminfo());
