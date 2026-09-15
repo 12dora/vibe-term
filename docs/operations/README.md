@@ -24,6 +24,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [tmux-process-survival.md](./tmux-process-survival.md) | 服务 kill 策略、linger、systemd OOMPolicy |
+| [gateway-loop-watchdog.md](./gateway-loop-watchdog.md) | 主线程卡死（libdatachannel 死锁）的真因、进程内看门狗与「服务 running 但 HTTP 不通」排查 |
 | [troubleshooting-db-master-key.md](./troubleshooting-db-master-key.md) | 库与主密钥不匹配 |
 
 ## 日常使用

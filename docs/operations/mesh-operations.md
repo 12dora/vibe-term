@@ -91,7 +91,11 @@
 | `VIBETERM_WS_DIAL_RACE` | `2`（夹紧 1..4） | 公网 WebSocket 开链竞速条数：peer ws-secure / 中继上行同时开 N 条，取最先 `open` 的一条。`1` = 关闭。回环 / RFC1918 / 链路本地恒为 1。import 时读一次，改完需重启。见 [路径优选](../architecture/path-selection.md) |
 | `VIBETERM_DC_REROLL` | 开（任意非 `off`） | `off` 关闭直连慢路径重掷（DC 与 ws-secure），且本端不报 `reroll` 能力位。采样不受影响 |
 | `VIBETERM_UPLINK_PATH_SAMPLING` | 开（任意非 `off`） | `off` 关闭中继上行的周期 TCP 采样与 `path-rerace` 劣化重连 |
-| `VIBETERM_EVENT_LOOP_LAG_WARN_MS` | `250` | event loop 采样滞后超过该值时打告警（10 s 至多一条） |
+| `VIBETERM_EVENT_LOOP_LAG_WARN_MS` | `250` | event loop 采样滞后超过该值时打告警（10 s 至多一条）。主线程卡在同步 N-API 时采样器看不见，见 [事件循环看门狗](./gateway-loop-watchdog.md) |
+| `VIBETERM_LOOP_WATCHDOG` | production 开；development / test 关 | 进程内事件循环看门狗。显式 `1` / `true` / `yes` 任意环境打开，`0` / `false` 关闭。`init` / `upgrade` 不写入 |
+| `VIBETERM_LOOP_WATCHDOG_STALL_SEC` | `30`（最小 5） | 服务已启动后的心跳超时秒数；低于最小值回退默认 |
+| `VIBETERM_LOOP_WATCHDOG_BOOT_SEC` | `180`（最小 10） | 启动完成前的心跳超时秒数；低于最小值回退默认 |
+| `VIBETERM_LOOP_WATCHDOG_SIGNAL` | `SIGKILL` | 超时后发给本进程的信号，仅 `SIGABRT` \| `SIGKILL` |
 | `VIBETERM_RTC_DIAL_BREAKER_MS` | `30000`（30 s） | DataChannel 熔断的**起始**冷却。连续 3 次失败（含拨号失败与通道打开后异常关闭 / liveness timeout / missed pong）后跳过 DC dial，冷却按 30 s → 60 s → 120 s … 指数递增，上限 30 min；`cooldownLevel` 在冷却过期后仍保留。通道保持健康 ≥ 60 s 才复位。本变量覆盖起始冷却，不改失败次数与上限。ws-secure / relay 不受影响 |
 | `VIBETERM_PEER_DIRECT_DIAL_CONCURRENCY` | `4` | 进程内同时进行的直连 endpoint 拨号数上限（整数 ≥ 1）。LAN 候选另有 4 s 总预算，失败地址按 1 min → 6 h 退避，见 [节点直连](../architecture/peer-direct-connect.md) |
 | `VIBETERM_DIAL_DNS_FALLBACK` | 开（任意非 `off`） | `off` / `0` / `false` / `no` 关闭：系统 DNS 解析失败时不再走 DoH 并按 IP + SNI 重拨。默认开。见 [公共中继 §9](../architecture/relay.md) |
@@ -438,6 +442,7 @@ vibeterm mesh keylog status
 | enroll 一直「待确认」 | 证书未到本会话，或 passkey 路径需手动确认，或 keylog 未落地 | 等 join 完成再点确认；查中继是否在线；根钥路径才自动 admit |
 | 登录页没有 passkey | `passkeyAvailable=false` 或本 origin 无凭证 | 用域名 HTTPS（加 `VIBETERM_TRUST_PROXY`）；先在本入口注册 |
 | TOTP 登录 `TOTP_INVALID` | epoch 与派生盐不一致，或验证码过期 | 确认用的是当前 epoch 的密码；日常改密会重封装 TOTP，无需重设；破坏性 `rotate-root` 后须重设 |
+| `systemctl is-active` 为 active，但本机 `curl /healthz` 超时、`relay list` 显示离线；`ss` 上 9883 的 Recv-Q ≥ Send-Q | 主线程卡在同步 N-API（libdatachannel DTLS / libjuice 死锁），listen backlog 打满；`EventLoopLagSampler` 看不见 | 重启前 `eu-stack -p <pid>` 核对 `getSelectedCandidatePair` / `handleTimeout` / `agent_send`，再 SIGKILL 拉起。看门狗会把挂死变成约 10–20 s 重启。见 [事件循环看门狗](./gateway-loop-watchdog.md)、[KI-17](../known-issues.md) |
 
 限速：每个 node 对同一 `uid` 或 IP 每分钟 10 次登录，超出 429。转发登录的限速桶目前是 `peer:<entryNodeId>`，不是浏览器真实 IP。
 
@@ -460,6 +465,7 @@ vibeterm mesh keylog status
 6. `VIBETERM_TRUST_PROXY` / `VIBETERM_PEER_BIND_HOST` / 外部 TURN 三元组不会被 `init` 写入，必须手改 `app.env`。内置 TURN 的 `VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE` 与 `VIBETERM_RTC_PORT_RANGE` 由 `init` 按角色写入；`VIBETERM_TURN_BIND_HOST` 默认 `auto`，不配也能跑。
 7. TURN 只支持 UDP：node 侧 ICE 由 node-datachannel（libjuice）实现，`turn:…?transport=tcp` / `turns:` 不会产生 relay 候选，内置 TURN 也只中继 UDP/IPv4。机器若被上游过滤入站 UDP（部分 VPS 默认如此，`tcpdump` 在网卡上看不到任何 UDP），则直连与 TURN 兜底都不可用，只能走转发；需换有 UDP 入站的机器跑中继。
 8. 对称 NAT（同一 socket 对不同目标映射出不同端口，如 Docker Desktop 出口）之间无法打洞，必须 TURN；macOS 上 TUN 模式代理会吞掉 UDP，做直连验证时要给中继 / TURN 的 IP 加主机路由绕过（`sudo route -n add -host <ip> <网关>`）。
+9. node-datachannel / libdatachannel 在 DTLS server + TURN 路径上存在未合入的 AB-BA 死锁，会永久卡住主线程；产品侧用事件循环看门狗把挂死变成重启。见 [事件循环看门狗](./gateway-loop-watchdog.md) 与 [KI-17](../known-issues.md)。
 
 ## 参考
 
@@ -469,5 +475,6 @@ vibeterm mesh keylog status
 - [部署指南（安装 / 服务 / SSH 设备）](./production-install.md)
 - [自更新](./self-update.md)
 - [tmux 进程存活](./tmux-process-survival.md)
+- [事件循环看门狗](./gateway-loop-watchdog.md)
 - [库与 MASTER_KEY 不匹配](./troubleshooting-db-master-key.md)
 - [登录面安全](../security/login-security.md)
