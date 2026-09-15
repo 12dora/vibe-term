@@ -16,6 +16,10 @@ export interface ReplayTerminalState {
   handle: ReplayTerminalHandle;
   /** 终端实例已就绪：回放要等它才开始喂数据。 */
   ready: boolean;
+  /** 已经就绪过至少一次：改字号会重建实例，那之后不该再闪「加载中」。 */
+  booted: boolean;
+  /** 实例代次，每次就绪 +1。重建太快时 ready 可能在一次渲染里就翻回 true，布尔值看不出换了一台。 */
+  generation: number;
   widget: ReactElement;
 }
 
@@ -52,12 +56,20 @@ export function createReplayTerminalBinding(onReadyChange: (ready: boolean) => v
   };
 }
 
-export function useReplayTerminal(): ReplayTerminalState {
+/** `fontSize` 由外框自适应算出；变了终端会重建，播放机随后按当前时刻重新快进。 */
+export function useReplayTerminal(fontSize?: number): ReplayTerminalState {
   const { t } = useTranslation();
   const [ready, setReady] = useState(false);
+  const [booted, setBooted] = useState(false);
+  const [generation, setGeneration] = useState(0);
   const bindingRef = useRef<ReturnType<typeof createReplayTerminalBinding> | null>(null);
   if (bindingRef.current === null) {
-    bindingRef.current = createReplayTerminalBinding(setReady);
+    bindingRef.current = createReplayTerminalBinding((next) => {
+      setReady(next);
+      if (!next) return;
+      setBooted(true);
+      setGeneration((prev) => prev + 1);
+    });
   }
   const binding = bindingRef.current;
   const ariaLabel = t('settings.share.replay.title');
@@ -68,13 +80,14 @@ export function useReplayTerminal(): ReplayTerminalState {
         viewportPan: true,
         surfaceFrame: true,
         selection: true,
+        fontSize,
         onReady: binding.onReady,
         onDispose: binding.onDispose,
         testId: 'share-replay-mount',
         ariaLabel,
       }),
-    [binding, ariaLabel]
+    [binding, ariaLabel, fontSize]
   );
 
-  return { handle: binding.handle, ready, widget };
+  return { handle: binding.handle, ready, booted, generation, widget };
 }

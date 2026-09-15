@@ -1,8 +1,8 @@
 // 分享日志回放的 e2e：默认跑「左对齐、选区复制、墙钟」三项断言。
 //
 // 另有四个只由环境变量打开的排查模式，默认路径不受影响：
-//   VIBETERM_E2E_REPLAY_WIDE_VIEWER=1  收件端用 2400×900 宽视口：录像（固定 220×50）窄于外框，
-//                                      走的是居中那一支；默认视口下录像溢出，走贴左那一支。
+//   VIBETERM_E2E_REPLAY_WIDE_VIEWER=1  收/发两端都用 2400×900 宽视口 + dpr 2：回放外框变高变宽，
+//                                      录像（固定 220×50）按字号自适应后整屏装得下，走居中那一支。
 //   VIBETERM_E2E_REPLAY_TUI=1          被分享端跑 fixtures/replay-tui-payload.sh（备用屏全屏 TUI）。
 //   VIBETERM_E2E_REPLAY_CLAUDE=1       被分享端跑 claude，录一段真实 TUI。
 //   VIBETERM_E2E_REPLAY_LOG_FILE=<f>   回放时用该 JSON 顶掉日志接口，复现线上录像。
@@ -53,8 +53,10 @@ interface ReadOnlyProbeLine {
 interface ReplayLayout {
   rootLeft: number;
   rootWidth: number;
+  rootHeight: number;
   screenLeft: number;
   screenWidth: number;
+  screenHeight: number;
   canvasLeft: number;
   panScrollLeft: number;
 }
@@ -229,8 +231,10 @@ async function readReplayLayout(page: Page): Promise<ReplayLayout> {
       return {
         rootLeft: Number.NaN,
         rootWidth: Number.NaN,
+        rootHeight: Number.NaN,
         screenLeft: Number.NaN,
         screenWidth: Number.NaN,
+        screenHeight: Number.NaN,
         canvasLeft: Number.NaN,
         panScrollLeft: Number.NaN,
       };
@@ -244,12 +248,48 @@ async function readReplayLayout(page: Page): Promise<ReplayLayout> {
     return {
       rootLeft: rootRect.left,
       rootWidth: rootRect.width,
+      rootHeight: rootRect.height,
       screenLeft: screenRect ? screenRect.left : Number.NaN,
       screenWidth: screenRect ? screenRect.width : Number.NaN,
+      screenHeight: screenRect ? screenRect.height : Number.NaN,
       canvasLeft: canvas instanceof HTMLElement ? canvas.getBoundingClientRect().left : Number.NaN,
       panScrollLeft: pan instanceof HTMLElement ? pan.scrollLeft : Number.NaN,
     };
   });
+}
+
+/**
+ * 等只读终端这一台实例稳定下来：字号自适应会按录像网格重建终端（换字号只能重建），
+ * 重建那一下会清屏并从 checkpoint 重放，正赶上拖选就会把选区弄丢。
+ * 给当前实例打个标记，隔一会儿再看标记还在不在——在就是没换过。
+ */
+async function waitForReplayTerminalSettled(page: Page): Promise<void> {
+  const tag = async (): Promise<boolean> =>
+    page.evaluate(() => {
+      const term = (
+        window as unknown as { __vibetermE2eReadOnlyTerminal?: { __e2eSettleTag?: number } }
+      ).__vibetermE2eReadOnlyTerminal;
+      if (!term) return false;
+      term.__e2eSettleTag = 1;
+      return true;
+    });
+  const stillTagged = async (): Promise<boolean> =>
+    page.evaluate(() => {
+      const term = (
+        window as unknown as { __vibetermE2eReadOnlyTerminal?: { __e2eSettleTag?: number } }
+      ).__vibetermE2eReadOnlyTerminal;
+      return term?.__e2eSettleTag === 1;
+    });
+  await expect
+    .poll(
+      async () => {
+        if (!(await tag())) return false;
+        await page.waitForTimeout(500);
+        return stillTagged();
+      },
+      { timeout: 30_000 }
+    )
+    .toBe(true);
 }
 
 async function setReplaySpeed8x(page: Page): Promise<void> {
@@ -354,7 +394,13 @@ async function dragReplayText(page: Page, needle: string): Promise<void> {
   await page.mouse.up();
 }
 
-test.use(process.env.VIBETERM_E2E_REPLAY_WIDE_VIEWER === '1' ? { deviceScaleFactor: 2 } : {});
+// 宽视口模式：录像端（收件人）与回放端（自己）都放大。回放窗是按自己这边的视口算尺寸的，
+// 只放大收件人视口的话，回放外框还是默认的 1280×720，验不到「宽屏上把录像放大铺满」。
+test.use(
+  process.env.VIBETERM_E2E_REPLAY_WIDE_VIEWER === '1'
+    ? { deviceScaleFactor: 2, viewport: { width: 2400, height: 900 } }
+    : {}
+);
 
 test('mesh: share replay renders from column 0, copies selection, and shows wall-clock time', async ({
   page,
@@ -456,6 +502,7 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
       await page.screenshot({ path: `${SCREENSHOT_DIR}/replay-claude.png` });
       return;
     }
+    await waitForReplayTerminalSettled(page);
     const markerLine = await waitForReplayMarker(page);
     expect(
       markerLine.index,
@@ -479,6 +526,20 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
       `canvas left=${layout.canvasLeft} screen left=${layout.screenLeft}`
     ).toBeLessThan(2);
 
+    // 字号自适应：录像按长宽比放到最大，受限的那条边应当基本贴满外框。
+    // 录像是横向的（宽 ≫ 高），所以受限边是宽——外框再宽也不会留下大片空当。
+    const fill = Math.max(
+      layout.screenWidth / layout.rootWidth,
+      layout.screenHeight / layout.rootHeight
+    );
+    expect(
+      fill,
+      `screen ${layout.screenWidth}×${layout.screenHeight} in frame ${layout.rootWidth}×${layout.rootHeight}`
+    ).toBeGreaterThan(0.85);
+    expect(layout.screenWidth, 'recording must not overflow the frame width').toBeLessThanOrEqual(
+      layout.rootWidth + 1
+    );
+
     const wallAtEnd = (await page.getByTestId('share-replay-wall-clock').innerText()).trim();
     expect(wallAtEnd).toMatch(WALL_CLOCK);
 
@@ -492,6 +553,7 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
       .not.toBe(wallAtEnd);
 
     await playReplayToEnd(page);
+    await waitForReplayTerminalSettled(page);
     await waitForReplayMarker(page);
     await dragReplayText(page, MARKER);
     await expect

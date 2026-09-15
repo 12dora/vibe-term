@@ -17,6 +17,8 @@ export interface UseReadOnlyTerminalOptions {
   viewportPan: boolean;
   /** 内容表面按「屏幕」画：外圈衬底 + 描边 + 居中。 */
   surfaceFrame: boolean;
+  /** 覆盖设置里的终端字号；不给就用设置值。 */
+  fontSize?: number;
   scrollback: number;
   onReady?: (handle: ReadOnlyTerminalHandle) => void;
   onDispose?: () => void;
@@ -99,7 +101,8 @@ function useReadOnlyE2eProbe(instance: CompatibleTerminalLike | null): void {
 
 export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOnlyTerminalRefs {
   const fontId = useUIStore((state) => state.terminalFontId);
-  const fontSize = useUIStore((state) => state.terminalFontSize);
+  const storeFontSize = useUIStore((state) => state.terminalFontSize);
+  const fontSize = options.fontSize ?? storeFontSize;
   const lineHeight = useUIStore((state) => state.terminalLineHeight);
   const theme = useUIStore((state) => state.theme);
   const themePreset = useUIStore((state) => state.themePreset);

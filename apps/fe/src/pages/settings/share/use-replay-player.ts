@@ -82,10 +82,51 @@ export function applyReplaySeek(input: ReplaySeekApplyInput): ReplaySeekApplyRes
   return { cursor: plan.toIndex, reset: plan.reset, markers, nextMarkerSeq: markerSeq };
 }
 
+interface ReplayClockInput {
+  playing: boolean;
+  speed: ReplaySpeed;
+  durationMs: number;
+  timeRef: { current: number };
+  apply: (target: number, force: boolean) => void;
+  setCurrentMs: (ms: number) => void;
+  setPlaying: (playing: boolean) => void;
+}
+
+/** 播放时钟：raf 按倍速推进时间并喂终端，播到片尾自动停。 */
+function useReplayClock(input: ReplayClockInput): void {
+  const { playing, speed, durationMs, timeRef, apply, setCurrentMs, setPlaying } = input;
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    let last = performance.now();
+    let shown = timeRef.current;
+    const tick = (now: number) => {
+      const next = timeRef.current + (now - last) * speed;
+      last = now;
+      const target = Math.min(next, durationMs);
+      timeRef.current = target;
+      apply(target, false);
+      if (Math.abs(target - shown) >= CLOCK_STEP_MS || target >= durationMs) {
+        shown = target;
+        setCurrentMs(target);
+      }
+      if (target >= durationMs) {
+        setPlaying(false);
+        return;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, speed, apply, durationMs, timeRef, setCurrentMs, setPlaying]);
+}
+
 export function useReplayPlayer(
   timeline: ReplayTimeline,
   terminal: ReplayTerminalHandle,
-  ready: boolean
+  ready: boolean,
+  /** 终端实例代次：改字号重建实例时 ready 可能来不及翻成 false，只看布尔值会漏掉重建。 */
+  bootGeneration = 0
 ): ReplayPlayer {
   const [paneId, setPaneId] = useState<string | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
@@ -134,44 +175,30 @@ export function useReplayPlayer(
     [apply, timeline.durationMs]
   );
 
-  // 终端就绪 / 换 pane：清空重建，再快进到当前时刻。
+  // 终端就绪（含重建）/ 换 pane：清空重建，再快进到当前时刻。
   // 依赖只认 paneId：日志是一页页到的，pane 对象每页都换一个新的，
   // 按对象身份重跑会让整份录像每来一页就从头快进一遍。
   const paneKey = pane?.paneId ?? null;
   const applyRef = useRef(apply);
   applyRef.current = apply;
+  // 未就绪为 0，就绪后是实例代次：一个值同时表达「能写了」和「换了一台」。
+  const bootKey = ready ? Math.max(1, bootGeneration) : 0;
   useEffect(() => {
-    if (!ready || paneKey === null) return;
+    if (bootKey === 0 || paneKey === null) return;
     terminal.reset();
     cursorRef.current = 0;
     applyRef.current(timeRef.current, true);
-  }, [ready, paneKey, terminal]);
+  }, [bootKey, paneKey, terminal]);
 
-  useEffect(() => {
-    if (!playing) return;
-    let raf = 0;
-    let last = performance.now();
-    let shown = timeRef.current;
-    const tick = (now: number) => {
-      const next = timeRef.current + (now - last) * speed;
-      last = now;
-      const end = timeline.durationMs;
-      const target = Math.min(next, end);
-      timeRef.current = target;
-      apply(target, false);
-      if (Math.abs(target - shown) >= CLOCK_STEP_MS || target >= end) {
-        shown = target;
-        setCurrentMs(target);
-      }
-      if (target >= end) {
-        setPlaying(false);
-        return;
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [playing, speed, apply, timeline.durationMs]);
+  useReplayClock({
+    playing,
+    speed,
+    durationMs: timeline.durationMs,
+    timeRef,
+    apply,
+    setCurrentMs,
+    setPlaying,
+  });
 
   const grid = useMemo(() => (pane ? replayGridAt(pane, currentMs) : null), [pane, currentMs]);
 
