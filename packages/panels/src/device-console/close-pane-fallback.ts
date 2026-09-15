@@ -2,12 +2,10 @@
 // 关闭 URL 点名的 pane 必须先把路由挪到幸存目标再发 close-pane：否则 kill 到新快照回来的
 // 这段时间里 URL 指向的是一个已不存在的 pane，界面只能显示「连接设备中」遮罩。
 
-import { type SelectionWindowLike, pickActiveSelectionPane } from './selection-recovery';
+import type { SelectionWindowLike } from './selection-recovery';
+import { type WindowCloseFallback, pickOtherWindowTarget } from './window-close-fallback';
 
-export type ClosePaneFallback =
-  | { kind: 'none' }
-  | { kind: 'pane'; windowId: string; paneId: string }
-  | { kind: 'device-list' };
+export type ClosePaneFallback = WindowCloseFallback;
 
 /**
  * 关闭的不是路由 pane 时返回 none（只发 close-pane）；是路由 pane 时按
@@ -40,14 +38,6 @@ export function resolveCloseFallback({
     }
   }
 
-  const otherWindows = allWindows.filter(
-    (window) => window.id !== routeWindowId && window.panes.length > 0
-  );
-  const nextWindow = otherWindows.find((window) => window.active) ?? otherWindows[0];
-  const nextPane = nextWindow ? pickActiveSelectionPane(nextWindow) : undefined;
-  if (nextWindow && nextPane) {
-    return { kind: 'pane', windowId: nextWindow.id, paneId: nextPane.id };
-  }
-
-  return { kind: 'device-list' };
+  const target = pickOtherWindowTarget(allWindows, closingWindowId);
+  return target ? { kind: 'pane', ...target } : { kind: 'device-list' };
 }

@@ -12,11 +12,13 @@ import { SidebarGroup } from '@vibeterm/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter } from '../device-connection';
+import { resolveWindowCloseFallback } from '../device-console/window-close-fallback';
 import type { SidebarAgentAdapter } from './agent-adapter';
 import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
 import {
+  type DeviceTreeNavigationApi,
   type DeviceTreeSelection,
   useDeviceTreeNavigationApi,
   useDeviceTreeSelection,
@@ -122,6 +124,44 @@ function useDeviceTreeSubscriptions({
   }, [authoritative, visibleDevices, ensureDeviceSubscribed, sidebarDeviceExpanded, expansionKey]);
 }
 
+/**
+ * 关闭窗口：关掉的是路由点名的那个时，先把路由挪到幸存窗口的 active pane（一个都不剩才去
+ * 设备列表），再发 close-window——否则 URL 会短暂指向已删除的窗口，只能画「连接设备中」遮罩。
+ * 回落一律 keepSidebarOpen：用户是在侧栏（移动端即「菜单」抽屉）里操作的，
+ * 关掉一个窗口不该把整张菜单一起收走。
+ */
+function useCloseWindowWithFallback({
+  selection,
+  handleNavigate,
+  navigateToPane,
+}: {
+  selection: DeviceTreeSelection;
+  handleNavigate: DeviceTreeNavigationApi['handleNavigate'];
+  navigateToPane: DeviceTreeNavigationApi['navigateToPane'];
+}): (deviceId: string, windowId: string) => void {
+  const runtime = useRuntime();
+  const { host } = runtime;
+  const closeWindow = useTmuxStore((state) => state.closeWindow);
+  const { selectedDeviceId, selectedWindowId } = selection;
+
+  return useCallback(
+    (deviceId: string, windowId: string) => {
+      const fallback = resolveWindowCloseFallback({
+        windows: runtime.stores.tmux.getState().snapshots[deviceId]?.session?.windows,
+        routeWindowId: deviceId === selectedDeviceId ? selectedWindowId : undefined,
+        closingWindowId: windowId,
+      });
+      if (fallback.kind === 'pane') {
+        navigateToPane(deviceId, fallback.windowId, fallback.paneId, { keepSidebarOpen: true });
+      } else if (fallback.kind === 'device-list') {
+        handleNavigate(hostAppPath(host, '/devices'), { keepSidebarOpen: true });
+      }
+      closeWindow(deviceId, windowId);
+    },
+    [closeWindow, handleNavigate, host, navigateToPane, runtime, selectedDeviceId, selectedWindowId]
+  );
+}
+
 export interface SideBarDeviceListProps {
   /** 展开/选中设备时保证已订阅其 tmux 快照（宿主接自己的连接管理） */
   ensureDeviceSubscribed: (deviceId: string) => void;
@@ -163,7 +203,6 @@ export function SideBarDeviceList({
   const selection = useDeviceTreeSelection();
   const { selectedDeviceId, selectedWindowId } = selection;
 
-  const closeWindow = useTmuxStore((state) => state.closeWindow);
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
   const devicesQuery = useQuery({
@@ -179,17 +218,11 @@ export function SideBarDeviceList({
   useHydratedDeviceErrors(authoritative ? devicesData?.devices : undefined);
 
   const { handleNavigate, navigateToPane, navigateToWindow, nav } = useDeviceTreeNavigationApi();
-
-  const handleCloseWindow = useCallback(
-    (deviceId: string, windowId: string) => {
-      // If closing the currently selected window, navigate to fallback
-      if (deviceId === selectedDeviceId && windowId === selectedWindowId) {
-        handleNavigate(hostAppPath(host, '/devices'));
-      }
-      closeWindow(deviceId, windowId);
-    },
-    [closeWindow, selectedDeviceId, selectedWindowId, handleNavigate, host]
-  );
+  const handleCloseWindow = useCloseWindowWithFallback({
+    selection,
+    handleNavigate,
+    navigateToPane,
+  });
 
   const {
     requestCloseWindow,
