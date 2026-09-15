@@ -8,6 +8,8 @@ import {
   type ToolbarButton,
   type ToolbarButtonsInput,
   buildToolbarButtons,
+  buildToolbarMenuItems,
+  hasToolbarMenuIndicator,
 } from './device-console-toolbar';
 import {
   type DeviceConsoleActionsModel,
@@ -108,14 +110,10 @@ describe('selection helpers', () => {
 });
 
 describe('buildToolbarButtons', () => {
-  test('keeps the desktop button order and test ids', () => {
+  test('keeps the desktop icon buttons and test ids', () => {
     expect(testIdsOf(buildToolbarButtons(toolbarInput()))).toEqual([
       'split-right-button',
       'split-down-button',
-      undefined,
-      'terminal-input-mode-toggle',
-      'share-open-button',
-      'watch-open-button',
       'keyboard-behavior-open-button',
     ]);
   });
@@ -127,39 +125,10 @@ describe('buildToolbarButtons', () => {
     expect(findButton(buttons, 'terminal-settings')?.testId).toBe('keyboard-behavior-open-button');
   });
 
-  test('drops the watch button when the featureset disables watch UI', () => {
-    const buttons = buildToolbarButtons(toolbarInput({ watchUi: false }));
-    expect(findButton(buttons, 'watch')).toBeUndefined();
-  });
-
-  test('disables pane actions while the pane is not interactive, but keeps refresh usable', () => {
+  test('disables split while the pane is not interactive, but keeps terminal settings usable', () => {
     const buttons = buildToolbarButtons(toolbarInput({ canInteract: false }));
     expect(findButton(buttons, 'split-right')?.disabled).toBe(true);
-    expect(findButton(buttons, 'input-mode')?.disabled).toBe(true);
-    expect(findButton(buttons, 'refresh')?.disabled).toBeUndefined();
     expect(findButton(buttons, 'terminal-settings')?.disabled).toBeUndefined();
-  });
-
-  test('disables watch without a resolved pane', () => {
-    const buttons = buildToolbarButtons(toolbarInput({ resolvedPaneId: undefined }));
-    expect(findButton(buttons, 'watch')?.disabled).toBe(true);
-  });
-
-  test('shows the watch badge only while a rule is enabled', () => {
-    expect(findButton(buildToolbarButtons(toolbarInput()), 'watch')?.badge).toEqual({
-      testId: 'watch-active-indicator',
-      visible: false,
-    });
-    expect(
-      findButton(buildToolbarButtons(toolbarInput({ hasEnabledWatchRule: true })), 'watch')?.badge
-        ?.visible
-    ).toBe(true);
-  });
-
-  test('drops the share button when the runtime is a share viewer', () => {
-    expect(
-      findButton(buildToolbarButtons(toolbarInput({ shareUi: false })), 'share')
-    ).toBeUndefined();
   });
 
   // 被分享人不能改分屏结构，服务端也会拒掉 SPLIT_PANE：入口不该还留着
@@ -167,28 +136,98 @@ describe('buildToolbarButtons', () => {
     const buttons = buildToolbarButtons(toolbarInput({ structureUi: false }));
     expect(findButton(buttons, 'split-right')).toBeUndefined();
     expect(findButton(buttons, 'split-down')).toBeUndefined();
-    expect(findButton(buttons, 'input-mode')).toBeDefined();
     expect(findButton(buttons, 'terminal-settings')).toBeDefined();
+  });
+
+  test('routes each button to its handler', () => {
+    const calls: string[] = [];
+    const input: ToolbarButtonsInput = {
+      ...toolbarInput(),
+      model: model({ onSplitPane: (direction) => calls.push(`split:${direction}`) }),
+      onOpenTerminalSettings: () => calls.push('terminal-settings'),
+    };
+
+    for (const button of buildToolbarButtons(input)) button.onClick();
+
+    expect(calls).toEqual(['split:right', 'split:down', 'terminal-settings']);
+  });
+});
+
+describe('buildToolbarMenuItems', () => {
+  test('keeps the menu order and test ids', () => {
+    expect(testIdsOf(buildToolbarMenuItems(toolbarInput()))).toEqual([
+      'refresh-page-button',
+      'terminal-input-mode-toggle',
+      'share-open-button',
+      'watch-open-button',
+    ]);
+  });
+
+  test('keeps the same menu on mobile viewports', () => {
+    expect(testIdsOf(buildToolbarMenuItems(toolbarInput({ isMobileViewport: true })))).toEqual(
+      testIdsOf(buildToolbarMenuItems(toolbarInput()))
+    );
+  });
+
+  test('drops the watch item when the featureset disables watch UI', () => {
+    expect(
+      findButton(buildToolbarMenuItems(toolbarInput({ watchUi: false })), 'watch')
+    ).toBeUndefined();
+  });
+
+  test('drops the share item when the runtime is a share viewer', () => {
+    expect(
+      findButton(buildToolbarMenuItems(toolbarInput({ shareUi: false })), 'share')
+    ).toBeUndefined();
+  });
+
+  // 被分享人没有分屏入口，但刷新与输入模式照旧
+  test('keeps refresh and input mode when structural actions are off', () => {
+    const items = buildToolbarMenuItems(toolbarInput({ structureUi: false }));
+    expect(findButton(items, 'refresh')).toBeDefined();
+    expect(findButton(items, 'input-mode')).toBeDefined();
+  });
+
+  test('disables the input mode item while the pane is not interactive, but keeps refresh usable', () => {
+    const items = buildToolbarMenuItems(toolbarInput({ canInteract: false }));
+    expect(findButton(items, 'input-mode')?.disabled).toBe(true);
+    expect(findButton(items, 'refresh')?.disabled).toBeUndefined();
+  });
+
+  test('disables watch without a resolved pane', () => {
+    const items = buildToolbarMenuItems(toolbarInput({ resolvedPaneId: undefined }));
+    expect(findButton(items, 'watch')?.disabled).toBe(true);
+  });
+
+  test('shows the watch badge only while a rule is enabled', () => {
+    expect(findButton(buildToolbarMenuItems(toolbarInput()), 'watch')?.badge).toEqual({
+      testId: 'watch-active-indicator',
+      visible: false,
+    });
+    expect(
+      findButton(buildToolbarMenuItems(toolbarInput({ hasEnabledWatchRule: true })), 'watch')?.badge
+        ?.visible
+    ).toBe(true);
   });
 
   test('disables share without a device or window', () => {
     expect(
-      findButton(buildToolbarButtons(toolbarInput({ windowId: undefined })), 'share')?.disabled
+      findButton(buildToolbarMenuItems(toolbarInput({ windowId: undefined })), 'share')?.disabled
     ).toBe(true);
     expect(
-      findButton(buildToolbarButtons(toolbarInput({ deviceId: undefined })), 'share')?.disabled
+      findButton(buildToolbarMenuItems(toolbarInput({ deviceId: undefined })), 'share')?.disabled
     ).toBe(true);
-    expect(findButton(buildToolbarButtons(toolbarInput()), 'share')?.disabled).toBe(false);
+    expect(findButton(buildToolbarMenuItems(toolbarInput()), 'share')?.disabled).toBe(false);
   });
 
   test('highlights share and shows the viewer count only while a share is active', () => {
-    const idle = findButton(buildToolbarButtons(toolbarInput()), 'share');
+    const idle = findButton(buildToolbarMenuItems(toolbarInput()), 'share');
     expect(idle?.active).toBe(false);
     expect(idle?.badge?.visible).toBe(false);
     expect(idle?.label).toBe('share.toolbar.share');
 
     const active = findButton(
-      buildToolbarButtons(toolbarInput({ hasActiveShare: true, shareViewers: 3 })),
+      buildToolbarMenuItems(toolbarInput({ hasActiveShare: true, shareViewers: 3 })),
       'share'
     );
     expect(active?.active).toBe(true);
@@ -200,40 +239,48 @@ describe('buildToolbarButtons', () => {
     expect(active?.label).toBe('share.toolbar.active');
   });
 
-  test('labels the input-mode button by the target mode', () => {
-    expect(findButton(buildToolbarButtons(toolbarInput()), 'input-mode')?.label).toBe(
+  test('labels the input-mode item by the target mode', () => {
+    expect(findButton(buildToolbarMenuItems(toolbarInput()), 'input-mode')?.label).toBe(
       'nav.switchToEditor'
     );
     expect(
-      findButton(buildToolbarButtons(toolbarInput({ inputMode: 'editor' })), 'input-mode')?.label
+      findButton(buildToolbarMenuItems(toolbarInput({ inputMode: 'editor' })), 'input-mode')?.label
     ).toBe('nav.switchToDirect');
   });
 
-  test('routes each button to its handler', () => {
+  test('routes each menu item to its handler', () => {
     const calls: string[] = [];
     const input: ToolbarButtonsInput = {
       ...toolbarInput(),
-      model: model({
-        onSplitPane: (direction) => calls.push(`split:${direction}`),
-        onToggleInputMode: () => calls.push('input-mode'),
-      }),
+      model: model({ onToggleInputMode: () => calls.push('input-mode') }),
       onOpenRefreshConfirm: () => calls.push('refresh'),
       onOpenWatchDialog: () => calls.push('watch'),
-      onOpenTerminalSettings: () => calls.push('terminal-settings'),
       onOpenShareDialog: () => calls.push('share'),
     };
 
-    for (const button of buildToolbarButtons(input)) button.onClick();
+    for (const item of buildToolbarMenuItems(input)) item.onClick();
 
-    expect(calls).toEqual([
-      'split:right',
-      'split:down',
-      'refresh',
-      'input-mode',
-      'share',
-      'watch',
-      'terminal-settings',
-    ]);
+    expect(calls).toEqual(['refresh', 'input-mode', 'share', 'watch']);
+  });
+});
+
+// 菜单收起时，分享中 / 有启用规则要在 ⋯ 触发器上留一个点，否则这两个状态从界面上消失
+describe('hasToolbarMenuIndicator', () => {
+  test('is on only while a menu badge is showing', () => {
+    expect(hasToolbarMenuIndicator(buildToolbarMenuItems(toolbarInput()))).toBe(false);
+    expect(
+      hasToolbarMenuIndicator(buildToolbarMenuItems(toolbarInput({ hasEnabledWatchRule: true })))
+    ).toBe(true);
+    expect(
+      hasToolbarMenuIndicator(
+        buildToolbarMenuItems(toolbarInput({ hasActiveShare: true, shareViewers: 2 }))
+      )
+    ).toBe(true);
+    expect(
+      hasToolbarMenuIndicator(
+        buildToolbarMenuItems(toolbarInput({ hasEnabledWatchRule: true, watchUi: false }))
+      )
+    ).toBe(false);
   });
 });
 

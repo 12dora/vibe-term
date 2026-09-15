@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { type Browser, type Page, expect, test } from '@playwright/test';
+import { clickConsoleMoreItem } from './helpers/console-more';
 import {
   type MeshState,
   createDeviceOnNode,
@@ -69,7 +70,7 @@ test('mesh: a shared window is reachable through the entry with only that window
     await expect(page.getByTestId('device-page')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
 
-    await page.getByTestId('share-open-button').click();
+    await clickConsoleMoreItem(page, 'share-open-button');
     await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
     const password = await page.getByTestId('share-password').inputValue();
     expect(password.length).toBeGreaterThanOrEqual(8);
@@ -190,7 +191,7 @@ test('mesh: a window on the entry node itself is shared over the direct path', a
 
     await page.goto(meshUrl(state, `/devices/${deviceId}`), { waitUntil: 'domcontentloaded' });
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId('share-open-button').click();
+    await clickConsoleMoreItem(page, 'share-open-button');
     await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
     const password = await page.getByTestId('share-password').inputValue();
     await page.getByTestId('share-create-submit').click();
@@ -249,7 +250,7 @@ async function shareOwnWindow(
 
   await page.goto(meshUrl(state, `/devices/${deviceId}`), { waitUntil: 'domcontentloaded' });
   await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId('share-open-button').click();
+  await clickConsoleMoreItem(page, 'share-open-button');
   await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
   const password = await page.getByTestId('share-password').inputValue();
   await page.getByTestId('share-name').fill(shareName);
@@ -394,7 +395,7 @@ test('mesh: a share on a remote node shows up in the entry node settings and can
       waitUntil: 'domcontentloaded',
     });
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId('share-open-button').click();
+    await clickConsoleMoreItem(page, 'share-open-button');
     await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
     await page.getByTestId('share-name').fill('e2e remote share');
     await page.getByTestId('share-create-submit').click();

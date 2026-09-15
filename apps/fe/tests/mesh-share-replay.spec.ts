@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Browser, type Page, expect, test } from '@playwright/test';
+import { clickConsoleMoreItem } from './helpers/console-more';
 import {
   type MeshState,
   loginWithPassword,
@@ -529,7 +530,7 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
     await expect
       .poll(() => readTerminalBuffer(page), { timeout: 20_000 })
       .toContain(CHECKPOINT_LINES[1]);
-    await page.getByTestId('share-open-button').click();
+    await clickConsoleMoreItem(page, 'share-open-button');
     await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
     const password = await page.getByTestId('share-password').inputValue();
     await page.getByTestId('share-name').fill('e2e replay');

@@ -3,6 +3,7 @@
 // WatchDialog 可打开且表单可达。真后端 + 本机 tmux。
 
 import { expect, test } from '@playwright/test';
+import { clickConsoleMoreItem } from './helpers/console-more';
 import { ensureCleanSession, tmux } from './helpers/tmux';
 
 test.use({ viewport: { width: 375, height: 812 } });
@@ -81,7 +82,7 @@ test.describe
       );
       await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-      await page.getByTestId('watch-open-button').click();
+      await clickConsoleMoreItem(page, 'watch-open-button');
       await expect(page.getByTestId('watch-dialog')).toBeVisible();
 
       await page.getByTestId('watch-rule-add').click();

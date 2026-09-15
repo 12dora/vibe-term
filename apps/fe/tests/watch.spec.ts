@@ -3,6 +3,7 @@
 // 回填表单；真实链路触发 WATCH_EVENT toast（规则采样间隔 5s，echo token 后等待广播）。
 
 import { expect, test } from '@playwright/test';
+import { clickConsoleMoreItem } from './helpers/console-more';
 import { ensureCleanSession, tmux } from './helpers/tmux';
 
 test.describe
@@ -53,7 +54,7 @@ test.describe
         `/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(paneId)}`
       );
       await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-      await page.getByTestId('watch-open-button').click();
+      await clickConsoleMoreItem(page, 'watch-open-button');
       await expect(page.getByTestId('watch-dialog')).toBeVisible();
     }
 
@@ -73,15 +74,15 @@ test.describe
       );
       await expect(ruleItem).toBeVisible();
 
-      // 有启用规则时 PageActions 按钮带角标
-      await expect(page.getByTestId('watch-active-indicator')).toBeVisible();
+      // 有启用规则时 ⋯ 触发器带指示点（角标本体在收起的菜单项上，只有触发器一直可见）
+      await expect(page.getByTestId('console-more-indicator')).toBeVisible();
 
       // 启停 Switch（PATCH enabled）
       const toggle = ruleItem.locator('[data-testid^="watch-rule-toggle-"]');
       await expect(toggle).toHaveAttribute('aria-checked', 'true');
       await toggle.click();
       await expect(toggle).toHaveAttribute('aria-checked', 'false');
-      await expect(page.getByTestId('watch-active-indicator')).toHaveCount(0);
+      await expect(page.getByTestId('console-more-indicator')).toHaveCount(0);
 
       // 删除（AlertDialog 确认）
       await ruleItem.locator('[data-testid^="watch-rule-delete-"]').click();
