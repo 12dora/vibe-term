@@ -453,6 +453,12 @@
       "pane": "ターミナル",
       "moveToWindow": "このウィンドウへ移動",
       "breakToWindow": "新しいウィンドウに分離",
+      "memory": "メモリ",
+      "memoryOom": "OOM で {{count}} 回強制終了",
+      "memoryLimitHigh": "ソフト上限",
+      "memoryLimitMax": "ハード上限",
+      "memorySwapMax": "スワップ上限",
+      "memoryScope": "スコープ",
       "noWindowSelected": "ウィンドウが選択されていません",
       "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },

@@ -453,6 +453,12 @@
       "pane": "终端",
       "moveToWindow": "移入此窗口",
       "breakToWindow": "拆为独立窗口",
+      "memory": "内存",
+      "memoryOom": "OOM 已杀 {{count}} 次",
+      "memoryLimitHigh": "软限额",
+      "memoryLimitMax": "硬限额",
+      "memorySwapMax": "交换限额",
+      "memoryScope": "作用域",
       "noWindowSelected": "未选择窗口",
       "selectWindowToStart": "选择一个窗口开始"
     },

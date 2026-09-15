@@ -4,12 +4,14 @@ import { SELF_NODE_ID } from '@vibeterm/api-client';
 import {
   type DeferredClipboardWriter,
   type EventDevicePayload,
+  type StateSnapshotPayload,
   createDeferredClipboardWriter,
 } from '@vibeterm/shared';
 import {
   type ConnectionState,
   type GatewayTransportEvent,
   serverSupportsDeviceLatency,
+  serverSupportsWindowMemory,
 } from '@vibeterm/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
 import {
@@ -18,8 +20,13 @@ import {
   handleTmuxEvent,
 } from './tmux-device-events';
 import type { TmuxSelectionActions } from './tmux-selection-actions';
-import type { DeviceLatencySample } from './tmux-state';
+import type { DeviceLatencySample, TmuxState } from './tmux-state';
 import { applyViewportPolicy, clearViewportPolicyForDevice } from './viewport-policy';
+import {
+  applyWindowMemory,
+  dropWindowMemoryForDevice,
+  pruneWindowMemoryWindows,
+} from './window-memory';
 
 export interface TmuxEventRouterContext extends TmuxDomainEventContext {
   selection: TmuxSelectionActions;
@@ -148,6 +155,20 @@ function dropDeviceLatency(map: DeviceLatencyMap, deviceId: string): DeviceLaten
   return next;
 }
 
+/** 窗口在快照里消失就把它的内存读数一并摘掉——网关不会为已关掉的窗口再发帧。 */
+function pruneWindowMemory(
+  prev: TmuxState,
+  deviceId: string,
+  snapshot: StateSnapshotPayload
+): TmuxState['windowMemory'] {
+  const windows = snapshot.session?.windows ?? [];
+  return pruneWindowMemoryWindows(
+    prev.windowMemory,
+    deviceId,
+    windows.map((window) => window.id)
+  );
+}
+
 const handlers: TmuxEventHandlers = {
   'connection-state': (event, ctx) => {
     handleTransportStateChange(ctx, event.state);
@@ -162,6 +183,10 @@ const handlers: TmuxEventHandlers = {
       deviceLatency: ready ? prev.deviceLatency : {},
       deviceLatencySupported: ready
         ? serverSupportsDeviceLatency(ctx.core.transport.serverCapabilities)
+        : false,
+      windowMemory: ready ? prev.windowMemory : {},
+      windowMemorySupported: ready
+        ? serverSupportsWindowMemory(ctx.core.transport.serverCapabilities)
         : false,
     }));
     if (ready) ctx.onReady();
@@ -203,6 +228,7 @@ const handlers: TmuxEventHandlers = {
     ctx.setState((prev) => ({
       deviceConnected: { ...prev.deviceConnected, [event.deviceId]: false },
       deviceLatency: dropDeviceLatency(prev.deviceLatency, event.deviceId),
+      windowMemory: dropWindowMemoryForDevice(prev.windowMemory, event.deviceId),
       viewportPolicy: clearViewportPolicyForDevice(prev.viewportPolicy, event.deviceId),
     }));
   },
@@ -223,6 +249,15 @@ const handlers: TmuxEventHandlers = {
     ctx.setState((state) => ({
       deviceLatency: { ...state.deviceLatency, [event.deviceId]: sample },
     }));
+  },
+
+  // 心跳帧（读数一模一样）也要落地：`receivedAt` 是 UI 判断「这台设备还在不在上报」的唯一
+  // 依据，网关停播与宿主换成不支持的内核都不会有 device-disconnected。
+  'window-memory': (event, ctx) => {
+    const prev = ctx.getState().windowMemory;
+    const windowMemory = applyWindowMemory(prev, event, (ctx.now ?? Date.now)());
+    if (windowMemory === prev) return;
+    ctx.setState({ windowMemory });
   },
 
   'device-event': (event, ctx) => {
@@ -249,6 +284,7 @@ const handlers: TmuxEventHandlers = {
     const previous = ctx.getState().snapshots[deviceId];
     ctx.setState((prev) => ({
       snapshots: { ...prev.snapshots, [deviceId]: event.snapshot },
+      windowMemory: pruneWindowMemory(prev, deviceId, event.snapshot),
     }));
     ctx.selection.handleSnapshotPaneRemoval(deviceId, previous);
   },
@@ -259,6 +295,7 @@ const handlers: TmuxEventHandlers = {
     if (!previous) return;
     ctx.setState((prev) => ({
       snapshots: { ...prev.snapshots, [event.deviceId]: event.snapshot },
+      windowMemory: pruneWindowMemory(prev, event.deviceId, event.snapshot),
     }));
     ctx.selection.handleSnapshotPaneRemoval(event.deviceId, previous);
   },

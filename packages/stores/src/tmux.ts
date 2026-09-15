@@ -1,7 +1,11 @@
 // tmux store 组装根：状态字段 + 命令下发，事件路由/pane 订阅/选择面拆到同目录模块。
 
 import { getTmuxWindowStyle } from '@vibeterm/shared';
-import { type ConnectionState, serverSupportsDeviceLatency } from '@vibeterm/ws-client';
+import {
+  type ConnectionState,
+  serverSupportsDeviceLatency,
+  serverSupportsWindowMemory,
+} from '@vibeterm/ws-client';
 import { create } from 'zustand';
 import { createPaneSubscriptionManager } from './pane-subscriptions';
 import type { RuntimeCore } from './runtime';
@@ -23,6 +27,24 @@ const CONNECT_DEDUP_WINDOW_MS = 500;
 export interface TmuxStoreDeps {
   getUI: () => UIStore;
   getSite: () => SiteStore;
+}
+
+// 宿主一跳延迟与窗口内存都由本次会话的 HELLO 决定，建 store 与进 READY 两处共用同一份口径。
+function telemetrySupport(capabilities: readonly string[] | undefined) {
+  return {
+    deviceLatencySupported: serverSupportsDeviceLatency(capabilities),
+    windowMemorySupported: serverSupportsWindowMemory(capabilities),
+  };
+}
+
+// 每个 store 实例各拿一份空表：常量对象会被多个 node runtime 共享，日后有人就地改一次就串了。
+function emptyDeviceTelemetry() {
+  return {
+    deviceLatency: {},
+    deviceLatencySupported: false,
+    windowMemory: {},
+    windowMemorySupported: false,
+  } satisfies Partial<TmuxState>;
 }
 
 export function createTmuxStore(
@@ -112,7 +134,7 @@ export function createTmuxStore(
         hasConnectedOnce: core.transport.hasConnectedOnce,
         wsLatencyMs: core.transport.latencyMs,
         wsLatencyRawMs: core.transport.latencyRawMs ?? null,
-        deviceLatencySupported: serverSupportsDeviceLatency(core.transport.serverCapabilities),
+        ...telemetrySupport(core.transport.serverCapabilities),
       });
       if (initialState === 'READY') handleReady();
 
@@ -141,8 +163,7 @@ export function createTmuxStore(
       hasConnectedOnce: false,
       wsLatencyMs: null,
       wsLatencyRawMs: null,
-      deviceLatency: {},
-      deviceLatencySupported: false,
+      ...emptyDeviceTelemetry(),
       snapshots: {},
       topologyPlaceholders: cacheTopology ? readTmuxTopologyCache(core.storagePrefix) : {},
       connectedDevices: new Set(),

@@ -84,6 +84,25 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
     },
   ],
   [
+    wsBorsh.KIND_WINDOW_MEMORY,
+    (payload, emit) => {
+      const decoded = wsBorsh.decodePayload(wsBorsh.WindowMemorySchema, payload);
+      emit({
+        type: 'window-memory',
+        deviceId: decoded.deviceId,
+        windowId: decoded.windowId,
+        current: Number(decoded.current),
+        high: Number(decoded.high),
+        max: Number(decoded.max),
+        swapMax: Number(decoded.swapMax),
+        oomKills: decoded.oomKills,
+        oomFlag: decoded.oomFlag,
+        panes: decoded.panes,
+        sampledAt: Number(decoded.sampledAt),
+      });
+    },
+  ],
+  [
     wsBorsh.KIND_TMUX_EVENT,
     (payload, emit) => {
       emit({ type: 'tmux-event', event: wsBorsh.decodeTmuxEventPayload(payload) });

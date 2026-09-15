@@ -7,6 +7,7 @@ import type {
 } from '@vibeterm/ws-client';
 import type { TmuxTopologyPlaceholders } from './tmux-topology-cache';
 import type { ViewportPolicyMap } from './viewport-policy';
+import type { WindowMemoryMap } from './window-memory';
 
 export type SnapshotMap = Record<string, StateSnapshotPayload | undefined>;
 
@@ -49,6 +50,10 @@ export interface TmuxState {
   deviceLatency: Record<string, DeviceLatencySample | undefined>;
   /** 当前网关是否播报 device-latency-v1；为 false 时宿主一跳是「未测量」而非 0。 */
   deviceLatencySupported: boolean;
+  /** 各窗口的 systemd pane scope 内存聚合，键为 deviceId → windowId；旧节点不下发，永远为空。 */
+  windowMemory: WindowMemoryMap;
+  /** 当前网关是否播报 window-memory-v1；为 false 时不渲染内存徽标。 */
+  windowMemorySupported: boolean;
   snapshots: SnapshotMap;
   /**
    * 上一次会话缓存下来的窗口 / pane 拓扑，仅供冷启动时渲染灰显占位。

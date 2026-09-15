@@ -32,6 +32,7 @@ export {
   TERM_VIEWPORT_MIN_SERVER_VERSION,
   serverSupportsDeviceLatency,
   serverSupportsTermViewport,
+  serverSupportsWindowMemory,
 } from './server-features';
 
 export {

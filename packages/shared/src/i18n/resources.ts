@@ -445,6 +445,25 @@ export const I18N_RESOURCES = {
         "remoteAccess": "Remote access"
       },
       "nodes": {
+        "memory": {
+          "title": "Memory limits",
+          "description": "Caps how much memory the processes in each window may use. Requires Linux with systemd (tmux 3.6 or newer); other hosts ignore it.",
+          "enabled": "Apply memory limits",
+          "high": "Soft limit (MB)",
+          "highHint": "Above this the kernel throttles the window and reclaims its pages; nothing is killed.",
+          "max": "Hard limit (MB)",
+          "maxHint": "Above this the kernel kills processes in the window.",
+          "swapMax": "Swap limit (MB)",
+          "interval": "Sample interval (seconds)",
+          "intervalHint": "Between {{min}} and {{max}} seconds.",
+          "unlimitedHint": "0 = unlimited",
+          "invalidMb": "Enter a whole number between 0 and {{max}}.",
+          "invalidInterval": "Enter a whole number between {{min}} and {{max}}.",
+          "highAboveMax": "The soft limit must not exceed the hard limit.",
+          "loadFailed": "Failed to load memory limits: {{message}}",
+          "saveFailed": "Failed to save memory limits: {{message}}",
+          "saved": "Memory limits saved"
+        },
         "routeMode": {
           "title": "Latency optimisation",
           "loadFailed": "Failed to load route mode: {{message}}",
@@ -1720,6 +1739,12 @@ export const I18N_RESOURCES = {
       "pane": "Terminal",
       "moveToWindow": "Move into this window",
       "breakToWindow": "Break into new window",
+      "memory": "Memory",
+      "memoryOom": "OOM killed {{count}}×",
+      "memoryLimitHigh": "Soft limit",
+      "memoryLimitMax": "Hard limit",
+      "memorySwapMax": "Swap limit",
+      "memoryScope": "Scope",
       "noWindowSelected": "No window selected",
       "selectWindowToStart": "Select a window to get started"
     },
@@ -4071,6 +4096,25 @@ export const I18N_RESOURCES = {
         "remoteAccess": "远程访问"
       },
       "nodes": {
+        "memory": {
+          "title": "内存限额",
+          "description": "限制每个窗口内进程可用的内存。需要 Linux + systemd（tmux 3.6 及以上），其他宿主自动忽略。",
+          "enabled": "启用内存限额",
+          "high": "软限额（MB）",
+          "highHint": "超过后内核会限速并回收该窗口的内存页，不杀进程。",
+          "max": "硬限额（MB）",
+          "maxHint": "超过后内核会杀掉窗口内的进程。",
+          "swapMax": "交换限额（MB）",
+          "interval": "采样周期（秒）",
+          "intervalHint": "取值 {{min}}–{{max}} 秒。",
+          "unlimitedHint": "0 = 不限",
+          "invalidMb": "请填 0 到 {{max}} 之间的整数。",
+          "invalidInterval": "请填 {{min}} 到 {{max}} 之间的整数。",
+          "highAboveMax": "软限额不能大于硬限额。",
+          "loadFailed": "内存限额读取失败：{{message}}",
+          "saveFailed": "内存限额保存失败：{{message}}",
+          "saved": "内存限额已保存"
+        },
         "routeMode": {
           "title": "延迟优化",
           "loadFailed": "选路模式读取失败：{{message}}",
@@ -5346,6 +5390,12 @@ export const I18N_RESOURCES = {
       "pane": "终端",
       "moveToWindow": "移入此窗口",
       "breakToWindow": "拆为独立窗口",
+      "memory": "内存",
+      "memoryOom": "OOM 已杀 {{count}} 次",
+      "memoryLimitHigh": "软限额",
+      "memoryLimitMax": "硬限额",
+      "memorySwapMax": "交换限额",
+      "memoryScope": "作用域",
       "noWindowSelected": "未选择窗口",
       "selectWindowToStart": "选择一个窗口开始"
     },
@@ -7688,6 +7738,25 @@ export const I18N_RESOURCES = {
         "remoteAccess": "リモートアクセス"
       },
       "nodes": {
+        "memory": {
+          "title": "メモリ上限",
+          "description": "各ウィンドウ内のプロセスが使えるメモリを制限します。Linux と systemd（tmux 3.6 以降）が必要で、他のホストでは無視されます。",
+          "enabled": "メモリ上限を適用",
+          "high": "ソフト上限（MB）",
+          "highHint": "これを超えるとカーネルが該当ウィンドウを抑制してページを回収します（強制終了はしません）。",
+          "max": "ハード上限（MB）",
+          "maxHint": "これを超えるとカーネルがウィンドウ内のプロセスを強制終了します。",
+          "swapMax": "スワップ上限（MB）",
+          "interval": "サンプリング間隔（秒）",
+          "intervalHint": "{{min}}〜{{max}} 秒の範囲で指定します。",
+          "unlimitedHint": "0 = 無制限",
+          "invalidMb": "0 から {{max}} までの整数を入力してください。",
+          "invalidInterval": "{{min}} から {{max}} までの整数を入力してください。",
+          "highAboveMax": "ソフト上限はハード上限を超えられません。",
+          "loadFailed": "メモリ上限の読み込みに失敗しました：{{message}}",
+          "saveFailed": "メモリ上限の保存に失敗しました：{{message}}",
+          "saved": "メモリ上限を保存しました"
+        },
         "routeMode": {
           "title": "遅延最適化",
           "loadFailed": "経路モードの読み込みに失敗しました：{{message}}",
@@ -8963,6 +9032,12 @@ export const I18N_RESOURCES = {
       "pane": "ターミナル",
       "moveToWindow": "このウィンドウへ移動",
       "breakToWindow": "新しいウィンドウに分離",
+      "memory": "メモリ",
+      "memoryOom": "OOM で {{count}} 回強制終了",
+      "memoryLimitHigh": "ソフト上限",
+      "memoryLimitMax": "ハード上限",
+      "memorySwapMax": "スワップ上限",
+      "memoryScope": "スコープ",
       "noWindowSelected": "ウィンドウが選択されていません",
       "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },

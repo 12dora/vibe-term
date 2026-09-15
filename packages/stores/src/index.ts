@@ -108,6 +108,21 @@ export {
   type ViewportPolicyMap,
 } from './viewport-policy';
 export {
+  WINDOW_MEMORY_STALE_MS,
+  acceptsWindowMemory,
+  applyWindowMemory,
+  composeWindowMemorySample,
+  dropWindowMemoryForDevice,
+  freshWindowMemory,
+  pruneWindowMemoryWindows,
+  selectWindowMemoryField,
+  windowMemoryExpiryDelayMs,
+  type WindowMemoryEvent,
+  type WindowMemoryMap,
+  type WindowMemorySample,
+  type WindowMemoryWindows,
+} from './window-memory';
+export {
   clearTmuxTopologyCache,
   pruneTmuxTopologyCache,
   readTmuxTopologyCache,

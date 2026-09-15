@@ -104,6 +104,23 @@ export type GatewayTransportEvent =
       hop: DeviceLatencyHop;
       sampledAt: number;
     }
+  // 拥有该设备的网关按窗口聚合的 systemd pane scope 内存；只有播报 window-memory-v1
+  // 的网关会发，宿主不支持（非 Linux / 无 cgroup v2 / 无 systemd --user）时同样不发。
+  // 字节在 wire 上是 u64，这里降成 number：12 GB 远在双精度整数安全区内。
+  | {
+      type: 'window-memory';
+      deviceId: string;
+      windowId: string;
+      current: number;
+      /** 0 = 未设限。 */
+      high: number;
+      max: number;
+      swapMax: number;
+      oomKills: number;
+      oomFlag: boolean;
+      panes: number;
+      sampledAt: number;
+    }
   | { type: 'metadata-snapshot'; snapshot: StateSnapshotPayload }
   // canonical metadata patch 已在客户端合并并按设备树顺序排好，消费方直接替换整棵快照
   | { type: 'metadata-patch'; deviceId: string; snapshot: StateSnapshotPayload }

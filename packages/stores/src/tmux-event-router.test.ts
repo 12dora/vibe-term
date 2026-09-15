@@ -88,6 +88,8 @@ function createHarness(options: HarnessOptions = {}) {
     viewportPolicy: {},
     deviceLatency: {},
     deviceLatencySupported: false,
+    windowMemory: {},
+    windowMemorySupported: false,
   } as unknown as TmuxState;
 
   const setState: TmuxSetState = (partial) => {
@@ -343,6 +345,101 @@ describe('tmux transport event router', () => {
     const harness = createHarness();
     harness.route({ type: 'connection-state', state: 'READY' });
     expect(harness.getState().deviceLatencySupported).toBe(false);
+  });
+
+  test('window-memory 落地时本地盖章 receivedAt；重复帧不写 store', () => {
+    let clock = 5_000;
+    const harness = createHarness({ now: () => clock });
+    const frame = (current: number, sampledAt: number) =>
+      ({
+        type: 'window-memory',
+        deviceId: 'device-a',
+        windowId: '@1',
+        current,
+        high: 8_589_934_592,
+        max: 12_884_901_888,
+        swapMax: 0,
+        oomKills: 0,
+        oomFlag: false,
+        panes: 2,
+        sampledAt,
+      }) as const;
+
+    harness.route(frame(1_024, 1_700_000_000_000));
+    expect(harness.getState().windowMemory['device-a']?.['@1']).toEqual({
+      current: 1_024,
+      high: 8_589_934_592,
+      max: 12_884_901_888,
+      swapMax: 0,
+      oomKills: 0,
+      oomFlag: false,
+      panes: 2,
+      sampledAt: 1_700_000_000_000,
+      receivedAt: 5_000,
+    });
+
+    clock = 20_000;
+    const written = harness.getState();
+    harness.route(frame(1_024, 1_700_000_000_000));
+    expect(harness.getState()).toBe(written);
+  });
+
+  test('READY 时按 HELLO 能力集判定窗口内存可测；离开 READY 作废已有读数', () => {
+    const harness = createHarness({ serverCapabilities: ['window-memory-v1'] });
+
+    harness.route({ type: 'connection-state', state: 'READY' });
+    expect(harness.getState().windowMemorySupported).toBe(true);
+
+    harness.route({
+      type: 'window-memory',
+      deviceId: 'device-a',
+      windowId: '@1',
+      current: 1_024,
+      high: 0,
+      max: 0,
+      swapMax: 0,
+      oomKills: 0,
+      oomFlag: false,
+      panes: 1,
+      sampledAt: 1_700_000_000_000,
+    });
+    harness.route({ type: 'connection-state', state: 'RECONNECT_BACKOFF' });
+    expect(harness.getState().windowMemory).toEqual({});
+    expect(harness.getState().windowMemorySupported).toBe(false);
+  });
+
+  test('老节点没播报 window-memory-v1 时不渲染内存徽标（能力位为 false）', () => {
+    const harness = createHarness();
+    harness.route({ type: 'connection-state', state: 'READY' });
+    expect(harness.getState().windowMemorySupported).toBe(false);
+  });
+
+  test('device-disconnected / 窗口从快照消失都会摘掉对应的内存读数', () => {
+    const harness = createHarness();
+    const memory = (windowId: string) =>
+      ({
+        type: 'window-memory',
+        deviceId: 'device-a',
+        windowId,
+        current: 1_024,
+        high: 0,
+        max: 0,
+        swapMax: 0,
+        oomKills: 0,
+        oomFlag: false,
+        panes: 1,
+        sampledAt: 1_700_000_000_000,
+      }) as const;
+
+    harness.route({ type: 'metadata-snapshot', snapshot });
+    harness.route(memory('@1'));
+    harness.route(memory('@9'));
+    // 快照里只有 @1：@9 已经被关掉，网关不会再为它发帧
+    harness.route({ type: 'metadata-patch', deviceId: 'device-a', snapshot });
+    expect(Object.keys(harness.getState().windowMemory['device-a'] ?? {})).toEqual(['@1']);
+
+    harness.route({ type: 'device-disconnected', deviceId: 'device-a' });
+    expect(harness.getState().windowMemory['device-a']).toBeUndefined();
   });
 
   test('device-connected resets error state and syncs window style', () => {
