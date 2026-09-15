@@ -190,7 +190,6 @@ export function SideBarDeviceList({
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
-  const { host } = runtime;
 
   const expansionKey = expansionKeyFor ?? identityExpansionKey;
   const queryKey = devicesQueryKey ?? defaultDevicesQueryKey;
@@ -201,7 +200,7 @@ export function SideBarDeviceList({
   const sidebarDeviceVisibility = useUIStore((state) => state.sidebarDeviceVisibility);
 
   const selection = useDeviceTreeSelection();
-  const { selectedDeviceId, selectedWindowId } = selection;
+  const { selectedDeviceId } = selection;
 
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
