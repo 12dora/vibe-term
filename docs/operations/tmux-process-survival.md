@@ -93,3 +93,7 @@ systemctl --user show 'tmux-spawn-*.scope' -p OOMPolicy
 ### 可选后续
 
 VibeTerm 为自己创建的会话开启 `remain-on-exit on`，并在 UI 上把 `pane_dead` 的 pane 显示为「进程已退出」并提供重开 / 关闭，让窗口不再无声消失。属产品决策，未实施。
+
+### 与窗口内存限额的关系
+
+`DefaultOOMPolicy=continue` 只决定「内核杀了 cgroup 里某个进程之后，systemd 要不要把整个 `tmux-spawn-*.scope` 停掉」。它不限制进程能吃多少内存。VibeTerm 另外通过 `systemctl --user set-property --runtime … MemoryHigh/MemoryMax/MemorySwapMax` 给每个 pane scope 套上限：软限额触发回收 / 限速，硬限额才由内核 OOM 杀超限进程。关窗前会先 `systemctl --user stop` 该 scope。完整说明（设置项、GUI 徽标、`vibeterm sessions --memory`、不支持时的静默行为与排障命令）见 [窗口内存限额](./window-memory-limits.md)。
