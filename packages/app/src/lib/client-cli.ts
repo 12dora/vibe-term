@@ -20,6 +20,7 @@ export const CLIENT_CLI_COMMANDS: ReadonlySet<string> = new Set([
   'nodes',
   'devices',
   'tmux',
+  'sessions',
   'term',
   'files',
   'cp',

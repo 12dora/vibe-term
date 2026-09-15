@@ -10,6 +10,7 @@ import { command as login } from './commands/login';
 import { command as logout } from './commands/logout';
 import { command as nodes } from './commands/nodes';
 import { command as port } from './commands/port';
+import { command as sessions } from './commands/sessions';
 import { command as settings } from './commands/settings';
 import { command as share } from './commands/share';
 import { command as system } from './commands/system';
@@ -34,11 +35,12 @@ export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   agent,
   settings,
   tmux,
+  sessions,
   term,
   exec,
   system,
 ];
-/** 十七个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
+/** 十八个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
 export const RESERVED_COMMANDS: readonly Command[] = [];
 export const COMMANDS: readonly Command[] = [...IMPLEMENTED_COMMANDS, ...RESERVED_COMMANDS];
 

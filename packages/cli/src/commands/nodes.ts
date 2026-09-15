@@ -30,6 +30,7 @@ import {
   isRelayUplink,
   resolveExcludeNodeIds,
   resolveNodeHexId,
+  rewriteBarePasswordFlag,
 } from '../core/nodes-relay';
 import {
   findAdminNode,
@@ -58,7 +59,14 @@ import type { Command } from './types';
 
 const FLAGS = {
   ttl: 'string',
-  password: 'boolean',
+  password: 'string',
+  'password-stdin': 'boolean',
+  'password-file': 'string',
+  current: 'string',
+  'current-stdin': 'boolean',
+  clear: 'boolean',
+  kick: 'boolean',
+  keep: 'boolean',
   version: 'string',
   wait: 'boolean',
   all: 'boolean',
@@ -78,11 +86,15 @@ const USAGE = [
   '  ls                         list mesh nodes',
   '  show <node>                full projection (directFailure, dcBreaker, endpoints, ports)',
   '  rename <node> <name>       signed keylog rename-node (needs a relay uplink)',
-  '  relay ls                   GET /api/mesh/relay/status',
+  '  relay ls                   GET /api/mesh/relay/status (quota lines in human output)',
   '  relay switch <url>         POST /api/mesh/relay/switch (honours --node)',
   '  relay unpin                POST /api/mesh/relay/unpin (honours --node)',
   '  relay rm <url> [--yes]     remove/prepare + keylog set-relays',
   '  relay readmit [--yes]      GET …/readmit/prepare + keylog readmit-node',
+  '  relay password [<url>]     GET /api/mesh/relay/password (default url = attached relay)',
+  '  relay password set <url> (--password <v> | --password-stdin | --password-file <p> | --clear)',
+  '                             [--current <v>|--current-stdin] [--kick|--keep] [--yes]',
+  '                             POST /api/mesh/relay/password; --clear sends next:null; default mode keep',
   '  ports <node> [--probe]     print MeshNode.ports; --probe POST …/ports/probe first',
   '  allow <node>               wrap K_meta for a pending member, else enable public-domain access',
   '  disallow <node>            disable public-domain access on the node',
@@ -104,6 +116,8 @@ const USAGE = [
   '  show        MeshNode & { address: string }',
   '  rename      { ok, id, name }',
   '  relay ls    RelayTenantStatus',
+  '  relay password  { known, password, passwordEpoch }',
+  '  relay password set  { ok, passwordEpoch }',
   '  relay switch|rm|readmit|unpin  result',
   '  ports       { node, ports: MeshPortReach[] }',
   '  op clear    { ok, node }',
@@ -277,7 +291,7 @@ const enroll: SubHandler = async (ctx, flags, positionals) => {
   requireRelayUplink(isRelayUplink(status));
   const relayUrl = attachedRelayUrl(status);
   const publicUrl = relayUrl && isTrustedPublicUrl(relayUrl) ? relayUrl : null;
-  if (flagBool(flags, 'password')) {
+  if (flags.password !== undefined) {
     if (!publicUrl)
       throw new CliError(
         'relay public url is unknown or not https; cannot print a password join command'
@@ -455,5 +469,6 @@ export const command: Command = {
   summary: 'inspect and manage mesh nodes',
   usage: USAGE,
   flags: FLAGS,
-  run: (ctx, argv) => runSubs(ctx, argv, FLAGS, HANDLERS, 'run: vibeterm nodes --help'),
+  run: (ctx, argv) =>
+    runSubs(ctx, rewriteBarePasswordFlag(argv), FLAGS, HANDLERS, 'run: vibeterm nodes --help'),
 };

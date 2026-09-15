@@ -1,7 +1,7 @@
 // `vibeterm share`：终端分享。
 
-import { generateSharePassword } from '@vibeterm/shared/share';
-import { flagBool, flagNumber, flagString } from '../core/args';
+import { type ShareLogPage, generateSharePassword } from '@vibeterm/shared/share';
+import { type FlagValues, flagBool, flagNumber, flagString } from '../core/args';
 import {
   type SubHandler,
   confirmOrYes,
@@ -19,6 +19,16 @@ import {
 } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { NotFoundError, UsageError } from '../core/errors';
+import {
+  assembleShareReplay,
+  fetchShareLogPages,
+  formatShareLogLine,
+  installReplayAbort,
+  pickShareReplayPane,
+  playShareReplay,
+  shareLogQueryPath,
+  sleepAbortable,
+} from '../core/share-replay';
 import { resolveShareOrigin, resolveShareTarget, sharePath } from '../core/share-target';
 import type { Command } from './types';
 
@@ -34,6 +44,10 @@ const FLAGS = {
   body: 'string',
   after: 'number',
   limit: 'number',
+  all: 'boolean',
+  pane: 'string',
+  speed: 'number',
+  from: 'number',
   'end-sessions': 'boolean',
   'record-logs': 'string',
   'retention-days': 'number',
@@ -50,7 +64,8 @@ const USAGE = [
   '  password <id> [--password] [--end-sessions]   GET; POST sets password (API cannot clear it)',
   '  revoke <id>                            POST /api/share/:id/revoke',
   '  rm <id> [--yes]                        DELETE (ended shares only; non-TTY requires --yes)',
-  '  log <id> [--after N] [--limit N]',
+  '  log <id> [--after N] [--limit N] [--all]',
+  '  replay <id> [--pane %id] [--speed <x>] [--from <ms>]',
   '  settings get|set                       GET/PUT /api/share/settings',
   '    set: --record-logs on|off --retention-days N --log-max-mb N --origin auto|<url> [--body]',
   '  origins                                GET /api/share/origins',
@@ -61,7 +76,12 @@ const USAGE = [
   '(recommended if it is a candidate, else the first candidate) and is printed on stderr.',
   'Password is optional (generated like the GUI). Or --password-stdin / --password-file /',
   '@file / VIBETERM_SHARE_PASSWORD (--password on argv warns).',
-  '--json: { share, password } / { active, history } / ShareRecord / ShareLogPage / ShareSettings',
+  'log --all follows nextAfter until exhausted (truncated is a warning, not a stop).',
+  'Human log: one line per entry `ts pane kind size`. --json --all: array of entries.',
+  'replay fetches the full log. Default pane is the first in the recording; invalid',
+  '--pane lists panes. --speed 0 skips delays. Non-TTY needs --speed 0 or --json.',
+  '--json: { share, password } / { active, history } / ShareRecord / ShareLogPage /',
+  '{ panes:[{paneId, cols, rows, chunks}], durationMs, entries } / ShareSettings',
 ].join('\n');
 
 async function readSharePassword(
@@ -183,22 +203,92 @@ const rm: SubHandler = async (ctx, flags, positionals) => {
   emit(ctx, result, () => ctx.out.line(`deleted ${id}`));
 };
 
+function printShareLog(
+  ctx: CliContext,
+  entries: ShareLogPage['entries'],
+  truncated: boolean
+): void {
+  for (const entry of entries) ctx.out.line(formatShareLogLine(entry));
+  if (truncated) ctx.out.warn('log truncated');
+}
+
 const log: SubHandler = async (ctx, flags, positionals) => {
   const id = requireArg(positionals, 0, 'id');
   rejectExtra(positionals, 1);
-  const params = new URLSearchParams();
   const after = flagNumber(flags, 'after');
   const limit = flagNumber(flags, 'limit');
-  if (after !== undefined) params.set('after', String(after));
-  if (limit !== undefined) params.set('limit', String(limit));
-  const query = params.toString();
   const nodeId = await ctx.targetNodeId();
-  const payload = await ctx.http.json(
-    nodeId,
-    'GET',
-    `${sharePath(id, '/log')}${query ? `?${query}` : ''}`
+  if (!flagBool(flags, 'all')) {
+    const payload = await ctx.http.json<ShareLogPage>(
+      nodeId,
+      'GET',
+      shareLogQueryPath(id, { after, limit })
+    );
+    emit(ctx, payload, () => printShareLog(ctx, payload.entries, payload.truncated));
+    if (ctx.globals.json && payload.truncated) ctx.out.warn('log truncated');
+    return;
+  }
+  const fetched = await fetchShareLogPages(ctx.http, nodeId, id, { after, limit, all: true });
+  emit(ctx, fetched.entries, () => printShareLog(ctx, fetched.entries, fetched.truncated));
+  if (ctx.globals.json && fetched.truncated) ctx.out.warn('log truncated');
+};
+
+function replaySpeed(flags: FlagValues): number {
+  const speed = flagNumber(flags, 'speed');
+  if (speed === undefined) return 1;
+  if (speed < 0) throw new UsageError('--speed must be >= 0');
+  return speed;
+}
+
+function replayFromMs(flags: FlagValues): number {
+  const from = flagNumber(flags, 'from');
+  if (from === undefined) return 0;
+  if (from < 0) throw new UsageError('--from must be >= 0');
+  return from;
+}
+
+function requireReplayTty(ctx: CliContext, speed: number): void {
+  if (ctx.globals.json || ctx.out.isStdoutTty() || speed === 0) return;
+  throw new UsageError(
+    'share replay needs a TTY',
+    'pass --json or --speed 0 to dump without rendering'
   );
-  emit(ctx, payload, () => ctx.out.data(payload));
+}
+
+function replayTtySize(ctx: CliContext): { cols: number; rows: number } | null {
+  if (!ctx.out.isStdoutTty()) return null;
+  return { cols: process.stdout.columns || 80, rows: process.stdout.rows || 24 };
+}
+
+const replay: SubHandler = async (ctx, flags, positionals) => {
+  const id = requireArg(positionals, 0, 'id');
+  rejectExtra(positionals, 1);
+  const speed = replaySpeed(flags);
+  const fromMs = replayFromMs(flags);
+  const paneId = flagString(flags, 'pane');
+  requireReplayTty(ctx, speed);
+  const nodeId = await ctx.targetNodeId();
+  const fetched = await fetchShareLogPages(ctx.http, nodeId, id, { all: true });
+  pickShareReplayPane(fetched.entries, paneId);
+  if (ctx.globals.json) {
+    ctx.out.data(assembleShareReplay(fetched.entries, fromMs));
+    return;
+  }
+  const abort = installReplayAbort();
+  try {
+    await playShareReplay(fetched.entries, {
+      paneId,
+      speed,
+      fromMs,
+      write: (bytes) => ctx.out.raw(bytes),
+      note: (text) => ctx.out.info(text),
+      sleep: (ms) => sleepAbortable(ms, abort.signal),
+      ttySize: replayTtySize(ctx),
+      signal: abort.signal,
+    });
+  } finally {
+    abort.dispose();
+  }
 };
 
 const SHARE_RETENTION_DAYS_MAX = 3650;
@@ -298,6 +388,7 @@ const HANDLERS: Record<string, SubHandler> = {
   revoke,
   rm,
   log,
+  replay,
   settings,
   origins,
 };

@@ -19,6 +19,7 @@ const USAGE_SNAPSHOT = [
   '  llm get|set|default|search set GET/PATCH /api/llm/settings (set needs --body)',
   '  domain-access get|set on|off   GET/PATCH /api/system/domain-access',
   '  mesh route-mode get|set <auto|direct|relay>  GET/PUT /api/settings/mesh-route',
+  '  memory get|set [--enabled on|off] [--high <MB>] [--max <MB>] [--swap-max <MB>] [--interval <sec>]  GET/PUT /api/settings/window-memory',
   '  tls get|set|renew|ca           GET/PUT /api/tls (--mode/--sans/--port/… or --body)',
   '  tunnel status|<action>         GET /api/tunnel/status or POST /api/tunnel/actions',
   '  system info|addresses|update-check|upgrade status|start',

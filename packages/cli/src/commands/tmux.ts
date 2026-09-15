@@ -239,6 +239,64 @@ export function parseGeometry(raw: string | undefined): { cols: number; rows: nu
   return { cols, rows };
 }
 
+async function styleCommand({ ctx, opened, rest }: TmuxInput): Promise<void> {
+  const style = requireArg(rest, 'window style');
+  if (rest[1]) throw new UsageError(`unexpected argument: ${rest[1]}`);
+  await applyTmuxChange(
+    opened,
+    { type: 'set-window-style', deviceId: opened.device.id, style },
+    () => true,
+    'window style to apply',
+    timeoutOf(ctx)
+  );
+  if (ctx.out.json) {
+    ctx.out.data({ ok: true, action: 'set-window-style', style });
+    return;
+  }
+  ctx.out.line(`set-window-style: ${style}`);
+}
+
+async function stackCommand({ ctx, opened, rest }: TmuxInput): Promise<void> {
+  const window = locateWindow(opened.tree, opened.target);
+  const size = parseGeometry(rest[0]);
+  if (rest[1]) throw new UsageError(`unexpected argument: ${rest[1]}`);
+  if (size.cols < 2 || size.rows < 2) {
+    throw new UsageError('stacked layout cols and rows must both be at least 2');
+  }
+  const tree = await applyTmuxChange(
+    opened,
+    {
+      type: 'apply-stacked-layout',
+      deviceId: opened.device.id,
+      windowId: window.id,
+      cols: size.cols,
+      rows: size.rows,
+    },
+    (next) => {
+      const updated = windowById(next, window.id);
+      return (
+        updated !== null &&
+        updated.panes.length > 0 &&
+        updated.panes.every((pane) => pane.width === size.cols && pane.height === size.rows)
+      );
+    },
+    `window ${window.id} to apply stacked layout`,
+    timeoutOf(ctx)
+  );
+  const updated = windowById(tree, window.id) ?? window;
+  if (ctx.out.json) {
+    ctx.out.data({
+      ok: true,
+      action: 'apply-stacked-layout',
+      windowId: updated.id,
+      cols: size.cols,
+      rows: size.rows,
+    });
+    return;
+  }
+  ctx.out.line(`apply-stacked-layout: ${updated.id} ${size.cols}x${size.rows}`);
+}
+
 async function resizeCommand({ ctx, opened, rest }: TmuxInput): Promise<void> {
   const { pane } = locatePane(opened.tree, opened.target);
   const size = parseGeometry(rest[0]);
@@ -290,6 +348,8 @@ const HANDLERS: Readonly<Record<string, TmuxHandler>> = {
   break: breakCommand,
   'order-windows': orderWindowsCommand,
   'order-panes': orderPanesCommand,
+  style: styleCommand,
+  stack: stackCommand,
 };
 
 async function run(ctx: CliContext, argv: string[]): Promise<undefined> {
@@ -339,6 +399,8 @@ export const command: Command = {
     '  break <pane>                    WS break-pane (pane becomes a new window)',
     '  order-windows <device> --ids    WS reorder-windows (--ids @1,@2)',
     '  order-panes <window> --ids      WS reorder-panes (--ids %0,%1)',
+    '  style <device> <style>          WS set-window-style',
+    '  stack <window> <cols>x<rows>    WS apply-stacked-layout',
     '',
     'Options:',
     '  --name <name>      name for new-window / rename-window / rename-pane',
@@ -354,6 +416,8 @@ export const command: Command = {
     '  ls        TmuxSession[] (one entry: the session of this device)',
     '  windows   TmuxWindow[] (each with its panes)',
     '  panes     TmuxPane[]',
+    '  style     {"ok":true,"action":"set-window-style","style":"..."}',
+    '  stack     {"ok":true,"action":"apply-stacked-layout","windowId","cols","rows"}',
     '  others    {"ok":true,"action":"...","window"|"pane"|"id":...}',
     '',
     'Examples:',
