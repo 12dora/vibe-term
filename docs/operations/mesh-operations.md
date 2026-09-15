@@ -98,7 +98,7 @@
 | `VIBETERM_LOOP_WATCHDOG_SIGNAL` | `SIGKILL` | 超时后发给本进程的信号，仅 `SIGABRT` \| `SIGKILL` |
 | `VIBETERM_RTC_DIAL_BREAKER_MS` | `30000`（30 s） | DataChannel 熔断的**起始**冷却。连续 3 次失败（含拨号失败与通道打开后异常关闭 / liveness timeout / missed pong）后跳过 DC dial，冷却按 30 s → 60 s → 120 s … 指数递增，上限 30 min；`cooldownLevel` 在冷却过期后仍保留。通道保持健康 ≥ 60 s 才复位。本变量覆盖起始冷却，不改失败次数与上限。ws-secure / relay 不受影响 |
 | `VIBETERM_PEER_DIRECT_DIAL_CONCURRENCY` | `4` | 进程内同时进行的直连 endpoint 拨号数上限（整数 ≥ 1）。LAN 候选另有 4 s 总预算，失败地址按 1 min → 6 h 退避，见 [节点直连](../architecture/peer-direct-connect.md) |
-| `VIBETERM_DIAL_DNS_FALLBACK` | 开（任意非 `off`） | `off` / `0` / `false` / `no` 关闭：系统 DNS 解析失败时不再走 DoH 并按 IP + SNI 重拨。默认开。见 [公共中继 §9](../architecture/relay.md) |
+| `VIBETERM_DIAL_DNS_FALLBACK` | 开（任意非 `off`） | `off` / `0` / `false` / `no` 关闭：系统 DNS 解析失败、或 fake-IP 连接失败时不再走 DoH 并按 IP + SNI 重拨。默认开。见 [公共中继 §9](../architecture/relay.md) |
 | `VIBETERM_DOH_ENDPOINTS` | 未设 | 逗号分隔的 **https** DoH URL，整体覆盖缺省列表。缺省是 IP 字面量 `https://223.5.5.5/resolve`、`https://120.53.53.53/dns-query`、`https://1.1.1.1/dns-query`、`https://8.8.8.8/resolve`（境内优先）。系统解析器坏掉时域名端点自己也解析不出来，所以默认不用主机名。隧道边缘与 STUN 解析共用 |
 
 相关但非 mesh 专有：`VIBETERM_MASTER_KEY`（加密落库的节点私钥等，生产必填）、`VIBETERM_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL`。
@@ -417,6 +417,7 @@ vibeterm mesh keylog status
 |---|---|---|
 | node 角色无 `[uplink]` 日志、或一直连不上中继 | 零中继时 uplink 空闲、不拨号，这是预期。已配置中继时每次尝试打 `[uplink] connect failed … attempt=<n> reason=<code> next_retry_ms=<delay>`（同一 reason 最多 30 s 一条），成功为 `[uplink] online … after_ms=…`，掉线为 `[uplink] offline reason=…`。副中继另有 `[uplink] secondary connect failed …` / `[uplink] secondary online …`（同样 30 s 节流）。不打 URL / token | 看 node 的 `reason`：`tls` 证书链不被系统信任；`dns` 解析失败（默认会再走 DoH 重拨，见下一行）；`refused` 端口未开或防火墙；`timeout` TLS/WS/auth 握手超过 `UPLINK_CONNECT_TIMEOUT_MS`（默认 20 s）；`http_4401` / `http_403` 升级被拒；`auth_rejected` 证书未 admit / 已吊销 / 签名失败。进程内 `UplinkClient.lastConnectError` 保留最近一次原因与时间 |
 | `[uplink] connect failed reason=dns`，公网其实能打开同一域名；日志随后有 `[uplink] dns fallback host=… via=doh` | 本机系统解析器坏了（常见：VPN / NetBird 残留分流 DNS，`*.example.com` 解析失败而公网仍可达）。默认会走 DoH 并按 IP + SNI 重拨，证书仍按主机名校验 | 只读诊断（不要改生产服务）：`scutil --dns` 看 resolver 与 search domain；`python3 -c "import socket; print(socket.getaddrinfo('<host>', 443))"` 看系统 lookup 是否失败；`netbird status`（或其它 VPN）看分流 DNS 是否还挂着。关掉残留 VPN / 修系统 DNS 后应出现 `[uplink] dns recovered host=…`。`VIBETERM_DIAL_DNS_FALLBACK=off` 可关这条回退。见 [公共中继 §9](../architecture/relay.md) |
+| `[uplink] connect failed reason=timeout` 且随后有 `[mesh][dial] fake-ip redial … via=doh` | 系统 lookup 把中继域名解析成 TUN fake-IP（`198.18/15`），TCP 进代理后无回包；已按 DoH 真实 IP 重拨 | 代理侧仍建议给中继域名钉国内解析或 DIRECT。见 [KI-18](../known-issues.md) |
 | `[uplink] connect failed reason=timeout` 反复出现 | 20 s 内未完成 WS 打开 + auth 握手（TLS 卡住、中继无响应、无 `auth.challenge`） | 确认中继公开地址可达、反代支持 WebSocket、证书有效。必要时把 `UPLINK_CONNECT_TIMEOUT_MS` 调大后重启 |
 | WS 关闭码 **4401** | 无 `node-session`、会话过期或 logout。`/ws`、`/n/:id/ws`、`/mesh/ws` 升级后以此码关闭；`/mesh/ws` 每 5 分钟复验失败同样 4401 | 本机入口：跳 `/login?next=`。其它 node：不跳全局登录，侧边栏「登录此节点」（内存里还有 `sk_sess` 则静默补登）。前端对 4401 **停止重连**，避免 open→close 循环 |
 | HTTP 401 `NODE_LOGIN_REQUIRED` | 目标 node 未登录或票的 `via` 不是当前 entry | 只在该 node 行登录，不要当整站掉登录 |

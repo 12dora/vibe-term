@@ -162,8 +162,10 @@ AI agent / CI 目前只能把完整会话能力交给调用方：默认 `~/.conf
 
 ## KI-18：TUN 代理 fake-IP 把中继域名解析成假地址时上联拨号超时
 
-本机走 mihomo / Surge 一类 TUN 代理、且 DNS 回落打到一条已死的境外出口时，系统 lookup 会把中继域名「成功」解析成 fake-IP（`198.18.0.0/15`）。上联按这个地址拨号，TCP 进 TUN 后无回包，表现为 `connect-timeout`，中继本身是健康的。
+状态：已在 2.7.1 修复/缓解。
 
-现有 `dial-resolve.ts` 的 DoH 重拨**只在系统 DNS 失败时**触发（见 [公共中继「系统 DNS 失败时的 DoH 重拨」](./architecture/relay.md)），lookup 成功拿到 fake-IP 不会走那条路径。隧道边缘与 STUN 的 fake-IP 绕行（[隧道边缘](./operations/tunnel-edge-fake-ip.md)、KI-13 / KI-15）也不覆盖这条 TCP 上联。
+本机走 mihomo / Surge 一类 TUN 代理、且 DNS 回落打到一条已死的境外出口时，系统 lookup 会把中继域名「成功」解析成 fake-IP（`198.18.0.0/15`）。上联按这个地址拨号，TCP 进 TUN 后无回包，表现为 `connect-timeout`，中继本身是健康的。隧道边缘与 STUN 的 fake-IP 绕行（[隧道边缘](./operations/tunnel-edge-fake-ip.md)、KI-13 / KI-15）不覆盖这条 TCP 上联。
 
-处置（代理侧，二选一）：给中继域名钉国内解析（mihomo `nameserver-policy`），或加 DIRECT 规则绕开 TUN。产品侧后续：解析结果是 fake-IP 且 connect 失败时，用 DoH 解析到的真实 IP 再拨一次。
+2.7.1 起：系统 lookup 仍先用 fake-IP 拨号（许多主机的 TUN 可用，且 DoH 可能被拦）；若 TCP 连接失败（`connect-timeout` / `ECONNREFUSED` / `EHOSTUNREACH` / `ENETUNREACH`），再走 DoH 解析真实 IP，按 IP + SNI 重拨，并在正缓存 TTL 内优先用真实 IP。关闭 `VIBETERM_DIAL_DNS_FALLBACK` 则行为与修复前相同。见 [公共中继「系统 DNS 失败时的 DoH 重拨」](./architecture/relay.md)。
+
+人工规避（代理侧，二选一）：给中继域名钉国内解析（mihomo `nameserver-policy`），或加 DIRECT 规则绕开 TUN。

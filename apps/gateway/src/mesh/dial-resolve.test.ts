@@ -10,6 +10,7 @@ import {
   hostHeaderOfDialUrl,
   hostOfDialUrl,
   identityCheckUrl,
+  isConnectClassFailure,
   isDialDnsFallbackEnabled,
   isDnsClassFailure,
   resetDialResolveForTest,
@@ -131,6 +132,28 @@ describe('isDnsClassFailure / env knob', () => {
     expect(isDnsClassFailure(new Error('connect ECONNREFUSED 1.2.3.4:443'))).toBe(false);
   });
 
+  test('isConnectClassFailure matches timeout / refused / unreach, not TLS or 101', () => {
+    expect(isConnectClassFailure(new Error('connect-timeout'))).toBe(true);
+    expect(
+      isConnectClassFailure(
+        Object.assign(new Error('connect ECONNREFUSED 1.2.3.4:443'), { code: 'ECONNREFUSED' })
+      )
+    ).toBe(true);
+    expect(
+      isConnectClassFailure(Object.assign(new Error('no route'), { code: 'EHOSTUNREACH' }))
+    ).toBe(true);
+    expect(isConnectClassFailure(Object.assign(new Error('net'), { code: 'ENETUNREACH' }))).toBe(
+      true
+    );
+    const aborted = new Error('The operation was aborted.');
+    (aborted as Error & { reason: Error }).reason = new Error('connect-timeout');
+    expect(isConnectClassFailure(aborted)).toBe(true);
+    expect(isConnectClassFailure(new Error('TLS handshake failed'))).toBe(false);
+    expect(isConnectClassFailure(new Error('Expected 101 status but got 200'))).toBe(false);
+    expect(isConnectClassFailure(new Error('auth-timeout'))).toBe(false);
+    expect(isConnectClassFailure(dnsErr())).toBe(false);
+  });
+
   test('VIBETERM_DIAL_DNS_FALLBACK=off disables the knob', () => {
     expect(isDialDnsFallbackEnabled()).toBe(true);
     process.env.VIBETERM_DIAL_DNS_FALLBACK = 'off';
@@ -165,12 +188,52 @@ describe('resolveDialHost', () => {
     expect(result).toBeNull();
   });
 
-  test('system fake-IP / unusable answers are skipped so DoH can run', async () => {
+  test('system fake-IP is returned as via=system with fake; DoH is not called yet', async () => {
     const result = await resolveDialHost('hub.example', {
       lookup: async () => ['198.18.32.196', '10.0.0.1', '100.64.1.2'],
-      doh: async () => ['1.1.1.1'],
+      doh: async () => {
+        throw new Error('doh should not run');
+      },
     });
-    expect(result).toEqual({ ip: '1.1.1.1', via: 'doh' });
+    expect(result).toEqual({ ip: '198.18.32.196', via: 'system', fake: true });
+  });
+
+  test('preferDoh after a fake system answer returns the real IP and caches it', async () => {
+    let now = 1_000;
+    let lookups = 0;
+    let dohs = 0;
+    const opts = {
+      lookup: async () => {
+        lookups += 1;
+        return ['198.18.0.180'];
+      },
+      doh: async () => {
+        dohs += 1;
+        return ['9.9.9.9'];
+      },
+      now: () => now,
+    };
+    expect(await resolveDialHost('hub.example', opts)).toEqual({
+      ip: '198.18.0.180',
+      via: 'system',
+      fake: true,
+    });
+    expect(await resolveDialHost('hub.example', { ...opts, preferDoh: true })).toEqual({
+      ip: '9.9.9.9',
+      via: 'doh',
+    });
+    expect(lookups).toBe(1);
+    expect(dohs).toBe(1);
+    expect(await resolveDialHost('hub.example', opts)).toEqual({ ip: '9.9.9.9', via: 'doh' });
+    expect(lookups).toBe(1);
+    expect(dohs).toBe(1);
+    now += DIAL_RESOLVE_TTL_MS + 1;
+    expect(await resolveDialHost('hub.example', opts)).toEqual({
+      ip: '198.18.0.180',
+      via: 'system',
+      fake: true,
+    });
+    expect(lookups).toBe(2);
   });
 
   test('memoizes success for ~60s and failures for ~15s', async () => {
@@ -426,6 +489,191 @@ describe('createDialWsFactory', () => {
   });
 });
 
+const FAKE_IP = '198.18.0.180';
+const REAL_IP = '9.9.9.9';
+
+function connectTimeout(): Error {
+  return new Error('connect-timeout');
+}
+
+function resolveFakeThenDoh(opts?: { now?: () => number; doh?: () => Promise<string[]> }): {
+  resolve: typeof resolveDialHost;
+  lookups: { n: number };
+  dohs: { n: number };
+} {
+  const lookups = { n: 0 };
+  const dohs = { n: 0 };
+  const lookup = async () => {
+    lookups.n += 1;
+    return [FAKE_IP];
+  };
+  const doh = async () => {
+    dohs.n += 1;
+    return opts?.doh ? await opts.doh() : [REAL_IP];
+  };
+  return {
+    lookups,
+    dohs,
+    resolve: (host, resolveOpts) =>
+      resolveDialHost(host, { lookup, doh, now: opts?.now, ...resolveOpts }),
+  };
+}
+
+describe('createDialWsFactory fake-IP redial', () => {
+  test('system fake-IP + connect-timeout redials via DoH and then prefers DoH', async () => {
+    const lines: string[] = [];
+    const log = spyOn(console, 'log').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    const { resolve, lookups, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve,
+      fetchImpl: async () => new Response(null, { status: 200 }),
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        if (url.includes(REAL_IP)) ws.open();
+        else ws.fail(connectTimeout());
+        return ws as never;
+      },
+    });
+    try {
+      await factory('wss://hub.example/uplink');
+      expect(calls).toEqual(['wss://hub.example/uplink', `wss://${REAL_IP}/uplink`]);
+      expect(dohs.n).toBe(1);
+      const redial = lines.filter((line) => line.includes('fake-ip redial'));
+      expect(redial).toHaveLength(1);
+      expect(redial[0]).toContain('host=hub.example');
+      expect(redial[0]).toContain(`fake=${FAKE_IP}`);
+      expect(redial[0]).toContain(`real=${REAL_IP}`);
+      expect(redial[0]).toContain('via=doh');
+      expect(redial[0]).toContain('reason=connect-timeout');
+
+      calls.length = 0;
+      await factory('wss://hub.example/uplink');
+      expect(calls).toEqual([`wss://${REAL_IP}/uplink`]);
+      expect(lookups.n).toBe(1);
+      expect(dohs.n).toBe(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test('system fake-IP + connect OK does not call DoH', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve,
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        ws.open();
+        return ws as never;
+      },
+    });
+    await factory('wss://hub.example/uplink');
+    expect(calls).toEqual(['wss://hub.example/uplink']);
+    expect(dohs.n).toBe(0);
+  });
+
+  test('system real IP + connect-timeout does not redial via DoH', async () => {
+    let dohs = 0;
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve: (host, opts) =>
+        resolveDialHost(host, {
+          lookup: async () => ['8.8.8.8'],
+          doh: async () => {
+            dohs += 1;
+            return [REAL_IP];
+          },
+          ...opts,
+        }),
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        ws.fail(connectTimeout());
+        return ws as never;
+      },
+    });
+    await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
+    expect(calls).toEqual(['wss://hub.example/uplink']);
+    expect(dohs).toBe(0);
+  });
+
+  test('DoH disabled leaves fake-IP connect-timeout unchanged', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: false,
+      resolve,
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        ws.fail(connectTimeout());
+        return ws as never;
+      },
+    });
+    await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
+    expect(calls).toEqual(['wss://hub.example/uplink']);
+    expect(dohs.n).toBe(0);
+  });
+
+  test('later DoH IP failure falls back to the system hostname', async () => {
+    const { resolve } = resolveFakeThenDoh();
+    let realOpen = true;
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve,
+      fetchImpl: async () => new Response(null, { status: 200 }),
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        if (url.includes(REAL_IP)) {
+          if (realOpen) ws.open();
+          else ws.fail(connectTimeout());
+        } else if (realOpen) ws.fail(connectTimeout());
+        else ws.open();
+        return ws as never;
+      },
+    });
+    await factory('wss://hub.example/uplink');
+    realOpen = false;
+    calls.length = 0;
+    await factory('wss://hub.example/uplink');
+    expect(calls).toEqual([`wss://${REAL_IP}/uplink`, 'wss://hub.example/uplink']);
+  });
+
+  test('TLS handshake failed on a fake-IP answer does not redial', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve,
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        ws.fail(new Error('TLS handshake failed'));
+        return ws as never;
+      },
+    });
+    await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
+    expect(calls).toEqual(['wss://hub.example/uplink']);
+    expect(dohs.n).toBe(0);
+  });
+});
+
 describe('fetchWithDnsFallback', () => {
   test('retries the IP URL with SNI + Host after a DNS-class fetch failure', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -500,6 +748,94 @@ describe('fetchWithDnsFallback', () => {
       )
     ).rejects.toThrow('boom');
     expect(n).toBe(1);
+  });
+
+  test('system fake-IP + connect-timeout redials via DoH and then prefers DoH', async () => {
+    const { resolve, lookups, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const fetchImpl = async (url: string) => {
+      calls.push(url);
+      if (!url.includes(REAL_IP)) throw connectTimeout();
+      return new Response(null, { status: 200 });
+    };
+    const opts = { enabled: true, resolve, fetchImpl };
+    expect((await fetchWithDnsFallback('https://hub.example/healthz', {}, opts)).ok).toBe(true);
+    expect(calls).toEqual(['https://hub.example/healthz', `https://${REAL_IP}/healthz`]);
+    expect(dohs.n).toBe(1);
+    calls.length = 0;
+    expect((await fetchWithDnsFallback('https://hub.example/healthz', {}, opts)).ok).toBe(true);
+    expect(calls).toEqual([`https://${REAL_IP}/healthz`]);
+    expect(lookups.n).toBe(1);
+    expect(dohs.n).toBe(1);
+  });
+
+  test('system fake-IP + connect OK does not call DoH', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    await fetchWithDnsFallback(
+      'https://hub.example/healthz',
+      {},
+      {
+        enabled: true,
+        resolve,
+        fetchImpl: async (url) => {
+          calls.push(url);
+          return new Response(null, { status: 200 });
+        },
+      }
+    );
+    expect(calls).toEqual(['https://hub.example/healthz']);
+    expect(dohs.n).toBe(0);
+  });
+
+  test('system real IP + connect-timeout does not redial via DoH', async () => {
+    let dohs = 0;
+    let n = 0;
+    await expect(
+      fetchWithDnsFallback(
+        'https://hub.example/healthz',
+        {},
+        {
+          enabled: true,
+          resolve: (host, opts) =>
+            resolveDialHost(host, {
+              lookup: async () => ['8.8.8.8'],
+              doh: async () => {
+                dohs += 1;
+                return [REAL_IP];
+              },
+              ...opts,
+            }),
+          fetchImpl: async () => {
+            n += 1;
+            throw connectTimeout();
+          },
+        }
+      )
+    ).rejects.toThrow('connect-timeout');
+    expect(n).toBe(1);
+    expect(dohs).toBe(0);
+  });
+
+  test('DoH disabled leaves fake-IP connect-timeout unchanged', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    let n = 0;
+    await expect(
+      fetchWithDnsFallback(
+        'https://hub.example/healthz',
+        {},
+        {
+          enabled: false,
+          resolve,
+          fetchImpl: async () => {
+            n += 1;
+            throw connectTimeout();
+          },
+        }
+      )
+    ).rejects.toThrow('connect-timeout');
+    expect(n).toBe(1);
+    expect(dohs.n).toBe(0);
   });
 });
 
