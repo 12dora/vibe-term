@@ -1,0 +1,86 @@
+// 窗口内存（systemd tmux-spawn pane scope）跟踪器的共享接口：tmux-client 侧实现采样 / 限额 / stop scope，
+// 网关侧（设置、持久化 OOM 标记、WS 广播、HTTP）只依赖这里的类型。
+
+import type { WindowMemorySettings } from '@vibeterm/shared';
+
+export interface HostShellResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/** 在 tmux 所在宿主上执行一段 POSIX sh 脚本（本地 `sh -c`，SSH 设备走远端 shell）。 */
+export interface HostShellRunner {
+  runHostShell(
+    script: string,
+    opts?: { timeoutMs?: number; maxOutputBytes?: number }
+  ): Promise<HostShellResult>;
+}
+
+export interface PaneScopeSample {
+  paneId: string;
+  pid: number;
+  /** `tmux-spawn-*.scope`，pane 不在 scope 里时为 null。 */
+  scope: string | null;
+  current: number;
+  high: number;
+  max: number;
+  swapMax: number;
+  oomKills: number;
+  /** memory.high 已不是 max（限额已应用）。 */
+  managed: boolean;
+}
+
+export interface WindowMemoryAggregate {
+  windowId: string;
+  windowName: string;
+  panes: number;
+  scopes: string[];
+  current: number;
+  high: number;
+  max: number;
+  swapMax: number;
+  oomKills: number;
+  oomFlag: boolean;
+  sampledAt: number;
+}
+
+export interface WindowOomKillEvent {
+  deviceId: string;
+  windowId: string;
+  paneId: string;
+  scope: string;
+  oomKills: number;
+  current: number;
+  high: number;
+  max: number;
+}
+
+/** 持久化的 OOM 粘性标记（网关侧实现，gateway_kv JSON），按 deviceId+windowId 记。 */
+export interface WindowOomMarkStore {
+  has(deviceId: string, windowId: string): boolean;
+  mark(deviceId: string, windowId: string, scope: string, oomKills: number): void;
+  clear(deviceId: string, windowId: string): void;
+}
+
+/** 网关侧注入给 tmux 连接的钩子。 */
+export interface WindowMemoryConnectionHooks {
+  getSettings(): WindowMemorySettings;
+  oomMarks: WindowOomMarkStore;
+  onSample(windows: WindowMemoryAggregate[]): void;
+  onOomKill(event: WindowOomKillEvent): void;
+  /** 宿主支持性判定完成时回调一次（每次连接）。 */
+  onSupport?(supported: boolean): void;
+}
+
+export interface WindowMemoryTracker {
+  /** null = 尚未判定。 */
+  readonly supported: boolean | null;
+  start(): void;
+  stop(): void;
+  /** 立即执行一次采样（测试与「设置变更后立刻应用」用）。 */
+  tick(): Promise<void>;
+  getWindows(): WindowMemoryAggregate[];
+  stopScopesForWindow(windowId: string): Promise<void>;
+  stopScopesForPane(paneId: string): Promise<void>;
+}

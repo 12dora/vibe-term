@@ -11,6 +11,9 @@ export const GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1 = 'canonical-state-v1.1';
 // 网关会按 DEVICE_LATENCY（0x0106）下发设备宿主一跳（网关 ↔ tmux）的往返延迟；
 // 没播报它的老节点只能展示浏览器 ↔ 节点这一段。
 export const GATEWAY_CAPABILITY_DEVICE_LATENCY_V1 = 'device-latency-v1';
+// 网关会按 WINDOW_MEMORY（0x0107）下发每个窗口的 systemd pane scope 内存聚合；
+// 没播报它的老节点不发此帧，客户端不显示内存徽标。
+export const GATEWAY_CAPABILITY_WINDOW_MEMORY_V1 = 'window-memory-v1';
 export const GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1 = 'canonical-screen-intent-v1';
 
 // HELLO_C2S 携带 screenIntent 时客户端声明、网关处理成功后在 HELLO_S2C 回显。
@@ -22,5 +25,6 @@ export const GATEWAY_CAPABILITIES = [
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1,
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
   GATEWAY_CAPABILITY_DEVICE_LATENCY_V1,
+  GATEWAY_CAPABILITY_WINDOW_MEMORY_V1,
   GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1,
 ] as const;
