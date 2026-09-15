@@ -168,12 +168,13 @@ function mountPlayer(
   host = { slots: [], index: 0, queue: [], dirty: false };
   let player: ReplayPlayer | null = null;
   let currentReady = ready;
+  let currentGeneration = ready ? 1 : 0;
 
   const pass = () => {
     const current = host as Host;
     current.index = 0;
     current.dirty = false;
-    player = useReplayPlayer(timeline, terminal, currentReady);
+    player = useReplayPlayer(timeline, terminal, currentReady, currentGeneration);
   };
 
   const flush = () => {
@@ -198,6 +199,13 @@ function mountPlayer(
 
   const setReady = (next: boolean) => {
     currentReady = next;
+    if (next) currentGeneration += 1;
+    return act();
+  };
+
+  /** 改字号那一类重建：ready 可能一直是 true，只有代次变了。 */
+  const reboot = () => {
+    currentGeneration += 1;
     return act();
   };
 
@@ -206,6 +214,7 @@ function mountPlayer(
     player: () => player as ReplayPlayer,
     act,
     setReady,
+    reboot,
   };
 }
 
@@ -274,6 +283,19 @@ describe('useReplayPlayer seek', () => {
     mounted.act();
     expect(writtenText(terminal.events)).toBe('');
     mounted.setReady(true);
+    expect(writtenText(terminal.events)).toBe('CKPTONETWOTHREE');
+  });
+
+  test('ready 不翻转、只换实例代次时照样清空重放到当前时刻', () => {
+    const timeline = sampleTimeline();
+    const terminal = fakeTerminal();
+    const mounted = mountPlayer(timeline, terminal, true);
+    mounted.player().seek(timeline.durationMs);
+    mounted.act();
+    terminal.events.length = 0;
+    mounted.reboot();
+    expect(terminal.events[0]).toBe('reset');
+    expect(terminal.events).toContain('resize:80x24');
     expect(writtenText(terminal.events)).toBe('CKPTONETWOTHREE');
   });
 });

@@ -1,4 +1,4 @@
-// 回放窗静态结构：22rem 外框裁剪，内部是带平移和选区的共享只读终端。
+// 回放窗静态结构：外框裁剪（窄屏 22rem、宽屏 44rem 且按视口封顶），内部是带平移和选区的共享只读终端。
 // 无 DOM 测试环境：框组件无 hook，按 share-tables 的做法当函数调用再走元素树；
 // 整页正文走 react-dom/server。`t` 单跑/合跑不一致，不断言译文字符串。
 
@@ -41,7 +41,7 @@ function hookWidget(): ReactElement {
 }
 
 describe('ReplayTerminalFrame', () => {
-  test('外框 22rem overflow-hidden，挂上平移+选区的 widget', () => {
+  test('外框按屏幕给高度且不超出视口，挂上平移+选区的 widget', () => {
     const widget = hookWidget();
     const frame = ReplayTerminalFrame({
       children: widget,
@@ -51,6 +51,9 @@ describe('ReplayTerminalFrame', () => {
       emptyLabel: 'empty',
     });
     expect(frame.props.className).toContain('h-[22rem]');
+    // 宽屏上要给够高度，窄录像才有放大的余地；再按视口封顶，控制条不会被挤出屏幕。
+    expect(frame.props.className).toContain('sm:h-[44rem]');
+    expect(frame.props.className).toContain('max-h-[calc(100dvh-15rem)]');
     expect(frame.props.className).toContain('overflow-hidden');
     expect(frame.props.style).toBeUndefined();
     const mount = findByTestId(frame, 'share-replay-mount');

@@ -48,11 +48,11 @@ function fakeHandle(): ReadOnlyTerminalHandle & {
   };
 }
 
-function mountHook(): { state: ReplayTerminalState; html: string } {
+function mountHook(fontSize?: number): { state: ReplayTerminalState; html: string } {
   latestProps = null;
   const slot: { state: ReplayTerminalState | null } = { state: null };
   function Probe() {
-    slot.state = useReplayTerminal();
+    slot.state = useReplayTerminal(fontSize);
     return slot.state.widget;
   }
   const html = renderToStaticMarkup(<Probe />);
@@ -117,6 +117,15 @@ describe('useReplayTerminal', () => {
     expect(widget.props.selection).toBe(true);
     expect(widget.props.testId).toBe('share-replay-mount');
     expect(state.ready).toBe(false);
+    expect(state.booted).toBe(false);
+    expect(latestProps?.fontSize).toBeUndefined();
+  });
+
+  test('自适应字号透传给 widget，不给则由设置决定', () => {
+    const { state } = mountHook(21);
+    expect(latestProps?.fontSize).toBe(21);
+    const widget = state.widget as ReactElement<ReadOnlyTerminalProps>;
+    expect(widget.props.fontSize).toBe(21);
   });
 
   test('把 widget 的 onReady/onDispose 接到 handle 转发', () => {

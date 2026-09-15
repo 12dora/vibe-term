@@ -19,6 +19,8 @@ export interface ReadOnlyTerminalProps {
   /** 录像回放用：内容表面按「屏幕」画——外圈换衬底、描一圈边、小于外框时居中。 */
   surfaceFrame?: boolean;
   selection?: boolean;
+  /** 覆盖设置里的终端字号（回放要按录像网格自适应）；行高与字体仍取设置。 */
+  fontSize?: number;
   scrollback?: number;
   onReady?: (handle: ReadOnlyTerminalHandle) => void;
   onDispose?: () => void;
@@ -54,6 +56,7 @@ export function ReadOnlyTerminal({
   viewportPan = false,
   surfaceFrame = false,
   selection = false,
+  fontSize,
   scrollback = READ_ONLY_TERMINAL_SCROLLBACK,
   onReady,
   onDispose,
@@ -63,6 +66,7 @@ export function ReadOnlyTerminal({
   const { containerRef, mountRef, instance, terminalTheme } = useReadOnlyTerminal({
     viewportPan,
     surfaceFrame,
+    fontSize,
     scrollback,
     onReady,
     onDispose,
