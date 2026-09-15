@@ -13,7 +13,7 @@ import { type ReactNode, type RefObject, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
 import { ReplayControls, ReplayInputTicker } from './replay-controls';
-import { buildReplayTimeline, firstReplayGrid } from './replay-timeline';
+import { buildReplayTimeline, replayPaneEnvelope } from './replay-timeline';
 import { useReplayFit } from './use-replay-fit';
 import { useReplayLog } from './use-replay-log';
 import { useReplayPlayer } from './use-replay-player';
@@ -34,7 +34,7 @@ export function ReplayViewer({ share, onClose }: ReplayViewerProps) {
         if (!next) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-6xl" data-testid="share-replay-dialog">
+      <DialogContent className="sm:max-w-[min(96vw,110rem)]" data-testid="share-replay-dialog">
         <DialogHeader>
           <DialogTitle>{t('settings.share.replay.title')}</DialogTitle>
           <DialogDescription>{share?.name ?? ''}</DialogDescription>
@@ -46,8 +46,8 @@ export function ReplayViewer({ share, onClose }: ReplayViewerProps) {
 }
 
 /**
- * 回放窗：固定高度的外框裁剪，滚动条由 widget 内部的平移视口提供。
- * 宽屏上给到 44rem，窄录像才有放大的余地；同时按视口高度封顶，免得控制条被挤出屏幕。
+ * 回放窗：外框就是「终端窗口」，终端把它铺满；溢出部分的滚动条由 widget 内部的平移视口提供。
+ * 高度跟着视口走（留出标题 + 控制条 + 输入条的位置），窄屏至少 18rem。
  */
 export function ReplayTerminalFrame({
   children,
@@ -67,7 +67,7 @@ export function ReplayTerminalFrame({
   return (
     <div
       ref={frameRef}
-      className="relative h-[22rem] max-h-[calc(100dvh-15rem)] w-full overflow-hidden rounded-md border sm:h-[44rem]"
+      className="relative h-[max(18rem,calc(100dvh-17rem))] w-full overflow-hidden rounded-md border"
     >
       {children}
       {loading ? (
@@ -89,18 +89,18 @@ export function ReplayBody({ shareId }: { shareId: string }) {
   const { t } = useTranslation();
   const log = useReplayLog(shareId);
   const timeline = useMemo(() => buildReplayTimeline(log.entries), [log.entries]);
-  // 开面尺寸取自时间轴里最早的网格（第一页日志就有），不等播放机推进到第一个 checkpoint。
-  const initialGrid = useMemo(() => firstReplayGrid(timeline), [timeline]);
+  // 开面尺寸取默认 pane 的包络（第一页日志就有），不等播放机推进到第一个 checkpoint。
+  const initialGrid = useMemo(() => replayPaneEnvelope(timeline.panes[0]), [timeline]);
   const fit = useReplayFit({ initialGrid, logSettled: !log.loading });
-  const terminal = useReplayTerminal(fit.fontSize);
+  const terminal = useReplayTerminal(fit.fontSize, fit.minGrid);
   const player = useReplayPlayer(timeline, terminal.handle, terminal.ready, terminal.generation);
 
-  // 录像中途改尺寸 / 换 pane 时字号要跟着变；播放机给的是当前时刻的网格。
+  // 换 pane / 日志又来一页：包络可能变大，字号与仿真网格都要跟着走。
   const setFitGrid = fit.setGrid;
-  const playerGrid = player.grid;
+  const paneEnvelope = useMemo(() => replayPaneEnvelope(player.pane), [player.pane]);
   useEffect(() => {
-    setFitGrid(playerGrid);
-  }, [setFitGrid, playerGrid]);
+    setFitGrid(paneEnvelope);
+  }, [setFitGrid, paneEnvelope]);
 
   const empty = !log.loading && log.errorKey === null && log.entries.length === 0;
 

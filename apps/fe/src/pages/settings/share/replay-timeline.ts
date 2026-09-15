@@ -159,14 +159,20 @@ export interface ReplayGrid {
 }
 
 /**
- * 整份录像最早出现的网格（默认 pane 的第一条 checkpoint/resize）；一条都没有时为 null。
+ * pane 的包络：整段录像里出现过的最大行列数；一条带尺寸的事件都没有时为 null。
  *
- * 回放要按录像网格定字号，而字号只在终端建面时生效：不能等播放机把时间推到第一个
- * checkpoint 才知道尺寸，第一页日志到手就得能算。
+ * 回放的仿真终端按「窗口 ∪ 包络」建网格，录像中途改尺寸不再去 resize 仿真终端——
+ * 那样会触发 ghostty 的 reflow，把 TUI 画面搅乱。包络只会随日志翻页变大。
  */
-export function firstReplayGrid(timeline: ReplayTimeline): ReplayGrid | null {
-  const found = timeline.panes[0]?.grids[0];
-  return found ? { cols: found.cols, rows: found.rows } : null;
+export function replayPaneEnvelope(pane: ReplayPane | null | undefined): ReplayGrid | null {
+  if (!pane || pane.grids.length === 0) return null;
+  let cols = 0;
+  let rows = 0;
+  for (const grid of pane.grids) {
+    if (grid.cols > cols) cols = grid.cols;
+    if (grid.rows > rows) rows = grid.rows;
+  }
+  return cols > 0 && rows > 0 ? { cols, rows } : null;
 }
 
 /**

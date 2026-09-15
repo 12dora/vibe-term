@@ -1,8 +1,8 @@
-// 分享日志回放的 e2e：默认跑「左对齐、选区复制、墙钟」三项断言。
+// 分享日志回放的 e2e：默认跑「铺满外框、左对齐、选区复制、墙钟」四项断言。
 //
 // 另有四个只由环境变量打开的排查模式，默认路径不受影响：
-//   VIBETERM_E2E_REPLAY_WIDE_VIEWER=1  收/发两端都用 2400×900 宽视口 + dpr 2：回放外框变高变宽，
-//                                      录像（固定 220×50）按字号自适应后整屏装得下，走居中那一支。
+//   VIBETERM_E2E_REPLAY_WIDE_VIEWER=1  收/发两端都用 2400×900 宽视口 + dpr 2：回放外框变大，
+//                                      仿真网格跟着外框长大（录像 220×50 只是下界），整屏装得下。
 //   VIBETERM_E2E_REPLAY_TUI=1          被分享端跑 fixtures/replay-tui-payload.sh（备用屏全屏 TUI）。
 //   VIBETERM_E2E_REPLAY_CLAUDE=1       被分享端跑 claude，录一段真实 TUI。
 //   VIBETERM_E2E_REPLAY_LOG_FILE=<f>   回放时用该 JSON 顶掉日志接口，复现线上录像。
@@ -52,13 +52,17 @@ interface ReadOnlyProbeLine {
 
 interface ReplayLayout {
   rootLeft: number;
+  rootTop: number;
   rootWidth: number;
   rootHeight: number;
   screenLeft: number;
+  screenTop: number;
   screenWidth: number;
   screenHeight: number;
   canvasLeft: number;
   panScrollLeft: number;
+  cellWidth: number;
+  cellHeight: number;
 }
 
 interface VisibleTextRange {
@@ -264,15 +268,27 @@ async function readReplayLayout(page: Page): Promise<ReplayLayout> {
     if (!(root instanceof HTMLElement)) {
       return {
         rootLeft: Number.NaN,
+        rootTop: Number.NaN,
         rootWidth: Number.NaN,
         rootHeight: Number.NaN,
         screenLeft: Number.NaN,
+        screenTop: Number.NaN,
         screenWidth: Number.NaN,
         screenHeight: Number.NaN,
         canvasLeft: Number.NaN,
         panScrollLeft: Number.NaN,
+        cellWidth: Number.NaN,
+        cellHeight: Number.NaN,
       };
     }
+    const term = (
+      window as unknown as {
+        __vibetermE2eReadOnlyTerminal?: {
+          cellDimensions?: () => { width: number; height: number };
+        };
+      }
+    ).__vibetermE2eReadOnlyTerminal;
+    const cell = term?.cellDimensions?.() ?? null;
     const screen = root.querySelector('.xterm-screen');
     const canvas = root.querySelector('canvas');
     const pan =
@@ -281,20 +297,31 @@ async function readReplayLayout(page: Page): Promise<ReplayLayout> {
     const screenRect = screen instanceof HTMLElement ? screen.getBoundingClientRect() : null;
     return {
       rootLeft: rootRect.left,
+      rootTop: rootRect.top,
       rootWidth: rootRect.width,
       rootHeight: rootRect.height,
       screenLeft: screenRect ? screenRect.left : Number.NaN,
+      screenTop: screenRect ? screenRect.top : Number.NaN,
       screenWidth: screenRect ? screenRect.width : Number.NaN,
       screenHeight: screenRect ? screenRect.height : Number.NaN,
       canvasLeft: canvas instanceof HTMLElement ? canvas.getBoundingClientRect().left : Number.NaN,
       panScrollLeft: pan instanceof HTMLElement ? pan.scrollLeft : Number.NaN,
+      cellWidth: cell ? cell.width : Number.NaN,
+      cellHeight: cell ? cell.height : Number.NaN,
     };
   });
 }
 
+/** 内容表面的位置与尺寸；比较「开窗那一刻」和「稳定之后」是否跳变。 */
+function screenRectOf(layout: ReplayLayout): string {
+  return `${Math.round(layout.screenLeft - layout.rootLeft)},${Math.round(
+    layout.screenTop - layout.rootTop
+  )} ${Math.round(layout.screenWidth)}×${Math.round(layout.screenHeight)}`;
+}
+
 /**
- * 等只读终端这一台实例稳定下来。开窗时只会开一台（字号先算好再挂终端），但录像中途改尺寸
- * 会让字号跟着变，而换字号只能重建终端：重建那一下清屏并从 checkpoint 重放，
+ * 等只读终端这一台实例稳定下来。开窗时只会开一台（字号与网格先算好再挂终端），但外框变化
+ * 或日志翻页让包络变大时仍可能换字号重建：重建那一下清屏并从 checkpoint 重放，
  * 正赶上拖选就会把选区弄丢。给当前实例打个标记，隔一会儿再看标记还在不在——在就是没换过。
  */
 async function waitForReplayTerminalSettled(page: Page): Promise<void> {
@@ -530,15 +557,26 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
     await expect(page.getByTestId('share-replay-toggle')).toBeEnabled({ timeout: 30_000 });
     await expect(page.getByTestId('share-replay-dialog').locator('.animate-spin')).toHaveCount(0);
 
+    // 开窗那一刻的内容表面矩形：终端只开一台、尺寸一次定死，稳定之后不该再跳。
+    const openedRect = screenRectOf(await readReplayLayout(page));
+    await page.screenshot({ path: `${SCREENSHOT_DIR}/replay-opened.png` });
+
     await playReplayToEnd(page);
     if (
       process.env.VIBETERM_E2E_REPLAY_CLAUDE === '1' ||
       process.env.VIBETERM_E2E_REPLAY_LOG_FILE
     ) {
-      await page.waitForTimeout(3_000);
+      await page.waitForTimeout(1_500);
+      const settledRect = screenRectOf(await readReplayLayout(page));
+      expect(settledRect, `screen rect jumped: ${openedRect} → ${settledRect}`).toBe(openedRect);
+      await page.waitForTimeout(1_500);
       await page.screenshot({ path: `${SCREENSHOT_DIR}/replay-claude.png` });
       return;
     }
+    expect(
+      screenRectOf(await readReplayLayout(page)),
+      `screen rect jumped after playback: opened ${openedRect}`
+    ).toBe(openedRect);
     await waitForReplayTerminalSettled(page);
     const markerLine = await waitForReplayMarker(page);
     expect(
@@ -548,33 +586,27 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
 
     const layout = await readReplayLayout(page);
     expect(layout.panScrollLeft, `pan viewport scrollLeft=${layout.panScrollLeft}`).toBe(0);
-    expect(layout.canvasLeft, `canvas left=${layout.canvasLeft}`).toBeGreaterThanOrEqual(
-      layout.rootLeft - 0.5
-    );
-    // 真正的不变量：内容表面窄于外框时居中（margin:auto），溢出时自动边距归零、仍贴左。
-    // 画布本来就该贴内容表面，不是贴外框——外框宽于录像时两者差的正是那半个空当。
-    const centerOffset = Math.max(0, (layout.rootWidth - layout.screenWidth) / 2);
+    // 和普通终端一样：内容表面贴着外框左上角，没有衬底、没有居中留白。
     expect(
-      Math.abs(layout.screenLeft - layout.rootLeft - centerOffset),
-      `screen left=${layout.screenLeft} root left=${layout.rootLeft} width ${layout.screenWidth}/${layout.rootWidth}`
+      Math.abs(layout.screenLeft - layout.rootLeft),
+      `screen left=${layout.screenLeft} root left=${layout.rootLeft}`
+    ).toBeLessThan(2);
+    expect(
+      Math.abs(layout.screenTop - layout.rootTop),
+      `screen top=${layout.screenTop} root top=${layout.rootTop}`
     ).toBeLessThan(2);
     expect(
       Math.abs(layout.canvasLeft - layout.screenLeft),
       `canvas left=${layout.canvasLeft} screen left=${layout.screenLeft}`
     ).toBeLessThan(2);
 
-    // 字号自适应：录像按长宽比放到最大，受限的那条边应当基本贴满外框。
-    // 录像是横向的（宽 ≫ 高），所以受限边是宽——外框再宽也不会留下大片空当。
-    const fill = Math.max(
-      layout.screenWidth / layout.rootWidth,
-      layout.screenHeight / layout.rootHeight
-    );
-    expect(
-      fill,
-      `screen ${layout.screenWidth}×${layout.screenHeight} in frame ${layout.rootWidth}×${layout.rootHeight}`
-    ).toBeGreaterThan(0.85);
-    expect(layout.screenWidth, 'recording must not overflow the frame width').toBeLessThanOrEqual(
-      layout.rootWidth + 1
+    // 仿真网格 = 外框能放下的 ∪ 录像包络：铺满外框，最多差一个 cell 的取整余数；
+    // 包络更大的那条边可以超出外框（由平移视口滚动），但绝不会留下空当。
+    const box = `screen ${layout.screenWidth}×${layout.screenHeight} in frame ${layout.rootWidth}×${layout.rootHeight} cell ${layout.cellWidth}×${layout.cellHeight}`;
+    expect(layout.cellWidth, box).toBeGreaterThan(0);
+    expect(layout.screenWidth, box).toBeGreaterThanOrEqual(layout.rootWidth - layout.cellWidth - 1);
+    expect(layout.screenHeight, box).toBeGreaterThanOrEqual(
+      layout.rootHeight - layout.cellHeight - 1
     );
 
     const wallAtEnd = (await page.getByTestId('share-replay-wall-clock').innerText()).trim();

@@ -1,24 +1,26 @@
 import { cn } from '@vibeterm/ui';
 import type { KeyboardEvent, PointerEvent, RefObject } from 'react';
 import { SelectionToolbar } from './SelectionToolbar';
-import { readOnlySurfaceBackdrop } from './hooks/read-only-surface-frame';
 import {
   READ_ONLY_TERMINAL_SCROLLBACK,
+  type ReadOnlyGrid,
   type ReadOnlyTerminalHandle,
   isReadOnlyCopyShortcut,
 } from './hooks/read-only-terminal-session';
 import { useReadOnlyTerminal } from './hooks/useReadOnlyTerminal';
 import { useTerminalSelectionChrome } from './hooks/useTerminalSelectionChrome';
 
-export type { ReadOnlyTerminalHandle };
+export type { ReadOnlyGrid, ReadOnlyTerminalHandle };
 export { READ_ONLY_TERMINAL_SCROLLBACK };
 
 export interface ReadOnlyTerminalProps {
   className?: string;
   viewportPan?: boolean;
-  /** 录像回放用：内容表面按「屏幕」画——外圈换衬底、描一圈边、小于外框时居中。 */
-  surfaceFrame?: boolean;
   selection?: boolean;
+  /** 录像回放用：生效网格不会小于这个包络，容器更大时照样铺满容器。 */
+  minGrid?: ReadOnlyGrid | null;
+  /** 生效网格变化（开面那次不算）：回放据此清屏重放。 */
+  onGridChange?: (cols: number, rows: number) => void;
   /** 覆盖设置里的终端字号（回放要按录像网格自适应）；行高与字体仍取设置。 */
   fontSize?: number;
   scrollback?: number;
@@ -54,8 +56,9 @@ export function ReadOnlySelectionToolbar(chrome: {
 export function ReadOnlyTerminal({
   className,
   viewportPan = false,
-  surfaceFrame = false,
   selection = false,
+  minGrid = null,
+  onGridChange,
   fontSize,
   scrollback = READ_ONLY_TERMINAL_SCROLLBACK,
   onReady,
@@ -65,8 +68,9 @@ export function ReadOnlyTerminal({
 }: ReadOnlyTerminalProps) {
   const { containerRef, mountRef, instance, terminalTheme } = useReadOnlyTerminal({
     viewportPan,
-    surfaceFrame,
     fontSize,
+    minGrid,
+    onGridChange,
     scrollback,
     onReady,
     onDispose,
@@ -92,11 +96,7 @@ export function ReadOnlyTerminal({
     <section
       ref={containerRef}
       className={cn('relative h-full w-full', className)}
-      style={{
-        backgroundColor: surfaceFrame
-          ? readOnlySurfaceBackdrop(terminalTheme)
-          : terminalTheme.background,
-      }}
+      style={{ backgroundColor: terminalTheme.background }}
       data-testid={testId}
       // biome-ignore lint/a11y/noNoninteractiveTabindex: 可滚动只读区域需能 Tab 进入以复制
       tabIndex={0}

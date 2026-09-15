@@ -33,26 +33,20 @@ function fakeHandle(): ReadOnlyTerminalHandle & {
     write(data) {
       calls.push(`write:${typeof data === 'string' ? data : Array.from(data).join(',')}`);
     },
-    resize(cols, rows) {
-      calls.push(`resize:${cols}x${rows}`);
-    },
     reset() {
       calls.push('reset');
-    },
-    fit() {
-      calls.push('fit');
-    },
-    scrollToOrigin() {
-      calls.push('origin');
     },
   };
 }
 
-function mountHook(fontSize: number | null): { state: ReplayTerminalState; html: string } {
+function mountHook(
+  fontSize: number | null,
+  minGrid: { cols: number; rows: number } | null = null
+): { state: ReplayTerminalState; html: string } {
   latestProps = null;
   const slot: { state: ReplayTerminalState | null } = { state: null };
   function Probe() {
-    slot.state = useReplayTerminal(fontSize);
+    slot.state = useReplayTerminal(fontSize, minGrid);
     return slot.state.widget;
   }
   const html = renderToStaticMarkup(<Probe />);
@@ -61,37 +55,49 @@ function mountHook(fontSize: number | null): { state: ReplayTerminalState; html:
 }
 
 describe('createReplayTerminalBinding', () => {
-  test('未就绪时 write/resize/reset/fit 都是空操作', () => {
+  test('未就绪时 write/reset 都是空操作', () => {
     const ready: boolean[] = [];
     const binding = createReplayTerminalBinding((next) => ready.push(next));
     const widget = fakeHandle();
     binding.handle.write(new Uint8Array([1]));
-    binding.handle.resize(80, 24);
     binding.handle.reset();
-    binding.handle.fit();
     expect(widget.calls).toEqual([]);
     expect(ready).toEqual([]);
   });
 
-  test('onReady 之后转发四件事，onDispose 再变回空操作', () => {
+  test('onReady 之后转发写入与清屏，onDispose 再变回空操作', () => {
     const ready: boolean[] = [];
     const binding = createReplayTerminalBinding((next) => ready.push(next));
     const widget = fakeHandle();
     binding.onReady(widget);
     expect(ready).toEqual([true]);
     binding.handle.write(new Uint8Array([65, 66]));
-    binding.handle.resize(120, 40);
     binding.handle.reset();
-    binding.handle.fit();
-    expect(widget.calls).toEqual(['write:65,66', 'resize:120x40', 'reset', 'fit']);
+    expect(widget.calls).toEqual(['write:65,66', 'reset']);
     binding.onDispose();
     expect(ready).toEqual([true, false]);
     widget.calls.length = 0;
     binding.handle.write(new Uint8Array([9]));
-    binding.handle.resize(1, 1);
     binding.handle.reset();
-    binding.handle.fit();
     expect(widget.calls).toEqual([]);
+  });
+
+  // 网格变了也要清屏重放：ghostty 在 resize 时会 reflow，TUI 画面不重放会留残渣。
+  test('就绪与网格变化各上报一次新画面，未就绪时网格变化不上报', () => {
+    const frames: string[] = [];
+    const binding = createReplayTerminalBinding(
+      () => undefined,
+      () => frames.push('frame')
+    );
+    binding.onGridChange();
+    expect(frames).toEqual([]);
+    binding.onReady(fakeHandle());
+    expect(frames).toEqual(['frame']);
+    binding.onGridChange();
+    expect(frames).toEqual(['frame', 'frame']);
+    binding.onDispose();
+    binding.onGridChange();
+    expect(frames).toEqual(['frame', 'frame']);
   });
 
   test('空 write 不往 widget 送', () => {
@@ -122,11 +128,14 @@ describe('useReplayTerminal', () => {
     expect(latestProps?.fontSize).toBe(13);
   });
 
-  test('自适应字号透传给 widget', () => {
-    const { state } = mountHook(21);
+  test('自适应字号与录像包络透传给 widget', () => {
+    const { state } = mountHook(21, { cols: 52, rows: 47 });
     expect(latestProps?.fontSize).toBe(21);
+    expect(latestProps?.minGrid).toEqual({ cols: 52, rows: 47 });
+    expect(typeof latestProps?.onGridChange).toBe('function');
     const widget = state.widget as ReactElement<ReadOnlyTerminalProps>;
     expect(widget.props.fontSize).toBe(21);
+    expect(widget.props.minGrid).toEqual({ cols: 52, rows: 47 });
   });
 
   // 字号没定下来就开面的话，那一台必然要被适配后的替换掉：画面跳一下，选区也没了。
@@ -144,10 +153,8 @@ describe('useReplayTerminal', () => {
     expect(widget.calls).toEqual([]);
     latestProps?.onReady?.(widget);
     state.handle.write(new Uint8Array([7]));
-    state.handle.resize(200, 60);
     state.handle.reset();
-    state.handle.fit();
-    expect(widget.calls).toEqual(['write:7', 'resize:200x60', 'reset', 'fit']);
+    expect(widget.calls).toEqual(['write:7', 'reset']);
     latestProps?.onDispose?.();
     widget.calls.length = 0;
     state.handle.write(new Uint8Array([8]));

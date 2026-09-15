@@ -12,7 +12,6 @@ import {
   countEventsUntil,
   findCheckpointIndex,
   findReplayPane,
-  firstReplayGrid,
   formatReplayClock,
   formatReplayWallClock,
   nextReplaySpeed,
@@ -21,6 +20,7 @@ import {
   planReplayTicks,
   replayCrossesCalendarDay,
   replayGridAt,
+  replayPaneEnvelope,
   replayScrubPositionToMs,
 } from './replay-timeline';
 
@@ -176,21 +176,19 @@ describe('replayGridAt', () => {
   });
 });
 
-describe('firstReplayGrid', () => {
-  test('取默认 pane 最早的那条网格，第一页日志到手就能算字号', () => {
-    expect(firstReplayGrid(buildReplayTimeline(LOG))).toEqual({ cols: 80, rows: 24 });
+describe('replayPaneEnvelope', () => {
+  test('逐轴取整段录像出现过的最大值，中途缩小也不会让包络变小', () => {
+    expect(replayPaneEnvelope(buildReplayTimeline(LOG).panes[0])).toEqual({ cols: 100, rows: 30 });
   });
 
   test('整份录像没有 checkpoint / resize 时为 null', () => {
-    expect(
-      firstReplayGrid(
-        buildReplayTimeline([
-          entry({ seq: 1, at: BASE, data: HI }),
-          entry({ seq: 2, at: BASE + 10, data: HI }),
-        ])
-      )
-    ).toBeNull();
-    expect(firstReplayGrid(buildReplayTimeline([]))).toBeNull();
+    const [plain] = buildReplayTimeline([
+      entry({ seq: 1, at: BASE, data: HI }),
+      entry({ seq: 2, at: BASE + 10, data: HI }),
+    ]).panes;
+    expect(replayPaneEnvelope(plain)).toBeNull();
+    expect(replayPaneEnvelope(buildReplayTimeline([]).panes[0])).toBeNull();
+    expect(replayPaneEnvelope(null)).toBeNull();
   });
 });
 
