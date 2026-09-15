@@ -13,5 +13,11 @@ export type TmuxSourceMetadataEvent =
   | { type: 'session-window-changed'; sessionId: string; windowId: string }
   | { type: 'window-renamed'; windowId: string; name: string }
   | { type: 'window-pane-changed'; windowId: string; paneId: string }
-  | { type: 'layout-change'; windowId: string; layout: string }
+  | {
+      type: 'layout-change';
+      windowId: string;
+      layout: string;
+      visibleLayout?: string;
+      flags?: string;
+    }
   | { type: 'window-close'; windowId: string };

@@ -126,7 +126,6 @@ export class ShareRecorder {
       const wanted = new Set(windowPanes(snapshot, this.windowId));
       const { changed, fresh } = this.reconcileMembership(wanted);
       if (changed) this.resubscribe();
-      this.reconcileReadySizes(snapshot);
       for (const paneId of fresh) await this.checkpointPane(paneId);
     } catch (error) {
       this.deps.onError?.(this.shareId, error);
@@ -139,19 +138,6 @@ export class ShareRecorder {
     if (this.stopped || bytes.byteLength === 0) return;
     this.trackPane(paneId);
     this.queue.push({ at: this.deps.now(), kind: 'in', paneId, data: new Uint8Array(bytes) });
-  }
-
-  recordResize(paneId: string, cols: number, rows: number): void {
-    if (this.stopped) return;
-    this.trackPane(paneId);
-    this.queue.push({
-      at: this.deps.now(),
-      kind: 'resize',
-      paneId,
-      data: new Uint8Array(0),
-      cols,
-      rows,
-    });
   }
 
   private trackPane(paneId: string): void {
@@ -203,16 +189,6 @@ export class ShareRecorder {
       changed = true;
     }
     return { changed, fresh };
-  }
-
-  private reconcileReadySizes(snapshot: StateSnapshotPayload | null): void {
-    const window = snapshot?.session?.windows.find((item) => item.id === this.windowId);
-    if (!window) return;
-    for (const pane of window.panes) {
-      const state = this.panes.get(pane.id);
-      if (!state?.ready) continue;
-      this.emitResizeIfChanged(pane.id, state, { cols: pane.width, rows: pane.height });
-    }
   }
 
   private handlePaneGeometry(
@@ -298,21 +274,9 @@ export class ShareRecorder {
     state.lastSize = { cols: checkpoint.cols, rows: checkpoint.rows };
     const pending = state.pendingSize;
     state.pendingSize = null;
-    if (pending && !sizesEqual(state.lastSize, pending)) {
-      this.emitResizeIfChanged(paneId, state, pending);
-    } else {
-      this.reconcileSnapshotSize(paneId, state);
-    }
+    if (pending) this.emitResizeIfChanged(paneId, state, pending);
     for (const segment of state.pending) this.enqueueOutput(paneId, segment, checkpoint.baseSeq);
     state.pending = [];
-  }
-
-  private reconcileSnapshotSize(paneId: string, state: PaneState): void {
-    const snapshot = this.runtime?.getCurrentSnapshot();
-    const window = snapshot?.session?.windows.find((item) => item.id === this.windowId);
-    const pane = window?.panes.find((item) => item.id === paneId);
-    if (!pane) return;
-    this.emitResizeIfChanged(paneId, state, { cols: pane.width, rows: pane.height });
   }
 
   private handleSegment(segment: PaneDataSegment): void {

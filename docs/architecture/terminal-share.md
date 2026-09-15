@@ -46,7 +46,10 @@
   分页读、按保留期清理。
 - `share-recorder.ts` —— 单分享录制器：`attachPaneConsumer` 订阅 window 内 pane，先给每个 pane 写
   `captureCanonicalScreen()` 的 `checkpoint`（并按 `baseSeq` 精确裁掉 checkpoint 之前的字节），之后追加
-  `out`；输入 / 尺寸由 ws 层回调写 `in` / `resize`；250 ms 批量落库；每 2 s 按设备快照跟随 pane 进出 window。
+  `out`；输入由 ws 层回调写 `in`；**尺寸以 tmux `%layout-change` 为准**——`RuntimeEventBridge` 在处理该事件的
+  同一同步回合广播 `onPaneGeometry`，录制器订阅后给已 checkpoint 的 pane 写 `resize`（checkpoint 前的几何暂存，
+  checkpoint 落地后经 `emitResizeIfChanged` 补一条，尺寸相同则为空操作）；被分享人的 resize *请求*
+  不记（会被尺寸仲裁改写，分屏时也只是 window 尺寸）；250 ms 批量落库；每 2 s 按设备快照跟随 pane 进出 window。
 - `share-origins.ts` —— 候选构造：`site`（`site_settings.site_url`）、
   `relay`（中继上联时的 `mesh_relays.url`，带 `/n/<本机 nodeId>`，见下）、
   `tunnel`（cloudflared 公开地址）、`ip`（`config.baseUrl` 且 host 为 IP）。
@@ -231,8 +234,10 @@ hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进�
 ## 录制与回放
 
 日志是「checkpoint + 增量」而非视频：分享创建即为 window 内每个 pane 写一条 `checkpoint`（canonical 屏幕快照，
-带 cols/rows），之后 `out` 追加输出、`in` 记输入、`resize` 记尺寸变化，全部带 `at` 时间戳与 `pane_id`。
-超过 `logMaxBytes` 停记并标 `logTruncated`。
+带 cols/rows），之后 `out` 追加输出、`in` 记输入、`resize` 记 pane 真实尺寸变化（来源是 tmux `%layout-change`，
+与 `%output` 同序，不依赖哪个客户端发起），全部带 `at` 时间戳与 `pane_id`。超过 `logMaxBytes` 停记并标 `logTruncated`。
+checkpoint 捕获进行中缓冲的输出会写在 checkpoint 之后那一条 `resize` 后面，因此捕获期间发生的 layout
+变化可能把少量「resize 前」字节放到新网格上（上限是捕获延迟，可接受）。
 
 回放（设置 → 分享 → 历史 → 回放）走 `packages/terminal-ui` 的共享组件 `ReadOnlyTerminal`
 （`apps/fe` 侧适配层 `use-replay-terminal.ts` 只转发 `write` / `resize` / `reset` / `fit` 与就绪态），
@@ -240,9 +245,17 @@ hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进�
 （禁粘贴，`Cmd`/`Ctrl+C` 复制）。设置页的 `TerminalPreview` 是该组件的薄封装。
 
 跳转往前接着播、往回从最近的 checkpoint 重建；倍速 1x/2x/4x/8x；`in` 条目**只**进终端下方的标记条
-（`⏎ ⇥ ⌫ ⎋ ^X`），绝不写回终端。回放尺寸由录像决定：先 `fit` 再开平移视口（`setViewportPan(true)`），
-resize 后回到原点；大尺寸录像可平移到右下角而不是被容器裁掉。首次 `fit` 跳过零尺寸容器
-（对话框还在 zoom / 尚未拿到真实布局），等 ResizeObserver 见到正尺寸再 fit，避免按 0×0 算出错误网格。
+（`⏎ ⇥ ⌫ ⎋ ^X`），绝不写回终端。回放网格由录像决定（pty 输出不能重排），**字号由外框决定**：
+`replay-fit.ts` 按（当前网格、外框 `clientWidth/Height`、字体 advance 比例（与 ghostty 同一套 `W`×10 探针）、
+行高、dpr）算出能整格放下的最大字号（8–40 px，2 px 安全边，再按设备像素取整的 cell 复核），
+`useReplayFit` 用 ResizeObserver + 对话框 `zoom-in-95` 动画结束后重测，120 ms 去抖后以 `fontSize` 覆盖
+`ReadOnlyTerminal` 重建实例；播放机按实例代次（`generation`）而非 `ready` 翻转重置并快进到当前时刻
+（boot 链常在微任务内完成，React 会把 `ready` 的 false→true 合并成一次渲染）。手机录的 52×47 在桌面宽窗里
+按高度放大居中、两侧 letterbox；超宽录像压到 8 px 仍放不下时退回平移视口（左上贴齐、可滚动）。
+计算只依赖（网格、外框、基准度量），不回读终端自身尺寸，因此不会震荡；首个 checkpoint 之前沿用上次网格，
+避免拖到 0 时字号在基准与拟合之间来回重建。先 `fit` 再开平移视口（`setViewportPan(true)`），
+resize 后回到原点。首次 `fit` 跳过零尺寸容器（对话框还在 zoom / 尚未拿到真实布局），
+等 ResizeObserver 见到正尺寸再 fit，避免按 0×0 算出错误网格。外框 `sm` 起 44rem 并按视口高度封顶，对话框 `max-w-6xl`。
 
 进度条是带刻度的时间轴（`replay-timeline.ts` 纯计算：墙钟格式化、刻度规划、位置换算）：
 保留原生 `range` 做可访问性，外层画主 / 次刻度与起止墙钟（跨日补日期）；墙钟 = `startAt + t`
@@ -254,6 +267,9 @@ resize 后回到原点；大尺寸录像可平移到右下角而不是被容器�
    对话框 zoom 期间对零尺寸容器 `fit` 会把网格算错。现已清掉 `inset`/`right`/`bottom`（保留 `left`/`top = 0`），
    并把首次 fit 推迟到容器有真实尺寸。
 2. **不能复制**：回放窗没挂选区 chrome。现与普通终端共用 `useTerminalSelectionChrome`。
+3. **TUI 阶梯错位（内容贴到右边）**：录制只在被分享人发 resize 时写 `resize`，分享方在手机上录（52×47）之后
+   从桌面改宽窗口，pty 已变宽而日志没有 `resize`，回放仍按 52 列重放，Ratatui 类 TUI 每行右漂一格。现改为
+   按 `%layout-change` 记真实几何（见上）。**改动前的旧录像无法修复**——日志里没有尺寸信息可用。
 
 ## 限速与开放模式
 
@@ -318,8 +334,8 @@ e2e 环境里中继 / 节点只有 localhost 地址、自动候选为空，用�
 
 1. **入口转发不传浏览器来源 IP**：节点侧限速在 `/n/<id>` 路径上仍把所有访客算成同一个来源，由入口侧配额兜住。
    彻底解法是给 peer 上下文加一条入口可信填写、浏览器不可覆盖的来源 IP 元数据。
-2. **录制器跟随 pane 靠 2 s 轮询设备快照**（没有事件驱动的 pane 变更钩子）；输入 / 尺寸不再因 pane 尚未同步
-   而丢弃——见到陌生 pane 会先触发一次同步再记账。
+2. **录制器跟随 pane 进出 window 靠 2 s 轮询设备快照**（pane 集合没有事件驱动钩子；尺寸已是事件驱动）；
+   输入不再因 pane 尚未同步而丢弃——见到陌生 pane 会先触发一次同步再记账。
 3. **日志保留按日志行的 `at` 裁剪**，长命分享会先丢头部，不是按分享结束时间整条删。
 4. **并发验证上限固定为 2**：同一 NAT 后大量访客同时首次登录会撞上，需要时把 `SHARE_LOGIN_MAX_CONCURRENT`
    提到 4–8。

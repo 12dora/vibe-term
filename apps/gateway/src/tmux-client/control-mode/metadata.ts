@@ -66,6 +66,21 @@ export class ControlModeMetadataBridge {
     return { type: 'window-close', windowId };
   }
 
+  private parseLayoutChange(windowId: string, rest: string): TmuxSourceMetadataEvent | null {
+    const [layout, afterLayout] = splitFirst(rest);
+    if (!windowId || !layout) {
+      return null;
+    }
+    const [visibleLayout, flags] = splitFirst(afterLayout);
+    return {
+      type: 'layout-change',
+      windowId,
+      layout,
+      ...(visibleLayout ? { visibleLayout } : {}),
+      ...(flags ? { flags } : {}),
+    };
+  }
+
   parse(notification: ControlModeNotification): TmuxSourceMetadataEvent | null {
     const [first, rest] = splitFirst(notification.args.trim());
     switch (notification.type) {
@@ -93,13 +108,8 @@ export class ControlModeMetadataBridge {
         }
         return null;
       }
-      case 'layout-change': {
-        const [layout] = splitFirst(rest);
-        if (first && layout) {
-          return { type: 'layout-change', windowId: first, layout };
-        }
-        return null;
-      }
+      case 'layout-change':
+        return this.parseLayoutChange(first, rest);
       case 'window-close':
       case 'unlinked-window-close':
         return this.parseWindowClose(first);

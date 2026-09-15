@@ -141,7 +141,7 @@ describe('control mode subscription golden traces', () => {
         continues: ['%1'],
         metadata: [
           { type: 'session-renamed', sessionId: '$0', name: 'work' },
-          { type: 'layout-change', windowId: '@1', layout: 'x' },
+          { type: 'layout-change', windowId: '@1', layout: 'x', visibleLayout: 'y', flags: '!' },
           { type: 'window-renamed', windowId: '@1', name: 'zsh' },
           { type: 'window-close', windowId: '@1' },
           { type: 'window-close', windowId: '@2' },
