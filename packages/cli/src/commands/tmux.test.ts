@@ -312,3 +312,73 @@ describe('vibeterm tmux move / break / reorder', () => {
     expect(() => parseIdList(' , ', '@1,@2')).toThrow(UsageError);
   });
 });
+
+describe('vibeterm tmux style / stack', () => {
+  test('style sends WS set-window-style and reports JSON', async () => {
+    const h = await harness({ json: true });
+    await tmux.run(h.ctx, ['style', 'laptop', 'fg=#d0d0d0,bg=#262626']);
+    expect(h.transport.commandsOfType('set-window-style')[0]).toMatchObject({
+      deviceId: 'device-1',
+      style: 'fg=#d0d0d0,bg=#262626',
+    });
+    expect(jsonOf(h)).toEqual({
+      ok: true,
+      action: 'set-window-style',
+      style: 'fg=#d0d0d0,bg=#262626',
+    });
+    expect(h.closed()).toBe(1);
+  });
+
+  test('style without a style string is a usage error', async () => {
+    const h = await harness();
+    await expect(tmux.run(h.ctx, ['style', 'laptop'])).rejects.toThrow(UsageError);
+  });
+
+  test('stack sends WS apply-stacked-layout and waits for pane sizes', async () => {
+    const h = await harness({ json: true });
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'apply-stacked-layout') return;
+      const next = fakeSession();
+      for (const pane of next.windows[1].panes) {
+        pane.width = command.cols;
+        pane.height = command.rows;
+      }
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['stack', 'laptop:build', '40x12']);
+    expect(h.transport.commandsOfType('apply-stacked-layout')[0]).toMatchObject({
+      deviceId: 'device-1',
+      windowId: '@1',
+      cols: 40,
+      rows: 12,
+    });
+    expect(jsonOf(h)).toEqual({
+      ok: true,
+      action: 'apply-stacked-layout',
+      windowId: '@1',
+      cols: 40,
+      rows: 12,
+    });
+  });
+
+  test('stack human output names the window and geometry', async () => {
+    const h = await harness();
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'apply-stacked-layout') return;
+      const next = fakeSession();
+      for (const pane of next.windows[1].panes) {
+        pane.width = 40;
+        pane.height = 12;
+      }
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['stack', 'laptop:build', '40x12']);
+    expect(h.stdout.text()).toContain('apply-stacked-layout: @1 40x12');
+  });
+
+  test('stack rejects a missing geometry and sizes below 2', async () => {
+    const h = await harness();
+    await expect(tmux.run(h.ctx, ['stack', 'laptop:build'])).rejects.toThrow(UsageError);
+    await expect(tmux.run(h.ctx, ['stack', 'laptop:build', '1x24'])).rejects.toThrow(UsageError);
+  });
+});

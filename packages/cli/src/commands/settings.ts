@@ -4,6 +4,7 @@ import { SITE_SETTING_CLI_USAGE_LINES, SITE_SETTING_SECRET_FLAGS } from '@vibete
 import { type SubHandler, runSubs } from '../core/cmd';
 import { llm } from './settings-llm';
 import { tls, local, system, tunnel } from './settings-local';
+import { memory } from './settings-memory';
 import { mesh } from './settings-mesh';
 import { telegram, weixin } from './settings-messaging';
 import { localAuth, passkey, passwd, totp } from './settings-security';
@@ -89,6 +90,10 @@ export const FLAGS = {
   keys: 'string',
   icon: 'string',
   ids: 'string',
+  high: 'number',
+  max: 'number',
+  'swap-max': 'number',
+  interval: 'number',
 } as const;
 
 const USAGE = [
@@ -103,6 +108,7 @@ const USAGE = [
   '  llm get|set|default|search set GET/PATCH /api/llm/settings (set needs --body)',
   '  domain-access get|set on|off   GET/PATCH /api/system/domain-access',
   '  mesh route-mode get|set <auto|direct|relay>  GET/PUT /api/settings/mesh-route',
+  '  memory get|set [--enabled on|off] [--high <MB>] [--max <MB>] [--swap-max <MB>] [--interval <sec>]  GET/PUT /api/settings/window-memory',
   '  tls get|set|renew|ca           GET/PUT /api/tls (--mode/--sans/--port/… or --body)',
   '  tunnel status|<action>         GET /api/tunnel/status or POST /api/tunnel/actions',
   '  system info|addresses|update-check|upgrade status|start',
@@ -130,6 +136,7 @@ const HANDLERS: Record<string, SubHandler> = {
   llm,
   'domain-access': domainAccess,
   mesh,
+  memory,
   tls,
   tunnel,
   system,

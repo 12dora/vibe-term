@@ -38,6 +38,7 @@ describe('client cli dispatch table', () => {
         'logout',
         'nodes',
         'port',
+        'sessions',
         'settings',
         'share',
         'system',

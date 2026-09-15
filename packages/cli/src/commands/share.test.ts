@@ -58,8 +58,8 @@ const ORIGINS = {
   nodePrefix: null,
 };
 
-async function restCtx(routes: Parameters<typeof routeFetch>[0]) {
-  const built = await testContext(routeFetch(routes), { json: true });
+async function restCtx(routes: Parameters<typeof routeFetch>[0], options: { json?: boolean } = {}) {
+  const built = await testContext(routeFetch(routes), { json: options.json ?? true });
   dirs.push(built.dir);
   return built;
 }
@@ -346,5 +346,111 @@ describe('vibeterm share', () => {
     });
     await share.run(cli, ['origins']);
     expect(JSON.parse(stdout.text()).recommended).toBeNull();
+  });
+});
+
+const LOG_BASE = 1_700_000_000_000;
+const LOG_HI = Buffer.from('hi', 'utf8').toString('base64');
+
+function logEntry(
+  seq: number,
+  at: number,
+  extra: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return { seq, at, kind: 'out', paneId: '%0', data: LOG_HI, ...extra };
+}
+
+function logPages(): Parameters<typeof routeFetch>[0] {
+  return {
+    'GET /api/share/s-1/log': (url) => {
+      const after = Number(url.searchParams.get('after') ?? '0');
+      if (after === 0) {
+        return {
+          entries: [logEntry(1, LOG_BASE), logEntry(2, LOG_BASE + 10, { paneId: '%1' })],
+          nextAfter: 2,
+          total: 4,
+          truncated: true,
+        };
+      }
+      return {
+        entries: [
+          logEntry(3, LOG_BASE + 20, { kind: 'resize', data: '', cols: 100, rows: 30 }),
+          logEntry(4, LOG_BASE + 40, { data: Buffer.from('xy').toString('base64') }),
+        ],
+        nextAfter: null,
+        total: 4,
+        truncated: true,
+      };
+    },
+  };
+}
+
+describe('vibeterm share log', () => {
+  test('--all follows nextAfter and --json prints the entry array', async () => {
+    const { ctx: cli, stdout, stderr } = await restCtx(logPages());
+    await share.run(cli, ['log', 's-1', '--all', '--limit', '2']);
+    const entries = JSON.parse(stdout.text()) as Array<{ seq: number }>;
+    expect(entries.map((item) => item.seq)).toEqual([1, 2, 3, 4]);
+    expect(stderr.text()).toContain('log truncated');
+  });
+
+  test('without --all --json is still the page object', async () => {
+    const { ctx: cli, stdout } = await restCtx(logPages());
+    await share.run(cli, ['log', 's-1', '--limit', '2']);
+    expect(JSON.parse(stdout.text())).toMatchObject({ nextAfter: 2, total: 4, truncated: true });
+  });
+
+  test('human mode prints one `ts pane kind size` line per entry', async () => {
+    const { ctx: cli, stdout, stderr } = await restCtx(logPages(), { json: false });
+    await share.run(cli, ['log', 's-1', '--all']);
+    expect(stdout.text().trim().split('\n')).toEqual([
+      `${LOG_BASE} %0 out 2`,
+      `${LOG_BASE + 10} %1 out 2`,
+      `${LOG_BASE + 20} %0 resize 0`,
+      `${LOG_BASE + 40} %0 out 2`,
+    ]);
+    expect(stderr.text()).toContain('log truncated');
+  });
+});
+
+describe('vibeterm share replay', () => {
+  test('--json assembles panes, duration and chunk text', async () => {
+    const { ctx: cli, stdout } = await restCtx(logPages());
+    await share.run(cli, ['replay', 's-1']);
+    expect(JSON.parse(stdout.text())).toEqual({
+      panes: [
+        { paneId: '%0', cols: 100, rows: 30, chunks: ['hi', 'xy'] },
+        { paneId: '%1', cols: 0, rows: 0, chunks: ['hi'] },
+      ],
+      durationMs: 40,
+      entries: 4,
+    });
+  });
+
+  test('invalid --pane lists the recording panes', async () => {
+    const { ctx: cli } = await restCtx(logPages());
+    try {
+      await share.run(cli, ['replay', 's-1', '--pane', '%9']);
+      throw new Error('expected UsageError');
+    } catch (error) {
+      expect(error).toBeInstanceOf(UsageError);
+      expect((error as UsageError).message).toBe('unknown pane: %9');
+      expect((error as UsageError).hint).toBe('panes: %0, %1');
+    }
+  });
+
+  test('non-TTY refuses unless --speed 0', async () => {
+    const { ctx: cli } = await restCtx(logPages(), { json: false });
+    await expect(share.run(cli, ['replay', 's-1'])).rejects.toBeInstanceOf(UsageError);
+    await expect(share.run(cli, ['replay', 's-1', '--speed', '2'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+  });
+
+  test('--speed 0 dumps the default pane to non-TTY stdout', async () => {
+    const { ctx: cli, stdout, stderr } = await restCtx(logPages(), { json: false });
+    await share.run(cli, ['replay', 's-1', '--speed', '0']);
+    expect(stdout.text()).toBe('hixy');
+    expect(stderr.text()).toBe('');
   });
 });

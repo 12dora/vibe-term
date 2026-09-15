@@ -27,9 +27,11 @@ import {
   signRecord,
   withRootKey,
 } from './nodes-keylog';
+import type { RelayQuotaView } from './nodes-relay-quota';
 import { type AdminNode, findAdminNode, isTrustedPublicUrl, joinCommand } from './nodes-roster';
 
 export type { RelayUplinkMode };
+export type { RelayQuotaUsageView, RelayQuotaView } from './nodes-relay-quota';
 
 /** 读侧宽松：旧节点 JSON 可能缺字段；`caFingerprint` 是 CLI 回退钉扎用的额外键。 */
 export type RelayStatusRow = Partial<RelayStatusRowDto> & {
@@ -43,6 +45,32 @@ export interface RelayStatusJson {
   relays?: RelayStatusRow[];
   metaEpoch?: number;
   caFingerprint?: string | null;
+  quota?: RelayQuotaView | null;
+}
+
+/**
+ * `nodes enroll --password` is a boolean switch; `nodes relay password set --password <v>`
+ * needs a string value. Bare `--password` (no following value) is rewritten to `--password=`
+ * so the group can keep a single string flag.
+ */
+export function rewriteBarePasswordFlag(argv: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === '--') {
+      out.push(...argv.slice(index));
+      break;
+    }
+    if (token === '--password') {
+      const next = argv[index + 1];
+      if (next === undefined || next.startsWith('-')) {
+        out.push('--password=');
+        continue;
+      }
+    }
+    out.push(token);
+  }
+  return out;
 }
 
 export async function fetchRelayStatus(ctx: CliContext): Promise<RelayStatusJson | null> {

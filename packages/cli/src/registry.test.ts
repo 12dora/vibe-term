@@ -17,6 +17,7 @@ const DISPATCHED_GROUPS = [
   'nodes',
   'devices',
   'tmux',
+  'sessions',
   'term',
   'files',
   'cp',

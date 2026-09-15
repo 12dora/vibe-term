@@ -8,8 +8,8 @@ import {
   encodeAdmitNodePayload,
 } from '@vibeterm/shared/auth';
 import type { CliContext } from './context';
-import { CliError } from './errors';
-import { httpStatusError } from './http';
+import { CliError, NetworkError, NotFoundError, UsageError } from './errors';
+import { httpStatusError, loginRequiredError } from './http';
 import {
   type KeyLogAppendResult,
   appendKeyLog,
@@ -54,8 +54,15 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   return {};
 }
 
+function nestedErrorCode(error: unknown): string | null {
+  if (typeof error === 'string') return error;
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+
 function codeOf(body: Record<string, unknown>): string | null {
-  return typeof body.code === 'string' ? body.code : null;
+  return typeof body.code === 'string' ? body.code : nestedErrorCode(body.error);
 }
 
 export async function removeRelayPrepare(
@@ -130,6 +137,147 @@ export interface ReadmitCliResult {
   failed: number;
   total: number;
   results: KeyLogAppendResult[];
+}
+
+export type RelayEnrollPasswordView = {
+  known: boolean;
+  password: string | null;
+  passwordEpoch: number | null;
+};
+
+export type RelayRotateEnrollPasswordRequest = {
+  url: string;
+  current?: string;
+  next: string | null;
+  mode: 'keep' | 'kick';
+};
+
+const RELAY_PASSWORD_PATH = '/api/mesh/relay/password';
+
+function extraNumber(body: Record<string, unknown>, key: string): number | undefined {
+  const direct = body[key];
+  if (typeof direct === 'number' && Number.isFinite(direct)) return direct;
+  const nested = body.error;
+  if (nested && typeof nested === 'object') {
+    const value = (nested as Record<string, unknown>)[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return undefined;
+}
+
+function membersOfflineError(body: Record<string, unknown>): CliError {
+  const online = extraNumber(body, 'online');
+  const admitted = extraNumber(body, 'admitted');
+  const counted =
+    online !== undefined && admitted !== undefined ? ` ${online}/${admitted} online` : '';
+  return new CliError(
+    `members are offline (relay_members_offline)${counted}`,
+    1,
+    undefined,
+    'relay_members_offline'
+  );
+}
+
+function rateLimitedError(body: Record<string, unknown>): CliError {
+  const retry = extraNumber(body, 'retryAfterMs');
+  return new CliError(
+    `rate limited (relay_rate_limited)${retry !== undefined ? `; retry after ${retry}ms` : ''}`,
+    1,
+    undefined,
+    'relay_rate_limited'
+  );
+}
+
+const PASSWORD_CODE_ERRORS: Record<string, (body: Record<string, unknown>) => CliError> = {
+  relay_password_invalid: () =>
+    new CliError(
+      'current enroll password is invalid (relay_password_invalid)',
+      1,
+      undefined,
+      'relay_password_invalid'
+    ),
+  INVALID_URL: () => new UsageError('invalid relay url (INVALID_URL)'),
+  MALFORMED: () => new UsageError('malformed enroll-password request (MALFORMED)'),
+  relay_password_too_short: () =>
+    new UsageError('enroll password must be at least 8 characters (relay_password_too_short)'),
+  relay_password_unset: () =>
+    new CliError(
+      'enroll password is not set on the relay (relay_password_unset)',
+      1,
+      undefined,
+      'relay_password_unset'
+    ),
+  relay_members_offline: membersOfflineError,
+  relay_rate_limited: rateLimitedError,
+  relay_unreachable: () => new NetworkError('relay unreachable (relay_unreachable)'),
+};
+
+function throwRelayPasswordError(
+  status: number,
+  body: Record<string, unknown>,
+  raw: string
+): never {
+  const code = codeOf(body);
+  if (status === 401 && (code === 'UNAUTHORIZED' || !code)) {
+    throw loginRequiredError(SELF_NODE_ID, raw);
+  }
+  if (code === 'relay_not_attached' || (status === 404 && code !== 'INVALID_URL')) {
+    throw new NotFoundError(
+      `relay not attached (${code ?? '404'})`,
+      'run: vibeterm nodes relay ls'
+    );
+  }
+  const mapped = code ? PASSWORD_CODE_ERRORS[code] : undefined;
+  if (mapped) throw mapped(body);
+  if (status === 502) throw new NetworkError('relay unreachable (HTTP 502)');
+  throw httpStatusError(SELF_NODE_ID, RELAY_PASSWORD_PATH, status, raw);
+}
+
+async function relayPasswordResponse(
+  ctx: CliContext,
+  init: { method: string; path: string; body?: unknown }
+): Promise<Record<string, unknown>> {
+  const response = await ctx.http.fetch(SELF_NODE_ID, init.path, {
+    method: init.method,
+    ...(init.body === undefined
+      ? {}
+      : {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(init.body),
+        }),
+  });
+  const body = await readJson(response);
+  if (response.ok) return body;
+  throwRelayPasswordError(response.status, body, JSON.stringify(body));
+}
+
+export function enrollPasswordView(body: Record<string, unknown>): RelayEnrollPasswordView {
+  return {
+    known: body.known === true,
+    password: typeof body.password === 'string' ? body.password : null,
+    passwordEpoch: typeof body.passwordEpoch === 'number' ? body.passwordEpoch : null,
+  };
+}
+
+export async function fetchEnrollPassword(
+  ctx: CliContext,
+  url: string
+): Promise<Record<string, unknown>> {
+  return relayPasswordResponse(ctx, {
+    method: 'GET',
+    path: `${RELAY_PASSWORD_PATH}?url=${encodeURIComponent(url)}`,
+  });
+}
+
+export async function rotateEnrollPassword(
+  ctx: CliContext,
+  request: RelayRotateEnrollPasswordRequest
+): Promise<Record<string, unknown>> {
+  return relayPasswordResponse(ctx, {
+    method: 'POST',
+    path: RELAY_PASSWORD_PATH,
+    body: request,
+  });
 }
 
 export async function readmitStaleMembers(ctx: CliContext): Promise<ReadmitCliResult> {
