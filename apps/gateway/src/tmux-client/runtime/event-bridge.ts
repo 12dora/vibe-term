@@ -136,7 +136,9 @@ export class RuntimeEventBridge {
 
   private broadcastLayoutGeometry(event: TmuxSourceMetadataEvent): void {
     if (event.type !== 'layout-change') return;
-    const parsed = parseWindowLayout(event.layout);
+    const parsed =
+      (event.visibleLayout ? parseWindowLayout(event.visibleLayout) : null) ??
+      parseWindowLayout(event.layout);
     if (!parsed) return;
     const panes: Array<{ paneId: string; cols: number; rows: number }> = [];
     for (const leaf of collectLayoutLeaves(parsed.root)) {

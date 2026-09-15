@@ -201,7 +201,7 @@ describe('control mode subscription', () => {
     subscription.push(lines('%window-add @1', '%layout-change @1 x y !', '%window-renamed @1 zsh'));
     expect(collected.structureChanges).toBe(0);
     expect(collected.metadata).toEqual([
-      { type: 'layout-change', windowId: '@1', layout: 'x' },
+      { type: 'layout-change', windowId: '@1', layout: 'x', visibleLayout: 'y', flags: '!' },
       { type: 'window-renamed', windowId: '@1', name: 'zsh' },
     ]);
     await Bun.sleep(80);

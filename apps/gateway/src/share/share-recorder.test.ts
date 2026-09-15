@@ -255,19 +255,17 @@ describe('ShareRecorder', () => {
     await harness.recorder.stop();
   });
 
-  test('recordInput / recordResize 不因 pane 尚未同步而丢失（作用域由 ws 层保证）', async () => {
+  test('recordInput 不因 pane 尚未同步而丢失（作用域由 ws 层保证）', async () => {
     const harness = makeHarness(snapshot({ '@1': ['%1'] }));
     await harness.recorder.start();
     harness.recorder.recordInput('%1', new TextEncoder().encode('ls\r'));
     harness.recorder.recordInput('%1', new Uint8Array(0));
     harness.recorder.recordInput('%9', new TextEncoder().encode('late'));
-    harness.recorder.recordResize('%1', 120, 40);
     harness.recorder.flush();
     const kinds = harness.entries.map((entry) => entry.kind);
-    expect(kinds).toEqual(['checkpoint', 'in', 'in', 'resize']);
+    expect(kinds).toEqual(['checkpoint', 'in', 'in']);
     expect(decode(harness.entries[1])).toBe('ls\r');
     expect(harness.entries[2]).toMatchObject({ paneId: '%9' });
-    expect(harness.entries[3]).toMatchObject({ cols: 120, rows: 40 });
     await harness.recorder.stop();
   });
 
@@ -378,23 +376,7 @@ describe('ShareRecorder', () => {
     expect(harness.entries).toHaveLength(before);
   });
 
-  test('sync 轮询发现快照尺寸变化时补一条 resize', async () => {
-    const harness = makeHarness(snapshot({ '@1': ['%1'] }));
-    await harness.recorder.start();
-    harness.recorder.flush();
-    const pane = harness.runtime.current.session?.windows[0]?.panes[0];
-    if (!pane) throw new Error('expected pane');
-    pane.width = 120;
-    pane.height = 40;
-    await harness.recorder.sync();
-    harness.recorder.flush();
-    const resizes = harness.entries.filter((entry) => entry.kind === 'resize');
-    expect(resizes).toHaveLength(1);
-    expect(resizes[0]).toMatchObject({ paneId: '%1', cols: 120, rows: 40 });
-    await harness.recorder.stop();
-  });
-
-  test('checkpoint 尺寸与快照不一致时立刻补 resize', async () => {
+  test('快照尺寸与 lastSize 不同也不写 resize（快照不是尺寸源）', async () => {
     const harness = makeHarness(snapshot({ '@1': ['%1'] }));
     harness.runtime.checkpointCols = 52;
     harness.runtime.checkpointRows = 47;
@@ -404,9 +386,42 @@ describe('ShareRecorder', () => {
     pane.height = 40;
     await harness.recorder.start();
     harness.recorder.flush();
-    expect(harness.entries.map((entry) => entry.kind)).toEqual(['checkpoint', 'resize']);
+    expect(harness.entries.map((entry) => entry.kind)).toEqual(['checkpoint']);
     expect(harness.entries[0]).toMatchObject({ cols: 52, rows: 47 });
-    expect(harness.entries[1]).toMatchObject({ paneId: '%1', cols: 120, rows: 40 });
+    pane.width = 200;
+    pane.height = 60;
+    await harness.recorder.sync();
+    harness.recorder.flush();
+    expect(harness.entries.filter((entry) => entry.kind === 'resize')).toHaveLength(0);
     await harness.recorder.stop();
+  });
+
+  test('pendingSize 与 checkpoint 尺寸相同不写 resize', async () => {
+    const runtime = new FakeRuntime(snapshot({ '@1': ['%1'] }));
+    let openGate = () => {};
+    runtime.gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const entries: ShareLogAppend[] = [];
+    const recorder = new ShareRecorder('sh1', 'dev-1', '@1', {
+      acquireRuntime: async () => runtime,
+      releaseRuntime: async () => {},
+      appendLog: (_id, batch) => {
+        entries.push(...batch);
+        return { truncated: false };
+      },
+      now: () => 1,
+      flushIntervalMs: 1_000,
+      pollIntervalMs: 1_000,
+    });
+    const started = recorder.start();
+    await Bun.sleep(1);
+    runtime.emitGeometry('@1', [{ paneId: '%1', cols: 80, rows: 24 }]);
+    openGate();
+    await started;
+    recorder.flush();
+    expect(entries.map((entry) => entry.kind)).toEqual(['checkpoint']);
+    expect(entries[0]).toMatchObject({ cols: 80, rows: 24 });
+    await recorder.stop();
   });
 });

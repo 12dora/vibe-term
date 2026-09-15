@@ -171,6 +171,54 @@ describe('RuntimeEventBridge', () => {
     historyReader.dispose();
   });
 
+  test('layout-change prefers visibleLayout when zoomed (full-window leaf)', () => {
+    const metadata = new MetadataProjection('device-a', { deviceName: 'Mac' });
+    const paneRetention = new PaneRetention();
+    const historyReader = new PaneHistoryReader({
+      getPaneHistoryCaptureInfo: async () => ({ historySize: 0, cols: 80 }),
+      capturePaneHistoryRange: async () => '',
+    });
+    let lastSnapshot: StateSnapshotPayload | null = null;
+    const geometries: Array<{
+      windowId: string;
+      panes: ReadonlyArray<{ paneId: string; cols: number; rows: number }>;
+    }> = [];
+    const bridge = new RuntimeEventBridge({
+      metadata,
+      paneRetention,
+      getHistoryReader: () => historyReader,
+      getLastSnapshot: () => lastSnapshot,
+      setLastSnapshot: (payload) => {
+        lastSnapshot = payload;
+      },
+      broadcast: (action) => {
+        action({
+          onPaneGeometry: (windowId, panes) => geometries.push({ windowId, panes }),
+        });
+      },
+      handleUnexpectedClose: () => undefined,
+    });
+    const options = bridge.connectionOptions({ deviceId: 'device-a' });
+    options.onSourceReady?.(SERVER_EPOCH);
+    options.onSnapshot(snapshot());
+    options.onSourceMetadata?.({
+      type: 'layout-change',
+      windowId: '@1',
+      layout: 'aaaa,80x24,0,0{40x24,0,0,1,39x24,41,0,2}',
+      visibleLayout: 'bbbb,80x24,0,0,1',
+      flags: 'Z',
+    });
+    expect(geometries).toEqual([
+      {
+        windowId: '@1',
+        panes: [{ paneId: '%1', cols: 80, rows: 24 }],
+      },
+    ]);
+    paneRetention.dispose();
+    metadata.dispose();
+    historyReader.dispose();
+  });
+
   test('metadata patch callback applies a legacy snapshot diff', () => {
     const paneRetention = new PaneRetention();
     const historyReader = new PaneHistoryReader({

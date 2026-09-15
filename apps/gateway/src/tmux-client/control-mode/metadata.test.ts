@@ -8,6 +8,13 @@ describe('ControlModeMetadataBridge', () => {
       type: 'layout-change',
       windowId: '@1',
       layout: 'x',
+      visibleLayout: 'y',
+      flags: '!',
+    });
+    expect(bridge.parse({ type: 'layout-change', args: '@1 only-layout', raw: '' })).toEqual({
+      type: 'layout-change',
+      windowId: '@1',
+      layout: 'only-layout',
     });
     expect(bridge.parse({ type: 'window-renamed', args: '@1 zsh', raw: '' })).toEqual({
       type: 'window-renamed',
