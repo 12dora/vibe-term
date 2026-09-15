@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { GATEWAY_CAPABILITY_DEVICE_LATENCY_V1 } from '@vibeterm/shared';
-import { serverSupportsDeviceLatency, serverSupportsTermViewport } from './server-features';
+import {
+  GATEWAY_CAPABILITY_DEVICE_LATENCY_V1,
+  GATEWAY_CAPABILITY_WINDOW_MEMORY_V1,
+} from '@vibeterm/shared';
+import {
+  serverSupportsDeviceLatency,
+  serverSupportsTermViewport,
+  serverSupportsWindowMemory,
+} from './server-features';
 
 describe('serverSupportsTermViewport', () => {
   test('1.1.7 起支持，更早的版本不发', () => {
@@ -21,5 +28,14 @@ describe('serverSupportsDeviceLatency', () => {
     expect(serverSupportsDeviceLatency(['canonical-state-v1.1'])).toBe(false);
     expect(serverSupportsDeviceLatency([])).toBe(false);
     expect(serverSupportsDeviceLatency(undefined)).toBe(false);
+  });
+});
+
+describe('serverSupportsWindowMemory', () => {
+  test('只认 HELLO 里播报的能力，不猜版本', () => {
+    expect(serverSupportsWindowMemory([GATEWAY_CAPABILITY_WINDOW_MEMORY_V1])).toBe(true);
+    expect(serverSupportsWindowMemory([GATEWAY_CAPABILITY_DEVICE_LATENCY_V1])).toBe(false);
+    expect(serverSupportsWindowMemory([])).toBe(false);
+    expect(serverSupportsWindowMemory(undefined)).toBe(false);
   });
 });

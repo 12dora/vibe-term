@@ -1,0 +1,156 @@
+// 设备页右上角的窗口内存徽标：当前窗口内所有 systemd pane scope 的内存合计。
+//
+// 数据与链路徽标分开走：链路按 node，内存按「设备 + 当前路由选中的窗口」。宿主不支持
+// （非 Linux / 无 cgroup v2 / 无 systemd --user）或网关没播报 window-memory-v1 时整块不渲染，
+// 而不是显示一个恒为 0 的读数。
+
+import { TONE_CLASS } from '@/lib/tone';
+import { formatBytes } from '@vibeterm/api-client';
+import {
+  type WindowMemorySample,
+  composeWindowMemorySample,
+  freshWindowMemory,
+  selectWindowMemoryField,
+  windowMemoryExpiryDelayMs,
+} from '@vibeterm/stores';
+import type { TmuxState } from '@vibeterm/stores/tmux-state';
+import { cn } from '@vibeterm/ui';
+import { MemoryStick } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useNodeTmuxStore, useTmuxSlice } from './tmux-slice';
+
+export type WindowMemoryTone = 'ok' | 'warn' | 'blocked';
+
+/** 到软限额的这个比例就转黄：再往上内核就要开始限速回收了。 */
+const WARN_RATIO = 0.75;
+
+const TONE_CHIP_CLASS: Record<WindowMemoryTone, string> = {
+  ok: TONE_CLASS.badge.ok,
+  warn: TONE_CLASS.chip.warn,
+  blocked: TONE_CLASS.chip.blocked,
+};
+
+/** 未设限（cgroup 值为 `max`）在 wire 上是 0。 */
+const UNLIMITED = '∞';
+
+export function windowMemoryTone(sample: WindowMemorySample): WindowMemoryTone {
+  // 粘性 OOM 标记压过一切：现在用量低不代表这个窗口没被杀过。
+  if (sample.oomFlag) return 'blocked';
+  if (sample.high <= 0) return 'ok';
+  if (sample.current >= sample.high) return 'blocked';
+  return sample.current >= sample.high * WARN_RATIO ? 'warn' : 'ok';
+}
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+function formatLimit(bytes: number): string {
+  return bytes > 0 ? formatBytes(bytes) : UNLIMITED;
+}
+
+export function windowMemoryTooltipLines(t: Translate, sample: WindowMemorySample): string[] {
+  const lines = [
+    `${t('window.memory')}: ${formatBytes(sample.current)}`,
+    `${t('window.memoryLimitHigh')}: ${formatLimit(sample.high)}`,
+    `${t('window.memoryLimitMax')}: ${formatLimit(sample.max)}`,
+    `${t('window.memorySwapMax')}: ${formatLimit(sample.swapMax)}`,
+  ];
+  // 粘性标记还在、计数器却随 scope 重建清零时，至少发生过一次——写 0 次会把结论说反。
+  if (sample.oomFlag || sample.oomKills > 0) {
+    lines.push(t('window.memoryOom', { count: Math.max(sample.oomKills, 1) }));
+  }
+  return lines;
+}
+
+/**
+ * 徽标读时间的唯一入口：**不做周期性 tick**。过期时刻由这一帧的到达时刻（本地盖章）算得出来，
+ * 只在那一刻醒一次；新样本带来新的 `receivedAt`，定时器随之重排。
+ */
+function useWindowMemoryClock(receivedAt: number | null): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const delay = windowMemoryExpiryDelayMs(receivedAt, Date.now());
+    if (delay === null) return;
+    const timer = setTimeout(() => setNow(Date.now()), delay);
+    return () => clearTimeout(timer);
+  }, [receivedAt]);
+
+  return now;
+}
+
+/** 逐字段订阅：网关每 30 s 重发一帧心跳，整对象订阅会让徽标每帧空转。 */
+function useWindowMemorySample(
+  nodeId: string,
+  deviceId: string | undefined,
+  windowId: string | undefined
+): WindowMemorySample | null {
+  const store = useNodeTmuxStore(nodeId);
+  const read =
+    <K extends keyof WindowMemorySample>(key: K) =>
+    (state: TmuxState) =>
+      selectWindowMemoryField(state.windowMemory, deviceId, windowId, key);
+  const current = useTmuxSlice(store, read('current'));
+  const high = useTmuxSlice(store, read('high'));
+  const max = useTmuxSlice(store, read('max'));
+  const swapMax = useTmuxSlice(store, read('swapMax'));
+  const oomKills = useTmuxSlice(store, read('oomKills'));
+  const oomFlag = useTmuxSlice(store, read('oomFlag'));
+  const panes = useTmuxSlice(store, read('panes'));
+  const sampledAt = useTmuxSlice(store, read('sampledAt'));
+  const receivedAt = useTmuxSlice(store, read('receivedAt'));
+  return useMemo(
+    () =>
+      composeWindowMemorySample({
+        current,
+        high,
+        max,
+        swapMax,
+        oomKills,
+        oomFlag,
+        panes,
+        sampledAt,
+        receivedAt,
+      }),
+    [current, high, max, swapMax, oomKills, oomFlag, panes, sampledAt, receivedAt]
+  );
+}
+
+export interface WindowMemoryBadgeProps {
+  nodeId: string;
+  /** 当前设备与路由选中的窗口；任一缺席就没有可展示的读数。 */
+  deviceId?: string;
+  windowId?: string;
+}
+
+export function WindowMemoryBadge({ nodeId, deviceId, windowId }: WindowMemoryBadgeProps) {
+  const { t } = useTranslation();
+  const sample = useWindowMemorySample(nodeId, deviceId, windowId);
+  const now = useWindowMemoryClock(sample?.receivedAt ?? null);
+  const fresh = freshWindowMemory(sample, now);
+  if (!fresh) return null;
+
+  const tone = windowMemoryTone(fresh);
+  const lines = windowMemoryTooltipLines(t, fresh);
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
+        TONE_CHIP_CLASS[tone]
+      )}
+      data-testid="window-memory-badge"
+      data-tone={tone}
+      title={lines.join('\n')}
+      aria-label={lines.join(' · ')}
+    >
+      <MemoryStick className="h-3 w-3 shrink-0" />
+      <span className="truncate">{formatBytes(fresh.current)}</span>
+      {fresh.oomFlag && (
+        <span
+          className={cn('h-1.5 w-1.5 shrink-0 rounded-full', TONE_CLASS.dot.blocked)}
+          data-testid="window-memory-oom-dot"
+        />
+      )}
+    </span>
+  );
+}

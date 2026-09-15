@@ -4,6 +4,7 @@
 import { useGlobalDevice } from '@/components/global-device-provider';
 import { DeviceNodeBadges } from '@/node/device-node-badges';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
+import { WindowMemoryBadge } from '@/node/window-memory-badge';
 import {
   DeviceConsole,
   DeviceConsoleActions,
@@ -35,13 +36,15 @@ export function PageTitle(params: DeviceRouteParams) {
   return <DeviceConsolePageTitle {...params} />;
 }
 
-// 头部动作区：先放链路徽标（浏览器 → node → tmux 的合计延迟），再放控制台动作。
-// 徽标要按设备取宿主那一跳的读数，因此把路由里的 deviceId 递下去。
+// 头部动作区：先放链路徽标（浏览器 → node → tmux 的合计延迟），再放当前窗口的内存徽标，
+// 最后是控制台动作。链路徽标按设备取宿主那一跳的读数，内存徽标还要再按路由选中的窗口取，
+// 因此把路由里的 deviceId / windowId 一并递下去。
 export function PageActions(params: DeviceRouteParams) {
   const nodeId = useRouteNodeId();
   return (
     <>
       <DeviceNodeBadges nodeId={nodeId} deviceId={params.deviceId} />
+      <WindowMemoryBadge nodeId={nodeId} deviceId={params.deviceId} windowId={params.windowId} />
       <DeviceConsoleActions {...params} />
     </>
   );

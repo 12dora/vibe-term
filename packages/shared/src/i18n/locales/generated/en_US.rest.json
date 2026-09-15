@@ -236,6 +236,25 @@
         "remoteAccess": "Remote access"
       },
       "nodes": {
+        "memory": {
+          "title": "Memory limits",
+          "description": "Caps how much memory the processes in each window may use. Requires Linux with systemd (tmux 3.6 or newer); other hosts ignore it.",
+          "enabled": "Apply memory limits",
+          "high": "Soft limit (MB)",
+          "highHint": "Above this the kernel throttles the window and reclaims its pages; nothing is killed.",
+          "max": "Hard limit (MB)",
+          "maxHint": "Above this the kernel kills processes in the window.",
+          "swapMax": "Swap limit (MB)",
+          "interval": "Sample interval (seconds)",
+          "intervalHint": "Between {{min}} and {{max}} seconds.",
+          "unlimitedHint": "0 = unlimited",
+          "invalidMb": "Enter a whole number between 0 and {{max}}.",
+          "invalidInterval": "Enter a whole number between {{min}} and {{max}}.",
+          "highAboveMax": "The soft limit must not exceed the hard limit.",
+          "loadFailed": "Failed to load memory limits: {{message}}",
+          "saveFailed": "Failed to save memory limits: {{message}}",
+          "saved": "Memory limits saved"
+        },
         "routeMode": {
           "title": "Latency optimisation",
           "loadFailed": "Failed to load route mode: {{message}}",

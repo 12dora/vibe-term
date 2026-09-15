@@ -22,3 +22,4 @@ export * from './mesh-route';
 export * from './terminal-shortcuts';
 export * from './transfer';
 export * from './watch';
+export * from './window-memory';

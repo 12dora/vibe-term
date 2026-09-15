@@ -453,6 +453,12 @@
       "pane": "Terminal",
       "moveToWindow": "Move into this window",
       "breakToWindow": "Break into new window",
+      "memory": "Memory",
+      "memoryOom": "OOM killed {{count}}×",
+      "memoryLimitHigh": "Soft limit",
+      "memoryLimitMax": "Hard limit",
+      "memorySwapMax": "Swap limit",
+      "memoryScope": "Scope",
       "noWindowSelected": "No window selected",
       "selectWindowToStart": "Select a window to get started"
     },

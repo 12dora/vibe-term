@@ -23,6 +23,7 @@ import { useMemo, useSyncExternalStore } from 'react';
 import { getMeshNodesState, subscribeMeshNodes } from './mesh-nodes';
 import { appNodeRuntimes } from './node-runtimes';
 import { relayPresenceOf, viaRelayOf } from './relay-extras';
+import { useNodeTmuxStore, useTmuxSlice } from './tmux-slice';
 
 /** 浏览器 ↔ 该 node 的承载诊断。 */
 export function useDirectDiagnostics(nodeId: string): DirectDiagnostics {
@@ -154,21 +155,6 @@ export interface NodeLatency {
   hostHopSupported: boolean;
 }
 
-interface TmuxStateReader {
-  subscribe: (listener: () => void) => () => void;
-  getState: () => TmuxState;
-}
-
-/**
- * 按 nodeId 读该 node 运行时的 tmux store，不依赖 `RuntimeProvider`：徽标与
- * `useDirectDiagnostics` 一样以 nodeId 为准，页面区之外（以及服务端渲染）也能取到同一份值。
- * 选择器只取标量或 store 内稳定的对象引用，`useSyncExternalStore` 才不会每帧判定为变更。
- */
-function useTmuxSlice<T>(store: TmuxStateReader, select: (state: TmuxState) => T): T {
-  const read = () => select(store.getState());
-  return useSyncExternalStore(store.subscribe, read, read);
-}
-
 /**
  * 宿主一跳按**字段**读，不整对象读：网关每 15 s 重发一帧，读数一模一样，store 里换的却是一个
  * 新对象——整对象读会让 `useSyncExternalStore` 每次都判定为变更，徽标跟着空转。
@@ -197,10 +183,7 @@ export function composeHostHop(fields: {
 }
 
 export function useNodeLatency(nodeId: string, deviceId?: string): NodeLatency {
-  const store = useMemo<TmuxStateReader>(
-    () => appNodeRuntimes.get(nodeId).runtime.stores.tmux,
-    [nodeId]
-  );
+  const store = useNodeTmuxStore(nodeId);
   const browserToNodeMs = useTmuxSlice(store, (state) => state.wsLatencyMs);
   const browserToNodeRawMs = useTmuxSlice(store, (state) => state.wsLatencyRawMs ?? null);
   const hostHopSupported = useTmuxSlice(store, (state) => state.deviceLatencySupported === true);

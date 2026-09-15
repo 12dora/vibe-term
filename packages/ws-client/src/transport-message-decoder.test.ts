@@ -114,6 +114,40 @@ describe('decodeGatewayTransportMessage', () => {
     ]);
   });
 
+  test('window-memory：u64 字节降为 number，未设限的 0 原样透出', () => {
+    const { handled, events } = collect(
+      wsBorsh.KIND_WINDOW_MEMORY,
+      wsBorsh.encodePayload(wsBorsh.WindowMemorySchema, {
+        deviceId: 'dev-1',
+        windowId: '@3',
+        current: BigInt(9_663_676_416),
+        high: BigInt(8_589_934_592),
+        max: BigInt(0),
+        swapMax: BigInt(4_294_967_296),
+        oomKills: 2,
+        oomFlag: true,
+        panes: 3,
+        sampledAt: BigInt(1_700_000_000_000),
+      })
+    );
+    expect(handled).toBe(true);
+    expect(events).toEqual([
+      {
+        type: 'window-memory',
+        deviceId: 'dev-1',
+        windowId: '@3',
+        current: 9_663_676_416,
+        high: 8_589_934_592,
+        max: 0,
+        swapMax: 4_294_967_296,
+        oomKills: 2,
+        oomFlag: true,
+        panes: 3,
+        sampledAt: 1_700_000_000_000,
+      },
+    ]);
+  });
+
   test('clipboard-write', () => {
     const { events } = collect(
       wsBorsh.KIND_CLIPBOARD_WRITE,

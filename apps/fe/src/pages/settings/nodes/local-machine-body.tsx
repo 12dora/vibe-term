@@ -1,4 +1,4 @@
-// 本机卡的四段正文：连接 → 中继服务 → 网络。段与段之间只有小标题，没有折叠、没有 tab。
+// 本机卡的四段正文：连接 → 中继服务 → 内存限额 → 网络。段与段之间只有小标题，没有折叠、没有 tab。
 //
 // 卡片的状态门禁（未登录 / 加载中 / 读取失败）在这里之前就分完了，进到这里一定有一份
 // 完整的 `status` 与 `direct`。
@@ -16,6 +16,7 @@ import { CardSection } from './card-parts';
 import type { DomainAccessApi } from './domain-access-row';
 import type { SetupIntent } from './membership/intent';
 import { isRelayRole } from './membership/role-transition';
+import { MemoryLimitsSection } from './memory-limits-section';
 import { NetworkSection } from './network-section';
 import { asPortRole, portPlanFromStatus, portPlanOrFallback } from './port-reach';
 import { RelayServiceSection } from './relay-service-section';
@@ -70,6 +71,10 @@ export function LocalMachineBody(props: LocalMachineBodyProps) {
           <RelayServiceSection service={service} />
         </CardSection>
       )}
+
+      <CardSection title={t('settings.nodes.memory.title')} testId="local-machine-memory">
+        <MemoryLimitsSection />
+      </CardSection>
 
       <CardSection title={t('nodes.machine.sections.network')} testId="local-machine-network">
         <NetworkSection

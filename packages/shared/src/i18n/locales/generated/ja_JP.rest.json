@@ -236,6 +236,25 @@
         "remoteAccess": "リモートアクセス"
       },
       "nodes": {
+        "memory": {
+          "title": "メモリ上限",
+          "description": "各ウィンドウ内のプロセスが使えるメモリを制限します。Linux と systemd（tmux 3.6 以降）が必要で、他のホストでは無視されます。",
+          "enabled": "メモリ上限を適用",
+          "high": "ソフト上限（MB）",
+          "highHint": "これを超えるとカーネルが該当ウィンドウを抑制してページを回収します（強制終了はしません）。",
+          "max": "ハード上限（MB）",
+          "maxHint": "これを超えるとカーネルがウィンドウ内のプロセスを強制終了します。",
+          "swapMax": "スワップ上限（MB）",
+          "interval": "サンプリング間隔（秒）",
+          "intervalHint": "{{min}}〜{{max}} 秒の範囲で指定します。",
+          "unlimitedHint": "0 = 無制限",
+          "invalidMb": "0 から {{max}} までの整数を入力してください。",
+          "invalidInterval": "{{min}} から {{max}} までの整数を入力してください。",
+          "highAboveMax": "ソフト上限はハード上限を超えられません。",
+          "loadFailed": "メモリ上限の読み込みに失敗しました：{{message}}",
+          "saveFailed": "メモリ上限の保存に失敗しました：{{message}}",
+          "saved": "メモリ上限を保存しました"
+        },
         "routeMode": {
           "title": "遅延最適化",
           "loadFailed": "経路モードの読み込みに失敗しました：{{message}}",

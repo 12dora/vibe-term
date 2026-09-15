@@ -4,7 +4,11 @@
 // 收到就回 ERROR_UNKNOWN_KIND；客户端据此在发送侧静默丢弃，避免每次切 pane 刷一条错误。
 // 版本无法解析（开发态的 `1.1.9_dev`、空串等）一律按新版处理，宁可多发不可少发。
 
-import { GATEWAY_CAPABILITY_DEVICE_LATENCY_V1, compareSemver } from '@vibeterm/shared';
+import {
+  GATEWAY_CAPABILITY_DEVICE_LATENCY_V1,
+  GATEWAY_CAPABILITY_WINDOW_MEMORY_V1,
+  compareSemver,
+} from '@vibeterm/shared';
 
 export const TERM_VIEWPORT_MIN_SERVER_VERSION = '1.1.7';
 
@@ -21,4 +25,12 @@ export function serverSupportsTermViewport(serverVersion: string | null): boolea
  */
 export function serverSupportsDeviceLatency(capabilities?: readonly string[]): boolean {
   return capabilities?.includes(GATEWAY_CAPABILITY_DEVICE_LATENCY_V1) ?? false;
+}
+
+/**
+ * 网关是否播报窗口内存（systemd pane scope 聚合）。没播报的旧节点永远不发 WINDOW_MEMORY
+ * 帧，UI 据此干脆不渲染内存徽标，而不是显示一个恒为 0 的读数。
+ */
+export function serverSupportsWindowMemory(capabilities?: readonly string[]): boolean {
+  return capabilities?.includes(GATEWAY_CAPABILITY_WINDOW_MEMORY_V1) ?? false;
 }
