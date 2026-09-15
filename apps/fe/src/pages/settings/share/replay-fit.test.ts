@@ -8,6 +8,7 @@ import {
   type ReplayFitInput,
   cellWidthRatioFrom,
   computeReplayFitFontSize,
+  replayFitCanMount,
   replayFitCellSize,
   sameReplayFitGrid,
 } from './replay-fit';
@@ -44,6 +45,41 @@ describe('replayFitCellSize', () => {
     expect(
       replayFitCellSize(1, { cellWidthRatio: 0.01, lineHeight: 0.01, devicePixelRatio: 0 })
     ).toEqual({ width: 1, height: 1 });
+  });
+
+  // 浏览器缩小到 dpr < 1：ghostty 的 measureCellDimensions 把 dpr 夹到 1，这里必须一致，
+  // 否则算出来的 cell 比实际小，字号会选大一档、内容溢出外框翻成平移。
+  test('dpr < 1 与 ghostty 一样夹到 1', () => {
+    const half = replayFitCellSize(11, { ...METRICS, devicePixelRatio: 0.5 });
+    const one = replayFitCellSize(11, { ...METRICS, devicePixelRatio: 1 });
+    expect(half).toEqual(one);
+    expect(half).toEqual({ width: 7, height: 13 });
+  });
+});
+
+describe('replayFitCanMount', () => {
+  const frame = { width: 1120, height: 660, settled: true };
+  const grid = { cols: 80, rows: 24 };
+
+  test('外框量到且网格已知才放行开面', () => {
+    expect(replayFitCanMount({ frame, grid, logSettled: false })).toBe(true);
+  });
+
+  test('开窗动画还没结束就先不开面', () => {
+    expect(
+      replayFitCanMount({ frame: { ...frame, settled: false }, grid, logSettled: false })
+    ).toBe(false);
+  });
+
+  test('外框还没有尺寸不开面', () => {
+    expect(
+      replayFitCanMount({ frame: { width: 0, height: 0, settled: true }, grid, logSettled: false })
+    ).toBe(false);
+  });
+
+  test('网格没到手时等日志；日志拉完还没有网格就按基准字号开面', () => {
+    expect(replayFitCanMount({ frame, grid: null, logSettled: false })).toBe(false);
+    expect(replayFitCanMount({ frame, grid: null, logSettled: true })).toBe(true);
   });
 });
 

@@ -45,13 +45,15 @@ function clampFontSize(value: number): number {
 
 /**
  * 某字号下 ghostty 的 cell 像素尺寸：宽按 advance 实测、高恒为 `字号 × 行高`，
- * 两者都对齐到物理像素（terminal-dom.ts measureCellDimensions 的算法）。
+ * 两者都对齐到物理像素。dpr 与 ghostty 一样按 `Math.max(1, dpr)` 夹住
+ * （terminal-dom.ts measureCellDimensions）——浏览器缩小到 dpr < 1 时若不夹，
+ * 这里会算出比 ghostty 实际用的更小的 cell，字号就会选大一档而溢出外框。
  */
 export function replayFitCellSize(
   fontSize: number,
   metrics: ReplayFitMetrics
 ): { width: number; height: number } {
-  const dpr = metrics.devicePixelRatio > 0 ? metrics.devicePixelRatio : 1;
+  const dpr = Math.max(1, metrics.devicePixelRatio || 1);
   return {
     width: Math.max(1, Math.round(fontSize * metrics.cellWidthRatio * dpr)) / dpr,
     height: Math.max(1, Math.round(fontSize * metrics.lineHeight * dpr)) / dpr,
@@ -91,6 +93,24 @@ export function computeReplayFitFontSize(input: ReplayFitInput): number {
   while (size > REPLAY_FIT_MIN_FONT_SIZE && !fitsInFrame(size, grid, input)) size -= 1;
   while (size < REPLAY_FIT_MAX_FONT_SIZE && fitsInFrame(size + 1, grid, input)) size += 1;
   return size;
+}
+
+export interface ReplayFitMountInput {
+  /** 外框内尺寸 + 「首帧（含开窗动画）之后量过了」。 */
+  frame: { width: number; height: number; settled: boolean };
+  grid: ReplayFitGrid | null;
+  /** 日志已拉完：到这一步还没有网格就按基准字号开面。 */
+  logSettled: boolean;
+}
+
+/**
+ * 可以开面了吗。字号只在建面时生效，所以宁可晚一点开：外框没量到、或录像网格还没到手时
+ * 开出来的那一台必然要被换掉，用户会看到画面跳一下，选区也会丢。
+ */
+export function replayFitCanMount(input: ReplayFitMountInput): boolean {
+  if (!input.frame.settled) return false;
+  if (!(input.frame.width > 0) || !(input.frame.height > 0)) return false;
+  return input.grid !== null || input.logSettled;
 }
 
 export function sameReplayFitGrid(a: ReplayFitGrid | null, b: ReplayFitGrid | null): boolean {

@@ -159,6 +159,17 @@ export interface ReplayGrid {
 }
 
 /**
+ * 整份录像最早出现的网格（默认 pane 的第一条 checkpoint/resize）；一条都没有时为 null。
+ *
+ * 回放要按录像网格定字号，而字号只在终端建面时生效：不能等播放机把时间推到第一个
+ * checkpoint 才知道尺寸，第一页日志到手就得能算。
+ */
+export function firstReplayGrid(timeline: ReplayTimeline): ReplayGrid | null {
+  const found = timeline.panes[0]?.grids[0];
+  return found ? { cols: found.cols, rows: found.rows } : null;
+}
+
+/**
  * t 时刻（含）之前最后一条带行列数的事件（checkpoint / resize）给出的网格；没有则 null。
  *
  * 只有 checkpoint 与 resize 带行列数，而 checkpoint 通常只在 pane 首次纳入时打一次：

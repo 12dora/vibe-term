@@ -13,7 +13,7 @@ import { type ReactNode, type RefObject, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
 import { ReplayControls, ReplayInputTicker } from './replay-controls';
-import { buildReplayTimeline } from './replay-timeline';
+import { buildReplayTimeline, firstReplayGrid } from './replay-timeline';
 import { useReplayFit } from './use-replay-fit';
 import { useReplayLog } from './use-replay-log';
 import { useReplayPlayer } from './use-replay-player';
@@ -88,12 +88,14 @@ export function ReplayTerminalFrame({
 export function ReplayBody({ shareId }: { shareId: string }) {
   const { t } = useTranslation();
   const log = useReplayLog(shareId);
-  const fit = useReplayFit();
-  const terminal = useReplayTerminal(fit.fontSize);
   const timeline = useMemo(() => buildReplayTimeline(log.entries), [log.entries]);
+  // 开面尺寸取自时间轴里最早的网格（第一页日志就有），不等播放机推进到第一个 checkpoint。
+  const initialGrid = useMemo(() => firstReplayGrid(timeline), [timeline]);
+  const fit = useReplayFit({ initialGrid, logSettled: !log.loading });
+  const terminal = useReplayTerminal(fit.fontSize);
   const player = useReplayPlayer(timeline, terminal.handle, terminal.ready, terminal.generation);
 
-  // 录像网格决定字号，字号又要在终端建面时给出：先渲染，网格到了再回灌。
+  // 录像中途改尺寸 / 换 pane 时字号要跟着变；播放机给的是当前时刻的网格。
   const setFitGrid = fit.setGrid;
   const playerGrid = player.grid;
   useEffect(() => {
@@ -117,8 +119,8 @@ export function ReplayBody({ shareId }: { shareId: string }) {
 
       <ReplayTerminalFrame
         frameRef={fit.frameRef}
-        // 改字号会重建终端：只在首次就绪前显示加载态，之后重建只留外框衬底，不闪遮罩。
-        loading={log.loading || !terminal.booted}
+        // 遮罩一直盖到「适配后的那一台」就绪为止；之后换字号重建只留外框衬底，不再闪遮罩。
+        loading={log.loading || !terminal.booted || fit.pending}
         empty={empty}
         loadingLabel={t('settings.share.replay.loading', {
           loaded: log.entries.length,

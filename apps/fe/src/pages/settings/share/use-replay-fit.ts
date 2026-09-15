@@ -1,53 +1,91 @@
-// 回放外框的自适应字号：量外框 + 当前录像网格 → 算字号，交给只读终端重建。
-// 字号一变终端要重开一次（ghostty 的字号只在建面时生效），所以要防抖，
-// 免得拖窗口或录像里连着几条 resize 时反复重建。
+// 回放外框的自适应字号：量外框 + 录像网格 → 算字号，交给只读终端按这个字号开面。
+//
+// ghostty 的字号只在建面时生效，改字号 = 重建实例（清屏 + 从 checkpoint 重放，选区也会没）。
+// 所以开面本身要等齐两件事：外框量到了（且开窗动画已结束，否则 ghostty 量 cell 时会被
+// `zoom-in-95` 的 transform 缩小约 5%），以及录像网格已知（或确认整份日志都没有网格）。
+// 齐了之后第一个字号同步落地、不防抖——用户从头到尾只会看到一台终端。
+// 之后外框或网格再变（拖窗口、录像中途 resize）才走 120 ms 防抖，避免连续重建。
 
 import { useUIStore } from '@vibeterm/stores/react';
 import { schedulePostPaintRefit } from '@vibeterm/terminal-ui/components/hooks/read-only-terminal-session';
 import { ensureTerminalFonts } from '@vibeterm/terminal-ui/components/hooks/terminal-fonts-cache';
 import { resolveFontStack } from '@vibeterm/theme';
-import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   type ReplayFitGrid,
   clearCellWidthRatioCache,
   computeReplayFitFontSize,
   measureCellWidthRatio,
+  replayFitCanMount,
   sameReplayFitGrid,
 } from './replay-fit';
 
 const FONT_DEBOUNCE_MS = 120;
+/** 等开窗动画的兜底：拿不到 animationend / rAF 时也得让终端开起来。 */
+const FRAME_SETTLE_FALLBACK_MS = 300;
 
 interface FrameSize {
   width: number;
   height: number;
+  /** 首帧绘制（含开窗动画）之后量过了：此前不开面。 */
+  settled: boolean;
+}
+
+export interface ReplayFitOptions {
+  /** 录像里第一个网格（checkpoint/resize）；日志还没到时为 null。 */
+  initialGrid: ReplayFitGrid | null;
+  /** 日志已经拉完：到这一步还没有网格，就按设置里的字号开面。 */
+  logSettled: boolean;
 }
 
 export interface ReplayFitState {
   /** 挂到回放外框上：字号按这个元素的内尺寸算。 */
   frameRef: RefObject<HTMLDivElement | null>;
-  fontSize: number;
+  /** 开面用的字号；外框或网格还没齐时为 null，这时先别挂终端。 */
+  fontSize: number | null;
+  /** 适配后的第一台终端还没定下来：加载遮罩要一直盖到那时候。 */
+  pending: boolean;
   /** 录像网格变了就告诉它；同尺寸不会引起重渲染。 */
   setGrid: (grid: ReplayFitGrid | null) => void;
 }
 
 /** 外框内尺寸：用 clientWidth/Height，dialog 的 `zoom-in-95` 期间 bounding rect 会偏小。 */
 function useFrameSize(ref: RefObject<HTMLElement | null>): FrameSize {
-  const [size, setSize] = useState<FrameSize>({ width: 0, height: 0 });
-  useEffect(() => {
+  const [size, setSize] = useState<FrameSize>({ width: 0, height: 0, settled: false });
+  useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || typeof ResizeObserver !== 'function') return;
-    const read = () => {
-      const next = { width: el.clientWidth, height: el.clientHeight };
-      setSize((prev) => (prev.width === next.width && prev.height === next.height ? prev : next));
+    if (!el) return;
+    const read = (settled: boolean) => {
+      const width = el.clientWidth;
+      const height = el.clientHeight;
+      setSize((prev) => {
+        const nextSettled = prev.settled || settled;
+        if (prev.width === width && prev.height === height && prev.settled === nextSettled) {
+          return prev;
+        }
+        return { width, height, settled: nextSettled };
+      });
     };
-    read();
-    const observer = new ResizeObserver(read);
-    observer.observe(el);
-    // 开窗动画结束后再量一次：动画期间外框还没到最终尺寸。
-    const cancelRefit = schedulePostPaintRefit(el, read);
+    // 布局副作用里先量一次：没有开窗动画时不必等 ResizeObserver 的下一拍。
+    read(false);
+    const observer =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(() => read(false)) : null;
+    observer?.observe(el);
+    // 开窗动画结束后再量一次，并放行开面。
+    const cancelRefit = schedulePostPaintRefit(el, () => read(true));
+    const fallback = setTimeout(() => read(true), FRAME_SETTLE_FALLBACK_MS);
     return () => {
-      observer.disconnect();
+      observer?.disconnect();
       cancelRefit();
+      clearTimeout(fallback);
     };
   }, [ref]);
   return size;
@@ -78,27 +116,46 @@ function useCellWidthRatio(fontId: string, fontSize: number): number {
   return ratio;
 }
 
-function useDebouncedFontSize(target: number, initial: number): number {
-  const [fontSize, setFontSize] = useState(initial);
+/** 设备像素比：窗口拖到另一块屏幕时 CSS 尺寸可能一点没变，只能靠 resolution 查询盯着。 */
+function useDevicePixelRatio(): number {
+  const [dpr, setDpr] = useState(() => globalThis.devicePixelRatio ?? 1);
   useEffect(() => {
-    if (!(target > 0) || target === fontSize) return;
-    const timer = setTimeout(() => setFontSize(target), FONT_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [target, fontSize]);
-  return fontSize;
+    const media = globalThis.matchMedia?.(`(resolution: ${dpr}dppx)`);
+    if (!media?.addEventListener) return;
+    const onChange = () => setDpr(globalThis.devicePixelRatio ?? 1);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, [dpr]);
+  return dpr;
 }
 
-export function useReplayFit(): ReplayFitState {
+/** 第一个字号同步落地，之后的变化防抖。`active` 为假表示还不到开面的时候。 */
+function useFittedFontSize(target: number, active: boolean): number | null {
+  const [applied, setApplied] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!active || applied !== null || !(target > 0)) return;
+    setApplied(target);
+  }, [active, applied, target]);
+  useEffect(() => {
+    if (applied === null || target === applied || !(target > 0)) return;
+    const timer = setTimeout(() => setApplied(target), FONT_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [applied, target]);
+  return applied;
+}
+
+export function useReplayFit(options: ReplayFitOptions): ReplayFitState {
   const frameRef = useRef<HTMLDivElement>(null);
   const baseFontSize = useUIStore((state) => state.terminalFontSize);
   const lineHeight = useUIStore((state) => state.terminalLineHeight);
   const fontId = useUIStore((state) => state.terminalFontId);
   const cellWidthRatio = useCellWidthRatio(fontId, baseFontSize);
+  const devicePixelRatio = useDevicePixelRatio();
   const frame = useFrameSize(frameRef);
-  const [grid, setGridState] = useState<ReplayFitGrid | null>(null);
+  const [liveGrid, setLiveGrid] = useState<ReplayFitGrid | null>(null);
 
   const setGrid = useCallback((next: ReplayFitGrid | null) => {
-    setGridState((prev) => {
+    setLiveGrid((prev) => {
       // 拖回第一个 checkpoint 之前时录像网格会暂时为 null；这时留住上一次的尺寸，
       // 否则字号会在 基准值 ↔ 适配值 之间来回跳，每跳一次终端就重建一次。
       if (next === null || sameReplayFitGrid(prev, next)) return prev;
@@ -106,20 +163,25 @@ export function useReplayFit(): ReplayFitState {
     });
   }, []);
 
+  const grid = liveGrid ?? options.initialGrid;
   const target = useMemo(
     () =>
       computeReplayFitFontSize({
         grid,
-        frame,
+        frame: { width: frame.width, height: frame.height },
         baseFontSize,
-        metrics: {
-          cellWidthRatio,
-          lineHeight,
-          devicePixelRatio: globalThis.devicePixelRatio ?? 1,
-        },
+        metrics: { cellWidthRatio, lineHeight, devicePixelRatio },
       }),
-    [grid, frame, baseFontSize, cellWidthRatio, lineHeight]
+    [grid, frame.width, frame.height, baseFontSize, cellWidthRatio, lineHeight, devicePixelRatio]
   );
 
-  return { frameRef, fontSize: useDebouncedFontSize(target, baseFontSize), setGrid };
+  const canMount = replayFitCanMount({ frame, grid, logSettled: options.logSettled });
+  const fontSize = useFittedFontSize(target, canMount);
+  // 只认「第一台适配后的终端」：之后换字号也重建，但那时画面已经有内容，再盖遮罩只会闪。
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    if (!settled && fontSize !== null && fontSize === target) setSettled(true);
+  }, [settled, fontSize, target]);
+
+  return { frameRef, fontSize, pending: !settled, setGrid };
 }

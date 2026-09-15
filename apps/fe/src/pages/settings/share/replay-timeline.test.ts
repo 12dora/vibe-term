@@ -12,6 +12,7 @@ import {
   countEventsUntil,
   findCheckpointIndex,
   findReplayPane,
+  firstReplayGrid,
   formatReplayClock,
   formatReplayWallClock,
   nextReplaySpeed,
@@ -172,6 +173,24 @@ describe('replayGridAt', () => {
       entry({ seq: 2, at: BASE + 10, data: HI }),
     ]).panes;
     expect(replayGridAt(plain, 100)).toBeNull();
+  });
+});
+
+describe('firstReplayGrid', () => {
+  test('取默认 pane 最早的那条网格，第一页日志到手就能算字号', () => {
+    expect(firstReplayGrid(buildReplayTimeline(LOG))).toEqual({ cols: 80, rows: 24 });
+  });
+
+  test('整份录像没有 checkpoint / resize 时为 null', () => {
+    expect(
+      firstReplayGrid(
+        buildReplayTimeline([
+          entry({ seq: 1, at: BASE, data: HI }),
+          entry({ seq: 2, at: BASE + 10, data: HI }),
+        ])
+      )
+    ).toBeNull();
+    expect(firstReplayGrid(buildReplayTimeline([]))).toBeNull();
   });
 });
 

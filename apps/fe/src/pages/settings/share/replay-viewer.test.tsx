@@ -32,7 +32,7 @@ function findByTestId(node: ReactNode, testId: string): ReactElement | null {
 function hookWidget(): ReactElement {
   let widget: ReactElement | null = null;
   function Probe() {
-    widget = useReplayTerminal().widget;
+    widget = useReplayTerminal(13).widget;
     return null;
   }
   renderToStaticMarkup(<Probe />);
@@ -81,7 +81,9 @@ describe('ReplayTerminalFrame', () => {
 });
 
 describe('ReplayBody', () => {
-  test('正文带 share-replay-body，框里是共享 widget', () => {
+  // 首帧还没量到外框、也没拿到录像网格：这时开面的那一台必然要被适配后的替换掉，
+  // 所以终端先不挂，遮罩一直盖着。
+  test('外框与网格都没齐时不挂终端，遮罩仍盖着', () => {
     const runtime = createAppRuntime({
       nodeId: 'self',
       storagePrefix: `share-replay-viewer-${Date.now()}:`,
@@ -92,7 +94,8 @@ describe('ReplayBody', () => {
       </RuntimeProvider>
     );
     expect(html).toContain('data-testid="share-replay-body"');
-    expect(html).toContain('data-testid="share-replay-mount"');
+    expect(html).not.toContain('data-testid="share-replay-mount"');
+    expect(html).toContain('animate-spin');
     expect(html).toContain('h-[22rem]');
     expect(html).toContain('overflow-hidden');
     expect(html).toContain('data-testid="share-replay-controls"');
