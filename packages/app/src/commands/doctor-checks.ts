@@ -7,6 +7,7 @@ import { checkBunVersion } from '../lib/bun';
 import { defaultShimDirs, findLegacyMarkedShims } from '../lib/cli-shim';
 import { getInstallHintAsync } from '../lib/dep-install';
 import { readEnvFile } from '../lib/env-file';
+import type { FetchLike } from '../lib/fetch-like';
 import { pathExists } from '../lib/fs-utils';
 import { isSupportedPlatform } from '../lib/platform';
 import { runCommand } from '../lib/process';
@@ -335,28 +336,91 @@ export async function checkService(input: {
   ];
 }
 
-export async function checkHealth(host: string, port: string): Promise<DoctorCheck[]> {
-  const url = formatHttpEndpoint(rewriteWildcardBindHost(host), port, '/healthz');
-  const healthResponse = await fetch(url, {
-    signal: AbortSignal.timeout(3000),
-  }).catch(() => null);
-  if (!healthResponse?.ok) {
-    return [
-      {
-        id: 'healthz',
-        level: 'warn',
-        message: t('doctor.health.fail', { url }),
-      },
-    ];
+const HEALTHZ_TIMEOUT_MS = 3000;
+const HEALTHZ_ATTEMPTS = 2;
+export const HEALTHZ_RETRY_DELAY_MS = 1000;
+
+export interface CheckHealthOptions {
+  fetchImpl?: FetchLike;
+  serviceRunning?: boolean;
+  installDir?: string;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export function healthzUrl(host: string, port: string): string {
+  return formatHttpEndpoint(rewriteWildcardBindHost(host), port, '/healthz');
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function isHealthzTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = (err as { name?: unknown }).name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
+export async function probeHealthz(
+  url: string,
+  fetchImpl: FetchLike = fetch,
+  sleep: (ms: number) => Promise<void> = sleepMs
+): Promise<{ ok: boolean; timedOut: boolean }> {
+  let timeouts = 0;
+  for (let attempt = 0; attempt < HEALTHZ_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(HEALTHZ_RETRY_DELAY_MS);
+    try {
+      const res = await fetchImpl(url, { signal: AbortSignal.timeout(HEALTHZ_TIMEOUT_MS) });
+      if (res?.ok) return { ok: true, timedOut: false };
+    } catch (err) {
+      if (isHealthzTimeoutError(err)) timeouts += 1;
+    }
   }
+  return { ok: false, timedOut: timeouts === HEALTHZ_ATTEMPTS };
+}
+
+export function loopStallCheck(input: {
+  serviceRunning: boolean;
+  timedOut: boolean;
+  url: string;
+  installDir: string;
+}): DoctorCheck[] {
+  if (!input.serviceRunning || !input.timedOut) return [];
   return [
     {
-      id: 'healthz',
-      level: 'pass',
-      message: t('doctor.health.pass', { url }),
+      id: 'loop-stall',
+      level: 'fail',
+      message: t('doctor.health.loopStall', { url: input.url, installDir: input.installDir }),
     },
-    ...(await meshSelfBlockedPortChecks({ host, port })),
   ];
+}
+
+export async function checkHealth(
+  host: string,
+  port: string,
+  options: CheckHealthOptions = {}
+): Promise<DoctorCheck[]> {
+  const url = healthzUrl(host, port);
+  const probe = await probeHealthz(url, options.fetchImpl ?? fetch, options.sleep);
+  const checks: DoctorCheck[] = [
+    {
+      id: 'healthz',
+      level: probe.ok ? 'pass' : 'warn',
+      message: t(probe.ok ? 'doctor.health.pass' : 'doctor.health.fail', { url }),
+    },
+  ];
+  if (probe.ok) {
+    checks.push(...(await meshSelfBlockedPortChecks({ host, port })));
+  }
+  checks.push(
+    ...loopStallCheck({
+      serviceRunning: options.serviceRunning === true,
+      timedOut: probe.timedOut,
+      url,
+      installDir: options.installDir ?? '',
+    })
+  );
+  return checks;
 }
 
 export function renderDoctorResult(checks: DoctorCheck[], json: boolean): void {

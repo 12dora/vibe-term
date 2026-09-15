@@ -135,6 +135,10 @@ export const en: Record<string, string> = {
   'doctor.ports.peerListening': 'PEER: listening {{port}}/tcp',
   'doctor.ports.peerNotListening': 'PEER: not listening {{port}}/tcp',
   'doctor.ports.blocked': 'Unreachable ports: {{list}}',
+  'doctor.health.loopStall':
+    'Service process is running but HTTP is not answering ({{url}}): the gateway main thread may be stalled; the loop watchdog restarts it automatically (see `journalctl --user -u vibeterm` / `{{installDir}}/loop-watchdog.log`); to recover now run `systemctl --user restart vibeterm` / `launchctl kickstart -k gui/$UID/com.vibeterm.vibeterm`',
+  'doctor.loopWatchdog.killed':
+    'at least {{count}} kill(s) in the last 64 KiB of loop-watchdog.log; last at {{ts}} (stalled {{stalledSec}}s, phase {{phase}}, version {{version}})',
 
   'mesh.passkey.removed':
     'Removed {{count}} passkey(s) for {{username}}. Two-step verification and password sessions stay; sessions created with those passkeys are signed out.',
