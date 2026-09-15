@@ -113,7 +113,7 @@ function createRunStub(
       return ok('@1|0|1|ba9d,80x24,0,0,1|main\n');
     }
     if (command.startsWith(`list-panes -s -t ${session}`)) {
-      return ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n');
+      return ok('%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n');
     }
     throw new Error(`unexpected command: ${argv.join(' ')}`);
   };
@@ -402,7 +402,7 @@ describe('LocalExternalTmuxConnection', () => {
       'tmux set-option -w -t @1 window-style fg=#d0d0d0,bg=#262626',
       'tmux display-message -p -t vibeterm-snapshot #{session_id}|#{session_name}',
       'tmux list-windows -t vibeterm-snapshot -F #{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name}',
-      'tmux list-panes -s -t vibeterm-snapshot -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_title}|#{pane_current_command}|#{pane_current_path}',
+      'tmux list-panes -s -t vibeterm-snapshot -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_pid}|#{pane_title}|#{pane_current_command}|#{pane_current_path}',
       'tmux list-panes -a -F #{pane_id}|#{@vibeterm_2031}|#{@tmex_2031}',
     ]);
     expect(snapshots).toEqual([
@@ -431,6 +431,7 @@ describe('LocalExternalTmuxConnection', () => {
                   height: 24,
                   left: 0,
                   top: 0,
+                  pid: 1000,
                 },
               ],
             },
@@ -680,7 +681,7 @@ describe('LocalExternalTmuxConnection', () => {
           overrides: (command) => {
             if (command.startsWith(`list-panes -s -t ${session}`) && includeSecondPane) {
               return ok(
-                '%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n%2|@1|1|0|80|24|0|0|1|stale|node|/home/user\n'
+                '%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n%2|@1|1|0|80|24|0|0|1|1000|stale|node|/home/user\n'
               );
             }
             return null;
@@ -1740,11 +1741,11 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
       session,
       overrides: (command) => {
         if (command.startsWith(`list-panes -s -t ${session}`) && panesGone) {
-          return ok('%2|@1|1|1|80|24|0|0|1|bash|node|/home/user\n');
+          return ok('%2|@1|1|1|80|24|0|0|1|1000|bash|node|/home/user\n');
         }
         if (command.startsWith(`list-panes -s -t ${session}`)) {
           return ok(
-            '%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n'
+            '%1|@1|0|1|80|24|0|0|1|1000|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|1000|bash|node|/home/user\n'
           );
         }
         return null;
@@ -1785,7 +1786,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
         }
         if (command.startsWith(`list-panes -s -t ${session}`) && !windowGone) {
           return ok(
-            '%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n%2|@2|0|1|80|24|0|0|0|bash|node|/home/user\n'
+            '%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n%2|@2|0|1|80|24|0|0|0|1000|bash|node|/home/user\n'
           );
         }
         return null;
@@ -1896,9 +1897,9 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
 
   test('concurrent snapshot demands run one batch plus one trailing refresh without overlap', async () => {
     const session = 'vibeterm-lc-race';
-    const fresh = '%2|@1|1|1|80|24|0|0|1|bash|node|/home/user\n';
+    const fresh = '%2|@1|1|1|80|24|0|0|1|1000|bash|node|/home/user\n';
     const stale =
-      '%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n';
+      '%1|@1|0|1|80|24|0|0|1|1000|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|1000|bash|node|/home/user\n';
     let paneListCalls = 0;
     const staleGate = Promise.withResolvers<void>();
     const baseRun = createRunStub(session);

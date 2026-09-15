@@ -60,6 +60,7 @@ export const PANE_SNAPSHOT_FORMAT = [
   '#{pane_left}',
   '#{pane_top}',
   '#{window_active}',
+  '#{pane_pid}',
   '#{pane_title}',
   '#{pane_current_command}',
   '#{pane_current_path}',
@@ -83,6 +84,7 @@ export interface PaneSnapshotRow {
   left?: number;
   top?: number;
   windowActive: boolean;
+  pid: number;
   title?: string;
   currentCommand?: string;
   currentPath?: string;
@@ -120,7 +122,7 @@ function parseOptionalTrimmed(raw: string): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
-const PANE_FLEXIBLE_LAYOUT = { prefix: 9, suffix: 2 };
+const PANE_FLEXIBLE_LAYOUT = { prefix: 10, suffix: 2 };
 
 const PANE_COLUMNS: readonly SnapshotColumn<PaneSnapshotRow>[] = [
   { name: 'id', required: true, parse: parseRequiredPaneId },
@@ -132,6 +134,7 @@ const PANE_COLUMNS: readonly SnapshotColumn<PaneSnapshotRow>[] = [
   { name: 'left', required: false, parse: parseOptionalInteger },
   { name: 'top', required: false, parse: parseOptionalInteger },
   { name: 'windowActive', required: true, parse: parseSnapshotFlag },
+  { name: 'pid', required: true, parse: parseSnapshotInteger },
   { name: 'title', required: false, parse: parseOptionalTitle },
   { name: 'currentCommand', required: false, parse: parseOptionalTrimmed },
   { name: 'currentPath', required: false, parse: parseOptionalTrimmed },

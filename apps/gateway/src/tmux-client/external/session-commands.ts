@@ -58,6 +58,8 @@ export interface SessionCommandHost {
   getControlCommandTimeoutMs(): number;
   runHistoryQuery(argv: string[]): Promise<CommandResult>;
   runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string>;
+  stopScopesForWindow?(windowId: string): Promise<void>;
+  stopScopesForPane?(paneId: string): Promise<void>;
 }
 
 export function buildCreateWindowArgv(
@@ -173,8 +175,7 @@ export class SessionCommands {
   }
 
   closePane(paneId: string): void {
-    logTmuxDestroy(this.host, 'kill-pane', paneId);
-    this.fire(() => this.runAndRefresh(['kill-pane', '-t', paneId], true));
+    this.fire(() => this.closePaneInternal(paneId));
   }
 
   splitPane(paneId: string, direction: 'h' | 'v', cwd?: string): void {
@@ -497,33 +498,24 @@ export class SessionCommands {
     await this.host.requestSnapshotInternal();
   }
 
+  // biome-ignore format: line budget
   async closeWindowInternal(windowId: string): Promise<void> {
     const count = Number.parseInt(
-      (
-        await this.runTmux([
-          'display-message',
-          '-p',
-          '-t',
-          this.host.sessionName,
-          '#{session_windows}',
-        ])
-      ).stdout.trim() || '0',
+      (await this.runTmux(['display-message', '-p', '-t', this.host.sessionName, '#{session_windows}'])).stdout.trim() || '0',
       10
     );
-
     if (count <= 1) {
-      await this.runTmux([
-        'new-window',
-        '-d',
-        '-t',
-        this.host.sessionName,
-        '-c',
-        this.host.resolveDefaultWorkingDir(),
-      ]);
+      await this.runTmux(['new-window', '-d', '-t', this.host.sessionName, '-c', this.host.resolveDefaultWorkingDir()]);
     }
-
+    await this.host.stopScopesForWindow?.(windowId);
     logTmuxDestroy(this.host, 'kill-window', windowId);
     await this.runAndRefresh(['kill-window', '-t', windowId], true);
+  }
+
+  async closePaneInternal(paneId: string): Promise<void> {
+    await this.host.stopScopesForPane?.(paneId);
+    logTmuxDestroy(this.host, 'kill-pane', paneId);
+    await this.runAndRefresh(['kill-pane', '-t', paneId], true);
   }
 
   async resizePaneInternal(paneId: string, cols: number, rows: number): Promise<void> {
@@ -728,8 +720,6 @@ export class SessionCommands {
       'extended-keys-format',
       'csi-u',
     ]);
-    // control client 自带 attached+focused 标志，focus-events on 会把 ESC[I 投递给
-    // ?1004h 的 pane（如 Claude Code），使其永久判定「用户在场」、通知静默，必须关闭。
     await this.host.runTmuxAllowFailure(['set-option', '-t', session, '-g', 'focus-events', 'off']);
     await this.host.runTmuxAllowFailure(['set-option', '-t', session, 'destroy-unattached', 'off']);
   }

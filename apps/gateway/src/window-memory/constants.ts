@@ -1,0 +1,9 @@
+export const MIB_BYTES = 1_048_576;
+export const HOST_SHELL_TIMEOUT_MS = 10_000;
+export const HOST_SHELL_MAX_OUTPUT_BYTES = 256 * 1024;
+export const APPLY_RETRY_MS = 60_000;
+export const HEARTBEAT_MS = 30_000;
+export const TICK_DEBOUNCE_MS = 300;
+export const STOP_SCOPE_TIMEOUT_MS = 10_000;
+export const SAMPLE_INTERVAL_MIN_SEC = 2;
+export const SAMPLE_INTERVAL_MAX_SEC = 60;

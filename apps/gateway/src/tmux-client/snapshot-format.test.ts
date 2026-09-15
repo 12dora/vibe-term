@@ -117,7 +117,7 @@ describe('parseWindowSnapshotRow', () => {
 });
 
 describe('parsePaneSnapshotRow', () => {
-  const base = '%5|@2|1|1|104|62|0|0|1';
+  const base = '%5|@2|1|1|104|62|0|0|1|4242';
 
   test('parses a normal row', () => {
     const row = parsePaneSnapshotRow(`${base}|my title|node|/home/user/project`);
@@ -131,6 +131,7 @@ describe('parsePaneSnapshotRow', () => {
       left: 0,
       top: 0,
       windowActive: true,
+      pid: 4242,
       title: 'my title',
       currentCommand: 'node',
       currentPath: '/home/user/project',
@@ -152,17 +153,18 @@ describe('parsePaneSnapshotRow', () => {
   });
 
   test('non-zero geometry offsets are parsed', () => {
-    const row = parsePaneSnapshotRow('%6|@2|2|0|103|30|105|32|1|t|zsh|/tmp');
+    const row = parsePaneSnapshotRow('%6|@2|2|0|103|30|105|32|1|4242|t|zsh|/tmp');
     expect(row?.left).toBe(105);
     expect(row?.top).toBe(32);
   });
 
   test('rejects rows with invalid ids or numbers', () => {
-    expect(parsePaneSnapshotRow('bogus|@2|1|1|104|62|0|0|1|t|c|/p')).toBeNull();
-    expect(parsePaneSnapshotRow('%5|bogus|1|1|104|62|0|0|1|t|c|/p')).toBeNull();
-    expect(parsePaneSnapshotRow('%5|@2|x|1|104|62|0|0|1|t|c|/p')).toBeNull();
-    expect(parsePaneSnapshotRow('%5|@2|1|3|104|62|0|0|1|t|c|/p')).toBeNull();
+    expect(parsePaneSnapshotRow('bogus|@2|1|1|104|62|0|0|1|4242|t|c|/p')).toBeNull();
+    expect(parsePaneSnapshotRow('%5|bogus|1|1|104|62|0|0|1|4242|t|c|/p')).toBeNull();
+    expect(parsePaneSnapshotRow('%5|@2|x|1|104|62|0|0|1|4242|t|c|/p')).toBeNull();
+    expect(parsePaneSnapshotRow('%5|@2|1|3|104|62|0|0|1|4242|t|c|/p')).toBeNull();
     expect(parsePaneSnapshotRow('%5|@2|1|1|104|62|0|0')).toBeNull();
+    expect(parsePaneSnapshotRow('%5|@2|1|1|104|62|0|0|1|pid|t|c|/p')).toBeNull();
   });
 
   test('PANE_SNAPSHOT_FORMAT field order matches the parser', () => {
@@ -176,6 +178,7 @@ describe('parsePaneSnapshotRow', () => {
       '#{pane_left}',
       '#{pane_top}',
       '#{window_active}',
+      '#{pane_pid}',
       '#{pane_title}',
       '#{pane_current_command}',
       '#{pane_current_path}',
@@ -187,7 +190,7 @@ describe('parsePaneSnapshotRow', () => {
   });
 
   test('rejects a row with too few fields', () => {
-    expect(parsePaneSnapshotRow('%5|@2|1|1|104|62|0|0|1|t|c')).toBeNull();
+    expect(parsePaneSnapshotRow('%5|@2|1|1|104|62|0|0|1|4242|t|c')).toBeNull();
   });
 
   test('trailing separator makes currentPath empty/undefined', () => {
@@ -227,7 +230,7 @@ describe('parsePaneSnapshotRow', () => {
   });
 
   test('invalid optional geometry becomes undefined without dropping the row', () => {
-    const row = parsePaneSnapshotRow('%5|@2|1|1|104|62|x|y|1|t|c|/p');
+    const row = parsePaneSnapshotRow('%5|@2|1|1|104|62|x|y|1|4242|t|c|/p');
     expect(row).not.toBeNull();
     expect(row?.left).toBeUndefined();
     expect(row?.top).toBeUndefined();

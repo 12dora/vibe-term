@@ -2,6 +2,13 @@ import type { Device, TmuxSession, TmuxWindow } from '@vibeterm/shared';
 
 import { config } from '../config';
 import { updateDeviceRuntimeStatus } from '../db';
+import {
+  bindWindowMemoryTracker,
+  onWindowMemorySnapshot,
+  paneIdsFromWindows,
+} from '../window-memory/bind';
+import type { WindowMemoryTrackerHandle } from '../window-memory/tracker';
+import type { HostShellResult, HostShellRunner } from '../window-memory/types';
 import type { PaneInfo } from './capture-history';
 import type { TmuxConnectionOptions } from './connection-types';
 import { type AtomicPaneCapture, ControlModeCommandQueue } from './control-mode-capture';
@@ -98,7 +105,7 @@ type ExternalTmuxCollaboratorHost = SessionCommandHost &
   SnapshotProjectorHost &
   ConnectionCleanupHost;
 
-export abstract class ExternalTmuxConnectionCore {
+export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
   protected readonly deviceId: string;
   protected readonly callbacks: TmuxConnectionOptions;
   protected readonly lookupDevice: (deviceId: string) => Device | null;
@@ -136,6 +143,8 @@ export abstract class ExternalTmuxConnectionCore {
   private readonly themeController: ThemeSubscriptionController;
   private readonly snapshotProjector: SnapshotProjector;
   private readonly connectionCleanup: ConnectionCleanup;
+  windowMemory: WindowMemoryTrackerHandle | null = null;
+  private readonly windowMemoryStarted = { value: false };
 
   protected abstract readonly logPrefix: string;
   protected abstract readonly stalledControlLabel: string;
@@ -160,104 +169,44 @@ export abstract class ExternalTmuxConnectionCore {
     this.themeController = new ThemeSubscriptionController(host);
     this.snapshotProjector = new SnapshotProjector(host);
     this.connectionCleanup = new ConnectionCleanup(host);
+    this.windowMemory = bindWindowMemoryTracker(this.deviceId, this, this.snapshotWindows, options);
   }
 
   private bindCollaboratorHost(): ExternalTmuxCollaboratorHost {
     const core = this;
+    // biome-ignore format: one-line accessors keep this frozen file under the line budget
     return {
-      get deviceId() {
-        return core.deviceId;
-      },
-      get sessionName() {
-        return core.sessionName;
-      },
-      get connected() {
-        return core.connected;
-      },
-      set connected(value) {
-        core.connected = value;
-      },
-      get connectGeneration() {
-        return core.connectGeneration;
-      },
-      get manualDisconnect() {
-        return core.manualDisconnect;
-      },
-      get logPrefix() {
-        return core.logPrefix;
-      },
-      get stalledControlLabel() {
-        return core.stalledControlLabel;
-      },
-      get activeWindowId() {
-        return core.activeWindowId;
-      },
-      set activeWindowId(value) {
-        core.activeWindowId = value;
-      },
-      get activePaneId() {
-        return core.activePaneId;
-      },
-      set activePaneId(value) {
-        core.activePaneId = value;
-      },
-      get snapshotWindows() {
-        return core.snapshotWindows;
-      },
-      get snapshotSession() {
-        return core.snapshotSession;
-      },
-      set snapshotSession(value) {
-        core.snapshotSession = value;
-      },
-      get callbacks() {
-        return core.callbacks;
-      },
-      get controlCommands() {
-        return core.controlCommands;
-      },
-      get controlStderrTail() {
-        return core.controlStderrTail;
-      },
-      get controlSubscription() {
-        return core.controlSubscription;
-      },
-      set controlSubscription(value) {
-        core.controlSubscription = value;
-      },
-      get heartbeatTimer() {
-        return core.heartbeatTimer;
-      },
-      set heartbeatTimer(value) {
-        core.heartbeatTimer = value;
-      },
-      get heartbeatPending() {
-        return core.heartbeatPending;
-      },
-      set heartbeatPending(value) {
-        core.heartbeatPending = value;
-      },
-      get heartbeatTimeoutTimer() {
-        return core.heartbeatTimeoutTimer;
-      },
-      set heartbeatTimeoutTimer(value) {
-        core.heartbeatTimeoutTimer = value;
-      },
-      get lifecycle() {
-        return core.lifecycle;
-      },
-      get cleanupPromise() {
-        return core.cleanupPromise;
-      },
-      set cleanupPromise(value) {
-        core.cleanupPromise = value;
-      },
-      get closeNotified() {
-        return core.closeNotified;
-      },
-      set closeNotified(value) {
-        core.closeNotified = value;
-      },
+      get deviceId() { return core.deviceId; },
+      get sessionName() { return core.sessionName; },
+      get connected() { return core.connected; },
+      set connected(value) { core.connected = value; },
+      get connectGeneration() { return core.connectGeneration; },
+      get manualDisconnect() { return core.manualDisconnect; },
+      get logPrefix() { return core.logPrefix; },
+      get stalledControlLabel() { return core.stalledControlLabel; },
+      get activeWindowId() { return core.activeWindowId; },
+      set activeWindowId(value) { core.activeWindowId = value; },
+      get activePaneId() { return core.activePaneId; },
+      set activePaneId(value) { core.activePaneId = value; },
+      get snapshotWindows() { return core.snapshotWindows; },
+      get snapshotSession() { return core.snapshotSession; },
+      set snapshotSession(value) { core.snapshotSession = value; },
+      get callbacks() { return core.callbacks; },
+      get controlCommands() { return core.controlCommands; },
+      get controlStderrTail() { return core.controlStderrTail; },
+      get controlSubscription() { return core.controlSubscription; },
+      set controlSubscription(value) { core.controlSubscription = value; },
+      get heartbeatTimer() { return core.heartbeatTimer; },
+      set heartbeatTimer(value) { core.heartbeatTimer = value; },
+      get heartbeatPending() { return core.heartbeatPending; },
+      set heartbeatPending(value) { core.heartbeatPending = value; },
+      get heartbeatTimeoutTimer() { return core.heartbeatTimeoutTimer; },
+      set heartbeatTimeoutTimer(value) { core.heartbeatTimeoutTimer = value; },
+      get lifecycle() { return core.lifecycle; },
+      get cleanupPromise() { return core.cleanupPromise; },
+      set cleanupPromise(value) { core.cleanupPromise = value; },
+      get closeNotified() { return core.closeNotified; },
+      set closeNotified(value) { core.closeNotified = value; },
       resolveDefaultWorkingDir: () => core.resolveDefaultWorkingDir(),
       shouldInstallGhosttyTerminfo: () => core.shouldInstallGhosttyTerminfo(),
       configureWindowStyle: (styleValue) => core.configureWindowStyle(styleValue),
@@ -294,6 +243,10 @@ export abstract class ExternalTmuxConnectionCore {
       markDeviceTmuxUnavailable: (message) => core.markDeviceTmuxUnavailable(message),
       stopControlClient: () => core.stopControlClient(),
       disposeTransport: () => core.disposeTransport(),
+      stopScopesForWindow: (windowId) =>
+        core.windowMemory?.stopScopesForWindow(windowId) ?? Promise.resolve(),
+      stopScopesForPane: (paneId) =>
+        core.windowMemory?.stopScopesForPane(paneId) ?? Promise.resolve(),
     };
   }
 
@@ -553,6 +506,13 @@ export abstract class ExternalTmuxConnectionCore {
   protected abstract runHistoryQuery(argv: string[]): Promise<CommandResult>;
   protected abstract runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string>;
 
+  async runHostShell(
+    _script: string,
+    _opts?: { timeoutMs?: number; maxOutputBytes?: number }
+  ): Promise<HostShellResult> {
+    throw new Error('unsupported');
+  }
+
   protected getControlCommandTimeoutMs(): number {
     return 10_000;
   }
@@ -681,7 +641,9 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   protected async performSnapshot(): Promise<void> {
-    return this.snapshotProjector.performSnapshot();
+    const prev = paneIdsFromWindows(this.snapshotWindows);
+    await this.snapshotProjector.performSnapshot();
+    onWindowMemorySnapshot(this.windowMemory, this.windowMemoryStarted, prev, this.snapshotWindows);
   }
 
   protected recordBell(paneId?: string, windowId?: string): void {
@@ -709,6 +671,7 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   protected async shutdownInternal(notifyClose: boolean): Promise<void> {
+    this.windowMemory?.stop();
     return this.connectionCleanup.shutdownInternal(notifyClose);
   }
 }
