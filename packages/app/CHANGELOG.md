@@ -1,4 +1,4 @@
-# 2.6.0
+# 2.6.1
 
 _2026-09-15_
 
@@ -6,11 +6,11 @@ _2026-09-15_
 
 ### Changes
 
-- Share → Log replay: the recording is now scaled to fit the replay window. A session recorded on a phone (for example 52×47) fills the height of the dialog on a desktop and stays centred with side bands; a very wide recording is shrunk to fit as far as it stays readable, then scrolls as before. The replay window is taller and wider on large screens, and it only appears once it is already fitted.
+- Share → Log replay: the replay now fills the whole replay window like a normal terminal, at your usual font size. A recording made on a narrow screen plays in the top-left of the full-size terminal instead of a small centred box with dark bands, and the picture no longer jumps after the window opens. Only when the recording is larger than the window is the font reduced to make it fit. Shell recordings open with their earlier output above the prompt, like a real terminal that was made taller.
 
 ### Fixes
 
-- Share → Log replay: recordings no longer come out garbled when the terminal was resized after sharing started (for example shared from a phone, then opened on a desktop). The recorder now records the real terminal size whenever tmux changes it, not just when a guest resized it; zoomed panes record the zoomed size. Recordings made before this version cannot be repaired — they do not contain the size changes.
+- Share → Log replay: multi-line screen snapshots no longer render as a staircase.
 
 ---
 
@@ -18,8 +18,8 @@ _2026-09-15_
 
 ### 变更
 
-- 分享 → 日志回放：录像现在会按回放窗自动缩放。手机上录的会话（如 52×47）在桌面上按对话框高度放大、居中显示、两侧留衬底；特别宽的录像在保持可读的前提下缩小，仍放不下时照旧可以拖动查看。大屏上的回放窗更高更宽，并且只在已适配好之后才出现。
+- 分享 → 日志回放：回放现在像普通终端一样铺满整个回放窗口，字号沿用你的终端设置。窄屏上录的会话在整幅终端的左上角播放，不再是居中的小框和两侧暗衬底；打开后画面也不再跳变。只有录像比窗口还大时才会缩小字号以放下。shell 会话的录像打开后，更早的输出会排在提示符上方，就像把真实终端拉高了一样。
 
 ### 修复
 
-- 分享 → 日志回放：分享开始后终端尺寸变过（如手机上分享、之后在桌面打开）的录像不再错位。录制器现在在 tmux 每次改尺寸时都记录真实终端尺寸，而不只是访客改尺寸时；放大（zoom）的窗格按放大后的尺寸记录。本版本之前的录像无法修复——日志里没有尺寸变化信息。
+- 分享 → 日志回放：多行的屏幕快照不再呈阶梯状错位。
