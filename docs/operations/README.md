@@ -24,6 +24,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [tmux-process-survival.md](./tmux-process-survival.md) | 服务 kill 策略、linger、systemd OOMPolicy |
+| [window-memory-limits.md](./window-memory-limits.md) | Linux 上按 tmux 窗口套 systemd 内存限额、GUI 徽标与 CLI，面向运维 |
 | [gateway-loop-watchdog.md](./gateway-loop-watchdog.md) | 主线程卡死（libdatachannel 死锁）的真因、进程内看门狗与「服务 running 但 HTTP 不通」排查 |
 | [troubleshooting-db-master-key.md](./troubleshooting-db-master-key.md) | 库与主密钥不匹配 |
 
@@ -31,7 +32,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [cli-usage.md](./cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、目标语法、接进任意节点的终端、Agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
+| [cli-usage.md](./cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、目标语法、接进任意节点的终端、窗口内存、Agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
 
 ## 发版与升级
 

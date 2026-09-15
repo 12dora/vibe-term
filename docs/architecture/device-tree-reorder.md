@@ -75,4 +75,5 @@ device 是数据库实体；window / pane 来自 tmux 实时快照（不入库�
 
 - window / pane id 跨 tmux 重启不稳定；overlay 以其为 key，靠降级规则容错，tmux 重启后部分顺序会丢失（可接受）。
 - `index` 徽标仍显示 tmux 原生索引，overlay 重排后可能与显示顺序不连续（预期）。
+- 从侧栏关掉**当前正在看的**窗口时（`sidebar-device-list.tsx` 的 `useCloseWindowWithFallback`）：切到该设备剩余窗口的活动 pane，并带 `keepSidebarOpen`，移动端菜单页（PWA 的窗口列表 sheet）保持打开；只在没有窗口剩下时才落到 `/devices`。关掉非当前窗口不导航。
 - i18n 文案改 `packages/shared/src/i18n/locales/*.json`（三语同步）后 `bun run build:i18n`，勿手改 / lint 生成的 `resources.ts`、`types.ts`。

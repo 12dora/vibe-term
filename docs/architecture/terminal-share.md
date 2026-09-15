@@ -4,7 +4,7 @@
 
 ## 背景与目标
 
-不用把对方拉进 mesh（等于给出整台机器）也不用截图：终端页工具栏点一下，生成一条带口令的公开链接，对方在浏览器里能操作**这一个 tmux window**（含分屏），看不到节点名、设备名与其它 window。分享可随时终止，全过程录屏式留痕可回放。
+不用把对方拉进 mesh（等于给出整台机器）也不用截图：终端页工具栏「更多」菜单（`console-more-button`）里点分享，生成一条带口令的公开链接，对方在浏览器里能操作**这一个 tmux window**（含分屏），看不到节点名、设备名与其它 window。分享可随时终止，全过程录屏式留痕可回放。
 
 设计目标：
 
@@ -289,15 +289,15 @@ checkpoint 快进到当前时刻；网格变化不会再引起网格变化，无
 
 ## 前端
 
-- **分享入口**：终端工具栏「分享」按钮（`packages/panels/src/share/`），弹窗字段为名称 / 有效期 / 口令 / 地址；
-  创建成功后显示链接与口令（口令只在创建时给一次明文），已有分享时按钮高亮并显示在线人数。
-  列表轮询：有进行中分享 10 s，否则 60 s，隐藏页不轮询。
+- **分享入口**：终端工具栏「更多」菜单（`data-testid="console-more-button"` / `console-more-menu`，`DeviceConsoleToolbar`）里的分享项（`share-open-button`，实现仍在 `packages/panels/src/share/`），弹窗字段为名称 / 有效期 / 口令 / 地址；
+  创建成功后显示链接与口令（口令只在创建时给一次明文），已有分享时菜单项带人数徽标，工具栏 ⋯ 上出现 `console-more-indicator`。
+  列表轮询：有进行中分享 10 s，否则 60 s，隐藏页不轮询。刷新页 / 切换输入模式 / 监控规则也收在同一菜单里；分屏与终端设置仍是工具栏上的图标按钮。
 - **被分享页**：`/s/:shareId` 与 `/n/:nodeId/s/:shareId`，挂在 `RootLayout` **之外**（无侧栏、无设置、无文件面板），
   独立 chunk。状态机 `loading → password → terminal → ended`。专用运行时
   `createShareRuntime()` 关掉 agent / watch / files，预置 `['devices']`、`['terminal-shortcuts']` 缓存做到**零常规
   `/api/*` 请求**；`host.appPath` 把包内的 `/devices/<d>/windows/<w>/panes/<p>` 映射成 `/s/<id>?w=&p=`，
   访客被钉死在这一个 tab 上。`installSessionInterceptor` 对分享路径不跳登录页。
-  分享模式（`features.shareViewer`）下工具栏不渲染分屏按钮与分享按钮，分屏视图不渲染 pane 关闭按钮、
+  分享模式（`features.shareViewer`）下工具栏不渲染分屏按钮，「更多」菜单也不含分享项，分屏视图不渲染 pane 关闭按钮、
   标题栏不可拖动；splitter 拖拽（resize-pane）与尺寸仲裁保留。
 - **设置 → 分享**：进行中表、历史表（删除）、日志回放、设置区（记录日志 / 保留天数 / 单条上限 / 默认地址）。
 - **i18n**：分享方 `share.*`、设置 `settings.share.*` 在 rest 包；被分享页 `shareAccess.*` 进
