@@ -58,7 +58,7 @@ function requireTimeout(timeout: number | undefined): number | undefined {
   return timeout;
 }
 
-type PreparedCommand = {
+export type PreparedCommand = {
   command: Command;
   commandArgv: string[];
   showHelp: boolean;
@@ -72,11 +72,18 @@ type PreparedCommand = {
   noColor: boolean;
 };
 
-function prepareCommand(argv: string[]): PreparedCommand {
+function preprocessCommandArgv(command: Command, argv: string[]): string[] {
+  return command.preprocessArgv ? command.preprocessArgv(argv) : argv;
+}
+
+export function prepareCommand(argv: string[]): PreparedCommand {
   const token = findCommandToken(argv);
   const command = requireCommand(token.name as string);
   const rest = [...argv.slice(0, token.index), ...argv.slice(token.index + 1)];
-  const { globals, rest: commandArgv } = splitGlobalFlags(rest, mergedSpec(command.flags));
+  const { globals, rest: commandArgv } = splitGlobalFlags(
+    preprocessCommandArgv(command, rest),
+    mergedSpec(command.flags)
+  );
   return {
     command,
     commandArgv,

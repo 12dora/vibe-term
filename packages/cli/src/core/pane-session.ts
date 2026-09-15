@@ -35,6 +35,7 @@ export interface DeviceSessionEvents {
   onRebase?(deviceId: string, paneId: string | undefined, reason: GatewayRebaseReason): void;
   onTree?(session: TmuxSession | null): void;
   onTmuxEvent?(event: EventTmuxPayload): void;
+  onWindowMemory?(event: Extract<GatewayTransportEvent, { type: 'window-memory' }>): void;
   /** 设备侧断线 / 网关断流：调用方据此收尾（attach 会尝试重连一次）。 */
   onDetached?(reason: string): void;
 }
@@ -68,6 +69,10 @@ export class DeviceSession {
 
   session(): TmuxSession | null {
     return this.tree;
+  }
+
+  serverCapabilities(): readonly string[] {
+    return this.transport.serverCapabilities ?? [];
   }
 
   /** 连设备并等到第一份会话树；超时抛网络错误。 */
@@ -209,7 +214,14 @@ export class DeviceSession {
       return;
     }
     if (this.handleContent(event)) return;
+    if (this.handleMemory(event)) return;
     this.handleLifecycle(event);
+  }
+
+  private handleMemory(event: GatewayTransportEvent): boolean {
+    if (event.type !== 'window-memory' || event.deviceId !== this.deviceId) return false;
+    this.events.onWindowMemory?.(event);
+    return true;
   }
 
   /** pane 内容面；处理了就返回 true。 */

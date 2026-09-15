@@ -419,7 +419,7 @@ describe('vibeterm share replay', () => {
     await share.run(cli, ['replay', 's-1']);
     expect(JSON.parse(stdout.text())).toEqual({
       panes: [
-        { paneId: '%0', cols: 100, rows: 30, chunks: ['hi', 'xy'] },
+        { paneId: '%0', cols: 100, rows: 30, chunks: ['hixy'] },
         { paneId: '%1', cols: 0, rows: 0, chunks: ['hi'] },
       ],
       durationMs: 40,

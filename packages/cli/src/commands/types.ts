@@ -12,6 +12,11 @@ export interface Command {
   usage: string;
   /** 本组自己的旗标；全局旗标由 main 合并进来，不要重复声明。 */
   flags?: FlagSpec;
+  /**
+   * 在 `splitGlobalFlags` 之前改写本组 argv（命令名已剥掉）。
+   * 用来处理「同一旗标在子命令里既是开关又是取值」这类派发层解析不了的形状。
+   */
+  preprocessArgv?(argv: readonly string[]): string[];
   /** 返回值即退出码；返回 undefined 视为 0。抛 CliError 由 main 翻译成退出码与提示。 */
   run(ctx: CliContext, argv: string[]): Promise<number | undefined>;
 }

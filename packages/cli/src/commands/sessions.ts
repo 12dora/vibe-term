@@ -1,7 +1,6 @@
 // `vibeterm sessions [--memory]`：列出节点上的 tmux 窗口，可选内存列。
 
 import {
-  type SessionsMemoryDevice,
   type SessionsMemoryResponse,
   type SessionsMemoryWindow,
   formatBytes,
@@ -10,6 +9,7 @@ import { flagBool, parseArgv } from '../core/args';
 import { rejectExtra } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
+import { type SessionsDeviceRow, fillDisconnectedDevices } from '../core/sessions-memory';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -22,13 +22,15 @@ const USAGE = [
   'List tmux windows on the target node (GET /api/sessions/memory).',
   '',
   '  --memory    add SCOPE, MEM, HIGH, MAX, OOM columns',
-  '  --json      print the gateway payload unchanged',
+  '  --json      print the (possibly WS-filled) payload as JSON',
   '',
   'Human table: DEVICE, WINDOW (`@id name`), PANES.',
   'With --memory: SCOPE (first scope, `+N` when more, `-` when none), MEM (current),',
   'HIGH, MAX (`∞` when 0), OOM (kills, `!` when oomFlag).',
   'Devices with supported:false print `(memory limits unsupported on this host)` after',
   'their rows in --memory mode.',
+  'Devices with connected:false are listed via a short device session; --memory waits',
+  'for window-memory samples (2×sampleIntervalSec+3s, at most 4 sessions at once).',
   'Non-TTY stdout defaults to JSON (like exec).',
 ].join('\n');
 
@@ -68,7 +70,7 @@ function windowLabel(window: SessionsMemoryWindow): string {
   return `${window.windowId} ${window.windowName}`.trimEnd();
 }
 
-function placeholderRow(device: SessionsMemoryDevice, note: string | null): SessionRow {
+function placeholderRow(device: SessionsDeviceRow, note: string | null): SessionRow {
   return {
     deviceName: device.deviceName || device.deviceId,
     window: '-',
@@ -83,7 +85,7 @@ function placeholderRow(device: SessionsMemoryDevice, note: string | null): Sess
 }
 
 function windowRow(
-  device: SessionsMemoryDevice,
+  device: SessionsDeviceRow,
   window: SessionsMemoryWindow,
   note: string | null
 ): SessionRow {
@@ -100,7 +102,7 @@ function windowRow(
   };
 }
 
-function buildRows(devices: readonly SessionsMemoryDevice[], memory: boolean): SessionRow[] {
+function buildRows(devices: readonly SessionsDeviceRow[], memory: boolean): SessionRow[] {
   const rows: SessionRow[] = [];
   for (const device of devices) {
     const windows = device.windows ?? [];
@@ -160,10 +162,15 @@ function printTable(ctx: CliContext, rows: SessionRow[], memory: boolean): void 
   }
 }
 
-function devicesOf(payload: unknown): SessionsMemoryDevice[] {
+function devicesOf(payload: unknown): SessionsDeviceRow[] {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
   const devices = (payload as SessionsMemoryResponse).devices;
   return Array.isArray(devices) ? devices : [];
+}
+
+function withDevices(payload: unknown, devices: SessionsDeviceRow[]): unknown {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { devices };
+  return { ...payload, devices };
 }
 
 async function run(ctx: CliContext, argv: string[]): Promise<number | undefined> {
@@ -175,11 +182,13 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   const memory = flagBool(flags, 'memory');
   const nodeId = await ctx.targetNodeId();
   const payload = await ctx.http.json<unknown>(nodeId, 'GET', '/api/sessions/memory');
+  const devices = await fillDisconnectedDevices(ctx, devicesOf(payload), memory);
+  const next = withDevices(payload, devices);
   if (wantJson(ctx)) {
-    ctx.out.line(JSON.stringify(payload));
+    ctx.out.line(JSON.stringify(next));
     return;
   }
-  printTable(ctx, buildRows(devicesOf(payload), memory), memory);
+  printTable(ctx, buildRows(devices, memory), memory);
 }
 
 export const command: Command = {
