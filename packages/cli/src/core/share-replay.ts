@@ -3,10 +3,12 @@
 import type { ShareLogEntry, ShareLogKind, ShareLogPage } from '@vibeterm/shared/share';
 import { InterruptError, UsageError, throwIfAborted } from './errors';
 import type { HttpClient } from './http';
+import { REPLAY_TTY_RESTORE_BYTES, ReplayVtFilter } from './replay-vt';
 import { sharePath } from './share-target';
 
 export const SGR_RESET = '\x1b[0m';
 export const SGR_RESET_BYTES = new TextEncoder().encode(SGR_RESET);
+export { REPLAY_TTY_RESTORE, REPLAY_TTY_RESTORE_BYTES } from './replay-vt';
 
 export interface ShareLogQuery {
   after?: number;
@@ -54,12 +56,29 @@ export interface ShareReplayPlayOptions {
 }
 
 /** 与 FE `decodeBase64` 相同：空串 → 空数组，其余走 `atob` 按字节还原。 */
-export function decodeShareLogData(data: string): Uint8Array {
+export function decodeShareLogData(data: string, entryIndex?: number): Uint8Array {
   if (data === '') return new Uint8Array(0);
-  const binary = atob(data);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
+  try {
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  } catch {
+    const where = entryIndex === undefined ? '' : ` entry ${entryIndex}`;
+    throw new UsageError(`invalid base64 in share log${where}`);
+  }
+}
+
+export function concatBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const chunk of chunks) total += chunk.length;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
 }
 
 /** 与 FE `base64ByteLength` 相同：不算 padding 之外的解码。 */
@@ -163,8 +182,9 @@ function entryGrid(entry: ShareLogEntry): ShareReplayTtySize | null {
   return { cols: entry.cols, rows: entry.rows };
 }
 
-function decodeChunkText(data: string): string {
-  return new TextDecoder('utf-8', { fatal: false }).decode(decodeShareLogData(data));
+function decodePaneBuffers(buffers: readonly Uint8Array[]): string[] {
+  if (buffers.length === 0) return [];
+  return [new TextDecoder('utf-8', { fatal: false }).decode(concatBytes(buffers))];
 }
 
 export function assembleShareReplay(
@@ -173,13 +193,15 @@ export function assembleShareReplay(
 ): ShareReplayJson {
   const { startAt, durationMs } = logSpan(entries);
   const floor = startAt + Math.max(0, fromMs);
-  const panes = new Map<string, ShareReplayPaneJson>();
-  for (const entry of entries) {
+  const panes = new Map<string, ShareReplayPaneJson & { buffers: Uint8Array[] }>();
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
     const pane = panes.get(entry.paneId) ?? {
       paneId: entry.paneId,
       cols: 0,
       rows: 0,
       chunks: [],
+      buffers: [],
     };
     const grid = entryGrid(entry);
     if (grid) {
@@ -187,11 +209,20 @@ export function assembleShareReplay(
       pane.rows = grid.rows;
     }
     if (entry.at >= floor && isOutputKind(entry.kind) && entry.data !== '') {
-      pane.chunks.push(decodeChunkText(entry.data));
+      pane.buffers.push(decodeShareLogData(entry.data, index));
     }
     panes.set(entry.paneId, pane);
   }
-  return { panes: [...panes.values()], durationMs, entries: entries.length };
+  return {
+    panes: [...panes.values()].map((pane) => ({
+      paneId: pane.paneId,
+      cols: pane.cols,
+      rows: pane.rows,
+      chunks: decodePaneBuffers(pane.buffers),
+    })),
+    durationMs,
+    entries: entries.length,
+  };
 }
 
 function maybeNoteResize(
@@ -219,8 +250,8 @@ async function waitUntil(
   throwIfAborted(options.signal);
 }
 
-function restoreSgr(write: (bytes: Uint8Array) => void): void {
-  write(SGR_RESET_BYTES);
+function restoreTty(write: (bytes: Uint8Array) => void): void {
+  write(REPLAY_TTY_RESTORE_BYTES);
 }
 
 export async function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
@@ -268,24 +299,33 @@ export async function playShareReplay(
   const { startAt } = logSpan(entries);
   const clock0 = startAt + Math.max(0, options.fromMs);
   let clock = clock0;
+  const filter = new ReplayVtFilter();
+  const writeClean = (bytes: Uint8Array): void => {
+    const clean = filter.push(bytes);
+    if (clean.byteLength > 0) options.write(clean);
+  };
   try {
-    for (const entry of entries) {
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
       throwIfAborted(options.signal);
       if (entry.paneId !== paneId || entry.at < clock0) continue;
       await waitUntil(entry.at, clock, options);
       clock = entry.at;
       maybeNoteResize(entry, options.ttySize, options.note);
       if (!isOutputKind(entry.kind) || entry.data === '') continue;
-      options.write(decodeShareLogData(entry.data));
+      writeClean(decodeShareLogData(entry.data, index));
     }
+    filter.flush();
+    if (filter.needsRestore()) restoreTty(options.write);
   } catch (error) {
-    restoreSgr(options.write);
+    filter.flush();
+    restoreTty(options.write);
     if (error instanceof InterruptError) throw error;
     throwIfAborted(options.signal);
     throw error;
   }
   if (options.signal?.aborted) {
-    restoreSgr(options.write);
+    restoreTty(options.write);
     throw new InterruptError();
   }
 }

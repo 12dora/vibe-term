@@ -100,7 +100,8 @@ const USAGE = [
   '  disallow <node>            disable public-domain access on the node',
   '  revoke <node> [--reason] [--yes]   signed key-log revoke-node (needs VIBETERM_PASSWORD)',
   '  enroll [--ttl 10m] [--password] [--name]',
-  '                             r3. join token via /api/mesh/relay/* (needs a relay uplink)',
+  '                             r3. join token via /api/mesh/relay/* (needs a relay uplink);',
+  '                             enroll [--password] still works as a switch',
   '  meta-key admit <node>      wrap current K_meta for a node (relay; VIBETERM_PASSWORD or TTY)',
   '  meta-key rotate [--exclude <node>...]',
   '                             rotate K_meta, excluding nodes (relay)',
@@ -469,6 +470,7 @@ export const command: Command = {
   summary: 'inspect and manage mesh nodes',
   usage: USAGE,
   flags: FLAGS,
+  preprocessArgv: rewriteBarePasswordFlag,
   run: (ctx, argv) =>
     runSubs(ctx, rewriteBarePasswordFlag(argv), FLAGS, HANDLERS, 'run: vibeterm nodes --help'),
 };

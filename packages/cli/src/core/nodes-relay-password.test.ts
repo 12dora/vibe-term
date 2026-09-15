@@ -24,6 +24,10 @@ async function ctx(routes: Parameters<typeof routeFetch>[0], json = true) {
 }
 
 describe('rewriteBarePasswordFlag', () => {
+  test('USAGE says enroll [--password] still works as a switch', () => {
+    expect(nodes.usage).toContain('enroll [--password] still works as a switch');
+  });
+
   test('turns a trailing --password into --password=', () => {
     expect(rewriteBarePasswordFlag(['enroll', '--password'])).toEqual(['enroll', '--password=']);
     expect(rewriteBarePasswordFlag(['enroll', '--password', '--name', 'x'])).toEqual([
@@ -308,6 +312,36 @@ describe('vibeterm nodes relay password', () => {
       .catch((err) => err)) as CliError;
     expect(error.code).toBe('relay_members_offline');
     expect(error.message).toContain('1/3');
+  });
+
+  test('set maps RELAY_RATE_LIMITED with retry after seconds', async () => {
+    const { ctx: cli } = await ctx({
+      'POST /api/mesh/relay/password': () =>
+        new Response(JSON.stringify({ code: 'RELAY_RATE_LIMITED', retryAfterMs: 15_000 }), {
+          status: 429,
+        }),
+    });
+    const error = (await nodes
+      .run(cli, ['relay', 'password', 'set', RELAY_URL, '--password', 'secret123'])
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.code).toBe('RELAY_RATE_LIMITED');
+    expect(error.message).toContain('RELAY_RATE_LIMITED');
+    expect(error.message).toContain('retry after 15s');
+  });
+
+  test('set maps lowercase relay_rate_limited alias', async () => {
+    const { ctx: cli } = await ctx({
+      'POST /api/mesh/relay/password': () =>
+        new Response(JSON.stringify({ code: 'relay_rate_limited', retryAfterMs: 500 }), {
+          status: 429,
+        }),
+    });
+    const error = (await nodes
+      .run(cli, ['relay', 'password', 'set', RELAY_URL, '--password', 'secret123'])
+      .catch((err) => err)) as CliError;
+    expect(error.code).toBe('relay_rate_limited');
+    expect(error.message).toContain('retry after 1s');
   });
 
   test('set maps relay_unreachable to a network error', async () => {

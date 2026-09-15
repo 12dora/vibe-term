@@ -178,14 +178,16 @@ function membersOfflineError(body: Record<string, unknown>): CliError {
   );
 }
 
+function formatRetryAfter(retryAfterMs: number): string {
+  const seconds = Math.ceil(retryAfterMs / 1000);
+  return `retry after ${seconds}s`;
+}
+
 function rateLimitedError(body: Record<string, unknown>): CliError {
   const retry = extraNumber(body, 'retryAfterMs');
-  return new CliError(
-    `rate limited (relay_rate_limited)${retry !== undefined ? `; retry after ${retry}ms` : ''}`,
-    1,
-    undefined,
-    'relay_rate_limited'
-  );
+  const code = codeOf(body) ?? 'RELAY_RATE_LIMITED';
+  const wait = retry !== undefined ? `; ${formatRetryAfter(retry)}` : '';
+  return new CliError(`rate limited (${code})${wait}`, 1, undefined, code);
 }
 
 const PASSWORD_CODE_ERRORS: Record<string, (body: Record<string, unknown>) => CliError> = {
@@ -209,6 +211,7 @@ const PASSWORD_CODE_ERRORS: Record<string, (body: Record<string, unknown>) => Cl
     ),
   relay_members_offline: membersOfflineError,
   relay_rate_limited: rateLimitedError,
+  RELAY_RATE_LIMITED: rateLimitedError,
   relay_unreachable: () => new NetworkError('relay unreachable (relay_unreachable)'),
 };
 

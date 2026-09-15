@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { Writable } from 'node:stream';
 import { UsageError } from './core/errors';
 import { Output } from './core/output';
-import { dispatch, findCommandToken, helpForArgv } from './dispatch';
+import { dispatch, findCommandToken, helpForArgv, prepareCommand } from './dispatch';
 
 function capture(): { out: Output; stdout: string; stderr: string } {
   let stdout = '';
@@ -64,5 +64,25 @@ describe('dispatch table', () => {
       name: 'whoami',
       index: 2,
     });
+  });
+});
+
+describe('prepareCommand nodes enroll --password', () => {
+  test('bare --password parses as a switch before splitGlobalFlags', () => {
+    const prepared = prepareCommand(['nodes', 'enroll', '--password']);
+    expect(prepared.command.name).toBe('nodes');
+    expect(prepared.commandArgv).toEqual(['enroll', '--password=']);
+    expect(prepared.json).toBe(false);
+  });
+
+  test('bare --password before --name parses', () => {
+    const prepared = prepareCommand(['nodes', 'enroll', '--password', '--name', 'x']);
+    expect(prepared.commandArgv).toEqual(['enroll', '--password=', '--name', 'x']);
+  });
+
+  test('bare --password after --json parses', () => {
+    const prepared = prepareCommand(['nodes', 'enroll', '--json', '--password']);
+    expect(prepared.json).toBe(true);
+    expect(prepared.commandArgv).toEqual(['enroll', '--password=']);
   });
 });

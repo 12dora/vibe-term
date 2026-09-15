@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import type { ShareLogEntry, ShareLogPage } from '@vibeterm/shared/share';
 import { InterruptError, UsageError } from './errors';
 import type { HttpClient } from './http';
+import { REPLAY_TTY_RESTORE } from './replay-vt';
 import {
-  SGR_RESET,
   assembleShareReplay,
   decodeShareLogData,
   fetchShareLogPages,
@@ -148,9 +148,33 @@ describe('assembleShareReplay', () => {
     expect(assembled.durationMs).toBe(2000);
     expect(assembled.entries).toBe(5);
     expect(assembled.panes).toEqual([
-      { paneId: '%0', cols: 100, rows: 30, chunks: ['hi', 'hi'] },
+      { paneId: '%0', cols: 100, rows: 30, chunks: ['hihi'] },
       { paneId: '%1', cols: 40, rows: 12, chunks: ['hi'] },
     ]);
+  });
+
+  test('concatenates UTF-8 bytes across chunks before decoding', () => {
+    const mid = Buffer.from('中', 'utf8');
+    const assembled = assembleShareReplay([
+      entry({ seq: 1, at: BASE, data: Buffer.from([mid[0]]).toString('base64') }),
+      entry({ seq: 2, at: BASE + 1, data: Buffer.from([mid[1], mid[2]]).toString('base64') }),
+    ]);
+    expect(assembled.panes[0].chunks).toEqual(['中']);
+  });
+
+  test('invalid base64 is a usage error with the entry index', () => {
+    expect(() => assembleShareReplay([entry({ seq: 1, at: BASE, data: '!!!' })])).toThrow(
+      UsageError
+    );
+    try {
+      assembleShareReplay([
+        entry({ seq: 1, at: BASE, data: HI }),
+        entry({ seq: 2, at: BASE + 1, data: '!!!' }),
+      ]);
+    } catch (error) {
+      expect(error).toBeInstanceOf(UsageError);
+      expect((error as UsageError).message).toContain('entry 1');
+    }
   });
 
   test('--from drops earlier chunks but keeps duration', () => {
@@ -218,7 +242,7 @@ describe('playShareReplay', () => {
     expect(delays).toEqual([]);
   });
 
-  test('Ctrl-C restores SGR and throws InterruptError', async () => {
+  test('Ctrl-C restores TTY modes and throws InterruptError', async () => {
     const written: Uint8Array[] = [];
     const controller = new AbortController();
     await expect(
@@ -237,7 +261,35 @@ describe('playShareReplay', () => {
         }
       )
     ).rejects.toBeInstanceOf(InterruptError);
-    expect(new TextDecoder().decode(written[written.length - 1])).toBe(SGR_RESET);
+    expect(new TextDecoder().decode(written[written.length - 1])).toBe(REPLAY_TTY_RESTORE);
+  });
+
+  test('normal end restores TTY when the recording entered alt-screen', async () => {
+    const written: string[] = [];
+    const alt = Buffer.from('\x1b[?1049hhi', 'utf8').toString('base64');
+    await playShareReplay([entry({ seq: 1, at: BASE, data: alt })], {
+      speed: 0,
+      fromMs: 0,
+      write: (bytes) => written.push(new TextDecoder().decode(bytes)),
+      note: () => {},
+      sleep: async () => {},
+    });
+    expect(written.at(-1)).toBe(REPLAY_TTY_RESTORE);
+    expect(written.join('')).toContain('hi');
+    expect(written.join('')).toContain('\x1b[?1049h');
+  });
+
+  test('strips OSC 52 before writing to the TTY', async () => {
+    const written: string[] = [];
+    const payload = Buffer.from('hi\x1b]52;c;QUFBQQ==\x07lo', 'utf8').toString('base64');
+    await playShareReplay([entry({ seq: 1, at: BASE, data: payload })], {
+      speed: 0,
+      fromMs: 0,
+      write: (bytes) => written.push(new TextDecoder().decode(bytes)),
+      note: () => {},
+      sleep: async () => {},
+    });
+    expect(written.join('')).toBe('hilo');
   });
 
   test('same-size resize is silent', async () => {

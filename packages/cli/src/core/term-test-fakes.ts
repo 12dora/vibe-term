@@ -45,6 +45,7 @@ export class FakeTransport implements Pick<GatewayTransport, 'send' | 'onEvent'>
   private readonly handlers = new Set<EventHandler>();
   /** 每条命令发出后的钩子：测试用它模拟服务端的回应。 */
   onCommand: ((command: GatewayTransportCommand) => void) | null = null;
+  serverCapabilities: readonly string[] = [];
   private sentSnapshot = false;
 
   constructor(private session: TmuxSession | null) {}
