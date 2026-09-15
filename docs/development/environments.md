@@ -87,7 +87,7 @@
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `VIBETERM_DIAL_DNS_FALLBACK` | 开 | `off` / `0` / `false` / `no` 关闭上联 / 中继拨号的 DoH 回退。见 [公共中继](../architecture/relay.md) |
+| `VIBETERM_DIAL_DNS_FALLBACK` | 开 | `off` / `0` / `false` / `no` 关闭上联 / 中继拨号的 DoH 回退（系统 DNS 失败或 fake-IP 连接失败）。见 [公共中继](../architecture/relay.md) |
 | `VIBETERM_DOH_ENDPOINTS` | IP 字面量列表 | 逗号分隔的 https URL，覆盖缺省 `https://223.5.5.5/resolve,https://120.53.53.53/dns-query,https://1.1.1.1/dns-query,https://8.8.8.8/resolve`（境内优先）。系统解析器坏掉时域名端点自己也解析不出来，所以默认不用主机名。隧道边缘与 STUN 解析共用 |
 | `VIBETERM_LOOP_WATCHDOG` | production 开；development / test 关 | 进程内事件循环看门狗。显式 `1` / `true` / `yes` 任意环境打开，`0` / `false` 关闭。见 [事件循环看门狗](../operations/gateway-loop-watchdog.md) |
 | `VIBETERM_LOOP_WATCHDOG_STALL_SEC` | `30`（最小 5） | 服务已启动后的心跳超时秒数；低于最小值回退默认 |
