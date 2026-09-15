@@ -155,6 +155,7 @@ export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOn
       theme: themeRef.current,
       viewportPan: options.viewportPan,
       minGrid: minGridRef.current ?? null,
+      readMinGrid: () => minGridRef.current ?? null,
       onGridChange: (cols, rows) => onGridChangeRef.current?.(cols, rows),
       isCancelled: () => cancelled,
       termRef,

@@ -12,6 +12,8 @@ import { useTranslation } from 'react-i18next';
 
 export interface ReplayTerminalHandle {
   write: (data: Uint8Array) => void;
+  /** 快照按录制网格写入（见 ReadOnlyTerminalHandle.writeCheckpoint）。 */
+  writeCheckpoint: (data: Uint8Array, grid: ReadOnlyGrid) => void;
   reset: () => void;
 }
 
@@ -46,6 +48,10 @@ export function createReplayTerminalBinding(
       write(data) {
         if (data.length === 0) return;
         widget?.write(data);
+      },
+      writeCheckpoint(data, grid) {
+        if (data.length === 0) return;
+        widget?.writeCheckpoint(data, grid);
       },
       reset() {
         widget?.reset();

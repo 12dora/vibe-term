@@ -220,6 +220,8 @@ export function planReplaySeek(pane: ReplayPane, targetMs: number, cursor: numbe
 
 export type ReplayOp =
   | { kind: 'resize'; cols: number; rows: number }
+  /** 快照：字节按录制时的网格拼成（带 history 与绝对 CUP），必须在该网格下写入。 */
+  | { kind: 'checkpoint'; data: string; cols: number; rows: number }
   /** 连续的输出合并成一条：base64 分片由调用方各自解码后拼接写入。 */
   | { kind: 'write'; chunks: string[] }
   | { kind: 'input'; t: number; data: string };
@@ -244,6 +246,10 @@ export function collectReplayOps(pane: ReplayPane, fromIndex: number, toIndex: n
     }
     if (event.cols !== null && event.rows !== null) {
       ops.push({ kind: 'resize', cols: event.cols, rows: event.rows });
+      if (event.kind === 'checkpoint' && event.data !== '') {
+        ops.push({ kind: 'checkpoint', data: event.data, cols: event.cols, rows: event.rows });
+        continue;
+      }
     }
     if (event.kind !== 'resize') pushWrite(ops, event.data);
   }

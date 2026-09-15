@@ -33,6 +33,11 @@ function fakeHandle(): ReadOnlyTerminalHandle & {
     write(data) {
       calls.push(`write:${typeof data === 'string' ? data : Array.from(data).join(',')}`);
     },
+    writeCheckpoint(data, grid) {
+      calls.push(
+        `ckpt:${grid.cols}x${grid.rows}:${typeof data === 'string' ? data : Array.from(data).join(',')}`
+      );
+    },
     reset() {
       calls.push('reset');
     },

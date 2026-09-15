@@ -141,16 +141,23 @@ function fakeTerminal(): ReplayTerminalHandle & { events: string[] } {
     write(data) {
       events.push(`write:${new TextDecoder().decode(data)}`);
     },
+    writeCheckpoint(data, grid) {
+      events.push(`ckpt:${grid.cols}x${grid.rows}:${new TextDecoder().decode(data)}`);
+    },
     reset() {
       events.push('reset');
     },
   };
 }
 
+/** 快照与普通输出都算「写进终端的内容」，前者多带一个录制网格前缀。 */
 function writtenText(events: string[]): string {
   return events
-    .filter((item) => item.startsWith('write:'))
-    .map((item) => item.slice(6))
+    .map((item) => {
+      if (item.startsWith('write:')) return item.slice(6);
+      if (item.startsWith('ckpt:')) return item.slice(item.indexOf(':', item.indexOf(':') + 1) + 1);
+      return '';
+    })
     .join('');
 }
 
@@ -277,6 +284,20 @@ describe('useReplayPlayer seek', () => {
     mounted.act();
     expect(writtenText(terminal.events)).toBe('');
     mounted.setReady(true);
+    expect(writtenText(terminal.events)).toBe('CKPTONETWOTHREE');
+  });
+
+  // 快照必须带着录制网格交给终端：它的字节是按那时的行列拼的（history + 绝对 CUP）。
+  test('快照走 writeCheckpoint 并带上录制网格，录像里的 resize 条目不下发', () => {
+    const timeline = sampleTimeline();
+    const terminal = fakeTerminal();
+    const mounted = mountPlayer(timeline, terminal, true);
+    expect(terminal.events[0]).toBe('reset');
+    expect(terminal.events.filter((item) => item.startsWith('ckpt:'))).toEqual(['ckpt:80x24:CKPT']);
+    expect(terminal.events.some((item) => item.startsWith('resize:'))).toBe(false);
+    mounted.player().seek(timeline.durationMs);
+    mounted.act();
+    expect(terminal.events.some((item) => item.startsWith('resize:'))).toBe(false);
     expect(writtenText(terminal.events)).toBe('CKPTONETWOTHREE');
   });
 

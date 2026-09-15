@@ -38,6 +38,7 @@ describe('TerminalPreview', () => {
       write: (data) => {
         writes.push(data);
       },
+      writeCheckpoint: () => {},
       reset: () => {},
     });
     expect(writes).toEqual([PREVIEW_ANSI]);

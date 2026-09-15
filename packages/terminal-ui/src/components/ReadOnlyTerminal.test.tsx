@@ -154,8 +154,11 @@ async function bootWithFake(input: {
   fontSize?: number;
   events?: string[];
   minGrid?: { cols: number; rows: number } | null;
+  readMinGrid?: () => { cols: number; rows: number } | null;
   onGridChange?: (cols: number, rows: number) => void;
   fit?: ReturnType<typeof createFakeFit>;
+  /** 在「建控制器」那一步执行：模拟异步建面期间外部状态发生变化。 */
+  beforeBoot?: () => void;
 }) {
   const events = input.events ?? [];
   const mount = createMount(input.width, input.height);
@@ -170,12 +173,14 @@ async function bootWithFake(input: {
     theme: { background: '#111' } as never,
     viewportPan: input.viewportPan,
     minGrid: input.minGrid ?? null,
+    readMinGrid: input.readMinGrid,
     onGridChange: input.onGridChange,
     isCancelled: () => false,
     termRef: { current: null },
     themeRef: { current: { background: '#111' } as never },
     loadFonts: async () => {},
     createController: async (options) => {
+      input.beforeBoot?.();
       const next = createFakeController(options);
       created.push(next);
       return next as unknown as ReadOnlyController;
@@ -339,6 +344,29 @@ describe('ReadOnlyTerminal grid', () => {
     session?.dispose();
   });
 
+  test('异步建面期间包络又变大：交出 session 前补齐，且不算网格变化', async () => {
+    const changes: Array<[number, number]> = [];
+    const fit = createFakeFit([], { cols: 100, rows: 30 });
+    let envelope = { cols: 52, rows: 24 };
+    const { session, controller } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: true,
+      fit,
+      minGrid: envelope,
+      // 建面 await 期间日志又来一页，包络涨到 220×50
+      readMinGrid: () => envelope,
+      onGridChange: (cols, rows) => changes.push([cols, rows]),
+      beforeBoot: () => {
+        envelope = { cols: 220, rows: 50 };
+      },
+    });
+    expect(session?.effectiveGrid).toEqual({ cols: 220, rows: 50 });
+    expect(controller.resizeCalls.at(-1)).toEqual([220, 50]);
+    expect(changes).toEqual([]);
+    session?.dispose();
+  });
+
   test('网格变化只在开面之后上报，开面那次不算', async () => {
     const changes: Array<[number, number]> = [];
     const fit = createFakeFit([], { cols: 100, rows: 30 });
@@ -358,6 +386,62 @@ describe('ReadOnlyTerminal grid', () => {
       [100, 47],
       [120, 47],
     ]);
+    session?.dispose();
+  });
+
+  test('写快照：调回录制网格 → 写 → 调回生效网格，且不算网格变化', async () => {
+    const changes: Array<[number, number]> = [];
+    const fit = createFakeFit([], { cols: 200, rows: 50 });
+    const { session, controller } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: true,
+      fit,
+      minGrid: { cols: 80, rows: 24 },
+      onGridChange: (cols, rows) => changes.push([cols, rows]),
+    });
+    expect(controller.resizeCalls).toEqual([[200, 50]]);
+    controller.resizeCalls.length = 0;
+    session?.handle.writeCheckpoint('SNAP', { cols: 80, rows: 24 });
+    expect(controller.resizeCalls).toEqual([
+      [80, 24],
+      [200, 50],
+    ]);
+    expect(controller.writes).toEqual(['SNAP']);
+    expect(changes).toEqual([]);
+    expect(session?.effectiveGrid).toEqual({ cols: 200, rows: 50 });
+    session?.dispose();
+  });
+
+  test('录制网格与生效网格相同时不来回 resize', async () => {
+    const fit = createFakeFit([], { cols: 80, rows: 24 });
+    const { session, controller } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: true,
+      fit,
+    });
+    controller.resizeCalls.length = 0;
+    session?.handle.writeCheckpoint('SNAP', { cols: 80, rows: 24 });
+    expect(controller.resizeCalls).toEqual([]);
+    expect(controller.writes).toEqual(['SNAP']);
+    session?.dispose();
+  });
+
+  test('reset 清屏后滚回原点：重放的内容要从左上角开始', async () => {
+    const fit = createFakeFit([], { cols: 220, rows: 50 });
+    const { session, controller } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: true,
+      fit,
+    });
+    controller.viewport.scrollLeft = 120;
+    controller.viewport.scrollTop = 40;
+    for (const listener of controller.viewport.listeners) listener();
+    session?.handle.reset();
+    expect(controller.viewport.scrollLeft).toBe(0);
+    expect(controller.viewport.scrollTop).toBe(0);
     session?.dispose();
   });
 

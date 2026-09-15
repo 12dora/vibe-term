@@ -31,6 +31,12 @@ export type ReadOnlyController = CompatibleTerminalLike & {
 
 export interface ReadOnlyTerminalHandle {
   write(data: Uint8Array | string): void;
+  /**
+   * 写入一份录制快照。快照的字节是按录制时的网格拼的（primary 屏还带着 history 与绝对 CUP），
+   * 必须先把仿真终端调回那个网格再写，写完调回生效网格——就像真终端被拉大：
+   * primary 屏把 history 拉回 scrollback（提示行仍在底部），alt 屏的 TUI 画面留在左上。
+   */
+  writeCheckpoint(data: Uint8Array | string, grid: ReadOnlyGrid): void;
   reset(): void;
 }
 
@@ -248,9 +254,12 @@ export class ReadOnlyTerminalSession {
       write: (data) => {
         this.term?.write(data);
       },
+      writeCheckpoint: (data, grid) => this.writeAtRecordedGrid(data, grid),
       reset: () => {
         this.origin.reset();
         this.term?.reset();
+        // 清屏之后内容要从左上角重写：不滚回原点的话会在旧偏移下重画，看着像丢了一截。
+        this.scrollToOrigin();
       },
     };
   }
@@ -269,11 +278,14 @@ export class ReadOnlyTerminalSession {
     this.applyGrid();
   }
 
-  /** 录像包络变了（日志又来一页 / 换 pane）。 */
-  setMinGrid(next: ReadOnlyGrid | null): void {
+  /**
+   * 录像包络变了（日志又来一页 / 换 pane）。
+   * `silent` 用于开面到就绪之间的补齐：那时上层还没拿到 handle，不该当成一次「网格变化」。
+   */
+  setMinGrid(next: ReadOnlyGrid | null, silent = false): void {
     if (sameReadOnlyGrid(this.minGrid, next)) return;
     this.minGrid = next ? { cols: next.cols, rows: next.rows } : null;
-    this.applyGrid();
+    this.applyGrid(silent);
   }
 
   dispose(): void {
@@ -296,7 +308,7 @@ export class ReadOnlyTerminalSession {
   }
 
   /** 按「容器 ∪ 包络」下发网格；没变就什么都不做，变了才通知上层重放。 */
-  private applyGrid(): void {
+  private applyGrid(silent = false): void {
     if (!this.term || !this.fit || !mountHasPositiveSize(this.mount)) return;
     const fitted = this.fit.proposeDimensions();
     if (!fitted) return;
@@ -308,7 +320,24 @@ export class ReadOnlyTerminalSession {
     if (this.viewportPan) this.enablePan();
     if (this.origin.shouldResetOrigin()) this.scrollToOrigin();
     if (booting) this.armDeferredRefit();
-    else this.onGridChange?.(next.cols, next.rows);
+    else if (!silent) this.onGridChange?.(next.cols, next.rows);
+  }
+
+  /**
+   * 在录制网格下写快照，写完调回生效网格。两次 resize 与 write 都是同步进 wasm 的，
+   * 中间不会渲染，也不动 minGrid / 平移状态，更不上报网格变化——这不是窗口变了。
+   */
+  private writeAtRecordedGrid(data: Uint8Array | string, grid: ReadOnlyGrid): void {
+    const term = this.term;
+    if (!term) return;
+    const effective = this.grid;
+    if (sameReadOnlyGrid(effective, grid)) {
+      term.write(data);
+      return;
+    }
+    term.resize(grid.cols, grid.rows);
+    term.write(data);
+    if (effective) term.resize(effective.cols, effective.rows);
   }
 
   private enablePan(): void {
@@ -350,6 +379,8 @@ export interface ReadOnlyBootInput {
   themeRef: { current: TerminalThemeColors };
   /** 录像包络：生效网格不会小于它。 */
   minGrid?: ReadOnlyGrid | null;
+  /** 建面完成那一刻的最新包络：异步建面期间日志可能又来一页，交出 session 前补齐。 */
+  readMinGrid?: () => ReadOnlyGrid | null;
   onGridChange?: (cols: number, rows: number) => void;
   loadFonts?: (fontId: string, fontSize: number) => Promise<void>;
   createController?: (options: GhosttyTerminalInitOptions) => Promise<ReadOnlyController>;
@@ -410,5 +441,8 @@ export async function bootReadOnlyTerminal(
     onGridChange: input.onGridChange,
   });
   session.tryFitToContainer();
+  // 建面是异步的（等字体 + 建控制器），这期间包络可能已经变大：交出 session 之前补齐，
+  // 第一次快进就落在最终网格上。此时上层还没拿到 handle，不算一次「网格变化」。
+  if (input.readMinGrid) session.setMinGrid(input.readMinGrid(), true);
   return session;
 }
