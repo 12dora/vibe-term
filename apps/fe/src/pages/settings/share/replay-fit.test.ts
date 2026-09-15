@@ -3,7 +3,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_CELL_WIDTH_RATIO,
-  REPLAY_FIT_MAX_FONT_SIZE,
   REPLAY_FIT_MIN_FONT_SIZE,
   type ReplayFitInput,
   cellWidthRatioFrom,
@@ -84,9 +83,19 @@ describe('replayFitCanMount', () => {
 });
 
 describe('computeReplayFitFontSize', () => {
-  test('手机竖录像（52×47）受高度限制缩到刚好装下，整屏不再被裁', () => {
-    const source = input({});
+  // 回放要和普通终端一样：默认就用设置里的字号，装得下就一个像素都不缩。
+  test('包络装得下时就用设置里的字号，绝不放大', () => {
+    expect(computeReplayFitFontSize(input({ grid: { cols: 80, rows: 24 } }))).toBe(13);
+    expect(computeReplayFitFontSize(input({ grid: { cols: 2, rows: 2 } }))).toBe(13);
+    expect(computeReplayFitFontSize(input({ grid: { cols: 2, rows: 2 }, baseFontSize: 20 }))).toBe(
+      20
+    );
+  });
+
+  test('手机竖录像（52×47）在矮外框里往下缩到刚好装下，整屏不再被裁', () => {
+    const source = input({ frame: { width: 1120, height: 560 } });
     const size = computeReplayFitFontSize(source);
+    expect(size).toBeLessThan(source.baseFontSize);
     const box = fills(size, source);
     expect(box.height).toBeLessThanOrEqual(source.frame.height);
     expect(box.width).toBeLessThanOrEqual(source.frame.width);
@@ -95,15 +104,6 @@ describe('computeReplayFitFontSize', () => {
     expect(bigger.width > source.frame.width - 2 || bigger.height > source.frame.height - 2).toBe(
       true
     );
-  });
-
-  test('常见 80×24 录像在宽外框里放大到远超设置字号', () => {
-    const source = input({ grid: { cols: 80, rows: 24 } });
-    const size = computeReplayFitFontSize(source);
-    expect(size).toBeGreaterThan(source.baseFontSize);
-    const box = fills(size, source);
-    expect(box.width).toBeLessThanOrEqual(source.frame.width);
-    expect(box.height).toBeLessThanOrEqual(source.frame.height);
   });
 
   test('宽录像在同一外框里被缩小，受宽度限制', () => {
@@ -118,9 +118,11 @@ describe('computeReplayFitFontSize', () => {
     expect(computeReplayFitFontSize(source)).toBe(REPLAY_FIT_MIN_FONT_SIZE);
   });
 
-  test('极小网格配极大外框时封顶在上限', () => {
-    const source = input({ grid: { cols: 2, rows: 2 }, frame: { width: 4000, height: 4000 } });
-    expect(computeReplayFitFontSize(source)).toBe(REPLAY_FIT_MAX_FONT_SIZE);
+  // 设置里的字号滑块下限就是 8，与这里的下限一致：塞不下也不会缩到看不清。
+  test('再塞不下也不缩到下限以下，剩下的交给平移视口', () => {
+    const source = input({ grid: { cols: 52, rows: 47 }, frame: { width: 1120, height: 400 } });
+    expect(computeReplayFitFontSize(source)).toBe(REPLAY_FIT_MIN_FONT_SIZE);
+    expect(fills(REPLAY_FIT_MIN_FONT_SIZE, source).height).toBeGreaterThan(source.frame.height);
   });
 
   test('没有网格 / 量不到外框 / 度量非法时用设置里的字号', () => {
@@ -133,25 +135,26 @@ describe('computeReplayFitFontSize', () => {
   });
 
   test('同样的入参永远给同一个字号，与上一次结果无关', () => {
-    const source = input({ grid: { cols: 80, rows: 24 } });
+    const source = input({ grid: { cols: 400, rows: 100 }, frame: { width: 900, height: 500 } });
     const first = computeReplayFitFontSize(source);
     expect(computeReplayFitFontSize(source)).toBe(first);
-    expect(computeReplayFitFontSize({ ...source, baseFontSize: 40 })).toBe(first);
+    expect(computeReplayFitFontSize({ ...source })).toBe(first);
   });
 
-  test('外框差一像素不会来回跳：结果随外框单调不减', () => {
+  test('外框差一像素不会来回跳：结果随外框单调不减，且不超过设置字号', () => {
     const grid = { cols: 52, rows: 47 };
     let previous = 0;
     for (let height = 200; height <= 1200; height += 1) {
       const size = computeReplayFitFontSize(input({ grid, frame: { width: 4000, height } }));
       expect(size).toBeGreaterThanOrEqual(previous);
+      expect(size).toBeLessThanOrEqual(13);
       previous = size;
     }
   });
 
-  test('取整后的 cell 也留得下两像素余量，不会把居中翻成平移', () => {
+  test('取整后的 cell 也留得下两像素余量，不会差一像素就溢出', () => {
     for (let width = 300; width <= 1600; width += 7) {
-      const source = input({ grid: { cols: 80, rows: 24 }, frame: { width, height: 4000 } });
+      const source = input({ grid: { cols: 200, rows: 24 }, frame: { width, height: 4000 } });
       const size = computeReplayFitFontSize(source);
       if (size === REPLAY_FIT_MIN_FONT_SIZE) continue;
       expect(fills(size, source).width).toBeLessThanOrEqual(width - 2);

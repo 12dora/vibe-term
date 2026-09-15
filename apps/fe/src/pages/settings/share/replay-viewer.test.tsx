@@ -32,7 +32,7 @@ function findByTestId(node: ReactNode, testId: string): ReactElement | null {
 function hookWidget(): ReactElement {
   let widget: ReactElement | null = null;
   function Probe() {
-    widget = useReplayTerminal(13).widget;
+    widget = useReplayTerminal(13, { cols: 52, rows: 47 }).widget;
     return null;
   }
   renderToStaticMarkup(<Probe />);
@@ -41,7 +41,7 @@ function hookWidget(): ReactElement {
 }
 
 describe('ReplayTerminalFrame', () => {
-  test('外框按屏幕给高度且不超出视口，挂上平移+选区的 widget', () => {
+  test('外框高度跟着视口走，挂上平移+选区的 widget', () => {
     const widget = hookWidget();
     const frame = ReplayTerminalFrame({
       children: widget,
@@ -50,10 +50,8 @@ describe('ReplayTerminalFrame', () => {
       loadingLabel: 'loading',
       emptyLabel: 'empty',
     });
-    expect(frame.props.className).toContain('h-[22rem]');
-    // 宽屏上要给够高度，窄录像才有放大的余地；再按视口封顶，控制条不会被挤出屏幕。
-    expect(frame.props.className).toContain('sm:h-[44rem]');
-    expect(frame.props.className).toContain('max-h-[calc(100dvh-15rem)]');
+    // 高度由视口决定：标题 + 控制条 + 输入条留够位置，窄屏保底 18rem。
+    expect(frame.props.className).toContain('h-[max(18rem,calc(100dvh-17rem))]');
     expect(frame.props.className).toContain('overflow-hidden');
     expect(frame.props.style).toBeUndefined();
     const mount = findByTestId(frame, 'share-replay-mount');
@@ -72,7 +70,7 @@ describe('ReplayTerminalFrame', () => {
       storagePrefix: `share-replay-frame-${Date.now()}:`,
     });
     const html = renderToStaticMarkup(<RuntimeProvider runtime={runtime}>{frame}</RuntimeProvider>);
-    expect(html).toContain('h-[22rem]');
+    expect(html).toContain('h-[max(18rem,calc(100dvh-17rem))]');
     expect(html).toContain('overflow-hidden');
     expect(html).toContain('data-testid="share-replay-mount"');
     expect(html).not.toContain('touch-action');
@@ -96,7 +94,7 @@ describe('ReplayBody', () => {
     expect(html).toContain('data-testid="share-replay-body"');
     expect(html).not.toContain('data-testid="share-replay-mount"');
     expect(html).toContain('animate-spin');
-    expect(html).toContain('h-[22rem]');
+    expect(html).toContain('h-[max(18rem,calc(100dvh-17rem))]');
     expect(html).toContain('overflow-hidden');
     expect(html).toContain('data-testid="share-replay-controls"');
     runtime.dispose();

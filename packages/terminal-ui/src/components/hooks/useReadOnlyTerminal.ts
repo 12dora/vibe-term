@@ -4,8 +4,7 @@ import { resolveTerminalTheme } from '@vibeterm/theme';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { applyTerminalTheme } from '../theme';
-import { applyReadOnlySurfaceFrame } from './read-only-surface-frame';
-import type { ReadOnlyTerminalHandle } from './read-only-terminal-session';
+import type { ReadOnlyGrid, ReadOnlyTerminalHandle } from './read-only-terminal-session';
 import {
   type ReadOnlyBootInput,
   type ReadOnlyController,
@@ -13,12 +12,16 @@ import {
   bootReadOnlyTerminal,
 } from './read-only-terminal-session';
 
+/** 拖动窗口一路触发 resize：等手停下来再重算网格，否则回放会被整份重放拖垮。 */
+const CONTAINER_REFIT_DEBOUNCE_MS = 150;
+
 export interface UseReadOnlyTerminalOptions {
   viewportPan: boolean;
-  /** 内容表面按「屏幕」画：外圈衬底 + 描边 + 居中。 */
-  surfaceFrame: boolean;
   /** 覆盖设置里的终端字号；不给就用设置值。 */
   fontSize?: number;
+  /** 生效网格的下界（录像包络）；容器更大时以容器为准。 */
+  minGrid?: ReadOnlyGrid | null;
+  onGridChange?: (cols: number, rows: number) => void;
   scrollback: number;
   onReady?: (handle: ReadOnlyTerminalHandle) => void;
   onDispose?: () => void;
@@ -65,19 +68,31 @@ function useReadOnlyContainerFit(
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
         sessionRef.current?.tryFitToContainer();
-      });
+      }, CONTAINER_REFIT_DEBOUNCE_MS);
     });
     ro.observe(el);
     return () => {
       ro.disconnect();
-      cancelAnimationFrame(raf);
+      clearTimeout(timer);
     };
   }, [containerRef, sessionRef]);
+}
+
+/** 包络变化按值比较下发：每页日志都会造出一个新对象，按引用比较会白白重算网格。 */
+function useReadOnlyMinGrid(
+  sessionRef: RefObject<ReadOnlyTerminalSession | null>,
+  minGrid: ReadOnlyGrid | null | undefined
+): void {
+  const cols = minGrid?.cols ?? 0;
+  const rows = minGrid?.rows ?? 0;
+  useEffect(() => {
+    sessionRef.current?.setMinGrid(cols > 0 && rows > 0 ? { cols, rows } : null);
+  }, [sessionRef, cols, rows]);
 }
 
 function useReadOnlyE2eProbe(instance: CompatibleTerminalLike | null): void {
@@ -120,6 +135,10 @@ export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOn
   onReadyRef.current = options.onReady;
   const onDisposeRef = useRef(options.onDispose);
   onDisposeRef.current = options.onDispose;
+  const onGridChangeRef = useRef(options.onGridChange);
+  onGridChangeRef.current = options.onGridChange;
+  const minGridRef = useRef(options.minGrid);
+  minGridRef.current = options.minGrid;
   const sessionRef = useRef<ReadOnlyTerminalSession | null>(null);
   const [instance, setInstance] = useState<CompatibleTerminalLike | null>(null);
 
@@ -135,6 +154,8 @@ export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOn
       scrollback: options.scrollback,
       theme: themeRef.current,
       viewportPan: options.viewportPan,
+      minGrid: minGridRef.current ?? null,
+      onGridChange: (cols, rows) => onGridChangeRef.current?.(cols, rows),
       isCancelled: () => cancelled,
       termRef,
       themeRef,
@@ -160,15 +181,15 @@ export function useReadOnlyTerminal(options: UseReadOnlyTerminalOptions): ReadOn
     };
   }, [fontId, fontSize, lineHeight, options.scrollback, options.viewportPan]);
 
-  // instance 进依赖：实例是异步建出来的，就绪那一刻要补下发一次主题与外框样式
-  //（ghostty 的 applyTheme 会重写底色，外框必须排在它后面）。
+  // instance 进依赖：实例是异步建出来的，就绪那一刻要补下发一次主题。
   useEffect(() => {
+    if (!instance) return;
     applyTerminalTheme(termRef.current, terminalTheme);
-    applyReadOnlySurfaceFrame(instance?.element ?? null, terminalTheme, options.surfaceFrame);
-  }, [terminalTheme, instance, options.surfaceFrame]);
+  }, [terminalTheme, instance]);
 
   useReadOnlyE2eProbe(instance);
   useReadOnlyContainerFit(containerRef, sessionRef);
+  useReadOnlyMinGrid(sessionRef, options.minGrid);
 
   return { containerRef, mountRef, instance, terminalTheme };
 }

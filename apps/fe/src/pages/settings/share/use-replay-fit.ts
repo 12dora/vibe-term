@@ -1,10 +1,11 @@
-// 回放外框的自适应字号：量外框 + 录像网格 → 算字号，交给只读终端按这个字号开面。
+// 回放的字号与录像包络：量外框 + 录像包络 → 定字号，交给只读终端按这个字号开面。
 //
+// 字号默认就是设置里的终端字号；只有包络在该字号下塞不进外框才往下缩（见 replay-fit.ts）。
 // ghostty 的字号只在建面时生效，改字号 = 重建实例（清屏 + 从 checkpoint 重放，选区也会没）。
 // 所以开面本身要等齐两件事：外框量到了（且开窗动画已结束，否则 ghostty 量 cell 时会被
-// `zoom-in-95` 的 transform 缩小约 5%），以及录像网格已知（或确认整份日志都没有网格）。
-// 齐了之后第一个字号同步落地、不防抖——用户从头到尾只会看到一台终端。
-// 之后外框或网格再变（拖窗口、录像中途 resize）才走 120 ms 防抖，避免连续重建。
+// `zoom-in-95` 的 transform 缩小约 5%），以及录像包络已知（或确认整份日志都没有尺寸）。
+// 齐了之后第一个字号同步落地、不防抖——用户从头到尾只会看到一台终端、一个尺寸。
+// 之后外框或包络再变才走 120 ms 防抖，避免连续重建。
 
 import { useUIStore } from '@vibeterm/stores/react';
 import { schedulePostPaintRefit } from '@vibeterm/terminal-ui/components/hooks/read-only-terminal-session';
@@ -40,7 +41,7 @@ interface FrameSize {
 }
 
 export interface ReplayFitOptions {
-  /** 录像里第一个网格（checkpoint/resize）；日志还没到时为 null。 */
+  /** 录像包络（默认 pane 的最大行列）；日志还没到时为 null。 */
   initialGrid: ReplayFitGrid | null;
   /** 日志已经拉完：到这一步还没有网格，就按设置里的字号开面。 */
   logSettled: boolean;
@@ -49,11 +50,13 @@ export interface ReplayFitOptions {
 export interface ReplayFitState {
   /** 挂到回放外框上：字号按这个元素的内尺寸算。 */
   frameRef: RefObject<HTMLDivElement | null>;
-  /** 开面用的字号；外框或网格还没齐时为 null，这时先别挂终端。 */
+  /** 开面用的字号；外框或包络还没齐时为 null，这时先别挂终端。 */
   fontSize: number | null;
+  /** 仿真网格的下界（录像包络）：窗口更大时终端照样铺满窗口。 */
+  minGrid: ReplayFitGrid | null;
   /** 适配后的第一台终端还没定下来：加载遮罩要一直盖到那时候。 */
   pending: boolean;
-  /** 录像网格变了就告诉它；同尺寸不会引起重渲染。 */
+  /** 录像包络变了就告诉它；同尺寸不会引起重渲染。 */
   setGrid: (grid: ReplayFitGrid | null) => void;
 }
 
@@ -156,8 +159,8 @@ export function useReplayFit(options: ReplayFitOptions): ReplayFitState {
 
   const setGrid = useCallback((next: ReplayFitGrid | null) => {
     setLiveGrid((prev) => {
-      // 拖回第一个 checkpoint 之前时录像网格会暂时为 null；这时留住上一次的尺寸，
-      // 否则字号会在 基准值 ↔ 适配值 之间来回跳，每跳一次终端就重建一次。
+      // 日志还没给出任何尺寸时为 null：留住上一次的包络，别让字号在 基准值 ↔ 适配值
+      // 之间来回跳，每跳一次终端就重建一次。
       if (next === null || sameReplayFitGrid(prev, next)) return prev;
       return { cols: next.cols, rows: next.rows };
     });
@@ -183,5 +186,5 @@ export function useReplayFit(options: ReplayFitOptions): ReplayFitState {
     if (!settled && fontSize !== null && fontSize === target) setSettled(true);
   }, [settled, fontSize, target]);
 
-  return { frameRef, fontSize, pending: !settled, setGrid };
+  return { frameRef, fontSize, minGrid: grid, pending: !settled, setGrid };
 }

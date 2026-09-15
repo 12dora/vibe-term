@@ -141,14 +141,8 @@ function fakeTerminal(): ReplayTerminalHandle & { events: string[] } {
     write(data) {
       events.push(`write:${new TextDecoder().decode(data)}`);
     },
-    resize(cols, rows) {
-      events.push(`resize:${cols}x${rows}`);
-    },
     reset() {
       events.push('reset');
-    },
-    fit() {
-      events.push('fit');
     },
   };
 }
@@ -295,7 +289,6 @@ describe('useReplayPlayer seek', () => {
     terminal.events.length = 0;
     mounted.reboot();
     expect(terminal.events[0]).toBe('reset');
-    expect(terminal.events).toContain('resize:80x24');
     expect(writtenText(terminal.events)).toBe('CKPTONETWOTHREE');
   });
 });

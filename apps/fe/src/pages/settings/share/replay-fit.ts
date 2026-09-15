@@ -27,7 +27,6 @@ export interface ReplayFitInput {
 }
 
 export const REPLAY_FIT_MIN_FONT_SIZE = 8;
-export const REPLAY_FIT_MAX_FONT_SIZE = 40;
 /** 留两像素余量：外框与内容同宽时一次进位就会把居中翻成平移视口。 */
 const FRAME_SAFETY_PX = 2;
 /** 量比例的字号：取大值，把字体度量的量化误差摊薄。 */
@@ -38,9 +37,9 @@ const MIN_CELL_WIDTH_RATIO = 0.4;
 const MAX_CELL_WIDTH_RATIO = 1.2;
 export const DEFAULT_CELL_WIDTH_RATIO = 0.6;
 
-function clampFontSize(value: number): number {
+function clampFontSize(value: number, cap: number): number {
   if (!Number.isFinite(value)) return REPLAY_FIT_MIN_FONT_SIZE;
-  return Math.min(REPLAY_FIT_MAX_FONT_SIZE, Math.max(REPLAY_FIT_MIN_FONT_SIZE, Math.floor(value)));
+  return Math.min(cap, Math.max(REPLAY_FIT_MIN_FONT_SIZE, Math.floor(value)));
 }
 
 /**
@@ -77,22 +76,24 @@ function usableInput(input: ReplayFitInput): ReplayFitGrid | null {
 }
 
 /**
- * 把录像网格塞进外框的最大字号：`min(宽限, 高限)` 取整后再按实际 cell 尺寸收/放一档。
+ * 回放字号：默认就用设置里的字号（和普通终端一样），只有录像包络在这个字号下塞不进外框
+ * 才往下缩，且不会缩到 `REPLAY_FIT_MIN_FONT_SIZE` 以下——再塞不下就交给平移视口滚动。
+ * 永远不会放大：放大等于把回放画得比用户的终端还大，那不是「和普通终端一样」。
  *
  * 解析解按未取整的 cell 算，而 ghostty 的 cell 会对齐到物理像素，逐格半像素误差在
  * 220 列上能累出几十像素，所以最后一定要按真 cell 校一遍。
- * 触到下限还塞不下就停在下限，剩下的交给既有的平移视口（贴左上 + 可滚）。
  */
 export function computeReplayFitFontSize(input: ReplayFitInput): number {
   const grid = usableInput(input);
   if (!grid) return input.baseFontSize;
+  const cap = Math.max(REPLAY_FIT_MIN_FONT_SIZE, Math.floor(input.baseFontSize));
   const byWidth =
     (input.frame.width - FRAME_SAFETY_PX) / (grid.cols * input.metrics.cellWidthRatio);
   const byHeight = (input.frame.height - FRAME_SAFETY_PX) / (grid.rows * input.metrics.lineHeight);
-  let size = clampFontSize(Math.min(byWidth, byHeight));
+  let size = clampFontSize(Math.min(byWidth, byHeight), cap);
   while (size > REPLAY_FIT_MIN_FONT_SIZE && !fitsInFrame(size, grid, input)) size -= 1;
-  while (size < REPLAY_FIT_MAX_FONT_SIZE && fitsInFrame(size + 1, grid, input)) size += 1;
-  return size;
+  while (size < cap && fitsInFrame(size + 1, grid, input)) size += 1;
+  return Math.min(size, cap);
 }
 
 export interface ReplayFitMountInput {

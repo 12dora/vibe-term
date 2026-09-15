@@ -38,10 +38,7 @@ describe('TerminalPreview', () => {
       write: (data) => {
         writes.push(data);
       },
-      resize: () => {},
       reset: () => {},
-      fit: () => {},
-      scrollToOrigin: () => {},
     });
     expect(writes).toEqual([PREVIEW_ANSI]);
     expect(PREVIEW_ANSI).toContain('你好，世界');

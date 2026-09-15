@@ -20,11 +20,11 @@ const {
   ReadOnlyTerminalSession,
   bootReadOnlyTerminal,
   buildReadOnlyControllerOptions,
-  fitThenEnablePan,
   isReadOnlyCopyShortcut,
   mountHasPositiveSize,
   readOnlyTerminalSettingsFromUi,
   schedulePostPaintRefit,
+  unionReadOnlyGrid,
 } = await import('./hooks/read-only-terminal-session');
 type ReadOnlyController = import('./hooks/read-only-terminal-session').ReadOnlyController;
 const { ReadOnlySelectionToolbar, ReadOnlyTerminal } = await import('./ReadOnlyTerminal');
@@ -75,11 +75,14 @@ function createMount(width: number, height: number) {
   };
 }
 
-function createFakeFit(events: string[] = []) {
+/** 假 FitAddon：只报容器能放下多少，网格由 session 按「容器 ∪ 包络」下发。 */
+function createFakeFit(events: string[] = [], proposal = { cols: 100, rows: 30 }) {
   return {
     events,
-    fit() {
-      events.push('fit');
+    proposal,
+    proposeDimensions() {
+      events.push('propose');
+      return proposal.cols > 0 && proposal.rows > 0 ? { ...proposal } : null;
     },
     dispose() {
       events.push('fit-dispose');
@@ -150,9 +153,13 @@ async function bootWithFake(input: {
   viewportPan: boolean;
   fontSize?: number;
   events?: string[];
+  minGrid?: { cols: number; rows: number } | null;
+  onGridChange?: (cols: number, rows: number) => void;
+  fit?: ReturnType<typeof createFakeFit>;
 }) {
   const events = input.events ?? [];
   const mount = createMount(input.width, input.height);
+  const fit = input.fit ?? createFakeFit(events);
   const created: FakeController[] = [];
   const session = await bootReadOnlyTerminal({
     mount: mount as unknown as HTMLElement,
@@ -162,6 +169,8 @@ async function bootWithFake(input: {
     scrollback: 10000,
     theme: { background: '#111' } as never,
     viewportPan: input.viewportPan,
+    minGrid: input.minGrid ?? null,
+    onGridChange: input.onGridChange,
     isCancelled: () => false,
     termRef: { current: null },
     themeRef: { current: { background: '#111' } as never },
@@ -171,11 +180,11 @@ async function bootWithFake(input: {
       created.push(next);
       return next as unknown as ReadOnlyController;
     },
-    createFitAddon: () => createFakeFit(events),
+    createFitAddon: () => fit,
   });
   const controller = created[0];
   if (!controller) throw new Error('controller not created');
-  return { session, controller, mount, events };
+  return { session, controller, mount, events, fit };
 }
 
 describe('ReadOnlyTerminal settings and controller options', () => {
@@ -255,59 +264,104 @@ describe('ReadOnlyTerminal settings and controller options', () => {
   });
 });
 
-describe('ReadOnlyTerminal viewport pan', () => {
-  test('viewportPan 先 fit 再 setViewportPan(true)', () => {
-    const events: string[] = [];
-    fitThenEnablePan(
-      {
-        setViewportPan(enabled) {
-          events.push(`pan:${enabled}`);
-        },
-      },
-      {
-        fit() {
-          events.push('fit');
-        },
-      }
-    );
-    expect(events).toEqual(['fit', 'pan:true']);
+describe('unionReadOnlyGrid', () => {
+  test('逐轴取大：窗口大就铺满窗口，录像大就按录像来', () => {
+    expect(unionReadOnlyGrid({ cols: 200, rows: 50 }, { cols: 52, rows: 47 })).toEqual({
+      cols: 200,
+      rows: 50,
+    });
+    expect(unionReadOnlyGrid({ cols: 100, rows: 30 }, { cols: 52, rows: 47 })).toEqual({
+      cols: 100,
+      rows: 47,
+    });
+    expect(unionReadOnlyGrid({ cols: 100, rows: 30 }, null)).toEqual({ cols: 100, rows: 30 });
   });
+});
 
-  test('零尺寸容器跳过首次 fit，有布局后再 fit+pan', async () => {
-    const events: string[] = [];
-    const { session, controller, mount } = await bootWithFake({
+describe('ReadOnlyTerminal grid', () => {
+  test('零尺寸容器先不建网格，有布局后按容器铺满并打开平移', async () => {
+    const { session, controller, mount, fit } = await bootWithFake({
       width: 0,
       height: 0,
       viewportPan: true,
-      events,
     });
     expect(session).toBeTruthy();
-    expect(events).toEqual([]);
+    expect(controller.resizeCalls).toEqual([]);
     expect(controller.panCalls).toEqual([]);
     expect(mountHasPositiveSize(mount)).toBe(false);
     mount.box.width = 640;
     mount.box.height = 352;
     session?.tryFitToContainer();
-    expect(events).toEqual(['fit']);
+    expect(controller.resizeCalls).toEqual([[fit.proposal.cols, fit.proposal.rows]]);
     expect(controller.panCalls).toEqual([true]);
     session?.dispose();
   });
 
-  test('boot 在有布局且 viewportPan 时 fit 后打开平移', async () => {
-    const events: string[] = [];
+  test('开面即按容器铺满；容器变大再 fit 一次，不会被录像尺寸挡住', async () => {
+    const fit = createFakeFit([], { cols: 100, rows: 30 });
     const { session, controller } = await bootWithFake({
       width: 640,
       height: 352,
       viewportPan: true,
-      events,
+      fit,
+      minGrid: { cols: 52, rows: 47 },
     });
-    expect(events).toEqual(['fit']);
-    expect(controller.panCalls).toEqual([true]);
+    // 容器 100×30 ∪ 包络 52×47 = 100×47
+    expect(controller.resizeCalls).toEqual([[100, 47]]);
+    fit.proposal.cols = 220;
+    fit.proposal.rows = 60;
+    session?.tryFitToContainer();
+    expect(controller.resizeCalls).toEqual([
+      [100, 47],
+      [220, 60],
+    ]);
+    expect(session?.effectiveGrid).toEqual({ cols: 220, rows: 60 });
     session?.dispose();
   });
 
-  test('pan 模式下 resize 滚回原点，用户平移后保留偏移', () => {
-    const events: string[] = [];
+  test('包络变大（日志又来一页）立刻重算，网格没变则什么都不做', async () => {
+    const fit = createFakeFit([], { cols: 100, rows: 30 });
+    const { session, controller } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: true,
+      fit,
+    });
+    expect(controller.resizeCalls).toEqual([[100, 30]]);
+    session?.setMinGrid({ cols: 52, rows: 47 });
+    expect(controller.resizeCalls).toEqual([
+      [100, 30],
+      [100, 47],
+    ]);
+    session?.setMinGrid({ cols: 52, rows: 47 });
+    session?.tryFitToContainer();
+    expect(controller.resizeCalls).toHaveLength(2);
+    session?.dispose();
+  });
+
+  test('网格变化只在开面之后上报，开面那次不算', async () => {
+    const changes: Array<[number, number]> = [];
+    const fit = createFakeFit([], { cols: 100, rows: 30 });
+    const { session } = await bootWithFake({
+      width: 640,
+      height: 352,
+      viewportPan: true,
+      fit,
+      onGridChange: (cols, rows) => changes.push([cols, rows]),
+    });
+    expect(changes).toEqual([]);
+    session?.setMinGrid({ cols: 52, rows: 47 });
+    expect(changes).toEqual([[100, 47]]);
+    fit.proposal.cols = 120;
+    session?.tryFitToContainer();
+    expect(changes).toEqual([
+      [100, 47],
+      [120, 47],
+    ]);
+    session?.dispose();
+  });
+
+  test('pan 模式下网格变化滚回原点，用户平移后保留偏移', () => {
     const controller = createFakeController({
       theme: { background: '#000' } as GhosttyTerminalInitOptions['theme'],
       fontFamily: 'monospace',
@@ -317,13 +371,14 @@ describe('ReadOnlyTerminal viewport pan', () => {
       rows: 40,
       disableStdin: true,
     });
+    const fit = createFakeFit([], { cols: 120, rows: 40 });
     const session = new ReadOnlyTerminalSession(
       true,
       controller as never,
-      createFakeFit(events),
+      fit,
       createMount(300, 200) as unknown as HTMLElement
     );
-    session.handle.resize(120, 40);
+    session.tryFitToContainer();
     expect(controller.resizeCalls).toEqual([[120, 40]]);
     expect(controller.panCalls).toEqual([true]);
     expect(controller.viewport.scrollLeft).toBe(0);
@@ -332,16 +387,16 @@ describe('ReadOnlyTerminal viewport pan', () => {
     controller.viewport.scrollLeft = 80;
     controller.viewport.scrollTop = 12;
     for (const listener of controller.viewport.listeners) listener();
-    session.handle.resize(132, 44);
+    session.setMinGrid({ cols: 132, rows: 44 });
     expect(controller.viewport.scrollLeft).toBe(80);
     expect(controller.viewport.scrollTop).toBe(12);
-    session.handle.resize(140, 48);
+    session.setMinGrid({ cols: 140, rows: 48 });
     expect(controller.viewport.scrollLeft).toBe(80);
     expect(controller.viewport.scrollTop).toBe(12);
     session.dispose();
   });
 
-  test('PanOriginPolicy 用户平移后 resize 不再回原点，reset 才清标志', () => {
+  test('PanOriginPolicy 用户平移后网格变化不再回原点，reset 才清标志', () => {
     const policy = new PanOriginPolicy();
     policy.runProgrammatic(() => policy.onScroll(40, 10));
     expect(policy.shouldResetOrigin()).toBe(true);
@@ -349,23 +404,6 @@ describe('ReadOnlyTerminal viewport pan', () => {
     expect(policy.shouldResetOrigin()).toBe(false);
     policy.reset();
     expect(policy.shouldResetOrigin()).toBe(true);
-  });
-
-  test('pan 模式在未收到录像尺寸时允许延迟再 fit 一次', async () => {
-    const events: string[] = [];
-    const { session } = await bootWithFake({
-      width: 640,
-      height: 352,
-      viewportPan: true,
-      events,
-    });
-    expect(events).toEqual(['fit']);
-    session?.refitIfNoRecordedSize();
-    expect(events).toEqual(['fit', 'fit']);
-    session?.handle.resize(80, 24);
-    session?.refitIfNoRecordedSize();
-    expect(events).toEqual(['fit', 'fit']);
-    session?.dispose();
   });
 });
 
@@ -516,8 +554,9 @@ describe('ReadOnlyTerminal a11y', () => {
   });
 });
 
-describe('ReadOnlyTerminal surface frame', () => {
-  test('surfaceFrame 才把根节点底色换成衬底，默认仍是终端底色', () => {
+describe('ReadOnlyTerminal background', () => {
+  // 回放不再画「屏幕外框」：根节点始终是终端底色，内容铺满整块，没有衬底/描边/黑边。
+  test('根节点底色恒为终端底色', () => {
     const runtime = createAppRuntime({
       nodeId: 'self',
       storagePrefix: `read-only-frame-${Date.now()}:`,
@@ -525,22 +564,22 @@ describe('ReadOnlyTerminal surface frame', () => {
     });
     const background = (html: string): string =>
       /style="background-color:([^"]+)"/.exec(html)?.[1] ?? '';
-    const plain = background(
+    const theme = background(
       renderToStaticMarkup(
         <RuntimeProvider runtime={runtime}>
           <ReadOnlyTerminal viewportPan />
         </RuntimeProvider>
       )
     );
-    const framed = background(
+    const withMinGrid = background(
       renderToStaticMarkup(
         <RuntimeProvider runtime={runtime}>
-          <ReadOnlyTerminal viewportPan surfaceFrame />
+          <ReadOnlyTerminal viewportPan minGrid={{ cols: 52, rows: 47 }} />
         </RuntimeProvider>
       )
     );
-    expect(plain).not.toBe('');
-    expect(framed).not.toBe(plain);
+    expect(theme).not.toBe('');
+    expect(withMinGrid).toBe(theme);
     runtime.dispose();
   });
 });

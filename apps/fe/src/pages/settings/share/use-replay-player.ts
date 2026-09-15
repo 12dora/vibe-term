@@ -69,8 +69,10 @@ export function applyReplaySeek(input: ReplaySeekApplyInput): ReplaySeekApplyRes
   let markerSeq = input.markerSeq ?? 0;
   const markers: ReplayInputMarker[] = [];
   for (const op of collectReplayOps(input.pane, plan.fromIndex, plan.toIndex)) {
-    if (op.kind === 'resize') input.terminal.resize(op.cols, op.rows);
-    else if (op.kind === 'write') input.terminal.write(concatBytes(op.chunks.map(decodeBase64)));
+    // resize 条目只用来算包络与显示「录制尺寸」：真去 resize 仿真终端会触发 ghostty 的
+    // reflow，把录像里那些按固定网格画的 TUI 画面搅乱，而回放没有应用能重绘它。
+    if (op.kind === 'resize') continue;
+    if (op.kind === 'write') input.terminal.write(concatBytes(op.chunks.map(decodeBase64)));
     else {
       markers.push({
         seq: markerSeq++,

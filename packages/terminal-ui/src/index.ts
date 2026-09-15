@@ -16,6 +16,7 @@ export {
   READ_ONLY_TERMINAL_SCROLLBACK,
 } from './components/ReadOnlyTerminal';
 export type {
+  ReadOnlyGrid,
   ReadOnlyTerminalHandle,
   ReadOnlyTerminalProps,
 } from './components/ReadOnlyTerminal';
