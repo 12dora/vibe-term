@@ -98,21 +98,12 @@ function recordCanonicalCommand(scope: ShareScope, decoded: unknown): void {
   if (!command || !service) return;
   if ('TerminalInput' in command) {
     service.recordInput(scope, command.TerminalInput.pane.paneId, command.TerminalInput.data);
-    return;
-  }
-  if ('ResizePane' in command) {
-    const { pane, cols, rows } = command.ResizePane;
-    service.recordResize(scope, pane.paneId, cols, rows);
-    return;
-  }
-  if ('ResizePaneV11' in command) {
-    const { pane, cols, rows } = command.ResizePaneV11;
-    service.recordResize(scope, pane.paneId, cols, rows);
   }
 }
 
 /**
- * 录屏日志的输入侧只记录被分享人（分享连接）的按键与尺寸；
+ * 录屏日志的输入侧只记录被分享人（分享连接）的按键；
+ * 尺寸以 tmux %layout-change 的真实 pane 几何为准，不把客人的 resize 请求当 pane 尺寸。
  * 输出侧由分享服务自己的 pane consumer 记录，两边互不重复。
  */
 export function recordShareCommand(scope: ShareScope, kind: number, decoded: unknown): void {
@@ -125,12 +116,6 @@ export function recordShareCommand(scope: ShareScope, kind: number, decoded: unk
   if (kind === wsBorsh.KIND_TERM_INPUT || kind === wsBorsh.KIND_TERM_PASTE) {
     const data = (decoded as { data?: unknown }).data;
     if (data instanceof Uint8Array) getShareWsService()?.recordInput(scope, paneId, data);
-    return;
-  }
-  if (kind !== wsBorsh.KIND_TMUX_RESIZE_PANE) return;
-  const { cols, rows } = decoded as { cols?: number | null; rows?: number | null };
-  if (typeof cols === 'number' && typeof rows === 'number') {
-    getShareWsService()?.recordResize(scope, paneId, cols, rows);
   }
 }
 

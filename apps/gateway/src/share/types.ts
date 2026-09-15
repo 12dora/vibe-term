@@ -102,7 +102,6 @@ export interface ShareService {
   onEnded(listener: (event: ShareEndedEvent) => void): () => void;
   onSessionsRevoked(listener: (event: ShareSessionsRevokedEvent) => void): () => void;
   recordInput(scope: ShareScope, paneId: string, bytes: Uint8Array): void;
-  recordResize(scope: ShareScope, paneId: string, cols: number, rows: number): void;
   setViewerCounter(fn: ShareViewerCounter | null): void;
   /** 返回 false 表示本节点未开启登录：此时禁止创建分享。 */
   setAuthRequiredResolver(fn: (() => boolean) | null): void;

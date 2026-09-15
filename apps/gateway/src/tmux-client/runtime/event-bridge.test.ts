@@ -107,6 +107,70 @@ describe('RuntimeEventBridge', () => {
     expect(paneRetention.getLatestCursor('%1')?.terminalSeq).toBe(1n);
   });
 
+  test('layout-change broadcasts onPaneGeometry from parsed leaves and skips non-positive dims', () => {
+    const metadata = new MetadataProjection('device-a', { deviceName: 'Mac' });
+    const paneRetention = new PaneRetention();
+    const historyReader = new PaneHistoryReader({
+      getPaneHistoryCaptureInfo: async () => ({ historySize: 0, cols: 80 }),
+      capturePaneHistoryRange: async () => '',
+    });
+    let lastSnapshot: StateSnapshotPayload | null = null;
+    const geometries: Array<{
+      windowId: string;
+      panes: ReadonlyArray<{ paneId: string; cols: number; rows: number }>;
+    }> = [];
+    const outputs: string[] = [];
+    const bridge = new RuntimeEventBridge({
+      metadata,
+      paneRetention,
+      getHistoryReader: () => historyReader,
+      getLastSnapshot: () => lastSnapshot,
+      setLastSnapshot: (payload) => {
+        lastSnapshot = payload;
+      },
+      broadcast: (action) => {
+        action({
+          onPaneGeometry: (windowId, panes) => geometries.push({ windowId, panes }),
+          onTerminalOutput: (_paneId, data) => outputs.push(new TextDecoder().decode(data)),
+        });
+      },
+      handleUnexpectedClose: () => undefined,
+    });
+    const options = bridge.connectionOptions({ deviceId: 'device-a' });
+    options.onSourceReady?.(SERVER_EPOCH);
+    options.onSnapshot(snapshot());
+    options.onSourceMetadata?.({
+      type: 'layout-change',
+      windowId: '@1',
+      layout: 'aaaa,80x24,0,0{40x24,0,0,1,39x24,41,0,2}',
+    });
+    options.onTerminalOutput('%1', encoder.encode('after'));
+    options.onSourceMetadata?.({ type: 'pane-title', paneId: '%1', title: 'ignored' });
+    options.onSourceMetadata?.({
+      type: 'layout-change',
+      windowId: '@1',
+      layout: 'aaaa,0x24,0,0,1',
+    });
+    options.onSourceMetadata?.({
+      type: 'layout-change',
+      windowId: '@1',
+      layout: 'not-a-layout',
+    });
+    expect(geometries).toEqual([
+      {
+        windowId: '@1',
+        panes: [
+          { paneId: '%1', cols: 40, rows: 24 },
+          { paneId: '%2', cols: 39, rows: 24 },
+        ],
+      },
+    ]);
+    expect(outputs).toEqual(['after']);
+    paneRetention.dispose();
+    metadata.dispose();
+    historyReader.dispose();
+  });
+
   test('metadata patch callback applies a legacy snapshot diff', () => {
     const paneRetention = new PaneRetention();
     const historyReader = new PaneHistoryReader({

@@ -322,10 +322,6 @@ class ShareServiceImpl implements ShareService {
     this.recorders.get(scope.shareId)?.recordInput(paneId, bytes);
   }
 
-  recordResize(scope: ShareScope, paneId: string, cols: number, rows: number): void {
-    this.recorders.get(scope.shareId)?.recordResize(paneId, cols, rows);
-  }
-
   setViewerCounter(fn: ShareViewerCounter | null): void {
     this.viewerCounter = fn;
   }

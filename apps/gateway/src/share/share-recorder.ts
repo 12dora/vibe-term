@@ -1,4 +1,5 @@
 import type { StateSnapshotPayload } from '@vibeterm/shared';
+import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
 import type {
   PaneDataSegment,
   PaneIdentity,
@@ -17,6 +18,7 @@ export type ShareRecorderRuntime = {
   attachPaneConsumer(callbacks: PaneRetentionConsumerCallbacks): PaneRetentionConsumerLease;
   captureCanonicalScreen(paneId: string, byteLimit: number): Promise<PaneScreenCheckpoint | null>;
   getCurrentSnapshot(): StateSnapshotPayload | null;
+  subscribe(listener: Pick<DeviceSessionRuntimeListener, 'onPaneGeometry'>): () => void;
 };
 
 export type ShareRecorderDeps = {
@@ -30,10 +32,14 @@ export type ShareRecorderDeps = {
   onError?(shareId: string, error: unknown): void;
 };
 
+type PaneSize = { cols: number; rows: number };
+
 type PaneState = {
   ready: boolean;
   baseSeq: bigint | null;
   pending: PaneDataSegment[];
+  lastSize: PaneSize | null;
+  pendingSize: PaneSize | null;
 };
 
 function windowPanes(snapshot: StateSnapshotPayload | null, windowId: string): string[] {
@@ -52,10 +58,19 @@ function trimSegment(segment: PaneDataSegment, baseSeq: bigint): Uint8Array | nu
   return offset === 0 ? segment.data : segment.data.subarray(offset);
 }
 
+function sizesEqual(left: PaneSize | null, right: PaneSize): boolean {
+  return left !== null && left.cols === right.cols && left.rows === right.rows;
+}
+
+function emptyPaneState(): PaneState {
+  return { ready: false, baseSeq: null, pending: [], lastSize: null, pendingSize: null };
+}
+
 /** 一个分享的录屏记录器：window 内所有 pane 的首帧快照 + 输出 / 输入 / 尺寸事件。 */
 export class ShareRecorder {
   private runtime: ShareRecorderRuntime | null = null;
   private lease: PaneRetentionConsumerLease | null = null;
+  private unsubscribe: (() => void) | null = null;
   private readonly panes = new Map<string, PaneState>();
   private readonly queue: ShareLogAppend[] = [];
   private generation = 0n;
@@ -90,6 +105,9 @@ export class ShareRecorder {
     this.lease = runtime.attachPaneConsumer({
       onData: (segment) => this.handleSegment(segment),
     });
+    this.unsubscribe = runtime.subscribe({
+      onPaneGeometry: (windowId, panes) => this.handlePaneGeometry(windowId, panes),
+    });
     this.flushTimer = setInterval(
       () => this.flush(),
       this.deps.flushIntervalMs ?? SHARE_RECORDER_FLUSH_MS
@@ -104,22 +122,11 @@ export class ShareRecorder {
     if (this.stopped || this.syncing || !this.runtime) return;
     this.syncing = true;
     try {
-      const wanted = new Set(windowPanes(this.runtime.getCurrentSnapshot(), this.windowId));
-      let changed = false;
-      for (const paneId of this.panes.keys()) {
-        if (wanted.has(paneId)) continue;
-        this.panes.delete(paneId);
-        changed = true;
-      }
-      const fresh: string[] = [];
-      for (const paneId of wanted) {
-        if (this.panes.has(paneId)) continue;
-        if (!this.runtime.getPaneIdentity(paneId)) continue;
-        this.panes.set(paneId, { ready: false, baseSeq: null, pending: [] });
-        fresh.push(paneId);
-        changed = true;
-      }
+      const snapshot = this.runtime.getCurrentSnapshot();
+      const wanted = new Set(windowPanes(snapshot, this.windowId));
+      const { changed, fresh } = this.reconcileMembership(wanted);
       if (changed) this.resubscribe();
+      this.reconcileReadySizes(snapshot);
       for (const paneId of fresh) await this.checkpointPane(paneId);
     } catch (error) {
       this.deps.onError?.(this.shareId, error);
@@ -170,12 +177,73 @@ export class ShareRecorder {
       const entries = this.queue.splice(0, this.queue.length);
       this.deps.appendLog(this.shareId, entries);
     }
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     this.lease?.close();
     this.lease = null;
     const runtime = this.runtime;
     this.runtime = null;
     this.panes.clear();
     if (runtime) await this.deps.releaseRuntime(this.deviceId, runtime);
+  }
+
+  private reconcileMembership(wanted: Set<string>): { changed: boolean; fresh: string[] } {
+    let changed = false;
+    for (const paneId of this.panes.keys()) {
+      if (wanted.has(paneId)) continue;
+      this.panes.delete(paneId);
+      changed = true;
+    }
+    const fresh: string[] = [];
+    for (const paneId of wanted) {
+      if (this.panes.has(paneId)) continue;
+      if (!this.runtime?.getPaneIdentity(paneId)) continue;
+      this.panes.set(paneId, emptyPaneState());
+      fresh.push(paneId);
+      changed = true;
+    }
+    return { changed, fresh };
+  }
+
+  private reconcileReadySizes(snapshot: StateSnapshotPayload | null): void {
+    const window = snapshot?.session?.windows.find((item) => item.id === this.windowId);
+    if (!window) return;
+    for (const pane of window.panes) {
+      const state = this.panes.get(pane.id);
+      if (!state?.ready) continue;
+      this.emitResizeIfChanged(pane.id, state, { cols: pane.width, rows: pane.height });
+    }
+  }
+
+  private handlePaneGeometry(
+    windowId: string,
+    panes: ReadonlyArray<{ paneId: string; cols: number; rows: number }>
+  ): void {
+    if (this.stopped || windowId !== this.windowId) return;
+    for (const pane of panes) {
+      const state = this.panes.get(pane.paneId);
+      if (!state) continue;
+      const size = { cols: pane.cols, rows: pane.rows };
+      if (!state.ready) {
+        state.pendingSize = size;
+        continue;
+      }
+      this.emitResizeIfChanged(pane.paneId, state, size);
+    }
+  }
+
+  private emitResizeIfChanged(paneId: string, state: PaneState, size: PaneSize): void {
+    if (size.cols <= 0 || size.rows <= 0) return;
+    if (sizesEqual(state.lastSize, size)) return;
+    state.lastSize = size;
+    this.queue.push({
+      at: this.deps.now(),
+      kind: 'resize',
+      paneId,
+      data: new Uint8Array(0),
+      cols: size.cols,
+      rows: size.rows,
+    });
   }
 
   private resubscribe(): void {
@@ -209,6 +277,14 @@ export class ShareRecorder {
       this.panes.delete(paneId);
       return;
     }
+    this.finishCheckpoint(paneId, state, checkpoint);
+  }
+
+  private finishCheckpoint(
+    paneId: string,
+    state: PaneState,
+    checkpoint: PaneScreenCheckpoint
+  ): void {
     this.queue.push({
       at: this.deps.now(),
       kind: 'checkpoint',
@@ -219,8 +295,24 @@ export class ShareRecorder {
     });
     state.baseSeq = checkpoint.baseSeq;
     state.ready = true;
+    state.lastSize = { cols: checkpoint.cols, rows: checkpoint.rows };
+    const pending = state.pendingSize;
+    state.pendingSize = null;
+    if (pending && !sizesEqual(state.lastSize, pending)) {
+      this.emitResizeIfChanged(paneId, state, pending);
+    } else {
+      this.reconcileSnapshotSize(paneId, state);
+    }
     for (const segment of state.pending) this.enqueueOutput(paneId, segment, checkpoint.baseSeq);
     state.pending = [];
+  }
+
+  private reconcileSnapshotSize(paneId: string, state: PaneState): void {
+    const snapshot = this.runtime?.getCurrentSnapshot();
+    const window = snapshot?.session?.windows.find((item) => item.id === this.windowId);
+    const pane = window?.panes.find((item) => item.id === paneId);
+    if (!pane) return;
+    this.emitResizeIfChanged(paneId, state, { cols: pane.width, rows: pane.height });
   }
 
   private handleSegment(segment: PaneDataSegment): void {

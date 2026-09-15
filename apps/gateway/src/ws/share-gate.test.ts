@@ -349,25 +349,22 @@ describe('share inbound gate', () => {
 describe('share input recording', () => {
   function installRecorder(): {
     inputs: Array<[string, string]>;
-    resizes: Array<[string, number, number]>;
   } {
     const inputs: Array<[string, string]> = [];
-    const resizes: Array<[string, number, number]> = [];
     const service: ShareWsService = {
       recordInput: (scope, paneId, bytes) => {
         expect(scope.shareId).toBe(SCOPE.shareId);
         inputs.push([paneId, new TextDecoder().decode(bytes)]);
       },
-      recordResize: (_scope, paneId, cols, rows) => resizes.push([paneId, cols, rows]),
       onEnded: () => () => {},
       onSessionsRevoked: () => () => {},
       setViewerCounter: () => {},
     };
     setShareWsServiceResolver(() => service);
-    return { inputs, resizes };
+    return { inputs };
   }
 
-  test('legacy TERM_INPUT / RESIZE_PANE 记入分享日志', async () => {
+  test('legacy TERM_INPUT 记入分享日志，RESIZE_PANE 不记', async () => {
     const recorder = installRecorder();
     const harness = createHarness(['%1']);
     await dispatch(
@@ -394,7 +391,42 @@ describe('share input recording', () => {
       })
     );
     expect(recorder.inputs).toEqual([['%1', 'id\r']]);
-    expect(recorder.resizes).toEqual([['%1', 100, 30]]);
+    expect(harness.calls).toContain('resize:device-a:%1:100x30');
+  });
+
+  test('canonical ResizePane / ResizePaneV11 不记入分享日志', async () => {
+    const recorder = installRecorder();
+    const harness = createHarness(['%1']);
+    await dispatch(
+      harness,
+      shareSession(),
+      wsBorsh.KIND_CANONICAL_COMMAND,
+      wsBorsh.encodeCanonicalCommandPayload({
+        ResizePane: {
+          requestId: REQUEST_ID,
+          pane: paneTarget('%1'),
+          cols: 100,
+          rows: 30,
+        },
+      })
+    );
+    await dispatch(
+      harness,
+      shareSession(),
+      wsBorsh.KIND_CANONICAL_COMMAND,
+      wsBorsh.encodeCanonicalCommandPayload({
+        ResizePaneV11: {
+          requestId: REQUEST_ID,
+          pane: paneTarget('%1'),
+          cols: 120,
+          rows: 40,
+          geometryReason: wsBorsh.CANONICAL_GEOMETRY_REASON_CHANGE,
+          sizeEpoch: 1n,
+        },
+      })
+    );
+    expect(recorder.inputs).toEqual([]);
+    expect(harness.calls).toEqual(['canonical', 'canonical']);
   });
 
   test('canonical TerminalInput 记入分享日志，越权命令不记', async () => {

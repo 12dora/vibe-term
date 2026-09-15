@@ -106,7 +106,6 @@ describe('share session index', () => {
     let counter!: (shareId: string) => number;
     const service: ShareWsService = {
       recordInput: () => {},
-      recordResize: () => {},
       onEnded: (listener) => {
         ended = listener;
         return () => {};
@@ -132,7 +131,6 @@ describe('share session index', () => {
     let revoked!: (shareId: string) => void;
     const service: ShareWsService = {
       recordInput: () => {},
-      recordResize: () => {},
       onEnded: () => () => {},
       onSessionsRevoked: (listener) => {
         revoked = listener;
