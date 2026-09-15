@@ -461,6 +461,10 @@ describe('录屏收尾', () => {
     getCurrentSnapshot() {
       return snapshots.get('dev-1') ?? null;
     }
+
+    subscribe() {
+      return () => {};
+    }
   }
 
   test('终止分享前刷出缓冲，最后一批输入不丢', async () => {

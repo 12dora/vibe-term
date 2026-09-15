@@ -1,11 +1,22 @@
-import { type StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
+import {
+  type StateSnapshotPayload,
+  collectLayoutLeaves,
+  layoutLeafPaneId,
+  parseWindowLayout,
+  wsBorsh,
+} from '@vibeterm/shared';
 
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from '../connection-types';
-import type { DeviceSessionRuntimeListener } from '../device-session-runtime';
-import type { TmuxSourceMetadataEvent } from '../events';
-import type { MetadataProjection, MetadataProjectionOptions } from '../metadata-projection';
+import type { TmuxEvent, TmuxSourceMetadataEvent } from '../events';
+import type {
+  MetadataProjection,
+  MetadataProjectionOptions,
+  MetadataProjectionPatch,
+  MetadataProjectionSnapshot,
+} from '../metadata-projection';
 import type { PaneHistoryReader } from '../pane-history-reader';
 import type { PaneIdentity, PaneRetention } from '../pane-retention';
+import type { PromptMarker } from '../pane-stream-parser';
 import { bytesEqual } from '../retention/bytes';
 import {
   clearSkippedPaneOutput,
@@ -13,6 +24,28 @@ import {
   markSkippedPaneOutput,
 } from '../retention/skipped-output';
 import { providePaneOutputMaterializationPredicate } from './output-materialization';
+
+export interface DeviceSessionRuntimeListener {
+  onEvent?: (event: TmuxEvent) => void;
+  onTerminalOutput?: (paneId: string, data: Uint8Array) => void;
+  onTerminalHistory?: (
+    paneId: string,
+    data: string,
+    alternateScreen: boolean,
+    modes: number
+  ) => void;
+  onPromptMarker?: (paneId: string, marker: PromptMarker) => void;
+  onClipboardWrite?: (paneId: string, text: string) => void;
+  onSnapshot?: (payload: StateSnapshotPayload) => void;
+  onMetadataPatch?: (patch: MetadataProjectionPatch) => void;
+  onMetadataRebaseRequired?: (snapshot: MetadataProjectionSnapshot) => void;
+  onPaneGeometry?: (
+    windowId: string,
+    panes: ReadonlyArray<{ paneId: string; cols: number; rows: number }>
+  ) => void;
+  onError?: (error: Error) => void;
+  onClose?: () => void;
+}
 
 export interface RuntimeEventBridgeHost {
   metadata: MetadataProjection;
@@ -87,6 +120,8 @@ export class RuntimeEventBridge {
       },
       onSourceMetadata: (event: TmuxSourceMetadataEvent) => {
         this.host.metadata.applySourceEvent(event);
+        // %layout-change 与后续 %output 同一次 parser push，同步广播以免 resize 落到 out 之后。
+        this.broadcastLayoutGeometry(event);
       },
       beginMetadataReconcile: () => this.host.metadata.revision,
       onSnapshot: (payload, baseRevision) => this.handleSnapshot(payload, baseRevision),
@@ -97,6 +132,19 @@ export class RuntimeEventBridge {
         this.host.handleUnexpectedClose();
       },
     };
+  }
+
+  private broadcastLayoutGeometry(event: TmuxSourceMetadataEvent): void {
+    if (event.type !== 'layout-change') return;
+    const parsed = parseWindowLayout(event.layout);
+    if (!parsed) return;
+    const panes: Array<{ paneId: string; cols: number; rows: number }> = [];
+    for (const leaf of collectLayoutLeaves(parsed.root)) {
+      if (leaf.width <= 0 || leaf.height <= 0) continue;
+      panes.push({ paneId: layoutLeafPaneId(leaf), cols: leaf.width, rows: leaf.height });
+    }
+    if (panes.length === 0) return;
+    this.host.broadcast((listener) => listener.onPaneGeometry?.(event.windowId, panes));
   }
 
   // 拆 dirty 维度：字段/revision 管 metadata rebuild；pane 集合（及未建立投影）管 retention/history。

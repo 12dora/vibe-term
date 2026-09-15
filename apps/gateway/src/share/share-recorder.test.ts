@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@vibeterm/shared';
+import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
 import type {
   PaneDataSegment,
   PaneRetentionConsumerCallbacks,
@@ -9,6 +10,9 @@ import { ShareRecorder, type ShareRecorderRuntime, hasWindow } from './share-rec
 import type { ShareLogAppend } from './share-store';
 
 const EPOCH = new Uint8Array(16).fill(7);
+
+type GeometryListener = Pick<DeviceSessionRuntimeListener, 'onPaneGeometry'>;
+type GeometryPane = { paneId: string; cols: number; rows: number };
 
 function snapshot(windows: Record<string, string[]>): StateSnapshotPayload {
   return {
@@ -41,7 +45,10 @@ class FakeRuntime implements ShareRecorderRuntime {
   captured: string[] = [];
   current: StateSnapshotPayload;
   baseSeq = 0n;
+  checkpointCols = 80;
+  checkpointRows = 24;
   missingIdentity = new Set<string>();
+  readonly geometryListeners = new Set<GeometryListener>();
 
   constructor(initial: StateSnapshotPayload) {
     this.current = initial;
@@ -65,6 +72,19 @@ class FakeRuntime implements ShareRecorderRuntime {
     } as never;
   }
 
+  subscribe(listener: GeometryListener): () => void {
+    this.geometryListeners.add(listener);
+    return () => {
+      this.geometryListeners.delete(listener);
+    };
+  }
+
+  emitGeometry(windowId: string, panes: ReadonlyArray<GeometryPane>): void {
+    for (const listener of this.geometryListeners) {
+      listener.onPaneGeometry?.(windowId, panes);
+    }
+  }
+
   gate: Promise<void> | null = null;
 
   async captureCanonicalScreen(paneId: string): Promise<PaneScreenCheckpoint | null> {
@@ -74,8 +94,8 @@ class FakeRuntime implements ShareRecorderRuntime {
       paneId,
       paneEpoch: EPOCH,
       baseSeq: this.baseSeq,
-      rows: 24,
-      cols: 80,
+      rows: this.checkpointRows,
+      cols: this.checkpointCols,
       modes: 0,
       data: new TextEncoder().encode(`screen:${paneId}`),
       historyCursor: null,
@@ -285,5 +305,108 @@ describe('ShareRecorder', () => {
     expect(harness.entries).toHaveLength(before);
     await harness.recorder.stop();
     expect(harness.released).toBe(1);
+  });
+
+  test('checkpoint 之后的几何事件写入一条 resize，且排在随后同轮 out 之前', async () => {
+    const harness = makeHarness(snapshot({ '@1': ['%1'] }));
+    await harness.recorder.start();
+    harness.recorder.flush();
+    harness.runtime.emitGeometry('@1', [{ paneId: '%1', cols: 120, rows: 40 }]);
+    harness.runtime.emit('%1', 'hi', 0n);
+    harness.recorder.flush();
+    expect(harness.entries.map((entry) => entry.kind)).toEqual(['checkpoint', 'resize', 'out']);
+    expect(harness.entries[1]).toMatchObject({ paneId: '%1', cols: 120, rows: 40 });
+    expect(decode(harness.entries[2])).toBe('hi');
+    await harness.recorder.stop();
+  });
+
+  test('相同几何重复到达不写第二条 resize', async () => {
+    const harness = makeHarness(snapshot({ '@1': ['%1'] }));
+    await harness.recorder.start();
+    harness.runtime.emitGeometry('@1', [{ paneId: '%1', cols: 120, rows: 40 }]);
+    harness.runtime.emitGeometry('@1', [{ paneId: '%1', cols: 120, rows: 40 }]);
+    harness.recorder.flush();
+    expect(harness.entries.filter((entry) => entry.kind === 'resize')).toHaveLength(1);
+    expect(harness.entries.filter((entry) => entry.kind === 'resize')[0]).toMatchObject({
+      cols: 120,
+      rows: 40,
+    });
+    await harness.recorder.stop();
+  });
+
+  test('未跟踪 pane / checkpoint 前的几何不落盘；pendingSize 在 checkpoint 后补一条 resize', async () => {
+    const runtime = new FakeRuntime(snapshot({ '@1': ['%1'] }));
+    let openGate = () => {};
+    runtime.gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const entries: ShareLogAppend[] = [];
+    const recorder = new ShareRecorder('sh1', 'dev-1', '@1', {
+      acquireRuntime: async () => runtime,
+      releaseRuntime: async () => {},
+      appendLog: (_id, batch) => {
+        entries.push(...batch);
+        return { truncated: false };
+      },
+      now: () => 1,
+      flushIntervalMs: 1_000,
+      pollIntervalMs: 1_000,
+    });
+    const started = recorder.start();
+    await Bun.sleep(1);
+    runtime.emitGeometry('@1', [{ paneId: '%9', cols: 50, rows: 20 }]);
+    runtime.emitGeometry('@1', [{ paneId: '%1', cols: 120, rows: 40 }]);
+    recorder.flush();
+    expect(entries).toEqual([]);
+    openGate();
+    await started;
+    recorder.flush();
+    expect(entries.map((entry) => entry.kind)).toEqual(['checkpoint', 'resize']);
+    expect(entries[1]).toMatchObject({ paneId: '%1', cols: 120, rows: 40 });
+    await recorder.stop();
+  });
+
+  test('stop 取消几何订阅，之后的事件不再记录', async () => {
+    const harness = makeHarness(snapshot({ '@1': ['%1'] }));
+    await harness.recorder.start();
+    expect(harness.runtime.geometryListeners.size).toBe(1);
+    await harness.recorder.stop();
+    expect(harness.runtime.geometryListeners.size).toBe(0);
+    const before = harness.entries.length;
+    harness.runtime.emitGeometry('@1', [{ paneId: '%1', cols: 120, rows: 40 }]);
+    harness.recorder.flush();
+    expect(harness.entries).toHaveLength(before);
+  });
+
+  test('sync 轮询发现快照尺寸变化时补一条 resize', async () => {
+    const harness = makeHarness(snapshot({ '@1': ['%1'] }));
+    await harness.recorder.start();
+    harness.recorder.flush();
+    const pane = harness.runtime.current.session?.windows[0]?.panes[0];
+    if (!pane) throw new Error('expected pane');
+    pane.width = 120;
+    pane.height = 40;
+    await harness.recorder.sync();
+    harness.recorder.flush();
+    const resizes = harness.entries.filter((entry) => entry.kind === 'resize');
+    expect(resizes).toHaveLength(1);
+    expect(resizes[0]).toMatchObject({ paneId: '%1', cols: 120, rows: 40 });
+    await harness.recorder.stop();
+  });
+
+  test('checkpoint 尺寸与快照不一致时立刻补 resize', async () => {
+    const harness = makeHarness(snapshot({ '@1': ['%1'] }));
+    harness.runtime.checkpointCols = 52;
+    harness.runtime.checkpointRows = 47;
+    const pane = harness.runtime.current.session?.windows[0]?.panes[0];
+    if (!pane) throw new Error('expected pane');
+    pane.width = 120;
+    pane.height = 40;
+    await harness.recorder.start();
+    harness.recorder.flush();
+    expect(harness.entries.map((entry) => entry.kind)).toEqual(['checkpoint', 'resize']);
+    expect(harness.entries[0]).toMatchObject({ cols: 52, rows: 47 });
+    expect(harness.entries[1]).toMatchObject({ paneId: '%1', cols: 120, rows: 40 });
+    await harness.recorder.stop();
   });
 });

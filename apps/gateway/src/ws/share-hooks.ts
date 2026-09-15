@@ -2,12 +2,11 @@ import { getShareService } from '../share/share-service';
 import type { ShareScope } from './share-scope';
 
 /**
- * ws 层只依赖分享服务的这五个能力。默认走 `apps/gateway/src/share` 的单例，
+ * ws 层只依赖分享服务的这四个能力。默认走 `apps/gateway/src/share` 的单例，
  * 测试可用 `setShareWsServiceResolver` 顶替；解析失败一律降级为空操作。
  */
 export interface ShareWsService {
   recordInput(scope: ShareScope, paneId: string, bytes: Uint8Array): void;
-  recordResize(scope: ShareScope, paneId: string, cols: number, rows: number): void;
   onEnded(listener: (shareId: string) => void): () => void;
   /** 改口令并选择踢人：分享还在，但已登录的连接必须回到密码表单。 */
   onSessionsRevoked(listener: (shareId: string) => void): () => void;
@@ -18,7 +17,6 @@ function defaultShareWsService(): ShareWsService {
   const service = getShareService();
   return {
     recordInput: (scope, paneId, bytes) => service.recordInput(scope, paneId, bytes),
-    recordResize: (scope, paneId, cols, rows) => service.recordResize(scope, paneId, cols, rows),
     onEnded: (listener) => service.onEnded((event) => listener(event.shareId)),
     onSessionsRevoked: (listener) => service.onSessionsRevoked((event) => listener(event.shareId)),
     setViewerCounter: (counter) => service.setViewerCounter(counter),

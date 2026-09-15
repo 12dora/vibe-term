@@ -5,7 +5,6 @@ import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from './connection-types';
 import type { AtomicPaneCapture } from './control-mode-capture';
-import type { TmuxEvent } from './events';
 import {
   type HostLatencyListener,
   type HostLatencySample,
@@ -15,7 +14,6 @@ import { LocalExternalTmuxConnection } from './local-external-connection';
 import {
   type DeviceTreeOrderInput,
   MetadataProjection,
-  type MetadataProjectionPatch,
   type MetadataProjectionSnapshot,
 } from './metadata-projection';
 import {
@@ -37,11 +35,12 @@ import {
   type PaneScreenCheckpoint,
   type PaneTerminalCursor,
 } from './pane-retention';
-import type { PromptMarker } from './pane-stream-parser';
 import { clearSkippedPaneOutput } from './retention/skipped-output';
 import { CanonicalScreenCapture } from './runtime/canonical-screen-capture';
-import { RuntimeEventBridge } from './runtime/event-bridge';
+import { type DeviceSessionRuntimeListener, RuntimeEventBridge } from './runtime/event-bridge';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
+
+export type { DeviceSessionRuntimeListener };
 
 export interface DeviceSessionRuntimeConnection {
   connect(): Promise<void>;
@@ -97,24 +96,6 @@ export interface DeviceSessionRuntimeConnection {
     maxOutputBytes: number
   ): Promise<string>;
   probeHostLatency?(): Promise<undefined | 'busy'>;
-}
-
-export interface DeviceSessionRuntimeListener {
-  onEvent?: (event: TmuxEvent) => void;
-  onTerminalOutput?: (paneId: string, data: Uint8Array) => void;
-  onTerminalHistory?: (
-    paneId: string,
-    data: string,
-    alternateScreen: boolean,
-    modes: number
-  ) => void;
-  onPromptMarker?: (paneId: string, marker: PromptMarker) => void;
-  onClipboardWrite?: (paneId: string, text: string) => void;
-  onSnapshot?: (payload: StateSnapshotPayload) => void;
-  onMetadataPatch?: (patch: MetadataProjectionPatch) => void;
-  onMetadataRebaseRequired?: (snapshot: MetadataProjectionSnapshot) => void;
-  onError?: (error: Error) => void;
-  onClose?: () => void;
 }
 
 export interface DeviceSessionRuntimeOptions {
@@ -248,9 +229,7 @@ export class DeviceSessionRuntime {
 
   subscribe(listener: DeviceSessionRuntimeListener): () => void {
     this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
+    return () => this.listeners.delete(listener);
   }
 
   async connect(): Promise<void> {
