@@ -44,6 +44,7 @@ export interface SessionsMemoryWindow extends WindowMemorySample {
 export interface SessionsMemoryDevice {
   deviceId: string;
   deviceName: string;
+  connected: boolean;
   supported: boolean;
   windows: SessionsMemoryWindow[];
 }

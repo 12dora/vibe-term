@@ -5,6 +5,10 @@ import { createDevice, updateDeviceRuntimeStatus } from '../db';
 import { getSqliteClient } from '../db/client';
 import * as devicesDb from '../db/devices';
 import { runMigrations } from '../db/migrate';
+import {
+  getWindowOomMarkStore,
+  resetWindowOomMarkStoreForTests,
+} from '../window-memory/oom-mark-store';
 import { handleApiRequest } from './index';
 
 const PREFIX = 'r3-api-dev-';
@@ -108,5 +112,35 @@ describe('GET /api/devices query batching', () => {
       devices: Array<{ id: string; tmuxAvailable: boolean }>;
     };
     expect(body.devices.filter((d) => d.id.startsWith(PREFIX))).toHaveLength(100);
+  });
+});
+
+describe('DELETE /api/devices/:id', () => {
+  test('删除设备时清掉该设备的 window-memory OOM 标记', async () => {
+    resetWindowOomMarkStoreForTests();
+    const id = `${PREFIX}oom-clear`;
+    const now = new Date().toISOString();
+    createDevice({
+      id,
+      name: 'oom-clear',
+      type: 'local',
+      session: 'vibeterm',
+      authMode: 'auto',
+      sortOrder: 999,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const store = getWindowOomMarkStore();
+    store.mark(id, '@1', 'tmux-spawn-aaa.scope', 2);
+    store.mark(`${PREFIX}000`, '@9', 'tmux-spawn-bbb.scope', 1);
+
+    const response = await handleApiRequest(
+      new Request(`http://localhost/api/devices/${id}`, { method: 'DELETE' }),
+      fakeServer
+    );
+    expect(response.status).toBe(200);
+    expect(store.has(id, '@1')).toBe(false);
+    expect(store.has(`${PREFIX}000`, '@9')).toBe(true);
+    resetWindowOomMarkStoreForTests();
   });
 });

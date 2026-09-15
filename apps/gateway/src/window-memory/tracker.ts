@@ -8,25 +8,28 @@ import {
   STOP_SCOPE_TIMEOUT_MS,
   TICK_DEBOUNCE_MS,
 } from './constants';
-import { parseSamplerOutput } from './sample-parser';
+import { type SamplerParseResult, parseSamplerOutput } from './sample-parser';
 import { buildSamplerScript } from './sampler-script';
-import { buildStopScopeScript } from './scope-commands';
+import { buildStopScopeScript, isAllZeroLimits } from './scope-commands';
 import {
   type MemoryPaneRef,
   type PaneMemoryState,
   aggregateWindows,
   applyScopeLimit,
   collectOomEvents,
-  vanishedWindowIds,
+  observedLimited,
+  releaseScopeLimit,
   windowNeedsEmit,
 } from './tracker-ops';
 import type {
   HostShellRunner,
-  PaneScopeSample,
   WindowMemoryAggregate,
   WindowMemoryConnectionHooks,
   WindowMemoryTracker,
 } from './types';
+
+const TRANSIENT_UNSUPPORTED_PIN = 6;
+const VANISH_MISS_TICKS = 2;
 
 export interface WindowMemorySchedule {
   setTimeout: (callback: () => void, delayMs: number) => unknown;
@@ -90,6 +93,11 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   private intervalTimer: unknown = null;
   private debounceTimer: unknown = null;
   private knownWindowIds = new Set<string>();
+  private knownSeeded = false;
+  private readonly windowMisses = new Map<string, number>();
+  private permanentUnsupported = false;
+  private transientMisses = 0;
+  private disabledSampled = false;
 
   constructor(opts: CreateWindowMemoryTrackerOptions) {
     this.deviceId = opts.deviceId;
@@ -113,7 +121,7 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   }
 
   requestTickSoon(): void {
-    if (this.stopped || this.supported === false) return;
+    if (this.stopped || this.permanentUnsupported) return;
     if (this.debounceTimer !== null) this.schedule.clearTimeout(this.debounceTimer);
     this.debounceTimer = this.schedule.setTimeout(() => {
       this.debounceTimer = null;
@@ -126,7 +134,7 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   }
 
   async tick(): Promise<void> {
-    if (this.stopped || this.inFlight || this.supported === false) return;
+    if (this.stopped || this.inFlight || this.permanentUnsupported) return;
     this.inFlight = true;
     try {
       await this.runTick();
@@ -144,6 +152,10 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   async stopScopesForWindow(windowId: string): Promise<void> {
     const scopes = this.scopesFor((state) => state.windowId === windowId);
     await this.stopScopes(scopes, `window=${windowId}`);
+    this.hooks.oomMarks.clear(this.deviceId, windowId);
+    this.lastSent.delete(windowId);
+    this.knownWindowIds.delete(windowId);
+    this.windowMisses.delete(windowId);
   }
 
   async stopScopesForPane(paneId: string): Promise<void> {
@@ -178,7 +190,7 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   }
 
   private armInterval(): void {
-    if (this.stopped || this.supported === false) return;
+    if (this.stopped || this.permanentUnsupported) return;
     if (this.intervalTimer !== null) this.schedule.clearTimeout(this.intervalTimer);
     this.intervalTimer = this.schedule.setTimeout(() => {
       this.intervalTimer = null;
@@ -195,33 +207,72 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
 
   private async runTick(): Promise<void> {
     const settings = this.hooks.getSettings();
-    if (!settings.enabled) return;
     const panes = this.getPanes();
+    this.pruneVanished(panes);
+    if (!settings.enabled && this.disabledSampled && !this.hasObservedLimits()) return;
     const parsed = await this.sampleHost(panes);
     if (!parsed) return;
-    if (this.supported === null) {
-      this.supported = parsed.supported;
-      this.hooks.onSupport?.(parsed.supported);
-      if (!parsed.supported) {
-        console.info(`[vibeterm][window-memory] unsupported device=${this.deviceId}`);
-        this.clearTimers();
-        return;
-      }
-    }
-    if (!parsed.supported) return;
+    if (!this.acceptSupport(parsed)) return;
     this.syncPaneStates(panes, parsed.panes);
-    const now = this.now();
-    for (const state of this.paneStates.values()) {
-      await applyScopeLimit(this.host, this.deviceId, state, settings, now);
+    await this.applyOrRelease(settings);
+    if (!settings.enabled) {
+      this.disabledSampled = true;
+      return;
     }
+    this.disabledSampled = false;
+    const now = this.now();
     this.emitOom();
     this.emitWindows(panes, now);
-    this.pruneVanished(panes);
   }
 
-  private async sampleHost(
-    panes: MemoryPaneRef[]
-  ): Promise<{ supported: boolean; panes: PaneScopeSample[] } | null> {
+  private async applyOrRelease(settings: WindowMemorySettings): Promise<void> {
+    const release = !settings.enabled || isAllZeroLimits(settings);
+    const now = this.now();
+    for (const state of this.paneStates.values()) {
+      if (release) await releaseScopeLimit(this.host, this.deviceId, state, now);
+      else await applyScopeLimit(this.host, this.deviceId, state, settings, now);
+    }
+  }
+
+  private hasObservedLimits(): boolean {
+    for (const state of this.paneStates.values()) {
+      if (state.sample && observedLimited(state.sample)) return true;
+    }
+    return false;
+  }
+
+  private acceptSupport(parsed: SamplerParseResult): boolean {
+    if (parsed.supported) {
+      this.transientMisses = 0;
+      if (this.supported !== true) {
+        this.supported = true;
+        this.hooks.onSupport?.(true);
+      }
+      return true;
+    }
+    if (parsed.reason === 'no-cgroup2') {
+      this.noteUnsupported(true);
+      return false;
+    }
+    this.transientMisses += 1;
+    if (this.transientMisses >= TRANSIENT_UNSUPPORTED_PIN) this.noteUnsupported(false);
+    return false;
+  }
+
+  private noteUnsupported(permanent: boolean): void {
+    const was = this.supported;
+    this.supported = false;
+    if (permanent) {
+      this.permanentUnsupported = true;
+      this.clearTimers();
+    }
+    if (was !== false) {
+      this.hooks.onSupport?.(false);
+      console.info(`[vibeterm][window-memory] unsupported device=${this.deviceId}`);
+    }
+  }
+
+  private async sampleHost(panes: MemoryPaneRef[]): Promise<SamplerParseResult | null> {
     const listed = panes.filter((pane) => Number.isInteger(pane.pid) && (pane.pid ?? 0) > 0);
     const script = buildSamplerScript(
       listed.map((pane) => ({ paneId: pane.paneId, pid: pane.pid as number }))
@@ -305,13 +356,36 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     if (changed.length > 0) this.hooks.onSample(changed);
   }
 
+  private seedKnownWindows(current: Set<string>): void {
+    if (this.knownSeeded) return;
+    this.knownSeeded = true;
+    for (const id of current) this.knownWindowIds.add(id);
+    for (const id of this.hooks.oomMarks.listWindowIds(this.deviceId)) {
+      this.knownWindowIds.add(id);
+    }
+  }
+
   private pruneVanished(panes: MemoryPaneRef[]): void {
     const current = new Set(panes.map((pane) => pane.windowId));
-    for (const windowId of vanishedWindowIds(this.knownWindowIds, current)) {
+    this.seedKnownWindows(current);
+    const candidates = new Set(this.knownWindowIds);
+    for (const id of this.hooks.oomMarks.listWindowIds(this.deviceId)) candidates.add(id);
+    for (const windowId of candidates) {
+      if (current.has(windowId)) {
+        this.windowMisses.delete(windowId);
+        this.knownWindowIds.add(windowId);
+        continue;
+      }
+      const misses = (this.windowMisses.get(windowId) ?? 0) + 1;
+      if (misses < VANISH_MISS_TICKS) {
+        this.windowMisses.set(windowId, misses);
+        continue;
+      }
       this.hooks.oomMarks.clear(this.deviceId, windowId);
       this.lastSent.delete(windowId);
+      this.knownWindowIds.delete(windowId);
+      this.windowMisses.delete(windowId);
     }
-    this.knownWindowIds = current;
   }
 }
 

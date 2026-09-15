@@ -14,6 +14,7 @@ import { t } from '../i18n';
 import { connectionAlertNotifier } from '../push/connection-alerts';
 import { pushSupervisor } from '../push/supervisor';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import { getWindowOomMarkStore } from '../window-memory/oom-mark-store';
 import {
   type DeviceUpdateDraft,
   nextDevicePushAction,
@@ -156,6 +157,7 @@ async function handleDeleteDevice(id: string): Promise<Response> {
   }
 
   deleteDevice(id);
+  getWindowOomMarkStore().clearDevice(id);
   broadcastSettingsUpdate('devices');
   broadcastSettingsUpdate('device-folders');
   pushSupervisor.remove(id);

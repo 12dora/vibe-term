@@ -3,6 +3,7 @@ import { WINDOW_MEMORY_SETTINGS_DEFAULTS } from '@vibeterm/shared';
 
 import {
   argvToScript,
+  buildReleasePropertyArgs,
   buildSetPropertyArgs,
   buildStopScopeScript,
   shQuote,
@@ -17,7 +18,7 @@ describe('shQuote', () => {
 });
 
 describe('buildSetPropertyArgs', () => {
-  test('emits MemoryHigh/Max/SwapMax and skips zeros', () => {
+  test('emits all three properties including infinity for zeros', () => {
     expect(buildSetPropertyArgs('tmux-spawn-a.scope', WINDOW_MEMORY_SETTINGS_DEFAULTS)).toEqual([
       'systemctl',
       '--user',
@@ -40,7 +41,9 @@ describe('buildSetPropertyArgs', () => {
       'set-property',
       '--runtime',
       'tmux-spawn-a.scope',
+      'MemoryHigh=infinity',
       'MemoryMax=12288M',
+      'MemorySwapMax=infinity',
     ]);
     expect(
       buildSetPropertyArgs('tmux-spawn-a.scope', {
@@ -50,6 +53,19 @@ describe('buildSetPropertyArgs', () => {
         memorySwapMaxMb: 0,
       })
     ).toBeNull();
+  });
+
+  test('release args set all three to infinity', () => {
+    expect(buildReleasePropertyArgs('tmux-spawn-a.scope')).toEqual([
+      'systemctl',
+      '--user',
+      'set-property',
+      '--runtime',
+      'tmux-spawn-a.scope',
+      'MemoryHigh=infinity',
+      'MemoryMax=infinity',
+      'MemorySwapMax=infinity',
+    ]);
   });
 });
 

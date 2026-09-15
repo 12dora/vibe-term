@@ -22,6 +22,19 @@ describe('buildSamplerScript', () => {
     expect(script).not.toContain('function ');
   });
 
+  test('exports XDG_RUNTIME_DIR and DBUS address before systemctl --user', () => {
+    const script = buildSamplerScript([]);
+    expect(script).toContain('export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"');
+    expect(script).toContain('export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"');
+    const dbusIdx = script.indexOf('DBUS_SESSION_BUS_ADDRESS');
+    const systemctlIdx = script.indexOf('systemctl --user show-environment');
+    expect(dbusIdx).toBeGreaterThan(-1);
+    expect(systemctlIdx).toBeGreaterThan(dbusIdx);
+    expect(script).toContain('no-cgroup2');
+    expect(script).toContain('no-user-systemd');
+    expect(script).toContain("printf 'VTMEM 1 %s 1 ok\\n'");
+  });
+
   test('reports unsupported on hosts without cgroup v2', async () => {
     if (process.platform === 'linux') return;
     const script = buildSamplerScript([{ paneId: "%1'oops", pid: 1 }]);
@@ -30,6 +43,7 @@ describe('buildSamplerScript', () => {
     expect(exitCode).toBe(0);
     const parsed = parseSamplerOutput(stdout);
     expect(parsed.supported).toBe(false);
+    expect(parsed.reason).toBe('no-cgroup2');
     expect(parsed.panes).toEqual([]);
   });
 });

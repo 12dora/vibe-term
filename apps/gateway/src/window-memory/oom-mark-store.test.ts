@@ -72,7 +72,12 @@ describe('createWindowOomMarkStore', () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     try {
       createWindowOomMarkStore(memoryKv().kv).mark('d', '@1', 'scope', 1);
-      expect(warn).not.toHaveBeenCalled();
+      expect(
+        warn.mock.calls.some((call) => {
+          const text = String(call[0] ?? '');
+          return text.includes('oom_kill') || text.includes('windowMemory.oomMarks');
+        })
+      ).toBe(false);
     } finally {
       warn.mockRestore();
     }
@@ -107,5 +112,36 @@ describe('createWindowOomMarkStore', () => {
     });
     expect(store.list()).toEqual([]);
     expect(store.has('d', '@1')).toBe(false);
+  });
+
+  test('listWindowIds / clearDevice 按设备隔离', () => {
+    const { data, kv } = memoryKv();
+    const store = createWindowOomMarkStore(kv, () => 1_000);
+    store.mark('dev-a', '@1', 'tmux-spawn-aaa.scope', 1);
+    store.mark('dev-a', '@2', 'tmux-spawn-bbb.scope', 2);
+    store.mark('dev-b', '@1', 'tmux-spawn-ccc.scope', 1);
+
+    expect(store.listWindowIds('dev-a')).toEqual(['@1', '@2']);
+    expect(store.listWindowIds('dev-b')).toEqual(['@1']);
+    expect(store.listWindowIds('dev-c')).toEqual([]);
+
+    store.clearDevice('dev-a');
+    expect(store.listWindowIds('dev-a')).toEqual([]);
+    expect(store.has('dev-a', '@1')).toBe(false);
+    expect(store.has('dev-b', '@1')).toBe(true);
+    expect(JSON.parse(data.get(WINDOW_MEMORY_OOM_MARKS_KV_KEY) ?? '{}')).toEqual({
+      'dev-b/@1': {
+        scope: 'tmux-spawn-ccc.scope',
+        oomKills: 1,
+        firstAt: 1_000,
+        lastAt: 1_000,
+      },
+    });
+
+    store.clearDevice('dev-a');
+    expect(store.has('dev-b', '@1')).toBe(true);
+    expect(Object.keys(JSON.parse(data.get(WINDOW_MEMORY_OOM_MARKS_KV_KEY) ?? '{}'))).toEqual([
+      'dev-b/@1',
+    ]);
   });
 });

@@ -1,7 +1,9 @@
 import type { PaneScopeSample } from './types';
 
-const HEADER_RE = /^VTMEM 1 (\d+) ([01])$/;
+const HEADER_RE = /^VTMEM 1 (\d+) ([01])(?: (ok|no-cgroup2|no-user-systemd))?$/;
 const SCOPE_RE = /^(?:-)$|^tmux-spawn-[^/\t]+\.scope$/;
+
+export type SamplerHeaderReason = 'ok' | 'no-cgroup2' | 'no-user-systemd';
 
 export class SamplerParseError extends Error {
   constructor(message: string) {
@@ -13,6 +15,7 @@ export class SamplerParseError extends Error {
 export interface SamplerParseResult {
   supported: boolean;
   uid: number;
+  reason?: SamplerHeaderReason;
   panes: PaneScopeSample[];
 }
 
@@ -70,15 +73,17 @@ export function parseSamplerOutput(stdout: string): SamplerParseResult {
   }
   const uid = Number.parseInt(header[1], 10);
   const supported = header[2] === '1';
+  const reason = header[3] as SamplerHeaderReason | undefined;
   if (!supported) {
     if (nonempty.length > 1) {
       throw new SamplerParseError('unsupported output must be header-only');
     }
-    return { supported: false, uid, panes: [] };
+    return { supported: false, uid, reason, panes: [] };
   }
   return {
     supported: true,
     uid,
+    reason,
     panes: nonempty.slice(1).map(parsePaneLine),
   };
 }

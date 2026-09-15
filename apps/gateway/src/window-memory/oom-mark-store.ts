@@ -103,6 +103,24 @@ export function createWindowOomMarkStore(
       if (!marks.delete(markKey(deviceId, windowId))) return;
       persist();
     },
+    listWindowIds(deviceId) {
+      const ids: string[] = [];
+      for (const key of marks.keys()) {
+        const parsed = parseKey(key);
+        if (parsed?.deviceId === deviceId) ids.push(parsed.windowId);
+      }
+      return ids;
+    },
+    clearDevice(deviceId) {
+      let changed = false;
+      for (const key of [...marks.keys()]) {
+        const parsed = parseKey(key);
+        if (parsed?.deviceId !== deviceId) continue;
+        marks.delete(key);
+        changed = true;
+      }
+      if (changed) persist();
+    },
     list() {
       const rows: WindowOomMarkRecord[] = [];
       for (const [key, mark] of marks) {
