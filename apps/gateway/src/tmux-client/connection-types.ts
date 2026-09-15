@@ -3,6 +3,7 @@ import type { EventType, StateSnapshotPayload, WebhookEvent } from '@vibeterm/sh
 import type { TmuxEvent } from './events';
 import type { TmuxSourceMetadataEvent } from './events';
 import type { PromptMarker } from './pane-stream-parser';
+import type { WindowMemoryConnectionHooks } from '../window-memory/types';
 
 export type LifecycleEventEmitter = (
   eventType: EventType,
@@ -25,6 +26,8 @@ export interface TmuxConnectionOptions {
   onSourceReady?: (serverEpoch: Uint8Array) => void;
   /** 宿主一跳（网关 ↔ tmux）往返样本：rttMs 为原始毫秒数，hop 见 DEVICE_LATENCY_HOP_*。 */
   onHostLatencySample?: (rttMs: number, hop: number) => void;
+  /** 窗口内存（systemd pane scope）限额 / 采样 / OOM 标记钩子；缺省时连接不做任何 cgroup 操作。 */
+  windowMemory?: WindowMemoryConnectionHooks;
   onInputTransportInvalidated?: () => void;
   onInputTransportReady?: () => void;
   onSourceMetadata?: (event: TmuxSourceMetadataEvent) => void;

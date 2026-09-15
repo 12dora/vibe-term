@@ -86,6 +86,7 @@ export * from './contracts/terminal-shortcuts';
 export * from './contracts/telegram';
 export * from './contracts/weixin';
 export * from './contracts/tmux';
+export * from './contracts/window-memory';
 export * from './contracts/websocket';
 export * from './contracts/notifications';
 export * from './contracts/mesh-notifications';
@@ -169,6 +170,7 @@ export {
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1,
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
   GATEWAY_CAPABILITY_DEVICE_LATENCY_V1,
+  GATEWAY_CAPABILITY_WINDOW_MEMORY_V1,
   GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1,
   GATEWAY_CAPABILITY_HELLO_SCREEN_INTENT_V1,
   CLIENT_CAPABILITY_HELLO_SCREEN_INTENT_V1,

@@ -17,6 +17,7 @@ export {
   KIND_DEVICE_DISCONNECTED,
   KIND_DEVICE_EVENT,
   KIND_DEVICE_LATENCY,
+  KIND_WINDOW_MEMORY,
   KIND_TMUX_SELECT,
   KIND_TMUX_SELECT_WINDOW,
   KIND_TMUX_CREATE_WINDOW,
@@ -178,6 +179,9 @@ export {
   DeviceLatencySchema,
   type DeviceLatencyWire,
 } from './schema';
+
+// ========== 窗口内存 ==========
+export { WindowMemorySchema, type WindowMemoryWire } from './window-memory';
 
 // ========== mesh 事件枚举值 ==========
 export {

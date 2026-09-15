@@ -114,6 +114,7 @@ export const EnvelopeSchema = b.struct({
 | 0x0104 | DEVICE_DISCONNECTED | S2C | 设备已断开 |
 | 0x0105 | DEVICE_EVENT | S2C | 设备事件（错误/重连等） |
 | 0x0106 | DEVICE_LATENCY | S2C | 设备宿主一跳（网关 ↔ tmux）往返延迟 |
+| 0x0107 | WINDOW_MEMORY | S2C | 窗口内存（systemd pane scope cgroup 聚合） |
 
 ### tmux 控制（0x0200-0x02FF）
 
@@ -342,6 +343,26 @@ EWMA 平滑后下发给已连接该设备的非分享会话：实质变化（|Δ
 - `rttMs: u32`（平滑值）
 - `rawMs: u32`（最近一次原始样本）
 - `hop: u8`：0 `local`、1 `ssh`
+- `sampledAt: u64`（Unix ms）
+
+### WINDOW_MEMORY（0x0107）
+
+Linux 宿主上 tmux ≥ 3.6 把每个 pane 放进独立的 systemd 用户 scope（`tmux-spawn-*.scope`）。拥有设备的网关按配置周期（默认 5 s）读取各 pane scope 的
+`memory.current` / `memory.high` / `memory.max` / `memory.swap.max` / `memory.events oom_kill`，按窗口求和后下发给已连接该设备的会话；
+值有实质变化（|Δcurrent| ≥ 1 MiB 或其它字段变化）才发，满 30 s 无条件刷新一次。宿主不支持（非 Linux、无 cgroup v2、无 `systemctl --user`）时不发此帧。
+网关在 HELLO_S2C `capabilities` 里播报 `window-memory-v1`；老客户端忽略未知 kind。
+
+字段：
+
+- `deviceId: string`
+- `windowId: string`
+- `current: u64`（字节，窗口内各 pane scope 求和）
+- `high: u64`（字节，0 = 未设限）
+- `max: u64`（字节，0 = 未设限）
+- `swapMax: u64`（字节，0 = 未设限）
+- `oomKills: u32`（各 pane scope `oom_kill` 求和）
+- `oomFlag: bool`（网关持久化的 OOM 粘性标记，窗口关闭时清除）
+- `panes: u8`（参与聚合的 pane 数）
 - `sampledAt: u64`（Unix ms）
 
 ### TMUX_SELECT（0x0201）
