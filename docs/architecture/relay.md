@@ -657,7 +657,8 @@ failover / fail-back / 退避机制与单上联池相同。`uplink_kind = 'none'
 按解析到的 IP 重拨。**注意 Bun 1.3.14 的 WebSocket 客户端只按 URL host 校验证书、URL 为 IP 字面量时跳过 SAN 校验，
 `tls.serverName` 只设 SNI**（`fetch` 则按 `serverName` 校验），所以 WS 按 IP 重拨前先用 `fetch` 对 `https://<ip>/healthz`
 （中继为 `/api/relay/health`）以原主机名做一次证书校验（`dial-identity.ts`），失败则不重拨并记 `dns fallback identity check failed`；
-HTTP `Host` 头用含端口的 `URL.host`。**系统解析失败、或系统答案是 fake-IP（`198.18.0.0/15`）且 TCP 连接失败时，DoH 解析成功才重拨**（`via === 'doh'`），
+HTTP `Host` 头用含端口的 `URL.host`。**系统解析失败、或系统答案是 fake-IP（`198.18.0.0/15`）且 TCP 连接失败时，DoH 解析成功才重拨**（`via === 'doh'`）。
+系统答案为 fake-IP 时，第一次拨号只用短预算（`min(3000, floor(timeoutMs / 3))` ms），失败后再用剩余预算打 DoH 真实 IP；真实 IP 仍走整段超时、单次尝试。
 `ECONNREFUSED` / `ConnectionRefused`（非 fake-IP）、鉴权拒绝、协议错误原样抛出；解析受调用方 signal 与探测超时约束。
 正缓存 60 s、负缓存 15 s。日志 `[uplink] dns fallback host=… ip=… via=doh` 与
 `[uplink] dns recovered host=…`（系统解析恢复后）。默认开；`VIBETERM_DIAL_DNS_FALLBACK=off` 关闭。

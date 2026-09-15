@@ -42,7 +42,12 @@ export type DialResolveFn = (
   opts?: Pick<ResolveDialHostOptions, 'signal' | 'preferDoh'>
 ) => Promise<DialResolveResult | null>;
 
-type CacheEntry = { result: DialResolveResult | null; expiresAt: number; dohFailedUntil?: number };
+type CacheEntry = {
+  /** `undefined`：只有 DoH 冷却，不当作成答；`null`：解析失败负缓存。 */
+  result?: DialResolveResult | null;
+  expiresAt: number;
+  dohFailedUntil?: number;
+};
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<DialResolveResult | null>>();
@@ -85,6 +90,7 @@ export async function resolveDialHost(
   if (pending) return pending;
   const work = resolveUncached(hostname, opts).then((resolved) => {
     const at = now();
+    if (isAbortedMiss(resolved, opts.signal)) return resolved.result;
     if (opts.preferDoh && resolved.result?.via !== 'doh') {
       markDohFailed(hostname, at);
       if (cached !== undefined) return cached;
@@ -105,15 +111,16 @@ export function peekPreferDoh(host: string, nowMs = Date.now()): DialResolveResu
   return hit?.via === 'doh' ? hit : null;
 }
 
-export function forgetPreferDoh(host: string): void {
+export function forgetPreferDoh(host: string, nowMs = Date.now()): void {
   const hit = cache.get(host);
-  if (hit?.result?.via === 'doh') cache.delete(host);
-  fakeIpRedialLogged.delete(host);
+  if (hit?.result?.via === 'doh') hit.result = undefined;
+  markDohFailed(host, nowMs);
 }
 
 export function noteFakeIpRedial(host: string, fake: string, real: string, reason: string): void {
-  if (fakeIpRedialLogged.has(host)) return;
-  fakeIpRedialLogged.add(host);
+  const key = `${host}\0${real}`;
+  if (fakeIpRedialLogged.has(key)) return;
+  fakeIpRedialLogged.add(key);
   logLine(
     '[mesh][dial]',
     `fake-ip redial host=${host} fake=${fake} real=${real} via=doh reason=${reason}`
@@ -146,9 +153,7 @@ async function preferDohResult(
   opts: ResolveDialHostOptions
 ): Promise<{ result: DialResolveResult | null; reason?: string } | null> {
   if (!opts.preferDoh) return null;
-  if (cacheEntryBlocked(hostname, (opts.now ?? Date.now)())) {
-    return { result: null, reason: 'doh negative ttl' };
-  }
+  if (cacheEntryBlocked(hostname, (opts.now ?? Date.now)())) return null;
   const dohHit = await tryDoh(hostname, opts);
   return dohHit.result ? dohHit : null;
 }
@@ -194,6 +199,7 @@ async function tryDoh(
     if (!dohIp) return { result: null, reason: 'doh empty' };
     return { result: { ip: dohIp, via: 'doh' } };
   } catch (err) {
+    if (opts.signal?.aborted) return { result: null, reason: 'aborted' };
     return { result: null, reason: errorMessage(err) || 'doh error' };
   }
 }
@@ -276,6 +282,7 @@ function cacheGet(host: string, nowMs: number): DialResolveResult | null | undef
   }
   cache.delete(host);
   cache.set(host, hit);
+  if (hit.result === undefined) return undefined;
   return hit.result;
 }
 
@@ -295,10 +302,12 @@ function markDohFailed(host: string, nowMs: number): void {
   const until = nowMs + DIAL_RESOLVE_NEGATIVE_TTL_MS;
   const hit = cache.get(host);
   if (hit) {
+    if (hit.result?.via === 'doh') hit.result = undefined;
     hit.dohFailedUntil = until;
+    if (hit.expiresAt < until) hit.expiresAt = until;
     return;
   }
-  cache.set(host, { result: null, expiresAt: until, dohFailedUntil: until });
+  cache.set(host, { expiresAt: until, dohFailedUntil: until });
   evictOldest();
 }
 
@@ -325,7 +334,6 @@ function noteTransition(host: string, result: DialResolveResult | null, reason?:
   if (result.via === 'doh' && prev !== 'doh') {
     console.warn(stamp(`[uplink] dns fallback host=${host} ip=${result.ip} via=doh`));
   } else if (result.via === 'system' && prev === 'doh') {
-    fakeIpRedialLogged.delete(host);
     console.warn(stamp(`[uplink] dns recovered host=${host}`));
   }
   lastVia.set(host, result.via);
@@ -341,6 +349,14 @@ function noteFallbackFailure(host: string, reason: string): void {
 
 export function stripBrackets(host: string): string {
   return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+}
+
+function isAbortedMiss(
+  resolved: { result: DialResolveResult | null; reason?: string },
+  signal?: AbortSignal
+): boolean {
+  if (resolved.reason === 'aborted') return true;
+  return resolved.result == null && !!signal?.aborted;
 }
 
 function errorMessage(err: unknown): string {

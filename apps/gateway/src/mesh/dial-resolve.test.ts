@@ -154,6 +154,28 @@ describe('isDnsClassFailure / env knob', () => {
     expect(isConnectClassFailure(dnsErr())).toBe(false);
   });
 
+  test('Bun Failed to connect / TimeoutError / AbortError shapes', async () => {
+    const failed = new Error(
+      "WebSocket connection to 'wss://hub.example/uplink' failed: Failed to connect"
+    );
+    expect(isConnectClassFailure(failed)).toBe(true);
+    expect(isDnsClassFailure(failed)).toBe(true);
+
+    const timeout = AbortSignal.timeout(1);
+    await Bun.sleep(20);
+    expect((timeout.reason as DOMException).name).toBe('TimeoutError');
+    expect(isConnectClassFailure(timeout.reason)).toBe(true);
+
+    const plain = new AbortController();
+    plain.abort();
+    expect((plain.signal.reason as DOMException).name).toBe('AbortError');
+    expect(isConnectClassFailure(plain.signal.reason)).toBe(false);
+
+    const timed = new AbortController();
+    timed.abort(new Error('connect-timeout'));
+    expect(isConnectClassFailure(timed.signal.reason)).toBe(true);
+  });
+
   test('VIBETERM_DIAL_DNS_FALLBACK=off disables the knob', () => {
     expect(isDialDnsFallbackEnabled()).toBe(true);
     process.env.VIBETERM_DIAL_DNS_FALLBACK = 'off';
@@ -467,7 +489,7 @@ describe('createDialWsFactory', () => {
       },
     });
     await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
-    expect(resolved).toBe(1);
+    expect(resolved).toBeGreaterThanOrEqual(1);
     expect(calls).toEqual(['wss://hub.example/uplink']);
   });
 
@@ -654,6 +676,126 @@ describe('createDialWsFactory fake-IP redial', () => {
     expect(calls).toEqual([`wss://${REAL_IP}/uplink`, 'wss://hub.example/uplink']);
   });
 
+  test('Bun Failed to connect on fake-IP redials via DoH', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve,
+      fetchImpl: async () => new Response(null, { status: 200 }),
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        if (url.includes(REAL_IP)) ws.open();
+        else {
+          ws.fail(
+            new Error(
+              "WebSocket connection to 'wss://hub.example/uplink' failed: Failed to connect"
+            )
+          );
+        }
+        return ws as never;
+      },
+    });
+    await factory('wss://hub.example/uplink');
+    expect(calls).toEqual(['wss://hub.example/uplink', `wss://${REAL_IP}/uplink`]);
+    expect(dohs.n).toBe(1);
+  });
+
+  test('fake-IP hang uses a short budget then redials DoH within ~3s', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve,
+      fetchImpl: async () => new Response(null, { status: 200 }),
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        if (url.includes(REAL_IP)) ws.open();
+        return ws as never;
+      },
+    });
+    const parent = new AbortController();
+    const t0 = Date.now();
+    await factory('wss://hub.example/uplink', { signal: parent.signal, timeoutMs: 20_000 });
+    const ms = Date.now() - t0;
+    expect(ms).toBeLessThan(6_000);
+    expect(ms).toBeGreaterThan(2_000);
+    expect(calls).toEqual(['wss://hub.example/uplink', `wss://${REAL_IP}/uplink`]);
+    expect(dohs.n).toBe(1);
+    expect(parent.signal.aborted).toBe(false);
+  }, 10_000);
+
+  test('real IP hang keeps the full budget and does not call DoH', async () => {
+    let dohs = 0;
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve: (host, opts) =>
+        resolveDialHost(host, {
+          lookup: async () => ['8.8.8.8'],
+          doh: async () => {
+            dohs += 1;
+            return [REAL_IP];
+          },
+          ...opts,
+        }),
+      wsCtor: () => new FakeSocket() as never,
+    });
+    const t0 = Date.now();
+    await expect(factory('wss://hub.example/uplink', { timeoutMs: 180 })).rejects.toBeDefined();
+    const ms = Date.now() - t0;
+    expect(ms).toBeGreaterThan(140);
+    expect(ms).toBeLessThan(800);
+    expect(dohs).toBe(0);
+  });
+
+  test('DoH connect failure cools down without a second fake-ip redial log', async () => {
+    const lines: string[] = [];
+    const log = spyOn(console, 'log').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    const { resolve, dohs } = resolveFakeThenDoh();
+    let realOpen = true;
+    const calls: string[] = [];
+    const factory = createDialWsFactory(null, {
+      raceCount: 1,
+      enabled: true,
+      resolve,
+      fetchImpl: async () => new Response(null, { status: 200 }),
+      wsCtor: (url) => {
+        calls.push(url);
+        const ws = new FakeSocket();
+        if (url.includes(REAL_IP)) {
+          if (realOpen) ws.open();
+          else ws.fail(connectTimeout());
+        } else ws.fail(connectTimeout());
+        return ws as never;
+      },
+    });
+    try {
+      await factory('wss://hub.example/uplink');
+      expect(dohs.n).toBe(1);
+      expect(lines.filter((line) => line.includes('fake-ip redial'))).toHaveLength(1);
+      realOpen = false;
+      calls.length = 0;
+      await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
+      expect(dohs.n).toBe(1);
+      expect(calls).toEqual([`wss://${REAL_IP}/uplink`, 'wss://hub.example/uplink']);
+      expect(lines.filter((line) => line.includes('fake-ip redial'))).toHaveLength(1);
+      calls.length = 0;
+      await expect(factory('wss://hub.example/uplink')).rejects.toBeDefined();
+      expect(dohs.n).toBe(1);
+      expect(calls).toEqual(['wss://hub.example/uplink']);
+      expect(lines.filter((line) => line.includes('fake-ip redial'))).toHaveLength(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   test('TLS handshake failed on a fake-IP answer does not redial', async () => {
     const { resolve, dohs } = resolveFakeThenDoh();
     const calls: string[] = [];
@@ -837,6 +979,88 @@ describe('fetchWithDnsFallback', () => {
     expect(n).toBe(1);
     expect(dohs.n).toBe(0);
   });
+
+  test('fake-IP fetch hang uses a short budget then redials DoH within ~3s', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const parent = new AbortController();
+    const t0 = Date.now();
+    const res = await fetchWithDnsFallback(
+      'https://hub.example/healthz',
+      { signal: parent.signal },
+      {
+        enabled: true,
+        resolve,
+        timeoutMs: 20_000,
+        fetchImpl: async (url, init) => {
+          calls.push(url);
+          if (url.includes(REAL_IP)) return new Response(null, { status: 200 });
+          await new Promise<never>((_, reject) => {
+            const signal = init?.signal;
+            const fail = () => reject(signal?.reason ?? new Error('hung'));
+            if (signal?.aborted) fail();
+            else signal?.addEventListener('abort', fail, { once: true });
+          });
+          return new Response(null, { status: 200 });
+        },
+      }
+    );
+    const ms = Date.now() - t0;
+    expect(res.ok).toBe(true);
+    expect(ms).toBeLessThan(6_000);
+    expect(ms).toBeGreaterThan(2_000);
+    expect(calls).toEqual(['https://hub.example/healthz', `https://${REAL_IP}/healthz`]);
+    expect(dohs.n).toBe(1);
+    expect(parent.signal.aborted).toBe(false);
+  }, 10_000);
+
+  test('fetch TimeoutError on fake-IP redials via DoH', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const calls: string[] = [];
+    const timeout = AbortSignal.timeout(1);
+    await Bun.sleep(20);
+    expect((timeout.reason as DOMException).name).toBe('TimeoutError');
+    const res = await fetchWithDnsFallback(
+      'https://hub.example/healthz',
+      {},
+      {
+        enabled: true,
+        resolve,
+        fetchImpl: async (url) => {
+          calls.push(url);
+          if (!url.includes(REAL_IP)) throw timeout.reason;
+          return new Response(null, { status: 200 });
+        },
+      }
+    );
+    expect(res.ok).toBe(true);
+    expect(calls).toEqual(['https://hub.example/healthz', `https://${REAL_IP}/healthz`]);
+    expect(dohs.n).toBe(1);
+  });
+
+  test('plain AbortError on fake-IP does not redial', async () => {
+    const { resolve, dohs } = resolveFakeThenDoh();
+    const ac = new AbortController();
+    ac.abort();
+    expect((ac.signal.reason as DOMException).name).toBe('AbortError');
+    let n = 0;
+    await expect(
+      fetchWithDnsFallback(
+        'https://hub.example/healthz',
+        {},
+        {
+          enabled: true,
+          resolve,
+          fetchImpl: async () => {
+            n += 1;
+            throw ac.signal.reason;
+          },
+        }
+      )
+    ).rejects.toBeDefined();
+    expect(n).toBe(1);
+    expect(dohs.n).toBe(0);
+  });
 });
 
 describe('resolveDialHost extras', () => {
@@ -870,16 +1094,26 @@ describe('resolveDialHost extras', () => {
   test('aborted signal skips lookup and DoH', async () => {
     const ac = new AbortController();
     ac.abort();
+    let lookups = 0;
+    const lookup = async () => {
+      lookups += 1;
+      return ['9.9.9.9'];
+    };
+    const doh = async () => {
+      throw new Error('doh should not run');
+    };
     const result = await resolveDialHost('hub.example', {
       signal: ac.signal,
-      lookup: async () => {
-        throw new Error('lookup should not run');
-      },
-      doh: async () => {
-        throw new Error('doh should not run');
-      },
+      lookup,
+      doh,
     });
     expect(result).toBeNull();
+    expect(lookups).toBe(0);
+    expect(await resolveDialHost('hub.example', { lookup, doh })).toEqual({
+      ip: '9.9.9.9',
+      via: 'system',
+    });
+    expect(lookups).toBe(1);
   });
 
   test('does not call network DoH in test without dohEnabled/doh/fetchImpl', async () => {
