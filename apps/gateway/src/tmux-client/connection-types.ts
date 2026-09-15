@@ -1,9 +1,9 @@
 import type { EventType, StateSnapshotPayload, WebhookEvent } from '@vibeterm/shared';
 
+import type { WindowMemoryConnectionHooks } from '../window-memory/types';
 import type { TmuxEvent } from './events';
 import type { TmuxSourceMetadataEvent } from './events';
 import type { PromptMarker } from './pane-stream-parser';
-import type { WindowMemoryConnectionHooks } from '../window-memory/types';
 
 export type LifecycleEventEmitter = (
   eventType: EventType,

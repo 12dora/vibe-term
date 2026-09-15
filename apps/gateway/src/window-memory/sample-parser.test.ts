@@ -12,6 +12,7 @@ describe('parseSamplerOutput', () => {
     expect(parseSamplerOutput(stdout)).toEqual({
       supported: true,
       uid: 1000,
+      reason: undefined,
       panes: [
         {
           paneId: '%1',
@@ -39,10 +40,35 @@ describe('parseSamplerOutput', () => {
     });
   });
 
-  test('parses unsupported header-only output', () => {
+  test('parses supported header with ok reason', () => {
+    expect(parseSamplerOutput('VTMEM 1 1000 1 ok\n')).toEqual({
+      supported: true,
+      uid: 1000,
+      reason: 'ok',
+      panes: [],
+    });
+  });
+
+  test('parses unsupported header-only output without reason', () => {
     expect(parseSamplerOutput('VTMEM 1 501 0\n')).toEqual({
       supported: false,
       uid: 501,
+      reason: undefined,
+      panes: [],
+    });
+  });
+
+  test('parses no-cgroup2 and no-user-systemd reasons', () => {
+    expect(parseSamplerOutput('VTMEM 1 1000 0 no-cgroup2\n')).toEqual({
+      supported: false,
+      uid: 1000,
+      reason: 'no-cgroup2',
+      panes: [],
+    });
+    expect(parseSamplerOutput('VTMEM 1 1000 0 no-user-systemd\n')).toEqual({
+      supported: false,
+      uid: 1000,
+      reason: 'no-user-systemd',
       panes: [],
     });
   });
@@ -58,5 +84,6 @@ describe('parseSamplerOutput', () => {
     expect(() => parseSamplerOutput('VTMEM 1 1 1\n%1\t1\tnot-a-scope\t0\t0\t0\t0\t0\t0')).toThrow(
       SamplerParseError
     );
+    expect(() => parseSamplerOutput('VTMEM 1 1 0 mystery')).toThrow(SamplerParseError);
   });
 });

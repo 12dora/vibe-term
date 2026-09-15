@@ -1,7 +1,12 @@
 import type { WindowMemorySettings } from '@vibeterm/shared';
 
 import { APPLY_RETRY_MS, HEARTBEAT_MS, HOST_SHELL_TIMEOUT_MS, MIB_BYTES } from './constants';
-import { argvToScript, buildSetPropertyArgs } from './scope-commands';
+import {
+  argvToScript,
+  buildReleasePropertyArgs,
+  buildSetPropertyArgs,
+  isAllZeroLimits,
+} from './scope-commands';
 import type {
   HostShellRunner,
   PaneScopeSample,
@@ -41,25 +46,57 @@ export function bytesOfMb(mb: number): number {
   return mb > 0 ? mb * MIB_BYTES : 0;
 }
 
+export function observedLimited(sample: PaneScopeSample): boolean {
+  return sample.high > 0 || sample.max > 0 || sample.swapMax > 0;
+}
+
 export function limitsDiffer(settings: WindowMemorySettings, sample: PaneScopeSample): boolean {
-  if (settings.memoryHighMb > 0 && sample.high !== bytesOfMb(settings.memoryHighMb)) return true;
-  if (settings.memoryMaxMb > 0 && sample.max !== bytesOfMb(settings.memoryMaxMb)) return true;
-  if (settings.memorySwapMaxMb > 0 && sample.swapMax !== bytesOfMb(settings.memorySwapMaxMb)) {
-    return true;
-  }
-  return false;
+  return (
+    sample.high !== bytesOfMb(settings.memoryHighMb) ||
+    sample.max !== bytesOfMb(settings.memoryMaxMb) ||
+    sample.swapMax !== bytesOfMb(settings.memorySwapMaxMb)
+  );
 }
 
 export function needsApply(settings: WindowMemorySettings, sample: PaneScopeSample): boolean {
   if (!sample.scope) return false;
-  if (!buildSetPropertyArgs(sample.scope, settings)) return false;
-  return !sample.managed || limitsDiffer(settings, sample);
+  if (isAllZeroLimits(settings)) return false;
+  return limitsDiffer(settings, sample);
 }
 
 export function canRetryApply(state: PaneMemoryState, now: number): boolean {
   if (state.applyAttempts >= 2) return false;
   if (state.applyAttempts === 0 || state.applyFailedAt === null) return true;
   return now - state.applyFailedAt >= APPLY_RETRY_MS;
+}
+
+async function runSetProperty(
+  host: HostShellRunner,
+  deviceId: string,
+  state: PaneMemoryState,
+  args: string[],
+  now: number
+): Promise<boolean> {
+  const desiredKey = args.join('\0');
+  if (desiredKey !== state.desiredKey) {
+    state.applyAttempts = 0;
+    state.applyFailedAt = null;
+    state.desiredKey = desiredKey;
+  }
+  if (!canRetryApply(state, now)) return false;
+  const result = await host.runHostShell(argvToScript(args), { timeoutMs: HOST_SHELL_TIMEOUT_MS });
+  if (result.exitCode === 0) {
+    state.applyAttempts = 0;
+    state.applyFailedAt = null;
+    return true;
+  }
+  state.applyAttempts += 1;
+  state.applyFailedAt = now;
+  const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
+  console.warn(
+    `[vibeterm][window-memory] set-property failed device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${stderr}`
+  );
+  return false;
 }
 
 export async function applyScopeLimit(
@@ -72,26 +109,27 @@ export async function applyScopeLimit(
   const scope = state.scope;
   if (!scope || !state.sample) return;
   const args = buildSetPropertyArgs(scope, settings);
-  const desiredKey = args ? args.join('\0') : '';
-  if (desiredKey !== state.desiredKey) {
-    state.applyAttempts = 0;
-    state.applyFailedAt = null;
-    state.desiredKey = desiredKey;
-  }
-  if (!args || !needsApply(settings, state.sample) || !canRetryApply(state, now)) return;
-  const result = await host.runHostShell(argvToScript(args), { timeoutMs: HOST_SHELL_TIMEOUT_MS });
-  if (result.exitCode === 0) {
-    state.applyAttempts = 0;
-    state.applyFailedAt = null;
+  if (!args || !needsApply(settings, state.sample)) return;
+  if (await runSetProperty(host, deviceId, state, args, now)) {
     state.sample.managed = true;
-    return;
   }
-  state.applyAttempts += 1;
-  state.applyFailedAt = now;
-  const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
-  console.warn(
-    `[vibeterm][window-memory] set-property failed device=${deviceId} pane=${state.paneId} scope=${scope}: ${stderr}`
-  );
+}
+
+export async function releaseScopeLimit(
+  host: HostShellRunner,
+  deviceId: string,
+  state: PaneMemoryState,
+  now: number
+): Promise<void> {
+  const scope = state.scope;
+  if (!scope || !state.sample || !observedLimited(state.sample)) return;
+  const args = buildReleasePropertyArgs(scope);
+  if (await runSetProperty(host, deviceId, state, args, now)) {
+    state.sample.managed = false;
+    state.sample.high = 0;
+    state.sample.max = 0;
+    state.sample.swapMax = 0;
+  }
 }
 
 export function collectOomEvents(

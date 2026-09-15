@@ -67,8 +67,7 @@ export class WindowMemoryBroadcast implements WindowMemoryRuntimeHost {
     const sessions = [...this.host.shareIndex.visibleClients(sessionsOf(entry), deviceId, null)];
     if (sessions.length === 0) return;
     for (const window of windows) {
-      const payload = encodeWindowMemoryPayload(deviceId, window);
-      for (const session of sessions) this.sendEncoded(session, payload);
+      this.encodeAndSendWindow(deviceId, window, sessions);
     }
   }
 
@@ -78,7 +77,24 @@ export class WindowMemoryBroadcast implements WindowMemoryRuntimeHost {
     windows: WindowMemoryAggregate[]
   ): void {
     for (const window of windows) {
-      this.sendEncoded(session, encodeWindowMemoryPayload(deviceId, window));
+      this.encodeAndSendWindow(deviceId, window, [session]);
+    }
+  }
+
+  private encodeAndSendWindow(
+    deviceId: string,
+    window: WindowMemoryAggregate,
+    sessions: readonly GatewaySession[]
+  ): void {
+    try {
+      const payload = encodeWindowMemoryPayload(deviceId, window);
+      for (const session of sessions) this.sendEncoded(session, payload);
+    } catch (error) {
+      console.warn(
+        `[vibeterm][window-memory] broadcast failed device=${deviceId} window=${window.windowId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 

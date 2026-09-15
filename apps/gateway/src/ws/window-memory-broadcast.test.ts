@@ -158,6 +158,31 @@ describe('WindowMemoryBroadcast fan-out', () => {
     expect(decode(session.sent[1]).payload.windowId).toBe('@2');
   });
 
+  test('encode 失败只跳过该窗口并 warn，其余窗口继续发', () => {
+    const { fake, addSession } = setup();
+    const session = addSession();
+    const orig = wsBorsh.encodePayload.bind(wsBorsh);
+    const spy = spyOn(wsBorsh, 'encodePayload').mockImplementation((schema, value) => {
+      if ((value as { windowId?: string }).windowId === '@1') {
+        throw new Error('boom');
+      }
+      return orig(schema, value);
+    });
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      fake.emit([aggregate('@1'), aggregate('@2', { current: 4096 })]);
+      expect(session.sent).toHaveLength(1);
+      expect(decode(session.sent[0]).payload.windowId).toBe('@2');
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]?.[0])).toBe(
+        `[vibeterm][window-memory] broadcast failed device=${DEVICE_ID} window=@1: boom`
+      );
+    } finally {
+      spy.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   test('never sends WINDOW_MEMORY to a share-scoped session', () => {
     const { fake, addSession, broadcast } = setup();
     const owner = addSession();

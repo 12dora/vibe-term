@@ -7,6 +7,7 @@ export type WindowMemoryRuntimeView = {
   getCurrentSnapshot?(): StateSnapshotPayload | null;
   onWindowMemory?(listener: (windows: WindowMemoryAggregate[]) => void): () => void;
   tickWindowMemory?(): Promise<void> | void;
+  isConnected?(): boolean;
 };
 
 export type WindowMemoryRuntimeHost = {
