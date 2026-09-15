@@ -149,3 +149,13 @@ AI agent / CI 目前只能把完整会话能力交给调用方：默认 `~/.conf
 `$VIBETERM_SESSION_FILE` 指到独立路径（0600，group/world 可读会拒绝加载）。拿到该文件等于拿到一个浏览器会话。
 后续若做短时 exec token，应在网关签发、按设备 / 命令 / TTL 收窄，并让 CLI 优先于会话 cookie 出示。
 见 [远程执行](./architecture/remote-exec.md)、[CLI 使用手册](./operations/cli-usage.md)。
+
+## KI-17：libdatachannel DTLS / libjuice 死锁会永久卡住网关主线程
+
+`node-datachannel@0.33.1`（libdatachannel v0.24.3 + libjuice）在 **DTLS server（offerer）+ ICE 选中 TURN relay + ClientHello 已排队** 时，libjuice poll 线程与 RTC worker 形成 AB-BA 死锁：前者持 juice registry 锁跑 ICE 回调并在 `DtlsTransport::handleTimeout()` 等 `mSslMutex`，后者在 `doRecv()` 持 `mSslMutex` 并在 `juice_send` / `agent_send` 上等 registry。Bun 主线程若此时进入同步 N-API `getSelectedCandidatePair`（`apps/gateway/src/mesh/rtc/rtc-peer-helpers.ts` 的 `onIceStateChange`），会永远阻塞。
+
+症状：`systemctl is-active` / launchd 仍为 running，`/healthz` 超时，listen backlog 打满（Recv-Q ≥ Send-Q），无新日志。`EventLoopLagSampler` 与健康检查都跑在主线程上，发现不了。JS 侧无法通过少调 native 避开——后续任意 N-API 同样会堵。
+
+上游修复 [libdatachannel PR #1630](https://github.com/paullouisageneau/libdatachannel/pull/1630)（`handleTimeout()` → `enqueueRecv()`）尚未合入；node-datachannel 0.33.4 / libdatachannel v0.24.5 也不含该行。产品侧用进程内事件循环看门狗把永久挂死变成约 10–20 s 的自杀重启（见 [事件循环看门狗](./operations/gateway-loop-watchdog.md)）。
+
+验证：生产启动应有 `[vibeterm][loop-watchdog] armed …`；卡死时应有 `main thread stalled …`、`<installDir>/loop-watchdog.log` 一行 JSON，随后服务被拉起。现场重启前用 `eu-stack -p <pid>` 核对 `agent_get_selected_candidate_pair` / `DtlsTransport::handleTimeout` / `agent_send`。`vibeterm doctor` 在服务 running 但 HTTP 无响应时 FAIL `loop-stall`。根因要等上游发版（或 vendor 补丁构建）才能从本文件移除。

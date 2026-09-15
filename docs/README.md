@@ -7,7 +7,7 @@
 | 目录 | 放什么 |
 | --- | --- |
 | [`architecture/`](./architecture/README.md) | 系统如何工作：多节点互联（mesh / 中继 / 直连 / 端口映射）、WebSocket 协议与状态机、终端底座与视口、文件传输、远程执行、分享、Agent、Watch、通知与消息指令 |
-| [`operations/`](./operations/README.md) | 部署与运维手册：安装、mesh 与中继运维、容器节点、HTTPS / 端口 / 隧道、进程存活、发版 / 签名 / 升级 / 改名迁移 |
+| [`operations/`](./operations/README.md) | 部署与运维手册：安装、mesh 与中继运维、容器节点、HTTPS / 端口 / 隧道、进程存活、事件循环看门狗、发版 / 签名 / 升级 / 改名迁移 |
 | [`security/`](./security/README.md) | 登录面安全模型与访问策略（mesh 的威胁模型在 `architecture/mesh-architecture.md`） |
 | [`development/`](./development/README.md) | 开发与测试：环境变量、前端包结构与外壳行为、性能基准、字体流水线、实测 harness |
 | `images/` | 根 README 引用的截图 |
@@ -18,6 +18,7 @@
 - 想把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
 - 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
 - 装在 ≤ 2 GiB 的小内存机上：[小内存主机](./operations/small-memory.md)。
+- 服务显示 running 但 HTTP / 中继不通：[事件循环看门狗](./operations/gateway-loop-watchdog.md)。
 - 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
@@ -71,6 +72,7 @@
 | [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
 | [tunnel-edge-fake-ip.md](./operations/tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘与 ICE STUN/TURN 的 fake-IP 绕行与排查 |
 | [tmux-process-survival.md](./operations/tmux-process-survival.md) | 服务 kill 策略、linger、tmux 3.6 pane scope 与 systemd OOMPolicy |
+| [gateway-loop-watchdog.md](./operations/gateway-loop-watchdog.md) | 主线程卡死（libdatachannel 死锁）的真因、进程内看门狗与「服务 running 但 HTTP 不通」排查 |
 | [troubleshooting-db-master-key.md](./operations/troubleshooting-db-master-key.md) | 数据库与 `VIBETERM_MASTER_KEY` 不匹配的启动失败 |
 | [release-process.md](./operations/release-process.md) | 发版手册：发行源、版本注入、changelog 改写规范、构建、校验、打 tag |
 | [release-signing.md](./operations/release-signing.md) | 发行包 Ed25519 签名：密钥轮换、校验点、兼容矩阵 |
