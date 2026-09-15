@@ -72,6 +72,11 @@ export function applyReplaySeek(input: ReplaySeekApplyInput): ReplaySeekApplyRes
     // resize 条目只用来算包络与显示「录制尺寸」：真去 resize 仿真终端会触发 ghostty 的
     // reflow，把录像里那些按固定网格画的 TUI 画面搅乱，而回放没有应用能重绘它。
     if (op.kind === 'resize') continue;
+    // 快照要在录制网格下写：它带着录制那一刻的 history 与绝对光标位置。
+    if (op.kind === 'checkpoint') {
+      input.terminal.writeCheckpoint(decodeBase64(op.data), { cols: op.cols, rows: op.rows });
+      continue;
+    }
     if (op.kind === 'write') input.terminal.write(concatBytes(op.chunks.map(decodeBase64)));
     else {
       markers.push({

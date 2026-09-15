@@ -320,6 +320,23 @@ function screenRectOf(layout: ReplayLayout): string {
 }
 
 /**
+ * 开窗那一刻与稳定之后的内容表面必须是同一块（同一字号、同一网格）。
+ * 容差一个 cell：首帧画完之前 `.xterm-screen` 还是 `width:100%`，落到「网格 × cell」时
+ * 会差掉最后那点取整余数——那不是尺寸跳变。
+ */
+function expectNoScreenJump(opened: ReplayLayout, settled: ReplayLayout): void {
+  const detail = `screen rect ${screenRectOf(opened)} → ${screenRectOf(settled)}`;
+  expect(Math.abs(settled.screenWidth - opened.screenWidth), detail).toBeLessThanOrEqual(
+    Math.max(settled.cellWidth, 1) + 1
+  );
+  expect(Math.abs(settled.screenHeight - opened.screenHeight), detail).toBeLessThanOrEqual(
+    Math.max(settled.cellHeight, 1) + 1
+  );
+  expect(Math.abs(settled.screenLeft - opened.screenLeft), detail).toBeLessThan(2);
+  expect(Math.abs(settled.screenTop - opened.screenTop), detail).toBeLessThan(2);
+}
+
+/**
  * 等只读终端这一台实例稳定下来。开窗时只会开一台（字号与网格先算好再挂终端），但外框变化
  * 或日志翻页让包络变大时仍可能换字号重建：重建那一下清屏并从 checkpoint 重放，
  * 正赶上拖选就会把选区弄丢。给当前实例打个标记，隔一会儿再看标记还在不在——在就是没换过。
@@ -558,7 +575,7 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
     await expect(page.getByTestId('share-replay-dialog').locator('.animate-spin')).toHaveCount(0);
 
     // 开窗那一刻的内容表面矩形：终端只开一台、尺寸一次定死，稳定之后不该再跳。
-    const openedRect = screenRectOf(await readReplayLayout(page));
+    const openedLayout = await readReplayLayout(page);
     await page.screenshot({ path: `${SCREENSHOT_DIR}/replay-opened.png` });
 
     await playReplayToEnd(page);
@@ -567,22 +584,38 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
       process.env.VIBETERM_E2E_REPLAY_LOG_FILE
     ) {
       await page.waitForTimeout(1_500);
-      const settledRect = screenRectOf(await readReplayLayout(page));
-      expect(settledRect, `screen rect jumped: ${openedRect} → ${settledRect}`).toBe(openedRect);
+      expectNoScreenJump(openedLayout, await readReplayLayout(page));
       await page.waitForTimeout(1_500);
       await page.screenshot({ path: `${SCREENSHOT_DIR}/replay-claude.png` });
       return;
     }
-    expect(
-      screenRectOf(await readReplayLayout(page)),
-      `screen rect jumped after playback: opened ${openedRect}`
-    ).toBe(openedRect);
+    expectNoScreenJump(openedLayout, await readReplayLayout(page));
     await waitForReplayTerminalSettled(page);
     const markerLine = await waitForReplayMarker(page);
     expect(
       markerLine.index,
       `expected ${MARKER} at column 0, got ${JSON.stringify(markerLine)}`
     ).toBe(0);
+
+    // 快照是按录制网格拼的（primary 屏还带着 history 与绝对光标位置），必须在那个网格下写入。
+    // 写错了的话可见画面会被顶到 history 之后、光标落进 history，屏幕上就会出现
+    // 「有内容 → 空行 → 又有内容」这种断层，最后一行也不再是提示符。
+    const buffer = (await readReplayLines(page)).map((line) => line.trimEnd());
+    const filled = buffer.flatMap((line, row) => (line.trim() === '' ? [] : [row]));
+    expect(
+      filled.length,
+      `replay buffer is empty: ${JSON.stringify(buffer.slice(0, 5))}`
+    ).toBeGreaterThan(0);
+    const first = filled[0];
+    const last = filled[filled.length - 1];
+    expect(
+      last - first + 1,
+      `blank rows inside the replayed screen: ${JSON.stringify(buffer.slice(first, last + 1))}`
+    ).toBe(filled.length);
+    expect(
+      buffer[last],
+      `last non-blank row should be the shell prompt: ${JSON.stringify(buffer.slice(-3))}`
+    ).toContain('$');
 
     const layout = await readReplayLayout(page);
     expect(layout.panScrollLeft, `pan viewport scrollLeft=${layout.panScrollLeft}`).toBe(0);

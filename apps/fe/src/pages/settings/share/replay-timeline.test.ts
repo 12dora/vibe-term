@@ -228,11 +228,19 @@ describe('planReplaySeek', () => {
 describe('collectReplayOps', () => {
   const [pane] = buildReplayTimeline(LOG).panes;
 
-  test('checkpoint 先定尺寸再写屏', () => {
+  // 快照单独成一条并带上录制网格：它的字节按那时的行列拼成（history + 绝对 CUP），
+  // 必须在那个网格下写入，不能和普通输出合并。
+  test('checkpoint 出一条带录制网格的快照操作', () => {
     expect(collectReplayOps(pane, 0, 1)).toEqual([
       { kind: 'resize', cols: 80, rows: 24 },
-      { kind: 'write', chunks: [HI] },
+      { kind: 'checkpoint', data: HI, cols: 80, rows: 24 },
     ]);
+  });
+
+  test('快照之后的输出不会被并进快照那一条', () => {
+    const ops = collectReplayOps(pane, 0, 2);
+    expect(ops[1]).toEqual({ kind: 'checkpoint', data: HI, cols: 80, rows: 24 });
+    expect(ops[2]?.kind).toBe('write');
   });
 
   test('连续输出合并成一条写入', () => {
