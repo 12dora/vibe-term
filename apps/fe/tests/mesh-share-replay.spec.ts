@@ -42,7 +42,7 @@ interface ShareListBody {
 }
 
 interface ShareLogBody {
-  entries: Array<{ kind: string; data: string }>;
+  entries: Array<{ kind: string; data: string; cols?: number; rows?: number }>;
 }
 
 interface ReadOnlyProbeLine {
@@ -122,6 +122,40 @@ function sendReplayPayload(sessionName: string): void {
     state.entryTmuxSocket,
     `send-keys -t ${sessionName} "printf '\\033[2J\\033[H${lines}\\n'" C-m`
   );
+}
+
+function paneSize(sessionName: string): { cols: number; rows: number } {
+  const [cols, rows] = meshTmux(
+    state.entryTmuxSocket,
+    `display-message -p -t ${sessionName}:0 '#{pane_width}x#{pane_height}'`
+  )
+    .split('x')
+    .map(Number);
+  return { cols, rows };
+}
+
+async function assertRecordsTmuxResize(
+  page: Page,
+  shareId: string,
+  sessionName: string
+): Promise<void> {
+  const before = paneSize(sessionName);
+  const target = { cols: before.cols - 20, rows: before.rows - 6 };
+  meshTmux(
+    state.entryTmuxSocket,
+    `resize-window -t ${sessionName}:0 -x ${target.cols} -y ${target.rows}`
+  );
+  await expect.poll(() => paneSize(sessionName), { timeout: 5_000 }).not.toEqual(before);
+  const after = paneSize(sessionName);
+  await expect
+    .poll(
+      async () =>
+        (await readShareLog(page, shareId))
+          .filter((entry) => entry.kind === 'resize')
+          .map((entry) => `${entry.cols}x${entry.rows}`),
+      { timeout: 20_000 }
+    )
+    .toContain(`${after.cols}x${after.rows}`);
 }
 
 async function listShares(page: Page): Promise<ShareListBody> {
@@ -468,6 +502,9 @@ test('mesh: share replay renders from column 0, copies selection, and shows wall
       )
       .toContain(MARKER);
     await page.waitForTimeout(2_000);
+
+    // 录制中途由 tmux 侧改窗口尺寸（不经任何浏览器客户端）：日志必须出现与真实 pane 尺寸一致的 resize。
+    await assertRecordsTmuxResize(page, share.id, sessionName);
 
     const revoke = await page.request.post(meshUrl(state, `/api/share/${share.id}/revoke`));
     expect(revoke.ok(), await revoke.text()).toBeTruthy();
