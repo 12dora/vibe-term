@@ -41,7 +41,7 @@ export async function probeRelayHealth(
 ): Promise<boolean> {
   const dialUrl = resolveRelayDialUrl(publicUrl, dial);
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const timer = setTimeout(() => ac.abort(new Error('connect-timeout')), timeoutMs);
   const timedOut = new Promise<never>((_resolve, reject) => {
     const fail = () => reject(new Error('probe_timeout'));
     if (ac.signal.aborted) fail();
@@ -52,7 +52,10 @@ export async function probeRelayHealth(
     const tls = uplinkWebSocketTls(relayTlsCaForDial(dialUrl, tlsCa));
     if (tls) Object.assign(init, tls);
     const url = `${dialUrl.replace(/\/+$/, '')}${RELAY_HEALTH_PATH}`;
-    const res = await Promise.race([fetchWithDnsFallback(url, init, fallback), timedOut]);
+    const res = await Promise.race([
+      fetchWithDnsFallback(url, init, { ...fallback, timeoutMs }),
+      timedOut,
+    ]);
     return res.ok;
   } catch {
     return false;

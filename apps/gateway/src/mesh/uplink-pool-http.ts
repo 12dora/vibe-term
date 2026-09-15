@@ -12,7 +12,7 @@ export async function defaultProbeHealthz(
   fallback?: FetchDnsFallbackOpts
 ): Promise<boolean> {
   const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const timer = setTimeout(() => ac.abort(new Error('connect-timeout')), timeoutMs);
   const timedOut = new Promise<never>((_resolve, reject) => {
     const fail = () => reject(new Error('probe_timeout'));
     if (ac.signal.aborted) fail();
@@ -23,7 +23,10 @@ export async function defaultProbeHealthz(
     const tls = uplinkWebSocketTls(tlsCa);
     if (tls) Object.assign(init, tls);
     const res = await Promise.race([
-      fetchWithDnsFallback(joinUplinkPath(publicUrl, '/healthz'), init, fallback),
+      fetchWithDnsFallback(joinUplinkPath(publicUrl, '/healthz'), init, {
+        ...fallback,
+        timeoutMs,
+      }),
       timedOut,
     ]);
     return res.ok;

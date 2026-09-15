@@ -9,6 +9,13 @@ import { isIP } from 'node:net';
 import type { WebSocketTransportInput } from '@vibeterm/shared/link';
 import { waitSocketOpen } from '@vibeterm/shared/net';
 import { isIpAddressLiteral } from './address-class';
+import { runFakeThenRedial } from './dial-connect-budget';
+import {
+  connectFailureReason,
+  isConnectClassFailure,
+  isDnsClassFailure,
+  isHardNonFallback,
+} from './dial-error';
 import { DIAL_IDENTITY_PATH_HEALTHZ, checkDialIdentity } from './dial-identity';
 import {
   type DialResolveFn,
@@ -20,7 +27,6 @@ import {
   resolveDialHost,
   stripBrackets,
 } from './dial-resolve-host';
-import { classifyUplinkConnectError } from './uplink-reconnect';
 import { wsDialRaceCount } from './ws-dial-race-config';
 import {
   WS_RACE_OPEN_TIMEOUT_MS,
@@ -54,6 +60,7 @@ export {
   checkDialIdentity,
   identityCheckUrl,
 } from './dial-identity';
+export { isConnectClassFailure, isDnsClassFailure } from './dial-error';
 
 export type DialTlsBase = {
   ca?: string[];
@@ -89,12 +96,8 @@ export type FetchDnsFallbackOpts = {
   fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>;
   resolve?: DialResolveFn;
   enabled?: boolean;
+  timeoutMs?: number;
 };
-
-const DNS_FAIL_RE =
-  /\b(enotfound|dns_enotfound|eai_noname|eai_again|eai_fail|getaddrinfo|failedtoopensocket)\b|failed to connect|was there a typo in the url|name not resolved|nodename nor servname|unable to connect\. is the computer able to access the url/;
-
-const CONNECT_CODE_RE = /^(econnrefused|connectionrefused|ehostunreach|enetunreach|etimedout)$/;
 
 export function rewriteDialUrl(url: string, ip: string): string {
   const parsed = new URL(url);
@@ -113,21 +116,6 @@ export function dialTlsForHost(
     tls: { ...baseTls, serverName: hostname },
     headers: { host: headerHost },
   };
-}
-
-export function isDnsClassFailure(err: unknown): boolean {
-  if (classifyUplinkConnectError(err) === 'dns') return true;
-  return DNS_FAIL_RE.test(`${errorCode(err)} ${errorMessage(err)}`.toLowerCase());
-}
-
-/** TCP 连不上：超时 / 拒连 / 不可达。TLS 握手失败、Expected 101 不算。 */
-export function isConnectClassFailure(err: unknown): boolean {
-  const blob = errorBlob(err);
-  if (blob.includes('connect-timeout')) return true;
-  if (CONNECT_CODE_RE.test(errorCode(err).toLowerCase())) return true;
-  if (/\b(ehostunreach|enetunreach|etimedout)\b/.test(blob)) return true;
-  if (/\beconnreset\b/.test(blob)) return false;
-  return /\beconnrefused\b|connection refused|connect refused/.test(blob);
 }
 
 export function hostOfDialUrl(url: string): string | null {
@@ -164,56 +152,44 @@ export async function fetchWithDnsFallback(
   init: RequestInit = {},
   opts: FetchDnsFallbackOpts = {}
 ): Promise<Response> {
-  const doFetch = opts.fetchImpl ?? ((input, requestInit) => fetch(input, requestInit));
-  const hostname = hostOfDialUrl(url);
-  const headerHost = hostHeaderOfDialUrl(url);
-  const resolve = opts.resolve ?? ((host, resolveOpts) => resolveDialHost(host, resolveOpts));
-  const fetchIp = (ipUrl: string): Promise<Response> => {
-    const dial =
-      hostname && headerHost ? dialTlsForHost(hostname, headerHost, tlsOf(init)) : undefined;
-    return doFetch(ipUrl, {
-      ...init,
-      ...(dial ? { tls: dial.tls } : {}),
-      headers: { ...plainHeaders(init.headers), host: headerHost ?? '' },
-    } as RequestInit);
-  };
-  const preferred = preferredIpUrl(url, hostname, opts.enabled);
+  const session = bindFetchSession(url, init, opts);
+  const preferred = preferredIpUrl(url, session.hostname, opts.enabled);
   if (preferred) {
     try {
-      return await fetchIp(preferred);
+      return await session.fetchIp(preferred);
     } catch {
-      if (hostname) forgetPreferDoh(hostname);
+      if (session.hostname) forgetPreferDoh(session.hostname);
     }
   }
+  if (await hostResolvesFake(session.hostname, opts.enabled, session.resolve, session.parent)) {
+    return await fetchFakeThenDoh(url, init, session);
+  }
   try {
-    return await doFetch(url, init);
+    return await session.doFetch(url, init);
   } catch (err) {
-    const ipUrl = await fallbackDialUrl({
-      url,
-      host: hostname,
-      err,
-      resolve,
-      enabled: opts.enabled,
-      signal: init.signal ?? undefined,
-    });
-    if (!ipUrl || !hostname || !headerHost) throw err;
-    try {
-      return await fetchIp(ipUrl);
-    } catch (ipErr) {
-      forgetPreferDoh(hostname);
-      throw ipErr;
-    }
+    return await fetchRedialIp(url, err, session, session.parent);
   }
 }
 
 type DialSession = {
   hostname: string | null;
   headerHost: string | null;
-  race: (target: string) => Promise<WebSocketTransportInput>;
+  open: DialWsCtor;
   resolve: DialResolveFn;
   baseTls: DialTlsBase | undefined;
   deps: DialWsFactoryDeps;
   ctx: WsDialContext | undefined;
+};
+
+type FetchSession = {
+  hostname: string | null;
+  headerHost: string | null;
+  resolve: DialResolveFn;
+  parent: AbortSignal | undefined;
+  timeoutMs: number | undefined;
+  enabled: boolean | undefined;
+  doFetch: (input: string, init?: RequestInit) => Promise<Response>;
+  fetchIp: (ipUrl: string, signal?: AbortSignal) => Promise<Response>;
 };
 
 async function openDialSocket(
@@ -233,8 +209,11 @@ async function openDialSocket(
     if (ws) return ws;
     forgetPreferDoh(session.hostname);
   }
+  if (await hostResolvesFake(session.hostname, state.deps.enabled, session.resolve, ctx?.signal)) {
+    return await openFakeThenDoh(url, session);
+  }
   try {
-    return await session.race(url);
+    return await raceSession(session, url);
   } catch (err) {
     return await redialAfterFailure(url, err, session);
   }
@@ -254,16 +233,36 @@ function bindDialSession(
   const headerHost = hostHeaderOfDialUrl(url);
   const socketOpts =
     hostname && headerHost ? dialTlsForHost(hostname, headerHost, state.baseTls) : undefined;
-  const open = (target: string) => state.wsCtor(target, socketOpts);
   return {
     hostname,
     headerHost,
-    race: (target: string) => raceOrOpen(open, target, ctx, state.deps.raceCount),
+    open: (target: string) => state.wsCtor(target, socketOpts),
     resolve: state.resolve,
     baseTls: state.baseTls,
     deps: state.deps,
     ctx,
   };
+}
+
+function raceSession(session: DialSession, target: string): Promise<WebSocketTransportInput> {
+  return raceOrOpen(session.open, target, session.ctx, session.deps.raceCount);
+}
+
+function withDialBudget(session: DialSession, signal: AbortSignal, timeoutMs: number): DialSession {
+  return { ...session, ctx: { signal, timeoutMs } };
+}
+
+async function openFakeThenDoh(
+  url: string,
+  session: DialSession
+): Promise<WebSocketTransportInput> {
+  return await runFakeThenRedial({
+    parent: session.ctx?.signal,
+    timeoutMs: session.ctx?.timeoutMs,
+    first: (signal, timeoutMs) => raceSession(withDialBudget(session, signal, timeoutMs), url),
+    redial: (err, signal, timeoutMs) =>
+      redialAfterFailure(url, err, withDialBudget(session, signal, timeoutMs)),
+  });
 }
 
 async function redialAfterFailure(
@@ -304,7 +303,7 @@ async function openVerifiedIp(args: {
   });
   if (!verified) return null;
   try {
-    return await args.session.race(args.ipUrl);
+    return await raceSession(args.session, args.ipUrl);
   } catch {
     if (args.session.hostname) forgetPreferDoh(args.session.hostname);
     return null;
@@ -385,46 +384,90 @@ function preferredIpUrl(url: string, host: string | null, enabled?: boolean): st
   return ipUrl === url ? null : ipUrl;
 }
 
-function isHardNonFallback(err: unknown): boolean {
-  const classified = classifyUplinkConnectError(err);
-  if (classified === 'auth_rejected' || classified === 'protocol') return true;
-  if (classified.startsWith('http_')) return true;
-  return classified === 'aborted' && !isConnectClassFailure(err);
-}
-
-function connectFailureReason(err: unknown): string {
-  const code = errorCode(err).trim().toLowerCase();
-  if (code) return code;
-  const blob = errorBlob(err);
-  if (blob.includes('connect-timeout')) return 'connect-timeout';
-  if (/\behostunreach\b/.test(blob)) return 'ehostunreach';
-  if (/\benetunreach\b/.test(blob)) return 'enetunreach';
-  if (/\beconnrefused\b|connection refused/.test(blob)) return 'econnrefused';
-  return 'connect-failed';
-}
-
 function tlsOf(init: RequestInit): DialTlsBase | undefined {
   return (init as { tls?: DialTlsBase }).tls;
 }
 
-function errorCode(err: unknown): string {
-  if (!err || typeof err !== 'object') return '';
-  const code = (err as { code?: unknown }).code;
-  return typeof code === 'string' ? code : '';
+function bindFetchSession(
+  url: string,
+  init: RequestInit,
+  opts: FetchDnsFallbackOpts
+): FetchSession {
+  const hostname = hostOfDialUrl(url);
+  const headerHost = hostHeaderOfDialUrl(url);
+  const doFetch = opts.fetchImpl ?? ((input, requestInit) => fetch(input, requestInit));
+  const resolve = opts.resolve ?? ((host, resolveOpts) => resolveDialHost(host, resolveOpts));
+  const parent = init.signal ?? undefined;
+  return {
+    hostname,
+    headerHost,
+    resolve,
+    parent,
+    timeoutMs: opts.timeoutMs,
+    enabled: opts.enabled,
+    doFetch,
+    fetchIp: (ipUrl, signal) => {
+      const dial =
+        hostname && headerHost ? dialTlsForHost(hostname, headerHost, tlsOf(init)) : undefined;
+      return doFetch(ipUrl, {
+        ...init,
+        ...(dial ? { tls: dial.tls } : {}),
+        headers: { ...plainHeaders(init.headers), host: headerHost ?? '' },
+        signal: signal ?? parent,
+      } as RequestInit);
+    },
+  };
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+async function fetchFakeThenDoh(
+  url: string,
+  init: RequestInit,
+  session: FetchSession
+): Promise<Response> {
+  return await runFakeThenRedial({
+    parent: session.parent,
+    timeoutMs: session.timeoutMs,
+    first: (signal) => session.doFetch(url, { ...init, signal }),
+    redial: (err, signal) => fetchRedialIp(url, err, session, signal),
+  });
 }
 
-function errorBlob(err: unknown): string {
-  const parts = [errorCode(err), errorMessage(err)];
-  if (err && typeof err === 'object') {
-    const rec = err as { cause?: unknown; reason?: unknown };
-    if (rec.cause) parts.push(errorCode(rec.cause), errorMessage(rec.cause));
-    if (rec.reason) parts.push(errorCode(rec.reason), errorMessage(rec.reason));
+async function fetchRedialIp(
+  url: string,
+  err: unknown,
+  session: FetchSession,
+  signal: AbortSignal | undefined
+): Promise<Response> {
+  const ipUrl = await fallbackDialUrl({
+    url,
+    host: session.hostname,
+    err,
+    resolve: session.resolve,
+    enabled: session.enabled,
+    signal,
+  });
+  if (!ipUrl || !session.hostname || !session.headerHost) throw err;
+  try {
+    return await session.fetchIp(ipUrl, signal);
+  } catch (ipErr) {
+    forgetPreferDoh(session.hostname);
+    throw ipErr;
   }
-  return parts.join(' ').toLowerCase();
+}
+
+async function hostResolvesFake(
+  host: string | null,
+  enabled: boolean | undefined,
+  resolve: DialResolveFn,
+  signal: AbortSignal | undefined
+): Promise<boolean> {
+  if (!fallbackOn(enabled) || !host || isIpAddressLiteral(host)) return false;
+  try {
+    const resolved = await resolve(host, { signal });
+    return resolved?.fake === true;
+  } catch {
+    return false;
+  }
 }
 
 function plainHeaders(headers: RequestInit['headers']): Record<string, string> {
