@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { clickConsoleMoreItem } from './helpers/console-more';
 
 test('device: terminal ui renders and editor input toggles', async ({ page, request }) => {
   const name = `e2e-terminal-${Date.now()}`;
@@ -38,7 +39,7 @@ test('device: terminal ui renders and editor input toggles', async ({ page, requ
   await expect(page.locator('[data-terminal-engine="ghostty-official"]')).toBeVisible();
   await expect(page.locator('.xterm canvas').first()).toBeVisible({ timeout: 20_000 });
 
-  await page.getByTestId('terminal-input-mode-toggle').click();
+  await clickConsoleMoreItem(page, 'terminal-input-mode-toggle');
   await expect(page.getByTestId('editor-input')).toBeVisible();
 
   // Cleanup.

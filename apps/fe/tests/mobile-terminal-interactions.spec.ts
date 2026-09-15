@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { clickConsoleMoreItem } from './helpers/console-more';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 import { attachCanonicalCommandCollector } from './helpers/ws-borsh';
 
@@ -113,7 +114,7 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
 
     await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
 
-    await page.getByTestId('terminal-input-mode-toggle').click();
+    await clickConsoleMoreItem(page, 'terminal-input-mode-toggle');
     const editorInput = page.getByTestId('editor-input');
     await expect(editorInput).toBeVisible();
     // direct 模式的快捷键栏（TerminalShortcutsSlot）卸载、编辑器自带的那排接手，两者

@@ -66,6 +66,7 @@ export type TranslationKey =
   | 'nav.openSidebar'
   | 'nav.closeSidebar'
   | 'nav.toggleSubmenu'
+  | 'nav.more'
   | 'nav.switchToEditor'
   | 'nav.switchToDirect'
   | 'nav.refreshPage'

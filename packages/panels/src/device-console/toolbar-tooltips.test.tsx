@@ -8,7 +8,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import {
   type ToolbarButtonsInput,
   ToolbarIconButton,
+  ToolbarMoreMenu,
   buildToolbarButtons,
+  buildToolbarMenuItems,
 } from './device-console-toolbar';
 import type { DeviceConsoleActionsModel } from './use-device-console-actions';
 
@@ -78,6 +80,39 @@ describe('顶栏图标按钮的说明气泡', () => {
       expect(html).toContain('data-slot="tooltip-trigger"');
       expect(html).toContain(`aria-label="${button.label}"`);
       expect(html).toContain('disabled=""');
+    }
+  });
+});
+
+describe('顶栏「更多」菜单', () => {
+  test('每个菜单项都有非空标签', () => {
+    const labels = buildToolbarMenuItems(toolbarInput()).map((item) => item.label);
+    expect(labels.length).toBe(4);
+    expect(labels.every((label) => label.length > 0)).toBe(true);
+  });
+
+  test('触发器有 aria-label 与气泡，且不挂 title', () => {
+    const html = renderToStaticMarkup(
+      <ToolbarMoreMenu items={buildToolbarMenuItems(toolbarInput())} label="nav.more" />
+    );
+    expect(html).toContain('data-testid="console-more-button"');
+    expect(html).toContain('aria-label="nav.more"');
+    expect(html).toContain('data-slot="tooltip-trigger"');
+    expect(html).not.toContain('title=');
+  });
+
+  // 菜单收起时这两个状态只剩触发器上的点，丢了等于界面上看不见「正在分享 / 规则已启用」
+  test('分享中或有启用规则时触发器带指示点', () => {
+    const idle = renderToStaticMarkup(
+      <ToolbarMoreMenu items={buildToolbarMenuItems(toolbarInput())} label="nav.more" />
+    );
+    expect(idle).not.toContain('data-testid="console-more-indicator"');
+
+    for (const overrides of [{ hasEnabledWatchRule: true }, { hasActiveShare: true }]) {
+      const html = renderToStaticMarkup(
+        <ToolbarMoreMenu items={buildToolbarMenuItems(toolbarInput(overrides))} label="nav.more" />
+      );
+      expect(html).toContain('data-testid="console-more-indicator"');
     }
   });
 });

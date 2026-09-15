@@ -1,4 +1,5 @@
 import { type Page, expect, test } from '@playwright/test';
+import { clickConsoleMoreItem } from './helpers/console-more';
 import { createTwoPaneSession, ensureCleanSession } from './helpers/tmux';
 
 async function activeElementClass(page: Page): Promise<string> {
@@ -42,9 +43,9 @@ test('terminal regains focus on load, pane switch, mode toggle and refresh', asy
       .toContain('xterm-helper-textarea');
 
     // editor 模式切回 direct 后焦点应回到终端
-    await page.getByTestId('terminal-input-mode-toggle').click();
+    await clickConsoleMoreItem(page, 'terminal-input-mode-toggle');
     await expect(page.getByTestId('editor-input')).toBeVisible();
-    await page.getByTestId('terminal-input-mode-toggle').click();
+    await clickConsoleMoreItem(page, 'terminal-input-mode-toggle');
     await expect
       .poll(() => activeElementClass(page), { timeout: 10_000 })
       .toContain('xterm-helper-textarea');
