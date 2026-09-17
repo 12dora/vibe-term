@@ -12,6 +12,7 @@ import { t } from '../i18n';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
 import type { TmuxEvent } from '../tmux-client/events';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
+import { isReportedTmuxError } from '../tmux-client/tmux-command-error';
 import { resolvePaneContext } from '../tmux/bell-context';
 import { connectionAlertNotifier } from './connection-alerts';
 import { dispatchTmuxPushEvent } from './tmux-push-events';
@@ -258,6 +259,8 @@ export class PushSupervisor {
       },
       onError: (error) => {
         console.error(`[push] tmux error on device ${entry.deviceId}:`, error);
+        // 一次性 tmux 命令失败在抛出前已上报过，这里再 notify 会让同一次失败弹两次。
+        if (isReportedTmuxError(error)) return;
         void connectionAlertNotifier.notify({
           device,
           error,

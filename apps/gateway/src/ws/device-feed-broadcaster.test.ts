@@ -1,12 +1,16 @@
 import { describe, expect, spyOn, test } from 'bun:test';
+import { wsBorsh } from '@vibeterm/shared';
 
+import { TmuxCommandFailedError } from '../tmux-client/tmux-command-error';
 import { DeviceFeedBroadcaster, type DeviceFeedHost } from './device-feed-broadcaster';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
+import type { GatewaySession } from './gateway-session';
 import { ShareSessionIndex } from './share-session-index';
 import {
   TERMINAL_OUTPUT_METRICS_CHECK_EVERY,
   TerminalOutputMetrics,
 } from './terminal-output-metrics';
+import type { DeviceConnectionEntry } from './types';
 
 function makeHost(metrics: TerminalOutputMetrics): DeviceFeedHost & { reports: number } {
   const host = {
@@ -60,5 +64,32 @@ describe('terminal output metrics window', () => {
     } finally {
       dateNow.mockRestore();
     }
+  });
+});
+
+describe('device error 去重', () => {
+  function makeErrorHost(): DeviceFeedHost & { kinds: number[] } {
+    const host = {
+      ...makeHost(new TerminalOutputMetrics(30_000, 0)),
+      kinds: [] as number[],
+      sendEnvelope(_session: GatewaySession, kind: number) {
+        host.kinds.push(kind);
+      },
+    };
+    return host;
+  }
+
+  test('已上报过的一次性 tmux 命令失败不再广播第二条 device error', () => {
+    const host = makeErrorHost();
+    host.connections.set('dev', {
+      clients: new Set<GatewaySession>([{} as GatewaySession]),
+    } as DeviceConnectionEntry);
+    const feed = new DeviceFeedBroadcaster(host);
+
+    feed.broadcastError('dev', new TmuxCommandFailedError('boom'));
+    expect(host.kinds).toEqual([]);
+
+    feed.broadcastError('dev', new Error('boom'));
+    expect(host.kinds).toEqual([wsBorsh.KIND_DEVICE_EVENT]);
   });
 });

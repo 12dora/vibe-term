@@ -280,6 +280,56 @@ describe('PushSupervisor', () => {
     await supervisor.stopAll();
   });
 
+  // 一次性 tmux 命令失败在抛出前已上报过；supervisor 再 notify 一次就是「两条 toast」的来源。
+  test('onError 跳过已上报的 tmux 命令失败，其他错误照旧告警', async () => {
+    const device = createDevice('reported-error');
+    const attached: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
+    const broadcasts: string[] = [];
+    const { connectionAlertNotifier } = await import('./connection-alerts');
+    const { TmuxCommandFailedError } = await import('../tmux-client/tmux-command-error');
+    connectionAlertNotifier.setSettingsProvider(() => createSettings());
+    connectionAlertNotifier.setPersister(() => {});
+    connectionAlertNotifier.setBroadcaster((_deviceId, payload) => {
+      broadcasts.push(payload.type);
+    });
+
+    const supervisor = new PushSupervisor({
+      deps: {
+        listDevices: () => [device],
+        getDevice: () => device,
+        getSettings: () => createSettings(),
+        acquireRuntime: async () =>
+          mockRuntime({
+            subscribe(next) {
+              attached.listener = next;
+              return () => {
+                attached.listener = null;
+              };
+            },
+          }),
+        releaseRuntime: async () => {},
+      },
+    });
+
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      await supervisor.start();
+      attached.listener?.onError?.(new TmuxCommandFailedError('boom'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(broadcasts).toEqual([]);
+
+      attached.listener?.onError?.(new Error('boom'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(broadcasts).toEqual(['error']);
+    } finally {
+      console.error = originalError;
+      await supervisor.stopAll();
+      connectionAlertNotifier.setBroadcaster(null);
+      connectionAlertNotifier.clear(device.id);
+    }
+  });
+
   // 断开告警桥的双发抑制信号来自连接实例的显式标志：supervisor 必须把
   // runtime.sessionClosedEmitted 透传给桥，不依赖任何持久化状态位。
   test.each([
