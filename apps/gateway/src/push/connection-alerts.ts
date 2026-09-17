@@ -164,6 +164,21 @@ export class ConnectionAlertNotifier {
     };
   }
 
+  /** 运行时错误自行恢复：沿告警同一条广播通道发 reconnected，让前端撤下设备错误。 */
+  broadcastDeviceRecovered(deviceId: string): void {
+    this.clear(deviceId);
+    if (!this.broadcaster) return;
+    try {
+      this.broadcaster(deviceId, {
+        deviceId,
+        type: 'reconnected',
+        message: t('sshError.reconnected'),
+      });
+    } catch (broadcastErr) {
+      console.error('[conn-alert] failed to broadcast recovery:', broadcastErr);
+    }
+  }
+
   clear(deviceId: string): void {
     for (const key of this.throttleMap.keys()) {
       if (key.startsWith(`${deviceId}:`)) {
