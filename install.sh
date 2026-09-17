@@ -233,6 +233,17 @@ vibeterm_run_init() {
   fi
 }
 
+# `set -e` 会让 init 的非零退出直接静默中断整个脚本，用户看不到发生了什么。
+vibeterm_run_init_or_fail() {
+  local status=0
+  vibeterm_run_init "$@" || status=$?
+  if [ "$status" -ne 0 ]; then
+    echo "vibeterm install: init failed (exit ${status}); the install is incomplete" >&2
+    echo "vibeterm install: fix the problem above and re-run the same command" >&2
+    exit "$status"
+  fi
+}
+
 VIBETERM_INSTALL_TMP=
 
 vibeterm_cleanup_tmp() {
@@ -350,14 +361,14 @@ vibeterm_install() {
   if [ ! -t 0 ]; then
     if { exec 3</dev/tty; } 2>/dev/null; then
       echo "vibeterm install: stdin is not a TTY; attaching /dev/tty for prompts"
-      vibeterm_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" <&3
+      vibeterm_run_init_or_fail "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" <&3
       exec 3<&-
     else
       echo "vibeterm install: no TTY; passing --no-interactive"
-      vibeterm_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" --no-interactive
+      vibeterm_run_init_or_fail "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" --no-interactive
     fi
   else
-    vibeterm_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}"
+    vibeterm_run_init_or_fail "$pkg_dir" "${init_args[@]+"${init_args[@]}"}"
   fi
 
   echo
