@@ -52,11 +52,14 @@ export function createPromptSession(): PromptSession {
 
 async function askLine(message: string): Promise<string> {
   const session = createPromptSession();
-  const rl = createInterface({ input: session.input, output: stdout });
   try {
-    return (await rl.question(message)).trim();
+    const rl = createInterface({ input: session.input, output: stdout });
+    try {
+      return (await rl.question(message)).trim();
+    } finally {
+      rl.close();
+    }
   } finally {
-    rl.close();
     session.release();
   }
 }
@@ -76,7 +79,7 @@ export async function promptText(
 }
 
 export function isInteractiveStdin(): boolean {
-  return Boolean(stdin.isTTY);
+  return promptInternals.stdinIsTty();
 }
 
 export async function promptPassword(
@@ -114,28 +117,56 @@ export async function promptPassword(
   return first;
 }
 
+// 隐藏输入把终端打成 raw，任何一条退出路径漏掉恢复都会让用户留下一个不回显的 shell，
+// 漏掉 release 则会吊住事件循环，所以恢复做成幂等，且 setup 抛错、流 error / end 都走它。
+function restoreTerminal(session: PromptSession, restored: { done: boolean }): void {
+  if (restored.done) return;
+  restored.done = true;
+  try {
+    session.input.setRawMode?.(false);
+    session.input.pause();
+  } finally {
+    session.release();
+  }
+}
+
 async function readHiddenLine(prompt: string): Promise<string> {
   stdout.write(prompt);
   const session = createPromptSession();
   const input = session.input;
-  input.setRawMode?.(true);
-  input.resume();
-  input.setEncoding('utf8');
+  const restored = { done: false };
+  try {
+    input.setRawMode?.(true);
+    input.resume();
+    input.setEncoding('utf8');
+  } catch (error) {
+    restoreTerminal(session, restored);
+    throw error;
+  }
 
   return await new Promise<string>((resolve, reject) => {
     let value = '';
+    const settle = (finish: () => void): void => {
+      input.off('data', onData);
+      input.off('error', onError);
+      input.off('end', onEnd);
+      restoreTerminal(session, restored);
+      finish();
+    };
     const onData = (chunk: string): void => {
       for (const char of chunk) {
         if (char === '\n' || char === '\r') {
-          cleanup();
-          stdout.write('\n');
-          resolve(value);
+          settle(() => {
+            stdout.write('\n');
+            resolve(value);
+          });
           return;
         }
         if (char === '\u0003') {
-          cleanup();
-          stdout.write('\n');
-          reject(new Error('Cancelled by user.'));
+          settle(() => {
+            stdout.write('\n');
+            reject(new Error('Cancelled by user.'));
+          });
           return;
         }
         if (char === '\u007f' || char === '\b') {
@@ -149,13 +180,15 @@ async function readHiddenLine(prompt: string): Promise<string> {
         value += char;
       }
     };
-    const cleanup = (): void => {
-      input.off('data', onData);
-      input.setRawMode?.(false);
-      input.pause();
-      session.release();
+    const onError = (error: Error): void => {
+      settle(() => reject(error));
+    };
+    const onEnd = (): void => {
+      settle(() => reject(new Error('input closed before a password was entered')));
     };
     input.on('data', onData);
+    input.on('error', onError);
+    input.on('end', onEnd);
   });
 }
 

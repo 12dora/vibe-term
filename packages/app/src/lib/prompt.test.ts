@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { PassThrough } from 'node:stream';
-import { createPromptSession, promptConfirm, promptInternals, promptText } from './prompt';
+import {
+  createPromptSession,
+  promptConfirm,
+  promptInternals,
+  promptPassword,
+  promptText,
+} from './prompt';
 
 const realStdinIsTty = promptInternals.stdinIsTty;
 const realOpen = promptInternals.openControllingTerminal;
@@ -119,6 +125,97 @@ describe('promptText / promptConfirm over the controlling terminal', () => {
       '/tmp/x'
     );
     expect(await promptConfirm({ nonInteractive: true }, 'Autostart?', true)).toBe(true);
+    expect(opened).toBe(0);
+  });
+});
+
+describe('promptPassword over the controlling terminal', () => {
+  function rawTty(): PassThrough & { isTTY?: boolean; rawModes: boolean[] } {
+    const stream = new PassThrough() as PassThrough & { isTTY?: boolean; rawModes: boolean[] };
+    stream.isTTY = true;
+    stream.rawModes = [];
+    (stream as unknown as { setRawMode: (mode: boolean) => void }).setRawMode = (mode: boolean) => {
+      stream.rawModes.push(mode);
+    };
+    return stream;
+  }
+
+  test('reads a hidden line, restores raw mode and destroys the handle', async () => {
+    const stream = rawTty();
+    promptInternals.stdinIsTty = () => true;
+    promptInternals.openControllingTerminal = () => stream;
+
+    const pending = promptPassword('Password');
+    stream.write('hunter2\n');
+    expect(await pending).toBe('hunter2');
+    expect(stream.rawModes).toEqual([true, false]);
+    expect(stream.destroyed).toBe(true);
+  });
+
+  test('backspace and ctrl-U edit the buffer', async () => {
+    const stream = rawTty();
+    promptInternals.stdinIsTty = () => true;
+    promptInternals.openControllingTerminal = () => stream;
+
+    const pending = promptPassword('Password');
+    stream.write('abc\u007f');
+    stream.write('xy\u0015');
+    stream.write('ok\n');
+    expect(await pending).toBe('ok');
+  });
+
+  test('ctrl-C rejects, restores raw mode and destroys the handle', async () => {
+    const stream = rawTty();
+    promptInternals.stdinIsTty = () => true;
+    promptInternals.openControllingTerminal = () => stream;
+
+    const pending = promptPassword('Password');
+    stream.write('secret\u0003');
+    await expect(pending).rejects.toThrow('Cancelled by user.');
+    expect(stream.rawModes).toEqual([true, false]);
+    expect(stream.destroyed).toBe(true);
+  });
+
+  test('a stream error settles instead of hanging, and still restores the terminal', async () => {
+    const stream = rawTty();
+    promptInternals.stdinIsTty = () => true;
+    promptInternals.openControllingTerminal = () => stream;
+
+    const pending = promptPassword('Password');
+    stream.emit('error', new Error('tty read failed'));
+    await expect(pending).rejects.toThrow('tty read failed');
+    expect(stream.rawModes).toEqual([true, false]);
+    expect(stream.destroyed).toBe(true);
+  });
+
+  test('the handle is released when entering raw mode throws', async () => {
+    const stream = rawTty();
+    let destroyed = 0;
+    (stream as unknown as { setRawMode: (mode: boolean) => void }).setRawMode = () => {
+      throw new Error('ioctl failed');
+    };
+    stream.destroy = () => {
+      destroyed += 1;
+      return stream;
+    };
+    promptInternals.stdinIsTty = () => true;
+    promptInternals.openControllingTerminal = () => stream;
+
+    await expect(promptPassword('Password')).rejects.toThrow('ioctl failed');
+    expect(destroyed).toBe(1);
+  });
+
+  test('without a TTY it still requires the env var instead of opening the terminal', async () => {
+    let opened = 0;
+    promptInternals.stdinIsTty = () => false;
+    promptInternals.openControllingTerminal = () => {
+      opened += 1;
+      return rawTty();
+    };
+
+    await expect(
+      promptPassword('Password', { envKey: 'VIBETERM_TEST_PW_MISSING' })
+    ).rejects.toThrow('stdin is not a TTY');
     expect(opened).toBe(0);
   });
 });
