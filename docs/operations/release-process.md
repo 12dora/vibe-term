@@ -102,7 +102,7 @@ npm pack --dry-run --workspace vibeterm-cli
 - `resources/gateway-drizzle` 中应包含迁移文件。
 - **CHANGELOG 已完成 agent 改写**：`grep -c DRAFT packages/app/CHANGELOG.md` 应为 `0`（仍有 DRAFT 标记说明漏了第 1.5 步），且内容无 commit hash / `feat:` 等黑话。
 - **CHANGELOG 为双语**：`grep -c '^## English' packages/app/CHANGELOG.md` 与 `grep -c '^## 中文' packages/app/CHANGELOG.md` 均应为 `1`（英中两段齐全，见 issue #20）。
-- **版本号已正确烧进 bundle**：`grep -c "<newVersion>" packages/app/dist/runtime/server.js` 应 > 0（确认 `--define` 注入生效，而非旧版本）。
+- **版本号已正确烧进 bundle**：`grep -rl "<newVersion>" packages/app/dist/runtime/` 应列出 `chunks/` 下的文件（确认 `--define` 注入生效，而非旧版本）。运行时是分块打包的，版本字面量落在 `dist/runtime/chunks/*.js`，**不在** `dist/runtime/server.js` 里——只 grep `server.js` 会永远是 0，当不了门禁。
 
 如果本次发布包含 `apps/gateway`、`apps/fe`、`packages/shared` 的行为变更，应额外执行受影响模块的测试或构建验证。
 
