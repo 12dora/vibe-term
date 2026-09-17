@@ -71,7 +71,7 @@
 | [nonstandard-ports.md](./operations/nonstandard-ports.md) | 按角色列出应放行的 TCP/UDP 口；80/443 不可用时的 HTTPS 候选与探测 |
 | [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
 | [tunnel-edge-fake-ip.md](./operations/tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘与 ICE STUN/TURN 的 fake-IP 绕行与排查 |
-| [tmux-process-survival.md](./operations/tmux-process-survival.md) | 服务 kill 策略、linger、tmux 3.6 pane scope 与 systemd OOMPolicy |
+| [tmux-process-survival.md](./operations/tmux-process-survival.md) | 服务 kill 策略、linger、tmux 3.6 pane scope 与 systemd OOMPolicy、套接字不可达恢复 |
 | [window-memory-limits.md](./operations/window-memory-limits.md) | Linux 上按 tmux 窗口套 systemd 内存限额：scope、OOM 粘性标记、GUI 徽标、CLI `sessions --memory`，面向运维 |
 | [gateway-loop-watchdog.md](./operations/gateway-loop-watchdog.md) | 主线程卡死（libdatachannel 死锁）的真因、进程内看门狗与「服务 running 但 HTTP 不通」排查 |
 | [troubleshooting-db-master-key.md](./operations/troubleshooting-db-master-key.md) | 数据库与 `VIBETERM_MASTER_KEY` 不匹配的启动失败 |

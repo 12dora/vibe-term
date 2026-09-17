@@ -97,3 +97,37 @@ VibeTerm 为自己创建的会话开启 `remain-on-exit on`，并在 UI 上把 `
 ### 与窗口内存限额的关系
 
 `DefaultOOMPolicy=continue` 只决定「内核杀了 cgroup 里某个进程之后，systemd 要不要把整个 `tmux-spawn-*.scope` 停掉」。它不限制进程能吃多少内存。VibeTerm 另外通过 `systemctl --user set-property --runtime … MemoryHigh/MemoryMax/MemorySwapMax` 给每个 pane scope 套上限：软限额触发回收 / 限速，硬限额才由内核 OOM 杀超限进程。关窗前会先 `systemctl --user stop` 该 scope。完整说明（设置项、GUI 徽标、`vibeterm sessions --memory`、不支持时的静默行为与排障命令）见 [窗口内存限额](./window-memory-limits.md)。
+
+## 4. 套接字不可达：server 还活着，新命令却连不上
+
+现象：某台节点上终端一切正常（输出、输入、历史都在），但每次进入该节点都弹「连接失败：error connecting to /tmp/tmux-1000/default (No such file or directory)」，节点日志里同一条 `[local] tmux command failed … argv=resize-window/select-window` 反复出现。
+
+真因在节点的挂载或 `/tmp` 清理，不在 VibeTerm：tmux server 启动时在 `/tmp/tmux-<uid>/default` 建套接字，之后 `/tmp` 被新的挂载遮蔽（如把 `/data/tmp/system` bind 到 `/tmp`）或该目录被清理，套接字文件就留在了被遮蔽的旧文件系统上。此时：
+
+- **已挂上的控制模式 client 照常工作**——它握的是打开着的 fd，与路径无关，所以终端看起来完全正常；
+- **新起的一次性 tmux 命令**（`resize-window`、`select-window` 等）按路径去连，连不到，逐条失败。
+
+`ss -xlp | grep tmux` 仍能看到 server 在原路径 LISTEN，但 `ls /tmp/tmux-1000/` 里没有它——这正是判据。
+
+### VibeTerm 的自动处理
+
+网关把这类失败与「server 真的没了」分开（`isTmuxSocketMissingMessage`，见 `apps/gateway/src/tmux-client/external/helpers.ts`），并按 tmux(1) 的规定恢复（`socket-recovery.ts`）：
+
+1. 经**已挂着的控制模式通道**取 server pid（此刻起不了新 tmux，只能走这条路）；
+2. 按 0700 补出套接字的父目录——tmux(1) 明说父目录缺失时 SIGUSR1 会失败；
+3. 向 server 发 `SIGUSR1`，tmux 据此重建套接字；
+4. 轮询确认可连（100 ms 一次，最多 1.5 s），成功则把失败的那条命令原样重试一次。
+
+限制：每条连接 30 s 内至多尝试一次；恢复不了就退回原来的失败上报。socket 不可达**绝不**会被当成 server gone 去拆会话。
+
+命令重新跑通后，网关清掉设备上滞留的 `lastError` 并广播 `reconnected`，前端据此撤下错误提示——此前 `lastError` 只在重连成功时才清，而这类故障下连接从不断开，错误会一直挂着。
+
+### 需要用户自己做的
+
+自动恢复只治标。挂载被换掉是运维动作，要么在起 tmux 前把 `/tmp` 的挂载定下来（fstab 里的 bind 在 `local-fs.target` 前完成，重启后即正常），要么别在 tmux server 运行期间重挂 `/tmp`。排查用：
+
+```bash
+findmnt /tmp                      # 同一挂载点上是否叠了两层
+ss -xlp | grep tmux               # server 仍在哪个路径 LISTEN
+ls -la /tmp/tmux-$(id -u)/        # 当前可见的 /tmp 里有没有那个套接字
+```
