@@ -58,6 +58,7 @@ function runInstallPolicy(opts: {
   args?: string[];
   legacyAssetOnly?: boolean;
   legacyBinOnly?: boolean;
+  initExitCode?: number;
   prepare?: (ctx: { root: string; payloadHex: string }) => { sumsBody: string };
 }): {
   status: number;
@@ -154,7 +155,7 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 printf '%s\\n' "$@" > "$FAKE_NODE_LOG"
-exit 0
+exit "\${FAKE_NODE_EXIT:-0}"
 `
   );
 
@@ -174,6 +175,7 @@ vibeterm_install "$@"
       FAKE_CURL_SUMS_BODY_FILE: sumsFile,
       FAKE_TAR_MARK: tarMark,
       FAKE_NODE_LOG: initLog,
+      ...(opts.initExitCode !== undefined ? { FAKE_NODE_EXIT: String(opts.initExitCode) } : {}),
       ...(opts.legacyAssetOnly ? { FAKE_CURL_ONLY_LEGACY: '1' } : {}),
       ...(opts.legacyBinOnly ? { FAKE_TAR_LEGACY_BIN_ONLY: '1' } : {}),
     },
@@ -416,6 +418,14 @@ describe('install.sh download checksum policy', () => {
     expect(result.tarCalled).toBe(true);
     expect(result.initArgs.length).toBeGreaterThan(0);
     expect(result.initArgs.some((line) => line.includes('vibeterm.js'))).toBe(true);
+  });
+
+  test('a failing init aborts with an actionable message and its exit code', () => {
+    const result = runInstallPolicy({ version: '1.1.4', sumsCode: '200', initExitCode: 3 });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain('init failed (exit 3)');
+    expect(result.stderr).toContain('the install is incomplete');
+    expect(result.stdout).not.toContain('vibeterm install: done.');
   });
 
   test('falls back to the legacy asset name and its SHA256SUMS entry', () => {
