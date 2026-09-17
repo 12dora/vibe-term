@@ -113,8 +113,11 @@ class RecoveryStubCore extends ExternalTmuxConnectionCore {
     });
   }
 
-  protected async runHistoryQuery(): Promise<CommandResult> {
-    return ok();
+  readonly historyQueries: string[][] = [];
+
+  protected async runHistoryQuery(argv: string[]): Promise<CommandResult> {
+    this.historyQueries.push(argv);
+    return ok('120|80');
   }
 
   protected async runHistoryCapture(): Promise<string> {
@@ -219,5 +222,30 @@ describe('ExternalTmuxConnectionCore socket recovery', () => {
     expect(status.tmuxAvailable).toBe(true);
     expect(events.map((event) => event.type)).toEqual(['reconnected']);
     expect(events[0]?.deviceId).toBe(device.id);
+  });
+
+  // 事故形态是「控制通道健康、spawn 全废」：控制模式历史查询成功不能当成恢复，否则错误被藏起来。
+  test('恢复失败后控制模式历史查询成功不清错误，只有 spawn 成功才清', async () => {
+    const device = seedDevice('r57-history-not-recovery');
+    const core = new RecoveryStubCore(device.id);
+    core.controlAlive = false; // 拿不到 pid：恢复必然失败
+    core.commandImpl = () => fail(SOCKET_MISSING);
+
+    const events = await withCapturedBroadcasts(async (captured) => {
+      await expect(core.exposeEnsureSession()).rejects.toThrow(SOCKET_MISSING);
+      expect(core.reported).toEqual([SOCKET_MISSING]);
+
+      expect(await core.getPaneHistoryCaptureInfo('%1')).toEqual({ historySize: 120, cols: 80 });
+      expect(core.historyQueries.length).toBe(1);
+      expect(getDeviceRuntimeStatus(device.id).lastError).toBe(SOCKET_MISSING);
+      expect(captured).toEqual([]);
+
+      core.commandImpl = () => ok();
+      await core.exposeEnsureSession();
+      return captured;
+    });
+
+    expect(getDeviceRuntimeStatus(device.id).lastError).toBeNull();
+    expect(events.map((event) => event.type)).toEqual(['reconnected']);
   });
 });

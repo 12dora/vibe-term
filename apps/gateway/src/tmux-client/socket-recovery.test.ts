@@ -191,6 +191,21 @@ describe('TmuxSocketRecovery', () => {
     expect(harness.scripts.length).toBe(2);
   });
 
+  test('并发调用共用同一次尝试：只发一次 SIGUSR1，后到者拿到同一结果', async () => {
+    const now = 1_000_000;
+    const harness = createRecovery({ now: () => now });
+    // 两次调用都在第一次的第一个 await 之前发出，正是进节点时 select-window / resize-window 的形态。
+    const first = harness.recovery.recreate(SOCKET_MISSING);
+    const second = harness.recovery.recreate(SOCKET_MISSING);
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(harness.scripts.length).toBe(1);
+
+    // 这次尝试已经结束：30 s 内再来的调用仍然被限流拦住（死循环闸不变）。
+    expect(await harness.recovery.recreate(SOCKET_MISSING)).toBe(false);
+    expect(harness.scripts.length).toBe(1);
+  });
+
   test('连接已断或用户主动断开时不尝试', async () => {
     const offline = createRecovery({});
     offline.host.connected = false;
@@ -257,6 +272,39 @@ describe('retryAfterSocketRecovery', () => {
       await retryAfterSocketRecovery(host, ['select-window'], SOCKET_MISSING, 10_000)
     ).toBeNull();
     expect(calls).toEqual([]);
+  });
+
+  // 进节点并发打出的两条一次性命令：后到的那条必须等同一次恢复并重试，而不是被限流丢掉后报错。
+  test('并发的两条命令共用一次恢复，都被重试且都不落回上报路径', async () => {
+    const now = 1_000_000;
+    const harness = createRecovery({ now: () => now });
+    const calls: string[][] = [];
+    const host = {
+      deviceId: 'dev-1',
+      logPrefix: '[test]',
+      connected: true,
+      manualDisconnect: false,
+      recreateTmuxSocket: (message: string) => harness.recovery.recreate(message),
+      runTmuxAllowFailure: async (argv: string[]) => {
+        calls.push(argv);
+        return ok('ok');
+      },
+    };
+
+    const [selectResult, resizeResult] = await Promise.all([
+      retryAfterSocketRecovery(host, ['select-window', '-t', '@1'], SOCKET_MISSING, 10_000),
+      retryAfterSocketRecovery(
+        host,
+        ['resize-window', '-t', '@1', '-x', '120', '-y', '40'],
+        SOCKET_MISSING,
+        10_000
+      ),
+    ]);
+
+    expect(selectResult?.exitCode).toBe(0);
+    expect(resizeResult?.exitCode).toBe(0);
+    expect(calls.map((argv) => argv[0])).toEqual(['select-window', 'resize-window']);
+    expect(harness.scripts.length).toBe(1);
   });
 
   test('非 socket 失败与已断开的连接都不触发恢复', async () => {
