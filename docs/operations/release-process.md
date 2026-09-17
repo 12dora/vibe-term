@@ -130,7 +130,19 @@ git push origin "v<newVersion>"
 
 ```bash
 gh release view "v<version>"
-curl -fsSIL "https://github.com/12dora/vibe-term/releases/download/v<version>/vibeterm-cli-<version>.tgz"
+for f in SHA256SUMS SHA256SUMS.sig vibeterm-cli-<version>.tgz tmex-cli-<version>.tgz; do
+  echo "$f: $(curl -sS -o /dev/null -w '%{http_code}' -L "https://github.com/12dora/vibe-term/releases/download/v<version>/$f")"
+done
+```
+
+**四个资产都必须是 200，尤其是 `SHA256SUMS`。** workflow 成功、`gh release view` 也列出了资产，并不代表下载地址可用：出现过资产 `state=uploaded`、用 API 按 asset id 能取到正确内容、但 `releases/download/…/SHA256SUMS` 持续 404 的情况（同批上传的 `.sig` 与两个 tarball 都正常）。`install.sh` 对 ≥ 1.1.4 的版本要求 SHA256SUMS 必须 HTTP 200 且摘要匹配，否则直接拒装——这一条挂了，**全网新装全部失败**，而 release 页面看上去一切正常。
+
+复原办法：用 asset id 取回原内容（确认摘要与已发布 tarball 一致）后原样重传，字节不变则 `SHA256SUMS.sig` 仍然有效。
+
+```bash
+ID=$(gh api repos/12dora/vibe-term/releases/tags/v<version> -q '.assets[] | select(.name=="SHA256SUMS") | .id')
+gh api -H "Accept: application/octet-stream" repos/12dora/vibe-term/releases/assets/$ID > SHA256SUMS
+gh release upload v<version> SHA256SUMS --clobber
 ```
 
 安装验证：
