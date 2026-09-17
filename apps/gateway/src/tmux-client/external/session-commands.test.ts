@@ -6,6 +6,7 @@ import type { TmuxConnectionOptions } from '../connection-types';
 import { ControlModeCommandQueue } from '../control-mode-capture';
 import { SNAPSHOT_FIELD_SEPARATOR } from '../snapshot-format';
 import { TmuxTargetMissingError } from '../target-missing';
+import { TmuxCommandFailedError } from '../tmux-command-error';
 import { LEGACY_PARKING_WINDOW_NAME, PARKING_WINDOW_NAME } from './constants';
 import { formatTmuxDestroyLog } from './destroy-log';
 import {
@@ -25,6 +26,18 @@ function ok(stdout = ''): CommandResult {
 
 function fail(stderr: string, exitCode = 1): CommandResult {
   return { exitCode, stdout: '', stderr };
+}
+
+const SOCKET_MISSING = 'error connecting to /tmp/tmux-1000/default (No such file or directory)';
+
+async function silenceWarn<T>(run: () => Promise<T>): Promise<T> {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    return await run();
+  } finally {
+    console.warn = originalWarn;
+  }
 }
 
 function createCallbacks(): TmuxConnectionOptions {
@@ -164,6 +177,8 @@ describe('SessionCommands', () => {
     const failures: string[] = [];
     const shutdowns: boolean[] = [];
     const gone: string[] = [];
+    const recoveries: string[] = [];
+    const recovery = { succeeds: false };
     const responses = new Map<string, CommandResult>();
     const host: SessionCommandHost = {
       deviceId: 'dev-1',
@@ -198,6 +213,10 @@ describe('SessionCommands', () => {
       reportTmuxCommandFailure: (message) => {
         failures.push(message);
       },
+      recreateTmuxSocket: async (message) => {
+        recoveries.push(message);
+        return recovery.succeeds;
+      },
       onTmuxServerGone: (message) => {
         gone.push(message);
       },
@@ -214,7 +233,19 @@ describe('SessionCommands', () => {
       runHistoryCapture: async () => '',
       ...overrides,
     };
-    return { host, allowCalls, events, snapshots, failures, shutdowns, gone, responses, calls };
+    return {
+      host,
+      allowCalls,
+      events,
+      snapshots,
+      failures,
+      shutdowns,
+      gone,
+      recoveries,
+      recovery,
+      responses,
+      calls,
+    };
   }
 
   test('configureSessionOptions runs session flags, env, default-path, then window style', async () => {
@@ -372,6 +403,67 @@ describe('SessionCommands', () => {
     expect(gone.failures).toEqual(['no server running on /tmp/tmux-1000/default']);
     expect(gone.gone).toEqual(['no server running on /tmp/tmux-1000/default']);
     expect(gone.shutdowns).toEqual([true]);
+  });
+
+  test('socket 不可达时重建套接字并重试一次，成功后不上报任何告警', async () => {
+    const attempts: string[][] = [];
+    const harness = createHost({
+      runTmuxAllowFailure: async (argv) => {
+        attempts.push(argv);
+        return attempts.length === 1 ? fail(SOCKET_MISSING) : ok('done');
+      },
+    });
+    harness.recovery.succeeds = true;
+
+    const result = await silenceWarn(() =>
+      new SessionCommands(harness.host).runTmux(['select-window', '-t', '@1'])
+    );
+
+    expect(result.stdout).toBe('done');
+    expect(attempts).toHaveLength(2);
+    expect(harness.recoveries).toEqual([SOCKET_MISSING]);
+    expect(harness.failures).toEqual([]);
+    expect(harness.gone).toEqual([]);
+    expect(harness.shutdowns).toEqual([]);
+  });
+
+  test('套接字恢复失败时只上报一次，且不按 server gone 拆会话', async () => {
+    const harness = createHost();
+    harness.responses.set('select-window -t @1', fail(SOCKET_MISSING));
+
+    const error = await silenceWarn(() =>
+      new SessionCommands(harness.host)
+        .runTmux(['select-window', '-t', '@1'])
+        .then(() => null)
+        .catch((err: unknown) => err)
+    );
+
+    expect(error).toBeInstanceOf(TmuxCommandFailedError);
+    expect((error as TmuxCommandFailedError).message).toBe(SOCKET_MISSING);
+    expect((error as TmuxCommandFailedError).reported).toBe(true);
+    expect(harness.recoveries).toEqual([SOCKET_MISSING]);
+    expect(harness.failures).toEqual([SOCKET_MISSING]);
+    expect(harness.gone).toEqual([]);
+    expect(harness.shutdowns).toEqual([]);
+  });
+
+  test('重建成功但重试仍失败时同样只上报一次', async () => {
+    const harness = createHost();
+    harness.responses.set('select-window -t @1', fail(SOCKET_MISSING));
+    harness.recovery.succeeds = true;
+
+    const error = await silenceWarn(() =>
+      new SessionCommands(harness.host)
+        .runTmux(['select-window', '-t', '@1'])
+        .then(() => null)
+        .catch((err: unknown) => err)
+    );
+
+    expect(error).toBeInstanceOf(TmuxCommandFailedError);
+
+    expect(harness.failures).toEqual([SOCKET_MISSING]);
+    expect(harness.gone).toEqual([]);
+    expect(harness.shutdowns).toEqual([]);
   });
 
   test('splitPaneInternal emits pane-active from the formatted tmux response', async () => {

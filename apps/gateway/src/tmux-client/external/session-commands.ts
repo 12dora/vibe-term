@@ -21,7 +21,9 @@ import {
   capturePaneFrameAtControlBarrier,
 } from '../control-mode-capture';
 import { SNAPSHOT_FIELD_SEPARATOR, isTmuxPaneId, isTmuxWindowId } from '../snapshot-format';
+import { retryAfterSocketRecovery } from '../socket-recovery';
 import { TmuxTargetMissingError, isTargetMissingMessage } from '../target-missing';
+import { TmuxCommandFailedError } from '../tmux-command-error';
 import { resolveTmuxWindowStyle } from '../window-style';
 import { logTmuxDestroy } from './destroy-log';
 import { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './helpers';
@@ -51,6 +53,7 @@ export interface SessionCommandHost {
   requestSnapshotInternal(): Promise<void>;
   requestSnapshot(): void;
   reportTmuxCommandFailure(message: string): void;
+  recreateTmuxSocket(socketMessage: string): Promise<boolean>;
   onTmuxServerGone(message: string): void;
   notifySessionClosed(message: string): void;
   shutdownInternal(notifyClose: boolean): Promise<void>;
@@ -647,6 +650,9 @@ export class SessionCommands {
       return result;
     }
 
+    const recovered = await retryAfterSocketRecovery(this.host, argv, message, timeoutMs);
+    if (recovered) return recovered;
+
     console.warn(
       `${this.host.logPrefix} tmux command failed deviceId=${this.host.deviceId} sessionName=${this.host.sessionName} argv=${argv.join(' ')} exitCode=${result.exitCode}: ${message}`
     );
@@ -657,7 +663,7 @@ export class SessionCommands {
       this.host.notifySessionClosed(message);
       void this.host.shutdownInternal(true);
     }
-    throw new Error(message);
+    throw new TmuxCommandFailedError(message);
   }
 
   recoverFromTargetMissingError(message: string): void {
