@@ -2,6 +2,7 @@ import type { Device, TmuxSession, TmuxWindow } from '@vibeterm/shared';
 
 import { config } from '../config';
 import { updateDeviceRuntimeStatus } from '../db';
+import { connectionAlertNotifier } from '../push/connection-alerts';
 import {
   bindWindowMemoryTracker,
   onWindowMemorySnapshot,
@@ -30,6 +31,7 @@ import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 import type { PaneStreamNotification } from './pane-stream-parser';
 import { ensureStableServerEpoch } from './server-epoch';
 import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
+import { TmuxSocketRecovery } from './socket-recovery';
 
 export type { CommandResult, ExternalControlHandle } from './external/types';
 export {
@@ -143,6 +145,9 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
   private readonly themeController: ThemeSubscriptionController;
   private readonly snapshotProjector: SnapshotProjector;
   private readonly connectionCleanup: ConnectionCleanup;
+  private readonly socketRecovery: TmuxSocketRecovery;
+  /** 已上报过一次性 tmux 命令失败，等下一次命令成功时撤下设备错误。 */
+  private runtimeErrorActive = false;
   windowMemory: WindowMemoryTrackerHandle | null = null;
   private readonly windowMemoryStarted = { value: false };
 
@@ -169,6 +174,7 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
     this.themeController = new ThemeSubscriptionController(host);
     this.snapshotProjector = new SnapshotProjector(host);
     this.connectionCleanup = new ConnectionCleanup(host);
+    this.socketRecovery = new TmuxSocketRecovery(host, this);
     this.windowMemory = bindWindowMemoryTracker(this.deviceId, this, this.snapshotWindows, options);
   }
 
@@ -211,17 +217,17 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
       shouldInstallGhosttyTerminfo: () => core.shouldInstallGhosttyTerminfo(),
       configureWindowStyle: (styleValue) => core.configureWindowStyle(styleValue),
       getParkingCommand: () => core.getParkingCommand(),
-      runTmuxAllowFailure: (argv: string[], timeoutMs?: number) =>
-        core.runTmuxAllowFailure(argv, timeoutMs),
+      runTmuxAllowFailure: (argv: string[], ms?: number) => core.runTmuxTracked(argv, ms),
       requestSnapshotInternal: () => core.requestSnapshotInternal(),
       requestSnapshot: () => core.requestSnapshot(),
-      reportTmuxCommandFailure: (message) => core.reportTmuxCommandFailure(message),
+      reportTmuxCommandFailure: (message) => core.noteTmuxCommandFailure(message),
+      recreateTmuxSocket: (message) => core.socketRecovery.recreate(message),
       onTmuxServerGone: (message) => core.onTmuxServerGone(message),
       notifySessionClosed: (message) => core.notifySessionClosed(message),
       shutdownInternal: (notifyClose) => core.shutdownInternal(notifyClose),
       getControlWriter: () => core.getControlWriter(),
       getControlCommandTimeoutMs: () => core.getControlCommandTimeoutMs(),
-      runHistoryQuery: (argv) => core.runHistoryQuery(argv),
+      runHistoryQuery: (argv) => core.runHistoryQueryTracked(argv),
       runHistoryCapture: (argv, maxOutputBytes) => core.runHistoryCapture(argv, maxOutputBytes),
       createParkingWindow: () => core.createParkingWindow(),
       removeParkingWindow: (windowId) => core.removeParkingWindow(windowId),
@@ -505,6 +511,36 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
   protected abstract reportTmuxCommandFailure(message: string): void;
   protected abstract runHistoryQuery(argv: string[]): Promise<CommandResult>;
   protected abstract runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string>;
+
+  private async runTmuxTracked(argv: string[], timeoutMs?: number): Promise<CommandResult> {
+    const result = await this.runTmuxAllowFailure(argv, timeoutMs);
+    if (result.exitCode === 0) this.noteTmuxCommandSuccess();
+    return result;
+  }
+
+  private async runHistoryQueryTracked(argv: string[]): Promise<CommandResult> {
+    const result = await this.runHistoryQuery(argv);
+    this.noteTmuxCommandSuccess();
+    return result;
+  }
+
+  private noteTmuxCommandFailure(message: string): void {
+    this.runtimeErrorActive = true;
+    this.reportTmuxCommandFailure(message);
+  }
+
+  /** tmux 命令重新跑通即视为运行时恢复：清掉滞留的 lastError，并让前端撤下设备错误。 */
+  private noteTmuxCommandSuccess(): void {
+    if (!this.runtimeErrorActive) return;
+    this.runtimeErrorActive = false;
+    updateDeviceRuntimeStatus(this.deviceId, {
+      lastSeenAt: new Date().toISOString(),
+      tmuxAvailable: true,
+      lastError: null,
+      lastErrorType: null,
+    });
+    connectionAlertNotifier.broadcastDeviceRecovered(this.deviceId);
+  }
 
   async runHostShell(
     _script: string,
