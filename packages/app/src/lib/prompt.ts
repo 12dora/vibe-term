@@ -1,8 +1,64 @@
+import { openSync } from 'node:fs';
 import { stdin, stdout } from 'node:process';
 import { createInterface } from 'node:readline/promises';
+import { ReadStream } from 'node:tty';
 
 export interface PromptContext {
   nonInteractive: boolean;
+}
+
+type PromptInput = NodeJS.ReadableStream & {
+  isTTY?: boolean;
+  setRawMode?: (mode: boolean) => void;
+  setEncoding: (encoding: BufferEncoding) => unknown;
+  resume: () => unknown;
+  pause: () => unknown;
+};
+
+export interface PromptSession {
+  input: PromptInput;
+  release: () => void;
+}
+
+// Bun 读不到被 shell 重新打开的 /dev/tty：`curl install.sh | bash` 里 fd 0 正是这种
+// 描述符（install.sh 用 `exec 3</dev/tty` + `<&3` 接回终端），此时 process.stdin 永远
+// 收不到数据，提问就卡死。所以交互输入一律另开控制终端，用完即销毁——留着不销毁会吊住
+// 事件循环，CLI 答完最后一问也退不出去。
+export const promptInternals = {
+  stdinIsTty: (): boolean => Boolean(stdin.isTTY),
+  openControllingTerminal: (): PromptInput => new ReadStream(openSync('/dev/tty', 'r')),
+};
+
+export function createPromptSession(): PromptSession {
+  if (!promptInternals.stdinIsTty()) {
+    return { input: stdin, release: () => {} };
+  }
+  let opened: PromptInput;
+  try {
+    opened = promptInternals.openControllingTerminal();
+  } catch {
+    return { input: stdin, release: () => {} };
+  }
+  let released = false;
+  return {
+    input: opened,
+    release: () => {
+      if (released) return;
+      released = true;
+      (opened as unknown as { destroy?: () => void }).destroy?.();
+    },
+  };
+}
+
+async function askLine(message: string): Promise<string> {
+  const session = createPromptSession();
+  const rl = createInterface({ input: session.input, output: stdout });
+  try {
+    return (await rl.question(message)).trim();
+  } finally {
+    rl.close();
+    session.release();
+  }
 }
 
 export async function promptText(
@@ -14,14 +70,9 @@ export async function promptText(
     return defaultValue ?? '';
   }
 
-  const rl = createInterface({ input: stdin, output: stdout });
-  try {
-    const suffix = defaultValue !== undefined ? ` (${defaultValue})` : '';
-    const answer = (await rl.question(`${message}${suffix}: `)).trim();
-    return answer || defaultValue || '';
-  } finally {
-    rl.close();
-  }
+  const suffix = defaultValue !== undefined ? ` (${defaultValue})` : '';
+  const answer = await askLine(`${message}${suffix}: `);
+  return answer || defaultValue || '';
 }
 
 export function isInteractiveStdin(): boolean {
@@ -65,11 +116,11 @@ export async function promptPassword(
 
 async function readHiddenLine(prompt: string): Promise<string> {
   stdout.write(prompt);
-  if (typeof stdin.setRawMode === 'function') {
-    stdin.setRawMode(true);
-  }
-  stdin.resume();
-  stdin.setEncoding('utf8');
+  const session = createPromptSession();
+  const input = session.input;
+  input.setRawMode?.(true);
+  input.resume();
+  input.setEncoding('utf8');
 
   return await new Promise<string>((resolve, reject) => {
     let value = '';
@@ -99,13 +150,12 @@ async function readHiddenLine(prompt: string): Promise<string> {
       }
     };
     const cleanup = (): void => {
-      stdin.off('data', onData);
-      if (typeof stdin.setRawMode === 'function') {
-        stdin.setRawMode(false);
-      }
-      stdin.pause();
+      input.off('data', onData);
+      input.setRawMode?.(false);
+      input.pause();
+      session.release();
     };
-    stdin.on('data', onData);
+    input.on('data', onData);
   });
 }
 
@@ -118,19 +168,14 @@ export async function promptConfirm(
     return defaultValue;
   }
 
-  const rl = createInterface({ input: stdin, output: stdout });
-  try {
-    const hint = defaultValue ? 'Y/n' : 'y/N';
-    const answer = (await rl.question(`${message} [${hint}]: `)).trim().toLowerCase();
-    if (!answer) {
-      return defaultValue;
-    }
-
-    if (answer === 'y' || answer === 'yes') return true;
-    if (answer === 'n' || answer === 'no') return false;
-
+  const hint = defaultValue ? 'Y/n' : 'y/N';
+  const answer = (await askLine(`${message} [${hint}]: `)).toLowerCase();
+  if (!answer) {
     return defaultValue;
-  } finally {
-    rl.close();
   }
+
+  if (answer === 'y' || answer === 'yes') return true;
+  if (answer === 'n' || answer === 'no') return false;
+
+  return defaultValue;
 }
