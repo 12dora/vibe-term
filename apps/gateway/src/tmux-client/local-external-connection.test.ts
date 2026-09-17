@@ -1876,7 +1876,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
       },
     });
 
-    // 设备行存在时 notifyRuntimeError 走 runtime 告警通路（不落 tmuxAvailable），
+    // 设备行存在时 notifyDeviceRuntimeError 走 runtime 告警通路（不落 tmuxAvailable），
     // 只有 server-gone 分支负责把 tmuxAvailable 置 false
     if (!getDeviceById('device-local')) {
       createDeviceRow(createDevice(session));

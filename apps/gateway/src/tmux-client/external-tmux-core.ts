@@ -227,7 +227,7 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
       shutdownInternal: (notifyClose) => core.shutdownInternal(notifyClose),
       getControlWriter: () => core.getControlWriter(),
       getControlCommandTimeoutMs: () => core.getControlCommandTimeoutMs(),
-      runHistoryQuery: (argv) => core.runHistoryQueryTracked(argv),
+      runHistoryQuery: (argv) => core.runHistoryQuery(argv),
       runHistoryCapture: (argv, maxOutputBytes) => core.runHistoryCapture(argv, maxOutputBytes),
       createParkingWindow: () => core.createParkingWindow(),
       removeParkingWindow: (windowId) => core.removeParkingWindow(windowId),
@@ -518,18 +518,15 @@ export abstract class ExternalTmuxConnectionCore implements HostShellRunner {
     return result;
   }
 
-  private async runHistoryQueryTracked(argv: string[]): Promise<CommandResult> {
-    const result = await this.runHistoryQuery(argv);
-    this.noteTmuxCommandSuccess();
-    return result;
-  }
-
   private noteTmuxCommandFailure(message: string): void {
     this.runtimeErrorActive = true;
     this.reportTmuxCommandFailure(message);
   }
 
-  /** tmux 命令重新跑通即视为运行时恢复：清掉滞留的 lastError，并让前端撤下设备错误。 */
+  /**
+   * 一次性（spawn）tmux 命令重新跑通才算运行时恢复：清掉滞留的 lastError，并让前端撤下设备错误。
+   * 控制通道的历史查询不算——事故形态正是「控制通道健康、spawn 全废」，用它清错误等于把故障藏起来。
+   */
   private noteTmuxCommandSuccess(): void {
     if (!this.runtimeErrorActive) return;
     this.runtimeErrorActive = false;

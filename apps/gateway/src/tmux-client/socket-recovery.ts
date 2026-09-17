@@ -66,6 +66,7 @@ export interface SocketRecoveryOptions {
 
 export class TmuxSocketRecovery {
   private lastAttemptAt = Number.NEGATIVE_INFINITY;
+  private inFlight: Promise<boolean> | null = null;
   private readonly minIntervalMs: number;
   private readonly pollIntervalMs: number;
   private readonly pollTimeoutMs: number;
@@ -84,12 +85,26 @@ export class TmuxSocketRecovery {
     this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
   }
 
-  async recreate(socketMessage: string): Promise<boolean> {
-    if (!this.host.connected || this.host.manualDisconnect) return false;
+  /**
+   * 进节点会并发打出 select-window / resize-window，本机是两次独立 spawn，会同时看到 socket 不可达。
+   * 后到的调用必须等同一次恢复的结果再重试自己的命令，不能被限流当成失败——否则那条命令既没执行又弹告警。
+   * 限流只拦「上一次已结束的尝试之后 30 s 内再发一次 SIGUSR1」，作为恢复不了时的死循环闸。
+   */
+  recreate(socketMessage: string): Promise<boolean> {
+    if (!this.host.connected || this.host.manualDisconnect) return Promise.resolve(false);
+    if (this.inFlight) return this.inFlight;
     const startedAt = this.now();
-    if (startedAt - this.lastAttemptAt < this.minIntervalMs) return false;
+    if (startedAt - this.lastAttemptAt < this.minIntervalMs) return Promise.resolve(false);
     this.lastAttemptAt = startedAt;
 
+    const attempt = this.runAttempt(socketMessage).finally(() => {
+      this.inFlight = null;
+    });
+    this.inFlight = attempt;
+    return attempt;
+  }
+
+  private async runAttempt(socketMessage: string): Promise<boolean> {
     const pid = parseTmuxServerPid(await this.queryControl(SERVER_PID_COMMAND));
     if (!pid) return false;
     const socketPath = await this.resolveSocketPath(socketMessage);

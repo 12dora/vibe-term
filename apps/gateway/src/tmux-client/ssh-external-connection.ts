@@ -25,6 +25,7 @@ import {
   type ControlReconnectHost,
   reconnectControlChannel,
 } from './reconnect-control-channel';
+import { notifyDeviceRuntimeError } from './runtime-error-alert';
 import { buildSshBootstrapScript, parseSshBootstrapOutput } from './ssh-bootstrap';
 import { resolveSshConnectConfig } from './ssh-connect-config';
 import { createSsh2Client } from './ssh2-client';
@@ -184,11 +185,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   protected reportTmuxCommandFailure(message: string): void {
-    updateDeviceRuntimeStatus(this.deviceId, {
-      lastSeenAt: new Date().toISOString(),
-      tmuxAvailable: false,
-      lastError: message,
-    });
+    void notifyDeviceRuntimeError(this.deviceId, message);
   }
 
   // biome-ignore format: line budget

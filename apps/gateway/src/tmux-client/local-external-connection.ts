@@ -3,7 +3,6 @@ import { type Device, errorMessage, wsBorsh } from '@vibeterm/shared';
 import { config } from '../config';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { logAt, shouldLog } from '../log/level';
-import { connectionAlertNotifier } from '../push/connection-alerts';
 import {
   buildLocalTmuxEnv,
   getLocalParkingCommand,
@@ -37,6 +36,7 @@ import {
   type ControlReconnectHost,
   reconnectControlChannel,
 } from './reconnect-control-channel';
+import { notifyDeviceRuntimeError } from './runtime-error-alert';
 import {
   isControlModeSupported,
   parseTmuxVersion,
@@ -404,7 +404,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   protected reportTmuxCommandFailure(message: string): void {
-    void this.notifyRuntimeError(message);
+    void notifyDeviceRuntimeError(this.deviceId, message);
   }
 
   protected onTmuxServerGone(message: string): void {
@@ -620,7 +620,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
       onGaveUp: (stderr) => {
         const message = stderr || `tmux control client exited repeatedly (last code ${exitCode})`;
         console.warn(`[local] tmux control client gave up on ${this.deviceId}: ${message}`);
-        void this.notifyRuntimeError(message);
+        void notifyDeviceRuntimeError(this.deviceId, message);
         void this.shutdownInternal(true);
       },
       onAttempt: (count) => {
@@ -643,24 +643,6 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     }
   }
 
-  private async notifyRuntimeError(message: string): Promise<void> {
-    const device = getDeviceById(this.deviceId);
-    if (!device) {
-      updateDeviceRuntimeStatus(this.deviceId, {
-        lastSeenAt: new Date().toISOString(),
-        tmuxAvailable: false,
-        lastError: message,
-      });
-      return;
-    }
-    await connectionAlertNotifier.notify({
-      device,
-      error: new Error(message),
-      source: 'runtime',
-      silentTelegram: true,
-    });
-  }
-
   private handleSpawnUnavailable(message: string): void {
     if (this.spawnUnavailableNotified) {
       return;
@@ -670,7 +652,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     console.warn(
       `[local] tmux spawn unavailable on ${this.deviceId} (process pressure), degrading without shutdown: ${detail}`
     );
-    void this.notifyRuntimeError(detail);
+    void notifyDeviceRuntimeError(this.deviceId, detail);
   }
 
   private markSpawnRecovered(): void {
