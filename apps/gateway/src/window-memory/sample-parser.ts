@@ -1,7 +1,8 @@
-import type { PaneScopeSample } from './types';
+import type { PaneMemorySource, PaneScopeSample } from './types';
 
-const HEADER_RE = /^VTMEM 1 (\d+) ([01])(?: (ok|no-cgroup2|no-user-systemd))?$/;
+const HEADER_RE = /^VTMEM 2 (\d+) ([01]) (ok|no-cgroup2|no-user-systemd)$/;
 const SCOPE_RE = /^(?:-)$|^tmux-spawn-[^/\t]+\.scope$/;
+const SOURCE_RE = /^(cgroup|rss|none)$/;
 
 export type SamplerHeaderReason = 'ok' | 'no-cgroup2' | 'no-user-systemd';
 
@@ -13,7 +14,7 @@ export class SamplerParseError extends Error {
 }
 
 export interface SamplerParseResult {
-  supported: boolean;
+  limitsSupported: boolean;
   uid: number;
   reason?: SamplerHeaderReason;
   panes: PaneScopeSample[];
@@ -32,11 +33,21 @@ function parseUint(raw: string, label: string): number {
 
 function parsePaneLine(line: string): PaneScopeSample {
   const fields = line.split('\t');
-  if (fields.length !== 9) {
+  if (fields.length !== 10) {
     throw new SamplerParseError(`invalid pane line: ${line}`);
   }
-  const [paneId, pidRaw, scopeRaw, currentRaw, highRaw, maxRaw, swapMaxRaw, oomRaw, managedRaw] =
-    fields;
+  const [
+    paneId,
+    pidRaw,
+    scopeRaw,
+    currentRaw,
+    highRaw,
+    maxRaw,
+    swapMaxRaw,
+    oomRaw,
+    managedRaw,
+    sourceRaw,
+  ] = fields;
   if (!paneId) {
     throw new SamplerParseError(`invalid pane id: ${line}`);
   }
@@ -45,6 +56,9 @@ function parsePaneLine(line: string): PaneScopeSample {
   }
   if (managedRaw !== '0' && managedRaw !== '1') {
     throw new SamplerParseError(`invalid managed: ${managedRaw}`);
+  }
+  if (!SOURCE_RE.test(sourceRaw)) {
+    throw new SamplerParseError(`invalid source: ${sourceRaw}`);
   }
   return {
     paneId,
@@ -56,6 +70,7 @@ function parsePaneLine(line: string): PaneScopeSample {
     swapMax: parseUint(swapMaxRaw, 'swapMax'),
     oomKills: parseUint(oomRaw, 'oomKill'),
     managed: managedRaw === '1',
+    source: sourceRaw as PaneMemorySource,
   };
 }
 
@@ -72,16 +87,10 @@ export function parseSamplerOutput(stdout: string): SamplerParseResult {
     throw new SamplerParseError(`invalid header: ${nonempty[0]}`);
   }
   const uid = Number.parseInt(header[1], 10);
-  const supported = header[2] === '1';
-  const reason = header[3] as SamplerHeaderReason | undefined;
-  if (!supported) {
-    if (nonempty.length > 1) {
-      throw new SamplerParseError('unsupported output must be header-only');
-    }
-    return { supported: false, uid, reason, panes: [] };
-  }
+  const limitsSupported = header[2] === '1';
+  const reason = header[3] as SamplerHeaderReason;
   return {
-    supported: true,
+    limitsSupported,
     uid,
     reason,
     panes: nonempty.slice(1).map(parsePaneLine),

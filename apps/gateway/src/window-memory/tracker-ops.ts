@@ -9,6 +9,7 @@ import {
 } from './scope-commands';
 import type {
   HostShellRunner,
+  PaneMemorySource,
   PaneScopeSample,
   WindowMemoryAggregate,
   WindowOomKillEvent,
@@ -168,6 +169,19 @@ function scopesOf(states: PaneMemoryState[]): string[] {
   return names;
 }
 
+function aggregateSource(paneStates: PaneMemoryState[]): PaneMemorySource {
+  let sawCgroup = false;
+  let sawRss = false;
+  for (const state of paneStates) {
+    const source = state.sample?.source;
+    if (source === 'rss') sawRss = true;
+    else if (source === 'cgroup') sawCgroup = true;
+  }
+  if (sawRss) return 'rss';
+  if (sawCgroup) return 'cgroup';
+  return 'none';
+}
+
 export function aggregateWindows(
   panes: MemoryPaneRef[],
   states: Map<string, PaneMemoryState>,
@@ -185,6 +199,8 @@ export function aggregateWindows(
     const paneStates = windowPanes
       .map((pane) => states.get(pane.paneId))
       .filter((state): state is PaneMemoryState => Boolean(state));
+    const source = aggregateSource(paneStates);
+    if (source === 'none') continue;
     windows.push({
       windowId,
       windowName: windowPanes[0]?.windowName ?? '',
@@ -197,9 +213,24 @@ export function aggregateWindows(
       oomKills: paneStates.reduce((sum, state) => sum + (state.sample?.oomKills ?? 0), 0),
       oomFlag: oomFlag(windowId),
       sampledAt,
+      source,
     });
   }
   return windows;
+}
+
+function windowReadingChanged(prev: WindowMemoryAggregate, next: WindowMemoryAggregate): boolean {
+  if (Math.abs(next.current - prev.current) >= MIB_BYTES) return true;
+  if (prev.high !== next.high || prev.max !== next.max || prev.swapMax !== next.swapMax) {
+    return true;
+  }
+  if (prev.oomKills !== next.oomKills || prev.oomFlag !== next.oomFlag) return true;
+  return prev.source !== next.source;
+}
+
+function windowShapeChanged(prev: WindowMemoryAggregate, next: WindowMemoryAggregate): boolean {
+  if (prev.panes !== next.panes || prev.windowName !== next.windowName) return true;
+  return prev.scopes.join('\0') !== next.scopes.join('\0');
 }
 
 export function windowNeedsEmit(
@@ -209,13 +240,7 @@ export function windowNeedsEmit(
   now: number
 ): boolean {
   if (!prev || lastSentAt === undefined || now - lastSentAt >= HEARTBEAT_MS) return true;
-  if (Math.abs(next.current - prev.current) >= MIB_BYTES) return true;
-  if (prev.high !== next.high || prev.max !== next.max || prev.swapMax !== next.swapMax) {
-    return true;
-  }
-  if (prev.oomKills !== next.oomKills || prev.oomFlag !== next.oomFlag) return true;
-  if (prev.panes !== next.panes || prev.windowName !== next.windowName) return true;
-  return prev.scopes.join('\0') !== next.scopes.join('\0');
+  return windowReadingChanged(prev, next) || windowShapeChanged(prev, next);
 }
 
 export function vanishedWindowIds(previous: Iterable<string>, current: Iterable<string>): string[] {

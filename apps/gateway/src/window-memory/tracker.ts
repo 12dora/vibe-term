@@ -19,6 +19,7 @@ import {
   collectOomEvents,
   observedLimited,
   releaseScopeLimit,
+  vanishedWindowIds,
   windowNeedsEmit,
 } from './tracker-ops';
 import type {
@@ -29,6 +30,8 @@ import type {
 } from './types';
 
 const TRANSIENT_UNSUPPORTED_PIN = 6;
+const MEASURE_MISS_PIN = 6;
+const MEASURE_MISS_BACKOFF_MS = 60_000;
 const VANISH_MISS_TICKS = 2;
 
 export interface WindowMemorySchedule {
@@ -78,6 +81,7 @@ function emptyState(pane: MemoryPaneRef): PaneMemoryState {
 
 class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   supported: boolean | null = null;
+  limitsSupported: boolean | null = null;
   private readonly deviceId: string;
   private readonly host: HostShellRunner;
   private readonly hooks: WindowMemoryConnectionHooks;
@@ -95,8 +99,9 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   private knownWindowIds = new Set<string>();
   private knownSeeded = false;
   private readonly windowMisses = new Map<string, number>();
-  private permanentUnsupported = false;
-  private transientMisses = 0;
+  private limitsCgroupPinned = false;
+  private transientLimitMisses = 0;
+  private measureMisses = 0;
   private disabledSampled = false;
 
   constructor(opts: CreateWindowMemoryTrackerOptions) {
@@ -121,7 +126,7 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   }
 
   requestTickSoon(): void {
-    if (this.stopped || this.permanentUnsupported) return;
+    if (this.stopped) return;
     if (this.debounceTimer !== null) this.schedule.clearTimeout(this.debounceTimer);
     this.debounceTimer = this.schedule.setTimeout(() => {
       this.debounceTimer = null;
@@ -134,7 +139,7 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   }
 
   async tick(): Promise<void> {
-    if (this.stopped || this.inFlight || this.permanentUnsupported) return;
+    if (this.stopped || this.inFlight) return;
     this.inFlight = true;
     try {
       await this.runTick();
@@ -189,13 +194,19 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     }
   }
 
+  private sampleDelayMs(): number {
+    const ms = intervalMs(this.hooks.getSettings());
+    if (this.supported === false) return Math.max(ms, MEASURE_MISS_BACKOFF_MS);
+    return ms;
+  }
+
   private armInterval(): void {
-    if (this.stopped || this.permanentUnsupported) return;
+    if (this.stopped) return;
     if (this.intervalTimer !== null) this.schedule.clearTimeout(this.intervalTimer);
     this.intervalTimer = this.schedule.setTimeout(() => {
       this.intervalTimer = null;
       void this.tick().finally(() => this.armInterval());
-    }, intervalMs(this.hooks.getSettings()));
+    }, this.sampleDelayMs());
   }
 
   private clearTimers(): void {
@@ -212,8 +223,10 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     if (!settings.enabled && this.disabledSampled && !this.hasObservedLimits()) return;
     const parsed = await this.sampleHost(panes);
     if (!parsed) return;
-    if (!this.acceptSupport(parsed)) return;
+    this.updateLimitsSupported(parsed);
     this.syncPaneStates(panes, parsed.panes);
+    this.refineLimitsByScopes();
+    if (!this.acceptMeasure(panes)) return;
     await this.applyOrRelease(settings);
     if (!settings.enabled) {
       this.disabledSampled = true;
@@ -226,6 +239,7 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   }
 
   private async applyOrRelease(settings: WindowMemorySettings): Promise<void> {
+    if (this.limitsSupported === false) return;
     const release = !settings.enabled || isAllZeroLimits(settings);
     const now = this.now();
     for (const state of this.paneStates.values()) {
@@ -241,34 +255,74 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     return false;
   }
 
-  private acceptSupport(parsed: SamplerParseResult): boolean {
-    if (parsed.supported) {
-      this.transientMisses = 0;
-      if (this.supported !== true) {
+  private updateLimitsSupported(parsed: SamplerParseResult): void {
+    if (this.limitsCgroupPinned) {
+      this.limitsSupported = false;
+      return;
+    }
+    if (parsed.limitsSupported) {
+      this.transientLimitMisses = 0;
+      this.limitsSupported = true;
+      return;
+    }
+    if (parsed.reason === 'no-cgroup2') {
+      this.limitsCgroupPinned = true;
+      this.limitsSupported = false;
+      return;
+    }
+    this.transientLimitMisses += 1;
+    if (this.transientLimitMisses >= TRANSIENT_UNSUPPORTED_PIN) {
+      this.limitsSupported = false;
+    }
+  }
+
+  /**
+   * cgroup v2 与用户级 systemd 都在，不等于限额真的能套上：tmux < 3.6（或没编 systemd 支持）
+   * 不会给 pane 建 `tmux-spawn-*.scope`，限额没有着落点。有样本的 pane 一个 scope 都没有时，
+   * 这台宿主就是限不了——每 tick 重算，换了 tmux 之后能自己恢复。
+   */
+  private refineLimitsByScopes(): void {
+    if (this.limitsSupported !== true) return;
+    let measured = 0;
+    let scoped = 0;
+    for (const state of this.paneStates.values()) {
+      if (!state.sample || state.sample.source === 'none') continue;
+      measured += 1;
+      if (state.sample.scope) scoped += 1;
+    }
+    if (measured > 0 && scoped === 0) this.limitsSupported = false;
+  }
+
+  private acceptMeasure(panes: MemoryPaneRef[]): boolean {
+    if (panes.length === 0) return true;
+    const hasMeasured = [...this.paneStates.values()].some(
+      (state) => state.sample != null && state.sample.source !== 'none'
+    );
+    if (hasMeasured) {
+      this.measureMisses = 0;
+      const was = this.supported;
+      if (was !== true) {
         this.supported = true;
         this.hooks.onSupport?.(true);
+        if (was === false) this.armInterval();
       }
       return true;
     }
-    if (parsed.reason === 'no-cgroup2') {
-      this.noteUnsupported(true);
+    this.measureMisses += 1;
+    if (this.measureMisses >= MEASURE_MISS_PIN) {
+      this.noteMeasureUnsupported();
       return false;
     }
-    this.transientMisses += 1;
-    if (this.transientMisses >= TRANSIENT_UNSUPPORTED_PIN) this.noteUnsupported(false);
-    return false;
+    return true;
   }
 
-  private noteUnsupported(permanent: boolean): void {
+  private noteMeasureUnsupported(): void {
     const was = this.supported;
     this.supported = false;
-    if (permanent) {
-      this.permanentUnsupported = true;
-      this.clearTimers();
-    }
     if (was !== false) {
       this.hooks.onSupport?.(false);
       console.info(`[vibeterm][window-memory] unsupported device=${this.deviceId}`);
+      this.armInterval();
     }
   }
 
@@ -346,6 +400,12 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
       now
     );
     this.windows = next;
+    for (const windowId of vanishedWindowIds(
+      this.lastSent.keys(),
+      next.map((window) => window.windowId)
+    )) {
+      this.lastSent.delete(windowId);
+    }
     const changed = next.filter((window) => {
       const prev = this.lastSent.get(window.windowId);
       return windowNeedsEmit(prev?.window, window, prev?.at, now);

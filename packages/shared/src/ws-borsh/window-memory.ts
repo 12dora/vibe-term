@@ -27,3 +27,29 @@ export const WindowMemorySchema = b.struct({
 });
 
 export type WindowMemoryWire = b.infer<typeof WindowMemorySchema>;
+
+/** 读数来源的 wire 值：cgroup 有限额，RSS 没有。 */
+export const WINDOW_MEMORY_SOURCE_CGROUP = 0;
+export const WINDOW_MEMORY_SOURCE_RSS = 1;
+
+/**
+ * v2 载荷：在 v1 十字段尾部追加 `source`。宿主没有 `tmux-spawn-*.scope`（tmux < 3.6 或没带 systemd 支持、
+ * 以及 macOS）时网关回退到「pane 进程树 RSS 合计」，此时限额字段恒为 0 且不可用——`source` 是客户端
+ * 区分「未设限」与「限不了」的唯一依据。borsh 解码容忍尾部多余字节，老客户端按 v1 schema 解此载荷仍然正确。
+ */
+export const WindowMemoryV2Schema = b.struct({
+  deviceId: b.string(),
+  windowId: b.string(),
+  current: b.u64(),
+  high: b.u64(),
+  max: b.u64(),
+  swapMax: b.u64(),
+  oomKills: b.u32(),
+  oomFlag: b.bool(),
+  panes: b.u8(),
+  sampledAt: b.u64(),
+  /** 0 = cgroup（pane systemd scope），1 = 进程树 RSS 合计。 */
+  source: b.u8(),
+});
+
+export type WindowMemoryV2Wire = b.infer<typeof WindowMemoryV2Schema>;

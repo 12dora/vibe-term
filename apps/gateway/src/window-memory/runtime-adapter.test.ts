@@ -25,6 +25,7 @@ function aggregate(windowId = '@1'): WindowMemoryAggregate {
     oomKills: 0,
     oomFlag: false,
     sampledAt: 1_700_000_000_000,
+    source: 'cgroup',
   };
 }
 
@@ -33,13 +34,15 @@ describe('createWindowMemoryRuntimeAdapter', () => {
     const adapter = createWindowMemoryRuntimeAdapter(() => ({}));
     expect(adapter.getWindows()).toEqual([]);
     expect(adapter.supported()).toBeNull();
+    expect(adapter.limitsSupported()).toBeNull();
     await adapter.tick();
   });
 
-  test('走 connection.windowMemory 的 getWindows/supported/tick', async () => {
+  test('走 connection.windowMemory 的 getWindows/supported/limitsSupported/tick', async () => {
     const ticks: number[] = [];
     const tracker: WindowMemoryTracker = {
       supported: true,
+      limitsSupported: false,
       start() {},
       stop() {},
       async tick() {
@@ -52,6 +55,7 @@ describe('createWindowMemoryRuntimeAdapter', () => {
     const adapter = createWindowMemoryRuntimeAdapter(() => ({ windowMemory: tracker }));
     expect(adapter.getWindows()).toEqual([aggregate('@2')]);
     expect(adapter.supported()).toBe(true);
+    expect(adapter.limitsSupported()).toBe(false);
     await adapter.tick();
     expect(ticks).toEqual([1]);
   });
@@ -97,6 +101,7 @@ describe('createWindowMemoryRuntimeAdapter', () => {
     const windows = [aggregate('@4')];
     const tracker: WindowMemoryTracker = {
       supported: false,
+      limitsSupported: false,
       start() {},
       stop() {},
       async tick() {},

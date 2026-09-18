@@ -55,22 +55,33 @@ function sampleLine(opts: {
   swapMax?: number;
   oomKill?: number;
   managed?: 0 | 1;
+  source?: 'cgroup' | 'rss' | 'none';
 }): string {
   return [
     opts.paneId ?? '%1',
     String(opts.pid ?? 4242),
-    opts.scope ?? 'tmux-spawn-abc.scope',
+    opts.scope ?? (opts.source === 'rss' || opts.source === 'none' ? '-' : 'tmux-spawn-abc.scope'),
     String(opts.current ?? 0),
     String(opts.high ?? 0),
     String(opts.max ?? 0),
     String(opts.swapMax ?? 0),
     String(opts.oomKill ?? 0),
     String(opts.managed ?? 0),
+    opts.source ?? 'cgroup',
   ].join('\t');
 }
 
 function supportedOutput(lines: string[], uid = 1000): string {
-  return [`VTMEM 1 ${uid} 1 ok`, ...lines].join('\n');
+  return [`VTMEM 2 ${uid} 1 ok`, ...lines].join('\n');
+}
+
+function headerOutput(
+  limitsSupported: 0 | 1,
+  reason: 'ok' | 'no-cgroup2' | 'no-user-systemd',
+  lines: string[] = [],
+  uid = 1000
+): string {
+  return [`VTMEM 2 ${uid} ${limitsSupported} ${reason}`, ...lines].join('\n');
 }
 
 function setup(opts?: {
@@ -155,59 +166,227 @@ function setup(opts?: {
 }
 
 describe('WindowMemoryTracker', () => {
-  test('unsupported no-cgroup2 stops the timer after one host call', async () => {
-    const info = spyOn(console, 'info').mockImplementation(() => {});
-    const { clock, tracker, scripts, support } = setup({
-      stdout: 'VTMEM 1 1000 0 no-cgroup2\n',
+  test('no-cgroup2 with rss keeps sampling and sets limitsSupported=false', async () => {
+    const { clock, tracker, scripts, support, samples } = setup({
+      stdout: headerOutput(0, 'no-cgroup2', [sampleLine({ source: 'rss', current: 4096 })]),
     });
     tracker.start();
     await flush();
-    expect(support).toEqual([false]);
-    expect(tracker.supported).toBe(false);
+    expect(support).toEqual([true]);
+    expect(tracker.supported).toBe(true);
+    expect(tracker.limitsSupported).toBe(false);
     expect(scripts).toHaveLength(1);
-    expect(
-      info.mock.calls.some((args) => String(args[0]).includes('unsupported device=dev-1'))
-    ).toBe(true);
-    await clock.advance(60_000);
-    expect(scripts).toHaveLength(1);
-    info.mockRestore();
+    expect(scripts[0]).not.toContain('set-property');
+    expect(samples).toHaveLength(1);
+    expect(samples[0]?.[0]).toEqual(
+      expect.objectContaining({ source: 'rss', current: 4096, windowId: '@1' })
+    );
+    await clock.advance(5_000);
+    expect(scripts).toHaveLength(2);
+    expect(tracker.limitsSupported).toBe(false);
+    expect(tracker.supported).toBe(true);
   });
 
-  test('transient no-user-systemd keeps sampling and recovers', async () => {
-    let header = 'VTMEM 1 1000 0 no-user-systemd\n';
-    const { tracker, scripts, support } = setup({ stdout: () => header });
+  test('transient no-user-systemd keeps sampling and recovers limitsSupported', async () => {
+    const rssLine = sampleLine({ source: 'rss', current: 2048 });
+    let stdout = headerOutput(0, 'no-user-systemd', [rssLine]);
+    const { tracker, scripts, support } = setup({ stdout: () => stdout });
     await tracker.tick();
-    await tracker.tick();
-    expect(tracker.supported).toBeNull();
-    expect(support).toEqual([]);
-    expect(scripts).toHaveLength(2);
-    header = supportedOutput([sampleLine({ managed: 0 })]);
     await tracker.tick();
     expect(tracker.supported).toBe(true);
+    expect(tracker.limitsSupported).toBeNull();
+    expect(support).toEqual([true]);
+    expect(scripts).toHaveLength(2);
+    stdout = supportedOutput([sampleLine({ managed: 0 })]);
+    await tracker.tick();
+    expect(tracker.supported).toBe(true);
+    expect(tracker.limitsSupported).toBe(true);
     expect(support).toEqual([true]);
   });
 
-  test('pins unsupported after 6 consecutive no-user-systemd then recovers', async () => {
-    const info = spyOn(console, 'info').mockImplementation(() => {});
-    let header = 'VTMEM 1 1000 0 no-user-systemd\n';
-    const { clock, tracker, scripts, support } = setup({ stdout: () => header });
+  test('pins limitsSupported=false after 6 consecutive no-user-systemd then recovers', async () => {
+    const rssLine = sampleLine({ source: 'rss', current: 2048 });
+    let stdout = headerOutput(0, 'no-user-systemd', [rssLine]);
+    const { clock, tracker, scripts, support } = setup({ stdout: () => stdout });
     tracker.start();
     await flush();
+    for (let i = 0; i < 5; i++) await clock.advance(5_000);
+    expect(tracker.supported).toBe(true);
+    expect(tracker.limitsSupported).toBe(false);
+    expect(support).toEqual([true]);
+    expect(scripts).toHaveLength(6);
+    await clock.advance(5_000);
+    expect(scripts).toHaveLength(7);
+    stdout = supportedOutput([sampleLine({ managed: 0 })]);
+    await clock.advance(5_000);
+    expect(tracker.supported).toBe(true);
+    expect(tracker.limitsSupported).toBe(true);
+    expect(support).toEqual([true]);
+  });
+
+  test('mixed window: one pane in a scope keeps limitsSupported=true', async () => {
+    const { tracker } = setup({
+      panes: [
+        { paneId: '%1', windowId: '@1', windowName: 'main', pid: 4242 },
+        { paneId: '%2', windowId: '@1', windowName: 'main', pid: 4343 },
+      ],
+      stdout: supportedOutput([
+        sampleLine({ paneId: '%1', current: 1000 }),
+        sampleLine({ paneId: '%2', pid: 4343, source: 'rss', current: 2000 }),
+      ]),
+    });
+    await tracker.tick();
+    expect(tracker.limitsSupported).toBe(true);
+    expect(tracker.getWindows()).toEqual([
+      expect.objectContaining({ source: 'rss', current: 3000 }),
+    ]);
+  });
+
+  test('limitsSupported recovers once panes land in scopes again', async () => {
+    let stdout = supportedOutput([sampleLine({ source: 'rss', current: 2048 })]);
+    const { clock, tracker } = setup({ stdout: () => stdout });
+    tracker.start();
+    await flush();
+    expect(tracker.limitsSupported).toBe(false);
+    stdout = supportedOutput([sampleLine({ current: 4096 })]);
+    await clock.advance(5_000);
+    expect(tracker.limitsSupported).toBe(true);
+  });
+
+  test('old tmux: header 1 ok + rss emits source=rss and limitsSupported=false', async () => {
+    const { tracker, samples } = setup({
+      stdout: supportedOutput([sampleLine({ source: 'rss', current: 12_345 })]),
+    });
+    await tracker.tick();
+    expect(tracker.supported).toBe(true);
+    // cgroup v2 与用户 systemd 都在，但一个 pane scope 都没有：限额没有着落点。
+    expect(tracker.limitsSupported).toBe(false);
+    expect(samples).toHaveLength(1);
+    expect(samples[0]?.[0]).toEqual(
+      expect.objectContaining({ source: 'rss', current: 12_345, windowId: '@1' })
+    );
+    expect(tracker.getWindows()).toEqual([
+      expect.objectContaining({ source: 'rss', current: 12_345 }),
+    ]);
+  });
+
+  test('all-none 6 ticks sets supported=false but keeps sampling at 60s backoff', async () => {
+    const info = spyOn(console, 'info').mockImplementation(() => {});
+    let stdout = supportedOutput([sampleLine({ source: 'none', current: 0 })]);
+    const { clock, tracker, scripts, support, samples } = setup({
+      stdout: () => stdout,
+    });
+    tracker.start();
+    await flush();
+    expect(tracker.supported).toBeNull();
+    expect(tracker.limitsSupported).toBe(true);
+    expect(support).toEqual([]);
+    expect(samples).toEqual([]);
+    expect(tracker.getWindows()).toEqual([]);
     for (let i = 0; i < 5; i++) await clock.advance(5_000);
     expect(tracker.supported).toBe(false);
     expect(support).toEqual([false]);
     expect(scripts).toHaveLength(6);
-    const unsupportedLogs = info.mock.calls.filter((args) =>
-      String(args[0]).includes('unsupported device=dev-1')
-    );
-    expect(unsupportedLogs).toHaveLength(1);
+    expect(
+      info.mock.calls.some((args) => String(args[0]).includes('unsupported device=dev-1'))
+    ).toBe(true);
+    expect(clock.timers.size).toBe(1);
     await clock.advance(5_000);
+    expect(scripts).toHaveLength(6);
+    await clock.advance(55_000);
     expect(scripts).toHaveLength(7);
-    header = supportedOutput([sampleLine({ managed: 0 })]);
-    await clock.advance(5_000);
+    expect(tracker.supported).toBe(false);
+
+    stdout = supportedOutput([sampleLine({ source: 'rss', current: 4096 })]);
+    await clock.advance(60_000);
     expect(tracker.supported).toBe(true);
     expect(support).toEqual([false, true]);
+    expect(scripts).toHaveLength(8);
+    expect(samples.at(-1)?.[0]).toEqual(
+      expect.objectContaining({ source: 'rss', current: 4096, windowId: '@1' })
+    );
+    await clock.advance(5_000);
+    expect(scripts).toHaveLength(9);
     info.mockRestore();
+  });
+
+  test('window dropped as none is removed from lastSent and re-emits on recovery', async () => {
+    let sources: Record<string, 'rss' | 'none'> = { '%1': 'rss', '%2': 'rss' };
+    const { tracker, samples } = setup({
+      panes: [
+        { paneId: '%1', windowId: '@1', windowName: 'one', pid: 11 },
+        { paneId: '%2', windowId: '@2', windowName: 'two', pid: 22 },
+      ],
+      stdout: () =>
+        supportedOutput([
+          sampleLine({
+            paneId: '%1',
+            pid: 11,
+            source: sources['%1'],
+            current: sources['%1'] === 'rss' ? 4096 : 0,
+          }),
+          sampleLine({
+            paneId: '%2',
+            pid: 22,
+            source: sources['%2'],
+            current: sources['%2'] === 'rss' ? 8192 : 0,
+          }),
+        ]),
+    });
+    await tracker.tick();
+    expect(samples).toHaveLength(1);
+    expect(samples[0]?.map((window) => window.windowId).sort()).toEqual(['@1', '@2']);
+    sources = { '%1': 'none', '%2': 'rss' };
+    await tracker.tick();
+    expect(tracker.getWindows().map((window) => window.windowId)).toEqual(['@2']);
+    expect(samples).toHaveLength(1);
+    sources = { '%1': 'rss', '%2': 'rss' };
+    await tracker.tick();
+    expect(samples).toHaveLength(2);
+    expect(samples[1]).toEqual([
+      expect.objectContaining({ windowId: '@1', source: 'rss', current: 4096 }),
+    ]);
+    expect(
+      tracker
+        .getWindows()
+        .map((window) => window.windowId)
+        .sort()
+    ).toEqual(['@1', '@2']);
+  });
+
+  test('mixed cgroup+rss window aggregates as rss', async () => {
+    const { tracker, samples } = setup({
+      panes: [
+        { paneId: '%1', windowId: '@1', windowName: 'main', pid: 11 },
+        { paneId: '%2', windowId: '@1', windowName: 'main', pid: 22 },
+      ],
+      stdout: supportedOutput([
+        sampleLine({ paneId: '%1', pid: 11, current: 1000, source: 'cgroup' }),
+        sampleLine({ paneId: '%2', pid: 22, current: 2500, source: 'rss' }),
+      ]),
+    });
+    await tracker.tick();
+    expect(samples).toHaveLength(1);
+    expect(samples[0]?.[0]).toEqual(
+      expect.objectContaining({ source: 'rss', current: 3500, panes: 2, windowId: '@1' })
+    );
+  });
+
+  test('source change emits even when current is unchanged', async () => {
+    let source: 'cgroup' | 'rss' = 'cgroup';
+    const { tracker, samples } = setup({
+      stdout: () =>
+        supportedOutput([
+          sampleLine({ current: MIB_BYTES, source, managed: source === 'cgroup' ? 1 : 0 }),
+        ]),
+    });
+    await tracker.tick();
+    expect(samples).toHaveLength(1);
+    expect(samples[0]?.[0]?.source).toBe('cgroup');
+    source = 'rss';
+    await tracker.tick();
+    expect(samples).toHaveLength(2);
+    expect(samples[1]?.[0]?.source).toBe('rss');
   });
 
   test('unmanaged scope gets set-property with configured values', async () => {
