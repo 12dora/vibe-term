@@ -181,7 +181,14 @@ export {
 } from './schema';
 
 // ========== 窗口内存 ==========
-export { WindowMemorySchema, type WindowMemoryWire } from './window-memory';
+export {
+  WINDOW_MEMORY_SOURCE_CGROUP,
+  WINDOW_MEMORY_SOURCE_RSS,
+  WindowMemorySchema,
+  WindowMemoryV2Schema,
+  type WindowMemoryV2Wire,
+  type WindowMemoryWire,
+} from './window-memory';
 
 // ========== mesh 事件枚举值 ==========
 export {

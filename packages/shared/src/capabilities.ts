@@ -14,6 +14,9 @@ export const GATEWAY_CAPABILITY_DEVICE_LATENCY_V1 = 'device-latency-v1';
 // 网关会按 WINDOW_MEMORY（0x0107）下发每个窗口的 systemd pane scope 内存聚合；
 // 没播报它的老节点不发此帧，客户端不显示内存徽标。
 export const GATEWAY_CAPABILITY_WINDOW_MEMORY_V1 = 'window-memory-v1';
+// v2 在同一 kind 的载荷尾部追加 `source`（cgroup / 进程树 RSS）。borsh 解码容忍尾部多余字节，
+// 老客户端按 v1 schema 解新帧仍然正确；播报它只是告诉新客户端「这一帧的来源字段可信」。
+export const GATEWAY_CAPABILITY_WINDOW_MEMORY_V2 = 'window-memory-v2';
 export const GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1 = 'canonical-screen-intent-v1';
 
 // HELLO_C2S 携带 screenIntent 时客户端声明、网关处理成功后在 HELLO_S2C 回显。
@@ -26,5 +29,6 @@ export const GATEWAY_CAPABILITIES = [
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
   GATEWAY_CAPABILITY_DEVICE_LATENCY_V1,
   GATEWAY_CAPABILITY_WINDOW_MEMORY_V1,
+  GATEWAY_CAPABILITY_WINDOW_MEMORY_V2,
   GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1,
 ] as const;

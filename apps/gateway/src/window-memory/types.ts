@@ -3,6 +3,13 @@
 
 import type { WindowMemorySettings } from '@vibeterm/shared';
 
+/**
+ * 单个 pane 读数的来源。`cgroup` = pane 落在 `tmux-spawn-*.scope` 里（可限额）；
+ * `rss` = 宿主没有 pane scope（tmux < 3.6 / 未编 systemd / macOS），退回进程树 RSS 合计；
+ * `none` = 连 RSS 都取不到（进程已退出、`ps` 不可用）。
+ */
+export type PaneMemorySource = 'cgroup' | 'rss' | 'none';
+
 export interface HostShellResult {
   stdout: string;
   stderr: string;
@@ -29,6 +36,7 @@ export interface PaneScopeSample {
   oomKills: number;
   /** memory.high 已不是 max（限额已应用）。 */
   managed: boolean;
+  source: PaneMemorySource;
 }
 
 export interface WindowMemoryAggregate {
@@ -43,6 +51,8 @@ export interface WindowMemoryAggregate {
   oomKills: number;
   oomFlag: boolean;
   sampledAt: number;
+  /** 窗口口径：有样本的 pane 全是 cgroup 才是 cgroup；有一个走 RSS 就是 rss；全 none 的窗口不进结果。 */
+  source: PaneMemorySource;
 }
 
 export interface WindowOomKillEvent {
@@ -78,8 +88,10 @@ export interface WindowMemoryConnectionHooks {
 }
 
 export interface WindowMemoryTracker {
-  /** null = 尚未判定。 */
+  /** 能不能量到内存（量不到就不发帧）。null = 尚未判定。 */
   readonly supported: boolean | null;
+  /** 宿主能不能按窗口限额（cgroup v2 + systemctl --user + pane scope）。null = 尚未判定。 */
+  readonly limitsSupported: boolean | null;
   start(): void;
   stop(): void;
   /** 立即执行一次采样（测试与「设置变更后立刻应用」用）。 */

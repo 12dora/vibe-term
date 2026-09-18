@@ -26,10 +26,12 @@ describe.skipIf(!enabled)('window-memory sampler (linux)', () => {
     const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     expect(exitCode).toBe(0);
     const parsed = parseSamplerOutput(stdout);
-    expect(parsed.supported).toBe(true);
+    expect(parsed.limitsSupported).toBe(true);
+    expect(parsed.reason).toBe('ok');
     expect(parsed.panes).toHaveLength(1);
     expect(parsed.panes[0]?.pid).toBe(pid);
     expect(parsed.panes[0]?.paneId).toBe('%1');
+    expect(parsed.panes[0]?.source === 'cgroup' || parsed.panes[0]?.source === 'rss').toBe(true);
     expect(parsed.panes[0]?.current).toBeGreaterThanOrEqual(0);
   });
 });

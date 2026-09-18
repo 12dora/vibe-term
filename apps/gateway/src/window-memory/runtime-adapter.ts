@@ -27,6 +27,7 @@ export type WindowMemoryRuntimeAdapter = {
   hooks: WindowMemoryConnectionHooks;
   getWindows(): WindowMemoryAggregate[];
   supported(): boolean | null;
+  limitsSupported(): boolean | null;
   subscribe(listener: WindowMemoryListener): () => void;
   tick(): Promise<void>;
 };
@@ -54,6 +55,9 @@ export function createWindowMemoryRuntimeAdapter(
     },
     supported() {
       return getConnection().windowMemory?.supported ?? null;
+    },
+    limitsSupported() {
+      return getConnection().windowMemory?.limitsSupported ?? null;
     },
     subscribe(listener) {
       listeners.add(listener);

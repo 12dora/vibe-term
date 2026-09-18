@@ -4,6 +4,7 @@ import type { WindowMemoryAggregate } from './types';
 export type WindowMemoryRuntimeView = {
   getWindowMemory?(): WindowMemoryAggregate[];
   getWindowMemorySupported?(): boolean | null;
+  getWindowMemoryLimitsSupported?(): boolean | null;
   getCurrentSnapshot?(): StateSnapshotPayload | null;
   onWindowMemory?(listener: (windows: WindowMemoryAggregate[]) => void): () => void;
   tickWindowMemory?(): Promise<void> | void;
