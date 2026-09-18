@@ -1,15 +1,15 @@
 // `vibeterm sessions [--memory]`：列出节点上的 tmux 窗口，可选内存列。
 
-import {
-  type SessionsMemoryResponse,
-  type SessionsMemoryWindow,
-  formatBytes,
-} from '@vibeterm/shared';
+import { type SessionsMemoryResponse, formatBytes } from '@vibeterm/shared';
 import { flagBool, parseArgv } from '../core/args';
 import { rejectExtra } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
-import { type SessionsDeviceRow, fillDisconnectedDevices } from '../core/sessions-memory';
+import {
+  type SessionsDeviceRow,
+  type SessionsWindowRow,
+  fillDisconnectedDevices,
+} from '../core/sessions-memory';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -21,26 +21,30 @@ const USAGE = [
   '',
   'List tmux windows on the target node (GET /api/sessions/memory).',
   '',
-  '  --memory    add SCOPE, MEM, HIGH, MAX, OOM columns',
+  '  --memory    add SCOPE, SOURCE, MEM, HIGH, MAX, OOM columns',
   '  --json      print the (possibly WS-filled) payload as JSON',
   '',
   'Human table: DEVICE, WINDOW (`@id name`), PANES.',
-  'With --memory: SCOPE (first scope, `+N` when more, `-` when none), MEM (current),',
-  'HIGH, MAX (`∞` when 0), OOM (kills, `!` when oomFlag).',
-  'Devices with supported:false print `(memory limits unsupported on this host)` after',
-  'their rows in --memory mode.',
+  'With --memory: SCOPE (first scope, `+N` when more, `-` when none), SOURCE (`cgroup`',
+  'or `RSS`), MEM (current), HIGH, MAX (`∞` when 0), OOM (kills, `!` when oomFlag).',
+  'SOURCE, MEM, HIGH, MAX, and OOM print `-` when the window is unsampled.',
+  'Devices with limitsSupported:false print `(limits unavailable)` after their rows.',
+  'Devices with supported:false print `(cannot sample memory)` after their rows',
+  '(not in addition to the limits note).',
   'Devices with connected:false are listed via a short device session; --memory waits',
   'for window-memory samples (2×sampleIntervalSec+3s, at most 4 sessions at once).',
   'Non-TTY stdout defaults to JSON (like exec).',
 ].join('\n');
 
-const UNSUPPORTED_NOTE = '(memory limits unsupported on this host)';
+const LIMITS_UNAVAILABLE_NOTE = '(limits unavailable)';
+const CANNOT_SAMPLE_NOTE = '(cannot sample memory)';
 
 interface SessionRow {
   deviceName: string;
   window: string;
   panes: string;
   scope: string;
+  source: string;
   mem: string;
   high: string;
   max: string;
@@ -66,7 +70,19 @@ function formatOom(kills: number, flag: boolean): string {
   return `${kills}${flag ? '!' : ''}`;
 }
 
-function windowLabel(window: SessionsMemoryWindow): string {
+function formatSource(window: SessionsWindowRow): string {
+  if (!window.sampledAt) return '-';
+  return window.source === 'rss' ? 'RSS' : 'cgroup';
+}
+
+function deviceNote(device: SessionsDeviceRow, memory: boolean): string | null {
+  if (!memory) return null;
+  if (device.limitsSupported === false) return LIMITS_UNAVAILABLE_NOTE;
+  if (!device.supported) return CANNOT_SAMPLE_NOTE;
+  return null;
+}
+
+function windowLabel(window: SessionsWindowRow): string {
   return `${window.windowId} ${window.windowName}`.trimEnd();
 }
 
@@ -76,6 +92,7 @@ function placeholderRow(device: SessionsDeviceRow, note: string | null): Session
     window: '-',
     panes: '0',
     scope: '-',
+    source: '-',
     mem: '-',
     high: '-',
     max: '-',
@@ -86,18 +103,20 @@ function placeholderRow(device: SessionsDeviceRow, note: string | null): Session
 
 function windowRow(
   device: SessionsDeviceRow,
-  window: SessionsMemoryWindow,
+  window: SessionsWindowRow,
   note: string | null
 ): SessionRow {
+  const sampled = Boolean(window.sampledAt);
   return {
     deviceName: device.deviceName || device.deviceId,
     window: windowLabel(window),
     panes: String(window.panes),
     scope: formatScope(window.scopes),
-    mem: formatBytes(window.current),
-    high: formatLimit(window.high),
-    max: formatLimit(window.max),
-    oom: formatOom(window.oomKills, window.oomFlag),
+    source: formatSource(window),
+    mem: sampled ? formatBytes(window.current) : '-',
+    high: sampled ? formatLimit(window.high) : '-',
+    max: sampled ? formatLimit(window.max) : '-',
+    oom: sampled ? formatOom(window.oomKills, window.oomFlag) : '-',
     note,
   };
 }
@@ -106,7 +125,7 @@ function buildRows(devices: readonly SessionsDeviceRow[], memory: boolean): Sess
   const rows: SessionRow[] = [];
   for (const device of devices) {
     const windows = device.windows ?? [];
-    const note = memory && !device.supported ? UNSUPPORTED_NOTE : null;
+    const note = deviceNote(device, memory);
     if (windows.length === 0) {
       if (note) rows.push(placeholderRow(device, note));
       continue;
@@ -127,6 +146,7 @@ function printTable(ctx: CliContext, rows: SessionRow[], memory: boolean): void 
     ...(memory
       ? [
           { header: 'SCOPE', value: (row: SessionRow) => row.scope },
+          { header: 'SOURCE', value: (row: SessionRow) => row.source },
           { header: 'MEM', value: (row: SessionRow) => row.mem },
           { header: 'HIGH', value: (row: SessionRow) => row.high },
           { header: 'MAX', value: (row: SessionRow) => row.max },

@@ -363,6 +363,7 @@ describe('tmux transport event router', () => {
         oomFlag: false,
         panes: 2,
         sampledAt,
+        source: 'cgroup' as const,
       }) as const;
 
     harness.route(frame(1_024, 1_700_000_000_000));
@@ -376,6 +377,7 @@ describe('tmux transport event router', () => {
       panes: 2,
       sampledAt: 1_700_000_000_000,
       receivedAt: 5_000,
+      source: 'cgroup',
     });
 
     clock = 20_000;
@@ -402,6 +404,7 @@ describe('tmux transport event router', () => {
       oomFlag: false,
       panes: 1,
       sampledAt: 1_700_000_000_000,
+      source: 'cgroup',
     });
     harness.route({ type: 'connection-state', state: 'RECONNECT_BACKOFF' });
     expect(harness.getState().windowMemory).toEqual({});
@@ -429,6 +432,7 @@ describe('tmux transport event router', () => {
         oomFlag: false,
         panes: 1,
         sampledAt: 1_700_000_000_000,
+        source: 'rss' as const,
       }) as const;
 
     harness.route({ type: 'metadata-snapshot', snapshot });

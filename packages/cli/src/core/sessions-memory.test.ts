@@ -28,13 +28,18 @@ const TREE: TmuxSession = {
 
 describe('deviceIsConnected', () => {
   test('uses the explicit connected field when present', () => {
-    const base = { deviceId: 'a', deviceName: 'a', windows: [] as never[] };
+    const base = {
+      deviceId: 'a',
+      deviceName: 'a',
+      windows: [] as never[],
+      limitsSupported: null as boolean | null,
+    };
     expect(deviceIsConnected({ ...base, supported: false, connected: true })).toBe(true);
     expect(deviceIsConnected({ ...base, supported: true, connected: false })).toBe(false);
   });
 
   test('infers connected from windows or supported when the field is missing', () => {
-    const base = { deviceId: 'a', deviceName: 'a' };
+    const base = { deviceId: 'a', deviceName: 'a', limitsSupported: null as boolean | null };
     expect(deviceIsConnected({ ...base, supported: false, windows: [] })).toBe(false);
     expect(deviceIsConnected({ ...base, supported: true, windows: [] })).toBe(true);
     expect(
@@ -55,7 +60,7 @@ describe('windowMemoryCollectTimeoutMs', () => {
 });
 
 describe('windowsFromTree / applyMemorySample', () => {
-  test('copies window ids and pane counts with zeroed memory fields', () => {
+  test('copies window ids and pane counts with zeroed memory fields and no source', () => {
     const windows = windowsFromTree(TREE);
     expect(windows).toEqual([
       {
@@ -72,6 +77,8 @@ describe('windowsFromTree / applyMemorySample', () => {
         sampledAt: 0,
       },
     ]);
+    expect(windows[0].source).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(windows[0]))).not.toHaveProperty('source');
     const merged = applyMemorySample(windows[0], {
       type: 'window-memory',
       deviceId: 'dev',
@@ -84,10 +91,51 @@ describe('windowsFromTree / applyMemorySample', () => {
       oomFlag: true,
       panes: 2,
       sampledAt: 8,
+      source: 'rss',
     });
     expect(merged.current).toBe(99);
     expect(merged.oomFlag).toBe(true);
     expect(merged.sampledAt).toBe(8);
+    expect(merged.source).toBe('rss');
+  });
+
+  test('unsampled windows stay sourceless so JSON cannot claim cgroup', () => {
+    const tree: TmuxSession = {
+      ...TREE,
+      windows: [
+        TREE.windows[0],
+        {
+          id: '@2',
+          name: 'dead',
+          index: 1,
+          active: false,
+          panes: [{ id: '%2', windowId: '@2', index: 0, active: true, width: 80, height: 24 }],
+        },
+      ],
+    };
+    const windows = windowsFromTree(tree);
+    const merged = [
+      applyMemorySample(windows[0], {
+        type: 'window-memory',
+        deviceId: 'dev',
+        windowId: '@1',
+        current: 4096,
+        high: 0,
+        max: 0,
+        swapMax: 0,
+        oomKills: 0,
+        oomFlag: false,
+        panes: 2,
+        sampledAt: 9,
+        source: 'rss',
+      }),
+      windows[1],
+    ];
+    expect(merged[0].source).toBe('rss');
+    expect(merged[0].sampledAt).toBe(9);
+    expect(merged[1].sampledAt).toBe(0);
+    expect(merged[1].source).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(merged[1]))).not.toHaveProperty('source');
   });
 });
 

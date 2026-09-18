@@ -1,7 +1,12 @@
 // Gateway transport 的对外契约：事件、命令与能力声明。
 // 编码器 / 解码器 / 具体 transport 实现共用本模块，避免相互 import 成环。
 
-import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@vibeterm/shared';
+import type {
+  EventDevicePayload,
+  EventTmuxPayload,
+  StateSnapshotPayload,
+  WindowMemorySource,
+} from '@vibeterm/shared';
 import type { ClientSendResult, ConnectionState, StateFeedMode } from './client';
 import type { MovePanePosition } from './message-builder';
 import type { PendingDropReason } from './pending-send-queue';
@@ -120,6 +125,8 @@ export type GatewayTransportEvent =
       oomFlag: boolean;
       panes: number;
       sampledAt: number;
+      /** 读数来源；旧网关只发 v1 载荷，解码侧按 `cgroup` 补齐。 */
+      source: WindowMemorySource;
     }
   | { type: 'metadata-snapshot'; snapshot: StateSnapshotPayload }
   // canonical metadata patch 已在客户端合并并按设备树顺序排好，消费方直接替换整棵快照

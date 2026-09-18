@@ -3,7 +3,6 @@ import type { InputCompletion } from './input-submission';
 
 import { getDeviceById } from '../db';
 import {
-  type WindowMemoryListener,
   type WindowMemoryTracker,
   createWindowMemoryRuntimeAdapter,
 } from '../window-memory/runtime-adapter';
@@ -43,6 +42,7 @@ import {
 import { clearSkippedPaneOutput } from './retention/skipped-output';
 import { CanonicalScreenCapture } from './runtime/canonical-screen-capture';
 import { type DeviceSessionRuntimeListener, RuntimeEventBridge } from './runtime/event-bridge';
+import { WindowMemoryRuntimeFacade } from './runtime/window-memory-view';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
 
 export type { DeviceSessionRuntimeListener };
@@ -121,7 +121,7 @@ function createDefaultConnection(options: TmuxConnectionOptions): DeviceSessionR
   return new SshExternalTmuxConnection(options);
 }
 
-export class DeviceSessionRuntime {
+export class DeviceSessionRuntime extends WindowMemoryRuntimeFacade {
   readonly deviceId: string;
 
   private readonly connection: DeviceSessionRuntimeConnection;
@@ -136,7 +136,7 @@ export class DeviceSessionRuntime {
   private readonly hostLatency = new HostLatencyTracker({
     probe: () => this.connection.probeHostLatency?.(),
   });
-  private readonly windowMemoryRuntime = createWindowMemoryRuntimeAdapter(() => this.connection);
+  protected readonly windowMemoryRuntime = createWindowMemoryRuntimeAdapter(() => this.connection);
   private lastSnapshot: StateSnapshotPayload | null = null;
   private connectPromise: Promise<void> | null = null;
   private connectGeneration = 0;
@@ -148,6 +148,7 @@ export class DeviceSessionRuntime {
   private resourcesDisposed = false;
 
   constructor(options: DeviceSessionRuntimeOptions) {
+    super();
     this.deviceId = options.deviceId;
     this.inputLane = new PaneInputPacer(
       (paneId, bytes, ...completion) => {
@@ -292,19 +293,6 @@ export class DeviceSessionRuntime {
 
   onHostLatency(listener: HostLatencyListener): () => void {
     return this.hostLatency.subscribe(listener);
-  }
-
-  getWindowMemory() {
-    return this.windowMemoryRuntime.getWindows();
-  }
-  getWindowMemorySupported() {
-    return this.windowMemoryRuntime.supported();
-  }
-  onWindowMemory(listener: WindowMemoryListener) {
-    return this.windowMemoryRuntime.subscribe(listener);
-  }
-  tickWindowMemory() {
-    return this.windowMemoryRuntime.tick();
   }
 
   /**

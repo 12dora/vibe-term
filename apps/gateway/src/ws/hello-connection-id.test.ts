@@ -14,6 +14,7 @@ describe('HELLO_S2C connectionId 能力', () => {
     const caps = helloS2CCapabilities(null);
     expect(caps).toContain(GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1);
     expect(caps).toContain(GATEWAY_CAPABILITY_WINDOW_MEMORY_V1);
+    expect(caps).toContain('window-memory-v2');
     expect(caps.some((cap) => cap.startsWith(CONNECTION_ID_CAPABILITY_PREFIX))).toBe(false);
     expect(helloS2CCapabilities(undefined)).toEqual(caps);
     expect(helloS2CCapabilities('')).toEqual(caps);
@@ -22,6 +23,7 @@ describe('HELLO_S2C connectionId 能力', () => {
   test('有 connectionId 时追加 connection-id:<id>，不替换既有能力', () => {
     const caps = helloS2CCapabilities('conn-tab-1');
     expect(caps).toContain(GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1);
+    expect(caps).toContain('window-memory-v2');
     expect(caps).toContain(formatConnectionIdCapability('conn-tab-1'));
   });
 });

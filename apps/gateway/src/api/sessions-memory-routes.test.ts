@@ -66,7 +66,11 @@ function snapshotWindow(
   };
 }
 
-function aggregate(windowId: string, windowName: string): WindowMemoryAggregate {
+function aggregate(
+  windowId: string,
+  windowName: string,
+  overrides: Partial<WindowMemoryAggregate> = {}
+): WindowMemoryAggregate {
   return {
     windowId,
     windowName,
@@ -79,6 +83,8 @@ function aggregate(windowId: string, windowName: string): WindowMemoryAggregate 
     oomKills: 1,
     oomFlag: true,
     sampledAt: 1_700_000_000_000,
+    source: 'cgroup',
+    ...overrides,
   };
 }
 
@@ -104,6 +110,7 @@ describe('GET /api/sessions/memory', () => {
             deviceName: 'Closed',
             connected: false,
             supported: false,
+            limitsSupported: null,
             windows: [],
           },
         ],
@@ -141,6 +148,7 @@ describe('GET /api/sessions/memory', () => {
         deviceName: 'A',
         connected: false,
         supported: false,
+        limitsSupported: null,
         windows: [],
       });
     } finally {
@@ -157,6 +165,7 @@ describe('GET /api/sessions/memory', () => {
         return {
           isConnected: () => true,
           getWindowMemorySupported: () => false,
+          getWindowMemoryLimitsSupported: () => false,
           getWindowMemory: () => [],
           getCurrentSnapshot: () => ({
             deviceId: 'dev-open',
@@ -180,6 +189,7 @@ describe('GET /api/sessions/memory', () => {
         deviceName: 'Open',
         connected: true,
         supported: false,
+        limitsSupported: false,
         windows: [
           {
             windowId: '@1',
@@ -193,6 +203,7 @@ describe('GET /api/sessions/memory', () => {
             oomKills: 0,
             oomFlag: true,
             sampledAt: 0,
+            source: 'rss',
           },
           {
             windowId: '@2',
@@ -206,6 +217,7 @@ describe('GET /api/sessions/memory', () => {
             oomKills: 0,
             oomFlag: false,
             sampledAt: 0,
+            source: 'rss',
           },
         ],
       });
@@ -227,6 +239,7 @@ describe('GET /api/sessions/memory', () => {
         return {
           isConnected: () => true,
           getWindowMemorySupported: () => true,
+          getWindowMemoryLimitsSupported: () => true,
           getWindowMemory: () => [aggregate('@1', 'from-tracker')],
           getCurrentSnapshot: () => ({
             deviceId: 'dev-open',
@@ -253,6 +266,7 @@ describe('GET /api/sessions/memory', () => {
             deviceName: 'Open',
             connected: true,
             supported: true,
+            limitsSupported: true,
             windows: [
               {
                 windowId: '@1',
@@ -266,6 +280,7 @@ describe('GET /api/sessions/memory', () => {
                 oomKills: 1,
                 oomFlag: true,
                 sampledAt: 1_700_000_000_000,
+                source: 'cgroup',
               },
               {
                 windowId: '@2',
@@ -279,6 +294,7 @@ describe('GET /api/sessions/memory', () => {
                 oomKills: 0,
                 oomFlag: true,
                 sampledAt: 0,
+                source: 'cgroup',
               },
             ],
           },
@@ -287,6 +303,7 @@ describe('GET /api/sessions/memory', () => {
             deviceName: 'Closed',
             connected: false,
             supported: false,
+            limitsSupported: null,
             windows: [],
           },
         ],
@@ -304,6 +321,7 @@ describe('GET /api/sessions/memory', () => {
         return {
           isConnected: () => true,
           getWindowMemorySupported: () => null,
+          getWindowMemoryLimitsSupported: () => null,
           getWindowMemory: () => [aggregate('@3', 'fallback')],
           getCurrentSnapshot: () => ({
             deviceId: 'dev-a',
@@ -323,6 +341,105 @@ describe('GET /api/sessions/memory', () => {
       expect(body.devices[0]?.supported).toBe(false);
       expect(body.devices[0]?.windows[0]?.windowName).toBe('shell');
       expect(body.devices[0]?.windows[0]?.current).toBe(4096);
+      expect(body.devices[0]?.limitsSupported).toBeNull();
+      expect(body.devices[0]?.windows[0]?.source).toBe('cgroup');
+    } finally {
+      list.mockRestore();
+    }
+  });
+
+  test('老 tmux：tracker.limitsSupported=false 且窗口 source=rss（HTTP 不按窗口二次推断）', async () => {
+    const list = spyOn(devicesDb, 'getAllDevices').mockReturnValue([
+      device('dev-old-tmux', 'ubuntu-24'),
+    ]);
+    bindWindowMemoryRuntimeHost({
+      requestTickAll() {},
+      getRuntime() {
+        return {
+          isConnected: () => true,
+          getWindowMemorySupported: () => true,
+          getWindowMemoryLimitsSupported: () => false,
+          getWindowMemory: () => [
+            aggregate('@1', 'shell', {
+              source: 'rss',
+              scopes: [],
+              current: 8192,
+              high: 0,
+              max: 0,
+              swapMax: 0,
+              oomKills: 0,
+              oomFlag: false,
+            }),
+          ],
+          getCurrentSnapshot: () => ({
+            deviceId: 'dev-old-tmux',
+            session: {
+              id: '$1',
+              name: 'main',
+              windows: [snapshotWindow('@1', 'shell')],
+            },
+          }),
+        };
+      },
+    });
+    try {
+      const res = await handleApiRequest(req('GET', SESSIONS_MEMORY_PATH), fakeServer);
+      const body = (await res.json()) as SessionsMemoryResponse;
+      expect(body.devices[0]).toEqual({
+        deviceId: 'dev-old-tmux',
+        deviceName: 'ubuntu-24',
+        connected: true,
+        supported: true,
+        limitsSupported: false,
+        windows: [
+          {
+            windowId: '@1',
+            windowName: 'shell',
+            panes: 1,
+            scopes: [],
+            current: 8192,
+            high: 0,
+            max: 0,
+            swapMax: 0,
+            oomKills: 0,
+            oomFlag: false,
+            sampledAt: 1_700_000_000_000,
+            source: 'rss',
+          },
+        ],
+      });
+    } finally {
+      list.mockRestore();
+    }
+  });
+
+  test('limitsSupported=false 的已连接设备透出 rss 窗口来源', async () => {
+    const list = spyOn(devicesDb, 'getAllDevices').mockReturnValue([device('dev-mac', 'Mac')]);
+    bindWindowMemoryRuntimeHost({
+      requestTickAll() {},
+      getRuntime() {
+        return {
+          isConnected: () => true,
+          getWindowMemorySupported: () => true,
+          getWindowMemoryLimitsSupported: () => false,
+          getWindowMemory: () => [aggregate('@1', 'shell', { source: 'rss', scopes: [] })],
+          getCurrentSnapshot: () => ({
+            deviceId: 'dev-mac',
+            session: {
+              id: '$1',
+              name: 'main',
+              windows: [snapshotWindow('@1', 'shell')],
+            },
+          }),
+        };
+      },
+    });
+    try {
+      const res = await handleApiRequest(req('GET', SESSIONS_MEMORY_PATH), fakeServer);
+      const body = (await res.json()) as SessionsMemoryResponse;
+      expect(body.devices[0]?.supported).toBe(true);
+      expect(body.devices[0]?.limitsSupported).toBe(false);
+      expect(body.devices[0]?.windows[0]?.source).toBe('rss');
     } finally {
       list.mockRestore();
     }

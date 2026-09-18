@@ -26,6 +26,7 @@ const PAYLOAD = {
       deviceName: 'linux',
       connected: true,
       supported: true,
+      limitsSupported: true,
       windows: [
         {
           windowId: '@1',
@@ -39,6 +40,7 @@ const PAYLOAD = {
           oomKills: 3,
           oomFlag: true,
           sampledAt: 1,
+          source: 'cgroup',
         },
         {
           windowId: '@2',
@@ -52,6 +54,7 @@ const PAYLOAD = {
           oomKills: 0,
           oomFlag: false,
           sampledAt: 1,
+          source: 'cgroup',
         },
       ],
     },
@@ -60,6 +63,7 @@ const PAYLOAD = {
       deviceName: 'macbook',
       connected: true,
       supported: false,
+      limitsSupported: false,
       windows: [],
     },
   ],
@@ -109,6 +113,7 @@ function memoryEvent(
     oomFlag: true,
     panes: 1,
     sampledAt: 9,
+    source: 'cgroup',
   };
 }
 
@@ -183,6 +188,10 @@ describe('vibeterm sessions', () => {
   test('USAGE names the group', () => {
     expect(sessions.usage).toContain('vibeterm sessions');
     expect(sessions.name).toBe('sessions');
+    expect(sessions.usage).toContain('(limits unavailable)');
+    expect(sessions.usage).toContain('(cannot sample memory)');
+    expect(sessions.usage).not.toContain('(memory limits unsupported on this host)');
+    expect(sessions.usage).toContain('SOURCE, MEM, HIGH, MAX, and OOM print `-`');
   });
 
   test('table without --memory lists DEVICE WINDOW PANES', async () => {
@@ -200,20 +209,24 @@ describe('vibeterm sessions', () => {
     expect(text).toContain('@1 build');
     expect(text).toContain('@2 main');
     expect(text).not.toContain('(memory limits unsupported on this host)');
+    expect(text).not.toContain('(cannot sample memory)');
+    expect(text).not.toContain('(limits unavailable)');
     expect(text).not.toContain('macbook');
   });
 
-  test('table with --memory adds SCOPE MEM HIGH MAX OOM', async () => {
+  test('table with --memory adds SCOPE SOURCE MEM HIGH MAX OOM', async () => {
     const { ctx, stdout } = await humanCtx({
       'GET /api/sessions/memory': () => PAYLOAD,
     });
     await sessions.run(ctx, ['--memory']);
     const text = stdout.text();
     expect(text).toContain('SCOPE');
+    expect(text).toContain('SOURCE');
     expect(text).toContain('MEM');
     expect(text).toContain('HIGH');
     expect(text).toContain('MAX');
     expect(text).toContain('OOM');
+    expect(text).toContain('cgroup');
     expect(text).toContain('tmux-spawn-aaa.scope+1');
     expect(text).toContain('tmux-spawn-ccc.scope');
     expect(text).toContain(formatBytes(1024 ** 3));
@@ -223,20 +236,158 @@ describe('vibeterm sessions', () => {
     expect(text).toMatch(/\b0\b/);
   });
 
-  test('unsupported device prints a note after its rows in --memory mode', async () => {
+  test('limitsSupported:false is preferred over supported:false for the device note', async () => {
     const { ctx, stdout } = await humanCtx({
       'GET /api/sessions/memory': () => PAYLOAD,
     });
     await sessions.run(ctx, ['--memory']);
     const text = stdout.text();
     expect(text).toContain('macbook');
-    expect(text).toContain('(memory limits unsupported on this host)');
+    expect(text).toContain('(limits unavailable)');
+    expect(text).not.toContain('(memory limits unsupported on this host)');
+    expect(text).not.toContain('(cannot sample memory)');
     const linuxIdx = text.indexOf('linux');
     const macIdx = text.indexOf('macbook');
-    const noteIdx = text.indexOf('(memory limits unsupported on this host)');
+    const noteIdx = text.indexOf('(limits unavailable)');
     expect(linuxIdx).toBeGreaterThanOrEqual(0);
     expect(macIdx).toBeGreaterThan(linuxIdx);
     expect(noteIdx).toBeGreaterThan(macIdx);
+  });
+
+  test('supported:false with limits still available prints (cannot sample memory)', async () => {
+    const { ctx, stdout } = await humanCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-miss',
+            deviceName: 'miss-host',
+            connected: true,
+            supported: false,
+            limitsSupported: true,
+            windows: [
+              {
+                windowId: '@1',
+                windowName: 'shell',
+                panes: 1,
+                scopes: ['tmux-spawn-aaa.scope'],
+                current: 0,
+                high: 0,
+                max: 0,
+                swapMax: 0,
+                oomKills: 0,
+                oomFlag: true,
+                sampledAt: 0,
+                source: 'cgroup',
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    await sessions.run(ctx, ['--memory']);
+    const text = stdout.text();
+    expect(text).toContain('miss-host');
+    expect(text).toContain('(cannot sample memory)');
+    expect(text).not.toContain('(limits unavailable)');
+    expect(text).not.toContain('(memory limits unsupported on this host)');
+    expect(text).not.toContain('0 B');
+    expect(text).not.toContain('∞');
+    expect(text).not.toContain('0!');
+  });
+
+  test('unsampled windows print - for MEM HIGH MAX OOM, not 0 B', async () => {
+    const { ctx, stdout } = await humanCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-mix',
+            deviceName: 'mixed',
+            connected: true,
+            supported: true,
+            limitsSupported: true,
+            windows: [
+              {
+                windowId: '@1',
+                windowName: 'live',
+                panes: 1,
+                scopes: ['tmux-spawn-aaa.scope'],
+                current: 4096,
+                high: 8 * 1024 ** 3,
+                max: 12 * 1024 ** 3,
+                swapMax: 0,
+                oomKills: 1,
+                oomFlag: true,
+                sampledAt: 1,
+                source: 'cgroup',
+              },
+              {
+                windowId: '@2',
+                windowName: 'gone',
+                panes: 1,
+                scopes: [],
+                current: 0,
+                high: 0,
+                max: 0,
+                swapMax: 0,
+                oomKills: 0,
+                oomFlag: true,
+                sampledAt: 0,
+                source: 'cgroup',
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    await sessions.run(ctx, ['--memory']);
+    const text = stdout.text();
+    expect(text).toContain('@1 live');
+    expect(text).toContain('@2 gone');
+    expect(text).toContain(formatBytes(4096));
+    expect(text).toContain('1!');
+    expect(text).not.toContain('0 B');
+    const goneLine = text.split('\n').find((line) => line.includes('@2 gone'));
+    expect(goneLine).toBeDefined();
+    expect(goneLine).toMatch(/gone\s+1\s+-\s+-\s+-\s+-\s+-\s+-$/);
+  });
+
+  test('limitsSupported:false prints (limits unavailable) and SOURCE=RSS', async () => {
+    const { ctx, stdout } = await humanCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-rss',
+            deviceName: 'old-tmux',
+            connected: true,
+            supported: true,
+            limitsSupported: false,
+            windows: [
+              {
+                windowId: '@1',
+                windowName: 'shell',
+                panes: 1,
+                scopes: [],
+                current: 4096,
+                high: 0,
+                max: 0,
+                swapMax: 0,
+                oomKills: 0,
+                oomFlag: false,
+                sampledAt: 1,
+                source: 'rss',
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    await sessions.run(ctx, ['--memory']);
+    const text = stdout.text();
+    expect(text).toContain('old-tmux');
+    expect(text).toContain('RSS');
+    expect(text).toContain('(limits unavailable)');
+    expect(text).not.toContain('(memory limits unsupported on this host)');
+    expect(text).not.toContain('(cannot sample memory)');
   });
 
   test('--json prints the gateway payload unchanged', async () => {
@@ -245,6 +396,41 @@ describe('vibeterm sessions', () => {
     });
     await sessions.run(ctx, ['--memory']);
     expect(JSON.parse(stdout.text())).toEqual(PAYLOAD);
+  });
+
+  test('--json keeps sampledAt:0 numeric zeros for unsampled HTTP windows', async () => {
+    const payload = {
+      devices: [
+        {
+          deviceId: 'dev-mix',
+          deviceName: 'mixed',
+          connected: true,
+          supported: true,
+          limitsSupported: true,
+          windows: [
+            {
+              windowId: '@2',
+              windowName: 'gone',
+              panes: 1,
+              scopes: [],
+              current: 0,
+              high: 0,
+              max: 0,
+              swapMax: 0,
+              oomKills: 0,
+              oomFlag: true,
+              sampledAt: 0,
+              source: 'cgroup',
+            },
+          ],
+        },
+      ],
+    };
+    const { ctx, stdout } = await jsonCtx({
+      'GET /api/sessions/memory': () => payload,
+    });
+    await sessions.run(ctx, ['--memory']);
+    expect(JSON.parse(stdout.text())).toEqual(payload);
   });
 
   test('non-TTY stdout defaults to JSON', async () => {
@@ -334,6 +520,7 @@ describe('vibeterm sessions', () => {
     expect(text).toContain(formatBytes(4096));
     expect(text).toContain('1!');
     expect(text).not.toContain('(memory limits unsupported on this host)');
+    expect(text).not.toContain('(cannot sample memory)');
   });
 
   test('connected:false --memory is unsupported without window-memory-v1', async () => {
@@ -358,7 +545,10 @@ describe('vibeterm sessions', () => {
     await sessions.run(transport.bind(ctx), ['--memory']);
     const text = stdout.text();
     expect(text).toContain('@7 idle');
-    expect(text).toContain('(memory limits unsupported on this host)');
+    expect(text).toContain('(limits unavailable)');
+    expect(text).not.toContain('(memory limits unsupported on this host)');
+    expect(text).not.toContain('(cannot sample memory)');
+    expect(text).not.toContain('0 B');
     expect(text).toContain('-');
   });
 
@@ -379,6 +569,69 @@ describe('vibeterm sessions', () => {
     await sessions.run(transport.bind(ctx), []);
     expect(transport.closes).toBe(0);
   });
+
+  test('disconnected --json omits source on windows that never got a sample', async () => {
+    const transport = new SessionsFakeTransport();
+    transport.trees.set('dev-off', {
+      id: '$0',
+      name: 'main',
+      windows: [
+        {
+          id: '@1',
+          name: 'live',
+          index: 0,
+          active: true,
+          panes: [{ id: '%0', windowId: '@1', index: 0, active: true, width: 80, height: 24 }],
+        },
+        {
+          id: '@2',
+          name: 'dead',
+          index: 1,
+          active: false,
+          panes: [{ id: '%1', windowId: '@2', index: 0, active: true, width: 80, height: 24 }],
+        },
+      ],
+    });
+    transport.memoryEvents = [
+      {
+        ...memoryEvent('dev-off', '@1', 4096),
+        source: 'rss',
+        high: 0,
+        max: 0,
+        oomKills: 0,
+        oomFlag: false,
+      },
+    ];
+    const { ctx, stdout } = await jsonCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-off',
+            deviceName: 'office',
+            connected: false,
+            supported: false,
+            windows: [],
+          },
+        ],
+      }),
+      'GET /api/devices': () => ({ devices: [deviceJson('dev-off', 'office')] }),
+      'GET /api/settings/window-memory': () => ({
+        ...WINDOW_MEMORY_SETTINGS_DEFAULTS,
+        sampleIntervalSec: 0.05,
+      }),
+    });
+    await sessions.run(transport.bind(ctx), ['--memory']);
+    const body = JSON.parse(stdout.text()) as {
+      devices: Array<{ limitsSupported: boolean | null; windows: Array<Record<string, unknown>> }>;
+    };
+    expect(body.devices[0]?.limitsSupported).toBe(false);
+    const live = body.devices[0]?.windows.find((window) => window.windowId === '@1');
+    const dead = body.devices[0]?.windows.find((window) => window.windowId === '@2');
+    expect(live?.source).toBe('rss');
+    expect(live?.sampledAt).toBe(9);
+    expect(dead?.sampledAt).toBe(0);
+    expect(dead).not.toHaveProperty('source');
+  }, 10_000);
 
   test('holds at most 4 device sessions at once', async () => {
     const transport = new SessionsFakeTransport();
