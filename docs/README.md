@@ -17,7 +17,7 @@
 
 - 想把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
 - 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
-- 装在 ≤ 2 GiB 的小内存机上：[小内存主机](./operations/small-memory.md)。Linux 上 tmux 窗口把机器吃满：[窗口内存限额](./operations/window-memory-limits.md)。
+- 装在 ≤ 2 GiB 的小内存机上：[小内存主机](./operations/small-memory.md)。想知道某个 tmux 窗口吃了多少内存、或想在 Linux 上把它限住：[窗口内存](./operations/window-memory-limits.md)。
 - 服务显示 running 但 HTTP / 中继不通：[事件循环看门狗](./operations/gateway-loop-watchdog.md)。
 - 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
@@ -72,7 +72,7 @@
 | [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
 | [tunnel-edge-fake-ip.md](./operations/tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘与 ICE STUN/TURN 的 fake-IP 绕行与排查 |
 | [tmux-process-survival.md](./operations/tmux-process-survival.md) | 服务 kill 策略、linger、tmux 3.6 pane scope 与 systemd OOMPolicy、套接字不可达恢复 |
-| [window-memory-limits.md](./operations/window-memory-limits.md) | Linux 上按 tmux 窗口套 systemd 内存限额：scope、OOM 粘性标记、GUI 徽标、CLI `sessions --memory`，面向运维 |
+| [window-memory-limits.md](./operations/window-memory-limits.md) | 按 tmux 窗口统计内存（cgroup 或进程树 RSS）与 Linux 上的 systemd 限额：GUI 徽标、节点管理表远程/批量设限、CLI `sessions --memory`，面向运维 |
 | [gateway-loop-watchdog.md](./operations/gateway-loop-watchdog.md) | 主线程卡死（libdatachannel 死锁）的真因、进程内看门狗与「服务 running 但 HTTP 不通」排查 |
 | [troubleshooting-db-master-key.md](./operations/troubleshooting-db-master-key.md) | 数据库与 `VIBETERM_MASTER_KEY` 不匹配的启动失败 |
 | [release-process.md](./operations/release-process.md) | 发版手册：发行源、版本注入、changelog 改写规范、构建、校验、打 tag |

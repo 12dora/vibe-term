@@ -24,7 +24,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [tmux-process-survival.md](./tmux-process-survival.md) | 服务 kill 策略、linger、systemd OOMPolicy、套接字不可达的自动恢复 |
-| [window-memory-limits.md](./window-memory-limits.md) | Linux 上按 tmux 窗口套 systemd 内存限额、GUI 徽标与 CLI，面向运维 |
+| [window-memory-limits.md](./window-memory-limits.md) | 按 tmux 窗口统计内存与 Linux 上的 systemd 限额：GUI 徽标、远程/批量设限、CLI，面向运维 |
 | [gateway-loop-watchdog.md](./gateway-loop-watchdog.md) | 主线程卡死（libdatachannel 死锁）的真因、进程内看门狗与「服务 running 但 HTTP 不通」排查 |
 | [troubleshooting-db-master-key.md](./troubleshooting-db-master-key.md) | 库与主密钥不匹配 |
 

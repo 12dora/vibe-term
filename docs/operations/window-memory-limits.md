@@ -1,6 +1,15 @@
-# 窗口内存限额（Linux tmux pane scope）
+# 窗口内存（读数与 systemd 限额）
 
-本文说明 VibeTerm 如何在 Linux 上给每个 tmux 窗口加上 systemd 内存限额、如何在 GUI / CLI 里查看用量，以及宿主不支持时会发生什么；面向 Linux 运维与初级工程师。协议帧见 [ws-borsh v1 规范「WINDOW_MEMORY」](../architecture/ws-borsh-v1-spec.md)；进程在 OOM 后会不会整窗消失，见 [tmux 进程存活](./tmux-process-survival.md)。
+本文说明 VibeTerm 怎么按 tmux 窗口统计内存、怎么在 Linux 上给每个窗口加 systemd 限额、怎么在 GUI / CLI 里查看与远程管理，以及宿主条件不满足时会发生什么；面向 Linux 运维与初级工程师。协议帧见 [ws-borsh v1 规范「WINDOW_MEMORY」](../architecture/ws-borsh-v1-spec.md)；进程在 OOM 后会不会整窗消失，见 [tmux 进程存活](./tmux-process-survival.md)。
+
+**两件事要分开看**：
+
+| 能力 | 条件 | 不满足时 |
+| --- | --- | --- |
+| 看到窗口内存读数 | 宿主有可用的 `ps`（几乎总有） | 徽标不渲染 |
+| 给窗口套内存限额 | Linux + cgroup v2 + 用户级 systemd + **tmux ≥ 3.6 且带 systemd 支持** | 限额写得进设置但不会生效，界面会明说 |
+
+2.8.0 之前只有前一套判据的一半：宿主只要有 cgroup v2 与用户级 systemd 就被判为「支持」，却没检查 tmux 有没有真的把 pane 放进 scope。tmux < 3.6（Ubuntu 24.04 是 3.4、Debian 12 是 3.3a）下所有读数都是 0，徽标显示 `0 B`，限额也悄悄不生效。
 
 ## 背景
 
@@ -17,7 +26,9 @@ tmux ≥ 3.6（发行版带 systemd 支持）会给**每个 pane** 建独立的�
 3. 按窗口聚合内存读数，经 WebSocket 推到客户端，并在 CLI 提供同一份快照。
 4. 记录粘性 OOM 标记，方便事后看到「这个窗口曾经被内核杀过」。
 
-macOS、没有 systemd、没有 cgroup v2 的宿主**静默不启用**，不影响其它功能。
+没有 pane scope 的宿主（tmux < 3.6、tmux 未编 systemd 支持、macOS、没有 cgroup v2）：
+
+5. 读数回退到「pane 进程树 RSS 合计」，徽标照常显示真实用量，但如实标明限额不可用；连 RSS 都取不到的窗口不发帧、不渲染。
 
 ## 设计
 
@@ -27,8 +38,20 @@ macOS、没有 systemd、没有 cgroup v2 的宿主**静默不启用**，不影�
 
 网关从 tmux 快照拿 `#{pane_pid}`，在宿主上读 `/proc/<pid>/cgroup`，取以 `0::` 开头的那一行路径 `P`：
 
-- 最后一段匹配 `tmux-spawn-*.scope` → scope 名就是这一段，cgroup 目录为 `/sys/fs/cgroup<P>`。
-- 不在 `tmux-spawn-*.scope` 里（旧 tmux、无 systemd）→ 该 pane 不管理。
+- 最后一段匹配 `tmux-spawn-*.scope`，且该 cgroup 的 `memory.current` 读得到 → `source=cgroup`，scope 名就是这一段，cgroup 目录为 `/sys/fs/cgroup<P>`，限额与 OOM 计数都从这里读。
+- 不在 `tmux-spawn-*.scope` 里（旧 tmux、无 systemd），或 `memory.current` 读不到（memory 控制器没下放、LSM 挡住）→ 该 pane 不管理，读数走下面的 RSS 兜底。
+
+### RSS 兜底
+
+没有 scope 的 pane，`current` 取**该 pane 进程树的 RSS 合计**（`pane_pid` 及其全部后代），限额三个字段恒为 0，`source=rss`。
+进程表来自 `ps -Ao pid=,ppid=,rss=`（依次回退 `ps -eo …`、`ps ax -o …`、`ps -o …`），每个 tick 最多取一次，且**只在真的需要兜底时才取**——
+全是 cgroup 的宿主一次 `ps` 都不跑。每条候选的输出都先校验「至少有一行三列全是十进制整数」，避免 BusyBox 这类 `ps` 对未知选项
+仍打印默认列表（`PID USER VSZ STAT COMMAND`）时把 VSZ 当成 RSS。子树求和在一次 awk 里完成。
+
+取不到进程表、或 pane 进程已经退出（合计为 0）→ `source=none`，该 pane 没有读数；一个窗口里所有 pane 都是 `none` 时**整窗不发帧**，
+客户端因此不渲染徽标，而不是显示 `0 B`。
+
+RSS 与 cgroup 读数口径不同：RSS 把父子共享页重复计了一点，也不含 page cache，通常比同一窗口的 cgroup 读数略小。界面会标明来源。
 
 本地设备用 `Bun.spawn(['sh','-c', script])`（环境与 tmux 命令相同）。到时限（默认 10 s）后对 `sh` 及其子进程发 `SIGTERM`，500 ms 后再 `SIGKILL`，立刻以 `exitCode: 124`、`stderr: timeout` 返回，不等管道 EOF。SSH 设备把同一段 POSIX sh 送到远端执行（超时走 SSH exec 自己的时限）。同一设备同一时刻只跑一份采样脚本，上一轮没结束就跳过本 tick。
 
@@ -60,25 +83,33 @@ systemctl --user set-property --runtime <scope> MemoryHigh=<n>M MemoryMax=<n>M M
 
 网关把当前快照里的 `paneId<TAB>pid` 列表经 heredoc 喂给脚本（不在脚本里自己找 tmux socket）。脚本是 dash 兼容的 POSIX sh。
 
-第一行：`VTMEM 1 <uid> <supported:0|1> <reason>`，`reason` 为 `ok` | `no-cgroup2` | `no-user-systemd`（解析器允许缺 reason）。`/sys/fs/cgroup/cgroup.controllers` 不存在 → `0 no-cgroup2`，只打这一行；`systemctl --user show-environment` 失败 → `0 no-user-systemd`，只打这一行。成功 → `1 ok`。调用 `systemctl --user` 之前脚本会 `export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"`，若 `DBUS_SESSION_BUS_ADDRESS` 未设则写成 `unix:path=$XDG_RUNTIME_DIR/bus`（SSH 会话经常缺这两项）。
+第一行：`VTMEM 2 <uid> <limitsSupported:0|1> <reason>`，`reason` 为 `ok` | `no-cgroup2` | `no-user-systemd`。
+`/sys/fs/cgroup/cgroup.controllers` 不存在 → `0 no-cgroup2`；`systemctl --user show-environment` 失败 → `0 no-user-systemd`；都过 → `1 ok`。
+**`limitsSupported=0` 不再提前退出，pane 行照常输出**（这时只有 RSS 兜底）。调用 `systemctl --user` 之前脚本会
+`export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"`，若 `DBUS_SESSION_BUS_ADDRESS` 未设则写成
+`unix:path=$XDG_RUNTIME_DIR/bus`（SSH 会话经常缺这两项）。
 
 随后每 pane 一行，TAB 分隔：
 
 ```
-paneId  pid  scope  current  high  max  swapMax  oomKill  managed
+paneId  pid  scope  current  high  max  swapMax  oomKill  managed  source
 ```
 
-`scope` 不是 tmux-spawn 时为 `-`；数字是字节，cgroup `max` 写成 `0`；`oomKill` 来自 `memory.events` 的 `oom_kill`；`managed=1` 表示 `memory.high` 已经不是 `max`。
+`scope` 不是 tmux-spawn 时为 `-`；数字是字节，cgroup `max` 写成 `0`；`oomKill` 来自 `memory.events` 的 `oom_kill`；
+`managed=1` 表示 `memory.high` 已经不是 `max`；`source` 为 `cgroup` | `rss` | `none`（见上一节）。
 
-默认周期 5 s（可配 2–60 s）。
+默认周期 5 s（可配 2–60 s）。连续 6 个 tick「有 pane 但一个都量不到」时，采样退避到 60 s 并停止发帧；
+任何一次又量到就立刻恢复到设置的周期。
 
 ### 实时数据：`WINDOW_MEMORY`（0x0107）
 
-拥有该设备的网关在 HELLO 里播报能力 `window-memory-v1`。每个已订阅该设备的会话会收到 Borsh 帧 `KIND_WINDOW_MEMORY = 0x0107`：
+拥有该设备的网关在 HELLO 里播报能力 `window-memory-v1` 与 `window-memory-v2`。每个已订阅该设备的会话会收到 Borsh 帧 `KIND_WINDOW_MEMORY = 0x0107`：
 
-`deviceId`、`windowId`、`current` / `high` / `max` / `swapMax`（`u64` 字节）、`oomKills`（`u32`）、`oomFlag`（bool）、`panes`（`u8`）、`sampledAt`（`u64` Unix ms）。
+`deviceId`、`windowId`、`current` / `high` / `max` / `swapMax`（`u64` 字节）、`oomKills`（`u32`）、`oomFlag`（bool）、`panes`（`u8`）、`sampledAt`（`u64` Unix ms）、`source`（`u8`：0 cgroup、1 rss）。
 
-`current` 变化不到 1 MiB 且其它字段没变时抑制；每个窗口至少每 30 s 心跳一帧。窗口从 snapshot 消失后，客户端自己丢掉对应条目。老客户端忽略未知 kind。协议细节见 [ws-borsh v1](../architecture/ws-borsh-v1-spec.md)。
+`source` 是 2.8.0 追加在 v1 载荷尾部的第十一个字段，kind 没变：老客户端按 v1 schema 解新帧仍然正确，新客户端解不出 v2 就退回 v1 并把来源当作 `cgroup`。
+
+`current` 变化不到 1 MiB 且其它字段没变时抑制；来源变了一定发；每个窗口至少每 30 s 心跳一帧。窗口从 snapshot 消失后，客户端自己丢掉对应条目。老客户端忽略未知 kind。协议细节见 [ws-borsh v1](../architecture/ws-borsh-v1-spec.md)。
 
 ### OOM 粘性标记
 
@@ -125,17 +156,24 @@ CLI 快照（HTTP 不打宿主，读运行时缓存）：
 
 ### 终端页右上角徽标
 
-`data-testid="window-memory-badge"`，紧挨延迟徽标（`DevicePage` 的 `PageActions`，`DeviceNodeBadges` 后面）。文案是当前窗口的 `current`（`formatBytes`，如 `1.2 GB`）。没有该窗口的样本（宿主不支持、功能关闭、超过 90 s 没收到帧）整块不渲染。
+`data-testid="window-memory-badge"`，紧挨延迟徽标（`DevicePage` 的 `PageActions`，`DeviceNodeBadges` 后面）。文案是当前窗口的 `current`（`formatBytes`，如 `1.2 GB`）。没有该窗口的样本（量不到、功能关闭、超过 90 s 没收到帧）整块不渲染。
 
 颜色（`data-tone`）：
 
 | 条件 | tone |
 | --- | --- |
+| `source = rss`（没有限额可比），且没有 OOM 标记 | `ok` |
 | `high == 0`，或 `current < 75% high`，且没有 OOM 标记 | `ok` |
 | `current ≥ 75% high` | `warn`（琥珀） |
 | `current ≥ high`，或 `oomFlag` | `blocked`（红，`border-destructive/40 text-destructive`） |
 
-`oomFlag` 时再加红点 `window-memory-oom-dot`，即使当前用量已经掉下来也保持红色。浮层列出当前用量 / 软限额 / 硬限额 / 交换限额（`0` 显示 `∞`）以及「OOM 已杀 N 次」。
+`oomFlag` 时再加红点 `window-memory-oom-dot`，即使当前用量已经掉下来也保持红色。
+
+浮层内容按来源分两种：
+
+- `source = cgroup`：当前用量 / 软限额 / 硬限额 / 交换限额（`0` 显示 `∞`），以及「OOM 已杀 N 次」。
+- `source = rss`：当前用量，加两行——「窗口限额：此宿主不支持（需 tmux ≥ 3.6）」与「读数来源：进程树 RSS 合计」。
+  不要把这里的 `0` 显示成 `∞`：那会把「限不了」说成「没限」。
 
 ### 设置 → 节点 →「内存限额」
 
@@ -150,6 +188,29 @@ CLI 快照（HTTP 不打宿主，读运行时缓存）：
 | 采样周期 | `memory-sampleIntervalSec` |
 | 保存 | `memory-limits-save` |
 
+已连接的设备里只要有一台 `limitsSupported === false`，表单上方会多出一条警示（列出受影响的设备名），
+说明这份限额在那些宿主上不会生效。读取 `/api/sessions/memory` 失败时不渲染警示，也不挡表单。
+
+### 设置 → 节点 → 节点管理表（远程 / 批量）
+
+同一份限额可以写到**别的节点**上，走 `/n/<nodeId>/api/settings/window-memory`：
+
+| 入口 | `data-testid` | 说明 |
+| --- | --- | --- |
+| 行内「更多」→ 内存限额 | `nodes-memory-<rowId>` | 打开该节点的对话框（`nodes-memory-dialog-<rowId>`），进来先 GET 它当前的值 |
+| 对话框字段 | `nodes-memory-<nodeId>-<字段名>` | 与本机卡同一套校验（`memory-limits-form.ts`） |
+| 对话框保存 | `nodes-memory-save-<rowId>` | 写入中关不掉（Esc / 遮罩 / 关闭键都挡住） |
+| 目标宿主限不了额的警示 | `nodes-memory-unsupported-<nodeId>` | 打开时并行拉该节点 `/api/sessions/memory`，失败静默 |
+| 卡头批量「更多」→ 内存限额 | `nodes-bulk-memory` | 打开批量框 `nodes-memory-bulk-dialog` |
+| 批量目标 / 跳过 | `nodes-memory-target-<rowId>` / `nodes-memory-skip-<rowId>` | 跳过原因见下 |
+| 批量写入 | `nodes-memory-bulk-apply` | 并发 3，一台失败不影响其余；失败逐台列出（`nodes-memory-failed-<rowId>`） |
+
+跳过规则（按顺序判定）：版本低于 2.7.0（没有这个 API）→ 本机放行 → 离线 → 未登录该节点 → 已暂停
+（暂停节点的 `/api/settings/*` 被转发器按 `purpose: 'user'` 闸掉，这是有意为之，没有为它放宽转发语义）。
+
+批量是「把同一份限额写上去」，**不会**先读各节点当前值再合并。批量框里常驻一句提醒：写入的是设置，
+宿主没有 pane scope 时不会真的限住。
+
 ## CLI
 
 ```bash
@@ -158,21 +219,35 @@ vibeterm settings memory get
 vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--swap-max <MB>] [--interval <sec>]
 ```
 
-- `sessions`：先 `GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的设备会再开一条设备 WS（与 `tmux ls` 同类）补窗口列表。带 `--memory` 时这条会话会等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则 `supported: false`、内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`；`--memory` 再加 `SCOPE`（第一个 scope，多个时 `+N`，没有为 `-`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（次数；`oomFlag` 时后缀 `!`）。`supported: false` 的设备在 `--memory` 模式下于其行后打印 `(memory limits unsupported on this host)`。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload（不是裸 HTTP 响应）。
+- `sessions`：先 `GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的设备会再开一条设备 WS（与 `tmux ls` 同类）补窗口列表。带 `--memory` 时这条会话会等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则 `supported: false`、内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`；`--memory` 再加 `SCOPE`（第一个 scope，多个时 `+N`，没有为 `-`）、`SOURCE`（`cgroup` / `RSS`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（次数；`oomFlag` 时后缀 `!`）。未采样窗口（`sampledAt === 0`）的 `SOURCE` / `MEM` / `HIGH` / `MAX` / `OOM` 一律为 `-`。`limitsSupported: false` 的设备在 `--memory` 模式下于其行后打印 `(limits unavailable)`；能限额但采不到读数（`supported: false`）则打印 `(cannot sample memory)`，两条不会叠印。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload（不是裸 HTTP 响应；未采样窗口不带 `source`）。
 - `settings memory`：`GET/PUT /api/settings/window-memory`。`set` 先 GET 再按旗标合并后整包 PUT；非法整数 / 越界 / `high > max` 为用法错误（退出码 2）。尊重全局 `--node`。人读为 `key  value` 行。
 
 用法细节见 [命令行使用手册](./cli-usage.md)。
 
-## 宿主不支持时
+## 宿主条件不满足时
 
-下列任一成立，该**设备**静默不启用（其它设备不受影响）：
+两件事分开判，都是**按设备**判的（同一网关下其它设备不受影响）。
 
-- 非 Linux（含 macOS / Windows）
-- 没有 cgroup v2（`/sys/fs/cgroup/cgroup.controllers` 不存在）
+### 限不了额（`limitsSupported = false`）
+
+下列任一成立：
+
+- 非 Linux（含 macOS / Windows），或没有 cgroup v2（`/sys/fs/cgroup/cgroup.controllers` 不存在）
 - `systemctl --user show-environment` 失败（没有用户级 systemd 会话）
-- pane 不在 `tmux-spawn-*.scope` 里（tmux 低于 3.6 或未编 systemd 支持）
+- **有 pane 读数、却一个 `tmux-spawn-*.scope` 都没有**（tmux 低于 3.6 或未编 systemd 支持）
 
-`no-cgroup2` 缓存到这次设备连接结束（定时器停掉）。`no-user-systemd` 连续 6 次后才钉成不支持，之后仍可能恢复。GUI 徽标不出现；`sessions --memory` 打出 unsupported 提示。连接时打一行 info 日志，见上文。SSH 设备上若用户级 systemd 其实可用，但会话缺 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`，脚本会按上面的默认值补上再测。
+前两条由采样脚本的头判定（`no-cgroup2` 在这次连接内永久，`no-user-systemd` 连续 6 次才钉死，中途恢复就复位）；
+第三条由 tracker 按样本每 tick 重算，换上新 tmux 之后会自己恢复。判为 false 时不再下发 `set-property`（省掉每 tick 的无用往返），
+徽标提示写明限额不可用，设置页与远程限额对话框给出警示，`sessions --memory` 在设备行下打 `(limits unavailable)`。
+**读数照常**，走 RSS 兜底。
+
+### 量不到（`supported = false`）
+
+连续 6 个 tick「快照里有 pane，却一个 pane 都拿不到读数」（`ps` 不可用、pid 全都不在进程表里）：停止发帧，
+采样退避到 60 s，打一行 `[vibeterm][window-memory] unsupported device=<id>`（只打一次）。这**不是**永久判定——
+任何一次又量到就立刻恢复正常周期与推送。GUI 徽标在读数过期（90 s 无新帧）后消失；`sessions --memory` 打 `(cannot sample memory)`。
+
+SSH 设备上若用户级 systemd 其实可用，但会话缺 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`，脚本会按上面的默认值补上再测。
 
 ## 注意事项
 
@@ -181,7 +256,9 @@ vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--sw
 - **`MemoryHigh`（软限额）**：内核开始回收 / 限速该 cgroup 的内存页，**不杀进程**。徽标在 ≥ 75% 时变黄，就是在逼近这一档。
 - **`MemoryMax`（硬限额）**：用量越过上限后由内核 OOM 杀掉 pane 内进程。配合 [tmux 进程存活](./tmux-process-survival.md) 里的 `DefaultOOMPolicy=continue`：被杀的是超限进程，systemd **不会**因此拆掉整个 scope、把还活着的 shell 一起停掉。没有 `continue` 时，一次 OOM 仍可能让整窗消失。
 - SSH 设备上的脚本在**远端**跑，限额套的是远端 pane 的 scope，不是跑网关的那台机器。
-- 需要用户级 systemd 会话：该 Unix 用户得能 `systemctl --user`。未登录且未 `loginctl enable-linger` 时，采样脚本会把该设备判为不支持。
+- 需要用户级 systemd 会话：该 Unix 用户得能 `systemctl --user`。未登录且未 `loginctl enable-linger` 时，采样脚本会把该设备判为限不了额（读数仍走 RSS）。
+- **RSS 兜底只是读数，不是限额**：它不会阻止任何进程吃内存。要真正限住，宿主得升到 tmux ≥ 3.6（带 systemd 支持）。
+- RSS 合计会把父子进程共享的页重复计一点，也不含 page cache，与同一窗口的 cgroup 读数不完全可比；跨机器对比数字前先看徽标提示里的来源。
 - 关窗前 `stop` 的是 VibeTerm 已知的 scope；从未被采样到的失控进程（例如在 VibeTerm 连上之前就建好、又读不到 pid 的 pane）不在此列。
 
 ## 只读排查
@@ -207,6 +284,18 @@ journalctl -k | grep -E 'Out of memory|invoked oom-killer'
 systemctl --user show -p DefaultOOMPolicy
 ```
 
+没有 pane scope 的宿主（tmux < 3.6、macOS）上改看 RSS 这条路：
+
+```bash
+tmux -V                                   # < 3.6 就不会有 tmux-spawn-*.scope
+tmux list-panes -a -F '#{pane_id} #{pane_pid}'
+ps -Ao pid=,ppid=,rss= | head             # 三列都得是数字，否则采样器会拒掉这张表
+# 某个 pane 的进程树 RSS（KB）
+ps -Ao pid=,ppid=,rss= | awk -v t=<pane_pid> '{kb[$1]=$3;ch[$2]=ch[$2]" "$1} END{n=1;s[1]=t;seen[t]=1;while(n>0){p=s[n];n--;if(p in kb)tot+=kb[p];if(p in ch){m=split(ch[p],k," ");for(i=1;i<=m;i++)if(k[i]!=""&&!(k[i] in seen)){seen[k[i]]=1;s[++n]=k[i]}}}print tot}'
+```
+
+这个数字乘 1024 就该与徽标 / `sessions --memory` 的 `MEM` 对得上。
+
 网关侧搜 `[vibeterm][window-memory]`（套限额失败、oom_kill、unsupported）和 `[tmux] stop-scope`（关窗前 stop）。
 
 ## 验收清单
@@ -219,5 +308,11 @@ systemctl --user show -p DefaultOOMPolicy
 - [ ] 终端页当前窗口有样本时出现 `window-memory-badge`；用量过软限额 75% 变黄，过软限额或有 OOM 标记变红。
 - [ ] 设置页 `local-machine-memory` 保存后 `GET /api/settings/window-memory` 与表单一致；非法输入（`high > max`、非整数）拒绝且不写库。
 - [ ] `vibeterm sessions --memory` 与 GUI 徽标同一窗口的 `MEM` / `HIGH` / `MAX` / `OOM` 对得上；未连接的设备能列出窗口（`--memory` 会等样本）；`--json` 为填过 WS 之后的 payload。
-- [ ] macOS 或无 systemd 的设备：无徽标、连接日志一行 `unsupported`、CLI 提示 unsupported，其它功能不受影响。
+- [ ] macOS 或无 cgroup v2 的设备：徽标**有**读数（进程树 RSS），提示里写明限额不可用；`sessions --memory` 的 `SOURCE` 为 `RSS`、设备行下有 `(limits unavailable)`。
+- [ ] tmux < 3.6 的 Linux 设备（如 Ubuntu 24.04 的 3.4）：同上——读数非 0、`limitsSupported` 为 `false`、设置页出现「不会生效」警示。
+- [ ] 在 pane 里跑一个吃几百 MB 的进程：徽标读数跟着涨（RSS 与 cgroup 两条路径都要看一遍）。
+- [ ] 窗口里所有 pane 的进程都退出后：不再发帧，徽标在 90 s 内消失，不会出现 `0 B`。
+- [ ] 节点管理表：行内「更多」→ 内存限额能读到目标节点当前值，保存后目标节点 `GET /api/settings/window-memory` 同步变化；写入过程中关不掉对话框。
+- [ ] 节点管理表批量：勾选多台后写入，逐台成败有交代；离线 / 未登录 / 已暂停 / 版本 < 2.7.0 的节点出现在跳过清单里并注明原因。
+- [ ] 目标节点是老 tmux 时，远程对话框里出现「限额不会生效」的警示。
 - [ ] SSH 设备：限额出现在远端 `systemctl --user show`，不出现在跑网关的那台机器上。

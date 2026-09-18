@@ -96,7 +96,7 @@ VibeTerm 为自己创建的会话开启 `remain-on-exit on`，并在 UI 上把 `
 
 ### 与窗口内存限额的关系
 
-`DefaultOOMPolicy=continue` 只决定「内核杀了 cgroup 里某个进程之后，systemd 要不要把整个 `tmux-spawn-*.scope` 停掉」。它不限制进程能吃多少内存。VibeTerm 另外通过 `systemctl --user set-property --runtime … MemoryHigh/MemoryMax/MemorySwapMax` 给每个 pane scope 套上限：软限额触发回收 / 限速，硬限额才由内核 OOM 杀超限进程。关窗前会先 `systemctl --user stop` 该 scope。完整说明（设置项、GUI 徽标、`vibeterm sessions --memory`、不支持时的静默行为与排障命令）见 [窗口内存限额](./window-memory-limits.md)。
+`DefaultOOMPolicy=continue` 只决定「内核杀了 cgroup 里某个进程之后，systemd 要不要把整个 `tmux-spawn-*.scope` 停掉」。它不限制进程能吃多少内存。VibeTerm 另外通过 `systemctl --user set-property --runtime … MemoryHigh/MemoryMax/MemorySwapMax` 给每个 pane scope 套上限：软限额触发回收 / 限速，硬限额才由内核 OOM 杀超限进程。关窗前会先 `systemctl --user stop` 该 scope。宿主没有 pane scope（tmux < 3.6 等）时限额不生效，读数改按进程树 RSS 统计。完整说明（设置项、GUI 徽标、远程/批量设限、`vibeterm sessions --memory` 与排障命令）见 [窗口内存](./window-memory-limits.md)。
 
 ## 4. 套接字不可达：server 还活着，新命令却连不上
 
