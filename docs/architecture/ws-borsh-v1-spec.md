@@ -349,21 +349,34 @@ EWMA 平滑后下发给已连接该设备的非分享会话：实质变化（|Δ
 
 Linux 宿主上 tmux ≥ 3.6 把每个 pane 放进独立的 systemd 用户 scope（`tmux-spawn-*.scope`）。拥有设备的网关按配置周期（默认 5 s）读取各 pane scope 的
 `memory.current` / `memory.high` / `memory.max` / `memory.swap.max` / `memory.events oom_kill`，按窗口求和后下发给已连接该设备的会话；
-值有实质变化（|Δcurrent| ≥ 1 MiB 或其它字段变化）才发，满 30 s 无条件刷新一次。宿主不支持（非 Linux、无 cgroup v2、无 `systemctl --user`）时不发此帧。
-网关在 HELLO_S2C `capabilities` 里播报 `window-memory-v1`；老客户端忽略未知 kind。
+值有实质变化（|Δcurrent| ≥ 1 MiB 或其它字段变化）才发，满 30 s 无条件刷新一次。
 
-字段：
+宿主没有 pane scope（tmux < 3.6、tmux 未编 systemd 支持、macOS、无 cgroup v2）时，2.8.0 起网关**不再发一帧恒为 0 的读数**，
+而是按 pane 进程树 RSS 合计兜底，`source` 标成 `1`、限额三个字段恒为 0；连 RSS 都取不到的窗口整窗不发。
+客户端据此把「未设限」与「限不了」分开展示——这两种情况在 v1 载荷里长得一模一样。
+
+网关在 HELLO_S2C `capabilities` 里播报 `window-memory-v1` 与 `window-memory-v2`；老客户端忽略未知 kind。
+
+字段（v2）：
 
 - `deviceId: string`
 - `windowId: string`
-- `current: u64`（字节，窗口内各 pane scope 求和）
+- `current: u64`（字节，窗口内各 pane 求和）
 - `high: u64`（字节，0 = 未设限）
 - `max: u64`（字节，0 = 未设限）
 - `swapMax: u64`（字节，0 = 未设限）
-- `oomKills: u32`（各 pane scope `oom_kill` 求和）
+- `oomKills: u32`（各 pane scope `oom_kill` 求和；RSS 兜底路径上恒为 0）
 - `oomFlag: bool`（网关持久化的 OOM 粘性标记，窗口关闭时清除）
 - `panes: u8`（参与聚合的 pane 数）
 - `sampledAt: u64`（Unix ms）
+- `source: u8`：0 `cgroup`（pane systemd scope，限额可用）、1 `rss`（进程树 RSS 合计，限额不可用）
+
+#### v1 → v2 的兼容
+
+`source` 是**追加**在 v1 十字段尾部的，kind 号不变。borsh 解码容忍尾部多余字节，所以 2.7.3 及更早的客户端
+按 v1 schema 解 v2 载荷仍然正确（它只会把所有读数当成 cgroup 口径，这与它自己的旧认知一致）。
+新客户端先按 v2 解，抛错即退回 v1 并把 `source` 记作 `cgroup`——旧网关只可能是这一种来源。
+播报 `window-memory-v2` 只表示「这一帧的 `source` 可信」，不改变「渲不渲染徽标」的判定（那仍看 `window-memory-v1`）。
 
 ### TMUX_SELECT（0x0201）
 

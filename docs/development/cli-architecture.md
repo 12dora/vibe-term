@@ -345,7 +345,7 @@ dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `setti
 
 ## `vibeterm sessions`
 
-`commands/sessions.ts` + `core/sessions-memory.ts`。无子命令：`GET /api/sessions/memory`（尊重 `--node`）。`connected: true` 的设备用 HTTP 行；`connected: false`（或缺字段时按 `windows.length > 0 || supported` 推断）走 `openDeviceSession` 补窗口列表。`--memory` 时保持这条 WS，收集 `window-memory` 事件直到所列窗口都有样本，或 `2 × sampleIntervalSec + 3 s`（间隔 `GET /api/settings/window-memory`，默认 5 s）；HELLO 无 `window-memory-v1` 则 `supported: false`。并发上限 `SESSIONS_WS_CONCURRENCY = 4`。人读表 `DEVICE` / `WINDOW` / `PANES`；`--memory` 加 `SCOPE` / `MEM` / `HIGH` / `MAX` / `OOM`。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload。口径见 [窗口内存限额](../operations/window-memory-limits.md)。
+`commands/sessions.ts` + `core/sessions-memory.ts`。无子命令：`GET /api/sessions/memory`（尊重 `--node`）。`connected: true` 的设备用 HTTP 行；`connected: false`（或缺字段时按 `windows.length > 0 || supported` 推断）走 `openDeviceSession` 补窗口列表。`--memory` 时保持这条 WS，收集 `window-memory` 事件直到所列窗口都有样本，或 `2 × sampleIntervalSec + 3 s`（间隔 `GET /api/settings/window-memory`，默认 5 s）；HELLO 无 `window-memory-v1` 则 `supported: false`。并发上限 `SESSIONS_WS_CONCURRENCY = 4`。人读表 `DEVICE` / `WINDOW` / `PANES`；`--memory` 加 `SCOPE` / `SOURCE`（`cgroup` / `RSS`）/ `MEM` / `HIGH` / `MAX` / `OOM`，未采样窗口（`sampledAt === 0`）这几列一律 `-`。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload。口径见 [窗口内存](../operations/window-memory-limits.md)。
 
 ## `vibeterm exec`
 
