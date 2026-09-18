@@ -13,6 +13,7 @@ export * from './portmap';
 export * from './notifications-mesh';
 export * from './relay/admin-api';
 export * from './relay/tenant-api';
+export * from './sessions-memory';
 export * from './share';
 export * from './site';
 export * from './telegram';

@@ -27,6 +27,7 @@ function sample(overrides: Partial<WindowMemorySample> = {}): WindowMemorySample
     panes: 2,
     sampledAt: now,
     receivedAt: now,
+    source: 'cgroup',
     ...overrides,
   };
 }
@@ -56,6 +57,16 @@ describe('windowMemoryTone', () => {
   test('粘性 OOM 标记压过用量：现在很闲也照样是红的', () => {
     expect(windowMemoryTone(sample({ current: 1024, oomFlag: true }))).toBe('blocked');
   });
+
+  test('RSS 兜底的宿主没有限额可比：用量再大也是 ok', () => {
+    expect(windowMemoryTone(sample({ source: 'rss', current: 900 * GB }))).toBe('ok');
+    expect(windowMemoryTone(sample({ source: 'rss', current: 9 * GB, high: 8 * GB }))).toBe('ok');
+  });
+
+  // 这条路径上网关不会发 oomFlag；真发了也按红处理，不要为了「没有限额」把警报吃掉。
+  test('RSS 读数上万一带了 OOM 标记，仍然是红的', () => {
+    expect(windowMemoryTone(sample({ source: 'rss', oomFlag: true }))).toBe('blocked');
+  });
 });
 
 describe('windowMemoryTooltipLines', () => {
@@ -80,6 +91,16 @@ describe('windowMemoryTooltipLines', () => {
     const lines = windowMemoryTooltipLines(t, sample({ oomKills: 0, oomFlag: true }));
     expect(lines.at(-1)).toBe('window.memoryOom:1');
   });
+
+  test('RSS 兜底：限额三行换成「限不了」+ 读数来源，不写 ∞', () => {
+    const lines = windowMemoryTooltipLines(t, sample({ source: 'rss', current: 2 * GB }));
+    expect(lines).toEqual([
+      'window.memory: 2.00 GB',
+      'window.memoryLimitUnavailable',
+      'window.memorySourceRss',
+    ]);
+    expect(lines.join('\n')).not.toContain('∞');
+  });
 });
 
 describe('WindowMemoryBadge', () => {
@@ -100,6 +121,16 @@ describe('WindowMemoryBadge', () => {
     const html = render(sample({ oomKills: 2, oomFlag: true }));
     expect(html).toContain('data-testid="window-memory-oom-dot"');
     expect(html).toContain('data-tone="blocked"');
+  });
+
+  test('RSS 兜底：照样显示字节数，档位恒为 ok，提示里写明来源', () => {
+    const html = render(sample({ source: 'rss', current: 9 * GB, high: 8 * GB }));
+    expect(html).toContain('data-testid="window-memory-badge"');
+    expect(html).toContain('9.00 GB');
+    expect(html).toContain('data-tone="ok"');
+    expect(html).toContain('window.memoryLimitUnavailable');
+    expect(html).toContain('window.memorySourceRss');
+    expect(html).not.toContain('window.memoryLimitHigh');
   });
 
   test('没有该窗口的读数（宿主不支持 / 换了窗口）时整块不渲染', () => {

@@ -8,6 +8,10 @@ import jaJP from '@vibeterm/shared/i18n/locales/ja_JP.json';
 import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryLimitsEnabledRow, MemoryLimitsSection } from './memory-limits-section';
+import {
+  MemoryLimitsUnsupportedNotice,
+  memoryLimitsUnsupportedLines,
+} from './memory-limits-unsupported';
 
 const API = {
   get: async () => WINDOW_MEMORY_SETTINGS_DEFAULTS,
@@ -32,6 +36,8 @@ const MEMORY_KEYS = [
   'loadFailed',
   'saveFailed',
   'saved',
+  'limitsUnsupported',
+  'limitsUnsupportedHint',
 ] as const;
 
 const WINDOW_KEYS = [
@@ -41,6 +47,8 @@ const WINDOW_KEYS = [
   'memoryLimitMax',
   'memorySwapMax',
   'memoryScope',
+  'memoryLimitUnavailable',
+  'memorySourceRss',
 ] as const;
 
 describe('MemoryLimitsSection', () => {
@@ -65,6 +73,30 @@ describe('MemoryLimitsSection', () => {
   });
 });
 
+describe('MemoryLimitsUnsupportedNotice', () => {
+  // 全量跑时另有测试用 `mock.module` 顶掉了 react-i18next，SSR 里的 `t()` 只会原样回 key，
+  // 所以文案装配单独按纯函数断言，SSR 只钉结构。
+  const t = (key: string, options?: Record<string, unknown>) =>
+    options && 'devices' in options ? `${key}:${options.devices}` : key;
+
+  test('设备名连成一行接进文案', () => {
+    expect(memoryLimitsUnsupportedLines(t, ['mac-mini', 'ubuntu-24'])).toEqual([
+      'settings.nodes.memory.limitsUnsupported:mac-mini、ubuntu-24',
+      'settings.nodes.memory.limitsUnsupportedHint',
+    ]);
+  });
+
+  test('有受影响的设备就渲染一条警示 Notice', () => {
+    const html = renderToStaticMarkup(<MemoryLimitsUnsupportedNotice deviceNames={['mac-mini']} />);
+    expect(html).toContain('data-testid="memory-limits-unsupported"');
+    expect(html).toContain('settings.nodes.memory.limitsUnsupportedHint');
+  });
+
+  test('没有受影响的设备就什么都不渲染', () => {
+    expect(renderToStaticMarkup(<MemoryLimitsUnsupportedNotice deviceNames={[]} />)).toBe('');
+  });
+});
+
 describe('内存相关 i18n key 三语齐全', () => {
   const locales = { en_US: enUS, zh_CN: zhCN, ja_JP: jaJP } as Record<
     string,
@@ -80,6 +112,7 @@ describe('内存相关 i18n key 三语齐全', () => {
       expect(memory.intervalHint).toContain('{{min}}');
       expect(memory.invalidMb).toContain('{{max}}');
       expect(window.memoryOom).toContain('{{count}}');
+      expect(memory.limitsUnsupported).toContain('{{devices}}');
     });
   }
 });
