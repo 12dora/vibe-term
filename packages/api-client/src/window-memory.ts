@@ -1,8 +1,11 @@
 // 窗口内存限额（systemd pane scope）的网关设置端点。
 // 记录是整条读写的：PUT 永远带全量五个字段，网关按 `WindowMemorySettings` 的口径校验。
+//
+// 失败一律抛 `ApiError`：经 `/n/<id>` 打远端节点时，转发器的顶层信封（503 `NODE_UNREACHABLE`、
+// 401 `NODE_LOGIN_REQUIRED`）与老节点的 404/405 都要能被调用方区分出来，而不是折成一句兜底文案。
 
 import { WINDOW_MEMORY_SETTINGS_DEFAULTS, type WindowMemorySettings } from '@vibeterm/shared';
-import { type ApiClient, defaultApiClient } from './client';
+import { type ApiClient, defaultApiClient, toApiError } from './client';
 import { requestJson } from './json-mutation';
 
 export const windowMemorySettingsQueryKey = ['window-memory-settings'] as const;
@@ -37,7 +40,7 @@ export async function getWindowMemorySettings(
     client,
     WINDOW_MEMORY_SETTINGS_PATH,
     {
-      errorFallback: 'Failed to load window memory settings',
+      toError: (res) => toApiError(res, 'Failed to load window memory settings'),
       pick: normalizeWindowMemorySettings,
     }
   );
@@ -53,7 +56,7 @@ export async function putWindowMemorySettings(
     {
       method: 'PUT',
       body,
-      errorFallback: 'Failed to save window memory settings',
+      toError: (res) => toApiError(res, 'Failed to save window memory settings'),
       pick: normalizeWindowMemorySettings,
     }
   );

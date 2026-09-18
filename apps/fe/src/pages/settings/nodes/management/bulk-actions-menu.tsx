@@ -1,4 +1,4 @@
-// 节点表的多选与卡头「更多」：批量暂停 / 恢复 / 升级 / 移除 / 卸载。
+// 节点表的多选与卡头「更多」：批量暂停 / 恢复 / 内存限额 / 升级 / 移除 / 卸载。
 //
 // 菜单项的可点性各自成一份纯函数（`bulkMenuStates`），单测直接对它断言；
 // Base UI 的菜单走 portal，静态渲染什么都不输出，因此下拉内容也单独导出成不带 hook 的组件。
@@ -11,15 +11,26 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@vibeterm/ui/dropdown-menu';
-import { CircleArrowUp, Ellipsis, Pause, Play, ShieldAlert, Trash2 } from 'lucide-react';
+import {
+  CircleArrowUp,
+  Ellipsis,
+  MemoryStick,
+  Pause,
+  Play,
+  ShieldAlert,
+  Trash2,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { toast } from 'sonner';
+import type { Translate } from './node-detail-types';
+import { planMemoryLimits } from './node-memory-limits';
 import { eligiblePauseRows, eligibleResumeRows } from './pause-eligibility';
 import { usePauseInflightGeneration } from './pause-inflight';
 import type { NodeUninstallController, NodeUpgradeController } from './types';
 import { isBatchEligible } from './upgrade-batch';
+import type { MemoryLimitsBatchController } from './use-memory-limits-batch';
 import { defaultPauseIo, runPauseBatch } from './use-node-pause';
 import { isUninstalling } from './use-node-uninstall';
 
@@ -87,96 +98,105 @@ export interface BulkMenuInput {
   eligibleResumeCount: number;
   /** 批量暂停 / 恢复正在跑。 */
   pauseBusy: boolean;
+  /** 选中行里能改内存限额的台数（剔掉离线 / 未登录 / 已暂停 / 版本低于 2.7.0 的）。 */
+  eligibleMemoryCount: number;
+  /** 批量内存限额正在写入。 */
+  memoryBusy: boolean;
 }
+
+type BulkAction = 'pause' | 'resume' | 'memory' | 'upgrade' | 'revoke' | 'uninstall';
+
+export type BulkMenuStates = Record<BulkAction, BulkItemState>;
+
+/** 有别的批量在跑时给哪一句：按「谁在跑」取最贴切的那条。 */
+function bulkBusyHint(input: BulkMenuInput, t: Translate): string {
+  if (input.uninstallRunning) return t('nodes.uninstall.running');
+  if (input.revoking) return t('nodes.selection.busy');
+  if (input.pauseBusy) return t('nodes.pause.busy');
+  if (input.memoryBusy) return t('nodes.memory.busy');
+  if (input.restoring) return t('nodes.upgrade.restoring');
+  return t('nodes.upgrade.allBusy');
+}
+
+function noneEligible(count: number, key: string, t: Translate): BulkItemState | undefined {
+  return count === 0 ? { disabled: true, title: t(key) } : undefined;
+}
+
+function upgradeOwnState(input: BulkMenuInput, t: Translate): BulkItemState | undefined {
+  if (!input.latestKnown) return { disabled: true, title: t('nodes.upgrade.releaseUnavailable') };
+  if (input.eligibleUpgradeCount === 0)
+    return { disabled: true, title: t('nodes.upgrade.allNone') };
+  // 本机跟着这一批一起升：可点，但把「页面会断一下」提前说清楚。
+  if (input.selfIncluded) return { disabled: false, title: t('nodes.selection.upgradeSelfNotice') };
+  return undefined;
+}
+
+interface BulkRule {
+  /** 这个动作要求上联收得下写入，且这一关排在「有别的批量在跑」前面。 */
+  needsWritable?: boolean;
+  /** 动作自己的那一关；返回 undefined 表示可点。 */
+  own?: (input: BulkMenuInput, t: Translate) => BulkItemState | undefined;
+}
+
+// 移除 / 卸载都以一次签名 `revoke-node` 收尾：上联不收写入时机器会被删干净，证书却撤不掉。
+const BULK_RULES: Record<BulkAction, BulkRule> = {
+  pause: {
+    own: (input, t) => noneEligible(input.eligiblePauseCount, 'nodes.selection.pauseNone', t),
+  },
+  resume: {
+    own: (input, t) => noneEligible(input.eligibleResumeCount, 'nodes.selection.resumeNone', t),
+  },
+  memory: {
+    own: (input, t) => noneEligible(input.eligibleMemoryCount, 'nodes.memory.selectionNone', t),
+  },
+  upgrade: { own: upgradeOwnState },
+  revoke: { needsWritable: true },
+  uninstall: { needsWritable: true },
+};
 
 /**
  * 菜单项的可点性与禁用原因。共同的前置条件是「选中了东西」与「没有别的批量在跑」，
- * 各自再叠自己的条件：升级看 latest 与可升级台数，移除与卸载都要上联收得下写入，
- * 暂停 / 恢复看资格过滤后的台数。
+ * 各自再叠 `BULK_RULES` 里自己的那一关。
  */
-export function bulkMenuStates(
-  input: BulkMenuInput,
-  t: (key: string, options?: Record<string, unknown>) => string
-): {
-  pause: BulkItemState;
-  resume: BulkItemState;
-  upgrade: BulkItemState;
-  revoke: BulkItemState;
-  uninstall: BulkItemState;
-} {
-  const empty: BulkItemState = { disabled: true, title: t('nodes.selection.none') };
-  const busyHint = input.uninstallRunning
-    ? t('nodes.uninstall.running')
-    : input.revoking
-      ? t('nodes.selection.busy')
-      : input.pauseBusy
-        ? t('nodes.pause.busy')
-        : input.restoring
-          ? t('nodes.upgrade.restoring')
-          : t('nodes.upgrade.allBusy');
-  const busy: BulkItemState = { disabled: true, title: busyHint };
+export function bulkMenuStates(input: BulkMenuInput, t: Translate): BulkMenuStates {
+  const busy: BulkItemState = { disabled: true, title: bulkBusyHint(input, t) };
   const anyBusy =
     input.upgradeBusy ||
     input.restoring ||
     input.uninstallRunning ||
     input.revoking ||
-    input.pauseBusy;
-
-  const upgrade = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
+    input.pauseBusy ||
+    input.memoryBusy;
+  const state = (action: BulkAction): BulkItemState => {
+    const rule = BULK_RULES[action];
+    if (input.selectedCount === 0) return { disabled: true, title: t('nodes.selection.none') };
+    if (rule.needsWritable && !input.writable) return { disabled: true, title: input.blockedHint };
     if (anyBusy) return busy;
-    if (!input.latestKnown) return { disabled: true, title: t('nodes.upgrade.releaseUnavailable') };
-    if (input.eligibleUpgradeCount === 0)
-      return { disabled: true, title: t('nodes.upgrade.allNone') };
-    if (!input.selfIncluded) return { disabled: false };
-    return { disabled: false, title: t('nodes.selection.upgradeSelfNotice') };
+    return rule.own?.(input, t) ?? { disabled: false };
   };
-
-  const revoke = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
-    if (!input.writable) return { disabled: true, title: input.blockedHint };
-    if (anyBusy) return busy;
-    return { disabled: false };
-  };
-
-  const uninstall = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
-    // 卸载以一次签名 `revoke-node` 收尾：上联不收写入时机器会被删干净，证书却撤不掉。
-    if (!input.writable) return { disabled: true, title: input.blockedHint };
-    if (anyBusy) return busy;
-    return { disabled: false };
-  };
-
-  const pause = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
-    if (anyBusy) return busy;
-    if (input.eligiblePauseCount === 0)
-      return { disabled: true, title: t('nodes.selection.pauseNone') };
-    return { disabled: false };
-  };
-
-  const resume = (): BulkItemState => {
-    if (input.selectedCount === 0) return empty;
-    if (anyBusy) return busy;
-    if (input.eligibleResumeCount === 0)
-      return { disabled: true, title: t('nodes.selection.resumeNone') };
-    return { disabled: false };
-  };
-
   return {
-    pause: pause(),
-    resume: resume(),
-    upgrade: upgrade(),
-    revoke: revoke(),
-    uninstall: uninstall(),
+    pause: state('pause'),
+    resume: state('resume'),
+    memory: state('memory'),
+    upgrade: state('upgrade'),
+    revoke: state('revoke'),
+    uninstall: state('uninstall'),
   };
 }
 
 export interface BulkActionsMenuListProps {
-  states: ReturnType<typeof bulkMenuStates>;
-  labels: { pause: string; resume: string; upgrade: string; revoke: string; uninstall: string };
+  states: BulkMenuStates;
+  labels: {
+    pause: string;
+    resume: string;
+    memory: string;
+    upgrade: string;
+    revoke: string;
+    uninstall: string;
+  };
   onPause: () => void;
   onResume: () => void;
+  onMemory: () => void;
   onUpgrade: () => void;
   onRevoke: () => void;
   onUninstall: () => void;
@@ -191,6 +211,7 @@ export function BulkActionsMenuList({
   labels,
   onPause,
   onResume,
+  onMemory,
   onUpgrade,
   onRevoke,
   onUninstall,
@@ -214,6 +235,15 @@ export function BulkActionsMenuList({
       >
         <Play className="size-4" />
         {labels.resume}
+      </DropdownMenuItem>
+      <DropdownMenuItem
+        disabled={states.memory.disabled}
+        title={states.memory.title}
+        onClick={onMemory}
+        data-testid="nodes-bulk-memory"
+      >
+        <MemoryStick className="size-4" />
+        {labels.memory}
       </DropdownMenuItem>
       <DropdownMenuItem
         disabled={states.upgrade.disabled}
@@ -282,38 +312,36 @@ async function executePauseBatch(
   }
 }
 
-/**
- * 「更多」：对**选中的行**批量暂停 / 恢复 / 升级 / 移除 / 卸载。没有单独的「全部升级」了——
- * 全选再走这个菜单即可，两个入口做同一件事只会让人猜它们有什么区别。
- * 升级是唯一会自动带上本机的动作，标签里写明「含本机」。
- */
-export function BulkActionsMenu({
-  rows,
-  selfRow,
-  upgrade,
-  uninstall,
-  revoking,
-  onRevoke,
-  onChanged,
-  writable,
-  blockedHint,
-}: {
+export interface BulkActionsMenuProps {
   rows: NodeRow[];
   selfRow: NodeRow | null;
   upgrade: NodeUpgradeController;
   uninstall: NodeUninstallController;
+  memory: MemoryLimitsBatchController;
   revoking: boolean;
   onRevoke: () => void;
   onChanged: () => void;
   writable: boolean;
   blockedHint: string;
-}) {
+}
+
+interface BulkMenuPlan {
+  states: BulkMenuStates;
+  /** 升级的实际目标（可能被追加了本机）。 */
+  upgradeRows: NodeRow[];
+  upgradeCount: number;
+  selfIncluded: boolean;
+  pauseTargets: NodeRow[];
+  resumeTargets: NodeRow[];
+}
+
+/** 把控制器状态与各动作的资格过滤收成菜单要的那一份输入。 */
+function useBulkMenuPlan(props: BulkActionsMenuProps, pauseBusy: boolean): BulkMenuPlan {
   const { t } = useTranslation();
   const pathname = useLocation().pathname;
-  usePauseInflightGeneration();
-  const [pauseBusy, setPauseBusy] = useState(false);
+  const { rows, upgrade, uninstall, memory } = props;
   const latestVersion = upgrade.latest?.latestVersion ?? null;
-  const targets = bulkUpgradeTargets(rows, selfRow, latestVersion);
+  const targets = bulkUpgradeTargets(rows, props.selfRow, latestVersion);
   const upgradeCount = upgrade.eligibleCount(targets.rows);
   const pauseTargets = eligiblePauseRows(rows, pathname);
   const resumeTargets = eligibleResumeRows(rows, pathname);
@@ -325,16 +353,39 @@ export function BulkActionsMenu({
       latestKnown: Boolean(latestVersion),
       upgradeBusy: upgrade.anyRunning || upgrade.batch.running,
       restoring: upgrade.restoring,
-      writable,
-      blockedHint,
+      writable: props.writable,
+      blockedHint: props.blockedHint,
       uninstallRunning: uninstall.running,
-      revoking,
+      revoking: props.revoking,
       eligiblePauseCount: pauseTargets.length,
       eligibleResumeCount: resumeTargets.length,
       pauseBusy,
+      eligibleMemoryCount: planMemoryLimits(rows).targets.length,
+      memoryBusy: memory.running,
     },
     t
   );
+  return {
+    states,
+    upgradeRows: targets.rows,
+    upgradeCount,
+    selfIncluded: targets.selfIncluded,
+    pauseTargets,
+    resumeTargets,
+  };
+}
+
+/**
+ * 「更多」：对**选中的行**批量暂停 / 恢复 / 改内存限额 / 升级 / 移除 / 卸载。没有单独的「全部升级」了——
+ * 全选再走这个菜单即可，两个入口做同一件事只会让人猜它们有什么区别。
+ * 升级是唯一会自动带上本机的动作，标签里写明「含本机」。
+ */
+export function BulkActionsMenu(props: BulkActionsMenuProps) {
+  const { t } = useTranslation();
+  const { rows, upgrade, uninstall, memory, onRevoke, onChanged } = props;
+  usePauseInflightGeneration();
+  const [pauseBusy, setPauseBusy] = useState(false);
+  const plan = useBulkMenuPlan(props, pauseBusy);
 
   const runBatch = (action: 'pause' | 'resume', batchRows: NodeRow[]) => {
     void executePauseBatch(batchRows, action, pauseBusy, setPauseBusy, onChanged, t);
@@ -358,20 +409,22 @@ export function BulkActionsMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-44">
         <BulkActionsMenuList
-          states={states}
+          states={plan.states}
           labels={{
             pause: t('nodes.selection.pause'),
             resume: t('nodes.selection.resume'),
+            memory: t('nodes.selection.memory'),
             upgrade: t(
-              targets.selfIncluded ? 'nodes.selection.upgradeWithSelf' : 'nodes.selection.upgrade',
-              { count: upgradeCount }
+              plan.selfIncluded ? 'nodes.selection.upgradeWithSelf' : 'nodes.selection.upgrade',
+              { count: plan.upgradeCount }
             ),
             revoke: t('nodes.selection.revoke'),
             uninstall: t('nodes.selection.uninstall'),
           }}
-          onPause={() => void runBatch('pause', pauseTargets)}
-          onResume={() => void runBatch('resume', resumeTargets)}
-          onUpgrade={() => upgrade.startAll(targets.rows)}
+          onPause={() => void runBatch('pause', plan.pauseTargets)}
+          onResume={() => void runBatch('resume', plan.resumeTargets)}
+          onMemory={() => memory.request(rows)}
+          onUpgrade={() => upgrade.startAll(plan.upgradeRows)}
           onRevoke={onRevoke}
           onUninstall={() => uninstall.request(rows)}
         />

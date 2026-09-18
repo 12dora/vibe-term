@@ -144,6 +144,7 @@ function NodeRowView({
             pathname={pathname}
             onChanged={deps.onChanged}
             onDetail={() => shared.setDetailOpen(true)}
+            onMemory={() => shared.setMemoryOpen(true)}
           />
           <RevokeButton row={row} shared={shared} />
         </div>

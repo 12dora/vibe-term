@@ -856,6 +856,8 @@ describe('「更多」菜单的可点性', () => {
     eligiblePauseCount: 2,
     eligibleResumeCount: 0,
     pauseBusy: false,
+    eligibleMemoryCount: 2,
+    memoryBusy: false,
   };
 
   test('选中了节点、上联收写入、没有别的批量在跑：升级 / 移除 / 卸载可点', () => {
@@ -933,18 +935,20 @@ describe('「更多」菜单的可点性', () => {
   });
 
   // 菜单内容走 portal，SSR 什么都不输出：直接对元素树断言（同 AddDeviceMenuList）。
-  test('五个菜单项：暂停 / 恢复在前，升级带选中数量，禁用原因进 title', () => {
+  test('六个菜单项：暂停 / 恢复 / 内存限额在前，升级带选中数量，禁用原因进 title', () => {
     const list = BulkActionsMenuList({
       states: bulkMenuStates({ ...base, selectedCount: 0 }, t),
       labels: {
         pause: '暂停',
         resume: '恢复',
+        memory: '内存限额',
         upgrade: '升级（3）',
         revoke: '移除节点',
         uninstall: '卸载 VibeTerm',
       },
       onPause: () => undefined,
       onResume: () => undefined,
+      onMemory: () => undefined,
       onUpgrade: () => undefined,
       onRevoke: () => undefined,
       onUninstall: () => undefined,
@@ -958,6 +962,7 @@ describe('「更多」菜单的可点性', () => {
     expect(items.map((item) => item.props['data-testid'])).toEqual([
       'nodes-bulk-pause',
       'nodes-bulk-resume',
+      'nodes-bulk-memory',
       'nodes-bulk-upgrade',
       'nodes-bulk-revoke',
       'nodes-bulk-uninstall',
@@ -966,19 +971,22 @@ describe('「更多」菜单的可点性', () => {
       expect(item.props.disabled).toBe(true);
       expect(item.props.title).toBe('nodes.selection.none');
     }
-    expect(JSON.stringify(items[2].props.children)).toContain('升级（3）');
+    expect(JSON.stringify(items[2].props.children)).toContain('内存限额');
+    expect(JSON.stringify(items[3].props.children)).toContain('升级（3）');
   });
 });
 
 describe('行内「更多」菜单', () => {
-  test('详情项带着 nodes-detail id；暂停项可点', () => {
+  test('详情 / 内存限额 / 暂停三项顺序固定，可点时不带禁用原因', () => {
     const list = NodeMoreMenuList({
       row: { id: 'qq' },
       paused: false,
       pauseDisabled: false,
       pauseTitle: 'nodes.pause.hint',
-      labels: { detail: '详情', pause: '暂停' },
+      memoryDisabled: false,
+      labels: { detail: '详情', memory: '内存限额', pause: '暂停' },
       onDetail: () => undefined,
+      onMemory: () => undefined,
       onPause: () => undefined,
     }) as ReactElement<{ children?: ReactNode }>;
     const items = Children.toArray(list.props.children) as ReactElement<{
@@ -989,12 +997,14 @@ describe('行内「更多」菜单', () => {
     }>[];
     expect(items.map((item) => item.props['data-testid'])).toEqual([
       'nodes-detail-qq',
+      'nodes-memory-qq',
       'node-pause-toggle',
     ]);
     expect(items[0].props.disabled).toBeUndefined();
     expect(items[1].props.disabled).toBe(false);
-    expect(items[1].props['data-paused']).toBe('false');
-    expect(JSON.stringify(items[1].props.children)).toContain('暂停');
+    expect(items[2].props.disabled).toBe(false);
+    expect(items[2].props['data-paused']).toBe('false');
+    expect(JSON.stringify(items[2].props.children)).toContain('暂停');
   });
 
   test('转发节点暂停项禁用并带原因；已暂停转发节点的恢复项可点', () => {
@@ -1003,8 +1013,10 @@ describe('行内「更多」菜单', () => {
       paused: false,
       pauseDisabled: true,
       pauseTitle: 'nodes.pause.forwarderBlocked',
-      labels: { detail: '详情', pause: '暂停' },
+      memoryDisabled: false,
+      labels: { detail: '详情', memory: '内存限额', pause: '暂停' },
       onDetail: () => undefined,
+      onMemory: () => undefined,
       onPause: () => undefined,
     }) as ReactElement<{ children?: ReactNode }>;
     const blockedItems = Children.toArray(blocked.props.children) as ReactElement<{
@@ -1013,17 +1025,19 @@ describe('行内「更多」菜单', () => {
       'data-paused'?: string;
       children?: ReactNode;
     }>[];
-    expect(blockedItems[1].props.disabled).toBe(true);
-    expect(blockedItems[1].props.title).toBe('nodes.pause.forwarderBlocked');
-    expect(blockedItems[1].props['data-paused']).toBe('false');
+    expect(blockedItems[2].props.disabled).toBe(true);
+    expect(blockedItems[2].props.title).toBe('nodes.pause.forwarderBlocked');
+    expect(blockedItems[2].props['data-paused']).toBe('false');
 
     const resume = NodeMoreMenuList({
       row: { id: 'fwd' },
       paused: true,
       pauseDisabled: false,
       pauseTitle: 'nodes.pause.hint',
-      labels: { detail: '详情', pause: '恢复' },
+      memoryDisabled: false,
+      labels: { detail: '详情', memory: '内存限额', pause: '恢复' },
       onDetail: () => undefined,
+      onMemory: () => undefined,
       onPause: () => undefined,
     }) as ReactElement<{ children?: ReactNode }>;
     const resumeItems = Children.toArray(resume.props.children) as ReactElement<{
@@ -1032,9 +1046,9 @@ describe('行内「更多」菜单', () => {
       'data-paused'?: string;
       children?: ReactNode;
     }>[];
-    expect(resumeItems[1].props.disabled).toBe(false);
-    expect(resumeItems[1].props['data-paused']).toBe('true');
-    expect(JSON.stringify(resumeItems[1].props.children)).toContain('恢复');
+    expect(resumeItems[2].props.disabled).toBe(false);
+    expect(resumeItems[2].props['data-paused']).toBe('true');
+    expect(JSON.stringify(resumeItems[2].props.children)).toContain('恢复');
   });
 
   test('在途时暂停项禁用并标 busy', () => {
@@ -1044,16 +1058,18 @@ describe('行内「更多」菜单', () => {
       pauseDisabled: true,
       pauseBusy: true,
       pauseTitle: 'nodes.pause.busy',
-      labels: { detail: '详情', pause: '暂停' },
+      memoryDisabled: false,
+      labels: { detail: '详情', memory: '内存限额', pause: '暂停' },
       onDetail: () => undefined,
+      onMemory: () => undefined,
       onPause: () => undefined,
     }) as ReactElement<{ children?: ReactNode }>;
     const items = Children.toArray(list.props.children) as ReactElement<{
       disabled?: boolean;
       title?: string;
     }>[];
-    expect(items[1].props.disabled).toBe(true);
-    expect(items[1].props.title).toBe('nodes.pause.busy');
+    expect(items[2].props.disabled).toBe(true);
+    expect(items[2].props.title).toBe('nodes.pause.busy');
   });
 });
 
