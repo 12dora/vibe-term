@@ -1,7 +1,12 @@
 // 本机卡「内存限额」段：每个 tmux 窗口的 systemd pane scope 上限 + 采样周期。
 // 记录整条读写：进来 GET 一次，保存时把五个字段全量 PUT 回去。
 
-import { getWindowMemorySettings, putWindowMemorySettings } from '@vibeterm/api-client';
+import {
+  type SessionsMemoryResponse,
+  getSessionsMemory,
+  getWindowMemorySettings,
+  putWindowMemorySettings,
+} from '@vibeterm/api-client';
 import {
   WINDOW_MEMORY_INTERVAL_MAX_SEC,
   WINDOW_MEMORY_INTERVAL_MIN_SEC,
@@ -24,15 +29,25 @@ import {
   memoryLimitsDraft,
   submitMemoryLimits,
 } from './memory-limits-form';
+import {
+  MemoryLimitsUnsupportedNotice,
+  type SessionsMemoryLoader,
+  useMemoryLimitsUnsupported,
+} from './memory-limits-unsupported';
 
 export interface MemoryLimitsApi {
   get: () => Promise<WindowMemorySettings>;
   put: (settings: WindowMemorySettings) => Promise<WindowMemorySettings>;
+  /** 只用来判断限额在哪些宿主上不会生效；缺省不拉，表单照常工作。 */
+  sessionsMemory?: SessionsMemoryLoader;
 }
+
+const listSessionsMemory = (): Promise<SessionsMemoryResponse> => getSessionsMemory();
 
 const defaultMemoryLimitsApi: MemoryLimitsApi = {
   get: () => getWindowMemorySettings(),
   put: (settings) => putWindowMemorySettings(settings),
+  sessionsMemory: listSessionsMemory,
 };
 
 const MB_FIELDS: readonly { field: MemoryLimitsField; labelKey: string; hintKey?: string }[] = [
@@ -195,6 +210,7 @@ function useMemoryLimits(api: MemoryLimitsApi) {
 export function MemoryLimitsSection({ api = defaultMemoryLimitsApi }: { api?: MemoryLimitsApi }) {
   const { t } = useTranslation();
   const { draft, errors, loadError, saving, update, save } = useMemoryLimits(api);
+  const unsupportedDevices = useMemoryLimitsUnsupported(api.sessionsMemory);
 
   if (loadError) {
     return (
@@ -214,6 +230,7 @@ export function MemoryLimitsSection({ api = defaultMemoryLimitsApi }: { api?: Me
 
   return (
     <div className="flex flex-col gap-3" data-testid="memory-limits-form">
+      <MemoryLimitsUnsupportedNotice deviceNames={unsupportedDevices} />
       <p className="text-xs text-muted-foreground">{t('settings.nodes.memory.description')}</p>
       <MemoryLimitsEnabledRow
         checked={draft.enabled}

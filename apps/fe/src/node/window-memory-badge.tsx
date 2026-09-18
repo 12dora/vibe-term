@@ -1,8 +1,11 @@
-// 设备页右上角的窗口内存徽标：当前窗口内所有 systemd pane scope 的内存合计。
+// 设备页右上角的窗口内存徽标：当前窗口的内存合计。
 //
-// 数据与链路徽标分开走：链路按 node，内存按「设备 + 当前路由选中的窗口」。宿主不支持
-// （非 Linux / 无 cgroup v2 / 无 systemd --user）或网关没播报 window-memory-v1 时整块不渲染，
-// 而不是显示一个恒为 0 的读数。
+// 数据与链路徽标分开走：链路按 node，内存按「设备 + 当前路由选中的窗口」。量不到内存
+// （网关没播报 window-memory-v1 / 采样一直取不到数）时整块不渲染，而不是显示一个恒为 0 的读数。
+//
+// 读数有两种来源：`cgroup` 来自 pane 的 systemd scope，限额与 OOM 计数都可信；`rss` 是宿主
+// 没有 pane scope（tmux < 3.6 或没带 systemd 支持、macOS）时按 pane 进程树 RSS 合计的兜底，
+// 这条路径上**没有任何限额**，不能拿「未设限」的 ∞ 去糊弄——提示里要说清楚。
 
 import { TONE_CLASS } from '@/lib/tone';
 import { formatBytes } from '@vibeterm/api-client';
@@ -37,6 +40,8 @@ const UNLIMITED = '∞';
 export function windowMemoryTone(sample: WindowMemorySample): WindowMemoryTone {
   // 粘性 OOM 标记压过一切：现在用量低不代表这个窗口没被杀过。
   if (sample.oomFlag) return 'blocked';
+  // RSS 兜底的宿主根本没有 scope，也就没有阈值可比——再大的用量也不该变色。
+  if (sample.source === 'rss') return 'ok';
   if (sample.high <= 0) return 'ok';
   if (sample.current >= sample.high) return 'blocked';
   return sample.current >= sample.high * WARN_RATIO ? 'warn' : 'ok';
@@ -48,13 +53,20 @@ function formatLimit(bytes: number): string {
   return bytes > 0 ? formatBytes(bytes) : UNLIMITED;
 }
 
-export function windowMemoryTooltipLines(t: Translate, sample: WindowMemorySample): string[] {
-  const lines = [
-    `${t('window.memory')}: ${formatBytes(sample.current)}`,
+function limitLines(t: Translate, sample: WindowMemorySample): string[] {
+  // RSS 兜底时限额三行全是 0，照 `formatLimit` 会打成「∞（未设限）」，把「限不了」说成「没限」。
+  if (sample.source === 'rss') {
+    return [t('window.memoryLimitUnavailable'), t('window.memorySourceRss')];
+  }
+  return [
     `${t('window.memoryLimitHigh')}: ${formatLimit(sample.high)}`,
     `${t('window.memoryLimitMax')}: ${formatLimit(sample.max)}`,
     `${t('window.memorySwapMax')}: ${formatLimit(sample.swapMax)}`,
   ];
+}
+
+export function windowMemoryTooltipLines(t: Translate, sample: WindowMemorySample): string[] {
+  const lines = [`${t('window.memory')}: ${formatBytes(sample.current)}`, ...limitLines(t, sample)];
   // 粘性标记还在、计数器却随 scope 重建清零时，至少发生过一次——写 0 次会把结论说反。
   if (sample.oomFlag || sample.oomKills > 0) {
     lines.push(t('window.memoryOom', { count: Math.max(sample.oomKills, 1) }));
@@ -99,6 +111,7 @@ function useWindowMemorySample(
   const panes = useTmuxSlice(store, read('panes'));
   const sampledAt = useTmuxSlice(store, read('sampledAt'));
   const receivedAt = useTmuxSlice(store, read('receivedAt'));
+  const source = useTmuxSlice(store, read('source'));
   return useMemo(
     () =>
       composeWindowMemorySample({
@@ -111,8 +124,9 @@ function useWindowMemorySample(
         panes,
         sampledAt,
         receivedAt,
+        source,
       }),
-    [current, high, max, swapMax, oomKills, oomFlag, panes, sampledAt, receivedAt]
+    [current, high, max, swapMax, oomKills, oomFlag, panes, sampledAt, receivedAt, source]
   );
 }
 
