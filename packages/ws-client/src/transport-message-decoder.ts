@@ -46,6 +46,32 @@ function decodeCanonicalEvent(payload: Uint8Array, emit: GatewayTransportEventHa
   emitSourceGap(event.SourceGap, emit);
 }
 
+function decodeWindowMemory(payload: Uint8Array, emit: GatewayTransportEventHandler): void {
+  let decoded: wsBorsh.WindowMemoryWire;
+  let source: 'cgroup' | 'rss' = 'cgroup';
+  try {
+    const v2 = wsBorsh.decodePayload(wsBorsh.WindowMemoryV2Schema, payload);
+    source = v2.source === wsBorsh.WINDOW_MEMORY_SOURCE_RSS ? 'rss' : 'cgroup';
+    decoded = v2;
+  } catch {
+    decoded = wsBorsh.decodePayload(wsBorsh.WindowMemorySchema, payload);
+  }
+  emit({
+    type: 'window-memory',
+    deviceId: decoded.deviceId,
+    windowId: decoded.windowId,
+    current: Number(decoded.current),
+    high: Number(decoded.high),
+    max: Number(decoded.max),
+    swapMax: Number(decoded.swapMax),
+    oomKills: decoded.oomKills,
+    oomFlag: decoded.oomFlag,
+    panes: decoded.panes,
+    sampledAt: Number(decoded.sampledAt),
+    source,
+  });
+}
+
 type MessageDecoder = (payload: Uint8Array, emit: GatewayTransportEventHandler) => void;
 
 const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
@@ -83,25 +109,7 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
       });
     },
   ],
-  [
-    wsBorsh.KIND_WINDOW_MEMORY,
-    (payload, emit) => {
-      const decoded = wsBorsh.decodePayload(wsBorsh.WindowMemorySchema, payload);
-      emit({
-        type: 'window-memory',
-        deviceId: decoded.deviceId,
-        windowId: decoded.windowId,
-        current: Number(decoded.current),
-        high: Number(decoded.high),
-        max: Number(decoded.max),
-        swapMax: Number(decoded.swapMax),
-        oomKills: decoded.oomKills,
-        oomFlag: decoded.oomFlag,
-        panes: decoded.panes,
-        sampledAt: Number(decoded.sampledAt),
-      });
-    },
-  ],
+  [wsBorsh.KIND_WINDOW_MEMORY, decodeWindowMemory],
   [
     wsBorsh.KIND_TMUX_EVENT,
     (payload, emit) => {

@@ -114,38 +114,79 @@ describe('decodeGatewayTransportMessage', () => {
     ]);
   });
 
+  const WINDOW_MEMORY_V1_FIELDS = {
+    deviceId: 'dev-1',
+    windowId: '@3',
+    current: BigInt(9_663_676_416),
+    high: BigInt(8_589_934_592),
+    max: BigInt(0),
+    swapMax: BigInt(4_294_967_296),
+    oomKills: 2,
+    oomFlag: true,
+    panes: 3,
+    sampledAt: BigInt(1_700_000_000_000),
+  };
+
+  const WINDOW_MEMORY_EVENT_BASE = {
+    type: 'window-memory' as const,
+    deviceId: 'dev-1',
+    windowId: '@3',
+    current: 9_663_676_416,
+    high: 8_589_934_592,
+    max: 0,
+    swapMax: 4_294_967_296,
+    oomKills: 2,
+    oomFlag: true,
+    panes: 3,
+    sampledAt: 1_700_000_000_000,
+  };
+
   test('window-memory：u64 字节降为 number，未设限的 0 原样透出', () => {
     const { handled, events } = collect(
       wsBorsh.KIND_WINDOW_MEMORY,
-      wsBorsh.encodePayload(wsBorsh.WindowMemorySchema, {
-        deviceId: 'dev-1',
-        windowId: '@3',
-        current: BigInt(9_663_676_416),
-        high: BigInt(8_589_934_592),
-        max: BigInt(0),
-        swapMax: BigInt(4_294_967_296),
-        oomKills: 2,
-        oomFlag: true,
-        panes: 3,
-        sampledAt: BigInt(1_700_000_000_000),
-      })
+      wsBorsh.encodePayload(wsBorsh.WindowMemorySchema, WINDOW_MEMORY_V1_FIELDS)
     );
     expect(handled).toBe(true);
-    expect(events).toEqual([
-      {
-        type: 'window-memory',
-        deviceId: 'dev-1',
-        windowId: '@3',
-        current: 9_663_676_416,
-        high: 8_589_934_592,
-        max: 0,
-        swapMax: 4_294_967_296,
-        oomKills: 2,
-        oomFlag: true,
-        panes: 3,
-        sampledAt: 1_700_000_000_000,
-      },
-    ]);
+    expect(events).toEqual([{ ...WINDOW_MEMORY_EVENT_BASE, source: 'cgroup' }]);
+  });
+
+  test('window-memory v2 载荷解出 source，v1 旧网关载荷补 cgroup，两者都不抛', () => {
+    const v2Rss = collect(
+      wsBorsh.KIND_WINDOW_MEMORY,
+      wsBorsh.encodePayload(wsBorsh.WindowMemoryV2Schema, {
+        ...WINDOW_MEMORY_V1_FIELDS,
+        source: wsBorsh.WINDOW_MEMORY_SOURCE_RSS,
+      })
+    );
+    expect(v2Rss.handled).toBe(true);
+    expect(v2Rss.events).toEqual([{ ...WINDOW_MEMORY_EVENT_BASE, source: 'rss' }]);
+
+    const v2Cgroup = collect(
+      wsBorsh.KIND_WINDOW_MEMORY,
+      wsBorsh.encodePayload(wsBorsh.WindowMemoryV2Schema, {
+        ...WINDOW_MEMORY_V1_FIELDS,
+        source: wsBorsh.WINDOW_MEMORY_SOURCE_CGROUP,
+      })
+    );
+    expect(v2Cgroup.events).toEqual([{ ...WINDOW_MEMORY_EVENT_BASE, source: 'cgroup' }]);
+
+    expect(() =>
+      decodeGatewayTransportMessage(
+        wsBorsh.KIND_WINDOW_MEMORY,
+        wsBorsh.encodePayload(wsBorsh.WindowMemorySchema, WINDOW_MEMORY_V1_FIELDS),
+        () => {}
+      )
+    ).not.toThrow();
+    expect(() =>
+      decodeGatewayTransportMessage(
+        wsBorsh.KIND_WINDOW_MEMORY,
+        wsBorsh.encodePayload(wsBorsh.WindowMemoryV2Schema, {
+          ...WINDOW_MEMORY_V1_FIELDS,
+          source: wsBorsh.WINDOW_MEMORY_SOURCE_RSS,
+        }),
+        () => {}
+      )
+    ).not.toThrow();
   });
 
   test('clipboard-write', () => {

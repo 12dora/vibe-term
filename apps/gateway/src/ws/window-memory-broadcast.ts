@@ -86,6 +86,7 @@ export class WindowMemoryBroadcast implements WindowMemoryRuntimeHost {
     window: WindowMemoryAggregate,
     sessions: readonly GatewaySession[]
   ): void {
+    if (window.source === 'none') return;
     try {
       const payload = encodeWindowMemoryPayload(deviceId, window);
       for (const session of sessions) this.sendEncoded(session, payload);
@@ -123,7 +124,7 @@ export function bindWindowMemoryBroadcast(instance: WindowMemoryBroadcast | null
 }
 
 function encodeWindowMemoryPayload(deviceId: string, window: WindowMemoryAggregate): Uint8Array {
-  return wsBorsh.encodePayload(wsBorsh.WindowMemorySchema, {
+  return wsBorsh.encodePayload(wsBorsh.WindowMemoryV2Schema, {
     deviceId,
     windowId: window.windowId,
     current: BigInt(window.current),
@@ -134,6 +135,10 @@ function encodeWindowMemoryPayload(deviceId: string, window: WindowMemoryAggrega
     oomFlag: window.oomFlag,
     panes: Math.min(255, Math.max(0, window.panes)),
     sampledAt: BigInt(window.sampledAt),
+    source:
+      window.source === 'rss'
+        ? wsBorsh.WINDOW_MEMORY_SOURCE_RSS
+        : wsBorsh.WINDOW_MEMORY_SOURCE_CGROUP,
   });
 }
 

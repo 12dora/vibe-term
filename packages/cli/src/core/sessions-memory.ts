@@ -6,6 +6,7 @@ import {
   type TmuxSession,
   type TmuxWindow,
   WINDOW_MEMORY_SETTINGS_DEFAULTS,
+  type WindowMemorySource,
 } from '@vibeterm/shared';
 import { type GatewayTransportEvent, serverSupportsWindowMemory } from '@vibeterm/ws-client';
 import type { CliContext } from './context';
@@ -13,7 +14,15 @@ import { openDeviceSession } from './tmux-ops';
 
 export const SESSIONS_WS_CONCURRENCY = 4;
 
-export type SessionsDeviceRow = Omit<SessionsMemoryDevice, 'connected'> & { connected?: boolean };
+/** CLI 窗口行：未采样（sampledAt=0）时不带 source，避免 JSON 消费者把缺读数当成 cgroup。 */
+export type SessionsWindowRow = Omit<SessionsMemoryWindow, 'source'> & {
+  source?: WindowMemorySource;
+};
+
+export type SessionsDeviceRow = Omit<SessionsMemoryDevice, 'connected' | 'windows'> & {
+  connected?: boolean;
+  windows: SessionsWindowRow[];
+};
 
 export type WindowMemoryTransportEvent = Extract<GatewayTransportEvent, { type: 'window-memory' }>;
 
@@ -26,7 +35,7 @@ export function windowMemoryCollectTimeoutMs(sampleIntervalSec: number): number 
   return 2 * sampleIntervalSec * 1000 + 3000;
 }
 
-function emptyWindow(window: TmuxWindow): SessionsMemoryWindow {
+function emptyWindow(window: TmuxWindow): SessionsWindowRow {
   return {
     windowId: window.id,
     windowName: window.customName ?? window.name,
@@ -42,14 +51,14 @@ function emptyWindow(window: TmuxWindow): SessionsMemoryWindow {
   };
 }
 
-export function windowsFromTree(tree: TmuxSession): SessionsMemoryWindow[] {
+export function windowsFromTree(tree: TmuxSession): SessionsWindowRow[] {
   return tree.windows.map(emptyWindow);
 }
 
 export function applyMemorySample(
-  window: SessionsMemoryWindow,
+  window: SessionsWindowRow,
   sample: WindowMemoryTransportEvent
-): SessionsMemoryWindow {
+): SessionsWindowRow {
   return {
     ...window,
     current: sample.current,
@@ -60,6 +69,7 @@ export function applyMemorySample(
     oomFlag: sample.oomFlag,
     panes: sample.panes,
     sampledAt: sample.sampledAt,
+    source: sample.source,
   };
 }
 
@@ -179,7 +189,7 @@ async function collectDeviceSession(
 
 async function withMemorySamples(
   capabilities: readonly string[],
-  windows: SessionsMemoryWindow[],
+  windows: SessionsWindowRow[],
   samples: Map<string, WindowMemoryTransportEvent>,
   opts: {
     attachNotify: (notify: () => void) => void;
@@ -188,7 +198,7 @@ async function withMemorySamples(
   }
 ): Promise<SessionsDeviceRow> {
   const helloOk = serverSupportsWindowMemory(capabilities);
-  if (!helloOk) return { ...opts.device, supported: false, windows };
+  if (!helloOk) return { ...opts.device, supported: false, limitsSupported: false, windows };
   const ids = windows.map((window) => window.windowId);
   await waitForWindowMemory(ids, samples, opts.attachNotify, opts.timeoutMs);
   const merged = windows.map((window) => {
@@ -196,5 +206,8 @@ async function withMemorySamples(
     return sample ? applyMemorySample(window, sample) : window;
   });
   const gotAny = ids.length === 0 || ids.some((id) => samples.has(id));
-  return { ...opts.device, supported: gotAny, windows: merged };
+  const sources = [...samples.values()].map((sample) => sample.source);
+  const limitsSupported =
+    sources.length === 0 ? null : sources.every((source) => source === 'cgroup');
+  return { ...opts.device, supported: gotAny, limitsSupported, windows: merged };
 }

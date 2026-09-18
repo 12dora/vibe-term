@@ -4,6 +4,7 @@
 // 「这台设备还在不在上报」的唯一依据，而它只能在收到时本地盖章：网关时钟与浏览器时钟未必
 // 对齐，拿 `sampledAt` 判新鲜会把时钟慢的节点一直判死。
 
+import type { WindowMemorySource } from '@vibeterm/shared';
 import type { GatewayTransportEvent } from '@vibeterm/ws-client';
 
 /** 一个窗口的内存读数；`high` / `max` / `swapMax` 为 0 表示未设限。 */
@@ -19,6 +20,8 @@ export interface WindowMemorySample {
   sampledAt: number;
   /** 本地收到这一帧的时刻（浏览器时钟）；新鲜度只按它判。 */
   receivedAt: number;
+  /** `cgroup` = pane systemd scope（限额可用）；`rss` = 进程树 RSS 合计（宿主限不了）。 */
+  source: WindowMemorySource;
 }
 
 export type WindowMemoryWindows = Record<string, WindowMemorySample | undefined>;
@@ -38,7 +41,8 @@ function sameReading(prev: WindowMemorySample, event: WindowMemoryEvent): boolea
     prev.swapMax === event.swapMax &&
     prev.oomKills === event.oomKills &&
     prev.oomFlag === event.oomFlag &&
-    prev.panes === event.panes
+    prev.panes === event.panes &&
+    prev.source === event.source
   );
 }
 
@@ -69,6 +73,7 @@ export function applyWindowMemory(
     panes: event.panes,
     sampledAt: event.sampledAt,
     receivedAt,
+    source: event.source,
   };
   return { ...map, [event.deviceId]: { ...windows, [event.windowId]: sample } };
 }
@@ -141,10 +146,12 @@ export function composeWindowMemorySample(fields: {
   panes: number | null;
   sampledAt: number | null;
   receivedAt: number | null;
+  source: WindowMemorySource | null;
 }): WindowMemorySample | null {
-  const { current, high, max, swapMax, oomKills, oomFlag, panes, sampledAt, receivedAt } = fields;
+  const { current, high, max, swapMax, oomKills, oomFlag, panes, sampledAt, receivedAt, source } =
+    fields;
   if (current === null || high === null || max === null || swapMax === null) return null;
-  if (oomKills === null || oomFlag === null || panes === null) return null;
+  if (oomKills === null || oomFlag === null || panes === null || source === null) return null;
   if (sampledAt === null || receivedAt === null) return null;
-  return { current, high, max, swapMax, oomKills, oomFlag, panes, sampledAt, receivedAt };
+  return { current, high, max, swapMax, oomKills, oomFlag, panes, sampledAt, receivedAt, source };
 }

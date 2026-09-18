@@ -28,6 +28,7 @@ function frame(overrides: Partial<WindowMemoryEvent> = {}): WindowMemoryEvent {
     oomFlag: false,
     panes: 2,
     sampledAt: NOW,
+    source: 'cgroup',
     ...overrides,
   };
 }
@@ -45,6 +46,7 @@ describe('applyWindowMemory', () => {
       panes: 2,
       sampledAt: NOW,
       receivedAt: 5_000,
+      source: 'cgroup',
     });
   });
 
@@ -82,6 +84,7 @@ describe('acceptsWindowMemory', () => {
     if (!sample) throw new Error('sample missing');
     expect(acceptsWindowMemory(sample, frame({ oomFlag: true }))).toBe(true);
     expect(acceptsWindowMemory(sample, frame({ panes: 3 }))).toBe(true);
+    expect(acceptsWindowMemory(sample, frame({ source: 'rss' }))).toBe(true);
     expect(acceptsWindowMemory(sample, frame())).toBe(false);
   });
 });
@@ -135,6 +138,7 @@ describe('composeWindowMemorySample', () => {
     panes: 1,
     sampledAt: NOW,
     receivedAt: NOW,
+    source: 'cgroup' as const,
   };
 
   test('字段齐了才装配得出样本', () => {
@@ -142,6 +146,7 @@ describe('composeWindowMemorySample', () => {
     expect(composeWindowMemorySample({ ...fields, current: null })).toBeNull();
     expect(composeWindowMemorySample({ ...fields, oomFlag: null })).toBeNull();
     expect(composeWindowMemorySample({ ...fields, receivedAt: null })).toBeNull();
+    expect(composeWindowMemorySample({ ...fields, source: null })).toBeNull();
   });
 });
 

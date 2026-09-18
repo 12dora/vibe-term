@@ -4,6 +4,7 @@ import type {
   SessionsMemoryWindow,
   StateSnapshotPayload,
   TmuxWindow,
+  WindowMemorySource,
 } from '@vibeterm/shared';
 import { getAllDevices } from '../db/devices';
 import { getWindowOomMarkStore } from '../window-memory/oom-mark-store';
@@ -18,7 +19,13 @@ function snapshotWindows(snapshot: StateSnapshotPayload | null): TmuxWindow[] {
   return snapshot?.session?.windows ?? [];
 }
 
-function zeroWindow(window: TmuxWindow, oomFlag: boolean): SessionsMemoryWindow {
+type SessionsMemoryRuntime = NonNullable<ReturnType<typeof getWindowMemoryRuntime>>;
+
+function zeroWindow(
+  window: TmuxWindow,
+  oomFlag: boolean,
+  source: WindowMemorySource
+): SessionsMemoryWindow {
   return {
     windowId: window.id,
     windowName: window.customName ?? window.name,
@@ -31,15 +38,26 @@ function zeroWindow(window: TmuxWindow, oomFlag: boolean): SessionsMemoryWindow 
     oomKills: 0,
     oomFlag,
     sampledAt: 0,
+    source,
   };
+}
+
+function windowSource(
+  agg: WindowMemoryAggregate | undefined,
+  fallback: WindowMemorySource
+): WindowMemorySource {
+  if (agg?.source === 'rss' || agg?.source === 'cgroup') return agg.source;
+  return fallback;
 }
 
 function mergeWindow(
   window: TmuxWindow,
   agg: WindowMemoryAggregate | undefined,
-  oomFlag: boolean
+  oomFlag: boolean,
+  fallbackSource: WindowMemorySource
 ): SessionsMemoryWindow {
-  const row = zeroWindow(window, oomFlag);
+  const source = windowSource(agg, fallbackSource);
+  const row = zeroWindow(window, oomFlag, source);
   if (!agg) return row;
   return {
     ...row,
@@ -51,32 +69,47 @@ function mergeWindow(
     oomKills: agg.oomKills,
     oomFlag: agg.oomFlag,
     sampledAt: agg.sampledAt,
+    source,
   };
 }
 
 function windowsOf(
   deviceId: string,
-  runtime: NonNullable<ReturnType<typeof getWindowMemoryRuntime>>
+  runtime: SessionsMemoryRuntime,
+  fallbackSource: WindowMemorySource
 ): SessionsMemoryWindow[] {
   const snapshot = runtime.getCurrentSnapshot?.() ?? null;
   const aggs = new Map((runtime.getWindowMemory?.() ?? []).map((agg) => [agg.windowId, agg]));
   const marks = getWindowOomMarkStore();
   return snapshotWindows(snapshot).map((window) =>
-    mergeWindow(window, aggs.get(window.id), marks.has(deviceId, window.id))
+    mergeWindow(window, aggs.get(window.id), marks.has(deviceId, window.id), fallbackSource)
   );
+}
+
+function readLimitsSupported(runtime: SessionsMemoryRuntime): boolean | null {
+  return runtime.getWindowMemoryLimitsSupported?.() ?? null;
 }
 
 function toDeviceRow(deviceId: string, deviceName: string): SessionsMemoryDevice {
   const runtime = getWindowMemoryRuntime(deviceId);
   if (!runtime || runtime.isConnected?.() !== true) {
-    return { deviceId, deviceName, connected: false, supported: false, windows: [] };
+    return {
+      deviceId,
+      deviceName,
+      connected: false,
+      supported: false,
+      limitsSupported: null,
+      windows: [],
+    };
   }
+  const limitsSupported = readLimitsSupported(runtime);
   return {
     deviceId,
     deviceName,
     connected: true,
     supported: runtime.getWindowMemorySupported?.() === true,
-    windows: windowsOf(deviceId, runtime),
+    limitsSupported,
+    windows: windowsOf(deviceId, runtime, limitsSupported === false ? 'rss' : 'cgroup'),
   };
 }
 

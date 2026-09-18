@@ -31,6 +31,7 @@ function aggregate(
     oomKills: 0,
     oomFlag: false,
     sampledAt: 1_700_000_000_000,
+    source: 'cgroup',
     ...overrides,
   };
 }
@@ -111,7 +112,7 @@ function decode(frame: Uint8Array) {
   const envelope = wsBorsh.decodeEnvelope(frame);
   return {
     kind: envelope.kind,
-    payload: wsBorsh.decodePayload(wsBorsh.WindowMemorySchema, envelope.payload as Uint8Array),
+    payload: wsBorsh.decodePayload(wsBorsh.WindowMemoryV2Schema, envelope.payload as Uint8Array),
   };
 }
 
@@ -145,8 +146,22 @@ describe('WindowMemoryBroadcast fan-out', () => {
         oomFlag: true,
         panes: 1,
         sampledAt: 1_700_000_000_123n,
+        source: wsBorsh.WINDOW_MEMORY_SOURCE_CGROUP,
       });
     }
+  });
+
+  test('rss 窗口编成 source=1；none 窗口跳过不发', () => {
+    const { fake, addSession } = setup();
+    const session = addSession();
+    fake.emit([
+      aggregate('@1', { source: 'rss', current: 4096 }),
+      aggregate('@2', { source: 'none', current: 0 }),
+    ]);
+    expect(session.sent).toHaveLength(1);
+    const { payload } = decode(session.sent[0]);
+    expect(payload.windowId).toBe('@1');
+    expect(payload.source).toBe(wsBorsh.WINDOW_MEMORY_SOURCE_RSS);
   });
 
   test('one frame per changed window', () => {
