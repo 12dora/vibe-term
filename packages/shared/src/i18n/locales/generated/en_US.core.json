@@ -459,6 +459,8 @@
       "memoryLimitMax": "Hard limit",
       "memorySwapMax": "Swap limit",
       "memoryScope": "Scope",
+      "memoryLimitUnavailable": "Window limits: not supported on this host (needs tmux 3.6+)",
+      "memorySourceRss": "Reading: sum of process-tree RSS",
       "noWindowSelected": "No window selected",
       "selectWindowToStart": "Select a window to get started"
     },

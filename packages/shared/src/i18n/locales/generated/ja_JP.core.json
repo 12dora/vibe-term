@@ -459,6 +459,8 @@
       "memoryLimitMax": "ハード上限",
       "memorySwapMax": "スワップ上限",
       "memoryScope": "スコープ",
+      "memoryLimitUnavailable": "ウィンドウ上限：このホストでは非対応（tmux 3.6 以降が必要）",
+      "memorySourceRss": "読み取り値：プロセスツリー RSS の合計",
       "noWindowSelected": "ウィンドウが選択されていません",
       "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },

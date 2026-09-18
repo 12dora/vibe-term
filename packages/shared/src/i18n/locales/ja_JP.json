@@ -456,7 +456,9 @@
           "highAboveMax": "ソフト上限はハード上限を超えられません。",
           "loadFailed": "メモリ上限の読み込みに失敗しました：{{message}}",
           "saveFailed": "メモリ上限の保存に失敗しました：{{message}}",
-          "saved": "メモリ上限を保存しました"
+          "saved": "メモリ上限を保存しました",
+          "limitsUnsupported": "次のデバイスでは上限が適用されません：{{devices}}",
+          "limitsUnsupportedHint": "ウィンドウ単位の上限には Linux と systemd、tmux 3.6 以降が必要です。"
         },
         "routeMode": {
           "title": "遅延最適化",
@@ -1739,6 +1741,8 @@
       "memoryLimitMax": "ハード上限",
       "memorySwapMax": "スワップ上限",
       "memoryScope": "スコープ",
+      "memoryLimitUnavailable": "ウィンドウ上限：このホストでは非対応（tmux 3.6 以降が必要）",
+      "memorySourceRss": "読み取り値：プロセスツリー RSS の合計",
       "noWindowSelected": "ウィンドウが選択されていません",
       "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },
@@ -2436,7 +2440,8 @@
         "copy": "コピー",
         "copied": "コピーしました",
         "pause": "一時停止",
-        "resume": "再開"
+        "resume": "再開",
+        "memory": "メモリ上限"
       },
       "pause": {
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
@@ -2523,7 +2528,36 @@
         "pause": "一時停止",
         "resume": "再開",
         "pauseNone": "選択したノードはいずれも一時停止できません。",
-        "resumeNone": "選択したノードはいずれも再開できません。"
+        "resumeNone": "選択したノードはいずれも再開できません。",
+        "memory": "メモリ上限"
+      },
+      "memory": {
+        "target": "対象ノード：{{name}}",
+        "unavailable": "このノードではメモリ上限を変更できません（{{reason}}）",
+        "busy": "メモリ上限を書き込み中です。完了までお待ちください。",
+        "selectionNone": "選択したノードはいずれもメモリ上限を変更できません。",
+        "bulkTitle": "メモリ上限を一括設定",
+        "bulkDescription": "同じ上限を選択したノードに書き込みます（各ノードの現在値は読み取りません）。",
+        "bulkEffectHint": "書き込むのは設定のみです。上限が適用されるかはホスト次第です（Linux と systemd、tmux 3.6 以降が必要）。",
+        "targets": "書き込み対象（{{count}}）",
+        "skipped": "スキップ（{{count}}）",
+        "noTargets": "選択したノードはいずれもメモリ上限を変更できません。",
+        "apply": "書き込む",
+        "failedTitle": "失敗したノード",
+        "failedNameWithId": "{{name}}（{{id}}）",
+        "summary": "{{count}} 個のノードに書き込みました",
+        "summaryFailed": "{{count}} 個に書き込み、{{failed}} 個が失敗しました（{{names}}）",
+        "skip": {
+          "tooOld": "バージョンが 2.7.0 未満",
+          "offline": "オフライン",
+          "loginRequired": "未ログイン",
+          "paused": "一時停止中"
+        },
+        "errors": {
+          "unreachable": "このノードに到達できません。",
+          "loginRequired": "先にこのノードへログインしてください。",
+          "unsupported": "このノードのバージョンでは未対応です。"
+        }
       },
       "uninstall": {
         "confirmTitle": "VibeTerm をアンインストール",

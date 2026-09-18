@@ -462,7 +462,9 @@ export const I18N_RESOURCES = {
           "highAboveMax": "The soft limit must not exceed the hard limit.",
           "loadFailed": "Failed to load memory limits: {{message}}",
           "saveFailed": "Failed to save memory limits: {{message}}",
-          "saved": "Memory limits saved"
+          "saved": "Memory limits saved",
+          "limitsUnsupported": "Memory limits will not take effect on these devices: {{devices}}",
+          "limitsUnsupportedHint": "Per-window limits need Linux with systemd and tmux 3.6 or newer."
         },
         "routeMode": {
           "title": "Latency optimisation",
@@ -1745,6 +1747,8 @@ export const I18N_RESOURCES = {
       "memoryLimitMax": "Hard limit",
       "memorySwapMax": "Swap limit",
       "memoryScope": "Scope",
+      "memoryLimitUnavailable": "Window limits: not supported on this host (needs tmux 3.6+)",
+      "memorySourceRss": "Reading: sum of process-tree RSS",
       "noWindowSelected": "No window selected",
       "selectWindowToStart": "Select a window to get started"
     },
@@ -2442,7 +2446,8 @@ export const I18N_RESOURCES = {
         "copy": "Copy",
         "copied": "Copied",
         "pause": "Pause",
-        "resume": "Resume"
+        "resume": "Resume",
+        "memory": "Memory Limits"
       },
       "pause": {
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
@@ -2529,7 +2534,36 @@ export const I18N_RESOURCES = {
         "pause": "Pause",
         "resume": "Resume",
         "pauseNone": "None of the selected nodes can be paused.",
-        "resumeNone": "None of the selected nodes can be resumed."
+        "resumeNone": "None of the selected nodes can be resumed.",
+        "memory": "Memory Limits"
+      },
+      "memory": {
+        "target": "Target node: {{name}}",
+        "unavailable": "Memory limits cannot be changed on this node ({{reason}})",
+        "busy": "Writing memory limits. Wait for it to finish.",
+        "selectionNone": "None of the selected nodes accept memory limits.",
+        "bulkTitle": "Set Memory Limits",
+        "bulkDescription": "Writes the same limits to the selected nodes; their current values are not read.",
+        "bulkEffectHint": "This only writes the setting; whether the limits take effect depends on the host (Linux with systemd, tmux 3.6 or newer).",
+        "targets": "Will be written ({{count}})",
+        "skipped": "Skipped ({{count}})",
+        "noTargets": "None of the selected nodes accept memory limits.",
+        "apply": "Write",
+        "failedTitle": "Nodes that failed",
+        "failedNameWithId": "{{name}} ({{id}})",
+        "summary": "Written to {{count}} node(s)",
+        "summaryFailed": "{{count}} written, {{failed}} failed ({{names}})",
+        "skip": {
+          "tooOld": "Version below 2.7.0",
+          "offline": "Offline",
+          "loginRequired": "Not signed in",
+          "paused": "Paused"
+        },
+        "errors": {
+          "unreachable": "This node is unreachable.",
+          "loginRequired": "Sign in to this node first.",
+          "unsupported": "Not supported by this node's version."
+        }
       },
       "uninstall": {
         "confirmTitle": "Uninstall VibeTerm",
@@ -4113,7 +4147,9 @@ export const I18N_RESOURCES = {
           "highAboveMax": "软限额不能大于硬限额。",
           "loadFailed": "内存限额读取失败：{{message}}",
           "saveFailed": "内存限额保存失败：{{message}}",
-          "saved": "内存限额已保存"
+          "saved": "内存限额已保存",
+          "limitsUnsupported": "限额在这些设备上不会生效：{{devices}}",
+          "limitsUnsupportedHint": "按窗口限额需 Linux + systemd，且 tmux 3.6 及以上。"
         },
         "routeMode": {
           "title": "延迟优化",
@@ -5396,6 +5432,8 @@ export const I18N_RESOURCES = {
       "memoryLimitMax": "硬限额",
       "memorySwapMax": "交换限额",
       "memoryScope": "作用域",
+      "memoryLimitUnavailable": "窗口限额：此宿主不支持（需 tmux ≥ 3.6）",
+      "memorySourceRss": "读数来源：进程树 RSS 合计",
       "noWindowSelected": "未选择窗口",
       "selectWindowToStart": "选择一个窗口开始"
     },
@@ -6093,7 +6131,8 @@ export const I18N_RESOURCES = {
         "copy": "复制",
         "copied": "已复制",
         "pause": "暂停",
-        "resume": "恢复"
+        "resume": "恢复",
+        "memory": "内存限额"
       },
       "pause": {
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
@@ -6180,7 +6219,36 @@ export const I18N_RESOURCES = {
         "pause": "暂停",
         "resume": "恢复",
         "pauseNone": "所选节点均不能暂停。",
-        "resumeNone": "所选节点均不能恢复。"
+        "resumeNone": "所选节点均不能恢复。",
+        "memory": "内存限额"
+      },
+      "memory": {
+        "target": "目标节点：{{name}}",
+        "unavailable": "该节点不能改内存限额（{{reason}}）",
+        "busy": "正在写入内存限额，请稍候。",
+        "selectionNone": "所选节点均不能改内存限额。",
+        "bulkTitle": "批量设置内存限额",
+        "bulkDescription": "把同一份限额写入所选节点，不读取各自的当前值。",
+        "bulkEffectHint": "写入的只是设置；限额是否生效取决于宿主（需 Linux + systemd，tmux 3.6 及以上）。",
+        "targets": "将写入（{{count}}）",
+        "skipped": "跳过（{{count}}）",
+        "noTargets": "所选节点均不能改内存限额。",
+        "apply": "写入",
+        "failedTitle": "写入失败的节点",
+        "failedNameWithId": "{{name}}（{{id}}）",
+        "summary": "已写入 {{count}} 个节点",
+        "summaryFailed": "已写入 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "skip": {
+          "tooOld": "版本低于 2.7.0",
+          "offline": "离线",
+          "loginRequired": "未登录",
+          "paused": "已暂停"
+        },
+        "errors": {
+          "unreachable": "该节点当前不可达。",
+          "loginRequired": "须先登录该节点。",
+          "unsupported": "该节点版本不支持。"
+        }
       },
       "uninstall": {
         "confirmTitle": "卸载 VibeTerm",
@@ -7755,7 +7823,9 @@ export const I18N_RESOURCES = {
           "highAboveMax": "ソフト上限はハード上限を超えられません。",
           "loadFailed": "メモリ上限の読み込みに失敗しました：{{message}}",
           "saveFailed": "メモリ上限の保存に失敗しました：{{message}}",
-          "saved": "メモリ上限を保存しました"
+          "saved": "メモリ上限を保存しました",
+          "limitsUnsupported": "次のデバイスでは上限が適用されません：{{devices}}",
+          "limitsUnsupportedHint": "ウィンドウ単位の上限には Linux と systemd、tmux 3.6 以降が必要です。"
         },
         "routeMode": {
           "title": "遅延最適化",
@@ -9038,6 +9108,8 @@ export const I18N_RESOURCES = {
       "memoryLimitMax": "ハード上限",
       "memorySwapMax": "スワップ上限",
       "memoryScope": "スコープ",
+      "memoryLimitUnavailable": "ウィンドウ上限：このホストでは非対応（tmux 3.6 以降が必要）",
+      "memorySourceRss": "読み取り値：プロセスツリー RSS の合計",
       "noWindowSelected": "ウィンドウが選択されていません",
       "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },
@@ -9735,7 +9807,8 @@ export const I18N_RESOURCES = {
         "copy": "コピー",
         "copied": "コピーしました",
         "pause": "一時停止",
-        "resume": "再開"
+        "resume": "再開",
+        "memory": "メモリ上限"
       },
       "pause": {
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
@@ -9822,7 +9895,36 @@ export const I18N_RESOURCES = {
         "pause": "一時停止",
         "resume": "再開",
         "pauseNone": "選択したノードはいずれも一時停止できません。",
-        "resumeNone": "選択したノードはいずれも再開できません。"
+        "resumeNone": "選択したノードはいずれも再開できません。",
+        "memory": "メモリ上限"
+      },
+      "memory": {
+        "target": "対象ノード：{{name}}",
+        "unavailable": "このノードではメモリ上限を変更できません（{{reason}}）",
+        "busy": "メモリ上限を書き込み中です。完了までお待ちください。",
+        "selectionNone": "選択したノードはいずれもメモリ上限を変更できません。",
+        "bulkTitle": "メモリ上限を一括設定",
+        "bulkDescription": "同じ上限を選択したノードに書き込みます（各ノードの現在値は読み取りません）。",
+        "bulkEffectHint": "書き込むのは設定のみです。上限が適用されるかはホスト次第です（Linux と systemd、tmux 3.6 以降が必要）。",
+        "targets": "書き込み対象（{{count}}）",
+        "skipped": "スキップ（{{count}}）",
+        "noTargets": "選択したノードはいずれもメモリ上限を変更できません。",
+        "apply": "書き込む",
+        "failedTitle": "失敗したノード",
+        "failedNameWithId": "{{name}}（{{id}}）",
+        "summary": "{{count}} 個のノードに書き込みました",
+        "summaryFailed": "{{count}} 個に書き込み、{{failed}} 個が失敗しました（{{names}}）",
+        "skip": {
+          "tooOld": "バージョンが 2.7.0 未満",
+          "offline": "オフライン",
+          "loginRequired": "未ログイン",
+          "paused": "一時停止中"
+        },
+        "errors": {
+          "unreachable": "このノードに到達できません。",
+          "loginRequired": "先にこのノードへログインしてください。",
+          "unsupported": "このノードのバージョンでは未対応です。"
+        }
       },
       "uninstall": {
         "confirmTitle": "VibeTerm をアンインストール",
