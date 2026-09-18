@@ -107,6 +107,7 @@ function NodeCardView({
           pathname={pathname}
           onChanged={deps.onChanged}
           onDetail={() => shared.setDetailOpen(true)}
+          onMemory={() => shared.setMemoryOpen(true)}
         />
       </div>
 

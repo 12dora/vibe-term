@@ -9,6 +9,7 @@ import { Download, Loader2, ShieldAlert, Square, SquareCheckBig, SquareMinus } f
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NodeDetailDialog } from './node-detail-dialog';
+import { NodeMemoryDialog } from './node-memory-dialog';
 import { RevokeDialog } from './revoke-dialog';
 import { rowBlockedHint } from './row-cells';
 import type {
@@ -60,6 +61,9 @@ export interface NodeRowShared {
   revokeDialog: RevokeController;
   detailOpen: boolean;
   setDetailOpen: (open: boolean) => void;
+  /** 「内存限额」对话框是否打开。 */
+  memoryOpen: boolean;
+  setMemoryOpen: (open: boolean) => void;
   /** 这一行正在远程卸载。 */
   uninstalling: boolean;
   /** 上级链路当前收得下管理写入。 */
@@ -79,6 +83,7 @@ export function useNodeRowShared(
   const { t } = useTranslation();
   const { busy, rename, revoke, revokeDialog } = useNodeRowActions(row, deps);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.uplinkWritable;
   const now = useMinuteClock(!row.online);
@@ -90,6 +95,8 @@ export function useNodeRowShared(
     revokeDialog,
     detailOpen,
     setDetailOpen,
+    memoryOpen,
+    setMemoryOpen,
     uninstalling,
     writable,
     disabledHint: writable ? undefined : rowBlockedHint(t, deps),
@@ -98,7 +105,7 @@ export function useNodeRowShared(
   };
 }
 
-/** 吊销确认框 + 详情框。两套版式都要挂，且同一行只能有一份。 */
+/** 吊销确认框 + 详情框 + 内存限额框。两套版式都要挂，且同一行只能有一份。 */
 export function NodeRowDialogs({
   row,
   shared,
@@ -117,6 +124,8 @@ export function NodeRowDialogs({
           onChanged={deps.onChanged}
         />
       )}
+      {/* 关掉就卸载：下次打开必须重新 GET 目标节点当前的限额，而不是接着看上一次的草稿。 */}
+      {shared.memoryOpen && <NodeMemoryDialog row={row} open onOpenChange={shared.setMemoryOpen} />}
     </>
   );
 }

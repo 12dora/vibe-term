@@ -32,6 +32,7 @@ import {
   toggleAllSelection,
   toggleSelection,
 } from './bulk-actions-menu';
+import { BulkMemoryDialog } from './bulk-memory-dialog';
 import { EnrollmentSection } from './enrollment-section';
 import { NodesSyncGate } from './nodes-sync-gate';
 import { NodesTable } from './nodes-table';
@@ -39,6 +40,7 @@ import { RevokeDialog } from './revoke-dialog';
 import type { NodeSelection, ResolvedMode } from './types';
 import { UninstallDialog } from './uninstall-dialog';
 import { UpgradeConfirmDialog } from './upgrade-confirm-dialog';
+import { useMemoryLimitsBatch } from './use-memory-limits-batch';
 import { useBulkRevoke } from './use-node-row-actions';
 import { useNodeUninstall } from './use-node-uninstall';
 import { useNodeUpgrade } from './use-node-upgrade-controller';
@@ -100,6 +102,8 @@ export function NodesManagement({
   const joinBlockedHint = joinCodesNeedRelayHint(t);
 
   const uninstall = useNodeUninstall({ api, mode, prompt, writable }, refreshAll);
+  // 内存限额是节点本地设置：不经入口的管理 API，也不改成员表，写完无需刷新列表。
+  const memoryLimits = useMemoryLimitsBatch();
   const bulkRevoke = useBulkRevoke({
     api,
     mode,
@@ -187,6 +191,7 @@ export function NodesManagement({
             selfRow={rows.find((row) => row.isSelf) ?? null}
             upgrade={upgrade}
             uninstall={uninstall}
+            memory={memoryLimits}
             revoking={bulkRevoke.busy}
             onRevoke={() => bulkRevoke.revokeRows(selectedRows)}
             onChanged={refreshAll}
@@ -248,6 +253,7 @@ export function NodesManagement({
         </NodesSyncGate>
 
         <UninstallDialog uninstall={uninstall} />
+        <BulkMemoryDialog controller={memoryLimits} />
         <UpgradeConfirmDialog upgrade={upgrade} />
         <RevokeDialog controller={bulkRevoke.revokeDialog} />
       </CardContent>
