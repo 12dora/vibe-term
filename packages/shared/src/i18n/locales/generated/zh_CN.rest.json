@@ -253,7 +253,9 @@
           "highAboveMax": "软限额不能大于硬限额。",
           "loadFailed": "内存限额读取失败：{{message}}",
           "saveFailed": "内存限额保存失败：{{message}}",
-          "saved": "内存限额已保存"
+          "saved": "内存限额已保存",
+          "limitsUnsupported": "限额在这些设备上不会生效：{{devices}}",
+          "limitsUnsupportedHint": "按窗口限额需 Linux + systemd，且 tmux 3.6 及以上。"
         },
         "routeMode": {
           "title": "延迟优化",
@@ -1660,7 +1662,8 @@
         "revoke": "移除",
         "refresh": "刷新",
         "pause": "暂停",
-        "resume": "恢复"
+        "resume": "恢复",
+        "memory": "内存限额"
       },
       "pause": {
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
@@ -1747,7 +1750,36 @@
         "pause": "暂停",
         "resume": "恢复",
         "pauseNone": "所选节点均不能暂停。",
-        "resumeNone": "所选节点均不能恢复。"
+        "resumeNone": "所选节点均不能恢复。",
+        "memory": "内存限额"
+      },
+      "memory": {
+        "target": "目标节点：{{name}}",
+        "unavailable": "该节点不能改内存限额（{{reason}}）",
+        "busy": "正在写入内存限额，请稍候。",
+        "selectionNone": "所选节点均不能改内存限额。",
+        "bulkTitle": "批量设置内存限额",
+        "bulkDescription": "把同一份限额写入所选节点，不读取各自的当前值。",
+        "bulkEffectHint": "写入的只是设置；限额是否生效取决于宿主（需 Linux + systemd，tmux 3.6 及以上）。",
+        "targets": "将写入（{{count}}）",
+        "skipped": "跳过（{{count}}）",
+        "noTargets": "所选节点均不能改内存限额。",
+        "apply": "写入",
+        "failedTitle": "写入失败的节点",
+        "failedNameWithId": "{{name}}（{{id}}）",
+        "summary": "已写入 {{count}} 个节点",
+        "summaryFailed": "已写入 {{count}} 个，{{failed}} 个失败（{{names}}）",
+        "skip": {
+          "tooOld": "版本低于 2.7.0",
+          "offline": "离线",
+          "loginRequired": "未登录",
+          "paused": "已暂停"
+        },
+        "errors": {
+          "unreachable": "该节点当前不可达。",
+          "loginRequired": "须先登录该节点。",
+          "unsupported": "该节点版本不支持。"
+        }
       },
       "uninstall": {
         "confirmTitle": "卸载 VibeTerm",

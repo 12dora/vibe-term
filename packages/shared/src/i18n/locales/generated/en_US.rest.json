@@ -253,7 +253,9 @@
           "highAboveMax": "The soft limit must not exceed the hard limit.",
           "loadFailed": "Failed to load memory limits: {{message}}",
           "saveFailed": "Failed to save memory limits: {{message}}",
-          "saved": "Memory limits saved"
+          "saved": "Memory limits saved",
+          "limitsUnsupported": "Memory limits will not take effect on these devices: {{devices}}",
+          "limitsUnsupportedHint": "Per-window limits need Linux with systemd and tmux 3.6 or newer."
         },
         "routeMode": {
           "title": "Latency optimisation",
@@ -1660,7 +1662,8 @@
         "revoke": "Remove",
         "refresh": "Refresh",
         "pause": "Pause",
-        "resume": "Resume"
+        "resume": "Resume",
+        "memory": "Memory Limits"
       },
       "pause": {
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
@@ -1747,7 +1750,36 @@
         "pause": "Pause",
         "resume": "Resume",
         "pauseNone": "None of the selected nodes can be paused.",
-        "resumeNone": "None of the selected nodes can be resumed."
+        "resumeNone": "None of the selected nodes can be resumed.",
+        "memory": "Memory Limits"
+      },
+      "memory": {
+        "target": "Target node: {{name}}",
+        "unavailable": "Memory limits cannot be changed on this node ({{reason}})",
+        "busy": "Writing memory limits. Wait for it to finish.",
+        "selectionNone": "None of the selected nodes accept memory limits.",
+        "bulkTitle": "Set Memory Limits",
+        "bulkDescription": "Writes the same limits to the selected nodes; their current values are not read.",
+        "bulkEffectHint": "This only writes the setting; whether the limits take effect depends on the host (Linux with systemd, tmux 3.6 or newer).",
+        "targets": "Will be written ({{count}})",
+        "skipped": "Skipped ({{count}})",
+        "noTargets": "None of the selected nodes accept memory limits.",
+        "apply": "Write",
+        "failedTitle": "Nodes that failed",
+        "failedNameWithId": "{{name}} ({{id}})",
+        "summary": "Written to {{count}} node(s)",
+        "summaryFailed": "{{count}} written, {{failed}} failed ({{names}})",
+        "skip": {
+          "tooOld": "Version below 2.7.0",
+          "offline": "Offline",
+          "loginRequired": "Not signed in",
+          "paused": "Paused"
+        },
+        "errors": {
+          "unreachable": "This node is unreachable.",
+          "loginRequired": "Sign in to this node first.",
+          "unsupported": "Not supported by this node's version."
+        }
       },
       "uninstall": {
         "confirmTitle": "Uninstall VibeTerm",
