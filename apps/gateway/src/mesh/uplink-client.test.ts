@@ -31,7 +31,9 @@ describe('classifyUplinkConnectError', () => {
       )
     ).toBe('refused');
     expect(classifyUplinkConnectError(new Error('connect-timeout'))).toBe('timeout');
-    expect(classifyUplinkConnectError(new Error('auth-timeout'))).toBe('timeout');
+    expect(classifyUplinkConnectError(new Error('auth-timeout'))).toBe('auth-timeout');
+    expect(classifyUplinkConnectError(new Error('dns-failed'))).toBe('dns');
+    expect(classifyUplinkConnectError(new Error('tls-failed'))).toBe('tls');
     expect(classifyUplinkConnectError(new Error('unable to verify the first certificate'))).toBe(
       'tls'
     );

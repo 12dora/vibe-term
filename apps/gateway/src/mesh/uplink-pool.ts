@@ -20,6 +20,8 @@ import {
   UPLINK_BACKOFF_MIN_MS,
   type UplinkClientOptions,
   type UplinkWsFactory,
+  isUplinkConnectCoolable,
+  uplinkCandidateCooldownMs,
 } from './uplink-constants';
 import { isUplinkPathRerace, sleepAfterUplinkSession } from './uplink-path-sampler';
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
@@ -116,12 +118,112 @@ export type UplinkPoolOptions = {
   probeTimeoutMs?: number;
   relayDrainRecheckMs?: number;
   relayDrainTimeoutMs?: number;
+  dialCoordinator?: UplinkDialCoordinator;
 };
 
 export function jitteredIntervalMs(baseMs: number, jitter = UPLINK_POOL_PROBE_JITTER): number {
   const ratio = Math.min(Math.max(jitter, 0), 1);
   const delta = baseMs * ratio;
   return Math.max(1, Math.floor(baseMs - delta + Math.random() * (2 * delta)));
+}
+
+/** 池与 secondary 共享：同一 URL 同时只允许一条在途拨号，在线 secondary 可被 promote。 */
+export class UplinkDialCoordinator {
+  private readonly inflight = new Map<string, object>();
+  private readonly standbys = new Map<
+    string,
+    { client: PooledUplink; yieldClient: () => void; owner: object }
+  >();
+
+  tryClaim(url: string, owner: object): boolean {
+    const key = normalizeUplinkEndpointUrl(url);
+    const cur = this.inflight.get(key);
+    if (cur && cur !== owner) return false;
+    this.inflight.set(key, owner);
+    return true;
+  }
+
+  release(url: string, owner: object): void {
+    const key = normalizeUplinkEndpointUrl(url);
+    if (this.inflight.get(key) === owner) this.inflight.delete(key);
+  }
+
+  claimedBy(url: string): object | null {
+    return this.inflight.get(normalizeUplinkEndpointUrl(url)) ?? null;
+  }
+
+  offerStandby(url: string, client: PooledUplink, yieldClient: () => void, owner: object): void {
+    this.standbys.set(normalizeUplinkEndpointUrl(url), { client, yieldClient, owner });
+  }
+
+  dropStandby(url: string, client: PooledUplink): void {
+    const key = normalizeUplinkEndpointUrl(url);
+    if (this.standbys.get(key)?.client === client) this.standbys.delete(key);
+  }
+
+  takeOnline(url: string): PooledUplink | null {
+    const key = normalizeUplinkEndpointUrl(url);
+    const row = this.standbys.get(key);
+    if (!row || row.client.state !== 'online') return null;
+    this.standbys.delete(key);
+    this.inflight.delete(key);
+    row.yieldClient();
+    return row.client;
+  }
+
+  dropOwner(owner: object): void {
+    for (const [url, who] of [...this.inflight]) {
+      if (who === owner) this.inflight.delete(url);
+    }
+    for (const [url, row] of [...this.standbys]) {
+      if (row.owner === owner) this.standbys.delete(url);
+    }
+  }
+}
+
+export const defaultUplinkDialCoordinator = new UplinkDialCoordinator();
+
+export function watchPredicate(check: () => boolean, fire: () => void, everyMs = 25): () => void {
+  let stopped = false;
+  const id = setInterval(() => {
+    if (stopped || !check()) return;
+    stopped = true;
+    clearInterval(id);
+    fire();
+  }, everyMs);
+  return () => {
+    stopped = true;
+    clearInterval(id);
+  };
+}
+
+export function pooledUplinkIfCapable(client: object): PooledUplink | null {
+  const row = client as Partial<PooledUplink>;
+  if (typeof row.connectWithLink !== 'function' || typeof row.requestCatchUpNow !== 'function') {
+    return null;
+  }
+  return client as PooledUplink;
+}
+
+export function offerPooledStandby(
+  coordinator: UplinkDialCoordinator,
+  url: string,
+  client: object,
+  slot: { yielded: boolean; client: unknown; abort: AbortController },
+  owner: object
+): void {
+  const pooled = pooledUplinkIfCapable(client);
+  if (!pooled) return;
+  coordinator.offerStandby(
+    url,
+    pooled,
+    () => {
+      slot.yielded = true;
+      slot.client = null;
+      slot.abort.abort();
+    },
+    owner
+  );
 }
 
 export class UplinkPool {
@@ -168,6 +270,8 @@ export class UplinkPool {
   >();
   private readonly probeLogAt = new Map<string, number>();
   private wrapSleepAbort: AbortController | null = null;
+  private readonly dialCoordinator: UplinkDialCoordinator;
+  private readonly coolByUrl = new Map<string, { until: number; fails: number }>();
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(uplink: AttachedUplink) => void> = [];
   private readonly detachedListeners: Array<() => void> = [];
@@ -192,6 +296,7 @@ export class UplinkPool {
     this.probeNowDebounceMs = opts.probeNowDebounceMs ?? UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS;
     this.coalescedDebounceMs = this.failbackDebounceMs;
     this.rttProbeIntervalMs = opts.rttProbeIntervalMs ?? UPLINK_POOL_RTT_PROBE_INTERVAL_MS;
+    this.dialCoordinator = opts.dialCoordinator ?? new UplinkDialCoordinator();
     this.relayDrain = new UplinkRelayDrain({
       scheduler: this.scheduler,
       recheckMs: opts.relayDrainRecheckMs,
@@ -307,6 +412,7 @@ export class UplinkPool {
   }
 
   async stop(): Promise<void> {
+    this.dialCoordinator.dropOwner(this);
     this.stopAbort?.abort();
     this.stopAbort = null;
     this.stopProbe();
@@ -435,6 +541,20 @@ export class UplinkPool {
   }
 
   private async tryCandidates(cands: UplinkCandidate[], signal: AbortSignal): Promise<boolean> {
+    const { ready, cooling } = this.splitCooledCandidates(cands);
+    if (ready.length === 0 && cooling.length > 0) {
+      const wait = this.msUntilCooldownExpiry(cooling);
+      if (wait > 0 && (await this.sleepWrap(signal, wait)) === 'stop') return false;
+      return this.dialCandidateQueue(cooling, signal);
+    }
+    return this.dialCandidateQueue(ready, signal);
+  }
+
+  private async dialCandidateQueue(
+    cands: UplinkCandidate[],
+    signal: AbortSignal
+  ): Promise<boolean> {
+    if (cands[0]) this.lastDialUrl = cands[0].publicUrl;
     for (let i = 0; i < cands.length; i += 1) {
       const cand = cands[i];
       if (!cand || signal.aborted) return false;
@@ -473,6 +593,8 @@ export class UplinkPool {
     index = 0,
     total = 1
   ): Promise<boolean> {
+    const acquired = this.acquireCandidateClient(cand);
+    if (!acquired) return false;
     const deadline = new AbortController();
     const combined = combineAbortSignals(signal, deadline.signal) ?? deadline.signal;
     const deadlineStarted = this.scheduler.now();
@@ -484,28 +606,21 @@ export class UplinkPool {
       () => {}
     );
     const token = this.beginSwitch();
-    const client = this.spawn(cand);
+    const { client } = acquired;
     this.pending = client;
     this.noteAttempt(cand);
     this.logCandidateEvent(cand, index, 'ws', this.lastErrorOf(cand), 'try', { total });
-    let failures = 0;
     try {
-      while (failures < this.failLimit && !combined.aborted) {
-        try {
-          await this.connectCandidate(client, cand, combined);
-          if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
-          deadline.abort();
-          await this.promote(client, cand, token);
-          await this.rememberSessionEnd(client, signal);
-          return true;
-        } catch (err) {
-          if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
-          failures += 1;
-          this.noteCandidateFailure(cand, err, failures, index, 'ws');
-          if (combined.aborted || failures >= this.failLimit) break;
-        }
-      }
-      return false;
+      const ok = await this.establishAcquiredCandidate(client, cand, {
+        borrowed: acquired.borrowed,
+        combined,
+        token,
+        signal,
+        deadline,
+        index,
+      });
+      if (!ok) this.coolAbandonedCandidate(cand, deadline.signal, signal);
+      return ok;
     } finally {
       deadline.abort();
       await sleeper.catch(() => {});
@@ -515,6 +630,7 @@ export class UplinkPool {
         this.clearLive(client);
       }
       if (this.live !== client) {
+        this.dialCoordinator.release(cand.publicUrl, this);
         try {
           await client.stop();
         } catch {
@@ -535,6 +651,105 @@ export class UplinkPool {
     this.lastConnectError = { reason: msg, at: this.scheduler.now() };
     this.noteFailure(cand, msg);
     this.logCandidateFailed(cand, msg, failures, index, transport);
+  }
+
+  private acquireCandidateClient(
+    cand: UplinkCandidate
+  ): { client: PooledUplink; borrowed: boolean } | null {
+    const taken = this.dialCoordinator.takeOnline(cand.publicUrl);
+    if (taken) {
+      this.dialCoordinator.tryClaim(cand.publicUrl, this);
+      return { client: taken, borrowed: true };
+    }
+    if (!this.dialCoordinator.tryClaim(cand.publicUrl, this)) return null;
+    return { client: this.spawn(cand), borrowed: false };
+  }
+
+  private async establishAcquiredCandidate(
+    client: PooledUplink,
+    cand: UplinkCandidate,
+    ctx: {
+      borrowed: boolean;
+      combined: AbortSignal;
+      token: number;
+      signal: AbortSignal;
+      deadline: AbortController;
+      index: number;
+    }
+  ): Promise<boolean> {
+    if (ctx.borrowed && client.state === 'online') {
+      return this.promoteEstablished(client, cand, ctx);
+    }
+    let failures = 0;
+    while (failures < this.failLimit && !ctx.combined.aborted) {
+      try {
+        await this.connectCandidate(client, cand, ctx.combined);
+        return await this.promoteEstablished(client, cand, ctx);
+      } catch (err) {
+        if (!this.isSwitchCurrent(ctx.token)) return await this.followLiveSession(ctx.signal);
+        failures += 1;
+        this.noteCandidateFailure(cand, err, failures, ctx.index, 'ws');
+        if (ctx.combined.aborted || failures >= this.failLimit) break;
+      }
+    }
+    return false;
+  }
+
+  private async promoteEstablished(
+    client: PooledUplink,
+    cand: UplinkCandidate,
+    ctx: { token: number; signal: AbortSignal; deadline: AbortController }
+  ): Promise<boolean> {
+    if (!this.isSwitchCurrent(ctx.token)) return await this.followLiveSession(ctx.signal);
+    ctx.deadline.abort();
+    await this.promote(client, cand, ctx.token);
+    await this.rememberSessionEnd(client, ctx.signal);
+    return true;
+  }
+
+  private splitCooledCandidates(cands: UplinkCandidate[]): {
+    ready: UplinkCandidate[];
+    cooling: UplinkCandidate[];
+  } {
+    const now = this.scheduler.now();
+    const ready: UplinkCandidate[] = [];
+    const cooling: UplinkCandidate[] = [];
+    for (const cand of cands) {
+      if (this.cooldownUntil(cand.publicUrl) > now) cooling.push(cand);
+      else ready.push(cand);
+    }
+    return { ready, cooling };
+  }
+
+  private msUntilCooldownExpiry(cands: UplinkCandidate[]): number {
+    const now = this.scheduler.now();
+    let until = Number.POSITIVE_INFINITY;
+    for (const cand of cands) {
+      const at = this.cooldownUntil(cand.publicUrl);
+      if (at < until) until = at;
+    }
+    if (!Number.isFinite(until)) return 0;
+    return Math.max(0, until - now);
+  }
+
+  private cooldownUntil(publicUrl: string): number {
+    return this.coolByUrl.get(normalizeUplinkEndpointUrl(publicUrl))?.until ?? 0;
+  }
+
+  private coolAbandonedCandidate(
+    cand: UplinkCandidate,
+    deadline: AbortSignal,
+    parent: AbortSignal
+  ): void {
+    const reason =
+      deadline.aborted && !parent.aborted ? 'connect-timeout' : (this.lastErrorOf(cand) ?? '');
+    if (!isUplinkConnectCoolable(reason)) return;
+    const key = normalizeUplinkEndpointUrl(cand.publicUrl);
+    const fails = (this.coolByUrl.get(key)?.fails ?? 0) + 1;
+    this.coolByUrl.set(key, {
+      until: this.scheduler.now() + uplinkCandidateCooldownMs(fails),
+      fails,
+    });
   }
 
   spawn(cand: UplinkCandidate): PooledUplink {
@@ -911,6 +1126,7 @@ export class UplinkPool {
 
   private noteSuccess(cand: UplinkCandidate): void {
     this.lastConnectError = null;
+    this.coolByUrl.delete(normalizeUplinkEndpointUrl(cand.publicUrl));
     this.patchDiag(cand.publicUrl, { lastError: null, lastErrorAt: null });
   }
 
@@ -973,6 +1189,7 @@ export class UplinkPool {
   /** 网络指纹变了：候选轮次退避按旧网络算的，重置并叫醒等待中的重连（PeerManager 触发）。 */
   resetBackoff(): void {
     this.wrapAttempt = 0;
+    this.coolByUrl.clear();
     this.wakeWrapSleep();
   }
 

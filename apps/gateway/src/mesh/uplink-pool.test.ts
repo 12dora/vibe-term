@@ -14,10 +14,16 @@ import type {
 } from './types';
 import type { UplinkClientOptions } from './uplink-constants';
 import {
+  UPLINK_CANDIDATE_COOLDOWN_MIN_MS,
+  isUplinkConnectCoolable,
+  uplinkCandidateCooldownMs,
+} from './uplink-constants';
+import {
   UPLINK_POOL_AUTH_DEADLINE_MS,
   UPLINK_POOL_FAIL_LIMIT,
   UPLINK_POOL_PROBE_JITTER,
   type UplinkCandidate,
+  UplinkDialCoordinator,
   UplinkPool,
   isRttSwitchWorth,
   redactUrl,
@@ -365,6 +371,17 @@ class FakeUplink {
     return { ok: false as const, error: 'offline' };
   }
 
+  requestCatchUpNow(): void {}
+
+  forceOnline(): void {
+    this.link = {
+      closed: new Promise((resolve) => {
+        this.closeResolve = resolve;
+      }),
+    };
+    this.setState('online');
+  }
+
   private setState(state: UplinkState): void {
     if (this.state === state) return;
     this.state = state;
@@ -409,6 +426,7 @@ describe('UplinkPool', () => {
     relayDrainTimeoutMs?: number;
     versions?: Record<string, string>;
     caPins?: RelayCaPinStore;
+    dialCoordinator?: UplinkDialCoordinator;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -447,6 +465,7 @@ describe('UplinkPool', () => {
       failbackDebounceMs: input.failbackDebounceMs,
       relayDrainRecheckMs: input.relayDrainRecheckMs,
       relayDrainTimeoutMs: input.relayDrainTimeoutMs,
+      dialCoordinator: input.dialCoordinator,
       caPins: input.caPins ?? new RelayCaPinStore(db),
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       onNodeList: input.onNodeList
@@ -1547,6 +1566,89 @@ describe('UplinkPool', () => {
     } finally {
       console.info = originalInfo;
     }
+  });
+
+  test('connect-timeout 后冷却该候选，下一轮先试未冷却的 URL', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: {
+        'https://a.example': { failTimes: 3, error: 'connect-timeout' },
+        'https://b.example': { failTimes: 3, error: 'connect-timeout' },
+      },
+      scheduler,
+    });
+    pool.start();
+    await waitMicro();
+    expect(created.some((row) => row.uplinkUrl === 'https://a.example')).toBe(true);
+    expect(created.some((row) => row.uplinkUrl === 'https://b.example')).toBe(true);
+    const firstA = created.filter((row) => row.uplinkUrl === 'https://a.example').length;
+    expect(created[0]?.connectCalls).toBe(UPLINK_POOL_FAIL_LIMIT);
+    created.length = 0;
+    await scheduler.advance(1_000);
+    await waitMicro();
+    expect(created.filter((row) => row.uplinkUrl === 'https://a.example')).toHaveLength(0);
+    expect(scheduler.sleeps.some((ms) => ms >= UPLINK_CANDIDATE_COOLDOWN_MIN_MS - 1_000)).toBe(
+      true
+    );
+    expect(firstA).toBe(1);
+    expect(pool.attachedUplink()).toBeNull();
+  });
+
+  test('冷却不改变同一轮内 UPLINK_POOL_FAIL_LIMIT 次重试', async () => {
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: { 'https://a.example': { failTimes: 3, error: 'connect-timeout' } },
+    });
+    pool.start();
+    await waitMicro();
+    expect(created[0]?.uplinkUrl).toBe('https://a.example');
+    expect(created[0]?.connectCalls).toBe(UPLINK_POOL_FAIL_LIMIT);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
+  });
+
+  test('在线 standby 被 promote，不再对同一 URL 起新拨号', async () => {
+    const coord = new UplinkDialCoordinator();
+    const { pool, created } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      dialCoordinator: coord,
+      behavior: { 'https://a.example': { hang: true } },
+    });
+    const standby = pool.spawn({
+      uplinkNodeId: null,
+      publicUrl: 'https://a.example',
+      priority: 1,
+    });
+    (standby as unknown as FakeUplink).forceOnline();
+    let yielded = false;
+    coord.offerStandby(
+      'https://a.example',
+      standby,
+      () => {
+        yielded = true;
+      },
+      {}
+    );
+    pool.start();
+    await waitMicro();
+    expect(yielded).toBe(true);
+    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
+    expect(pool.liveClient()).toBe(standby);
+    expect(created.every((row) => row.uplinkUrl !== 'https://a.example' || row === standby)).toBe(
+      true
+    );
+  });
+});
+
+describe('uplink candidate cooldown helpers', () => {
+  test('指数增长夹在 30–60s，只冷却连接类失败', () => {
+    expect(uplinkCandidateCooldownMs(1, () => 0)).toBe(UPLINK_CANDIDATE_COOLDOWN_MIN_MS);
+    expect(uplinkCandidateCooldownMs(2, () => 1)).toBe(60_000);
+    expect(isUplinkConnectCoolable('connect-timeout')).toBe(true);
+    expect(isUplinkConnectCoolable('connect-failed')).toBe(true);
+    expect(isUplinkConnectCoolable('dns-failed')).toBe(true);
+    expect(isUplinkConnectCoolable('auth-rejected')).toBe(false);
+    expect(isUplinkConnectCoolable('aborted')).toBe(false);
   });
 });
 

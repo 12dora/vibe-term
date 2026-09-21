@@ -1,4 +1,8 @@
-import { type LinkSession, WebSocketLink } from '@vibeterm/shared/link';
+import {
+  type LinkSession,
+  WebSocketLink,
+  type WebSocketTransportInput,
+} from '@vibeterm/shared/link';
 import { waitSocketOpen } from '@vibeterm/shared/net';
 import {
   type DialWsFactoryDeps,
@@ -12,8 +16,12 @@ import {
   relayTlsCaForDial,
   resolveRelayDialUrl,
 } from './relay-dial';
-import { type UplinkWsFactory, uplinkWebSocketTls } from './uplink-constants';
-import { closeTransport } from './uplink-reconnect';
+import {
+  UPLINK_AUTH_TIMEOUT_MS,
+  type UplinkWsFactory,
+  uplinkWebSocketTls,
+} from './uplink-constants';
+import { classifyUplinkConnectError, closeTransport } from './uplink-reconnect';
 
 export const RELAY_UPLINK_PATH = '/relay/uplink';
 export const RELAY_HEALTH_PATH = '/api/relay/health';
@@ -65,36 +73,30 @@ export async function probeRelayHealth(
   }
 }
 
-/** 拨号 `/relay/uplink` 并完成 WebSocket 握手；超时统一报 `connect-timeout`。 */
+export type OpenRelayLinkOpts = {
+  timeoutMs: number;
+  authTimeoutMs?: number;
+  createLink?: (ws: WebSocketTransportInput) => LinkSession;
+};
+
+/** 拨号 `/relay/uplink`：连接段与 auth 段分开计时，auth 失败不记成 `connect-timeout`。 */
 export async function openRelayLink(
   wsFactory: UplinkWsFactory,
   relayUrl: string,
-  timeoutMs: number,
   signal: AbortSignal,
-  attach: (link: LinkSession, signal: AbortSignal) => Promise<void>
+  attach: (link: LinkSession, signal: AbortSignal) => Promise<void>,
+  opts: OpenRelayLinkOpts
 ): Promise<void> {
-  const timeout = new AbortController();
-  const timer = setTimeout(() => timeout.abort(new Error('connect-timeout')), timeoutMs);
-  const onParentAbort = () => {
-    if (!timeout.signal.aborted) timeout.abort(signal.reason);
-  };
-  if (signal.aborted) onParentAbort();
-  else signal.addEventListener('abort', onParentAbort, { once: true });
-  try {
-    const ws = await wsFactory(relayUplinkWsUrl(relayUrl), { signal: timeout.signal, timeoutMs });
-    if (timeout.signal.aborted) {
-      closeTransport(ws);
-      throw new Error('connect-timeout');
-    }
-    await waitSocketOpen(ws, timeoutMs, timeout.signal);
-    await attach(new WebSocketLink(ws, { role: 'initiator' }), timeout.signal);
-  } catch (err) {
-    if (timeout.signal.aborted && !signal.aborted) throw new Error('connect-timeout');
-    throw err;
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener('abort', onParentAbort);
-  }
+  const startedAt = Date.now();
+  const authBudget = opts.authTimeoutMs ?? UPLINK_AUTH_TIMEOUT_MS;
+  const ws = await openRelaySocket(
+    wsFactory,
+    relayUrl,
+    remainingMs(opts.timeoutMs, startedAt),
+    signal
+  );
+  const authMs = Math.min(authBudget, remainingMs(opts.timeoutMs + authBudget, startedAt));
+  await attachRelayAuth(ws, authMs, signal, attach, opts.createLink);
 }
 
 export function defaultRelayWsFactory(
@@ -105,4 +107,150 @@ export function defaultRelayWsFactory(
     ...deps,
     identityPath: deps?.identityPath ?? RELAY_HEALTH_PATH,
   });
+}
+
+export function remainingMs(budgetMs: number, startedAt: number, now = Date.now()): number {
+  return Math.max(1, budgetMs - (now - startedAt));
+}
+
+export function remapRelayOpenError(
+  err: unknown,
+  stage: 'connect' | 'auth',
+  stageSignal: AbortSignal,
+  parent: AbortSignal
+): Error {
+  if (parent.aborted) return asError(err, 'aborted');
+  const msg = err instanceof Error ? err.message.trim() : String(err);
+  if (stage === 'auth') return remapAuthStageError(err, msg, stageSignal);
+  if (stageSignal.aborted) return new Error('connect-timeout');
+  return remapConnectStageError(err, msg);
+}
+
+function remapAuthStageError(err: unknown, msg: string, stageSignal: AbortSignal): Error {
+  if (stageSignal.aborted || msg === 'auth-timeout' || msg === 'connect-timeout') {
+    return new Error('auth-timeout');
+  }
+  return asError(err, msg || 'auth-failed');
+}
+
+function remapConnectStageError(err: unknown, msg: string): Error {
+  const code = classifyUplinkConnectError(err);
+  if (code === 'dns') return new Error('dns-failed');
+  if (code === 'tls') return new Error('tls-failed');
+  if (code === 'timeout' || msg === 'connect-timeout') return new Error('connect-timeout');
+  if (msg === 'aborted' || isStableReason(msg)) return asError(err, msg);
+  return new Error('connect-failed');
+}
+
+async function openRelaySocket(
+  wsFactory: UplinkWsFactory,
+  relayUrl: string,
+  budgetMs: number,
+  parent: AbortSignal
+): Promise<WebSocketTransportInput> {
+  const startedAt = Date.now();
+  const stage = bindStageAbort(parent, 'connect-timeout', budgetMs);
+  let ws: WebSocketTransportInput | null = null;
+  try {
+    ws = await wsFactory(relayUplinkWsUrl(relayUrl), {
+      signal: stage.signal,
+      timeoutMs: budgetMs,
+    });
+    if (stage.signal.aborted) {
+      closeTransport(ws);
+      throw new Error('connect-timeout');
+    }
+    await waitRelaySocketOpen(ws, remainingMs(budgetMs, startedAt), stage.signal);
+    return ws;
+  } catch (err) {
+    if (ws) closeTransport(ws);
+    throw remapRelayOpenError(err, 'connect', stage.signal, parent);
+  } finally {
+    stage.dispose();
+  }
+}
+
+async function attachRelayAuth(
+  ws: WebSocketTransportInput,
+  budgetMs: number,
+  parent: AbortSignal,
+  attach: (link: LinkSession, signal: AbortSignal) => Promise<void>,
+  createLink?: (ws: WebSocketTransportInput) => LinkSession
+): Promise<void> {
+  const stage = bindStageAbort(parent, 'auth-timeout', budgetMs);
+  const link = createLink ? createLink(ws) : new WebSocketLink(ws, { role: 'initiator' });
+  try {
+    await runWithAbort(() => attach(link, stage.signal), stage.signal);
+  } catch (err) {
+    throw remapRelayOpenError(err, 'auth', stage.signal, parent);
+  } finally {
+    stage.dispose();
+  }
+}
+
+function waitRelaySocketOpen(
+  ws: WebSocketTransportInput,
+  timeoutMs: number,
+  signal: AbortSignal
+): Promise<void> {
+  if (socketAlreadyOpen(ws)) return Promise.resolve();
+  return waitSocketOpen(ws, timeoutMs, signal);
+}
+
+function socketAlreadyOpen(ws: object): boolean {
+  if (typeof (ws as { onDrain?: unknown }).onDrain === 'function') return true;
+  return (ws as { readyState?: number }).readyState === 1;
+}
+
+function bindStageAbort(
+  parent: AbortSignal,
+  reason: 'connect-timeout' | 'auth-timeout',
+  budgetMs: number
+): { signal: AbortSignal; dispose: () => void } {
+  const stage = new AbortController();
+  const timer = setTimeout(() => stage.abort(new Error(reason)), budgetMs);
+  const onParent = () => {
+    if (!stage.signal.aborted) stage.abort(parent.reason);
+  };
+  if (parent.aborted) onParent();
+  else parent.addEventListener('abort', onParent, { once: true });
+  return {
+    signal: stage.signal,
+    dispose: () => {
+      clearTimeout(timer);
+      parent.removeEventListener('abort', onParent);
+    },
+  };
+}
+
+function asError(err: unknown, fallback: string): Error {
+  if (err instanceof Error && err.message) return err;
+  return new Error(fallback);
+}
+
+function runWithAbort<T>(op: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      reject(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+    };
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    void op().then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
+function isStableReason(msg: string): boolean {
+  return msg.length <= 64 && /^[a-z0-9_.:-]+$/i.test(msg);
 }

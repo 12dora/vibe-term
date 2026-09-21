@@ -1,8 +1,15 @@
 // 中继健康探测的拨号改写：`relay,node` 机器探自己的中继时必须走回环。
 
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { LinkSession } from '@vibeterm/shared/link';
 import type { RelayDialContext } from './relay-dial';
-import { defaultRelayWsFactory, probeRelayHealth, relayUplinkWsUrl } from './relay-uplink-http';
+import {
+  defaultRelayWsFactory,
+  openRelayLink,
+  probeRelayHealth,
+  relayUplinkWsUrl,
+  remainingMs,
+} from './relay-uplink-http';
 
 const SELF: RelayDialContext = {
   roles: { relay: true },
@@ -155,6 +162,113 @@ describe('probeRelayHealth dns fallback', () => {
       })
     ).toBe(false);
     expect(Date.now() - started).toBeLessThan(500);
+  });
+});
+
+describe('openRelayLink staged timeouts', () => {
+  const dummyLink = {} as LinkSession;
+  const dummyAttach = async () => {};
+
+  function open(
+    factory: () => FakeSocket | Promise<FakeSocket>,
+    attach: (link: LinkSession, signal: AbortSignal) => Promise<void>,
+    extra?: { timeoutMs?: number; authTimeoutMs?: number }
+  ) {
+    return openRelayLink(
+      factory as never,
+      'https://relay.example',
+      new AbortController().signal,
+      attach,
+      {
+        timeoutMs: extra?.timeoutMs ?? 200,
+        ...(extra?.authTimeoutMs != null ? { authTimeoutMs: extra.authTimeoutMs } : {}),
+        createLink: () => dummyLink,
+      }
+    );
+  }
+
+  test('WS 已开但 attach 挂起记 auth-timeout，不记 connect-timeout', async () => {
+    const ws = new FakeSocket();
+    ws.readyState = 1;
+    const started = Date.now();
+    await expect(
+      open(
+        async () => ws,
+        () => new Promise(() => undefined),
+        { authTimeoutMs: 40 }
+      )
+    ).rejects.toThrow('auth-timeout');
+    expect(Date.now() - started).toBeLessThan(180);
+  });
+
+  test('连接段挂起记 connect-timeout，不消耗 auth 预算', async () => {
+    const started = Date.now();
+    await expect(
+      open(async () => new FakeSocket(), dummyAttach, { timeoutMs: 50, authTimeoutMs: 400 })
+    ).rejects.toThrow('connect-timeout');
+    expect(Date.now() - started).toBeLessThan(250);
+  });
+
+  test('DNS 失败记 dns-failed', async () => {
+    await expect(
+      open(async () => {
+        throw Object.assign(new Error('getaddrinfo ENOTFOUND'), { code: 'ENOTFOUND' });
+      }, dummyAttach)
+    ).rejects.toThrow('dns-failed');
+  });
+
+  test('TLS 失败记 tls-failed', async () => {
+    await expect(
+      open(async () => {
+        throw new Error('unable to verify the first certificate');
+      }, dummyAttach)
+    ).rejects.toThrow('tls-failed');
+  });
+
+  test('auth 失败不 remap 成 connect-timeout', async () => {
+    const ws = new FakeSocket();
+    ws.readyState = 1;
+    await expect(
+      open(
+        async () => ws,
+        async () => {
+          throw new Error('auth-rejected');
+        }
+      )
+    ).rejects.toThrow('auth-rejected');
+  });
+
+  test('waitSocketOpen 只用连接段剩余预算', async () => {
+    const started = Date.now();
+    await expect(
+      open(
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return new FakeSocket();
+        },
+        dummyAttach,
+        { timeoutMs: 70, authTimeoutMs: 400 }
+      )
+    ).rejects.toThrow('connect-timeout');
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  test('remainingMs 用剩余预算而不是每段满额', () => {
+    expect(remainingMs(20_000, 1_000, 6_000)).toBe(15_000);
+    expect(remainingMs(10_000, 1_000, 20_000)).toBe(1);
+  });
+
+  test('已 open 的 socket 跳过二次 wait 并进入 attach', async () => {
+    const ws = new FakeSocket();
+    ws.readyState = 1;
+    let attached = 0;
+    await open(
+      async () => ws,
+      async () => {
+        attached += 1;
+      }
+    );
+    expect(attached).toBe(1);
   });
 });
 

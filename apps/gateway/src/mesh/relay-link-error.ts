@@ -16,6 +16,8 @@ const RULES: Array<[RegExp, RelayLinkErrorCode]> = [
   ],
   [/\b(?:missed-pong|ping-failed|heartbeat[-_]timeout|heartbeat[-_]lost)\b/, 'heartbeat-lost'],
   [/\bauth-timeout\b/, 'auth-timeout'],
+  [/\bdns-failed\b/, 'dns'],
+  [/\btls-failed\b/, 'tls'],
   [
     /\b(?:connect-timeout|etimedout|timed out)\b|(?:^|[\s:_-])timeout(?:$|[\s:_-])/,
     'connect-timeout',

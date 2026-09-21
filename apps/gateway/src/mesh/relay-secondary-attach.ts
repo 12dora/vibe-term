@@ -12,6 +12,12 @@ import {
   UPLINK_CONNECT_LOG_INTERVAL_MS,
 } from './uplink-client';
 import { isUplinkPathRerace } from './uplink-path-sampler';
+import {
+  UplinkDialCoordinator,
+  offerPooledStandby,
+  pooledUplinkIfCapable,
+  watchPredicate,
+} from './uplink-pool';
 import { normalizeUplinkEndpointUrl, redactUrl, sameUplinkUrl } from './uplink-pool-url';
 import type { UplinkCtlMessage } from './uplink-protocol';
 
@@ -53,6 +59,7 @@ export type RelaySecondaryAttachOptions = {
   onRelayStream?: InboundRelayHandler;
   onExclusiveOffline?: (peerIds: string[]) => void;
   staleMs?: number;
+  dialCoordinator?: UplinkDialCoordinator;
 };
 
 type Slot = {
@@ -62,6 +69,7 @@ type Slot = {
   client: SecondaryUplink | null;
   loop: Promise<void>;
   attempt: number;
+  yielded: boolean;
 };
 
 /**
@@ -70,6 +78,7 @@ type Slot = {
  */
 export class RelaySecondaryAttach implements RelayStreamOpener {
   private readonly opts: RelaySecondaryAttachOptions;
+  private readonly dialCoordinator: UplinkDialCoordinator;
   private readonly slots = new Map<string, Slot>();
   private readonly decays = new Map<string, { clear: () => void }>();
   private readonly failLogAt = new Map<string, number>();
@@ -80,6 +89,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
 
   constructor(opts: RelaySecondaryAttachOptions) {
     this.opts = opts;
+    this.dialCoordinator = opts.dialCoordinator ?? new UplinkDialCoordinator();
   }
 
   start(): void {
@@ -90,6 +100,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.dialCoordinator.dropOwner(this);
     await this.queueReconcile();
     const pending = [...this.slots.keys()].map((url) => this.drop(url, 'stop'));
     await Promise.all(pending);
@@ -154,10 +165,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     return next;
   }
 
-  /**
-   * 只把池的当前目标（已挂上或正在拨的 URL）从 secondary 里排除，避免双连。
-   * `primary` 为空且仍在跑（池刚 start / 尚未选出候选）时保住已有 secondary，不要全拆。
-   */
+  /** 排除 primary / 池正在拨的 URL；primary 为空时保住未冲突的已有 secondary。 */
   private wantedSecondaries(
     rows: readonly RelaySecondaryRow[],
     primary: string | null
@@ -165,12 +173,14 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     const wanted = new Map<string, string>();
     if (!primary) {
       if (this.running) {
-        for (const [url, slot] of this.slots) wanted.set(url, slot.credentialKey);
+        for (const [url, slot] of this.slots) {
+          if (!this.blockedByPool(url)) wanted.set(url, slot.credentialKey);
+        }
       }
       return wanted;
     }
     for (const row of rows) {
-      if (sameUplinkUrl(row.url, primary)) continue;
+      if (sameUplinkUrl(row.url, primary) || this.blockedByPool(row.url)) continue;
       wanted.set(normalizeUplinkEndpointUrl(row.url), row.credentialKey);
     }
     return wanted;
@@ -202,6 +212,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   private spawnLoop(url: string, credentialKey: string): void {
     const key = normalizeUplinkEndpointUrl(url);
     if (this.slots.has(key)) return;
+    if (!this.dialCoordinator.tryClaim(key, this)) return;
     const abort = new AbortController();
     const slot: Slot = {
       url: key,
@@ -210,6 +221,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
       client: null,
       loop: Promise.resolve(),
       attempt: 0,
+      yielded: false,
     };
     this.slots.set(key, slot);
     slot.loop = this.runLoop(slot);
@@ -231,6 +243,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     this.clearDecay(slot.url);
     this.clearFailLogs(slot.url);
     this.slots.delete(slot.url);
+    if (!slot.yielded) this.dialCoordinator.release(slot.url, this);
     if (this.running) void this.queueReconcile();
   }
 
@@ -244,33 +257,55 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     slot.client = client;
     this.bindRelayStream(slot, client);
     const unsub = client.onStateChange((state) => this.onClientState(slot, client, state));
+    const stopWatch = watchPredicate(
+      () => !this.stillWanted(slot.url),
+      () => slot.abort.abort()
+    );
     let closeReason = '';
     let retryDelay: number | null = null;
     try {
       client.start();
       await client.attemptConnect(slot.abort.signal);
-      if (slot.abort.signal.aborted) return true;
+      if (slot.yielded || slot.abort.signal.aborted) return true;
       slot.attempt = 0;
       this.clearDecay(slot.url);
       this.opts.presence.setConnected(slot.url, true, client.rttMs, this.opts.scheduler.now());
       this.logSecondaryOnline(slot.url);
       await client.waitUntilClosed(slot.abort.signal);
     } catch (err) {
-      retryDelay = this.noteSecondaryConnectFail(slot, client, err);
+      if (!slot.yielded) retryDelay = this.noteSecondaryConnectFail(slot, client, err);
     } finally {
+      stopWatch();
       unsub();
       closeReason = client.lastConnectError?.reason ?? closeReason;
-      const now = this.opts.scheduler.now();
-      this.opts.presence.markDisconnected(slot.url, now, this.staleMs());
-      slot.client = null;
-      try {
-        await client.stop();
-      } catch {
-        /* 停失败不影响下一轮 */
-      }
+      await this.finishSlotAttempt(slot, client);
     }
-    if (!this.running || slot.abort.signal.aborted || !this.stillWanted(slot.url)) return true;
+    if (slot.yielded || !this.running || slot.abort.signal.aborted || !this.stillWanted(slot.url)) {
+      return true;
+    }
     return this.sleepBeforeRetry(slot, closeReason, retryDelay);
+  }
+
+  private async finishSlotAttempt(slot: Slot, client: SecondaryUplink): Promise<void> {
+    const pooled = pooledUplinkIfCapable(client);
+    if (pooled) this.dialCoordinator.dropStandby(slot.url, pooled);
+    slot.client = null;
+    if (slot.yielded) return;
+    this.opts.presence.markDisconnected(slot.url, this.opts.scheduler.now(), this.staleMs());
+    try {
+      await client.stop();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private offerIfPooled(slot: Slot, client: SecondaryUplink): void {
+    offerPooledStandby(this.dialCoordinator, slot.url, client, slot, this);
+  }
+
+  private blockedByPool(url: string): boolean {
+    const owner = this.dialCoordinator.claimedBy(url);
+    return owner != null && owner !== this;
   }
 
   private bindRelayStream(slot: Slot, client: SecondaryUplink): void {
@@ -358,6 +393,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     if (state === 'online') {
       this.clearDecay(slot.url);
       this.opts.presence.setConnected(slot.url, true, client.rttMs, now);
+      this.offerIfPooled(slot, client);
     } else if (state === 'offline') {
       this.opts.presence.markDisconnected(slot.url, now, this.staleMs());
     }
@@ -368,6 +404,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     if (!this.running) return false;
     const primary = this.opts.primaryUrl();
     if (primary && sameUplinkUrl(url, primary)) return false;
+    if (this.blockedByPool(url)) return false;
     return this.opts.rows().some((row) => !row.kicked && sameUplinkUrl(row.url, url));
   }
 

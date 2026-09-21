@@ -8,6 +8,7 @@ import {
 } from './relay-secondary-attach';
 import { waitUntil } from './test-support';
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
+import { UplinkDialCoordinator } from './uplink-pool';
 
 const SH = 'https://sh.example';
 const TK = 'https://tk.example';
@@ -207,6 +208,7 @@ function setup(
     onRelayStream?: InboundRelayHandler;
     onSpawn?: (client: FakeSecondary, spawned: FakeSecondary[]) => void;
     primaryUrl?: (livePrimary: string | null) => string | null;
+    dialCoordinator?: UplinkDialCoordinator;
   }
 ) {
   const scheduler = new ParkScheduler();
@@ -232,6 +234,7 @@ function setup(
     },
     staleMs: 50,
     ...(extra?.onRelayStream ? { onRelayStream: extra.onRelayStream } : {}),
+    ...(extra?.dialCoordinator ? { dialCoordinator: extra.dialCoordinator } : {}),
   });
   return { manager, presence, spawned, liveRows, livePrimary, primaryOpens, scheduler };
 }
@@ -619,5 +622,56 @@ describe('RelaySecondaryAttach', () => {
     } finally {
       console.info = info;
     }
+  });
+
+  test('stillWanted 变 false 时立刻 abort 在途 attempt', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH, {
+      onSpawn: (client) => {
+        if (client.uplinkUrl === TK) client.connectGate = gate;
+      },
+    });
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.connects >= 1));
+    livePrimary.current = TK;
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.stopped > 0));
+    expect(spawned.filter((c) => c.uplinkUrl === TK && c.connects > 0)).toHaveLength(1);
+    release();
+    await manager.stop();
+  });
+
+  test('同一 URL 任意时刻最多一条在途连接', async () => {
+    const coord = new UplinkDialCoordinator();
+    const owner = {};
+    expect(coord.tryClaim(SH, owner)).toBe(true);
+    const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], TK, {
+      dialCoordinator: coord,
+    });
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === SH) || spawned.length >= 0);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(0);
+    coord.release(SH, owner);
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === SH && c.state === 'online'));
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(1);
+    await manager.stop();
+  });
+
+  test('primaryUrl 指向本槽时从 wanted 排除，不与池双拨', async () => {
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], TK);
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(1);
+    livePrimary.current = SH;
+    await waitUntil(() => manager.client(SH) == null);
+    expect(spawned.filter((c) => c.uplinkUrl === SH && c.state === 'online')).toHaveLength(0);
+    await manager.stop();
   });
 });
