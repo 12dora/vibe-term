@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
-import { encodeBase64url, generateEd25519KeyPair } from '@vibeterm/shared/auth';
+import { decodeBase64url, encodeBase64url, generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import { buildContext } from '../core/context';
 import { AuthError, NetworkError, UsageError } from '../core/errors';
 import type { FetchLike } from '../core/http';
@@ -17,6 +17,7 @@ const NODE_A = 'a'.repeat(32);
 const NODE_HOME = 'b'.repeat(32);
 const NODE_OFFLINE = 'c'.repeat(32);
 const NODE_STUCK = 'd'.repeat(32);
+const NODE_BOOM = 'f'.repeat(32);
 const dirs: string[] = [];
 
 afterEach(async () => {
@@ -474,7 +475,8 @@ describe('fan-out failures', () => {
     expect(await login.run(ctx, [])).toBe(5);
     expect(gateway.issued.has('self')).toBe(true);
     expect(stderr.text()).not.toContain('logged in to 1 nodes');
-    expect(stderr.text()).toContain('unreachable');
+    expect(stderr.text()).toContain('skipped oracle: unreachable');
+    expect(stderr.text()).not.toContain(`node ${NODE_OFFLINE} (oracle): unreachable`);
   });
 
   test('one successful node uses the singular noun', async () => {
@@ -710,7 +712,8 @@ describe('login progress, timeout and concurrency', () => {
 
     expect(await login.run(ctx, ['--node-timeout', '150'])).toBe(5);
     expect(gateway.issued.has('self')).toBe(true);
-    expect(stderr.text()).toContain('timeout');
+    expect(stderr.text()).toContain('skipped stuck: timeout');
+    expect(stderr.text()).not.toContain(`node ${NODE_STUCK} (stuck): timeout`);
     expect(stderr.text()).not.toContain('logged in to 1 node, skipped');
   });
 
@@ -765,5 +768,115 @@ describe('login progress, timeout and concurrency', () => {
     expect(stderr.text()).toContain('logging in to office ...');
     expect(stderr.text()).toContain('logging in to home ...');
     expect(stderr.text()).toContain('two-step verification');
+  });
+
+  test('usage says login ignores global --timeout', () => {
+    expect(login.usage).toContain('ignore the global `--timeout`');
+    expect(login.usage).toContain('--node-timeout');
+  });
+
+  test('entry timeout names --node-timeout in the hint', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({ user });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (String(url).includes('/api/auth/challenge') && !String(url).includes('/n/')) {
+        return hangUntilAbort(init?.signal);
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx } = await testContext(gateway, { fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const error = (await login
+      .run(ctx, ['--node-timeout', '80'])
+      .catch((err) => err)) as NetworkError;
+    expect(error).toBeInstanceOf(NetworkError);
+    expect(error.exitCode).toBe(5);
+    expect(error.hint).toContain('--node-timeout');
+  });
+
+  test('a 500 on the second node does not zeroize keys or abort the table', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_BOOM]: 'boom', [NODE_HOME]: 'home' },
+    });
+    let inFlight = 0;
+    let boomFailed = false;
+    let homeChallengeAfterBoom = false;
+    const fetchImpl: FetchLike = async (url, init) => {
+      inFlight += 1;
+      try {
+        const nodeId = nodeIdFromUrl(String(url));
+        if (nodeId === NODE_BOOM && String(url).includes('/api/auth/challenge')) {
+          boomFailed = true;
+          return new Response(JSON.stringify({ error: 'boom' }), { status: 500 });
+        }
+        // 拖住 home 的 challenge，让 boom 的抛错窗口盖过 signLogin 之前。
+        if (nodeId === NODE_HOME && String(url).includes('/api/auth/challenge')) {
+          await sleepOrAbort(80, init?.signal);
+          homeChallengeAfterBoom = boomFailed;
+        }
+        return gateway.fetch(url, init);
+      } finally {
+        inFlight -= 1;
+      }
+    };
+    const { ctx, stdout, stderr } = await testContext(gateway, { fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const code = await login.run(ctx, ['--concurrency', '2']);
+    const out = stdout.text();
+    const homeLogin = gateway.loginBodies.find((entry) => entry.nodeId === NODE_HOME);
+    const sig = decodeBase64url(String(homeLogin?.body.sig ?? ''));
+
+    expect(code).toBe(1);
+    expect(inFlight).toBe(0);
+    expect(homeChallengeAfterBoom).toBe(true);
+    expect(gateway.issued.has('self')).toBe(true);
+    expect(gateway.issued.has(NODE_A)).toBe(true);
+    expect(gateway.issued.has(NODE_HOME)).toBe(true);
+    expect(gateway.issued.has(NODE_BOOM)).toBe(false);
+    expect(sig.some((byte) => byte !== 0)).toBe(true);
+    expect(out).toContain('NODE');
+    expect(out).toContain('STATUS');
+    expect(out).toContain('HTTP_500');
+    expect(out).toContain(NODE_A);
+    expect(out).toContain(NODE_HOME);
+    expect(out).toContain(NODE_BOOM);
+    expect(stderr.text()).toContain('login to boom failed: HTTP_500');
+    expect(stderr.text()).toContain('logged in to home: ok');
+  });
+
+  test('HTTP_500 mixed with an auth rejection exits 1 and still prints the table', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_BOOM]: 'boom' },
+      forceLoginErrorFor: { [NODE_A]: 'INVALID_CREDENTIALS' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (nodeIdFromUrl(String(url)) === NODE_BOOM && String(url).includes('/api/auth/challenge')) {
+        return new Response(JSON.stringify({ error: 'boom' }), { status: 500 });
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stdout, stderr } = await testContext(gateway, { json: true, fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(1);
+    const payload = JSON.parse(stdout.text()) as {
+      nodes: Array<{ node: string; ok: boolean; code?: string }>;
+    };
+    expect(payload.nodes.find((row) => row.node === NODE_A)).toMatchObject({
+      ok: false,
+      code: 'INVALID_CREDENTIALS',
+    });
+    expect(payload.nodes.find((row) => row.node === NODE_BOOM)).toMatchObject({
+      ok: false,
+      code: 'HTTP_500',
+    });
+    expect(stderr.text()).toContain('invalid username or password');
+    expect(stderr.text()).toContain('HTTP_500');
   });
 });

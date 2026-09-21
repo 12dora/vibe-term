@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LOGIN_TIMEOUT } from './auth';
-import { UsageError } from './errors';
+import { CliError, UsageError } from './errors';
 import {
   emitLoginDone,
   emitLoginStart,
@@ -9,6 +9,7 @@ import {
   mapBounded,
   networkSkipLabel,
   requirePositiveInt,
+  runFanoutTarget,
   takeTotpForRetry,
   totpRetryIndices,
 } from './login-fanout';
@@ -54,6 +55,37 @@ describe('login fan-out helpers', () => {
     expect(requirePositiveInt('node-timeout', 1500, 25_000)).toBe(1500);
     expect(() => requirePositiveInt('concurrency', 0, 4)).toThrow(UsageError);
     expect(() => requirePositiveInt('node-timeout', 1.5, 25_000)).toThrow(UsageError);
+  });
+
+  test('runFanoutTarget never rejects, so mapBounded still drains remaining work', async () => {
+    const lines: string[] = [];
+    const out = { warn: (text: string) => lines.push(text) };
+    const attempted: string[] = [];
+    const items = [
+      { nodeId: '1'.repeat(32), name: 'office', publicKey: null },
+      { nodeId: '2'.repeat(32), name: 'boom', publicKey: null },
+      { nodeId: '3'.repeat(32), name: 'home', publicKey: null },
+    ];
+    const results = await mapBounded(items, 2, (target) =>
+      runFanoutTarget({
+        out,
+        target,
+        attempt: async () => {
+          attempted.push(target.name);
+          if (target.name === 'boom') {
+            throw new CliError('/api/auth/challenge → HTTP 500 {"error":"boom"}', 1);
+          }
+          await Bun.sleep(15);
+          return { node: target.nodeId, name: target.name, ok: true };
+        },
+        emitDone: true,
+      })
+    );
+    expect(results.map((row) => row.ok)).toEqual([true, false, true]);
+    expect(results[1]?.code).toBe('HTTP_500');
+    expect(attempted.sort()).toEqual(['boom', 'home', 'office']);
+    expect(lines).toContain('login to boom failed: HTTP_500');
+    expect(lines).toContain('logged in to home: ok');
   });
 
   test('mapBounded preserves input order while overlapping slow work', async () => {

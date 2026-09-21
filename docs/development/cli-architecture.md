@@ -23,7 +23,7 @@
 4. 两步验证由 TOTP 满足（`--totp` / `VIBETERM_TOTP` / TTY 提示）。服务端 `/api/auth/mode.secondFactorPolicy` 为 `either` 时，一个有效 TOTP 码即可通过通行密钥这一关；为 `passkey`（账号没开 TOTP、但本 origin 注册了通行密钥）时 CLI 做不了断言，退出码 3 并说明补救办法。CLI 不实现 WebAuthn。
    `k_totp`（TOTP 密文的解密钥）在签完 delegation、清零种子**之前无条件派生**：旧版本入口的 `/api/auth/mode` 不下发 `totpEnabled` / `secondFactorPolicy`，要等它回 `TOTP_REQUIRED` 才知道要交码，那时种子已经没了。所以只要用户给了码就一定带得上，不会出现「反复重试直到撞限流」。
 5. 登录 entry 之后照浏览器的 `verifySelfPublicKey` 再核一道：challenge 里 entry 当场出示的 `nodePk`，必须与 `/api/mesh/nodes` 里它自己那行的 `publicKey` 逐字节一致。对不上就地删掉刚拿到的会话并以 `NODE_PK_MISMATCH`（退出码 3）中止——入口可能被掉包或配置错乱。名册里没有自己那行（standalone / 旧网关 / 成员表未同步）时跳过。
-6. fan-out 里某台 node 失败，会像 entry 一样给出完整解释（`PASSKEY_REQUIRED` 也不例外），并且**绝不重发**——重发只会再被拒一次、多记一次失败。失败全是鉴权类时退出码 3，混了别的原因才退 1。离线节点（HTTP 503 `NODE_UNREACHABLE` 或 `NetworkError`）不算拒绝：打 `skipped <node>: unreachable` 并继续；entry 登录成功且其余失败都是不可达时退出码 0，并汇总 `logged in to N nodes, skipped M unreachable`。
+6. fan-out 里某台 node 失败，会像 entry 一样给出完整解释（`PASSKEY_REQUIRED` 也不例外），并且**绝不重发**——重发只会再被拒一次、多记一次失败。失败全是鉴权类时退出码 3；夹杂非鉴权 HTTP 错误（challenge/login 的 5xx / 404 / 非会话 403，结果码 `HTTP_5xx`）时退出码 1。fan-out worker **永不抛**：这类错误收成结果行，结果表照常打印，避免 `Promise.all` 提前拒绝、在其余节点仍在途时把会话私钥 `destroy()` 清零。离线节点（HTTP 503 `NODE_UNREACHABLE`、`NetworkError` 或 per-node 墙上时钟 `TIMEOUT`）不算拒绝：打 `skipped <node>: unreachable|timeout` 并继续；entry 登录成功且其余失败都是不可达/超时时退出码 0，并汇总 `logged in to N nodes, skipped M unreachable, N timeout`。`--node` 指名的那台不可达或超时退出码 5。entry 先串行登录，其余节点有界并发（`--concurrency`，缺省 4）；每台截止只看 `--node-timeout`（缺省 25000 ms），**不受**全局 `--timeout` 约束。entry 超时抛 `NetworkError`（退出码 5）并提示可调 `--node-timeout`。
 
 ## 目录与模块
 
@@ -48,6 +48,7 @@ packages/cli/src/
     session-store.ts     session.json（0600）
     http.ts              cookie 罐、Origin、会话续期、JSON/NDJSON/字节、错误翻译
     auth.ts              登录流程（浏览器版去掉 WebAuthn）
+    login-fanout.ts      有界并发登录、per-node 超时、非登录码收成结果行、结果表
     account-security.ts  改密 / TOTP / 删 passkey 的 key-log 签名
     settings-body.ts     LLM models/default/search、tunnel Access 旗标
     settings-tls-body.ts TLS PUT body（对齐 GUI tls-form）
