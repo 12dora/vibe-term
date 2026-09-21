@@ -61,3 +61,33 @@ export function earlyTrackResult(
   if (intercept.action === 'reject') close(intercept.reason);
   return { result: prev?.session ?? null };
 }
+
+export function bestRetiringPeer(
+  rows: Iterable<LivePeer>,
+  excluded?: LivePeer | null
+): LivePeer | null {
+  let best: LivePeer | null = null;
+  for (const row of rows) {
+    if (row === excluded || row.finishRetired) continue;
+    if (!best || comparePeerTransport(row.transport, best.transport) > 0) best = row;
+  }
+  return best;
+}
+
+/** 升为 live 时清 RTT，按「尚未测到」处理，避免沿用 retiring 窗口里的旧样本。 */
+export function preparePromotedPeer(best: LivePeer): void {
+  best.retiring = false;
+  best.retireReason = 'replaced';
+  best.retiredAt = 0;
+  best.retireTimer?.clear();
+  best.retireTimer = null;
+  best.gotQuiesceAck = false;
+  best.gotPeerQuiesce = false;
+  best.rttMs = null;
+  best.pingSentAt = null;
+  best.rttSpikeIgnored = false;
+  best.rttSamples = 0;
+  best.rttMinMs = undefined;
+  best.lastEmittedRttMs = null;
+  best.lastRttEmitAt = 0;
+}

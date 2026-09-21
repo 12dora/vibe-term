@@ -1,21 +1,22 @@
-import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
-import type { LinkSession, LinkStream, StreamChunk } from '@vibeterm/shared/link';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
-import { encodeJsonBytes, isRecord } from './ctl';
+import { encodeJsonBytes } from './ctl';
 import {
   UploadStallError,
-  armDeferredTimeout,
   httpHeadTimeoutMs,
   wrapUploadDestination,
 } from './forwarder-attempt-deadline';
 import { parseOpenPayload } from './peer-protocol';
-import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
+import { attachMeshPeerMarker } from './peer-request-marker';
 import {
   type StreamAuthContext,
   type StreamAuthOk,
   authResponseHeaders,
   authorizeHttpStream,
 } from './stream-auth';
+import { readHttpHead } from './stream-http-head';
+import { headerRecord, stringHeaders, stripForwardedRequestHeaders } from './stream-http-headers';
+import { responseFromHttpHead } from './stream-http-response';
 import { pumpToLink } from './stream-pump';
 import type { DispatchContext, DispatchHttp, HttpStreamOpenPayload } from './types';
 
@@ -23,84 +24,10 @@ export type { StreamAuthContext };
 export { isAuthSkippedPath } from './stream-auth';
 export type { AcceptWsStreamOptions, GatewaySessionClose } from './ws-stream-target';
 export { WS_CLOSE_STREAM_TEARDOWN, acceptWsStream, openWsStream } from './ws-stream-target';
-
-const HTTP_FORWARD_ABORT_LOG_INTERVAL_MS = 1_000;
-let lastHttpForwardAbortLogAt = 0;
-
-const BLOCKED_REQUEST_HEADERS = addHeaderNames(
-  new Set(['cookie', 'authorization', 'host', 'connection', 'upgrade']),
-  VIA_HEADER,
-  MESH_PEER_HEADER
-);
+export { stripForwardedRequestHeaders };
 
 function resolveInboundHttpUrl(path: string, query: string, origin: string): URL {
   return new URL(path + query, origin.endsWith('/') ? origin : `${origin}/`);
-}
-
-export function stripForwardedRequestHeaders(
-  headers?: Record<string, string> | null
-): Record<string, string> {
-  return copyHeaders(
-    headers,
-    (k) => BLOCKED_REQUEST_HEADERS.has(k) || k.startsWith('proxy-') || k.startsWith('x-forwarded-')
-  );
-}
-
-export function stripSetCookieHeaders(headers: Record<string, string>): Record<string, string> {
-  return copyHeaders(headers, (k) => k === 'set-cookie');
-}
-
-function copyHeaders(
-  headers: Record<string, string> | null | undefined,
-  drop: (lower: string) => boolean
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!headers) return out;
-  for (const [key, value] of Object.entries(headers)) {
-    if (!drop(key.toLowerCase())) out[key] = value;
-  }
-  return out;
-}
-
-function parseContentLength(headers: Record<string, string>): number | null {
-  for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() !== 'content-length') continue;
-    const n = Number(value.trim());
-    if (!Number.isInteger(n) || n < 0) return null;
-    return n;
-  }
-  return null;
-}
-
-function logHttpForwardAborted(fields: {
-  status: number;
-  sent: number;
-  expected: number | null;
-  reason: string;
-}): void {
-  const now = Date.now();
-  if (now - lastHttpForwardAbortLogAt < HTTP_FORWARD_ABORT_LOG_INTERVAL_MS) return;
-  lastHttpForwardAbortLogAt = now;
-  console.warn(
-    `[mesh][http] forward aborted status=${fields.status} sent=${fields.sent} expected=${fields.expected ?? '-'} reason=${fields.reason}`
-  );
-}
-
-function headerRecord(headers: Headers): Record<string, string> {
-  const out: Record<string, string> = {};
-  headers.forEach((value, key) => {
-    out[key] = value;
-  });
-  return stripSetCookieHeaders(out);
-}
-
-function stringHeaders(value: unknown): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!isRecord(value)) return out;
-  for (const [key, val] of Object.entries(value)) {
-    if (typeof val === 'string') out[key] = val;
-  }
-  return out;
 }
 
 function str(value: unknown, fallback = ''): string {
@@ -394,79 +321,7 @@ export async function openHttpStream(
     } catch {
       // writer stopped
     }
-    const expectedLength = parseContentLength(head.headers);
-    let sent = 0;
-    let bodyFailed = false;
-    let abortedAfterHead = false;
-    let bodyController: ReadableStreamDefaultController<Uint8Array> | null = null;
-
-    const failBody = (err: unknown) => {
-      const error = err instanceof Error ? err : new Error(String(err ?? 'http body aborted'));
-      if (!bodyFailed) {
-        bodyFailed = true;
-        logHttpForwardAborted({
-          status: head.status,
-          sent,
-          expected: expectedLength,
-          reason: error.message,
-        });
-      }
-      try {
-        bodyController?.error(error);
-      } catch {
-        // already closed/errored
-      }
-    };
-
-    stream.onAbort(() => {
-      abortedAfterHead = true;
-      failBody(new Error('http stream aborted'));
-    });
-    void stream.closed.then((info) => {
-      if (info.reason === 'end') return;
-      console.warn(
-        `[mesh][http] stream closed after head reason=${info.reason} message=${info.message ?? ''} sent=${sent}`
-      );
-    });
-
-    const responseBody = new ReadableStream<Uint8Array>({
-      async start(controller) {
-        bodyController = controller;
-        if (abortedAfterHead || bodyFailed) {
-          failBody(new Error('http stream aborted'));
-          return;
-        }
-        for (const chunk of head.rest) {
-          sent += chunk.byteLength;
-          controller.enqueue(chunk);
-        }
-        const reader = stream.readable.getReader();
-        try {
-          while (true) {
-            if (bodyFailed) return;
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-              sent += value.bytes.byteLength;
-              controller.enqueue(value.bytes);
-            }
-          }
-          if (abortedAfterHead) return failBody(new Error('http stream aborted'));
-          if (expectedLength !== null && sent < expectedLength) {
-            return failBody(
-              new Error(`http body truncated: sent=${sent} expected=${expectedLength}`)
-            );
-          }
-          controller.close();
-        } catch (err) {
-          failBody(err);
-        }
-      },
-      cancel() {
-        rst();
-      },
-    });
-    return new Response(responseBody, { status: head.status, headers: head.headers });
+    return responseFromHttpHead(stream, head, rst);
   } catch (err) {
     if (signal?.aborted) throw signal.reason ?? err;
     if (stall.err) throw stall.err;
@@ -479,66 +334,6 @@ export async function openHttpStream(
     } catch {
       // already released
     }
-  }
-}
-
-async function readHttpHead(
-  stream: LinkStream,
-  opts: { timeoutMs: number; armAfter?: Promise<unknown>; abort?: AbortSignal }
-): Promise<{
-  status: number;
-  headers: Record<string, string>;
-  rest: Uint8Array[];
-}> {
-  const reader = stream.readable.getReader();
-  const rest: Uint8Array[] = [];
-  let rejectTimeout: ((err: Error) => void) | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    rejectTimeout = reject;
-  });
-  const armed = armDeferredTimeout({
-    timeoutMs: opts.timeoutMs,
-    armAfter: opts.armAfter,
-    abort: opts.abort,
-    onTimeout: () => {
-      try {
-        stream.reset('head-timeout');
-      } catch {
-        // already closed
-      }
-      rejectTimeout?.(new Error('http head timeout'));
-    },
-  });
-  try {
-    return await Promise.race([readHttpHeadLoop(reader, rest), timeout]);
-  } finally {
-    armed.dispose();
-    try {
-      reader.releaseLock();
-    } catch {
-      // already released
-    }
-  }
-}
-
-async function readHttpHeadLoop(
-  reader: ReadableStreamDefaultReader<StreamChunk>,
-  rest: Uint8Array[]
-): Promise<{ status: number; headers: Record<string, string>; rest: Uint8Array[] }> {
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done || !value) {
-      throw new Error('http stream closed before response head');
-    }
-    if (value.head) {
-      const parsed = parseOpenPayload(value.bytes) ?? {};
-      return {
-        status: typeof parsed.status === 'number' ? parsed.status : 200,
-        headers: stripSetCookieHeaders(stringHeaders(parsed.headers)),
-        rest,
-      };
-    }
-    rest.push(value.bytes);
   }
 }
 
