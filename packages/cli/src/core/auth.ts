@@ -23,7 +23,7 @@ import {
 } from '@vibeterm/shared/auth';
 import type { Delegation } from '@vibeterm/shared/auth';
 import { AuthError, CliError, NetworkError } from './errors';
-import { type HttpClient, isSessionAuthFailure } from './http';
+import { type HttpClient, type RequestOptions, isSessionAuthFailure } from './http';
 
 /**
  * 服务端的两步验证策略：`either` = 有效 TOTP 或本 origin 的通行密钥断言其一即可。
@@ -149,6 +149,9 @@ export interface LoginNodeResult {
 /** 本地就能判定的失败：会话材料里没有 k_totp，交了码也没用。 */
 export const TOTP_KEY_UNAVAILABLE = 'TOTP_KEY_UNAVAILABLE';
 
+/** per-node 墙上时钟到点；与 `NODE_UNREACHABLE` 同属网络类，不是鉴权拒绝。 */
+export const LOGIN_TIMEOUT = 'TIMEOUT';
+
 interface ChallengeResponse {
   challenge_id: string;
   nonce: string;
@@ -161,8 +164,7 @@ export function isNodeUnreachableError(error: unknown): boolean {
   return error instanceof CliError && error.code === 'NODE_UNREACHABLE';
 }
 
-/** 一次「取 challenge → 签 login → POST /login」。重试必须整套重来：nonce 一次性。 */
-export async function loginToNode(args: {
+export interface LoginToNodeArgs {
   http: HttpClient;
   nodeId: string;
   material: SessionMaterial;
@@ -174,10 +176,40 @@ export async function loginToNode(args: {
    * NetworkError（退出码 5、原 message），不能降级成 AuthError。
    */
   treatUnreachableAsOutcome?: boolean;
-}): Promise<LoginNodeResult> {
+  /** 整次登录的截止信号；abort 后必须传到 fetch，不能只是丢弃结果。 */
+  signal?: AbortSignal;
+  /** 覆盖 HttpClient 默认 per-request 超时，使 `--node-timeout` 真正生效。 */
+  timeoutMs?: number;
+}
+
+function loginHttpOptions(args: LoginToNodeArgs): RequestOptions {
+  // 有调用方 signal 时关掉 HttpClient 自己那层 AbortSignal.timeout，避免两个同deadline
+  // 的 timer 抢跑：后启动的那个先 abort 时 `args.signal.aborted` 仍是 false，会被误判成
+  // NODE_UNREACHABLE。
+  if (args.signal) return { signal: args.signal, timeoutMs: null };
+  if (args.timeoutMs !== undefined) return { timeoutMs: args.timeoutMs };
+  return {};
+}
+
+function isLoginTimeoutError(error: unknown, signal?: AbortSignal): boolean {
+  if (!signal) return false;
+  if (signal.aborted) return true;
+  return error instanceof NetworkError && /timed out/i.test(error.message);
+}
+
+function timeoutOutcomeOrThrow(nodeId: string, asOutcome: boolean | undefined): LoginNodeResult {
+  if (asOutcome) return { nodeId, ok: false, code: LOGIN_TIMEOUT };
+  throw new NetworkError(`login to node ${nodeId} timed out`);
+}
+
+/** 一次「取 challenge → 签 login → POST /login」。重试必须整套重来：nonce 一次性。 */
+export async function loginToNode(args: LoginToNodeArgs): Promise<LoginNodeResult> {
   try {
     return await loginToNodeOnce(args);
   } catch (error) {
+    if (isLoginTimeoutError(error, args.signal)) {
+      return timeoutOutcomeOrThrow(args.nodeId, args.treatUnreachableAsOutcome);
+    }
     if (args.treatUnreachableAsOutcome && isNodeUnreachableError(error)) {
       return { nodeId: args.nodeId, ok: false, code: 'NODE_UNREACHABLE' };
     }
@@ -185,17 +217,16 @@ export async function loginToNode(args: {
   }
 }
 
-async function loginToNodeOnce(args: {
-  http: HttpClient;
-  nodeId: string;
-  material: SessionMaterial;
-  pinnedPublicKey?: string | null;
-  totpCode?: string | null;
-}): Promise<LoginNodeResult> {
+async function loginToNodeOnce(args: LoginToNodeArgs): Promise<LoginNodeResult> {
   const { http, nodeId, material } = args;
-  const challenge = await http.json<ChallengeResponse>(nodeId, 'POST', '/api/auth/challenge', {
-    uid: material.uid,
-  });
+  const httpOpts = loginHttpOptions(args);
+  const challenge = await http.json<ChallengeResponse>(
+    nodeId,
+    'POST',
+    '/api/auth/challenge',
+    { uid: material.uid },
+    httpOpts
+  );
 
   const targetPk = decodeBase64url(challenge.nodePk);
   if (args.pinnedPublicKey && !bytesEqual(targetPk, decodeBase64url(args.pinnedPublicKey))) {
@@ -227,6 +258,7 @@ async function loginToNodeOnce(args: {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    ...httpOpts,
   });
   if (response.ok) {
     const payload = (await response.json()) as { expires_at?: number };
@@ -315,6 +347,12 @@ export function loginFailure(nodeId: string, code: string, policy?: SecondFactor
       `node ${nodeId} presented a public key that does not match the mesh roster; aborting`,
       'the entry may be compromised or misconfigured; verify it before logging in again',
       code
+    );
+  }
+  if (code === LOGIN_TIMEOUT) {
+    return new NetworkError(
+      `login to node ${nodeId} timed out`,
+      'pass --node-timeout <ms> to wait longer, or check the mesh path to this node'
     );
   }
   return new AuthError(`login to node ${nodeId} failed: ${code}`, undefined, code);
