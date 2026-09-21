@@ -26,6 +26,11 @@ import {
   verifyLogin,
 } from '@vibeterm/shared/auth';
 import {
+  LOGIN_RETRY_FIRST_MS,
+  getNodeLoginFailure,
+  setNodeLoginRetryTimersForTest,
+} from './node-login-retry';
+import {
   NODE_LOGIN_FANOUT,
   clearSessionKey,
   ensureNodeLogin,
@@ -197,6 +202,9 @@ afterEach(() => {
   resetNodeLoginsForTest();
   resetMeshNodesStateForTest();
   setLoginLoaderForTest();
+  // 登录记账收在 `ensureNodeLogin` 里，本文件的失败用例会往里写记录并排真实定时器：
+  // 传 null 把在途定时器掐掉、记账清空，同时还原真实定时器实现，不留给下一个测试文件。
+  setNodeLoginRetryTimersForTest(null);
 });
 
 describe('establishSessionFromSeed', () => {
@@ -809,6 +817,62 @@ describe('ensureNodeLogin', () => {
     expect(logins).toBe(1);
   });
 
+  test('同一份在途登录被两个调用方 await：失败只记一笔，退避不跳级', async () => {
+    // 生产触发组合：设备页分组与侧边栏同时挂着这台 node 的门闸（或 StrictMode 把 effect 跑两遍）。
+    // 请求本身被 `nodeLoginsInFlight` 合并成一次，记账也必须只有一次——否则 `attempts` 直接是 2，
+    // 第一档 3–6 秒退避被吃掉，8 次自动重试的额度按 `.then` 个数扣。
+    const scheduled: number[] = [];
+    setNodeLoginRetryTimersForTest({
+      schedule: (_fn, ms) => {
+        scheduled.push(ms);
+        return scheduled.length;
+      },
+      cancel: () => undefined,
+      random: () => 0,
+    });
+    await establishRoot();
+    setLoginLoaderForTest(async () => ({
+      loginToNode: async () => ({ ok: false, code: 'NODE_UNREACHABLE' }) as const,
+    }));
+
+    const first = ensureNodeLogin(NODE_A);
+    const second = ensureNodeLogin(NODE_A);
+    expect(second).toBe(first);
+    expect(await Promise.all([first, second])).toEqual([
+      { ok: false, code: 'NODE_UNREACHABLE' },
+      { ok: false, code: 'NODE_UNREACHABLE' },
+    ]);
+
+    expect(getNodeLoginFailure(NODE_A)).toEqual({
+      code: 'NODE_UNREACHABLE',
+      kind: 'unreachable',
+      attempts: 1,
+      retrying: true,
+    });
+    expect(scheduled).toEqual([LOGIN_RETRY_FIRST_MS]);
+  });
+
+  test('成功也只记一笔：两个调用方 await 完，失败记录被清掉', async () => {
+    setNodeLoginRetryTimersForTest({
+      schedule: () => null,
+      cancel: () => undefined,
+      random: () => 0,
+    });
+    await establishRoot();
+    setLoginLoaderForTest(async () => ({
+      loginToNode: async () => ({ ok: false, code: 'NODE_UNREACHABLE' }) as const,
+    }));
+    await ensureNodeLogin(NODE_A);
+    expect(getNodeLoginFailure(NODE_A)?.attempts).toBe(1);
+
+    resetNodeLoginsForTest();
+    setLoginLoaderForTest(async () => ({ loginToNode: async () => ({ ok: true }) as const }));
+    const a = ensureNodeLogin(NODE_A);
+    const b = ensureNodeLogin(NODE_A);
+    await Promise.all([a, b]);
+    expect(getNodeLoginFailure(NODE_A)).toBeNull();
+  });
+
   test('登录 chunk 落地前就发出 challenge，且只发一次', async () => {
     await establishRoot();
     let releaseChunk = (): void => {};
@@ -861,6 +925,66 @@ describe('ensureNodeLogin', () => {
   });
 });
 
+describe('登录记账只有一个写入点', () => {
+  test('调用方不得自己记账：重复记一笔就会把退避阶梯按 .then 个数翻倍', async () => {
+    const read = (path: string) => Bun.file(`${import.meta.dir}/${path}`).text();
+    for (const file of ['use-node-login.ts', 'NodeLoginButton.tsx', 'NodeRetryConnectButton.tsx']) {
+      const text = await read(file);
+      expect(`${file}:noteNodeLoginFailure=${text.includes('noteNodeLoginFailure')}`).toBe(
+        `${file}:noteNodeLoginFailure=false`
+      );
+      expect(`${file}:noteNodeLoginSuccess=${text.includes('noteNodeLoginSuccess')}`).toBe(
+        `${file}:noteNodeLoginSuccess=false`
+      );
+    }
+    // 升级的补登路径同样只能靠 `ensureNodeLogin` 记账。
+    const upgrade = await read('../pages/settings/nodes/management/use-node-upgrade.ts');
+    expect(upgrade.includes('noteNodeLogin')).toBe(false);
+    // 唯一的写入点就在这个 store 里。
+    expect((await read('session-key-store.ts')).includes('noteNodeLoginFailure')).toBe(true);
+  });
+});
+
+describe('retryNodeConnection（「重试连接」按钮的两步）', () => {
+  test('阶梯归零 + 重发一次登录：节点表没有门闸，只抹记录不会有人替它重发', async () => {
+    const scheduled: number[] = [];
+    setNodeLoginRetryTimersForTest({
+      schedule: (_fn, ms) => {
+        scheduled.push(ms);
+        return scheduled.length;
+      },
+      cancel: () => undefined,
+      random: () => 0,
+    });
+    await establishRoot();
+    let logins = 0;
+    setLoginLoaderForTest(async () => ({
+      loginToNode: async () => {
+        logins += 1;
+        return { ok: false, code: 'NODE_UNREACHABLE' } as const;
+      },
+    }));
+
+    await ensureNodeLogin(NODE_A);
+    resetNodeLoginsForTest();
+    await ensureNodeLogin(NODE_A);
+    expect(getNodeLoginFailure(NODE_A)?.attempts).toBe(2);
+    expect(scheduled).toEqual([LOGIN_RETRY_FIRST_MS, LOGIN_RETRY_FIRST_MS * 2]);
+
+    const { retryNodeConnection } = await import('./NodeRetryConnectButton');
+    resetNodeLoginsForTest();
+    await retryNodeConnection(NODE_A);
+    // 真的又发了一次登录，且阶梯从第一档重新起步。
+    expect(logins).toBe(3);
+    expect(getNodeLoginFailure(NODE_A)?.attempts).toBe(1);
+    expect(scheduled).toEqual([
+      LOGIN_RETRY_FIRST_MS,
+      LOGIN_RETRY_FIRST_MS * 2,
+      LOGIN_RETRY_FIRST_MS,
+    ]);
+  });
+});
+
 describe('常驻模块的静态依赖', () => {
   test('只动态加载 ./session-login，不静态拖入 argon2 / 椭圆曲线（否则会回到首屏 chunk）', async () => {
     const scan = async (file: string) =>
@@ -872,7 +996,7 @@ describe('常驻模块的静态依赖', () => {
     expect(store.map((entry) => entry.path)).not.toContain('@vibeterm/shared/auth');
 
     // 侧边栏 / 路由边界这两条常驻入口也只能碰 store，不能直接引实现。
-    for (const file of ['NodeLoginButton.tsx', 'use-node-login.ts']) {
+    for (const file of ['NodeLoginButton.tsx', 'NodeRetryConnectButton.tsx', 'use-node-login.ts']) {
       const paths = (await scan(file)).map((entry) => entry.path);
       expect(paths).not.toContain('./session-login');
       expect(paths).not.toContain('@vibeterm/shared/auth');

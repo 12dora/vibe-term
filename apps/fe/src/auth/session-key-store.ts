@@ -20,6 +20,7 @@ import {
 } from '@vibeterm/api-client/auth/index';
 import type { Delegation } from '@vibeterm/shared/auth';
 import { resetDirectAuthorizeBreakers } from '@vibeterm/ws-client/direct/direct-authorize-breaker';
+import { noteNodeLoginFailure, noteNodeLoginSuccess } from './node-login-retry';
 import {
   PERSISTED_SESSION_VERSION,
   clearPersistedSession,
@@ -468,11 +469,29 @@ export function ensureNodeLogin(
   const existing = nodeLoginsInFlight.get(nodeId);
   if (existing) return existing;
 
-  const task = runEnsureNodeLogin(nodeId, opts).finally(() => {
-    nodeLoginsInFlight.delete(nodeId);
-  });
+  const task = runEnsureNodeLogin(nodeId, opts)
+    .then((result) => {
+      recordNodeLoginOutcome(nodeId, result);
+      return result;
+    })
+    .finally(() => {
+      nodeLoginsInFlight.delete(nodeId);
+    });
   nodeLoginsInFlight.set(nodeId, task);
   return task;
+}
+
+/**
+ * 每次登录的结果只在这里记一笔。
+ *
+ * 一份在途登录会被多个调用方 await——设备页分组与侧边栏同时挂着同一台 node 的门闸、
+ * 静默登录还在途时用户又点了「登录该节点」、`StrictMode` 把 effect 跑两遍。请求本身被
+ * `nodeLoginsInFlight` 合并成一次，但如果每个调用方各记一笔，退避阶梯会按 `.then` 的个数
+ * 翻倍（第一档 3–6 秒直接被吃掉），8 次自动重试的额度也只剩一半真实尝试。
+ */
+function recordNodeLoginOutcome(nodeId: string, result: LoginNodeResult): void {
+  if (result.ok) noteNodeLoginSuccess(nodeId);
+  else noteNodeLoginFailure(nodeId, result.code);
 }
 
 /**

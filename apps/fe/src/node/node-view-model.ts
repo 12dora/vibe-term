@@ -33,12 +33,20 @@ export interface NodeView {
   statusTitle?: string;
   /** 这一行当前该按哪一档说话；行内的登录入口据此决定出不出。 */
   signInState: NodeSignInState;
+  /**
+   * 系统还会自己再试一次（登录退避还排着，或该 node 的 REST 还在退避窗口里）。
+   * 为假且 `signInState === 'unreachable'` 时，界面必须给一个「重试连接」出口。
+   */
+  signInRetrying: boolean;
 }
 
-/** 表格行额外掌握的两个事实：登录失败码与「REST 正在退避」。都不来自 `/api/mesh/nodes`。 */
+/** 表格行额外掌握的三个事实，都不来自 `/api/mesh/nodes`。 */
 export interface NodeReachFacts {
   failureCode?: string | null;
+  /** 该 node 的 REST 正处在「打不通」退避窗口里。 */
   unreachable?: boolean;
+  /** 登录退避还排着下一次自动重试。 */
+  retrying?: boolean;
 }
 
 export function buildNodeView(
@@ -58,14 +66,20 @@ export function buildNodeView(
     statusTitle:
       !row.online && row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : undefined,
     signInState: signIn,
+    // REST 退避窗口本身就是「等一下还会再问一次」，与登录退避同档：那期间不必催用户动手。
+    signInRetrying: facts.retrying === true || facts.unreachable === true,
   };
 }
 
-/** 本机永远算 `ready`：本地 UI 已经过 localUiGuard，再报「未登录」是死循环。 */
+/**
+ * 本机在线就永远算 `ready`：本地 UI 已经过 localUiGuard，报「未登录 / 连接不上」都是死循环。
+ * 链路事实一概不看——`self` 不走转发器，也不该被某次 `?node=self` 留下的记录带偏。
+ */
 function signInStateOf(row: NodeRow, facts: NodeReachFacts): NodeSignInState {
+  if (row.isSelf) return row.online ? 'ready' : 'offline';
   return nodeSignInState({
     online: row.online,
-    loggedIn: row.loggedIn || row.isSelf,
+    loggedIn: row.loggedIn,
     failureCode: facts.failureCode ?? null,
     unreachable: facts.unreachable,
   });

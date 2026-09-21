@@ -1974,6 +1974,8 @@
         "retryLogin": "Try again",
         "signInRequired": "Sign in to this node to continue.",
         "unreachable": "Cannot reach this node. Retrying automatically.",
+        "unreachableStalled": "Cannot reach this node. Automatic retries stopped.",
+        "retryConnect": "Retry Connection",
         "backToLocal": "Back to this machine"
       },
       "errors": {

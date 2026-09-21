@@ -1980,6 +1980,8 @@ export const I18N_RESOURCES = {
         "retryLogin": "Try again",
         "signInRequired": "Sign in to this node to continue.",
         "unreachable": "Cannot reach this node. Retrying automatically.",
+        "unreachableStalled": "Cannot reach this node. Automatic retries stopped.",
+        "retryConnect": "Retry Connection",
         "backToLocal": "Back to this machine"
       },
       "errors": {
@@ -5672,6 +5674,8 @@ export const I18N_RESOURCES = {
         "retryLogin": "重试登录",
         "signInRequired": "需要登录该节点才能继续。",
         "unreachable": "连接不上该节点，稍后自动重试。",
+        "unreachableStalled": "连接不上该节点，已停止自动重试。",
+        "retryConnect": "重试连接",
         "backToLocal": "返回本机"
       },
       "errors": {
@@ -9355,6 +9359,8 @@ export const I18N_RESOURCES = {
         "retryLogin": "再試行",
         "signInRequired": "続行するには、このノードにサインインしてください。",
         "unreachable": "このノードに接続できません。しばらくすると自動で再試行します。",
+        "unreachableStalled": "このノードに接続できません。自動再試行は停止しました。",
+        "retryConnect": "接続を再試行",
         "backToLocal": "このマシンに戻る"
       },
       "errors": {

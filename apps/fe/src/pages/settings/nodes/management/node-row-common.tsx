@@ -106,7 +106,11 @@ export function useNodeRowShared(
     uninstalling,
     writable,
     disabledHint: writable ? undefined : rowBlockedHint(t, deps),
-    view: buildNodeView(row, t, now, { failureCode: loginFailure?.code ?? null, unreachable }),
+    view: buildNodeView(row, t, now, {
+      failureCode: loginFailure?.code ?? null,
+      unreachable,
+      retrying: loginFailure?.retrying ?? false,
+    }),
     selectable: !row.isSelf && !uninstalling,
   };
 }

@@ -9,15 +9,17 @@
 //     期间只显示一行「登录中…」；确实登不上才渲染「登录该节点」按钮（凭证类失败再补一行原因）。
 //     这一档不建运行时，避免每次渲染都撞 4401。
 //   - 在线但**打不通**：静默登录败在传输层（`NODE_UNREACHABLE` / 断网 / 超时）。这不是登录问题，
-//     因此既不说「未登录」也不给登录按钮——点了只会在抖动的链路上再叠一次拨号；门闸已经排了
-//     退避重试，这里只说「连接不上，稍后自动重试」。
+//     因此既不说「未登录」也不给登录按钮——点了只会在抖动的链路上再叠一次拨号。退避还排着就说
+//     「稍后自动重试」；额度用完了就换一句不承诺重试的，并给出「重试连接」——不给出口等于把人
+//     关在错误态里，看着一句不会兑现的话。
 //
 // 「添加设备」全页只有顶栏一个 +：ready 的分组把自己的 `openAddDevice` 登记到
 // `add-device-targets` 注册表，顶栏据此直接开或先让用户选节点；面板自身仍不监听全局事件
 // （多面板同时挂载会一起弹框），只有 entry 自身保留监听兜住其它派发方。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
-import { nodeLoginFailureTextKey } from '@/auth/login-failure-kind';
+import { NodeRetryConnectButton } from '@/auth/NodeRetryConnectButton';
+import { nodeLoginFailureTextKey } from '@/auth/login-failure-text';
 import { nodeSignInState } from '@/auth/node-signin-state';
 import type { LoginFailureCode } from '@/auth/session-key-store';
 import { type NodeLoginGate, useNodeLoginGate } from '@/auth/use-node-login';
@@ -196,7 +198,7 @@ function SignedOutBody({ node, gate }: { node: NodeDeviceGroupEntry; gate: NodeL
     );
   }
 
-  const hint = gate.status === 'blocked' ? nodeLoginFailureTextKey(gate.code) : null;
+  const hint = gate.status === 'blocked' ? nodeLoginFailureTextKey(gate.code, gate.retrying) : null;
   return (
     <div
       data-testid={`devices-node-login-${node.runtimeNodeId}`}
@@ -216,15 +218,23 @@ function SignedOutBody({ node, gate }: { node: NodeDeviceGroupEntry; gate: NodeL
   );
 }
 
-/** 打不通的那一档：只报状态，不给登录入口——门闸已经排了退避重试。 */
-function UnreachableBody({ node }: { node: NodeDeviceGroupEntry }) {
+/**
+ * 打不通的那一档：只报状态，不给登录入口。
+ * 退避还排着就等它；额度用完了才摆「重试连接」，那时自动重试已经不会再来。
+ */
+function UnreachableBody({ node, gate }: { node: NodeDeviceGroupEntry; gate: NodeLoginGate }) {
   const { t } = useTranslation();
+  const textKey = nodeLoginFailureTextKey(gate.code, gate.retrying) ?? 'auth.node.unreachable';
   return (
     <div
       data-testid={`devices-node-unreachable-${node.runtimeNodeId}`}
+      data-retrying={gate.retrying ? 'true' : 'false'}
       className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
     >
-      <span>{t('auth.node.unreachable')}</span>
+      <span>{t(textKey)}</span>
+      {!gate.retrying && (
+        <NodeRetryConnectButton nodeId={node.runtimeNodeId} nodeName={node.name} />
+      )}
     </div>
   );
 }
@@ -324,7 +334,7 @@ export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeD
         // 状态块还没解开：这台的设备一个都不作数（快照可能是上一代的），先摆卡片占位
         <DeviceCardSkeleton />
       ) : state === 'unreachable' ? (
-        <UnreachableBody node={node} />
+        <UnreachableBody node={node} gate={gate} />
       ) : state === 'signedOut' ? (
         <SignedOutBody node={node} gate={gate} />
       ) : (

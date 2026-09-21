@@ -115,3 +115,53 @@ describe('buildNodeView 的链路事实', () => {
     expect(buildNodeView(row({ id: 'n8', online: false }), t, NOW).signInState).toBe('offline');
   });
 });
+
+describe('signInRetrying：界面要不要给「重试连接」出口', () => {
+  test('登录退避还排着：系统会自己再试，不催用户动手', () => {
+    const view = buildNodeView(row({ id: 'r1', loggedIn: false }), t, NOW, {
+      failureCode: 'NODE_UNREACHABLE',
+      retrying: true,
+    });
+    expect(view.signInState).toBe('unreachable');
+    expect(view.signInRetrying).toBe(true);
+  });
+
+  test('重试额度用完：必须给出口', () => {
+    const view = buildNodeView(row({ id: 'r2', loggedIn: false }), t, NOW, {
+      failureCode: 'NODE_UNREACHABLE',
+      retrying: false,
+    });
+    expect(view.signInState).toBe('unreachable');
+    expect(view.signInRetrying).toBe(false);
+  });
+
+  test('REST 退避窗口本身也算「还会再问一次」：那 2–5 秒不摆按钮', () => {
+    const view = buildNodeView(row({ id: 'r3' }), t, NOW, { unreachable: true });
+    expect(view.signInState).toBe('unreachable');
+    expect(view.signInRetrying).toBe(true);
+  });
+
+  test('没有任何故障证据时恒为 false，但那时 signInState 也不是 unreachable', () => {
+    const view = buildNodeView(row({ id: 'r4' }), t, NOW);
+    expect(view.signInState).toBe('ready');
+    expect(view.signInRetrying).toBe(false);
+  });
+});
+
+describe('本机不受链路事实影响', () => {
+  test('留在记账里的失败码不该把本机画成「连接不上」', () => {
+    const view = buildNodeView(row({ id: 'me', isSelf: true, loggedIn: false }), t, NOW, {
+      failureCode: 'NODE_UNREACHABLE',
+      unreachable: true,
+    });
+    expect(view.signInState).toBe('ready');
+    expect(view.statusText).toBe('nodes.status.onlineSignedIn');
+  });
+
+  test('本机离线仍按离线报', () => {
+    const view = buildNodeView(row({ id: 'me', isSelf: true, online: false }), t, NOW, {
+      failureCode: 'NODE_UNREACHABLE',
+    });
+    expect(view.signInState).toBe('offline');
+  });
+});
