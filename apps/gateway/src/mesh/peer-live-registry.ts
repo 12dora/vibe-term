@@ -6,6 +6,7 @@ import {
   classifyPeerReach,
   rttChangedMaterially,
 } from './address-class';
+import { type DcPromoteGate, attachDcPromote, mergeTrackIntercept } from './peer-dc-promote-gate';
 import type { UpgradeGate } from './peer-dc-upgrade';
 import { type PeerInboundStreamHost, handlePeerInboundStream } from './peer-live-inbound';
 import {
@@ -30,6 +31,11 @@ import { parseOpenPayload } from './peer-protocol';
 import { type LivePeer, peerDropPlan } from './peer-reconnect-wake';
 import { type IncomingWakeGate, PEER_RTC_WAKE_COOLDOWN_MS } from './peer-rtc-wake';
 import { quiet } from './peer-ws-race';
+import {
+  type RelayDialBreaker,
+  type RelayDialBreakerSnapshot,
+  getRelayDialBreaker,
+} from './relay-dial-breaker';
 import type { TrackIntercept, TrackInterceptInput } from './route-degrade';
 import {
   type RtcDialBreaker,
@@ -44,6 +50,7 @@ import type { GatewaySessionClose } from './ws-stream-target';
 
 export type PeerLiveRegistryDeps = {
   dcBreaker: RtcDialBreaker;
+  relayBreaker?: RelayDialBreaker;
   sendPeerCtl: (live: LivePeer, msg: Record<string, unknown>) => void;
   handlePeerCtl: (live: LivePeer, bytes: Uint8Array) => void;
   sendPeerStatus: (live: LivePeer) => void;
@@ -104,6 +111,7 @@ export type PeerLiveRegistryOptions = {
         transport: PeerTransportKind | null;
         rttMs: number | null;
         dcBreaker?: RtcDialBreakerSnapshot;
+        relayBreaker?: RelayDialBreakerSnapshot;
       }) => void)
     | null;
   deps: PeerLiveRegistryDeps;
@@ -121,6 +129,7 @@ export class PeerLiveRegistry {
   private readonly onGatewaySessionClose: PeerLiveRegistryOptions['onGatewaySessionClose'];
   private readonly onLinkInfo: PeerLiveRegistryOptions['onLinkInfo'];
   private readonly inboundHost: PeerInboundStreamHost;
+  private readonly dcPromote: DcPromoteGate;
   private linkInfoHold = 0;
   private readonly bypassRank = new WeakSet<LinkSession>();
 
@@ -135,6 +144,7 @@ export class PeerLiveRegistry {
     this.onGatewaySession = opts.onGatewaySession;
     this.onGatewaySessionClose = opts.onGatewaySessionClose;
     this.onLinkInfo = opts.onLinkInfo;
+    this.dcPromote = attachDcPromote(this as never);
     this.inboundHost = {
       selfNodeId: state.identity.nodeId,
       dispatchHttp: this.dispatchHttp,
@@ -180,18 +190,19 @@ export class PeerLiveRegistry {
         rtcEpoch
       );
     }
+    const tap = {
+      session,
+      peerNodeId,
+      transport,
+      initiatedBy,
+      gen,
+      rtcEpoch,
+      prev,
+      remoteAddress: resolvedAddress,
+      dcAttemptId,
+    };
     const early = earlyTrackResult(
-      this.deps.interceptTrack?.({
-        session,
-        peerNodeId,
-        transport,
-        initiatedBy,
-        gen,
-        rtcEpoch,
-        prev,
-        remoteAddress: resolvedAddress,
-        dcAttemptId,
-      }),
+      mergeTrackIntercept(this.deps.interceptTrack?.(tap), this.dcPromote.decide(tap)),
       prev,
       (reason) => {
         quiet(() => session.close(reason));
@@ -224,7 +235,6 @@ export class PeerLiveRegistry {
       rtcEpoch
     );
   }
-
   forceInstall(
     session: LinkSession,
     peerNodeId: string,
@@ -246,7 +256,6 @@ export class PeerLiveRegistry {
       dcAttemptId
     );
   }
-
   private installLive(
     session: LinkSession,
     peerNodeId: string,
@@ -397,7 +406,6 @@ export class PeerLiveRegistry {
       if (this.state.live.get(live.peerNodeId) === live) this.armIdle(live);
     });
   }
-
   startPing(live: LivePeer): void {
     live.pingTimer?.clear();
     live.missedPongs = 0;
@@ -445,27 +453,23 @@ export class PeerLiveRegistry {
   }
 
   emitLinkInfo(live: LivePeer): void {
-    if (this.linkInfoHold > 0) return;
-    this.onLinkInfo?.({
-      nodeId: live.peerNodeId,
-      reach: classifyPeerReach(live.transport, live.remoteAddress),
-      transport: live.transport,
-      rttMs: live.rttMs,
-      dcBreaker: this.deps.dcBreaker.snapshot(live.peerNodeId),
-    });
+    this.emitInfo(live.peerNodeId, live);
   }
-
   emitOfflineLinkInfo(nodeId: string): void {
+    this.emitInfo(nodeId, null);
+  }
+  private emitInfo(nodeId: string, live: LivePeer | null): void {
     if (this.linkInfoHold > 0) return;
+    const breaker = this.deps.relayBreaker ?? getRelayDialBreaker();
     this.onLinkInfo?.({
       nodeId,
-      reach: null,
-      transport: null,
-      rttMs: null,
+      reach: live ? classifyPeerReach(live.transport, live.remoteAddress) : null,
+      transport: live?.transport ?? null,
+      rttMs: live?.rttMs ?? null,
       dcBreaker: this.deps.dcBreaker.snapshot(nodeId),
+      relayBreaker: breaker.snapshot(nodeId),
     });
   }
-
   private maybeEmitRtt(live: LivePeer): void {
     if (!rttChangedMaterially(live.lastEmittedRttMs, live.rttMs)) return;
     const now = this.state.scheduler.now();
@@ -476,7 +480,6 @@ export class PeerLiveRegistry {
     live.lastEmittedRttMs = live.rttMs;
     this.emitLinkInfo(live);
   }
-
   armIdle(live: LivePeer): void {
     this.clearIdle(live);
     if (this.state.live.get(live.peerNodeId) !== live) return;
@@ -497,12 +500,10 @@ export class PeerLiveRegistry {
       Math.max(1, idleMs)
     );
   }
-
   clearIdle(live: LivePeer): void {
     live.idleTimer?.clear();
     live.idleTimer = null;
   }
-
   dropPeer(nodeId: string, reason: string): void {
     const live = this.state.live.get(nodeId);
     const plan = peerDropPlan(live, reason, this.state.stopped, isIntentionalDcLoss(reason));
@@ -559,7 +560,6 @@ export class PeerLiveRegistry {
     if (next) this.emitLinkInfo(next);
     else this.emitOfflineLinkInfo(nodeId);
   }
-
   private promoteRetiring(nodeId: string, excluded?: LivePeer | null): boolean {
     if (this.state.live.get(nodeId)) return false;
     const set = this.state.retiring.get(nodeId);

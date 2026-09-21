@@ -1,7 +1,12 @@
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
-import { logLine } from './mesh-log';
 import { handshakeRelay } from './peer-protocol';
+import {
+  type RelayDialBreaker,
+  classifyRelayDialFailure,
+  getRelayDialBreaker,
+  logRelayBreakerCooling,
+} from './relay-dial-breaker';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import { type MeshIdentity, NodeUnreachableError } from './types';
 
@@ -67,15 +72,14 @@ export async function openRelayStreamForPeer(input: {
   presence?: RelayPresenceIndex;
   opener?: RelayStreamOpener;
   openFallback: (nodeId: string) => Promise<LinkStream>;
+  breaker?: RelayDialBreaker;
 }): Promise<{ stream: LinkStream; viaRelay?: string }> {
   const { nodeId, presence, opener, openFallback } = input;
   if (!presence || !opener) return { stream: await openFallback(nodeId) };
   const choice = presence.chooseRelay(nodeId);
   if (!choice) return { stream: await openFallback(nodeId) };
-  logLine(
-    '[mesh][peer]',
-    formatRelayChooseLog(nodeId, choice.url, choice.scoreMs, presence.relaysFor(nodeId).length)
-  );
+  const breaker = input.breaker ?? getRelayDialBreaker();
+  breaker.logChoose(nodeId, choice.url, choice.scoreMs, presence.relaysFor(nodeId).length);
   try {
     return { stream: await openVia(opener, choice.url, nodeId), viaRelay: choice.url };
   } catch (err) {
@@ -87,7 +91,7 @@ export async function openRelayStreamForPeer(input: {
 }
 
 async function handshakeWithPrimaryRetry(
-  opened: { stream: LinkStream; viaRelay?: string },
+  opened: { stream: LinkStream; viaRelay?: string; timeoutMs?: number },
   nodeId: string,
   identity: MeshIdentity,
   userStore: UserStore,
@@ -95,7 +99,13 @@ async function handshakeWithPrimaryRetry(
   opener: RelayStreamOpener | undefined
 ): Promise<{ result: Awaited<ReturnType<typeof handshakeRelay>>; viaRelay?: string }> {
   const handshake = (stream: LinkStream) =>
-    handshakeRelay({ stream, role: 'initiator', identity, userStore });
+    handshakeRelay({
+      stream,
+      role: 'initiator',
+      identity,
+      userStore,
+      timeoutMs: opened.timeoutMs,
+    });
   try {
     return { result: await handshake(opened.stream), viaRelay: opened.viaRelay };
   } catch (err) {
@@ -160,6 +170,7 @@ export type PeerRelayDialHost = {
   relayOpener?: RelayStreamOpener;
   uplink: { openRelay(nodeId: string): Promise<LinkStream> };
   live: { get(nodeId: string): { transport: string; viaRelay?: string } | undefined };
+  relayBreaker?: RelayDialBreaker;
 };
 
 export function openPeerRelaySession(input: {
@@ -183,10 +194,11 @@ export function openPeerRelaySession(input: {
     track: input.track,
     liveOf: (peerNodeId) => host.live.get(peerNodeId),
     signal: input.signal,
+    breaker: host.relayBreaker,
   });
 }
 
-export async function completeRelayDial(input: {
+export type CompleteRelayDialInput = {
   nodeId: string;
   gen: number;
   identity: MeshIdentity;
@@ -198,24 +210,65 @@ export async function completeRelayDial(input: {
   track: (session: LinkSession, peerNodeId: string, gen: number) => LinkSession | null;
   liveOf: (peerNodeId: string) => { transport: string; viaRelay?: string } | undefined;
   signal?: AbortSignal;
-}): Promise<LinkSession> {
+  breaker?: RelayDialBreaker;
+  handshakeTimeoutMs?: number;
+};
+
+export async function completeRelayDial(input: CompleteRelayDialInput): Promise<LinkSession> {
   throwIfRelayAborted(input.signal, input.nodeId);
+  const breaker = input.breaker ?? getRelayDialBreaker();
+  return breaker.singleFlight(input.nodeId, () => runGuardedRelayDial(input, breaker));
+}
+
+async function runGuardedRelayDial(
+  input: CompleteRelayDialInput,
+  breaker: RelayDialBreaker
+): Promise<LinkSession> {
+  const decision = breaker.shouldTry(input.nodeId);
+  if (!decision.allow) {
+    logRelayBreakerCooling(input.nodeId, decision.until);
+    throw new NodeUnreachableError(input.nodeId, 'breaker_cooling');
+  }
+  breaker.beginAttempt(input.nodeId);
+  try {
+    const kept = await executeRelayDial(input, breaker);
+    breaker.noteSuccess(input.nodeId);
+    return kept;
+  } catch (err) {
+    const kind = classifyRelayDialFailure(err);
+    breaker.noteFailure(input.nodeId, kind);
+    throw err;
+  }
+}
+
+async function executeRelayDial(
+  input: CompleteRelayDialInput,
+  breaker: RelayDialBreaker
+): Promise<LinkSession> {
   const opened = await awaitUnlessAborted(
     openRelayStreamForPeer({
       nodeId: input.nodeId,
       presence: input.presence,
       opener: input.opener,
       openFallback: input.openFallback,
+      breaker,
     }),
     input.signal,
     input.nodeId,
     (late) => quietReset(late.stream, 'dial-race-lost')
   );
-  let handshake: Awaited<ReturnType<typeof handshakeWithPrimaryRetry>>;
+  const handshake = await handshakeOpened(input, opened);
+  return finishRelayHandshake(input, handshake);
+}
+
+async function handshakeOpened(
+  input: CompleteRelayDialInput,
+  opened: { stream: LinkStream; viaRelay?: string }
+): Promise<Awaited<ReturnType<typeof handshakeWithPrimaryRetry>>> {
   try {
-    handshake = await awaitUnlessAborted(
+    return await awaitUnlessAborted(
       handshakeWithPrimaryRetry(
-        opened,
+        { ...opened, timeoutMs: input.handshakeTimeoutMs },
         input.nodeId,
         input.identity,
         input.userStore,
@@ -230,6 +283,12 @@ export async function completeRelayDial(input: {
     if (input.signal?.aborted) quietReset(opened.stream, 'dial-race-lost');
     throw err;
   }
+}
+
+function finishRelayHandshake(
+  input: CompleteRelayDialInput,
+  handshake: Awaited<ReturnType<typeof handshakeWithPrimaryRetry>>
+): LinkSession {
   const { result, viaRelay } = handshake;
   if (input.signal?.aborted) {
     quietClose(result.session, 'dial-race-lost');

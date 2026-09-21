@@ -9,6 +9,7 @@ import { decodeCertificate, encodeBase64url } from '@vibeterm/shared/auth';
 import { hasNodeSessionCookie } from '../auth/cookies';
 import { isPeerReachable } from './address-class';
 import { MESH_VIA_SELF } from './mesh-deps';
+import { getRelayDialBreaker } from './relay-dial-breaker';
 
 export type { MeshNodeDcBreaker, MeshNodeDirectFailure, MeshPortReach } from '@vibeterm/shared';
 
@@ -26,11 +27,14 @@ export type MeshNodeLinkDetail = {
   endpoints: string[];
   directFailure: MeshNodeDirectFailure | null;
   dcBreaker?: MeshNodeDcBreaker | null;
+  relayBreaker?: MeshNodeDcBreaker | null;
   viaRelay?: string | null;
   relayPresence?: string[];
 };
 
-export type MeshNodeDto = MeshNode;
+export type MeshNodeDto = MeshNode & {
+  relayBreaker?: (MeshNodeDcBreaker & { disabled?: boolean }) | null;
+};
 
 export function parseJson(raw: string | null | undefined, fallback: unknown): unknown {
   if (raw == null) return fallback;
@@ -141,8 +145,12 @@ function selfStatusOverlay(
 function meshLinkFields(
   isSelf: boolean,
   detail: MeshNodeLinkDetail | null | undefined,
-  storedEndpoints: string[]
-): Pick<MeshNodeDto, 'peerAddress' | 'linkSinceAt' | 'endpoints' | 'directFailure' | 'dcBreaker'> {
+  storedEndpoints: string[],
+  nodeId: string
+): Pick<
+  MeshNodeDto,
+  'peerAddress' | 'linkSinceAt' | 'endpoints' | 'directFailure' | 'dcBreaker' | 'relayBreaker'
+> {
   if (isSelf) {
     return {
       peerAddress: null,
@@ -150,6 +158,7 @@ function meshLinkFields(
       endpoints: [],
       directFailure: null,
       dcBreaker: null,
+      relayBreaker: null,
     };
   }
   return {
@@ -158,6 +167,19 @@ function meshLinkFields(
     endpoints: storedEndpoints,
     directFailure: detail?.directFailure ?? null,
     dcBreaker: detail?.dcBreaker ?? null,
+    relayBreaker: detail?.relayBreaker ?? relayBreakerDto(nodeId),
+  };
+}
+
+function relayBreakerDto(nodeId: string): MeshNodeDcBreaker & { disabled: boolean } {
+  const snap = getRelayDialBreaker().snapshot(nodeId);
+  return {
+    cooling: snap.cooling,
+    until: snap.until,
+    failures: snap.failures,
+    level: snap.level,
+    lastFailureKind: snap.lastFailureKind,
+    disabled: snap.disabled,
   };
 }
 
@@ -263,7 +285,7 @@ export function projectMeshListNode(
     direct_capable: core.direct_capable,
     inventory: core.inventory,
     loggedIn: hasNodeSessionCookie(cookies, isSelf ? MESH_VIA_SELF : id),
-    ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson)),
+    ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson), id),
     ...meshRelayFields(isSelf, id, path.transport, detail, viaRelayOf, relayPresenceOf),
     lastSeenAt: meshLastSeenAt(isSelf, peer?.lastSeenAt),
   };
