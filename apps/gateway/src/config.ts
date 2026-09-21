@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 import {
@@ -9,6 +10,7 @@ import {
 import { DEFAULT_PEER_PORT, parsePortRange, parseStunServersEnv } from '@vibeterm/shared/net';
 import { parseBoolEnv, parsePort } from '../../../packages/shared/src/env/parse';
 import { resolveMemoryProfile } from './memory-profile';
+import { classifyRemoteAddress, isCgnatIpv4, isFakeIpv4 } from './mesh/address-class';
 import {
   parseTurnExternalIp,
   parseTurnHost,
@@ -119,6 +121,46 @@ export function parsePeerBindHost(raw: string | undefined): string[] {
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
   return hosts.length > 0 ? hosts : [...DEFAULT_PEER_BIND_HOSTS];
+}
+
+/** 至少含一个点的 FQDN；启动时只做语法校验，不现场解析 DNS。 */
+const PUBLIC_PEER_HOSTNAME_RE =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+export function isPublicPeerHostname(host: string): boolean {
+  return PUBLIC_PEER_HOSTNAME_RE.test(host);
+}
+
+/**
+ * `VIBETERM_PEER_PUBLIC_HOST`：可广告的公网 IPv4 或 FQDN。
+ * 未设 / 空白 → `null`；非法值警告后当作未设，不让网关启动失败。
+ */
+export function parsePeerPublicHost(raw: string | undefined): string | null {
+  const value = raw?.trim() ?? '';
+  if (!value) return null;
+  if (isIP(value) === 4) {
+    if (isUnusablePeerPublicIpv4(value)) {
+      warnPeerPublicHost(value);
+      return null;
+    }
+    return value;
+  }
+  if (isIP(value) === 0 && isPublicPeerHostname(value)) return value;
+  warnPeerPublicHost(value);
+  return null;
+}
+
+function isUnusablePeerPublicIpv4(host: string): boolean {
+  if (isFakeIpv4(host) || isCgnatIpv4(host)) return true;
+  if (classifyRemoteAddress(host) === 'lan') return true;
+  const first = Number(host.split('.')[0]);
+  return first === 0 || first >= 224;
+}
+
+function warnPeerPublicHost(value: string): void {
+  console.warn(
+    `[config] VIBETERM_PEER_PUBLIC_HOST=${value} is not an advertisable public IPv4 or hostname; ignoring`
+  );
 }
 
 export type RtcPortRange = {
@@ -296,6 +338,7 @@ export const config = {
   stunServers: stunEnv.servers,
   stunSource: stunEnv.source,
   peerBindHost: parsePeerBindHost(process.env.VIBETERM_PEER_BIND_HOST),
+  peerPublicHost: parsePeerPublicHost(process.env.VIBETERM_PEER_PUBLIC_HOST),
   rtcPortRange: parseRtcPortRange(process.env.VIBETERM_RTC_PORT_RANGE),
   turnUrl: getOptionalEnv('VIBETERM_TURN_URL'),
   turnUsername: getOptionalEnv('VIBETERM_TURN_USERNAME'),

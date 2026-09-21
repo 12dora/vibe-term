@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type os from 'node:os';
 import {
+  advertisablePublicHost,
   enumeratePeerEndpoints,
   stunMappedAddressesForAdvertise,
   usablePublicIpv4,
@@ -73,19 +74,128 @@ describe('enumeratePeerEndpoints public IPv4', () => {
     });
     expect(urls).toEqual(['ws://10.0.0.8:39001/peer']);
   });
+
+  test('appends an explicit public hostname', () => {
+    const urls = enumeratePeerEndpoints(39001, lan, {
+      bindHosts: ['0.0.0.0'],
+      publicHost: 'tmexhub-sh.example.com',
+    });
+    expect(urls.at(-1)).toBe('ws://tmexhub-sh.example.com:39001/peer');
+  });
 });
 
-describe('stunMappedAddressesForAdvertise TTL', () => {
+describe('advertisablePublicHost', () => {
+  test('accepts public IPv4 and FQDN, rejects LAN / fake-IP / IPv6', () => {
+    expect(advertisablePublicHost('203.0.113.10')).toBe('203.0.113.10');
+    expect(advertisablePublicHost(' tmexhub-sh.jiefakj.com ')).toBe('tmexhub-sh.jiefakj.com');
+    expect(advertisablePublicHost('10.0.0.3')).toBeNull();
+    expect(advertisablePublicHost('198.18.0.1')).toBeNull();
+    expect(advertisablePublicHost('2001:db8::1')).toBeNull();
+    expect(advertisablePublicHost('localhost')).toBeNull();
+    expect(advertisablePublicHost('not a host')).toBeNull();
+  });
+});
+
+describe('stunMappedAddressesForAdvertise', () => {
+  const now = 1_000_000_000;
+
   test('超过 30 min 的映射地址不再广播', () => {
-    const now = 1_000_000_000;
     const rows = [
-      { ok: true, mappedAddress: '203.0.113.9:54321', probedAt: now - 31 * 60 * 1000 },
+      { ok: true, mappedAddress: '198.51.100.7:1', probedAt: now - 31 * 60 * 1000 },
       { ok: true, mappedAddress: '198.51.100.7:1000', probedAt: now - 60 * 1000 },
-      { ok: true, mappedAddress: '192.0.2.5:2000' },
+      { ok: true, mappedAddress: '198.51.100.7:2000' },
     ];
     expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
       '198.51.100.7:1000',
-      '192.0.2.5:2000',
+      '198.51.100.7:2000',
     ]);
+  });
+
+  test('过期样本不参与多数派，只剩一条新鲜样本时仍广告', () => {
+    const rows = [
+      { ok: true, mappedAddress: '203.0.113.9:1', probedAt: now - 31 * 60 * 1000 },
+      { ok: true, mappedAddress: '198.51.100.7:1000', probedAt: now - 60 * 1000 },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual(['198.51.100.7:1000']);
+  });
+
+  test('全体一致时广告该 IPv4，忽略 fakeIp', () => {
+    const rows = [
+      { ok: true, fakeIp: false, mappedAddress: '203.0.113.9:1' },
+      { ok: true, fakeIp: true, mappedAddress: '203.0.113.9:2' },
+      { ok: true, mappedAddress: '203.0.113.9:3' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
+      '203.0.113.9:1',
+      '203.0.113.9:2',
+      '203.0.113.9:3',
+    ]);
+  });
+
+  test('二比二分歧不广告（含 TUN 全 fakeIp）', () => {
+    const rows = [
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:1' },
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:2' },
+      { ok: true, fakeIp: true, mappedAddress: '152.70.84.203:3' },
+      { ok: true, fakeIp: true, mappedAddress: '152.70.84.203:4' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([]);
+  });
+
+  test('三比一多数广告多数派', () => {
+    const rows = [
+      { ok: true, mappedAddress: '122.51.254.148:1' },
+      { ok: true, mappedAddress: '122.51.254.148:2' },
+      { ok: true, mappedAddress: '122.51.254.148:3' },
+      { ok: true, mappedAddress: '152.70.84.203:4' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
+      '122.51.254.148:1',
+      '122.51.254.148:2',
+      '122.51.254.148:3',
+    ]);
+  });
+
+  test('只有一个有效样本时广告它', () => {
+    const rows = [
+      { ok: false, mappedAddress: '203.0.113.9:1' },
+      { ok: true, mappedAddress: '198.51.100.7:2' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual(['198.51.100.7:2']);
+  });
+
+  test('全部不可用时不广告', () => {
+    const rows = [
+      { ok: false, mappedAddress: '203.0.113.9:1' },
+      { ok: true, fakeIp: true },
+      { ok: true, mappedAddress: '198.18.0.1:9' },
+      { ok: true, mappedAddress: '10.0.0.3:9' },
+      { ok: true, mappedAddress: '100.64.1.1:9' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([]);
+  });
+
+  test('TUN 代理机全部 fakeIp=true 且 mapped 一致时广告公网地址', () => {
+    const rows = [
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:53251' },
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:51119' },
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:37716' },
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:38118' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
+      '122.51.254.148:53251',
+      '122.51.254.148:51119',
+      '122.51.254.148:37716',
+      '122.51.254.148:38118',
+    ]);
+    const urls = enumeratePeerEndpoints(
+      39001,
+      { eth0: [v4('10.0.0.3')] },
+      {
+        bindHosts: ['0.0.0.0'],
+        mappedAddresses: stunMappedAddressesForAdvertise(rows, now),
+      }
+    );
+    expect(urls).toEqual(['ws://10.0.0.3:39001/peer', 'ws://122.51.254.148:39001/peer']);
   });
 });

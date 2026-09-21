@@ -548,7 +548,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
         ifaceCache.get(),
         {
           bindHosts: resolvePeerBindHost(undefined, stores.config.peerBindHost),
-          publicHost: process.env.VIBETERM_PEER_PUBLIC_HOST,
+          publicHost: gatewayConfig.peerPublicHost,
           mappedAddresses: stunMappedAddressesForAdvertise(),
         }
       ),

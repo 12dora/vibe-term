@@ -9,6 +9,7 @@ import {
   parseLinkStreamInflightBytes,
   parsePeerBindHost,
   parsePeerPort,
+  parsePeerPublicHost,
   parseRelayAutoSelect,
   parseRelayAutoSelectIntervalMs,
   parseRtcPortRange,
@@ -35,6 +36,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   stunServers: string[];
   stunSource: 'builtin' | 'custom' | 'disabled';
   peerBindHost: string[];
+  peerPublicHost: string | null;
   rtcPortRange: { begin: number; end: number } | null;
   turnUrl: string | null;
   turnUsername: string | null;
@@ -69,6 +71,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         stunServers: string[];
         stunSource: 'builtin' | 'custom' | 'disabled';
         peerBindHost: string[];
+        peerPublicHost: string | null;
         rtcPortRange: { begin: number; end: number } | null;
         turnUrl: string | null;
         turnUsername: string | null;
@@ -275,6 +278,37 @@ describe('parsePeerBindHost', () => {
   });
 });
 
+describe('parsePeerPublicHost', () => {
+  test('defaults to unset and accepts public IPv4 or FQDN', () => {
+    expect(parsePeerPublicHost(undefined)).toBeNull();
+    expect(parsePeerPublicHost('')).toBeNull();
+    expect(parsePeerPublicHost('  ')).toBeNull();
+    expect(parsePeerPublicHost(' 203.0.113.9 ')).toBe('203.0.113.9');
+    expect(parsePeerPublicHost('tmexhub-sh.jiefakj.com')).toBe('tmexhub-sh.jiefakj.com');
+  });
+
+  test('warns and ignores unadvertisable values', () => {
+    const warnings: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      expect(parsePeerPublicHost('10.0.0.3')).toBeNull();
+      expect(parsePeerPublicHost('198.18.0.1')).toBeNull();
+      expect(parsePeerPublicHost('100.64.1.1')).toBeNull();
+      expect(parsePeerPublicHost('0.0.0.0')).toBeNull();
+      expect(parsePeerPublicHost('localhost')).toBeNull();
+      expect(parsePeerPublicHost('not a host')).toBeNull();
+      expect(parsePeerPublicHost('2001:db8::1')).toBeNull();
+    } finally {
+      console.warn = warn;
+    }
+    expect(warnings.length).toBe(7);
+    expect(warnings.every((line) => line.includes('VIBETERM_PEER_PUBLIC_HOST'))).toBe(true);
+  });
+});
+
 describe('parsePeerPort', () => {
   test('peer port defaults to 39001 and rejects out-of-range values', () => {
     expect(parsePeerPort(undefined)).toBe(39001);
@@ -369,12 +403,18 @@ describe('config node/relay env', () => {
     expect(config.stunServers).toEqual([...BUILTIN_STUN_SERVERS]);
     expect(config.stunSource).toBe('builtin');
     expect(config.peerBindHost).toEqual(['::', '0.0.0.0']);
+    expect(config.peerPublicHost).toBeNull();
     expect(config.rtcPortRange).toBeNull();
   });
 
   test('parses VIBETERM_PEER_BIND_HOST comma-separated list', async () => {
     const config = await loadConfigWith({ VIBETERM_PEER_BIND_HOST: '127.0.0.1,::1' });
     expect(config.peerBindHost).toEqual(['127.0.0.1', '::1']);
+  });
+
+  test('parses VIBETERM_PEER_PUBLIC_HOST', async () => {
+    const config = await loadConfigWith({ VIBETERM_PEER_PUBLIC_HOST: '203.0.113.9' });
+    expect(config.peerPublicHost).toBe('203.0.113.9');
   });
 
   test('parses VIBETERM_RTC_PORT_RANGE', async () => {
