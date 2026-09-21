@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { StreamCloseInfo } from '@vibeterm/shared/link';
 import { adaptWsStream } from './adapted-ws-stream';
+import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 import { encodeTerminalStreamClose } from './stream-close-code';
 
 type FakeOpened = {
@@ -72,11 +73,34 @@ describe('adaptWsStream', () => {
     await tick();
     const late: Array<{ code?: number; reason?: string }> = [];
     adapted.onClose((info) => late.push(info));
-    expect(early).toEqual([{ code: 1011, reason: 'stream-error' }]);
+    expect(early).toEqual([{ code: 1011, reason: 'noise' }]);
     expect(late).toEqual(early);
+    expect(early[0]?.code).not.toBe(WS_CLOSE_LOGIN_REQUIRED);
     fake.abort();
     await tick();
     expect(early.length).toBe(1);
+  });
+
+  test('abort 透传原始收尾原因，普通拆流不是 4401', async () => {
+    const cases: Array<{ closed: StreamCloseInfo; reason: string }> = [
+      { closed: { reason: 'rst', message: 'head-timeout' }, reason: 'head-timeout' },
+      { closed: { reason: 'link-closed', message: 'link-closed' }, reason: 'link-closed' },
+      { closed: { reason: 'link-closed', message: 'retired' }, reason: 'retired' },
+      { closed: { reason: 'rst', message: 'peer-rst' }, reason: 'peer-rst' },
+      { closed: { reason: 'rst', message: 'aborted' }, reason: 'aborted' },
+    ];
+    for (const row of cases) {
+      const fake = fakeOpened(row.closed);
+      const adapted = adaptWsStream(fake.opened);
+      const seen: Array<{ code?: number; reason?: string }> = [];
+      adapted.onClose((info) => seen.push(info));
+      fake.abort();
+      await tick();
+      expect(seen).toEqual([{ code: 1011, reason: row.reason }]);
+      expect(seen[0]?.code).not.toBe(WS_CLOSE_LOGIN_REQUIRED);
+      expect(seen[0]?.reason).not.toBe('NODE_LOGIN_REQUIRED');
+      expect(seen[0]?.reason).not.toBe('reset');
+    }
   });
 
   test('close() 后注册的 onClose 也拿到关闭原因', async () => {

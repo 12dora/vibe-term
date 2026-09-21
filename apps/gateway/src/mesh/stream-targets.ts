@@ -7,7 +7,7 @@ import {
   httpHeadTimeoutMs,
   wrapUploadDestination,
 } from './forwarder-attempt-deadline';
-import { lookupPeerRttMs } from './peer-manager-state';
+import { lookupPeerRttMsForLink } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
 import {
@@ -335,6 +335,11 @@ function pumpHttpRequestBody(
   };
 }
 
+/** HTTP head 等待：跟 live 链路 RTT 走，无样本仍是 800 ms 档。 */
+export function httpHeadTimeoutForStream(link: LinkSession): number {
+  return httpHeadTimeoutMs(lookupPeerRttMsForLink(link));
+}
+
 export async function openHttpStream(
   link: LinkSession,
   openPayload: HttpStreamOpenPayload,
@@ -374,7 +379,7 @@ export async function openHttpStream(
 
   try {
     const head = await readHttpHead(stream, {
-      timeoutMs: httpHeadTimeoutMs(lookupPeerRttMs()),
+      timeoutMs: httpHeadTimeoutForStream(link),
       armAfter: upload.armAfter,
       abort: signal,
     });

@@ -5,7 +5,8 @@ import {
   MESH_PEER_HEADER,
   SESSION_RENEWED_HEADER,
 } from '@vibeterm/shared/http/mesh-headers';
-import { createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
 import { handleApiRequest } from '../api';
 import { dispatchRoutes } from '../api/route';
 import { NODE_SESSION_TTL_MS, NodeSessionStore } from '../auth/node-session-store';
@@ -14,25 +15,34 @@ import { UserStore } from '../auth/user-store';
 import { runMigrations } from '../db/migrate';
 import { createGatewayRuntime } from '../runtime';
 import { WebSocketServer } from '../ws';
+import { adaptWsStream } from './adapted-ws-stream';
 import {
   CLIENT_SOURCE_HEADER,
   CLIENT_SOURCE_LOCAL,
   waivesPasskeySecondFactor,
 } from './client-source';
-import { setHttpHeadDeadlineMs, setUploadStallMs } from './forwarder-attempt-deadline';
+import {
+  httpHeadTimeoutMs,
+  setHttpHeadDeadlineMs,
+  setUploadStallMs,
+} from './forwarder-attempt-deadline';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS, setMeshRequestContext } from './mesh-deps';
+import { PeerEndpointBackoff } from './peer-endpoint-backoff';
+import { createPeerManagerState, resetPeerRttLookupForTests } from './peer-manager-state';
+import type { LivePeer } from './peer-reconnect-wake';
 import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
 import { decodeTerminalStreamClose } from './stream-close-code';
 import {
   acceptHttpStream,
   acceptWsStream,
+  httpHeadTimeoutForStream,
   openHttpStream,
   openWsStream,
   stripForwardedRequestHeaders,
 } from './stream-targets';
-import { seedUser, waitUntil } from './test-support';
-import { requestDispatchContext } from './types';
+import { ImmediateScheduler, seedUser, waitUntil } from './test-support';
+import { type MeshIdentity, requestDispatchContext } from './types';
 
 beforeAll(() => {
   runMigrations();
@@ -43,6 +53,7 @@ describe('http/ws stream targets', () => {
   afterEach(async () => {
     setHttpHeadDeadlineMs(0);
     setUploadStallMs(0);
+    resetPeerRttLookupForTests();
     while (fixtures.length) {
       const item = fixtures.pop();
       await item?.stop?.();
@@ -1703,5 +1714,55 @@ describe('分享凭证的 mesh 流', () => {
     });
     expect(res.status).toBe(200);
     expect(dispatched).toBe(1);
+  });
+
+  test('HTTP head 预算随 live RTT 放大，无样本仍是 800 ms 档', () => {
+    resetPeerRttLookupForTests();
+    const unmatched = {} as LinkSession;
+    expect(httpHeadTimeoutForStream(unmatched)).toBe(httpHeadTimeoutMs(DEFAULT_DIAL_RTT_MS));
+
+    const scheduler = new ImmediateScheduler();
+    const slowLink = { id: 'slow' } as unknown as LinkSession;
+    const fastLink = { id: 'fast' } as unknown as LinkSession;
+    const state = createPeerManagerState({
+      identity: { nodeId: 'aa'.repeat(16), edSecretKey: new Uint8Array(64) } as MeshIdentity,
+      userStore: { getCert: () => null } as never,
+      uplink: { rttMs: null, resetBackoff() {} } as never,
+      scheduler,
+      endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
+    });
+    state.live.set('fast', { rttMs: 40, session: fastLink, peerNodeId: 'fast' } as LivePeer);
+    state.live.set('slow', { rttMs: 2500, session: slowLink, peerNodeId: 'slow' } as LivePeer);
+    const slowBudget = httpHeadTimeoutForStream(slowLink);
+    const proxyBudget = httpHeadTimeoutMs(DEFAULT_DIAL_RTT_MS);
+    expect(slowBudget).toBe(httpHeadTimeoutMs(2500));
+    expect(slowBudget).toBeGreaterThan(proxyBudget);
+    expect(httpHeadTimeoutForStream(fastLink)).toBe(httpHeadTimeoutMs(40));
+    resetPeerRttLookupForTests();
+    expect(httpHeadTimeoutForStream(slowLink)).toBe(proxyBudget);
+  });
+
+  test('adaptWsStream 普通收尾不改写成 4401', async () => {
+    const aborts: Array<() => void> = [];
+    const readable = new ReadableStream<Uint8Array>({ start() {} });
+    const adapted = adaptWsStream({
+      stream: {
+        id: 3,
+        closed: Promise.resolve({ reason: 'link-closed', message: 'retired' }),
+        onAbort: (cb) => {
+          aborts.push(cb);
+        },
+      },
+      send: async () => {},
+      readable,
+      close: () => {},
+    });
+    const seen: Array<{ code?: number; reason?: string }> = [];
+    adapted.onClose((info) => seen.push(info));
+    for (const cb of aborts) cb();
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    expect(seen).toEqual([{ code: 1011, reason: 'retired' }]);
+    expect(seen[0]?.code).not.toBe(WS_CLOSE_LOGIN_REQUIRED);
   });
 });
