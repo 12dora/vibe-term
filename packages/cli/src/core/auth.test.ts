@@ -3,10 +3,13 @@ import {
   type SessionMaterial,
   fetchMeshNodes,
   isNodeUnreachableError,
+  isUnexpectedLoginCode,
   listMeshNodes,
+  loginFailure,
   loginToNode,
+  unexpectedLoginCode,
 } from './auth';
-import { CliError, NetworkError } from './errors';
+import { AuthError, CliError, NetworkError, NotFoundError, PermissionError } from './errors';
 import { HttpClient, createMemoryCookieJar } from './http';
 
 const ENTRY = 'http://entry.example:9883';
@@ -184,5 +187,34 @@ describe('loginToNode unreachable', () => {
     expect(error).toBeInstanceOf(NetworkError);
     expect((error as NetworkError).exitCode).toBe(5);
     expect((error as NetworkError).message).toContain('timed out');
+    expect((error as NetworkError).hint).toContain('--node-timeout');
+  });
+});
+
+describe('unexpected login codes', () => {
+  test('HTTP 500/404/403 from thrown CliError become HTTP_* outcome codes', () => {
+    expect(
+      unexpectedLoginCode(new CliError('/api/auth/challenge → HTTP 500 {"error":"boom"}'))
+    ).toBe('HTTP_500');
+    expect(unexpectedLoginCode(new NotFoundError('/api/auth/challenge → 404 not found'))).toBe(
+      'HTTP_404'
+    );
+    expect(
+      unexpectedLoginCode(new PermissionError('/api/auth/challenge → FORBIDDEN', 'FORBIDDEN'))
+    ).toBe('HTTP_403');
+    expect(unexpectedLoginCode(new Error('nope'))).toBe('HTTP_ERROR');
+    expect(isUnexpectedLoginCode('HTTP_500')).toBe(true);
+    expect(isUnexpectedLoginCode('HTTP_ERROR')).toBe(true);
+    expect(isUnexpectedLoginCode('INVALID_CREDENTIALS')).toBe(false);
+  });
+
+  test('loginFailure maps HTTP_* to generic exit 1 and auth codes to 3', () => {
+    const http = loginFailure('n1', 'HTTP_500');
+    expect(http).toBeInstanceOf(CliError);
+    expect(http).not.toBeInstanceOf(AuthError);
+    expect(http.exitCode).toBe(1);
+    const auth = loginFailure('n1', 'INVALID_CREDENTIALS');
+    expect(auth).toBeInstanceOf(AuthError);
+    expect(auth.exitCode).toBe(3);
   });
 });

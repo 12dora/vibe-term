@@ -22,7 +22,14 @@ import {
   signLogin,
 } from '@vibeterm/shared/auth';
 import type { Delegation } from '@vibeterm/shared/auth';
-import { AuthError, CliError, NetworkError } from './errors';
+import {
+  AuthError,
+  CliError,
+  EXIT_GENERIC,
+  NetworkError,
+  NotFoundError,
+  PermissionError,
+} from './errors';
 import { type HttpClient, type RequestOptions, isSessionAuthFailure } from './http';
 
 /**
@@ -152,6 +159,25 @@ export const TOTP_KEY_UNAVAILABLE = 'TOTP_KEY_UNAVAILABLE';
 /** per-node 墙上时钟到点；与 `NODE_UNREACHABLE` 同属网络类，不是鉴权拒绝。 */
 export const LOGIN_TIMEOUT = 'TIMEOUT';
 
+/** fan-out 把非登录码抛错收成结果行时的兜底码（解析不出 HTTP 状态时用）。 */
+export const UNEXPECTED_LOGIN = 'HTTP_ERROR';
+
+export function isUnexpectedLoginCode(code: string | undefined): boolean {
+  return code === UNEXPECTED_LOGIN || (typeof code === 'string' && /^HTTP_\d{3}$/.test(code));
+}
+
+/** challenge/login 抛出的 5xx/404/非会话 403 等 → 结果表用的码；优先 HTTP 状态。 */
+export function unexpectedLoginCode(error: unknown): string {
+  if (error instanceof NotFoundError) return 'HTTP_404';
+  if (error instanceof PermissionError) return 'HTTP_403';
+  if (error instanceof Error) {
+    const http = /HTTP (\d{3})\b/.exec(error.message);
+    if (http) return `HTTP_${http[1]}`;
+  }
+  if (error instanceof CliError && error.code) return error.code;
+  return UNEXPECTED_LOGIN;
+}
+
 interface ChallengeResponse {
   challenge_id: string;
   nonce: string;
@@ -199,7 +225,7 @@ function isLoginTimeoutError(error: unknown, signal?: AbortSignal): boolean {
 
 function timeoutOutcomeOrThrow(nodeId: string, asOutcome: boolean | undefined): LoginNodeResult {
   if (asOutcome) return { nodeId, ok: false, code: LOGIN_TIMEOUT };
-  throw new NetworkError(`login to node ${nodeId} timed out`);
+  throw loginFailure(nodeId, LOGIN_TIMEOUT);
 }
 
 /** 一次「取 challenge → 签 login → POST /login」。重试必须整套重来：nonce 一次性。 */
@@ -283,6 +309,8 @@ export async function fetchMeshNodes(
 }
 
 async function readLoginErrorCode(response: Response): Promise<string> {
+  // 5xx 是反代/转发层故障，不是鉴权拒绝；不要被 JSON 体里的 error 字符串带跑。
+  if (response.status >= 500) return `HTTP_${response.status}`;
   try {
     const payload = (await response.json()) as { code?: unknown; error?: unknown };
     if (typeof payload.code === 'string') return payload.code;
@@ -354,6 +382,9 @@ export function loginFailure(nodeId: string, code: string, policy?: SecondFactor
       `login to node ${nodeId} timed out`,
       'pass --node-timeout <ms> to wait longer, or check the mesh path to this node'
     );
+  }
+  if (isUnexpectedLoginCode(code)) {
+    return new CliError(`login to node ${nodeId} failed: ${code}`, EXIT_GENERIC, undefined, code);
   }
   return new AuthError(`login to node ${nodeId} failed: ${code}`, undefined, code);
 }

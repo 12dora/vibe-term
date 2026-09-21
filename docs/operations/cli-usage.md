@@ -15,7 +15,7 @@ vibeterm login --entry https://vt.example.com --user admin
 ```
 
 - 密码交互输入；非交互场景用 `VIBETERM_PASSWORD`。开了两步验证就再给 `--totp <6 位码>` 或 `VIBETERM_TOTP`。
-- 默认把 entry 后面**每个节点**都登一遍（`--all-nodes`），之后访问任意节点都不用再登；只想登一台就 `--node <id|名字>`。某台离线（HTTP 503 `NODE_UNREACHABLE` 或网络错误）会打 `skipped <node>: unreachable` 并继续，entry 登录成功且其余失败都是不可达时退出码 0，并汇总 `logged in to N nodes, skipped M unreachable`；可达节点拒绝登录才非 0。
+- 默认把 entry 后面**每个节点**都登一遍（`--all-nodes`），之后访问任意节点都不用再登；只想登一台就 `--node <id|名字>`。entry 先串行登录，其余节点有界并发（`--concurrency`，缺省 4），每台有墙上时钟（`--node-timeout`，缺省 25000 ms）；超时行是 `TIMEOUT`，与 `NODE_UNREACHABLE` 同属网络类跳过。stderr 会打逐节点进度。某台离线（HTTP 503 `NODE_UNREACHABLE`、网络错误或 `TIMEOUT`）会打 `skipped <node>: unreachable|timeout` 并继续，entry 登录成功且其余失败都是不可达/超时时退出码 0，并汇总 `logged in to N nodes, skipped M unreachable, N timeout`；可达节点鉴权拒绝退出码 3，非鉴权 HTTP 错误（5xx / 404）退出码 1（与鉴权码混合时也是 1）。`--node` 指名的那台不可达或超时退出码 5。解析 `login --json` 的脚本除 `NODE_UNREACHABLE` 外还会看到 `TIMEOUT`、`HTTP_5xx`。登录的 challenge/login 请求**不受**全局 `--timeout` 约束，只看 `--node-timeout`。
 - 登录流程与网页端逐步一致（argon2id 派生根种子 → 临时会话密钥对 → 签名委托）。密码、根种子、会话私钥**都不落盘**，落盘的只有会话 sid 与到期时刻，默认文件是 `~/.config/vibeterm/session.json`（目录 0700、文件 0600）。`$VIBETERM_SESSION_FILE` 可改走指定路径（同样 0600；group/world 可读会拒绝）。**该文件是完整会话能力，须按密钥保护**，不要提交、不要世界可读。
 - 只在本 origin 注册了通行密钥、又没开 TOTP 的账号，CLI 登不上（不实现 WebAuthn），会退出码 3 并说明补救办法：在网页端开 TOTP。
 

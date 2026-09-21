@@ -6,7 +6,6 @@ import { bytesEqual, decodeBase64url } from '@vibeterm/shared/auth';
 import { flagBool, flagNumber, flagString, parseArgv } from '../core/args';
 import {
   type AuthMode,
-  LOGIN_TIMEOUT,
   type SessionMaterial,
   TOTP_KEY_UNAVAILABLE,
   buildSessionMaterial,
@@ -17,26 +16,19 @@ import {
   requiresLogin,
 } from '../core/auth';
 import type { CliContext } from '../core/context';
-import {
-  AuthError,
-  EXIT_AUTH,
-  EXIT_NETWORK,
-  NetworkError,
-  UsageError,
-  exitCodeOf,
-} from '../core/errors';
+import { AuthError, UsageError } from '../core/errors';
 import {
   DEFAULT_LOGIN_CONCURRENCY,
   DEFAULT_NODE_TIMEOUT_MS,
+  type LoginTarget,
+  type TargetOutcome,
   emitLoginDone,
   emitLoginStart,
-  formatNetworkSkipSummary,
-  isNetworkLoginCode,
-  mapBounded,
-  networkSkipLabel,
+  loginOthers,
+  reportLoginFailures,
+  reportLoginOutcomes,
   requirePositiveInt,
-  takeTotpForRetry,
-  totpRetryIndices,
+  throwIfSelfFailed,
 } from '../core/login-fanout';
 import { isInteractive, promptHidden, promptLine, readAllStdin } from '../core/prompt';
 import type { Command } from './types';
@@ -49,20 +41,6 @@ const FLAGS = {
   'node-timeout': 'number',
   concurrency: 'number',
 } as const;
-
-interface LoginTarget {
-  nodeId: string;
-  name: string;
-  publicKey: string | null;
-}
-
-interface TargetOutcome {
-  node: string;
-  name: string;
-  ok: boolean;
-  code?: string;
-  nodePk?: string;
-}
 
 interface LoginAttemptOpts {
   treatUnreachableAsOutcome?: boolean;
@@ -203,180 +181,9 @@ async function loginOne(
   };
 }
 
-async function loginFanoutOne(
-  ctx: CliContext,
-  target: LoginTarget,
-  material: SessionMaterial,
-  totp: { code: string | null },
-  timeoutMs: number
-): Promise<TargetOutcome> {
-  emitLoginStart(ctx.out, target.name);
-  const outcome = await loginOne(ctx, target, material, totp, {
-    timeoutMs,
-    allowPrompt: false,
-    treatUnreachableAsOutcome: true,
-  });
-  if (outcome.ok || outcome.code !== 'TOTP_REQUIRED') emitLoginDone(ctx.out, target.name, outcome);
-  return outcome;
-}
-
-function applyTotpUnavailable(
-  outcomes: TargetOutcome[],
-  retryAt: readonly number[]
-): TargetOutcome[] {
-  const next = outcomes.slice();
-  for (const index of retryAt) {
-    next[index] = { ...next[index], code: TOTP_KEY_UNAVAILABLE };
-  }
-  return next;
-}
-
-function emitTotpPendingDone(
-  ctx: CliContext,
-  targets: readonly LoginTarget[],
-  outcomes: readonly TargetOutcome[],
-  retryAt: readonly number[]
-): void {
-  for (const index of retryAt) emitLoginDone(ctx.out, targets[index].name, outcomes[index]);
-}
-
-async function retryTotpTargets(args: {
-  ctx: CliContext;
-  targets: readonly LoginTarget[];
-  first: TargetOutcome[];
-  material: SessionMaterial;
-  totp: { code: string | null };
-  timeoutMs: number;
-  concurrency: number;
-  retryAt: readonly number[];
-}): Promise<TargetOutcome[]> {
-  const retried = await mapBounded(args.retryAt, args.concurrency, async (index) => {
-    const target = args.targets[index];
-    emitLoginStart(args.ctx.out, target.name);
-    const outcome = await loginOne(args.ctx, target, args.material, args.totp, {
-      timeoutMs: args.timeoutMs,
-      allowPrompt: false,
-      treatUnreachableAsOutcome: true,
-    });
-    emitLoginDone(args.ctx.out, target.name, outcome);
-    return outcome;
-  });
-  const next = args.first.slice();
-  args.retryAt.forEach((index, i) => {
-    next[index] = retried[i];
-  });
-  return next;
-}
-
-async function finishFanout(args: {
-  ctx: CliContext;
-  targets: readonly LoginTarget[];
-  first: TargetOutcome[];
-  material: SessionMaterial;
-  totp: { code: string | null };
-  timeoutMs: number;
-  concurrency: number;
-}): Promise<TargetOutcome[]> {
-  const retryAt = totpRetryIndices(args.first);
-  if (retryAt.length === 0) return args.first;
-  if (args.totp.code) {
-    emitTotpPendingDone(args.ctx, args.targets, args.first, retryAt);
-    return args.first;
-  }
-  const status = await takeTotpForRetry({
-    totp: args.totp,
-    hasTotpKey: Boolean(args.material.kTotp),
-    interactive: isInteractive(),
-    prompt: () => promptLine('Two-step verification code: '),
-  });
-  if (status === 'ready') return retryTotpTargets({ ...args, retryAt });
-  const finalized =
-    status === 'unavailable' ? applyTotpUnavailable(args.first, retryAt) : args.first;
-  emitTotpPendingDone(args.ctx, args.targets, finalized, retryAt);
-  return finalized;
-}
-
-async function loginOthers(args: {
-  ctx: CliContext;
-  targets: readonly LoginTarget[];
-  material: SessionMaterial;
-  totp: { code: string | null };
-  timeoutMs: number;
-  concurrency: number;
-}): Promise<TargetOutcome[]> {
-  const { ctx, targets, material, totp, timeoutMs, concurrency } = args;
-  if (targets.length === 0) return [];
-  const first = await mapBounded(targets, concurrency, (target) =>
-    loginFanoutOne(ctx, target, material, totp, timeoutMs)
-  );
-  return finishFanout({ ctx, targets, first, material, totp, timeoutMs, concurrency });
-}
-
-function report(ctx: CliContext, outcomes: TargetOutcome[]): void {
-  if (ctx.globals.json) {
-    ctx.out.data({ entry: ctx.globals.entry, nodes: outcomes });
-    return;
-  }
-  ctx.out.table(outcomes, [
-    { header: 'NODE', value: (row) => row.node },
-    { header: 'NAME', value: (row) => row.name },
-    { header: 'STATUS', value: (row) => (row.ok ? 'ok' : (row.code ?? 'failed')) },
-  ]);
-}
-
 function emitOpenStandalone(ctx: CliContext): void {
   ctx.out.info(`${ctx.globals.entry} does not require a login (open standalone instance)`);
   if (ctx.globals.json) ctx.out.data({ entry: ctx.globals.entry, login: 'not-required' });
-}
-
-function throwIfSelfFailed(outcome: TargetOutcome, policy: AuthMode['secondFactorPolicy']): void {
-  if (outcome.ok) return;
-  if (outcome.code === 'NODE_UNREACHABLE' || outcome.code === LOGIN_TIMEOUT) {
-    throw new NetworkError(`login to node self failed: ${outcome.code}`);
-  }
-  throw loginFailure('self', outcome.code ?? 'UNKNOWN', policy);
-}
-
-function emitNetworkSkipSummary(ctx: CliContext, outcomes: TargetOutcome[]): void {
-  const network = outcomes.filter((row) => !row.ok && isNetworkLoginCode(row.code));
-  if (network.length === 0) return;
-  const okCount = outcomes.filter((row) => row.ok).length;
-  const unreachable = network.filter((row) => row.code === 'NODE_UNREACHABLE').length;
-  const timedOut = network.filter((row) => row.code === LOGIN_TIMEOUT).length;
-  ctx.out.info(formatNetworkSkipSummary(okCount, unreachable, timedOut));
-}
-
-function reportRejected(ctx: CliContext, mode: AuthMode, rejected: TargetOutcome[]): number {
-  let authOnly = true;
-  for (const outcome of rejected) {
-    const error = loginFailure(outcome.node, outcome.code ?? 'UNKNOWN', mode.secondFactorPolicy);
-    ctx.out.warn(`node ${outcome.node} (${outcome.name}): ${error.message}`);
-    if (error.hint) ctx.out.warn(`  ${error.hint}`);
-    if (exitCodeOf(error) !== EXIT_AUTH) authOnly = false;
-  }
-  return authOnly ? EXIT_AUTH : 1;
-}
-
-function reportFailures(
-  ctx: CliContext,
-  mode: AuthMode,
-  outcomes: TargetOutcome[],
-  explicitTarget: boolean
-): number {
-  const failed = outcomes.filter((outcome) => !outcome.ok);
-  const network = failed.filter((outcome) => isNetworkLoginCode(outcome.code));
-  const rejected = failed.filter((outcome) => !isNetworkLoginCode(outcome.code));
-  if (explicitTarget && network.length > 0) {
-    for (const outcome of network) {
-      ctx.out.warn(`node ${outcome.node} (${outcome.name}): ${networkSkipLabel(outcome.code)}`);
-    }
-    return EXIT_NETWORK;
-  }
-  if (rejected.length === 0) {
-    emitNetworkSkipSummary(ctx, outcomes);
-    return 0;
-  }
-  return reportRejected(ctx, mode, rejected);
 }
 
 async function loginEntry(
@@ -429,14 +236,21 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     const rest = await loginOthers({
       ctx,
       targets: await otherTargets(ctx, mode, nodeRef, roster),
-      material,
       totp,
-      timeoutMs,
+      hasTotpKey: Boolean(material.kTotp),
+      interactive: isInteractive(),
+      promptTotp: () => promptLine('Two-step verification code: '),
       concurrency,
+      attempt: (target) =>
+        loginOne(ctx, target, material, totp, {
+          timeoutMs,
+          allowPrompt: false,
+          treatUnreachableAsOutcome: true,
+        }),
     });
     const outcomes = [selfOutcome, ...rest];
-    report(ctx, outcomes);
-    return reportFailures(ctx, mode, outcomes, Boolean(nodeRef));
+    reportLoginOutcomes(ctx, outcomes);
+    return reportLoginFailures(ctx, mode, outcomes, Boolean(nodeRef));
   } finally {
     material.destroy();
   }
@@ -459,10 +273,16 @@ export const command: Command = {
     'network skip like NODE_UNREACHABLE — not an auth rejection. Progress lines go to stderr',
     'so `--json` stdout stays a single object.',
     '',
+    'Login challenge/login requests ignore the global `--timeout` flag. Their deadline is',
+    '`--node-timeout` (default 25000 ms) only; `--timeout 50 --node-timeout 500` still waits',
+    'up to 500 ms per node. A 5xx/404/non-session 403 on one node is a failed row (code',
+    'HTTP_5xx), not a command abort: the rest continue and the result table is always printed.',
+    '',
     'An offline node (HTTP 503 NODE_UNREACHABLE, a network error, or TIMEOUT) is skipped with',
     '`skipped <node>: unreachable|timeout` when `--node` is absent; login still exits 0 if the',
     'entry succeeded and every other failure is unreachable or timeout. `--node` naming a single',
-    'unreachable or timed-out target exits 5. A reachable node that rejects the login is non-zero.',
+    'unreachable or timed-out target exits 5. Auth rejections exit 3; a non-auth HTTP error',
+    '(5xx/404) exits 1, including when mixed with auth rejections.',
     '',
     'Options:',
     '  --user <name>         verify the entry serves this account before asking for a password',
@@ -470,7 +290,8 @@ export const command: Command = {
     '  --password-stdin      read the password from stdin instead of prompting',
     '  --all-nodes           log into every mesh node (default when --node is absent)',
     '  --node <id|name>      log into this node only (plus the entry itself)',
-    '  --node-timeout <ms>   per-node login deadline (default 25000); aborts the in-flight fetch',
+    '  --node-timeout <ms>   per-node login deadline (default 25000); aborts the in-flight fetch.',
+    '                        Challenge/login ignore global --timeout; only this flag applies',
     '  --concurrency <n>     max parallel logins after the entry (default 4)',
     '  --ca <pem-file>       trust this extra CA; --insecure skips verification entirely',
     '',
