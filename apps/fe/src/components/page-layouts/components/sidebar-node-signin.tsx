@@ -1,7 +1,7 @@
 // 在线但还没有该 node 会话：默认折叠，用户点开（或冷启动自动登一次）才触发静默登录。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
-import { loginErrorKey } from '@/auth/login-errors';
+import { nodeLoginFailureTextKey, offerNodeLogin } from '@/auth/login-failure-kind';
 import { restoreSessionKey } from '@/auth/session-key-store';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { useUIStore } from '@vibeterm/stores/react';
@@ -84,8 +84,11 @@ export function SidebarNodeSignIn({
   const gate = useNodeLoginGate(node.runtimeNodeId, { enabled: expanded || eager });
   const presence = useSectionPresence(present, null);
   if (!presence.rendered) return null;
-  // 自动登录进行中就别先闪一下「登录此节点」：那条按钮点下去做的正是同一件事。
+  // 自动登录进行中就别先闪一下「登录该节点」：那条按钮点下去做的正是同一件事。
   const busy = gate.status === 'pending' && (expanded || eager);
+  const errorKey = nodeLoginFailureTextKey(gate.code);
+  // 传输层失败不给登录入口：点了只是在抖动的链路上再叠一次拨号，门闸已经排了退避重试。
+  const offerLogin = offerNodeLogin(gate.code);
 
   return (
     <div
@@ -116,15 +119,24 @@ export function SidebarNodeSignIn({
           </button>
         ) : (
           <div className="vibeterm-fade flex flex-col gap-1">
-            {gate.code ? (
+            {errorKey ? (
               <span
-                className="px-1 text-[10px] text-destructive"
+                className={cn(
+                  'px-1 text-[10px]',
+                  offerLogin ? 'text-destructive' : 'text-muted-foreground'
+                )}
                 data-testid={`sidebar-node-error-${node.runtimeNodeId}`}
               >
-                {t(loginErrorKey(gate.code, 'password'))}
+                {t(errorKey)}
               </span>
             ) : null}
-            <NodeLoginButton nodeId={node.runtimeNodeId} nodeName={node.name} className="w-full" />
+            {offerLogin && (
+              <NodeLoginButton
+                nodeId={node.runtimeNodeId}
+                nodeName={node.name}
+                className="w-full"
+              />
+            )}
           </div>
         )}
       </div>

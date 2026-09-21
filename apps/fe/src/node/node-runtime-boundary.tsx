@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
-import { loginErrorKey } from '@/auth/login-errors';
+import { nodeLoginFailureTextKey, offerNodeLogin } from '@/auth/login-failure-kind';
 import { type NodeLoginGate, useNodeLoginGate } from '@/auth/use-node-login';
 import { GlobalDeviceProvider } from '@/components/global-device-provider';
 import { toRuntimeNodeId } from './merge-nodes';
@@ -79,8 +79,10 @@ export function NodeRouteGate({ children }: { children: ReactNode }) {
 }
 
 /**
- * 失败时给出「登录此节点」（会话钥没了就跳 `/login?node=`）与回本机的出口；
+ * 失败时给出「登录该节点」（会话钥没了就跳 `/login?node=`）与回本机的出口；
  * 手机上侧边栏是抽屉，这里补一个开合按钮，免得用户被困在这一屏。
+ *
+ * 传输层失败（打不通）不摆登录入口：这一屏说的是「连接不上」，门闸已在排退避重试。
  */
 function NodeGateScreen({ nodeId, gate }: { nodeId: string; gate: NodeLoginGate }) {
   const { t } = useTranslation();
@@ -96,19 +98,27 @@ function NodeGateScreen({ nodeId, gate }: { nodeId: string; gate: NodeLoginGate 
     );
   }
 
+  const errorKey = nodeLoginFailureTextKey(gate.code);
+  const offerLogin = offerNodeLogin(gate.code);
   return (
     <div
       className="relative flex h-full flex-col items-center justify-center gap-3 p-8 text-center"
       data-testid={`node-gate-blocked-${nodeId}`}
+      data-gate-kind={gate.kind ?? undefined}
     >
       <SidebarTrigger className="absolute top-3 left-3" data-testid="node-gate-sidebar-open" />
-      <p className="text-sm text-muted-foreground">{t('auth.node.signInRequired')}</p>
-      {gate.code ? (
-        <p className="text-sm text-destructive" data-testid="node-gate-error">
-          {t(loginErrorKey(gate.code, 'password'))}
+      {offerLogin && (
+        <p className="text-sm text-muted-foreground">{t('auth.node.signInRequired')}</p>
+      )}
+      {errorKey ? (
+        <p
+          className={offerLogin ? 'text-sm text-destructive' : 'text-sm text-muted-foreground'}
+          data-testid="node-gate-error"
+        >
+          {t(errorKey)}
         </p>
       ) : null}
-      <NodeLoginButton nodeId={nodeId} />
+      {offerLogin && <NodeLoginButton nodeId={nodeId} />}
       <Link to="/" className="text-xs text-muted-foreground underline underline-offset-4">
         {t('auth.node.backToLocal')}
       </Link>

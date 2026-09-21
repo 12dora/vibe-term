@@ -76,6 +76,34 @@ export function eligibleUpgradeRows(rows: NodeRow[], latestVersion: string | nul
   return rows.filter((row) => isBatchEligible(row, latestVersion));
 }
 
+/** 批量跳过的两类原因；版本原因（已最新 / 太旧）不算「跳过」，那是正常结论。 */
+export interface UpgradeSkipCounts {
+  /** 打不通：离线，点多少次都一样，只能等链路回来。 */
+  unreachable: number;
+  /** 没有该节点的会话：用户登一次就能进批量。 */
+  loginRequired: number;
+}
+
+export const NO_UPGRADE_SKIPS: UpgradeSkipCounts = { unreachable: 0, loginRequired: 0 };
+
+/**
+ * 这一批里因为「连不上」或「要先登录」而被排除的节点各有几台。
+ * 两者的下一步完全不同，合成一个「已跳过 N 台」等于什么都没说。
+ */
+export function upgradeSkipCounts(
+  rows: NodeRow[],
+  latestVersion: string | null
+): UpgradeSkipCounts {
+  const counts: UpgradeSkipCounts = { unreachable: 0, loginRequired: 0 };
+  for (const row of rows) {
+    if (isMeshNodePaused(row)) continue;
+    const reason = upgradeBlockReason(row, latestVersion);
+    if (reason === 'offline') counts.unreachable += 1;
+    else if (reason === 'loginRequired') counts.loginRequired += 1;
+  }
+  return counts;
+}
+
 /** 按「普通节点 → 本机」切成两组；空组会被去掉。 */
 export function orderUpgradeGroups(rows: NodeRow[]): NodeRow[][] {
   const others: NodeRow[] = [];
@@ -91,6 +119,8 @@ export interface UpgradeBatchSummary {
   succeeded: number;
   failed: number;
   failedNames: string[];
+  /** 开跑前就被排除的两类节点，按原因分开报；缺省即没有跳过。 */
+  skipped?: UpgradeSkipCounts;
   /** 用户中途按「停止升级」打断的节点数：既不算成功也不算失败，单独报一档。 */
   cancelledCount: number;
   /** 组件卸载 / 页面离开：结论不完整，不该弹汇总 toast。 */
@@ -115,6 +145,8 @@ export interface UpgradeBatchParams {
   onSettled?: (row: NodeRow, outcome: UpgradeRunOutcome) => void;
   /** 上一次会话已经跑完的机器：直接进汇总与进度，不再发 POST。 */
   settled?: SettledUpgrade[];
+  /** 开跑前就被排除的节点，按原因分开计数，进最后那条汇总。 */
+  skipped?: UpgradeSkipCounts;
 }
 
 function tally(summary: UpgradeBatchSummary, row: { name: string }, outcome: UpgradeRunOutcome) {
@@ -162,12 +194,25 @@ async function settleOne(p: UpgradeBatchParams, row: NodeRow): Promise<UpgradeRu
   }
 }
 
-function emptySummary(): UpgradeBatchSummary {
-  return { succeeded: 0, failed: 0, failedNames: [], cancelledCount: 0, cancelled: false };
+/** 一台都没跳过时不写 `skipped`：汇总对象保持原形，调用方不必处理一堆 0。 */
+export function skipsOrUndefined(counts: UpgradeSkipCounts): UpgradeSkipCounts | undefined {
+  return counts.unreachable > 0 || counts.loginRequired > 0 ? counts : undefined;
+}
+
+function emptySummary(skipped?: UpgradeSkipCounts): UpgradeBatchSummary {
+  const summary: UpgradeBatchSummary = {
+    succeeded: 0,
+    failed: 0,
+    failedNames: [],
+    cancelledCount: 0,
+    cancelled: false,
+  };
+  if (skipped) summary.skipped = skipped;
+  return summary;
 }
 
 export async function runUpgradeBatch(p: UpgradeBatchParams): Promise<UpgradeBatchSummary> {
-  const summary = emptySummary();
+  const summary = emptySummary(p.skipped);
   for (const item of p.settled ?? []) tally(summary, item, item.outcome);
   const progress = { completed: p.settled?.length ?? 0 };
   for (const group of p.groups ?? orderUpgradeGroups(p.rows)) {
@@ -178,6 +223,25 @@ export async function runUpgradeBatch(p: UpgradeBatchParams): Promise<UpgradeBat
   return summary;
 }
 
+/**
+ * 跳过的那一句：两类原因分开说，都是 0 就没有这一句。
+ * 只有一类时不报另一类的 0，免得一条汇总里塞两个没用的数字。
+ */
+export function batchSkipText(t: Translate, skipped: UpgradeSkipCounts): string {
+  const { unreachable, loginRequired } = skipped;
+  if (unreachable > 0 && loginRequired > 0) {
+    return t('nodes.upgrade.skippedBoth', { unreachable, loginRequired });
+  }
+  if (unreachable > 0) return t('nodes.upgrade.skippedUnreachable', { count: unreachable });
+  if (loginRequired > 0) return t('nodes.upgrade.skippedLoginRequired', { count: loginRequired });
+  return '';
+}
+
+function withSkips(t: Translate, text: string, skipped: UpgradeSkipCounts): string {
+  const skip = batchSkipText(t, skipped);
+  return skip ? `${text}${skip}` : text;
+}
+
 /** 批量结束后的唯一一条 toast；被取消时不提示（结论不完整）。 */
 export function reportBatchSummary(
   t: Translate,
@@ -186,22 +250,28 @@ export function reportBatchSummary(
 ): void {
   if (summary.cancelled) return;
   const counts = { success: summary.succeeded, failed: summary.failed };
+  const skipped = summary.skipped ?? NO_UPGRADE_SKIPS;
   if (summary.cancelledCount > 0) {
     // 有人中途按了停止：三个数一起报，失败节点名让位给「已取消」这一档。
-    const text = t('nodes.upgrade.allDoneWithCancelled', {
-      ...counts,
-      cancelled: summary.cancelledCount,
-    });
+    const text = withSkips(
+      t,
+      t('nodes.upgrade.allDoneWithCancelled', { ...counts, cancelled: summary.cancelledCount }),
+      skipped
+    );
     if (summary.failed === 0) toasts.info(text);
     else toasts.warning(text);
     return;
   }
   if (summary.failed === 0) {
-    toasts.success(t('nodes.upgrade.allDone', counts));
+    const text = withSkips(t, t('nodes.upgrade.allDone', counts), skipped);
+    if (skipped.unreachable > 0 || skipped.loginRequired > 0) toasts.info(text);
+    else toasts.success(text);
     return;
   }
   const names = summary.failedNames.join(t('nodes.upgrade.listSeparator'));
-  toasts.warning(t('nodes.upgrade.allDoneWithFailures', { ...counts, names }));
+  toasts.warning(
+    withSkips(t, t('nodes.upgrade.allDoneWithFailures', { ...counts, names }), skipped)
+  );
 }
 
 export interface UpgradeBatchLaunch {
@@ -258,6 +328,7 @@ export async function launchUpgradeBatch(
     rows: targets,
     groups,
     signal: p.signal,
+    skipped: skipsOrUndefined(upgradeSkipCounts(p.rows, version)),
     // 批量期间每节点的 toast 全部吞掉，只保留行内阶段与最后那条汇总。
     run: (row) => p.runOne(row, version, SILENT_UPGRADE_TOASTS),
     onProgress: p.onProgress,
@@ -344,6 +415,7 @@ export function resumeUpgradeBatch(p: UpgradeBatchResume): Promise<UpgradeBatchS
     groups,
     signal: p.signal,
     settled,
+    skipped: skipsOrUndefined(upgradeSkipCounts(p.rows, version)),
     run: (row) => resumeOne(p, row, version),
     onProgress: p.onProgress,
     onSettled: (row, outcome) => recordSettled(p.sink, p.signal, row.id, outcome),

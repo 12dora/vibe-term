@@ -677,6 +677,7 @@
         "loggingIn": "Signing in…",
         "retryLogin": "Try again",
         "signInRequired": "Sign in to this node to continue.",
+        "unreachable": "Cannot reach this node. Retrying automatically.",
         "backToLocal": "Back to this machine"
       },
       "errors": {

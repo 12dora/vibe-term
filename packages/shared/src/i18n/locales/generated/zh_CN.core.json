@@ -677,6 +677,7 @@
         "loggingIn": "登录中…",
         "retryLogin": "重试登录",
         "signInRequired": "需要登录该节点才能继续。",
+        "unreachable": "连接不上该节点，稍后自动重试。",
         "backToLocal": "返回本机"
       },
       "errors": {

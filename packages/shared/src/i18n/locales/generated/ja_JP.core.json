@@ -677,6 +677,7 @@
         "loggingIn": "サインインしています…",
         "retryLogin": "再試行",
         "signInRequired": "続行するには、このノードにサインインしてください。",
+        "unreachable": "このノードに接続できません。しばらくすると自動で再試行します。",
         "backToLocal": "このマシンに戻る"
       },
       "errors": {

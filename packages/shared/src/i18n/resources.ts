@@ -1979,6 +1979,7 @@ export const I18N_RESOURCES = {
         "loggingIn": "Signing in…",
         "retryLogin": "Try again",
         "signInRequired": "Sign in to this node to continue.",
+        "unreachable": "Cannot reach this node. Retrying automatically.",
         "backToLocal": "Back to this machine"
       },
       "errors": {
@@ -2418,6 +2419,7 @@ export const I18N_RESOURCES = {
         "online": "Online",
         "onlineSignedIn": "Online · signed in",
         "onlineSignedOut": "Online · not signed in",
+        "unreachable": "Cannot reach",
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
@@ -2658,6 +2660,7 @@ export const I18N_RESOURCES = {
         "stateDownloadingSize": "Downloading {{size}}",
         "done": "“{{name}}” upgraded to {{version}}",
         "failed": "Upgrade failed: {{error}}",
+        "failedNeedsLogin": "Upgrade failed: sign in to \"{{name}}\" first, using the Sign in button on that row.",
         "alreadyLatest": "“{{name}}” is already on the latest version.",
         "offline": "The node is offline and cannot be upgraded.",
         "loginRequired": "Sign in to this node first.",
@@ -2682,6 +2685,9 @@ export const I18N_RESOURCES = {
         "allDone": "All upgrades finished: {{success}} succeeded, {{failed}} failed.",
         "allDoneWithFailures": "All upgrades finished: {{success}} succeeded, {{failed}} failed. Failed: {{names}}.",
         "allDoneWithCancelled": "All upgrades finished: {{success}} succeeded, {{failed}} failed, {{cancelled}} cancelled.",
+        "skippedUnreachable": "Skipped {{count}} node(s) that cannot be reached.",
+        "skippedLoginRequired": "Skipped {{count}} node(s) that need sign-in first.",
+        "skippedBoth": "Skipped: {{unreachable}} unreachable, {{loginRequired}} needing sign-in.",
         "listSeparator": ", ",
         "cancel": "Stop Upgrade",
         "cancelled": "Upgrade of “{{name}}” cancelled.",
@@ -2952,7 +2958,8 @@ export const I18N_RESOURCES = {
         "status": {
           "online": "Online",
           "offline": "Offline",
-          "signedOut": "Not signed in"
+          "signedOut": "Not signed in",
+          "unreachable": "Cannot reach"
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",
@@ -5664,6 +5671,7 @@ export const I18N_RESOURCES = {
         "loggingIn": "登录中…",
         "retryLogin": "重试登录",
         "signInRequired": "需要登录该节点才能继续。",
+        "unreachable": "连接不上该节点，稍后自动重试。",
         "backToLocal": "返回本机"
       },
       "errors": {
@@ -6103,6 +6111,7 @@ export const I18N_RESOURCES = {
         "online": "在线",
         "onlineSignedIn": "在线 · 已登录",
         "onlineSignedOut": "在线 · 未登录",
+        "unreachable": "连接不上",
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
@@ -6339,6 +6348,7 @@ export const I18N_RESOURCES = {
         "stateDownloadingSize": "下载中 {{size}}",
         "done": "「{{name}}」已升级到 {{version}}",
         "failed": "升级失败：{{error}}",
+        "failedNeedsLogin": "升级失败：须先登录「{{name}}」，可在该行点「登录该节点」。",
         "alreadyLatest": "「{{name}}」已是最新版本。",
         "offline": "节点离线，无法升级。",
         "loginRequired": "须先登录该节点。",
@@ -6362,6 +6372,9 @@ export const I18N_RESOURCES = {
         "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
         "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
         "allDoneWithCancelled": "全部升级完成：成功 {{success}}，失败 {{failed}}，已取消 {{cancelled}}。",
+        "skippedUnreachable": "已跳过 {{count}} 台连接不上的节点。",
+        "skippedLoginRequired": "已跳过 {{count}} 台须先登录的节点。",
+        "skippedBoth": "已跳过：连接不上 {{unreachable}} 台，须先登录 {{loginRequired}} 台。",
         "listSeparator": "、",
         "cancel": "停止升级",
         "cancelled": "已取消「{{name}}」的升级。",
@@ -6632,7 +6645,8 @@ export const I18N_RESOURCES = {
         "status": {
           "online": "在线",
           "offline": "离线",
-          "signedOut": "未登录"
+          "signedOut": "未登录",
+          "unreachable": "连接不上"
         },
         "version": "版本 {{version}}",
         "signInToManage": "登录该节点后才能管理它的设备。",
@@ -9340,6 +9354,7 @@ export const I18N_RESOURCES = {
         "loggingIn": "サインインしています…",
         "retryLogin": "再試行",
         "signInRequired": "続行するには、このノードにサインインしてください。",
+        "unreachable": "このノードに接続できません。しばらくすると自動で再試行します。",
         "backToLocal": "このマシンに戻る"
       },
       "errors": {
@@ -9779,6 +9794,7 @@ export const I18N_RESOURCES = {
         "online": "オンライン",
         "onlineSignedIn": "オンライン · サインイン済み",
         "onlineSignedOut": "オンライン · 未サインイン",
+        "unreachable": "接続できません",
         "offline": "オフライン",
         "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
@@ -10015,6 +10031,7 @@ export const I18N_RESOURCES = {
         "stateDownloadingSize": "ダウンロード中 {{size}}",
         "done": "「{{name}}」を {{version}} にアップグレードしました",
         "failed": "アップグレードに失敗しました：{{error}}",
+        "failedNeedsLogin": "アップグレードに失敗しました：先に「{{name}}」へログインしてください。該当行の「このノードにサインイン」から行えます。",
         "alreadyLatest": "「{{name}}」はすでに最新バージョンです。",
         "offline": "ノードがオフラインのためアップグレードできません。",
         "loginRequired": "先にこのノードにログインしてください。",
@@ -10038,6 +10055,9 @@ export const I18N_RESOURCES = {
         "allDone": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。",
         "allDoneWithFailures": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。失敗：{{names}}。",
         "allDoneWithCancelled": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}、中止 {{cancelled}}。",
+        "skippedUnreachable": "接続できないノード {{count}} 台をスキップしました。",
+        "skippedLoginRequired": "先にログインが必要なノード {{count}} 台をスキップしました。",
+        "skippedBoth": "スキップ：接続できない {{unreachable}} 台、要ログイン {{loginRequired}} 台。",
         "listSeparator": "、",
         "cancel": "アップグレードを中止",
         "cancelled": "「{{name}}」のアップグレードを中止しました。",
@@ -10308,7 +10328,8 @@ export const I18N_RESOURCES = {
         "status": {
           "online": "オンライン",
           "offline": "オフライン",
-          "signedOut": "未サインイン"
+          "signedOut": "未サインイン",
+          "unreachable": "接続できません"
         },
         "version": "バージョン {{version}}",
         "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",
