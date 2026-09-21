@@ -237,9 +237,21 @@ export function batchSkipText(t: Translate, skipped: UpgradeSkipCounts): string 
   return '';
 }
 
+/**
+ * 汇总那句后面接上「已跳过…」。
+ *
+ * 分隔按语言走：中日的「。」后可以直接接下一句，英文的 `.` 后必须留一个空格，否则拼出
+ * `...failed.Skipped 3...`。分隔做不成 i18n key——语言包守卫要求每个 key 的值都是非空字符串
+ * （`locale-consistency.test.ts`），空串和单个空格都过不去。所以按前一句的收尾标点判断，
+ * 那个标点本身就是语言给出的信号。
+ */
+export function joinSummarySentences(head: string, tail: string): string {
+  if (!tail) return head;
+  return /[.!?]$/.test(head) ? `${head} ${tail}` : `${head}${tail}`;
+}
+
 function withSkips(t: Translate, text: string, skipped: UpgradeSkipCounts): string {
-  const skip = batchSkipText(t, skipped);
-  return skip ? `${text}${skip}` : text;
+  return joinSummarySentences(text, batchSkipText(t, skipped));
 }
 
 /** 批量结束后的唯一一条 toast；被取消时不提示（结论不完整）。 */

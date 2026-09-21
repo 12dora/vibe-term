@@ -25,7 +25,6 @@
 // 就地标成未登录，行里的「登录该节点」按钮随之出现——这是有实证的判决，与「401 即登出」不同。
 
 import { classifyNodeLoginFailure } from '@/auth/login-failure-kind';
-import { noteNodeLoginFailure, noteNodeLoginSuccess } from '@/auth/node-login-retry';
 import { type LoginNodeResult, ensureNodeLogin } from '@/auth/session-key-store';
 import {
   type NodeRow,
@@ -161,7 +160,10 @@ export type UpgradeCancelOutcome =
 /** 状态机与真实请求之间的接缝：单测注入假实现，不碰网络与计时器。 */
 export interface UpgradeIo {
   start(nodeId: string, signal: AbortSignal): Promise<UpgradeStartOutcome>;
-  /** 目标说「须先登录」时当场补一次登录；不给就用默认实现（允许弹通行密钥仪式）。 */
+  /**
+   * 目标说「须先登录」时当场补一次登录；不给就用默认实现（允许弹通行密钥仪式）。
+   * 成败记账由 `ensureNodeLogin` 自己完成，本层不再记第二笔。
+   */
   login?(nodeId: string): Promise<LoginNodeResult>;
   /** 轮询与刷新后的状态回读共用同一个 GET。 */
   poll(nodeId: string, signal: AbortSignal): Promise<UpgradePollOutcome>;
@@ -398,7 +400,7 @@ export interface UpgradeRunParams {
  * `NODE_UNREACHABLE` 分开，后者是「结果未知、继续轮询」），凭证类才交回 `NODE_LOGIN_REQUIRED`
  * 并把这一行标成未登录，让行内的「登录该节点」按钮出来。
  *
- * 失败一律记进 `node-login-retry`：节点表与设备页据此改口，网络类还会自动排退避重试。
+ * 成败记账在 `ensureNodeLogin` 里：节点表与设备页据此改口，网络类还会自动排退避重试。
  */
 export async function startUpgradeWithLogin(p: UpgradeRunParams): Promise<UpgradeStartOutcome> {
   const first = await p.io.start(p.row.id, p.signal);
@@ -406,11 +408,7 @@ export async function startUpgradeWithLogin(p: UpgradeRunParams): Promise<Upgrad
   if (p.signal.aborted) return { kind: 'cancelled' };
   const login = await (p.io.login ?? loginForUpgrade)(p.row.id);
   if (p.signal.aborted) return { kind: 'cancelled' };
-  if (login.ok) {
-    noteNodeLoginSuccess(p.row.id);
-    return p.io.start(p.row.id, p.signal);
-  }
-  noteNodeLoginFailure(p.row.id, login.code);
+  if (login.ok) return p.io.start(p.row.id, p.signal);
   if (classifyNodeLoginFailure(login.code) === 'unreachable') {
     return { kind: 'failed', code: 'NODE_UNREACHABLE_LOGIN' };
   }

@@ -56,6 +56,7 @@ export function NodeDetailInfo({ row }: { row: NodeRow }) {
   const view = buildNodeView(row, t, now, {
     failureCode: loginFailure?.code ?? null,
     unreachable,
+    retrying: loginFailure?.retrying ?? false,
   });
   const transport = nodeTransportText(row);
   const presence = nodeRelayPresenceText(row);

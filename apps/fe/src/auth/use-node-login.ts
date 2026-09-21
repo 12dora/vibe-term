@@ -16,12 +16,7 @@ import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import type { NodeLoginFailureKind } from './login-failure-kind';
-import {
-  noteNodeLoginFailure,
-  noteNodeLoginSuccess,
-  retryNodeLoginNow,
-  useNodeLoginFailure,
-} from './node-login-retry';
+import { retryNodeLoginNow, useNodeLoginFailure } from './node-login-retry';
 import { type LoginFailureCode, ensureNodeLogin } from './session-key-store';
 
 type NodeLoginGateStatus =
@@ -65,8 +60,8 @@ export function shouldAttemptSilentLogin(needsLogin: boolean, code: string | nul
  * node 给出同一句话。网络类失败由那份记账自己排退避重试——到点它把记录抹掉，本 effect
  * 的 `code` 回到 `null`，于是下一帧自然重发一次，不必在这里另开定时器。
  *
- * 结果一律记账，**不看组件是否已卸载**：写的是模块级 Map，没有「往死组件上 setState」的问题，
- * 而丢掉这条记录会让刚离开的那一屏白白重来一次。
+ * 记账在 `ensureNodeLogin` 内部完成，这里**不许**再记一笔：同一台 node 上挂两个门闸
+ * （设备页分组 + 侧边栏）时两个 effect 共享同一份在途 Promise，各记一次会把退避阶梯直接翻倍。
  */
 function useSilentLogin(
   nodeId: string,
@@ -85,10 +80,7 @@ function useSilentLogin(
 
   useEffect(() => {
     if (!shouldAttemptSilentLogin(needsLogin, code)) return;
-    void ensureNodeLogin(nodeId, { node: rowRef.current ?? undefined }).then((result) => {
-      if (result.ok) noteNodeLoginSuccess(nodeId);
-      else noteNodeLoginFailure(nodeId, result.code);
-    });
+    void ensureNodeLogin(nodeId, { node: rowRef.current ?? undefined });
   }, [needsLogin, code, nodeId]);
 
   return {

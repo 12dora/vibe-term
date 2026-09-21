@@ -1,7 +1,9 @@
 // 在线但还没有该 node 会话：默认折叠，用户点开（或冷启动自动登一次）才触发静默登录。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
-import { nodeLoginFailureTextKey, offerNodeLogin } from '@/auth/login-failure-kind';
+import { NodeRetryConnectButton } from '@/auth/NodeRetryConnectButton';
+import { offerNodeLogin } from '@/auth/login-failure-kind';
+import { nodeLoginFailureTextKey } from '@/auth/login-failure-text';
 import { restoreSessionKey } from '@/auth/session-key-store';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { useUIStore } from '@vibeterm/stores/react';
@@ -86,9 +88,11 @@ export function SidebarNodeSignIn({
   if (!presence.rendered) return null;
   // 自动登录进行中就别先闪一下「登录该节点」：那条按钮点下去做的正是同一件事。
   const busy = gate.status === 'pending' && (expanded || eager);
-  const errorKey = nodeLoginFailureTextKey(gate.code);
-  // 传输层失败不给登录入口：点了只是在抖动的链路上再叠一次拨号，门闸已经排了退避重试。
+  const errorKey = nodeLoginFailureTextKey(gate.code, gate.retrying);
+  // 传输层失败不给登录入口：点了只是在抖动的链路上再叠一次拨号。
   const offerLogin = offerNodeLogin(gate.code);
+  // 自动重试的额度用完了才给「重试连接」，否则等退避自己到点。
+  const offerRetry = !offerLogin && !gate.retrying;
 
   return (
     <div
@@ -132,6 +136,13 @@ export function SidebarNodeSignIn({
             ) : null}
             {offerLogin && (
               <NodeLoginButton
+                nodeId={node.runtimeNodeId}
+                nodeName={node.name}
+                className="w-full"
+              />
+            )}
+            {offerRetry && (
+              <NodeRetryConnectButton
                 nodeId={node.runtimeNodeId}
                 nodeName={node.name}
                 className="w-full"

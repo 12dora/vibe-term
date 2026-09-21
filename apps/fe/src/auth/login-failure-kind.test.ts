@@ -1,16 +1,12 @@
 // 登录失败码的分类：链路打不通 vs 会话真的不能用。现网那次「多个节点显示登录失败」
 // 就是所有认不出的码（含 `NODE_UNREACHABLE`）一律落到「登录失败。」造成的。
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import {
   classifyNodeLoginFailure,
   isUnreachableLoginFailure,
-  nodeLoginFailureTextKey,
   offerNodeLogin,
 } from './login-failure-kind';
-import { clearSessionKey } from './session-key-store';
-
-afterEach(() => clearSessionKey());
 
 const UNREACHABLE = [
   'NODE_UNREACHABLE',
@@ -111,22 +107,5 @@ describe('isUnreachableLoginFailure / offerNodeLogin', () => {
     expect(offerNodeLogin('NO_SESSION_KEY')).toBe(true);
     expect(offerNodeLogin('RATE_LIMITED')).toBe(true);
     expect(offerNodeLogin(null)).toBe(true);
-  });
-});
-
-describe('nodeLoginFailureTextKey', () => {
-  test('传输层失败绝不显示 auth.errors.LOGIN_FAILED', () => {
-    for (const code of UNREACHABLE) {
-      expect([code, nodeLoginFailureTextKey(code)]).toEqual([code, 'auth.node.unreachable']);
-    }
-  });
-
-  test('凭证类按现有分表取原因', () => {
-    expect(nodeLoginFailureTextKey('TOTP_REQUIRED')).toBe('auth.errors.TOTP_REQUIRED');
-    expect(nodeLoginFailureTextKey('NO_SESSION_KEY')).toBe('auth.errors.NO_SESSION_KEY');
-  });
-
-  test('认不出的码仍落通用文案，但那条路径已经与链路故障无关', () => {
-    expect(nodeLoginFailureTextKey('SOMETHING_BRAND_NEW')).toBe('auth.errors.LOGIN_FAILED');
   });
 });

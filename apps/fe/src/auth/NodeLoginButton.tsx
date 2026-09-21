@@ -6,7 +6,6 @@ import { Loader2, LogIn } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router';
-import { noteNodeLoginFailure, noteNodeLoginSuccess } from './node-login-retry';
 import type { LoginFailureCode, LoginNodeResult } from './session-key-store';
 import { ensureNodeLogin } from './session-key-store';
 
@@ -62,10 +61,9 @@ export function NodeLoginButton({
   // 同步问 `hasSessionKey()` 在 PWA 冷启动的第一帧永远是「没有」。
   const onClick = useCallback(async () => {
     setState({ status: 'pending' });
+    // 结果由 `ensureNodeLogin` 统一记账（节点表与设备页据此改口），这里不再记第二笔：
+    // 静默登录还在途时点下来会 join 同一份 Promise，两处各记一次就把退避阶梯翻了倍。
     const result = await loginFromNodeButton(nodeId);
-    // 手点的结果同样进宿主级记账：节点表与设备页据此改口（「连接不上」/「需要登录」）。
-    if (result.ok) noteNodeLoginSuccess(nodeId);
-    else noteNodeLoginFailure(nodeId, result.code);
     if (result.ok) {
       setState({ status: 'ok' });
       onLoggedIn?.(nodeId);

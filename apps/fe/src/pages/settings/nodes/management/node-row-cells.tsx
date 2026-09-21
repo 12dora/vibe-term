@@ -1,6 +1,7 @@
 // 节点表已接纳行的名字 / 状态单元格。从 nodes-table 抽出，压文件行数。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
+import { NodeRetryConnectButton } from '@/auth/NodeRetryConnectButton';
 import { TONE_CLASS } from '@/lib/tone';
 import type { NodeRow } from '@/node/mesh-nodes';
 import type { NodeView } from '@/node/node-view-model';
@@ -44,7 +45,8 @@ export function NameCell(props: NodeNameTagsProps) {
  * 状态列：正常显示在线态；这一行正在远程卸载时改显「卸载中」，失败则显「卸载失败」并把
  * 原因放进 title，旁边留一个清除按钮——记录只活在入口这边，卸载失败后总得有办法抹掉它。
  *
- * 「连接不上」与「未登录」是两回事：前者不给登录按钮（见 `nodeSignInState`）。
+ * 「连接不上」与「未登录」是两回事：前者不给登录按钮（见 `nodeSignInState`），改在自动重试
+ * 用完之后给「重试连接」——这张表没有登录门闸，所以那颗按钮自己会发一次登录。
  */
 export function StatusCell({
   row,
@@ -55,7 +57,10 @@ export function StatusCell({
   row: NodeRow;
   uninstall: NodeUninstallController;
   uninstalling: boolean;
-  view: Pick<NodeView, 'statusTone' | 'statusText' | 'statusTitle' | 'signInState'>;
+  view: Pick<
+    NodeView,
+    'statusTone' | 'statusText' | 'statusTitle' | 'signInState' | 'signInRetrying'
+  >;
 }) {
   const { t } = useTranslation();
   const failed = row.operation?.kind === 'uninstall' && row.operation.phase === 'failed';
@@ -111,6 +116,9 @@ export function StatusCell({
       {/* 只有「确实没有会话」才给登录入口：打不通时点它只是在抖动的链路上再叠一次拨号。 */}
       {view.signInState === 'signedOut' && !row.isSelf && (
         <NodeLoginButton nodeId={row.runtimeNodeId} nodeName={row.name} />
+      )}
+      {view.signInState === 'unreachable' && !view.signInRetrying && !row.isSelf && (
+        <NodeRetryConnectButton nodeId={row.runtimeNodeId} nodeName={row.name} size="icon-xs" />
       )}
       {row.paused === true && <PausedTag />}
     </span>

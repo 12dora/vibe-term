@@ -7,9 +7,10 @@
 //
 // 判定用白名单，两张表都认不出时按 `other`：那是服务端给过的业务结论（限流、公钥不匹配……），
 // 照旧显示它自己的原因，但绝不谎称成「连接不上」。
-
-import { loginErrorKey } from './login-errors';
-import { getSessionKey } from './session-key-store';
+//
+// 本模块**不许有任何 import**：`session-key-store` 要 import `node-login-retry`（登录记账收在
+// `ensureNodeLogin` 里），`node-login-retry` 又要 import 这里的分类。文案映射因此单独放
+// `./login-failure-text`，它才碰得到 `session-key-store`。
 
 export type NodeLoginFailureKind =
   /** 根本没问到目标：转发器打不通、断网、超时、mesh 列表拉不到。 */
@@ -86,16 +87,4 @@ export function isUnreachableLoginFailure(code: string | null | undefined): bool
 /** 该不该给「登录该节点」入口。打不通时点了也只是再叠一次拨号。 */
 export function offerNodeLogin(code: string | null | undefined): boolean {
   return classifyNodeLoginFailure(code) !== 'unreachable';
-}
-
-/**
- * 失败原因文案 key；没有码（还没失败过）返回 `null`。
- *
- * 打不通一律走「连接不上」那句，并说明会自动重试；其余按现有分表取原因。
- * 同一个签名类错误在密码 / passkey 两条路径下含义完全不同，因此按当前会话的方式取文案。
- */
-export function nodeLoginFailureTextKey(code: string | null | undefined): string | null {
-  if (!code) return null;
-  if (isUnreachableLoginFailure(code)) return 'auth.node.unreachable';
-  return loginErrorKey(code, getSessionKey()?.method === 'passkey' ? 'passkey' : 'password');
 }

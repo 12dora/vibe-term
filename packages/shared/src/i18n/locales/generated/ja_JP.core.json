@@ -678,6 +678,8 @@
         "retryLogin": "再試行",
         "signInRequired": "続行するには、このノードにサインインしてください。",
         "unreachable": "このノードに接続できません。しばらくすると自動で再試行します。",
+        "unreachableStalled": "このノードに接続できません。自動再試行は停止しました。",
+        "retryConnect": "接続を再試行",
         "backToLocal": "このマシンに戻る"
       },
       "errors": {

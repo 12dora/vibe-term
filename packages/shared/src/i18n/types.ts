@@ -1761,6 +1761,8 @@ export type TranslationKey =
   | 'auth.node.retryLogin'
   | 'auth.node.signInRequired'
   | 'auth.node.unreachable'
+  | 'auth.node.unreachableStalled'
+  | 'auth.node.retryConnect'
   | 'auth.node.backToLocal'
   | 'auth.errors'
   | 'auth.errors.NO_SESSION_KEY'

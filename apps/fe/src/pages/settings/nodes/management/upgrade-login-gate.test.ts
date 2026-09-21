@@ -14,7 +14,12 @@ import {
   setMeshNodesStateForTest,
 } from '@/node/mesh-nodes';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
-import { NO_UPGRADE_SKIPS, batchSkipText, upgradeSkipCounts } from './upgrade-batch';
+import {
+  NO_UPGRADE_SKIPS,
+  batchSkipText,
+  joinSummarySentences,
+  upgradeSkipCounts,
+} from './upgrade-batch';
 import {
   type UpgradeIo,
   type UpgradeStartOutcome,
@@ -294,5 +299,33 @@ describe('批量跳过的原因计数', () => {
       'nodes.upgrade.skippedLoginRequired:{"count":3}'
     );
     expect(batchSkipText(t, NO_UPGRADE_SKIPS)).toBe('');
+  });
+});
+
+describe('汇总与跳过那两句的拼接', () => {
+  test('英文的 `.` 后要留一个空格，否则拼成 `...failed.Skipped 3...`', () => {
+    expect(
+      joinSummarySentences(
+        'All upgrades finished: 2 succeeded, 0 failed.',
+        'Skipped 3 node(s) that cannot be reached.'
+      )
+    ).toBe(
+      'All upgrades finished: 2 succeeded, 0 failed. Skipped 3 node(s) that cannot be reached.'
+    );
+  });
+
+  test('中日的「。」后直接接下一句，不插空格', () => {
+    expect(
+      joinSummarySentences('全部升级完成：成功 2，失败 0。', '已跳过 3 台连接不上的节点。')
+    ).toBe('全部升级完成：成功 2，失败 0。已跳过 3 台连接不上的节点。');
+    expect(
+      joinSummarySentences('すべてのアップグレードが完了しました：成功 2、失敗 0。', 'スキップ。')
+    ).toBe('すべてのアップグレードが完了しました：成功 2、失敗 0。スキップ。');
+  });
+
+  test('一台都没跳过时原样返回，不留一个多出来的空格', () => {
+    expect(joinSummarySentences('All upgrades finished: 2 succeeded, 0 failed.', '')).toBe(
+      'All upgrades finished: 2 succeeded, 0 failed.'
+    );
   });
 });

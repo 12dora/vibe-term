@@ -1,7 +1,7 @@
 // 设备页「在线未登录」那一档：分组状态怎么定、静默登录失败后补哪一行原因。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { nodeLoginFailureTextKey } from '@/auth/login-failure-kind';
+import { nodeLoginFailureTextKey } from '@/auth/login-failure-text';
 import { clearSessionKey } from '@/auth/session-key-store';
 import { type NodeDeviceGroupEntry, nodeDeviceGroupState } from './node-device-group';
 
@@ -51,15 +51,15 @@ describe('nodeDeviceGroupState', () => {
   });
 });
 
-describe('nodeLoginFailureTextKey', () => {
+describe('nodeLoginFailureTextKey（设备页那一行原因）', () => {
   test('还没失败过：不多给一行', () => {
     expect(nodeLoginFailureTextKey(null)).toBeNull();
   });
 
   test('网络类失败说「连接不上」，绝不说「登录失败」', () => {
-    expect(nodeLoginFailureTextKey('NETWORK_ERROR')).toBe('auth.node.unreachable');
-    expect(nodeLoginFailureTextKey('NODE_LIST_FAILED')).toBe('auth.node.unreachable');
-    expect(nodeLoginFailureTextKey('NODE_UNREACHABLE')).toBe('auth.node.unreachable');
+    expect(nodeLoginFailureTextKey('NETWORK_ERROR', true)).toBe('auth.node.unreachable');
+    expect(nodeLoginFailureTextKey('NODE_LIST_FAILED', true)).toBe('auth.node.unreachable');
+    expect(nodeLoginFailureTextKey('NODE_UNREACHABLE', false)).toBe('auth.node.unreachableStalled');
   });
 
   test('凭证 / 授权类失败必须说清楚原因', () => {
