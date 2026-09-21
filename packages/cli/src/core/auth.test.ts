@@ -127,4 +127,62 @@ describe('loginToNode unreachable', () => {
     });
     expect(result).toEqual({ nodeId: 'a'.repeat(32), ok: false, code: 'NODE_UNREACHABLE' });
   });
+
+  function hangOnSignal(signal: AbortSignal | null | undefined): Promise<Response> {
+    return new Promise((_resolve, reject) => {
+      const fail = () => {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        reject(err);
+      };
+      if (signal?.aborted) {
+        fail();
+        return;
+      }
+      signal?.addEventListener('abort', fail, { once: true });
+    });
+  }
+
+  test('an aborted signal becomes TIMEOUT and really cancels the in-flight fetch', async () => {
+    let sawSignal: AbortSignal | undefined;
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 60_000,
+      jar: createMemoryCookieJar(),
+      fetchImpl: async (_url, init) => {
+        sawSignal = init?.signal ?? undefined;
+        return hangOnSignal(init?.signal);
+      },
+    });
+    const signal = AbortSignal.timeout(30);
+    const result = await loginToNode({
+      http,
+      nodeId: 'a'.repeat(32),
+      material: dummy,
+      treatUnreachableAsOutcome: true,
+      signal,
+      timeoutMs: 30,
+    });
+    expect(result).toEqual({ nodeId: 'a'.repeat(32), ok: false, code: 'TIMEOUT' });
+    expect(sawSignal?.aborted).toBe(true);
+  });
+
+  test('entry timeout without treatUnreachableAsOutcome throws NetworkError', async () => {
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 60_000,
+      jar: createMemoryCookieJar(),
+      fetchImpl: async (_url, init) => hangOnSignal(init?.signal),
+    });
+    const error = await loginToNode({
+      http,
+      nodeId: 'self',
+      material: dummy,
+      signal: AbortSignal.timeout(30),
+      timeoutMs: 30,
+    }).catch((err) => err);
+    expect(error).toBeInstanceOf(NetworkError);
+    expect((error as NetworkError).exitCode).toBe(5);
+    expect((error as NetworkError).message).toContain('timed out');
+  });
 });

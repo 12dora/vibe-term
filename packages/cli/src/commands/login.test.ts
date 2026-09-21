@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { encodeBase64url, generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import { buildContext } from '../core/context';
-import { AuthError, NetworkError } from '../core/errors';
+import { AuthError, NetworkError, UsageError } from '../core/errors';
 import type { FetchLike } from '../core/http';
 import { type FakeGateway, createFakeGateway, createFakeUser } from '../core/test-fakes';
 import { command as login } from './login';
@@ -14,7 +14,9 @@ import { command as whoami } from './whoami';
 
 const ENTRY = 'http://entry.example:9883';
 const NODE_A = 'a'.repeat(32);
+const NODE_HOME = 'b'.repeat(32);
 const NODE_OFFLINE = 'c'.repeat(32);
+const NODE_STUCK = 'd'.repeat(32);
 const dirs: string[] = [];
 
 afterEach(async () => {
@@ -528,5 +530,240 @@ describe('fan-out failures', () => {
     expect(stderr.text()).toContain(`node ${other}`);
     expect(stderr.text()).toContain('rate limiting');
     expect(ctx.sessions.entry(ENTRY)?.nodes.self.sid).toBeTruthy();
+  });
+});
+
+function nodeIdFromUrl(url: string): string | null {
+  const match = /\/n\/([0-9a-f]{32})\//.exec(url);
+  return match?.[1] ?? null;
+}
+
+function abortError(): Error {
+  const err = new Error('aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+function hangUntilAbort(signal?: AbortSignal | null): Promise<never> {
+  return new Promise((_resolve, reject) => {
+    const fail = () => reject(abortError());
+    if (signal?.aborted) {
+      fail();
+      return;
+    }
+    signal?.addEventListener('abort', fail, { once: true });
+  });
+}
+
+function sleepOrAbort(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    const fail = () => {
+      clearTimeout(timer);
+      reject(abortError());
+    };
+    if (signal?.aborted) {
+      fail();
+      return;
+    }
+    signal?.addEventListener('abort', fail, { once: true });
+  });
+}
+
+describe('login progress, timeout and concurrency', () => {
+  test('prints per-node start and result on stderr while a node is still hanging', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home', [NODE_STUCK]: 'stuck' },
+    });
+    let abortedStuck = false;
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (nodeIdFromUrl(String(url)) === NODE_STUCK) {
+        try {
+          await hangUntilAbort(init?.signal);
+        } catch (error) {
+          abortedStuck = true;
+          throw error;
+        }
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stdout, stderr } = await testContext(gateway, { fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const code = await login.run(ctx, ['--node-timeout', '200']);
+    const err = stderr.text();
+    const out = stdout.text();
+
+    expect(code).toBe(0);
+    expect(abortedStuck).toBe(true);
+    expect(err).toContain('logging in to self (entry) ...');
+    expect(err).toContain('logged in to self (entry): ok');
+    expect(err).toContain('logging in to office ...');
+    expect(err).toContain('logged in to office: ok');
+    expect(err).toContain('logging in to home ...');
+    expect(err).toContain('logged in to home: ok');
+    expect(err).toContain('logging in to stuck ...');
+    expect(err).toContain('skipped stuck: timeout');
+    expect(err).toContain('logged in to 3 nodes, skipped 1 timeout');
+    expect(out).toContain('TIMEOUT');
+    expect(out.indexOf('office')).toBeLessThan(out.indexOf('home'));
+    expect(out.indexOf('home')).toBeLessThan(out.indexOf('stuck'));
+  });
+
+  test('--json stdout is a single object; progress stays on stderr', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+    });
+    const { ctx, stdout, stderr } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(0);
+    const lines = stdout.text().trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const payload = JSON.parse(lines[0]) as {
+      entry: string;
+      nodes: Array<{ node: string; ok: boolean }>;
+    };
+    expect(payload.entry).toBe(ENTRY);
+    expect(payload.nodes.map((row) => row.node)).toEqual(['self', NODE_A, NODE_HOME]);
+    expect(stderr.text()).toContain('logging in to office ...');
+    expect(stderr.text()).not.toMatch(/^\s*\{/m);
+  });
+
+  test('concurrent logins keep roster order even when a later node finishes first', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home', [NODE_STUCK]: 'lab' },
+    });
+    const delayMs: Record<string, number> = {
+      [NODE_A]: 80,
+      [NODE_HOME]: 40,
+      [NODE_STUCK]: 10,
+    };
+    const started: number[] = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      const nodeId = nodeIdFromUrl(String(url));
+      const delay = nodeId ? delayMs[nodeId] : undefined;
+      if (delay !== undefined && String(url).includes('/api/auth/challenge')) {
+        started.push(Date.now());
+        await sleepOrAbort(delay, init?.signal);
+      }
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stdout } = await testContext(gateway, { json: true, fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, ['--concurrency', '4'])).toBe(0);
+    const payload = JSON.parse(stdout.text()) as { nodes: Array<{ node: string; ok: boolean }> };
+    expect(payload.nodes.map((row) => row.node)).toEqual(['self', NODE_A, NODE_HOME, NODE_STUCK]);
+    expect(payload.nodes.every((row) => row.ok)).toBe(true);
+    expect(started).toHaveLength(3);
+    expect(Math.max(...started) - Math.min(...started)).toBeLessThan(50);
+  });
+
+  test('TIMEOUT is skipped as network-class and exits 0 without --node', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_STUCK]: 'stuck' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (nodeIdFromUrl(String(url)) === NODE_STUCK) return hangUntilAbort(init?.signal);
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stdout, stderr } = await testContext(gateway, { json: true, fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, ['--node-timeout', '150'])).toBe(0);
+    const payload = JSON.parse(stdout.text()) as {
+      nodes: Array<{ node: string; ok: boolean; code?: string }>;
+    };
+    expect(payload.nodes.find((row) => row.node === NODE_A)?.ok).toBe(true);
+    expect(payload.nodes.find((row) => row.node === NODE_STUCK)).toMatchObject({
+      ok: false,
+      code: 'TIMEOUT',
+    });
+    expect(stderr.text()).toContain('skipped stuck: timeout');
+  });
+
+  test('--node targeting a timed-out node exits 5', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_STUCK]: 'stuck' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (nodeIdFromUrl(String(url)) === NODE_STUCK) return hangUntilAbort(init?.signal);
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stderr } = await testContext(gateway, {
+      node: 'stuck',
+      json: true,
+      fetchImpl,
+    });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, ['--node-timeout', '150'])).toBe(5);
+    expect(gateway.issued.has('self')).toBe(true);
+    expect(stderr.text()).toContain('timeout');
+    expect(stderr.text()).not.toContain('logged in to 1 node, skipped');
+  });
+
+  test('TIMEOUT mixed with an auth rejection still exits 3', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_STUCK]: 'stuck' },
+      forceLoginErrorFor: { [NODE_A]: 'INVALID_CREDENTIALS' },
+    });
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (nodeIdFromUrl(String(url)) === NODE_STUCK) return hangUntilAbort(init?.signal);
+      return gateway.fetch(url, init);
+    };
+    const { ctx, stderr } = await testContext(gateway, { json: true, fetchImpl });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, ['--node-timeout', '150'])).toBe(3);
+    expect(stderr.text()).toContain('invalid username or password');
+    expect(stderr.text()).toContain('skipped stuck: timeout');
+  });
+
+  test('--node-timeout and --concurrency reject non-positive values', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({ user });
+    const { ctx } = await testContext(gateway);
+    process.env.VIBETERM_PASSWORD = 'pw';
+    const timeoutErr = await login.run(ctx, ['--node-timeout', '0']).catch((err) => err);
+    expect(timeoutErr).toBeInstanceOf(UsageError);
+    expect((timeoutErr as Error).message).toContain('--node-timeout');
+    const concErr = await login.run(ctx, ['--concurrency', '0']).catch((err) => err);
+    expect(concErr).toBeInstanceOf(UsageError);
+    expect((concErr as Error).message).toContain('--concurrency');
+  });
+
+  test('concurrent TOTP_REQUIRED does not prompt and still exits 3', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+      forceLoginErrorFor: { [NODE_A]: 'TOTP_REQUIRED', [NODE_HOME]: 'TOTP_REQUIRED' },
+    });
+    const { ctx, stdout, stderr } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(3);
+    const payload = JSON.parse(stdout.text()) as {
+      nodes: Array<{ node: string; ok: boolean; code?: string }>;
+    };
+    expect(payload.nodes.find((row) => row.node === NODE_A)?.code).toBe('TOTP_REQUIRED');
+    expect(payload.nodes.find((row) => row.node === NODE_HOME)?.code).toBe('TOTP_REQUIRED');
+    expect(stderr.text()).toContain('logging in to office ...');
+    expect(stderr.text()).toContain('logging in to home ...');
+    expect(stderr.text()).toContain('two-step verification');
   });
 });
