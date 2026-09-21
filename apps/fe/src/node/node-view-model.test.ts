@@ -84,3 +84,34 @@ describe('buildNodeView', () => {
     expect(buildNodeView(row({ id: 'n' }), t, NOW).addressText).toBe('—');
   });
 });
+
+describe('buildNodeView 的链路事实', () => {
+  test('登录败在传输层：状态列改说「连接不上」，不给 signedOut 的登录入口', () => {
+    const view = buildNodeView(row({ id: 'n3', loggedIn: false }), t, NOW, {
+      failureCode: 'NODE_UNREACHABLE',
+    });
+    expect(view.statusText).toBe('nodes.status.unreachable');
+    expect(view.statusTone).toBe('warn');
+    expect(view.signInState).toBe('unreachable');
+  });
+
+  test('REST 正在退避：同一档，哪怕列表还报着已登录', () => {
+    const view = buildNodeView(row({ id: 'n4' }), t, NOW, { unreachable: true });
+    expect(view.statusText).toBe('nodes.status.unreachable');
+    expect(view.signInState).toBe('unreachable');
+  });
+
+  test('凭证类失败仍是「在线 · 未登录」，登录入口照常出', () => {
+    const view = buildNodeView(row({ id: 'n5', loggedIn: false }), t, NOW, {
+      failureCode: 'NO_SESSION_KEY',
+    });
+    expect(view.statusText).toBe('nodes.status.onlineSignedOut');
+    expect(view.signInState).toBe('signedOut');
+  });
+
+  test('没有链路事实时与旧口径完全一致', () => {
+    expect(buildNodeView(row({ id: 'n6' }), t, NOW).signInState).toBe('ready');
+    expect(buildNodeView(row({ id: 'n7', loggedIn: false }), t, NOW).signInState).toBe('signedOut');
+    expect(buildNodeView(row({ id: 'n8', online: false }), t, NOW).signInState).toBe('offline');
+  });
+});

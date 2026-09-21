@@ -14,7 +14,14 @@ import {
 } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
+import type { NodeLoginFailureKind } from './login-failure-kind';
+import {
+  noteNodeLoginFailure,
+  noteNodeLoginSuccess,
+  retryNodeLoginNow,
+  useNodeLoginFailure,
+} from './node-login-retry';
 import { type LoginFailureCode, ensureNodeLogin } from './session-key-store';
 
 type NodeLoginGateStatus =
@@ -29,7 +36,11 @@ export interface NodeLoginGate {
   status: NodeLoginGateStatus;
   /** `blocked` 时的失败码。 */
   code: LoginFailureCode | null;
-  /** 重新尝试一次静默登录。 */
+  /** 这次失败属于哪一类；没失败过为 `null`。界面据此决定说「连接不上」还是「需要登录」。 */
+  kind: NodeLoginFailureKind | null;
+  /** 还排着一次自动退避重试：界面说「稍后自动重试」，不要催用户去点。 */
+  retrying: boolean;
+  /** 重新尝试一次静默登录（退避阶梯归零）。 */
   retry: () => void;
 }
 
@@ -39,32 +50,53 @@ interface UseNodeLoginGateOptions {
 }
 
 /**
- * 静默登录：`needsLogin` 起来就登一次，失败后停下等 `retry()`。
- * 失败记录带上 nodeId：切到另一台 node 时旧的失败自动不再匹配，不必额外重置。
+ * 静默登录的触发条件：需要登录，且手上没有未消化的失败记录。
+ * 网络类失败排的那次退避到点后会把记录抹掉，这个条件随即重新成立——重试就是这么发生的，
+ * 本模块里没有第二个定时器。
+ */
+export function shouldAttemptSilentLogin(needsLogin: boolean, code: string | null): boolean {
+  return needsLogin && code === null;
+}
+
+/**
+ * 静默登录：`needsLogin` 起来就登一次，失败记进宿主级的 `node-login-retry`。
+ *
+ * 失败记录不再放组件 state：节点管理表压根不发登录请求，只有共用一份记账三处才能对同一台
+ * node 给出同一句话。网络类失败由那份记账自己排退避重试——到点它把记录抹掉，本 effect
+ * 的 `code` 回到 `null`，于是下一帧自然重发一次，不必在这里另开定时器。
+ *
+ * 结果一律记账，**不看组件是否已卸载**：写的是模块级 Map，没有「往死组件上 setState」的问题，
+ * 而丢掉这条记录会让刚离开的那一屏白白重来一次。
  */
 function useSilentLogin(
   nodeId: string,
   row: MeshNode | null,
   needsLogin: boolean
-): { code: LoginFailureCode | null; retry: () => void } {
-  const [failure, setFailure] = useState<{ nodeId: string; code: LoginFailureCode } | null>(null);
+): {
+  code: LoginFailureCode | null;
+  kind: NodeLoginFailureKind | null;
+  retrying: boolean;
+  retry: () => void;
+} {
+  const failure = useNodeLoginFailure(nodeId);
   const rowRef = useRef<MeshNode | null>(row);
   rowRef.current = row;
-  const code = failure?.nodeId === nodeId ? failure.code : null;
+  const code = failure?.code ?? null;
 
   useEffect(() => {
-    if (!needsLogin || code !== null) return;
-    let cancelled = false;
+    if (!shouldAttemptSilentLogin(needsLogin, code)) return;
     void ensureNodeLogin(nodeId, { node: rowRef.current ?? undefined }).then((result) => {
-      if (!cancelled && !result.ok) setFailure({ nodeId, code: result.code });
+      if (result.ok) noteNodeLoginSuccess(nodeId);
+      else noteNodeLoginFailure(nodeId, result.code);
     });
-    return () => {
-      cancelled = true;
-    };
   }, [needsLogin, code, nodeId]);
 
-  // 清掉失败记录即重新触发上面的静默登录。
-  return { code, retry: useCallback(() => setFailure(null), []) };
+  return {
+    code,
+    kind: failure?.kind ?? null,
+    retrying: failure?.retrying ?? false,
+    retry: useCallback(() => retryNodeLoginNow(nodeId), [nodeId]),
+  };
 }
 
 function isRemoteGateActive(
@@ -125,6 +157,6 @@ export function useNodeLoginGate(
   }, [listPending]);
 
   const needsLogin = row?.online === true && !row.loggedIn;
-  const { code, retry } = useSilentLogin(runtimeNodeId, row, needsLogin);
-  return { status: resolveNodeLoginStatus(waiting, needsLogin, code), code, retry };
+  const { code, kind, retrying, retry } = useSilentLogin(runtimeNodeId, row, needsLogin);
+  return { status: resolveNodeLoginStatus(waiting, needsLogin, code), code, kind, retrying, retry };
 }

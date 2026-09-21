@@ -1,7 +1,9 @@
 // 节点详情的只读信息区：状态 / REACH / 地址 / 最近在线走 buildNodeView，与表同一口径。
 
+import { useNodeLoginFailure } from '@/auth/node-login-retry';
 import { TONE_CLASS } from '@/lib/tone';
 import type { NodeRow } from '@/node/mesh-nodes';
+import { useNodeRequestBlocked } from '@/node/node-unreachable-backoff';
 import { buildNodeView, useMinuteClock } from '@/node/node-view-model';
 import { relayHostLabel, relayHostList } from '@/node/relay-extras';
 import { useTranslation } from 'react-i18next';
@@ -48,7 +50,13 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 export function NodeDetailInfo({ row }: { row: NodeRow }) {
   const { t } = useTranslation();
   const now = useMinuteClock(row.lastSeenAt != null);
-  const view = buildNodeView(row, t, now);
+  // 与表同一口径：「连接不上」与「未登录」不能混成一句。
+  const loginFailure = useNodeLoginFailure(row.runtimeNodeId);
+  const unreachable = useNodeRequestBlocked(row.runtimeNodeId);
+  const view = buildNodeView(row, t, now, {
+    failureCode: loginFailure?.code ?? null,
+    unreachable,
+  });
   const transport = nodeTransportText(row);
   const presence = nodeRelayPresenceText(row);
   return (

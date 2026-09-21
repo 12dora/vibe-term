@@ -6,6 +6,7 @@ import { Loader2, LogIn } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router';
+import { noteNodeLoginFailure, noteNodeLoginSuccess } from './node-login-retry';
 import type { LoginFailureCode, LoginNodeResult } from './session-key-store';
 import { ensureNodeLogin } from './session-key-store';
 
@@ -62,6 +63,9 @@ export function NodeLoginButton({
   const onClick = useCallback(async () => {
     setState({ status: 'pending' });
     const result = await loginFromNodeButton(nodeId);
+    // 手点的结果同样进宿主级记账：节点表与设备页据此改口（「连接不上」/「需要登录」）。
+    if (result.ok) noteNodeLoginSuccess(nodeId);
+    else noteNodeLoginFailure(nodeId, result.code);
     if (result.ok) {
       setState({ status: 'ok' });
       onLoggedIn?.(nodeId);

@@ -1973,6 +1973,7 @@
         "loggingIn": "Signing in…",
         "retryLogin": "Try again",
         "signInRequired": "Sign in to this node to continue.",
+        "unreachable": "Cannot reach this node. Retrying automatically.",
         "backToLocal": "Back to this machine"
       },
       "errors": {
@@ -2412,6 +2413,7 @@
         "online": "Online",
         "onlineSignedIn": "Online · signed in",
         "onlineSignedOut": "Online · not signed in",
+        "unreachable": "Cannot reach",
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
@@ -2652,6 +2654,7 @@
         "stateDownloadingSize": "Downloading {{size}}",
         "done": "“{{name}}” upgraded to {{version}}",
         "failed": "Upgrade failed: {{error}}",
+        "failedNeedsLogin": "Upgrade failed: sign in to \"{{name}}\" first, using the Sign in button on that row.",
         "alreadyLatest": "“{{name}}” is already on the latest version.",
         "offline": "The node is offline and cannot be upgraded.",
         "loginRequired": "Sign in to this node first.",
@@ -2676,6 +2679,9 @@
         "allDone": "All upgrades finished: {{success}} succeeded, {{failed}} failed.",
         "allDoneWithFailures": "All upgrades finished: {{success}} succeeded, {{failed}} failed. Failed: {{names}}.",
         "allDoneWithCancelled": "All upgrades finished: {{success}} succeeded, {{failed}} failed, {{cancelled}} cancelled.",
+        "skippedUnreachable": "Skipped {{count}} node(s) that cannot be reached.",
+        "skippedLoginRequired": "Skipped {{count}} node(s) that need sign-in first.",
+        "skippedBoth": "Skipped: {{unreachable}} unreachable, {{loginRequired}} needing sign-in.",
         "listSeparator": ", ",
         "cancel": "Stop Upgrade",
         "cancelled": "Upgrade of “{{name}}” cancelled.",
@@ -2946,7 +2952,8 @@
         "status": {
           "online": "Online",
           "offline": "Offline",
-          "signedOut": "Not signed in"
+          "signedOut": "Not signed in",
+          "unreachable": "Cannot reach"
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",

@@ -2,7 +2,9 @@
 // 宽屏表格行（nodes-table）与窄屏记录卡（nodes-card-list）都从这里取，两套版式只是摆法不同，
 // 动作与状态必须完全一致。
 
+import { useNodeLoginFailure } from '@/auth/node-login-retry';
 import type { NodeRow } from '@/node/mesh-nodes';
+import { useNodeRequestBlocked } from '@/node/node-unreachable-backoff';
 import { type NodeView, buildNodeView, useMinuteClock } from '@/node/node-view-model';
 import { Button } from '@vibeterm/ui/button';
 import { Download, Loader2, ShieldAlert, Square, SquareCheckBig, SquareMinus } from 'lucide-react';
@@ -87,6 +89,10 @@ export function useNodeRowShared(
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.uplinkWritable;
   const now = useMinuteClock(!row.online);
+  // 表格自己不发登录请求：链路事实来自别处记下的登录失败与每 node 的 REST 退避，
+  // 否则一次链路抖动在这张表上只会写成「在线 · 未登录」，再配一个点了也没用的登录按钮。
+  const loginFailure = useNodeLoginFailure(row.runtimeNodeId);
+  const unreachable = useNodeRequestBlocked(row.runtimeNodeId);
 
   return {
     busy,
@@ -100,7 +106,7 @@ export function useNodeRowShared(
     uninstalling,
     writable,
     disabledHint: writable ? undefined : rowBlockedHint(t, deps),
-    view: buildNodeView(row, t, now),
+    view: buildNodeView(row, t, now, { failureCode: loginFailure?.code ?? null, unreachable }),
     selectable: !row.isSelf && !uninstalling,
   };
 }

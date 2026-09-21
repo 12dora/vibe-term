@@ -1,7 +1,7 @@
 // 「用到才登录」门闸的状态判定。无 DOM 测试环境，用 react-dom/server 静态渲染探针
 // （effect 不会执行，因此这里测的纯粹是**该不该挡**，静默登录本身由 ensureNodeLogin 的用例覆盖）。
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
@@ -9,7 +9,13 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { useNodeLoginGate } = await import('./use-node-login');
+const { shouldAttemptSilentLogin, useNodeLoginGate } = await import('./use-node-login');
+const {
+  getNodeLoginFailure,
+  noteNodeLoginFailure,
+  noteNodeLoginSuccess,
+  setNodeLoginRetryTimersForTest,
+} = await import('./node-login-retry');
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
@@ -171,5 +177,57 @@ describe('useNodeLoginGate', () => {
     });
     expect(statusOf(NODE_A, false)).toBe('ready');
     expect(statusOf(NODE_A, true)).toBe('pending');
+  });
+});
+
+describe('shouldAttemptSilentLogin', () => {
+  interface Handle {
+    fire: () => void;
+  }
+  let pending: Handle[] = [];
+
+  beforeEach(() => {
+    pending = [];
+    setNodeLoginRetryTimersForTest({
+      schedule: (fn) => {
+        const handle: Handle = {
+          fire: () => {
+            pending = pending.filter((item) => item !== handle);
+            fn();
+          },
+        };
+        pending.push(handle);
+        return handle;
+      },
+      cancel: (handle) => {
+        pending = pending.filter((item) => item !== handle);
+      },
+      random: () => 0,
+    });
+  });
+
+  afterEach(() => setNodeLoginRetryTimersForTest(null));
+
+  const codeOf = (nodeId: string) => getNodeLoginFailure(nodeId)?.code ?? null;
+
+  test('不需要登录时一个请求都不发', () => {
+    expect(shouldAttemptSilentLogin(false, null)).toBe(false);
+    expect(shouldAttemptSilentLogin(false, 'NODE_UNREACHABLE')).toBe(false);
+  });
+
+  test('网络类失败：记录在时按住不重发，退避到点抹掉记录后条件重新成立', () => {
+    noteNodeLoginFailure(NODE_A, 'NODE_UNREACHABLE');
+    expect(shouldAttemptSilentLogin(true, codeOf(NODE_A))).toBe(false);
+    expect(pending).toHaveLength(1);
+    pending[0].fire();
+    expect(shouldAttemptSilentLogin(true, codeOf(NODE_A))).toBe(true);
+  });
+
+  test('凭证类失败一直按住：没有退避，等用户介入', () => {
+    noteNodeLoginFailure(NODE_A, 'NO_SESSION_KEY');
+    expect(pending).toHaveLength(0);
+    expect(shouldAttemptSilentLogin(true, codeOf(NODE_A))).toBe(false);
+    noteNodeLoginSuccess(NODE_A);
+    expect(shouldAttemptSilentLogin(true, codeOf(NODE_A))).toBe(true);
   });
 });

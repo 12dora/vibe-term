@@ -43,6 +43,8 @@ export function NameCell(props: NodeNameTagsProps) {
 /**
  * 状态列：正常显示在线态；这一行正在远程卸载时改显「卸载中」，失败则显「卸载失败」并把
  * 原因放进 title，旁边留一个清除按钮——记录只活在入口这边，卸载失败后总得有办法抹掉它。
+ *
+ * 「连接不上」与「未登录」是两回事：前者不给登录按钮（见 `nodeSignInState`）。
  */
 export function StatusCell({
   row,
@@ -53,7 +55,7 @@ export function StatusCell({
   row: NodeRow;
   uninstall: NodeUninstallController;
   uninstalling: boolean;
-  view: Pick<NodeView, 'statusTone' | 'statusText' | 'statusTitle'>;
+  view: Pick<NodeView, 'statusTone' | 'statusText' | 'statusTitle' | 'signInState'>;
 }) {
   const { t } = useTranslation();
   const failed = row.operation?.kind === 'uninstall' && row.operation.phase === 'failed';
@@ -106,7 +108,8 @@ export function StatusCell({
       title={view.statusTitle}
     >
       <span className={TONE_CLASS.text[view.statusTone]}>{view.statusText}</span>
-      {row.online && !row.loggedIn && !row.isSelf && (
+      {/* 只有「确实没有会话」才给登录入口：打不通时点它只是在抖动的链路上再叠一次拨号。 */}
+      {view.signInState === 'signedOut' && !row.isSelf && (
         <NodeLoginButton nodeId={row.runtimeNodeId} nodeName={row.name} />
       )}
       {row.paused === true && <PausedTag />}

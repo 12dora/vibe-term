@@ -1636,6 +1636,7 @@
         "online": "在线",
         "onlineSignedIn": "在线 · 已登录",
         "onlineSignedOut": "在线 · 未登录",
+        "unreachable": "连接不上",
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
@@ -1870,6 +1871,7 @@
         "stateDownloadingSize": "下载中 {{size}}",
         "done": "「{{name}}」已升级到 {{version}}",
         "failed": "升级失败：{{error}}",
+        "failedNeedsLogin": "升级失败：须先登录「{{name}}」，可在该行点「登录该节点」。",
         "alreadyLatest": "「{{name}}」已是最新版本。",
         "offline": "节点离线，无法升级。",
         "loginRequired": "须先登录该节点。",
@@ -1893,6 +1895,9 @@
         "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
         "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
         "allDoneWithCancelled": "全部升级完成：成功 {{success}}，失败 {{failed}}，已取消 {{cancelled}}。",
+        "skippedUnreachable": "已跳过 {{count}} 台连接不上的节点。",
+        "skippedLoginRequired": "已跳过 {{count}} 台须先登录的节点。",
+        "skippedBoth": "已跳过：连接不上 {{unreachable}} 台，须先登录 {{loginRequired}} 台。",
         "listSeparator": "、",
         "cancel": "停止升级",
         "cancelled": "已取消「{{name}}」的升级。",
@@ -2163,7 +2168,8 @@
         "status": {
           "online": "在线",
           "offline": "离线",
-          "signedOut": "未登录"
+          "signedOut": "未登录",
+          "unreachable": "连接不上"
         },
         "version": "版本 {{version}}",
         "signInToManage": "登录该节点后才能管理它的设备。",

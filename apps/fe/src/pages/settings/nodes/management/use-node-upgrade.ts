@@ -17,8 +17,22 @@
 //
 // 「停止升级」在 POST 在途时按下不能立刻发 DELETE——目标还没登记这次升级，只会扑空，随后 POST
 // 照样把升级跑起来。因此由 `createUpgradeCancelGate` 记账，等 POST 落地再补发（`UpgradeStartHandoff`）。
+//
+// POST 吃到 401 `NODE_LOGIN_REQUIRED` 不再直接报失败：`/api/mesh/nodes` 的 `loggedIn` 只表示
+// 浏览器有没有那只 cookie，过期的 cookie 照样显示已登录，于是按钮亮着、点一次失败一次。
+// 用户主动点下的升级这条路径允许当场补一次登录（可弹通行密钥仪式），登上了就接着升级；
+// 登录这一步再失败，才按失败原因分开说：传输层说「连接不上」，凭证类说「须先登录」并把这一行
+// 就地标成未登录，行里的「登录该节点」按钮随之出现——这是有实证的判决，与「401 即登出」不同。
 
-import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
+import { classifyNodeLoginFailure } from '@/auth/login-failure-kind';
+import { noteNodeLoginFailure, noteNodeLoginSuccess } from '@/auth/node-login-retry';
+import { type LoginNodeResult, ensureNodeLogin } from '@/auth/session-key-store';
+import {
+  type NodeRow,
+  getMeshNodesState,
+  markLoggedOut,
+  refreshMeshNodes,
+} from '@/node/mesh-nodes';
 import { defaultApiClient, formatBytesFixed, formatBytesPair } from '@vibeterm/api-client';
 import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@vibeterm/shared';
 import type {
@@ -58,6 +72,8 @@ export const UPGRADE_CANCELLED_ERROR: string = UPGRADE_CANCELLED;
 
 const ERROR_KEYS: Record<string, string> = {
   NODE_LOGIN_REQUIRED: 'nodes.upgrade.loginRequired',
+  /** 补登录这一步败在传输层：说连接不上，不谎称成登录问题。 */
+  NODE_UNREACHABLE_LOGIN: 'nodes.upgrade.unreachable',
   NODE_UNREACHABLE: 'nodes.upgrade.unreachable',
   NOT_FOUND: 'nodes.upgrade.nodeGone',
   UPGRADE_NOT_ALLOWED: 'nodes.upgrade.notAllowed',
@@ -145,6 +161,8 @@ export type UpgradeCancelOutcome =
 /** 状态机与真实请求之间的接缝：单测注入假实现，不碰网络与计时器。 */
 export interface UpgradeIo {
   start(nodeId: string, signal: AbortSignal): Promise<UpgradeStartOutcome>;
+  /** 目标说「须先登录」时当场补一次登录；不给就用默认实现（允许弹通行密钥仪式）。 */
+  login?(nodeId: string): Promise<LoginNodeResult>;
   /** 轮询与刷新后的状态回读共用同一个 GET。 */
   poll(nodeId: string, signal: AbortSignal): Promise<UpgradePollOutcome>;
   cancel(nodeId: string, signal: AbortSignal): Promise<UpgradeCancelOutcome>;
@@ -246,8 +264,14 @@ async function readNodeVersion(nodeId: string): Promise<string | null | undefine
   return node ? (node.version ?? null) : undefined;
 }
 
+/** 升级是用户按下按钮才发生的，因此这条登录允许当场弹一次通行密钥仪式。 */
+function loginForUpgrade(nodeId: string): Promise<LoginNodeResult> {
+  return ensureNodeLogin(nodeId, { allowPasskeyPrompt: true });
+}
+
 export const defaultUpgradeIo: UpgradeIo = {
   start: requestUpgradeStart,
+  login: loginForUpgrade,
   poll: requestUpgradeStatus,
   cancel: requestUpgradeCancel,
   nodeVersion: readNodeVersion,
@@ -366,6 +390,49 @@ export interface UpgradeRunParams {
   handoff?: UpgradeStartHandoff;
 }
 
+/**
+ * POST 吃到「须先登录」时先补一次登录再重发一次 POST。
+ *
+ * 只重发**一次**：登录成功后目标仍回 401 是确定性结论，再试只是重复。登录这一步失败时按原因
+ * 换码——传输层失败交回 `NODE_UNREACHABLE_LOGIN`（界面说「连接不上」；与 POST 自己的
+ * `NODE_UNREACHABLE` 分开，后者是「结果未知、继续轮询」），凭证类才交回 `NODE_LOGIN_REQUIRED`
+ * 并把这一行标成未登录，让行内的「登录该节点」按钮出来。
+ *
+ * 失败一律记进 `node-login-retry`：节点表与设备页据此改口，网络类还会自动排退避重试。
+ */
+export async function startUpgradeWithLogin(p: UpgradeRunParams): Promise<UpgradeStartOutcome> {
+  const first = await p.io.start(p.row.id, p.signal);
+  if (first.kind !== 'failed' || first.code !== 'NODE_LOGIN_REQUIRED') return first;
+  if (p.signal.aborted) return { kind: 'cancelled' };
+  const login = await (p.io.login ?? loginForUpgrade)(p.row.id);
+  if (p.signal.aborted) return { kind: 'cancelled' };
+  if (login.ok) {
+    noteNodeLoginSuccess(p.row.id);
+    return p.io.start(p.row.id, p.signal);
+  }
+  noteNodeLoginFailure(p.row.id, login.code);
+  if (classifyNodeLoginFailure(login.code) === 'unreachable') {
+    return { kind: 'failed', code: 'NODE_UNREACHABLE_LOGIN' };
+  }
+  // 这是一次真的登录尝试给出的判决（不是一发 401），因此可以就地翻成未登录。
+  markLoggedOut(p.row.id);
+  return { kind: 'failed', code: 'NODE_LOGIN_REQUIRED' };
+}
+
+/**
+ * POST 失败的 toast。「须先登录」这一档要说清下一步在哪儿点，笼统一句「升级失败」只会让用户
+ * 继续点同一个按钮；其余沿用「升级失败：<原因>」。
+ */
+export function upgradeStartFailureToast(
+  t: Translate,
+  name: string,
+  code: string,
+  error: string
+): string {
+  if (code === 'NODE_LOGIN_REQUIRED') return t('nodes.upgrade.failedNeedsLogin', { name });
+  return t('nodes.upgrade.failed', { error });
+}
+
 /** POST 的四种结论；只有「已开始」与「结果未知」要继续轮询。 */
 function reportStart(
   p: UpgradeRunParams,
@@ -382,7 +449,7 @@ function reportStart(
   if (started.kind === 'failed') {
     const error = upgradeErrorText(p.t, started.code);
     p.patch({ phase: 'failed', error });
-    p.toasts.error(p.t('nodes.upgrade.failed', { error }));
+    p.toasts.error(upgradeStartFailureToast(p.t, p.row.name, started.code, error));
     return null;
   }
   if (started.kind === 'unconfirmed') {
@@ -431,7 +498,7 @@ export async function runNodeUpgrade(p: UpgradeRunParams): Promise<UpgradeRunOut
   p.handoff?.begin();
   let started: UpgradeStartOutcome;
   try {
-    started = await p.io.start(p.row.id, p.signal);
+    started = await startUpgradeWithLogin(p);
   } catch (error) {
     await p.handoff?.settle(false);
     throw error;
