@@ -25,12 +25,10 @@ export const RELAY_CTL_TYPES = [
   'relay.kicked',
 ] as const;
 export type RelayCtlType = (typeof RELAY_CTL_TYPES)[number];
-
 const TYPE_SET = new Set<string>(RELAY_CTL_TYPES);
 const te = new TextEncoder();
 const td = new TextDecoder();
 const HEX_16 = /^[0-9a-f]{32}$/;
-
 export const RELAY_CTL_MAX_BYTES = 64 * 1024;
 export const RELAY_CTL_MAX_DEPTH = 8;
 export const RELAY_CTL_MAX_ARRAY_LEN = 1024;
@@ -47,7 +45,6 @@ export const RELAY_KEYLOG_PAGE_DEFAULT_LIMIT = 32;
 export const RELAY_KEYLOG_PAGE_MAX_LIMIT = 64;
 export const RELAY_CTL_MAX_U64 = 18446744073709551615n;
 export const RELAY_KEYLOG_SEQ_MISMATCH = 'SEQ_MISMATCH';
-
 export class RelayCtlError extends Error {
   constructor(message: string) {
     super(message);
@@ -112,6 +109,7 @@ export type RelayCtlMessage =
       key_log_head_seq: RelaySeqWire;
       rtc: RelayRtcConfig;
       token_rotated?: boolean;
+      observedIpv4?: string;
     }
   | { t: 'ping'; token_rotated?: boolean }
   | { t: 'pong'; token_rotated?: boolean }
@@ -167,11 +165,9 @@ export type RelayCtlMessage =
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
-
 function fail(message: string): never {
   throw new RelayCtlError(message);
 }
-
 function assertBounds(value: unknown, depth: number): void {
   if (depth > RELAY_CTL_MAX_DEPTH) fail('ctl too deep');
   if (typeof value === 'string' && value.length > RELAY_CTL_MAX_STRING_LEN) {
@@ -439,7 +435,6 @@ function parseHeartbeat(t: 'ping' | 'pong', obj: Record<string, unknown>): Relay
 }
 
 type RelayCtlParser = (obj: Record<string, unknown>) => RelayCtlMessage;
-
 const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
   'auth.challenge': (obj) => ({ t: 'auth.challenge', nonce: b64(obj, 'nonce', 32) }),
   'relay.auth': parseAuth,
@@ -451,6 +446,11 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
       key_log_head_seq: seq(obj, 'key_log_head_seq'),
       rtc: rtcConfig(obj, 'rtc'),
       ...(tokenRotated !== undefined ? { token_rotated: tokenRotated } : {}),
+      ...(typeof obj.observedIpv4 === 'string' &&
+      obj.observedIpv4.length > 0 &&
+      obj.observedIpv4.length <= 45
+        ? { observedIpv4: obj.observedIpv4 }
+        : {}),
     };
   },
   ping: (obj) => parseHeartbeat('ping', obj),

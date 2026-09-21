@@ -207,6 +207,7 @@ function openSecondaryAttach(
     onRelayStream: input.onRelayStream,
     onExclusiveOffline,
     staleMs,
+    dialCoordinator: input.uplink.dialCoordinator,
   } satisfies RelaySecondaryAttachOptions);
 }
 

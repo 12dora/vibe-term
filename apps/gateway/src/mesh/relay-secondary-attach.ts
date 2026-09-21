@@ -78,7 +78,7 @@ type Slot = {
  */
 export class RelaySecondaryAttach implements RelayStreamOpener {
   private readonly opts: RelaySecondaryAttachOptions;
-  private readonly dialCoordinator: UplinkDialCoordinator;
+  readonly dialCoordinator: UplinkDialCoordinator;
   private readonly slots = new Map<string, Slot>();
   private readonly decays = new Map<string, { clear: () => void }>();
   private readonly failLogAt = new Map<string, number>();

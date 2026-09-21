@@ -40,7 +40,7 @@ export type RelayAuthHost = {
   rtcConfig(): RelayRtcConfig;
 };
 
-type PendingAuth = { nonce: Uint8Array };
+type PendingAuth = { nonce: Uint8Array; observedIpv4?: string };
 
 /**
  * 链路存续期间复查：令牌哈希、踢出、租户 epoch、全局 min epoch。
@@ -128,7 +128,7 @@ export async function handleRelayAuth(
     return;
   }
   await (host.authBarrier?.() ?? Promise.resolve());
-  finishAuth(host, link, msg);
+  finishAuth(host, link, msg, pending);
 }
 
 function checkAuthPreconditions(
@@ -196,7 +196,8 @@ function admitNode(
 function finishAuth(
   host: RelayAuthHost,
   link: LinkSession,
-  msg: Extract<RelayCtlMessage, { t: 'relay.auth' }>
+  msg: Extract<RelayCtlMessage, { t: 'relay.auth' }>,
+  pending: PendingAuth
 ): void {
   if (host.stopped || !host.accepted.has(link)) return;
   const fresh = host.tenants.get(msg.tenant_id);
@@ -240,6 +241,7 @@ function finishAuth(
     token_rotated: relayTokenHashState(fresh, presentedHash, now) === 'password_rotated',
     key_log_head_seq: relaySeqToWire(host.tenants.get(fresh.id)?.keyLogHeadSeq ?? 0n),
     rtc: host.rtcConfig(),
+    ...(pending.observedIpv4 ? { observedIpv4: pending.observedIpv4 } : {}),
   });
   host.notifyQuota(fresh.id);
   host.scheduleList(fresh.id);

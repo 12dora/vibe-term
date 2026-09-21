@@ -30,6 +30,21 @@ export type EnumeratePeerEndpointsOpts = {
   bindHosts?: readonly string[];
   publicHost?: string | null;
   mappedAddresses?: readonly (string | undefined)[];
+  /** 已认证中继 uplink 回告的源 IPv4；过 `usablePublicIpv4` 之后才采用。 */
+  relayObserved?: readonly string[];
+  onPublicPick?: (pick: PublicPeerAdvertisePick) => void;
+};
+
+export type PublicPeerAdvertiseSource =
+  | 'explicit'
+  | 'relay-observed'
+  | 'stun-majority'
+  | 'stun-split'
+  | 'none';
+
+export type PublicPeerAdvertisePick = {
+  hosts: string[];
+  source: PublicPeerAdvertiseSource;
 };
 
 export function isContainerOrientedIface(name: string): boolean {
@@ -188,7 +203,9 @@ function appendPublicPeerEndpoint(
   if (!opts) return urls;
   const bindHosts = opts.bindHosts ?? gatewayConfig.peerBindHost;
   if (!peerBindsAllInterfaces(bindHosts)) return urls;
-  for (const host of pickPublicPeerHosts(opts, ifaceIps)) {
+  const pick = pickPublicPeerIpv4(opts, ifaceIps);
+  opts.onPublicPick?.(pick);
+  for (const host of pick.hosts) {
     const url = `ws://${host}:${port}/peer`;
     if (urls.includes(url)) continue;
     urls.push(url);
@@ -196,22 +213,57 @@ function appendPublicPeerEndpoint(
   return urls;
 }
 
-function pickPublicPeerHosts(
+/**
+ * 公网 endpoint 来源：显式 `publicHost` > 中继观测 > STUN。
+ * 中继观测命中时不再附带分歧的 STUN 候选。
+ */
+export function pickPublicPeerIpv4(
   opts: EnumeratePeerEndpointsOpts,
   ifaceIps: ReadonlySet<string>
-): string[] {
+): PublicPeerAdvertisePick {
   const explicit = advertisablePublicHost(opts.publicHost);
-  if (explicit && !ifaceIps.has(explicit)) return [explicit];
+  if (explicit && !ifaceIps.has(explicit)) return { hosts: [explicit], source: 'explicit' };
+  const observed = pickRelayObservedIpv4(opts.relayObserved ?? []);
+  if (observed && !ifaceIps.has(observed)) {
+    return { hosts: [observed], source: 'relay-observed' };
+  }
+  return pickStunPublicHosts(opts.mappedAddresses ?? [], ifaceIps);
+}
+
+/** 多条观测多数派；只有一条可用观测也可以采用（仍比 STUN 分歧强）。 */
+export function pickRelayObservedIpv4(samples: readonly string[]): string | null {
+  const counts = new Map<string, number>();
+  for (const sample of samples) {
+    const ip = usablePublicIpv4(sample);
+    if (!ip) continue;
+    counts.set(ip, (counts.get(ip) ?? 0) + 1);
+  }
+  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  if (total === 0) return null;
+  if (total === 1) return [...counts.keys()][0] ?? null;
+  return strictMajorityKey(counts, total);
+}
+
+function pickStunPublicHosts(
+  mapped: readonly (string | undefined)[],
+  ifaceIps: ReadonlySet<string>
+): PublicPeerAdvertisePick {
   const hosts: string[] = [];
   const seen = new Set<string>();
-  for (const raw of opts.mappedAddresses ?? []) {
+  for (const raw of mapped) {
     const ip = mappedIpv4(raw);
     if (!ip || ifaceIps.has(ip) || seen.has(ip)) continue;
     seen.add(ip);
     hosts.push(ip);
     if (hosts.length >= STUN_MAPPED_ADVERTISE_MAX) break;
   }
-  return hosts;
+  return { hosts, source: stunAdvertiseSource(hosts) };
+}
+
+function stunAdvertiseSource(hosts: readonly string[]): PublicPeerAdvertiseSource {
+  if (hosts.length === 0) return 'none';
+  if (hosts.length === 1) return 'stun-majority';
+  return 'stun-split';
 }
 
 /** 显式公网 host：可广告 IPv4，或语法合法的 FQDN。 */

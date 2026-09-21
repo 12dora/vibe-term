@@ -42,7 +42,7 @@ import {
   type RelayTenantRecord,
 } from './types';
 
-type PendingAuth = { nonce: Uint8Array };
+type PendingAuth = { nonce: Uint8Array; observedIpv4?: string };
 
 export type RelayUplinkServerOptions = {
   db: AuthDb;
@@ -148,14 +148,14 @@ export class RelayUplinkServer implements RelayUplinkHost {
     return this.accepted.size;
   }
 
-  accept(link: LinkSession): void {
+  accept(link: LinkSession, opts?: { observedIpv4?: string }): void {
     if (this.stopped) {
       link.close('relay-stop');
       return;
     }
     const nonce = randomBytes(32);
     this.accepted.add(link);
-    this.pending.set(link, { nonce });
+    this.pending.set(link, { nonce, observedIpv4: opts?.observedIpv4 });
     this.armAuthTimer(link);
     this.send(link, { t: 'auth.challenge', nonce: encodeBase64url(nonce) });
     link.ctl.onMessage((bytes) => {

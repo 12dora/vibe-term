@@ -33,6 +33,7 @@ import {
 } from '@vibeterm/shared/relay';
 import { encodePasskeyAssertionSig } from '../auth/passkey';
 import { createEs256Authenticator } from '../auth/passkey-test-fixtures';
+import { observedIpv4FromClientIp } from '../mesh/client-ip';
 import { encodeRedeemPopMessage } from './redeem-pop';
 import {
   RELAY_TEST_PUBLIC_URL,
@@ -90,7 +91,7 @@ export type RelayTenantHandle = {
   createEnrollment(node: RelayNodeFixture, client: RelayNodeClient, id?: string): Promise<void>;
   connect(
     node: RelayNodeFixture,
-    opts?: { withMember?: boolean; clientVersion?: string; token?: string }
+    opts?: { withMember?: boolean; clientVersion?: string; token?: string; clientIp?: string }
   ): Promise<RelayNodeClient>;
 };
 
@@ -406,7 +407,7 @@ async function connectNode(
   harness: RelayHarness,
   tenant: { id: string; token: string },
   node: RelayNodeFixture,
-  opts?: { withMember?: boolean; clientVersion?: string; token?: string }
+  opts?: { withMember?: boolean; clientVersion?: string; token?: string; clientIp?: string }
 ): Promise<RelayNodeClient> {
   const [nodeLink, relayLink] = createInMemoryLinkPair();
   const inbox = relayCtlInbox(nodeLink);
@@ -414,7 +415,9 @@ async function connectNode(
   nodeLink.onStream((stream) => {
     for (const cb of streamCbs) cb(stream);
   });
-  harness.runtime.uplink.accept(relayLink);
+  harness.runtime.uplink.accept(relayLink, {
+    observedIpv4: observedIpv4FromClientIp(opts?.clientIp),
+  });
   const challenge = await inbox.takeOf('auth.challenge');
   if (challenge.t !== 'auth.challenge') throw new Error('expected auth.challenge');
   const nonce = decodeNonce(challenge.nonce);

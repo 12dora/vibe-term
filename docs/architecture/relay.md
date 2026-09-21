@@ -526,7 +526,7 @@ ctl 是 JSON `{t, ...}`，编解码在 `packages/shared/src/relay/codec.ts`。
 |---|---|---|---|
 | `auth.challenge` | R→N | `{nonce: b64url32}` | 连上即发，`RELAY_AUTH_TIMEOUT_MS` 10 s 内不认证就断 |
 | `relay.auth` | N→R | `{tenant_id, token, node_id, sig, proto, client_version, member?}` | 见下 |
-| `auth.ok` | R→N | `{tenant_id, key_log_head_seq, rtc}` | |
+| `auth.ok` | R→N | `{tenant_id, key_log_head_seq, rtc, observedIpv4?}` | 认证成功后回告中继看到的 uplink 源 IPv4（可选；旧节点忽略） |
 | `ping` / `pong` | 双向 | | 心跳 15 s，连丢 3 次断 |
 | `relay.status` | N→R | `{blob: Envelope(K_meta), epoch}` | 只存内存最新一块 + 触发广播；节点断开即消失 |
 | `relay.list` | R→N | `{version, nodes: [{id, online, status, epoch?, blob?}], rtc, key_log_head_seq}` | 全量；先滤掉 `revoked` 再截断到 256 条；整帧超 64 KiB 时退化成不带 `blob` 的清单；100 ms 防抖 |
@@ -967,6 +967,7 @@ bun packages/app/src/runtime/server.ts
 
 哈希分类区分当前令牌、仍在宽限内的历史令牌（`password_rotated`）与未知、过期令牌（`kicked`）。
 `auth.ok`、`ping`、`pong` 均支持可选字段 `token_rotated?: boolean`。中继在有效历史令牌认证及存续连接心跳时发送 `true`，当前令牌为 `false`；旧消息缺失该字段仍兼容。已在线成员无需重连就能得知令牌换代。
+`auth.ok` 另有可选 `observedIpv4`：中继在认证成功后回告这条 uplink 的真实源 IPv4（走既有 `clientIp(req)`，信任代理时吃 XFF / CF / X-Real-IP）。节点只采用已认证观测、丢掉回环/私网，并优先于 STUN 广告公网 endpoint；编解码丢弃未知字段，老节点忽略该键。
 成员据此设置 `awaitingToken`。`GET /api/mesh/relay/status` 区分以下状态；表中行级字段指受影响的中继，顶层 `reauthRequired` 在任一中继行被踢出时为真。
 
 | 状态 | `online` / `attached` | `awaitingToken` | `reauthRequired` | 行级 `kicked` / `kickedReason` | 含义 |

@@ -132,6 +132,7 @@ export type RelayUpgradeServer = {
 
 export type RelayUplinkSocketData = {
   kind: typeof RELAY_UPLINK_WS_KIND;
+  clientIp?: string;
 };
 
 export type RelayServerWebSocket = {

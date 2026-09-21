@@ -181,8 +181,6 @@ export class UplinkDialCoordinator {
   }
 }
 
-export const defaultUplinkDialCoordinator = new UplinkDialCoordinator();
-
 export function watchPredicate(check: () => boolean, fire: () => void, everyMs = 25): () => void {
   let stopped = false;
   const id = setInterval(() => {
@@ -270,7 +268,7 @@ export class UplinkPool {
   >();
   private readonly probeLogAt = new Map<string, number>();
   private wrapSleepAbort: AbortController | null = null;
-  private readonly dialCoordinator: UplinkDialCoordinator;
+  readonly dialCoordinator: UplinkDialCoordinator;
   private readonly coolByUrl = new Map<string, { until: number; fails: number }>();
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(uplink: AttachedUplink) => void> = [];
