@@ -1,5 +1,5 @@
 import type { LinkSession } from '@vibeterm/shared/link';
-import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
+import { DEFAULT_DIAL_RTT_MS, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import type { UserStore } from '../auth/user-store';
 import type { DcRerollRecord } from './peer-dc-reroll';
 import type { DirectAttemptRecord } from './peer-direct-attempt';
@@ -80,22 +80,13 @@ export type PeerManagerState = {
 };
 
 const rttByScheduler = new WeakMap<object, PeerManagerState>();
-/**
- * 单进程内最近一次 `createPeerManagerState` 的 RTT 源。
- * 转发层 `openHttpStream` / `forwardLinkDeadlineFor` 拿不到 scheduler：调用点在
- * StreamOpener 适配器之后，mesh-runtime 没把 scheduler 传下来。生产一个进程一个
- * PeerManager，用这份回退读 live/uplink RTT。多实例测试继续显式传 scheduler，
- * WeakMap 互不覆盖；测完必须 `resetPeerRttLookupForTests()`，避免串文件污染。
- */
-let currentRttState: PeerManagerState | null = null;
 
 function finiteRtt(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function resolveRttState(scheduler?: object): PeerManagerState | undefined {
-  if (scheduler) return rttByScheduler.get(scheduler);
-  return currentRttState ?? undefined;
+  return scheduler ? rttByScheduler.get(scheduler) : undefined;
 }
 
 function trackedSessionOf(state: PeerManagerState, link: LinkSession): LivePeer | undefined {
@@ -110,9 +101,8 @@ function trackedSessionOf(state: PeerManagerState, link: LinkSession): LivePeer 
   return undefined;
 }
 
-export function resetPeerRttLookupForTests(): void {
-  currentRttState = null;
-}
+/** @deprecated RTT 源只挂在 scheduler WeakMap 上，不再有进程级单例。 */
+export function resetPeerRttLookupForTests(): void {}
 
 export type PeerRttSampleTarget = {
   rttMs: number | null;
@@ -187,7 +177,24 @@ export function readUplinkRtt(uplink: PooledUplink | UplinkPool): number | null 
   return finiteRtt((uplink as { rttMs?: number | null }).rttMs);
 }
 
-/** 已测节点 RTT → 全网 live 中位数 → uplink 代理 → 800 ms。无 nodeId 时不用全局 max。 */
+function liveMedianRtt(state: PeerManagerState): number | null {
+  const samples: number[] = [];
+  for (const live of state.live.values()) {
+    const rtt = finiteRtt(live.rttMs);
+    if (rtt != null) samples.push(rtt);
+  }
+  return samples.length > 0 ? medianRtt(samples) : null;
+}
+
+/** 无本链路样本时的转发兜底：max(全网中位数, uplinkRtt) → 800 ms。不要用 pathRtt.bestMs。 */
+function pessimisticForwardRttMs(state: PeerManagerState): number {
+  const median = liveMedianRtt(state);
+  const uplink = readUplinkRtt(state.uplink);
+  if (median != null && uplink != null) return Math.max(median, uplink);
+  return median ?? uplink ?? DEFAULT_DIAL_RTT_MS;
+}
+
+/** 已测节点 RTT → 全网 live 中位数 → uplink 代理 → 800 ms。拨号用；无 nodeId 时不用全局 max。 */
 export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
   const state = resolveRttState(scheduler);
   if (!state) return DEFAULT_DIAL_RTT_MS;
@@ -195,23 +202,42 @@ export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
     const peer = finiteRtt(state.live.get(nodeId)?.rttMs);
     if (peer != null) return peer;
   }
-  const samples: number[] = [];
-  for (const live of state.live.values()) {
-    const rtt = finiteRtt(live.rttMs);
-    if (rtt != null) samples.push(rtt);
-  }
-  if (samples.length > 0) return medianRtt(samples);
-  return readUplinkRtt(state.uplink) ?? DEFAULT_DIAL_RTT_MS;
+  return liveMedianRtt(state) ?? readUplinkRtt(state.uplink) ?? DEFAULT_DIAL_RTT_MS;
 }
 
-/** 用 live/retiring session 反查该链路 RTT。openHttpStream 只有 link，没有 nodeId。 */
+/**
+ * 转发 / head 预算：本链路样本 → max(中位数, uplinkRtt) → 800 ms。
+ * 新建链路 rttMs 为 null 时必须走悲观兜底，不能用乐观中位数。
+ */
+export function lookupPeerRttMsForForward(nodeId: string | undefined, scheduler?: object): number {
+  const state = resolveRttState(scheduler);
+  if (!state) return DEFAULT_DIAL_RTT_MS;
+  if (nodeId) {
+    const sample = finiteRtt(state.live.get(nodeId)?.rttMs);
+    if (sample != null) return sample;
+  }
+  return pessimisticForwardRttMs(state);
+}
+
+/** 用 live/retiring session 反查该链路 RTT。无本链路样本时悲观，不回落乐观中位数。 */
 export function lookupPeerRttMsForLink(link: LinkSession, scheduler?: object): number {
   const state = resolveRttState(scheduler);
   if (!state) return DEFAULT_DIAL_RTT_MS;
   const tracked = trackedSessionOf(state, link);
   const sample = finiteRtt(tracked?.rttMs);
   if (sample != null) return sample;
-  return lookupPeerRttMs(tracked?.peerNodeId, state.scheduler);
+  return pessimisticForwardRttMs(state);
+}
+
+/** missed-pong 判死窗口：至少 15 s，且严格大于同档 head 预算。 */
+export function peerLivenessDeadlineMs(rttMs: number | null | undefined): number {
+  const headMs = nestedDialBudgetsMs(rttMs).forwardMs;
+  const floorMs = PEER_PING_INTERVAL_MS * PEER_MISSED_PONG_LIMIT;
+  return Math.max(floorMs, headMs + PEER_PING_INTERVAL_MS);
+}
+
+export function missedPongExceeded(missedPongs: number, rttMs: number | null | undefined): boolean {
+  return missedPongs * PEER_PING_INTERVAL_MS >= peerLivenessDeadlineMs(rttMs);
 }
 
 export function createPeerManagerState(opts: {
@@ -255,7 +281,6 @@ export function createPeerManagerState(opts: {
     rerolls: new Map(),
   };
   rttByScheduler.set(opts.scheduler, state);
-  currentRttState = state;
   return state;
 }
 

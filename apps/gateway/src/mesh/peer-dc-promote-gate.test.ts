@@ -135,7 +135,22 @@ describe('DcPromoteGate', () => {
     expect(installed).toEqual([dc]);
     expect(liveMap.get(PEER)?.session).toBe(dc);
     expect(liveMap.get(PEER)?.rttMs).toBe(40);
-    expect(retired).toEqual([current]);
+    expect(retired).toEqual([]);
+  });
+
+  test('unmeasurable DC is installed rather than rejected', async () => {
+    const current = stubSession();
+    const dc = stubSession();
+    const { gate, installed, liveMap, retired } = makeGate({
+      measureRtt: async () => null,
+    });
+    const prev = live('ws-secure', current, 89);
+    liveMap.set(PEER, prev);
+    expect(gate.decide(inputOf('dc', dc, prev)).action).toBe('hold');
+    await Bun.sleep(0);
+    expect(installed).toEqual([dc]);
+    expect(liveMap.get(PEER)?.session).toBe(dc);
+    expect(retired).toEqual([]);
   });
 
   test('backoff after reject blocks the next upgrade attempt', async () => {

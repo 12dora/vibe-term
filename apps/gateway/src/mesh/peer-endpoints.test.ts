@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type os from 'node:os';
 import {
+  STUN_MAPPED_ADVERTISE_MAX,
   advertisablePublicHost,
   enumeratePeerEndpoints,
   stunMappedAddressesForAdvertise,
@@ -24,6 +25,14 @@ describe('usablePublicIpv4', () => {
     expect(usablePublicIpv4('10.0.0.2')).toBeNull();
     expect(usablePublicIpv4('192.168.1.4')).toBeNull();
     expect(usablePublicIpv4('hostname.example')).toBeNull();
+  });
+
+  test('rejects reserved IPv4: 0/8, multicast, class E, broadcast', () => {
+    expect(usablePublicIpv4('0.0.0.1')).toBeNull();
+    expect(usablePublicIpv4('0.0.0.0')).toBeNull();
+    expect(usablePublicIpv4('224.0.0.1')).toBeNull();
+    expect(usablePublicIpv4('240.0.0.1')).toBeNull();
+    expect(usablePublicIpv4('255.255.255.255')).toBeNull();
   });
 });
 
@@ -93,6 +102,9 @@ describe('advertisablePublicHost', () => {
     expect(advertisablePublicHost('2001:db8::1')).toBeNull();
     expect(advertisablePublicHost('localhost')).toBeNull();
     expect(advertisablePublicHost('not a host')).toBeNull();
+    expect(advertisablePublicHost('1.2.3.4.5')).toBeNull();
+    expect(advertisablePublicHost('1.2.3')).toBeNull();
+    expect(advertisablePublicHost('a.b')).toBe('a.b');
   });
 });
 
@@ -132,14 +144,38 @@ describe('stunMappedAddressesForAdvertise', () => {
     ]);
   });
 
-  test('二比二分歧不广告（含 TUN 全 fakeIp）', () => {
+  test('二比二分歧按地址稳定排序广告全部可用公网候选', () => {
     const rows = [
-      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:1' },
-      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:2' },
       { ok: true, fakeIp: true, mappedAddress: '152.70.84.203:3' },
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:1' },
       { ok: true, fakeIp: true, mappedAddress: '152.70.84.203:4' },
+      { ok: true, fakeIp: true, mappedAddress: '122.51.254.148:2' },
     ];
-    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([]);
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
+      '122.51.254.148:1',
+      '152.70.84.203:3',
+    ]);
+    const urls = enumeratePeerEndpoints(
+      39001,
+      { eth0: [v4('10.0.0.3')] },
+      {
+        bindHosts: ['0.0.0.0'],
+        mappedAddresses: stunMappedAddressesForAdvertise(rows, now),
+      }
+    );
+    expect(urls).toEqual([
+      'ws://10.0.0.3:39001/peer',
+      'ws://122.51.254.148:39001/peer',
+      'ws://152.70.84.203:39001/peer',
+    ]);
+  });
+
+  test('两条可达且 1:1 分歧时两条都广告', () => {
+    const rows = [
+      { ok: true, mappedAddress: '198.51.100.7:1' },
+      { ok: true, mappedAddress: '203.0.113.9:2' },
+    ];
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual(['198.51.100.7:1', '203.0.113.9:2']);
   });
 
   test('三比一多数广告多数派', () => {
@@ -162,6 +198,21 @@ describe('stunMappedAddressesForAdvertise', () => {
       { ok: true, mappedAddress: '198.51.100.7:2' },
     ];
     expect(stunMappedAddressesForAdvertise(rows, now)).toEqual(['198.51.100.7:2']);
+  });
+
+  test('无多数时最多广告 STUN_MAPPED_ADVERTISE_MAX 条不同 IPv4', () => {
+    const rows = [
+      { ok: true, mappedAddress: '198.51.100.4:4' },
+      { ok: true, mappedAddress: '198.51.100.1:1' },
+      { ok: true, mappedAddress: '198.51.100.3:3' },
+      { ok: true, mappedAddress: '198.51.100.2:2' },
+    ];
+    expect(STUN_MAPPED_ADVERTISE_MAX).toBe(3);
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
+      '198.51.100.1:1',
+      '198.51.100.2:2',
+      '198.51.100.3:3',
+    ]);
   });
 
   test('全部不可用时不广告', () => {

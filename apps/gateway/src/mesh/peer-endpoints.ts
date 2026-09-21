@@ -90,12 +90,16 @@ export type StunAdvertiseRow = {
   probedAt?: number;
 };
 
+/** 分歧时最多广告这么多条不同公网 IPv4；对端有 backoff + probe 裁剪。 */
+export const STUN_MAPPED_ADVERTISE_MAX = 3;
+
 /**
  * 选出可广告的 STUN mapped 地址。
  * `fakeIp` 只表示「解析 STUN 服务器域名时系统 DNS 见过 fake-IP」，与 mapped 本身无关，
  * 不再作为否决条件；mapped 是否可广告由 `usablePublicIpv4` 把关。
- * 多条样本按 mapped IPv4 计票：只有 1 条有效样本时采用（无分歧证据）；
- * ≥2 条时取票数 ≥2 且严格过半的那个，平票 / 无多数则不广告。
+ * 多条样本按 mapped IPv4 计票：只有 1 条有效样本时采用；≥2 条且严格过半则只发多数派。
+ * 平票 / 无多数时按票数降序、地址升序把可用公网候选全部广告出去（去重，上限
+ * `STUN_MAPPED_ADVERTISE_MAX`），不退化为「一个都不发」。
  */
 export function stunMappedAddressesForAdvertise(
   rows: readonly StunAdvertiseRow[] = stunProbeSnapshot(),
@@ -119,8 +123,29 @@ function pickMajorityMappedAddresses(mapped: readonly string[]): string[] {
   if (mapped.length === 0) return [];
   if (mapped.length === 1) return [...mapped];
   const winner = majorityMappedIpv4(mapped);
-  if (!winner) return [];
-  return mapped.filter((item) => mappedIpv4(item) === winner);
+  if (winner) return mapped.filter((item) => mappedIpv4(item) === winner);
+  return uniqueMappedByVotes(mapped, STUN_MAPPED_ADVERTISE_MAX);
+}
+
+function uniqueMappedByVotes(mapped: readonly string[], limit: number): string[] {
+  const counts = new Map<string, number>();
+  const first = new Map<string, string>();
+  for (const item of mapped) {
+    const ip = mappedIpv4(item);
+    if (!ip) continue;
+    counts.set(ip, (counts.get(ip) ?? 0) + 1);
+    if (!first.has(ip)) first.set(ip, item);
+  }
+  return [...counts.keys()]
+    .sort((a, b) => {
+      const byVotes = (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
+      return byVotes !== 0 ? byVotes : a.localeCompare(b);
+    })
+    .slice(0, Math.max(0, limit))
+    .flatMap((ip) => {
+      const row = first.get(ip);
+      return row ? [row] : [];
+    });
 }
 
 function majorityMappedIpv4(mapped: readonly string[]): string | null {
@@ -163,25 +188,30 @@ function appendPublicPeerEndpoint(
   if (!opts) return urls;
   const bindHosts = opts.bindHosts ?? gatewayConfig.peerBindHost;
   if (!peerBindsAllInterfaces(bindHosts)) return urls;
-  const host = pickPublicPeerHost(opts, ifaceIps);
-  if (!host) return urls;
-  const url = `ws://${host}:${port}/peer`;
-  if (urls.includes(url)) return urls;
-  urls.push(url);
+  for (const host of pickPublicPeerHosts(opts, ifaceIps)) {
+    const url = `ws://${host}:${port}/peer`;
+    if (urls.includes(url)) continue;
+    urls.push(url);
+  }
   return urls;
 }
 
-function pickPublicPeerHost(
+function pickPublicPeerHosts(
   opts: EnumeratePeerEndpointsOpts,
   ifaceIps: ReadonlySet<string>
-): string | null {
+): string[] {
   const explicit = advertisablePublicHost(opts.publicHost);
-  if (explicit && !ifaceIps.has(explicit)) return explicit;
+  if (explicit && !ifaceIps.has(explicit)) return [explicit];
+  const hosts: string[] = [];
+  const seen = new Set<string>();
   for (const raw of opts.mappedAddresses ?? []) {
     const ip = mappedIpv4(raw);
-    if (ip && !ifaceIps.has(ip)) return ip;
+    if (!ip || ifaceIps.has(ip) || seen.has(ip)) continue;
+    seen.add(ip);
+    hosts.push(ip);
+    if (hosts.length >= STUN_MAPPED_ADVERTISE_MAX) break;
   }
-  return null;
+  return hosts;
 }
 
 /** 显式公网 host：可广告 IPv4，或语法合法的 FQDN。 */
@@ -248,9 +278,9 @@ function isAdvertisableIpv4(address: string): boolean {
   if (!o) return false;
   const [a, b] = o;
   if (a === 127) return false;
-  if (a === 0) return o.some((n) => n !== 0);
+  if (a === 0) return false;
   if (a === 169) return b !== 254;
-  return a < 224 || a > 239;
+  return a < 224;
 }
 
 function isAdvertisableIpv6(address: string): boolean {

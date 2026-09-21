@@ -1,18 +1,22 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@vibeterm/shared/link';
-import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
+import { DEFAULT_DIAL_RTT_MS, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import {
   PEER_DC_IDLE_MS,
   PEER_IDLE_MS,
+  PEER_MISSED_PONG_LIMIT,
+  PEER_PING_INTERVAL_MS,
   PEER_RETIRE_STREAM_LEAK_MS,
   applyPeerRttSample,
   createPeerManagerState,
   lookupPeerRttMs,
+  lookupPeerRttMsForForward,
   lookupPeerRttMsForLink,
   measurePingRttMs,
+  missedPongExceeded,
   parseEchoedSentAt,
-  resetPeerRttLookupForTests,
+  peerLivenessDeadlineMs,
 } from './peer-manager-state';
 import { PEER_PATH_RTT_WINDOW_MS } from './peer-path-rtt';
 import type { LivePeer } from './peer-reconnect-wake';
@@ -44,10 +48,6 @@ function liveRow(rttMs: number | null, extra?: Partial<LivePeer>): LivePeer {
 }
 
 describe('peer RTT EWMA and lookup', () => {
-  afterEach(() => {
-    resetPeerRttLookupForTests();
-  });
-
   test('EWMA α 0.3 ignores one spike above 3× then accepts the next', () => {
     const live = { rttMs: null as number | null, rttSpikeIgnored: false };
     expect(applyPeerRttSample(live, 40)).toBe(40);
@@ -67,12 +67,11 @@ describe('peer RTT EWMA and lookup', () => {
     expect(lookupPeerRttMs(undefined, scheduler)).toBe(40);
     state.live.clear();
     expect(lookupPeerRttMs(undefined, scheduler)).toBe(90);
-    expect(lookupPeerRttMs()).toBe(90);
+    expect(lookupPeerRttMs()).toBe(DEFAULT_DIAL_RTT_MS);
     expect(DEFAULT_DIAL_RTT_MS).toBe(800);
   });
 
-  test('lookupPeerRttMs falls back to current process state when scheduler is omitted', () => {
-    resetPeerRttLookupForTests();
+  test('lookupPeerRttMs without scheduler does not read another test file state', () => {
     expect(lookupPeerRttMs()).toBe(DEFAULT_DIAL_RTT_MS);
     expect(lookupPeerRttMs('missing')).toBe(DEFAULT_DIAL_RTT_MS);
 
@@ -80,37 +79,63 @@ describe('peer RTT EWMA and lookup', () => {
     state.live.set('slow', liveRow(2500));
     state.live.set('fast', liveRow(40));
     state.live.set('lan', liveRow(20));
-    expect(lookupPeerRttMs('slow')).toBe(2500);
+    expect(lookupPeerRttMs('slow')).toBe(DEFAULT_DIAL_RTT_MS);
     expect(lookupPeerRttMs('slow', scheduler)).toBe(2500);
-    expect(lookupPeerRttMs('unknown')).toBe(40);
-    expect(lookupPeerRttMs()).toBe(40);
+    expect(lookupPeerRttMs('unknown', scheduler)).toBe(40);
 
     const other = new ImmediateScheduler();
     expect(lookupPeerRttMs('slow', other)).toBe(DEFAULT_DIAL_RTT_MS);
 
     state.live.clear();
-    expect(lookupPeerRttMs('slow')).toBe(DEFAULT_DIAL_RTT_MS);
-    resetPeerRttLookupForTests();
-    expect(lookupPeerRttMs('slow')).toBe(DEFAULT_DIAL_RTT_MS);
     expect(lookupPeerRttMs('slow', scheduler)).toBe(DEFAULT_DIAL_RTT_MS);
   });
 
-  test('lookupPeerRttMsForLink uses the live session nodeId, not the mesh median', () => {
+  test('lookupPeerRttMsForLink uses the live session sample, not the mesh median', () => {
     const { scheduler, state } = makeRttState(90);
     const slowLink = { id: 'slow' } as unknown as LinkSession;
     const otherLink = { id: 'other' } as unknown as LinkSession;
     state.live.set('fast', liveRow(40, { session: otherLink, peerNodeId: 'fast' }));
     state.live.set('lan', liveRow(20));
     state.live.set('slow', liveRow(2500, { session: slowLink, peerNodeId: 'slow' }));
-    expect(lookupPeerRttMsForLink(slowLink)).toBe(2500);
+    expect(lookupPeerRttMsForLink(slowLink)).toBe(DEFAULT_DIAL_RTT_MS);
     expect(lookupPeerRttMsForLink(slowLink, scheduler)).toBe(2500);
-    expect(lookupPeerRttMsForLink({} as LinkSession)).toBe(40);
+    expect(lookupPeerRttMsForLink({} as LinkSession, scheduler)).toBe(90);
     const retiringLink = { id: 'retiring' } as unknown as LinkSession;
     state.retiring.set(
       'retired-slow',
       new Set([liveRow(1800, { session: retiringLink, peerNodeId: 'retired-slow' })])
     );
-    expect(lookupPeerRttMsForLink(retiringLink)).toBe(1800);
+    expect(lookupPeerRttMsForLink(retiringLink, scheduler)).toBe(1800);
+  });
+
+  test('no per-link sample uses max(median, uplinkRtt), not the optimistic median', () => {
+    const { scheduler, state } = makeRttState(13_900);
+    const newLink = { id: 'new' } as unknown as LinkSession;
+    state.live.set('lan', liveRow(20));
+    state.live.set('fast', liveRow(40));
+    state.live.set('other', liveRow(50));
+    state.live.set('new', liveRow(null, { session: newLink, peerNodeId: 'new' }));
+    expect(lookupPeerRttMs(undefined, scheduler)).toBe(40);
+    expect(lookupPeerRttMsForLink(newLink, scheduler)).toBe(13_900);
+    expect(lookupPeerRttMsForForward('new', scheduler)).toBe(13_900);
+    expect(lookupPeerRttMsForForward('missing', scheduler)).toBe(13_900);
+    expect(nestedDialBudgetsMs(lookupPeerRttMsForLink(newLink, scheduler)).forwardMs).toBe(
+      nestedDialBudgetsMs(13_900).forwardMs
+    );
+    expect(nestedDialBudgetsMs(40).forwardMs).toBeLessThan(nestedDialBudgetsMs(13_900).forwardMs);
+  });
+
+  test('head budget cap is strictly below the missed-pong liveness deadline', () => {
+    expect(PEER_PING_INTERVAL_MS * PEER_MISSED_PONG_LIMIT).toBe(15_000);
+    for (const rtt of [1, 40, 800, 2_500, 10_000, 13_900, 20_000]) {
+      const head = nestedDialBudgetsMs(rtt).forwardMs;
+      const live = peerLivenessDeadlineMs(rtt);
+      expect(head).toBeLessThan(live);
+    }
+    expect(peerLivenessDeadlineMs(40)).toBe(15_000);
+    expect(missedPongExceeded(3, 40)).toBe(true);
+    expect(missedPongExceeded(3, 13_900)).toBe(false);
+    expect(missedPongExceeded(5, 13_900)).toBe(true);
   });
 
   test('DC idle is 30 min and relay idle stays 5 min', () => {

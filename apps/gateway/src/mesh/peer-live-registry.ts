@@ -17,13 +17,14 @@ import {
 } from './peer-live-rank';
 import {
   PEER_DC_IDLE_MS,
-  PEER_MISSED_PONG_LIMIT,
   PEER_PING_INTERVAL_MS,
   type PeerManagerState,
   applyPeerRttSample,
   comparePeerTransport,
   isPeerTrusted,
+  lookupPeerRttMsForLink,
   measurePingRttMs,
+  missedPongExceeded,
   parseEchoedSentAt,
   peerStale,
 } from './peer-manager-state';
@@ -421,7 +422,12 @@ export class PeerLiveRegistry {
         live.lastInboundFrameAt = lastFrameAt;
         live.missedPongs = 0;
       } else live.missedPongs += 1;
-      if (live.missedPongs >= PEER_MISSED_PONG_LIMIT) {
+      if (
+        missedPongExceeded(
+          live.missedPongs,
+          lookupPeerRttMsForLink(live.session, this.state.scheduler)
+        )
+      ) {
         this.dropPeer(live.peerNodeId, 'missed-pong');
         return;
       }

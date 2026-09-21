@@ -29,7 +29,11 @@ import {
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS, setMeshRequestContext } from './mesh-deps';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
-import { createPeerManagerState, resetPeerRttLookupForTests } from './peer-manager-state';
+import {
+  createPeerManagerState,
+  lookupPeerRttMsForLink,
+  resetPeerRttLookupForTests,
+} from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
 import { decodeTerminalStreamClose } from './stream-close-code';
@@ -1716,29 +1720,37 @@ describe('分享凭证的 mesh 流', () => {
     expect(dispatched).toBe(1);
   });
 
-  test('HTTP head 预算随 live RTT 放大，无样本仍是 800 ms 档', () => {
-    resetPeerRttLookupForTests();
+  test('HTTP head 预算随注入的 RTT 放大，缺省仍是 800 ms 档', () => {
     const unmatched = {} as LinkSession;
     expect(httpHeadTimeoutForStream(unmatched)).toBe(httpHeadTimeoutMs(DEFAULT_DIAL_RTT_MS));
 
     const scheduler = new ImmediateScheduler();
     const slowLink = { id: 'slow' } as unknown as LinkSession;
     const fastLink = { id: 'fast' } as unknown as LinkSession;
+    const newLink = { id: 'new' } as unknown as LinkSession;
     const state = createPeerManagerState({
       identity: { nodeId: 'aa'.repeat(16), edSecretKey: new Uint8Array(64) } as MeshIdentity,
       userStore: { getCert: () => null } as never,
-      uplink: { rttMs: null, resetBackoff() {} } as never,
+      uplink: { rttMs: 13_900, resetBackoff() {} } as never,
       scheduler,
       endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
     });
     state.live.set('fast', { rttMs: 40, session: fastLink, peerNodeId: 'fast' } as LivePeer);
     state.live.set('slow', { rttMs: 2500, session: slowLink, peerNodeId: 'slow' } as LivePeer);
-    const slowBudget = httpHeadTimeoutForStream(slowLink);
+    state.live.set('new', { rttMs: null, session: newLink, peerNodeId: 'new' } as LivePeer);
+    const slowBudget = httpHeadTimeoutForStream(
+      slowLink,
+      lookupPeerRttMsForLink(slowLink, scheduler)
+    );
     const proxyBudget = httpHeadTimeoutMs(DEFAULT_DIAL_RTT_MS);
     expect(slowBudget).toBe(httpHeadTimeoutMs(2500));
     expect(slowBudget).toBeGreaterThan(proxyBudget);
-    expect(httpHeadTimeoutForStream(fastLink)).toBe(httpHeadTimeoutMs(40));
-    resetPeerRttLookupForTests();
+    expect(httpHeadTimeoutForStream(fastLink, lookupPeerRttMsForLink(fastLink, scheduler))).toBe(
+      httpHeadTimeoutMs(40)
+    );
+    expect(httpHeadTimeoutForStream(newLink, lookupPeerRttMsForLink(newLink, scheduler))).toBe(
+      httpHeadTimeoutMs(13_900)
+    );
     expect(httpHeadTimeoutForStream(slowLink)).toBe(proxyBudget);
   });
 

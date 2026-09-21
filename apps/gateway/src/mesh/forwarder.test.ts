@@ -3254,8 +3254,8 @@ describe('forward / authorizedHttp deadlines follow live RTT', () => {
       minMs: 10_000,
       maxMs: 30_000,
     });
-    expect(forwardLinkDeadlineFor(OTHER)).toBe(liveForward);
-    expect(authorizedHttpDeadlineMs(OTHER)).toBe(liveAuth);
+    expect(forwardLinkDeadlineFor(OTHER, 2500)).toBe(liveForward);
+    expect(authorizedHttpDeadlineMs(OTHER, 2500)).toBe(liveAuth);
     expect(liveForward).toBeGreaterThan(proxyForward);
     expect(liveAuth).toBeGreaterThan(proxyAuth);
     expect(forwardLinkDeadlineFor(OTHER, 40)).toBe(nestedDialBudgetsMs(40).forwardMs);

@@ -285,6 +285,7 @@ describe('parsePeerPublicHost', () => {
     expect(parsePeerPublicHost('  ')).toBeNull();
     expect(parsePeerPublicHost(' 203.0.113.9 ')).toBe('203.0.113.9');
     expect(parsePeerPublicHost('tmexhub-sh.jiefakj.com')).toBe('tmexhub-sh.jiefakj.com');
+    expect(parsePeerPublicHost('a.b')).toBe('a.b');
   });
 
   test('warns and ignores unadvertisable values', () => {
@@ -298,13 +299,16 @@ describe('parsePeerPublicHost', () => {
       expect(parsePeerPublicHost('198.18.0.1')).toBeNull();
       expect(parsePeerPublicHost('100.64.1.1')).toBeNull();
       expect(parsePeerPublicHost('0.0.0.0')).toBeNull();
+      expect(parsePeerPublicHost('240.0.0.1')).toBeNull();
+      expect(parsePeerPublicHost('1.2.3.4.5')).toBeNull();
+      expect(parsePeerPublicHost('1.2.3')).toBeNull();
       expect(parsePeerPublicHost('localhost')).toBeNull();
       expect(parsePeerPublicHost('not a host')).toBeNull();
       expect(parsePeerPublicHost('2001:db8::1')).toBeNull();
     } finally {
       console.warn = warn;
     }
-    expect(warnings.length).toBe(7);
+    expect(warnings.length).toBe(10);
     expect(warnings.every((line) => line.includes('VIBETERM_PEER_PUBLIC_HOST'))).toBe(true);
   });
 });

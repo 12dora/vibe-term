@@ -2923,7 +2923,8 @@ describe('PeerManager', () => {
 
     const [dcA, dcB] = createInMemoryLinkPair();
     echoQuiesceCaps(dcB);
-    expect(managerA.adoptLink(peer.nodeId, dcA, 'dc', self.nodeId, '10.0.0.8')).toBe(dcA);
+    managerA.adoptLink(peer.nodeId, dcA, 'dc', self.nodeId, '10.0.0.8');
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'dc');
     expect(managerA.transportOf(peer.nodeId)).toBe('dc');
     expect(managerA.rttOf(peer.nodeId)).toBeNull();
 
