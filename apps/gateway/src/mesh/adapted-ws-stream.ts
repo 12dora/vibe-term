@@ -1,4 +1,4 @@
-import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
+import type { LinkSession, LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
 import type { OpenedWsStream } from './mesh-deps';
 import { decodeTerminalStreamClose } from './stream-close-code';
 import { openWsStream } from './stream-targets';
@@ -11,6 +11,36 @@ type OpenedLinkWsStream = {
   readable: ReadableStream<Uint8Array>;
   close: () => void;
 };
+
+function waitStreamCloseInfo(stream: Pick<LinkStream, 'closed'>): Promise<StreamCloseInfo | null> {
+  return Promise.race([
+    stream.closed.catch(() => null),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 0)),
+  ]);
+}
+
+/**
+ * 普通收尾（head-timeout / link-closed / retired / peer-rst / aborted）原样透传，
+ * 只有编码过的终止 RST 才是 4401 / 4410。切勿把链路抖动改写成 NODE_LOGIN_REQUIRED。
+ */
+function adaptedCloseFromStream(info: StreamCloseInfo): CloseInfo {
+  if (info.reason === 'rst') {
+    const terminal = decodeTerminalStreamClose(info.message);
+    if (terminal) return terminal;
+  }
+  const reason = info.message?.trim() || info.reason;
+  return { code: 1011, reason };
+}
+
+function settleAdaptedClose(
+  notifyClose: (info: CloseInfo) => void,
+  stream: Pick<LinkStream, 'closed'>,
+  fallback: CloseInfo
+): void {
+  void waitStreamCloseInfo(stream).then((info) => {
+    notifyClose(info ? adaptedCloseFromStream(info) : fallback);
+  });
+}
 
 /**
  * 把 link 上的 ws 流适配成 forwarder 的 `OpenedWsStream`。
@@ -31,15 +61,6 @@ export function adaptWsStream(opened: OpenedLinkWsStream): OpenedWsStream {
     }
     closeCbs.length = 0;
   };
-  // RST 的 reason 会随帧到达；只有它能区分「节点端主动终止」和链路抖动。
-  const settledTerminalClose = async (): Promise<{ code: number; reason: string } | null> => {
-    const info = await Promise.race([
-      opened.stream.closed.catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 0)),
-    ]);
-    if (!info || info.reason !== 'rst') return null;
-    return decodeTerminalStreamClose(info.message);
-  };
   const reader = opened.readable.getReader();
   void (async () => {
     try {
@@ -50,13 +71,11 @@ export function adaptWsStream(opened: OpenedLinkWsStream): OpenedWsStream {
       }
       notifyClose({});
     } catch {
-      notifyClose((await settledTerminalClose()) ?? { code: 1011, reason: 'stream-error' });
+      settleAdaptedClose(notifyClose, opened.stream, { code: 1011, reason: 'stream-error' });
     }
   })();
   opened.stream.onAbort(() => {
-    void (async () => {
-      notifyClose((await settledTerminalClose()) ?? { code: 1011, reason: 'reset' });
-    })();
+    settleAdaptedClose(notifyClose, opened.stream, { code: 1011, reason: 'reset' });
   });
   return {
     muxStreamId: opened.stream.id,

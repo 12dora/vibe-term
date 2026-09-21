@@ -72,12 +72,12 @@ export function setForwardLinkDeadlineMs(ms: number): void {
   forwardLinkDeadlineOverride = ms > 0 ? ms : 0;
 }
 
-function forwardLinkDeadlineFor(nodeId: string, rttMs?: number | null): number {
+export function forwardLinkDeadlineFor(nodeId: string, rttMs?: number | null): number {
   if (forwardLinkDeadlineOverride > 0) return forwardLinkDeadlineOverride;
   return nestedDialBudgetsMs(rttMs ?? lookupPeerRttMs(nodeId)).forwardMs;
 }
 
-function authorizedHttpDeadlineMs(nodeId: string, rttMs?: number | null): number {
+export function authorizedHttpDeadlineMs(nodeId: string, rttMs?: number | null): number {
   return adaptiveDeadlineMs({
     rttMs: rttMs ?? lookupPeerRttMs(nodeId),
     factor: 8,

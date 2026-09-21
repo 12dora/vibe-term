@@ -80,9 +80,38 @@ export type PeerManagerState = {
 };
 
 const rttByScheduler = new WeakMap<object, PeerManagerState>();
+/**
+ * 单进程内最近一次 `createPeerManagerState` 的 RTT 源。
+ * 转发层 `openHttpStream` / `forwardLinkDeadlineFor` 拿不到 scheduler：调用点在
+ * StreamOpener 适配器之后，mesh-runtime 没把 scheduler 传下来。生产一个进程一个
+ * PeerManager，用这份回退读 live/uplink RTT。多实例测试继续显式传 scheduler，
+ * WeakMap 互不覆盖；测完必须 `resetPeerRttLookupForTests()`，避免串文件污染。
+ */
+let currentRttState: PeerManagerState | null = null;
 
 function finiteRtt(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function resolveRttState(scheduler?: object): PeerManagerState | undefined {
+  if (scheduler) return rttByScheduler.get(scheduler);
+  return currentRttState ?? undefined;
+}
+
+function trackedSessionOf(state: PeerManagerState, link: LinkSession): LivePeer | undefined {
+  for (const live of state.live.values()) {
+    if (live.session === link) return live;
+  }
+  for (const group of state.retiring.values()) {
+    for (const live of group) {
+      if (live.session === link) return live;
+    }
+  }
+  return undefined;
+}
+
+export function resetPeerRttLookupForTests(): void {
+  currentRttState = null;
 }
 
 export type PeerRttSampleTarget = {
@@ -160,7 +189,7 @@ export function readUplinkRtt(uplink: PooledUplink | UplinkPool): number | null 
 
 /** 已测节点 RTT → 全网 live 中位数 → uplink 代理 → 800 ms。无 nodeId 时不用全局 max。 */
 export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
-  const state = scheduler ? rttByScheduler.get(scheduler) : undefined;
+  const state = resolveRttState(scheduler);
   if (!state) return DEFAULT_DIAL_RTT_MS;
   if (nodeId) {
     const peer = finiteRtt(state.live.get(nodeId)?.rttMs);
@@ -173,6 +202,16 @@ export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
   }
   if (samples.length > 0) return medianRtt(samples);
   return readUplinkRtt(state.uplink) ?? DEFAULT_DIAL_RTT_MS;
+}
+
+/** 用 live/retiring session 反查该链路 RTT。openHttpStream 只有 link，没有 nodeId。 */
+export function lookupPeerRttMsForLink(link: LinkSession, scheduler?: object): number {
+  const state = resolveRttState(scheduler);
+  if (!state) return DEFAULT_DIAL_RTT_MS;
+  const tracked = trackedSessionOf(state, link);
+  const sample = finiteRtt(tracked?.rttMs);
+  if (sample != null) return sample;
+  return lookupPeerRttMs(tracked?.peerNodeId, state.scheduler);
 }
 
 export function createPeerManagerState(opts: {
@@ -216,6 +255,7 @@ export function createPeerManagerState(opts: {
     rerolls: new Map(),
   };
   rttByScheduler.set(opts.scheduler, state);
+  currentRttState = state;
   return state;
 }
 

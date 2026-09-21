@@ -1,7 +1,8 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { type NodeUnreachableReason, wsBorsh } from '@vibeterm/shared';
 import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { LinkError, type LinkSession } from '@vibeterm/shared/link';
+import { DEFAULT_DIAL_RTT_MS, adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import {
   FakePeers,
   FakeStreams,
@@ -19,7 +20,9 @@ import {
   FORWARD_WS_LINK_FAILURE_REASON,
   FORWARD_WS_LINK_TIMEOUT_REASON,
   Forwarder,
+  authorizedHttpDeadlineMs,
   expirePendingForwardStream,
+  forwardLinkDeadlineFor,
   getSelfRewrite,
   pendingForwardStreamCount,
   setForwardLinkDeadlineMs,
@@ -40,13 +43,21 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
+import { PeerEndpointBackoff } from './peer-endpoint-backoff';
+import { createPeerManagerState, resetPeerRttLookupForTests } from './peer-manager-state';
+import type { LivePeer } from './peer-reconnect-wake';
 import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';
 import { SHARE_LOGIN_MAX_FAILURES } from './share-login-quota';
-import { waitUntil } from './test-support';
-import { NodeUnreachableError, PeerHandshakeError } from './types';
+import { ImmediateScheduler, waitUntil } from './test-support';
+import { type MeshIdentity, NodeUnreachableError, PeerHandshakeError } from './types';
 
 const OTHER = 'bb'.repeat(16);
 const dummyLink = {} as LinkSession;
+
+afterEach(() => {
+  resetPeerRttLookupForTests();
+  setForwardLinkDeadlineMs(0);
+});
 
 describe('forwarder', () => {
   test('self fallthrough rewrites path and returns rewritten Request', async () => {
@@ -3211,5 +3222,42 @@ describe('forwarder 分享凭证', () => {
     } finally {
       mesh.close();
     }
+  });
+});
+
+describe('forward / authorizedHttp deadlines follow live RTT', () => {
+  test('无样本时仍是 800 ms 档；live 2500 ms 显著放大', () => {
+    resetPeerRttLookupForTests();
+    const proxyForward = nestedDialBudgetsMs(DEFAULT_DIAL_RTT_MS).forwardMs;
+    const proxyAuth = adaptiveDeadlineMs({
+      rttMs: DEFAULT_DIAL_RTT_MS,
+      factor: 8,
+      minMs: 10_000,
+      maxMs: 30_000,
+    });
+    expect(forwardLinkDeadlineFor(OTHER)).toBe(proxyForward);
+    expect(authorizedHttpDeadlineMs(OTHER)).toBe(proxyAuth);
+
+    const scheduler = new ImmediateScheduler();
+    const state = createPeerManagerState({
+      identity: { nodeId: NODE_ID, edSecretKey: new Uint8Array(64) } as MeshIdentity,
+      userStore: { getCert: () => null } as never,
+      uplink: { rttMs: null, resetBackoff() {} } as never,
+      scheduler,
+      endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
+    });
+    state.live.set(OTHER, { rttMs: 2500, peerNodeId: OTHER } as LivePeer);
+    const liveForward = nestedDialBudgetsMs(2500).forwardMs;
+    const liveAuth = adaptiveDeadlineMs({
+      rttMs: 2500,
+      factor: 8,
+      minMs: 10_000,
+      maxMs: 30_000,
+    });
+    expect(forwardLinkDeadlineFor(OTHER)).toBe(liveForward);
+    expect(authorizedHttpDeadlineMs(OTHER)).toBe(liveAuth);
+    expect(liveForward).toBeGreaterThan(proxyForward);
+    expect(liveAuth).toBeGreaterThan(proxyAuth);
+    expect(forwardLinkDeadlineFor(OTHER, 40)).toBe(nestedDialBudgetsMs(40).forwardMs);
   });
 });

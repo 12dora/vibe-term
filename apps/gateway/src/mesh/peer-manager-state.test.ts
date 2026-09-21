@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import {
@@ -8,19 +9,45 @@ import {
   applyPeerRttSample,
   createPeerManagerState,
   lookupPeerRttMs,
+  lookupPeerRttMsForLink,
   measurePingRttMs,
   parseEchoedSentAt,
+  resetPeerRttLookupForTests,
 } from './peer-manager-state';
 import { PEER_PATH_RTT_WINDOW_MS } from './peer-path-rtt';
 import type { LivePeer } from './peer-reconnect-wake';
 import { ImmediateScheduler } from './test-support';
-import type { MeshIdentity } from './types';
+import type { MeshIdentity, PooledUplink } from './types';
 
 function identity(nodeId = 'aa'.repeat(16)): MeshIdentity {
   return { nodeId, edSecretKey: new Uint8Array(64) } as MeshIdentity;
 }
 
+function makeRttState(uplinkRtt: number | null = null) {
+  const scheduler = new ImmediateScheduler();
+  const uplink = {
+    rttMs: uplinkRtt,
+    resetBackoff() {},
+  } as unknown as PooledUplink & { resetBackoff(): void };
+  const state = createPeerManagerState({
+    identity: identity(),
+    userStore: { getCert: () => null } as never,
+    uplink,
+    scheduler,
+    endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
+  });
+  return { scheduler, state };
+}
+
+function liveRow(rttMs: number | null, extra?: Partial<LivePeer>): LivePeer {
+  return { rttMs, pingSentAt: null, rttSpikeIgnored: false, ...extra } as LivePeer;
+}
+
 describe('peer RTT EWMA and lookup', () => {
+  afterEach(() => {
+    resetPeerRttLookupForTests();
+  });
+
   test('EWMA α 0.3 ignores one spike above 3× then accepts the next', () => {
     const live = { rttMs: null as number | null, rttSpikeIgnored: false };
     expect(applyPeerRttSample(live, 40)).toBe(40);
@@ -32,29 +59,58 @@ describe('peer RTT EWMA and lookup', () => {
   });
 
   test('lookupPeerRttMs(undefined) uses the median of live samples, not the max', () => {
-    const scheduler = new ImmediateScheduler();
-    const uplink = {
-      rttMs: 90,
-      resetBackoff() {},
-    } as unknown as import('./types').PooledUplink & { resetBackoff(): void };
-    const state = createPeerManagerState({
-      identity: identity(),
-      userStore: { getCert: () => null } as never,
-      uplink,
-      scheduler,
-      endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
-    });
-    const row = (rttMs: number): LivePeer =>
-      ({ rttMs, pingSentAt: null, rttSpikeIgnored: false }) as LivePeer;
-    state.live.set('a', row(20));
-    state.live.set('b', row(40));
-    state.live.set('c', row(1428));
+    const { scheduler, state } = makeRttState(90);
+    state.live.set('a', liveRow(20));
+    state.live.set('b', liveRow(40));
+    state.live.set('c', liveRow(1428));
     expect(lookupPeerRttMs('c', scheduler)).toBe(1428);
     expect(lookupPeerRttMs(undefined, scheduler)).toBe(40);
     state.live.clear();
     expect(lookupPeerRttMs(undefined, scheduler)).toBe(90);
-    expect(lookupPeerRttMs()).toBe(DEFAULT_DIAL_RTT_MS);
+    expect(lookupPeerRttMs()).toBe(90);
     expect(DEFAULT_DIAL_RTT_MS).toBe(800);
+  });
+
+  test('lookupPeerRttMs falls back to current process state when scheduler is omitted', () => {
+    resetPeerRttLookupForTests();
+    expect(lookupPeerRttMs()).toBe(DEFAULT_DIAL_RTT_MS);
+    expect(lookupPeerRttMs('missing')).toBe(DEFAULT_DIAL_RTT_MS);
+
+    const { scheduler, state } = makeRttState(null);
+    state.live.set('slow', liveRow(2500));
+    state.live.set('fast', liveRow(40));
+    state.live.set('lan', liveRow(20));
+    expect(lookupPeerRttMs('slow')).toBe(2500);
+    expect(lookupPeerRttMs('slow', scheduler)).toBe(2500);
+    expect(lookupPeerRttMs('unknown')).toBe(40);
+    expect(lookupPeerRttMs()).toBe(40);
+
+    const other = new ImmediateScheduler();
+    expect(lookupPeerRttMs('slow', other)).toBe(DEFAULT_DIAL_RTT_MS);
+
+    state.live.clear();
+    expect(lookupPeerRttMs('slow')).toBe(DEFAULT_DIAL_RTT_MS);
+    resetPeerRttLookupForTests();
+    expect(lookupPeerRttMs('slow')).toBe(DEFAULT_DIAL_RTT_MS);
+    expect(lookupPeerRttMs('slow', scheduler)).toBe(DEFAULT_DIAL_RTT_MS);
+  });
+
+  test('lookupPeerRttMsForLink uses the live session nodeId, not the mesh median', () => {
+    const { scheduler, state } = makeRttState(90);
+    const slowLink = { id: 'slow' } as unknown as LinkSession;
+    const otherLink = { id: 'other' } as unknown as LinkSession;
+    state.live.set('fast', liveRow(40, { session: otherLink, peerNodeId: 'fast' }));
+    state.live.set('lan', liveRow(20));
+    state.live.set('slow', liveRow(2500, { session: slowLink, peerNodeId: 'slow' }));
+    expect(lookupPeerRttMsForLink(slowLink)).toBe(2500);
+    expect(lookupPeerRttMsForLink(slowLink, scheduler)).toBe(2500);
+    expect(lookupPeerRttMsForLink({} as LinkSession)).toBe(40);
+    const retiringLink = { id: 'retiring' } as unknown as LinkSession;
+    state.retiring.set(
+      'retired-slow',
+      new Set([liveRow(1800, { session: retiringLink, peerNodeId: 'retired-slow' })])
+    );
+    expect(lookupPeerRttMsForLink(retiringLink)).toBe(1800);
   });
 
   test('DC idle is 30 min and relay idle stays 5 min', () => {

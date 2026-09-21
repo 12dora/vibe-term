@@ -259,6 +259,14 @@ describe('httpHeadTimeoutMs', () => {
     expect(httpHeadTimeoutMs(1)).toBeGreaterThanOrEqual(5_000);
     expect(httpHeadTimeoutMs(1)).toBeLessThanOrEqual(20_000);
   });
+
+  test('live RTT 2500 ms 的 head 预算显著大于 800 ms 兜底档', () => {
+    const proxy = httpHeadTimeoutMs(800);
+    const live = httpHeadTimeoutMs(2500);
+    expect(live).toBeGreaterThan(proxy);
+    expect(live).toBeGreaterThanOrEqual(5_000);
+    expect(live).toBeLessThanOrEqual(20_000);
+  });
 });
 
 describe('armDeferredTimeout', () => {
