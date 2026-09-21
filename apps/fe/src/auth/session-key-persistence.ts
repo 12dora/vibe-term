@@ -10,7 +10,7 @@
 //   * 任何一步失败（隐私模式、配额、被其它 tab 阻塞）都退化成纯内存，绝不把异常抛给 UI。
 
 import type { Delegation } from '@vibeterm/shared/auth';
-import type { SessionKeyInfo } from './session-key-store';
+import type { SessionKeyInfo } from './session-key-types';
 
 const DB_NAME = 'vibeterm-auth';
 /** 改名前的库名。首次访问时把会话记录搬过来，搬完删掉，失败就当没有持久化（用户重登）。 */

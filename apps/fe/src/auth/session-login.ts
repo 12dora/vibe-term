@@ -39,7 +39,6 @@ import {
 import { markLoggedIn } from '@/node/mesh-nodes';
 import { clearLocalDeviceCaches } from './logout-local-caches';
 import { selectPasskeyCredential } from './passkey-credential-select';
-import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-store';
 import {
   adoptSessionSecrets,
   clearSessionKey,
@@ -49,6 +48,7 @@ import {
   replaceSessionKey,
   setPasskeyAssertion,
 } from './session-key-store';
+import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-types';
 
 /**
  * WebAuthn 断言仪式。真实实现来自 `@vibeterm/api-client`，测试用 `setPasskeyCeremonyForTest()`
