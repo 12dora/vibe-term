@@ -8,8 +8,9 @@ import {
   relayOpenFailureReason,
   rstReasonOf,
 } from './peer-dialer-relay';
+import { RELAY_DIAL_BREAKER_FAILS, RelayDialBreaker } from './relay-dial-breaker';
 import type { RelayChoice, RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
-import { NodeUnreachableError } from './types';
+import { NodeUnreachableError, PeerHandshakeError } from './types';
 
 function fakePresence(opts: {
   choice?: RelayChoice | null;
@@ -244,6 +245,7 @@ describe('completeRelayDial abort', () => {
         track: (session) => session,
         liveOf: () => undefined,
         signal: abort.signal,
+        breaker: new RelayDialBreaker({ now: () => 0, jitter: 0 }),
       })
     ).rejects.toBeInstanceOf(NodeUnreachableError);
     expect(opened).toBe(0);
@@ -273,6 +275,7 @@ describe('completeRelayDial abort', () => {
       track: (session) => session,
       liveOf: () => undefined,
       signal: abort.signal,
+      breaker: new RelayDialBreaker({ now: () => 0, jitter: 0 }),
     });
     await Bun.sleep(0);
     abort.abort();
@@ -280,5 +283,86 @@ describe('completeRelayDial abort', () => {
     finishOpen?.(stream);
     await Bun.sleep(0);
     expect(resetReason).toBe('dial-race-lost');
+  });
+});
+
+describe('completeRelayDial breaker', () => {
+  const nodeId = 'de'.repeat(16);
+  const identity = { nodeId: 'bb'.repeat(16), edSecretKey: new Uint8Array(64) };
+
+  function hangingDial(breaker: RelayDialBreaker, open: () => Promise<LinkStream>) {
+    return completeRelayDial({
+      nodeId,
+      gen: 1,
+      identity: identity as never,
+      userStore: {} as never,
+      openFallback: open,
+      rememberKeys: () => undefined,
+      track: (session) => session,
+      liveOf: () => undefined,
+      breaker,
+    });
+  }
+
+  test('handshake timeout trips then cooling blocks new streams', async () => {
+    let now = 1_000;
+    const breaker = new RelayDialBreaker({ now: () => now, jitter: 0 });
+    let opened = 0;
+    const timeout = async () => {
+      opened += 1;
+      throw new PeerHandshakeError('timeout', 'peer handshake timed out');
+    };
+    for (let i = 0; i < RELAY_DIAL_BREAKER_FAILS; i += 1) {
+      await expect(hangingDial(breaker, timeout)).rejects.toThrow('peer handshake timed out');
+    }
+    expect(opened).toBe(RELAY_DIAL_BREAKER_FAILS);
+    expect(breaker.shouldTry(nodeId).cooling).toBe(true);
+    await expect(hangingDial(breaker, timeout)).rejects.toThrow('breaker_cooling');
+    expect(opened).toBe(RELAY_DIAL_BREAKER_FAILS);
+    now += 30_000;
+    await expect(hangingDial(breaker, timeout)).rejects.toThrow('peer handshake timed out');
+    expect(opened).toBe(RELAY_DIAL_BREAKER_FAILS + 1);
+  });
+
+  test('ten concurrent dials produce one open', async () => {
+    const breaker = new RelayDialBreaker({ now: () => 0, jitter: 0 });
+    let opened = 0;
+    let release!: (err: Error) => void;
+    const hang = new Promise<LinkStream>((_, reject) => {
+      release = reject;
+    });
+    void hang.catch(() => undefined);
+    const pending = Array.from({ length: 10 }, () =>
+      hangingDial(breaker, () => {
+        opened += 1;
+        return hang;
+      })
+    );
+    await Bun.sleep(0);
+    expect(opened).toBe(1);
+    release(new PeerHandshakeError('timeout', 'peer handshake timed out'));
+    const results = await Promise.allSettled(pending);
+    expect(results.every((row) => row.status === 'rejected')).toBe(true);
+    expect(opened).toBe(1);
+  });
+
+  test('success clears the breaker', async () => {
+    const breaker = new RelayDialBreaker({ now: () => 0, jitter: 0 });
+    breaker.noteFailure(nodeId, 'handshake-timeout', '1');
+    breaker.noteFailure(nodeId, 'handshake-timeout', '2');
+    breaker.noteFailure(nodeId, 'handshake-timeout', '3');
+    expect(breaker.shouldTry(nodeId).cooling).toBe(true);
+    breaker.noteSuccess(nodeId);
+    let opened = 0;
+    await expect(
+      hangingDial(breaker, async () => {
+        opened += 1;
+        throw new Error('offline');
+      })
+    ).rejects.toThrow('offline');
+    expect(opened).toBe(1);
+    expect(breaker.snapshot(nodeId).lastFailureKind).toBe('offline');
+    expect(breaker.snapshot(nodeId).cooling).toBe(true);
+    expect(breaker.snapshot(nodeId).level).toBe(0);
   });
 });

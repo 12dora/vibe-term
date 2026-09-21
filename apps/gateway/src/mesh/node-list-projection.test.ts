@@ -334,6 +334,14 @@ describe('node-list-projection', () => {
       level: 1,
       lastFailureKind: 'timeout',
     });
+    expect(peerDto?.relayBreaker).toEqual({
+      cooling: false,
+      until: null,
+      failures: 0,
+      level: 0,
+      lastFailureKind: null,
+      disabled: false,
+    });
     const selfDto = projectMeshListNode(
       selfId,
       selfId,
@@ -361,6 +369,7 @@ describe('node-list-projection', () => {
     expect(selfDto?.endpoints).toEqual([]);
     expect(selfDto?.directFailure).toBeNull();
     expect(selfDto?.dcBreaker).toBeNull();
+    expect(selfDto?.relayBreaker).toBeNull();
     expect(selfDto?.lastSeenAt).toBeNull();
   });
 
@@ -562,6 +571,14 @@ describe('node-list-projection', () => {
         failures: 3,
         level: 1,
         lastFailureKind: 'timeout',
+      },
+      relayBreaker: {
+        cooling: false,
+        until: null,
+        failures: 0,
+        level: 0,
+        lastFailureKind: null,
+        disabled: false,
       },
       viaRelay: 'https://sh.example',
       relayPresence: ['https://sh.example', 'https://ty.example'],
