@@ -1,6 +1,7 @@
 import { type ServerSocketAdapter, WebSocketLink } from '@vibeterm/shared/link';
 import { matchPath } from '../api/route';
 import type { AuthDb } from '../auth/types';
+import { observedIpv4FromClientIp } from '../mesh/client-ip';
 import {
   type RelayAdminAuth,
   type RelayLocalAuthCheck,
@@ -219,8 +220,9 @@ export class RelayRuntime {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         return relayError(RelayErrorCode.methodNotAllowed, 405);
       }
+      const clientIp = this.publicDeps.clientIp(req);
       const ok = server.upgrade(req, {
-        data: { kind: RELAY_UPLINK_WS_KIND } satisfies RelayUplinkSocketData,
+        data: { kind: RELAY_UPLINK_WS_KIND, clientIp } satisfies RelayUplinkSocketData,
       });
       return ok ? undefined : relayError(RelayErrorCode.upgradeFailed, 426);
     }
@@ -299,7 +301,9 @@ export class RelayRuntime {
   handleUplinkOpen(ws: RelayServerWebSocket): void {
     const adapter = new RelayServerWsAdapter(ws);
     ws.data.adapter = adapter;
-    this.uplink.accept(new WebSocketLink(adapter, { role: 'acceptor' }));
+    this.uplink.accept(new WebSocketLink(adapter, { role: 'acceptor' }), {
+      observedIpv4: observedIpv4FromClientIp(ws.data.clientIp),
+    });
   }
 
   handleUplinkMessage(ws: RelayServerWebSocket, message: string | ArrayBuffer | Uint8Array): void {

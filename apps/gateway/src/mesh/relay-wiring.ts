@@ -10,6 +10,7 @@ import type { MeshRoles } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { RelayAutoSelect } from './relay-auto-select';
 import { type RelayDialContext, relayDialContextFromEnv } from './relay-dial';
+import type { RelayObservedIpv4Sink } from './relay-observed-ip';
 import { orderRelaysByPreferred } from './relay-preferred';
 import { RelayRoutes } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
@@ -207,7 +208,11 @@ export type RelayUplinkOverrides = {
 /** 中继模式下替换池子的候选来源、客户端构造与健康探测。 */
 export function relayUplinkOverrides(
   wiring: RelayWiring,
-  opts: { nameProvider: () => string; dial?: RelayDialContext }
+  opts: {
+    nameProvider: () => string;
+    dial?: RelayDialContext;
+    observedIpv4?: RelayObservedIpv4Sink;
+  }
 ): RelayUplinkOverrides {
   const relayMode = () => wiring.secrets.uplinkKind() === 'relay';
   const dial = opts.dial ?? relayDialContextFromEnv();
@@ -245,6 +250,7 @@ export function relayUplinkOverrides(
         onKicked: (reason) => notifyRelayKicked(wiring, o.uplinkUrl, reason),
         onRtt: (rttMs) => notifyRelayRtt(wiring, o.uplinkUrl, rttMs),
         dial,
+        ...(opts.observedIpv4 ? { observedIpv4: opts.observedIpv4 } : {}),
       }),
     probeHealthz: (publicUrl, tlsCa, timeoutMs) =>
       probeRelayHealth(publicUrl, tlsCa, timeoutMs, dial),

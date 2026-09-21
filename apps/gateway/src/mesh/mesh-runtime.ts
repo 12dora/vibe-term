@@ -47,6 +47,7 @@ import {
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
 import { applyInboundDispatchContext } from './mesh-inbound-dispatch';
+import { stamp } from './mesh-log';
 import { dispatchUplinkRtcSignal, sendRtcOverUplink } from './mesh-rtc-dispatch';
 import {
   type RegisterGatewaySessionInput,
@@ -67,7 +68,11 @@ import { pickSelfDisplayName } from './node-list-projection';
 import { buildMeshNotificationBridge } from './notification-bridge-wiring';
 import { setMeshNotificationBridge } from './notification-mesh-bridge';
 import { listNotificationSinkNodeIds } from './notification-sink-records';
-import { enumeratePeerEndpoints, stunMappedAddressesForAdvertise } from './peer-endpoints';
+import {
+  type PublicPeerAdvertisePick,
+  enumeratePeerEndpoints,
+  stunMappedAddressesForAdvertise,
+} from './peer-endpoints';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
   bootPortReach,
@@ -76,6 +81,7 @@ import {
   peerReachPayload,
 } from './port-reach';
 import { installRelayMultiAttach, primaryNodeListApplyPatch } from './relay-multi-attach';
+import { RelayObservedIpv4Store } from './relay-observed-ip';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import { RelayUplinkClient } from './relay-uplink-client';
 import {
@@ -105,7 +111,12 @@ import { openHttpStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
 import type { UplinkWsFactory } from './uplink-constants';
 import { startUplinkPathSamplingFromCandidates } from './uplink-path-sampler';
-import { type AttachedUplink, UplinkPool, attachedUplinkHost } from './uplink-pool';
+import {
+  type AttachedUplink,
+  UplinkDialCoordinator,
+  UplinkPool,
+  attachedUplinkHost,
+} from './uplink-pool';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 import type { GatewaySessionClose } from './ws-stream-target';
 
@@ -534,6 +545,8 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
   };
   await refreshTls();
   const ifaceCache = createTtlCache(stores.interfacesFn, STATUS_IFACE_CACHE_TTL_MS);
+  const observedIpv4 = new RelayObservedIpv4Store();
+  const onPublicPick = publicPeerAdvertiseLogger();
   const statusProvider = () => {
     const version = getDisplayVersion();
     const ids = stores.userStore.listPeers().map((row) => row.nodeId);
@@ -551,6 +564,8 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
           bindHosts: resolvePeerBindHost(undefined, stores.config.peerBindHost),
           publicHost: gatewayConfig.peerPublicHost,
           mappedAddresses: stunMappedAddressesForAdvertise(),
+          relayObserved: observedIpv4.snapshot(),
+          onPublicPick,
         }
       ),
       ...(Object.keys(peerReach).length > 0 ? { peer_reach: peerReach } : {}),
@@ -563,6 +578,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     ...bindings,
     scheduler,
     statusProvider,
+    observedIpv4,
     refreshTls,
     refreshLocalInterfaces,
     invalidateStatusCache: ifaceCache.invalidate,
@@ -607,6 +623,7 @@ function createUplinkWiring(d: MeshDeps) {
   };
   const relayOverrides = relayUplinkOverrides(d.relay, {
     nameProvider: () => selfDisplayNameOf(d) ?? '',
+    observedIpv4: d.observedIpv4,
   });
   const uplink = new UplinkPool({
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
@@ -621,6 +638,7 @@ function createUplinkWiring(d: MeshDeps) {
     createClient: relayOverrides.createClient,
     caPins: new RelayCaPinStore(d.db),
     probeHealthz: relayOverrides.probeHealthz,
+    dialCoordinator: new UplinkDialCoordinator(),
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({
         enrollPk: msg.enroll_pk,
@@ -1170,6 +1188,18 @@ function resolveSiteName(): string {
     if (saved) return saved;
   } catch {}
   return gatewayConfig.siteNameDefault?.trim() ?? '';
+}
+
+function publicPeerAdvertiseLogger(): (pick: PublicPeerAdvertisePick) => void {
+  let key = '';
+  return (pick) => {
+    const next = `${pick.source}:${pick.hosts.join(',')}`;
+    if (next === key) return;
+    key = next;
+    console.info(
+      stamp(`[mesh] public endpoint source=${pick.source} hosts=${pick.hosts.join(',') || '-'}`)
+    );
+  };
 }
 
 function selfDisplayNameOf(d: MeshDeps): string | null {

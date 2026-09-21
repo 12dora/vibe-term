@@ -83,6 +83,9 @@ export type RelayUplinkCtlHost = {
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
   onQuota?: (quota: RelayQuota) => void;
   onKicked?: (reason: RelayKickReason) => void;
+  noteObservedIpv4?(ipv4: string | undefined): void;
+  clearObservedIpv4?(): void;
+  touchObservedIpv4?(): void;
 };
 
 export function dispatchRelayAuthedCtl(host: RelayUplinkCtlHost, msg: RelayCtlMessage): void {
@@ -127,6 +130,7 @@ export function enqueueRelayList(
 
 export async function sendRelayStatusNow(host: RelayUplinkCtlHost): Promise<void> {
   if (!host.link || !host.isAuthenticated()) return;
+  host.touchObservedIpv4?.();
   try {
     const built = await buildRelayStatusMessage(
       host.secrets,
@@ -174,6 +178,7 @@ export function acceptRelayAuthOk(
   host.markUnkicked();
   host.authWaiter?.resolve();
   host.keyLog.noteRemoteHead(relaySeqFromWire(msg.key_log_head_seq));
+  host.noteObservedIpv4?.(msg.observedIpv4);
 }
 
 export async function acceptRelayChallenge(

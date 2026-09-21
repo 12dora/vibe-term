@@ -1,5 +1,7 @@
-import { isLoopbackClientIp, parseIpLiteral } from './address-class';
+import { isIpv4DottedLiteral, isLoopbackClientIp, parseIpLiteral } from './address-class';
 import { getMeshRequestContext } from './mesh-deps';
+
+const IPV4_MAPPED_DOTTED = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
 
 export type ClientIpInput = {
   socketIp?: string | null;
@@ -22,6 +24,15 @@ export function isRequestLoopback(input: ClientIpInput): boolean {
 
 export function clientIpFromRequest(req: Request): string | undefined {
   return resolveClientIp(inputFromRequest(req));
+}
+
+/** 从 clientIp 抽出 dotted IPv4（含 v4-mapped）；IPv6 / 非法值返回 undefined。 */
+export function observedIpv4FromClientIp(raw: string | undefined): string | undefined {
+  const parsed = parseIpLiteral(raw);
+  if (!parsed) return undefined;
+  if (isIpv4DottedLiteral(parsed)) return parsed;
+  const mapped = parsed.match(IPV4_MAPPED_DOTTED);
+  return mapped?.[1] && isIpv4DottedLiteral(mapped[1]) ? mapped[1] : undefined;
 }
 
 export function requestIsLoopback(req: Request): boolean {

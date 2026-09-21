@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isRequestLoopback, resolveClientIp } from './client-ip';
+import { isRequestLoopback, observedIpv4FromClientIp, resolveClientIp } from './client-ip';
 
 const SOCKET = '10.0.0.9';
 const LOOPBACK = '127.0.0.1';
@@ -222,5 +222,23 @@ describe('isRequestLoopback', () => {
         trustProxy: false,
       })
     ).toBe(true);
+  });
+});
+
+describe('observedIpv4FromClientIp', () => {
+  test('keeps dotted IPv4 including loopback and LAN', () => {
+    expect(observedIpv4FromClientIp('122.51.254.148')).toBe('122.51.254.148');
+    expect(observedIpv4FromClientIp('127.0.0.1')).toBe('127.0.0.1');
+    expect(observedIpv4FromClientIp('10.0.0.3')).toBe('10.0.0.3');
+  });
+
+  test('unwraps IPv4-mapped and rejects pure IPv6 / garbage', () => {
+    expect(observedIpv4FromClientIp('::ffff:122.51.254.148')).toBe('122.51.254.148');
+    expect(observedIpv4FromClientIp('[::ffff:203.0.113.9]')).toBe('203.0.113.9');
+    expect(observedIpv4FromClientIp('2001:db8::1')).toBeUndefined();
+    expect(observedIpv4FromClientIp('::1')).toBeUndefined();
+    expect(observedIpv4FromClientIp('not-an-ip')).toBeUndefined();
+    expect(observedIpv4FromClientIp('')).toBeUndefined();
+    expect(observedIpv4FromClientIp(undefined)).toBeUndefined();
   });
 });

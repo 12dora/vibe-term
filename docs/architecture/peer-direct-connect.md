@@ -15,7 +15,13 @@
 - IPv6 ULA `fc00::/7` 与废弃的 site-local `fec0::/10` 默认不广播。
 - CGNAT `100.64/10` 默认不广播，仅当本机自己有非 internal 的 `100.64/10` 地址时才广播（Tailscale 场景）。
 - 普通网卡上的 RFC1918（`10.x`、`192.168.x`、`172.16–31.x`）照常广播。
-- 只有内网地址的云主机（1:1 DNAT）在 peer server 绑定全部接口时，额外追加一条或多条 `ws://<公网 IPv4 或主机名>:<peer 端口>/peer`。公网地址优先取 `VIBETERM_PEER_PUBLIC_HOST`（可广告的公网 IPv4 或 FQDN，非法值启动时警告并忽略），否则取 STUN 探测 `ok` 且 mapped 本身可广告的地址（只用 IP）。**不要**用探针行上的 `fakeIp` 否决 mapped：`fakeIp` 只表示解析 STUN **服务器域名**时系统 DNS 见过 `198.18/15`，与 Binding 回报的映射地址无关；TUN 代理机上几乎每条探针都是 `fakeIp: true`，否决它会把真实公网出口丢光。多条 STUN 报出不同公网 IP 时按 mapped IPv4 计票：仅 1 条有效样本则采用；≥2 条且严格过半则只广告多数派。平票或无多数（大陆节点常态 2 条可达且双 ISP / ECMP 下 1:1）时按票数降序、票数相同按地址稳定排序，把可用的公网候选全部广告出去（去重，最多 3 条），不要一个都不发——少发的代价是永久只能走中继，多发一条的代价只是对端一次拨号退避（`peer-endpoint-backoff` + `probePeerEndpoints`）。永不追加 fake-IP `198.18/15`、CGNAT、RFC1918、`0.0.0.0/8`、组播 `224/4`、保留 `240/4`；映射地址变化时随 status 重新广播。对端会 TCP 探测并可能直连这些公网地址。
+- 只有内网地址的云主机（1:1 DNAT）在 peer server 绑定全部接口时，额外追加一条或多条 `ws://<公网 IPv4 或主机名>:<peer 端口>/peer`。公网地址来源按优先级：
+
+  1. **显式** `VIBETERM_PEER_PUBLIC_HOST`（可广告的公网 IPv4 或 FQDN，非法值启动时警告并忽略）。
+  2. **中继观测**：已认证的 `/relay/uplink` 在 `auth.ok` 里回告的 `observedIpv4`（中继 `accept` 时用既有 `clientIp(req)` / `VIBETERM_TRUST_PROXY` 解析真实源地址，不自己拆 XFF）。按中继 URL 记住，随 uplink 断开失效，并有 30 min TTL（在线心跳会续期）。回环 / 私网观测一律丢掉——`relay,node` 本机接入自己的中继时 `resolveRelayDialUrl` 会改写成 `127.0.0.1`，中继看到的就是回环，不能当公网地址。多条观测不一致时取多数派；**只有一条可用观测也可以采用**（它仍比 STUN 分歧强）。观测命中时**不再附带**分歧的 STUN 候选。
+  3. **STUN**：探测 `ok` 且 mapped 本身可广告的地址（只用 IP）。**不要**用探针行上的 `fakeIp` 否决 mapped：`fakeIp` 只表示解析 STUN **服务器域名**时系统 DNS 见过 `198.18/15`，与 Binding 回报的映射地址无关；TUN 代理机上几乎每条探针都是 `fakeIp: true`，否决它会把真实公网出口丢光。多条 STUN 报出不同公网 IP 时按 mapped IPv4 计票：仅 1 条有效样本则采用；≥2 条且严格过半则只广告多数派。平票或无多数（大陆节点常态 2 条可达且双 ISP / ECMP 下 1:1）时按票数降序、票数相同按地址稳定排序，把可用的公网候选全部广告出去（去重，最多 3 条），不要一个都不发——少发的代价是永久只能走中继，多发一条的代价只是对端一次拨号退避（`peer-endpoint-backoff` + `probePeerEndpoints`）。
+
+  中继只回告观测值，不改节点广告内容；字段可选，老节点 / 老中继任一未升级都忽略并照常工作。候选变化时打 `[mesh] public endpoint source=<explicit|relay-observed|stun-majority|stun-split|none> hosts=…`。永不追加 fake-IP `198.18/15`、CGNAT、RFC1918、`0.0.0.0/8`、组播 `224/4`、保留 `240/4`；映射地址变化时随 status 重新广播。对端会 TCP 探测并可能直连这些公网地址。
 
 真正挡住 docker 网桥的是**网卡名过滤**；地址段规则只是补漏。运营商把 `100.64` 配在 `en0` / `ppp0` 上时仍会广播，由接收侧退避消化。**两侧都升级才彻底干净**：广播端升级后别人才看不到它的 docker 地址；接收端的退避用来保护面对尚未升级的旧广播者。
 

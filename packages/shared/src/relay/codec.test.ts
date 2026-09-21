@@ -106,6 +106,36 @@ describe('relay ctl 编解码', () => {
     );
   });
 
+  it('auth.ok 丢弃未知字段，旧节点仍能解码', () => {
+    const legacy = {
+      t: 'auth.ok' as const,
+      tenant_id: TENANT,
+      key_log_head_seq: 12,
+      rtc: RTC,
+    };
+    expect(
+      decodeRelayCtl(JSON.stringify({ ...legacy, futureField: 'x', nested: { a: 1 }, pad: ['y'] }))
+    ).toEqual(legacy);
+  });
+
+  it('auth.ok observedIpv4 可选，非法类型当作未下发', () => {
+    const legacy: RelayCtlMessage = {
+      t: 'auth.ok',
+      tenant_id: TENANT,
+      key_log_head_seq: 12,
+      rtc: RTC,
+    };
+    expect(decodeRelayCtl(encodeRelayCtl(legacy))).toEqual(legacy);
+    const withIp: RelayCtlMessage = { ...legacy, observedIpv4: '122.51.254.148' };
+    expect(decodeRelayCtl(encodeRelayCtl(withIp))).toEqual(withIp);
+    expect(
+      decodeRelayCtl(JSON.stringify({ ...legacy, observedIpv4: '122.51.254.148', extra: true }))
+    ).toEqual(withIp);
+    expect(decodeRelayCtl(JSON.stringify({ ...legacy, observedIpv4: 1 }))).toEqual(legacy);
+    expect(decodeRelayCtl(JSON.stringify({ ...legacy, observedIpv4: '' }))).toEqual(legacy);
+    expect(decodeRelayCtl(JSON.stringify({ ...legacy, observedIpv4: null }))).toEqual(legacy);
+  });
+
   it('ping/pong 的 token_rotated 可选，保留布尔值并拒绝错误类型', () => {
     for (const t of ['ping', 'pong'] as const) {
       expect(decodeRelayCtl(encodeRelayCtl({ t }))).toEqual({ t });

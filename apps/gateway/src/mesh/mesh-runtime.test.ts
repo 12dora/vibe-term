@@ -15,6 +15,7 @@ import {
   enumeratePeerEndpoints,
   isAdvertisablePeerAddress,
 } from './mesh-runtime';
+import { RelaySecondaryAttach } from './relay-secondary-attach';
 import { fakeSocketPair, seedUser } from './test-support';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
@@ -75,6 +76,40 @@ describe('createMeshRuntime', () => {
     expect(mesh.uplink.liveClient()).toBeNull();
     expect(mesh.uplink.state).toBe('offline');
     expect(mesh.peers.listenPort).toBeGreaterThan(0);
+  });
+
+  test('UplinkPool 与 RelaySecondaryAttach 共享同一个 UplinkDialCoordinator', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: { roles: { node: true, relay: false }, peerPort: 0, stunServers: [] },
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    expect(mesh.relayOpener).toBeInstanceOf(RelaySecondaryAttach);
+    const opener = mesh.relayOpener as RelaySecondaryAttach;
+    expect(opener.dialCoordinator).toBe(mesh.uplink.dialCoordinator);
+  });
+
+  test('两个 mesh runtime 不共享 UplinkDialCoordinator', async () => {
+    const a = createMigratedAuthDb();
+    const b = createMigratedAuthDb();
+    seedUser(new UserStore(a.db));
+    seedUser(new UserStore(b.db));
+    const meshA = await createMeshRuntime({
+      db: a.db,
+      gateway: fakeGateway(a.db),
+      config: { roles: { node: true, relay: false }, peerPort: 0, stunServers: [] },
+    });
+    const meshB = await createMeshRuntime({
+      db: b.db,
+      gateway: fakeGateway(b.db),
+      config: { roles: { node: true, relay: false }, peerPort: 0, stunServers: [] },
+    });
+    fixtures.push({ close: a.close, stop: () => meshA.stop() });
+    fixtures.push({ close: b.close, stop: () => meshB.stop() });
+    expect(meshA.uplink.dialCoordinator).not.toBe(meshB.uplink.dialCoordinator);
   });
 
   test('MeshRuntimeConfig.peerBindHost is threaded to PeerServer when peerHostname is omitted', async () => {

@@ -61,6 +61,48 @@ describe('relay uplink auth', () => {
     expect(relay.runtime.tenants.getNode(tenant.id, node.nodeId)?.status).toBe('admitted');
   });
 
+  test('auth.ok 携带 accept 时观测到的客户端 IPv4', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node, { clientIp: '122.51.254.148' });
+    const ok = await client.inbox.takeOf('auth.ok');
+    expect(ok.t === 'auth.ok' && ok.observedIpv4).toBe('122.51.254.148');
+  });
+
+  test('回环与 IPv4-mapped 观测原样抽出 dotted IPv4；缺省不带字段', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const loop = await tenant.connect(tenant.addNode(), { clientIp: '127.0.0.1' });
+    const loopOk = await loop.inbox.takeOf('auth.ok');
+    expect(loopOk.t === 'auth.ok' && loopOk.observedIpv4).toBe('127.0.0.1');
+    const mapped = await tenant.connect(tenant.addNode(), { clientIp: '::ffff:203.0.113.9' });
+    const mappedOk = await mapped.inbox.takeOf('auth.ok');
+    expect(mappedOk.t === 'auth.ok' && mappedOk.observedIpv4).toBe('203.0.113.9');
+    const none = await tenant.connect(tenant.addNode());
+    const noneOk = await none.inbox.takeOf('auth.ok');
+    expect(noneOk.t === 'auth.ok' && noneOk.observedIpv4).toBeUndefined();
+    const v6 = await tenant.connect(tenant.addNode(), { clientIp: '2001:db8::1' });
+    const v6Ok = await v6.inbox.takeOf('auth.ok');
+    expect(v6Ok.t === 'auth.ok' && v6Ok.observedIpv4).toBeUndefined();
+  });
+
+  test('upgrade /relay/uplink 把 clientIp 写入 socket data', async () => {
+    const relay = await boot({ clientIp: () => '203.0.113.9' });
+    let data: unknown;
+    const res = await relay.runtime.handleRequest(
+      new Request('http://relay.example/relay/uplink'),
+      {
+        upgrade(_req, opts) {
+          data = opts?.data;
+          return true;
+        },
+      }
+    );
+    expect(res).toBeUndefined();
+    expect(data).toEqual({ kind: 'relay-uplink', clientIp: '203.0.113.9' });
+  });
+
   test('auth.ok and relay.list send empty stun when stunSource is not custom', async () => {
     const relay = await boot({
       config: {

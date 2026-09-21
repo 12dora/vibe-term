@@ -22,6 +22,7 @@ import {
 } from './relay-dial';
 import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
 import { emitRelayRtcSignal } from './relay-node-list';
+import type { RelayObservedIpv4Sink } from './relay-observed-ip';
 import type { RelaySecrets } from './relay-secrets';
 import {
   type RelayEnrollAck,
@@ -83,6 +84,7 @@ export type RelayUplinkClientOptions = {
   dial?: RelayDialContext;
   /** secondary 只做前缀校验补推，禁止经 sendCtl 发布本机新记录。 */
   keyLogCatchUp?: 'publish' | 'prefix-verified';
+  observedIpv4?: RelayObservedIpv4Sink;
 };
 
 /**
@@ -220,6 +222,18 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
 
   nodeName(): string {
     return this.opts.nameProvider?.() ?? '';
+  }
+
+  noteObservedIpv4(ipv4: string | undefined): void {
+    this.opts.observedIpv4?.note(this.uplinkUrl, ipv4);
+  }
+
+  clearObservedIpv4(): void {
+    this.opts.observedIpv4?.drop(this.uplinkUrl);
+  }
+
+  touchObservedIpv4(): void {
+    this.opts.observedIpv4?.touch(this.uplinkUrl);
   }
 
   markUnkicked(): void {
@@ -543,6 +557,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   tearDownLink(reason: string): void {
+    this.clearObservedIpv4();
     this.resetConnectionState(reason);
     const link = this.link;
     this.link = null;

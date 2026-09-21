@@ -33,6 +33,7 @@ import { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
+import { RelayObservedIpv4Store } from './relay-observed-ip';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
 import type { RelaySecrets } from './relay-secrets';
 import { RelayUplinkClient } from './relay-uplink-client';
@@ -125,7 +126,12 @@ type Harness = {
   streams: LinkStream[];
 };
 
-function fakeRelayServer(link: WebSocketLink, headSeq: number, tokenRotated?: boolean): Harness {
+function fakeRelayServer(
+  link: WebSocketLink,
+  headSeq: number,
+  tokenRotated?: boolean,
+  observedIpv4?: string
+): Harness {
   const received: RelayCtlMessage[] = [];
   const streams: LinkStream[] = [];
   const send = (msg: RelayCtlMessage) => link.ctl.send(encodeRelayCtl(msg));
@@ -138,6 +144,7 @@ function fakeRelayServer(link: WebSocketLink, headSeq: number, tokenRotated?: bo
         tenant_id: msg.tenant_id,
         key_log_head_seq: headSeq,
         ...(tokenRotated !== undefined ? { token_rotated: tokenRotated } : {}),
+        ...(observedIpv4 ? { observedIpv4 } : {}),
         rtc: { stun: ['stun:stun.example:3478'], turn: null },
       });
     }
@@ -291,6 +298,68 @@ describe('RelayUplinkClient', () => {
     expect(blob.name).toBe('node-a');
     expect(blob.version).toBe('1.1.23');
     expect(blob.endpoints).toEqual(['ws://10.0.0.1:39001/peer']);
+  });
+
+  test('auth.ok observedIpv4 记入 store，断开后失效', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const observed = new RelayObservedIpv4Store();
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(
+      new WebSocketLink(serverWs, { role: 'acceptor' }),
+      2,
+      undefined,
+      '122.51.254.148'
+    );
+    const client = new RelayUplinkClient({
+      uplinkUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+      observedIpv4: observed,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+    expect(observed.snapshot()).toEqual(['122.51.254.148']);
+    await client.stop();
+    expect(observed.snapshot()).toEqual([]);
+  });
+
+  test('auth.ok 回环观测不入库', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const observed = new RelayObservedIpv4Store();
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(
+      new WebSocketLink(serverWs, { role: 'acceptor' }),
+      2,
+      undefined,
+      '127.0.0.1'
+    );
+    const client = new RelayUplinkClient({
+      uplinkUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+      observedIpv4: observed,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+    expect(observed.snapshot()).toEqual([]);
   });
 
   for (const tokenRotated of [true, false]) {
