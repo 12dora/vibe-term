@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import os from 'node:os';
-import { config as gatewayConfig } from '../config';
+import { config as gatewayConfig, isPublicPeerHostname } from '../config';
 import {
   classifyRemoteAddress,
   hasLocalCgnatAddress,
@@ -83,22 +83,75 @@ export function enumeratePeerEndpoints(
 /** STUN 映射地址只在最近一轮探测内有效：公网出口变化后旧地址不能继续广播。 */
 export const STUN_MAPPED_ADVERTISE_TTL_MS = 30 * 60 * 1000;
 
+export type StunAdvertiseRow = {
+  ok: boolean;
+  fakeIp?: boolean;
+  mappedAddress?: string;
+  probedAt?: number;
+};
+
+/**
+ * 选出可广告的 STUN mapped 地址。
+ * `fakeIp` 只表示「解析 STUN 服务器域名时系统 DNS 见过 fake-IP」，与 mapped 本身无关，
+ * 不再作为否决条件；mapped 是否可广告由 `usablePublicIpv4` 把关。
+ * 多条样本按 mapped IPv4 计票：只有 1 条有效样本时采用（无分歧证据）；
+ * ≥2 条时取票数 ≥2 且严格过半的那个，平票 / 无多数则不广告。
+ */
 export function stunMappedAddressesForAdvertise(
-  rows: readonly {
-    ok: boolean;
-    fakeIp?: boolean;
-    mappedAddress?: string;
-    probedAt?: number;
-  }[] = stunProbeSnapshot(),
+  rows: readonly StunAdvertiseRow[] = stunProbeSnapshot(),
   now: number = Date.now()
 ): string[] {
-  const out: string[] = [];
+  const usable: string[] = [];
   for (const row of rows) {
-    if (!row.ok || row.fakeIp || !row.mappedAddress) continue;
-    if (row.probedAt !== undefined && now - row.probedAt > STUN_MAPPED_ADVERTISE_TTL_MS) continue;
-    out.push(row.mappedAddress);
+    const mapped = mappedAddressIfAdvertisable(row, now);
+    if (mapped) usable.push(mapped);
   }
-  return out;
+  return pickMajorityMappedAddresses(usable);
+}
+
+function mappedAddressIfAdvertisable(row: StunAdvertiseRow, now: number): string | null {
+  if (!row.ok || !row.mappedAddress) return null;
+  if (row.probedAt !== undefined && now - row.probedAt > STUN_MAPPED_ADVERTISE_TTL_MS) return null;
+  return mappedIpv4(row.mappedAddress) ? row.mappedAddress : null;
+}
+
+function pickMajorityMappedAddresses(mapped: readonly string[]): string[] {
+  if (mapped.length === 0) return [];
+  if (mapped.length === 1) return [...mapped];
+  const winner = majorityMappedIpv4(mapped);
+  if (!winner) return [];
+  return mapped.filter((item) => mappedIpv4(item) === winner);
+}
+
+function majorityMappedIpv4(mapped: readonly string[]): string | null {
+  const counts = new Map<string, number>();
+  for (const item of mapped) {
+    const ip = mappedIpv4(item);
+    if (!ip) continue;
+    counts.set(ip, (counts.get(ip) ?? 0) + 1);
+  }
+  return strictMajorityKey(counts, mapped.length);
+}
+
+function strictMajorityKey(counts: Map<string, number>, total: number): string | null {
+  let winner: string | null = null;
+  let best = 0;
+  let ties = 0;
+  for (const [ip, n] of counts) {
+    if (n > best) {
+      winner = ip;
+      best = n;
+      ties = 1;
+    } else if (n === best) {
+      ties += 1;
+    }
+  }
+  if (!winner || ties !== 1 || best < 2 || best * 2 <= total) return null;
+  return winner;
+}
+
+function mappedIpv4(mapped: string | undefined): string | null {
+  return usablePublicIpv4(ipv4FromMapped(mapped));
 }
 
 function appendPublicPeerEndpoint(
@@ -110,25 +163,34 @@ function appendPublicPeerEndpoint(
   if (!opts) return urls;
   const bindHosts = opts.bindHosts ?? gatewayConfig.peerBindHost;
   if (!peerBindsAllInterfaces(bindHosts)) return urls;
-  const ip = pickPublicPeerIpv4(opts, ifaceIps);
-  if (!ip) return urls;
-  const url = `ws://${ip}:${port}/peer`;
+  const host = pickPublicPeerHost(opts, ifaceIps);
+  if (!host) return urls;
+  const url = `ws://${host}:${port}/peer`;
   if (urls.includes(url)) return urls;
   urls.push(url);
   return urls;
 }
 
-function pickPublicPeerIpv4(
+function pickPublicPeerHost(
   opts: EnumeratePeerEndpointsOpts,
   ifaceIps: ReadonlySet<string>
 ): string | null {
-  const explicit = usablePublicIpv4(opts.publicHost);
+  const explicit = advertisablePublicHost(opts.publicHost);
   if (explicit && !ifaceIps.has(explicit)) return explicit;
   for (const raw of opts.mappedAddresses ?? []) {
-    const ip = usablePublicIpv4(ipv4FromMapped(raw));
+    const ip = mappedIpv4(raw);
     if (ip && !ifaceIps.has(ip)) return ip;
   }
   return null;
+}
+
+/** 显式公网 host：可广告 IPv4，或语法合法的 FQDN。 */
+export function advertisablePublicHost(raw: string | null | undefined): string | null {
+  const host = raw?.trim() ?? '';
+  if (!host) return null;
+  if (isIP(host) === 4) return usablePublicIpv4(host);
+  if (isIP(host) !== 0) return null;
+  return isPublicPeerHostname(host) ? host : null;
 }
 
 export function usablePublicIpv4(raw: string | null | undefined): string | null {

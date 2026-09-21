@@ -69,4 +69,6 @@ gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding �
 
 全部失败时再打 warn：`[mesh][rtc] stun unreachable all=N`。`GET /api/mesh/rtc-config` 带最近一次结果 `probes: [{ url, ok, rttMs, mappedAddress, error, resolvedIp, via, fakeIp, errorResponse, skipped, probedAt }]`。
 
+探针行上的 `fakeIp` **不能**用来否决公网 endpoint 广告：它只说明解析 STUN 服务器主机名时系统 DNS 见过 fake-IP，Binding 回报的 mapped 仍可能是真实出口。广告侧对 mapped 本身做 `usablePublicIpv4` 校验，并在多条 STUN 报出不同公网 IP 时要求多数派一致（见 [节点直连](../architecture/peer-direct-connect.md)）。本机代理把境外 STUN 分流到另一台机器的出口时会出现 2:2 分歧，此时不广告，可手设 `VIBETERM_PEER_PUBLIC_HOST`。
+
 Surge / Clash TUN 把境外 UDP 丢进无 UDP 中继的节点时，Google `:19302` / Cloudflare `:3478` 常无应答；给 UDP 3478/19302 加 DIRECT，或依赖内置列表里可达的小米 / Bilibili STUN。

@@ -43,6 +43,7 @@ export type StunResolveRecord = {
   host: string;
   ip: string | null;
   via: StunResolveVia;
+  /** 解析 STUN 服务器主机名时系统 DNS 是否见过 fake-IP，与 Binding 回报的 mapped address 无关。 */
   fakeIp: boolean;
   ms: number;
 };
