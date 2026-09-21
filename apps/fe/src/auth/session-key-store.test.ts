@@ -937,9 +937,13 @@ describe('登录记账只有一个写入点', () => {
         `${file}:noteNodeLoginSuccess=false`
       );
     }
-    // 升级的补登路径同样只能靠 `ensureNodeLogin` 记账。
-    const upgrade = await read('../pages/settings/nodes/management/use-node-upgrade.ts');
-    expect(upgrade.includes('noteNodeLogin')).toBe(false);
+    // 升级的补登路径同样只能靠 `ensureNodeLogin` 记账（状态机与它下面的 REST 层都不许自己记）。
+    for (const file of ['use-node-upgrade.ts', 'upgrade-io.ts']) {
+      const upgrade = await read(`../pages/settings/nodes/management/${file}`);
+      expect(`${file}:noteNodeLogin=${upgrade.includes('noteNodeLogin')}`).toBe(
+        `${file}:noteNodeLogin=false`
+      );
+    }
     // 唯一的写入点就在这个 store 里。
     expect((await read('session-key-store.ts')).includes('noteNodeLoginFailure')).toBe(true);
   });

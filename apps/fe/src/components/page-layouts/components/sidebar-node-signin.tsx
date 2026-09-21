@@ -1,16 +1,10 @@
 // 在线但还没有该 node 会话：默认折叠，用户点开（或冷启动自动登一次）才触发静默登录。
 
-import { NodeLoginButton } from '@/auth/NodeLoginButton';
-import { NodeRetryConnectButton } from '@/auth/NodeRetryConnectButton';
-import { offerNodeLogin } from '@/auth/login-failure-kind';
-import { nodeLoginFailureTextKey } from '@/auth/login-failure-text';
 import { restoreSessionKey } from '@/auth/session-key-store';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { useUIStore } from '@vibeterm/stores/react';
 import { cn } from '@vibeterm/ui';
-import { ChevronRight, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { SectionHeader } from './sidebar-node-header';
 import {
@@ -19,6 +13,7 @@ import {
   hasSidebarVisibleDeviceForNode,
   selectedDeviceIdForNode,
 } from './sidebar-node-model';
+import { SidebarNodeSignInBody } from './sidebar-node-signin-body';
 import { useSectionPresence } from './use-section-presence';
 
 /**
@@ -76,7 +71,6 @@ export function SidebarNodeSignIn({
   node: SidebarNodeEntry;
   drag?: SidebarNodeSortable;
 }) {
-  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
   const selectedDeviceId = selectedDeviceIdForNode(useLocation().pathname, node.runtimeNodeId);
@@ -86,13 +80,6 @@ export function SidebarNodeSignIn({
   const gate = useNodeLoginGate(node.runtimeNodeId, { enabled: expanded || eager });
   const presence = useSectionPresence(present, null);
   if (!presence.rendered) return null;
-  // 自动登录进行中就别先闪一下「登录该节点」：那条按钮点下去做的正是同一件事。
-  const busy = gate.status === 'pending' && (expanded || eager);
-  const errorKey = nodeLoginFailureTextKey(gate.code, gate.retrying);
-  // 传输层失败不给登录入口：点了只是在抖动的链路上再叠一次拨号。
-  const offerLogin = offerNodeLogin(gate.code);
-  // 自动重试的额度用完了才给「重试连接」，否则等退避自己到点。
-  const offerRetry = !offerLogin && !gate.retrying;
 
   return (
     <div
@@ -103,53 +90,13 @@ export function SidebarNodeSignIn({
     >
       <SectionHeader node={node} drag={drag} />
       <div className="px-1 pb-0.5">
-        {busy ? (
-          <div
-            className="vibeterm-fade flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
-            data-testid={`sidebar-node-pending-${node.runtimeNodeId}`}
-          >
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
-            <span className="truncate">{t('auth.node.loggingIn')}</span>
-          </div>
-        ) : !expanded && gate.code === null ? (
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none"
-            data-testid={`sidebar-node-expand-${node.runtimeNodeId}`}
-            onClick={() => setExpanded(true)}
-          >
-            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{t('auth.node.loginToThisNode')}</span>
-          </button>
-        ) : (
-          <div className="vibeterm-fade flex flex-col gap-1">
-            {errorKey ? (
-              <span
-                className={cn(
-                  'px-1 text-[10px]',
-                  offerLogin ? 'text-destructive' : 'text-muted-foreground'
-                )}
-                data-testid={`sidebar-node-error-${node.runtimeNodeId}`}
-              >
-                {t(errorKey)}
-              </span>
-            ) : null}
-            {offerLogin && (
-              <NodeLoginButton
-                nodeId={node.runtimeNodeId}
-                nodeName={node.name}
-                className="w-full"
-              />
-            )}
-            {offerRetry && (
-              <NodeRetryConnectButton
-                nodeId={node.runtimeNodeId}
-                nodeName={node.name}
-                className="w-full"
-              />
-            )}
-          </div>
-        )}
+        <SidebarNodeSignInBody
+          node={node}
+          gate={gate}
+          expanded={expanded}
+          eager={eager}
+          onExpand={() => setExpanded(true)}
+        />
       </div>
     </div>
   );
