@@ -110,6 +110,8 @@ export type PeerLinkProvider = {
   listUplinkOnline?(): ReadonlySet<string>;
   transportOf?(nodeId: string): PeerTransportKind | null;
   rttOf?(nodeId: string): number | null;
+  rttForNode?(nodeId: string): number;
+  rttForLink?(link: LinkSession): number;
   viaRelayOf?(nodeId: string): string | null;
   relayPresenceOf?(nodeId: string): string[] | undefined;
   linkSinceAtOf?(nodeId: string): number | null;

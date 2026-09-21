@@ -1,4 +1,5 @@
 import os from 'node:os';
+import type { LinkSession } from '@vibeterm/shared/link';
 import type { StunEnvSource } from '@vibeterm/shared/net';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { dropPaneGrantsOfNode } from '../agent/pane-grant/revoke';
@@ -927,6 +928,8 @@ function wireMeshHttp(
     listReach: () => peerManager.listReach(),
     transportOf: (nodeId: string) => peerManager.transportOf(nodeId),
     rttOf: (nodeId: string) => peerManager.rttOf(nodeId),
+    rttForNode: (nodeId: string) => peerManager.rttForNode(nodeId),
+    rttForLink: (link: LinkSession) => peerManager.rttForLink(link),
     linkSinceAtOf: (nodeId: string) => peerManager.linkDetailOf(nodeId).linkSinceAt,
     linkDetailOf: (nodeId: string) => peerManager.linkDetailOf(nodeId),
     listUplinkOnline: () =>
@@ -940,7 +943,7 @@ function wireMeshHttp(
   };
   const streams: StreamOpener = {
     openHttpStream: (link, open, body, signal) =>
-      openHttpStream(link, { type: 'http', ...open }, body, signal),
+      openHttpStream(link, { type: 'http', ...open }, body, signal, peerManager.rttForLink(link)),
     openWsStream: (link, auth, cid, share) => openAdaptedWsStream(link, auth, cid, share),
   };
   const publisher = createKeyLogPublisher(uplink, () =>

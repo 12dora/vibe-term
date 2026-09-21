@@ -128,6 +128,7 @@ const PUBLIC_PEER_HOSTNAME_RE =
   /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
 
 export function isPublicPeerHostname(host: string): boolean {
+  if (/^\d+(\.\d+)*$/.test(host)) return false;
   return PUBLIC_PEER_HOSTNAME_RE.test(host);
 }
 

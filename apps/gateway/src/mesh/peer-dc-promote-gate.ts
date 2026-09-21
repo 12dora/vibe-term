@@ -129,15 +129,14 @@ export class DcPromoteGate {
     this.pending.delete(input.peerNodeId);
     const live = this.ports.liveOf(input.peerNodeId);
     const currentMs = live?.rttMs ?? input.prev?.rttMs ?? null;
-    if (dcMs == null || this.shouldReject(dcMs, currentMs)) {
+    if (dcMs != null && this.shouldReject(dcMs, currentMs)) {
       this.rejectCandidate(input, dcMs, currentMs);
       return;
     }
     this.acceptCandidate(input, live ?? input.prev, dcMs);
   }
 
-  private shouldReject(dcMs: number | null, currentMs: number | null): boolean {
-    if (dcMs == null) return true;
+  private shouldReject(dcMs: number, currentMs: number | null): boolean {
     if (currentMs == null) return false;
     return dcPromoteTooSlow(dcMs, currentMs, this.ratio, this.additiveMs);
   }
@@ -155,8 +154,14 @@ export class DcPromoteGate {
   private acceptCandidate(
     input: TrackInterceptInput,
     prev: LivePeer | undefined,
-    dcMs: number
+    dcMs: number | null
   ): void {
+    const live = this.ports.liveOf(input.peerNodeId);
+    if (live?.session === input.session) {
+      if (dcMs != null) live.rttMs = dcMs;
+      this.backoffUntil.delete(input.peerNodeId);
+      return;
+    }
     const kept = this.ports.forceInstall(
       input.session,
       input.peerNodeId,
@@ -171,9 +176,8 @@ export class DcPromoteGate {
       return;
     }
     const installed = this.ports.liveOf(input.peerNodeId);
-    if (installed) installed.rttMs = dcMs;
+    if (installed && dcMs != null) installed.rttMs = dcMs;
     this.backoffUntil.delete(input.peerNodeId);
-    if (prev && prev.session !== kept) this.ports.finishRetire(prev, 'retired');
   }
 
   private measure(session: LinkSession, signal: AbortSignal): Promise<number | null> {

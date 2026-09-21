@@ -18,7 +18,13 @@ import { type PeerLifecycleHost, startPeerManager, stopPeerManager } from './pee
 import type { PeerLinkDrain } from './peer-link-drain';
 import type { PeerLinkWaiters } from './peer-link-waiters';
 import type { PeerLiveRegistry } from './peer-live-registry';
-import { type PeerManagerState, createPeerManagerState, isPeerTrusted } from './peer-manager-state';
+import {
+  type PeerManagerState,
+  createPeerManagerState,
+  isPeerTrusted,
+  lookupPeerRttMsForForward,
+  lookupPeerRttMsForLink,
+} from './peer-manager-state';
 import type { PeerLinkDetail, PeerManagerOptions } from './peer-manager-types';
 import {
   listPeerReach,
@@ -227,6 +233,14 @@ export class PeerManager extends PeerCollaboratorHost {
   }
   rttOf(n: string): number | null {
     return this.state.live.get(n)?.rttMs ?? null;
+  }
+
+  rttForLink(link: LinkSession): number {
+    return lookupPeerRttMsForLink(link, this.state.scheduler);
+  }
+
+  rttForNode(nodeId: string): number {
+    return lookupPeerRttMsForForward(nodeId, this.state.scheduler);
   }
   viaRelayOf(n: string): string | null {
     return viaRelayOfLive(this.state.live.get(n));

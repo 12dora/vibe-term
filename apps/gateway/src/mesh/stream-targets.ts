@@ -1,5 +1,6 @@
 import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession, LinkStream, StreamChunk } from '@vibeterm/shared/link';
+import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
 import { encodeJsonBytes, isRecord } from './ctl';
 import {
   UploadStallError,
@@ -7,7 +8,6 @@ import {
   httpHeadTimeoutMs,
   wrapUploadDestination,
 } from './forwarder-attempt-deadline';
-import { lookupPeerRttMsForLink } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
 import {
@@ -335,16 +335,20 @@ function pumpHttpRequestBody(
   };
 }
 
-/** HTTP head 等待：跟 live 链路 RTT 走，无样本仍是 800 ms 档。 */
-export function httpHeadTimeoutForStream(link: LinkSession): number {
-  return httpHeadTimeoutMs(lookupPeerRttMsForLink(link));
+/** HTTP head 等待：RTT 由调用方注入（PeerManager.rttForLink），缺省 800 ms 档。 */
+export function httpHeadTimeoutForStream(
+  _link: LinkSession,
+  rttMs: number = DEFAULT_DIAL_RTT_MS
+): number {
+  return httpHeadTimeoutMs(rttMs);
 }
 
 export async function openHttpStream(
   link: LinkSession,
   openPayload: HttpStreamOpenPayload,
   body?: ReadableStream<Uint8Array> | Uint8Array | null,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  rttMs: number = DEFAULT_DIAL_RTT_MS
 ): Promise<Response> {
   const payload: HttpStreamOpenPayload = {
     type: 'http',
@@ -379,7 +383,7 @@ export async function openHttpStream(
 
   try {
     const head = await readHttpHead(stream, {
-      timeoutMs: httpHeadTimeoutForStream(link),
+      timeoutMs: httpHeadTimeoutForStream(link, rttMs),
       armAfter: upload.armAfter,
       abort: signal,
     });

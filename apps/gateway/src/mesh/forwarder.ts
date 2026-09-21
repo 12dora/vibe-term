@@ -72,14 +72,27 @@ export function setForwardLinkDeadlineMs(ms: number): void {
   forwardLinkDeadlineOverride = ms > 0 ? ms : 0;
 }
 
-export function forwardLinkDeadlineFor(nodeId: string, rttMs?: number | null): number {
-  if (forwardLinkDeadlineOverride > 0) return forwardLinkDeadlineOverride;
-  return nestedDialBudgetsMs(rttMs ?? lookupPeerRttMs(nodeId)).forwardMs;
+function deadlineRttMs(nodeId: string, rttMs?: number | null, peers?: PeerLinkProvider): number {
+  if (typeof rttMs === 'number' && Number.isFinite(rttMs)) return rttMs;
+  return peers?.rttForNode?.(nodeId) ?? lookupPeerRttMs(nodeId);
 }
 
-export function authorizedHttpDeadlineMs(nodeId: string, rttMs?: number | null): number {
+export function forwardLinkDeadlineFor(
+  nodeId: string,
+  rttMs?: number | null,
+  peers?: PeerLinkProvider
+): number {
+  if (forwardLinkDeadlineOverride > 0) return forwardLinkDeadlineOverride;
+  return nestedDialBudgetsMs(deadlineRttMs(nodeId, rttMs, peers)).forwardMs;
+}
+
+export function authorizedHttpDeadlineMs(
+  nodeId: string,
+  rttMs?: number | null,
+  peers?: PeerLinkProvider
+): number {
   return adaptiveDeadlineMs({
-    rttMs: rttMs ?? lookupPeerRttMs(nodeId),
+    rttMs: deadlineRttMs(nodeId, rttMs, peers),
     factor: 8,
     minMs: 10_000,
     maxMs: 30_000,
@@ -226,7 +239,11 @@ export class Forwarder {
         },
       });
     }
-    const floorMs = forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId));
+    const floorMs = forwardLinkDeadlineFor(
+      nodeId,
+      this.deps.peers.rttOf?.(nodeId),
+      this.deps.peers
+    );
     try {
       const link = await this.deps.peers.getLink(nodeId);
       return await withHttpStreamUploadDeadline(
@@ -304,8 +321,8 @@ export class Forwarder {
     let lastError: unknown;
     const rttMs = this.deps.peers.rttOf?.(input.nodeId);
     const budgets = authorizedAttemptBudgetsMs({
-      linkMs: forwardLinkDeadlineFor(input.nodeId, rttMs),
-      overallMs: authorizedHttpDeadlineMs(input.nodeId, rttMs),
+      linkMs: forwardLinkDeadlineFor(input.nodeId, rttMs, this.deps.peers),
+      overallMs: authorizedHttpDeadlineMs(input.nodeId, rttMs, this.deps.peers),
       headers,
       hasRawBody: Boolean(rawBody),
     });
@@ -437,7 +454,11 @@ export class Forwarder {
     const retryable = IDEMPOTENT_HTTP.has(req.method);
     const body = retryable ? null : req.body;
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
-    const floorMs = forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId));
+    const floorMs = forwardLinkDeadlineFor(
+      nodeId,
+      this.deps.peers.rttOf?.(nodeId),
+      this.deps.peers
+    );
     const deadlineAt = Date.now() + floorMs;
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -546,7 +567,7 @@ export class Forwarder {
     return upgradeRemoteWs(req, server, nodeId, {
       peers: this.deps.peers,
       streams: this.deps.streams,
-      deadlineMs: forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId)),
+      deadlineMs: forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId), this.deps.peers),
     });
   }
 
