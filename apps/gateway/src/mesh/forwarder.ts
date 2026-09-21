@@ -10,7 +10,6 @@ export {
   setPendingForwardStreamTtlMs,
   takePendingForwardStream,
 } from './forwarder-ws-upgrade';
-import { adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import { isShareAccessPath } from './auth-public-paths';
@@ -30,8 +29,17 @@ import {
   peekJsonCode,
 } from './forwarder-auth-policy';
 import { cancelForwardBody, countStreamBytes, throttledProgress } from './forwarder-body';
+import { authorizedHttpDeadlineMs, forwardLinkDeadlineFor } from './forwarder-deadline';
+export {
+  FORWARD_LINK_DEADLINE_MS,
+  authorizedHttpDeadlineMs,
+  forwardLinkDeadlineFor,
+  setForwardLinkDeadlineMs,
+} from './forwarder-deadline';
 import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
 import { parseNodePrefix } from './forwarder-path';
+import { rewriteRequest } from './forwarder-rewrite';
+export { getSelfRewrite, rewriteSelf } from './forwarder-rewrite';
 import { nodeUnreachableResponse } from './forwarder-unreachable';
 import { buildJsonStreamBody } from './json-stream-body';
 import {
@@ -48,7 +56,6 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { stamp } from './mesh-log';
-import { lookupPeerRttMs } from './peer-manager-state';
 import { jsonError } from './session-middleware';
 import { readShareCookie, shareAuthValue } from './share-credential';
 import { ShareLoginQuota, shareLoginShareId } from './share-login-quota';
@@ -63,41 +70,6 @@ type ForwarderDeps = {
 };
 
 const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
-/** 取链路的墙钟上限（LAN 缺省）；高 RTT 时按 nestedDialBudgetsMs 放大。 */
-export const FORWARD_LINK_DEADLINE_MS = 5_000;
-let forwardLinkDeadlineOverride = 0;
-
-/** 测试用：缩短取链路的墙钟上限。`ms <= 0` 恢复自适应缺省。 */
-export function setForwardLinkDeadlineMs(ms: number): void {
-  forwardLinkDeadlineOverride = ms > 0 ? ms : 0;
-}
-
-function deadlineRttMs(nodeId: string, rttMs?: number | null, peers?: PeerLinkProvider): number {
-  if (typeof rttMs === 'number' && Number.isFinite(rttMs)) return rttMs;
-  return peers?.rttForNode?.(nodeId) ?? lookupPeerRttMs(nodeId);
-}
-
-export function forwardLinkDeadlineFor(
-  nodeId: string,
-  rttMs?: number | null,
-  peers?: PeerLinkProvider
-): number {
-  if (forwardLinkDeadlineOverride > 0) return forwardLinkDeadlineOverride;
-  return nestedDialBudgetsMs(deadlineRttMs(nodeId, rttMs, peers)).forwardMs;
-}
-
-export function authorizedHttpDeadlineMs(
-  nodeId: string,
-  rttMs?: number | null,
-  peers?: PeerLinkProvider
-): number {
-  return adaptiveDeadlineMs({
-    rttMs: deadlineRttMs(nodeId, rttMs, peers),
-    factor: 8,
-    minMs: 10_000,
-    maxMs: 30_000,
-  });
-}
 
 /** GET/HEAD 默认可重试；其余方法只有调用方明确要求才重试，且不超过失败切换的上限。 */
 function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): number {
@@ -118,32 +90,6 @@ function forwardedAuthFor(req: Request, nodeId: string, rest: string): string | 
   }
   if (AUTH_SKIP.has(rest)) return null;
   return readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId);
-}
-
-export function getSelfRewrite(req: Request): string | null {
-  return getMeshRequestContext(req).selfRewrite ?? null;
-}
-
-export function rewriteSelf(req: Request, localNodeId: string): Request | null {
-  const url = new URL(req.url);
-  const parsed = parseNodePrefix(url.pathname);
-  if (!parsed) return null;
-  if (parsed.nodeId !== MESH_VIA_SELF && parsed.nodeId !== localNodeId) return null;
-  return rewriteRequest(req, parsed.rest + url.search);
-}
-
-function rewriteRequest(req: Request, rewrite: string): Request {
-  const url = new URL(req.url);
-  const q = rewrite.indexOf('?');
-  url.pathname = q === -1 ? rewrite : rewrite.slice(0, q);
-  url.search = q === -1 ? '' : rewrite.slice(q);
-  const inner = new Request(url, req);
-  setMeshRequestContext(inner, {
-    ...getMeshRequestContext(req),
-    via: MESH_VIA_SELF,
-    selfRewrite: undefined,
-  });
-  return inner;
 }
 
 export class Forwarder {
