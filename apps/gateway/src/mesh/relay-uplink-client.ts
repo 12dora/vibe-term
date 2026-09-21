@@ -1,11 +1,5 @@
 import { encodeBase64url, hostFromUrl } from '@vibeterm/shared/auth';
-import {
-  type LinkSession,
-  type LinkStream,
-  WebSocketLink,
-  type WebSocketTransportInput,
-} from '@vibeterm/shared/link';
-import { waitSocketOpen } from '@vibeterm/shared/net';
+import { type LinkSession, type LinkStream, WebSocketLink } from '@vibeterm/shared/link';
 import {
   type RelayCtlMessage,
   type RelayKickReason,
@@ -44,7 +38,7 @@ import {
   sendRelayStatusNow,
   shouldResendRelayStatus,
 } from './relay-uplink-ctl';
-import { defaultRelayWsFactory, relayUplinkWsUrl } from './relay-uplink-http';
+import { defaultRelayWsFactory, openRelayLink } from './relay-uplink-http';
 import { waitUntilUplinkClosed } from './relay-uplink-wait';
 import type {
   InboundRelayHandler,
@@ -63,7 +57,6 @@ import {
 } from './uplink-constants';
 import { UplinkStreamGate, createUplinkPathHeartbeat } from './uplink-path-sampler';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
-import { closeTransport } from './uplink-reconnect';
 
 export type RelayUplinkClientOptions = {
   uplinkUrl: string;
@@ -446,34 +439,18 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     );
     const wsFactory =
       this.opts.wsFactory ?? defaultRelayWsFactory(relayTlsCaForDial(dialUrl, this.opts.tlsCa));
-    const timeoutMs = this.opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS;
-    const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(new Error('connect-timeout')), timeoutMs);
-    const onParentAbort = () => {
-      if (!timeout.signal.aborted) timeout.abort(signal.reason);
-    };
-    if (signal.aborted) onParentAbort();
-    else signal.addEventListener('abort', onParentAbort, { once: true });
-    let ws: WebSocketTransportInput | null = null;
-    try {
-      ws = await wsFactory(relayUplinkWsUrl(dialUrl), { signal: timeout.signal, timeoutMs });
-      if (timeout.signal.aborted) {
-        closeTransport(ws);
-        throw new Error('connect-timeout');
+    const logContext = { transport: 'relay-uplink', url: this.uplinkUrl };
+    await openRelayLink(
+      wsFactory,
+      dialUrl,
+      signal,
+      (link, attachSignal) => this.connectWithLink(link, attachSignal),
+      {
+        timeoutMs: this.opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS,
+        authTimeoutMs: this.authTimeoutMs,
+        createLink: (ws) => new WebSocketLink(ws, { role: 'initiator', logContext }),
       }
-      await waitSocketOpen(ws, timeoutMs, timeout.signal);
-      const logContext = { transport: 'relay-uplink', url: this.uplinkUrl };
-      await this.connectWithLink(
-        new WebSocketLink(ws, { role: 'initiator', logContext }),
-        timeout.signal
-      );
-    } catch (err) {
-      if (timeout.signal.aborted && !signal.aborted) throw new Error('connect-timeout');
-      throw err;
-    } finally {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', onParentAbort);
-    }
+    );
   }
 
   private bindLink(link: LinkSession, generation: number): void {

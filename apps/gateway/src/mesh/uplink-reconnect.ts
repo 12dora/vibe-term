@@ -15,11 +15,15 @@ function errMsg(err: unknown): string {
 }
 
 const UPLINK_CONNECT_RULES: Array<[RegExp, string]> = [
-  [/\b(enotfound|eai_again|getaddrinfo|dns)\b|name not resolved|nodename nor servname/, 'dns'],
-  [/\b(econnrefused|econnreset)\b|connection refused|connect refused/, 'refused'],
-  [/connect-timeout|auth-timeout|\b(etimedout|timeout|timed out)\b/, 'timeout'],
   [
-    /\b(tls|ssl|cert_|err_tls|err_cert)\b|certificate|self signed|self-signed|unable to verify|hostname mismatch|altname/,
+    /\b(enotfound|eai_again|getaddrinfo|dns-failed|dns)\b|name not resolved|nodename nor servname/,
+    'dns',
+  ],
+  [/\b(econnrefused|econnreset)\b|connection refused|connect refused/, 'refused'],
+  [/\bauth-timeout\b/, 'auth-timeout'],
+  [/connect-timeout|\b(etimedout|timeout|timed out)\b/, 'timeout'],
+  [
+    /\b(tls-failed|tls|ssl|cert_|err_tls|err_cert)\b|certificate|self signed|self-signed|unable to verify|hostname mismatch|altname/,
     'tls',
   ],
   [

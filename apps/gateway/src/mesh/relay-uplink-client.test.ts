@@ -607,6 +607,28 @@ describe('RelayUplinkClient', () => {
     expect(b.secrets.relayRows()[0]?.kickedReason).toBeNull();
   });
 
+  test('WS 已开但 challenge 不到记 auth-timeout 而不是 connect-timeout', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs] = fakeSocketPair();
+    const client = new RelayUplinkClient({
+      uplinkUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      connectTimeoutMs: 200,
+      authTimeoutMs: 40,
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    client.start();
+    await expect(client.attemptConnect()).rejects.toThrow('auth-timeout');
+    expect(client.lastConnectError?.reason).toBe('auth-timeout');
+  });
+
   test('远端关闭保留 close reason', async () => {
     const b = await bootRelayNode();
     fixtures.push({ close: b.close });
@@ -690,6 +712,7 @@ describe('RelayUplinkClient', () => {
       statusProvider: status,
       dial: { roles: { relay: true }, relayPublicUrl: RELAY_URL, gatewayPort: 19993 },
       connectTimeoutMs: 50,
+      authTimeoutMs: 50,
       wsFactory: (url) => {
         dialed.push(url);
         return clientWs;
@@ -702,6 +725,7 @@ describe('RelayUplinkClient', () => {
     try {
       const connecting = client.attemptConnect();
       await waitUntil(() => dialed.length > 0);
+      await waitUntil(() => client.link !== null);
       clientWs.close();
       await connecting.catch(() => undefined);
       expect(dialed).toEqual(['ws://127.0.0.1:19993/relay/uplink']);

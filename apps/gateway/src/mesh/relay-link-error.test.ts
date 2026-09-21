@@ -17,6 +17,8 @@ const CASES: Array<[string | null | undefined, RelayLinkErrorCode | null]> = [
   ['timeout', 'connect-timeout'],
   ['ETIMEDOUT', 'connect-timeout'],
   ['auth-timeout', 'auth-timeout'],
+  ['dns-failed', 'dns'],
+  ['tls-failed', 'tls'],
   ['auth_rejected', 'auth-rejected'],
   ['bad-token', 'auth-rejected'],
   ['token-epoch', 'auth-rejected'],

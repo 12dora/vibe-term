@@ -21,6 +21,24 @@ export const UPLINK_BACKOFF_MIN_MS = 1_000;
 export const UPLINK_BACKOFF_MAX_MS = 60_000;
 export const UPLINK_CONNECT_TIMEOUT_MS = 20_000;
 export const UPLINK_AUTH_TIMEOUT_MS = 10_000;
+export const UPLINK_CANDIDATE_COOLDOWN_MIN_MS = 30_000;
+export const UPLINK_CANDIDATE_COOLDOWN_MAX_MS = 60_000;
+
+export function uplinkCandidateCooldownMs(fails: number, random = Math.random): number {
+  const exp = Math.min(
+    UPLINK_CANDIDATE_COOLDOWN_MAX_MS,
+    UPLINK_CANDIDATE_COOLDOWN_MIN_MS * 2 ** Math.max(0, fails - 1)
+  );
+  const jitter = 0.9 + random() * 0.2;
+  return Math.min(
+    UPLINK_CANDIDATE_COOLDOWN_MAX_MS,
+    Math.max(UPLINK_CANDIDATE_COOLDOWN_MIN_MS, Math.floor(exp * jitter))
+  );
+}
+
+export function isUplinkConnectCoolable(reason: string): boolean {
+  return /^(connect-timeout|connect-failed|dns-failed|tls-failed)$/i.test(reason.trim());
+}
 export const UPLINK_STABLE_UPTIME_MS = 30_000;
 export const UPLINK_KEY_LOG_ACK_TIMEOUT_MS = 10_000;
 export const UPLINK_KEY_LOG_RETRY_LIMIT = 3;
