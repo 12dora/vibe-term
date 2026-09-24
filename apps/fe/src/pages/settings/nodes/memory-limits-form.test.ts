@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { WINDOW_MEMORY_SETTINGS_DEFAULTS } from '@vibeterm/shared';
+import { WINDOW_MEMORY_SETTINGS_DEFAULTS, type WindowMemorySettings } from '@vibeterm/shared';
 import {
   type MemoryLimitsDraft,
   isUnlimitedSettings,
@@ -8,6 +8,7 @@ import {
   memoryLimitsMode,
   parseBulkMemoryLimits,
   parseMemoryLimitsDraft,
+  releasedMemoryLimits,
   submitMemoryLimits,
 } from './memory-limits-form';
 
@@ -16,6 +17,15 @@ function draft(overrides: Partial<MemoryLimitsDraft> = {}): MemoryLimitsDraft {
 }
 
 describe('memoryLimitsDraft', () => {
+  test('老版本存下的「开着但三项全 0」按「不限制」打开', () => {
+    const zeros = { memoryHighMb: 0, memoryMaxMb: 0, memorySwapMaxMb: 0 };
+    expect(memoryLimitsDraft({ ...WINDOW_MEMORY_SETTINGS_DEFAULTS, ...zeros }).enabled).toBe(false);
+    expect(
+      memoryLimitsDraft({ ...WINDOW_MEMORY_SETTINGS_DEFAULTS, ...zeros, memorySwapMaxMb: 1 })
+        .enabled
+    ).toBe(true);
+  });
+
   test('记录逐字段变成输入框里的字符串', () => {
     expect(memoryLimitsDraft(WINDOW_MEMORY_SETTINGS_DEFAULTS)).toEqual({
       enabled: true,
@@ -29,17 +39,32 @@ describe('memoryLimitsDraft', () => {
 
 describe('parseMemoryLimitsDraft', () => {
   test('合法草稿原样解析，0 表示不设该项', () => {
-    const parsed = parseMemoryLimitsDraft(
-      draft({ memoryHighMb: '0', memoryMaxMb: '0', memorySwapMaxMb: '0' })
-    );
+    const parsed = parseMemoryLimitsDraft(draft({ memoryHighMb: '0', memorySwapMaxMb: '0' }));
     expect(parsed.errors).toEqual({});
     expect(parsed.settings).toEqual({
       enabled: true,
       memoryHighMb: 0,
-      memoryMaxMb: 0,
+      memoryMaxMb: 12288,
       memorySwapMaxMb: 0,
       sampleIntervalSec: 5,
     });
+  });
+
+  test('「自定义」三项全 0 存成「不限制」，下次打开时选中的也是「不限制」', () => {
+    const parsed = parseMemoryLimitsDraft(
+      draft({ memoryHighMb: '0', memoryMaxMb: '0', memorySwapMaxMb: '0', sampleIntervalSec: '9' })
+    );
+    expect(parsed.errors).toEqual({});
+    expect(parsed.settings).toEqual({
+      enabled: false,
+      memoryHighMb: 0,
+      memoryMaxMb: 0,
+      memorySwapMaxMb: 0,
+      sampleIntervalSec: 9,
+    });
+    expect(memoryLimitsMode(memoryLimitsDraft(parsed.settings as WindowMemorySettings))).toBe(
+      'unlimited'
+    );
   });
 
   test('非整数 / 负数 / 超上限的 MB 都报错', () => {
@@ -128,27 +153,49 @@ describe('「不限制」方式', () => {
 describe('parseBulkMemoryLimits', () => {
   const untouched = memoryLimitsDraft(WINDOW_MEMORY_SETTINGS_DEFAULTS);
 
-  test('没选方式就不产出任何记录：原封不动点写入不会把缺省限额装到各节点上', () => {
-    expect(parseBulkMemoryLimits(null, untouched)).toEqual({ settings: null, errors: {} });
+  test('没选方式就不产出任何写入：原封不动点写入不会把缺省限额装到各节点上', () => {
+    expect(parseBulkMemoryLimits(null, untouched)).toEqual({ write: null, errors: {} });
   });
 
-  test('「不限制」连同额度一起清零', () => {
-    expect(parseBulkMemoryLimits('unlimited', untouched).settings).toEqual({
-      enabled: false,
-      memoryHighMb: 0,
-      memoryMaxMb: 0,
-      memorySwapMaxMb: 0,
-      sampleIntervalSec: 5,
+  test('「不限制」不带任何数字，连填坏的采样周期也不拦', () => {
+    expect(parseBulkMemoryLimits('unlimited', untouched)).toEqual({
+      write: { kind: 'release' },
+      errors: {},
+    });
+    expect(
+      parseBulkMemoryLimits('unlimited', { ...untouched, sampleIntervalSec: 'x' }).write
+    ).toEqual({ kind: 'release' });
+  });
+
+  test('「自定义」按草稿校验并整条写入', () => {
+    expect(parseBulkMemoryLimits('custom', { ...untouched, enabled: false }).write).toEqual({
+      kind: 'replace',
+      settings: WINDOW_MEMORY_SETTINGS_DEFAULTS,
+    });
+    const invalid = parseBulkMemoryLimits('custom', { ...untouched, memoryMaxMb: 'x' });
+    expect(invalid.write).toBeNull();
+    expect(invalid.errors.memoryMaxMb).toBe('settings.nodes.memory.invalidMb');
+  });
+
+  test('「自定义」三项全 0 同样写成「不限制」', () => {
+    const zeros = { memoryHighMb: '0', memoryMaxMb: '0', memorySwapMaxMb: '0' };
+    expect(parseBulkMemoryLimits('custom', { ...untouched, ...zeros }).write).toEqual({
+      kind: 'replace',
+      settings: {
+        enabled: false,
+        memoryHighMb: 0,
+        memoryMaxMb: 0,
+        memorySwapMaxMb: 0,
+        sampleIntervalSec: 5,
+      },
     });
   });
+});
 
-  test('「自定义」按草稿校验并写入', () => {
-    expect(parseBulkMemoryLimits('custom', { ...untouched, enabled: false }).settings).toEqual(
-      WINDOW_MEMORY_SETTINGS_DEFAULTS
-    );
-    expect(
-      parseBulkMemoryLimits('custom', { ...untouched, memoryMaxMb: 'x' }).errors.memoryMaxMb
-    ).toBe('settings.nodes.memory.invalidMb');
+describe('releasedMemoryLimits', () => {
+  test('只翻开关，额度与采样周期照节点现值', () => {
+    const current = { ...WINDOW_MEMORY_SETTINGS_DEFAULTS, sampleIntervalSec: 30 };
+    expect(releasedMemoryLimits(current)).toEqual({ ...current, enabled: false });
   });
 });
 

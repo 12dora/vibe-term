@@ -4,7 +4,8 @@
 // 版式沿用详情框（`Dialog`），目标 / 跳过清单与卸载确认框共用 `PlanRows`。
 //
 // 批量不读各节点的旧值，所以方式（不限制 / 自定义限额）一开始是空的，选了才能写入：
-// 原封不动点「写入」不能把缺省的 8 / 12 GB 装到每一台上。
+// 原封不动点「写入」不能把缺省的 8 / 12 GB 装到每一台上。「不限制」不带任何数字：采样周期
+// 输入框收起，各节点保留自己的。
 
 import { WINDOW_MEMORY_SETTINGS_DEFAULTS } from '@vibeterm/shared';
 import { Button } from '@vibeterm/ui/button';
@@ -89,7 +90,7 @@ export function BulkMemoryDialog({ controller }: { controller: MemoryLimitsBatch
   const apply = () => {
     const parsed = parseBulkMemoryLimits(mode, draft);
     setErrors(parsed.errors);
-    if (parsed.settings) controller.run(parsed.settings);
+    if (parsed.write) controller.run(parsed.write);
   };
 
   return (
@@ -115,11 +116,20 @@ export function BulkMemoryDialog({ controller }: { controller: MemoryLimitsBatch
           disabled={running}
           mode={mode}
           onModeChange={setMode}
+          intervalWhenUnlimited={false}
           onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))}
         />
         {mode === null && (
           <p className="text-xs text-muted-foreground" data-testid="nodes-memory-bulk-choose-mode">
             {t('nodes.memory.chooseMode')}
+          </p>
+        )}
+        {mode === 'unlimited' && (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="nodes-memory-bulk-keep-interval"
+          >
+            {t('nodes.memory.keepInterval')}
           </p>
         )}
         <BulkMemoryDialogBody plan={plan} failures={failures} />

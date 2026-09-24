@@ -9,8 +9,13 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { appNodeRuntimes } = await import('./node-runtimes');
-const { WindowMemoryBadge, isWindowMemoryBadgeStale, windowMemoryTone, windowMemoryTooltipLines } =
-  await import('./window-memory-badge');
+const {
+  WindowMemoryBadge,
+  isWindowMemoryBadgeStale,
+  windowMemoryClockDelaysMs,
+  windowMemoryTone,
+  windowMemoryTooltipLines,
+} = await import('./window-memory-badge');
 
 const GB = 1024 * 1024 * 1024;
 const DAY_MS = 86_400_000;
@@ -76,24 +81,34 @@ describe('windowMemoryTone', () => {
 describe('isWindowMemoryBadgeStale', () => {
   const now = Date.now();
 
-  test('网关重放的几天前的读数：刚收到也算过期', () => {
+  test('节点时钟慢了几天：只要帧还在按时到，读数就是新鲜的', () => {
     expect(
       isWindowMemoryBadgeStale(sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now }), now)
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  test('徽标挂载后才到的新帧：参照时刻取收到时刻，不因挂载时的旧 now 误判', () => {
-    const mountedAt = now - DAY_MS;
-    expect(isWindowMemoryBadgeStale(sample({ sampledAt: now, receivedAt: now }), mountedAt)).toBe(
-      false
-    );
-    expect(
-      isWindowMemoryBadgeStale(sample({ sampledAt: now - 3 * DAY_MS, receivedAt: now }), mountedAt)
-    ).toBe(true);
+  test('两次心跳（60 s）内没有新帧仍新鲜，超过就过期', () => {
+    expect(isWindowMemoryBadgeStale(sample({ receivedAt: now - 60_000 }), now)).toBe(false);
+    expect(isWindowMemoryBadgeStale(sample({ receivedAt: now - 60_001 }), now)).toBe(true);
   });
 
-  test('刚采的读数不过期', () => {
+  test('刚收到的读数不过期', () => {
     expect(isWindowMemoryBadgeStale(sample(), now)).toBe(false);
+  });
+});
+
+describe('windowMemoryClockDelaysMs', () => {
+  const now = 1_000_000;
+
+  test('新帧：先在灰显那一刻醒，再在收起那一刻醒', () => {
+    expect(windowMemoryClockDelaysMs(now, now)).toEqual([60_001, 90_000]);
+    expect(windowMemoryClockDelaysMs(now - 30_000, now)).toEqual([30_001, 60_000]);
+  });
+
+  test('已经灰显：只剩收起那一刻；已经收起或没有帧：不再醒', () => {
+    expect(windowMemoryClockDelaysMs(now - 70_000, now)).toEqual([20_000]);
+    expect(windowMemoryClockDelaysMs(now - 90_000, now)).toEqual([]);
+    expect(windowMemoryClockDelaysMs(null, now)).toEqual([]);
   });
 });
 
@@ -120,7 +135,7 @@ describe('windowMemoryTooltipLines', () => {
     expect(lines.at(-1)).toBe('window.memoryOom:1');
   });
 
-  test('过期读数：不列旧限额，改说「读数已过期」并带上相对采样时刻', () => {
+  test('过期读数：不列旧限额，改说「读数已过期」并带上最后一帧的相对时刻', () => {
     const now = Date.now();
     const tt = (key: string, options?: Record<string, unknown>) =>
       options && 'ago' in options
@@ -128,7 +143,11 @@ describe('windowMemoryTooltipLines', () => {
         : options && 'n' in options
           ? `${key}:${options.n}`
           : key;
-    const lines = windowMemoryTooltipLines(tt, sample({ sampledAt: now - 3 * DAY_MS }), { now });
+    const lines = windowMemoryTooltipLines(
+      tt,
+      sample({ sampledAt: now + DAY_MS, receivedAt: now - 3 * DAY_MS }),
+      { now }
+    );
     expect(lines).toEqual([
       'window.memory: 1.00 GB',
       'window.memoryStale:settings.share.time.daysAgo:3',
@@ -182,15 +201,24 @@ describe('WindowMemoryBadge', () => {
     expect(render(sample(), '@9')).toBe('');
   });
 
-  test('到达时就已过期的读数：灰显、不挂红点、提示里没有旧限额', () => {
+  test('节点时钟慢了几天、帧却刚到：照常显示限额与档位，不灰显', () => {
+    const now = Date.now();
+    const html = render(sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now, current: 9 * GB }));
+    expect(html).toContain('data-tone="blocked"');
+    expect(html).not.toContain('data-stale');
+    expect(html).toContain('window.memoryLimitHigh');
+  });
+
+  test('一分钟多没有新帧：灰显、不挂红点、提示里没有旧限额也没有 ∞', () => {
     const now = Date.now();
     const html = render(
-      sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now, current: 9 * GB, oomFlag: true })
+      sample({ receivedAt: now - 70_000, current: 9 * GB, high: 0, oomFlag: true })
     );
     expect(html).toContain('data-tone="stale"');
     expect(html).toContain('data-stale="true"');
     expect(html).toContain('window.memoryStale');
     expect(html).not.toContain('window.memoryLimitHigh');
+    expect(html).not.toContain('∞');
     expect(html).not.toContain('window-memory-oom-dot');
   });
 

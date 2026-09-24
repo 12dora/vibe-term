@@ -109,6 +109,54 @@ describe('memoryLimitsReleaseReport', () => {
   });
 });
 
+describe('memoryLimitsReleaseReport：网关给的 stale / sampledAgeMs', () => {
+  const zeros = { high: 0, max: 0, swapMax: 0 };
+
+  test('标了 stale 的窗口即便限额被清成 0 也算「确认不了」，不当成已放开', () => {
+    const marked = { ...win({ windowId: '@1', ...zeros }), stale: true } as SessionsMemoryWindow;
+    expect(memoryLimitsReleaseReport(response([marked]), UNLIMITED, NOW)).toEqual({
+      lingering: [],
+      stale: { count: 1, oldestSampledAt: NOW - 1_000 },
+    });
+  });
+
+  test('标了 stale 的窗口保留着真实限额：同样只说确认不了，不点名为「仍带限额」', () => {
+    const marked = { ...win({ windowId: '@1' }), stale: true } as SessionsMemoryWindow;
+    const report = memoryLimitsReleaseReport(response([marked]), UNLIMITED, NOW);
+    expect(report?.lingering).toEqual([]);
+    expect(report?.stale?.count).toBe(1);
+  });
+
+  test('节点时钟慢了一小时：按网关给的读数年龄判，新读数照样算新鲜', () => {
+    const skewed = {
+      ...win({ windowId: '@1', windowName: 'vim', sampledAt: NOW - 3_600_000 }),
+      sampledAgeMs: 2_000,
+    } as SessionsMemoryWindow;
+    expect(memoryLimitsReleaseReport(response([skewed]), UNLIMITED, NOW)).toEqual({
+      lingering: ['jiefa-app / vim'],
+      stale: null,
+    });
+  });
+
+  test('节点时钟快了几天：读数年龄说旧就是旧，采样时刻按年龄折算到浏览器时钟', () => {
+    const old = {
+      ...win({ windowId: '@1', sampledAt: NOW + 5 * DAY_MS }),
+      sampledAgeMs: 2 * DAY_MS,
+    } as SessionsMemoryWindow;
+    expect(memoryLimitsReleaseReport(response([old]), UNLIMITED, NOW)).toEqual({
+      lingering: [],
+      stale: { count: 1, oldestSampledAt: NOW - 2 * DAY_MS },
+    });
+  });
+
+  test('读数未过期且三项都是 0：确实已放开，不提示', () => {
+    const released = { ...win({ windowId: '@1', ...zeros }), sampledAgeMs: 1_000 };
+    expect(
+      memoryLimitsReleaseReport(response([released as SessionsMemoryWindow]), UNLIMITED, NOW)
+    ).toBeNull();
+  });
+});
+
 describe('memoryLimitsReleaseLines', () => {
   const t = (key: string, options?: Record<string, unknown>) =>
     options ? `${key}:${JSON.stringify(options)}` : key;

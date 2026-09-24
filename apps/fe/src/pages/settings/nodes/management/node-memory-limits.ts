@@ -21,9 +21,11 @@ import {
 } from '@vibeterm/api-client';
 import { type WindowMemorySettings, compareSemver } from '@vibeterm/shared';
 import {
+  type MemoryLimitsBatchWrite,
   type MemoryLimitsDraft,
   type MemoryLimitsErrors,
   memoryLimitsDraft,
+  releasedMemoryLimits,
   submitMemoryLimits,
 } from '../memory-limits-form';
 import { actionErrorText } from './errors';
@@ -35,7 +37,7 @@ export const MIN_WINDOW_MEMORY_SETTINGS_VERSION = '2.7.0';
 /** 老节点没有这个端点：入口原样转发目标的 404 / 405。 */
 const UNSUPPORTED_STATUS = new Set([404, 405]);
 
-/** 批量写入的并发上限：PUT 很轻，压这么几台只是为了别把转发器排满。 */
+/** 批量写入的并发上限（每台至多一次 GET + 一次 PUT）：请求很轻，压这么几台只是为了别把转发器排满。 */
 export const MEMORY_LIMITS_CONCURRENCY = 3;
 
 /** 一台节点不能改内存限额的原因；`null` 表示可以改。 */
@@ -134,7 +136,7 @@ export interface MemoryLimitsBatchSummary {
 
 export interface MemoryLimitsBatchParams {
   targets: NodeRow[];
-  settings: WindowMemorySettings;
+  write: MemoryLimitsBatchWrite;
   io: MemoryLimitsIo;
   t: Translate;
   concurrency?: number;
@@ -143,7 +145,20 @@ export interface MemoryLimitsBatchParams {
 }
 
 /**
- * 逐台 PUT 同一份限额，并发上限 `MEMORY_LIMITS_CONCURRENCY`。一台失败不影响其余几台，
+ * 这台节点要写入的整条记录（PUT 只收五个字段齐全的记录）：`release` 先读它现在的记录，
+ * 只翻 `enabled`，额度与采样周期都保留它自己的。
+ */
+async function batchSettingsFor(
+  write: MemoryLimitsBatchWrite,
+  row: NodeRow,
+  io: MemoryLimitsIo
+): Promise<WindowMemorySettings> {
+  if (write.kind === 'replace') return write.settings;
+  return releasedMemoryLimits(await io.get(row));
+}
+
+/**
+ * 逐台写入，并发上限 `MEMORY_LIMITS_CONCURRENCY`。一台失败不影响其余几台，
  * 失败清单按**输入顺序**收集——并发下的完成次序会让汇总文案时好时坏。
  */
 export async function runMemoryLimitsBatch(
@@ -160,7 +175,7 @@ export async function runMemoryLimitsBatch(
       if (!row) return;
       let message: string | null = null;
       try {
-        await p.io.put(row, p.settings);
+        await p.io.put(row, await batchSettingsFor(p.write, row, p.io));
       } catch (err) {
         message = memoryLimitsErrorText(p.t, err);
       }

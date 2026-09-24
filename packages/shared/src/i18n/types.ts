@@ -2288,6 +2288,7 @@ export type TranslationKey =
   | 'nodes.memory.bulkDescription'
   | 'nodes.memory.bulkEffectHint'
   | 'nodes.memory.chooseMode'
+  | 'nodes.memory.keepInterval'
   | 'nodes.memory.targets'
   | 'nodes.memory.skipped'
   | 'nodes.memory.noTargets'
