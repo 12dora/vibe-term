@@ -1,17 +1,21 @@
 // 直连协商的两条转发 REST：换 connectionId、authorize。失败按 body 里的 code 分流：
-// 等 primary（404/409）、目标给不出直连（DIRECT_UNAVAILABLE，整段冷却）、链路打不通
-// （NODE_UNREACHABLE，计入 authorize 熔断）、其余 5xx 退避、4xx 不重试。
+// 等 primary（404/409）、目标给不出直连（DIRECT_UNAVAILABLE，整段停放）、目标这次没给出
+// （DIRECT_BUSY / 老 node 带一过性 reason 的 DIRECT_UNAVAILABLE，计入熔断并守 retryAfterMs）、
+// 链路打不通（NODE_UNREACHABLE，计入 authorize 熔断）、其余 5xx 退避、4xx 不重试。
 
 import { CONNECTION_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import {
   noteAuthorizeFailure,
   noteAuthorizeSuccess,
+  noteDirectBusy,
   noteDirectUnavailable,
 } from './direct-authorize-breaker';
 import {
-  DIRECT_UNAVAILABLE_CODE,
   DirectAuthorizeError,
+  type ErrorBody,
   NODE_UNREACHABLE_CODE,
+  classifyDirectAuthorizeFailure,
+  readErrorBody,
   readErrorCode,
   throwIfPrimaryWaitCode,
 } from './direct-carrier-errors';
@@ -33,17 +37,29 @@ export interface DirectRestContext {
   signal: AbortSignal;
 }
 
-function describeFailure(label: string, status: number, code: string): string {
-  return `${label} failed (${status}${code ? ` ${code}` : ''})`;
+function describeFailure(
+  label: string,
+  status: number,
+  code: string,
+  reason: string | null = null
+): string {
+  const detail = [code, reason].filter(Boolean).join(' ');
+  return `${label} failed (${status}${detail ? ` ${detail}` : ''})`;
 }
 
 /** 转发层 / 目标 node 的 5xx 记账。 */
-function noteServerFailure(ctx: DirectRestContext, code: string): void {
-  if (code === DIRECT_UNAVAILABLE_CODE) {
+function noteServerFailure(ctx: DirectRestContext, failure: ErrorBody): void {
+  const verdict = classifyDirectAuthorizeFailure(failure.code, failure.reason);
+  if (verdict === 'unavailable') {
     noteDirectUnavailable(ctx.nodeId, ctx.now());
     return;
   }
-  const kind = code === NODE_UNREACHABLE_CODE ? 'node-unreachable' : 'authorize-unavailable';
+  if (verdict === 'busy') {
+    noteDirectBusy(ctx.nodeId, ctx.now(), failure.retryAfterMs);
+    return;
+  }
+  const kind =
+    failure.code === NODE_UNREACHABLE_CODE ? 'node-unreachable' : 'authorize-unavailable';
   noteAuthorizeFailure(ctx.nodeId, ctx.now(), kind);
 }
 
@@ -71,7 +87,8 @@ export async function lookupConnectionId(
   const code = await readErrorCode(res);
   throwIfPrimaryWaitCode(res.status, code, 'connection lookup');
   if (res.status < 500) return null;
-  if (code === NODE_UNREACHABLE_CODE) noteServerFailure(ctx, code);
+  if (code === NODE_UNREACHABLE_CODE)
+    noteAuthorizeFailure(ctx.nodeId, ctx.now(), 'node-unreachable');
   throw new DirectAuthorizeError(
     describeFailure('connection lookup', res.status, code),
     false,
@@ -104,16 +121,16 @@ export async function requestAuthorize(
     signal: ctx.signal,
   });
   if (!res.ok) {
-    const code = await readErrorCode(res);
+    const failure = await readErrorBody(res);
     // connectionId 在 GET 与 authorize 之间失效（primary 重连 / 又开了一个标签页）：
     // 这不是配置错误，按「等 primary」处理，别当成 4xx 永久失败卡死在 failed。
-    throwIfPrimaryWaitCode(res.status, code, 'authorize');
+    throwIfPrimaryWaitCode(res.status, failure.code, 'authorize');
     // 4xx 是配置/权限问题，重试没有意义；5xx 退避重试，由 authorize 熔断限流。
-    if (res.status >= 500) noteServerFailure(ctx, code);
+    if (res.status >= 500) noteServerFailure(ctx, failure);
     throw new DirectAuthorizeError(
-      describeFailure('authorize', res.status, code),
+      describeFailure('authorize', res.status, failure.code, failure.reason),
       res.status < 500,
-      code
+      failure.code
     );
   }
   noteAuthorizeSuccess(ctx.nodeId);

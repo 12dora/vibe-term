@@ -46,6 +46,7 @@ import { createDeferredDiagnosticsSource } from '@vibeterm/ws-client/direct/type
 import i18n from 'i18next';
 import {
   type DirectLinkClientLike,
+  clearDirectUnavailableVerdict,
   isDirectLinkUnavailable,
   watchDirectNegotiation,
 } from './direct-link-availability';
@@ -156,6 +157,23 @@ function createDirectController(
     createNodeApiClient('self')
   );
   return defaultController(loaded, nodeId, connection, cid, apiClient);
+}
+
+/** 建控制器并挂上诊断源与 bulk 通道；显式重试顺带撤掉控制器侧的 DIRECT_UNAVAILABLE 停放。 */
+function mountDirectController(
+  loaded: DirectLinkModule,
+  spec: DirectControllerSpec,
+  diagnostics: ReturnType<typeof createDeferredDiagnosticsSource>,
+  explicit: boolean
+): DirectCarrierController | null {
+  const created = createDirectController(loaded, spec);
+  if (!created) return null;
+  diagnostics.attach(created.diagnosticsSource);
+  // 文件面板只拿得到 nodeId，bulk 通道按 nodeId 登记（F3-2）。
+  loaded.registerBulkClient(spec.nodeId, new loaded.BulkClient(created));
+  if (explicit) created.retryDirect();
+  else created.start();
+  return created;
 }
 
 function defaultPageResume(listener: () => void): () => void {
@@ -283,7 +301,8 @@ function whenConnectionReady(connection: GatewayConnection, run: () => void): ()
  * 标志裁决：先 dispose 的话加载完成后什么都不做，不会留下没人 stop 的 `RTCPeerConnection`。
  *
  * 负缓存命中（含协商途中新记上的）时直连「停放」：负结论过期后，下一次 primary READY 或
- * 页面恢复再起一次，不在这之前发任何协商请求。
+ * 页面恢复再起一次，不在这之前发任何协商请求；唯一例外是用户显式 `retryDirect()`，
+ * 它撤掉「目标给不出直连」的负结论并立即重试。
  */
 function attachDirectLink(
   nodeId: string,
@@ -306,43 +325,41 @@ function attachDirectLink(
     controller = null;
     diagnostics.attach(null);
   };
-  const parkDirect = () => {
+  /** 停放期间只有用户显式重试（`explicit`）能撤掉「给不出直连」的负结论；自动信号只等它过期。 */
+  const resumeParked = (explicit = false) => {
+    if (disposed || controller || !parked) return;
+    const entry = entryNodeIdNow();
+    if (explicit) clearDirectUnavailableVerdict(nodeId, entry);
+    if (!isDirectLinkUnavailable(nodeId, entry)) launchDirect(explicit);
+  };
+  const markParked = () => {
     parked = true;
+    connection.setDirectRetry(() => resumeParked(true));
+  };
+  const parkDirect = () => {
     stopDirect();
+    markParked();
   };
 
-  const startDirect = () => {
+  const launchDirect = (explicit: boolean) => {
     parked = false;
     const pending = (wiring.loadDirect ?? loadDirectModule)().then((loaded) => {
       if (!loaded || disposed || controller) return;
-      if (isDirectLinkUnavailable(nodeId, entryNodeIdNow())) {
-        parked = true;
-        return;
-      }
+      if (isDirectLinkUnavailable(nodeId, entryNodeIdNow())) return markParked();
       const spec = { nodeId, connection, cid, wiring, onUnavailable: parkDirect };
-      const created = createDirectController(loaded, spec);
-      if (!created) return;
-      direct = loaded;
-      controller = created;
-      diagnostics.attach(created.diagnosticsSource);
-      // 文件面板只拿得到 nodeId，bulk 通道按 nodeId 登记（F3-2）。
-      loaded.registerBulkClient(nodeId, new loaded.BulkClient(created));
-      created.start();
+      controller = mountDirectController(loaded, spec, diagnostics, explicit);
+      if (controller) direct = loaded;
     });
     directLinkPending.set(connection, pending);
   };
 
-  const cancelReadyWatch = whenConnectionReady(connection, startDirect);
+  const cancelReadyWatch = whenConnectionReady(connection, () => launchDirect(false));
 
-  const resumeParked = () => {
-    if (disposed || controller || !parked) return;
-    if (!isDirectLinkUnavailable(nodeId, entryNodeIdNow())) startDirect();
-  };
   const retryDirectIfDown = () => {
     if (disposed) return;
     if (!controller) return resumeParked();
     if (controller.getState() === 'active') return;
-    controller.retryDirect();
+    controller.retry();
   };
   const stopPageResume = (wiring.pageResume ?? defaultPageResume)(retryDirectIfDown);
   const stopReadyResume = connection.client.onStateChange((state) => {

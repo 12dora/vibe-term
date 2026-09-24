@@ -16,11 +16,18 @@
 //     nodeId 分不出这两种情况。所以该 node 一旦重新登录成功就把负结论清掉
 //     （`markLoggedIn` 是唯一入口），不让一次误判把直连按住半小时。
 //
-// 目标 node 自己答 `503 DIRECT_UNAVAILABLE`（眼下给不出直连）也记一笔，但只压 10 分钟：
-// 那是目标当前的状态（插件没装、指纹没就绪），不像代答 401 那样是入口的固有属性。
-// 转发器的 `503 NODE_UNREACHABLE` 是链路抖动，不进这里，由直连控制器的 authorize 熔断限流。
+// 目标 node 自己答 `503 DIRECT_UNAVAILABLE`（给不出直连：原生栈没装 / 被关掉）也记一笔，
+// 但只压 10 分钟：那是目标当前的状态，不像代答 401 那样是入口的固有属性；用户显式重试可以清掉它。
+// 一过性失败——`503 DIRECT_BUSY`，以及老 node 带 `timeout|aborted|failed|capacity` reason 的
+// `DIRECT_UNAVAILABLE`——与转发器的 `503 NODE_UNREACHABLE` 一样不进这里，由直连控制器的
+// authorize 熔断限流。
 //
 // 缓存只在内存里（刷新即失效）。
+
+import {
+  classifyDirectAuthorizeFailure,
+  readErrorBody,
+} from '@vibeterm/ws-client/direct/direct-carrier-errors';
 
 /** 负结论的有效期。 */
 export const DIRECT_LINK_NEGATIVE_TTL_MS = 30 * 60_000;
@@ -28,7 +35,14 @@ export const DIRECT_LINK_NEGATIVE_TTL_MS = 30 * 60_000;
 export const DIRECT_UNAVAILABLE_TTL_MS = 10 * 60_000;
 
 const RTC_AUTHORIZE_RELATIVE_PATH = '/api/rtc/authorize';
-const DIRECT_UNAVAILABLE_CODE = 'DIRECT_UNAVAILABLE';
+
+/** `foreign-answer`：协商被入口代答成 401；`direct-unavailable`：目标答给不出直连。 */
+export type DirectLinkVerdict = 'foreign-answer' | 'direct-unavailable';
+
+const VERDICT_TTL_MS: Record<DirectLinkVerdict, number> = {
+  'foreign-answer': DIRECT_LINK_NEGATIVE_TTL_MS,
+  'direct-unavailable': DIRECT_UNAVAILABLE_TTL_MS,
+};
 
 /** 直连协商的两条端点（相对目标 node 的路径，不含 `/n/<id>` 前缀）。 */
 const NEGOTIATION_PATHS = new Set(['/api/mesh/connection', RTC_AUTHORIZE_RELATIVE_PATH]);
@@ -36,7 +50,7 @@ const NEGOTIATION_PATHS = new Set(['/api/mesh/connection', RTC_AUTHORIZE_RELATIV
 /** ICE 配置打 **entry** 的 `/api/mesh/rtc-config`，不必转发到目标 node。 */
 export const RTC_CONFIG_RELATIVE_PATH = '/api/mesh/rtc-config';
 
-const unavailableUntil = new Map<string, number>();
+const unavailableUntil = new Map<string, { until: number; verdict: DirectLinkVerdict }>();
 
 function cacheKey(entryNodeId: string, nodeId: string): string {
   return `${entryNodeId}→${nodeId}`;
@@ -46,11 +60,14 @@ export function markDirectLinkUnavailable(
   nodeId: string,
   entryNodeId: string | null,
   now: number = Date.now(),
-  ttlMs: number = DIRECT_LINK_NEGATIVE_TTL_MS
+  verdict: DirectLinkVerdict = 'foreign-answer'
 ): void {
   // 入口身份未知：记了也查不中，索性不记（下一次协商照常重试一遍）。
   if (!entryNodeId) return;
-  unavailableUntil.set(cacheKey(entryNodeId, nodeId), now + ttlMs);
+  unavailableUntil.set(cacheKey(entryNodeId, nodeId), {
+    until: now + VERDICT_TTL_MS[verdict],
+    verdict,
+  });
 }
 
 export function isDirectLinkUnavailable(
@@ -60,11 +77,23 @@ export function isDirectLinkUnavailable(
 ): boolean {
   if (!entryNodeId) return false;
   const key = cacheKey(entryNodeId, nodeId);
-  const until = unavailableUntil.get(key);
-  if (until === undefined) return false;
-  if (until > now) return true;
+  const entry = unavailableUntil.get(key);
+  if (entry === undefined) return false;
+  if (entry.until > now) return true;
   unavailableUntil.delete(key);
   return false;
+}
+
+/**
+ * 用户显式重试直连：只撤掉「目标给不出直连」那一种负结论（目标的状态可能已经变了）；
+ * 代答 401 是入口的固有属性，重试也不会变，保留。返回是否清掉了一条。
+ */
+export function clearDirectUnavailableVerdict(nodeId: string, entryNodeId: string | null): boolean {
+  if (!entryNodeId) return false;
+  const key = cacheKey(entryNodeId, nodeId);
+  if (unavailableUntil.get(key)?.verdict !== 'direct-unavailable') return false;
+  unavailableUntil.delete(key);
+  return true;
 }
 
 /**
@@ -103,29 +132,23 @@ async function answeredByForeignNode(res: Response, nodeId: string): Promise<boo
   }
 }
 
-/** 目标 node 自己答的「眼下给不出直连」。 */
+/** 目标 node 自己答的「给不出直连」；一过性失败（DIRECT_BUSY 等）不算。 */
 async function directUnavailable(res: Response): Promise<boolean> {
-  try {
-    const body = (await res.clone().json()) as { code?: unknown } | null;
-    return body?.code === DIRECT_UNAVAILABLE_CODE;
-  } catch {
-    return false;
-  }
+  const body = await readErrorBody(res.clone());
+  return classifyDirectAuthorizeFailure(body.code, body.reason) === 'unavailable';
 }
 
-/** 这条协商响应该压多久的负结论；`0` / `null` 表示不压。 */
-function negativeVerdictTtl(
+/** 这条协商响应该记哪种负结论；`null` 表示不记。 */
+function negativeVerdict(
   res: Response,
   relative: string,
   nodeId: string
-): Promise<number> | null {
+): Promise<DirectLinkVerdict | null> | null {
   if (res.status === 401) {
-    return answeredByForeignNode(res, nodeId).then((hit) =>
-      hit ? DIRECT_LINK_NEGATIVE_TTL_MS : 0
-    );
+    return answeredByForeignNode(res, nodeId).then((hit) => (hit ? 'foreign-answer' : null));
   }
   if (res.status === 503 && relative === RTC_AUTHORIZE_RELATIVE_PATH) {
-    return directUnavailable(res).then((hit) => (hit ? DIRECT_UNAVAILABLE_TTL_MS : 0));
+    return directUnavailable(res).then((hit) => (hit ? 'direct-unavailable' : null));
   }
   return null;
 }
@@ -153,10 +176,9 @@ export function watchDirectNegotiation(
       const routed = relative === RTC_CONFIG_RELATIVE_PATH ? RTC_CONFIG_RELATIVE_PATH : path;
       return target.fetch(routed, init).then((res) => {
         if (!NEGOTIATION_PATHS.has(relative)) return res;
-        const verdict = negativeVerdictTtl(res, relative, nodeId);
-        void verdict?.then((ttlMs) => {
-          if (!ttlMs) return;
-          markDirectLinkUnavailable(nodeId, entryNodeId(), Date.now(), ttlMs);
+        void negativeVerdict(res, relative, nodeId)?.then((verdict) => {
+          if (!verdict) return;
+          markDirectLinkUnavailable(nodeId, entryNodeId(), Date.now(), verdict);
           onUnavailable();
         });
         return res;
