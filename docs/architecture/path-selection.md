@@ -71,8 +71,20 @@ make-before-break：upgrade 拨出的直连**先 hold**，中继继续载流。�
 
 - **每对端一条 live**：interactive / bulk 共用这条链路。`decidePath(peerId, streamClass)` 已编码 bulk 门槛（中继须同时好出 40 ms 与 20%），未接双 live。
 - auto **未降级**时，2.3.7 推入的 dc / ws-secure **立刻安装**。首次竞速中继先成、直连后到也立刻升，慢 DC 再靠 15 s 滞环降下去。
-- 无新 ctl / 协议字段。`relay` 模式靠关入站直连让对端熔断退避。
+- 慢 DC 降到中继仍不新增选路字段。测量隔离另有一条 ctl，见下节，不要和这里的滞环混。
 - 重掷（下节）只在 live 仍是 dc 时发生；`relay` 模式先拆掉 DC live，重掷因 `transport≠dc` 不再起。
+
+### 测量中的直连（pending-measure）
+
+持有方在升回判定完成前，把打到这条直连上的用户流以 `rst` `pending-measure` 拒掉（请求还没进对端业务）。接收方的反应按传输分开：
+
+- **只有直连**（`dc` / `ws-secure`）上的 `pending-measure` 才把该节点隔离 `REMOTE_HOLD_MS` = `(ROUTE_PROMOTE_SAMPLES + 1) × 5 s` = **20 s**。旧版本不发 `route-promoted` 时，也不会在第三拍 ping 之前探回这条 DC。`stale-link` / `parked` 仍可重放这一次请求，**不**隔离整节点。
+- 隔离期内 **auto** 在 live DC 旁边借一条中继给用户流：不退役 DC、不标 `degraded`、不武装选路退避。这条旁路中继接对端打进来的用户流并回 ctl ping（它在对端可能已经是 live）。`direct` 模式不再为这次转发另拨一条随手丢掉的中继，这次重试直接拒绝。
+- 持有方测量通过后发 ctl `{ "t": "route-promoted" }`。接收方解除隔离并关掉旁路（`reason=route-promoted`）。隔离到期关 `hold-expired`。DC 被拆且原因不是停机 / 吊销、旁路还在、又没有别的 live 时，旁路装成 live，而不是先拆掉再重拨。停机 / 吊销则关掉旁路。
+
+入口 failover：同一传输上，流在 HELLO / ack 之前被拆，只允许再试 **一次**（`SAME_TRANSPORT_PRE_ACK_RETRIES`）。没有 HELLO 可等时，流至少要活过一个 RTT（夹在 50–250 ms）才算这次打开成功，避免 delay 0 的热循环。连续 3 轮拿不到 HELLO 仍整段收手。
+
+POST 在派发前被拒（`pending-measure` / `stale-link` / `parked`）时，只有**声明了 `Content-Length` 且 ≤ 64 KiB** 的请求体会先缓冲再重放一次。没有长度、或更大的流式上传原样透传，不重放。GET / HEAD 没有请求体，按原有次数换链路。
 
 ### 现网事故（2026-09-13）
 

@@ -263,7 +263,7 @@ SSH 设备上若用户级 systemd 其实可用，但会话缺 `XDG_RUNTIME_DIR` 
 ## 注意事项
 
 - `set-property --runtime` 不持久，scope 随 pane 消亡；不要指望重启后属性还在 unit 文件里。把某一档改成 `0`、三个都改成 `0`、或关掉功能，只会给**当前读数等于 VibeTerm 记过的某一档**的 scope（含本 server 的孤儿 `tmux-spawn-*.scope`）写 `infinity`。用户自己用 drop-in 或 `set-property` 设的其它数字留着。退出码 0 不算数，下一次采样读到的 cgroup 文件才算；读数仍有限就退避再试，不会每 5 秒重写。
-- 本地宿主脚本硬超时默认 10 s，超时 `exit 124`；不要把挂死的 `systemctl` 当成采样成功。
+- 采样脚本硬超时默认 10 s，超时 `exit 124`；不要把挂死的 `ps` / `systemctl show` 当成采样成功。写入限额的 `set-property` 不走这一个 10 s：按最多 8 个 scope 分段，每段 `min(10s + N×1s, 60s)`，124 只把没打出 `VTSET` 行的 scope 算超时。
 - **`MemoryHigh`（软限额）**：内核开始回收 / 限速该 cgroup 的内存页，**不杀进程**。徽标在 ≥ 75% 时变黄，就是在逼近这一档。
 - **`MemoryMax`（硬限额）**：用量越过上限后由内核 OOM 杀掉 pane 内进程。配合 [tmux 进程存活](./tmux-process-survival.md) 里的 `DefaultOOMPolicy=continue`：被杀的是超限进程，systemd **不会**因此拆掉整个 scope、把还活着的 shell 一起停掉。没有 `continue` 时，一次 OOM 仍可能让整窗消失。
 - SSH 设备上的脚本在**远端**跑，限额套的是远端 pane 的 scope，不是跑网关的那台机器。

@@ -77,19 +77,25 @@ endpoint recovered node=<id> addr=<host:port>
 | 冷却阶梯 | 30s → 60s → 120s … 上限 **30min** |
 | 复位条件 | 通道保持健康 **≥ 60s** |
 
-- `cooldownLevel` 在冷却过期后**仍然保留**，下次再触发直接用更长的一档。短命通道（开了不到 60s 就死）计一次失败，不会把 level 降回去。
-- 复位只认「健康满 60s」。`noteSuccess()` 是 no-op；`notePeerChanged()`（endpoints / inventory / `direct_capable` 变化）只清掉在途 attempt 标记，不清零计数。
+- `cooldownLevel` 在冷却过期后**仍然保留**，下次再触发直接用更长的一档。短命通道不会把 level 降回去。
+- 拨号失败计数的复位只认「健康满 60s」。`noteSuccess()` 是 no-op；`notePeerChanged()`（清单 / `direct_capable` 变化本身）只清掉在途 attempt 标记，不清零计数。endpoint 变化、能力或版本变化走下面的 rearm，不是这条。
 - 失败按 attempt / session id 去重：同一次尝试从多条路径报错只计一次。
-- 熔断器 `skipKinds` 排除本地信令状态错误；到达永久禁用阈值后每 10 min 允许一次 `forceProbe`。
+- 熔断器 `skipKinds` 排除本地信令状态错误；到达 `disabled` 后每 10 min 允许一次 `forceProbe`。`disabled` 只在这条 DC 健康满 60 s（`noteHealthy`）后解除；通道刚建立（`noteChannelEstablished`）不解，约 10 s 就夭折的 DC 不算恢复。
 
-**算失败**：拨号失败，以及通道打开后的异常关闭——`liveness-timeout`、`missed-pong`、`timeout`、`ice`、`channel-error`、`channel-closed`、`protocol`、`transport-lost`。
+**算失败**：拨号没连上，以及**对端没报 `dc-stable-hold`** 时通道打开后的异常关闭——`liveness-timeout`、`missed-pong`、`timeout`、`ice`、`channel-error`、`channel-closed`、`protocol`、`transport-lost`。
 
-**不算失败**（有意的关闭）：`stopped`、`revoked`、`idle`、`replaced`、`stale`、`not-trusted`、`lower-priority`、`simultaneous-dial`、`superseded`。`dialDc` 对 `AbortError` 及消息里含 `abort` 的错误也不计，避免 `stop()` 与竞态 abort 误触发。注意被取消的拨号若晚到失败仍照记进熔断器——否则「取消」会把 DC 坏掉这件事从账上抹掉。同一 `peer+attemptId` 的 `beginAttempt` / `noteFailure` 幂等，竞速 abort 后 `settleAbandonedDcDial` 不会再记一笔。熔断器只活在进程内存里，gateway 重启即清零。
+**不算拨号失败**：
 
-### 冷却期间
+- 有意关闭：`stopped`、`revoked`、`idle`、`replaced`、`stale`、`not-trusted`、`lower-priority`、`simultaneous-dial`、`superseded`、`dc-declined`、`dc-promote-reject`、`route-measure-reject`。`dc-declined` 是对端 decline，这次拨号到此结束，不按 glare 再开 PC。
+- 对端 `link.hello` 报了 `dc-stable-hold` 时，建立之后、寿命短于 60 s 的断开（不论这条 DC 有没有被证明）：记一次不稳定连击，走 `noteUnstable`。冷却 60 s 起、翻倍、封顶 30 min，`lastFailureKind=unstable-dc`，**不抬** `level` / `consecutiveFailures`。连击只在这条 DC 存活满 60 s 后清掉。对端没报该能力位时仍按上一行计失败——旧对端不会把中继留到 DC 稳住，本端若也不计失败，会在对端已经退避时继续拨。
 
-不自动拨 DC，保持 ws-secure / relay。`armDcUpgradeRetry` 只在 `until` 时刻排**一次**探测；熔断处于 `disabled` 时不再排周期探测，
-要等显式 rearm（peer 重连、指纹 / endpoint 变化、中继 uplink 切换、手动探测）。
+`dialDc` 对 `AbortError` 及消息里含 `abort` 的错误也不计，避免 `stop()` 与竞态 abort 误触发。注意被取消的拨号若晚到失败仍照记进熔断器——否则「取消」会把 DC 坏掉这件事从账上抹掉。同一 `peer+attemptId` 的 `beginAttempt` / `noteFailure` 幂等，竞速 abort 后 `settleAbandonedDcDial` 不会再记一笔。熔断器只活在进程内存里，gateway 重启即清零。
+
+### 冷却期间与 rearm
+
+不自动拨 DC，保持 ws-secure / relay。`armDcUpgradeRetry` 只在 `until` 时刻排**一次**探测；`disabled` 时不再排周期探测，只留 10 min 一次的 `forceProbe`。
+
+relay / ws-secure 会话替换（中继闪断、顶号）**不 rearm、不降档**。在线状态离开后再回来，且离开 ≥ 90 s（`DC_PRESENCE_ABSENCE_MS`，与中继 presence 陈旧窗口相同），才降**一档**并结束当前冷却（`source=presence-return`，同时清掉 `disabled`，以便再探一次）。短于 90 s 的离线忽略。下面几项是**整档清零**（`level_after=0`，并立刻再探）：本机指纹变化、对端 endpoint 变化、中继 uplink 切换、对端能力或版本变化、手动探测。能力比较发生在写 `peer_cache` 之前，中继名册也会触发；版本和能力都没变则不 rearm。日志 `[mesh][rtc] breaker rearm peer=… source=… level_before=… level_after=…`。
 
 **后台升级扫描的门闩**（`peer-dc-upgrade-gate.ts`）：熔断 `disabled`，或最近一次失败码属于重试也打不穿的永久码
 （`no_srflx` / `no_candidates` / `stun_unconfigured` / `not_direct_capable` / `rtc_unavailable`）时，15 s 的 endpoint 扫描
@@ -99,13 +105,34 @@ endpoint recovered node=<id> addr=<host:port>
 强制探测各有一个入口：
 
 - gateway：`PeerManager.forceDcProbe(nodeId)`（无 HTTP 接口 / UI 按钮）。
-- 浏览器：`GatewayConnection.retryDirect()` → `DirectCarrierController.retryDirect()`，冷却中恰好放行一次。`retry()` 走同一条路径，不清零失败计数；连接 ACTIVE 本身也不清零，仍要满 60s 才 reset。
+- 浏览器：用户 `GatewayConnection.retryDirect()` 先撤掉 `DIRECT_UNAVAILABLE` 停放，再强制探一次（冷却中恰好一次，越不过 `DIRECT_BUSY` 的最短间隔）。`pageshow` / 可见恢复走 `retry()`，**不**撤停放；最近一次是 `NODE_UNREACHABLE` 时冷却中也不强制。两者都不清零失败计数。连接 ACTIVE 本身也不清零，仍要满 60 s 才 reset。
 
-### 浏览器侧：协商起点与 authorize 熔断
+### 浏览器侧：协商起点与 authorize
 
 - **协商在 primary `READY`（收到 `HELLO_S2C`）之后才开始**。新网关在 `HELLO_S2C.capabilities` 捎带 `connection-id:<id>`（登记后的会话 id）：客户端跳过转发的 `GET /api/mesh/connection`，`rtc-config` 打 **entry** 的 `/api/mesh/rtc-config`（可与本地 `createOffer` 重叠），只剩 **1 次转发** `POST /n/:T/api/rtc/authorize`。老网关无该能力串时仍先 `GET connection`（转发）再 authorize，共 2 次转发。`/mesh/ws` 的 3 s 首屏闸门不再把直连 attempt 判失败：`signalingReady() === false` 时 REST/ICE 照开，offer 进 outbox，mesh 连上后泵一次。
 - 服务端配合：`/api/mesh/connection` 带 `cid` 但尚未登记时返回 404 `NO_CONNECTION` **加 `retryAfterMs: 500`**，客户端据此退避而不是立刻重打（无 `connection-id:` 的旧路径仍走这条）。
-- `/api/rtc/authorize` 返回 5xx 时进 per-node **authorize 熔断**（`direct-authorize-breaker.ts`）：连续 3 次失败后冷却 30 s 起跳、封顶 5 min，冷却中不再发起协商。熔断器是**模块级、按 nodeId 共享**的，切路由重建 controller 不会把计数清零；`retryDirect()` 仍放行一次探测。熔断 key 带**登录世代**：登出 / 重新登录（`NodeSessionGuard` 重登成功）时 `resetDirectAuthorizeBreakers()` 让世代 +1 并清空全部冷却，上一个会话留下的冷却不会压住新会话。`pageshow` / 可见恢复时若直连非 `active` 也会 `retryDirect()`。
+
+`node-datachannel@0.33.1`（libdatachannel 0.24.x）在空 `PeerConnection` 上 `localDescription()` 一直是 `null`，裸 `setLocalDescription()` 会抛出接不住的 C++ 异常并让进程 abort。浏览器才是 `sess` 的 offerer，目标节点是 answerer，不能靠空 PC 铸出 `fp_node`。2.8.0 及更早的 `createBrowser` 两者都不做，`waitLocalFingerprint` 干等满 15 s；入口转发预算大约 5–7 s 先到，浏览器只看到 503 `NODE_UNREACHABLE`，目标侧没有响应。现在在**同一条** answerer PC 上：`createDataChannel('vt-fp-probe')` 同步拿到带 `a=fingerprint` 的本地描述，关掉探测通道，仅在信令态为 `have-local-offer` 时 `setLocalDescription('rollback')`，消化掉晚到的 `onLocalDescription`，确认回到 `stable` 再发 nonce。指纹等待上限 `min(握手预算, 3 s)`，并跟请求的 `AbortSignal`。回滚不清掉 `localDescription()` 里残留的 offer 文本，只把信令态拉回 `stable`；断言的是信令态。探测标签不进 SDP（通道走 DCEP）。
+
+authorize 的 503 分成两档，不要混：
+
+| 码 | 何时 | 客户端 |
+| --- | --- | --- |
+| `DIRECT_UNAVAILABLE` `reason=disabled` | 没有 RTC provider（直连关掉） | 停放 **10 min**。自动的 `pageshow` / 可见恢复 / 网络恢复**不**再问。只有用户 `retryDirect()` 撤掉停放并立刻再试一次。到期自动解除 |
+| `DIRECT_UNAVAILABLE` `reason=native-missing` | 原生栈没就绪（`ready()` 为假） | 同上 |
+| `DIRECT_BUSY` + `reason` + `retryAfterMs` | 这次没给出来：`timeout` 1 s、`aborted` 500 ms、`failed` 2 s、`capacity` 1 s | 按普通失败计入 authorize 熔断。`retryAfterMs` 是强制探测也越不过的最短间隔，封顶 5 min。老节点把这些 `reason` 塞进 `DIRECT_UNAVAILABLE` 时，客户端仍按忙处理，不整段停放 |
+
+没有 `reason`、或 `reason` 不在上面四个暂时原因里的 `DIRECT_UNAVAILABLE`，一律按「给不出直连」停放。`NODE_UNREACHABLE` 计入同一熔断，最近一次是这类链路失败时，页面恢复也不绕过冷却。其余 5xx 照旧退避。熔断仍是模块级、按 `登录世代:nodeId` 共享：连续 3 次失败后 30 s 起跳、封顶 5 min；登出 / 重新登录世代 +1 并清空冷却与停放。`retryDirect()` 在冷却中放行一次，但越不过 `DIRECT_BUSY` 的最短间隔，也不清失败计数。成功（`noteAuthorizeSuccess`）清熔断、停放和最短间隔。
+
+名额三层，刷新**同一个** `rtcSession` 不占新名额；任一层满都是 `DIRECT_BUSY` `reason=capacity`，不再用「不能直连」把所有标签停放 10 min：每个登录会话（`sid`）2、每个账号（`uid`）8、全节点 64。授权后还没收到 offer、也还没 `accept` 的记录 **30 s** 回收；`accept` 一开始改回完整 TTL（2 min），避免空等占着 UDP / TURN 到 120 s。
+
+外发 SDP（浏览器授权与节点间两条路径，`publishLocalDescription`）去掉 `198.18.0.0/15` 的 `a=candidate` 行。探测通道会提前 gather，answer 里内联的 fake-IP 候选绕得过只过滤 trickle 的那一层。日志 `signal dropped kind=sdp cause=fake-ip dropped=<n>`。trickle 候选的收发过滤不变，见下文 ICE。失败日志：`[mesh][rtc] authorize via=…`，失败 `[mesh][rtc] authorize failed via=… reason=timeout|aborted|failed|capacity`（不打 nonce、指纹、sid）。
+
+### decline
+
+被拒的 offer 立即回一条 SDP，形状仍是 `{ "type": "decline", "sdp": "disabled" | "cooling" }`。可选附加字段 `retryAfterMs`（相对毫秒，优先）和 `until`（对端时钟的绝对时刻）。旧解码器只读 `type` / `sdp` / `epoch`，未知 type 直接丢掉，不抛。新 offerer 把这次拨号终止为 `dc-declined`（有意关闭，不计失败），不再把 `superseded` 当成 glare 在 15 s 预算里重开 PC。`noteRemoteRefusal` 只把冷却终点往后推，不升档、不计失败、也不解除 `disabled`。没有在途拨号的 decline 直接丢弃，不进 inbox，也不触发被动拨号；拨号已经在飞时仍交给这一次 attempt 中止。只有 `until` 且已落在本端过去时，不冷却。
+
+`disabled` 的本端在自己的 force-probe 窗口（含 `beginAttempt` 之后 15 s 宽限）内不 decline 入站 offer，这样互相禁用的一对能在同一次探测里建上。窗口外、以及冷却档位 ≥ 5 且没有 `disabled` 行时，仍 decline。老 decline 不带 `retryAfterMs` 时循环会停，但本端不替它发明退避。
 
 ### 环境变量
 
@@ -123,9 +150,16 @@ endpoint recovered node=<id> addr=<host:port>
 [mesh][rtc] gather summary peer=<id> attempt=<id> host=<n> srflx=<n> relay=<n> stun_count=<n> turn=<bool>
 [mesh][rtc] dial timeout peer=<id> stage=<gathering|no-remote-sdp|checking|dtls|handshake> local_types=[…] remote_types=[…] stun_count=<n> turn=<bool>
 [mesh][rtc] dial failed peer=<id> reason=… stun_count=<n> turn=<bool> attempt=<id>
+[mesh][rtc] breaker rearm peer=<id> source=<local-fingerprint|peer-endpoint|uplink-switch|peer-capabilities|manual|presence-return> level_before=<n> level_after=<n>
+[mesh][rtc] breaker disabled peer=<id> fails=<n> disable_after=<n>
+[mesh][rtc] authorize via=<id>
+[mesh][rtc] authorize failed via=<id> reason=<timeout|aborted|failed|capacity>
+[mesh][rtc] datachannel closed peer=<id> reason=<…> initiator=<local|remote> attempt=<id> lifetime_ms=<n> proven=<true|false>
+[mesh][rtc] dc drop peer=<id> reason=<…> attempt=<id> proven=<true|false> lifetime_ms=<n>
+[mesh][rtc] signal dropped kind=sdp cause=fake-ip dropped=<n>
 ```
 
-每次状态迁移各一条。熔断只拦**本侧自发**的拨号：对端发起的尝试（收到签名 `wake` 或未绑定的 offer）带 `peerInitiated` 绕过 cooling / disabled 直接应答（本会被拦时打一条 `answer while cooling peer=… level=…`），否则应答方冷却时 offerer 只能等到 `no-remote-sdp`、两侧熔断错峰互锁永不收敛；应答侧的超时 / `no-remote-sdp`（从未收到 offer）不计入熔断。冷却期内跳过的自发拨号打在既有的 `dial failed` 上，带 `cause=breaker_cooling`，同一 peer 仍按 60s 聚合并带 `count=`。另有 `[mesh][rtc] summary`（每 peer 最多 60 s 一条）按 peer 聚合候选对类型的成功 / 失败与拨号耗时。同一 PeerConnection 的 `[mesh][rtc]` 行带 `attempt=` 与 `epoch=`，用来区分重叠拨号。`gather summary` 在本地 ICE gathering 完成时打一条 info，用来判断有没有 srflx。
+每次状态迁移各一条。冷却只拦**本侧自发**拨号，跳过时打在 `dial failed` 上，带 `cause=breaker_cooling`，同一 peer 仍按 60 s 聚合并带 `count=`。对端发起的 offer：冷却档还没到顶时仍应答（本会被拦时打 `answer while cooling peer=… level=…`），避免两侧错峰互锁。`disabled`，或冷却档位 ≥ 5，则回 decline（`answer declined … cause=disabled|cooling`），除非落在本端 force-probe 窗口里。应答侧从未收到 offer 的超时 / `no-remote-sdp` 不计入熔断。另有 `[mesh][rtc] summary`（每 peer 最多 60 s 一条）按 peer 聚合候选对类型的成功 / 失败与拨号耗时。同一 PeerConnection 的 `[mesh][rtc]` 行带 `attempt=` 与 `epoch=`，用来区分重叠拨号。`gather summary` 在本地 ICE gathering 完成时打一条 info，用来判断有没有 srflx。
 
 ### 对外字段
 
@@ -205,7 +239,7 @@ hello 全落进 fanout 的 8 槽 dump 缓冲，跨 NAT、offerer 先 connected �
 
 - ICE 服务器列表按「节点自定义 > 节点禁用 > 中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档（`node-custom` / `node-disabled` / `relay-custom` / `builtin`）；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。
 - **TURN 按条门控**：中继下发的 TURN 可能有多条（每台中继至多一条，中继角色自带 TURN）。每个 URL 各做一次 STUN Binding 可达探测（并发 2），**只有探测 `ok` 的条目**按 RTT 升序取前两条进 `iceServers`；探测失败、尚未探测、`turns:` / `?transport=tcp`（libjuice 不支持）一律排除。日志 `[mesh][rtc] turn gate configured=N reachable=M used=[…]`（used 集合变化才打）。`GET /api/mesh/rtc-config` 的 `turn` 是实际进 ICE 的数组，`turnConfigured` 是全部已知条目，`turnProbes` 每条 configured URL 一份探测记录（`turnProbe` 保留第一条，兼容旧前端）。
-- **丢弃 fake-IP 候选**：地址落在 `198.18.0.0/15`（Surge / Clash 增强模式的 fake-IP）的 host 候选**收发两侧**都丢弃，日志 `signal dropped … cause=fake-ip`；RFC1918（`10/8`、`192.168/16` 等）保留，局域网直连不受影响。单边升级即生效。
+- **丢弃 fake-IP 候选**：地址落在 `198.18.0.0/15`（Surge / Clash 增强模式的 fake-IP）的 host 候选**收发两侧**都丢弃，日志 `signal dropped … cause=fake-ip`。外发 SDP 里内联的 `a=candidate` 同样剥掉（`kind=sdp`），否则 answer 会把探测阶段收集到的 fake-IP 带出去。RFC1918（`10/8`、`192.168/16` 等）保留，局域网直连不受影响。单边升级即生效。
 - `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**仅当列表里真有可达 TURN 时才为 false**：libjuice mux 不支持 TURN。没有可达 TURN 就保持 mux 并把 TURN 全部从 `iceServers` 剥掉——早期「先纳入、探测后再说」会让 gathering 挂死、srflx 一起消失。Binding 探测只证明 UDP 通，不能代替带凭证的 Allocate，见 [KI-4](../known-issues.md)）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（非中继缺省 `40000-40099`，中继主机 `40050-40099`，见 `@vibeterm/shared/net`；**未设该键时 ICE 仍走系统临时口**。`init` / `upgrade` 按角色写入。node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
 - **ws-secure 开链竞速**：公网目标同时开 `VIBETERM_WS_DIAL_RACE` 条（默认 2，夹紧 1..4），取最先 `open` 的一条，其余不发字节即关（`close(1000, 'ws-race-loser')`）。局域网不竞速。日志 `[mesh][dial] ws race url=<host> winner_ms=… others_ms=… count=…`。入站握手限流因此从 10 提到 **30**/IP/min。中继上行同一套。详见 [路径优选](./path-selection.md)。
 - **慢路径重掷**：live DC / ws-secure 的稳态 RTT 明显高于该对端 30 min 窗内的 best 时，offerer 再拨一条新链（DC 需对端报 `reroll` 能力位，2.3.1 不报则不发起），make-before-break 换链，提升 ≥ 30 % 时把在途流搬过去。NAT 后的应答侧采得到 offerer 公网口、offerer 采不到应答侧时，应答侧按同一策略发 `link.reroll-request`（对端必须报过 `reroll`；2.3.1 收不到），offerer 校验后 `reason=peer-request` 重拨，两端预算各 3/小时。`link.reroll-request` 走现有 DC ctl，SDP / ICE 在 live 已是 dc 时走中继 uplink。ws-secure 重掷只在 DC 拨号真正在途 / `state.upgrading` / 升级协调器已 coalesced-scheduled 时让路（**熔断健康不算**），并与前台 ws 拨号共享在途槽；live 已换人则以 `reroll-stale` 关闭、不二次记预算。应答侧拒绝 epoch ≤ `LivePeer.rtcEpoch` 的迟到 offer；更高 epoch 的 ICE 候选若先于重掷 offer 到达，入 `rtcInbox`（30 s TTL、候选最多 16 条），offer 落定后丢掉 foreign-epoch。日志 `reroll` / `reroll_request` / `reroll_result` / `reroll_rehome` / `reroll_offer_ignored` / `answerer_backoff`。`VIBETERM_DC_REROLL=off` 关闭。重掷只换五元组，**不会**因为中继更快而离开 DC——那是选路模式（`auto` 滞环）的事。详见 [路径优选](./path-selection.md)。
@@ -223,6 +257,7 @@ hello 全落进 fanout 的 8 槽 dump 缓冲，跨 NAT、offerer 先 connected �
   的直接成因。现在只要 `streams > 0` 就不结束退役，按 quiet / min / max 规则等排空；防泄漏硬上限
   `PEER_RETIRE_STREAM_LEAK_MS = 30 min`，到点强制关闭且原因改成 `retired`（不再用 `replaced` 砸整条 uplink）。
   心跳失活 / 闲置这类退役仍有 `PEER_RETIRE_MAX_MS = 30 s` 的硬截止，先于流数判断。
+- **没证明、或还没稳住的 DC 不拆中继**。证明只认本端收到的 liveness **pong**（对端 ping 只回 pong，不算这条 DC 已通；上一条 DC 的迟到 pong 用 generation 丢掉）。对端报了 `dc-stable-hold` 时，被 `replaced` 的 relay / ws 在新 DC 已证明且活过 `DC_MIN_STABLE_MS`（15 s）之前不收尾；30 s 封顶不变。对端还在 pending-measure 时同样留着。对端没报该能力位则保持旧的「流排空即可收尾」，不扣留中继。DC 在证明前或 15 s 内死掉时，还在退役的中继回到 live。约 10 s 被掐掉的通道看 `[mesh][rtc] datachannel closed … initiator= lifetime_ms= proven=`：`initiator=remote` 且 `reason=channel-closed` 是对端或原生栈关的；本端 liveness 超时是 `reason=liveness-timeout`、`initiator=local`。`dc drop` 是同一事件在路由侧的一行（含 `proven` 与寿命），用来对「刚通就断」和「没证明就拆了中继」。
 - **DC 空闲拆链 30 min**（`PEER_DC_IDLE_MS`），relay / ws-secure 仍是 `PEER_IDLE_MS = 5 min`：5 min 对「用户刚用过、马上还要用」
   太短，反复重建 DC 本身就是抖动源。DC 因 idle 结束时只关它自己那条 session，仍在排空的中继会被 promote 回 live。
 - relay client / pool 双层追踪在途隧道流；就近切换、回切、reconfigure 等待排空（每 3 s 复查，10 min 硬上限，到期剩余流被 reset）；`retireClient` 停止接新流并排空后再 `stop()`；死链仍立即处理。
