@@ -270,7 +270,7 @@ RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live �
 
 ### 直连授权（浏览器 ↔ 目标 node 的 `sess` 通道）
 
-浏览器创建 `RTCPeerConnection`、`createOffer()` + `setLocalDescription()` 后从 `localDescription.sdp` 解析自己的 DTLS 指纹 `fp_browser`，`POST /n/:T/api/rtc/authorize {rtcSession, fp_browser}`（带 `node-session`，经 entry 的认证链路送达 T）→ T 生成 32 字节随机 `nonce`，登记 `{nonce, uid, rtcSession, fp_browser, exp=2 分钟}`，返回 `{nonce, fp_node}`（T 在 `setLocalDescription` 后从自身 SDP 解析的指纹）→ 浏览器核对远端 SDP 的 `a=fingerprint` 等于 `fp_node`，否则放弃直连 → `sess` 首帧发 `{nonce}` → T 核对 `remoteFingerprint()` 等于登记的 `fp_browser` 后挂载载体；`bulk:*` 复用同一 PeerConnection，不再鉴权。该绑定挡住**失陷中继**改写信令做 DTLS 中间人；它**不**挡失陷 entry（authorize 请求、响应与信令都经 entry），这属于「正在使用的 entry」这一已接受的信任点（§5 安全边界）。
+浏览器创建 `RTCPeerConnection`、`createOffer()` + `setLocalDescription()` 后从 `localDescription.sdp` 解析自己的 DTLS 指纹 `fp_browser`，`POST /n/:T/api/rtc/authorize {rtcSession, fp_browser}`（带 `node-session`，经 entry 的认证链路送达 T）。T 是 answerer：`node-datachannel@0.33.1` 在没有 DataChannel 的 PC 上拿不到本地描述，所以先在同一条 PC 上开探测通道 `vt-fp-probe` 读出证书指纹，再 rollback 回 `stable`，然后生成 32 字节随机 `nonce`。还没收到 offer 的登记 30 s 过期；开始 accept 后才是 2 分钟。返回 `{nonce, fp_node}`。浏览器核对远端 SDP 的 `a=fingerprint` 等于 `fp_node`，否则放弃直连。`sess` 首帧发 `{nonce}`，T 核对 `remoteFingerprint()` 等于登记的 `fp_browser` 后挂载载体；`bulk:*` 复用同一 PeerConnection，不再鉴权。暂时失败回 503 `DIRECT_BUSY`（带 `retryAfterMs`），只有直连关掉或原生栈缺失才回 `DIRECT_UNAVAILABLE`。名额、停放和错误码见 [节点直连](./peer-direct-connect.md)。该绑定挡住**失陷中继**改写信令做 DTLS 中间人；它**不**挡失陷 entry（authorize 请求、响应与信令都经 entry），这属于「正在使用的 entry」这一已接受的信任点（§5 安全边界）。
 
 ### 载体抽象（node 侧唯一的结构性改动）
 

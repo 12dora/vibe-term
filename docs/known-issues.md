@@ -169,3 +169,19 @@ AI agent / CI 目前只能把完整会话能力交给调用方：默认 `~/.conf
 2.7.1 起：系统 lookup 仍先用 fake-IP 拨号（许多主机的 TUN 可用，且 DoH 可能被拦）；若 TCP 连接失败（`connect-timeout` / `ECONNREFUSED` / `EHOSTUNREACH` / `ENETUNREACH`），再走 DoH 解析真实 IP，按 IP + SNI 重拨，并在正缓存 TTL 内优先用真实 IP。关闭 `VIBETERM_DIAL_DNS_FALLBACK` 则行为与修复前相同。见 [公共中继「系统 DNS 失败时的 DoH 重拨」](./architecture/relay.md)。
 
 人工规避（代理侧，二选一）：给中继域名钉国内解析（mihomo `nameserver-policy`），或加 DIRECT 规则绕开 TUN。
+
+## KI-19：经入口访问时节点超时，浏览器直连协商不起来
+
+状态：本版本修复。2.8.0 及更早仍会复现；混合版本网要入口和目标都升上来，只升入口不够。
+
+现象：浏览器经入口（现网例：tmexhub-sh）已经能开终端，但 `POST /n/<id>/api/rtc/authorize` 在大约 5–7 s 后变成 503 `NODE_UNREACHABLE` `reason=timeout`，直连徽标一直不亮。同时节点之间的 DataChannel 在「刚通就断」上反复拨号，共享的中继上行被打满，其它节点的转发也开始超时。
+
+三层原因都在目标节点，不是入口把请求体吃掉：
+
+1. `node-datachannel@0.33.1` 在空 PeerConnection 上没有本地描述。旧 authorize 干等指纹到 15 s，入口的转发预算先到，目标日志是空的。名额满和指纹超时以前也一律答 `DIRECT_UNAVAILABLE`，客户端把「暂时忙」停放 10 分钟。
+2. DC 打开 5 s 就拆掉中继，而这条 DC 常在打开后约 10 s 被静默关闭（两端都没有 liveness 日志，疑为 libdatachannel SCTP 10 s 心跳）；已建立后的关闭又被记成拨号失败，熔断升到 5 级冷却 16 分钟，下一次请求只能重拨中继。另一方面，中继会话一闪就把已禁用的 DC 熔断清零，对永远打不通的节点（如老 hub）反复拨号，每次白烧 15 s 和一次 TURN 分配。
+3. 对端还在测量的直连上，接收方把整节点降级并拆掉那条 DC，测量方再拨，两边对打。
+
+本版本用探测通道在 3 s 内铸出指纹；暂时失败答 `DIRECT_BUSY`，只有真不能直连才停放 10 分钟。DC 要先证明（本端 ping 的 pong）并活过 15 s 才拆中继，短命断开走不计档的冷却。测量中的直连只隔离这条直连，旁边借一条中继，不降级。
+
+升完之后目标上应能 grep 到 `[mesh][rtc] authorize`。仍失败时看 `authorize failed … reason=`、`datachannel closed … initiator= lifetime_ms= proven=`、`dc drop`、`breaker rearm … level_before`、`signal dropped kind=sdp cause=fake-ip`。对照见 [mesh 运维「常见排障」](./operations/mesh-operations.md)。
