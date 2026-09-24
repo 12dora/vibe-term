@@ -1,6 +1,7 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { type PeerLinkPurpose, rejectPausedUserLink } from './node-pause';
 import type { PeerManagerState } from './peer-manager-state';
+import type { LivePeer } from './peer-reconnect-wake';
 import type { RouteDegradeCoordinator } from './route-degrade';
 import { NodeUnreachableError } from './types';
 
@@ -22,12 +23,7 @@ export async function getPeerLink(
   if (host.state.stopped) throw new NodeUnreachableError(nodeId, 'peer manager stopped');
   host.requireTrusted(nodeId);
   const existing = host.state.live.get(nodeId);
-  if (existing) {
-    const switched = await host.routes.ensureLiveForMode(existing);
-    if (switched) return switched;
-    host.maybeUpgrade(nodeId, { cooldown: true, userPath: true });
-    return existing.session;
-  }
+  if (existing) return useLiveLink(host, nodeId, existing);
   const inflight = host.state.pending.get(nodeId);
   if (inflight) return host.awaitEstablishedOrDial(nodeId, inflight);
   const attempt = host.dialForeground(nodeId);
@@ -49,4 +45,17 @@ export async function getPeerLink(
     if (err instanceof NodeUnreachableError) throw err;
     throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
   }
+}
+
+async function useLiveLink(
+  host: PeerGetLinkHost,
+  nodeId: string,
+  existing: LivePeer
+): Promise<LinkSession> {
+  const switched = await host.routes.ensureLiveForMode(existing);
+  if (switched) return switched;
+  const fallback = await host.routes.userLinkWhileRemoteHold(existing);
+  if (fallback) return fallback;
+  host.maybeUpgrade(nodeId, { cooldown: true, userPath: true });
+  return existing.session;
 }
