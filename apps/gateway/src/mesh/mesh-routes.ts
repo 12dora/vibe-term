@@ -43,7 +43,7 @@ import {
   sweepStaleNodeOperations,
 } from './node-operations';
 import { pausedNodeIds } from './node-pause';
-import { failReason } from './rtc/browser-authorize';
+import { directBusyBody } from './rtc/browser-authorize';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -414,7 +414,8 @@ export class MeshRoutes {
 
   private async handleRtcAuthorize(req: Request, auth: AuthenticateOk): Promise<Response> {
     if (!auth.userId) return jsonError('UNAUTHORIZED', 401);
-    if (!this.deps.rtcFingerprint) return jsonError('DIRECT_UNAVAILABLE', 503);
+    if (!this.deps.rtcFingerprint)
+      return jsonError('DIRECT_UNAVAILABLE', 503, { reason: 'disabled' });
     const parsed = rtcAuthFields(await readJsonObjectBody(req), req);
     if (!parsed) return jsonError('MALFORMED', 400);
     if (!auth.sid) return jsonError('UNAUTHORIZED', 401);
@@ -442,10 +443,10 @@ export class MeshRoutes {
         },
         req.signal
       );
-      if (!granted) return jsonError('DIRECT_UNAVAILABLE', 503);
+      if (!granted) return jsonError('DIRECT_UNAVAILABLE', 503, { reason: 'native-missing' });
       return jsonBody({ nonce: encodeBase64url(granted.nonce), fp_node: granted.fpNode });
     } catch (err) {
-      return jsonError('DIRECT_UNAVAILABLE', 503, { reason: failReason(err) });
+      return jsonError('DIRECT_BUSY', 503, directBusyBody(err));
     }
   }
 

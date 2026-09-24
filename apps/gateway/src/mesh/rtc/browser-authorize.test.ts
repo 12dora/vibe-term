@@ -8,7 +8,13 @@ import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { seedNodeIdentity, seedUser } from '../test-support';
 import { PeerHandshakeError } from '../types';
-import { BROWSER_FP_PROBE_LABEL } from './browser-authorize';
+import {
+  AuthorizeBusyError,
+  BROWSER_FP_PROBE_LABEL,
+  RTC_AUTHORIZE_MAX_PER_SESSION,
+  RTC_AUTHORIZE_MAX_PER_USER,
+  RTC_AUTHORIZE_PENDING_TTL_MS,
+} from './browser-authorize';
 import { SESS_CHANNEL_LABEL } from './rtc-peer-helpers';
 import { RtcPeerManager } from './rtc-peer-manager';
 import { loopbackSignaling } from './rtc-test-fixtures';
@@ -105,7 +111,14 @@ describe('browser authorize fingerprint', () => {
     expect(auth?.fpNode.algorithm).toBe('sha-256');
     const node = fake.connections.find((row) => row.name.includes(rtcSession));
     expect(node?.signalingState()).toBe('stable');
-    expect(node?.localDescription()).toBeNull();
+    // libdatachannel 回滚后 signaling 回到 stable，但第一次 pending offer 仍留在 localDescription。
+    expect(node?.localDescription()?.type).toBe('offer');
+    if (node) {
+      node.sdpSuffix = [
+        'a=candidate:1 1 UDP 1 198.18.0.1 9 typ host',
+        'a=candidate:2 1 UDP 1 192.168.1.9 9 typ host',
+      ].join('\r\n');
+    }
     const probes = node?.created.filter((row) => row.label === BROWSER_FP_PROBE_LABEL) ?? [];
     expect(probes.length).toBe(1);
     expect(probes.every((row) => row.closed)).toBe(true);
@@ -126,6 +139,8 @@ describe('browser authorize fingerprint', () => {
     const accepted = await acceptP;
     expect(accepted.sid).toBe('sid-1');
     expect(applied).toEqual(['answer']);
+    expect(answerSdp).not.toContain('198.18.0.1');
+    expect(answerSdp).toContain('192.168.1.9');
     expect(fingerprintsEqual(parseSdpFingerprint(answerSdp), auth?.fpNode)).toBe(true);
     accepted.pc.close();
   });
@@ -196,5 +211,163 @@ describe('browser authorize fingerprint', () => {
     expect(mgr.authorizationOf('slow')).toBeNull();
     expect(pcs.find((row) => row.name.includes('slow'))?.closed).toBe(true);
     expect(logs.some((line) => line.includes('reason=timeout'))).toBe(true);
+  });
+
+  test('createPeerConnection answerer never calls bare setLocalDescription', async () => {
+    const { mgr, fake } = setup();
+    await mgr.ready();
+    const before = fake.connections.length;
+    await expect(mgr.createPeerConnection('answerer')).rejects.toBeInstanceOf(PeerHandshakeError);
+    expect(fake.connections.length).toBe(before);
+  });
+
+  test('one session cannot fill the node authorize cap', async () => {
+    const { mgr, fake } = setup();
+    await mgr.ready();
+    const fp = { algorithm: 'sha-256', value: 'AA' };
+    for (let i = 0; i < RTC_AUTHORIZE_MAX_PER_SESSION; i++) {
+      const auth = await mgr.authorizeBrowser({
+        rtcSession: `sess-${i}`,
+        uid: 'user-1',
+        via: 'self',
+        sid: 'sid-same',
+        fpBrowser: fp,
+      });
+      expect(auth).not.toBeNull();
+    }
+    const before = fake.connections.length;
+    await expect(
+      mgr.authorizeBrowser({
+        rtcSession: 'sess-overflow',
+        uid: 'user-1',
+        via: 'self',
+        sid: 'sid-same',
+        fpBrowser: fp,
+      })
+    ).rejects.toBeInstanceOf(AuthorizeBusyError);
+    expect(fake.connections.length).toBe(before);
+    const otherSession = await mgr.authorizeBrowser({
+      rtcSession: 'other-tab',
+      uid: 'user-1',
+      via: 'self',
+      sid: 'sid-other',
+      fpBrowser: fp,
+    });
+    expect(otherSession).not.toBeNull();
+    const refreshed = await mgr.authorizeBrowser({
+      rtcSession: 'sess-0',
+      uid: 'user-1',
+      via: 'self',
+      sid: 'sid-same',
+      fpBrowser: fp,
+    });
+    expect(refreshed).not.toBeNull();
+  });
+
+  test('one user cannot fill the node authorize cap across sessions', async () => {
+    const { mgr } = setup();
+    await mgr.ready();
+    const fp = { algorithm: 'sha-256', value: 'AA' };
+    for (let i = 0; i < RTC_AUTHORIZE_MAX_PER_USER; i++) {
+      const auth = await mgr.authorizeBrowser({
+        rtcSession: `user-sess-${i}`,
+        uid: 'user-1',
+        via: 'self',
+        sid: `sid-${i}`,
+        fpBrowser: fp,
+      });
+      expect(auth).not.toBeNull();
+    }
+    await expect(
+      mgr.authorizeBrowser({
+        rtcSession: 'user-overflow',
+        uid: 'user-1',
+        via: 'self',
+        sid: 'sid-overflow',
+        fpBrowser: fp,
+      })
+    ).rejects.toBeInstanceOf(AuthorizeBusyError);
+    const otherUser = await mgr.authorizeBrowser({
+      rtcSession: 'user-2-sess',
+      uid: 'user-2',
+      via: 'self',
+      sid: 'sid-user-2',
+      fpBrowser: fp,
+    });
+    expect(otherUser).not.toBeNull();
+  });
+
+  test('an authorized record with no offer expires at the pending TTL and is closed', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const identity = seedNodeIdentity(store, 'user-1');
+    const fake = createFakeNativeModule();
+    let now = 1_000;
+    const mgr = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: () => ({ stun: [], turn: null }),
+      identity,
+      userStore: store,
+      now: () => now,
+      authorizeTtlMs: 120_000,
+      sweepIntervalMs: 0,
+    });
+    fixtures.push({ close: () => mgr.close() });
+    await mgr.ready();
+    const auth = await mgr.authorizeBrowser({
+      rtcSession: 'pending',
+      uid: 'user-1',
+      via: 'self',
+      sid: 'sid-pending',
+      fpBrowser: { algorithm: 'sha-256', value: 'AA' },
+    });
+    expect(auth).not.toBeNull();
+    const pc = fake.connections.find((row) => row.name.includes('pending'));
+    now = 1_000 + RTC_AUTHORIZE_PENDING_TTL_MS - 1;
+    expect(mgr.authorizationOf('pending')?.sid).toBe('sid-pending');
+    now = 1_000 + RTC_AUTHORIZE_PENDING_TTL_MS;
+    const [sigNode] = loopbackSignaling();
+    await expect(mgr.acceptBrowser('pending', sigNode)).rejects.toBeInstanceOf(PeerHandshakeError);
+    expect(pc?.closed).toBe(true);
+    expect(mgr.authorizationOf('pending')).toBeNull();
+  });
+
+  test('accept extends the record past the pending TTL', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const identity = seedNodeIdentity(store, 'user-1');
+    const fake = createFakeNativeModule();
+    let now = 1_000;
+    const mgr = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: () => ({ stun: [], turn: null }),
+      identity,
+      userStore: store,
+      now: () => now,
+      authorizeTtlMs: 120_000,
+      handshakeTimeoutMs: 50,
+      sweepIntervalMs: 0,
+    });
+    fixtures.push({ close: () => mgr.close() });
+    await mgr.ready();
+    await mgr.authorizeBrowser({
+      rtcSession: 'hold',
+      uid: 'user-1',
+      via: 'self',
+      sid: 'sid-hold',
+      fpBrowser: { algorithm: 'sha-256', value: 'AA' },
+    });
+    now = 1_000 + 20_000;
+    const [sigNode] = loopbackSignaling();
+    const pending = mgr.acceptBrowser('hold', sigNode);
+    pending.catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    now = 1_000 + RTC_AUTHORIZE_PENDING_TTL_MS;
+    expect(mgr.authorizationOf('hold')?.sid).toBe('sid-hold');
+    expect(fake.connections.find((row) => row.name.includes('hold'))?.closed).toBe(false);
   });
 });

@@ -17,6 +17,7 @@ import { CarrierSwitchController, type DirectCarrier } from './carrier-switch';
 import { DataChannelCarrier } from './data-channel-carrier';
 import type { NodeDatachannelModule, RtcIceConfig } from './native';
 import { RtcPeerManager, type RtcPeerManagerOptions, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
+import { isFakeIpv4IceCandidate } from './rtc-signal-apply';
 import { loopbackSignaling } from './rtc-test-fixtures';
 import { pairDataChannels } from './test-fakes';
 
@@ -266,6 +267,14 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
     expect(accepted.carrier.send(new Uint8Array([7]))).toBe('sent');
     expect(appliedTypes).toEqual(['answer']);
     expect(browserFingerprintsEqual(browserParseSdpFingerprint(answerSdp), auth.fpNode)).toBe(true);
+    const signaledFake = answerSdp
+      .split(/\r?\n/)
+      .filter((line) => /^a=candidate:/i.test(line) && isFakeIpv4IceCandidate(line));
+    expect(signaledFake).toEqual([]);
+    const rawFake = (accepted.pc.localDescription()?.sdp ?? '')
+      .split(/\r?\n/)
+      .filter((line) => isFakeIpv4IceCandidate(line));
+    expect(rawFake.length).toBeGreaterThan(0);
     accepted.pc.close();
   });
 });

@@ -196,6 +196,7 @@ export class FakePeerConnection implements PeerConnectionLike {
   remoteFp: DtlsFingerprint | null = null;
   remoteFpOverride: DtlsFingerprint | null = null;
   localSdp: { type: string; sdp: string } | null = null;
+  sdpSuffix = '';
   created: FakeDataChannel[] = [];
   inbound: FakeDataChannel[] = [];
   pcState = 'new';
@@ -229,7 +230,6 @@ export class FakePeerConnection implements PeerConnectionLike {
   setLocalDescription(type?: string): void {
     const descType = type && type !== 'unspec' ? type : (this.localSdp?.type ?? 'offer');
     if (descType === 'rollback') {
-      this.localSdp = null;
       this.signaling = 'stable';
       return;
     }
@@ -370,13 +370,14 @@ export class FakePeerConnection implements PeerConnectionLike {
   }
 
   private fingerprintSdp(): string {
-    return [
+    const body = [
       'v=0',
       `a=fake-id:${this.id}`,
       `a=fingerprint:${this.fingerprint.algorithm} ${this.fingerprint.value}`,
       'a=ice-ufrag:fake',
       'a=ice-pwd:fake',
     ].join('\r\n');
+    return this.sdpSuffix ? `${body}\r\n${this.sdpSuffix}` : body;
   }
 
   private emitLocal(type: string): void {
