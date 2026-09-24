@@ -188,6 +188,13 @@ export class DialBreaker {
     state.lastFailureKind = 'unstable-dc';
   }
 
+  /** 对端拒绝：只把冷却终点延后。不升档、不计失败、不改失败种类。 */
+  noteCooldownUntil(peer: string, until: number): void {
+    if (!(until > 0)) return;
+    const state = this.ensure(peer);
+    if (until > state.coolingUntil) state.coolingUntil = until;
+  }
+
   noteHealthy(peer: string, now = this.now()): boolean {
     const state = this.peers.get(peer);
     if (!state || state.healthySince == null) return false;

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { decodeSdpSignal } from './ice';
 import type { PeerConnectionLike } from './native';
 import {
   consumeOffererOnDecline,
@@ -6,6 +7,7 @@ import {
   encodeDcOfferDecline,
   isDcOfferDecline,
   offererReactionToRemoteSdp,
+  readDcOfferDeclineDetail,
 } from './rtc-offer-decline';
 import { applyRemoteSdp, createSignalingAttemptState } from './rtc-signal-apply';
 
@@ -52,5 +54,28 @@ describe('dc offer decline', () => {
     });
     expect(ctl).toMatchObject({ t: 'rtc.signal', from: 'node', to: 'ec42f364' });
     expect(isDcOfferDecline(ctl.sdp)).toBe(true);
+  });
+
+  test('decline keeps the sdp shape and carries cooldown for new offerers only', () => {
+    const raw = encodeDcOfferDecline('cooling', { until: 5_000, retryAfterMs: 4_000 });
+    expect(decodeSdpSignal(raw)).toMatchObject({ type: 'decline', sdp: 'cooling' });
+    expect(readDcOfferDeclineDetail(raw)).toEqual({
+      reason: 'cooling',
+      until: 5_000,
+      retryAfterMs: 4_000,
+    });
+    expect(readDcOfferDeclineDetail('{"type":"decline","sdp":"disabled"}')).toEqual({
+      reason: 'disabled',
+      until: null,
+      retryAfterMs: null,
+    });
+    const ctl = dcOfferDeclineCtl({
+      rtcSession: 'dc:a:b',
+      to: 'peer',
+      reason: 'disabled',
+      until: null,
+      retryAfterMs: 600_000,
+    });
+    expect(readDcOfferDeclineDetail(ctl.sdp)?.retryAfterMs).toBe(600_000);
   });
 });

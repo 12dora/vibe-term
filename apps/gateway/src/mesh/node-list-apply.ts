@@ -2,6 +2,7 @@ import type { UserKeyService } from '../auth';
 import { LEGACY_HUB_PEER_ID, type UserStore } from '../auth/user-store';
 import { isRemoteNodePresent } from './mesh-agent-bridge';
 import type { NodeEventProjection } from './node-event-dedupe';
+import { takeRelayCapabilityChanges } from './peer-capability-change';
 import type { PeerReach, PeerTransportKind } from './types';
 import { persistUplinkPeerCache } from './uplink-peer-persist';
 import type { UplinkNodeList } from './uplink-protocol';
@@ -354,6 +355,7 @@ export function applyUplinkNodeList(
     list: applied,
     now: d.scheduler.now(),
     onCapabilitiesChanged: (nodeId) => d.peerHolder.manager?.onPeerCapabilitiesChanged?.(nodeId),
+    relayChanges: takeRelayCapabilityChanges(list),
   });
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
   emitListedNodeEvents(d, applied, reach, rejectPeer);

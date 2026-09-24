@@ -15,6 +15,7 @@ import type { UserStore } from '../auth/user-store';
 import { jsonStable } from './ctl';
 import { jsonText } from './json-text';
 import { stamp } from './mesh-log';
+import { peerCapabilitiesChanged, tagRelayCapabilityChanges } from './peer-capability-change';
 import { ingestPeerReachEpoch, ingestPeerReachMap, ingestTurnOk } from './port-reach';
 import type { RelaySecrets } from './relay-secrets';
 import type { UplinkStatus } from './types';
@@ -66,12 +67,14 @@ function entryFromCache(node: RelayListNode, ctx: RelayListContext): ListEntry {
 /**
  * `relay.list` → 与 peer `node.list` 同形状的列表，顺带把解出的状态块写进 `peer_cache`。
  * 解不开（世代未知/被排除）的节点只保留在线标志。
+ * 能力变化必须在 upsert 之前比较：这份名单随后才会进 `onNodeList`。
  */
 export async function relayListToNodeList(
   msg: Extract<RelayCtlMessage, { t: 'relay.list' }>,
   ctx: RelayListContext
 ): Promise<UplinkNodeList> {
   const nodes: ListEntry[] = [];
+  const changed: string[] = [];
   for (const node of msg.nodes) {
     if (node.status !== 'admitted') continue;
     if (node.id === ctx.selfNodeId) continue;
@@ -82,37 +85,61 @@ export async function relayListToNodeList(
       nodes.push(entryFromCache(node, ctx));
       continue;
     }
-    ctx.userStore.upsertPeer({
-      nodeId: node.id,
-      name: blob.name || node.id,
-      endpointsJson: jsonText(blob.endpoints),
-      inventoryJson: jsonText(blob.inventory),
-      directCapable: blob.direct_capable,
-      lastSeenAt: ctx.now,
-      listVersion: msg.version,
-      version: blob.version || null,
-    });
-    ingestPeerReachMap(node.id, blob.peer_reach, ctx.selfNodeId);
-    ingestPeerReachEpoch(node.id, blob.peer_reach_epoch);
-    if (ctx.relayUrl) ingestTurnOk(node.id, blob.turn_ok, ctx.relayUrl);
-    nodes.push({
-      id: node.id,
-      name: blob.name || node.id,
-      online: node.online,
-      endpoints: blob.endpoints,
-      inventory: blob.inventory,
-      direct_capable: blob.direct_capable,
-      version: blob.version || null,
-      ...(blob.rtt_ms != null ? { rtt_ms: blob.rtt_ms } : {}),
-    } as ListEntry);
+    nodes.push(cacheAdmittedRelayNode(node, blob, ctx, msg.version, changed));
   }
-  return {
+  const list: UplinkNodeList = {
     t: 'node.list',
     version: msg.version,
     key_log_head: { seq: relaySeqFromWire(msg.key_log_head_seq), hash: new Uint8Array(32) },
     rtc: { stun: msg.rtc.stun, turn: msg.rtc.turn },
     nodes,
   };
+  tagRelayCapabilityChanges(list, changed);
+  return list;
+}
+
+function cacheAdmittedRelayNode(
+  node: Extract<RelayCtlMessage, { t: 'relay.list' }>['nodes'][number],
+  blob: RelayStatusBlob,
+  ctx: RelayListContext,
+  listVersion: number,
+  changed: string[]
+): ListEntry {
+  const version = blob.version || null;
+  const inventoryJson = jsonText(blob.inventory);
+  const existing = ctx.userStore.getPeer(node.id);
+  if (
+    peerCapabilitiesChanged(existing, {
+      version,
+      directCapable: blob.direct_capable,
+      inventoryJson,
+    })
+  ) {
+    changed.push(node.id);
+  }
+  ctx.userStore.upsertPeer({
+    nodeId: node.id,
+    name: blob.name || node.id,
+    endpointsJson: jsonText(blob.endpoints),
+    inventoryJson,
+    directCapable: blob.direct_capable,
+    lastSeenAt: ctx.now,
+    listVersion,
+    version,
+  });
+  ingestPeerReachMap(node.id, blob.peer_reach, ctx.selfNodeId);
+  ingestPeerReachEpoch(node.id, blob.peer_reach_epoch);
+  if (ctx.relayUrl) ingestTurnOk(node.id, blob.turn_ok, ctx.relayUrl);
+  return {
+    id: node.id,
+    name: blob.name || node.id,
+    online: node.online,
+    endpoints: blob.endpoints,
+    inventory: blob.inventory,
+    direct_capable: blob.direct_capable,
+    version,
+    ...(blob.rtt_ms != null ? { rtt_ms: blob.rtt_ms } : {}),
+  } as ListEntry;
 }
 
 export async function relayRtcToSignal(
