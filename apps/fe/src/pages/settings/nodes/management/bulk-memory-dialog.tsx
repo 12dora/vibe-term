@@ -2,6 +2,9 @@
 //
 // 不用 `ConfirmDialog`——它的输入槽只放得下一行文本，这里有一个开关加四个数字。
 // 版式沿用详情框（`Dialog`），目标 / 跳过清单与卸载确认框共用 `PlanRows`。
+//
+// 批量不读各节点的旧值，所以方式（不限制 / 自定义限额）一开始是空的，选了才能写入：
+// 原封不动点「写入」不能把缺省的 8 / 12 GB 装到每一台上。
 
 import { WINDOW_MEMORY_SETTINGS_DEFAULTS } from '@vibeterm/shared';
 import { Button } from '@vibeterm/ui/button';
@@ -19,8 +22,9 @@ import { useTranslation } from 'react-i18next';
 import {
   type MemoryLimitsDraft,
   type MemoryLimitsErrors,
+  type MemoryLimitsMode,
   memoryLimitsDraft,
-  parseMemoryLimitsDraft,
+  parseBulkMemoryLimits,
 } from '../memory-limits-form';
 import { MemoryLimitsFields } from './memory-limits-fields';
 import {
@@ -78,11 +82,12 @@ export function BulkMemoryDialog({ controller }: { controller: MemoryLimitsBatch
   const [draft, setDraft] = useState<MemoryLimitsDraft>(() =>
     memoryLimitsDraft(WINDOW_MEMORY_SETTINGS_DEFAULTS)
   );
+  const [mode, setMode] = useState<MemoryLimitsMode | null>(null);
   const [errors, setErrors] = useState<MemoryLimitsErrors>({});
   if (!plan) return null;
 
   const apply = () => {
-    const parsed = parseMemoryLimitsDraft(draft);
+    const parsed = parseBulkMemoryLimits(mode, draft);
     setErrors(parsed.errors);
     if (parsed.settings) controller.run(parsed.settings);
   };
@@ -108,8 +113,15 @@ export function BulkMemoryDialog({ controller }: { controller: MemoryLimitsBatch
           errors={errors}
           idPrefix="nodes-memory-bulk"
           disabled={running}
+          mode={mode}
+          onModeChange={setMode}
           onChange={(patch) => setDraft((previous) => ({ ...previous, ...patch }))}
         />
+        {mode === null && (
+          <p className="text-xs text-muted-foreground" data-testid="nodes-memory-bulk-choose-mode">
+            {t('nodes.memory.chooseMode')}
+          </p>
+        )}
         <BulkMemoryDialogBody plan={plan} failures={failures} />
 
         <DialogFooter>
@@ -118,7 +130,7 @@ export function BulkMemoryDialog({ controller }: { controller: MemoryLimitsBatch
           </Button>
           <Button
             variant="secondary"
-            disabled={running || plan.targets.length === 0}
+            disabled={running || mode === null || plan.targets.length === 0}
             onClick={apply}
             data-testid="nodes-memory-bulk-apply"
           >

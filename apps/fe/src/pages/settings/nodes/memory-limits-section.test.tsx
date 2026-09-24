@@ -7,7 +7,9 @@ import enUS from '@vibeterm/shared/i18n/locales/en_US.json';
 import jaJP from '@vibeterm/shared/i18n/locales/ja_JP.json';
 import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryLimitsEnabledRow, MemoryLimitsSection } from './memory-limits-section';
+import { MemoryLimitsFields } from './management/memory-limits-fields';
+import { memoryLimitsDraft } from './memory-limits-form';
+import { MemoryLimitsSection } from './memory-limits-section';
 import {
   MemoryLimitsUnsupportedNotice,
   memoryLimitsUnsupportedLines,
@@ -21,7 +23,7 @@ const API = {
 const MEMORY_KEYS = [
   'title',
   'description',
-  'enabled',
+  'modeLabel',
   'high',
   'highHint',
   'max',
@@ -38,6 +40,8 @@ const MEMORY_KEYS = [
   'saved',
   'limitsUnsupported',
   'limitsUnsupportedHint',
+  'notReleased',
+  'staleSample',
 ] as const;
 
 const WINDOW_KEYS = [
@@ -49,6 +53,7 @@ const WINDOW_KEYS = [
   'memoryScope',
   'memoryLimitUnavailable',
   'memorySourceRss',
+  'memoryStale',
 ] as const;
 
 describe('MemoryLimitsSection', () => {
@@ -57,19 +62,43 @@ describe('MemoryLimitsSection', () => {
     expect(html).toContain('data-testid="memory-limits-loading"');
     expect(html).not.toContain('data-testid="memory-limits-form"');
   });
+});
 
-  // 开关行两件事都要在：label htmlFor 管点整行切换，aria-labelledby 管 role="switch" 的无障碍名。
-  test('开关行关联文案：label htmlFor + aria-labelledby', () => {
+describe('MemoryLimitsFields', () => {
+  const custom = memoryLimitsDraft(WINDOW_MEMORY_SETTINGS_DEFAULTS);
+
+  test('方式二选一是一组单选，带无障碍名', () => {
     const html = renderToStaticMarkup(
-      <MemoryLimitsEnabledRow checked={false} onCheckedChange={() => {}} />
+      <MemoryLimitsFields draft={custom} errors={{}} idPrefix="memory" onChange={() => {}} />
     );
-    expect(html).toContain('for="memory-limits-enabled"');
-    expect(html).toContain('id="memory-limits-enabled"');
-    expect(html).toContain('id="memory-limits-enabled-label"');
-    expect(html).toMatch(
-      /role="switch"[^>]*aria-labelledby="memory-limits-enabled-label"|aria-labelledby="memory-limits-enabled-label"[^>]*role="switch"/
+    expect(html).toContain('role="radiogroup"');
+    expect(html).toContain('aria-label="settings.nodes.memory.modeLabel"');
+    expect(html).toContain('data-testid="memory-mode-unlimited-input"');
+    expect(html).toContain('data-testid="memory-mode-custom-input"');
+    expect(html).toContain('id="memory-memoryHighMb"');
+  });
+
+  test('额度字段的提示写明「0 只取消这一项」', () => {
+    const html = renderToStaticMarkup(
+      <MemoryLimitsFields draft={custom} errors={{}} idPrefix="memory" onChange={() => {}} />
     );
-    expect(html).toContain('data-testid="memory-limits-enabled"');
+    expect(html).toContain('settings.nodes.memory.unlimitedHint');
+  });
+
+  test('方式还没选（批量框初始）：两项都不选中，额度输入框不出现', () => {
+    const html = renderToStaticMarkup(
+      <MemoryLimitsFields
+        draft={custom}
+        errors={{}}
+        idPrefix="bulk"
+        mode={null}
+        onModeChange={() => {}}
+        onChange={() => {}}
+      />
+    );
+    expect(html).not.toContain('data-selected="true"');
+    expect(html).not.toContain('bulk-memoryHighMb');
+    expect(html).toContain('data-testid="bulk-sampleIntervalSec"');
   });
 });
 
@@ -113,6 +142,14 @@ describe('内存相关 i18n key 三语齐全', () => {
       expect(memory.invalidMb).toContain('{{max}}');
       expect(window.memoryOom).toContain('{{count}}');
       expect(memory.limitsUnsupported).toContain('{{devices}}');
+      for (const mode of ['unlimited', 'custom']) {
+        expect(typeof memory.mode[mode].title).toBe('string');
+        expect(typeof memory.mode[mode].description).toBe('string');
+      }
+      expect(memory.notReleased).toContain('{{windows}}');
+      expect(memory.staleSample).toContain('{{ago}}');
+      expect(window.memoryStale).toContain('{{ago}}');
+      expect(typeof bundle.translation.nodes.memory.chooseMode).toBe('string');
     });
   }
 });

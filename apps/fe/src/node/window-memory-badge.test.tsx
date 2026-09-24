@@ -9,11 +9,11 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { appNodeRuntimes } = await import('./node-runtimes');
-const { WindowMemoryBadge, windowMemoryTone, windowMemoryTooltipLines } = await import(
-  './window-memory-badge'
-);
+const { WindowMemoryBadge, isWindowMemoryBadgeStale, windowMemoryTone, windowMemoryTooltipLines } =
+  await import('./window-memory-badge');
 
 const GB = 1024 * 1024 * 1024;
+const DAY_MS = 86_400_000;
 
 function sample(overrides: Partial<WindowMemorySample> = {}): WindowMemorySample {
   const now = Date.now();
@@ -67,6 +67,34 @@ describe('windowMemoryTone', () => {
   test('RSS 读数上万一带了 OOM 标记，仍然是红的', () => {
     expect(windowMemoryTone(sample({ source: 'rss', oomFlag: true }))).toBe('blocked');
   });
+
+  test('过期读数不按旧限额变色，OOM 标记也不再染红', () => {
+    expect(windowMemoryTone(sample({ current: 9 * GB, oomFlag: true }), true)).toBe('stale');
+  });
+});
+
+describe('isWindowMemoryBadgeStale', () => {
+  const now = Date.now();
+
+  test('网关重放的几天前的读数：刚收到也算过期', () => {
+    expect(
+      isWindowMemoryBadgeStale(sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now }), now)
+    ).toBe(true);
+  });
+
+  test('徽标挂载后才到的新帧：参照时刻取收到时刻，不因挂载时的旧 now 误判', () => {
+    const mountedAt = now - DAY_MS;
+    expect(isWindowMemoryBadgeStale(sample({ sampledAt: now, receivedAt: now }), mountedAt)).toBe(
+      false
+    );
+    expect(
+      isWindowMemoryBadgeStale(sample({ sampledAt: now - 3 * DAY_MS, receivedAt: now }), mountedAt)
+    ).toBe(true);
+  });
+
+  test('刚采的读数不过期', () => {
+    expect(isWindowMemoryBadgeStale(sample(), now)).toBe(false);
+  });
 });
 
 describe('windowMemoryTooltipLines', () => {
@@ -90,6 +118,22 @@ describe('windowMemoryTooltipLines', () => {
   test('粘性标记还在但计数器已随 scope 重建清零：至少算一次，不写 0', () => {
     const lines = windowMemoryTooltipLines(t, sample({ oomKills: 0, oomFlag: true }));
     expect(lines.at(-1)).toBe('window.memoryOom:1');
+  });
+
+  test('过期读数：不列旧限额，改说「读数已过期」并带上相对采样时刻', () => {
+    const now = Date.now();
+    const tt = (key: string, options?: Record<string, unknown>) =>
+      options && 'ago' in options
+        ? `${key}:${options.ago}`
+        : options && 'n' in options
+          ? `${key}:${options.n}`
+          : key;
+    const lines = windowMemoryTooltipLines(tt, sample({ sampledAt: now - 3 * DAY_MS }), { now });
+    expect(lines).toEqual([
+      'window.memory: 1.00 GB',
+      'window.memoryStale:settings.share.time.daysAgo:3',
+    ]);
+    expect(lines.join('\n')).not.toContain('8.00 GB');
   });
 
   test('RSS 兜底：限额三行换成「限不了」+ 读数来源，不写 ∞', () => {
@@ -136,6 +180,18 @@ describe('WindowMemoryBadge', () => {
   test('没有该窗口的读数（宿主不支持 / 换了窗口）时整块不渲染', () => {
     expect(render(null)).toBe('');
     expect(render(sample(), '@9')).toBe('');
+  });
+
+  test('到达时就已过期的读数：灰显、不挂红点、提示里没有旧限额', () => {
+    const now = Date.now();
+    const html = render(
+      sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now, current: 9 * GB, oomFlag: true })
+    );
+    expect(html).toContain('data-tone="stale"');
+    expect(html).toContain('data-stale="true"');
+    expect(html).toContain('window.memoryStale');
+    expect(html).not.toContain('window.memoryLimitHigh');
+    expect(html).not.toContain('window-memory-oom-dot');
   });
 
   test('超过三次心跳没有新帧的陈旧读数一律不展示', () => {

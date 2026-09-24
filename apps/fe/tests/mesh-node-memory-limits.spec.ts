@@ -101,22 +101,28 @@ function memoryField(page: Page, prefix: string, field: keyof WindowMemorySettin
   return page.getByTestId(`${prefix}-${field}`);
 }
 
+const MB_FIELDS = ['memoryHighMb', 'memoryMaxMb', 'memorySwapMaxMb'] as const;
+
+function modeCard(page: Page, prefix: string, enabled: boolean) {
+  return page.getByTestId(`${prefix}-mode-${enabled ? 'custom' : 'unlimited'}`);
+}
+
+/** 「不限制」下额度输入框是收起的，只看得到方式与采样周期。 */
 async function expectFormShows(
   page: Page,
   prefix: string,
   settings: WindowMemorySettings
 ): Promise<void> {
-  await expect(memoryField(page, prefix, 'enabled')).toHaveAttribute(
-    'aria-checked',
-    String(settings.enabled)
+  await expect(modeCard(page, prefix, settings.enabled)).toHaveAttribute('data-selected', 'true');
+  await expect(memoryField(page, prefix, 'sampleIntervalSec')).toHaveValue(
+    String(settings.sampleIntervalSec)
   );
-  for (const field of [
-    'memoryHighMb',
-    'memoryMaxMb',
-    'memorySwapMaxMb',
-    'sampleIntervalSec',
-  ] as const) {
-    await expect(memoryField(page, prefix, field)).toHaveValue(String(settings[field]));
+  for (const field of MB_FIELDS) {
+    if (settings.enabled) {
+      await expect(memoryField(page, prefix, field)).toHaveValue(String(settings[field]));
+    } else {
+      await expect(memoryField(page, prefix, field)).toHaveCount(0);
+    }
   }
 }
 
@@ -125,17 +131,12 @@ async function fillMemoryForm(
   prefix: string,
   settings: WindowMemorySettings
 ): Promise<void> {
-  for (const field of [
-    'memoryHighMb',
-    'memoryMaxMb',
-    'memorySwapMaxMb',
-    'sampleIntervalSec',
-  ] as const) {
+  await modeCard(page, prefix, settings.enabled).click();
+  const fields = settings.enabled
+    ? [...MB_FIELDS, 'sampleIntervalSec' as const]
+    : ['sampleIntervalSec' as const];
+  for (const field of fields) {
     await memoryField(page, prefix, field).fill(String(settings[field]));
-  }
-  const toggle = memoryField(page, prefix, 'enabled');
-  if ((await toggle.getAttribute('aria-checked')) !== String(settings.enabled)) {
-    await toggle.click();
   }
 }
 
@@ -188,6 +189,9 @@ test('mesh: the row memory item loads node B current limits and writes them back
   await expect(page.getByTestId(`${prefix}-form`)).toBeVisible({ timeout: 15_000 });
   await expectFormShows(page, prefix, ROW_BASELINE);
 
+  // 切回「自定义限额」：收起时留着的那几个数字原样回来。
+  await modeCard(page, prefix, true).click();
+  await expectFormShows(page, prefix, { ...ROW_BASELINE, enabled: true });
   await memoryField(page, prefix, 'memoryHighMb').fill(String(ROW_EDITED_HIGH_MB));
   await page.getByTestId(`nodes-memory-save-${nodeId}`).click();
   await expect(toast(page, SAVED_COPY)).toBeVisible({ timeout: 30_000 });
@@ -196,6 +200,7 @@ test('mesh: the row memory item loads node B current limits and writes them back
   // 唯一有分量的断言：B 自己回的那份记录。
   expect(await readSettings(page, nodeId)).toEqual({
     ...ROW_BASELINE,
+    enabled: true,
     memoryHighMb: ROW_EDITED_HIGH_MB,
   });
   // 入口自身不能被写串。
@@ -233,6 +238,9 @@ test('mesh: the bulk memory action writes one form to the selected node B', asyn
   await expect(page.getByTestId(`nodes-memory-target-${nodeId}`)).toBeVisible();
   await expect(page.getByTestId(`nodes-memory-skip-${nodeId}`)).toHaveCount(0);
   await expect(page.getByTestId('nodes-memory-bulk-effect')).toBeVisible();
+  // 方式没选之前写不了：原封不动点「写入」不能把缺省限额装到节点上。
+  await expect(page.getByTestId('nodes-memory-bulk-apply')).toBeDisabled();
+  await expect(page.getByTestId('nodes-memory-bulk-choose-mode')).toBeVisible();
 
   await fillMemoryForm(page, 'nodes-memory-bulk', BULK_SETTINGS);
   await page.getByTestId('nodes-memory-bulk-apply').click();

@@ -466,6 +466,7 @@
       "memoryScope": "作用域",
       "memoryLimitUnavailable": "窗口限额：此宿主不支持（需 tmux ≥ 3.6）",
       "memorySourceRss": "读数来源：进程树 RSS 合计",
+      "memoryStale": "读数已过期（采样于 {{ago}}），不代表当前限额",
       "noWindowSelected": "未选择窗口",
       "selectWindowToStart": "选择一个窗口开始"
     },

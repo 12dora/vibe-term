@@ -11,28 +11,36 @@ export type SessionsMemoryLoader = () => Promise<SessionsMemoryResponse>;
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 /**
- * 拉一次 `GET /api/sessions/memory`，挑出「已连接且明确限不了」的设备名。
- * 拉取失败一律当作没有可提示的设备：这条提示是锦上添花，绝不能挡住限额表单。
+ * 拉一次 `GET /api/sessions/memory`：既用来挑出「已连接且明确限不了」的设备，也用来对照
+ * 「设置已是不限制、窗口却还显示限额」。拉取失败一律当作没有读数：这两条提示是锦上添花，
+ * 绝不能挡住限额表单。
  */
-export function useMemoryLimitsUnsupported(load: SessionsMemoryLoader | undefined): string[] {
-  const [names, setNames] = useState<string[]>([]);
+export function useSessionsMemorySnapshot(
+  load: SessionsMemoryLoader | undefined
+): SessionsMemoryResponse | null {
+  const [response, setResponse] = useState<SessionsMemoryResponse | null>(null);
 
   useEffect(() => {
     if (!load) return;
     let alive = true;
     load()
-      .then((response) => {
-        if (alive) setNames(devicesWithoutMemoryLimits(response).map((row) => row.deviceName));
+      .then((next) => {
+        if (alive) setResponse(next);
       })
       .catch(() => {
-        if (alive) setNames([]);
+        if (alive) setResponse(null);
       });
     return () => {
       alive = false;
     };
   }, [load]);
 
-  return names;
+  return response;
+}
+
+/** 已连接且明确限不了的设备名；没有读数即没有可提示的设备。 */
+export function unsupportedDeviceNames(response: SessionsMemoryResponse | null): string[] {
+  return response ? devicesWithoutMemoryLimits(response).map((row) => row.deviceName) : [];
 }
 
 /** 提示的两行：受影响的设备名 + 生效条件。 */

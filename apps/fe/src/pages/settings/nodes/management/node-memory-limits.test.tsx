@@ -344,8 +344,50 @@ describe('对话框正文', () => {
     );
     // 字段 id 带节点前缀：本机卡那份表单同页渲染时不会撞车。
     expect(form).toContain('id="nodes-memory-qq-memoryHighMb"');
-    expect(form).toContain('data-testid="nodes-memory-qq-enabled"');
+    expect(form).toContain('data-testid="nodes-memory-qq-mode-custom"');
     expect(form).toContain('settings.nodes.memory.highAboveMax');
+  });
+
+  test('单节点框：「不限制」是选中的一项，额度输入框收起，只留采样周期', () => {
+    const html = renderToStaticMarkup(
+      <NodeMemoryDialogBody
+        nodeId="qq"
+        draft={{
+          enabled: false,
+          memoryHighMb: '8192',
+          memoryMaxMb: '12288',
+          memorySwapMaxMb: '4096',
+          sampleIntervalSec: '5',
+        }}
+        errors={{}}
+        loadError={null}
+        saving={false}
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toMatch(
+      /data-testid="nodes-memory-qq-mode-unlimited"[^>]*data-selected="true"|data-selected="true"[^>]*data-testid="nodes-memory-qq-mode-unlimited"/
+    );
+    expect(html).toContain('settings.nodes.memory.mode.unlimited.description');
+    expect(html).not.toContain('nodes-memory-qq-memoryMaxMb');
+    expect(html).toContain('data-testid="nodes-memory-qq-sampleIntervalSec"');
+  });
+
+  test('单节点框：设置已不限制而窗口仍带限额时，按读数新旧分别提示', () => {
+    const html = renderToStaticMarkup(
+      <NodeMemoryDialogBody
+        nodeId="qq"
+        draft={null}
+        errors={{}}
+        loadError={null}
+        saving={false}
+        releaseReport={{ lingering: ['工作室 / vim'], stale: { count: 2, oldestSampledAt: 1 } }}
+        now={2}
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="nodes-memory-release-qq-lingering"');
+    expect(html).toContain('data-testid="nodes-memory-release-qq-stale"');
   });
 });
 
@@ -551,7 +593,7 @@ describe('「写入设置」不等于「限额生效」', () => {
     expect(html).toContain('settings.nodes.memory.limitsUnsupported');
     expect(html).toContain('settings.nodes.memory.limitsUnsupportedHint');
     // 提示归提示，表单照常可用。
-    expect(html).toContain('data-testid="nodes-memory-qq-enabled"');
+    expect(html).toContain('data-testid="nodes-memory-qq-mode"');
   });
 
   test('没有受影响的设备就不提示', () => {
