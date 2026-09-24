@@ -3,7 +3,7 @@ import type { RtcSignalMessage } from '../mesh-deps';
 import { decodeCandidateSignal, decodeSdpSignal, isEmptyCandidate } from './ice';
 import type { PeerConnectionLike } from './native';
 import { type IceCandidateTrace, type RtcLogContext, rtcLog, rtcLogCandidate } from './rtc-log';
-import { consumeOffererOnDecline } from './rtc-offer-decline';
+import { consumeOffererOnDecline, rememberOffererDecline } from './rtc-offer-decline';
 
 export type QueuedRemoteCandidate = { candidate: string; mid: string; epoch?: number };
 
@@ -165,6 +165,7 @@ function rejectRemoteSdp(
   if (
     expect === 'answer' &&
     consumeOffererOnDecline(raw, () => {
+      rememberOffererDecline(peer, raw);
       state.onSuperseded?.();
     })
   ) {

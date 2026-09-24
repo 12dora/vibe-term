@@ -3,6 +3,9 @@ import { encodeRelayStatusBlob, generateTenantKey, sealEnvelope } from '@vibeter
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { applyUplinkNodeList } from './node-list-apply';
+import type { PeerManagerState } from './peer-manager-state';
+import type { LivePeer } from './peer-reconnect-wake';
+import { PeerStatusSync } from './peer-status-sync';
 import { membersProbeSnapshot, resetPortReachForTest } from './port-reach';
 import { relayListToNodeList } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
@@ -366,6 +369,158 @@ describe('relayListToNodeList', () => {
       await relayListToNodeList(msg, { ...ctx, relayUrl: 'https://jp.example' });
       expect(membersProbeSnapshot('https://jp.example')).toMatchObject({ ok: 1, total: 1 });
       expect(membersProbeSnapshot('https://sh.example')).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
+  test('relay list compares capabilities before writing peer_cache', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const nodeId = 'ab'.repeat(16);
+      const selfId = 'cd'.repeat(16);
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      userStore.upsertPeer({
+        nodeId,
+        name: 'peer-b',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+        version: '2.8.0',
+      });
+      const metaKey = generateTenantKey();
+      const seal = (version: string, directCapable: boolean) =>
+        sealEnvelope(
+          metaKey,
+          'status',
+          encodeRelayStatusBlob({
+            name: 'peer-b',
+            version,
+            tmux: true,
+            direct_capable: directCapable,
+            inventory: { tmux: true },
+            endpoints: [],
+          }),
+          1
+        );
+      const ctx = {
+        selfNodeId: selfId,
+        userId: 'user-1',
+        userStore,
+        secrets: {
+          metaKey: async (epoch: number) => (epoch === 1 ? metaKey : null),
+        } as unknown as RelaySecrets,
+        now: 2,
+      };
+      const listMsg = async (version: string, directCapable: boolean, listVersion: number) =>
+        relayListToNodeList(
+          {
+            t: 'relay.list',
+            version: listVersion,
+            nodes: [
+              {
+                id: nodeId,
+                online: true,
+                status: 'admitted',
+                epoch: 1,
+                blob: await seal(version, directCapable),
+              },
+            ],
+            rtc: { stun: [], turn: null },
+            key_log_head_seq: 0,
+          },
+          ctx
+        );
+      const changed: string[] = [];
+      const apply = (listed: Awaited<ReturnType<typeof relayListToNodeList>>) => {
+        applyUplinkNodeList(
+          {
+            state: {
+              lastNodeList: null,
+              uplinkPresenceLive: true,
+              uplinkGeneration: 1,
+              lastRtc: null,
+            },
+            retainPeerIds: () => [nodeId],
+            extraListedNodes: () => [],
+            identity: { nodeIdHex: selfId },
+            scheduler: { now: () => 3 },
+            userIdOf: () => 'user-1',
+            userStore,
+            peerHolder: {
+              manager: {
+                listReach: () => new Map(),
+                transportOf: () => null,
+                rttOf: () => null,
+                notifyPeerEndpointsChanged: () => undefined,
+                onPeerCapabilitiesChanged: (id: string) => changed.push(id),
+              },
+            },
+            emitListNodeEvent: () => undefined,
+            opts: {},
+          },
+          listed,
+          () => false
+        );
+      };
+      apply(await listMsg('2.9.0', false, 4));
+      expect(userStore.getPeer(nodeId)?.version).toBe('2.9.0');
+      expect(changed).toEqual([nodeId]);
+      apply(await listMsg('2.9.0', false, 5));
+      expect(changed).toEqual([nodeId]);
+
+      const statusChanged: string[] = [];
+      const sync = new PeerStatusSync(
+        {
+          identity: { nodeId: selfId },
+          userStore,
+          uplink: { userId: 'user-1' },
+          scheduler: { now: () => 4 },
+        } as PeerManagerState,
+        {
+          deps: {
+            sendPeerCtl: () => undefined,
+            notifyPeerEndpointsChanged: () => undefined,
+            onPeerCapabilitiesChanged: (id) => statusChanged.push(id),
+            listenPort: () => undefined,
+          },
+        }
+      );
+      await sync.applyPeerStatus({ peerNodeId: nodeId } as LivePeer, {
+        version: '2.9.0',
+        endpoints: [],
+        inventory: { tmux: true },
+        direct_capable: false,
+      });
+      expect(statusChanged).toEqual([]);
+      await sync.applyPeerStatus({ peerNodeId: nodeId } as LivePeer, {
+        version: '2.9.1',
+        endpoints: [],
+        inventory: { tmux: true },
+        direct_capable: false,
+      });
+      expect(statusChanged).toEqual([nodeId]);
     } finally {
       close();
     }

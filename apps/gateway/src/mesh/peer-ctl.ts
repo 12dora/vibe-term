@@ -14,7 +14,7 @@ import {
 import { decodeSdpSignal, isRtcWakeSdp, peerRtcSession } from './rtc/ice';
 import type { DcOfferBlockReason } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
-import { dcOfferDeclineCtl } from './rtc/rtc-offer-decline';
+import { dcOfferDeclineCtl, isDcOfferDecline } from './rtc/rtc-offer-decline';
 
 export type PeerCtlHost = {
   identity: { nodeId: string };
@@ -35,6 +35,7 @@ export type PeerCtlHost = {
     dcBreaker: {
       shouldAcceptAnswer: (nodeId: string) => boolean;
       inboundBlock: (nodeId: string) => DcOfferBlockReason | null;
+      refusalCooldown?: (nodeId: string) => { until: number | null; retryAfterMs: number };
     };
   };
   rtcListeners: Map<string, Set<(msg: RtcSignalMessage) => void>>;
@@ -113,16 +114,28 @@ function declineBlockedInboundOffer(
   if (decoded?.type !== 'offer') return false;
   const live = host.state.live.get(fromNodeId);
   if (live) {
+    const cooldown = host.dcUpgrade.dcBreaker.refusalCooldown?.(fromNodeId);
     sendPeerCtlQuiet(
       live,
       dcOfferDeclineCtl({
         rtcSession: msg.rtcSession || peerRtcSession(host.identity.nodeId, fromNodeId),
         to: fromNodeId,
         reason: block,
+        until: cooldown?.until,
+        retryAfterMs: cooldown?.retryAfterMs,
       })
     );
   }
   return true;
+}
+
+function dropUnboundDecline(
+  msg: RtcSignalMessage,
+  pending: boolean,
+  upgrading: boolean,
+  inflight: boolean
+): boolean {
+  return isDcOfferDecline(msg.sdp) && !pending && !upgrading && !inflight;
 }
 
 function bufferOrStartRtcAttempt(
@@ -133,6 +146,7 @@ function bufferOrStartRtcAttempt(
   const pending = host.state.pending.has(fromNodeId);
   const upgrading = host.state.upgrading.has(fromNodeId);
   const inflight = host.dialer.hasDcInflight(fromNodeId);
+  if (dropUnboundDecline(msg, pending, upgrading, inflight)) return;
   if (
     shouldDropUnboundRtcSignal({
       selfNodeId: host.identity.nodeId,

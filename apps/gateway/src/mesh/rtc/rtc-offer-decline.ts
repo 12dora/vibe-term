@@ -1,5 +1,6 @@
 import { decodeSdpSignal } from './ice';
 import type { DcOfferBlockReason } from './rtc-dial-breaker';
+import { isSupersededDcLoss } from './rtc-dial-progress';
 
 /** 信令里没有独立的 busy/reject。decline 走现有 rtc.signal SDP：旧对端把未知 type 丢掉，不抛。 */
 export const DC_OFFER_DECLINE_TYPE = 'decline';
@@ -8,19 +9,130 @@ export type DcOfferDeclineReason = DcOfferBlockReason;
 
 export type OffererSdpReaction = 'apply-answer' | 'abort-now' | 'ignore';
 
-export function encodeDcOfferDecline(reason: DcOfferDeclineReason): string {
-  return JSON.stringify({ type: DC_OFFER_DECLINE_TYPE, sdp: reason });
+export type DcOfferDeclineExtra = {
+  until?: number | null;
+  retryAfterMs?: number | null;
+};
+
+export type DcOfferDeclineDetail = {
+  reason: DcOfferDeclineReason;
+  until: number | null;
+  retryAfterMs: number | null;
+};
+
+/**
+ * 形状仍是 `{type:'decline', sdp}`。until / retryAfterMs 是旧解码器会忽略的附加字段。
+ * 优先带 retryAfterMs：对端时钟和本端不必对齐。
+ */
+export function encodeDcOfferDecline(
+  reason: DcOfferDeclineReason,
+  extra?: DcOfferDeclineExtra
+): string {
+  const body: Record<string, unknown> = { type: DC_OFFER_DECLINE_TYPE, sdp: reason };
+  if (extra?.until != null && Number.isFinite(extra.until)) body.until = extra.until;
+  if (
+    extra?.retryAfterMs != null &&
+    extra.retryAfterMs > 0 &&
+    Number.isFinite(extra.retryAfterMs)
+  ) {
+    body.retryAfterMs = Math.round(extra.retryAfterMs);
+  }
+  return JSON.stringify(body);
 }
 
 export function readDcOfferDecline(raw: string | null | undefined): DcOfferDeclineReason | null {
+  return readDcOfferDeclineDetail(raw)?.reason ?? null;
+}
+
+export function readDcOfferDeclineDetail(
+  raw: string | null | undefined
+): DcOfferDeclineDetail | null {
   if (!isDcOfferDecline(raw) || !raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { sdp?: unknown };
-    if (parsed.sdp === 'disabled' || parsed.sdp === 'cooling') return parsed.sdp;
+    const parsed = JSON.parse(raw) as { sdp?: unknown; until?: unknown; retryAfterMs?: unknown };
+    if (parsed.sdp !== 'disabled' && parsed.sdp !== 'cooling') return null;
+    return {
+      reason: parsed.sdp,
+      until: finiteMs(parsed.until),
+      retryAfterMs: finiteMs(parsed.retryAfterMs),
+    };
   } catch {
     return null;
   }
+}
+
+function finiteMs(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** 相对剩余时间优先；只有绝对 until 时要求它还在本端时钟的未来。 */
+export function declineBackoffUntil(detail: DcOfferDeclineExtra, now: number): number | null {
+  if (detail.retryAfterMs != null && detail.retryAfterMs > 0) return now + detail.retryAfterMs;
+  if (detail.until != null && detail.until > now) return detail.until;
   return null;
+}
+
+export class DcDeclinedError extends Error {
+  readonly reason: DcOfferDeclineReason;
+  readonly until: number | null;
+  readonly retryAfterMs: number | null;
+
+  constructor(detail: DcOfferDeclineDetail) {
+    super('dc-declined');
+    this.name = 'DcDeclinedError';
+    this.reason = detail.reason;
+    this.until = detail.until;
+    this.retryAfterMs = detail.retryAfterMs;
+  }
+}
+
+export function dcDeclineNoticeOf(err: unknown): DcOfferDeclineDetail | null {
+  if (err instanceof DcDeclinedError) {
+    return { reason: err.reason, until: err.until, retryAfterMs: err.retryAfterMs };
+  }
+  return null;
+}
+
+const pendingDeclines = new Map<string, DcOfferDeclineDetail>();
+
+export function rememberOffererDecline(peer: string, raw: string): void {
+  const detail = readDcOfferDeclineDetail(raw) ?? {
+    reason: 'disabled',
+    until: null,
+    retryAfterMs: null,
+  };
+  pendingDeclines.set(peer.toLowerCase(), detail);
+}
+
+export function takePendingDecline(peer: string): DcOfferDeclineDetail | null {
+  const key = peer.toLowerCase();
+  const found = pendingDeclines.get(key) ?? null;
+  if (found) pendingDeclines.delete(key);
+  return found;
+}
+
+export function discardPendingDecline(peer: string): void {
+  pendingDeclines.delete(peer.toLowerCase());
+}
+
+/** true：这次 superseded 还在预算内，拨号循环再试一次。decline 直接抛 dc-declined。 */
+export function retrySupersededDial(
+  peer: string,
+  err: unknown,
+  deadline: number,
+  signal?: AbortSignal
+): boolean {
+  if (signal?.aborted) {
+    discardPendingDecline(peer);
+    return false;
+  }
+  if (isSupersededDcLoss(err)) {
+    const declined = takePendingDecline(peer);
+    if (declined) throw new DcDeclinedError(declined);
+    return performance.now() < deadline;
+  }
+  discardPendingDecline(peer);
+  return false;
 }
 
 export function isDcOfferDecline(raw: string | null | undefined): boolean {
@@ -57,6 +169,8 @@ export function dcOfferDeclineCtl(opts: {
   rtcSession: string;
   to: string;
   reason: DcOfferDeclineReason;
+  until?: number | null;
+  retryAfterMs?: number | null;
 }): {
   t: 'rtc.signal';
   rtcSession: string;
@@ -69,6 +183,9 @@ export function dcOfferDeclineCtl(opts: {
     rtcSession: opts.rtcSession,
     from: 'node',
     to: opts.to,
-    sdp: encodeDcOfferDecline(opts.reason),
+    sdp: encodeDcOfferDecline(opts.reason, {
+      until: opts.until,
+      retryAfterMs: opts.retryAfterMs,
+    }),
   };
 }

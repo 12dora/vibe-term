@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { gateDcDial, planInboundOffer } from './peer-dialer-dc-gate';
+import { gateDcDial, noteDialDcFailure, planInboundOffer } from './peer-dialer-dc-gate';
 import type { RtcDialBreakerDecision } from './rtc/rtc-dial-breaker';
-import { offererReactionToRemoteSdp } from './rtc/rtc-offer-decline';
+import { DcDeclinedError, offererReactionToRemoteSdp } from './rtc/rtc-offer-decline';
 
 function decision(
   patch: Partial<RtcDialBreakerDecision> & Pick<RtcDialBreakerDecision, 'level' | 'disabled'>
@@ -74,5 +74,42 @@ describe('gateDcDial inbound offers', () => {
     ).toBe(true);
     expect(lines.some((line) => line.includes('cause=cooling'))).toBe(true);
     expect(lines.some((line) => line.includes('answer while cooling'))).toBe(false);
+  });
+
+  test('force-probe accept window answers instead of declining', () => {
+    const allowed = gateDcDial({
+      peer: 'aa',
+      capable: true,
+      aboveDc: true,
+      peerInitiated: true,
+      decision: decision({ level: 5, disabled: true, allow: false, acceptInbound: true }),
+    });
+    expect(allowed).toEqual({ allow: true });
+  });
+
+  test('dc-declined is not a dial failure and sets a non-escalating cooldown', () => {
+    const noted: string[] = [];
+    const refusals: Array<number | null> = [];
+    const now = Date.now();
+    const reason = noteDialDcFailure({
+      stopped: false,
+      nodeId: 'peer',
+      err: new DcDeclinedError({ reason: 'cooling', until: null, retryAfterMs: 50_000 }),
+      connectP: null,
+      attemptId: 'dc:1',
+      peerInitiated: false,
+      dcBreaker: {
+        noteFailure: () => {
+          noted.push('fail');
+          return { counted: true, opened: false, open: false };
+        },
+        noteRemoteRefusal: (_peer, until) => refusals.push(until),
+      },
+    });
+    expect(reason).toBe('dc-declined');
+    expect(noted).toEqual([]);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0] ?? 0).toBeGreaterThanOrEqual(now + 50_000);
+    expect(refusals[0] ?? 0).toBeLessThan(now + 50_000 + 1_000);
   });
 });

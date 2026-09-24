@@ -1,6 +1,6 @@
 import type { UserStore } from '../auth/user-store';
 import { jsonText } from './json-text';
-import { peerCapabilitiesChanged } from './peer-capability-change';
+import { type PeerCapabilityFields, peerCapabilitiesChanged } from './peer-capability-change';
 import { ingestPeerReachMap } from './port-reach';
 import type { UplinkNodeList } from './uplink-protocol';
 
@@ -12,6 +12,8 @@ export function persistUplinkPeerCache(input: {
   list: UplinkNodeList;
   now: number;
   onCapabilitiesChanged?: (nodeId: string) => void;
+  /** `relay.list` 写缓存之前比出来的变化；此时再读行已经看不出差别。 */
+  relayChanges?: ReadonlySet<string>;
 }): void {
   const { userStore, userId, selfNodeId, list, now } = input;
   for (const node of list.nodes) {
@@ -24,15 +26,11 @@ export function persistUplinkPeerCache(input: {
     // 已解密出 endpoints/inventory 的 2.2.x 对端可以没有 version，仍要建缓存行。
     if (!existing && !version && !hasDecryptablePeerPayload(node)) continue;
     const inventoryJson = jsonText(node.inventory);
-    if (
-      peerCapabilitiesChanged(existing, {
-        version,
-        directCapable: node.direct_capable,
-        inventoryJson,
-      })
-    ) {
-      input.onCapabilitiesChanged?.(node.id);
-    }
+    notifyCapabilityChange(input, node.id, existing, {
+      version,
+      directCapable: node.direct_capable,
+      inventoryJson,
+    });
     userStore.upsertPeer({
       nodeId: node.id,
       name: node.name,
@@ -44,6 +42,20 @@ export function persistUplinkPeerCache(input: {
       version,
     });
     ingestPeerReachMap(node.id, node.peer_reach, selfNodeId);
+  }
+}
+
+function notifyCapabilityChange(
+  input: {
+    onCapabilitiesChanged?: (nodeId: string) => void;
+    relayChanges?: ReadonlySet<string>;
+  },
+  nodeId: string,
+  existing: PeerCapabilityFields | null | undefined,
+  next: PeerCapabilityFields
+): void {
+  if (input.relayChanges?.has(nodeId) || peerCapabilitiesChanged(existing, next)) {
+    input.onCapabilitiesChanged?.(nodeId);
   }
 }
 

@@ -6,7 +6,12 @@ import type { PeerManagerState } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { encodeCandidateSignal, encodeSdpSignal, peerRtcSession } from './rtc/ice';
 import type { PeerConnectionLike } from './rtc/native';
-import { isDcOfferDecline, readDcOfferDecline } from './rtc/rtc-offer-decline';
+import {
+  encodeDcOfferDecline,
+  isDcOfferDecline,
+  readDcOfferDecline,
+  readDcOfferDeclineDetail,
+} from './rtc/rtc-offer-decline';
 import { applyRemoteSdp, createSignalingAttemptState } from './rtc/rtc-signal-apply';
 
 function encodeCtl(msg: Record<string, unknown>): Uint8Array {
@@ -259,6 +264,77 @@ describe('receiveRtcSignal', () => {
     });
     expect(open.upgrades).toEqual([peer]);
     expect(open.state.rtcInbox.get(peer)).toHaveLength(1);
+  });
+
+  test('unbound decline is dropped: no inbox and no peer-initiated dial', () => {
+    const peer = 'bb'.repeat(16);
+    const host = fakeHost({
+      dialer: { hasDcInflight: () => false, dcCapable: () => true },
+      dcUpgrade: {
+        dcBreaker: { shouldAcceptAnswer: () => true, inboundBlock: () => null },
+      },
+    });
+    host.state.live.set(peer, {
+      peerNodeId: peer,
+      transport: 'relay',
+      quiesceCapable: true,
+    } as unknown as LivePeer);
+    receiveRtcSignal(host, peer, {
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: host.identity.nodeId,
+      sdp: encodeDcOfferDecline('disabled'),
+      candidate: null,
+    });
+    expect(host.upgrades).toEqual([]);
+    expect(host.state.rtcInbox.has(peer)).toBe(false);
+  });
+
+  test('decline during an inflight dial stays in the inbox and does not start another dial', () => {
+    const peer = 'bb'.repeat(16);
+    const host = fakeHost({
+      dialer: { hasDcInflight: () => true, dcCapable: () => true },
+      dcUpgrade: {
+        dcBreaker: { shouldAcceptAnswer: () => true, inboundBlock: () => null },
+      },
+    });
+    receiveRtcSignal(host, peer, {
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: host.identity.nodeId,
+      sdp: encodeDcOfferDecline('cooling', { retryAfterMs: 30_000 }),
+      candidate: null,
+    });
+    expect(host.upgrades).toEqual([]);
+    expect(host.state.rtcInbox.get(peer)).toHaveLength(1);
+  });
+
+  test('decline carries the remote cooldown', () => {
+    const peer = 'bb'.repeat(16);
+    const sent: unknown[] = [];
+    const host = fakeHost({
+      dcUpgrade: {
+        dcBreaker: {
+          shouldAcceptAnswer: () => false,
+          inboundBlock: () => 'cooling',
+          refusalCooldown: () => ({ until: 9_000, retryAfterMs: 8_000 }),
+        },
+      },
+    });
+    host.state.live.set(peer, liveWithCtl(peer, sent));
+    receiveRtcSignal(host, peer, {
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: host.identity.nodeId,
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 1 }),
+      candidate: null,
+    });
+    const decline = sent[0] as { sdp: string };
+    expect(readDcOfferDeclineDetail(decline.sdp)).toEqual({
+      reason: 'cooling',
+      until: 9_000,
+      retryAfterMs: 8_000,
+    });
   });
 });
 

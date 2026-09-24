@@ -14,7 +14,11 @@ import {
   rtcDialFailureMetaOf,
 } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
-import { encodeDcOfferDecline } from './rtc/rtc-offer-decline';
+import {
+  dcDeclineNoticeOf,
+  declineBackoffUntil,
+  encodeDcOfferDecline,
+} from './rtc/rtc-offer-decline';
 
 export async function ensureRtcReady(rtc: RtcPeerManager): Promise<void> {
   if ((await rtc.ready?.()) === false) throw new Error('node-datachannel is not available');
@@ -34,7 +38,11 @@ export type InboundOfferPlan =
 export function planInboundOffer(decision: RtcDialBreakerDecision): InboundOfferPlan {
   const reason = inboundOfferBlockReason(decision);
   if (!reason) return { action: 'accept' };
-  return { action: 'decline', reason, sdp: encodeDcOfferDecline(reason) };
+  return {
+    action: 'decline',
+    reason,
+    sdp: encodeDcOfferDecline(reason, { until: decision.until }),
+  };
 }
 
 /** 对端发起的拨号在低档冷却中仍放行；disabled 或冷却到顶则拒绝，不建 PC。 */
@@ -67,6 +75,7 @@ function declinePeerOffer(input: {
   decision: RtcDialBreakerDecision;
 }): DcDialGate | null {
   if (!input.peerInitiated) return null;
+  if (input.decision.acceptInbound) return { allow: true };
   const reason = inboundOfferBlockReason(input.decision);
   if (!reason) return null;
   rtcLog('answer declined', {
@@ -113,10 +122,13 @@ export function noteDialDcFailure(input: {
   connectP: Promise<{ pc: { close(): void } }> | null;
   attemptId: string;
   peerInitiated: boolean;
-  dcBreaker: Pick<RtcDialBreaker, 'noteFailure'>;
+  dcBreaker: Pick<RtcDialBreaker, 'noteFailure'> & {
+    noteRemoteRefusal?: (peer: string, until: number | null) => void;
+  };
 }): string {
   const reason = input.err instanceof Error ? input.err.message : String(input.err);
   const note = (failure: unknown) => {
+    if (!input.stopped) applyRemoteDecline(input, failure);
     const meta = rtcDialFailureMetaOf(failure);
     if (input.stopped || isIntentionalDcLoss(meta.reason)) return;
     input.dcBreaker.noteFailure(
@@ -137,4 +149,16 @@ export function noteDialDcFailure(input: {
     note(input.err);
   }
   return reason;
+}
+
+function applyRemoteDecline(
+  input: {
+    nodeId: string;
+    dcBreaker: { noteRemoteRefusal?: (peer: string, until: number | null) => void };
+  },
+  failure: unknown
+): void {
+  const detail = dcDeclineNoticeOf(failure);
+  if (!detail || !input.dcBreaker.noteRemoteRefusal) return;
+  input.dcBreaker.noteRemoteRefusal(input.nodeId, declineBackoffUntil(detail, Date.now()));
 }

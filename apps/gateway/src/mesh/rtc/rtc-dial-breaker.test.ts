@@ -23,6 +23,7 @@ import {
   createGatewayRtcDialBreaker,
   isIntentionalDcLoss,
 } from './rtc-dial-breaker';
+import { RTC_FORCE_PROBE_INBOUND_GRACE_MS } from './rtc-force-probe';
 import type { RtcPeerManager } from './rtc-peer-manager';
 
 describe('RtcDialBreaker', () => {
@@ -212,6 +213,7 @@ describe('RtcDialBreaker', () => {
     expect(isIntentionalDcLoss('idle')).toBe(true);
     expect(isIntentionalDcLoss('replaced')).toBe(true);
     expect(isIntentionalDcLoss('superseded')).toBe(true);
+    expect(isIntentionalDcLoss('dc-declined')).toBe(true);
     expect(isIntentionalDcLoss('liveness-timeout')).toBe(false);
     expect(RTC_DIAL_BREAKER_BASE_MS_DEFAULT).toBe(30_000);
     expect(RTC_DIAL_DISABLE_AFTER_DEFAULT).toBe(10);
@@ -570,6 +572,151 @@ describe('RtcDialBreaker', () => {
     } finally {
       console.log = orig;
     }
+  });
+
+  test('a channel that dies at 10s does not clear disabled; 60s healthy does', () => {
+    let now = 0;
+    const dead = new RtcDialBreaker({ now: () => now, disableAfter: 1 });
+    const peer = 'p';
+    dead.noteFailure(peer, 'timeout', 'f1', now);
+    now = RTC_DIAL_FORCE_PROBE_MS;
+    dead.beginAttempt(peer, 'probe');
+    dead.noteChannelEstablished(peer, 'ok', now);
+    expect(dead.isDisabled(peer)).toBe(true);
+    now += 10_000;
+    expect(dead.noteHealthy(peer, now)).toBe(false);
+    expect(dead.isDisabled(peer)).toBe(true);
+    dead.noteFailure(peer, 'liveness-timeout', 'dead', now);
+    now += RTC_DIAL_BREAKER_HEALTHY_MS;
+    expect(dead.noteHealthy(peer, now)).toBe(false);
+    expect(dead.isDisabled(peer)).toBe(true);
+
+    const unstable = new RtcDialBreaker({ now: () => now, disableAfter: 1 });
+    unstable.noteFailure(peer, 'timeout', 'f1', now);
+    const unstableOpened = now;
+    unstable.noteChannelEstablished(peer, 'ok', unstableOpened);
+    unstable.noteUnstable(peer, 60_000, unstableOpened + 10_000);
+    expect(unstable.isDisabled(peer)).toBe(true);
+    expect(unstable.noteHealthy(peer, unstableOpened + RTC_DIAL_BREAKER_HEALTHY_MS)).toBe(false);
+    expect(unstable.isDisabled(peer)).toBe(true);
+
+    const survived = new RtcDialBreaker({ now: () => now, disableAfter: 1 });
+    const openedAt = now;
+    survived.noteFailure(peer, 'timeout', 'f1', openedAt);
+    survived.noteChannelEstablished(peer, 'ok', openedAt);
+    expect(survived.isDisabled(peer)).toBe(true);
+    expect(survived.noteHealthy(peer, openedAt + RTC_DIAL_BREAKER_HEALTHY_MS - 1)).toBe(false);
+    expect(survived.isDisabled(peer)).toBe(true);
+    now = openedAt + RTC_DIAL_BREAKER_HEALTHY_MS;
+    expect(survived.noteHealthy(peer, now)).toBe(true);
+    expect(survived.isDisabled(peer)).toBe(false);
+  });
+
+  test('mutually disabled peers recover on a force probe within 10 min', () => {
+    let now = 1_000_000;
+    const onA = new RtcDialBreaker({ now: () => now, disableAfter: 10 });
+    const onB = new RtcDialBreaker({ now: () => now, disableAfter: 10 });
+    for (let i = 0; i < 10; i += 1) {
+      onA.noteFailure('B', 'timeout', `a${i}`, now);
+      onB.noteFailure('A', 'timeout', `b${i}`, now);
+      now += 1_000;
+    }
+    expect(onA.isDisabled('B')).toBe(true);
+    expect(onB.isDisabled('A')).toBe(true);
+    const disabledAt = now;
+    expect(onA.inboundBlock('B', disabledAt)).toBe('disabled');
+    expect(onB.inboundBlock('A', disabledAt)).toBe('disabled');
+    let probes = 0;
+    let declined = 0;
+    let recoveredAt: number | null = null;
+    const end = now + 24 * 3600 * 1000;
+    while (now < end && recoveredAt == null) {
+      now += 60_000;
+      const pairs = [
+        [onA, onB, 'B', 'A'],
+        [onB, onA, 'A', 'B'],
+      ] as const;
+      for (const [me, other, peerId, otherId] of pairs) {
+        const decision = me.shouldTry(peerId, now);
+        if (!decision.allow) continue;
+        probes += 1;
+        me.beginAttempt(peerId, `p${probes}`);
+        if (other.inboundBlock(otherId, now)) {
+          declined += 1;
+          continue;
+        }
+        const openedAt = now;
+        me.noteChannelEstablished(peerId, `ok${probes}`, openedAt);
+        other.noteChannelEstablished(otherId, `ok${probes}`, openedAt);
+        if (!me.isDisabled(peerId) || !other.isDisabled(otherId)) {
+          throw new Error('establish must not clear disabled');
+        }
+        now = openedAt + RTC_DIAL_BREAKER_HEALTHY_MS;
+        me.noteHealthy(peerId, now);
+        other.noteHealthy(otherId, now);
+        if (!me.isDisabled(peerId) && !other.isDisabled(otherId)) {
+          recoveredAt = now;
+          break;
+        }
+      }
+    }
+    expect(recoveredAt).not.toBeNull();
+    expect((recoveredAt ?? 0) - disabledAt).toBeLessThanOrEqual(
+      RTC_DIAL_FORCE_PROBE_MS + RTC_DIAL_BREAKER_HEALTHY_MS + 60_000
+    );
+    expect(onA.isDisabled('B')).toBe(false);
+    expect(onB.isDisabled('A')).toBe(false);
+    expect(declined).toBeLessThan(probes);
+  });
+
+  test('force-probe window stays open through the handshake grace after both sides dial', () => {
+    let now = 0;
+    const breaker = new RtcDialBreaker({ now: () => now, disableAfter: 1 });
+    const peer = 'p';
+    breaker.noteFailure(peer, 'timeout', 'f1');
+    expect(breaker.inboundBlock(peer)).toBe('disabled');
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
+    now = RTC_DIAL_FORCE_PROBE_MS;
+    expect(breaker.inboundBlock(peer)).toBeNull();
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(true);
+    expect(breaker.shouldTry(peer).acceptInbound).toBe(true);
+    breaker.beginAttempt(peer, 'probe');
+    expect(breaker.shouldTry(peer)).toMatchObject({
+      allow: false,
+      disabled: true,
+      acceptInbound: true,
+    });
+    expect(breaker.inboundBlock(peer, now + 1_000)).toBeNull();
+    now += RTC_FORCE_PROBE_INBOUND_GRACE_MS;
+    expect(breaker.inboundBlock(peer)).toBe('disabled');
+    expect(breaker.shouldTry(peer).acceptInbound).toBe(false);
+  });
+
+  test('remote refusal cools without raising level or counting a failure', () => {
+    let now = 1_000;
+    const breaker = new RtcDialBreaker({ now: () => now });
+    const peer = 'p';
+    breaker.noteFailure(peer, 'timeout', 'a1');
+    const before = breaker.snapshot(peer);
+    breaker.noteRemoteRefusal(peer, now + 120_000);
+    expect(breaker.snapshot(peer)).toMatchObject({
+      failures: before.failures,
+      level: before.level,
+      cooling: true,
+      until: now + 120_000,
+      disabled: false,
+      lastFailureKind: before.lastFailureKind,
+    });
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    breaker.noteRemoteRefusal(peer, now + 1_000);
+    breaker.noteRemoteRefusal(peer, null);
+    breaker.noteRemoteRefusal(peer, now - 1);
+    expect(breaker.snapshot(peer).until).toBe(now + 120_000);
+    now += 120_000;
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    const disabled = new RtcDialBreaker({ now: () => now, disableAfter: 1 });
+    disabled.noteFailure(peer, 'timeout', 'd1', now);
+    expect(disabled.refusalCooldown(peer, now).retryAfterMs).toBe(RTC_DIAL_FORCE_PROBE_MS);
   });
 });
 
