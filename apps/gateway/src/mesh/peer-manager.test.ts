@@ -45,6 +45,31 @@ import {
 } from './test-support';
 import { type MeshScheduler, NodeUnreachableError, type UplinkStatus } from './types';
 
+/** 内存 DC 没有 DataChannelLink 的 liveness pong，证明走对端 mux ping（handleRttCtl）。 */
+async function proveDcByMuxPing(remote: {
+  ctl: {
+    send(bytes: Uint8Array): void;
+    onMessage(cb: (bytes: Uint8Array) => void): void;
+  };
+}): Promise<void> {
+  const proved = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('dc mux ping was not answered')), 1_000);
+    remote.ctl.onMessage((bytes) => {
+      let msg: { t?: string };
+      try {
+        msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
+      } catch {
+        return;
+      }
+      if (msg.t !== 'pong') return;
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  remote.ctl.send(encodeJsonBytes({ t: 'ping' }));
+  await proved;
+}
+
 function keysMatchInitiator(
   live: { sendKey: Uint8Array; recvKey: Uint8Array } | null,
   initiator: { sendKey?: Uint8Array; recvKey?: Uint8Array }
@@ -2034,13 +2059,10 @@ describe('PeerManager', () => {
       ).toBe(true);
       const detailLarge = managerLarge.linkDetailOf(small.nodeId);
       const detailSmall = managerSmall.linkDetailOf(large.nodeId);
-      expect(
-        detailLarge.dcBreaker.failures + detailSmall.dcBreaker.failures
-      ).toBeGreaterThanOrEqual(1);
-      expect(detailLarge.dcBreaker.failures).toBeLessThanOrEqual(1);
-      const kind =
-        detailLarge.dcBreaker.lastFailureKind ?? detailSmall.dcBreaker.lastFailureKind ?? '';
-      expect(['liveness-timeout', 'channel-closed']).toContain(kind);
+      expect(detailLarge.dcBreaker.failures).toBe(0);
+      expect(detailSmall.dcBreaker.failures).toBe(0);
+      expect(detailLarge.dcBreaker.lastFailureKind ?? null).toBeNull();
+      expect(detailSmall.dcBreaker.lastFailureKind ?? null).toBeNull();
       expect(detailLarge.dcBreaker.cooling).toBe(false);
     } finally {
       console.log = orig;
@@ -3259,6 +3281,7 @@ describe('PeerManager', () => {
       (row) => !row.cleared && row.ms === PEER_RETIRE_MIN_MS
     );
     expect(retireTimers).toHaveLength(timersBeforeRetire + 1);
+    await proveDcByMuxPing(nextB);
     scheduler.advance(PEER_RETIRE_MIN_MS - 1);
     let done = false;
     void retired.then(() => {
@@ -3306,6 +3329,7 @@ describe('PeerManager', () => {
     echoQuiesceCaps(nextB);
     const retired = liveA.closed;
     expect(manager.adoptLink(peer.nodeId, nextA, 'dc', self.nodeId, '10.0.0.8')).toBe(nextA);
+    await proveDcByMuxPing(nextB);
     scheduler.advance(PEER_RETIRE_MIN_MS);
     let done = false;
     void retired.then(() => {
@@ -3407,8 +3431,64 @@ describe('PeerManager', () => {
     echoQuiesceCaps(nextB);
     const retired = liveA.closed;
     expect(manager.adoptLink(peer.nodeId, nextA, 'dc', self.nodeId, '10.0.0.8')).toBe(nextA);
+    await proveDcByMuxPing(nextB);
     liveB.ctl.send(encodeJsonBytes({ t: 'link.quiesce.ack' }));
     liveB.ctl.send(encodeJsonBytes({ t: 'link.quiesce' }));
+    expect((await retired).reason).toBe('replaced');
+  });
+
+  test('unproven DC hold does not delay retire past PEER_RETIRE_MAX_MS', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [liveA, liveB] = createInMemoryLinkPair();
+    echoQuiesceCaps(liveB);
+    expect(manager.adoptLink(peer.nodeId, liveA, 'ws-secure', self.nodeId)).toBe(liveA);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    const [nextA, nextB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => nextB.close('test') });
+    echoQuiesceCaps(nextB);
+    const retired = liveA.closed;
+    let done = false;
+    void retired.then(() => {
+      done = true;
+    });
+    expect(manager.adoptLink(peer.nodeId, nextA, 'dc', self.nodeId, '10.0.0.8')).toBe(nextA);
+    expect(manager.transportOf(peer.nodeId)).toBe('dc');
+
+    scheduler.advance(PEER_RETIRE_MIN_MS);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    expect(manager.transportOf(peer.nodeId)).toBe('dc');
+
+    scheduler.advance(PEER_RETIRE_MAX_MS - PEER_RETIRE_MIN_MS - 1);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    expect(manager.transportOf(peer.nodeId)).toBe('dc');
+
+    scheduler.advance(1);
     expect((await retired).reason).toBe('replaced');
   });
 

@@ -35,6 +35,12 @@ export const PEER_RETIRE_QUIET_MS = 2_000;
 export const PEER_RETIRE_MAX_MS = 30_000;
 /** 退役 session 仍有内层流时的泄漏上限：到期后以 `retired` 强制关闭。 */
 export const PEER_RETIRE_STREAM_LEAK_MS = 30 * 60 * 1000;
+/** 已建立但从未证明的 DC 连续夭折这么多次后，短冷却，不抬拨号熔断档。 */
+export const DC_UNSTABLE_STRIKES = 3;
+/** 未证明夭折计入同一轮的窗口。 */
+export const DC_UNSTABLE_WINDOW_MS = 3 * 60 * 1000;
+/** 不稳定 DC 的冷却。短于拨号熔断第一档（30s 起翻倍），且不抬 level。 */
+export const DC_UNSTABLE_BACKOFF_MS = 60_000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
 
 export const PEER_TRANSPORT_RANK: Record<PeerTransportKind, number> = {

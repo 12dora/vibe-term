@@ -125,6 +125,7 @@ export async function runPeerHandshake(opts: {
   userStore: UserStore;
   liveness: Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'> | false;
   waitLocalFingerprint: (pc: PeerConnectionLike, timeoutMs: number) => Promise<DtlsFingerprint>;
+  attempt?: string;
 }): Promise<{
   link: DataChannelLink;
   pc: PeerConnectionLike;
@@ -165,6 +166,7 @@ export async function runPeerHandshake(opts: {
     }
     const link = new DataChannelLink(channel, {
       peer: peerNodeId,
+      attempt: opts.attempt,
       ...(opts.liveness === false ? { liveness: false as const } : opts.liveness),
     });
     if (hs.peerNodeId !== peerNodeId.toLowerCase()) {
@@ -192,6 +194,36 @@ export type PeerConnectAttemptHooks = {
   noteSummary: (outcome: 'success' | 'failure', durationMs: number) => void;
   untrackAndClose: (pc: PeerConnectionLike) => void;
 };
+
+function startPeerHandshake(
+  opts: {
+    identity: MeshIdentity;
+    userStore: UserStore;
+    liveness: Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'> | false;
+  },
+  input: {
+    pc: PeerConnectionLike;
+    peerNodeId: string;
+    offerer: boolean;
+    deadline: number;
+    progress: RtcDialProgress;
+    attempt?: string;
+    waitLocalFingerprint: PeerConnectAttemptHooks['waitLocalFingerprint'];
+  }
+): ReturnType<typeof runPeerHandshake> {
+  return runPeerHandshake({
+    pc: input.pc,
+    peerNodeId: input.peerNodeId,
+    offerer: input.offerer,
+    deadline: input.deadline,
+    progress: input.progress,
+    identity: opts.identity,
+    userStore: opts.userStore,
+    liveness: opts.liveness,
+    waitLocalFingerprint: input.waitLocalFingerprint,
+    attempt: input.attempt,
+  });
+}
 
 export async function runPeerConnectAttempt(opts: {
   pc: PeerConnectionLike;
@@ -263,15 +295,13 @@ export async function runPeerConnectAttempt(opts: {
       }
     );
     if (supersededSync) unsubSignaling();
-    const work = runPeerHandshake({
+    const work = startPeerHandshake(opts, {
       pc,
       peerNodeId,
       offerer,
       deadline,
       progress,
-      identity: opts.identity,
-      userStore: opts.userStore,
-      liveness: opts.liveness,
+      attempt: ctx.attempt,
       waitLocalFingerprint: hooks.waitLocalFingerprint,
     });
     void work.catch(() => undefined);

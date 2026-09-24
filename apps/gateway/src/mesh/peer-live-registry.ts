@@ -1,6 +1,14 @@
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { classifyPeerReach } from './address-class';
 import { type DcPromoteGate, attachDcPromote, mergeTrackIntercept } from './peer-dc-promote-gate';
+import {
+  UnstableDcBackoff,
+  bindLiveDcProof,
+  logDcDrop,
+  noteLiveDcProof,
+  settleEstablishedDcDrop,
+  unbindLiveDcProof,
+} from './peer-dc-proof';
 import { type PeerInboundStreamHost, handlePeerInboundStream } from './peer-live-inbound';
 import { notePeerPingTick, shouldEmitPeerRtt } from './peer-live-ping';
 import {
@@ -29,7 +37,7 @@ import { type LivePeer, peerDropPlan } from './peer-reconnect-wake';
 import { PEER_RTC_WAKE_COOLDOWN_MS } from './peer-rtc-wake';
 import { quiet } from './peer-ws-race';
 import { getRelayDialBreaker } from './relay-dial-breaker';
-import { classifyRtcDialFailure, isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
+import { isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
 import { flushDialFailed } from './rtc/rtc-log';
 import { classifyOpenPayload } from './stream-targets';
 import type { PeerTransportKind } from './types';
@@ -49,6 +57,7 @@ export class PeerLiveRegistry {
   private readonly dcPromote: DcPromoteGate;
   private linkInfoHold = 0;
   private readonly bypassRank = new WeakSet<LinkSession>();
+  private readonly unstableDc = new UnstableDcBackoff(() => this.state.scheduler.now());
 
   constructor(state: PeerManagerState, opts: PeerLiveRegistryOptions) {
     this.state = state;
@@ -226,6 +235,7 @@ export class PeerLiveRegistry {
     };
     this.state.live.set(peerNodeId, live);
     if (transport === 'dc') {
+      this.armDcProof(live);
       this.deps.dcBreaker.noteChannelEstablished(peerNodeId, live.dcAttemptId ?? undefined);
       flushDialFailed(peerNodeId, { cause: 'established' });
       if (live.dcAttemptId) this.deps.armDcHealthTimer(peerNodeId, live.dcAttemptId);
@@ -358,11 +368,13 @@ export class PeerLiveRegistry {
     const msg = parseOpenPayload(bytes);
     if (!msg || typeof msg.t !== 'string') return false;
     if (msg.t === 'ping') {
+      this.noteMuxProof(live);
       const sentAt = parseEchoedSentAt(msg.sentAt);
       this.deps.sendPeerCtl(live, sentAt == null ? { t: 'pong' } : { t: 'pong', sentAt });
       return true;
     }
     if (msg.t !== 'pong') return false;
+    this.noteMuxProof(live);
     this.onPeerPong(live, parseEchoedSentAt(msg.sentAt));
     return true;
   }
@@ -418,6 +430,8 @@ export class PeerLiveRegistry {
   }
   dropPeer(nodeId: string, reason: string): void {
     const live = this.state.live.get(nodeId);
+    logDcDrop(live, reason, this.state.scheduler.now());
+    unbindLiveDcProof(live);
     const plan = peerDropPlan(live, reason, this.state.stopped, isIntentionalDcLoss(reason));
     const drainLive = plan.drain ? live : null;
     const disabledLiveLost = Boolean(live && this.deps.dcBreaker.isDisabled(nodeId));
@@ -446,11 +460,15 @@ export class PeerLiveRegistry {
       return;
     }
     if (plan.countDcFailure) {
-      this.deps.dcBreaker.noteFailure(
-        nodeId,
-        classifyRtcDialFailure(reason),
-        dcAttemptId ?? undefined
-      );
+      settleEstablishedDcDrop({
+        breaker: this.deps.dcBreaker,
+        unstable: this.unstableDc,
+        peer: nodeId,
+        reason,
+        attemptId: dcAttemptId,
+        live,
+        now: this.state.scheduler.now(),
+      });
     }
     if (plan.wasDc) {
       this.state.lostDirect.add(nodeId);
@@ -489,5 +507,22 @@ export class PeerLiveRegistry {
     this.deps.notifyLive(nodeId, best.session);
     this.emitLinkInfo(best);
     return true;
+  }
+
+  private armDcProof(live: LivePeer): void {
+    bindLiveDcProof(live, () => {
+      if (this.state.live.get(live.peerNodeId) !== live) return;
+      this.releaseRetireHold(live.peerNodeId);
+    });
+  }
+
+  private noteMuxProof(live: LivePeer): void {
+    noteLiveDcProof(live, () => this.releaseRetireHold(live.peerNodeId));
+  }
+
+  private releaseRetireHold(nodeId: string): void {
+    const set = this.state.retiring.get(nodeId);
+    if (!set) return;
+    for (const row of set) this.deps.maybeFinishRetire(row);
   }
 }

@@ -8,6 +8,7 @@ import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
 import { noteRtcGather } from '../port-reach';
 import { PeerHandshakeError } from '../types';
 import type { FanoutDataChannel } from './channel-fanout';
+import { dataChannelLinkOwns } from './dc-link-proof';
 import { maskIceAddress, parseIceCandidateType } from './ice';
 import type { DataChannelLike, IceServerConfig, PeerConnectionLike, RtcIceConfig } from './native';
 import { toUint8Array } from './native';
@@ -284,6 +285,17 @@ function logSelectedPair(pc: PeerConnectionLike, peer: string): void {
   });
 }
 
+export function logDataChannelClosed(fields: {
+  peer?: string;
+  reason: string;
+  initiator: 'local' | 'remote';
+  attempt?: string;
+  lifetime_ms: number;
+  proven: boolean;
+}): void {
+  rtcLog('datachannel closed', fields);
+}
+
 export function bindChannelDiagnostics(dc: DataChannelLike, peer: string): void {
   const label = dc.getLabel?.() ?? PEER_CHANNEL_LABEL;
   dc.onOpen(() => {
@@ -293,6 +305,8 @@ export function bindChannelDiagnostics(dc: DataChannelLike, peer: string): void 
     rtcLog('datachannel error', { peer, label, err });
   });
   dc.onClosed(() => {
+    // Link 已经接上时由 DataChannelLink 打带 reason/initiator 的那一行，避免重复。
+    if (dataChannelLinkOwns(dc)) return;
     rtcLog('datachannel closed', { peer, label });
   });
 }

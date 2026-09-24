@@ -1,11 +1,13 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { encodeJsonBytes } from './ctl';
 import { envInt, logLine } from './mesh-log';
+import { markLiveDcProven } from './peer-dc-proof';
 import { measurePingRttMs, parseEchoedSentAt } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import { quiet } from './peer-ws-race';
 import type { TrackIntercept, TrackInterceptInput } from './route-degrade';
+import { currentDcProofGeneration, markDcLinkProof } from './rtc/dc-link-proof';
 import type { MeshScheduler, PeerTransportKind } from './types';
 
 export const DC_PROMOTE_RATIO_DEFAULT = 2;
@@ -158,10 +160,15 @@ export class DcPromoteGate {
   ): void {
     const live = this.ports.liveOf(input.peerNodeId);
     if (live?.session === input.session) {
-      if (dcMs != null) live.rttMs = dcMs;
+      if (dcMs != null) {
+        live.rttMs = dcMs;
+        markLiveDcProven(live);
+      }
       this.backoffUntil.delete(input.peerNodeId);
       return;
     }
+    // 测量到的 mux pong 就是证明。先标上，再安装，避免同步 quiesce 在标志落下之前拆掉 relay。
+    if (dcMs != null) this.noteMeasuredProof(input.peerNodeId);
     const kept = this.ports.forceInstall(
       input.session,
       input.peerNodeId,
@@ -176,8 +183,16 @@ export class DcPromoteGate {
       return;
     }
     const installed = this.ports.liveOf(input.peerNodeId);
-    if (installed && dcMs != null) installed.rttMs = dcMs;
+    if (installed && dcMs != null) {
+      installed.rttMs = dcMs;
+      markLiveDcProven(installed);
+    }
     this.backoffUntil.delete(input.peerNodeId);
+  }
+
+  private noteMeasuredProof(peer: string): void {
+    const generation = currentDcProofGeneration(peer);
+    if (generation !== undefined) markDcLinkProof(peer, generation);
   }
 
   private measure(session: LinkSession, signal: AbortSignal): Promise<number | null> {

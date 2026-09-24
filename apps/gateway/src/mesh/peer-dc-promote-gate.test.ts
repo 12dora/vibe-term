@@ -7,6 +7,7 @@ import {
   dcPromoteTooSlow,
   mergeTrackIntercept,
 } from './peer-dc-promote-gate';
+import { isLiveDcProven } from './peer-dc-proof';
 import type { LivePeer } from './peer-reconnect-wake';
 import type { TrackInterceptInput } from './route-degrade';
 import { ImmediateScheduler } from './test-support';
@@ -135,6 +136,7 @@ describe('DcPromoteGate', () => {
     expect(installed).toEqual([dc]);
     expect(liveMap.get(PEER)?.session).toBe(dc);
     expect(liveMap.get(PEER)?.rttMs).toBe(40);
+    expect(isLiveDcProven(liveMap.get(PEER)!)).toBe(true);
     expect(retired).toEqual([]);
   });
 
@@ -150,6 +152,7 @@ describe('DcPromoteGate', () => {
     await Bun.sleep(0);
     expect(installed).toEqual([dc]);
     expect(liveMap.get(PEER)?.session).toBe(dc);
+    expect(isLiveDcProven(liveMap.get(PEER)!)).toBe(false);
     expect(retired).toEqual([]);
   });
 

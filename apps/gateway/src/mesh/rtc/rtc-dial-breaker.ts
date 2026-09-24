@@ -148,6 +148,8 @@ const INTENTIONAL_DC_LOSS = new Set([
   'lower-priority',
   'simultaneous-dial',
   'superseded',
+  'dc-promote-reject',
+  'route-measure-reject',
 ]);
 
 const RTC_DIAL_FAILURE_RULES: ReadonlyArray<KeywordRule<string>> = [
@@ -325,6 +327,10 @@ export class RtcDialBreaker {
     this.lastUncountedKind.delete(peer);
     this.answererBackoff.noteSuccess(peer);
     this.inner.noteChannelEstablished(peer, attemptId, now);
+  }
+
+  noteUnstable(peer: string, cooldownMs: number, now?: number): void {
+    this.inner.noteUnstable(peer, cooldownMs, now);
   }
 
   noteHealthy(peer: string, now?: number): boolean {
