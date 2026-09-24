@@ -5,7 +5,7 @@ import { encodeJsonBytes } from './ctl';
 import { noteAndContinuePlainHttp } from './forwarder-pre-dispatch-retry';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { getPeerLink } from './peer-get-link';
-import { createPeerManagerState } from './peer-manager-state';
+import { PEER_RETIRE_MAX_MS, createPeerManagerState } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { REMOTE_HOLD_MS, rememberLinkTransport } from './pending-measure-hold';
 import { RouteDegradeCoordinator, type RouteModeHolder } from './route-degrade';
@@ -203,6 +203,75 @@ describe('pending-measure 接收侧不再把同一条 DC 当作用户链路', ()
     expect(h.state.live.get(PEER)?.session).toBe(dc);
     expect(h.state.sideRelays.has(PEER)).toBe(false);
     expect((await link.closed).reason).toBe('route-promoted');
+    h.coord.dispose();
+  });
+
+  test('route-promoted 排空旁路中继上的在途流，空闲才关', async () => {
+    const h = harness();
+    const [dc, remote] = createInMemoryLinkPair();
+    h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 10));
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: PEER,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:drain',
+      prev: undefined,
+    });
+    remote.onStream((stream) => stream.reset('pending-measure'));
+    const opened = await dc.openStream(new Uint8Array([1]));
+    await opened.closed;
+    const link = await getPeerLink(quietHost(h), PEER);
+    expect(link).not.toBeNull();
+    if (!link) throw new Error('missing side relay');
+    const held = await link.openStream(new Uint8Array([7]));
+    remote.ctl.send(encodeJsonBytes({ t: 'route-promoted' }));
+    await Bun.sleep(20);
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    expect(h.state.sideRelays.has(PEER)).toBe(false);
+    let closed = false;
+    void link.closed.then(() => {
+      closed = true;
+    });
+    await Bun.sleep(20);
+    expect(closed).toBe(false);
+    held.reset('done');
+    expect((await link.closed).reason).toBe('route-promoted');
+    h.coord.dispose();
+  });
+
+  test('hold-expired 在排空上限后关掉还有流的旁路中继', async () => {
+    const h = harness();
+    const [dc, remote] = createInMemoryLinkPair();
+    h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 10));
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: PEER,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:drain-cap',
+      prev: undefined,
+    });
+    remote.onStream((stream) => stream.reset('pending-measure'));
+    const opened = await dc.openStream(new Uint8Array([1]));
+    await opened.closed;
+    const link = await getPeerLink(quietHost(h), PEER);
+    if (!link) throw new Error('missing side relay');
+    await link.openStream(new Uint8Array([7]));
+    h.scheduler.advance(REMOTE_HOLD_MS);
+    let closed = false;
+    void link.closed.then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    h.scheduler.advance(PEER_RETIRE_MAX_MS);
+    expect((await link.closed).reason).toBe('hold-expired');
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
     h.coord.dispose();
   });
 

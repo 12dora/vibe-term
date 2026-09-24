@@ -1,6 +1,5 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs } from './ctl';
-import type { RtcSignalMessage } from './mesh-deps';
 import { isNodePaused } from './node-pause';
 import {
   attachPermanentHoldClear,
@@ -8,8 +7,6 @@ import {
   noteBackgroundDcUpgradeAttempt,
 } from './peer-dc-upgrade-gate';
 import { RelayPresenceGap } from './peer-reconnect-wake';
-import type { IncomingWakeGate, RtcWakeGate, WakeGate } from './peer-rtc-wake';
-import type { RtcSignaling, RtcWakeFields } from './rtc/ice';
 import {
   type DcRearmSource,
   RTC_DIAL_BREAKER_HEALTHY_MS,
@@ -66,6 +63,8 @@ export type DcUpgradePorts = {
   probeQuiesce: (live: DcUpgradeLivePeer) => void;
   hasWsSecureCandidate: (nodeId: string) => boolean;
   lostDirect: () => Set<string>;
+  /** 真 rearm（指纹 / 端点 / 上行 / 能力 / 手动）清短命 DC 连击。不传 nodeId 表示全部。 */
+  clearUnstableStreak?: (nodeId?: string) => void;
 };
 
 export class DcUpgradeCoordinator {
@@ -84,7 +83,10 @@ export class DcUpgradeCoordinator {
   constructor(ports: DcUpgradePorts) {
     this.ports = ports;
     this.dcBreaker = attachPermanentHoldClear(
-      createGatewayRtcDialBreaker({ now: () => this.ports.scheduler.now() }),
+      createGatewayRtcDialBreaker({
+        now: () => this.ports.scheduler.now(),
+        onDisable: (event) => this.scheduleDisabledProbe(event.peer),
+      }),
       () => this.ports.scheduler.now()
     );
   }
@@ -95,14 +97,19 @@ export class DcUpgradeCoordinator {
   }
 
   onLocalFingerprintChanged(): void {
+    this.ports.clearUnstableStreak?.();
+    this.upgradeClearedSoft();
     this.rearmAllDisabled('local-fingerprint');
   }
 
   onPeerEndpointChanged(nodeId: string): void {
+    this.ports.clearUnstableStreak?.(nodeId);
     this.rearmDisabled(nodeId, 'peer-endpoint');
   }
 
   onUplinkSwitched(): void {
+    this.ports.clearUnstableStreak?.();
+    this.upgradeClearedSoft();
     this.rearmAllDisabled('uplink-switch');
   }
 
@@ -110,6 +117,7 @@ export class DcUpgradeCoordinator {
   onPeerReconnected(_nodeId: string): void {}
 
   onPeerCapabilitiesChanged(nodeId: string): void {
+    this.ports.clearUnstableStreak?.(nodeId);
     this.rearmDisabled(nodeId, 'peer-capabilities');
   }
 
@@ -120,6 +128,7 @@ export class DcUpgradeCoordinator {
   }
 
   retryDcUpgrade(nodeId: string): void {
+    this.ports.clearUnstableStreak?.(nodeId);
     this.dcBreaker.forceProbe(nodeId);
     this.cancelDcUpgradeRetry(nodeId);
     this.maybeUpgrade(nodeId, { cooldown: false });
@@ -357,10 +366,13 @@ export class DcUpgradeCoordinator {
   }
 
   armDcUpgradeRetry(nodeId: string): void {
+    if (this.dcBreaker.isDisabled(nodeId)) {
+      this.scheduleDisabledProbe(nodeId);
+      return;
+    }
     const live = this.liveForDcRetry(nodeId);
     if (!live) return;
     const decision = this.dcBreaker.shouldTry(nodeId);
-    if (this.dcBreaker.isDisabled(nodeId) && !decision.allow) return;
     if (!decision.allow) {
       this.scheduleDcBreakerProbe(nodeId, decision.until);
       return;
@@ -398,10 +410,10 @@ export class DcUpgradeCoordinator {
     );
   }
 
-  scheduleDcBreakerProbe(nodeId: string, until: number | null): void {
+  scheduleDcBreakerProbe(nodeId: string, until: number | null, ignoreQuiesce = false): void {
     const live = this.liveForDcRetry(nodeId);
     if (!live) return;
-    if (!live.quiesceCapable) return;
+    if (!ignoreQuiesce && !live.quiesceCapable) return;
     let rec = this.dcUpgradeRetry.get(nodeId);
     if (!rec) {
       rec = { attempt: 0, abort: null };
@@ -423,14 +435,7 @@ export class DcUpgradeCoordinator {
       () => {
         this.ports.stopSignal().removeEventListener('abort', onStop);
         if (rec.abort === abort) rec.abort = null;
-        if (!this.liveForDcRetry(nodeId)) return;
-        if (!this.ports.shouldTryDc(nodeId)) {
-          const next = this.dcBreaker.shouldTry(nodeId);
-          if (next.disabled) return;
-          if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
-          return;
-        }
-        this.followUpgradeRetry(nodeId);
+        this.onBreakerProbeFired(nodeId);
       },
       () => {
         this.ports.stopSignal().removeEventListener('abort', onStop);
@@ -469,6 +474,56 @@ export class DcUpgradeCoordinator {
       .catch(() => undefined);
   }
 
+  private scheduleDisabledProbe(nodeId: string): void {
+    const live = this.ports.live().get(nodeId);
+    if (!this.dcBreaker.isDisabled(nodeId) || !live || live.retiring || live.transport === 'dc') {
+      return;
+    }
+    if (!live.quiesceCapable) {
+      this.ports.probeQuiesce(live);
+      this.ensureGate(nodeId).coalesced = true;
+    }
+    const at = this.dcBreaker.nextOutboundProbeAt(nodeId);
+    if (at == null) return;
+    this.scheduleDcBreakerProbe(nodeId, at, true);
+  }
+
+  private onBreakerProbeFired(nodeId: string): void {
+    if (!this.ports.dcCapable(nodeId)) {
+      this.cancelDcUpgradeRetry(nodeId);
+      return;
+    }
+    if (!this.liveForDcRetry(nodeId)) return;
+    const live = this.ports.live().get(nodeId);
+    if (this.dcBreaker.isDisabled(nodeId) && live && !live.quiesceCapable) {
+      this.ports.probeQuiesce(live);
+      this.ensureGate(nodeId).coalesced = true;
+      const wait = this.dcBreaker.disabledProbeIntervalMs(nodeId);
+      this.scheduleDcBreakerProbe(nodeId, this.ports.scheduler.now() + wait, true);
+      return;
+    }
+    if (!this.ports.shouldTryDc(nodeId)) {
+      this.rescheduleBlockedProbe(nodeId);
+      return;
+    }
+    this.followUpgradeRetry(nodeId);
+  }
+
+  private rescheduleBlockedProbe(nodeId: string): void {
+    const next = this.dcBreaker.shouldTry(nodeId);
+    if (next.disabled) {
+      this.scheduleDisabledProbe(nodeId);
+      return;
+    }
+    if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
+  }
+
+  private upgradeClearedSoft(): void {
+    for (const nodeId of this.dcBreaker.clearAllSoftCooldowns()) {
+      this.maybeUpgrade(nodeId, { cooldown: false });
+    }
+  }
+
   private liveForDcRetry(nodeId: string): DcUpgradeLivePeer | null {
     if (this.ports.stopped()) {
       this.cancelDcUpgradeRetry(nodeId);
@@ -490,102 +545,5 @@ export class DcUpgradeCoordinator {
       return null;
     }
     return live;
-  }
-}
-
-export abstract class PeerCollaboratorHost {
-  protected abstract readonly dcUpgrade: DcUpgradeCoordinator;
-  protected abstract readonly rtcWake: RtcWakeGate;
-
-  protected wantsUpgrade(live: DcUpgradeLivePeer): boolean {
-    return this.dcUpgrade.wantsUpgrade(live);
-  }
-  protected ensureGate(nodeId: string): UpgradeGate {
-    return this.dcUpgrade.ensureGate(nodeId);
-  }
-  protected noteUpgradeResult(nodeId: string, ok: boolean): void {
-    this.dcUpgrade.noteUpgradeResult(nodeId, ok);
-  }
-  protected scheduleCoalescedUpgrade(nodeId: string): void {
-    this.dcUpgrade.scheduleCoalescedUpgrade(nodeId);
-  }
-  protected acquireUpgradeSlot(): Promise<void> {
-    return this.dcUpgrade.acquireUpgradeSlot();
-  }
-  protected releaseUpgradeSlot(): void {
-    this.dcUpgrade.releaseUpgradeSlot();
-  }
-  protected queueUpgrade(nodeId: string): void {
-    this.dcUpgrade.queueUpgrade(nodeId);
-  }
-  protected runUpgradeDial(nodeId: string, before: LinkSession | null): Promise<LinkSession> {
-    return this.dcUpgrade.runUpgradeDial(nodeId, before);
-  }
-  protected maybeUpgrade(nodeId: string, opts: { cooldown: boolean; userPath?: boolean }): void {
-    this.dcUpgrade.maybeUpgrade(nodeId, opts);
-  }
-  protected handleIncomingRtcWake(fromNodeId: string, msg: RtcSignalMessage): void {
-    this.rtcWake.handleIncomingRtcWake(fromNodeId, msg);
-  }
-  protected ensureIncomingWakeGate(fromNodeId: string): IncomingWakeGate {
-    return this.rtcWake.ensureIncomingWakeGate(fromNodeId);
-  }
-  protected cancelDcUpgradeRetry(nodeId: string): void {
-    this.dcUpgrade.cancelDcUpgradeRetry(nodeId);
-  }
-  protected nextDcAttemptId(): string {
-    return this.dcUpgrade.nextDcAttemptId();
-  }
-  protected cancelDcHealthTimer(nodeId: string): void {
-    this.dcUpgrade.cancelDcHealthTimer(nodeId);
-  }
-  protected armDcHealthTimer(nodeId: string, attemptId: string): void {
-    this.dcUpgrade.armDcHealthTimer(nodeId, attemptId);
-  }
-  protected armDcUpgradeRetry(nodeId: string): void {
-    this.dcUpgrade.armDcUpgradeRetry(nodeId);
-  }
-  protected releaseRtcWakeAttempt(peerNodeId: string): void {
-    this.rtcWake.releaseRtcWakeAttempt(peerNodeId);
-  }
-  protected dispatchRtcWake(peerNodeId: string): void {
-    this.rtcWake.dispatchRtcWake(peerNodeId);
-  }
-  protected signalingFor(peerNodeId: string): RtcSignaling {
-    return this.rtcWake.signalingFor(peerNodeId);
-  }
-  protected sendRtcSignal(peerNodeId: string, msg: RtcSignalMessage): void {
-    this.rtcWake.sendRtcSignal(peerNodeId, msg);
-  }
-  protected acceptSignedRtcWake(
-    fromNodeId: string,
-    msg: RtcSignalMessage,
-    wake: RtcWakeFields
-  ): boolean {
-    return this.rtcWake.acceptSignedRtcWake(fromNodeId, msg, wake);
-  }
-  protected rememberRtcWakeNonce(fromNodeId: string, nonce: string, issuedAt: number): boolean {
-    return this.rtcWake.rememberRtcWakeNonce(fromNodeId, nonce, issuedAt);
-  }
-  protected pruneRtcWakeNonces(peer: Map<string, number>): void {
-    this.rtcWake.pruneRtcWakeNonces(peer);
-  }
-  protected consumeWakeVerifyToken(gate: IncomingWakeGate, now: number): boolean {
-    return this.rtcWake.consumeWakeVerifyToken(gate, now);
-  }
-  protected dcUpgradeRetryDelayMs(attempt: number): number {
-    return this.dcUpgrade.dcUpgradeRetryDelayMs(attempt);
-  }
-  protected ensureWakeGate(peerNodeId: string): WakeGate {
-    return this.rtcWake.ensureWakeGate(peerNodeId);
-  }
-  protected abortDeferredRtcWakes(): void {
-    this.rtcWake.abortDeferredRtcWakes();
-  }
-  protected disarmDeferredRtcWake(gate: WakeGate): void {
-    this.rtcWake.disarmDeferredRtcWake(gate);
-  }
-  protected armDeferredRtcWake(peerNodeId: string, gate: WakeGate): void {
-    this.rtcWake.armDeferredRtcWake(peerNodeId, gate);
   }
 }

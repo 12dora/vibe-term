@@ -1,16 +1,88 @@
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { encodeJsonBytes } from './ctl';
 import { type PeerInboundStreamHost, handlePeerInboundStream } from './peer-live-inbound';
-import type { PeerManagerState } from './peer-manager-state';
+import { PEER_RETIRE_MAX_MS, type PeerManagerState } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import { quiet } from './peer-ws-race';
 import { rememberLinkTransport } from './pending-measure-hold';
 import { isDirectTransport } from './route-policy';
 import { classifyOpenPayload } from './stream-targets';
-import type { PeerTransportKind } from './types';
+import type { MeshScheduler, PeerTransportKind } from './types';
 
 const boundSideRelays = new WeakSet<LinkSession>();
+const accountedSideRelays = new WeakSet<LinkSession>();
+
+type SideLoad = {
+  in: number;
+  out: number;
+  retiring: boolean;
+  closed: boolean;
+  onIdle: (() => void) | null;
+};
+
+const sideLoads = new WeakMap<LinkSession, SideLoad>();
+
+function sideLoad(session: LinkSession): SideLoad {
+  let row = sideLoads.get(session);
+  if (!row) {
+    row = { in: 0, out: 0, retiring: false, closed: false, onIdle: null };
+    sideLoads.set(session, row);
+  }
+  return row;
+}
+
+function bumpSide(session: LinkSession, field: 'in' | 'out', delta: number): void {
+  const row = sideLoad(session);
+  row[field] = Math.max(0, row[field] + delta);
+  if (row.retiring && row.in + row.out === 0) row.onIdle?.();
+}
+
+/** 旁路中继的出站和入站都算上。测量窗结束时用来决定是立刻关还是排空。 */
+export function attachSideRelayAccounting(session: LinkSession): void {
+  if (accountedSideRelays.has(session)) return;
+  accountedSideRelays.add(session);
+  const orig = session.openStream.bind(session);
+  session.openStream = async (payload: Uint8Array) => {
+    const stream = await orig(payload);
+    bumpSide(session, 'out', 1);
+    void stream.closed.then(() => bumpSide(session, 'out', -1));
+    return stream;
+  };
+  session.onStream((stream) => {
+    bumpSide(session, 'in', 1);
+    void stream.closed.then(() => bumpSide(session, 'in', -1));
+  });
+}
+
+/** 空闲立刻关。还有流就等到归零，最多 PEER_RETIRE_MAX_MS。 */
+export function retireSideRelay(
+  session: LinkSession,
+  reason: string,
+  scheduler: MeshScheduler,
+  maxMs = PEER_RETIRE_MAX_MS
+): void {
+  const row = sideLoad(session);
+  const close = () => {
+    if (row.closed) return;
+    row.closed = true;
+    row.onIdle = null;
+    quiet(() => session.close(reason));
+  };
+  if (row.in + row.out === 0) {
+    close();
+    return;
+  }
+  row.retiring = true;
+  const handle = scheduler.interval(() => {
+    handle.clear();
+    close();
+  }, maxMs);
+  row.onIdle = () => {
+    handle.clear();
+    close();
+  };
+}
 
 /** 测量期间旁路拨中继：live 仍是 DC，这条 relay 只给用户流用。 */
 export function shouldParkBesideRelay(
@@ -32,6 +104,7 @@ export function parkBesideRelay(
   if (prev && prev !== session) quiet(() => prev.close('replaced'));
   state.sideRelays.set(peerId, session);
   rememberLinkTransport(session, 'relay');
+  attachSideRelayAccounting(session);
   state.sideRelayAttach?.(session, peerId);
   void session.closed.then(() => {
     if (state.sideRelays.get(peerId) === session) state.sideRelays.delete(peerId);

@@ -3,7 +3,9 @@ import { classifyPeerReach } from './address-class';
 import { type DcPromoteGate, attachDcPromote, mergeTrackIntercept } from './peer-dc-promote-gate';
 import {
   UnstableDcBackoff,
+  armUnstableHealthyTimer,
   bindLiveDcProof,
+  clearUnstableHealthyTimer,
   logDcDrop,
   noteLiveDcProof,
   settleEstablishedDcDrop,
@@ -39,7 +41,7 @@ import * as sideRelay from './peer-side-relay';
 import { quiet } from './peer-ws-race';
 import { rememberLinkTransport } from './pending-measure-hold';
 import { getRelayDialBreaker } from './relay-dial-breaker';
-import { RTC_DIAL_BREAKER_HEALTHY_MS, isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
+import { isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
 import { flushDialFailed } from './rtc/rtc-log';
 import { classifyOpenPayload } from './stream-targets';
 import type { PeerTransportKind } from './types';
@@ -560,23 +562,17 @@ export class PeerLiveRegistry {
     this.armUnstableClear(live);
   }
 
+  clearUnstableStreak(peer?: string): void {
+    if (peer) this.unstableDc.noteHealthy(peer);
+    else this.unstableDc.clearAll();
+  }
+
   private armUnstableClear(live: LivePeer): void {
-    this.clearUnstableTimer(live.peerNodeId);
-    const peer = live.peerNodeId;
-    const attempt = live.dcAttemptId;
-    const handle = this.state.scheduler.interval(() => {
-      handle.clear();
-      this.unstableClear.delete(peer);
-      const current = this.state.live.get(peer);
-      if (current !== live || current.dcAttemptId !== attempt) return;
-      this.unstableDc.noteHealthy(peer);
-    }, RTC_DIAL_BREAKER_HEALTHY_MS);
-    this.unstableClear.set(peer, handle);
+    armUnstableHealthyTimer(this.state, this.unstableDc, this.unstableClear, live);
   }
 
   private clearUnstableTimer(peer: string): void {
-    this.unstableClear.get(peer)?.clear();
-    this.unstableClear.delete(peer);
+    clearUnstableHealthyTimer(this.unstableClear, peer);
   }
 
   private armDcProof(live: LivePeer): void {

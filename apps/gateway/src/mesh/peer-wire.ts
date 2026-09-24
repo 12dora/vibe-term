@@ -2,6 +2,7 @@ import os from 'node:os';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { defaultScheduler } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
+import { bindRelayCapabilityRearm } from './peer-capability-change';
 import { DcRerollCoordinator } from './peer-dc-reroll';
 import { DcUpgradeCoordinator } from './peer-dc-upgrade';
 import { PeerDialer } from './peer-dialer';
@@ -107,6 +108,7 @@ function wireRoutesAndUpgrade(ctx: WireCtx): void {
     probeQuiesce: (live) => parts.drain.probeQuiesce(live as LivePeer),
     hasWsSecureCandidate: (nodeId) => parts.dialer.hasWsSecureCandidate(nodeId),
     lostDirect: () => state.lostDirect,
+    clearUnstableStreak: (nodeId) => parts.registry?.clearUnstableStreak(nodeId),
   });
 }
 
@@ -118,6 +120,7 @@ function wireRtcWake(ctx: WireCtx): void {
     scheduler,
     sendRtcSignal: (peerNodeId, msg) => parts.rtcWake.sendRtcSignal(peerNodeId, msg),
     dcCapable: (nodeId) => parts.dialer.dcCapable(nodeId),
+    dcBreaker: parts.dcUpgrade.dcBreaker,
     maybeUpgrade: (nodeId, upgradeOpts) => hooks.maybeUpgrade(nodeId, upgradeOpts),
     stopSignal: () => state.stopAbort.signal,
     stopped: () => state.stopped,
@@ -283,5 +286,6 @@ export function createPeerCollaborators(input: {
   wireStatusDrainReroll(ctx);
   wireRegistry(ctx);
   wireDialerAndServer(ctx);
+  bindRelayCapabilityRearm((nodeId) => ctx.parts.dcUpgrade.onPeerCapabilitiesChanged(nodeId));
   return ctx.parts;
 }

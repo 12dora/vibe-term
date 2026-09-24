@@ -482,7 +482,7 @@ describe('RtcDialBreaker', () => {
     breaker.beginAttempt(peer, 'probe-1');
     expect(breaker.shouldTry(peer)).toMatchObject({ allow: false, disabled: true });
     breaker.noteFailure(peer, 'ice', 'probe-1');
-    now += RTC_DIAL_FORCE_PROBE_MS - 1;
+    now += RTC_DIAL_FORCE_PROBE_MS * 2 - 1;
     expect(breaker.shouldTry(peer).allow).toBe(false);
     now += 1;
     expect(breaker.shouldTry(peer)).toMatchObject({ allow: true, disabled: true });
@@ -669,7 +669,7 @@ describe('RtcDialBreaker', () => {
     expect(declined).toBeLessThan(probes);
   });
 
-  test('force-probe window stays open through the handshake grace after both sides dial', () => {
+  test('inbound accept is one slot per interval and ignores the outbound probe', () => {
     let now = 0;
     const breaker = new RtcDialBreaker({ now: () => now, disableAfter: 1 });
     const peer = 'p';
@@ -679,13 +679,10 @@ describe('RtcDialBreaker', () => {
     now = RTC_DIAL_FORCE_PROBE_MS;
     expect(breaker.inboundBlock(peer)).toBeNull();
     expect(breaker.shouldAcceptAnswer(peer)).toBe(true);
-    expect(breaker.shouldTry(peer).acceptInbound).toBe(true);
     breaker.beginAttempt(peer, 'probe');
-    expect(breaker.shouldTry(peer)).toMatchObject({
-      allow: false,
-      disabled: true,
-      acceptInbound: true,
-    });
+    expect(breaker.shouldTry(peer)).toMatchObject({ allow: false, disabled: true });
+    expect(breaker.inboundBlock(peer)).toBeNull();
+    breaker.noteInboundAccepted(peer);
     expect(breaker.inboundBlock(peer, now + 1_000)).toBeNull();
     now += RTC_FORCE_PROBE_INBOUND_GRACE_MS;
     expect(breaker.inboundBlock(peer)).toBe('disabled');
@@ -717,6 +714,27 @@ describe('RtcDialBreaker', () => {
     const disabled = new RtcDialBreaker({ now: () => now, disableAfter: 1 });
     disabled.noteFailure(peer, 'timeout', 'd1', now);
     expect(disabled.refusalCooldown(peer, now).retryAfterMs).toBe(RTC_DIAL_FORCE_PROBE_MS);
+  });
+
+  test('remote refusal and unstable cooling clear on a full rearm, not on presence alone', () => {
+    const now = 1_000;
+    const breaker = new RtcDialBreaker({ now: () => now });
+    const peer = 'p';
+    breaker.noteUnstable(peer, 30 * 60 * 1000, now);
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    expect(breaker.rearmDisabled(peer, 'peer-endpoint')).toBe(true);
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    expect(breaker.snapshot(peer).lastFailureKind).toBeNull();
+
+    breaker.noteRemoteRefusal(peer, now + 1e12);
+    expect(breaker.snapshot(peer).until).toBe(now + 30 * 60 * 1000);
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+    expect(breaker.rearmDisabled(peer, 'peer-capabilities')).toBe(true);
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+
+    breaker.noteUnstable(peer, 60_000, now);
+    expect(breaker.rearmDisabled(peer, 'presence-return')).toBe(true);
+    expect(breaker.snapshot(peer).lastFailureKind).toBe('unstable-dc');
   });
 });
 

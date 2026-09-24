@@ -1,6 +1,7 @@
 import { decodeCertificate } from '@vibeterm/shared/auth';
 import type { UserStore } from '../auth/user-store';
 import type { RtcSignalMessage } from './mesh-deps';
+import { declineIncomingWake } from './peer-wake-decline';
 import {
   RTC_WAKE_MAX_SKEW_MS,
   type RtcSignaling,
@@ -13,6 +14,7 @@ import {
   peerRtcSession,
   verifyRtcWakeSignature,
 } from './rtc/ice';
+import type { RtcDialBreaker } from './rtc/rtc-dial-breaker';
 import { rtcLog, rtcLogRateLimited } from './rtc/rtc-log';
 import type { MeshIdentity, MeshScheduler, PeerTransportKind } from './types';
 import type { UplinkRtcSignal } from './uplink-protocol';
@@ -157,6 +159,7 @@ export type RtcWakePorts = {
   scheduler: MeshScheduler;
   sendRtcSignal: (peerNodeId: string, msg: RtcSignalMessage) => void;
   dcCapable: (nodeId: string) => boolean;
+  dcBreaker?: RtcDialBreaker;
   maybeUpgrade: (nodeId: string, opts: PeerUpgradeOpts) => void;
   stopSignal: () => AbortSignal;
   stopped: () => boolean;
@@ -275,6 +278,7 @@ export class RtcWakeGate {
       return;
     }
     rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
+    if (this.refuseWake(fromNodeId, msg)) return;
     const live = this.ports.live().get(fromNodeId);
     if (
       !shouldStartRtcAttempt(
@@ -288,7 +292,20 @@ export class RtcWakeGate {
     ) {
       return;
     }
+    this.ports.dcBreaker?.noteInboundAccepted(fromNodeId);
     this.ports.maybeUpgrade(fromNodeId, { cooldown: false, userPath: true, peerInitiated: true });
+  }
+
+  private refuseWake(fromNodeId: string, msg: RtcSignalMessage): boolean {
+    const breaker = this.ports.dcBreaker;
+    if (!breaker) return false;
+    return declineIncomingWake({
+      breaker,
+      selfId: this.ports.identity.nodeId,
+      fromNodeId,
+      msg,
+      send: (signal) => this.sendRtcSignal(fromNodeId, signal),
+    });
   }
 
   acceptSignedRtcWake(fromNodeId: string, msg: RtcSignalMessage, wake: RtcWakeFields): boolean {

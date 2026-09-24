@@ -3,6 +3,7 @@ import { encodeRelayStatusBlob, generateTenantKey, sealEnvelope } from '@vibeter
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { applyUplinkNodeList } from './node-list-apply';
+import { bindRelayCapabilityRearm } from './peer-capability-change';
 import type { PeerManagerState } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { PeerStatusSync } from './peer-status-sync';
@@ -521,6 +522,156 @@ describe('relayListToNodeList', () => {
         direct_capable: false,
       });
       expect(statusChanged).toEqual([nodeId]);
+    } finally {
+      close();
+    }
+  });
+
+  test('secondary relay.list rearms at the cache write, before the primary list compares', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const nodeId = 'ab'.repeat(16);
+      const selfId = 'cd'.repeat(16);
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      userStore.upsertPeer({
+        nodeId,
+        name: 'peer-b',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+        version: '2.8.0',
+      });
+      const metaKey = generateTenantKey();
+      const seal = (version: string) =>
+        sealEnvelope(
+          metaKey,
+          'status',
+          encodeRelayStatusBlob({
+            name: 'peer-b',
+            version,
+            tmux: true,
+            direct_capable: false,
+            inventory: { tmux: true },
+            endpoints: [],
+          }),
+          1
+        );
+      const fromWrite: string[] = [];
+      const ctx = {
+        selfNodeId: selfId,
+        userId: 'user-1',
+        userStore,
+        secrets: {
+          metaKey: async (epoch: number) => (epoch === 1 ? metaKey : null),
+        } as unknown as RelaySecrets,
+        now: 2,
+        onCapabilitiesChanged: (id: string) => fromWrite.push(id),
+      };
+      const listMsg = async (version: string, listVersion: number) =>
+        relayListToNodeList(
+          {
+            t: 'relay.list',
+            version: listVersion,
+            nodes: [
+              {
+                id: nodeId,
+                online: true,
+                status: 'admitted',
+                epoch: 1,
+                blob: await seal(version),
+              },
+            ],
+            rtc: { stun: [], turn: null },
+            key_log_head_seq: 0,
+          },
+          ctx
+        );
+      await listMsg('2.9.0', 7);
+      expect(fromWrite).toEqual([nodeId]);
+      const primary = await listMsg('2.9.0', 4);
+      const applied: string[] = [];
+      applyUplinkNodeList(
+        {
+          state: {
+            lastNodeList: null,
+            uplinkPresenceLive: true,
+            uplinkGeneration: 1,
+            lastRtc: null,
+          },
+          retainPeerIds: () => [nodeId],
+          extraListedNodes: () => [],
+          identity: { nodeIdHex: selfId },
+          scheduler: { now: () => 3 },
+          userIdOf: () => 'user-1',
+          userStore,
+          peerHolder: {
+            manager: {
+              listReach: () => new Map(),
+              transportOf: () => null,
+              rttOf: () => null,
+              notifyPeerEndpointsChanged: () => undefined,
+              onPeerCapabilitiesChanged: (id: string) => applied.push(id),
+            },
+          },
+          emitListNodeEvent: () => undefined,
+          opts: {},
+        } as never,
+        primary,
+        () => false
+      );
+      expect(applied).toEqual([]);
+      expect(fromWrite).toEqual([nodeId]);
+
+      const bound: string[] = [];
+      bindRelayCapabilityRearm((id) => bound.push(id));
+      try {
+        const bare = {
+          ...ctx,
+          onCapabilitiesChanged: undefined,
+        };
+        await relayListToNodeList(
+          {
+            t: 'relay.list',
+            version: 8,
+            nodes: [
+              {
+                id: nodeId,
+                online: true,
+                status: 'admitted',
+                epoch: 1,
+                blob: await seal('2.9.1'),
+              },
+            ],
+            rtc: { stun: [], turn: null },
+            key_log_head_seq: 0,
+          },
+          bare
+        );
+        expect(bound).toEqual([nodeId]);
+      } finally {
+        bindRelayCapabilityRearm(null);
+      }
     } finally {
       close();
     }
