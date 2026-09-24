@@ -2,11 +2,11 @@
 
 export interface WindowMemorySettings {
   enabled: boolean;
-  /** MemoryHigh，MiB；0 = 不设置该属性。 */
+  /** MemoryHigh，MiB。0 = 写成 infinity（清掉之前套过的上限），不是「别动这个属性」。 */
   memoryHighMb: number;
-  /** MemoryMax，MiB；0 = 不设置该属性。 */
+  /** MemoryMax，MiB。0 = 写成 infinity（清掉之前套过的上限），不是「别动这个属性」。 */
   memoryMaxMb: number;
-  /** MemorySwapMax，MiB；0 = 不设置该属性。 */
+  /** MemorySwapMax，MiB。0 = 写成 infinity（清掉之前套过的上限），不是「别动这个属性」。 */
   memorySwapMaxMb: number;
   /** 采样周期（秒）。 */
   sampleIntervalSec: number;
@@ -46,6 +46,12 @@ export interface WindowMemorySample {
 export interface SessionsMemoryWindow extends WindowMemorySample {
   windowName: string;
   scopes: string[];
+  /**
+   * 这份读数不能当现状：sampledAt 早于 max(6 个采样周期, 60s)。
+   * 为 true 时 high/max/swapMax 已清成 0，sampledAt 仍是原采样时刻。缺省视为新鲜。
+   * 设备未连接时不返回窗口，而不是把上次的限额再交出去。
+   */
+  stale?: boolean;
 }
 
 export interface SessionsMemoryDevice {

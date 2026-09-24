@@ -295,6 +295,46 @@ describe('vibeterm sessions', () => {
     expect(text).not.toContain('0!');
   });
 
+  test('stale samples print - for MEM HIGH MAX, not the old cap', async () => {
+    const { ctx, stdout } = await humanCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-stale',
+            deviceName: 'stale-host',
+            connected: true,
+            supported: true,
+            limitsSupported: true,
+            windows: [
+              {
+                windowId: '@4',
+                windowName: 'old',
+                panes: 1,
+                scopes: ['tmux-spawn-old.scope'],
+                current: 400 * 1024 ** 2,
+                high: 8 * 1024 ** 3,
+                max: 12 * 1024 ** 3,
+                swapMax: 4 * 1024 ** 3,
+                oomKills: 2,
+                oomFlag: true,
+                sampledAt: 1_700_000_000_000,
+                source: 'cgroup',
+                stale: true,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    await sessions.run(ctx, ['--memory']);
+    const text = stdout.text();
+    expect(text).toContain('@4 old');
+    expect(text).not.toContain('8.00 GB');
+    expect(text).not.toContain('12.00 GB');
+    expect(text).not.toContain('∞');
+    expect(text).toContain('tmux-spawn-old.scope');
+  });
+
   test('unsampled windows print - for MEM HIGH MAX OOM, not 0 B', async () => {
     const { ctx, stdout } = await humanCtx({
       'GET /api/sessions/memory': () => ({

@@ -8,6 +8,7 @@ import {
   STOP_SCOPE_TIMEOUT_MS,
   TICK_DEBOUNCE_MS,
 } from './constants';
+import { sweepReleaseOrphans } from './orphan-scopes';
 import { type SamplerParseResult, parseSamplerOutput } from './sample-parser';
 import { buildSamplerScript } from './sampler-script';
 import { buildStopScopeScript, isAllZeroLimits } from './scope-commands';
@@ -17,7 +18,6 @@ import {
   aggregateWindows,
   applyScopeLimit,
   collectOomEvents,
-  observedLimited,
   releaseScopeLimit,
   vanishedWindowIds,
   windowNeedsEmit,
@@ -65,6 +65,14 @@ function intervalMs(settings: WindowMemorySettings): number {
   return sec * 1000;
 }
 
+function scopesOf(states: Iterable<PaneMemoryState>): string[] {
+  const names: string[] = [];
+  for (const state of states) {
+    if (state.scope && !names.includes(state.scope)) names.push(state.scope);
+  }
+  return names;
+}
+
 function emptyState(pane: MemoryPaneRef): PaneMemoryState {
   return {
     paneId: pane.paneId,
@@ -76,6 +84,8 @@ function emptyState(pane: MemoryPaneRef): PaneMemoryState {
     applyAttempts: 0,
     applyFailedAt: null,
     desiredKey: '',
+    lastStderr: '',
+    giveUpLogged: false,
   };
 }
 
@@ -102,7 +112,8 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   private limitsCgroupPinned = false;
   private transientLimitMisses = 0;
   private measureMisses = 0;
-  private disabledSampled = false;
+  private readonly orphanStates = new Map<string, PaneMemoryState>();
+  private readonly orphanWarn = new Set<string>();
 
   constructor(opts: CreateWindowMemoryTrackerOptions) {
     this.deviceId = opts.deviceId;
@@ -220,7 +231,6 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     const settings = this.hooks.getSettings();
     const panes = this.getPanes();
     this.pruneVanished(panes);
-    if (!settings.enabled && this.disabledSampled && !this.hasObservedLimits()) return;
     const parsed = await this.sampleHost(panes);
     if (!parsed) return;
     this.updateLimitsSupported(parsed);
@@ -228,19 +238,15 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     this.refineLimitsByScopes();
     if (!this.acceptMeasure(panes)) return;
     await this.applyOrRelease(settings);
-    if (!settings.enabled) {
-      this.disabledSampled = true;
-      return;
-    }
-    this.disabledSampled = false;
+    await this.sweepOrphans(settings, panes);
     const now = this.now();
     this.emitOom();
     this.emitWindows(panes, now);
   }
 
   private async applyOrRelease(settings: WindowMemorySettings): Promise<void> {
-    if (this.limitsSupported === false) return;
     const release = !settings.enabled || isAllZeroLimits(settings);
+    if (!release && this.limitsSupported === false) return;
     const now = this.now();
     for (const state of this.paneStates.values()) {
       if (release) await releaseScopeLimit(this.host, this.deviceId, state, now);
@@ -248,11 +254,25 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     }
   }
 
-  private hasObservedLimits(): boolean {
-    for (const state of this.paneStates.values()) {
-      if (state.sample && observedLimited(state.sample)) return true;
+  private async sweepOrphans(
+    settings: WindowMemorySettings,
+    panes: MemoryPaneRef[]
+  ): Promise<void> {
+    const release = !settings.enabled || isAllZeroLimits(settings);
+    if (!release) {
+      this.orphanStates.clear();
+      return;
     }
-    return false;
+    if (this.limitsCgroupPinned) return;
+    await sweepReleaseOrphans({
+      host: this.host,
+      deviceId: this.deviceId,
+      now: this.now(),
+      panes,
+      liveScopes: scopesOf(this.paneStates.values()),
+      states: this.orphanStates,
+      warned: this.orphanWarn,
+    });
   }
 
   private updateLimitsSupported(parsed: SamplerParseResult): void {

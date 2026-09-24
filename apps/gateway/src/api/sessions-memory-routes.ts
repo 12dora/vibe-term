@@ -9,6 +9,8 @@ import type {
 import { getAllDevices } from '../db/devices';
 import { getWindowOomMarkStore } from '../window-memory/oom-mark-store';
 import { getWindowMemoryRuntime } from '../window-memory/runtime-host';
+import { isMemorySampleStale } from '../window-memory/sample-freshness';
+import { getWindowMemorySettingsStore } from '../window-memory/settings-store';
 import type { WindowMemoryAggregate } from '../window-memory/types';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
@@ -76,21 +78,41 @@ function mergeWindow(
 function windowsOf(
   deviceId: string,
   runtime: SessionsMemoryRuntime,
-  fallbackSource: WindowMemorySource
+  fallbackSource: WindowMemorySource,
+  now: number,
+  intervalSec: number
 ): SessionsMemoryWindow[] {
   const snapshot = runtime.getCurrentSnapshot?.() ?? null;
   const aggs = new Map((runtime.getWindowMemory?.() ?? []).map((agg) => [agg.windowId, agg]));
   const marks = getWindowOomMarkStore();
   return snapshotWindows(snapshot).map((window) =>
-    mergeWindow(window, aggs.get(window.id), marks.has(deviceId, window.id), fallbackSource)
+    presentWindow(
+      mergeWindow(window, aggs.get(window.id), marks.has(deviceId, window.id), fallbackSource),
+      now,
+      intervalSec
+    )
   );
+}
+
+function presentWindow(
+  row: SessionsMemoryWindow,
+  now: number,
+  intervalSec: number
+): SessionsMemoryWindow {
+  if (!isMemorySampleStale(row.sampledAt, now, intervalSec)) return row;
+  return { ...row, stale: true, high: 0, max: 0, swapMax: 0 };
 }
 
 function readLimitsSupported(runtime: SessionsMemoryRuntime): boolean | null {
   return runtime.getWindowMemoryLimitsSupported?.() ?? null;
 }
 
-function toDeviceRow(deviceId: string, deviceName: string): SessionsMemoryDevice {
+function toDeviceRow(
+  deviceId: string,
+  deviceName: string,
+  now: number,
+  intervalSec: number
+): SessionsMemoryDevice {
   const runtime = getWindowMemoryRuntime(deviceId);
   if (!runtime || runtime.isConnected?.() !== true) {
     return {
@@ -109,13 +131,21 @@ function toDeviceRow(deviceId: string, deviceName: string): SessionsMemoryDevice
     connected: true,
     supported: runtime.getWindowMemorySupported?.() === true,
     limitsSupported,
-    windows: windowsOf(deviceId, runtime, limitsSupported === false ? 'rss' : 'cgroup'),
+    windows: windowsOf(
+      deviceId,
+      runtime,
+      limitsSupported === false ? 'rss' : 'cgroup',
+      now,
+      intervalSec
+    ),
   };
 }
 
 function handleGet(): Response {
+  const now = Date.now();
+  const intervalSec = getWindowMemorySettingsStore().get().sampleIntervalSec;
   const body: SessionsMemoryResponse = {
-    devices: getAllDevices().map((device) => toDeviceRow(device.id, device.name)),
+    devices: getAllDevices().map((device) => toDeviceRow(device.id, device.name, now, intervalSec)),
   };
   return json(body);
 }

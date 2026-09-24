@@ -1,5 +1,7 @@
 import type { WindowMemorySettings } from '@vibeterm/shared';
 
+import { withUserBus } from './user-bus';
+
 export function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -46,7 +48,7 @@ export function buildStopScopeScript(scopes: string[]): string {
   if (scopes.length === 0) {
     return 'true';
   }
-  return `systemctl --user stop ${scopes.map(shQuote).join(' ')}`;
+  return withUserBus(`systemctl --user stop ${scopes.map(shQuote).join(' ')}`);
 }
 
 export function argvToScript(argv: string[]): string {

@@ -53,6 +53,25 @@ describe('getSessionsMemory', () => {
     ]);
   });
 
+  test('stale 只在网关明确标记时透传', async () => {
+    const response = await getSessionsMemory(
+      client({
+        devices: [
+          {
+            deviceId: 'dev-1',
+            deviceName: '本机',
+            connected: true,
+            supported: true,
+            limitsSupported: true,
+            windows: [{ ...WINDOW, stale: true }, { ...WINDOW, windowId: '@2', stale: 'yes' }],
+          },
+        ],
+      })
+    );
+    expect(response.devices[0]?.windows[0]?.stale).toBe(true);
+    expect('stale' in (response.devices[0]?.windows[1] ?? {})).toBe(false);
+  });
+
   test('路径固定', async () => {
     let seen = '';
     const recorder = new ApiClient('', (url) => {
