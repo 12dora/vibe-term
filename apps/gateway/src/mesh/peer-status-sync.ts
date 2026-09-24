@@ -1,6 +1,8 @@
 import { decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
+import type { PeerCacheRecord } from '../auth/user-store';
 import { isRecord, jsonStable, parseSeq } from './ctl';
 import { jsonText } from './json-text';
+import { peerCapabilitiesChanged } from './peer-capability-change';
 import { sanitizeEndpoints } from './peer-dc-upgrade';
 import {
   KEY_LOG_STATUS_DEBOUNCE_MS,
@@ -14,8 +16,48 @@ import type { KeyLogApplier, UplinkStatus } from './types';
 export type PeerStatusSyncDeps = {
   sendPeerCtl: (live: LivePeer, msg: Record<string, unknown>) => void;
   notifyPeerEndpointsChanged: (nodeId?: string) => void;
+  onPeerCapabilitiesChanged?: (nodeId: string) => void;
   listenPort: () => number | undefined;
 };
+
+function rememberPeerProjection(
+  userStore: PeerManagerState['userStore'],
+  deps: PeerStatusSyncDeps,
+  row: {
+    peerNodeId: string;
+    existing: PeerCacheRecord | null;
+    endpointsJson: string;
+    inventoryJson: string;
+    directCapable: boolean;
+    versionRaw: unknown;
+    lastSeenAt: number;
+    changed: boolean;
+  }
+): void {
+  const version =
+    typeof row.versionRaw === 'string' ? row.versionRaw : (row.existing?.version ?? null);
+  const capabilitiesChanged = peerCapabilitiesChanged(row.existing, {
+    version,
+    directCapable: row.directCapable,
+    inventoryJson: row.inventoryJson,
+  });
+  if (!row.changed && !capabilitiesChanged) {
+    userStore.touchPeerLastSeenAt(row.peerNodeId, row.lastSeenAt);
+    return;
+  }
+  userStore.upsertPeer({
+    nodeId: row.peerNodeId,
+    name: row.existing?.name ?? row.peerNodeId,
+    endpointsJson: row.endpointsJson,
+    inventoryJson: row.inventoryJson,
+    directCapable: row.directCapable,
+    lastSeenAt: row.lastSeenAt,
+    listVersion: row.existing?.listVersion ?? 0,
+    version,
+  });
+  if (row.changed) deps.notifyPeerEndpointsChanged(row.peerNodeId);
+  if (capabilitiesChanged) deps.onPeerCapabilitiesChanged?.(row.peerNodeId);
+}
 
 /** node.status 广播与 key log 同步：对端状态落库、密钥日志的服务端与应用端。 */
 export class PeerStatusSync {
@@ -83,20 +125,16 @@ export class PeerStatusSync {
       existing.endpointsJson !== endpointsJson ||
       existing.inventoryJson !== inventoryJson ||
       existing.directCapable !== directCapable;
-    if (changed) {
-      userStore.upsertPeer({
-        nodeId: peerNodeId,
-        name: existing?.name ?? peerNodeId,
-        endpointsJson,
-        inventoryJson,
-        directCapable,
-        lastSeenAt,
-        listVersion: existing?.listVersion ?? 0,
-      });
-      this.deps.notifyPeerEndpointsChanged(peerNodeId);
-    } else {
-      userStore.touchPeerLastSeenAt(peerNodeId, lastSeenAt);
-    }
+    rememberPeerProjection(userStore, this.deps, {
+      peerNodeId,
+      existing,
+      endpointsJson,
+      inventoryJson,
+      directCapable,
+      versionRaw: msg.version,
+      lastSeenAt,
+      changed,
+    });
     const head = isRecord(msg.key_log_head) ? msg.key_log_head : null;
     if (!head || !this.keyLogApplier) return;
     try {

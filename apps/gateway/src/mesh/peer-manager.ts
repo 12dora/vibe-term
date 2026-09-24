@@ -343,6 +343,14 @@ export class PeerManager extends PeerCollaboratorHost {
     }
   }
 
+  noteRelayPresence(nodeId: string, online: boolean): boolean {
+    return this.dcUpgrade.noteRelayPresence(nodeId, online);
+  }
+
+  onPeerCapabilitiesChanged(nodeId: string): void {
+    this.dcUpgrade.onPeerCapabilitiesChanged(nodeId);
+  }
+
   async forceProbe(nodeId: string, endpoints?: string[]): Promise<LinkSession | null> {
     if (isNodePaused(nodeId)) return null;
     return this.dialer.forceProbe(nodeId, endpoints);

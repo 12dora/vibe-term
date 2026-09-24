@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../auth/test-db';
-import { UserStore } from '../auth/user-store';
+import { LEGACY_HUB_PEER_ID, UserStore } from '../auth/user-store';
 import { NodeEventDedupe } from './node-event-dedupe';
 import {
   type NodeListApplyDeps,
@@ -10,6 +10,7 @@ import {
   mergeListedRtc,
   overlayOnlineUnion,
 } from './node-list-apply';
+import type { PeerReach } from './types';
 import type { UplinkNodeList } from './uplink-protocol';
 
 const SELF = 'aa'.repeat(16);
@@ -389,6 +390,63 @@ describe('applyUplinkNodeList STUN distribution', () => {
       applyUplinkNodeList(d, incoming, () => false);
       expect(d.state.lastNodeList?.nodes.find((node) => node.id === PEER)?.online).toBe(false);
       expect(events).toEqual([`${PEER}:offline`]);
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('relay presence and disappeared nodes', () => {
+  test('reports online and offline for every remote, and offline for nodes that left while online', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      const notes: Array<{ id: string; online: boolean }> = [];
+      const d = applyDeps(userStore);
+      const reach = new Map<string, PeerReach>([[PEER, 'lan']]);
+      const gone = 'cc'.repeat(16);
+      const stayingOffline = 'dd'.repeat(16);
+      d.peerHolder.manager = {
+        listReach: () => reach,
+        transportOf: () => null,
+        rttOf: () => null,
+        notifyPeerEndpointsChanged: () => {},
+        noteRelayPresence: (id, online) => {
+          notes.push({ id, online });
+          return false;
+        },
+      };
+      applyUplinkNodeList(
+        d,
+        emptyList({
+          nodes: [
+            listedNode(SELF, true, 'self'),
+            listedNode(PEER, false),
+            listedNode(gone, true, 'gone'),
+            listedNode(stayingOffline, false, 'off'),
+            listedNode(LEGACY_HUB_PEER_ID, true, 'hub'),
+          ],
+        }),
+        () => false
+      );
+      expect(notes).toEqual([
+        { id: PEER, online: true },
+        { id: gone, online: true },
+        { id: stayingOffline, online: false },
+      ]);
+
+      notes.length = 0;
+      applyUplinkNodeList(
+        d,
+        emptyList({
+          nodes: [listedNode(SELF, true, 'self'), listedNode(stayingOffline, false, 'off')],
+        }),
+        () => false
+      );
+      expect(notes).toEqual([
+        { id: gone, online: false },
+        { id: stayingOffline, online: false },
+      ]);
     } finally {
       close();
     }

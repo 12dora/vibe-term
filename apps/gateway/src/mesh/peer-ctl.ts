@@ -11,8 +11,10 @@ import {
   shouldDropUnboundRtcSignal,
   shouldStartRtcAttempt,
 } from './peer-rtc-wake';
-import { isRtcWakeSdp } from './rtc/ice';
+import { decodeSdpSignal, isRtcWakeSdp, peerRtcSession } from './rtc/ice';
+import type { DcOfferBlockReason } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
+import { dcOfferDeclineCtl } from './rtc/rtc-offer-decline';
 
 export type PeerCtlHost = {
   identity: { nodeId: string };
@@ -29,7 +31,12 @@ export type PeerCtlHost = {
     dcCapable: (nodeId: string) => boolean;
   };
   reroll: { interceptRtc: (fromNodeId: string, msg: RtcSignalMessage) => boolean };
-  dcUpgrade: { dcBreaker: { shouldAcceptAnswer: (nodeId: string) => boolean } };
+  dcUpgrade: {
+    dcBreaker: {
+      shouldAcceptAnswer: (nodeId: string) => boolean;
+      inboundBlock: (nodeId: string) => DcOfferBlockReason | null;
+    };
+  };
   rtcListeners: Map<string, Set<(msg: RtcSignalMessage) => void>>;
   onBrowserSignal: ((msg: RtcSignalMessage, fromNodeId?: string) => void) | null;
   isTrusted: (nodeId: string) => boolean;
@@ -95,6 +102,29 @@ function pushRtcInbox(host: PeerCtlHost, fromNodeId: string, msg: RtcSignalMessa
   return true;
 }
 
+function declineBlockedInboundOffer(
+  host: PeerCtlHost,
+  fromNodeId: string,
+  msg: RtcSignalMessage
+): boolean {
+  const block = host.dcUpgrade.dcBreaker.inboundBlock(fromNodeId);
+  if (!block || !msg.sdp) return false;
+  const decoded = decodeSdpSignal(msg.sdp);
+  if (decoded?.type !== 'offer') return false;
+  const live = host.state.live.get(fromNodeId);
+  if (live) {
+    sendPeerCtlQuiet(
+      live,
+      dcOfferDeclineCtl({
+        rtcSession: msg.rtcSession || peerRtcSession(host.identity.nodeId, fromNodeId),
+        to: fromNodeId,
+        reason: block,
+      })
+    );
+  }
+  return true;
+}
+
 function bufferOrStartRtcAttempt(
   host: PeerCtlHost,
   fromNodeId: string,
@@ -112,6 +142,8 @@ function bufferOrStartRtcAttempt(
     })
   )
     return;
+  // 被拒绝的 offer 不能进 rtcInbox，否则之后的出站探测会把它回放到新 PC。
+  if (declineBlockedInboundOffer(host, fromNodeId, msg)) return;
   if (!pushRtcInbox(host, fromNodeId, msg)) return;
   const attempt = peerInitiatedRtcAttemptInput({
     dcCapable:

@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeCandidateSignal, encodeSdpSignal } from './ice';
+import { decodeSdpSignal, encodeCandidateSignal, encodeSdpSignal } from './ice';
 import type { PeerConnectionLike } from './native';
 import { createIceCandidateTrace } from './rtc-log';
+import { encodeDcOfferDecline } from './rtc-offer-decline';
 import {
   RTC_PENDING_CANDIDATE_MAX,
   createRtcSignalApplier,
@@ -290,5 +291,48 @@ describe('createRtcSignalApplier', () => {
     expect(candidates).toEqual([
       { candidate: 'candidate:2 1 UDP 1 192.168.1.8 9 typ host', mid: '0' },
     ]);
+  });
+
+  test('offerer aborts on decline in under a second and does not set the remote description', () => {
+    const { pc, remote } = fakePc();
+    const state = createSignalingAttemptState(2);
+    const superseded: number[] = [];
+    state.onSuperseded = () => {
+      superseded.push(1);
+    };
+    const apply = createRtcSignalApplier(pc, 'peer', 'answer', state, createIceCandidateTrace());
+    const started = Date.now();
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: encodeDcOfferDecline('cooling'),
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(superseded).toEqual([1]);
+    expect(remote).toHaveLength(0);
+    expect(state.answerApplied).toBe(false);
+  });
+
+  test('answerer ignores decline, and a legacy offerer never applies a non-answer', () => {
+    const { pc, remote } = fakePc();
+    const state = createSignalingAttemptState();
+    const superseded: number[] = [];
+    state.onSuperseded = () => {
+      superseded.push(1);
+    };
+    const apply = createRtcSignalApplier(pc, 'peer', 'offer', state, createIceCandidateTrace());
+    const raw = encodeDcOfferDecline('disabled');
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: raw,
+    });
+    expect(superseded).toEqual([]);
+    expect(remote).toHaveLength(0);
+    const decoded = decodeSdpSignal(raw);
+    expect(decoded?.type).toBe('decline');
+    expect(decoded?.type === 'answer').toBe(false);
   });
 });

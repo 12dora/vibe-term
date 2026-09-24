@@ -3,6 +3,7 @@ import type { RtcSignalMessage } from '../mesh-deps';
 import { decodeCandidateSignal, decodeSdpSignal, isEmptyCandidate } from './ice';
 import type { PeerConnectionLike } from './native';
 import { type IceCandidateTrace, type RtcLogContext, rtcLog, rtcLogCandidate } from './rtc-log';
+import { consumeOffererOnDecline } from './rtc-offer-decline';
 
 export type QueuedRemoteCandidate = { candidate: string; mid: string; epoch?: number };
 
@@ -76,20 +77,7 @@ export function applyRemoteSdp(
 ): 'applied' | 'dropped' | 'superseded' {
   const decoded = decodeSdpSignal(raw);
   if (!decoded) return 'dropped';
-  if (decoded.type !== expect) {
-    logSignal(
-      'signal dropped',
-      {
-        peer,
-        kind: 'sdp',
-        cause: 'unexpected-type',
-        expected: expect,
-        received: decoded.type,
-      },
-      state
-    );
-    return 'dropped';
-  }
+  if (rejectRemoteSdp(peer, expect, state, raw, decoded)) return 'dropped';
   const epoch = classifyEpoch(
     decoded.epoch,
     state.epoch,
@@ -161,6 +149,41 @@ export function applyRemoteSdp(
     );
     return 'dropped';
   }
+}
+
+/**
+ * 只有 offerer（正在等 answer）收到 decline 才立刻 superseded。
+ * 应答侧和未知 type 仍只丢弃：不 setRemoteDescription、不抛。
+ */
+function rejectRemoteSdp(
+  peer: string,
+  expect: 'offer' | 'answer',
+  state: SignalingAttemptState,
+  raw: string,
+  decoded: { type: string }
+): boolean {
+  if (
+    expect === 'answer' &&
+    consumeOffererOnDecline(raw, () => {
+      state.onSuperseded?.();
+    })
+  ) {
+    logSignal('signal dropped', { peer, kind: 'sdp', cause: 'declined' }, state);
+    return true;
+  }
+  if (decoded.type === expect) return false;
+  logSignal(
+    'signal dropped',
+    {
+      peer,
+      kind: 'sdp',
+      cause: 'unexpected-type',
+      expected: expect,
+      received: decoded.type,
+    },
+    state
+  );
+  return true;
 }
 
 /** ICE 候选里的 connection-address；198.18/15 fake-IP 在收发两侧都丢掉。 */

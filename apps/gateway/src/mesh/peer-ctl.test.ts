@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
+import { decodeJsonBytes } from './ctl';
 import { type PeerCtlHost, handlePeerCtl, receiveRtcSignal } from './peer-ctl';
+import { noteDialDcFailure } from './peer-dialer-dc-gate';
 import type { PeerManagerState } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
+import { encodeCandidateSignal, encodeSdpSignal, peerRtcSession } from './rtc/ice';
+import type { PeerConnectionLike } from './rtc/native';
+import { isDcOfferDecline, readDcOfferDecline } from './rtc/rtc-offer-decline';
+import { applyRemoteSdp, createSignalingAttemptState } from './rtc/rtc-signal-apply';
 
 function encodeCtl(msg: Record<string, unknown>): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(msg));
@@ -45,7 +51,9 @@ function fakeHost(overrides: Partial<PeerCtlHost> = {}): PeerCtlHost & {
     },
     dialer: { hasDcInflight: () => false, dcCapable: () => false },
     reroll: { interceptRtc: () => false },
-    dcUpgrade: { dcBreaker: { shouldAcceptAnswer: () => false } },
+    dcUpgrade: {
+      dcBreaker: { shouldAcceptAnswer: () => false, inboundBlock: () => null },
+    },
     rtcListeners: new Map(),
     onBrowserSignal: (_msg: unknown, from?: string) => {
       browser.push({ from });
@@ -129,4 +137,140 @@ describe('receiveRtcSignal', () => {
     });
     expect(host.browser).toEqual([{ from: 'bb'.repeat(16) }]);
   });
+
+  test('blocked offer is declined before the inbox and the offerer stops without a dial failure', () => {
+    const peer = 'bb'.repeat(16);
+    const sent: unknown[] = [];
+    const host = fakeHost({
+      dialer: { hasDcInflight: () => false, dcCapable: () => true },
+      dcUpgrade: {
+        dcBreaker: { shouldAcceptAnswer: () => false, inboundBlock: () => 'disabled' },
+      },
+    });
+    host.state.live.set(peer, liveWithCtl(peer, sent));
+    const started = Date.now();
+    receiveRtcSignal(host, peer, {
+      rtcSession: '',
+      from: 'node',
+      to: host.identity.nodeId,
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 4 }),
+      candidate: null,
+    });
+    receiveRtcSignal(host, peer, {
+      rtcSession: '',
+      from: 'node',
+      to: host.identity.nodeId,
+      sdp: null,
+      candidate: encodeCandidateSignal('candidate:1 1 UDP 1 10.0.0.8 9 typ host', '0', 4),
+    });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(host.upgrades).toEqual([]);
+    expect(host.state.rtcInbox.has(peer)).toBe(false);
+    expect(sent).toHaveLength(1);
+    const decline = sent[0] as { t: string; sdp: string; to: string; rtcSession: string };
+    expect(decline.t).toBe('rtc.signal');
+    expect(decline.to).toBe(peer);
+    expect(decline.rtcSession).toBe(peerRtcSession(host.identity.nodeId, peer));
+    expect(isDcOfferDecline(decline.sdp)).toBe(true);
+    expect(readDcOfferDecline(decline.sdp)).toBe('disabled');
+
+    const superseded: number[] = [];
+    const state = createSignalingAttemptState(4);
+    state.onSuperseded = () => {
+      superseded.push(1);
+    };
+    const pc = {
+      setRemoteDescription() {
+        throw new Error('decline must not be applied');
+      },
+    } as unknown as PeerConnectionLike;
+    const offererStarted = Date.now();
+    expect(applyRemoteSdp(pc, peer, 'answer', state, decline.sdp)).toBe('dropped');
+    expect(Date.now() - offererStarted).toBeLessThan(1_000);
+    expect(superseded).toEqual([1]);
+    let noted = 0;
+    noteDialDcFailure({
+      stopped: false,
+      nodeId: peer,
+      err: new Error('superseded'),
+      connectP: null,
+      attemptId: 'dc:1',
+      peerInitiated: false,
+      dcBreaker: {
+        noteFailure: () => {
+          noted += 1;
+          return { counted: true, opened: false, open: false };
+        },
+      },
+    });
+    expect(noted).toBe(0);
+  });
+
+  test('cooling at the cap declines; an answer and an unblocked offer are not declined', () => {
+    const peer = 'bb'.repeat(16);
+    const sent: unknown[] = [];
+    const blocked = fakeHost({
+      dcUpgrade: {
+        dcBreaker: { shouldAcceptAnswer: () => false, inboundBlock: () => 'cooling' },
+      },
+    });
+    blocked.state.live.set(peer, liveWithCtl(peer, sent));
+    receiveRtcSignal(blocked, peer, {
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: blocked.identity.nodeId,
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 1 }),
+      candidate: null,
+    });
+    expect(readDcOfferDecline((sent[0] as { sdp: string }).sdp)).toBe('cooling');
+    expect(blocked.state.rtcInbox.has(peer)).toBe(false);
+
+    const answerer = fakeHost({
+      identity: { nodeId: 'ff'.repeat(16) },
+      dcUpgrade: {
+        dcBreaker: { shouldAcceptAnswer: () => false, inboundBlock: () => 'disabled' },
+      },
+    });
+    const answerFrom = '11'.repeat(16);
+    const answerSent: unknown[] = [];
+    answerer.state.live.set(answerFrom, liveWithCtl(answerFrom, answerSent));
+    receiveRtcSignal(answerer, answerFrom, {
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: answerer.identity.nodeId,
+      sdp: encodeSdpSignal({ type: 'answer', sdp: 'v=0', epoch: 1 }),
+      candidate: null,
+    });
+    expect(answerSent).toEqual([]);
+    expect(answerer.state.rtcInbox.get(answerFrom)).toHaveLength(1);
+
+    const open = fakeHost({
+      dialer: { hasDcInflight: () => false, dcCapable: () => true },
+      dcUpgrade: {
+        dcBreaker: { shouldAcceptAnswer: () => true, inboundBlock: () => null },
+      },
+    });
+    receiveRtcSignal(open, peer, {
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: open.identity.nodeId,
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 2 }),
+      candidate: null,
+    });
+    expect(open.upgrades).toEqual([peer]);
+    expect(open.state.rtcInbox.get(peer)).toHaveLength(1);
+  });
 });
+
+function liveWithCtl(peerNodeId: string, sent: unknown[]): LivePeer {
+  return {
+    peerNodeId,
+    session: {
+      ctl: {
+        send: (bytes: Uint8Array) => {
+          sent.push(decodeJsonBytes(bytes));
+        },
+      },
+    },
+  } as unknown as LivePeer;
+}

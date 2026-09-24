@@ -98,4 +98,61 @@ describe('persistUplinkPeerCache', () => {
       close();
     }
   });
+
+  test('version, inventory, or directCapable notifies once; endpoints and repeats do not', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      seedUser(userStore);
+      const changed: string[] = [];
+      const base = {
+        id: PEER,
+        name: 'peer',
+        online: true,
+        endpoints: ['ws://10.0.0.2:39001/peer'],
+        inventory: { tmux: true },
+        direct_capable: false,
+        version: '2.8.0',
+      };
+      const save = (node: UplinkNodeList['nodes'][number]) => {
+        changed.length = 0;
+        persistUplinkPeerCache({
+          userStore,
+          userId: 'user-1',
+          selfNodeId: SELF,
+          now: 2,
+          list: listWith([node]),
+          onCapabilitiesChanged: (nodeId) => changed.push(nodeId),
+        });
+      };
+      save(base);
+      expect(changed).toEqual([]);
+      save(base);
+      expect(changed).toEqual([]);
+      save({ ...base, endpoints: ['ws://10.0.0.9:39001/peer'] });
+      expect(changed).toEqual([]);
+      save({ ...base, endpoints: ['ws://10.0.0.9:39001/peer'], version: '2.9.0' });
+      expect(changed).toEqual([PEER]);
+      expect(userStore.getPeer(PEER)?.version).toBe('2.9.0');
+      save({ ...base, endpoints: ['ws://10.0.0.9:39001/peer'], version: '2.9.0' });
+      expect(changed).toEqual([]);
+      save({
+        ...base,
+        endpoints: ['ws://10.0.0.9:39001/peer'],
+        version: '2.9.0',
+        direct_capable: true,
+      });
+      expect(changed).toEqual([PEER]);
+      save({
+        ...base,
+        endpoints: ['ws://10.0.0.9:39001/peer'],
+        version: '2.9.0',
+        direct_capable: true,
+        inventory: { tmux: false },
+      });
+      expect(changed).toEqual([PEER]);
+    } finally {
+      close();
+    }
+  });
 });
