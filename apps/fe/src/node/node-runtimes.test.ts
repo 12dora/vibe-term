@@ -498,6 +498,71 @@ describe('createNodeConnection', () => {
     resetMeshNodesStateForTest();
   });
 
+  test('负缓存停放的直连：过期前 READY / 页面恢复都不起，过期后下一次信号才起', async () => {
+    setMeshNodesStateForTest({ entryNodeId: 'entry-node', nodes: [] });
+    markDirectLinkUnavailable('node-parked', 'entry-node');
+    let created = 0;
+    const resume: Array<() => void> = [];
+    const raw = fakeConnection();
+    const connection = createNodeConnection('node-parked', {
+      createConnection: () => raw,
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => {
+        created += 1;
+        return fakeController();
+      },
+      pageResume: (listener) => {
+        resume.push(listener);
+        return () => undefined;
+      },
+    });
+    await directLinkSettled(connection);
+    expect(created).toBe(0);
+
+    resume[0]?.();
+    raw.becomeReady();
+    await directLinkSettled(connection);
+    expect(created).toBe(0);
+
+    clearDirectLinkAvailability();
+    raw.becomeReady();
+    await directLinkSettled(connection);
+    expect(created).toBe(1);
+
+    resume[0]?.();
+    raw.becomeReady();
+    await directLinkSettled(connection);
+    expect(created).toBe(1);
+    connection.dispose();
+    resetMeshNodesStateForTest();
+  });
+
+  test('负缓存停放后页面恢复同样能在过期后重起直连', async () => {
+    setMeshNodesStateForTest({ entryNodeId: 'entry-node', nodes: [] });
+    markDirectLinkUnavailable('node-parked-resume', 'entry-node');
+    let created = 0;
+    const resume: Array<() => void> = [];
+    const connection = createNodeConnection('node-parked-resume', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => {
+        created += 1;
+        return fakeController();
+      },
+      pageResume: (listener) => {
+        resume.push(listener);
+        return () => undefined;
+      },
+    });
+    await directLinkSettled(connection);
+    clearDirectLinkAvailability();
+    resume[0]?.();
+    await directLinkSettled(connection);
+    expect(created).toBe(1);
+    connection.dispose();
+    resetMeshNodesStateForTest();
+  });
+
   test('入口身份还没落地时不查负缓存，直连照常协商一次', async () => {
     resetMeshNodesStateForTest();
     markDirectLinkUnavailable('node-b', null);

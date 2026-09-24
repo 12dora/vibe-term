@@ -7,6 +7,8 @@
 // 退避是这轮的硬要求：链路抖动时静默登录必然失败，停在错误态等用户点，用户点了又是一次失败；
 // 而不设退避地重试等于前端自己再造一次拨号风暴。阶梯取 3–6 秒抖动起步、逐次翻倍、封顶 5 分钟、
 // 最多 8 次，另加「页面重新可见 / 网络恢复」时立即重试一次（那是链路真的回来了的信号）。
+// 转发器回的 `NODE_UNREACHABLE` 例外：那是入口到目标这一段不通，手机切回前台并不改变它，
+// 恢复信号只换来一次立即重试、阶梯保留，否则每次切回前台都是每台 node 一轮新的 8 连发。
 // 凭证类失败**不重试**：同一份会话钥再发多少次都是同一个结论，只能等用户介入。
 //
 // 定时器到点只做一件事——把失败记录抹掉。真正的重发由挂载中的门闸（`useNodeLoginGate`）
@@ -15,6 +17,8 @@
 import { onPageRecovery } from '@/node/mesh-recovery';
 import { useSyncExternalStore } from 'react';
 import { type NodeLoginFailureKind, classifyNodeLoginFailure } from './login-failure-kind';
+
+const FORWARD_UNREACHABLE_CODE = 'NODE_UNREACHABLE';
 
 /** 首次退避下限（再叠加抖动）。 */
 export const LOGIN_RETRY_FIRST_MS = 3_000;
@@ -138,14 +142,17 @@ export function useNodeLoginFailure(nodeId: string): NodeLoginFailure | null {
   );
 }
 
-/** 页面重新可见 / 网络恢复：链路可能刚回来，排着的退避一律作废，阶梯归零。 */
+/**
+ * 页面重新可见 / 网络恢复：链路可能刚回来，排着的退避一律作废、立即重试一次。
+ * 阶梯只对 `NODE_UNREACHABLE` 以外的网络类失败归零。
+ */
 export function clearAllNodeLoginRetries(): void {
   let changed = false;
   for (const nodeId of [...retryTimers.keys()]) cancelRetry(nodeId);
   for (const [nodeId, record] of [...failures]) {
     if (record.kind !== 'unreachable') continue;
     failures.delete(nodeId);
-    attempts.delete(nodeId);
+    if (record.code !== FORWARD_UNREACHABLE_CODE) attempts.delete(nodeId);
     changed = true;
   }
   if (changed) notify();

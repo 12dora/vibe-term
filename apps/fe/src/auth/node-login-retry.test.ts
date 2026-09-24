@@ -167,13 +167,37 @@ describe('清账', () => {
   });
 
   test('页面重新可见 / 网络恢复：网络类立即作废，凭证类留着（它跟链路无关）', () => {
-    noteNodeLoginFailure('a', 'NODE_UNREACHABLE');
+    noteNodeLoginFailure('a', 'NETWORK_ERROR');
     noteNodeLoginFailure('b', 'NO_SESSION_KEY');
     clearAllNodeLoginRetries();
     expect(getNodeLoginFailure('a')).toBeNull();
     expect(getNodeLoginFailure('b')?.code).toBe('NO_SESSION_KEY');
     expect(timers.pending).toHaveLength(0);
-    expect(noteNodeLoginFailure('a', 'NODE_UNREACHABLE').attempts).toBe(1);
+    expect(noteNodeLoginFailure('a', 'NETWORK_ERROR').attempts).toBe(1);
+  });
+
+  test('NODE_UNREACHABLE：恢复信号只换一次立即重试，阶梯保留，不会重来一轮 8 连发', () => {
+    noteNodeLoginFailure(NODE, 'NODE_UNREACHABLE');
+    noteNodeLoginFailure(NODE, 'NODE_UNREACHABLE');
+    clearAllNodeLoginRetries();
+    expect(getNodeLoginFailure(NODE)).toBeNull();
+    expect(timers.pending).toHaveLength(0);
+    const next = noteNodeLoginFailure(NODE, 'NODE_UNREACHABLE');
+    expect(next.attempts).toBe(3);
+    expect(timers.pending[0].ms).toBe(LOGIN_RETRY_FIRST_MS * 4);
+  });
+
+  test('NODE_UNREACHABLE 阶梯用完后：每次恢复只多一次探测，之后不再排定时器', () => {
+    for (let i = 0; i <= LOGIN_RETRY_MAX_ATTEMPTS; i += 1) {
+      noteNodeLoginFailure(NODE, 'NODE_UNREACHABLE');
+      timers.pending[0]?.fire();
+    }
+    expect(getNodeLoginFailure(NODE)?.retrying).toBe(false);
+    clearAllNodeLoginRetries();
+    expect(getNodeLoginFailure(NODE)).toBeNull();
+    const probe = noteNodeLoginFailure(NODE, 'NODE_UNREACHABLE');
+    expect(probe.retrying).toBe(false);
+    expect(timers.pending).toHaveLength(0);
   });
 });
 

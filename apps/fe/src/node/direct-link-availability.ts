@@ -16,13 +16,22 @@
 //     nodeId 分不出这两种情况。所以该 node 一旦重新登录成功就把负结论清掉
 //     （`markLoggedIn` 是唯一入口），不让一次误判把直连按住半小时。
 //
+// 目标 node 自己答 `503 DIRECT_UNAVAILABLE`（眼下给不出直连）也记一笔，但只压 10 分钟：
+// 那是目标当前的状态（插件没装、指纹没就绪），不像代答 401 那样是入口的固有属性。
+// 转发器的 `503 NODE_UNREACHABLE` 是链路抖动，不进这里，由直连控制器的 authorize 熔断限流。
+//
 // 缓存只在内存里（刷新即失效）。
 
 /** 负结论的有效期。 */
 export const DIRECT_LINK_NEGATIVE_TTL_MS = 30 * 60_000;
+/** 目标 node 答 `DIRECT_UNAVAILABLE` 时负结论的有效期。 */
+export const DIRECT_UNAVAILABLE_TTL_MS = 10 * 60_000;
+
+const RTC_AUTHORIZE_RELATIVE_PATH = '/api/rtc/authorize';
+const DIRECT_UNAVAILABLE_CODE = 'DIRECT_UNAVAILABLE';
 
 /** 直连协商的两条端点（相对目标 node 的路径，不含 `/n/<id>` 前缀）。 */
-const NEGOTIATION_PATHS = new Set(['/api/mesh/connection', '/api/rtc/authorize']);
+const NEGOTIATION_PATHS = new Set(['/api/mesh/connection', RTC_AUTHORIZE_RELATIVE_PATH]);
 
 /** ICE 配置打 **entry** 的 `/api/mesh/rtc-config`，不必转发到目标 node。 */
 export const RTC_CONFIG_RELATIVE_PATH = '/api/mesh/rtc-config';
@@ -36,11 +45,12 @@ function cacheKey(entryNodeId: string, nodeId: string): string {
 export function markDirectLinkUnavailable(
   nodeId: string,
   entryNodeId: string | null,
-  now: number = Date.now()
+  now: number = Date.now(),
+  ttlMs: number = DIRECT_LINK_NEGATIVE_TTL_MS
 ): void {
   // 入口身份未知：记了也查不中，索性不记（下一次协商照常重试一遍）。
   if (!entryNodeId) return;
-  unavailableUntil.set(cacheKey(entryNodeId, nodeId), now + DIRECT_LINK_NEGATIVE_TTL_MS);
+  unavailableUntil.set(cacheKey(entryNodeId, nodeId), now + ttlMs);
 }
 
 export function isDirectLinkUnavailable(
@@ -93,13 +103,41 @@ async function answeredByForeignNode(res: Response, nodeId: string): Promise<boo
   }
 }
 
+/** 目标 node 自己答的「眼下给不出直连」。 */
+async function directUnavailable(res: Response): Promise<boolean> {
+  try {
+    const body = (await res.clone().json()) as { code?: unknown } | null;
+    return body?.code === DIRECT_UNAVAILABLE_CODE;
+  } catch {
+    return false;
+  }
+}
+
+/** 这条协商响应该压多久的负结论；`0` / `null` 表示不压。 */
+function negativeVerdictTtl(
+  res: Response,
+  relative: string,
+  nodeId: string
+): Promise<number> | null {
+  if (res.status === 401) {
+    return answeredByForeignNode(res, nodeId).then((hit) =>
+      hit ? DIRECT_LINK_NEGATIVE_TTL_MS : 0
+    );
+  }
+  if (res.status === 503 && relative === RTC_AUTHORIZE_RELATIVE_PATH) {
+    return directUnavailable(res).then((hit) => (hit ? DIRECT_UNAVAILABLE_TTL_MS : 0));
+  }
+  return null;
+}
+
 export interface DirectLinkClientLike {
   fetch(path: string, init?: RequestInit): Promise<Response>;
 }
 
 /**
- * 给直连控制器用的 REST 客户端包一层：协商端点被别人代答成 401 时记下负结论并回调宿主，
- * 由宿主停掉这次直连。除此之外一个字节都不改，请求照常返回给控制器自己处理。
+ * 给直连控制器用的 REST 客户端包一层：协商端点被别人代答成 401、或目标答
+ * `503 DIRECT_UNAVAILABLE` 时记下负结论并回调宿主，由宿主停掉这次直连。
+ * 除此之外一个字节都不改，请求照常返回给控制器自己处理。
  */
 export function watchDirectNegotiation(
   nodeId: string,
@@ -114,10 +152,11 @@ export function watchDirectNegotiation(
       const target = relative === RTC_CONFIG_RELATIVE_PATH && entryClient ? entryClient : client;
       const routed = relative === RTC_CONFIG_RELATIVE_PATH ? RTC_CONFIG_RELATIVE_PATH : path;
       return target.fetch(routed, init).then((res) => {
-        if (res.status !== 401 || !NEGOTIATION_PATHS.has(relative)) return res;
-        void answeredByForeignNode(res, nodeId).then((foreign) => {
-          if (!foreign) return;
-          markDirectLinkUnavailable(nodeId, entryNodeId());
+        if (!NEGOTIATION_PATHS.has(relative)) return res;
+        const verdict = negativeVerdictTtl(res, relative, nodeId);
+        void verdict?.then((ttlMs) => {
+          if (!ttlMs) return;
+          markDirectLinkUnavailable(nodeId, entryNodeId(), Date.now(), ttlMs);
           onUnavailable();
         });
         return res;

@@ -41,11 +41,7 @@ import {
   type SocketFactory,
   createGatewayConnection,
 } from '@vibeterm/ws-client';
-import type {
-  DirectCarrierController,
-  DirectSignalMessage,
-  DirectSignalingTransport,
-} from '@vibeterm/ws-client/direct';
+import type { DirectCarrierController } from '@vibeterm/ws-client/direct';
 import { createDeferredDiagnosticsSource } from '@vibeterm/ws-client/direct/types';
 import i18n from 'i18next';
 import {
@@ -53,9 +49,10 @@ import {
   isDirectLinkUnavailable,
   watchDirectNegotiation,
 } from './direct-link-availability';
-import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
+import { sharedMeshEvents } from './mesh-events';
 import { getMeshNodesState, markLoggedOut, subscribeMeshNodes } from './mesh-nodes';
 import { onPageRecovery } from './mesh-recovery';
+import { MeshRtcSignalFanout } from './mesh-rtc-signal-fanout';
 import { resolveMeshNodeName } from './node-names';
 import { createGatedNodeApiClient, probeNodeSession } from './node-session-probe';
 import { type NodeSessionRecoveryOutcome, recoverNodeSession } from './node-session-recovery';
@@ -64,54 +61,6 @@ import { clearNodeBackoff, nodeBackoffRemainingMs } from './node-unreachable-bac
 /** 当前入口自身的 nodeId（`/api/auth/mode` 还没落地时为 null）。 */
 function entryNodeIdNow(): string | null {
   return getMeshNodesState().entryNodeId;
-}
-
-/**
- * `/mesh/ws` 的 `RTC_SIGNAL` 只有**一个** handler 槽（见 `mesh-events.ts` 的注释），
- * 而每个非 self 的 node 各有一个控制器，所以这里做一层扇出：信令按 `rtcSession` 由
- * 各控制器自行过滤，扇出不会让某个控制器抢答别人的 answer。
- *
- * `send` 如实返回 `sendRtcSignal` 的结果，并透出 `isReady` / `onReady`：`/mesh/ws` 未连上时
- * 控制器把 offer 排进 outbox，不把 attempt 判失败；连上后泵出信令。
- */
-class MeshRtcSignalFanout {
-  private readonly handlers = new Set<(signal: DirectSignalMessage) => void>();
-  private bound: MeshEventSource | null = null;
-
-  constructor(private readonly resolveSource: () => MeshEventSource) {}
-
-  transport(): DirectSignalingTransport {
-    return {
-      send: (signal) => this.source().sendRtcSignal(signal),
-      onSignal: (cb) => {
-        this.handlers.add(cb);
-        this.bind();
-        return () => {
-          this.handlers.delete(cb);
-        };
-      },
-      isReady: () => this.resolveSource().connected,
-      onReady: (cb) => {
-        const source = this.source();
-        return source.onStatusChange(() => cb(source.connected));
-      },
-    };
-  }
-
-  private source(): MeshEventSource {
-    const source = this.resolveSource();
-    source.start();
-    return source;
-  }
-
-  private bind(): void {
-    const source = this.source();
-    if (this.bound === source) return;
-    this.bound = source;
-    source.setRtcSignalHandler((signal) => {
-      for (const handler of [...this.handlers]) handler(signal);
-    });
-  }
 }
 
 const meshRtcSignals = new MeshRtcSignalFanout(() => sharedMeshEvents());
@@ -182,6 +131,40 @@ function defaultController(
     connection,
     cid,
   });
+}
+
+interface DirectControllerSpec {
+  nodeId: string;
+  connection: GatewayConnection;
+  cid: () => string | null;
+  wiring: NodeDirectWiring;
+  /** 协商被入口代答 / 目标答「给不出直连」：记了负缓存，宿主停掉这次直连。 */
+  onUnavailable: () => void;
+}
+
+function createDirectController(
+  loaded: DirectLinkModule,
+  spec: DirectControllerSpec
+): DirectCarrierController | null {
+  const { nodeId, connection, cid, wiring } = spec;
+  if (wiring.createController) return wiring.createController(nodeId, connection, cid);
+  const apiClient = watchDirectNegotiation(
+    nodeId,
+    createNodeApiClient(nodeId),
+    spec.onUnavailable,
+    entryNodeIdNow,
+    createNodeApiClient('self')
+  );
+  return defaultController(loaded, nodeId, connection, cid, apiClient);
+}
+
+function defaultPageResume(listener: () => void): () => void {
+  const offRecovery = onPageRecovery(listener);
+  const offPageshow = onPageshow(listener);
+  return () => {
+    offRecovery();
+    offPageshow();
+  };
 }
 
 function onPageshow(listener: () => void): () => void {
@@ -298,6 +281,9 @@ function whenConnectionReady(connection: GatewayConnection, run: () => void): ()
  * 给一条已建好的远端 node 连接接上直连：诊断占位源与 resume 钩子同步挂好（UI 在同一帧就会
  * 订阅），控制器等 WS 就绪 + 直连栈 chunk 到位后再建。dispose 与加载是并发的，靠 `disposed`
  * 标志裁决：先 dispose 的话加载完成后什么都不做，不会留下没人 stop 的 `RTCPeerConnection`。
+ *
+ * 负缓存命中（含协商途中新记上的）时直连「停放」：负结论过期后，下一次 primary READY 或
+ * 页面恢复再起一次，不在这之前发任何协商请求。
  */
 function attachDirectLink(
   nodeId: string,
@@ -310,9 +296,9 @@ function attachDirectLink(
   connection.setResumeSubscribedPanes(() => resumeSubscribedPanes(nodeId, connection, wiring));
 
   let disposed = false;
+  let parked = false;
   let controller: DirectCarrierController | null = null;
   let direct: DirectLinkModule | null = null;
-  /** 停掉这次直连（协商被入口代答、或连接被回收）：控制器、bulk 通道、诊断源一并摘掉。 */
   const stopDirect = () => {
     if (!controller) return;
     direct?.registerBulkClient(nodeId, null);
@@ -320,27 +306,21 @@ function attachDirectLink(
     controller = null;
     diagnostics.attach(null);
   };
+  const parkDirect = () => {
+    parked = true;
+    stopDirect();
+  };
 
   const startDirect = () => {
+    parked = false;
     const pending = (wiring.loadDirect ?? loadDirectModule)().then((loaded) => {
-      if (!loaded || disposed) return;
-      // 这条入口最近已经答过「给不出直连」：30 分钟内不再白协商一次（见 direct-link-availability）。
-      if (isDirectLinkUnavailable(nodeId, entryNodeIdNow())) return;
-      const created = wiring.createController
-        ? wiring.createController(nodeId, connection, cid)
-        : defaultController(
-            loaded,
-            nodeId,
-            connection,
-            cid,
-            watchDirectNegotiation(
-              nodeId,
-              createNodeApiClient(nodeId),
-              stopDirect,
-              entryNodeIdNow,
-              createNodeApiClient('self')
-            )
-          );
+      if (!loaded || disposed || controller) return;
+      if (isDirectLinkUnavailable(nodeId, entryNodeIdNow())) {
+        parked = true;
+        return;
+      }
+      const spec = { nodeId, connection, cid, wiring, onUnavailable: parkDirect };
+      const created = createDirectController(loaded, spec);
       if (!created) return;
       direct = loaded;
       controller = created;
@@ -354,28 +334,27 @@ function attachDirectLink(
 
   const cancelReadyWatch = whenConnectionReady(connection, startDirect);
 
+  const resumeParked = () => {
+    if (disposed || controller || !parked) return;
+    if (!isDirectLinkUnavailable(nodeId, entryNodeIdNow())) startDirect();
+  };
   const retryDirectIfDown = () => {
-    if (disposed || !controller) return;
+    if (disposed) return;
+    if (!controller) return resumeParked();
     if (controller.getState() === 'active') return;
     controller.retryDirect();
   };
-  const subscribeResume =
-    wiring.pageResume ??
-    ((listener: () => void) => {
-      const offRecovery = onPageRecovery(listener);
-      const offPageshow = onPageshow(listener);
-      return () => {
-        offRecovery();
-        offPageshow();
-      };
-    });
-  const stopPageResume = subscribeResume(retryDirectIfDown);
+  const stopPageResume = (wiring.pageResume ?? defaultPageResume)(retryDirectIfDown);
+  const stopReadyResume = connection.client.onStateChange((state) => {
+    if (state === 'READY') resumeParked();
+  });
 
   const baseDispose = connection.dispose.bind(connection);
   connection.dispose = () => {
     disposed = true;
     cancelReadyWatch();
     stopPageResume();
+    stopReadyResume();
     connection.setResumeSubscribedPanes(null);
     stopDirect();
     diagnostics.attach(null);

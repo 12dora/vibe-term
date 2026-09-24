@@ -26,10 +26,13 @@ export {
 export {
   AUTHORIZE_BREAKER_BASE_MS,
   AUTHORIZE_BREAKER_MAX_MS,
+  DIRECT_UNAVAILABLE_COOLDOWN_MS,
   authorizeBreakerShouldTry,
+  authorizeProbeSuppressed,
   forceAuthorizeProbe,
   noteAuthorizeFailure,
   noteAuthorizeSuccess,
+  noteDirectUnavailable,
   resetDirectAuthorizeBreakers,
 } from './direct-authorize-breaker';
 
