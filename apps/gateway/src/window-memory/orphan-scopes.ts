@@ -1,6 +1,7 @@
 // 只释放「本网关这只 tmux server」名下、且限额字节数等于 VibeTerm 套过的某一档的孤儿 scope。
 // Description 里的 launcher pid 对上 server 就够了，不要求同一个 slice。
-// 进程树兜底仍然要求同一个 slice。对不上的有限 scope 每个名字打一行原因，不重复刷。
+// 进程树兜底仍然要求同一个 slice。launcher pid 已经不在 /proc（原 tmux server 退出了）时拒绝，不改口。
+// 对不上的有限 scope 每个名字打一行原因，不重复刷。
 
 import type { AppliedLimitTriple } from './applied-triples';
 import { observedMatchesAny } from './applied-triples';
@@ -26,7 +27,11 @@ export interface ListedScope {
   high: number;
   max: number;
   swapMax: number;
+  /** systemctl 报了 MemorySwapMax，但 cgroup 的 memory.swap.max 不可读。 */
+  swapUnknown?: boolean;
   treeHit: boolean;
+  /** Description 里的 launcher pid 是否还在 /proc。旧输出没有这一列时为 undefined。 */
+  launcherAlive?: boolean;
 }
 
 export interface OrphanSweepParse {
@@ -61,6 +66,7 @@ export function orphanRejectReason(
   if (!SCOPE_NAME.test(unit.scope)) return 'name';
   if (!controlGroupNamesScope(unit.controlGroup, unit.scope)) return 'cgroup';
   if (unit.launcherPid === serverPid) return null;
+  if (unit.launcherPid !== null && unit.launcherAlive === false) return 'exited-server';
   if (!sameMemorySlice(unit.controlGroup, serverCgroup)) return 'slice';
   if (unit.treeHit) return null;
   if (unit.launcherPid === null) return 'launcher';
@@ -122,26 +128,68 @@ function parseServer(lines: readonly string[]): { pid: number; cgroup: string } 
   return { pid, cgroup };
 }
 
+function fieldAt(fields: string[], index: number): string {
+  return fields[index] ?? '';
+}
+
+function acceptedUnitWidth(fields: string[]): boolean {
+  return fields.length === 8 || fields.length === 9;
+}
+
+function readUnitLimits(
+  fields: string[]
+): { high: number; max: number; swapMax: number; swapUnknown: boolean } | null {
+  const high = parseMemoryProperty(fieldAt(fields, 4));
+  const max = parseMemoryProperty(fieldAt(fields, 5));
+  const swap = parseSwapProperty(fieldAt(fields, 6));
+  if (high === null || max === null || swap === null) return null;
+  return { high, max, swapMax: swap.swapMax, swapUnknown: swap.swapUnknown };
+}
+
+function readLauncherAlive(fields: string[]): boolean | undefined | 'bad' {
+  if (fields.length !== 9) return undefined;
+  if (fields[8] === '1') return true;
+  if (fields[8] === '0') return false;
+  return 'bad';
+}
+
+function listedScope(
+  scope: string,
+  fields: string[],
+  limits: { high: number; max: number; swapMax: number; swapUnknown: boolean },
+  alive: boolean | undefined
+): ListedScope {
+  const listed: ListedScope = {
+    scope,
+    launcherPid: parseLauncher(fieldAt(fields, 2)),
+    controlGroup: fieldAt(fields, 3),
+    high: limits.high,
+    max: limits.max,
+    swapMax: limits.swapMax,
+    treeHit: fields[7] === '1',
+  };
+  if (limits.swapUnknown) listed.swapUnknown = true;
+  if (alive !== undefined) listed.launcherAlive = alive;
+  return listed;
+}
+
 function parseUnit(line: string): ListedScope[] {
   const fields = line.split('\t');
-  if (fields.length !== 8) return [];
-  const scope = fields[1] ?? '';
+  if (!acceptedUnitWidth(fields)) return [];
+  const scope = fieldAt(fields, 1);
   if (!SCOPE_NAME.test(scope)) return [];
-  const high = parseMemoryProperty(fields[4] ?? '');
-  const max = parseMemoryProperty(fields[5] ?? '');
-  const swapMax = parseMemoryProperty(fields[6] ?? '');
-  if (high === null || max === null || swapMax === null) return [];
-  return [
-    {
-      scope,
-      launcherPid: parseLauncher(fields[2] ?? ''),
-      controlGroup: fields[3] ?? '',
-      high,
-      max,
-      swapMax,
-      treeHit: fields[7] === '1',
-    },
-  ];
+  const limits = readUnitLimits(fields);
+  if (!limits) return [];
+  const alive = readLauncherAlive(fields);
+  if (alive === 'bad') return [];
+  return [listedScope(scope, fields, limits, alive)];
+}
+
+function parseSwapProperty(raw: string): { swapMax: number; swapUnknown: boolean } | null {
+  if (raw === '?') return { swapMax: 0, swapUnknown: true };
+  const swapMax = parseMemoryProperty(raw);
+  if (swapMax === null) return null;
+  return { swapMax, swapUnknown: false };
 }
 
 function parseLauncher(raw: string): number | null {
@@ -244,8 +292,12 @@ function noteReject(opts: OrphanSweepOptions, scope: string, reason: string): vo
   const key = `reject:${scope}`;
   if (opts.warned.has(key)) return;
   opts.warned.add(key);
+  const detail =
+    reason === 'exited-server'
+      ? 'exited-server (launcher pid is not running; leaving the cap in place)'
+      : reason;
   console.info(
-    `[vibeterm][window-memory] orphan scope rejected device=${opts.deviceId} scope=${scope} reason=${reason}`
+    `[vibeterm][window-memory] orphan scope rejected device=${opts.deviceId} scope=${scope} reason=${detail}`
   );
 }
 
@@ -299,6 +351,7 @@ function sampleOf(unit: ListedScope): PaneScopeSample {
     high: unit.high,
     max: unit.max,
     swapMax: unit.swapMax,
+    ...(unit.swapUnknown ? { swapUnknown: true } : {}),
     oomKills: 0,
     managed: true,
     source: 'cgroup',

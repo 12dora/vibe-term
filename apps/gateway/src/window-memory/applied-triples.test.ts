@@ -100,6 +100,47 @@ describe('applied limit triples', () => {
     expect(data.has(WINDOW_MEMORY_APPLIED_KV_KEY)).toBe(false);
   });
 
+  test('an absent kv list is seeded with the shipped default triple', () => {
+    const { data, kv } = memoryKv();
+    const book = createKvAppliedTripleBook(kv);
+    expect(book.list()).toEqual([triple(8192, 12288, 4096)]);
+    expect(JSON.parse(data.get(WINDOW_MEMORY_APPLIED_KV_KEY) ?? '')).toEqual([
+      triple(8192, 12288, 4096),
+    ]);
+    const bytes = {
+      high: 8192 * MIB_BYTES,
+      max: 12288 * MIB_BYTES,
+      swapMax: 4096 * MIB_BYTES,
+    };
+    expect(observedMatchesAny(bytes, book.list())).toBe(true);
+    const again = createKvAppliedTripleBook(kv);
+    again.remember({ ...defaults, memoryHighMb: 0, memoryMaxMb: 0, memorySwapMaxMb: 0 });
+    expect(again.list()).toEqual([triple(8192, 12288, 4096)]);
+  });
+
+  test('a present list, including an empty one, is not re-seeded', () => {
+    const empty = memoryKv({ [WINDOW_MEMORY_APPLIED_KV_KEY]: '[]' });
+    expect(createKvAppliedTripleBook(empty.kv).list()).toEqual([]);
+    const custom = memoryKv({
+      [WINDOW_MEMORY_APPLIED_KV_KEY]: JSON.stringify([triple(1024, 2048, 512)]),
+    });
+    expect(createKvAppliedTripleBook(custom.kv).list()).toEqual([triple(1024, 2048, 512)]);
+  });
+
+  test('unreadable swap is a wildcard but a real zero is not', () => {
+    const applied = triple(8192, 12288, 4096);
+    const high = 8192 * MIB_BYTES;
+    const max = 12288 * MIB_BYTES;
+    expect(observedMatchesAny({ high, max, swapMax: 0, swapUnknown: true }, [applied])).toBe(true);
+    expect(observedMatchesAny({ high, max, swapMax: 0 }, [applied])).toBe(false);
+    expect(
+      observedMatchesAny({ high: high + 8192, max, swapMax: 0, swapUnknown: true }, [applied])
+    ).toBe(false);
+    expect(
+      observedMatchesAny({ high, max, swapMax: 0, swapUnknown: true }, [triple(8192, 12288, 0)])
+    ).toBe(true);
+  });
+
   test('kv book reads back what the tracker remembers, including disabled-with-numbers', () => {
     const { kv } = memoryKv();
     const book = createKvAppliedTripleBook(kv);

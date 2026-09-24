@@ -8,6 +8,15 @@ import type { HostShellResult, HostShellRunner } from './types';
 import { withUserBus } from './user-bus';
 
 export const PROPERTY_BATCH_MARK = 'VTSET_BATCH';
+/** 一段脚本里最多多少次 set-property。再多就拆段，避免一次超时拖死整轮。 */
+export const PROPERTY_BATCH_MAX_WRITES = 8;
+const BATCH_TIMEOUT_CAP_MS = 60_000;
+
+export function propertyBatchTimeoutMs(count: number): number {
+  const writes = count > 0 ? count : 1;
+  const scaled = HOST_SHELL_TIMEOUT_MS + writes * 1000;
+  return scaled > BATCH_TIMEOUT_CAP_MS ? BATCH_TIMEOUT_CAP_MS : scaled;
+}
 
 export function buildPropertyBatchScript(writes: readonly PlannedWrite[]): string {
   const body = writes.map(writeCommand).join('\n');
@@ -51,8 +60,11 @@ export async function runPropertyBatch(
   now: number
 ): Promise<void> {
   if (writes.length === 0) return;
-  const result = await runBatch(host, writes);
-  applyBatchResult(deviceId, writes, result, now);
+  for (let index = 0; index < writes.length; index += PROPERTY_BATCH_MAX_WRITES) {
+    const chunk = writes.slice(index, index + PROPERTY_BATCH_MAX_WRITES);
+    const result = await runBatch(host, chunk);
+    applyBatchResult(deviceId, chunk, result, now);
+  }
 }
 
 async function runBatch(
@@ -61,7 +73,7 @@ async function runBatch(
 ): Promise<HostShellResult> {
   try {
     return await host.runHostShell(buildPropertyBatchScript(writes), {
-      timeoutMs: HOST_SHELL_TIMEOUT_MS,
+      timeoutMs: propertyBatchTimeoutMs(writes.length),
     });
   } catch (error) {
     return {
@@ -78,17 +90,55 @@ function applyBatchResult(
   result: HostShellResult,
   now: number
 ): void {
-  if (result.exitCode !== 0) {
-    const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
-    for (const write of writes) failWrite(deviceId, write, result.exitCode, stderr, now);
+  if (result.exitCode === 0) {
+    applyCleanExit(deviceId, writes, result.stdout, now);
     return;
   }
-  const rows = parsePropertyBatch(result.stdout);
+  if (result.exitCode === 124) {
+    applyTimeoutExit(deviceId, writes, result, now);
+    return;
+  }
+  const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
+  for (const write of writes) failWrite(deviceId, write, result.exitCode, stderr, now);
+}
+
+function applyCleanExit(
+  deviceId: string,
+  writes: readonly PlannedWrite[],
+  stdout: string,
+  now: number
+): void {
+  const rows = parsePropertyBatch(stdout);
   if (rows.size === 0) {
     for (const write of writes) succeedWrite(deviceId, write, now);
     return;
   }
   for (const write of writes) applyRow(deviceId, write, rows, now);
+}
+
+function applyTimeoutExit(
+  deviceId: string,
+  writes: readonly PlannedWrite[],
+  result: HostShellResult,
+  now: number
+): void {
+  const rows = parsePropertyBatch(result.stdout);
+  const stderr = result.stderr.trim() || 'timeout';
+  for (const write of writes) {
+    const row = rows.get(write.state.scope ?? '');
+    if (!row) {
+      failWrite(deviceId, write, 124, stderr, now);
+      continue;
+    }
+    recordPropertyResult({
+      state: write.state,
+      kind: write.kind,
+      code: row.code,
+      stderr: row.stderr,
+      now,
+      deviceId,
+    });
+  }
 }
 
 function succeedWrite(deviceId: string, write: PlannedWrite, now: number): void {

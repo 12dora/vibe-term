@@ -33,6 +33,11 @@ export interface PaneScopeSample {
   high: number;
   max: number;
   swapMax: number;
+  /**
+   * `memory.swap.max` 不存在或不可读（内核不记 swap）。不是 0：0 表示文件里是 `max` 或数字 0。
+   * 比对已套档时这一列通配，展示仍把 swapMax 当 0。
+   */
+  swapUnknown?: boolean;
   oomKills: number;
   /** memory.high 已不是 max（限额已应用）。 */
   managed: boolean;

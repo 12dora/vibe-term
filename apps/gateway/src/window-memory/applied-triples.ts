@@ -2,7 +2,11 @@
 // 关掉或三项都是 0 时，只释放「当前字节数对得上其中一档」的 scope。
 // 对不上的（drop-in、手工 set-property）一律不动。
 
-import { WINDOW_MEMORY_MB_MAX, type WindowMemorySettings } from '@vibeterm/shared';
+import {
+  WINDOW_MEMORY_MB_MAX,
+  WINDOW_MEMORY_SETTINGS_DEFAULTS,
+  type WindowMemorySettings,
+} from '@vibeterm/shared';
 import { getGatewayKv, setGatewayKv } from '../db/kv';
 import { APPLIED_BYTES_TOLERANCE, MIB_BYTES } from './constants';
 import { isAllZeroLimits } from './scope-commands';
@@ -30,6 +34,8 @@ export interface ObservedLimits {
   high: number;
   max: number;
   swapMax: number;
+  /** 采样读不到 memory.swap.max。通配这一列，不要把它当成 0。 */
+  swapUnknown?: boolean;
 }
 
 export function tripleFromSettings(settings: WindowMemorySettings): AppliedLimitTriple | null {
@@ -114,6 +120,13 @@ export function bytesMatchField(observed: number, expectedMb: number): boolean {
   return Math.abs(observed - expected) <= APPLIED_BYTES_TOLERANCE;
 }
 
+function swapMatches(observed: ObservedLimits, expectedMb: number): boolean {
+  // 读不到 swap 文件才通配。0 是读到了 max 或数字 0，不能通配：
+  // 用户只把 MemorySwapMax 改成无限时，high/max 仍等于我们的档也不该被释放。
+  if (observed.swapUnknown === true) return true;
+  return bytesMatchField(observed.swapMax, expectedMb);
+}
+
 export function observedMatchesTriple(
   observed: ObservedLimits,
   triple: AppliedLimitTriple
@@ -121,7 +134,7 @@ export function observedMatchesTriple(
   return (
     bytesMatchField(observed.high, triple.memoryHighMb) &&
     bytesMatchField(observed.max, triple.memoryMaxMb) &&
-    bytesMatchField(observed.swapMax, triple.memorySwapMaxMb)
+    swapMatches(observed, triple.memorySwapMaxMb)
   );
 }
 
@@ -133,12 +146,36 @@ export function observedMatchesAny(
   return triples.some((triple) => observedMatchesTriple(observed, triple));
 }
 
-function readSafe(kv: AppliedTripleKv): { ok: boolean; triples: AppliedLimitTriple[] } {
+function readSafe(kv: AppliedTripleKv): {
+  ok: boolean;
+  missing: boolean;
+  triples: AppliedLimitTriple[];
+} {
   try {
-    return { ok: true, triples: parseAppliedTriples(kv.get(WINDOW_MEMORY_APPLIED_KV_KEY)) };
+    const raw = kv.get(WINDOW_MEMORY_APPLIED_KV_KEY);
+    if (raw === null) return { ok: true, missing: true, triples: [] };
+    return { ok: true, missing: false, triples: parseAppliedTriples(raw) };
   } catch {
-    return { ok: false, triples: [] };
+    return { ok: false, missing: false, triples: [] };
   }
+}
+
+function shippedDefaultTriple(): AppliedLimitTriple | null {
+  return tripleFromSettings(WINDOW_MEMORY_SETTINGS_DEFAULTS);
+}
+
+function seedShippedDefault(kv: AppliedTripleKv): AppliedLimitTriple[] {
+  const triple = shippedDefaultTriple();
+  if (!triple) return [];
+  const seeded = [triple];
+  try {
+    if (kv.get(WINDOW_MEMORY_APPLIED_KV_KEY) === null) {
+      kv.set(WINDOW_MEMORY_APPLIED_KV_KEY, JSON.stringify(seeded));
+    }
+  } catch {
+    // 这次进程里照样用出厂档；写不进去下次启动再种。
+  }
+  return seeded;
 }
 
 export function rememberAppliedOnKv(
@@ -170,11 +207,13 @@ export function createKvAppliedTripleBook(kv: AppliedTripleKv): AppliedTripleBoo
   return {
     list() {
       const loaded = readSafe(kv);
-      if (loaded.ok) {
-        overlay = loaded.triples;
-        return loaded.triples.slice();
+      if (!loaded.ok) return (overlay ?? []).slice();
+      if (loaded.missing) {
+        overlay = seedShippedDefault(kv);
+        return overlay.slice();
       }
-      return (overlay ?? []).slice();
+      overlay = loaded.triples;
+      return loaded.triples.slice();
     },
     remember(settings) {
       const triple = tripleFromSettings(settings);

@@ -186,7 +186,9 @@ export function recordPropertyResult(result: {
     if (state.sample) state.sample.managed = true;
     return;
   }
-  state.applyAttempts += code === 124 ? 2 : 1;
+  // 释放的 124 记两次，退避跳过一档。套限额的 124 只记一次：两次才放弃，一次超时不能把重试用光。
+  const bump = code === 124 && kind === 'release' ? 2 : 1;
+  state.applyAttempts += bump;
   state.applyFailedAt = now;
   state.releaseUnverified = false;
   state.lastStderr = result.stderr || `exit ${code}`;

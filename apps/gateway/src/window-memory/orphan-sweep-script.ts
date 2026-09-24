@@ -1,5 +1,6 @@
 // 孤儿清扫脚本：一次 systemctl show 拉完全部候选，先看限额再走进程树。
 // 活着的 pane scope 由 pane 循环处理，这里直接跳过。
+// case 模式必须写死在脚本里：POSIX sh 把参数展开出来的 | 当成字面字符。
 
 import { withUserBus } from './user-bus';
 
@@ -56,11 +57,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     tmux-spawn-*.scope) ;;
     *) continue ;;
   esac
-  if [ -n "$live_pat" ]; then
-    case "$name" in
-      $live_pat) continue ;;
-    esac
-  fi
+VT_LIVE_SKIP
   names="$names $name"
 done <<ENDUNITS
 \${units}
@@ -126,12 +123,24 @@ flush_unit() {
       tree=1
     fi
   fi
+  alive=0
+  if [ -n "$launcher" ] && [ -d "/proc/$launcher" ]; then
+    alive=1
+  fi
+  case "$cg" in
+    /*) _swapf="/sys/fs/cgroup\${cg}/memory.swap.max" ;;
+    '') _swapf= ;;
+    *) _swapf="/sys/fs/cgroup/\${cg}/memory.swap.max" ;;
+  esac
+  if [ -n "$_swapf" ] && [ ! -r "$_swapf" ]; then
+    swap=?
+  fi
   [ -n "$launcher" ] || launcher=-
   [ -n "$cg" ] || cg=-
   [ -n "$high" ] || high=-
   [ -n "$maxmem" ] || maxmem=-
   [ -n "$swap" ] || swap=-
-  printf 'UNIT\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$id" "$launcher" "$cg" "$high" "$maxmem" "$swap" "$tree"
+  printf 'UNIT\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$id" "$launcher" "$cg" "$high" "$maxmem" "$swap" "$tree" "$alive"
   id=; desc=; high=; maxmem=; swap=; cg=
 }
 printf '%s\\n' 'VTORPHAN 1 ok'
@@ -174,7 +183,13 @@ export function buildOrphanSweepScript(
   const lines = panePids.filter((pid) => Number.isInteger(pid) && pid > 0);
   const body = lines.join('\n');
   const live = liveScopes.filter((scope) => SCOPE_NAME.test(scope));
-  const liveAssign = live.length > 0 ? `live_pat='${live.join('|')}'` : 'live_pat=';
-  const pids = `${SWEEP_BEFORE}${body}${body ? '\n' : ''}${SWEEP_AFTER}`;
-  return withUserBus(`${liveAssign}\n${pids}`);
+  const skip = liveScopeSkip(live);
+  const after = SWEEP_AFTER.replace('VT_LIVE_SKIP\n', skip);
+  const pids = `${SWEEP_BEFORE}${body}${body ? '\n' : ''}${after}`;
+  return withUserBus(pids);
+}
+
+function liveScopeSkip(scopes: readonly string[]): string {
+  if (scopes.length === 0) return '';
+  return `  case "$name" in\n    ${scopes.join('|')}) continue ;;\n  esac\n`;
 }

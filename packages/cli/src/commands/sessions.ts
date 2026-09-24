@@ -30,7 +30,8 @@ const USAGE = [
   'or `RSS`), MEM (current), HIGH, MAX (`∞` when 0), OOM (kills, `!` when oomFlag).',
   'SOURCE, MEM, HIGH, MAX, and OOM print `-` when the window is unsampled',
   'or the sample is stale (`stale: true`, or `sampledAgeMs` above max(6×interval, 60s),',
-  'or — when the target omits `sampledAgeMs` — `sampledAt` is that old on the local clock).',
+  'or — when the target omits `sampledAgeMs` — `sampledAt` is that old on the local clock',
+  'plus a 60s skew margin).',
   'A stale sample is not a live cap.',
   'Devices with limitsSupported:false print `(limits unavailable)` after their rows.',
   'Devices with supported:false print `(cannot sample memory)` after their rows',
@@ -39,6 +40,9 @@ const USAGE = [
   'for window-memory samples (2×sampleIntervalSec+3s, at most 4 sessions at once).',
   'Non-TTY stdout defaults to JSON (like exec).',
 ].join('\n');
+
+/** 只加在「用本机时钟减节点 sampledAt」这条退路上，和前端 CLOCK_SKEW_MARGIN_MS 一样。 */
+const CLOCK_SKEW_MARGIN_MS = 60_000;
 
 const LIMITS_UNAVAILABLE_NOTE = '(limits unavailable)';
 const CANNOT_SAMPLE_NOTE = '(cannot sample memory)';
@@ -85,7 +89,7 @@ function memoryHidden(window: SessionsWindowRow, intervalSec: number, now: numbe
   if (typeof window.sampledAgeMs === 'number' && Number.isFinite(window.sampledAgeMs)) {
     return window.sampledAgeMs > limit;
   }
-  return Number.isFinite(now) && now - window.sampledAt > limit;
+  return Number.isFinite(now) && now - window.sampledAt > limit + CLOCK_SKEW_MARGIN_MS;
 }
 
 function formatSource(window: SessionsWindowRow, intervalSec: number, now: number): string {
