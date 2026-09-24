@@ -27,7 +27,8 @@ const USAGE = [
   'Human table: DEVICE, WINDOW (`@id name`), PANES.',
   'With --memory: SCOPE (first scope, `+N` when more, `-` when none), SOURCE (`cgroup`',
   'or `RSS`), MEM (current), HIGH, MAX (`∞` when 0), OOM (kills, `!` when oomFlag).',
-  'SOURCE, MEM, HIGH, MAX, and OOM print `-` when the window is unsampled.',
+  'SOURCE, MEM, HIGH, MAX, and OOM print `-` when the window is unsampled',
+  'or the sample is stale (`stale: true`). A stale sample is not a live cap.',
   'Devices with limitsSupported:false print `(limits unavailable)` after their rows.',
   'Devices with supported:false print `(cannot sample memory)` after their rows',
   '(not in addition to the limits note).',
@@ -70,8 +71,12 @@ function formatOom(kills: number, flag: boolean): string {
   return `${kills}${flag ? '!' : ''}`;
 }
 
+function memoryHidden(window: SessionsWindowRow): boolean {
+  return !window.sampledAt || window.stale === true;
+}
+
 function formatSource(window: SessionsWindowRow): string {
-  if (!window.sampledAt) return '-';
+  if (memoryHidden(window)) return '-';
   return window.source === 'rss' ? 'RSS' : 'cgroup';
 }
 
@@ -106,17 +111,17 @@ function windowRow(
   window: SessionsWindowRow,
   note: string | null
 ): SessionRow {
-  const sampled = Boolean(window.sampledAt);
+  const hidden = memoryHidden(window);
   return {
     deviceName: device.deviceName || device.deviceId,
     window: windowLabel(window),
     panes: String(window.panes),
     scope: formatScope(window.scopes),
     source: formatSource(window),
-    mem: sampled ? formatBytes(window.current) : '-',
-    high: sampled ? formatLimit(window.high) : '-',
-    max: sampled ? formatLimit(window.max) : '-',
-    oom: sampled ? formatOom(window.oomKills, window.oomFlag) : '-',
+    mem: hidden ? '-' : formatBytes(window.current),
+    high: hidden ? '-' : formatLimit(window.high),
+    max: hidden ? '-' : formatLimit(window.max),
+    oom: hidden ? '-' : formatOom(window.oomKills, window.oomFlag),
     note,
   };
 }

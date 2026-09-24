@@ -70,10 +70,15 @@ describe('buildSetPropertyArgs', () => {
 });
 
 describe('buildStopScopeScript', () => {
-  test('quotes each scope name', () => {
+  test('quotes each scope name and exports the user bus before systemctl', () => {
     expect(buildStopScopeScript([])).toBe('true');
-    expect(buildStopScopeScript(['tmux-spawn-a.scope', "tmux-spawn-b's.scope"])).toBe(
+    const script = buildStopScopeScript(['tmux-spawn-a.scope', "tmux-spawn-b's.scope"]);
+    expect(script).toContain(
       "systemctl --user stop 'tmux-spawn-a.scope' 'tmux-spawn-b'\\''s.scope'"
+    );
+    expect(script.indexOf('export XDG_RUNTIME_DIR=')).toBeGreaterThanOrEqual(0);
+    expect(script.indexOf('DBUS_SESSION_BUS_ADDRESS')).toBeLessThan(
+      script.indexOf('systemctl --user stop')
     );
     expect(argvToScript(['systemctl', '--user', 'stop', 'tmux-spawn-a.scope'])).toBe(
       "'systemctl' '--user' 'stop' 'tmux-spawn-a.scope'"

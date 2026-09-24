@@ -66,6 +66,8 @@ function snapshotWindow(
   };
 }
 
+const FRESH_SAMPLED_AT = Date.now();
+
 function aggregate(
   windowId: string,
   windowName: string,
@@ -82,7 +84,7 @@ function aggregate(
     swapMax: 1024,
     oomKills: 1,
     oomFlag: true,
-    sampledAt: 1_700_000_000_000,
+    sampledAt: FRESH_SAMPLED_AT,
     source: 'cgroup',
     ...overrides,
   };
@@ -279,7 +281,7 @@ describe('GET /api/sessions/memory', () => {
                 swapMax: 1024,
                 oomKills: 1,
                 oomFlag: true,
-                sampledAt: 1_700_000_000_000,
+                sampledAt: FRESH_SAMPLED_AT,
                 source: 'cgroup',
               },
               {
@@ -403,7 +405,7 @@ describe('GET /api/sessions/memory', () => {
             swapMax: 0,
             oomKills: 0,
             oomFlag: false,
-            sampledAt: 1_700_000_000_000,
+            sampledAt: FRESH_SAMPLED_AT,
             source: 'rss',
           },
         ],
@@ -440,6 +442,57 @@ describe('GET /api/sessions/memory', () => {
       expect(body.devices[0]?.supported).toBe(true);
       expect(body.devices[0]?.limitsSupported).toBe(false);
       expect(body.devices[0]?.windows[0]?.source).toBe('rss');
+    } finally {
+      list.mockRestore();
+    }
+  });
+
+  test('connected 但样本早于 6 个周期：stale，限额字段丢掉，sampledAt 保留', async () => {
+    const list = spyOn(devicesDb, 'getAllDevices').mockReturnValue([device('dev-old', 'Old')]);
+    bindWindowMemoryRuntimeHost({
+      requestTickAll() {},
+      getRuntime() {
+        return {
+          isConnected: () => true,
+          getWindowMemorySupported: () => true,
+          getWindowMemoryLimitsSupported: () => true,
+          getWindowMemory: () => [
+            aggregate('@4', 'stuck', {
+              sampledAt: 1_700_000_000_000,
+              high: 8 * 1024 ** 3,
+              max: 12 * 1024 ** 3,
+            }),
+          ],
+          getCurrentSnapshot: () => ({
+            deviceId: 'dev-old',
+            session: {
+              id: '$1',
+              name: 'main',
+              windows: [snapshotWindow('@4', 'stuck')],
+            },
+          }),
+        };
+      },
+    });
+    try {
+      const res = await handleApiRequest(req('GET', SESSIONS_MEMORY_PATH), fakeServer);
+      const body = (await res.json()) as SessionsMemoryResponse;
+      expect(body.devices[0]?.connected).toBe(true);
+      expect(body.devices[0]?.windows[0]).toEqual({
+        windowId: '@4',
+        windowName: 'stuck',
+        panes: 1,
+        scopes: ['tmux-spawn-aaa.scope', 'tmux-spawn-bbb.scope'],
+        current: 4096,
+        high: 0,
+        max: 0,
+        swapMax: 0,
+        oomKills: 1,
+        oomFlag: true,
+        sampledAt: 1_700_000_000_000,
+        source: 'cgroup',
+        stale: true,
+      });
     } finally {
       list.mockRestore();
     }

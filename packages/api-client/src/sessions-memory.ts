@@ -48,6 +48,7 @@ function normalizeWindow(wire: Record<string, unknown>): SessionsMemoryWindow {
     panes: numberOr(wire.panes),
     sampledAt: numberOr(wire.sampledAt),
     source: normalizeSource(wire.source),
+    ...(wire.stale === true ? { stale: true } : {}),
   };
 }
 

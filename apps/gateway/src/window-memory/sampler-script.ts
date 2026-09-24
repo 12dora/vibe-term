@@ -1,3 +1,5 @@
+import { USER_BUS_EXPORT_LINES } from './user-bus';
+
 const SCRIPT_HEAD = [
   'uid=$(id -u 2>/dev/null) || uid=0',
   '[ -n "$uid" ] || uid=0',
@@ -7,10 +9,7 @@ const SCRIPT_HEAD = [
   '  limitsSupported=0',
   '  reason=no-cgroup2',
   'else',
-  '  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"',
-  '  if [ -z "$DBUS_SESSION_BUS_ADDRESS" ]; then',
-  '    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"',
-  '  fi',
+  ...USER_BUS_EXPORT_LINES,
   '  if ! systemctl --user show-environment >/dev/null 2>&1; then',
   '    limitsSupported=0',
   '    reason=no-user-systemd',

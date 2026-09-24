@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { WINDOW_MEMORY_SETTINGS_DEFAULTS, type WindowMemorySettings } from '@vibeterm/shared';
 
 import { MIB_BYTES } from './constants';
+import { isOrphanSweepScript } from './orphan-scopes';
 import { createWindowMemoryTracker } from './tracker';
 import type { MemoryPaneRef as PaneRef } from './tracker-ops';
 import type {
@@ -91,6 +92,7 @@ function setup(opts?: {
   stdout?: string | ((script: string) => string);
   exitCode?: number;
   initialMarks?: Array<[string, string]>;
+  sweepStdout?: string;
 }) {
   const clock = new FakeClock();
   let settings: WindowMemorySettings = { ...WINDOW_MEMORY_SETTINGS_DEFAULTS, ...opts?.settings };
@@ -108,6 +110,13 @@ function setup(opts?: {
   const host: HostShellRunner = {
     runHostShell: async (script): Promise<HostShellResult> => {
       scripts.push(script);
+      if (isOrphanSweepScript(script)) {
+        return {
+          stdout: opts?.sweepStdout ?? 'VTORPHAN 0 no-server\n',
+          stderr: '',
+          exitCode: 0,
+        };
+      }
       if (opts?.run) return opts.run(script);
       const stdout =
         typeof opts?.stdout === 'function'
@@ -399,6 +408,11 @@ describe('WindowMemoryTracker', () => {
     expect(apply).toContain('MemoryMax=12288M');
     expect(apply).toContain('MemorySwapMax=4096M');
     expect(apply).toContain('tmux-spawn-abc.scope');
+    expect(apply?.indexOf('export XDG_RUNTIME_DIR=')).toBeGreaterThanOrEqual(0);
+    expect(apply?.indexOf('DBUS_SESSION_BUS_ADDRESS') ?? -1).toBeLessThan(
+      apply?.indexOf('systemctl') ?? 0
+    );
+    expect(scripts.some((script) => isOrphanSweepScript(script))).toBe(false);
   });
 
   test('zero high emits infinity so lowering to 0 re-applies', async () => {
@@ -508,40 +522,49 @@ describe('WindowMemoryTracker', () => {
     expect(marks.has('dev-1/@1')).toBe(false);
   });
 
-  test('enabled=false samples once to release then skips emission', async () => {
+  test('enabled=false keeps sampling at the normal interval and still emits', async () => {
     const { clock, tracker, scripts, samples } = setup({ settings: { enabled: false } });
     tracker.start();
     await flush();
-    expect(scripts).toHaveLength(1);
-    expect(scripts[0]).not.toContain('set-property');
-    expect(samples).toEqual([]);
-    await clock.advance(60_000);
-    expect(scripts).toHaveLength(1);
+    expect(scripts.filter((script) => script.includes('VTMEM'))).toHaveLength(1);
+    expect(scripts.filter((script) => isOrphanSweepScript(script))).toHaveLength(1);
+    expect(scripts.some((script) => script.includes('set-property'))).toBe(false);
+    expect(samples).toHaveLength(1);
+    const firstAt = tracker.getWindows()[0]?.sampledAt;
+    await clock.advance(5_000);
+    expect(scripts.filter((script) => script.includes('VTMEM'))).toHaveLength(2);
+    expect(tracker.getWindows()[0]?.sampledAt).toBeGreaterThan(firstAt ?? 0);
+    await clock.advance(55_000);
+    expect(scripts.filter((script) => script.includes('VTMEM')).length).toBeGreaterThan(2);
   });
 
-  test('enabled=false releases managed scopes then cheap-ticks', async () => {
+  test('enabled=false releases again while the next sample is still finite', async () => {
+    let high = 8192 * MIB_BYTES;
+    let max = 12288 * MIB_BYTES;
+    let swapMax = 4096 * MIB_BYTES;
     const { tracker, scripts, samples, setSettings } = setup({
-      stdout: supportedOutput([
-        sampleLine({
-          managed: 1,
-          high: 8192 * MIB_BYTES,
-          max: 12288 * MIB_BYTES,
-          swapMax: 4096 * MIB_BYTES,
-        }),
-      ]),
+      stdout: () => supportedOutput([sampleLine({ managed: 1, high, max, swapMax })]),
     });
     await tracker.tick();
-    const before = scripts.length;
     setSettings({ enabled: false });
     await tracker.tick();
-    const release = scripts.slice(before).filter((s) => s.includes('MemoryHigh=infinity'));
-    expect(release).toHaveLength(1);
+    await tracker.tick();
+    const release = scripts.filter((script) => script.includes('MemoryHigh=infinity'));
+    expect(release).toHaveLength(2);
     expect(release[0]).toContain('MemoryMax=infinity');
     expect(release[0]).toContain('MemorySwapMax=infinity');
-    const samplesAfterDisable = samples.length;
+    expect(release[0]?.indexOf('DBUS_SESSION_BUS_ADDRESS') ?? -1).toBeLessThan(
+      release[0]?.indexOf('systemctl') ?? 0
+    );
+    expect(tracker.getWindows()[0]?.high).toBe(high);
+    high = 0;
+    max = 0;
+    swapMax = 0;
     await tracker.tick();
-    expect(scripts.filter((s) => s.includes('set-property'))).toHaveLength(1);
-    expect(samples).toHaveLength(samplesAfterDisable);
+    expect(scripts.filter((script) => script.includes('set-property'))).toHaveLength(2);
+    expect(samples.at(-1)?.[0]?.high).toBe(0);
+    expect(samples.at(-1)?.[0]?.max).toBe(0);
+    expect(tracker.getWindows()[0]?.high).toBe(0);
   });
 
   test('prune still runs when disabled', async () => {
@@ -575,7 +598,7 @@ describe('WindowMemoryTracker', () => {
     info.mockRestore();
   });
 
-  test('set-property failure retries once after 60s then gives up', async () => {
+  test('apply set-property failure retries once after 60s then logs give-up and stops', async () => {
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     const { clock, tracker, scripts } = setup({
       run: (script) => {
@@ -593,9 +616,110 @@ describe('WindowMemoryTracker', () => {
     await clock.advance(1_000);
     await tracker.tick();
     expect(scripts.filter((s) => s.includes('set-property'))).toHaveLength(2);
+    expect(
+      warn.mock.calls.some(
+        (args) =>
+          String(args[0]).includes('set-property giving up') && String(args[0]).includes('denied')
+      )
+    ).toBe(true);
     await clock.advance(60_000);
     await tracker.tick();
     expect(scripts.filter((s) => s.includes('set-property'))).toHaveLength(2);
     warn.mockRestore();
+  });
+
+  test('release failure keeps retrying after the give-up line', async () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const { clock, tracker, scripts } = setup({
+      settings: { enabled: false },
+      stdout: supportedOutput([
+        sampleLine({
+          managed: 1,
+          high: 8192 * MIB_BYTES,
+          max: 12288 * MIB_BYTES,
+          swapMax: 4096 * MIB_BYTES,
+        }),
+      ]),
+      run: (script) => {
+        if (script.includes('set-property')) {
+          return { stdout: '', stderr: 'Failed to connect to bus', exitCode: 1 };
+        }
+        return {
+          stdout: supportedOutput([
+            sampleLine({
+              managed: 1,
+              high: 8192 * MIB_BYTES,
+              max: 12288 * MIB_BYTES,
+              swapMax: 4096 * MIB_BYTES,
+            }),
+          ]),
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    });
+    await tracker.tick();
+    expect(scripts.filter((script) => script.includes('set-property'))).toHaveLength(1);
+    await clock.advance(60_000);
+    await tracker.tick();
+    expect(scripts.filter((script) => script.includes('set-property'))).toHaveLength(2);
+    expect(
+      warn.mock.calls.some(
+        (args) =>
+          String(args[0]).includes('release giving up') &&
+          String(args[0]).includes('Failed to connect to bus')
+      )
+    ).toBe(true);
+    await clock.advance(60_000);
+    await tracker.tick();
+    expect(scripts.filter((script) => script.includes('set-property'))).toHaveLength(3);
+    warn.mockRestore();
+  });
+
+  test('limitsSupported=false still releases a named scope', async () => {
+    const line = sampleLine({
+      managed: 1,
+      high: 8192 * MIB_BYTES,
+      max: 12288 * MIB_BYTES,
+      swapMax: 4096 * MIB_BYTES,
+    });
+    const { tracker, scripts } = setup({
+      settings: { enabled: false },
+      stdout: headerOutput(0, 'no-user-systemd', [line]),
+    });
+    for (let i = 0; i < 7; i++) await tracker.tick();
+    expect(tracker.limitsSupported).toBe(false);
+    expect(scripts.filter((script) => script.includes('set-property'))).toHaveLength(7);
+    expect(scripts.some((script) => script.includes('MemoryMax=infinity'))).toBe(true);
+  });
+
+  test('disabled sweep releases only orphan scopes owned by this tmux server', async () => {
+    const slice = '/user.slice/user-1.slice/user@1.service/app.slice';
+    const sweepStdout = [
+      'VTORPHAN 1 ok',
+      `SERVER\t99\t${slice}/tmux.scope`,
+      `UNIT\ttmux-spawn-orphan.scope\t99\t${slice}/tmux-spawn-orphan.scope\t100\t200\t300\t0`,
+      `UNIT\ttmux-spawn-other.scope\t555\t${slice}/tmux-spawn-other.scope\t100\t200\t300\t0`,
+      'UNIT\ttmux-spawn-foreign.scope\t99\t/other.slice/app.slice/tmux-spawn-foreign.scope\t100\t200\t300\t0',
+      `UNIT\ttmux-spawn-abc.scope\t99\t${slice}/tmux-spawn-abc.scope\t100\t200\t300\t0`,
+    ].join('\n');
+    const { tracker, scripts } = setup({
+      settings: { enabled: false },
+      stdout: supportedOutput([sampleLine({ high: 100, max: 200, swapMax: 300 })]),
+      sweepStdout,
+    });
+    await tracker.tick();
+    const releases = scripts.filter((script) => script.includes('set-property'));
+    expect(releases.filter((script) => script.includes('tmux-spawn-orphan.scope'))).toHaveLength(1);
+    expect(releases.filter((script) => script.includes('tmux-spawn-abc.scope'))).toHaveLength(1);
+    expect(releases.some((script) => script.includes('tmux-spawn-other.scope'))).toBe(false);
+    expect(releases.some((script) => script.includes('tmux-spawn-foreign.scope'))).toBe(false);
+    const orphan = releases.find((script) => script.includes('tmux-spawn-orphan.scope'));
+    expect(orphan).toContain('MemoryHigh=infinity');
+    expect(orphan?.indexOf('DBUS_SESSION_BUS_ADDRESS') ?? -1).toBeLessThan(
+      orphan?.indexOf('systemctl') ?? 0
+    );
+    await tracker.tick();
+    expect(scripts.filter((script) => script.includes('tmux-spawn-orphan.scope'))).toHaveLength(2);
   });
 });

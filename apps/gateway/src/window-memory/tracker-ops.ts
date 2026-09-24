@@ -14,6 +14,7 @@ import type {
   WindowMemoryAggregate,
   WindowOomKillEvent,
 } from './types';
+import { withUserBus } from './user-bus';
 
 export interface PaneMemoryState {
   paneId: string;
@@ -25,6 +26,9 @@ export interface PaneMemoryState {
   applyAttempts: number;
   applyFailedAt: number | null;
   desiredKey: string;
+  lastStderr: string;
+  /** 到达旧的两次上限后打过一行 give-up。释放路径仍会按退避继续试。 */
+  giveUpLogged: boolean;
 }
 
 export interface MemoryPaneRef {
@@ -65,38 +69,74 @@ export function needsApply(settings: WindowMemorySettings, sample: PaneScopeSamp
   return limitsDiffer(settings, sample);
 }
 
-export function canRetryApply(state: PaneMemoryState, now: number): boolean {
-  if (state.applyAttempts >= 2) return false;
+export function canRetryApply(
+  state: PaneMemoryState,
+  now: number,
+  kind: 'apply' | 'release'
+): boolean {
+  if (kind === 'apply' && state.applyAttempts >= 2) return false;
   if (state.applyAttempts === 0 || state.applyFailedAt === null) return true;
   return now - state.applyFailedAt >= APPLY_RETRY_MS;
 }
 
-async function runSetProperty(
-  host: HostShellRunner,
-  deviceId: string,
-  state: PaneMemoryState,
-  args: string[],
-  now: number
-): Promise<boolean> {
-  const desiredKey = args.join('\0');
-  if (desiredKey !== state.desiredKey) {
-    state.applyAttempts = 0;
-    state.applyFailedAt = null;
-    state.desiredKey = desiredKey;
+interface PropertyWrite {
+  host: HostShellRunner;
+  deviceId: string;
+  state: PaneMemoryState;
+  args: string[];
+  now: number;
+  kind: 'apply' | 'release';
+}
+
+function resetApplyState(state: PaneMemoryState, desiredKey: string): void {
+  state.applyAttempts = 0;
+  state.applyFailedAt = null;
+  state.desiredKey = desiredKey;
+  state.giveUpLogged = false;
+  state.lastStderr = '';
+}
+
+function clearApplyFailure(state: PaneMemoryState): void {
+  state.applyAttempts = 0;
+  state.applyFailedAt = null;
+  state.giveUpLogged = false;
+  state.lastStderr = '';
+}
+
+function logGiveUp(kind: 'apply' | 'release', deviceId: string, state: PaneMemoryState): void {
+  if (state.giveUpLogged) return;
+  state.giveUpLogged = true;
+  const stderr = state.lastStderr || 'exit';
+  const scope = `device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${stderr}`;
+  if (kind === 'release') {
+    console.warn(
+      `[vibeterm][window-memory] release giving up ${scope}; retrying while the sample stays limited`
+    );
+    return;
   }
-  if (!canRetryApply(state, now)) return false;
-  const result = await host.runHostShell(argvToScript(args), { timeoutMs: HOST_SHELL_TIMEOUT_MS });
+  console.warn(`[vibeterm][window-memory] set-property giving up ${scope}`);
+}
+
+async function runSetProperty(write: PropertyWrite): Promise<boolean> {
+  const { host, deviceId, state, args, now, kind } = write;
+  const desiredKey = args.join('\0');
+  if (desiredKey !== state.desiredKey) resetApplyState(state, desiredKey);
+  if (!canRetryApply(state, now, kind)) return false;
+  const result = await host.runHostShell(withUserBus(argvToScript(args)), {
+    timeoutMs: HOST_SHELL_TIMEOUT_MS,
+  });
   if (result.exitCode === 0) {
-    state.applyAttempts = 0;
-    state.applyFailedAt = null;
+    clearApplyFailure(state);
     return true;
   }
   state.applyAttempts += 1;
   state.applyFailedAt = now;
   const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
+  state.lastStderr = stderr;
   console.warn(
     `[vibeterm][window-memory] set-property failed device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${stderr}`
   );
+  if (state.applyAttempts >= 2) logGiveUp(kind, deviceId, state);
   return false;
 }
 
@@ -111,7 +151,7 @@ export async function applyScopeLimit(
   if (!scope || !state.sample) return;
   const args = buildSetPropertyArgs(scope, settings);
   if (!args || !needsApply(settings, state.sample)) return;
-  if (await runSetProperty(host, deviceId, state, args, now)) {
+  if (await runSetProperty({ host, deviceId, state, args, now, kind: 'apply' })) {
     state.sample.managed = true;
   }
 }
@@ -125,11 +165,8 @@ export async function releaseScopeLimit(
   const scope = state.scope;
   if (!scope || !state.sample || !observedLimited(state.sample)) return;
   const args = buildReleasePropertyArgs(scope);
-  if (await runSetProperty(host, deviceId, state, args, now)) {
+  if (await runSetProperty({ host, deviceId, state, args, now, kind: 'release' })) {
     state.sample.managed = false;
-    state.sample.high = 0;
-    state.sample.max = 0;
-    state.sample.swapMax = 0;
   }
 }
 
