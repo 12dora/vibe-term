@@ -81,10 +81,16 @@ describe('windowMemoryTone', () => {
 describe('isWindowMemoryBadgeStale', () => {
   const now = Date.now();
 
-  test('节点时钟慢了几天：只要帧还在按时到，读数就是新鲜的', () => {
+  test('节点时钟慢了几分钟：只要帧还在按时到，读数就是新鲜的', () => {
+    expect(
+      isWindowMemoryBadgeStale(sample({ sampledAt: now - 5 * 60_000, receivedAt: now }), now)
+    ).toBe(false);
+  });
+
+  test('旧网关重放几天前的缓存读数：刚收到也立即过期', () => {
     expect(
       isWindowMemoryBadgeStale(sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now }), now)
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test('两次心跳（60 s）内没有新帧仍新鲜，超过就过期', () => {
@@ -155,6 +161,25 @@ describe('windowMemoryTooltipLines', () => {
     expect(lines.join('\n')).not.toContain('8.00 GB');
   });
 
+  test('重放帧的过期时刻按采样时刻说，不说成「刚刚」', () => {
+    const now = Date.now();
+    const tt = (key: string, options?: Record<string, unknown>) =>
+      options && 'ago' in options
+        ? `${key}:${options.ago}`
+        : options && 'n' in options
+          ? `${key}:${options.n}`
+          : key;
+    const lines = windowMemoryTooltipLines(
+      tt,
+      sample({ sampledAt: now - 3 * DAY_MS, receivedAt: now }),
+      { now }
+    );
+    expect(lines).toEqual([
+      'window.memory: 1.00 GB',
+      'window.memoryStale:settings.share.time.daysAgo:3',
+    ]);
+  });
+
   test('RSS 兜底：限额三行换成「限不了」+ 读数来源，不写 ∞', () => {
     const lines = windowMemoryTooltipLines(t, sample({ source: 'rss', current: 2 * GB }));
     expect(lines).toEqual([
@@ -201,12 +226,21 @@ describe('WindowMemoryBadge', () => {
     expect(render(sample(), '@9')).toBe('');
   });
 
-  test('节点时钟慢了几天、帧却刚到：照常显示限额与档位，不灰显', () => {
+  test('节点时钟慢了几分钟、帧却刚到：照常显示限额与档位，不灰显', () => {
     const now = Date.now();
-    const html = render(sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now, current: 9 * GB }));
+    const html = render(sample({ sampledAt: now - 5 * 60_000, receivedAt: now, current: 9 * GB }));
     expect(html).toContain('data-tone="blocked"');
     expect(html).not.toContain('data-stale');
     expect(html).toContain('window.memoryLimitHigh');
+  });
+
+  test('旧网关连上就重放几天前的读数：一到就灰显，不列当时的旧限额', () => {
+    const now = Date.now();
+    const html = render(sample({ sampledAt: now - 4 * DAY_MS, receivedAt: now, current: 9 * GB }));
+    expect(html).toContain('data-tone="stale"');
+    expect(html).toContain('data-stale="true"');
+    expect(html).not.toContain('window.memoryLimitHigh');
+    expect(html).not.toContain('8.00 GB');
   });
 
   test('一分钟多没有新帧：灰显、不挂红点、提示里没有旧限额也没有 ∞', () => {

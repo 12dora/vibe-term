@@ -8,8 +8,9 @@
 // 这条路径上**没有任何限额**，不能拿「未设限」的 ∞ 去糊弄——提示里要说清楚。
 //
 // 帧停了读数就变旧：连着两次心跳没有新帧先灰显（提示里只说「读数已过期」，不再列旧限额、
-// 不再按旧限额变色），再过一跳整块收起。新旧只按浏览器本地的 `receivedAt` 判，不拿节点的
-// `sampledAt` 比浏览器时钟——没对时的节点会被一直判成过期。
+// 不再按旧限额变色），再过一跳整块收起。新旧主要按浏览器本地的 `receivedAt` 判，不拿节点的
+// `sampledAt` 比浏览器时钟——没对时的节点会被一直判成过期；唯一例外是采样时刻落后十分钟以上
+// 的旧网关重放帧，一到就灰显（见 `WINDOW_MEMORY_REPLAY_STALE_MS`）。
 
 import { formatRelative } from '@/lib/format-relative';
 import { TONE_CLASS } from '@/lib/tone';
@@ -27,7 +28,11 @@ import { MemoryStick } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNodeTmuxStore, useTmuxSlice } from './tmux-slice';
-import { WINDOW_MEMORY_FRAME_STALE_MS, isWindowMemoryFrameStale } from './window-memory-staleness';
+import {
+  WINDOW_MEMORY_FRAME_STALE_MS,
+  isWindowMemoryFrameStale,
+  windowMemoryFrameStaleSince,
+} from './window-memory-staleness';
 
 export type WindowMemoryTone = 'ok' | 'warn' | 'blocked' | 'stale';
 
@@ -45,7 +50,7 @@ const TONE_CHIP_CLASS: Record<WindowMemoryTone, string> = {
 const UNLIMITED = '∞';
 
 export function isWindowMemoryBadgeStale(sample: WindowMemorySample, now: number): boolean {
-  return isWindowMemoryFrameStale(sample.receivedAt, now);
+  return isWindowMemoryFrameStale(sample, now);
 }
 
 export function windowMemoryTone(sample: WindowMemorySample, stale = false): WindowMemoryTone {
@@ -77,9 +82,13 @@ function limitLines(t: Translate, sample: WindowMemorySample): string[] {
   ];
 }
 
-/** 过期读数按「最后一帧是多久前收到的」说：两端都是浏览器时钟，不受节点时钟偏差影响。 */
+/**
+ * 过期读数按「最后一帧是多久前收到的」说：两端都是浏览器时钟，不受节点时钟偏差影响。
+ * 重放帧刚收到，按收到时刻会说成「刚刚」，改按采样时刻说。
+ */
 function staleLine(t: Translate, sample: WindowMemorySample, now: number): string {
-  const ago = formatRelative(t, sample.receivedAt, now, 'settings.share.time') ?? '';
+  const since = windowMemoryFrameStaleSince(sample);
+  const ago = formatRelative(t, since, now, 'settings.share.time') ?? '';
   return t('window.memoryStale', { ago });
 }
 

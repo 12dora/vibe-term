@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
   WINDOW_MEMORY_FRAME_STALE_MS,
+  WINDOW_MEMORY_REPLAY_STALE_MS,
   isWindowMemoryFrameStale,
   isWindowMemorySampleStale,
+  windowMemoryFrameStaleSince,
   windowMemoryStaleAfterMs,
 } from './window-memory-staleness';
 
@@ -101,13 +103,43 @@ describe('isWindowMemorySampleStale：网关给了读数年龄', () => {
 });
 
 describe('isWindowMemoryFrameStale', () => {
-  test('只看本地收到多久：两次心跳内新鲜，超过即过期', () => {
-    expect(isWindowMemoryFrameStale(NOW - WINDOW_MEMORY_FRAME_STALE_MS, NOW)).toBe(false);
-    expect(isWindowMemoryFrameStale(NOW - WINDOW_MEMORY_FRAME_STALE_MS - 1, NOW)).toBe(true);
+  const frame = (receivedAt: number, sampledAt = receivedAt) => ({ receivedAt, sampledAt });
+
+  test('按本地收到多久判：两次心跳内新鲜，超过即过期', () => {
+    expect(isWindowMemoryFrameStale(frame(NOW - WINDOW_MEMORY_FRAME_STALE_MS), NOW)).toBe(false);
+    expect(isWindowMemoryFrameStale(frame(NOW - WINDOW_MEMORY_FRAME_STALE_MS - 1), NOW)).toBe(true);
   });
 
   test('没有收到时刻的帧不可信', () => {
-    expect(isWindowMemoryFrameStale(0, NOW)).toBe(true);
-    expect(isWindowMemoryFrameStale(Number.NaN, NOW)).toBe(true);
+    expect(isWindowMemoryFrameStale(frame(0), NOW)).toBe(true);
+    expect(isWindowMemoryFrameStale(frame(Number.NaN), NOW)).toBe(true);
+  });
+
+  test('旧网关连上就重放几天前的缓存读数：刚收到也立即过期', () => {
+    expect(isWindowMemoryFrameStale(frame(NOW, NOW - 4 * 86_400_000), NOW)).toBe(true);
+    expect(isWindowMemoryFrameStale(frame(NOW, NOW - WINDOW_MEMORY_REPLAY_STALE_MS - 1), NOW)).toBe(
+      true
+    );
+  });
+
+  test('节点时钟慢或快几分钟、帧按时到：照常新鲜', () => {
+    expect(isWindowMemoryFrameStale(frame(NOW, NOW - 5 * 60_000), NOW)).toBe(false);
+    expect(isWindowMemoryFrameStale(frame(NOW, NOW - WINDOW_MEMORY_REPLAY_STALE_MS), NOW)).toBe(
+      false
+    );
+    expect(isWindowMemoryFrameStale(frame(NOW, NOW + 5 * 60_000), NOW)).toBe(false);
+    expect(isWindowMemoryFrameStale(frame(NOW - 30_000, NOW - 8 * 60_000), NOW)).toBe(false);
+  });
+
+  test('采样时刻缺失时只按收到时刻判', () => {
+    expect(isWindowMemoryFrameStale(frame(NOW, Number.NaN), NOW)).toBe(false);
+  });
+});
+
+describe('windowMemoryFrameStaleSince', () => {
+  test('重放帧按采样时刻，其余按收到时刻', () => {
+    const old = NOW - 3 * 86_400_000;
+    expect(windowMemoryFrameStaleSince({ receivedAt: NOW, sampledAt: old })).toBe(old);
+    expect(windowMemoryFrameStaleSince({ receivedAt: NOW, sampledAt: NOW - 60_000 })).toBe(NOW);
   });
 });
