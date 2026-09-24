@@ -1,5 +1,5 @@
 import type { LinkSession } from '@vibeterm/shared/link';
-import { backoffDelayMs, isRecord } from './ctl';
+import { backoffDelayMs } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
 import { isNodePaused } from './node-pause';
 import {
@@ -7,6 +7,7 @@ import {
   isBackgroundDcUpgradeBlocked,
   noteBackgroundDcUpgradeAttempt,
 } from './peer-dc-upgrade-gate';
+import { RelayPresenceGap } from './peer-reconnect-wake';
 import type { IncomingWakeGate, RtcWakeGate, WakeGate } from './peer-rtc-wake';
 import type { RtcSignaling, RtcWakeFields } from './rtc/ice';
 import {
@@ -22,8 +23,12 @@ export const PEER_UPGRADE_BACKOFF_CAP_MS = 5 * 60 * 1000;
 export const PEER_UPGRADE_MAX_INFLIGHT = 4;
 export const PEER_DC_UPGRADE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000] as const;
 export const PEER_DC_UPGRADE_RETRY_TAIL_MS = 120_000;
-export const PEER_MAX_ENDPOINTS = 16;
-export const PEER_MAX_ENDPOINT_LENGTH = 256;
+export {
+  PEER_MAX_ENDPOINT_LENGTH,
+  PEER_MAX_ENDPOINTS,
+  parseEndpoints,
+  sanitizeEndpoints,
+} from './peer-endpoint-parse';
 
 export type UpgradeGate = {
   nextEligibleAt: number;
@@ -73,6 +78,7 @@ export class DcUpgradeCoordinator {
   readonly upgradeWaiters: Array<() => void> = [];
   upgradeScan: { clear: () => void } | null = null;
   private readonly wsUpgradeInflight = new Set<string>();
+  private readonly presenceGap = new RelayPresenceGap();
   private readonly ports: DcUpgradePorts;
 
   constructor(ports: DcUpgradePorts) {
@@ -100,8 +106,17 @@ export class DcUpgradeCoordinator {
     this.rearmAllDisabled('uplink-switch');
   }
 
-  onPeerReconnected(nodeId: string): void {
-    this.rearmDisabled(nodeId, 'peer-reconnect');
+  /** relay/ws 会话替换不是 DC 会通的证据，不 rearm、不降档。 */
+  onPeerReconnected(_nodeId: string): void {}
+
+  onPeerCapabilitiesChanged(nodeId: string): void {
+    this.rearmDisabled(nodeId, 'peer-capabilities');
+  }
+
+  noteRelayPresence(nodeId: string, online: boolean): boolean {
+    const event = this.presenceGap.observe(nodeId, online, this.ports.scheduler.now());
+    if (event !== 'returned') return false;
+    return this.rearmDisabled(nodeId, 'presence-return');
   }
 
   retryDcUpgrade(nodeId: string): void {
@@ -132,6 +147,7 @@ export class DcUpgradeCoordinator {
     this.clearScan();
     for (const nodeId of [...this.dcUpgradeRetry.keys()]) this.cancelDcUpgradeRetry(nodeId);
     for (const nodeId of [...this.dcHealth.keys()]) this.cancelDcHealthTimer(nodeId);
+    this.presenceGap.reset();
     this.dcBreaker.reset();
   }
 
@@ -477,52 +493,6 @@ export class DcUpgradeCoordinator {
   }
 }
 
-export function sanitizeEndpoints(value: unknown, fallbackPort?: number): string[] {
-  if (typeof value === 'string') return parseEndpoints(value, fallbackPort);
-  try {
-    return parseEndpoints(JSON.stringify(value ?? []), fallbackPort);
-  } catch {
-    return [];
-  }
-}
-
-export function parseEndpoints(endpointsJson: string, fallbackPort?: number): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(endpointsJson);
-  } catch {
-    return [];
-  }
-  const urls: string[] = [];
-  const push = (raw: string) => {
-    if (urls.length >= PEER_MAX_ENDPOINTS) return;
-    if (raw.length > PEER_MAX_ENDPOINT_LENGTH) return;
-    if (raw.startsWith('ws://') || raw.startsWith('wss://')) {
-      urls.push(raw);
-      return;
-    }
-    if (raw.includes('://')) return;
-    const withPath = raw.includes('/peer') ? raw : `${raw}/peer`;
-    const url = withPath.startsWith('ws') ? withPath : `ws://${withPath}`;
-    if (url.length > PEER_MAX_ENDPOINT_LENGTH) return;
-    urls.push(url);
-  };
-  if (Array.isArray(parsed)) {
-    for (const item of parsed) {
-      if (typeof item === 'string') {
-        push(item);
-      } else if (isRecord(item)) {
-        if (typeof item.url === 'string') push(item.url);
-        else if (typeof item.host === 'string') {
-          const port = typeof item.port === 'number' ? item.port : (fallbackPort ?? 39001);
-          const path = typeof item.path === 'string' ? item.path : '/peer';
-          push(`ws://${item.host}:${port}${path.startsWith('/') ? path : `/${path}`}`);
-        }
-      }
-    }
-  }
-  return urls;
-}
 export abstract class PeerCollaboratorHost {
   protected abstract readonly dcUpgrade: DcUpgradeCoordinator;
   protected abstract readonly rtcWake: RtcWakeGate;

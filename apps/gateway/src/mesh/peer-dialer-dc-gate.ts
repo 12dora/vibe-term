@@ -5,13 +5,16 @@ import { type DirectAttemptRecord, hasDirectFailure, noteDcOutcome } from './pee
 import type { PeerManagerState } from './peer-manager-state';
 import type { RtcPeerManager } from './rtc';
 import {
+  type DcOfferBlockReason,
   type RtcDialBreaker,
   type RtcDialBreakerDecision,
   classifyRtcDialFailure,
+  inboundOfferBlockReason,
   isIntentionalDcLoss,
   rtcDialFailureMetaOf,
 } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
+import { encodeDcOfferDecline } from './rtc/rtc-offer-decline';
 
 export async function ensureRtcReady(rtc: RtcPeerManager): Promise<void> {
   if ((await rtc.ready?.()) === false) throw new Error('node-datachannel is not available');
@@ -20,9 +23,21 @@ export async function ensureRtcReady(rtc: RtcPeerManager): Promise<void> {
 export type DcDialGate = {
   allow: boolean;
   coolingUntil?: number | null;
+  decline?: DcOfferBlockReason;
 };
 
-/** 对端发起的拨号（应答 offer / 被 wake 叫醒）在冷却中仍放行；自发拨号维持熔断。 */
+export type InboundOfferPlan =
+  | { action: 'accept' }
+  | { action: 'decline'; reason: DcOfferBlockReason; sdp: string };
+
+/** disabled / 冷却到顶：回 decline，调用方不建 answerer PC。其余低档冷却仍可应答。 */
+export function planInboundOffer(decision: RtcDialBreakerDecision): InboundOfferPlan {
+  const reason = inboundOfferBlockReason(decision);
+  if (!reason) return { action: 'accept' };
+  return { action: 'decline', reason, sdp: encodeDcOfferDecline(reason) };
+}
+
+/** 对端发起的拨号在低档冷却中仍放行；disabled 或冷却到顶则拒绝，不建 PC。 */
 export function gateDcDial(input: {
   peer: string;
   capable: boolean;
@@ -31,6 +46,8 @@ export function gateDcDial(input: {
   decision: RtcDialBreakerDecision;
 }): DcDialGate {
   if (!input.aboveDc || !input.capable) return { allow: false };
+  const declined = declinePeerOffer(input);
+  if (declined) return declined;
   if (input.decision.allow) return { allow: true };
   if (input.peerInitiated) {
     rtcLog('answer while cooling', { peer: input.peer, level: input.decision.level });
@@ -42,6 +59,23 @@ export function gateDcDial(input: {
     until: input.decision.until,
   });
   return { allow: false, coolingUntil: input.decision.until };
+}
+
+function declinePeerOffer(input: {
+  peer: string;
+  peerInitiated: boolean;
+  decision: RtcDialBreakerDecision;
+}): DcDialGate | null {
+  if (!input.peerInitiated) return null;
+  const reason = inboundOfferBlockReason(input.decision);
+  if (!reason) return null;
+  rtcLog('answer declined', {
+    peer: input.peer,
+    level: input.decision.level,
+    disabled: input.decision.disabled,
+    cause: reason,
+  });
+  return { allow: false, decline: reason, coolingUntil: input.decision.until };
 }
 
 export function finishDirectAttemptRecord(

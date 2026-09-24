@@ -6,7 +6,8 @@ import {
   type DcUpgradePorts,
 } from './peer-dc-upgrade';
 import { PERMANENT_FAILURE_HOLD_MS, isBackgroundDcUpgradeBlocked } from './peer-dc-upgrade-gate';
-import { RTC_DIAL_FORCE_PROBE_MS } from './rtc/rtc-dial-breaker';
+import { DC_PRESENCE_ABSENCE_MS, type LivePeer, PeerReconnectWake } from './peer-reconnect-wake';
+import { RTC_DIAL_BREAKER_FAILS, RTC_DIAL_FORCE_PROBE_MS } from './rtc/rtc-dial-breaker';
 import type { MeshScheduler, PeerTransportKind } from './types';
 
 class ManualScheduler implements MeshScheduler {
@@ -160,6 +161,8 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
 
     disablePeer(coordinator, peer);
     coordinator.onPeerReconnected(peer);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
+    coordinator.onPeerCapabilitiesChanged(peer);
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
 
     disablePeer(coordinator, peer);
@@ -199,6 +202,9 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(dials).toEqual([]);
 
     coordinator.onPeerReconnected(peer);
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+    coordinator.onPeerEndpointChanged(peer);
     await flushMicrotasks();
     expect(dials).toEqual([peer]);
     coordinator.dispose();
@@ -295,6 +301,9 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(dials).toEqual([]);
     coordinator.onPeerReconnected(peer);
     await flushMicrotasks();
+    expect(dials).toEqual([]);
+    coordinator.onPeerCapabilitiesChanged(peer);
+    await flushMicrotasks();
     expect(dials).toEqual([peer]);
     coordinator.dispose();
   });
@@ -334,6 +343,91 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(unavailable.lostDirect.has('unavailable')).toBe(true);
   });
 });
+
+describe('DcUpgradeCoordinator relay flap vs presence return', () => {
+  test('a relay session flap does not rearm or reset escalation', () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live } = makeCoordinator({ scheduler });
+    const peer = 'ec42f364';
+    live.set(peer, livePeer(peer, 'relay'));
+    climbDisabled(coordinator, scheduler, peer);
+    const before = coordinator.dcBreaker.snapshot(peer);
+    expect(before.disabled).toBe(true);
+    expect(before.level).toBe(5);
+
+    const wake = new PeerReconnectWake();
+    const woken: string[] = [];
+    wake.lost(peer, true, false);
+    const session = {
+      peerNodeId: peer,
+      transport: 'relay',
+      quiesceCapable: false,
+    } as LivePeer;
+    wake.installed(session, (id) => woken.push(id));
+    expect(woken).toEqual([]);
+    session.quiesceCapable = true;
+    wake.ready(session, (id) => {
+      woken.push(id);
+      coordinator.onPeerReconnected(id);
+    });
+    expect(woken).toEqual([peer]);
+    scheduler.nowMs += 60 * 60 * 1000;
+    coordinator.onPeerReconnected(peer);
+    expect(coordinator.dcBreaker.snapshot(peer)).toMatchObject({
+      disabled: true,
+      level: before.level,
+      failures: before.failures,
+    });
+    coordinator.dispose();
+  });
+
+  test('presence return after a long absence probes once and keeps escalation', async () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials } = makeCoordinator({ scheduler });
+    const peer = 'ec42f364';
+    live.set(peer, livePeer(peer, 'relay'));
+    climbDisabled(coordinator, scheduler, peer);
+    const before = coordinator.dcBreaker.snapshot(peer);
+    expect(before.level).toBeGreaterThan(1);
+
+    coordinator.noteRelayPresence(peer, false);
+    scheduler.nowMs += DC_PRESENCE_ABSENCE_MS - 1;
+    expect(coordinator.noteRelayPresence(peer, true)).toBe(false);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
+    expect(coordinator.dcBreaker.snapshot(peer).level).toBe(before.level);
+    expect(dials).toEqual([]);
+
+    coordinator.noteRelayPresence(peer, false);
+    scheduler.nowMs += DC_PRESENCE_ABSENCE_MS;
+    expect(coordinator.noteRelayPresence(peer, true)).toBe(true);
+    expect(coordinator.dcBreaker.snapshot(peer)).toMatchObject({
+      disabled: false,
+      level: before.level - 1,
+      failures: before.failures,
+    });
+    expect(coordinator.dcBreaker.snapshot(peer).level).toBeGreaterThan(0);
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+
+    coordinator.dcBreaker.noteFailure(peer, 'timeout', 'probe-fail');
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
+    coordinator.dispose();
+  });
+});
+
+function climbDisabled(
+  coordinator: DcUpgradeCoordinator,
+  scheduler: ManualScheduler,
+  peer: string
+): void {
+  for (let round = 0; round < 5; round += 1) {
+    const until = coordinator.dcBreaker.snapshot(peer).until;
+    if (until != null && until > scheduler.now()) scheduler.nowMs = until;
+    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) {
+      coordinator.dcBreaker.noteFailure(peer, 'timeout', `c${round}-${i}`);
+    }
+  }
+}
 
 describe('DcUpgradeCoordinator ws-secure vs DC inflight', () => {
   test('dc inflight does not suppress a ws-secure upgrade on live relay', async () => {

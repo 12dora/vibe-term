@@ -32,18 +32,21 @@ export const RTC_DIAL_BREAKER_MAX_MS = DIAL_BREAKER_MAX_MS;
 export const RTC_DIAL_BREAKER_HEALTHY_MS = DIAL_BREAKER_HEALTHY_MS;
 export const RTC_DIAL_DISABLE_AFTER_DEFAULT = 10;
 export const RTC_DIAL_FORCE_PROBE_MS = 10 * 60 * 1000;
+/** 冷却档位到顶后不再接对端 offer。更低档仍应答，避免短暂失败互相掐断。 */
+export const RTC_ANSWER_REFUSE_LEVEL = 5;
 
 export const RTC_DIAL_BREAKER_MS_DEFAULT = RTC_DIAL_BREAKER_BASE_MS_DEFAULT;
 
 export const RTC_DIAL_BREAKER_SKIP_KINDS = new Set(['signaling-state', 'signal-dropped']);
 
-export const DC_REARM_SOURCES = [
+export const DC_FULL_REARM_SOURCES = [
   'local-fingerprint',
   'peer-endpoint',
   'uplink-switch',
-  'peer-reconnect',
+  'peer-capabilities',
   'manual',
 ] as const;
+export const DC_REARM_SOURCES = [...DC_FULL_REARM_SOURCES, 'presence-return'] as const;
 export type DcRearmSource = (typeof DC_REARM_SOURCES)[number];
 
 export type RtcDialBreakerDecision = DialBreakerDecision & { disabled: boolean };
@@ -61,7 +64,20 @@ export type RtcDialBreakerDisableEvent = {
 export type RtcDialBreakerRearmEvent = {
   peer: string;
   source: DcRearmSource;
+  levelBefore: number;
+  levelAfter: number;
 };
+
+export type DcOfferBlockReason = 'disabled' | 'cooling';
+
+/** disabled，或冷却档位到顶：不应再接对端 offer。 */
+export function inboundOfferBlockReason(
+  decision: Pick<RtcDialBreakerDecision, 'disabled' | 'cooling' | 'level'>
+): DcOfferBlockReason | null {
+  if (decision.disabled) return 'disabled';
+  if (decision.cooling && decision.level >= RTC_ANSWER_REFUSE_LEVEL) return 'cooling';
+  return null;
+}
 
 export type RtcDialFailureOpts = {
   peerInitiated?: boolean;
@@ -240,16 +256,22 @@ export class RtcDialBreaker {
   }
 
   /**
-   * 应答侧是否还该接这个对端的 offer。冷却中为 false。
-   * `respondsToOurRequest`：对端在应答本端 `link.reroll-request` 时作为独立授权，绕过冷却。
+   * 应答侧是否还该接这个对端的 offer。
+   * disabled 或冷却到顶时拒绝，reroll 授权也不能绕过。
+   * 仅 answerer backoff 时，对端在应答本端 `link.reroll-request` 仍放行。
    */
   shouldAcceptAnswer(
     peer: string,
     now = this.now(),
     opts?: { respondsToOurRequest?: boolean }
   ): boolean {
+    if (inboundOfferBlockReason(this.snapshot(peer, now))) return false;
     if (opts?.respondsToOurRequest === true) return true;
     return this.answererBackoff.shouldAccept(peer, now);
+  }
+
+  inboundBlock(peer: string, now = this.now()): DcOfferBlockReason | null {
+    return inboundOfferBlockReason(this.snapshot(peer, now));
   }
 
   disabledPeers(): string[] {
@@ -317,10 +339,12 @@ export class RtcDialBreaker {
   }
 
   rearmDisabled(peer: string, source: DcRearmSource): boolean {
+    if (source === 'presence-return') return this.notePresenceReturn(peer);
     if (!this.disabled.has(peer)) return false;
+    const levelBefore = this.inner.snapshot(peer).level;
     this.disabled.delete(peer);
     this.inner.reset(peer);
-    this.onRearm?.({ peer, source });
+    this.onRearm?.({ peer, source, levelBefore, levelAfter: 0 });
     return true;
   }
 
@@ -343,6 +367,16 @@ export class RtcDialBreaker {
     }
     this.answererBackoff.reset(peer);
     this.inner.reset(peer);
+  }
+
+  private notePresenceReturn(peer: string): boolean {
+    const snap = this.snapshot(peer);
+    if (!snap.disabled && !snap.cooling && snap.level <= 0) return false;
+    const levelBefore = snap.level;
+    this.disabled.delete(peer);
+    const levelAfter = this.inner.decayEscalation(peer)?.levelAfter ?? levelBefore;
+    this.onRearm?.({ peer, source: 'presence-return', levelBefore, levelAfter });
+    return true;
   }
 
   private noteAnswererTimeout(peer: string, now?: number): void {
@@ -398,6 +432,8 @@ export function createGatewayRtcDialBreaker(opts: RtcDialBreakerOptions = {}): R
       rtcLog('breaker rearm', {
         peer: event.peer,
         source: event.source,
+        level_before: event.levelBefore,
+        level_after: event.levelAfter,
       });
     },
   });
