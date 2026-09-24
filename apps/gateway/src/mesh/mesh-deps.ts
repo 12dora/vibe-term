@@ -180,7 +180,8 @@ export type RtcAuthorizeBrowserResult = {
 
 export type RtcFingerprintProvider = {
   authorizeBrowser(
-    input: RtcAuthorizeBrowserInput
+    input: RtcAuthorizeBrowserInput,
+    opts?: { signal?: AbortSignal }
   ): RtcAuthorizeBrowserResult | null | Promise<RtcAuthorizeBrowserResult | null>;
 };
 

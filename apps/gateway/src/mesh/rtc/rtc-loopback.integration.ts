@@ -4,6 +4,10 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { encodeBase64url, normalizeFingerprint, parseSdpFingerprint } from '@vibeterm/shared/auth';
 import { LinkMux } from '@vibeterm/shared/link';
+import {
+  fingerprintsEqual as browserFingerprintsEqual,
+  parseSdpFingerprint as browserParseSdpFingerprint,
+} from '../../../../../packages/ws-client/src/direct/fingerprint';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { createGatewaySession } from '../../ws/test-helpers';
@@ -178,9 +182,21 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
       iceServers: ['stun:stun.l.google.com:19302'],
     });
     fixtures.push({ close: () => browserPc.close() });
+    const appliedTypes: string[] = [];
+    let answerSdp = '';
+    let grantedFp: { algorithm: string; value: string } | null = null;
     sigBrowser.onMessage((msg) => {
       if (msg.sdp) {
         const parsed = JSON.parse(msg.sdp) as { type: string; sdp: string };
+        appliedTypes.push(parsed.type);
+        if (parsed.type !== 'answer') return;
+        answerSdp = parsed.sdp;
+        const answerFp = browserParseSdpFingerprint(parsed.sdp);
+        if (!browserFingerprintsEqual(answerFp, grantedFp)) {
+          throw new Error('node DTLS fingerprint mismatch');
+        }
+        const media = parsed.sdp.split(/\r?\n/).filter((line) => line.startsWith('m=application'));
+        if (media.length !== 1) throw new Error(`answer application m-lines=${media.length}`);
         browserPc.setRemoteDescription(parsed.sdp, parsed.type);
       }
       if (msg.candidate) {
@@ -221,6 +237,7 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
     });
     const parsedFp = parseSdpFingerprint(browserPc.localDescription()?.sdp ?? '');
     const fpBrowser = normalizeFingerprint(parsedFp ?? { algorithm: 'sha-256', value: '00' });
+    const started = Date.now();
     const auth = await left.authorizeBrowser({
       rtcSession,
       uid: 'user-1',
@@ -228,7 +245,9 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
       sid: 'sid-integ-1',
       fpBrowser,
     });
+    expect(Date.now() - started).toBeLessThan(3_000);
     if (!auth) throw new Error('authorizeBrowser returned null');
+    grantedFp = auth.fpNode;
     const acceptP = left.acceptBrowser(rtcSession, sigNode);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('sess open timeout')), 15_000);
@@ -245,6 +264,8 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
     const accepted = await acceptP;
     expect(accepted.uid).toBe('user-1');
     expect(accepted.carrier.send(new Uint8Array([7]))).toBe('sent');
+    expect(appliedTypes).toEqual(['answer']);
+    expect(browserFingerprintsEqual(browserParseSdpFingerprint(answerSdp), auth.fpNode)).toBe(true);
     accepted.pc.close();
   });
 });

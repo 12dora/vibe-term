@@ -17,6 +17,7 @@ import {
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type PeerLinkProvider,
+  type RtcAuthorizeBrowserInput,
   type RtcConfigProvider,
   type RtcFingerprintProvider,
   type RtcSignalMessage,
@@ -42,6 +43,7 @@ import {
   sweepStaleNodeOperations,
 } from './node-operations';
 import { pausedNodeIds } from './node-pause';
+import { failReason } from './rtc/browser-authorize';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -427,16 +429,24 @@ export class MeshRoutes {
       `send connectionId from GET /api/mesh/connection or ${CONNECTION_HEADER.name}`
     );
     if (fail) return fail;
-    const granted = await this.deps.rtcFingerprint.authorizeBrowser({
-      rtcSession: parsed.rtcSession,
-      uid: auth.userId,
-      via,
-      sid: auth.sid,
-      ...(resolved?.ok ? { connectionId: resolved.connectionId } : {}),
-      fpBrowser: parsed.fp,
-    });
-    if (!granted) return jsonError('DIRECT_UNAVAILABLE', 503);
-    return jsonBody({ nonce: encodeBase64url(granted.nonce), fp_node: granted.fpNode });
+    try {
+      const granted = await callAuthorizeBrowser(
+        this.deps.rtcFingerprint,
+        {
+          rtcSession: parsed.rtcSession,
+          uid: auth.userId,
+          via,
+          sid: auth.sid,
+          ...(resolved?.ok ? { connectionId: resolved.connectionId } : {}),
+          fpBrowser: parsed.fp,
+        },
+        req.signal
+      );
+      if (!granted) return jsonError('DIRECT_UNAVAILABLE', 503);
+      return jsonBody({ nonce: encodeBase64url(granted.nonce), fp_node: granted.fpNode });
+    } catch (err) {
+      return jsonError('DIRECT_UNAVAILABLE', 503, { reason: failReason(err) });
+    }
   }
 
   private handleMeshWsUpgrade(req: Request, server: MeshUpgradeServer): Response | undefined {
@@ -520,6 +530,14 @@ function lookupFail(
   return resolved && !resolved.ok
     ? jsonError(resolved.code, resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404, { hint })
     : null;
+}
+
+function callAuthorizeBrowser(
+  provider: RtcFingerprintProvider,
+  input: RtcAuthorizeBrowserInput,
+  signal: AbortSignal
+): ReturnType<RtcFingerprintProvider['authorizeBrowser']> {
+  return provider.authorizeBrowser(input, { signal });
 }
 
 function rtcAuthFields(body: Record<string, unknown> | null, req: Request) {
