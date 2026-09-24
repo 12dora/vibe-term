@@ -19,7 +19,11 @@ import type { DeviceConnectionAdapter } from '../device-connection';
 import { DeviceCardSkeleton } from './device-card-skeleton';
 import { DeviceDialog } from './device-dialog';
 import { DeviceGrid } from './device-grid';
-import { describeDeviceLoadError, deviceLoadErrorMessageKey } from './device-load-error';
+import {
+  describeDeviceLoadError,
+  deviceLoadErrorMessageKey,
+  unreachableReasonKey,
+} from './device-load-error';
 import type { DeviceNodeContext } from './device-node-context';
 import { type AddDevicePreset, OPEN_ADD_DEVICE_EVENT, addDevicePresetFromEvent } from './events';
 import { useDeviceManagementState } from './use-device-management-state';
@@ -63,12 +67,13 @@ export interface DeviceManagementPanelProps {
   ref?: Ref<DeviceManagementPanelHandle>;
 }
 
-/** 加载失败的一张卡：文案按失败性质分档，节点打不通时优先用后端给的原因串。 */
+/** 加载失败的一张卡：文案按失败性质分档，节点打不通且原因认得出时带上翻译后的原因。 */
 function LoadErrorCard({ error, onRetry }: { error: unknown; onRetry: () => void }) {
   const { t } = useTranslation();
   const info = describeDeviceLoadError(error);
-  const text = info.reason
-    ? t('device.loadFailedUnreachableReason', { reason: info.reason })
+  const reasonKey = unreachableReasonKey(info.reason);
+  const text = reasonKey
+    ? t('device.loadFailedUnreachableReason', { reason: t(reasonKey) })
     : t(deviceLoadErrorMessageKey(info.kind));
   return (
     <Card size="sm" className="vibeterm-reveal">

@@ -175,6 +175,11 @@
         "modeFollowDesc": "Shift just enough to keep the cursor right above the keyboard; terminal size stays the same"
       },
       "connecting": "Connecting to device...",
+      "connectingStalled": {
+        "node": "Still connecting to the node; the link is slow or temporarily down.",
+        "reconnecting": "Connection to the node dropped; reconnecting automatically.",
+        "device": "Node connected; waiting for the device to respond."
+      },
       "inputPlaceholder": "Type command here...",
       "clear": "Clear",
       "windowClosed": "Current window has been closed, please select a window from the sidebar.",

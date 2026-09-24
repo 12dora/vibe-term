@@ -2,7 +2,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { ApiError, NODE_UNREACHABLE } from '@vibeterm/api-client';
-import { describeDeviceLoadError, deviceLoadErrorMessageKey } from './device-load-error';
+import {
+  describeDeviceLoadError,
+  deviceLoadErrorMessageKey,
+  unreachableReasonKey,
+} from './device-load-error';
 
 const NODE_ID = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
 
@@ -40,5 +44,22 @@ describe('describeDeviceLoadError', () => {
     });
     expect(describeDeviceLoadError(undefined)).toEqual({ kind: 'generic', reason: null });
     expect(deviceLoadErrorMessageKey('generic')).toBe('device.loadFailed');
+  });
+});
+
+describe('unreachableReasonKey', () => {
+  test('转发器的安全原因字面量映射到链路失败文案', () => {
+    expect(unreachableReasonKey('timeout')).toBe('nodes.badge.failure.timeout');
+    expect(unreachableReasonKey('no_link')).toBe('nodes.badge.failure.unreachable');
+    expect(unreachableReasonKey('link_lost')).toBe('nodes.badge.failure.reset');
+    expect(unreachableReasonKey('handshake_failed')).toBe('nodes.badge.failure.handshake');
+    expect(unreachableReasonKey('relay_reset:offline')).toBe('nodes.badge.failure.unreachable');
+  });
+
+  test('认不出的代号与空值不带原因', () => {
+    expect(unreachableReasonKey(null)).toBeNull();
+    expect(unreachableReasonKey('')).toBeNull();
+    expect(unreachableReasonKey('no link')).toBeNull();
+    expect(unreachableReasonKey('constructor')).toBeNull();
   });
 });

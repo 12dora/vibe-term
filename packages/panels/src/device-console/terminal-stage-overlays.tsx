@@ -1,8 +1,11 @@
 // 终端显示区的占位与遮罩：主动断开 / 加载中 / 选择失效 / 快照解析中 / 设备连接中。
 // 从 ./terminal-stage 拆出，DOM 结构被 e2e 依赖（data-testid 不要改名）。
 
-import { Loader2, SearchX } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import type { ConnectionState } from '@vibeterm/ws-client';
+import { Loader2, RefreshCcw, SearchX } from 'lucide-react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DevicePaneSelection } from './use-device-pane-selection';
 
@@ -92,18 +95,70 @@ export function ResolvingOverlay() {
   );
 }
 
+/** 「连接设备...」挂了这么久还没连上就补一行现状与重试（与连接按钮的超时同一口径）。 */
+export const CONNECTING_OVERLAY_DEADLINE_MS = 8_000;
+
+/** 超时后那一行说什么：按节点 WS 的当前状态区分「还在连节点」「断了在重连」「节点通了、设备没回」。 */
+export function connectingStalledKey(state: ConnectionState): string {
+  if (state === 'READY') return 'terminal.connectingStalled.device';
+  if (state === 'RECONNECT_BACKOFF' || state === 'CLOSED') {
+    return 'terminal.connectingStalled.reconnecting';
+  }
+  return 'terminal.connectingStalled.node';
+}
+
+function useDeadlinePassed(ms: number): boolean {
+  const [passed, setPassed] = useState(ms <= 0);
+  useEffect(() => {
+    if (ms <= 0) return;
+    const timer = setTimeout(() => setPassed(true), ms);
+    return () => clearTimeout(timer);
+  }, [ms]);
+  return passed;
+}
+
+function ConnectingStalledHint() {
+  const { t } = useTranslation();
+  const runtime = useRuntime();
+  const state = useTmuxStore((s) => s.connectionState);
+  return (
+    <div
+      className="pointer-events-auto flex flex-col items-center gap-2 text-xs"
+      data-testid="terminal-connecting-stalled"
+    >
+      <p>{t(connectingStalledKey(state))}</p>
+      <Button
+        variant="outline"
+        size="sm"
+        data-testid="terminal-connecting-retry"
+        onClick={() => runtime.client.reconnect()}
+      >
+        <RefreshCcw className="size-4" />
+        {t('websocket.reconnect')}
+      </Button>
+    </div>
+  );
+}
+
 /**
  * pane id 已由本地拓扑给出、设备尚未连上：终端先挂起来（wasm / 订阅 / 首屏请求都能提前排队），
  * 内容为空的这段时间盖一层「连接中」。首个 ScreenBegin…Commit / SourceGap 会整屏重写。
+ * 转发 WS 一直连不上时这层不会自己消失，过了期限补一行现状与「重新连接」。
  */
-export function ConnectingOverlay() {
+export function ConnectingOverlay({
+  deadlineMs = CONNECTING_OVERLAY_DEADLINE_MS,
+}: {
+  deadlineMs?: number;
+}) {
   const { t } = useTranslation();
+  const overdue = useDeadlinePassed(deadlineMs);
   return (
     <div
-      className="vibeterm-fade pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-background/60 text-sm text-muted-foreground"
+      className="vibeterm-fade pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background/60 p-4 text-center text-sm text-muted-foreground"
       data-testid="terminal-connecting-overlay"
     >
-      {t('terminal.connecting')}
+      <span>{t('terminal.connecting')}</span>
+      {overdue ? <ConnectingStalledHint /> : null}
     </div>
   );
 }
