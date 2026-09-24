@@ -466,6 +466,7 @@
       "memoryScope": "Scope",
       "memoryLimitUnavailable": "Window limits: not supported on this host (needs tmux 3.6+)",
       "memorySourceRss": "Reading: sum of process-tree RSS",
+      "memoryStale": "Reading out of date (sampled {{ago}}); limits may have changed",
       "noWindowSelected": "No window selected",
       "selectWindowToStart": "Select a window to get started"
     },

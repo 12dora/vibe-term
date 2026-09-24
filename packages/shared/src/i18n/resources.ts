@@ -453,7 +453,17 @@ export const I18N_RESOURCES = {
         "memory": {
           "title": "Memory limits",
           "description": "Caps how much memory the processes in each window may use. Requires Linux with systemd (tmux 3.6 or newer); other hosts ignore it.",
-          "enabled": "Apply memory limits",
+          "modeLabel": "Limit mode",
+          "mode": {
+            "unlimited": {
+              "title": "No Limit",
+              "description": "Removes memory limits from all windows, including running ones."
+            },
+            "custom": {
+              "title": "Custom Limits",
+              "description": "Caps each window's memory with the values below."
+            }
+          },
           "high": "Soft limit (MB)",
           "highHint": "Above this the kernel throttles the window and reclaims its pages; nothing is killed.",
           "max": "Hard limit (MB)",
@@ -461,7 +471,7 @@ export const I18N_RESOURCES = {
           "swapMax": "Swap limit (MB)",
           "interval": "Sample interval (seconds)",
           "intervalHint": "Between {{min}} and {{max}} seconds.",
-          "unlimitedHint": "0 = unlimited",
+          "unlimitedHint": "0 removes only this limit; the others stay.",
           "invalidMb": "Enter a whole number between 0 and {{max}}.",
           "invalidInterval": "Enter a whole number between {{min}} and {{max}}.",
           "highAboveMax": "The soft limit must not exceed the hard limit.",
@@ -469,7 +479,9 @@ export const I18N_RESOURCES = {
           "saveFailed": "Failed to save memory limits: {{message}}",
           "saved": "Memory limits saved",
           "limitsUnsupported": "Memory limits will not take effect on these devices: {{devices}}",
-          "limitsUnsupportedHint": "Per-window limits need Linux with systemd and tmux 3.6 or newer."
+          "limitsUnsupportedHint": "Per-window limits need Linux with systemd and tmux 3.6 or newer.",
+          "notReleased": "Set to no limit, but {{count}} window(s) still have limits: {{windows}}",
+          "staleSample": "Readings for {{count}} window(s) are out of date (last sampled {{ago}}); cannot confirm the limits were removed."
         },
         "routeMode": {
           "title": "Latency optimisation",
@@ -1754,6 +1766,7 @@ export const I18N_RESOURCES = {
       "memoryScope": "Scope",
       "memoryLimitUnavailable": "Window limits: not supported on this host (needs tmux 3.6+)",
       "memorySourceRss": "Reading: sum of process-tree RSS",
+      "memoryStale": "Reading out of date (sampled {{ago}}); limits may have changed",
       "noWindowSelected": "No window selected",
       "selectWindowToStart": "Select a window to get started"
     },
@@ -2554,6 +2567,7 @@ export const I18N_RESOURCES = {
         "bulkTitle": "Set Memory Limits",
         "bulkDescription": "Writes the same limits to the selected nodes; their current values are not read.",
         "bulkEffectHint": "This only writes the setting; whether the limits take effect depends on the host (Linux with systemd, tmux 3.6 or newer).",
+        "chooseMode": "Choose \"No Limit\" or \"Custom Limits\" first.",
         "targets": "Will be written ({{count}})",
         "skipped": "Skipped ({{count}})",
         "noTargets": "None of the selected nodes accept memory limits.",
@@ -4152,7 +4166,17 @@ export const I18N_RESOURCES = {
         "memory": {
           "title": "内存限额",
           "description": "限制每个窗口内进程可用的内存。需要 Linux + systemd（tmux 3.6 及以上），其他宿主自动忽略。",
-          "enabled": "启用内存限额",
+          "modeLabel": "限额方式",
+          "mode": {
+            "unlimited": {
+              "title": "不限制",
+              "description": "解除全部窗口的内存限额，含已在运行的窗口。"
+            },
+            "custom": {
+              "title": "自定义限额",
+              "description": "按下方数值限制每个窗口的内存。"
+            }
+          },
           "high": "软限额（MB）",
           "highHint": "超过后内核会限速并回收该窗口的内存页，不杀进程。",
           "max": "硬限额（MB）",
@@ -4160,7 +4184,7 @@ export const I18N_RESOURCES = {
           "swapMax": "交换限额（MB）",
           "interval": "采样周期（秒）",
           "intervalHint": "取值 {{min}}–{{max}} 秒。",
-          "unlimitedHint": "0 = 不限",
+          "unlimitedHint": "填 0 只取消这一项，其余限额照旧。",
           "invalidMb": "请填 0 到 {{max}} 之间的整数。",
           "invalidInterval": "请填 {{min}} 到 {{max}} 之间的整数。",
           "highAboveMax": "软限额不能大于硬限额。",
@@ -4168,7 +4192,9 @@ export const I18N_RESOURCES = {
           "saveFailed": "内存限额保存失败：{{message}}",
           "saved": "内存限额已保存",
           "limitsUnsupported": "限额在这些设备上不会生效：{{devices}}",
-          "limitsUnsupportedHint": "按窗口限额需 Linux + systemd，且 tmux 3.6 及以上。"
+          "limitsUnsupportedHint": "按窗口限额需 Linux + systemd，且 tmux 3.6 及以上。",
+          "notReleased": "设置为不限制，但仍有 {{count}} 个窗口带限额：{{windows}}",
+          "staleSample": "{{count}} 个窗口的读数已过期（最后采样于 {{ago}}），无法确认限额是否已解除。"
         },
         "routeMode": {
           "title": "延迟优化",
@@ -5453,6 +5479,7 @@ export const I18N_RESOURCES = {
       "memoryScope": "作用域",
       "memoryLimitUnavailable": "窗口限额：此宿主不支持（需 tmux ≥ 3.6）",
       "memorySourceRss": "读数来源：进程树 RSS 合计",
+      "memoryStale": "读数已过期（采样于 {{ago}}），不代表当前限额",
       "noWindowSelected": "未选择窗口",
       "selectWindowToStart": "选择一个窗口开始"
     },
@@ -6253,6 +6280,7 @@ export const I18N_RESOURCES = {
         "bulkTitle": "批量设置内存限额",
         "bulkDescription": "把同一份限额写入所选节点，不读取各自的当前值。",
         "bulkEffectHint": "写入的只是设置；限额是否生效取决于宿主（需 Linux + systemd，tmux 3.6 及以上）。",
+        "chooseMode": "须先选择「不限制」或「自定义限额」。",
         "targets": "将写入（{{count}}）",
         "skipped": "跳过（{{count}}）",
         "noTargets": "所选节点均不能改内存限额。",
@@ -7842,7 +7870,17 @@ export const I18N_RESOURCES = {
         "memory": {
           "title": "メモリ上限",
           "description": "各ウィンドウ内のプロセスが使えるメモリを制限します。Linux と systemd（tmux 3.6 以降）が必要で、他のホストでは無視されます。",
-          "enabled": "メモリ上限を適用",
+          "modeLabel": "上限の方式",
+          "mode": {
+            "unlimited": {
+              "title": "制限なし",
+              "description": "実行中を含むすべてのウィンドウのメモリ上限を解除します。"
+            },
+            "custom": {
+              "title": "上限を指定",
+              "description": "下の値で各ウィンドウのメモリを制限します。"
+            }
+          },
           "high": "ソフト上限（MB）",
           "highHint": "これを超えるとカーネルが該当ウィンドウを抑制してページを回収します（強制終了はしません）。",
           "max": "ハード上限（MB）",
@@ -7850,7 +7888,7 @@ export const I18N_RESOURCES = {
           "swapMax": "スワップ上限（MB）",
           "interval": "サンプリング間隔（秒）",
           "intervalHint": "{{min}}〜{{max}} 秒の範囲で指定します。",
-          "unlimitedHint": "0 = 無制限",
+          "unlimitedHint": "0 にするとこの項目のみ解除され、他の上限はそのままです。",
           "invalidMb": "0 から {{max}} までの整数を入力してください。",
           "invalidInterval": "{{min}} から {{max}} までの整数を入力してください。",
           "highAboveMax": "ソフト上限はハード上限を超えられません。",
@@ -7858,7 +7896,9 @@ export const I18N_RESOURCES = {
           "saveFailed": "メモリ上限の保存に失敗しました：{{message}}",
           "saved": "メモリ上限を保存しました",
           "limitsUnsupported": "次のデバイスでは上限が適用されません：{{devices}}",
-          "limitsUnsupportedHint": "ウィンドウ単位の上限には Linux と systemd、tmux 3.6 以降が必要です。"
+          "limitsUnsupportedHint": "ウィンドウ単位の上限には Linux と systemd、tmux 3.6 以降が必要です。",
+          "notReleased": "制限なしに設定済みですが、{{count}} 個のウィンドウにまだ上限があります：{{windows}}",
+          "staleSample": "{{count}} 個のウィンドウの読み取り値が古くなっています（最終取得：{{ago}}）。上限が解除されたか確認できません。"
         },
         "routeMode": {
           "title": "遅延最適化",
@@ -9143,6 +9183,7 @@ export const I18N_RESOURCES = {
       "memoryScope": "スコープ",
       "memoryLimitUnavailable": "ウィンドウ上限：このホストでは非対応（tmux 3.6 以降が必要）",
       "memorySourceRss": "読み取り値：プロセスツリー RSS の合計",
+      "memoryStale": "読み取り値が古くなっています（{{ago}}に取得）。現在の上限とは限りません",
       "noWindowSelected": "ウィンドウが選択されていません",
       "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },
@@ -9943,6 +9984,7 @@ export const I18N_RESOURCES = {
         "bulkTitle": "メモリ上限を一括設定",
         "bulkDescription": "同じ上限を選択したノードに書き込みます（各ノードの現在値は読み取りません）。",
         "bulkEffectHint": "書き込むのは設定のみです。上限が適用されるかはホスト次第です（Linux と systemd、tmux 3.6 以降が必要）。",
+        "chooseMode": "先に「制限なし」または「上限を指定」を選択してください。",
         "targets": "書き込み対象（{{count}}）",
         "skipped": "スキップ（{{count}}）",
         "noTargets": "選択したノードはいずれもメモリ上限を変更できません。",

@@ -1,6 +1,9 @@
 // 「内存限额」表单的草稿与校验。口径与网关一致（见 packages/shared/src/contracts/window-memory.ts）：
-// 三个额度都是 MB 整数，0 表示不设该属性；软限额不得大于硬限额；采样周期 2–60 秒。
+// 三个额度都是 MB 整数，0 表示这一项不限（其余两项照旧）；软限额不得大于硬限额；采样周期 2–60 秒。
 // 越界的值网关一律回 400，与其点了才知道，不如在字段上直接说清楚。
+//
+// 「不限制」与「自定义限额」是两种方式，对应记录里的 `enabled`。选「不限制」时额度输入框收起，
+// 里面的数字只是留着给切回「自定义」用：填坏了也不该挡住「不限制」的保存。
 
 import {
   WINDOW_MEMORY_INTERVAL_MAX_SEC,
@@ -28,6 +31,18 @@ export interface MemoryLimitsParseResult {
 }
 
 const MB_FIELDS = ['memoryHighMb', 'memoryMaxMb', 'memorySwapMaxMb'] as const;
+
+export type MemoryLimitsMode = 'unlimited' | 'custom';
+
+export function memoryLimitsMode(draft: Pick<MemoryLimitsDraft, 'enabled'>): MemoryLimitsMode {
+  return draft.enabled ? 'custom' : 'unlimited';
+}
+
+/** 记录是否等于「不限制」：关掉开关，或三项额度全为 0。 */
+export function isUnlimitedSettings(settings: WindowMemorySettings): boolean {
+  if (!settings.enabled) return true;
+  return settings.memoryHighMb <= 0 && settings.memoryMaxMb <= 0 && settings.memorySwapMaxMb <= 0;
+}
 
 export function memoryLimitsDraft(settings: WindowMemorySettings): MemoryLimitsDraft {
   return {
@@ -72,9 +87,20 @@ function highAboveMax(mb: Record<MbField, number>): boolean {
   return mb.memoryHighMb > 0 && mb.memoryMaxMb > 0 && mb.memoryHighMb > mb.memoryMaxMb;
 }
 
+const ZERO_MB: Record<MbField, number> = { memoryHighMb: 0, memoryMaxMb: 0, memorySwapMaxMb: 0 };
+
+/**
+ * 「不限制」下额度字段是收起的：数字合法就原样留着，不合法（或软高于硬，网关会拒）就一并清零，
+ * 错误不写回——用户看不到那几个输入框，报在上面只会让保存莫名失败。
+ */
+function unlimitedMbFields(draft: MemoryLimitsDraft): Record<MbField, number> {
+  const mb = parseMbFields(draft, {});
+  return mb && !highAboveMax(mb) ? mb : ZERO_MB;
+}
+
 export function parseMemoryLimitsDraft(draft: MemoryLimitsDraft): MemoryLimitsParseResult {
   const errors: MemoryLimitsErrors = {};
-  const mb = parseMbFields(draft, errors);
+  const mb = draft.enabled ? parseMbFields(draft, errors) : unlimitedMbFields(draft);
   const sampleIntervalSec = boundedInteger(
     draft.sampleIntervalSec,
     WINDOW_MEMORY_INTERVAL_MIN_SEC,
@@ -89,6 +115,25 @@ export function parseMemoryLimitsDraft(draft: MemoryLimitsDraft): MemoryLimitsPa
     return { settings: null, errors };
   }
   return { settings: { enabled: draft.enabled, ...mb, sampleIntervalSec }, errors };
+}
+
+/**
+ * 批量写入：方式必须显式选过（`null` 即没选，一个请求都不发）。「不限制」连同额度一起清零——
+ * 批量本就不读各节点的旧值，没有「留着给切回用」的数字可言。
+ */
+export function parseBulkMemoryLimits(
+  mode: MemoryLimitsMode | null,
+  draft: MemoryLimitsDraft
+): MemoryLimitsParseResult {
+  if (mode === null) return { settings: null, errors: {} };
+  if (mode === 'custom') return parseMemoryLimitsDraft({ ...draft, enabled: true });
+  return parseMemoryLimitsDraft({
+    ...draft,
+    enabled: false,
+    memoryHighMb: '0',
+    memoryMaxMb: '0',
+    memorySwapMaxMb: '0',
+  });
 }
 
 export function memoryLimitsEqual(a: WindowMemorySettings, b: WindowMemorySettings): boolean {

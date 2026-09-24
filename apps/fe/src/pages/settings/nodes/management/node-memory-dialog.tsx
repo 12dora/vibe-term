@@ -4,9 +4,11 @@
 // 与本机卡那一段是同一份记录、同一套校验。
 //
 // 写进设置不等于宿主能限额：同时拉一次目标节点的 `/api/sessions/memory`，宿主没有
-// pane scope 时在表单上方把「写了也不生效」说清楚。这一发失败不影响表单与保存。
+// pane scope 时在表单上方把「写了也不生效」说清楚；设置已是「不限制」而窗口读数仍带限额时，
+// 按读数新旧分别说「仍带限额」或「读数已过期」。这一发失败不影响表单与保存。
 
 import type { NodeRow } from '@/node/mesh-nodes';
+import type { WindowMemorySettings } from '@vibeterm/shared';
 import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
@@ -17,7 +19,7 @@ import {
   DialogTitle,
 } from '@vibeterm/ui/dialog';
 import { Loader2, Save } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Notice } from '../../components/form-primitives';
@@ -26,6 +28,12 @@ import {
   type MemoryLimitsErrors,
   memoryLimitsDraft,
 } from '../memory-limits-form';
+import {
+  MemoryLimitsReleaseNotice,
+  type MemoryLimitsReleaseReport,
+  memoryLimitsReleaseReport,
+} from '../memory-limits-release';
+import { useSessionsMemorySnapshot } from '../memory-limits-unsupported';
 import { MemoryLimitsFields } from './memory-limits-fields';
 import {
   type MemoryLimitsIo,
@@ -43,6 +51,9 @@ export interface NodeMemoryDialogBodyProps {
   saving: boolean;
   /** 该节点上限额落不到 cgroup 的设备名；为空即不提示。 */
   unsupportedDevices?: string[];
+  /** 「设置已是不限制、窗口读数仍带限额」的对照结果；`null` 即不提示。 */
+  releaseReport?: MemoryLimitsReleaseReport | null;
+  now?: number;
   onChange: (patch: Partial<MemoryLimitsDraft>) => void;
 }
 
@@ -54,6 +65,8 @@ export function NodeMemoryDialogBody({
   loadError,
   saving,
   unsupportedDevices = [],
+  releaseReport = null,
+  now = Date.now(),
   onChange,
 }: NodeMemoryDialogBodyProps) {
   const { t } = useTranslation();
@@ -99,6 +112,11 @@ export function NodeMemoryDialogBody({
           <p>{t('settings.nodes.memory.limitsUnsupportedHint')}</p>
         </Notice>
       )}
+      <MemoryLimitsReleaseNotice
+        report={releaseReport}
+        now={now}
+        testId={`nodes-memory-release-${nodeId}`}
+      />
       {content}
     </div>
   );
@@ -111,7 +129,8 @@ function useNodeMemoryLimits(row: NodeRow, io: MemoryLimitsIo, onSaved: () => vo
   // 原始异常存着、渲染时才翻译：这样读取回路不依赖 `t`，切语言不会把草稿冲掉重拉。
   const [failure, setFailure] = useState<{ error: unknown } | null>(null);
   const [saving, setSaving] = useState(false);
-  const [unsupportedDevices, setUnsupportedDevices] = useState<string[]>([]);
+  // 只对照打开时读到的那份记录：保存成功后对话框即关闭，不会拿刚写下的值去比旧读数。
+  const [baseline, setBaseline] = useState<WindowMemorySettings | null>(null);
   // 节点列表每次刷新都会换一个新的行对象：拿 ref 读它，否则草稿会被重新 GET 冲掉。
   const rowRef = useRef(row);
   rowRef.current = row;
@@ -129,7 +148,9 @@ function useNodeMemoryLimits(row: NodeRow, io: MemoryLimitsIo, onSaved: () => vo
     let alive = true;
     io.get(rowRef.current)
       .then((settings) => {
-        if (alive) setDraft(memoryLimitsDraft(settings));
+        if (!alive) return;
+        setDraft(memoryLimitsDraft(settings));
+        setBaseline(settings);
       })
       .catch((err) => {
         if (alive) setFailure({ error: err });
@@ -139,21 +160,12 @@ function useNodeMemoryLimits(row: NodeRow, io: MemoryLimitsIo, onSaved: () => vo
     };
   }, [io]);
 
-  useEffect(() => {
-    const loadSessions = io.sessions;
-    if (!loadSessions) return;
-    let alive = true;
-    loadSessions(rowRef.current)
-      .then((response) => {
-        if (alive) setUnsupportedDevices(memoryLimitsUnsupportedDevices(response));
-      })
-      .catch(() => {
-        // 这条提示是锦上添花：拉不到就不提示，绝不能挡住限额表单。
-      });
-    return () => {
-      alive = false;
-    };
+  // 这一发只用来提示：拉不到就不提示，绝不能挡住限额表单。
+  const loadSessions = useMemo(() => {
+    const load = io.sessions;
+    return load ? () => load(rowRef.current) : undefined;
   }, [io]);
+  const sessions = useSessionsMemorySnapshot(loadSessions);
 
   const update = useCallback((patch: Partial<MemoryLimitsDraft>) => {
     setDraft((previous) => (previous ? { ...previous, ...patch } : previous));
@@ -178,7 +190,11 @@ function useNodeMemoryLimits(row: NodeRow, io: MemoryLimitsIo, onSaved: () => vo
     ? t('settings.nodes.memory.loadFailed', { message: memoryLimitsErrorText(t, failure.error) })
     : null;
 
-  return { draft, errors, loadError, saving, unsupportedDevices, update, save };
+  const now = Date.now();
+  const unsupportedDevices = sessions ? memoryLimitsUnsupportedDevices(sessions) : [];
+  const releaseReport = memoryLimitsReleaseReport(sessions, baseline, now);
+
+  return { draft, errors, loadError, saving, unsupportedDevices, releaseReport, now, update, save };
 }
 
 export function NodeMemoryDialog({
@@ -195,7 +211,7 @@ export function NodeMemoryDialog({
 }) {
   const { t } = useTranslation();
   const close = useCallback(() => onOpenChange(false), [onOpenChange]);
-  const { draft, errors, loadError, saving, unsupportedDevices, update, save } =
+  const { draft, errors, loadError, saving, unsupportedDevices, releaseReport, now, update, save } =
     useNodeMemoryLimits(row, io, close);
 
   return (
@@ -226,6 +242,8 @@ export function NodeMemoryDialog({
           loadError={loadError}
           saving={saving}
           unsupportedDevices={unsupportedDevices}
+          releaseReport={releaseReport}
+          now={now}
           onChange={update}
         />
 

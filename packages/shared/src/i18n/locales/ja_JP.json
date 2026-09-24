@@ -447,7 +447,17 @@
         "memory": {
           "title": "メモリ上限",
           "description": "各ウィンドウ内のプロセスが使えるメモリを制限します。Linux と systemd（tmux 3.6 以降）が必要で、他のホストでは無視されます。",
-          "enabled": "メモリ上限を適用",
+          "modeLabel": "上限の方式",
+          "mode": {
+            "unlimited": {
+              "title": "制限なし",
+              "description": "実行中を含むすべてのウィンドウのメモリ上限を解除します。"
+            },
+            "custom": {
+              "title": "上限を指定",
+              "description": "下の値で各ウィンドウのメモリを制限します。"
+            }
+          },
           "high": "ソフト上限（MB）",
           "highHint": "これを超えるとカーネルが該当ウィンドウを抑制してページを回収します（強制終了はしません）。",
           "max": "ハード上限（MB）",
@@ -455,7 +465,7 @@
           "swapMax": "スワップ上限（MB）",
           "interval": "サンプリング間隔（秒）",
           "intervalHint": "{{min}}〜{{max}} 秒の範囲で指定します。",
-          "unlimitedHint": "0 = 無制限",
+          "unlimitedHint": "0 にするとこの項目のみ解除され、他の上限はそのままです。",
           "invalidMb": "0 から {{max}} までの整数を入力してください。",
           "invalidInterval": "{{min}} から {{max}} までの整数を入力してください。",
           "highAboveMax": "ソフト上限はハード上限を超えられません。",
@@ -463,7 +473,9 @@
           "saveFailed": "メモリ上限の保存に失敗しました：{{message}}",
           "saved": "メモリ上限を保存しました",
           "limitsUnsupported": "次のデバイスでは上限が適用されません：{{devices}}",
-          "limitsUnsupportedHint": "ウィンドウ単位の上限には Linux と systemd、tmux 3.6 以降が必要です。"
+          "limitsUnsupportedHint": "ウィンドウ単位の上限には Linux と systemd、tmux 3.6 以降が必要です。",
+          "notReleased": "制限なしに設定済みですが、{{count}} 個のウィンドウにまだ上限があります：{{windows}}",
+          "staleSample": "{{count}} 個のウィンドウの読み取り値が古くなっています（最終取得：{{ago}}）。上限が解除されたか確認できません。"
         },
         "routeMode": {
           "title": "遅延最適化",
@@ -1748,6 +1760,7 @@
       "memoryScope": "スコープ",
       "memoryLimitUnavailable": "ウィンドウ上限：このホストでは非対応（tmux 3.6 以降が必要）",
       "memorySourceRss": "読み取り値：プロセスツリー RSS の合計",
+      "memoryStale": "読み取り値が古くなっています（{{ago}}に取得）。現在の上限とは限りません",
       "noWindowSelected": "ウィンドウが選択されていません",
       "selectWindowToStart": "開始するにはウィンドウを選択してください"
     },
@@ -2548,6 +2561,7 @@
         "bulkTitle": "メモリ上限を一括設定",
         "bulkDescription": "同じ上限を選択したノードに書き込みます（各ノードの現在値は読み取りません）。",
         "bulkEffectHint": "書き込むのは設定のみです。上限が適用されるかはホスト次第です（Linux と systemd、tmux 3.6 以降が必要）。",
+        "chooseMode": "先に「制限なし」または「上限を指定」を選択してください。",
         "targets": "書き込み対象（{{count}}）",
         "skipped": "スキップ（{{count}}）",
         "noTargets": "選択したノードはいずれもメモリ上限を変更できません。",

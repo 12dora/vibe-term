@@ -239,7 +239,17 @@
         "memory": {
           "title": "内存限额",
           "description": "限制每个窗口内进程可用的内存。需要 Linux + systemd（tmux 3.6 及以上），其他宿主自动忽略。",
-          "enabled": "启用内存限额",
+          "modeLabel": "限额方式",
+          "mode": {
+            "unlimited": {
+              "title": "不限制",
+              "description": "解除全部窗口的内存限额，含已在运行的窗口。"
+            },
+            "custom": {
+              "title": "自定义限额",
+              "description": "按下方数值限制每个窗口的内存。"
+            }
+          },
           "high": "软限额（MB）",
           "highHint": "超过后内核会限速并回收该窗口的内存页，不杀进程。",
           "max": "硬限额（MB）",
@@ -247,7 +257,7 @@
           "swapMax": "交换限额（MB）",
           "interval": "采样周期（秒）",
           "intervalHint": "取值 {{min}}–{{max}} 秒。",
-          "unlimitedHint": "0 = 不限",
+          "unlimitedHint": "填 0 只取消这一项，其余限额照旧。",
           "invalidMb": "请填 0 到 {{max}} 之间的整数。",
           "invalidInterval": "请填 {{min}} 到 {{max}} 之间的整数。",
           "highAboveMax": "软限额不能大于硬限额。",
@@ -255,7 +265,9 @@
           "saveFailed": "内存限额保存失败：{{message}}",
           "saved": "内存限额已保存",
           "limitsUnsupported": "限额在这些设备上不会生效：{{devices}}",
-          "limitsUnsupportedHint": "按窗口限额需 Linux + systemd，且 tmux 3.6 及以上。"
+          "limitsUnsupportedHint": "按窗口限额需 Linux + systemd，且 tmux 3.6 及以上。",
+          "notReleased": "设置为不限制，但仍有 {{count}} 个窗口带限额：{{windows}}",
+          "staleSample": "{{count}} 个窗口的读数已过期（最后采样于 {{ago}}），无法确认限额是否已解除。"
         },
         "routeMode": {
           "title": "延迟优化",
@@ -1762,6 +1774,7 @@
         "bulkTitle": "批量设置内存限额",
         "bulkDescription": "把同一份限额写入所选节点，不读取各自的当前值。",
         "bulkEffectHint": "写入的只是设置；限额是否生效取决于宿主（需 Linux + systemd，tmux 3.6 及以上）。",
+        "chooseMode": "须先选择「不限制」或「自定义限额」。",
         "targets": "将写入（{{count}}）",
         "skipped": "跳过（{{count}}）",
         "noTargets": "所选节点均不能改内存限额。",

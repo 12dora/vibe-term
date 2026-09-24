@@ -1,8 +1,11 @@
-// 对话框里的内存限额表单字段。校验与草稿一律取 `memory-limits-form.ts`（与本机卡同一份），
-// 这里只管排版。
+// 内存限额表单字段：本机卡、单台节点对话框、批量对话框三处共用。校验与草稿一律取
+// `memory-limits-form.ts`，这里只管排版。
 //
-// 不直接复用本机卡那个段落：本机卡与节点表在同一页上同时渲染，两处共用一套写死的
-// `id` / `data-testid` 会在 DOM 里撞车（label htmlFor 只认得第一个）。因此字段 id 带前缀。
+// 本机卡与节点表在同一页上同时渲染，写死的 `id` / `data-testid` 会在 DOM 里撞车
+// （label htmlFor 只认得第一个），因此字段 id 与单选组名都带前缀。
+//
+// 最上面是「不限制 / 自定义限额」二选一：「不限制」是一个动作，而不是把三个数字挨个改成 0。
+// 选「不限制」时额度输入框收起，只留采样周期。
 
 import {
   WINDOW_MEMORY_INTERVAL_MAX_SEC,
@@ -10,18 +13,34 @@ import {
   WINDOW_MEMORY_MB_MAX,
 } from '@vibeterm/shared';
 import { Input } from '@vibeterm/ui/input';
-import { Switch } from '@vibeterm/ui/switch';
+import { InfinityIcon, SlidersHorizontal } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FormField } from '../../components/form-primitives';
-import type {
-  MemoryLimitsDraft,
-  MemoryLimitsErrors,
-  MemoryLimitsField,
+import { ChoiceCard } from '../../remote-access/choice-card';
+import {
+  type MemoryLimitsDraft,
+  type MemoryLimitsErrors,
+  type MemoryLimitsField,
+  type MemoryLimitsMode,
+  memoryLimitsMode,
 } from '../memory-limits-form';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
-const FIELDS: readonly { field: MemoryLimitsField; labelKey: string; hintKey?: string }[] = [
+const MODES: readonly { mode: MemoryLimitsMode; icon: ReactNode }[] = [
+  { mode: 'unlimited', icon: <InfinityIcon className="size-4" /> },
+  { mode: 'custom', icon: <SlidersHorizontal className="size-4" /> },
+];
+
+const INTERVAL_FIELD = {
+  field: 'sampleIntervalSec',
+  labelKey: 'settings.nodes.memory.interval',
+} as const satisfies FieldItem;
+
+type FieldItem = { field: MemoryLimitsField; labelKey: string; hintKey?: string };
+
+const LIMIT_FIELDS: readonly FieldItem[] = [
   {
     field: 'memoryHighMb',
     labelKey: 'settings.nodes.memory.high',
@@ -33,7 +52,6 @@ const FIELDS: readonly { field: MemoryLimitsField; labelKey: string; hintKey?: s
     hintKey: 'settings.nodes.memory.maxHint',
   },
   { field: 'memorySwapMaxMb', labelKey: 'settings.nodes.memory.swapMax' },
-  { field: 'sampleIntervalSec', labelKey: 'settings.nodes.memory.interval' },
 ];
 
 function fieldHint(t: Translate, field: MemoryLimitsField, hintKey?: string): string {
@@ -60,6 +78,43 @@ function fieldError(
   });
 }
 
+export function MemoryLimitsModeChooser({
+  mode,
+  idPrefix,
+  disabled,
+  onSelect,
+}: {
+  /** `null` = 还没选（批量框的初始状态）。 */
+  mode: MemoryLimitsMode | null;
+  idPrefix: string;
+  disabled?: boolean;
+  onSelect: (mode: MemoryLimitsMode) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="grid gap-3 sm:grid-cols-2"
+      role="radiogroup"
+      aria-label={t('settings.nodes.memory.modeLabel')}
+      data-testid={`${idPrefix}-mode`}
+    >
+      {MODES.map((item) => (
+        <ChoiceCard
+          key={item.mode}
+          group={`${idPrefix}-mode`}
+          value={item.mode}
+          icon={item.icon}
+          selected={mode === item.mode}
+          disabled={disabled === true}
+          onSelect={onSelect}
+          testidPrefix={`${idPrefix}-mode`}
+          i18nPrefix="settings.nodes.memory.mode"
+        />
+      ))}
+    </div>
+  );
+}
+
 export interface MemoryLimitsFieldsProps {
   draft: MemoryLimitsDraft;
   errors: MemoryLimitsErrors;
@@ -67,6 +122,12 @@ export interface MemoryLimitsFieldsProps {
   idPrefix: string;
   disabled?: boolean;
   onChange: (patch: Partial<MemoryLimitsDraft>) => void;
+  /**
+   * 方式由调用方单独持有时传入（批量框：`null` = 还没选）；缺省按 `draft.enabled` 推导，
+   * 选择落回 `onChange({ enabled })`。
+   */
+  mode?: MemoryLimitsMode | null;
+  onModeChange?: (mode: MemoryLimitsMode) => void;
 }
 
 /** 表单本体。单独导出且不带请求：对话框走 portal，静态渲染只看得到这一块。 */
@@ -76,29 +137,24 @@ export function MemoryLimitsFields({
   idPrefix,
   disabled,
   onChange,
+  mode = memoryLimitsMode(draft),
+  onModeChange,
 }: MemoryLimitsFieldsProps) {
   const { t } = useTranslation();
-  const enabledId = `${idPrefix}-enabled`;
+  const fields: readonly FieldItem[] =
+    mode === 'custom' ? [...LIMIT_FIELDS, INTERVAL_FIELD] : [INTERVAL_FIELD];
+  const selectMode =
+    onModeChange ?? ((next: MemoryLimitsMode) => onChange({ enabled: next === 'custom' }));
   return (
     <div className="flex flex-col gap-3" data-testid={`${idPrefix}-form`}>
-      <label
-        className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5"
-        htmlFor={enabledId}
-      >
-        <span className="min-w-0 text-sm font-medium" id={`${enabledId}-label`}>
-          {t('settings.nodes.memory.enabled')}
-        </span>
-        <Switch
-          id={enabledId}
-          aria-labelledby={`${enabledId}-label`}
-          checked={draft.enabled}
-          disabled={disabled}
-          onCheckedChange={(next) => onChange({ enabled: next === true })}
-          data-testid={enabledId}
-        />
-      </label>
+      <MemoryLimitsModeChooser
+        mode={mode}
+        idPrefix={idPrefix}
+        disabled={disabled}
+        onSelect={selectMode}
+      />
       <div className="grid gap-3 sm:grid-cols-2">
-        {FIELDS.map((item) => (
+        {fields.map((item) => (
           <FormField
             key={item.field}
             id={`${idPrefix}-${item.field}`}

@@ -239,7 +239,17 @@
         "memory": {
           "title": "Memory limits",
           "description": "Caps how much memory the processes in each window may use. Requires Linux with systemd (tmux 3.6 or newer); other hosts ignore it.",
-          "enabled": "Apply memory limits",
+          "modeLabel": "Limit mode",
+          "mode": {
+            "unlimited": {
+              "title": "No Limit",
+              "description": "Removes memory limits from all windows, including running ones."
+            },
+            "custom": {
+              "title": "Custom Limits",
+              "description": "Caps each window's memory with the values below."
+            }
+          },
           "high": "Soft limit (MB)",
           "highHint": "Above this the kernel throttles the window and reclaims its pages; nothing is killed.",
           "max": "Hard limit (MB)",
@@ -247,7 +257,7 @@
           "swapMax": "Swap limit (MB)",
           "interval": "Sample interval (seconds)",
           "intervalHint": "Between {{min}} and {{max}} seconds.",
-          "unlimitedHint": "0 = unlimited",
+          "unlimitedHint": "0 removes only this limit; the others stay.",
           "invalidMb": "Enter a whole number between 0 and {{max}}.",
           "invalidInterval": "Enter a whole number between {{min}} and {{max}}.",
           "highAboveMax": "The soft limit must not exceed the hard limit.",
@@ -255,7 +265,9 @@
           "saveFailed": "Failed to save memory limits: {{message}}",
           "saved": "Memory limits saved",
           "limitsUnsupported": "Memory limits will not take effect on these devices: {{devices}}",
-          "limitsUnsupportedHint": "Per-window limits need Linux with systemd and tmux 3.6 or newer."
+          "limitsUnsupportedHint": "Per-window limits need Linux with systemd and tmux 3.6 or newer.",
+          "notReleased": "Set to no limit, but {{count}} window(s) still have limits: {{windows}}",
+          "staleSample": "Readings for {{count}} window(s) are out of date (last sampled {{ago}}); cannot confirm the limits were removed."
         },
         "routeMode": {
           "title": "Latency optimisation",
@@ -1762,6 +1774,7 @@
         "bulkTitle": "Set Memory Limits",
         "bulkDescription": "Writes the same limits to the selected nodes; their current values are not read.",
         "bulkEffectHint": "This only writes the setting; whether the limits take effect depends on the host (Linux with systemd, tmux 3.6 or newer).",
+        "chooseMode": "Choose \"No Limit\" or \"Custom Limits\" first.",
         "targets": "Will be written ({{count}})",
         "skipped": "Skipped ({{count}})",
         "noTargets": "None of the selected nodes accept memory limits.",
