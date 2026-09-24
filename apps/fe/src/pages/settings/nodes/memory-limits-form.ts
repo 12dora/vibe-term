@@ -4,6 +4,8 @@
 //
 // 「不限制」与「自定义限额」是两种方式，对应记录里的 `enabled`。选「不限制」时额度输入框收起，
 // 里面的数字只是留着给切回「自定义」用：填坏了也不该挡住「不限制」的保存。
+// 「自定义」里三项全填 0 与「不限制」效果相同，保存时一律存成「不限制」，免得下次打开时
+// 选中的方式与实际效果对不上。
 
 import {
   WINDOW_MEMORY_INTERVAL_MAX_SEC,
@@ -44,9 +46,10 @@ export function isUnlimitedSettings(settings: WindowMemorySettings): boolean {
   return settings.memoryHighMb <= 0 && settings.memoryMaxMb <= 0 && settings.memorySwapMaxMb <= 0;
 }
 
+/** 记录里「开着但三项全 0」（老版本存下的）同样按「不限制」打开，方式与效果一致。 */
 export function memoryLimitsDraft(settings: WindowMemorySettings): MemoryLimitsDraft {
   return {
-    enabled: settings.enabled,
+    enabled: !isUnlimitedSettings(settings),
     memoryHighMb: String(settings.memoryHighMb),
     memoryMaxMb: String(settings.memoryMaxMb),
     memorySwapMaxMb: String(settings.memorySwapMaxMb),
@@ -114,26 +117,43 @@ export function parseMemoryLimitsDraft(draft: MemoryLimitsDraft): MemoryLimitsPa
   if (!mb || sampleIntervalSec === null || Object.keys(errors).length > 0) {
     return { settings: null, errors };
   }
-  return { settings: { enabled: draft.enabled, ...mb, sampleIntervalSec }, errors };
+  const allZero = MB_FIELDS.every((field) => mb[field] === 0);
+  return { settings: { enabled: draft.enabled && !allZero, ...mb, sampleIntervalSec }, errors };
 }
 
 /**
- * 批量写入：方式必须显式选过（`null` 即没选，一个请求都不发）。「不限制」连同额度一起清零——
- * 批量本就不读各节点的旧值，没有「留着给切回用」的数字可言。
+ * 批量写入的内容。`replace` = 把这份记录原样写到每台上；`release` = 每台各自改成「不限制」，
+ * 额度与采样周期保留各节点自己的值（批量表单里没有能代表每台现值的数字）。
+ */
+export type MemoryLimitsBatchWrite =
+  | { kind: 'replace'; settings: WindowMemorySettings }
+  | { kind: 'release' };
+
+export interface BulkMemoryLimitsParseResult {
+  write: MemoryLimitsBatchWrite | null;
+  errors: MemoryLimitsErrors;
+}
+
+/** `release` 落到某台节点上：只翻 `enabled`，其余字段照它现在的记录。 */
+export function releasedMemoryLimits(current: WindowMemorySettings): WindowMemorySettings {
+  return { ...current, enabled: false };
+}
+
+/**
+ * 批量写入：方式必须显式选过（`null` 即没选，一个请求都不发）。「不限制」不带任何数字，
+ * 由各节点保留自己的额度与采样周期；「自定义」照表单整条写入。
  */
 export function parseBulkMemoryLimits(
   mode: MemoryLimitsMode | null,
   draft: MemoryLimitsDraft
-): MemoryLimitsParseResult {
-  if (mode === null) return { settings: null, errors: {} };
-  if (mode === 'custom') return parseMemoryLimitsDraft({ ...draft, enabled: true });
-  return parseMemoryLimitsDraft({
-    ...draft,
-    enabled: false,
-    memoryHighMb: '0',
-    memoryMaxMb: '0',
-    memorySwapMaxMb: '0',
-  });
+): BulkMemoryLimitsParseResult {
+  if (mode === null) return { write: null, errors: {} };
+  if (mode === 'unlimited') return { write: { kind: 'release' }, errors: {} };
+  const parsed = parseMemoryLimitsDraft({ ...draft, enabled: true });
+  return {
+    write: parsed.settings ? { kind: 'replace', settings: parsed.settings } : null,
+    errors: parsed.errors,
+  };
 }
 
 export function memoryLimitsEqual(a: WindowMemorySettings, b: WindowMemorySettings): boolean {

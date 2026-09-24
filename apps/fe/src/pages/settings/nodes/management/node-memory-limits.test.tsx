@@ -98,12 +98,13 @@ describe('内存限额资格分拣', () => {
 
 describe('批量写入', () => {
   const settings: WindowMemorySettings = { ...WINDOW_MEMORY_SETTINGS_DEFAULTS, memoryMaxMb: 2048 };
+  const write = { kind: 'replace', settings } as const;
 
   test('一台失败不影响其余几台，成败双计且失败按输入顺序', async () => {
     const written: string[] = [];
     const summary = await runMemoryLimitsBatch({
       targets: [row({ id: 'a' }), row({ id: 'b' }), row({ id: 'c' })],
-      settings,
+      write,
       t,
       io: {
         get: () => Promise.reject(new Error('unused')),
@@ -126,7 +127,7 @@ describe('批量写入', () => {
     const targets = Array.from({ length: 7 }, (_, index) => row({ id: `n${index}` }));
     const summary = await runMemoryLimitsBatch({
       targets,
-      settings,
+      write,
       t,
       io: {
         get: () => Promise.reject(new Error('unused')),
@@ -145,10 +146,75 @@ describe('批量写入', () => {
     expect(bodies.every((body) => body.memoryMaxMb === 2048)).toBe(true);
   });
 
+  test('「不限制」逐台读出现值，只翻开关：各节点的额度与采样周期原样保留', async () => {
+    const current: Record<string, WindowMemorySettings> = {
+      a: { ...WINDOW_MEMORY_SETTINGS_DEFAULTS, sampleIntervalSec: 30 },
+      b: {
+        enabled: false,
+        memoryHighMb: 0,
+        memoryMaxMb: 0,
+        memorySwapMaxMb: 0,
+        sampleIntervalSec: 2,
+      },
+    };
+    const bodies: Record<string, WindowMemorySettings> = {};
+    const summary = await runMemoryLimitsBatch({
+      targets: [row({ id: 'a' }), row({ id: 'b' })],
+      write: { kind: 'release' },
+      t,
+      io: {
+        get: async (target) => current[target.id] as WindowMemorySettings,
+        put: async (target, next) => {
+          bodies[target.id] = next;
+          return next;
+        },
+      },
+    });
+    expect(summary).toEqual({ saved: 2, failed: [] });
+    expect(bodies).toEqual({
+      a: { ...WINDOW_MEMORY_SETTINGS_DEFAULTS, enabled: false, sampleIntervalSec: 30 },
+      b: current.b as WindowMemorySettings,
+    });
+  });
+
+  test('「不限制」读不到现值的那台记为失败、不发 PUT，其余照写；读写合计并发不超过上限', async () => {
+    let inflight = 0;
+    let peak = 0;
+    const put: string[] = [];
+    const track = async <T,>(work: () => T): Promise<T> => {
+      inflight += 1;
+      peak = Math.max(peak, inflight);
+      await Promise.resolve();
+      inflight -= 1;
+      return work();
+    };
+    const targets = Array.from({ length: 6 }, (_, index) => row({ id: `n${index}` }));
+    const summary = await runMemoryLimitsBatch({
+      targets,
+      write: { kind: 'release' },
+      t,
+      io: {
+        get: (target) =>
+          track(() => {
+            if (target.id === 'n2') throw new Error('offline');
+            return WINDOW_MEMORY_SETTINGS_DEFAULTS;
+          }),
+        put: (target, next) =>
+          track(() => {
+            put.push(target.id);
+            return next;
+          }),
+      },
+    });
+    expect(put.sort()).toEqual(['n0', 'n1', 'n3', 'n4', 'n5']);
+    expect(summary.failed).toEqual([{ id: 'n2', name: 'n2', message: 'offline' }]);
+    expect(peak).toBeLessThanOrEqual(3);
+  });
+
   test('目标为空时不发请求', async () => {
     const summary = await runMemoryLimitsBatch({
       targets: [],
-      settings,
+      write,
       t,
       io: {
         get: () => Promise.reject(new Error('unused')),

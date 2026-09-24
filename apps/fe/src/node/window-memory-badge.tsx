@@ -7,8 +7,9 @@
 // 没有 pane scope（tmux < 3.6 或没带 systemd 支持、macOS）时按 pane 进程树 RSS 合计的兜底，
 // 这条路径上**没有任何限额**，不能拿「未设限」的 ∞ 去糊弄——提示里要说清楚。
 //
-// 网关会在设备重连时重放缓存的读数，采样停摆时那份读数可能是几天前的：到达时就已过期的读数
-// 一律灰显，提示里只说「读数已过期」，不再列出旧限额，也不再按旧限额变色。
+// 帧停了读数就变旧：连着两次心跳没有新帧先灰显（提示里只说「读数已过期」，不再列旧限额、
+// 不再按旧限额变色），再过一跳整块收起。新旧只按浏览器本地的 `receivedAt` 判，不拿节点的
+// `sampledAt` 比浏览器时钟——没对时的节点会被一直判成过期。
 
 import { formatRelative } from '@/lib/format-relative';
 import { TONE_CLASS } from '@/lib/tone';
@@ -26,7 +27,7 @@ import { MemoryStick } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNodeTmuxStore, useTmuxSlice } from './tmux-slice';
-import { isWindowMemorySampleStale } from './window-memory-staleness';
+import { WINDOW_MEMORY_FRAME_STALE_MS, isWindowMemoryFrameStale } from './window-memory-staleness';
 
 export type WindowMemoryTone = 'ok' | 'warn' | 'blocked' | 'stale';
 
@@ -43,15 +44,8 @@ const TONE_CHIP_CLASS: Record<WindowMemoryTone, string> = {
 /** 未设限（cgroup 值为 `max`）在 wire 上是 0。 */
 const UNLIMITED = '∞';
 
-/**
- * 到达时就已过期的读数（网关重放的旧缓存）。参照时刻取「本地收到」与「现在」中较晚的一个：
- * 徽标的时钟只在过期时醒，拿挂载时的 `now` 比新帧会把新帧算得比实际更新，反之不会误判。
- */
 export function isWindowMemoryBadgeStale(sample: WindowMemorySample, now: number): boolean {
-  return isWindowMemorySampleStale({
-    sampledAt: sample.sampledAt,
-    now: Math.max(now, sample.receivedAt),
-  });
+  return isWindowMemoryFrameStale(sample.receivedAt, now);
 }
 
 export function windowMemoryTone(sample: WindowMemorySample, stale = false): WindowMemoryTone {
@@ -83,9 +77,9 @@ function limitLines(t: Translate, sample: WindowMemorySample): string[] {
   ];
 }
 
-/** 过期读数的采样时刻，按相对时间说（「3 天前」），浏览器与网关的时钟差在这里无关紧要。 */
+/** 过期读数按「最后一帧是多久前收到的」说：两端都是浏览器时钟，不受节点时钟偏差影响。 */
 function staleLine(t: Translate, sample: WindowMemorySample, now: number): string {
-  const ago = formatRelative(t, sample.sampledAt, now, 'settings.share.time') ?? '';
+  const ago = formatRelative(t, sample.receivedAt, now, 'settings.share.time') ?? '';
   return t('window.memoryStale', { ago });
 }
 
@@ -105,21 +99,33 @@ export function windowMemoryTooltipLines(
   return lines;
 }
 
+/** 这一帧之后要醒的几个时刻离现在多久：灰显那一刻、收起那一刻；已经过去的不再列出。 */
+export function windowMemoryClockDelaysMs(receivedAt: number | null, now: number): number[] {
+  const expiry = windowMemoryExpiryDelayMs(receivedAt, now);
+  if (receivedAt === null || expiry === null || expiry === 0) return [];
+  const staleIn = receivedAt + WINDOW_MEMORY_FRAME_STALE_MS - now;
+  // 过期判定是严格大于，醒早了一毫秒就还是新鲜的。
+  return staleIn >= 0 ? [staleIn + 1, expiry] : [expiry];
+}
+
 /**
- * 徽标读时间的唯一入口：**不做周期性 tick**。过期时刻由这一帧的到达时刻（本地盖章）算得出来，
- * 只在那一刻醒一次；新样本带来新的 `receivedAt`，定时器随之重排。
+ * 徽标读时间的唯一入口：**不做周期性 tick**。灰显与收起的时刻都由这一帧的到达时刻（本地盖章）
+ * 算得出来，只在这两个时刻各醒一次；新样本带来新的 `receivedAt`，定时器随之重排。
+ * 返回值不早于 `receivedAt`：挂载时的旧 `now` 比新帧会把新帧算得比实际更旧。
  */
 function useWindowMemoryClock(receivedAt: number | null): number {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const delay = windowMemoryExpiryDelayMs(receivedAt, Date.now());
-    if (delay === null) return;
-    const timer = setTimeout(() => setNow(Date.now()), delay);
-    return () => clearTimeout(timer);
+    const timers = windowMemoryClockDelaysMs(receivedAt, Date.now()).map((delay) =>
+      setTimeout(() => setNow(Date.now()), delay)
+    );
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+    };
   }, [receivedAt]);
 
-  return now;
+  return Math.max(now, receivedAt ?? 0);
 }
 
 /** 逐字段订阅：网关每 30 s 重发一帧心跳，整对象订阅会让徽标每帧空转。 */
@@ -177,11 +183,7 @@ export function WindowMemoryBadge({ nodeId, deviceId, windowId }: WindowMemoryBa
 
   const stale = isWindowMemoryBadgeStale(fresh, now);
   const tone = windowMemoryTone(fresh, stale);
-  const lines = windowMemoryTooltipLines(
-    t,
-    fresh,
-    stale ? { now: Math.max(now, fresh.receivedAt) } : null
-  );
+  const lines = windowMemoryTooltipLines(t, fresh, stale ? { now } : null);
   return (
     <span
       className={cn(

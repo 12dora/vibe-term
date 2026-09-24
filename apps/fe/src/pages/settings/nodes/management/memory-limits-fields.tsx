@@ -5,7 +5,7 @@
 // （label htmlFor 只认得第一个），因此字段 id 与单选组名都带前缀。
 //
 // 最上面是「不限制 / 自定义限额」二选一：「不限制」是一个动作，而不是把三个数字挨个改成 0。
-// 选「不限制」时额度输入框收起，只留采样周期。
+// 选「不限制」时额度输入框收起，只留采样周期（批量框连采样周期也收起，见 `intervalWhenUnlimited`）。
 
 import {
   WINDOW_MEMORY_INTERVAL_MAX_SEC,
@@ -78,6 +78,14 @@ function fieldError(
   });
 }
 
+function formFields(
+  mode: MemoryLimitsMode | null,
+  intervalWhenUnlimited: boolean
+): readonly FieldItem[] {
+  if (mode === 'custom') return [...LIMIT_FIELDS, INTERVAL_FIELD];
+  return intervalWhenUnlimited ? [INTERVAL_FIELD] : [];
+}
+
 export function MemoryLimitsModeChooser({
   mode,
   idPrefix,
@@ -128,6 +136,8 @@ export interface MemoryLimitsFieldsProps {
    */
   mode?: MemoryLimitsMode | null;
   onModeChange?: (mode: MemoryLimitsMode) => void;
+  /** 「不限制」下是否还给采样周期输入框；缺省给。 */
+  intervalWhenUnlimited?: boolean;
 }
 
 /** 表单本体。单独导出且不带请求：对话框走 portal，静态渲染只看得到这一块。 */
@@ -139,10 +149,10 @@ export function MemoryLimitsFields({
   onChange,
   mode = memoryLimitsMode(draft),
   onModeChange,
+  intervalWhenUnlimited = true,
 }: MemoryLimitsFieldsProps) {
   const { t } = useTranslation();
-  const fields: readonly FieldItem[] =
-    mode === 'custom' ? [...LIMIT_FIELDS, INTERVAL_FIELD] : [INTERVAL_FIELD];
+  const fields = formFields(mode, intervalWhenUnlimited);
   const selectMode =
     onModeChange ?? ((next: MemoryLimitsMode) => onChange({ enabled: next === 'custom' }));
   return (

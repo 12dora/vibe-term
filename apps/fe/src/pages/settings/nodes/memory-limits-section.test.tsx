@@ -100,6 +100,22 @@ describe('MemoryLimitsFields', () => {
     expect(html).not.toContain('bulk-memoryHighMb');
     expect(html).toContain('data-testid="bulk-sampleIntervalSec"');
   });
+
+  test('批量框选「不限制」：采样周期也收起，一个输入框都没有', () => {
+    const html = renderToStaticMarkup(
+      <MemoryLimitsFields
+        draft={custom}
+        errors={{}}
+        idPrefix="bulk"
+        mode="unlimited"
+        onModeChange={() => {}}
+        onChange={() => {}}
+        intervalWhenUnlimited={false}
+      />
+    );
+    expect(html).not.toContain('<input id="bulk-');
+    expect(html).not.toContain('bulk-sampleIntervalSec');
+  });
 });
 
 describe('MemoryLimitsUnsupportedNotice', () => {
@@ -150,6 +166,7 @@ describe('内存相关 i18n key 三语齐全', () => {
       expect(memory.staleSample).toContain('{{ago}}');
       expect(window.memoryStale).toContain('{{ago}}');
       expect(typeof bundle.translation.nodes.memory.chooseMode).toBe('string');
+      expect(typeof bundle.translation.nodes.memory.keepInterval).toBe('string');
     });
   }
 });

@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { isWindowMemorySampleStale, windowMemoryStaleAfterMs } from './window-memory-staleness';
+import {
+  WINDOW_MEMORY_FRAME_STALE_MS,
+  isWindowMemoryFrameStale,
+  isWindowMemorySampleStale,
+  windowMemoryStaleAfterMs,
+} from './window-memory-staleness';
 
 const NOW = Date.UTC(2026, 8, 24, 12);
 
 describe('windowMemoryStaleAfterMs', () => {
-  test('3 个采样周期，不短于 3 个心跳，另加一分钟时钟余量', () => {
-    expect(windowMemoryStaleAfterMs(5)).toBe(3 * 30_000 + 60_000);
-    expect(windowMemoryStaleAfterMs(60)).toBe(3 * 60_000 + 60_000);
+  test('3 个采样周期，不短于 3 个心跳', () => {
+    expect(windowMemoryStaleAfterMs(5)).toBe(3 * 30_000);
+    expect(windowMemoryStaleAfterMs(60)).toBe(3 * 60_000);
   });
 
   test('不知道周期时按上限 60 s 算', () => {
@@ -30,8 +35,8 @@ describe('isWindowMemorySampleStale', () => {
     );
   });
 
-  test('超过阈值即过期', () => {
-    const limit = windowMemoryStaleAfterMs(5);
+  test('退回跨机比较时超过阈值（另加一分钟时钟余量）即过期', () => {
+    const limit = windowMemoryStaleAfterMs(5) + 60_000;
     expect(isWindowMemorySampleStale({ sampledAt: NOW - limit, now: NOW, intervalSec: 5 })).toBe(
       false
     );
@@ -49,5 +54,60 @@ describe('isWindowMemorySampleStale', () => {
   test('没有采样时刻的读数不可信', () => {
     expect(isWindowMemorySampleStale({ sampledAt: 0, now: NOW })).toBe(true);
     expect(isWindowMemorySampleStale({ sampledAt: Number.NaN, now: NOW })).toBe(true);
+  });
+});
+
+describe('isWindowMemorySampleStale：网关给了读数年龄', () => {
+  test('按年龄判，不拿节点时钟比浏览器时钟', () => {
+    const limit = windowMemoryStaleAfterMs(5);
+    const slowNode = NOW - 10 * 60_000;
+    expect(
+      isWindowMemorySampleStale({
+        sampledAt: slowNode,
+        now: NOW,
+        intervalSec: 5,
+        sampledAgeMs: 3_000,
+      })
+    ).toBe(false);
+    const fastNode = NOW + 10 * 60_000;
+    expect(
+      isWindowMemorySampleStale({
+        sampledAt: fastNode,
+        now: NOW,
+        intervalSec: 5,
+        sampledAgeMs: limit + 1,
+      })
+    ).toBe(true);
+    expect(
+      isWindowMemorySampleStale({
+        sampledAt: fastNode,
+        now: NOW,
+        intervalSec: 5,
+        sampledAgeMs: limit,
+      })
+    ).toBe(false);
+  });
+
+  test('stale 仍然压过年龄；年龄不合法时退回跨机比较', () => {
+    expect(
+      isWindowMemorySampleStale({ sampledAt: NOW, now: NOW, stale: true, sampledAgeMs: 0 })
+    ).toBe(true);
+    for (const sampledAgeMs of [-1, Number.NaN, '5', null]) {
+      expect(
+        isWindowMemorySampleStale({ sampledAt: NOW - 4 * 86_400_000, now: NOW, sampledAgeMs })
+      ).toBe(true);
+    }
+  });
+});
+
+describe('isWindowMemoryFrameStale', () => {
+  test('只看本地收到多久：两次心跳内新鲜，超过即过期', () => {
+    expect(isWindowMemoryFrameStale(NOW - WINDOW_MEMORY_FRAME_STALE_MS, NOW)).toBe(false);
+    expect(isWindowMemoryFrameStale(NOW - WINDOW_MEMORY_FRAME_STALE_MS - 1, NOW)).toBe(true);
+  });
+
+  test('没有收到时刻的帧不可信', () => {
+    expect(isWindowMemoryFrameStale(0, NOW)).toBe(true);
+    expect(isWindowMemoryFrameStale(Number.NaN, NOW)).toBe(true);
   });
 });

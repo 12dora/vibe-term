@@ -2,6 +2,8 @@
 //
 // `/api/sessions/memory` 里的读数可能是采样停摆前留下的（几天前的 8 GB / 12 GB）：过期的读数
 // 不能当成「仍带限额」的证据，只能说「读数过期、确认不了」；还新鲜的读数才说「仍带限额」。
+// 网关标了 `stale` 的窗口不管读数里有没有限额都算「确认不了」：老一点的网关会把过期窗口的
+// 限额清成 0，而 0 在契约里是「未设限」，照读就成了「已放开」。
 // 只对照打开表单时读到的那份记录——刚保存完网关还没来得及放开，这时报「仍带限额」是误报。
 
 import { formatRelative } from '@/lib/format-relative';
@@ -25,8 +27,41 @@ export interface MemoryLimitsReleaseReport {
 }
 
 function hasLimit(window: SessionsMemoryWindow): boolean {
-  if (window.source === 'rss') return false;
   return window.high > 0 || window.max > 0 || window.swapMax > 0;
+}
+
+/** 可选字段按 unknown 读：api-client 的规范化未必认得这些新字段。 */
+function optionalField(window: SessionsMemoryWindow, key: 'stale' | 'sampledAgeMs'): unknown {
+  return (window as unknown as Record<string, unknown>)[key];
+}
+
+/** 采样时刻折算到浏览器时钟：网关给了读数年龄就按它倒推，不拿节点时钟当浏览器时钟用。 */
+function localSampledAt(window: SessionsMemoryWindow, now: number): number {
+  const age = optionalField(window, 'sampledAgeMs');
+  return typeof age === 'number' && Number.isFinite(age) && age >= 0 ? now - age : window.sampledAt;
+}
+
+type WindowVerdict = 'none' | 'lingering' | 'stale';
+
+/** 一个窗口该怎么说：读数新鲜且带限额 → 仍带限额；过期（或网关标了 stale）→ 确认不了。 */
+function windowVerdict(
+  window: SessionsMemoryWindow,
+  connected: boolean,
+  settings: WindowMemorySettings,
+  now: number
+): WindowVerdict {
+  if (window.source === 'rss') return 'none';
+  const flagged = optionalField(window, 'stale') === true;
+  if (!flagged && !hasLimit(window)) return 'none';
+  const stale = isWindowMemorySampleStale({
+    sampledAt: window.sampledAt,
+    now,
+    intervalSec: settings.sampleIntervalSec,
+    stale: flagged,
+    sampledAgeMs: optionalField(window, 'sampledAgeMs'),
+    connected,
+  });
+  return stale ? 'stale' : 'lingering';
 }
 
 /** 设置不是「不限制」、或没有任何带限额的窗口时返回 `null`：没什么要说的。 */
@@ -41,18 +76,11 @@ export function memoryLimitsReleaseReport(
   let oldestSampledAt = Number.POSITIVE_INFINITY;
   for (const device of response.devices) {
     for (const window of device.windows) {
-      if (!hasLimit(window)) continue;
-      const stale = isWindowMemorySampleStale({
-        sampledAt: window.sampledAt,
-        now,
-        intervalSec: settings.sampleIntervalSec,
-        stale: (window as { stale?: unknown }).stale,
-        connected: device.connected,
-      });
-      if (stale) {
+      const verdict = windowVerdict(window, device.connected, settings, now);
+      if (verdict === 'stale') {
         staleCount += 1;
-        oldestSampledAt = Math.min(oldestSampledAt, window.sampledAt);
-      } else {
+        oldestSampledAt = Math.min(oldestSampledAt, localSampledAt(window, now));
+      } else if (verdict === 'lingering') {
         lingering.push(`${device.deviceName} / ${window.windowName || window.windowId}`);
       }
     }

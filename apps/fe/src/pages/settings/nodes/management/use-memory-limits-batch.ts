@@ -1,13 +1,13 @@
 // 批量内存限额的状态机：分拣 → 一份草稿 → 并发写入 → 逐台成败。
 //
-// 语义是「把同一份限额写到所选节点上」，因此**不**先逐台 GET 再合并：那样既慢，
-// 用户也说不清自己到底改了什么。
+// 「自定义限额」是把同一份记录写到所选节点上，不逐台 GET 再合并：用户说不清自己到底改了什么。
+// 「不限制」例外：它不带任何数字，逐台读出现值只翻开关，免得把各节点的采样周期一并改掉。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { WindowMemorySettings } from '@vibeterm/shared';
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import type { MemoryLimitsBatchWrite } from '../memory-limits-form';
 import {
   type MemoryLimitsFailure,
   type MemoryLimitsIo,
@@ -26,8 +26,8 @@ export interface MemoryLimitsBatchController {
   failures: MemoryLimitsFailure[];
   request: (rows: NodeRow[]) => void;
   dismiss: () => void;
-  /** 把这份限额写到 `plan.targets` 上。 */
-  run: (settings: WindowMemorySettings) => void;
+  /** 把这份写入落到 `plan.targets` 上。 */
+  run: (write: MemoryLimitsBatchWrite) => void;
 }
 
 export function useMemoryLimitsBatch(io: MemoryLimitsIo = defaultMemoryLimitsIo) {
@@ -47,14 +47,14 @@ export function useMemoryLimitsBatch(io: MemoryLimitsIo = defaultMemoryLimitsIo)
   }, []);
 
   const run = useCallback(
-    (settings: WindowMemorySettings) => {
+    (write: MemoryLimitsBatchWrite) => {
       const targets = plan?.targets ?? [];
       if (targets.length === 0 || running) return;
       setRunning(true);
       setFailures([]);
       void (async () => {
         try {
-          const summary = await runMemoryLimitsBatch({ targets, settings, io, t });
+          const summary = await runMemoryLimitsBatch({ targets, write, io, t });
           const { level, text } = memoryLimitsSummaryText(t, summary);
           if (level === 'success') toast.success(text);
           else toast.error(text);
