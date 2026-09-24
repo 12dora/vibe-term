@@ -132,7 +132,11 @@ authorize 的 503 分成两档，不要混：
 
 被拒的 offer 立即回一条 SDP，形状仍是 `{ "type": "decline", "sdp": "disabled" | "cooling" }`。可选附加字段 `retryAfterMs`（相对毫秒，优先）和 `until`（对端时钟的绝对时刻）。旧解码器只读 `type` / `sdp` / `epoch`，未知 type 直接丢掉，不抛。新 offerer 把这次拨号终止为 `dc-declined`（有意关闭，不计失败），不再把 `superseded` 当成 glare 在 15 s 预算里重开 PC。`noteRemoteRefusal` 只把冷却终点往后推，不升档、不计失败、也不解除 `disabled`。没有在途拨号的 decline 直接丢弃，不进 inbox，也不触发被动拨号；拨号已经在飞时仍交给这一次 attempt 中止。只有 `until` 且已落在本端过去时，不冷却。
 
-`disabled` 的本端在自己的 force-probe 窗口（含 `beginAttempt` 之后 15 s 宽限）内不 decline 入站 offer，这样互相禁用的一对能在同一次探测里建上。窗口外、以及冷却档位 ≥ 5 且没有 `disabled` 行时，仍 decline。老 decline 不带 `retryAfterMs` 时循环会停，但本端不替它发明退避。
+`disabled` 的对端由定时器低频探测：`lastProbeAt + 间隔 + 抖动` 到点外拨一次（抖动按节点 id 稳定取 0–60 s，只推后）。间隔从 10 min 起，禁用后每次计数失败翻倍（10→20→40→80 min，封顶 2 h）；decline 不算失败，不拖慢间隔。入站另有一个名额：每个间隔接受对端一次 offer（接受后 15 s 宽限），与本端外拨互不关闭，所以两端探测相位不同也能在约一个间隔内碰上。名额外、以及冷却档位 ≥ 5 且没有 `disabled` 行时，仍 decline；唤醒路径（`peer-rtc-wake`）拒绝时同样回 decline，唤醒方不计失败。
+
+收到的 `retryAfterMs` / `until` 会先校验：NaN、非正数、已过去的时刻忽略，超过 30 min 截断。老 decline 不带 `retryAfterMs` 时循环会停，但本端不替它发明退避。端点 / 上行 / 本端指纹 / 能力版本变化或手动探测这类真正的重接事件，会一并清掉不稳定冷却与对端拒绝冷却；`presence-return` 只降一档。能力比较在写 `peer_cache` 的地方直接触发，多中继时副中继先写入也不会吞掉这次重接。
+
+已知限制：`dc-stable-hold` 能力记在进程内，对端回滚到 2.8.x 后，本端要到重启才回到旧的失败计数。
 
 ### 环境变量
 
