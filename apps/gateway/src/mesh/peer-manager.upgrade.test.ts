@@ -8,6 +8,7 @@ import {
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
+import { encodeJsonBytes } from './ctl';
 import {
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
@@ -23,6 +24,31 @@ import { ImmediateScheduler, seedNodeIdentity, seedUser, waitUntil } from './tes
 const HTTP_OPEN = new TextEncoder().encode(
   JSON.stringify({ type: 'http', method: 'GET', path: '/api/auth/challenge' })
 );
+
+/** 内存 DC 没有 DataChannelLink 的 liveness pong，证明走对端 mux ping（handleRttCtl）。 */
+async function proveDcByMuxPing(remote: {
+  ctl: {
+    send(bytes: Uint8Array): void;
+    onMessage(cb: (bytes: Uint8Array) => void): void;
+  };
+}): Promise<void> {
+  const proved = new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('dc mux ping was not answered')), 1_000);
+    remote.ctl.onMessage((bytes) => {
+      let msg: { t?: string };
+      try {
+        msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
+      } catch {
+        return;
+      }
+      if (msg.t !== 'pong') return;
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  remote.ctl.send(encodeJsonBytes({ t: 'ping' }));
+  await proved;
+}
 
 function dummySessionStore(): NodeSessionStore {
   return {
@@ -1052,6 +1078,7 @@ describe('PeerManager upgrade review fixes', () => {
     echoQuiesceCaps(dcB);
     expect(managerA.adoptLink(peer.nodeId, dcA, 'dc', self.nodeId)).toBe(dcA);
     expect(managerA.transportOf(peer.nodeId)).toBe('dc');
+    await proveDcByMuxPing(dcB);
 
     scheduler.advance(5_000);
     await new Promise((resolve) => setTimeout(resolve, 20));

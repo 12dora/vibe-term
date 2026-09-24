@@ -9,6 +9,7 @@ import {
   MAX_REASSEMBLED_FRAME_BYTES,
 } from './fragmenter';
 import { parseLivenessChunk } from './liveness';
+import { bindChannelDiagnostics } from './rtc-peer-helpers';
 import { FakeClock, pairDataChannels } from './test-fakes';
 
 function muxOpFromChunk(chunk: Uint8Array): number | undefined {
@@ -30,8 +31,8 @@ function livenessOpts(clock: FakeClock, peer = 'peer-b') {
 describe('DataChannelLink', () => {
   test('is a ByteTransport that round-trips fragmented payloads', async () => {
     const [a, b] = pairDataChannels('peer');
-    const left = new DataChannelLink(a);
-    const right = new DataChannelLink(b);
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
     const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
     const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(11);
     left.send(payload);
@@ -69,8 +70,8 @@ describe('DataChannelLink', () => {
 
   test('send Promise resolves only after every fragment is accepted', async () => {
     const [a, b] = pairDataChannels('peer');
-    const left = new DataChannelLink(a);
-    const right = new DataChannelLink(b);
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
     const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
     a.succeedsBeforeBlock = 1;
     const payload = new Uint8Array(FRAGMENT_SEND_PAYLOAD_SIZE + 4).fill(11);
@@ -220,14 +221,89 @@ describe('DataChannelLink', () => {
     const [a, b] = pairDataChannels('peer');
     const left = new DataChannelLink(a, livenessOpts(clock));
     const right = new DataChannelLink(b, livenessOpts(clock));
+    const pingCount = () => a.sent.filter((chunk) => parseLivenessChunk(chunk) === 'ping').length;
+    // 开局 ping/pong 要过几拍 flush 才把 callbackDepth 降回 0，否则 send 会卡在假时钟上。
+    clock.advance(24);
+    expect(pingCount()).toBe(1);
     const got = new Promise<Uint8Array>((resolve) => left.onData(resolve));
-    clock.advance(20);
     await right.send(new Uint8Array([9, 9]));
     expect(await got).toEqual(new Uint8Array([9, 9]));
     clock.advance(20);
-    expect(a.sent.some((chunk) => parseLivenessChunk(chunk) === 'ping')).toBe(false);
+    expect(pingCount()).toBe(1);
     left.close();
     right.close();
+  });
+
+  test('opening the link pings immediately and a pong proves it', () => {
+    const clock = new FakeClock();
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, livenessOpts(clock, 'left'));
+    const right = new DataChannelLink(b, livenessOpts(clock, 'right'));
+    expect(left.proven).toBe(false);
+    expect(a.sent.some((chunk) => parseLivenessChunk(chunk) === 'ping')).toBe(true);
+    clock.advance(DC_FLUSH_RETRY_MS * 2);
+    expect(left.proven).toBe(true);
+    expect(right.proven).toBe(true);
+    left.close();
+    right.close();
+  });
+
+  test('logs one close line with reason, initiator, attempt, lifetime and proven', () => {
+    const [raw] = pairDataChannels('peer');
+    const fan = fanoutDataChannel(raw, { peer: 'peer-a' });
+    bindChannelDiagnostics(fan, 'peer-a');
+    const link = new DataChannelLink(fan, {
+      liveness: false,
+      peer: 'peer-a',
+      attempt: 'dc:9',
+      now: () => 5_000,
+    });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      link.close('liveness-timeout');
+    } finally {
+      console.log = orig;
+    }
+    const closed = lines.filter((line) => line.includes('datachannel closed'));
+    expect(closed).toHaveLength(1);
+    expect(closed[0]).toContain('reason=liveness-timeout');
+    expect(closed[0]).toContain('initiator=local');
+    expect(closed[0]).toContain('attempt=dc:9');
+    expect(closed[0]).toContain('lifetime_ms=0');
+    expect(closed[0]).toContain('proven=false');
+  });
+
+  test('a native close is logged as remote channel-closed', () => {
+    const [raw] = pairDataChannels('peer');
+    const fan = fanoutDataChannel(raw, { peer: 'peer-b' });
+    bindChannelDiagnostics(fan, 'peer-b');
+    const link = new DataChannelLink(fan, {
+      liveness: false,
+      peer: 'peer-b',
+      attempt: 'dc:10',
+      now: () => 8_000,
+    });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      raw.close();
+    } finally {
+      console.log = orig;
+    }
+    const closed = lines.filter((line) => line.includes('datachannel closed'));
+    expect(closed).toHaveLength(1);
+    expect(closed[0]).toContain('reason=channel-closed');
+    expect(closed[0]).toContain('initiator=remote');
+    expect(closed[0]).toContain('attempt=dc:10');
+    expect(closed[0]).toContain('proven=false');
+    expect(link.proven).toBe(false);
   });
 
   test('finishClose is idempotent so a dying channel yields one reason', () => {
@@ -370,7 +446,7 @@ describe('DataChannelLink', () => {
     });
     await Promise.resolve();
     expect(dataResolved).toBe(false);
-    expect(a.sent).toHaveLength(0);
+    expect(a.sent.every((chunk) => parseLivenessChunk(chunk) === 'ping')).toBe(true);
 
     const windowFrame = encodeFrame({
       streamId: 1,

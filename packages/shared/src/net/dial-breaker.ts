@@ -178,6 +178,16 @@ export class DialBreaker {
     state.healthySince = now;
   }
 
+  /** 已建立但未证明的 DC 反复夭折：短冷却，不抬 consecutiveFailures / level。 */
+  noteUnstable(peer: string, cooldownMs: number, now = this.now()): void {
+    if (cooldownMs <= 0) return;
+    const state = this.ensure(peer);
+    const until = now + cooldownMs;
+    if (until > state.coolingUntil) state.coolingUntil = until;
+    state.healthySince = null;
+    state.lastFailureKind = 'unstable-dc';
+  }
+
   noteHealthy(peer: string, now = this.now()): boolean {
     const state = this.peers.get(peer);
     if (!state || state.healthySince == null) return false;

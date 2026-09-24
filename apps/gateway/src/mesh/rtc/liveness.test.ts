@@ -54,7 +54,7 @@ describe('liveness protocol', () => {
 });
 
 describe('ChannelLiveness', () => {
-  test('sends ping only while idle and times out without inbound', () => {
+  test('pings once at start, then only while idle, and times out without inbound', () => {
     const clock = new FakeClock();
     let pings = 0;
     let timedOut = 0;
@@ -79,15 +79,16 @@ describe('ChannelLiveness', () => {
     };
     try {
       liveness.start();
-      clock.advance(29);
-      expect(pings).toBe(0);
-      clock.advance(1);
       expect(pings).toBe(1);
-      liveness.noteInbound();
       clock.advance(29);
       expect(pings).toBe(1);
       clock.advance(1);
       expect(pings).toBe(2);
+      liveness.noteInbound();
+      clock.advance(29);
+      expect(pings).toBe(2);
+      clock.advance(1);
+      expect(pings).toBe(3);
       clock.advance(70);
       expect(timedOut).toBe(100);
       expect(lines.some((line) => line.includes('[mesh][rtc] liveness timeout'))).toBe(true);
@@ -116,10 +117,11 @@ describe('ChannelLiveness', () => {
       onTimeout: () => {},
     });
     liveness.start();
-    clock.advance(10);
     expect(pings).toBe(1);
     clock.advance(10);
     expect(pings).toBe(2);
+    clock.advance(10);
+    expect(pings).toBe(3);
     liveness.stop();
   });
 

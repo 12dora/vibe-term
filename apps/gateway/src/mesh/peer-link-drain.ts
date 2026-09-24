@@ -1,5 +1,6 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { warnLine } from './mesh-log';
+import { shouldFinishReplacedRetire } from './peer-dc-proof';
 import {
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
@@ -217,11 +218,7 @@ export class PeerLinkDrain {
       return;
     }
     const quietFor = live.zeroStreamsSince > 0 ? now - live.zeroStreamsSince : 0;
-    if (
-      (live.gotQuiesceAck && live.gotPeerQuiesce) ||
-      elapsed >= PEER_RETIRE_MAX_MS ||
-      (elapsed >= PEER_RETIRE_MIN_MS && quietFor >= PEER_RETIRE_QUIET_MS)
-    ) {
+    if (shouldFinishReplacedRetire(live, elapsed, quietFor, this.state)) {
       this.finishRetire(live, reason);
     }
   }

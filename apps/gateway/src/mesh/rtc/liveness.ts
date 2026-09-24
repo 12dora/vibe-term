@@ -116,8 +116,19 @@ export class ChannelLiveness {
     this.stop();
     this.running = true;
     this.lastInboundAt = this.now();
-    this.armInterval();
     this.armTimeout();
+    // 不等第一个 interval：立刻打一拍，让 SCTP 在 native 10s heartbeat 之前就有 user data。
+    this.sendPingSafe();
+    this.armInterval();
+  }
+
+  private sendPingSafe(): void {
+    if (!this.running) return;
+    try {
+      this.sendPing();
+    } catch {
+      // sendPing 失败不能拆掉后续的 interval
+    }
   }
 
   stop(): void {

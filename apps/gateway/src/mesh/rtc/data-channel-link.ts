@@ -2,6 +2,7 @@ import { type ByteTransport, CTL_STREAM_ID, FrameOp } from '@vibeterm/shared/lin
 import { fanoutMaxPendingBytes } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
 import { isDcHandshakeWire } from './dc-handshake';
+import { beginDcLinkProof, markDcLinkProof, ownDataChannelLink } from './dc-link-proof';
 import {
   FragmentProtocolError,
   type FragmentSizing,
@@ -18,12 +19,15 @@ import {
 import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
 import { rtcLog } from './rtc-log';
+import { logDataChannelClosed } from './rtc-peer-helpers';
 
 export const DC_FLUSH_RETRY_MS = 8;
 
 export type DataChannelLinkOptions = RtcLivenessClock & {
   reassembler?: FrameReassembler;
   peer?: string;
+  /** 拨号 attempt id。关闭日志要在 ALS 结束之后还能打出来。 */
+  attempt?: string;
   intervalMs?: number;
   timeoutMs?: number;
   liveness?: boolean;
@@ -75,6 +79,12 @@ export class DataChannelLink implements ByteTransport {
   private closeReason = 'closed';
   private liveness: ChannelLiveness | null = null;
   private readonly peer: string | undefined;
+  private readonly attempt: string | undefined;
+  private readonly nowFn: () => number;
+  private readonly startedAt: number;
+  private wasOpen = false;
+  private provenFlag = false;
+  private proofGeneration: number | undefined;
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
   private readonly clearTimeoutFn: (handle: unknown) => void;
   private pendingPing = false;
@@ -88,6 +98,10 @@ export class DataChannelLink implements ByteTransport {
   constructor(channel: DataChannelLike, opts?: DataChannelLinkOptions) {
     this.channel = channel;
     this.peer = opts?.peer;
+    this.attempt = opts?.attempt;
+    this.nowFn = opts?.now ?? Date.now;
+    this.startedAt = this.nowFn();
+    ownDataChannelLink(channel);
     this.setTimeoutFn = opts?.setTimeoutFn ?? defaultSetTimeout;
     this.clearTimeoutFn =
       opts?.clearTimeoutFn ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
@@ -122,7 +136,10 @@ export class DataChannelLink implements ByteTransport {
           this.sendLiveness('pong');
           return;
         }
-        if (livenessKind === 'pong') return;
+        if (livenessKind === 'pong') {
+          this.noteProven();
+          return;
+        }
         let frame: Uint8Array | null;
         try {
           frame = this.reassembler.push(bytes);
@@ -142,27 +159,45 @@ export class DataChannelLink implements ByteTransport {
         this.dispatchFrame(frame);
       });
     });
-    channel.onClosed(() => {
-      this.finishClose('channel-closed');
+    this.bindLifetime(opts);
+  }
+
+  get proven(): boolean {
+    return this.provenFlag;
+  }
+
+  private bindLifetime(opts?: DataChannelLinkOptions): void {
+    this.wasOpen = this.channel.isOpen();
+    if (this.peer && this.wasOpen) this.proofGeneration = beginDcLinkProof(this.peer);
+    this.channel.onClosed(() => {
+      this.finishClose('channel-closed', 'remote');
     });
-    channel.onError((err) => {
-      this.finishClose(err || 'channel-error');
+    this.channel.onError((err) => {
+      this.finishClose(err || 'channel-error', 'remote');
     });
-    if (!channel.isOpen()) this.finishClose('channel-closed');
+    if (!this.channel.isOpen()) this.finishClose('channel-closed', 'remote');
     if (opts?.liveness === false || this.closed) {
       this.liveness = null;
-    } else {
-      this.liveness = new ChannelLiveness({
-        peer: opts?.peer,
-        intervalMs: opts?.intervalMs,
-        timeoutMs: opts?.timeoutMs,
-        now: opts?.now,
-        setTimeoutFn: opts?.setTimeoutFn,
-        clearTimeoutFn: opts?.clearTimeoutFn,
-        sendPing: () => this.sendLiveness('ping'),
-        onTimeout: () => this.close('liveness-timeout'),
-      });
-      this.liveness.start();
+      return;
+    }
+    this.liveness = new ChannelLiveness({
+      peer: opts?.peer,
+      intervalMs: opts?.intervalMs,
+      timeoutMs: opts?.timeoutMs,
+      now: opts?.now,
+      setTimeoutFn: opts?.setTimeoutFn,
+      clearTimeoutFn: opts?.clearTimeoutFn,
+      sendPing: () => this.sendLiveness('ping'),
+      onTimeout: () => this.close('liveness-timeout'),
+    });
+    this.liveness.start();
+  }
+
+  private noteProven(): void {
+    if (this.provenFlag) return;
+    this.provenFlag = true;
+    if (this.peer && this.proofGeneration !== undefined) {
+      markDcLinkProof(this.peer, this.proofGeneration);
     }
   }
 
@@ -289,7 +324,7 @@ export class DataChannelLink implements ByteTransport {
     const accepted = ok || after > before;
     if (!accepted) {
       if (!this.channel.isOpen()) {
-        this.finishClose('channel-closed');
+        this.finishClose('channel-closed', 'remote');
         return false;
       }
       this.dropLowThreshold();
@@ -375,7 +410,7 @@ export class DataChannelLink implements ByteTransport {
     return frameId;
   }
 
-  private finishClose(reason: string): void {
+  private finishClose(reason: string, origin: 'local' | 'remote' = 'local'): void {
     if (this.closed) return;
     this.closed = true;
     this.closeReason = reason;
@@ -386,6 +421,16 @@ export class DataChannelLink implements ByteTransport {
     this.liveness?.stop();
     this.liveness = null;
     this.reassembler.dispose();
+    if (this.wasOpen) {
+      logDataChannelClosed({
+        peer: this.peer,
+        reason,
+        initiator: origin,
+        attempt: this.attempt,
+        lifetime_ms: Math.max(0, this.nowFn() - this.startedAt),
+        proven: this.provenFlag,
+      });
+    }
     this.settleQueuedSends(reason);
     for (const cb of this.closeCbs) {
       try {
