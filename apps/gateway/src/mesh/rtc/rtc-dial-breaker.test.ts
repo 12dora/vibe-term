@@ -11,6 +11,7 @@ import {
   ANSWERER_COOLDOWN_MS,
   ANSWERER_TIMEOUT_LIMIT,
   DC_REARM_SOURCES,
+  RTC_ANSWER_REFUSE_LEVEL,
   RTC_DIAL_BREAKER_BASE_MS_DEFAULT,
   RTC_DIAL_BREAKER_FAILS,
   RTC_DIAL_BREAKER_HEALTHY_MS,
@@ -19,6 +20,7 @@ import {
   RTC_DIAL_FORCE_PROBE_MS,
   RtcDialBreaker,
   classifyRtcDialFailure,
+  createGatewayRtcDialBreaker,
   isIntentionalDcLoss,
 } from './rtc-dial-breaker';
 import type { RtcPeerManager } from './rtc-peer-manager';
@@ -425,14 +427,22 @@ describe('RtcDialBreaker', () => {
       }
       expect(breaker.isDisabled(peer)).toBe(false);
       expect(breaker.shouldTry(peer).allow).toBe(true);
+      if (source === 'presence-return') {
+        expect(breaker.shouldTry(peer).failures).toBeGreaterThan(0);
+        expect(breaker.snapshot(peer).level).toBe(0);
+      } else {
+        expect(breaker.shouldTry(peer).failures).toBe(0);
+        expect(breaker.snapshot(peer).level).toBe(0);
+      }
     }
     expect(rearms).toEqual([
       'local-fingerprint',
       'local-fingerprint',
       'peer-endpoint',
       'uplink-switch',
-      'peer-reconnect',
+      'peer-capabilities',
       'manual',
+      'presence-return',
     ]);
   });
 
@@ -475,7 +485,108 @@ describe('RtcDialBreaker', () => {
     now += 1;
     expect(breaker.shouldTry(peer)).toMatchObject({ allow: true, disabled: true });
   });
+
+  test('presence return keeps escalation and allows one probe; a relay rearm source is gone', () => {
+    const now = { t: 0 };
+    const rearms: Array<{ source: string; levelBefore: number; levelAfter: number }> = [];
+    const breaker = new RtcDialBreaker({
+      now: () => now.t,
+      disableAfter: 10,
+      onRearm: (event) => rearms.push(event),
+    });
+    const peer = 'ec42f364';
+    openCooldownRounds(breaker, peer, now, 5);
+    const before = breaker.snapshot(peer);
+    expect(before).toMatchObject({ disabled: true, level: 5 });
+    expect(before.failures).toBeGreaterThanOrEqual(10);
+
+    expect(breaker.rearmDisabled(peer, 'presence-return')).toBe(true);
+    expect(breaker.isDisabled(peer)).toBe(false);
+    expect(breaker.snapshot(peer)).toMatchObject({
+      level: 4,
+      failures: before.failures,
+      cooling: false,
+    });
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+    expect(rearms).toMatchObject([{ source: 'presence-return', levelBefore: 5, levelAfter: 4 }]);
+
+    breaker.noteFailure(peer, 'timeout', 'probe');
+    expect(breaker.isDisabled(peer)).toBe(true);
+    expect(breaker.snapshot(peer).level).toBe(5);
+    expect(breaker.shouldTry(peer).allow).toBe(false);
+
+    expect(breaker.rearmDisabled(peer, 'peer-endpoint')).toBe(true);
+    expect(breaker.snapshot(peer)).toMatchObject({ level: 0, failures: 0, disabled: false });
+    expect(rearms.at(-1)).toMatchObject({
+      source: 'peer-endpoint',
+      levelBefore: 5,
+      levelAfter: 0,
+    });
+  });
+
+  test('disabled or ceiling cooling declines offers; lower cooling still accepts', () => {
+    const now = { t: 0 };
+    const breaker = new RtcDialBreaker({ now: () => now.t, disableAfter: 1_000 });
+    const peer = 'ec42f364';
+    openCooldownRounds(breaker, peer, now, RTC_ANSWER_REFUSE_LEVEL - 1);
+    expect(breaker.snapshot(peer).level).toBe(RTC_ANSWER_REFUSE_LEVEL - 1);
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(true);
+    expect(breaker.shouldAcceptAnswer(peer, now.t, { respondsToOurRequest: true })).toBe(true);
+
+    openCooldownRounds(breaker, peer, now, 1);
+    expect(breaker.snapshot(peer)).toMatchObject({
+      level: RTC_ANSWER_REFUSE_LEVEL,
+      disabled: false,
+      cooling: true,
+    });
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
+    expect(breaker.shouldAcceptAnswer(peer, now.t, { respondsToOurRequest: true })).toBe(false);
+    expect(breaker.inboundBlock(peer)).toBe('cooling');
+
+    const disabled = new RtcDialBreaker({ now: () => 0, disableAfter: 3 });
+    for (let i = 0; i < 3; i += 1) disabled.noteFailure(peer, 'timeout', `d${i}`);
+    expect(disabled.shouldAcceptAnswer(peer)).toBe(false);
+    expect(disabled.shouldAcceptAnswer(peer, 0, { respondsToOurRequest: true })).toBe(false);
+    expect(disabled.inboundBlock(peer)).toBe('disabled');
+  });
+
+  test('rearm log keeps source and adds level before/after', () => {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    const breaker = createGatewayRtcDialBreaker({ now: () => 0, disableAfter: 3 });
+    const peer = 'ec42f364';
+    try {
+      for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'timeout', `f${i}`);
+      expect(breaker.rearmDisabled(peer, 'peer-capabilities')).toBe(true);
+      const line = lines.find(
+        (row) => row.includes('breaker rearm') && row.includes(`peer=${peer}`)
+      );
+      expect(line).toContain('source=peer-capabilities');
+      expect(line).toContain('level_before=1');
+      expect(line).toContain('level_after=0');
+    } finally {
+      console.log = orig;
+    }
+  });
 });
+
+function openCooldownRounds(
+  breaker: RtcDialBreaker,
+  peer: string,
+  now: { t: number },
+  rounds: number
+): void {
+  for (let round = 0; round < rounds; round += 1) {
+    const until = breaker.snapshot(peer).until;
+    if (until != null && until > now.t) now.t = until;
+    for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) {
+      breaker.noteFailure(peer, 'timeout', `r${round}-${i}`);
+    }
+  }
+}
 
 describe('PeerManager DataChannel breaker', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
@@ -664,7 +775,7 @@ describe('PeerManager DataChannel breaker', () => {
     expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
   });
 
-  test('disabled DC upgrade retries immediately after the same endpoint reconnects', async () => {
+  test('disabled DC upgrade does not retry when the same peer session reconnects', async () => {
     const { manager, peer, dcCalls } = await setupManager({
       breakerMs: '60000',
       disableAfter: String(RTC_DIAL_BREAKER_FAILS),
@@ -672,13 +783,15 @@ describe('PeerManager DataChannel breaker', () => {
     await tripBreaker(manager, peer.nodeId, dcCalls, { keepFinalLive: true });
     expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(true);
     const frozen = dcCalls();
+    const level = manager.linkDetailOf(peer.nodeId).dcBreaker.level;
 
     await dropLive(manager, peer.nodeId);
     const link = await manager.getLink(peer.nodeId);
-    await waitUntil(() => dcCalls() > frozen);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
 
-    expect(dcCalls()).toBe(frozen + 1);
-    expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(false);
+    expect(dcCalls()).toBe(frozen);
+    expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(true);
+    expect(manager.linkDetailOf(peer.nodeId).dcBreaker.level).toBe(level);
     expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
     expect(link).toBeTruthy();
   });

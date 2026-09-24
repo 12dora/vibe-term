@@ -106,4 +106,41 @@ describe('DialBreaker', () => {
     expect(breaker.noteFailure(peer, 'timeout', '4').counted).toBe(true);
     expect(breaker.shouldTry(peer).failures).toBe(1);
   });
+
+  test('decayEscalation drops one level without deleting state; reset still wipes', () => {
+    let now = 0;
+    const breaker = new DialBreaker({ now: () => now, breakerMs: 30_000 });
+    const peer = 'relay-user';
+    for (let round = 0; round < 3; round += 1) {
+      const until = breaker.shouldTry(peer).until;
+      if (until != null && until > now) now = until;
+      for (let i = 0; i < DIAL_BREAKER_FAILS; i += 1) {
+        breaker.noteFailure(peer, 'handshake-timeout', `r${round}-${i}`);
+      }
+    }
+    const before = breaker.shouldTry(peer);
+    expect(before.level).toBe(3);
+    expect(before.cooling).toBe(true);
+    expect(before.allow).toBe(false);
+
+    expect(breaker.decayEscalation(peer)).toEqual({ levelBefore: 3, levelAfter: 2 });
+    expect(breaker.shouldTry(peer)).toMatchObject({
+      allow: true,
+      cooling: false,
+      failures: DIAL_BREAKER_FAILS * 3,
+      level: 2,
+    });
+    expect(breaker.decayEscalation('missing')).toBeNull();
+
+    breaker.reset(peer);
+    expect(breaker.shouldTry(peer)).toMatchObject({
+      allow: true,
+      cooling: false,
+      failures: 0,
+      level: 0,
+    });
+    breaker.noteFailure('other', 'open-failed', 'o1');
+    breaker.reset();
+    expect(breaker.shouldTry('other').failures).toBe(0);
+  });
 });

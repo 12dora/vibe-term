@@ -1,5 +1,41 @@
 import type { LinkSession } from '@vibeterm/shared/link';
+import { RELAY_PRESENCE_STALE_MS } from './relay-presence';
 import type { PeerTransportKind } from './types';
+
+/**
+ * 短于中继 presence 陈旧窗口的离线不算重启。
+ * relay/ws 会话 flap 是秒级，不走这里。
+ */
+export const DC_PRESENCE_ABSENCE_MS = RELAY_PRESENCE_STALE_MS;
+
+export type PresenceGapEvent = 'absent' | 'returned' | 'unchanged';
+
+export class RelayPresenceGap {
+  private readonly absentSince = new Map<string, number>();
+
+  observe(nodeId: string, online: boolean, now: number): PresenceGapEvent {
+    if (!online) return this.markAbsent(nodeId, now);
+    return this.markOnline(nodeId, now);
+  }
+
+  reset(nodeId?: string): void {
+    if (nodeId) this.absentSince.delete(nodeId);
+    else this.absentSince.clear();
+  }
+
+  private markAbsent(nodeId: string, now: number): PresenceGapEvent {
+    if (!this.absentSince.has(nodeId)) this.absentSince.set(nodeId, now);
+    return 'absent';
+  }
+
+  private markOnline(nodeId: string, now: number): PresenceGapEvent {
+    const since = this.absentSince.get(nodeId);
+    if (since == null) return 'unchanged';
+    this.absentSince.delete(nodeId);
+    if (now - since < DC_PRESENCE_ABSENCE_MS) return 'unchanged';
+    return 'returned';
+  }
+}
 
 export type LivePeer = {
   session: LinkSession;

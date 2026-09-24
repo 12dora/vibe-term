@@ -212,6 +212,21 @@ export class DialBreaker {
     else this.peers.clear();
   }
 
+  /**
+   * 降一档并结束当前冷却，保留失败次数。不删除 peer。
+   * relay 熔断继续只用 reset()，语义不变。
+   */
+  decayEscalation(peer: string): { levelBefore: number; levelAfter: number } | null {
+    const state = this.peers.get(peer);
+    if (!state) return null;
+    const levelBefore = state.cooldownLevel;
+    const levelAfter = Math.max(0, state.cooldownLevel - 1);
+    state.cooldownLevel = levelAfter;
+    state.coolingUntil = 0;
+    state.forceProbe = false;
+    return { levelBefore, levelAfter };
+  }
+
   private ensure(peer: string): PeerState {
     let state = this.peers.get(peer);
     if (!state) {
