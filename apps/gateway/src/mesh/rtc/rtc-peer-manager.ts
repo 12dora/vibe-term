@@ -34,8 +34,9 @@ import type {
   NodeDatachannelModule,
   PeerConnectionLike,
 } from './native';
-import { isSupersededDcLoss } from './rtc-dial-progress';
+import { noteRtcDialSummary } from './rtc-dial-summary';
 import { type RtcLogContext, rtcLog, runWithRtcLogContext } from './rtc-log';
+import { retrySupersededDial } from './rtc-offer-decline';
 import { OfferEpochMemory, rtcAttemptEpochBase } from './rtc-offer-epoch';
 import { bindPeerSignaling, runPeerConnectAttempt } from './rtc-peer-connect';
 import {
@@ -44,18 +45,15 @@ import {
   PEER_CHANNEL_LABEL,
   type RtcDialAggregate,
   SESS_CHANNEL_LABEL,
-  createRtcDialAggregate,
-  emptyPairCounts,
   fingerprintsEqual,
-  formatPairCounts,
   logRtcDialStart,
   parseNonceMessage,
-  selectedCandidatePairType,
   waitChannelOpen,
   waitDataChannel,
   waitFirstMessage,
   waitForLocalFingerprint,
 } from './rtc-peer-helpers';
+import { publishLocalDescription } from './sdp-fake-ip';
 
 export const RTC_AUTHORIZE_TTL_MS = 120_000;
 export const RTC_AUTHORIZE_MAX = 64;
@@ -226,6 +224,10 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     role: 'offerer' | 'answerer',
     channelLabel = PEER_CHANNEL_LABEL
   ): Promise<CreatedPeerConnection> {
+    // 空 PC 上无参 setLocalDescription() 会让 Bun 进程 abort，answerer 没有生产调用方。
+    if (role !== 'offerer') {
+      throw new PeerHandshakeError('protocol', 'answerer fingerprint needs a data channel');
+    }
     await this.ready();
     const native = this.requireNative();
     const pc = new native.PeerConnection(
@@ -233,12 +235,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       buildRtcIceConfig(this.iceConfigProvider())
     );
     this.prepareLocalDescriptions(pc);
-    let channel: DataChannelLike | null = null;
-    if (role === 'offerer') {
-      channel = pc.createDataChannel(channelLabel);
-    } else {
-      pc.setLocalDescription?.();
-    }
+    const channel = pc.createDataChannel(channelLabel);
     const fingerprint = await this.waitLocalFingerprint(pc);
     return { pc, fingerprint, channel };
   }
@@ -285,8 +282,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
           signal
         );
       } catch (err) {
-        if (signal?.aborted) throw err;
-        if (!isSupersededDcLoss(err) || performance.now() >= deadline) throw err;
+        if (!retrySupersededDial(peerNodeId, err, deadline, signal)) throw err;
       }
     }
   }
@@ -362,14 +358,16 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     if (!input.sid) return null;
     rtcLog('authorize', { via: input.via });
     this.sweepBrowser();
-    const existing = this.browser.get(input.rtcSession);
-    if (!existing && this.browser.size >= this.authorizeMax) return null;
-    const rec = this.createBrowser(input.rtcSession);
+    let rec: BrowserRecord | null = null;
     try {
+      browserAuth.assertAuthorizeRoom(this.browser.values(), input, this.authorizeMax);
+      rec = this.createBrowser(input.rtcSession);
       return await browserAuth.grantBrowser(rec, input, this.browserPrimeOpts(rec, opts?.signal));
     } catch (err) {
-      if (this.browser.get(input.rtcSession) === rec) this.browser.delete(input.rtcSession);
-      this.untrackAndClose(rec.pc);
+      if (rec && this.browser.get(input.rtcSession) === rec) {
+        this.browser.delete(input.rtcSession);
+        this.untrackAndClose(rec.pc);
+      }
       rtcLog('authorize failed', { via: input.via, reason: browserAuth.failReason(err) });
       throw err;
     }
@@ -382,6 +380,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     if (!rec || !rec.nonce || !rec.fpBrowser || rec.exp <= this.now()) {
       throw new PeerHandshakeError('protocol', 'rtc session is not authorized');
     }
+    rec.exp = this.now() + this.authorizeTtlMs;
     const unsubSignaling = bindPeerSignaling(
       rec.pc,
       signaling,
@@ -483,14 +482,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     }
     this.probePc?.close();
     this.probePc = null;
-    for (const pc of this.livePcs) {
-      try {
-        pc.close();
-      } catch {
-        // ignore
-      }
-    }
-    this.livePcs.clear();
+    for (const pc of [...this.livePcs]) this.untrackAndClose(pc);
     this.browser.clear();
     this.dialAggregates.clear();
     this.lastOfferEpochByPeer.clear();
@@ -509,34 +501,14 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     outcome: 'success' | 'failure',
     durationMs: number
   ): void {
-    const aggregate = this.dialAggregates.get(peer) ?? createRtcDialAggregate();
-    this.dialAggregates.set(peer, aggregate);
-    const pairType = selectedCandidatePairType(pc);
-    aggregate[outcome === 'success' ? 'successes' : 'failures'][pairType] += 1;
-    aggregate.attempts += 1;
-    aggregate.durationTotalMs += durationMs;
-    aggregate.durationMaxMs = Math.max(aggregate.durationMaxMs, durationMs);
-    const now = this.now();
-    if (
-      aggregate.lastEmittedAt !== null &&
-      now - aggregate.lastEmittedAt < RTC_SUMMARY_INTERVAL_MS
-    ) {
-      return;
-    }
-    rtcLog('summary', {
+    noteRtcDialSummary(this.dialAggregates, {
       peer,
-      success_by_pair: formatPairCounts(aggregate.successes),
-      failure_by_pair: formatPairCounts(aggregate.failures),
-      attempts: aggregate.attempts,
-      dial_ms_avg: Math.round(aggregate.durationTotalMs / aggregate.attempts),
-      dial_ms_max: Math.round(aggregate.durationMaxMs),
+      pc,
+      outcome,
+      durationMs,
+      now: this.now(),
+      intervalMs: RTC_SUMMARY_INTERVAL_MS,
     });
-    aggregate.lastEmittedAt = now;
-    aggregate.successes = emptyPairCounts();
-    aggregate.failures = emptyPairCounts();
-    aggregate.attempts = 0;
-    aggregate.durationTotalMs = 0;
-    aggregate.durationMaxMs = 0;
   }
 
   private nativeLoadAllowed(): boolean {
@@ -584,7 +556,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private browserPrimeOpts(rec: BrowserRecord, signal?: AbortSignal): browserAuth.GrantOpts {
     return {
       now: this.now(),
-      ttlMs: this.authorizeTtlMs,
+      ttlMs: browserAuth.pendingAuthorizeTtlMs(this.authorizeTtlMs),
       handshakeTimeoutMs: this.handshakeTimeoutMs,
       signal,
       fanout: this.prepareLocalDescriptions(rec.pc),
@@ -593,13 +565,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   }
 
   private sweepBrowser(): void {
-    const now = this.now();
-    for (const [id, rec] of this.browser) {
-      if (rec.exp <= now) {
-        this.untrackAndClose(rec.pc);
-        this.browser.delete(id);
-      }
-    }
+    browserAuth.sweepExpiredBrowsers(this.browser, this.now(), (pc) => this.untrackAndClose(pc));
   }
 
   private trackPc(pc: PeerConnectionLike): void {
@@ -611,11 +577,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     if (existing) return existing;
     const fanout: LocalDescriptionFanout = { latest: null, listeners: new Set() };
     this.sdpFanouts.set(pc, fanout);
-    pc.onLocalDescription((sdp, type) => {
-      const description = { sdp, type };
-      fanout.latest = description;
-      for (const listener of fanout.listeners) listener(description);
-    });
+    pc.onLocalDescription((sdp, type) => publishLocalDescription(fanout, sdp, type));
     return fanout;
   }
 

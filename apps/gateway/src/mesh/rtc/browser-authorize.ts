@@ -61,10 +61,99 @@ export function emptyBrowserRecord(
   };
 }
 
+/** 一个登录会话同时占住的浏览器 PC。重试会换 rtcSession，所以留 1 个在途 + 1 个替换。 */
+export const RTC_AUTHORIZE_MAX_PER_SESSION = 2;
+/** 一个账号多标签的上限。再往上就会挤占节点上其他用户的名额。 */
+export const RTC_AUTHORIZE_MAX_PER_USER = 8;
+/** 授权后一直没收到 offer / 没进入 accept 的记录。握手一旦开始仍用完整 TTL。 */
+export const RTC_AUTHORIZE_PENDING_TTL_MS = 30_000;
+
+/**
+ * 客户端熔断按目标 node 计，不按会话。retryAfterMs 只是最短间隔，设太长会把别的标签一起冻住。
+ * 真正挡住刷接口的是上面的会话/用户名额；连续失败仍由客户端 30s 熔断接管。
+ */
+export const DIRECT_BUSY_RETRY_MS = {
+  timeout: 1_000,
+  aborted: 500,
+  failed: 2_000,
+  capacity: 1_000,
+} as const;
+
+export type DirectBusyReason = keyof typeof DIRECT_BUSY_RETRY_MS;
+
+export class AuthorizeBusyError extends Error {
+  readonly reason = 'capacity' as const;
+
+  constructor() {
+    super('browser authorize capacity');
+    this.name = 'AuthorizeBusyError';
+  }
+}
+
 export function failReason(err: unknown): string {
+  if (err instanceof AuthorizeBusyError) return err.reason;
   if (err instanceof PeerHandshakeError) return err.code;
   if (isAbortError(err)) return 'aborted';
   return 'failed';
+}
+
+export function directBusyBody(err: unknown): { reason: DirectBusyReason; retryAfterMs: number } {
+  const raw = failReason(err);
+  const reason: DirectBusyReason =
+    raw === 'timeout' || raw === 'aborted' || raw === 'capacity' ? raw : 'failed';
+  return { reason, retryAfterMs: DIRECT_BUSY_RETRY_MS[reason] };
+}
+
+export function pendingAuthorizeTtlMs(authorizeTtlMs: number): number {
+  return Math.min(Math.max(1, authorizeTtlMs), RTC_AUTHORIZE_PENDING_TTL_MS);
+}
+
+/**
+ * 名额分三层：同一 sid、同一 uid、整个节点。刷新已有 rtcSession 不占新名额。
+ * 任一层满都拒绝，避免一个会话用随机 rtcSession 把节点 64 个名额占光。
+ */
+function countAuthorizeUsage(
+  records: Iterable<BrowserAuthRecord>,
+  input: { rtcSession: string; uid: string; sid?: string }
+): { refresh: boolean; total: number; perSession: number; perUser: number } {
+  let total = 0;
+  let perSession = 0;
+  let perUser = 0;
+  for (const rec of records) {
+    if (rec.rtcSession === input.rtcSession) return { refresh: true, total, perSession, perUser };
+    total += 1;
+    if (input.sid && rec.sid === input.sid) perSession += 1;
+    if (input.uid && rec.uid === input.uid) perUser += 1;
+  }
+  return { refresh: false, total, perSession, perUser };
+}
+
+export function assertAuthorizeRoom(
+  records: Iterable<BrowserAuthRecord>,
+  input: { rtcSession: string; uid: string; sid?: string },
+  max: number
+): void {
+  const usage = countAuthorizeUsage(records, input);
+  if (usage.refresh) return;
+  if (
+    usage.total >= max ||
+    usage.perSession >= RTC_AUTHORIZE_MAX_PER_SESSION ||
+    usage.perUser >= RTC_AUTHORIZE_MAX_PER_USER
+  ) {
+    throw new AuthorizeBusyError();
+  }
+}
+
+export function sweepExpiredBrowsers<T extends { exp: number; pc: PeerConnectionLike }>(
+  records: Map<string, T>,
+  now: number,
+  close: (pc: PeerConnectionLike) => void
+): void {
+  for (const [id, rec] of records) {
+    if (rec.exp > now) continue;
+    close(rec.pc);
+    records.delete(id);
+  }
 }
 
 export async function grantBrowser(

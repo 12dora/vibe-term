@@ -10,6 +10,7 @@ import { UserStore } from '../../auth/user-store';
 import { createGatewaySession } from '../../ws/test-helpers';
 import { seedNodeIdentity, seedUser } from '../test-support';
 import { PeerHandshakeError } from '../types';
+import { AuthorizeBusyError } from './browser-authorize';
 import { DataChannelCarrier } from './data-channel-carrier';
 import { fragmentFrame } from './fragmenter';
 import { type RtcSignaling, encodeSdpSignal } from './ice';
@@ -613,7 +614,7 @@ describeRtc('RtcPeerManager', () => {
     const fp = { algorithm: 'sha-256', value: 'AA' };
     const first = await left.authorizeBrowser({
       rtcSession: 'cap-0',
-      uid: 'user-1',
+      uid: 'cap-user-0',
       via: 'self',
       sid: 'sid-cap-0',
       fpBrowser: fp,
@@ -622,24 +623,25 @@ describeRtc('RtcPeerManager', () => {
     for (let i = 1; i < RTC_AUTHORIZE_MAX; i++) {
       const auth = await left.authorizeBrowser({
         rtcSession: `cap-${i}`,
-        uid: 'user-1',
+        uid: `cap-user-${i}`,
         via: 'self',
         sid: `sid-cap-${i}`,
         fpBrowser: fp,
       });
       expect(auth).not.toBeNull();
     }
-    const overflow = await left.authorizeBrowser({
-      rtcSession: 'cap-overflow',
-      uid: 'user-1',
-      via: 'self',
-      sid: 'sid-overflow',
-      fpBrowser: fp,
-    });
-    expect(overflow).toBeNull();
+    await expect(
+      left.authorizeBrowser({
+        rtcSession: 'cap-overflow',
+        uid: 'cap-user-overflow',
+        via: 'self',
+        sid: 'sid-overflow',
+        fpBrowser: fp,
+      })
+    ).rejects.toBeInstanceOf(AuthorizeBusyError);
     const refresh = await left.authorizeBrowser({
       rtcSession: 'cap-0',
-      uid: 'user-1',
+      uid: 'cap-user-0',
       via: 'self',
       sid: 'sid-cap-0',
       fpBrowser: fp,
