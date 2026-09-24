@@ -1,4 +1,4 @@
-import { type DtlsFingerprint, encodeBase64url, normalizeFingerprint } from '@vibeterm/shared/auth';
+import { type DtlsFingerprint, encodeBase64url } from '@vibeterm/shared/auth';
 import type { UserStore } from '../../auth/user-store';
 import type { Carrier } from '../../ws/carrier';
 import type { GatewaySession } from '../../ws/gateway-session';
@@ -9,6 +9,7 @@ import type {
 } from '../mesh-deps';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
+import * as browserAuth from './browser-authorize';
 import {
   type AttachDirectOptions,
   CarrierSwitchController,
@@ -354,24 +355,24 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   }
 
   async authorizeBrowser(
-    input: RtcAuthorizeBrowserInput
+    input: RtcAuthorizeBrowserInput,
+    opts?: { signal?: AbortSignal }
   ): Promise<RtcAuthorizeBrowserResult | null> {
     if (!(await this.ready())) return null;
     if (!input.sid) return null;
+    rtcLog('authorize', { via: input.via });
     this.sweepBrowser();
     const existing = this.browser.get(input.rtcSession);
     if (!existing && this.browser.size >= this.authorizeMax) return null;
     const rec = this.createBrowser(input.rtcSession);
-    rec.uid = input.uid;
-    rec.sid = input.sid;
-    rec.via = input.via;
-    rec.connectionId = input.connectionId ?? '';
-    rec.fpBrowser = normalizeFingerprint(input.fpBrowser);
-    rec.exp = this.now() + this.authorizeTtlMs;
-    const fpNode = rec.fpNode ?? (await this.waitLocalFingerprint(rec.pc));
-    rec.fpNode = fpNode;
-    rec.nonce = crypto.getRandomValues(new Uint8Array(32));
-    return { nonce: rec.nonce, fpNode };
+    try {
+      return await browserAuth.grantBrowser(rec, input, this.browserPrimeOpts(rec, opts?.signal));
+    } catch (err) {
+      if (this.browser.get(input.rtcSession) === rec) this.browser.delete(input.rtcSession);
+      this.untrackAndClose(rec.pc);
+      rtcLog('authorize failed', { via: input.via, reason: browserAuth.failReason(err) });
+      throw err;
+    }
   }
 
   async acceptBrowser(rtcSession: string, signaling: RtcSignaling): Promise<AcceptBrowserResult> {
@@ -576,20 +577,19 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     );
     this.prepareLocalDescriptions(pc);
     this.trackPc(pc);
-    const rec: BrowserRecord = {
-      rtcSession,
-      uid: '',
-      sid: '',
-      via: '',
-      connectionId: '',
-      nonce: null,
-      fpBrowser: null,
-      fpNode: null,
-      exp: this.now() + this.authorizeTtlMs,
-      pc,
-    };
+    const rec = browserAuth.emptyBrowserRecord(rtcSession, pc, this.now() + this.authorizeTtlMs);
     this.browser.set(rtcSession, rec);
     return rec;
+  }
+  private browserPrimeOpts(rec: BrowserRecord, signal?: AbortSignal): browserAuth.GrantOpts {
+    return {
+      now: this.now(),
+      ttlMs: this.authorizeTtlMs,
+      handshakeTimeoutMs: this.handshakeTimeoutMs,
+      signal,
+      fanout: this.prepareLocalDescriptions(rec.pc),
+      waitFingerprint: (target, timeoutMs) => this.waitLocalFingerprint(target, timeoutMs),
+    };
   }
 
   private sweepBrowser(): void {

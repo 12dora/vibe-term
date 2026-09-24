@@ -262,7 +262,7 @@ export class FakePeerConnection implements PeerConnectionLike {
   }
 
   localDescription(): { type: string; sdp: string } | null {
-    return this.localSdp ?? { type: 'unspec', sdp: this.fingerprintSdp() };
+    return this.localSdp;
   }
 
   remoteFingerprint(): DtlsFingerprint {
