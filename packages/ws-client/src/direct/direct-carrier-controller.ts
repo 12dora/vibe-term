@@ -10,6 +10,8 @@ import { type DirectRestContext, lookupConnectionId, requestAuthorize } from './
 import {
   authorizeBreakerShouldTry,
   authorizeProbeSuppressed,
+  beginAuthorizeAttempt,
+  clearDirectUnavailable,
   forceAuthorizeProbe,
 } from './direct-authorize-breaker';
 import {
@@ -350,10 +352,19 @@ export class DirectCarrierController {
   }
 
   /**
-   * 强制拨一次（冷却中也允许恰好一次）；不复位失败计数。最近一次是链路类失败时
-   * 不强制：只在冷却已过时照常拨一次，冷却中什么都不做。
+   * 用户显式重试：先撤掉 `DIRECT_UNAVAILABLE` 停放，其余同 `retry()`。
+   * `GatewayConnection.retryDirect()` 走这里；页面恢复 / 网络变化这类自动信号走 `retry()`。
    */
   retryDirect(): void {
+    clearDirectUnavailable(this.nodeId);
+    this.retry();
+  }
+
+  /**
+   * 强制拨一次（冷却中也允许恰好一次，`retryAfterMs` 之内不行）；不复位失败计数。
+   * 最近一次是链路类失败或目标给不出直连时不强制：只在冷却已过时照常拨一次，冷却中什么都不做。
+   */
+  retry(): void {
     if (!this.started) {
       this.start();
       return;
@@ -369,11 +380,6 @@ export class DirectCarrierController {
     this.clearPrimaryWait();
     this.teardownAttempt();
     this.connect();
-  }
-
-  /** 与 `retryDirect()` 相同：UI / 网络变化走强制探测，不复位熔断计数。 */
-  retry(): void {
-    this.retryDirect();
   }
 
   stop(): void {
@@ -416,6 +422,7 @@ export class DirectCarrierController {
       this.publish();
       return;
     }
+    beginAuthorizeAttempt(this.nodeId);
     this.clearPrimaryWait();
     this.setState('connecting', null);
     const attempt = this.beginAttempt();

@@ -304,6 +304,16 @@ export class FakeConnection {
   exposePrimaryStatus = true;
   /** 模拟 HELLO_S2C 能力集（含 `connection-id:<id>` 时跳过 GET connection）。 */
   helloCapabilities: string[] = [];
+  private directRetry: (() => void) | null = null;
+
+  setDirectRetry(fn: (() => void) | null): void {
+    this.directRetry = fn;
+  }
+
+  /** 与 `GatewayConnection.retryDirect()` 同形：用户显式重试。 */
+  retryDirect(): void {
+    this.directRetry?.();
+  }
 
   /** 与 `GatewayConnection.client` 同形：控制器只用 `isReady` / `onStateChange` / 能力集。 */
   get client(): PrimaryStatusLike | undefined {

@@ -18,7 +18,11 @@ import {
   PRIMARY_ONLY_DIAGNOSTICS,
   resolveDirectDiagnostics,
 } from '@vibeterm/ws-client/direct/types';
-import { clearDirectLinkAvailability, markDirectLinkUnavailable } from './direct-link-availability';
+import {
+  clearDirectLinkAvailability,
+  isDirectLinkUnavailable,
+  markDirectLinkUnavailable,
+} from './direct-link-availability';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import {
   DEVICES_STALE_MS,
@@ -54,6 +58,7 @@ function fakeConnection(mountedPanes: string[] = [], ready = true): FakeConnecti
   const mounted = new Set(mountedPanes);
   const stateListeners = new Set<(state: string) => void>();
   let isReady = ready;
+  let directRetry: (() => void) | null = null;
   const connection = {
     client: {
       isReady: () => isReady,
@@ -80,6 +85,10 @@ function fakeConnection(mountedPanes: string[] = [], ready = true): FakeConnecti
     setResumeSubscribedPanes: (fn: (() => void) | null) => {
       connection.resumeHook = fn;
     },
+    setDirectRetry: (fn: (() => void) | null) => {
+      directRetry = fn;
+    },
+    retryDirect: () => directRetry?.(),
     dispose: () => {},
     resumeHook: null as (() => void) | null,
     mountedPanes: mounted,
@@ -91,6 +100,7 @@ interface FakeController {
   starts: number;
   stops: number;
   retries: number;
+  explicitRetries: number;
   carrierState: 'idle' | 'connecting' | 'active' | 'failed';
   diagSnapshot: DirectDiagnostics;
   emitDiag: () => void;
@@ -142,9 +152,13 @@ function fakeController(): FakeController & DirectCarrierController {
       controller.stops += 1;
     },
     retries: 0,
+    explicitRetries: 0,
     carrierState: 'idle' as FakeController['carrierState'],
-    retryDirect() {
+    retry() {
       controller.retries += 1;
+    },
+    retryDirect() {
+      controller.explicitRetries += 1;
     },
     getState: () => controller.carrierState,
   };
@@ -303,7 +317,7 @@ describe('createNodeConnection', () => {
     expect(controller.starts).toBe(1);
   });
 
-  test('pageshow / 可见恢复时直连未 active 则 retryDirect；active 不拨', async () => {
+  test('pageshow / 可见恢复时直连未 active 则自动 retry（不是显式 retryDirect）；active 不拨', async () => {
     const down = fakeController();
     down.carrierState = 'failed';
     const resume: Array<() => void> = [];
@@ -320,6 +334,7 @@ describe('createNodeConnection', () => {
     expect(down.retries).toBe(0);
     resume[0]?.();
     expect(down.retries).toBe(1);
+    expect(down.explicitRetries).toBe(0);
 
     down.carrierState = 'active';
     resume[0]?.();
@@ -534,6 +549,63 @@ describe('createNodeConnection', () => {
     await directLinkSettled(connection);
     expect(created).toBe(1);
     connection.dispose();
+    resetMeshNodesStateForTest();
+  });
+
+  test('DIRECT_UNAVAILABLE 停放：页面恢复 / READY 不起，用户显式 retryDirect 清掉负结论并显式重试', async () => {
+    setMeshNodesStateForTest({ entryNodeId: 'entry-node', nodes: [] });
+    markDirectLinkUnavailable('node-unavail', 'entry-node', Date.now(), 'direct-unavailable');
+    const controller = fakeController();
+    let created = 0;
+    const resume: Array<() => void> = [];
+    const raw = fakeConnection();
+    const connection = createNodeConnection('node-unavail', {
+      createConnection: () => raw,
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => {
+        created += 1;
+        return controller;
+      },
+      pageResume: (listener) => {
+        resume.push(listener);
+        return () => undefined;
+      },
+    });
+    await directLinkSettled(connection);
+    resume[0]?.();
+    raw.becomeReady();
+    await directLinkSettled(connection);
+    expect(created).toBe(0);
+
+    connection.retryDirect();
+    await directLinkSettled(connection);
+    expect(created).toBe(1);
+    expect(controller.explicitRetries).toBe(1);
+    expect(controller.starts).toBe(0);
+    expect(isDirectLinkUnavailable('node-unavail', 'entry-node')).toBe(false);
+    connection.dispose();
+    clearDirectLinkAvailability();
+    resetMeshNodesStateForTest();
+  });
+
+  test('代答 401 的停放：显式 retryDirect 也不起（入口给不出直连，重试不会变）', async () => {
+    setMeshNodesStateForTest({ entryNodeId: 'entry-node', nodes: [] });
+    markDirectLinkUnavailable('node-foreign', 'entry-node');
+    let created = 0;
+    const connection = createNodeConnection('node-foreign', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => {
+        created += 1;
+        return fakeController();
+      },
+    });
+    await directLinkSettled(connection);
+    connection.retryDirect();
+    await directLinkSettled(connection);
+    expect(created).toBe(0);
+    connection.dispose();
+    clearDirectLinkAvailability();
     resetMeshNodesStateForTest();
   });
 

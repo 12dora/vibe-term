@@ -3,6 +3,7 @@ import {
   AUTHORIZE_BREAKER_BASE_MS,
   DIRECT_UNAVAILABLE_COOLDOWN_MS,
   authorizeBreakerShouldTry,
+  authorizeProbeSuppressed,
   resetAuthorizeBreakerForTest,
 } from './direct-authorize-breaker';
 import {
@@ -1371,9 +1372,12 @@ describe('DirectCarrierController authorize 链路类失败', () => {
   const authorizeCalls = (s: Setup) =>
     s.api.calls.filter((c) => c.path === RTC_AUTHORIZE_PATH).length;
 
-  test('503 DIRECT_UNAVAILABLE：10 分钟内不再问，online / retryDirect 也不放行；到期再探一次', async () => {
+  test('503 DIRECT_UNAVAILABLE：10 分钟内自动信号（online / 页面恢复 retry）不再问；到期再探一次', async () => {
     const s = setup();
-    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: { code: 'DIRECT_UNAVAILABLE' } });
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 503,
+      body: { code: 'DIRECT_UNAVAILABLE', reason: 'native-missing' },
+    });
     s.controller.start();
     await flush();
     expect(authorizeCalls(s)).toBe(1);
@@ -1382,7 +1386,7 @@ describe('DirectCarrierController authorize 链路类失败', () => {
     for (let i = 0; i < 9; i += 1) {
       s.clock.advance(60_000);
       s.network.emit('online');
-      s.controller.retryDirect();
+      s.controller.retry();
       await flush();
     }
     expect(authorizeCalls(s)).toBe(1);
@@ -1391,6 +1395,91 @@ describe('DirectCarrierController authorize 链路类失败', () => {
     s.clock.advance(DIRECT_UNAVAILABLE_COOLDOWN_MS);
     await flush();
     expect(authorizeCalls(s)).toBe(2);
+  });
+
+  test('DIRECT_UNAVAILABLE 停放：用户显式 retryDirect 解除并立刻再问一次', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: { code: 'DIRECT_UNAVAILABLE' } });
+    s.controller.start();
+    await flush();
+    s.clock.advance(60_000);
+    s.network.emit('online');
+    await flush();
+    expect(authorizeCalls(s)).toBe(1);
+
+    s.controller.retryDirect();
+    await flush();
+    expect(authorizeCalls(s)).toBe(2);
+  });
+
+  test('GatewayConnection.retryDirect() 走显式重试：同样解除停放', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: { code: 'DIRECT_UNAVAILABLE' } });
+    s.controller.start();
+    await flush();
+    s.connection.retryDirect();
+    await flush();
+    expect(authorizeCalls(s)).toBe(2);
+  });
+
+  test('503 DIRECT_BUSY：计入 authorize 熔断，retryAfterMs 之前谁也不问，之后自动重试', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 503,
+      body: { code: 'DIRECT_BUSY', reason: 'timeout', retryAfterMs: 5_000 },
+    });
+    s.controller.start();
+    await flush();
+    expect(authorizeCalls(s)).toBe(1);
+
+    s.clock.advance(1_000);
+    s.network.emit('online');
+    s.controller.retry();
+    s.controller.retryDirect();
+    await flush();
+    expect(authorizeCalls(s)).toBe(1);
+
+    s.clock.advance(4_000);
+    await flush();
+    expect(authorizeCalls(s)).toBe(2);
+  });
+
+  test('DIRECT_BUSY 把熔断打开后：online / 页面恢复在冷却中能强制探测一次，且只一次', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 503,
+      body: { code: 'DIRECT_BUSY', reason: 'capacity' },
+    });
+    s.controller.start();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    s.clock.advance(2000);
+    await flush();
+    expect(authorizeCalls(s)).toBe(3);
+    expect(authorizeBreakerShouldTry(NODE_ID, s.clock.now).allow).toBe(false);
+
+    s.network.emit('online');
+    await flush();
+    expect(authorizeCalls(s)).toBe(4);
+    s.clock.advance(5_000);
+    await flush();
+    expect(authorizeCalls(s)).toBe(4);
+  });
+
+  test('老 node：DIRECT_UNAVAILABLE 带一过性 reason 按 DIRECT_BUSY 处理，不停放', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 503,
+      body: { code: 'DIRECT_UNAVAILABLE', reason: 'timeout' },
+    });
+    s.controller.start();
+    await flush();
+    expect(authorizeCalls(s)).toBe(1);
+    s.clock.advance(1000);
+    await flush();
+    expect(authorizeCalls(s)).toBe(2);
+    expect(authorizeProbeSuppressed(NODE_ID, s.clock.now)).toBe(false);
   });
 
   test('503 NODE_UNREACHABLE：计入熔断；冷却中 online / 页面恢复不强制探测', async () => {
