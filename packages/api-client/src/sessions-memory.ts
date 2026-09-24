@@ -33,8 +33,14 @@ function normalizeLimitsSupported(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
 }
 
+function sampledAgeMs(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  return value;
+}
+
 function normalizeWindow(wire: Record<string, unknown>): SessionsMemoryWindow {
   const scopes = Array.isArray(wire.scopes) ? wire.scopes : [];
+  const age = sampledAgeMs(wire.sampledAgeMs);
   return {
     windowId: stringOr(wire.windowId),
     windowName: stringOr(wire.windowName),
@@ -49,6 +55,7 @@ function normalizeWindow(wire: Record<string, unknown>): SessionsMemoryWindow {
     sampledAt: numberOr(wire.sampledAt),
     source: normalizeSource(wire.source),
     ...(wire.stale === true ? { stale: true } : {}),
+    ...(age === undefined ? {} : { sampledAgeMs: age }),
   };
 }
 

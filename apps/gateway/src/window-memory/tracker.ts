@@ -1,5 +1,7 @@
 import type { WindowMemorySettings } from '@vibeterm/shared';
 
+import type { AppliedTripleBook } from './applied-triples';
+import { createMemoryAppliedTripleBook } from './applied-triples';
 import {
   HOST_SHELL_MAX_OUTPUT_BYTES,
   HOST_SHELL_TIMEOUT_MS,
@@ -8,17 +10,19 @@ import {
   STOP_SCOPE_TIMEOUT_MS,
   TICK_DEBOUNCE_MS,
 } from './constants';
-import { sweepReleaseOrphans } from './orphan-scopes';
-import { type SamplerParseResult, parseSamplerOutput } from './sample-parser';
+import { type SweepClock, runMemoryMutations } from './release-cycle';
+import {
+  type SamplerHeaderReason,
+  type SamplerParseResult,
+  parseSamplerOutput,
+} from './sample-parser';
 import { buildSamplerScript } from './sampler-script';
-import { buildStopScopeScript, isAllZeroLimits } from './scope-commands';
+import { buildStopScopeScript } from './scope-commands';
 import {
   type MemoryPaneRef,
   type PaneMemoryState,
   aggregateWindows,
-  applyScopeLimit,
   collectOomEvents,
-  releaseScopeLimit,
   vanishedWindowIds,
   windowNeedsEmit,
 } from './tracker-ops';
@@ -50,6 +54,7 @@ export interface CreateWindowMemoryTrackerOptions {
   getPanes: () => MemoryPaneRef[];
   now?: () => number;
   schedule?: WindowMemorySchedule;
+  appliedTriples?: AppliedTripleBook;
 }
 
 const systemSchedule: WindowMemorySchedule = {
@@ -65,14 +70,6 @@ function intervalMs(settings: WindowMemorySettings): number {
   return sec * 1000;
 }
 
-function scopesOf(states: Iterable<PaneMemoryState>): string[] {
-  const names: string[] = [];
-  for (const state of states) {
-    if (state.scope && !names.includes(state.scope)) names.push(state.scope);
-  }
-  return names;
-}
-
 function emptyState(pane: MemoryPaneRef): PaneMemoryState {
   return {
     paneId: pane.paneId,
@@ -86,6 +83,7 @@ function emptyState(pane: MemoryPaneRef): PaneMemoryState {
     desiredKey: '',
     lastStderr: '',
     giveUpLogged: false,
+    releaseUnverified: false,
   };
 }
 
@@ -114,6 +112,10 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   private measureMisses = 0;
   private readonly orphanStates = new Map<string, PaneMemoryState>();
   private readonly orphanWarn = new Set<string>();
+  private readonly book: AppliedTripleBook;
+  private readonly sweep: SweepClock = { lastAt: 0, forced: true, releaseKey: '' };
+  private sampleReason: SamplerHeaderReason | undefined;
+  private sawTmuxSpawn = false;
 
   constructor(opts: CreateWindowMemoryTrackerOptions) {
     this.deviceId = opts.deviceId;
@@ -122,6 +124,7 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     this.getPanes = opts.getPanes;
     this.now = opts.now ?? Date.now;
     this.schedule = opts.schedule ?? systemSchedule;
+    this.book = opts.appliedTriples ?? createMemoryAppliedTripleBook();
   }
 
   start(): void {
@@ -233,46 +236,40 @@ class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
     this.pruneVanished(panes);
     const parsed = await this.sampleHost(panes);
     if (!parsed) return;
+    this.sampleReason = parsed.reason;
     this.updateLimitsSupported(parsed);
     this.syncPaneStates(panes, parsed.panes);
+    this.noteSpawnScopes();
     this.refineLimitsByScopes();
     if (!this.acceptMeasure(panes)) return;
-    await this.applyOrRelease(settings);
-    await this.sweepOrphans(settings, panes);
+    await runMemoryMutations({
+      host: this.host,
+      deviceId: this.deviceId,
+      now: this.now(),
+      settings,
+      panes,
+      paneStates: this.paneStates,
+      orphanStates: this.orphanStates,
+      orphanWarn: this.orphanWarn,
+      limitsSupported: this.limitsSupported,
+      cgroupPinned: this.limitsCgroupPinned,
+      sampleReason: this.sampleReason,
+      sawTmuxSpawn: this.sawTmuxSpawn,
+      book: this.book,
+      sweep: this.sweep,
+    });
     const now = this.now();
     this.emitOom();
     this.emitWindows(panes, now);
   }
 
-  private async applyOrRelease(settings: WindowMemorySettings): Promise<void> {
-    const release = !settings.enabled || isAllZeroLimits(settings);
-    if (!release && this.limitsSupported === false) return;
-    const now = this.now();
+  private noteSpawnScopes(): void {
+    if (this.sawTmuxSpawn) return;
     for (const state of this.paneStates.values()) {
-      if (release) await releaseScopeLimit(this.host, this.deviceId, state, now);
-      else await applyScopeLimit(this.host, this.deviceId, state, settings, now);
-    }
-  }
-
-  private async sweepOrphans(
-    settings: WindowMemorySettings,
-    panes: MemoryPaneRef[]
-  ): Promise<void> {
-    const release = !settings.enabled || isAllZeroLimits(settings);
-    if (!release) {
-      this.orphanStates.clear();
+      if (!state.scope) continue;
+      this.sawTmuxSpawn = true;
       return;
     }
-    if (this.limitsCgroupPinned) return;
-    await sweepReleaseOrphans({
-      host: this.host,
-      deviceId: this.deviceId,
-      now: this.now(),
-      panes,
-      liveScopes: scopesOf(this.paneStates.values()),
-      states: this.orphanStates,
-      warned: this.orphanWarn,
-    });
   }
 
   private updateLimitsSupported(parsed: SamplerParseResult): void {

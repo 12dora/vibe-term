@@ -9,6 +9,7 @@ import {
   type SessionsDeviceRow,
   type SessionsWindowRow,
   fillDisconnectedDevices,
+  readSampleIntervalSec,
 } from '../core/sessions-memory';
 import type { Command } from './types';
 
@@ -28,7 +29,9 @@ const USAGE = [
   'With --memory: SCOPE (first scope, `+N` when more, `-` when none), SOURCE (`cgroup`',
   'or `RSS`), MEM (current), HIGH, MAX (`∞` when 0), OOM (kills, `!` when oomFlag).',
   'SOURCE, MEM, HIGH, MAX, and OOM print `-` when the window is unsampled',
-  'or the sample is stale (`stale: true`). A stale sample is not a live cap.',
+  'or the sample is stale (`stale: true`, or `sampledAgeMs` above max(6×interval, 60s),',
+  'or — when the target omits `sampledAgeMs` — `sampledAt` is that old on the local clock).',
+  'A stale sample is not a live cap.',
   'Devices with limitsSupported:false print `(limits unavailable)` after their rows.',
   'Devices with supported:false print `(cannot sample memory)` after their rows',
   '(not in addition to the limits note).',
@@ -71,12 +74,22 @@ function formatOom(kills: number, flag: boolean): string {
   return `${kills}${flag ? '!' : ''}`;
 }
 
-function memoryHidden(window: SessionsWindowRow): boolean {
-  return !window.sampledAt || window.stale === true;
+function staleAfterMs(intervalSec: number): number {
+  const sec = Math.min(60, Math.max(2, intervalSec));
+  return Math.max(sec * 1000 * 6, 60_000);
 }
 
-function formatSource(window: SessionsWindowRow): string {
-  if (memoryHidden(window)) return '-';
+function memoryHidden(window: SessionsWindowRow, intervalSec: number, now: number): boolean {
+  if (!window.sampledAt || window.stale === true) return true;
+  const limit = staleAfterMs(intervalSec);
+  if (typeof window.sampledAgeMs === 'number' && Number.isFinite(window.sampledAgeMs)) {
+    return window.sampledAgeMs > limit;
+  }
+  return Number.isFinite(now) && now - window.sampledAt > limit;
+}
+
+function formatSource(window: SessionsWindowRow, intervalSec: number, now: number): string {
+  if (memoryHidden(window, intervalSec, now)) return '-';
   return window.source === 'rss' ? 'RSS' : 'cgroup';
 }
 
@@ -109,15 +122,17 @@ function placeholderRow(device: SessionsDeviceRow, note: string | null): Session
 function windowRow(
   device: SessionsDeviceRow,
   window: SessionsWindowRow,
-  note: string | null
+  note: string | null,
+  intervalSec: number,
+  now: number
 ): SessionRow {
-  const hidden = memoryHidden(window);
+  const hidden = memoryHidden(window, intervalSec, now);
   return {
     deviceName: device.deviceName || device.deviceId,
     window: windowLabel(window),
     panes: String(window.panes),
     scope: formatScope(window.scopes),
-    source: formatSource(window),
+    source: formatSource(window, intervalSec, now),
     mem: hidden ? '-' : formatBytes(window.current),
     high: hidden ? '-' : formatLimit(window.high),
     max: hidden ? '-' : formatLimit(window.max),
@@ -126,7 +141,12 @@ function windowRow(
   };
 }
 
-function buildRows(devices: readonly SessionsDeviceRow[], memory: boolean): SessionRow[] {
+function buildRows(
+  devices: readonly SessionsDeviceRow[],
+  memory: boolean,
+  intervalSec: number,
+  now: number
+): SessionRow[] {
   const rows: SessionRow[] = [];
   for (const device of devices) {
     const windows = device.windows ?? [];
@@ -137,7 +157,7 @@ function buildRows(devices: readonly SessionsDeviceRow[], memory: boolean): Sess
     }
     for (let index = 0; index < windows.length; index += 1) {
       const last = index === windows.length - 1;
-      rows.push(windowRow(device, windows[index], last ? note : null));
+      rows.push(windowRow(device, windows[index], last ? note : null, intervalSec, now));
     }
   }
   return rows;
@@ -213,7 +233,8 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     ctx.out.line(JSON.stringify(next));
     return;
   }
-  printTable(ctx, buildRows(devices, memory), memory);
+  const intervalSec = memory ? await readSampleIntervalSec(ctx, nodeId) : 5;
+  printTable(ctx, buildRows(devices, memory, intervalSec, Date.now()), memory);
 }
 
 export const command: Command = {

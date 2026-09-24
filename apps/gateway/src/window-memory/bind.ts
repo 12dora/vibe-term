@@ -1,6 +1,7 @@
 import type { TmuxWindow } from '@vibeterm/shared';
 
 import type { TmuxConnectionOptions } from '../tmux-client/connection-types';
+import { getAppliedTripleBook } from './applied-triples';
 import { type WindowMemoryTrackerHandle, createWindowMemoryTracker } from './tracker';
 import type { HostShellRunner } from './types';
 
@@ -50,6 +51,7 @@ export function bindWindowMemoryTracker(
     host,
     hooks: options.windowMemory,
     getPanes: () => panesFromWindows(snapshotWindows),
+    appliedTriples: getAppliedTripleBook(),
   });
 }
 

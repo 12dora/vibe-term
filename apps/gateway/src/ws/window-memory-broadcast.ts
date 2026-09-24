@@ -4,6 +4,8 @@ import {
   type WindowMemoryRuntimeHost,
   bindWindowMemoryRuntimeHost,
 } from '../window-memory/runtime-host';
+import { isMemorySampleStale } from '../window-memory/sample-freshness';
+import { getWindowMemorySettingsStore } from '../window-memory/settings-store';
 import type { WindowMemoryAggregate } from '../window-memory/types';
 import { encodePayloadFrames } from './borsh/codec-borsh';
 import type { GatewaySession } from './gateway-session';
@@ -14,6 +16,8 @@ import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 export interface WindowMemoryBroadcastHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
   readonly shareIndex: Pick<ShareSessionIndex, 'visibleClients'>;
+  readonly now?: () => number;
+  readonly sampleIntervalSec?: () => number;
 }
 
 /**
@@ -40,11 +44,20 @@ export class WindowMemoryBroadcast implements WindowMemoryRuntimeHost {
     const entry = this.host.connections.get(deviceId);
     if (!entry) return;
     if (!entry.clients.has(session) && !entry.canonicalClients?.has(session)) return;
-    const windows = entry.runtime.getWindowMemory?.() ?? [];
+    const windows = this.freshWindows(entry.runtime.getWindowMemory?.() ?? []);
     if (windows.length === 0) return;
     for (const target of this.host.shareIndex.visibleClients([session], deviceId, null)) {
       this.sendWindows(target, deviceId, windows);
     }
+  }
+
+  /** 追踪器停采期间缓存的是旧读数；重连时只补发仍新鲜的，别让几天前的限额看起来像当前。 */
+  private freshWindows(windows: WindowMemoryAggregate[]): WindowMemoryAggregate[] {
+    if (windows.length === 0) return windows;
+    const now = this.host.now?.() ?? Date.now();
+    const interval =
+      this.host.sampleIntervalSec?.() ?? getWindowMemorySettingsStore().get().sampleIntervalSec;
+    return windows.filter((w) => !isMemorySampleStale(w.sampledAt, now, interval));
   }
 
   getRuntime(deviceId: string): DeviceSessionRuntime | undefined {

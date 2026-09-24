@@ -76,7 +76,12 @@ function setup() {
       return shareVisibleClients(clients, deviceId, paneId, () => false);
     },
   };
-  const broadcast = new WindowMemoryBroadcast({ connections, shareIndex });
+  const broadcast = new WindowMemoryBroadcast({
+    connections,
+    shareIndex,
+    now: () => 1_700_000_001_000,
+    sampleIntervalSec: () => 5,
+  });
   const fake = createFakeRuntime();
   const clients = new Set<GatewaySession>();
   const canonicalClients = new Set<GatewaySession>();
@@ -301,6 +306,18 @@ describe('WindowMemoryBroadcast session connect', () => {
     expect(session.sent).toHaveLength(2);
     expect(decode(session.sent[0]).payload.current).toBe(77n);
     expect(decode(session.sent[1]).payload.windowId).toBe('@2');
+  });
+
+  test('does not replay samples older than the stale threshold', () => {
+    const { fake, addSession, broadcast } = setup();
+    const session = addSession();
+    fake.setCurrent([
+      aggregate('@1', { sampledAt: 1_700_000_001_000 - 61_000 }),
+      aggregate('@2', { sampledAt: 1_700_000_000_900 }),
+      aggregate('@3', { sampledAt: 0 }),
+    ]);
+    broadcast.handleDeviceConnected(session, DEVICE_ID);
+    expect(session.sent.map((frame) => decode(frame).payload.windowId)).toEqual(['@2', '@3']);
   });
 
   test('stays quiet when there are no samples or no entry yet', () => {

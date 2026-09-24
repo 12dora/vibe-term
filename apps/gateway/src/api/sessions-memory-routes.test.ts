@@ -282,6 +282,7 @@ describe('GET /api/sessions/memory', () => {
                 oomKills: 1,
                 oomFlag: true,
                 sampledAt: FRESH_SAMPLED_AT,
+                sampledAgeMs: expect.any(Number),
                 source: 'cgroup',
               },
               {
@@ -406,6 +407,7 @@ describe('GET /api/sessions/memory', () => {
             oomKills: 0,
             oomFlag: false,
             sampledAt: FRESH_SAMPLED_AT,
+            sampledAgeMs: expect.any(Number),
             source: 'rss',
           },
         ],
@@ -447,7 +449,7 @@ describe('GET /api/sessions/memory', () => {
     }
   });
 
-  test('connected 但样本早于 6 个周期：stale，限额字段丢掉，sampledAt 保留', async () => {
+  test('connected 但样本早于 6 个周期：stale，限额原值保留，并带上服务端年龄', async () => {
     const list = spyOn(devicesDb, 'getAllDevices').mockReturnValue([device('dev-old', 'Old')]);
     bindWindowMemoryRuntimeHost({
       requestTickAll() {},
@@ -478,21 +480,24 @@ describe('GET /api/sessions/memory', () => {
       const res = await handleApiRequest(req('GET', SESSIONS_MEMORY_PATH), fakeServer);
       const body = (await res.json()) as SessionsMemoryResponse;
       expect(body.devices[0]?.connected).toBe(true);
-      expect(body.devices[0]?.windows[0]).toEqual({
+      const row = body.devices[0]?.windows[0];
+      expect(row).toEqual({
         windowId: '@4',
         windowName: 'stuck',
         panes: 1,
         scopes: ['tmux-spawn-aaa.scope', 'tmux-spawn-bbb.scope'],
         current: 4096,
-        high: 0,
-        max: 0,
-        swapMax: 0,
+        high: 8 * 1024 ** 3,
+        max: 12 * 1024 ** 3,
+        swapMax: 1024,
         oomKills: 1,
         oomFlag: true,
         sampledAt: 1_700_000_000_000,
+        sampledAgeMs: expect.any(Number),
         source: 'cgroup',
         stale: true,
       });
+      expect(row?.sampledAgeMs ?? 0).toBeGreaterThan(60_000);
     } finally {
       list.mockRestore();
     }
