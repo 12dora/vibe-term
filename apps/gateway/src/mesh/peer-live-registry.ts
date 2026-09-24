@@ -35,9 +35,11 @@ import {
 import { parseOpenPayload } from './peer-protocol';
 import { type LivePeer, peerDropPlan } from './peer-reconnect-wake';
 import { PEER_RTC_WAKE_COOLDOWN_MS } from './peer-rtc-wake';
+import * as sideRelay from './peer-side-relay';
 import { quiet } from './peer-ws-race';
+import { rememberLinkTransport } from './pending-measure-hold';
 import { getRelayDialBreaker } from './relay-dial-breaker';
-import { isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
+import { RTC_DIAL_BREAKER_HEALTHY_MS, isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
 import { flushDialFailed } from './rtc/rtc-log';
 import { classifyOpenPayload } from './stream-targets';
 import type { PeerTransportKind } from './types';
@@ -57,7 +59,8 @@ export class PeerLiveRegistry {
   private readonly dcPromote: DcPromoteGate;
   private linkInfoHold = 0;
   private readonly bypassRank = new WeakSet<LinkSession>();
-  private readonly unstableDc = new UnstableDcBackoff(() => this.state.scheduler.now());
+  private readonly unstableDc = new UnstableDcBackoff();
+  private readonly unstableClear = new Map<string, { clear(): void }>();
 
   constructor(state: PeerManagerState, opts: PeerLiveRegistryOptions) {
     this.state = state;
@@ -80,6 +83,7 @@ export class PeerLiveRegistry {
       onGatewaySession: this.onGatewaySession,
       onGatewaySessionClose: this.onGatewaySessionClose,
     };
+    sideRelay.watchSideRelay(this.state, this.inboundHost, this.maxConcurrentStreams);
   }
 
   track(
@@ -103,18 +107,18 @@ export class PeerLiveRegistry {
     const resolvedAddress =
       remoteAddress ?? (transport === 'dc' ? (prev?.remoteAddress ?? null) : null);
     if (consumeForcedSession(this.bypassRank, session)) {
-      if (prev && prev.session !== session) this.deps.retirePeer(prev, 'replaced');
-      return this.installLive(
+      return this.installForced({
         session,
         peerNodeId,
         transport,
         initiatedBy,
         gen,
         quiesceCapable,
-        resolvedAddress,
+        remoteAddress: resolvedAddress,
         dcAttemptId,
-        rtcEpoch
-      );
+        rtcEpoch,
+        prev,
+      });
     }
     const tap = {
       session,
@@ -182,6 +186,37 @@ export class PeerLiveRegistry {
       dcAttemptId
     );
   }
+  private installForced(input: {
+    session: LinkSession;
+    peerNodeId: string;
+    transport: PeerTransportKind;
+    initiatedBy: string;
+    gen: number;
+    quiesceCapable: boolean;
+    remoteAddress: string | null;
+    dcAttemptId: string | null;
+    rtcEpoch?: number;
+    prev: LivePeer | undefined;
+  }): LinkSession {
+    const { session, prev, transport } = input;
+    if (sideRelay.shouldParkBesideRelay(this.state, prev, transport) && prev.session !== session) {
+      sideRelay.parkBesideRelay(this.state, prev.peerNodeId, session);
+      return session;
+    }
+    if (prev && prev.session !== session) this.deps.retirePeer(prev, 'replaced');
+    return this.installLive(
+      session,
+      input.peerNodeId,
+      transport,
+      input.initiatedBy,
+      input.gen,
+      input.quiesceCapable,
+      input.remoteAddress,
+      input.dcAttemptId,
+      input.rtcEpoch
+    );
+  }
+
   private installLive(
     session: LinkSession,
     peerNodeId: string,
@@ -193,6 +228,7 @@ export class PeerLiveRegistry {
     dcAttemptId: string | null = null,
     rtcEpoch?: number
   ): LinkSession {
+    rememberLinkTransport(session, transport);
     const keys = this.state.sessionKeys.get(session);
     const live: LivePeer = {
       session,
@@ -238,7 +274,7 @@ export class PeerLiveRegistry {
       this.armDcProof(live);
       this.deps.dcBreaker.noteChannelEstablished(peerNodeId, live.dcAttemptId ?? undefined);
       flushDialFailed(peerNodeId, { cause: 'established' });
-      if (live.dcAttemptId) this.deps.armDcHealthTimer(peerNodeId, live.dcAttemptId);
+      this.armDcHealth(live, peerNodeId);
     }
     if (transport === 'dc' || transport === 'ws-secure') {
       this.deps.clearDirectFailure(peerNodeId);
@@ -356,9 +392,11 @@ export class PeerLiveRegistry {
 
   onPeerPong(live: LivePeer, echoedSentAt?: number): void {
     live.missedPongs = 0;
+    const answered = live.pingSentAt != null;
     const sample = measurePingRttMs(performance.now(), echoedSentAt, live.pingSentAt);
     live.pingSentAt = null;
     if (sample == null) return;
+    if (answered) this.noteMuxProof(live);
     applyPeerRttSample(live, sample);
     this.deps.onRttSample(live, sample);
     this.maybeEmitRtt(live);
@@ -368,13 +406,11 @@ export class PeerLiveRegistry {
     const msg = parseOpenPayload(bytes);
     if (!msg || typeof msg.t !== 'string') return false;
     if (msg.t === 'ping') {
-      this.noteMuxProof(live);
       const sentAt = parseEchoedSentAt(msg.sentAt);
       this.deps.sendPeerCtl(live, sentAt == null ? { t: 'pong' } : { t: 'pong', sentAt });
       return true;
     }
     if (msg.t !== 'pong') return false;
-    this.noteMuxProof(live);
     this.onPeerPong(live, parseEchoedSentAt(msg.sentAt));
     return true;
   }
@@ -429,6 +465,7 @@ export class PeerLiveRegistry {
     live.idleTimer = null;
   }
   dropPeer(nodeId: string, reason: string): void {
+    this.clearUnstableTimer(nodeId);
     const live = this.state.live.get(nodeId);
     logDcDrop(live, reason, this.state.scheduler.now());
     unbindLiveDcProof(live);
@@ -444,6 +481,9 @@ export class PeerLiveRegistry {
         this.deps.finishRetire(live, reason);
       }
     }
+    sideRelay.releaseSideRelay(this.state, nodeId, plan, reason, (session) =>
+      this.adoptSideRelay(nodeId, session)
+    );
     const incoming = this.deps.ensureIncomingWakeGate(nodeId);
     incoming.nextEligibleAt = Math.max(
       incoming.nextEligibleAt,
@@ -490,6 +530,11 @@ export class PeerLiveRegistry {
     if (next) this.emitLinkInfo(next);
     else this.emitOfflineLinkInfo(nodeId);
   }
+  private adoptSideRelay(nodeId: string, session: LinkSession): void {
+    const id = this.state.identity.nodeId;
+    this.installLive(session, nodeId, 'relay', id, this.state.generation, false, null);
+  }
+
   private promoteRetiring(nodeId: string, excluded?: LivePeer | null): boolean {
     if (this.state.live.get(nodeId)) return false;
     const set = this.state.retiring.get(nodeId);
@@ -507,6 +552,31 @@ export class PeerLiveRegistry {
     this.deps.notifyLive(nodeId, best.session);
     this.emitLinkInfo(best);
     return true;
+  }
+
+  private armDcHealth(live: LivePeer, peerNodeId: string): void {
+    if (!live.dcAttemptId) return;
+    this.deps.armDcHealthTimer(peerNodeId, live.dcAttemptId);
+    this.armUnstableClear(live);
+  }
+
+  private armUnstableClear(live: LivePeer): void {
+    this.clearUnstableTimer(live.peerNodeId);
+    const peer = live.peerNodeId;
+    const attempt = live.dcAttemptId;
+    const handle = this.state.scheduler.interval(() => {
+      handle.clear();
+      this.unstableClear.delete(peer);
+      const current = this.state.live.get(peer);
+      if (current !== live || current.dcAttemptId !== attempt) return;
+      this.unstableDc.noteHealthy(peer);
+    }, RTC_DIAL_BREAKER_HEALTHY_MS);
+    this.unstableClear.set(peer, handle);
+  }
+
+  private clearUnstableTimer(peer: string): void {
+    this.unstableClear.get(peer)?.clear();
+    this.unstableClear.delete(peer);
   }
 
   private armDcProof(live: LivePeer): void {

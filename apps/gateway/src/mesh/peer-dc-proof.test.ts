@@ -1,34 +1,66 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { encodeCtlMessage } from './ctl';
-import { UnstableDcBackoff, isLiveDcProven, isPostEstablishDcLoss } from './peer-dc-proof';
+import {
+  DC_STABLE_HOLD_CAP,
+  UnstableDcBackoff,
+  isLiveDcProven,
+  markLiveDcProven,
+  notePeerDcStableHold,
+  peerSupportsDcStableHold,
+  resetDcStableHoldForTests,
+  settleEstablishedDcDrop,
+  unstableCooldownMs,
+} from './peer-dc-proof';
 import { noteDialDcFailure } from './peer-dialer-dc-gate';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { PeerLinkDrain } from './peer-link-drain';
 import { PeerLiveRegistry } from './peer-live-registry';
 import {
+  DC_MIN_STABLE_MS,
   DC_UNSTABLE_BACKOFF_MS,
-  DC_UNSTABLE_STRIKES,
-  DC_UNSTABLE_WINDOW_MS,
+  PEER_PING_INTERVAL_MS,
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
   createPeerManagerState,
 } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { resetDcLinkProofForTests } from './rtc/dc-link-proof';
+import { RTC_DIAL_BREAKER_HEALTHY_MS, RtcDialBreaker } from './rtc/rtc-dial-breaker';
 import { ImmediateScheduler } from './test-support';
 import type { MeshIdentity, PeerTransportKind } from './types';
 
 const SELF = 'aa'.repeat(16);
 const PEER = 'bb'.repeat(16);
+const HTTP_OPEN = new TextEncoder().encode(
+  JSON.stringify({ type: 'http', method: 'GET', path: '/' })
+);
 
 afterEach(() => {
   resetDcLinkProofForTests();
+  resetDcStableHoldForTests();
 });
 
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function waitForCtl(remote: LinkSession, type: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`no ${type}`)), 1_000);
+    remote.ctl.onMessage((bytes) => {
+      let msg: { t?: string };
+      try {
+        msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
+      } catch {
+        return;
+      }
+      if (msg.t !== type) return;
+      clearTimeout(timer);
+      resolve(msg.t);
+    });
+  });
 }
 
 type FailureCall = { kind: string; attempt?: string };
@@ -150,7 +182,8 @@ function makeHarness() {
   return { scheduler, state, registry, drain, failures, unstableCalls, established };
 }
 
-function installRelayThenDc(h: ReturnType<typeof makeHarness>, attempt = 'dc:1') {
+function installRelayThenDc(h: ReturnType<typeof makeHarness>, attempt = 'dc:1', capable = true) {
+  if (capable) notePeerDcStableHold(PEER);
   const [relay, relayPeer] = createInMemoryLinkPair();
   const [dc, dcPeer] = createInMemoryLinkPair();
   let relayReason: string | undefined;
@@ -203,7 +236,7 @@ describe('unproven DC does not retire the previous relay', () => {
       expect(h.state.live.get(PEER)?.transport).toBe('relay');
       expect(link.relayReason()).toBeUndefined();
       expect(h.failures).toEqual([]);
-      expect(h.unstableCalls).toEqual([]);
+      expect(h.unstableCalls).toEqual([{ peer: PEER, cooldownMs: DC_UNSTABLE_BACKOFF_MS }]);
       expect(
         lines.some((line) => line.includes('dc drop') && line.includes('reason=channel-closed'))
       ).toBe(true);
@@ -215,16 +248,29 @@ describe('unproven DC does not retire the previous relay', () => {
     }
   });
 
-  test('a mux pong proves the DC and the relay then retires on the old timer', async () => {
+  test('an inbound ping does not prove; an answered pong retires only after the stable age', async () => {
     const h = makeHarness();
     const link = installRelayThenDc(h, 'dc:pong');
-    link.dcPeer.ctl.send(encodeCtlMessage({ t: 'pong' }));
+    link.dcPeer.ctl.send(encodeCtlMessage({ t: 'ping' }));
     await flush();
+    expect(isLiveDcProven(h.state.live.get(PEER)!)).toBe(false);
+
+    link.dcPeer.ctl.send(encodeCtlMessage({ t: 'pong', sentAt: 1 }));
+    await flush();
+    expect(isLiveDcProven(h.state.live.get(PEER)!)).toBe(false);
+
+    h.scheduler.advance(PEER_PING_INTERVAL_MS);
     await flush();
     const live = h.state.live.get(PEER);
     expect(live?.transport).toBe('dc');
+    expect(link.relayReason()).toBeUndefined();
+    expect(live?.pingSentAt).not.toBeNull();
+    link.dcPeer.ctl.send(encodeCtlMessage({ t: 'pong', sentAt: live?.pingSentAt }));
+    await flush();
     expect(isLiveDcProven(live!)).toBe(true);
-    h.scheduler.advance(PEER_RETIRE_MIN_MS);
+    expect(link.relayReason()).toBeUndefined();
+
+    h.scheduler.advance(DC_MIN_STABLE_MS - PEER_PING_INTERVAL_MS);
     await flush();
     expect(link.relayReason()).toBe('replaced');
     expect(h.state.live.get(PEER)?.session).toBe(link.dc);
@@ -232,7 +278,7 @@ describe('unproven DC does not retire the previous relay', () => {
     await flush();
     expect(h.state.live.get(PEER)).toBeUndefined();
     expect(h.failures).toEqual([]);
-    expect(h.unstableCalls).toEqual([]);
+    expect(h.unstableCalls).toEqual([{ peer: PEER, cooldownMs: DC_UNSTABLE_BACKOFF_MS }]);
   });
 
   test('an unproven DC is retired anyway at PEER_RETIRE_MAX_MS', async () => {
@@ -265,32 +311,44 @@ describe('established DC loss is not a dial failure', () => {
     expect(calls).toEqual(['timeout']);
   });
 
-  test('channel-closed, liveness-timeout, missed-pong and dc-promote-reject do not count; timeout does', async () => {
+  test('capable peer: post-establish loss escalates and does not climb the dial breaker', async () => {
     const h = makeHarness();
-    const reasons = [
-      'channel-closed',
-      'liveness-timeout',
-      'missed-pong',
-      'dc-promote-reject',
-    ] as const;
+    notePeerDcStableHold(PEER);
+    const reasons = ['channel-closed', 'liveness-timeout', 'missed-pong'] as const;
     for (const reason of reasons) {
-      const [, , dc] = trackDc(h, `dc:${reason}`);
+      trackDc(h, `dc:${reason}`);
       h.registry.dropPeer(PEER, reason);
       await flush();
       expect(h.state.live.has(PEER)).toBe(false);
-      void dc;
     }
+    trackDc(h, 'dc:promote');
+    h.registry.dropPeer(PEER, 'dc-promote-reject');
+    await flush();
     expect(h.failures).toEqual([]);
-    const dc = trackDc(h, 'dc:timeout')[2];
+    expect(h.unstableCalls.map((call) => call.cooldownMs)).toEqual([
+      unstableCooldownMs(1),
+      unstableCooldownMs(2),
+      unstableCooldownMs(3),
+    ]);
+    trackDc(h, 'dc:timeout');
     h.registry.dropPeer(PEER, 'timeout');
     await flush();
     expect(h.failures).toEqual([{ kind: 'timeout', attempt: 'dc:timeout' }]);
-    void dc;
   });
 
-  test('N unproven deaths arm a short unstable backoff and do not climb the dial breaker', async () => {
+  test('old peer: post-establish loss still counts as a dial failure', async () => {
     const h = makeHarness();
-    for (let i = 0; i < DC_UNSTABLE_STRIKES; i += 1) {
+    trackDc(h, 'dc:old');
+    h.registry.dropPeer(PEER, 'channel-closed');
+    await flush();
+    expect(h.failures).toEqual([{ kind: 'channel-closed', attempt: 'dc:old' }]);
+    expect(h.unstableCalls).toEqual([]);
+  });
+
+  test('short deaths escalate 60s, 2min, 4min and do not climb the dial breaker', async () => {
+    const h = makeHarness();
+    notePeerDcStableHold(PEER);
+    for (let i = 0; i < 3; i += 1) {
       const [relay] = createInMemoryLinkPair();
       const [dc] = createInMemoryLinkPair();
       if (!h.state.live.has(PEER)) h.registry.track(relay, PEER, 'relay', SELF, 0, true);
@@ -300,31 +358,237 @@ describe('established DC loss is not a dial failure', () => {
       expect(h.state.live.get(PEER)?.transport).toBe('relay');
     }
     expect(h.failures).toEqual([]);
-    expect(h.unstableCalls).toEqual([{ peer: PEER, cooldownMs: DC_UNSTABLE_BACKOFF_MS }]);
+    expect(h.unstableCalls.map((call) => call.cooldownMs)).toEqual([
+      unstableCooldownMs(1),
+      unstableCooldownMs(2),
+      unstableCooldownMs(3),
+    ]);
   });
 });
 
 describe('UnstableDcBackoff', () => {
-  test('counts only unproven deaths inside the window and clears after a proven one', () => {
-    let now = 0;
-    const backoff = new UnstableDcBackoff(
-      () => now,
-      3,
-      DC_UNSTABLE_WINDOW_MS,
-      DC_UNSTABLE_BACKOFF_MS
-    );
-    expect(backoff.note('p', false)).toBe(0);
-    expect(backoff.note('p', false)).toBe(0);
-    expect(backoff.note('p', true)).toBe(0);
-    expect(backoff.note('p', false)).toBe(0);
-    expect(backoff.note('p', false)).toBe(0);
-    expect(backoff.note('p', false)).toBe(DC_UNSTABLE_BACKOFF_MS);
-    now += DC_UNSTABLE_WINDOW_MS;
-    expect(isPostEstablishDcLoss('channel-closed')).toBe(true);
-    expect(isPostEstablishDcLoss('timeout')).toBe(false);
-    expect(backoff.note('p', false)).toBe(0);
+  test('every short life escalates and only noteHealthy clears', () => {
+    const backoff = new UnstableDcBackoff();
+    expect(backoff.noteShortLife('p', 10_000)).toBe(unstableCooldownMs(1));
+    expect(backoff.noteShortLife('p', 10_000)).toBe(unstableCooldownMs(2));
+    backoff.noteHealthy('p');
+    expect(backoff.noteShortLife('p', 10_000)).toBe(unstableCooldownMs(1));
+    expect(backoff.noteShortLife('p', RTC_DIAL_BREAKER_HEALTHY_MS)).toBe(0);
+    expect(unstableCooldownMs(8)).toBe(30 * 60 * 1000);
   });
 });
+
+describe('proven DC that dies at 10s', () => {
+  test('one hour of 10s deaths stays a handful and does not climb the dial breaker', () => {
+    let now = 1_000_000;
+    const breaker = new RtcDialBreaker({ now: () => now, disableAfter: 10 });
+    const unstable = new UnstableDcBackoff();
+    notePeerDcStableHold('peer-b');
+    let dials = 0;
+    const end = now + 60 * 60 * 1000;
+    while (now < end) {
+      const decision = breaker.shouldTry('peer-b', now);
+      if (!decision.allow) {
+        now = (decision.until ?? now) + 1;
+        continue;
+      }
+      dials += 1;
+      const id = `dc:${dials}`;
+      breaker.beginAttempt('peer-b', id);
+      now += 2_000;
+      breaker.noteChannelEstablished('peer-b', id, now);
+      const openedAt = now;
+      const live = {
+        peerNodeId: 'peer-b',
+        transport: 'dc',
+        linkSinceAt: openedAt,
+      } as LivePeer;
+      markLiveDcProven(live);
+      now += 10_100;
+      settleEstablishedDcDrop({
+        breaker,
+        unstable,
+        peer: 'peer-b',
+        reason: 'channel-closed',
+        attemptId: id,
+        live,
+        now,
+      });
+      now += 5_000;
+    }
+    const snap = breaker.snapshot('peer-b', now);
+    expect(dials).toBeGreaterThan(2);
+    expect(dials).toBeLessThanOrEqual(10);
+    expect(snap.level).toBe(0);
+    expect(snap.failures).toBe(0);
+    expect(snap.disabled).toBe(false);
+  });
+});
+
+describe('dc-stable-hold capability', () => {
+  test('link.hello advertises the cap and a peer hello turns the hold on', async () => {
+    const h = makeHarness();
+    const [relay, relayPeer] = createInMemoryLinkPair();
+    const seen: Array<{ t?: string; caps?: string[] }> = [];
+    relayPeer.ctl.onMessage((bytes) => {
+      seen.push(JSON.parse(new TextDecoder().decode(bytes)) as { t?: string; caps?: string[] });
+    });
+    h.registry.track(relay, PEER, 'relay', SELF, 0, false);
+    await flush();
+    expect(
+      seen.some((msg) => msg.t === 'link.hello' && msg.caps?.includes(DC_STABLE_HOLD_CAP))
+    ).toBe(true);
+    const live = h.state.live.get(PEER);
+    h.drain.handleLinkCtl(live!, 'link.hello', {
+      t: 'link.hello',
+      caps: ['quiesce', DC_STABLE_HOLD_CAP],
+    });
+    expect(peerSupportsDcStableHold(PEER)).toBe(true);
+
+    const [dc] = createInMemoryLinkPair();
+    h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:cap');
+    const retiring = [...(h.state.retiring.get(PEER) ?? [])][0];
+    retiring!.gotQuiesceAck = true;
+    retiring!.gotPeerQuiesce = true;
+    h.drain.maybeFinishRetire(retiring!);
+    expect(retiring!.finishRetired).toBe(false);
+  });
+
+  test('without the cap, quiesce acks retire immediately and the death counts', async () => {
+    const h = makeHarness();
+    const link = installRelayThenDc(h, 'dc:old', false);
+    const retiring = [...(h.state.retiring.get(PEER) ?? [])][0];
+    retiring!.gotQuiesceAck = true;
+    retiring!.gotPeerQuiesce = true;
+    h.drain.maybeFinishRetire(retiring!);
+    expect(retiring!.finishRetired).toBe(true);
+    await flush();
+    expect(link.relayReason()).toBe('replaced');
+    link.dc.close('channel-closed');
+    await flush();
+    expect(h.failures).toEqual([{ kind: 'channel-closed', attempt: 'dc:old' }]);
+    expect(h.unstableCalls).toEqual([]);
+  });
+
+  test('remote measure keeps a stable DC relay until the 30s cap', async () => {
+    const h = makeHarness();
+    const link = installRelayThenDc(h, 'dc:measure');
+    markLiveDcProven(h.state.live.get(PEER)!);
+    h.state.remoteMeasureUntil.set(PEER, Date.now() + 60_000);
+    h.scheduler.advance(DC_MIN_STABLE_MS);
+    await flush();
+    expect(link.relayReason()).toBeUndefined();
+    h.scheduler.advance(PEER_RETIRE_MAX_MS - DC_MIN_STABLE_MS);
+    await flush();
+    expect(link.relayReason()).toBe('replaced');
+  });
+
+  test('a beside relay dial does not replace the live DC', () => {
+    const h = makeHarness();
+    const [dc] = createInMemoryLinkPair();
+    h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
+    h.state.besideRelayDial.add(PEER);
+    const [relay] = createInMemoryLinkPair();
+    const kept = h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
+    expect(kept).toBe(relay);
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    expect(h.state.sideRelays.get(PEER)).toBe(relay);
+  });
+
+  test('side relay dispatches inbound streams and answers one ping without becoming live', async () => {
+    const h = makeHarness();
+    const [dc] = createInMemoryLinkPair();
+    h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
+    h.state.besideRelayDial.add(PEER);
+    const [relay, remote] = createInMemoryLinkPair();
+    h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
+    const pong = waitForCtl(remote, 'pong');
+    remote.ctl.send(encodeCtlMessage({ t: 'ping', sentAt: 7 }));
+    expect(await pong).toBe('pong');
+    const stream = await remote.openStream(HTTP_OPEN);
+    const info = await stream.closed;
+    expect(info.reason).toBe('rst');
+    expect(info.message).toBe('http-not-configured');
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    expect(h.state.sideRelays.get(PEER)).toBe(relay);
+  });
+
+  test('DC death promotes the side relay to live instead of closing it', async () => {
+    const h = makeHarness();
+    const [dc] = createInMemoryLinkPair();
+    h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
+    h.state.besideRelayDial.add(PEER);
+    const [relay, remote] = createInMemoryLinkPair();
+    let closed = false;
+    void relay.closed.then(() => {
+      closed = true;
+    });
+    h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
+    dc.close('channel-closed');
+    await flush();
+    expect(closed).toBe(false);
+    expect(h.state.sideRelays.has(PEER)).toBe(false);
+    expect(h.state.live.get(PEER)?.session).toBe(relay);
+    expect(h.state.live.get(PEER)?.transport).toBe('relay');
+    const pong = waitForCtl(remote, 'pong');
+    remote.ctl.send(encodeCtlMessage({ t: 'ping', sentAt: 8 }));
+    expect(await pong).toBe('pong');
+    const stream = await remote.openStream(HTTP_OPEN);
+    expect((await stream.closed).message).toBe('http-not-configured');
+  });
+
+  test('revoking the peer closes the side relay instead of promoting it', async () => {
+    const h = makeHarness();
+    const [dc] = createInMemoryLinkPair();
+    h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
+    h.state.besideRelayDial.add(PEER);
+    const [relay] = createInMemoryLinkPair();
+    h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
+    h.registry.dropPeer(PEER, 'revoked');
+    await flush();
+    expect(h.state.sideRelays.has(PEER)).toBe(false);
+    expect(h.state.live.get(PEER)?.session).not.toBe(relay);
+    expect((await relay.closed).reason).toBe('revoked');
+  });
+
+  test('a DC that lives through the healthy window clears the next strike', async () => {
+    const h = makeHarness();
+    notePeerDcStableHold(PEER);
+    const [first, firstPeer] = createInMemoryLinkPair();
+    h.registry.track(first, PEER, 'dc', SELF, 0, false, null, 'dc:first');
+    first.close('channel-closed');
+    await flush();
+    const [second, secondPeer] = createInMemoryLinkPair();
+    answerPings(secondPeer);
+    h.registry.track(second, PEER, 'dc', SELF, 0, false, null, 'dc:second');
+    h.scheduler.advance(RTC_DIAL_BREAKER_HEALTHY_MS);
+    await flush();
+    second.close('channel-closed');
+    await flush();
+    const [third] = createInMemoryLinkPair();
+    h.registry.track(third, PEER, 'dc', SELF, 0, false, null, 'dc:third');
+    third.close('channel-closed');
+    await flush();
+    expect(h.unstableCalls.map((call) => call.cooldownMs)).toEqual([
+      unstableCooldownMs(1),
+      unstableCooldownMs(1),
+    ]);
+    void firstPeer;
+  });
+});
+
+function answerPings(remote: LinkSession): void {
+  remote.ctl.onMessage((bytes) => {
+    let msg: { t?: string; sentAt?: number };
+    try {
+      msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string; sentAt?: number };
+    } catch {
+      return;
+    }
+    if (msg.t !== 'ping') return;
+    remote.ctl.send(encodeCtlMessage({ t: 'pong', sentAt: msg.sentAt }));
+  });
+}
 
 function trackDc(
   h: ReturnType<typeof makeHarness>,

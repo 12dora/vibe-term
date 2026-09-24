@@ -1,8 +1,8 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { ForwardDeadlineError } from './forwarder-attempt-deadline';
-import { isPreDispatchTransportRefusal } from './forwarder-unreachable';
+import { isPendingMeasureRefusal, isPreDispatchTransportRefusal } from './forwarder-unreachable';
 import { HTTP_FAILOVER_MAX_ATTEMPTS } from './mesh-deps';
-import { emitTransportRefused } from './pending-measure-hold';
+import { emitTransportRefused, transportOfLink } from './pending-measure-hold';
 
 /** 小请求先缓冲再发，pending-measure 这种开流即拒才能安全重放 POST。 */
 export const REPLAY_BODY_LIMIT = 64 * 1024;
@@ -88,8 +88,15 @@ export function noteAndContinueAuthorized(input: {
 }
 
 function noteRefusal(nodeId: string, link: LinkSession | null, err: unknown): void {
-  if (!link || !isPreDispatchTransportRefusal(err)) return;
+  if (!directPendingMeasure(link, err)) return;
   emitTransportRefused(nodeId, link);
+}
+
+/** 只有直连上的 pending-measure 隔离整节点。stale-link / parked 仍可重放，但不隔离。 */
+function directPendingMeasure(link: LinkSession | null, err: unknown): boolean {
+  if (!link || !isPendingMeasureRefusal(err)) return false;
+  const transport = transportOfLink(link);
+  return transport === 'dc' || transport === 'ws-secure';
 }
 
 function declaredLength(req: Request): number | null {

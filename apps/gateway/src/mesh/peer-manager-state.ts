@@ -35,12 +35,17 @@ export const PEER_RETIRE_QUIET_MS = 2_000;
 export const PEER_RETIRE_MAX_MS = 30_000;
 /** 退役 session 仍有内层流时的泄漏上限：到期后以 `retired` 强制关闭。 */
 export const PEER_RETIRE_STREAM_LEAK_MS = 30 * 60 * 1000;
-/** 已建立但从未证明的 DC 连续夭折这么多次后，短冷却，不抬拨号熔断档。 */
+/**
+ * 原生 SCTP 与 liveness 都在建连后约 10s 掐掉还没稳住的 DC。
+ * 证明之外再活过这段才允许拆中继；仍受 PEER_RETIRE_MAX_MS（30s）封顶。
+ */
+export const DC_MIN_STABLE_MS = 15_000;
+/** 旧实现按次数封顶；现在每次短命夭折都升级冷却，这两个常量不再参与计算。 */
 export const DC_UNSTABLE_STRIKES = 3;
-/** 未证明夭折计入同一轮的窗口。 */
 export const DC_UNSTABLE_WINDOW_MS = 3 * 60 * 1000;
-/** 不稳定 DC 的冷却。短于拨号熔断第一档（30s 起翻倍），且不抬 level。 */
+/** 短命 DC 的第一档冷却。之后翻倍，不抬拨号熔断的 level / consecutiveFailures。 */
 export const DC_UNSTABLE_BACKOFF_MS = 60_000;
+export const DC_UNSTABLE_BACKOFF_CAP_MS = 30 * 60 * 1000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
 
 export const PEER_TRANSPORT_RANK: Record<PeerTransportKind, number> = {
@@ -83,6 +88,14 @@ export type PeerManagerState = {
   readonly peerReconnectWake: PeerReconnectWake;
   readonly pathRtt: PeerPathRttMemory;
   readonly rerolls: Map<string, DcRerollRecord>;
+  /** 对端 pending-measure 隔离的截止时间（Date.now()）。退役判断用它留住中继。 */
+  readonly remoteMeasureUntil: Map<string, number>;
+  /** 测量期间为用户流量旁路拨出的中继，不替换 live DC。 */
+  readonly sideRelays: Map<string, LinkSession>;
+  /** 这一跳 forceInstall 应旁路停放，而不是把 live DC 退役掉。 */
+  readonly besideRelayDial: Set<string>;
+  /** 旁路中继入站分发。不把它装成 live。 */
+  sideRelayAttach?: (session: LinkSession, peerId: string) => void;
 };
 
 const rttByScheduler = new WeakMap<object, PeerManagerState>();
@@ -285,6 +298,9 @@ export function createPeerManagerState(opts: {
       ttlMs: PEER_PATH_RTT_WINDOW_MS,
     }),
     rerolls: new Map(),
+    remoteMeasureUntil: new Map(),
+    sideRelays: new Map(),
+    besideRelayDial: new Set(),
   };
   rttByScheduler.set(opts.scheduler, state);
   return state;

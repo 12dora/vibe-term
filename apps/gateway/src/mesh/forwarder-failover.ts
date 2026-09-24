@@ -85,6 +85,11 @@ export const STREAM_FAILOVER_HELLO_RETRY_WAIT_MS = 500;
 /** 连续这么多轮拿不到 HELLO 就不再静默重试，直接把这条转发流收掉让浏览器重连。 */
 export const STREAM_FAILOVER_NO_HELLO_LIMIT = 3;
 
+function noteDirectMeasureRefusal(pump: ForwardPump): void {
+  if (pump.boundTransport !== 'dc' && pump.boundTransport !== 'ws-secure') return;
+  emitTransportRefused(pump.nodeId, null);
+}
+
 function peerRttMs(host: StreamFailoverHost, pump: ForwardPump): number {
   const rtt = host.peers.rttOf?.(pump.nodeId);
   return typeof rtt === 'number' && Number.isFinite(rtt) && rtt > 0 ? rtt : DEFAULT_DIAL_RTT_MS;
@@ -135,7 +140,7 @@ export async function runStreamFailover(
   info: { code?: number; reason?: string }
 ): Promise<void> {
   if (pump.browserClosed || pump.failingOver) return;
-  if (info.reason === PENDING_MEASURE_REASON) emitTransportRefused(pump.nodeId, null);
+  if (info.reason === PENDING_MEASURE_REASON) noteDirectMeasureRefusal(pump);
   const abort = new AbortController();
   pump.failingOver = true;
   pump.failoverAbort = abort;

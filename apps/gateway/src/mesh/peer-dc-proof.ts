@@ -1,7 +1,7 @@
 import {
+  DC_MIN_STABLE_MS,
+  DC_UNSTABLE_BACKOFF_CAP_MS,
   DC_UNSTABLE_BACKOFF_MS,
-  DC_UNSTABLE_STRIKES,
-  DC_UNSTABLE_WINDOW_MS,
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
   PEER_RETIRE_QUIET_MS,
@@ -9,8 +9,25 @@ import {
 } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { currentDcProofGeneration, dcLinkProven, subscribeDcLinkProof } from './rtc/dc-link-proof';
-import { classifyRtcDialFailure } from './rtc/rtc-dial-breaker';
+import { RTC_DIAL_BREAKER_HEALTHY_MS, classifyRtcDialFailure } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
+
+/** link.hello 能力位：对端会把中继留到 DC 稳住，并按短命夭折升级冷却。2.9.0 起广告。 */
+export const DC_STABLE_HOLD_CAP = 'dc-stable-hold';
+
+const stableHoldPeers = new Set<string>();
+
+export function notePeerDcStableHold(peerId: string): void {
+  stableHoldPeers.add(peerId);
+}
+
+export function peerSupportsDcStableHold(peerId: string): boolean {
+  return stableHoldPeers.has(peerId);
+}
+
+export function resetDcStableHoldForTests(): void {
+  stableHoldPeers.clear();
+}
 
 /**
  * 通道已经建立之后的断开。这是路径/存活损失，不是「拨号没连上」。
@@ -87,8 +104,9 @@ export function noteLiveDcProof(live: LivePeer, onProven: () => void): void {
 }
 
 /**
- * replaced 掉的 relay/ws 要等新 DC 证明自己（或等到 PEER_RETIRE_MAX_MS）才真正关掉。
- * 在途流仍走原来的排空判断，这里只挡 streams===0 的提前收尾。
+ * replaced 掉的 relay/ws 在新 DC 稳住之前不关。稳住 = 对端认 dc-stable-hold，
+ * 且本端已证明并活过 DC_MIN_STABLE_MS。对端还在 pending-measure 时同样留着。
+ * 在途流仍走原来的排空判断，这里只挡 streams===0 的提前收尾。30s 封顶不变。
  */
 export function shouldHoldUnprovenDc(
   state: PeerManagerState,
@@ -96,10 +114,28 @@ export function shouldHoldUnprovenDc(
   elapsed: number
 ): boolean {
   if (elapsed >= PEER_RETIRE_MAX_MS) return false;
-  if (retiring.retireReason !== 'replaced' || retiring.transport === 'dc') return false;
+  const next = replacedRelayNextDc(state, retiring);
+  if (!next) return false;
+  if (remoteMeasureActive(state, next.peerNodeId)) return true;
+  if (!peerSupportsDcStableHold(next.peerNodeId)) return false;
+  return !dcStableEnough(state, next);
+}
+
+function replacedRelayNextDc(state: PeerManagerState, retiring: LivePeer): LivePeer | null {
+  if (retiring.retireReason !== 'replaced' || retiring.transport === 'dc') return null;
   const next = state.live.get(retiring.peerNodeId);
-  if (!next || next.transport !== 'dc') return false;
-  return !isLiveDcProven(next);
+  if (!next || next.transport !== 'dc') return null;
+  return next;
+}
+
+function remoteMeasureActive(state: PeerManagerState, peerId: string): boolean {
+  // 截止时间是转发层打的 Date.now()，retire 用的 scheduler 对不上。
+  return Date.now() < (state.remoteMeasureUntil.get(peerId) ?? 0);
+}
+
+function dcStableEnough(state: PeerManagerState, live: LivePeer): boolean {
+  if (!isLiveDcProven(live)) return false;
+  return state.scheduler.now() - live.linkSinceAt >= DC_MIN_STABLE_MS;
 }
 
 export function shouldFinishReplacedRetire(
@@ -116,27 +152,30 @@ export function shouldFinishReplacedRetire(
   );
 }
 
+/** 第 1 次 60s，之后翻倍，封顶 30min。 */
+export function unstableCooldownMs(strike: number): number {
+  if (strike <= 0) return 0;
+  const exp = Math.min(strike - 1, 16);
+  return Math.min(DC_UNSTABLE_BACKOFF_MS * 2 ** exp, DC_UNSTABLE_BACKOFF_CAP_MS);
+}
+
 export class UnstableDcBackoff {
-  private readonly hits = new Map<string, number[]>();
+  private readonly level = new Map<string, number>();
 
-  constructor(
-    private readonly now: () => number,
-    private readonly strikes = DC_UNSTABLE_STRIKES,
-    private readonly windowMs = DC_UNSTABLE_WINDOW_MS,
-    private readonly backoffMs = DC_UNSTABLE_BACKOFF_MS
-  ) {}
+  /**
+   * 建连后寿命短于 RTC_DIAL_BREAKER_HEALTHY_MS 记一笔，不论有没有证明过。
+   * 返回本次应交给 noteUnstable 的冷却；0 表示这次不冷却。
+   * 只有 noteHealthy 清连击。
+   */
+  noteShortLife(peer: string, lifetimeMs: number): number {
+    if (lifetimeMs >= RTC_DIAL_BREAKER_HEALTHY_MS) return 0;
+    const next = (this.level.get(peer) ?? 0) + 1;
+    this.level.set(peer, next);
+    return unstableCooldownMs(next);
+  }
 
-  /** 未证明就夭折记一笔。凑满次数返回冷却毫秒，证明过一次则清零。 */
-  note(peer: string, proven: boolean): number {
-    if (proven) {
-      this.hits.delete(peer);
-      return 0;
-    }
-    const now = this.now();
-    const recent = (this.hits.get(peer) ?? []).filter((at) => now - at < this.windowMs);
-    recent.push(now);
-    this.hits.set(peer, recent);
-    return recent.length >= this.strikes ? this.backoffMs : 0;
+  noteHealthy(peer: string): void {
+    this.level.delete(peer);
   }
 }
 
@@ -154,7 +193,7 @@ export function settleEstablishedDcDrop(input: {
   live: LivePeer | undefined;
   now: number;
 }): void {
-  if (!isPostEstablishDcLoss(input.reason)) {
+  if (countEstablishedDropAsDialFailure(input)) {
     input.breaker.noteFailure(
       input.peer,
       classifyRtcDialFailure(input.reason),
@@ -163,9 +202,22 @@ export function settleEstablishedDcDrop(input: {
     );
     return;
   }
-  const proven = input.live !== undefined && isLiveDcProven(input.live);
-  const cooldown = input.unstable.note(input.peer, proven);
+  const cooldown = input.unstable.noteShortLife(input.peer, dcLifetimeMs(input));
   if (cooldown > 0) input.breaker.noteUnstable?.(input.peer, cooldown, input.now);
+}
+
+/** 旧对端不会留中继，短命断开仍按拨号失败累计。认能力位的对端走不稳定冷却。 */
+function countEstablishedDropAsDialFailure(input: {
+  peer: string;
+  reason: string;
+}): boolean {
+  if (!isPostEstablishDcLoss(input.reason)) return true;
+  return !peerSupportsDcStableHold(input.peer);
+}
+
+function dcLifetimeMs(input: { live: LivePeer | undefined; now: number }): number {
+  if (!input.live) return 0;
+  return Math.max(0, input.now - input.live.linkSinceAt);
 }
 
 export function logDcDrop(live: LivePeer | undefined, reason: string, now: number): void {

@@ -1,6 +1,10 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { warnLine } from './mesh-log';
-import { shouldFinishReplacedRetire } from './peer-dc-proof';
+import {
+  DC_STABLE_HOLD_CAP,
+  notePeerDcStableHold,
+  shouldFinishReplacedRetire,
+} from './peer-dc-proof';
 import {
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
@@ -269,7 +273,7 @@ export class PeerLinkDrain {
   sendLinkHello(live: LivePeer): void {
     this.deps.sendPeerCtl(live, {
       t: 'link.hello',
-      caps: ['quiesce', ...this.deps.extraHelloCaps()],
+      caps: ['quiesce', DC_STABLE_HOLD_CAP, ...this.deps.extraHelloCaps()],
     });
   }
 
@@ -278,6 +282,7 @@ export class PeerLinkDrain {
     if (t === 'link.hello') {
       const caps = Array.isArray(msg.caps) ? msg.caps : [];
       this.deps.noteHelloCaps(live, caps);
+      if (caps.includes(DC_STABLE_HOLD_CAP)) notePeerDcStableHold(live.peerNodeId);
       if (caps.includes('quiesce')) this.markQuiesceCapable(live);
       if (!live.helloReplied) {
         live.helloReplied = true;
