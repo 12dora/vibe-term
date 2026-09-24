@@ -177,6 +177,38 @@ export class UnstableDcBackoff {
   noteHealthy(peer: string): void {
     this.level.delete(peer);
   }
+
+  clearAll(): void {
+    this.level.clear();
+  }
+}
+
+export function clearUnstableHealthyTimer(
+  handles: Map<string, { clear(): void }>,
+  peer: string
+): void {
+  handles.get(peer)?.clear();
+  handles.delete(peer);
+}
+
+/** 同一条 DC 活过 healthy 窗口才清连击。掉线或换 attempt 的定时器作废。 */
+export function armUnstableHealthyTimer(
+  state: PeerManagerState,
+  unstable: UnstableDcBackoff,
+  handles: Map<string, { clear(): void }>,
+  live: LivePeer
+): void {
+  clearUnstableHealthyTimer(handles, live.peerNodeId);
+  const peer = live.peerNodeId;
+  const attempt = live.dcAttemptId;
+  const handle = state.scheduler.interval(() => {
+    handle.clear();
+    handles.delete(peer);
+    const current = state.live.get(peer);
+    if (current !== live || current.dcAttemptId !== attempt) return;
+    unstable.noteHealthy(peer);
+  }, RTC_DIAL_BREAKER_HEALTHY_MS);
+  handles.set(peer, handle);
 }
 
 export type DcDropBreaker = {

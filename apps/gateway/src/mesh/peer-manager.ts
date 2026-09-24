@@ -7,9 +7,10 @@ import {
   peerDialRetireOf,
   retirePeerDialState,
 } from './node-pause';
+import { PeerCollaboratorHost } from './peer-collaborator-host';
 import { type PeerCtlHost, handlePeerCtl, receiveRtcSignal } from './peer-ctl';
 import type { DcRerollCoordinator } from './peer-dc-reroll';
-import { type DcUpgradeCoordinator, PeerCollaboratorHost } from './peer-dc-upgrade';
+import type { DcUpgradeCoordinator } from './peer-dc-upgrade';
 import type { PeerDialer } from './peer-dialer';
 import { winningDialInitiator } from './peer-direct-attempt';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';

@@ -8,6 +8,7 @@ import {
 } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
+import { attachSideRelayAccounting, retireSideRelay } from './peer-side-relay';
 import { quiet } from './peer-ws-race';
 import { ROUTE_PROMOTE_SAMPLES, isDirectTransport } from './route-policy';
 import type { PeerTransportKind } from './types';
@@ -256,7 +257,7 @@ function closeSideRelay(state: HoldState, nodeId: string, reason: string): void 
   if (!session) return;
   manager.sideRelays.delete(nodeId);
   if (manager.live.get(nodeId)?.session === session) return;
-  quiet(() => session.close(reason));
+  retireSideRelay(session, reason, manager.scheduler);
 }
 
 function holdStillOpen(coord: object, peerId: string, now = Date.now()): boolean {
@@ -321,6 +322,7 @@ function rememberSide(
   if (manager.sideRelays.get(peerId) === session) return;
   manager.sideRelays.set(peerId, session);
   rememberLinkTransport(session, 'relay');
+  attachSideRelayAccounting(session);
   manager.sideRelayAttach?.(session, peerId);
   const closed = session.closed;
   if (!closed || typeof closed.then !== 'function') return;

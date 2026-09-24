@@ -73,7 +73,7 @@ export function isBackgroundDcUpgradeBlocked(
   nodeId: string,
   now = Date.now()
 ): boolean {
-  if (breaker.isDisabled(nodeId)) return true;
+  if (breaker.isDisabled(nodeId)) return !breaker.outboundProbeDue(nodeId, now);
   const hold = syncPermanentHold(breaker, nodeId, now);
   if (!hold || hold.established) return false;
   if (now - hold.since < PERMANENT_FAILURE_HOLD_MS) return true;

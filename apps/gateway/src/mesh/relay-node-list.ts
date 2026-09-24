@@ -15,7 +15,11 @@ import type { UserStore } from '../auth/user-store';
 import { jsonStable } from './ctl';
 import { jsonText } from './json-text';
 import { stamp } from './mesh-log';
-import { peerCapabilitiesChanged, tagRelayCapabilityChanges } from './peer-capability-change';
+import {
+  notifyRelayCapabilityChanged,
+  peerCapabilitiesChanged,
+  tagRelayCapabilityChanges,
+} from './peer-capability-change';
 import { ingestPeerReachEpoch, ingestPeerReachMap, ingestTurnOk } from './port-reach';
 import type { RelaySecrets } from './relay-secrets';
 import type { UplinkStatus } from './types';
@@ -29,6 +33,8 @@ export type RelayListContext = {
   now: number;
   /** 这份 `relay.list` 来自哪条中继；`turn_ok` 按此分桶。 */
   relayUrl?: string;
+  /** 写缓存时能力变了就回调。不依赖这份名单之后有没有人读 tag。 */
+  onCapabilitiesChanged?: (nodeId: string) => void;
 };
 
 type ListEntry = UplinkNodeList['nodes'][number];
@@ -116,6 +122,7 @@ function cacheAdmittedRelayNode(
     })
   ) {
     changed.push(node.id);
+    notifyRelayCapabilityChanged(node.id, ctx.onCapabilitiesChanged);
   }
   ctx.userStore.upsertPeer({
     nodeId: node.id,

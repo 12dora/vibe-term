@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { decodeSdpSignal } from './ice';
 import type { PeerConnectionLike } from './native';
+import { RTC_DECLINE_BACKOFF_CAP_MS } from './rtc-force-probe';
 import {
   consumeOffererOnDecline,
   dcOfferDeclineCtl,
+  declineBackoffUntil,
   encodeDcOfferDecline,
   isDcOfferDecline,
   offererReactionToRemoteSdp,
@@ -77,5 +79,16 @@ describe('dc offer decline', () => {
       retryAfterMs: 600_000,
     });
     expect(readDcOfferDeclineDetail(ctl.sdp)?.retryAfterMs).toBe(600_000);
+  });
+
+  test('decline backoff ignores NaN and the past, and clamps a far future to 30 min', () => {
+    const now = 10_000;
+    expect(declineBackoffUntil({ retryAfterMs: Number.NaN }, now)).toBeNull();
+    expect(declineBackoffUntil({ retryAfterMs: -5 }, now)).toBeNull();
+    expect(declineBackoffUntil({ until: now - 1 }, now)).toBeNull();
+    expect(declineBackoffUntil({ until: Number.POSITIVE_INFINITY }, now)).toBeNull();
+    expect(declineBackoffUntil({ retryAfterMs: 1e12 }, now)).toBe(now + RTC_DECLINE_BACKOFF_CAP_MS);
+    expect(declineBackoffUntil({ until: now + 1e12 }, now)).toBe(now + RTC_DECLINE_BACKOFF_CAP_MS);
+    expect(declineBackoffUntil({ retryAfterMs: 5_000, until: now + 1e12 }, now)).toBe(now + 5_000);
   });
 });

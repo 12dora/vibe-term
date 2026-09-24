@@ -23,6 +23,24 @@ export function peerCapabilitiesChanged(
 const relayCapabilityChanges = new WeakMap<object, ReadonlySet<string>>();
 const NO_CAPABILITY_CHANGES: ReadonlySet<string> = new Set();
 
+/** 中继名单写缓存时的 rearm。secondary 的 onNodeList 不会再读这份 tag。 */
+let boundCapabilityRearm: ((nodeId: string) => void) | null = null;
+
+export function bindRelayCapabilityRearm(fn: ((nodeId: string) => void) | null): void {
+  boundCapabilityRearm = fn;
+}
+
+export function notifyRelayCapabilityChanged(
+  nodeId: string,
+  direct?: (nodeId: string) => void
+): void {
+  if (direct) {
+    direct(nodeId);
+    return;
+  }
+  boundCapabilityRearm?.(nodeId);
+}
+
 /** `relay.list` 在写 `peer_cache` 之前记下的变化。名单对象本身不进协议。 */
 export function tagRelayCapabilityChanges(list: object, ids: readonly string[]): void {
   if (ids.length === 0) return;

@@ -8,6 +8,7 @@ import {
 import { PERMANENT_FAILURE_HOLD_MS, isBackgroundDcUpgradeBlocked } from './peer-dc-upgrade-gate';
 import { DC_PRESENCE_ABSENCE_MS, type LivePeer, PeerReconnectWake } from './peer-reconnect-wake';
 import { RTC_DIAL_BREAKER_FAILS, RTC_DIAL_FORCE_PROBE_MS } from './rtc/rtc-dial-breaker';
+import { RTC_DIAL_FORCE_PROBE_JITTER_MS } from './rtc/rtc-force-probe';
 import type { MeshScheduler, PeerTransportKind } from './types';
 
 class ManualScheduler implements MeshScheduler {
@@ -146,7 +147,7 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
     coordinator.armDcUpgradeRetry(peer);
     expect(dials).toEqual([]);
-    expect(coordinator.dcUpgradeRetry.has(peer)).toBe(false);
+    expect(coordinator.dcUpgradeRetry.has(peer)).toBe(true);
 
     coordinator.onLocalFingerprintChanged();
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
@@ -184,7 +185,7 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     coordinator.dispose();
   });
 
-  test('disabled breaker does not dial until rearm', async () => {
+  test('disabled breaker dials once when the scheduled probe is due', async () => {
     const scheduler = new ManualScheduler();
     const { coordinator, live, dials } = makeCoordinator({
       scheduler,
@@ -194,19 +195,22 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     live.set(peer, livePeer(peer));
     disablePeer(coordinator, peer);
 
-    coordinator.armDcUpgradeRetry(peer);
     coordinator.maybeUpgrade(peer, { cooldown: false });
     expect(dials).toEqual([]);
-    expect(coordinator.dcUpgradeRetry.has(peer)).toBe(false);
-    await scheduler.advance(RTC_DIAL_FORCE_PROBE_MS);
+    expect(coordinator.dcUpgradeRetry.has(peer)).toBe(true);
+    await scheduler.advance(RTC_DIAL_FORCE_PROBE_MS - 1);
     expect(dials).toEqual([]);
+    await scheduler.advance(RTC_DIAL_FORCE_PROBE_JITTER_MS + 1);
+    expect(dials).toEqual([peer]);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
 
     coordinator.onPeerReconnected(peer);
     await flushMicrotasks();
-    expect(dials).toEqual([]);
+    expect(dials).toEqual([peer]);
     coordinator.onPeerEndpointChanged(peer);
     await flushMicrotasks();
-    expect(dials).toEqual([peer]);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
+    expect(dials).toEqual([peer, peer]);
     coordinator.dispose();
   });
 
@@ -287,24 +291,26 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     coordinator.dispose();
   });
 
-  test('breaker disabled stays blocked after the permanent-failure hold until rearm', async () => {
+  test('a scheduled probe does not clear disabled; capability rearm does', async () => {
     const scheduler = new ManualScheduler();
-    const { coordinator, live, dials } = makeCoordinator({ scheduler });
+    const { coordinator, live, dials } = makeCoordinator({
+      scheduler,
+      recordDialFailure: true,
+    });
     const peer = 'peer-disabled-hold';
     live.set(peer, livePeer(peer));
     disablePeer(coordinator, peer);
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
-    coordinator.maybeUpgrade(peer, { cooldown: false });
-    await scheduler.advance(PERMANENT_FAILURE_HOLD_MS);
-    coordinator.maybeUpgrade(peer, { cooldown: false });
-    await flushMicrotasks();
-    expect(dials).toEqual([]);
+    await scheduler.advance(RTC_DIAL_FORCE_PROBE_MS + RTC_DIAL_FORCE_PROBE_JITTER_MS);
+    expect(dials).toEqual([peer]);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
     coordinator.onPeerReconnected(peer);
     await flushMicrotasks();
-    expect(dials).toEqual([]);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
     coordinator.onPeerCapabilitiesChanged(peer);
     await flushMicrotasks();
-    expect(dials).toEqual([peer]);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
+    expect(dials).toEqual([peer, peer]);
     coordinator.dispose();
   });
 
@@ -326,7 +332,7 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     disablePeer(missing.coordinator, 'missing');
     missing.coordinator.armDcUpgradeRetry('missing');
     missing.live.delete('missing');
-    await missingScheduler.advance(RTC_DIAL_FORCE_PROBE_MS);
+    await missingScheduler.advance(RTC_DIAL_FORCE_PROBE_MS + RTC_DIAL_FORCE_PROBE_JITTER_MS);
     expect(missing.dials).toEqual([]);
     expect(missing.coordinator.dcUpgradeRetry.size).toBe(0);
 
@@ -336,10 +342,11 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     unavailable.lostDirect.add('unavailable');
     disablePeer(unavailable.coordinator, 'unavailable');
     unavailable.coordinator.armDcUpgradeRetry('unavailable');
-    expect(unavailable.coordinator.dcUpgradeRetry.size).toBe(0);
+    expect(unavailable.coordinator.dcUpgradeRetry.size).toBe(1);
     unavailable.availability.dc = false;
-    await unavailableScheduler.advance(RTC_DIAL_FORCE_PROBE_MS);
+    await unavailableScheduler.advance(RTC_DIAL_FORCE_PROBE_MS + RTC_DIAL_FORCE_PROBE_JITTER_MS);
     expect(unavailable.dials).toEqual([]);
+    expect(unavailable.coordinator.dcUpgradeRetry.size).toBe(0);
     expect(unavailable.lostDirect.has('unavailable')).toBe(true);
   });
 });

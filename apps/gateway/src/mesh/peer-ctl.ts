@@ -35,6 +35,7 @@ export type PeerCtlHost = {
     dcBreaker: {
       shouldAcceptAnswer: (nodeId: string) => boolean;
       inboundBlock: (nodeId: string) => DcOfferBlockReason | null;
+      noteInboundAccepted?: (nodeId: string) => void;
       refusalCooldown?: (nodeId: string) => { until: number | null; retryAfterMs: number };
     };
   };
@@ -108,10 +109,14 @@ function declineBlockedInboundOffer(
   fromNodeId: string,
   msg: RtcSignalMessage
 ): boolean {
-  const block = host.dcUpgrade.dcBreaker.inboundBlock(fromNodeId);
-  if (!block || !msg.sdp) return false;
+  if (!msg.sdp) return false;
   const decoded = decodeSdpSignal(msg.sdp);
   if (decoded?.type !== 'offer') return false;
+  const block = host.dcUpgrade.dcBreaker.inboundBlock(fromNodeId);
+  if (!block) {
+    host.dcUpgrade.dcBreaker.noteInboundAccepted?.(fromNodeId);
+    return false;
+  }
   const live = host.state.live.get(fromNodeId);
   if (live) {
     const cooldown = host.dcUpgrade.dcBreaker.refusalCooldown?.(fromNodeId);

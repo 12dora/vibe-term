@@ -1,6 +1,7 @@
 import { decodeSdpSignal } from './ice';
 import type { DcOfferBlockReason } from './rtc-dial-breaker';
 import { isSupersededDcLoss } from './rtc-dial-progress';
+import { RTC_DECLINE_BACKOFF_CAP_MS } from './rtc-force-probe';
 
 /** 信令里没有独立的 busy/reject。decline 走现有 rtc.signal SDP：旧对端把未知 type 丢掉，不抛。 */
 export const DC_OFFER_DECLINE_TYPE = 'decline';
@@ -65,10 +66,18 @@ function finiteMs(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-/** 相对剩余时间优先；只有绝对 until 时要求它还在本端时钟的未来。 */
+/** 相对剩余时间优先；绝对 until 必须还在未来。NaN / 过去 / 超过 30min 都不照单全收。 */
 export function declineBackoffUntil(detail: DcOfferDeclineExtra, now: number): number | null {
-  if (detail.retryAfterMs != null && detail.retryAfterMs > 0) return now + detail.retryAfterMs;
-  if (detail.until != null && detail.until > now) return detail.until;
+  const until = unclampedDeclineUntil(detail, now);
+  if (until == null) return null;
+  return Math.min(until, now + RTC_DECLINE_BACKOFF_CAP_MS);
+}
+
+function unclampedDeclineUntil(detail: DcOfferDeclineExtra, now: number): number | null {
+  const retry = detail.retryAfterMs;
+  if (typeof retry === 'number' && Number.isFinite(retry) && retry > 0) return now + retry;
+  const abs = detail.until;
+  if (typeof abs === 'number' && Number.isFinite(abs) && abs > now) return abs;
   return null;
 }
 

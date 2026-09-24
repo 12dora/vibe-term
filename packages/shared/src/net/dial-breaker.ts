@@ -195,6 +195,27 @@ export class DialBreaker {
     if (until > state.coolingUntil) state.coolingUntil = until;
   }
 
+  /** 只清冷却终点。unstable-dc 可以连失败种类一起清。不改 level / failures。 */
+  clearCooling(peer: string, opts?: { dropUnstableKind?: boolean }): void {
+    const state = this.peers.get(peer);
+    if (!state) return;
+    state.coolingUntil = 0;
+    if (opts?.dropUnstableKind && state.lastFailureKind === 'unstable-dc') {
+      state.lastFailureKind = null;
+    }
+  }
+
+  clearUnstableCooling(): string[] {
+    const cleared: string[] = [];
+    for (const [peer, state] of this.peers) {
+      if (state.lastFailureKind !== 'unstable-dc') continue;
+      state.coolingUntil = 0;
+      state.lastFailureKind = null;
+      cleared.push(peer);
+    }
+    return cleared;
+  }
+
   noteHealthy(peer: string, now = this.now()): boolean {
     const state = this.peers.get(peer);
     if (!state || state.healthySince == null) return false;
