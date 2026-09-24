@@ -10,7 +10,7 @@ import {
 import { applyRemoteSdp, createSignalingAttemptState } from './rtc-signal-apply';
 
 describe('dc offer decline', () => {
-  test('new offerer aborts immediately; current applier ignores the type without throwing', () => {
+  test('new offerer aborts immediately; decline is not applied as an answer', () => {
     const raw = encodeDcOfferDecline('disabled');
     expect(isDcOfferDecline(raw)).toBe(true);
     expect(offererReactionToRemoteSdp(raw)).toBe('abort-now');
@@ -31,14 +31,19 @@ describe('dc offer decline', () => {
     ).toBe(false);
 
     let applied = false;
+    let superseded = 0;
     const pc = {
       setRemoteDescription() {
         applied = true;
       },
     } as unknown as PeerConnectionLike;
     const state = createSignalingAttemptState(1);
+    state.onSuperseded = () => {
+      superseded += 1;
+    };
     expect(applyRemoteSdp(pc, 'ec42f364', 'answer', state, raw)).toBe('dropped');
     expect(applied).toBe(false);
+    expect(superseded).toBe(1);
 
     const ctl = dcOfferDeclineCtl({
       rtcSession: 'dc:a:b',

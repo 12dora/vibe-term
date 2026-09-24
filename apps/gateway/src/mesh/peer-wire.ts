@@ -144,6 +144,7 @@ function wireStatusDrainReroll(ctx: WireCtx): void {
     deps: {
       sendPeerCtl: (live, msg) => sendPeerCtlQuiet(live, msg),
       notifyPeerEndpointsChanged: (nodeId) => hooks.notifyPeerEndpointsChanged(nodeId),
+      onPeerCapabilitiesChanged: (nodeId) => parts.dcUpgrade.onPeerCapabilitiesChanged(nodeId),
       listenPort: () => parts.server?.port,
     },
   });

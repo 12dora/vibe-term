@@ -174,6 +174,8 @@ export type NodeListApplyDeps = {
       viaRelayOf?: (nodeId: string) => string | null;
       relayPresenceOf?: (nodeId: string) => string[] | undefined;
       notifyPeerEndpointsChanged: (nodeId: string) => void;
+      noteRelayPresence?: (nodeId: string, online: boolean) => boolean;
+      onPeerCapabilitiesChanged?: (nodeId: string) => void;
     } | null;
   };
   emitListNodeEvent: (event: NodeEventProjection) => void;
@@ -189,9 +191,10 @@ export function emitListedNodeEvents(
   for (const node of list.nodes) {
     if (node.id === LEGACY_HUB_PEER_ID) continue;
     if (rejectPeer(node.id, true)) continue;
+    const online = isRemoteNodePresent(node.online, reach.get(node.id));
     d.emitListNodeEvent({
       nodeId: node.id,
-      status: isRemoteNodePresent(node.online, reach.get(node.id)) ? 'online' : 'offline',
+      status: online ? 'online' : 'offline',
       reach: reach.get(node.id) ?? null,
       ...listedLinkFields(d, node.id),
       inventory:
@@ -202,7 +205,21 @@ export function emitListedNodeEvents(
       direct_capable: node.direct_capable,
       name: node.name,
     });
-    if (node.id !== d.identity.nodeIdHex) d.peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
+    if (node.id === d.identity.nodeIdHex) continue;
+    d.peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
+    d.peerHolder.manager?.noteRelayPresence?.(node.id, online);
+  }
+}
+
+/** 在线节点从名册消失时补一条 offline，否则回来没有缺席起点，不会降档。 */
+function noteDroppedListedPeers(d: NodeListApplyDeps, applied: UplinkNodeList): void {
+  const prev = d.state.lastNodeList;
+  if (!prev) return;
+  const still = new Set(applied.nodes.map((node) => node.id));
+  for (const node of prev.nodes) {
+    if (!node.online || still.has(node.id)) continue;
+    if (node.id === d.identity.nodeIdHex || node.id === LEGACY_HUB_PEER_ID) continue;
+    d.peerHolder.manager?.noteRelayPresence?.(node.id, false);
   }
 }
 
@@ -321,6 +338,7 @@ export function applyUplinkNodeList(
 ): void {
   const { state, identity } = d;
   const applied = mergeAppliedNodeList(list, d.extraListedNodes?.() ?? [], d.onlineUnionIds?.());
+  noteDroppedListedPeers(d, applied);
   state.lastNodeList = applied;
   if (!state.uplinkPresenceLive) state.uplinkGeneration += 1;
   state.uplinkPresenceLive = true;
@@ -335,6 +353,7 @@ export function applyUplinkNodeList(
     selfNodeId: identity.nodeIdHex,
     list: applied,
     now: d.scheduler.now(),
+    onCapabilitiesChanged: (nodeId) => d.peerHolder.manager?.onPeerCapabilitiesChanged?.(nodeId),
   });
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
   emitListedNodeEvents(d, applied, reach, rejectPeer);
