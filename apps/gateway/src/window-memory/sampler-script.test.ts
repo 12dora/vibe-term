@@ -24,6 +24,7 @@ describe('buildSamplerScript', () => {
     expect(script).not.toContain('local ');
     expect(script).not.toContain('function ');
     expect(script).not.toContain('exit 0');
+    expect(script).toContain("swapMax='?'");
     expect(script).toContain('rss_tree()');
     expect(script).toContain('pstab_ok()');
     expect(script).toContain('PSTAB=$(ps -Ao pid=,ppid=,rss= 2>/dev/null)');

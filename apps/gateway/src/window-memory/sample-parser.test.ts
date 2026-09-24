@@ -105,6 +105,15 @@ describe('parseSamplerOutput', () => {
     });
   });
 
+  test('unreadable swap is ?, not a numeric zero', () => {
+    const parsed = parseSamplerOutput(
+      'VTMEM 2 1000 1 ok\n%1\t4242\ttmux-spawn-abc.scope\t1048576\t8589934592\t12884901888\t?\t0\t1\tcgroup'
+    );
+    expect(parsed.panes[0]).toEqual(
+      expect.objectContaining({ swapMax: 0, swapUnknown: true, source: 'cgroup' })
+    );
+  });
+
   test('rejects garbage output', () => {
     expect(() => parseSamplerOutput('')).toThrow(SamplerParseError);
     expect(() => parseSamplerOutput('hello')).toThrow(SamplerParseError);

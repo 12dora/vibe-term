@@ -373,6 +373,65 @@ describe('vibeterm sessions', () => {
     expect(text).not.toContain('∞');
   });
 
+  test('local-clock fallback allows 60s of skew; sampledAgeMs does not', async () => {
+    const now = Date.now();
+    const base = {
+      panes: 1,
+      scopes: ['tmux-spawn-a.scope'],
+      current: 4096,
+      high: 8 * 1024 ** 3,
+      max: 12 * 1024 ** 3,
+      swapMax: 0,
+      oomKills: 0,
+      oomFlag: false,
+      source: 'cgroup' as const,
+    };
+    const { ctx, stdout } = await humanCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-skew',
+            deviceName: 'skew-host',
+            connected: true,
+            supported: true,
+            limitsSupported: true,
+            windows: [
+              {
+                ...base,
+                windowId: '@1',
+                windowName: 'within-margin',
+                sampledAt: now - 61_000,
+              },
+              {
+                ...base,
+                windowId: '@2',
+                windowName: 'past-margin',
+                sampledAt: now - 121_000,
+              },
+              {
+                ...base,
+                windowId: '@3',
+                windowName: 'aged-field',
+                sampledAt: now,
+                sampledAgeMs: 61_000,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    await sessions.run(ctx, ['--memory']);
+    const text = stdout.text();
+    const within = text.split('\n').find((line) => line.includes('@1 within-margin'));
+    const past = text.split('\n').find((line) => line.includes('@2 past-margin'));
+    const aged = text.split('\n').find((line) => line.includes('@3 aged-field'));
+    expect(within).toContain('8.00 GB');
+    expect(past).toBeDefined();
+    expect(past).not.toContain('8.00 GB');
+    expect(aged).toBeDefined();
+    expect(aged).not.toContain('8.00 GB');
+  });
+
   test('sampledAgeMs overrides the local clock, both directions', async () => {
     const freshAge = {
       windowId: '@1',

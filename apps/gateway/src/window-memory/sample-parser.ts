@@ -31,6 +31,11 @@ function parseUint(raw: string, label: string): number {
   return value;
 }
 
+function parseSwapMax(raw: string): { swapMax: number; swapUnknown?: boolean } {
+  if (raw === '?') return { swapMax: 0, swapUnknown: true };
+  return { swapMax: parseUint(raw, 'swapMax') };
+}
+
 function parsePaneLine(line: string): PaneScopeSample {
   const fields = line.split('\t');
   if (fields.length !== 10) {
@@ -67,7 +72,7 @@ function parsePaneLine(line: string): PaneScopeSample {
     current: parseUint(currentRaw, 'current'),
     high: parseUint(highRaw, 'high'),
     max: parseUint(maxRaw, 'max'),
-    swapMax: parseUint(swapMaxRaw, 'swapMax'),
+    ...parseSwapMax(swapMaxRaw),
     oomKills: parseUint(oomRaw, 'oomKill'),
     managed: managedRaw === '1',
     source: sourceRaw as PaneMemorySource,
