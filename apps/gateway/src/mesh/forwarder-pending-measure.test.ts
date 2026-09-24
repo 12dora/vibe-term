@@ -127,7 +127,8 @@ describe('HTTP pending-measure', () => {
       throw new LinkError('rst', 'pending-measure');
     });
     const res = await forwarder.handle(streamingAuthorize(), dummyServer);
+    if (!(res instanceof Response)) throw new Error('expected response');
     expect(opens).toBe(1);
-    expect(res?.status).toBe(503);
+    expect(res.status).toBe(503);
   });
 });
