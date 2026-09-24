@@ -99,8 +99,10 @@ function presentWindow(
   now: number,
   intervalSec: number
 ): SessionsMemoryWindow {
-  if (!isMemorySampleStale(row.sampledAt, now, intervalSec)) return row;
-  return { ...row, stale: true, high: 0, max: 0, swapMax: 0 };
+  if (!(row.sampledAt > 0)) return row;
+  const sampledAgeMs = Math.max(0, now - row.sampledAt);
+  if (!isMemorySampleStale(row.sampledAt, now, intervalSec)) return { ...row, sampledAgeMs };
+  return { ...row, stale: true, sampledAgeMs };
 }
 
 function readLimitsSupported(runtime: SessionsMemoryRuntime): boolean | null {

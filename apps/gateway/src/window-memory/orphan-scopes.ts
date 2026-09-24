@@ -1,128 +1,23 @@
-// 只释放「本网关这只 tmux server」名下、限额仍是有限值的 tmux-spawn-*.scope。
-// 归属：活着的 pane 的 ppid 必须是同一个 comm=tmux 的 server；scope 的 ControlGroup
-// 与该 server 的 cgroup 落在同一 slice；并且 Description 里的 launcher pid 对得上，
-// 或 cgroup.procs 里还有该 server 的后代。别的 tmux、别的 slice、非 tmux-spawn 一律不动。
-// 限额仍开着时不扫：活 pane 每 tick 会校正，死 pane 留着上一次的有限上限，
-// 比在用户还想限额时把它们写成 infinity 安全。关掉或三项都是 0 才释放。
+// 只释放「本网关这只 tmux server」名下、且限额字节数等于 VibeTerm 套过的某一档的孤儿 scope。
+// Description 里的 launcher pid 对上 server 就够了，不要求同一个 slice。
+// 进程树兜底仍然要求同一个 slice。对不上的有限 scope 每个名字打一行原因，不重复刷。
 
+import type { AppliedLimitTriple } from './applied-triples';
+import { observedMatchesAny } from './applied-triples';
 import { HOST_SHELL_MAX_OUTPUT_BYTES, HOST_SHELL_TIMEOUT_MS } from './constants';
-import { releaseScopeLimit } from './tracker-ops';
-import type { MemoryPaneRef, PaneMemoryState } from './tracker-ops';
+import {
+  ORPHAN_SWEEP_MARK,
+  SCOPE_NAME,
+  buildOrphanSweepScript,
+  isOrphanSweepScript,
+} from './orphan-sweep-script';
+import { type PaneMemoryState, type PlannedWrite, decideRelease } from './tracker-ops';
+import type { MemoryPaneRef } from './tracker-ops';
 import type { HostShellRunner, PaneScopeSample } from './types';
-import { withUserBus } from './user-bus';
 
-export const ORPHAN_SWEEP_MARK = 'VTORPHAN_SWEEP';
+export { ORPHAN_SWEEP_MARK, buildOrphanSweepScript, isOrphanSweepScript };
 
-const SCOPE_NAME = /^tmux-spawn-[A-Za-z0-9_-]+\.scope$/;
 const LOUD_REASONS = new Set(['list-failed', 'mixed-server', 'no-server-cgroup']);
-
-const SWEEP_BEFORE = `# ${ORPHAN_SWEEP_MARK}
-if ! command -v systemctl >/dev/null 2>&1; then
-  printf '%s\\n' 'VTORPHAN 0 no-systemctl'
-  exit 0
-fi
-server_pid=
-while IFS= read -r pane_pid || [ -n "$pane_pid" ]; do
-  [ -n "$pane_pid" ] || continue
-  case "$pane_pid" in
-    *[!0-9]*) continue ;;
-  esac
-  [ "$pane_pid" -gt 0 ] || continue
-  ppid=$(ps -o ppid= -p "$pane_pid" 2>/dev/null | tr -d '[:space:]')
-  [ -n "$ppid" ] || continue
-  comm=$(ps -o comm= -p "$ppid" 2>/dev/null | tr -d '[:space:]')
-  case "$comm" in
-    tmux|tmux:*|*/tmux) ;;
-    *) continue ;;
-  esac
-  if [ -z "$server_pid" ]; then
-    server_pid=$ppid
-  elif [ "$server_pid" != "$ppid" ]; then
-    printf '%s\\n' 'VTORPHAN 0 mixed-server'
-    exit 0
-  fi
-done <<'VT_PIDS'
-`;
-
-const SWEEP_AFTER = `VT_PIDS
-if [ -z "$server_pid" ]; then
-  printf '%s\\n' 'VTORPHAN 0 no-server'
-  exit 0
-fi
-server_cg=$(sed -n 's/^0:://p' "/proc/\${server_pid}/cgroup" | head -n 1)
-if [ -z "$server_cg" ]; then
-  printf '%s\\n' 'VTORPHAN 0 no-server-cgroup'
-  exit 0
-fi
-units=$(systemctl --user list-units 'tmux-spawn-*.scope' --all --no-legend --no-pager 2>/dev/null) || {
-  printf '%s\\n' 'VTORPHAN 0 list-failed'
-  exit 0
-}
-prop_of() {
-  printf '%s\\n' "$1" | sed -n "s/^$2=//p" | head -n 1 | tr '\\t' ' '
-}
-tree_owns() {
-  _cg="$1"
-  [ -n "$_cg" ] || return 1
-  case "$_cg" in
-    /*) _procs="/sys/fs/cgroup\${_cg}/cgroup.procs" ;;
-    *) _procs="/sys/fs/cgroup/\${_cg}/cgroup.procs" ;;
-  esac
-  [ -r "$_procs" ] || return 1
-  _n=0
-  while IFS= read -r _p || [ -n "$_p" ]; do
-    [ -n "$_p" ] || continue
-    _n=$((_n + 1))
-    [ "$_n" -le 32 ] || break
-    _walk="$_p"
-    _d=0
-    while [ "$_d" -lt 32 ]; do
-      [ "$_walk" = "$server_pid" ] && return 0
-      [ -z "$_walk" ] || [ "$_walk" = 0 ] || [ "$_walk" = 1 ] && break
-      _walk=$(ps -o ppid= -p "$_walk" 2>/dev/null | tr -d '[:space:]')
-      _d=$((_d + 1))
-    done
-  done < "$_procs"
-  return 1
-}
-printf '%s\\n' 'VTORPHAN 1 ok'
-printf 'SERVER\\t%s\\t%s\\n' "$server_pid" "$server_cg"
-printf '%s\\n' "$units" | while IFS= read -r line || [ -n "$line" ]; do
-  line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//')
-  name=\${line%% *}
-  case "$name" in
-    tmux-spawn-*.scope) ;;
-    *) continue ;;
-  esac
-  show=$(systemctl --user show "$name" -p Description -p MemoryHigh -p MemoryMax -p MemorySwapMax -p ControlGroup --no-pager 2>/dev/null) || continue
-  launcher=$(prop_of "$show" Description)
-  launcher=$(printf '%s\\n' "$launcher" | sed -n 's/.*launched by process \\([0-9][0-9]*\\).*/\\1/p' | head -n 1)
-  cg=$(prop_of "$show" ControlGroup)
-  high=$(prop_of "$show" MemoryHigh)
-  max=$(prop_of "$show" MemoryMax)
-  swap=$(prop_of "$show" MemorySwapMax)
-  [ -n "$launcher" ] || launcher=-
-  [ -n "$cg" ] || cg=-
-  [ -n "$high" ] || high=-
-  [ -n "$max" ] || max=-
-  [ -n "$swap" ] || swap=-
-  tree=0
-  if [ "$launcher" != "$server_pid" ] && tree_owns "$cg"; then
-    tree=1
-  fi
-  printf 'UNIT\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$name" "$launcher" "$cg" "$high" "$max" "$swap" "$tree"
-done
-`;
-
-export function isOrphanSweepScript(script: string): boolean {
-  return script.includes(ORPHAN_SWEEP_MARK);
-}
-
-export function buildOrphanSweepScript(panePids: readonly number[]): string {
-  const lines = panePids.filter((pid) => Number.isInteger(pid) && pid > 0);
-  const body = lines.join('\n');
-  return withUserBus(`${SWEEP_BEFORE}${body}${body ? '\n' : ''}${SWEEP_AFTER}`);
-}
 
 export interface ListedScope {
   scope: string;
@@ -158,16 +53,26 @@ export function sameMemorySlice(controlGroup: string, serverCgroup: string): boo
   return server.startsWith(`${parent}/`);
 }
 
+export function orphanRejectReason(
+  unit: ListedScope,
+  serverPid: number,
+  serverCgroup: string
+): string | null {
+  if (!SCOPE_NAME.test(unit.scope)) return 'name';
+  if (!controlGroupNamesScope(unit.controlGroup, unit.scope)) return 'cgroup';
+  if (unit.launcherPid === serverPid) return null;
+  if (!sameMemorySlice(unit.controlGroup, serverCgroup)) return 'slice';
+  if (unit.treeHit) return null;
+  if (unit.launcherPid === null) return 'launcher';
+  return 'no-tree';
+}
+
 export function orphanOwnedByServer(
   unit: ListedScope,
   serverPid: number,
   serverCgroup: string
 ): boolean {
-  if (!SCOPE_NAME.test(unit.scope)) return false;
-  if (!controlGroupNamesScope(unit.controlGroup, unit.scope)) return false;
-  if (!sameMemorySlice(unit.controlGroup, serverCgroup)) return false;
-  if (unit.launcherPid === serverPid) return true;
-  return unit.treeHit;
+  return orphanRejectReason(unit, serverPid, serverCgroup) === null;
 }
 
 function controlGroupNamesScope(controlGroup: string, scope: string): boolean {
@@ -249,8 +154,9 @@ function parseLauncher(raw: string): number | null {
 function parseMemoryProperty(raw: string): number | null {
   if (raw === '-' || raw === '' || raw === 'infinity' || raw === 'inf' || raw === 'max') return 0;
   if (!/^\d+$/.test(raw)) return null;
+  if (raw.length > 16) return 0;
   const value = Number.parseInt(raw, 10);
-  if (!Number.isSafeInteger(value)) return null;
+  if (!Number.isSafeInteger(value)) return 0;
   return value;
 }
 
@@ -262,68 +168,91 @@ export interface OrphanSweepOptions {
   liveScopes: readonly string[];
   states: Map<string, PaneMemoryState>;
   warned: Set<string>;
+  triples: readonly AppliedLimitTriple[];
 }
 
-export async function sweepReleaseOrphans(opts: OrphanSweepOptions): Promise<void> {
+export async function sweepReleaseOrphans(opts: OrphanSweepOptions): Promise<PlannedWrite[]> {
   try {
-    await releaseListedOrphans(opts);
+    return await planListedOrphans(opts);
   } catch (error) {
     console.warn(
       `[vibeterm][window-memory] orphan sweep failed device=${opts.deviceId}: ${
         error instanceof Error ? error.message : String(error)
       }`
     );
+    return [];
   }
 }
 
-async function releaseListedOrphans(opts: OrphanSweepOptions): Promise<void> {
-  const script = buildOrphanSweepScript(positivePids(opts.panes));
+async function planListedOrphans(opts: OrphanSweepOptions): Promise<PlannedWrite[]> {
+  const script = buildOrphanSweepScript(positivePids(opts.panes), opts.liveScopes);
   const result = await opts.host.runHostShell(script, {
     timeoutMs: HOST_SHELL_TIMEOUT_MS,
     maxOutputBytes: HOST_SHELL_MAX_OUTPUT_BYTES,
   });
   if (result.exitCode !== 0) {
     noteLoud(opts, 'list-failed');
-    return;
+    return [];
   }
   const parsed = parseOrphanSweep(result.stdout);
   if (!parsed.ok || parsed.serverPid === null) {
     noteLoud(opts, parsed.reason);
-    return;
+    return [];
   }
-  const releasing = await releaseOwned(opts, parsed);
+  return planOwned(opts, parsed);
+}
+
+function planOwned(opts: OrphanSweepOptions, parsed: OrphanSweepParse): PlannedWrite[] {
+  const live = new Set(opts.liveScopes);
+  const releasing = new Set<string>();
+  const planned: PlannedWrite[] = [];
+  const serverPid = parsed.serverPid ?? 0;
+  for (const unit of parsed.units) {
+    const write = planUnit(opts, unit, live, serverPid, parsed.serverCgroup);
+    if (!write.keep) continue;
+    releasing.add(unit.scope);
+    if (write.plan) planned.push(write.plan);
+  }
   for (const scope of [...opts.states.keys()]) {
     if (!releasing.has(scope)) opts.states.delete(scope);
   }
+  return planned;
 }
 
-async function releaseOwned(
+function planUnit(
   opts: OrphanSweepOptions,
-  parsed: OrphanSweepParse
-): Promise<Set<string>> {
-  const live = new Set(opts.liveScopes);
-  const releasing = new Set<string>();
-  const serverPid = parsed.serverPid ?? 0;
-  for (const unit of parsed.units) {
-    if (live.has(unit.scope)) continue;
-    if (!unitLimited(unit)) continue;
-    if (!orphanOwnedByServer(unit, serverPid, parsed.serverCgroup)) continue;
-    releasing.add(unit.scope);
-    await releaseOne(opts, unit);
+  unit: ListedScope,
+  live: Set<string>,
+  serverPid: number,
+  serverCgroup: string
+): { keep: boolean; plan: PlannedWrite | null } {
+  if (live.has(unit.scope) || !unitLimited(unit)) return { keep: false, plan: null };
+  const reason = orphanRejectReason(unit, serverPid, serverCgroup);
+  if (reason) {
+    noteReject(opts, unit.scope, reason);
+    return { keep: false, plan: null };
   }
-  return releasing;
-}
-
-async function releaseOne(opts: OrphanSweepOptions, unit: ListedScope): Promise<void> {
+  if (!observedMatchesAny(unit, opts.triples)) return { keep: false, plan: null };
   const state = opts.states.get(unit.scope) ?? newOrphanState(unit.scope);
   opts.states.set(unit.scope, state);
   state.sample = sampleOf(unit);
-  if (state.desiredKey === '') {
-    console.info(
-      `[vibeterm][window-memory] orphan scope still limited device=${opts.deviceId} scope=${unit.scope}`
-    );
-  }
-  await releaseScopeLimit(opts.host, opts.deviceId, state, opts.now);
+  if (state.desiredKey === '') noteStillLimited(opts, unit.scope);
+  return { keep: true, plan: decideRelease(state, opts.triples, opts.now, opts.deviceId) };
+}
+
+function noteReject(opts: OrphanSweepOptions, scope: string, reason: string): void {
+  const key = `reject:${scope}`;
+  if (opts.warned.has(key)) return;
+  opts.warned.add(key);
+  console.info(
+    `[vibeterm][window-memory] orphan scope rejected device=${opts.deviceId} scope=${scope} reason=${reason}`
+  );
+}
+
+function noteStillLimited(opts: OrphanSweepOptions, scope: string): void {
+  console.info(
+    `[vibeterm][window-memory] orphan scope still limited device=${opts.deviceId} scope=${scope}`
+  );
 }
 
 function noteLoud(opts: OrphanSweepOptions, reason: string): void {
@@ -357,6 +286,7 @@ function newOrphanState(scope: string): PaneMemoryState {
     desiredKey: '',
     lastStderr: '',
     giveUpLogged: false,
+    releaseUnverified: false,
   };
 }
 

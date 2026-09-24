@@ -63,9 +63,11 @@ systemctl --user set-property --runtime <scope> MemoryHigh=<n>M MemoryMax=<n>M M
 
 数值来自该节点的设置（整数 MB）。`0` 的意思是**写成 `infinity`**（清掉这一档已经套上的上限），不是「别动原来的属性」。只要三个字段不全为 0，三条属性每次都会写上：非 0 写成 `<n>M`，为 0 写成 `infinity`。比较观测值与配置时，`0` 与 cgroup 的 `max` 等价。
 
-三个都是 0、或关掉 `enabled`：采样和推送**按原周期继续**（关开关不会把周期拉长）。读数以**下一次真实采样**为准——`set-property` 退出码 0 不会把内存里的 high/max 改成 0。只要样本仍是有限值，就再写一遍三条 `infinity`。`limitsSupported === false` 只跳过「套上有限限额」；scope 名还在时释放照样做。
+三个都是 0、或关掉 `enabled`：采样和推送**按原周期继续**。网关只收回**自己套过的那几档**。套过的三元组（`memoryHighMb` / `memoryMaxMb` / `memorySwapMaxMb`，最近 8 个不同的值）记在 `gateway_kv` 键 `windowMemory.appliedTriples`，重启还在。当前设置里还留着非 0 的 MB 时，这一档也会记进去——「不限制」通常就是这样留下旧数字的。比较用和写入相同的 MB→字节（`× 1048576`），并允许 systemd / cgroup 最多偏一页（4096 字节）。某一档是 0（写成 `infinity`）时必须读回 0，不能靠这个容差把一个小上限当成无限。
 
-同一轮还会清扫**本 tmux server** 留下的孤儿 scope（pane 已经不在快照里，但 `tmux-spawn-*.scope` 还挂着有限的 MemoryHigh/Max/SwapMax）。归属只认两件事：活着的 pane 的父进程是同一个 `comm=tmux` 的 server，且该 scope 的 cgroup 与这只 server 在同一个 slice；再加上 Description 里的 `launched by process <server pid>`，或 cgroup 里还有这只 server 的后代。别的 tmux、别的 slice 不动。限额仍然开着时不扫这些孤儿——活 pane 每 tick 会校正，死 pane 留着上一次的有限上限。
+对得上才写三条 `infinity`。读数已经是无限，或者不再对得上（用户后来改过），就停手，不再每个 tick 改写。drop-in、手工 `set-property` 出来的其它数字不会被改回去。`set-property` 退出码 0 不算数：下一次采样仍是有限值，就记一次失败并退避，不会静默地每 5 秒再写一遍。`limitsSupported === false` 只跳过「套上有限限额」；名字还在、字节数又对得上的 scope 仍会释放。
+
+孤儿 scope（pane 已经不在快照里，但 `tmux-spawn-*.scope` 还挂着有限限额）只在**进入释放或限额设置变了**的那一拍清扫，之后最多每 60 秒一次，不跟每个采样 tick。采样器报 `no-user-systemd` / `no-cgroup2`、或者这台连接上从没见过 `tmux-spawn-*.scope`、或者一档套过的三元组都没有时，整段清扫跳过。脚本里跳过仍挂在活 pane 上的 scope；全部候选合并成**一次** `systemctl --user show`；先看是不是有限值，再才为对不上 launcher pid 的单位走进程树。归属：Description 里的 `launched by process <server pid>` 对上这只 tmux server 就够了，不要求同一个 slice。没有这行 Description 时，才要求 cgroup 和 server 在同一个 slice，并且 `cgroup.procs` 里还有 server 的后代。被拒绝的有限 scope 每个名字打一行 `orphan scope rejected … reason=slice|launcher|no-tree|cgroup`，不重复刷。限额仍然开着时不扫孤儿——活 pane 每 tick 会校正，死 pane 留着上一次的有限上限。
 
 失败打：
 
@@ -73,7 +75,7 @@ systemctl --user set-property --runtime <scope> MemoryHigh=<n>M MemoryMax=<n>M M
 [vibeterm][window-memory] set-property failed device=… pane=… scope=… : <stderr>
 ```
 
-套有限限额：失败后再等 60 s 试第二次，然后打一行 `set-property giving up`（带 stderr）并不再试，直到目标命令变了或进程重启。释放：同样 60 s 退避，第二次失败时打一行 `release giving up …; retrying while the sample stays limited`（带 stderr），**之后只要样本还是有限值就继续试**，不再静默停掉。新 pane 出现后 300 ms 内会补一次 tick（跟在 `new-window` / `split-window` / `break-pane` 的 snapshot 后面）。
+套有限限额：失败后再等 60 s 试第二次，然后打一行 `set-property giving up`（带 stderr）并不再试，直到目标命令变了或进程重启。释放：从 60 s 起按指数退避，上限 30 分钟（60 s、120 s、240 s……）。每一次真正的失败打一行（`set-property failed`，或退出码 0 但下一次采样仍有限时的 `release still limited`），退避等待期间不重复打。同一轮里多个 pane 的 `set-property` 合成一段脚本、一次往返，共用采样脚本那个 10 s 超时，避免一台挂住的用户总线把 tick 串成 N×10 s。超时（exit 124）按两次失败计，退避更长一档。新 pane 出现后 300 ms 内会补一次 tick（跟在 `new-window` / `split-window` / `break-pane` 的 snapshot 后面）。
 
 `set-property`、释放、`stop`、孤儿清扫在调用 `systemctl --user` 之前，用和采样脚本同一段逻辑补上 `XDG_RUNTIME_DIR` / `DBUS_SESSION_BUS_ADDRESS`（缺省 `unix:path=$XDG_RUNTIME_DIR/bus`）。采样能读到限额、写入却连不上用户总线的情况因此对不齐。
 
@@ -139,7 +141,7 @@ paneId  pid  scope  current  high  max  swapMax  oomKill  managed  source
 
 | 字段 | 默认 | 含义 |
 | --- | ---: | --- |
-| `enabled` | `true` | 总开关；`false` 时把已套限额的 scope（含本 server 的孤儿 scope）释放成 `infinity`，采样与推送继续，直到 cgroup 读数变成无限 |
+| `enabled` | `true` | 总开关；`false` 时只把「当前限额等于 VibeTerm 套过的某一档」的 scope（含本 server 的孤儿）释放成 `infinity`，采样与推送继续。读数变成无限或不再对得上之后就停手 |
 | `memoryHighMb` | `8192` | `MemoryHigh`，软限额 |
 | `memoryMaxMb` | `12288` | `MemoryMax`，硬限额 |
 | `memorySwapMaxMb` | `4096` | `MemorySwapMax` |
@@ -154,7 +156,7 @@ HTTP（与其它设置路由同一套管理会话鉴权；可走 `/n/<nodeId>/` 
 
 CLI 快照（HTTP 不打宿主，读运行时缓存）：
 
-- `GET /api/sessions/memory` → `{ devices: [{ deviceId, deviceName, connected, supported, limitsSupported, windows: [{ windowId, windowName, panes, scopes, current, high, max, swapMax, oomKills, oomFlag, sampledAt, source, stale? }] }] }`。`connected` 是这台网关的 tmux 会话是否还连着，不是「有没有浏览器开着」。设备未挂上或 tmux 连接未打开 → `connected: false, supported: false, windows: []`，**不会**把 tracker 里上一份限额交出去；tracker 也已 `stop`，断开期间不再采样、不再 `set-property`。已连接时窗口列表来自最近一份 snapshot。`sampledAt` 早于 `max(6 × 采样周期, 60s)` 时窗口带 `stale: true`，并把 `high` / `max` / `swapMax` 清成 0（`sampledAt` 与 `current` 保留）——旧客户端忽略 `stale` 也只会看到「无限」，不会把几天前的 8 GiB / 12 GiB 当成现在的限额。`supported` 仍是采样器判定。
+- `GET /api/sessions/memory` → `{ devices: [{ deviceId, deviceName, connected, supported, limitsSupported, windows: [{ windowId, windowName, panes, scopes, current, high, max, swapMax, oomKills, oomFlag, sampledAt, source, stale?, sampledAgeMs? }] }] }`。`connected` 是这台网关的 tmux 会话是否还连着，不是「有没有浏览器开着」。设备未挂上或 tmux 连接未打开 → `connected: false, supported: false, windows: []`，**不会**把 tracker 里上一份限额交出去；tracker 也已 `stop`，断开期间不再采样、不再 `set-property`。已连接时窗口列表来自最近一份 snapshot。`sampledAt > 0` 时每个窗口带 `sampledAgeMs`（网关自己的 `now - sampledAt`，和客户端时钟无关）。年龄超过 `max(6 × 采样周期, 60s)` 时再加 `stale: true`，**限额数字保持原值**，不写成 0。未采样（`sampledAt === 0`）不带年龄、也不标 stale。`supported` 仍是采样器判定。
 
 ## GUI
 
@@ -223,7 +225,7 @@ vibeterm settings memory get
 vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--swap-max <MB>] [--interval <sec>]
 ```
 
-- `sessions`：先 `GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的设备会再开一条设备 WS（与 `tmux ls` 同类）补窗口列表。带 `--memory` 时这条会话会等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则 `supported: false`、内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`；`--memory` 再加 `SCOPE`（第一个 scope，多个时 `+N`，没有为 `-`）、`SOURCE`（`cgroup` / `RSS`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（次数；`oomFlag` 时后缀 `!`）。未采样窗口（`sampledAt === 0`）以及 `stale: true` 的窗口，`SOURCE` / `MEM` / `HIGH` / `MAX` / `OOM` 一律为 `-`（不把过期的 high/max 印成 `∞` 或具体 GiB）。`limitsSupported: false` 的设备在 `--memory` 模式下于其行后打印 `(limits unavailable)`；能限额但采不到读数（`supported: false`）则打印 `(cannot sample memory)`，两条不会叠印。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload（不是裸 HTTP 响应；未采样窗口不带 `source`）。
+- `sessions`：先 `GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的设备会再开一条设备 WS（与 `tmux ls` 同类）补窗口列表。带 `--memory` 时这条会话会等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则 `supported: false`、内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`；`--memory` 再加 `SCOPE`（第一个 scope，多个时 `+N`，没有为 `-`）、`SOURCE`（`cgroup` / `RSS`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（次数；`oomFlag` 时后缀 `!`）。下列窗口的 `SOURCE` / `MEM` / `HIGH` / `MAX` / `OOM` 一律为 `-`：未采样（`sampledAt === 0`）；`stale: true`；带了 `sampledAgeMs` 且大于 `max(6 × 采样周期, 60s)`；没有 `sampledAgeMs` 的旧目标（2.7.x / 2.8.0）上，`sampledAt` 相对本机时钟早于同一阈值。过期行不把几天前的 high/max 印成 `∞` 或具体 GiB。有 `sampledAgeMs` 时以它为准，不用本机时钟和节点的 `sampledAt` 对表。`limitsSupported: false` 的设备在 `--memory` 模式下于其行后打印 `(limits unavailable)`；能限额但采不到读数（`supported: false`）则打印 `(cannot sample memory)`，两条不会叠印。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload（不是裸 HTTP 响应；未采样窗口不带 `source`）。
 - `settings memory`：`GET/PUT /api/settings/window-memory`。`set` 先 GET 再按旗标合并后整包 PUT；非法整数 / 越界 / `high > max` 为用法错误（退出码 2）。尊重全局 `--node`。人读为 `key  value` 行。
 
 用法细节见 [命令行使用手册](./cli-usage.md)。
@@ -242,7 +244,7 @@ vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--sw
 
 前两条由采样脚本的头判定（`no-cgroup2` 在这次连接内永久，`no-user-systemd` 连续 6 次才钉死，中途恢复就复位）；
 第三条由 tracker 按样本每 tick 重算，换上新 tmux 之后会自己恢复。判为 false 时不再把**有限**限额 `set-property` 上去（省掉每 tick 的无用往返）；
-已经点了名的 scope 在「关掉或三项都是 0」时仍会释放。`no-cgroup2` 不再去列用户 scope（宿主上不可能有 `tmux-spawn-*.scope`）。
+已经点了名、并且字节数对得上 VibeTerm 套过的某一档的 scope，在「关掉或三项都是 0」时仍会释放。`no-cgroup2` 与 `no-user-systemd` 不再去列用户 scope。
 徽标提示写明限额不可用，设置页与远程限额对话框给出警示，`sessions --memory` 在设备行下打 `(limits unavailable)`。
 **读数照常**，走 RSS 兜底。
 
@@ -256,7 +258,7 @@ SSH 设备上若用户级 systemd 其实可用，但会话缺 `XDG_RUNTIME_DIR` 
 
 ## 注意事项
 
-- `set-property --runtime` 不持久，scope 随 pane 消亡；不要指望重启后属性还在 unit 文件里。把某一档改成 `0`、三个都改成 `0`、或关掉功能，已经套过的 scope（含不再出现在 pane 列表里、但仍属于这只 tmux server 的 `tmux-spawn-*.scope`）会收到 `infinity`，`systemctl --user show` 应回到无限。退出码 0 不算数，下一次采样读到的 cgroup 文件才算。
+- `set-property --runtime` 不持久，scope 随 pane 消亡；不要指望重启后属性还在 unit 文件里。把某一档改成 `0`、三个都改成 `0`、或关掉功能，只会给**当前读数等于 VibeTerm 记过的某一档**的 scope（含本 server 的孤儿 `tmux-spawn-*.scope`）写 `infinity`。用户自己用 drop-in 或 `set-property` 设的其它数字留着。退出码 0 不算数，下一次采样读到的 cgroup 文件才算；读数仍有限就退避再试，不会每 5 秒重写。
 - 本地宿主脚本硬超时默认 10 s，超时 `exit 124`；不要把挂死的 `systemctl` 当成采样成功。
 - **`MemoryHigh`（软限额）**：内核开始回收 / 限速该 cgroup 的内存页，**不杀进程**。徽标在 ≥ 75% 时变黄，就是在逼近这一档。
 - **`MemoryMax`（硬限额）**：用量越过上限后由内核 OOM 杀掉 pane 内进程。配合 [tmux 进程存活](./tmux-process-survival.md) 里的 `DefaultOOMPolicy=continue`：被杀的是超限进程，systemd **不会**因此拆掉整个 scope、把还活着的 shell 一起停掉。没有 `continue` 时，一次 OOM 仍可能让整窗消失。
@@ -308,7 +310,7 @@ ps -Ao pid=,ppid=,rss= | awk -v t=<pane_pid> '{kb[$1]=$3;ch[$2]=ch[$2]" "$1} END
 - [ ] Linux + tmux ≥ 3.6 + 用户级 systemd 的本地设备：新建窗口后 `systemctl --user show <scope> -p MemoryHigh,MemoryMax` 与设置一致。
 - [ ] 三个 MB 都填 `0`：采样仍在（CLI `sessions --memory` 有读数）；已管理的 scope 收到三条 `infinity`，未管理的不动。
 - [ ] 限额改为 `0` 后，`systemctl --user show <scope> -p MemoryHigh,MemoryMax,MemorySwapMax` 应回到 `infinity`。
-- [ ] `enabled` 关掉或三项都是 0：采样仍按原周期走；已管理的 scope 和本 server 的孤儿 scope 被写成 `infinity`，下一次 cgroup 读数（以及 `sessions --memory`）里的 high/max 为 0 / `∞`，而不是几天前的数字。样本超过 `max(6 × 周期, 60s)` 时 HTTP 带 `stale: true` 且不再展示旧限额。
+- [ ] `enabled` 关掉或三项都是 0：采样仍按原周期走；只有当前限额等于 VibeTerm 套过的某一档的 scope（含本 server 的孤儿）被写成 `infinity`。其它上限不动。对得上的 scope 在 cgroup 读回无限之前会按退避重试，读数对不上或已经无限就停。样本超过 `max(6 × 周期, 60s)` 时 HTTP 带 `stale: true` 和 `sampledAgeMs`，限额数字保留原值；`sessions --memory` 把这一行的 SOURCE/MEM/HIGH/MAX/OOM 打成 `-`。
 - [ ] 关窗后对应 `tmux-spawn-*.scope` 消失，失控子进程不再留在后台。
 - [ ] 终端页当前窗口有样本时出现 `window-memory-badge`；用量过软限额 75% 变黄，过软限额或有 OOM 标记变红。
 - [ ] 设置页 `local-machine-memory` 保存后 `GET /api/settings/window-memory` 与表单一致；非法输入（`high > max`、非整数）拒绝且不写库。

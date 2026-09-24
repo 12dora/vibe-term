@@ -47,11 +47,16 @@ export interface SessionsMemoryWindow extends WindowMemorySample {
   windowName: string;
   scopes: string[];
   /**
-   * 这份读数不能当现状：sampledAt 早于 max(6 个采样周期, 60s)。
-   * 为 true 时 high/max/swapMax 已清成 0，sampledAt 仍是原采样时刻。缺省视为新鲜。
+   * 这份读数不能当现状：采样年龄超过 max(6 个采样周期, 60s)。
+   * 为 true 时 high/max/swapMax 仍是上次采到的原值，调用方应改显示为未知。缺省视为新鲜。
    * 设备未连接时不返回窗口，而不是把上次的限额再交出去。
    */
   stale?: boolean;
+  /**
+   * 网关用自己的时钟算的采样年龄（毫秒），`now - sampledAt`。客户端用它判断过期，避免和节点时钟对不上。
+   * 未采样（sampledAt 为 0）时不带。
+   */
+  sampledAgeMs?: number;
 }
 
 export interface SessionsMemoryDevice {

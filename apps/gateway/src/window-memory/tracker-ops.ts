@@ -1,20 +1,14 @@
 import type { WindowMemorySettings } from '@vibeterm/shared';
 
-import { APPLY_RETRY_MS, HEARTBEAT_MS, HOST_SHELL_TIMEOUT_MS, MIB_BYTES } from './constants';
-import {
-  argvToScript,
-  buildReleasePropertyArgs,
-  buildSetPropertyArgs,
-  isAllZeroLimits,
-} from './scope-commands';
+import { type AppliedLimitTriple, observedMatchesAny } from './applied-triples';
+import { APPLY_RETRY_MS, HEARTBEAT_MS, MIB_BYTES, RELEASE_BACKOFF_MAX_MS } from './constants';
+import { buildReleasePropertyArgs, buildSetPropertyArgs, isAllZeroLimits } from './scope-commands';
 import type {
-  HostShellRunner,
   PaneMemorySource,
   PaneScopeSample,
   WindowMemoryAggregate,
   WindowOomKillEvent,
 } from './types';
-import { withUserBus } from './user-bus';
 
 export interface PaneMemoryState {
   paneId: string;
@@ -27,8 +21,16 @@ export interface PaneMemoryState {
   applyFailedAt: number | null;
   desiredKey: string;
   lastStderr: string;
-  /** 到达旧的两次上限后打过一行 give-up。释放路径仍会按退避继续试。 */
+  /** 套有限限额到达两次失败后打过一行 give-up。 */
   giveUpLogged: boolean;
+  /** 释放命令退出码 0，但还没看到下一次采样变成无限。 */
+  releaseUnverified: boolean;
+}
+
+export interface PlannedWrite {
+  state: PaneMemoryState;
+  args: string[];
+  kind: 'apply' | 'release';
 }
 
 export interface MemoryPaneRef {
@@ -69,6 +71,12 @@ export function needsApply(settings: WindowMemorySettings, sample: PaneScopeSamp
   return limitsDiffer(settings, sample);
 }
 
+export function retryDelayMs(attempts: number, kind: 'apply' | 'release'): number {
+  if (kind === 'apply' || attempts <= 1) return APPLY_RETRY_MS;
+  const shift = Math.min(attempts - 1, 8);
+  return Math.min(APPLY_RETRY_MS * 2 ** shift, RELEASE_BACKOFF_MAX_MS);
+}
+
 export function canRetryApply(
   state: PaneMemoryState,
   now: number,
@@ -76,16 +84,7 @@ export function canRetryApply(
 ): boolean {
   if (kind === 'apply' && state.applyAttempts >= 2) return false;
   if (state.applyAttempts === 0 || state.applyFailedAt === null) return true;
-  return now - state.applyFailedAt >= APPLY_RETRY_MS;
-}
-
-interface PropertyWrite {
-  host: HostShellRunner;
-  deviceId: string;
-  state: PaneMemoryState;
-  args: string[];
-  now: number;
-  kind: 'apply' | 'release';
+  return now - state.applyFailedAt >= retryDelayMs(state.applyAttempts, kind);
 }
 
 function resetApplyState(state: PaneMemoryState, desiredKey: string): void {
@@ -94,6 +93,7 @@ function resetApplyState(state: PaneMemoryState, desiredKey: string): void {
   state.desiredKey = desiredKey;
   state.giveUpLogged = false;
   state.lastStderr = '';
+  state.releaseUnverified = false;
 }
 
 function clearApplyFailure(state: PaneMemoryState): void {
@@ -101,73 +101,99 @@ function clearApplyFailure(state: PaneMemoryState): void {
   state.applyFailedAt = null;
   state.giveUpLogged = false;
   state.lastStderr = '';
+  state.releaseUnverified = false;
 }
 
-function logGiveUp(kind: 'apply' | 'release', deviceId: string, state: PaneMemoryState): void {
+export function clearReleaseProgress(state: PaneMemoryState): void {
+  clearApplyFailure(state);
+  state.desiredKey = '';
+}
+
+function armDesired(state: PaneMemoryState, args: string[]): void {
+  const desiredKey = args.join('\0');
+  if (desiredKey !== state.desiredKey) resetApplyState(state, desiredKey);
+}
+
+function logGiveUp(deviceId: string, state: PaneMemoryState): void {
   if (state.giveUpLogged) return;
   state.giveUpLogged = true;
   const stderr = state.lastStderr || 'exit';
-  const scope = `device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${stderr}`;
-  if (kind === 'release') {
-    console.warn(
-      `[vibeterm][window-memory] release giving up ${scope}; retrying while the sample stays limited`
-    );
-    return;
-  }
-  console.warn(`[vibeterm][window-memory] set-property giving up ${scope}`);
+  console.warn(
+    `[vibeterm][window-memory] set-property giving up device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${stderr}`
+  );
 }
 
-async function runSetProperty(write: PropertyWrite): Promise<boolean> {
-  const { host, deviceId, state, args, now, kind } = write;
-  const desiredKey = args.join('\0');
-  if (desiredKey !== state.desiredKey) resetApplyState(state, desiredKey);
-  if (!canRetryApply(state, now, kind)) return false;
-  const result = await host.runHostShell(withUserBus(argvToScript(args)), {
-    timeoutMs: HOST_SHELL_TIMEOUT_MS,
-  });
-  if (result.exitCode === 0) {
-    clearApplyFailure(state);
-    return true;
-  }
+function noteReleaseUnverified(state: PaneMemoryState, now: number, deviceId: string): void {
+  if (!state.releaseUnverified) return;
+  state.releaseUnverified = false;
   state.applyAttempts += 1;
   state.applyFailedAt = now;
-  const stderr = result.stderr.trim() || `exit ${result.exitCode}`;
-  state.lastStderr = stderr;
+  state.lastStderr = 'exit 0 but sample still limited';
   console.warn(
-    `[vibeterm][window-memory] set-property failed device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${stderr}`
+    `[vibeterm][window-memory] release still limited device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${state.lastStderr}`
   );
-  if (state.applyAttempts >= 2) logGiveUp(kind, deviceId, state);
-  return false;
 }
 
-export async function applyScopeLimit(
-  host: HostShellRunner,
-  deviceId: string,
+export function decideApply(
   state: PaneMemoryState,
   settings: WindowMemorySettings,
   now: number
-): Promise<void> {
+): PlannedWrite | null {
   const scope = state.scope;
-  if (!scope || !state.sample) return;
+  if (!scope || !state.sample) return null;
   const args = buildSetPropertyArgs(scope, settings);
-  if (!args || !needsApply(settings, state.sample)) return;
-  if (await runSetProperty({ host, deviceId, state, args, now, kind: 'apply' })) {
-    state.sample.managed = true;
-  }
+  if (!args || !needsApply(settings, state.sample)) return null;
+  armDesired(state, args);
+  if (!canRetryApply(state, now, 'apply')) return null;
+  return { state, args, kind: 'apply' };
 }
 
-export async function releaseScopeLimit(
-  host: HostShellRunner,
-  deviceId: string,
+export function decideRelease(
   state: PaneMemoryState,
-  now: number
-): Promise<void> {
+  triples: readonly AppliedLimitTriple[],
+  now: number,
+  deviceId: string
+): PlannedWrite | null {
   const scope = state.scope;
-  if (!scope || !state.sample || !observedLimited(state.sample)) return;
-  const args = buildReleasePropertyArgs(scope);
-  if (await runSetProperty({ host, deviceId, state, args, now, kind: 'release' })) {
-    state.sample.managed = false;
+  const sample = state.sample;
+  if (!scope || !sample || !observedLimited(sample) || !observedMatchesAny(sample, triples)) {
+    clearReleaseProgress(state);
+    return null;
   }
+  noteReleaseUnverified(state, now, deviceId);
+  const args = buildReleasePropertyArgs(scope);
+  armDesired(state, args);
+  if (!canRetryApply(state, now, 'release')) return null;
+  return { state, args, kind: 'release' };
+}
+
+export function recordPropertyResult(result: {
+  state: PaneMemoryState;
+  kind: 'apply' | 'release';
+  code: number;
+  stderr: string;
+  now: number;
+  deviceId: string;
+}): void {
+  const { state, kind, code, now, deviceId } = result;
+  if (code === 0) {
+    if (kind === 'release') {
+      state.releaseUnverified = true;
+      if (state.sample) state.sample.managed = false;
+      return;
+    }
+    clearApplyFailure(state);
+    if (state.sample) state.sample.managed = true;
+    return;
+  }
+  state.applyAttempts += code === 124 ? 2 : 1;
+  state.applyFailedAt = now;
+  state.releaseUnverified = false;
+  state.lastStderr = result.stderr || `exit ${code}`;
+  console.warn(
+    `[vibeterm][window-memory] set-property failed device=${deviceId} pane=${state.paneId} scope=${state.scope}: ${state.lastStderr}`
+  );
+  if (kind === 'apply' && state.applyAttempts >= 2) logGiveUp(deviceId, state);
 }
 
 export function collectOomEvents(

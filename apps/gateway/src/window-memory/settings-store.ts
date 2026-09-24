@@ -6,6 +6,7 @@ import {
   type WindowMemorySettings,
 } from '@vibeterm/shared';
 import { getGatewayKv, setGatewayKv } from '../db/kv';
+import { rememberAppliedOnKv, tripleFromSettings } from './applied-triples';
 
 export const WINDOW_MEMORY_SETTINGS_KV_KEY = 'windowMemory.settings';
 export const INVALID_WINDOW_MEMORY_SETTINGS = 'INVALID_WINDOW_MEMORY_SETTINGS';
@@ -100,6 +101,20 @@ function settingsEqual(a: WindowMemorySettings, b: WindowMemorySettings): boolea
   );
 }
 
+function rememberTriples(
+  kv: WindowMemorySettingsKv,
+  keepPrev: boolean,
+  prev: WindowMemorySettings,
+  next: WindowMemorySettings
+): void {
+  try {
+    if (keepPrev) rememberAppliedOnKv(kv, tripleFromSettings(prev));
+    rememberAppliedOnKv(kv, tripleFromSettings(next));
+  } catch {
+    // 设置已经落库。记不住历史只会少释放，不会去改用户自己设的其它上限。
+  }
+}
+
 function mergeOverDefaults(raw: unknown): unknown {
   if (!isPlainObject(raw)) return { ...WINDOW_MEMORY_SETTINGS_DEFAULTS };
   return { ...WINDOW_MEMORY_SETTINGS_DEFAULTS, ...raw };
@@ -110,6 +125,7 @@ export function createWindowMemorySettingsStore(
 ): WindowMemorySettingsStore {
   const listeners = new Set<(settings: WindowMemorySettings) => void>();
   let cached: WindowMemorySettings | null = null;
+  let loadedFromKv = false;
 
   function read(): WindowMemorySettings {
     if (cached !== null) return cached;
@@ -121,12 +137,15 @@ export function createWindowMemorySettingsStore(
     }
     if (raw === null) {
       cached = { ...WINDOW_MEMORY_SETTINGS_DEFAULTS };
+      loadedFromKv = false;
       return cached;
     }
     try {
       cached = parseWindowMemorySettings(mergeOverDefaults(JSON.parse(raw)));
+      loadedFromKv = true;
     } catch {
       cached = { ...WINDOW_MEMORY_SETTINGS_DEFAULTS };
+      loadedFromKv = false;
     }
     return cached;
   }
@@ -136,8 +155,11 @@ export function createWindowMemorySettingsStore(
     set(next) {
       const parsed = parseWindowMemorySettings(next);
       const prev = read();
+      const keepPrev = loadedFromKv;
       kv.set(WINDOW_MEMORY_SETTINGS_KV_KEY, JSON.stringify(parsed));
       cached = parsed;
+      loadedFromKv = true;
+      rememberTriples(kv, keepPrev, prev, parsed);
       if (settingsEqual(parsed, prev)) return parsed;
       for (const fn of listeners) fn(parsed);
       return parsed;

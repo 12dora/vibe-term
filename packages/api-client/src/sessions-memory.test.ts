@@ -63,13 +63,42 @@ describe('getSessionsMemory', () => {
             connected: true,
             supported: true,
             limitsSupported: true,
-            windows: [{ ...WINDOW, stale: true }, { ...WINDOW, windowId: '@2', stale: 'yes' }],
+            windows: [
+              { ...WINDOW, stale: true },
+              { ...WINDOW, windowId: '@2', stale: 'yes' },
+            ],
           },
         ],
       })
     );
     expect(response.devices[0]?.windows[0]?.stale).toBe(true);
     expect('stale' in (response.devices[0]?.windows[1] ?? {})).toBe(false);
+  });
+
+  test('sampledAgeMs 只透传非负有限数', async () => {
+    const response = await getSessionsMemory(
+      client({
+        devices: [
+          {
+            deviceId: 'dev-1',
+            deviceName: '本机',
+            connected: true,
+            supported: true,
+            limitsSupported: true,
+            windows: [
+              { ...WINDOW, sampledAgeMs: 1500 },
+              { ...WINDOW, windowId: '@2', sampledAgeMs: -1 },
+              { ...WINDOW, windowId: '@3', sampledAgeMs: '12' },
+            ],
+          },
+        ],
+      })
+    );
+    const windows = response.devices[0]?.windows ?? [];
+    expect(windows[0]?.sampledAgeMs).toBe(1500);
+    expect(windows[0]?.high).toBe(2048);
+    expect('sampledAgeMs' in (windows[1] ?? {})).toBe(false);
+    expect('sampledAgeMs' in (windows[2] ?? {})).toBe(false);
   });
 
   test('路径固定', async () => {

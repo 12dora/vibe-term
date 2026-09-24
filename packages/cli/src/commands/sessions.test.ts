@@ -39,7 +39,7 @@ const PAYLOAD = {
           swapMax: 4 * 1024 ** 3,
           oomKills: 3,
           oomFlag: true,
-          sampledAt: 1,
+          sampledAt: Date.now(),
           source: 'cgroup',
         },
         {
@@ -53,7 +53,7 @@ const PAYLOAD = {
           swapMax: 0,
           oomKills: 0,
           oomFlag: false,
-          sampledAt: 1,
+          sampledAt: Date.now(),
           source: 'cgroup',
         },
       ],
@@ -112,7 +112,7 @@ function memoryEvent(
     oomKills: 1,
     oomFlag: true,
     panes: 1,
-    sampledAt: 9,
+    sampledAt: Date.now(),
     source: 'cgroup',
   };
 }
@@ -335,6 +335,91 @@ describe('vibeterm sessions', () => {
     expect(text).toContain('tmux-spawn-old.scope');
   });
 
+  test('old targets without sampledAgeMs hide limits once sampledAt is past the local threshold', async () => {
+    const { ctx, stdout } = await humanCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-old',
+            deviceName: 'old-gw',
+            connected: true,
+            supported: true,
+            limitsSupported: true,
+            windows: [
+              {
+                windowId: '@4',
+                windowName: 'frozen',
+                panes: 1,
+                scopes: ['tmux-spawn-old.scope'],
+                current: 400 * 1024 ** 2,
+                high: 8 * 1024 ** 3,
+                max: 12 * 1024 ** 3,
+                swapMax: 0,
+                oomKills: 1,
+                oomFlag: false,
+                sampledAt: Date.now() - 7 * 24 * 60 * 60 * 1000,
+                source: 'cgroup',
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    await sessions.run(ctx, ['--memory']);
+    const text = stdout.text();
+    expect(text).toContain('@4 frozen');
+    expect(text).not.toContain('8.00 GB');
+    expect(text).not.toContain('12.00 GB');
+    expect(text).not.toContain('∞');
+  });
+
+  test('sampledAgeMs overrides the local clock, both directions', async () => {
+    const freshAge = {
+      windowId: '@1',
+      windowName: 'skewed',
+      panes: 1,
+      scopes: ['tmux-spawn-a.scope'],
+      current: 4096,
+      high: 8 * 1024 ** 3,
+      max: 12 * 1024 ** 3,
+      swapMax: 0,
+      oomKills: 0,
+      oomFlag: false,
+      sampledAt: 1_700_000_000_000,
+      sampledAgeMs: 1_000,
+      source: 'cgroup',
+    };
+    const oldAge = {
+      ...freshAge,
+      windowId: '@2',
+      windowName: 'aged',
+      sampledAt: Date.now(),
+      sampledAgeMs: 120_000,
+    };
+    const { ctx, stdout } = await humanCtx({
+      'GET /api/sessions/memory': () => ({
+        devices: [
+          {
+            deviceId: 'dev-age',
+            deviceName: 'aged-host',
+            connected: true,
+            supported: true,
+            limitsSupported: true,
+            windows: [freshAge, oldAge],
+          },
+        ],
+      }),
+    });
+    await sessions.run(ctx, ['--memory']);
+    const text = stdout.text();
+    const skewed = text.split('\n').find((line) => line.includes('@1 skewed'));
+    const aged = text.split('\n').find((line) => line.includes('@2 aged'));
+    expect(skewed).toContain('8.00 GB');
+    expect(aged).toBeDefined();
+    expect(aged).not.toContain('8.00 GB');
+    expect(aged).toMatch(/aged\s+1\s+\S+\s+-\s+-\s+-\s+-\s+-$/);
+  });
+
   test('unsampled windows print - for MEM HIGH MAX OOM, not 0 B', async () => {
     const { ctx, stdout } = await humanCtx({
       'GET /api/sessions/memory': () => ({
@@ -357,7 +442,7 @@ describe('vibeterm sessions', () => {
                 swapMax: 0,
                 oomKills: 1,
                 oomFlag: true,
-                sampledAt: 1,
+                sampledAt: Date.now(),
                 source: 'cgroup',
               },
               {
@@ -413,7 +498,7 @@ describe('vibeterm sessions', () => {
                 swapMax: 0,
                 oomKills: 0,
                 oomFlag: false,
-                sampledAt: 1,
+                sampledAt: Date.now(),
                 source: 'rss',
               },
             ],
@@ -668,7 +753,8 @@ describe('vibeterm sessions', () => {
     const live = body.devices[0]?.windows.find((window) => window.windowId === '@1');
     const dead = body.devices[0]?.windows.find((window) => window.windowId === '@2');
     expect(live?.source).toBe('rss');
-    expect(live?.sampledAt).toBe(9);
+    expect(typeof live?.sampledAt).toBe('number');
+    expect(live?.sampledAt).not.toBe(0);
     expect(dead?.sampledAt).toBe(0);
     expect(dead).not.toHaveProperty('source');
   }, 10_000);
