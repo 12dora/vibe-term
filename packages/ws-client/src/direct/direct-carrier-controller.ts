@@ -3,20 +3,19 @@
 // rtc-config 与 connection 查找并行；authorize 5xx 走进程内 per-node 熔断。
 // attempt 必须在任何 await 之前登记；指纹不一致立即放弃；信令 FIFO。
 
-import { CONNECTION_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
+import { CONNECTION_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
+import { type DirectRestContext, lookupConnectionId, requestAuthorize } from './direct-authorize';
 import {
   authorizeBreakerShouldTry,
+  authorizeProbeSuppressed,
   forceAuthorizeProbe,
-  noteAuthorizeFailure,
-  noteAuthorizeSuccess,
 } from './direct-authorize-breaker';
 import {
   DirectAuthorizeError,
   DirectPrimaryWaitError,
   type PrimaryWaitMode,
-  throwIfPrimaryWait,
 } from './direct-carrier-errors';
 import {
   type PageVisibility,
@@ -48,7 +47,6 @@ import type {
   IceCandidateLike,
   IceServerLike,
   RTCPeerConnectionLike,
-  RtcAuthorizeResponse,
   RtcPeerConnectionFactory,
 } from './rtc-types';
 import {
@@ -64,14 +62,12 @@ export type DirectCarrierState = 'idle' | 'connecting' | 'active' | 'failed';
 
 export const SESS_CHANNEL_LABEL = 'sess';
 export { RTC_CONFIG_PATH } from './direct-negotiate';
-export const RTC_AUTHORIZE_PATH = '/api/rtc/authorize';
-export const MESH_CONNECTION_PATH = '/api/mesh/connection';
+export {
+  MESH_CONNECTION_PATH,
+  RTC_AUTHORIZE_PATH,
+  meshConnectionPath,
+} from './direct-authorize';
 export { CONNECTION_HEADER };
-
-/** `GET /api/mesh/connection`：带上本条 WS 的 client nonce，node 据此答出**服务端** id。 */
-export function meshConnectionPath(cid?: string | null): string {
-  return cid ? `${MESH_CONNECTION_PATH}?cid=${encodeURIComponent(cid)}` : MESH_CONNECTION_PATH;
-}
 
 const DEFAULT_RETRY_BASE_MS = 1000;
 const DEFAULT_RETRY_MAX_MS = 30_000;
@@ -247,6 +243,8 @@ export class DirectCarrierController {
   private attempt: Attempt | null = null;
   private generation = 0;
   private attempts = 0;
+  /** 上一次计入 `attempts` 时 primary 的身份：primary 真换了一条连接才重置预算。 */
+  private attemptsIdentity: string | null = null;
   private retryHandle: unknown = null;
   private coolingHandle: unknown = null;
   private healthyHandle: unknown = null;
@@ -351,10 +349,17 @@ export class DirectCarrierController {
     this.connect();
   }
 
-  /** 强制拨一次（冷却中也允许恰好一次）；不复位失败计数。 */
+  /**
+   * 强制拨一次（冷却中也允许恰好一次）；不复位失败计数。最近一次是链路类失败时
+   * 不强制：只在冷却已过时照常拨一次，冷却中什么都不做。
+   */
   retryDirect(): void {
     if (!this.started) {
       this.start();
+      return;
+    }
+    if (authorizeProbeSuppressed(this.nodeId, this.now())) {
+      if (!this.attempt && this.retryHandle == null) this.connect();
       return;
     }
     this.breaker.forceProbe(this.nodeId);
@@ -560,6 +565,15 @@ export class DirectCarrierController {
     return connectionIdFromCapabilities(this.options.connection.client?.serverCapabilities);
   }
 
+  private restContext(attempt: Attempt): DirectRestContext {
+    return {
+      apiClient: this.options.apiClient,
+      nodeId: this.nodeId,
+      now: this.now,
+      signal: attempt.abort.signal,
+    };
+  }
+
   /**
    * `GET /api/mesh/connection?cid=<nonce>`：取本标签页那条 Gateway WS 在目标 node 上的
    * `connectionId`。HELLO 已带 id 的网关跳过这条（见 `runAttempt`）。**每次尝试都要重取**
@@ -568,75 +582,20 @@ export class DirectCarrierController {
    * 浏览器的 `WebSocket` 构造函数不能带自定义请求头，也读不到 upgrade 响应头，
    * 老网关的 HELLO 也不带 id，所以身份只能靠握手 URL 上的 `?cid=` nonce 加这一条 REST 换取。
    * 返回的是 node **自己生成**的 id，nonce 绝不能拿去 authorize。
-   *
-   * 非 2xx 时：`NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 交给 `throwIfPrimaryWait` 转成等待，
-   * 5xx 退避重试，其余（老 node 上该路由返回的 405 等）退化成不带 connectionId 的旧行为
-   * ——单连接时 node 侧照样能唯一定位。
    */
-  private async fetchConnectionId(attempt: Attempt): Promise<string | null> {
-    let res: Response;
-    try {
-      res = await this.options.apiClient.fetch(meshConnectionPath(this.options.cid?.()), {
-        signal: attempt.abort.signal,
-      });
-    } catch (err) {
-      if (this.stale(attempt)) return null;
-      throw new DirectAuthorizeError(
-        err instanceof Error
-          ? `connection lookup failed: ${err.message}`
-          : 'connection lookup failed',
-        false
-      );
-    }
-    if (res.ok) {
-      const body = (await res.json().catch(() => null)) as { connectionId?: unknown } | null;
-      if (typeof body?.connectionId === 'string' && body.connectionId) return body.connectionId;
-      throw new DirectAuthorizeError('connection lookup response malformed', true);
-    }
-    await throwIfPrimaryWait(res, 'connection lookup');
-    if (res.status >= 500) {
-      throw new DirectAuthorizeError(`connection lookup failed (${res.status})`, false);
-    }
-    return null;
+  private fetchConnectionId(attempt: Attempt): Promise<string | null> {
+    return lookupConnectionId(this.restContext(attempt), this.options.cid?.());
   }
 
-  private async authorize(
+  private authorize(
     attempt: Attempt,
     fpBrowser: DtlsFingerprint
   ): Promise<{ nonce: string; fpNode: DtlsFingerprint }> {
-    const connectionId = attempt.connectionId;
-    const res = await this.options.apiClient.fetch(RTC_AUTHORIZE_PATH, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(connectionId ? assignHeaderPair({}, CONNECTION_HEADER, connectionId) : {}),
-      },
-      body: JSON.stringify({
-        rtcSession: attempt.rtcSession,
-        fp_browser: fpBrowser,
-        ...(connectionId ? { connectionId } : {}),
-      }),
-      signal: attempt.abort.signal,
+    return requestAuthorize(this.restContext(attempt), {
+      rtcSession: attempt.rtcSession,
+      connectionId: attempt.connectionId,
+      fpBrowser,
     });
-    if (!res.ok) {
-      // connectionId 在 GET 与 authorize 之间失效（primary 重连 / 又开了一个标签页）：
-      // 这不是配置错误，按「等 primary」处理，别当成 4xx 永久失败卡死在 failed。
-      await throwIfPrimaryWait(res, 'authorize');
-      // 4xx 是配置/权限问题，重试没有意义；5xx（如 DIRECT_UNAVAILABLE）才退避重试。
-      if (res.status >= 500) noteAuthorizeFailure(this.nodeId, this.now());
-      throw new DirectAuthorizeError(`authorize failed (${res.status})`, res.status < 500);
-    }
-    noteAuthorizeSuccess(this.nodeId);
-    const body = (await res.json()) as RtcAuthorizeResponse;
-    const fp = body.fp_node as { algorithm?: unknown; value?: unknown } | undefined;
-    if (
-      typeof body.nonce !== 'string' ||
-      typeof fp?.algorithm !== 'string' ||
-      typeof fp?.value !== 'string'
-    ) {
-      throw new DirectAuthorizeError('authorize response malformed', true);
-    }
-    return { nonce: body.nonce, fpNode: { algorithm: fp.algorithm, value: fp.value } };
   }
 
   // ========== 信令 ==========
@@ -895,10 +854,26 @@ export class DirectCarrierController {
       }
       if (!sawDown) return;
       this.clearPrimaryWait();
-      this.attempts = 0;
+      if (this.primaryChanged()) this.attempts = 0;
       this.retryHandle = this.clearHandle(this.retryHandle);
       this.connect();
     });
+  }
+
+  /** 本条 Gateway WS 的身份：HELLO 捎带的 connectionId，退而求其次用握手 nonce。 */
+  private primaryIdentity(): string | null {
+    return this.helloConnectionId() ?? this.options.cid?.() ?? null;
+  }
+
+  /**
+   * primary 回到 READY 时要不要重置重试预算：链路类失败（`NODE_UNREACHABLE` 等）与这条 WS
+   * 是谁无关，WS 重连一次就重来一轮只会把一次链路故障放大成周期性的请求风暴。
+   * 身份认不出（老网关、宿主没接 `cid`）时保持原行为。
+   */
+  private primaryChanged(): boolean {
+    if (authorizeProbeSuppressed(this.nodeId, this.now())) return false;
+    const identity = this.primaryIdentity();
+    return identity === null || identity !== this.attemptsIdentity;
   }
 
   private clearPrimaryWait(): void {
@@ -941,6 +916,7 @@ export class DirectCarrierController {
     if (this.attempts >= cap) return;
     const delay = this.retryDelay(this.attempts);
     this.attempts += 1;
+    this.attemptsIdentity = this.primaryIdentity();
     this.retryHandle = this.schedule(() => {
       this.retryHandle = null;
       if (!this.started) return;

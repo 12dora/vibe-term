@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   DIRECT_LINK_NEGATIVE_TTL_MS,
+  DIRECT_UNAVAILABLE_TTL_MS,
   clearDirectLinkAvailability,
   clearDirectLinkUnavailableFor,
   isDirectLinkUnavailable,
@@ -157,6 +158,56 @@ describe('watchDirectNegotiation', () => {
     await client.fetch('/api/rtc/authorize');
     await flush();
 
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
+  });
+
+  test('目标答 503 DIRECT_UNAVAILABLE：记 10 分钟负缓存并回调宿主', async () => {
+    let stopped = 0;
+    const client = watchDirectNegotiation(
+      NODE_A,
+      clientReturning(
+        () => new Response(JSON.stringify({ code: 'DIRECT_UNAVAILABLE' }), { status: 503 })
+      ),
+      () => {
+        stopped += 1;
+      },
+      () => ENTRY_B
+    );
+    const before = Date.now();
+    const res = await client.fetch(`/n/${NODE_A}/api/rtc/authorize`);
+    await flush();
+
+    expect(await res.json()).toEqual({ code: 'DIRECT_UNAVAILABLE' });
+    expect(stopped).toBe(1);
+    expect(
+      isDirectLinkUnavailable(NODE_A, ENTRY_B, before + DIRECT_UNAVAILABLE_TTL_MS - 1_000)
+    ).toBe(true);
+    expect(
+      isDirectLinkUnavailable(NODE_A, ENTRY_B, Date.now() + DIRECT_UNAVAILABLE_TTL_MS + 1)
+    ).toBe(false);
+  });
+
+  test('转发器的 503 NODE_UNREACHABLE 是链路抖动：不进负缓存', async () => {
+    let stopped = 0;
+    const client = watchDirectNegotiation(
+      NODE_A,
+      clientReturning(
+        () =>
+          new Response(
+            JSON.stringify({ code: 'NODE_UNREACHABLE', nodeId: NODE_A, reason: 'timeout' }),
+            { status: 503 }
+          )
+      ),
+      () => {
+        stopped += 1;
+      },
+      () => ENTRY_B
+    );
+    await client.fetch('/api/rtc/authorize');
+    await client.fetch('/api/mesh/connection?cid=abc');
+    await flush();
+
+    expect(stopped).toBe(0);
     expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
   });
 

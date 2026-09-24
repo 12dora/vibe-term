@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { resetAuthorizeBreakerForTest } from './direct-authorize-breaker';
+import {
+  AUTHORIZE_BREAKER_BASE_MS,
+  DIRECT_UNAVAILABLE_COOLDOWN_MS,
+  authorizeBreakerShouldTry,
+  resetAuthorizeBreakerForTest,
+} from './direct-authorize-breaker';
 import {
   CONNECTION_HEADER,
   DirectCarrierController,
@@ -1361,3 +1366,111 @@ function hostPairStats(rttSeconds: number) {
     },
   ]);
 }
+
+describe('DirectCarrierController authorize 链路类失败', () => {
+  const authorizeCalls = (s: Setup) =>
+    s.api.calls.filter((c) => c.path === RTC_AUTHORIZE_PATH).length;
+
+  test('503 DIRECT_UNAVAILABLE：10 分钟内不再问，online / retryDirect 也不放行；到期再探一次', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: { code: 'DIRECT_UNAVAILABLE' } });
+    s.controller.start();
+    await flush();
+    expect(authorizeCalls(s)).toBe(1);
+    expect(s.controller.reason).toContain('DIRECT_UNAVAILABLE');
+
+    for (let i = 0; i < 9; i += 1) {
+      s.clock.advance(60_000);
+      s.network.emit('online');
+      s.controller.retryDirect();
+      await flush();
+    }
+    expect(authorizeCalls(s)).toBe(1);
+    expect(s.connection.attached.length).toBe(0);
+
+    s.clock.advance(DIRECT_UNAVAILABLE_COOLDOWN_MS);
+    await flush();
+    expect(authorizeCalls(s)).toBe(2);
+  });
+
+  test('503 NODE_UNREACHABLE：计入熔断；冷却中 online / 页面恢复不强制探测', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 503,
+      body: { code: 'NODE_UNREACHABLE', nodeId: NODE_ID, reason: 'timeout' },
+    });
+    s.controller.start();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    s.clock.advance(2000);
+    await flush();
+    expect(s.controller.diagnostics().cooling).toBe(true);
+    expect(authorizeCalls(s)).toBe(3);
+
+    s.network.emit('online');
+    s.controller.retryDirect();
+    await flush();
+    expect(authorizeCalls(s)).toBe(3);
+
+    s.clock.advance(AUTHORIZE_BREAKER_BASE_MS);
+    await flush();
+    expect(authorizeCalls(s)).toBe(4);
+  });
+
+  test('NODE_UNREACHABLE 期间 primary 反复重连 + 页面恢复：10 分钟内请求数受熔断约束', async () => {
+    const s = setup();
+    let generation = 0;
+    s.connection.helloCapabilities = [formatConnectionIdCapability('conn-0')];
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 503,
+      body: { code: 'NODE_UNREACHABLE', nodeId: NODE_ID, reason: 'timeout' },
+    });
+    s.controller.start();
+    await flush();
+    for (let elapsed = 0; elapsed < 600_000; elapsed += 10_000) {
+      s.connection.setPrimaryState('RECONNECT_BACKOFF');
+      s.network.emit('online');
+      await flush();
+      generation += 1;
+      s.connection.helloCapabilities = [formatConnectionIdCapability(`conn-${generation}`)];
+      s.connection.setPrimaryState('READY');
+      s.controller.retryDirect();
+      await flush();
+      s.clock.advance(10_000);
+      await flush();
+    }
+    expect(authorizeCalls(s)).toBeLessThanOrEqual(8);
+  });
+
+  test('其余 5xx 不算链路类：retryDirect 照旧允许冷却中探测一次', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: { code: 'OTHER' } });
+    s.controller.start();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    s.clock.advance(2000);
+    await flush();
+    expect(authorizeCalls(s)).toBe(3);
+    s.controller.retryDirect();
+    await flush();
+    expect(authorizeCalls(s)).toBe(4);
+  });
+
+  test('connection lookup 503 NODE_UNREACHABLE 同样计入 authorize 熔断', async () => {
+    const s = setup();
+    s.api.routes.set(MESH_CONNECTION_PATH, {
+      status: 503,
+      body: { code: 'NODE_UNREACHABLE', nodeId: NODE_ID, reason: 'no_link' },
+    });
+    s.controller.start();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    s.clock.advance(2000);
+    await flush();
+    expect(authorizeBreakerShouldTry(NODE_ID, s.clock.now).allow).toBe(false);
+    expect(authorizeCalls(s)).toBe(0);
+  });
+});
