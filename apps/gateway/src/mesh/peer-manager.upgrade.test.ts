@@ -25,7 +25,7 @@ const HTTP_OPEN = new TextEncoder().encode(
   JSON.stringify({ type: 'http', method: 'GET', path: '/api/auth/challenge' })
 );
 
-/** 内存 DC 没有 DataChannelLink 的 liveness pong，证明走对端 mux ping（handleRttCtl）。 */
+/** 入站 ping 会换回 pong，但不再证明 DC。未证明的中继要留到 PEER_RETIRE_MAX_MS。 */
 async function proveDcByMuxPing(remote: {
   ctl: {
     send(bytes: Uint8Array): void;
@@ -1087,10 +1087,10 @@ describe('PeerManager upgrade review fixes', () => {
 
     inflight.reset('done');
     await inflight.closed;
-    scheduler.advance(PEER_RETIRE_QUIET_MS - 1);
+    scheduler.advance(PEER_RETIRE_QUIET_MS);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(retiredDone).toBe(false);
-    scheduler.advance(1);
+    scheduler.advance(PEER_RETIRE_MAX_MS - 5_000 - PEER_RETIRE_QUIET_MS);
     expect((await retired).reason).toBe('replaced');
   });
 

@@ -4,6 +4,7 @@ import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
+import { notePeerDcStableHold, resetDcStableHoldForTests } from './peer-dc-proof';
 import { FOREGROUND_DIRECT_DEADLINE_MS } from './peer-dial-race';
 import {
   KEY_LOG_STATUS_DEBOUNCE_MS,
@@ -2035,6 +2036,9 @@ describe('PeerManager', () => {
     await managerLarge.getLink(small.nodeId);
     await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
     await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+    // 假通道只送达一个方向的 link.hello。两边都是当前构建，短命断开走不稳定冷却。
+    notePeerDcStableHold(small.nodeId);
+    notePeerDcStableHold(large.nodeId);
     const firstWakes = wakes.length;
     const afterDc = fake.connections.length;
     const lines: string[] = [];
@@ -2061,11 +2065,15 @@ describe('PeerManager', () => {
       const detailSmall = managerSmall.linkDetailOf(large.nodeId);
       expect(detailLarge.dcBreaker.failures).toBe(0);
       expect(detailSmall.dcBreaker.failures).toBe(0);
-      expect(detailLarge.dcBreaker.lastFailureKind ?? null).toBeNull();
-      expect(detailSmall.dcBreaker.lastFailureKind ?? null).toBeNull();
-      expect(detailLarge.dcBreaker.cooling).toBe(false);
+      expect(detailLarge.dcBreaker.lastFailureKind).toBe('unstable-dc');
+      expect(detailSmall.dcBreaker.lastFailureKind).toBe('unstable-dc');
+      expect(detailLarge.dcBreaker.level).toBe(0);
+      expect(detailSmall.dcBreaker.level).toBe(0);
+      expect(detailLarge.dcBreaker.cooling).toBe(true);
+      expect(detailSmall.dcBreaker.cooling).toBe(true);
     } finally {
       console.log = orig;
+      resetDcStableHoldForTests();
     }
 
     managerSmall.receiveRtcSignal(large.nodeId, {
@@ -3475,6 +3483,7 @@ describe('PeerManager', () => {
     void retired.then(() => {
       done = true;
     });
+    notePeerDcStableHold(peer.nodeId);
     expect(manager.adoptLink(peer.nodeId, nextA, 'dc', self.nodeId, '10.0.0.8')).toBe(nextA);
     expect(manager.transportOf(peer.nodeId)).toBe('dc');
 

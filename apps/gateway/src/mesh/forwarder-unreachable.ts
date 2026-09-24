@@ -72,6 +72,10 @@ export function isPreDispatchTransportRefusal(err: unknown): boolean {
   return PRE_DISPATCH_REFUSAL.has(unreachableToken(err));
 }
 
+export function isPendingMeasureRefusal(err: unknown): boolean {
+  return unreachableToken(err) === 'pending-measure';
+}
+
 function unreachableToken(err: unknown): string {
   if (err instanceof LinkError && err.code === 'rst') return err.message.trim();
   if (err instanceof NodeUnreachableError) return err.message.trim();

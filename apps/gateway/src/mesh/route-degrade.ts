@@ -20,6 +20,7 @@ import { quiet } from './peer-ws-race';
 import {
   armPendingMeasureWatch,
   attachRemoteHold,
+  borrowRelayForRemoteHold,
   detachRemoteHold,
   remoteDirectBlocked,
   resolveRefusedUserLink,
@@ -200,12 +201,13 @@ export class RouteDegradeCoordinator {
     return this.degradeToRelay(live.peerNodeId);
   }
 
-  /** 对端还在测量这条直连时，用户流改走 retiring 的非 DC，或现拨中继。 */
+  /** 对端测量期间走 retiring 非 DC；只有 auto 才旁路拨中继，不降级也不拆 DC。 */
   async userLinkWhileRemoteHold(live: LivePeer): Promise<LinkSession | null> {
     return resolveRefusedUserLink(this, live, {
       now: Date.now(),
+      mode: this.mode(),
       retiring: this.ports.state.retiring.get(live.peerNodeId),
-      dialRelay: () => this.degradeToRelay(live.peerNodeId),
+      dialRelay: () => borrowRelayForRemoteHold(this, live.peerNodeId),
     });
   }
 

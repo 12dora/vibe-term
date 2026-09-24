@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { LinkError, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import type { MeshRouteMode } from '@vibeterm/shared/net';
 import { encodeJsonBytes } from './ctl';
+import { noteAndContinuePlainHttp } from './forwarder-pre-dispatch-retry';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { getPeerLink } from './peer-get-link';
 import { createPeerManagerState } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
+import { REMOTE_HOLD_MS, rememberLinkTransport } from './pending-measure-hold';
 import { RouteDegradeCoordinator, type RouteModeHolder } from './route-degrade';
 import { ImmediateScheduler } from './test-support';
 import type { MeshIdentity, PeerTransportKind } from './types';
@@ -34,7 +36,7 @@ function liveOf(
   } as LivePeer;
 }
 
-function harness() {
+function harness(mode: MeshRouteMode = 'auto') {
   const scheduler = new ImmediateScheduler();
   const identity = { nodeId: 'aa'.repeat(16), edSecretKey: new Uint8Array(64) } as MeshIdentity;
   const uplink = { rttMs: 14, resetBackoff() {} } as unknown as PooledUplink & {
@@ -50,12 +52,10 @@ function harness() {
   const relays: LivePeer['session'][] = [];
   const coord = new RouteDegradeCoordinator({
     state,
-    mode: fakeMode(),
+    mode: fakeMode(mode),
     openRelay: async () => {
-      const session = { closedReason: null } as unknown as LivePeer['session'];
+      const [session] = createInMemoryLinkPair();
       relays.push(session);
-      const prev = state.live.get(PEER);
-      state.live.set(PEER, liveOf(PEER, 'relay', session, 14));
       return session;
     },
     forceInstall: (session, peerId, transport) => {
@@ -65,7 +65,20 @@ function harness() {
     finishRetire: () => {},
     maybeUpgrade: () => {},
   });
-  return { coord, state, relays };
+  return { coord, state, relays, scheduler };
+}
+
+function quietHost(h: ReturnType<typeof harness>) {
+  return {
+    state: h.state,
+    routes: h.coord,
+    maybeUpgrade() {},
+    requireTrusted() {},
+    dialForeground: async () => {
+      throw new Error('held dc must not dial');
+    },
+    awaitEstablishedOrDial: async (_id: string, pending: Promise<LivePeer['session']>) => pending,
+  };
 }
 
 describe('pending-measure 接收侧不再把同一条 DC 当作用户链路', () => {
@@ -127,7 +140,7 @@ describe('pending-measure 接收侧不再把同一条 DC 当作用户链路', ()
     h.coord.dispose();
   });
 
-  test('没有可复用的 relay 时改拨中继，而不是再交出这条 DC', async () => {
+  test('没有可复用的 relay 时旁路拨中继，不拆 DC 也不降级', async () => {
     const h = harness();
     const [dc, remote] = createInMemoryLinkPair();
     h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 10));
@@ -145,22 +158,177 @@ describe('pending-measure 接收侧不再把同一条 DC 当作用户链路', ()
     const opened = await dc.openStream(new Uint8Array([1]));
     await opened.closed;
 
-    const link = await getPeerLink(
-      {
-        state: h.state,
-        routes: h.coord,
-        maybeUpgrade() {},
-        requireTrusted() {},
-        dialForeground: async () => {
-          throw new Error('dial foreground would race the dc');
-        },
-        awaitEstablishedOrDial: async (_id, pending) => pending,
+    const host = {
+      state: h.state,
+      routes: h.coord,
+      maybeUpgrade() {},
+      requireTrusted() {},
+      dialForeground: async () => {
+        throw new Error('dial foreground would race the dc');
       },
-      PEER
-    );
+      awaitEstablishedOrDial: async (_id: string, pending: Promise<LivePeer['session']>) => pending,
+    };
+    const link = await getPeerLink(host, PEER);
     expect(link).not.toBe(dc);
-    expect(h.state.live.get(PEER)?.transport).toBe('relay');
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    expect(h.coord.isDegraded(PEER)).toBe(false);
+    const again = await getPeerLink(host, PEER);
+    expect(again).toBe(link);
     expect(h.relays).toHaveLength(1);
+    h.coord.dispose();
+  });
+
+  test('route-promoted 关掉旁路中继，DC 仍是 live', async () => {
+    const h = harness();
+    const [dc, remote] = createInMemoryLinkPair();
+    h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 10));
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: PEER,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:promoted',
+      prev: undefined,
+    });
+    remote.onStream((stream) => stream.reset('pending-measure'));
+    const opened = await dc.openStream(new Uint8Array([1]));
+    await opened.closed;
+    const link = await getPeerLink(quietHost(h), PEER);
+    expect(link).not.toBe(dc);
+    expect(h.state.sideRelays.get(PEER)).toBe(link);
+    remote.ctl.send(encodeJsonBytes({ t: 'route-promoted' }));
+    await Bun.sleep(20);
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    expect(h.state.sideRelays.has(PEER)).toBe(false);
+    expect((await link.closed).reason).toBe('route-promoted');
+    h.coord.dispose();
+  });
+
+  test('测量窗口到期关掉旁路中继，不把 DC 拆掉', async () => {
+    const h = harness();
+    const [dc, remote] = createInMemoryLinkPair();
+    h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 10));
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: PEER,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:expiry',
+      prev: undefined,
+    });
+    remote.onStream((stream) => stream.reset('pending-measure'));
+    const opened = await dc.openStream(new Uint8Array([1]));
+    await opened.closed;
+    const link = await getPeerLink(quietHost(h), PEER);
+    expect(h.state.sideRelays.get(PEER)).toBe(link);
+    h.scheduler.advance(REMOTE_HOLD_MS);
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    expect(h.state.sideRelays.has(PEER)).toBe(false);
+    expect((await link.closed).reason).toBe('hold-expired');
+    h.coord.dispose();
+  });
+
+  test('direct 模式测量期间不拨中继，把拒绝交回这条 DC', async () => {
+    const h = harness('direct');
+    const [dc, remote] = createInMemoryLinkPair();
+    h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 10));
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: PEER,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:direct',
+      prev: undefined,
+    });
+    remote.onStream((stream) => stream.reset('pending-measure'));
+    const opened = await dc.openStream(new Uint8Array([1]));
+    await opened.closed;
+    for (let i = 0; i < 5; i += 1) {
+      const link = await getPeerLink(
+        {
+          state: h.state,
+          routes: h.coord,
+          maybeUpgrade() {},
+          requireTrusted() {},
+          dialForeground: async () => {
+            throw new Error('direct hold must not dial');
+          },
+          awaitEstablishedOrDial: async (_id, pending) => pending,
+        },
+        PEER
+      );
+      expect(link).toBe(dc);
+    }
+    expect(h.relays).toHaveLength(0);
+    expect(h.coord.isDegraded(PEER)).toBe(false);
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    h.coord.dispose();
+  });
+});
+
+describe('pending-measure quarantine', () => {
+  test('只有直连上的 pending-measure 隔离节点；stale-link 和 parked 仍可重放', () => {
+    const h = harness();
+    const [dc] = createInMemoryLinkPair();
+    const [relay] = createInMemoryLinkPair();
+    rememberLinkTransport(dc, 'dc');
+    rememberLinkTransport(relay, 'relay');
+    h.state.live.set(PEER, liveOf(PEER, 'dc', dc, 10));
+    const stale = new LinkError('rst', 'stale-link');
+    const parked = new LinkError('rst', 'parked');
+    const pending = new LinkError('rst', 'pending-measure');
+    noteAndContinuePlainHttp({
+      method: 'GET',
+      attempt: 0,
+      err: stale,
+      canReplay: true,
+      nodeId: PEER,
+      link: relay,
+    });
+    noteAndContinuePlainHttp({
+      method: 'GET',
+      attempt: 0,
+      err: parked,
+      canReplay: true,
+      nodeId: PEER,
+      link: relay,
+    });
+    noteAndContinuePlainHttp({
+      method: 'GET',
+      attempt: 0,
+      err: pending,
+      canReplay: true,
+      nodeId: PEER,
+      link: relay,
+    });
+    expect(h.coord.allowsOutboundDirect(PEER)).toBe(true);
+    expect(h.coord.isDegraded(PEER)).toBe(false);
+    expect(
+      noteAndContinuePlainHttp({
+        method: 'POST',
+        attempt: 0,
+        err: stale,
+        canReplay: true,
+        nodeId: PEER,
+        link: relay,
+      })
+    ).toBe(true);
+    noteAndContinuePlainHttp({
+      method: 'GET',
+      attempt: 0,
+      err: pending,
+      canReplay: true,
+      nodeId: PEER,
+      link: dc,
+    });
+    expect(h.coord.allowsOutboundDirect(PEER)).toBe(false);
+    expect(h.coord.isDegraded(PEER)).toBe(false);
     h.coord.dispose();
   });
 });
