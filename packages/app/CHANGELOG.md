@@ -1,33 +1,43 @@
-# 2.8.0
+# 2.9.0
 
-_2026-09-18_
+_2026-09-24_
 
 ## English
 
+### Fixes
+
+- Opening several machines through a relay no longer times out in waves. The root causes were all on the target side: a direct DataChannel was treated as ready 5 s after it opened and the relay was torn down, but on many networks that channel was cut about 10 s after opening; the loss was then counted as a dial failure, so the machine was locked out of direct for 16 minutes and every next request had to rebuild the relay. VibeTerm now keeps the relay until the direct link has answered a ping and stayed up for 15 s, puts the relay back if the direct link dies early, and backs off unstable direct links without counting them as failures.
+- Machines that can never be reached directly (for example an old hub behind a firewall) are no longer redialed every few seconds. A relay hiccup used to wipe the direct-connect breaker; now it only resets on real changes such as a new address, and a refused offer is answered at once instead of burning 15 s and a TURN allocation each time.
+- A loop where two machines kept opening and resetting the same connection every 30 ms is gone.
+- Browser direct connection now actually works when you go through a relay entry. The target used to wait for a fingerprint that never arrived, so every attempt failed after 5–7 s and the browser retried forever. Temporary failures no longer switch direct off for 10 minutes, and the browser no longer restarts its retry burst on every reconnect.
+- Large uploads through a relay are no longer held back by the new retry logic.
+- Setting a machine's memory limit to "no limit" now really clears it and says so. Previously the page kept showing days-old 8 GB / 12 GB readings, and a window left over from earlier could keep its old limit. VibeTerm now keeps reading memory while limits are off, verifies that each limit it had set was actually removed, also clears leftover windows it started, and never touches limits you set yourself.
+- The terminal's "Connecting to device…" screen now explains after 8 seconds what it is waiting for and offers a reconnect button, instead of spinning forever.
+
 ### Improvements
 
-- The memory reading in the top-right corner of a terminal now works everywhere. It used to show `0 B` on many machines — not because the window was idle, but because VibeTerm could only read memory through a per-window systemd group that only tmux 3.6 and newer create. On hosts with an older tmux (Ubuntu 24.04 ships 3.4, Debian 12 ships 3.3a) and on macOS, it now adds up the memory of every process in the window instead, so you finally see a real number.
-- Hovering the badge tells you which of the two readings you are looking at, and says plainly when the host cannot enforce a per-window memory limit at all — instead of showing an "unlimited" symbol that made it look like you simply had not set one.
-- The memory-limit settings now warn you when the limit will not actually take effect, and name the machines it cannot apply to. Enforcing a limit still needs Linux with tmux 3.6 or newer; the reading works regardless.
-- A window whose processes have all exited no longer shows a misleading `0 B` — the badge simply goes away.
-
-### Features
-
-- Memory limits can now be managed remotely. In Settings → Nodes, each node's ⋯ menu has a new "Memory limits" entry that edits that machine's limits directly, and the bulk menu in the card header can write one set of limits to every selected node at once, telling you node by node what succeeded and what was skipped (offline, not signed in, paused, or running a version older than 2.7.0).
-- `vibeterm sessions --memory` gained a SOURCE column showing where each reading came from, and now says "limits unavailable" only when limits really are unavailable.
+- Memory-limit dialogs ask you to choose "No limit" or "Custom limits" explicitly; the bulk dialog can no longer apply default limits to every node by accident, and "No limit" keeps each node's own sampling interval.
+- Old memory readings are shown as out of date instead of as the current limit, in the browser and in `vibeterm sessions --memory`.
+- `vibeterm login` reports progress per node, times out per node and logs in to several nodes at once.
+- Relay and direct-path selection use each link's real round-trip time, and a node's public address is taken from what the relay actually sees.
 
 ---
 
 ## 中文
 
+### 修复
+
+- 经中继同时打开多台机器时，不再成片超时。根因都在目标一侧：直连 DataChannel 打开 5 秒就被当成可用并拆掉中继，但在不少网络里这条通道会在打开约 10 秒后被掐断；随后又被算成一次拨号失败，这台机器 16 分钟内都不再尝试直连，下一次请求只能重建中继。现在要等直连回应过 ping 并稳定 15 秒才拆中继，直连提前断掉会把中继接回来，不稳定的直连只做退避、不再算作失败。
+- 永远连不上直连的机器（比如防火墙后的老 hub）不再每隔几秒被重拨。过去中继一抖就把直连熔断清零；现在只有地址变化这类真实变化才重置，对方拒绝时也会立即回复，不再每次白白耗掉 15 秒和一次 TURN 分配。
+- 修复两台机器每 30 毫秒反复打开又重置同一条连接的循环。
+- 经中继入口访问时，浏览器直连终于能建立了。目标此前一直在等一个永远不会出现的指纹，每次 5–7 秒后失败，浏览器无限重试。暂时性失败不再把直连关掉 10 分钟，每次重连也不再重新开始一轮重试。
+- 新的重试逻辑不会再卡住经中继的大文件上传。
+- 把机器的内存限额设为「不限制」后，现在会真正解除并如实显示。过去页面一直显示几天前的 8 GB / 12 GB 读数，早先遗留的窗口也可能保留旧限额。现在关闭限额后仍持续采样，逐个核实自己施加过的限额已解除，也会清理由它启动的遗留窗口，而你自己设置的限额不会被动。
+- 终端「连接设备...」界面 8 秒后会说明正在等什么，并提供「重新连接」，不再无限转圈。
+
 ### 改进
 
-- 终端右上角的内存读数现在到处都能用了。过去它在不少机器上一直显示 `0 B`——不是窗口真没占内存，而是 VibeTerm 只会从一种「按窗口划分的 systemd 分组」里取数，而这种分组只有 tmux 3.6 及以上才会建。tmux 版本较老的机器（Ubuntu 24.04 自带 3.4、Debian 12 自带 3.3a）和 macOS 上，现在改成把窗口里所有进程占的内存加起来，终于能看到真实数字。
-- 鼠标悬停会说明这个数字是哪种口径，宿主根本无法按窗口限额时也会直说，而不是显示一个「无限制」符号，让人以为只是自己没设。
-- 内存限额的设置页会在限额其实不会生效时给出提示，并列出受影响的机器。真正限住内存仍然需要 Linux + tmux 3.6 及以上；读数则不受影响。
-- 窗口里的进程全退出后，不会再显示一个容易误解的 `0 B`，徽标直接消失。
-
-### 新增
-
-- 内存限额可以远程管理了。设置 → 节点里，每个节点的 ⋯ 菜单新增「内存限额」，直接改那台机器的限额；卡片右上角的批量菜单可以把同一份限额一次写到所选的多台节点，并逐台告诉你哪台写成功、哪台被跳过（离线、未登录、已暂停，或版本低于 2.7.0）。
-- `vibeterm sessions --memory` 新增「来源」列，说明每个读数是怎么来的；「限额不可用」也只在限额真的不可用时才出现。
+- 内存限额对话框要求明确选择「不限制」或「自定义限额」；批量对话框不会再误把默认限额写给所有节点，「不限制」保留各节点自己的采样周期。
+- 过期的内存读数在浏览器和 `vibeterm sessions --memory` 中显示为已过期，不再冒充当前限额。
+- `vibeterm login` 逐节点报告进度、每台单独超时，并同时登录多台。
+- 中继与直连选路按每条链路的真实往返时间计算，节点公网地址以中继实际看到的为准。
