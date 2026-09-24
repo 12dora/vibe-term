@@ -175,6 +175,11 @@
         "modeFollowDesc": "按光标位置上移，光标始终在键盘正上方，终端大小不变"
       },
       "connecting": "连接设备...",
+      "connectingStalled": {
+        "node": "仍在连接节点，链路较慢或暂时不通。",
+        "reconnecting": "与节点的连接已中断，正在自动重连。",
+        "device": "节点已连接，正在等待设备响应。"
+      },
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
       "windowClosed": "当前窗口已关闭，请在侧边栏重新选择窗口。",

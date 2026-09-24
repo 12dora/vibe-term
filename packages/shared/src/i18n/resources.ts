@@ -366,6 +366,11 @@ export const I18N_RESOURCES = {
         "modeFollowDesc": "Shift just enough to keep the cursor right above the keyboard; terminal size stays the same"
       },
       "connecting": "Connecting to device...",
+      "connectingStalled": {
+        "node": "Still connecting to the node; the link is slow or temporarily down.",
+        "reconnecting": "Connection to the node dropped; reconnecting automatically.",
+        "device": "Node connected; waiting for the device to respond."
+      },
       "inputPlaceholder": "Type command here...",
       "clear": "Clear",
       "windowClosed": "Current window has been closed, please select a window from the sidebar.",
@@ -4060,6 +4065,11 @@ export const I18N_RESOURCES = {
         "modeFollowDesc": "按光标位置上移，光标始终在键盘正上方，终端大小不变"
       },
       "connecting": "连接设备...",
+      "connectingStalled": {
+        "node": "仍在连接节点，链路较慢或暂时不通。",
+        "reconnecting": "与节点的连接已中断，正在自动重连。",
+        "device": "节点已连接，正在等待设备响应。"
+      },
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
       "windowClosed": "当前窗口已关闭，请在侧边栏重新选择窗口。",
@@ -7745,6 +7755,11 @@ export const I18N_RESOURCES = {
         "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（ターミナルサイズは不変）"
       },
       "connecting": "デバイスに接続中...",
+      "connectingStalled": {
+        "node": "ノードに接続しています。回線が遅いか、一時的に不通です。",
+        "reconnecting": "ノードとの接続が切断されました。自動で再接続しています。",
+        "device": "ノードに接続済みです。デバイスの応答を待っています。"
+      },
       "inputPlaceholder": "ここにコマンドを入力...",
       "clear": "クリア",
       "windowClosed": "現在のウィンドウは閉じられました。サイドバーからウィンドウを選択してください。",

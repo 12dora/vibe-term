@@ -75,17 +75,30 @@ describe('DeviceManagementPanel 的加载失败分支', () => {
     expect(html).not.toContain('data-testid="devices-grid"');
   });
 
-  test('NODE_UNREACHABLE 带上后端给的原因串', async () => {
+  test('NODE_UNREACHABLE 的原因代号翻成人话，不露出英文 token', async () => {
     const html = await renderFailedPanel(
       new ApiError(503, NODE_UNREACHABLE, {
         code: NODE_UNREACHABLE,
         nodeId: NODE_ID,
-        reason: '最近一次连接失败：超时',
+        reason: 'timeout',
       })
     );
     expect(html).toContain('data-error-kind="unreachable"');
-    expect(html).toContain('最近一次连接失败：超时');
+    expect(html).toContain('加载设备列表失败：节点不可达（连接超时）');
+    expect(html).not.toContain('timeout');
     expect(html).toContain('data-testid="devices-load-retry"');
+  });
+
+  test('认不出的原因代号退回通用不可达文案', async () => {
+    const html = await renderFailedPanel(
+      new ApiError(503, NODE_UNREACHABLE, {
+        code: NODE_UNREACHABLE,
+        nodeId: NODE_ID,
+        reason: 'something_new',
+      })
+    );
+    expect(html).toContain('加载设备列表失败：节点不可达');
+    expect(html).not.toContain('something_new');
   });
 
   test('没有 reason 的 NODE_UNREACHABLE 用通用不可达文案', async () => {
