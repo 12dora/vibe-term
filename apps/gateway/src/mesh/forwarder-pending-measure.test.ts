@@ -33,10 +33,24 @@ function forwarderWith(open: () => Response): Forwarder {
 }
 
 function authorize(): Request {
+  const body = JSON.stringify({ rtcSession: 'sess' });
+  return new Request(`http://localhost/n/${OTHER}/api/rtc/authorize`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': String(body.length) },
+    body,
+  });
+}
+
+function streamingAuthorize(): Request {
   return new Request(`http://localhost/n/${OTHER}/api/rtc/authorize`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ rtcSession: 'sess' }),
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"rtcSession":"sess"}'));
+        controller.close();
+      },
+    }),
   });
 }
 
@@ -104,5 +118,16 @@ describe('HTTP pending-measure', () => {
       code: 'NODE_UNREACHABLE',
       reason: 'link_lost',
     });
+  });
+
+  test('没有 content-length 的流式请求体不缓冲，也不重放', async () => {
+    let opens = 0;
+    const forwarder = forwarderWith(() => {
+      opens += 1;
+      throw new LinkError('rst', 'pending-measure');
+    });
+    const res = await forwarder.handle(streamingAuthorize(), dummyServer);
+    expect(opens).toBe(1);
+    expect(res?.status).toBe(503);
   });
 });

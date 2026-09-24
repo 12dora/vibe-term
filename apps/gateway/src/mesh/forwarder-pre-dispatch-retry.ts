@@ -22,8 +22,11 @@ export function captureLink<T>(pending: Promise<T>, box: { current: T | null }):
   });
 }
 
+/** 只缓冲声明了 content-length 且不超限的请求体；流式上传（无长度/可能永不结束）原样透传。 */
 export async function bufferReplayableBody(req: Request): Promise<ReplayableBody> {
   if (NO_BODY_METHOD.has(req.method) || !req.body) return emptyBody();
+  const declared = declaredLength(req);
+  if (declared === null || declared > REPLAY_BODY_LIMIT) return onceStream(req.body);
   const read = await readBounded(req.body, REPLAY_BODY_LIMIT);
   if (read.kind === 'overflow') return onceStream(read.stream);
   return replayBytes(read.bytes);
@@ -87,6 +90,13 @@ export function noteAndContinueAuthorized(input: {
 function noteRefusal(nodeId: string, link: LinkSession | null, err: unknown): void {
   if (!link || !isPreDispatchTransportRefusal(err)) return;
   emitTransportRefused(nodeId, link);
+}
+
+function declaredLength(req: Request): number | null {
+  const raw = req.headers.get('content-length');
+  if (raw === null) return null;
+  const n = Number(raw.trim());
+  return Number.isInteger(n) && n >= 0 ? n : null;
 }
 
 function emptyBody(): ReplayableBody {
