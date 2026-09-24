@@ -17,6 +17,15 @@ import {
 import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import { quiet } from './peer-ws-race';
+import {
+  armPendingMeasureWatch,
+  attachRemoteHold,
+  detachRemoteHold,
+  remoteDirectBlocked,
+  resolveRefusedUserLink,
+  signalRoutePromoted,
+} from './pending-measure-hold';
+import { type PeerRouteRecord, emptyRouteRecord, formatRouteSwitch } from './route-degrade-record';
 import type { MeshRouteModeStore } from './route-mode-store';
 import {
   ROUTE_DEGRADE_CONSECUTIVE,
@@ -76,14 +85,6 @@ export type RouteDegradePorts = {
   maybeUpgrade: (nodeId: string) => void;
 };
 
-type PeerRouteRecord = {
-  consecutiveSlow: number;
-  firstSlowAt: number | null;
-  backoffUntil: number;
-  backoffMs: number;
-  degraded: boolean;
-};
-
 type DirectCandidate = {
   session: LinkSession;
   transport: 'dc' | 'ws-secure';
@@ -95,28 +96,6 @@ type DirectCandidate = {
   pingTimer: { clear: () => void } | null;
   pingSentAt: number | null;
 };
-
-function emptyRecord(): PeerRouteRecord {
-  return {
-    consecutiveSlow: 0,
-    firstSlowAt: null,
-    backoffUntil: 0,
-    backoffMs: 0,
-    degraded: false,
-  };
-}
-
-function formatRouteSwitch(input: {
-  peer: string;
-  from: string;
-  to: string;
-  directMs: number | null;
-  relayMs: number | null;
-}): string {
-  const direct = input.directMs == null ? '-' : String(Math.round(input.directMs));
-  const relay = input.relayMs == null ? '-' : String(Math.round(input.relayMs));
-  return `route_switch peer=${input.peer} from=${input.from} to=${input.to} direct_ms=${direct} relay_ms=${relay}`;
-}
 
 export class RouteDegradeCoordinator {
   private readonly ports: RouteDegradePorts;
@@ -131,9 +110,11 @@ export class RouteDegradeCoordinator {
     this.ports = ports;
     this.lastMode = ports.mode.get();
     this.unsub = ports.mode.subscribe((mode) => this.onModeChange(mode));
+    attachRemoteHold(this);
   }
 
   dispose(): void {
+    detachRemoteHold(this);
     this.unsub?.();
     this.unsub = null;
     for (const peerId of [...this.candidates.keys()]) this.dropCandidate(peerId, 'stopped');
@@ -152,6 +133,7 @@ export class RouteDegradeCoordinator {
   allowsOutboundDirect(peerId: string): boolean {
     const mode = this.mode();
     if (mode === 'relay') return false;
+    if (remoteDirectBlocked(this, peerId, Date.now())) return false;
     if (mode === 'direct') return true;
     if (this.candidates.has(peerId)) return false;
     const rec = this.peers.get(peerId);
@@ -176,6 +158,7 @@ export class RouteDegradeCoordinator {
 
   interceptTrack(input: TrackInterceptInput): TrackIntercept {
     if (!isDirectTransport(input.transport)) return { action: 'continue' };
+    armPendingMeasureWatch(this, input.session, input.peerNodeId);
     if (this.measured.has(input.session)) return { action: 'continue' };
     if (!this.allowsInboundDirect()) return { action: 'reject', reason: 'route-relay' };
     if (this.mode() !== 'auto') return { action: 'continue' };
@@ -215,6 +198,15 @@ export class RouteDegradeCoordinator {
     if (this.mode() !== 'relay') return null;
     if (!isDirectTransport(live.transport)) return null;
     return this.degradeToRelay(live.peerNodeId);
+  }
+
+  /** 对端还在测量这条直连时，用户流改走 retiring 的非 DC，或现拨中继。 */
+  async userLinkWhileRemoteHold(live: LivePeer): Promise<LinkSession | null> {
+    return resolveRefusedUserLink(this, live, {
+      now: Date.now(),
+      retiring: this.ports.state.retiring.get(live.peerNodeId),
+      dialRelay: () => this.degradeToRelay(live.peerNodeId),
+    });
   }
 
   async degradeToRelay(peerId: string): Promise<LinkSession | null> {
@@ -258,7 +250,7 @@ export class RouteDegradeCoordinator {
   private recordOf(peerId: string): PeerRouteRecord {
     let rec = this.peers.get(peerId);
     if (!rec) {
-      rec = emptyRecord();
+      rec = emptyRouteRecord();
       this.peers.set(peerId, rec);
     }
     return rec;
@@ -359,7 +351,7 @@ export class RouteDegradeCoordinator {
   }
 
   private resetPeer(peerId: string): void {
-    this.peers.set(peerId, emptyRecord());
+    this.peers.set(peerId, emptyRouteRecord());
   }
 
   private holdCandidate(input: TrackInterceptInput): void {
@@ -457,6 +449,7 @@ export class RouteDegradeCoordinator {
       this.armBackoff(peerId, true);
       return;
     }
+    signalRoutePromoted(candidate.session);
     if (prev && prev.session !== kept) this.ports.finishRetire(prev, 'retired');
     this.resetPeer(peerId);
     logLine(

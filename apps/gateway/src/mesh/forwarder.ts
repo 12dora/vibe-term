@@ -10,6 +10,7 @@ export {
   setPendingForwardStreamTtlMs,
   takePendingForwardStream,
 } from './forwarder-ws-upgrade';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import { isShareAccessPath } from './auth-public-paths';
@@ -30,6 +31,13 @@ import {
 } from './forwarder-auth-policy';
 import { cancelForwardBody, countStreamBytes, throttledProgress } from './forwarder-body';
 import { authorizedHttpDeadlineMs, forwardLinkDeadlineFor } from './forwarder-deadline';
+import {
+  bufferReplayableBody,
+  captureLink,
+  noteAndContinuePlainHttp,
+  shouldRetryAuthorized,
+  warnRawAbort,
+} from './forwarder-pre-dispatch-retry';
 export {
   FORWARD_LINK_DEADLINE_MS,
   authorizedHttpDeadlineMs,
@@ -230,12 +238,9 @@ export class Forwarder {
       rawBody?: ReadableStream<Uint8Array>;
       headers?: Record<string, string>;
       signal?: AbortSignal;
-      /**
-       * 非幂等方法的显式重试授权：调用方确认这次转发重发一遍是安全的（如删除暂存包）。
-       * 带 rawBody 的请求一律不重试——流只能读一次，重发要由调用方按偏移重建。
-       */
+      /** 非幂等重试授权。rawBody 不重试：流只能读一次。 */
       retry?: { attempts: number };
-      /** rawBody 的上行进度（累计已读字节），节流后回调，用于长传的进度展示。 */
+      /** rawBody 上行进度，节流后回调。 */
       onProgress?: (uploadedBytes: number) => void;
     },
     signal?: AbortSignal
@@ -258,12 +263,9 @@ export class Forwarder {
         })
       : null;
     const attempts = rawBody ? 1 : forwardAttempts(idempotent, input.retry);
-    const retryable = attempts > 1;
-    // JSON 体每次尝试重建：ReadableStream 只能读一次，复用会让第二次 open 抛 locked。
-    const nextBody = (): ReadableStream<Uint8Array> | null => {
-      if (idempotent) return null;
-      return countedRaw ?? buildJsonStreamBody(input.body, headers);
-    };
+    const openedLink = { current: null as LinkSession | null };
+    const nextBody = (): ReadableStream<Uint8Array> | null =>
+      idempotent ? null : (countedRaw ?? buildJsonStreamBody(input.body, headers));
     let lastError: unknown;
     const rttMs = this.deps.peers.rttOf?.(input.nodeId);
     const budgets = authorizedAttemptBudgetsMs({
@@ -273,7 +275,7 @@ export class Forwarder {
       hasRawBody: Boolean(rawBody),
     });
     const deadlineAt = Date.now() + budgets.overallMs;
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    for (let attempt = 0; attempt < HTTP_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
       if (abort.aborted || Date.now() >= deadlineAt) break;
       if (attempt > 0) {
         try {
@@ -288,7 +290,10 @@ export class Forwarder {
           parent: abort,
           linkBudgetMs: Math.min(remaining, budgets.linkMs),
           transferBudgetMs: Math.min(remaining, budgets.transferMs),
-          getLink: this.deps.peers.getLink(input.nodeId, { purpose: 'management' }),
+          getLink: captureLink(
+            this.deps.peers.getLink(input.nodeId, { purpose: 'management' }),
+            openedLink
+          ),
           transfer: (link, signal) => {
             const origin = req.headers.get('origin') ?? new URL(req.url).origin;
             return this.deps.streams
@@ -310,13 +315,15 @@ export class Forwarder {
         });
       } catch (err) {
         lastError = err;
-        if (rawBody) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.warn(
-            `[mesh][forward] raw-body push aborted node=${input.nodeId} bytes=${uploaded} err=${message}`
-          );
-        }
-        if (!retryable) break;
+        if (rawBody) warnRawAbort(input.nodeId, uploaded, err);
+        if (
+          !shouldRetryAuthorized(err, attempt, attempts, rawBody, {
+            method,
+            nodeId: input.nodeId,
+            link: openedLink.current,
+          })
+        )
+          break;
       }
     }
     await cancelForwardBody(countedRaw);
@@ -397,9 +404,7 @@ export class Forwarder {
     const headers = filterRequestHeaders(req);
     const auth = forwardedAuthFor(req, nodeId, rest);
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
-    const retryable = IDEMPOTENT_HTTP.has(req.method);
-    const body = retryable ? null : req.body;
-    const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    const replay = await bufferReplayableBody(req);
     const floorMs = forwardLinkDeadlineFor(
       nodeId,
       this.deps.peers.rttOf?.(nodeId),
@@ -407,7 +412,8 @@ export class Forwarder {
     );
     const deadlineAt = Date.now() + floorMs;
     let lastError: unknown;
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    let link: LinkSession | null = null;
+    for (let attempt = 0; attempt < HTTP_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
       if (signal.aborted || Date.now() >= deadlineAt) break;
       if (attempt > 0) {
         try {
@@ -417,14 +423,15 @@ export class Forwarder {
         }
       }
       try {
-        const link = await this.linkBefore(nodeId, deadlineAt, rest);
+        const opened = await this.linkBefore(nodeId, deadlineAt, rest);
+        link = opened;
         const upstream = await this.adaptResponse(
           req,
-          await withHttpStreamUploadDeadline(signal, floorMs, headers, Boolean(body), (s) =>
+          await withHttpStreamUploadDeadline(signal, floorMs, headers, replay.hasBody, (s) =>
             this.deps.streams.openHttpStream(
-              link,
+              opened,
               { method: req.method, path: rest, query: search, headers, origin, auth },
-              body,
+              replay.next(),
               s
             )
           ),
@@ -434,7 +441,18 @@ export class Forwarder {
         return upstream;
       } catch (err) {
         lastError = err;
-        if (!retryable || err instanceof ForwardDeadlineError) break;
+        if (
+          !noteAndContinuePlainHttp({
+            method: req.method,
+            attempt,
+            err,
+            canReplay: replay.canReplay,
+            nodeId,
+            link,
+          })
+        ) {
+          break;
+        }
       }
     }
     return nodeUnreachableResponse(nodeId, signal.aborted, lastError);

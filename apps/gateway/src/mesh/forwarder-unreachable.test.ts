@@ -35,6 +35,11 @@ const REASON_CASES: Array<{ err: unknown; reason: NodeUnreachableReason }> = [
   { err: new LinkError('rst', 'relay-replaced'), reason: 'link_lost' },
   { err: new LinkError('rst', 'stopped'), reason: 'link_lost' },
   { err: new Error('stream-aborted'), reason: 'link_lost' },
+  // 对端在这条传输上拒绝用户流（测量未完成就 RST），不是「没有链路」。
+  { err: new LinkError('rst', 'pending-measure'), reason: 'link_lost' },
+  { err: new LinkError('rst', 'stale-link'), reason: 'link_lost' },
+  { err: new LinkError('rst', 'parked'), reason: 'link_lost' },
+  { err: new Error('pending-measure'), reason: 'link_lost' },
 ];
 
 describe('safeUnreachableReason', () => {

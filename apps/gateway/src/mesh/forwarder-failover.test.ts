@@ -477,6 +477,52 @@ describe('续流握手失败的归因', () => {
     expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-no-hello' }]);
   });
 
+  test('没有 HELLO 时，同传输上的 pre-ack RST 不能算成功，最多再试一次', async () => {
+    const pump = makePump();
+    pump.stream = null;
+    pump.streamAlive = false;
+    pump.boundTransport = 'dc';
+    const delays: number[] = [];
+    const fixture = trackingHost({
+      // 等到宏任务，模拟 RST 在「同步宣告成功」之后、在存活等待期间才到达。
+      sleep: async (ms) => {
+        delays.push(ms);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+      bindStream(target, stream, transport) {
+        target.stream = stream;
+        target.streamAlive = true;
+        target.boundTransport = transport;
+        setTimeout(() => {
+          if (target.stream !== stream) return;
+          target.streamAlive = false;
+          target.helloWait?.();
+        }, 0);
+      },
+      peers: {
+        getLink: async () => ({ id: 'dc-link' }) as unknown as LinkSession,
+        listReach: () => new Map(),
+        onNodeEvent: () => () => {},
+        transportOf: () => 'dc',
+      },
+    });
+
+    let spins = 0;
+    while (!pump.browserClosed && spins < 30) {
+      spins += 1;
+      await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'pending-measure' });
+    }
+
+    expect(spins).toBeLessThanOrEqual(2);
+    expect(fixture.opened.length).toBeLessThanOrEqual(2);
+    expect(fixture.opened.length).toBeGreaterThan(0);
+    expect(pump.browserClosed).toBe(true);
+    expect(fixture.flushed).toBe(0);
+    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-exhausted' }]);
+    expect(delays.some((ms) => ms >= 50)).toBe(true);
+    expect(delays.filter((ms) => ms === 0)).toHaveLength(0);
+  });
+
   test('对端答了 HELLO 但版本不达标：才关成 node-too-old', async () => {
     const pump = makePump();
     pump.stream = null;

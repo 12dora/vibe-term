@@ -21,7 +21,14 @@ const LINK_LOST_REASONS = new Set<string>([
   'replaced',
   'relay-replaced',
   'stopped',
+  // 对端在接受流时就拒绝这条传输，请求还没被处理。
+  'pending-measure',
+  'stale-link',
+  'parked',
 ]);
+
+/** 开流即拒、对端还没读 body。POST 重放一次是安全的；半截上传不是。 */
+const PRE_DISPATCH_REFUSAL = new Set<string>(['pending-measure', 'stale-link', 'parked']);
 
 /** token → reason 的直查表；同义写法都收在这里，判定函数只留兜底分支。 */
 const TOKEN_REASONS = new Map<string, NodeUnreachableReason>([
@@ -59,6 +66,10 @@ export function safeUnreachableReason(err: unknown): NodeUnreachableReason {
   }
   if (token.startsWith('relay-rst')) return 'link_lost';
   return TOKEN_REASONS.get(token) ?? 'no_link';
+}
+
+export function isPreDispatchTransportRefusal(err: unknown): boolean {
+  return PRE_DISPATCH_REFUSAL.has(unreachableToken(err));
 }
 
 function unreachableToken(err: unknown): string {

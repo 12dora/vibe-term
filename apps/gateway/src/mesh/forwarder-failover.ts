@@ -1,4 +1,4 @@
-import { wsBorsh } from '@vibeterm/shared';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { DEFAULT_DIAL_RTT_MS, adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import {
@@ -9,6 +9,20 @@ import {
   formatFailoverSummary,
 } from './failover-log';
 import {
+  sameTransportPreAckCapped,
+  unackedOpenHoldMs,
+  waitUnackedOpen,
+} from './forwarder-failover-ack';
+import {
+  STREAM_STALE_INPUT_TTL_MS,
+  type StaleQueueDrop,
+  dropStaleQueuedInput,
+  streamStaleInputTtlMs,
+} from './forwarder-failover-stale';
+
+export { STREAM_STALE_INPUT_TTL_MS, dropStaleQueuedInput, streamStaleInputTtlMs };
+export type { StaleQueueDrop };
+import {
   type OpenedWsStream,
   type PeerLinkProvider,
   type PeerTransportKind,
@@ -17,6 +31,11 @@ import {
   STREAM_FAILOVER_RESUME_WAIT_MS,
   type StreamOpener,
 } from './mesh-deps';
+import {
+  PENDING_MEASURE_REASON,
+  emitTransportRefused,
+  transportOfLink,
+} from './pending-measure-hold';
 import { type StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
 export type ForwardPump = {
@@ -41,6 +60,8 @@ export type ForwardPump = {
   inflight: OpenedWsStream | null;
   queueBytes: number;
   lastAttempt?: { attempt: number; getLinkMs: number; openStreamMs: number };
+  /** 本轮流在 HELLO/ack 之前被拆。同传输只许再试一次。 */
+  preAckRefused?: boolean;
 };
 
 export type StreamFailoverHost = {
@@ -57,24 +78,12 @@ export type StreamFailoverHost = {
   flushQueue(pump: ForwardPump): void;
 };
 
-/** 输入 TTL 下限；实际值与客户端一致，按取链预算放大到最多 45 s。 */
-export const STREAM_STALE_INPUT_TTL_MS = 10_000;
-
 /** 首次续流等 HELLO 的下限。 */
 export const STREAM_FAILOVER_HELLO_WAIT_MS = 2_000;
 /** 连续无 HELLO 回应时，后续续流等待的下限。 */
 export const STREAM_FAILOVER_HELLO_RETRY_WAIT_MS = 500;
 /** 连续这么多轮拿不到 HELLO 就不再静默重试，直接把这条转发流收掉让浏览器重连。 */
 export const STREAM_FAILOVER_NO_HELLO_LIMIT = 3;
-
-export function streamStaleInputTtlMs(budgetMs: number): number {
-  return adaptiveDeadlineMs({
-    rttMs: budgetMs,
-    factor: 4,
-    minMs: STREAM_STALE_INPUT_TTL_MS,
-    maxMs: 45_000,
-  });
-}
 
 function peerRttMs(host: StreamFailoverHost, pump: ForwardPump): number {
   const rtt = host.peers.rttOf?.(pump.nodeId);
@@ -102,61 +111,6 @@ type FailoverAttemptContext = {
   helloWaitMs: number;
 };
 
-/** 队列里是不透明的 mux 帧，只能解信封判定；解不出的一律当结构帧保留。 */
-function isOrderedInputFrame(bytes: Uint8Array): boolean {
-  let env: wsBorsh.Envelope;
-  try {
-    env = wsBorsh.decodeEnvelopeView(bytes);
-  } catch {
-    return false;
-  }
-  if (env.kind === wsBorsh.KIND_TERM_INPUT || env.kind === wsBorsh.KIND_TERM_PASTE) return true;
-  if (env.kind !== wsBorsh.KIND_CANONICAL_COMMAND) return false;
-  try {
-    return 'TerminalInput' in wsBorsh.decodeCanonicalCommandPayload(env.payload).command;
-  } catch {
-    return false;
-  }
-}
-
-export type StaleQueueDrop = { droppedFrames: number; droppedBytes: number; oldestAgeMs: number };
-
-/**
- * failover 恢复后不再补发排队过久的终端输入：用户对着卡住的终端敲的 `exit` / Ctrl-D
- * 几十秒后落到已恢复的 pane 会杀掉里面的进程。只丢输入帧，结构帧（订阅、连接、resize）照旧。
- */
-export function dropStaleQueuedInput(
-  pump: Pick<ForwardPump, 'queue' | 'queuedAt' | 'queueBytes'>,
-  now: number,
-  ttlMs: number = streamStaleInputTtlMs(nestedDialBudgetsMs(DEFAULT_DIAL_RTT_MS).forwardMs)
-): StaleQueueDrop {
-  const keptFrames: Uint8Array[] = [];
-  const keptAt: number[] = [];
-  let droppedFrames = 0;
-  let droppedBytes = 0;
-  let oldestAgeMs = 0;
-  for (let index = 0; index < pump.queue.length; index += 1) {
-    const bytes = pump.queue[index];
-    const age = now - (pump.queuedAt[index] ?? now);
-    if (age > ttlMs && isOrderedInputFrame(bytes)) {
-      droppedFrames += 1;
-      droppedBytes += bytes.byteLength;
-      oldestAgeMs = Math.max(oldestAgeMs, age);
-      continue;
-    }
-    keptFrames.push(bytes);
-    keptAt.push(pump.queuedAt[index] ?? now);
-  }
-  if (droppedFrames > 0) {
-    pump.queue.length = 0;
-    pump.queue.push(...keptFrames);
-    pump.queuedAt.length = 0;
-    pump.queuedAt.push(...keptAt);
-    pump.queueBytes = Math.max(0, pump.queueBytes - droppedBytes);
-  }
-  return { droppedFrames, droppedBytes, oldestAgeMs };
-}
-
 function safeLog(host: StreamFailoverHost, line: string): void {
   try {
     host.log(line);
@@ -181,6 +135,7 @@ export async function runStreamFailover(
   info: { code?: number; reason?: string }
 ): Promise<void> {
   if (pump.browserClosed || pump.failingOver) return;
+  if (info.reason === PENDING_MEASURE_REASON) emitTransportRefused(pump.nodeId, null);
   const abort = new AbortController();
   pump.failingOver = true;
   pump.failoverAbort = abort;
@@ -237,6 +192,7 @@ async function runFailoverAttempts(
   base: Omit<FailoverAttemptContext, 'helloWaitMs'>
 ): Promise<'settled' | 'exhausted' | 'no-hello'> {
   let noHelloStreak = 0;
+  const sameTransport = { transport: null as string | null, fails: 0 };
   for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
     const opened = await openFailoverStream(host, pump, base.signal, attempt);
     if (opened === 'aborted') return 'settled';
@@ -244,6 +200,11 @@ async function runFailoverAttempts(
     const helloWaitMs = helloWaitBudgetMs(peerRttMs(host, pump), noHelloStreak > 0);
     const outcome = await completeFailover(host, pump, opened, { ...base, helloWaitMs });
     if (outcome === 'done') return 'settled';
+    if (
+      sameTransportPreAckCapped(outcome, pump.preAckRefused, pump.boundTransport, sameTransport)
+    ) {
+      return 'exhausted';
+    }
     if (outcome !== 'retry-no-hello') {
       noHelloStreak = 0;
       continue;
@@ -252,6 +213,16 @@ async function runFailoverAttempts(
     if (noHelloStreak >= STREAM_FAILOVER_NO_HELLO_LIMIT) return 'no-hello';
   }
   return 'exhausted';
+}
+
+function openedLinkTransport(
+  host: StreamFailoverHost,
+  nodeId: string,
+  link: LinkSession
+): PeerTransportKind | null {
+  const known = transportOfLink(link);
+  if (known) return known;
+  return host.peers.transportOf?.(nodeId) ?? null;
 }
 
 async function openFailoverStream(
@@ -287,7 +258,7 @@ async function openFailoverStream(
     );
     return null;
   }
-  const transport = host.peers.transportOf?.(pump.nodeId) ?? null;
+  const transport = openedLinkTransport(host, pump.nodeId, link);
   const opened = await elapsed(() =>
     host.streams.openWsStream(link, pump.auth, pump.cid, pump.share).catch(() => null)
   );
@@ -418,20 +389,23 @@ async function completeFailover(
   return 'done';
 }
 
+type ReplayWait = {
+  helloWaitMs: number;
+  resumeWaitMs: number;
+  resumed: number;
+  helloOk: boolean;
+  helloReplied: boolean;
+};
+
 async function replaySubscription(
   host: StreamFailoverHost,
   pump: ForwardPump,
   stream: OpenedWsStream,
   signal: AbortSignal,
   helloWaitBudgetMs: number
-): Promise<{
-  helloWaitMs: number;
-  resumeWaitMs: number;
-  resumed: number;
-  helloOk: boolean;
-  helloReplied: boolean;
-}> {
+): Promise<ReplayWait> {
   pump.replay.beginResume();
+  pump.preAckRefused = false;
   const wait = async (key: 'helloWait' | 'resumeWait', ms: number, before?: () => void) => {
     const t0 = Date.now();
     const waited = new Promise<void>((resolve) => {
@@ -445,7 +419,26 @@ async function replaySubscription(
   let helloWaitMs = 0;
   let resumeWaitMs = 0;
   const hello = pump.replay.hello;
-  if (hello) {
+  if (!hello) {
+    const held = await waitUnackedOpen(
+      host,
+      pump,
+      stream,
+      signal,
+      unackedOpenHoldMs(peerRttMs(host, pump))
+    );
+    helloWaitMs = held.helloWaitMs;
+    pump.preAckRefused = !held.skipped && !held.accepted;
+    if (pump.preAckRefused) {
+      return {
+        helloWaitMs,
+        resumeWaitMs: 0,
+        resumed: 0,
+        helloOk: false,
+        helloReplied: false,
+      };
+    }
+  } else {
     helloWaitMs = await wait('helloWait', helloWaitBudgetMs, () =>
       host.sendToStream(pump, stream, hello)
     );
