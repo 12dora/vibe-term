@@ -29,7 +29,12 @@ export type {
   SignerInput,
   TotpSetupDraft,
 } from './account-security-totp';
-export { beginTotpSetup, clearTotp, confirmTotpSetup } from './account-security-totp';
+export {
+  TotpEnrollment,
+  beginTotpSetup,
+  clearTotp,
+  confirmTotpSetup,
+} from './account-security-totp';
 
 export interface RegisterPasskeyInput extends SignerInput {
   /** 用户给这把 passkey 起的名字，写进 add-passkey payload。 */

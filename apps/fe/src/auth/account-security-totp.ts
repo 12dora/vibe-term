@@ -108,6 +108,47 @@ export async function confirmTotpSetup(
   }
 }
 
+/**
+ * 一次 TOTP 设置流程的草稿持有者：确认成功或显式放弃之前始终是同一份密钥。
+ *
+ * 验证码失败（输错、过期换码、key-log 拒绝）都不会换密钥，用户已经扫过的二维码继续有效。
+ */
+export class TotpEnrollment {
+  #draft: (TotpSetupDraft & { uid: string }) | null = null;
+
+  get draft(): TotpSetupDraft | null {
+    return this.#draft;
+  }
+
+  start(input: BeginTotpSetupInput): TotpSetupDraft {
+    if (this.#draft?.uid === input.uid) return this.#draft;
+    this.discard();
+    this.#draft = { ...beginTotpSetup(input), uid: input.uid };
+    return this.#draft;
+  }
+
+  async confirm(
+    input: Omit<ConfirmTotpSetupInput, 'secret' | 'uid'>
+  ): Promise<ConfirmTotpSetupResult> {
+    const draft = this.#draft;
+    if (!draft) throw new Error('TOTP setup has not been started');
+    // 用副本：确认途中面板被关掉（discard 清零原件）也不会把全零密钥写进 key-log。
+    const secret = draft.secret.slice();
+    try {
+      const outcome = await confirmTotpSetup({ ...input, uid: draft.uid, secret });
+      if (outcome.ok && outcome.result.ok && this.#draft === draft) this.discard();
+      return outcome;
+    } finally {
+      secret.fill(0);
+    }
+  }
+
+  discard(): void {
+    this.#draft?.secret.fill(0);
+    this.#draft = null;
+  }
+}
+
 export interface SignerInput {
   api?: AuthApi;
   uid: string;
