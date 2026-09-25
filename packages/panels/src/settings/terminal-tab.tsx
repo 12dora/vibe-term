@@ -1,9 +1,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { TerminalShortcutsEditor } from './TerminalShortcutsEditor';
 import { TerminalSettingsPanel } from './terminal-settings-panel';
 
-export function TerminalSettingsTab() {
+export function TerminalSettingsTab({ memoryLimits }: { memoryLimits?: ReactNode }) {
   const { t } = useTranslation();
 
   return (
@@ -28,6 +29,16 @@ export function TerminalSettingsTab() {
           <TerminalShortcutsEditor />
         </CardContent>
       </Card>
+
+      {memoryLimits && (
+        <Card className="border-0 ring-0" data-testid="terminal-memory-limits">
+          <CardHeader>
+            <CardTitle>{t('settings.nodes.memory.title')}</CardTitle>
+            <CardDescription>{t('settings.nodes.memory.description')}</CardDescription>
+          </CardHeader>
+          <CardContent>{memoryLimits}</CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -537,6 +537,7 @@ export type TranslationKey =
   | 'settings.remoteAccess.direct.protection.node'
   | 'settings.remoteAccess.direct.protection.node.title'
   | 'settings.remoteAccess.direct.protection.node.description'
+  | 'settings.remoteAccess.direct.protection.node.link'
   | 'settings.remoteAccess.direct.protection.local'
   | 'settings.remoteAccess.direct.protection.local.title'
   | 'settings.remoteAccess.direct.protection.local.description'

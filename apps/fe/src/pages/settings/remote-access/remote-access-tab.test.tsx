@@ -1257,6 +1257,22 @@ describe('直接连接', () => {
     expect(html).not.toContain('data-testid="remote-access-direct-enable"');
   });
 
+  test('node 角色：保护提示里带账号安全面板的直达链接，其余档位没有', () => {
+    const node = renderWizard('direct', { localAuth: localAuth({ supported: false }) });
+    const link = node.match(/<a [^>]*data-testid="remote-access-direct-security-link"[^>]*>/)?.[0];
+    expect(link).toBeDefined();
+    expect(link).toMatch(/href="[^"]*[?&]panel=security[^"]*"/);
+    expect(node).toContain('settings.remoteAccess.direct.protection.node.link');
+
+    const local = renderWizard('direct', {
+      localAuth: localAuth({ enabled: true, effective: true, credentialsPresent: true }),
+    });
+    expect(local).not.toContain('remote-access-direct-security-link');
+    expect(renderWizard('direct', { localAuth: localAuth() })).not.toContain(
+      'remote-access-direct-security-link'
+    );
+  });
+
   test('本机登录已生效：受保护态，同样不给启用表单', () => {
     const html = renderWizard('direct', {
       localAuth: localAuth({ enabled: true, effective: true, credentialsPresent: true }),

@@ -64,8 +64,8 @@
       "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost."
     },
     "appError": {
-      "title": "Something went wrong",
-      "description": "This page hit an unexpected error and stopped rendering. Try again, or reload the app if it keeps failing.",
+      "title": "An error occurred",
+      "description": "This page hit an unexpected error and stopped rendering. Try again first. If it still fails, reload the app.",
       "panelDescription": "This panel hit an unexpected error. The rest of the page still works.",
       "retry": "Retry",
       "reload": "Reload app",
@@ -564,7 +564,7 @@
           "error": "Failed"
         },
         "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
-        "degradedHint": "cloudflared cannot reach the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
+        "degradedHint": "cloudflared is unable to connect to the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
         "edge": {
           "label": "Edge address",
           "staticActive": "Fake-IP bypassed, connecting to real edge addresses",
@@ -604,7 +604,8 @@
           "protection": {
             "node": {
               "title": "Protected by node sign-in",
-              "description": "Sign-in protection is already on for this machine; reaching it requires signing in."
+              "description": "Sign-in protection is already on for this machine; reaching it requires signing in.",
+              "link": "Sign-in protection settings"
             },
             "local": {
               "title": "Local sign-in is on",
@@ -1991,8 +1992,8 @@
         "loggingIn": "Signing in…",
         "retryLogin": "Try again",
         "signInRequired": "Sign in to this node to continue.",
-        "unreachable": "Cannot reach this node. Retrying automatically.",
-        "unreachableStalled": "Cannot reach this node. Automatic retries stopped.",
+        "unreachable": "Connection failed. Retrying automatically.",
+        "unreachableStalled": "Connection failed. Automatic retries stopped.",
         "retryConnect": "Retry Connection",
         "backToLocal": "Back to this machine"
       },
@@ -2433,7 +2434,7 @@
         "online": "Online",
         "onlineSignedIn": "Online · signed in",
         "onlineSignedOut": "Online · not signed in",
-        "unreachable": "Cannot reach",
+        "unreachable": "Connection failed",
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
@@ -2611,7 +2612,7 @@
         "summaryAborted": "Relay unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
         "errors": {
           "loginRequired": "Sign in to that node first.",
-          "unreachable": "That node cannot be reached.",
+          "unreachable": "Unable to connect to this node.",
           "notAllowed": "That node was not deployed by the VibeTerm installer and cannot be uninstalled remotely.",
           "unsupported": "That node runs a version without remote uninstall.",
           "selfBlocked": "This machine cannot be uninstalled.",
@@ -2701,9 +2702,9 @@
         "allDone": "All upgrades finished: {{success}} succeeded, {{failed}} failed.",
         "allDoneWithFailures": "All upgrades finished: {{success}} succeeded, {{failed}} failed. Failed: {{names}}.",
         "allDoneWithCancelled": "All upgrades finished: {{success}} succeeded, {{failed}} failed, {{cancelled}} cancelled.",
-        "skippedUnreachable": "Skipped {{count}} node(s) that cannot be reached.",
+        "skippedUnreachable": "Skipped {{count}} node(s) that failed to connect.",
         "skippedLoginRequired": "Skipped {{count}} node(s) that need sign-in first.",
-        "skippedBoth": "Skipped: {{unreachable}} unreachable, {{loginRequired}} needing sign-in.",
+        "skippedBoth": "Skipped: {{unreachable}} failed to connect, {{loginRequired}} needing sign-in.",
         "listSeparator": ", ",
         "cancel": "Stop Upgrade",
         "cancelled": "Upgrade of “{{name}}” cancelled.",
@@ -2975,7 +2976,7 @@
           "online": "Online",
           "offline": "Offline",
           "signedOut": "Not signed in",
-          "unreachable": "Cannot reach"
+          "unreachable": "Connection failed"
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",

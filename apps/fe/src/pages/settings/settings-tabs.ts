@@ -36,7 +36,7 @@ export const loadNotificationSettingsTab = () =>
   import('./notification-settings-tab').then((m) => m.NotificationSettingsTab);
 export const loadAISettingsTab = () => import('./ai-settings-tab').then((m) => m.AISettingsTab);
 export const loadTerminalSettingsTab = () =>
-  import('@vibeterm/panels/settings/terminal').then((m) => m.TerminalSettingsTab);
+  import('./terminal-settings-tab').then((m) => m.TerminalSettingsTab);
 export const loadRemoteAccessTab = () =>
   import('./remote-access/remote-access-tab').then((m) => m.RemoteAccessTab);
 export const loadRelayTab = () => import('./relay/relay-tab').then((m) => m.RelayTab);

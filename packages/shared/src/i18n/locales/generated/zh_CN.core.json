@@ -64,8 +64,8 @@
       "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。"
     },
     "appError": {
-      "title": "出了点问题",
-      "description": "页面遇到意外错误，已经停止显示。可以先重试；仍然不行就重新加载应用。",
+      "title": "出现错误",
+      "description": "页面遇到意外错误，已停止显示。请先重试；若仍失败，请重新加载应用。",
       "panelDescription": "这个面板遇到意外错误，页面其他部分仍可正常使用。",
       "retry": "重试",
       "reload": "重新加载应用",
@@ -198,7 +198,7 @@
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
-      "copyPending": "点一下屏幕以完成复制",
+      "copyPending": "轻触屏幕以完成复制",
       "pasteFailed": "无法读取剪贴板，请检查浏览器权限",
       "clearSelection": "取消选择",
       "hideKeyboard": "隐藏键盘",
@@ -489,19 +489,19 @@
       },
       "type": {
         "match": "匹配",
-        "unchanged": "卡住",
+        "unchanged": "停滞",
         "llm": "LLM"
       },
       "typeDesc": {
         "match": "正则命中屏幕内容时触发",
-        "unchanged": "提取值连续 N 分钟不变时触发（如下载卡住）",
+        "unchanged": "提取值连续 N 分钟不变时触发（如下载停滞）",
         "llm": "由 LLM 周期查看屏幕并判断自然语言条件"
       },
       "form": {
         "createTitle": "新建监控规则",
         "editTitle": "编辑监控规则",
         "name": "规则名称",
-        "namePlaceholder": "如：下载卡住提醒",
+        "namePlaceholder": "如：下载停滞提醒",
         "triggerType": "触发类型",
         "pattern": "正则表达式",
         "patternPlaceholder": "如：(\\d+)%",
@@ -683,8 +683,8 @@
         "loggingIn": "登录中…",
         "retryLogin": "重试登录",
         "signInRequired": "需要登录该节点才能继续。",
-        "unreachable": "连接不上该节点，稍后自动重试。",
-        "unreachableStalled": "连接不上该节点，已停止自动重试。",
+        "unreachable": "连接失败，稍后自动重试。",
+        "unreachableStalled": "连接失败，已停止自动重试。",
         "retryConnect": "重试连接",
         "backToLocal": "返回本机"
       },
