@@ -1,4 +1,4 @@
-// 本机卡「内存限额」段：每个 tmux 窗口的 systemd pane scope 上限 + 采样周期。
+// 终端设置「内存限额」卡：每个 tmux 窗口的 systemd pane scope 上限 + 采样周期。
 // 记录整条读写：进来 GET 一次，保存时把五个字段全量 PUT 回去。表单字段与节点表对话框共用。
 
 import {
@@ -122,7 +122,6 @@ export function MemoryLimitsSection({ api = defaultMemoryLimitsApi }: { api?: Me
     <div className="flex flex-col gap-3" data-testid="memory-limits-form">
       <MemoryLimitsUnsupportedNotice deviceNames={unsupportedDeviceNames(sessions)} />
       <MemoryLimitsReleaseNotice report={releaseReport} now={now} testId="memory-limits-release" />
-      <p className="text-xs text-muted-foreground">{t('settings.nodes.memory.description')}</p>
       <MemoryLimitsFields
         draft={draft}
         errors={errors}

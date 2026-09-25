@@ -392,7 +392,8 @@
           "protection": {
             "node": {
               "title": "ノードのログインで保護されています",
-              "description": "このマシンではログイン保護が有効で、アクセスにはログインが必要です。"
+              "description": "このマシンではログイン保護が有効で、アクセスにはログインが必要です。",
+              "link": "ログイン保護の設定"
             },
             "local": {
               "title": "ローカルログインが有効です",
@@ -1648,7 +1649,7 @@
         "online": "オンライン",
         "onlineSignedIn": "オンライン · サインイン済み",
         "onlineSignedOut": "オンライン · 未サインイン",
-        "unreachable": "接続できません",
+        "unreachable": "接続に失敗しました",
         "offline": "オフライン",
         "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
@@ -1823,7 +1824,7 @@
         "summaryAborted": "中継が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
         "errors": {
           "loginRequired": "先にそのノードにログインしてください。",
-          "unreachable": "そのノードに接続できません。",
+          "unreachable": "このノードに接続できません。",
           "notAllowed": "そのノードは VibeTerm インストーラーで導入されていないため、リモートでアンインストールできません。",
           "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
           "selfBlocked": "本機はアンインストールできません。",
@@ -1909,9 +1910,9 @@
         "allDone": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。",
         "allDoneWithFailures": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。失敗：{{names}}。",
         "allDoneWithCancelled": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}、中止 {{cancelled}}。",
-        "skippedUnreachable": "接続できないノード {{count}} 台をスキップしました。",
+        "skippedUnreachable": "接続に失敗したノード {{count}} 台をスキップしました。",
         "skippedLoginRequired": "先にログインが必要なノード {{count}} 台をスキップしました。",
-        "skippedBoth": "スキップ：接続できない {{unreachable}} 台、要ログイン {{loginRequired}} 台。",
+        "skippedBoth": "スキップ：接続失敗 {{unreachable}} 台、要ログイン {{loginRequired}} 台。",
         "listSeparator": "、",
         "cancel": "アップグレードを中止",
         "cancelled": "「{{name}}」のアップグレードを中止しました。",
@@ -2183,7 +2184,7 @@
           "online": "オンライン",
           "offline": "オフライン",
           "signedOut": "未サインイン",
-          "unreachable": "接続できません"
+          "unreachable": "接続に失敗しました"
         },
         "version": "バージョン {{version}}",
         "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",

@@ -185,9 +185,9 @@ CLI 快照（HTTP 不打宿主，读运行时缓存）：
 - `source = rss`：当前用量，加两行——「窗口限额：此宿主不支持（需 tmux ≥ 3.6）」与「读数来源：进程树 RSS 合计」。
   不要把这里的 `0` 显示成 `∞`：那会把「限不了」说成「没限」。
 
-### 设置 → 节点 →「内存限额」
+### 设置 → 终端 →「内存限额」
 
-本机卡片上，中继服务与网络两段之间，`data-testid="local-machine-memory"`。启用开关 + 三个 MB 输入 + 采样周期，保存时五字段整包 PUT。
+终端标签的第三张卡片，`data-testid="terminal-memory-limits"`，只读写入口网关自己的记录；`/n/<nodeId>/settings` 下不显示，远端节点走下面的节点管理表。启用开关 + 三个 MB 输入 + 采样周期，保存时五字段整包 PUT。
 
 | 控件 | `data-testid` |
 | --- | --- |
@@ -208,7 +208,7 @@ CLI 快照（HTTP 不打宿主，读运行时缓存）：
 | 入口 | `data-testid` | 说明 |
 | --- | --- | --- |
 | 行内「更多」→ 内存限额 | `nodes-memory-<rowId>` | 打开该节点的对话框（`nodes-memory-dialog-<rowId>`），进来先 GET 它当前的值 |
-| 对话框字段 | `nodes-memory-<nodeId>-<字段名>` | 与本机卡同一套校验（`memory-limits-form.ts`） |
+| 对话框字段 | `nodes-memory-<nodeId>-<字段名>` | 与终端标签同一套校验（`memory-limits-form.ts`） |
 | 对话框保存 | `nodes-memory-save-<rowId>` | 写入中关不掉（Esc / 遮罩 / 关闭键都挡住） |
 | 目标宿主限不了额的警示 | `nodes-memory-unsupported-<nodeId>` | 打开时并行拉该节点 `/api/sessions/memory`，失败静默 |
 | 卡头批量「更多」→ 内存限额 | `nodes-bulk-memory` | 打开批量框 `nodes-memory-bulk-dialog` |
@@ -317,7 +317,7 @@ ps -Ao pid=,ppid=,rss= | awk -v t=<pane_pid> '{kb[$1]=$3;ch[$2]=ch[$2]" "$1} END
 - [ ] `enabled` 关掉或三项都是 0：采样仍按原周期走；只有当前限额等于 VibeTerm 套过的某一档的 scope（含本 server 的孤儿）被写成 `infinity`。其它上限不动。对得上的 scope 在 cgroup 读回无限之前会按退避重试，读数对不上或已经无限就停。样本超过 `max(6 × 周期, 60s)` 时 HTTP 带 `stale: true` 和 `sampledAgeMs`，限额数字保留原值；`sessions --memory` 把这一行的 SOURCE/MEM/HIGH/MAX/OOM 打成 `-`。
 - [ ] 关窗后对应 `tmux-spawn-*.scope` 消失，失控子进程不再留在后台。
 - [ ] 终端页当前窗口有样本时出现 `window-memory-badge`；用量过软限额 75% 变黄，过软限额或有 OOM 标记变红。
-- [ ] 设置页 `local-machine-memory` 保存后 `GET /api/settings/window-memory` 与表单一致；非法输入（`high > max`、非整数）拒绝且不写库。
+- [ ] 设置页 `terminal-memory-limits` 保存后 `GET /api/settings/window-memory` 与表单一致；非法输入（`high > max`、非整数）拒绝且不写库。
 - [ ] `vibeterm sessions --memory` 与 GUI 徽标同一窗口的 `MEM` / `HIGH` / `MAX` / `OOM` 对得上；未连接的设备能列出窗口（`--memory` 会等样本）；`--json` 为填过 WS 之后的 payload。
 - [ ] macOS 或无 cgroup v2 的设备：徽标**有**读数（进程树 RSS），提示里写明限额不可用；`sessions --memory` 的 `SOURCE` 为 `RSS`、设备行下有 `(limits unavailable)`。
 - [ ] tmux < 3.6 的 Linux 设备（如 Ubuntu 24.04 的 3.4）：同上——读数非 0、`limitsSupported` 为 `false`、设置页出现「不会生效」警示。

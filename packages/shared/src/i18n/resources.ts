@@ -70,8 +70,8 @@ export const I18N_RESOURCES = {
       "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost."
     },
     "appError": {
-      "title": "Something went wrong",
-      "description": "This page hit an unexpected error and stopped rendering. Try again, or reload the app if it keeps failing.",
+      "title": "An error occurred",
+      "description": "This page hit an unexpected error and stopped rendering. Try again first. If it still fails, reload the app.",
       "panelDescription": "This panel hit an unexpected error. The rest of the page still works.",
       "retry": "Retry",
       "reload": "Reload app",
@@ -570,7 +570,7 @@ export const I18N_RESOURCES = {
           "error": "Failed"
         },
         "degradedNotice": "The tunnel process is running but has no edge connections; the public URL is unreachable.",
-        "degradedHint": "cloudflared cannot reach the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
+        "degradedHint": "cloudflared is unable to connect to the Cloudflare edge (TCP/UDP 7844). Check that the proxy or firewall allows *.argotunnel.com and *.cftunnel.com.",
         "edge": {
           "label": "Edge address",
           "staticActive": "Fake-IP bypassed, connecting to real edge addresses",
@@ -610,7 +610,8 @@ export const I18N_RESOURCES = {
           "protection": {
             "node": {
               "title": "Protected by node sign-in",
-              "description": "Sign-in protection is already on for this machine; reaching it requires signing in."
+              "description": "Sign-in protection is already on for this machine; reaching it requires signing in.",
+              "link": "Sign-in protection settings"
             },
             "local": {
               "title": "Local sign-in is on",
@@ -1997,8 +1998,8 @@ export const I18N_RESOURCES = {
         "loggingIn": "Signing in…",
         "retryLogin": "Try again",
         "signInRequired": "Sign in to this node to continue.",
-        "unreachable": "Cannot reach this node. Retrying automatically.",
-        "unreachableStalled": "Cannot reach this node. Automatic retries stopped.",
+        "unreachable": "Connection failed. Retrying automatically.",
+        "unreachableStalled": "Connection failed. Automatic retries stopped.",
         "retryConnect": "Retry Connection",
         "backToLocal": "Back to this machine"
       },
@@ -2439,7 +2440,7 @@ export const I18N_RESOURCES = {
         "online": "Online",
         "onlineSignedIn": "Online · signed in",
         "onlineSignedOut": "Online · not signed in",
-        "unreachable": "Cannot reach",
+        "unreachable": "Connection failed",
         "offline": "Offline",
         "offlineSince": "Offline · {{time}}",
         "revoked": "Removed",
@@ -2617,7 +2618,7 @@ export const I18N_RESOURCES = {
         "summaryAborted": "Relay unavailable. Stopped with {{remaining}} node(s) left ({{count}} uninstalled).",
         "errors": {
           "loginRequired": "Sign in to that node first.",
-          "unreachable": "That node cannot be reached.",
+          "unreachable": "Unable to connect to this node.",
           "notAllowed": "That node was not deployed by the VibeTerm installer and cannot be uninstalled remotely.",
           "unsupported": "That node runs a version without remote uninstall.",
           "selfBlocked": "This machine cannot be uninstalled.",
@@ -2707,9 +2708,9 @@ export const I18N_RESOURCES = {
         "allDone": "All upgrades finished: {{success}} succeeded, {{failed}} failed.",
         "allDoneWithFailures": "All upgrades finished: {{success}} succeeded, {{failed}} failed. Failed: {{names}}.",
         "allDoneWithCancelled": "All upgrades finished: {{success}} succeeded, {{failed}} failed, {{cancelled}} cancelled.",
-        "skippedUnreachable": "Skipped {{count}} node(s) that cannot be reached.",
+        "skippedUnreachable": "Skipped {{count}} node(s) that failed to connect.",
         "skippedLoginRequired": "Skipped {{count}} node(s) that need sign-in first.",
-        "skippedBoth": "Skipped: {{unreachable}} unreachable, {{loginRequired}} needing sign-in.",
+        "skippedBoth": "Skipped: {{unreachable}} failed to connect, {{loginRequired}} needing sign-in.",
         "listSeparator": ", ",
         "cancel": "Stop Upgrade",
         "cancelled": "Upgrade of “{{name}}” cancelled.",
@@ -2981,7 +2982,7 @@ export const I18N_RESOURCES = {
           "online": "Online",
           "offline": "Offline",
           "signedOut": "Not signed in",
-          "unreachable": "Cannot reach"
+          "unreachable": "Connection failed"
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",
@@ -3784,8 +3785,8 @@ export const I18N_RESOURCES = {
       "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。"
     },
     "appError": {
-      "title": "出了点问题",
-      "description": "页面遇到意外错误，已经停止显示。可以先重试；仍然不行就重新加载应用。",
+      "title": "出现错误",
+      "description": "页面遇到意外错误，已停止显示。请先重试；若仍失败，请重新加载应用。",
       "panelDescription": "这个面板遇到意外错误，页面其他部分仍可正常使用。",
       "retry": "重试",
       "reload": "重新加载应用",
@@ -4103,7 +4104,7 @@ export const I18N_RESOURCES = {
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
-      "copyPending": "点一下屏幕以完成复制",
+      "copyPending": "轻触屏幕以完成复制",
       "pasteFailed": "无法读取剪贴板，请检查浏览器权限",
       "clearSelection": "取消选择",
       "hideKeyboard": "隐藏键盘",
@@ -4284,7 +4285,7 @@ export const I18N_RESOURCES = {
           "error": "异常"
         },
         "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
-        "degradedHint": "cloudflared 连不上 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
+        "degradedHint": "cloudflared 无法连接 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
         "edge": {
           "label": "边缘地址",
           "staticActive": "已绕开 fake-IP，直连真实边缘地址",
@@ -4324,7 +4325,8 @@ export const I18N_RESOURCES = {
           "protection": {
             "node": {
               "title": "已由节点登录保护",
-              "description": "本机已启用登录保护，访问它必须先登录。"
+              "description": "本机已启用登录保护，访问它必须先登录。",
+              "link": "登录保护设置"
             },
             "local": {
               "title": "本机登录已启用",
@@ -5503,19 +5505,19 @@ export const I18N_RESOURCES = {
       },
       "type": {
         "match": "匹配",
-        "unchanged": "卡住",
+        "unchanged": "停滞",
         "llm": "LLM"
       },
       "typeDesc": {
         "match": "正则命中屏幕内容时触发",
-        "unchanged": "提取值连续 N 分钟不变时触发（如下载卡住）",
+        "unchanged": "提取值连续 N 分钟不变时触发（如下载停滞）",
         "llm": "由 LLM 周期查看屏幕并判断自然语言条件"
       },
       "form": {
         "createTitle": "新建监控规则",
         "editTitle": "编辑监控规则",
         "name": "规则名称",
-        "namePlaceholder": "如：下载卡住提醒",
+        "namePlaceholder": "如：下载停滞提醒",
         "triggerType": "触发类型",
         "pattern": "正则表达式",
         "patternPlaceholder": "如：(\\d+)%",
@@ -5711,8 +5713,8 @@ export const I18N_RESOURCES = {
         "loggingIn": "登录中…",
         "retryLogin": "重试登录",
         "signInRequired": "需要登录该节点才能继续。",
-        "unreachable": "连接不上该节点，稍后自动重试。",
-        "unreachableStalled": "连接不上该节点，已停止自动重试。",
+        "unreachable": "连接失败，稍后自动重试。",
+        "unreachableStalled": "连接失败，已停止自动重试。",
         "retryConnect": "重试连接",
         "backToLocal": "返回本机"
       },
@@ -6153,7 +6155,7 @@ export const I18N_RESOURCES = {
         "online": "在线",
         "onlineSignedIn": "在线 · 已登录",
         "onlineSignedOut": "在线 · 未登录",
-        "unreachable": "连接不上",
+        "unreachable": "连接失败",
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
@@ -6330,7 +6332,7 @@ export const I18N_RESOURCES = {
         "summaryAborted": "中继不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
         "errors": {
           "loginRequired": "须先登录该节点。",
-          "unreachable": "连不上该节点。",
+          "unreachable": "无法连接到该节点。",
           "notAllowed": "该节点不是由 VibeTerm 安装器部署的，无法远程卸载。",
           "unsupported": "该节点版本过旧，不支持远程卸载。",
           "selfBlocked": "不能卸载本机。",
@@ -6416,9 +6418,9 @@ export const I18N_RESOURCES = {
         "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
         "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
         "allDoneWithCancelled": "全部升级完成：成功 {{success}}，失败 {{failed}}，已取消 {{cancelled}}。",
-        "skippedUnreachable": "已跳过 {{count}} 台连接不上的节点。",
+        "skippedUnreachable": "已跳过 {{count}} 台连接失败的节点。",
         "skippedLoginRequired": "已跳过 {{count}} 台须先登录的节点。",
-        "skippedBoth": "已跳过：连接不上 {{unreachable}} 台，须先登录 {{loginRequired}} 台。",
+        "skippedBoth": "已跳过：连接失败 {{unreachable}} 台，须先登录 {{loginRequired}} 台。",
         "listSeparator": "、",
         "cancel": "停止升级",
         "cancelled": "已取消「{{name}}」的升级。",
@@ -6690,7 +6692,7 @@ export const I18N_RESOURCES = {
           "online": "在线",
           "offline": "离线",
           "signedOut": "未登录",
-          "unreachable": "连接不上"
+          "unreachable": "连接失败"
         },
         "version": "版本 {{version}}",
         "signInToManage": "登录该节点后才能管理它的设备。",
@@ -7489,8 +7491,8 @@ export const I18N_RESOURCES = {
       "refreshPageConfirm": "ページを更新してもよろしいですか？保存されていない内容は失われます。"
     },
     "appError": {
-      "title": "問題が発生しました",
-      "description": "このページで予期しないエラーが発生し、表示を停止しました。まず再試行し、それでも直らない場合はアプリを再読み込みしてください。",
+      "title": "エラーが発生しました",
+      "description": "このページで予期しないエラーが発生し、表示を停止しました。まず再試行し、それでも失敗する場合はアプリを再読み込みしてください。",
       "panelDescription": "このパネルで予期しないエラーが発生しました。ページの他の部分は引き続き利用できます。",
       "retry": "再試行",
       "reload": "アプリを再読み込み",
@@ -8029,7 +8031,8 @@ export const I18N_RESOURCES = {
           "protection": {
             "node": {
               "title": "ノードのログインで保護されています",
-              "description": "このマシンではログイン保護が有効で、アクセスにはログインが必要です。"
+              "description": "このマシンではログイン保護が有効で、アクセスにはログインが必要です。",
+              "link": "ログイン保護の設定"
             },
             "local": {
               "title": "ローカルログインが有効です",
@@ -9416,8 +9419,8 @@ export const I18N_RESOURCES = {
         "loggingIn": "サインインしています…",
         "retryLogin": "再試行",
         "signInRequired": "続行するには、このノードにサインインしてください。",
-        "unreachable": "このノードに接続できません。しばらくすると自動で再試行します。",
-        "unreachableStalled": "このノードに接続できません。自動再試行は停止しました。",
+        "unreachable": "接続に失敗しました。しばらくすると自動で再試行します。",
+        "unreachableStalled": "接続に失敗しました。自動再試行は停止しました。",
         "retryConnect": "接続を再試行",
         "backToLocal": "このマシンに戻る"
       },
@@ -9858,7 +9861,7 @@ export const I18N_RESOURCES = {
         "online": "オンライン",
         "onlineSignedIn": "オンライン · サインイン済み",
         "onlineSignedOut": "オンライン · 未サインイン",
-        "unreachable": "接続できません",
+        "unreachable": "接続に失敗しました",
         "offline": "オフライン",
         "offlineSince": "オフライン · {{time}}",
         "revoked": "削除済み",
@@ -10035,7 +10038,7 @@ export const I18N_RESOURCES = {
         "summaryAborted": "中継が利用できないため、残り {{remaining}} 台を中止しました（{{count}} 台はアンインストール済み）。",
         "errors": {
           "loginRequired": "先にそのノードにログインしてください。",
-          "unreachable": "そのノードに接続できません。",
+          "unreachable": "このノードに接続できません。",
           "notAllowed": "そのノードは VibeTerm インストーラーで導入されていないため、リモートでアンインストールできません。",
           "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
           "selfBlocked": "本機はアンインストールできません。",
@@ -10121,9 +10124,9 @@ export const I18N_RESOURCES = {
         "allDone": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。",
         "allDoneWithFailures": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}。失敗：{{names}}。",
         "allDoneWithCancelled": "すべてのアップグレードが完了しました：成功 {{success}}、失敗 {{failed}}、中止 {{cancelled}}。",
-        "skippedUnreachable": "接続できないノード {{count}} 台をスキップしました。",
+        "skippedUnreachable": "接続に失敗したノード {{count}} 台をスキップしました。",
         "skippedLoginRequired": "先にログインが必要なノード {{count}} 台をスキップしました。",
-        "skippedBoth": "スキップ：接続できない {{unreachable}} 台、要ログイン {{loginRequired}} 台。",
+        "skippedBoth": "スキップ：接続失敗 {{unreachable}} 台、要ログイン {{loginRequired}} 台。",
         "listSeparator": "、",
         "cancel": "アップグレードを中止",
         "cancelled": "「{{name}}」のアップグレードを中止しました。",
@@ -10395,7 +10398,7 @@ export const I18N_RESOURCES = {
           "online": "オンライン",
           "offline": "オフライン",
           "signedOut": "未サインイン",
-          "unreachable": "接続できません"
+          "unreachable": "接続に失敗しました"
         },
         "version": "バージョン {{version}}",
         "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",

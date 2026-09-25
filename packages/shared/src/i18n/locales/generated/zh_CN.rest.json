@@ -352,7 +352,7 @@
           "error": "异常"
         },
         "degradedNotice": "隧道进程运行中，但无边缘连接，公网地址当前不可达。",
-        "degradedHint": "cloudflared 连不上 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
+        "degradedHint": "cloudflared 无法连接 Cloudflare 边缘（TCP/UDP 7844）。请检查代理或防火墙是否放行 *.argotunnel.com 与 *.cftunnel.com。",
         "edge": {
           "label": "边缘地址",
           "staticActive": "已绕开 fake-IP，直连真实边缘地址",
@@ -392,7 +392,8 @@
           "protection": {
             "node": {
               "title": "已由节点登录保护",
-              "description": "本机已启用登录保护，访问它必须先登录。"
+              "description": "本机已启用登录保护，访问它必须先登录。",
+              "link": "登录保护设置"
             },
             "local": {
               "title": "本机登录已启用",
@@ -1648,7 +1649,7 @@
         "online": "在线",
         "onlineSignedIn": "在线 · 已登录",
         "onlineSignedOut": "在线 · 未登录",
-        "unreachable": "连接不上",
+        "unreachable": "连接失败",
         "offline": "离线",
         "offlineSince": "离线 · {{time}}",
         "revoked": "已移除",
@@ -1823,7 +1824,7 @@
         "summaryAborted": "中继不可用，已停止卸载剩余 {{remaining}} 个节点（已卸载 {{count}} 个）。",
         "errors": {
           "loginRequired": "须先登录该节点。",
-          "unreachable": "连不上该节点。",
+          "unreachable": "无法连接到该节点。",
           "notAllowed": "该节点不是由 VibeTerm 安装器部署的，无法远程卸载。",
           "unsupported": "该节点版本过旧，不支持远程卸载。",
           "selfBlocked": "不能卸载本机。",
@@ -1909,9 +1910,9 @@
         "allDone": "全部升级完成：成功 {{success}}，失败 {{failed}}。",
         "allDoneWithFailures": "全部升级完成：成功 {{success}}，失败 {{failed}}。失败：{{names}}。",
         "allDoneWithCancelled": "全部升级完成：成功 {{success}}，失败 {{failed}}，已取消 {{cancelled}}。",
-        "skippedUnreachable": "已跳过 {{count}} 台连接不上的节点。",
+        "skippedUnreachable": "已跳过 {{count}} 台连接失败的节点。",
         "skippedLoginRequired": "已跳过 {{count}} 台须先登录的节点。",
-        "skippedBoth": "已跳过：连接不上 {{unreachable}} 台，须先登录 {{loginRequired}} 台。",
+        "skippedBoth": "已跳过：连接失败 {{unreachable}} 台，须先登录 {{loginRequired}} 台。",
         "listSeparator": "、",
         "cancel": "停止升级",
         "cancelled": "已取消「{{name}}」的升级。",
@@ -2183,7 +2184,7 @@
           "online": "在线",
           "offline": "离线",
           "signedOut": "未登录",
-          "unreachable": "连接不上"
+          "unreachable": "连接失败"
         },
         "version": "版本 {{version}}",
         "signInToManage": "登录该节点后才能管理它的设备。",

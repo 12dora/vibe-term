@@ -3,6 +3,7 @@
 // 「直接连接」与「访问控制 → 账号密码」两条路径共用同一块 UI：档位与文案由 `directProtection`
 // 单点推导，两处的 testid 保持一致（同一时刻只会渲染其中一处，勾选框 id 不会撞）。
 
+import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
 import {
   bootstrapLocalAuth,
   localAuthErrorCode,
@@ -14,6 +15,7 @@ import { Input } from '@vibeterm/ui/input';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { FormField, type NoticeTone, SetupNotice } from '../nodes/setup/form-parts';
 import {
   type BootstrapDraft,
@@ -41,7 +43,24 @@ export function LoginProtectionNotice({ localAuth }: { localAuth: LocalAuthStatu
         {t(`settings.remoteAccess.direct.protection.${protection}.title`)}
       </p>
       <p>{t(`settings.remoteAccess.direct.protection.${protection}.description`)}</p>
+      {protection === 'node' && <AccountSecurityLink />}
     </SetupNotice>
+  );
+}
+
+/** 受节点登录保护时，改密 / TOTP / passkey 都在账号安全面板里：给一个直达入口。 */
+function AccountSecurityLink() {
+  const { t } = useTranslation();
+  const { hrefFor } = useSidePanel();
+  return (
+    <Link
+      className="text-primary underline-offset-4 hover:underline"
+      to={hrefFor('security')}
+      state={SIDE_PANEL_LINK_STATE}
+      data-testid="remote-access-direct-security-link"
+    >
+      {t('settings.remoteAccess.direct.protection.node.link')}
+    </Link>
   );
 }
 
