@@ -1,9 +1,4 @@
-import {
-  type TotpSetupDraft,
-  beginTotpSetup,
-  clearTotp,
-  confirmTotpSetup,
-} from '@/auth/account-security-actions';
+import { TotpEnrollment, type TotpSetupDraft, clearTotp } from '@/auth/account-security-actions';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { AuthApi, PasskeySummary } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
@@ -43,23 +38,22 @@ export function TotpSection({
   const [error, setError] = useState<string | null>(null);
   const ownFeedback = feedback?.section === 'totp' ? feedback : null;
   // 第一阶段的草稿：密钥只在内存，用户确认验证码之前不会写任何 key-log 记录。
+  const [enrollment] = useState(() => new TotpEnrollment());
   const [draft, setDraft] = useState<TotpSetupDraft | null>(null);
   const [code, setCode] = useState('');
 
-  // 组件卸载时清掉未确认的密钥字节。
-  useEffect(
-    () => () => {
-      draft?.secret.fill(0);
-    },
-    [draft]
-  );
+  // 只在真正卸载（离开面板）时清零；effect 重跑（StrictMode / HMR）后按控制器实际状态对齐。
+  useEffect(() => {
+    setDraft(enrollment.draft);
+    return () => enrollment.discard();
+  }, [enrollment]);
 
   const begin = useCallback(() => {
     setError(null);
     publishFeedback(null);
     setCode('');
-    setDraft(beginTotpSetup({ uid, issuer: 'VibeTerm' }));
-  }, [publishFeedback, uid]);
+    setDraft(enrollment.start({ uid, issuer: 'VibeTerm' }));
+  }, [enrollment, publishFeedback, uid]);
 
   const confirm = useCallback(async () => {
     setError(null);
@@ -74,26 +68,23 @@ export function TotpSection({
     }
     setBusy(true);
     try {
-      const outcome = await confirmTotpSetup({
+      const outcome = await enrollment.confirm({
         api,
-        uid,
         password,
         currentKdfParams: mode.kdfParams,
-        secret: draft.secret,
         code,
       });
-      setPassword('');
+      setCode('');
       if (!outcome.ok) {
         setError(t('auth.errors.TOTP_INVALID'));
         return;
       }
+      setPassword('');
       if (!outcome.result.ok) {
         setError(securityActionErrorText(t, outcome.result.code));
         return;
       }
-      draft.secret.fill(0);
       setDraft(null);
-      setCode('');
       // 同改密：`onDone()` 会触发 mode 刷新，反馈必须先交到面板级 state。
       publishFeedback({ section: 'totp', tone: 'ok', text: t('auth.security.totpDone') });
       onDone();
@@ -102,14 +93,15 @@ export function TotpSection({
     } finally {
       setBusy(false);
     }
-  }, [api, code, draft, mode.kdfParams, onDone, password, publishFeedback, t, uid]);
+  }, [api, code, draft, enrollment, mode.kdfParams, onDone, password, publishFeedback, t]);
 
   const cancel = useCallback(() => {
-    draft?.secret.fill(0);
+    enrollment.discard();
     setDraft(null);
     setCode('');
+    setPassword('');
     setError(null);
-  }, [draft]);
+  }, [enrollment]);
 
   /** `clear-totp` 允许 passkey 签（不需要 seed），走统一的凭据对话框。 */
   const disable = useCallback(async () => {
@@ -143,22 +135,24 @@ export function TotpSection({
     >
       {error ? <Feedback tone="error" text={error} /> : null}
       {ownFeedback ? <Feedback tone={ownFeedback.tone} text={ownFeedback.text} /> : null}
-      <div className="flex gap-2">
-        <Button type="button" disabled={busy} onClick={begin} data-testid="security-totp-set">
-          {mode.totpEnabled ? t('auth.security.totpReset') : t('auth.security.totpSet')}
-        </Button>
-        {mode.totpEnabled ? (
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={busy}
-            onClick={() => void disable()}
-            data-testid="security-totp-clear"
-          >
-            {t('auth.security.totpClear')}
+      {draft ? null : (
+        <div className="flex gap-2">
+          <Button type="button" disabled={busy} onClick={begin} data-testid="security-totp-set">
+            {mode.totpEnabled ? t('auth.security.totpReset') : t('auth.security.totpSet')}
           </Button>
-        ) : null}
-      </div>
+          {mode.totpEnabled ? (
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void disable()}
+              data-testid="security-totp-clear"
+            >
+              {t('auth.security.totpClear')}
+            </Button>
+          ) : null}
+        </div>
+      )}
       {draft ? (
         <div className="flex flex-col items-start gap-2" data-testid="security-totp-uri">
           <p className="text-xs text-muted-foreground">{t('auth.security.totpScanNow')}</p>
