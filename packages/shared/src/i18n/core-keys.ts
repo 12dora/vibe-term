@@ -10,7 +10,14 @@ export const I18N_CORE_KEY_PREFIXES: readonly string[] = [
   // 主密钥失配的常驻提示挂在外壳上（登录页也要看得到），整块进 core。
   'app.masterKeyMismatch',
   'appError',
-  'auth',
+  'auth.credential',
+  'auth.duration',
+  'auth.errors',
+  'auth.login',
+  'auth.node',
+  // 安全面板本体（含登录限制设置）是懒面板，外壳只用到它的标题。
+  'auth.security.title',
+  'auth.totpDigit',
   'common',
   'device',
   'deviceStatus',

@@ -1391,6 +1391,86 @@
       "download": "ダウンロード",
       "openRaw": "元ファイルを開く"
     },
+    "auth": {
+      "security": {
+        "changePassword": "パスワードを変更",
+        "changePasswordWarning": "パスワードを変更すると、すべてのデバイスのパスキーと認証アプリの設定が削除され、すべてのセッションからサインアウトします。",
+        "changePasswordDone": "パスワードを変更しました。各ノードで再度サインインしてください。",
+        "currentPassword": "現在のパスワード",
+        "newPassword": "新しいパスワード",
+        "confirmPassword": "新しいパスワードの確認",
+        "passwordRequired": "パスワードを入力してください。",
+        "passwordMismatch": "新しいパスワードが一致しません。",
+        "totp": "認証アプリ",
+        "totpNote": "パスワードが漏れた場合にアカウントを守ります。より強い二要素認証にはパスキーを使ってください。",
+        "totpPasskeyNote": "パスキーでサインインする場合、コードは不要です。",
+        "totpSet": "設定する",
+        "totpReset": "再設定",
+        "totpClear": "オフにする",
+        "totpScanNow": "今すぐスキャンしてください。表示は一度だけです。",
+        "passkeys": "パスキー",
+        "passkeyNote": "パスキーは、作成したアドレスでのみ使えます。",
+        "passkeyUnavailable": "パスキーにはドメイン名付きの https アドレスが必要です。",
+        "passkeyName": "パスキーの名前",
+        "registerPasskey": "パスキーを追加",
+        "signWithExistingPasskey": "パスワードの代わりに、パスキーで確認できます。",
+        "passkeySecondFactorHint": "登録すると、パスワードでのサインインにもパスキーの確認が必要になります（このマシンや LAN アドレスからのサインインでは不要）。",
+        "sessionKeyNote": "このページの操作はすべて、パスワードまたはパスキーの確認を求めます。",
+        "totpConfirm": "確認して有効にする",
+        "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。",
+        "totpCodeRequired": "6 桁のコードを入力してください。",
+        "totpDone": "認証アプリを有効にしました",
+        "passkeyListFailed": "パスキーを読み込めませんでした：{{error}}",
+        "passkeyOtherOrigin": "（別のアドレスで作成されたため、ここでは使えません）",
+        "fullReset": "すべてのパスキーと 2 段階認証を削除し、全セッションからサインアウトする",
+        "fullResetHint": "パスワードが漏れた可能性がある場合に使います。オフのままなら既存のサインイン方法とセッションを保持します。",
+        "changePasswordKeepDone": "パスワードを更新しました。既存のサインイン方法はそのまま使えます。",
+        "reloginTotpHint": "変更後の再サインインにはコードが必要です。空欄ならスキップします。",
+        "sessionResumeFailed": "パスワードを更新しました。再サインインは完了していません。他のノードでは再度サインインが必要です。",
+        "sessionResumeSkipped": "パスワードを更新しました。コード未入力のため、他のノードでは再度サインインが必要です。",
+        "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。",
+        "loginLimit": {
+          "title": "サインイン制限",
+          "description": "パスワードの失敗が続くと送信元 IP をロックし、アカウントのパスワードサインインを一時停止します。パスキーでのサインインは影響を受けません。",
+          "preset": {
+            "relaxed": "緩め",
+            "standard": "標準",
+            "strict": "厳格",
+            "custom": "カスタム"
+          },
+          "presetIp": "同一 IP で {{count}} 回失敗すると {{base}} ロック（最長 {{max}}）",
+          "presetAccount": "1 時間に {{count}} 回失敗するとパスワードサインインを {{duration}} 停止",
+          "fields": {
+            "ipFailThreshold": "IP の失敗回数上限",
+            "ipLockBase": "IP の初回ロック時間",
+            "ipLockMax": "IP の最長ロック時間",
+            "accountFailPerHour": "アカウントの 1 時間あたり失敗上限",
+            "accountLock": "アカウントの停止時間"
+          },
+          "unit": {
+            "times": "回",
+            "minutes": "分",
+            "hours": "時間",
+            "days": "日"
+          },
+          "ladderHint": "同じ IP が再びロックされるたびにロック時間が倍になり、最長ロック時間を超えません。",
+          "exemptLocal": "ローカルと LAN はロック対象外",
+          "exemptLocalHint": "失敗はサインイン履歴に記録されます。",
+          "sourceDefault": "既定の設定（標準）を使用しています。",
+          "save": "保存",
+          "saved": "サインイン制限を更新しました。",
+          "loadFailed": "サインイン制限を読み込めませんでした：{{error}}",
+          "blocked": "次のノードは {{version}} 未満です。先にアップグレードしてください：",
+          "versionUnknown": "バージョン不明",
+          "errors": {
+            "range": "{{min}}〜{{max}} の範囲で入力してください。",
+            "integer": "整数を入力してください。",
+            "maxBelowBase": "初回ロック時間より短くできません。",
+            "invalid": "設定が無効です。"
+          }
+        }
+      }
+    },
     "nodes": {
       "loading": {
         "members": "ノード一覧を同期中"
