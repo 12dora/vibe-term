@@ -10,7 +10,7 @@
 
 | | packages/app（原有） | packages/cli（本文） |
 | --- | --- | --- |
-| 命令 | `init` `doctor` `upgrade` `uninstall` `user` `relay` `mesh` `tls` `direct` | `login` `logout` `whoami` `api` `nodes` `devices` `tmux` `sessions` `term` `exec` `system` `files` `cp` `port` `share` `watch` `agent` `settings`（十八个组） |
+| 命令 | `init` `doctor` `upgrade` `uninstall` `user` `relay` `mesh` `tls` `direct` | `login` `logout` `whoami` `auth` `api` `nodes` `devices` `tmux` `sessions` `term` `exec` `system` `files` `cp` `port` `share` `watch` `agent` `settings`（十九个组） |
 | 依赖 | 本机安装目录、SQLite、主密钥；`user`/`relay`/`mesh` 那组还要 bun 运行时 | 只有 `fetch` 与 WebSocket |
 | 运行时 | Node（`init` 等）+ bun（`cli-auth-entry.ts`） | Node ≥ 20（bundle 也能在 bun 下跑） |
 | 权限 | 本机 root 级配置 | 与一个浏览器会话完全等价 |
@@ -30,11 +30,11 @@
 ```
 packages/cli/src/
   main.ts                入口：找命令、拆全局旗标、建 ctx、翻译退出码；dispatch 表驱动在 `dispatch.ts`
-  registry.ts            命令注册表（十八个已落地组）
+  registry.ts            命令注册表（十九个已落地组）
   version.ts             自报版本（网关的 canonical v1.1 版本门要用）
   commands/
     types.ts             Command 契约
-    login.ts logout.ts whoami.ts api.ts
+    login.ts logout.ts whoami.ts auth.ts api.ts
     agent.ts agent-format.ts
     nodes.ts nodes-relay.ts nodes-ports.ts nodes-ops.ts
     settings.ts settings-http.ts settings-site.ts settings-local.ts
@@ -88,8 +88,8 @@ export const command: Command = {
 };
 ```
 
-2. 在 `src/registry.ts` 的 `IMPLEMENTED_COMMANDS` 登记（十八个组已全部落地，`RESERVED_COMMANDS` 为空）。
-3. `packages/app/src/lib/client-cli.ts` 的 `CLIENT_CLI_COMMANDS` 已经把十八个组全部登记好了，**新增组名时两处都要改**——`registry.test.ts` 会比对两份名单。本机运维新增子命令（如 `relay metrics`）还要挂 `cli-auth-entry.ts` 的 `HANDLERS` 与 `AUTH_COMMANDS`，否则 parse 成功却 dispatch 失败。
+2. 在 `src/registry.ts` 的 `IMPLEMENTED_COMMANDS` 登记（十九个组已全部落地，`RESERVED_COMMANDS` 为空）。
+3. `packages/app/src/lib/client-cli.ts` 的 `CLIENT_CLI_COMMANDS` 已经把十九个组全部登记好了，**新增组名时两处都要改**——`registry.test.ts` 会比对两份名单。本机运维新增子命令（如 `relay metrics`）还要挂 `cli-auth-entry.ts` 的 `HANDLERS` 与 `AUTH_COMMANDS`，否则 parse 成功却 dispatch 失败。
 
 `dispatch.ts` 的 `prepareCommand` 在 `splitGlobalFlags` **之前**调用可选的 `Command.preprocessArgv`（命令名已剥掉）。`main.ts` 已经替命令做完这些事：解析并校验全局旗标（未知旗标在这里就报用法错误）、处理 `--help`、把全局旗标从 argv 里摘掉、构造 `ctx`、把抛出的 `CliError` 翻成退出码与提示。命令拿到的 `argv` 里只剩自己的旗标与位置参数。
 
@@ -311,6 +311,10 @@ HTTP 形状对齐 `packages/api-client/src/agent.ts` 与网关 `/api/agent/**`�
 | `set <id> --write-mode confirm\|auto` / `--allow-control-chars on\|off` / `--pane %N` | `PATCH {writeMode}` / `{allowControlChars}` / `{paneId}` |
 
 `new` 未给 `--write-mode` 时默认 `confirm`。`queue edit|rm` 的 session 仅作定位，请求只按 item id。`--json`：`{ sessions }` / `{ session, messages }` / `{ session }` / `{ message\|queued }` / `{ queued }`。
+
+## `vibeterm auth`
+
+`commands/auth.ts`。`history` / `history clear` / `history retention` 对名册里 ≥ 2.10.0 且可达的节点 fan-out（`GET` / `DELETE /api/auth/login-records`，`GET` / `PUT …/settings`）。`policy` 读 `GET /api/auth/login-policy`。`policy set` 在 entry 上签 `login-policy` 再 `POST /api/auth/keylog`；`--node` 不改签名落点。离线与过旧节点跳过且退出码 0；显式 `--node` 不可达退出码 5。使用者说明见 [命令行使用手册](../operations/cli-usage.md)。
 
 ## `vibeterm settings`
 

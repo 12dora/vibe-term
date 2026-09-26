@@ -47,8 +47,9 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 
 ## KI-5：中继在途流保护的代价
 
-`MAX_LINK_UNACKED` 提到 65 × 1 MiB，是「不误关满窗口中继流」的直接代价，单条 mux 最坏内存占用随之上升；
-排空等待有 10 分钟硬上限，到期时剩余流仍会被 reset。见
+`MAX_LINK_UNACKED` 提到 65 × 1 MiB，是「不误关满窗口中继流」的直接代价，单条 mux 最坏内存占用随之上升。
+换主中继时的排空只等这条 uplink 上的用户流，宽限 30 s，peer session 载体本身不计；见
+[路径优选](./architecture/path-selection.md)。单条 mux 的未确认窗口见
 [节点直连](./architecture/peer-direct-connect.md)。
 
 ## KI-6：待现网实测的两项
@@ -61,8 +62,8 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 节点侧看到的 clientIp 恒为 `peer:<entryNodeId>`（`dispatchInboundHttp` 写入），`x-forwarded-*` 两端都被剥。
 因此目标节点自己的分享登录限速会把所有经该入口转发的访客算成同一个来源。当前由入口按（真实来源 IP, shareId）
 的配额兜住（`apps/gateway/src/mesh/share-login-quota.ts`），实际不会误锁别人；但目标节点端限速在这条路径上
-仍是空转。彻底解法是给 peer 上下文加一条入口可信填写、浏览器不可覆盖的来源 IP 元数据。
-见[终端分享](./architecture/terminal-share.md)。
+仍是空转。账号登录历史用的是另一条头（`x-vibeterm-entry-client-ip`，只给 peer 入站、且入口版本 ≥ 2.10.0），
+不覆盖分享配额。见[终端分享](./architecture/terminal-share.md)与[登录面安全](./security/login-security.md)。
 
 ## KI-9：本机自升级没有下载字节进度
 
@@ -185,3 +186,13 @@ AI agent / CI 目前只能把完整会话能力交给调用方：默认 `~/.conf
 本版本用探测通道在 3 s 内铸出指纹；暂时失败答 `DIRECT_BUSY`，只有真不能直连才停放 10 分钟。DC 要先证明（本端 ping 的 pong）并活过 15 s 才拆中继，短命断开走不计档的冷却。测量中的直连只隔离这条直连，旁边借一条中继，不降级。
 
 升完之后目标上应能 grep 到 `[mesh][rtc] authorize`。仍失败时看 `authorize failed … reason=`、`datachannel closed … initiator= lifetime_ms= proven=`、`dc drop`、`breaker rearm … level_before`、`signal dropped kind=sdp cause=fake-ip`。对照见 [mesh 运维「常见排障」](./operations/mesh-operations.md)。
+
+## KI-20：同一条直连被装两次后，入站流全部 `stale-link`
+
+状态：已在 2.10.0 修复。更早的版本上会复现；两端都升上来之后，已经打开的僵尸会话要断一次才会消失。
+
+现象：节点对之间 DataChannel 显示还在，终端与转发却全部失败。目标日志里同一条 session 上有两个监听，每条入站 OPEN 被 RST `stale-link`，随后仍被派发；`route_switch from=dc to=dc`。
+
+根因：晋升有两张门（`DcPromoteGate` 与 `RouteDegrade`）。两边都对同一条已经 live 的 session 调用 `installLive`，注册表不幂等，于是留下一个非当前的 `LivePeer`。它既不是 live 也不是正在退役，就对之后所有流回 `stale-link`，而且不关 session，所以会一直留着。mux 在流已经被 RST 之后仍交给后面的监听。
+
+现在只剩 `RouteDegrade` 一张晋升门，`installLive` 对当前 session 幂等。每条 session 只有一份流 / ctl 监听；非当前、非退役的绑定标 `dead`，RST `stale-link` 并只关一次。对端看到 `stale-link` 时同样关掉本端 session，不再把这条拒绝留在可重放集合里。机制见 [路径优选](./architecture/path-selection.md)「晋升：一条门」。

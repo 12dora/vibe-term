@@ -19,7 +19,7 @@
 - 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
 - 装在 ≤ 2 GiB 的小内存机上：[小内存主机](./operations/small-memory.md)。想知道某个 tmux 窗口吃了多少内存、或想在 Linux 上把它限住：[窗口内存](./operations/window-memory-limits.md)。
 - 服务显示 running 但 HTTP / 中继不通：[事件循环看门狗](./operations/gateway-loop-watchdog.md)。
-- 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
+- 登录相关（密码、通行密钥、TOTP、登录限制、登录历史、公网暴露）：[登录面安全](./security/login-security.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
 - 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)；改共享口径先看 [单一上游](./development/code-conventions.md)。
@@ -33,8 +33,8 @@
 | 文档 | 内容 |
 | --- | --- |
 | [mesh-architecture.md](./architecture/mesh-architecture.md) | 多节点互联架构：拓扑、用户自持根钥与密钥日志、节点证书、链路多路复用、paused 本机可见性例外、端口计划、角色装配、失陷边界 |
-| [peer-direct-connect.md](./architecture/peer-direct-connect.md) | 节点直连：地址退避、paused 不拨号、WebRTC 熔断、信令代次、`ports` 可达性、失败码与链路信息窗 |
-| [path-selection.md](./architecture/path-selection.md) | 路径优选与选路模式：智能 / 直连 / 中继、滞环与升回、重掷协议、五元组 ECMP、WS 开链竞速、上行 `path-rerace` |
+| [peer-direct-connect.md](./architecture/peer-direct-connect.md) | 节点直连：地址退避、paused 不拨号、WebRTC 熔断与 decline、浏览器授权名额、信令代次、`ports` 可达性、失败码与链路信息窗 |
+| [path-selection.md](./architecture/path-selection.md) | 路径优选与选路模式：智能 / 直连 / 中继、单一晋升门、会话绑定、滞环与升回、重掷协议、五元组 ECMP、WS 开链竞速、上行 `path-rerace` |
 | [relay.md](./architecture/relay.md) | 公共中继角色：盲中继协议、租户密钥、密钥日志记录、加入串与密码加入、存储、HTTP / uplink 接口、CLI 与网页、运维、边界、令牌换发 |
 | [relay-limits-and-metrics.md](./architecture/relay-limits-and-metrics.md) | 中继运营限额（租户数、总带宽、公平分配、单文件上限）与 `/api/relay/metrics` |
 | [port-mapping.md](./architecture/port-mapping.md) | 端口映射：node A 的 TCP 监听经 peer 流复用器隧道到 node B |
@@ -81,14 +81,14 @@
 | [self-update.md](./operations/self-update.md) | 程序内自更新：版本注入、`canSelfUpdate`、状态机、发行包缓存与租约 |
 | [remote-upgrade.md](./operations/remote-upgrade.md) | 远程升级：三通道投递、推包续传与进度 |
 | [bun-path-resolution.md](./operations/bun-path-resolution.md) | CLI 的 bun 路径解析与 `run.sh` 约束 |
-| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、目标语法、tmux 结构、窗口内存、像 ssh 一样接进任意节点的终端、AI agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
+| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、登录历史与登录限制、目标语法、tmux 结构、窗口内存、像 ssh 一样接进任意节点的终端、AI agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
 | [rename-migration.md](./operations/rename-migration.md) | tmex → VibeTerm 改名迁移：命名表、冻结值、兼容桥、目录迁移、升级手册 |
 
 ### security/
 
 | 文档 | 内容 |
 | --- | --- |
-| [login-security.md](./security/login-security.md) | 登录失败模糊化、客户端 IP 与 bootstrap、二次验证「TOTP 或本 origin 通行密钥」二选一（按 origin + 本地豁免）、TOTP 限流与防重放、公网安全评估 |
+| [login-security.md](./security/login-security.md) | 登录失败模糊化、客户端 IP、登录限制与登录历史、二次验证「TOTP 或本 origin 通行密钥」二选一、公网安全评估 |
 | [domain-access-policy.md](./security/domain-access-policy.md) | 按节点的「允许域名访问」开关 |
 
 ### development/

@@ -92,6 +92,8 @@ Every install ships the `vibeterm` client commands, which do from a terminal wha
 
 ```bash
 vibeterm login --entry https://vt.example.com --user admin      # one login covers every node behind the entry
+vibeterm auth history                                           # recent sign-ins on each node (2.10.0+)
+vibeterm auth policy                                            # mesh login rate-limit policy
 vibeterm nodes ls                                               # nodes and their online state
 vibeterm term attach konata-mac/dev                             # attach to a device's terminal pane
 vibeterm term run konata-mac/dev "make test" --marker --json    # run one command, get output and exit code
