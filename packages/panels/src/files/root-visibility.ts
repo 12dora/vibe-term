@@ -41,3 +41,24 @@ export function selectVisibleFileRoots({
       isFileRootDeviceReachable(root.deviceType, root.deviceId, deviceConnected)
   );
 }
+
+export interface FileRootsQuerySnapshot {
+  data?: { roots: readonly FileRootDto[] };
+  isSuccess: boolean;
+  isPlaceholderData?: boolean;
+}
+
+/**
+ * 该 node 有目录的设备集合，仅当目录列表是**权威**的：本次确实加载成功（非占位）、
+ * 且 node 此刻在线。离线时缓存里那份成功结果可能早已过期，不能拿来清偏好。
+ * 设备已删除的目录（`deviceType` 为 null）不算。
+ */
+export function authoritativeRootDeviceIds(
+  query: FileRootsQuerySnapshot,
+  nodeOnline: boolean
+): ReadonlySet<string> | null {
+  if (!nodeOnline || !query.isSuccess || query.isPlaceholderData || !query.data) return null;
+  return new Set(
+    query.data.roots.filter((root) => root.deviceType !== null).map((root) => root.deviceId)
+  );
+}

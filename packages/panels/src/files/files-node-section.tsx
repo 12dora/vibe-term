@@ -5,6 +5,8 @@
 //     该 node 一个可见目录都没有时整节不渲染（见 `FilesNodeRootsSection`）；
 //   - 在线但未登录：只留宿主给的一行登录入口，不发任何请求；
 //   - 离线：只留一行「节点离线」。
+// 远端 node 一台设备都没在「管理设备」里打开「文件」时，无论哪种形态都整节不渲染、不挂运行时
+// ——否则折叠 / 离线 / 未登录的分节头先出现、一点开又消失（见 `mayShowSidebarFilesNode`）。
 //
 // 分节可折叠（收起即卸载文件树，连带停掉该 node 的 files 查询），也可整节拖动排序
 // ——顺序与终端侧栏共用一份 UI 偏好，由宿主持久化。
@@ -12,6 +14,8 @@
 import { NodeBadge, type NodeBadgeInfo } from '../device-tree/node-badge';
 
 import { useIsFetching } from '@tanstack/react-query';
+import { mayShowSidebarFilesNode } from '@vibeterm/stores';
+import { useUIStore } from '@vibeterm/stores/react';
 import { cn } from '@vibeterm/ui';
 import { ChevronRight, GripVertical, Loader2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
@@ -163,6 +167,12 @@ function FilesNodeRootsSection({
   );
 }
 
+/** 远端 node 一台设备都没打开「文件」：整节不渲染，按 `empty` 上报（不劝用户去配置目录）。 */
+function FilesNodeHiddenSection({ node }: { node: FilesNodeInfo }) {
+  useReportFilesSection(node.runtimeNodeId, 'empty');
+  return null;
+}
+
 /** 离线 / 未登录 / 已折叠的分节：本身就有内容（提示或登录入口），一律按 `content` 上报。 */
 function FilesNodeStaticSection({
   node,
@@ -198,6 +208,13 @@ export function FilesNodeSection({
   onExpandedChange,
 }: FilesNodeSectionProps) {
   const { t } = useTranslation();
+  const mayShow = useUIStore((state) =>
+    mayShowSidebarFilesNode(state.sidebarFilesVisibility, node.runtimeNodeId)
+  );
+  // 远端没有打开的设备时展开也必为空，宿主不挂它的运行时，这里也一条查询都不能跑
+  if (!mayShow) return <FilesNodeHiddenSection node={node} />;
+  // 本机折叠时宿主仍挂着它的运行时（入口本身，不多建连接），交给目录列表判断出不出头
+  const rootsKnown = node.online && node.loggedIn && (expanded !== false || node.isSelf);
 
   if (!node.online) {
     return (
@@ -236,9 +253,9 @@ export function FilesNodeSection({
     );
   }
 
-  // 宿主折叠了这一节：它没挂该 node 的运行时，文件树的查询（roots / 目录）在这里一律不能跑
+  // 宿主折叠了远端分节：它没挂该 node 的运行时，文件树的查询（roots / 目录）在这里一律不能跑
   // ——上下文里只有 entry 的 QueryClient，跑起来读到的会是别人的目录。
-  if (expanded === false) {
+  if (!rootsKnown) {
     return (
       <FilesNodeStaticSection
         node={node}

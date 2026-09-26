@@ -1,13 +1,13 @@
 // 文件侧栏的空态：目录不在设置页配置了（入口是「管理设备」→ 设备卡片 ⋯ →「文件」），
 // 一个目录都没配过时给一条带链接的提示。
 //
-// 单 node 宿主由 `FilesNodeRoots` 直接渲染这条提示；多 node 宿主各分节在空时整节不渲染，
+// 单 node 宿主由 `FilesNodeRoots` 直接渲染提示；多 node 宿主各分节在空时整节不渲染，
 // 提示只能由外壳出一条——各分节把自己的状态报到 `FilesSectionStateProvider`，外壳据此判断。
 
 import { hostAppPath } from '@vibeterm/stores';
 import { useRuntime } from '@vibeterm/stores/react';
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { Trans } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 
 /** 一个分节此刻的成色：`content` 指分节确实渲染了东西（目录、错误、离线或登录入口）。 */
@@ -28,11 +28,16 @@ export function filesSectionState(
   return configuredCount === 0 ? 'unconfigured' : 'empty';
 }
 
-/** 外壳出不出那条提示：全部分节都加载完、都没内容，且至少有一台确实没配过目录。 */
-export function shouldShowNoRootsHint(states: readonly FilesSectionState[]): boolean {
-  if (states.length === 0) return false;
-  if (states.some((state) => state === 'loading' || state === 'content')) return false;
-  return states.includes('unconfigured');
+/**
+ * 外壳出哪条提示：全部分节都加载完、都没内容时才出。至少有一台确实没配过目录就劝去配置，
+ * 否则（配过但全被开关隐藏 / 设备没连上）与单 node 一样只说没得显示，不留一片空白。
+ */
+export function filesTabEmptyHint(
+  states: readonly FilesSectionState[]
+): 'noRoots' | 'noVisibleRoots' | null {
+  if (states.length === 0) return null;
+  if (states.some((state) => state === 'loading' || state === 'content')) return null;
+  return states.includes('unconfigured') ? 'noRoots' : 'noVisibleRoots';
 }
 
 type ReportSection = (id: string, state: FilesSectionState | null) => void;
@@ -76,6 +81,19 @@ export function useFilesSectionStates(): {
     });
   }, []);
   return { report, states: Object.values(byId) };
+}
+
+/** 配过目录但一个都不显示：单 node 文件树与 mesh 外壳共用。 */
+export function FilesNoVisibleRootsHint() {
+  const { t } = useTranslation();
+  return (
+    <div
+      data-testid="files-no-visible-roots-hint"
+      className="px-3 py-6 text-center text-xs text-muted-foreground"
+    >
+      {t('files.noVisibleRoots')}
+    </div>
+  );
 }
 
 /** 「未配置目录」提示：「管理设备」是链接，其余是路径说明。 */
