@@ -22,7 +22,7 @@ import { SortableVerticalList, useSortableRow } from '../device-tree/device-tree
 import { type DirectoryDragHandle, DirectoryNodeView } from './directory-node-view';
 import { fileIconColor, fileIconFor } from './file-icon';
 import { FileLeafContextMenu } from './file-leaf-menu';
-import { FilesNoRootsHint } from './files-empty-hint';
+import { FilesNoRootsHint, FilesNoVisibleRootsHint } from './files-empty-hint';
 import { runCappedFileRootsFetch } from './files-roots-fetch';
 import { NodeError } from './node-menu';
 import {
@@ -35,6 +35,7 @@ import { SelectedFileProvider, useIsFileSelected, useSelectedChildPath } from '.
 import { ShowAllEntriesProvider, useShowAllEntries } from './show-all-entries';
 import { useDirectoryListing } from './use-directory-listing';
 import { useDirectoryUpload } from './use-directory-upload';
+import { usePruneStaleFilesVisibility } from './use-prune-files-visibility';
 import { useRsyncMissingToast } from './use-rsync-missing-toast';
 
 const DEFAULT_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024;
@@ -102,6 +103,8 @@ export function useVisibleFileRoots() {
     queryFn: () => runCappedFileRootsFetch(() => fetchFileRoots(apiClient)),
     refetchOnWindowFocus: FILE_ROOTS_REFETCH_ON_WINDOW_FOCUS,
   });
+  // 能挂上运行时就说明该 node 在线且已登录，这份目录列表是权威的
+  usePruneStaleFilesVisibility(nodeId, rootsQuery, true);
   const filesVisibility = useUIStore((state) => state.sidebarFilesVisibility);
   const deviceConnected = useTmuxStore((state) => state.deviceConnected);
   const allRoots = useMemo(() => rootsQuery.data?.roots ?? [], [rootsQuery.data]);
@@ -216,13 +219,7 @@ export function FilesNodeRoots() {
       {!rootsQuery.isLoading &&
         !rootsQuery.isError &&
         roots.length === 0 &&
-        (allRoots.length === 0 ? (
-          <FilesNoRootsHint />
-        ) : (
-          <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-            {t('files.noVisibleRoots')}
-          </div>
-        ))}
+        (allRoots.length === 0 ? <FilesNoRootsHint /> : <FilesNoVisibleRootsHint />)}
     </SelectedFileProvider>
   );
 }

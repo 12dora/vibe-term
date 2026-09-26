@@ -23,6 +23,7 @@ import { cn } from '@vibeterm/ui';
 import { GripVertical } from 'lucide-react';
 import { type CSSProperties, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePruneStaleFilesVisibility } from '../files/use-prune-files-visibility';
 import { DeviceCardHost, type DeviceCardHostProps } from './device-card-host';
 import { DEVICE_GRID_CLASS } from './device-card-skeleton';
 import { deviceGridCollisionDetection } from './device-grid-collision';
@@ -109,7 +110,10 @@ export function DeviceGrid({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const { devices, deviceIds, reorderDisabled } = state;
-  const deviceIdsWithRoots = useDeviceIdsWithRoots(card.offline ?? false);
+  const deviceIdsWithRoots = useDeviceIdsWithRoots(
+    card.nodeContext.runtimeNodeId,
+    card.offline ?? false
+  );
   // 宿主每次渲染都新建 card 字面量；按字段锁住引用，卡片的 memo 才拦得住
   const { queryKey, nodeContext, connection, offline } = card;
   const cardProps = useMemo<CardProps>(
@@ -151,7 +155,7 @@ export function DeviceGrid({
  * 与文件侧栏同一个 query key：`file-roots` 设置事件失效 ['files'] 后，
  * 在弹窗里配完目录，卡片上的「文件」开关立刻从禁用变可用。
  */
-function useDeviceIdsWithRoots(offline: boolean): ReadonlySet<string> {
+function useDeviceIdsWithRoots(runtimeNodeId: string, offline: boolean): ReadonlySet<string> {
   const runtime = useRuntime();
   const rootsQuery = useQuery({
     queryKey: ['files', 'roots'],
@@ -159,6 +163,8 @@ function useDeviceIdsWithRoots(offline: boolean): ReadonlySet<string> {
     enabled: runtime.features.filesUi && !offline,
     throwOnError: false,
   });
+  // 设备页是文件开关的权威清理点：侧栏里没打开过的远端分节不挂运行时，拿不到目录列表
+  usePruneStaleFilesVisibility(runtimeNodeId, rootsQuery, !offline);
   const roots = rootsQuery.data?.roots;
   return useMemo(() => new Set((roots ?? []).map((root) => root.deviceId)), [roots]);
 }

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { FileRootDto } from '@vibeterm/shared';
-import { isFileRootDeviceReachable, selectVisibleFileRoots } from './root-visibility';
+import { pruneStaleSidebarFilesVisibility } from '@vibeterm/stores';
+import {
+  authoritativeRootDeviceIds,
+  isFileRootDeviceReachable,
+  selectVisibleFileRoots,
+} from './root-visibility';
 
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
 
@@ -85,5 +90,40 @@ describe('selectVisibleFileRoots', () => {
       'r-ssh',
     ]);
     expect(select([LOCAL, SSH], { deviceConnected: { 'd-ssh': false } })).toEqual(['r-local']);
+  });
+});
+
+describe('authoritativeRootDeviceIds', () => {
+  const loaded = (roots: FileRootDto[]) => ({ data: { roots }, isSuccess: true });
+
+  test('在线且加载成功：给出有目录的设备集合，已删除设备的目录不算', () => {
+    const gone = root({ id: 'r-gone', deviceId: 'd-gone', deviceType: null });
+    expect(authoritativeRootDeviceIds(loaded([LOCAL, SSH, gone]), true)).toEqual(
+      new Set(['d-local', 'd-ssh'])
+    );
+  });
+
+  test('离线（缓存里的旧结果）、未加载成功、占位数据：一律不给', () => {
+    expect(authoritativeRootDeviceIds(loaded([LOCAL]), false)).toBeNull();
+    expect(authoritativeRootDeviceIds({ isSuccess: false }, true)).toBeNull();
+    expect(authoritativeRootDeviceIds({ ...loaded([LOCAL]), isSuccess: false }, true)).toBeNull();
+    expect(
+      authoritativeRootDeviceIds({ ...loaded([LOCAL]), isPlaceholderData: true }, true)
+    ).toBeNull();
+  });
+
+  /** 设备卡片在无目录时开关显示为关且置灰，残留的 true 键只能靠这里清 */
+  test('键为 true 但设备已没有目录：加载完成后清掉；离线时保留', () => {
+    const map = { [`${NODE_A}:d-local`]: true, [`${NODE_A}:d-stale`]: true };
+    const query = loaded([LOCAL]);
+
+    const offlineIds = authoritativeRootDeviceIds(query, false);
+    expect(offlineIds).toBeNull();
+
+    const onlineIds = authoritativeRootDeviceIds(query, true);
+    expect(onlineIds).not.toBeNull();
+    expect(pruneStaleSidebarFilesVisibility(map, NODE_A, onlineIds ?? new Set())).toEqual({
+      [`${NODE_A}:d-local`]: true,
+    });
   });
 });

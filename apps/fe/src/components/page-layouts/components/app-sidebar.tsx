@@ -16,6 +16,7 @@ import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { SortableVerticalList, useSortableRow } from '@vibeterm/panels/device-tree';
 import type { FilesNodeInfo } from '@vibeterm/panels/files';
 import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
+import { mayShowSidebarFilesNode } from '@vibeterm/stores';
 import { useUIStore } from '@vibeterm/stores/react';
 import { Reveal } from '@vibeterm/ui/motion';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@vibeterm/ui/sidebar';
@@ -70,15 +71,22 @@ export function filesSectionDefaultExpanded(isSelf: boolean): boolean {
   return isSelf;
 }
 
-/** 此刻确实挂着运行时：还要求分节没被折叠——只有这些 node 有自己的 QueryClient 与事件订阅。 */
+/**
+ * 此刻确实挂着运行时：远端还要求分节展开、且至少一台设备打开了「文件」（否则展开也必为空，
+ * 不值得建一条 WS）——只有这些 node 有自己的 QueryClient 与事件订阅。
+ * self 折叠也挂（入口运行时本就在，不多建连接），好按目录列表决定出不出分节头。
+ */
 export function hasMountedFilesRuntime(
   entry: Pick<SidebarNodeEntry, 'online' | 'loggedIn' | 'isSelf' | 'runtimeNodeId'>,
-  expansion: Record<string, boolean>
+  expansion: Record<string, boolean>,
+  filesVisibility: Record<string, boolean>
 ): boolean {
+  if (!isFilesSectionMounted(entry)) return false;
+  if (entry.isSelf) return true;
   return (
-    isFilesSectionMounted(entry) &&
     (sidebarSectionExpanded(expansion, 'files', entry.runtimeNodeId) ??
-      filesSectionDefaultExpanded(entry.isSelf))
+      filesSectionDefaultExpanded(entry.isSelf)) &&
+    mayShowSidebarFilesNode(filesVisibility, entry.runtimeNodeId)
   );
 }
 
@@ -94,8 +102,13 @@ function SortableFilesNodeSection({ entry }: { entry: SidebarNodeEntry }) {
     filesSectionDefaultExpanded(node.isSelf)
   );
 
-  // 离线 / 未登录 / 已折叠的 node 不挂运行时：不建连接，也不发它的 files 查询。
-  if (!isFilesSectionMounted(entry) || !expanded) {
+  const filesOptedIn = useUIStore((state) =>
+    mayShowSidebarFilesNode(state.sidebarFilesVisibility, node.runtimeNodeId)
+  );
+
+  // 离线 / 未登录 / 已折叠 / 没有设备打开「文件」的远端 node 不挂运行时：不建连接，也不发 files 查询。
+  // 这类 node 的残留开关由设备管理页（每个在线 node 都拉目录列表）负责清理。
+  if (!isFilesSectionMounted(entry) || (!node.isSelf && !(expanded && filesOptedIn))) {
     return (
       <FilesNodeSection
         node={node}
@@ -131,6 +144,7 @@ function MeshFilesTab({ entryNodeId }: { entryNodeId: string | null }) {
   const sidebarNodeOrder = useUIStore((state) => state.sidebarNodeOrder);
   const setSidebarNodeOrder = useUIStore((state) => state.setSidebarNodeOrder);
   const expansion = useUIStore((state) => state.sidebarNodeExpansion);
+  const filesVisibility = useUIStore((state) => state.sidebarFilesVisibility);
 
   const entries = useMemo(
     () => toSidebarEntries(nodes, entryNodeId, sidebarNodeOrder),
@@ -148,10 +162,10 @@ function MeshFilesTab({ entryNodeId }: { entryNodeId: string | null }) {
   // 调它会留下一份永远等不到 `onDispose` 的缓存。
   const refresh = useCallback(() => {
     for (const entry of entries) {
-      if (!hasMountedFilesRuntime(entry, expansion)) continue;
+      if (!hasMountedFilesRuntime(entry, expansion, filesVisibility)) continue;
       void nodeQueryClient(entry.runtimeNodeId).invalidateQueries({ queryKey: FILES_QUERY_KEY });
     }
-  }, [entries, expansion]);
+  }, [entries, expansion, filesVisibility]);
 
   // mesh 列表还没回来时先渲染 self 的文件树，避免侧边栏首屏闪空。
   if (entries.length === 0) return <FilesTab />;

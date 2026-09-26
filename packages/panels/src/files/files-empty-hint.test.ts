@@ -1,7 +1,7 @@
 // 文件侧栏空态的两个判定：单个分节的成色，与「外壳该不该出那条提示」。
 
 import { describe, expect, test } from 'bun:test';
-import { filesSectionState, shouldShowNoRootsHint } from './files-empty-hint';
+import { filesSectionState, filesTabEmptyHint } from './files-empty-hint';
 
 const LOADING = { isError: false, isSuccess: false };
 const LOADED = { isError: false, isSuccess: true };
@@ -29,25 +29,25 @@ describe('filesSectionState', () => {
   });
 });
 
-describe('shouldShowNoRootsHint', () => {
+describe('filesTabEmptyHint', () => {
   test('一个分节都没有（还没拿到 mesh 列表）时不出提示', () => {
-    expect(shouldShowNoRootsHint([])).toBe(false);
+    expect(filesTabEmptyHint([])).toBeNull();
   });
 
   test('还有分节在加载时不出提示，避免闪一下又消失', () => {
-    expect(shouldShowNoRootsHint(['loading', 'unconfigured'])).toBe(false);
+    expect(filesTabEmptyHint(['loading', 'unconfigured'])).toBeNull();
   });
 
   test('任一分节有内容就不出提示', () => {
-    expect(shouldShowNoRootsHint(['content', 'unconfigured'])).toBe(false);
+    expect(filesTabEmptyHint(['content', 'unconfigured'])).toBeNull();
   });
 
-  test('全空且至少一台没配过目录：出一条', () => {
-    expect(shouldShowNoRootsHint(['unconfigured'])).toBe(true);
-    expect(shouldShowNoRootsHint(['empty', 'unconfigured'])).toBe(true);
+  test('全空且至少一台没配过目录：劝去配置', () => {
+    expect(filesTabEmptyHint(['unconfigured'])).toBe('noRoots');
+    expect(filesTabEmptyHint(['empty', 'unconfigured'])).toBe('noRoots');
   });
 
-  test('全是「配过但没得显示」时不劝去配置', () => {
-    expect(shouldShowNoRootsHint(['empty', 'empty'])).toBe(false);
+  test('全是「配过但没得显示」时不劝去配置，但也不能留一片空白', () => {
+    expect(filesTabEmptyHint(['empty', 'empty'])).toBe('noVisibleRoots');
   });
 });

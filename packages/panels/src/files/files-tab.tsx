@@ -15,8 +15,9 @@ import { useTranslation } from 'react-i18next';
 
 import {
   FilesNoRootsHint,
+  FilesNoVisibleRootsHint,
   FilesSectionStateProvider,
-  shouldShowNoRootsHint,
+  filesTabEmptyHint,
   useFilesSectionStates,
 } from './files-empty-hint';
 import { FilesNodeRoots } from './files-node-roots';
@@ -60,7 +61,7 @@ function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
   const isFetching = useIsFetching({ queryKey: ['files'] });
   // 多 node 聚合时各分节在空时整节不渲染，提示由外壳出一条（单 node 由文件树自己出）。
   const sectionStates = useFilesSectionStates();
-  const showHint = sections !== undefined && shouldShowNoRootsHint(sectionStates.states);
+  const hint = sections === undefined ? null : filesTabEmptyHint(sectionStates.states);
 
   const refresh = () => {
     if (onRefresh) {
@@ -103,7 +104,8 @@ function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
           <FilesSectionStateProvider report={sectionStates.report}>
             {sections ?? <FilesNodeRoots />}
           </FilesSectionStateProvider>
-          {showHint && <FilesNoRootsHint />}
+          {hint === 'noRoots' && <FilesNoRootsHint />}
+          {hint === 'noVisibleRoots' && <FilesNoVisibleRootsHint />}
         </div>
       </ScrollArea>
     </SidebarGroup>

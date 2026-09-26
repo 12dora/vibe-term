@@ -64,6 +64,20 @@ const REMOTE_NODE: FilesNodeInfo = {
 
 let storageSeq = 0;
 
+/** 该远端 node 在「管理设备」里显式打开过「文件」的设备 */
+const REMOTE_OPT_IN = { 'node-app:d-remote-local': true };
+
+/**
+ * 静态渲染下 zustand 只读 `getInitialState`（hook 上的该方法与内部 api 不是同一引用，替换无效），
+ * 只能改写它返回的初始 state 对象，才能表达「用户在设备卡片上动过文件开关」。
+ */
+function seedFilesVisibility(
+  runtime: ReturnType<typeof createAppRuntime>,
+  visibility: Record<string, boolean>
+): void {
+  Object.assign(runtime.stores.ui.getInitialState(), { sidebarFilesVisibility: visibility });
+}
+
 /**
  * `runtimeNodeId` 决定文件可见性的缺省：`self` 的设备配了目录就显示，远端 node 的设备默认隐藏。
  * 静态渲染下 zustand 只认 `getInitialState`（改 store / 写持久化存储都不生效），
@@ -72,12 +86,18 @@ let storageSeq = 0;
 function renderSection(
   node: FilesNodeInfo,
   roots: FileRootDto[] = [],
-  options: { runtimeNodeId?: string; rootsLoaded?: boolean } = {}
+  options: {
+    runtimeNodeId?: string;
+    rootsLoaded?: boolean;
+    expanded?: boolean;
+    filesVisibility?: Record<string, boolean>;
+  } = {}
 ): string {
   const runtime = createAppRuntime({
     storagePrefix: `files-node-section-${storageSeq++}:`,
     nodeId: options.runtimeNodeId,
   });
+  if (options.filesVisibility) seedFilesVisibility(runtime, options.filesVisibility);
   const queryClient = new QueryClient();
   if (options.rootsLoaded !== false) queryClient.setQueryData(['files', 'roots'], { roots });
   const html = renderToStaticMarkup(
@@ -88,6 +108,7 @@ function renderSection(
             <SidebarProvider>
               <FilesNodeSection
                 node={node}
+                expanded={options.expanded}
                 renderLogin={(target) => <span>登录 {target.name}</span>}
               />
             </SidebarProvider>
@@ -102,21 +123,25 @@ function renderSection(
 
 describe('FilesNodeSection 的分节头', () => {
   test('在线已登录时显示 node 名与该 node 的目录', () => {
-    const html = renderSection(REMOTE_NODE, [REMOTE_ROOT]);
+    const html = renderSection(REMOTE_NODE, [REMOTE_ROOT], { filesVisibility: REMOTE_OPT_IN });
     expect(html).toContain('data-testid="files-node-section-node-app"');
     expect(html).toContain('jiefa-app');
     expect(html).toContain('data-testid="file-dir-r-remote-/srv/app"');
   });
 
   test('离线只留一行提示，不渲染目录', () => {
-    const html = renderSection({ ...REMOTE_NODE, online: false }, [REMOTE_ROOT]);
+    const html = renderSection({ ...REMOTE_NODE, online: false }, [REMOTE_ROOT], {
+      filesVisibility: REMOTE_OPT_IN,
+    });
     expect(html).toContain('data-testid="files-node-offline-node-app"');
     expect(html).toContain('节点离线');
     expect(html).not.toContain('data-testid="file-dir-r-remote-/srv/app"');
   });
 
   test('在线未登录只留登录入口，不渲染目录', () => {
-    const html = renderSection({ ...REMOTE_NODE, loggedIn: false }, [REMOTE_ROOT]);
+    const html = renderSection({ ...REMOTE_NODE, loggedIn: false }, [REMOTE_ROOT], {
+      filesVisibility: REMOTE_OPT_IN,
+    });
     expect(html).toContain('data-testid="files-node-login-node-app"');
     expect(html).toContain('登录后显示文件');
     expect(html).toContain('登录 jiefa-app');
@@ -140,19 +165,95 @@ describe('FilesNodeSection 的分节头', () => {
     expect(html).not.toContain('data-testid="files-node-section-node-app"');
   });
 
-  test('离线 / 未登录的分节照常渲染（它们承载提示与登录入口）', () => {
+  test('离线 / 未登录的分节在该 node 有设备打开「文件」时照常渲染（承载提示与登录入口）', () => {
     const offline = renderSection({ ...REMOTE_NODE, online: false }, [], {
       runtimeNodeId: 'node-app',
+      filesVisibility: REMOTE_OPT_IN,
     });
     expect(offline).toContain('data-testid="files-node-section-node-app"');
     const signedOut = renderSection({ ...REMOTE_NODE, loggedIn: false }, [], {
       runtimeNodeId: 'node-app',
+      filesVisibility: REMOTE_OPT_IN,
     });
     expect(signedOut).toContain('data-testid="files-node-section-node-app"');
   });
 
+  /**
+   * 回归：远端 node 的设备全都没打开「文件」（缺省即关，或在设备卡片上显式关掉）时，
+   * 拿不到目录列表的折叠 / 离线 / 未登录分节也不能出头——否则头先出现，一点开挂上运行时
+   * 按目录过滤后整节变空，看上去就是「点一下就消失」。
+   */
+  test.each([
+    ['折叠', { expanded: false }],
+    ['离线', { online: false }],
+    ['未登录', { loggedIn: false }],
+  ] as const)('远端 node 没有设备打开「文件」时%s分节也不出头', (_label, variant) => {
+    const { expanded, ...nodePatch } = { expanded: undefined, ...variant };
+    const node = { ...REMOTE_NODE, ...nodePatch };
+    const maps: Record<string, boolean>[] = [{}, { 'node-app:d-remote-local': false }];
+    for (const filesVisibility of maps) {
+      const html = renderSection(node, [REMOTE_ROOT], { expanded, filesVisibility });
+      expect(html).not.toContain('data-testid="files-node-section-node-app"');
+      expect(html).not.toContain('jiefa-app');
+    }
+  });
+
+  test('远端 node 在线已登录但没有设备打开「文件」：不出头，也不挂 roots 查询', () => {
+    const runtime = createAppRuntime({ storagePrefix: `files-node-section-${storageSeq++}:` });
+    const queryClient = new QueryClient();
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <I18nextProvider i18n={i18n}>
+          <QueryClientProvider client={queryClient}>
+            <RuntimeProvider runtime={runtime}>
+              <SidebarProvider>
+                <FilesNodeSection node={REMOTE_NODE} expanded />
+              </SidebarProvider>
+            </RuntimeProvider>
+          </QueryClientProvider>
+        </I18nextProvider>
+      </MemoryRouter>
+    );
+    runtime.dispose();
+
+    expect(html).not.toContain('data-testid="files-node-section-node-app"');
+    expect(queryClient.getQueryCache().find({ queryKey: ['files', 'roots'] })).toBeUndefined();
+  });
+
+  test('别的 node 打开的开关不会让本 node 的折叠分节出头', () => {
+    const html = renderSection(REMOTE_NODE, [REMOTE_ROOT], {
+      expanded: false,
+      filesVisibility: { 'node-other:d-remote-local': true, 'self:d-remote-local': true },
+    });
+    expect(html).not.toContain('data-testid="files-node-section-node-app"');
+  });
+
+  const SELF_NODE: FilesNodeInfo = {
+    id: 'entry-node',
+    runtimeNodeId: 'self',
+    name: '本机',
+    online: true,
+    loggedIn: true,
+    isSelf: true,
+  };
+
+  test('本机折叠时按目录列表决定：设备的「文件」全关就不出头', () => {
+    const html = renderSection(SELF_NODE, [REMOTE_ROOT], {
+      expanded: false,
+      filesVisibility: { 'self:d-remote-local': false },
+    });
+    expect(html).not.toContain('data-testid="files-node-section-self"');
+  });
+
+  test('本机折叠且有可见目录时只出收起的分节头，不渲染目录', () => {
+    const html = renderSection(SELF_NODE, [REMOTE_ROOT], { expanded: false });
+    expect(html).toContain('data-testid="files-node-section-self"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain('data-testid="file-dir-r-remote-/srv/app"');
+  });
+
   test('根行带拖拽手柄，分节头带折叠开关', () => {
-    const html = renderSection(REMOTE_NODE, [REMOTE_ROOT]);
+    const html = renderSection(REMOTE_NODE, [REMOTE_ROOT], { filesVisibility: REMOTE_OPT_IN });
     expect(html).toContain('data-testid="files-node-toggle-node-app"');
     expect(html).toContain('aria-label="拖动以调整目录顺序"');
   });
@@ -163,6 +264,7 @@ describe('FilesNodeSection 的分节头', () => {
    */
   test('受控折叠时只留分节头，不挂 roots 查询', () => {
     const runtime = createAppRuntime({ storagePrefix: `files-node-section-${storageSeq++}:` });
+    seedFilesVisibility(runtime, REMOTE_OPT_IN);
     const queryClient = new QueryClient();
     const html = renderToStaticMarkup(
       <MemoryRouter>
@@ -208,6 +310,9 @@ describe('FilesNodeSection 的按 node 隔离', () => {
     const a = countingRuntime();
     const b = countingRuntime();
     const offline = countingRuntime();
+    seedFilesVisibility(a.runtime, REMOTE_OPT_IN);
+    seedFilesVisibility(b.runtime, { 'node-b:d-b-local': true });
+    seedFilesVisibility(offline.runtime, { 'node-c:d-c-local': true });
     const clientA = new QueryClient();
     const clientB = new QueryClient();
     const clientOffline = new QueryClient();
