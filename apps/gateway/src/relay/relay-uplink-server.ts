@@ -1,4 +1,4 @@
-import { encodeBase64url, hostFromUrl, randomBytes } from '@vibeterm/shared/auth';
+import { bytesToHex, encodeBase64url, hostFromUrl, randomBytes } from '@vibeterm/shared/auth';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import {
   MIN_RELAY_CLIENT_VERSION,
@@ -41,7 +41,6 @@ import {
   type RelayRuntimeConfig,
   type RelayTenantRecord,
 } from './types';
-
 type PendingAuth = { nonce: Uint8Array; observedIpv4?: string };
 
 export type RelayUplinkServerOptions = {
@@ -68,7 +67,6 @@ export type RelayUplinkServerOptions = {
   };
   turnProvider?: () => RelayRtcConfig['turn'];
 };
-
 export class RelayUplinkServer implements RelayUplinkHost {
   readonly relayHost: string;
   readonly db: AuthDb;
@@ -97,6 +95,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
   private readonly listDeps: RelayListDeps;
   private readonly enrollCreates: RelayEnrollCreateRate;
   private listVersion = 0;
+  private readonly listBoot = bytesToHex(randomBytes(8));
   private stopped = false;
   private tenantRates:
     | ((tenantId: string) => {
@@ -141,6 +140,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
         this.listVersion += 1;
         return this.listVersion;
       },
+      bootId: this.listBoot,
     };
   }
 

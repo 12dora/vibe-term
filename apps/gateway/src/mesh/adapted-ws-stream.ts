@@ -9,7 +9,7 @@ type OpenedLinkWsStream = {
   stream: Pick<LinkStream, 'id' | 'closed' | 'onAbort'>;
   send: (bytes: Uint8Array) => Promise<void>;
   readable: ReadableStream<Uint8Array>;
-  close: () => void;
+  close: (reason?: string) => void;
 };
 
 function waitStreamCloseInfo(stream: Pick<LinkStream, 'closed'>): Promise<StreamCloseInfo | null> {
@@ -96,7 +96,7 @@ export function adaptWsStream(opened: OpenedLinkWsStream): OpenedWsStream {
     },
     close(_code, reason) {
       try {
-        opened.close();
+        opened.close(reason);
       } catch {}
       notifyClose({ reason });
     },

@@ -42,6 +42,7 @@ import { bindRelayReconcile, createRelayWiring, relayUplinkOverrides } from './r
 import { fakeSocketPair, waitUntil } from './test-support';
 import type { KeyLogApplier, UplinkStatus } from './types';
 import { UplinkPool } from './uplink-pool';
+import { noteRelayCarriedStream } from './uplink-relay-drain';
 
 const RELAY_URL = 'https://relay.example';
 const TENANT_ID = 'cd'.repeat(16);
@@ -222,6 +223,14 @@ describe('RelayUplinkClient', () => {
     expect(original.awaitingToken).toBe(true);
     const stream = await pool.openRelay(b.peer.nodeIdHex);
     await waitUntil(() => servers[0]?.streams.length === 1);
+    let carriedDone!: () => void;
+    const carried = {
+      id: 99,
+      closed: new Promise<void>((resolve) => {
+        carriedDone = resolve;
+      }),
+    } as unknown as LinkStream;
+    noteRelayCarriedStream(original.uplinkUrl, carried);
 
     await updateRelayToken(b, TOKEN);
     await b.wiring.reconcileQuietly();
@@ -240,6 +249,9 @@ describe('RelayUplinkClient', () => {
 
     await Promise.all([stream.end(), servers[0]?.streams[0]?.end()]);
     await stream.closed;
+    await Bun.sleep(20);
+    expect(pool.liveClient()).toBe(original);
+    carriedDone();
     await waitUntil(() => pool.liveClient() !== original && pool.liveClient()?.state === 'online');
     const refreshed = pool.liveClient() as RelayUplinkClient;
     expect(refreshed.awaitingToken).toBe(false);

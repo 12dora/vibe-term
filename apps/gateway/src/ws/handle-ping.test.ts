@@ -122,4 +122,55 @@ describe('handlePing PONG priority path', () => {
 
     server.closeSession(ws, 1000, 'ping cleanup');
   });
+
+  test('PONG follows the carrier the PING arrived on', () => {
+    const server = new WebSocketServer();
+    const primary = createFakeCarrier();
+    const direct = createFakeCarrier();
+    const session = createGatewaySession({ carrier: primary });
+    server.handleOpen(session);
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(direct);
+    session.borshState.negotiated = true;
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_PING, pingPayload(5, 99n), 1);
+    server.handleMessage({ data: { session, carrier: primary } } as never, Buffer.from(frame));
+    expect(primary.sent).toHaveLength(1);
+    expect(decodePong(primary.sent[0] as Uint8Array).nonce).toBe(5);
+    expect(direct.sent).toHaveLength(0);
+    server.closeSession(session, 1000, 'ping cleanup');
+  });
+
+  test('stream session PONG follows the mux carrier, not the active direct DC', () => {
+    const server = new WebSocketServer();
+    const primary = createFakeCarrier();
+    const direct = createFakeCarrier();
+    const attached = server.attachStreamSession(primary);
+    const session = attached.session;
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(direct);
+    session.borshState.negotiated = true;
+    const frame = (nonce: number) =>
+      wsBorsh.encodeEnvelope(wsBorsh.KIND_PING, pingPayload(nonce, 1n), 1);
+    attached.onDecodedEnvelope(wsBorsh.decodeEnvelope(frame(7)));
+    attached.onMessage(frame(8));
+    expect(primary.sent).toHaveLength(2);
+    expect(direct.sent).toHaveLength(0);
+    server.closeSession(session, 1000, 'ping cleanup');
+  });
+
+  test('deliverRtcInbound PONG follows the direct carrier while active is primary', () => {
+    const server = new WebSocketServer();
+    const primary = createFakeCarrier();
+    const direct = createFakeCarrier();
+    const session = createGatewaySession({ carrier: primary });
+    server.handleOpen(session);
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(primary);
+    session.borshState.negotiated = true;
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_PING, pingPayload(9, 1n), 1);
+    server.deliverRtcInbound(session, frame, direct);
+    expect(direct.sent).toHaveLength(1);
+    expect(primary.sent).toHaveLength(0);
+    server.closeSession(session, 1000, 'ping cleanup');
+  });
 });

@@ -36,7 +36,8 @@ export interface DirectCarrierLike {
   send(bytes: Uint8Array): 'sent' | 'backpressure' | 'closed';
   onMessage(cb: (bytes: Uint8Array) => void): void;
   onClose(cb: () => void): void;
-  close(): void;
+  /** `reason` 只用于诊断：本端主动关闭的原因。 */
+  close(reason?: string): void;
 }
 
 /** 出站结果：`backpressure` = 已被直连排队、暂停继续压帧（不是失败，也不能改走 primary）。 */
@@ -301,7 +302,7 @@ export class CarrierSwitchBarrier {
     this.setPhase('primary');
     if (direct) {
       try {
-        direct.close();
+        direct.close('carrier switch buffer overflow');
       } catch {
         // 已在关闭中
       }

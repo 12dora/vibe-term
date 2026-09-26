@@ -15,8 +15,8 @@ import type { RtcSignalMessage } from './mesh-deps';
 import { logLine } from './mesh-log';
 import {
   type RerollOfferIgnoreReason,
+  consumeIgnoredRerollOffer,
   dropInboxMessage,
-  rerollOfferIgnoreReason,
 } from './peer-dc-reroll-offer';
 import { winningDialInitiator } from './peer-direct-attempt';
 import { type PeerManagerState, RTC_PEER_INBOX_MAX_MESSAGES } from './peer-manager-state';
@@ -59,6 +59,8 @@ export type DcRerollDeps = {
   sendPeerCtl?: (live: LivePeer, msg: Record<string, unknown>) => void;
   /** 应答侧 offer 忽略冷却；缺省放行。 */
   answererAllows?: (nodeId: string) => boolean;
+  isDegraded?: (nodeId: string) => boolean;
+  sendRtcSignal?: (peerNodeId: string, msg: RtcSignalMessage) => void;
 };
 
 let disabledLogged = false;
@@ -117,6 +119,7 @@ export class DcRerollCoordinator {
       this.state.pathRtt.record(live.peerNodeId, { kind: live.transport, rttMs: sampleMs });
     }
     this.settleResult(live);
+    if (this.deps.isDegraded?.(live.peerNodeId)) return;
     if (!dcRerollEnabled() || this.busy(live.peerNodeId)) return;
     const now = this.state.scheduler.now();
     const rec = this.recordOf(live.peerNodeId, now);
@@ -194,11 +197,6 @@ export class DcRerollCoordinator {
     return this.interceptOffer(nodeId, msg) || this.interceptCandidate(nodeId, msg);
   }
 
-  /**
-   * 应答侧入口：已是 dc 时常规路径不会再建 PC。更高 epoch 的 offer 在这里入队并起应答拨号。
-   * 只接对端报过 reroll 能力的 offer。接 offer 不看本端 request 预算；
-   * 应答本端仍在结果窗口内的 reroll-request 时绕过应答冷却。
-   */
   interceptOffer(nodeId: string, msg: RtcSignalMessage): boolean {
     if (!dcRerollEnabled() || !msg.sdp) return false;
     const offer = decodeSdpSignal(msg.sdp);
@@ -206,19 +204,20 @@ export class DcRerollCoordinator {
     const now = this.state.scheduler.now();
     const pending = this.state.rerolls.get(nodeId);
     const respondsToOurRequest = pending != null && this.isAnsweringOwnRequest(pending, now);
-    const reason = rerollOfferIgnoreReason({
+    const ignored = consumeIgnoredRerollOffer({
       live: this.state.live.get(nodeId),
       offerEpoch: offer.epoch,
       inflight: this.deps.hasDcInflight(nodeId),
       isAnswerer: !this.isInitiator(nodeId),
       answererAllows: this.deps.answererAllows?.(nodeId) !== false,
       respondsToOurRequest,
+      send: this.deps.sendRtcSignal,
+      selfId: this.state.identity.nodeId,
+      nodeId,
+      msg,
     });
-    if (reason === 'skip') return false;
-    if (reason) {
-      rtcLog('reroll_offer_ignored', { peer: id8(nodeId), reason });
-      return false;
-    }
+    if (ignored === 'skip') return false;
+    if (ignored === 'declined') return true;
     if (offer.epoch !== undefined) this.dropForeignCandidates(nodeId, offer.epoch);
     if (!this.enqueueInbox(nodeId, msg)) {
       rtcLog('reroll_offer_ignored', { peer: id8(nodeId), reason: 'inbox-full' });

@@ -36,6 +36,8 @@ export type DirectDialRaceOptions<T> = {
   sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   /** 输的一方晚到的会话：不是赢家也不是当前活链路就关掉，别留悬空 RTC 会话。 */
   discard: (kind: DialRaceLegKind, session: T, winner: T | null) => void;
+  /** 远端 SDP 已经落地的 DC 腿让它跑完，交给 track；DC 比 ws 高，会变成正常升级。 */
+  dcSdpApplied?: () => boolean;
   log?: (event: string, fields: Record<string, unknown>) => void;
 };
 
@@ -61,12 +63,13 @@ function settleDialRace<T>(
   legs: RaceLegs<T>,
   winner: Settled<T> | null,
   timedOut: boolean,
-  opts: Pick<DirectDialRaceOptions<T>, 'discard' | 'log'>
+  opts: Pick<DirectDialRaceOptions<T>, 'discard' | 'log' | 'dcSdpApplied'>
 ): DirectDialRaceOutcome<T> {
   const leftovers = [...legs.inflight.values()];
   const adopted = winner?.session ?? null;
   if (!timedOut) {
     for (const [kind, pending] of legs.inflight) {
+      if (kind === 'dc' && opts.dcSdpApplied?.()) continue;
       legs.aborts.get(kind)?.abort(new DOMException('dial-race-lost', 'AbortError'));
       void pending.then((late) => {
         if (late.session) opts.discard(kind, late.session, adopted);
@@ -258,6 +261,7 @@ export type ForegroundDialPorts<T> = {
   live: () => T | null;
   close: (session: T, reason: string) => void;
   log: (event: string, fields: Record<string, unknown>) => void;
+  dcSdpApplied?: () => boolean;
   /** 调用方自定义 socket 超时；缺省或等于 `PEER_CONNECT_TIMEOUT_MS` 时走 RTT 自适应。 */
   connectTimeoutMs?: number;
   nodeId?: string;
@@ -292,6 +296,7 @@ export function raceForegroundDial<T>(
     now: () => ports.scheduler.now(),
     sleep: (ms, signal) => ports.scheduler.sleep(ms, signal),
     log: ports.log,
+    dcSdpApplied: ports.dcSdpApplied,
     discard: (_kind, session, winner) => {
       if (session === winner || ports.live() === session) return;
       ports.close(session, 'dial-race-lost');

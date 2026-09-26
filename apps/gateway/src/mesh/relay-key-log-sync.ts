@@ -81,12 +81,7 @@ export type RelayKeyLogSyncOptions = {
   pushMode?: RelayKeyLogPushMode;
 };
 
-/**
- * 中继侧密钥日志双向同步：本地 head 落后就拉取解密应用，超前就上传缺失记录。
- * 中继线协议只带 `key_log_head_seq`（没有 head hash），fork 由本地 applier 与
- * secondary 的前缀校验兜底。记录本身是 `prev_hash` 哈希链，见 `remoteIsLocalPrefix`。
- * secondary 的 `prefix-verified` 模式禁止把本机新记录推到可能已分叉的中继上。
- */
+/** 中继密钥日志同步。`prefix-verified` 只向已验证前缀补推，主中继无条件发布。 */
 export class RelayKeyLogSync {
   remoteHead: bigint | null = null;
   /** 拉下来但解不开 / 应用不了的记录数（诊断用，前端展示）。 */
@@ -101,7 +96,7 @@ export class RelayKeyLogSync {
   private readonly host: RelayKeyLogSyncHost;
   private readonly applier: KeyLogApplier;
   private readonly timeoutMs: number;
-  private readonly pushMode: RelayKeyLogPushMode;
+  private pushMode: RelayKeyLogPushMode;
   private divergedLogged = false;
   private readonly pendingAcks = new Map<string, (ack: RelayKeyLogAck) => void>();
   private pendingReq: {
@@ -118,6 +113,11 @@ export class RelayKeyLogSync {
     this.applier = opts.applier;
     this.timeoutMs = opts.timeoutMs ?? RELAY_KEYLOG_ACK_TIMEOUT_MS;
     this.pushMode = opts.pushMode ?? 'publish';
+  }
+
+  setPushMode(mode: RelayKeyLogPushMode): void {
+    this.pushMode = mode;
+    if (mode === 'publish') this.schedule();
   }
 
   reset(reason = 'reconnect'): void {

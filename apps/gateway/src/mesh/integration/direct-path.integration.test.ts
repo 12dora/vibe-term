@@ -387,7 +387,7 @@ describe('direct path integration', () => {
     openedB.close();
   }, 15_000);
 
-  test('duplicate cid is rejected and the original session stays intact', async () => {
+  test('same cid on a new stream takes over the previous session', async () => {
     const fake = createFakeNativeModule();
     const wsServer = new WebSocketServer();
     const h = await bootRelayMeshHarness();
@@ -425,11 +425,12 @@ describe('direct path integration', () => {
     await waitUntil(() => openedSessions.length === 1, 3_000);
     const original = openedSessions[0] as GatewaySession;
     const second = await openWsStream(linkA2, sid, 'same-nonce');
-    await expect(second.stream.closed).resolves.toMatchObject({ reason: 'rst' });
-    expect(openedSessions).toHaveLength(1);
-    expect(original.closed).toBe(false);
-    expect(mesh.sessions.listBySid(sid)).toHaveLength(1);
-    first.close();
+    await waitUntil(() => openedSessions.length === 2, 3_000);
+    await expect(first.stream.closed).resolves.toMatchObject({ reason: 'rst' });
+    const sessions = mesh.sessions.listBySid(sid);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.session).not.toBe(original);
+    second.close();
   }, 10_000);
 
   test('expired session and wrong via cannot attach a direct carrier', async () => {
@@ -640,7 +641,7 @@ describe('direct path integration', () => {
     const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       linkB.onStream(resolve)
     );
-    const open = new TextEncoder().encode('{"type":"ping"}');
+    const open = new TextEncoder().encode('{"type":"http","method":"GET","path":"/healthz"}');
     const out = await linkA.openStream(open);
     const inn = await incoming;
     expect(inn.openPayload).toEqual(open);

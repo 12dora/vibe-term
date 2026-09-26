@@ -7,6 +7,7 @@ import { reconfigureUplinkPool } from './relay-wiring';
 import { seedUser, waitUntil } from './test-support';
 import type { KeyLogApplier, PooledUplink, UplinkState, UplinkStatus } from './types';
 import { type UplinkCandidate, UplinkPool } from './uplink-pool';
+import { noteRelayCarriedStream } from './uplink-relay-drain';
 
 const applier: KeyLogApplier = {
   async head() {
@@ -177,7 +178,7 @@ describe('UplinkPool 上级种类切换', () => {
     }
   });
 
-  test('reconfigure waits for current relay streams and then rebuilds the pool', async () => {
+  test('reconfigure waits for carried user streams and then rebuilds the pool', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const userStore = new UserStore(db);
@@ -204,9 +205,11 @@ describe('UplinkPool 上级种类切换', () => {
       pool.start();
       await waitUntil(() => pool.attachedUplink() !== null);
       const old = created[0];
+      if (!old) throw new Error('missing uplink');
       const active = controlledRelayStream();
-      old?.relayStreams.push(active.stream);
+      old.relayStreams.push(active.stream);
       await pool.openRelay('cd'.repeat(16));
+      noteRelayCarriedStream(old.uplinkUrl, active.stream);
       kind = 'relay';
 
       let reconfigured = false;
@@ -227,7 +230,7 @@ describe('UplinkPool 上级种类切换', () => {
     }
   });
 
-  test('reconfigure enforces the relay drain hard cap', async () => {
+  test('reconfigure enforces the carried-stream drain hard cap', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const userStore = new UserStore(db);
@@ -252,14 +255,18 @@ describe('UplinkPool 上级种类切换', () => {
       });
       pool.start();
       await waitUntil(() => pool.attachedUplink() !== null);
+      const old = created[0];
+      if (!old) throw new Error('missing uplink');
       const active = controlledRelayStream();
-      created[0]?.relayStreams.push(active.stream);
+      old.relayStreams.push(active.stream);
       await pool.openRelay('cd'.repeat(16));
+      noteRelayCarriedStream(old.uplinkUrl, active.stream);
 
       const startedAt = performance.now();
       await reconfigureUplinkPool(pool);
       expect(performance.now() - startedAt).toBeGreaterThanOrEqual(15);
       expect(created[0]?.stopped).toBeGreaterThan(0);
+      active.finish();
       await pool.stop();
     } finally {
       close();

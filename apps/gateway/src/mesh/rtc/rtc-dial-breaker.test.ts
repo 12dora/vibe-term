@@ -177,16 +177,16 @@ describe('RtcDialBreaker', () => {
     expect(breaker.noteHealthy(peer)).toBe(false);
   });
 
-  test('notePeerChanged does not reset cooling', () => {
-    let now = 10;
+  test('decay rearm clears cooling without wiping failures', () => {
+    const now = 10;
     const breaker = new RtcDialBreaker({ now: () => now, breakerMs: 60_000 });
     const peer = 'hub-a';
     for (let i = 0; i < RTC_DIAL_BREAKER_FAILS; i += 1) breaker.noteFailure(peer, 'x', `f${i}`);
+    const before = breaker.snapshot(peer).failures;
     expect(breaker.shouldTry(peer).allow).toBe(false);
-    breaker.notePeerChanged(peer);
-    expect(breaker.shouldTry(peer).allow).toBe(false);
-    now = 10 + 60_000;
+    expect(breaker.rearmDisabled(peer, 'uplink-url-changed')).toBe(true);
     expect(breaker.shouldTry(peer).allow).toBe(true);
+    expect(breaker.snapshot(peer).failures).toBe(before);
   });
 
   test('cooldown is capped at 30 min and skip is per-peer', () => {
@@ -249,14 +249,14 @@ describe('RtcDialBreaker', () => {
       stage: 'dtls',
       remoteSdpApplied: true,
     });
-    expect(dtls.counted).toBe(true);
+    expect(dtls.counted).toBe(false);
     const handshake = breaker.noteFailure(peer, 'timeout', 'handshake', undefined, {
       peerInitiated: true,
       stage: 'handshake',
       remoteSdpApplied: true,
     });
-    expect(handshake.counted).toBe(true);
-    expect(breaker.shouldTry(peer).failures).toBe(2);
+    expect(handshake.counted).toBe(false);
+    expect(breaker.shouldTry(peer).failures).toBe(0);
     expect(breaker.shouldTry(peer).cooling).toBe(false);
 
     const third = breaker.noteFailure(peer, 'timeout', 'handshake-2', undefined, {
@@ -264,10 +264,10 @@ describe('RtcDialBreaker', () => {
       stage: 'handshake',
       remoteSdpApplied: true,
     });
-    expect(third.counted).toBe(true);
-    expect(third.opened).toBe(true);
-    expect(breaker.shouldTry(peer).cooling).toBe(true);
-    expect(trips).toHaveLength(1);
+    expect(third.counted).toBe(false);
+    expect(third.opened).toBe(false);
+    expect(breaker.shouldTry(peer).cooling).toBe(false);
+    expect(trips).toHaveLength(0);
   });
 
   test('peer-initiated timeouts trip answerer backoff without opening the offerer breaker', () => {
@@ -286,7 +286,7 @@ describe('RtcDialBreaker', () => {
           stage: 'checking',
           remoteSdpApplied: true,
         });
-        expect(result.counted).toBe(true);
+        expect(result.counted).toBe(false);
         expect(breaker.shouldAcceptAnswer(peer)).toBe(true);
       }
       const third = breaker.noteFailure(peer, 'datachannel open timeout', 'a2', undefined, {
@@ -294,12 +294,11 @@ describe('RtcDialBreaker', () => {
         stage: 'checking',
         remoteSdpApplied: true,
       });
-      expect(third.counted).toBe(true);
+      expect(third.counted).toBe(false);
+      expect(breaker.shouldTry(peer).cooling).toBe(false);
+      breaker.noteAnswerAccepted(peer);
       expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
-      expect(breaker.shouldTry(peer).cooling).toBe(true);
-      expect(
-        lines.filter((row) => row.includes('answerer_backoff') && row.includes(`peer=${peer}`))
-      ).toHaveLength(1);
+      expect(breaker.shouldAcceptAnswer(peer, now, { respondsToOurRequest: true })).toBe(true);
 
       const uncounted = new RtcDialBreaker({ now: () => now });
       const other = 'dead-hub';
@@ -317,8 +316,10 @@ describe('RtcDialBreaker', () => {
         cooling: false,
         failures: 0,
       });
+      expect(uncounted.shouldAcceptAnswer(other)).toBe(true);
+      uncounted.noteAnswerAccepted(other);
       expect(uncounted.shouldAcceptAnswer(other)).toBe(false);
-      now += ANSWERER_COOLDOWN_MS[0];
+      now += 30_000;
       expect(uncounted.shouldAcceptAnswer(other)).toBe(true);
       uncounted.noteChannelEstablished(other, 'ok');
       expect(uncounted.shouldAcceptAnswer(other)).toBe(true);
@@ -337,8 +338,26 @@ describe('RtcDialBreaker', () => {
         remoteSdpApplied: false,
       });
     }
+    breaker.noteAnswerAccepted(peer);
     expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
     expect(breaker.shouldAcceptAnswer(peer, 0, { respondsToOurRequest: true })).toBe(true);
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
+  });
+
+  test('a finished peer-initiated attempt clears the answer rate', () => {
+    let now = 5_000;
+    const breaker = new RtcDialBreaker({ now: () => now });
+    const peer = 'p';
+    breaker.noteAnswerAccepted(peer);
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
+    breaker.noteFailure(peer, 'timeout', 'a1', undefined, {
+      peerInitiated: true,
+      stage: 'checking',
+      remoteSdpApplied: true,
+    });
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(true);
+    now += 1;
+    breaker.noteAnswerAccepted(peer);
     expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
   });
 
@@ -347,14 +366,14 @@ describe('RtcDialBreaker', () => {
     const peer = 'p';
     expect(
       breaker.noteFailure(peer, 'ice failed', 'a1', undefined, { peerInitiated: true }).counted
-    ).toBe(true);
+    ).toBe(false);
     expect(
       breaker.noteFailure(peer, 'ice failed', 'a2', undefined, { peerInitiated: true }).counted
-    ).toBe(true);
+    ).toBe(false);
     const third = breaker.noteFailure(peer, 'ice failed', 'a3', undefined, { peerInitiated: true });
-    expect(third.counted).toBe(true);
-    expect(third.opened).toBe(true);
-    expect(breaker.shouldTry(peer).cooling).toBe(true);
+    expect(third.counted).toBe(false);
+    expect(third.opened).toBe(false);
+    expect(breaker.shouldTry(peer).cooling).toBe(false);
   });
 
   test('does not count local signaling-state failures', () => {
@@ -422,40 +441,27 @@ describe('RtcDialBreaker', () => {
     for (const source of DC_REARM_SOURCES) {
       for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'timeout', `${source}-${i}`);
       expect(breaker.isDisabled(peer)).toBe(true);
-      if (source === 'local-fingerprint' || source === 'uplink-switch') {
-        expect(breaker.rearmAllDisabled(source)).toEqual([peer]);
-      } else {
-        expect(breaker.rearmDisabled(peer, source)).toBe(true);
-      }
+      expect(breaker.rearmDisabled(peer, source)).toBe(true);
       expect(breaker.isDisabled(peer)).toBe(false);
       expect(breaker.shouldTry(peer).allow).toBe(true);
-      if (source === 'presence-return') {
-        expect(breaker.shouldTry(peer).failures).toBeGreaterThan(0);
-        expect(breaker.snapshot(peer).level).toBe(0);
-      } else {
+      const full =
+        source === 'manual' || source === 'local-fingerprint' || source === 'peer-endpoint';
+      if (full) {
         expect(breaker.shouldTry(peer).failures).toBe(0);
         expect(breaker.snapshot(peer).level).toBe(0);
+      } else {
+        expect(breaker.shouldTry(peer).failures).toBeGreaterThan(0);
       }
     }
-    expect(rearms).toEqual([
-      'local-fingerprint',
-      'local-fingerprint',
-      'peer-endpoint',
-      'uplink-switch',
-      'peer-capabilities',
-      'manual',
-      'presence-return',
-    ]);
+    expect(rearms).toEqual(['local-fingerprint', ...DC_REARM_SOURCES]);
   });
 
-  test('forceProbe rearms disabled and notePeerChanged does not', () => {
+  test('forceProbe rearms a disabled peer', () => {
     const breaker = new RtcDialBreaker({ now: () => 0, disableAfter: 3, breakerMs: 30_000 });
     const peer = 'p';
     for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'x', `f${i}`);
     expect(breaker.shouldTry(peer).allow).toBe(false);
-    breaker.notePeerChanged(peer);
     expect(breaker.isDisabled(peer)).toBe(true);
-    expect(breaker.shouldTry(peer).allow).toBe(false);
     breaker.forceProbe(peer);
     expect(breaker.isDisabled(peer)).toBe(false);
     expect(breaker.shouldTry(peer).allow).toBe(true);
@@ -541,8 +547,12 @@ describe('RtcDialBreaker', () => {
       disabled: false,
       cooling: true,
     });
+    expect(breaker.shouldAcceptAnswer(peer)).toBe(true);
+    expect(breaker.shouldAcceptAnswer(peer, now.t, { respondsToOurRequest: true })).toBe(true);
+    expect(breaker.inboundBlock(peer)).toBeNull();
+    breaker.noteAnswerAccepted(peer);
     expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
-    expect(breaker.shouldAcceptAnswer(peer, now.t, { respondsToOurRequest: true })).toBe(false);
+    expect(breaker.shouldAcceptAnswer(peer, now.t, { respondsToOurRequest: true })).toBe(true);
     expect(breaker.inboundBlock(peer)).toBe('cooling');
 
     const disabled = new RtcDialBreaker({ now: () => 0, disableAfter: 3 });
@@ -735,6 +745,47 @@ describe('RtcDialBreaker', () => {
     breaker.noteUnstable(peer, 60_000, now);
     expect(breaker.rearmDisabled(peer, 'presence-return')).toBe(true);
     expect(breaker.snapshot(peer).lastFailureKind).toBe('unstable-dc');
+  });
+
+  test('uplink decay restores only the refusal wait, not the escalation cooldown', () => {
+    let now = 1_000;
+    const breaker = new RtcDialBreaker({ now: () => now, breakerMs: 30_000 });
+    const peer = 'p';
+    for (let round = 0; round < 3; round += 1) {
+      const until = breaker.snapshot(peer).until;
+      if (until != null && until > now) now = until;
+      for (let i = 0; i < 3; i += 1) breaker.noteFailure(peer, 'timeout', `r${round}-${i}`);
+    }
+    const escalated = breaker.snapshot(peer);
+    expect(escalated.until).toBeGreaterThan(now + 60_000);
+    const refusalUntil = now + 60_000;
+    breaker.noteRemoteRefusal(peer, refusalUntil);
+    expect(breaker.snapshot(peer).until).toBe(escalated.until);
+    expect(breaker.rearmDisabled(peer, 'uplink-url-changed')).toBe(true);
+    expect(breaker.snapshot(peer).level).toBe(escalated.level - 1);
+    expect(breaker.snapshot(peer).until).toBe(refusalUntil);
+    expect(breaker.honoursRemoteRefusal(peer)).toBe(true);
+    expect(breaker.rearmDisabled(peer, 'ice-config')).toBe(true);
+    expect(breaker.honoursRemoteRefusal(peer)).toBe(false);
+    expect(breaker.shouldTry(peer).allow).toBe(true);
+  });
+
+  test('foreign timeouts stay uncounted until the established DC is lost', () => {
+    let now = 1_000_000;
+    const breaker = new RtcDialBreaker({ now: () => now, disableAfter: 3 });
+    breaker.beginAttempt('p', 'dc:1');
+    breaker.noteChannelEstablished('p', 'dc:1');
+    now += 600_000;
+    breaker.beginAttempt('p', 'dc:2');
+    expect(breaker.noteFailure('p', 'timeout', 'dc:2').counted).toBe(false);
+    expect(breaker.snapshot('p').failures).toBe(0);
+    breaker.noteChannelLost('p', 'dc:1');
+    for (let i = 3; i < 6; i += 1) {
+      now += 600_000;
+      breaker.beginAttempt('p', `dc:${i}`);
+      expect(breaker.noteFailure('p', 'timeout', `dc:${i}`).counted).toBe(true);
+    }
+    expect(breaker.snapshot('p').failures).toBeGreaterThan(0);
   });
 });
 

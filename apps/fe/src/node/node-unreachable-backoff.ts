@@ -17,6 +17,7 @@
 // 换来的只是一个连本地都刷不出来的界面。
 
 import { ApiError, isSelfNode } from '@vibeterm/api-client';
+import { isNodeLinkFailureClose } from '@vibeterm/ws-client';
 import { useEffect, useSyncExternalStore } from 'react';
 import { onPageRecovery } from './mesh-recovery';
 
@@ -284,6 +285,34 @@ export function noteMeshNodesOnline(
     if (before.get(node.id) === true) continue;
     clearNodeBackoff(node.id);
   }
+}
+
+/**
+ * primary 重连读取本退避时的上限：退避本身会翻倍到 10 分钟（REST 照此节流），
+ * 终端连接最多多等 1 分钟，界面上的「重新连接」随时可以绕过它。
+ */
+export const PRIMARY_RECONNECT_FLOOR_CAP_MS = 60_000;
+
+/** primary WS 下一次重连的下限。 */
+export function primaryReconnectFloorMs(nodeId: string): number {
+  return Math.min(nodeBackoffRemainingMs(nodeId), PRIMARY_RECONNECT_FLOOR_CAP_MS);
+}
+
+/**
+ * 非 self 的 primary WS 关闭码记账：入口说「到不了这台 node」的 1011 记一笔「打不通」；
+ * 慢客户端撑爆转发队列之类的 1011 是浏览器这侧的问题，不记。关闭码一律原样转给宿主。
+ */
+export function withReachabilityAccounting(
+  nodeId: string,
+  onClose: (code: number) => void
+): (code: number, reason?: string) => void {
+  if (isSelfNode(nodeId)) return onClose;
+  return (code, reason) => {
+    if (isNodeLinkFailureClose(code, reason ?? null)) {
+      noteNodeUnreachable(nodeId, { reason: reason || null });
+    }
+    onClose(code);
+  };
 }
 
 /** 页面重新可见 / 网络恢复：整份退避作废，各条请求重新试一次。 */

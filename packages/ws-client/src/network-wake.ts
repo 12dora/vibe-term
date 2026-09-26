@@ -1,5 +1,6 @@
 // 网络恢复唤醒：`online`、`navigator.connection` 的 `change`、以及 iOS 上两者都没有时的
 // 可见前台 liveness。退避已经排到封顶间隔时干等一个整间隔纯属浪费，网络一回来就立刻醒一次。
+// 回前台 / `pageshow` 的唤醒归 `client-resume.ts`，这里只用可见性启停前台节拍，不重复唤醒。
 // 非浏览器宿主（bun / node）事件源都取不到，install 后就是空操作。
 
 /** 事件源的最小结构子集（`window` / `navigator.connection` / `document` 都满足）。 */
@@ -64,6 +65,20 @@ function documentVisibility(): 'visible' | 'hidden' | null {
   return doc.visibilityState === 'hidden' ? 'hidden' : 'visible';
 }
 
+/** 唤醒来源：`online` 是网络恢复；`change` / `watchdog` 只是「链路可能变了」的线索。 */
+export type NetworkWakeSource = 'online' | 'change' | 'watchdog';
+
+/**
+ * 唤醒信号的分量。`recovery`（online / 回前台 / pageshow）可清零退避立即重连；`hint`
+ * （`change` 在 Android 上随每次带宽估计更新都会来、漂移看门狗）只能把排着的重连提前，
+ * 不越过宿主给的下限、也不清零退避计数。
+ */
+export type WakeKind = 'recovery' | 'hint';
+
+export function wakeKindOf(source: NetworkWakeSource): WakeKind {
+  return source === 'online' ? 'recovery' : 'hint';
+}
+
 export class NetworkWakeListeners {
   private readonly cleanups: Array<() => void> = [];
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -73,7 +88,7 @@ export class NetworkWakeListeners {
   private readonly clock: NetworkWakeClock;
 
   constructor(
-    private readonly onWake: () => void,
+    private readonly onWake: (source: NetworkWakeSource) => void,
     clock: NetworkWakeClock = defaultClock
   ) {
     this.clock = clock;
@@ -82,12 +97,11 @@ export class NetworkWakeListeners {
   /** 幂等：已装过就不重复装。 */
   install(): void {
     if (this.cleanups.length > 0) return;
-    this.bind(windowEventSource(), 'online', 0);
-    this.bind(windowEventSource(), 'pageshow', 0);
+    this.bind(windowEventSource(), 'online', 'online', 0);
     // Wi-Fi ↔ 蜂窝切换通常不触发 `online`，有 Network Information API 时才听 change。
-    this.bind(connectionEventSource(), 'change', NETWORK_CHANGE_DEBOUNCE_MS);
+    this.bind(connectionEventSource(), 'change', 'change', NETWORK_CHANGE_DEBOUNCE_MS);
     this.bindVisibility();
-    this.bind(windowEventSource(), 'offline', 0, () => {
+    this.bind(windowEventSource(), 'offline', 'watchdog', 0, () => {
       this.trouble = true;
     });
     if (documentVisibility() === 'visible') this.startWatch();
@@ -113,13 +127,14 @@ export class NetworkWakeListeners {
   private bind(
     target: EventTargetLike | null,
     type: string,
+    source: NetworkWakeSource,
     debounceMs: number,
     beforeWake?: () => void
   ): void {
     if (!target) return;
     const handler = () => {
       beforeWake?.();
-      this.schedule(debounceMs);
+      this.schedule(source, debounceMs);
     };
     target.addEventListener(type, handler);
     this.cleanups.push(() => {
@@ -138,7 +153,6 @@ export class NetworkWakeListeners {
         return;
       }
       this.startWatch();
-      this.schedule(0);
     };
     doc.addEventListener('visibilitychange', handler);
     this.cleanups.push(() => {
@@ -171,19 +185,19 @@ export class NetworkWakeListeners {
     this.lastTickAt = now;
     if (offline || drifted) this.trouble = true;
     if (!this.trouble) return;
-    this.onWake();
+    this.onWake('watchdog');
     if (!offline && !drifted) this.trouble = false;
   }
 
-  private schedule(debounceMs: number): void {
+  private schedule(source: NetworkWakeSource, debounceMs: number): void {
     this.clearTimer();
     if (debounceMs <= 0) {
-      this.onWake();
+      this.onWake(source);
       return;
     }
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null;
-      this.onWake();
+      this.onWake(source);
     }, debounceMs);
   }
 

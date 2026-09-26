@@ -44,6 +44,7 @@ import {
 } from './node-operations';
 import { pausedNodeIds } from './node-pause';
 import { directBusyBody } from './rtc/browser-authorize';
+import { BrowserSignalReplay } from './rtc/browser-signal-replay';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -88,6 +89,7 @@ export class MeshRoutes {
   private readonly backpressureWarned = new WeakSet<MeshServerWebSocket>();
   private readonly unsubPeer: () => void;
   private unsubSignals: (() => void) | null = null;
+  private readonly rtcReplay = new BrowserSignalReplay();
   private seq = 0;
 
   constructor(private readonly deps: MeshRoutesDeps) {
@@ -100,8 +102,8 @@ export class MeshRoutes {
       this.broadcastNodeEvent(event);
     });
     if (deps.rtcSignals) {
-      this.unsubSignals = deps.rtcSignals.subscribe((signal) => {
-        this.broadcastRtcSignal(signal);
+      this.unsubSignals = deps.rtcSignals.subscribe((signal, browserSessionId) => {
+        this.broadcastRtcSignal(signal, browserSessionId);
       });
     }
   }
@@ -155,6 +157,7 @@ export class MeshRoutes {
     if (ws.data.sid && ws.data.uid) {
       this.deps.registerSocket?.(ws, { sid: ws.data.sid, uid: ws.data.uid });
     }
+    this.replayRtcTo(ws);
   }
 
   handleMeshSocketMessage(ws: MeshServerWebSocket, message: unknown): void {
@@ -479,7 +482,28 @@ export class MeshRoutes {
     this.broadcast(encodeNodeEventFrame(event, ++this.seq, this.deps.peers));
   }
 
-  private broadcastRtcSignal(signal: RtcSignalMessage): void {
+  private broadcastRtcSignal(signal: RtcSignalMessage, browserSessionId?: string): void {
+    if (signal.from !== 'node') {
+      this.broadcast(this.encodeRtcFrame(signal));
+      return;
+    }
+    if (!browserSessionId) return;
+    this.rtcReplay.remember(browserSessionId, signal, this.clock());
+    const frame = this.encodeRtcFrame(signal);
+    for (const ws of this.meshSockets) {
+      if (ws.data.sid !== browserSessionId) continue;
+      this.sendToMeshClient(ws, frame);
+    }
+  }
+
+  private replayRtcTo(ws: MeshServerWebSocket): void {
+    const sid = ws.data.sid;
+    if (!sid) return;
+    const queued = this.rtcReplay.peek(sid, this.clock());
+    for (const signal of queued) this.sendToMeshClient(ws, this.encodeRtcFrame(signal));
+  }
+
+  private encodeRtcFrame(signal: RtcSignalMessage): Uint8Array {
     const payload = wsBorsh.encodePayload(wsBorsh.schema.RtcSignalSchema, {
       rtcSession: signal.rtcSession,
       from: signal.from === 'node' ? wsBorsh.RTC_SIGNAL_FROM_NODE : wsBorsh.RTC_SIGNAL_FROM_BROWSER,
@@ -487,8 +511,11 @@ export class MeshRoutes {
       sdp: signal.sdp ?? null,
       candidate: signal.candidate ?? null,
     });
-    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_RTC_SIGNAL, payload, ++this.seq);
-    this.broadcast(frame);
+    return wsBorsh.encodeEnvelope(wsBorsh.KIND_RTC_SIGNAL, payload, ++this.seq);
+  }
+
+  private clock(): number {
+    return this.deps.now?.() ?? Date.now();
   }
 
   private broadcast(frame: Uint8Array): void {

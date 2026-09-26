@@ -1,4 +1,5 @@
 import type { UserStore } from '../../auth/user-store';
+import { peerLivenessDeadlineMs } from '../peer-manager-state';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import { fanoutDataChannel } from './channel-fanout';
@@ -20,6 +21,7 @@ import {
   rtcLog,
   rtcLogCandidate,
 } from './rtc-log';
+import { DcDeclinedError, type DcOfferDeclineDetail } from './rtc-offer-decline';
 import {
   PEER_CHANNEL_LABEL,
   type SignalingAttemptState,
@@ -41,6 +43,7 @@ export type BindPeerSignalingHooks = {
   ctx?: RtcLogContext;
   lastOfferEpoch?: number;
   onSuperseded?: (epoch?: number) => void;
+  onDeclined?: (detail: DcOfferDeclineDetail) => void;
   onEpoch?: (epoch: number) => void;
   onRemoteDescriptionApplied?: () => void;
   onState?: (state: SignalingAttemptState) => void;
@@ -64,6 +67,7 @@ export function bindPeerSignaling(
   const state = createSignalingAttemptState(epoch, hooks?.lastOfferEpoch);
   state.logFields = { ...hooks?.ctx, peer: to, epoch };
   state.onSuperseded = hooks?.onSuperseded;
+  state.onDeclined = hooks?.onDeclined;
   hooks?.onState?.(state);
   state.onEpoch = (next) => {
     state.logFields = { ...state.logFields, epoch: next };
@@ -167,7 +171,7 @@ export async function runPeerHandshake(opts: {
     const link = new DataChannelLink(channel, {
       peer: peerNodeId,
       attempt: opts.attempt,
-      ...(opts.liveness === false ? { liveness: false as const } : opts.liveness),
+      ...nodeDcLiveness(opts.liveness),
     });
     if (hs.peerNodeId !== peerNodeId.toLowerCase()) {
       throw new PeerHandshakeError('protocol', 'connected peer node_id mismatch');
@@ -194,6 +198,18 @@ export type PeerConnectAttemptHooks = {
   noteSummary: (outcome: 'success' | 'failure', durationMs: number) => void;
   untrackAndClose: (pc: PeerConnectionLike) => void;
 };
+
+/**
+ * 活链路的判死靠 mux ping。没升成 live 的候选、以及退役后仍带着流的 DC 没有 mux ping，
+ * 保留 DataChannel 空闲计时，窗口与 missed-pong 相同。调用方给了 timeout 时沿用（测试 / 显式配置）。
+ */
+function nodeDcLiveness(
+  liveness: Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'> | false
+): { liveness: false } | Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'> {
+  if (liveness === false) return { liveness: false };
+  if (liveness.timeoutMs != null) return liveness;
+  return { ...liveness, timeoutMs: peerLivenessDeadlineMs(undefined) };
+}
 
 function startPeerHandshake(
   opts: {
@@ -238,6 +254,7 @@ export async function runPeerConnectAttempt(opts: {
   epoch?: number;
   lastOfferEpoch?: number;
   signal?: AbortSignal;
+  onRemoteSdpApplied?: () => void;
   identity: MeshIdentity;
   userStore: UserStore;
   liveness: Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'> | false;
@@ -282,12 +299,18 @@ export async function runPeerConnectAttempt(opts: {
           unsubSignaling();
           rejectSuperseded?.(new Error('superseded'));
         },
+        onDeclined: (detail) => {
+          supersededSync = true;
+          unsubSignaling();
+          rejectSuperseded?.(new DcDeclinedError(detail));
+        },
         onEpoch: (next) => {
           ctx.epoch = next;
           hooks.rememberOfferEpoch(next);
         },
         onRemoteDescriptionApplied: () => {
           progress.remoteDescriptionApplied = true;
+          opts.onRemoteSdpApplied?.();
         },
         onState: (state) => {
           sigState = state;
@@ -316,27 +339,55 @@ export async function runPeerConnectAttempt(opts: {
     });
     return { ...result, epoch: ctx.epoch ?? opts.epoch };
   } catch (err) {
-    if (!summaryNoted && !isSupersededDcLoss(err)) {
-      hooks.noteSummary('failure', performance.now() - opts.dialStartedAt);
-    }
-    const reason = err instanceof Error ? err.message : String(err);
-    if (isRtcTimeoutFailure(reason)) {
-      logRtcDialTimeout(peerNodeId, pc, trace, progress, ice, reason);
-    }
-    unsubSignaling();
-    unsubDiag();
-    hooks.untrackAndClose(pc);
-    if (isRtcTimeoutFailure(reason)) {
-      throw withRtcDialFailureMeta(
-        new PeerHandshakeError(
-          'timeout',
-          timeoutFailureMessage(progress, ice, trace.localCounts, reason)
-        ),
-        progress
-      );
-    }
-    throw withRtcDialFailureMeta(err, progress);
+    throw failPeerConnectAttempt(err, {
+      summaryNoted,
+      elapsedMs: performance.now() - opts.dialStartedAt,
+      peerNodeId,
+      pc,
+      trace,
+      progress,
+      ice,
+      hooks,
+      unsubSignaling,
+      unsubDiag,
+    });
   }
+}
+
+function failPeerConnectAttempt(
+  err: unknown,
+  ctx: {
+    summaryNoted: boolean;
+    elapsedMs: number;
+    peerNodeId: string;
+    pc: PeerConnectionLike;
+    trace: IceCandidateTrace;
+    progress: RtcDialProgress;
+    ice: IceServerConfig;
+    hooks: PeerConnectAttemptHooks;
+    unsubSignaling: () => void;
+    unsubDiag: () => void;
+  }
+): never {
+  if (!ctx.summaryNoted && !isSupersededDcLoss(err))
+    ctx.hooks.noteSummary('failure', ctx.elapsedMs);
+  const reason = err instanceof Error ? err.message : String(err);
+  if (isRtcTimeoutFailure(reason)) {
+    logRtcDialTimeout(ctx.peerNodeId, ctx.pc, ctx.trace, ctx.progress, ctx.ice, reason);
+  }
+  ctx.unsubSignaling();
+  ctx.unsubDiag();
+  ctx.hooks.untrackAndClose(ctx.pc);
+  if (isRtcTimeoutFailure(reason)) {
+    throw withRtcDialFailureMeta(
+      new PeerHandshakeError(
+        'timeout',
+        timeoutFailureMessage(ctx.progress, ctx.ice, ctx.trace.localCounts, reason)
+      ),
+      ctx.progress
+    );
+  }
+  throw withRtcDialFailureMeta(err, ctx.progress);
 }
 
 export function withRtcDialFailureMeta<T>(err: T, progress: RtcDialProgress): T {

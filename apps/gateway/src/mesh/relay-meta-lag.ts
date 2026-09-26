@@ -97,7 +97,7 @@ export function metaKeyLaggingIdsFor(input: {
  * 顺带还让这些节点永远改不了名（`rename-node` 同样吃这道门）。
  *
  * 只豁免「旧节点解不开也不会卡死整条链」的那几类记录；`readmit-node` /
- * `notification-sink` / `rotate-root-keep` 一律照旧 fail-closed。
+ * `notification-sink` / `rotate-root-keep` / `login-policy` 一律照旧 fail-closed。
  */
 const META_LAG_EXEMPT_RECORD_TYPES: readonly string[] = ['meta-key', 'set-relays', 'rename-node'];
 

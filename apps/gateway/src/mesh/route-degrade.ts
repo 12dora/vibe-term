@@ -5,16 +5,8 @@ import {
   type MeshRouteMode,
   type MeshStreamClass,
 } from '@vibeterm/shared/net';
-import { encodeJsonBytes } from './ctl';
 import { logLine } from './mesh-log';
-import {
-  PEER_PING_INTERVAL_MS,
-  type PeerManagerState,
-  measurePingRttMs,
-  parseEchoedSentAt,
-  readUplinkRtt,
-} from './peer-manager-state';
-import { parseOpenPayload } from './peer-protocol';
+import { type PeerManagerState, readUplinkRtt } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { quiet } from './peer-ws-race';
 import {
@@ -24,14 +16,13 @@ import {
   detachRemoteHold,
   remoteDirectBlocked,
   resolveRefusedUserLink,
-  signalRoutePromoted,
 } from './pending-measure-hold';
+import { CandidateHold, type CandidateOffer } from './route-degrade-hold';
 import { type PeerRouteRecord, emptyRouteRecord, formatRouteSwitch } from './route-degrade-record';
 import type { MeshRouteModeStore } from './route-mode-store';
 import {
   ROUTE_DEGRADE_CONSECUTIVE,
   ROUTE_DEGRADE_MIN_SPAN_MS,
-  ROUTE_PROMOTE_SAMPLES,
   decidePath,
   isDirectSlowVsRelay,
   isDirectTransport,
@@ -39,9 +30,10 @@ import {
   pathKindOf,
   readDirectMs,
   relayMsForPeer,
-  shouldPromoteDirect,
 } from './route-policy';
 import type { PeerTransportKind } from './types';
+
+export type { CandidateOffer };
 
 export type RouteModeHolder = Pick<MeshRouteModeStore, 'get' | 'subscribe'>;
 
@@ -61,6 +53,7 @@ export type TrackInterceptInput = {
   remoteAddress: string | null;
   dcAttemptId: string | null;
   rtcEpoch?: number;
+  quiesceCapable?: boolean;
   prev: LivePeer | undefined;
 };
 
@@ -80,36 +73,42 @@ export type RouteDegradePorts = {
     initiatedBy: string,
     gen: number,
     remoteAddress?: string | null,
-    dcAttemptId?: string | null
+    dcAttemptId?: string | null,
+    rtcEpoch?: number
   ) => LinkSession | null;
   finishRetire: (live: LivePeer, reason: string) => void;
   maybeUpgrade: (nodeId: string) => void;
-};
-
-type DirectCandidate = {
-  session: LinkSession;
-  transport: 'dc' | 'ws-secure';
-  initiatedBy: string;
-  gen: number;
-  remoteAddress: string | null;
-  dcAttemptId: string | null;
-  samples: number[];
-  pingTimer: { clear: () => void } | null;
-  pingSentAt: number | null;
+  openUntrackedRelay?: (nodeId: string) => Promise<LinkSession>;
+  parkSide?: (peerId: string, session: LinkSession) => void;
 };
 
 export class RouteDegradeCoordinator {
   private readonly ports: RouteDegradePorts;
   private readonly peers = new Map<string, PeerRouteRecord>();
-  private readonly candidates = new Map<string, DirectCandidate>();
   private readonly inflight = new Map<string, Promise<LinkSession | null>>();
-  private readonly measured = new WeakSet<LinkSession>();
+  private readonly hold: CandidateHold;
   private unsub: (() => void) | null = null;
   private lastMode: MeshRouteMode;
 
   constructor(ports: RouteDegradePorts) {
     this.ports = ports;
     this.lastMode = ports.mode.get();
+    this.hold = new CandidateHold({
+      now: () => this.now(),
+      selfId: () => this.ports.state.identity.nodeId,
+      mode: () => this.mode(),
+      isDegraded: (peerId) => this.isDegraded(peerId),
+      allowsInboundDirect: () => this.allowsInboundDirect(),
+      scheduler: ports.state.scheduler,
+      live: (peerId) => this.ports.state.live.get(peerId),
+      relayMs: (peerId, live) => this.relayMsOf(peerId, live),
+      recordOf: (peerId) => this.recordOf(peerId),
+      resetPeer: (peerId) => this.resetPeer(peerId),
+      armDegradedBackoff: (peerId) => this.armBackoff(peerId, true),
+      watchMeasure: (session, peerId) => armPendingMeasureWatch(this, session, peerId),
+      forceInstall: (...args) => this.ports.forceInstall(...args),
+      finishRetire: (live, reason) => this.ports.finishRetire(live, reason),
+    });
     this.unsub = ports.mode.subscribe((mode) => this.onModeChange(mode));
     attachRemoteHold(this);
   }
@@ -118,7 +117,7 @@ export class RouteDegradeCoordinator {
     detachRemoteHold(this);
     this.unsub?.();
     this.unsub = null;
-    for (const peerId of [...this.candidates.keys()]) this.dropCandidate(peerId, 'stopped');
+    this.hold.dispose();
     this.peers.clear();
     this.inflight.clear();
   }
@@ -136,7 +135,7 @@ export class RouteDegradeCoordinator {
     if (mode === 'relay') return false;
     if (remoteDirectBlocked(this, peerId, Date.now())) return false;
     if (mode === 'direct') return true;
-    if (this.candidates.has(peerId)) return false;
+    if (this.hold.has(peerId)) return false;
     const rec = this.peers.get(peerId);
     return !rec || this.now() >= rec.backoffUntil;
   }
@@ -154,20 +153,25 @@ export class RouteDegradeCoordinator {
   }
 
   hasCandidate(peerId: string): boolean {
-    return this.candidates.has(peerId);
+    return this.hold.has(peerId);
+  }
+
+  /** 直连候选测量。已完成的 DC 重掷也走这里：有 RTT 时先测量再换，没有 RTT 时直接装上。 */
+  offerCandidate(input: CandidateOffer): 'held' | 'installed' | 'rejected' {
+    return this.hold.offer(input);
+  }
+
+  /** WP-B pause/revoke 调用：丢掉该对端还在测量的直连候选。 */
+  dropCandidates(peerId: string, reason = 'paused'): void {
+    this.hold.drop(peerId, reason);
+  }
+
+  promoteHeldCandidate(peerId: string): void {
+    this.hold.promoteNow(peerId);
   }
 
   interceptTrack(input: TrackInterceptInput): TrackIntercept {
-    if (!isDirectTransport(input.transport)) return { action: 'continue' };
-    armPendingMeasureWatch(this, input.session, input.peerNodeId);
-    if (this.measured.has(input.session)) return { action: 'continue' };
-    if (!this.allowsInboundDirect()) return { action: 'reject', reason: 'route-relay' };
-    if (this.mode() !== 'auto') return { action: 'continue' };
-    const prev = input.prev;
-    if (!prev || prev.transport !== 'relay') return { action: 'continue' };
-    if (!this.peers.get(input.peerNodeId)?.degraded) return { action: 'continue' };
-    this.holdCandidate(input);
-    return { action: 'hold' };
+    return this.hold.intercept(input);
   }
 
   onRttSample(live: LivePeer, _sampleMs: number): void {
@@ -224,11 +228,7 @@ export class RouteDegradeCoordinator {
   }
 
   noteCandidateSample(peerId: string, sampleMs: number): void {
-    const candidate = this.candidates.get(peerId);
-    if (!candidate) return;
-    candidate.samples.push(Math.max(0, Math.round(sampleMs)));
-    if (candidate.samples.length < ROUTE_PROMOTE_SAMPLES) return;
-    this.settleCandidate(peerId, candidate);
+    this.hold.noteSample(peerId, sampleMs);
   }
 
   private snapshot(peerId: string, streamClass: MeshStreamClass) {
@@ -305,21 +305,37 @@ export class RouteDegradeCoordinator {
       );
       if (!kept) return null;
     }
-    if (prev && this.ports.state.live.get(peerId)?.session !== prev.session) {
-      this.ports.finishRetire(prev, 'retired');
+    return this.commitRelay({ peerId, session, prev, from, directMs, relayMs });
+  }
+
+  private commitRelay(input: {
+    peerId: string;
+    session: LinkSession;
+    prev: LivePeer | undefined;
+    from: string;
+    directMs: number | null;
+    relayMs: number | null;
+  }): LinkSession | null {
+    const installed = this.ports.state.live.get(input.peerId);
+    if (installed?.session !== input.session || installed.transport !== 'relay') {
+      logLine('[mesh][peer]', `route_switch_abandoned peer=${input.peerId}`);
+      return installed?.session ?? null;
     }
-    this.armBackoff(peerId, true);
+    if (input.prev && input.prev.session !== installed.session) {
+      this.ports.finishRetire(input.prev, 'retired');
+    }
+    this.armBackoff(input.peerId, true);
     logLine(
       '[mesh][peer]',
       formatRouteSwitch({
-        peer: peerId,
-        from,
+        peer: input.peerId,
+        from: input.from,
         to: 'relay',
-        directMs,
-        relayMs: this.ports.state.live.get(peerId)?.rttMs ?? relayMs,
+        directMs: input.directMs,
+        relayMs: installed.rttMs ?? input.relayMs,
       })
     );
-    return this.ports.state.live.get(peerId)?.session ?? session;
+    return installed.session;
   }
 
   private degradeStillCurrent(
@@ -356,132 +372,13 @@ export class RouteDegradeCoordinator {
     this.peers.set(peerId, emptyRouteRecord());
   }
 
-  private holdCandidate(input: TrackInterceptInput): void {
-    if (!isDirectTransport(input.transport)) return;
-    this.dropCandidate(input.peerNodeId, 'replaced-candidate');
-    const candidate: DirectCandidate = {
-      session: input.session,
-      transport: input.transport,
-      initiatedBy: input.initiatedBy,
-      gen: input.gen,
-      remoteAddress: input.remoteAddress,
-      dcAttemptId: input.dcAttemptId,
-      samples: [],
-      pingTimer: null,
-      pingSentAt: null,
-    };
-    this.candidates.set(input.peerNodeId, candidate);
-    this.bindCandidatePing(input.peerNodeId, candidate);
-  }
-
-  private bindCandidatePing(peerId: string, candidate: DirectCandidate): void {
-    const session = candidate.session;
-    quiet(() => {
-      session.onStream((stream) => {
-        if (this.candidates.get(peerId) !== candidate) return;
-        quiet(() => stream.reset('pending-measure'));
-      });
-    });
-    session.ctl.onMessage((bytes) => {
-      if (this.candidates.get(peerId) !== candidate) return;
-      const msg = parseOpenPayload(bytes);
-      if (!msg || typeof msg.t !== 'string') return;
-      if (msg.t === 'ping') {
-        const sentAt = parseEchoedSentAt(msg.sentAt);
-        quiet(() =>
-          session.ctl.send(encodeJsonBytes(sentAt == null ? { t: 'pong' } : { t: 'pong', sentAt }))
-        );
-        return;
-      }
-      if (msg.t !== 'pong') return;
-      const sample = measurePingRttMs(
-        performance.now(),
-        parseEchoedSentAt(msg.sentAt),
-        candidate.pingSentAt
-      );
-      candidate.pingSentAt = null;
-      if (sample == null) return;
-      this.noteCandidateSample(peerId, sample);
-    });
-    const sendPing = () => {
-      if (this.candidates.get(peerId) !== candidate) return;
-      candidate.pingSentAt = performance.now();
-      quiet(() => session.ctl.send(encodeJsonBytes({ t: 'ping', sentAt: candidate.pingSentAt })));
-    };
-    sendPing();
-    candidate.pingTimer = this.ports.state.scheduler.interval(sendPing, PEER_PING_INTERVAL_MS);
-    void session.closed.then(() => {
-      this.clearCandidateTimer(peerId, candidate);
-    });
-  }
-
-  private clearCandidateTimer(peerId: string, candidate: DirectCandidate): void {
-    if (this.candidates.get(peerId) !== candidate) return;
-    candidate.pingTimer?.clear();
-    candidate.pingTimer = null;
-    this.candidates.delete(peerId);
-  }
-
-  private settleCandidate(peerId: string, candidate: DirectCandidate): void {
-    const live = this.ports.state.live.get(peerId);
-    const relayMs = this.relayMsOf(peerId, live);
-    const directMs = Math.max(...candidate.samples);
-    const accept =
-      relayMs != null && candidate.samples.every((ms) => shouldPromoteDirect(ms, relayMs));
-    this.candidates.delete(peerId);
-    candidate.pingTimer?.clear();
-    if (!accept) {
-      quiet(() => candidate.session.close('route-measure-reject'));
-      this.armBackoff(peerId, true);
-      return;
-    }
-    this.measured.add(candidate.session);
-    const prev = live;
-    const kept = this.ports.forceInstall(
-      candidate.session,
-      peerId,
-      candidate.transport,
-      candidate.initiatedBy,
-      candidate.gen,
-      candidate.remoteAddress,
-      candidate.dcAttemptId
-    );
-    if (!kept) {
-      quiet(() => candidate.session.close('route-measure-reject'));
-      this.armBackoff(peerId, true);
-      return;
-    }
-    signalRoutePromoted(candidate.session);
-    if (prev && prev.session !== kept) this.ports.finishRetire(prev, 'retired');
-    this.resetPeer(peerId);
-    logLine(
-      '[mesh][peer]',
-      formatRouteSwitch({
-        peer: peerId,
-        from: prev?.transport ?? 'relay',
-        to: candidate.transport,
-        directMs,
-        relayMs,
-      })
-    );
-  }
-
-  private dropCandidate(peerId: string, reason: string): void {
-    const candidate = this.candidates.get(peerId);
-    if (!candidate) return;
-    candidate.pingTimer?.clear();
-    candidate.pingTimer = null;
-    this.candidates.delete(peerId);
-    quiet(() => candidate.session.close(reason));
-  }
-
   private onModeChange(mode: MeshRouteMode): void {
     const prev = this.lastMode;
     this.lastMode = mode;
     if (mode === prev) return;
-    for (const peerId of [...this.candidates.keys()]) {
-      if (mode === 'direct') this.promoteCandidateNow(peerId);
-      else this.dropCandidate(peerId, 'route-mode');
+    for (const peerId of this.hold.ids()) {
+      if (mode === 'direct') this.hold.promoteNow(peerId);
+      else this.hold.drop(peerId, 'route-mode');
     }
     for (const peerId of [...this.peers.keys()]) this.resetPeer(peerId);
     if (mode === 'relay') {
@@ -497,25 +394,5 @@ export class RouteDegradeCoordinator {
         if (live.transport === 'relay') this.ports.maybeUpgrade(live.peerNodeId);
       }
     }
-  }
-
-  private promoteCandidateNow(peerId: string): void {
-    const candidate = this.candidates.get(peerId);
-    if (!candidate) return;
-    this.candidates.delete(peerId);
-    candidate.pingTimer?.clear();
-    this.measured.add(candidate.session);
-    const prev = this.ports.state.live.get(peerId);
-    const kept = this.ports.forceInstall(
-      candidate.session,
-      peerId,
-      candidate.transport,
-      candidate.initiatedBy,
-      candidate.gen,
-      candidate.remoteAddress,
-      candidate.dcAttemptId
-    );
-    if (!kept) quiet(() => candidate.session.close('route-mode'));
-    else if (prev && prev.session !== kept) this.ports.finishRetire(prev, 'retired');
   }
 }

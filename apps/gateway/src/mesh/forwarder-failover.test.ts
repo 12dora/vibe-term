@@ -16,6 +16,7 @@ import {
   STREAM_FAILOVER_MAX_ATTEMPTS,
 } from './mesh-deps';
 import { StreamReplayState } from './stream-replay-state';
+import { NodeUnreachableError } from './types';
 
 function fakeStream(): OpenedWsStream {
   return {
@@ -74,6 +75,8 @@ function trackingHost(overrides: Partial<StreamFailoverHost> = {}): {
       pump.stream = stream;
       pump.streamAlive = true;
       pump.boundTransport = transport;
+      // 成功只认入站帧。默认夹具在绑定点记一帧，覆盖「续上之后丢过期输入」这条路径。
+      pump.sawInbound = true;
     },
     discardStream(pump, stream) {
       if (pump.inflight === stream) pump.inflight = null;
@@ -130,6 +133,8 @@ function makePump(): ForwardPump {
     streamAlive: true,
     inflight: null,
     queueBytes: 3,
+    deadOpens: 0,
+    sawInbound: false,
   };
 }
 
@@ -161,6 +166,7 @@ describe('runStreamFailover logging isolation', () => {
         target.stream = opened;
         target.streamAlive = true;
         target.boundTransport = transport;
+        target.sawInbound = true;
       },
       discardStream() {},
       closePump(target, info) {
@@ -477,7 +483,7 @@ describe('续流握手失败的归因', () => {
     expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-no-hello' }]);
   });
 
-  test('没有 HELLO 时，同传输上的 pre-ack RST 不能算成功，最多再试一次', async () => {
+  test('没有 HELLO 时，流在第一帧之前被拆不算成功，连续无入站就收手', async () => {
     const pump = makePump();
     pump.stream = null;
     pump.streamAlive = false;
@@ -513,14 +519,73 @@ describe('续流握手失败的归因', () => {
       await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'pending-measure' });
     }
 
-    expect(spins).toBeLessThanOrEqual(2);
-    expect(fixture.opened.length).toBeLessThanOrEqual(2);
-    expect(fixture.opened.length).toBeGreaterThan(0);
+    expect(spins).toBe(1);
+    expect(fixture.opened.length).toBe(STREAM_FAILOVER_NO_HELLO_LIMIT);
     expect(pump.browserClosed).toBe(true);
     expect(fixture.flushed).toBe(0);
-    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-exhausted' }]);
+    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-no-hello' }]);
     expect(delays.some((ms) => ms >= 50)).toBe(true);
     expect(delays.filter((ms) => ms === 0)).toHaveLength(0);
+  });
+
+  test('revoked / paused / untrusted ends failover without burning the retry budget', async () => {
+    const pump = makePump();
+    pump.stream = null;
+    pump.streamAlive = false;
+    let gets = 0;
+    const fixture = trackingHost({
+      peers: {
+        getLink: async () => {
+          gets += 1;
+          throw new NodeUnreachableError('node-1', 'revoked');
+        },
+        listReach: () => new Map(),
+        onNodeEvent: () => () => {},
+        transportOf: () => 'relay',
+      },
+    });
+    await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
+    expect(gets).toBe(1);
+    expect(fixture.opened).toHaveLength(0);
+    expect(fixture.closed).toEqual([{ code: 1011, reason: 'node-unreachable' }]);
+  });
+
+  test('failover 期间排进来的 HELLO 会送到新流，不再烧掉静默预算', async () => {
+    const pump = makePump();
+    pump.stream = null;
+    pump.streamAlive = false;
+    const sent: number[] = [];
+    let injected = false;
+    const fixture = trackingHost({
+      bindStream(target, stream, transport) {
+        target.stream = stream;
+        target.streamAlive = true;
+        target.boundTransport = transport;
+        target.sawInbound = false;
+      },
+      sleep: async () => {
+        if (injected || pump.replay.hello) return;
+        injected = true;
+        pump.queue.push(helloC2S);
+        pump.queuedAt.push(Date.now());
+        pump.queueBytes += helloC2S.byteLength;
+        pump.replay.noteOutbound(helloC2S);
+        pump.helloWait?.();
+      },
+      sendToStream(target, _stream, bytes) {
+        const kind = wsBorsh.decodeEnvelopeView(bytes).kind;
+        sent.push(kind);
+        if (kind !== wsBorsh.KIND_HELLO_C2S) return;
+        target.replay.noteInbound(helloS2C('2.0.0'));
+        target.helloWait?.();
+        target.helloWait = null;
+      },
+    });
+    await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
+    expect(fixture.opened).toHaveLength(1);
+    expect(fixture.closed).toEqual([]);
+    expect(sent).toContain(wsBorsh.KIND_HELLO_C2S);
+    expect(pump.queue.some((frame) => frame.byteLength === helloC2S.byteLength)).toBe(false);
   });
 
   test('对端答了 HELLO 但版本不达标：才关成 node-too-old', async () => {

@@ -13,7 +13,7 @@ const TRANSIENT_DIRECT_REASONS: ReadonlySet<string> = new Set([
   'capacity',
 ]);
 
-/** `unavailable`：整段停放；`busy`：走 authorize 熔断；`null`：不是目标 node 的直连结论。 */
+/** `unavailable`：整段停放；`busy`：计入熔断并守 `retryAfterMs`；`null`：不是目标 node 的直连结论。 */
 export type DirectAuthorizeVerdict = 'unavailable' | 'busy' | null;
 
 export function classifyDirectAuthorizeFailure(
@@ -31,11 +31,19 @@ export interface ErrorBody {
   retryAfterMs: number | null;
 }
 
+/**
+ * 协商 REST 的失败。`kind` 是熔断记账种类（见 `direct-breaker.ts`），由控制器统一记一次；
+ * 为 `null` 时控制器按 message 归类。
+ */
 export class DirectAuthorizeError extends Error {
   constructor(
     message: string,
     readonly fatal: boolean,
-    readonly code: string = ''
+    readonly code: string = '',
+    readonly kind: string | null = null,
+    readonly retryAfterMs: number | null = null,
+    /** 转发器 / 目标 node 在 body 里给的 `reason`（如 `no_link`）。 */
+    readonly reason: string | null = null
   ) {
     super(message);
     this.name = 'DirectAuthorizeError';

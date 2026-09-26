@@ -29,6 +29,16 @@ export function forwardLinkDeadlineFor(
   return nestedDialBudgetsMs(deadlineRttMs(nodeId, rttMs, peers)).forwardMs;
 }
 
+/** `max(剩余取链预算, 自适应 forwardMs)`。冷拨号 leftover≈0 仍至少等这一档。 */
+export function forwardResponseBudgetMs(
+  leftoverMs: number,
+  floorMs = FORWARD_LINK_DEADLINE_MS
+): number {
+  const leftover = Number.isFinite(leftoverMs) ? Math.max(0, leftoverMs) : 0;
+  const floor = forwardLinkDeadlineOverride > 0 ? forwardLinkDeadlineOverride : floorMs;
+  return Math.max(floor, leftover);
+}
+
 export function authorizedHttpDeadlineMs(
   nodeId: string,
   rttMs?: number | null,

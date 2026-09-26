@@ -47,6 +47,11 @@ export function runWithRtcLogContext<T>(ctx: RtcLogContext, fn: () => T): T {
   return rtcLogContext.run(ctx, fn);
 }
 
+/** 信道回调晚于拨号返回，不能再带着这次拨号的日志上下文。 */
+export function exitRtcLogContext<T>(fn: () => T): T {
+  return rtcLogContext.exit(fn);
+}
+
 export function noteCandidate(
   trace: IceCandidateTrace,
   side: 'local' | 'remote',

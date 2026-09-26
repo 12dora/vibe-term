@@ -111,9 +111,9 @@ function latestProbeByUrl(probes: readonly TurnProbeRecord[]): Map<string, TurnP
   return map;
 }
 
-function pickReachableTurns(
+function rankReachableTurns(
   entries: readonly RelayTurnConfig[],
-  probes: readonly TurnProbeRecord[]
+  probes: readonly TurnProbeRecord[] = turnProbeSnapshot()
 ): RelayTurnConfig[] {
   const latest = latestProbeByUrl(probes);
   const ranked: Array<{ entry: RelayTurnConfig; rttMs: number; index: number }> = [];
@@ -125,7 +125,14 @@ function pickReachableTurns(
     ranked.push({ entry, rttMs: probe.rttMs, index: i });
   }
   ranked.sort((a, b) => a.rttMs - b.rttMs || a.index - b.index);
-  return ranked.slice(0, MAX_GATED_TURN).map((row) => row.entry);
+  return ranked.map((row) => row.entry);
+}
+
+function pickReachableTurns(
+  entries: readonly RelayTurnConfig[],
+  probes: readonly TurnProbeRecord[]
+): RelayTurnConfig[] {
+  return rankReachableTurns(entries, probes).slice(0, MAX_GATED_TURN);
 }
 
 function logTurnGate(configured: number, used: readonly RelayTurnConfig[]): void {
@@ -152,20 +159,104 @@ function turnProbesForConfigured(
   return out;
 }
 
+/** 新出现的可达 TURN 要持续这么久才 rearm，探测抖动和排序交换不算。 */
+export const ICE_GAIN_DEBOUNCE_MS = 10 * 60 * 1000;
+
+type IceRearmState = {
+  stunKey: string;
+  configuredKey: string;
+  baseline: Set<string>;
+  pending: Map<string, number>;
+};
+
+let iceConfigRearm: (() => void) | null = null;
+let iceRearmState: IceRearmState | null = null;
+
+export function bindIceConfigRearm(fn: (() => void) | null): void {
+  iceConfigRearm = fn;
+}
+
+export function resetIceConfigRearmForTests(): void {
+  iceConfigRearm = null;
+  iceRearmState = null;
+}
+
+function commitIceBaseline(
+  stunKey: string,
+  configuredKey: string,
+  reachable: ReadonlySet<string>,
+  rearm: boolean
+): void {
+  iceRearmState = { stunKey, configuredKey, baseline: new Set(reachable), pending: new Map() };
+  if (rearm) iceConfigRearm?.();
+}
+
+function persistTurnGains(
+  state: IceRearmState,
+  reachable: ReadonlySet<string>,
+  now: number
+): boolean {
+  for (const url of [...state.pending.keys()]) {
+    if (!reachable.has(url)) state.pending.delete(url);
+  }
+  let fire = false;
+  for (const url of reachable) {
+    if (state.baseline.has(url)) continue;
+    const since = state.pending.get(url);
+    if (since == null) {
+      state.pending.set(url, now);
+      continue;
+    }
+    if (now - since < ICE_GAIN_DEBOUNCE_MS) continue;
+    state.baseline.add(url);
+    state.pending.delete(url);
+    fire = true;
+  }
+  return fire;
+}
+
+function noteIceConfigKey(
+  stun: readonly string[],
+  turn: unknown,
+  reachableUrls: readonly string[],
+  now: number
+): void {
+  const stunKey = [...stun].sort().join('|');
+  const configuredKey = JSON.stringify(turn ?? null);
+  const reachable = new Set(reachableUrls);
+  const state = iceRearmState;
+  if (!state) {
+    commitIceBaseline(stunKey, configuredKey, reachable, false);
+    return;
+  }
+  if (state.stunKey !== stunKey || state.configuredKey !== configuredKey) {
+    commitIceBaseline(stunKey, configuredKey, reachable, true);
+    return;
+  }
+  if (persistTurnGains(state, reachable, now)) iceConfigRearm?.();
+}
+
 export function resolveMeshRtcConfig(
   config: MeshStunConfig,
   lastRtc: CachedRtcConfig | null,
-  probes: readonly StunProbeRecord[] = stunProbeSnapshot(),
+  probes?: readonly StunProbeRecord[],
   now: number = Date.now()
 ): ResolvedMeshRtcConfig {
+  const stunProbes = probes ?? stunProbeSnapshot();
   const resolved = resolveEffectiveStun({
     local: localStunEnv(config),
     distributed: lastRtc?.stun ?? null,
   });
   const turnConfigured = flattenTurnConfigs(lastRtc ? lastRtc.turn : turnFromMesh(config));
   const gated = gateTurnByProbe(turnConfigured);
+  noteIceConfigKey(
+    resolved.stun,
+    turnConfigured,
+    rankReachableTurns(turnConfigured).map((row) => row.url),
+    now
+  );
   return {
-    stun: rankStunByProbes(resolved.stun, probes, now),
+    stun: rankStunByProbes(resolved.stun, stunProbes, now),
     turn: gated.turn,
     turnConfigured,
     turnProbeOk: gated.turnProbeOk,

@@ -4,6 +4,7 @@ import type { RelayCaPinStore } from '../auth/relay-ca-pin-store';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler } from './ctl';
 import { createDialWsFactory } from './dial-resolve';
+import { clearDohFailures } from './dial-resolve-host';
 import { stamp } from './mesh-log';
 import type {
   InboundRelayHandler,
@@ -30,7 +31,11 @@ import { runPreferredProbe } from './uplink-pool-probe';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
 import { primaryTargetOf } from './uplink-pool-target';
 import { normalizeUplinkEndpointUrl, redactUrl, sameUplinkUrl } from './uplink-pool-url';
-import { UplinkRelayDrain, type UplinkRelayDrainReason } from './uplink-relay-drain';
+import {
+  UplinkRelayDrain,
+  type UplinkRelayDrainReason,
+  unbindRelayDrainOwner,
+} from './uplink-relay-drain';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
 export {
@@ -118,67 +123,27 @@ export type UplinkPoolOptions = {
   probeTimeoutMs?: number;
   relayDrainRecheckMs?: number;
   relayDrainTimeoutMs?: number;
-  dialCoordinator?: UplinkDialCoordinator;
+};
+
+export type UplinkRelayHooks = {
+  /** 认证成功后拆掉同 URL 的副连接。接管失败时不要提前拆。 */
+  releaseSecondary?: (url: string) => Promise<void>;
+  /** 在线副连接改接成主连接；拿不到就保持原样。 */
+  takeoverSecondary?: (url: string) => Promise<PooledUplink | null>;
+  /** 这次拨号没挂上：副中继可以回来。 */
+  onTargetFree?: () => void;
+  /** 本机网络变了：副中继退避与中继熔断一并清掉。 */
+  onNetworkReset?: () => void;
+  /** 把刚卸下的主连接原地交给副中继。成功则不再排空。 */
+  adoptRetiring?: (client: PooledUplink) => boolean;
+  noteRetiring?: (url: string) => void;
+  clearRetiring?: (url: string) => void;
 };
 
 export function jitteredIntervalMs(baseMs: number, jitter = UPLINK_POOL_PROBE_JITTER): number {
   const ratio = Math.min(Math.max(jitter, 0), 1);
   const delta = baseMs * ratio;
   return Math.max(1, Math.floor(baseMs - delta + Math.random() * (2 * delta)));
-}
-
-/** 池与 secondary 共享：同一 URL 同时只允许一条在途拨号，在线 secondary 可被 promote。 */
-export class UplinkDialCoordinator {
-  private readonly inflight = new Map<string, object>();
-  private readonly standbys = new Map<
-    string,
-    { client: PooledUplink; yieldClient: () => void; owner: object }
-  >();
-
-  tryClaim(url: string, owner: object): boolean {
-    const key = normalizeUplinkEndpointUrl(url);
-    const cur = this.inflight.get(key);
-    if (cur && cur !== owner) return false;
-    this.inflight.set(key, owner);
-    return true;
-  }
-
-  release(url: string, owner: object): void {
-    const key = normalizeUplinkEndpointUrl(url);
-    if (this.inflight.get(key) === owner) this.inflight.delete(key);
-  }
-
-  claimedBy(url: string): object | null {
-    return this.inflight.get(normalizeUplinkEndpointUrl(url)) ?? null;
-  }
-
-  offerStandby(url: string, client: PooledUplink, yieldClient: () => void, owner: object): void {
-    this.standbys.set(normalizeUplinkEndpointUrl(url), { client, yieldClient, owner });
-  }
-
-  dropStandby(url: string, client: PooledUplink): void {
-    const key = normalizeUplinkEndpointUrl(url);
-    if (this.standbys.get(key)?.client === client) this.standbys.delete(key);
-  }
-
-  takeOnline(url: string): PooledUplink | null {
-    const key = normalizeUplinkEndpointUrl(url);
-    const row = this.standbys.get(key);
-    if (!row || row.client.state !== 'online') return null;
-    this.standbys.delete(key);
-    this.inflight.delete(key);
-    row.yieldClient();
-    return row.client;
-  }
-
-  dropOwner(owner: object): void {
-    for (const [url, who] of [...this.inflight]) {
-      if (who === owner) this.inflight.delete(url);
-    }
-    for (const [url, row] of [...this.standbys]) {
-      if (row.owner === owner) this.standbys.delete(url);
-    }
-  }
 }
 
 export function watchPredicate(check: () => boolean, fire: () => void, everyMs = 25): () => void {
@@ -193,35 +158,6 @@ export function watchPredicate(check: () => boolean, fire: () => void, everyMs =
     stopped = true;
     clearInterval(id);
   };
-}
-
-export function pooledUplinkIfCapable(client: object): PooledUplink | null {
-  const row = client as Partial<PooledUplink>;
-  if (typeof row.connectWithLink !== 'function' || typeof row.requestCatchUpNow !== 'function') {
-    return null;
-  }
-  return client as PooledUplink;
-}
-
-export function offerPooledStandby(
-  coordinator: UplinkDialCoordinator,
-  url: string,
-  client: object,
-  slot: { yielded: boolean; client: unknown; abort: AbortController },
-  owner: object
-): void {
-  const pooled = pooledUplinkIfCapable(client);
-  if (!pooled) return;
-  coordinator.offerStandby(
-    url,
-    pooled,
-    () => {
-      slot.yielded = true;
-      slot.client = null;
-      slot.abort.abort();
-    },
-    owner
-  );
 }
 
 export class UplinkPool {
@@ -261,6 +197,11 @@ export class UplinkPool {
   private lastFailbackProbeAt = 0;
   private wrapAttempt = 0;
   private lastDialUrl: string | null = null;
+  private lastSessionUrl: string | null = null;
+  private dialSerial = 0;
+  private dialHold: { url: string; serial: number } | null = null;
+  private adopted: PooledUplink | null = null;
+  private relayHooks: UplinkRelayHooks = {};
   private readonly diagByUrl = new Map<string, UrlDiag>();
   private readonly candLogAt = new Map<
     string,
@@ -268,7 +209,6 @@ export class UplinkPool {
   >();
   private readonly probeLogAt = new Map<string, number>();
   private wrapSleepAbort: AbortController | null = null;
-  readonly dialCoordinator: UplinkDialCoordinator;
   private readonly coolByUrl = new Map<string, { until: number; fails: number }>();
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private readonly attachedListeners: Array<(uplink: AttachedUplink) => void> = [];
@@ -294,7 +234,6 @@ export class UplinkPool {
     this.probeNowDebounceMs = opts.probeNowDebounceMs ?? UPLINK_POOL_PROBE_NOW_DEBOUNCE_MS;
     this.coalescedDebounceMs = this.failbackDebounceMs;
     this.rttProbeIntervalMs = opts.rttProbeIntervalMs ?? UPLINK_POOL_RTT_PROBE_INTERVAL_MS;
-    this.dialCoordinator = opts.dialCoordinator ?? new UplinkDialCoordinator();
     this.relayDrain = new UplinkRelayDrain({
       scheduler: this.scheduler,
       recheckMs: opts.relayDrainRecheckMs,
@@ -323,13 +262,63 @@ export class UplinkPool {
     return this.attached;
   }
 
-  /** 已挂上，否则正在拨 / 上次尝试的 URL；空闲或已 stop 才为 null。 */
+  /**
+   * 池当前占用的 URL。正在拨或切换的目标优先于已挂上的；
+   * 都没有时，重拨空窗只占上次那一条。
+   */
   primaryTarget(): string | null {
-    return primaryTargetOf(
-      this.attached?.publicUrl,
-      this.pending?.uplinkUrl ?? this.lastDialUrl,
-      this.loop != null
-    );
+    const dialling =
+      this.dialHold?.url ?? this.pending?.uplinkUrl ?? (this.attached ? null : this.lastDialUrl);
+    return primaryTargetOf(this.attached?.publicUrl, dialling, this.loop != null);
+  }
+
+  setRelayHooks(hooks: UplinkRelayHooks): void {
+    this.relayHooks = hooks;
+  }
+
+  /** 切换入口在拆副中继之前先占住目标，避免 reconcile 把它又挂回去。 */
+  armSwitch(url: string): number {
+    return this.holdDial(url);
+  }
+
+  disarmSwitch(serial: number | undefined): void {
+    if (serial == null) return;
+    const held = this.dialHold?.serial === serial;
+    this.releaseDial(serial);
+    if (held) this.relayHooks.onTargetFree?.();
+  }
+
+  holdDial(url: string): number {
+    this.dialSerial += 1;
+    this.dialHold = { url, serial: this.dialSerial };
+    return this.dialSerial;
+  }
+
+  releaseDial(serial: number): void {
+    if (this.dialHold?.serial === serial) this.dialHold = null;
+  }
+
+  releaseSecondary(url: string): Promise<void> {
+    return this.relayHooks.releaseSecondary?.(url) ?? Promise.resolve();
+  }
+
+  takeoverSecondary(url: string): Promise<PooledUplink | null> {
+    const cand = this.candidates().find((row) => sameUplinkUrl(row.publicUrl, url));
+    if (!cand) return Promise.resolve(null);
+    return this.takeoverFor(cand);
+  }
+
+  notifyTargetFree(): void {
+    this.relayHooks.onTargetFree?.();
+  }
+
+  tlsCaFor(publicUrl: string): string[] | null {
+    try {
+      const pin = this.opts.caPins.get(publicUrl);
+      return pin?.caPem ? [pin.caPem] : null;
+    } catch {
+      return null;
+    }
   }
 
   /** 候选由 `opts.candidates()` 惰性读库；重算 RTT / failback 探测节奏，不动在线客户端。 */
@@ -410,7 +399,7 @@ export class UplinkPool {
   }
 
   async stop(): Promise<void> {
-    this.dialCoordinator.dropOwner(this);
+    this.dialHold = null;
     this.stopAbort?.abort();
     this.stopAbort = null;
     this.stopProbe();
@@ -431,6 +420,8 @@ export class UplinkPool {
     await pending?.stop();
     await live?.stop();
     await this.relayDrain.waitForRetiring();
+    if (live) unbindRelayDrainOwner(live, live.uplinkUrl);
+    if (pending && pending !== live) unbindRelayDrainOwner(pending, pending.uplinkUrl);
     try {
       if (loop) await loop;
     } catch {
@@ -517,7 +508,7 @@ export class UplinkPool {
   private async run(signal: AbortSignal): Promise<void> {
     this.syncRttProbe();
     while (!signal.aborted) {
-      const cands = this.candidates();
+      const cands = this.dialOrder();
       if (cands.length === 0) {
         if ((await this.sleepWrap(signal, UPLINK_BACKOFF_MAX_MS)) === 'stop') return;
         continue;
@@ -591,8 +582,8 @@ export class UplinkPool {
     index = 0,
     total = 1
   ): Promise<boolean> {
-    const acquired = this.acquireCandidateClient(cand);
-    if (!acquired) return false;
+    const serial = await this.reserveCandidate(cand, signal);
+    if (serial == null) return false;
     const deadline = new AbortController();
     const combined = combineAbortSignals(signal, deadline.signal) ?? deadline.signal;
     const deadlineStarted = this.scheduler.now();
@@ -604,13 +595,12 @@ export class UplinkPool {
       () => {}
     );
     const token = this.beginSwitch();
-    const { client } = acquired;
+    const client = this.claimCandidateClient(cand);
     this.pending = client;
     this.noteAttempt(cand);
     this.logCandidateEvent(cand, index, 'ws', this.lastErrorOf(cand), 'try', { total });
     try {
       const ok = await this.establishAcquiredCandidate(client, cand, {
-        borrowed: acquired.borrowed,
         combined,
         token,
         signal,
@@ -620,6 +610,7 @@ export class UplinkPool {
       if (!ok) this.coolAbandonedCandidate(cand, deadline.signal, signal);
       return ok;
     } finally {
+      this.releaseDial(serial);
       deadline.abort();
       await sleeper.catch(() => {});
       if (this.pending === client) this.pending = null;
@@ -628,14 +619,77 @@ export class UplinkPool {
         this.clearLive(client);
       }
       if (this.live !== client) {
-        this.dialCoordinator.release(cand.publicUrl, this);
         try {
           await client.stop();
         } catch {
           /* ignore */
         }
+        this.notifyTargetFree();
       }
     }
+  }
+
+  private dialOrder(): UplinkCandidate[] {
+    return preferLastSessionUrl(this.candidates(), this.lastSessionUrl, this.lastSessionReason);
+  }
+
+  private async reserveCandidate(
+    cand: UplinkCandidate,
+    signal: AbortSignal
+  ): Promise<number | null> {
+    const serial = this.holdDial(cand.publicUrl);
+    if (signal.aborted) return this.abandonReserve(serial);
+    this.adopted = await this.takeoverFor(cand);
+    if (!signal.aborted) return serial;
+    const adopted = this.adopted;
+    this.adopted = null;
+    if (adopted) void adopted.stop();
+    return this.abandonReserve(serial);
+  }
+
+  private abandonReserve(serial: number): null {
+    this.releaseDial(serial);
+    this.notifyTargetFree();
+    return null;
+  }
+
+  private async takeoverFor(cand: UplinkCandidate): Promise<PooledUplink | null> {
+    const client = await this.relayHooks.takeoverSecondary?.(cand.publicUrl);
+    if (!client || client.state !== 'online') {
+      if (client) void client.stop();
+      return null;
+    }
+    this.wireTakenOver(client, cand);
+    return client;
+  }
+
+  private claimCandidateClient(cand: UplinkCandidate): PooledUplink {
+    const taken = this.adopted;
+    this.adopted = null;
+    return taken ?? this.spawn(cand);
+  }
+
+  private wireTakenOver(client: PooledUplink, cand: UplinkCandidate): void {
+    const adopt = (
+      client as PooledUplink & {
+        adoptPrimaryWiring?(wiring: {
+          onNodeList?: (list: UplinkNodeList) => void;
+          onRtcSignal?: (msg: UplinkRtcSignal) => void;
+          onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
+        }): void;
+      }
+    ).adoptPrimaryWiring;
+    adopt?.call(client, {
+      onNodeList: (list) => this.dispatchNodeList(client, list, cand.uplinkNodeId),
+      onRtcSignal: (msg) => {
+        if (this.live !== client) return;
+        this.opts.onRtcSignal?.(msg);
+      },
+      onEnrollRedeemed: (msg) => {
+        if (this.live !== client) return;
+        this.opts.onEnrollRedeemed?.(msg);
+      },
+    });
   }
 
   private noteCandidateFailure(
@@ -651,23 +705,10 @@ export class UplinkPool {
     this.logCandidateFailed(cand, msg, failures, index, transport);
   }
 
-  private acquireCandidateClient(
-    cand: UplinkCandidate
-  ): { client: PooledUplink; borrowed: boolean } | null {
-    const taken = this.dialCoordinator.takeOnline(cand.publicUrl);
-    if (taken) {
-      this.dialCoordinator.tryClaim(cand.publicUrl, this);
-      return { client: taken, borrowed: true };
-    }
-    if (!this.dialCoordinator.tryClaim(cand.publicUrl, this)) return null;
-    return { client: this.spawn(cand), borrowed: false };
-  }
-
   private async establishAcquiredCandidate(
     client: PooledUplink,
     cand: UplinkCandidate,
     ctx: {
-      borrowed: boolean;
       combined: AbortSignal;
       token: number;
       signal: AbortSignal;
@@ -675,9 +716,7 @@ export class UplinkPool {
       index: number;
     }
   ): Promise<boolean> {
-    if (ctx.borrowed && client.state === 'online') {
-      return this.promoteEstablished(client, cand, ctx);
-    }
+    if (client.state === 'online') return this.promoteEstablished(client, cand, ctx);
     let failures = 0;
     while (failures < this.failLimit && !ctx.combined.aborted) {
       try {
@@ -796,17 +835,29 @@ export class UplinkPool {
       publicUrl: cand.publicUrl,
       since: this.scheduler.now(),
     };
+    this.handOffRetired(old);
+    this.releaseHeldDial(cand.publicUrl);
     this.emitAttached(this.attached);
     this.emitState(client.state);
     this.noteSuccess(cand);
     client.sendStatusIfChanged();
     this.syncProbe();
     this.syncRttProbe();
-    if (old) this.retireClient(old);
+    await this.releaseSecondary(cand.publicUrl);
   }
 
-  private retireClient(client: PooledUplink): void {
-    this.relayDrain.retire(client, this.stopAbort?.signal);
+  private handOffRetired(old: PooledUplink | null): void {
+    if (!old) return;
+    if (this.relayHooks.adoptRetiring?.(old)) return;
+    const url = old.uplinkUrl;
+    this.relayHooks.noteRetiring?.(url);
+    this.relayDrain.retire(old, this.stopAbort?.signal, () => {
+      this.relayHooks.clearRetiring?.(url);
+    });
+  }
+
+  private releaseHeldDial(publicUrl: string): void {
+    if (this.dialHold && sameUplinkUrl(this.dialHold.url, publicUrl)) this.dialHold = null;
   }
 
   private dispatchNodeList(
@@ -860,8 +911,9 @@ export class UplinkPool {
   }
 
   private async rememberSessionEnd(client: PooledUplink, signal: AbortSignal): Promise<void> {
-    this.lastSessionReason =
-      (await this.waitActiveSession(this.live ?? client, signal))?.reason ?? '';
+    const ended = await this.waitActiveSession(this.live ?? client, signal);
+    this.lastSessionReason = ended?.reason ?? '';
+    if (ended?.publicUrl) this.lastSessionUrl = ended.publicUrl;
   }
   private persistTerminalError(client: PooledUplink, publicUrl: string): void {
     const reason = terminalErrorOf(client);
@@ -1069,15 +1121,6 @@ export class UplinkPool {
     }
   }
 
-  private tlsCaFor(publicUrl: string): string[] | null {
-    try {
-      const pin = this.opts.caPins.get(publicUrl);
-      return pin?.caPem ? [pin.caPem] : null;
-    } catch {
-      return null;
-    }
-  }
-
   private async probeHealthzTimed(publicUrl: string): Promise<boolean> {
     if (this.stopAbort?.signal.aborted) return false;
     const probe = this.opts.probeHealthz ?? defaultProbeHealthz;
@@ -1188,6 +1231,8 @@ export class UplinkPool {
   resetBackoff(): void {
     this.wrapAttempt = 0;
     this.coolByUrl.clear();
+    clearDohFailures();
+    this.relayHooks.onNetworkReset?.();
     this.wakeWrapSleep();
   }
 
@@ -1230,6 +1275,21 @@ export class UplinkPool {
       }
     }
   }
+}
+
+function preferLastSessionUrl(
+  cands: UplinkCandidate[],
+  lastUrl: string | null,
+  reason: string
+): UplinkCandidate[] {
+  if (!lastUrl || !isUplinkPathRerace(reason)) return cands;
+  const idx = cands.findIndex((row) => sameUplinkUrl(row.publicUrl, lastUrl));
+  if (idx <= 0) return cands;
+  const next = cands.slice();
+  const [hit] = next.splice(idx, 1);
+  if (!hit) return cands;
+  next.unshift(hit);
+  return next;
 }
 
 function errMessage(err: unknown): string {

@@ -23,6 +23,7 @@ type RelayPresenceRow = {
   selfRttMs: number | null;
   peers: Map<string, RelayPeerPresence>;
   listVersion: number;
+  listBoot: string | null;
   updatedAt: number;
   staleUntil: number;
   priority: number;
@@ -43,6 +44,11 @@ function finiteRtt(value: number | null | undefined): number | null {
 export class RelayPresence implements RelayPresenceIndex {
   private readonly rows = new Map<string, RelayPresenceRow>();
   private primary: string | null = null;
+  private onPeerOnline: ((id: string) => void) | null = null;
+
+  setOnPeerOnline(cb: ((id: string) => void) | null): void {
+    this.onPeerOnline = cb;
+  }
 
   snapshot(): RelayPresenceSnapshot[] {
     return [...this.rows.values()]
@@ -101,7 +107,7 @@ export class RelayPresence implements RelayPresenceIndex {
     return { url: best.row.url, role: best.row.role, scoreMs: best.scoreMs };
   }
 
-  onlineUnion(now?: number): Set<string> {
+  onlineUnion(now = Date.now()): Set<string> {
     const ids = new Set<string>();
     for (const row of this.rows.values()) {
       if (!this.rowHoldsPresence(row, now)) continue;
@@ -198,11 +204,16 @@ export class RelayPresence implements RelayPresenceIndex {
     url: string,
     nodes: readonly RelayPresencePeerInput[],
     version: number,
-    now: number
+    now: number,
+    boot?: string | null
   ): void {
     const row = this.ensureRow(url, 0);
-    if (version < row.listVersion) return;
+    if (boot && boot !== row.listBoot) {
+      row.listBoot = boot;
+      row.listVersion = 0;
+    }
     row.listVersion = version;
+    if (boot) row.listBoot = boot;
     row.updatedAt = now;
     const next = new Map<string, RelayPeerPresence>();
     for (const node of nodes) {
@@ -212,7 +223,41 @@ export class RelayPresence implements RelayPresenceIndex {
         seenAt: now,
       });
     }
+    this.emitReturnedPeers(row, next);
     row.peers = next;
+  }
+
+  /**
+   * 连接态只反映客户端：在线清掉 hold，掉线起算 90s。
+   * 重复的掉线通知不把窗口往后推。
+   */
+  noteLink(
+    url: string,
+    connected: boolean,
+    selfRttMs: number | null,
+    now: number,
+    holdMs = RELAY_PRESENCE_STALE_MS
+  ): void {
+    const row = this.ensureRow(url, 0);
+    row.updatedAt = now;
+    row.connected = connected;
+    if (connected) {
+      row.selfRttMs = finiteRtt(selfRttMs);
+      row.staleUntil = 0;
+      return;
+    }
+    row.selfRttMs = null;
+    if (row.staleUntil <= 0) row.staleUntil = now + holdMs;
+  }
+
+  /** 到期的 hold 一次收口，返回只在这些中继上线的对端。 */
+  sweep(now: number): string[] {
+    const exclusive: string[] = [];
+    for (const row of this.rows.values()) {
+      if (row.connected || row.staleUntil <= 0 || now < row.staleUntil) continue;
+      exclusive.push(...this.decay(row.url, now));
+    }
+    return exclusive;
   }
 
   markDisconnected(url: string, now: number, staleMs = RELAY_PRESENCE_STALE_MS): void {
@@ -268,6 +313,7 @@ export class RelayPresence implements RelayPresenceIndex {
       selfRttMs: null,
       peers: new Map(),
       listVersion: 0,
+      listBoot: null,
       updatedAt: 0,
       staleUntil: 0,
       priority,
@@ -276,11 +322,19 @@ export class RelayPresence implements RelayPresenceIndex {
     return row;
   }
 
+  private emitReturnedPeers(row: RelayPresenceRow, next: Map<string, RelayPeerPresence>): void {
+    const notify = this.onPeerOnline;
+    if (!notify) return;
+    for (const [id, peer] of next) {
+      if (!peer.online || row.peers.get(id)?.online === true) continue;
+      notify(id);
+    }
+  }
+
   private rowHoldsPresence(row: RelayPresenceRow, now?: number): boolean {
     if (row.connected) return true;
     if (row.staleUntil <= 0) return false;
-    if (now === undefined) return true;
-    return now < row.staleUntil;
+    return (now ?? Date.now()) < row.staleUntil;
   }
 
   private heldElsewhere(peerId: string, exceptUrl: string, now: number): boolean {

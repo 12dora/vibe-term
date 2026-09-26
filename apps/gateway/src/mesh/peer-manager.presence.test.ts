@@ -173,29 +173,31 @@ describe('PeerManager presence and capabilities', () => {
     }
   });
 
-  test('a node.list version change full-resets a disabled breaker; the same version does not', async () => {
+  test('a node.list version change decays one level; the same version does not', async () => {
     const h = harness();
     try {
       applyList(h.deps, [listed(h.peer.nodeId, true, '2.8.0')]);
       climbDisabled(h.manager, h.scheduler, h.peer.nodeId);
-      expect(h.manager.linkDetailOf(h.peer.nodeId).dcBreaker.disabled).toBe(true);
+      const before = h.manager.linkDetailOf(h.peer.nodeId).dcBreaker;
+      expect(before.disabled).toBe(true);
       applyList(h.deps, [listed(h.peer.nodeId, true, '2.8.0')]);
       expect(h.manager.linkDetailOf(h.peer.nodeId).dcBreaker).toMatchObject({
         disabled: true,
-        level: 5,
+        level: before.level,
       });
       applyList(h.deps, [listed(h.peer.nodeId, true, '2.9.0')]);
       expect(h.store.getPeer(h.peer.nodeId)?.version).toBe('2.9.0');
       expect(h.manager.linkDetailOf(h.peer.nodeId).dcBreaker).toMatchObject({
         disabled: false,
-        level: 0,
+        level: before.level - 1,
+        failures: before.failures,
       });
     } finally {
       await h.close();
     }
   });
 
-  test('node.status version change full-resets once and a repeat does not', async () => {
+  test('node.status version change decays once and a repeat does not', async () => {
     const h = harness();
     try {
       h.store.upsertPeer({
@@ -213,7 +215,8 @@ describe('PeerManager presence and capabilities', () => {
       expect(h.manager.adoptLink(h.peer.nodeId, local, 'ws-secure', h.self.nodeId)).toBe(local);
       await waitUntil(() => h.manager.quiesceCapableOf(h.peer.nodeId));
       climbDisabled(h.manager, h.scheduler, h.peer.nodeId);
-      expect(h.manager.linkDetailOf(h.peer.nodeId).dcBreaker.disabled).toBe(true);
+      const before = h.manager.linkDetailOf(h.peer.nodeId).dcBreaker;
+      expect(before.disabled).toBe(true);
       const status = {
         t: 'node.status',
         version: '2.9.0',
@@ -225,7 +228,8 @@ describe('PeerManager presence and capabilities', () => {
       await waitUntil(() => h.store.getPeer(h.peer.nodeId)?.version === '2.9.0');
       expect(h.manager.linkDetailOf(h.peer.nodeId).dcBreaker).toMatchObject({
         disabled: false,
-        level: 0,
+        level: before.level - 1,
+        failures: before.failures,
       });
 
       climbDisabled(h.manager, h.scheduler, h.peer.nodeId);

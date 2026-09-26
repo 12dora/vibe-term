@@ -101,7 +101,7 @@ describe('HTTP pending-measure', () => {
     if (!(res instanceof Response)) throw new Error('expected response');
     expect(opens).toBe(1);
     expect(res.status).toBe(503);
-    expect(await res.json()).toMatchObject({ reason: 'no_link' });
+    expect(await res.json()).toMatchObject({ reason: 'link_lost' });
   });
 
   test('pending-measure 连拒两次后 503 的原因是 link_lost', async () => {

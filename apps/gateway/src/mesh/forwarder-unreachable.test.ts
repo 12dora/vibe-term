@@ -72,6 +72,32 @@ describe('classifyUnreachableReason', () => {
     );
     expect(classifyUnreachableReason(false, undefined)).toBe('no_link');
   });
+
+  test('拿到链路之后按阶段分类：截止是 timeout，断链是 link_lost，没拿到仍是 no_link', () => {
+    expect(classifyUnreachableReason(false, new Error('http head timeout'), true)).toBe('timeout');
+    expect(classifyUnreachableReason(false, new LinkError('closed', 'retired'), true)).toBe(
+      'link_lost'
+    );
+    expect(classifyUnreachableReason(false, new LinkError('closed', 'missed-pong'), true)).toBe(
+      'link_lost'
+    );
+    expect(classifyUnreachableReason(false, new LinkError('rst', 'too-many-streams'), true)).toBe(
+      'link_lost'
+    );
+    expect(classifyUnreachableReason(false, new Error('peer link replaced'), true)).toBe(
+      'link_lost'
+    );
+    expect(classifyUnreachableReason(false, new LinkError('rst', 'stale-link'), true)).toBe(
+      'link_lost'
+    );
+    expect(classifyUnreachableReason(false, new LinkError('rst', 'quota-streams'), true)).toBe(
+      'relay_reset:quota-streams'
+    );
+    expect(classifyUnreachableReason(false, new Error('no session'), false)).toBe('no_link');
+    expect(classifyUnreachableReason(false, new LinkError('closed', 'retired'), false)).toBe(
+      'no_link'
+    );
+  });
 });
 
 describe('nodeUnreachableResponse', () => {

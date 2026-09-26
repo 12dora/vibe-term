@@ -4,6 +4,8 @@ export type PeerRouteRecord = {
   backoffUntil: number;
   backoffMs: number;
   degraded: boolean;
+  /** 未降级 DC 测量被拒后的短退避，不把节点标成 degraded。 */
+  promoteBackoffUntil: number;
 };
 
 export function emptyRouteRecord(): PeerRouteRecord {
@@ -13,6 +15,7 @@ export function emptyRouteRecord(): PeerRouteRecord {
     backoffUntil: 0,
     backoffMs: 0,
     degraded: false,
+    promoteBackoffUntil: 0,
   };
 }
 

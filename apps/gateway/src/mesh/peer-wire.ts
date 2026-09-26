@@ -2,10 +2,14 @@ import os from 'node:os';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { defaultScheduler } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
+import { isNodePaused } from './node-pause';
 import { bindRelayCapabilityRearm } from './peer-capability-change';
+import { isLiveDcProven } from './peer-dc-proof';
 import { DcRerollCoordinator } from './peer-dc-reroll';
 import { DcUpgradeCoordinator } from './peer-dc-upgrade';
+import { isBackgroundDcUpgradeBlocked } from './peer-dc-upgrade-gate';
 import { PeerDialer } from './peer-dialer';
+import { evaluateCanDialDirect } from './peer-direct-dial-policy';
 import { PeerLinkDrain } from './peer-link-drain';
 import { PeerLinkWaiters } from './peer-link-waiters';
 import { PeerLiveRegistry } from './peer-live-registry';
@@ -24,6 +28,7 @@ import { PeerStatusSync } from './peer-status-sync';
 import { defaultPeerWsFactory, sharedDirectDialLimiter } from './peer-ws-race';
 import { RouteDegradeCoordinator, defaultRouteModeHolder } from './route-degrade';
 import { rtcLog } from './rtc/rtc-log';
+import { bindIceConfigRearm } from './rtc/stun-effective';
 import type { MeshIdentity, MeshScheduler } from './types';
 
 export type PeerWireHooks = {
@@ -41,7 +46,7 @@ export type PeerWireHooks = {
   cancelDcUpgradeRetry: (nodeId: string) => void;
   ensureGate: (nodeId: string) => ReturnType<DcUpgradeCoordinator['ensureGate']>;
   ensureIncomingWakeGate: (nodeId: string) => ReturnType<RtcWakeGate['ensureIncomingWakeGate']>;
-  dispatchRtcWake: (peerNodeId: string) => void;
+  dispatchRtcWake: (peerNodeId: string, opts?: { gated?: boolean }) => void;
   releaseRtcWakeAttempt: (peerNodeId: string) => void;
   signalingFor: (peerNodeId: string) => ReturnType<RtcWakeGate['signalingFor']>;
 };
@@ -86,7 +91,9 @@ function wireRoutesAndUpgrade(ctx: WireCtx): void {
   parts.routes = new RouteDegradeCoordinator({
     state,
     mode: opts.routeMode ?? defaultRouteModeHolder(),
-    openRelay: (nodeId) => parts.dialer.dialRelayOnly(nodeId),
+    openRelay: (nodeId) => parts.dialer.dialRelayOnly(nodeId, { background: true }),
+    openUntrackedRelay: (nodeId) => parts.dialer.dialRelayUntracked(nodeId),
+    parkSide: (peerId, session) => parts.registry.parkSide(peerId, session),
     forceInstall: (s, p, t, i, g, r, d) => parts.registry.forceInstall(s, p, t, i, g, r ?? null, d),
     finishRetire: (live, reason) => parts.drain.finishRetire(live, reason),
     maybeUpgrade: (nodeId) => hooks.maybeUpgrade(nodeId, { cooldown: false, userPath: true }),
@@ -94,7 +101,7 @@ function wireRoutesAndUpgrade(ctx: WireCtx): void {
   parts.dcUpgrade = new DcUpgradeCoordinator({
     scheduler,
     live: () => state.live,
-    dialDc: (nodeId) => parts.dialer.dial(nodeId),
+    dialDc: (nodeId, opts) => parts.dialer.dial(nodeId, opts),
     shouldTryDc: (nodeId) => parts.dialer.shouldTryDc(nodeId),
     dcCapable: (nodeId) => parts.dialer.dcCapable(nodeId),
     emitLinkInfo: (live) => parts.registry.emitLinkInfo(live as LivePeer),
@@ -109,7 +116,31 @@ function wireRoutesAndUpgrade(ctx: WireCtx): void {
     hasWsSecureCandidate: (nodeId) => parts.dialer.hasWsSecureCandidate(nodeId),
     lostDirect: () => state.lostDirect,
     clearUnstableStreak: (nodeId) => parts.registry?.clearUnstableStreak(nodeId),
+    allowsUpgrade: (nodeId) => parts.routes.allowsUpgrade(nodeId, false),
+    canDialDirect: (nodeId, dialOpts) =>
+      evaluateCanDialDirect({
+        paused: isNodePaused(nodeId),
+        allowsUpgrade: parts.routes.allowsUpgrade(nodeId, dialOpts.peerInitiated),
+        breakerAllows: parts.dcUpgrade.dcBreaker.shouldTry(nodeId).allow,
+        permanentHold: isBackgroundDcUpgradeBlocked(
+          parts.dcUpgrade.dcBreaker,
+          nodeId,
+          scheduler.now()
+        ),
+        upgradeCooling: false,
+        peerInitiated: dialOpts.peerInitiated,
+      }),
+    peerCapability: (nodeId) => {
+      const peer = opts.userStore.getPeer(nodeId);
+      if (!peer) return null;
+      return { version: peer.version, directCapable: peer.directCapable };
+    },
+    dcProven: (nodeId) => {
+      const live = state.live.get(nodeId);
+      return live != null && isLiveDcProven(live);
+    },
   });
+  bindIceConfigRearm(() => parts.dcUpgrade.onIceConfigChanged());
 }
 
 function wireRtcWake(ctx: WireCtx): void {
@@ -175,6 +206,8 @@ function wireStatusDrainReroll(ctx: WireCtx): void {
     dialReroll: (nodeId, rerollOpts) => parts.dialer.dialDcReroll(nodeId, rerollOpts),
     finishRetire: (live, reason) => parts.drain.finishRetire(live, reason),
     answererAllows: (nodeId) => parts.dcUpgrade.dcBreaker.shouldAcceptAnswer(nodeId),
+    isDegraded: (nodeId) => parts.routes.isDegraded(nodeId),
+    sendRtcSignal: (peerNodeId, msg) => parts.rtcWake.sendRtcSignal(peerNodeId, msg),
   });
 }
 
@@ -221,6 +254,9 @@ function wireRegistry(ctx: WireCtx): void {
         parts.reroll.onRttSample(live, sampleMs);
       },
       interceptTrack: (trackInput) => parts.routes.interceptTrack(trackInput),
+      offerCandidate: (offer) => parts.routes.offerCandidate(offer),
+      dropCandidates: (peerId, reason) => parts.routes.dropCandidates(peerId, reason),
+      promoteHeldCandidate: (peerId) => parts.routes.promoteHeldCandidate(peerId),
     },
   });
 }
@@ -243,7 +279,9 @@ function wireDialerAndServer(ctx: WireCtx): void {
       maybeUpgrade: (nodeId, upgradeOpts) => hooks.maybeUpgrade(nodeId, upgradeOpts),
       nextDcAttemptId: () => hooks.nextDcAttemptId(),
       signalingFor: (peerNodeId) => hooks.signalingFor(peerNodeId),
-      dispatchRtcWake: (peerNodeId) => hooks.dispatchRtcWake(peerNodeId),
+      dispatchRtcWake: (peerNodeId, wakeOpts) => hooks.dispatchRtcWake(peerNodeId, wakeOpts),
+      isDegraded: (nodeId) => parts.routes.isDegraded(nodeId),
+      offerCandidate: (offer) => parts.routes.offerCandidate(offer),
       releaseRtcWakeAttempt: (peerNodeId) => hooks.releaseRtcWakeAttempt(peerNodeId),
       onLocalFingerprintChanged: () => parts.dcUpgrade.onLocalFingerprintChanged(),
       onPeerEndpointChanged: (nodeId) => parts.dcUpgrade.onPeerEndpointChanged(nodeId),

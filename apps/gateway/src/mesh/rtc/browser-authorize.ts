@@ -61,16 +61,14 @@ export function emptyBrowserRecord(
   };
 }
 
-/** 一个登录会话同时占住的浏览器 PC。重试会换 rtcSession，所以留 1 个在途 + 1 个替换。 */
-export const RTC_AUTHORIZE_MAX_PER_SESSION = 2;
 /** 一个账号多标签的上限。再往上就会挤占节点上其他用户的名额。 */
 export const RTC_AUTHORIZE_MAX_PER_USER = 8;
-/** 授权后一直没收到 offer / 没进入 accept 的记录。握手一旦开始仍用完整 TTL。 */
+/** 授权后数据通道还没打开。通道打开之后才延长到完整握手 TTL。 */
 export const RTC_AUTHORIZE_PENDING_TTL_MS = 30_000;
 
 /**
  * 客户端熔断按目标 node 计，不按会话。retryAfterMs 只是最短间隔，设太长会把别的标签一起冻住。
- * 真正挡住刷接口的是上面的会话/用户名额；连续失败仍由客户端 30s 熔断接管。
+ * 真正挡住刷接口的是用户名额和节点上限；连续失败仍由客户端 30s 熔断接管。
  */
 export const DIRECT_BUSY_RETRY_MS = {
   timeout: 1_000,
@@ -109,23 +107,21 @@ export function pendingAuthorizeTtlMs(authorizeTtlMs: number): number {
 }
 
 /**
- * 名额分三层：同一 sid、同一 uid、整个节点。刷新已有 rtcSession 不占新名额。
- * 任一层满都拒绝，避免一个会话用随机 rtcSession 把节点 64 个名额占光。
+ * 名额两层：同一 uid、整个节点。同一条 connection 的旧 pending 先被挤掉，不占新名额。
+ * 刷新已有 rtcSession 不占新名额。
  */
 function countAuthorizeUsage(
   records: Iterable<BrowserAuthRecord>,
-  input: { rtcSession: string; uid: string; sid?: string }
-): { refresh: boolean; total: number; perSession: number; perUser: number } {
+  input: { rtcSession: string; uid: string }
+): { refresh: boolean; total: number; perUser: number } {
   let total = 0;
-  let perSession = 0;
   let perUser = 0;
   for (const rec of records) {
-    if (rec.rtcSession === input.rtcSession) return { refresh: true, total, perSession, perUser };
+    if (rec.rtcSession === input.rtcSession) return { refresh: true, total, perUser };
     total += 1;
-    if (input.sid && rec.sid === input.sid) perSession += 1;
     if (input.uid && rec.uid === input.uid) perUser += 1;
   }
-  return { refresh: false, total, perSession, perUser };
+  return { refresh: false, total, perUser };
 }
 
 export function assertAuthorizeRoom(
@@ -135,13 +131,31 @@ export function assertAuthorizeRoom(
 ): void {
   const usage = countAuthorizeUsage(records, input);
   if (usage.refresh) return;
-  if (
-    usage.total >= max ||
-    usage.perSession >= RTC_AUTHORIZE_MAX_PER_SESSION ||
-    usage.perUser >= RTC_AUTHORIZE_MAX_PER_USER
-  ) {
+  if (usage.total >= max || usage.perUser >= RTC_AUTHORIZE_MAX_PER_USER) {
     throw new AuthorizeBusyError();
   }
+}
+
+/** 同一条 Gateway WS 只留一条 pending：新授权挤掉还没完成的旧记录。 */
+export function evictPendingConnection(
+  records: Map<string, BrowserAuthRecord>,
+  input: { rtcSession: string; connectionId?: string },
+  close: (pc: PeerConnectionLike) => void
+): void {
+  const connectionId = input.connectionId?.trim() ?? '';
+  if (!connectionId) return;
+  for (const [id, rec] of [...records]) {
+    if (id === input.rtcSession || rec.connectionId !== connectionId) continue;
+    close(rec.pc);
+    records.delete(id);
+  }
+}
+
+export function acceptFailureLogFields(
+  rtcSession: string,
+  err: unknown
+): { rtcSession: string; reason: string } {
+  return { rtcSession: rtcSession.slice(0, 8), reason: failReason(err) };
 }
 
 export function sweepExpiredBrowsers<T extends { exp: number; pc: PeerConnectionLike }>(

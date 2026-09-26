@@ -18,8 +18,8 @@ interface FakeSocketBase extends WebSocketLike {
   closeCount: number;
   /** 模拟连接建立：先转 OPEN，再回调，顺序与浏览器一致。 */
   open(): void;
-  /** 模拟对端断开：先落 CLOSED，再派发 onclose。 */
-  simulateClose(): void;
+  /** 模拟对端断开：先落 CLOSED，再派发 onclose（给了 code 就带上 `CloseEvent` 形状）。 */
+  simulateClose(code?: number, reason?: string): void;
   /** 把一帧二进制投递给 onmessage。 */
   deliver(frame: Uint8Array): void;
 }
@@ -76,9 +76,10 @@ export function createFakeSocket(options: FakeSocketOptions = {}): FakeSocket | 
       socket.onopen?.();
     },
 
-    simulateClose() {
+    simulateClose(code, reason) {
       socket.readyState = 3;
-      socket.onclose?.();
+      if (code === undefined) socket.onclose?.();
+      else socket.onclose?.({ code, reason: reason ?? '' });
     },
 
     deliver(frame) {

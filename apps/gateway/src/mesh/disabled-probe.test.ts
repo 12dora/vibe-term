@@ -130,9 +130,16 @@ function disable(coordinator: DcUpgradeCoordinator, peer: string): void {
   }
 }
 
-async function drive(scheduler: ManualScheduler, recovered: () => boolean): Promise<number | null> {
+async function drive(
+  scheduler: ManualScheduler,
+  recovered: () => boolean,
+  tick?: () => void
+): Promise<number | null> {
   const start = scheduler.now();
-  for (let i = 0; i < 80 && !recovered(); i += 1) await scheduler.advance(30_000);
+  for (let i = 0; i < 80 && !recovered(); i += 1) {
+    tick?.();
+    await scheduler.advance(30_000);
+  }
   return recovered() ? scheduler.now() - start : null;
 }
 
@@ -163,7 +170,14 @@ async function runMutual(offsetSec: number): Promise<number | null> {
   disable(offer.coordinator, 'bb');
   if (offsetSec > 0) await scheduler.advance(offsetSec * 1000);
   disable(wake.coordinator, 'aa');
-  const elapsed = await drive(scheduler, () => recovered);
+  const elapsed = await drive(
+    scheduler,
+    () => recovered,
+    () => {
+      offer.coordinator.scanPeers();
+      wake.coordinator.scanPeers();
+    }
+  );
   expect(offer.probes() + wake.probes()).toBeLessThan(12);
   offer.dispose();
   wake.dispose();
@@ -209,7 +223,14 @@ test('disabled offerer declines a level-5 wake instead of letting it time out', 
   expect(wake.coordinator.dcBreaker.snapshot('aa').level).toBeGreaterThanOrEqual(5);
   wake.coordinator.armDcUpgradeRetry('aa');
   disable(offer.coordinator, 'bb');
-  const elapsed = await drive(scheduler, () => recovered);
+  const elapsed = await drive(
+    scheduler,
+    () => recovered,
+    () => {
+      offer.coordinator.scanPeers();
+      wake.coordinator.scanPeers();
+    }
+  );
   expect(elapsed).not.toBeNull();
   expect(elapsed ?? 0).toBeLessThanOrEqual(40 * 60 * 1000);
   expect(wake.coordinator.dcBreaker.snapshot('aa').failures).toBe(failures);
@@ -246,11 +267,14 @@ test('a hopeless disabled peer is probed at 10 then 20 minutes, not every scan',
   });
   disable(side.coordinator, 'ec42');
   const start = scheduler.now();
-  for (let i = 0; i < 360; i += 1) await scheduler.advance(30_000);
+  for (let i = 0; i < 360; i += 1) {
+    await scheduler.advance(30_000);
+    side.coordinator.scanPeers();
+  }
   side.dispose();
   expect(times.length).toBeGreaterThanOrEqual(2);
   expect(times.length).toBeLessThanOrEqual(6);
   expect((times[1] ?? 0) - (times[0] ?? 0)).toBeGreaterThanOrEqual(20 * 60 * 1000 - 60_000);
   expect((times[0] ?? 0) - start).toBeGreaterThanOrEqual(10 * 60 * 1000);
-  expect((times[0] ?? 0) - start).toBeLessThanOrEqual(10 * 60 * 1000 + 60_000);
+  expect((times[0] ?? 0) - start).toBeLessThanOrEqual(10 * 60 * 1000 + 90_000);
 });

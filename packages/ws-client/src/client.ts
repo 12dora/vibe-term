@@ -6,12 +6,8 @@ import {
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
   wsBorsh,
 } from '@vibeterm/shared';
-import {
-  type ActiveCarrier,
-  type AttachDirectOptions,
-  CarrierSwitchBarrier,
-  type DirectCarrierLike,
-} from './carrier-switch';
+import type { ActiveCarrier, AttachDirectOptions, DirectCarrierLike } from './carrier-switch';
+import { PrimaryCarrierLink } from './client-carrier';
 import { ResumeProbeGate, ResumeSignalListeners } from './client-resume';
 import {
   type SocketFactory,
@@ -20,17 +16,18 @@ import {
   type WebSocketLike,
   defaultSocketFactory,
   defaultWsUrl,
+  readCloseEvent,
   toArrayBuffer,
 } from './client-socket';
 import { getDefaultClientVersion, setDefaultClientVersion } from './client-version';
-import { notifyHandlers } from './handler-fanout';
+import { HandlerSet } from './handler-fanout';
 import {
   normalizeNegotiatedHeartbeatIntervalMs,
   resolveHeartbeatCadence,
   resolveResumeProbeTimeoutMs,
 } from './heartbeat-cadence';
 import { type HeartbeatCadence, HeartbeatController } from './heartbeat-controller';
-import { NetworkWakeListeners } from './network-wake';
+import { NetworkWakeListeners, type WakeKind, wakeKindOf } from './network-wake';
 import {
   DEFAULT_MAX_PENDING_BYTES,
   DEFAULT_MAX_PENDING_FRAMES,
@@ -106,6 +103,10 @@ export interface BorshClientOptions {
   maxPendingBytes?: number;
   /** 未就绪待发队列帧数上限；缺省 2048 */
   maxPendingFrames?: number;
+  /** 下一次自动重连的最短等待（宿主按目标 node 的不可达退避给出）；缺省 0。 */
+  reconnectDelayFloorMs?: () => number;
+  /** READY 保持多久才清零重连退避；缺省 12 s（见 `ReconnectController`）。 */
+  reconnectHealthyMs?: number;
 }
 
 export type ConnectionState =
@@ -155,37 +156,47 @@ export class BorshWebSocketClient {
   private readonly explicitPongTimeoutMs: number | undefined;
 
   // 回调
-  private messageHandlers: Set<MessageHandler> = new Set();
-  private stateChangeHandlers: Set<StateChangeHandler> = new Set();
-  private errorHandlers: Set<ErrorHandler> = new Set();
-  private latencyHandlers: Set<(latencyMs: number, rawMs: number) => void> = new Set();
-  private chunkProgressHandlers: Set<ChunkProgressHandler> = new Set();
-  private pendingOverflowHandlers: Set<PendingOverflowHandler> = new Set();
+  private readonly messageHandlers = new HandlerSet<BorshMessage>('message');
+  private readonly stateChangeHandlers = new HandlerSet<ConnectionState>('state change');
+  private readonly errorHandlers = new HandlerSet<Error>('error');
+  private readonly latencyHandlers = new HandlerSet<{ latencyMs: number; rawMs: number }>(
+    'latency'
+  );
+  private readonly chunkProgressHandlers = new HandlerSet<ChunkProgress>('chunk progress');
+  private readonly pendingOverflowHandlers = new HandlerSet<PendingOverflowInfo>('overflow');
+  private readonly sessionHealthyHandlers = new HandlerSet('session healthy');
 
   // 恢复信号（visibilitychange / pageshow）
   private readonly resumeSignals = new ResumeSignalListeners({
     // 转入后台只换节奏、不补发 PING；在途 PONG 沿用原截止时间。
     onVisibilityChange: () => this.applyHeartbeatCadence(),
-    onResume: () => this.handleResumeSignal(),
+    onResume: () => this.handleResumeSignal('recovery'),
   });
   private lastVisibilityReconnectAt = 0;
   private readonly resumeProbeGate = new ResumeProbeGate();
 
   // online / navigator.connection change
-  private readonly networkWake = new NetworkWakeListeners(() => this.handleResumeSignal());
+  private readonly networkWake = new NetworkWakeListeners((source) =>
+    this.handleResumeSignal(wakeKindOf(source))
+  );
 
   // 协议级不可重试错误（对端版本低于 canonical v1.1 门槛）：重连只会原样再被拒一次，
   // 只有宿主升级或调用方显式 connect()/reconnect() 才有意义，故就地熄火。
   private protocolFatal = false;
 
   // 直连载体（F3-1）：懒建，未挂载直连时整条路径与之前完全一致
-  private barrier: CarrierSwitchBarrier | null = null;
-  private carrierChangeHandlers: Set<(active: ActiveCarrier) => void> = new Set();
-  private resumeSubscribedPanes: (() => void) | null = null;
+  private readonly carriers = new PrimaryCarrierLink({
+    deliver: (bytes) => this.dispatcher.handleFrame(toArrayBuffer(bytes)),
+    sendPrimary: (bytes) => this.sendPrimaryRaw(bytes),
+    nextSeq: () => this.nextSeq(),
+  });
 
   private readonly pending: PendingSendQueue;
 
   hasConnectedOnce = false;
+  /** 最近一次 socket 关闭的关闭码 / 原因；进入 READY 时清空。 */
+  lastCloseCode: number | null = null;
+  lastCloseReason: string | null = null;
   latencyMs: number | null = null;
   latencyRawMs: number | null = null;
   // 服务端 HELLO_S2C 协商的能力集（消费方按 featureset 判定；多实例宿主按连接读取）
@@ -249,6 +260,8 @@ export class BorshWebSocketClient {
       delayMs: this.options.reconnectDelayMs,
       maxAttempts: this.options.maxReconnectAttempts,
       onReconnect: () => this.connect(),
+      minDelayMs: () => this.options.reconnectDelayFloorMs?.() ?? 0,
+      healthyMs: this.options.reconnectHealthyMs,
       onSchedule: ({ attempt, delayMs }) => {
         console.log(`[borsh-client] Reconnecting in ${delayMs}ms (attempt ${attempt})`);
       },
@@ -259,7 +272,7 @@ export class BorshWebSocketClient {
       intervalMs: cadence.intervalMs,
       pongTimeoutMs: cadence.pongTimeoutMs,
       sendPing: (nonce) => this.sendPingFrame(nonce),
-      onPongTimeout: () => this.ws?.close(),
+      onPongTimeout: () => this.handleLivenessTimeout(() => this.ws?.close()),
     });
   }
 
@@ -271,7 +284,7 @@ export class BorshWebSocketClient {
     console.log(`[borsh-client] State: ${this.state} -> ${newState}`);
     this.state = newState;
 
-    notifyHandlers(this.stateChangeHandlers, newState, 'state change');
+    this.stateChangeHandlers.emit(newState);
 
     // 进入 READY 时发送队列
     if (newState === 'READY') {
@@ -290,33 +303,37 @@ export class BorshWebSocketClient {
   // ========== 事件订阅 ==========
 
   onMessage(handler: MessageHandler): () => void {
-    this.messageHandlers.add(handler);
-    return () => this.messageHandlers.delete(handler);
+    return this.messageHandlers.add(handler);
   }
 
   onStateChange(handler: StateChangeHandler): () => void {
-    this.stateChangeHandlers.add(handler);
-    return () => this.stateChangeHandlers.delete(handler);
+    return this.stateChangeHandlers.add(handler);
   }
 
   onError(handler: ErrorHandler): () => void {
-    this.errorHandlers.add(handler);
-    return () => this.errorHandlers.delete(handler);
+    return this.errorHandlers.add(handler);
   }
 
   onLatency(handler: (latencyMs: number, rawMs: number) => void): () => void {
-    this.latencyHandlers.add(handler);
-    return () => this.latencyHandlers.delete(handler);
+    return this.latencyHandlers.add((sample) => handler(sample.latencyMs, sample.rawMs));
   }
 
   onChunkProgress(handler: ChunkProgressHandler): () => void {
-    this.chunkProgressHandlers.add(handler);
-    return () => this.chunkProgressHandlers.delete(handler);
+    return this.chunkProgressHandlers.add(handler);
   }
 
   onPendingOverflow(handler: PendingOverflowHandler): () => void {
-    this.pendingOverflowHandlers.add(handler);
-    return () => this.pendingOverflowHandlers.delete(handler);
+    return this.pendingOverflowHandlers.add(handler);
+  }
+
+  /** primary 会话结束，在直连被一并关掉**之前**触发（直连控制器据此不把它记成直连失败）。 */
+  onSessionEnd(handler: () => void): () => void {
+    return this.carriers.onSessionEnd(handler);
+  }
+
+  /** READY 保持满 `reconnectHealthyMs`：会话算真正恢复了（重连退避已清零）。 */
+  onSessionHealthy(handler: () => void): () => void {
+    return this.sessionHealthyHandlers.add(handler);
   }
 
   // ========== 连接管理 ==========
@@ -347,15 +364,13 @@ export class BorshWebSocketClient {
 
       socket.onmessage = (event) => {
         if (this.ws !== socket) return;
-        if (this.barrier && typeof event.data !== 'string') {
-          this.barrier.handlePrimaryInbound(new Uint8Array(event.data));
-          return;
-        }
+        if (this.carriers.handlePrimaryInbound(event.data)) return;
         this.dispatcher.handleFrame(event.data);
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (this.ws !== socket) return;
+        [this.lastCloseCode, this.lastCloseReason] = readCloseEvent(event);
         this.handleClose();
       };
 
@@ -381,7 +396,7 @@ export class BorshWebSocketClient {
     this.clearTimers();
     this.negotiatedHeartbeatIntervalMs = null;
     this.dispatcher.reset();
-    this.barrier?.closeDirect();
+    this.carriers.endSession();
     this.resetLatency();
     this.resetNegotiatedServerState();
 
@@ -401,11 +416,11 @@ export class BorshWebSocketClient {
       this.protocolFatal = true;
       this.reconnector.cancel();
     }
-    notifyHandlers(this.messageHandlers, message, 'message');
+    this.messageHandlers.emit(message);
   }
 
   private dispatchChunkProgress(progress: ChunkProgress): void {
-    notifyHandlers(this.chunkProgressHandlers, progress, 'chunk progress');
+    this.chunkProgressHandlers.emit(progress);
   }
 
   private handleHelloNegotiated(hello: NegotiatedHello): void {
@@ -422,12 +437,18 @@ export class BorshWebSocketClient {
       this.effectiveMaxFrameBytes >= MIN_CANONICAL_FEED_FRAME_BYTES
         ? 'canonical'
         : 'unsupported';
+    this.lastCloseCode = null;
+    this.lastCloseReason = null;
     this.setState('READY');
     this.hasConnectedOnce = true;
     this.applyHeartbeatCadence();
     this.heartbeat.start();
     this.heartbeat.ping();
-    this.reconnector.reset();
+    const socket = this.ws;
+    this.reconnector.armHealthyReset(
+      () => this.state === 'READY' && this.ws === socket,
+      () => this.sessionHealthyHandlers.emit()
+    );
   }
 
   get negotiatedCapabilities(): readonly string[] {
@@ -446,11 +467,7 @@ export class BorshWebSocketClient {
 
     this.latencyMs = sample.latencyMs;
     this.latencyRawMs = sample.rawMs;
-    for (const handler of this.latencyHandlers) {
-      try {
-        handler(sample.latencyMs, sample.rawMs);
-      } catch {}
-    }
+    this.latencyHandlers.emit(sample);
   }
 
   /** 丢弃上一次 HELLO 的协商结果：连接重建前后都必须回到未协商态。 */
@@ -468,13 +485,14 @@ export class BorshWebSocketClient {
 
   private handleClose(): void {
     this.heartbeat.stop();
+    this.reconnector.clearHealthyReset();
     this.negotiatedHeartbeatIntervalMs = null;
     this.resetLatency();
     this.dispatcher.reset();
     this.resetNegotiatedServerState();
     // primary 断开 = 会话整体结束，直连随之关闭（设计 §3 步骤 4）；
     // 重连后是全新会话，epoch 从 0 重来。
-    this.barrier?.closeDirect();
+    this.carriers.endSession();
 
     if (this.state === 'CLOSED') {
       return;
@@ -496,7 +514,7 @@ export class BorshWebSocketClient {
   private handleError(error: Error): void {
     console.error('[borsh-client] Error:', error);
 
-    notifyHandlers(this.errorHandlers, error, 'error');
+    this.errorHandlers.emit(error);
   }
 
   // ========== 发送消息 ==========
@@ -578,9 +596,8 @@ export class BorshWebSocketClient {
 
   /** 返回是否已真正写出；`false` 表示直连在背压中、整帧已排队等待排水。 */
   private sendRaw(data: Uint8Array): boolean {
-    if (this.barrier) {
-      return this.barrier.send(data) === 'sent';
-    }
+    const viaCarrier = this.carriers.send(data);
+    if (viaCarrier !== null) return viaCarrier;
     this.sendPrimaryRaw(data);
     return true;
   }
@@ -600,13 +617,7 @@ export class BorshWebSocketClient {
 
   private emitPendingOverflow(info: PendingOverflowInfo): void {
     console.warn(`[borsh-client] pending send ${info.reason ?? 'overflow'}`, info);
-    for (const handler of this.pendingOverflowHandlers) {
-      try {
-        handler(info);
-      } catch (err) {
-        console.error('[borsh-client] Pending overflow handler error:', err);
-      }
-    }
+    this.pendingOverflowHandlers.emit(info);
   }
 
   private flushPendingMessages(): void {
@@ -623,46 +634,25 @@ export class BorshWebSocketClient {
    * `options.rtcSession` 把切换绑定到本次 attempt（见 `CarrierSwitchBarrier`）。
    */
   attachDirectCarrier(carrier: DirectCarrierLike, options?: AttachDirectOptions): void {
-    this.ensureBarrier().attachDirect(carrier, options);
+    this.carriers.attach(carrier, options);
   }
 
   /** 主动摘掉直连（控制器放弃/停止时调用），回落 primary。 */
   detachDirectCarrier(): void {
-    this.barrier?.handleDirectClose();
+    this.carriers.detach();
   }
 
   get activeCarrier(): ActiveCarrier {
-    return this.barrier?.activeCarrier ?? 'primary';
+    return this.carriers.active;
   }
 
   onCarrierChange(handler: (active: ActiveCarrier) => void): () => void {
-    this.carrierChangeHandlers.add(handler);
-    return () => this.carrierChangeHandlers.delete(handler);
+    return this.carriers.onCarrierChange(handler);
   }
 
   /** 切回 primary 时触发的补齐钩子（宿主注入：对已订阅 pane 重新 resume）。 */
   setResumeSubscribedPanes(fn: (() => void) | null): void {
-    this.resumeSubscribedPanes = fn;
-  }
-
-  private ensureBarrier(): CarrierSwitchBarrier {
-    if (this.barrier) return this.barrier;
-    this.barrier = new CarrierSwitchBarrier({
-      deliver: (bytes) => this.dispatcher.handleFrame(toArrayBuffer(bytes)),
-      sendPrimary: (bytes) => this.sendPrimaryRaw(bytes),
-      nextSeq: () => this.nextSeq(),
-      onCarrierChange: (active) => {
-        for (const handler of this.carrierChangeHandlers) {
-          try {
-            handler(active);
-          } catch (err) {
-            console.error('[borsh-client] Carrier change handler error:', err);
-          }
-        }
-      },
-      resumeSubscribedPanes: () => this.resumeSubscribedPanes?.(),
-    });
-    return this.barrier;
+    this.carriers.setResumeSubscribedPanes(fn);
   }
 
   // ========== 心跳 ==========
@@ -715,21 +705,30 @@ export class BorshWebSocketClient {
     this.heartbeat.stop();
   }
 
-  // ========== 恢复信号（visibilitychange / pageshow / online） ==========
+  /** 常规 PING 超时而直连活跃（PING 走的是直连）：先摘直连、在 primary 上补探，再没回才关。 */
+  private handleLivenessTimeout(closePrimary: () => void): void {
+    if (this.state !== 'READY' || !this.carriers.dropActiveDirect()) {
+      closePrimary();
+      return;
+    }
+    console.warn('[borsh-client] liveness probe over direct timed out, re-probing on primary');
+    this.heartbeat.pingWithDeadline(this.heartbeat.cadence.pongTimeoutMs, closePrimary);
+  }
+
+  // ========== 恢复信号（visibilitychange / pageshow / online / connection change） ==========
 
   /**
-   * 回前台 / 网络恢复的统一处置。READY 时补一次 PING，但这一次用 **RTT 推出来的短期限**
-   * 武装 PONG 超时（`resolveResumeProbeTimeoutMs`）：链路是僵尸的话秒级就能发现，而不是
-   * 干等常规的 30 s；期限内收到 PONG 就什么都不做，下一拍自动回到常规节奏。其余状态照旧立刻重连。
+   * 回前台 / 网络恢复的统一处置。READY 时补一次 PING，用 RTT 推出来的短期限武装 PONG 超时
+   * （`resolveResumeProbeTimeoutMs`），僵尸链路秒级发现；不在 READY 时按 `WakeKind` 处置。
    */
-  private handleResumeSignal(): void {
+  private handleResumeSignal(kind: WakeKind): void {
     if (this.state !== 'READY') {
-      this.wakeReconnect();
+      this.wakeReconnect(kind);
       return;
     }
     if (!this.resumeProbeGate.allow()) return;
-    // 探测没等到 PONG：这条 socket 是僵尸。只 `close()` 不够——对端已经不在，关闭握手可能
-    // 迟迟等不到回应，`onclose` 也就迟迟不来。直接强制重连（摘回调、关旧 socket、立刻建连）。
+    // 没等到 PONG 即僵尸：`close()` 的关闭握手可能迟迟不回，直接强制重连。直连活跃时两条路径
+    // 多半一起断了（切网恢复），不再在 primary 上补探。
     const deadlineMs = resolveResumeProbeTimeoutMs({
       medianLatencyMs: this.heartbeat.medianLatencyMs,
       pongTimeoutMs: this.heartbeat.cadence.pongTimeoutMs,
@@ -740,9 +739,9 @@ export class BorshWebSocketClient {
     });
   }
 
-  /** 立即重连：清空退避计数后直接建连；CLOSED 态按节流放行。 */
-  private wakeReconnect(): void {
+  private wakeReconnect(kind: WakeKind): void {
     if (this.protocolFatal) return;
+    if (kind === 'hint' && (this.options.reconnectDelayFloorMs?.() ?? 0) > 0) return;
 
     if (this.state === 'CLOSED') {
       const now = Date.now();
@@ -754,7 +753,8 @@ export class BorshWebSocketClient {
     }
 
     if (this.state === 'RECONNECT_BACKOFF') {
-      this.reconnector.reset();
+      if (kind === 'recovery') this.reconnector.reset();
+      else this.reconnector.cancel();
       this.connect();
     }
   }
@@ -774,7 +774,7 @@ export class BorshWebSocketClient {
 
   reconnect(): void {
     this.clearTimers();
-    this.barrier?.closeDirect();
+    this.carriers.endSession();
     this.resetLatency();
     this.resetNegotiatedServerState();
     if (this.ws) {

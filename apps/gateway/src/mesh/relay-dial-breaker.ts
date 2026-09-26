@@ -39,6 +39,12 @@ const SKIP_KINDS = new Set([
   'stale',
   'not-trusted',
   'skip',
+  'uplink is not online',
+  'uplink-retiring',
+  'unauthenticated',
+  'relay-unhandled',
+  'quota-streams',
+  'relay-open-local',
 ]);
 
 export type RelayDialBreakerDecision = DialBreakerDecision & { disabled: boolean };
@@ -96,6 +102,7 @@ function classifyFailureMessage(message: string): string {
   }
   if (lower.includes('timed out') || lower.includes('timeout')) return 'handshake-timeout';
   if (lower.includes('rst')) return 'rst';
+  if (lower === 'open-failed') return 'skip';
   return 'open-failed';
 }
 

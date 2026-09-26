@@ -3,7 +3,18 @@ import {
   assignHeaderPair,
   isVibeTermHeaderName,
 } from '@vibeterm/shared/http/mesh-headers';
+import { clientIpFromRequest } from './client-ip';
 import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL, isTrustedLocalClient } from './client-source';
+
+/** 入口把真实客户端 IP 交给目标，只用于登录记录。浏览器自带的同名头一律丢掉。 */
+export const ENTRY_CLIENT_IP_HEADER = 'x-vibeterm-entry-client-ip';
+export const VIBETERM_CLIENT_HEADER = 'x-vibeterm-client';
+
+const FORWARDED_AUTH_PATHS = new Set([
+  '/api/auth/challenge',
+  '/api/auth/login',
+  '/api/auth/passkey/login/options',
+]);
 import { MESH_ALLOWED_MIME, MESH_FORWARD_CSP, SET_SESSION_HEADER } from './mesh-deps';
 import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';
 
@@ -86,6 +97,37 @@ export function filterRequestHeaders(req: Request): Record<string, string> {
     assignHeaderPair(out, CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL);
   }
   return out;
+}
+
+export function stampForwardedAuthHeaders(
+  headers: Record<string, string>,
+  req: Request,
+  rest: string
+): void {
+  deleteHeader(headers, ENTRY_CLIENT_IP_HEADER);
+  if (!FORWARDED_AUTH_PATHS.has(rest)) return;
+  const ip = clientIpFromRequest(req);
+  if (ip) headers[ENTRY_CLIENT_IP_HEADER] = ip;
+  copyIfMissing(headers, req, VIBETERM_CLIENT_HEADER);
+  copyIfMissing(headers, req, 'user-agent');
+}
+
+function copyIfMissing(headers: Record<string, string>, req: Request, name: string): void {
+  if (hasHeader(headers, name)) return;
+  const value = req.headers.get(name);
+  if (value) headers[name] = value;
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const lower = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === lower);
+}
+
+function deleteHeader(headers: Record<string, string>, name: string): void {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === lower) delete headers[key];
+  }
 }
 
 function baseMime(contentType: string): string {

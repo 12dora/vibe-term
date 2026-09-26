@@ -8,6 +8,7 @@ export type PeerLifecycleHost = {
   dialer: { syncLocalFingerprint: () => void };
   dcUpgrade: {
     startScan: (cb: () => void) => void;
+    noteLiveDcHealth?: () => void;
     clearScan: () => void;
     dispose: () => void;
   };
@@ -32,6 +33,7 @@ export async function startPeerManager(host: PeerLifecycleHost): Promise<void> {
     host.state.endpointBackoff.prune();
     host.refreshAdvertisedStatus();
     host.notifyPeerEndpointsChanged();
+    host.dcUpgrade.noteLiveDcHealth?.();
   });
 }
 
@@ -71,7 +73,6 @@ export async function stopPeerManager(host: PeerLifecycleHost): Promise<void> {
   host.state.upgrading.clear();
   host.rtcWake.dispose();
   host.state.lostDirect.clear();
-  host.state.peerReconnectWake.reset();
   host.dcUpgrade.dispose();
   host.routes.dispose();
 }

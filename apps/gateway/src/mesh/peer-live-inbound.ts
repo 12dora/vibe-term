@@ -33,6 +33,7 @@ export function handlePeerInboundStream(
   peerNodeId: string,
   stream: LinkStream
 ): void {
+  if (stream.dead) return;
   const kind = classifyOpenPayload(stream.openPayload);
   if (kind === 'tcp') {
     dispatchTcpStream(stream, { peerNodeId, selfNodeId: host.selfNodeId });
@@ -52,7 +53,10 @@ export function handlePeerInboundStream(
     });
     return;
   }
-  if (kind !== 'ws') return;
+  if (kind !== 'ws') {
+    stream.reset('unknown-stream-type');
+    return;
+  }
   if (!host.wsServer || !host.sessionStore) {
     stream.reset('ws-not-configured');
     return;

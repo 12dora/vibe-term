@@ -9,7 +9,11 @@ import {
 } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { currentDcProofGeneration, dcLinkProven, subscribeDcLinkProof } from './rtc/dc-link-proof';
-import { RTC_DIAL_BREAKER_HEALTHY_MS, classifyRtcDialFailure } from './rtc/rtc-dial-breaker';
+import {
+  RTC_DIAL_BREAKER_HEALTHY_MS,
+  classifyRtcDialFailure,
+  isIntentionalDcLoss,
+} from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
 
 /** link.hello 能力位：对端会把中继留到 DC 稳住，并按短命夭折升级冷却。2.9.0 起广告。 */
@@ -183,6 +187,43 @@ export class UnstableDcBackoff {
   }
 }
 
+const ROUTE_CLOSE_REASONS = new Set([
+  'dc-promote-reject',
+  'dc-promote-backoff',
+  'route-measure-reject',
+  'route-relay',
+]);
+export const ROUTE_CLOSE_DEFAULT_MS = 60_000;
+
+const routeCloseByLive = new WeakMap<LivePeer, { until: number }>();
+
+/** 已建立 DC 上的选路关闭。旧对端不认识这条 ctl，直接丢掉。 */
+export function noteIncomingRouteClose(
+  live: LivePeer,
+  msg: Record<string, unknown>,
+  now: number
+): void {
+  const reason = typeof msg.reason === 'string' ? msg.reason : '';
+  if (!ROUTE_CLOSE_REASONS.has(reason)) return;
+  const raw = msg.retryAfterMs;
+  const retryAfterMs =
+    typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : ROUTE_CLOSE_DEFAULT_MS;
+  routeCloseByLive.set(live, { until: now + retryAfterMs });
+}
+
+/** 随后的 channel-closed 不计失败，并按对端给的 retryAfter 冷却再拨 DC。 */
+export function applyRouteCloseCooldown(
+  breaker: { noteRemoteRefusal(peer: string, until: number | null, now?: number): void },
+  live: LivePeer | undefined,
+  peer: string,
+  reason: string
+): boolean {
+  const mark = live ? routeCloseByLive.get(live) : undefined;
+  if (live && mark) routeCloseByLive.delete(live);
+  if (mark) breaker.noteRemoteRefusal(peer, mark.until);
+  return isIntentionalDcLoss(reason) || mark != null;
+}
+
 export function clearUnstableHealthyTimer(
   handles: Map<string, { clear(): void }>,
   peer: string
@@ -214,6 +255,7 @@ export function armUnstableHealthyTimer(
 export type DcDropBreaker = {
   noteFailure(peer: string, kind: string, attemptId?: string, now?: number): void;
   noteUnstable?(peer: string, cooldownMs: number, now?: number): void;
+  noteChannelLost?(peer: string, attemptId?: string): void;
 };
 
 export function settleEstablishedDcDrop(input: {
@@ -225,6 +267,7 @@ export function settleEstablishedDcDrop(input: {
   live: LivePeer | undefined;
   now: number;
 }): void {
+  input.breaker.noteChannelLost?.(input.peer, input.attemptId ?? undefined);
   if (countEstablishedDropAsDialFailure(input)) {
     input.breaker.noteFailure(
       input.peer,

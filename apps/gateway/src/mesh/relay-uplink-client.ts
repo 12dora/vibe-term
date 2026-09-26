@@ -40,6 +40,7 @@ import {
   shouldResendRelayStatus,
 } from './relay-uplink-ctl';
 import { defaultRelayWsFactory, openRelayLink } from './relay-uplink-http';
+import { relayUplinkConnectReason } from './relay-uplink-reason';
 import { waitUntilUplinkClosed } from './relay-uplink-wait';
 import type {
   InboundRelayHandler,
@@ -58,6 +59,7 @@ import {
 } from './uplink-constants';
 import { UplinkStreamGate, createUplinkPathHeartbeat } from './uplink-path-sampler';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
+import { bindRelayStreamClient } from './uplink-relay-drain';
 
 export type RelayUplinkClientOptions = {
   uplinkUrl: string;
@@ -87,10 +89,7 @@ export type RelayUplinkClientOptions = {
   observedIpv4?: RelayObservedIpv4Sink;
 };
 
-/**
- * 中继上行客户端；对 `UplinkPool` 暴露与 `UplinkClient` 相同的公开面
- * （`PooledUplinkClient`），内部走 `relay/v1` 密文协议。
- */
+/** 中继上行客户端。对池暴露与 UplinkClient 相同的公开面，内部走 relay/v1。 */
 export class RelayUplinkClient implements RelayUplinkCtlHost {
   readonly identity: MeshIdentity;
   readonly uplinkUrl: string;
@@ -102,6 +101,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   awaitingToken = false;
   tenantId: string | null = null;
   listVersion = 0;
+  listBoot = '';
   nodesViaRelay = 0;
   /** `relay.list` 串行化：blob 多的大清单解密慢，晚到的旧版本不能覆盖新版本。 */
   listChain: Promise<void> = Promise.resolve();
@@ -252,13 +252,27 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     };
   }
 
+  adoptPrimaryWiring(
+    wiring: Pick<RelayUplinkClientOptions, 'onNodeList' | 'onEnrollRedeemed' | 'onRtcSignal'>
+  ): void {
+    if (wiring.onNodeList) this.opts.onNodeList = wiring.onNodeList;
+    if (wiring.onEnrollRedeemed) this.opts.onEnrollRedeemed = wiring.onEnrollRedeemed;
+    if (wiring.onRtcSignal) this.opts.onRtcSignal = wiring.onRtcSignal;
+    this.opts.keyLogCatchUp = 'publish';
+    this.keyLog.setPushMode('publish');
+  }
+
+  releasePrimaryWiring(): void {
+    this.opts.keyLogCatchUp = 'prefix-verified';
+    this.keyLog.setPushMode('prefix-verified');
+  }
+
   setOnRelayStream(handler: InboundRelayHandler | null): void {
     this.relayHandler = handler;
   }
 
   beginRelayDrain(): void {
     this.acceptingRelayStreams = false;
-    this.relayHandler = null;
   }
 
   start(): void {
@@ -277,7 +291,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     try {
       await this.connectOnce(effective);
     } catch (err) {
-      this.tearDownLink(connectFailureReason(err));
+      this.tearDownLink(relayUplinkConnectReason(err));
       this.setState('offline');
       throw err;
     }
@@ -362,10 +376,13 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       throw new Error('uplink is not online');
     }
     const generation = this.connectGeneration;
-    return this.relayGate.open(
-      () => link.openStream(encodeRelayOpenStream({ to: toNodeId })),
-      () =>
-        this.acceptingRelayStreams && this.link === link && generation === this.connectGeneration
+    return bindRelayStreamClient(
+      await this.relayGate.open(
+        () => link.openStream(encodeRelayOpenStream({ to: toNodeId })),
+        () =>
+          this.acceptingRelayStreams && this.link === link && generation === this.connectGeneration
+      ),
+      this
     );
   }
 
@@ -483,19 +500,18 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         stream.reset('unauthenticated');
         return;
       }
-      if (!this.acceptingRelayStreams) {
-        stream.reset('uplink-retiring');
-        return;
-      }
       const open = parseOpenPayload(stream.openPayload);
       const from = typeof open?.from === 'string' ? open.from : '';
-      if (open?.to !== this.identity.nodeId || !from) return;
+      if (open?.to !== this.identity.nodeId || !from) {
+        stream.reset('relay-unhandled');
+        return;
+      }
       const handler = this.relayHandler;
       if (!handler) {
         stream.reset('relay-unhandled');
         return;
       }
-      handler(this.trackRelayStream(stream), from, this.uplinkUrl);
+      handler(this.relayGate.track(stream), from, this.uplinkUrl);
     });
     void link.closed.then((info) => {
       if (generation !== this.connectGeneration) return;
@@ -549,11 +565,9 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     this.lastRttSentMs = null;
     this.lastRttSentAt = 0;
     this.enroll.reset('RELAY_OFFLINE');
+    this.listVersion = 0;
+    this.listBoot = '';
     if (this.state === 'online') this.setState('connecting');
-  }
-
-  private trackRelayStream(stream: LinkStream): LinkStream {
-    return this.relayGate.track(stream);
   }
 
   tearDownLink(reason: string): void {
@@ -571,11 +585,4 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       /* already closed */
     }
   }
-}
-
-function connectFailureReason(err: unknown): string {
-  const msg = err instanceof Error ? err.message.trim() : '';
-  if (!msg) return 'connect-failed';
-  if (msg === 'aborted' || (msg.length <= 64 && /^[a-z0-9_.:-]+$/i.test(msg))) return msg;
-  return 'connect-failed';
 }

@@ -1,18 +1,20 @@
+import { compareSemver } from '@vibeterm/shared';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs } from './ctl';
 import { isNodePaused } from './node-pause';
 import {
   attachPermanentHoldClear,
+  backgroundUpgradeSkipsDc,
   isBackgroundDcUpgradeBlocked,
   noteBackgroundDcUpgradeAttempt,
 } from './peer-dc-upgrade-gate';
 import { RelayPresenceGap } from './peer-reconnect-wake';
 import {
   type DcRearmSource,
-  RTC_DIAL_BREAKER_HEALTHY_MS,
   type RtcDialBreaker,
   createGatewayRtcDialBreaker,
 } from './rtc/rtc-dial-breaker';
+import { forceProbeJitterMs } from './rtc/rtc-force-probe';
 import type { MeshScheduler, PeerTransportKind } from './types';
 export const PEER_UPGRADE_COOLDOWN_MS = 10_000;
 export const PEER_UPGRADE_SCAN_MS = 15_000;
@@ -44,12 +46,13 @@ export type DcUpgradeLivePeer = {
   quiesceCapable: boolean;
   session: LinkSession;
   dcAttemptId: string | null;
+  linkSinceAt?: number;
 };
 
 export type DcUpgradePorts = {
   scheduler: MeshScheduler;
   live: () => Map<string, DcUpgradeLivePeer>;
-  dialDc: (nodeId: string) => Promise<LinkSession>;
+  dialDc: (nodeId: string, opts?: { skipDc?: boolean }) => Promise<LinkSession>;
   shouldTryDc: (nodeId: string) => boolean;
   dcCapable: (nodeId: string) => boolean;
   emitLinkInfo: (live: DcUpgradeLivePeer) => void;
@@ -63,15 +66,17 @@ export type DcUpgradePorts = {
   probeQuiesce: (live: DcUpgradeLivePeer) => void;
   hasWsSecureCandidate: (nodeId: string) => boolean;
   lostDirect: () => Set<string>;
-  /** 真 rearm（指纹 / 端点 / 上行 / 能力 / 手动）清短命 DC 连击。不传 nodeId 表示全部。 */
   clearUnstableStreak?: (nodeId?: string) => void;
+  canDialDirect?: (nodeId: string, opts: { peerInitiated: boolean }) => boolean;
+  allowsUpgrade?: (nodeId: string) => boolean;
+  peerCapability?: (nodeId: string) => { version: string | null; directCapable: boolean } | null;
+  dcProven?: (nodeId: string) => boolean;
 };
 
 export class DcUpgradeCoordinator {
   readonly upgradeGate = new Map<string, UpgradeGate>();
   readonly dcUpgradeRetry = new Map<string, DcUpgradeRetry>();
   readonly dcBreaker: RtcDialBreaker;
-  readonly dcHealth = new Map<string, AbortController>();
   dcAttemptSeq = 0;
   upgradeInflight = 0;
   readonly upgradeWaiters: Array<() => void> = [];
@@ -79,13 +84,16 @@ export class DcUpgradeCoordinator {
   private readonly wsUpgradeInflight = new Set<string>();
   private readonly presenceGap = new RelayPresenceGap();
   private readonly ports: DcUpgradePorts;
+  private readonly capSnap = new Map<
+    string,
+    { version: string | null; directCapable: boolean; at: number }
+  >();
 
   constructor(ports: DcUpgradePorts) {
     this.ports = ports;
     this.dcBreaker = attachPermanentHoldClear(
       createGatewayRtcDialBreaker({
         now: () => this.ports.scheduler.now(),
-        onDisable: (event) => this.scheduleDisabledProbe(event.peer),
       }),
       () => this.ports.scheduler.now()
     );
@@ -110,13 +118,47 @@ export class DcUpgradeCoordinator {
   onUplinkSwitched(): void {
     this.ports.clearUnstableStreak?.();
     this.upgradeClearedSoft();
-    this.rearmAllDisabled('uplink-switch');
+    this.decayEscalated('uplink-url-changed');
+  }
+
+  onIceConfigChanged(): void {
+    this.decayEscalated('ice-config');
   }
 
   /** relay/ws 会话替换不是 DC 会通的证据，不 rearm、不降档。 */
   onPeerReconnected(_nodeId: string): void {}
 
   onPeerCapabilitiesChanged(nodeId: string): void {
+    const next = this.ports.peerCapability?.(nodeId);
+    if (!next) {
+      this.ports.clearUnstableStreak?.(nodeId);
+      this.rearmDisabled(nodeId, 'peer-capabilities');
+      return;
+    }
+    const now = this.ports.scheduler.now();
+    const prev = this.capSnap.get(nodeId);
+    if (!prev) {
+      this.capSnap.set(nodeId, {
+        version: next.version,
+        directCapable: next.directCapable,
+        at: now,
+      });
+      this.ports.clearUnstableStreak?.(nodeId);
+      this.rearmDisabled(nodeId, 'peer-capabilities');
+      return;
+    }
+    const versionUp = capabilityVersionIncreased(prev.version, next.version);
+    const capableEdge = !prev.directCapable && next.directCapable;
+    if (!versionUp && !capableEdge) {
+      this.capSnap.set(nodeId, {
+        version: next.version,
+        directCapable: next.directCapable,
+        at: prev.at,
+      });
+      return;
+    }
+    if (now - prev.at < CAPABILITY_REARM_DEBOUNCE_MS) return;
+    this.capSnap.set(nodeId, { version: next.version, directCapable: next.directCapable, at: now });
     this.ports.clearUnstableStreak?.(nodeId);
     this.rearmDisabled(nodeId, 'peer-capabilities');
   }
@@ -155,21 +197,22 @@ export class DcUpgradeCoordinator {
   dispose(): void {
     this.clearScan();
     for (const nodeId of [...this.dcUpgradeRetry.keys()]) this.cancelDcUpgradeRetry(nodeId);
-    for (const nodeId of [...this.dcHealth.keys()]) this.cancelDcHealthTimer(nodeId);
     this.presenceGap.reset();
+    this.capSnap.clear();
     this.dcBreaker.reset();
   }
 
   wantsUpgrade(live: DcUpgradeLivePeer): boolean {
     if (live.retiring || isNodePaused(live.peerNodeId)) return false;
     if (live.transport === 'dc') return false;
+    if (this.ports.allowsUpgrade && !this.ports.allowsUpgrade(live.peerNodeId)) return false;
+    if (this.wsSecureCandidate(live)) return true;
+    if (this.dcBreaker.honoursRemoteRefusal(live.peerNodeId)) return false;
+    if (!this.ports.dcCapable(live.peerNodeId)) return false;
     if (isBackgroundDcUpgradeBlocked(this.dcBreaker, live.peerNodeId, this.ports.scheduler.now())) {
       return false;
     }
-    return (
-      this.ports.shouldTryDc(live.peerNodeId) ||
-      (live.transport === 'relay' && this.ports.hasWsSecureCandidate(live.peerNodeId))
-    );
+    return this.ports.shouldTryDc(live.peerNodeId);
   }
 
   ensureGate(nodeId: string): UpgradeGate {
@@ -249,7 +292,6 @@ export class DcUpgradeCoordinator {
   maybeUpgrade(nodeId: string, opts: { cooldown: boolean; userPath?: boolean }): void {
     if (this.ports.stopped()) return;
     if (!this.ports.isTrusted(nodeId)) return;
-    if (isBackgroundDcUpgradeBlocked(this.dcBreaker, nodeId, this.ports.scheduler.now())) return;
     const live = this.ports.live().get(nodeId);
     if (!live || !this.wantsUpgrade(live)) return;
     if (!live.quiesceCapable) {
@@ -278,16 +320,22 @@ export class DcUpgradeCoordinator {
     this.queueUpgrade(nodeId);
   }
   queueUpgrade(nodeId: string): void {
-    noteBackgroundDcUpgradeAttempt(this.dcBreaker, nodeId, this.ports.scheduler.now());
+    const liveNow = this.ports.live().get(nodeId);
+    const wsSecure = liveNow != null && this.wsSecureCandidate(liveNow);
+    const skipDc = backgroundUpgradeSkipsDc(
+      this.dcLegBlocked(nodeId),
+      isBackgroundDcUpgradeBlocked(this.dcBreaker, nodeId, this.ports.scheduler.now())
+    );
+    if (!wsSecure && skipDc) return;
+    if (!skipDc) noteBackgroundDcUpgradeAttempt(this.dcBreaker, nodeId, this.ports.scheduler.now());
     const upgrading = this.ports.upgrading();
-    const live = this.ports.live().get(nodeId);
-    const wsSecure = live?.transport === 'relay' && this.ports.hasWsSecureCandidate(nodeId);
+    const live = liveNow;
     if (upgrading.has(nodeId) && (!wsSecure || this.wsUpgradeInflight.has(nodeId))) {
       this.ensureGate(nodeId).coalesced = true;
       return;
     }
     const before = live?.session ?? null;
-    const upgrade = this.runUpgradeDial(nodeId, before);
+    const upgrade = this.runUpgradeDial(nodeId, before, skipDc);
     if (wsSecure) this.wsUpgradeInflight.add(nodeId);
     upgrading.set(nodeId, upgrade);
     void upgrade
@@ -301,10 +349,10 @@ export class DcUpgradeCoordinator {
       });
   }
 
-  async runUpgradeDial(nodeId: string, before: LinkSession | null): Promise<LinkSession> {
+  async runUpgradeDial(nodeId: string, before: LinkSession | null, skipDc = false) {
     await this.acquireUpgradeSlot();
     try {
-      const session = await this.ports.dialDc(nodeId);
+      const session = await this.ports.dialDc(nodeId, skipDc ? { skipDc: true } : undefined);
       this.noteUpgradeResult(nodeId, session !== before);
       return session;
     } catch (err) {
@@ -328,35 +376,27 @@ export class DcUpgradeCoordinator {
     return `dc:${this.dcAttemptSeq}`;
   }
 
-  cancelDcHealthTimer(nodeId: string): void {
-    const abort = this.dcHealth.get(nodeId);
-    if (!abort) return;
-    this.dcHealth.delete(nodeId);
-    abort.abort();
+  cancelDcHealthTimer(_nodeId: string): void {}
+
+  armDcHealthTimer(_nodeId: string, _attemptId: string): void {}
+
+  scanPeers(): void {
+    this.noteLiveDcHealth();
+    for (const nodeId of this.ports.live().keys()) {
+      this.maybeUpgrade(nodeId, { cooldown: true });
+    }
   }
 
-  armDcHealthTimer(nodeId: string, attemptId: string): void {
-    this.cancelDcHealthTimer(nodeId);
-    const abort = new AbortController();
-    this.dcHealth.set(nodeId, abort);
-    const establishedAt = this.ports.scheduler.now();
-    const handle = this.ports.scheduler.interval(() => {
-      handle.clear();
-      if (this.dcHealth.get(nodeId) !== abort) return;
-      this.dcHealth.delete(nodeId);
-      if (this.ports.scheduler.now() - establishedAt < RTC_DIAL_BREAKER_HEALTHY_MS) return;
-      const live = this.ports.live().get(nodeId);
-      if (live?.transport !== 'dc' || live.dcAttemptId !== attemptId) return;
-      if (this.dcBreaker.noteHealthy(nodeId)) this.ports.emitLinkInfo(live);
-    }, RTC_DIAL_BREAKER_HEALTHY_MS);
-    abort.signal.addEventListener(
-      'abort',
-      () => {
-        handle.clear();
-        if (this.dcHealth.get(nodeId) === abort) this.dcHealth.delete(nodeId);
-      },
-      { once: true }
-    );
+  noteLiveDcHealth(): void {
+    const now = this.ports.scheduler.now();
+    for (const live of this.ports.live().values()) {
+      if (live.transport !== 'dc' || live.retiring || live.linkSinceAt == null) continue;
+      const proven = this.ports.dcProven?.(live.peerNodeId) === true;
+      const ageMs = now - live.linkSinceAt;
+      if (this.dcBreaker.noteHealthy(live.peerNodeId, now, { ageMs, proven })) {
+        this.ports.emitLinkInfo(live);
+      }
+    }
   }
 
   dcUpgradeRetryDelayMs(attempt: number): number {
@@ -448,7 +488,6 @@ export class DcUpgradeCoordinator {
   willAttemptUpgrade(nodeId: string): boolean {
     const live = this.ports.live().get(nodeId);
     if (!live || !this.wantsUpgrade(live) || this.ports.lostDirect().has(nodeId)) return false;
-    // 还在等 quiesce 探测回包时 coalesced 只是占位，扫描循环并不会拨号。
     if (!live.quiesceCapable) return false;
     const gate = this.upgradeGate.get(nodeId);
     if (gate && this.ports.scheduler.now() < gate.nextEligibleAt) return false;
@@ -518,12 +557,39 @@ export class DcUpgradeCoordinator {
     if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
   }
 
-  private upgradeClearedSoft(): void {
-    for (const nodeId of this.dcBreaker.clearAllSoftCooldowns()) {
-      this.maybeUpgrade(nodeId, { cooldown: false });
+  private decayEscalated(source: DcRearmSource): void {
+    for (const peer of this.dcBreaker.escalatedPeers()) {
+      if (!this.dcBreaker.rearmDisabled(peer, source)) continue;
+      const jitter = forceProbeJitterMs(peer, 60_000);
+      this.scheduleUpgrade(peer, jitter);
     }
   }
 
+  private scheduleUpgrade(nodeId: string, delayMs: number): void {
+    void this.ports.scheduler.sleep(delayMs, this.ports.stopSignal()).then(
+      () => {
+        if (this.ports.stopped()) return;
+        this.maybeUpgrade(nodeId, { cooldown: false });
+      },
+      () => undefined
+    );
+  }
+
+  private upgradeClearedSoft(): void {
+    for (const nodeId of this.dcBreaker.clearUnstableCooldowns()) {
+      this.scheduleUpgrade(nodeId, forceProbeJitterMs(nodeId, 60_000));
+    }
+  }
+
+  private wsSecureCandidate(live: DcUpgradeLivePeer): boolean {
+    return live.transport === 'relay' && this.ports.hasWsSecureCandidate(live.peerNodeId);
+  }
+  private dcLegBlocked(nodeId: string): boolean {
+    if (this.ports.canDialDirect && !this.ports.canDialDirect(nodeId, { peerInitiated: false })) {
+      return true;
+    }
+    return !this.ports.shouldTryDc(nodeId);
+  }
   private liveForDcRetry(nodeId: string): DcUpgradeLivePeer | null {
     if (this.ports.stopped()) {
       this.cancelDcUpgradeRetry(nodeId);
@@ -546,4 +612,10 @@ export class DcUpgradeCoordinator {
     }
     return live;
   }
+}
+
+const CAPABILITY_REARM_DEBOUNCE_MS = 5_000;
+
+function capabilityVersionIncreased(prev: string | null, next: string | null): boolean {
+  return Boolean(prev && next && (compareSemver(next, prev) ?? 0) > 0);
 }

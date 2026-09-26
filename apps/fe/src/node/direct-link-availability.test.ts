@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   DIRECT_LINK_NEGATIVE_TTL_MS,
-  DIRECT_UNAVAILABLE_TTL_MS,
   clearDirectLinkAvailability,
   clearDirectLinkUnavailableFor,
-  clearDirectUnavailableVerdict,
   isDirectLinkUnavailable,
   markDirectLinkUnavailable,
   watchDirectNegotiation,
@@ -162,39 +160,13 @@ describe('watchDirectNegotiation', () => {
     expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
   });
 
-  test('目标答 503 DIRECT_UNAVAILABLE：记 10 分钟负缓存并回调宿主', async () => {
-    let stopped = 0;
-    const client = watchDirectNegotiation(
-      NODE_A,
-      clientReturning(
-        () => new Response(JSON.stringify({ code: 'DIRECT_UNAVAILABLE' }), { status: 503 })
-      ),
-      () => {
-        stopped += 1;
-      },
-      () => ENTRY_B
-    );
-    const before = Date.now();
-    const res = await client.fetch(`/n/${NODE_A}/api/rtc/authorize`);
-    await flush();
-
-    expect(await res.json()).toEqual({ code: 'DIRECT_UNAVAILABLE' });
-    expect(stopped).toBe(1);
-    expect(
-      isDirectLinkUnavailable(NODE_A, ENTRY_B, before + DIRECT_UNAVAILABLE_TTL_MS - 1_000)
-    ).toBe(true);
-    expect(
-      isDirectLinkUnavailable(NODE_A, ENTRY_B, Date.now() + DIRECT_UNAVAILABLE_TTL_MS + 1)
-    ).toBe(false);
-  });
-
   test.each([
+    [{ code: 'DIRECT_UNAVAILABLE' }],
+    [{ code: 'DIRECT_UNAVAILABLE', reason: 'disabled' }],
     [{ code: 'DIRECT_BUSY', reason: 'timeout', retryAfterMs: 2000 }],
     [{ code: 'DIRECT_BUSY', reason: 'capacity' }],
     [{ code: 'DIRECT_UNAVAILABLE', reason: 'timeout' }],
-    [{ code: 'DIRECT_UNAVAILABLE', reason: 'aborted' }],
-    [{ code: 'DIRECT_UNAVAILABLE', reason: 'failed' }],
-  ])('目标这次没给出直连（%o）：不进负缓存，交给控制器的熔断', async (body) => {
+  ])('目标自己的 503（%o）：不进负缓存，只由控制器的直连熔断记账', async (body) => {
     let stopped = 0;
     const client = watchDirectNegotiation(
       NODE_A,
@@ -204,38 +176,12 @@ describe('watchDirectNegotiation', () => {
       },
       () => ENTRY_B
     );
-    await client.fetch(`/n/${NODE_A}/api/rtc/authorize`);
+    const res = await client.fetch(`/n/${NODE_A}/api/rtc/authorize`);
     await flush();
 
+    expect(await res.json()).toEqual(body);
     expect(stopped).toBe(0);
     expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
-  });
-
-  test('DIRECT_UNAVAILABLE 带永久 reason 照样停放 10 分钟', async () => {
-    const client = watchDirectNegotiation(
-      NODE_A,
-      clientReturning(
-        () =>
-          new Response(JSON.stringify({ code: 'DIRECT_UNAVAILABLE', reason: 'disabled' }), {
-            status: 503,
-          })
-      ),
-      () => undefined,
-      () => ENTRY_B
-    );
-    await client.fetch(`/n/${NODE_A}/api/rtc/authorize`);
-    await flush();
-    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(true);
-  });
-
-  test('显式重试只清「给不出直连」这一种负结论，代答 401 的不动', () => {
-    markDirectLinkUnavailable(NODE_A, ENTRY_B, Date.now(), 'direct-unavailable');
-    expect(clearDirectUnavailableVerdict(NODE_A, ENTRY_B)).toBe(true);
-    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
-
-    markDirectLinkUnavailable(NODE_A, ENTRY_B);
-    expect(clearDirectUnavailableVerdict(NODE_A, ENTRY_B)).toBe(false);
-    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(true);
   });
 
   test('转发器的 503 NODE_UNREACHABLE 是链路抖动：不进负缓存', async () => {

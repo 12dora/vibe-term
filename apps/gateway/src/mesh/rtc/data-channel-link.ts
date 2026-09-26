@@ -18,7 +18,7 @@ import {
 } from './liveness';
 import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
-import { rtcLog } from './rtc-log';
+import { exitRtcLogContext, rtcLog } from './rtc-log';
 import { logDataChannelClosed } from './rtc-peer-helpers';
 
 export const DC_FLUSH_RETRY_MS = 8;
@@ -119,11 +119,13 @@ export class DataChannelLink implements ByteTransport {
     this.opened = channel.isOpen();
     channel.setBufferedAmountLowThreshold(DC_LOW_WATER_BYTES);
     channel.onBufferedAmountLow(() => {
-      this.armFlushRetry(DC_FLUSH_RETRY_MS);
+      exitRtcLogContext(() => this.armFlushRetry(DC_FLUSH_RETRY_MS));
     });
     channel.onOpen(() => {
-      this.opened = true;
-      this.flush();
+      exitRtcLogContext(() => {
+        this.opened = true;
+        this.flush();
+      });
     });
     channel.onMessage((msg) => {
       if (this.closed) return;
@@ -170,10 +172,10 @@ export class DataChannelLink implements ByteTransport {
     this.wasOpen = this.channel.isOpen();
     if (this.peer && this.wasOpen) this.proofGeneration = beginDcLinkProof(this.peer);
     this.channel.onClosed(() => {
-      this.finishClose('channel-closed', 'remote');
+      exitRtcLogContext(() => this.finishClose('channel-closed', 'remote'));
     });
     this.channel.onError((err) => {
-      this.finishClose(err || 'channel-error', 'remote');
+      exitRtcLogContext(() => this.finishClose(err || 'channel-error', 'remote'));
     });
     if (!this.channel.isOpen()) this.finishClose('channel-closed', 'remote');
     if (opts?.liveness === false || this.closed) {
@@ -240,7 +242,7 @@ export class DataChannelLink implements ByteTransport {
     if (this.closed) return;
     this.callbackDepth += 1;
     try {
-      fn();
+      exitRtcLogContext(fn);
     } finally {
       this.setTimeoutFn(() => {
         this.callbackDepth = Math.max(0, this.callbackDepth - 1);
@@ -444,9 +446,9 @@ export class DataChannelLink implements ByteTransport {
   private settleQueuedSends(reason: string): void {
     const pending = this.controlQueue.splice(0).concat(this.dataQueue.splice(0));
     if (pending.length === 0) return;
-    // 底层 DC 被 PC/对端拆掉时，排队中的 send 调用方往往已经不再 await（LinkMux 的 WINDOW/END）。
-    // resolve 而不是 reject，避免 channel-closed 变成 unhandledRejection；主动 close(reason) 仍 reject。
-    if (reason === 'channel-closed') {
+    // 拆链或本端 stop 时，排队中的 WINDOW/END 调用方往往已经不再 await。
+    // resolve 而不是 reject，避免变成 unhandledRejection；其它主动 close(reason) 仍 reject。
+    if (reason === 'channel-closed' || reason === 'stopped') {
       for (const item of pending) item.resolve();
       return;
     }

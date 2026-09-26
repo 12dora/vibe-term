@@ -2,11 +2,15 @@ import type { RtcSignalMessage, RtcSignalOwner, RtcSignalRouter } from '../mesh-
 
 export const RTC_LOCAL_INBOX_MAX_SESSIONS = 32;
 export const RTC_LOCAL_INBOX_MAX_MESSAGES = 16;
+/** 入口上指向远端目标的 owner。本地目标由 accept 结束时 unregister。 */
+export const RTC_REMOTE_OWNER_TTL_MS = 60_000;
 
 export type RtcSessionOwner = {
   browserSessionId: string;
   targetNodeId: string;
 };
+
+type StoredOwner = RtcSessionOwner & { registeredAt: number };
 
 export type SendCtl = (nodeId: string, msg: RtcSignalMessage) => void;
 
@@ -18,6 +22,8 @@ export type RtcSignalRouterOptions = {
   shouldCacheLocal?: ShouldCacheLocal;
   maxInboxSessions?: number;
   maxInboxMessages?: number;
+  now?: () => number;
+  remoteOwnerTtlMs?: number;
 };
 
 export class MeshRtcSignalRouter implements RtcSignalRouter {
@@ -26,8 +32,12 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   private readonly shouldCacheLocal: ShouldCacheLocal | null;
   private readonly maxInboxSessions: number;
   private readonly maxInboxMessages: number;
-  private readonly owners = new Map<string, RtcSessionOwner>();
-  private readonly subscribers = new Set<(signal: RtcSignalMessage) => void>();
+  private readonly now: () => number;
+  private readonly remoteOwnerTtlMs: number;
+  private readonly owners = new Map<string, StoredOwner>();
+  private readonly subscribers = new Set<
+    (signal: RtcSignalMessage, browserSessionId?: string) => void
+  >();
   private readonly localListeners = new Map<string, Set<(signal: RtcSignalMessage) => void>>();
   private readonly localInbox = new Map<string, RtcSignalMessage[]>();
 
@@ -37,12 +47,16 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
     this.shouldCacheLocal = opts.shouldCacheLocal ?? null;
     this.maxInboxSessions = opts.maxInboxSessions ?? RTC_LOCAL_INBOX_MAX_SESSIONS;
     this.maxInboxMessages = opts.maxInboxMessages ?? RTC_LOCAL_INBOX_MAX_MESSAGES;
+    this.now = opts.now ?? Date.now;
+    this.remoteOwnerTtlMs = opts.remoteOwnerTtlMs ?? RTC_REMOTE_OWNER_TTL_MS;
   }
 
   register(rtcSession: string, owner: RtcSessionOwner): void {
+    this.sweepRemoteOwners();
     this.owners.set(rtcSession, {
       browserSessionId: owner.browserSessionId,
       targetNodeId: owner.targetNodeId.toLowerCase(),
+      registeredAt: this.now(),
     });
   }
 
@@ -53,10 +67,12 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   }
 
   ownerOf(rtcSession: string): RtcSessionOwner | undefined {
-    return this.owners.get(rtcSession);
+    this.sweepRemoteOwners();
+    return this.publicOwner(this.owners.get(rtcSession));
   }
 
   send(signal: RtcSignalMessage, caller?: RtcSignalOwner): void {
+    this.sweepRemoteOwners();
     const owner = this.owners.get(signal.rtcSession);
     if (!owner) return;
     if (signal.from === 'browser') {
@@ -76,7 +92,7 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
     }
   }
 
-  subscribe(cb: (signal: RtcSignalMessage) => void): () => void {
+  subscribe(cb: (signal: RtcSignalMessage, browserSessionId?: string) => void): () => void {
     this.subscribers.add(cb);
     return () => {
       this.subscribers.delete(cb);
@@ -128,6 +144,7 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   }
 
   private canCache(signal: RtcSignalMessage, sourceNodeId?: string): boolean {
+    this.sweepRemoteOwners();
     if (this.shouldCacheLocal) {
       return this.shouldCacheLocal(signal, sourceNodeId);
     }
@@ -137,6 +154,7 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   }
 
   receiveFromNode(fromNodeId: string, signal: RtcSignalMessage): void {
+    this.sweepRemoteOwners();
     const owner = this.owners.get(signal.rtcSession);
     if (!owner) return;
     if (fromNodeId.toLowerCase() !== owner.targetNodeId) return;
@@ -153,12 +171,32 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   }
 
   private emitBrowser(signal: RtcSignalMessage): void {
+    const sid = this.owners.get(signal.rtcSession)?.browserSessionId;
+    if (!sid) return;
     for (const cb of this.subscribers) {
       try {
-        cb(signal);
+        cb(signal, sid);
       } catch {
         // subscriber
       }
     }
+  }
+
+  private publicOwner(owner: StoredOwner | undefined): RtcSessionOwner | undefined {
+    if (!owner) return undefined;
+    return { browserSessionId: owner.browserSessionId, targetNodeId: owner.targetNodeId };
+  }
+
+  private sweepRemoteOwners(): void {
+    const now = this.now();
+    for (const [id, owner] of this.owners) {
+      if (!this.remoteOwnerExpired(owner, now)) continue;
+      this.unregister(id);
+    }
+  }
+
+  private remoteOwnerExpired(owner: StoredOwner, now: number): boolean {
+    if (owner.targetNodeId === this.selfNodeId) return false;
+    return now - owner.registeredAt >= this.remoteOwnerTtlMs;
   }
 }

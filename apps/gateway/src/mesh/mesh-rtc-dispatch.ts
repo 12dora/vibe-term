@@ -7,9 +7,14 @@ export function dispatchUplinkRtcSignal(
     peerHolder: {
       manager?: { receiveRtcSignal(peer: string, signal: RtcSignalMessage): void } | null;
     };
-    innerSignalsHolder: { router?: { deliverLocal(signal: RtcSignalMessage): void } | null };
+    innerSignalsHolder: {
+      router?: {
+        deliverLocal(signal: RtcSignalMessage): void;
+        ownerOf?(rtcSession: string): { browserSessionId: string } | undefined;
+      } | null;
+    };
     startBrowserAcceptHolder: { fn: (rtcSession: string) => void };
-    signalListeners: Set<(signal: RtcSignalMessage) => void>;
+    signalListeners: Set<(signal: RtcSignalMessage, browserSessionId?: string) => void>;
   },
   identityNodeId: string,
   msg: UplinkRtcSignal,
@@ -30,7 +35,7 @@ export function dispatchUplinkRtcSignal(
   }
   for (const cb of d.signalListeners) {
     try {
-      cb(signal);
+      cb(signal, d.innerSignalsHolder.router?.ownerOf?.(signal.rtcSession)?.browserSessionId);
     } catch {}
   }
 }

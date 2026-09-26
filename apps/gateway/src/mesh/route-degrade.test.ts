@@ -5,6 +5,7 @@ import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { createPeerManagerState } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { RouteDegradeCoordinator, type RouteModeHolder } from './route-degrade';
+import { stashSessionRtcUnsub, takeSessionRtcUnsub } from './session-binding';
 import { ImmediateScheduler } from './test-support';
 import type { MeshIdentity, PeerTransportKind } from './types';
 import type { PooledUplink } from './types';
@@ -423,7 +424,7 @@ describe('RouteDegradeCoordinator inbound direct in relay mode', () => {
     h.coord.dispose();
   });
 
-  test('auto 未降级时入站直连继续走原 rank（兼容 2.3.7 / 现有测试）', () => {
+  test('auto 未降级时入站 DC 先测量再决定是否替换 relay', () => {
     const h = makeHarness();
     const relay = stubSession();
     h.state.live.set(PEER, liveOf(PEER, 'relay', relay, 15));
@@ -438,7 +439,7 @@ describe('RouteDegradeCoordinator inbound direct in relay mode', () => {
         dcAttemptId: 'dc:1',
         prev: h.state.live.get(PEER),
       })
-    ).toEqual({ action: 'continue' });
+    ).toEqual({ action: 'hold' });
     h.coord.dispose();
   });
 });
@@ -518,6 +519,102 @@ describe('RouteDegradeCoordinator intercept hold uses a real mux', () => {
     await Promise.resolve();
     expect(h.coord.hasCandidate(PEER)).toBe(false);
     expect(h.scheduler.intervals.every((row) => row.cleared)).toBe(true);
+    h.coord.dispose();
+  });
+
+  test('对端关掉持有的候选时释放暂存的 rtc 订阅', async () => {
+    const h = makeHarness();
+    const live = liveOf(PEER, 'dc', stubSession(), 225);
+    h.state.live.set(PEER, live);
+    h.coord.onRttSample(live, 225);
+    h.scheduler.nowMs += 15_000;
+    h.coord.onRttSample(live, 225);
+    h.coord.onRttSample(live, 225);
+    await Promise.resolve();
+    h.scheduler.nowMs += 2 * 60 * 1000;
+    const [local, remote] = createInMemoryLinkPair();
+    const decision = h.coord.interceptTrack({
+      session: local,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: h.state.identity.nodeId,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:2',
+      prev: h.state.live.get(PEER),
+    });
+    expect(decision.action).toBe('hold');
+    let released = 0;
+    stashSessionRtcUnsub(local, () => {
+      released += 1;
+    });
+    remote.close('remote-close');
+    await local.closed;
+    await Promise.resolve();
+    expect(h.coord.hasCandidate(PEER)).toBe(false);
+    expect(released).toBe(1);
+    expect(takeSessionRtcUnsub(local)).toBeNull();
+    h.coord.dispose();
+  });
+});
+
+describe('offer uses the same promote gates as intercept', () => {
+  test('direct mode installs without holding', () => {
+    const h = makeHarness({ mode: 'direct' });
+    const relay = stubSession();
+    h.state.live.set(PEER, liveOf(PEER, 'relay', relay, 100));
+    const dc = stubSession();
+    expect(
+      h.coord.offerCandidate({
+        session: dc,
+        peerNodeId: PEER,
+        transport: 'dc',
+        initiatedBy: h.state.identity.nodeId,
+        gen: 1,
+      })
+    ).toBe('installed');
+    expect(h.coord.hasCandidate(PEER)).toBe(false);
+    expect(h.state.live.get(PEER)?.session).toBe(dc);
+    h.coord.dispose();
+  });
+
+  test('promote backoff rejects the next offer and sends a decline', async () => {
+    const h = makeHarness();
+    const [relayL, relayR] = createInMemoryLinkPair();
+    const seen: Array<{ t?: string; sdp?: string }> = [];
+    relayR.ctl.onMessage((bytes) => {
+      seen.push(JSON.parse(new TextDecoder().decode(bytes)) as { t?: string; sdp?: string });
+    });
+    h.state.live.set(PEER, liveOf(PEER, 'relay', relayL, 100));
+    const slow = stubSession();
+    expect(
+      h.coord.offerCandidate({
+        session: slow,
+        peerNodeId: PEER,
+        transport: 'dc',
+        initiatedBy: h.state.identity.nodeId,
+        gen: 1,
+      })
+    ).toBe('held');
+    h.coord.noteCandidateSample(PEER, 10_000);
+    expect(slow.closedReason).toBe('dc-promote-reject');
+    for (let i = 0; i < 5 && seen.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const decline = seen.find((row) => row.t === 'rtc.signal');
+    expect(String(decline?.sdp)).toContain('retryAfterMs');
+    const again = stubSession();
+    expect(
+      h.coord.offerCandidate({
+        session: again,
+        peerNodeId: PEER,
+        transport: 'dc',
+        initiatedBy: h.state.identity.nodeId,
+        gen: 1,
+      })
+    ).toBe('rejected');
+    expect(again.closedReason).toBe('dc-promote-backoff');
+    expect(h.coord.hasCandidate(PEER)).toBe(false);
     h.coord.dispose();
   });
 });

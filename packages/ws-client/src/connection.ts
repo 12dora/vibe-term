@@ -36,9 +36,9 @@ export interface GatewayConnectionOptions {
   /**
    * 每次底层 socket 关闭时的关闭码回调（`CloseEvent.code`，取不到则 1006）。
    * 宿主用它识别 **4401**（会话失效）：停掉重连并按 self / 目标 node 派发一次鉴权事件，
-   * 否则客户端会一直重连并被立刻关掉。
+   * 否则客户端会一直重连并被立刻关掉。`reason` 是 `CloseEvent.reason`（取不到为空串）。
    */
-  onClose?: (code: number) => void;
+  onClose?: (code: number, reason: string) => void;
 }
 
 /**
@@ -46,14 +46,17 @@ export interface GatewayConnectionOptions {
  * 自己占住真 socket 的 `onclose`，先调 `onClose(code)` 再转给 client 的处理函数。
  * client 侧代码完全不变（它拿到的仍是一个 `WebSocketLike`）。
  */
-function withCloseCode(factory: SocketFactory, onClose: (code: number) => void): SocketFactory {
+function withCloseCode(
+  factory: SocketFactory,
+  onClose: (code: number, reason: string) => void
+): SocketFactory {
   return (url) => {
     const socket = factory(url);
     let downstream: ((event?: unknown) => void) | null = null;
     socket.onclose = (event) => {
-      const raw = (event as { code?: unknown } | undefined)?.code;
+      const { code, reason } = (event ?? {}) as { code?: unknown; reason?: unknown };
       try {
-        onClose(typeof raw === 'number' ? raw : 1006);
+        onClose(typeof code === 'number' ? code : 1006, typeof reason === 'string' ? reason : '');
       } catch {
         // 宿主回调异常不得影响连接收敛
       }

@@ -80,6 +80,11 @@ export function isBackgroundDcUpgradeBlocked(
   return hold.probeReleased;
 }
 
+/** ws-secure 升级时 DC 腿仍受熔断和永久失败抑制，避免把到期后的那一次探测烧掉。 */
+export function backgroundUpgradeSkipsDc(breakerBlocked: boolean, holdBlocked: boolean): boolean {
+  return breakerBlocked || holdBlocked;
+}
+
 /** 真正排队拨号时消耗「到期后的一次探测」；新的永久失败会重新武装。 */
 export function noteBackgroundDcUpgradeAttempt(
   breaker: RtcDialBreaker,

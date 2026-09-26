@@ -5,6 +5,8 @@ import {
   unionListedNodes,
   withdrawListedRtc,
 } from './node-list-apply';
+import { getRelayDialBreaker } from './relay-dial-breaker';
+import { relayListBoot } from './relay-node-list';
 import {
   RELAY_PRESENCE_STALE_MS,
   RelayPresence,
@@ -77,78 +79,46 @@ export function createRelayMultiAttach(input: {
   noteStun?: () => void;
 }): RelayMultiAttach {
   const presence = new RelayPresence();
-  const decays = new Map<string, { clear: () => void }>();
   const staleMs = RELAY_PRESENCE_STALE_MS;
   let active = true;
-
+  let stopSweep = () => {};
   const relayMode = () => input.wiring.secrets.uplinkKind() === 'relay';
-
   const emitExclusiveOffline = (peerIds: string[]): void => {
     markCachedNodesOffline(input.rtc, peerIds);
     input.onExclusiveOffline(peerIds);
   };
-
   const opener = openSecondaryAttach(input, presence, staleMs, emitExclusiveOffline);
-
-  function clearDecay(url: string): void {
-    decays.get(url)?.clear();
-    decays.delete(url);
-  }
-
-  function scheduleDecay(url: string): void {
-    if (!active || !relayMode()) return;
-    clearDecay(url);
-    const handle = input.scheduler.interval(() => {
-      handle.clear();
-      decays.delete(url);
-      const exclusive = presence.decay(url, input.scheduler.now());
-      if (exclusive.length > 0) emitExclusiveOffline(exclusive);
-    }, staleMs);
-    decays.set(url, handle);
-  }
-
+  const live = () => active && relayMode();
   const api: RelayMultiAttach = {
     presence,
     opener,
     start() {
       active = true;
       opener.start();
+      stopSweep = startPresenceSweep(input.scheduler, presence, emitExclusiveOffline);
       if (relayMode()) markPrimaryConnectedIfLive(input.uplink, presence, input.scheduler.now());
     },
     async stop() {
       active = false;
-      for (const handle of decays.values()) handle.clear();
-      decays.clear();
+      stopSweep();
+      stopSweep = () => {};
       await opener.stop();
     },
     reconcile: () => opener.reconcile(),
     handlePrimaryState(state, url, rttMs) {
-      if (!active || !relayMode() || !url) return;
-      const now = input.scheduler.now();
-      if (state === 'online') {
-        clearDecay(url);
-        presence.setPrimary(url);
-        presence.setConnected(url, true, rttMs, now);
-        void opener.reconcile();
-        return;
-      }
-      // path-rerace 等瞬态非 online：live 仍挂同一中继时不要把花名册 connected 打掉。
-      const live = input.uplink.liveClient();
-      const attached = input.uplink.attachedUplink()?.publicUrl;
-      if (live?.state === 'online' && attached && sameUplinkUrl(attached, url)) {
-        void opener.reconcile();
-        return;
-      }
-      presence.markDisconnected(url, now, staleMs);
-      scheduleDecay(url);
-      void opener.reconcile();
+      notePrimaryLink({
+        input,
+        presence,
+        opener,
+        staleMs,
+        isLive: live(),
+        state,
+        url,
+        rttMs,
+      });
     },
     applyPrimaryList(list) {
-      const url = input.uplink.attachedUplink()?.publicUrl;
-      if (!url) return;
-      presence.setPrimary(url);
-      markPrimaryConnectedIfLive(input.uplink, presence, input.scheduler.now());
-      presence.applyList(url, presencePeersFromList(list), list.version, input.scheduler.now());
+      applyPrimaryRoster(input, presence, list);
     },
     listUplinkOnline(now) {
       if (input.wiring.secrets.uplinkKind() !== 'relay') return null;
@@ -158,22 +128,84 @@ export function createRelayMultiAttach(input: {
       sendRtcViaPresence(presence, opener, peerId, sendPrimary, sendVia),
     connectedClients: () => opener.connected(),
     secondaryClient: (url) => opener.client(url),
-    prepareSwitch: (url) => opener.release(url),
+    prepareSwitch: async () => {},
     sendStatusAll: () => opener.sendStatusAll(),
     minMaxFileBytes: (primary) => minQuotaFileBytes(primary, opener.connected()),
   };
-
   bindPrimaryLifecycle({
     uplink: input.uplink,
     scheduler: input.scheduler,
     presence,
     opener,
     staleMs,
-    isLive: () => active && relayMode(),
-    scheduleDecay,
+    isLive: live,
   });
-
   return api;
+}
+
+const PRESENCE_SWEEP_MS = 5_000;
+
+function startPresenceSweep(
+  scheduler: MeshScheduler,
+  presence: RelayPresence,
+  emit: (peerIds: string[]) => void
+): () => void {
+  const handle = scheduler.interval(() => {
+    const exclusive = presence.sweep(scheduler.now());
+    if (exclusive.length > 0) emit(exclusive);
+  }, PRESENCE_SWEEP_MS);
+  return () => handle.clear();
+}
+
+function notePrimaryLink(ctx: {
+  input: Parameters<typeof createRelayMultiAttach>[0];
+  presence: RelayPresence;
+  opener: RelaySecondaryAttach;
+  staleMs: number;
+  isLive: boolean;
+  state: UplinkState;
+  url: string | null;
+  rttMs: number | null;
+}): void {
+  if (!ctx.isLive || !ctx.url) return;
+  const now = ctx.input.scheduler.now();
+  if (ctx.state === 'online') {
+    getRelayDialBreaker().reset();
+    ctx.presence.setPrimary(ctx.url);
+    ctx.presence.noteLink(ctx.url, true, ctx.rttMs, now, ctx.staleMs);
+    void ctx.opener.reconcile();
+    return;
+  }
+  if (primaryStillLive(ctx.input.uplink, ctx.url)) {
+    void ctx.opener.reconcile();
+    return;
+  }
+  ctx.presence.noteLink(ctx.url, false, null, now, ctx.staleMs);
+  void ctx.opener.reconcile();
+}
+
+function primaryStillLive(uplink: UplinkPool, url: string): boolean {
+  const live = uplink.liveClient();
+  const attached = uplink.attachedUplink()?.publicUrl;
+  return Boolean(live?.state === 'online' && attached && sameUplinkUrl(attached, url));
+}
+
+function applyPrimaryRoster(
+  input: Parameters<typeof createRelayMultiAttach>[0],
+  presence: RelayPresence,
+  list: UplinkNodeList
+): void {
+  const url = input.uplink.attachedUplink()?.publicUrl;
+  if (!url) return;
+  presence.setPrimary(url);
+  markPrimaryConnectedIfLive(input.uplink, presence, input.scheduler.now());
+  presence.applyList(
+    url,
+    presencePeersFromList(list),
+    list.version,
+    input.scheduler.now(),
+    relayListBoot(list)
+  );
 }
 
 function openSecondaryAttach(
@@ -182,7 +214,7 @@ function openSecondaryAttach(
   staleMs: number,
   onExclusiveOffline: (peerIds: string[]) => void
 ): RelaySecondaryAttach {
-  return new RelaySecondaryAttach({
+  const opener = new RelaySecondaryAttach({
     rows: () =>
       input.wiring.secrets.relayRows().map((row) => ({
         url: row.url,
@@ -190,7 +222,8 @@ function openSecondaryAttach(
         kicked: row.kicked,
         credentialKey: input.wiring.secrets.credentialKeyFor?.(row.url) ?? '',
       })),
-    primaryUrl: () => input.uplink.primaryTarget(),
+    primaryUrl: () => input.uplink.attachedUplink()?.publicUrl ?? null,
+    excludeUrl: () => dialExcludeUrl(input.uplink),
     spawn: (url) =>
       input.spawn({
         ...input.baseClient,
@@ -207,8 +240,38 @@ function openSecondaryAttach(
     onRelayStream: input.onRelayStream,
     onExclusiveOffline,
     staleMs,
-    dialCoordinator: input.uplink.dialCoordinator,
   } satisfies RelaySecondaryAttachOptions);
+  bindPoolRelayHooks(input.uplink, opener);
+  return opener;
+}
+
+function dialExcludeUrl(uplink: UplinkPool): string | null {
+  const attached = uplink.attachedUplink()?.publicUrl ?? null;
+  const target = uplink.primaryTarget();
+  if (!target || (attached && sameUplinkUrl(attached, target))) return null;
+  return target;
+}
+
+function bindPoolRelayHooks(uplink: UplinkPool, opener: RelaySecondaryAttach): void {
+  if (typeof uplink.setRelayHooks !== 'function') return;
+  uplink.setRelayHooks({
+    releaseSecondary: (url) => opener.release(url),
+    takeoverSecondary: async (url) => {
+      const client = await opener.detachOnline(url);
+      if (!client) await opener.releaseNotOnline(url);
+      return client as import('./types').PooledUplink | null;
+    },
+    adoptRetiring: (client) => opener.adoptOnline(client as unknown as SecondaryUplink),
+    noteRetiring: (url) => opener.noteRetiring(url),
+    clearRetiring: (url) => opener.clearRetiring(url),
+    onTargetFree: () => {
+      void opener.reconcile();
+    },
+    onNetworkReset: () => {
+      opener.resetAttempts();
+      getRelayDialBreaker().reset();
+    },
+  });
 }
 
 function mergeSecondaryRoster(
@@ -218,7 +281,7 @@ function mergeSecondaryRoster(
   list: UplinkNodeList,
   now: number
 ): void {
-  presence.applyList(url, presencePeersFromList(list), list.version, now);
+  presence.applyList(url, presencePeersFromList(list), list.version, now, relayListBoot(list));
   rtc.lastRtc = mergeListedRtc(rtc.lastRtc, list.rtc, {
     sourceUrl: normalizeUplinkEndpointUrl(url),
     primary: false,
@@ -241,7 +304,7 @@ function markPrimaryConnectedIfLive(
   const live = uplink.liveClient() as RelayUplinkClient | null;
   if (!url || live?.state !== 'online') return;
   presence.setPrimary(url);
-  presence.setConnected(url, true, live && 'rttMs' in live ? live.rttMs : null, now);
+  presence.noteLink(url, true, live && 'rttMs' in live ? live.rttMs : null, now);
 }
 
 function sendRtcViaPresence(
@@ -286,17 +349,17 @@ function bindPrimaryLifecycle(input: {
   opener: RelaySecondaryAttach;
   staleMs: number;
   isLive: () => boolean;
-  scheduleDecay: (url: string) => void;
 }): void {
   input.uplink.onAttached((uplink) => {
     if (!input.isLive()) return;
     input.presence.setPrimary(uplink.publicUrl);
     const live = input.uplink.liveClient() as RelayUplinkClient | null;
-    input.presence.setConnected(
+    input.presence.noteLink(
       uplink.publicUrl,
       true,
       live && 'rttMs' in live ? live.rttMs : null,
-      input.scheduler.now()
+      input.scheduler.now(),
+      input.staleMs
     );
     void input.opener.reconcile();
   });
@@ -304,8 +367,7 @@ function bindPrimaryLifecycle(input: {
     if (!input.isLive()) return;
     const url = input.presence.primaryUrl();
     if (url) {
-      input.presence.markDisconnected(url, input.scheduler.now(), input.staleMs);
-      input.scheduleDecay(url);
+      input.presence.noteLink(url, false, null, input.scheduler.now(), input.staleMs);
     }
     input.presence.setPrimary(null);
     void input.opener.reconcile();

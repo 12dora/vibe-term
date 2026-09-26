@@ -13,6 +13,9 @@ export {
 import type { LinkSession } from '@vibeterm/shared/link';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
+import { recordEntryLogin429 } from '../auth/login-records-forward';
+import type { LoginMethod } from './auth-login-limiter';
+import { loginLimiterIp, peekLoginMethod } from './auth-login-policy-http';
 import { isShareAccessPath } from './auth-public-paths';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
@@ -30,7 +33,11 @@ import {
   peekJsonCode,
 } from './forwarder-auth-policy';
 import { cancelForwardBody, countStreamBytes, throttledProgress } from './forwarder-body';
-import { authorizedHttpDeadlineMs, forwardLinkDeadlineFor } from './forwarder-deadline';
+import {
+  authorizedHttpDeadlineMs,
+  forwardLinkDeadlineFor,
+  forwardResponseBudgetMs,
+} from './forwarder-deadline';
 import {
   bufferReplayableBody,
   captureLink,
@@ -44,7 +51,13 @@ export {
   forwardLinkDeadlineFor,
   setForwardLinkDeadlineMs,
 } from './forwarder-deadline';
-import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
+import {
+  copyUpstreamHeaders,
+  filterRequestHeaders,
+  stampForwardedAuthHeaders,
+} from './forwarder-headers';
+import { runForwardInternalHttp } from './forwarder-internal-http';
+import { rejectClosedLink } from './forwarder-link-state';
 import { parseNodePrefix } from './forwarder-path';
 import { rewriteRequest } from './forwarder-rewrite';
 export { getSelfRewrite, rewriteSelf } from './forwarder-rewrite';
@@ -80,6 +93,10 @@ type ForwarderDeps = {
 const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
 
 /** GET/HEAD 默认可重试；其余方法只有调用方明确要求才重试，且不超过失败切换的上限。 */
+function xferBudget(remaining: number, transferMs: number, linkMs: number): number {
+  return forwardResponseBudgetMs(Math.min(remaining, transferMs), linkMs);
+}
+
 function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): number {
   const requested = retry?.attempts;
   if (requested === undefined) return idempotent ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
@@ -158,7 +175,7 @@ export class Forwarder {
    * peer 身份的节点间调用（`/api/mesh-internal/*`）。默认是一次性 JSON POST；
    * 需要搬字节时给 `rawBody`（只能读一次，续传由调用方按偏移重开）。
    */
-  async forwardInternalHttp(
+  forwardInternalHttp(
     nodeId: string,
     path: string,
     body: unknown,
@@ -172,59 +189,14 @@ export class Forwarder {
       onProgress?: (uploadedBytes: number) => void;
     }
   ): Promise<Response> {
-    const abort = signal ?? new AbortController().signal;
-    const headers: Record<string, string> = { ...(input?.headers ?? {}) };
-    let streamBody: ReadableStream<Uint8Array> | null;
-    if (input?.rawBody) {
-      let uploaded = 0;
-      const progress = input.onProgress ? throttledProgress(input.onProgress) : null;
-      streamBody = countStreamBytes(input.rawBody, (n) => {
-        uploaded += n;
-        progress?.(uploaded);
-      });
-    } else {
-      const payload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
-      const bytes = new TextEncoder().encode(payload);
-      headers['content-type'] = headers['content-type'] ?? 'application/json';
-      streamBody = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(bytes);
-          controller.close();
-        },
-      });
-    }
-    const floorMs = forwardLinkDeadlineFor(
+    return runForwardInternalHttp({
+      deps: { peers: this.deps.peers, streams: this.deps.streams, sleep: this.sleep },
       nodeId,
-      this.deps.peers.rttOf?.(nodeId),
-      this.deps.peers
-    );
-    try {
-      const link = await this.deps.peers.getLink(nodeId);
-      return await withHttpStreamUploadDeadline(
-        abort,
-        floorMs,
-        headers,
-        Boolean(input?.rawBody),
-        (s) =>
-          this.deps.streams.openHttpStream(
-            link,
-            {
-              method: input?.method ?? 'POST',
-              path,
-              query: input?.query ?? '',
-              headers,
-              origin: 'http://localhost',
-              auth: null,
-            },
-            streamBody,
-            s
-          )
-      );
-    } catch (err) {
-      // 传输层还没接手这个 body：不主动掐掉的话，源端的读取管道与文件句柄就没人再关了
-      await cancelForwardBody(streamBody);
-      return nodeUnreachableResponse(nodeId, abort.aborted, err);
-    }
+      path,
+      body,
+      signal,
+      input,
+    });
   }
 
   async forwardAuthorizedHttp(
@@ -246,9 +218,7 @@ export class Forwarder {
     signal?: AbortSignal
   ): Promise<Response> {
     const auth = readNodeSessionCookie(parseCookies(req.headers.get('cookie')), input.nodeId);
-    if (!auth) {
-      return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
-    }
+    if (!auth) return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
     const abort = input.signal ?? signal ?? req.signal;
     const method = input.method.toUpperCase();
     const idempotent = IDEMPOTENT_HTTP.has(method);
@@ -284,17 +254,19 @@ export class Forwarder {
           break;
         }
       }
-      const remaining = deadlineAt - Date.now();
+      openedLink.current = null;
+      const remaining = Math.max(0, deadlineAt - Date.now());
       try {
         return await runLinkThenTransfer({
           parent: abort,
           linkBudgetMs: Math.min(remaining, budgets.linkMs),
-          transferBudgetMs: Math.min(remaining, budgets.transferMs),
+          transferBudgetMs: xferBudget(remaining, budgets.transferMs, budgets.linkMs),
           getLink: captureLink(
             this.deps.peers.getLink(input.nodeId, { purpose: 'management' }),
             openedLink
           ),
-          transfer: (link, signal) => {
+          transfer: async (link, signal) => {
+            await rejectClosedLink(link);
             const origin = req.headers.get('origin') ?? new URL(req.url).origin;
             return this.deps.streams
               .openHttpStream(
@@ -333,7 +305,8 @@ export class Forwarder {
       lastError,
       rawBody && lastError !== undefined
         ? { error: lastError instanceof Error ? lastError.message : String(lastError) }
-        : undefined
+        : undefined,
+      Boolean(openedLink.current)
     );
   }
 
@@ -399,9 +372,10 @@ export class Forwarder {
     search: string,
     signal: AbortSignal
   ): Promise<Response> {
-    const gated = await this.gateForwardedAuth(req, rest);
+    const gated = await this.gateForwardedAuth(req, nodeId, rest);
     if (gated.response) return gated.response;
     const headers = filterRequestHeaders(req);
+    stampForwardedAuthHeaders(headers, req, rest);
     const auth = forwardedAuthFor(req, nodeId, rest);
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
     const replay = await bufferReplayableBody(req);
@@ -422,12 +396,15 @@ export class Forwarder {
           break;
         }
       }
+      link = null;
       try {
         const opened = await this.linkBefore(nodeId, deadlineAt, rest);
         link = opened;
+        await rejectClosedLink(opened);
+        const transferMs = forwardResponseBudgetMs(deadlineAt - Date.now(), floorMs);
         const upstream = await this.adaptResponse(
           req,
-          await withHttpStreamUploadDeadline(signal, floorMs, headers, replay.hasBody, (s) =>
+          await withHttpStreamUploadDeadline(signal, transferMs, headers, replay.hasBody, (s) =>
             this.deps.streams.openHttpStream(
               opened,
               { method: req.method, path: rest, query: search, headers, origin, auth },
@@ -437,7 +414,7 @@ export class Forwarder {
           ),
           nodeId
         );
-        await this.recordForwardedLoginFailure(gated, rest, upstream);
+        await this.recordForwardedLoginFailure(req, gated, rest, upstream);
         return upstream;
       } catch (err) {
         lastError = err;
@@ -455,10 +432,20 @@ export class Forwarder {
         }
       }
     }
-    return nodeUnreachableResponse(nodeId, signal.aborted, lastError);
+    return nodeUnreachableResponse(nodeId, signal.aborted, lastError, undefined, Boolean(link));
   }
 
   private async gateForwardedAuth(
+    req: Request,
+    nodeId: string,
+    rest: string
+  ): Promise<{ response: Response | null; uidHint: string; ip: string; shareId?: string }> {
+    const gated = await this.evaluateForwardedAuth(req, rest);
+    await recordEntryLogin429(this.deps.nodeId, req, nodeId, gated);
+    return gated;
+  }
+
+  private async evaluateForwardedAuth(
     req: Request,
     rest: string
   ): Promise<{ response: Response | null; uidHint: string; ip: string; shareId?: string }> {
@@ -472,20 +459,22 @@ export class Forwarder {
       return { response: limits.consumeChallengeQuota(req), uidHint: '', ip };
     }
     if (rest !== AUTH_LOGIN_PATH) return empty;
+    const ladderIp = loginLimiterIp(req);
     let uidHint = '';
+    let method: LoginMethod = null;
     try {
       const parsed = await readJsonObjectBody(req.clone());
       uidHint = parsed ? peekLoginUid(parsed) : '';
+      method = parsed ? peekLoginMethod(parsed) : null;
     } catch {
       uidHint = '';
     }
     if (uidHint && authUidTooLong(uidHint)) {
-      return { response: jsonError('MALFORMED', 400), uidHint, ip };
+      return { response: jsonError('MALFORMED', 400), uidHint, ip: ladderIp };
     }
-    if (limits.isLoginRateLimited(uidHint, ip)) {
-      return { response: jsonError('RATE_LIMITED', 429), uidHint, ip };
-    }
-    return { response: null, uidHint, ip };
+    const blocked = limits.gateLogin(req, uidHint, ladderIp, method);
+    if (blocked) return { response: blocked, uidHint, ip: ladderIp };
+    return { response: null, uidHint, ip: ladderIp };
   }
 
   /** 分享登录：节点侧只看得到 `peer:<nodeId>`，配额必须在入口这一侧按真实来源 IP 计。 */
@@ -510,6 +499,7 @@ export class Forwarder {
   }
 
   private async recordForwardedLoginFailure(
+    req: Request,
     gated: { uidHint: string; ip: string; shareId?: string },
     rest: string,
     upstream: Response
@@ -520,11 +510,8 @@ export class Forwarder {
       return;
     }
     const limits = this.authRateLimits;
-    if (!limits || rest !== AUTH_LOGIN_PATH || upstream.status !== 401) return;
-    const code = await peekJsonCode(upstream.clone());
-    if (code === 'TOTP_REQUIRED' || code === 'PASSKEY_REQUIRED') return;
-    if (gated.uidHint && authUidTooLong(gated.uidHint)) return;
-    limits.recordLoginFailure(gated.uidHint, gated.ip);
+    if (!limits || rest !== AUTH_LOGIN_PATH) return;
+    await settleForwardedLoginLimit(limits, req, gated, upstream);
   }
 
   private handleRemoteWs(req: Request, server: MeshUpgradeServer, nodeId: string) {
@@ -548,6 +535,23 @@ export class Forwarder {
       )) ?? new Response(upstream.body, { status: upstream.status, headers })
     );
   }
+}
+
+async function settleForwardedLoginLimit(
+  limits: AuthRateLimits,
+  req: Request,
+  gated: { uidHint: string; ip: string },
+  upstream: Response
+): Promise<void> {
+  if (upstream.ok) {
+    limits.recordLoginSuccess(gated.ip);
+    return;
+  }
+  if (upstream.status !== 401) return;
+  const code = await peekJsonCode(upstream.clone());
+  if (code === 'TOTP_REQUIRED' || code === 'PASSKEY_REQUIRED') return;
+  if (gated.uidHint && authUidTooLong(gated.uidHint)) return;
+  limits.recordLoginFailure(req, gated.uidHint, gated.ip);
 }
 
 async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {

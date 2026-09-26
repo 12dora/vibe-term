@@ -200,7 +200,7 @@ export type RtcSignalOwner = {
 
 export type RtcSignalRouter = {
   send(signal: RtcSignalMessage, owner?: RtcSignalOwner): void;
-  subscribe(cb: (signal: RtcSignalMessage) => void): () => void;
+  subscribe(cb: (signal: RtcSignalMessage, browserSessionId?: string) => void): () => void;
 };
 
 export type CachedRtcConfig = {

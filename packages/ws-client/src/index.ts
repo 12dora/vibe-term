@@ -28,6 +28,8 @@ export {
 
 export type { PendingDropReason } from './pending-send-queue';
 
+export { NODE_LINK_FAILURE_CLOSE_CODE, isNodeLinkFailureClose } from './node-link-close';
+
 export {
   TERM_VIEWPORT_MIN_SERVER_VERSION,
   serverSupportsDeviceLatency,

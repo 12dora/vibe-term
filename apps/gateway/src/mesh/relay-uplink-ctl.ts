@@ -18,6 +18,7 @@ import {
   buildRelayStatusMessage,
   relayListToNodeList,
   relayStatusBlobOf,
+  tagRelayListBoot,
 } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
 import {
@@ -52,6 +53,7 @@ export type RelayUplinkCtlHost = {
   kickedReason: RelayKickReason | null;
   awaitingToken: boolean;
   listVersion: number;
+  listBoot: string;
   nodesViaRelay: number;
   lastStatusJson: string;
   lastRttSentMs: number | null;
@@ -120,7 +122,12 @@ export function enqueueRelayList(
   const generation = host.connectGeneration;
   host.listChain = host.listChain
     .then(() => {
-      if (generation !== host.connectGeneration || msg.version < host.listVersion) return;
+      if (generation !== host.connectGeneration) return;
+      if (msg.boot && msg.boot !== host.listBoot) {
+        host.listBoot = msg.boot;
+        host.listVersion = 0;
+      }
+      if (msg.version < host.listVersion) return;
       return applyRelayList(host, msg);
     })
     .catch((err) => {
@@ -286,6 +293,7 @@ async function applyRelayList(
     relayUrl: host.uplinkUrl,
   });
   if (msg.version < host.listVersion) return;
+  if (msg.boot) tagRelayListBoot(list, msg.boot);
   host.nodesViaRelay = list.nodes.length;
   host.keyLog.noteRemoteHead(relaySeqFromWire(msg.key_log_head_seq));
   host.onNodeList?.(list);

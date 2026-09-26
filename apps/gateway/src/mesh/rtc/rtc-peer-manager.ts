@@ -67,6 +67,7 @@ export type IceConfigProvider = () => IceServerConfig;
 export type ConnectToPeerOptions = {
   attemptId?: string;
   signal?: AbortSignal;
+  onRemoteSdpApplied?: () => void;
 };
 
 export type RtcLivenessOptions = Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'>;
@@ -255,7 +256,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       attempt: opts?.attemptId ?? `pc:${this.nextLogSeq()}`,
     };
     return runWithRtcLogContext(ctx, () =>
-      this.connectToPeerUntilDeadline(peerNodeId, signaling, deadline, ctx, opts?.signal)
+      this.connectToPeerUntilDeadline(peerNodeId, signaling, deadline, ctx, opts)
     );
   }
 
@@ -269,20 +270,13 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     signaling: RtcSignaling,
     deadline: number,
     ctx: RtcLogContext,
-    signal?: AbortSignal
+    opts?: ConnectToPeerOptions
   ): Promise<DcPeerConnectResult> {
     for (let iteration = 1; ; iteration += 1) {
       try {
-        return await this.connectToPeerOnce(
-          peerNodeId,
-          signaling,
-          deadline,
-          ctx,
-          iteration,
-          signal
-        );
+        return await this.connectToPeerOnce(peerNodeId, signaling, deadline, ctx, iteration, opts);
       } catch (err) {
-        if (!retrySupersededDial(peerNodeId, err, deadline, signal)) throw err;
+        if (!retrySupersededDial(peerNodeId, err, deadline, opts?.signal)) throw err;
       }
     }
   }
@@ -297,7 +291,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     deadline: number,
     baseCtx: RtcLogContext,
     iteration: number,
-    signal?: AbortSignal
+    opts?: ConnectToPeerOptions
   ): Promise<DcPeerConnectResult> {
     const dialStartedAt = performance.now();
     const native = this.requireNative();
@@ -332,7 +326,8 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         ice,
         epoch,
         lastOfferEpoch,
-        signal,
+        signal: opts?.signal,
+        onRemoteSdpApplied: opts?.onRemoteSdpApplied,
         identity: this.identity,
         userStore: this.userStore,
         liveness: this.liveness,
@@ -358,6 +353,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     if (!input.sid) return null;
     rtcLog('authorize', { via: input.via });
     this.sweepBrowser();
+    browserAuth.evictPendingConnection(this.browser, input, (pc) => this.untrackAndClose(pc));
     let rec: BrowserRecord | null = null;
     try {
       browserAuth.assertAuthorizeRoom(this.browser.values(), input, this.authorizeMax);
@@ -376,11 +372,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   async acceptBrowser(rtcSession: string, signaling: RtcSignaling): Promise<AcceptBrowserResult> {
     await this.ready();
     this.sweepBrowser();
-    const rec = this.browser.get(rtcSession);
-    if (!rec || !rec.nonce || !rec.fpBrowser || rec.exp <= this.now()) {
-      throw new PeerHandshakeError('protocol', 'rtc session is not authorized');
-    }
-    rec.exp = this.now() + this.authorizeTtlMs;
+    const rec = this.requireBrowser(rtcSession);
     const unsubSignaling = bindPeerSignaling(
       rec.pc,
       signaling,
@@ -396,11 +388,11 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         { peer: rtcSession }
       );
       await waitChannelOpen(channel, this.handshakeTimeoutMs);
+      this.extendBrowserOnChannelOpen(rtcSession, rec);
       const nonceRaw = await waitFirstMessage(channel, this.handshakeTimeoutMs);
       this.sweepBrowser();
       const live = this.browser.get(rtcSession);
       if (!live || live !== rec || !live.nonce || !live.fpBrowser || live.exp <= this.now()) {
-        this.untrackAndClose(rec.pc);
         throw new PeerHandshakeError('protocol', 'rtc session is not authorized');
       }
       const nonce = live.nonce;
@@ -411,14 +403,10 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       const connectionId = live.connectionId;
       const got = parseNonceMessage(nonceRaw);
       if (got !== encodeBase64url(nonce)) {
-        this.browser.delete(rtcSession);
-        this.untrackAndClose(rec.pc);
         throw new PeerHandshakeError('protocol', 'sess nonce mismatch');
       }
       const remote = rec.pc.remoteFingerprint();
       if (!fingerprintsEqual(remote, fpBrowser)) {
-        this.browser.delete(rtcSession);
-        this.untrackAndClose(rec.pc);
         throw new PeerHandshakeError('protocol', 'browser dtls fingerprint mismatch');
       }
       this.browser.delete(rtcSession);
@@ -437,6 +425,9 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         rtcSession,
         connectionId,
       };
+    } catch (err) {
+      this.releaseFailedBrowser(rtcSession, rec);
+      throw err;
     } finally {
       if (!keepSignaling) unsubSignaling();
     }
@@ -562,6 +553,24 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       fanout: this.prepareLocalDescriptions(rec.pc),
       waitFingerprint: (target, timeoutMs) => this.waitLocalFingerprint(target, timeoutMs),
     };
+  }
+
+  private requireBrowser(rtcSession: string): BrowserRecord {
+    const rec = this.browser.get(rtcSession);
+    if (!rec || !rec.nonce || !rec.fpBrowser || rec.exp <= this.now()) {
+      throw new PeerHandshakeError('protocol', 'rtc session is not authorized');
+    }
+    return rec;
+  }
+
+  private extendBrowserOnChannelOpen(rtcSession: string, rec: BrowserRecord): void {
+    if (this.browser.get(rtcSession) !== rec || rec.exp <= this.now()) return;
+    rec.exp = this.now() + this.authorizeTtlMs;
+  }
+
+  private releaseFailedBrowser(rtcSession: string, rec: BrowserRecord): void {
+    if (this.browser.get(rtcSession) === rec) this.browser.delete(rtcSession);
+    this.untrackAndClose(rec.pc);
   }
 
   private sweepBrowser(): void {

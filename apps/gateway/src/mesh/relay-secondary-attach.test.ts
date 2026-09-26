@@ -8,7 +8,6 @@ import {
 } from './relay-secondary-attach';
 import { waitUntil } from './test-support';
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
-import { UplinkDialCoordinator } from './uplink-pool';
 
 const SH = 'https://sh.example';
 const TK = 'https://tk.example';
@@ -156,6 +155,9 @@ class FakeSecondary implements SecondaryUplink {
     this.relayHandler?.({} as never, from);
   }
 
+  adoptPrimaryWiring: (() => void) | null = null;
+  releasePrimaryWiring: (() => void) | null = null;
+
   sendStatus(): void {}
   sendCtl(): void {}
   async openRelay(_to: string): Promise<LinkStream> {
@@ -208,7 +210,7 @@ function setup(
     onRelayStream?: InboundRelayHandler;
     onSpawn?: (client: FakeSecondary, spawned: FakeSecondary[]) => void;
     primaryUrl?: (livePrimary: string | null) => string | null;
-    dialCoordinator?: UplinkDialCoordinator;
+    excludeUrl?: () => string | null;
   }
 ) {
   const scheduler = new ParkScheduler();
@@ -234,7 +236,7 @@ function setup(
     },
     staleMs: 50,
     ...(extra?.onRelayStream ? { onRelayStream: extra.onRelayStream } : {}),
-    ...(extra?.dialCoordinator ? { dialCoordinator: extra.dialCoordinator } : {}),
+    ...(extra?.excludeUrl ? { excludeUrl: extra.excludeUrl } : {}),
   });
   return { manager, presence, spawned, liveRows, livePrimary, primaryOpens, scheduler };
 }
@@ -644,21 +646,36 @@ describe('RelaySecondaryAttach', () => {
     await manager.stop();
   });
 
-  test('同一 URL 任意时刻最多一条在途连接', async () => {
-    const coord = new UplinkDialCoordinator();
-    const owner = {};
-    expect(coord.tryClaim(SH, owner)).toBe(true);
+  test('detachOnline 交出现有副连接且不 stop；没有主接线时原样留下', async () => {
+    const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], TK);
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    const plain = spawned.find((client) => client.uplinkUrl === SH);
+    if (!plain) throw new Error('missing secondary');
+    expect(await manager.detachOnline(SH)).toBeNull();
+    expect(plain.stopped).toBe(0);
+    expect(manager.client(SH)?.state).toBe('online');
+    plain.adoptPrimaryWiring = () => {};
+    expect(await manager.detachOnline(SH)).toBe(plain);
+    expect(plain.stopped).toBe(0);
+    expect(manager.client(SH)).toBeNull();
+    await manager.stop();
+    expect(plain.stopped).toBe(0);
+  });
+
+  test('excludeUrl 挡住池正在拨的 URL，松开后才挂上', async () => {
+    let exclude: string | null = SH;
     const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], TK, {
-      dialCoordinator: coord,
+      excludeUrl: () => exclude,
     });
     manager.start();
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.uplinkUrl === SH) || spawned.length >= 0);
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(0);
-    coord.release(SH, owner);
+    exclude = null;
     await manager.reconcile();
-    await waitUntil(() => spawned.some((c) => c.uplinkUrl === SH && c.state === 'online'));
+    await waitUntil(() => manager.client(SH)?.state === 'online');
     expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(1);
     await manager.stop();
   });
@@ -672,6 +689,97 @@ describe('RelaySecondaryAttach', () => {
     livePrimary.current = SH;
     await waitUntil(() => manager.client(SH) == null);
     expect(spawned.filter((c) => c.uplinkUrl === SH && c.state === 'online')).toHaveLength(0);
+    await manager.stop();
+  });
+
+  test('releaseNotOnline 丢掉未在线的槽，在线但不能收养的留下', async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { manager, spawned } = setup([row(SH, 0), row(TK, 1), row(JP, 2)], SH, {
+      onSpawn: (client) => {
+        if (client.uplinkUrl === TK) client.connectGate = gate;
+      },
+    });
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === JP && c.state === 'online'));
+    await waitUntil(() => spawned.some((c) => c.uplinkUrl === TK && c.connects >= 1));
+    const tokyo = spawned.find((c) => c.uplinkUrl === TK);
+    await manager.releaseNotOnline(TK);
+    expect(manager.client(TK)).toBeNull();
+    expect(tokyo?.stopped).toBeGreaterThan(0);
+    const japan = spawned.find((c) => c.uplinkUrl === JP);
+    if (!japan) throw new Error('missing japan secondary');
+    await manager.releaseNotOnline(JP);
+    expect(manager.client(JP)).toBe(japan);
+    expect(japan?.stopped).toBe(0);
+    release();
+    await manager.stop();
+  });
+
+  test('resetAttempts 不叫醒池正在占用的槽', async () => {
+    let exclude: string | null = null;
+    const { manager, spawned, scheduler } = setup([row(SH, 0), row(TK, 1)], SH, {
+      excludeUrl: () => exclude,
+      onSpawn: (client, already) => {
+        if (client.uplinkUrl === TK && already.every((item) => item.uplinkUrl !== TK)) {
+          client.failNext = true;
+        }
+      },
+    });
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => scheduler.sleeps.length > 0);
+    expect(spawned.filter((c) => c.uplinkUrl === TK).reduce((n, c) => n + c.connects, 0)).toBe(1);
+    exclude = TK;
+    manager.resetAttempts();
+    expect(scheduler.sleeps.length).toBeGreaterThan(0);
+    scheduler.flushSleeps();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(spawned.filter((c) => c.uplinkUrl === TK).reduce((n, c) => n + c.connects, 0)).toBe(1);
+    await manager.stop();
+  });
+
+  test('adoptOnline 原地收下旧主连接，reconcile 不再另拨', async () => {
+    let exclude: string | null = SH;
+    const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], TK, {
+      excludeUrl: () => exclude,
+    });
+    manager.start();
+    await manager.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(0);
+    const handed = new FakeSecondary(SH);
+    handed.state = 'online';
+    let released = 0;
+    handed.releasePrimaryWiring = () => {
+      released += 1;
+    };
+    expect(manager.adoptOnline(handed)).toBe(true);
+    expect(manager.client(SH)).toBe(handed);
+    expect(handed.connects).toBe(0);
+    expect(handed.stopped).toBe(0);
+    expect(released).toBe(1);
+    exclude = null;
+    await manager.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(0);
+    expect(manager.client(SH)).toBe(handed);
+    await manager.stop();
+  });
+
+  test('noteRetiring 在清掉之前不把该 URL 再挂成 secondary', async () => {
+    const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], TK);
+    manager.noteRetiring(SH);
+    manager.start();
+    await manager.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(0);
+    manager.clearRetiring(SH);
+    await waitUntil(() => manager.client(SH)?.state === 'online');
+    expect(spawned.filter((c) => c.uplinkUrl === SH)).toHaveLength(1);
     await manager.stop();
   });
 });

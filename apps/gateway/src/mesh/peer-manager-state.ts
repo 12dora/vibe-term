@@ -6,7 +6,7 @@ import type { DirectAttemptRecord } from './peer-direct-attempt';
 import type { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import type { LiveWaiter, ParkedInbound, TransportWaiter } from './peer-manager-types';
 import { PEER_PATH_RTT_WINDOW_MS, PeerPathRttMemory } from './peer-path-rtt';
-import { type LivePeer, PeerReconnectWake } from './peer-reconnect-wake';
+import type { LivePeer } from './peer-reconnect-wake';
 import type { RtcSignalInboxEntry } from './peer-rtc-wake';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import {
@@ -85,17 +85,12 @@ export type PeerManagerState = {
   readonly lastDirectAttempt: Map<string, DirectAttemptRecord>;
   readonly advertisedEndpointSet: Map<string, string>;
   readonly endpointBackoff: PeerEndpointBackoff;
-  readonly peerReconnectWake: PeerReconnectWake;
   readonly pathRtt: PeerPathRttMemory;
   readonly rerolls: Map<string, DcRerollRecord>;
   /** 对端 pending-measure 隔离的截止时间（Date.now()）。退役判断用它留住中继。 */
   readonly remoteMeasureUntil: Map<string, number>;
   /** 测量期间为用户流量旁路拨出的中继，不替换 live DC。 */
   readonly sideRelays: Map<string, LinkSession>;
-  /** 这一跳 forceInstall 应旁路停放，而不是把 live DC 退役掉。 */
-  readonly besideRelayDial: Set<string>;
-  /** 旁路中继入站分发。不把它装成 live。 */
-  sideRelayAttach?: (session: LinkSession, peerId: string) => void;
 };
 
 const rttByScheduler = new WeakMap<object, PeerManagerState>();
@@ -292,7 +287,6 @@ export function createPeerManagerState(opts: {
     lastDirectAttempt: new Map(),
     advertisedEndpointSet: new Map(),
     endpointBackoff: opts.endpointBackoff,
-    peerReconnectWake: new PeerReconnectWake(),
     pathRtt: new PeerPathRttMemory({
       now: () => opts.scheduler.now(),
       ttlMs: PEER_PATH_RTT_WINDOW_MS,
@@ -300,7 +294,6 @@ export function createPeerManagerState(opts: {
     rerolls: new Map(),
     remoteMeasureUntil: new Map(),
     sideRelays: new Map(),
-    besideRelayDial: new Set(),
   };
   rttByScheduler.set(opts.scheduler, state);
   return state;

@@ -431,13 +431,15 @@ export class RtcWakeGate {
     this.disarmDeferredRtcWake(gate);
   }
 
-  dispatchRtcWake(peerNodeId: string): void {
+  dispatchRtcWake(peerNodeId: string, opts?: { gated?: boolean }): void {
     if (this.ports.identity.nodeId.toLowerCase() < peerNodeId.toLowerCase()) return;
     if (this.ports.live().get(peerNodeId)?.transport === 'dc') {
       this.releaseRtcWakeAttempt(peerNodeId);
       return;
     }
-    if (!this.ports.shouldTryDc(peerNodeId)) return;
+    if (!opts?.gated && !this.ports.shouldTryDc(peerNodeId)) {
+      if (this.ports.hasDcInflight?.(peerNodeId) !== true) return;
+    }
     const gate = this.ensureWakeGate(peerNodeId);
     if (gate.inflight) return;
     const now = this.ports.scheduler.now();

@@ -15,6 +15,8 @@ export type RelayListDeps = {
   registry: RelayRegistry;
   rtc: () => RelayRtcConfig;
   nextVersion: () => number;
+  /** 本进程启动 id；清单版本在重启后从 1 重计，靠它让节点接受新名单。 */
+  bootId: string;
 };
 
 export function buildRelayList(
@@ -40,6 +42,7 @@ export function buildRelayList(
   return {
     t: 'relay.list',
     version: deps.nextVersion(),
+    boot: deps.bootId,
     nodes,
     rtc: deps.rtc(),
     key_log_head_seq: relaySeqToWire(deps.tenants.get(tenantId)?.keyLogHeadSeq ?? 0n),

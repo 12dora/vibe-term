@@ -3,7 +3,7 @@
 
 import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { Button } from '@vibeterm/ui/button';
-import type { ConnectionState } from '@vibeterm/ws-client';
+import { type ConnectionState, isNodeLinkFailureClose } from '@vibeterm/ws-client';
 import { Loader2, RefreshCcw, SearchX } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -98,9 +98,18 @@ export function ResolvingOverlay() {
 /** 「连接设备...」挂了这么久还没连上就补一行现状与重试（与连接按钮的超时同一口径）。 */
 export const CONNECTING_OVERLAY_DEADLINE_MS = 8_000;
 
-/** 超时后那一行说什么：按节点 WS 的当前状态区分「还在连节点」「断了在重连」「节点通了、设备没回」。 */
-export function connectingStalledKey(state: ConnectionState): string {
+/**
+ * 超时后那一行说什么：按节点 WS 的当前状态区分「还在连节点」「断了在重连」「节点通了、设备没回」；
+ * 上一次是入口以「到不了该节点」的原因关掉的（1011 + 链路类 reason），明说「当前入口连接不了该节点」。
+ */
+export function connectingStalledKey(
+  state: ConnectionState,
+  lastCloseCode: number | null = null,
+  lastCloseReason: string | null = null
+): string {
   if (state === 'READY') return 'terminal.connectingStalled.device';
+  if (isNodeLinkFailureClose(lastCloseCode, lastCloseReason))
+    return 'terminal.connectingStalled.unreachable';
   if (state === 'RECONNECT_BACKOFF' || state === 'CLOSED') {
     return 'terminal.connectingStalled.reconnecting';
   }
@@ -126,7 +135,11 @@ function ConnectingStalledHint() {
       className="pointer-events-auto flex flex-col items-center gap-2 text-xs"
       data-testid="terminal-connecting-stalled"
     >
-      <p>{t(connectingStalledKey(state))}</p>
+      <p>
+        {t(
+          connectingStalledKey(state, runtime.client.lastCloseCode, runtime.client.lastCloseReason)
+        )}
+      </p>
       <Button
         variant="outline"
         size="sm"

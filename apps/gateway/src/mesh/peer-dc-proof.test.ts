@@ -6,6 +6,7 @@ import {
   UnstableDcBackoff,
   isLiveDcProven,
   markLiveDcProven,
+  noteIncomingRouteClose,
   notePeerDcStableHold,
   peerSupportsDcStableHold,
   resetDcStableHoldForTests,
@@ -80,6 +81,7 @@ function makeHarness() {
   });
   const failures: FailureCall[] = [];
   const unstableCalls: UnstableCall[] = [];
+  const refusals: Array<number | null> = [];
   const established: string[] = [];
   const gates = new Map<
     string,
@@ -114,6 +116,9 @@ function makeHarness() {
     },
     noteChannelEstablished: (_peer: string, attemptId?: string) => {
       if (attemptId) established.push(attemptId);
+    },
+    noteRemoteRefusal: (_peer: string, until: number | null) => {
+      refusals.push(until);
     },
     isDisabled: () => false,
     snapshot: () => ({
@@ -179,7 +184,7 @@ function makeHarness() {
     },
   });
   late.registry = registry;
-  return { scheduler, state, registry, drain, failures, unstableCalls, established };
+  return { scheduler, state, registry, drain, failures, unstableCalls, established, refusals };
 }
 
 function installRelayThenDc(h: ReturnType<typeof makeHarness>, attempt = 'dc:1', capable = true) {
@@ -336,6 +341,23 @@ describe('established DC loss is not a dial failure', () => {
     expect(h.failures).toEqual([{ kind: 'timeout', attempt: 'dc:timeout' }]);
   });
 
+  test('route-close makes the following channel-closed uncounted and cooled', async () => {
+    const h = makeHarness();
+    trackDc(h, 'dc:route');
+    const live = h.state.live.get(PEER);
+    expect(live).toBeTruthy();
+    noteIncomingRouteClose(
+      live as LivePeer,
+      { reason: 'route-measure-reject', retryAfterMs: 60_000 },
+      h.scheduler.now()
+    );
+    h.registry.dropPeer(PEER, 'channel-closed');
+    await flush();
+    expect(h.failures).toEqual([]);
+    expect(h.unstableCalls).toEqual([]);
+    expect(h.refusals).toEqual([h.scheduler.now() + 60_000]);
+  });
+
   test('old peer: post-establish loss still counts as a dial failure', async () => {
     const h = makeHarness();
     trackDc(h, 'dc:old');
@@ -487,10 +509,8 @@ describe('dc-stable-hold capability', () => {
     const h = makeHarness();
     const [dc] = createInMemoryLinkPair();
     h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
-    h.state.besideRelayDial.add(PEER);
     const [relay] = createInMemoryLinkPair();
-    const kept = h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
-    expect(kept).toBe(relay);
+    h.registry.parkSide(PEER, relay);
     expect(h.state.live.get(PEER)?.session).toBe(dc);
     expect(h.state.sideRelays.get(PEER)).toBe(relay);
   });
@@ -499,9 +519,8 @@ describe('dc-stable-hold capability', () => {
     const h = makeHarness();
     const [dc] = createInMemoryLinkPair();
     h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
-    h.state.besideRelayDial.add(PEER);
     const [relay, remote] = createInMemoryLinkPair();
-    h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
+    h.registry.parkSide(PEER, relay);
     const pong = waitForCtl(remote, 'pong');
     remote.ctl.send(encodeCtlMessage({ t: 'ping', sentAt: 7 }));
     expect(await pong).toBe('pong');
@@ -517,13 +536,12 @@ describe('dc-stable-hold capability', () => {
     const h = makeHarness();
     const [dc] = createInMemoryLinkPair();
     h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
-    h.state.besideRelayDial.add(PEER);
     const [relay, remote] = createInMemoryLinkPair();
     let closed = false;
     void relay.closed.then(() => {
       closed = true;
     });
-    h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
+    h.registry.parkSide(PEER, relay);
     dc.close('channel-closed');
     await flush();
     expect(closed).toBe(false);
@@ -541,9 +559,8 @@ describe('dc-stable-hold capability', () => {
     const h = makeHarness();
     const [dc] = createInMemoryLinkPair();
     h.registry.track(dc, PEER, 'dc', SELF, 0, false, null, 'dc:live');
-    h.state.besideRelayDial.add(PEER);
     const [relay] = createInMemoryLinkPair();
-    h.registry.forceInstall(relay, PEER, 'relay', SELF, 0);
+    h.registry.parkSide(PEER, relay);
     h.registry.dropPeer(PEER, 'revoked');
     await flush();
     expect(h.state.sideRelays.has(PEER)).toBe(false);

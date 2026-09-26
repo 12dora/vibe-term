@@ -29,6 +29,7 @@ import type { UserStore } from '../auth/user-store';
 import { decodeJsonBytes, encodeCtlMessage, isRecord, requireString } from './ctl';
 import { withPeerHandshakeTimeout } from './peer-handshake-timeout';
 import { type MeshIdentity, PeerHandshakeError, type PeerTransportKind } from './types';
+import { adoptRelayStreamOwner } from './uplink-relay-drain';
 
 export type PeerHelloWire = {
   t: 'hello';
@@ -37,7 +38,6 @@ export type PeerHelloWire = {
   eph_x25519_pk: string;
   dtls_fingerprint?: { algorithm: string; value: string } | null;
 };
-
 export type PeerSigWire = {
   t: 'sig';
   sig: string;
@@ -45,7 +45,6 @@ export type PeerSigWire = {
 
 export type PeerCtlPing = { t: 'ping' };
 export type PeerCtlPong = { t: 'pong' };
-
 export const PEER_LINK_REROLL_REQUEST = 'link.reroll-request' as const;
 
 export type PeerLinkRerollRequest = {
@@ -480,6 +479,7 @@ export async function handshakeRelay(opts: {
       role: opts.role,
       logContext: { nodeId: result.peerNodeId, transport: 'relay' },
     });
+    adoptRelayStreamOwner(opts.stream, session);
     return {
       session,
       peerNodeId: result.peerNodeId,

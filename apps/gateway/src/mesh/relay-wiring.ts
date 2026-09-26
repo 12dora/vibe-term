@@ -310,6 +310,8 @@ export function relayUplinkView(wiring: RelayWiring, uplink: UplinkPool): RelayU
     presence: () => RELAY_BINDINGS.get(wiring)?.attach?.presence ?? null,
     prepareSwitch: (url) =>
       RELAY_BINDINGS.get(wiring)?.attach?.prepareSwitch(url) ?? Promise.resolve(),
+    armSwitch: (url) => uplink.armSwitch(url),
+    disarmSwitch: (serial) => uplink.disarmSwitch(serial),
     multiAttach: () => wiring.secrets.relayRows().filter((row) => !row.kicked).length >= 2,
     autoSelectView: () => RELAY_BINDINGS.get(wiring)?.autoSelect?.view() ?? null,
     scoreOf: (url) => RELAY_BINDINGS.get(wiring)?.autoSelect?.scoreOf(url) ?? null,
@@ -374,7 +376,8 @@ function autoSelectDeps(input: {
     },
     secondaryOf: (url: string) => attach.secondaryClient(url),
     presence: () => attach.presence,
-    probeHealthz: (url: string) => probeRelayHealth(url, null, UPLINK_POOL_PROBE_TIMEOUT_MS),
+    probeHealthz: (url: string) =>
+      probeRelayHealth(url, uplink.tlsCaFor(url), UPLINK_POOL_PROBE_TIMEOUT_MS),
     waitForDrain: () => uplink.waitForLiveRelayDrain('auto-select'),
     switchDeps: () => ({ secrets: wiring.secrets, uplink: relayUplinkView(wiring, uplink) }),
   };

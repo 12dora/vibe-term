@@ -1,19 +1,32 @@
 // 浏览器 ↔ 目标 node 的直连控制器。每次尝试都是全新 generation / rtcSession / PC。
 // 协商在 primary HELLO_S2C（READY）之后才开始；HELLO 可捎带 connectionId。
-// rtc-config 与 connection 查找并行；authorize 5xx 走进程内 per-node 熔断。
+// rtc-config 与 connection 查找并行；所有失败只在 per-node 的直连熔断里记一次账。
 // attempt 必须在任何 await 之前登记；指纹不一致立即放弃；信令 FIFO。
+//
+// 谁决定什么：
+//   * 通道死没死由 ICE 状态机判（`disconnected` 宽限 5 s）；控制器不再自己听 `online` /
+//     `navigator.connection` 的 `change`——那些信号经宿主的 `nudge()` 进来，而 `nudge()`
+//     在 connecting / active 时什么都不做。
+//   * primary 会话结束（关闭 / 强制重连）不是直连失败：在途 attempt 不计次地放弃，
+//     等 primary 重新 READY 再用新的 connectionId 重来。
 
 import { CONNECTION_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
 import { type DirectRestContext, lookupConnectionId, requestAuthorize } from './direct-authorize';
 import {
-  authorizeBreakerShouldTry,
-  authorizeProbeSuppressed,
-  beginAuthorizeAttempt,
+  DIRECT_BREAKER_HEALTHY_MS,
+  NODE_UNREACHABLE_KIND,
+  beginDirectAttempt,
   clearDirectUnavailable,
-  forceAuthorizeProbe,
-} from './direct-authorize-breaker';
+  directBreakerGate,
+  directBreakerSnapshot,
+  forceDirectProbe,
+  noteDirectAuthorized,
+  noteDirectEstablished,
+  noteDirectFailure,
+  noteDirectHealthy,
+} from './direct-breaker';
 import {
   DirectAuthorizeError,
   DirectPrimaryWaitError,
@@ -27,13 +40,10 @@ import {
   retainIceCandidateTypes,
   sameDirectDiagnostics,
 } from './direct-diagnostics';
-import {
-  DIRECT_DIAL_BREAKER_HEALTHY_MS,
-  DirectDialBreaker,
-  classifyDirectDialFailure,
-} from './direct-dial-breaker';
+import { classifyDirectDialFailure } from './direct-dial-breaker';
 import { connectionIdFromCapabilities } from './direct-hello-connection';
 import { buildIceServers } from './direct-ice-servers';
+import { LinkBackoffWait } from './direct-link-wait';
 import { fetchRtcConfig } from './direct-negotiate';
 import { type DtlsFingerprint, fingerprintsEqual, parseSdpFingerprint } from './fingerprint';
 import {
@@ -73,24 +83,26 @@ export { CONNECTION_HEADER };
 
 const DEFAULT_RETRY_BASE_MS = 1000;
 const DEFAULT_RETRY_MAX_MS = 30_000;
-const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_STATS_INTERVAL_MS = 2000;
 /** `iceConnectionState === 'disconnected'` 的宽限期：撑过短暂抖动，超时就回落 primary。 */
 const DEFAULT_ICE_DISCONNECT_GRACE_MS = 5000;
-/** `navigator.connection` 的 `change` 抖动很密，去抖后再重连。 */
-const DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS = 800;
+/** 回前台时 visibility / pageshow / online 往往连着到：距上一次 attempt 这么近的 `nudge()` 合并掉。 */
+export const NUDGE_COALESCE_MS = 2000;
 
 /**
  * primary（Gateway WS）的状态源。`BorshWebSocketClient` 结构上即满足，
  * 宿主把整个 `GatewayConnection` 传进来时自动可用。
  *
- * 控制器只在「connectionId 取不到」时用它：node 侧的 `connectionId` 是**每条 Gateway WS**
- * 一个身份，primary 没连上（404）或同 sid 有多条（409）时，只有 primary 重新连过才可能变。
+ * node 侧的 `connectionId` 是**每条 Gateway WS** 一个身份：primary 没连上（404）或同 sid
+ * 有多条（409）时，只有 primary 重新连过才可能变；primary 一旦重连，在途 attempt 手上的
+ * 旧 id 也就作废了。
  */
 export interface PrimaryStatusLike {
   isReady?(): boolean;
   onStateChange?(handler: (state: string) => void): () => void;
+  /** primary 会话结束，在直连被一并关掉**之前**触发；缺省时只靠 `onStateChange`。 */
+  onSessionEnd?(handler: () => void): () => void;
   /**
    * 最近一次 HELLO_S2C 的能力集。含 `connection-id:<id>` 时本轮不必再
    * `GET /api/mesh/connection`；老网关没有该串，走原来的 REST。
@@ -108,12 +120,6 @@ export interface GatewayConnectionLike {
   readonly client?: PrimaryStatusLike;
   /** 由控制器挂上「强制拨一次」；`GatewayConnection.retryDirect()` 走这里。 */
   setDirectRetry?(fn: (() => void) | null): void;
-}
-
-/** 事件源的最小结构子集（`window` / `navigator.connection` 都满足）。 */
-interface EventTargetLike {
-  addEventListener(type: string, cb: () => void): void;
-  removeEventListener(type: string, cb: () => void): void;
 }
 
 export interface DirectCarrierControllerOptions {
@@ -140,12 +146,6 @@ export interface DirectCarrierControllerOptions {
   rtcSession?: string;
   retryBaseMs?: number;
   retryMaxMs?: number;
-  /**
-   * 同一不健康周期内的自动重试上限（默认 5）。通道保持 `active` ≥ 60 s
-   * （熔断器 `noteHealthy` 复位）时清零。主限流是熔断器（连续 3 次失败进冷却），
-   * 本上限防止单次故障在熔断触发前空转。
-   */
-  maxAttempts?: number;
   now?: () => number;
   connectTimeoutMs?: number;
   statsIntervalMs?: number;
@@ -155,13 +155,15 @@ export interface DirectCarrierControllerOptions {
    */
   visibility?: PageVisibility;
   iceDisconnectGraceMs?: number;
-  networkChangeDebounceMs?: number;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
-  /** `online` 事件源，缺省 `globalThis`。 */
-  networkEvents?: EventTargetLike;
-  /** Network Information API（`navigator.connection`）的 `change` 事件源；缺省自动探测。 */
-  connectionEvents?: EventTargetLike | null;
+  /**
+   * 该 node 在宿主的「打不通」退避里还剩多久（与 REST、primary 重连共用一份账）。
+   * 大于 0 时不发起新 attempt（不计入熔断），按短步长复查（见 `LinkBackoffWait`）。
+   */
+  linkBackoffRemainingMs?: () => number;
+  /** 协商 REST 被转发器答 `NODE_UNREACHABLE`：交给宿主记进同一份不可达退避（带 body 的 `reason`）。 */
+  onNodeUnreachable?: (reason: string | null) => void;
   onStateChange?: (state: DirectCarrierState, reason: string | null) => void;
 }
 
@@ -197,6 +199,13 @@ interface Attempt {
   chain: Promise<void>;
 }
 
+/** 一次失败怎么记账：`count: false` 不进熔断；`kind` 缺省按 reason 归类。 */
+interface FailureAccount {
+  count?: boolean;
+  kind?: string | null;
+  retryAfterMs?: number | null;
+}
+
 /** 清理路径（注销订阅 / 关闭已关闭的对象）不该因二次调用抛出而中断。 */
 function quietly(fn: (() => void) | null | undefined): void {
   try {
@@ -226,13 +235,6 @@ function defaultRtcFactory(config: { iceServers: IceServerLike[] }): RTCPeerConn
   return new ctor(config) as unknown as RTCPeerConnectionLike;
 }
 
-function defaultConnectionEvents(): EventTargetLike | null {
-  const nav = (globalThis as { navigator?: { connection?: unknown } }).navigator;
-  const conn = nav?.connection as Partial<EventTargetLike> | undefined;
-  if (!conn || typeof conn.addEventListener !== 'function') return null;
-  return conn as EventTargetLike;
-}
-
 export class DirectCarrierController {
   readonly nodeId: string;
 
@@ -244,23 +246,24 @@ export class DirectCarrierController {
   private failureReason: string | null = null;
   private attempt: Attempt | null = null;
   private generation = 0;
-  private attempts = 0;
-  /** 上一次计入 `attempts` 时 primary 的身份：primary 真换了一条连接才重置预算。 */
-  private attemptsIdentity: string | null = null;
+  /** 连续自动重试的次数，只用来算退避间隔；通道健康满 60 s 清零。 */
+  private retryStreak = 0;
+  private lastAttemptAt = Number.NEGATIVE_INFINITY;
   private retryHandle: unknown = null;
   private coolingHandle: unknown = null;
+  private readonly linkWait: LinkBackoffWait;
   private healthyHandle: unknown = null;
   private statsHandle: unknown = null;
   private statsPollGeneration = 0;
   private statsVisibilityUnsub: (() => void) | null = null;
-  private networkDebounceHandle: unknown = null;
   private started = false;
-  private readonly breaker: DirectDialBreaker;
   private readonly now: () => number;
-  private readonly networkCleanups: (() => void)[] = [];
   private unsubscribeSignalingReady: (() => void) | null = null;
   private unsubscribeCarrierChange: (() => void) | null = null;
-  private unsubscribePrimaryWait: (() => void) | null = null;
+  private readonly primaryCleanups: (() => void)[] = [];
+  /** 正在等 primary：`open` 等它 READY，`reconnect` 等它掉出 READY 再回来。 */
+  private primaryWait: PrimaryWaitMode | null = null;
+  private primarySawDown = false;
 
   private route: DirectRoute | null = null;
   private rttMs: number | null = null;
@@ -272,7 +275,7 @@ export class DirectCarrierController {
     this.options = options;
     this.nodeId = options.nodeId;
     this.now = options.now ?? Date.now;
-    this.breaker = new DirectDialBreaker({ now: this.now });
+    this.linkWait = new LinkBackoffWait(() => options.linkBackoffRemainingMs?.() ?? 0);
     this.schedule =
       options.setTimeoutFn ?? ((fn, ms) => (globalThis as typeof global).setTimeout(fn, ms));
     this.cancelTimer =
@@ -344,41 +347,42 @@ export class DirectCarrierController {
   start(): void {
     if (this.started) return;
     this.started = true;
-    this.attempts = 0;
+    this.retryStreak = 0;
     this.options.connection.setDirectRetry?.(() => this.retryDirect());
-    this.installNetworkListeners();
+    this.installPrimaryListeners();
     this.installSignalingReadyListener();
     this.connect();
   }
 
   /**
-   * 用户显式重试：先撤掉 `DIRECT_UNAVAILABLE` 停放，其余同 `retry()`。
-   * `GatewayConnection.retryDirect()` 走这里；页面恢复 / 网络变化这类自动信号走 `retry()`。
+   * 用户显式重试：撤掉 `DIRECT_UNAVAILABLE` 停放，冷却中也放行恰好一次（`retryAfterMs`
+   * 之内不行），不等宿主的不可达退避。已在建连或已 active 时什么都不做——拆掉在途 attempt
+   * 只会让目标 node 多挂一条授权记录。
    */
   retryDirect(): void {
     clearDirectUnavailable(this.nodeId);
-    this.retry();
-  }
-
-  /**
-   * 强制拨一次（冷却中也允许恰好一次，`retryAfterMs` 之内不行）；不复位失败计数。
-   * 最近一次是链路类失败或目标给不出直连时不强制：只在冷却已过时照常拨一次，冷却中什么都不做。
-   */
-  retry(): void {
     if (!this.started) {
       this.start();
       return;
     }
-    if (authorizeProbeSuppressed(this.nodeId, this.now())) {
-      if (!this.attempt && this.retryHandle == null) this.connect();
-      return;
-    }
-    this.breaker.forceProbe(this.nodeId);
-    forceAuthorizeProbe(this.nodeId);
+    if (this.attempt) return;
+    forceDirectProbe(this.nodeId);
     this.retryHandle = this.clearHandle(this.retryHandle);
     this.coolingHandle = this.clearHandle(this.coolingHandle);
-    this.clearPrimaryWait();
-    this.teardownAttempt();
+    this.connect(true);
+  }
+
+  /**
+   * 「环境可能变了，方便的话再试一次」（页面恢复、`/mesh/ws` 重连）。connecting / active / 等
+   * primary / 冷却中、距上次 attempt 不到 `NUDGE_COALESCE_MS` 都不动；等宿主退避而它已清掉时立即重来。
+   */
+  nudge(): void {
+    if (!this.started || this.attempt || this.primaryWait) return;
+    const linkCleared = this.linkWait.cleared;
+    if (this.coolingHandle != null && !linkCleared) return;
+    if (!linkCleared && this.now() - this.lastAttemptAt < NUDGE_COALESCE_MS) return;
+    this.coolingHandle = this.clearHandle(this.coolingHandle);
+    this.retryHandle = this.clearHandle(this.retryHandle);
     this.connect();
   }
 
@@ -386,10 +390,11 @@ export class DirectCarrierController {
     this.started = false;
     this.retryHandle = this.clearHandle(this.retryHandle);
     this.coolingHandle = this.clearHandle(this.coolingHandle);
+    this.linkWait.reset();
     this.healthyHandle = this.clearHandle(this.healthyHandle);
     this.stopStatsPolling();
-    this.clearPrimaryWait();
-    this.removeNetworkListeners();
+    this.primaryWait = null;
+    this.removePrimaryListeners();
     this.removeSignalingReadyListener();
     this.options.connection.setDirectRetry?.(null);
     this.teardownAttempt();
@@ -398,46 +403,49 @@ export class DirectCarrierController {
 
   // ========== 连接流程 ==========
 
-  private connect(): void {
-    if (!this.started) return;
-    if (this.attempt) return;
-    // 信令没通也开 attempt：REST / ICE 与 `/mesh/ws` 握手重叠，offer 进 outbox，
-    // ready 再泵。这里 fail 会把 3 s 的 mesh 闸门变成一次「直连失败」。
+  private connect(explicit = false): void {
+    if (!this.started || this.attempt) return;
+    // 信令没通也开 attempt：REST / ICE 与 `/mesh/ws` 握手重叠，offer 进 outbox，ready 再泵。
     // HELLO_S2C 之前 connection 还没登记：先等 primary READY，避免 404 空转。
     if (!this.primaryReady()) {
-      this.failWaitingPrimary('primary not ready', 'open');
+      this.waitPrimary('primary not ready', 'open');
       return;
     }
-    const authGate = authorizeBreakerShouldTry(this.nodeId, this.now());
-    if (!authGate.allow) {
+    if (!explicit && this.waitLinkBackoff()) return;
+    const gate = directBreakerGate(this.nodeId, this.now());
+    if (!gate.allow) {
       this.setState('failed', this.failureReason);
-      this.armCoolingRetry(authGate.until);
+      this.armCoolingRetry(gate.until);
       this.publish();
       return;
     }
-    const decision = this.breaker.shouldTry(this.nodeId);
-    if (!decision.allow) {
-      this.setState('failed', this.failureReason);
-      this.armCoolingRetry(decision.until);
-      this.publish();
-      return;
-    }
-    beginAuthorizeAttempt(this.nodeId);
-    this.clearPrimaryWait();
+    this.primaryWait = null;
     this.setState('connecting', null);
     const attempt = this.beginAttempt();
     void this.runAttempt(attempt).catch((err) => {
       if (this.attempt !== attempt) return;
       if (err instanceof DirectPrimaryWaitError) {
-        this.failWaitingPrimary(err.message, err.mode);
+        this.waitPrimary(err.message, err.mode);
         return;
       }
-      const fatal = err instanceof DirectAuthorizeError && err.fatal;
-      this.failAttempt(err instanceof Error ? err.message : String(err), !fatal);
+      if (err instanceof DirectAuthorizeError) {
+        this.failNegotiation(err);
+        return;
+      }
+      this.failAttempt(err instanceof Error ? err.message : String(err), true);
     });
   }
 
-  /** 在**任何 await 之前**登记 attempt：否则并发 `retry()` 会开出两条 PeerConnection。 */
+  /** 宿主说这台 node 此刻打不通：不发请求、不计次，短步长复查。 */
+  private waitLinkBackoff(): boolean {
+    const delay = this.linkWait.next();
+    if (delay <= 0) return false;
+    this.setState('idle', 'node unreachable');
+    this.armCoolingRetry(this.now() + delay);
+    return true;
+  }
+
+  /** 在**任何 await 之前**登记 attempt：否则并发调用会开出两条 PeerConnection。 */
   private beginAttempt(): Attempt {
     this.generation += 1;
     const attempt: Attempt = {
@@ -463,7 +471,8 @@ export class DirectCarrierController {
       chain: Promise.resolve(),
     };
     this.attempt = attempt;
-    this.breaker.beginAttempt(this.nodeId, String(attempt.id));
+    this.lastAttemptAt = this.now();
+    beginDirectAttempt(this.nodeId, attempt.rtcSession);
     attempt.timeoutHandle = this.schedule(() => {
       attempt.timeoutHandle = null;
       if (this.stale(attempt)) return;
@@ -516,6 +525,7 @@ export class DirectCarrierController {
 
     const granted = await this.authorize(attempt, fpBrowser);
     if (this.stale(attempt)) return;
+    noteDirectAuthorized(this.nodeId);
     attempt.nonce = granted.nonce;
     attempt.fpNode = granted.fpNode;
 
@@ -530,7 +540,7 @@ export class DirectCarrierController {
     };
     channel.onclose = () => {
       if (this.stale(attempt)) return;
-      this.failAttempt('direct channel closed', true);
+      this.failAttempt('direct channel closed before switch', true);
     };
     if (channel.readyState === 'open') this.mountCarrier(attempt);
   }
@@ -573,12 +583,7 @@ export class DirectCarrierController {
   }
 
   private restContext(attempt: Attempt): DirectRestContext {
-    return {
-      apiClient: this.options.apiClient,
-      nodeId: this.nodeId,
-      now: this.now,
-      signal: attempt.abort.signal,
-    };
+    return { apiClient: this.options.apiClient, signal: attempt.abort.signal };
   }
 
   /**
@@ -709,6 +714,7 @@ export class DirectCarrierController {
     }
   }
 
+  /** `/mesh/ws` 连上：在途 attempt 接着泵 outbox；没有在途 attempt 就当作一次 `nudge()`。 */
   private installSignalingReadyListener(): void {
     const signaling = this.options.signaling;
     if (!signaling.onReady || this.unsubscribeSignalingReady) return;
@@ -719,9 +725,7 @@ export class DirectCarrierController {
         void this.pumpOutbox(attempt);
         return;
       }
-      if (!this.breaker.shouldTry(this.nodeId).allow) return;
-      this.retryHandle = this.clearHandle(this.retryHandle);
-      this.connect();
+      this.nudge();
     });
   }
 
@@ -731,118 +735,64 @@ export class DirectCarrierController {
     quietly(unsubscribe);
   }
 
-  // ========== 载体挂载与激活 ==========
+  // ========== primary 状态 ==========
 
   /**
-   * 通道 open：发首帧 nonce、建载体挂进屏障。**不置 active**——node 可能因为 nonce /
-   * session 绑定失败立刻关掉通道，此时若已清零重试计数，退避永远从 1 s 重来、
-   * 也永远到不了上限；诊断还会长期显示「direct」而实际仍走 primary。
+   * 整个 started 期间都盯着 primary：会话结束时在途 attempt 手上的 connectionId 就作废了，
+   * 此时拆掉它**不计入熔断**（primary 断开不是直连的错），等 primary 回到 READY 再来。
+   * `onSessionEnd` 在屏障关直连之前触发，保证随之而来的通道关闭不会被当成直连失败；
+   * 没有该事件的宿主退回 `onStateChange`。
    */
-  private mountCarrier(attempt: Attempt): void {
-    if (attempt.carrier) return;
-    const channel = attempt.channel;
-    const nonce = attempt.nonce;
-    if (!channel || nonce == null) return;
-    // 首帧 nonce 必须是**裸的**未分片 JSON：node 在挂载载体前先读走这一条。
-    try {
-      channel.send(new TextEncoder().encode(JSON.stringify({ nonce })));
-    } catch (err) {
-      this.failAttempt(err instanceof Error ? err.message : 'nonce send failed', true);
+  private installPrimaryListeners(): void {
+    const status = this.options.connection.client;
+    if (!status) return;
+    if (status.onSessionEnd) {
+      this.primaryCleanups.push(status.onSessionEnd.call(status, () => this.handlePrimaryLost()));
+    }
+    if (status.onStateChange) {
+      this.primaryCleanups.push(
+        status.onStateChange.call(status, (state) => this.handlePrimaryState(state))
+      );
+    }
+  }
+
+  private removePrimaryListeners(): void {
+    for (const off of this.primaryCleanups.splice(0)) quietly(off);
+  }
+
+  private handlePrimaryLost(): void {
+    if (!this.started) return;
+    this.primarySawDown = true;
+    if (!this.attempt) return;
+    this.abandonAttempt('primary closed', 'idle', { detach: false });
+    this.primaryWait = 'open';
+  }
+
+  private handlePrimaryState(state: string): void {
+    if (!this.started) return;
+    if (state !== PRIMARY_READY_STATE) {
+      this.handlePrimaryLost();
       return;
     }
-    // 分片层的协议违规会自毁载体，随后走同一条 onClose；原因单独记下来供诊断。
-    const failure: { reason: string | null } = { reason: null };
-    const carrier = new DirectDataChannelCarrier(channel, {
-      maxMessageBytes: attempt.pc?.sctp?.maxMessageSize,
-      onProtocolError: (reason) => {
-        failure.reason = reason;
-      },
-    });
-    attempt.carrier = carrier;
-    carrier.onClose(() => {
-      if (this.stale(attempt)) return;
-      this.failAttempt(
-        failure.reason ? `direct protocol violation: ${failure.reason}` : 'direct channel closed',
-        true
-      );
-    });
-    this.subscribeCarrierChange(attempt);
-    // 登记本次 attempt 的 rtcSession：屏障据此丢弃上一次 attempt 迟到的切换帧。
-    this.options.connection.attachDirectCarrier(carrier, { rtcSession: attempt.rtcSession });
-    // 没有 onCarrierChange 的宿主（老测试桩）退化成「挂上即生效」。
-    if (!this.options.connection.onCarrierChange) this.activate(attempt);
-  }
-
-  private subscribeCarrierChange(attempt: Attempt): void {
-    const subscribe = this.options.connection.onCarrierChange;
-    if (!subscribe) return;
-    quietly(this.unsubscribeCarrierChange);
-    this.unsubscribeCarrierChange = subscribe.call(this.options.connection, (active) => {
-      if (this.stale(attempt)) return;
-      if (active === 'direct') {
-        this.activate(attempt);
-        return;
-      }
-      // 切回 primary：这条直连已经不承载业务了，按载体失效处理（退避后重来）。
-      if (this.state === 'active') this.failAttempt('switched back to primary', true);
-    });
-  }
-
-  /** 屏障已切换并回过 ACK：这时候才算真的 active。 */
-  private activate(attempt: Attempt): void {
-    if (this.stale(attempt) || !attempt.carrier) return;
-    if (this.state === 'active') return;
-    attempt.timeoutHandle = this.clearHandle(attempt.timeoutHandle);
-    this.breaker.noteChannelEstablished(this.nodeId, String(attempt.id));
-    this.healthyHandle = this.clearHandle(this.healthyHandle);
-    const establishedAt = this.now();
-    this.healthyHandle = this.schedule(() => {
-      this.healthyHandle = null;
-      if (this.state !== 'active' || this.attempt !== attempt) return;
-      if (this.now() - establishedAt < DIRECT_DIAL_BREAKER_HEALTHY_MS) return;
-      this.breaker.noteHealthy(this.nodeId);
-      this.attempts = 0;
-      this.publish();
-    }, DIRECT_DIAL_BREAKER_HEALTHY_MS);
-    this.setState('active', null);
-    this.startStatsPolling();
-  }
-
-  // ========== 失败与退避 ==========
-
-  private failAttempt(reason: string, retryable: boolean, count = true): void {
-    const attemptId = this.attempt ? String(this.attempt.id) : undefined;
-    this.healthyHandle = this.clearHandle(this.healthyHandle);
-    this.teardownAttempt();
-    this.stopStatsPolling();
-    this.route = null;
-    this.rttMs = null;
-    if (count) {
-      const kind = classifyDirectDialFailure(reason);
-      if (kind) this.breaker.noteFailure(this.nodeId, kind, attemptId);
-    }
-    this.setState('failed', reason);
-    if (retryable && this.started) this.scheduleRetry();
+    if (!this.primaryWait || !this.primarySawDown) return;
+    this.primaryWait = null;
+    this.retryHandle = this.clearHandle(this.retryHandle);
+    this.connect();
   }
 
   /**
-   * connectionId 定位不到本标签页：这不是退避能解决的问题（多标签时重试多少次都是 409），
-   * 所以**不消耗重试次数**，挂在 primary 的状态上等它重连过再来一轮。
-   */
-  private failWaitingPrimary(reason: string, mode: PrimaryWaitMode): void {
-    this.failAttempt(reason, false, false);
-    if (this.started) this.waitForPrimary(mode);
-  }
-
-  /**
+   * connectionId 定位不到本标签页 / primary 还没 READY：这不是退避能解决的问题（多标签时
+   * 重试多少次都是 409），不计入熔断，挂在 primary 的状态上等它（重）连过再来。
+   *
    * `open`：等 primary 进入 READY（已经 READY 说明只是登记竞态，退避重试即可）。
-   * `reconnect`：必须先看到 primary 掉出 READY 再回到 READY——同 sid 的连接分布只有
-   * 这时才可能变。宿主没给状态源（老测试桩）时退回普通退避，绝不静默卡死。
+   * `reconnect`：必须先看到 primary 掉出 READY 再回到 READY。宿主没给状态源（老测试桩）
+   * 时退回普通退避，绝不静默卡死。
    */
-  private waitForPrimary(mode: PrimaryWaitMode): void {
+  private waitPrimary(reason: string, mode: PrimaryWaitMode): void {
+    this.abandonAttempt(reason, 'idle');
+    if (!this.started) return;
     const status = this.options.connection.client;
-    const subscribe = status?.onStateChange;
-    if (!status || !subscribe) {
+    if (!status?.onStateChange) {
       this.scheduleRetry();
       return;
     }
@@ -851,42 +801,8 @@ export class DirectCarrierController {
       this.scheduleRetry();
       return;
     }
-    this.clearPrimaryWait();
-    let sawDown = !ready;
-    this.unsubscribePrimaryWait = subscribe.call(status, (state) => {
-      if (!this.started) return;
-      if (state !== PRIMARY_READY_STATE) {
-        sawDown = true;
-        return;
-      }
-      if (!sawDown) return;
-      this.clearPrimaryWait();
-      if (this.primaryChanged()) this.attempts = 0;
-      this.retryHandle = this.clearHandle(this.retryHandle);
-      this.connect();
-    });
-  }
-
-  /** 本条 Gateway WS 的身份：HELLO 捎带的 connectionId，退而求其次用握手 nonce。 */
-  private primaryIdentity(): string | null {
-    return this.helloConnectionId() ?? this.options.cid?.() ?? null;
-  }
-
-  /**
-   * primary 回到 READY 时要不要重置重试预算：链路类失败（`NODE_UNREACHABLE` 等）与这条 WS
-   * 是谁无关，WS 重连一次就重来一轮只会把一次链路故障放大成周期性的请求风暴。
-   * 身份认不出（老网关、宿主没接 `cid`）时保持原行为。
-   */
-  private primaryChanged(): boolean {
-    if (authorizeProbeSuppressed(this.nodeId, this.now())) return false;
-    const identity = this.primaryIdentity();
-    return identity === null || identity !== this.attemptsIdentity;
-  }
-
-  private clearPrimaryWait(): void {
-    const unsubscribe = this.unsubscribePrimaryWait;
-    this.unsubscribePrimaryWait = null;
-    quietly(unsubscribe);
+    this.primaryWait = mode;
+    this.primarySawDown = !ready;
   }
 
   /**
@@ -911,19 +827,140 @@ export class DirectCarrierController {
     if (state === 'failed' || state === 'closed') this.failAttempt(`ice ${state}`, true);
   }
 
+  // ========== 载体挂载与激活 ==========
+
+  /**
+   * 通道 open：发首帧 nonce、建载体挂进屏障。**不置 active**——node 可能因为 nonce /
+   * session 绑定失败立刻关掉通道，此时若已清零重试计数，退避永远从 1 s 重来；
+   * 诊断还会长期显示「direct」而实际仍走 primary。
+   */
+  private mountCarrier(attempt: Attempt): void {
+    if (attempt.carrier) return;
+    const channel = attempt.channel;
+    const nonce = attempt.nonce;
+    if (!channel || nonce == null) return;
+    // 首帧 nonce 必须是**裸的**未分片 JSON：node 在挂载载体前先读走这一条。
+    try {
+      channel.send(new TextEncoder().encode(JSON.stringify({ nonce })));
+    } catch (err) {
+      this.failAttempt(err instanceof Error ? err.message : 'nonce send failed', true);
+      return;
+    }
+    // 分片层的协议违规会自毁载体，随后走同一条 onClose；原因单独记下来供诊断。
+    const failure: { reason: string | null } = { reason: null };
+    const carrier = new DirectDataChannelCarrier(channel, {
+      maxMessageBytes: attempt.pc?.sctp?.maxMessageSize,
+      onProtocolError: (reason) => {
+        failure.reason = reason;
+      },
+    });
+    attempt.carrier = carrier;
+    carrier.onClose(() => {
+      if (this.stale(attempt)) return;
+      if (failure.reason) {
+        this.failAttempt(`direct protocol violation: ${failure.reason}`, true);
+        return;
+      }
+      const local = carrier.closeReason;
+      this.failAttempt(
+        local ? `direct channel closed (${local})` : 'direct channel closed by peer',
+        true
+      );
+    });
+    this.subscribeCarrierChange(attempt);
+    // 登记本次 attempt 的 rtcSession：屏障据此丢弃上一次 attempt 迟到的切换帧。
+    this.options.connection.attachDirectCarrier(carrier, { rtcSession: attempt.rtcSession });
+    // 没有 onCarrierChange 的宿主（老测试桩）退化成「挂上即生效」。
+    if (!this.options.connection.onCarrierChange) this.activate(attempt);
+  }
+
+  private subscribeCarrierChange(attempt: Attempt): void {
+    const subscribe = this.options.connection.onCarrierChange;
+    if (!subscribe) return;
+    quietly(this.unsubscribeCarrierChange);
+    this.unsubscribeCarrierChange = subscribe.call(this.options.connection, (active) => {
+      if (this.stale(attempt)) return;
+      if (active === 'direct') {
+        this.activate(attempt);
+        return;
+      }
+      // 切回 primary（node 切回，或 PING 在直连上超时被摘掉）：这条直连已经不承载业务了。
+      if (this.state === 'active') this.failAttempt('switched back to primary', true);
+    });
+  }
+
+  /** 屏障已切换并回过 ACK：这时候才算真的 active。 */
+  private activate(attempt: Attempt): void {
+    if (this.stale(attempt) || !attempt.carrier) return;
+    if (this.state === 'active') return;
+    attempt.timeoutHandle = this.clearHandle(attempt.timeoutHandle);
+    noteDirectEstablished(this.nodeId, attempt.rtcSession, this.now());
+    this.healthyHandle = this.clearHandle(this.healthyHandle);
+    const establishedAt = this.now();
+    this.healthyHandle = this.schedule(() => {
+      this.healthyHandle = null;
+      if (this.state !== 'active' || this.attempt !== attempt) return;
+      if (this.now() - establishedAt < DIRECT_BREAKER_HEALTHY_MS) return;
+      noteDirectHealthy(this.nodeId, this.now());
+      this.retryStreak = 0;
+      this.publish();
+    }, DIRECT_BREAKER_HEALTHY_MS);
+    this.setState('active', null);
+    this.startStatsPolling();
+  }
+
+  // ========== 失败与退避 ==========
+
+  /** 协商 REST 的失败只记一次账：`NODE_UNREACHABLE` 只进宿主的不可达退避，不进熔断。 */
+  private failNegotiation(err: DirectAuthorizeError): void {
+    const kind = err.kind ?? classifyDirectDialFailure(err.message);
+    const unreachable = kind === NODE_UNREACHABLE_KIND;
+    if (unreachable) this.options.onNodeUnreachable?.(err.reason);
+    const account = unreachable ? { count: false } : { kind, retryAfterMs: err.retryAfterMs };
+    this.failAttempt(err.message, !err.fatal, account);
+  }
+
+  private failAttempt(reason: string, retryable: boolean, account: FailureAccount = {}): void {
+    const attemptId = this.attempt?.rtcSession;
+    this.stopAttempt();
+    if (account.count !== false) {
+      const kind = account.kind !== undefined ? account.kind : classifyDirectDialFailure(reason);
+      if (kind) {
+        noteDirectFailure(this.nodeId, kind, attemptId, this.now(), account.retryAfterMs ?? null);
+      }
+    }
+    this.setState('failed', reason);
+    if (retryable && this.started) this.scheduleRetry();
+  }
+
+  /** 放弃在途 attempt 但不记失败（primary 没了、要等 primary）。 */
+  private abandonAttempt(
+    reason: string,
+    state: DirectCarrierState,
+    options: { detach?: boolean } = {}
+  ): void {
+    this.stopAttempt(options.detach ?? true);
+    this.setState(state, reason);
+  }
+
+  private stopAttempt(detach = true): void {
+    this.healthyHandle = this.clearHandle(this.healthyHandle);
+    this.teardownAttempt(detach);
+    this.stopStatsPolling();
+    this.route = null;
+    this.rttMs = null;
+  }
+
   private scheduleRetry(): void {
     if (this.retryHandle != null || this.coolingHandle != null) return;
-    const decision = this.breaker.shouldTry(this.nodeId);
-    if (!decision.allow) {
-      this.armCoolingRetry(decision.until);
+    const gate = directBreakerGate(this.nodeId, this.now());
+    if (!gate.allow) {
+      this.armCoolingRetry(gate.until);
       this.publish();
       return;
     }
-    const cap = this.options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-    if (this.attempts >= cap) return;
-    const delay = this.retryDelay(this.attempts);
-    this.attempts += 1;
-    this.attemptsIdentity = this.primaryIdentity();
+    const delay = this.retryDelay(this.retryStreak);
+    this.retryStreak += 1;
     this.retryHandle = this.schedule(() => {
       this.retryHandle = null;
       if (!this.started) return;
@@ -933,6 +970,7 @@ export class DirectCarrierController {
 
   private armCoolingRetry(until: number | null): void {
     if (this.coolingHandle != null) return;
+    this.retryHandle = this.clearHandle(this.retryHandle);
     const delay = Math.max(0, (until ?? this.now()) - this.now());
     this.coolingHandle = this.schedule(() => {
       this.coolingHandle = null;
@@ -948,7 +986,12 @@ export class DirectCarrierController {
     return Math.min(max, base * 2 ** Math.max(0, attempt));
   }
 
-  private teardownAttempt(): void {
+  /**
+   * `detach: false` 只用于 primary 会话结束：屏障紧接着会 `closeDirect()`。这里既不摘载体，
+   * 也不同步关载体 / PC——载体一关，屏障会当成「直连掉了」去补齐订阅、弹回落提示，而此刻
+   * primary 本身就不在。等屏障切回 primary 之后（微任务）再关。
+   */
+  private teardownAttempt(detach = true): void {
     const attempt = this.attempt;
     if (!attempt) return;
     this.attempt = null;
@@ -968,8 +1011,15 @@ export class DirectCarrierController {
       attempt.pc.onconnectionstatechange = null;
       attempt.pc.oniceconnectionstatechange = null;
     }
-    quietly(() => attempt.carrier?.close());
-    quietly(() => attempt.pc?.close());
+    const release = () => {
+      quietly(() => attempt.carrier?.close());
+      quietly(() => attempt.pc?.close());
+    };
+    if (!detach) {
+      queueMicrotask(release);
+      return;
+    }
+    release();
     this.options.connection.detachDirectCarrier?.();
   }
 
@@ -1038,7 +1088,7 @@ export class DirectCarrierController {
       route: this.route,
       rtt: this.rttMs,
       ice: this.ice,
-      breaker: this.breaker.snapshot(this.nodeId),
+      breaker: directBreakerSnapshot(this.nodeId, this.now()),
     });
     if (sameDirectDiagnostics(this.snapshot, next)) return;
     this.snapshot = next;
@@ -1055,39 +1105,6 @@ export class DirectCarrierController {
     }
     this.publish();
     this.options.onStateChange?.(state, reason);
-  }
-
-  private installNetworkListeners(): void {
-    const bind = (target: EventTargetLike | null, type: string, debounceMs: number) => {
-      if (!target?.addEventListener) return;
-      const handler = () => this.handleNetworkChange(debounceMs);
-      target.addEventListener(type, handler);
-      this.networkCleanups.push(() => target.removeEventListener?.(type, handler));
-    };
-    bind(this.options.networkEvents ?? (globalThis as unknown as EventTargetLike), 'online', 0);
-    // Wi-Fi ↔ 蜂窝切换通常不触发 `online`，只有 Network Information API 的 change。
-    const events = this.options.connectionEvents;
-    const debounce = this.options.networkChangeDebounceMs ?? DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS;
-    bind(events !== undefined ? events : defaultConnectionEvents(), 'change', debounce);
-  }
-
-  private handleNetworkChange(debounceMs: number): void {
-    if (!this.started) return;
-    this.networkDebounceHandle = this.clearHandle(this.networkDebounceHandle);
-    if (debounceMs <= 0) {
-      this.retry();
-      return;
-    }
-    this.networkDebounceHandle = this.schedule(() => {
-      this.networkDebounceHandle = null;
-      if (!this.started) return;
-      this.retry();
-    }, debounceMs);
-  }
-
-  private removeNetworkListeners(): void {
-    this.networkDebounceHandle = this.clearHandle(this.networkDebounceHandle);
-    for (const off of this.networkCleanups.splice(0)) quietly(off);
   }
 }
 

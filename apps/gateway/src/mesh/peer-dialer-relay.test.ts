@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { LinkError, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
   completeRelayDial,
   formatRelayChooseLog,
@@ -147,6 +147,31 @@ describe('openRelayStreamForPeer', () => {
     expect(opened.stream).toBe(primaryStream);
   });
 
+  test('closed secondary during open tries the next relay and is not open-failed', async () => {
+    const [local] = createInMemoryLinkPair();
+    const primaryStream = await local.openStream(new Uint8Array([4]));
+    const urls: string[] = [];
+    const opened = await openRelayStreamForPeer({
+      nodeId: 'ff'.repeat(16),
+      presence: fakePresence({
+        choice: { url: 'https://ty.example', role: 'secondary', scoreMs: 10 },
+        primary: 'https://sh.example',
+        relaysFor: ['https://ty.example', 'https://sh.example'],
+      }),
+      opener: {
+        async openRelayVia(url) {
+          urls.push(url);
+          if (url === 'https://ty.example') throw new LinkError('closed', 'missed-pong');
+          return primaryStream;
+        },
+      },
+      openFallback: async () => Promise.reject(new Error('no-fallback')),
+    });
+    expect(urls).toEqual(['https://ty.example', 'https://sh.example']);
+    expect(opened.viaRelay).toBe('https://sh.example');
+    expect(opened.stream).toBe(primaryStream);
+  });
+
   test('retries once when openStream surfaces RST unknown-target', async () => {
     const [local] = createInMemoryLinkPair();
     const primaryStream = await local.openStream(new Uint8Array([3]));
@@ -192,7 +217,7 @@ describe('openRelayStreamForPeer', () => {
     expect(urls).toEqual(['https://sh.example']);
   });
 
-  test('does not retry quota or other RST reasons', async () => {
+  test('quota-streams tries the next relay, then surfaces the failure', async () => {
     const urls: string[] = [];
     await expect(
       openRelayStreamForPeer({
@@ -210,7 +235,7 @@ describe('openRelayStreamForPeer', () => {
         openFallback: async () => Promise.reject(new Error('no-fallback')),
       })
     ).rejects.toThrow('quota-streams');
-    expect(urls).toEqual(['https://ty.example']);
+    expect(urls).toEqual(['https://ty.example', 'https://sh.example']);
   });
 
   test('logs relay choose with score and candidate count', () => {

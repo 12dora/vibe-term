@@ -29,7 +29,10 @@ describe('classifyRelayDialFailure', () => {
     expect(classifyRelayDialFailure(new Error('offline'))).toBe('offline');
     expect(classifyRelayDialFailure(new Error('unknown-target'))).toBe('unknown-target');
     expect(classifyRelayDialFailure(new Error('stream rst quota-streams'))).toBe('rst');
-    expect(classifyRelayDialFailure(new Error('uplink is not online'))).toBe('open-failed');
+    expect(classifyRelayDialFailure(new Error('uplink is not online'))).toBe('skip');
+    expect(classifyRelayDialFailure(new Error('open-failed'))).toBe('skip');
+    expect(classifyRelayDialFailure(new Error('quota-streams'))).toBe('skip');
+    expect(classifyRelayDialFailure(new Error('relay-open-local'))).toBe('skip');
   });
 });
 

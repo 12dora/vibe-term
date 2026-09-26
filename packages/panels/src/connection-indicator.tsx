@@ -16,6 +16,38 @@ function shouldShowIndicator(state: ConnectionState): boolean {
   );
 }
 
+/** 连上之后指示器再留这么久才退场：握手成功后立刻又断的会话不会让它一闪一闪。 */
+export const INDICATOR_LINGER_MS = 1000;
+
+function useLingering(active: boolean, lingerMs: number): boolean {
+  const [lingering, setLingering] = useState(active);
+  useEffect(() => {
+    if (active) {
+      setLingering(true);
+      return;
+    }
+    const timer = setTimeout(() => setLingering(false), lingerMs);
+    return () => clearTimeout(timer);
+  }, [active, lingerMs]);
+  return active || lingering;
+}
+
+type IndicatorMode = 'closed' | 'first' | 'reconnecting';
+
+/** 要不要显示、用哪种样式。退场前的停留期里状态已是 READY：沿用上一种样式（首连转圈不换成「重连中」）。 */
+function useIndicatorPresence(
+  state: ConnectionState,
+  hasConnectedOnce: boolean
+): { show: boolean; mode: IndicatorMode } {
+  const modeRef = useRef<IndicatorMode>('first');
+  if (state !== 'READY') {
+    modeRef.current = state === 'CLOSED' ? 'closed' : hasConnectedOnce ? 'reconnecting' : 'first';
+  }
+  const show = useLingering(shouldShowIndicator(state), INDICATOR_LINGER_MS);
+  const mode = state === 'READY' && modeRef.current === 'closed' ? 'reconnecting' : modeRef.current;
+  return { show, mode };
+}
+
 export function ConnectionIndicator() {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -28,7 +60,7 @@ export function ConnectionIndicator() {
   // 退场必须直接落到 hidden，否则节点会停在 opacity:0 永不卸载。
   const reducedMotion = useReducedMotion();
 
-  const shouldShow = shouldShowIndicator(connectionState);
+  const { show: shouldShow, mode } = useIndicatorPresence(connectionState, hasConnectedOnce);
 
   useEffect(() => {
     if (reducedMotion) {
@@ -56,8 +88,8 @@ export function ConnectionIndicator() {
 
   if (phase === 'hidden') return null;
 
-  const isClosed = connectionState === 'CLOSED';
-  const isFirstConnect = !hasConnectedOnce && !isClosed;
+  const isClosed = mode === 'closed';
+  const isFirstConnect = mode === 'first';
 
   const easing = phase === 'exiting' ? 'var(--vibeterm-ease-in)' : 'var(--vibeterm-ease-out)';
   const duration = `${motionDurations.layout}ms`;

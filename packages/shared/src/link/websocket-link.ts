@@ -312,6 +312,10 @@ export class WebSocketLink implements LinkSession {
     return this.mux.ctl;
   }
 
+  get lastFrameAt(): number {
+    return this.mux.lastFrameAt;
+  }
+
   get closed(): Promise<LinkCloseInfo> {
     return this.mux.closed;
   }
