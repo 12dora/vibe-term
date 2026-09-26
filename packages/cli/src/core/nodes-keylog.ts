@@ -19,7 +19,7 @@ import {
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
 } from '@vibeterm/shared/auth';
-import { type AuthMode, fetchAuthMode } from './auth';
+import { type AuthMode, fetchAuthMode, noteDerivingKey } from './auth';
 import type { CliContext } from './context';
 import { AuthError, CliError, UsageError } from './errors';
 import { isInteractive, promptHidden } from './prompt';
@@ -81,6 +81,7 @@ export async function deriveRootFromMode(mode: AuthMode, password: string): Prom
     throw new CliError('auth mode is missing uid/kdf/rootEpoch; cannot sign');
   }
   assertKdfParamsFloor(mode.kdfParams);
+  noteDerivingKey();
   const seed = await deriveSeed(password, {
     salt: decodeBase64url(mode.kdfParams.salt),
     memory_kib: mode.kdfParams.memory_kib,

@@ -10,7 +10,7 @@ const commands = [
   { command: 'mesh reset-root', rest: [], flags: ['--yes'] },
   { command: 'user passwd', rest: ['alice'], flags: ['--full-reset', '--yes'] },
   { command: 'user add', rest: ['alice'], flags: [] },
-  { command: 'user totp', rest: ['alice'], flags: [] },
+  { command: 'user totp', rest: ['alice'], flags: ['--code', '123456'] },
   { command: 'relay pack upload', rest: [], flags: [] },
 ];
 

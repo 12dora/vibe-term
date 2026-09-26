@@ -1,5 +1,6 @@
 // mesh 鉴权 REST 客户端。所有 `/n/:T/...` 路径由 nodeId 决定，`self` 退化为不带前缀的旧路由。
 
+import { LOGIN_RECORD_CLIENT_HEADER } from '@vibeterm/shared';
 import { assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
@@ -39,7 +40,7 @@ export function nodeAuthPath(nodeId: string, path: string): string {
 
 export type LoginResult =
   | { ok: true; response: AuthLoginResponse }
-  | { ok: false; status: number; code: AuthLoginErrorCode };
+  | { ok: false; status: number; code: AuthLoginErrorCode; retryAfterMs?: number };
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 
@@ -54,25 +55,58 @@ async function readCode(res: Response, fallback: string): Promise<string> {
   return fallback;
 }
 
+async function readLoginFailure(
+  res: Response,
+  fallback: string
+): Promise<{ code: string; retryAfterMs?: number }> {
+  try {
+    const payload = (await res.json()) as {
+      code?: unknown;
+      error?: unknown;
+      retryAfterMs?: unknown;
+    };
+    const code =
+      typeof payload.code === 'string'
+        ? payload.code
+        : typeof payload.error === 'string'
+          ? payload.error
+          : fallback;
+    const retryAfterMs = retryAfterOf(payload);
+    return retryAfterMs === undefined ? { code } : { code, retryAfterMs };
+  } catch {
+    return { code: fallback };
+  }
+}
+
 /**
  * 抛异常的端点也必须把服务端的 `{code}` 原样带出去。
  *
  * 只留 message 的话，调用方（登录页的 `loginErrorKeyFromException`）读不到码，会把
  * `PASSKEY_REQUIRED` / `NO_PASSKEY_FOR_ORIGIN` 这类**结论性**失败一律显示成「网络错误」。
  */
-function requestError(code: string, status: number, message: string): Error {
-  return Object.assign(new Error(message), { code, status });
+function requestError(code: string, status: number, message: string, retryAfterMs?: number): Error {
+  return Object.assign(new Error(message), {
+    code,
+    status,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+  });
 }
 
 /** 读一次错误信封：`code` 用于分支判定，`error`/兜底文案用于 message。 */
 async function readErrorEnvelope(
   res: Response,
   fallback: string
-): Promise<{ code: string; message: string }> {
+): Promise<{ code: string; message: string; retryAfterMs?: number }> {
   let code = '';
   let message = '';
+  let retryAfterMs: number | undefined;
   try {
-    const payload = (await res.json()) as { code?: unknown; error?: unknown };
+    const payload = (await res.json()) as {
+      code?: unknown;
+      error?: unknown;
+      retryAfterMs?: unknown;
+    };
+    retryAfterMs = retryAfterOf(payload);
     if (typeof payload.code === 'string') code = payload.code;
     if (typeof payload.error === 'string') message = payload.error;
     else if (payload.error && typeof payload.error === 'object') {
@@ -82,11 +116,38 @@ async function readErrorEnvelope(
   } catch {
     // 非 JSON 响应：只剩兜底文案
   }
-  return { code: code || `HTTP_${res.status}`, message: message || code || fallback };
+  return {
+    code: code || `HTTP_${res.status}`,
+    message: message || code || fallback,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
+  };
+}
+
+/** 登录类 POST 上的客户端自报（`LOGIN_RECORD_CLIENT_HEADER`），节点据此写登录记录的「类型」列。 */
+export type LoginClientKind = 'web' | 'cli';
+
+export interface AuthApiOptions {
+  /** 缺省不带自报头，节点记为 `unknown`。 */
+  clientKind?: LoginClientKind;
+}
+
+/** 限流 / 暂停响应里的 `retryAfterMs`；缺失或不合法为 `undefined`。 */
+function retryAfterOf(payload: { retryAfterMs?: unknown }): number | undefined {
+  const value = payload.retryAfterMs;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 export class AuthApi {
-  constructor(private readonly client: ApiClient = defaultApiClient) {}
+  private readonly loginHeaders: Record<string, string>;
+
+  constructor(
+    private readonly client: ApiClient = defaultApiClient,
+    options: AuthApiOptions = {}
+  ) {
+    this.loginHeaders = options.clientKind
+      ? { ...JSON_HEADERS, [LOGIN_RECORD_CLIENT_HEADER]: options.clientKind }
+      : { ...JSON_HEADERS };
+  }
 
   /** standalone 下 `mode==='none'`，登录相关 UI 全部不渲染。 */
   async getMode(): Promise<AuthModeResponse> {
@@ -174,12 +235,12 @@ export class AuthApi {
   async challenge(nodeId: string, uid: string): Promise<AuthChallengeResponse> {
     const res = await this.client.fetch(nodeAuthPath(nodeId, '/api/auth/challenge'), {
       method: 'POST',
-      headers: JSON_HEADERS,
+      headers: this.loginHeaders,
       body: JSON.stringify({ uid }),
     });
     if (!res.ok) {
       const envelope = await readErrorEnvelope(res, 'Failed to obtain login challenge');
-      throw requestError(envelope.code, res.status, envelope.message);
+      throw requestError(envelope.code, res.status, envelope.message, envelope.retryAfterMs);
     }
     return (await res.json()) as AuthChallengeResponse;
   }
@@ -188,12 +249,12 @@ export class AuthApi {
   async login(nodeId: string, body: AuthLoginRequest): Promise<LoginResult> {
     const res = await this.client.fetch(nodeAuthPath(nodeId, '/api/auth/login'), {
       method: 'POST',
-      headers: JSON_HEADERS,
+      headers: this.loginHeaders,
       body: JSON.stringify(body),
     });
     if (!res.ok) {
       const fallback = res.status === 429 ? 'RATE_LIMITED' : 'LOGIN_FAILED';
-      return { ok: false, status: res.status, code: await readCode(res, fallback) };
+      return { ok: false, status: res.status, ...(await readLoginFailure(res, fallback)) };
     }
     return { ok: true, response: (await res.json()) as AuthLoginResponse };
   }
@@ -238,7 +299,7 @@ export class AuthApi {
   ): Promise<PublicKeyCredentialRequestOptionsJSON> {
     const res = await this.client.fetch('/api/auth/passkey/login/options', {
       method: 'POST',
-      headers: JSON_HEADERS,
+      headers: this.loginHeaders,
       body: JSON.stringify({ uid, delegation }),
     });
     if (!res.ok) {
@@ -248,7 +309,7 @@ export class AuthApi {
       if (res.status === 404 && envelope.code === 'NO_PASSKEY_FOR_ORIGIN') {
         throw new NoPasskeyForOriginError();
       }
-      throw requestError(envelope.code, res.status, envelope.message);
+      throw requestError(envelope.code, res.status, envelope.message, envelope.retryAfterMs);
     }
     return (await res.json()) as PublicKeyCredentialRequestOptionsJSON;
   }
@@ -414,4 +475,4 @@ export class AuthApi {
   }
 }
 
-export const defaultAuthApi = new AuthApi();
+export const defaultAuthApi = new AuthApi(defaultApiClient, { clientKind: 'web' });

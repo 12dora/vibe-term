@@ -25,7 +25,7 @@ const USAGE_SNAPSHOT = [
   '  system info|addresses|update-check|upgrade status|start',
   '  local status|leave|direct      GET /api/local/status; POST /api/local/leave|direct (--node honoured for direct)',
   '  passwd [--full-reset]          keylog rotate-root-keep (or rotate-root); VIBETERM_PASSWORD / VIBETERM_NEW_PASSWORD',
-  '  totp enable|disable [--yes]    set-totp (prints secret + otpauth, verifies --code) / clear-totp',
+  '  totp enable|disable [--yes]    set-totp (prints secret + otpauth; a bad TTY code re-prompts) / clear-totp',
   '  passkey ls|rm <id> [--yes]     GET /api/auth/passkeys; keylog remove-passkey (register in the browser)',
   '  local-auth bootstrap|set       POST /api/auth/local/bootstrap; POST /api/auth/local',
   '  telegram ls|add|edit|rm|chats  /api/settings/telegram/bots and …/chats',
@@ -394,10 +394,30 @@ describe('vibeterm settings', () => {
         return { ok: true };
       },
     });
-    await expect(settings.run(cli, ['totp', 'enable', '--code', '000000'])).rejects.toBeInstanceOf(
-      AuthError
-    );
+    const error = await settings
+      .run(cli, ['totp', 'enable', '--code', '000000'])
+      .catch((err) => err);
+    expect(error).toBeInstanceOf(AuthError);
+    expect((error as AuthError).hint).toContain('--totp-secret');
+    expect((error as AuthError).hint).toContain(process.env.VIBETERM_TOTP_SECRET);
     expect(keylog).toBe(false);
+  });
+
+  test('empty VIBETERM_TOTP is treated as unset off-tty', async () => {
+    process.env.VIBETERM_TOTP = '';
+    const { ctx: cli } = await ctx({
+      'GET /api/auth/mode': () => ({
+        mode: 'mesh',
+        nodeId: NODE,
+        uid: 'user-1',
+        kdfParams: { salt: 'AA', memory_kib: 65536, iterations: 3, parallelism: 1 },
+        rootEpoch: 1,
+        rootPublicKey: 'AA',
+      }),
+    });
+    const error = await settings.run(cli, ['totp', 'enable']).catch((err) => err);
+    expect(error).toBeInstanceOf(UsageError);
+    expect(String(error)).toContain('required');
   });
 
   test('totp enable without a code is a usage error off-tty', async () => {

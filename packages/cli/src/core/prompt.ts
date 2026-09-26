@@ -7,7 +7,28 @@ export function isInteractive(stdin: NodeJS.ReadStream = process.stdin): boolean
   return Boolean(stdin.isTTY);
 }
 
+function clearPromptRawMode(input: NodeJS.ReadStream): void {
+  if (typeof input.setRawMode !== 'function') return;
+  try {
+    input.setRawMode(false);
+  } catch {
+    // 非 TTY
+  }
+}
+
+/**
+ * 连续两次 `createInterface({ terminal: true })` 时，上一次 `close()` 会 pause stdin
+ * 并可能把 TTY 留在 raw。Node 20+ 与 Bun 上若不先恢复，下一次 `question()` 收不到 line，
+ * 密码问完就再也看不到两步验证提示。问完必须重新 pause，否则 stdin 会吊住进程退不出去。
+ */
+function armPromptInput(input: NodeJS.ReadStream): void {
+  clearPromptRawMode(input);
+  if (input.isPaused()) input.resume();
+}
+
 async function ask(prompt: string, hidden: boolean): Promise<string> {
+  const input = process.stdin;
+  armPromptInput(input);
   let muted = false;
   const output = new Writable({
     write(chunk, _encoding, callback) {
@@ -15,16 +36,18 @@ async function ask(prompt: string, hidden: boolean): Promise<string> {
       callback();
     },
   });
-  const rl = createInterface({ input: process.stdin, output, terminal: true });
+  const rl = createInterface({ input, output, terminal: true });
   process.stderr.write(prompt);
   muted = hidden;
   try {
-    const answer = await new Promise<string>((resolve) => rl.question('', resolve));
-    return answer;
+    return await new Promise<string>((resolve) => {
+      rl.question('', resolve);
+    });
   } finally {
     muted = false;
     rl.close();
     if (hidden) process.stderr.write('\n');
+    clearPromptRawMode(input);
   }
 }
 

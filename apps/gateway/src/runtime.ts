@@ -6,6 +6,7 @@ import {
 } from './agent/lazy';
 import { type SystemApiHandler, handleApiRequest } from './api';
 import { json } from './api/http';
+import { startGatewaySweepers, stopGatewaySweepers } from './auth/login-records-runtime';
 import type { AuthDb } from './auth/types';
 import { config, isRelayOnly, resolveLiveRoles } from './config';
 import { runtimeController } from './control/runtime';
@@ -29,7 +30,6 @@ import { startPortMaps, stopPortMaps } from './portmap/manager';
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
 import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
-import { getShareService } from './share';
 import {
   loadTelegramService,
   refreshTelegramService,
@@ -262,7 +262,7 @@ export async function createGatewayRuntime(
     renamePane: (deviceId, paneId, name) => wsServer.renamePane(deviceId, paneId, name),
     getCustomNames: (deviceId) => wsServer.getCustomNames(deviceId),
   });
-  getShareService().startSweeper();
+  startGatewaySweepers();
   await liveStart();
 
   return {
@@ -331,7 +331,7 @@ export async function createGatewayRuntime(
     },
     async stop() {
       wsServer.closeAll();
-      await getShareService().stop();
+      await stopGatewaySweepers();
       await stopGatewayLiveServices();
     },
   };

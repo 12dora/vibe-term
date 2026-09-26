@@ -12,6 +12,8 @@ export const MIN_RENAME_NODE_RECORD_VERSION = '1.1.24';
 export const MIN_READMIT_NODE_RECORD_VERSION = '1.1.26';
 /** 写入 `notification-sink` 前，所有未吊销节点须达到该版本。 */
 export const MIN_NOTIFICATION_SINK_RECORD_VERSION = '1.1.39';
+/** 写入 `login-policy` 前，所有未吊销节点须达到该版本。 */
+export const MIN_LOGIN_POLICY_RECORD_VERSION = '2.10.0';
 export const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
 export const ROTATE_ROOT_KEEP_RECORD_TYPES = ['rotate-root-keep'] as const;
 
@@ -41,6 +43,10 @@ export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRec
   },
   'notification-sink': {
     minVersion: MIN_NOTIFICATION_SINK_RECORD_VERSION,
+    failClosedUncached: true,
+  },
+  'login-policy': {
+    minVersion: MIN_LOGIN_POLICY_RECORD_VERSION,
     failClosedUncached: true,
   },
   'rotate-root-keep': {

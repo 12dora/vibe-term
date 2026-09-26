@@ -67,6 +67,7 @@ describe('serveFrontend', () => {
     const response = await serveFrontend(req(`/assets/${HASHED_JS}`), root);
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+    expect(response.headers.get('Content-Security-Policy')).toBeNull();
     expect(await response.text()).toBe(HASHED_JS_BODY);
   });
 
@@ -82,6 +83,7 @@ describe('serveFrontend', () => {
     const response = await serveFrontend(req('/index.html'), root);
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    expect(response.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'");
     expect(response.headers.get('ETag')).toMatch(/^W\/"\d+-\d+"$/);
     expect(response.headers.get('Last-Modified')).toBeTruthy();
     expect(response.headers.get('Vary')).toBe('Accept-Encoding');
@@ -98,6 +100,7 @@ describe('serveFrontend', () => {
     const again = await serveFrontend(req('/index.html', { 'If-None-Match': etag! }), root);
     expect(again.status).toBe(304);
     expect(again.headers.get('ETag')).toBe(etag);
+    expect(again.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'");
     expect(again.headers.get('Cache-Control')).toBe('no-cache');
     expect(await again.text()).toBe('');
   });

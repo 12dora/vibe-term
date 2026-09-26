@@ -11,12 +11,13 @@ import {
 import { NODE, routeFetch, testContext } from '../commands/cli-test-harness';
 import {
   changeAccountPassword,
+  confirmTotpCode,
   disableTotp,
   enableTotp,
   generateTotpSecret,
   removePasskey,
 } from './account-security';
-import { AuthError } from './errors';
+import { AuthError, UsageError } from './errors';
 
 const dirs: string[] = [];
 
@@ -126,5 +127,54 @@ describe('account-security keylog', () => {
     expect(JSON.parse(keylog()).bytes).toBeTruthy();
     await removePasskey(ctx, 'cred-1', 'old-pass-word');
     expect(JSON.parse(keylog()).bytes).toBeTruthy();
+  });
+});
+
+describe('confirmTotpCode', () => {
+  test('re-prompts on a TTY with the same secret', async () => {
+    const secret = generateTotpSecret();
+    const nowSec = 1_700_000_000;
+    const good = totpCode(secret, nowSec);
+    const prompts = ['000000', good];
+    const warnings: string[] = [];
+    const code = await confirmTotpCode({
+      secret,
+      preset: null,
+      interactive: true,
+      secretBase32: encodeBase32(secret),
+      nowSec,
+      prompt: async () => prompts.shift() ?? '',
+      warn: (message) => warnings.push(message),
+    });
+    expect(code).toBe(good);
+    expect(warnings[0]).toContain('same secret');
+    expect(prompts).toEqual([]);
+  });
+
+  test('a non-TTY miss tells the user to reuse the printed secret', async () => {
+    const error = await confirmTotpCode({
+      secret: generateTotpSecret(),
+      preset: null,
+      interactive: false,
+      secretBase32: 'NB2W45DFOIZA',
+      prompt: async () => '000000',
+    }).catch((err) => err);
+    expect(error).toBeInstanceOf(UsageError);
+    expect((error as UsageError).hint).toContain('--totp-secret NB2W45DFOIZA');
+  });
+
+  test('a bad --code does not retry', async () => {
+    const secret = generateTotpSecret();
+    const error = await confirmTotpCode({
+      secret,
+      preset: '000000',
+      interactive: true,
+      secretBase32: encodeBase32(secret),
+      prompt: async () => {
+        throw new Error('should not prompt');
+      },
+    }).catch((err) => err);
+    expect(error).toBeInstanceOf(AuthError);
+    expect((error as AuthError).hint).toContain(encodeBase32(secret));
   });
 });

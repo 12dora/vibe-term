@@ -992,6 +992,84 @@
         "interruptNotice": "サービス再起動中は接続が切断されますが、まもなく復旧します。",
         "checkFailed": "更新の確認に失敗しました",
         "terminalHint": "またはターミナルから更新：vibeterm upgrade"
+      },
+      "loginHistory": {
+        "title": "サインイン履歴",
+        "description": "各ノードが記録したアカウントのサインインと失敗した試行です。",
+        "tabs": {
+          "success": "成功",
+          "failed": "失敗"
+        },
+        "showBackground": "バックグラウンドのサインインを表示",
+        "showBackgroundHint": "他のノードを開いたときに自動で行われたサインイン",
+        "background": "バックグラウンド",
+        "viaEntry": "{{name}} 経由",
+        "columns": {
+          "time": "時刻",
+          "node": "ノード",
+          "account": "アカウント",
+          "method": "方式",
+          "reason": "理由",
+          "client": "種類",
+          "ip": "IP",
+          "device": "デバイス"
+        },
+        "client": {
+          "web": "Web",
+          "cli": "CLI",
+          "unknown": "不明"
+        },
+        "method": {
+          "password": "パスワード",
+          "passwordTotp": "パスワード + 認証アプリ",
+          "passwordPasskey": "パスワード + パスキー",
+          "passwordWaived": "パスワード（二段階認証免除）",
+          "passkey": "パスキー"
+        },
+        "reason": {
+          "unknown": "不明な理由",
+          "INVALID_CREDENTIALS": "ユーザー名またはパスワードが違います",
+          "UNKNOWN_USER": "アカウントが存在しません",
+          "ROOT_KEY_MISMATCH": "パスワードが違います",
+          "TOTP_INVALID": "確認コードが違います",
+          "PASSKEY_INVALID": "パスキーの検証に失敗",
+          "RATE_LIMITED": "IP をロック中",
+          "PASSWORD_LOGIN_PAUSED": "パスワードサインイン停止中",
+          "CHALLENGE_EXPIRED": "サインイン要求の期限切れ",
+          "CHALLENGE_CONSUMED": "サインイン要求は使用済み",
+          "MALFORMED": "不正な要求",
+          "DELEGATION_EXPIRED": "認可の期限切れ"
+        },
+        "empty": {
+          "success": "サインインの記録はありません",
+          "failed": "失敗した記録はありません"
+        },
+        "loadMore": "さらに読み込む",
+        "skippedLabel": "対象外：",
+        "skip": {
+          "offline": "オフライン",
+          "tooOld": "要アップグレード",
+          "loginRequired": "要サインイン",
+          "paused": "一時停止中",
+          "failed": "読み込み失敗"
+        },
+        "skippedItem": "{{name}}（{{reason}}）",
+        "listSeparator": "、",
+        "partial": "{{base}}。未処理：{{names}}",
+        "retention": {
+          "label": "保存期間",
+          "days": "{{n}} 日",
+          "forever": "無期限",
+          "mixed": "ノードごとに異なる",
+          "saved": "{{count}} 台のノードで保存期間を更新しました"
+        },
+        "clear": {
+          "button": "記録を消去",
+          "confirmTitle": "サインイン履歴を消去しますか？",
+          "confirmBody": "アクセス可能なすべてのノードのサインイン記録を削除します。元に戻せません。",
+          "confirm": "消去",
+          "done": "{{count}} 台のノードから {{deleted}} 件の記録を消去しました"
+        }
       }
     },
     "messaging": {
@@ -1334,7 +1412,8 @@
           "label": "その他の操作",
           "connect": "接続",
           "changeRole": "ロールを変更",
-          "leave": "マルチノード接続から退出…"
+          "leave": "マルチノード接続から退出…",
+          "loginHistory": "サインイン履歴"
         },
         "status": {
           "standalone": "スタンドアロン",
@@ -2136,7 +2215,9 @@
           "relay_pack_invalid": "中継上の参加情報が使えません。既に参加済みのマシンでログインし直して更新してください。",
           "relay_unreachable": "中継に接続できません。アドレスと、中継が動作しているかを確認してください。",
           "relay_not_authorized": "中継が参加要求を拒否しました：本機は許可されていません。",
-          "local_user_exists": "このマシンには同じユーザー名が既に存在します。"
+          "local_user_exists": "このマシンには同じユーザー名が既に存在します。",
+          "LOOPBACK_REQUIRED": "初期設定はこのマシン上で行ってください。",
+          "UNAUTHORIZED": "先にログインしてください。"
         },
         "becomeRelay": {
           "title": "本機を中継にする",

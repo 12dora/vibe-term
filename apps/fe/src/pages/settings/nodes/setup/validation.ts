@@ -180,6 +180,8 @@ const KNOWN_ERROR_CODES = new Set([
   'relay_unreachable',
   'relay_not_authorized',
   'local_user_exists',
+  'LOOPBACK_REQUIRED',
+  'UNAUTHORIZED',
 ]);
 
 /** 已知错误码返回 `nodes.setup.errors.<code>`；未知（含未列举的 `direct_*`）返回 null。 */

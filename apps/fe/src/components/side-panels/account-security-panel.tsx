@@ -1,4 +1,4 @@
-// 账号安全面板（右侧滑出，`?panel=security`）：改密、TOTP、passkey。
+// 账号安全面板（右侧滑出，`?panel=security`）：改密、TOTP、passkey、登录限制。
 //
 // 原先是 `/account/security` 整页。做成面板后不再打断当前页面，也不必再为它单独留一条
 // 无侧栏路由；`standalone`（`mode==='none'`）下整块返回 null，入口本身也不会出现。
@@ -16,6 +16,7 @@ import { errorMessage } from '@vibeterm/shared';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { LoginLimitSection } from './account-security/login-limit-section';
 import { PasskeySection } from './account-security/passkey-section';
 import { PasswordSection } from './account-security/password-section';
 import { TotpSection } from './account-security/totp-section';
@@ -171,6 +172,7 @@ function AccountSecurity({
           reloadMode();
         }}
       />
+      <LoginLimitSection mode={mode} api={api} prompt={prompt} />
       <p className="px-1 text-xs text-muted-foreground">{t('auth.security.sessionKeyNote')}</p>
       {prompt.dialog}
     </div>

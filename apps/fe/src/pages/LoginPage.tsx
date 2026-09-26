@@ -8,11 +8,9 @@
 // 通行密钥按钮只要当前地址支持（HTTPS / localhost）就一直在——按「本 origin 已注册过」来藏它，
 // 等于没人发现得了这个功能；没注册的情况在点击时给出下一步，不可用的地址给一行说明。
 
-import {
-  isCredentialFailure,
-  loginErrorKey,
-  loginErrorKeyFromException,
-} from '@/auth/login-errors';
+import { isCredentialFailure, loginErrorKeyFromException } from '@/auth/login-errors';
+import { sameSiteNextPath } from '@/auth/login-next';
+import { loginFailureMessage } from '@/auth/login-throttle';
 import { clearLocalDeviceCaches } from '@/auth/logout-local-caches';
 import { shouldRunPasskeySecondFactor, totpSecondFactorHintKey } from '@/auth/second-factor';
 import {
@@ -312,7 +310,7 @@ function LoginForm({ mode, api, notice }: LoginFormProps) {
   const { t } = useTranslation();
   const [params] = useSearchParams();
 
-  const nextPath = params.get('next') || '/';
+  const nextPath = sameSiteNextPath(params.get('next'));
   /** `?node=` 是「去登录这一台」的显式入口（多半来自「登录此节点」按钮），必须等它完成。 */
   const targetNode = params.get('node');
 
@@ -356,10 +354,10 @@ function LoginForm({ mode, api, notice }: LoginFormProps) {
         await clearSessionKey();
         clearLocalDeviceCaches();
       }
-      setError(t(loginErrorKey(result.code, method)));
+      setError(loginFailureMessage(t, result, method, mode));
       setPhase('idle');
     },
-    [api, t, targetNode]
+    [api, mode, t, targetNode]
   );
 
   const onSubmit = useCallback(
@@ -399,7 +397,7 @@ function LoginForm({ mode, api, notice }: LoginFormProps) {
         if (mode.totpEnabled && totp) setTotpCode(totp);
         await finishLogin('password');
       } catch (err) {
-        setError(t(loginErrorKeyFromException(err, 'password')));
+        setError(loginFailureMessage(t, err, 'password', mode));
         setPhase('idle');
       } finally {
         setBusy(false);

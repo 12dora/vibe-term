@@ -4,6 +4,7 @@ import {
   decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeClearTotpPayload,
+  decodeLoginPolicyPayload,
   decodeNotificationSinkPayload,
   decodeRemovePasskeyPayload,
   decodeRenameNodePayload,
@@ -15,7 +16,7 @@ import {
   decodeSetTotpPayload,
   encodeBase64url,
 } from '@vibeterm/shared/auth';
-import { and, asc, eq, gte } from 'drizzle-orm';
+import { and, asc, desc, eq, gte } from 'drizzle-orm';
 import { userKeyLog, users } from '../db/schema';
 import { toBuffer, toBytes } from './binary';
 import type { AuthDb } from './types';
@@ -66,6 +67,17 @@ export class KeyLogStore {
             .orderBy(asc(userKeyLog.seq));
     const rows = limit != null ? base.limit(limit).all() : base.all();
     return rows.map(toEntry);
+  }
+
+  latestByType(userId: string, type: string): KeyLogEntry | null {
+    const row = this.db
+      .select()
+      .from(userKeyLog)
+      .where(and(eq(userKeyLog.userId, userId), eq(userKeyLog.type, type)))
+      .orderBy(desc(userKeyLog.seq))
+      .limit(1)
+      .get();
+    return row ? toEntry(row) : null;
   }
 
   getAtSeq(userId: string, seq: number): KeyLogEntry | null {
@@ -138,8 +150,13 @@ function decodePayload(type: string, payload: Uint8Array): unknown {
     case 'notification-sink':
       return decodeNotificationSinkPayload(payload);
     default:
-      return {};
+      return decodeExtraPayload(type, payload);
   }
+}
+
+function decodeExtraPayload(type: string, payload: Uint8Array): unknown {
+  if (type === 'login-policy') return decodeLoginPolicyPayload(payload);
+  return {};
 }
 
 function decodeLegacyHubPayload(

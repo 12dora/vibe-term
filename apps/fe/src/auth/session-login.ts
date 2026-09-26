@@ -2,6 +2,7 @@
 // 这些依赖（hash-wasm、@noble/curves、WebAuthn 客户端）都只在用户真的登录时才用到，
 // 因此本模块**不进常驻路径**——`session-key-store.ensureNodeLogin()` 与登录页各自按需加载。
 
+import { markLoggedIn } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type {
   AuthApi,
@@ -35,8 +36,7 @@ import {
   signLogin,
   signWithWebCryptoEd25519,
 } from '@vibeterm/shared/auth';
-
-import { markLoggedIn } from '@/node/mesh-nodes';
+import { withRetryAfter } from './login-throttle';
 import { clearLocalDeviceCaches } from './logout-local-caches';
 import { selectPasskeyCredential } from './passkey-credential-select';
 import {
@@ -616,9 +616,9 @@ async function signAndLogin(args: {
   const { api, nodeId, session, secrets, node, totp } = args;
   const challenge = await (args.challenge ?? api.challenge(nodeId, session.uid)).then(
     (value) => ({ ok: true as const, value }),
-    (err: unknown) => ({ ok: false as const, code: transportFailureCode(err) })
+    (err: unknown) => ({ ok: false as const, code: transportFailureCode(err), err })
   );
-  if (!challenge.ok) return { ok: false, code: challenge.code };
+  if (!challenge.ok) return withRetryAfter({ ok: false, code: challenge.code }, challenge.err);
 
   const targetPk = decodeBase64url(challenge.value.nodePk);
   if (!pinnedPkOk(targetPk, node)) return { ok: false, code: 'NODE_PK_MISMATCH' };
@@ -649,7 +649,7 @@ async function signAndLogin(args: {
   };
   const result = await api.login(nodeId, body).catch(() => null);
   if (!result) return { ok: false, code: 'NETWORK_ERROR' };
-  return result.ok ? { ok: true } : { ok: false, code: result.code };
+  return result.ok ? { ok: true } : withRetryAfter({ ok: false, code: result.code }, result);
 }
 
 interface LoginSelfOptions {

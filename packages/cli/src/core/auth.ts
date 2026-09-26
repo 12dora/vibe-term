@@ -102,6 +102,7 @@ export async function buildSessionMaterial(options: BuildSessionOptions): Promis
   const rootEpoch = requireModeField(mode.rootEpoch, 'rootEpoch');
   const now = options.now ?? Date.now();
 
+  noteDerivingKey();
   const seed = await deriveSeed(options.password, {
     salt: decodeBase64url(kdf.salt),
     memory_kib: kdf.memory_kib,
@@ -155,6 +156,14 @@ export interface LoginNodeResult {
 
 /** 本地就能判定的失败：会话材料里没有 k_totp，交了码也没用。 */
 export const TOTP_KEY_UNAVAILABLE = 'TOTP_KEY_UNAVAILABLE';
+
+/** challenge / login 标明这是 CLI，网关据此把登录历史的 client 记成 cli。 */
+export const CLI_CLIENT_HEADERS = { 'x-vibeterm-client': 'cli' } as const;
+
+/** argon2id 会占住 CPU 数百毫秒到数秒，不打这一行用户会以为卡在密码提示之后。 */
+export function noteDerivingKey(): void {
+  process.stderr.write('Deriving key…\n');
+}
 
 /** per-node 墙上时钟到点；与 `NODE_UNREACHABLE` 同属网络类，不是鉴权拒绝。 */
 export const LOGIN_TIMEOUT = 'TIMEOUT';
@@ -251,7 +260,7 @@ async function loginToNodeOnce(args: LoginToNodeArgs): Promise<LoginNodeResult> 
     'POST',
     '/api/auth/challenge',
     { uid: material.uid },
-    httpOpts
+    { ...httpOpts, headers: CLI_CLIENT_HEADERS }
   );
 
   const targetPk = decodeBase64url(challenge.nodePk);
@@ -282,7 +291,7 @@ async function loginToNodeOnce(args: LoginToNodeArgs): Promise<LoginNodeResult> 
 
   const response = await http.fetch(nodeId, '/api/auth/login', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...CLI_CLIENT_HEADERS },
     body: JSON.stringify(body),
     ...httpOpts,
   });

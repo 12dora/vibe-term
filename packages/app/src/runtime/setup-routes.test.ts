@@ -1,3 +1,4 @@
+import { setMeshRequestContext } from '../../../../apps/gateway/src/mesh/mesh-deps';
 import type { FetchLike } from '../lib/fetch-like';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -64,12 +65,19 @@ async function jsonOf(res: Response | null): Promise<{ status: number; body: unk
   return { status: res.status, body: await res.json() };
 }
 
-function post(path: string, body: unknown): Request {
-  return new Request(`http://127.0.0.1${path}`, {
+function post(
+  path: string,
+  body: unknown,
+  clientIp = '127.0.0.1',
+  headers: Record<string, string> = {}
+): Request {
+  const req = new Request(`http://127.0.0.1${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
   });
+  setMeshRequestContext(req, { via: 'self', clientIp });
+  return req;
 }
 
 describe('setup routes gating', () => {
@@ -88,6 +96,103 @@ describe('setup routes gating', () => {
 
   test('unrelated paths return null', async () => {
     expect(await handleSetupRequest(post('/api/auth/login', {}), deps())).toBeNull();
+  });
+
+  test('before credentials, a public client is loopback-only', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://relay.example.com' }, '203.0.113.9'),
+        deps()
+      )
+    );
+    expect(status).toBe(403);
+    expect(body).toEqual({
+      error: {
+        code: 'LOOPBACK_REQUIRED',
+        message: 'setup is only available on this machine',
+      },
+    });
+  });
+
+  test('once a user exists, loopback without a session is unauthorized', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://relay.example.com' }),
+        deps({
+          auth: {
+            userStore: { listUsers: () => [{ id: 'u1' }], getByUsername: () => null },
+          } as unknown as LocalAuthContext,
+        })
+      )
+    );
+    expect(status).toBe(401);
+    expect(body).toEqual({ error: { code: 'UNAUTHORIZED', message: 'login required' } });
+  });
+
+  test('a loopback socket with proxy headers is not local before credentials', async () => {
+    const cases: Record<string, string>[] = [
+      { 'x-forwarded-for': '203.0.113.8' },
+      { 'x-real-ip': '203.0.113.8' },
+      { 'cf-connecting-ip': '203.0.113.8' },
+      { forwarded: 'for=203.0.113.8' },
+    ];
+    for (const headers of cases) {
+      const { status, body } = await jsonOf(
+        await handleSetupRequest(
+          post('/api/setup/precheck', { url: 'https://relay.example.com' }, '127.0.0.1', headers),
+          deps()
+        )
+      );
+      expect(status).toBe(403);
+      expect(body).toEqual({
+        error: {
+          code: 'LOOPBACK_REQUIRED',
+          message: 'setup is only available on this machine',
+        },
+      });
+    }
+  });
+
+  test('an open auth bypass still requires a loopback socket', async () => {
+    const withUsers = deps({
+      auth: {
+        userStore: { listUsers: () => [{ id: 'u1' }], getByUsername: () => null },
+      } as unknown as LocalAuthContext,
+      authenticate: () => ({ ok: true, userId: null }),
+    } as Partial<SetupServiceDeps> & {
+      authenticate: () => { ok: true; userId: null };
+    });
+    const remote = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://relay.example.com' }, '203.0.113.9'),
+        withUsers
+      )
+    );
+    expect(remote.status).toBe(403);
+    const local = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://relay.example.com' }),
+        withUsers
+      )
+    );
+    expect(local.status).toBe(200);
+  });
+
+  test('a valid session proceeds after credentials exist', async () => {
+    const { status } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://relay.example.com' }),
+        deps({
+          auth: {
+            userStore: { listUsers: () => [{ id: 'u1' }], getByUsername: () => null },
+          } as unknown as LocalAuthContext,
+          authenticate: () => ({ ok: true, userId: 'u1' }),
+        } as Partial<SetupServiceDeps> & {
+          authenticate: (req: Request) => { ok: true; userId: string };
+        })
+      )
+    );
+    expect(status).toBe(200);
   });
 });
 

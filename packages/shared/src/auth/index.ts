@@ -168,6 +168,7 @@ export {
   KEY_LOG_SIGNER_MATRIX,
   MIN_RENAME_NODE_RECORD_VERSION,
   MIN_READMIT_NODE_RECORD_VERSION,
+  MIN_LOGIN_POLICY_RECORD_VERSION,
   MIN_NOTIFICATION_SINK_RECORD_VERSION,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   ROTATE_ROOT_KEEP_RECORD_TYPES,
@@ -294,4 +295,30 @@ export {
   encodeNotificationSinkPayload,
 } from './notification-sink-record';
 export type { NotificationSinkPayload } from './notification-sink-record';
+export {
+  LOGIN_POLICY_PAYLOAD_VERSION,
+  LOGIN_POLICY_PRESETS,
+  LOGIN_POLICY_PRESET_NAMES,
+  LoginPolicyPayloadSchema,
+  applyLoginPolicy,
+  buildLoginPolicyRecord,
+  decodeLoginPolicyPayload,
+  encodeLoginPolicy,
+  encodeLoginPolicyPayload,
+  loginPolicyFromPreset,
+  signLoginPolicyRecordWithRoot,
+  standardLoginPolicy,
+  validateLoginPolicy,
+} from './login-policy-record';
+export type {
+  LoginPolicy,
+  LoginPolicyBlocker,
+  LoginPolicyNumbers,
+  LoginPolicyPayload,
+  LoginPolicyPreset,
+  LoginPolicyRecordInput,
+  LoginPolicyStatus,
+  LoginPolicyValidation,
+  NamedLoginPolicyPreset,
+} from './login-policy-record';
 export { applyReadmitNode, buildRootReadmitAuthorization } from './readmit-node-record';

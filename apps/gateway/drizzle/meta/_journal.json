@@ -414,6 +414,20 @@
       "when": 1790342400000,
       "tag": "0058_relay_enroll_password",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1790346000000,
+      "tag": "0059_login_policy_keylog",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1790428800000,
+      "tag": "0060_login_records",
+      "breakpoints": true
     }
   ]
 }

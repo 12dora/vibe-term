@@ -20,6 +20,7 @@ type ItemProps = {
 function renderList(role: LocalRole, roleLocked = false, connect: ConnectMenuItem[] = []) {
   const picked: LocalRole[] = [];
   let left = 0;
+  let historyOpened = 0;
   const list = LocalMachineMenuList({
     roles: roleMenuTargets(role),
     roleLabel: (target) => `role:${target}`,
@@ -29,9 +30,13 @@ function renderList(role: LocalRole, roleLocked = false, connect: ConnectMenuIte
       changeRole: '更改角色',
       leave: '退出多节点互联…',
       security: '账号安全',
+      loginHistory: '登录历史',
     },
     securityHref: '/?panel=security',
     roleLocked,
+    onLoginHistory: () => {
+      historyOpened += 1;
+    },
     onSelectRole: (target) => {
       picked.push(target);
     },
@@ -52,7 +57,7 @@ function renderList(role: LocalRole, roleLocked = false, connect: ConnectMenuIte
       ? (Children.toArray(node.props.children) as ReactElement<ItemProps>[])
       : [node as ReactElement<ItemProps>]
   );
-  return { top, items, picked, leftCount: () => left };
+  return { top, items, picked, leftCount: () => left, historyCount: () => historyOpened };
 }
 
 function connectItem(overrides: Partial<ConnectMenuItem> = {}): ConnectMenuItem {
@@ -76,7 +81,7 @@ describe('LocalMachineMenuList', () => {
     expect(top.some((node) => node.type === DropdownMenuLabel)).toBe(false);
   });
 
-  test('先是角色分组，再是离开与账号安全', () => {
+  test('先是角色分组，再是离开、账号安全与登录历史', () => {
     const { items } = renderList('node');
     const testIds = items.map((item) => item.props['data-testid']);
     expect(testIds).toEqual([
@@ -86,7 +91,18 @@ describe('LocalMachineMenuList', () => {
       undefined, // 分隔线
       'local-machine-leave',
       'local-machine-account-security',
+      'local-machine-login-history',
     ]);
+  });
+
+  test('登录历史打开对话框，退出在途时照旧可点', () => {
+    const { items, historyCount } = renderList('node', true);
+    const history = items.find(
+      (item) => item.props['data-testid'] === 'local-machine-login-history'
+    );
+    expect(history?.props.disabled).toBeUndefined();
+    history?.props.onClick?.();
+    expect(historyCount()).toBe(1);
   });
 
   test('账号安全指向右侧滑出面板，而不是已删除的整页', () => {

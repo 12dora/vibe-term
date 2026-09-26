@@ -44,6 +44,7 @@ export const KeyLogType = {
   'rename-node': 'rename-node',
   'readmit-node': 'readmit-node',
   'notification-sink': 'notification-sink',
+  'login-policy': 'login-policy',
 } as const;
 export type KeyLogType = (typeof KeyLogType)[keyof typeof KeyLogType];
 

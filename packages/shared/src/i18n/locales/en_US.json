@@ -363,7 +363,8 @@
       "connectingStalled": {
         "node": "Still connecting to the node; the link is slow or temporarily down.",
         "reconnecting": "Connection to the node dropped; reconnecting automatically.",
-        "device": "Node connected; waiting for the device to respond."
+        "device": "Node connected; waiting for the device to respond.",
+        "unreachable": "The current entry can't reach this node; retrying automatically."
       },
       "inputPlaceholder": "Type command here...",
       "clear": "Clear",
@@ -1204,6 +1205,84 @@
         "interruptNotice": "The connection will drop while the service restarts; it will recover shortly.",
         "checkFailed": "Failed to check for updates",
         "terminalHint": "Or upgrade from a terminal: vibeterm upgrade"
+      },
+      "loginHistory": {
+        "title": "Sign-in history",
+        "description": "Account sign-ins and failed attempts recorded by each node.",
+        "tabs": {
+          "success": "Successful",
+          "failed": "Failed"
+        },
+        "showBackground": "Show background sign-ins",
+        "showBackgroundHint": "Sign-ins completed automatically when opening other nodes",
+        "background": "Background",
+        "viaEntry": "via {{name}}",
+        "columns": {
+          "time": "Time",
+          "node": "Node",
+          "account": "Account",
+          "method": "Method",
+          "reason": "Reason",
+          "client": "Client",
+          "ip": "IP",
+          "device": "Device"
+        },
+        "client": {
+          "web": "Web",
+          "cli": "CLI",
+          "unknown": "Unknown"
+        },
+        "method": {
+          "password": "Password",
+          "passwordTotp": "Password + authenticator",
+          "passwordPasskey": "Password + passkey",
+          "passwordWaived": "Password (2FA waived)",
+          "passkey": "Passkey"
+        },
+        "reason": {
+          "unknown": "Unknown reason",
+          "INVALID_CREDENTIALS": "Wrong username or password",
+          "UNKNOWN_USER": "Account does not exist",
+          "ROOT_KEY_MISMATCH": "Wrong password",
+          "TOTP_INVALID": "Wrong authenticator code",
+          "PASSKEY_INVALID": "Passkey verification failed",
+          "RATE_LIMITED": "IP locked",
+          "PASSWORD_LOGIN_PAUSED": "Password sign-in paused",
+          "CHALLENGE_EXPIRED": "Sign-in request expired",
+          "CHALLENGE_CONSUMED": "Sign-in request already used",
+          "MALFORMED": "Malformed request",
+          "DELEGATION_EXPIRED": "Authorization expired"
+        },
+        "empty": {
+          "success": "No sign-ins",
+          "failed": "No failed attempts"
+        },
+        "loadMore": "Load more",
+        "skippedLabel": "Not included:",
+        "skip": {
+          "offline": "Offline",
+          "tooOld": "Upgrade required",
+          "loginRequired": "Sign-in required",
+          "paused": "Paused",
+          "failed": "Load failed"
+        },
+        "skippedItem": "{{name}} ({{reason}})",
+        "listSeparator": ", ",
+        "partial": "{{base}}. Not processed: {{names}}",
+        "retention": {
+          "label": "Retention",
+          "days": "{{n}} days",
+          "forever": "Forever",
+          "mixed": "Varies by node",
+          "saved": "Retention updated on {{count}} node(s)"
+        },
+        "clear": {
+          "button": "Clear records",
+          "confirmTitle": "Clear sign-in history?",
+          "confirmBody": "Deletes sign-in records on all reachable nodes. This cannot be undone.",
+          "confirm": "Clear",
+          "done": "Cleared {{deleted}} record(s) on {{count}} node(s)"
+        }
       }
     },
     "messaging": {
@@ -1985,7 +2064,12 @@
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
         "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address. If none of the existing passkeys can be used any more, run vibeterm mesh passkey remove-all on the server.",
-        "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in."
+        "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in.",
+        "throttle": {
+          "rateLimited": "Too many attempts. Try again in {{time}}.",
+          "paused": "Too many failed attempts. Password sign-in is paused for {{time}}.",
+          "usePasskey": " Passkey sign-in is still available."
+        }
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -2034,7 +2118,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "invalidCredentials": "Incorrect username or password.",
         "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
-        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again."
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again.",
+        "PASSWORD_LOGIN_PAUSED": "Password sign-in is paused. Try again later."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
@@ -2074,7 +2159,47 @@
         "reloginTotpHint": "Signing back in after the change needs a code. Leave empty to skip.",
         "sessionResumeFailed": "Password updated. Signing back in did not finish; other nodes need a new sign-in.",
         "sessionResumeSkipped": "Password updated. No code entered; other nodes need a new sign-in.",
-        "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first."
+        "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first.",
+        "loginLimit": {
+          "title": "Sign-in limits",
+          "description": "After repeated password failures, locks the source IP and pauses password sign-in for the account. Passkey sign-in is not affected.",
+          "preset": {
+            "relaxed": "Relaxed",
+            "standard": "Standard",
+            "strict": "Strict",
+            "custom": "Custom"
+          },
+          "presetIp": "Lock an IP for {{base}} after {{count}} failures, up to {{max}}",
+          "presetAccount": "Pause password sign-in for {{duration}} after {{count}} failures in an hour",
+          "fields": {
+            "ipFailThreshold": "IP failure limit",
+            "ipLockBase": "First IP lock",
+            "ipLockMax": "Maximum IP lock",
+            "accountFailPerHour": "Account failures per hour",
+            "accountLock": "Account pause"
+          },
+          "unit": {
+            "times": "failures",
+            "minutes": "min",
+            "hours": "h",
+            "days": "d"
+          },
+          "ladderHint": "Each repeat lock of the same IP doubles the duration, up to the maximum.",
+          "exemptLocal": "Exempt local and LAN",
+          "exemptLocalHint": "Failures are still recorded in sign-in history.",
+          "sourceDefault": "Using the default (Standard).",
+          "save": "Save",
+          "saved": "Sign-in limits updated.",
+          "loadFailed": "Failed to load sign-in limits: {{error}}",
+          "blocked": "These nodes run a version below {{version}}. Upgrade them first:",
+          "versionUnknown": "unknown version",
+          "errors": {
+            "range": "Must be between {{min}} and {{max}}.",
+            "integer": "Enter a whole number.",
+            "maxBelowBase": "Must not be shorter than the first IP lock.",
+            "invalid": "Invalid settings."
+          }
+        }
       },
       "credential": {
         "title": "Confirm it's you",
@@ -2088,8 +2213,15 @@
           "revoke": "Remove a node",
           "passkey": "Add or remove a passkey",
           "totp": "Turn off the authenticator",
-          "notifySink": "Change mesh notifications"
+          "notifySink": "Change mesh notifications",
+          "loginPolicy": "Change sign-in limits"
         }
+      },
+      "duration": {
+        "seconds": "{{n}} s",
+        "minutes": "{{n}} min",
+        "hours": "{{n}} h",
+        "days": "{{n}} d"
       }
     },
     "nodes": {
@@ -2113,7 +2245,8 @@
           "label": "More actions",
           "connect": "Connection",
           "changeRole": "Change Role",
-          "leave": "Leave Mesh…"
+          "leave": "Leave Mesh…",
+          "loginHistory": "Sign-in history"
         },
         "status": {
           "standalone": "Standalone",
@@ -2928,7 +3061,9 @@
           "relay_pack_invalid": "The join material on the relay is unusable. Sign in on a machine that already joined to refresh it.",
           "relay_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
           "relay_not_authorized": "The relay rejected this join request: this machine is not authorized.",
-          "local_user_exists": "That username is already taken on this machine."
+          "local_user_exists": "That username is already taken on this machine.",
+          "LOOPBACK_REQUIRED": "Complete setup on this machine.",
+          "UNAUTHORIZED": "Sign in first."
         },
         "becomeRelay": {
           "title": "Use This Machine as the Relay",

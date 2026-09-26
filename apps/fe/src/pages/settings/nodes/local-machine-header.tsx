@@ -18,8 +18,10 @@ import {
   DropdownMenuTrigger,
 } from '@vibeterm/ui/dropdown-menu';
 import { Ellipsis } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
+import { LoginHistoryDialog } from './login-history/login-history-dialog';
 import { type MachineStatusBadge, roleMenuTargets } from './machine-status';
 import { isMeshRole, roleLabelKey } from './membership/role-transition';
 import type { ConnectMenuItem } from './uplink/connect-menu';
@@ -60,6 +62,7 @@ export function LocalMachineHeader({
   // （纯中继没有网页、standalone 的下一步在向导里）时整个菜单不挂——摆一个点了没反应的菜单
   // 比没有菜单更糟。
   const menuRole = meshEnabled && role && isMeshRole(role) ? role : null;
+  const [historyOpen, setHistoryOpen] = useState(false);
   return (
     // ⋯ 永远钉在右上角：整行不换行，标题与徽标在左半边自己折。
     <div className="flex min-w-0 items-start gap-2">
@@ -104,13 +107,9 @@ export function LocalMachineHeader({
               roles={roleMenuTargets(menuRole)}
               roleLabel={(target) => t(roleLabelKey(target))}
               connect={connectActions}
-              labels={{
-                connect: t('nodes.machine.menu.connect'),
-                changeRole: t('nodes.machine.menu.changeRole'),
-                leave: t('nodes.machine.menu.leave'),
-                security: t('nodes.machine.accountSecurity'),
-              }}
+              labels={menuLabels(t)}
               securityHref={panelHref('security')}
+              onLoginHistory={() => setHistoryOpen(true)}
               roleLocked={roleLocked}
               onSelectRole={onSelectRole}
               onLeave={onLeave}
@@ -118,8 +117,38 @@ export function LocalMachineHeader({
           </DropdownMenuContent>
         </DropdownMenu>
       )}
+      {menuRole && <LoginHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} />}
     </div>
   );
+}
+
+function menuLabels(t: (key: string) => string): LocalMachineMenuListProps['labels'] {
+  return {
+    connect: t('nodes.machine.menu.connect'),
+    changeRole: t('nodes.machine.menu.changeRole'),
+    leave: t('nodes.machine.menu.leave'),
+    security: t('nodes.machine.accountSecurity'),
+    loginHistory: t('nodes.machine.menu.loginHistory'),
+  };
+}
+
+export interface LocalMachineMenuListProps {
+  roles: LocalRole[];
+  roleLabel: (role: LocalRole) => string;
+  /** 当前形态下的上级操作；空数组时整组不出。 */
+  connect: ConnectMenuItem[];
+  labels: {
+    connect: string;
+    changeRole: string;
+    leave: string;
+    security: string;
+    loginHistory: string;
+  };
+  securityHref: string;
+  roleLocked: boolean;
+  onSelectRole: (role: LocalRole) => void;
+  onLeave: () => void;
+  onLoginHistory: () => void;
 }
 
 /**
@@ -135,17 +164,8 @@ export function LocalMachineMenuList({
   roleLocked,
   onSelectRole,
   onLeave,
-}: {
-  roles: LocalRole[];
-  roleLabel: (role: LocalRole) => string;
-  /** 当前形态下的上级操作；空数组时整组不出。 */
-  connect: ConnectMenuItem[];
-  labels: { connect: string; changeRole: string; leave: string; security: string };
-  securityHref: string;
-  roleLocked: boolean;
-  onSelectRole: (role: LocalRole) => void;
-  onLeave: () => void;
-}) {
+  onLoginHistory,
+}: LocalMachineMenuListProps) {
   return (
     <>
       {connect.length > 0 && (
@@ -202,6 +222,9 @@ export function LocalMachineMenuList({
         render={<Link to={securityHref} state={SIDE_PANEL_LINK_STATE} />}
       >
         {labels.security}
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={onLoginHistory} data-testid="local-machine-login-history">
+        {labels.loginHistory}
       </DropdownMenuItem>
     </>
   );

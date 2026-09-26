@@ -197,6 +197,9 @@ export async function serveFrontend(req: Request, staticRoot: string): Promise<R
   if (type) {
     headers.set('Content-Type', type);
   }
+  if (type?.startsWith('text/html')) {
+    headers.set('Content-Security-Policy', "frame-ancestors 'self'");
+  }
 
   const compressible = isCompressiblePath(target);
   if (compressible) {
