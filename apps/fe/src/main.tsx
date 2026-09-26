@@ -26,7 +26,6 @@ import {
   startupPreloadGate,
 } from '@/lib/chunk-preload';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
-import { warmTerminalFonts } from '@/lib/fonts/warm-terminal-fonts';
 import { notifyFirstTerminalPaint } from '@/node/mesh-events';
 import { MeshNodesResident } from '@/node/mesh-nodes-resident';
 import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
@@ -453,8 +452,13 @@ void i18nReady
       // 侧栏两个顶层入口的 chunk 逐个拉下来：点过去时只剩数据请求那一段。
       startIdleChunkPreload(IDLE_PRELOAD_PAGE_MODULES);
       // 终端字体的首屏子集很小，但完整 Nerd 图标仍有 2.3 MB，同样归预算管。
-      scheduleIdle(() =>
-        warmTerminalFonts(appNodeRuntimes.get(SELF_NODE_ID).runtime.stores.ui.getState())
-      );
+      // 预热模块会带上 ghostty wasm 封装，按需加载，不进首屏
+      scheduleIdle(() => {
+        void import('@/lib/fonts/warm-terminal-fonts')
+          .then(({ warmTerminalFonts }) =>
+            warmTerminalFonts(appNodeRuntimes.get(SELF_NODE_ID).runtime.stores.ui.getState())
+          )
+          .catch(() => undefined);
+      });
     });
   });
