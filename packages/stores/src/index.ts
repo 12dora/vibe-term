@@ -38,6 +38,8 @@ export {
 export {
   isSidebarDeviceVisible,
   isSidebarFilesVisible,
+  mayShowSidebarFilesNode,
+  pruneStaleSidebarFilesVisibility,
   sidebarDeviceVisibilityKey,
 } from './sidebar-device-visibility';
 export { createSiteStore, type SiteStore } from './site';

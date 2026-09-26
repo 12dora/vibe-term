@@ -35,3 +35,41 @@ export function isSidebarFilesVisible(
   const stored = map[sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)];
   return stored ?? (runtimeNodeId === SELF_NODE_ID && hasRoots);
 }
+
+/**
+ * 文件侧栏里一个**没挂运行时**（折叠 / 离线 / 未登录）的 node 分节该不该出头。
+ *
+ * 拿不到该 node 的目录列表，只能按偏好表推断：远端设备缺省隐藏，用户没显式打开过任何一台时
+ * 整节必然为空——出头的话一点开就消失。本机缺省可见，推断不出，交给宿主按目录列表判断。
+ */
+export function mayShowSidebarFilesNode(
+  map: Record<string, boolean>,
+  runtimeNodeId: string
+): boolean {
+  if (runtimeNodeId === SELF_NODE_ID) return true;
+  const prefix = sidebarDeviceVisibilityKey(runtimeNodeId, '');
+  return Object.entries(map).some(([key, visible]) => visible && key.startsWith(prefix));
+}
+
+/**
+ * 清掉某 node 下「显式打开、但设备已没有目录（或设备已删除）」的文件开关。
+ *
+ * 这种键在设备卡片上显示为关且置灰，用户改不回去，却会让折叠分节一直出头
+ * （见 `mayShowSidebarFilesNode`）。只能拿该 node 权威的目录列表来清：离线、未登录、
+ * 加载失败时都不许调。删键而不是写 false：没目录时两者等价，缺省规则照旧生效。
+ */
+export function pruneStaleSidebarFilesVisibility(
+  map: Record<string, boolean>,
+  runtimeNodeId: string,
+  deviceIdsWithRoots: ReadonlySet<string>
+): Record<string, boolean> {
+  const prefix = sidebarDeviceVisibilityKey(runtimeNodeId, '');
+  let next: Record<string, boolean> | null = null;
+  for (const [key, visible] of Object.entries(map)) {
+    if (!visible || !key.startsWith(prefix)) continue;
+    if (deviceIdsWithRoots.has(key.slice(prefix.length))) continue;
+    next ??= { ...map };
+    delete next[key];
+  }
+  return next ?? map;
+}
