@@ -29,6 +29,7 @@ import {
   type RelayMeshHarness,
   type RelayTenant,
   bootRelayMeshHarness,
+  waitForReportedPeerVersion,
   waitUntil,
   waitUntilAsync,
 } from './relay-mesh-harness';
@@ -477,7 +478,7 @@ describe('relay password join', () => {
         { auth }
       );
       const before = auth.userStore.getById(joined.userId)?.rootPublicKey;
-      // 先上线一次让本机版本进 peer_cache（`rotate-root-keep` 有版本门），再断线
+      // 先上线并等主节点 peer_cache 记到版本（rotate-root-keep 版本门），再断线
       const seed = await deriveSeed(
         NODE_PASSWORD,
         kdfParamsFromJson(new UserStore(created.db).getById(joined.userId)?.kdfParamsJson ?? '{}')
@@ -489,6 +490,7 @@ describe('relay password join', () => {
         close: () => {},
       });
       await waitUntil(() => b.mesh.uplink.state === 'online', 8_000);
+      await waitForReportedPeerVersion(tenant.owner, b.nodeId);
       await b.mesh.stop();
 
       // 主节点常规改密（rotate-root-keep）；本机离线错过了这条记录，本地根公钥就此落后
