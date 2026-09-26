@@ -28,7 +28,7 @@
 |---|---|---|---|
 | `direct` | 与既有顺序相同（dc > ws-secure > relay） | 开 | 按原 rank 安装 |
 | `relay` | 只拨中继（`dialRelayOnly`），无 DC / ws 腿 | 关 | **关闭、不安装**（`reason=route-relay`）；2.3.7 对端熔断自行退避 |
-| `auto` | 起步同 `direct` | 降级回退期内关 | 仅**已降级**时 measure-before-install；否则立刻装（兼容 2.3.7） |
+| `auto` | 起步同 `direct` | 降级回退期内关；未降级的 DC 替换也先测量 | 已降级走 `degraded`；未降级、live 已有 RTT 的 DC 替换走 `promote`（1 个样本 / 3 s） |
 
 ### 测量输入
 
@@ -61,28 +61,62 @@
 [mesh][peer] route_switch peer=… from=dc to=relay direct_ms=… relay_ms=…
 ```
 
-回退：起步 **2 min**，失败翻倍，封顶 **30 min**。进程重启或**任何 mode 变更**清零。回退期内 upgrade coordinator 不拨直连。
+回退：起步 **2 min**，失败翻倍，封顶 **30 min**。进程重启或**任何 mode 变更**清零。回退期内 upgrade coordinator 不拨直连。这条账只挡「再拨直连」，不决定一条已经拨出来的 DC 装不装上——安装只看下一节的晋升门。
 
 ### 升回（auto 且已降级）
 
 make-before-break：upgrade 拨出的直连**先 hold**，中继继续载流。≥ **3** 个 ping **全部**满足 `directMs < relayMs − max(5 ms, 20% × relayMs)` 才 `forceInstall`；否则关直连并加倍回退。加法项取 5 ms 是为了让 ~15 ms 的快中继上局域网直连仍能升回（20 ms 门槛会变成负数）。切到 `direct` 模式：立刻安装未测完的候选，并 `maybeUpgrade`。
 
-### 本轮限制
+### 晋升：一条门
+
+谁把一条候选装成 live，只由 `RouteDegrade` 的持有表决定（`route-degrade-hold.ts`）。独立的 `DcPromoteGate` 已并进这张表。三种候选，阈值都在 `route-policy.ts`：
+
+| kind | 何时 | 测量 | 用户流 | 接受后的旧 live |
+|---|---|---|---|---|
+| `promote` | `auto`、未降级、新 DC 要换掉已有 RTT 的 relay / ws-secure | 1 个样本，超时 3 s。测不到仍安装。慢于 `max(2× 当前, 当前 + 200 ms)` 则拒绝，并冷却 60 s | 排队，不 RST `pending-measure` | `replaced`，排空 |
+| `degraded` | `auto` 且已降级，live 是中继 | 3 个样本，全部满足升回不等式 | 直连上 RST `pending-measure` | `finishRetire(..., 'retired')` |
+| `reroll` | 慢路径重掷的替换链 | 沿用重掷增益门 | 排队；信令订阅先挂在 session 上，装上再转给 live | `replaced`，排空 |
+
+`route_switch from=` 是持有开始时的传输，不是样本结束时 live 上还在的那条。ws-secure 替换中继不进 `promote`，也不套这档 60 s 冷却。live 还没有 RTT、或新链路已经是 DC 时，按原 rank 安装，不进测量。切到 `direct` 模式，或 live 掉了：持有中的候选立刻安装。
+
+拒绝或选路主动关 DC（`dc-promote-reject`、`dc-promote-backoff`、`route-measure-reject`、`route-relay`）之前，先在 peer ctl 上发 cooling decline，`retryAfterMs` 为 60 s。对端把这次关掉记成有意关闭，不计 `channel-closed`。
+
+`installLive` 对已经是当前 live 的同一条 session 幂等。同一条 DC 被装两次时，会留下第二个 `LivePeer`，对之后每条入站 OPEN 回 `stale-link`，而 mux 仍把已死的流派给后面的监听——终端侧看到的是直连还在、流却全部被拒。收口是下面的单一绑定：非当前、非退役的绑定只关一次。
+
+### 一条 session 一个监听
+
+`session-binding.ts` 在任何机制第一次碰到 session 时，注册唯一的 `onStream` 与 ctl 监听。角色：
+
+| 角色 | 入站 OPEN |
+|---|---|
+| `candidate` | 按上表排队，或 RST `pending-measure` |
+| `parked` | RST `parked`（只绑这一条 session） |
+| `side` / `live` / `retiring` | 派发一次 |
+| `dead` | RST `stale-link` 并关闭 |
+
+`stream.dead` 之后不再交给后续监听。非当前、非退役的绑定标 `dead`：RST `stale-link` 并只关一次。对端再送来 `stale-link` 时，本端同样关掉这条 session，不再把它当成可以一直重放的拒绝。`pending-measure` / `parked` 仍由测量隔离处理：只有直连上的 `pending-measure` 隔离整节点；已经关掉的 session 不会再交给下一次打开。
+
+旁路中继只在节点级测量隔离开着时拨。空闲拆掉 DC 不把旁路收成 live；DC 死亡、旁路还在、又没有别的 live 时，旁路仍可装成 live。pause 丢掉持有的直连候选，并中止在途 DC 拨号。
+
+### 中继 uplink 排空
+
+换主、回切、自动优选、令牌轮换时，旧 uplink 留到它上面的用户流归零，或满 30 s（`UPLINK_RELAY_DRAIN_TIMEOUT_MS`，每 3 s 复查）。计入的是骑在中继 peer session 里的用户流，peer session 载体本身不计，长寿 peer 会话不再把排空拖到 10 min。排空期间新的出站中继流拒绝（`uplink-retiring`），入站仍接受，直到这条 uplink 真正关闭。
+
+### 其余限制
 
 - **每对端一条 live**：interactive / bulk 共用这条链路。`decidePath(peerId, streamClass)` 已编码 bulk 门槛（中继须同时好出 40 ms 与 20%），未接双 live。
-- auto **未降级**时，2.3.7 推入的 dc / ws-secure **立刻安装**。首次竞速中继先成、直连后到也立刻升，慢 DC 再靠 15 s 滞环降下去。
-- 慢 DC 降到中继仍不新增选路字段。测量隔离另有一条 ctl，见下节，不要和这里的滞环混。
+- 慢 DC 降到中继仍不新增选路字段。测量隔离的 ctl 见下节，不要和滞环混。
 - 重掷（下节）只在 live 仍是 dc 时发生；`relay` 模式先拆掉 DC live，重掷因 `transport≠dc` 不再起。
 
 ### 测量中的直连（pending-measure）
 
-持有方在升回判定完成前，把打到这条直连上的用户流以 `rst` `pending-measure` 拒掉（请求还没进对端业务）。接收方的反应按传输分开：
+`degraded` 持有在升回判定完成前，把打到这条直连上的用户流以 `rst` `pending-measure` 拒掉（请求还没进对端业务）。`promote` / `reroll` 把这些流排队，不发 `pending-measure`。接收方的反应按传输分开：
 
 - **只有直连**（`dc` / `ws-secure`）上的 `pending-measure` 才把该节点隔离 `REMOTE_HOLD_MS` = `(ROUTE_PROMOTE_SAMPLES + 1) × 5 s` = **20 s**。旧版本不发 `route-promoted` 时，也不会在第三拍 ping 之前探回这条 DC。`stale-link` / `parked` 仍可重放这一次请求，**不**隔离整节点。
 - 隔离期内 **auto** 在 live DC 旁边借一条中继给用户流：不退役 DC、不标 `degraded`、不武装选路退避。这条旁路中继接对端打进来的用户流并回 ctl ping（它在对端可能已经是 live）。`direct` 模式不再为这次转发另拨一条随手丢掉的中继，这次重试直接拒绝。
 - 持有方测量通过后发 ctl `{ "t": "route-promoted" }`。接收方解除隔离并收掉旁路（`reason=route-promoted`），隔离到期则是 `hold-expired`；旁路先从可用列表摘掉，在途流排空后再关，最长等 `PEER_RETIRE_MAX_MS`。DC 被拆且原因不是停机 / 吊销、旁路还在、又没有别的 live 时，旁路装成 live，而不是先拆掉再重拨。停机 / 吊销则关掉旁路。
 
-入口 failover：同一传输上，流在 HELLO / ack 之前被拆，只允许再试 **一次**（`SAME_TRANSPORT_PRE_ACK_RETRIES`）。没有 HELLO 可等时，流至少要活过一个 RTT（夹在 50–250 ms）才算这次打开成功，避免 delay 0 的热循环。连续 3 轮拿不到 HELLO 仍整段收手。
+入口 failover：拿到链路之后，HTTP 响应等待是 `max(剩余预算, 10 s)`，不随冷的 `getLink` 缩短；`getLink` 自己仍用转发截止。成功以新流上的第一帧入站为准。排队中的浏览器 HELLO 在新流上发出。连续 3 次打开都没有入站字节，以 `failover-no-hello` 关掉浏览器。已经拿到过链路之后的失败是 `link_lost`（含截止 / 首包超时、`retired`、`missed-pong`、`too-many-streams`、`peer link replaced`、`stale-link`）；这一次根本没拿到链路是 `no_link`。前端对 `no_link` / `not_admitted` / `relay_reset:offline` 仍是 15 s 硬退避。同一 `(sid, via, cid)` 且旧网关会话还活着，是接管（`replaced-by-failover`，关 1001），不是 `duplicate-connection`。同一传输上，流在 HELLO / ack 之前被拆，只允许再试 **一次**（`SAME_TRANSPORT_PRE_ACK_RETRIES`）。
 
 POST 在派发前被拒（`pending-measure` / `stale-link` / `parked`）时，只有**声明了 `Content-Length` 且 ≤ 64 KiB** 的请求体会先缓冲再重放一次。没有长度、或更大的流式上传原样透传，不重放。GET / HEAD 没有请求体，按原有次数换链路。
 
@@ -153,7 +187,7 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 | DC 额外 | 对端 `link.hello` 报过 `reroll` 能力位；熔断放行（应答侧发请求不查本端熔断；offerer 收请求时查） |
 | ws-secure 额外 | 入站本就会接新连接，不依赖 `reroll` 位。已能拨 DC 时，只在 **DC 拨号在途 / `state.upgrading` / 升级协调器已 coalesced-scheduled** 让路，**熔断健康不算**。与前台 ws 拨号共享 `wsInflight`（前台复用在途 Promise，重掷遇在途则放弃）；track 前若 live 已换人，以 `reroll-stale` 关闭且不二次记预算 |
 | 结算 | 新链路 `linkSinceAt` ≥ 触发时刻且攒够 3 个样本；90 s 时限 |
-| 搬流 | 相对提升 ≥ 30 %（`DC_REROLL_REHOME_GAIN`）且旧 session 还带流 → `finishRetire(old, 'retired')` |
+| 搬流 | 相对提升 ≥ 30 %（`DC_REROLL_REHOME_GAIN`）且旧 session 还带流 → 旧链 `replaced` 并排空。不因重掷硬关 `retired`（硬关只留给 `degraded`） |
 
 ### 兼容与开关
 
@@ -224,10 +258,10 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
    signal dropped ... cause=superseded expected_epoch=E received_epoch=E+1
    reroll_result peer=ab12cd34 transport=dc old_ms=198 new_ms=93 better=true
    reroll_rehome peer=ab12cd34 transport=dc streams=2 gain_pct=53
-   [mesh][stream] failover_start ... cause=stream_close close_reason=retired from=dc
+   [mesh][stream] failover_start ... cause=stream_close close_reason=replaced from=dc
    ```
 
-   `reroll_result better=true` 的占比是效果指标；重掷后 `dial failed` 集中上升，说明对端还是 2.3.1（没报 `reroll`）。
+   重掷与未降级晋升的收尾原因是 `replaced`；只有已降级升回才是 `retired`。`reroll_result better=true` 的占比是效果指标；重掷后 `dial failed` 集中上升，说明对端还是 2.3.1（没报 `reroll`）。
 3. **上行是否在重赛**：`grep 'path re-race' <log>`。`vibeterm relay list` 在该行有 `pathBestMs` 时多一列 `BEST`（毫秒）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发）。`vibeterm nodes` 不受影响。
 
 ## 限制与关闭

@@ -263,7 +263,7 @@ node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请�
 - 防远程猜密码 / 旁观，**不是**独立于口令的第二因素（与根钥同源派生）。需要独立第二因素时用 passkey。
 - UI 两段式：先生成密钥与 otpauth URI（不写日志）→ 扫码并输入 6 位码 → 本地校验通过才追加 `set-totp`。取消或离开页面会清零密钥。
 - **启用 TOTP 只能用密码**（需要 seed）。关闭 TOTP、增删 passkey 可用 passkey 授权。
-- CLI：本机运维 `vibeterm user totp <username>` 打印 otpauth URI（无 ASCII QR）。客户端 `vibeterm settings totp enable|disable [--yes]` 经 HTTP 签 `set-totp` / `clear-totp`（enable 先打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再提交；`disable` 非 TTY 必须 `--yes`）。
+- CLI：本机运维 `vibeterm user totp <username>` 在追加 `set-totp` 之前要验一次码（`--code` 或 `VIBETERM_TOTP`），通过才写入。客户端 `vibeterm settings totp enable|disable [--yes]` 经 HTTP 签 `set-totp` / `clear-totp`（enable 先打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再提交；TTY 里码不对就用同一条 secret 再问，非 TTY 失败时提示 `--totp-secret` 重跑；`disable` 非 TTY 必须 `--yes`）。登录记录与登录限制是客户端 `vibeterm auth`，见 [命令行使用手册](./cli-usage.md)。
 
 ### 改密
 

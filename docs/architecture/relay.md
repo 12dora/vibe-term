@@ -620,14 +620,19 @@ failover / fail-back / 退避机制与单上联池相同。`uplink_kind = 'none'
 - **按对选中继**（`chooseRelay`）：在「已连接、且该对端在其清单里在线」的中继里取 `rtt(本机,R) + rtt(对端,R)` 最小的一条；
   缺样本的行排在有样本的行之后，并列回落主中继与 `priority`。对端 RTT 来自加密状态块新增的可选字段 `rtt_ms`
   （每条 uplink 上报自己到该中继的心跳 RTT，2.2.x 解码器忽略它）。开流失败且原因恰为 `offline` / `unknown-target` 时，
-  在主中继上重试一次。日志 `[mesh][peer] relay choose peer=… via=… score_ms=… candidates=N`。
+  在主中继上重试一次。握手完成前的连接错误（含 `uplink-retiring`、`quota-streams`、`open-failed`）换成 `relay-open-local`，
+  换下一条中继，分类为 skip，不记到对端熔断上。`offline` / `unknown-target` 仍是原来的错误，可以记到对端。
+  日志 `[mesh][peer] relay choose peer=… via=… score_ms=… candidates=N`。
+- **中继拨号熔断**只计能归因到对端的失败（握手超时、`open-failed`、对端 RST、peer-id 不符、`offline`、`unknown-target`）。
+  本端中止、冷却、上行不在线、`relay-open-local` 等 skip。选路降级和 pending-measure 的后台拨号不进前台熔断，也不进它的 single-flight。
+  本机网络指纹变化时清掉 DoH 失败、副中继退避和这份熔断。`healthz` 使用钉扎的 CA，不清共享的 DoH 偏好。
 - **在线名册取并集**：中继模式下 mesh 的「在线」= 各中继清单的并集；某条 uplink 掉线后它那份在线状态保留 90 s，
   到期只把**仅在该中继上可见**的对端置离线。
 - **TURN / STUN 合并**：每条中继各贡献至多一条 TURN，按主中继优先去重成数组；某条中继下发 `turn: null` 或断开，
   只撤回**它自己**那条。STUN 取并集。libjuice 最多纳入 2 条 TURN（`MAX_TURN_ICE_ENTRIES`）：每次拨号重建 ICE 时，若有探测记录则**只纳入 `ok` 的条目**，再按 RTT 升序、主中继、原序取前两条；没有任何探测记录时回落到已按探测过滤的 gated `turn` 列表，而不是未过滤的 `turnConfigured`。未探测成功的 TURN 不会进入 ICE（mux 打开时 libjuice gathering 会卡住）。选集变化打一条 `[mesh][rtc] turn pick urls=… dropped=… by=probe-rtt`。
 - **被踢**：`relay.kicked` 只标它自己那一行，其余中继不受影响。
-- `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继并固定**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
-  若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。成功后写入 `gateway_kv` 键 `relay.preferredUrl`。
+- `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继并固定**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`。
+  目标当前是**在线副中继**时，接管那条 `RelayUplinkClient`（名册、enrollment、RTC、密钥日志发布），不 `stop()`。接不下来（没有 `adoptPrimaryWiring`，或还没 online）就在新主认证完成前保持这条副连接；拨号失败不释放它，认证成功后才按副中继槽位收掉。被换下来的旧主仍走排空（见 [路径优选](./path-selection.md)「中继 uplink 排空」），排空结束后按副中继重新挂上。成功后写入 `gateway_kv` 键 `relay.preferredUrl`。
 - `POST /api/mesh/relay/unpin` 清除该固定，`{ ok: true, unpinned: boolean }`；本来就没固定也是 200（`unpinned: false`）。
 - **自动优选主中继**（`VIBETERM_RELAY_AUTO_SELECT`，未设时 ≥ 2 条未踢中继默认开）：按 uplink 心跳 RTT 的 EWMA 打分，
   `scoreMs = ewmaRtt + 0.15×pathBestMs + 0.05×(peersOnline/maxNodes)×1000 + 失败罚分`，
@@ -684,6 +689,7 @@ DoH 端点必须是 **https 的 IP 字面量**（系统解析器坏掉时域名�
 `relay.list` → 解开对端状态块后写 `peer_cache`（含 `direct_capable`）；
 解不开（旧世代 / 被排除）时回落到本地 `peer_cache.directCapable`。
 清单处理串行化并按 `version` 丢弃过期帧，避免大清单晚于小清单完成导致回退。
+帧上可选 `boot`（中继进程启动时生成的 8 字节 id）。`boot` 变了，或这条 uplink 重新连上（本端 `listBoot` 清空），就把已见版本归零，中继从 1 再计的序列照收。旧中继不带 `boot`，行为与以前相同。presence 的 `connected` 表示这条客户端链路在线，不是清单版本标志。谁可以对外连接由 `UplinkPool.primaryTarget()` 决定：正在拨的目标，否则已挂上的主。
 
 ### 被踢与重认证
 

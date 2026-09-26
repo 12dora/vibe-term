@@ -32,7 +32,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [cli-usage.md](./cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、目标语法、接进任意节点的终端、窗口内存、Agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
+| [cli-usage.md](./cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、登录历史与登录限制、目标语法、接进任意节点的终端、窗口内存、Agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
 
 ## 发版与升级
 

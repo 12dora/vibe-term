@@ -1,12 +1,12 @@
 # 登录面安全：失败模糊化、客户端 IP、通行密钥二次验证与公网评估
 
-本文汇总 VibeTerm 账号密码登录暴露到公网时的安全机制：登录失败模糊化、客户端 IP 解析与 bootstrap 限制、未登录面的资源上限、通行密钥二次验证（按 origin 生效 + 可信本地来源豁免 + TOTP/通行密钥 OR）、认证审计日志、以及公网暴露的安全评估结论；面向运维与改动 `apps/gateway/src/mesh/auth-*.ts` 的开发者。身份与密钥模型（根钥、delegation、node-session、密钥日志）见 [多节点架构 §2](../architecture/mesh-architecture.md)。
+本文汇总 VibeTerm 账号密码登录暴露到公网时的安全机制：登录失败模糊化、客户端 IP 解析与 bootstrap 限制、登录限制与登录历史、未登录面的资源上限、通行密钥二次验证（按 origin 生效 + 可信本地来源豁免 + TOTP/通行密钥 OR）、认证审计日志、以及公网暴露的安全评估结论；面向运维与改动 `apps/gateway/src/mesh/auth-*.ts` 的开发者。身份与密钥模型（根钥、delegation、node-session、密钥日志）见 [多节点架构 §2](../architecture/mesh-architecture.md)。
 
 ## 1. 现有机制（比常规密码登录强）
 
 - **密码不出浏览器**：浏览器用 argon2id（64 MiB / 3 轮 / 1 lane）把密码派生成 Ed25519 根钥，签 challenge 登录；网关只存根公钥与 KDF 参数，没有密码哈希（`apps/fe/src/auth/session-login.ts`、`packages/shared/src/auth/root-key.ts`、`apps/gateway/src/mesh/auth-routes.ts`）。
 - **会话**：256-bit 随机不透明 SID，DB 记录，18 h 滑动 / 7 d 硬上限，可撤销，按节点绑定 `viaNodeId`；cookie `HttpOnly` + `SameSite=Lax`，HTTPS 下 `Secure`；WS 复用 cookie，URL 不带 token；改密/登出即失效全部会话。
-- **限流**：登录失败每 IP、每 UID 各 10 次 / 60 s（内存）。TOTP 错码另有按 uid 的 5 次 / 15 min 桶，连续窗口指数锁定（最长 8 h）；已消费验证码按 `(uid, code, sess_pk)` 缓存 90 s，防止同一码换会话钥重放。
+- **限流**：密码登录失败走 mesh 签名的 `login-policy`（缺省预设 `standard`：同一 IP 在 15 min 内 10 次失败则锁定，账号在滚动 1 小时内超过 50 次则暂停密码登录）。计数只在内存里，重启即清。TOTP 错码另有按 uid 的 5 次 / 15 min 桶，连续窗口指数锁定（最长 8 h）；已消费验证码按 `(uid, code, sess_pk)` 缓存 90 s，防止同一码换会话钥重放。挑战与 passkey options 仍是每 IP 60 次 / 60 s。细则见 §7。
 - **passkey**：严格 origin/RP 绑定；**mesh peer 端口（39001）**用节点证书 + 握手签名鉴权，与用户密码无关。
 - **文件 API**：目录根限定、路径穿越与符号链接逃逸有检查；Telegram/微信为轮询，无入站 webhook。
 - 跨节点静默登录使用持久化的会话钥（[架构 §2「会话钥的跨文档持久化」](../architecture/mesh-architecture.md)），不改变节点侧校验：节点 B 仍要求根钥签的 delegation + 一次性 challenge + `target/target_pk` 绑定，A 的 SID / login 不能重放到 B。持久化的私钥为 WebCrypto 不可导出 CryptoKey，风险等级与既有 HttpOnly cookie 相同，上限为 delegation 18 h。
@@ -23,7 +23,7 @@
 | login 会话签名错 | `INVALID_CREDENTIALS` |
 | `passkey/login/options` 未知用户 | `404 NO_PASSKEY_FOR_ORIGIN`（与「本 origin 无凭证」相同） |
 
-结构性错误（`MALFORMED`、`CHALLENGE_*`、`*_MISMATCH`、`DELEGATION_EXPIRED` 等）、`RATE_LIMITED`、`TOTP_*` 保持原码；passkey 直接登录失败仍是 `DELEGATION_BAD_SIGNATURE`。`TOTP_REQUIRED` / `PASSKEY_REQUIRED` 不计入限流失败次数。
+结构性错误（`MALFORMED`、`CHALLENGE_*`、`*_MISMATCH`、`DELEGATION_EXPIRED` 等）、`RATE_LIMITED`、`PASSWORD_LOGIN_PAUSED`、`TOTP_*` 保持原码；passkey 直接登录失败仍是 `DELEGATION_BAD_SIGNATURE`。`TOTP_REQUIRED` / `PASSKEY_REQUIRED` 不计入限流，也不写登录历史。IP 锁定是 `429 RATE_LIMITED`（带 `retryAfterMs`）；账号暂停密码登录是 `429 PASSWORD_LOGIN_PAUSED`（仅 `method=root` 且 uid 已知）。其余失败仍保持 `INVALID_CREDENTIALS` 的不透明。登录页对这两种 429 显示剩余时间；密码登录被暂停且本 origin 有通行密钥时，提示改用通行密钥。
 
 前端密码路径把 `INVALID_CREDENTIALS` 与旧码（`DELEGATION_BAD_SIGNATURE`、`BAD_SIGNATURE`、`UNKNOWN_USER` 等，兼容未升级节点）统一显示为「用户名或密码错误。」。`/n/:id/api/auth/{challenge,login}` 的 401 不被 forwarder 改写成 `NODE_LOGIN_REQUIRED`，目标节点的原码直达浏览器。
 
@@ -44,9 +44,9 @@
   3. `X-Forwarded-For` 的**最后一个非空**条目（`proxy_add_x_forwarded_for` 把真实客户端追加在末尾；首段由客户端自带、可伪造）。末段不是合法字面量时不回退到更早的条目。
   4. 回退 socket IP
 
-登录限流的 IP 桶使用该结果；UID 桶与阈值不变。Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`；不要在不可信跳数前开启。
+`resolveClientIp` 的结果用于挑战限速、审计和直连登录记录。Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`；不要在不可信跳数前开启。未开启时，登录 IP 阶梯不把所有访客挤进同一个回环套接字：带了 `CF-Connecting-IP` / `X-Real-IP` / `X-Forwarded-For` / `Forwarded` 的请求单独进 `proxied:<声称地址>` 桶（声称值截断 128 字符，可伪造，只做隔离）。写进登录记录和审计日志的仍是套接字地址。
 
-**转发登录**：入口 `forwarder` 会丢掉 `x-forwarded-*` / `CF-Connecting-IP`，目标节点看到的是 `peer:<入口>`。对端即使自带转发头也不可信（成员节点可伪造），因此目标节点的登录失败限流**只按 uid**，不按 IP；真实客户端 IP 的限速仍在入口执行。TOTP 错码桶同样只按 uid（每节点一份内存表）。
+**转发登录**：入口 `forwarder` 会丢掉 `x-forwarded-*` / `CF-Connecting-IP`。入口只按真实客户端 IP 计登录阶梯，不计账号桶。目标节点看到的是 `peer:<入口>`，登录阶梯不按 IP 计，只按规范 uid 计账号软顶（用户名与 uid 共用这只桶）。TOTP 错码桶同样只按 uid（每节点一份内存表）。登录记录用的入口 IP 头见 §8，与这里的限流桶不是同一条规则。
 
 **TOTP 错码与重放**（`apps/gateway/src/mesh/auth-totp-guard.ts`）：
 
@@ -154,16 +154,26 @@ vibeterm mesh passkey remove-all [<username>]
 | 高（条件） | 未 bootstrap 的新实例经隧道连 `127.0.0.1` 时可远程创建首个账户 | 已修（§3）；运维上仍应先在本机 bootstrap 再暴露 |
 | 高（条件） | 裸 `@vibeterm/gateway start` 入口不装会话守卫 | 不改：该入口仅开发用，打包运行时（`packages/app` 装配）才是公网形态 |
 | 高 | HTTP 直连暴露时会话可被嗅探；cookie `Secure` 依赖 HTTPS 探测 | 不改代码：公网一律走 Tunnel HTTPS 或自配 TLS，反代后开 `VIBETERM_TRUST_PROXY` |
-| 中 | 限流 IP 桶在隧道后全员共桶 | 已修（§3） |
+| 中 | 限流 IP 桶在隧道后全员共桶 | 已修（§3、§7）：反代后开 `VIBETERM_TRUST_PROXY`；未开时按声称地址拆桶，记录仍是套接字地址 |
 | 中 | 密码最短 8 位、无复杂度要求；拿到 DB 可离线撞根公钥 | 不改：argon2id 已足够贵；建议用密码管理器生成 16+ 位或改用 passkey。**不加复杂度规则** |
 | 中 | agent 会话 / 文件传输 API 无按用户归属检查 | 不改：VibeTerm 每节点单用户（`findPrimaryUser`），不承诺多用户隔离 |
 | 低 | 登录可枚举用户名 | 用户名枚举已由失败模糊化收口（§2）；用户名不是安全边界 |
 | 低 | 无通用 Origin 校验，CSRF 依赖 `SameSite=Lax` + 无 CORS 放行 | 不改：当前威胁模型足够 |
 | 低 | TOTP 由同一密码派生，不是独立第二因子 | 不改；不宣传为 MFA，需要第二因子用 passkey |
 
-**明确不做的事（避免过度防御）**：服务端 bcrypt/argon2 密码哈希（现有 challenge 签名设计更优）；全局锁定、指数退避、密码复杂度规则；JWT / localStorage token / WS `?token=`；全站 HSTS（localhost 与自签场景会被打坏，有需要在公网边缘配）；给 peer 握手再加口令层；收紧 passkey 域名绑定。
+**明确不做的事（避免过度防御）**：服务端 bcrypt/argon2 密码哈希（现有 challenge 签名设计更优）；全站锁定、密码复杂度规则；JWT / localStorage token / WS `?token=`；给 peer 握手再加口令层；收紧 passkey 域名绑定。IP 阶梯与账号暂停见 §7，不再把「不做指数退避」当成结论。
 
-**暴力破解的现实评估**：在线每 IP、每 UID 各 ≈ 0.17 次/秒（限流决定，argon2 在浏览器侧不构成服务端成本）；分布式源 IP 也受 UID 桶约束。离线需先拿到 DB（根公钥 + KDF 参数），argon2id 64 MiB 单次派生成本高，随机 16+ 位密码即可忽略。
+下面几项评估过、这一版不加：
+
+| 项 | 原因 |
+|---|---|
+| 对已登录会话隐藏 `GET /api/auth/nodes` | 名册是 fan-out 与节点管理的输入，会话门已经挡在前面 |
+| 收掉中继 `healthz` 的字段 | 拨号与自动优选用这份探测；不在登录面收口 |
+| 加长分享口令最短长度 | 分享口令规则保持现状 |
+| 把登录各分支的耗时对齐 | challenge 签名路径不做密码哈希比较，不另加填充 |
+| HSTS、脚本 CSP、CSRF token | HTML 只加 `Content-Security-Policy: frame-ancestors 'self'`（§9）。HSTS 会打坏 localhost 与自签。CSRF 仍靠 `SameSite=Lax` 与不放行 CORS |
+
+**暴力破解的现实评估**：在线速率由 §7 的策略决定（缺省同一 IP 15 min 内 10 次失败即锁定，账号每小时超过 50 次则暂停密码登录）。argon2 在浏览器侧，不构成服务端成本。分布式源 IP 仍受账号软顶约束；通行密钥直接登录不受这道暂停影响。离线需先拿到 DB（根公钥 + KDF 参数），argon2id 64 MiB 单次派生成本高，随机 16+ 位密码即可忽略。重启会清掉内存里的锁定，这是有意的。
 
 ## 6. 审计日志
 
@@ -176,4 +186,54 @@ vibeterm mesh passkey remove-all [<username>]
 [auth] logout uid=<uid> sessions=<N>
 [auth] session revoked uid=<uid> reason=revokeAllSessions|revokeSessionsByCredential|revokeSessionsVia
 ```
+
+## 7. 登录限制（`login-policy`）
+
+全网一份策略，记在密钥日志类型 `login-policy` 上，签名者 `root` / `passkey`，最低节点版本 `2.10.0`（`MIN_LOGIN_POLICY_RECORD_VERSION`）。任一未吊销节点版本未知或低于该版本时，写入 fail-closed，与 `notification-sink` 同一套。没有任何记录的节点用预设 `standard`。策略在检查当时读当前投影；历史行解不开则忽略，回落 `standard`。
+
+`exemptLocal` 在三档预设里缺省都是 true，命名预设也允许单独改它。非 `custom` 时数值必须与预设一致。`custom` 范围：`ipFailThreshold` 3–100；`ipLockBaseMs` 1 min–24 h；`ipLockMaxMs` 从 base 到 7 d；`accountFailPerHour` 10–1000；`accountLockMs` 1 min–24 h。网关、网页和 CLI 共用 `validateLoginPolicy()`。
+
+| 预设 | IP 失败阈值 | 首次锁定 | 阶梯上限 | 账号每小时 | 账号暂停 |
+|---|---|---|---|---|---|
+| `relaxed` | 20 | 5 min | 1 h | 100 | 5 min |
+| `standard`（缺省） | 10 | 15 min | 24 h | 50 | 15 min |
+| `strict` | 5 | 30 min | 7 d | 20 | 1 h |
+
+**IP 阶梯**（`LoginPolicyLimiter`）：按客户端 IP 计凭证失败。窗口长度是 `ipLockBaseMs`。窗口内次数达到 `ipFailThreshold` 时锁定该 IP，时长 `ipLockBaseMs × 2^n`，封顶 `ipLockMaxMs`。`n` 是该 IP 在最近 24 h 内已经发生过的锁次数。该 IP 登录成功只清失败计数，不清阶梯历史。锁定期间再失败不追加计数。
+
+**账号软顶**：该 uid 在滚动 60 min 内的失败次数超过 `accountFailPerHour` 时，暂停 `method=root` 的密码登录 `accountLockMs`。通行密钥直接登录（`method=passkey`）不停。暂停开始时清空该 uid 的失败窗口，暂停期间的失败不入窗口；到期后要重新累计超过 `accountFailPerHour` 次失败才会再次暂停，单次请求不能把账号重新打回暂停。`TOTP_REQUIRED` / `PASSKEY_REQUIRED` 不计。TOTP 自己的桶不变。
+
+**`exemptLocal`**：同时跳过 IP 阶梯和账号软顶。条件与通行密钥本地豁免的严格本地判定一致：策略打开、不是 peer 入站、请求不带任何代理头（`x-forwarded-for`、`x-real-ip`、`cf-connecting-ip`、`forwarded`）、套接字是回环或局域网。这些失败仍写入登录历史，但不进两道限流的窗口，所以本机失败既不会锁自己，也不能用来暂停公网的密码登录。反代后面要让真实客户端 IP 进阶梯，打开 `VIBETERM_TRUST_PROXY`；不开则走 §3 的 `proxied:` 桶，豁免也不会命中。
+
+入口转发的登录只计 IP。目标节点只计规范 uid。账号桶不会因为经过入口而记两次。
+
+IP 表与 uid 表各自硬顶 1 万条，超出时按最久未触碰淘汰空闲条目；全是活跃锁时，淘汰最早到期的锁。状态只在进程内，重启即清。
+
+**残余风险**：落到回环的 TCP 隧道（`frp`、`ssh -R`）若不带转发头，会被判为严格本地，两道锁都豁免，在尚无凭据时也能通过 setup；HTTP 层无法与真实本机客户端区分，这类部署应关闭 `exemptLocal`。反代后未开 `VIBETERM_TRUST_PROXY` 时，轮换 `proxied:` 声称值可以各自获得失败行配额（见 §8），但不能冲掉 2 万行上限以外的记录。
+
+`GET /api/auth/login-policy`（要会话，本节点）：`{ policy, source: 'default'|'keylog', writable, blockers }`。`blockers` 是未吊销且低于最低版本的节点。写入与 TOTP 相同：客户端签 `login-policy`，`POST /api/auth/keylog`，服务端用 `validateLoginPolicy` 验载荷。`source === 'keylog'` 时，低于 2.10.0 的节点放不回这条记录；接纳或重新接纳之前应先升级。接口不因此拒绝接纳。网页在「账号安全 → 登录限制」里改预设或自定义字段，保存时走与 TOTP 相同的凭据签名；`writable=false` 时列出阻挡节点。CLI 见 [命令行使用手册](../operations/cli-usage.md)。
+
+## 8. 登录历史
+
+每台节点只存自己处理过的登录，没有全网一张表。表 `login_records`：`id`、`at`（毫秒）、`outcome`（`success`|`failed`）、`uid`、`username`、`method`（`root`|`passkey`）、`second`（`totp`|`passkey`|`waived`|`none`）、`client`（`web`|`cli`|`unknown`）、`kind`（`interactive`|`background`）、`via_node_id`、`target_node_id`、`ip`（完整，不脱敏）、`user_agent`（截断 512）、`origin`、`code`（成功为 null）。
+
+`kind`：这次登录的入口就是本节点 → `interactive`；经别的入口 fan-out 过来 → `background`。`client` 来自 `x-vibeterm-client: web|cli`，其它或缺失为 `unknown`。网页和 CLI 的 challenge / login / passkey options 都带这个头。入口转发 `/n/:id/api/auth/*` 时原样带上，并写入 `x-vibeterm-entry-client-ip`（入口看到的真实 IP）和 `user-agent`。
+
+目标节点只在 peer 入站、且该入口在节点表和 `peer_cache` 里**每一份**已知版本都 ≥ 2.10.0 时，才把这条 IP 写入记录。缺一份、或任一份更低，IP 记 null（fail-closed）。直连请求删掉同名头，改用 `resolveClientIp`。分享配额不读这个头（[KI-8](../known-issues.md)）。
+
+写入点：`handleLogin` 成功；凭证类失败（`INVALID_CREDENTIALS` 及其同类、`TOTP_INVALID`、`PASSKEY_INVALID`、锁定 / 暂停 429、畸形与 challenge 错误）。不写 `TOTP_REQUIRED` / `PASSKEY_REQUIRED`。入口侧 429 由入口记一行，`target_node_id` 指向目标，`kind=interactive`；只记这一次，不在目标上再记一笔。凭证类失败按限流键（`proxied:` 声称值或解析出的 IP，再加 uid）每分钟最多 6 行；锁定或暂停生效期间的 `RATE_LIMITED` / `PASSWORD_LOGIN_PAUSED` 同一把钥匙最多每 60 s 一行。成功不限。写入失败只打日志，不拖慢、不打断登录。
+
+保留：`retentionDays` ∈ {7, 30, 90, 180, 0}，0 为永久，缺省 90，存在该节点的 `gateway_kv`。每小时扫一次。成功与失败各自硬顶 20 000 行，超出删最旧的。进程重启后，60 s 节流重新计。
+
+`GET /api/auth/login-records`（要会话；远端经 `/n/<id>/…`）：查询 `outcome=success|failed`、`kind=interactive|all`（只过滤成功；失败始终含两种 kind）、`limit` 1–500（缺省 200）、`before` + `beforeId`。响应 `{ records, nextBefore: { at, id } | null }`，按 `at` 降序，同一毫秒再按 `id` 降序。`DELETE /api/auth/login-records` → `{ deleted }`。`GET` / `PUT /api/auth/login-records/settings` 的体是 `{ retentionDays }`，非法 400。节点低于 2.10.0 时这些路由是 405。
+
+网页：设置 → 多节点互联 → 本机卡片菜单「登录历史」。对在线、已登录、版本达标的节点 fan-out；离线、需升级、需登录以状态芯片标出。成功页缺省只看 `interactive`，可打开「显示后台登录」。保留时间与清空作用到所有可达节点，跳过的节点会说明。账号安全面板的「登录限制」即 §7。
+
+## 9. 登录后跳转、初始化与嵌入
+
+登录页的 `next` 只接受本站路径：以单个 `/` 开头，不含 `//`、反斜杠、方案和控制字符，否则落到 `/`。
+
+`/api/setup/*`（含 `precheck`）：已经有用户，或本机认证已生效时，要求与其它 `/api/*` 相同的有效会话，否则 `UNAUTHORIZED`。在那之前只允许回环套接字且不带代理头，否则 `403 LOOPBACK_REQUIRED`。设置向导把这两个码显示成「请先登录。」与「请在本机完成初始化。」
+
+装配运行时的 HTML 响应带 `Content-Security-Policy: frame-ancestors 'self'`，只有这一条指令。没有 HSTS，也没有脚本 CSP。
 

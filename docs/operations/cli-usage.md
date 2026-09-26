@@ -4,7 +4,7 @@
 
 ## 它是什么，不是什么
 
-`vibeterm login|whoami|api|nodes|devices|tmux|sessions|term|exec|system|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
+`vibeterm login|whoami|auth|api|nodes|devices|tmux|sessions|term|exec|system|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
 
 `vibeterm init|doctor|upgrade|uninstall|user|relay|mesh|tls|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。本机用户用 `vibeterm user add|passwd|totp`。
 
@@ -18,6 +18,7 @@ vibeterm login --entry https://vt.example.com --user admin
 - 默认把 entry 后面**每个节点**都登一遍（`--all-nodes`），之后访问任意节点都不用再登；只想登一台就 `--node <id|名字>`。entry 先串行登录，其余节点有界并发（`--concurrency`，缺省 4），每台有墙上时钟（`--node-timeout`，缺省 25000 ms）；超时行是 `TIMEOUT`，与 `NODE_UNREACHABLE` 同属网络类跳过。stderr 会打逐节点进度。某台离线（HTTP 503 `NODE_UNREACHABLE`、网络错误或 `TIMEOUT`）会打 `skipped <node>: unreachable|timeout` 并继续，entry 登录成功且其余失败都是不可达/超时时退出码 0，并汇总 `logged in to N nodes, skipped M unreachable, N timeout`；可达节点鉴权拒绝退出码 3，非鉴权 HTTP 错误（5xx / 404）退出码 1（与鉴权码混合时也是 1）。`--node` 指名的那台不可达或超时退出码 5。解析 `login --json` 的脚本除 `NODE_UNREACHABLE` 外还会看到 `TIMEOUT`、`HTTP_5xx`。登录的 challenge/login 请求**不受**全局 `--timeout` 约束，只看 `--node-timeout`。
 - 登录流程与网页端逐步一致（argon2id 派生根种子 → 临时会话密钥对 → 签名委托）。密码、根种子、会话私钥**都不落盘**，落盘的只有会话 sid 与到期时刻，默认文件是 `~/.config/vibeterm/session.json`（目录 0700、文件 0600）。`$VIBETERM_SESSION_FILE` 可改走指定路径（同样 0600；group/world 可读会拒绝）。**该文件是完整会话能力，须按密钥保护**，不要提交、不要世界可读。
 - 只在本 origin 注册了通行密钥、又没开 TOTP 的账号，CLI 登不上（不实现 WebAuthn），会退出码 3 并说明补救办法：在网页端开 TOTP。
+- challenge / login 带 `x-vibeterm-client: cli`。密码派生开始前 stderr 打 `Deriving key…`（`--quiet` / `--json` 也打），避免 argon2 看起来像卡住。IP 锁定是 `RATE_LIMITED`，账号暂停密码登录是 `PASSWORD_LOGIN_PAUSED`；通行密钥直接登录不受暂停影响。策略与历史见下一节。
 
 ```bash
 vibeterm whoami           # 当前 entry、账号与各节点会话状态
@@ -29,6 +30,27 @@ vibeterm logout           # 对每个已登录节点各撤销一次会话，并�
 `logout` 撤销的是**服务端**签发的会话，和在网页端退出登录等价：本机 session.json 被删的同时，别处用同一账号拿到的会话也一并失效。丢了笔记本就在任意一台机器上 `vibeterm logout`。
 
 默认 entry 的优先级：`--entry` > `$VIBETERM_ENTRY` > 上次用过的 entry > 本机安装的 `VIBETERM_BASE_URL` > `http://127.0.0.1:9883`。
+
+## 登录历史与登录限制
+
+`vibeterm auth` 读、清各节点上的登录记录，并签全网的 `login-policy`。节点须 ≥ 2.10.0。离线和更旧的节点跳过并在 stderr 说明；这种跳过退出码 0。显式 `--node` 点到不可达节点时退出码 5。路由 405 表示该节点还没有这些接口。语义见 [登录面安全](../security/login-security.md) §7、§8。
+
+```bash
+vibeterm auth history [--failed] [--all] [--node <id|名字>] [--limit N] [--json]
+vibeterm auth history clear [--node <id|名字>] [--yes]
+vibeterm auth history retention [7|30|90|180|forever] [--node <id|名字>]
+vibeterm auth policy [--node <id|名字>]
+vibeterm auth policy set --preset relaxed|standard|strict
+vibeterm auth policy set --custom --ip-threshold N --ip-lock 15m --ip-lock-max 24h \
+  --account-per-hour N --account-lock 15m [--no-exempt-local]
+```
+
+- `history` 缺省列出成功的交互登录（`kind=interactive`）。`--failed` 列出失败并带错误码，失败行不分 kind。`--all` 在成功列表里加上后台 fan-out。`--limit` 缺省 200，范围 1–500。
+- `history clear` 打 `DELETE /api/auth/login-records`。非 TTY 必须 `--yes`。
+- `history retention` 不带参数则显示；`forever` 即 `retentionDays: 0`。缺省保留 90 天。设置作用到选出的每台可达节点。
+- `policy` 打 `GET /api/auth/login-policy`，打印生效策略、`source`、是否可写、低于 2.10.0 的阻挡节点。`source` 为 `keylog` 时，stderr 提醒先升级那些节点再接纳：它们放不回这条记录。405 时警告并退出 0。
+- `policy set` 用根密码签 `login-policy` 并 `POST /api/auth/keylog`。密码来自 TTY、`--password-stdin` 或 `VIBETERM_PASSWORD`。不在这里要 TOTP：先 `vibeterm login`。预设：relaxed 为 20 次 / 5 min / 上限 1 h / 账号 100 次 / 暂停 5 min；standard 为 10 / 15 min / 24 h / 50 / 15 min；strict 为 5 / 30 min / 7 d / 20 / 1 h。`exemptLocal` 缺省 true，`--no-exempt-local` 关掉。签名打在 entry 上；`--node` 只选择 `policy` 的查询目标以及 history / retention 的节点，不改签名落点。
+- 24 h 印成 `24h`，不印成 `1d`（天从 2d 起），以便和 `--ip-lock-max 24h` 对得上。
 
 ## 目标语法
 
@@ -360,7 +382,7 @@ vibeterm settings weixin users approve <account> <user>
 ```
 
 - `passwd`：当前密码 `VIBETERM_PASSWORD` 或隐藏 prompt；新密码 `--new-password*` / `VIBETERM_NEW_PASSWORD` 或 TTY 双次确认。默认 `rotate-root-keep`；`--full-reset` 写 `rotate-root`（非 TTY 要 `--yes`）。keep 路径会话仍有效；全量重置后须重新 `login`。
-- `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。`totp disable` 非 TTY 必须 `--yes`。
+- `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。TTY 里码不对就用**同一条** secret 再问一次，Ctrl-C 中止。非 TTY 失败时，提示带上 `--totp-secret <刚打印的 secret>` 重跑，二维码才仍然有效。`totp disable` 非 TTY 必须 `--yes`。
 - `passkey ls` 人类输出带「注册只能在浏览器」hint。
 - `mesh route-mode get|set`：读写本机选路模式（`auto` / `direct` / `relay`），打 `GET/PUT /api/settings/mesh-route`。非法值用法错误。语义见 [mesh 运维「延迟优化」](./mesh-operations.md) 与 [路径优选](../architecture/path-selection.md)。
 - `memory get|set`：读写该节点的窗口内存限额（`GET/PUT /api/settings/window-memory`）。`set` 先 GET 再按旗标合并，整包 PUT；MB 为整数 `0…1048576`，周期 2–60 秒，软限额不得大于硬限额（两者都非 0 时）。尊重 `--node`。口径见 [窗口内存限额](./window-memory-limits.md)。
