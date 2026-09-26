@@ -34,6 +34,31 @@ export async function waitUntilAsync(
   }
 }
 
+type ReportedPeer = { version: string | null; name: string };
+
+/**
+ * 等到观察节点的 `peer_cache` 记下对端版本。
+ * uplink `online` 只表示认证完成；版本要等 `relay.status` 进入中继名单、观察方解开状态块后才落库。
+ * 对端断开后名单不再附带状态块，漏掉的版本补不回来。
+ */
+export async function waitForReportedPeerVersion(
+  observer: { userStore: { getPeer(nodeId: string): ReportedPeer | null } },
+  peerNodeId: string,
+  timeoutMs = 8_000
+): Promise<string> {
+  const start = Date.now();
+  for (;;) {
+    const peer = observer.userStore.getPeer(peerNodeId);
+    if (peer?.version) return peer.version;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(
+        `peer ${peerNodeId} version was not reported within ${timeoutMs}ms (cached=${peer != null}, name=${peer?.name ?? 'null'}, version=${peer?.version ?? 'null'})`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 export const NODE_PASSWORD = 'relay-integration-pass';
 export const NODE_ROLES: VibeTermRoles = { node: true, relay: false };
 
