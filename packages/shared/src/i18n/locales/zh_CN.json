@@ -363,7 +363,8 @@
       "connectingStalled": {
         "node": "仍在连接节点，链路较慢或暂时不通。",
         "reconnecting": "与节点的连接已中断，正在自动重连。",
-        "device": "节点已连接，正在等待设备响应。"
+        "device": "节点已连接，正在等待设备响应。",
+        "unreachable": "当前入口无法连接该节点，稍后自动重试。"
       },
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
@@ -1204,6 +1205,84 @@
         "interruptNotice": "服务重启期间连接会断开，稍候即可恢复。",
         "checkFailed": "检查更新失败",
         "terminalHint": "或通过终端升级：vibeterm upgrade"
+      },
+      "loginHistory": {
+        "title": "登录历史",
+        "description": "各节点记录的账号登录与失败尝试。",
+        "tabs": {
+          "success": "成功",
+          "failed": "失败"
+        },
+        "showBackground": "显示后台登录",
+        "showBackgroundHint": "打开其他节点时自动完成的登录",
+        "background": "后台",
+        "viaEntry": "经 {{name}}",
+        "columns": {
+          "time": "时间",
+          "node": "节点",
+          "account": "账号",
+          "method": "方式",
+          "reason": "原因",
+          "client": "类型",
+          "ip": "IP",
+          "device": "设备"
+        },
+        "client": {
+          "web": "网页",
+          "cli": "CLI",
+          "unknown": "未知"
+        },
+        "method": {
+          "password": "密码",
+          "passwordTotp": "密码 + 验证码",
+          "passwordPasskey": "密码 + 通行密钥",
+          "passwordWaived": "密码（免二次验证）",
+          "passkey": "通行密钥"
+        },
+        "reason": {
+          "unknown": "未知原因",
+          "INVALID_CREDENTIALS": "用户名或密码错误",
+          "UNKNOWN_USER": "账号不存在",
+          "ROOT_KEY_MISMATCH": "密码错误",
+          "TOTP_INVALID": "验证码错误",
+          "PASSKEY_INVALID": "通行密钥验证失败",
+          "RATE_LIMITED": "IP 已锁定",
+          "PASSWORD_LOGIN_PAUSED": "密码登录已暂停",
+          "CHALLENGE_EXPIRED": "登录请求已过期",
+          "CHALLENGE_CONSUMED": "登录请求已被使用",
+          "MALFORMED": "请求格式错误",
+          "DELEGATION_EXPIRED": "授权已过期"
+        },
+        "empty": {
+          "success": "暂无登录记录",
+          "failed": "暂无失败记录"
+        },
+        "loadMore": "加载更多",
+        "skippedLabel": "未包含：",
+        "skip": {
+          "offline": "离线",
+          "tooOld": "需升级",
+          "loginRequired": "需登录",
+          "paused": "已暂停",
+          "failed": "读取失败"
+        },
+        "skippedItem": "{{name}}（{{reason}}）",
+        "listSeparator": "、",
+        "partial": "{{base}}；未处理：{{names}}",
+        "retention": {
+          "label": "保留时间",
+          "days": "{{n}} 天",
+          "forever": "永久",
+          "mixed": "各节点不同",
+          "saved": "已更新 {{count}} 个节点的保留时间"
+        },
+        "clear": {
+          "button": "清空记录",
+          "confirmTitle": "清空登录历史？",
+          "confirmBody": "将删除所有可访问节点上的登录记录，且无法恢复。",
+          "confirm": "清空",
+          "done": "已清空 {{count}} 个节点，共 {{deleted}} 条记录"
+        }
       }
     },
     "messaging": {
@@ -1985,7 +2064,12 @@
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
         "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥；通行密钥均已不可用时，在服务器执行 vibeterm mesh passkey remove-all。",
-        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
+        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
+        "throttle": {
+          "rateLimited": "尝试次数过多，请在 {{time}} 后重试。",
+          "paused": "失败次数过多，密码登录已暂停，{{time}} 后恢复。",
+          "usePasskey": "可改用通行密钥登录。"
+        }
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -2034,7 +2118,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "invalidCredentials": "用户名或密码错误。",
         "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
-        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。"
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。",
+        "PASSWORD_LOGIN_PAUSED": "密码登录已暂停，请稍后再试。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -2074,7 +2159,47 @@
         "reloginTotpHint": "改密后重新登录需要验证码；留空则跳过。",
         "sessionResumeFailed": "密码已更新；重新登录未完成，其他节点需重新登录。",
         "sessionResumeSkipped": "密码已更新；未输入验证码，其他节点需重新登录。",
-        "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。"
+        "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。",
+        "loginLimit": {
+          "title": "登录限制",
+          "description": "密码多次输错后锁定来源 IP，并暂停该账号的密码登录；通行密钥登录不受影响。",
+          "preset": {
+            "relaxed": "宽松",
+            "standard": "标准",
+            "strict": "严格",
+            "custom": "自定义"
+          },
+          "presetIp": "同一 IP 失败 {{count}} 次锁定 {{base}}，最长 {{max}}",
+          "presetAccount": "账号每小时失败 {{count}} 次，暂停密码登录 {{duration}}",
+          "fields": {
+            "ipFailThreshold": "IP 失败次数上限",
+            "ipLockBase": "IP 首次锁定时长",
+            "ipLockMax": "IP 最长锁定时长",
+            "accountFailPerHour": "账号每小时失败上限",
+            "accountLock": "账号暂停时长"
+          },
+          "unit": {
+            "times": "次",
+            "minutes": "分钟",
+            "hours": "小时",
+            "days": "天"
+          },
+          "ladderHint": "同一 IP 再次被锁时锁定时长翻倍，不超过最长锁定时长。",
+          "exemptLocal": "本机与局域网免锁定",
+          "exemptLocalHint": "失败仍会记入登录历史。",
+          "sourceDefault": "当前为默认设置（标准）。",
+          "save": "保存",
+          "saved": "登录限制已更新。",
+          "loadFailed": "登录限制读取失败：{{error}}",
+          "blocked": "以下节点版本低于 {{version}}，须先升级才能修改：",
+          "versionUnknown": "版本未知",
+          "errors": {
+            "range": "须在 {{min}}–{{max}} 之间。",
+            "integer": "请输入整数。",
+            "maxBelowBase": "不能短于首次锁定时长。",
+            "invalid": "设置无效。"
+          }
+        }
       },
       "credential": {
         "title": "确认身份",
@@ -2088,8 +2213,15 @@
           "revoke": "移除节点",
           "passkey": "添加或删除通行密钥",
           "totp": "关闭验证码",
-          "notifySink": "设置多节点通知"
+          "notifySink": "设置多节点通知",
+          "loginPolicy": "修改登录限制"
         }
+      },
+      "duration": {
+        "seconds": "{{n}} 秒",
+        "minutes": "{{n}} 分钟",
+        "hours": "{{n}} 小时",
+        "days": "{{n}} 天"
       }
     },
     "nodes": {
@@ -2113,7 +2245,8 @@
           "label": "更多操作",
           "connect": "连接",
           "changeRole": "更改角色",
-          "leave": "退出多节点互联…"
+          "leave": "退出多节点互联…",
+          "loginHistory": "登录历史"
         },
         "status": {
           "standalone": "独立运行",
@@ -2923,7 +3056,9 @@
           "relay_pack_invalid": "中继上的加入材料无法使用。请在已加入的机器上重新登录以补上材料。",
           "relay_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
           "relay_not_authorized": "中继拒绝了本次加入请求：本机未获授权。",
-          "local_user_exists": "本机已存在同名用户。"
+          "local_user_exists": "本机已存在同名用户。",
+          "LOOPBACK_REQUIRED": "请在本机完成初始化。",
+          "UNAUTHORIZED": "请先登录。"
         },
         "becomeRelay": {
           "title": "本机作为中继",

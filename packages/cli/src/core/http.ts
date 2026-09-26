@@ -388,6 +388,10 @@ export function isSessionAuthFailure(status: number, body: string): boolean {
   return isAuthErrorCode(reasonFromBody(body));
 }
 
+function isUnupgradedAuthPath(path: string): boolean {
+  return path.includes('/api/auth/login-records') || path.includes('/api/auth/login-policy');
+}
+
 function forbiddenError(path: string, code: string | null, body: string): PermissionError {
   const detail = body && body !== code ? `: ${body}` : '';
   return new PermissionError(`${path} → ${code ?? 'forbidden'}${detail}`.trim(), code ?? undefined);
@@ -408,7 +412,10 @@ export function httpStatusError(
     return loginRequiredError(nodeId, body);
   }
   if (status === 403) return forbiddenError(path, code, body);
-  if (status === 404) return new NotFoundError(`${path} → 404 ${body || 'not found'}`);
+  if (status === 404 || (status === 405 && isUnupgradedAuthPath(path))) {
+    const detail = status === 405 ? 'needs upgrade to 2.10.0' : body || 'not found';
+    return new NotFoundError(`${path} → ${status} ${detail}`);
+  }
   return new CliError(
     `${path} → HTTP ${status} ${body}`.trim(),
     EXIT_GENERIC,

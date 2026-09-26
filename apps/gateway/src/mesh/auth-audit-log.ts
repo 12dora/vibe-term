@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { type KeyLogEffect, bytesEqual } from '@vibeterm/shared/auth';
 import { and, count, eq, isNull } from 'drizzle-orm';
+import { recordAuthLoginSuccess } from '../auth/login-records-hooks';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { AuthDb } from '../auth/types';
 import { nodeSessions } from '../db/schema';
@@ -125,21 +126,33 @@ export function logAuthLoginSuccessIfOk(
     waived: boolean;
     ip: string;
     origin: string;
+    req?: Request;
+    afterOk?: () => void;
   }
 ): void {
   if (res.status !== 200) return;
+  fields.afterOk?.();
+  const second = resolveLoginSecond({
+    method: fields.method,
+    totpPresent: factorBodyPresent(fields.totpBody, 'code'),
+    passkeyPresent: factorBodyPresent(fields.passkeyBody, 'sig'),
+    waived: fields.waived,
+  });
   logAuthLoginOk({
     uid: fields.uid,
     via: fields.via,
     method: fields.method,
-    second: resolveLoginSecond({
-      method: fields.method,
-      totpPresent: factorBodyPresent(fields.totpBody, 'code'),
-      passkeyPresent: factorBodyPresent(fields.passkeyBody, 'sig'),
-      waived: fields.waived,
-    }),
+    second,
     ip: fields.ip,
     origin: fields.origin,
+  });
+  recordAuthLoginSuccess({
+    uid: fields.uid,
+    via: fields.via,
+    method: fields.method,
+    second,
+    origin: fields.origin,
+    req: fields.req,
   });
 }
 

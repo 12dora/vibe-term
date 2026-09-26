@@ -3,6 +3,15 @@ import { getMeshRequestContext } from './mesh-deps';
 
 const IPV4_MAPPED_DOTTED = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
 
+const PROXY_HEADERS = ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip', 'forwarded'] as const;
+
+export function requestHasProxyHeaders(headers: Headers): boolean {
+  for (const name of PROXY_HEADERS) {
+    if (headers.has(name)) return true;
+  }
+  return false;
+}
+
 export type ClientIpInput = {
   socketIp?: string | null;
   headers: Headers;
@@ -37,6 +46,14 @@ export function observedIpv4FromClientIp(raw: string | undefined): string | unde
 
 export function requestIsLoopback(req: Request): boolean {
   return isRequestLoopback(inputFromRequest(req));
+}
+
+/** 套接字是回环，且请求没有代理头。同机反代在未开 trust-proxy 时不能算本机。 */
+export function requestIsStrictLoopback(req: Request): boolean {
+  if (requestHasProxyHeaders(req.headers)) return false;
+  const socket = getMeshRequestContext(req).clientIp ?? '';
+  if (!socket || socket.startsWith('peer:')) return false;
+  return isLoopbackClientIp(socket);
 }
 
 function inputFromRequest(req: Request): ClientIpInput {

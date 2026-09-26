@@ -11,6 +11,7 @@ import {
 /** packages/app 的分发表必须与这份名单逐字一致，否则会出现路由得到、但 CLI 不认的组。 */
 const DISPATCHED_GROUPS = [
   'login',
+  'auth',
   'logout',
   'whoami',
   'api',

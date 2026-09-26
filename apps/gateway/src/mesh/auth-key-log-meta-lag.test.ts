@@ -67,6 +67,15 @@ describe('exemptMetaKeyLaggingNodes', () => {
     expect(out.ok).toBe(false);
   });
 
+  test('login-policy 不因成员密钥未送达而放行', () => {
+    const out = exemptMetaKeyLaggingNodes(
+      blocked([LAGGING]),
+      record('login-policy'),
+      () => new Set([LAGGING])
+    );
+    expect(out.ok).toBe(false);
+  });
+
   test('非中继模式（没有名单来源）原样返回', () => {
     const out = exemptMetaKeyLaggingNodes(blocked([LAGGING]), record('rename-node'), null);
     expect(out.ok).toBe(false);

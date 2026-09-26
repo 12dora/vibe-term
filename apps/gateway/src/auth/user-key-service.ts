@@ -35,6 +35,7 @@ import {
 import { encrypt } from '../crypto';
 import { toBuffer } from './binary';
 import type { KeyLogStore } from './key-log-store';
+import { projectLoginPolicy } from './login-policy-projection';
 import { projectRelayKeyLogState } from './mesh-relay-store';
 import { type NodeIdentityKeys, selfSignedNodeCertificate } from './node-identity-service';
 import type { SaveNodeIdentityInput } from './node-identity-store';
@@ -241,8 +242,13 @@ export class UserKeyService {
       totp,
       nodeCerts,
       head: { seq: BigInt(user.keyLogHeadSeq), hash: user.keyLogHeadHash },
+      loginPolicy: projectLoginPolicy(this.keyLogStore, userId),
       ...projectRelayKeyLogState(this.db, userId),
     };
+  }
+
+  readLoginPolicy(userId: string) {
+    return projectLoginPolicy(this.keyLogStore, userId);
   }
 
   async apply(userId: string, input: ApplyKeyLogInput): Promise<ApplyKeyLogServiceResult> {

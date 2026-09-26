@@ -253,6 +253,63 @@ describe('AuthApi', () => {
   });
 });
 
+describe('AuthApi 登录客户端自报与限流信息', () => {
+  const LOGIN_BODY = { login: 'a', sig: 'b', delegation: 'c', delegation_sig: 'd' };
+
+  function headerOf(call: Call, name: string): string | null {
+    return new Headers(call.init?.headers).get(name);
+  }
+
+  test('clientKind=web 时 challenge / login / passkey options 都带 x-vibeterm-client', async () => {
+    const calls: Call[] = [];
+    const client = new ApiClient('', (url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+    const api = new AuthApi(client, { clientKind: 'web' });
+    await api.challenge('self', 'alice');
+    await api.login('self', LOGIN_BODY);
+    await api.passkeyLoginOptions('alice', 'AA');
+    expect(calls.map((call) => headerOf(call, 'x-vibeterm-client'))).toEqual(['web', 'web', 'web']);
+    expect(calls.map((call) => headerOf(call, 'content-type'))).toEqual([
+      'application/json',
+      'application/json',
+      'application/json',
+    ]);
+  });
+
+  test('未声明 clientKind 时不带自报头', async () => {
+    const { api, calls } = recorder([new Response('{}', { status: 200 })]);
+    await api.login('self', LOGIN_BODY);
+    expect(headerOf(calls[0], 'x-vibeterm-client')).toBeNull();
+  });
+
+  test('login 429 透出 retryAfterMs', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'PASSWORD_LOGIN_PAUSED', retryAfterMs: 900_000 }), {
+        status: 429,
+      }),
+    ]);
+    expect(await api.login('self', LOGIN_BODY)).toEqual({
+      ok: false,
+      status: 429,
+      code: 'PASSWORD_LOGIN_PAUSED',
+      retryAfterMs: 900_000,
+    });
+  });
+
+  test('challenge 429 把 retryAfterMs 挂到异常上；非法值丢弃', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'RATE_LIMITED', retryAfterMs: 60_000 }), { status: 429 }),
+      new Response(JSON.stringify({ code: 'RATE_LIMITED', retryAfterMs: -1 }), { status: 429 }),
+    ]);
+    const first = await api.challenge('self', 'alice').catch((err: unknown) => err);
+    expect(first).toMatchObject({ code: 'RATE_LIMITED', status: 429, retryAfterMs: 60_000 });
+    const second = (await api.challenge('self', 'alice').catch((err: unknown) => err)) as object;
+    expect('retryAfterMs' in second).toBe(false);
+  });
+});
+
 describe('AuthApi.getConnection（F3-4）', () => {
   test('200 → 带 node 前缀取到 connectionId', async () => {
     const { api, calls } = recorder([

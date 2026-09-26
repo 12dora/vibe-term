@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   bytesEqual,
   encodeAdmitNodePayload,
+  encodeLoginPolicy,
   encodeRenameNodePayload,
   encodeRotateRootKeepPayload,
   generateKdfParams,
@@ -142,5 +143,28 @@ describe('KeyLogStore', () => {
     const parsed = JSON.parse(json) as { authorization_bytes: string; cert_sig: string };
     expect(parsed.authorization_bytes.length).toBeGreaterThan(0);
     expect(parsed.cert_sig.length).toBeGreaterThan(0);
+  });
+
+  test('projectPayloadJson decodes login-policy', () => {
+    const json = projectPayloadJson(
+      'login-policy',
+      encodeLoginPolicy({
+        preset: 'standard',
+        ipFailThreshold: 10,
+        ipLockBaseMs: 15 * 60 * 1000,
+        ipLockMaxMs: 24 * 60 * 60 * 1000,
+        accountFailPerHour: 50,
+        accountLockMs: 15 * 60 * 1000,
+        exemptLocal: true,
+      })
+    );
+    const parsed = JSON.parse(json) as {
+      preset: string;
+      ip_fail_threshold: number;
+      exempt_local: boolean;
+    };
+    expect(parsed.preset).toBe('standard');
+    expect(parsed.ip_fail_threshold).toBe(10);
+    expect(parsed.exempt_local).toBe(true);
   });
 });

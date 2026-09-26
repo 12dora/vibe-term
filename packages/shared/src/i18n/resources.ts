@@ -369,7 +369,8 @@ export const I18N_RESOURCES = {
       "connectingStalled": {
         "node": "Still connecting to the node; the link is slow or temporarily down.",
         "reconnecting": "Connection to the node dropped; reconnecting automatically.",
-        "device": "Node connected; waiting for the device to respond."
+        "device": "Node connected; waiting for the device to respond.",
+        "unreachable": "The current entry can't reach this node; retrying automatically."
       },
       "inputPlaceholder": "Type command here...",
       "clear": "Clear",
@@ -1210,6 +1211,84 @@ export const I18N_RESOURCES = {
         "interruptNotice": "The connection will drop while the service restarts; it will recover shortly.",
         "checkFailed": "Failed to check for updates",
         "terminalHint": "Or upgrade from a terminal: vibeterm upgrade"
+      },
+      "loginHistory": {
+        "title": "Sign-in history",
+        "description": "Account sign-ins and failed attempts recorded by each node.",
+        "tabs": {
+          "success": "Successful",
+          "failed": "Failed"
+        },
+        "showBackground": "Show background sign-ins",
+        "showBackgroundHint": "Sign-ins completed automatically when opening other nodes",
+        "background": "Background",
+        "viaEntry": "via {{name}}",
+        "columns": {
+          "time": "Time",
+          "node": "Node",
+          "account": "Account",
+          "method": "Method",
+          "reason": "Reason",
+          "client": "Client",
+          "ip": "IP",
+          "device": "Device"
+        },
+        "client": {
+          "web": "Web",
+          "cli": "CLI",
+          "unknown": "Unknown"
+        },
+        "method": {
+          "password": "Password",
+          "passwordTotp": "Password + authenticator",
+          "passwordPasskey": "Password + passkey",
+          "passwordWaived": "Password (2FA waived)",
+          "passkey": "Passkey"
+        },
+        "reason": {
+          "unknown": "Unknown reason",
+          "INVALID_CREDENTIALS": "Wrong username or password",
+          "UNKNOWN_USER": "Account does not exist",
+          "ROOT_KEY_MISMATCH": "Wrong password",
+          "TOTP_INVALID": "Wrong authenticator code",
+          "PASSKEY_INVALID": "Passkey verification failed",
+          "RATE_LIMITED": "IP locked",
+          "PASSWORD_LOGIN_PAUSED": "Password sign-in paused",
+          "CHALLENGE_EXPIRED": "Sign-in request expired",
+          "CHALLENGE_CONSUMED": "Sign-in request already used",
+          "MALFORMED": "Malformed request",
+          "DELEGATION_EXPIRED": "Authorization expired"
+        },
+        "empty": {
+          "success": "No sign-ins",
+          "failed": "No failed attempts"
+        },
+        "loadMore": "Load more",
+        "skippedLabel": "Not included:",
+        "skip": {
+          "offline": "Offline",
+          "tooOld": "Upgrade required",
+          "loginRequired": "Sign-in required",
+          "paused": "Paused",
+          "failed": "Load failed"
+        },
+        "skippedItem": "{{name}} ({{reason}})",
+        "listSeparator": ", ",
+        "partial": "{{base}}. Not processed: {{names}}",
+        "retention": {
+          "label": "Retention",
+          "days": "{{n}} days",
+          "forever": "Forever",
+          "mixed": "Varies by node",
+          "saved": "Retention updated on {{count}} node(s)"
+        },
+        "clear": {
+          "button": "Clear records",
+          "confirmTitle": "Clear sign-in history?",
+          "confirmBody": "Deletes sign-in records on all reachable nodes. This cannot be undone.",
+          "confirm": "Clear",
+          "done": "Cleared {{deleted}} record(s) on {{count}} node(s)"
+        }
       }
     },
     "messaging": {
@@ -1991,7 +2070,12 @@ export const I18N_RESOURCES = {
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
         "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address. If none of the existing passkeys can be used any more, run vibeterm mesh passkey remove-all on the server.",
-        "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in."
+        "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in.",
+        "throttle": {
+          "rateLimited": "Too many attempts. Try again in {{time}}.",
+          "paused": "Too many failed attempts. Password sign-in is paused for {{time}}.",
+          "usePasskey": " Passkey sign-in is still available."
+        }
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -2040,7 +2124,8 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "invalidCredentials": "Incorrect username or password.",
         "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
-        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again."
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again.",
+        "PASSWORD_LOGIN_PAUSED": "Password sign-in is paused. Try again later."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
@@ -2080,7 +2165,47 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "Signing back in after the change needs a code. Leave empty to skip.",
         "sessionResumeFailed": "Password updated. Signing back in did not finish; other nodes need a new sign-in.",
         "sessionResumeSkipped": "Password updated. No code entered; other nodes need a new sign-in.",
-        "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first."
+        "nodesTooOld": "Some nodes are older than 1.1.16. Update every node first.",
+        "loginLimit": {
+          "title": "Sign-in limits",
+          "description": "After repeated password failures, locks the source IP and pauses password sign-in for the account. Passkey sign-in is not affected.",
+          "preset": {
+            "relaxed": "Relaxed",
+            "standard": "Standard",
+            "strict": "Strict",
+            "custom": "Custom"
+          },
+          "presetIp": "Lock an IP for {{base}} after {{count}} failures, up to {{max}}",
+          "presetAccount": "Pause password sign-in for {{duration}} after {{count}} failures in an hour",
+          "fields": {
+            "ipFailThreshold": "IP failure limit",
+            "ipLockBase": "First IP lock",
+            "ipLockMax": "Maximum IP lock",
+            "accountFailPerHour": "Account failures per hour",
+            "accountLock": "Account pause"
+          },
+          "unit": {
+            "times": "failures",
+            "minutes": "min",
+            "hours": "h",
+            "days": "d"
+          },
+          "ladderHint": "Each repeat lock of the same IP doubles the duration, up to the maximum.",
+          "exemptLocal": "Exempt local and LAN",
+          "exemptLocalHint": "Failures are still recorded in sign-in history.",
+          "sourceDefault": "Using the default (Standard).",
+          "save": "Save",
+          "saved": "Sign-in limits updated.",
+          "loadFailed": "Failed to load sign-in limits: {{error}}",
+          "blocked": "These nodes run a version below {{version}}. Upgrade them first:",
+          "versionUnknown": "unknown version",
+          "errors": {
+            "range": "Must be between {{min}} and {{max}}.",
+            "integer": "Enter a whole number.",
+            "maxBelowBase": "Must not be shorter than the first IP lock.",
+            "invalid": "Invalid settings."
+          }
+        }
       },
       "credential": {
         "title": "Confirm it's you",
@@ -2094,8 +2219,15 @@ export const I18N_RESOURCES = {
           "revoke": "Remove a node",
           "passkey": "Add or remove a passkey",
           "totp": "Turn off the authenticator",
-          "notifySink": "Change mesh notifications"
+          "notifySink": "Change mesh notifications",
+          "loginPolicy": "Change sign-in limits"
         }
+      },
+      "duration": {
+        "seconds": "{{n}} s",
+        "minutes": "{{n}} min",
+        "hours": "{{n}} h",
+        "days": "{{n}} d"
       }
     },
     "nodes": {
@@ -2119,7 +2251,8 @@ export const I18N_RESOURCES = {
           "label": "More actions",
           "connect": "Connection",
           "changeRole": "Change Role",
-          "leave": "Leave Mesh…"
+          "leave": "Leave Mesh…",
+          "loginHistory": "Sign-in history"
         },
         "status": {
           "standalone": "Standalone",
@@ -2934,7 +3067,9 @@ export const I18N_RESOURCES = {
           "relay_pack_invalid": "The join material on the relay is unusable. Sign in on a machine that already joined to refresh it.",
           "relay_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
           "relay_not_authorized": "The relay rejected this join request: this machine is not authorized.",
-          "local_user_exists": "That username is already taken on this machine."
+          "local_user_exists": "That username is already taken on this machine.",
+          "LOOPBACK_REQUIRED": "Complete setup on this machine.",
+          "UNAUTHORIZED": "Sign in first."
         },
         "becomeRelay": {
           "title": "Use This Machine as the Relay",
@@ -4084,7 +4219,8 @@ export const I18N_RESOURCES = {
       "connectingStalled": {
         "node": "仍在连接节点，链路较慢或暂时不通。",
         "reconnecting": "与节点的连接已中断，正在自动重连。",
-        "device": "节点已连接，正在等待设备响应。"
+        "device": "节点已连接，正在等待设备响应。",
+        "unreachable": "当前入口无法连接该节点，稍后自动重试。"
       },
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
@@ -4925,6 +5061,84 @@ export const I18N_RESOURCES = {
         "interruptNotice": "服务重启期间连接会断开，稍候即可恢复。",
         "checkFailed": "检查更新失败",
         "terminalHint": "或通过终端升级：vibeterm upgrade"
+      },
+      "loginHistory": {
+        "title": "登录历史",
+        "description": "各节点记录的账号登录与失败尝试。",
+        "tabs": {
+          "success": "成功",
+          "failed": "失败"
+        },
+        "showBackground": "显示后台登录",
+        "showBackgroundHint": "打开其他节点时自动完成的登录",
+        "background": "后台",
+        "viaEntry": "经 {{name}}",
+        "columns": {
+          "time": "时间",
+          "node": "节点",
+          "account": "账号",
+          "method": "方式",
+          "reason": "原因",
+          "client": "类型",
+          "ip": "IP",
+          "device": "设备"
+        },
+        "client": {
+          "web": "网页",
+          "cli": "CLI",
+          "unknown": "未知"
+        },
+        "method": {
+          "password": "密码",
+          "passwordTotp": "密码 + 验证码",
+          "passwordPasskey": "密码 + 通行密钥",
+          "passwordWaived": "密码（免二次验证）",
+          "passkey": "通行密钥"
+        },
+        "reason": {
+          "unknown": "未知原因",
+          "INVALID_CREDENTIALS": "用户名或密码错误",
+          "UNKNOWN_USER": "账号不存在",
+          "ROOT_KEY_MISMATCH": "密码错误",
+          "TOTP_INVALID": "验证码错误",
+          "PASSKEY_INVALID": "通行密钥验证失败",
+          "RATE_LIMITED": "IP 已锁定",
+          "PASSWORD_LOGIN_PAUSED": "密码登录已暂停",
+          "CHALLENGE_EXPIRED": "登录请求已过期",
+          "CHALLENGE_CONSUMED": "登录请求已被使用",
+          "MALFORMED": "请求格式错误",
+          "DELEGATION_EXPIRED": "授权已过期"
+        },
+        "empty": {
+          "success": "暂无登录记录",
+          "failed": "暂无失败记录"
+        },
+        "loadMore": "加载更多",
+        "skippedLabel": "未包含：",
+        "skip": {
+          "offline": "离线",
+          "tooOld": "需升级",
+          "loginRequired": "需登录",
+          "paused": "已暂停",
+          "failed": "读取失败"
+        },
+        "skippedItem": "{{name}}（{{reason}}）",
+        "listSeparator": "、",
+        "partial": "{{base}}；未处理：{{names}}",
+        "retention": {
+          "label": "保留时间",
+          "days": "{{n}} 天",
+          "forever": "永久",
+          "mixed": "各节点不同",
+          "saved": "已更新 {{count}} 个节点的保留时间"
+        },
+        "clear": {
+          "button": "清空记录",
+          "confirmTitle": "清空登录历史？",
+          "confirmBody": "将删除所有可访问节点上的登录记录，且无法恢复。",
+          "confirm": "清空",
+          "done": "已清空 {{count}} 个节点，共 {{deleted}} 条记录"
+        }
       }
     },
     "messaging": {
@@ -5706,7 +5920,12 @@ export const I18N_RESOURCES = {
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
         "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥；通行密钥均已不可用时，在服务器执行 vibeterm mesh passkey remove-all。",
-        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
+        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
+        "throttle": {
+          "rateLimited": "尝试次数过多，请在 {{time}} 后重试。",
+          "paused": "失败次数过多，密码登录已暂停，{{time}} 后恢复。",
+          "usePasskey": "可改用通行密钥登录。"
+        }
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -5755,7 +5974,8 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "invalidCredentials": "用户名或密码错误。",
         "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
-        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。"
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。",
+        "PASSWORD_LOGIN_PAUSED": "密码登录已暂停，请稍后再试。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -5795,7 +6015,47 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "改密后重新登录需要验证码；留空则跳过。",
         "sessionResumeFailed": "密码已更新；重新登录未完成，其他节点需重新登录。",
         "sessionResumeSkipped": "密码已更新；未输入验证码，其他节点需重新登录。",
-        "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。"
+        "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。",
+        "loginLimit": {
+          "title": "登录限制",
+          "description": "密码多次输错后锁定来源 IP，并暂停该账号的密码登录；通行密钥登录不受影响。",
+          "preset": {
+            "relaxed": "宽松",
+            "standard": "标准",
+            "strict": "严格",
+            "custom": "自定义"
+          },
+          "presetIp": "同一 IP 失败 {{count}} 次锁定 {{base}}，最长 {{max}}",
+          "presetAccount": "账号每小时失败 {{count}} 次，暂停密码登录 {{duration}}",
+          "fields": {
+            "ipFailThreshold": "IP 失败次数上限",
+            "ipLockBase": "IP 首次锁定时长",
+            "ipLockMax": "IP 最长锁定时长",
+            "accountFailPerHour": "账号每小时失败上限",
+            "accountLock": "账号暂停时长"
+          },
+          "unit": {
+            "times": "次",
+            "minutes": "分钟",
+            "hours": "小时",
+            "days": "天"
+          },
+          "ladderHint": "同一 IP 再次被锁时锁定时长翻倍，不超过最长锁定时长。",
+          "exemptLocal": "本机与局域网免锁定",
+          "exemptLocalHint": "失败仍会记入登录历史。",
+          "sourceDefault": "当前为默认设置（标准）。",
+          "save": "保存",
+          "saved": "登录限制已更新。",
+          "loadFailed": "登录限制读取失败：{{error}}",
+          "blocked": "以下节点版本低于 {{version}}，须先升级才能修改：",
+          "versionUnknown": "版本未知",
+          "errors": {
+            "range": "须在 {{min}}–{{max}} 之间。",
+            "integer": "请输入整数。",
+            "maxBelowBase": "不能短于首次锁定时长。",
+            "invalid": "设置无效。"
+          }
+        }
       },
       "credential": {
         "title": "确认身份",
@@ -5809,8 +6069,15 @@ export const I18N_RESOURCES = {
           "revoke": "移除节点",
           "passkey": "添加或删除通行密钥",
           "totp": "关闭验证码",
-          "notifySink": "设置多节点通知"
+          "notifySink": "设置多节点通知",
+          "loginPolicy": "修改登录限制"
         }
+      },
+      "duration": {
+        "seconds": "{{n}} 秒",
+        "minutes": "{{n}} 分钟",
+        "hours": "{{n}} 小时",
+        "days": "{{n}} 天"
       }
     },
     "nodes": {
@@ -5834,7 +6101,8 @@ export const I18N_RESOURCES = {
           "label": "更多操作",
           "connect": "连接",
           "changeRole": "更改角色",
-          "leave": "退出多节点互联…"
+          "leave": "退出多节点互联…",
+          "loginHistory": "登录历史"
         },
         "status": {
           "standalone": "独立运行",
@@ -6644,7 +6912,9 @@ export const I18N_RESOURCES = {
           "relay_pack_invalid": "中继上的加入材料无法使用。请在已加入的机器上重新登录以补上材料。",
           "relay_unreachable": "无法连接到中继。请检查地址，并确认中继正在运行。",
           "relay_not_authorized": "中继拒绝了本次加入请求：本机未获授权。",
-          "local_user_exists": "本机已存在同名用户。"
+          "local_user_exists": "本机已存在同名用户。",
+          "LOOPBACK_REQUIRED": "请在本机完成初始化。",
+          "UNAUTHORIZED": "请先登录。"
         },
         "becomeRelay": {
           "title": "本机作为中继",
@@ -7790,7 +8060,8 @@ export const I18N_RESOURCES = {
       "connectingStalled": {
         "node": "ノードに接続しています。回線が遅いか、一時的に不通です。",
         "reconnecting": "ノードとの接続が切断されました。自動で再接続しています。",
-        "device": "ノードに接続済みです。デバイスの応答を待っています。"
+        "device": "ノードに接続済みです。デバイスの応答を待っています。",
+        "unreachable": "現在の入口からこのノードに接続できません。自動で再試行します。"
       },
       "inputPlaceholder": "ここにコマンドを入力...",
       "clear": "クリア",
@@ -8631,6 +8902,84 @@ export const I18N_RESOURCES = {
         "interruptNotice": "サービス再起動中は接続が切断されますが、まもなく復旧します。",
         "checkFailed": "更新の確認に失敗しました",
         "terminalHint": "またはターミナルから更新：vibeterm upgrade"
+      },
+      "loginHistory": {
+        "title": "サインイン履歴",
+        "description": "各ノードが記録したアカウントのサインインと失敗した試行です。",
+        "tabs": {
+          "success": "成功",
+          "failed": "失敗"
+        },
+        "showBackground": "バックグラウンドのサインインを表示",
+        "showBackgroundHint": "他のノードを開いたときに自動で行われたサインイン",
+        "background": "バックグラウンド",
+        "viaEntry": "{{name}} 経由",
+        "columns": {
+          "time": "時刻",
+          "node": "ノード",
+          "account": "アカウント",
+          "method": "方式",
+          "reason": "理由",
+          "client": "種類",
+          "ip": "IP",
+          "device": "デバイス"
+        },
+        "client": {
+          "web": "Web",
+          "cli": "CLI",
+          "unknown": "不明"
+        },
+        "method": {
+          "password": "パスワード",
+          "passwordTotp": "パスワード + 認証アプリ",
+          "passwordPasskey": "パスワード + パスキー",
+          "passwordWaived": "パスワード（二段階認証免除）",
+          "passkey": "パスキー"
+        },
+        "reason": {
+          "unknown": "不明な理由",
+          "INVALID_CREDENTIALS": "ユーザー名またはパスワードが違います",
+          "UNKNOWN_USER": "アカウントが存在しません",
+          "ROOT_KEY_MISMATCH": "パスワードが違います",
+          "TOTP_INVALID": "確認コードが違います",
+          "PASSKEY_INVALID": "パスキーの検証に失敗",
+          "RATE_LIMITED": "IP をロック中",
+          "PASSWORD_LOGIN_PAUSED": "パスワードサインイン停止中",
+          "CHALLENGE_EXPIRED": "サインイン要求の期限切れ",
+          "CHALLENGE_CONSUMED": "サインイン要求は使用済み",
+          "MALFORMED": "不正な要求",
+          "DELEGATION_EXPIRED": "認可の期限切れ"
+        },
+        "empty": {
+          "success": "サインインの記録はありません",
+          "failed": "失敗した記録はありません"
+        },
+        "loadMore": "さらに読み込む",
+        "skippedLabel": "対象外：",
+        "skip": {
+          "offline": "オフライン",
+          "tooOld": "要アップグレード",
+          "loginRequired": "要サインイン",
+          "paused": "一時停止中",
+          "failed": "読み込み失敗"
+        },
+        "skippedItem": "{{name}}（{{reason}}）",
+        "listSeparator": "、",
+        "partial": "{{base}}。未処理：{{names}}",
+        "retention": {
+          "label": "保存期間",
+          "days": "{{n}} 日",
+          "forever": "無期限",
+          "mixed": "ノードごとに異なる",
+          "saved": "{{count}} 台のノードで保存期間を更新しました"
+        },
+        "clear": {
+          "button": "記録を消去",
+          "confirmTitle": "サインイン履歴を消去しますか？",
+          "confirmBody": "アクセス可能なすべてのノードのサインイン記録を削除します。元に戻せません。",
+          "confirm": "消去",
+          "done": "{{count}} 台のノードから {{deleted}} 件の記録を消去しました"
+        }
       }
     },
     "messaging": {
@@ -9412,7 +9761,12 @@ export const I18N_RESOURCES = {
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
         "passkeySecondFactor": "パスキーの確認を完了してください…",
         "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。既存のパスキーがどれも使えない場合は、サーバーで vibeterm mesh passkey remove-all を実行してください。",
-        "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。"
+        "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
+        "throttle": {
+          "rateLimited": "試行回数が多すぎます。{{time}}後に再試行してください。",
+          "paused": "失敗が多すぎるため、パスワードでのサインインを一時停止しました。{{time}}後に再開します。",
+          "usePasskey": "パスキーでのサインインは引き続き利用できます。"
+        }
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
@@ -9461,7 +9815,8 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
         "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
-        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。"
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。",
+        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
@@ -9501,7 +9856,47 @@ export const I18N_RESOURCES = {
         "reloginTotpHint": "変更後の再サインインにはコードが必要です。空欄ならスキップします。",
         "sessionResumeFailed": "パスワードを更新しました。再サインインは完了していません。他のノードでは再度サインインが必要です。",
         "sessionResumeSkipped": "パスワードを更新しました。コード未入力のため、他のノードでは再度サインインが必要です。",
-        "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。"
+        "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。",
+        "loginLimit": {
+          "title": "サインイン制限",
+          "description": "パスワードの失敗が続くと送信元 IP をロックし、アカウントのパスワードサインインを一時停止します。パスキーでのサインインは影響を受けません。",
+          "preset": {
+            "relaxed": "緩め",
+            "standard": "標準",
+            "strict": "厳格",
+            "custom": "カスタム"
+          },
+          "presetIp": "同一 IP で {{count}} 回失敗すると {{base}} ロック（最長 {{max}}）",
+          "presetAccount": "1 時間に {{count}} 回失敗するとパスワードサインインを {{duration}} 停止",
+          "fields": {
+            "ipFailThreshold": "IP の失敗回数上限",
+            "ipLockBase": "IP の初回ロック時間",
+            "ipLockMax": "IP の最長ロック時間",
+            "accountFailPerHour": "アカウントの 1 時間あたり失敗上限",
+            "accountLock": "アカウントの停止時間"
+          },
+          "unit": {
+            "times": "回",
+            "minutes": "分",
+            "hours": "時間",
+            "days": "日"
+          },
+          "ladderHint": "同じ IP が再びロックされるたびにロック時間が倍になり、最長ロック時間を超えません。",
+          "exemptLocal": "ローカルと LAN はロック対象外",
+          "exemptLocalHint": "失敗はサインイン履歴に記録されます。",
+          "sourceDefault": "既定の設定（標準）を使用しています。",
+          "save": "保存",
+          "saved": "サインイン制限を更新しました。",
+          "loadFailed": "サインイン制限を読み込めませんでした：{{error}}",
+          "blocked": "次のノードは {{version}} 未満です。先にアップグレードしてください：",
+          "versionUnknown": "バージョン不明",
+          "errors": {
+            "range": "{{min}}〜{{max}} の範囲で入力してください。",
+            "integer": "整数を入力してください。",
+            "maxBelowBase": "初回ロック時間より短くできません。",
+            "invalid": "設定が無効です。"
+          }
+        }
       },
       "credential": {
         "title": "本人確認",
@@ -9515,8 +9910,15 @@ export const I18N_RESOURCES = {
           "revoke": "ノードを削除",
           "passkey": "パスキーの追加・削除",
           "totp": "認証アプリをオフにする",
-          "notifySink": "マルチノード通知の設定"
+          "notifySink": "マルチノード通知の設定",
+          "loginPolicy": "サインイン制限の変更"
         }
+      },
+      "duration": {
+        "seconds": "{{n}} 秒",
+        "minutes": "{{n}} 分",
+        "hours": "{{n}} 時間",
+        "days": "{{n}} 日"
       }
     },
     "nodes": {
@@ -9540,7 +9942,8 @@ export const I18N_RESOURCES = {
           "label": "その他の操作",
           "connect": "接続",
           "changeRole": "ロールを変更",
-          "leave": "マルチノード接続から退出…"
+          "leave": "マルチノード接続から退出…",
+          "loginHistory": "サインイン履歴"
         },
         "status": {
           "standalone": "スタンドアロン",
@@ -10350,7 +10753,9 @@ export const I18N_RESOURCES = {
           "relay_pack_invalid": "中継上の参加情報が使えません。既に参加済みのマシンでログインし直して更新してください。",
           "relay_unreachable": "中継に接続できません。アドレスと、中継が動作しているかを確認してください。",
           "relay_not_authorized": "中継が参加要求を拒否しました：本機は許可されていません。",
-          "local_user_exists": "このマシンには同じユーザー名が既に存在します。"
+          "local_user_exists": "このマシンには同じユーザー名が既に存在します。",
+          "LOOPBACK_REQUIRED": "初期設定はこのマシン上で行ってください。",
+          "UNAUTHORIZED": "先にログインしてください。"
         },
         "becomeRelay": {
           "title": "本機を中継にする",

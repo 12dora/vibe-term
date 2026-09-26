@@ -9,6 +9,8 @@ import { jsonBody, jsonError } from './session-middleware';
 
 export type { LoginFailureSink } from './auth-key-log-login';
 export { createLoginFailureSink, loginRequestContext } from './auth-key-log-login';
+export { bindLoginHooks } from '../auth/login-records-hooks';
+export { recordsOr405 } from '../auth/login-records-routes';
 export { verifySecondFactors } from './auth-passkey-origin';
 export { definesUplink, planKeyLogAppend } from './auth-key-log-plan';
 export type { KeyLogAppendPlan } from './auth-key-log-plan';

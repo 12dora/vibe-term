@@ -1770,22 +1770,122 @@ describe('auth-routes', () => {
     }
   });
 
-  test('rate limit 10 failures per uid / ip → 429', async () => {
+  test('standard login policy locks a public IP after 10 failures', async () => {
     const mesh = await bootMesh();
+    const rejected: string[] = [];
+    mesh.runtime.auth.setOnLimiterReject((info) => {
+      rejected.push(info.code);
+    });
+    const ip = '203.0.113.19';
     try {
       for (let i = 0; i < 10; i++) {
+        const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+          badSig: true,
+          clientIp: ip,
+        });
+        expect(res.status).toBe(401);
+      }
+      const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        badSig: true,
+        clientIp: ip,
+      });
+      expect(res.status).toBe(429);
+      const body = (await res.json()) as { code: string; retryAfterMs: number };
+      expect(body.code).toBe('RATE_LIMITED');
+      expect(body.retryAfterMs).toBeGreaterThan(14 * 60 * 1000);
+      expect(rejected).toEqual(['RATE_LIMITED']);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('trusted LAN clients are exempt from the login lock', async () => {
+    const mesh = await bootMesh();
+    try {
+      for (let i = 0; i < 11; i++) {
         const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
           badSig: true,
           clientIp: '10.0.0.9',
         });
         expect(res.status).toBe(401);
       }
-      const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
-        badSig: true,
-        clientIp: '10.0.0.9',
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/login-policy requires a session and defaults to standard', async () => {
+    const mesh = await bootMesh();
+    try {
+      const anon = await call(mesh.runtime, 'http://localhost/api/auth/login-policy');
+      expect(anon.status).toBe(401);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/login-policy', {
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
-      expect(res.status).toBe(429);
-      expect((await res.json()).code).toBe('RATE_LIMITED');
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        source: string;
+        writable: boolean;
+        blockers: unknown[];
+        policy: { preset: string; ipFailThreshold: number; exemptLocal: boolean };
+      };
+      expect(body.source).toBe('default');
+      expect(body.writable).toBe(true);
+      expect(body.blockers).toEqual([]);
+      expect(body.policy).toMatchObject({
+        preset: 'standard',
+        ipFailThreshold: 10,
+        exemptLocal: true,
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('custom login-policy lowers the public IP lock threshold', async () => {
+    const { encodeLoginPolicy } = await import('@vibeterm/shared/auth');
+    const mesh = await bootMesh();
+    const ip = '198.51.100.77';
+    try {
+      const applied = await mesh.keyLogService.signAndApply(mesh.boot.userId, mesh.boot.rootKey, {
+        type: 'login-policy',
+        payload: encodeLoginPolicy({
+          preset: 'custom',
+          ipFailThreshold: 3,
+          ipLockBaseMs: 15 * 60 * 1000,
+          ipLockMaxMs: 24 * 60 * 60 * 1000,
+          accountFailPerHour: 50,
+          accountLockMs: 15 * 60 * 1000,
+          exemptLocal: true,
+        }),
+      });
+      expect(applied.ok).toBe(true);
+      for (let i = 0; i < 3; i++) {
+        const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+          badSig: true,
+          clientIp: ip,
+        });
+        expect(res.status).toBe(401);
+      }
+      const locked = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        badSig: true,
+        clientIp: ip,
+      });
+      expect(locked.res.status).toBe(429);
+      expect((await locked.res.json()).code).toBe('RATE_LIMITED');
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '198.51.100.78',
+      });
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/login-policy', {
+        headers: { cookie: `vibeterm_s_self=${sid}` },
+      });
+      const body = (await res.json()) as {
+        source: string;
+        policy: { preset: string; ipFailThreshold: number };
+      };
+      expect(body.source).toBe('keylog');
+      expect(body.policy).toMatchObject({ preset: 'custom', ipFailThreshold: 3 });
     } finally {
       mesh.close();
     }
@@ -1903,6 +2003,26 @@ describe('auth-routes', () => {
         });
         expect(res.status).toBe(400);
       }
+      const otherClaim = await failLogin(untrusted.runtime, {
+        clientIp: socket,
+        trustProxy: false,
+        cfIp: '198.51.100.9',
+      });
+      expect(otherClaim.status).toBe(400);
+      for (let i = 0; i < 8; i++) {
+        const res = await failLogin(untrusted.runtime, {
+          clientIp: socket,
+          trustProxy: false,
+          cfIp: '198.51.100.9',
+        });
+        expect(res.status).toBe(400);
+      }
+      const tenth = await failLogin(untrusted.runtime, {
+        clientIp: socket,
+        trustProxy: false,
+        cfIp: '198.51.100.9',
+      });
+      expect(tenth.status).toBe(400);
       const blocked = await failLogin(untrusted.runtime, {
         clientIp: socket,
         trustProxy: false,

@@ -2,6 +2,7 @@
 
 import { command as agent } from './commands/agent';
 import { command as api } from './commands/api';
+import { command as auth } from './commands/auth';
 import { command as cp } from './commands/cp';
 import { command as devices } from './commands/devices';
 import { command as exec } from './commands/exec';
@@ -22,6 +23,7 @@ import { command as whoami } from './commands/whoami';
 
 export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   login,
+  auth,
   logout,
   whoami,
   api,
@@ -40,7 +42,7 @@ export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   exec,
   system,
 ];
-/** 十八个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
+/** 十九个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
 export const RESERVED_COMMANDS: readonly Command[] = [];
 export const COMMANDS: readonly Command[] = [...IMPLEMENTED_COMMANDS, ...RESERVED_COMMANDS];
 

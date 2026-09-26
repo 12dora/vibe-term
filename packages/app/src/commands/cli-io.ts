@@ -19,6 +19,8 @@ export type CliIo = {
   start?: (serviceName: string, installDir: string) => Promise<void>;
   nodeEnv?: string;
   totpCode?: string;
+  /** 测试用：在密钥打印之后、写入之前提供验证码。 */
+  readTotpCode?: (secret: Uint8Array) => string | Promise<string>;
   serviceManager?: ServiceManagerKind;
   confirm?: () => boolean | Promise<boolean>;
   isTTY?: boolean;

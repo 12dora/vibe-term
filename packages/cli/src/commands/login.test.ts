@@ -103,6 +103,13 @@ describe('vibeterm login', () => {
 
     expect(gateway.requests.length).toBeGreaterThan(3);
     expect(gateway.requests.every((row) => row.origin === ENTRY)).toBe(true);
+    const authPosts = gateway.requests.filter(
+      (row) => row.path.endsWith('/api/auth/challenge') || row.path.endsWith('/api/auth/login')
+    );
+    expect(authPosts.length).toBeGreaterThan(0);
+    expect(authPosts.every((row) => row.client === 'cli')).toBe(true);
+    const other = gateway.requests.filter((row) => !authPosts.includes(row));
+    expect(other.every((row) => row.client === null)).toBe(true);
   });
 
   test('reaches other nodes through /n/<id> with that node’s own cookie', async () => {

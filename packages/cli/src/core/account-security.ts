@@ -25,9 +25,9 @@ import {
   verifyTotpCode,
 } from '@vibeterm/shared/auth';
 import type { AuthMode } from './auth';
-import { fetchAuthMode } from './auth';
+import { fetchAuthMode, noteDerivingKey } from './auth';
 import type { CliContext } from './context';
-import { AuthError, CliError } from './errors';
+import { AuthError, CliError, UsageError } from './errors';
 import {
   appendKeyLog,
   assertKeyLogAppended,
@@ -68,6 +68,47 @@ export async function totpPreview(
     secretBase32: encodeBase32(secret),
     otpauthUri: buildOtpauthUri({ secret, account: uid }),
   };
+}
+
+export function totpSecretRetryHint(secretBase32: string): string {
+  return `rerun with --totp-secret ${secretBase32}`;
+}
+
+export interface TotpConfirmInput {
+  secret: Uint8Array;
+  /** 旗标或环境变量已给的码。null 表示还要向 TTY 要。 */
+  preset: string | null;
+  interactive: boolean;
+  secretBase32: string;
+  nowSec?: number;
+  prompt: () => Promise<string>;
+  warn?: (message: string) => void;
+}
+
+/** 校验验证码。TTY 上码不对就用同一密钥再问，直到对或 Ctrl-C。非 TTY 只试一次。 */
+export async function confirmTotpCode(input: TotpConfirmInput): Promise<string> {
+  const hint = totpSecretRetryHint(input.secretBase32);
+  if (input.preset === null && !input.interactive) {
+    throw new UsageError(
+      'TOTP code is required and stdin is not a terminal',
+      `pass --code or set VIBETERM_TOTP; ${hint}`
+    );
+  }
+  let code = (input.preset ?? (await input.prompt())).trim();
+  if (!code) throw new UsageError('TOTP code is empty');
+  const canRetry = input.interactive && input.preset === null;
+  while (!verifyTotpCode(input.secret, code, input.nowSec ?? Math.floor(Date.now() / 1000))) {
+    if (!canRetry) {
+      throw new AuthError(
+        'TOTP code is invalid',
+        `check the authenticator clock and try a fresh code; ${hint}`
+      );
+    }
+    input.warn?.('TOTP code is invalid; enter another code for the same secret (Ctrl-C to abort)');
+    code = (await input.prompt()).trim();
+    if (!code) throw new UsageError('TOTP code is empty');
+  }
+  return code;
 }
 
 export function decodeTotpSecret(raw: string): Uint8Array {
@@ -156,6 +197,7 @@ export async function changeAccountPassword(
   const mode = await requireMeshMode(ctx);
   const oldRoot = await deriveRootFromMode(mode, input.oldPassword);
   const newKdf = generateKdfParams();
+  noteDerivingKey();
   const newSeed = await deriveSeed(input.newPassword, newKdf);
   const newRoot = rootKeyFromSeed(newSeed);
   try {

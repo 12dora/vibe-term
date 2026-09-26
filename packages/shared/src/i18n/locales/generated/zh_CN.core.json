@@ -178,7 +178,8 @@
       "connectingStalled": {
         "node": "仍在连接节点，链路较慢或暂时不通。",
         "reconnecting": "与节点的连接已中断，正在自动重连。",
-        "device": "节点已连接，正在等待设备响应。"
+        "device": "节点已连接，正在等待设备响应。",
+        "unreachable": "当前入口无法连接该节点，稍后自动重试。"
       },
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
@@ -676,7 +677,12 @@
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
         "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥；通行密钥均已不可用时，在服务器执行 vibeterm mesh passkey remove-all。",
-        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
+        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
+        "throttle": {
+          "rateLimited": "尝试次数过多，请在 {{time}} 后重试。",
+          "paused": "失败次数过多，密码登录已暂停，{{time}} 后恢复。",
+          "usePasskey": "可改用通行密钥登录。"
+        }
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -725,7 +731,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "invalidCredentials": "用户名或密码错误。",
         "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
-        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。"
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。",
+        "PASSWORD_LOGIN_PAUSED": "密码登录已暂停，请稍后再试。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -765,7 +772,47 @@
         "reloginTotpHint": "改密后重新登录需要验证码；留空则跳过。",
         "sessionResumeFailed": "密码已更新；重新登录未完成，其他节点需重新登录。",
         "sessionResumeSkipped": "密码已更新；未输入验证码，其他节点需重新登录。",
-        "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。"
+        "nodesTooOld": "有节点版本低于 1.1.16，须先升级全部节点。",
+        "loginLimit": {
+          "title": "登录限制",
+          "description": "密码多次输错后锁定来源 IP，并暂停该账号的密码登录；通行密钥登录不受影响。",
+          "preset": {
+            "relaxed": "宽松",
+            "standard": "标准",
+            "strict": "严格",
+            "custom": "自定义"
+          },
+          "presetIp": "同一 IP 失败 {{count}} 次锁定 {{base}}，最长 {{max}}",
+          "presetAccount": "账号每小时失败 {{count}} 次，暂停密码登录 {{duration}}",
+          "fields": {
+            "ipFailThreshold": "IP 失败次数上限",
+            "ipLockBase": "IP 首次锁定时长",
+            "ipLockMax": "IP 最长锁定时长",
+            "accountFailPerHour": "账号每小时失败上限",
+            "accountLock": "账号暂停时长"
+          },
+          "unit": {
+            "times": "次",
+            "minutes": "分钟",
+            "hours": "小时",
+            "days": "天"
+          },
+          "ladderHint": "同一 IP 再次被锁时锁定时长翻倍，不超过最长锁定时长。",
+          "exemptLocal": "本机与局域网免锁定",
+          "exemptLocalHint": "失败仍会记入登录历史。",
+          "sourceDefault": "当前为默认设置（标准）。",
+          "save": "保存",
+          "saved": "登录限制已更新。",
+          "loadFailed": "登录限制读取失败：{{error}}",
+          "blocked": "以下节点版本低于 {{version}}，须先升级才能修改：",
+          "versionUnknown": "版本未知",
+          "errors": {
+            "range": "须在 {{min}}–{{max}} 之间。",
+            "integer": "请输入整数。",
+            "maxBelowBase": "不能短于首次锁定时长。",
+            "invalid": "设置无效。"
+          }
+        }
       },
       "credential": {
         "title": "确认身份",
@@ -779,8 +826,15 @@
           "revoke": "移除节点",
           "passkey": "添加或删除通行密钥",
           "totp": "关闭验证码",
-          "notifySink": "设置多节点通知"
+          "notifySink": "设置多节点通知",
+          "loginPolicy": "修改登录限制"
         }
+      },
+      "duration": {
+        "seconds": "{{n}} 秒",
+        "minutes": "{{n}} 分钟",
+        "hours": "{{n}} 小时",
+        "days": "{{n}} 天"
       }
     },
     "nodes": {

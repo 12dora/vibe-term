@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
  */
 export const CLIENT_CLI_COMMANDS: ReadonlySet<string> = new Set([
   'login',
+  'auth',
   'logout',
   'whoami',
   'api',

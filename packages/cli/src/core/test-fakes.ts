@@ -81,7 +81,13 @@ export interface FakeGatewayOptions {
 export interface FakeGateway {
   fetch: FetchLike;
   /** 收到的请求，按顺序。 */
-  requests: Array<{ method: string; path: string; origin: string | null; cookie: string | null }>;
+  requests: Array<{
+    method: string;
+    path: string;
+    origin: string | null;
+    cookie: string | null;
+    client: string | null;
+  }>;
   /** 收到的每个登录体（按顺序），用来断言 `totp` / `k_totp` 真的发了。 */
   loginBodies: Array<{ nodeId: string; body: Record<string, unknown> }>;
   /** 已签发的会话：nodeId → sid。 */
@@ -316,6 +322,7 @@ export function createFakeGateway(options: FakeGatewayOptions): FakeGateway {
       path: url.pathname,
       origin: request.headers.get('origin'),
       cookie: request.headers.get('cookie'),
+      client: request.headers.get('x-vibeterm-client'),
     });
     return await route(state, target, path, request);
   };

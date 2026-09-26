@@ -1,6 +1,7 @@
 import {
   PASSKEY_REGISTER_HINT,
   changeAccountPassword,
+  confirmTotpCode,
   decodeTotpSecret,
   disableTotp,
   enableTotp,
@@ -63,20 +64,9 @@ function totpSecretFromFlags(flags: Parameters<SubHandler>[1]): Uint8Array {
   return raw ? decodeTotpSecret(raw) : generateTotpSecret();
 }
 
-async function totpCodeFromFlags(flags: Parameters<SubHandler>[1]): Promise<string> {
-  const fromFlag = flagString(flags, 'code');
-  if (fromFlag) return fromFlag;
-  const fromEnv = process.env.VIBETERM_TOTP;
-  if (fromEnv) return fromEnv;
-  if (!isInteractive()) {
-    throw new UsageError(
-      'TOTP code is required and stdin is not a terminal',
-      'pass --code or set VIBETERM_TOTP after scanning the otpauth URI'
-    );
-  }
-  const value = (await promptHidden('TOTP code: ')).trim();
-  if (!value) throw new UsageError('TOTP code is empty');
-  return value;
+function sayTotpSecret(ctx: Parameters<SubHandler>[0], line: string): void {
+  if (ctx.globals.json) ctx.out.warn(line);
+  else ctx.out.info(line);
 }
 
 export const totp: SubHandler = async (ctx, flags, positionals) => {
@@ -92,16 +82,24 @@ export const totp: SubHandler = async (ctx, flags, positionals) => {
     throw new UsageError(`unknown totp action: ${action}`, 'use enable|disable');
   }
   const secret = totpSecretFromFlags(flags);
-  const preview = await totpPreview(ctx, secret);
-  if (!ctx.globals.json) {
-    ctx.out.info(`Secret (base32): ${preview.secretBase32}`);
-    ctx.out.info(preview.otpauthUri);
+  try {
+    const preview = await totpPreview(ctx, secret);
+    sayTotpSecret(ctx, `Secret (base32): ${preview.secretBase32}`);
+    sayTotpSecret(ctx, preview.otpauthUri);
+    const code = await confirmTotpCode({
+      secret,
+      preset: flagString(flags, 'code') || process.env.VIBETERM_TOTP || null,
+      interactive: isInteractive(),
+      secretBase32: preview.secretBase32,
+      prompt: () => promptHidden('TOTP code: '),
+      warn: (message) => ctx.out.warn(message),
+    });
+    const password = await readAccountPassword();
+    const outcome = await enableTotp(ctx, { password, secret, code });
+    emit(ctx, outcome, () => ctx.out.line('TOTP enabled'));
+  } finally {
+    secret.fill(0);
   }
-  const code = await totpCodeFromFlags(flags);
-  const password = await readAccountPassword();
-  const outcome = await enableTotp(ctx, { password, secret, code });
-  secret.fill(0);
-  emit(ctx, outcome, () => ctx.out.line('TOTP enabled'));
 };
 
 export const passkey: SubHandler = async (ctx, flags, positionals) => {

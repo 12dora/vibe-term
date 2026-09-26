@@ -50,4 +50,7 @@ export type LoginFailureCode =
   | 'NODE_LIST_FAILED'
   | (string & {});
 
-export type LoginNodeResult = { ok: true } | { ok: false; code: LoginFailureCode };
+export type LoginNodeResult =
+  | { ok: true }
+  /** `retryAfterMs`：限流 / 密码登录暂停时服务端给出的剩余时长。 */
+  | { ok: false; code: LoginFailureCode; retryAfterMs?: number };

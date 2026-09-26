@@ -12,6 +12,7 @@ import {
   encodeAddPasskeyPayload,
   encodeBase64url,
   rootKeyFromSeed,
+  totpCode,
 } from '../../../shared/src/auth';
 import { setLang, t } from '../i18n';
 import { parseArgs } from '../lib/args';
@@ -22,6 +23,14 @@ import { runUserAdd, runUserPasswd, runUserTotp } from './user';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const parsed = parseArgs([]);
+
+function totpIo(password: string) {
+  return {
+    password,
+    log: () => undefined,
+    readTotpCode: (secret: Uint8Array) => totpCode(secret, Math.floor(Date.now() / 1000)),
+  };
+}
 
 function must<T>(value: T | null | undefined, label: string): T {
   if (value == null) throw new Error(`missing ${label}`);
@@ -149,8 +158,7 @@ describe('user commands', () => {
     });
     const enrolled = await runUserTotp(parsed, 'bob', {
       auth,
-      password: 'old-pass-word',
-      log: () => undefined,
+      ...totpIo('old-pass-word'),
     });
     await addTestPasskey(auth, 'bob', 'old-pass-word');
     const before = must(auth.userStore.getByUsername('bob'), 'bob');
@@ -193,8 +201,7 @@ describe('user commands', () => {
     });
     await runUserTotp(parsed, 'bob', {
       auth,
-      password: 'old-pass-word',
-      log: () => undefined,
+      ...totpIo('old-pass-word'),
     });
     await addTestPasskey(auth, 'bob', 'old-pass-word');
     const before = must(auth.userStore.getByUsername('bob'), 'bob');
@@ -246,8 +253,7 @@ describe('user commands', () => {
     });
     const enrolled = await runUserTotp(parsed, 'carol', {
       auth,
-      password: 'totp-pass-word',
-      log: () => undefined,
+      ...totpIo('totp-pass-word'),
     });
     expect(enrolled.uri.startsWith('otpauth://totp/')).toBe(true);
 
@@ -267,6 +273,29 @@ describe('user commands', () => {
       seq: BigInt(totpSeq),
     });
     expect(bytesEqual(plain, enrolled.secret)).toBe(true);
+  });
+
+  test('user totp does not write set-totp when the code does not match', async () => {
+    const auth = await openUserAuth();
+    authHandles.push(auth);
+    await runUserAdd(parsed, 'dave', {
+      auth,
+      password: 'totp-pass-word',
+      log: () => undefined,
+    });
+    const before = must(auth.userStore.getByUsername('dave'), 'dave');
+    const logsBefore = auth.keyLogStore.list(before.id).length;
+    await expect(
+      runUserTotp(parsed, 'dave', {
+        auth,
+        password: 'totp-pass-word',
+        totpCode: '000000',
+        log: () => undefined,
+      })
+    ).rejects.toThrow(/nothing was saved/);
+    const after = must(auth.userStore.getByUsername('dave'), 'dave');
+    expect(auth.keyLogStore.list(after.id).length).toBe(logsBefore);
+    expect(after.totpRecordSeq).toBeNull();
   });
 
   test('user add refuses an existing username', async () => {

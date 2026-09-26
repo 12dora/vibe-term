@@ -178,7 +178,8 @@
       "connectingStalled": {
         "node": "ノードに接続しています。回線が遅いか、一時的に不通です。",
         "reconnecting": "ノードとの接続が切断されました。自動で再接続しています。",
-        "device": "ノードに接続済みです。デバイスの応答を待っています。"
+        "device": "ノードに接続済みです。デバイスの応答を待っています。",
+        "unreachable": "現在の入口からこのノードに接続できません。自動で再試行します。"
       },
       "inputPlaceholder": "ここにコマンドを入力...",
       "clear": "クリア",
@@ -676,7 +677,12 @@
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
         "passkeySecondFactor": "パスキーの確認を完了してください…",
         "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。既存のパスキーがどれも使えない場合は、サーバーで vibeterm mesh passkey remove-all を実行してください。",
-        "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。"
+        "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
+        "throttle": {
+          "rateLimited": "試行回数が多すぎます。{{time}}後に再試行してください。",
+          "paused": "失敗が多すぎるため、パスワードでのサインインを一時停止しました。{{time}}後に再開します。",
+          "usePasskey": "パスキーでのサインインは引き続き利用できます。"
+        }
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
@@ -725,7 +731,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
         "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
-        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。"
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。",
+        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
@@ -765,7 +772,47 @@
         "reloginTotpHint": "変更後の再サインインにはコードが必要です。空欄ならスキップします。",
         "sessionResumeFailed": "パスワードを更新しました。再サインインは完了していません。他のノードでは再度サインインが必要です。",
         "sessionResumeSkipped": "パスワードを更新しました。コード未入力のため、他のノードでは再度サインインが必要です。",
-        "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。"
+        "nodesTooOld": "1.1.16 より古いノードがあります。先にすべてのノードを更新してください。",
+        "loginLimit": {
+          "title": "サインイン制限",
+          "description": "パスワードの失敗が続くと送信元 IP をロックし、アカウントのパスワードサインインを一時停止します。パスキーでのサインインは影響を受けません。",
+          "preset": {
+            "relaxed": "緩め",
+            "standard": "標準",
+            "strict": "厳格",
+            "custom": "カスタム"
+          },
+          "presetIp": "同一 IP で {{count}} 回失敗すると {{base}} ロック（最長 {{max}}）",
+          "presetAccount": "1 時間に {{count}} 回失敗するとパスワードサインインを {{duration}} 停止",
+          "fields": {
+            "ipFailThreshold": "IP の失敗回数上限",
+            "ipLockBase": "IP の初回ロック時間",
+            "ipLockMax": "IP の最長ロック時間",
+            "accountFailPerHour": "アカウントの 1 時間あたり失敗上限",
+            "accountLock": "アカウントの停止時間"
+          },
+          "unit": {
+            "times": "回",
+            "minutes": "分",
+            "hours": "時間",
+            "days": "日"
+          },
+          "ladderHint": "同じ IP が再びロックされるたびにロック時間が倍になり、最長ロック時間を超えません。",
+          "exemptLocal": "ローカルと LAN はロック対象外",
+          "exemptLocalHint": "失敗はサインイン履歴に記録されます。",
+          "sourceDefault": "既定の設定（標準）を使用しています。",
+          "save": "保存",
+          "saved": "サインイン制限を更新しました。",
+          "loadFailed": "サインイン制限を読み込めませんでした：{{error}}",
+          "blocked": "次のノードは {{version}} 未満です。先にアップグレードしてください：",
+          "versionUnknown": "バージョン不明",
+          "errors": {
+            "range": "{{min}}〜{{max}} の範囲で入力してください。",
+            "integer": "整数を入力してください。",
+            "maxBelowBase": "初回ロック時間より短くできません。",
+            "invalid": "設定が無効です。"
+          }
+        }
       },
       "credential": {
         "title": "本人確認",
@@ -779,8 +826,15 @@
           "revoke": "ノードを削除",
           "passkey": "パスキーの追加・削除",
           "totp": "認証アプリをオフにする",
-          "notifySink": "マルチノード通知の設定"
+          "notifySink": "マルチノード通知の設定",
+          "loginPolicy": "サインイン制限の変更"
         }
+      },
+      "duration": {
+        "seconds": "{{n}} 秒",
+        "minutes": "{{n}} 分",
+        "hours": "{{n}} 時間",
+        "days": "{{n}} 日"
       }
     },
     "nodes": {

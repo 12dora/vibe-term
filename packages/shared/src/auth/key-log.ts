@@ -24,6 +24,8 @@ import {
   nodeIdToHex,
   sha256,
 } from './encoding';
+import { applyLoginPolicy } from './login-policy-record';
+import type { LoginPolicy } from './login-policy-record';
 import { applyNotificationSink } from './notification-sink-record';
 import { applyReadmitNode } from './readmit-node-record';
 import type { StoredRelayList } from './relay-records';
@@ -62,12 +64,15 @@ export type UserKeyState = {
   nodeNames?: Map<string, string>;
   /** 最新 `notification-sink` 投影：nodeId hex → 是否为汇聚机。未回放密钥日志的快照可缺省。 */
   notificationSinks?: Map<string, boolean>;
+  /** 最新 `login-policy`。缺省表示尚未写入，运行时用预设 `standard`。 */
+  loginPolicy?: LoginPolicy | null;
   head: KeyLogHead;
 };
 
 export {
   KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+  MIN_LOGIN_POLICY_RECORD_VERSION,
   MIN_NOTIFICATION_SINK_RECORD_VERSION,
   MIN_READMIT_NODE_RECORD_VERSION,
   MIN_RENAME_NODE_RECORD_VERSION,
@@ -101,6 +106,7 @@ export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> 
   'rename-node': ['root', 'passkey'],
   'readmit-node': ['root', 'passkey'],
   'notification-sink': ['root', 'passkey'],
+  'login-policy': ['root', 'passkey'],
 };
 
 export type KeyLogSignedRecord = {
@@ -194,6 +200,7 @@ export function emptyUserKeyState(
     metaKeyEntries: [],
     nodeNames: new Map(),
     notificationSinks: new Map(),
+    loginPolicy: null,
     head: genesisHead(),
   };
 }
@@ -367,6 +374,7 @@ function cloneState(state: UserKeyState): UserKeyState {
     metaKeyEntries: state.metaKeyEntries.map((entry) => ({ ...entry })),
     nodeNames: new Map(state.nodeNames),
     notificationSinks: new Map(state.notificationSinks),
+    loginPolicy: state.loginPolicy ?? null,
     head: { seq: state.head.seq, hash: new Uint8Array(state.head.hash) },
   };
 }
@@ -573,6 +581,7 @@ const KEY_LOG_APPLIERS: Record<KeyLogType, KeyLogApplier> = {
   'rename-node': applyRenameNode,
   'readmit-node': applyReadmitNode,
   'notification-sink': applyNotificationSink,
+  'login-policy': applyLoginPolicy,
 };
 
 export async function applyKeyLogRecord(

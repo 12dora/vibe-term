@@ -30,6 +30,7 @@ describe('client cli dispatch table', () => {
       [
         'agent',
         'api',
+        'auth',
         'cp',
         'devices',
         'exec',

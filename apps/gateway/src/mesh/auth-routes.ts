@@ -47,10 +47,23 @@ import {
 } from './auth-audit-log';
 import {
   AuthKeyLogRoutes,
+  bindLoginHooks,
   createLoginFailureSink,
   loginRequestContext,
+  recordsOr405,
 } from './auth-key-log-routes';
-import { LoginFailureLimiter } from './auth-login-limiter';
+import {
+  LoginFailureLimiter,
+  type LoginLimiterRejectInfo,
+  type LoginMethod,
+  LoginPolicyLimiter,
+} from './auth-login-limiter';
+import {
+  attachLoginLimiter,
+  currentLoginPolicy,
+  handleLoginPolicyRequest,
+  loginLimiterIp,
+} from './auth-login-policy-http';
 import {
   AuthModeCache,
   type AuthTlsInfoProvider,
@@ -78,7 +91,6 @@ import {
   type KeyLogPublishAck,
   type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
-  LOGIN_RATE_LIMIT,
   MESH_VIA_SELF,
   type MeshRoles,
   PASSKEY_REGISTER_TTL_MS,
@@ -101,8 +113,9 @@ export type AuthKeyLogPublisher = KeyLogPublisher;
 
 export type AuthRateLimits = {
   consumeChallengeQuota(req: Request): Response | null;
-  isLoginRateLimited(uidHint: string, ip: string): boolean;
-  recordLoginFailure(uidHint: string, ip: string): void;
+  gateLogin(req: Request, uidHint: string, ip: string, method: LoginMethod): Response | null;
+  recordLoginFailure(req: Request, uidHint: string, ip: string): void;
+  recordLoginSuccess(ip: string): void;
 };
 
 const uidEncoder = new TextEncoder();
@@ -145,6 +158,7 @@ export type AuthRoutesDeps = {
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
   tlsInfo?: AuthTlsInfoProvider;
   localAuth?: LocalAuthStoreLike;
+  onLimiterReject?: (info: LoginLimiterRejectInfo) => void;
 };
 
 export const AUTH_LOCAL_PRESESSION_PATHS = new Set([
@@ -161,8 +175,13 @@ export function isAuthPublicPath(
 }
 
 export class AuthRoutes {
-  private readonly limiter = new LoginFailureLimiter(() => this.now());
+  private readonly policyLimiter = new LoginPolicyLimiter(
+    () => this.now(),
+    () => currentLoginPolicy(this.deps.userStore, this.deps.keyLogService, this.deps.primaryUserId)
+  );
   private readonly challengeLimiter = new LoginFailureLimiter(() => this.now());
+  private readonly loginLimits: ReturnType<typeof attachLoginLimiter>;
+  private onLimiterReject: ((info: LoginLimiterRejectInfo) => void) | undefined;
   private readonly totpGuard = new TotpLoginGuard(() => this.now());
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly verifyPasskey: VerifyDelegationPasskey;
@@ -183,13 +202,21 @@ export class AuthRoutes {
     this.verifyPasskey =
       deps.verifyDelegationPasskey ?? makeVerifyDelegationPasskey(deps.userStore);
     this.tlsInfoProvider = deps.tlsInfo;
+    this.onLimiterReject = bindLoginHooks(this.deps);
+    this.loginLimits = attachLoginLimiter({
+      limiter: this.policyLimiter,
+      policy: () =>
+        currentLoginPolicy(this.deps.userStore, this.deps.keyLogService, this.deps.primaryUserId),
+      onReject: () => this.onLimiterReject,
+      peekUid: peekLoginUid,
+      uidTooLong: authUidTooLong,
+      canonicalUid: (hint) => resolveUser(this.deps.userStore, hint)?.id ?? hint,
+    });
     this.rateLimits = {
       consumeChallengeQuota: (req) => this.consumeChallengeQuota(req),
-      isLoginRateLimited: (uidHint, ip) => this.limiter.isRateLimited(uidHint, ip),
-      recordLoginFailure: (uidHint, ip) => {
-        if (ip) this.limiter.recordFailure(`ip:${ip}`);
-        if (uidHint && !authUidTooLong(uidHint)) this.limiter.recordFailure(`uid:${uidHint}`);
-      },
+      gateLogin: (req, uidHint, ip, method) => this.loginLimits.gate(req, uidHint, ip, method),
+      recordLoginFailure: (req, uidHint, ip) => this.loginLimits.record(req, uidHint, ip),
+      recordLoginSuccess: (ip) => this.policyLimiter.recordSuccess(ip),
     };
     this.keyLog = new AuthKeyLogRoutes(deps, {
       invalidateAuthModeCache: () => this.invalidateAuthModeCache(),
@@ -204,6 +231,10 @@ export class AuthRoutes {
   setLocalAuthStore(store: LocalAuthStoreLike): void {
     this.localAuth = store;
     this.invalidateAuthModeCache();
+  }
+
+  setOnLimiterReject(hook: ((info: LoginLimiterRejectInfo) => void) | undefined): void {
+    this.onLimiterReject = hook;
   }
 
   invalidateAuthModeCache(): void {
@@ -230,6 +261,8 @@ export class AuthRoutes {
       'POST /api/auth/passkey/login/options': () => this.handlePasskeyLoginOptions(req),
       'GET /api/auth/keylog/head': () => session((_r, uid) => this.keyLog.handleKeyLogHead(uid)),
       'GET /api/auth/totp-record': () => handleTotpRecordRequest(session, this.deps),
+      'GET /api/auth/login-policy': () =>
+        session((_r, uid) => handleLoginPolicyRequest(uid, this.deps)),
       'GET /api/auth/passkeys': () => session((r, uid) => this.handlePasskeys(r, uid)),
       'POST /api/auth/keylog': () => session((r, uid) => this.keyLog.handleKeyLog(r, uid)),
       'POST /api/auth/local': () =>
@@ -243,7 +276,7 @@ export class AuthRoutes {
     };
     const run = routes[`${req.method} ${path}`];
     if (run) return run();
-    if (path.startsWith('/api/auth/')) return jsonError('method_not_allowed', 405);
+    if (path.startsWith('/api/auth/')) return recordsOr405(req, session);
     return null;
   }
 
@@ -325,15 +358,7 @@ export class AuthRoutes {
 
   private async handleLogin(req: Request): Promise<Response> {
     const ctx = loginRequestContext(req);
-    const { noteUidHint, fail, precheck, rejectUid } = createLoginFailureSink(
-      {
-        recordFailure: (key) => this.limiter.recordFailure(key),
-        loginLimited: (uidHint, ip) => this.loginLimited(uidHint, ip),
-        peekUid: peekLoginUid,
-        uidTooLong: authUidTooLong,
-      },
-      ctx
-    );
+    const { noteUidHint, fail, precheck, rejectUid } = this.loginLimits.openSink(req, ctx);
     const body = await readJsonObjectBody(req);
     const blocked = precheck(body);
     if (blocked) return blocked;
@@ -403,6 +428,8 @@ export class AuthRoutes {
         waived: waivesPasskeySecondFactor(req),
         ip: ctx.ip,
         origin: requestOrigin(req),
+        req,
+        afterOk: () => this.policyLimiter.recordSuccess(loginLimiterIp(req)),
       });
       return issued;
     } catch {
@@ -682,11 +709,6 @@ export class AuthRoutes {
     }
     this.challengeLimiter.record(key);
     return null;
-  }
-
-  private loginLimited(uidHint: string, ip: string): boolean {
-    if (ip) return this.limiter.isRateLimited(uidHint, ip);
-    return uidHint ? this.limiter.count(`uid:${uidHint}`) >= LOGIN_RATE_LIMIT : false;
   }
 }
 

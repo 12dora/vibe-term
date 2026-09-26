@@ -37,6 +37,7 @@ export function bindKeyLogProjection(
     d.onKeyLogEffects?.(userId, step.effects);
     d.relay.notifyIfRelayRecord(step.record.type);
     // 汇聚声明变了：撤销掉的汇聚机队列与在途投递立刻收掉，别等下一次重试才发现。
+    if (step.record.type === 'login-policy') return;
     if (step.record.type === 'notification-sink') {
       meshForwardChannel.pruneUnauthorizedSinks();
       return;

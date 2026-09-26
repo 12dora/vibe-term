@@ -992,6 +992,84 @@
         "interruptNotice": "The connection will drop while the service restarts; it will recover shortly.",
         "checkFailed": "Failed to check for updates",
         "terminalHint": "Or upgrade from a terminal: vibeterm upgrade"
+      },
+      "loginHistory": {
+        "title": "Sign-in history",
+        "description": "Account sign-ins and failed attempts recorded by each node.",
+        "tabs": {
+          "success": "Successful",
+          "failed": "Failed"
+        },
+        "showBackground": "Show background sign-ins",
+        "showBackgroundHint": "Sign-ins completed automatically when opening other nodes",
+        "background": "Background",
+        "viaEntry": "via {{name}}",
+        "columns": {
+          "time": "Time",
+          "node": "Node",
+          "account": "Account",
+          "method": "Method",
+          "reason": "Reason",
+          "client": "Client",
+          "ip": "IP",
+          "device": "Device"
+        },
+        "client": {
+          "web": "Web",
+          "cli": "CLI",
+          "unknown": "Unknown"
+        },
+        "method": {
+          "password": "Password",
+          "passwordTotp": "Password + authenticator",
+          "passwordPasskey": "Password + passkey",
+          "passwordWaived": "Password (2FA waived)",
+          "passkey": "Passkey"
+        },
+        "reason": {
+          "unknown": "Unknown reason",
+          "INVALID_CREDENTIALS": "Wrong username or password",
+          "UNKNOWN_USER": "Account does not exist",
+          "ROOT_KEY_MISMATCH": "Wrong password",
+          "TOTP_INVALID": "Wrong authenticator code",
+          "PASSKEY_INVALID": "Passkey verification failed",
+          "RATE_LIMITED": "IP locked",
+          "PASSWORD_LOGIN_PAUSED": "Password sign-in paused",
+          "CHALLENGE_EXPIRED": "Sign-in request expired",
+          "CHALLENGE_CONSUMED": "Sign-in request already used",
+          "MALFORMED": "Malformed request",
+          "DELEGATION_EXPIRED": "Authorization expired"
+        },
+        "empty": {
+          "success": "No sign-ins",
+          "failed": "No failed attempts"
+        },
+        "loadMore": "Load more",
+        "skippedLabel": "Not included:",
+        "skip": {
+          "offline": "Offline",
+          "tooOld": "Upgrade required",
+          "loginRequired": "Sign-in required",
+          "paused": "Paused",
+          "failed": "Load failed"
+        },
+        "skippedItem": "{{name}} ({{reason}})",
+        "listSeparator": ", ",
+        "partial": "{{base}}. Not processed: {{names}}",
+        "retention": {
+          "label": "Retention",
+          "days": "{{n}} days",
+          "forever": "Forever",
+          "mixed": "Varies by node",
+          "saved": "Retention updated on {{count}} node(s)"
+        },
+        "clear": {
+          "button": "Clear records",
+          "confirmTitle": "Clear sign-in history?",
+          "confirmBody": "Deletes sign-in records on all reachable nodes. This cannot be undone.",
+          "confirm": "Clear",
+          "done": "Cleared {{deleted}} record(s) on {{count}} node(s)"
+        }
       }
     },
     "messaging": {
@@ -1334,7 +1412,8 @@
           "label": "More actions",
           "connect": "Connection",
           "changeRole": "Change Role",
-          "leave": "Leave Mesh…"
+          "leave": "Leave Mesh…",
+          "loginHistory": "Sign-in history"
         },
         "status": {
           "standalone": "Standalone",
@@ -2141,7 +2220,9 @@
           "relay_pack_invalid": "The join material on the relay is unusable. Sign in on a machine that already joined to refresh it.",
           "relay_unreachable": "Could not reach the relay. Check the address and make sure the relay is running.",
           "relay_not_authorized": "The relay rejected this join request: this machine is not authorized.",
-          "local_user_exists": "That username is already taken on this machine."
+          "local_user_exists": "That username is already taken on this machine.",
+          "LOOPBACK_REQUIRED": "Complete setup on this machine.",
+          "UNAUTHORIZED": "Sign in first."
         },
         "becomeRelay": {
           "title": "Use This Machine as the Relay",

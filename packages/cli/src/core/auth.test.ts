@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
 import {
   type SessionMaterial,
+  buildSessionMaterial,
   fetchMeshNodes,
   isNodeUnreachableError,
   isUnexpectedLoginCode,
@@ -206,6 +208,39 @@ describe('unexpected login codes', () => {
     expect(isUnexpectedLoginCode('HTTP_500')).toBe(true);
     expect(isUnexpectedLoginCode('HTTP_ERROR')).toBe(true);
     expect(isUnexpectedLoginCode('INVALID_CREDENTIALS')).toBe(false);
+  });
+
+  test('buildSessionMaterial says it is deriving a key before argon2', async () => {
+    const lines: string[] = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      lines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      const material = await buildSessionMaterial({
+        password: 'pw',
+        mode: {
+          mode: 'mesh',
+          nodeId: 'n'.repeat(32),
+          uid: 'user-1',
+          username: 'ada',
+          passkeysForThisOrigin: false,
+          passkeyAvailable: false,
+          kdfParams: {
+            salt: encodeBase64url(randomBytes(16)),
+            memory_kib: 8,
+            iterations: 1,
+            parallelism: 1,
+          },
+          rootEpoch: 1,
+        },
+      });
+      material.destroy();
+    } finally {
+      process.stderr.write = original;
+    }
+    expect(lines.join('')).toContain('Deriving key…');
   });
 
   test('loginFailure maps HTTP_* to generic exit 1 and auth codes to 3', () => {

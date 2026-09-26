@@ -2,11 +2,14 @@ import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-ident
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import {
   deriveTotpKey,
+  encodeBase32,
   encodeSetTotpPayload,
   encryptTotpSecret,
   randomBytes,
+  verifyTotpCode,
 } from '../../../shared/src/auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
+import { isInteractiveStdin, promptPassword } from '../lib/prompt';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { applyUserPasswd } from '../lib/user-passwd';
 import type { ParsedArgs } from '../types';
@@ -64,6 +67,57 @@ export async function runUserPasswd(
   return await withAuth(parsed, io, (ctx) => applyUserPasswd(parsed, username, ctx, io));
 }
 
+function presetTotpCode(parsed: ParsedArgs, io: CliIo): string | null {
+  const fromIo = io.totpCode?.trim();
+  if (fromIo) return fromIo;
+  const fromFlag = parsed.flags.code;
+  if (typeof fromFlag === 'string' && fromFlag.trim()) return fromFlag.trim();
+  const fromEnv = process.env.VIBETERM_TOTP?.trim();
+  return fromEnv || null;
+}
+
+async function promptEnrollmentCode(): Promise<string> {
+  if (!isInteractiveStdin()) {
+    throw new Error('TOTP code is required: stdin is not a TTY, pass --code or set VIBETERM_TOTP');
+  }
+  const code = (
+    await promptPassword('TOTP code', { envKey: 'VIBETERM_TOTP', confirm: false })
+  ).trim();
+  if (!code) throw new Error('TOTP code is empty');
+  return code;
+}
+
+async function takeEnrollmentCode(
+  parsed: ParsedArgs,
+  io: CliIo,
+  secret: Uint8Array
+): Promise<{ code: string; prompted: boolean }> {
+  const preset = presetTotpCode(parsed, io);
+  if (preset) return { code: preset, prompted: false };
+  if (io.readTotpCode) {
+    const code = (await io.readTotpCode(secret)).trim();
+    if (!code) throw new Error('TOTP code is empty');
+    return { code, prompted: false };
+  }
+  return { code: await promptEnrollmentCode(), prompted: true };
+}
+
+async function requireMatchingTotpCode(
+  parsed: ParsedArgs,
+  io: CliIo,
+  secret: Uint8Array
+): Promise<string> {
+  let taken = await takeEnrollmentCode(parsed, io, secret);
+  for (;;) {
+    if (verifyTotpCode(secret, taken.code, Math.floor(Date.now() / 1000))) return taken.code;
+    if (!taken.prompted) {
+      throw new Error('TOTP code does not match this secret; nothing was saved');
+    }
+    log(io, 'TOTP code does not match; enter another code for the same secret (Ctrl-C to abort)');
+    taken = { code: await promptEnrollmentCode(), prompted: true };
+  }
+}
+
 export async function runUserTotp(
   parsed: ParsedArgs,
   username: string,
@@ -85,6 +139,10 @@ export async function runUserTotp(
     const rootKey = await deriveRootKey(password, kdfParamsFromJson(user.kdfParamsJson));
     assertRootKeyMatches(rootKey, user.rootPublicKey);
     const secret = randomBytes(20);
+    const uri = totpOtpauthUri(username, secret);
+    log(io, `TOTP secret (base32): ${encodeBase32(secret)}`);
+    log(io, uri);
+    await requireMatchingTotpCode(parsed, io, secret);
     const seq = BigInt(user.keyLogHeadSeq + 1);
     const kTotp = deriveTotpKey(rootKey.seed, user.id, user.rootEpoch);
     const payload = await encryptTotpSecret(kTotp, secret, {
@@ -99,9 +157,7 @@ export async function runUserTotp(
     if (!applied.ok) {
       throw new Error(`set-totp failed: ${applied.error}`);
     }
-    const uri = totpOtpauthUri(username, secret);
     log(io, `TOTP enrolled for ${username}`);
-    log(io, uri);
     return { uri, secret };
   });
 }

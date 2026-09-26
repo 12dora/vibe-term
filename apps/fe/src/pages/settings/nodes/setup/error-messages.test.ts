@@ -51,6 +51,18 @@ describe('describeSetupError', () => {
     );
   });
 
+  test('本机限定与未登录给出静态文案', () => {
+    expect(
+      describeSetupError(
+        t,
+        new SetupApiError('LOOPBACK_REQUIRED', 'setup is only available on this machine', 403)
+      )
+    ).toBe('nodes.setup.errors.LOOPBACK_REQUIRED');
+    expect(describeSetupError(t, new SetupApiError('UNAUTHORIZED', 'login required', 401))).toBe(
+      'nodes.setup.errors.UNAUTHORIZED'
+    );
+  });
+
   test('未知错误码与普通异常都走 unknown', () => {
     expect(describeSetupError(t, new SetupApiError('kaboom', 'went wrong', 500))).toBe(
       'nodes.setup.errors.unknown|{"message":"went wrong"}'

@@ -23,6 +23,7 @@ const SHARED: Record<string, string> = {
   PASSKEY_REQUIRED: 'auth.errors.PASSKEY_REQUIRED',
   NETWORK_ERROR: 'auth.errors.NETWORK_ERROR',
   RATE_LIMITED: 'auth.errors.RATE_LIMITED',
+  PASSWORD_LOGIN_PAUSED: 'auth.errors.PASSWORD_LOGIN_PAUSED',
   UNKNOWN_NODE: 'auth.errors.UNKNOWN_NODE',
   NODE_PK_MISMATCH: 'auth.errors.NODE_PK_MISMATCH',
   NODE_LIST_FAILED: 'auth.login.nodeListFailed',

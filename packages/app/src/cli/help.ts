@@ -13,7 +13,7 @@ Usage:
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   vibeterm user add <username>
   vibeterm user passwd <username> [--full-reset] [--yes]
-  vibeterm user totp <username>
+  vibeterm user totp <username> [--code <digits>]
   vibeterm mesh reset-identity [--reset-tls] [--yes]
   vibeterm tls reset [--yes]
   vibeterm mesh keylog status
@@ -43,7 +43,7 @@ Usage:
   vibeterm relay label <tenantId> <text>
 
 Client commands (talk to a gateway over HTTP/WS, same security boundary as the web UI):
-  vibeterm login|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|system
+  vibeterm login|auth|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|system
   Run vibeterm <group> --help for the options of one group.
 
 Password prompting (add / passwd / totp / reset-root / relay join):
@@ -51,6 +51,7 @@ Password prompting (add / passwd / totp / reset-root / relay join):
   Non-TTY: VIBETERM_PASSWORD (VIBETERM_PASSWORD_OLD for passwd). NFKC is applied by deriveSeed.
   Destructive recovery confirmation: TTY requires typing yes; non-TTY requires --yes.
   --full-reset (passwd): also remove all passkeys and two-step verification and sign out everywhere
+  user totp: verify a code (--code or VIBETERM_TOTP) before saving; a mismatch writes nothing
 
 Init shim ownership:
   --replace-shim: replace managed PATH shims owned by another install (or with unknown ownership).
@@ -69,7 +70,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   vibeterm user add <username>
   vibeterm user passwd <username> [--full-reset] [--yes]
-  vibeterm user totp <username>
+  vibeterm user totp <username> [--code <digits>]
   vibeterm mesh reset-identity [--reset-tls] [--yes]
   vibeterm tls reset [--yes]
   vibeterm mesh keylog status
@@ -99,7 +100,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm relay label <tenantId> <text>
 
 客户端命令（经 HTTP/WS 访问网关，安全边界与网页端完全一致）：
-  vibeterm login|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|system
+  vibeterm login|auth|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|system
   用 vibeterm <组名> --help 查看某一组的用法。
 
 密码输入（add / passwd / totp / reset-root / relay join）：
@@ -107,6 +108,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   非 TTY：VIBETERM_PASSWORD（passwd 的旧密码用 VIBETERM_PASSWORD_OLD）。NFKC 由 deriveSeed 处理。
   破坏性恢复确认：TTY 必须输入完整 yes；非 TTY 必须传 --yes。
   --full-reset（passwd）：同时移除所有通行密钥、两步验证并注销全部会话
+  user totp：先核对验证码（--code 或 VIBETERM_TOTP）再写入；不匹配则不保存
 
 初始化命令入口：
   --replace-shim：替换属于其他安装或归属未知的托管 PATH shim。

@@ -245,7 +245,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'full-reset',
     'yes',
   ]),
-  'user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive', 'code']),
   'mesh.reset-root': new Set([
     ...GLOBAL_FLAGS,
     'install-dir',
