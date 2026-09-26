@@ -148,6 +148,23 @@ describe('sidebar tab state', () => {
     expect(rehydrated.getState().sidebarFilesVisibility).toEqual({ 'node-a:device-1': false });
   });
 
+  test('prunes stale files opt-ins for one node without touching others', () => {
+    const store = createUIStore({ storagePrefix: `ui-files-prune-${Date.now()}-` });
+    store.getState().setSidebarFilesVisibility('node-a:gone', true);
+    store.getState().setSidebarFilesVisibility('node-a:kept', true);
+    store.getState().setSidebarFilesVisibility('node-b:gone', true);
+
+    store.getState().pruneSidebarFilesVisibility('node-a', new Set(['kept']));
+    expect(store.getState().sidebarFilesVisibility).toEqual({
+      'node-a:kept': true,
+      'node-b:gone': true,
+    });
+
+    const before = store.getState();
+    store.getState().pruneSidebarFilesVisibility('node-a', new Set(['kept']));
+    expect(store.getState()).toBe(before);
+  });
+
   test('normalizes invalid persisted files visibility', () => {
     const prefix = `ui-sidebar-invalid-files-visibility-${Date.now()}-`;
     storage.setItem(

@@ -1,7 +1,8 @@
 import { DEFAULT_FONT_ID, type ThemePreset, isThemePreset } from '@vibeterm/theme';
-import { create } from 'zustand';
+import { type StoreApi, create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';
+import { pruneStaleSidebarFilesVisibility } from './sidebar-device-visibility';
 import { migrateStorageKey } from './storage-migration';
 import {
   type DeferredPersistOptions,
@@ -152,6 +153,11 @@ export interface UIState {
   setSidebarDeviceVisibility: (key: string, visible: boolean) => void;
   /** key 由 `sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)` 生成 */
   setSidebarFilesVisibility: (key: string, visible: boolean) => void;
+  /** 拿到某 node 权威的目录列表后调用：清掉没有目录 / 已删除设备上残留的「打开」键。 */
+  pruneSidebarFilesVisibility: (
+    runtimeNodeId: string,
+    deviceIdsWithRoots: ReadonlySet<string>
+  ) => void;
   setDeviceFolderExpanded: (folderId: string, expanded: boolean) => void;
   setSidebarNodeOrder: (nodeIds: string[]) => void;
   /** key 为 `${sidebarTab}:${runtimeNodeId}` */
@@ -278,6 +284,33 @@ function uiStorageKeyFor(prefix: string, options: CreateUIStoreOptions): string 
   return key;
 }
 
+function sidebarVisibilityActions(
+  set: StoreApi<UIState>['setState']
+): Pick<
+  UIState,
+  'setSidebarDeviceVisibility' | 'setSidebarFilesVisibility' | 'pruneSidebarFilesVisibility'
+> {
+  return {
+    setSidebarDeviceVisibility: (key, visible) =>
+      set((state) => ({
+        sidebarDeviceVisibility: { ...state.sidebarDeviceVisibility, [key]: visible },
+      })),
+    setSidebarFilesVisibility: (key, visible) =>
+      set((state) => ({
+        sidebarFilesVisibility: { ...state.sidebarFilesVisibility, [key]: visible },
+      })),
+    pruneSidebarFilesVisibility: (runtimeNodeId, deviceIdsWithRoots) =>
+      set((state) => {
+        const next = pruneStaleSidebarFilesVisibility(
+          state.sidebarFilesVisibility,
+          runtimeNodeId,
+          deviceIdsWithRoots
+        );
+        return next === state.sidebarFilesVisibility ? state : { sidebarFilesVisibility: next };
+      }),
+  };
+}
+
 export function createUIStore(
   core: Pick<RuntimeCore, 'storagePrefix'>,
   options: CreateUIStoreOptions = {}
@@ -314,14 +347,7 @@ export function createUIStore(
           set((state) => ({
             sidebarDeviceExpanded: { ...state.sidebarDeviceExpanded, [deviceId]: expanded },
           })),
-        setSidebarDeviceVisibility: (key, visible) =>
-          set((state) => ({
-            sidebarDeviceVisibility: { ...state.sidebarDeviceVisibility, [key]: visible },
-          })),
-        setSidebarFilesVisibility: (key, visible) =>
-          set((state) => ({
-            sidebarFilesVisibility: { ...state.sidebarFilesVisibility, [key]: visible },
-          })),
+        ...sidebarVisibilityActions(set),
         setDeviceFolderExpanded: (folderId, expanded) =>
           set((state) => ({
             deviceFolderExpanded: { ...state.deviceFolderExpanded, [folderId]: expanded },
