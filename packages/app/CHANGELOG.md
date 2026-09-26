@@ -1,3 +1,29 @@
+# 2.10.2
+
+_2026-09-27_
+
+## English
+
+### Fixes
+
+- The Files tab no longer lists machines whose "Files" toggle is off in Manage Devices. Previously a collapsed, offline or signed-out remote machine was always listed and only disappeared once you clicked it. A "Files" setting left on for a device whose folders were later removed is now cleared automatically, and when nothing is visible the Files tab says so instead of staying blank.
+- Fallback text now shows up where a translation is missing, instead of the raw translation key (for example in login failure reasons).
+
+### Improvements
+
+- The first screen loads less JavaScript: settings-only code and texts are no longer part of the startup bundle, and terminal font warm-up loads on demand.
+
+## 中文
+
+### 修复
+
+- 文件 tab 不再列出在「管理设备」里关闭了「文件」的机器。之前远端机器在折叠、离线或未登录时总会出现，点开后才消失。设备的目录被删除后残留的「文件」开关会自动清除；没有可显示的目录时，文件 tab 会给出提示，不再一片空白。
+- 缺少翻译时显示预设的兜底文案，不再显示原始翻译键（如登录失败原因）。
+
+### 改进
+
+- 首屏加载的 JavaScript 更少：仅设置页用到的代码与文案不再打进启动包，终端字体预热改为按需加载。
+
 # 2.10.1
 
 _2026-09-26_
