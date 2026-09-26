@@ -2,6 +2,7 @@
 
 import { createInterface } from 'node:readline';
 import { Writable } from 'node:stream';
+import { InterruptError } from './errors';
 
 export function isInteractive(stdin: NodeJS.ReadStream = process.stdin): boolean {
   return Boolean(stdin.isTTY);
@@ -26,28 +27,80 @@ function armPromptInput(input: NodeJS.ReadStream): void {
   if (input.isPaused()) input.resume();
 }
 
-async function ask(prompt: string, hidden: boolean): Promise<string> {
-  const input = process.stdin;
-  armPromptInput(input);
-  let muted = false;
+function releasePromptInput(input: NodeJS.ReadStream): void {
+  clearPromptRawMode(input);
+  if (!input.isPaused()) input.pause();
+}
+
+type PromptOutput = {
+  output: Writable;
+  mute: () => void;
+  stop: () => void;
+};
+
+/**
+ * readline 用 `output.columns` 折行，并在 `output` 的 `resize` 上重画（Node 与 Bun 都如此）。
+ * 普通 Writable 没有宽度，列数会被当成 Infinity。
+ */
+function createPromptOutput(): PromptOutput {
+  let hideEcho = false;
   const output = new Writable({
     write(chunk, _encoding, callback) {
-      if (!muted) process.stderr.write(chunk);
+      if (!hideEcho) process.stderr.write(chunk);
       callback();
     },
   });
-  const rl = createInterface({ input, output, terminal: true });
-  process.stderr.write(prompt);
-  muted = hidden;
+  Object.defineProperty(output, 'columns', {
+    get: () => process.stderr.columns,
+  });
+  const onResize = (): void => {
+    output.emit('resize');
+  };
+  process.stderr.on('resize', onResize);
+  return {
+    output,
+    mute: () => {
+      hideEcho = true;
+    },
+    stop: () => {
+      process.stderr.removeListener('resize', onResize);
+    },
+  };
+}
+
+// 提示交给 readline。先 stderr.write 再 question('') 时，刷新的 `\x1b[1G\x1b[0J` 会把提示擦掉。
+// question() 在 Node 与 Bun 上都同步写完提示；隐藏模式在它返回后立刻静音，后续刷新整段丢掉。
+// Ctrl+C 拒绝；EOF / Ctrl+D（close 先于答案）以空串结束。这两种中断要补一个换行，
+// 避免下一条消息粘在提示同一行；隐藏模式收尾本来就会补，不要写两次。
+async function ask(prompt: string, hidden: boolean): Promise<string> {
+  const input = process.stdin;
+  armPromptInput(input);
+  const proxy = createPromptOutput();
+  const rl = createInterface({ input, output: proxy.output, terminal: true });
+  let settled = false;
+  let answered = false;
   try {
-    return await new Promise<string>((resolve) => {
-      rl.question('', resolve);
+    return await new Promise<string>((resolve, reject) => {
+      const finish = (value: string | Error): void => {
+        if (settled) return;
+        settled = true;
+        if (value instanceof Error) reject(value);
+        else resolve(value);
+      };
+      rl.on('SIGINT', () => finish(new InterruptError()));
+      rl.on('close', () => finish(''));
+      rl.question(prompt, (answer) => {
+        answered = true;
+        finish(answer);
+      });
+      if (hidden) proxy.mute();
     });
   } finally {
-    muted = false;
     rl.close();
-    if (hidden) process.stderr.write('\n');
-    clearPromptRawMode(input);
+    proxy.stop();
+    proxy.output.end();
+    if (hidden || !answered) process.stderr.write('\n');
+    releasePromptInput(input);
   }
 }
 
