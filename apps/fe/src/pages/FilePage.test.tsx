@@ -4,7 +4,8 @@
 import { describe, expect, mock, test } from 'bun:test';
 import * as actualReactQuery from '@tanstack/react-query';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
-import * as actualReactI18next from 'react-i18next';
+import i18next from 'i18next';
+import { I18nextProvider } from 'react-i18next';
 
 installWindowStorage();
 
@@ -16,11 +17,6 @@ mock.module('@tanstack/react-query', () => ({
   ...actualReactQuery,
   useQuery: () => ({ data: statResponse, isLoading: false, isError: false, error: null }),
   useQueryClient: () => ({ invalidateQueries: () => Promise.resolve() }),
-}));
-
-mock.module('react-i18next', () => ({
-  ...actualReactI18next,
-  useTranslation: () => ({ t: (key: string) => key }),
 }));
 
 mock.module('@vibeterm/panels/code-viewer', () => ({
@@ -46,6 +42,10 @@ const { encodeFileRef } = await import('@vibeterm/stores');
 const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { appNodeRuntimes } = await import('./../node/node-runtimes');
 
+// 独立空实例：t 回 key；不 mock react-i18next，免得进程级 mock 泄漏给后续测试文件。
+const i18n = i18next.createInstance();
+await i18n.init({ lng: 'en_US', resources: {}, react: { useSuspense: false } });
+
 const routeParams: { ref?: string } = {};
 mock.module('react-router', () => ({ useParams: () => routeParams }));
 
@@ -57,9 +57,11 @@ function renderFilePage(nodeId: string, rootId: string, path: string, category: 
   statResponse = { type: 'file', category, name: 'a.png', path, size: 10 };
   const runtime = appNodeRuntimes.get(nodeId).runtime;
   return renderToStaticMarkup(
-    <RuntimeProvider runtime={runtime}>
-      <FilePage />
-    </RuntimeProvider>
+    <I18nextProvider i18n={i18n}>
+      <RuntimeProvider runtime={runtime}>
+        <FilePage />
+      </RuntimeProvider>
+    </I18nextProvider>
   );
 }
 
@@ -100,9 +102,11 @@ describe('FilePage 媒体 URL 带 node 前缀', () => {
   test('PageActions 的「打开原始文件」链接带 node 前缀', () => {
     const runtime = appNodeRuntimes.get('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b').runtime;
     const markup = renderToStaticMarkup(
-      <RuntimeProvider runtime={runtime}>
-        <PageActions ref={encodeFileRef('r1', '/a.png')} />
-      </RuntimeProvider>
+      <I18nextProvider i18n={i18n}>
+        <RuntimeProvider runtime={runtime}>
+          <PageActions ref={encodeFileRef('r1', '/a.png')} />
+        </RuntimeProvider>
+      </I18nextProvider>
     );
     expect(markup).toContain(
       'href="/n/0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b/api/files/raw?rootId=r1&amp;path=%2Fa.png"'

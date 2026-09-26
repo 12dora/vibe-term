@@ -1,15 +1,31 @@
 // 登录历史的静态渲染：页签、后台开关、保留时间与清空、跳过标签、两种版式的列。
-// 没有 i18next 实例时 `t` 原样返回 key，断言的是 key 与 testId。
+// 用无资源的独立 i18next 实例注入：缺 key 原样返回（有 defaultValue 时返回它），断言的是 key 与 testId；
+// 同进程其他测试会初始化全局实例，独立实例让结果与文件顺序无关。
 
 import { describe, expect, test } from 'bun:test';
 import type { LoginRecord } from '@vibeterm/shared';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
+import i18next from 'i18next';
+import type { ReactNode } from 'react';
+import { I18nextProvider } from 'react-i18next';
 import type { LoginHistoryRow } from './login-history-data';
 import type { LoginHistoryNode } from './login-history-nodes';
 
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
+
+const i18n = i18next.createInstance();
+await i18n.init({
+  lng: 'en_US',
+  resources: {},
+  interpolation: { escapeValue: false },
+  react: { useSuspense: false },
+});
+
+function render(node: ReactNode): string {
+  return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
+}
 const { LoginHistoryToolbar, SkippedNodeChips, batchSummaryText, mergeSkips, retentionLabel } =
   await import('./login-history-dialog');
 const { LoginHistoryCards, LoginHistoryWideTable } = await import('./login-history-table');
@@ -63,7 +79,7 @@ const toolbarProps = {
 
 describe('LoginHistoryToolbar', () => {
   test('success tab shows the background toggle, retention and clear', () => {
-    const html = renderToStaticMarkup(<LoginHistoryToolbar outcome="success" {...toolbarProps} />);
+    const html = render(<LoginHistoryToolbar outcome="success" {...toolbarProps} />);
     expect(html).toContain('data-testid="login-history-tab-success"');
     expect(html).toContain('data-testid="login-history-tab-failed"');
     expect(html).toContain('data-testid="login-history-background"');
@@ -74,7 +90,7 @@ describe('LoginHistoryToolbar', () => {
   });
 
   test('failed tab hides the background toggle; mixed retention shows its own label', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <LoginHistoryToolbar outcome="failed" {...toolbarProps} retention={null} />
     );
     expect(html).not.toContain('login-history-background');
@@ -91,7 +107,7 @@ describe('retentionLabel', () => {
 
 describe('SkippedNodeChips', () => {
   test('one chip per node with its reason', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <SkippedNodeChips
         skipped={[
           { node: B, reason: 'tooOld' },
@@ -105,7 +121,7 @@ describe('SkippedNodeChips', () => {
   });
 
   test('renders nothing when no node is skipped', () => {
-    expect(renderToStaticMarkup(<SkippedNodeChips skipped={[]} />)).toBe('');
+    expect(render(<SkippedNodeChips skipped={[]} />)).toBe('');
   });
 });
 
@@ -134,7 +150,7 @@ describe('LoginHistoryWideTable', () => {
   const names = new Map([[SELF.meshId, '本机']]);
 
   test('success rows: node, method, client, IP, parsed device', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <LoginHistoryWideTable
         rows={[row()]}
         outcome="success"
@@ -152,7 +168,7 @@ describe('LoginHistoryWideTable', () => {
   });
 
   test('background rows name the entry node', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <LoginHistoryWideTable
         rows={[row({ kind: 'background', viaNodeId: SELF.meshId }, B)]}
         outcome="success"
@@ -166,7 +182,7 @@ describe('LoginHistoryWideTable', () => {
   });
 
   test('failed rows show account and reason', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <LoginHistoryWideTable
         rows={[row({ outcome: 'failed', code: 'TOTP_INVALID', username: 'mallory' })]}
         outcome="failed"
@@ -178,12 +194,12 @@ describe('LoginHistoryWideTable', () => {
     expect(html).toContain('settings.loginHistory.columns.reason');
     expect(html).toContain('mallory');
     expect(html).toContain('data-testid="login-history-reason-self:r1"');
-    // 无 i18next 实例时 t 回 defaultValue：专用文案缺失会一路落到原码。
+    // 专用文案与通用错误表都缺时一路落到原码。
     expect(html).toContain('>TOTP_INVALID</td>');
   });
 
   test('empty state', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <LoginHistoryWideTable
         rows={[]}
         outcome="failed"
@@ -199,7 +215,7 @@ describe('LoginHistoryWideTable', () => {
 
 describe('LoginHistoryCards', () => {
   test('narrow layout keeps the same test ids', () => {
-    const html = renderToStaticMarkup(
+    const html = render(
       <LoginHistoryCards
         rows={[row({ outcome: 'failed', code: 'RATE_LIMITED' })]}
         outcome="failed"

@@ -105,10 +105,10 @@ export const i18nReady = i18n
     lng: initialLanguage,
     fallbackLng: DEFAULT_LOCALE,
     // 缺 key 先记下、等当前语言的 rest 落地后复核，确实缺才去拉 fallback 语言；
-    // 返回值就是 i18next 原本的兜底渲染（裸 key）。
-    parseMissingKeyHandler: (key: string) => {
+    // 返回值保持 i18next 原本的兜底：有 defaultValue 用它，否则裸 key。
+    parseMissingKeyHandler: (key: string, defaultValue?: string) => {
       localeUnlock.recordMissingKey(key);
-      return key;
+      return defaultValue ?? key;
     },
     ns: ['translation'],
     defaultNS: 'translation',
