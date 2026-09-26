@@ -97,6 +97,8 @@ export type FetchDnsFallbackOpts = {
   resolve?: DialResolveFn;
   enabled?: boolean;
   timeoutMs?: number;
+  /** 健康探测失败不抹掉 uplink 正在用的 DoH 偏好。 */
+  preserveDoh?: boolean;
 };
 
 export function rewriteDialUrl(url: string, ip: string): string {
@@ -158,7 +160,7 @@ export async function fetchWithDnsFallback(
     try {
       return await session.fetchIp(preferred);
     } catch {
-      if (session.hostname) forgetPreferDoh(session.hostname);
+      forgetFetchDoh(session);
     }
   }
   if (await hostResolvesFake(session.hostname, opts.enabled, session.resolve, session.parent)) {
@@ -188,9 +190,15 @@ type FetchSession = {
   parent: AbortSignal | undefined;
   timeoutMs: number | undefined;
   enabled: boolean | undefined;
+  preserveDoh: boolean;
   doFetch: (input: string, init?: RequestInit) => Promise<Response>;
   fetchIp: (ipUrl: string, signal?: AbortSignal) => Promise<Response>;
 };
+
+function forgetFetchDoh(session: Pick<FetchSession, 'hostname' | 'preserveDoh'>): void {
+  if (session.preserveDoh || !session.hostname) return;
+  forgetPreferDoh(session.hostname);
+}
 
 async function openDialSocket(
   url: string,
@@ -405,6 +413,7 @@ function bindFetchSession(
     parent,
     timeoutMs: opts.timeoutMs,
     enabled: opts.enabled,
+    preserveDoh: opts.preserveDoh === true,
     doFetch,
     fetchIp: (ipUrl, signal) => {
       const dial =
@@ -450,7 +459,7 @@ async function fetchRedialIp(
   try {
     return await session.fetchIp(ipUrl, signal);
   } catch (ipErr) {
-    forgetPreferDoh(session.hostname);
+    forgetFetchDoh(session);
     throw ipErr;
   }
 }

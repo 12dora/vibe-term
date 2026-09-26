@@ -40,3 +40,12 @@ export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   }
   return bytes.slice().buffer as ArrayBuffer;
 }
+
+/** `CloseEvent` 的关闭码与原因；取不到为 null。 */
+export function readCloseEvent(event: unknown): [number | null, string | null] {
+  const { code, reason } = (event ?? {}) as { code?: unknown; reason?: unknown };
+  return [
+    typeof code === 'number' ? code : null,
+    typeof reason === 'string' && reason ? reason : null,
+  ];
+}

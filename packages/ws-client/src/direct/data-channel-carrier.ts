@@ -77,6 +77,7 @@ export class DirectDataChannelCarrier {
   private queuedBytes = 0;
   private nextFrameId = 1;
   private closed = false;
+  private localCloseReason: string | null = null;
 
   constructor(channel: RTCDataChannelLike, options: DirectDataChannelCarrierOptions = {}) {
     this.channel = channel;
@@ -166,10 +167,16 @@ export class DirectDataChannelCarrier {
     this.drainCbs.push(cb);
   }
 
-  close(): void {
+  /** 本端主动关闭时给的原因（诊断用）；对端关闭为 null。 */
+  get closeReason(): string | null {
+    return this.localCloseReason;
+  }
+
+  close(reason?: string): void {
     if (this.closed) {
       return;
     }
+    this.localCloseReason = reason ?? 'closed locally';
     try {
       this.channel.close();
     } catch {
@@ -225,7 +232,7 @@ export class DirectDataChannelCarrier {
 
   private failProtocol(reason: string): void {
     this.onProtocolError?.(reason);
-    this.close();
+    this.close(`protocol: ${reason}`);
   }
 
   private markClosed(): void {

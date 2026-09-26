@@ -45,11 +45,14 @@ type PeerState = {
   coolingUntil: number;
   healthySince: number | null;
   lastFailureKind: string | null;
-  lastFailureAt: number;
-  activeAttempt: string | null;
   lastCountedAttempt: string | null;
   establishedAttempt: string | null;
   forceProbe: boolean;
+};
+
+export type DialBreakerHealthProof = {
+  ageMs: number;
+  proven: boolean;
 };
 
 export type DialBreakerOptions = {
@@ -62,6 +65,8 @@ export type DialBreakerOptions = {
   onTrip?: (event: DialBreakerTripEvent) => void;
   onReset?: (event: DialBreakerResetEvent) => void;
   trackAttempts?: boolean;
+  /** 这些 kind 即使不是当前 established attempt 也要记进主熔断（活链路自己死了）。 */
+  countForeignKinds?: ReadonlySet<string>;
 };
 
 export class DialBreaker {
@@ -74,6 +79,7 @@ export class DialBreaker {
   private readonly onTrip?: (event: DialBreakerTripEvent) => void;
   private readonly onReset?: (event: DialBreakerResetEvent) => void;
   private readonly trackAttempts: boolean;
+  private readonly countForeignKinds: ReadonlySet<string> | undefined;
   private readonly peers = new Map<string, PeerState>();
 
   constructor(opts: DialBreakerOptions = {}) {
@@ -86,6 +92,7 @@ export class DialBreaker {
     this.onTrip = opts.onTrip;
     this.onReset = opts.onReset;
     this.trackAttempts = opts.trackAttempts ?? false;
+    this.countForeignKinds = opts.countForeignKinds;
   }
 
   shouldTry(peer: string, now = this.now()): DialBreakerDecision {
@@ -116,10 +123,13 @@ export class DialBreaker {
     };
   }
 
-  beginAttempt(peer: string, attemptId: string): void {
+  beginAttempt(peer: string, _attemptId: string): void {
     const state = this.ensure(peer);
-    if (this.trackAttempts) state.activeAttempt = attemptId;
     if (state.forceProbe) state.forceProbe = false;
+  }
+
+  peerIds(): string[] {
+    return [...this.peers.keys()];
   }
 
   forceProbe(peer: string): void {
@@ -144,11 +154,15 @@ export class DialBreaker {
         until: state.coolingUntil > now ? state.coolingUntil : undefined,
       };
     }
-    if (attemptId) state.lastCountedAttempt = attemptId;
-    if (this.trackAttempts) {
-      state.activeAttempt = null;
-      state.lastFailureAt = now;
+    if (this.foreignEstablishedAttempt(state, attemptId) && !this.countForeignKinds?.has(kind)) {
+      return {
+        counted: false,
+        opened: false,
+        open: state.coolingUntil > now,
+        until: state.coolingUntil > now ? state.coolingUntil : undefined,
+      };
     }
+    if (attemptId) state.lastCountedAttempt = attemptId;
     state.healthySince = null;
     if (this.trackAttempts) state.establishedAttempt = null;
     state.consecutiveFailures += 1;
@@ -171,11 +185,20 @@ export class DialBreaker {
   noteChannelEstablished(peer: string, attemptId?: string, now = this.now()): void {
     const state = this.ensure(peer);
     if (attemptId && state.lastCountedAttempt === attemptId) return;
-    if (this.trackAttempts) {
-      state.activeAttempt = attemptId ?? null;
-      state.establishedAttempt = attemptId ?? null;
-    }
+    if (this.trackAttempts) state.establishedAttempt = attemptId ?? null;
     state.healthySince = now;
+  }
+
+  /**
+   * 这条已建立的 DC 不再是活链路。外尝试护盾只覆盖它还活着的时候，
+   * 否则后续超时永远不计，熔断升不了档。
+   */
+  noteChannelLost(peer: string, attemptId?: string): void {
+    if (!this.trackAttempts) return;
+    const state = this.peers.get(peer);
+    if (!state?.establishedAttempt) return;
+    if (attemptId && state.establishedAttempt !== attemptId) return;
+    state.establishedAttempt = null;
   }
 
   /** 已建立但未证明的 DC 反复夭折：短冷却，不抬 consecutiveFailures / level。 */
@@ -216,28 +239,17 @@ export class DialBreaker {
     return cleared;
   }
 
-  noteHealthy(peer: string, now = this.now()): boolean {
+  noteHealthy(peer: string, now = this.now(), proof?: DialBreakerHealthProof): boolean {
     const state = this.peers.get(peer);
-    if (!state || state.healthySince == null) return false;
+    if (!state) return false;
+    if (proof) {
+      if (!proof.proven || proof.ageMs < this.healthyMs) return false;
+      return this.clearDebt(state, peer, proof.ageMs);
+    }
+    if (state.healthySince == null) return false;
     const healthyMs = Math.max(0, now - state.healthySince);
     if (healthyMs < this.healthyMs) return false;
-    const hadDebt =
-      state.consecutiveFailures > 0 || state.cooldownLevel > 0 || state.coolingUntil > 0;
-    state.consecutiveFailures = 0;
-    state.cooldownLevel = 0;
-    state.coolingUntil = 0;
-    state.lastFailureKind = null;
-    state.lastFailureAt = 0;
-    state.forceProbe = false;
-    state.lastCountedAttempt = null;
-    state.activeAttempt = null;
-    if (hadDebt) this.onReset?.({ peer, healthyMs });
-    return hadDebt;
-  }
-
-  notePeerChanged(peer: string): void {
-    const state = this.peers.get(peer);
-    if (state) state.activeAttempt = null;
+    return this.clearDebt(state, peer, healthyMs);
   }
 
   remainingCooldownMs(peer: string, now = this.now()): number {
@@ -274,8 +286,6 @@ export class DialBreaker {
         coolingUntil: 0,
         healthySince: null,
         lastFailureKind: null,
-        lastFailureAt: 0,
-        activeAttempt: null,
         lastCountedAttempt: null,
         establishedAttempt: null,
         forceProbe: false,
@@ -283,6 +293,28 @@ export class DialBreaker {
       this.peers.set(peer, state);
     }
     return state;
+  }
+
+  private foreignEstablishedAttempt(state: PeerState, attemptId?: string): boolean {
+    return (
+      this.trackAttempts &&
+      !!attemptId &&
+      !!state.establishedAttempt &&
+      attemptId !== state.establishedAttempt
+    );
+  }
+
+  private clearDebt(state: PeerState, peer: string, healthyMs: number): boolean {
+    const hadDebt =
+      state.consecutiveFailures > 0 || state.cooldownLevel > 0 || state.coolingUntil > 0;
+    state.consecutiveFailures = 0;
+    state.cooldownLevel = 0;
+    state.coolingUntil = 0;
+    state.lastFailureKind = null;
+    state.forceProbe = false;
+    state.lastCountedAttempt = null;
+    if (hadDebt) this.onReset?.({ peer, healthyMs });
+    return hadDebt;
   }
 
   private cooldownMs(level: number): number {

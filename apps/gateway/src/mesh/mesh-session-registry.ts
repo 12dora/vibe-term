@@ -32,7 +32,7 @@ export type RegisterGatewaySessionInput = {
 };
 
 export type RegisterGatewaySessionResult =
-  | { ok: true; entry: RegisteredGatewaySession }
+  | { ok: true; entry: RegisteredGatewaySession; replaced?: RegisteredGatewaySession }
   | { ok: false; code: 'DUPLICATE_CONNECTION' | 'DUPLICATE_CID' };
 
 function cidIndexKey(sid: string, via: string, cid: string): string {
@@ -57,6 +57,16 @@ function normalizeCid(value: string | undefined | null): string {
   return sanitizeCid(value);
 }
 
+function releaseReplacedCarriers(session: GatewaySession): void {
+  for (const carrier of session.carriers()) {
+    try {
+      carrier.terminate();
+    } catch {
+      // already gone
+    }
+  }
+}
+
 export class SessionRegistry {
   private readonly byConnection = new Map<string, RegisteredGatewaySession>();
   private readonly bySession = new WeakMap<GatewaySession, string>();
@@ -71,9 +81,9 @@ export class SessionRegistry {
       return Boolean(e && e.session !== entry.session && !e.session.closed);
     };
     if (providedId && taken(providedId)) return { ok: false, code: 'DUPLICATE_CONNECTION' };
-    if (cid && taken(this.byCid.get(cidIndexKey(entry.sid, entry.via, cid)))) {
-      return { ok: false, code: 'DUPLICATE_CID' };
-    }
+    const replaced = cid
+      ? this.takeOverSameCid(entry.sid, entry.via, cid, entry.session)
+      : undefined;
     let connectionId = providedId;
     if (!connectionId) {
       do {
@@ -103,7 +113,25 @@ export class SessionRegistry {
     }
     set.add(connectionId);
     if (cid) this.byCid.set(cidIndexKey(entry.sid, entry.via, cid), connectionId);
-    return { ok: true, entry: stored };
+    return replaced ? { ok: true, entry: stored, replaced } : { ok: true, entry: stored };
+  }
+
+  /**
+   * 同一 (sid, via, cid) 的新流是入口在旧链路死后的 failover。
+   * 先摘掉旧登记并终止其载体，调用方再用 `replaced` 做会话级 teardown。
+   */
+  private takeOverSameCid(
+    sid: string,
+    via: string,
+    cid: string,
+    next: GatewaySession
+  ): RegisteredGatewaySession | undefined {
+    const prevId = this.byCid.get(cidIndexKey(sid, via, cid));
+    const prev = prevId ? this.byConnection.get(prevId) : undefined;
+    if (!prev || prev.session === next || prev.session.closed) return undefined;
+    releaseReplacedCarriers(prev.session);
+    this.drop(prev);
+    return prev;
   }
 
   unregister(sid: string, session?: GatewaySession): void {

@@ -107,4 +107,7 @@ export type ParkedInbound = {
   at: number;
   timer: { clear: () => void } | null;
   remoteAddress: string | null;
+  dcAttemptId?: string | null;
+  rtcEpoch?: number;
+  quiesceCapable?: boolean;
 };

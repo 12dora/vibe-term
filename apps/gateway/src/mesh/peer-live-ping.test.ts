@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { RTT_EVENT_MIN_INTERVAL_MS } from './address-class';
-import { notePeerPingTick, shouldEmitPeerRtt } from './peer-live-ping';
+import { notePeerPingTick, peerPingStep, shouldEmitPeerRtt } from './peer-live-ping';
 import type { LivePeer } from './peer-reconnect-wake';
 
 function live(opts: {
@@ -45,6 +45,21 @@ describe('notePeerPingTick', () => {
     expect(notePeerPingTick(row, 40)).toBe('ping');
     expect(row.missedPongs).toBe(0);
     expect(row.lastInboundFrameAt).toBe(80);
+  });
+});
+
+describe('peerPingStep', () => {
+  test('retiring DC is still checked; a live row that is no longer current is skipped', () => {
+    const retiring = live({}) as LivePeer & { transport: string; retiring: boolean };
+    retiring.transport = 'dc';
+    retiring.retiring = true;
+    const set = new Set<LivePeer>([retiring]);
+    expect(peerPingStep(retiring, undefined, set, 40)).toBe('ping');
+    expect(peerPingStep(retiring, undefined, set, 40)).toBe('ping');
+    expect(peerPingStep(retiring, undefined, set, 40)).toBe('drop-retire');
+
+    const gone = live({});
+    expect(peerPingStep(gone, undefined, undefined, 40)).toBe('skip');
   });
 });
 

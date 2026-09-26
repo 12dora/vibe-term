@@ -3,10 +3,13 @@ import {
   classifyByKeywords,
   truncateReason,
 } from '../../../../../packages/shared/src/net/classify-by-keywords';
+import { PeerHandshakeError } from '../types';
 import type { RtcFailureStage } from './rtc-dial-progress';
 
 export type RtcDialFailureOpts = {
   peerInitiated?: boolean;
+  /** 重掷失败只记重掷预算，不进主熔断。 */
+  reroll?: boolean;
   stage?: RtcFailureStage;
   remoteSdpApplied?: boolean;
 };
@@ -31,7 +34,11 @@ const INTENTIONAL_DC_LOSS = new Set([
   'superseded',
   'dc-declined',
   'dc-promote-reject',
+  'dc-promote-backoff',
   'route-measure-reject',
+  'route-relay',
+  'stale-link',
+  'reroll-stale',
 ]);
 
 const RTC_DIAL_FAILURE_RULES: ReadonlyArray<KeywordRule<string>> = [
@@ -75,6 +82,19 @@ export function isUncountedPeerInitiatedTimeout(
   if (opts.remoteSdpApplied === true) return false;
   return (
     opts.remoteSdpApplied === false || opts.stage === 'gathering' || opts.stage === 'no-remote-sdp'
+  );
+}
+
+/** 证书还没同步、吊销、签名失败是信任/配置问题，不是这条 DC 路径坏了。 */
+export function isUncountedDcTrustFailure(err: unknown): boolean {
+  if (err instanceof PeerHandshakeError) {
+    return err.code === 'unknown' || err.code === 'revoked' || err.code === 'bad_signature';
+  }
+  const reason = (err instanceof Error ? err.message : String(err ?? '')).toLowerCase();
+  return (
+    reason.includes('no node_certs') ||
+    reason.includes('bad_signature') ||
+    reason.includes('is revoked')
   );
 }
 

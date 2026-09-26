@@ -1,4 +1,5 @@
 import type { MeshPathKind, MeshRouteMode, MeshStreamClass } from '@vibeterm/shared/net';
+import { envInt } from './mesh-log';
 import type { PeerPathRttMemory } from './peer-path-rtt';
 import type { RelayPresenceIndex } from './relay-presence-types';
 import type { PeerTransportKind } from './types';
@@ -13,6 +14,45 @@ export const ROUTE_DEGRADE_ADDITIVE_MS = 40;
 export const ROUTE_PROMOTE_SAMPLES = 3;
 export const ROUTE_PROMOTE_ADDITIVE_MS = 5;
 export const ROUTE_PROMOTE_RATIO = 0.2;
+
+/** 未降级时 DC 替换 relay/ws：一次采样，慢于 max(2×, +200 ms) 则拒绝。超时未测到仍安装。 */
+export const DC_PROMOTE_RATIO = 2;
+export const DC_PROMOTE_ADDITIVE_MS = 200;
+export const DC_PROMOTE_BACKOFF_MS = 60_000;
+export const DC_PROMOTE_MEASURE_TIMEOUT_MS = 3_000;
+
+export function dcPromoteRatio(): number {
+  return envFloat('VIBETERM_DC_PROMOTE_RATIO', DC_PROMOTE_RATIO, 1);
+}
+
+export function dcPromoteAdditiveMs(): number {
+  return envInt('VIBETERM_DC_PROMOTE_ADDITIVE_MS', DC_PROMOTE_ADDITIVE_MS, 0);
+}
+
+export function dcPromoteBackoffMs(): number {
+  return envInt('VIBETERM_DC_PROMOTE_BACKOFF_MS', DC_PROMOTE_BACKOFF_MS, 1);
+}
+
+export function dcPromoteMeasureTimeoutMs(): number {
+  return envInt('VIBETERM_DC_PROMOTE_MEASURE_TIMEOUT_MS', DC_PROMOTE_MEASURE_TIMEOUT_MS, 1);
+}
+
+function envFloat(name: string, fallback: number, min = 0): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min) return fallback;
+  return n;
+}
+
+export function dcPromoteTooSlow(
+  dcMs: number,
+  currentMs: number,
+  ratio = DC_PROMOTE_RATIO,
+  additiveMs = DC_PROMOTE_ADDITIVE_MS
+): boolean {
+  return dcMs > Math.max(currentMs * ratio, currentMs + additiveMs);
+}
 
 /** 降级后禁止再拨直连：起步 2 min，翻倍封顶 30 min。 */
 export const ROUTE_PROMOTE_BACKOFF_START_MS = 2 * 60 * 1000;

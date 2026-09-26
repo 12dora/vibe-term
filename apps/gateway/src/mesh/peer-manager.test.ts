@@ -747,6 +747,10 @@ describe('PeerManager', () => {
     uplinkB.state = 'online';
     uplinkB.sendCtl = (msg) => forward(holderA, peer.nodeId, msg as never);
 
+    const sessionStore = {
+      verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+    } as never;
+    const dispatchHttp = async () => new Response('ok');
     const managerA = new PeerManager({
       identity: self,
       userStore: store,
@@ -754,6 +758,8 @@ describe('PeerManager', () => {
       peerPort: 0,
       startServer: false,
       rtc: rtcA,
+      sessionStore,
+      dispatchHttp,
     });
     const managerB = new PeerManager({
       identity: peer,
@@ -762,6 +768,8 @@ describe('PeerManager', () => {
       peerPort: 0,
       startServer: false,
       rtc: rtcB,
+      sessionStore,
+      dispatchHttp,
     });
     holderA.manager = managerA;
     holderB.manager = managerB;
@@ -777,7 +785,7 @@ describe('PeerManager', () => {
     const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       linkB.onStream(resolve)
     );
-    const open = new TextEncoder().encode('{"type":"ping"}');
+    const open = encodeJsonBytes({ type: 'http', method: 'GET', path: '/api/auth/challenge' });
     const out = await linkA.openStream(open);
     const inn = await incoming;
     expect(inn.openPayload).toEqual(open);

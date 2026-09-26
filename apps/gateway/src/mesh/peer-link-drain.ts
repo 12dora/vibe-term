@@ -16,6 +16,7 @@ import {
 import type { ParkedInbound } from './peer-manager-types';
 import { type LivePeer, isDrainRetireReason } from './peer-reconnect-wake';
 import { quiet } from './peer-ws-race';
+import { claimSession, readInstallMeta, setSessionRole } from './session-binding';
 import type { PeerTransportKind } from './types';
 
 export type PeerLinkDrainDeps = {
@@ -75,8 +76,9 @@ export class PeerLinkDrain {
       this.parkedSessions.delete(existing.session);
       quiet(() => existing.session.close('replaced-park'));
     }
-    this.armParkedDrain(session);
+    this.armParkedDrain(peerNodeId, session);
     this.parkedSessions.add(session);
+    const meta = readInstallMeta(session);
     const row: ParkedInbound = {
       session,
       transport,
@@ -85,6 +87,9 @@ export class PeerLinkDrain {
       at: parkedAt,
       timer: null,
       remoteAddress,
+      dcAttemptId: meta.dcAttemptId ?? null,
+      rtcEpoch: meta.rtcEpoch,
+      quiesceCapable: meta.quiesceCapable === true,
     };
     row.timer = scheduler.interval(
       () => {
@@ -106,14 +111,8 @@ export class PeerLinkDrain {
     parked.set(peerNodeId, row);
   }
 
-  private armParkedDrain(session: LinkSession): void {
-    session.onStream((stream) => {
-      if (!this.parkedSessions.has(session)) return;
-      quiet(() => stream.reset('parked'));
-    });
-    session.ctl.onMessage(() => {
-      // drain ctl while parked so the inbox cannot grow
-    });
+  private armParkedDrain(peerId: string, session: LinkSession): void {
+    claimSession(session, { role: 'parked', peerId, owner: null });
   }
 
   dropParked(nodeId: string, reason: string): void {
@@ -141,8 +140,10 @@ export class PeerLinkDrain {
       parked.transport,
       parked.initiatedBy,
       parked.generation,
-      false,
-      parked.remoteAddress
+      parked.quiesceCapable === true,
+      parked.remoteAddress,
+      parked.dcAttemptId ?? null,
+      parked.rtcEpoch
     );
   }
 
@@ -151,13 +152,16 @@ export class PeerLinkDrain {
       this.state.live.delete(prev.peerNodeId);
     }
     this.deps.clearIdle(prev);
-    prev.pingTimer?.clear();
-    prev.pingTimer = null;
+    if (prev.transport !== 'dc') {
+      prev.pingTimer?.clear();
+      prev.pingTimer = null;
+    }
     if (prev.finishRetired) {
       this.finishRetire(prev, reason);
       return;
     }
     prev.retiring = true;
+    setSessionRole(prev.session, 'retiring');
     prev.retireReason = reason;
     prev.retiredAt = this.state.scheduler.now();
     prev.zeroStreamsSince = prev.streams === 0 ? prev.retiredAt : 0;
@@ -240,7 +244,6 @@ export class PeerLinkDrain {
       live.unsubRtc();
       live.unsubRtc = null;
     }
-    this.state.rtcInbox.delete(live.peerNodeId);
     const set = this.state.retiring.get(live.peerNodeId);
     if (set) {
       set.delete(live);
@@ -327,8 +330,6 @@ export class PeerLinkDrain {
     live.quiesceCapable = true;
     if (already || live.retiring) return;
     this.activateParked(live.peerNodeId);
-    const current = this.state.live.get(live.peerNodeId);
-    this.state.peerReconnectWake.ready(current, (nodeId) => this.deps.onPeerReconnected(nodeId));
     if (this.deps.hasCoalescedUpgrade(live.peerNodeId)) {
       this.deps.maybeUpgrade(live.peerNodeId, { cooldown: true });
     }

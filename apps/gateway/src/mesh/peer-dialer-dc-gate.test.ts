@@ -28,7 +28,7 @@ describe('gateDcDial inbound offers', () => {
     expect(planInboundOffer(decision({ level: 4, disabled: false })).action).toBe('accept');
   });
 
-  test('disabled and ceiling cooling decline fast and do not allow a PC', () => {
+  test('disabled declines a peer-initiated offer; breaker ceiling does not', () => {
     const lines: string[] = [];
     const orig = console.log;
     console.log = (...args: unknown[]) => {
@@ -56,7 +56,7 @@ describe('gateDcDial inbound offers', () => {
         peerInitiated: true,
         decision: decision({ level: 5, disabled: false }),
       });
-      expect(ceiling).toMatchObject({ allow: false, decline: 'cooling' });
+      expect(ceiling).toEqual({ allow: true });
 
       const outboundProbe = gateDcDial({
         peer: 'ec42f364',
@@ -72,8 +72,8 @@ describe('gateDcDial inbound offers', () => {
     expect(
       lines.some((line) => line.includes('answer declined') && line.includes('cause=disabled'))
     ).toBe(true);
-    expect(lines.some((line) => line.includes('cause=cooling'))).toBe(true);
-    expect(lines.some((line) => line.includes('answer while cooling'))).toBe(false);
+    expect(lines.some((line) => line.includes('cause=cooling'))).toBe(false);
+    expect(lines.some((line) => line.includes('answer while cooling'))).toBe(true);
   });
 
   test('force-probe accept window answers instead of declining', () => {
@@ -94,7 +94,12 @@ describe('gateDcDial inbound offers', () => {
     const reason = noteDialDcFailure({
       stopped: false,
       nodeId: 'peer',
-      err: new DcDeclinedError({ reason: 'cooling', until: null, retryAfterMs: 50_000 }),
+      err: new DcDeclinedError({
+        reason: 'cooling',
+        until: null,
+        retryAfterMs: 50_000,
+        epoch: null,
+      }),
       connectP: null,
       attemptId: 'dc:1',
       peerInitiated: false,

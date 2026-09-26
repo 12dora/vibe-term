@@ -35,19 +35,19 @@ describe('dc offer decline', () => {
     ).toBe(false);
 
     let applied = false;
-    let superseded = 0;
+    let declined = 0;
     const pc = {
       setRemoteDescription() {
         applied = true;
       },
     } as unknown as PeerConnectionLike;
     const state = createSignalingAttemptState(1);
-    state.onSuperseded = () => {
-      superseded += 1;
+    state.onDeclined = () => {
+      declined += 1;
     };
     expect(applyRemoteSdp(pc, 'ec42f364', 'answer', state, raw)).toBe('dropped');
     expect(applied).toBe(false);
-    expect(superseded).toBe(1);
+    expect(declined).toBe(1);
 
     const ctl = dcOfferDeclineCtl({
       rtcSession: 'dc:a:b',
@@ -65,11 +65,13 @@ describe('dc offer decline', () => {
       reason: 'cooling',
       until: 5_000,
       retryAfterMs: 4_000,
+      epoch: null,
     });
     expect(readDcOfferDeclineDetail('{"type":"decline","sdp":"disabled"}')).toEqual({
       reason: 'disabled',
       until: null,
       retryAfterMs: null,
+      epoch: null,
     });
     const ctl = dcOfferDeclineCtl({
       rtcSession: 'dc:a:b',

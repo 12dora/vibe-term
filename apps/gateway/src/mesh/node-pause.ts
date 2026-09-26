@@ -69,6 +69,8 @@ export type PeerDialRetire = {
   resetEndpointBackoff(id: string): void;
   advertisedEndpointSet: { delete(id: string): boolean };
   resetDcBreaker(id: string): void;
+  abortDcInflight?(id: string): void;
+  dropHeldCandidates?(id: string): void;
 };
 
 type PeerManagerDialHost = {
@@ -92,6 +94,8 @@ type PeerManagerDialHost = {
   cancelDcUpgradeRetry: PeerDialRetire['cancelDcUpgradeRetry'];
   waiters: { failTransportWaiters: PeerDialRetire['failTransportWaiters'] };
   dcBreaker: { reset: PeerDialRetire['resetDcBreaker'] };
+  dialer?: { abortDcInflight(id: string): void };
+  routes?: { dropCandidates(id: string, reason?: string): void };
 };
 
 export function peerDialRetireOf(manager: object): PeerDialRetire {
@@ -113,6 +117,8 @@ export function peerDialRetireOf(manager: object): PeerDialRetire {
     resetEndpointBackoff: (id) => p.state.endpointBackoff.resetNode(id),
     advertisedEndpointSet: p.state.advertisedEndpointSet,
     resetDcBreaker: (id) => p.dcBreaker.reset(id),
+    abortDcInflight: (id) => p.dialer?.abortDcInflight(id),
+    dropHeldCandidates: (id) => p.routes?.dropCandidates(id, 'paused'),
   };
 }
 
@@ -139,6 +145,8 @@ export function retirePeerDialState(
   if (reason === 'paused') {
     r.pending.delete(nodeId);
     r.resetDcBreaker(nodeId);
+    r.abortDcInflight?.(nodeId);
+    r.dropHeldCandidates?.(nodeId);
   }
 }
 

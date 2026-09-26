@@ -156,7 +156,8 @@ export class PeerManager extends PeerCollaboratorHost {
       cancelDcUpgradeRetry: (nodeId: string) => this.cancelDcUpgradeRetry(nodeId),
       ensureGate: (nodeId: string) => this.ensureGate(nodeId),
       ensureIncomingWakeGate: (nodeId: string) => this.ensureIncomingWakeGate(nodeId),
-      dispatchRtcWake: (peerNodeId: string) => this.dispatchRtcWake(peerNodeId),
+      dispatchRtcWake: (peerNodeId: string, opts?: { gated?: boolean }) =>
+        this.dispatchRtcWake(peerNodeId, opts),
       releaseRtcWakeAttempt: (peerNodeId: string) => this.releaseRtcWakeAttempt(peerNodeId),
       signalingFor: (peerNodeId: string) => this.signalingFor(peerNodeId),
     };
@@ -172,6 +173,7 @@ export class PeerManager extends PeerCollaboratorHost {
       dialer: this.dialer,
       reroll: this.reroll,
       dcUpgrade: this.dcUpgrade,
+      sendRtcSignal: (peerNodeId, msg) => this.sendRtcSignal(peerNodeId, msg),
       rtcListeners: this.rtcListeners,
       onBrowserSignal: this.onBrowserSignal,
       isTrusted: this.isTrusted,
@@ -248,6 +250,9 @@ export class PeerManager extends PeerCollaboratorHost {
   }
   relayPresenceOf(n: string): string[] | undefined {
     return relayPresenceOfIndex(this.state.relayPresence, n);
+  }
+  resetEndpointBackoff(nodeId: string): void {
+    this.state.endpointBackoff.resetNode(nodeId);
   }
   linkDetailOf(nodeId: string): PeerLinkDetail {
     return peerLinkDetailFromState(

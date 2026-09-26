@@ -687,11 +687,9 @@ export class LinkMux implements LinkSession {
     this.remoteMaxStreamId = frame.streamId;
     const stream = new MuxStream(this, frame.streamId, copyBytes(frame.payload));
     this.streams.set(frame.streamId, stream);
-    if (this.streamListeners.length === 0) {
-      this.pendingIncoming.push(stream);
-      return;
-    }
+    if (this.streamListeners.length === 0) return void this.pendingIncoming.push(stream);
     for (const cb of this.streamListeners) {
+      if (stream.dead) break;
       try {
         cb(stream);
       } catch {

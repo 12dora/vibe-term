@@ -13,12 +13,14 @@ export type OffererSdpReaction = 'apply-answer' | 'abort-now' | 'ignore';
 export type DcOfferDeclineExtra = {
   until?: number | null;
   retryAfterMs?: number | null;
+  epoch?: number | null;
 };
 
 export type DcOfferDeclineDetail = {
   reason: DcOfferDeclineReason;
   until: number | null;
   retryAfterMs: number | null;
+  epoch: number | null;
 };
 
 /**
@@ -38,6 +40,9 @@ export function encodeDcOfferDecline(
   ) {
     body.retryAfterMs = Math.round(extra.retryAfterMs);
   }
+  if (extra?.epoch != null && Number.isSafeInteger(extra.epoch) && extra.epoch >= 0) {
+    body.epoch = extra.epoch;
+  }
   return JSON.stringify(body);
 }
 
@@ -50,12 +55,18 @@ export function readDcOfferDeclineDetail(
 ): DcOfferDeclineDetail | null {
   if (!isDcOfferDecline(raw) || !raw) return null;
   try {
-    const parsed = JSON.parse(raw) as { sdp?: unknown; until?: unknown; retryAfterMs?: unknown };
+    const parsed = JSON.parse(raw) as {
+      sdp?: unknown;
+      until?: unknown;
+      retryAfterMs?: unknown;
+      epoch?: unknown;
+    };
     if (parsed.sdp !== 'disabled' && parsed.sdp !== 'cooling') return null;
     return {
       reason: parsed.sdp,
       until: finiteMs(parsed.until),
       retryAfterMs: finiteMs(parsed.retryAfterMs),
+      epoch: finiteEpoch(parsed.epoch),
     };
   } catch {
     return null;
@@ -64,6 +75,10 @@ export function readDcOfferDeclineDetail(
 
 function finiteMs(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function finiteEpoch(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /** 相对剩余时间优先；绝对 until 必须还在未来。NaN / 过去 / 超过 30min 都不照单全收。 */
@@ -85,6 +100,7 @@ export class DcDeclinedError extends Error {
   readonly reason: DcOfferDeclineReason;
   readonly until: number | null;
   readonly retryAfterMs: number | null;
+  readonly epoch: number | null;
 
   constructor(detail: DcOfferDeclineDetail) {
     super('dc-declined');
@@ -92,55 +108,34 @@ export class DcDeclinedError extends Error {
     this.reason = detail.reason;
     this.until = detail.until;
     this.retryAfterMs = detail.retryAfterMs;
+    this.epoch = detail.epoch;
   }
 }
 
 export function dcDeclineNoticeOf(err: unknown): DcOfferDeclineDetail | null {
   if (err instanceof DcDeclinedError) {
-    return { reason: err.reason, until: err.until, retryAfterMs: err.retryAfterMs };
+    return {
+      reason: err.reason,
+      until: err.until,
+      retryAfterMs: err.retryAfterMs,
+      epoch: err.epoch,
+    };
   }
   return null;
 }
 
-const pendingDeclines = new Map<string, DcOfferDeclineDetail>();
-
-export function rememberOffererDecline(peer: string, raw: string): void {
-  const detail = readDcOfferDeclineDetail(raw) ?? {
-    reason: 'disabled',
-    until: null,
-    retryAfterMs: null,
-  };
-  pendingDeclines.set(peer.toLowerCase(), detail);
-}
-
-export function takePendingDecline(peer: string): DcOfferDeclineDetail | null {
-  const key = peer.toLowerCase();
-  const found = pendingDeclines.get(key) ?? null;
-  if (found) pendingDeclines.delete(key);
-  return found;
-}
-
-export function discardPendingDecline(peer: string): void {
-  pendingDeclines.delete(peer.toLowerCase());
-}
-
-/** true：这次 superseded 还在预算内，拨号循环再试一次。decline 直接抛 dc-declined。 */
+/**
+ * true：应答侧 superseded 还在预算内，拨号循环再试一次。
+ * decline 已经是 DcDeclinedError，调用方原样抛出，不再经全局 map 二次解释。
+ */
 export function retrySupersededDial(
-  peer: string,
+  _peer: string,
   err: unknown,
   deadline: number,
   signal?: AbortSignal
 ): boolean {
-  if (signal?.aborted) {
-    discardPendingDecline(peer);
-    return false;
-  }
-  if (isSupersededDcLoss(err)) {
-    const declined = takePendingDecline(peer);
-    if (declined) throw new DcDeclinedError(declined);
-    return performance.now() < deadline;
-  }
-  discardPendingDecline(peer);
+  if (signal?.aborted || err instanceof DcDeclinedError) return false;
+  if (isSupersededDcLoss(err)) return performance.now() < deadline;
   return false;
 }
 
@@ -180,6 +175,7 @@ export function dcOfferDeclineCtl(opts: {
   reason: DcOfferDeclineReason;
   until?: number | null;
   retryAfterMs?: number | null;
+  epoch?: number | null;
 }): {
   t: 'rtc.signal';
   rtcSession: string;
@@ -195,6 +191,7 @@ export function dcOfferDeclineCtl(opts: {
     sdp: encodeDcOfferDecline(opts.reason, {
       until: opts.until,
       retryAfterMs: opts.retryAfterMs,
+      epoch: opts.epoch,
     }),
   };
 }

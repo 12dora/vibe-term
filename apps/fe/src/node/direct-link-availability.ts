@@ -16,41 +16,21 @@
 //     nodeId 分不出这两种情况。所以该 node 一旦重新登录成功就把负结论清掉
 //     （`markLoggedIn` 是唯一入口），不让一次误判把直连按住半小时。
 //
-// 目标 node 自己答 `503 DIRECT_UNAVAILABLE`（给不出直连：原生栈没装 / 被关掉）也记一笔，
-// 但只压 10 分钟：那是目标当前的状态，不像代答 401 那样是入口的固有属性；用户显式重试可以清掉它。
-// 一过性失败——`503 DIRECT_BUSY`，以及老 node 带 `timeout|aborted|failed|capacity` reason 的
-// `DIRECT_UNAVAILABLE`——与转发器的 `503 NODE_UNREACHABLE` 一样不进这里，由直连控制器的
-// authorize 熔断限流。
+// 目标 node 自己答的 `503 DIRECT_UNAVAILABLE` / `DIRECT_BUSY`、转发器的 `503 NODE_UNREACHABLE`
+// 都不进这里：那是目标此刻的状态，由直连控制器的熔断（`direct-breaker.ts`）唯一记账。
 //
 // 缓存只在内存里（刷新即失效）。
 
-import {
-  classifyDirectAuthorizeFailure,
-  readErrorBody,
-} from '@vibeterm/ws-client/direct/direct-carrier-errors';
-
 /** 负结论的有效期。 */
 export const DIRECT_LINK_NEGATIVE_TTL_MS = 30 * 60_000;
-/** 目标 node 答 `DIRECT_UNAVAILABLE` 时负结论的有效期。 */
-export const DIRECT_UNAVAILABLE_TTL_MS = 10 * 60_000;
-
-const RTC_AUTHORIZE_RELATIVE_PATH = '/api/rtc/authorize';
-
-/** `foreign-answer`：协商被入口代答成 401；`direct-unavailable`：目标答给不出直连。 */
-export type DirectLinkVerdict = 'foreign-answer' | 'direct-unavailable';
-
-const VERDICT_TTL_MS: Record<DirectLinkVerdict, number> = {
-  'foreign-answer': DIRECT_LINK_NEGATIVE_TTL_MS,
-  'direct-unavailable': DIRECT_UNAVAILABLE_TTL_MS,
-};
 
 /** 直连协商的两条端点（相对目标 node 的路径，不含 `/n/<id>` 前缀）。 */
-const NEGOTIATION_PATHS = new Set(['/api/mesh/connection', RTC_AUTHORIZE_RELATIVE_PATH]);
+const NEGOTIATION_PATHS = new Set(['/api/mesh/connection', '/api/rtc/authorize']);
 
 /** ICE 配置打 **entry** 的 `/api/mesh/rtc-config`，不必转发到目标 node。 */
 export const RTC_CONFIG_RELATIVE_PATH = '/api/mesh/rtc-config';
 
-const unavailableUntil = new Map<string, { until: number; verdict: DirectLinkVerdict }>();
+const unavailableUntil = new Map<string, number>();
 
 function cacheKey(entryNodeId: string, nodeId: string): string {
   return `${entryNodeId}→${nodeId}`;
@@ -59,15 +39,11 @@ function cacheKey(entryNodeId: string, nodeId: string): string {
 export function markDirectLinkUnavailable(
   nodeId: string,
   entryNodeId: string | null,
-  now: number = Date.now(),
-  verdict: DirectLinkVerdict = 'foreign-answer'
+  now: number = Date.now()
 ): void {
   // 入口身份未知：记了也查不中，索性不记（下一次协商照常重试一遍）。
   if (!entryNodeId) return;
-  unavailableUntil.set(cacheKey(entryNodeId, nodeId), {
-    until: now + VERDICT_TTL_MS[verdict],
-    verdict,
-  });
+  unavailableUntil.set(cacheKey(entryNodeId, nodeId), now + DIRECT_LINK_NEGATIVE_TTL_MS);
 }
 
 export function isDirectLinkUnavailable(
@@ -77,23 +53,11 @@ export function isDirectLinkUnavailable(
 ): boolean {
   if (!entryNodeId) return false;
   const key = cacheKey(entryNodeId, nodeId);
-  const entry = unavailableUntil.get(key);
-  if (entry === undefined) return false;
-  if (entry.until > now) return true;
+  const until = unavailableUntil.get(key);
+  if (until === undefined) return false;
+  if (until > now) return true;
   unavailableUntil.delete(key);
   return false;
-}
-
-/**
- * 用户显式重试直连：只撤掉「目标给不出直连」那一种负结论（目标的状态可能已经变了）；
- * 代答 401 是入口的固有属性，重试也不会变，保留。返回是否清掉了一条。
- */
-export function clearDirectUnavailableVerdict(nodeId: string, entryNodeId: string | null): boolean {
-  if (!entryNodeId) return false;
-  const key = cacheKey(entryNodeId, nodeId);
-  if (unavailableUntil.get(key)?.verdict !== 'direct-unavailable') return false;
-  unavailableUntil.delete(key);
-  return true;
 }
 
 /**
@@ -132,35 +96,13 @@ async function answeredByForeignNode(res: Response, nodeId: string): Promise<boo
   }
 }
 
-/** 目标 node 自己答的「给不出直连」；一过性失败（DIRECT_BUSY 等）不算。 */
-async function directUnavailable(res: Response): Promise<boolean> {
-  const body = await readErrorBody(res.clone());
-  return classifyDirectAuthorizeFailure(body.code, body.reason) === 'unavailable';
-}
-
-/** 这条协商响应该记哪种负结论；`null` 表示不记。 */
-function negativeVerdict(
-  res: Response,
-  relative: string,
-  nodeId: string
-): Promise<DirectLinkVerdict | null> | null {
-  if (res.status === 401) {
-    return answeredByForeignNode(res, nodeId).then((hit) => (hit ? 'foreign-answer' : null));
-  }
-  if (res.status === 503 && relative === RTC_AUTHORIZE_RELATIVE_PATH) {
-    return directUnavailable(res).then((hit) => (hit ? 'direct-unavailable' : null));
-  }
-  return null;
-}
-
 export interface DirectLinkClientLike {
   fetch(path: string, init?: RequestInit): Promise<Response>;
 }
 
 /**
- * 给直连控制器用的 REST 客户端包一层：协商端点被别人代答成 401、或目标答
- * `503 DIRECT_UNAVAILABLE` 时记下负结论并回调宿主，由宿主停掉这次直连。
- * 除此之外一个字节都不改，请求照常返回给控制器自己处理。
+ * 给直连控制器用的 REST 客户端包一层：协商端点被别人代答成 401 时记下负结论并回调宿主，
+ * 由宿主停掉这次直连。除此之外一个字节都不改，请求照常返回给控制器自己处理。
  */
 export function watchDirectNegotiation(
   nodeId: string,
@@ -175,10 +117,10 @@ export function watchDirectNegotiation(
       const target = relative === RTC_CONFIG_RELATIVE_PATH && entryClient ? entryClient : client;
       const routed = relative === RTC_CONFIG_RELATIVE_PATH ? RTC_CONFIG_RELATIVE_PATH : path;
       return target.fetch(routed, init).then((res) => {
-        if (!NEGOTIATION_PATHS.has(relative)) return res;
-        void negativeVerdict(res, relative, nodeId)?.then((verdict) => {
-          if (!verdict) return;
-          markDirectLinkUnavailable(nodeId, entryNodeId(), Date.now(), verdict);
+        if (!NEGOTIATION_PATHS.has(relative) || res.status !== 401) return res;
+        void answeredByForeignNode(res, nodeId).then((foreign) => {
+          if (!foreign) return;
+          markDirectLinkUnavailable(nodeId, entryNodeId(), Date.now());
           onUnavailable();
         });
         return res;

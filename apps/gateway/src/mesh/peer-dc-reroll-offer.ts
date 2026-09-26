@@ -1,6 +1,9 @@
 import type { RtcSignalMessage } from './mesh-deps';
 import type { LivePeer } from './peer-reconnect-wake';
 import type { RtcSignalInboxEntry } from './peer-rtc-wake';
+import { peerRtcSession } from './rtc/ice';
+import { rtcLog } from './rtc/rtc-log';
+import { dcOfferDeclineCtl } from './rtc/rtc-offer-decline';
 
 export type RerollOfferIgnoreReason =
   | 'epoch'
@@ -42,6 +45,46 @@ export function rerollOfferIgnoreReason(
   if (!input.isAnswerer) return 'role';
   if (!input.answererAllows && !input.respondsToOurRequest) return 'cooldown';
   return null;
+}
+
+export function sendRerollDecline(
+  send: ((peerNodeId: string, msg: RtcSignalMessage) => void) | undefined,
+  selfId: string,
+  nodeId: string,
+  msg: RtcSignalMessage,
+  epoch: number | undefined
+): void {
+  if (!send) return;
+  const ctl = dcOfferDeclineCtl({
+    rtcSession: msg.rtcSession || peerRtcSession(selfId, nodeId),
+    to: nodeId,
+    reason: 'cooling',
+    retryAfterMs: 30_000,
+    epoch,
+  });
+  send(nodeId, {
+    rtcSession: ctl.rtcSession,
+    from: 'node',
+    to: ctl.to,
+    sdp: ctl.sdp,
+    candidate: null,
+  });
+}
+
+export function consumeIgnoredRerollOffer(
+  input: RerollOfferIgnoreInput & {
+    send: ((peerNodeId: string, msg: RtcSignalMessage) => void) | undefined;
+    selfId: string;
+    nodeId: string;
+    msg: RtcSignalMessage;
+  }
+): 'skip' | 'declined' | 'take' {
+  const reason = rerollOfferIgnoreReason(input);
+  if (reason === 'skip') return 'skip';
+  if (!reason) return 'take';
+  sendRerollDecline(input.send, input.selfId, input.nodeId, input.msg, input.offerEpoch);
+  rtcLog('reroll_offer_ignored', { peer: input.nodeId.slice(0, 8), reason });
+  return 'declined';
 }
 
 export function dropInboxMessage(

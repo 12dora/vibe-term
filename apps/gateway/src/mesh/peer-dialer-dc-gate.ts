@@ -11,6 +11,7 @@ import {
   classifyRtcDialFailure,
   inboundOfferBlockReason,
   isIntentionalDcLoss,
+  isUncountedDcTrustFailure,
   rtcDialFailureMetaOf,
 } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
@@ -34,7 +35,7 @@ export type InboundOfferPlan =
   | { action: 'accept' }
   | { action: 'decline'; reason: DcOfferBlockReason; sdp: string };
 
-/** disabled / 冷却到顶：回 decline，调用方不建 answerer PC。其余低档冷却仍可应答。 */
+/** disabled 回 decline，调用方不建 answerer PC。冷却档位不再拦入站 offer。 */
 export function planInboundOffer(decision: RtcDialBreakerDecision): InboundOfferPlan {
   const reason = inboundOfferBlockReason(decision);
   if (!reason) return { action: 'accept' };
@@ -45,7 +46,7 @@ export function planInboundOffer(decision: RtcDialBreakerDecision): InboundOffer
   };
 }
 
-/** 对端发起的拨号在低档冷却中仍放行；disabled 或冷却到顶则拒绝，不建 PC。 */
+/** 对端发起的拨号在冷却中仍放行；disabled 则拒绝，不建 PC。 */
 export function gateDcDial(input: {
   peer: string;
   capable: boolean;
@@ -122,6 +123,7 @@ export function noteDialDcFailure(input: {
   connectP: Promise<{ pc: { close(): void } }> | null;
   attemptId: string;
   peerInitiated: boolean;
+  reroll?: boolean;
   dcBreaker: Pick<RtcDialBreaker, 'noteFailure'> & {
     noteRemoteRefusal?: (peer: string, until: number | null) => void;
   };
@@ -130,7 +132,9 @@ export function noteDialDcFailure(input: {
   const note = (failure: unknown) => {
     if (!input.stopped) applyRemoteDecline(input, failure);
     const meta = rtcDialFailureMetaOf(failure);
-    if (input.stopped || isIntentionalDcLoss(meta.reason)) return;
+    if (input.stopped || isIntentionalDcLoss(meta.reason) || isUncountedDcTrustFailure(failure)) {
+      return;
+    }
     input.dcBreaker.noteFailure(
       input.nodeId,
       classifyRtcDialFailure(meta.reason),
@@ -138,6 +142,7 @@ export function noteDialDcFailure(input: {
       undefined,
       {
         peerInitiated: input.peerInitiated,
+        reroll: input.reroll,
         stage: meta.stage,
         remoteSdpApplied: meta.remoteSdpApplied,
       }

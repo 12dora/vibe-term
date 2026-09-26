@@ -80,6 +80,7 @@ import {
   peerReachEpochPayload,
   peerReachPayload,
 } from './port-reach';
+import { getRelayDialBreaker } from './relay-dial-breaker';
 import { installRelayMultiAttach, primaryNodeListApplyPatch } from './relay-multi-attach';
 import { RelayObservedIpv4Store } from './relay-observed-ip';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
@@ -100,7 +101,9 @@ import {
   MeshRtcSignalRouter,
   RtcPeerManager,
 } from './rtc';
+import { acceptFailureLogFields } from './rtc/browser-authorize';
 import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
+import { rtcLog } from './rtc/rtc-log';
 // biome-ignore format: mesh-runtime fileLines allowlist
 import {
   meshRtcConfigResponse, noteMeshStunConfig, resolveMeshRtcConfig,
@@ -111,12 +114,7 @@ import { openHttpStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
 import type { UplinkWsFactory } from './uplink-constants';
 import { startUplinkPathSamplingFromCandidates } from './uplink-path-sampler';
-import {
-  type AttachedUplink,
-  UplinkDialCoordinator,
-  UplinkPool,
-  attachedUplinkHost,
-} from './uplink-pool';
+import { type AttachedUplink, UplinkPool, attachedUplinkHost } from './uplink-pool';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 import type { GatewaySessionClose } from './ws-stream-target';
 
@@ -399,7 +397,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     nodeEventDedupe.onRevoke(nodeId);
     emitNodeEvent({ nodeId, status: 'revoked' });
   };
-  const signalListeners = new Set<(signal: RtcSignalMessage) => void>();
+  const signalListeners = new Set<(signal: RtcSignalMessage, browserSessionId?: string) => void>();
   const relay = createRelayWiring({ db, identity, userIdOf });
   return {
     opts,
@@ -446,7 +444,7 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
     deliverInbound: (session, bytes) => {
       const entry = sessions.getBySession(session);
       if (!entry || !verifyBoundSession(entry)) return;
-      gateway.wsServer.deliverRtcInbound(session, bytes);
+      gateway.wsServer.deliverRtcInbound(session, bytes, session.direct ?? undefined);
     },
     verifyInbound: (session) => {
       const entry = sessions.getBySession(session);
@@ -638,7 +636,6 @@ function createUplinkWiring(d: MeshDeps) {
     createClient: relayOverrides.createClient,
     caPins: new RelayCaPinStore(d.db),
     probeHealthz: relayOverrides.probeHealthz,
-    dialCoordinator: new UplinkDialCoordinator(),
     onEnrollRedeemed: (msg) => {
       d.httpHolder.runtime?.mesh.forwardEnrollRedeemed({
         enrollPk: msg.enroll_pk,
@@ -704,7 +701,13 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool) {
     refreshLocalInterfaces: d.refreshLocalInterfaces,
     routeMode: d.routeMode,
     uplinkHost: () => attachedUplinkHost(uplink.attachedUplink()),
-    onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
+    onGatewaySession: (session, auth) => {
+      const result = sessions.register({ ...auth, session });
+      if (result.ok && result.replaced) {
+        d.teardownBinding(result.replaced, { code: 1001, reason: 'replaced-by-failover' });
+      }
+      return result.ok;
+    },
     onGatewaySessionClose: (session, close) => {
       const entry = sessions.getBySession(session);
       if (entry) d.teardownBinding(entry, close);
@@ -738,12 +741,15 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool) {
   });
   d.peerHolder.manager = peerManager;
   const attach = installNodeRelayAttach(d, uplink, peerManager);
+  let lastUplinkUrl: string | null = null;
   const unsubscribeUplinkState = uplink.onStateChange((liveState) => {
     const url = uplink.attachedUplink()?.publicUrl ?? attach?.presence.primaryUrl() ?? null;
     const live = uplink.liveClient();
     const rtt = live instanceof RelayUplinkClient ? live.rttMs : null;
     attach?.handlePrimaryState(liveState, url, rtt);
-    if (liveState === 'online') {
+    const urlChanged = lastUplinkUrl != null && url != null && url !== lastUplinkUrl;
+    lastUplinkUrl = url;
+    if (liveState === 'online' && urlChanged) {
       peerManager.onUplinkSwitched();
     }
   });
@@ -751,7 +757,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool) {
 }
 
 function installNodeRelayAttach(d: MeshDeps, uplink: UplinkPool, peerManager: PeerManager) {
-  return installRelayMultiAttach({
+  const attach = installRelayMultiAttach({
     wiring: d.relay,
     uplink,
     peerBind: peerManager,
@@ -773,6 +779,11 @@ function installNodeRelayAttach(d: MeshDeps, uplink: UplinkPool, peerManager: Pe
       syncMeshRtcProbes(d.rtc);
     },
   });
+  attach?.presence.setOnPeerOnline((nodeId) => {
+    getRelayDialBreaker().reset(nodeId);
+    peerManager.resetEndpointBackoff(nodeId);
+  });
+  return attach;
 }
 
 function createRtcBrowserWiring(d: MeshDeps, uplink: UplinkPool, peerManager: PeerManager) {
@@ -807,7 +818,10 @@ function createRtcBrowserWiring(d: MeshDeps, uplink: UplinkPool, peerManager: Pe
   const startBrowserAccept = (rtcSession: string) => {
     if (!rtcSession || d.acceptingBrowser.has(rtcSession)) return;
     const auth = rtc.authorizationOf(rtcSession);
-    if (!auth) return;
+    if (!auth) {
+      innerSignals.unregister(rtcSession);
+      return;
+    }
     d.acceptingBrowser.add(rtcSession);
     if (!innerSignals.ownerOf(rtcSession)) {
       innerSignals.register(rtcSession, {
@@ -853,7 +867,9 @@ function createRtcBrowserWiring(d: MeshDeps, uplink: UplinkPool, peerManager: Pe
           } catch {}
         }
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        rtcLog('accept failed', acceptFailureLogFields(rtcSession, err));
+      })
       .finally(() => {
         d.acceptingBrowser.delete(rtcSession);
         innerSignals.unregister(rtcSession);
@@ -877,7 +893,7 @@ function createRtcBrowserWiring(d: MeshDeps, uplink: UplinkPool, peerManager: Pe
       }
       innerSignals.send(signal, owner);
     },
-    subscribe(cb: (signal: RtcSignalMessage) => void) {
+    subscribe(cb: (signal: RtcSignalMessage, browserSessionId?: string) => void) {
       const offRouter = innerSignals.subscribe(cb);
       d.signalListeners.add(cb);
       return () => {

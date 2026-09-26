@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { decodeJsonBytes } from './ctl';
 import { type PeerCtlHost, handlePeerCtl, receiveRtcSignal } from './peer-ctl';
+import { applyRouteCloseCooldown } from './peer-dc-proof';
 import { noteDialDcFailure } from './peer-dialer-dc-gate';
 import type { PeerManagerState } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { encodeCandidateSignal, encodeSdpSignal, peerRtcSession } from './rtc/ice';
 import type { PeerConnectionLike } from './rtc/native';
+import { RtcDialBreaker } from './rtc/rtc-dial-breaker';
 import {
   encodeDcOfferDecline,
   isDcOfferDecline,
@@ -87,6 +89,38 @@ function fakeLive(peerNodeId = 'bb'.repeat(16)): LivePeer {
 }
 
 describe('handlePeerCtl', () => {
+  test('link.route-close marks the live row and is not forwarded', () => {
+    const host = fakeHost();
+    const live = fakeLive();
+    handlePeerCtl(
+      host,
+      live,
+      encodeCtl({ t: 'link.route-close', reason: 'route-measure-reject', retryAfterMs: 60_000 })
+    );
+    expect(host.link).toEqual([]);
+    const noted: Array<number | null> = [];
+    const intentional = applyRouteCloseCooldown(
+      {
+        noteRemoteRefusal: (_peer, until) => {
+          noted.push(until);
+        },
+      },
+      live,
+      live.peerNodeId,
+      'channel-closed'
+    );
+    expect(intentional).toBe(true);
+    expect(noted).toEqual([60_001]);
+    expect(
+      applyRouteCloseCooldown(
+        { noteRemoteRefusal: () => undefined },
+        live,
+        live.peerNodeId,
+        'channel-closed'
+      )
+    ).toBe(false);
+  });
+
   test('ignores malformed payloads', () => {
     const host = fakeHost();
     handlePeerCtl(host, fakeLive(), new Uint8Array([0xff, 0xfe]));
@@ -181,7 +215,7 @@ describe('receiveRtcSignal', () => {
 
     const superseded: number[] = [];
     const state = createSignalingAttemptState(4);
-    state.onSuperseded = () => {
+    state.onDeclined = () => {
       superseded.push(1);
     };
     const pc = {
@@ -334,8 +368,44 @@ describe('receiveRtcSignal', () => {
       reason: 'cooling',
       until: 9_000,
       retryAfterMs: 8_000,
+      epoch: 1,
     });
   });
+});
+
+test('recording an accept does not block answering that same offer', () => {
+  const peer = 'bb'.repeat(16);
+  const upgrades: string[] = [];
+  const sent: unknown[] = [];
+  const breaker = new RtcDialBreaker({ now: () => 1_000_000 });
+  const host = fakeHost({
+    identity: { nodeId: 'cc'.repeat(16) },
+    state: {
+      rtcInbox: new Map(),
+      pending: new Map(),
+      upgrading: new Map(),
+      live: new Map(),
+      scheduler: { now: () => 1_000_000 },
+    } as unknown as PeerManagerState,
+    dialer: { hasDcInflight: () => false, dcCapable: () => true },
+    dcUpgrade: { dcBreaker: breaker },
+    sendRtcSignal: (_p: string, message: unknown) => {
+      sent.push(message);
+    },
+    maybeUpgrade: (id: string) => {
+      upgrades.push(id);
+    },
+  });
+  receiveRtcSignal(host, peer, {
+    rtcSession: 'dc:x',
+    from: 'node',
+    to: 'cc'.repeat(16),
+    sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 1 }),
+    candidate: null,
+  });
+  expect(sent).toHaveLength(0);
+  expect(upgrades).toEqual([peer]);
+  expect(breaker.shouldAcceptAnswer(peer)).toBe(false);
 });
 
 function liveWithCtl(peerNodeId: string, sent: unknown[]): LivePeer {

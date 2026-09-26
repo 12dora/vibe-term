@@ -1,9 +1,7 @@
 import { decodeBase64url, encodeBase64url } from '../auth/encoding';
 import type { RelayEnvelope } from './tenant-cipher';
-
 export const RELAY_PROTO_VERSION = 1;
 export const MIN_RELAY_CLIENT_VERSION = '1.1.23';
-
 export const RELAY_CTL_TYPES = [
   'auth.challenge',
   'relay.auth',
@@ -120,6 +118,7 @@ export type RelayCtlMessage =
       nodes: RelayListNode[];
       rtc: RelayRtcConfig;
       key_log_head_seq: RelaySeqWire;
+      boot?: string;
     }
   | {
       t: 'relay.keylog.append';
@@ -466,6 +465,7 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
     nodes: listNodes(obj),
     rtc: rtcConfig(obj, 'rtc'),
     key_log_head_seq: seq(obj, 'key_log_head_seq'),
+    ...(optStr(obj, 'boot', 64) ? { boot: optStr(obj, 'boot', 64) } : {}),
   }),
   'relay.keylog.append': (obj) => {
     const member = keylogMember(obj, 'member');

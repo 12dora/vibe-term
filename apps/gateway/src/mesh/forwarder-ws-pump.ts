@@ -1,5 +1,9 @@
 import { wsBorsh } from '@vibeterm/shared';
-import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
+import {
+  type ForwardPump as FailoverPump,
+  STREAM_FAILOVER_NO_HELLO_LIMIT,
+  runStreamFailover,
+} from './forwarder-failover';
 import {
   FORWARD_WS_LINK_FAILURE_CODE,
   PendingForwardOpen,
@@ -25,6 +29,7 @@ type ForwardPump = FailoverPump & {
   browserPaused: boolean;
   inboundHold: Uint8Array[];
   inboundHoldBytes: number;
+  tornDown: boolean;
 };
 
 export class ForwardWsPumps {
@@ -49,9 +54,11 @@ export class ForwardWsPumps {
     if (!pump || pump.browserClosed) return;
     const bytes = toBytes(message);
     if (!bytes) return;
+    const hadHello = Boolean(pump.replay.hello);
     pump.replay.noteOutbound(bytes);
     if (pump.failingOver || !pump.stream) {
       if (!enqueueFrame(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
+      if (!hadHello && pump.replay.hello) pump.helloWait?.();
       return;
     }
     this.sendToStream(pump, pump.stream, bytes);
@@ -66,12 +73,10 @@ export class ForwardWsPumps {
 
   handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
     const pump = this.pumps.get(ws);
-    this.pumps.delete(ws);
     if (!pump) {
       discardPendingStream(ws.data?.token);
       return;
     }
-    pump.browserClosed = true;
     this.closePump(pump, { code, reason });
   }
 
@@ -101,6 +106,9 @@ export class ForwardWsPumps {
       browserPaused: false,
       inboundHold: [],
       inboundHoldBytes: 0,
+      deadOpens: 0,
+      sawInbound: false,
+      tornDown: false,
     };
     this.pumps.set(ws, pump);
     if (stream instanceof PendingForwardOpen) {
@@ -132,12 +140,13 @@ export class ForwardWsPumps {
     pump.stream = stream;
     pump.boundTransport = transport;
     pump.streamAlive = true;
+    pump.sawInbound = false;
     stream.onMessage((bytes) => {
       if (generation !== pump.generation || pump.browserClosed) return;
       this.handleRemoteBytes(pump, bytes);
     });
     stream.onClose((info) => {
-      if (generation !== pump.generation || pump.browserClosed) return;
+      if (generation !== pump.generation || pump.browserClosed || pump.tornDown) return;
       pump.streamAlive = false;
       pump.helloWait?.();
       pump.helloWait = null;
@@ -146,12 +155,19 @@ export class ForwardWsPumps {
         this.closePump(pump, info);
         return;
       }
-      if (pump.failingOver) return;
+      this.noteSilentDeath(pump);
+      if (pump.tornDown || pump.failingOver) return;
       void this.failover(pump, info ?? {});
     });
   }
 
   private handleRemoteBytes(pump: ForwardPump, bytes: Uint8Array): void {
+    pump.sawInbound = true;
+    pump.deadOpens = 0;
+    if (!pump.replay.hello) {
+      pump.helloWait?.();
+      pump.helloWait = null;
+    }
     const noted = pump.replay.noteInbound(bytes);
     if (pump.resumeWait && pump.replay.isResumeReady()) {
       pump.resumeWait();
@@ -181,11 +197,11 @@ export class ForwardWsPumps {
     try {
       result = pump.ws.send(bytes);
     } catch {
-      pump.stream?.close();
+      this.closePump(pump, { code: 1011, reason: 'forward-ws-closed' });
       return;
     }
     if (result === 0) {
-      this.closeBrowser(pump, { code: 1011, reason: 'forward-ws-closed' });
+      this.closePump(pump, { code: 1011, reason: 'forward-ws-closed' });
       return;
     }
     if (result === -1) {
@@ -261,20 +277,44 @@ export class ForwardWsPumps {
     this.closePump(pump, { code: 1011, reason });
   }
 
-  /** 整条转发流拆解：先断上游（当前流 + 在途流），再断浏览器，避免留下无主的 mesh 流。 */
+  /**
+   * 整条转发流拆解。先作废 generation，再关上游，最后关浏览器。
+   * 顺序反了的话，适配器同步 onClose 会把拆解当成链路抖动再开一轮 failover。
+   */
   closePump(pump: ForwardPump, info: { code?: number; reason?: string }): void {
+    if (pump.tornDown) return;
+    pump.tornDown = true;
+    pump.generation += 1;
+    const closeSocket = !pump.browserClosed;
+    pump.browserClosed = true;
+    pump.failingOver = false;
     pump.failoverAbort?.abort();
     pump.helloWait?.();
     pump.helloWait = null;
     pump.resumeWait?.();
     pump.resumeWait = null;
     const inflight = pump.inflight;
+    const stream = pump.stream;
     pump.inflight = null;
-    inflight?.close(info.code, info.reason);
-    pump.stream?.close(info.code, info.reason);
     pump.stream = null;
     pump.streamAlive = false;
-    this.closeBrowser(pump, info);
+    if (inflight && inflight !== stream) inflight.close(info.code, info.reason);
+    stream?.close(info.code, info.reason);
+    this.pumps.delete(pump.ws);
+    if (!closeSocket) return;
+    try {
+      pump.ws.close(info.code, info.reason);
+    } catch {
+      // socket already gone
+    }
+  }
+
+  /** 还没看到入站帧就死了。failover 进行中由尝试循环计数，避免一死计两次。 */
+  private noteSilentDeath(pump: ForwardPump): void {
+    if (pump.failingOver || pump.sawInbound) return;
+    pump.deadOpens += 1;
+    if (pump.deadOpens < STREAM_FAILOVER_NO_HELLO_LIMIT) return;
+    this.closePump(pump, { code: 1011, reason: 'failover-no-hello' });
   }
 
   private discardStream(pump: ForwardPump, stream: OpenedWsStream): void {
@@ -285,15 +325,6 @@ export class ForwardWsPumps {
     }
     try {
       stream.close();
-    } catch {}
-  }
-
-  closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
-    if (pump.browserClosed) return;
-    pump.browserClosed = true;
-    this.pumps.delete(pump.ws);
-    try {
-      pump.ws.close(info.code, info.reason);
     } catch {}
   }
 }

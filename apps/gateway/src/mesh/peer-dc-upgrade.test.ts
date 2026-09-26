@@ -6,7 +6,7 @@ import {
   type DcUpgradePorts,
 } from './peer-dc-upgrade';
 import { PERMANENT_FAILURE_HOLD_MS, isBackgroundDcUpgradeBlocked } from './peer-dc-upgrade-gate';
-import { DC_PRESENCE_ABSENCE_MS, type LivePeer, PeerReconnectWake } from './peer-reconnect-wake';
+import { DC_PRESENCE_ABSENCE_MS } from './peer-reconnect-wake';
 import { RTC_DIAL_BREAKER_FAILS, RTC_DIAL_FORCE_PROBE_MS } from './rtc/rtc-dial-breaker';
 import { RTC_DIAL_FORCE_PROBE_JITTER_MS } from './rtc/rtc-force-probe';
 import type { MeshScheduler, PeerTransportKind } from './types';
@@ -101,12 +101,14 @@ function makeCoordinator(
   const lostDirect = new Set<string>();
   const stop = new AbortController();
   const dials: string[] = [];
+  const skips: boolean[] = [];
   const availability = { dc: true };
   const ports: DcUpgradePorts = {
     scheduler,
     live: () => live,
-    dialDc: async (nodeId) => {
+    dialDc: async (nodeId, dialOpts) => {
       dials.push(nodeId);
+      skips.push(dialOpts?.skipDc === true);
       if (opts.recordDialFailure) {
         const attemptId = `dial-${dials.length}`;
         coordinator.dcBreaker.beginAttempt(nodeId, attemptId);
@@ -129,7 +131,7 @@ function makeCoordinator(
     lostDirect: () => lostDirect,
   };
   const coordinator = new DcUpgradeCoordinator(ports);
-  return { coordinator, live, dials, lostDirect, stop, availability };
+  return { coordinator, live, dials, skips, lostDirect, stop, availability };
 }
 
 function disablePeer(coordinator: DcUpgradeCoordinator, peer: string): void {
@@ -147,7 +149,7 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
     coordinator.armDcUpgradeRetry(peer);
     expect(dials).toEqual([]);
-    expect(coordinator.dcUpgradeRetry.has(peer)).toBe(true);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
 
     coordinator.onLocalFingerprintChanged();
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
@@ -197,10 +199,13 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
 
     coordinator.maybeUpgrade(peer, { cooldown: false });
     expect(dials).toEqual([]);
-    expect(coordinator.dcUpgradeRetry.has(peer)).toBe(true);
     await scheduler.advance(RTC_DIAL_FORCE_PROBE_MS - 1);
+    coordinator.scanPeers();
+    await flushMicrotasks();
     expect(dials).toEqual([]);
     await scheduler.advance(RTC_DIAL_FORCE_PROBE_JITTER_MS + 1);
+    coordinator.scanPeers();
+    await flushMicrotasks();
     expect(dials).toEqual([peer]);
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
 
@@ -215,7 +220,7 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
   });
 
   test('scan skips peers whose last DC failure is permanent', async () => {
-    const { coordinator, live, dials } = makeCoordinator();
+    const { coordinator, live, dials } = makeCoordinator({ hasWsSecure: () => false });
     const peer = 'peer-nosrflx';
     live.set(peer, livePeer(peer, 'relay'));
     coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'a1');
@@ -228,7 +233,10 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
 
   test('permanent failure hold expires after 60 min then one probe; a fresh failure re-arms', async () => {
     const scheduler = new ManualScheduler();
-    const { coordinator, live, dials } = makeCoordinator({ scheduler });
+    const { coordinator, live, dials } = makeCoordinator({
+      scheduler,
+      hasWsSecure: () => false,
+    });
     const peer = 'peer-hold';
     live.set(peer, livePeer(peer, 'relay'));
     coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'h1');
@@ -264,7 +272,10 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
 
   test('released probe 建 DC 后立刻清 hold，不等 noteHealthy；新永久失败再武装', async () => {
     const scheduler = new ManualScheduler();
-    const { coordinator, live, dials } = makeCoordinator({ scheduler });
+    const { coordinator, live, dials } = makeCoordinator({
+      scheduler,
+      hasWsSecure: () => false,
+    });
     const peer = 'peer-established';
     live.set(peer, livePeer(peer, 'relay'));
     coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'e1');
@@ -302,14 +313,17 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     disablePeer(coordinator, peer);
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
     await scheduler.advance(RTC_DIAL_FORCE_PROBE_MS + RTC_DIAL_FORCE_PROBE_JITTER_MS);
+    coordinator.scanPeers();
+    await flushMicrotasks();
     expect(dials).toEqual([peer]);
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
     coordinator.onPeerReconnected(peer);
     await flushMicrotasks();
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
     coordinator.onPeerCapabilitiesChanged(peer);
-    await flushMicrotasks();
     expect(coordinator.dcBreaker.isDisabled(peer)).toBe(false);
+    expect(coordinator.dcBreaker.snapshot(peer).failures).toBeGreaterThan(0);
+    await flushMicrotasks();
     expect(dials).toEqual([peer, peer]);
     coordinator.dispose();
   });
@@ -324,7 +338,6 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     stopped.coordinator.dispose();
     await stoppedScheduler.advance(RTC_DIAL_FORCE_PROBE_MS);
     expect(stopped.dials).toEqual([]);
-    expect(stopped.coordinator.dcUpgradeRetry.size).toBe(0);
 
     const missingScheduler = new ManualScheduler();
     const missing = makeCoordinator({ scheduler: missingScheduler });
@@ -333,8 +346,9 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     missing.coordinator.armDcUpgradeRetry('missing');
     missing.live.delete('missing');
     await missingScheduler.advance(RTC_DIAL_FORCE_PROBE_MS + RTC_DIAL_FORCE_PROBE_JITTER_MS);
+    missing.coordinator.scanPeers();
+    await flushMicrotasks();
     expect(missing.dials).toEqual([]);
-    expect(missing.coordinator.dcUpgradeRetry.size).toBe(0);
 
     const unavailableScheduler = new ManualScheduler();
     const unavailable = makeCoordinator({ scheduler: unavailableScheduler });
@@ -342,11 +356,11 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     unavailable.lostDirect.add('unavailable');
     disablePeer(unavailable.coordinator, 'unavailable');
     unavailable.coordinator.armDcUpgradeRetry('unavailable');
-    expect(unavailable.coordinator.dcUpgradeRetry.size).toBe(1);
     unavailable.availability.dc = false;
     await unavailableScheduler.advance(RTC_DIAL_FORCE_PROBE_MS + RTC_DIAL_FORCE_PROBE_JITTER_MS);
+    unavailable.coordinator.scanPeers();
+    await flushMicrotasks();
     expect(unavailable.dials).toEqual([]);
-    expect(unavailable.coordinator.dcUpgradeRetry.size).toBe(0);
     expect(unavailable.lostDirect.has('unavailable')).toBe(true);
   });
 });
@@ -362,22 +376,7 @@ describe('DcUpgradeCoordinator relay flap vs presence return', () => {
     expect(before.disabled).toBe(true);
     expect(before.level).toBe(5);
 
-    const wake = new PeerReconnectWake();
-    const woken: string[] = [];
-    wake.lost(peer, true, false);
-    const session = {
-      peerNodeId: peer,
-      transport: 'relay',
-      quiesceCapable: false,
-    } as LivePeer;
-    wake.installed(session, (id) => woken.push(id));
-    expect(woken).toEqual([]);
-    session.quiesceCapable = true;
-    wake.ready(session, (id) => {
-      woken.push(id);
-      coordinator.onPeerReconnected(id);
-    });
-    expect(woken).toEqual([peer]);
+    coordinator.onPeerReconnected(peer);
     scheduler.nowMs += 60 * 60 * 1000;
     coordinator.onPeerReconnected(peer);
     expect(coordinator.dcBreaker.snapshot(peer)).toMatchObject({
@@ -507,5 +506,96 @@ describe('DcUpgradeCoordinator.willAttemptUpgrade', () => {
     expect(lost.coordinator.willAttemptUpgrade(peer)).toBe(false);
     cooling.coordinator.dispose();
     lost.coordinator.dispose();
+  });
+});
+
+describe('DcUpgradeCoordinator review fixes', () => {
+  test('lostDirect does not block the retry ladder or the scan', async () => {
+    const { coordinator, live, dials, lostDirect } = makeCoordinator({
+      hasWsSecure: () => false,
+    });
+    const peer = 'p';
+    live.set(peer, livePeer(peer, 'relay'));
+    lostDirect.add(peer);
+    coordinator.armDcUpgradeRetry(peer);
+    coordinator.scanPeers();
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+    coordinator.dispose();
+  });
+
+  test('relay with a ws-secure candidate upgrades when DC is incapable or cooling', async () => {
+    const incapable = makeCoordinator({
+      hasWsSecure: () => true,
+    });
+    incapable.availability.dc = false;
+    incapable.live.set('p', livePeer('p', 'relay'));
+    incapable.coordinator.maybeUpgrade('p', { cooldown: false });
+    await flushMicrotasks();
+    expect(incapable.dials).toEqual(['p']);
+    incapable.coordinator.dispose();
+
+    const cooling = makeCoordinator({ hasWsSecure: () => true });
+    cooling.live.set('p', livePeer('p', 'relay'));
+    for (let i = 0; i < 3; i += 1) {
+      cooling.coordinator.dcBreaker.beginAttempt('p', `a${i}`);
+      cooling.coordinator.dcBreaker.noteFailure('p', 'timeout', `a${i}`);
+    }
+    expect(cooling.coordinator.dcBreaker.shouldTry('p').allow).toBe(false);
+    cooling.coordinator.maybeUpgrade('p', { cooldown: false });
+    await flushMicrotasks();
+    expect(cooling.dials).toEqual(['p']);
+    cooling.coordinator.dispose();
+  });
+
+  test('uplink switch keeps a decline retryAfter and does not dial immediately', async () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials } = makeCoordinator({
+      scheduler,
+      hasWsSecure: () => true,
+    });
+    live.set('p', livePeer('p', 'relay'));
+    const until = scheduler.nowMs + 120_000;
+    coordinator.dcBreaker.noteRemoteRefusal('p', until);
+    coordinator.onUplinkSwitched();
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+    expect(coordinator.dcBreaker.honoursRemoteRefusal('p')).toBe(true);
+    expect(coordinator.dcBreaker.shouldTry('p').until).toBe(until);
+    coordinator.dispose();
+  });
+
+  test('a DC decline does not block relay to ws-secure, and skips the DC leg', async () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials, skips } = makeCoordinator({
+      scheduler,
+      hasWsSecure: () => true,
+    });
+    live.set('p', livePeer('p', 'relay'));
+    coordinator.dcBreaker.noteRemoteRefusal('p', scheduler.nowMs + 20 * 60_000);
+    coordinator.maybeUpgrade('p', { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual(['p']);
+    expect(skips).toEqual([true]);
+    coordinator.dispose();
+  });
+
+  test('a no-srflx hold still skips DC when a ws-secure candidate exists', async () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials, skips } = makeCoordinator({
+      scheduler,
+      hasWsSecure: () => true,
+    });
+    const peer = 'p';
+    live.set(peer, livePeer(peer, 'relay'));
+    coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'a1');
+    expect(isBackgroundDcUpgradeBlocked(coordinator.dcBreaker, peer, scheduler.nowMs)).toBe(true);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+    expect(skips).toEqual([true]);
+    expect(isBackgroundDcUpgradeBlocked(coordinator.dcBreaker, peer, scheduler.nowMs)).toBe(true);
+    expect(coordinator.dcBreaker.snapshot(peer).failures).toBe(1);
+    coordinator.dispose();
   });
 });

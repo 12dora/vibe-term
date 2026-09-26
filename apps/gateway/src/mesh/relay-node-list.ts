@@ -39,6 +39,16 @@ export type RelayListContext = {
 
 type ListEntry = UplinkNodeList['nodes'][number];
 
+const relayListBoots = new WeakMap<object, string>();
+
+export function tagRelayListBoot(list: object, boot: string): void {
+  relayListBoots.set(list, boot);
+}
+
+export function relayListBoot(list: object): string | null {
+  return relayListBoots.get(list) ?? null;
+}
+
 async function openStatusBlob(
   node: RelayListNode,
   secrets: RelaySecrets
@@ -104,6 +114,19 @@ export async function relayListToNodeList(
   return list;
 }
 
+function notifyCachedCapability(
+  changed: boolean,
+  nodeId: string,
+  onChanged: RelayListContext['onCapabilitiesChanged']
+): void {
+  if (!changed) return;
+  try {
+    notifyRelayCapabilityChanged(nodeId, onChanged);
+  } catch {
+    /* 过期的 rearm 不能打断已经写入的 peer_cache */
+  }
+}
+
 function cacheAdmittedRelayNode(
   node: Extract<RelayCtlMessage, { t: 'relay.list' }>['nodes'][number],
   blob: RelayStatusBlob,
@@ -114,29 +137,27 @@ function cacheAdmittedRelayNode(
   const version = blob.version || null;
   const inventoryJson = jsonText(blob.inventory);
   const existing = ctx.userStore.getPeer(node.id);
-  if (
-    peerCapabilitiesChanged(existing, {
-      version,
-      directCapable: blob.direct_capable,
-      inventoryJson,
-    })
-  ) {
-    changed.push(node.id);
-    notifyRelayCapabilityChanged(node.id, ctx.onCapabilitiesChanged);
-  }
+  const capsChanged = peerCapabilitiesChanged(existing, {
+    version,
+    directCapable: blob.direct_capable,
+    inventoryJson,
+  });
+  if (capsChanged) changed.push(node.id);
+  const keepCaps = existing != null && !capsChanged;
   ctx.userStore.upsertPeer({
     nodeId: node.id,
     name: blob.name || node.id,
     endpointsJson: jsonText(blob.endpoints),
-    inventoryJson,
-    directCapable: blob.direct_capable,
+    inventoryJson: keepCaps ? existing.inventoryJson : inventoryJson,
+    directCapable: keepCaps ? existing.directCapable : blob.direct_capable,
     lastSeenAt: ctx.now,
     listVersion,
-    version,
+    version: keepCaps ? existing.version : version,
   });
   ingestPeerReachMap(node.id, blob.peer_reach, ctx.selfNodeId);
   ingestPeerReachEpoch(node.id, blob.peer_reach_epoch);
   if (ctx.relayUrl) ingestTurnOk(node.id, blob.turn_ok, ctx.relayUrl);
+  notifyCachedCapability(capsChanged, node.id, ctx.onCapabilitiesChanged);
   return {
     id: node.id,
     name: blob.name || node.id,

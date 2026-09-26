@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { RtcSignalMessage } from '../mesh-deps';
-import { MeshRtcSignalRouter } from './signaling';
+import { MeshRtcSignalRouter, RTC_REMOTE_OWNER_TTL_MS } from './signaling';
 
 describe('MeshRtcSignalRouter', () => {
   test('forwards browser signals to the registered target node', () => {
@@ -149,5 +149,45 @@ describe('MeshRtcSignalRouter', () => {
     expect(delivered).toEqual([]);
     router.deliverLocal({ rtcSession: 'ok', from: 'node', to: 'aa', sdp: 'good' }, 'entry');
     expect(delivered).toEqual(['good']);
+  });
+
+  test('node signals carry the owning browser session and remote owners expire', () => {
+    let now = 5_000;
+    const router = new MeshRtcSignalRouter({
+      selfNodeId: 'aa',
+      sendCtl: () => {},
+      now: () => now,
+    });
+    router.register('remote', { browserSessionId: 'sid-a', targetNodeId: 'bb' });
+    router.register('local', { browserSessionId: 'sid-a', targetNodeId: 'aa' });
+    const seen: string[] = [];
+    router.subscribe((msg, sid) => {
+      seen.push(`${sid}:${msg.sdp ?? msg.candidate ?? ''}`);
+    });
+    router.receiveFromNode('bb', {
+      rtcSession: 'remote',
+      from: 'node',
+      to: 'bb',
+      sdp: 'answer',
+    });
+    expect(seen).toEqual(['sid-a:answer']);
+    now += RTC_REMOTE_OWNER_TTL_MS - 1;
+    router.receiveFromNode('bb', {
+      rtcSession: 'remote',
+      from: 'node',
+      to: 'bb',
+      candidate: 'late',
+    });
+    expect(seen).toEqual(['sid-a:answer', 'sid-a:late']);
+    now += 1;
+    expect(router.ownerOf('remote')).toBeUndefined();
+    expect(router.ownerOf('local')?.browserSessionId).toBe('sid-a');
+    router.receiveFromNode('bb', {
+      rtcSession: 'remote',
+      from: 'node',
+      to: 'bb',
+      candidate: 'after',
+    });
+    expect(seen).toEqual(['sid-a:answer', 'sid-a:late']);
   });
 });

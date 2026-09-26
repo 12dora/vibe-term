@@ -6,12 +6,13 @@ import {
   DialBreaker,
   type DialBreakerDecision,
   type DialBreakerFailureResult,
+  type DialBreakerHealthProof,
   type DialBreakerResetEvent,
   type DialBreakerSnapshot,
   type DialBreakerTripEvent,
 } from '../../../../../packages/shared/src/net/dial-breaker';
 import { envInt } from '../mesh-log';
-import { AnswererOfferBackoff } from './rtc-answerer-backoff';
+import { AnswerRateLimit } from './rtc-answer-rate';
 import {
   type RtcDialFailureOpts,
   classifyRtcDialFailure,
@@ -55,15 +56,18 @@ export const RTC_DIAL_BREAKER_MS_DEFAULT = RTC_DIAL_BREAKER_BASE_MS_DEFAULT;
 
 export const RTC_DIAL_BREAKER_SKIP_KINDS = new Set(['signaling-state', 'signal-dropped']);
 
-export const DC_FULL_REARM_SOURCES = [
-  'local-fingerprint',
-  'peer-endpoint',
+export const DC_FULL_REARM_SOURCES = ['manual', 'local-fingerprint', 'peer-endpoint'] as const;
+export const DC_DECAY_REARM_SOURCES = [
+  'uplink-url-changed',
   'uplink-switch',
+  'presence-return',
   'peer-capabilities',
-  'manual',
+  'ice-config',
 ] as const;
-export const DC_REARM_SOURCES = [...DC_FULL_REARM_SOURCES, 'presence-return'] as const;
+export const DC_REARM_SOURCES = [...DC_FULL_REARM_SOURCES, ...DC_DECAY_REARM_SOURCES] as const;
 export type DcRearmSource = (typeof DC_REARM_SOURCES)[number];
+
+const DECAY_REARM = new Set<DcRearmSource>(DC_DECAY_REARM_SOURCES);
 
 export type RtcDialBreakerDecision = DialBreakerDecision & {
   disabled: boolean;
@@ -90,12 +94,11 @@ export type RtcDialBreakerRearmEvent = {
 
 export type DcOfferBlockReason = 'disabled' | 'cooling';
 
-/** disabled，或冷却档位到顶：不应再接对端 offer。 */
+/** disabled 才按熔断拒绝。冷却到顶不再静默拒答，改由应答限速回 decline。 */
 export function inboundOfferBlockReason(
   decision: Pick<RtcDialBreakerDecision, 'disabled' | 'cooling' | 'level'>
 ): DcOfferBlockReason | null {
   if (decision.disabled) return 'disabled';
-  if (decision.cooling && decision.level >= RTC_ANSWER_REFUSE_LEVEL) return 'cooling';
   return null;
 }
 
@@ -103,6 +106,7 @@ export type { RtcDialFailureOpts } from './rtc-dial-failure';
 export {
   classifyRtcDialFailure,
   isIntentionalDcLoss,
+  isUncountedDcTrustFailure,
   rtcDialFailureMetaOf,
 } from './rtc-dial-failure';
 
@@ -134,16 +138,15 @@ export class RtcDialBreaker {
   private readonly onDisable?: (event: RtcDialBreakerDisableEvent) => void;
   private readonly onRearm?: (event: RtcDialBreakerRearmEvent) => void;
   private readonly disabled = new Map<string, DisabledProbeRow>();
-  /** 当前冷却里有对端 decline 的成分。rearm 时清掉，不碰正常失败档。 */
-  private readonly remoteRefusal = new Set<string>();
+  private readonly remoteRefusal = new Map<string, number>();
   /** 应答侧未收到远端 SDP 的 timeout 不抬档，但仍让 snapshot.lastFailureKind 看到本次 kind。 */
   private readonly lastUncountedKind = new Map<string, string>();
-  /** 对端发起的连续超时：忽略该对端后续 offer，不抬 offerer 熔断。 */
-  private readonly answererBackoff: AnswererOfferBackoff;
+  /** 每个对端 30s 最多接一条 offer。 */
+  private readonly answerRate: AnswerRateLimit;
 
   constructor(opts: RtcDialBreakerOptions = {}) {
     this.now = opts.now ?? Date.now;
-    this.answererBackoff = new AnswererOfferBackoff(this.now);
+    this.answerRate = new AnswerRateLimit(this.now);
     this.disableAfter =
       opts.disableAfter ??
       envInt('VIBETERM_RTC_DIAL_DISABLE_AFTER', RTC_DIAL_DISABLE_AFTER_DEFAULT, 1);
@@ -163,6 +166,13 @@ export class RtcDialBreaker {
       onReset: opts.onReset,
       skipKinds: RTC_DIAL_BREAKER_SKIP_KINDS,
       trackAttempts: true,
+      countForeignKinds: new Set([
+        'liveness-timeout',
+        'channel-closed',
+        'missed-pong',
+        'no srflx candidates',
+        'stun unconfigured',
+      ]),
     });
   }
 
@@ -216,32 +226,46 @@ export class RtcDialBreaker {
 
   /**
    * 应答侧是否还该接这个对端的 offer。
-   * disabled 的 force-probe 窗口（含握手宽限）内放行；否则 disabled 或冷却到顶拒绝，reroll 也不能绕过。
-   * 仅 answerer backoff 时，对端在应答本端 `link.reroll-request` 仍放行。
+   * disabled 的入站槽内放行。限速窗口内拒绝，但回应本端 reroll-request 可以绕过限速。
    */
   shouldAcceptAnswer(
     peer: string,
     now = this.now(),
     opts?: { respondsToOurRequest?: boolean }
   ): boolean {
-    const row = this.disabled.get(peer);
-    if (row && inboundSlotOpen(row, this.probeClock(peer, now))) return true;
-    if (inboundOfferBlockReason(this.snapshot(peer, now))) return false;
+    if (this.inboundSlotAllows(peer, now)) return true;
+    if (this.disabled.has(peer)) return false;
     if (opts?.respondsToOurRequest === true) return true;
-    return this.answererBackoff.shouldAccept(peer, now);
+    return !this.answerRate.blocked(peer, now);
   }
 
   inboundBlock(peer: string, now = this.now()): DcOfferBlockReason | null {
-    const row = this.disabled.get(peer);
-    if (row && inboundSlotOpen(row, this.probeClock(peer, now))) return null;
-    return inboundOfferBlockReason(this.snapshot(peer, now));
+    if (this.inboundSlotAllows(peer, now)) return null;
+    if (this.disabled.has(peer)) return 'disabled';
+    if (this.answerRate.blocked(peer, now)) return 'cooling';
+    return null;
   }
 
-  /** 回给 offerer 的冷却。disabled 用下次入站槽，冷却到顶用 coolingUntil。 */
+  /** 回给 offerer 的冷却。disabled 用下次入站槽，限速用剩余窗口。 */
   refusalCooldown(peer: string, now = this.now()): { until: number | null; retryAfterMs: number } {
-    const snap = this.inner.snapshot(peer, now);
-    const coolingUntil = snap.cooling && snap.level >= RTC_ANSWER_REFUSE_LEVEL ? snap.until : null;
-    return refusalBackoff(this.disabled.get(peer), coolingUntil, this.probeClock(peer, now));
+    const rate = this.answerRate.retryAfterMs(peer, now);
+    if (rate > 0 && !this.disabled.has(peer)) {
+      return { until: now + rate, retryAfterMs: rate };
+    }
+    return refusalBackoff(this.disabled.get(peer), null, this.probeClock(peer, now));
+  }
+
+  noteAnswerAccepted(peer: string, now = this.now()): void {
+    this.answerRate.noteAccepted(peer, now);
+  }
+
+  escalatedPeers(now = this.now()): string[] {
+    const ids = new Set(this.disabled.keys());
+    for (const peer of this.inner.peerIds()) {
+      const snap = this.inner.snapshot(peer, now);
+      if (snap.level > 0 || snap.cooling) ids.add(peer);
+    }
+    return [...ids];
   }
 
   noteInboundAccepted(peer: string, now = this.now()): void {
@@ -274,10 +298,12 @@ export class RtcDialBreaker {
   ): RtcDialFailureResult {
     const classified = classifyRtcDialFailure(kind);
     const breakerKind = RTC_DIAL_BREAKER_SKIP_KINDS.has(classified) ? classified : kind;
-    if (opts?.peerInitiated === true && classified === 'timeout') {
-      this.noteAnswererTimeout(peer, now);
-    }
-    if (isUncountedPeerInitiatedTimeout(classified, opts)) {
+    if (
+      opts?.reroll === true ||
+      opts?.peerInitiated === true ||
+      isUncountedPeerInitiatedTimeout(classified, opts)
+    ) {
+      if (opts?.peerInitiated === true) this.answerRate.reset(peer);
       this.lastUncountedKind.set(peer, breakerKind);
       const decision = this.inner.shouldTry(peer, now);
       return {
@@ -299,8 +325,20 @@ export class RtcDialBreaker {
   noteChannelEstablished(peer: string, attemptId?: string, now?: number): void {
     // 建连不等于稳住。disabled 只在 noteHealthy 活过 healthyMs 之后解除。
     this.lastUncountedKind.delete(peer);
-    this.answererBackoff.noteSuccess(peer);
+    this.answerRate.reset(peer);
     this.inner.noteChannelEstablished(peer, attemptId, now);
+  }
+
+  /** 已建立的那条 DC 拆了。外尝试护盾随之结束，之后的拨号失败重新计数。 */
+  noteChannelLost(peer: string, attemptId?: string): void {
+    this.inner.noteChannelLost(peer, attemptId);
+  }
+
+  /** 对端 decline 的冷却还没到期。上行切换不能把它清掉。过期的记录不再挡住后续熔断冷却。 */
+  honoursRemoteRefusal(peer: string, now = this.now()): boolean {
+    const until = this.remoteRefusal.get(peer) ?? 0;
+    if (until <= now) return false;
+    return this.inner.shouldTry(peer, now).cooling;
   }
 
   noteUnstable(peer: string, cooldownMs: number, now?: number): void {
@@ -310,43 +348,37 @@ export class RtcDialBreaker {
   /** 对端 decline 带来的冷却：不升档、不计失败，也不解除 disabled。超过 30min 的直到被夹掉。 */
   noteRemoteRefusal(peer: string, until: number | null, now = this.now()): void {
     if (until == null || !Number.isFinite(until) || until <= now) return;
-    this.remoteRefusal.add(peer);
-    this.inner.noteCooldownUntil(peer, Math.min(until, now + RTC_DECLINE_BACKOFF_CAP_MS));
+    const capped = Math.min(until, now + RTC_DECLINE_BACKOFF_CAP_MS);
+    const next = Math.max(this.remoteRefusal.get(peer) ?? 0, capped);
+    this.remoteRefusal.set(peer, next);
+    this.inner.noteCooldownUntil(peer, next);
   }
 
-  noteHealthy(peer: string, now?: number): boolean {
-    const reset = this.inner.noteHealthy(peer, now);
+  noteHealthy(peer: string, now?: number, proof?: DialBreakerHealthProof): boolean {
+    const reset = this.inner.noteHealthy(peer, now, proof);
     if (reset) this.disabled.delete(peer);
     this.remoteRefusal.delete(peer);
     this.lastUncountedKind.delete(peer);
-    this.answererBackoff.noteSuccess(peer);
+    this.answerRate.reset(peer);
     return reset;
   }
 
-  notePeerChanged(peer: string): void {
-    this.inner.notePeerChanged(peer);
-  }
-
   rearmDisabled(peer: string, source: DcRearmSource): boolean {
-    if (source === 'presence-return') return this.notePresenceReturn(peer);
+    if (DECAY_REARM.has(source)) return this.decayPeer(peer, source);
     const softened = this.clearSoftCooldown(peer);
     if (!this.disabled.has(peer)) return softened;
     const levelBefore = this.inner.snapshot(peer).level;
     this.disabled.delete(peer);
     this.remoteRefusal.delete(peer);
+    this.answerRate.reset(peer);
     this.inner.reset(peer);
     this.onRearm?.({ peer, source, levelBefore, levelAfter: 0 });
     return true;
   }
 
-  /** endpoint / uplink / fingerprint / capability / manual：清 unstable-dc 和远端拒绝冷却。 */
-  clearAllSoftCooldowns(): string[] {
-    const peers = new Set<string>();
-    for (const peer of [...this.remoteRefusal]) {
-      if (this.clearSoftCooldown(peer)) peers.add(peer);
-    }
-    for (const peer of this.inner.clearUnstableCooling()) peers.add(peer);
-    return [...peers];
+  /** 只清 unstable-dc。对端 decline 的 retryAfter 留下，由对方说了算。 */
+  clearUnstableCooldowns(): string[] {
+    return this.inner.clearUnstableCooling();
   }
 
   rearmAllDisabled(source: DcRearmSource): string[] {
@@ -368,28 +400,34 @@ export class RtcDialBreaker {
       this.remoteRefusal.clear();
       this.lastUncountedKind.clear();
     }
-    this.answererBackoff.reset(peer);
+    this.answerRate.reset(peer);
     this.inner.reset(peer);
   }
 
-  private notePresenceReturn(peer: string): boolean {
+  private decayPeer(peer: string, source: DcRearmSource): boolean {
     const snap = this.snapshot(peer);
     if (!snap.disabled && !snap.cooling && snap.level <= 0) return false;
     const levelBefore = snap.level;
+    const keepRefusal = this.keepsRemoteRefusal(source, peer);
+    const stored = keepRefusal ? this.remoteRefusal.get(peer) : undefined;
+    const refusalUntil = stored != null && stored > this.now() ? stored : null;
     this.disabled.delete(peer);
+    if (refusalUntil == null) this.remoteRefusal.delete(peer);
     const levelAfter = this.inner.decayEscalation(peer)?.levelAfter ?? levelBefore;
-    this.onRearm?.({ peer, source: 'presence-return', levelBefore, levelAfter });
+    if (refusalUntil != null) this.inner.noteCooldownUntil(peer, refusalUntil);
+    this.answerRate.reset(peer);
+    this.onRearm?.({ peer, source, levelBefore, levelAfter });
     return true;
   }
 
-  private noteAnswererTimeout(peer: string, now?: number): void {
-    const trip = this.answererBackoff.noteTimeout(peer, now ?? this.now());
-    if (!trip.opened) return;
-    rtcLog('answerer_backoff', {
-      peer,
-      cooldown_ms: trip.cooldownMs,
-      consecutive: trip.consecutive,
-    });
+  private keepsRemoteRefusal(source: DcRearmSource, peer: string): boolean {
+    if (source !== 'uplink-url-changed' && source !== 'uplink-switch') return false;
+    return this.remoteRefusal.has(peer);
+  }
+
+  private inboundSlotAllows(peer: string, now: number): boolean {
+    const row = this.disabled.get(peer);
+    return !!row && inboundSlotOpen(row, this.probeClock(peer, now));
   }
 
   private maybeDisable(peer: string, now?: number): void {

@@ -173,6 +173,10 @@ describe('runUplinkSwitch 连接失败归一化', () => {
       },
       isSwitchCurrent: (value) => value === token,
       spawn: (row) => fakeClient(row.publicUrl),
+      holdDial: () => 1,
+      releaseDial: () => {},
+      releaseSecondary: async () => {},
+      notifyTargetFree: () => {},
       connectCandidate: async (client) => connect(client),
       promote: async (client) => {
         live = client;
@@ -200,5 +204,50 @@ describe('runUplinkSwitch 连接失败归一化', () => {
     release();
     expect(await first).toEqual({ ok: false, reason: 'superseded' });
     expect(failures).toEqual([]);
+  });
+
+  test('在线副连接接管后不再 attemptConnect', async () => {
+    const stop = new AbortController();
+    let token = 0;
+    let live: PooledUplink | null = fakeClient('https://b.example', 'online');
+    let attached = 'https://b.example';
+    let connects = 0;
+    const taken = fakeClient('https://a.example', 'online');
+    const host: UplinkSwitchHost = {
+      candidates: () => [cand('https://a.example'), cand('https://b.example')],
+      attachedUplink: () => ({ publicUrl: attached, since: 1 }),
+      liveClient: () => live,
+      stopSignal: () => stop.signal,
+      pending: null,
+      noteAttempt: () => {},
+      logCandidateEvent: () => {},
+      lastErrorOf: () => null,
+      beginSwitch: () => {
+        token += 1;
+        return token;
+      },
+      isSwitchCurrent: (value) => value === token,
+      spawn: () => {
+        throw new Error('should not spawn');
+      },
+      holdDial: () => 1,
+      releaseDial: () => {},
+      releaseSecondary: async () => {},
+      takeoverSecondary: async () => taken,
+      notifyTargetFree: () => {},
+      connectCandidate: async () => {
+        connects += 1;
+      },
+      promote: async (client) => {
+        live = client;
+        attached = client.uplinkUrl;
+        host.pending = null;
+      },
+      noteFailure: () => {},
+      logCandidateFailed: () => {},
+    };
+    expect(await runUplinkSwitch(host, 'https://a.example')).toEqual({ ok: true });
+    expect(connects).toBe(0);
+    expect(live).toBe(taken);
   });
 });

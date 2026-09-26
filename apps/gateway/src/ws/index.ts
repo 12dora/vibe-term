@@ -35,13 +35,10 @@ import {
 import { DeviceFeedBroadcaster, type DeviceFeedHost } from './device-feed-broadcaster';
 import { DeviceLatencyBroadcast } from './device-latency-broadcast';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
-import {
-  type GatewayMetricsHost,
-  logTerminalOutputMetricsIfDue,
-  recordPingProbe,
-} from './gateway-metrics-log';
+import { type GatewayMetricsHost, logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
 import { negotiateHello } from './hello-negotiate';
+import { replyToGatewayPing } from './pong-reply';
 import { closeGatewaySession, logWsClientConnected } from './session-close';
 import type { ShareScope } from './share-scope';
 import { ShareSessionIndex } from './share-session-index';
@@ -57,21 +54,11 @@ import {
   type WebSocketServerOptions,
   defaultDeps,
 } from './types';
-import {
-  GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES,
-  gatewayWebSocketSendGuard,
-} from './websocket-send-guard';
+import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 import { WindowMemoryBroadcast, bindWindowMemoryBroadcast } from './window-memory-broadcast';
-import { carrierKindOf } from './ws-backpressure-log';
 
 export { RUNTIME_IDLE_GRACE_MS } from './types';
 export { parseWindowLayoutSize, payloadNeedsChunking } from './frame-utils';
-
-function monotonicMs(): number {
-  return typeof performance !== 'undefined' && typeof performance.now === 'function'
-    ? performance.now()
-    : Date.now();
-}
 
 export class WebSocketServer
   extends WebSocketServerTmuxFacade
@@ -87,7 +74,6 @@ export class WebSocketServer
   readonly gatewayActivityMetrics = new GatewayActivityMetrics();
   readonly terminalOutputMetrics = new TerminalOutputMetrics();
   terminalOutputEventsUntilMetricsCheck = 1024;
-
   connectedClients = new Set<GatewaySession>();
   readonly shareIndex = new ShareSessionIndex();
   readonly canonicalSessions = new Map<GatewaySession, CanonicalFeedSession>();
@@ -99,6 +85,7 @@ export class WebSocketServer
   private readonly deviceLatency: DeviceLatencyBroadcast;
   private readonly windowMemory: WindowMemoryBroadcast;
   private readonly borshHandlers: BorshKindHandlerMap;
+  private inboundCarrier: Carrier | null = null;
 
   get connections() {
     return this.registry.connections;
@@ -247,14 +234,22 @@ export class WebSocketServer
       session,
       onMessage: (bytes) => {
         if (session.closed) return;
-        this.handleMessage(session, Buffer.from(bytes));
+        this.handleMessage(session, Buffer.from(bytes), carrier);
       },
       onDecodedEnvelope: (envelope) => {
         if (session.closed) return;
-        const p = envelope.payload;
-        // 视图 payload 在 mux 缓冲回收后会失效；已独立持有则不必再拷
-        const owned = p.byteOffset === 0 && p.byteLength === p.buffer.byteLength;
-        this.handleDecodedEnvelope(session, owned ? envelope : { ...envelope, payload: p.slice() });
+        this.inboundCarrier = carrier;
+        try {
+          const p = envelope.payload;
+          // 视图 payload 在 mux 缓冲回收后会失效；已独立持有则不必再拷
+          const owned = p.byteOffset === 0 && p.byteLength === p.buffer.byteLength;
+          this.handleDecodedEnvelope(
+            session,
+            owned ? envelope : { ...envelope, payload: p.slice() }
+          );
+        } finally {
+          this.inboundCarrier = null;
+        }
       },
       onClose: (code, reason) => {
         this.handleCarrierClose(session, carrier, code, reason);
@@ -264,13 +259,37 @@ export class WebSocketServer
 
   handleMessage(
     ws: ServerWebSocket<GatewaySocketData> | GatewaySession,
-    message: string | Buffer
+    message: string | Buffer,
+    carrier?: Carrier
   ): void {
     if (typeof message === 'string') return;
-    this.deliverRtcInbound(this.bindingOf(ws).session, message);
+    const binding = this.bindingOf(ws);
+    this.inboundCarrier = carrier ?? binding.carrier;
+    try {
+      this.deliverRtcInbound(binding.session, message);
+    } finally {
+      this.inboundCarrier = null;
+    }
   }
 
-  deliverRtcInbound(session: GatewaySession, bytes: Uint8Array): void {
+  deliverRtcInbound(session: GatewaySession, bytes: Uint8Array, carrier?: Carrier | null): void {
+    this.pinInboundCarrier(carrier, () => this.deliverRtcBytes(session, bytes));
+  }
+
+  private pinInboundCarrier(carrier: Carrier | null | undefined, run: () => void): void {
+    if (!carrier) {
+      run();
+      return;
+    }
+    this.inboundCarrier = carrier;
+    try {
+      run();
+    } finally {
+      this.inboundCarrier = null;
+    }
+  }
+
+  private deliverRtcBytes(session: GatewaySession, bytes: Uint8Array): void {
     if (session.closed) return;
     try {
       if (!wsBorsh.checkMagic(bytes)) {
@@ -525,7 +544,14 @@ export class WebSocketServer
       }
 
       if (kind === wsBorsh.KIND_PING) {
-        this.handlePing(ws, refSeq, payload);
+        replyToGatewayPing({
+          ws,
+          refSeq,
+          payload,
+          carrier: this.inboundCarrier,
+          sendError: (code, message, retryable) =>
+            this.sendError(ws, refSeq, code, message, retryable),
+        });
         return;
       }
 
@@ -550,56 +576,6 @@ export class WebSocketServer
         false
       );
     }
-  }
-
-  private handlePing(ws: GatewaySession, refSeq: number, payload: Uint8Array): void {
-    const startedAt = monotonicMs();
-    try {
-      const ping = wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, payload);
-      const pongPayload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
-        nonce: ping.nonce,
-        timeMs: ping.timeMs,
-      });
-      this.sendPong(ws, pongPayload, startedAt);
-    } catch (err) {
-      const e = err instanceof wsBorsh.WsBorshError ? err : null;
-      this.sendError(
-        ws,
-        refSeq,
-        e?.code ?? wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
-        e?.message ?? 'PING payload decode failed',
-        e?.retryable ?? false
-      );
-    }
-  }
-
-  /** PONG 走优先发送：不进入终端输出的 drop/defer 队列。 */
-  private sendPong(ws: GatewaySession, payload: Uint8Array, startedAt: number): void {
-    if (ws.closed) return;
-    const carrier = ws.activeCarrier;
-    const state = ws.borshState;
-    const frames = encodePayloadFrames(
-      wsBorsh.KIND_PONG,
-      payload,
-      state.seqGen,
-      state.maxFrameBytes
-    );
-    let buffered = 0;
-    try {
-      buffered = Math.max(0, carrier.bufferedAmount());
-    } catch {
-      buffered = 0;
-    }
-    const bypassed =
-      buffered < GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES &&
-      !gatewayWebSocketSendGuard.isBackpressured(carrier);
-    gatewayWebSocketSendGuard.sendPriorityFrames(carrier, frames as readonly BufferSource[]);
-    recordPingProbe({
-      serverHandleMs: monotonicMs() - startedAt,
-      path: bypassed ? 'bypassed' : 'queued',
-      bufferedBytes: buffered,
-      kind: carrierKindOf(carrier),
-    });
   }
 
   sendEnvelope(ws: GatewaySession, kind: number, payload: Uint8Array): void {

@@ -1,25 +1,19 @@
-import { hostFromUrl } from '@vibeterm/shared/auth';
 import type { LinkStream } from '@vibeterm/shared/link';
 import type { RelayQuota, RelayRtcConfig } from '@vibeterm/shared/relay';
-import { backoffDelayMs } from './ctl';
-import { stamp } from './mesh-log';
 import { RELAY_PRESENCE_STALE_MS, type RelayPresence } from './relay-presence';
 import type { RelayStreamOpener } from './relay-presence-types';
+import {
+  type SecondaryRetryHost,
+  logSecondaryOnline,
+  noteSecondaryConnectFail,
+  sleepAfterSecondaryFail,
+  sleepBeforeSecondaryRetry,
+} from './relay-secondary-retry';
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
-import {
-  UPLINK_BACKOFF_MAX_MS,
-  UPLINK_BACKOFF_MIN_MS,
-  UPLINK_CONNECT_LOG_INTERVAL_MS,
-} from './uplink-client';
-import { isUplinkPathRerace } from './uplink-path-sampler';
-import {
-  UplinkDialCoordinator,
-  offerPooledStandby,
-  pooledUplinkIfCapable,
-  watchPredicate,
-} from './uplink-pool';
-import { normalizeUplinkEndpointUrl, redactUrl, sameUplinkUrl } from './uplink-pool-url';
+import { watchPredicate } from './uplink-pool';
+import { normalizeUplinkEndpointUrl, sameUplinkUrl } from './uplink-pool-url';
 import type { UplinkCtlMessage } from './uplink-protocol';
+import { bindRelayStreamClient, unbindRelayDrainOwner } from './uplink-relay-drain';
 
 export type SecondaryUplink = {
   readonly uplinkUrl: string;
@@ -52,6 +46,8 @@ export type RelaySecondaryRow = {
 export type RelaySecondaryAttachOptions = {
   rows: () => readonly RelaySecondaryRow[];
   primaryUrl: () => string | null;
+  /** 池正在拨、但还不是已挂上的主中继。只排除这一条。 */
+  excludeUrl?: () => string | null;
   spawn: (url: string) => SecondaryUplink;
   presence: RelayPresence;
   scheduler: MeshScheduler;
@@ -59,7 +55,6 @@ export type RelaySecondaryAttachOptions = {
   onRelayStream?: InboundRelayHandler;
   onExclusiveOffline?: (peerIds: string[]) => void;
   staleMs?: number;
-  dialCoordinator?: UplinkDialCoordinator;
 };
 
 type Slot = {
@@ -67,9 +62,10 @@ type Slot = {
   credentialKey: string;
   abort: AbortController;
   client: SecondaryUplink | null;
+  handedOff: SecondaryUplink | null;
   loop: Promise<void>;
   attempt: number;
-  yielded: boolean;
+  wake: AbortController;
 };
 
 /**
@@ -78,18 +74,16 @@ type Slot = {
  */
 export class RelaySecondaryAttach implements RelayStreamOpener {
   private readonly opts: RelaySecondaryAttachOptions;
-  readonly dialCoordinator: UplinkDialCoordinator;
   private readonly slots = new Map<string, Slot>();
-  private readonly decays = new Map<string, { clear: () => void }>();
   private readonly failLogAt = new Map<string, number>();
   private readonly onlineLogAt = new Map<string, number>();
   private readonly slotStateListeners: Array<(url: string, state: UplinkState) => void> = [];
   private running = false;
   private chain: Promise<void> = Promise.resolve();
+  private readonly retiringUrls = new Set<string>();
 
   constructor(opts: RelaySecondaryAttachOptions) {
     this.opts = opts;
-    this.dialCoordinator = opts.dialCoordinator ?? new UplinkDialCoordinator();
   }
 
   start(): void {
@@ -100,7 +94,6 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
 
   async stop(): Promise<void> {
     this.running = false;
-    this.dialCoordinator.dropOwner(this);
     await this.queueReconcile();
     const pending = [...this.slots.keys()].map((url) => this.drop(url, 'stop'));
     await Promise.all(pending);
@@ -120,9 +113,63 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     return client.openRelay(peerNodeId);
   }
 
-  /** switch 前拆掉目标上的 secondary，避免与即将 promote 的 primary 双连。 */
   async release(url: string): Promise<void> {
     await this.drop(url, 'promoted');
+  }
+
+  async detachOnline(url: string): Promise<SecondaryUplink | null> {
+    const key = normalizeUplinkEndpointUrl(url);
+    const slot = this.slots.get(key);
+    const client = slot?.client;
+    if (!slot || !client || client.state !== 'online' || !hasPrimaryWiring(client)) return null;
+    slot.handedOff = client;
+    slot.client = null;
+    this.slots.delete(key);
+    slot.abort.abort();
+    await slot.loop.catch(() => undefined);
+    return client;
+  }
+
+  /** 本机网络变了：清掉退避。池正占用的 URL 不叫醒，避免和主拨号抢注册。 */
+  resetAttempts(): void {
+    for (const slot of this.slots.values()) {
+      slot.attempt = 0;
+      if (this.excluded(slot.url) || this.retiringUrls.has(slot.url)) continue;
+      slot.wake.abort();
+    }
+  }
+
+  async releaseNotOnline(url: string): Promise<void> {
+    const key = normalizeUplinkEndpointUrl(url);
+    const slot = this.slots.get(key);
+    if (!slot || slot.client?.state === 'online') return;
+    await this.drop(key, 'stop');
+  }
+
+  /** 把刚卸下的主连接原地收成 secondary，不再另拨、不再排空。 */
+  adoptOnline(client: SecondaryUplink): boolean {
+    if (!this.running || client.state !== 'online') return false;
+    const key = normalizeUplinkEndpointUrl(client.uplinkUrl);
+    const primary = this.opts.primaryUrl();
+    if ((primary && sameUplinkUrl(key, primary)) || this.slots.has(key)) return false;
+    if (this.retiringUrls.has(key)) return false;
+    const row = this.opts.rows().find((item) => !item.kicked && sameUplinkUrl(item.url, key));
+    if (!row) return false;
+    (client as SecondaryUplink & { releasePrimaryWiring?: () => void }).releasePrimaryWiring?.();
+    const slot = this.blankSlot(key, row.credentialKey);
+    slot.client = client;
+    this.slots.set(key, slot);
+    this.bindRelayStream(slot, client);
+    slot.loop = this.watchAdopted(slot, client);
+    return true;
+  }
+
+  noteRetiring(url: string): void {
+    this.retiringUrls.add(normalizeUplinkEndpointUrl(url));
+  }
+
+  clearRetiring(url: string): void {
+    if (this.retiringUrls.delete(normalizeUplinkEndpointUrl(url))) void this.queueReconcile();
   }
 
   client(url: string): SecondaryUplink | null {
@@ -171,17 +218,26 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     primary: string | null
   ): Map<string, string> {
     const wanted = new Map<string, string>();
+    const exclude = this.opts.excludeUrl?.() ?? null;
     if (!primary) {
       if (this.running) {
         for (const [url, slot] of this.slots) {
-          if (!this.blockedByPool(url)) wanted.set(url, slot.credentialKey);
+          if (this.retiringUrls.has(url)) continue;
+          wanted.set(url, slot.credentialKey);
         }
       }
       return wanted;
     }
     for (const row of rows) {
-      if (sameUplinkUrl(row.url, primary) || this.blockedByPool(row.url)) continue;
-      wanted.set(normalizeUplinkEndpointUrl(row.url), row.credentialKey);
+      if (sameUplinkUrl(row.url, primary)) continue;
+      const key = normalizeUplinkEndpointUrl(row.url);
+      if (this.retiringUrls.has(key)) continue;
+      if (exclude && sameUplinkUrl(row.url, exclude)) {
+        const slot = this.slots.get(key);
+        if (slot) wanted.set(key, slot.credentialKey);
+        continue;
+      }
+      wanted.set(key, row.credentialKey);
     }
     return wanted;
   }
@@ -191,6 +247,9 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     this.opts.presence.setPrimary(primary);
     const rows = this.running ? this.opts.rows().filter((row) => !row.kicked) : [];
     for (const row of rows) this.opts.presence.setPriority(row.url, row.priority);
+    for (const key of [...this.slots.keys()]) {
+      if (this.retiringUrls.has(key)) await this.drop(key, 'stop');
+    }
     const wanted = this.wantedSecondaries(rows, primary);
     const keepPresence = [...(primary ? [primary] : []), ...rows.map((row) => row.url)];
     this.opts.presence.retainUrls(keepPresence);
@@ -212,24 +271,32 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   private spawnLoop(url: string, credentialKey: string): void {
     const key = normalizeUplinkEndpointUrl(url);
     if (this.slots.has(key)) return;
-    if (!this.dialCoordinator.tryClaim(key, this)) return;
-    const abort = new AbortController();
-    const slot: Slot = {
-      url: key,
-      credentialKey,
-      abort,
-      client: null,
-      loop: Promise.resolve(),
-      attempt: 0,
-      yielded: false,
-    };
+    const slot = this.blankSlot(key, credentialKey);
     this.slots.set(key, slot);
     slot.loop = this.runLoop(slot);
   }
 
+  private blankSlot(url: string, credentialKey: string): Slot {
+    return {
+      url,
+      credentialKey,
+      abort: new AbortController(),
+      client: null,
+      handedOff: null,
+      loop: Promise.resolve(),
+      attempt: 0,
+      wake: new AbortController(),
+    };
+  }
+
   private async runLoop(slot: Slot): Promise<void> {
     try {
-      while (this.running && !slot.abort.signal.aborted && this.stillWanted(slot.url)) {
+      while (
+        this.running &&
+        !slot.abort.signal.aborted &&
+        this.stillWanted(slot.url) &&
+        !this.excluded(slot.url)
+      ) {
         if (await this.runSlotAttempt(slot)) break;
       }
     } finally {
@@ -240,10 +307,8 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   /** slots 里只保留还活着的 loop；自然退出也要走 drop 同款删除，否则 reconcile 不会再 spawn。 */
   private releaseSlot(slot: Slot): void {
     if (this.slots.get(slot.url) !== slot) return;
-    this.clearDecay(slot.url);
     this.clearFailLogs(slot.url);
     this.slots.delete(slot.url);
-    if (!slot.yielded) this.dialCoordinator.release(slot.url, this);
     if (this.running) void this.queueReconcile();
   }
 
@@ -252,7 +317,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     try {
       client = this.opts.spawn(slot.url);
     } catch {
-      return this.sleepAfterFail(slot);
+      return sleepAfterSecondaryFail(slot, this.retryHost());
     }
     slot.client = client;
     this.bindRelayStream(slot, client);
@@ -266,32 +331,79 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     try {
       client.start();
       await client.attemptConnect(slot.abort.signal);
-      if (slot.yielded || slot.abort.signal.aborted) return true;
+      if (slot.abort.signal.aborted) return true;
       slot.attempt = 0;
-      this.clearDecay(slot.url);
-      this.opts.presence.setConnected(slot.url, true, client.rttMs, this.opts.scheduler.now());
-      this.logSecondaryOnline(slot.url);
+      this.opts.presence.noteLink(
+        slot.url,
+        true,
+        client.rttMs,
+        this.opts.scheduler.now(),
+        this.staleMs()
+      );
+      logSecondaryOnline(this.retryHost(), slot.url);
       await client.waitUntilClosed(slot.abort.signal);
     } catch (err) {
-      if (!slot.yielded) retryDelay = this.noteSecondaryConnectFail(slot, client, err);
+      retryDelay = noteSecondaryConnectFail(slot, client, err, this.retryHost());
     } finally {
       stopWatch();
       unsub();
       closeReason = client.lastConnectError?.reason ?? closeReason;
       await this.finishSlotAttempt(slot, client);
     }
-    if (slot.yielded || !this.running || slot.abort.signal.aborted || !this.stillWanted(slot.url)) {
+    if (
+      !this.running ||
+      slot.abort.signal.aborted ||
+      !this.stillWanted(slot.url) ||
+      this.excluded(slot.url)
+    ) {
       return true;
     }
-    return this.sleepBeforeRetry(slot, closeReason, retryDelay);
+    return sleepBeforeSecondaryRetry(slot, closeReason, retryDelay, this.retryHost());
+  }
+
+  private retryHost(): SecondaryRetryHost {
+    return {
+      scheduler: this.opts.scheduler,
+      failLogAt: this.failLogAt,
+      onlineLogAt: this.onlineLogAt,
+    };
+  }
+
+  private async watchAdopted(slot: Slot, client: SecondaryUplink): Promise<void> {
+    const unsub = client.onStateChange((state) => this.onClientState(slot, client, state));
+    this.opts.presence.noteLink(
+      slot.url,
+      true,
+      client.rttMs,
+      this.opts.scheduler.now(),
+      this.staleMs()
+    );
+    let handedBack = false;
+    try {
+      await client.waitUntilClosed(slot.abort.signal);
+    } finally {
+      unsub();
+      handedBack = slot.handedOff === client;
+      slot.client = null;
+    }
+    if (handedBack) return;
+    unbindRelayDrainOwner(client, slot.url);
+    this.opts.presence.noteLink(slot.url, false, null, this.opts.scheduler.now(), this.staleMs());
+    try {
+      await client.stop();
+    } catch {
+      /* already stopped */
+    }
+    this.releaseSlot(slot);
   }
 
   private async finishSlotAttempt(slot: Slot, client: SecondaryUplink): Promise<void> {
-    const pooled = pooledUplinkIfCapable(client);
-    if (pooled) this.dialCoordinator.dropStandby(slot.url, pooled);
+    if (slot.handedOff === client) {
+      slot.client = null;
+      return;
+    }
     slot.client = null;
-    if (slot.yielded) return;
-    this.opts.presence.markDisconnected(slot.url, this.opts.scheduler.now(), this.staleMs());
+    this.opts.presence.noteLink(slot.url, false, null, this.opts.scheduler.now(), this.staleMs());
     try {
       await client.stop();
     } catch {
@@ -299,103 +411,22 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     }
   }
 
-  private offerIfPooled(slot: Slot, client: SecondaryUplink): void {
-    offerPooledStandby(this.dialCoordinator, slot.url, client, slot, this);
-  }
-
-  private blockedByPool(url: string): boolean {
-    const owner = this.dialCoordinator.claimedBy(url);
-    return owner != null && owner !== this;
-  }
-
   private bindRelayStream(slot: Slot, client: SecondaryUplink): void {
     if (!this.opts.onRelayStream) return;
     const inner = this.opts.onRelayStream;
-    client.setOnRelayStream((stream, from, viaRelay) => inner(stream, from, viaRelay ?? slot.url));
-  }
-
-  private async sleepAfterFail(slot: Slot): Promise<boolean> {
-    const delay = backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
-    slot.attempt += 1;
-    try {
-      await this.opts.scheduler.sleep(delay, slot.abort.signal);
-      return false;
-    } catch {
-      return true;
-    }
-  }
-
-  private noteSecondaryConnectFail(
-    slot: Slot,
-    client: SecondaryUplink,
-    err: unknown
-  ): number | null {
-    if (slot.abort.signal.aborted) return null;
-    const reason = client.lastConnectError?.reason ?? secondaryFailReason(err);
-    if (reason === 'aborted') return null;
-    const delay = isUplinkPathRerace(reason)
-      ? 0
-      : backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
-    this.logSecondaryConnectFailed(slot.url, slot.attempt + 1, reason, delay);
-    return delay;
-  }
-
-  private logSecondaryConnectFailed(
-    url: string,
-    attempt: number,
-    reason: string,
-    nextRetryMs: number
-  ): void {
-    const now = this.opts.scheduler.now();
-    const prev = this.failLogAt.get(url) ?? Number.NEGATIVE_INFINITY;
-    if (now - prev < UPLINK_CONNECT_LOG_INTERVAL_MS) return;
-    this.failLogAt.set(url, now);
-    console.warn(
-      stamp(
-        `[uplink] secondary connect failed url=${secondaryUrlLabel(url)} attempt=${attempt} reason=${reason} next_retry_ms=${nextRetryMs}`
-      )
-    );
-  }
-
-  private logSecondaryOnline(url: string): void {
-    this.failLogAt.delete(url);
-    const now = this.opts.scheduler.now();
-    const prev = this.onlineLogAt.get(url) ?? Number.NEGATIVE_INFINITY;
-    if (now - prev < UPLINK_CONNECT_LOG_INTERVAL_MS) return;
-    this.onlineLogAt.set(url, now);
-    console.info(stamp(`[uplink] secondary online url=${secondaryUrlLabel(url)}`));
-  }
-
-  private async sleepBeforeRetry(
-    slot: Slot,
-    closeReason: string,
-    loggedDelay: number | null
-  ): Promise<boolean> {
-    if (isUplinkPathRerace(closeReason)) {
-      slot.attempt = 0;
-      return false;
-    }
-    this.scheduleDecay(slot.url);
-    const delay =
-      loggedDelay ?? backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
-    slot.attempt += 1;
-    try {
-      await this.opts.scheduler.sleep(delay, slot.abort.signal);
-      return false;
-    } catch {
-      return true;
-    }
+    client.setOnRelayStream((stream, from, viaRelay) => {
+      bindRelayStreamClient(stream, client);
+      inner(stream, from, viaRelay ?? slot.url);
+    });
   }
 
   private onClientState(slot: Slot, client: SecondaryUplink, state: UplinkState): void {
     if (this.slots.get(slot.url)?.client !== client) return;
     const now = this.opts.scheduler.now();
     if (state === 'online') {
-      this.clearDecay(slot.url);
-      this.opts.presence.setConnected(slot.url, true, client.rttMs, now);
-      this.offerIfPooled(slot, client);
+      this.opts.presence.noteLink(slot.url, true, client.rttMs, now, this.staleMs());
     } else if (state === 'offline') {
-      this.opts.presence.markDisconnected(slot.url, now, this.staleMs());
+      this.opts.presence.noteLink(slot.url, false, null, now, this.staleMs());
     }
     for (const cb of this.slotStateListeners) cb(slot.url, state);
   }
@@ -404,14 +435,17 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     if (!this.running) return false;
     const primary = this.opts.primaryUrl();
     if (primary && sameUplinkUrl(url, primary)) return false;
-    if (this.blockedByPool(url)) return false;
     return this.opts.rows().some((row) => !row.kicked && sameUplinkUrl(row.url, url));
+  }
+
+  private excluded(url: string): boolean {
+    const exclude = this.opts.excludeUrl?.() ?? null;
+    return Boolean(exclude && sameUplinkUrl(url, exclude));
   }
 
   private async drop(url: string, reason: 'gone' | 'promoted' | 'stop'): Promise<void> {
     const key = normalizeUplinkEndpointUrl(url);
     const slot = this.slots.get(key);
-    this.clearDecay(key);
     this.clearFailLogs(key);
     if (!slot) {
       if (reason === 'gone') this.opts.presence.remove(key);
@@ -434,26 +468,8 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     }
     if (reason === 'gone') this.opts.presence.remove(key);
     else if (reason === 'stop') {
-      this.opts.presence.markDisconnected(key, this.opts.scheduler.now(), this.staleMs());
-      if (this.running) this.scheduleDecay(key);
+      this.opts.presence.noteLink(key, false, null, this.opts.scheduler.now(), this.staleMs());
     }
-  }
-
-  private scheduleDecay(url: string): void {
-    this.clearDecay(url);
-    const staleMs = this.staleMs();
-    const handle = this.opts.scheduler.interval(() => {
-      handle.clear();
-      this.decays.delete(url);
-      const exclusive = this.opts.presence.decay(url, this.opts.scheduler.now());
-      if (exclusive.length > 0) this.opts.onExclusiveOffline?.(exclusive);
-    }, staleMs);
-    this.decays.set(url, handle);
-  }
-
-  private clearDecay(url: string): void {
-    this.decays.get(url)?.clear();
-    this.decays.delete(url);
   }
 
   private clearFailLogs(url: string): void {
@@ -466,6 +482,10 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
   }
 }
 
+function hasPrimaryWiring(client: SecondaryUplink): boolean {
+  return typeof (client as { adoptPrimaryWiring?: unknown }).adoptPrimaryWiring === 'function';
+}
+
 function staleDropReason(
   key: string,
   nextKey: string | undefined,
@@ -475,17 +495,4 @@ function staleDropReason(
   if (nextKey === undefined && primary && sameUplinkUrl(key, primary)) return 'promoted';
   const stillConfigured = rows.some((row) => !row.kicked && sameUplinkUrl(row.url, key));
   return stillConfigured ? 'stop' : 'gone';
-}
-
-function secondaryFailReason(err: unknown): string {
-  const msg = err instanceof Error ? err.message.trim() : '';
-  return msg || 'connect-failed';
-}
-
-function secondaryUrlLabel(url: string): string {
-  try {
-    return hostFromUrl(url);
-  } catch {
-    return redactUrl(url);
-  }
 }

@@ -1,8 +1,8 @@
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { classifyPeerReach } from './address-class';
-import { type DcPromoteGate, attachDcPromote, mergeTrackIntercept } from './peer-dc-promote-gate';
 import {
   UnstableDcBackoff,
+  applyRouteCloseCooldown,
   armUnstableHealthyTimer,
   bindLiveDcProof,
   clearUnstableHealthyTimer,
@@ -11,8 +11,9 @@ import {
   settleEstablishedDcDrop,
   unbindLiveDcProof,
 } from './peer-dc-proof';
-import { type PeerInboundStreamHost, handlePeerInboundStream } from './peer-live-inbound';
-import { notePeerPingTick, shouldEmitPeerRtt } from './peer-live-ping';
+import { attachLiveBinding, buildInstalledPeer } from './peer-live-bind';
+import type { PeerInboundStreamHost } from './peer-live-inbound';
+import { armPeerPing, clearOutstandingPing, shouldEmitPeerRtt } from './peer-live-ping';
 import {
   applyExistingLive,
   bestRetiringPeer,
@@ -31,20 +32,33 @@ import {
   isPeerTrusted,
   lookupPeerRttMsForLink,
   measurePingRttMs,
-  parseEchoedSentAt,
   peerStale,
 } from './peer-manager-state';
-import { parseOpenPayload } from './peer-protocol';
 import { type LivePeer, peerDropPlan } from './peer-reconnect-wake';
 import { PEER_RTC_WAKE_COOLDOWN_MS } from './peer-rtc-wake';
 import * as sideRelay from './peer-side-relay';
 import { quiet } from './peer-ws-race';
 import { rememberLinkTransport } from './pending-measure-hold';
 import { getRelayDialBreaker } from './relay-dial-breaker';
-import { isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
+import { closeRouteSession } from './route-decline';
+import type { CandidateOffer } from './route-degrade-hold';
 import { flushDialFailed } from './rtc/rtc-log';
-import { classifyOpenPayload } from './stream-targets';
+import { setSessionRole, stampInstallMeta } from './session-binding';
 import type { PeerTransportKind } from './types';
+import { noteLiveRelayStream } from './uplink-relay-drain';
+type TrackOpenInput = {
+  session: LinkSession;
+  peerNodeId: string;
+  transport: PeerTransportKind;
+  initiatedBy: string;
+  gen: number;
+  quiesceCapable: boolean;
+  resolvedAddress: string | null;
+  dcAttemptId: string | null;
+  rtcEpoch?: number;
+  prev: LivePeer | undefined;
+  reject: (reason: string, keep?: LinkSession | null) => LinkSession | null;
+};
 
 export class PeerLiveRegistry {
   private readonly state: PeerManagerState;
@@ -58,7 +72,6 @@ export class PeerLiveRegistry {
   private readonly onGatewaySessionClose: PeerLiveRegistryOptions['onGatewaySessionClose'];
   private readonly onLinkInfo: PeerLiveRegistryOptions['onLinkInfo'];
   private readonly inboundHost: PeerInboundStreamHost;
-  private readonly dcPromote: DcPromoteGate;
   private linkInfoHold = 0;
   private readonly bypassRank = new WeakSet<LinkSession>();
   private readonly unstableDc = new UnstableDcBackoff();
@@ -75,7 +88,6 @@ export class PeerLiveRegistry {
     this.onGatewaySession = opts.onGatewaySession;
     this.onGatewaySessionClose = opts.onGatewaySessionClose;
     this.onLinkInfo = opts.onLinkInfo;
-    this.dcPromote = attachDcPromote(this as never);
     this.inboundHost = {
       selfNodeId: state.identity.nodeId,
       dispatchHttp: this.dispatchHttp,
@@ -85,7 +97,6 @@ export class PeerLiveRegistry {
       onGatewaySession: this.onGatewaySession,
       onGatewaySessionClose: this.onGatewaySessionClose,
     };
-    sideRelay.watchSideRelay(this.state, this.inboundHost, this.maxConcurrentStreams);
   }
 
   track(
@@ -108,6 +119,41 @@ export class PeerLiveRegistry {
     const prev = this.state.live.get(peerNodeId);
     const resolvedAddress =
       remoteAddress ?? (transport === 'dc' ? (prev?.remoteAddress ?? null) : null);
+    stampInstallMeta(session, {
+      remoteAddress: resolvedAddress,
+      dcAttemptId,
+      quiesceCapable,
+      rtcEpoch,
+    });
+    return this.trackOpen({
+      session,
+      peerNodeId,
+      transport,
+      initiatedBy,
+      gen,
+      quiesceCapable,
+      resolvedAddress,
+      dcAttemptId,
+      rtcEpoch,
+      prev,
+      reject,
+    });
+  }
+
+  private trackOpen(input: TrackOpenInput): LinkSession | null {
+    const {
+      session,
+      peerNodeId,
+      transport,
+      initiatedBy,
+      gen,
+      quiesceCapable,
+      resolvedAddress,
+      dcAttemptId,
+      rtcEpoch,
+      prev,
+      reject,
+    } = input;
     if (consumeForcedSession(this.bypassRank, session)) {
       return this.installForced({
         session,
@@ -122,23 +168,29 @@ export class PeerLiveRegistry {
         prev,
       });
     }
-    const tap = {
-      session,
-      peerNodeId,
-      transport,
-      initiatedBy,
-      gen,
-      rtcEpoch,
-      prev,
-      remoteAddress: resolvedAddress,
-      dcAttemptId,
-    };
     const early = earlyTrackResult(
-      mergeTrackIntercept(this.deps.interceptTrack?.(tap), this.dcPromote.decide(tap)),
+      this.deps.interceptTrack?.({
+        session,
+        peerNodeId,
+        transport,
+        initiatedBy,
+        gen,
+        rtcEpoch,
+        prev,
+        remoteAddress: resolvedAddress,
+        dcAttemptId,
+        quiesceCapable,
+      }),
       prev,
-      (reason) => {
-        quiet(() => session.close(reason));
-      }
+      (reason) =>
+        closeRouteSession({
+          selfId: this.state.identity.nodeId,
+          peerId: peerNodeId,
+          session,
+          also: prev?.session,
+          reason,
+          epoch: rtcEpoch,
+        })
     );
     if (early) return early.result;
     const applied = applyExistingLive(
@@ -200,16 +252,15 @@ export class PeerLiveRegistry {
     rtcEpoch?: number;
     prev: LivePeer | undefined;
   }): LinkSession {
-    const { session, prev, transport } = input;
-    if (sideRelay.shouldParkBesideRelay(this.state, prev, transport) && prev.session !== session) {
-      sideRelay.parkBesideRelay(this.state, prev.peerNodeId, session);
+    const { session, prev } = input;
+    if (prev?.session === session || this.state.live.get(input.peerNodeId)?.session === session) {
       return session;
     }
-    if (prev && prev.session !== session) this.deps.retirePeer(prev, 'replaced');
+    if (prev) this.deps.retirePeer(prev, 'replaced');
     return this.installLive(
       session,
       input.peerNodeId,
-      transport,
+      input.transport,
       input.initiatedBy,
       input.gen,
       input.quiesceCapable,
@@ -230,47 +281,24 @@ export class PeerLiveRegistry {
     dcAttemptId: string | null = null,
     rtcEpoch?: number
   ): LinkSession {
-    rememberLinkTransport(session, transport);
+    if (this.state.live.get(peerNodeId)?.session === session) return session;
     const keys = this.state.sessionKeys.get(session);
-    const live: LivePeer = {
+    const live = buildInstalledPeer({
       session,
       peerNodeId,
       transport,
       initiatedBy,
-      generation: gen,
-      streams: 0,
-      lastStreamAt: this.state.scheduler.now(),
-      idleTimer: null,
-      pingTimer: null,
-      missedPongs: 0,
-      lastInboundFrameAt: session.lastFrameAt ?? this.state.scheduler.now(),
-      retiring: false,
-      retireReason: 'replaced',
-      retiredAt: 0,
-      zeroStreamsSince: 0,
-      gotQuiesceAck: false,
-      gotPeerQuiesce: false,
-      retireTimer: null,
-      finishRetired: false,
-      lastAdvertisedStatusJson: '',
-      unsubRtc: null,
+      gen,
+      quiesceCapable,
+      remoteAddress,
+      dcAttemptId,
+      rtcEpoch,
+      now: this.state.scheduler.now(),
       sendKey: keys?.sendKey,
       recvKey: keys?.recvKey,
-      quiesceCapable,
-      helloReplied: false,
-      probeSent: false,
-      remoteAddress,
-      rttMs: null,
-      pingSentAt: null,
-      rttSpikeIgnored: false,
-      lastRttEmitAt: 0,
-      lastEmittedRttMs: null,
-      linkSinceAt: this.state.scheduler.now(),
-      dcAttemptId: transport === 'dc' ? (dcAttemptId ?? this.deps.nextDcAttemptId()) : null,
-      rttSamples: 0,
-      rttMinMs: undefined,
-      ...(transport === 'dc' && rtcEpoch !== undefined ? { rtcEpoch } : {}),
-    };
+      nextDcAttemptId: () => this.deps.nextDcAttemptId(),
+    });
+    rememberLinkTransport(session, transport);
     this.state.live.set(peerNodeId, live);
     if (transport === 'dc') {
       this.armDcProof(live);
@@ -281,8 +309,18 @@ export class PeerLiveRegistry {
     if (transport === 'dc' || transport === 'ws-secure') {
       this.deps.clearDirectFailure(peerNodeId);
     }
-    this.bindSession(live);
-    this.state.peerReconnectWake.installed(live, (nodeId) => this.deps.onPeerReconnected(nodeId));
+    attachLiveBinding(
+      {
+        state: this.state,
+        maxConcurrentStreams: this.maxConcurrentStreams,
+        inbound: this.inboundHost,
+        handlePeerCtl: (row, bytes) => this.deps.handlePeerCtl(row, bytes),
+        onStreamOpened: (row, stream) => this.onLocalStream(row, stream),
+        onPong: (row, echoed) => this.onPeerPong(row, echoed),
+        onClosed: (row, reason) => this.onLiveClosed(row, reason),
+      },
+      live
+    );
     if (!live.quiesceCapable) this.deps.sendLinkHello(live);
     this.armIdle(live);
     this.startPing(live);
@@ -299,55 +337,19 @@ export class PeerLiveRegistry {
     return session;
   }
 
-  private bindSession(live: LivePeer): void {
-    const { session, peerNodeId } = live;
-    const origOpen = session.openStream.bind(session);
-    session.openStream = async (openPayload: Uint8Array) => {
-      if (live.finishRetired) throw new Error('peer link replaced');
-      if (live.streams >= this.maxConcurrentStreams) throw new Error('too-many-streams');
-      const stream = await origOpen(openPayload);
-      this.onLocalStream(live, stream);
-      return stream;
-    };
-    session.onStream((stream) => {
-      const retiringSet = this.state.retiring.get(peerNodeId);
-      const isCurrent = this.state.live.get(peerNodeId) === live;
-      const isRetiring = live.retiring && retiringSet?.has(live) === true;
-      if (!isCurrent && !isRetiring) {
-        stream.reset('stale-link');
-        return;
-      }
-      const kind = classifyOpenPayload(stream.openPayload);
-      if (kind === 'unknown' || kind === 'relay') {
-        stream.reset('unknown-stream-type');
-        return;
-      }
-      if (live.streams >= this.maxConcurrentStreams) {
-        stream.reset('too-many-streams');
-        return;
-      }
-      this.onLocalStream(live, stream);
-      handlePeerInboundStream(this.inboundHost, peerNodeId, stream);
-    });
-    session.ctl.onMessage((bytes) => {
-      if (this.handleRttCtl(live, bytes)) return;
-      this.deps.handlePeerCtl(live, bytes);
-    });
-    void session.closed.then((info) => {
-      const reason = info?.reason ?? 'closed';
-      if (this.state.live.get(peerNodeId)?.session === session) {
-        this.dropPeer(peerNodeId, reason);
-      }
-      const set = this.state.retiring.get(peerNodeId);
-      if (set) {
-        for (const row of [...set]) {
-          if (row.session === session) this.deps.finishRetire(row, reason);
-        }
-      }
-    });
+  private onLiveClosed(live: LivePeer, reason: string): void {
+    if (this.state.live.get(live.peerNodeId)?.session === live.session) {
+      this.dropPeer(live.peerNodeId, reason);
+    }
+    const set = this.state.retiring.get(live.peerNodeId);
+    if (!set) return;
+    for (const row of [...set]) {
+      if (row.session === live.session) this.deps.finishRetire(row, reason);
+    }
   }
 
   private onLocalStream(live: LivePeer, stream: LinkStream): void {
+    noteLiveRelayStream(live, stream);
     live.streams += 1;
     live.lastStreamAt = this.state.scheduler.now();
     live.zeroStreamsSince = 0;
@@ -372,28 +374,22 @@ export class PeerLiveRegistry {
     });
   }
   startPing(live: LivePeer): void {
-    live.pingTimer?.clear();
-    live.missedPongs = 0;
-    live.lastInboundFrameAt = live.session.lastFrameAt ?? live.lastInboundFrameAt;
-    const sendPing = () => {
-      live.pingSentAt = performance.now();
-      this.deps.sendPeerCtl(live, { t: 'ping', sentAt: live.pingSentAt });
-    };
-    live.pingTimer = this.state.scheduler.interval(() => {
-      if (this.state.live.get(live.peerNodeId) !== live) return;
-      if (
-        notePeerPingTick(live, lookupPeerRttMsForLink(live.session, this.state.scheduler)) ===
-        'drop'
-      ) {
-        this.dropPeer(live.peerNodeId, 'missed-pong');
-        return;
-      }
-      sendPing();
-    }, PEER_PING_INTERVAL_MS);
+    armPeerPing({
+      live,
+      intervalMs: PEER_PING_INTERVAL_MS,
+      schedule: (fn, ms) => this.state.scheduler.interval(fn, ms),
+      current: () => this.state.live.get(live.peerNodeId),
+      retiring: () => this.state.retiring.get(live.peerNodeId),
+      rttMs: () => lookupPeerRttMsForLink(live.session, this.state.scheduler),
+      sendCtl: (msg) => this.deps.sendPeerCtl(live, msg),
+      onDropLive: () => this.dropPeer(live.peerNodeId, 'missed-pong'),
+      onDropRetire: () => this.deps.finishRetire(live, 'missed-pong'),
+    });
   }
-
   onPeerPong(live: LivePeer, echoedSentAt?: number): void {
     live.missedPongs = 0;
+    if (this.state.live.get(live.peerNodeId) !== live) clearOutstandingPing(live);
+    if (this.state.live.get(live.peerNodeId) !== live) return;
     const answered = live.pingSentAt != null;
     const sample = measurePingRttMs(performance.now(), echoedSentAt, live.pingSentAt);
     live.pingSentAt = null;
@@ -402,19 +398,6 @@ export class PeerLiveRegistry {
     applyPeerRttSample(live, sample);
     this.deps.onRttSample(live, sample);
     this.maybeEmitRtt(live);
-  }
-
-  private handleRttCtl(live: LivePeer, bytes: Uint8Array): boolean {
-    const msg = parseOpenPayload(bytes);
-    if (!msg || typeof msg.t !== 'string') return false;
-    if (msg.t === 'ping') {
-      const sentAt = parseEchoedSentAt(msg.sentAt);
-      this.deps.sendPeerCtl(live, sentAt == null ? { t: 'pong' } : { t: 'pong', sentAt });
-      return true;
-    }
-    if (msg.t !== 'pong') return false;
-    this.onPeerPong(live, parseEchoedSentAt(msg.sentAt));
-    return true;
   }
 
   emitLinkInfo(live: LivePeer): void {
@@ -471,9 +454,9 @@ export class PeerLiveRegistry {
     const live = this.state.live.get(nodeId);
     logDcDrop(live, reason, this.state.scheduler.now());
     unbindLiveDcProof(live);
-    const plan = peerDropPlan(live, reason, this.state.stopped, isIntentionalDcLoss(reason));
+    const intentional = applyRouteCloseCooldown(this.deps.dcBreaker, live, nodeId, reason);
+    const plan = peerDropPlan(live, reason, this.state.stopped, intentional);
     const drainLive = plan.drain ? live : null;
-    const disabledLiveLost = Boolean(live && this.deps.dcBreaker.isDisabled(nodeId));
     const dcAttemptId = live?.dcAttemptId ?? null;
     if (plan.wasDc) this.deps.cancelDcHealthTimer(nodeId);
     if (live) {
@@ -495,9 +478,9 @@ export class PeerLiveRegistry {
     if (plan.terminal) {
       this.deps.cancelDcUpgradeRetry(nodeId);
       this.state.lostDirect.delete(nodeId);
-      this.state.peerReconnectWake.clear(nodeId);
       if (plan.revoked) this.deps.dcBreaker.reset(nodeId);
       this.deps.dropParked(nodeId, reason);
+      this.dropCandidates(nodeId, reason);
       this.emitOfflineLinkInfo(nodeId);
       return;
     }
@@ -513,6 +496,7 @@ export class PeerLiveRegistry {
       });
     }
     if (plan.wasDc) {
+      this.deps.dcBreaker.noteChannelLost?.(nodeId, dcAttemptId ?? undefined);
       this.state.lostDirect.add(nodeId);
       const gate = this.deps.ensureGate(nodeId);
       gate.failures = 0;
@@ -523,18 +507,37 @@ export class PeerLiveRegistry {
     try {
       this.promoteRetiring(nodeId, drainLive);
       this.deps.activateParked(nodeId);
+      if (!this.state.live.get(nodeId)) this.deps.promoteHeldCandidate?.(nodeId);
     } finally {
       this.linkInfoHold -= 1;
     }
     if (plan.wasDc) this.deps.armDcUpgradeRetry(nodeId);
     const next = this.state.live.get(nodeId);
-    this.state.peerReconnectWake.lost(nodeId, disabledLiveLost, Boolean(next));
     if (next) this.emitLinkInfo(next);
     else this.emitOfflineLinkInfo(nodeId);
   }
   private adoptSideRelay(nodeId: string, session: LinkSession): void {
+    this.state.sideRelays.delete(nodeId);
     const id = this.state.identity.nodeId;
     this.installLive(session, nodeId, 'relay', id, this.state.generation, false, null);
+  }
+
+  parkSide(peerId: string, session: LinkSession): void {
+    sideRelay.parkSideRelay(
+      this.state,
+      peerId,
+      session,
+      this.inboundHost,
+      this.maxConcurrentStreams
+    );
+  }
+
+  offerCandidate(offer: CandidateOffer): 'held' | 'installed' | 'rejected' {
+    return this.deps.offerCandidate?.(offer) ?? 'rejected';
+  }
+
+  dropCandidates(peerId: string, reason = 'paused'): void {
+    this.deps.dropCandidates?.(peerId, reason);
   }
 
   private promoteRetiring(nodeId: string, excluded?: LivePeer | null): boolean {
@@ -546,6 +549,7 @@ export class PeerLiveRegistry {
     set.delete(best);
     if (set.size === 0) this.state.retiring.delete(nodeId);
     preparePromotedPeer(best);
+    setSessionRole(best.session, 'live');
     this.state.live.set(nodeId, best);
     this.armIdle(best);
     this.startPing(best);

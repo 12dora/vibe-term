@@ -23,13 +23,13 @@ import {
   UPLINK_POOL_FAIL_LIMIT,
   UPLINK_POOL_PROBE_JITTER,
   type UplinkCandidate,
-  UplinkDialCoordinator,
   UplinkPool,
   isRttSwitchWorth,
   redactUrl,
   sameUplinkUrl,
 } from './uplink-pool';
 import type { UplinkNodeList } from './uplink-protocol';
+import { noteRelayCarriedStream } from './uplink-relay-drain';
 
 const ID = {
   a: 'aa'.repeat(16),
@@ -426,7 +426,6 @@ describe('UplinkPool', () => {
     relayDrainTimeoutMs?: number;
     versions?: Record<string, string>;
     caPins?: RelayCaPinStore;
-    dialCoordinator?: UplinkDialCoordinator;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
@@ -465,7 +464,6 @@ describe('UplinkPool', () => {
       failbackDebounceMs: input.failbackDebounceMs,
       relayDrainRecheckMs: input.relayDrainRecheckMs,
       relayDrainTimeoutMs: input.relayDrainTimeoutMs,
-      dialCoordinator: input.dialCoordinator,
       caPins: input.caPins ?? new RelayCaPinStore(db),
       probeHealthz: async (url) => (input.probe ? input.probe(url) : false),
       onNodeList: input.onNodeList
@@ -684,23 +682,29 @@ describe('UplinkPool', () => {
     expect(standby?.stopped).toBe(true);
   });
 
-  test('switchTo retires the old client only after its relay streams drain', async () => {
+  test('switchTo retires the old client only after carried user streams drain', async () => {
     const { pool, created } = boot({ urls: ['https://a.example', 'https://b.example'] });
     pool.start();
     await waitMicro();
     const old = created[0];
-    const active = controlledRelayStream();
-    old?.queueRelayStream(active.stream);
+    if (!old) throw new Error('missing uplink');
+    const carrier = controlledRelayStream();
+    old.queueRelayStream(carrier.stream);
     await pool.openRelay(ID.c);
+    const user = controlledRelayStream(2);
+    noteRelayCarriedStream(old.uplinkUrl, user.stream);
     expect(pool.relayStreamsInFlight()).toBe(1);
 
     expect(await pool.switchTo('https://b.example')).toEqual({ ok: true });
-    expect(old?.stopped).toBe(false);
+    expect(old.stopped).toBe(false);
+    carrier.finish();
+    await waitMicro();
+    expect(old.stopped).toBe(false);
     expect(pool.relayStreamsInFlight()).toBe(1);
 
-    active.finish();
+    user.finish();
     await waitMicro();
-    expect(old?.stopped).toBe(true);
+    expect(old.stopped).toBe(true);
     expect(pool.relayStreamsInFlight()).toBe(0);
   });
 
@@ -736,29 +740,29 @@ describe('UplinkPool', () => {
     pool.start();
     await waitMicro();
     const old = created[0];
-    const active = controlledRelayStream();
-    old?.queueRelayStream(active.stream);
-    await pool.openRelay(ID.c);
+    if (!old) throw new Error('missing uplink');
+    const user = controlledRelayStream();
+    noteRelayCarriedStream(old.uplinkUrl, user.stream);
     expect(await pool.switchTo('https://b.example')).toEqual({ ok: true });
-    expect(old?.stopped).toBe(false);
+    expect(old.stopped).toBe(false);
     await scheduler.advance(3_000);
     await waitMicro();
-    expect(old?.stopped).toBe(false);
+    expect(old.stopped).toBe(false);
     await scheduler.advance(3_000);
     await waitMicro();
-    expect(old?.stopped).toBe(true);
+    expect(old.stopped).toBe(true);
 
     const current = created.at(-1);
+    if (!current) throw new Error('missing promoted uplink');
     const deadStream = controlledRelayStream(3);
-    current?.queueRelayStream(deadStream.stream);
-    await pool.openRelay(ID.c);
-    if (current) {
-      current.state = 'offline';
-      current.link = null;
-    }
+    noteRelayCarriedStream(current.uplinkUrl, deadStream.stream);
+    current.state = 'offline';
+    current.link = null;
     expect(await pool.switchTo('https://a.example')).toEqual({ ok: true });
     await waitMicro();
     expect(current?.stopped).toBe(true);
+    user.finish();
+    deadStream.finish();
   });
 
   test('promote 成功后清掉该 URL 的 lastError', async () => {
@@ -841,7 +845,7 @@ describe('UplinkPool', () => {
     expect(probe?.ms).toBe(60_000);
   });
 
-  test('switch-back waits for relay streams on the current uplink', async () => {
+  test('switch-back waits for carried user streams on the current uplink', async () => {
     const lines: string[] = [];
     const originalInfo = console.info;
     console.info = (...args: unknown[]) => {
@@ -859,9 +863,9 @@ describe('UplinkPool', () => {
       pool.start();
       await waitMicro();
       const current = created.find((client) => client.uplinkUrl === 'https://b.example');
+      if (!current) throw new Error('missing uplink');
       const active = controlledRelayStream();
-      current?.queueRelayStream(active.stream);
-      await pool.openRelay(ID.c);
+      noteRelayCarriedStream(current.uplinkUrl, active.stream);
       aHealthy = true;
 
       await scheduler.advance(60_000);
@@ -1607,11 +1611,9 @@ describe('UplinkPool', () => {
     expect(pool.attachedUplink()?.publicUrl).toBe('https://b.example');
   });
 
-  test('在线 standby 被 promote，不再对同一 URL 起新拨号', async () => {
-    const coord = new UplinkDialCoordinator();
+  test('拨号不接管已有客户端，始终新建', async () => {
     const { pool, created } = boot({
-      urls: ['https://a.example', 'https://b.example'],
-      dialCoordinator: coord,
+      urls: ['https://a.example'],
       behavior: { 'https://a.example': { hang: true } },
     });
     const standby = pool.spawn({
@@ -1620,22 +1622,11 @@ describe('UplinkPool', () => {
       priority: 1,
     });
     (standby as unknown as FakeUplink).forceOnline();
-    let yielded = false;
-    coord.offerStandby(
-      'https://a.example',
-      standby,
-      () => {
-        yielded = true;
-      },
-      {}
-    );
     pool.start();
     await waitMicro();
-    expect(yielded).toBe(true);
-    expect(pool.attachedUplink()?.publicUrl).toBe('https://a.example');
-    expect(pool.liveClient()).toBe(standby);
-    expect(created.every((row) => row.uplinkUrl !== 'https://a.example' || row === standby)).toBe(
-      true
+    expect(pool.liveClient()).not.toBe(standby);
+    expect(created.filter((row) => row.uplinkUrl === 'https://a.example').length).toBeGreaterThan(
+      1
     );
   });
 });

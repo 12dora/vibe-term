@@ -29,7 +29,7 @@ function fakeGateway(db: AuthDb): GatewayRuntime {
   };
 }
 
-describe('integration: UplinkDialCoordinator 按 runtime 隔离', () => {
+describe('integration: 每个 runtime 自己的 uplink 目标', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
 
   afterEach(async () => {
@@ -40,7 +40,7 @@ describe('integration: UplinkDialCoordinator 按 runtime 隔离', () => {
     }
   });
 
-  test('多个网关不共享 coordinator，同一网关的 pool 与 secondary 共享', async () => {
+  test('多个网关的 uplink 目标互不影响', async () => {
     const a = createMigratedAuthDb();
     const b = createMigratedAuthDb();
     seedUser(new UserStore(a.db));
@@ -59,12 +59,11 @@ describe('integration: UplinkDialCoordinator 按 runtime 隔离', () => {
     fixtures.push({ close: b.close, stop: () => meshB.stop() });
     expect(meshA.relayOpener).toBeInstanceOf(RelaySecondaryAttach);
     expect(meshB.relayOpener).toBeInstanceOf(RelaySecondaryAttach);
-    expect((meshA.relayOpener as RelaySecondaryAttach).dialCoordinator).toBe(
-      meshA.uplink.dialCoordinator
-    );
-    expect((meshB.relayOpener as RelaySecondaryAttach).dialCoordinator).toBe(
-      meshB.uplink.dialCoordinator
-    );
-    expect(meshA.uplink.dialCoordinator).not.toBe(meshB.uplink.dialCoordinator);
+    expect(meshA.relayOpener).not.toBe(meshB.relayOpener);
+    await meshA.start();
+    await meshB.start();
+    meshA.uplink.armSwitch('https://a.example');
+    expect(meshA.uplink.primaryTarget()).toBe('https://a.example');
+    expect(meshB.uplink.primaryTarget()).not.toBe('https://a.example');
   });
 });

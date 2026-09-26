@@ -18,11 +18,7 @@ import {
   PRIMARY_ONLY_DIAGNOSTICS,
   resolveDirectDiagnostics,
 } from '@vibeterm/ws-client/direct/types';
-import {
-  clearDirectLinkAvailability,
-  isDirectLinkUnavailable,
-  markDirectLinkUnavailable,
-} from './direct-link-availability';
+import { clearDirectLinkAvailability, markDirectLinkUnavailable } from './direct-link-availability';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import {
   DEVICES_STALE_MS,
@@ -35,7 +31,9 @@ import {
   nodeQueryClient,
 } from './node-runtimes';
 import {
+  BACKOFF_FIRST_MS,
   isNodeRequestBlocked,
+  nodeUnreachableReason,
   noteNodeUnreachable,
   setNodeBackoffTimersForTest,
 } from './node-unreachable-backoff';
@@ -48,6 +46,8 @@ interface FakeConnection extends GatewayConnection {
   mountedPanes: Set<string>;
   /** 把这条假连接推到 READY（直连接线等的就是这一下）。 */
   becomeReady: () => void;
+  /** 模拟 primary 会话保持健康满一段时间。 */
+  becomeHealthy: () => void;
 }
 
 /**
@@ -57,6 +57,7 @@ interface FakeConnection extends GatewayConnection {
 function fakeConnection(mountedPanes: string[] = [], ready = true): FakeConnection {
   const mounted = new Set(mountedPanes);
   const stateListeners = new Set<(state: string) => void>();
+  const healthyListeners = new Set<() => void>();
   let isReady = ready;
   let directRetry: (() => void) | null = null;
   const connection = {
@@ -68,10 +69,19 @@ function fakeConnection(mountedPanes: string[] = [], ready = true): FakeConnecti
           stateListeners.delete(handler);
         };
       },
+      onSessionHealthy: (handler: () => void) => {
+        healthyListeners.add(handler);
+        return () => {
+          healthyListeners.delete(handler);
+        };
+      },
     } as unknown as GatewayConnection['client'],
     becomeReady: () => {
       isReady = true;
       for (const listener of [...stateListeners]) listener('READY');
+    },
+    becomeHealthy: () => {
+      for (const listener of [...healthyListeners]) listener();
     },
     transport: { stateFeedMode: 'canonical' } as GatewayConnection['transport'],
     paneSinks: {
@@ -99,7 +109,7 @@ function fakeConnection(mountedPanes: string[] = [], ready = true): FakeConnecti
 interface FakeController {
   starts: number;
   stops: number;
-  retries: number;
+  nudges: number;
   explicitRetries: number;
   carrierState: 'idle' | 'connecting' | 'active' | 'failed';
   diagSnapshot: DirectDiagnostics;
@@ -151,11 +161,11 @@ function fakeController(): FakeController & DirectCarrierController {
     stop() {
       controller.stops += 1;
     },
-    retries: 0,
+    nudges: 0,
     explicitRetries: 0,
     carrierState: 'idle' as FakeController['carrierState'],
-    retry() {
-      controller.retries += 1;
+    nudge() {
+      controller.nudges += 1;
     },
     retryDirect() {
       controller.explicitRetries += 1;
@@ -317,9 +327,9 @@ describe('createNodeConnection', () => {
     expect(controller.starts).toBe(1);
   });
 
-  test('pageshow / 可见恢复时直连未 active 则自动 retry（不是显式 retryDirect）；active 不拨', async () => {
+  test('页面恢复只给控制器一次 nudge()（不是显式 retryDirect）：在途 / 已通由控制器自己忽略', async () => {
     const down = fakeController();
-    down.carrierState = 'failed';
+    down.carrierState = 'connecting';
     const resume: Array<() => void> = [];
     const connection = createNodeConnection('node-resume-direct', {
       createConnection: () => fakeConnection(),
@@ -331,14 +341,11 @@ describe('createNodeConnection', () => {
       },
     });
     await directLinkSettled(connection);
-    expect(down.retries).toBe(0);
+    expect(down.nudges).toBe(0);
     resume[0]?.();
-    expect(down.retries).toBe(1);
+    expect(down.nudges).toBe(1);
     expect(down.explicitRetries).toBe(0);
-
-    down.carrierState = 'active';
-    resume[0]?.();
-    expect(down.retries).toBe(1);
+    expect(down.stops).toBe(0);
     connection.dispose();
   });
 
@@ -552,42 +559,6 @@ describe('createNodeConnection', () => {
     resetMeshNodesStateForTest();
   });
 
-  test('DIRECT_UNAVAILABLE 停放：页面恢复 / READY 不起，用户显式 retryDirect 清掉负结论并显式重试', async () => {
-    setMeshNodesStateForTest({ entryNodeId: 'entry-node', nodes: [] });
-    markDirectLinkUnavailable('node-unavail', 'entry-node', Date.now(), 'direct-unavailable');
-    const controller = fakeController();
-    let created = 0;
-    const resume: Array<() => void> = [];
-    const raw = fakeConnection();
-    const connection = createNodeConnection('node-unavail', {
-      createConnection: () => raw,
-      loadDirect: async () => fakeDirectModule(),
-      createController: () => {
-        created += 1;
-        return controller;
-      },
-      pageResume: (listener) => {
-        resume.push(listener);
-        return () => undefined;
-      },
-    });
-    await directLinkSettled(connection);
-    resume[0]?.();
-    raw.becomeReady();
-    await directLinkSettled(connection);
-    expect(created).toBe(0);
-
-    connection.retryDirect();
-    await directLinkSettled(connection);
-    expect(created).toBe(1);
-    expect(controller.explicitRetries).toBe(1);
-    expect(controller.starts).toBe(0);
-    expect(isDirectLinkUnavailable('node-unavail', 'entry-node')).toBe(false);
-    connection.dispose();
-    clearDirectLinkAvailability();
-    resetMeshNodesStateForTest();
-  });
-
   test('代答 401 的停放：显式 retryDirect 也不起（入口给不出直连，重试不会变）', async () => {
     setMeshNodesStateForTest({ entryNodeId: 'entry-node', nodes: [] });
     markDirectLinkUnavailable('node-foreign', 'entry-node');
@@ -736,10 +707,10 @@ class FakeSocket implements WebSocketLike {
     this.readyState = 3;
     this.closed.push(code ?? 1000);
   }
-  /** 服务端主动关闭（会话失效 → 4401）。 */
-  serverClose(code: number): void {
+  /** 服务端主动关闭（会话失效 → 4401；入口到不了 node → 1011）。 */
+  serverClose(code: number, reason = ''): void {
     this.readyState = 3;
-    this.onclose?.({ code });
+    this.onclose?.({ code, reason });
   }
 
   /** 走完 open + HELLO_S2C，把 ws-client 推到 READY。 */
@@ -835,6 +806,81 @@ describe('4401 通过真实宿主接线传到 manager', () => {
 
     expect(unauthorized).toEqual(['self']);
     manager.disposeAll();
+  });
+});
+
+describe('primary WS 与「打不通」退避共用一份账（F10）', () => {
+  test('1011（入口到不了 node）记进该 node 的不可达退避；下一次重连以它为下限', () => {
+    setNodeBackoffTimersForTest({
+      schedule: () => 1,
+      cancel: () => undefined,
+      now: () => 0,
+      random: () => 0,
+    });
+    const sockets: FakeSocket[] = [];
+    const manager = hostManager({ sockets });
+    const entry = manager.get(NODE_HEX_A);
+    const client = entry.connection.client;
+    const delays: number[] = [];
+    const reconnector = (
+      client as unknown as {
+        reconnector: { options: { onSchedule?: (i: { delayMs: number }) => void } };
+      }
+    ).reconnector;
+    reconnector.options.onSchedule = (info) => delays.push(info.delayMs);
+
+    client.connect();
+    sockets[0].negotiate();
+    sockets[0].serverClose(1011, 'failover-exhausted');
+
+    expect(isNodeRequestBlocked(NODE_HEX_A)).toBe(true);
+    expect(nodeUnreachableReason(NODE_HEX_A)).toBe('failover-exhausted');
+    expect(client.lastCloseCode).toBe(1011);
+    expect(delays).toEqual([BACKOFF_FIRST_MS]);
+    manager.disposeAll();
+    setNodeBackoffTimersForTest(null);
+  });
+
+  test('普通断线（1006）与 self 的 1011 不记账', () => {
+    setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
+    const sockets: FakeSocket[] = [];
+    const manager = hostManager({ sockets });
+    manager.get(NODE_HEX_B).connection.client.connect();
+    sockets[0].serverClose(1006);
+    manager.get('self').connection.client.connect();
+    sockets[1].serverClose(1011, 'node-unreachable');
+    expect(isNodeRequestBlocked(NODE_HEX_B)).toBe(false);
+    expect(isNodeRequestBlocked('self')).toBe(false);
+    manager.disposeAll();
+    setNodeBackoffTimersForTest(null);
+  });
+
+  test('浏览器这侧的 1011（转发队列溢出、浏览器 socket 写不进去）不记账', () => {
+    setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
+    const sockets: FakeSocket[] = [];
+    const manager = hostManager({ sockets });
+    const client = manager.get(NODE_HEX_B).connection.client;
+    client.connect();
+    sockets[0].negotiate();
+    sockets[0].serverClose(1011, 'forward-queue-overflow');
+    expect(isNodeRequestBlocked(NODE_HEX_B)).toBe(false);
+    expect(client.lastCloseReason).toBe('forward-queue-overflow');
+    manager.disposeAll();
+    setNodeBackoffTimersForTest(null);
+  });
+
+  test('primary 健康满一段时间即清掉该 node 的不可达退避', () => {
+    setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
+    const raw = fakeConnection();
+    createNodeConnection(NODE_HEX_C, {
+      createConnection: () => raw,
+      loadDirect: async () => null,
+    });
+    noteNodeUnreachable(NODE_HEX_C);
+    expect(isNodeRequestBlocked(NODE_HEX_C)).toBe(true);
+    raw.becomeHealthy();
+    expect(isNodeRequestBlocked(NODE_HEX_C)).toBe(false);
+    setNodeBackoffTimersForTest(null);
   });
 });
 

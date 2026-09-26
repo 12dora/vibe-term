@@ -6,6 +6,7 @@
 
 export {
   DirectCarrierController,
+  NUDGE_COALESCE_MS,
   buildIceServers,
   meshConnectionPath,
   MESH_CONNECTION_PATH,
@@ -13,6 +14,7 @@ export {
   type DirectCarrierControllerOptions,
   type DirectCarrierState,
   type GatewayConnectionLike,
+  type PrimaryStatusLike,
 } from './direct-carrier-controller';
 
 export { RTC_CONFIG_PATH } from './direct-negotiate';
@@ -24,28 +26,19 @@ export {
 } from './direct-hello-connection';
 
 export {
-  AUTHORIZE_BREAKER_BASE_MS,
-  AUTHORIZE_BREAKER_MAX_MS,
+  DIRECT_BREAKER_BASE_MS,
+  DIRECT_BREAKER_FAILS,
+  DIRECT_BREAKER_HEALTHY_MS,
+  DIRECT_BREAKER_MAX_MS,
   DIRECT_UNAVAILABLE_COOLDOWN_MS,
-  authorizeBreakerShouldTry,
-  authorizeProbeSuppressed,
-  forceAuthorizeProbe,
-  noteAuthorizeFailure,
-  noteAuthorizeSuccess,
-  noteDirectUnavailable,
-  resetDirectAuthorizeBreakers,
-} from './direct-authorize-breaker';
+  directBreakerGate,
+  directBreakerSnapshot,
+  resetDirectBreakerFor,
+  resetDirectBreakers,
+  type DirectBreakerGate,
+} from './direct-breaker';
 
-export {
-  DIRECT_DIAL_BREAKER_BASE_MS,
-  DIRECT_DIAL_BREAKER_FAILS,
-  DIRECT_DIAL_BREAKER_HEALTHY_MS,
-  DIRECT_DIAL_BREAKER_MAX_MS,
-  DirectDialBreaker,
-  classifyDirectDialFailure,
-  type DirectDialBreakerDecision,
-  type DirectDialBreakerSnapshot,
-} from './direct-dial-breaker';
+export { classifyDirectDialFailure } from './direct-dial-breaker';
 
 export {
   BulkClient,

@@ -296,9 +296,9 @@ describe('createRtcSignalApplier', () => {
   test('offerer aborts on decline in under a second and does not set the remote description', () => {
     const { pc, remote } = fakePc();
     const state = createSignalingAttemptState(2);
-    const superseded: number[] = [];
-    state.onSuperseded = () => {
-      superseded.push(1);
+    const declined: string[] = [];
+    state.onDeclined = (detail) => {
+      declined.push(detail.reason);
     };
     const apply = createRtcSignalApplier(pc, 'peer', 'answer', state, createIceCandidateTrace());
     const started = Date.now();
@@ -309,17 +309,17 @@ describe('createRtcSignalApplier', () => {
       sdp: encodeDcOfferDecline('cooling'),
     });
     expect(Date.now() - started).toBeLessThan(1_000);
-    expect(superseded).toEqual([1]);
+    expect(declined).toEqual(['cooling']);
     expect(remote).toHaveLength(0);
     expect(state.answerApplied).toBe(false);
   });
 
-  test('answerer ignores decline, and a legacy offerer never applies a non-answer', () => {
+  test('answerer reports decline and does not apply it as an offer', () => {
     const { pc, remote } = fakePc();
     const state = createSignalingAttemptState();
-    const superseded: number[] = [];
-    state.onSuperseded = () => {
-      superseded.push(1);
+    const declined: string[] = [];
+    state.onDeclined = (detail) => {
+      declined.push(detail.reason);
     };
     const apply = createRtcSignalApplier(pc, 'peer', 'offer', state, createIceCandidateTrace());
     const raw = encodeDcOfferDecline('disabled');
@@ -329,7 +329,7 @@ describe('createRtcSignalApplier', () => {
       to: 'peer',
       sdp: raw,
     });
-    expect(superseded).toEqual([]);
+    expect(declined).toEqual(['disabled']);
     expect(remote).toHaveLength(0);
     const decoded = decodeSdpSignal(raw);
     expect(decoded?.type).toBe('decline');

@@ -302,7 +302,7 @@ describe('forwarder', () => {
       { err: new LinkError('rst', 'offline'), reason: 'relay_reset:offline' },
       { err: new LinkError('rst', 'open-failed'), reason: 'relay_reset:open-failed' },
       { err: new DOMException('The operation was aborted.', 'AbortError'), reason: 'timeout' },
-      { err: new Error('https://evil.example/token=secret'), reason: 'no_link' },
+      { err: new Error('https://evil.example/token=secret'), reason: 'link_lost' },
     ];
     for (const { err, reason } of cases) {
       const peers = new FakePeers();
@@ -626,6 +626,45 @@ describe('forwarder', () => {
       });
       expect(other.status).toBe(200);
       expect(streams.httpOpenCount).toBe(CHALLENGE_RATE_LIMIT + 1);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('entry locks a forwarded login IP after the standard threshold', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponseFactory = () =>
+      new Response(JSON.stringify({ code: 'INVALID_CREDENTIALS' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+    const mesh = await bootMesh({ peers, streams });
+    const ip = '203.0.113.80';
+    const url = `http://localhost/n/${OTHER}/api/auth/login`;
+    try {
+      for (let i = 0; i < 10; i += 1) {
+        const res = await call(mesh.runtime, url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: '{}',
+          clientIp: ip,
+        });
+        expect(res.status).toBe(401);
+      }
+      expect(streams.httpOpenCount).toBe(10);
+      const blocked = await call(mesh.runtime, url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+        clientIp: ip,
+      });
+      expect(blocked.status).toBe(429);
+      const body = (await blocked.json()) as { code: string; retryAfterMs: number };
+      expect(body.code).toBe('RATE_LIMITED');
+      expect(body.retryAfterMs).toBeGreaterThan(14 * 60 * 1000);
+      expect(streams.httpOpenCount).toBe(10);
     } finally {
       mesh.close();
     }
@@ -2173,7 +2212,7 @@ describe('forwardAuthorizedHttp', () => {
     expect(await postRes.json()).toEqual({
       code: 'NODE_UNREACHABLE',
       nodeId: OTHER,
-      reason: 'no_link',
+      reason: 'link_lost',
     });
     expect(opens).toBe(1);
   });
@@ -2512,7 +2551,7 @@ describe('forwardAuthorizedHttp', () => {
       expect(await res.json()).toEqual({
         code: 'NODE_UNREACHABLE',
         nodeId: OTHER,
-        reason: 'no_link',
+        reason: 'link_lost',
         error: 'websocket send discarded',
       });
       expect(warnings.some((line) => line.includes('[mesh][forward] raw-body push aborted'))).toBe(

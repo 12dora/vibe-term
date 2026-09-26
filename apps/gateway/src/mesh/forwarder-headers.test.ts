@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL } from './client-source';
-import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
+import {
+  ENTRY_CLIENT_IP_HEADER,
+  copyUpstreamHeaders,
+  filterRequestHeaders,
+  stampForwardedAuthHeaders,
+} from './forwarder-headers';
 import {
   MESH_FORWARD_CSP,
   MESH_VIA_SELF,
@@ -107,5 +112,33 @@ describe('filterRequestHeaders', () => {
     );
     expect(out[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
     expect(out.accept).toBe('*/*');
+  });
+});
+
+describe('stampForwardedAuthHeaders', () => {
+  test('登录路径写真实 IP，并保留 client 与 user-agent；伪造的入口 IP 被丢掉', () => {
+    const req = reqWith(
+      {
+        'user-agent': 'VibeTerm/1',
+        'x-vibeterm-client': 'cli',
+        [ENTRY_CLIENT_IP_HEADER]: '1.2.3.4',
+      },
+      '203.0.113.9'
+    );
+    const headers = filterRequestHeaders(req);
+    stampForwardedAuthHeaders(headers, req, '/api/auth/login');
+    expect(headers[ENTRY_CLIENT_IP_HEADER]).toBe('203.0.113.9');
+    expect(headers['user-agent']).toBe('VibeTerm/1');
+    expect(headers['x-vibeterm-client']).toBe('cli');
+  });
+
+  test('非登录路径不盖入口 IP', () => {
+    const req = reqWith({ [ENTRY_CLIENT_IP_HEADER]: '1.2.3.4' }, '203.0.113.9');
+    const headers = filterRequestHeaders(req);
+    stampForwardedAuthHeaders(headers, req, '/api/devices');
+    expect(headers[ENTRY_CLIENT_IP_HEADER]).toBeUndefined();
+    expect(Object.keys(headers).some((key) => key.toLowerCase() === ENTRY_CLIENT_IP_HEADER)).toBe(
+      false
+    );
   });
 });

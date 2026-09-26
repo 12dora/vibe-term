@@ -1,8 +1,40 @@
+import type { NodeUnreachableReason } from '@vibeterm/shared';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { ForwardDeadlineError } from './forwarder-attempt-deadline';
-import { isPendingMeasureRefusal, isPreDispatchTransportRefusal } from './forwarder-unreachable';
+import {
+  classifyUnreachableReason,
+  isPendingMeasureRefusal,
+  isPreDispatchTransportRefusal,
+} from './forwarder-unreachable';
 import { HTTP_FAILOVER_MAX_ATTEMPTS } from './mesh-deps';
 import { emitTransportRefused, transportOfLink } from './pending-measure-hold';
+
+export type ForwardAttemptKind = 'plain' | 'authorized';
+
+export type ForwardAttemptInput = {
+  kind: ForwardAttemptKind;
+  method: string;
+  attempt: number;
+  err: unknown;
+  replayable: boolean;
+  requestedAttempts: number;
+  obtainedLink: boolean;
+  hasRawBody?: boolean;
+  nodeId?: string;
+  link?: LinkSession | null;
+};
+
+/** 三条转发入口共用：要不要再试，以及这次失败该告诉浏览器的 reason。 */
+export function decideForwardAttempt(input: ForwardAttemptInput): {
+  retry: boolean;
+  reason: NodeUnreachableReason;
+} {
+  if (input.nodeId) noteRefusal(input.nodeId, input.link ?? null, input.err);
+  return {
+    retry: retryForwardFailure(input),
+    reason: classifyUnreachableReason(false, input.err, input.obtainedLink),
+  };
+}
 
 /** 小请求先缓冲再发，pending-measure 这种开流即拒才能安全重放 POST。 */
 export const REPLAY_BODY_LIMIT = 64 * 1024;
@@ -40,10 +72,17 @@ export function noteAndContinuePlainHttp(input: {
   nodeId: string;
   link: LinkSession | null;
 }): boolean {
-  noteRefusal(input.nodeId, input.link, input.err);
-  if (input.err instanceof ForwardDeadlineError) return false;
-  if (NO_BODY_METHOD.has(input.method)) return input.attempt + 1 < HTTP_FAILOVER_MAX_ATTEMPTS;
-  return input.attempt === 0 && input.canReplay && isPreDispatchTransportRefusal(input.err);
+  return decideForwardAttempt({
+    kind: 'plain',
+    method: input.method,
+    attempt: input.attempt,
+    err: input.err,
+    replayable: input.canReplay,
+    requestedAttempts: HTTP_FAILOVER_MAX_ATTEMPTS,
+    obtainedLink: Boolean(input.link),
+    nodeId: input.nodeId,
+    link: input.link,
+  }).retry;
 }
 
 export function warnRawAbort(nodeId: string, uploaded: number, err: unknown): void {
@@ -80,10 +119,30 @@ export function noteAndContinueAuthorized(input: {
   nodeId: string;
   link: LinkSession | null;
 }): boolean {
-  noteRefusal(input.nodeId, input.link, input.err);
+  return decideForwardAttempt({
+    kind: 'authorized',
+    method: input.method,
+    attempt: input.attempt,
+    err: input.err,
+    replayable: true,
+    requestedAttempts: input.attempts,
+    obtainedLink: Boolean(input.link),
+    hasRawBody: input.hasRawBody,
+    nodeId: input.nodeId,
+    link: input.link,
+  }).retry;
+}
+
+function retryForwardFailure(input: ForwardAttemptInput): boolean {
   if (input.hasRawBody || input.err instanceof ForwardDeadlineError) return false;
-  if (input.attempt + 1 < input.attempts) return true;
-  if (NO_BODY_METHOD.has(input.method) || input.attempts !== 1) return false;
+  if (input.kind === 'authorized') return retryAuthorized(input);
+  if (NO_BODY_METHOD.has(input.method)) return input.attempt + 1 < input.requestedAttempts;
+  return input.attempt === 0 && input.replayable && isPreDispatchTransportRefusal(input.err);
+}
+
+function retryAuthorized(input: ForwardAttemptInput): boolean {
+  if (input.attempt + 1 < input.requestedAttempts) return true;
+  if (NO_BODY_METHOD.has(input.method) || input.requestedAttempts !== 1) return false;
   return input.attempt === 0 && isPreDispatchTransportRefusal(input.err);
 }
 

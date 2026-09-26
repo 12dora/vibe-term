@@ -3,7 +3,11 @@ import type { RtcSignalMessage } from '../mesh-deps';
 import { decodeCandidateSignal, decodeSdpSignal, isEmptyCandidate } from './ice';
 import type { PeerConnectionLike } from './native';
 import { type IceCandidateTrace, type RtcLogContext, rtcLog, rtcLogCandidate } from './rtc-log';
-import { consumeOffererOnDecline, rememberOffererDecline } from './rtc-offer-decline';
+import {
+  type DcOfferDeclineDetail,
+  isDcOfferDecline,
+  readDcOfferDeclineDetail,
+} from './rtc-offer-decline';
 
 export type QueuedRemoteCandidate = { candidate: string; mid: string; epoch?: number };
 
@@ -19,6 +23,7 @@ export type SignalingAttemptState = {
   pendingDropped: number;
   logFields?: RtcLogContext;
   onSuperseded?: (epoch?: number) => void;
+  onDeclined?: (detail: DcOfferDeclineDetail) => void;
   onEpoch?: (epoch: number) => void;
   onRemoteDescriptionApplied?: () => void;
   /** 已建成的 live PC：更高 epoch 的 offer 忽略，不 superseded、不退订残留 ICE。 */
@@ -151,9 +156,14 @@ export function applyRemoteSdp(
   }
 }
 
+function declineEpochMatches(detail: DcOfferDeclineDetail, state: SignalingAttemptState): boolean {
+  if (detail.epoch == null || state.epoch == null) return true;
+  return detail.epoch === state.epoch;
+}
+
 /**
- * 只有 offerer（正在等 answer）收到 decline 才立刻 superseded。
- * 应答侧和未知 type 仍只丢弃：不 setRemoteDescription、不抛。
+ * offerer 等 answer、应答侧等 offer（wake 之后）收到 decline 都立刻收束。
+ * epoch 对不上的迟到 decline 丢掉。没有 epoch 的旧对端仍然生效。
  */
 function rejectRemoteSdp(
   peer: string,
@@ -162,14 +172,29 @@ function rejectRemoteSdp(
   raw: string,
   decoded: { type: string }
 ): boolean {
-  if (
-    expect === 'answer' &&
-    consumeOffererOnDecline(raw, () => {
-      rememberOffererDecline(peer, raw);
-      state.onSuperseded?.();
-    })
-  ) {
+  if (isDcOfferDecline(raw)) {
+    const detail = readDcOfferDeclineDetail(raw) ?? {
+      reason: 'disabled' as const,
+      until: null,
+      retryAfterMs: null,
+      epoch: null,
+    };
+    if (!declineEpochMatches(detail, state)) {
+      logSignal(
+        'signal dropped',
+        {
+          peer,
+          kind: 'sdp',
+          cause: 'epoch-mismatch',
+          expected_epoch: state.epoch,
+          received_epoch: detail.epoch,
+        },
+        state
+      );
+      return true;
+    }
     logSignal('signal dropped', { peer, kind: 'sdp', cause: 'declined' }, state);
+    state.onDeclined?.(detail);
     return true;
   }
   if (decoded.type === expect) return false;

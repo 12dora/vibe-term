@@ -3,14 +3,15 @@ import type { MeshRouteMode } from '@vibeterm/shared/net';
 import { encodeJsonBytes } from './ctl';
 import {
   PEER_PING_INTERVAL_MS,
+  PEER_RETIRE_MAX_MS,
   type PeerManagerState,
   comparePeerTransport,
 } from './peer-manager-state';
-import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import { attachSideRelayAccounting, retireSideRelay } from './peer-side-relay';
 import { quiet } from './peer-ws-race';
 import { ROUTE_PROMOTE_SAMPLES, isDirectTransport } from './route-policy';
+import { noteSessionRefusal, onRoutePromoted } from './session-binding';
 import type { PeerTransportKind } from './types';
 
 /** 对端在测量完成前复位用户流。开流即拒，请求还没进对端业务。 */
@@ -35,7 +36,9 @@ type HoldState = {
   watched: WeakSet<LinkSession>;
   borrowed: Map<string, Promise<LinkSession | null>>;
   expiryGen: Map<string, number>;
+  holdSession: Map<string, LinkSession>;
   unsub: (() => void) | null;
+  unsubPromoted: (() => void) | null;
   coord: object;
 };
 
@@ -43,6 +46,8 @@ type MeasureHost = {
   ports?: {
     state?: PeerManagerState;
     openRelay?: (nodeId: string) => Promise<LinkSession>;
+    openUntrackedRelay?: (nodeId: string) => Promise<LinkSession>;
+    parkSide?: (peerId: string, session: LinkSession) => void;
   };
 };
 
@@ -59,7 +64,9 @@ function holdState(coord: object): HoldState {
       watched: new WeakSet(),
       borrowed: new Map(),
       expiryGen: new Map(),
+      holdSession: new Map(),
       unsub: null,
+      unsubPromoted: null,
       coord,
     };
     states.set(coord, state);
@@ -93,8 +100,14 @@ export function transportOfLink(session: LinkSession): PeerTransportKind | null 
 export function attachRemoteHold(coord: object): void {
   const state = holdState(coord);
   state.unsub?.();
+  state.unsubPromoted?.();
   state.unsub = subscribeTransportRefused((notice) => {
     extendHold(state, notice.nodeId, notice.session, notice.now);
+  });
+  state.unsubPromoted = onRoutePromoted((peerId, session) => {
+    const id = holdIdForSession(state, peerId, session);
+    if (!id) return;
+    clearPeerHold(state, id, session);
   });
 }
 
@@ -102,6 +115,7 @@ export function detachRemoteHold(coord: object): void {
   const state = states.get(coord);
   if (!state) return;
   state.unsub?.();
+  state.unsubPromoted?.();
   states.delete(coord);
 }
 
@@ -121,7 +135,6 @@ export function armPendingMeasureWatch(coord: object, session: LinkSession, peer
   if (typeof session.openStream !== 'function') return;
   state.watched.add(session);
   wrapLocalOpen(state, session, peerId);
-  watchPromotion(state, session, peerId);
 }
 
 export async function resolveRefusedUserLink(
@@ -138,8 +151,8 @@ export async function resolveRefusedUserLink(
   if (!directRefused(coord, live.peerNodeId, live.session, opts.now)) return null;
   const fallback = refusedFallback(coord, live, opts.retiring);
   if (fallback) return fallback;
-  // direct 要的是直连。测量中再拨中继会被直接模式丢掉，拒绝交回这一次转发重试。
-  if (opts.mode !== 'auto') return null;
+  // 只有节点级测量窗才旁路拨中继。parked 只绑在这一条 session 上，拨出来也会被 hold-expired 丢掉。
+  if (opts.mode !== 'auto' || !holdStillOpen(coord, live.peerNodeId, opts.now)) return null;
   return opts.dialRelay();
 }
 
@@ -181,13 +194,21 @@ function extendHold(
   publishMeasureUntil(state, nodeId, state.until.get(nodeId) ?? until);
   armHoldExpiry(state, nodeId);
   if (!session) return;
+  state.holdSession.set(nodeId, session);
   const sessionUntil = state.sessions.get(session) ?? 0;
   if (until > sessionUntil) state.sessions.set(session, until);
+}
+
+function holdIdForSession(state: HoldState, peerId: string, session: LinkSession): string | null {
+  if (state.holdSession.get(peerId) === session) return peerId;
+  for (const [id, held] of state.holdSession) if (held === session) return id;
+  return null;
 }
 
 function clearPeerHold(state: HoldState, nodeId: string, session: LinkSession): void {
   state.until.delete(nodeId);
   state.expiryGen.delete(nodeId);
+  state.holdSession.delete(nodeId);
   state.sessions.delete(session);
   publishMeasureUntil(state, nodeId, null);
   closeSideRelay(state, nodeId, 'route-promoted');
@@ -209,18 +230,24 @@ function notePendingMeasure(
   peerId: string
 ): void {
   void stream.closed.then((info) => {
-    if (info.reason !== 'rst' || info.message !== PENDING_MEASURE_REASON) return;
+    const message = info.message ?? '';
+    if (info.reason === 'rst' && message === 'stale-link') {
+      noteSessionRefusal(session, 'stale-link', peerId);
+      return;
+    }
+    if (info.reason === 'rst' && message === 'parked') {
+      holdSessionOnly(state, session);
+      return;
+    }
+    if (info.reason !== 'rst' || message !== PENDING_MEASURE_REASON) return;
     extendHold(state, peerId, session, Date.now());
   });
 }
 
-function watchPromotion(state: HoldState, session: LinkSession, peerId: string): void {
-  if (typeof session.ctl?.onMessage !== 'function') return;
-  session.ctl.onMessage((bytes) => {
-    const msg = parseOpenPayload(bytes);
-    if (msg?.t !== ROUTE_PROMOTED_CTL) return;
-    clearPeerHold(state, peerId, session);
-  });
+function holdSessionOnly(state: HoldState, session: LinkSession): void {
+  const until = Date.now() + PEER_RETIRE_MAX_MS;
+  const prev = state.sessions.get(session) ?? 0;
+  if (until > prev) state.sessions.set(session, until);
 }
 
 function refusedFallback(
@@ -293,9 +320,9 @@ async function dialBeside(
   open: (nodeId: string) => Promise<LinkSession>
 ): Promise<LinkSession | null> {
   const manager = managerOf(coord);
-  manager?.besideRelayDial.add(peerId);
+  const untracked = (coord as MeasureHost).ports?.openUntrackedRelay ?? open;
   try {
-    const session = await open(peerId);
+    const session = await untracked(peerId);
     if (manager?.stopped) {
       quiet(() => session.close('stopped'));
       return null;
@@ -304,12 +331,12 @@ async function dialBeside(
       quiet(() => session.close('hold-expired'));
       return null;
     }
-    rememberSide(manager, peerId, session);
+    const park = (coord as MeasureHost).ports?.parkSide;
+    if (park) park(peerId, session);
+    else rememberSide(manager, peerId, session);
     return session;
   } catch {
     return null;
-  } finally {
-    manager?.besideRelayDial.delete(peerId);
   }
 }
 
@@ -323,7 +350,6 @@ function rememberSide(
   manager.sideRelays.set(peerId, session);
   rememberLinkTransport(session, 'relay');
   attachSideRelayAccounting(session);
-  manager.sideRelayAttach?.(session, peerId);
   const closed = session.closed;
   if (!closed || typeof closed.then !== 'function') return;
   void closed.then(() => {

@@ -1,4 +1,5 @@
 import type { RtcSignalMessage } from './mesh-deps';
+import { noteIncomingRouteClose } from './peer-dc-proof';
 import type { PeerManagerState } from './peer-manager-state';
 import { RTC_PEER_INBOX_MAX_MESSAGES } from './peer-manager-state';
 import { sendPeerCtlQuiet } from './peer-path-view';
@@ -36,9 +37,12 @@ export type PeerCtlHost = {
       shouldAcceptAnswer: (nodeId: string) => boolean;
       inboundBlock: (nodeId: string) => DcOfferBlockReason | null;
       noteInboundAccepted?: (nodeId: string) => void;
+      noteAnswerAccepted?: (nodeId: string) => void;
       refusalCooldown?: (nodeId: string) => { until: number | null; retryAfterMs: number };
     };
   };
+  /** 活链路非 DC 走 ctl，否则走 uplink。没有时只在已有 live 上发。 */
+  sendRtcSignal?: (peerNodeId: string, msg: RtcSignalMessage) => void;
   rtcListeners: Map<string, Set<(msg: RtcSignalMessage) => void>>;
   onBrowserSignal: ((msg: RtcSignalMessage, fromNodeId?: string) => void) | null;
   isTrusted: (nodeId: string) => boolean;
@@ -74,6 +78,7 @@ function dispatchSyncPeerCtl(
 ): void {
   if (t === 'ping') sendPeerCtlQuiet(live, { t: 'pong' });
   else if (t === 'pong') host.registry.onPeerPong(live);
+  else if (t === 'link.route-close') noteIncomingRouteClose(live, msg, host.state.scheduler.now());
   else if (t.startsWith('link.')) host.drain.handleLinkCtl(live, t, msg);
   else if (t === 'rtc.signal') {
     const signal = rtcSignalFromCtl(msg);
@@ -108,30 +113,51 @@ function declineBlockedInboundOffer(
   host: PeerCtlHost,
   fromNodeId: string,
   msg: RtcSignalMessage
-): boolean {
-  if (!msg.sdp) return false;
+): 'accepted' | 'declined' | 'n/a' {
+  if (!msg.sdp) return 'n/a';
   const decoded = decodeSdpSignal(msg.sdp);
-  if (decoded?.type !== 'offer') return false;
-  const block = host.dcUpgrade.dcBreaker.inboundBlock(fromNodeId);
-  if (!block) {
-    host.dcUpgrade.dcBreaker.noteInboundAccepted?.(fromNodeId);
-    return false;
+  if (decoded?.type !== 'offer') return 'n/a';
+  const breaker = host.dcUpgrade.dcBreaker;
+  const block = breaker.inboundBlock(fromNodeId);
+  if (!block && breaker.shouldAcceptAnswer(fromNodeId)) {
+    breaker.noteInboundAccepted?.(fromNodeId);
+    breaker.noteAnswerAccepted?.(fromNodeId);
+    return 'accepted';
   }
-  const live = host.state.live.get(fromNodeId);
-  if (live) {
-    const cooldown = host.dcUpgrade.dcBreaker.refusalCooldown?.(fromNodeId);
-    sendPeerCtlQuiet(
-      live,
-      dcOfferDeclineCtl({
-        rtcSession: msg.rtcSession || peerRtcSession(host.identity.nodeId, fromNodeId),
-        to: fromNodeId,
-        reason: block,
-        until: cooldown?.until,
-        retryAfterMs: cooldown?.retryAfterMs,
-      })
-    );
+  const reason = block ?? 'cooling';
+  const cooldown = breaker.refusalCooldown?.(fromNodeId);
+  const ctl = dcOfferDeclineCtl({
+    rtcSession: msg.rtcSession || peerRtcSession(host.identity.nodeId, fromNodeId),
+    to: fromNodeId,
+    reason,
+    until: cooldown?.until,
+    retryAfterMs:
+      cooldown?.retryAfterMs && cooldown.retryAfterMs > 0 ? cooldown.retryAfterMs : 30_000,
+    epoch: decoded.epoch,
+  });
+  const signal: RtcSignalMessage = {
+    rtcSession: ctl.rtcSession,
+    from: 'node',
+    to: ctl.to,
+    sdp: ctl.sdp,
+    candidate: null,
+  };
+  if (host.sendRtcSignal) host.sendRtcSignal(fromNodeId, signal);
+  else {
+    const live = host.state.live.get(fromNodeId);
+    if (live) sendPeerCtlQuiet(live, ctl);
   }
-  return true;
+  return 'declined';
+}
+
+function answererCanStartDc(
+  host: PeerCtlHost,
+  fromNodeId: string,
+  offerVerdict: 'accepted' | 'n/a'
+): boolean {
+  if (!host.dialer.dcCapable(fromNodeId)) return false;
+  if (offerVerdict === 'accepted') return true;
+  return host.dcUpgrade.dcBreaker.inboundBlock(fromNodeId) !== 'disabled';
 }
 
 function dropUnboundDecline(
@@ -162,11 +188,12 @@ function bufferOrStartRtcAttempt(
   )
     return;
   // 被拒绝的 offer 不能进 rtcInbox，否则之后的出站探测会把它回放到新 PC。
-  if (declineBlockedInboundOffer(host, fromNodeId, msg)) return;
+  // 刚记下的 accept 只限制下一条 offer，不能把这一条自己挡掉。
+  const offerVerdict = declineBlockedInboundOffer(host, fromNodeId, msg);
+  if (offerVerdict === 'declined') return;
   if (!pushRtcInbox(host, fromNodeId, msg)) return;
   const attempt = peerInitiatedRtcAttemptInput({
-    dcCapable:
-      host.dialer.dcCapable(fromNodeId) && host.dcUpgrade.dcBreaker.shouldAcceptAnswer(fromNodeId),
+    dcCapable: answererCanStartDc(host, fromNodeId, offerVerdict),
     dcInflight: inflight,
     upgrading,
     live: host.state.live.get(fromNodeId),

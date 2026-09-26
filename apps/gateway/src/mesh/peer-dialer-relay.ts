@@ -12,8 +12,31 @@ import { type MeshIdentity, NodeUnreachableError } from './types';
 
 const RETRYABLE_RELAY_RST = new Set(['offline', 'unknown-target']);
 
+/** 握手完成前的失败：换下一条中继，不当作对端的错。 */
+const PRE_HANDSHAKE_RST = new Set([
+  'offline',
+  'unknown-target',
+  'uplink-retiring',
+  'relay-unhandled',
+  'stale',
+  'unauthenticated',
+  'quota-streams',
+  'open-failed',
+  'relay-open-local',
+]);
+
+/** 开流抛错里仍要记到对端熔断上的 RST。其余连接错误换成 relay-open-local，不计 peer。 */
+const COUNTED_OPEN_THROW = new Set(['offline', 'unknown-target']);
+
 export function isRetryableRelayOpenReason(reason: string | null | undefined): boolean {
   return Boolean(reason && RETRYABLE_RELAY_RST.has(reason));
+}
+
+export function isPreHandshakeRelayFailure(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  if (!msg) return false;
+  if (msg === 'uplink is not online') return true;
+  return PRE_HANDSHAKE_RST.has(msg);
 }
 
 export function relayOpenFailureReason(err: unknown): string | null {
@@ -50,12 +73,30 @@ async function openVia(
   url: string,
   nodeId: string
 ): Promise<LinkStream> {
-  const stream = await opener.openRelayVia(url, nodeId);
+  const stream = await openRelayOrSkip(opener, url, nodeId);
   const reason = await rstReasonOf(stream);
-  if (isRetryableRelayOpenReason(reason)) {
-    throw new Error(reason ?? 'offline');
-  }
+  if (reason && PRE_HANDSHAKE_RST.has(reason)) throw new Error(reason);
   return stream;
+}
+
+async function openRelayOrSkip(
+  opener: RelayStreamOpener,
+  url: string,
+  nodeId: string
+): Promise<LinkStream> {
+  try {
+    return await opener.openRelayVia(url, nodeId);
+  } catch (err) {
+    if (preserveOpenThrow(err)) throw err;
+    throw new Error('relay-open-local');
+  }
+}
+
+function preserveOpenThrow(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  if (!msg) return false;
+  if (msg === 'uplink is not online') return true;
+  return PRE_HANDSHAKE_RST.has(msg) || COUNTED_OPEN_THROW.has(msg);
 }
 
 export function formatRelayChooseLog(
@@ -73,21 +114,64 @@ export async function openRelayStreamForPeer(input: {
   opener?: RelayStreamOpener;
   openFallback: (nodeId: string) => Promise<LinkStream>;
   breaker?: RelayDialBreaker;
+  exclude?: readonly string[];
 }): Promise<{ stream: LinkStream; viaRelay?: string }> {
   const { nodeId, presence, opener, openFallback } = input;
   if (!presence || !opener) return { stream: await openFallback(nodeId) };
-  const choice = presence.chooseRelay(nodeId);
-  if (!choice) return { stream: await openFallback(nodeId) };
+  const opened = await openChosenRelay(input, presence, opener);
+  if (opened) return opened;
+  return { stream: await openFallback(nodeId) };
+}
+
+async function openChosenRelay(
+  input: {
+    nodeId: string;
+    breaker?: RelayDialBreaker;
+    exclude?: readonly string[];
+  },
+  presence: RelayPresenceIndex,
+  opener: RelayStreamOpener
+): Promise<{ stream: LinkStream; viaRelay?: string } | null> {
+  const tried = [...(input.exclude ?? [])];
   const breaker = input.breaker ?? getRelayDialBreaker();
-  breaker.logChoose(nodeId, choice.url, choice.scoreMs, presence.relaysFor(nodeId).length);
-  try {
-    return { stream: await openVia(opener, choice.url, nodeId), viaRelay: choice.url };
-  } catch (err) {
-    const primary = presence.primaryUrl();
-    const reason = relayOpenFailureReason(err);
-    if (!isRetryableRelayOpenReason(reason) || !primary || primary === choice.url) throw err;
-    return { stream: await openVia(opener, primary, nodeId), viaRelay: primary };
+  let last: unknown = null;
+  for (let i = 0; i < 8; i += 1) {
+    const url = nextRelayUrl(presence, input.nodeId, tried);
+    if (!url) {
+      if (last) throw last;
+      return null;
+    }
+    tried.push(url);
+    const choice = presence.chooseRelay(input.nodeId, { exclude: tried.slice(0, -1) });
+    if (choice && choice.url === url) {
+      breaker.logChoose(input.nodeId, url, choice.scoreMs, presence.relaysFor(input.nodeId).length);
+    }
+    try {
+      return { stream: await openVia(opener, url, input.nodeId), viaRelay: url };
+    } catch (err) {
+      last = err;
+      if (!isPreHandshakeRelayFailure(err)) throw err;
+    }
   }
+  if (last && !isPreHandshakeRelayFailure(last)) throw last;
+  return null;
+}
+
+function nextRelayUrl(
+  presence: RelayPresenceIndex,
+  nodeId: string,
+  tried: readonly string[]
+): string | null {
+  const choice = presence.chooseRelay(nodeId, { exclude: tried });
+  if (choice && !alreadyTried(tried, choice.url)) return choice.url;
+  if (tried.length === 0) return null;
+  const primary = presence.primaryUrl();
+  if (!primary || alreadyTried(tried, primary)) return null;
+  return primary;
+}
+
+function alreadyTried(tried: readonly string[], url: string): boolean {
+  return tried.some((item) => item === url);
 }
 
 async function handshakeWithPrimaryRetry(
@@ -110,20 +194,30 @@ async function handshakeWithPrimaryRetry(
     return { result: await handshake(opened.stream), viaRelay: opened.viaRelay };
   } catch (err) {
     const reason = relayOpenFailureReason(err) ?? (await rstReasonOf(opened.stream));
-    const primary = presence?.primaryUrl() ?? null;
-    if (
-      !isRetryableRelayOpenReason(reason) ||
-      !opener ||
-      !primary ||
-      !opened.viaRelay ||
-      primary === opened.viaRelay
-    ) {
-      throw err;
-    }
+    if (!canRetryHandshake(reason, err, opener, opened.viaRelay)) throw err;
     quietReset(opened.stream, 'relay-retry-primary');
-    const stream = await openVia(opener, primary, nodeId);
-    return { result: await handshake(stream), viaRelay: primary };
+    const next = await openRelayStreamForPeer({
+      nodeId,
+      presence,
+      opener,
+      openFallback: async () => {
+        throw err;
+      },
+      exclude: opened.viaRelay ? [opened.viaRelay] : [],
+    });
+    return { result: await handshake(next.stream), viaRelay: next.viaRelay };
   }
+}
+
+function canRetryHandshake(
+  reason: string | null,
+  err: unknown,
+  opener: RelayStreamOpener | undefined,
+  viaRelay: string | undefined
+): boolean {
+  if (!opener || !viaRelay) return false;
+  if (reason && PRE_HANDSHAKE_RST.has(reason)) return true;
+  return isPreHandshakeRelayFailure(err);
 }
 
 function throwIfRelayAborted(signal: AbortSignal | undefined, nodeId: string): void {
@@ -180,6 +274,7 @@ export function openPeerRelaySession(input: {
   rememberKeys: (session: LinkSession, sendKey?: Uint8Array, recvKey?: Uint8Array) => void;
   track: (session: LinkSession, peerNodeId: string, gen: number) => LinkSession | null;
   signal?: AbortSignal;
+  background?: boolean;
 }): Promise<LinkSession> {
   const { host } = input;
   return completeRelayDial({
@@ -195,6 +290,7 @@ export function openPeerRelaySession(input: {
     liveOf: (peerNodeId) => host.live.get(peerNodeId),
     signal: input.signal,
     breaker: host.relayBreaker,
+    bypassBreaker: input.background === true,
   });
 }
 
@@ -212,11 +308,14 @@ export type CompleteRelayDialInput = {
   signal?: AbortSignal;
   breaker?: RelayDialBreaker;
   handshakeTimeoutMs?: number;
+  /** 降级 / 借路等后台拨号不进前台熔断，也不跟前台抢单飞。 */
+  bypassBreaker?: boolean;
 };
 
 export async function completeRelayDial(input: CompleteRelayDialInput): Promise<LinkSession> {
   throwIfRelayAborted(input.signal, input.nodeId);
   const breaker = input.breaker ?? getRelayDialBreaker();
+  if (input.bypassBreaker) return executeRelayDial(input, breaker);
   return breaker.singleFlight(input.nodeId, () => runGuardedRelayDial(input, breaker));
 }
 
@@ -301,7 +400,7 @@ function finishRelayHandshake(
   input.rememberKeys(result.session, result.sendKey, result.recvKey);
   const kept = input.track(result.session, result.peerNodeId, input.gen);
   if (!kept) throw new NodeUnreachableError(input.nodeId, 'simultaneous-dial');
-  if (viaRelay) {
+  if (viaRelay && kept === result.session) {
     const live = input.liveOf(result.peerNodeId);
     if (live?.transport === 'relay') live.viaRelay = viaRelay;
   }

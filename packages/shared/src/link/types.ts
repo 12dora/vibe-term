@@ -71,6 +71,8 @@ export interface LinkStream {
   /** Half-close our send direction after previously queued writes. New writes reject immediately. */
   end(): Promise<void>;
   reset(reason?: string): void;
+  /** RST 或链路关闭之后为 true。后注册的监听器应停止处理。 */
+  readonly dead?: boolean;
   readonly closed: Promise<StreamCloseInfo>;
   /** Fired once on peer RST or link close (not on a clean bilateral END). */
   onAbort(cb: () => void): void;

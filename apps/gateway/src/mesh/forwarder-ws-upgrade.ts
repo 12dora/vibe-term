@@ -10,6 +10,7 @@ import {
   type StreamOpener,
 } from './mesh-deps';
 import { sanitizeCid } from './mesh-session-registry';
+import { transportOfLink } from './pending-measure-hold';
 import { jsonError } from './session-middleware';
 import { shareWsParam } from './share-credential';
 
@@ -83,9 +84,12 @@ export async function upgradeRemoteWs(
   if (!auth) return rejectRemoteWs(req, server, nodeId, share);
   if (req.signal.aborted) return nodeUnreachableResponse(nodeId, true);
   const cid = sanitizeCid(url.searchParams.get('cid')) || undefined;
-  const pending = new PendingForwardOpen((signal) =>
-    openForwardLink(nodeId, deps, auth, cid, share ?? undefined, signal)
-  );
+  const pending = new PendingForwardOpen(async (signal) => {
+    const opened = await openForwardLink(nodeId, deps, auth, cid, share ?? undefined, signal);
+    const meta = pendingMeta.get(pending);
+    if (meta) meta.transport = opened.transport;
+    return opened.stream;
+  });
   if (req.signal.aborted) pending.abort.abort();
   else req.signal.addEventListener('abort', () => pending.abort.abort(), { once: true });
   const token = crypto.randomUUID();
@@ -113,10 +117,11 @@ async function openForwardLink(
   cid: string | undefined,
   share: string | undefined,
   signal: AbortSignal
-): Promise<OpenedWsStream> {
+): Promise<{ stream: OpenedWsStream; transport: PeerTransportKind | null }> {
   const link = await raceLink(deps.peers.getLink(nodeId), deps.deadlineMs, signal);
   if (signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  return deps.streams.openWsStream(link, auth, cid, share);
+  const stream = await deps.streams.openWsStream(link, auth, cid, share);
+  return { stream, transport: transportOfLink(link) ?? deps.peers.transportOf?.(nodeId) ?? null };
 }
 
 function raceLink(

@@ -61,7 +61,7 @@ export async function probeRelayHealth(
     if (tls) Object.assign(init, tls);
     const url = `${dialUrl.replace(/\/+$/, '')}${RELAY_HEALTH_PATH}`;
     const res = await Promise.race([
-      fetchWithDnsFallback(url, init, { ...fallback, timeoutMs }),
+      fetchWithDnsFallback(url, init, { ...fallback, timeoutMs, preserveDoh: true }),
       timedOut,
     ]);
     return res.ok;

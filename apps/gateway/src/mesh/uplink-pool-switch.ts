@@ -25,6 +25,11 @@ export type UplinkSwitchHost = {
   beginSwitch(): number;
   isSwitchCurrent(token: number): boolean;
   spawn(cand: UplinkCandidate): PooledUplink;
+  holdDial(url: string): number;
+  releaseDial(serial: number): void;
+  releaseSecondary(url: string): Promise<void>;
+  takeoverSecondary?(url: string): Promise<PooledUplink | null>;
+  notifyTargetFree(): void;
   connectCandidate(client: PooledUplink, cand: UplinkCandidate, signal: AbortSignal): Promise<void>;
   promote(client: PooledUplink, cand: UplinkCandidate, token: number): Promise<void>;
   noteFailure(cand: Pick<UplinkCandidate, 'publicUrl'>, msg: string): void;
@@ -47,6 +52,9 @@ export async function runUplinkSwitch(
   if (alreadyAttachedTo(host, publicUrl)) return { ok: true };
   const poolSignal = host.stopSignal();
   if (!poolSignal || poolSignal.aborted) return { ok: false, reason: 'aborted' };
+  const held = await holdSwitchTarget(host, publicUrl);
+  if (!held) return { ok: false, reason: 'aborted' };
+  const taken = (await host.takeoverSecondary?.(publicUrl)) ?? null;
   const combined = signal ? composeAbortSignals(poolSignal, signal) : null;
   const combinedSignal = combined?.signal ?? poolSignal;
   const cands = host.candidates();
@@ -56,7 +64,7 @@ export async function runUplinkSwitch(
     total: cands.length,
   });
   const token = host.beginSwitch();
-  const client = host.spawn(target);
+  const client = taken ?? host.spawn(target);
   host.pending = client;
   const onAbort = () => invalidateSwitch(host, token, client);
   watchSwitchAbort(signal, onAbort);
@@ -67,11 +75,22 @@ export async function runUplinkSwitch(
     const reason = classifySwitchFailure(host, token, signal, err);
     noteSwitchFailure(host, target, reason, err, idx, 'ws');
     await abandonSwitchClient(host, client);
+    host.notifyTargetFree();
     return { ok: false, reason };
   } finally {
+    host.releaseDial(held);
     signal?.removeEventListener('abort', onAbort);
     combined?.cleanup();
   }
+}
+
+async function holdSwitchTarget(host: UplinkSwitchHost, publicUrl: string): Promise<number | null> {
+  const serial = host.holdDial(publicUrl);
+  const poolSignal = host.stopSignal();
+  if (poolSignal && !poolSignal.aborted) return serial;
+  host.releaseDial(serial);
+  host.notifyTargetFree();
+  return null;
 }
 
 function alreadyAttachedTo(host: UplinkSwitchHost, publicUrl: string): boolean {
@@ -105,7 +124,7 @@ async function connectAndPromote(
   combined: AbortSignal
 ): Promise<void> {
   if (combined.aborted || !host.isSwitchCurrent(token)) throw new Error('aborted');
-  await host.connectCandidate(client, target, combined);
+  if (client.state !== 'online') await host.connectCandidate(client, target, combined);
   if (!host.isSwitchCurrent(token) || combined.aborted) throw new Error('aborted');
   await host.promote(client, target, token);
   if (!switchAttachedTo(host, client, publicUrl)) throw new Error('superseded');

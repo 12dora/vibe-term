@@ -60,8 +60,8 @@ export abstract class PeerCollaboratorHost {
   protected releaseRtcWakeAttempt(peerNodeId: string): void {
     this.rtcWake.releaseRtcWakeAttempt(peerNodeId);
   }
-  protected dispatchRtcWake(peerNodeId: string): void {
-    this.rtcWake.dispatchRtcWake(peerNodeId);
+  protected dispatchRtcWake(peerNodeId: string, opts?: { gated?: boolean }): void {
+    this.rtcWake.dispatchRtcWake(peerNodeId, opts);
   }
   protected signalingFor(peerNodeId: string): RtcSignaling {
     return this.rtcWake.signalingFor(peerNodeId);

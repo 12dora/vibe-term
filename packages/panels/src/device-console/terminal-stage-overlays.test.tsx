@@ -74,4 +74,31 @@ describe('connectingStalledKey', () => {
     expect(connectingStalledKey('CLOSED')).toBe('terminal.connectingStalled.reconnecting');
     expect(connectingStalledKey('READY')).toBe('terminal.connectingStalled.device');
   });
+
+  test('上一次被入口以「到不了该节点」的 1011 关掉：明说入口连接不了该节点；READY 后回到常规说法', () => {
+    expect(connectingStalledKey('RECONNECT_BACKOFF', 1011, 'failover-exhausted')).toBe(
+      'terminal.connectingStalled.unreachable'
+    );
+    expect(connectingStalledKey('WS_CONNECTING', 1011, 'node-unreachable')).toBe(
+      'terminal.connectingStalled.unreachable'
+    );
+    expect(connectingStalledKey('RECONNECT_BACKOFF', 1006, null)).toBe(
+      'terminal.connectingStalled.reconnecting'
+    );
+    expect(connectingStalledKey('READY', 1011, 'node-unreachable')).toBe(
+      'terminal.connectingStalled.device'
+    );
+  });
+
+  test('浏览器这侧的 1011（转发队列溢出、写不进去）不说成入口到不了节点', () => {
+    expect(connectingStalledKey('RECONNECT_BACKOFF', 1011, 'forward-queue-overflow')).toBe(
+      'terminal.connectingStalled.reconnecting'
+    );
+    expect(connectingStalledKey('RECONNECT_BACKOFF', 1011, 'forward-ws-closed')).toBe(
+      'terminal.connectingStalled.reconnecting'
+    );
+    expect(connectingStalledKey('WS_CONNECTING', 1011, null)).toBe(
+      'terminal.connectingStalled.node'
+    );
+  });
 });

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { DEFAULT_DIAL_RTT_MS, adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import {
+  FORWARD_LINK_DEADLINE_MS,
   authorizedHttpDeadlineMs,
   deadlineRttMs,
   forwardLinkDeadlineFor,
+  forwardResponseBudgetMs,
   setForwardLinkDeadlineMs,
 } from './forwarder-deadline';
 import type { PeerLinkProvider } from './mesh-deps';
@@ -37,6 +39,17 @@ describe('forwarder deadline RTT source', () => {
     );
     expect(forwardLinkDeadlineFor('n', 40, peers)).toBe(nestedDialBudgetsMs(40).forwardMs);
     expect(forwardLinkDeadlineFor('n')).toBe(nestedDialBudgetsMs(DEFAULT_DIAL_RTT_MS).forwardMs);
+  });
+
+  test('响应等待取 max(剩余, 自适应 forwardMs)，测试缩短取链时下限跟同一档', () => {
+    expect(forwardResponseBudgetMs(30)).toBe(FORWARD_LINK_DEADLINE_MS);
+    expect(forwardResponseBudgetMs(30, nestedDialBudgetsMs(50).forwardMs)).toBe(
+      nestedDialBudgetsMs(50).forwardMs
+    );
+    expect(forwardResponseBudgetMs(12_000)).toBe(12_000);
+    setForwardLinkDeadlineMs(300);
+    expect(forwardResponseBudgetMs(30, 8_000)).toBe(300);
+    expect(forwardResponseBudgetMs(500)).toBe(500);
   });
 
   test('setForwardLinkDeadlineMs 覆盖自适应缺省，<=0 恢复', () => {

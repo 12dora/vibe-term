@@ -96,7 +96,7 @@ describe('pending-measure 接收侧不再把同一条 DC 当作用户链路', ()
       gen: 1,
       remoteAddress: null,
       dcAttemptId: 'dc:1',
-      prev: relay,
+      prev: h.state.live.get(PEER),
     });
     remote.onStream((stream) => stream.reset('pending-measure'));
     const opened = await dc.openStream(new Uint8Array([1]));
@@ -398,6 +398,32 @@ describe('pending-measure quarantine', () => {
     });
     expect(h.coord.allowsOutboundDirect(PEER)).toBe(false);
     expect(h.coord.isDegraded(PEER)).toBe(false);
+    h.coord.dispose();
+  });
+
+  test('parked RST does not dial a throwaway side relay', async () => {
+    const h = harness();
+    const [dc, remote] = createInMemoryLinkPair();
+    const live = liveOf(PEER, 'dc', dc, 10);
+    h.state.live.set(PEER, live);
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: PEER,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:1',
+      prev: live,
+    });
+    remote.onStream((stream) => stream.reset('parked'));
+    const opened = await dc.openStream(new Uint8Array([1]));
+    await opened.closed;
+    for (let i = 0; i < 3; i += 1) {
+      const link = await getPeerLink(quietHost(h) as never, PEER);
+      expect(link).toBe(dc);
+    }
+    expect(h.relays).toHaveLength(0);
     h.coord.dispose();
   });
 });

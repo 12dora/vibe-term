@@ -9,10 +9,10 @@ import {
   formatFailoverSummary,
 } from './failover-log';
 import {
-  sameTransportPreAckCapped,
-  unackedOpenHoldMs,
-  waitUnackedOpen,
-} from './forwarder-failover-ack';
+  type FailoverLinkPick,
+  openedLinkTransport,
+  pickFailoverLink,
+} from './forwarder-failover-link';
 import {
   STREAM_STALE_INPUT_TTL_MS,
   type StaleQueueDrop,
@@ -22,6 +22,7 @@ import {
 
 export { STREAM_STALE_INPUT_TTL_MS, dropStaleQueuedInput, streamStaleInputTtlMs };
 export type { StaleQueueDrop };
+import { forgetQueuedHello, queuedHello, waitForFirstInbound } from './forwarder-failover-hello';
 import {
   type OpenedWsStream,
   type PeerLinkProvider,
@@ -31,11 +32,7 @@ import {
   STREAM_FAILOVER_RESUME_WAIT_MS,
   type StreamOpener,
 } from './mesh-deps';
-import {
-  PENDING_MEASURE_REASON,
-  emitTransportRefused,
-  transportOfLink,
-} from './pending-measure-hold';
+import { PENDING_MEASURE_REASON, emitTransportRefused } from './pending-measure-hold';
 import { type StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
 export type ForwardPump = {
@@ -60,8 +57,9 @@ export type ForwardPump = {
   inflight: OpenedWsStream | null;
   queueBytes: number;
   lastAttempt?: { attempt: number; getLinkMs: number; openStreamMs: number };
-  /** 本轮流在 HELLO/ack 之前被拆。同传输只许再试一次。 */
-  preAckRefused?: boolean;
+  /** 这条泵上，入站第一帧出现之前连续死去的开流次数。看到入站帧才清零。 */
+  deadOpens: number;
+  sawInbound: boolean;
 };
 
 export type StreamFailoverHost = {
@@ -196,38 +194,25 @@ async function runFailoverAttempts(
   pump: ForwardPump,
   base: Omit<FailoverAttemptContext, 'helloWaitMs'>
 ): Promise<'settled' | 'exhausted' | 'no-hello'> {
-  let noHelloStreak = 0;
-  const sameTransport = { transport: null as string | null, fails: 0 };
   for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
     const opened = await openFailoverStream(host, pump, base.signal, attempt);
     if (opened === 'aborted') return 'settled';
+    if (opened === 'terminal') {
+      host.closePump(pump, { code: 1011, reason: 'node-unreachable' });
+      return 'settled';
+    }
     if (!opened) continue;
-    const helloWaitMs = helloWaitBudgetMs(peerRttMs(host, pump), noHelloStreak > 0);
+    const helloWaitMs = helloWaitBudgetMs(peerRttMs(host, pump), pump.deadOpens > 0);
     const outcome = await completeFailover(host, pump, opened, { ...base, helloWaitMs });
     if (outcome === 'done') return 'settled';
-    if (
-      sameTransportPreAckCapped(outcome, pump.preAckRefused, pump.boundTransport, sameTransport)
-    ) {
-      return 'exhausted';
-    }
     if (outcome !== 'retry-no-hello') {
-      noHelloStreak = 0;
+      pump.deadOpens = 0;
       continue;
     }
-    noHelloStreak += 1;
-    if (noHelloStreak >= STREAM_FAILOVER_NO_HELLO_LIMIT) return 'no-hello';
+    pump.deadOpens += 1;
+    if (pump.deadOpens >= STREAM_FAILOVER_NO_HELLO_LIMIT) return 'no-hello';
   }
   return 'exhausted';
-}
-
-function openedLinkTransport(
-  host: StreamFailoverHost,
-  nodeId: string,
-  link: LinkSession
-): PeerTransportKind | null {
-  const known = transportOfLink(link);
-  if (known) return known;
-  return host.peers.transportOf?.(nodeId) ?? null;
 }
 
 async function openFailoverStream(
@@ -235,7 +220,7 @@ async function openFailoverStream(
   pump: ForwardPump,
   signal: AbortSignal,
   attempt: number
-): Promise<OpenedWsStream | null | 'aborted'> {
+): Promise<OpenedWsStream | null | 'aborted' | 'terminal'> {
   if (pumpDead(pump, signal)) return 'aborted';
   const delay = STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 1600;
   if (delay > 0) {
@@ -246,40 +231,36 @@ async function openFailoverStream(
     }
   }
   if (pumpDead(pump, signal)) return 'aborted';
-  const linked = await elapsed(() => host.peers.getLink(pump.nodeId).catch(() => null));
-  if (pumpDead(pump, signal)) return 'aborted';
-  const link = linked.value;
+  const picked = await elapsed(() =>
+    pickFailoverLink(host.peers, pump.nodeId, signal, pumpDead(pump, signal))
+  );
+  return attachPickedStream(host, pump, signal, {
+    attempt: attempt + 1,
+    value: picked.value,
+    getLinkMs: picked.ms,
+  });
+}
+
+async function attachPickedStream(
+  host: StreamFailoverHost,
+  pump: ForwardPump,
+  signal: AbortSignal,
+  picked: { attempt: number; value: FailoverLinkPick; getLinkMs: number }
+): Promise<OpenedWsStream | null | 'aborted' | 'terminal'> {
+  const link = picked.value;
+  if (link === 'aborted' || pumpDead(pump, signal)) return 'aborted';
+  if (link === 'terminal') return 'terminal';
   if (!link) {
-    safeLog(
-      host,
-      formatFailoverAttempt({
-        pumpId: pump.id,
-        attempt: attempt + 1,
-        getLinkMs: linked.ms,
-        openStreamMs: 0,
-        helloWaitMs: 0,
-        resumeWaitMs: 0,
-      })
-    );
+    logFailoverMiss(host, pump, picked.attempt, picked.getLinkMs, 0);
     return null;
   }
-  const transport = openedLinkTransport(host, pump.nodeId, link);
+  const transport = openedLinkTransport(host.peers, pump.nodeId, link);
   const opened = await elapsed(() =>
     host.streams.openWsStream(link, pump.auth, pump.cid, pump.share).catch(() => null)
   );
   const stream = opened.value;
   if (!stream) {
-    safeLog(
-      host,
-      formatFailoverAttempt({
-        pumpId: pump.id,
-        attempt: attempt + 1,
-        getLinkMs: linked.ms,
-        openStreamMs: opened.ms,
-        helloWaitMs: 0,
-        resumeWaitMs: 0,
-      })
-    );
+    logFailoverMiss(host, pump, picked.attempt, picked.getLinkMs, opened.ms);
     return pumpDead(pump, signal) ? 'aborted' : null;
   }
   pump.inflight = stream;
@@ -287,14 +268,35 @@ async function openFailoverStream(
     host.discardStream(pump, stream);
     return 'aborted';
   }
+  pump.sawInbound = false;
   host.bindStream(pump, stream, transport);
   pump.inflight = null;
   pump.lastAttempt = {
-    attempt: attempt + 1,
-    getLinkMs: linked.ms,
+    attempt: picked.attempt,
+    getLinkMs: picked.getLinkMs,
     openStreamMs: opened.ms,
   };
   return stream;
+}
+
+function logFailoverMiss(
+  host: StreamFailoverHost,
+  pump: ForwardPump,
+  attempt: number,
+  getLinkMs: number,
+  openStreamMs: number
+): void {
+  safeLog(
+    host,
+    formatFailoverAttempt({
+      pumpId: pump.id,
+      attempt,
+      getLinkMs,
+      openStreamMs,
+      helloWaitMs: 0,
+      resumeWaitMs: 0,
+    })
+  );
 }
 
 async function completeFailover(
@@ -410,7 +412,6 @@ async function replaySubscription(
   helloWaitBudgetMs: number
 ): Promise<ReplayWait> {
   pump.replay.beginResume();
-  pump.preAckRefused = false;
   const wait = async (key: 'helloWait' | 'resumeWait', ms: number, before?: () => void) => {
     const t0 = Date.now();
     const waited = new Promise<void>((resolve) => {
@@ -423,40 +424,25 @@ async function replaySubscription(
   };
   let helloWaitMs = 0;
   let resumeWaitMs = 0;
-  const hello = pump.replay.hello;
+  let hello = queuedHello(pump);
   if (!hello) {
-    const held = await waitUnackedOpen(
-      host,
-      pump,
-      stream,
-      signal,
-      unackedOpenHoldMs(peerRttMs(host, pump))
-    );
-    helloWaitMs = held.helloWaitMs;
-    pump.preAckRefused = !held.skipped && !held.accepted;
-    if (pump.preAckRefused) {
-      return {
-        helloWaitMs,
-        resumeWaitMs: 0,
-        resumed: 0,
-        helloOk: false,
-        helloReplied: false,
-      };
-    }
-  } else {
-    helloWaitMs = await wait('helloWait', helloWaitBudgetMs, () =>
-      host.sendToStream(pump, stream, hello)
-    );
-    // beginResume 已把 peerVersion 清空：这里为真只可能是本条流刚播报了达标版本。
-    if (!pump.replay.peerSupportsCanonical()) {
-      return {
-        helloWaitMs,
-        resumeWaitMs,
-        resumed: 0,
-        helloOk: false,
-        helloReplied: pump.replay.resumeHelloSeen,
-      };
-    }
+    const first = await waitForFirstInbound(pump, stream, signal, helloWaitBudgetMs, wait);
+    if (!('upgradeHello' in first)) return first;
+    hello = first.upgradeHello;
+  }
+  forgetQueuedHello(pump);
+  helloWaitMs = await wait('helloWait', helloWaitBudgetMs, () =>
+    host.sendToStream(pump, stream, hello)
+  );
+  // beginResume 已把 peerVersion 清空：这里为真只可能是本条流刚播报了达标版本。
+  if (!pump.replay.peerSupportsCanonical()) {
+    return {
+      helloWaitMs,
+      resumeWaitMs,
+      resumed: 0,
+      helloOk: false,
+      helloReplied: pump.replay.resumeHelloSeen,
+    };
   }
   const sendAll = (frames: Uint8Array[]): void => {
     for (const frame of frames) {

@@ -16,6 +16,9 @@
 //   占位实现（`createDeferredDiagnosticsSource`），控制器就位后转发，UI 不会错过订阅。
 // - 直连断开回落 primary 时，`setResumeSubscribedPanes` 钩子在这里接上该 node 的 pane
 //   订阅面：重发订阅 + 对挂载中的 pane 重新拉一次画面，并提示用户最近输入可能未送达。
+// - 「这台 node 打不通」只有一份账（`node-unreachable-backoff`）：REST 失败、primary WS 以
+//   1011 被入口关掉（入口到不了 node）、直连协商的 `NODE_UNREACHABLE` 都记进去；primary 的
+//   下一次重连与直连的下一次尝试都以它为下限；primary 健康一段时间即清账。
 
 import { sonnerNotificationSink } from '@/lib/sonner-notification-sink';
 import { deviceSnapshotPlaceholder } from '@/pages/devices/device-snapshot-store';
@@ -43,10 +46,9 @@ import {
 } from '@vibeterm/ws-client';
 import type { DirectCarrierController } from '@vibeterm/ws-client/direct';
 import { createDeferredDiagnosticsSource } from '@vibeterm/ws-client/direct/types';
-import i18n from 'i18next';
+import { resumeAfterDirectFallback } from './direct-fallback-resume';
 import {
   type DirectLinkClientLike,
-  clearDirectUnavailableVerdict,
   isDirectLinkUnavailable,
   watchDirectNegotiation,
 } from './direct-link-availability';
@@ -57,7 +59,14 @@ import { MeshRtcSignalFanout } from './mesh-rtc-signal-fanout';
 import { resolveMeshNodeName } from './node-names';
 import { createGatedNodeApiClient, probeNodeSession } from './node-session-probe';
 import { type NodeSessionRecoveryOutcome, recoverNodeSession } from './node-session-recovery';
-import { clearNodeBackoff, nodeBackoffRemainingMs } from './node-unreachable-backoff';
+import {
+  clearNodeBackoff,
+  nodeBackoffRemainingMs,
+  noteNodeReachable,
+  noteNodeUnreachable,
+  primaryReconnectFloorMs,
+  withReachabilityAccounting,
+} from './node-unreachable-backoff';
 
 /** 当前入口自身的 nodeId（`/api/auth/mode` 还没落地时为 null）。 */
 function entryNodeIdNow(): string | null {
@@ -97,7 +106,10 @@ function loadDirectModule(): Promise<DirectLinkModule | null> {
 
 export interface NodeDirectWiring {
   /** 自建连接（测试注入）。**必须**把第二个参数接到真 socket 的 `onclose` 上。 */
-  createConnection?: (nodeId: string, onClose: (code: number) => void) => GatewayConnection;
+  createConnection?: (
+    nodeId: string,
+    onClose: (code: number, reason?: string) => void
+  ) => GatewayConnection;
   /** 直连栈加载器（测试注入）；缺省按需 `import('@vibeterm/ws-client/direct')`。 */
   loadDirect?: () => Promise<DirectLinkModule | null>;
   createController?: (
@@ -131,6 +143,8 @@ function defaultController(
     signaling: meshRtcSignals.transport(),
     connection,
     cid,
+    linkBackoffRemainingMs: () => nodeBackoffRemainingMs(nodeId),
+    onNodeUnreachable: (reason) => noteNodeUnreachable(nodeId, { reason }),
   });
 }
 
@@ -139,7 +153,7 @@ interface DirectControllerSpec {
   connection: GatewayConnection;
   cid: () => string | null;
   wiring: NodeDirectWiring;
-  /** 协商被入口代答 / 目标答「给不出直连」：记了负缓存，宿主停掉这次直连。 */
+  /** 协商被入口代答：记了负缓存，宿主停掉这次直连。 */
   onUnavailable: () => void;
 }
 
@@ -176,23 +190,12 @@ function mountDirectController(
   return created;
 }
 
+/**
+ * 直连的页面恢复信号只接 `onPageRecovery`（visibility / online）。bfcache 恢复的 `pageshow`
+ * 由 primary 客户端自己处理：primary 真断了会重连，控制器随 primary 重新 READY 再拨。
+ */
 function defaultPageResume(listener: () => void): () => void {
-  const offRecovery = onPageRecovery(listener);
-  const offPageshow = onPageshow(listener);
-  return () => {
-    offRecovery();
-    offPageshow();
-  };
-}
-
-function onPageshow(listener: () => void): () => void {
-  const g = globalThis as {
-    addEventListener?: (type: string, cb: () => void) => void;
-    removeEventListener?: (type: string, cb: () => void) => void;
-  };
-  if (typeof g.addEventListener !== 'function') return () => undefined;
-  g.addEventListener('pageshow', listener);
-  return () => g.removeEventListener?.('pageshow', listener);
+  return onPageRecovery(listener);
 }
 
 /**
@@ -204,44 +207,7 @@ function resolveExistingRuntime(nodeId: string): AppRuntime | null {
   return appNodeRuntimes.has(nodeId) ? appNodeRuntimes.get(nodeId).runtime : null;
 }
 
-/** 该 device 下当前**挂载着终端实例**的 pane（注册表里有 sink 即挂载中）。 */
-function mountedPaneIds(
-  connection: GatewayConnection,
-  runtime: AppRuntime,
-  deviceId: string
-): string[] {
-  const tmux = runtime.stores.tmux.getState();
-  const ids = new Set<string>();
-  for (const window of tmux.snapshots[deviceId]?.session?.windows ?? []) {
-    for (const pane of window.panes) {
-      if (connection.paneSinks.hasPaneSink(deviceId, pane.id)) ids.add(pane.id);
-    }
-  }
-  const selected = tmux.selectedPanes[deviceId];
-  if (selected && connection.paneSinks.hasPaneSink(deviceId, selected.paneId)) {
-    ids.add(selected.paneId);
-  }
-  return [...ids];
-}
-
-/** 直连断开提示的文案 key（locale 里有正式条目，不再靠 `defaultValue` 兜底）。 */
-const DIRECT_FALLBACK_KEY = 'device.directFallbackToast';
-
-/** runtime 还没建好时它自己的 `t` 也没有，退到宿主的全局 i18n 实例。 */
-function directFallbackText(runtime: AppRuntime | null): string {
-  return runtime?.t(DIRECT_FALLBACK_KEY) || i18n.t(DIRECT_FALLBACK_KEY) || DIRECT_FALLBACK_KEY;
-}
-
-/**
- * 切回 primary（含直连异常关闭）后的补齐：
- * 1. 重发该 device 的整份 pane 订阅——`mountPane()` 拿到的释放函数**立刻调用**，
- *    引用计数一加一减回到原值，但两次都会以新 generation 重下发当前订阅集合；
- *    订阅面在 `@vibeterm/stores`，没有对外暴露「只重发一次」的入口（见 result 备注）。
- * 2. 提示用户：浏览器→node 方向的最近输入可能没送到（这一方向没有补齐机制）。
- *
- * canonical feed 由带 cursor 的重订阅精确补流，只有服务端明确返回 gap 时才重取整屏，
- * 因此这里不主动请求首屏。
- */
+/** 切回 primary（含直连异常关闭）后的补齐与提示，见 `direct-fallback-resume.ts`。 */
 function resumeSubscribedPanes(
   nodeId: string,
   connection: GatewayConnection,
@@ -249,15 +215,7 @@ function resumeSubscribedPanes(
 ): void {
   const runtime = (wiring.resolveRuntime ?? resolveExistingRuntime)(nodeId);
   const sink = wiring.notifications ?? runtime?.notifications ?? sonnerNotificationSink;
-  if (runtime) {
-    const tmux = runtime.stores.tmux.getState();
-    for (const deviceId of tmux.connectedDevices) {
-      const first = mountedPaneIds(connection, runtime, deviceId)[0];
-      if (first === undefined) continue;
-      tmux.mountPane(deviceId, first)();
-    }
-  }
-  sink.warning(directFallbackText(runtime));
+  resumeAfterDirectFallback(connection, runtime, sink);
 }
 
 const directLinkPending = new WeakMap<GatewayConnection, Promise<void>>();
@@ -300,9 +258,9 @@ function whenConnectionReady(connection: GatewayConnection, run: () => void): ()
  * 订阅），控制器等 WS 就绪 + 直连栈 chunk 到位后再建。dispose 与加载是并发的，靠 `disposed`
  * 标志裁决：先 dispose 的话加载完成后什么都不做，不会留下没人 stop 的 `RTCPeerConnection`。
  *
- * 负缓存命中（含协商途中新记上的）时直连「停放」：负结论过期后，下一次 primary READY 或
- * 页面恢复再起一次，不在这之前发任何协商请求；唯一例外是用户显式 `retryDirect()`，
- * 它撤掉「目标给不出直连」的负结论并立即重试。
+ * 负缓存命中（入口代答 401，含协商途中新记上的）时直连「停放」：负结论过期后，下一次
+ * primary READY 或页面恢复再起一次，不在这之前发任何协商请求。「目标给不出直连」不在
+ * 这里停放，由控制器的熔断停放（显式 `retryDirect()` 可解）。
  */
 function attachDirectLink(
   nodeId: string,
@@ -325,12 +283,10 @@ function attachDirectLink(
     controller = null;
     diagnostics.attach(null);
   };
-  /** 停放期间只有用户显式重试（`explicit`）能撤掉「给不出直连」的负结论；自动信号只等它过期。 */
+  /** 代答 401 是入口的固有属性：停放期间谁来都只等它过期。 */
   const resumeParked = (explicit = false) => {
     if (disposed || controller || !parked) return;
-    const entry = entryNodeIdNow();
-    if (explicit) clearDirectUnavailableVerdict(nodeId, entry);
-    if (!isDirectLinkUnavailable(nodeId, entry)) launchDirect(explicit);
+    if (!isDirectLinkUnavailable(nodeId, entryNodeIdNow())) launchDirect(explicit);
   };
   const markParked = () => {
     parked = true;
@@ -355,11 +311,11 @@ function attachDirectLink(
 
   const cancelReadyWatch = whenConnectionReady(connection, () => launchDirect(false));
 
+  /** 页面恢复：在途 / 已通的直连一概不动（`nudge()` 自己判断），停放中的看负结论过期没有。 */
   const retryDirectIfDown = () => {
     if (disposed) return;
     if (!controller) return resumeParked();
-    if (controller.getState() === 'active') return;
-    controller.retry();
+    controller.nudge();
   };
   const stopPageResume = (wiring.pageResume ?? defaultPageResume)(retryDirectIfDown);
   const stopReadyResume = connection.client.onStateChange((state) => {
@@ -389,7 +345,8 @@ export function createNodeConnection(
 ): GatewayConnection {
   // 关闭码回调对两条工厂路径都是**必给**的：自建工厂不接它，4401 就没人处理，
   // ws-client 会一路重连到被反复关掉（见 F4-fix 评审 Major）。
-  const onClose = wiring.onClose ?? (() => undefined);
+  const onClose = withReachabilityAccounting(nodeId, wiring.onClose ?? (() => undefined));
+  const self = isSelfNode(nodeId);
   // 每建一条 socket（含重连）换一个 client nonce：node 只能靠握手 URL 上的 `?cid=` 把这条
   // Gateway WS 认出来，直连控制器随后用它换回服务端生成的 `connectionId`。
   const wsUrls = createNodeWsUrlSource(nodeId);
@@ -400,11 +357,21 @@ export function createNodeConnection(
         wsUrl: nodeWsUrl(id),
         wsUrlFactory: () => wsUrls.nextUrl(),
         onClose: close,
+        ...(self
+          ? {}
+          : {
+              clientOptions: {
+                reconnectDelayFloorMs: () => primaryReconnectFloorMs(id),
+              },
+            }),
         ...(wiring.socketFactory ? { socketFactory: wiring.socketFactory } : {}),
       }))
   )(nodeId, onClose);
-  if (isSelfNode(nodeId)) return connection;
+  if (self) return connection;
 
+  if (typeof connection.client.onSessionHealthy === 'function') {
+    connection.client.onSessionHealthy(() => noteNodeReachable(nodeId));
+  }
   attachDirectLink(nodeId, connection, () => wsUrls.cid(), wiring);
   return connection;
 }

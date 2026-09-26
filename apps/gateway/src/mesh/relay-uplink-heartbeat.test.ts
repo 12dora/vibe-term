@@ -55,6 +55,37 @@ describe('RelayUplinkHeartbeat', () => {
     expect(timeouts).toEqual([]);
   });
 
+  test('入站帧清掉 miss，没有新 pong 时不改 RTT', () => {
+    const nowMs = { value: 0 };
+    const scheduler = fakeScheduler(nowMs);
+    const timeouts: string[] = [];
+    let frameAt = 0;
+    const link = {
+      get lastFrameAt() {
+        return frameAt;
+      },
+    } as LinkSession;
+    const hb = new RelayUplinkHeartbeat({
+      scheduler,
+      intervalMs: 1,
+      missedLimit: 2,
+      sendPing: () => {},
+      onTimeout: (reason) => {
+        timeouts.push(reason);
+      },
+    });
+    hb.start(link, () => true);
+    scheduler.ticks[0]?.();
+    frameAt = 10;
+    scheduler.ticks[0]?.();
+    frameAt = 20;
+    scheduler.ticks[0]?.();
+    frameAt = 30;
+    scheduler.ticks[0]?.();
+    expect(timeouts).toEqual([]);
+    expect(hb.rttMs).toBeNull();
+  });
+
   test('连丢达到上限触发 missed-pong', () => {
     const nowMs = { value: 0 };
     const scheduler = fakeScheduler(nowMs);

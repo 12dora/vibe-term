@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { buildRtcIceConfig, hasTurnServer } from './ice';
 import {
+  ICE_GAIN_DEBOUNCE_MS,
+  bindIceConfigRearm,
   gateTurnByProbe,
   meshRtcConfigResponse,
+  resetIceConfigRearmForTests,
   resetTurnGateLogForTest,
   resolveMeshRtcConfig,
 } from './stun-effective';
@@ -11,6 +14,7 @@ import { resetTurnProbeForTest, setTurnProbeSnapshotForTest } from './turn-probe
 afterEach(() => {
   resetTurnProbeForTest();
   resetTurnGateLogForTest();
+  resetIceConfigRearmForTests();
 });
 
 const local = {
@@ -193,5 +197,103 @@ describe('gateTurnByProbe / resolveMeshRtcConfig', () => {
     expect(gateLogs[0]).toContain(`used=[${a.url}]`);
     expect(gateLogs[1]).toContain('reachable=2');
     expect(gateLogs[1]).toContain(`used=[${b.url},${a.url}]`);
+  });
+
+  test('a new reachable TURN rearms only after it stays up for 10 min', () => {
+    resetIceConfigRearmForTests();
+    let rearms = 0;
+    bindIceConfigRearm(() => {
+      rearms += 1;
+    });
+    const t0 = 1_000_000;
+    resolveMeshRtcConfig(local, { stun: [], turn: [a] }, undefined, t0);
+    expect(rearms).toBe(0);
+    setTurnProbeSnapshotForTest([{ url: a.url, ok: true, rttMs: 9, probedAt: 1 }]);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a] }, undefined, t0);
+    expect(rearms).toBe(0);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a] }, undefined, t0 + ICE_GAIN_DEBOUNCE_MS - 1);
+    expect(rearms).toBe(0);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a] }, undefined, t0 + ICE_GAIN_DEBOUNCE_MS);
+    expect(rearms).toBe(1);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a] }, undefined, t0 + ICE_GAIN_DEBOUNCE_MS * 2);
+    expect(rearms).toBe(1);
+  });
+
+  test('a TURN flap or RTT reorder does not rearm', () => {
+    resetIceConfigRearmForTests();
+    let rearms = 0;
+    bindIceConfigRearm(() => {
+      rearms += 1;
+    });
+    const t0 = 2_000_000;
+    setTurnProbeSnapshotForTest([
+      { url: a.url, ok: true, rttMs: 30, probedAt: 1 },
+      { url: b.url, ok: true, rttMs: 20, probedAt: 1 },
+      { url: c.url, ok: true, rttMs: 10, probedAt: 1 },
+    ]);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a, b, c] }, undefined, t0);
+    expect(rearms).toBe(0);
+    setTurnProbeSnapshotForTest([
+      { url: a.url, ok: true, rttMs: 5, probedAt: 2 },
+      { url: b.url, ok: true, rttMs: 40, probedAt: 2 },
+      { url: c.url, ok: true, rttMs: 15, probedAt: 2 },
+    ]);
+    resolveMeshRtcConfig(
+      local,
+      { stun: [], turn: [a, b, c] },
+      undefined,
+      t0 + ICE_GAIN_DEBOUNCE_MS
+    );
+    expect(rearms).toBe(0);
+
+    resetIceConfigRearmForTests();
+    rearms = 0;
+    bindIceConfigRearm(() => {
+      rearms += 1;
+    });
+    setTurnProbeSnapshotForTest([{ url: a.url, ok: true, rttMs: 9, probedAt: 1 }]);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a, b] }, undefined, t0);
+    setTurnProbeSnapshotForTest([
+      { url: a.url, ok: true, rttMs: 9, probedAt: 2 },
+      { url: b.url, ok: true, rttMs: 12, probedAt: 2 },
+    ]);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a, b] }, undefined, t0 + 1_000);
+    setTurnProbeSnapshotForTest([{ url: a.url, ok: true, rttMs: 9, probedAt: 3 }]);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a, b] }, undefined, t0 + 2_000);
+    setTurnProbeSnapshotForTest([
+      { url: a.url, ok: true, rttMs: 9, probedAt: 4 },
+      { url: b.url, ok: true, rttMs: 12, probedAt: 4 },
+    ]);
+    const back = t0 + 3_000;
+    resolveMeshRtcConfig(local, { stun: [], turn: [a, b] }, undefined, back);
+    resolveMeshRtcConfig(
+      local,
+      { stun: [], turn: [a, b] },
+      undefined,
+      back + ICE_GAIN_DEBOUNCE_MS - 1
+    );
+    expect(rearms).toBe(0);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a, b] }, undefined, back + ICE_GAIN_DEBOUNCE_MS);
+    expect(rearms).toBe(1);
+  });
+
+  test('a STUN or configured TURN change rearms immediately', () => {
+    resetIceConfigRearmForTests();
+    let rearms = 0;
+    bindIceConfigRearm(() => {
+      rearms += 1;
+    });
+    const t0 = 3_000_000;
+    resolveMeshRtcConfig(local, { stun: [], turn: [a] }, undefined, t0);
+    expect(rearms).toBe(0);
+    resolveMeshRtcConfig(
+      { ...local, stunServers: ['stun:b.example:3478'] },
+      { stun: [], turn: [a] },
+      undefined,
+      t0
+    );
+    expect(rearms).toBe(1);
+    resolveMeshRtcConfig(local, { stun: [], turn: [a, b] }, undefined, t0);
+    expect(rearms).toBe(2);
   });
 });

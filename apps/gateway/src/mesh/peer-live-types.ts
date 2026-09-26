@@ -6,6 +6,7 @@ import type { LivePeer } from './peer-reconnect-wake';
 import type { IncomingWakeGate } from './peer-rtc-wake';
 import type { RelayDialBreaker, RelayDialBreakerSnapshot } from './relay-dial-breaker';
 import type { TrackIntercept, TrackInterceptInput } from './route-degrade';
+import type { CandidateOffer } from './route-degrade-hold';
 import type { RtcDialBreaker, RtcDialBreakerSnapshot } from './rtc/rtc-dial-breaker';
 import type { DispatchHttp, PeerReach, PeerTransportKind } from './types';
 import type { GatewaySessionClose } from './ws-stream-target';
@@ -46,6 +47,9 @@ export type PeerLiveRegistryDeps = {
   notifyLive: (nodeId: string, session: LinkSession) => void;
   onRttSample: (live: LivePeer, sampleMs: number) => void;
   interceptTrack?: (input: TrackInterceptInput) => TrackIntercept;
+  offerCandidate?: (input: CandidateOffer) => 'held' | 'installed' | 'rejected';
+  dropCandidates?: (peerId: string, reason?: string) => void;
+  promoteHeldCandidate?: (peerId: string) => void;
 };
 
 export type PeerLiveRegistryOptions = {

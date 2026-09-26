@@ -44,13 +44,30 @@ const TOKEN_REASONS = new Map<string, NodeUnreachableReason>([
   ...[...LINK_LOST_REASONS].map((token): [string, NodeUnreachableReason] => [token, 'link_lost']),
 ]);
 
+const DEADLINE_TOKENS = new Set<string>([
+  'timeout',
+  'connect-timeout',
+  'handshake-timeout',
+  'upload-stall',
+  'http head timeout',
+]);
+
+/**
+ * `obtainedLink`：这次失败发生在 `getLink` 已经返回之后。
+ * 有链路时，截止/中止是 `timeout`，其余落在白名单外的原因是 `link_lost`（短退避）。
+ * 没有链路时仍走 token 表，未知原因保持 `no_link`（长退避）。
+ */
 export function classifyUnreachableReason(
   aborted: boolean,
-  lastError: unknown
+  lastError: unknown,
+  obtainedLink = false
 ): NodeUnreachableReason {
   if (aborted) return 'timeout';
-  if (lastError !== undefined) return safeUnreachableReason(lastError);
-  return 'no_link';
+  if (lastError === undefined) return obtainedLink ? 'link_lost' : 'no_link';
+  if (obtainedLink && isDeadlineFailure(lastError)) return 'timeout';
+  const mapped = safeUnreachableReason(lastError);
+  if (obtainedLink && mapped === 'no_link') return 'link_lost';
+  return mapped;
 }
 
 export function safeUnreachableReason(err: unknown): NodeUnreachableReason {
@@ -83,15 +100,23 @@ function unreachableToken(err: unknown): string {
   return '';
 }
 
+function isDeadlineFailure(err: unknown): boolean {
+  if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+    return true;
+  }
+  return DEADLINE_TOKENS.has(unreachableToken(err));
+}
+
 export function nodeUnreachableResponse(
   nodeId: string,
   aborted: boolean,
   lastError?: unknown,
-  extra?: Record<string, unknown>
+  extra?: Record<string, unknown>,
+  obtainedLink = false
 ): Response {
   return jsonError('NODE_UNREACHABLE', 503, {
     nodeId,
-    reason: classifyUnreachableReason(aborted, lastError),
+    reason: classifyUnreachableReason(aborted, lastError, obtainedLink),
     ...extra,
   });
 }

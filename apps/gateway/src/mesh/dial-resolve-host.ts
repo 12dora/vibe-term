@@ -111,6 +111,14 @@ export function peekPreferDoh(host: string, nowMs = Date.now()): DialResolveResu
   return hit?.via === 'doh' ? hit : null;
 }
 
+/** 本机网络变了：DoH 负缓存和冷却都按旧网络算的，清掉。成功解析留下。 */
+export function clearDohFailures(): void {
+  for (const [host, hit] of cache) {
+    hit.dohFailedUntil = undefined;
+    if (hit.result == null) cache.delete(host);
+  }
+}
+
 export function forgetPreferDoh(host: string, nowMs = Date.now()): void {
   const hit = cache.get(host);
   if (hit?.result?.via === 'doh') hit.result = undefined;

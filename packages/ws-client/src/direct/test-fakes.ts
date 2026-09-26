@@ -299,9 +299,12 @@ export class FakeConnection {
   active: 'primary' | 'direct' = 'primary';
   private readonly carrierHandlers = new Set<(active: 'primary' | 'direct') => void>();
   private readonly primaryHandlers = new Set<(state: string) => void>();
+  private readonly sessionEndHandlers = new Set<() => void>();
   private primaryState = 'READY';
   /** 是否暴露 `client`（模拟不带 primary 状态源的老宿主）。 */
   exposePrimaryStatus = true;
+  /** 是否暴露 `client.onSessionEnd`（老宿主只有 `onStateChange`）。 */
+  exposeSessionEnd = true;
   /** 模拟 HELLO_S2C 能力集（含 `connection-id:<id>` 时跳过 GET connection）。 */
   helloCapabilities: string[] = [];
   private directRetry: (() => void) | null = null;
@@ -315,7 +318,7 @@ export class FakeConnection {
     this.directRetry?.();
   }
 
-  /** 与 `GatewayConnection.client` 同形：控制器只用 `isReady` / `onStateChange` / 能力集。 */
+  /** 与 `GatewayConnection.client` 同形：控制器只用 `isReady` / `onStateChange` / `onSessionEnd` / 能力集。 */
   get client(): PrimaryStatusLike | undefined {
     if (!this.exposePrimaryStatus) return undefined;
     return {
@@ -326,8 +329,30 @@ export class FakeConnection {
           this.primaryHandlers.delete(cb);
         };
       },
+      ...(this.exposeSessionEnd
+        ? {
+            onSessionEnd: (cb: () => void) => {
+              this.sessionEndHandlers.add(cb);
+              return () => {
+                this.sessionEndHandlers.delete(cb);
+              };
+            },
+          }
+        : {}),
       serverCapabilities: this.helloCapabilities,
     };
+  }
+
+  /**
+   * 与 `BorshWebSocketClient.handleClose` 同序：会话结束通知 → 屏障 `closeDirect()`
+   * （切回 primary、关掉直连载体）→ 状态离开 READY。
+   */
+  dropPrimary(next = 'RECONNECT_BACKOFF'): void {
+    for (const cb of [...this.sessionEndHandlers]) cb();
+    const carrier = this.attached[this.attached.length - 1];
+    this.switchTo('primary');
+    carrier?.close();
+    this.setPrimaryState(next);
   }
 
   /** 模拟 primary（Gateway WS）状态迁移。 */

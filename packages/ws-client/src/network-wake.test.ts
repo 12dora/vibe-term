@@ -133,7 +133,7 @@ describe('NetworkWakeListeners', () => {
     expect(wakes).toEqual([]);
   });
 
-  test('pageshow 与回前台立即唤醒，不依赖 navigator.connection', () => {
+  test('pageshow / 回前台不在这里唤醒（归 ResumeSignalListeners，避免同一事件两路扇出）', () => {
     const browser = stubBrowser();
     const clock = fakeClock();
     try {
@@ -147,7 +147,8 @@ describe('NetworkWakeListeners', () => {
       browser.visibilitychange();
       browser.setVisibility('visible');
       browser.visibilitychange();
-      expect(wakes.length).toBeGreaterThanOrEqual(2);
+      expect(wakes).toEqual([]);
+      expect(clock.intervalCount()).toBe(1);
       listeners.dispose();
     } finally {
       browser.restore();
@@ -167,6 +168,29 @@ describe('NetworkWakeListeners', () => {
       expect(wakes).toHaveLength(0);
       await new Promise((resolve) => setTimeout(resolve, NETWORK_CHANGE_DEBOUNCE_MS + 20));
       expect(wakes).toHaveLength(1);
+      listeners.dispose();
+    } finally {
+      browser.restore();
+    }
+  });
+
+  test('唤醒带上来源：online 是恢复，change / offline / 看门狗只是线索', async () => {
+    const browser = stubBrowser();
+    const clock = fakeClock();
+    try {
+      const sources: string[] = [];
+      const listeners = new NetworkWakeListeners((source) => {
+        sources.push(source);
+      }, clock.clock);
+      listeners.install();
+      browser.online();
+      browser.connectionChange();
+      await new Promise((resolve) => setTimeout(resolve, NETWORK_CHANGE_DEBOUNCE_MS + 20));
+      clock.advance(FOREGROUND_LIVENESS_INTERVAL_MS + FOREGROUND_LIVENESS_DRIFT_MS);
+      clock.fire();
+      browser.setOnline(false);
+      browser.offline();
+      expect(sources).toEqual(['online', 'change', 'watchdog', 'watchdog']);
       listeners.dispose();
     } finally {
       browser.restore();

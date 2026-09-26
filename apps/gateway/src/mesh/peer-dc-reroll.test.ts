@@ -542,10 +542,10 @@ describe('DcRerollCoordinator 应答侧', () => {
     const h = harness('ff'.repeat(16));
     const peerId = '11'.repeat(16);
     const live = makeLive(h.state, { peerNodeId: peerId, rerollCapable: false });
-    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(false);
+    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
     live.rerollCapable = true;
     h.inflight.add(peerId);
-    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(false);
+    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
     h.inflight.delete(peerId);
     live.transport = 'relay';
     expect(h.coordinator.interceptOffer(peerId, offer())).toBe(false);
@@ -555,8 +555,8 @@ describe('DcRerollCoordinator 应答侧', () => {
     const h = harness('ff'.repeat(16));
     const peerId = '11'.repeat(16);
     makeLive(h.state, { peerNodeId: peerId, rtcEpoch: 9 });
-    expect(h.coordinator.interceptOffer(peerId, offer(9))).toBe(false);
-    expect(h.coordinator.interceptOffer(peerId, offer(3))).toBe(false);
+    expect(h.coordinator.interceptOffer(peerId, offer(9))).toBe(true);
+    expect(h.coordinator.interceptOffer(peerId, offer(3))).toBe(true);
     expect(h.dials).toHaveLength(0);
     expect(h.state.rerolls.get(peerId)?.count ?? 0).toBe(0);
     expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
@@ -611,7 +611,7 @@ describe('DcRerollCoordinator 应答侧', () => {
     const peerId = '11'.repeat(16);
     makeLive(h.state, { peerNodeId: peerId, rtcEpoch: 9 });
     h.answererAllows.value = false;
-    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
     expect(h.dials).toHaveLength(0);
 
     h.state.rerolls.set(peerId, {
@@ -624,7 +624,7 @@ describe('DcRerollCoordinator 应答侧', () => {
       pendingPeerRequest: true,
     });
     h.scheduler.nowMs += DC_REROLL_RESULT_DEADLINE_MS + 1;
-    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
     expect(h.dials).toHaveLength(0);
   });
 
@@ -680,27 +680,27 @@ describe('DcRerollCoordinator 应答侧', () => {
     const peerId = '11'.repeat(16);
     const live = makeLive(answerer.state, { peerNodeId: peerId, rtcEpoch: 9 });
     const epochLines = captureLogs(() => {
-      expect(answerer.coordinator.interceptOffer(peerId, offer(9))).toBe(false);
+      expect(answerer.coordinator.interceptOffer(peerId, offer(9))).toBe(true);
     });
     expect(epochLines.some((row) => row.includes('reason=epoch'))).toBe(true);
 
     live.rerollCapable = false;
     const capLines = captureLogs(() => {
-      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
     });
     expect(capLines.some((row) => row.includes('reason=not-capable'))).toBe(true);
     live.rerollCapable = true;
 
     answerer.inflight.add(peerId);
     const inflightLines = captureLogs(() => {
-      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
     });
     expect(inflightLines.some((row) => row.includes('reason=inflight'))).toBe(true);
     answerer.inflight.delete(peerId);
 
     answerer.answererAllows.value = false;
     const coolLines = captureLogs(() => {
-      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(false);
+      expect(answerer.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
     });
     expect(coolLines.some((row) => row.includes('reason=cooldown'))).toBe(true);
     answerer.answererAllows.value = true;
@@ -708,7 +708,7 @@ describe('DcRerollCoordinator 应答侧', () => {
     const offerer = harness();
     makeLive(offerer.state);
     const roleLines = captureLogs(() => {
-      expect(offerer.coordinator.interceptOffer(PEER, offer())).toBe(false);
+      expect(offerer.coordinator.interceptOffer(PEER, offer())).toBe(true);
     });
     expect(roleLines.some((row) => row.includes('reason=role'))).toBe(true);
 

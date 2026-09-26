@@ -78,7 +78,7 @@ describe('createMeshRuntime', () => {
     expect(mesh.peers.listenPort).toBeGreaterThan(0);
   });
 
-  test('UplinkPool 与 RelaySecondaryAttach 共享同一个 UplinkDialCoordinator', async () => {
+  test('每个 runtime 用自己的 uplink 决定当前拨号目标', async () => {
     const { db, close } = createMigratedAuthDb();
     seedUser(new UserStore(db));
     const mesh = await createMeshRuntime({
@@ -88,11 +88,12 @@ describe('createMeshRuntime', () => {
     });
     fixtures.push({ close, stop: () => mesh.stop() });
     expect(mesh.relayOpener).toBeInstanceOf(RelaySecondaryAttach);
-    const opener = mesh.relayOpener as RelaySecondaryAttach;
-    expect(opener.dialCoordinator).toBe(mesh.uplink.dialCoordinator);
+    await mesh.start();
+    mesh.uplink.armSwitch('https://a.example');
+    expect(mesh.uplink.primaryTarget()).toBe('https://a.example');
   });
 
-  test('两个 mesh runtime 不共享 UplinkDialCoordinator', async () => {
+  test('两个 mesh runtime 的 uplink 互不影响', async () => {
     const a = createMigratedAuthDb();
     const b = createMigratedAuthDb();
     seedUser(new UserStore(a.db));
@@ -109,7 +110,11 @@ describe('createMeshRuntime', () => {
     });
     fixtures.push({ close: a.close, stop: () => meshA.stop() });
     fixtures.push({ close: b.close, stop: () => meshB.stop() });
-    expect(meshA.uplink.dialCoordinator).not.toBe(meshB.uplink.dialCoordinator);
+    await meshA.start();
+    await meshB.start();
+    meshA.uplink.armSwitch('https://a.example');
+    expect(meshA.uplink.primaryTarget()).toBe('https://a.example');
+    expect(meshB.uplink.primaryTarget()).not.toBe('https://a.example');
   });
 
   test('MeshRuntimeConfig.peerBindHost is threaded to PeerServer when peerHostname is omitted', async () => {
@@ -243,9 +248,14 @@ describe('SessionRegistry', () => {
     expect(b.closed).toBe(false);
   });
 
-  test('rejects a duplicate cid in the same sid+via scope', () => {
+  test('same cid takes over the previous gateway session', () => {
     const registry = new SessionRegistry();
-    const a = new GatewaySession({ primary: createFakeCarrier() });
+    const carrierA = createFakeCarrier();
+    let terminated = 0;
+    carrierA.terminate = () => {
+      terminated += 1;
+    };
+    const a = new GatewaySession({ primary: carrierA });
     const b = new GatewaySession({ primary: createFakeCarrier() });
     const first = registry.register({
       sid: 'sid-1',
@@ -262,9 +272,16 @@ describe('SessionRegistry', () => {
       cid: 'same-nonce',
       session: b,
     });
-    expect(dup).toEqual({ ok: false, code: 'DUPLICATE_CID' });
-    if (!first.ok) throw new Error('expected ok');
-    expect(registry.getByConnectionId(first.entry.connectionId)?.session).toBe(a);
+    expect(dup.ok).toBe(true);
+    if (!dup.ok || !first.ok) throw new Error('expected ok');
+    expect(dup.replaced?.session).toBe(a);
+    expect(terminated).toBe(1);
+    expect(registry.getByConnectionId(first.entry.connectionId)).toBeNull();
+    expect(registry.lookup('sid-1', 'self', null, 'same-nonce')).toEqual({
+      ok: true,
+      connectionId: dup.entry.connectionId,
+    });
+    expect(a.closed).toBe(false);
   });
 });
 

@@ -22,6 +22,8 @@ export type RelayUplinkView = {
   secondaryClient?(url: string): RelayUplinkClient | null;
   presence?(): RelayPresence | null;
   prepareSwitch?(url: string): Promise<void>;
+  armSwitch?(url: string): number;
+  disarmSwitch?(serial: number): void;
   multiAttach?(): boolean;
   autoSelectView?(): RelayAutoSelectView | null;
   scoreOf?(url: string): number | null;
@@ -86,7 +88,7 @@ export async function runRelaySwitch(
   opts?: RelaySwitchOpts
 ): Promise<{ ok: true } | SwitchFailure> {
   const persistPin = opts?.persistPin !== false;
-  await deps.uplink.prepareSwitch?.(url);
+  await armThenPrepare(deps, url);
   deps.uplink.noteSwitchReason?.(persistPin ? 'manual' : 'auto-rtt');
   const ac = new AbortController();
   const timeoutMs = deps.switchTimeoutMs ?? RELAY_SWITCH_TIMEOUT_MS;
@@ -106,6 +108,16 @@ export async function runRelaySwitch(
     return switchFailed(err);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function armThenPrepare(deps: RelaySwitchDeps, url: string): Promise<void> {
+  const held = deps.uplink.armSwitch?.(url);
+  try {
+    await deps.uplink.prepareSwitch?.(url);
+  } catch (err) {
+    if (held != null) deps.uplink.disarmSwitch?.(held);
+    throw err;
   }
 }
 
