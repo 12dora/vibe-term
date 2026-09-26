@@ -3,16 +3,16 @@
 
 import { describe, expect, mock, test } from 'bun:test';
 import type { ReadOnlyTerminalHandle, ReadOnlyTerminalProps } from '@vibeterm/terminal-ui';
+import i18next from 'i18next';
 import { type ReactElement, createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import * as ReactI18nRuntime from 'react-i18next';
+import { I18nextProvider } from 'react-i18next';
 
 let latestProps: ReadOnlyTerminalProps | null = null;
 
-mock.module('react-i18next', () => ({
-  ...ReactI18nRuntime,
-  useTranslation: () => ({ t: (key: string) => key, i18n: {}, ready: true }),
-}));
+// 独立空实例注入而不 mock react-i18next：进程级 mock 会泄漏给同进程后续文件。
+const i18n = i18next.createInstance();
+await i18n.init({ lng: 'en_US', resources: {}, react: { useSuspense: false } });
 
 mock.module('@vibeterm/terminal-ui', () => ({
   ReadOnlyTerminal: (props: ReadOnlyTerminalProps) => {
@@ -54,7 +54,11 @@ function mountHook(
     slot.state = useReplayTerminal(fontSize, minGrid);
     return slot.state.widget;
   }
-  const html = renderToStaticMarkup(<Probe />);
+  const html = renderToStaticMarkup(
+    <I18nextProvider i18n={i18n}>
+      <Probe />
+    </I18nextProvider>
+  );
   if (!slot.state) throw new Error('probe did not render');
   return { state: slot.state, html };
 }
