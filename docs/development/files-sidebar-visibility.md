@@ -42,7 +42,41 @@ isSidebarFilesVisible = stored ?? (runtimeNodeId === SELF_NODE_ID && hasRoots)
 - 查询成功但可见目录为空：不渲染（连分节头都不出）；
 - 查询失败：照常渲染，错误提示与重试按钮挂在分节里。
 
-离线 / 未登录的分节不受影响——它们承载「节点离线」提示与登录入口。
+远端 node 的整节显隐改由 `mayShowSidebarFilesNode()`（`packages/stores/src/sidebar-device-visibility.ts`）
+按偏好表先行判断：远端设备缺省隐藏，没有任何一台设备被显式打开「文件」时该 node 在文件页必然为空，
+于是无论折叠、展开、离线、未登录，整节都不渲染（按 `empty` 上报给外壳），宿主（`apps/fe/.../app-sidebar.tsx`）
+也不挂它的运行时（不建 WS、不发 roots 查询；`hasMountedFilesRuntime()` 同步收紧，刷新不会给它建缓存）。
+此前折叠 / 离线 / 未登录的分节总是出头，展开后挂上运行时按目录过滤又整节变空，
+表现为「管理设备里关了文件的节点仍出现在文件页，点一下才消失」。
+
+本机缺省可见、推断不出，所以 self 折叠时宿主照样挂它的运行时（入口运行时本就在，不多建连接），
+`FilesNodeSection` 走目录列表判断，只出收起的分节头、不挂文件树；`hasMountedFilesRuntime()` 对 self 恒为真。
+
+### 残留开关清理
+
+设备的目录被删光或设备被删除后，它的 `${node}:${device}=true` 键还在：卡片上开关显示为关且置灰
+（`checked={hasRoots && filesVisible}`），用户改不回去，而这个键会让远端分节一直出头、点开又消失。
+因此在拿到某 node **权威**目录列表时清理：
+
+- 纯函数 `pruneStaleSidebarFilesVisibility()` + store action `pruneSidebarFilesVisibility()`：
+  删掉该 node 下值为 `true`、但设备不在「有目录的设备集合」里的键（删键而非写 false，缺省规则照旧）；
+  显式 `false` 与别的 node 的键不动，无变化时不触发 store 更新。
+- `authoritativeRootDeviceIds()`（`packages/panels/src/files/root-visibility.ts`）决定这份列表算不算权威：
+  node 在线、roots 查询成功、非占位数据；`deviceType` 为 null（设备已删除）的目录不算。
+- 触发点 `usePruneStaleFilesVisibility()`：设备管理页 `device-grid.tsx`（每个在线 node 都拉 roots，
+  是主要清理点——侧栏里没打开过的远端分节不挂运行时，拿不到列表）与文件侧栏 `useVisibleFileRoots()`
+  （已挂运行时即在线且已登录）。离线、未登录（查询报错）时不清。
+
+副作用：设备目录删光后再重新配置，远端设备的「文件」需要重新打开一次。
+
+### mesh 外壳的空态
+
+`filesTabEmptyHint()` 取代原 `shouldShowNoRootsHint()`：全部分节加载完且都没内容时，至少有一台没配过目录
+出「未配置目录」提示（`noRoots`），否则出与单 node 相同的 `files.noVisibleRoots`（`FilesNoVisibleRootsHint`），
+不再整页空白。
+
+已知边界：远端 SSH 设备显式打开过「文件」但此刻未连上时，折叠分节仍会出头，展开后按设备连接过滤可能为空
+——偏好表与目录列表里都没有连接状态。
 
 ### 竖向拖拽 + 只纵向滚动
 
@@ -71,4 +105,5 @@ isSidebarFilesVisible = stored ?? (runtimeNodeId === SELF_NODE_ID && hasRoots)
 - 缺省规则变了但**存量偏好不变**：以前手动开关过的设备仍按存的值走。此前靠缺省显示的远端目录
   会消失，需要用户在「管理设备」里开一次——这是预期行为。
 - 静态渲染（`react-dom/server`）下 zustand 只读 `getInitialState`，改 store 或预写
-  localStorage 都不生效，所以分节单测用 runtime 的 `nodeId` 表达「本机 / 远端」两种缺省。
+  localStorage 都不生效，所以分节单测用 runtime 的 `nodeId` 表达「本机 / 远端」两种缺省；
+  需要预置开关时直接改写 `stores.ui.getInitialState()` 返回的对象（替换 hook 上的方法无效）。
