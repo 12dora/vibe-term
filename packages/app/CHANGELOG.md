@@ -1,3 +1,19 @@
+# 2.10.1
+
+_2026-09-26_
+
+## English
+
+### Fixes
+
+- Interactive `vibeterm login` no longer looks stuck after you enter the password. The two-step verification prompt was printed and then immediately erased, so the command sat on an empty line waiting for a code. The prompt now stays visible. Prompts longer than the terminal width no longer garble while you type, Ctrl+C exits with code 130, and Ctrl+D no longer hangs.
+
+## 中文
+
+### 修复
+
+- 交互式 `vibeterm login` 输完密码后不再像卡住一样。原因是两步验证提示刚打印出来就被擦掉，命令其实停在空行上等验证码。现在提示会保留在屏幕上。超过终端宽度的提示输入时不再错乱，Ctrl+C 以退出码 130 退出，Ctrl+D 不再挂住。
+
 # 2.10.0
 
 _2026-09-26_
