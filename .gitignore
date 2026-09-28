@@ -55,3 +55,11 @@ data/
 # 本地代理状态（笔记/计划/临时产物不进 history，但 evidence 是任务交付物，
 # 需随对应 commit 进 git 供后续 Task 引用与审计）
 .sisyphus/
+
+# 构建/测试产物与 AI agent 工作记录(可能含本机路径、主机名等)不入库
+coverage/
+.nyc_output/
+prompt-archives/
+.omo/
+**/scratchpad/
+.claude/settings.local.json
