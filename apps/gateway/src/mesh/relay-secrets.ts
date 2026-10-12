@@ -146,10 +146,6 @@ export class RelaySecrets {
     deletePreferredRelayUrl(this.db);
   }
 
-  tenantId(): string | null {
-    return this.store.listRelayRows()[0]?.tenantId ?? null;
-  }
-
   userId(): string {
     return this.userIdOf();
   }

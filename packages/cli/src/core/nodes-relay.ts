@@ -9,9 +9,12 @@ import {
   encodeBase64url,
 } from '@vibeterm/shared/auth';
 import {
+  type RelayJoinTarget,
   type RelayStatusRow as RelayStatusRowDto,
   type RelayUplinkMode,
   encodeRelayJoinToken,
+  pickRelayJoinTarget,
+  preferRelayFirst,
 } from '@vibeterm/shared/relay';
 import type { FlagValues } from './args';
 import { flagStrings } from './args';
@@ -86,6 +89,11 @@ export function isRelayUplink(status: RelayStatusJson | null): boolean {
 
 export async function detectRelayUplink(ctx: CliContext): Promise<boolean> {
   return isRelayUplink(await fetchRelayStatus(ctx));
+}
+
+/** 新机器该连的那一台中继：地址与租户编号出自同一行。 */
+export function relayJoinTarget(status: RelayStatusJson | null): RelayJoinTarget | null {
+  return pickRelayJoinTarget(status?.relays ?? [], status?.tenantId);
 }
 
 export function attachedRelayUrl(status: RelayStatusJson | null): string | null {
@@ -318,7 +326,7 @@ interface RelayEnrollmentCreated {
 
 export async function createRelayEnrollment(
   ctx: CliContext,
-  options: { ttlMs: number; name?: string }
+  options: { ttlMs: number; name?: string; preferUrl?: string | null }
 ): Promise<CreatedEnrollmentResult> {
   const material = await fetchJoinMaterial(ctx);
   const caFingerprint = await resolveRelayJoinCaFingerprint(ctx, material);
@@ -345,7 +353,10 @@ export async function createRelayEnrollment(
           exp: now + options.ttlMs,
         }
       );
-      const targets = acceptedJoinRelays(material, created.relays);
+      const targets = preferRelayFirst(
+        acceptedJoinRelays(material, created.relays),
+        options.preferUrl
+      );
       tokens = targets.map((relay) => decodeBase64url(relay.token));
       const joinRelays = targets.map((relay, index) => ({
         url: relay.url,

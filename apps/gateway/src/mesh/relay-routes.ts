@@ -157,7 +157,6 @@ export class RelayRoutes {
     return jsonBody(
       buildRelayStatusPayload({
         mode,
-        tenantId: this.deps.secrets.tenantId(),
         rows,
         attachedUrl: attached?.publicUrl ?? null,
         primary: client,

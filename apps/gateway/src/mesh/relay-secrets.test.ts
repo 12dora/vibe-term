@@ -106,7 +106,6 @@ describe('RelaySecrets', () => {
       expect(await b.secrets.metaKey(1)).toEqual(metaKey);
       const stored = await b.secrets.store.getRelay(canonicalPublicUrl(RELAY_URL));
       expect(stored?.token).toEqual(token);
-      expect(b.secrets.tenantId()).toBe(TENANT_ID);
     } finally {
       b.close();
     }

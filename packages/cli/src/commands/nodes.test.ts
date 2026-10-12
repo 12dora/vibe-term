@@ -496,6 +496,32 @@ describe('vibeterm nodes', () => {
     expect(JSON.parse(stdout.text()).joinCommand).toContain('--password');
   });
 
+  test('enroll --password pairs the primary relay with its own tenant', async () => {
+    const shTenant = 'a1'.repeat(16);
+    const jpTenant = 'b2'.repeat(16);
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        tenantId: jpTenant,
+        relays: [
+          { url: 'https://sh.example', tenantId: shTenant, priority: 0, role: 'secondary' },
+          {
+            url: 'https://jp.example',
+            tenantId: jpTenant,
+            priority: 1,
+            attached: true,
+            role: 'primary',
+          },
+        ],
+      }),
+    });
+    await nodes.run(cli, ['enroll', '--password']);
+    expect(JSON.parse(stdout.text())).toMatchObject({
+      publicUrl: 'https://jp.example',
+      joinCommand: `vibeterm relay join 'https://jp.example' --tenant ${jpTenant} --password`,
+    });
+  });
+
   test('enroll without a relay uplink is NODE_NOT_ON_RELAY', async () => {
     const { ctx: cli } = await ctx({
       'GET /api/mesh/relay/status': () => ({ mode: 'none' }),

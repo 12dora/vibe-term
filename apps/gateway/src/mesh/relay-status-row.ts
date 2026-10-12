@@ -1,9 +1,10 @@
-import type {
-  RelayAutoSelectView,
-  RelayStatusPayload,
-  RelayStatusRow,
-  RelayStatusTurnView,
-  RelaySwitchReason,
+import {
+  type RelayAutoSelectView,
+  type RelayStatusPayload,
+  type RelayStatusRow,
+  type RelayStatusTurnView,
+  type RelaySwitchReason,
+  pickRelayJoinTarget,
 } from '@vibeterm/shared/relay';
 import { membersProbeSnapshot } from './port-reach';
 import { classifyRelayLinkError } from './relay-link-error';
@@ -81,7 +82,13 @@ function statusRowRttMs(
 }
 
 export function buildRelayStatusRow(
-  row: { url: string; priority: number; kicked: boolean; kickedReason?: string | null },
+  row: {
+    url: string;
+    tenantId: string;
+    priority: number;
+    kicked: boolean;
+    kickedReason?: string | null;
+  },
   attachedUrl: string | null,
   client: Pick<RelayUplinkClient, 'state' | 'rttMs'> | null,
   live: Pick<PooledUplink, 'lastConnectError'> | null,
@@ -94,6 +101,7 @@ export function buildRelayStatusRow(
   const errors = statusRowErrors(online, attached, extras, live, cand);
   return {
     url: row.url,
+    tenantId: row.tenantId,
     priority: row.priority,
     online,
     attached,
@@ -179,6 +187,7 @@ export function enrichRelayTurnView(
 export function collectRelayStatusRows(input: {
   rows: Array<{
     url: string;
+    tenantId: string;
     priority: number;
     kicked: boolean;
     kickedReason?: string | null;
@@ -242,9 +251,9 @@ function isAutoSwitchReason(reason: RelaySwitchReason | null | undefined): boole
 
 export function buildRelayStatusPayload(input: {
   mode: string;
-  tenantId: string | null;
   rows: Array<{
     url: string;
+    tenantId: string;
     priority: number;
     kicked: boolean;
     kickedReason?: string | null;
@@ -297,7 +306,7 @@ export function buildRelayStatusPayload(input: {
     : (input.primary?.nodesViaRelay ?? 0);
   return {
     mode: input.mode,
-    tenantId: input.tenantId,
+    tenantId: pickRelayJoinTarget(relays, null)?.tenantId ?? null,
     relays,
     metaEpoch: input.metaEpoch,
     nodesViaRelay,

@@ -6,7 +6,7 @@
 
 `vibeterm login|whoami|auth|api|nodes|devices|tmux|sessions|term|exec|system|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
 
-`vibeterm init|doctor|upgrade|uninstall|user|relay|mesh|tls|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。本机用户用 `vibeterm user add|passwd|totp`。
+`vibeterm init|doctor|upgrade|uninstall|user|relay|mesh|tls|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` 不加参数时不提问，默认角色 `standalone`，各项均可用旗标覆盖；`relay join` 把 `standalone` 自动切为 `node` 并重启服务。`init` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。本机用户用 `vibeterm user add|passwd|totp`。
 
 ## 登录
 
@@ -284,11 +284,11 @@ vibeterm nodes revoke <node> --yes
 CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分是否已接中继（`RelayUplinkMode`：`'relay' | 'none'`）：
 
 - **`mode: 'none'`**（未接入中继）：`enroll` / 需要中继材料的命令报 `NODE_NOT_ON_RELAY`，提示 `vibeterm relay join <url> --token <r3> or vibeterm relay join <url> --tenant <id> --password`。
-- **`mode: 'relay'`**：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm relay join <relayUrl> --token r3.… --name <name>`。`enroll --password` 仍是开关（不取值）：只打印 `vibeterm relay join <url> --tenant <id> --password`，不会把后面的 `--name` 当口令吃掉。`rename` 走 keylog `rename-node`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
+- **`mode: 'relay'`**：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm relay join <relayUrl> --token r3.… --name <name>`。`enroll --password` 仍是开关（不取值）：只打印 `vibeterm relay join <url> --tenant <id> --password`，不会把后面的 `--name` 当口令吃掉；`<url>` 与 `<id>` 取自 status 里同一台中继（当前主中继），租户编号每台中继各不相同。`r3.` 加入码把这台主中继排在最前，其余按原顺序。`rename` 走 keylog `rename-node`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
 - `allow <node>`：若节点已在 `pendingMemberIds`（已接纳但解不开状态块），补 `meta-key`；否则打开该节点的公网域名访问。网页在别的标签页生成的加入码，证书材料只在那次浏览器会话里，CLI 签不出 `admit-node`——那种情况请用 `meta-key admit`。
 
-`vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 租户编号 / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
-接着是中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE`——`ROLE` 是 `primary`（写记录、出名册的那台）/ `secondary` / `-`（未连接），
+`vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
+接着是中继表，列为 `PRI URL TENANT ROLE STATE RTT PEERS TURN NOTE`——`TENANT` 是该中继自己的租户编号（每台中继各不相同；旧网关的行不带它，此时改为表前一行 `tenant: <id>`），`ROLE` 是 `primary`（写记录、出名册的那台）/ `secondary` / `-`（未连接），
 `RTT` 是该条 uplink 自己的心跳时延，`PEERS` 是该中继上在线的对端数，`TURN` 是它下发的 TURN 地址并带归因：本机 ok 且有 members → `(ok, N/M)`；本机 fail 且有 members → `(down, N/M nodes ok)`；本机 fail 无 members → `(down)`。
 该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`（已知最佳路径 RTT，毫秒）。payload 带 `autoSelect` 时再加 `AUTO`（`auto` / `pinned` / `-`）与 `SCORE`（自动优选打分，越小越好，毫秒；样本不足为 `-`）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发）、`pinned` / `autoSelected` / `score`，payload 可选 `preferredUrl` / `autoSelect`。`--json` 打 `raw`，新字段原样出去。
 `vibeterm relay unpin [--json]` 清掉手动固定的主中继，人读为 `unpinned` 或 `nothing pinned`。

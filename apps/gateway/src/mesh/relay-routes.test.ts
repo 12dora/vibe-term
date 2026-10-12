@@ -44,6 +44,7 @@ const RELAY_URL = 'https://relay.example';
 const RELAY_URL_2 = 'https://relay-2.example';
 const RELAY_URL_3 = 'https://relay-3.example';
 const TENANT_ID = 'ef'.repeat(16);
+const TENANT_ID_2 = '12'.repeat(16);
 
 async function boot(
   opts: {
@@ -121,7 +122,11 @@ async function boot(
   return { db, close, userStore, service, identity, user, secrets, routes, call };
 }
 
-async function configureRelays(b: Awaited<ReturnType<typeof boot>>, urls: string[]) {
+async function configureRelays(
+  b: Awaited<ReturnType<typeof boot>>,
+  urls: string[],
+  tenantIds: string[] = []
+) {
   const logKey = generateTenantKey();
   const metaKey = generateTenantKey();
   const applied = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
@@ -129,7 +134,7 @@ async function configureRelays(b: Awaited<ReturnType<typeof boot>>, urls: string
     payload: await buildSetRelaysPayload({
       relays: urls.map((url, index) => ({
         url,
-        tenantId: TENANT_ID,
+        tenantId: tenantIds[index] ?? TENANT_ID,
         token: new Uint8Array(32).fill(6),
         priority: index,
       })),
@@ -206,6 +211,7 @@ describe('RelayRoutes', () => {
       expect(after.relays).toEqual([
         {
           url: canonicalPublicUrl(RELAY_URL),
+          tenantId: TENANT_ID,
           priority: 0,
           online: false,
           attached: false,
@@ -288,6 +294,48 @@ describe('RelayRoutes', () => {
       });
       client.awaitingToken = false;
       expect(await current()).toMatchObject({ awaitingToken: false, reauthRequired: false });
+    } finally {
+      b.close();
+    }
+  });
+
+  test('status 的 tenantId 与主中继同一行，多中继各行带自己的租户编号', async () => {
+    const client = Object.assign(Object.create(RelayUplinkClient.prototype), {
+      state: 'online',
+      awaitingToken: false,
+      nodesViaRelay: 1,
+      quota: null,
+      heartbeat: { rttMs: null },
+      keyLog: { skipped: 0, blockedSeq: null, caughtUp: true },
+    }) as RelayUplinkClient;
+    const b = await boot({
+      uplink: {
+        liveClient: () => client,
+        attachedUplink: () => ({ publicUrl: canonicalPublicUrl(RELAY_URL_2), since: 1 }),
+      },
+    });
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2], [TENANT_ID, TENANT_ID_2]);
+      const body = (await (await b.call('/api/mesh/relay/status')).json()) as {
+        tenantId: string;
+        relays: Array<{ url: string; tenantId: string; role: string | null }>;
+      };
+      expect(body.tenantId).toBe(TENANT_ID_2);
+      expect(body.relays.map((row) => [row.url, row.tenantId, row.role])).toEqual([
+        [canonicalPublicUrl(RELAY_URL), TENANT_ID, null],
+        [canonicalPublicUrl(RELAY_URL_2), TENANT_ID_2, 'primary'],
+      ]);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('status 没有挂上任何中继时 tenantId 取 priority 最小的一行', async () => {
+    const b = await boot();
+    try {
+      await configureRelays(b, [RELAY_URL, RELAY_URL_2], [TENANT_ID, TENANT_ID_2]);
+      const body = (await (await b.call('/api/mesh/relay/status')).json()) as { tenantId: string };
+      expect(body.tenantId).toBe(TENANT_ID);
     } finally {
       b.close();
     }

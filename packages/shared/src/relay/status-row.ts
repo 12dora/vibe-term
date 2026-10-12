@@ -43,6 +43,8 @@ export type RelayAutoSelectView = {
  */
 export type RelayStatusRow = {
   url: string;
+  /** 该中继为本 mesh 签发的租户编号（每台中继各不相同）；旧节点不下发。 */
+  tenantId?: string;
   priority: number;
   online: boolean;
   attached: boolean;
@@ -81,6 +83,7 @@ export type RelayKeyLogHealth = {
 /** `GET /api/mesh/relay/status` 网关产出形状（后加字段在旧节点上可能缺）。 */
 export type RelayStatusPayload = {
   mode: string;
+  /** 当前主中继那一行的租户编号（没有连上任何中继时取 priority 最小的一行）。 */
   tenantId: string | null;
   relays: RelayStatusRow[];
   metaEpoch: number;

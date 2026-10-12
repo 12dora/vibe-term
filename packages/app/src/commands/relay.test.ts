@@ -318,6 +318,21 @@ describe('relay enroll', () => {
     expect(logs.at(-1)).toContain(RELAY_URL);
   });
 
+  test('enroll 报告被接入中继自己的租户编号，而不是 status 顶层的那个', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const other = { ...ATTACHED_STATUS, tenantId: 'e'.repeat(32) };
+    const { fetcher } = fakeGateway(auth, { status: [other] });
+    const result = await runRelayEnroll(
+      parseArgs(['relay', 'enroll', RELAY_URL]),
+      RELAY_URL,
+      io(auth, fetcher, logs)
+    );
+    expect(result.tenantId).toBe('d'.repeat(32));
+    expect(logs.join('\n')).toContain('d'.repeat(32));
+    expect(logs.join('\n')).not.toContain('e'.repeat(32));
+  });
+
   test('the enroll body carries the relay password and a root-signed proof', async () => {
     const auth = await openAuth();
     const { calls, fetcher, user } = fakeGateway(auth, { status: [ATTACHED_STATUS] });
@@ -967,6 +982,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
         {
@@ -981,6 +997,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
         {
@@ -995,6 +1012,7 @@ describe('formatting helpers', () => {
           lastError: 'connect-failed',
           lastErrorCode: 'connect-failed',
           lastErrorAt: 1,
+          tenantId: '',
           kicked: false,
         },
       ],
@@ -1035,6 +1053,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
         {
@@ -1049,6 +1068,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
         {
@@ -1063,6 +1083,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
       ],
@@ -1119,6 +1140,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
       ],
@@ -1138,6 +1160,78 @@ describe('formatting helpers', () => {
     expect(lines.some((line) => line.includes('40 ms') && line.includes('90 ms'))).toBe(true);
   });
 
+  test('formatRelayStatusLines 逐行打印各中继自己的租户编号，不再有全局 tenant 行', () => {
+    const shTenant = 'a'.repeat(32);
+    const jpTenant = 'b'.repeat(32);
+    const row = (url: string, priority: number, primary: boolean, tenantId: string) => ({
+      url,
+      tenantId,
+      priority,
+      online: true,
+      attached: primary,
+      role: primary ? ('primary' as const) : ('secondary' as const),
+      rttMs: 10,
+      peersOnline: 1,
+      turn: null,
+      lastError: null,
+      lastErrorCode: null,
+      lastErrorAt: null,
+      kicked: false,
+    });
+    const lines = formatRelayStatusLines({
+      mode: 'relay',
+      tenantId: jpTenant,
+      relays: [
+        row('https://sh.example', 0, false, shTenant),
+        row('https://jp.example', 1, true, jpTenant),
+      ],
+      metaEpoch: 1,
+      nodesViaRelay: 1,
+      multiAttach: true,
+      reauthRequired: false,
+      readmitPending: 0,
+      raw: {},
+    });
+    expect(lines.some((line) => line.startsWith('tenant:'))).toBe(false);
+    expect(lines.find((line) => line.includes('PRI'))).toContain('TENANT');
+    expect(lines.find((line) => line.includes('https://sh.example'))).toContain(shTenant);
+    const jp = lines.find((line) => line.includes('https://jp.example'));
+    expect(jp).toContain(jpTenant);
+    expect(jp).not.toContain(shTenant);
+  });
+
+  test('formatRelayStatusLines 旧网关行上没有租户编号时仍打印顶层 tenant 行', () => {
+    const lines = formatRelayStatusLines({
+      mode: 'relay',
+      tenantId: 'd'.repeat(32),
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          rttMs: 10,
+          peersOnline: 1,
+          turn: null,
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          tenantId: '',
+          kicked: false,
+        },
+      ],
+      metaEpoch: 1,
+      nodesViaRelay: 1,
+      multiAttach: false,
+      reauthRequired: false,
+      readmitPending: 0,
+      raw: { relays: [{ url: 'https://sh.example' }] },
+    });
+    expect(lines).toContain(`tenant: ${'d'.repeat(32)}`);
+    expect(lines.find((line) => line.includes('PRI'))).not.toContain('TENANT');
+  });
+
   test('formatRelayStatusLines 仅有 preferredUrl 时也打印 AUTO', () => {
     const lines = formatRelayStatusLines({
       mode: 'relay',
@@ -1155,6 +1249,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
       ],
@@ -1217,6 +1312,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
         {
@@ -1231,6 +1327,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
         {
@@ -1245,6 +1342,7 @@ describe('formatting helpers', () => {
           lastError: null,
           lastErrorCode: null,
           lastErrorAt: null,
+          tenantId: '',
           kicked: false,
         },
       ],

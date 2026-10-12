@@ -160,6 +160,9 @@ export type {
   RelayUplinkMode,
 } from './status-row';
 
+export { pickRelayJoinTarget, preferRelayFirst } from './join-target';
+export type { RelayJoinTarget, RelayJoinTargetRow } from './join-target';
+
 export type { RelayChoice, RelayPeerPresence, RelayPresenceSnapshot } from './presence';
 
 export type {

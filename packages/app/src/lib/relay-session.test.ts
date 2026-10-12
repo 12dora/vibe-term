@@ -12,7 +12,7 @@ import {
   verifyEd25519,
 } from '../../../shared/src/auth';
 import type { LocalAuthContext } from './local-auth';
-import { type RelayTenantSession, reaffirmStaleMembers } from './relay-session';
+import { type RelayTenantSession, parseRelayStatus, reaffirmStaleMembers } from './relay-session';
 
 const UID = 'user-1';
 const ROOT_EPOCH = 4;
@@ -105,5 +105,18 @@ describe('reaffirmStaleMembers', () => {
     expect(
       verifyEd25519(payload.authorization_sig, payload.authorization_bytes, rootKey.publicKey)
     ).toBe(true);
+  });
+});
+
+describe('parseRelayStatus', () => {
+  test('每行带上该中继自己的租户编号，旧网关的行回落为空串', () => {
+    const status = parseRelayStatus({
+      mode: 'relay',
+      relays: [
+        { url: 'https://a.example', tenantId: 'a'.repeat(32), priority: 0 },
+        { url: 'https://b.example', priority: 1 },
+      ],
+    });
+    expect(status.relays.map((row) => row.tenantId)).toEqual(['a'.repeat(32), '']);
   });
 });

@@ -13,7 +13,12 @@ import { NODE, meshNode, routeFetch, testContext } from '../commands/cli-test-ha
 import { command as nodes } from '../commands/nodes';
 import type { AuthMode } from './auth';
 import { CliError, UsageError } from './errors';
-import { appendRelayMetaKeyWithRoot, attachedRelayUrl, isRelayUplink } from './nodes-relay';
+import {
+  appendRelayMetaKeyWithRoot,
+  attachedRelayUrl,
+  isRelayUplink,
+  relayJoinTarget,
+} from './nodes-relay';
 
 const dirs: string[] = [];
 
@@ -23,6 +28,8 @@ afterEach(async () => {
 });
 
 const PEER = 'b'.repeat(32);
+const TENANT_SH = 'a1'.repeat(16);
+const TENANT_JP = 'b2'.repeat(16);
 const HASH = encodeBase64url(new Uint8Array(32).fill(1));
 const PAYLOAD = encodeBase64url(new Uint8Array([7, 8, 9]));
 const KEY32 = encodeBase64url(new Uint8Array(32).fill(3));
@@ -80,6 +87,37 @@ describe('relay status helpers', () => {
         relays: [{ url: 'https://a.example' }, { url: 'https://b.example', attached: true }],
       })
     ).toBe('https://b.example');
+  });
+
+  test('relayJoinTarget pairs the primary relay url with its own tenant', () => {
+    expect(
+      relayJoinTarget({
+        tenantId: TENANT_SH,
+        relays: [
+          { url: 'https://sh.example', tenantId: TENANT_SH, priority: 0, role: 'secondary' },
+          {
+            url: 'https://jp.example',
+            tenantId: TENANT_JP,
+            priority: 1,
+            attached: true,
+            role: 'primary',
+          },
+        ],
+      })
+    ).toEqual({ url: 'https://jp.example', tenantId: TENANT_JP });
+  });
+
+  test('relayJoinTarget on a legacy gateway falls back to the lowest-priority row', () => {
+    expect(
+      relayJoinTarget({
+        tenantId: TENANT_SH,
+        relays: [
+          { url: 'https://sh.example', priority: 0 },
+          { url: 'https://jp.example', priority: 1, attached: true },
+        ],
+      })
+    ).toEqual({ url: 'https://sh.example', tenantId: TENANT_SH });
+    expect(relayJoinTarget(null)).toBeNull();
   });
 });
 
@@ -222,6 +260,23 @@ describe('vibeterm nodes meta-key / enroll / allow (relay)', () => {
     expect(payload.joinCommand).toContain('--tenant');
     expect(payload.joinCommand).toContain('--password');
     expect(payload.joinCommand).toContain('https://relay-sh.example');
+  });
+
+  test('enroll --password on a legacy gateway uses the lowest-priority row', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        tenantId: TENANT_SH,
+        relays: [
+          { url: 'https://relay-sh.example', priority: 0 },
+          { url: 'https://relay-jp.example', priority: 1, attached: true },
+        ],
+      }),
+    });
+    await nodes.run(cli, ['enroll', '--password']);
+    expect(JSON.parse(stdout.text()).joinCommand).toBe(
+      `vibeterm relay join 'https://relay-sh.example' --tenant ${TENANT_SH} --password`
+    );
   });
 
   test('allow on a relay pendingMemberId wraps K_meta instead of domain-access', async () => {
@@ -382,6 +437,81 @@ describe('signed relay commands', () => {
     );
     expect(payload.publicUrl).toBe('https://relay.example');
     expect(hits).toEqual(['relay-enroll']);
+  });
+
+  describe('enroll token puts the primary relay first', () => {
+    const SH_URL = 'https://relay-sh.example';
+    const JP_URL = 'https://relay-jp.example';
+    const TK_URL = 'https://relay-tk.example';
+
+    async function enrollWith(accepted: string[], legacyWire = false) {
+      const signed = await signingMode();
+      process.env.VIBETERM_PASSWORD = signed.password;
+      const tenantOf = (url: string) => (url === JP_URL ? TENANT_JP : TENANT_SH);
+      const { ctx: cli, stdout } = await ctx({
+        'GET /api/auth/mode': () => signed.json,
+        'GET /api/mesh/relay/status': () => ({
+          mode: 'relay',
+          tenantId: TENANT_JP,
+          relays: [
+            { url: SH_URL, tenantId: TENANT_SH, priority: 0, role: 'secondary' },
+            { url: JP_URL, tenantId: TENANT_JP, priority: 1, attached: true, role: 'primary' },
+            { url: TK_URL, tenantId: TENANT_SH, priority: 2, role: 'secondary' },
+          ],
+        }),
+        'GET /api/mesh/relay/join-material': () => ({
+          logKey: KEY32,
+          relays: [SH_URL, JP_URL, TK_URL].map((url) => ({
+            url,
+            tenantId: tenantOf(url),
+            token: TOKEN32,
+          })),
+        }),
+        'GET /api/auth/keylog/head': () => ({ seq: 4, hash: HASH }),
+        'POST /api/mesh/relay/enrollments': () => ({
+          id: 'enroll-1',
+          expiresAt: 1_700_000_000_000,
+          relays: legacyWire
+            ? accepted
+            : accepted.map((url) => ({
+                url,
+                tenantId: tenantOf(url),
+                token: TOKEN32,
+                accepted: true,
+              })),
+        }),
+        'GET /api/tls/ca.crt': () => new Response('no_ca', { status: 404 }),
+      });
+      await nodes.run(cli, ['enroll']);
+      const payload = JSON.parse(stdout.text()) as { joinToken: string; joinCommand: string };
+      return {
+        payload,
+        urls: decodeRelayJoinToken(payload.joinToken).relays.map((relay) => relay.url),
+      };
+    }
+
+    test('primary accepted: it leads, the rest keep their order', async () => {
+      const { payload, urls } = await enrollWith([SH_URL, JP_URL, TK_URL]);
+      expect(urls).toEqual([JP_URL, SH_URL, TK_URL]);
+      expect(payload.joinCommand).toContain(`vibeterm relay join '${JP_URL}' --token`);
+    });
+
+    test('primary not accepted: the first accepted relay leads', async () => {
+      const { payload, urls } = await enrollWith([TK_URL, SH_URL]);
+      expect(urls).toEqual([TK_URL, SH_URL]);
+      expect(payload.joinCommand).toContain(`vibeterm relay join '${TK_URL}' --token`);
+    });
+
+    test('legacy gateway returning accepted urls as strings: primary still leads', async () => {
+      const { payload, urls } = await enrollWith([SH_URL, JP_URL, TK_URL], true);
+      expect(urls).toEqual([JP_URL, SH_URL, TK_URL]);
+      expect(payload.joinCommand).toContain(`vibeterm relay join '${JP_URL}' --token`);
+    });
+
+    test('legacy gateway string urls without the primary: first accepted leads', async () => {
+      const { urls } = await enrollWith([TK_URL, SH_URL], true);
+      expect(urls).toEqual([TK_URL, SH_URL]);
+    });
   });
 
   test('enroll on a self-signed relay appends the CA fingerprint suffix', async () => {

@@ -90,8 +90,10 @@ function formatScoreCell(row: Record<string, unknown> | null | undefined): strin
   return typeof row?.score === 'number' && Number.isFinite(row.score) ? String(row.score) : '-';
 }
 
-function relayStatusHeaders(showAuto: boolean, showBest: boolean): string[] {
-  const headers = ['PRI', 'URL', 'ROLE'];
+function relayStatusHeaders(showTenant: boolean, showAuto: boolean, showBest: boolean): string[] {
+  const headers = ['PRI', 'URL'];
+  if (showTenant) headers.push('TENANT');
+  headers.push('ROLE');
   if (showAuto) headers.push('AUTO');
   headers.push('STATE', 'RTT');
   if (showBest) headers.push('BEST');
@@ -102,7 +104,8 @@ function relayStatusHeaders(showAuto: boolean, showBest: boolean): string[] {
 
 export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
   const lines = [`mode: ${status.mode}`];
-  if (status.tenantId) lines.push(`tenant: ${status.tenantId}`);
+  const showTenant = status.relays.some((relay) => relay.tenantId !== '');
+  if (status.tenantId && !showTenant) lines.push(`tenant: ${status.tenantId}`);
   lines.push(`meta epoch: ${status.metaEpoch}`);
   lines.push(`peers via relay: ${status.nodesViaRelay}`);
   if (status.multiAttach) lines.push('multi-attach: yes');
@@ -115,7 +118,9 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
   const showBest = status.relays.some((relay) => pathBestMsOf(status, relay.url) != null);
   const rows = status.relays.map((relay) => {
     const raw = rawRelayRow(status, relay.url);
-    const cells = [String(relay.priority), relay.url, formatRelayRole(relay.role)];
+    const cells = [String(relay.priority), relay.url];
+    if (showTenant) cells.push(relay.tenantId || '-');
+    cells.push(formatRelayRole(relay.role));
     if (showAuto) cells.push(formatAutoCell(raw));
     cells.push(
       relay.online ? 'online' : 'offline',
@@ -133,7 +138,7 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
     );
     return cells;
   });
-  lines.push(...formatTable(relayStatusHeaders(showAuto, showBest), rows));
+  lines.push(...formatTable(relayStatusHeaders(showTenant, showAuto, showBest), rows));
   return lines;
 }
 

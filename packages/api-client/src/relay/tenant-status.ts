@@ -80,6 +80,13 @@ function rowPath(row: RelayLinkStatus): Pick<RelayLinkStatus, 'pathBestMs' | 're
   };
 }
 
+/** 逐行租户编号；旧网关不下发，缺席就是缺席，不拿顶层那一个去补。 */
+function rowTenant(row: RelayLinkStatus): Pick<RelayLinkStatus, 'tenantId'> {
+  return typeof row.tenantId === 'string' && row.tenantId.length > 0
+    ? { tenantId: row.tenantId }
+    : {};
+}
+
 function rowEnrollPassword(row: RelayLinkStatus): RelayLinkStatus['enrollPassword'] {
   return { known: row.enrollPassword?.known === true };
 }
@@ -88,6 +95,7 @@ function rowEnrollPassword(row: RelayLinkStatus): RelayLinkStatus['enrollPasswor
 function normalizeRelayRow(row: RelayLinkStatus): RelayLinkStatus {
   return {
     url: row.url,
+    ...rowTenant(row),
     priority: row.priority ?? 0,
     online: row.online === true,
     attached: row.attached === true,

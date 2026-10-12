@@ -22,12 +22,12 @@ import { renameNodeViaKeyLog, revokeNode } from '../core/nodes-keylog';
 import { printPortsTable } from '../core/nodes-ports';
 import {
   appendRelayMetaKey,
-  attachedRelayUrl,
   createRelayEnrollment,
   detectRelayUplink,
   fetchRelayStatus,
   findRelayAllowTarget,
   isRelayUplink,
+  relayJoinTarget,
   resolveExcludeNodeIds,
   resolveNodeHexId,
   rewriteBarePasswordFlag,
@@ -285,29 +285,41 @@ function printEnrollment(
   });
 }
 
+function printPasswordEnrollment(
+  ctx: CliContext,
+  target: { url: string; tenantId: string | null } | null
+): void {
+  const publicUrl = target && isTrustedPublicUrl(target.url) ? target.url : null;
+  if (!publicUrl) {
+    throw new CliError(
+      'relay public url is unknown or not https; cannot print a password join command'
+    );
+  }
+  const tenantId = target?.tenantId?.trim() ?? '';
+  if (!tenantId) {
+    throw new CliError('relay tenant id is unknown; cannot print a password join command');
+  }
+  const command = passwordJoinCommand(publicUrl, tenantId);
+  emit(ctx, { mode: 'password', joinCommand: command, publicUrl }, () => ctx.out.line(command));
+}
+
 const enroll: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 0);
   const ttl = parseDurationMs(flagString(flags, 'ttl') ?? '10m');
   const status = await fetchRelayStatus(ctx);
   requireRelayUplink(isRelayUplink(status));
-  const relayUrl = attachedRelayUrl(status);
-  const publicUrl = relayUrl && isTrustedPublicUrl(relayUrl) ? relayUrl : null;
+  const target = relayJoinTarget(status);
   if (flags.password !== undefined) {
-    if (!publicUrl)
-      throw new CliError(
-        'relay public url is unknown or not https; cannot print a password join command'
-      );
-    const tenantId = status?.tenantId?.trim() ?? '';
-    if (!tenantId) {
-      throw new CliError('relay tenant id is unknown; cannot print a password join command');
-    }
-    const command = passwordJoinCommand(publicUrl, tenantId);
-    emit(ctx, { mode: 'password', joinCommand: command, publicUrl }, () => ctx.out.line(command));
+    printPasswordEnrollment(ctx, target);
     return;
   }
   printEnrollment(
     ctx,
-    await createRelayEnrollment(ctx, { ttlMs: ttl, name: flagString(flags, 'name') })
+    await createRelayEnrollment(ctx, {
+      ttlMs: ttl,
+      name: flagString(flags, 'name'),
+      preferUrl: target?.url,
+    })
   );
 };
 

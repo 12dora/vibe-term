@@ -188,13 +188,17 @@ async function resolveRelayEnrollUrl(
   return normalizeRelayUrl(probed);
 }
 
-function reportRelayStatus(io: RelayIo, relayUrl: string, status: RelayStatusResponse): void {
-  const row = status.relays.find((item) => item.url === relayUrl);
+function reportRelayStatus(
+  io: RelayIo,
+  relay: { url: string; tenantId: string },
+  status: RelayStatusResponse
+): void {
+  const row = status.relays.find((item) => item.url === relay.url);
   if (status.mode === 'relay' && row?.online) {
-    relayLog(io, t('relay.enroll.done', { url: relayUrl, tenantId: status.tenantId ?? '' }));
+    relayLog(io, t('relay.enroll.done', { url: relay.url, tenantId: relay.tenantId }));
     return;
   }
-  relayLog(io, t('relay.enroll.pending', { url: relayUrl, error: row?.lastError ?? '' }));
+  relayLog(io, t('relay.enroll.pending', { url: relay.url, error: row?.lastError ?? '' }));
 }
 
 async function runRelayEnrollInternal(
@@ -235,10 +239,11 @@ async function runRelayEnrollInternal(
         current.relays.some((item) => item.url === relayUrl && item.online)
     );
     await uploadRequiredRelayPack(parsed, session, io);
-    reportRelayStatus(io, relayUrl, status);
     const row = status.relays.find((item) => item.url === relayUrl);
+    const tenantId = exchange.tenantId || row?.tenantId || '';
+    reportRelayStatus(io, { url: relayUrl, tenantId }, status);
     return {
-      tenantId: exchange.tenantId || (status.tenantId ?? ''),
+      tenantId,
       relayUrl,
       online: Boolean(row?.online),
     };

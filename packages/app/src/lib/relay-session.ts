@@ -33,6 +33,8 @@ import { asString } from './validate';
 
 export type RelayStatusRelay = {
   url: string;
+  /** 该中继自己的租户编号；旧网关的行上没有这个字段时为空串。 */
+  tenantId: string;
   priority: number;
   online: boolean;
   attached: boolean;
@@ -300,6 +302,7 @@ function relayRowFromJson(value: unknown): RelayStatusRelay {
   const role = raw.role;
   return {
     url: asText(raw.url),
+    tenantId: typeof raw.tenantId === 'string' ? raw.tenantId : '',
     priority: asNumber(raw.priority),
     online: raw.online === true,
     attached: raw.attached === true,

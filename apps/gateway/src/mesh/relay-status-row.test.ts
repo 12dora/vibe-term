@@ -13,6 +13,9 @@ import { ensureTcpSamplingTrust, resetTcpSamplingTrustForTest } from './tcp-samp
 import type { UplinkState } from './types';
 import { resetUplinkPathSamplerForTest } from './uplink-path-sampler';
 
+const TENANT_A = 'ab'.repeat(16);
+const TENANT_B = 'cd'.repeat(16);
+
 describe('relayLinkError', () => {
   test('attached row uses the live client error, not the pool candidate', () => {
     expect(
@@ -49,7 +52,7 @@ describe('relayLinkError', () => {
 describe('buildRelayStatusRow', () => {
   test('fills lastError from the matching unattached candidate', () => {
     const row = buildRelayStatusRow(
-      { url: 'https://b.example', priority: 1, kicked: false },
+      { url: 'https://b.example', tenantId: TENANT_B, priority: 1, kicked: false },
       'https://a.example',
       null,
       null,
@@ -68,7 +71,7 @@ describe('buildRelayStatusRow', () => {
 
   test('secondary 在线行填 rtt / peersOnline / role，attached 仍为 false', () => {
     const row = buildRelayStatusRow(
-      { url: 'https://b.example', priority: 1, kicked: false },
+      { url: 'https://b.example', tenantId: TENANT_B, priority: 1, kicked: false },
       'https://a.example',
       null,
       null,
@@ -93,7 +96,7 @@ describe('buildRelayStatusRow', () => {
 
   test('secondary 分叉时带可选 keyLog.diverged', () => {
     const row = buildRelayStatusRow(
-      { url: 'https://b.example', priority: 1, kicked: false },
+      { url: 'https://b.example', tenantId: TENANT_B, priority: 1, kicked: false },
       'https://a.example',
       null,
       null,
@@ -115,7 +118,7 @@ describe('buildRelayStatusRow', () => {
 
   test('enrollPassword.known 来自 extras，缺省为 false', () => {
     const unknown = buildRelayStatusRow(
-      { url: 'https://a.example', priority: 0, kicked: false },
+      { url: 'https://a.example', tenantId: TENANT_A, priority: 0, kicked: false },
       'https://a.example',
       { state: 'online', rttMs: 1 },
       null,
@@ -123,7 +126,7 @@ describe('buildRelayStatusRow', () => {
     );
     expect(unknown.enrollPassword).toEqual({ known: false });
     const known = buildRelayStatusRow(
-      { url: 'https://a.example', priority: 0, kicked: false },
+      { url: 'https://a.example', tenantId: TENANT_A, priority: 0, kicked: false },
       'https://a.example',
       { state: 'online', rttMs: 1 },
       null,
@@ -135,7 +138,7 @@ describe('buildRelayStatusRow', () => {
 
   test('online row 强制清空 lastError / lastErrorCode', () => {
     const row = buildRelayStatusRow(
-      { url: 'https://a.example', priority: 0, kicked: false },
+      { url: 'https://a.example', tenantId: TENANT_A, priority: 0, kicked: false },
       'https://a.example',
       { state: 'online', rttMs: 12 },
       { lastConnectError: { reason: 'connect-failed', at: 9 } },
@@ -154,7 +157,7 @@ describe('buildRelayStatusRow', () => {
 
   test('stopped / aborted 不当成当前错误', () => {
     const row = buildRelayStatusRow(
-      { url: 'https://a.example', priority: 0, kicked: false },
+      { url: 'https://a.example', tenantId: TENANT_A, priority: 0, kicked: false },
       'https://a.example',
       { state: 'offline', rttMs: null },
       { lastConnectError: { reason: 'stopped', at: 3 } },
@@ -170,7 +173,7 @@ describe('buildRelayStatusRow', () => {
 
   test('path-rerace 不当成当前错误', () => {
     const row = buildRelayStatusRow(
-      { url: 'https://a.example', priority: 0, kicked: false },
+      { url: 'https://a.example', tenantId: TENANT_A, priority: 0, kicked: false },
       'https://a.example',
       { state: 'offline', rttMs: null },
       { lastConnectError: { reason: 'path-rerace', at: 3 } },
@@ -185,7 +188,7 @@ describe('buildRelayStatusRow', () => {
 
   test('可选 pathBestMs / reraces 原样带出', () => {
     const row = buildRelayStatusRow(
-      { url: 'https://a.example', priority: 0, kicked: false },
+      { url: 'https://a.example', tenantId: TENANT_A, priority: 0, kicked: false },
       'https://a.example',
       { state: 'online', rttMs: 90 },
       null,
@@ -260,8 +263,8 @@ function fiveOnlinePeers() {
 
 describe('collectRelayStatusRows', () => {
   const rows = [
-    { url: SH, priority: 0, kicked: false },
-    { url: TK, priority: 1, kicked: false },
+    { url: SH, tenantId: TENANT_A, priority: 0, kicked: false },
+    { url: TK, tenantId: TENANT_B, priority: 1, kicked: false },
   ];
 
   function seedPresence(primaryConnected: boolean): RelayPresence {
@@ -327,7 +330,7 @@ describe('collectRelayStatusRows', () => {
 
   test('attached 比较忽略尾斜杠', () => {
     const result = collectRelayStatusRows({
-      rows: [{ url: SH, priority: 0, kicked: false }],
+      rows: [{ url: SH, tenantId: TENANT_A, priority: 0, kicked: false }],
       attachedUrl: `${SH}/`,
       primary: fakeClient('online', 12),
       live: null,
@@ -377,11 +380,16 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
 
     const payload = buildRelayStatusPayload({
       mode: 'relay',
-      tenantId: 'ab'.repeat(16),
       rows: [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-        { url: 'https://os.example', priority: 2, kicked: true, kickedReason: 'password_rotated' },
+        { url: SH, tenantId: TENANT_A, priority: 0, kicked: false },
+        { url: TK, tenantId: TENANT_B, priority: 1, kicked: false },
+        {
+          url: 'https://os.example',
+          tenantId: TENANT_B,
+          priority: 2,
+          kicked: true,
+          kickedReason: 'password_rotated',
+        },
       ],
       attachedUrl: SH,
       primary,
@@ -399,15 +407,14 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
     });
 
     expect(JSON.stringify(payload)).toBe(
-      '{"mode":"relay","tenantId":"abababababababababababababababab","relays":[{"url":"https://sh.example","priority":0,"online":true,"attached":true,"role":"primary","rttMs":12,"peersOnline":null,"turn":{"url":"turn:sh.example:3478","probeOk":null},"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"enrollPassword":{"known":false}},{"url":"https://tk.example","priority":1,"online":true,"attached":false,"role":"secondary","rttMs":33,"peersOnline":null,"turn":null,"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"keyLog":{"diverged":true},"enrollPassword":{"known":false}},{"url":"https://os.example","priority":2,"online":false,"attached":false,"role":null,"rttMs":null,"peersOnline":null,"turn":null,"lastError":"client-too-old","lastErrorCode":"protocol","lastErrorAt":7,"kicked":true,"kickedReason":"password_rotated","enrollPassword":{"known":false}}],"metaEpoch":4,"nodesViaRelay":2,"multiAttach":true,"reauthRequired":true,"awaitingToken":true,"readmitPending":1,"metaKeyLagging":[],"quota":{"maxNodes":8,"maxStreams":16,"bandwidthBytesPerSec":1024},"keyLog":{"skipped":0,"blockedSeq":null,"caughtUp":true}}'
+      '{"mode":"relay","tenantId":"abababababababababababababababab","relays":[{"url":"https://sh.example","tenantId":"abababababababababababababababab","priority":0,"online":true,"attached":true,"role":"primary","rttMs":12,"peersOnline":null,"turn":{"url":"turn:sh.example:3478","probeOk":null},"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"enrollPassword":{"known":false}},{"url":"https://tk.example","tenantId":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","priority":1,"online":true,"attached":false,"role":"secondary","rttMs":33,"peersOnline":null,"turn":null,"lastError":null,"lastErrorCode":null,"lastErrorAt":null,"kicked":false,"kickedReason":null,"keyLog":{"diverged":true},"enrollPassword":{"known":false}},{"url":"https://os.example","tenantId":"cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd","priority":2,"online":false,"attached":false,"role":null,"rttMs":null,"peersOnline":null,"turn":null,"lastError":"client-too-old","lastErrorCode":"protocol","lastErrorAt":7,"kicked":true,"kickedReason":"password_rotated","enrollPassword":{"known":false}}],"metaEpoch":4,"nodesViaRelay":2,"multiAttach":true,"reauthRequired":true,"awaitingToken":true,"readmitPending":1,"metaKeyLagging":[],"quota":{"maxNodes":8,"maxStreams":16,"bandwidthBytesPerSec":1024},"keyLog":{"skipped":0,"blockedSeq":null,"caughtUp":true}}'
     );
   });
 
   test('auto-select fields are omitted when off', () => {
     const payload = buildRelayStatusPayload({
       mode: 'relay',
-      tenantId: null,
-      rows: [{ url: SH, priority: 0, kicked: false }],
+      rows: [{ url: SH, tenantId: TENANT_A, priority: 0, kicked: false }],
       attachedUrl: SH,
       primary: fakeClient('online', 12),
       live: { lastConnectError: null },
@@ -432,10 +439,9 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
   test('auto-select on fills preferredUrl, score, autoSelected, pinned', () => {
     const payload = buildRelayStatusPayload({
       mode: 'relay',
-      tenantId: null,
       rows: [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
+        { url: SH, tenantId: TENANT_A, priority: 0, kicked: false },
+        { url: TK, tenantId: TENANT_B, priority: 1, kicked: false },
       ],
       attachedUrl: SH,
       primary: fakeClient('online', 12),
@@ -473,5 +479,54 @@ describe('buildRelayStatusPayload JSON snapshot', () => {
     expect(payload.relays[1]).toMatchObject({ url: TK, score: 23 });
     expect(payload.relays[1]?.pinned).toBeUndefined();
     expect(payload.relays[1]?.autoSelected).toBeUndefined();
+  });
+
+  test('tenantId 取主中继那一行，各行带自己的租户编号', () => {
+    const payload = buildRelayStatusPayload({
+      mode: 'relay',
+      rows: [
+        { url: SH, tenantId: TENANT_A, priority: 0, kicked: false },
+        { url: TK, tenantId: TENANT_B, priority: 1, kicked: false },
+      ],
+      attachedUrl: TK,
+      primary: fakeClient('online', 12),
+      live: { lastConnectError: null },
+      candidates: [],
+      secondaryOf: () => null,
+      presence: null,
+      multiAttach: false,
+      metaEpoch: 1,
+      reauthRequired: false,
+      readmitPending: 0,
+      metaKeyLagging: [],
+    });
+    expect(payload.tenantId).toBe(TENANT_B);
+    expect(payload.relays.map((row) => [row.url, row.tenantId, row.role])).toEqual([
+      [SH, TENANT_A, null],
+      [TK, TENANT_B, 'primary'],
+    ]);
+  });
+
+  test('没有挂上任何中继时 tenantId 取 priority 最小的一行；无行为 null', () => {
+    const base = {
+      mode: 'relay',
+      attachedUrl: null,
+      primary: null,
+      live: null,
+      candidates: [],
+      secondaryOf: () => null,
+      presence: null,
+      multiAttach: false,
+      metaEpoch: 1,
+      reauthRequired: false,
+      readmitPending: 0,
+      metaKeyLagging: [],
+    };
+    const rows = [
+      { url: TK, tenantId: TENANT_B, priority: 1, kicked: false },
+      { url: SH, tenantId: TENANT_A, priority: 0, kicked: false },
+    ];
+    expect(buildRelayStatusPayload({ ...base, rows }).tenantId).toBe(TENANT_A);
+    expect(buildRelayStatusPayload({ ...base, rows: [] }).tenantId).toBeNull();
   });
 });
