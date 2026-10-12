@@ -35,7 +35,7 @@ vibeterm_sha256sums_hex_for() {
   local sums_file="$1"
   local want="$2"
   awk -v want="$want" '
-    $1 ~ /^[a-fA-F0-9]{64}$/ {
+    length($1) == 64 && $1 !~ /[^a-fA-F0-9]/ {
       name = $2
       sub(/^\*/, "", name)
       if (name == want) {
@@ -238,8 +238,7 @@ vibeterm_run_init_or_fail() {
   local status=0
   vibeterm_run_init "$@" || status=$?
   if [ "$status" -ne 0 ]; then
-    echo "vibeterm install: init failed (exit ${status}); the install is incomplete" >&2
-    echo "vibeterm install: fix the problem above and re-run the same command" >&2
+    echo "vibeterm install: init failed (exit ${status}); see the message above" >&2
     exit "$status"
   fi
 }
@@ -360,11 +359,10 @@ vibeterm_install() {
   VIBETERM_INIT_LOG="$init_log"
   if [ ! -t 0 ]; then
     if { exec 3</dev/tty; } 2>/dev/null; then
-      echo "vibeterm install: stdin is not a TTY; attaching /dev/tty for prompts"
       vibeterm_run_init_or_fail "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" <&3
       exec 3<&-
     else
-      echo "vibeterm install: no TTY; passing --no-interactive"
+      echo "vibeterm install: no TTY; running non-interactively"
       vibeterm_run_init_or_fail "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" --no-interactive
     fi
   else

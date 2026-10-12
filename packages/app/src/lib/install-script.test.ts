@@ -316,37 +316,62 @@ HDR
     expect(result.stdout.trim().split('\n')).toEqual(['missing', 'ok', 'error']);
   });
 
-  test('vibeterm_sha256sums_hex_for accepts exact filename and rejects path-qualified entries', () => {
+  test('install.sh uses no regex interval expressions (mawk / BSD awk do not support them)', () => {
+    const source = readFileSync(installSh, 'utf8');
+    const intervalRe = /(?<!\$)\{\d+(,\d*)?\}|\\\{\d+(,\d*)?\\\}/;
+    const hits = source
+      .split('\n')
+      .map((line, index) => ({ line: index + 1, text: line }))
+      .filter(({ text }) => !text.trimStart().startsWith('#') && intervalRe.test(text));
+    expect(hits).toEqual([]);
+
+    expect('awk /^[0-9]{64}$/'.match(intervalRe)).not.toBeNull();
+    expect('grep "x\\{2,3\\}"'.match(intervalRe)).not.toBeNull();
+    expect('"${1}" "${VAR}" -w %{http_code}'.match(intervalRe)).toBeNull();
+  });
+});
+
+describe('vibeterm_sha256sums_hex_for', () => {
+  function lookup(body: string, want = 'vibeterm-cli-1.1.4.tgz') {
     const root = mkdtempSync(join(tmpdir(), 'vibeterm-sums-hex-'));
     sandboxDirs.push(root);
     const sums = join(root, 'SHA256SUMS');
-    const hex = 'a'.repeat(64);
-    writeFileSync(
-      sums,
+    writeFileSync(sums, body);
+    const result = sourceEval(`vibeterm_sha256sums_hex_for ${JSON.stringify(sums)} ${want}`);
+    return { status: result.status, hex: result.stdout.trim() };
+  }
+
+  test('accepts the exact filename and rejects path-qualified entries', () => {
+    const picked = lookup(
       [
-        `${hex}  /tmp/vibeterm-cli-1.1.4.tgz`,
+        `${'a'.repeat(64)}  /tmp/vibeterm-cli-1.1.4.tgz`,
         `${'b'.repeat(64)}  ../vibeterm-cli-1.1.4.tgz`,
         `${'c'.repeat(64)}  vibeterm-cli-1.1.4.tgz`,
         '',
       ].join('\n')
     );
-    const exact = sourceEval(
-      `vibeterm_sha256sums_hex_for ${JSON.stringify(sums)} vibeterm-cli-1.1.4.tgz`
-    );
-    expect(exact.status).toBe(0);
-    expect(exact.stdout.trim()).toBe('c'.repeat(64));
+    expect(picked).toEqual({ status: 0, hex: 'c'.repeat(64) });
 
-    writeFileSync(sums, `${hex}  /tmp/vibeterm-cli-1.1.4.tgz\n`);
-    const abs = sourceEval(
-      `vibeterm_sha256sums_hex_for ${JSON.stringify(sums)} vibeterm-cli-1.1.4.tgz`
-    );
-    expect(abs.status).not.toBe(0);
+    expect(lookup(`${'a'.repeat(64)}  /tmp/vibeterm-cli-1.1.4.tgz\n`).status).not.toBe(0);
+    expect(lookup(`${'a'.repeat(64)}  ../vibeterm-cli-1.1.4.tgz\n`).status).not.toBe(0);
+  });
 
-    writeFileSync(sums, `${hex}  ../vibeterm-cli-1.1.4.tgz\n`);
-    const rel = sourceEval(
-      `vibeterm_sha256sums_hex_for ${JSON.stringify(sums)} vibeterm-cli-1.1.4.tgz`
-    );
-    expect(rel.status).not.toBe(0);
+  test('lowercases uppercase hex', () => {
+    const picked = lookup(`${'AB12CD34'.repeat(8)}  vibeterm-cli-1.1.4.tgz\n`);
+    expect(picked).toEqual({ status: 0, hex: 'ab12cd34'.repeat(8) });
+  });
+
+  test('strips the leading * binary marker', () => {
+    const picked = lookup(`${'d'.repeat(64)} *vibeterm-cli-1.1.4.tgz\n`);
+    expect(picked).toEqual({ status: 0, hex: 'd'.repeat(64) });
+  });
+
+  test('rejects digests that are not exactly 64 hex characters', () => {
+    expect(lookup(`${'a'.repeat(63)}  vibeterm-cli-1.1.4.tgz\n`).status).not.toBe(0);
+    expect(lookup(`${'a'.repeat(65)}  vibeterm-cli-1.1.4.tgz\n`).status).not.toBe(0);
+    expect(lookup(`${'a'.repeat(63)}g  vibeterm-cli-1.1.4.tgz\n`).status).not.toBe(0);
+    const dashed = `${'a'.repeat(32)}-${'a'.repeat(31)}`;
+    expect(lookup(`${dashed}  vibeterm-cli-1.1.4.tgz\n`).status).not.toBe(0);
   });
 });
 
@@ -420,11 +445,21 @@ describe('install.sh download checksum policy', () => {
     expect(result.initArgs.some((line) => line.includes('vibeterm.js'))).toBe(true);
   });
 
+  test('passes no init flags of its own and only mentions TTY handling when it adds --no-interactive', () => {
+    const result = runInstallPolicy({ version: '1.1.4', sumsCode: '200' });
+    expect(result.status).toBe(0);
+    const flags = result.initArgs.filter((line) => line.startsWith('--'));
+    const addedNonInteractive = flags.includes('--no-interactive');
+    expect(flags.filter((flag) => flag !== '--no-interactive')).toEqual([]);
+    expect(result.stdout.includes('no TTY; running non-interactively')).toBe(addedNonInteractive);
+    expect(result.stdout).not.toContain('attaching /dev/tty');
+  });
+
   test('a failing init aborts with an actionable message and its exit code', () => {
     const result = runInstallPolicy({ version: '1.1.4', sumsCode: '200', initExitCode: 3 });
     expect(result.status).toBe(3);
     expect(result.stderr).toContain('init failed (exit 3)');
-    expect(result.stderr).toContain('the install is incomplete');
+    expect(result.stderr).toContain('see the message above');
     expect(result.stdout).not.toContain('vibeterm install: done.');
   });
 
