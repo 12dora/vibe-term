@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { computeRecordHash, randomBytes } from '../../../shared/src/auth';
+import { t } from '../i18n';
 import { RelayPasswordJoinError, pinHead, relaysForPersist } from './relay-password-join-flow';
 
 describe('pinHead', () => {
@@ -39,7 +40,7 @@ describe('relaysForPersist', () => {
       expect(error).toMatchObject({
         name: 'RelayPasswordJoinError',
         code: 'relay_not_authorized',
-        message: '该中继不在根签名的中继列表里',
+        message: t('relay.join.reason.relayNotAuthorized'),
       });
     }
   });

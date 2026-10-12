@@ -417,6 +417,12 @@ curl -sS https://<隧道域名>/api/relay/health
 
    `r3.` 串里内嵌了每台中继的地址、租户编号与各自的令牌（最多 16 台）；显式给 URL 只是把那台中继提到 failover 队首。串尾带 CA 指纹时会先 pin 再发任何带令牌的请求，指纹不符**不 failover**、直接中止。
 
+   加入码只是提交加入申请，需要人在已接入的设备上点「确认加入」。命令默认阻塞等待批准（最长 10 分钟，非 TTY 同样等待）：批准后输出「加入成功。」退出 0，超时或失败输出「加入失败：<原因>」退出 1，Ctrl+C 退出 130。**脚本 / AI 部署一律加 `--no-wait`**：命令提交申请后立即退出 0，随后提示用户去批准，再用 `vibeterm relay list` 确认；不加则脚本会被阻塞到批准或超时。
+
+   ```bash
+   vibeterm relay join <中继地址> --token r3.<加入串> --name <节点名> --no-wait
+   ```
+
 4. 中继运营者侧不需要做任何操作——成员判定在租户自己的节点上完成，中继的注册表只是链路准入缓存。
 
 ### 验收
@@ -440,6 +446,7 @@ vibeterm doctor
 - **404 `RELAY_TENANT_NOT_FOUND`**：租户编号写错，或该租户还没上传过密封包（根钥轮换后会清空，需要持有根种子的节点重新 `relay enroll` / `relay reauth` 刷新，或 `vibeterm relay pack upload`）。
 - **401 `RELAY_TENANT_KICKED`**：该租户被运营者踢了。让持有根种子的节点用新口令 `vibeterm relay reauth <url>` 恢复。
 - **加入报「该中继不在根签名的中继列表里」**：用户输入的地址不在该租户已授权的中继表中，核对地址与端口是否与 `relay list` 里的完全一致。
+- **`r3.` 加入等待批准超时**：加入申请仍留在中继上，让用户在已接入设备点「确认加入」，服务会自动完成加入；没有人可批准就重新出码。
 - **加了一半失败、中继上留下 pending 节点**：让运营者在成员表里撤销那个 pending 节点后重试。
 - **退出中继**：`vibeterm relay leave`（要账户密码，它签一条空的中继列表记录）。
 - **令牌换发**：`vibeterm relay resend-token` 让中继重发当前令牌；`vibeterm relay pack upload` 单独刷新密封包。
@@ -530,6 +537,7 @@ vibeterm port rm <映射 id>
 | `relay join` 失败：`ca_fingerprint_mismatch` | 中继本机 `GET /api/tls` 的 `caFingerprint` | 加入串里的指纹与中继当前 CA 不符。重新出 `r3.` 码；不要从没核实的页面复制指纹 |
 | `relay join` 失败：409 `node_revoked` | 命令输出 | 该身份已被吊销，必须换新身份：`vibeterm mesh reset-identity` 或重新 `init` |
 | `relay join` 失败：`key log rejected` / `epoch_changed` | 命令输出 | 出码之后入口上改过密或重建过根钥，重新出码 |
+| `relay join` 失败：加入码无效或已过期 | 命令输出「加入失败：加入码无效或已过期」 | 加入码有效期 10 分钟，中继会清掉过期记录；核对是否抄错，否则重新生成加入码 |
 | 加入成功但节点一直离线 | 节点日志 `[uplink] connect failed … reason=` | `dns` 解析失败；`refused` 端口未开或防火墙；`timeout` 握手超时（查反代是否支持 WebSocket）；`auth_rejected` 证书未准入或已吊销 |
 | 网页 WS 立刻以 4401 断开 | 浏览器控制台 | 没有会话或会话过期，跳登录页；这不是证书或 JWT 问题 |
 | 登录页没有通行密钥按钮 | `grep VIBETERM_TRUST_PROXY <安装目录>/app.env` | 反代 / 隧道场景必须 `VIBETERM_TRUST_PROXY=true` 并重启；纯 IP 地址入口无法注册通行密钥 |

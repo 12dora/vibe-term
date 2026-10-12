@@ -454,6 +454,8 @@ describe('runRelayPasswordJoin', () => {
         expect(result.userId).toBe(owner.userStore.listUsers()[0]?.id);
         expect(installed).toBe(true);
         expect(restarted).toBe(!failure);
+        expect(logs.at(-1)).toBe(t(failure ? 'relay.join.doneRestart' : 'relay.join.done'));
+        expect(logs.filter((line) => /restart/i.test(line))).toHaveLength(failure ? 1 : 0);
         expect(logs.some((line) => /39001\/tcp/.test(line) && /40000-40099\/udp/.test(line))).toBe(
           true
         );
@@ -513,8 +515,11 @@ describe('runRelayPasswordJoin', () => {
       const stored = await Promise.all([store.getRelay(RELAY_URL), store.getRelay(RELAY_B)]);
       expect(stored[via === 'A' ? 0 : 1]?.token).toEqual(fixture.token);
       expect(stored[via === 'A' ? 1 : 0]?.token).toEqual(via === 'A' ? tokenB : tokenA);
-      expect(logs).toContain(t('relay.join.joined', { url: joined.url, tenantId: joined.tenant }));
-      expect(logs).toContain(t('relay.join.alsoConfigured', { urls: other }));
+      const relayLine = t('relay.join.relay', { url: joined.url, tenantId: joined.tenant });
+      const alsoLine = t('relay.join.alsoConfigured', { urls: other });
+      expect(logs).toContain(relayLine);
+      expect(logs.indexOf(alsoLine)).toBe(logs.indexOf(relayLine) + 1);
+      expect(logs.at(-1)).toBe(t('relay.join.done'));
     });
   }
 
@@ -531,6 +536,44 @@ describe('runRelayPasswordJoin', () => {
     );
     expect(result.relayUrl).toBe(RELAY_URL);
     expect(result.relayUrls).toEqual([RELAY_URL, RELAY_B]);
+  });
+
+  test('relay join --tenant 失败时输出带前缀的原因，且不重复加前缀', async () => {
+    const auth = await openAuth();
+    const fetcher: FetchLike = async (input) => {
+      if (String(input).endsWith('/api/relay/health')) return Response.json({ ok: true });
+      return Response.json(
+        { error: { code: 'RELAY_TENANT_NOT_FOUND', message: 'missing' } },
+        { status: 404 }
+      );
+    };
+    const error = await runRelayJoinCommand(
+      parseArgs(['relay', 'join', RELAY_URL, '--tenant', TENANT_ID]),
+      { auth, password: PASSWORD, fetcher, log: () => undefined }
+    ).catch((caught) => caught);
+    expect(error.message).toBe(
+      t('relay.join.failed', { reason: t('relay.join.reason.tenantNotFound') })
+    );
+    expect(error.cause).toMatchObject({
+      name: 'RelayPasswordJoinError',
+      code: 'relay_tenant_unknown',
+    });
+  });
+
+  test.each([
+    [429, 'RELAY_RATE_LIMITED', 'relay.join.reason.rateLimited'],
+    [401, 'RELAY_PASSWORD_INVALID', 'relay.join.reason.wrongPassword'],
+  ])('relay join --tenant maps %d %s to a readable reason', async (status, code, reason) => {
+    const auth = await openAuth();
+    const fetcher: FetchLike = async (input) => {
+      if (String(input).endsWith('/api/relay/health')) return Response.json({ ok: true });
+      return Response.json({ error: { code, message: code } }, { status });
+    };
+    const error = await runRelayJoinCommand(
+      parseArgs(['relay', 'join', RELAY_URL, '--tenant', TENANT_ID]),
+      { auth, password: PASSWORD, fetcher, log: () => undefined }
+    ).catch((caught) => caught);
+    expect(error.message).toBe(t('relay.join.failed', { reason: t(reason) }));
   });
 
   test('requires --tenant', async () => {

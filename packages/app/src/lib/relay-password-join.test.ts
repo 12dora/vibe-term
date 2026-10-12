@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { RelayPackError } from '../../../shared/src/relay';
-import { RelayApiError, RelayTimeoutError } from '../commands/relay-shared';
+import { RelayApiError, RelayTimeoutError, RelayTransportError } from '../commands/relay-shared';
 import { RelayCaError } from './relay-ca';
 import { wrapRelayPasswordJoinError } from './relay-password-join';
 import { RelayPasswordJoinError } from './relay-password-join-flow';
@@ -48,9 +48,19 @@ describe('wrapRelayPasswordJoinError', () => {
       code: 'relay_unreachable',
     },
     {
-      name: 'ECONNREFUSED',
-      error: new Error('connect ECONNREFUSED 127.0.0.1:19993'),
+      name: 'transport failure',
+      error: new RelayTransportError('relay kdf failed: connect ECONNREFUSED 127.0.0.1:19993'),
       code: 'relay_unreachable',
+    },
+    {
+      name: 'programming TypeError is not network trouble',
+      error: new TypeError("undefined is not an object (evaluating 'body.kdf_params')"),
+      code: 'join_failed',
+    },
+    {
+      name: 'error text that merely looks like a network failure',
+      error: new Error('connect ECONNREFUSED 127.0.0.1:19993'),
+      code: 'join_failed',
     },
     {
       name: 'local user exists passthrough',
@@ -86,4 +96,32 @@ describe('wrapRelayPasswordJoinError', () => {
       expect(wrapped.code).toBe(row.code);
     });
   }
+});
+
+describe('wrapRelayPasswordJoinError keeps the original error as cause', () => {
+  test('RelayApiError survives every classification', () => {
+    const rateLimited = new RelayApiError(429, 'RELAY_RATE_LIMITED', 'relay password join failed');
+    const wrapped = wrapRelayPasswordJoinError(rateLimited);
+    expect(wrapped.code).toBe('join_failed');
+    expect(wrapped.cause).toBe(rateLimited);
+
+    const wrong = new RelayApiError(401, 'RELAY_BAD_PROOF', 'bad proof');
+    expect(wrapRelayPasswordJoinError(wrong).cause).toBe(wrong);
+    const missing = new RelayApiError(404, 'RELAY_TENANT_NOT_FOUND', 'missing');
+    expect(wrapRelayPasswordJoinError(missing).cause).toBe(missing);
+  });
+
+  test('transport, pack and generic failures keep their cause too', () => {
+    const transport = new RelayTransportError('relay kdf failed: reset');
+    expect(wrapRelayPasswordJoinError(transport).cause).toBe(transport);
+    const pack = new RelayPackError('aad mismatch');
+    expect(wrapRelayPasswordJoinError(pack).cause).toBe(pack);
+    const plain = new Error('boom');
+    expect(wrapRelayPasswordJoinError(plain).cause).toBe(plain);
+  });
+
+  test('an already wrapped error is returned unchanged', () => {
+    const wrapped = new RelayPasswordJoinError('local_user_exists', 'already has a user');
+    expect(wrapRelayPasswordJoinError(wrapped)).toBe(wrapped);
+  });
 });

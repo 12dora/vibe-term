@@ -9,7 +9,7 @@ import {
   RELAY_QUOTA_MAX_STREAMS_LIMIT,
 } from '../../../../apps/gateway/src/relay/relay-quota';
 import { errorMessage } from '../lib/error-message';
-import type { FetchLike } from '../lib/fetch-like';
+import type { FetchInit, FetchLike } from '../lib/fetch-like';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readBoundedResponseText } from '../lib/pem';
 import type { ParsedArgs } from '../types';
@@ -52,8 +52,18 @@ export type RelayLimits = {
   fairShare: boolean;
 };
 
-/** 传输层失败的一种：`isRelayTransportError` 认它，可以换下一台中继重试。 */
-export class RelayTimeoutError extends Error {
+/**
+ * 请求没有拿到（完整的）响应：连不上、连接中断、超时、响应体读到一半被切断。
+ * 这是「中继不可达」的唯一来源，调用方（加入流程的原因映射、轮询的重试判断）只认它。
+ */
+export class RelayTransportError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'RelayTransportError';
+  }
+}
+
+export class RelayTimeoutError extends RelayTransportError {
   constructor(label: string, timeoutMs: number) {
     super(`${label} timed out after ${timeoutMs}ms`);
     this.name = 'RelayTimeoutError';
@@ -115,11 +125,12 @@ async function readRelayBody(
     text = await readBoundedResponseText(response, maxBytes);
   } catch (error) {
     const message = errorMessage(error);
-    throw new Error(
-      message === 'ca_response_too_large'
-        ? `${label} response exceeds ${maxBytes} bytes`
-        : `${label} response could not be read: ${message}`
-    );
+    if (message === 'ca_response_too_large') {
+      throw new Error(`${label} response exceeds ${maxBytes} bytes`);
+    }
+    throw new RelayTransportError(`${label} response could not be read: ${message}`, {
+      cause: error,
+    });
   }
   if (!text) return {};
   try {
@@ -133,6 +144,46 @@ async function readRelayBody(
   }
 }
 
+type RequestGuard = { signal: AbortSignal; timedOut: () => boolean; dispose: () => void };
+
+/** 超时与外部中断任一触发都中止同一个 fetch；结束时摘掉计时器和监听。 */
+function guardRelayRequest(timeoutMs: number, external: AbortSignal | undefined): RequestGuard {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  const onAbort = () => controller.abort();
+  if (external?.aborted) controller.abort();
+  else external?.addEventListener('abort', onAbort, { once: true });
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    dispose: () => {
+      clearTimeout(timer);
+      external?.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+/** fetch 本身抛出的一律是传输失败；调用方主动中断（外部信号）则原样抛出，不算中继的问题。 */
+async function sendRelayRequest(
+  fetcher: FetchLike,
+  url: string,
+  init: FetchInit,
+  context: { label: string; external: AbortSignal | undefined }
+): Promise<Response> {
+  try {
+    return await fetcher(url, init);
+  } catch (error) {
+    if (context.external?.aborted) throw error;
+    throw new RelayTransportError(`${context.label} failed: ${errorMessage(error)}`, {
+      cause: error,
+    });
+  }
+}
+
 export async function requestRelayJson(options: {
   fetcher?: FetchLike;
   url: string;
@@ -142,8 +193,9 @@ export async function requestRelayJson(options: {
   label: string;
   timeoutMs?: number;
   maxBytes?: number;
+  /** 调用方的中断信号：触发时立即中止进行中的请求。 */
+  signal?: AbortSignal;
 }): Promise<Record<string, unknown>> {
-  const fetcher = options.fetcher ?? fetch;
   const headers: Record<string, string> = { ...options.headers };
   let payload: string | undefined;
   if (options.body !== undefined) {
@@ -151,20 +203,20 @@ export async function requestRelayJson(options: {
     payload = JSON.stringify(options.body);
   }
   const timeoutMs = options.timeoutMs ?? RELAY_REQUEST_TIMEOUT_MS;
-  const controller = new AbortController();
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
+  const guard = guardRelayRequest(timeoutMs, options.signal);
   try {
-    const response = await fetcher(options.url, {
-      method: options.method ?? (payload ? 'POST' : 'GET'),
-      headers,
-      redirect: 'error',
-      signal: controller.signal,
-      ...(payload === undefined ? {} : { body: payload }),
-    });
+    const response = await sendRelayRequest(
+      options.fetcher ?? fetch,
+      options.url,
+      {
+        method: options.method ?? (payload ? 'POST' : 'GET'),
+        headers,
+        redirect: 'error',
+        signal: guard.signal,
+        ...(payload === undefined ? {} : { body: payload }),
+      },
+      { label: options.label, external: options.signal }
+    );
     const body = await readRelayBody(
       response,
       options.maxBytes ?? RELAY_RESPONSE_MAX_BYTES,
@@ -179,10 +231,10 @@ export async function requestRelayJson(options: {
     }
     return body;
   } catch (error) {
-    if (timedOut) throw new RelayTimeoutError(options.label, timeoutMs);
+    if (guard.timedOut()) throw new RelayTimeoutError(options.label, timeoutMs);
     throw error;
   } finally {
-    clearTimeout(timer);
+    guard.dispose();
   }
 }
 

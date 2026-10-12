@@ -21,25 +21,22 @@ import {
   sealRelayPack,
   signRelayEnrollProof,
 } from '../../../shared/src/relay';
-import {
-  RELAY_REDEEM_RESPONSE_MAX_BYTES,
-  joinRelayUrl,
-  requestRelayJson,
-} from '../commands/relay-shared';
+import { joinRelayUrl, requestRelayJson } from '../commands/relay-shared';
+import { t } from '../i18n';
 import type { FetchLike } from './fetch-like';
 import { joinUserKeyService, makeReplayPasskeyVerifier } from './keylog-passkey-replay';
 import type { LocalAuthContext } from './local-auth';
 import { deriveRootKey } from './password';
 import { storeRelayCaPin } from './relay-ca';
-import { openRelayKeyLogPage, parseRelayKeyLogPage } from './relay-keylog';
+import { fetchRelayKeyLog, type openRelayKeyLogPage } from './relay-keylog';
 import { type AppendPairResult, appendAdmitThenMetaRetrying } from './relay-password-join-append';
 import { type RelayTargetRow, overlayRelayToken, persistRelayUplink } from './relay-store';
 
 export class RelayPasswordJoinError extends Error {
   readonly code: string;
 
-  constructor(code: string, message: string) {
-    super(message);
+  constructor(code: string, message: string, options?: { cause?: unknown }) {
+    super(message, options);
     this.name = 'RelayPasswordJoinError';
     this.code = code;
   }
@@ -106,41 +103,12 @@ export function relaysForPersist(
 ): RelayTargetRow[] {
   const rows = overlayRelayToken(stateRelays, joined);
   if (!rows) {
-    throw new RelayPasswordJoinError('relay_not_authorized', '该中继不在根签名的中继列表里');
+    throw new RelayPasswordJoinError(
+      'relay_not_authorized',
+      t('relay.join.reason.relayNotAuthorized')
+    );
   }
   return rows;
-}
-
-async function downloadKeyLog(input: {
-  relayUrl: string;
-  tenantId: string;
-  token: Uint8Array;
-  logKey: Uint8Array;
-  fetcher?: FetchLike;
-  timeoutMs?: number;
-}) {
-  const items: ReturnType<typeof parseRelayKeyLogPage> = [];
-  let fromSeq = 1;
-  for (;;) {
-    const body = await requestRelayJson({
-      fetcher: input.fetcher,
-      url: joinRelayUrl(
-        input.relayUrl,
-        `/api/relay/tenants/${input.tenantId}/keylog?from_seq=${fromSeq}&limit=64`
-      ),
-      headers: tenantHeaders(input.token),
-      label: 'relay key log',
-      maxBytes: RELAY_REDEEM_RESPONSE_MAX_BYTES,
-      timeoutMs: input.timeoutMs,
-    });
-    const page = parseRelayKeyLogPage(body.key_log);
-    items.push(...page);
-    if (body.has_more !== true || page.length === 0) break;
-    const last = page[page.length - 1];
-    fromSeq = Number(last?.seq ?? fromSeq) + 1;
-    if (!Number.isFinite(fromSeq) || fromSeq <= 0) break;
-  }
-  return openRelayKeyLogPage(input.logKey, items);
 }
 
 async function uploadPack(input: {
@@ -261,10 +229,10 @@ export async function joinDownloadVerifyReplay(
   transport: JoinTransport,
   pack: JoinPackPhase
 ): Promise<JoinLogPhase> {
-  const records = await downloadKeyLog({
+  const records = await fetchRelayKeyLog({
     relayUrl: transport.relayUrl,
     tenantId: transport.tenantId,
-    token: pack.pack.token,
+    headers: tenantHeaders(pack.pack.token),
     logKey: pack.pack.log_key,
     fetcher: transport.fetcher,
     timeoutMs: transport.timeoutMs,

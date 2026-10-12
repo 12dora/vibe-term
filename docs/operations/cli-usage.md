@@ -8,6 +8,10 @@
 
 `vibeterm init|doctor|upgrade|uninstall|user|relay|mesh|tls|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` 不加参数时不提问，默认角色 `standalone`，各项均可用旗标覆盖；`relay join` 把 `standalone` 自动切为 `node` 并重启服务。`init` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。本机用户用 `vibeterm user add|passwd|totp`。
 
+`vibeterm relay join` 的结果始终落在最后一行：密码加入与已批准的 `r3.` 加入以「加入成功。」结束；`--token` 加入默认等待现有设备批准（最长 10 分钟，非 TTY 同样等待），批准后打印「加入成功。」；`--no-wait` 提交申请后立即以 0 退出。任何失败输出「加入失败：<原因>」并以 1 退出，超时未批准同样以 1 退出（申请仍然有效）；Ctrl+C 只停止等待并以 130 退出（申请同样仍然有效）。使用 `--no-restart` 或平台没有服务管理器时服务不会重启，批准后不会自动完成加入，最后一行改为提示「请重启 VibeTerm」。脚本加 `--no-wait`，不要依赖阻塞等待。
+
+布尔旗标（`--no-wait`、`--no-restart`、`--yes`、`--json`、`--force` 等只表示开关的旗标）不会吞掉后面的参数，可以放在命令行任意位置（`--no-wait https://relay.example` 里的地址仍是位置参数）；也可写成 `--flag=true` / `--flag=false`，其它取值按用法错误处理。`--password [<p>]`、`--autostart [true|false]` 这类可带可不带值的旗标保持原样：后面跟的非 `--` 参数就是它的值。
+
 ## 登录
 
 ```bash

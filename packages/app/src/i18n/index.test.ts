@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { cliHelpText } from '../cli/help';
+import { en } from './en';
 import { normalizeLang, setLang, t } from './index';
+import { zhCN } from './zh-cn';
 
 describe('i18n', () => {
   afterEach(() => {
@@ -35,6 +37,8 @@ describe('i18n', () => {
     expect(t('cli.help')).toBe(cliHelpText('zh-CN'));
     expect(t('cli.help')).toContain('vibeterm relay join');
     expect(t('cli.help')).toContain('--no-restart');
+    expect(t('cli.help')).toContain('--no-wait');
+    expect(cliHelpText('en')).toContain('--no-wait');
     expect(t('cli.help')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
   });
 
@@ -167,5 +171,22 @@ describe('i18n', () => {
     const zh = t('cli.shim.skipForeign', { path: '/tmp/vibeterm' });
     expect(zh).toContain('/tmp/vibeterm');
     expect(zh).not.toContain('你');
+  });
+
+  test('relay.join keys exist in both languages, zh-CN avoids 你/您, and no dead key remains', () => {
+    const keysOf = (table: Record<string, string>) =>
+      Object.keys(table)
+        .filter((key) => key.startsWith('relay.join.'))
+        .sort();
+    expect(keysOf(zhCN)).toEqual(keysOf(en));
+    expect(keysOf(en)).not.toContain('relay.join.joined');
+    expect(keysOf(en)).not.toContain('relay.join.syncing');
+    for (const key of keysOf(zhCN)) {
+      expect(zhCN[key]).not.toContain('你');
+      expect(zhCN[key]).not.toContain('您');
+    }
+    setLang('zh-CN');
+    expect(t('relay.join.done')).toBe('加入成功。');
+    expect(t('relay.join.failed', { reason: '密码错误' })).toBe('加入失败：密码错误');
   });
 });

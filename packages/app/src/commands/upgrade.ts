@@ -94,7 +94,7 @@ export function passthroughUpgradeFlags(
   const merged = { ...parsed.flags, ...extra };
   for (const key of UPGRADE_PASSTHROUGH_FLAGS) {
     const value = merged[key];
-    if (value === undefined) continue;
+    if (value === undefined || value === false) continue;
     if (value === true) {
       args.push(`--${key}`);
     } else {

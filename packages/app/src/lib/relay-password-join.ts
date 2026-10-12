@@ -1,11 +1,11 @@
 import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-store';
 import { RelayPackError, normalizeRelayUrl } from '../../../shared/src/relay';
-import { RelayApiError, RelayTimeoutError } from '../commands/relay-shared';
+import { RelayApiError } from '../commands/relay-shared';
 import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
 import type { LocalAuthContext } from './local-auth';
 import { probeAddressForCli, probeNotFoundMessage } from './probe-address';
-import { RelayCaError, fetchPinnedRelayCa, pinRelayCa, storeRelayCaPin } from './relay-ca';
+import { fetchPinnedRelayCa, pinRelayCa, storeRelayCaPin } from './relay-ca';
 import {
   type JoinLogPhase,
   RelayPasswordJoinError,
@@ -16,6 +16,7 @@ import {
 } from './relay-password-join-flow';
 import { persistedRelayUrls } from './relay-store';
 import { assertRekeyAccount, rekeyRelayToken } from './relay-token-rekey';
+import { isRelayUnreachable } from './relay-unreachable';
 
 export { RelayPasswordJoinError } from './relay-password-join-flow';
 
@@ -94,57 +95,36 @@ async function resolveJoinRelayPort(rawUrl: string, deps: RelayPasswordJoinDeps)
   return parseJoinRelayUrl(probed.url);
 }
 
-function isRelayUnreachableCause(error: unknown): boolean {
-  if (error instanceof RelayTimeoutError) return true;
-  if (error instanceof RelayCaError) return error.transport;
-  if (!(error instanceof Error)) return false;
-  if (error.name === 'TypeError') return true;
-  const message = error.message.toLowerCase();
-  return (
-    message.includes('econnrefused') ||
-    message.includes('enotfound') ||
-    message.includes('etimedout') ||
-    message.includes('fetch failed') ||
-    message.includes('unable to connect')
-  );
+function passwordApiFailure(error: RelayApiError): RelayPasswordJoinError {
+  const cause = { cause: error };
+  if (PASSWORD_API_CODES.has(error.code) || error.status === 401) {
+    return new RelayPasswordJoinError('relay_password_invalid', error.message, cause);
+  }
+  if (error.code === 'RELAY_TENANT_NOT_FOUND' || error.status === 404) {
+    return new RelayPasswordJoinError('relay_tenant_unknown', error.message, cause);
+  }
+  if (PACK_API_CODES.has(error.code)) {
+    return new RelayPasswordJoinError('relay_pack_invalid', error.message, cause);
+  }
+  return new RelayPasswordJoinError('join_failed', error.message, cause);
 }
 
+/** 统一成 `RelayPasswordJoinError`；原始错误留在 `cause`，让上层按原始错误码给出原因。 */
 export function wrapRelayPasswordJoinError(error: unknown): RelayPasswordJoinError {
   if (error instanceof RelayPasswordJoinError) {
     if (error.code === 'head_hash_mismatch') {
-      return new RelayPasswordJoinError('relay_pack_invalid', error.message);
+      return new RelayPasswordJoinError('relay_pack_invalid', error.message, { cause: error });
     }
     return error;
   }
   if (error instanceof RelayPackError) {
-    return new RelayPasswordJoinError('relay_pack_invalid', error.message);
+    return new RelayPasswordJoinError('relay_pack_invalid', error.message, { cause: error });
   }
-  if (error instanceof RelayTimeoutError || isRelayUnreachableCause(error)) {
-    return new RelayPasswordJoinError(
-      'relay_unreachable',
-      error instanceof Error ? error.message : 'relay unreachable'
-    );
+  if (isRelayUnreachable(error)) {
+    return new RelayPasswordJoinError('relay_unreachable', errorMessage(error), { cause: error });
   }
-  if (error instanceof RelayCaError) {
-    return new RelayPasswordJoinError('join_failed', error.message);
-  }
-  if (error instanceof RelayApiError) {
-    if (PASSWORD_API_CODES.has(error.code) || error.status === 401) {
-      return new RelayPasswordJoinError('relay_password_invalid', error.message);
-    }
-    if (error.code === 'RELAY_TENANT_NOT_FOUND' || error.status === 404) {
-      return new RelayPasswordJoinError('relay_tenant_unknown', error.message);
-    }
-    if (PACK_API_CODES.has(error.code)) {
-      return new RelayPasswordJoinError('relay_pack_invalid', error.message);
-    }
-    return new RelayPasswordJoinError('join_failed', error.message);
-  }
-  return new RelayPasswordJoinError('join_failed', errorMessage(error));
-}
-
-function wrapJoinError(error: unknown): RelayPasswordJoinError {
-  return wrapRelayPasswordJoinError(error);
+  if (error instanceof RelayApiError) return passwordApiFailure(error);
+  return new RelayPasswordJoinError('join_failed', errorMessage(error), { cause: error });
 }
 
 async function localJoinUser(ctx: LocalAuthContext): Promise<string | null> {
@@ -265,7 +245,7 @@ export async function performRelayPasswordJoin(
       tenantId,
     };
   } catch (error) {
-    throw wrapJoinError(error);
+    throw wrapRelayPasswordJoinError(error);
   } finally {
     pack?.pack.log_key.fill(0);
     pack?.pack.token.fill(0);

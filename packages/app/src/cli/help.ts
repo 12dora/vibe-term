@@ -21,7 +21,7 @@ Usage:
   vibeterm mesh passkey remove-all [<username>]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
-  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart]
+  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart] [--no-wait]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
   vibeterm relay resend-token
@@ -53,6 +53,12 @@ Password prompting (add / passwd / totp / reset-root / relay join):
   --full-reset (passwd): also remove all passkeys and two-step verification and sign out everywhere
   user totp: verify a code (--code or VIBETERM_TOTP) before saving; a mismatch writes nothing
 
+relay join --token:
+  Waits for approval by default (up to 10 minutes, also without a TTY); approve with "Confirm join" on the device that created the join code.
+  --no-wait: print the pending state and exit 0 right away; the node appears on the other devices once approved. Scripts should pass it.
+  Exit codes: 0 joined (or --no-wait); 1 failed or no approval in time (the request stays pending); 130 Ctrl+C (stops waiting, the request stays pending).
+  With --no-restart or without a service manager, restart VibeTerm after approval; the final line says so.
+
 Init shim ownership:
   --replace-shim: replace managed PATH shims owned by another install (or with unknown ownership).
   --stun-servers <list>: ${STUN_SERVERS_FLAG_HELP}.
@@ -78,7 +84,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm mesh passkey remove-all [<username>]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
-  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart]
+  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart] [--no-wait]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
   vibeterm relay resend-token
@@ -109,6 +115,12 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   破坏性恢复确认：TTY 必须输入完整 yes；非 TTY 必须传 --yes。
   --full-reset（passwd）：同时移除所有通行密钥、两步验证并注销全部会话
   user totp：先核对验证码（--code 或 VIBETERM_TOTP）再写入；不匹配则不保存
+
+relay join --token：
+  默认等待批准（最长 10 分钟，非 TTY 同样等待）；请在生成加入码的设备上点「确认加入」。
+  --no-wait：只提示等待批准并立即以 0 退出，批准后本机出现在其他设备的节点页；脚本应加此参数。
+  退出码：0 已加入（或 --no-wait）；1 失败或超时未批准（申请仍然有效）；130 Ctrl+C（只停止等待，申请仍然有效）。
+  使用 --no-restart 或平台没有服务管理器时，批准后需手动重启 VibeTerm，最后一行会提示。
 
 初始化命令入口：
   --replace-shim：替换属于其他安装或归属未知的托管 PATH shim。

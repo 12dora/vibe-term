@@ -5,14 +5,13 @@ import {
   type RelayPasswordJoinResult,
   performRelayPasswordJoin,
 } from '../lib/relay-password-join';
-import { alsoConfiguredLine } from '../lib/relay-store';
 import { asString } from '../lib/validate';
-import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import { applyRelayPasswordJoinEnv, commitRelayPasswordJoinEnv } from '../runtime/setup-shared';
 import type { ParsedArgs } from '../types';
 import type { CliIo } from './cli-io';
 import { enableDirectForOnboarding } from './direct';
-import { maybeRestart } from './restart';
+import { logRelayJoinSummary } from './relay-join-summary';
+import { type RestartOutcome, maybeRestart } from './restart';
 import { withAuth } from './with-auth';
 
 export {
@@ -82,20 +81,19 @@ export async function runRelayPasswordJoin(
       });
       process.env.VIBETERM_ROLES = next.VIBETERM_ROLES;
     }
+    let restart: RestartOutcome = 'skipped';
     if (ctx.installDir) {
       await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
-      await maybeRestart(parsed, io, ctx.installDir);
+      restart = await maybeRestart(parsed, io, ctx.installDir);
     }
-    (io.log ?? console.log)(
-      t('relay.join.joined', { url: result.relayUrl, tenantId: result.tenantId })
-    );
-    const alsoConfigured = alsoConfiguredLine(result.relayUrl, result.relayUrls);
-    if (alsoConfigured) (io.log ?? console.log)(alsoConfigured);
-    const next = applyRelayPasswordJoinEnv({
-      VIBETERM_ROLES: ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? '',
+    logRelayJoinSummary((message) => (io.log ?? console.log)(message), {
+      url: result.relayUrl,
+      tenantId: result.tenantId,
+      relayUrls: result.relayUrls,
+      env: ctx.env,
+      pending: false,
+      restart,
     });
-    const list = formatPortPlanForEnv({ ...ctx.env, VIBETERM_ROLES: next.VIBETERM_ROLES });
-    if (list) (io.log ?? console.log)(t('relay.join.portsHint', { list }));
     return result;
   });
 }

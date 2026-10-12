@@ -4,6 +4,7 @@ import {
   RELAY_RESPONSE_MAX_BYTES,
   RelayApiError,
   RelayTimeoutError,
+  RelayTransportError,
   formatLimits,
   formatQuota,
   gatewayBaseUrl,
@@ -132,6 +133,83 @@ describe('requestRelayJson', () => {
     expect(Date.now() - started).toBeLessThan(5_000);
     // 超时不是 RelayApiError，所以 r3 的 failover 会换下一台中继。
     expect(error).not.toBeInstanceOf(RelayApiError);
+  });
+
+  test('wraps a failing fetch into a transport error that keeps the cause', async () => {
+    const cause = new TypeError('Unable to connect');
+    const error = await requestRelayJson({
+      fetcher: async () => {
+        throw cause;
+      },
+      url: 'https://relay.example/api/relay/health',
+      label: 'relay health',
+    }).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(RelayTransportError);
+    expect((error as Error).message).toBe('relay health failed: Unable to connect');
+    expect((error as Error).cause).toBe(cause);
+  });
+
+  test('a response body cut mid-read is a transport error', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new Error('socket closed'));
+      },
+    });
+    const error = await requestRelayJson({
+      fetcher: async () => new Response(body, { status: 200 }),
+      url: 'https://relay.example/api/relay/health',
+      label: 'relay health',
+    }).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(RelayTransportError);
+    expect((error as Error).message).toContain('response could not be read');
+  });
+
+  test('an oversized body is not a transport error', async () => {
+    const error = await requestRelayJson({
+      fetcher: async () => new Response('x'.repeat(64), { status: 200 }),
+      url: 'https://relay.example/api/relay/health',
+      label: 'relay health',
+      maxBytes: 8,
+    }).catch((err: unknown) => err);
+    expect(error).not.toBeInstanceOf(RelayTransportError);
+    expect((error as Error).message).toContain('exceeds 8 bytes');
+  });
+
+  test('an external abort cancels the in-flight request and leaves no timer behind', async () => {
+    const controller = new AbortController();
+    let aborted = false;
+    const fetcher: FetchLike = (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        (init?.signal as AbortSignal).addEventListener('abort', () => {
+          aborted = true;
+          reject(new Error('aborted'));
+        });
+      });
+    const pending = requestRelayJson({
+      fetcher,
+      url: 'https://relay.example/api/relay/health',
+      label: 'relay health',
+      timeoutMs: 60_000,
+      signal: controller.signal,
+    }).catch((err: unknown) => err);
+    controller.abort();
+    const error = await pending;
+    expect(aborted).toBe(true);
+    expect(error).not.toBeInstanceOf(RelayTransportError);
+  });
+
+  test('an already aborted signal never reaches the network as a transport failure', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetcher: FetchLike = (_url, init) =>
+      Promise.reject(new Error(init?.signal?.aborted ? 'aborted' : 'not aborted'));
+    const error = await requestRelayJson({
+      fetcher,
+      url: 'https://relay.example/api/relay/health',
+      label: 'relay health',
+      signal: controller.signal,
+    }).catch((err: unknown) => err);
+    expect((error as Error).message).toBe('aborted');
   });
 
   test('clears the timer on a normal response', async () => {

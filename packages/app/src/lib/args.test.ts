@@ -24,6 +24,37 @@ describe('parseArgs', () => {
     expect(parsed.flags['no-interactive']).toBe(true);
   });
 
+  test('boolean flags never swallow the following token', () => {
+    const noWait = parseArgs(['relay', 'join', '--no-wait', 'https://relay.example']);
+    expect(noWait.flags['no-wait']).toBe(true);
+    expect(noWait.positionals).toEqual(['join', 'https://relay.example']);
+    const restart = parseArgs(['relay', 'join', '--no-restart', 'https://relay.example']);
+    expect(restart.flags['no-restart']).toBe(true);
+    expect(restart.positionals).toEqual(['join', 'https://relay.example']);
+    const yes = parseArgs(['uninstall', '--yes', '--purge', '--install-dir', '/opt/vt']);
+    expect(yes.flags).toEqual({ yes: true, purge: true, 'install-dir': '/opt/vt' });
+  });
+
+  test('boolean flags accept =true and =false as real booleans', () => {
+    const parsed = parseArgs(['relay', 'join', '--no-wait=true', '--no-restart=false']);
+    expect(parsed.flags['no-wait']).toBe(true);
+    expect(parsed.flags['no-restart']).toBe(false);
+    expect(() => assertKnownFlags(parsed)).not.toThrow();
+  });
+
+  test('any other value on a boolean flag is a usage error', () => {
+    const parsed = parseArgs(['relay', 'join', '--no-wait=junk']);
+    expect(() => assertKnownFlags(parsed)).toThrow('--no-wait=junk');
+    expect(() => assertKnownFlags(parseArgs(['doctor', '--json=']))).toThrow('--json=');
+  });
+
+  test('flags with an optional value keep consuming it', () => {
+    expect(parseArgs(['init', '--autostart', 'false']).flags.autostart).toBe('false');
+    expect(parseArgs(['init', '--autostart']).flags.autostart).toBe(true);
+    expect(parseArgs(['relay', 'join', '--password', 'secret']).flags.password).toBe('secret');
+    expect(parseArgs(['relay', 'join', '--password']).flags.password).toBe(true);
+  });
+
   test('allows global flags before command', () => {
     const parsed = parseArgs(['--lang', 'zh-CN', 'doctor', '--json']);
     expect(parsed.command).toBe('doctor');
@@ -64,6 +95,12 @@ describe('resolveNestedCommand', () => {
     ]);
     expect(join.flags['no-restart']).toBe(true);
     expect(resolveNestedCommand(join).name).toBe('relay.join');
+  });
+
+  test('relay join accepts --no-wait', () => {
+    const join = parseArgs(['relay', 'join', '--token', 'r3.x', '--no-wait']);
+    expect(join.flags['no-wait']).toBe(true);
+    expect(() => assertKnownFlags(join)).not.toThrow();
   });
 
   test('resolves mesh reset-root and direct', () => {

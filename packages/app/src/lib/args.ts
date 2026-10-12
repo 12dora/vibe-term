@@ -45,6 +45,46 @@ export type NestedCommand = {
   raw: string | null;
 };
 
+/**
+ * 只表示「开/关」的旗标：永远不吞后面的 token（`--no-wait <url>` 里的 url 是位置参数），
+ * 只接受光秃秃的 `--flag` 或 `--flag=true|false`。可带可不带值的旗标（`--password [<p>]`、
+ * `--autostart [true|false]`）不在此列。
+ */
+const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
+  'help',
+  'yes',
+  'json',
+  'force',
+  'purge',
+  'fix',
+  'no-interactive',
+  'full-reset',
+  'clear',
+  'kick',
+  'keep',
+  'members',
+  'inherit',
+  'reset-tls',
+  'replace-shim',
+  'no-service',
+  'no-restart',
+  'no-wait',
+  'install-deps',
+  'skip-dep-check',
+  'repair',
+  'keep-backup',
+  'allow-missing-native',
+  'allow-unverified',
+  'apply-current-package',
+]);
+
+function equalsFlagValue(key: string, value: string): string | boolean {
+  if (!BOOLEAN_FLAGS.has(key)) return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   let command: string | null = null;
   const flags: Record<string, string | boolean> = {};
@@ -78,12 +118,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (equalIndex >= 0) {
       const key = noPrefix.slice(0, equalIndex);
       const value = noPrefix.slice(equalIndex + 1);
-      flags[key] = value;
+      flags[key] = equalsFlagValue(key, value);
       continue;
     }
 
     const maybeNext = argv[index + 1];
-    if (maybeNext && !maybeNext.startsWith('--')) {
+    if (!BOOLEAN_FLAGS.has(noPrefix) && maybeNext && !maybeNext.startsWith('--')) {
       flags[noPrefix] = maybeNext;
       index += 1;
       continue;
@@ -294,6 +334,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'name',
     'ca-fingerprint',
     'no-restart',
+    'no-wait',
   ]),
   'relay.reauth': RELAY_TENANT_FLAGS,
   'relay.pack.upload': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
@@ -323,9 +364,12 @@ export function requireFlagValue(
 export function assertKnownFlags(parsed: ParsedArgs): void {
   const nested = resolveNestedCommand(parsed);
   const allowed = COMMAND_FLAGS[nested.name] ?? GLOBAL_FLAGS;
-  for (const key of Object.keys(parsed.flags)) {
+  for (const [key, value] of Object.entries(parsed.flags)) {
     if (!allowed.has(key)) {
       throw new Error(t('cli.error.unknownFlag', { flag: key }));
+    }
+    if (BOOLEAN_FLAGS.has(key) && typeof value === 'string') {
+      throw new Error(t('errors.args.invalidFlag', { flag: key, value }));
     }
   }
 }

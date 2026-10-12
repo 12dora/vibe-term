@@ -249,15 +249,48 @@ export const en: Record<string, string> = {
   'runtime.notFound': 'Not Found',
 
   'relay.join.portsHint': 'Allow inbound {{list}}',
-  'relay.join.joined': 'joined relay {{url}} (tenant {{tenantId}})',
+  'relay.join.relay': 'Relay: {{url}} (tenant {{tenantId}})',
   'relay.join.refreshed': 'refreshed the relay token for {{url}} (tenant {{tenantId}})',
   'relay.join.alsoConfigured': 'also configured: {{urls}}',
+  'relay.join.pending':
+    'Join request sent. Waiting for approval: click "Confirm join" on the device that created the join code.',
+  'relay.join.pendingLater': 'Once approved, this node appears on the other devices.',
+  'relay.join.pendingLaterRestart':
+    'Once approved, restart VibeTerm; this node then appears on the other devices.',
+  'relay.join.done': 'Joined.',
+  'relay.join.doneRestart': 'Joined. Restart VibeTerm to apply.',
+  'relay.join.next.auto': 'once approved, this node completes the join automatically.',
+  'relay.join.next.restart': 'once approved, restart VibeTerm to complete the join.',
+  'relay.join.failed': 'Join failed: {{reason}}',
+  'relay.join.timeout':
+    'No approval within {{minutes}} minutes. The join request stays pending; {{next}}',
+  'relay.join.interrupted': 'Stopped waiting. The join request stays pending; {{next}}',
+  'relay.join.reason.unreachable':
+    'cannot reach the relay; check the network and the relay address',
+  'relay.join.reason.codeInvalid': 'the join code is invalid or has expired; generate a new one',
+  'relay.join.reason.codeUsed': 'the join code has already been used; generate a new one',
+  'relay.join.reason.codeExpired': 'the join code has expired; generate a new one',
+  'relay.join.reason.tokenRejected':
+    'the relay no longer accepts this join code; generate a new one',
+  'relay.join.reason.tenantNotFound':
+    'the relay has no such tenant; check the tenant ID and the relay address',
+  'relay.join.reason.tenantKicked': 'this tenant was removed by the relay administrator',
+  'relay.join.reason.wrongPassword': 'wrong password',
+  'relay.join.reason.rateLimited': 'too many attempts; try again later',
+  'relay.join.reason.quotaNodes': 'this tenant has reached its node limit',
+  'relay.join.reason.nodeRevoked':
+    'this node identity was revoked; run vibeterm mesh reset-identity, then join again',
+  'relay.join.reason.caMismatch': 'the relay CA fingerprint does not match the expected one',
+  'relay.join.reason.relayNotAuthorized':
+    'this relay is not in the relay list signed by the account',
+  'relay.join.reason.localUserExists':
+    'this machine already has a mesh user; password join does not overwrite it',
+  'relay.join.reason.packInvalid':
+    'the relay data for this tenant is missing or out of date; run vibeterm relay pack upload on a connected node, then join again',
   'relay.trust.fingerprintInvalid':
     '--fingerprint requires the 64-hex SHA-256 SPKI fingerprint of the relay CA',
   'relay.trust.pinned': 'relay CA pinned: {{url}} SHA256 SPKI {{fingerprint}}',
   'relay.trust.restartHint': 'Restart VibeTerm to apply the new relay CA pin.',
-  'relay.join.syncing':
-    "this node will appear on other members' Nodes page once it syncs. If the join code has not been admitted yet, finish the admission in the browser tab that created the join code",
 
   'user.passwd.nodesTooOld': 'Some nodes are older than 1.1.16. Update every node first.',
   'user.passwd.failed': 'password update failed: {{error}}',

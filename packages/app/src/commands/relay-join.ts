@@ -18,25 +18,21 @@ import {
   decodeRelayJoinToken,
   isRelayJoinToken,
 } from '../../../shared/src/relay';
-import { t } from '../i18n';
 import { requireFlagValue } from '../lib/args';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
-import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import { joinUserKeyService, makeReplayPasskeyVerifier } from '../lib/keylog-passkey-replay';
 import type { LocalAuthContext } from '../lib/local-auth';
 import {
-  RelayCaError,
   fetchPinnedRelayCa,
   pinRelayCa,
   resolveRelayJoinCaFingerprint,
   storeRelayCaPin,
 } from '../lib/relay-ca';
 import { openRelayKeyLogPage, parseRelayKeyLogPage } from '../lib/relay-keylog';
-import { alsoConfiguredLine, persistRelayUplink, relaysForTokenJoin } from '../lib/relay-store';
+import { persistRelayUplink, relaysForTokenJoin } from '../lib/relay-store';
 import { asString } from '../lib/validate';
-import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import { applyRelayPasswordJoinEnv, relayJoinRoleName } from '../runtime/setup-shared';
 import type { ParsedArgs } from '../types';
 import type { CliIo } from './cli-io';
@@ -45,12 +41,15 @@ import { JoinError, NODE_REVOKED_REJOIN_ERROR } from './join-error';
 import { assertChainUids } from './join-verify';
 import { orderRelayEntries } from './relay-join-entries';
 import {
-  RELAY_REDEEM_RESPONSE_MAX_BYTES,
-  RelayApiError,
-  joinRelayUrl,
-  requestRelayJson,
-} from './relay-shared';
-import { maybeRestart } from './restart';
+  RELAY_ENROLLMENT_LOOKUP_MISSING,
+  isBareNotFound,
+  shouldTryNextRelay,
+} from './relay-join-failover';
+import { joinFailureMessage } from './relay-join-failure';
+import { logRelayJoinSummary } from './relay-join-summary';
+import { type RelayAdmissionWatch, settleRelayAdmission } from './relay-join-wait';
+import { RELAY_REDEEM_RESPONSE_MAX_BYTES, joinRelayUrl, requestRelayJson } from './relay-shared';
+import { type RestartOutcome, maybeRestart } from './restart';
 import { withAuth } from './with-auth';
 
 export { orderRelayEntries, relayJoinRoleName };
@@ -63,29 +62,14 @@ export type RelayJoinResult = {
   admitted: boolean;
 };
 
+/** 未被批准时带上盯日志所需的上下文（已批准为 null），以及服务重启的结果。 */
+export type RelayJoinRun = RelayJoinResult & {
+  watch: RelayAdmissionWatch | null;
+  restart: RestartOutcome;
+};
+
 function log(io: CliIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
-}
-
-export const RELAY_ENROLLMENT_LOOKUP_MISSING =
-  'this relay does not expose GET /api/relay/tenants/:tenantId/enrollments/:enrollPk; upgrade the relay to 1.1.23 or newer';
-
-/** 只有传输层失败才换下一个中继：中继明确拒绝（4xx/5xx 契约错误）换一台也是同样的答案。 */
-function isRelayTransportError(error: unknown): boolean {
-  if (error instanceof RelayCaError) return error.transport;
-  return !(error instanceof RelayApiError) && !(error instanceof JoinError);
-}
-
-/** 这台中继没有这条 enrollment：fan-out 部分失败时 r3 里可能仍带着它，换下一台。CA 指纹不符仍直接失败。 */
-function isMissingEnrollmentError(error: unknown): boolean {
-  if (error instanceof RelayApiError) {
-    return error.code === 'RELAY_ENROLLMENT_UNKNOWN' || error.code === 'RELAY_NOT_FOUND';
-  }
-  return error instanceof JoinError && error.message === RELAY_ENROLLMENT_LOOKUP_MISSING;
-}
-
-function shouldTryNextRelay(error: unknown): boolean {
-  return isRelayTransportError(error) || isMissingEnrollmentError(error);
 }
 
 /** 每台中继的租户令牌都是它自己签发的，跨中继复用只会被拒。 */
@@ -118,7 +102,7 @@ async function fetchEnrollmentUid(input: {
       timeoutMs: input.timeoutMs,
     });
   } catch (error) {
-    if (error instanceof RelayApiError && error.status === 404) {
+    if (isBareNotFound(error)) {
       throw new JoinError('join_failed', RELAY_ENROLLMENT_LOOKUP_MISSING);
     }
     throw error;
@@ -230,6 +214,7 @@ type RelayAttempt = {
   prepared: PreparedJoin;
   redeemed: RelayRedeemResponse;
   entry: RelayJoinTokenEntry;
+  fetcher: FetchLike | undefined;
   /** 自签中继的 CA：redeem 成功后才落库，避免为一台连不上的中继留下 pin。 */
   pin: { caPem: string; fingerprint: string } | null;
 };
@@ -294,14 +279,13 @@ async function redeemAgainstRelays(input: {
         fetcher,
         timeoutMs: input.io.relayTimeoutMs,
       });
-      return { prepared, redeemed, entry, pin };
+      return { prepared, redeemed, entry, fetcher, pin };
     } catch (error) {
       lastError = error;
       if (!shouldTryNextRelay(error)) break;
     }
   }
-  const message = errorMessage(lastError);
-  throw new JoinError('relay_unreachable', `relay join failed: ${message}`);
+  throw lastError;
 }
 
 async function commitRelayJoin(input: {
@@ -372,12 +356,45 @@ async function writeRelayNodeEnv(envPath: string): Promise<void> {
   });
 }
 
+/** 把本机切成中继成员：写角色、装直连插件、按需重启服务，返回重启结果。 */
+async function applyNodeSetup(
+  ctx: LocalAuthContext,
+  parsed: ParsedArgs,
+  io: CliIo
+): Promise<RestartOutcome> {
+  if (ctx.envPath) {
+    await writeRelayNodeEnv(ctx.envPath);
+  } else {
+    process.env.VIBETERM_ROLES = relayJoinRoleName(
+      ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? undefined
+    );
+    for (const key of ['VIBETERM_HUB_URL', 'VIBETERM_HUB_PUBLIC_URL'] as const) {
+      delete process.env[key];
+    }
+  }
+  if (!ctx.installDir) return 'skipped';
+  await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
+  return await maybeRestart(parsed, io, ctx.installDir);
+}
+
+function admissionWatch(attempt: RelayAttempt, decoded: RelayJoinToken): RelayAdmissionWatch {
+  return {
+    entry: attempt.entry,
+    headers: relayHeaders(attempt.entry),
+    fetcher: attempt.fetcher,
+    logKey: decoded.logKey,
+    rootPublicKey: decoded.rootPublicKey,
+    nodeIdHex: attempt.prepared.identity.nodeIdHex,
+    records: [...attempt.redeemed.keyLog],
+  };
+}
+
 export async function runRelayJoin(
   parsed: ParsedArgs,
   urlRaw: string,
   token: string,
   io: CliIo = {}
-): Promise<RelayJoinResult> {
+): Promise<RelayJoinRun> {
   let decoded: RelayJoinToken;
   try {
     decoded = decodeRelayJoinToken(token);
@@ -397,39 +414,23 @@ export async function runRelayJoin(
   return await withAuth(parsed, io, async (ctx) => {
     const attempt = await redeemAgainstRelays({ ctx, decoded, entries, io, caFingerprint });
     const committed = await commitRelayJoin({ ctx, decoded, attempt, entries, name });
-    if (ctx.envPath) {
-      await writeRelayNodeEnv(ctx.envPath);
-    } else {
-      process.env.VIBETERM_ROLES = relayJoinRoleName(
-        ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? undefined
-      );
-      for (const key of ['VIBETERM_HUB_URL', 'VIBETERM_HUB_PUBLIC_URL'] as const) {
-        delete process.env[key];
-      }
-    }
-    if (ctx.installDir) {
-      await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
-      await maybeRestart(parsed, io, ctx.installDir);
-    }
-    log(io, t('relay.join.joined', { url: attempt.entry.url, tenantId: attempt.entry.tenantId }));
-    const alsoConfigured = alsoConfiguredLine(attempt.entry.url, committed.relayUrls);
-    if (alsoConfigured) log(io, alsoConfigured);
-    if (!committed.admitted) {
-      log(io, t('relay.join.syncing'));
-    }
-    const list = formatPortPlanForEnv({
-      ...ctx.env,
-      VIBETERM_ROLES: relayJoinRoleName(
-        ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? undefined
-      ),
+    const restart = await applyNodeSetup(ctx, parsed, io);
+    logRelayJoinSummary((message) => log(io, message), {
+      url: attempt.entry.url,
+      tenantId: attempt.entry.tenantId,
+      relayUrls: committed.relayUrls,
+      env: ctx.env,
+      pending: !committed.admitted,
+      restart,
     });
-    if (list) log(io, t('relay.join.portsHint', { list }));
     return {
       userId: committed.userId,
       relayUrl: attempt.entry.url,
       relayUrls: committed.relayUrls,
       tenantId: attempt.entry.tenantId,
       admitted: committed.admitted,
+      watch: committed.admitted ? null : admissionWatch(attempt, decoded),
+      restart,
     };
   });
 }
@@ -439,11 +440,7 @@ export function relayJoinUrlFromParsed(parsed: ParsedArgs): string {
   return rest[0] ?? '';
 }
 
-/** CLI entry: `--token r3.…` or `--tenant` + password. */
-export async function runRelayJoinCommand(
-  parsed: ParsedArgs,
-  io: CliIo = {}
-): Promise<RelayJoinResult> {
+async function dispatchRelayJoin(parsed: ParsedArgs, io: CliIo): Promise<RelayJoinResult> {
   const token = requireFlagValue(parsed.flags, 'token');
   const tenant = asString(parsed.flags.tenant);
   if (token && (Object.hasOwn(parsed.flags, 'password') || tenant)) {
@@ -463,5 +460,24 @@ export async function runRelayJoinCommand(
   if (!isRelayJoinToken(token)) {
     throw new JoinError('invalid_token', 'relay join --token must be an r3. join token');
   }
-  return await runRelayJoin(parsed, relayJoinUrlFromParsed(parsed), token, io);
+  const { watch, restart, ...result } = await runRelayJoin(
+    parsed,
+    relayJoinUrlFromParsed(parsed),
+    token,
+    io
+  );
+  await settleRelayAdmission(parsed, watch, io, restart);
+  return result;
+}
+
+/** CLI entry: `--token r3.…` or `--tenant` + password. 任何失败都带「加入失败」前缀。 */
+export async function runRelayJoinCommand(
+  parsed: ParsedArgs,
+  io: CliIo = {}
+): Promise<RelayJoinResult> {
+  try {
+    return await dispatchRelayJoin(parsed, io);
+  } catch (error) {
+    throw new Error(joinFailureMessage(error), { cause: error });
+  }
 }
