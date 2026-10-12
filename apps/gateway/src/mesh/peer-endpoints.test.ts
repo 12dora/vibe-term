@@ -153,10 +153,7 @@ describe('stunMappedAddressesForAdvertise', () => {
       { ok: true, fakeIp: true, mappedAddress: '4.2.2.2:4' },
       { ok: true, fakeIp: true, mappedAddress: '203.0.113.10:2' },
     ];
-    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual([
-      '203.0.113.10:1',
-      '4.2.2.2:3',
-    ]);
+    expect(stunMappedAddressesForAdvertise(rows, now)).toEqual(['203.0.113.10:1', '4.2.2.2:3']);
     const urls = enumeratePeerEndpoints(
       39001,
       { eth0: [v4('10.0.0.3')] },
@@ -290,9 +287,7 @@ describe('pickRelayObservedIpv4 / pickPublicPeerIpv4', () => {
   });
 
   test('多条观测多数派；1:1 平票不采用', () => {
-    expect(pickRelayObservedIpv4(['203.0.113.10', '203.0.113.10', '4.2.2.2'])).toBe(
-      '203.0.113.10'
-    );
+    expect(pickRelayObservedIpv4(['203.0.113.10', '203.0.113.10', '4.2.2.2'])).toBe('203.0.113.10');
     expect(pickRelayObservedIpv4(['203.0.113.10', '4.2.2.2'])).toBeNull();
   });
 

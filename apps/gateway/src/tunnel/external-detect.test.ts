@@ -470,7 +470,8 @@ describe('token-tunnel log + Access probe', () => {
             'base64'
           );
         }
-        if (path === '/tmp/cf.log') return `${escapedConfigLogLine('vibeterm.example.org', 9883)}\n`;
+        if (path === '/tmp/cf.log')
+          return `${escapedConfigLogLine('vibeterm.example.org', 9883)}\n`;
         return null;
       },
       listDir: async () => [],
