@@ -15,6 +15,7 @@ import type {
 } from '@vibeterm/api-client/relay/tenant-api';
 import { defaultRelayTenantApi, isRelayRoutesMissing } from '@vibeterm/api-client/relay/tenant-api';
 import { errorMessage } from '@vibeterm/shared';
+import { type RelayJoinTarget, pickRelayJoinTarget } from '@vibeterm/shared/relay';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
   type PollingTimingOptions,
@@ -135,6 +136,43 @@ export function relayAwaitingToken(snapshot: MeshRelayState): boolean {
 /** 按 priority 升序（即 failover 顺序）排一份；同优先级按地址稳定排序。 */
 export function orderedRelays(snapshot: MeshRelayState): RelayLinkStatus[] {
   return [...snapshot.relays].sort((a, b) => a.priority - b.priority || a.url.localeCompare(b.url));
+}
+
+/**
+ * 新机器该指向的那台中继。地址与租户编号出自同一行，
+ * 指引里的地址、`relay join` 命令与加入码命令都只认这一个结果。
+ */
+export function relayJoinTarget(
+  snapshot: Pick<MeshRelayState, 'relays' | 'tenantId'>
+): RelayJoinTarget | null {
+  return pickRelayJoinTarget(snapshot.relays, snapshot.tenantId);
+}
+
+function urlOrigin(url: string): string | null {
+  try {
+    const { origin } = new URL(url);
+    return origin === 'null' ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 本机自己那台中继（`publicUrl`）签发的租户编号：按 origin 找到地址对上的那一行，取它自己的编号。
+ * 旧网关不下发逐行编号，顶层 `tenantId` 属于 priority 最小的那一行，对上的正是它才能用。
+ */
+export function relayHostTenantId(
+  snapshot: Pick<MeshRelayState, 'relays' | 'tenantId'>,
+  publicUrl: string | null | undefined
+): string | null {
+  const origin = publicUrl ? urlOrigin(publicUrl) : null;
+  if (origin === null) return null;
+  const row = snapshot.relays.find((candidate) => urlOrigin(candidate.url) === origin);
+  if (!row) return null;
+  if (row.tenantId) return row.tenantId;
+  if (snapshot.relays.some((candidate) => candidate.tenantId)) return null;
+  const lowest = [...snapshot.relays].sort((a, b) => a.priority - b.priority)[0];
+  return lowest === row ? snapshot.tenantId : null;
 }
 
 /**

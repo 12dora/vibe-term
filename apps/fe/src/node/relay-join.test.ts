@@ -173,6 +173,45 @@ describe('createEnrollmentOnRelay 的 fan-out 结果', () => {
     expect(created.publicUrl).toBe(RELAY_A.url);
   });
 
+  test('首选中继收下了 enrollment：排到 join 串第一条，命令地址跟着它', async () => {
+    const created = await createEnrollmentOnRelay({
+      channel: channelOf([], {
+        relays: [
+          { ...RELAY_A, token: encodeBase64url(TOKEN), accepted: true },
+          { ...RELAY_B, token: encodeBase64url(TOKEN), accepted: true },
+        ],
+      }),
+      relayApi: relayApiOf([RELAY_A], [RELAY_A, RELAY_B]),
+      preferredUrl: RELAY_B.url,
+      ...SHARED,
+    });
+
+    expect(decodeRelayJoinToken(created.joinToken).relays).toEqual([
+      { url: RELAY_B.url, tenantId: RELAY_B.tenantId, token: TOKEN },
+      { url: RELAY_A.url, tenantId: RELAY_A.tenantId, token: TOKEN },
+    ]);
+    expect(created.publicUrl).toBe(RELAY_B.url);
+  });
+
+  test('首选中继没收下：退回第一台收下的，顺序不动', async () => {
+    const created = await createEnrollmentOnRelay({
+      channel: channelOf([], {
+        relays: [
+          { ...RELAY_A, token: encodeBase64url(TOKEN), accepted: true },
+          { ...RELAY_B, accepted: false, error: 'timeout' },
+        ],
+      }),
+      relayApi: relayApiOf([RELAY_A], [RELAY_A, RELAY_B]),
+      preferredUrl: RELAY_B.url,
+      ...SHARED,
+    });
+
+    expect(decodeRelayJoinToken(created.joinToken).relays.map((relay) => relay.url)).toEqual([
+      RELAY_A.url,
+    ]);
+    expect(created.publicUrl).toBe(RELAY_A.url);
+  });
+
   test('accepted 的那条没带令牌时按地址回查 join-material', async () => {
     const created = await createEnrollmentOnRelay({
       channel: channelOf([], {

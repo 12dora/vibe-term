@@ -54,6 +54,7 @@ function machine(over: Partial<ConnectMachine> = {}): ConnectMachine {
     relayUrl: null,
     tenantId: null,
     relayPublicUrl: null,
+    hostTenantId: null,
     relayHasPassword: false,
     ...over,
   };

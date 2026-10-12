@@ -183,6 +183,61 @@ describe('连接详情', () => {
     expect(html).toContain('data-testid="nodes-relay-enroll-password-change"');
   });
 
+  test('多条中继：每台的租户编号挂在自己的主机名后面，不再只摆一个全局值', () => {
+    const row = { online: true, attached: true, enrollPassword: { known: true } };
+    const html = render({
+      ...RELAY_MODE,
+      tenantId: 'cc'.repeat(16),
+      relays: [
+        {
+          ...row,
+          url: 'https://jp.example.com',
+          tenantId: 'bb'.repeat(16),
+          priority: 1,
+          role: 'primary',
+        },
+        {
+          ...row,
+          url: 'https://sh.example.com:8443',
+          tenantId: 'aa'.repeat(16),
+          priority: 0,
+          role: 'secondary',
+        },
+      ],
+    });
+    const sh = html.indexOf('data-testid="nodes-relay-tenant-id-sh.example.com:8443"');
+    const jp = html.indexOf('data-testid="nodes-relay-tenant-id-jp.example.com"');
+    expect(sh).toBeGreaterThan(-1);
+    expect(jp).toBeGreaterThan(sh);
+    expect(html.slice(sh, jp)).toContain('aa'.repeat(16));
+    expect(html.slice(jp)).toContain('bb'.repeat(16));
+    expect(html).not.toContain('cc'.repeat(16));
+    expect(html).not.toContain('data-testid="nodes-relay-tenant-id"');
+    // 每行的复制按钮同名，靠所在分组的主机名区分。
+    expect(html).toContain('<fieldset aria-label="sh.example.com:8443"');
+    expect(html).toContain('<fieldset aria-label="jp.example.com"');
+  });
+
+  test('只有一条中继：用这一行自己的编号，不标主机名', () => {
+    const html = render({
+      ...RELAY_MODE,
+      tenantId: 'bb'.repeat(16),
+      relays: [
+        {
+          url: 'https://jp.example.com',
+          tenantId: 'cc'.repeat(16),
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+        },
+      ],
+    });
+    expect(html).toContain('data-testid="nodes-relay-tenant-id"');
+    expect(html).toContain('cc'.repeat(16));
+    expect(html).not.toContain('bb'.repeat(16));
+  });
+
   test('已挂上但本机未记录：接入密码显示未记录', () => {
     const html = render({
       ...RELAY_MODE,

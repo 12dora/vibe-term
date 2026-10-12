@@ -12,6 +12,8 @@ import {
   orderedRelays,
   refreshMeshRelay,
   relayAwaitingToken,
+  relayHostTenantId,
+  relayJoinTarget,
   relayKicked,
   relayWritable,
   resetMeshRelayStateForTest,
@@ -140,6 +142,107 @@ describe('mesh-relay 纯函数', () => {
       'https://pri.example'
     );
     expect(enrollPasswordRelays(snapshot)[0]?.enrollPassword).toEqual({ known: true });
+  });
+
+  test('新机器的加入目标：地址与租户编号出自同一行，主中继优先于 priority', () => {
+    const sh = { url: 'https://sh.example', tenantId: 'aa'.repeat(16) };
+    const jp = { url: 'https://jp.example', tenantId: 'bb'.repeat(16) };
+    const snapshot = {
+      ...getMeshRelayState(),
+      ...status({
+        tenantId: 'cc'.repeat(16),
+        relays: [
+          link(sh.url, { tenantId: sh.tenantId, priority: 0, attached: true, role: 'secondary' }),
+          link(jp.url, { tenantId: jp.tenantId, priority: 1, attached: true, role: 'primary' }),
+        ],
+      }),
+    };
+    const target = relayJoinTarget(snapshot);
+    expect(target).toEqual(jp);
+    expect(target?.tenantId).not.toBe('cc'.repeat(16));
+  });
+
+  test('本机自建中继的租户编号：取地址对上的那一行，不取加入目标的', () => {
+    const snapshot = {
+      ...getMeshRelayState(),
+      ...status({
+        tenantId: 'cc'.repeat(16),
+        relays: [
+          link('https://sh.example:8443/', {
+            tenantId: 'aa'.repeat(16),
+            priority: 0,
+            attached: true,
+            role: 'secondary',
+          }),
+          link('https://jp.example', {
+            tenantId: 'bb'.repeat(16),
+            priority: 1,
+            attached: true,
+            role: 'primary',
+          }),
+        ],
+      }),
+    };
+    // 按 origin 比：末尾斜杠与路径不算差异，端口算。
+    expect(relayHostTenantId(snapshot, 'https://sh.example:8443')).toBe('aa'.repeat(16));
+    expect(relayHostTenantId(snapshot, 'https://jp.example/')).toBe('bb'.repeat(16));
+    expect(relayHostTenantId(snapshot, 'https://sh.example')).toBeNull();
+    expect(relayHostTenantId(snapshot, 'https://other.example')).toBeNull();
+    expect(relayHostTenantId(snapshot, 'not a url')).toBeNull();
+    expect(relayHostTenantId(snapshot, null)).toBeNull();
+  });
+
+  test('本机自建中继的租户编号：对上的那一行还没有编号时不借别的行或顶层的', () => {
+    const snapshot = {
+      ...getMeshRelayState(),
+      ...status({
+        tenantId: 'bb'.repeat(16),
+        relays: [
+          link('https://sh.example', { priority: 0 }),
+          link('https://jp.example', {
+            tenantId: 'bb'.repeat(16),
+            priority: 1,
+            attached: true,
+            role: 'primary',
+          }),
+        ],
+      }),
+    };
+    expect(relayHostTenantId(snapshot, 'https://sh.example')).toBeNull();
+  });
+
+  test('本机自建中继的租户编号：旧网关的顶层编号只配 priority 最小的那一行', () => {
+    const snapshot = {
+      ...getMeshRelayState(),
+      ...status({
+        tenantId: 'aa'.repeat(16),
+        relays: [
+          link('https://jp.example', { priority: 1, attached: true, role: 'primary' }),
+          link('https://sh.example', { priority: 0, attached: true, role: 'secondary' }),
+        ],
+      }),
+    };
+    expect(relayHostTenantId(snapshot, 'https://sh.example')).toBe('aa'.repeat(16));
+    expect(relayHostTenantId(snapshot, 'https://jp.example')).toBeNull();
+    expect(relayHostTenantId({ ...snapshot, relays: [] }, 'https://sh.example')).toBeNull();
+  });
+
+  test('旧网关不下发逐行编号：顶层编号只配 priority 最小的那一行', () => {
+    const snapshot = {
+      ...getMeshRelayState(),
+      ...status({
+        tenantId: 'aa'.repeat(16),
+        relays: [
+          link('https://sh.example', { priority: 0, attached: true, role: 'secondary' }),
+          link('https://jp.example', { priority: 1, attached: true, role: 'primary' }),
+        ],
+      }),
+    };
+    expect(relayJoinTarget(snapshot)).toEqual({
+      url: 'https://sh.example',
+      tenantId: 'aa'.repeat(16),
+    });
+    expect(relayJoinTarget({ ...snapshot, relays: [] })).toBeNull();
   });
 
   test('令牌换代按「等待新令牌」判，不当成要重新输入口令', () => {

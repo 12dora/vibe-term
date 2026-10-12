@@ -21,7 +21,7 @@ export const RELAY_HOST_STEP_OFFSET = 2;
 
 /** 本机已经作为租户接进自己那条中继：租户编号到手，才谈得上让别的机器加入。 */
 export function relayHostEnrolled(machine: ConnectMachine): boolean {
-  return machine.relayMode && machine.tenantId !== null;
+  return machine.relayMode && machine.hostTenantId !== null;
 }
 
 function SetupStep({ machine, index }: { machine: ConnectMachine; index: number }) {
@@ -108,7 +108,7 @@ function EnrollStep({ machine, index }: { machine: ConnectMachine; index: number
         title={t(`${PREFIX}.enroll.title`)}
       >
         <CommandBlock
-          value={machine.tenantId as string}
+          value={machine.hostTenantId as string}
           testId="relay-tenant-id"
           label={t(`${PREFIX}.enroll.tenantId`)}
         />

@@ -6,7 +6,7 @@
 // 错误态，也不会把这份「允许缺失」的口径写进设置页共用的那份缓存。
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
-import { useMeshRelay } from '@/node/mesh-relay';
+import { relayHostTenantId, relayJoinTarget, useMeshRelay } from '@/node/mesh-relay';
 import { portPlanFromStatus } from '@/pages/settings/nodes/port-reach';
 import { LOCAL_STATUS_QUERY_KEY } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
@@ -47,10 +47,12 @@ function useGuideLocalStatus(api: LocalApi): LocalStatusResponse | null {
 
 export interface ConnectMachine extends ConnectStatus {
   mode: AuthModeResponse | null;
-  /** 新机器该加入的中继地址：本机挂着的那条，本机自己就是中继时用它的对外地址。 */
+  /** 新机器该加入的中继地址，与 `tenantId` 出自同一台中继；本机自己就是中继时用它的对外地址。 */
   relayUrl: string | null;
   /** 本机自己作为中继时的对外地址。 */
   relayPublicUrl: string | null;
+  /** 本机那台中继签发的租户编号，与 `relayPublicUrl` 配对；本机还没接进自己的中继时为 null。 */
+  hostTenantId: string | null;
   /** 本机作为中继时是否已设接入密码。 */
   relayHasPassword: boolean;
   /** 本机 live 端口计划；旧节点不下发或缺省时为 null，步骤退回角色默认。 */
@@ -61,7 +63,8 @@ export function useConnectMachine(api: LocalApi = defaultLocalApi): ConnectMachi
   const { mode, meshEnabled } = useSharedAuthMode();
   const relay = useMeshRelay({ enabled: meshEnabled });
   const status = useGuideLocalStatus(api);
-  const attached = relay.attached ?? relay.ordered[0] ?? null;
+  const target = relayJoinTarget(relay);
+  const relayPublicUrl = status?.relay?.publicUrl ?? null;
 
   return {
     role: status?.role ?? null,
@@ -69,9 +72,10 @@ export function useConnectMachine(api: LocalApi = defaultLocalApi): ConnectMachi
     relayMode: relay.relayMode,
     meshEnabled,
     mode,
-    relayUrl: attached?.url ?? status?.relay?.publicUrl ?? null,
-    tenantId: relay.relayMode ? relay.tenantId : null,
-    relayPublicUrl: status?.relay?.publicUrl ?? null,
+    relayUrl: target?.url ?? relayPublicUrl,
+    tenantId: relay.relayMode ? (target?.tenantId ?? null) : null,
+    relayPublicUrl,
+    hostTenantId: relay.relayMode ? relayHostTenantId(relay, relayPublicUrl) : null,
     relayHasPassword: status?.relay?.hasPassword ?? false,
     portPlan: portPlanFromStatus(status) ?? null,
   };

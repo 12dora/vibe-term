@@ -11,7 +11,7 @@ import {
   requireRootPublicKey,
 } from '@/node/enrollment';
 import { defaultRelayEnrollmentApi } from '@/node/enrollment-api';
-import { type UseMeshRelayResult, useMeshRelay } from '@/node/mesh-relay';
+import { type UseMeshRelayResult, relayJoinTarget, useMeshRelay } from '@/node/mesh-relay';
 import { createEnrollmentOnRelay } from '@/node/relay-join';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
@@ -58,6 +58,7 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
   const owned = useMeshRelay({ enabled: !input.relay && mode?.mode === 'mesh' });
   const relay = input.relay ?? owned;
   const clearedIds = input.clearedIds ?? NO_CLEARED_IDS;
+  const joinUrl = relayJoinTarget(relay)?.url ?? null;
   const { t } = useTranslation();
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
@@ -104,6 +105,7 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
         rootPublicKey,
         keyLogHeadHash: headFromResponse(head).hash,
         name,
+        preferredUrl: joinUrl,
         channel: defaultRelayEnrollmentApi,
         relayApi: defaultRelayTenantApi,
       });
@@ -117,7 +119,7 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
     } finally {
       setBusy(false);
     }
-  }, [api, mode, name, prompt, relay.relayMode, t]);
+  }, [api, joinUrl, mode, name, prompt, relay.relayMode, t]);
 
   return {
     name,
@@ -125,14 +127,14 @@ export function useCreateEnrollment(input: UseCreateEnrollmentInput): CreateEnro
     busy,
     error,
     created,
-    publicUrl: resolvePublicUrl(created, relay.ordered[0]?.url ?? null),
+    publicUrl: resolvePublicUrl(created, joinUrl),
     relayMode: relay.relayMode,
     submit,
   };
 }
 
 /**
- * join 命令里的对外地址：enrollment 创建响应的 `publicUrl`，或调用方给出的中继地址。
+ * join 命令里的对外地址：enrollment 创建响应的 `publicUrl`，生成之前用 `relayJoinTarget` 选出的中继地址。
  * 两者都没有、或值不是可信 https URL 就不生成命令：它会被原样拼进一条让用户粘贴执行的
  * shell 命令，畸形值等于命令注入（见 F4-fix 评审 Major）。
  */

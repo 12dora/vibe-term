@@ -104,7 +104,7 @@ describe('中继链路与操作', () => {
 
   test('租户编号、元数据代数、配额都不在这一段（它们在连接详情里）', () => {
     const html = render();
-    expect(html).not.toContain('data-testid="nodes-relay-tenant-id"');
+    expect(html).not.toContain('nodes-relay-tenant-id');
     expect(html).not.toContain('data-testid="nodes-relay-meta"');
     expect(html).not.toContain('data-testid="nodes-relay-quota"');
   });

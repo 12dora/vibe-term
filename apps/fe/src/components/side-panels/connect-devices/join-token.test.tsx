@@ -61,6 +61,7 @@ const MACHINE: ConnectMachine = {
   relayUrl: RELAY_URL,
   tenantId: TENANT,
   relayPublicUrl: RELAY_URL,
+  hostTenantId: TENANT,
   relayHasPassword: false,
 };
 

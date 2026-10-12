@@ -70,6 +70,7 @@ function machine(over: Partial<ConnectMachine> = {}): ConnectMachine {
     relayUrl: null,
     tenantId: null,
     relayPublicUrl: null,
+    hostTenantId: null,
     relayHasPassword: false,
     ...over,
   };
@@ -83,6 +84,7 @@ function stepIndex(html: string, testId: string): string | null {
 
 const RELAY_URL = 'https://relay.example.com';
 const TENANT = 'aabbccddeeff00112233445566778899';
+const OTHER_TENANT = 'bb'.repeat(16);
 
 function attachRelay(): void {
   setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
@@ -294,6 +296,35 @@ describe('ComputerGuide 的路径选择', () => {
     expect(html).toContain(`vibeterm relay join &#x27;${RELAY_URL}&#x27; --tenant ${TENANT}`);
   });
 
+  test('多条中继：地址、租户编号与两条命令都出自主中继那一台', () => {
+    const sh = { url: 'https://sh.example.com', tenantId: 'aa'.repeat(16) };
+    const jp = { url: 'https://jp.example.com', tenantId: 'bb'.repeat(16) };
+    const topLevelTenant = 'cc'.repeat(16);
+    const row = { online: true, attached: true, rttMs: null, lastError: null, kicked: false };
+    setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      tenantId: topLevelTenant,
+      multiAttach: true,
+      relays: [
+        { ...row, ...sh, priority: 0, role: 'secondary' },
+        { ...row, ...jp, priority: 1, role: 'primary' },
+      ],
+      loadedAt: 1,
+    });
+    const html = render(<ComputerGuide />);
+    expect(html).toContain(`vibeterm relay join &#x27;${jp.url}&#x27; --tenant ${jp.tenantId}`);
+    const block = (testId: string) =>
+      new RegExp(`data-testid="command-block-${testId}"[^>]*>([^<]*)<`).exec(html)?.[1] ?? '';
+    expect(block('join-uplink-url')).toBe(jp.url);
+    expect(block('join-tenant-id')).toBe(jp.tenantId);
+    // 加入码命令（生成前的预览）与密码加入指向同一台。
+    expect(block('join')).toContain(jp.url);
+    expect(html).not.toContain(sh.url);
+    expect(html).not.toContain(sh.tenantId);
+    expect(html).not.toContain(topLevelTenant);
+  });
+
   test('一级 tab 之下再套一层二级 tab，两层各只挂当前面板', () => {
     const html = render(<ComputerGuide />);
     expect(html.split('role="tablist"').length - 1).toBe(2);
@@ -359,16 +390,42 @@ describe('本机自建中继的三步', () => {
           relayHasPassword: true,
           relayMode: true,
           relayAttached: true,
-          tenantId: TENANT,
+          tenantId: OTHER_TENANT,
+          hostTenantId: TENANT,
         })}
         onSwitchToJoin={() => undefined}
       />
     );
     expect(html.split('data-step-state="done"').length - 1).toBe(3);
-    expect(html).toContain('data-testid="command-block-relay-tenant-id"');
-    expect(html).toContain(TENANT);
+    const tenant = /data-testid="command-block-relay-tenant-id"[^>]*>([^<]*)</.exec(html)?.[1];
+    expect(tenant).toBe(TENANT);
+    // 加入目标是另一台中继时，它的编号不能配到本机中继的地址旁边。
+    expect(html).not.toContain(OTHER_TENANT);
     expect(html).toContain('connectDevices.computer.relayHost.invite.description');
     expect(html).toContain('data-testid="connect-relay-goto-join"');
+  });
+
+  test('本机只是别的中继的租户、还没接进自己的中继：接入这一步仍是待办，不借别台的租户编号', () => {
+    const html = render(
+      <RelayHostSteps
+        machine={machine({
+          role: 'relay,node',
+          relayPublicUrl: RELAY_URL,
+          relayHasPassword: true,
+          relayMode: true,
+          relayAttached: true,
+          relayUrl: 'https://jp.example.com',
+          tenantId: OTHER_TENANT,
+        })}
+        onSwitchToJoin={() => undefined}
+      />
+    );
+    expect(html.split('data-step-state="done"').length - 1).toBe(2);
+    expect(html).not.toContain('data-testid="command-block-relay-tenant-id"');
+    expect(html).not.toContain(OTHER_TENANT);
+    expect(html).toContain(`vibeterm relay enroll &#x27;${RELAY_URL}&#x27;`);
+    expect(html).toContain('connectDevices.computer.relayHost.invite.blocked');
+    expect(html).not.toContain('data-testid="connect-relay-goto-join"');
   });
 
   test('已是中继却没有对外地址：明确说别的机器加不进来', () => {

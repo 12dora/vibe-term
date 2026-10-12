@@ -3,7 +3,7 @@
 // 这些字段（租户编号、本机编号、可访问节点、三档配额）排查时缺一不可，平时一个都不该占版面。
 // **卡片其余部分不再重复其中任何一项**。
 
-import type { UseMeshRelayResult } from '@/node/mesh-relay';
+import { type UseMeshRelayResult, orderedRelays, relayJoinTarget } from '@/node/mesh-relay';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
 import { Progress } from '@vibeterm/ui/progress';
 import { ChevronRight } from 'lucide-react';
@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { CopyableValue, Row } from './copy-feedback';
 import { RelayPasswordRow } from './relay/relay-password-row';
 import { type RelayQuotaRow, relayQuotaRows } from './relay/relay-quota';
+import { relayLabel } from './relay/relay-rows';
 
 export interface ConnectionDetailsProps {
   relay: UseMeshRelayResult;
@@ -43,14 +44,7 @@ export function ConnectionDetailsContent({ relay, selfNodeId }: ConnectionDetail
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-1.5 pt-2 text-xs" data-testid="local-machine-details-content">
-      {relay.relayMode && relay.tenantId && (
-        <Row label={t('relay.tenant.strip.tenantId')}>
-          <CopyableValue value={relay.tenantId} testId="nodes-relay-tenant-id" mono />
-          <span className="basis-full text-[11px] text-muted-foreground">
-            {t('relay.tenant.strip.tenantIdHint')}
-          </span>
-        </Row>
-      )}
+      {relay.relayMode && <TenantRow relay={relay} />}
       <RelayPasswordRow relay={relay} />
       {selfNodeId && (
         <Row label={t('nodes.machine.details.nodeId')}>
@@ -59,6 +53,62 @@ export function ConnectionDetailsContent({ relay, selfNodeId }: ConnectionDetail
       )}
       {relay.relayMode && <RelayDetails relay={relay} />}
     </div>
+  );
+}
+
+interface TenantEntry {
+  /** 多条中继时标出编号属于哪一台；只有一条时不必标。 */
+  host: string | null;
+  tenantId: string;
+}
+
+/**
+ * 租户编号由每台中继各自签发：逐台列出自己的那一个，各成一组（复制按钮同名，读屏靠组名区分）。
+ * 旧网关只下发顶层一个编号，它属于 `relayJoinTarget` 选出的那一台。
+ */
+export function tenantEntries(relay: UseMeshRelayResult): TenantEntry[] {
+  const rows = orderedRelays(relay);
+  const labelled = rows.length > 1;
+  const issued = rows.filter((row) => row.tenantId);
+  if (issued.length > 0) {
+    return issued.map((row) => ({
+      host: labelled ? relayLabel(row.url) : null,
+      tenantId: row.tenantId as string,
+    }));
+  }
+  const target = relayJoinTarget(relay);
+  const tenantId = target?.tenantId ?? relay.tenantId;
+  if (!tenantId) return [];
+  return [{ host: labelled && target ? relayLabel(target.url) : null, tenantId }];
+}
+
+function TenantRow({ relay }: { relay: UseMeshRelayResult }) {
+  const { t } = useTranslation();
+  const entries = tenantEntries(relay);
+  if (entries.length === 0) return null;
+  return (
+    <Row label={t('relay.tenant.strip.tenantId')}>
+      {entries.map((entry) => (
+        <TenantValue key={entry.host ?? entry.tenantId} entry={entry} />
+      ))}
+      <span className="basis-full text-[11px] text-muted-foreground">
+        {t('relay.tenant.strip.tenantIdHint')}
+      </span>
+    </Row>
+  );
+}
+
+function TenantValue({ entry }: { entry: TenantEntry }) {
+  if (entry.host === null) {
+    return <CopyableValue value={entry.tenantId} testId="nodes-relay-tenant-id" mono />;
+  }
+  return (
+    <fieldset aria-label={entry.host} className="flex min-w-0 basis-full items-center gap-2">
+      <span className="max-w-[45%] shrink-0 truncate text-muted-foreground" title={entry.host}>
+        {entry.host}
+      </span>
+      <CopyableValue value={entry.tenantId} testId={`nodes-relay-tenant-id-${entry.host}`} mono />
+    </fieldset>
   );
 }
 

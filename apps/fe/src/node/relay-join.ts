@@ -15,7 +15,7 @@ import type { RecordSigner } from '@/auth/key-log-actions';
 import { enrollmentSignerFrom } from '@/auth/key-log-actions';
 import type { RelayJoinMaterial, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { createEnrollment, decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
-import { encodeRelayJoinToken } from '@vibeterm/shared/relay';
+import { encodeRelayJoinToken, preferRelayFirst } from '@vibeterm/shared/relay';
 import type { CreatedEnrollment, PendingEnrollment } from './enrollment';
 import { addPendingEnrollment } from './enrollment';
 import type { EnrollmentApi, EnrollmentRelayResult } from './enrollment-api';
@@ -43,6 +43,8 @@ export interface CreateRelayEnrollmentInput {
   /** `GET /api/auth/keylog/head` 的 head hash。 */
   keyLogHeadHash: Uint8Array;
   name?: string | null;
+  /** 新机器该指向的中继（`relayJoinTarget`）：它收下了 enrollment 就排在 join 串第一条。 */
+  preferredUrl?: string | null;
   now?: number;
   ttlMs?: number;
 }
@@ -84,7 +86,10 @@ export async function createEnrollmentOnRelay(
       authorization_sig: authorizationSig,
       exp,
     });
-    const accepted = await acceptedRelays(input.relayApi, material, created.relays);
+    const accepted = preferRelayFirst(
+      await acceptedRelays(input.relayApi, material, created.relays),
+      input.preferredUrl
+    );
     relays = accepted.map((relay) => ({
       url: relay.url,
       tenantId: relay.tenantId,

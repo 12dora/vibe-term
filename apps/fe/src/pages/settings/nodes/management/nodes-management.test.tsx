@@ -27,7 +27,7 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { resetMeshRelayStateForTest } = await import('@/node/mesh-relay');
+const { relayJoinTarget, resetMeshRelayStateForTest } = await import('@/node/mesh-relay');
 const { useLocalUplinkController } = await import('../uplink/local-uplink-controller');
 const { actionErrorText } = await import('./errors');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
@@ -1501,6 +1501,30 @@ describe('resolvePublicUrl', () => {
       'https://fallback.example'
     );
     expect(resolvePublicUrl(null, 'https://fallback.example')).toBe('https://fallback.example');
+  });
+
+  test('生成之前的 fallback 是加入目标那一台，不是 priority 最小的那一台', () => {
+    const row = { online: true, attached: true };
+    const target = relayJoinTarget({
+      tenantId: 'bb'.repeat(16),
+      relays: [
+        {
+          ...row,
+          url: 'https://sh.example',
+          tenantId: 'aa'.repeat(16),
+          priority: 0,
+          role: 'secondary',
+        },
+        {
+          ...row,
+          url: 'https://jp.example',
+          tenantId: 'bb'.repeat(16),
+          priority: 1,
+          role: 'primary',
+        },
+      ],
+    });
+    expect(resolvePublicUrl(null, target?.url)).toBe('https://jp.example');
   });
 
   test('两处都没有时返回 null——绝不退化成入口 origin', () => {

@@ -15,6 +15,7 @@
   - 服务器或电脑：第 1 步选路径（经中继 / SSH）。**加入已有中继**：② 安装 → ③ **放行端口** → ④ 起为加入步骤（准备上级 → 生成加入码 → `vibeterm relay join` 示例 → 确认加入）。**本机作为中继**：② 设为中继 → ③ **放行端口** → ④ 密码 → ⑤ enroll → ⑥ 邀请。SSH 路径不加「放行端口」。清单优先 `GET /api/local/status.portPlan`，缺字段则 `portPlanForRole` 用该路径角色的默认 live。
   - 命令块 `command-block.tsx` 复用 `copy-feedback.tsx` 的复制反馈。
 - 「加入已有中继」在放行端口之后就地生成加入码（`use-create-enrollment.ts` 与节点管理页共用），随后命令与加入码/节点名称联动，再就地确认加入：证书监听 + admit 签名收敛为 `apps/fe/src/node/enrollment-engine.ts` 单例（一条轮询、全局 key-log 写互斥、签前重校验、已签记录先入未确认存储、签名者租约、面板会话 id 持久化）。
+- 「新机器该指向哪台中继」只有一个选择器：`apps/fe/src/node/mesh-relay.ts` 的 `relayJoinTarget`（基于 `@vibeterm/shared/relay` 的 `pickRelayJoinTarget`，主中继 → 已挂上 → priority 最小），地址与租户编号取自同一行。中继地址 / 租户编号块、`vibeterm relay join` 命令、加入码命令的预览地址都用它；`createEnrollmentOnRelay` 在该中继收下 enrollment 时把它排在 `r3` 加入码的第一条，没收下才退回第一台收下的中继。「本机作为中继」一侧不用它：`useConnectMachine` 的 `hostTenantId`（`relayHostTenantId`，按 URL origin 匹配本机中继对外地址的那一行）才与 `relayPublicUrl` 配对，本机只是别台中继的租户时它为 null，enroll 步骤保持待办。旧网关不下发逐行租户编号：密码加入命令指向 priority 最小的中继，生成的加入码可能只列已挂上的那一台，两条命令各自自洽。
 - 「本机作为中继」的公网入口与角色步骤由 `host-status.ts` 按隧道状态推导（命名/接管/临时隧道）；「放行端口」插在设为中继之后、邀请之前。
 - 移动设备第 1 步的候选地址由 `access-addresses.ts` 排序：健康隧道 → 中继入口 → 局域网 → Tailscale → VPN → 掉线隧道 → 非回环当前地址。
   - 「中继」是 `GET /api/system/addresses` 下发的 `relayAccessUrl`（`<中继>/n/<本机 nodeId>`），复用分享侧的入口探测，探不通则不列。回环地址一律丢弃。

@@ -15,7 +15,7 @@ export interface ConnectStatus {
   relayAttached: boolean;
   /** 本机走中继模式。 */
   relayMode: boolean;
-  /** 本机所在的租户；本机不是中继租户时为 null。 */
+  /** 新机器该加入的那台中继签发的租户编号；本机不是中继租户时为 null。 */
   tenantId: string | null;
   /** 本机已加入多节点互联。 */
   meshEnabled: boolean;
