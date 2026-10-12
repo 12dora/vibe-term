@@ -84,7 +84,7 @@ VibeTerm 将 Mac、Linux 服务器、NAS 和云主机组网。所有接入节点
 
 ### 人工部署
 
-一行命令安装后，用 `vibeterm --help` 查看全部子命令；`vibeterm doctor` 诊断环境，`vibeterm upgrade` 升级。完整手册见 [部署指南](./docs/operations/production-install.md) 与 [mesh 运维](./docs/operations/mesh-operations.md)。
+一行命令安装，全程不提问，默认监听 `127.0.0.1:9883`；之后用 `vibeterm --help` 查看全部子命令；`vibeterm doctor` 诊断环境，`vibeterm upgrade` 升级。完整手册见 [部署指南](./docs/operations/production-install.md) 与 [mesh 运维](./docs/operations/mesh-operations.md)。
 
 ## 命令行
 

@@ -18,7 +18,7 @@
 curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
 ```
 
-`install.sh` 后面追加的参数会原样传给 `vibeterm init`，例如 `bash install.sh --role relay --relay-public-url https://relay.example.com`。管道执行时脚本会尝试接管 `/dev/tty` 来提问；接不上就自动补 `--no-interactive`，此时所有必填项都得由参数给出。固定版本用 `VIBETERM_VERSION=<版本> bash install.sh`。
+安装不提问，全部取默认值（角色 `standalone`、`127.0.0.1:9883`、peer 端口 `39001`、开机自启）；`--install-dir`、`--host`、`--port`、`--db-path`、`--autostart`、`--service-name`、`--role`、`--peer-port` 均为可选覆盖。默认端口被占用且未显式指定时，`init` 自动顺延到下一个空闲端口并打印一行说明。`install.sh` 后面追加的参数会原样传给 `vibeterm init`，例如 `bash install.sh --role relay --relay-public-url https://relay.example.com`。管道执行时脚本会尝试接管 `/dev/tty`，仅用于缺依赖时的安装确认与中继角色的追问（公网 HTTPS 端口、中继公开地址）；接不上就自动补 `--no-interactive`，非交互的中继角色必须给 `--relay-public-url`。固定版本用 `VIBETERM_VERSION=<版本> bash install.sh`。
 
 CLI 落在 `~/.local/bin/vibeterm`（`tmex` 为等价别名）。该目录不在 `PATH` 时脚本会打印提示，需要 `export PATH="$HOME/.local/bin:$PATH"`。
 
@@ -45,7 +45,7 @@ CLI 落在 `~/.local/bin/vibeterm`（`tmex` 为等价别名）。该目录不在
 
 ### 角色
 
-`VIBETERM_ROLES` 只能取四者之一：`standalone`（默认，单机无登录）、`node`（mesh 成员，可接 0..N 台中继）、`relay`（纯中继，无前端）、`relay,node`（中继兼本机设备）。未知值启动失败：`VIBETERM_ROLES must be one of standalone | node | relay | relay,node`。遗留的 `hub,node` 启动时映射为 `node` 并打一条警告，`vibeterm upgrade` 会把 `app.env` 改写成 `node`。零中继的 `node` 合法（未接入成员），peer 直连仍可用。
+`VIBETERM_ROLES` 只能取四者之一：`standalone`（默认，单机无登录）、`node`（mesh 成员，可接 0..N 台中继）、`relay`（纯中继，无前端）、`relay,node`（中继兼本机设备）。未知值启动失败：`VIBETERM_ROLES must be one of standalone | node | relay | relay,node`。遗留的 `hub,node` 启动时映射为 `node` 并打一条警告，`vibeterm upgrade` 会把 `app.env` 改写成 `node`。零中继的 `node` 合法（未接入成员），peer 直连仍可用。安装时不必预选角色：`standalone` 经 `vibeterm relay join` 加入 mesh 后，角色自动切为 `node` 并重启服务。
 
 ### `vibeterm doctor`
 
@@ -81,7 +81,7 @@ launchctl print gui/$(id -u)/com.vibeterm.vibeterm
    ```
    把密码写进命令行会进 shell 历史，优先让用户自己在交互终端执行，或用只对单条命令生效的前置赋值。
 3. **破坏性命令必须先取得用户确认**。`user passwd --full-reset`、`mesh reset-root`、`mesh reset-identity`、`tls reset`、`relay remove`、`relay passwd --kick`、`uninstall --purge` 都会造成不可逆后果（掉全部会话、清通行密钥与两步验证、全网断连、删数据）。交互终端要求逐字输入 `yes`，非交互必须显式加 `--yes`——**不要替用户加 `--yes`**。
-4. **不要对已有安装重复 `init`**。`init` 发现安装目录非空时，交互模式会问一遍，非交互模式直接报错；`--force` 会**删掉整个安装目录**重来。既有安装要改配置就改 `app.env` 再重启，要换角色就用对应的 `relay join` / `relay leave`。
+4. **不要对已有安装重复 `init`**。安装目录里已有 `install-meta.json` 或 `app.env` 时，`install.sh` / `init` 不加 `--force` 直接报「已安装」并提示 `vibeterm upgrade`；`--force` 会**删掉整个安装目录**重来。既有安装要改配置就改 `app.env` 再重启，要换角色就用对应的 `relay join` / `relay leave`。
 5. **`--replace-shim` 的语义**。`init` 部署 `~/.local/bin/vibeterm` 与 `~/.bun/bin/vibeterm` 这两个 PATH 入口时，如果那里的 shim 属于另一份仍然存在的安装、或归属记录缺失，会**跳过并打印告警**，不覆盖。确认要把 PATH 入口抢过来时才加 `--replace-shim`。非 VibeTerm 托管的同名文件任何情况下都不会被覆盖。
 6. **不要在验收之外操作用户的 tmux**。VibeTerm 的会话跑在 tmux 里，`kill-server` 之类的命令会连带杀掉用户正在跑的东西。
 
@@ -110,21 +110,13 @@ vibeterm relay status           # 中继机本地：口令状态、租户数、�
 
 ### 步骤
 
-1. 安装（交互模式一路回车即可，角色默认 `standalone`）：
+1. 安装（不提问，角色默认 `standalone`）：
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
    ```
 
-   非交互等价写法：
-
-   ```bash
-   bash install.sh --role standalone --no-interactive \
-     --install-dir "$HOME/.local/share/vibeterm" \
-     --host 127.0.0.1 --port 9883 \
-     --db-path "$HOME/.local/share/vibeterm/data/vibeterm.db" \
-     --autostart true
-   ```
+   需要局域网访问或改端口时追加参数，例如 `bash install.sh --host 0.0.0.0 --port 9884`。
 
 2. 打开 `http://127.0.0.1:9883`。
 
@@ -175,14 +167,10 @@ curl -sS http://127.0.0.1:9883/healthz
 
 ### 步骤
 
-1. 安装。非交互必须给 `--relay-public-url`，它在落任何配置之前就按 https 规则校验（只有回环允许 http）：
+1. 安装。中继角色是唯一仍会追问的场景（公网 HTTPS 端口、中继公开地址）；非交互必须给 `--relay-public-url`，它在落任何配置之前就按 https 规则校验（只有回环允许 http）：
 
    ```bash
    bash install.sh --role relay --no-interactive \
-     --install-dir "$HOME/.local/share/vibeterm" \
-     --host 127.0.0.1 --port 9883 \
-     --db-path "$HOME/.local/share/vibeterm/data/vibeterm.db" \
-     --autostart true \
      --relay-public-url https://<中继域名>
    ```
 
@@ -284,10 +272,6 @@ curl -sS https://<中继域名>/api/relay/health
 
    ```bash
    bash install.sh --role relay,node --no-interactive \
-     --install-dir "$HOME/.local/share/vibeterm" \
-     --host 127.0.0.1 --port 9883 \
-     --db-path "$HOME/.local/share/vibeterm/data/vibeterm.db" \
-     --autostart true \
      --relay-public-url https://<公网 IP 或 DDNS 域名> --public-port <路由器外部端口>
    ```
 
@@ -343,10 +327,6 @@ curl -sSk https://<公网 IP 或 DDNS 域名>:<路由器外部端口>/api/relay/
 
    ```bash
    bash install.sh --role relay,node --no-interactive \
-     --install-dir "$HOME/.local/share/vibeterm" \
-     --host 127.0.0.1 --port 9883 \
-     --db-path "$HOME/.local/share/vibeterm/data/vibeterm.db" \
-     --autostart true \
      --relay-public-url https://<隧道域名>
    ```
 
@@ -406,14 +386,10 @@ curl -sS https://<隧道域名>/api/relay/health
 
 ### 步骤
 
-1. 在要加入的机器上安装（角色 `standalone` 或 `node` 都行）：
+1. 在要加入的机器上按默认安装（`standalone`，无需选角色；加入时 `relay join` 自动切为 `node` 并重启服务）：
 
    ```bash
-   bash install.sh --role node --no-interactive \
-     --install-dir "$HOME/.local/share/vibeterm" \
-     --host 127.0.0.1 --port 9883 \
-     --db-path "$HOME/.local/share/vibeterm/data/vibeterm.db" \
-     --autostart true
+   curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
    ```
 
 2. **密码加入**（推荐，不需要提前出码）：

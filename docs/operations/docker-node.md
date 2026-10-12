@@ -41,7 +41,7 @@ node /opt/vibeterm-pkg/package/bin/vibeterm.js init \
   --autostart=false --bun-path=/usr/local/bin/bun
 ```
 
-`init` 自己会把运行时拉起来（`--no-service` 走 `createDirectProcessControl`），随后 entrypoint 停掉它、补两个 `init` 不写的键再启动：
+这些参数都不是 `init` 的必填项（`--no-interactive` 不要求任何参数），此处显式给出是为了固定容器内的路径、监听地址与端口。`init` 自己会把运行时拉起来（`--no-service` 走 `createDirectProcessControl`），随后 entrypoint 停掉它、补两个 `init` 不写的键再启动：
 
 - `VIBETERM_SITE_NAME`：`init` 固定写 `vibeterm`，这里改成 `${VIBETERM_SITE_NAME:-docker-node}`；
 - `VIBETERM_PEER_BIND_HOST=0.0.0.0`：`init` 不写，容器里必须监听全网卡；

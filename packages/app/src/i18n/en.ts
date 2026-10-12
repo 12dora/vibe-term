@@ -29,7 +29,6 @@ export const en: Record<string, string> = {
   'common.cancelled': 'Cancelled by user.',
   'common.done': 'Done.',
 
-  'errors.args.missingFlag': 'Missing required flag: --{{flag}}',
   'errors.args.invalidFlag': 'Invalid flag value: --{{flag}}={{value}}',
 
   'errors.validate.invalidPort': 'Invalid port: {{value}}',
@@ -62,16 +61,17 @@ export const en: Record<string, string> = {
   'service.hint.launchd': 'launchctl print gui/$(id -u)/com.vibeterm.{{serviceName}}',
   'service.hint.none': 'No service manager command on this platform.',
 
-  'init.prompt.installDir': 'Install directory (install-dir)',
-  'init.prompt.host': 'Bind host',
-  'init.prompt.port': 'Bind port',
-  'init.prompt.dbPath': 'Database path (db-path)',
-  'init.prompt.autostart': 'Enable autostart',
-  'init.prompt.serviceName': 'Service name (service-name)',
   'init.prompt.dirExistsConfirm':
-    'Directory {{installDir}} already exists. Continue (will not delete existing config/db)?',
+    'Directory {{installDir}} is not empty. Install into it anyway (existing files are not deleted)?',
   'init.error.installDirNotEmpty':
-    'Install directory is not empty: {{installDir}}. Use --force to overwrite.',
+    'Install directory is not empty: {{installDir}}. Use --force to delete it and reinstall.',
+  'init.error.alreadyInstalled':
+    'VibeTerm {{version}} is already installed in {{installDir}}. Run "vibeterm upgrade" to update.',
+  'init.error.alreadyInstalledNoVersion':
+    'VibeTerm is already installed in {{installDir}}. Run "vibeterm upgrade" to update.',
+  'init.error.noFreePort':
+    'No free port found in {{from}}-{{to}} on {{host}}. Choose one with --{{flag}}.',
+  'init.port.fallback': 'Port {{from}} is unavailable; using {{to}}.',
   'init.error.noServiceManager':
     'No supported service manager found (platform: {{platform}}). VibeTerm requires systemd (Linux) or launchd (macOS).',
   'init.warning.noServiceManager':
@@ -249,6 +249,9 @@ export const en: Record<string, string> = {
   'runtime.notFound': 'Not Found',
 
   'relay.join.portsHint': 'Allow inbound {{list}}',
+  'relay.join.joined': 'joined relay {{url}} (tenant {{tenantId}})',
+  'relay.join.refreshed': 'refreshed the relay token for {{url}} (tenant {{tenantId}})',
+  'relay.join.alsoConfigured': 'also configured: {{urls}}',
   'relay.trust.fingerprintInvalid':
     '--fingerprint requires the 64-hex SHA-256 SPKI fingerprint of the relay CA',
   'relay.trust.pinned': 'relay CA pinned: {{url}} SHA256 SPKI {{fingerprint}}',

@@ -8,13 +8,7 @@ import {
   pickSuggestedPortAvoiding,
 } from '../../../shared/src/net';
 import { normalizeRelayUrl } from '../../../shared/src/relay';
-import {
-  DEFAULT_SERVICE_NAME,
-  defaultDatabasePath,
-  defaultHost,
-  defaultInstallDir,
-  defaultPort,
-} from '../constants';
+import { DEFAULT_SERVICE_NAME, defaultDatabasePath, defaultHost, defaultPort } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
 import { defaultShimDirs, deployCliAndShim } from '../lib/cli-shim';
@@ -27,6 +21,7 @@ import {
 } from '../lib/dep-install';
 import { writeEnvFile } from '../lib/env-file';
 import { errorMessage } from '../lib/error-message';
+import { type CanBind, canBindPort, pickFreePort } from '../lib/free-port';
 import { ensureDir, pathExists } from '../lib/fs-utils';
 import {
   buildAppEnvValues,
@@ -39,7 +34,6 @@ import {
 import {
   createInstallLayout,
   createVersionLayout,
-  resolveInstallDir,
   resolvePackageLayout,
 } from '../lib/install-layout';
 import { detectInstallSource } from '../lib/install-source';
@@ -51,11 +45,19 @@ import { checkTmuxVersion } from '../lib/tmux';
 import { repairUpgrade, withUpgradeLock } from '../lib/upgrade-apply';
 import { readJournal } from '../lib/upgrade-state';
 import { switchCurrent } from '../lib/upgrade-switch';
-import { asBoolean, asString, assertNonEmpty, parsePort } from '../lib/validate';
+import { asBoolean, asString, parsePort } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
 import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
 import { type DirectOnboardingDeps, enableDirectForOnboarding } from './direct';
+import {
+  type InitPlan,
+  explicitString,
+  planInstallTarget,
+  resolveInstallTarget,
+} from './init-target';
+
+const PEER_PROBE_HOST = '0.0.0.0';
 
 export type { InitConfig };
 export { DEFAULT_PUBLIC_HTTPS_PORT };
@@ -75,22 +77,6 @@ export async function enableDirectAfterInit(
   await enableDirectForOnboarding(config.installDir, deps);
 }
 
-function mustGetStringFlag(flags: ParsedArgs['flags'], key: string): string {
-  const value = asString(flags[key]);
-  if (!value) {
-    throw new Error(t('errors.args.missingFlag', { flag: key }));
-  }
-  return value;
-}
-
-function mustGetBooleanFlag(flags: ParsedArgs['flags'], key: string): boolean {
-  const value = asBoolean(flags[key]);
-  if (value === undefined) {
-    throw new Error(t('errors.args.invalidFlag', { flag: key, value: String(flags[key]) }));
-  }
-  return value;
-}
-
 async function directoryHasContent(path: string): Promise<boolean> {
   if (!(await pathExists(path))) {
     return false;
@@ -100,59 +86,97 @@ async function directoryHasContent(path: string): Promise<boolean> {
   return items.length > 0;
 }
 
-async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
-  const flags = parsed.flags;
-  const ni = flags['no-interactive'] === true;
-  const ask = async (
-    key: string,
-    prompt: string,
-    fallback: string,
-    required = true
-  ): Promise<string> => {
-    if (ni) {
-      if (required) return assertNonEmpty(mustGetStringFlag(flags, key), key);
-      return asString(flags[key]) || fallback;
-    }
-    const value = await promptText(
-      { nonInteractive: false },
-      prompt,
-      asString(flags[key]) || fallback
-    );
-    return required ? assertNonEmpty(value, key) : value;
-  };
+type InitAsk = (message: string, fallback: string) => Promise<string>;
 
-  const installDir = resolveInstallDir(
-    await ask('install-dir', t('init.prompt.installDir'), defaultInstallDir(process.platform))
-  );
-  const host = await ask('host', t('init.prompt.host'), defaultHost());
-  const port = parsePort(await ask('port', t('init.prompt.port'), String(defaultPort())));
-  const databasePath = resolve(
-    await ask('db-path', t('init.prompt.dbPath'), defaultDatabasePath(installDir))
-  );
-  const autostart = ni
-    ? mustGetBooleanFlag(flags, 'autostart')
-    : (asBoolean(flags.autostart) ??
-      (await promptConfirm({ nonInteractive: false }, t('init.prompt.autostart'), true)));
-  const serviceName = assertNonEmpty(
-    ni
-      ? asString(flags['service-name']) || DEFAULT_SERVICE_NAME
-      : await promptText(
-          { nonInteractive: false },
-          t('init.prompt.serviceName'),
-          asString(flags['service-name']) || DEFAULT_SERVICE_NAME
-        ),
-    'service-name'
-  );
-  const uplink = await buildUplinkConfig(parsed, ni, ask, port);
+export type PortFallback = { from: number; to: number };
+
+export interface InitDeps {
+  canBind?: CanBind;
+  /** 仅 relay 角色的公网端口与地址会提问。 */
+  ask?: InitAsk;
+  /** 默认端口被占用而改用其他端口时回调，由调用方决定何时提示。 */
+  onPortFallback?: (fallback: PortFallback) => void;
+}
+
+type ResolvedInitDeps = Required<InitDeps>;
+
+function resolveInitDeps(deps: InitDeps): ResolvedInitDeps {
+  return {
+    canBind: deps.canBind ?? canBindPort,
+    ask:
+      deps.ask ?? ((message, fallback) => promptText({ nonInteractive: false }, message, fallback)),
+    onPortFallback: deps.onPortFallback ?? (() => {}),
+  };
+}
+
+function explicitBoolean(flags: ParsedArgs['flags'], key: string, fallback: boolean): boolean {
+  const raw = flags[key];
+  if (raw === undefined) return fallback;
+  const value = asBoolean(raw);
+  if (value === undefined) {
+    throw new Error(t('errors.args.invalidFlag', { flag: key, value: String(raw) }));
+  }
+  return value;
+}
+
+/** 给了端口就原样使用；`--force` 重装沿用旧 app.env 的端口；都没有则从默认端口起探测第一个可绑定的。 */
+async function resolvePort(input: {
+  flags: ParsedArgs['flags'];
+  key: string;
+  preferred: number;
+  reuse: number | undefined;
+  host: string;
+  avoid: readonly number[];
+  deps: ResolvedInitDeps;
+}): Promise<number> {
+  const explicit = explicitString(input.flags, input.key);
+  if (explicit !== undefined) return parsePort(explicit);
+  if (input.reuse !== undefined) return input.reuse;
+  const port = await pickFreePort(input.preferred, input.host, {
+    flag: input.key,
+    canBind: input.deps.canBind,
+    avoid: input.avoid,
+  });
+  if (port !== input.preferred) input.deps.onPortFallback({ from: input.preferred, to: port });
+  return port;
+}
+
+export async function prepareInitConfig(
+  parsed: ParsedArgs,
+  initDeps: InitDeps = {}
+): Promise<InitConfig> {
+  const plan = await planInstallTarget(resolveInstallTarget(parsed.flags));
+  return buildInitConfig(parsed, plan, initDeps);
+}
+
+export async function buildInitConfig(
+  parsed: ParsedArgs,
+  plan: InitPlan,
+  initDeps: InitDeps = {}
+): Promise<InitConfig> {
+  const flags = parsed.flags;
+  const deps = resolveInitDeps(initDeps);
+  const { installDir } = plan;
+  const host = explicitString(flags, 'host') ?? defaultHost();
+  const port = await resolvePort({
+    flags,
+    key: 'port',
+    preferred: defaultPort(),
+    reuse: plan.reusePorts.port,
+    host,
+    avoid: [],
+    deps,
+  });
+  const uplink = await buildUplinkConfig(parsed, port, plan.reusePorts.peerPort, deps);
   return {
     installDir,
     host,
     port,
-    databasePath,
-    autostart,
-    serviceName,
-    force: asBoolean(flags.force) ?? false,
-    nonInteractive: ni,
+    databasePath: resolve(explicitString(flags, 'db-path') ?? defaultDatabasePath(installDir)),
+    autostart: explicitBoolean(flags, 'autostart', true),
+    serviceName: explicitString(flags, 'service-name') ?? DEFAULT_SERVICE_NAME,
+    force: plan.force,
+    nonInteractive: flags['no-interactive'] === true,
     installDeps: asBoolean(flags['install-deps']) ?? false,
     skipDepCheck: asBoolean(flags['skip-dep-check']) ?? false,
     ...uplink,
@@ -161,37 +185,40 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
   };
 }
 
-type AskFlag = (
-  key: string,
-  prompt: string,
-  fallback: string,
-  required?: boolean
-) => Promise<string>;
-
 type UplinkConfig = Pick<InitConfig, 'role' | 'relayPublicUrl' | 'peerPort'>;
 
 async function buildUplinkConfig(
   parsed: ParsedArgs,
-  ni: boolean,
-  ask: AskFlag,
-  gatewayPort: number
+  gatewayPort: number,
+  reusePeerPort: number | undefined,
+  deps: ResolvedInitDeps
 ): Promise<UplinkConfig> {
   const flags = parsed.flags;
-  const role = parseVibeTermRoleName(
-    (await ask('role', 'Role (standalone|node|relay|relay,node)', 'standalone', false)) ||
-      'standalone'
+  const nonInteractive = flags['no-interactive'] === true;
+  const role = parseVibeTermRoleName(explicitString(flags, 'role') ?? 'standalone');
+  const peerPort = await resolvePort({
+    flags,
+    key: 'peer-port',
+    preferred: DEFAULT_PEER_PORT,
+    reuse: reusePeerPort,
+    host: PEER_PROBE_HOST,
+    avoid: [gatewayPort, DEFAULT_TLS_PORT],
+    deps,
+  });
+  if (role !== 'relay' && role !== 'relay,node') {
+    return { role, relayPublicUrl: '', peerPort };
+  }
+  const publicPort = await resolvePublicHttpsPort(parsed, nonInteractive, deps.ask, [
+    gatewayPort,
+    peerPort,
+    DEFAULT_TLS_PORT,
+  ]);
+  const relayPublicUrl = await resolveRelayPublicUrl(
+    nonInteractive,
+    deps.ask,
+    asString(flags['relay-public-url']) || '',
+    publicPort
   );
-  const isRelay = role === 'relay' || role === 'relay,node';
-  const peerPort = parsePort(
-    (await ask('peer-port', 'Peer port (VIBETERM_PEER_PORT)', String(DEFAULT_PEER_PORT), false)) ||
-      String(DEFAULT_PEER_PORT)
-  );
-  const publicPort = isRelay
-    ? await resolvePublicHttpsPort(parsed, ni, [gatewayPort, peerPort, DEFAULT_TLS_PORT])
-    : DEFAULT_PUBLIC_HTTPS_PORT;
-  const relayPublicUrl = isRelay
-    ? await resolveRelayPublicUrl(ni, asString(flags['relay-public-url']) || '', publicPort)
-    : '';
   return { role, relayPublicUrl, peerPort };
 }
 
@@ -202,14 +229,14 @@ async function buildUplinkConfig(
 async function resolvePublicHttpsPort(
   parsed: ParsedArgs,
   nonInteractive: boolean,
+  ask: InitAsk,
   used: number[]
 ): Promise<number> {
   const flag = asString(parsed.flags['public-port']);
   if (flag) return parsePort(flag);
   if (nonInteractive) return DEFAULT_PUBLIC_HTTPS_PORT;
   const suggested = pickSuggestedPortAvoiding(used);
-  const answer = await promptText(
-    { nonInteractive: false },
+  const answer = await ask(
     t('init.prompt.publicPort', { suggested }),
     String(DEFAULT_PUBLIC_HTTPS_PORT)
   );
@@ -239,6 +266,7 @@ const RELAY_PUBLIC_URL_ATTEMPTS = 3;
  */
 async function resolveRelayPublicUrl(
   nonInteractive: boolean,
+  ask: InitAsk,
   current: string,
   publicPort: number
 ): Promise<string> {
@@ -249,6 +277,7 @@ async function resolveRelayPublicUrl(
     return normalizeRelayPublicUrl(applyPublicPort(current, publicPort));
   }
   const answer = await promptPublicUrl({
+    ask,
     label: 'Relay public URL (VIBETERM_RELAY_PUBLIC_URL)',
     current,
     publicPort,
@@ -260,6 +289,7 @@ async function resolveRelayPublicUrl(
 
 /** 提问 → 补端口 → 校验，最多重试 `RELAY_PUBLIC_URL_ATTEMPTS` 次；全失败返回 `null`。 */
 async function promptPublicUrl(input: {
+  ask: InitAsk;
   label: string;
   current: string;
   publicPort: number;
@@ -267,7 +297,7 @@ async function promptPublicUrl(input: {
 }): Promise<string | null> {
   let answer = applyPublicPort(input.current, input.publicPort);
   for (let attempt = 0; attempt < RELAY_PUBLIC_URL_ATTEMPTS; attempt++) {
-    answer = await promptText({ nonInteractive: false }, input.label, answer);
+    answer = await input.ask(input.label, answer);
     try {
       return input.normalize(applyPublicPort(answer, input.publicPort));
     } catch (error) {
@@ -408,8 +438,33 @@ export function initPortPlanList(
   });
 }
 
+async function confirmNonEmptyInstallDir(config: InitConfig): Promise<void> {
+  if (!(await directoryHasContent(config.installDir))) return;
+  if (config.nonInteractive) {
+    throw new Error(t('init.error.installDirNotEmpty', { installDir: config.installDir }));
+  }
+  const confirmed = await promptConfirm(
+    { nonInteractive: false },
+    t('init.prompt.dirExistsConfirm', { installDir: config.installDir }),
+    false
+  );
+  if (!confirmed) {
+    throw new Error(t('common.cancelled'));
+  }
+}
+
+async function repairInterruptedUpgrade(installDir: string, bunPath: string): Promise<void> {
+  if (!(await readJournal(installDir))) return;
+  await withUpgradeLock(installDir, () =>
+    repairUpgrade(installDir, bunPath, { shimDirs: defaultShimDirs() })
+  );
+}
+
 export async function runInit(parsed: ParsedArgs): Promise<void> {
-  const config = await buildInitConfig(parsed);
+  const portFallbacks: PortFallback[] = [];
+  const config = await prepareInitConfig(parsed, {
+    onPortFallback: (fallback) => portFallbacks.push(fallback),
+  });
   const manager = await detectServiceManager();
   if (manager === 'none' && !config.noService) {
     throw new Error(t('init.error.noServiceManager', { platform: process.platform }));
@@ -418,28 +473,11 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   const bun = await checkInitDependencies(config, parsed);
 
   if (!config.force) {
-    const journal = await readJournal(config.installDir);
-    if (journal) {
-      await withUpgradeLock(config.installDir, () =>
-        repairUpgrade(config.installDir, bun.path, { shimDirs: defaultShimDirs() })
-      );
-    }
+    await repairInterruptedUpgrade(config.installDir, bun.path);
+    await confirmNonEmptyInstallDir(config);
   }
-
-  if (!config.force && (await directoryHasContent(config.installDir))) {
-    if (config.nonInteractive) {
-      throw new Error(t('init.error.installDirNotEmpty', { installDir: config.installDir }));
-    }
-
-    const confirmed = await promptConfirm(
-      { nonInteractive: false },
-      t('init.prompt.dirExistsConfirm', { installDir: config.installDir }),
-      false
-    );
-
-    if (!confirmed) {
-      throw new Error(t('common.cancelled'));
-    }
+  for (const fallback of portFallbacks) {
+    console.log(`[vibeterm] ${t('init.port.fallback', fallback)}`);
   }
 
   const packageLayout = await resolvePackageLayout(import.meta.url);

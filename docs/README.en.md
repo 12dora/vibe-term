@@ -84,7 +84,7 @@ Paste one of the prompts below into Claude Code, Codex, or a similar coding agen
 
 ### Deploy by hand
 
-After the one-line install, run `vibeterm --help` for every subcommand; `vibeterm doctor` checks the environment and `vibeterm upgrade` updates. The full manuals are the [installation guide](./operations/production-install.md) and [mesh operations](./operations/mesh-operations.md) (Chinese).
+The one-line install asks nothing and listens on `127.0.0.1:9883` by default; afterwards run `vibeterm --help` for every subcommand; `vibeterm doctor` checks the environment and `vibeterm upgrade` updates. The full manuals are the [installation guide](./operations/production-install.md) and [mesh operations](./operations/mesh-operations.md) (Chinese).
 
 ## Command line
 

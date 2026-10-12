@@ -18,13 +18,21 @@ VibeTerm 没有 JWT、管理员密码或 OIDC：standalone 无应用层登录；
 curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
 ```
 
-默认角色 `standalone`（单机、无登录页）。要做公网中继入口：
+安装全程不提问，全部取默认值：角色 `standalone`（单机、无登录页）、监听 `127.0.0.1:9883`、peer 端口 `39001`、开机自启、服务名 `vibeterm`。默认的网关或 peer 端口被占用且未显式指定时，`init` 自动顺延到下一个空闲端口并打印一行说明。
+
+要改默认值，向 `install.sh` 追加 `init` 参数（交互与 `--no-interactive` 下一致，均为可选）：`--install-dir`、`--host`、`--port`、`--db-path`、`--autostart`、`--service-name`、`--role`、`--peer-port`。
+
+要做公网中继入口，改角色即可：
 
 ```bash
-vibeterm init --role relay --relay-public-url https://<中继域名>
+bash install.sh --role relay --relay-public-url https://<中继域名>
 ```
 
-或 `relay,node`（中继兼本机设备）。随后 `vibeterm user add`、`vibeterm relay enroll` / `vibeterm relay join` 的完整步骤在运维指南。角色只能是 `standalone` | `node` | `relay` | `relay,node`。
+或 `relay,node`（中继兼本机设备）。只有这两种角色才会追问公网 HTTPS 端口与中继公开地址，非交互时必须给 `--relay-public-url`。角色只能是 `standalone` | `node` | `relay` | `relay,node`。
+
+默认装成 `standalone` 即可加入 mesh：之后 `vibeterm relay join …` 会自动把角色切为 `node` 并重启服务，安装时无需预先选角色。`vibeterm user add`、`vibeterm relay enroll` / `vibeterm relay join` 的完整步骤在运维指南。
+
+本机已有安装（安装目录里存在 `install-meta.json` 或 `app.env`）时，再次执行 `install.sh` / `init` 会直接报错「已安装」并提示用 `vibeterm upgrade`；确需重装才加 `--force`（会删除整个安装目录）。
 
 `init` 会：
 
@@ -36,25 +44,21 @@ vibeterm init --role relay --relay-public-url https://<中继域名>
 
 默认 HTTP：`127.0.0.1:9883`。本机浏览器打开该地址即可。需要局域网访问时再把 `app.env` 的 `VIBETERM_BIND_HOST` 改为 `0.0.0.0` 并重启，同时收紧防火墙。
 
-非交互示例：
+`--no-interactive` 不要求任何参数；显式覆盖默认值的示例：
 
 ```bash
-vibeterm init --role standalone --no-interactive \
-  --install-dir "$HOME/.local/share/vibeterm" \
-  --host 127.0.0.1 --port 9883 \
-  --db-path "$HOME/.local/share/vibeterm/data/vibeterm.db" \
-  --autostart true
+vibeterm init --no-interactive --host 0.0.0.0 --port 9884 --autostart false
 ```
 
-全局还支持 `--install-dir`、`--lang en|zh-CN`、`--bun-path`。`init` 结束打印角色入站端口计划（`formatPortList`）与一行放行提示；`install.sh` 从 `init` stdout 解析该清单，不再写死 TURN 口。`doctor` 可检查安装（含端口计划、peer TCP 是否在听、有会话时 self 行 blocked 口）；`--fix` 尝试修复。
+另支持 `--lang en|zh-CN`、`--bun-path`。`init` 结束打印角色入站端口计划（`formatPortList`）与一行放行提示；`install.sh` 从 `init` stdout 解析该清单，不再写死 TURN 口。`doctor` 可检查安装（含端口计划、peer TCP 是否在听、有会话时 self 行 blocked 口）；`--fix` 尝试修复。
 
-### 管道执行时的交互提问
+### 管道执行时的终端接管
 
-`curl … | bash` 下 bash 自己的 fd 0 是脚本管道，所以 `install.sh` 用 `exec 3</dev/tty` 把控制终端接回来再喂给 `init`（接不上就自动补 `--no-interactive`，此时必填项全部要由参数给出）。
+`curl … | bash` 下 bash 自己的 fd 0 是脚本管道，所以 `install.sh` 用 `exec 3</dev/tty` 把控制终端接回来再喂给 `init`，供缺少 tmux / bun 时的依赖安装确认与中继角色的追问使用；接不上就自动补 `--no-interactive`（依赖需 `--install-deps` 才会自动安装，中继角色必须由参数给全）。
 
 CLI 侧不读 `process.stdin`，而是每次提问自己打开 `/dev/tty`，答完即销毁该句柄。原因是 **Bun 在「被 shell 重新打开的 `/dev/tty`」这种描述符上永远收不到 `process.stdin` 数据**（Node 正常），沿用 `process.stdin` 会让一键安装卡死在第一个提问上——机器没装 Node ≥ 20 时 `install.sh` 正是用 Bun 跑 `init`。句柄必须销毁：留着不销毁会吊住事件循环，答完最后一问也退不出去。`stdin` 不是 TTY 时仍走 `process.stdin`，管道喂答案与非交互行为不变。
 
-`init` 非零退出时 `install.sh` 会打印「安装未完成」并按原退出码退出，不再静默中断。
+`init` 非零退出时 `install.sh` 会打印失败退出码并按原退出码退出，不再静默中断。
 
 > 改名前（1.1.x，产品名 tmex）安装的实例在升到 2.0.0 时**由升级器整体迁移到新路径**：安装目录 `~/Library/Application Support/tmex/` → `.../vibeterm/`（Linux `~/.local/share/tmex/` → `~/.local/share/vibeterm/`），`data/tmex.db{,-wal,-shm}` → `data/vibeterm.db*`，`app.env` 的 `TMEX_*` 键改写为 `VIBETERM_*`（原文件备份进 `backups/`），服务名 `tmex` 改为 `vibeterm` 并显式卸载旧 label。用 `--install-dir` 指定过自定义目录的安装**不迁移**，只改服务与 env 键。迁移细节与回滚见 [改名迁移](./rename-migration.md)。
 

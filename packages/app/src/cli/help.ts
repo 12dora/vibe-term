@@ -7,7 +7,7 @@ export const STUN_SERVERS_FLAG_HELP =
 const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 
 Usage:
-  vibeterm init [--role standalone|node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -64,7 +64,7 @@ Global flags:
 const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 
 用法：
-  vibeterm init [--role standalone|node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]

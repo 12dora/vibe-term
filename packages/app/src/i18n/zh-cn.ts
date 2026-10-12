@@ -26,7 +26,6 @@ export const zhCN: Record<string, string> = {
   'common.cancelled': '已取消。',
   'common.done': '完成。',
 
-  'errors.args.missingFlag': '缺少必要参数：--{{flag}}',
   'errors.args.invalidFlag': '参数值非法：--{{flag}}={{value}}',
 
   'errors.validate.invalidPort': '非法端口：{{value}}',
@@ -57,15 +56,14 @@ export const zhCN: Record<string, string> = {
   'service.hint.launchd': 'launchctl print gui/$(id -u)/com.vibeterm.{{serviceName}}',
   'service.hint.none': '当前平台无服务管理命令',
 
-  'init.prompt.installDir': '安装目录（install-dir）',
-  'init.prompt.host': '监听 host',
-  'init.prompt.port': '监听端口',
-  'init.prompt.dbPath': '数据库路径（db-path）',
-  'init.prompt.autostart': '是否启用开机启动',
-  'init.prompt.serviceName': '服务名称（service-name）',
-  'init.prompt.dirExistsConfirm':
-    '目录 {{installDir}} 已存在，是否继续（不会删除现有配置与数据库）？',
-  'init.error.installDirNotEmpty': '安装目录已存在且非空：{{installDir}}。如需覆盖请加 --force',
+  'init.prompt.dirExistsConfirm': '目录 {{installDir}} 非空，是否仍在此安装（不会删除现有文件）？',
+  'init.error.installDirNotEmpty': '安装目录非空：{{installDir}}。如需清空后重装，请加 --force',
+  'init.error.alreadyInstalled':
+    '{{installDir}} 已安装 VibeTerm {{version}}，更新请运行 vibeterm upgrade。',
+  'init.error.alreadyInstalledNoVersion':
+    '{{installDir}} 已安装 VibeTerm，更新请运行 vibeterm upgrade。',
+  'init.error.noFreePort': '{{host}} 上 {{from}}-{{to}} 无可用端口，请用 --{{flag}} 指定。',
+  'init.port.fallback': '端口 {{from}} 不可用，改用 {{to}}。',
   'init.error.noServiceManager':
     '未检测到可用的服务管理器（平台：{{platform}}）。VibeTerm 需要 systemd（Linux）或 launchd（macOS）。',
   'init.warning.noServiceManager': '当前平台 {{platform}} 未实现自动服务安装，已完成文件部署。',
@@ -231,6 +229,9 @@ export const zhCN: Record<string, string> = {
   'runtime.notFound': '资源不存在',
 
   'relay.join.portsHint': '请放行入站 {{list}}',
+  'relay.join.joined': '已加入中继 {{url}}（租户 {{tenantId}}）',
+  'relay.join.refreshed': '已更新 {{url}} 的中继令牌（租户 {{tenantId}}）',
+  'relay.join.alsoConfigured': '同时配置：{{urls}}',
   'relay.trust.fingerprintInvalid': '--fingerprint 需要中继 CA 的 64 位十六进制 SHA-256 SPKI 指纹',
   'relay.trust.pinned': '已钉扎中继 CA：{{url}} SHA256 SPKI {{fingerprint}}',
   'relay.trust.restartHint': '请重启 VibeTerm 以使新的中继 CA 钉扎生效。',

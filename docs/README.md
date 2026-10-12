@@ -65,7 +65,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查，以及 agent 用 CLI 调试别的节点 |
-| [production-install.md](./operations/production-install.md) | 生产部署：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
+| [production-install.md](./operations/production-install.md) | 生产部署：零提问安装与可选参数、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
 | [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、延迟优化、节点表、环境变量、接入中继、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
 | [docker-node.md](./operations/docker-node.md) | 可升级的容器节点 |
 | [nonstandard-ports.md](./operations/nonstandard-ports.md) | 按角色列出应放行的 TCP/UDP 口；80/443 不可用时的 HTTPS 候选与探测 |
