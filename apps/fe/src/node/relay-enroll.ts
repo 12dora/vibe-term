@@ -20,7 +20,7 @@ import {
   kdfParamsFromJson,
 } from '@/auth/key-log-actions';
 import type { AuthApi, AuthKdfParamsJson } from '@vibeterm/api-client/auth/index';
-import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import { WebAuthnError, requireRootEpoch } from '@vibeterm/api-client/auth/index';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { relayErrorCode } from '@vibeterm/api-client/relay/tenant-api';
 import { errorMessage } from '@vibeterm/shared';
@@ -99,10 +99,16 @@ export interface RelayFlowDeps {
   lock: KeyLogLock;
 }
 
+/** passkey 仪式被用户取消（或浏览器没放行）：不是故障，文案走 `auth.errors.PASSKEY_ABORTED`。 */
+export const PASSKEY_ABORTED = 'PASSKEY_ABORTED';
+
 /** 异常 → 结论；中继自己的错误码原样透出，其余退回消息文本。供中继流程各模块复用。 */
 export function relayFlowFailure(err: unknown): RelayFlowResult {
   const code = relayErrorCode(err);
   if (code) return { ok: false, code };
+  if (err instanceof WebAuthnError && err.code === 'aborted') {
+    return { ok: false, code: PASSKEY_ABORTED };
+  }
   return { ok: false, code: errorMessage(err) };
 }
 

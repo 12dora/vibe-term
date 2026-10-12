@@ -210,6 +210,9 @@ admit 之后那条 `meta-key` 是**必需**的，缺了它新节点解不开元�
   天然满足 `MIN_RELAY_RECORD_VERSION`。`readmit-node` / `notification-sink` / `rotate-root-keep` 仍 fail-closed。
 - 「批准加入」的两条入口（enrollment 引擎与节点表的待批准行）都会补发；
   引擎的重发路径从已签字节里解出 node id，`node_id_reused` 按「早就已加入」收尾（清 pending + 照常补发）。
+- 「确认加入」界面把 `admit-node` 与这条 `meta-key` 当作同一次操作的两步：第二步由引擎在 admit 落账后紧接着发起，
+  「节点已加入」只在它也落账后报一次；没签成时结果停在「成员密钥待补发」并带补发按钮。
+  状态与 passkey 为何要验证两次见 [「接入更多设备」面板](../development/connect-devices-panel.md#确认加入准入--下发成员密钥)。
 
 ## 5. join 串 r3
 

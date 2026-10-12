@@ -210,9 +210,9 @@ export const I18N_RESOURCES = {
           },
           "confirm": {
             "title": "Confirm the join",
-            "description": "Confirm the join on the Node management page. The new machine appears in the device list after it restarts.",
-            "meshDescription": "Once the new machine runs the command, confirm the join here. It appears in the device list after it restarts.",
-            "done": "The new machine joined; it appears in the device list after it restarts."
+            "description": "Confirm the join on the Node management page.",
+            "meshDescription": "Once the new machine runs the command, confirm the join here.",
+            "done": "The new machine joined."
           }
         },
         "relayHost": {
@@ -2213,6 +2213,7 @@ export const I18N_RESOURCES = {
         "usePassword": "Use password",
         "usePasskey": "Use passkey",
         "passkeySelect": "Choose a passkey",
+        "passkeyTwice": "You'll be asked for your passkey twice.",
         "purpose": {
           "enroll": "Add a node",
           "admit": "Approve the new node",
@@ -2770,14 +2771,20 @@ export const I18N_RESOURCES = {
         "cancelPending": "Cancel",
         "admitted": "Node added",
         "unknownCertificate": "Ignored a response from an unknown node.",
-        "badCertSig": "Ignored a node response that failed its signature check.",
+        "badCertSig": "The node response failed its signature check. Generate a new join code.",
         "expired": "This join code expired. Create a new one.",
         "noCertificateYet": "The new node has not answered yet. Try again in a moment.",
         "relayNotConfirmed": "The relay did not confirm, so nothing was saved. Retry to send it again.",
         "retry": "Retry",
         "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
         "staleRecord": "Your account changed in the meantime. Approve again.",
-        "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
+        "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again.",
+        "admitFailed": "Could not approve the join. Try again.",
+        "memberKeyPending": "Node added, but its member key was not sent. Resend it.",
+        "step": {
+          "admit": "1/2 Approving join",
+          "memberKey": "2/2 Sending member key"
+        }
       },
       "rename": {
         "cancelled": "Cancelled."
@@ -3485,7 +3492,6 @@ export const I18N_RESOURCES = {
         },
         "metaKey": {
           "done": "Member key updated.",
-          "admitFailed": "Failed to deliver the member key to the new node: {{error}}",
           "pending": "Member key update has not landed yet ({{count}}).",
           "retry": "Retry",
           "retryFailed": "The member key update still has not landed. Try again later.",
@@ -4060,9 +4066,9 @@ export const I18N_RESOURCES = {
           },
           "confirm": {
             "title": "确认加入",
-            "description": "回到节点管理页确认加入，新机器重启后出现在设备列表。",
-            "meshDescription": "新机器执行命令后在此确认加入，重启后出现在设备列表。",
-            "done": "新机器已加入，重启后出现在设备列表。"
+            "description": "回到节点管理页确认加入。",
+            "meshDescription": "新机器执行命令后在此确认加入。",
+            "done": "新机器已加入。"
           }
         },
         "relayHost": {
@@ -6063,6 +6069,7 @@ export const I18N_RESOURCES = {
         "usePassword": "使用密码",
         "usePasskey": "使用通行密钥",
         "passkeySelect": "选择通行密钥",
+        "passkeyTwice": "通行密钥需验证两次。",
         "purpose": {
           "enroll": "添加节点",
           "admit": "确认新节点加入",
@@ -6619,14 +6626,20 @@ export const I18N_RESOURCES = {
         "cancelPending": "取消",
         "admitted": "节点已加入",
         "unknownCertificate": "收到未知节点的响应，已忽略。",
-        "badCertSig": "节点响应的签名校验失败，已忽略。",
+        "badCertSig": "节点响应的签名校验失败，请重新生成加入码。",
         "expired": "加入码已过期，请重新生成。",
         "noCertificateYet": "新节点尚未响应，请稍后重试。",
         "relayNotConfirmed": "中继未确认，本次没有写入任何内容，可直接重试。",
         "retry": "重试",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
         "staleRecord": "账号信息已变化，请重新确认。",
-        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
+        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。",
+        "admitFailed": "确认加入失败，请重试。",
+        "memberKeyPending": "节点已加入，成员密钥尚未下发，请补发。",
+        "step": {
+          "admit": "1/2 确认加入",
+          "memberKey": "2/2 下发成员密钥"
+        }
       },
       "rename": {
         "cancelled": "已取消。"
@@ -7326,7 +7339,6 @@ export const I18N_RESOURCES = {
         },
         "metaKey": {
           "done": "成员密钥已更新。",
-          "admitFailed": "新节点的成员密钥下发失败：{{error}}",
           "pending": "成员密钥更新尚未送达（{{count}} 条）。",
           "retry": "重试",
           "retryFailed": "成员密钥更新仍未送达，请稍后重试。",
@@ -7901,9 +7913,9 @@ export const I18N_RESOURCES = {
           },
           "confirm": {
             "title": "参加を承認",
-            "description": "ノード管理ページで参加を承認します。新しいマシンは再起動後にデバイス一覧に表示されます。",
-            "meshDescription": "新しいマシンでコマンドを実行したら、ここで参加を承認します。再起動後にデバイス一覧に表示されます。",
-            "done": "新しいマシンが参加しました。再起動後にデバイス一覧に表示されます。"
+            "description": "ノード管理ページで参加を承認します。",
+            "meshDescription": "新しいマシンでコマンドを実行したら、ここで参加を承認します。",
+            "done": "新しいマシンが参加しました。"
           }
         },
         "relayHost": {
@@ -9904,6 +9916,7 @@ export const I18N_RESOURCES = {
         "usePassword": "パスワードを使う",
         "usePasskey": "パスキーを使う",
         "passkeySelect": "パスキーを選択",
+        "passkeyTwice": "パスキーの確認は 2 回行われます。",
         "purpose": {
           "enroll": "ノードを追加",
           "admit": "新しいノードを承認",
@@ -10460,14 +10473,20 @@ export const I18N_RESOURCES = {
         "cancelPending": "キャンセル",
         "admitted": "ノードを追加しました",
         "unknownCertificate": "不明なノードからの応答を無視しました。",
-        "badCertSig": "署名の検証に失敗したノードの応答を無視しました。",
+        "badCertSig": "ノードの応答の署名を検証できませんでした。参加コードを再生成してください。",
         "expired": "参加コードの有効期限が切れました。新しく作成してください。",
         "noCertificateYet": "新しいノードからまだ応答がありません。しばらくしてからお試しください。",
         "relayNotConfirmed": "中継が確認しなかったため、何も保存されていません。もう一度お試しください。",
         "retry": "再試行",
         "missingRelayUrl": "中継アドレスを取得できないため、参加コマンドを作成できません。",
         "staleRecord": "その間にアカウント情報が変わりました。もう一度承認してください。",
-        "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
+        "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。",
+        "admitFailed": "参加を承認できませんでした。もう一度お試しください。",
+        "memberKeyPending": "ノードは追加済みですが、メンバー鍵が未配布です。再送してください。",
+        "step": {
+          "admit": "1/2 参加を承認中",
+          "memberKey": "2/2 メンバー鍵を配布中"
+        }
       },
       "rename": {
         "cancelled": "キャンセルしました。"
@@ -11167,7 +11186,6 @@ export const I18N_RESOURCES = {
         },
         "metaKey": {
           "done": "メンバー鍵を更新しました。",
-          "admitFailed": "新しいノードへのメンバー鍵の配布に失敗しました：{{error}}",
           "pending": "メンバー鍵の更新が未送信です（{{count}} 件）。",
           "retry": "再試行",
           "retryFailed": "メンバー鍵の更新はまだ送信できていません。しばらくしてから再試行してください。",

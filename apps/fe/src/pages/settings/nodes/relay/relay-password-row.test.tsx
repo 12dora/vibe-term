@@ -34,6 +34,7 @@ const NO_RELAY = {
   loading: false,
   error: null,
   loadedAt: 1,
+  requestedAt: 1,
   unsupported: false,
   refresh: () => undefined,
   switchRelay: () => Promise.resolve(),

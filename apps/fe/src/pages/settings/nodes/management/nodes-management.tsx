@@ -6,6 +6,7 @@
 // 整体是设置页「节点」标签里的一张卡片：卡头放刷新与「添加」，卡体依次是加入码表单、
 // 待确认列表与节点表。上级链路与它的操作都在本机卡上，这里只读它的状态。
 
+import { withoutRowOwned } from '@/node/admit-progress';
 import { listPendingEnrollments, subscribePendingEnrollments } from '@/node/enrollment';
 import { defaultRelayEnrollmentApi } from '@/node/enrollment-api';
 import {
@@ -22,7 +23,7 @@ import { Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { RelayMetaLagNotice } from '../relay/relay-meta-lag-notice';
-import { useRelayAdmitFollowUp } from '../relay/use-relay-admit-follow-up';
+import { admitModeOnceRelayKnown, useRelayAdmitFollowUp } from '../relay/use-relay-admit-follow-up';
 import type { LocalUplinkController } from '../uplink/local-uplink-controller';
 import { joinCodesNeedRelayHint, uplinkBlockedHint } from '../uplink/relay-targets';
 import {
@@ -139,21 +140,18 @@ export function NodesManagement({
   // 同一张证书绝不会被签成两条 `admit-node`（见 `enrollment-engine.ts` 顶部）。
   // enrollment 建在中继上，证书也从 `/api/mesh/relay/enrollments/:id` 回读。
   const enrollChannel = defaultRelayEnrollmentApi;
-  const { confirmManually } = useEnrollmentEngine({
+  // 中继模式下加入分两步：`admit-node` 之后引擎紧接着下发成员密钥（见 `admit-progress.ts`）。
+  const followUp = useRelayAdmitFollowUp({ enabled: relay.relayMode, api, mode });
+  const { confirmManually, resendMemberKey } = useEnrollmentEngine({
     api,
-    mode,
+    mode: admitModeOnceRelayKnown(relay, mode),
     enrollmentApi: enrollChannel,
     prompt,
+    followUp,
     onDone: refreshAll,
     t,
   });
   const engine = useEnrollmentEngineState();
-  useRelayAdmitFollowUp({
-    enabled: relay.relayMode,
-    admittedIds: engine.admittedIds,
-    api,
-    mode,
-  });
 
   if (!mode) {
     return (
@@ -213,9 +211,10 @@ export function NodesManagement({
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3">
-        {/* 成员密钥没送到的成员：服务端真相，与本标签页记了什么无关（见 relay-meta-lag-notice.tsx）。 */}
+        {/* 成员密钥没送到的成员：服务端真相，与本标签页记了什么无关（见 relay-meta-lag-notice.tsx）。
+            加入结果行正管着的那几台不重复列：补发入口每台只留一个。 */}
         <RelayMetaLagNotice
-          lagging={relay.metaKeyLagging}
+          lagging={withoutRowOwned(relay.metaKeyLagging, Object.values(engine.progressById))}
           mode={mode}
           api={api}
           prompt={prompt}
@@ -232,9 +231,9 @@ export function NodesManagement({
           pendings={pendings}
           onConfirm={(pending) => void confirmManually(pending.hubEnrollmentId)}
           onCancel={cancelPending}
-          busyIds={engine.busyIds}
-          unconfirmedIds={engine.unconfirmedIds}
-          clearedIds={engine.clearedIds}
+          onResendKey={(id) => void resendMemberKey(id)}
+          twoStep={followUp !== null}
+          engine={engine}
         />
 
         <NodesSyncGate>

@@ -744,6 +744,7 @@
         "usePassword": "使用密码",
         "usePasskey": "使用通行密钥",
         "passkeySelect": "选择通行密钥",
+        "passkeyTwice": "通行密钥需验证两次。",
         "purpose": {
           "enroll": "添加节点",
           "admit": "确认新节点加入",

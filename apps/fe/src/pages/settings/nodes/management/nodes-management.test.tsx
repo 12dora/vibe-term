@@ -27,7 +27,9 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { relayJoinTarget, resetMeshRelayStateForTest } = await import('@/node/mesh-relay');
+const { relayJoinTarget, resetMeshRelayStateForTest, setMeshRelayStateForTest } = await import(
+  '@/node/mesh-relay'
+);
 const { useLocalUplinkController } = await import('../uplink/local-uplink-controller');
 const { actionErrorText } = await import('./errors');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
@@ -41,9 +43,12 @@ const {
   toggleAllSelection,
   toggleSelection,
 } = await import('./bulk-actions-menu');
-const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } = await import(
-  '@/node/enrollment-engine'
-);
+const {
+  canAutoSignAdmit,
+  invalidCertificateKey,
+  resetEnrollmentEngineForTest,
+  setEnrollmentEngineStateForTest,
+} = await import('@/node/enrollment-engine');
 const { resolvePublicUrl } = await import('./enrollment-section');
 const {
   createUninstallIo,
@@ -325,6 +330,45 @@ describe('NodesManagement', () => {
     const html = render(MODE);
     expect(html).toContain(`data-testid="nodes-address-${entry}"`);
     expect(html).toContain('10.0.0.8');
+  });
+});
+
+describe('「成员密钥未送达」告警条与加入结果行不重复', () => {
+  const LAGGING = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
+  const NOTICE = 'data-testid="nodes-relay-meta-lagging"';
+
+  function renderLagging(phase: 'distributing' | 'keyPending' | 'done' | null): string {
+    setMeshNodesStateForTest({
+      entryNodeId: MODE.nodeId,
+      nodes: [meshNode({ id: MODE.nodeId as string, name: 'entry', loggedIn: true })],
+    });
+    setMeshRelayStateForTest({
+      mode: 'relay',
+      metaKeyLagging: [{ nodeId: LAGGING, name: 'studio', since: null, admitSeq: 1 }],
+      loadedAt: 1,
+    });
+    if (phase) {
+      setEnrollmentEngineStateForTest({
+        admittedIds: ['e-1'],
+        progressById: { 'e-1': { phase, steps: 2, name: 'studio', nodeId: LAGGING } },
+      });
+    }
+    return render(MODE);
+  }
+
+  test('没有结果行管着：告警条照常给出补发入口', () => {
+    expect(renderLagging(null)).toContain(NOTICE);
+  });
+
+  test('结果行待补发 / 正在下发：这台只留结果行那一个入口', () => {
+    const pending = renderLagging('keyPending');
+    expect(pending).not.toContain(NOTICE);
+    expect(pending).toContain('data-testid="nodes-admit-result-e-1-resend"');
+    expect(renderLagging('distributing')).not.toContain(NOTICE);
+  });
+
+  test('结果行已收尾：告警条重新兜底', () => {
+    expect(renderLagging('done')).toContain(NOTICE);
   });
 });
 

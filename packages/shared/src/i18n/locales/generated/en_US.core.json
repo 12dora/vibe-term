@@ -744,6 +744,7 @@
         "usePassword": "Use password",
         "usePasskey": "Use passkey",
         "passkeySelect": "Choose a passkey",
+        "passkeyTwice": "You'll be asked for your passkey twice.",
         "purpose": {
           "enroll": "Add a node",
           "admit": "Approve the new node",

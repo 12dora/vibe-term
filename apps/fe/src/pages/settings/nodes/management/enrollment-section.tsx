@@ -6,13 +6,15 @@
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type PendingEnrollment, joinCommand } from '@/node/enrollment';
+import type { EnrollmentEngineState } from '@/node/enrollment-engine-state';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import { Button } from '@vibeterm/ui/button';
 import { Input } from '@vibeterm/ui/input';
-import { Check, Loader2, ShieldCheck, X } from 'lucide-react';
+import { Loader2, ShieldCheck } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { CopyableCode } from '../copy-feedback';
+import { AdmitRows } from './admit-rows';
 import type { ResolvedMode } from './types';
 import { useCreateEnrollment } from './use-create-enrollment';
 
@@ -28,9 +30,9 @@ export function EnrollmentSection({
   pendings,
   onConfirm,
   onCancel,
-  busyIds,
-  unconfirmedIds,
-  clearedIds,
+  onResendKey,
+  twoStep,
+  engine,
   relay,
 }: {
   api: AuthApi;
@@ -46,12 +48,12 @@ export function EnrollmentSection({
   onConfirm: (pending: PendingEnrollment) => void;
   /** 取消一条待确认记录（误点「添加」的回退路径）：仅删本地 pending，中继侧记录会自然过期。 */
   onCancel: (pending: PendingEnrollment) => void;
-  /** 正在跑 admit 的 pending id：确认与取消都要禁用——取消一条 append 未定的记录会丢字节。 */
-  busyIds: string[];
-  /** `hubAck === false` 或分类失败：手上还留着一份可重发记录的 pending id。`relayAck` 走 toast。 */
-  unconfirmedIds: string[];
-  /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
-  clearedIds: string[];
+  /** 「补发成员密钥」：节点已加入、成员密钥没下发成功的那一条。 */
+  onResendKey: (enrollmentId: string) => void;
+  /** 确认加入要签两条记录（中继模式）：passkey 用户在确认按钮旁看到「需验证两次」。 */
+  twoStep: boolean;
+  /** 引擎状态：行的忙碌 / 失败 / 进度从这里读；`clearedIds` 里的 join 串必须立刻从 DOM 里消失。 */
+  engine: EnrollmentEngineState;
   /** 本机卡已经在轮询的那份中继快照：给了就不再自己订一份。 */
   relay?: UseMeshRelayResult;
 }) {
@@ -60,7 +62,7 @@ export function EnrollmentSection({
     api,
     mode,
     prompt,
-    clearedIds,
+    clearedIds: engine.clearedIds,
     ...(relay ? { relay } : {}),
   });
   const { created, publicUrl } = create;
@@ -120,81 +122,16 @@ export function EnrollmentSection({
           </p>
         ))}
 
-      {pendings.length > 0 && (
-        <ul className="flex flex-col gap-1" data-testid="nodes-pending-list">
-          {pendings.map((pending) => (
-            <PendingRow
-              key={pending.hubEnrollmentId}
-              pending={pending}
-              unconfirmed={unconfirmedIds.includes(pending.hubEnrollmentId)}
-              busy={busyIds.includes(pending.hubEnrollmentId)}
-              writable={writable}
-              blockedHint={blockedHint}
-              onConfirm={onConfirm}
-              onCancel={onCancel}
-            />
-          ))}
-        </ul>
-      )}
+      <AdmitRows
+        pendings={pendings}
+        engine={engine}
+        writable={writable}
+        blockedHint={blockedHint}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+        onResendKey={onResendKey}
+        passkeyTwice={{ twoStep, passkeysAvailable: prompt.passkeys.length > 0 }}
+      />
     </>
-  );
-}
-
-/** 一条待确认记录。上级未确认时文案与按钮都换成「重试」口径。 */
-function PendingRow({
-  pending,
-  unconfirmed,
-  busy,
-  writable,
-  blockedHint,
-  onConfirm,
-  onCancel,
-}: {
-  pending: PendingEnrollment;
-  unconfirmed: boolean;
-  busy: boolean;
-  writable: boolean;
-  blockedHint: string;
-  onConfirm: (pending: PendingEnrollment) => void;
-  onCancel: (pending: PendingEnrollment) => void;
-}) {
-  const { t } = useTranslation();
-  const id = pending.hubEnrollmentId;
-  return (
-    <li
-      className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-xs"
-      data-testid={`nodes-pending-${id}`}
-    >
-      <span className="truncate">
-        {unconfirmed ? t('nodes.enrollment.relayNotConfirmed') : t('nodes.enrollment.pending')}
-        <span className="ml-2 font-mono text-muted-foreground">
-          {pending.name ?? pending.enrollPk.slice(0, 12)}
-        </span>
-      </span>
-      <span className="flex shrink-0 items-center gap-1">
-        <Button
-          type="button"
-          size="xs"
-          disabled={busy || !writable}
-          title={writable ? undefined : blockedHint}
-          onClick={() => onConfirm(pending)}
-          data-testid={`nodes-pending-confirm-${id}`}
-        >
-          {busy ? <Loader2 className="animate-spin" /> : <Check />}
-          {unconfirmed ? t('nodes.enrollment.retry') : t('nodes.enrollment.confirmPending')}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          disabled={busy}
-          onClick={() => onCancel(pending)}
-          data-testid={`nodes-pending-cancel-${id}`}
-        >
-          <X />
-          {t('nodes.enrollment.cancelPending')}
-        </Button>
-      </span>
-    </li>
   );
 }

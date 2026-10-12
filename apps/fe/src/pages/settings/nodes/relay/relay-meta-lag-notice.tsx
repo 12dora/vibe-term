@@ -8,6 +8,7 @@
 // 在各处只显示一串 node id，也收不到其它节点的状态。而这件事没有任何自愈路径。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
+import { markMemberKeysDelivered } from '@/node/admit-progress';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import { refreshMeshRelay } from '@/node/mesh-relay';
 import type { RelayFlowDeps, RelayFlowMode } from '@/node/relay-enroll';
@@ -30,6 +31,37 @@ export function laggingNames(rows: readonly RelayMetaKeyLaggingNode[], limit = 3
     .slice(0, limit)
     .map((row) => row.name ?? row.nodeId.slice(0, 8))
     .join('、');
+}
+
+type Translate = (key: string, options?: Record<string, unknown>) => string;
+
+/**
+ * 按服务端名单补发一轮并报结果。返回是否真的跑了一轮（用户取消凭据框为 `false`）。
+ *
+ * 加入结果行里停在「成员密钥待补发」的那几条跟着收成已加入（`markMemberKeysDelivered`）；
+ * 名单本身来自 `/api/mesh/relay/status`，补完自己重拉一次，否则告警条要等下一拍 30 秒轮询才消失。
+ */
+export async function resendLaggingMemberKeys(input: {
+  deps: RelayFlowDeps;
+  prompt: Pick<CredentialPromptHandle, 'withSigner'>;
+  t: Translate;
+}): Promise<boolean> {
+  const { deps, prompt, t } = input;
+  const summary = await prompt.withSigner(
+    (signer) => catchUpMetaKeyLagging(deps, signer, deps.relayApi),
+    { purpose: 'admit' }
+  );
+  if (!summary) return false;
+  markMemberKeysDelivered(summary.deliveredNodeIds, summary.failedCode === null);
+  if (summary.failedCode === null) {
+    toast.success(t('relay.tenant.metaKey.lagging.done', { count: summary.delivered }));
+  } else {
+    toast.error(
+      t('relay.tenant.metaKey.lagging.failed', { error: relayErrorText(t, summary.failedCode) })
+    );
+  }
+  await refreshMeshRelay(deps.relayApi);
+  return true;
 }
 
 export interface RelayMetaLagNoticeProps {
@@ -60,24 +92,7 @@ export function RelayMetaLagNotice({
     setBusy(true);
     try {
       const deps: RelayFlowDeps = { api, relayApi, mode, lock: withKeyLogLock };
-      const summary = await prompt.withSigner(
-        (signer) => catchUpMetaKeyLagging(deps, signer, relayApi),
-        { purpose: 'admit' }
-      );
-      if (!summary) return;
-      if (summary.failedCode === null) {
-        toast.success(t('relay.tenant.metaKey.lagging.done', { count: summary.delivered }));
-      } else {
-        toast.error(
-          t('relay.tenant.metaKey.lagging.failed', {
-            error: relayErrorText(t, summary.failedCode),
-          })
-        );
-      }
-      // 名单本身来自 `/api/mesh/relay/status`，补完必须自己重拉一次，
-      // 否则告警条要等下一拍 30 秒轮询才会消失。
-      await refreshMeshRelay(relayApi);
-      onChanged();
+      if (await resendLaggingMemberKeys({ deps, prompt, t })) onChanged();
     } finally {
       setBusy(false);
     }

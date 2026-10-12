@@ -111,6 +111,36 @@ describe('对话框', () => {
     );
   }
 
+  function renderAdmit(passkeys: PasskeySummary[], passkeyCeremonies?: number): string {
+    return renderToStaticMarkup(
+      <CredentialPromptDialog
+        purpose="admit"
+        passkeys={passkeys}
+        passkeyCeremonies={passkeyCeremonies}
+        busy={false}
+        error={null}
+        onSubmit={() => undefined}
+        onCancel={() => undefined}
+      />
+    );
+  }
+
+  test('要签两条记录且能用 passkey：事先说明要验证两次', () => {
+    expect(renderAdmit([ORIGIN_PASSKEY], 2)).toContain(
+      'data-testid="credential-prompt-passkey-twice"'
+    );
+  });
+
+  test('只能用密码（根钥一次签完两条）或只签一条：不多说一句', () => {
+    expect(renderAdmit([], 2)).not.toContain('data-testid="credential-prompt-passkey-twice"');
+    expect(renderAdmit([ORIGIN_PASSKEY], 1)).not.toContain(
+      'data-testid="credential-prompt-passkey-twice"'
+    );
+    expect(renderAdmit([ORIGIN_PASSKEY])).not.toContain(
+      'data-testid="credential-prompt-passkey-twice"'
+    );
+  });
+
   test('没有可用 passkey 时只渲染密码路径', () => {
     const html = render([]);
     expect(html).toContain('data-testid="credential-prompt-password"');

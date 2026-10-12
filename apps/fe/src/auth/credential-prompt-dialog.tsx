@@ -15,6 +15,8 @@ export interface CredentialPromptDialogProps {
   purpose: CredentialPurpose;
   /** 已按 origin 过滤过的可用凭证；为空则只渲染密码路径。 */
   passkeys: PasskeySummary[];
+  /** 本次操作 passkey 要验证几次；为 2 时在 passkey 选项旁事先说明。 */
+  passkeyCeremonies?: number;
   busy: boolean;
   error: string | null;
   onSubmit: (choice: CredentialChoice) => void;
@@ -94,6 +96,7 @@ export function CredentialPromptDialog(props: CredentialPromptDialogProps) {
 function CredentialPromptFields({
   purpose,
   passkeys,
+  passkeyCeremonies,
   busy,
   error,
   onSubmit,
@@ -182,14 +185,45 @@ function CredentialPromptFields({
         </Button>
       </div>
 
-      {canUsePasskey && passkeys.length > 1 ? (
+      <PasskeyExtras
+        passkeys={passkeys}
+        selectedId={selected?.credential_id ?? ''}
+        onSelect={setCredentialId}
+        ceremonies={passkeyCeremonies}
+      />
+    </>
+  );
+}
+
+/** passkey 路径的附加信息：要验证两次时的说明，以及多把凭证时的选择器。 */
+function PasskeyExtras({
+  passkeys,
+  selectedId,
+  onSelect,
+  ceremonies,
+}: {
+  passkeys: PasskeySummary[];
+  selectedId: string;
+  onSelect: (credentialId: string) => void;
+  ceremonies?: number;
+}) {
+  const { t } = useTranslation();
+  if (passkeys.length === 0) return null;
+  return (
+    <>
+      {ceremonies === 2 ? (
+        <p className="text-xs text-muted-foreground" data-testid="credential-prompt-passkey-twice">
+          {t('auth.credential.passkeyTwice')}
+        </p>
+      ) : null}
+      {passkeys.length > 1 ? (
         <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
           {t('auth.credential.passkeySelect')}
           <select
             className="rounded-md border border-border bg-background p-1 text-xs"
-            value={selected?.credential_id ?? ''}
+            value={selectedId}
             data-testid="credential-prompt-passkey-select"
-            onChange={(event) => setCredentialId(event.target.value)}
+            onChange={(event) => onSelect(event.target.value)}
           >
             {passkeys.map((row) => (
               <option key={row.credential_id} value={row.credential_id}>

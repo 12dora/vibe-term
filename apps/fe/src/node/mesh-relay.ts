@@ -37,6 +37,8 @@ export interface MeshRelayState extends RelayTenantStatus {
   loading: boolean;
   error: string | null;
   loadedAt: number | null;
+  /** 这份状态对应的请求发出的时刻；判断「它是否晚于某件事」要用它，响应落地时刻会把在途的旧请求算成新的。 */
+  requestedAt: number | null;
   /** 节点没有这族路由（版本太老）：整套中继 UI 不出现，也不报错。 */
   unsupported: boolean;
 }
@@ -58,6 +60,7 @@ const EMPTY_STATE: MeshRelayState = {
   loading: false,
   error: null,
   loadedAt: null,
+  requestedAt: null,
   unsupported: false,
 };
 
@@ -215,6 +218,7 @@ export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantA
   const started = generation;
   store.set({ loading: true });
   const promise = (async () => {
+    const requestedAt = Date.now();
     try {
       const status = await api.status();
       if (started !== generation) return;
@@ -225,12 +229,13 @@ export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantA
         error: null,
         unsupported: false,
         loadedAt: Date.now(),
+        requestedAt,
       });
     } catch (err) {
       if (started !== generation) return;
       // 路由不存在不是错误：把它记成「本版本没有中继」，UI 一行提示都不出。
       if (isRelayRoutesMissing(err)) {
-        store.set({ ...EMPTY_STATE, unsupported: true, loadedAt: Date.now() });
+        store.set({ ...EMPTY_STATE, unsupported: true, loadedAt: Date.now(), requestedAt });
         return;
       }
       // 失败保留上一份链路：一次网络抖动不该把已经展示出来的中继列表抹掉。
@@ -253,6 +258,7 @@ export async function switchMeshRelay(
   url: string,
   api: RelayTenantApi = defaultRelayTenantApi
 ): Promise<void> {
+  const requestedAt = Date.now();
   const status = await api.switchRelay(url);
   generation += 1;
   store.set({
@@ -262,6 +268,7 @@ export async function switchMeshRelay(
     error: null,
     unsupported: false,
     loadedAt: Date.now(),
+    requestedAt,
   });
 }
 

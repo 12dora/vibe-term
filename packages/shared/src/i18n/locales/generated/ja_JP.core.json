@@ -744,6 +744,7 @@
         "usePassword": "パスワードを使う",
         "usePasskey": "パスキーを使う",
         "passkeySelect": "パスキーを選択",
+        "passkeyTwice": "パスキーの確認は 2 回行われます。",
         "purpose": {
           "enroll": "ノードを追加",
           "admit": "新しいノードを承認",

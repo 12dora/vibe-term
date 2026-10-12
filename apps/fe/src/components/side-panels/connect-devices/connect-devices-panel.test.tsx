@@ -36,6 +36,7 @@ type JoinSession = Parameters<typeof isSessionValid>[0];
 const { getEnrollmentEngineState, resetEnrollmentEngineForTest, setEnrollmentEngineStateForTest } =
   await import('@/node/enrollment-engine');
 const { joinCommandPreview } = await import('./join-command-preview');
+const { forgetSigner } = await import('@/auth/credential-prompt');
 
 const ORIGIN = 'http://localhost:9663';
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
@@ -598,9 +599,12 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     nodeId: null,
   };
 
+  type Enrollment = Parameters<typeof JoinConfirmStatus>[0]['enrollment'];
+
   function confirmStatus(
     patch: Parameters<typeof setEnrollmentEngineStateForTest>[0],
-    session: JoinSession = SESSION
+    session: JoinSession = SESSION,
+    over: Partial<Enrollment> = {}
   ): string {
     setEnrollmentEngineStateForTest(patch);
     const enrollment = {
@@ -609,8 +613,18 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
       session,
       engine: getEnrollmentEngineState(),
       confirmManually: () => undefined,
-    } as unknown as Parameters<typeof JoinConfirmStatus>[0]['enrollment'];
+      confirmReady: true,
+      passkeyTwice: { twoStep: true, passkeysAvailable: false },
+      ...over,
+    } as unknown as Enrollment;
     return render(<JoinConfirmStatus enrollment={enrollment} />);
+  }
+
+  /** 确认按钮的开标签：禁用与否只认 React 渲染出的 `disabled=""`（class 里本来就有 `disabled:`）。 */
+  function confirmButton(html: string): string {
+    const at = html.indexOf('data-testid="connect-join-confirm"');
+    expect(at).toBeGreaterThan(-1);
+    return html.slice(html.lastIndexOf('<button', at), html.indexOf('>', at) + 1);
   }
 
   test('等待中：只有「等待新节点加入」，没有确认按钮', () => {
@@ -624,6 +638,35 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     const html = confirmStatus({ certificateReadyIds: ['e-1'] });
     expect(html).toContain('data-testid="connect-join-confirm"');
     expect(html).toContain('nodes.enrollment.confirmPending');
+    expect(confirmButton(html)).not.toContain('disabled=""');
+  });
+
+  test('中继状态还没拉到：确认按钮禁用并转圈——此时还不知道有没有第二步', () => {
+    const html = confirmStatus({ certificateReadyIds: ['e-1'] }, SESSION, { confirmReady: false });
+    expect(confirmButton(html)).toContain('disabled=""');
+    expect(html).toContain('animate-spin');
+    expect(html).toContain('nodes.enrollment.confirmPending');
+  });
+
+  test('有第二步且会用到 passkey：按钮旁常驻「需验证两次」；只能用密码则不提示', () => {
+    const HINT = 'data-testid="connect-join-passkey-twice"';
+    // 复用窗口为空：提示只跟着入口有没有 passkey 走。
+    forgetSigner();
+    const withPasskeys = confirmStatus({ certificateReadyIds: ['e-1'] }, SESSION, {
+      passkeyTwice: { twoStep: true, passkeysAvailable: true },
+    });
+    expect(withPasskeys).toContain(HINT);
+    expect(withPasskeys).toContain('auth.credential.passkeyTwice');
+    expect(confirmStatus({ certificateReadyIds: ['e-1'] })).not.toContain(HINT);
+    const singleStep = confirmStatus({ certificateReadyIds: ['e-1'] }, SESSION, {
+      passkeyTwice: { twoStep: false, passkeysAvailable: true },
+    });
+    expect(singleStep).not.toContain(HINT);
+    // 还没到能点确认的时候（证书未到）不提前说。
+    const waiting = confirmStatus({ certificateReadyIds: [] }, SESSION, {
+      passkeyTwice: { twoStep: true, passkeysAvailable: true },
+    });
+    expect(waiting).not.toContain(HINT);
   });
 
   test('relayAck 未确认：文案与按钮都换成重试', () => {
@@ -637,6 +680,55 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     expect(html).toContain('data-testid="connect-join-admitted"');
     expect(html).toContain('connectDevices.computer.join.confirm.done');
     expect(html).not.toContain('data-testid="connect-join-confirm"');
+  });
+
+  const progress = (phase: 'admitting' | 'distributing' | 'done' | 'keyPending') => ({
+    'e-1': { phase, steps: 2 as const, name: 'studio', nodeId: null },
+  });
+
+  test('第一步进行中：确认按钮标出「1/2」', () => {
+    const html = confirmStatus({
+      certificateReadyIds: ['e-1'],
+      busyIds: ['e-1'],
+      progressById: progress('admitting'),
+    });
+    expect(html).toContain('data-testid="connect-join-confirm"');
+    expect(html).toContain('nodes.enrollment.step.admit');
+  });
+
+  test('第二步进行中：标出「2/2」，还不说已加入', () => {
+    const html = confirmStatus({ admittedIds: ['e-1'], progressById: progress('distributing') });
+    expect(html).toContain('data-testid="connect-join-progress"');
+    expect(html).toContain('nodes.enrollment.step.memberKey');
+    expect(html).not.toContain('data-testid="connect-join-admitted"');
+  });
+
+  test('成员密钥没下发：不报成功，说清还差哪一步并给补发按钮', () => {
+    const html = confirmStatus({ admittedIds: ['e-1'], progressById: progress('keyPending') });
+    expect(html).toContain('nodes.enrollment.memberKeyPending');
+    expect(html).toContain('data-testid="connect-join-progress-resend"');
+    expect(html).not.toContain('data-testid="connect-join-admitted"');
+    expect(html).not.toContain('data-testid="connect-join-progress-reason"');
+  });
+
+  test('成员密钥下发失败：句后跟上原因', () => {
+    const failed = { 'e-1': { ...progress('keyPending')['e-1'], keyError: 'RELAY_OFFLINE' } };
+    const html = confirmStatus({ admittedIds: ['e-1'], progressById: failed });
+    expect(html).toMatch(/role="alert"[^>]*data-testid="connect-join-progress-reason"/);
+    expect(html).toContain('RELAY_OFFLINE');
+  });
+
+  test('两步都落账：才显示「已加入」', () => {
+    const html = confirmStatus({ admittedIds: ['e-1'], progressById: progress('done') });
+    expect(html).toContain('data-testid="connect-join-admitted"');
+    expect(html).not.toContain('data-testid="connect-join-progress"');
+  });
+
+  test('确认失败：行内给出原因，按钮换成重试', () => {
+    const html = confirmStatus({ failureById: { 'e-1': 'nodes.enrollment.admitFailed' } });
+    expect(html).toMatch(/role="alert"[^>]*data-testid="connect-join-failure"/);
+    expect(html).toContain('nodes.enrollment.admitFailed');
+    expect(html).toContain('nodes.enrollment.retry');
   });
 
   test('证书判定失败：给出与设置页同一条错误文案', () => {

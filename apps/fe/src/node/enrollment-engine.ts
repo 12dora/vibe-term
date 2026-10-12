@@ -25,11 +25,24 @@ import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type RecordSigner, headFromResponse } from '@/auth/key-log-actions';
 import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
-import { errorMessage } from '@vibeterm/shared';
 import type { KeyLogHead } from '@vibeterm/shared/auth';
 import { encodeBase64url } from '@vibeterm/shared/auth';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
+import {
+  type AdmitFollowUp,
+  type MemberKeyStep,
+  abandonAdmit,
+  awaitMemberKey,
+  beginAdmit,
+  completeAdmit,
+  distributeMemberKey,
+  failAdmit,
+  markAdmitExpired,
+  reportAdmitError,
+  resendMemberKey,
+  resetAdmitProgressForTest,
+} from './admit-progress';
 import {
   NODE_ID_REUSED,
   type SignedRecord,
@@ -57,9 +70,12 @@ import {
 import type { EnrollmentApi } from './enrollment-api';
 import {
   type EnrollmentEngineState,
-  appendId,
+  NO_CERTIFICATE_YET_KEY,
   commitEnrollmentEngine,
+  commitTerminal,
   getEnrollmentEngineState,
+  markCertificateInvalid,
+  markCertificateReady,
   resetEnrollmentEngineState,
   subscribeEnrollmentEngine,
 } from './enrollment-engine-state';
@@ -75,9 +91,11 @@ import {
   offerCertificate,
   outcomesForCandidates,
 } from './enrollment-watch';
+import { resetKeyLogLockForTest, withKeyLogLock } from './key-log-lock';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
 export { canAutoSignAdmit, invalidCertificateKey } from './enrollment-policy';
+export { withKeyLogLock };
 export {
   getEnrollmentEngineState,
   setEnrollmentEngineStateForTest,
@@ -104,6 +122,8 @@ export interface AdmitContext {
   mode: AdmitMode | null;
   enrollmentApi: EnrollmentApi | null;
   prompt: CredentialPromptHandle;
+  /** admit 之后还要补的那一步（中继模式下发成员密钥）；没有则 admit 落账即完成。 */
+  followUp?: AdmitFollowUp | null;
   /** admit 成功后刷新列表。 */
   onDone: () => void;
   /** 消费方的翻译函数：引擎在模块级，拿不到 React 的 i18n 上下文。 */
@@ -114,6 +134,8 @@ export interface AdmitContext {
 export interface EnrollmentEngineHandle {
   /** 「待确认 / 重试」按钮：只认 enrollment id，pending 一律从权威 store 现取。 */
   confirmManually(enrollmentId: string): Promise<void>;
+  /** 「补发成员密钥」：节点已加入、第二步没签成时只补这一条。 */
+  resendMemberKey(enrollmentId: string): Promise<void>;
 }
 
 // 未确认集合是 `admit-record.ts` 的模块级 store，直接镜像进来，消费方只订阅一处。
@@ -218,6 +240,7 @@ export function registerAdmitContext(
   const detach = attachSlot(slot);
   return {
     confirmManually: (enrollmentId: string) => confirmFromSlot(slot, enrollmentId),
+    resendMemberKey: (enrollmentId: string) => resendKeyFromSlot(slot, enrollmentId),
     update: (next: AdmitContext) => writeSlot(slot, next),
     release: detach,
   };
@@ -236,6 +259,8 @@ interface OperationContext {
   t: AdmitContext['t'];
   /** 签名者取用口：自动路径到用时才从复用窗口现取，手动路径固定用刚拿到的那个。 */
   signer: () => RecordSigner | null;
+  /** 由用户手势（按钮）发起；轮询 / 推送发起的为假，第二步不能替 passkey 用户自动起仪式。 */
+  gesture: boolean;
   slot: ContextSlot;
   slotGeneration: number;
   engineGeneration: number;
@@ -243,7 +268,8 @@ interface OperationContext {
 
 function openOperation(
   slot: ContextSlot,
-  signer: () => RecordSigner | null
+  signer: () => RecordSigner | null,
+  gesture: boolean
 ): OperationContext | null {
   const value = slot.value;
   if (!value?.mode || !slots.includes(slot)) return null;
@@ -255,6 +281,7 @@ function openOperation(
     prompt: value.prompt,
     t: value.t,
     signer,
+    gesture,
     slot,
     slotGeneration: slot.generation,
     engineGeneration,
@@ -319,9 +346,7 @@ function scheduleSweep(): void {
       sweepTimer = null;
     }
     if (slots.length === 0) return;
-    for (const row of prunePendingEnrollments(nowMs())) {
-      finishPending(row.hubEnrollmentId, 'expired');
-    }
+    for (const row of prunePendingEnrollments(nowMs())) expirePending(row);
     const next = nextPendingExpiry(listPendingEnrollments());
     if (next === null) return;
     sweepTimer = setTimeout(
@@ -406,12 +431,18 @@ async function tick(): Promise<void> {
 function finishPending(
   id: string,
   outcome: 'admitted' | 'expired' | 'cancelled',
-  nodeIdHex?: string
+  nodeIdHex?: string | null
 ): void {
   forgetUnconfirmedRecord(id);
   if (livePending(id)) removePendingEnrollment(id);
   if (nodeIdHex) admittedNodeIds.set(id, nodeIdHex);
-  commitEnrollmentEngine({ ...clearProjections(id), ...terminalIds(id, outcome) });
+  commitTerminal(id, outcome);
+}
+
+/** 过期收尾：pending 没了，结果行还要说得出是哪一条。 */
+function expirePending(row: Pick<PendingEnrollment, 'hubEnrollmentId' | 'name'>): void {
+  finishPending(row.hubEnrollmentId, 'expired');
+  markAdmitExpired(row.hubEnrollmentId, row.name);
 }
 
 /**
@@ -424,36 +455,6 @@ export function admittedNodeIdFor(enrollmentId: string): string | null {
   return admittedNodeIds.get(enrollmentId) ?? null;
 }
 
-function clearProjections(id: string): Partial<EnrollmentEngineState> {
-  const current = getEnrollmentEngineState();
-  const patch: Partial<EnrollmentEngineState> = {};
-  if (current.certificateReadyIds.includes(id)) {
-    patch.certificateReadyIds = current.certificateReadyIds.filter((row) => row !== id);
-  }
-  if (current.invalidById[id]) {
-    const next = { ...current.invalidById };
-    delete next[id];
-    patch.invalidById = next;
-  }
-  return patch;
-}
-
-function terminalIds(
-  id: string,
-  outcome: 'admitted' | 'expired' | 'cancelled'
-): Partial<EnrollmentEngineState> {
-  if (outcome === 'admitted') {
-    const next = appendId(getEnrollmentEngineState().admittedIds, id);
-    return next ? { admittedIds: next } : {};
-  }
-  if (outcome === 'expired') {
-    const next = appendId(getEnrollmentEngineState().expiredIds, id);
-    return next ? { expiredIds: next } : {};
-  }
-  const next = appendId(getEnrollmentEngineState().cancelledIds, id);
-  return next ? { cancelledIds: next } : {};
-}
-
 // ---------------------------------------------------------------------------
 // admit 流水线
 // ---------------------------------------------------------------------------
@@ -461,6 +462,8 @@ function terminalIds(
 /** 一条 admit 的事务状态。`cancelRequested` 只是意向，等处置明朗之后才兑现。 */
 interface AdmitTransaction {
   cancelRequested: boolean;
+  /** admit 落账后要接着跑的那一步；必须等写锁放开再跑——它自己也要进这条锁。 */
+  afterLock: (() => Promise<void>) | null;
 }
 
 /** 同一条 pending 同时只允许一次 admit 在飞；也是 `busyIds` 的唯一来源。 */
@@ -471,45 +474,28 @@ function commitBusy(): void {
   commitEnrollmentEngine({ busyIds, busyPendingId: busyIds.at(-1) ?? null });
 }
 
-/**
- * key log 写锁：**引擎级**一条 FIFO 链。
- *
- * head 是全局的，`keyLogHead → 构造签名 → append` 必须整段串行：两条不同 enrollment 的 admit
- * 若并行读到同一个 head，就会造出两条同 seq 的记录，对端只收得下一条，另一条永久 `seq_gap`
- * （见 R4 #1）。按 enrollment 上锁挡不住这种情况。
- *
- * 导出给 `node/` 之外的写入方（吊销在 `use-node-row-actions.ts`）：它们与 admit 抢同一个
- * head，不进这条链照样撞（见 R5 #1）。**只圈住取 head → 签名 → append**，凭据对话框留锁外。
- */
-let keyLogQueue: Promise<unknown> = Promise.resolve();
-
-export function withKeyLogLock<T>(run: () => Promise<T>): Promise<T> {
-  const result = keyLogQueue.then(run, run);
-  keyLogQueue = result.then(
-    () => undefined,
-    () => undefined
-  );
-  return result;
-}
-
 /** 开事务 → 置忙 → 跑 → 无论如何收尾。锁拿到之后的每一句都在 `try` 里，异常不会把锁焊死。 */
 async function runAdmit(op: OperationContext, id: string, run: () => Promise<void>): Promise<void> {
   if (transactions.has(id)) return;
-  const txn: AdmitTransaction = { cancelRequested: false };
+  const txn: AdmitTransaction = { cancelRequested: false, afterLock: null };
   transactions.set(id, txn);
   try {
+    beginAdmit(id, livePending(id)?.name ?? null, Boolean(op.slot.value?.followUp));
     commitBusy();
     await withKeyLogLock(run);
   } catch (err) {
-    if (opAlive(op)) toast.error(errorMessage(err));
+    reportAdmitError(opAlive(op) ? op.t : null, id, err);
   } finally {
     if (transactions.get(id) === txn) transactions.delete(id);
     // 引擎已被重置：这条操作属于上一代，不再往新状态上写任何东西。
     if (op.engineGeneration === engineGeneration) {
+      abandonAdmit(id);
       commitBusy();
       if (txn.cancelRequested) applyDeferredCancel(id);
     }
   }
+  // 同一次用户操作里紧接着跑，不另排定时器；浏览器若不放行第二次仪式，状态落到待补发。
+  if (op.engineGeneration === engineGeneration) await txn.afterLock?.();
 }
 
 /**
@@ -543,19 +529,41 @@ async function submitAdmit(
   }
   if (disposition.kind === 'stale') {
     // fork / seq_gap：这份字节永远不会被接受，让用户重新签一条。
-    toast.error(op.t('nodes.enrollment.staleRecord'));
+    failAdmit(op.t, id, 'nodes.enrollment.staleRecord');
     return;
   }
   // `node_id_reused` 不是失败：这台早就被接纳过（上一次确认已落账，只是本标签页没看到结果），
   // 卡片必须消失、中继的补发也要照跑，否则用户只会一次次重点「确认」。
   if (disposition.kind === 'error' && disposition.code !== NODE_ID_REUSED) {
-    toast.error(op.t(`auth.errors.${disposition.code}`, { defaultValue: disposition.code }));
+    const key = `auth.errors.${disposition.code}`;
+    failAdmit(op.t, id, key, op.t(key, { defaultValue: disposition.code }));
     return;
   }
   // 重发路径手上只有字节、没有证书对象，node id 从字节里解——丢了它就补不出 `meta-key`。
-  finishPending(id, 'admitted', nodeIdHex ?? nodeIdFromAdmitRecord(record) ?? undefined);
-  toast.success(op.t('nodes.enrollment.admitted'));
+  const nodeId = nodeIdHex ?? nodeIdFromAdmitRecord(record) ?? null;
+  finishPending(id, 'admitted', nodeId);
   fanOutDone();
+  const step = memberKeyStep(op.slot, id);
+  const txn = transactions.get(id);
+  // 「节点已加入」只报一次，而且要等成员密钥也下发成功之后。
+  if (!step || !txn) {
+    completeAdmit(op.t, id);
+    return;
+  }
+  awaitMemberKey(id, nodeId);
+  const auto = op.gesture || canAutoSignAdmit(op.signer());
+  txn.afterLock = () => distributeMemberKey(step, auto);
+}
+
+function memberKeyStep(slot: ContextSlot, id: string): MemberKeyStep | null {
+  const value = slot.value;
+  if (!value?.followUp) return null;
+  return { id, followUp: value.followUp, t: value.t, onDone: fanOutDone };
+}
+
+async function resendKeyFromSlot(slot: ContextSlot, id: string): Promise<void> {
+  const step = slots.includes(slot) ? memberKeyStep(slot, id) : null;
+  if (step && slot.value) await resendMemberKey(step, slot.value.prompt);
 }
 
 /**
@@ -600,7 +608,7 @@ async function signAdmit(
   if (!live) return;
   if (isPendingExpired(live, nowMs())) {
     toast.error(op.t('nodes.enrollment.expired'));
-    finishPending(id, 'expired');
+    expirePending(live);
     return;
   }
   const record = await buildRecord(op, live, outcome, head);
@@ -610,24 +618,9 @@ async function signAdmit(
   await submitAdmit(op, id, record, outcome.nodeIdHex);
 }
 
-/** 收到一张**有效**证书：记下「证书已到」，同时抹掉这条 id 之前的判定失败提示。 */
-function markCertificateReady(id: string): void {
-  const patch: Partial<EnrollmentEngineState> = {};
-  const ready = appendId(getEnrollmentEngineState().certificateReadyIds, id);
-  if (ready) patch.certificateReadyIds = ready;
-  if (getEnrollmentEngineState().invalidById[id]) {
-    const next = { ...getEnrollmentEngineState().invalidById };
-    delete next[id];
-    patch.invalidById = next;
-  }
-  if (ready || patch.invalidById) commitEnrollmentEngine(patch);
-}
-
 function markInvalid(t: AdmitContext['t'] | null, id: string, reason: string): void {
   const key = invalidCertificateKey(reason);
-  if (getEnrollmentEngineState().invalidById[id] === key) return;
-  commitEnrollmentEngine({ invalidById: { ...getEnrollmentEngineState().invalidById, [id]: key } });
-  if (t) toast.error(t(key));
+  if (markCertificateInvalid(id, key) && t) toast.error(t(key));
 }
 
 /** 轮询 / 推送检测出的结果。已过期或签名坏的直接告警；能自动签就自动签。 */
@@ -652,7 +645,7 @@ async function handleOutcome(outcome: CertificateOutcome): Promise<void> {
   if (!slot) return;
   // 复用窗口已过、或窗口里是 passkey：都留在「待确认」，等用户点按钮。
   if (admitPlan(id, canAutoSignAdmit(takeRememberedSigner(nowMs()))) === 'wait') return;
-  const op = openOperation(slot, () => takeRememberedSigner(nowMs()));
+  const op = openOperation(slot, () => takeRememberedSigner(nowMs()), false);
   if (!op) return;
   await runAdmit(op, id, () => admitInLock(op, id, outcome));
 }
@@ -681,7 +674,7 @@ async function confirmFromSlot(slot: ContextSlot, id: string): Promise<void> {
   if (!pending) return;
   const enrollPk = pending.enrollPk;
   let signer: RecordSigner | null = null;
-  const op = openOperation(slot, () => signer);
+  const op = openOperation(slot, () => signer, true);
   if (!op) return;
   if (unconfirmedRecord(id)) {
     await runAdmit(op, id, () => resendInLock(op, id, enrollPk));
@@ -689,9 +682,10 @@ async function confirmFromSlot(slot: ContextSlot, id: string): Promise<void> {
   }
   try {
     // request() 会把签名者放进 5 分钟复用窗口，后续自动 admit 直接用它。
-    signer = await op.prompt.request({ purpose: 'admit', reuse: true });
+    const passkeyCeremonies = slot.value?.followUp ? 2 : 1;
+    signer = await op.prompt.request({ purpose: 'admit', reuse: true, passkeyCeremonies });
   } catch (err) {
-    toast.error(errorMessage(err));
+    reportAdmitError(op.t, id, err);
     return;
   }
   if (!signer) return;
@@ -727,7 +721,7 @@ async function confirmInLock(op: OperationContext, id: string, enrollPk: string)
       return;
     }
   }
-  toast.error(op.t('nodes.enrollment.noCertificateYet'));
+  failAdmit(op.t, id, NO_CERTIFICATE_YET_KEY);
 }
 
 /**
@@ -766,7 +760,11 @@ export function useEnrollmentEngine(context: AdmitContext): EnrollmentEngineHand
     (enrollmentId: string) => confirmFromSlot(slot.current, enrollmentId),
     []
   );
-  return { confirmManually };
+  const resendKey = useCallback(
+    (enrollmentId: string) => resendKeyFromSlot(slot.current, enrollmentId),
+    []
+  );
+  return { confirmManually, resendMemberKey: resendKey };
 }
 
 export function useEnrollmentEngineState(): EnrollmentEngineState {
@@ -809,12 +807,13 @@ export function resetEnrollmentEngineForTest(): void {
   slots.length = 0;
   transactions.clear();
   admittedNodeIds.clear();
-  keyLogQueue = Promise.resolve();
+  resetKeyLogLockForTest();
   ticking = false;
   overrides = {};
   clearUnconfirmedRecords();
   clearPendingEnrollments();
   forgetSigner();
   resetSignerLeasesForTest();
+  resetAdmitProgressForTest();
   resetEnrollmentEngineState();
 }

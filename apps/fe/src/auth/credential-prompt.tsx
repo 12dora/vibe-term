@@ -19,7 +19,10 @@ import {
   rootSignerFromPassword,
   withRootSigner,
 } from './account-security-actions';
-import { CredentialPromptDialog } from './credential-prompt-dialog';
+import {
+  CredentialPromptDialog,
+  type CredentialPromptDialogProps,
+} from './credential-prompt-dialog';
 import type { RecordSigner } from './key-log-actions';
 
 /** 刚做完密码 / passkey 交互后的免二次输入窗口（设计 §2 步骤 3）。 */
@@ -39,6 +42,24 @@ let rememberedTimer: ReturnType<typeof setTimeout> | null = null;
 const leases = new Map<RecordSigner, number>();
 /** 租约期内被要求清零的签名者：等租约还清再动手。 */
 const deferredWipes = new Set<RecordSigner>();
+const rememberedListeners = new Set<() => void>();
+
+function notifyRemembered(): void {
+  for (const listener of [...rememberedListeners]) listener();
+}
+
+/** 复用窗口换了内容（存入 / 到期 / 清零）时通知：界面据此预告下一次确认用哪种凭据。 */
+export function subscribeRememberedSigner(listener: () => void): () => void {
+  rememberedListeners.add(listener);
+  return () => {
+    rememberedListeners.delete(listener);
+  };
+}
+
+/** 复用窗口里那把签名者的种类；窗口是空的为 `null`。 */
+export function rememberedSignerKind(): RecordSigner['kind'] | null {
+  return rememberedSigner?.signer.kind ?? null;
+}
 
 /** 根钥签名者的 seed 是根私钥：丢引用不够，必须显式清零。 */
 export function wipeSigner(signer: RecordSigner | null | undefined): void {
@@ -56,6 +77,7 @@ function dropRemembered(): void {
   // 有人正拿它签记录：现在清零会让签名用到半截的根钥，推迟到租约释放。
   if (leases.has(previous.signer)) deferredWipes.add(previous.signer);
   else wipeSigner(previous.signer);
+  notifyRemembered();
 }
 
 /**
@@ -103,6 +125,7 @@ export function rememberSigner(signer: RecordSigner, now: number, owner?: Signer
   }, SIGNER_REUSE_WINDOW_MS);
   // Node/Bun 下别让定时器吊住进程。
   (rememberedTimer as { unref?: () => void }).unref?.();
+  notifyRemembered();
 }
 
 export function takeRememberedSigner(now: number): RecordSigner | null {
@@ -291,12 +314,17 @@ export interface CredentialPromptConfig {
   origin?: string;
 }
 
+export interface CredentialRequestOptions {
+  purpose?: CredentialPurpose;
+  /** 为真且复用窗口里还有签名者时直接返回，不打扰用户。 */
+  reuse?: boolean;
+  /** 本次操作要签几条记录：passkey 每条一次仪式，多于一次时在框里事先说明。 */
+  passkeyCeremonies?: number;
+}
+
 export interface CredentialPromptHandle {
-  /**
-   * 取一个签名者并放进 5 分钟复用窗口（窗口负责清零根钥 seed）。
-   * `reuse` 为真且窗口里还有签名者时直接返回，不打扰用户。用户取消返回 `null`。
-   */
-  request(options?: { purpose?: CredentialPurpose; reuse?: boolean }): Promise<RecordSigner | null>;
+  /** 取一个签名者并放进 5 分钟复用窗口（窗口负责清零根钥 seed）。用户取消返回 `null`。 */
+  request(options?: CredentialRequestOptions): Promise<RecordSigner | null>;
   /** 作用域式：回调返回即清零，**不**进复用窗口。用户取消返回 `null`。 */
   withSigner<T>(
     fn: (signer: RecordSigner) => Promise<T> | T,
@@ -310,8 +338,14 @@ export interface CredentialPromptHandle {
   passkeys: PasskeySummary[];
 }
 
+/** 对话框这一屏要展示的东西。 */
+type PromptView = Pick<CredentialPromptDialogProps, 'purpose' | 'passkeyCeremonies'>;
+
+function promptView(options: CredentialRequestOptions, fallback: CredentialPurpose): PromptView {
+  return { purpose: options.purpose ?? fallback, passkeyCeremonies: options.passkeyCeremonies };
+}
+
 interface PendingPrompt {
-  purpose: CredentialPurpose;
   consume: (choice: CredentialChoice) => Promise<unknown>;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
@@ -337,7 +371,7 @@ function usePromptTeardown(pendingRef: RefObject<PendingPrompt | null>, owner: S
 }
 
 export function useCredentialPrompt(config: CredentialPromptConfig): CredentialPromptHandle {
-  const [open, setOpen] = useState<CredentialPurpose | null>(null);
+  const [open, setOpen] = useState<PromptView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pendingRef = useRef<PendingPrompt | null>(null);
@@ -351,19 +385,18 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
   );
 
   const ask = useCallback(
-    <T,>(purpose: CredentialPurpose, consume: (choice: CredentialChoice) => Promise<T>) =>
+    <T,>(view: PromptView, consume: (choice: CredentialChoice) => Promise<T>) =>
       new Promise<T | null>((resolve, reject) => {
         // 上一个请求还没结果就又来一个：把旧的当成「取消」，否则它的 promise 永远挂着。
         pendingRef.current?.resolve(null);
         pendingRef.current = {
-          purpose,
           consume: consume as (choice: CredentialChoice) => Promise<unknown>,
           resolve: resolve as (value: unknown) => void,
           reject,
         };
         setError(null);
         setBusy(false);
-        setOpen(purpose);
+        setOpen(view);
       }),
     []
   );
@@ -402,12 +435,12 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
   const cancel = useCallback(() => settle((pending) => pending.resolve(null)), [settle]);
 
   const request = useCallback(
-    async (options: { purpose?: CredentialPurpose; reuse?: boolean } = {}) => {
+    async (options: CredentialRequestOptions = {}) => {
       if (options.reuse) {
         const reused = takeRememberedSigner(Date.now());
         if (reused) return reused;
       }
-      return ask(options.purpose ?? 'admit', async (choice) => {
+      return ask(promptView(options, 'admit'), async (choice) => {
         const signer = await signerFromChoice(choice, kdfParams, rootPublicKey);
         // 交给复用窗口托管：它负责到期 / 显式清零，调用方不必再管根钥 seed。
         rememberSigner(signer, Date.now(), owner);
@@ -422,7 +455,7 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
       fn: (signer: RecordSigner) => Promise<T> | T,
       options: { purpose?: CredentialPurpose } = {}
     ) =>
-      ask(options.purpose ?? 'revoke', (choice) =>
+      ask(promptView(options, 'revoke'), (choice) =>
         runWithChoice(choice, kdfParams, fn, rootPublicKey)
       ),
     [ask, kdfParams, rootPublicKey]
@@ -437,7 +470,7 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
     passkeys: usable,
     dialog: open ? (
       <CredentialPromptDialog
-        purpose={open}
+        {...open}
         passkeys={usable}
         busy={busy}
         error={error}

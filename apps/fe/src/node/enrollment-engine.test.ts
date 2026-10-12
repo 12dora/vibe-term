@@ -38,9 +38,15 @@ const {
   getEnrollmentEngineState,
   registerAdmitContext,
   resetEnrollmentEngineForTest,
+  setEnrollmentEngineStateForTest,
   withKeyLogLock,
 } = await import('./enrollment-engine');
 const { offerCertificate } = await import('./enrollment-watch');
+const { resetMeshRelayStateForTest } = await import('./mesh-relay');
+const { clearPendingMetaKeysForTest } = await import('./relay-meta-key-pending');
+const { relayAdmitFollowUp } = await import(
+  '@/pages/settings/nodes/relay/use-relay-admit-follow-up'
+);
 
 type AdmitContext = Parameters<typeof registerAdmitContext>[0];
 type PendingEnrollment = ReturnType<typeof listPendingEnrollments>[number];
@@ -906,6 +912,604 @@ describe('与吊销共用一条写锁', () => {
   });
 });
 
+describe('加入进度：准入 + 下发成员密钥是一次操作', () => {
+  type FollowUp = NonNullable<AdmitContext['followUp']>;
+  type FollowUpResult = Awaited<ReturnType<FollowUp>>;
+
+  /** 记下每次调用的第二步桩；`gate` 给了就停在那里，等测试放行。 */
+  function followUpSpy(results: FollowUpResult[], gate?: Promise<void>) {
+    const calls: { nodeId: string | null; signer: unknown }[] = [];
+    const followUp: FollowUp = async (nodeId, signer) => {
+      calls.push({ nodeId, signer });
+      await gate;
+      return results.shift() ?? { ok: true };
+    };
+    return { calls, followUp };
+  }
+
+  /** 记下引擎翻译过哪些 key：「节点已加入」只该出现一次，且在第二步之后。 */
+  function tSpy() {
+    const keys: string[] = [];
+    return {
+      keys,
+      t: (key: string) => {
+        keys.push(key);
+        return key;
+      },
+    };
+  }
+
+  function phaseOf(id: string): string | undefined {
+    return getEnrollmentEngineState().progressById[id]?.phase;
+  }
+
+  test('非中继（没有第二步）：admit 落账即完成，只有一步', async () => {
+    const { pending, candidate } = await fixture('e-single');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const seen = tSpy();
+
+    addPendingEnrollment({ ...pending, name: 'alice-laptop' });
+    const ctx = registerAdmitContext({ ...context(spy.api), t: seen.t });
+    push(candidate);
+    await settle();
+
+    expect(getEnrollmentEngineState().progressById['e-single']).toEqual({
+      phase: 'done',
+      steps: 1,
+      name: 'alice-laptop',
+      nodeId: null,
+    });
+    expect(seen.keys.filter((key) => key === 'nodes.enrollment.admitted')).toHaveLength(1);
+    ctx.release();
+  });
+
+  test('中继模式：第二步落账之前不报「节点已加入」，落账之后只报一次', async () => {
+    const { pending, candidate } = await fixture('e-two');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const seen = tSpy();
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const second = followUpSpy([{ ok: true }], gate);
+    let refreshed = 0;
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext({
+      ...context(spy.api),
+      t: seen.t,
+      followUp: second.followUp,
+      onDone: () => {
+        refreshed += 1;
+      },
+    });
+    push(candidate);
+    await settle();
+
+    // admit 本身照常落账：pending 清掉、记进 admittedIds，只是「完成」的信号还没给。
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-two']);
+    expect(listPendingEnrollments()).toHaveLength(0);
+    expect(getEnrollmentEngineState().progressById['e-two']).toMatchObject({
+      phase: 'distributing',
+      steps: 2,
+    });
+    expect(seen.keys).not.toContain('nodes.enrollment.admitted');
+    expect(second.calls).toEqual([{ nodeId: admittedNodeIdFor('e-two'), signer: null }]);
+    const refreshedAfterAdmit = refreshed;
+
+    open();
+    await settle();
+    expect(phaseOf('e-two')).toBe('done');
+    expect(seen.keys.filter((key) => key === 'nodes.enrollment.admitted')).toHaveLength(1);
+    expect(refreshed).toBe(refreshedAfterAdmit + 1);
+    ctx.release();
+  });
+
+  test('第二步自己也要进写锁：必须等 admit 放开锁再跑，否则互相等死', async () => {
+    const { pending, candidate } = await fixture('e-lock');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const followUp: FollowUp = () => withKeyLogLock(async () => ({ ok: true as const }));
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext({ ...context(spy.api), followUp });
+    push(candidate);
+    await settle();
+
+    expect(phaseOf('e-lock')).toBe('done');
+    ctx.release();
+  });
+
+  test('第二次验证被取消：节点已加入、成员密钥待补发；补发只跑第二步', async () => {
+    const { pending, candidate } = await fixture('e-key');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const seen = tSpy();
+    const second = followUpSpy([{ ok: false, code: 'aborted' }, { ok: true }]);
+    const passkey = { kind: 'passkey', credentialId: 'cred-1' };
+    let prompts = 0;
+    const prompt = {
+      ...promptSpy().prompt,
+      withSigner: (fn: (signer: unknown) => unknown) => {
+        prompts += 1;
+        return Promise.resolve(fn(passkey));
+      },
+    } as unknown as AdmitContext['prompt'];
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext({
+      ...context(spy.api, prompt),
+      t: seen.t,
+      followUp: second.followUp,
+    });
+    push(candidate);
+    await settle();
+
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-key']);
+    expect(phaseOf('e-key')).toBe('keyPending');
+    expect(seen.keys).toContain('nodes.enrollment.memberKeyPending');
+    expect(seen.keys).not.toContain('nodes.enrollment.admitted');
+
+    await ctx.resendMemberKey('e-key');
+
+    expect(prompts).toBe(1);
+    // 没有再签 admit-node：整个补发只是把第二步用当场拿到的签名者重跑一次。
+    expect(spy.appended).toHaveLength(1);
+    expect(second.calls).toHaveLength(2);
+    expect(second.calls[1]).toEqual({ nodeId: admittedNodeIdFor('e-key'), signer: passkey });
+    expect(phaseOf('e-key')).toBe('done');
+    expect(seen.keys.filter((key) => key === 'nodes.enrollment.admitted')).toHaveLength(1);
+    ctx.release();
+  });
+
+  /** 接管 `console.warn`：断言留痕，也不让预期内的告警刷屏。 */
+  function captureWarn() {
+    const real = console.warn;
+    const calls: unknown[][] = [];
+    console.warn = (...args: unknown[]) => {
+      calls.push(args);
+    };
+    return {
+      calls,
+      restore: () => {
+        console.warn = real;
+      },
+    };
+  }
+
+  function count(keys: string[], key: string): number {
+    return keys.filter((row) => row === key).length;
+  }
+
+  test('补发时取消凭据框：状态退回待补发，第二步没有再跑，也不再告警', async () => {
+    const { pending, candidate } = await fixture('e-key-cancel');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const seen = tSpy();
+    const second = followUpSpy([{ ok: false, code: 'RELAY_OFFLINE' }]);
+    const phasesAtPrompt: (string | undefined)[] = [];
+    const prompt = {
+      ...promptSpy().prompt,
+      withSigner: () => {
+        // 补发真的走到了要凭据这一步，此刻行上显示的是「2/2」。
+        phasesAtPrompt.push(phaseOf('e-key-cancel'));
+        return Promise.resolve(null);
+      },
+    } as unknown as AdmitContext['prompt'];
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext({
+      ...context(spy.api, prompt),
+      t: seen.t,
+      followUp: second.followUp,
+    });
+    push(candidate);
+    await settle();
+    expect(getEnrollmentEngineState().progressById['e-key-cancel']).toMatchObject({
+      phase: 'keyPending',
+      keyError: 'RELAY_OFFLINE',
+    });
+    expect(count(seen.keys, 'nodes.enrollment.memberKeyPending')).toBe(1);
+
+    const warn = captureWarn();
+    await ctx.resendMemberKey('e-key-cancel');
+    warn.restore();
+
+    expect(phasesAtPrompt).toEqual(['distributing']);
+    expect(second.calls).toHaveLength(1);
+    expect(phaseOf('e-key-cancel')).toBe('keyPending');
+    // 用户自己取消的：上一次的失败原因清掉，不再弹告警，控制台也不留痕。
+    expect(getEnrollmentEngineState().progressById['e-key-cancel']?.keyError).toBeUndefined();
+    expect(count(seen.keys, 'nodes.enrollment.memberKeyPending')).toBe(1);
+    expect(warn.calls).toEqual([]);
+    ctx.release();
+  });
+
+  test('设置页与面板同时挂着：第二步只跑一次，「节点已加入」只报一次', async () => {
+    const { pending, candidate } = await fixture('e-two-slots');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const page = { seen: tSpy(), second: followUpSpy([]) };
+    const panel = { seen: tSpy(), second: followUpSpy([]) };
+
+    addPendingEnrollment(pending);
+    const pageCtx = registerAdmitContext({
+      ...context(spy.api),
+      t: page.seen.t,
+      followUp: page.second.followUp,
+    });
+    const panelCtx = registerAdmitContext({
+      ...context(spy.api),
+      t: panel.seen.t,
+      followUp: panel.second.followUp,
+    });
+    push(candidate);
+    await settle();
+    // 轮询又看到同一张证书：已经收尾的那条不会再起第二步。
+    push(candidate);
+    await settle();
+
+    expect(spy.appended).toHaveLength(1);
+    expect(page.second.calls.length + panel.second.calls.length).toBe(1);
+    expect(phaseOf('e-two-slots')).toBe('done');
+    const keys = [...page.seen.keys, ...panel.seen.keys];
+    expect(count(keys, 'nodes.enrollment.admitted')).toBe(1);
+    panelCtx.release();
+    pageCtx.release();
+  });
+
+  test('passkey 手动确认的完整链路：两次断言，第二次落账后才算完成', async () => {
+    const { pending, candidate } = await fixture('e-passkey');
+    addPendingEnrollment(pending);
+    clearPendingMetaKeysForTest();
+    const seen = tSpy();
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let asserts = 0;
+    const part = (byte: number) => encodeBase64url(new Uint8Array([byte]));
+    const passkey = {
+      kind: 'passkey' as const,
+      credentialId: 'cred-1',
+      assert: async (_challenge: Uint8Array, credentialId: string) => {
+        asserts += 1;
+        // 第二次仪式停在这里：此刻 admit-node 已落账，成员密钥还没签。
+        if (asserts === 2) await gate;
+        return {
+          id: credentialId,
+          response: { clientDataJSON: part(1), authenticatorData: part(2), signature: part(3) },
+        } as never;
+      },
+    };
+    const appended: unknown[] = [];
+    const api = {
+      keyLogHead: () =>
+        Promise.resolve({ seq: 5, hash: encodeBase64url(new Uint8Array(32).fill(7)) }),
+      appendKeyLog: (body: unknown) => {
+        appended.push(body);
+        return Promise.resolve({ ok: true as const, hubAck: true, relayAck: true });
+      },
+    } as unknown as AuthApi;
+    const relayApi = {
+      metaKeyPrepare: () => Promise.resolve({ payload: 'AQID', payloadHash: 'h' }),
+      status: () => Promise.resolve({ mode: 'relay', relays: [], metaKeyLagging: [] }),
+    } as never;
+    const prompt = {
+      ...promptSpy().prompt,
+      // 与真的凭据框一样：拿到的签名者进复用窗口，第二步从窗口里取同一把。
+      request: async () => {
+        rememberSigner(passkey, Date.now());
+        return passkey;
+      },
+    } as unknown as AdmitContext['prompt'];
+    const ctx = registerAdmitContext({
+      ...context(api, prompt),
+      t: seen.t,
+      enrollmentApi: {
+        getEnrollment: () =>
+          Promise.resolve({
+            status: 'redeemed',
+            enroll_pk: pending.enrollPk,
+            certificate: candidate.certificate,
+            cert_sig: candidate.certSig,
+          }),
+      } as unknown as AdmitContext['enrollmentApi'],
+      followUp: relayAdmitFollowUp({
+        api,
+        relayApi,
+        mode: {
+          uid: UID,
+          rootEpoch: 1,
+          kdfParams: { salt: 'x', memory_kib: 64, iterations: 1, parallelism: 1 },
+        },
+        lock: withKeyLogLock,
+      }),
+    });
+
+    const confirming = ctx.confirmManually('e-passkey');
+    await settle(12);
+    expect(asserts).toBe(2);
+    expect(appended).toHaveLength(1);
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-passkey']);
+    expect(phaseOf('e-passkey')).toBe('distributing');
+    expect(seen.keys).not.toContain('nodes.enrollment.admitted');
+
+    open();
+    await confirming;
+    expect(asserts).toBe(2);
+    expect(appended).toHaveLength(2);
+    expect(phaseOf('e-passkey')).toBe('done');
+    expect(count(seen.keys, 'nodes.enrollment.admitted')).toBe(1);
+    ctx.release();
+    resetMeshRelayStateForTest();
+    clearPendingMetaKeysForTest();
+  });
+
+  /** 上一次手动确认已签、上级没确认：手上留着一份可重发的记录，轮询会自动重发它。 */
+  async function unconfirmedFixture(id: string) {
+    const { pending, candidate } = await fixture(id);
+    addPendingEnrollment(pending);
+    const stash = apiSpy({ ok: false, code: 'HUB_TIMEOUT' });
+    await submitAdmitRecord(stash.api, id, { bytes: 'YWJj', sig: 'ZGVm' });
+    return candidate;
+  }
+
+  test('未确认记录的自动重发不是用户手势：手上是 passkey 时不起第二步，直接待补发', async () => {
+    const candidate = await unconfirmedFixture('e-auto-passkey');
+    rememberSigner({ kind: 'passkey', credentialId: 'cred-1' }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const seen = tSpy();
+    const second = followUpSpy([]);
+    const ctx = registerAdmitContext({
+      ...context(spy.api),
+      t: seen.t,
+      followUp: second.followUp,
+    });
+    push(candidate);
+    await settle();
+
+    expect(spy.appended).toHaveLength(1);
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-auto-passkey']);
+    expect(second.calls).toEqual([]);
+    expect(phaseOf('e-auto-passkey')).toBe('keyPending');
+    expect(seen.keys).toContain('nodes.enrollment.memberKeyPending');
+    expect(seen.keys).not.toContain('nodes.enrollment.admitted');
+    ctx.release();
+  });
+
+  test('未确认记录的自动重发：手上是根钥时第二步照常自动跑完', async () => {
+    const candidate = await unconfirmedFixture('e-auto-root');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const second = followUpSpy([]);
+    const ctx = registerAdmitContext({ ...context(spy.api), followUp: second.followUp });
+    push(candidate);
+    await settle();
+
+    expect(second.calls).toHaveLength(1);
+    expect(phaseOf('e-auto-root')).toBe('done');
+    ctx.release();
+  });
+
+  test('用户点「重试」重发未确认记录：是用户手势，第二步照常跑', async () => {
+    await unconfirmedFixture('e-manual-resend');
+    rememberSigner({ kind: 'passkey', credentialId: 'cred-1' }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const second = followUpSpy([]);
+    const ctx = registerAdmitContext({ ...context(spy.api), followUp: second.followUp });
+
+    await ctx.confirmManually('e-manual-resend');
+
+    expect(second.calls).toHaveLength(1);
+    expect(phaseOf('e-manual-resend')).toBe('done');
+    ctx.release();
+  });
+
+  test('第二步抛异常：节点已加入、待补发并带上原因，原始异常留在控制台', async () => {
+    const { pending, candidate } = await fixture('e-key-throw');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const err = new Error('socket hang up');
+    const followUp: FollowUp = () => Promise.reject(err);
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext({ ...context(spy.api), followUp });
+    const warn = captureWarn();
+    push(candidate);
+    await settle();
+    warn.restore();
+
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-key-throw']);
+    expect(getEnrollmentEngineState().progressById['e-key-throw']).toMatchObject({
+      phase: 'keyPending',
+      keyError: 'socket hang up',
+    });
+    expect(warn.calls).toContainEqual(['[enroll] member key step failed', err]);
+    ctx.release();
+  });
+
+  test('两步之间发起的消费方卸载了：第二步照样收场，不悬在「2/2」', async () => {
+    const { pending, candidate } = await fixture('e-unmount');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const seen = tSpy();
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const second = followUpSpy([{ ok: true }], gate);
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext({
+      ...context(spy.api),
+      t: seen.t,
+      followUp: second.followUp,
+    });
+    push(candidate);
+    await settle();
+    expect(phaseOf('e-unmount')).toBe('distributing');
+
+    ctx.release();
+    open();
+    await settle();
+
+    expect(phaseOf('e-unmount')).toBe('done');
+    expect(count(seen.keys, 'nodes.enrollment.admitted')).toBe(1);
+    // 已注销的消费方按钮不再生效。
+    await ctx.resendMemberKey('e-unmount');
+    expect(second.calls).toHaveLength(1);
+  });
+
+  test('中继状态还没拉到的消费方（mode 为 null）：点确认什么都不签，也不要凭据', async () => {
+    const { pending } = await fixture('e-not-ready');
+    addPendingEnrollment(pending);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const prompt = promptSpy({ kind: 'root', rootKey });
+    const ctx = registerAdmitContext({ ...context(spy.api, prompt.prompt), mode: null });
+
+    await ctx.confirmManually('e-not-ready');
+
+    expect(prompt.requests).toBe(0);
+    expect(spy.appended).toHaveLength(0);
+    expect(phaseOf('e-not-ready')).toBeUndefined();
+    ctx.release();
+  });
+
+  test('凭据框事先知道要验证几次：有第二步报 2，没有报 1', async () => {
+    const seen: unknown[] = [];
+    const prompt = {
+      ...promptSpy().prompt,
+      request: (options: unknown) => {
+        seen.push(options);
+        return Promise.resolve(null);
+      },
+    } as unknown as AdmitContext['prompt'];
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const { pending } = await fixture('e-hint');
+    addPendingEnrollment(pending);
+
+    const relay = registerAdmitContext({
+      ...context(spy.api, prompt),
+      followUp: followUpSpy([]).followUp,
+    });
+    await relay.confirmManually('e-hint');
+    relay.release();
+    const plain = registerAdmitContext(context(spy.api, prompt));
+    await plain.confirmManually('e-hint');
+    plain.release();
+
+    expect(seen).toEqual([
+      { purpose: 'admit', reuse: true, passkeyCeremonies: 2 },
+      { purpose: 'admit', reuse: true, passkeyCeremonies: 1 },
+    ]);
+  });
+
+  test('确认途中抛异常（超时 / 断网）：行内留一句成句的提示，pending 留着可重试', async () => {
+    const { pending, candidate } = await fixture('e-raw');
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const seen = tSpy();
+    let heads = 0;
+    const appended: unknown[] = [];
+    const api = {
+      keyLogHead: () => {
+        heads += 1;
+        if (heads === 1) return Promise.reject(new Error('socket hang up'));
+        return Promise.resolve({ seq: 5, hash: encodeBase64url(new Uint8Array(32).fill(7)) });
+      },
+      appendKeyLog: (body: unknown) => {
+        appended.push(body);
+        return Promise.resolve({ ok: true as const, hubAck: true });
+      },
+    } as unknown as AuthApi;
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext({ ...context(api), t: seen.t });
+    push(candidate);
+    await settle();
+
+    expect(getEnrollmentEngineState().failureById).toEqual({
+      'e-raw': 'nodes.enrollment.admitFailed',
+    });
+    expect(seen.keys).toContain('nodes.enrollment.admitFailed');
+    expect(seen.keys).not.toContain('socket hang up');
+    expect(listPendingEnrollments()).toHaveLength(1);
+    // 没落账的那次不留进度，行回到待确认。
+    expect(phaseOf('e-raw')).toBeUndefined();
+
+    // 重试成功：失败提示随之清掉。
+    push(candidate);
+    await settle();
+    expect(appended).toHaveLength(1);
+    expect(getEnrollmentEngineState().failureById).toEqual({});
+    expect(phaseOf('e-raw')).toBe('done');
+    ctx.release();
+  });
+
+  test('手动确认时新节点还没响应：提示留在行内', async () => {
+    const { pending } = await fixture('e-nocert');
+    addPendingEnrollment(pending);
+    const spy = apiSpy({ ok: true, hubAck: true });
+    const prompt = promptSpy({ kind: 'root', rootKey });
+    const ctx = registerAdmitContext(context(spy.api, prompt.prompt));
+
+    await ctx.confirmManually('e-nocert');
+
+    expect(getEnrollmentEngineState().failureById).toEqual({
+      'e-nocert': 'nodes.enrollment.noCertificateYet',
+    });
+    expect(spy.appended).toHaveLength(0);
+    ctx.release();
+  });
+
+  test('证书到达时清掉「新节点尚未响应」；别的失败提示不会被轮询顺手抹掉', async () => {
+    const { pending, candidate } = await fixture('e-late-cert');
+    addPendingEnrollment(pending);
+    const passkey = { kind: 'passkey', credentialId: 'cred-1' };
+    const ctx = registerAdmitContext(
+      context(apiSpy({ ok: true, hubAck: true }).api, promptSpy(passkey).prompt)
+    );
+    await ctx.confirmManually('e-late-cert');
+    expect(getEnrollmentEngineState().failureById).toEqual({
+      'e-late-cert': 'nodes.enrollment.noCertificateYet',
+    });
+
+    // passkey 用户：证书到了不自动签，停在待确认——那句「尚未响应」必须跟着消失。
+    rememberSigner({ kind: 'passkey', credentialId: 'cred-1' }, NOW);
+    push(candidate);
+    await settle();
+    expect(getEnrollmentEngineState().failureById).toEqual({});
+    expect(getEnrollmentEngineState().certificateReadyIds).toEqual(['e-late-cert']);
+
+    setEnrollmentEngineStateForTest({
+      failureById: { 'e-late-cert': 'nodes.enrollment.staleRecord' },
+    });
+    push(candidate);
+    await settle();
+    expect(getEnrollmentEngineState().failureById).toEqual({
+      'e-late-cert': 'nodes.enrollment.staleRecord',
+    });
+    ctx.release();
+  });
+
+  test('过期的那条留下一条带名字的结果', async () => {
+    const { pending } = await fixture('e-exp');
+    addPendingEnrollment({ ...pending, name: 'bob-server' });
+    configureEnrollmentEngineForTest({ now: () => pending.exp + 1 });
+    const ctx = registerAdmitContext(context(apiSpy({ ok: true, hubAck: true }).api));
+
+    expect(getEnrollmentEngineState().progressById['e-exp']).toEqual({
+      phase: 'expired',
+      steps: 1,
+      name: 'bob-server',
+      nodeId: null,
+    });
+    ctx.release();
+  });
+});
+
 describe('resetEnrollmentEngineForTest', () => {
   test('撤掉回路与上下文，并把协作 store 一起归零', async () => {
     const { pending } = await fixture('e-11');
@@ -934,6 +1538,8 @@ describe('resetEnrollmentEngineForTest', () => {
       unconfirmedIds: [],
       certificateReadyIds: [],
       invalidById: {},
+      failureById: {},
+      progressById: {},
     });
     expect(pushHandlers.size).toBe(0);
     expect(listPendingEnrollments()).toHaveLength(0);

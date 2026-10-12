@@ -7,12 +7,13 @@
 //   3. 谁是欠账方以服务端为准：`GET /api/mesh/relay/status` 的 `metaKeyLagging` 按当前
 //      `meta-key` 记录的封装条目算，换台机器、换标签页、刷新页面都看得到（见 relay-meta-lag.ts）。
 //
-// 从 `use-relay-admit-follow-up.ts` 拆出来：设置页、接入面板与「批准加入」按钮三条入口共用同一段。
+// 从 `use-relay-admit-follow-up.ts` 拆出来：加入的第二步与告警条的「补发成员密钥」共用同一段。
 
 import { leaseSigner, takeRememberedSigner } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
-import { defaultRelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { defaultRelayTenantApi, relayErrorCode } from '@vibeterm/api-client/relay/tenant-api';
+import { errorMessage } from '@vibeterm/shared';
 import { type RelayFlowDeps, type RelayFlowResult, appendMetaKey } from './relay-enroll';
 import { forgetPendingMetaKey, rememberPendingMetaKey } from './relay-meta-key-pending';
 import { refreshRelayPackForSigner } from './relay-pack';
@@ -68,7 +69,9 @@ export type MetaKeyCatchUpSummary = {
   lagging: number;
   /** 本次补发成功的成员数。 */
   delivered: number;
-  /** 第一条失败的错误码；全成功为 `null`。 */
+  /** 本次补发成功的那几台的 node id。 */
+  deliveredNodeIds: string[];
+  /** 第一条失败的错误码（名单拉不到也算失败）；全成功为 `null`。 */
   failedCode: string | null;
 };
 
@@ -85,15 +88,22 @@ export async function catchUpMetaKeyLagging(
   let rows: { nodeId: string }[];
   try {
     rows = (await relayApi.status()).metaKeyLagging;
-  } catch {
-    return { lagging: 0, delivered: 0, failedCode: null };
+  } catch (err) {
+    // 名单没拿到不等于没有欠账：如实回失败码，调用方才不会把「没问到」当成「已补齐」。
+    const failedCode = relayErrorCode(err) ?? errorMessage(err);
+    return { lagging: 0, delivered: 0, deliveredNodeIds: [], failedCode };
   }
-  let delivered = 0;
+  const deliveredNodeIds: string[] = [];
   let failedCode: string | null = null;
   for (const row of rows) {
     const result = await distributeMetaKey(deps, row.nodeId, signer);
-    if (result.ok) delivered += 1;
+    if (result.ok) deliveredNodeIds.push(row.nodeId);
     else failedCode ??= result.code;
   }
-  return { lagging: rows.length, delivered, failedCode };
+  return {
+    lagging: rows.length,
+    delivered: deliveredNodeIds.length,
+    deliveredNodeIds,
+    failedCode,
+  };
 }

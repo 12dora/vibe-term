@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { type AuthApi, WebAuthnError } from '@vibeterm/api-client/auth/index';
 import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
 import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
@@ -18,6 +18,7 @@ import {
 import { decodeRelayEnrollProof } from '@vibeterm/shared/relay';
 import { READMIT_PENDING } from './readmit-members';
 import {
+  PASSKEY_ABORTED,
   READMIT_REQUIRED,
   ROOT_PASSWORD_INVALID,
   alreadyLocked,
@@ -217,6 +218,25 @@ describe('appendMetaKey', () => {
       await rootSigner()
     );
     expect(result).toEqual({ ok: false, code: 'NO_ADMITTED_NODES' });
+    expect(appended).toHaveLength(0);
+  });
+
+  test('passkey 仪式被取消：回 PASSKEY_ABORTED，调用方据此不当作故障', async () => {
+    const appended: Appended[] = [];
+    const relayApi = {
+      metaKeyPrepare: () => Promise.resolve({ payload: PAYLOAD, payloadHash: 'h' }),
+    } as unknown as RelayTenantApi;
+    const signer: RecordSigner = {
+      kind: 'passkey',
+      credentialId: 'cred-1',
+      assert: () => Promise.reject(new WebAuthnError('aborted', 'passkey ceremony aborted')),
+    };
+    const result = await appendMetaKey(
+      { api: authApi(appended), relayApi, mode: await modeOf(), lock: alreadyLocked },
+      { op: 'admit', node_id: 'ab'.repeat(16) },
+      signer
+    );
+    expect(result).toEqual({ ok: false, code: PASSKEY_ABORTED });
     expect(appended).toHaveLength(0);
   });
 });

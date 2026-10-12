@@ -1,6 +1,8 @@
 // 加入码面板的 enrollment 接线：mesh 模式、中继通道、凭据对话框与本次会话。
 
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
+import type { PasskeyTwiceContext } from '@/auth/passkey-twice-hint';
+import { withoutRowOwned } from '@/node/admit-progress';
 import { defaultRelayEnrollmentApi } from '@/node/enrollment-api';
 import {
   type EnrollmentEngineState,
@@ -20,9 +22,13 @@ import {
   useCreateEnrollment,
 } from '@/pages/settings/nodes/management/use-create-enrollment';
 import { RelayMetaLagNotice } from '@/pages/settings/nodes/relay/relay-meta-lag-notice';
-import { useRelayAdmitFollowUp } from '@/pages/settings/nodes/relay/use-relay-admit-follow-up';
+import {
+  admitModeOnceRelayKnown,
+  useRelayAdmitFollowUp,
+} from '@/pages/settings/nodes/relay/use-relay-admit-follow-up';
 import type { AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import type { RelayMetaKeyLaggingNode } from '@vibeterm/api-client/relay/tenant-api';
 import { type ReactElement, useMemo, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type JoinSession, type JoinSessionIdentity, useJoinSession } from './join-session';
@@ -44,6 +50,15 @@ export interface JoinEnrollment {
   engine: EnrollmentEngineState;
   /** 步骤 6 的「确认加入」：绑定本面板这个引擎槽位。 */
   confirmManually: (enrollmentId: string) => void;
+  /**
+   * 中继状态已经拉到，「确认加入」才可点：此前不知道有没有第二步，
+   * 照单步签下去会漏掉成员密钥却报「已加入」。
+   */
+  confirmReady: boolean;
+  /** 「通行密钥需验证两次」提示的判据。 */
+  passkeyTwice: PasskeyTwiceContext;
+  /** 「补发成员密钥」：新机器已加入、成员密钥没下发成功时只补这一条。 */
+  resendMemberKey: (enrollmentId: string) => void;
   /** 凭据对话框，必须由调用方挂进 DOM。 */
   dialog: ReactElement | null;
   /** 「成员密钥未送达」告警条（服务端真相）；没有欠账时为 `null`。 */
@@ -98,13 +113,14 @@ function useJoinSessionIdentity(
 }
 
 function metaLagNoticeOf(
-  relay: ReturnType<typeof useMeshRelay>,
+  relayMode: boolean,
+  lagging: RelayMetaKeyLaggingNode[],
   ctx: ReturnType<typeof useJoinAuthContext>
 ): ReactElement | null {
-  if (!relay.relayMode || relay.metaKeyLagging.length === 0) return null;
+  if (!relayMode || lagging.length === 0) return null;
   return (
     <RelayMetaLagNotice
-      lagging={relay.metaKeyLagging}
+      lagging={lagging}
       mode={ctx.mode}
       api={ctx.api}
       prompt={ctx.prompt}
@@ -121,22 +137,22 @@ export function useJoinEnrollment(): JoinEnrollment {
   // standalone 下这族路由是全局 401：只在 mesh 里才问，否则 session 拦截器会把页面踢去登录页。
   const relay = useMeshRelay({ enabled: ctx.meshEnabled });
   const enrollChannel = defaultRelayEnrollmentApi;
-  const { confirmManually } = useEnrollmentEngine({
+  // 中继模式下加入分两步：`admit-node` 之后引擎紧接着下发成员密钥（见 `admit-progress.ts`）。
+  const followUp = useRelayAdmitFollowUp({
+    enabled: relay.relayMode,
     api: ctx.api,
     mode: ctx.mode,
+  });
+  const { confirmManually, resendMemberKey } = useEnrollmentEngine({
+    api: ctx.api,
+    mode: admitModeOnceRelayKnown(relay, ctx.mode),
     enrollmentApi: enrollChannel,
     prompt: ctx.prompt,
+    followUp,
     onDone: refreshAfterAdmit,
     t,
   });
   const engine = useEnrollmentEngineState();
-  // admit 之后补发当前世代的 K_meta；宿主级去重，设置页同时开着也只会补一次。
-  useRelayAdmitFollowUp({
-    enabled: relay.relayMode,
-    admittedIds: engine.admittedIds,
-    api: ctx.api,
-    mode: ctx.mode,
-  });
   const create = useCreateEnrollment({
     api: ctx.api,
     mode: ctx.mode,
@@ -148,6 +164,10 @@ export function useJoinEnrollment(): JoinEnrollment {
   // 只读共享 store 的快照，不额外拉一次 `/api/mesh/nodes`：拿不到就退回纯时效判定。
   const identity = useJoinSessionIdentity(ctx.modeLoaded, ctx.rawMode);
   const session = useJoinSession(create.created?.pending ?? null, engine, identity);
+  // 本次会话那条结果行自己带着补发按钮时，告警条不再重复列这一台。
+  const lagging = withoutRowOwned(relay.metaKeyLagging, [
+    session ? engine.progressById[session.id] : undefined,
+  ]);
 
   return {
     meshEnabled: ctx.meshEnabled,
@@ -156,9 +176,12 @@ export function useJoinEnrollment(): JoinEnrollment {
     session,
     engine,
     confirmManually: (enrollmentId: string) => void confirmManually(enrollmentId),
+    confirmReady: relay.loadedAt !== null,
+    passkeyTwice: { twoStep: followUp !== null, passkeysAvailable: ctx.prompt.passkeys.length > 0 },
+    resendMemberKey: (enrollmentId: string) => void resendMemberKey(enrollmentId),
     dialog: ctx.prompt.dialog,
     // 这条面板正是「加一台机器」的入口：刚批准的那台没拿到成员密钥，必须在这里就说清楚，
     // 而不是等用户下次翻到设置页（见 relay-meta-lag-notice.tsx）。
-    metaLagNotice: metaLagNoticeOf(relay, ctx),
+    metaLagNotice: metaLagNoticeOf(relay.relayMode, lagging, ctx),
   };
 }

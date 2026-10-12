@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import { forgetSigner, rememberSigner, resetSignerLeasesForTest } from '@/auth/credential-prompt';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
 import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { encodeBase64url, rootKeyFromSeed } from '@vibeterm/shared/auth';
 import type { RelayFlowDeps } from './relay-enroll';
@@ -130,7 +131,12 @@ describe('catchUpMetaKeyLagging', () => {
         }),
     } as unknown as RelayTenantApi;
     const summary = await catchUpMetaKeyLagging(deps, signer(), relayApi);
-    expect(summary).toEqual({ lagging: 2, delivered: 2, failedCode: null });
+    expect(summary).toEqual({
+      lagging: 2,
+      delivered: 2,
+      deliveredNodeIds: [NODE_A, NODE_B],
+      failedCode: null,
+    });
     expect(appended).toHaveLength(2);
     expect(listPendingMetaKeys()).toEqual([]);
   });
@@ -142,19 +148,31 @@ describe('catchUpMetaKeyLagging', () => {
     } as unknown as RelayTenantApi;
     const summary = await catchUpMetaKeyLagging(deps, signer(), relayApi);
     expect(summary.delivered).toBe(0);
+    expect(summary.deliveredNodeIds).toEqual([]);
     expect(summary.failedCode).toBe('RELAY_OFFLINE');
     expect(listPendingMetaKeys()).toHaveLength(2);
   });
 
-  test('状态拉不到时不编造欠账', async () => {
-    const { deps } = depsOf();
+  test('状态拉不到时不编造欠账，但结论是失败——没问到不等于已补齐', async () => {
+    const { deps, appended } = depsOf();
     const relayApi = {
       status: () => Promise.reject(new Error('offline')),
     } as unknown as RelayTenantApi;
     expect(await catchUpMetaKeyLagging(deps, signer(), relayApi)).toEqual({
       lagging: 0,
       delivered: 0,
-      failedCode: null,
+      deliveredNodeIds: [],
+      failedCode: 'offline',
     });
+    expect(appended).toHaveLength(0);
+  });
+
+  test('状态接口报了中继错误码：原样带出', async () => {
+    const { deps } = depsOf();
+    const relayApi = {
+      status: () => Promise.reject(new RelayApiError('RELAY_NOT_CONFIGURED', 'none', 409)),
+    } as unknown as RelayTenantApi;
+    const summary = await catchUpMetaKeyLagging(deps, signer(), relayApi);
+    expect(summary.failedCode).toBe('RELAY_NOT_CONFIGURED');
   });
 });

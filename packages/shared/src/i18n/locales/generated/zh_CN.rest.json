@@ -128,9 +128,9 @@
           },
           "confirm": {
             "title": "确认加入",
-            "description": "回到节点管理页确认加入，新机器重启后出现在设备列表。",
-            "meshDescription": "新机器执行命令后在此确认加入，重启后出现在设备列表。",
-            "done": "新机器已加入，重启后出现在设备列表。"
+            "description": "回到节点管理页确认加入。",
+            "meshDescription": "新机器执行命令后在此确认加入。",
+            "done": "新机器已加入。"
           }
         },
         "relayHost": {
@@ -2002,14 +2002,20 @@
         "cancelPending": "取消",
         "admitted": "节点已加入",
         "unknownCertificate": "收到未知节点的响应，已忽略。",
-        "badCertSig": "节点响应的签名校验失败，已忽略。",
+        "badCertSig": "节点响应的签名校验失败，请重新生成加入码。",
         "expired": "加入码已过期，请重新生成。",
         "noCertificateYet": "新节点尚未响应，请稍后重试。",
         "relayNotConfirmed": "中继未确认，本次没有写入任何内容，可直接重试。",
         "retry": "重试",
         "missingRelayUrl": "中继地址不可用，无法生成加入命令。",
         "staleRecord": "账号信息已变化，请重新确认。",
-        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
+        "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。",
+        "admitFailed": "确认加入失败，请重试。",
+        "memberKeyPending": "节点已加入，成员密钥尚未下发，请补发。",
+        "step": {
+          "admit": "1/2 确认加入",
+          "memberKey": "2/2 下发成员密钥"
+        }
       },
       "rename": {
         "cancelled": "已取消。"
@@ -2709,7 +2715,6 @@
         },
         "metaKey": {
           "done": "成员密钥已更新。",
-          "admitFailed": "新节点的成员密钥下发失败：{{error}}",
           "pending": "成员密钥更新尚未送达（{{count}} 条）。",
           "retry": "重试",
           "retryFailed": "成员密钥更新仍未送达，请稍后重试。",

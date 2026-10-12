@@ -128,9 +128,9 @@
           },
           "confirm": {
             "title": "Confirm the join",
-            "description": "Confirm the join on the Node management page. The new machine appears in the device list after it restarts.",
-            "meshDescription": "Once the new machine runs the command, confirm the join here. It appears in the device list after it restarts.",
-            "done": "The new machine joined; it appears in the device list after it restarts."
+            "description": "Confirm the join on the Node management page.",
+            "meshDescription": "Once the new machine runs the command, confirm the join here.",
+            "done": "The new machine joined."
           }
         },
         "relayHost": {
@@ -2003,14 +2003,20 @@
         "cancelPending": "Cancel",
         "admitted": "Node added",
         "unknownCertificate": "Ignored a response from an unknown node.",
-        "badCertSig": "Ignored a node response that failed its signature check.",
+        "badCertSig": "The node response failed its signature check. Generate a new join code.",
         "expired": "This join code expired. Create a new one.",
         "noCertificateYet": "The new node has not answered yet. Try again in a moment.",
         "relayNotConfirmed": "The relay did not confirm, so nothing was saved. Retry to send it again.",
         "retry": "Retry",
         "missingRelayUrl": "The relay address is unavailable, so the join command cannot be built.",
         "staleRecord": "Your account changed in the meantime. Approve again.",
-        "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
+        "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again.",
+        "admitFailed": "Could not approve the join. Try again.",
+        "memberKeyPending": "Node added, but its member key was not sent. Resend it.",
+        "step": {
+          "admit": "1/2 Approving join",
+          "memberKey": "2/2 Sending member key"
+        }
       },
       "rename": {
         "cancelled": "Cancelled."
@@ -2718,7 +2724,6 @@
         },
         "metaKey": {
           "done": "Member key updated.",
-          "admitFailed": "Failed to deliver the member key to the new node: {{error}}",
           "pending": "Member key update has not landed yet ({{count}}).",
           "retry": "Retry",
           "retryFailed": "The member key update still has not landed. Try again later.",
