@@ -9,6 +9,7 @@ import {
   deriveSeed,
   encodeBase64url,
   encodeSetRelaysPayload,
+  hexToBytes,
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
@@ -18,18 +19,22 @@ import {
   sealRelayKeyLogRecord,
   sealRelayPack,
 } from '../../../shared/src/relay';
+import { t } from '../i18n';
 import { parseArgs } from '../lib/args';
 import { readEnvFile } from '../lib/env-file';
 import type { FetchLike } from '../lib/fetch-like';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { performRelayPasswordJoin } from '../lib/relay-password-join';
+import { runRelayJoinCommand } from './relay-join';
 import { runRelayPasswordJoin } from './relay-password-join';
 import { runUserAdd } from './user';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const PASSWORD = 'relay-password-join-pass';
 const RELAY_URL = 'https://relay.example';
+const RELAY_B = 'https://relay-b.example';
 const TENANT_ID = 'ab'.repeat(16);
+const TENANT_B = 'cd'.repeat(16);
 const handles: LocalAuthContext[] = [];
 
 afterEach(() => {
@@ -72,7 +77,8 @@ function kdfOf(auth: LocalAuthContext): PackKdf {
  */
 async function packFixture(
   kdfRaw: PackKdf | null,
-  logOwner?: LocalAuthContext
+  logOwner?: LocalAuthContext,
+  tenantId = TENANT_ID
 ): Promise<{ fetcher: FetchLike; token: Uint8Array; logKey: Uint8Array }> {
   const kdf = kdfRaw ?? {
     salt: new Uint8Array(16).fill(3),
@@ -96,7 +102,7 @@ async function packFixture(
     : { seq: 1n, hash: randomBytes(32) };
   const sealed = await sealRelayPack({
     rootSeed: root.seed,
-    tenantId: TENANT_ID,
+    tenantId,
     rootPublicKey: root.publicKey,
     rootEpoch: 0,
     plaintext: {
@@ -124,6 +130,45 @@ async function packFixture(
     return new Response('nope', { status: 404 });
   };
   return { fetcher, token, logKey };
+}
+
+type SetRelaysRow = { url: string; tenantHex: string; token: Uint8Array };
+
+/** 一个已经发布过根签名 `set-relays` 的租户拥有者。 */
+async function ownerWithSetRelays(rows: SetRelaysRow[]): Promise<LocalAuthContext> {
+  const owner = await openAuth('owner');
+  const ownerUser = owner.userStore.listUsers()[0];
+  if (!ownerUser) throw new Error('missing owner');
+  const ownerRoot = rootKeyFromSeed(await deriveSeed(PASSWORD, kdfOf(owner)));
+  const relays = await owner.userKeys.signAndApply(ownerUser.id, ownerRoot, {
+    type: 'set-relays',
+    payload: encodeSetRelaysPayload({
+      mode: 'ordered',
+      relays: rows.map((row, priority) => ({
+        url: row.url,
+        tenant_id: hexToBytes(row.tenantHex),
+        token: row.token,
+        priority,
+      })),
+      log_key: [],
+      meta_key: { epoch: owner.userKeys.currentState(ownerUser.id).metaKeyEpoch, entries: [] },
+    }),
+  });
+  expect(relays.ok).toBe(true);
+  return owner;
+}
+
+/** 在 fixture 之上接住加入时回传的 admit / pack 写入。 */
+function acceptingFetcher(fixture: { fetcher: FetchLike }): FetchLike {
+  return async (input, init) => {
+    if (init?.method === 'POST' && String(input).endsWith('/keylog')) {
+      return Response.json({ ok: true });
+    }
+    if (init?.method === 'POST' && String(input).endsWith('/pack')) {
+      return Response.json({ ok: true });
+    }
+    return fixture.fetcher(input, init);
+  };
 }
 
 describe('performRelayPasswordJoin', () => {
@@ -361,30 +406,9 @@ describe('runRelayPasswordJoin', () => {
     test(`密码加入在提交配置后安装直连插件，失败不影响加入（failure=${failure}）`, async () => {
       const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-password-direct-'));
       try {
-        const owner = await openAuth('owner');
-        const ownerUser = owner.userStore.listUsers()[0];
-        if (!ownerUser) throw new Error('missing owner');
-        const ownerRoot = rootKeyFromSeed(await deriveSeed(PASSWORD, kdfOf(owner)));
-        const relays = await owner.userKeys.signAndApply(ownerUser.id, ownerRoot, {
-          type: 'set-relays',
-          payload: encodeSetRelaysPayload({
-            mode: 'ordered',
-            relays: [
-              {
-                url: RELAY_URL,
-                tenant_id: new Uint8Array(16).fill(0xab),
-                token: randomBytes(32),
-                priority: 0,
-              },
-            ],
-            log_key: [],
-            meta_key: {
-              epoch: owner.userKeys.currentState(ownerUser.id).metaKeyEpoch,
-              entries: [],
-            },
-          }),
-        });
-        expect(relays.ok).toBe(true);
+        const owner = await ownerWithSetRelays([
+          { url: RELAY_URL, tenantHex: TENANT_ID, token: randomBytes(32) },
+        ]);
         const auth = await openAuth();
         auth.installDir = dir;
         auth.envPath = join(dir, 'app.env');
@@ -405,13 +429,7 @@ describe('runRelayPasswordJoin', () => {
           {
             auth,
             password: PASSWORD,
-            fetcher: async (input, init) => {
-              if (init?.method === 'POST' && String(input).endsWith('/keylog'))
-                return Response.json({ ok: true });
-              if (init?.method === 'POST' && String(input).endsWith('/pack'))
-                return Response.json({ ok: true });
-              return fixture.fetcher(input, init);
-            },
+            fetcher: acceptingFetcher(fixture),
             enableDirect: async ({ installDir, signal }) => {
               installed = true;
               expect(installDir).toBe(dir);
@@ -448,6 +466,72 @@ describe('runRelayPasswordJoin', () => {
       }
     });
   }
+
+  test('只有一台中继时不输出「同时配置」', async () => {
+    const owner = await ownerWithSetRelays([
+      { url: RELAY_URL, tenantHex: TENANT_ID, token: randomBytes(32) },
+    ]);
+    const auth = await openAuth();
+    const fixture = await packFixture(kdfOf(owner), owner);
+    const logs: string[] = [];
+    const result = await runRelayPasswordJoin(
+      parseArgs(['relay', 'join', RELAY_URL, '--tenant', TENANT_ID]),
+      { auth, password: PASSWORD, fetcher: acceptingFetcher(fixture), log: (l) => logs.push(l) }
+    );
+    expect(result.relayUrls).toEqual([RELAY_URL]);
+    const prefix = t('relay.join.alsoConfigured', { urls: '' });
+    expect(logs.some((line) => line.startsWith(prefix))).toBe(false);
+  });
+
+  for (const via of ['A', 'B'] as const) {
+    test(`经由中继 ${via} 密码加入，本机同时配置 set-relays 里的全部中继`, async () => {
+      const tokenA = new Uint8Array(32).fill(0x0a);
+      const tokenB = new Uint8Array(32).fill(0x0b);
+      const owner = await ownerWithSetRelays([
+        { url: RELAY_URL, tenantHex: TENANT_ID, token: tokenA },
+        { url: RELAY_B, tenantHex: TENANT_B, token: tokenB },
+      ]);
+      const joined =
+        via === 'A' ? { url: RELAY_URL, tenant: TENANT_ID } : { url: RELAY_B, tenant: TENANT_B };
+      const other = via === 'A' ? RELAY_B : RELAY_URL;
+      const auth = await openAuth();
+      const fixture = await packFixture(kdfOf(owner), owner, joined.tenant);
+      const logs: string[] = [];
+      const result = await runRelayPasswordJoin(
+        parseArgs(['relay', 'join', joined.url, '--tenant', joined.tenant]),
+        { auth, password: PASSWORD, fetcher: acceptingFetcher(fixture), log: (l) => logs.push(l) }
+      );
+
+      expect(result.relayUrl).toBe(joined.url);
+      expect(result.relayUrls).toEqual([RELAY_URL, RELAY_B]);
+      const store = new MeshRelayStore(auth.db);
+      const rows = store.listRelayRows();
+      expect(rows.map((row) => [row.url, row.tenantId, row.priority])).toEqual([
+        [RELAY_URL, TENANT_ID, 0],
+        [RELAY_B, TENANT_B, 1],
+      ]);
+      const stored = await Promise.all([store.getRelay(RELAY_URL), store.getRelay(RELAY_B)]);
+      expect(stored[via === 'A' ? 0 : 1]?.token).toEqual(fixture.token);
+      expect(stored[via === 'A' ? 1 : 0]?.token).toEqual(via === 'A' ? tokenB : tokenA);
+      expect(logs).toContain(t('relay.join.joined', { url: joined.url, tenantId: joined.tenant }));
+      expect(logs).toContain(t('relay.join.alsoConfigured', { urls: other }));
+    });
+  }
+
+  test('relay join --tenant 的结果带上全部已配置的中继', async () => {
+    const owner = await ownerWithSetRelays([
+      { url: RELAY_URL, tenantHex: TENANT_ID, token: randomBytes(32) },
+      { url: RELAY_B, tenantHex: TENANT_B, token: randomBytes(32) },
+    ]);
+    const auth = await openAuth();
+    const fixture = await packFixture(kdfOf(owner), owner);
+    const result = await runRelayJoinCommand(
+      parseArgs(['relay', 'join', RELAY_URL, '--tenant', TENANT_ID]),
+      { auth, password: PASSWORD, fetcher: acceptingFetcher(fixture), log: () => undefined }
+    );
+    expect(result.relayUrl).toBe(RELAY_URL);
+    expect(result.relayUrls).toEqual([RELAY_URL, RELAY_B]);
+  });
 
   test('requires --tenant', async () => {
     const auth = await openAuth();

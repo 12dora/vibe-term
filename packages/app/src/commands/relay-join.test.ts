@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import {
   encodePasskeyAssertionSig,
   makeVerifyPasskeyAssertion,
@@ -16,6 +17,7 @@ import {
   UserKeyService,
   kdfParamsFromJson,
 } from '../../../../apps/gateway/src/auth/user-key-service';
+import { RelaySecrets } from '../../../../apps/gateway/src/mesh/relay-secrets';
 import {
   buildKeyLogRecord,
   createEnrollment,
@@ -24,6 +26,7 @@ import {
   encodeBase64url,
   encodeKeyLogRecord,
   encodeMetaKeyPayload,
+  encodeSetRelaysPayload,
   hexToBytes,
   randomBytes,
   sha256,
@@ -35,6 +38,7 @@ import {
   generateTenantKey,
   sealEnvelope,
 } from '../../../shared/src/relay';
+import { t } from '../i18n';
 import { parseArgs } from '../lib/args';
 import { readEnvFile } from '../lib/env-file';
 import type { FetchLike } from '../lib/fetch-like';
@@ -154,6 +158,29 @@ async function appendRootMetaKey(tenant: Tenant, epoch: number): Promise<void> {
     payload: encodeMetaKeyPayload({ epoch, entries: [] }),
   });
   if (!applied.ok) throw new Error(`meta-key append failed: ${applied.error}`);
+  tenant.keyLog = readKeyLog(tenant.auth, tenant.userId);
+}
+
+/** 追加一条根签名的 `set-relays`：租户的权威中继表，顺序即 priority。 */
+async function appendSetRelays(tenant: Tenant, targets: RelayJoinTokenEntry[]): Promise<void> {
+  const applied = await tenant.auth.userKeys.signAndApply(tenant.userId, tenant.rootKey, {
+    type: 'set-relays',
+    payload: encodeSetRelaysPayload({
+      mode: 'ordered',
+      relays: targets.map((target, priority) => ({
+        url: target.url,
+        tenant_id: hexToBytes(target.tenantId),
+        token: target.token,
+        priority,
+      })),
+      log_key: [],
+      meta_key: {
+        epoch: tenant.auth.userKeys.currentState(tenant.userId).metaKeyEpoch,
+        entries: [],
+      },
+    }),
+  });
+  if (!applied.ok) throw new Error(`set-relays append failed: ${applied.error}`);
   tenant.keyLog = readKeyLog(tenant.auth, tenant.userId);
 }
 
@@ -440,6 +467,7 @@ describe('relay join with an r3 token', () => {
 
     expect(result.tenantId).toBe(TENANT_A);
     expect(result.relayUrl).toBe(RELAY_A);
+    expect(result.relayUrls).toEqual([RELAY_A]);
     expect(result.userId).toBe(tenant.userId);
     expect(result.admitted).toBe(false);
     expect(calls.map((call) => call.method)).toEqual(['GET', 'POST']);
@@ -674,6 +702,127 @@ describe('relay join with an r3 token', () => {
       })
     ).rejects.toThrow();
     expect(called).toBe(false);
+  });
+});
+
+describe('r3 join against a multi-relay set-relays table', () => {
+  const TABLE_TOKEN_A = new Uint8Array(32).fill(0x11);
+  const TABLE_TOKEN_B = new Uint8Array(32).fill(0x22);
+  const TABLE_A: RelayJoinTokenEntry = { ...ENTRY_A, token: TABLE_TOKEN_A };
+  const TABLE_B: RelayJoinTokenEntry = { ...ENTRY_B, token: TABLE_TOKEN_B };
+
+  async function joinTenant(tenant: Tenant) {
+    const joiner = await openAuth();
+    const { fetcher } = fakeRelay(tenant);
+    const logs: string[] = [];
+    const result = await runRelayJoin(parseArgs(['relay', 'join']), '', joinTokenFor(tenant), {
+      auth: joiner,
+      fetcher,
+      skipRestart: true,
+      log: (line) => logs.push(line),
+    });
+    const store = new MeshRelayStore(joiner.db);
+    return { joiner, result, logs, store };
+  }
+
+  async function tokenOf(store: MeshRelayStore, url: string) {
+    return (await store.getRelay(url))?.token;
+  }
+
+  async function snapshot(store: MeshRelayStore) {
+    return await Promise.all(
+      store.listRelayRows().map(async (row) => {
+        const stored = await store.getRelay(row.url);
+        return [row.url, row.tenantId, row.priority, stored?.token] as const;
+      })
+    );
+  }
+
+  test('r3 lists only relay A: the node is still configured for relay B, with the table tokens', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    await appendSetRelays(tenant, [TABLE_A, TABLE_B]);
+    const { joiner, result, logs, store } = await joinTenant(tenant);
+
+    const rows = readRelayUplink(joiner).relays;
+    expect(rows.map((row) => [row.url, row.tenantId, row.priority])).toEqual([
+      [RELAY_A, TENANT_A, 0],
+      [RELAY_B, TENANT_B, 1],
+    ]);
+    expect(await tokenOf(store, RELAY_A)).toEqual(TABLE_TOKEN_A);
+    expect(await tokenOf(store, RELAY_B)).toEqual(TABLE_TOKEN_B);
+    expect(result.relayUrl).toBe(RELAY_A);
+    expect(result.relayUrls).toEqual([RELAY_A, RELAY_B]);
+    expect(logs[0]).toBe(t('relay.join.joined', { url: RELAY_A, tenantId: TENANT_A }));
+    expect(logs[1]).toBe(t('relay.join.alsoConfigured', { urls: RELAY_B }));
+  });
+
+  test('r3 tokens that differ from the table never replace the root-signed ones', async () => {
+    const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
+    await appendSetRelays(tenant, [TABLE_A, TABLE_B]);
+    const { result, store } = await joinTenant(tenant);
+
+    expect(await tokenOf(store, RELAY_A)).toEqual(TABLE_TOKEN_A);
+    expect(await tokenOf(store, RELAY_B)).toEqual(TABLE_TOKEN_B);
+    expect(result.relayUrls).toEqual([RELAY_A, RELAY_B]);
+  });
+
+  test('the root-signed priority order wins over the r3 order', async () => {
+    const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
+    await appendSetRelays(tenant, [TABLE_B, TABLE_A]);
+    const { result, store } = await joinTenant(tenant);
+
+    expect(result.relayUrls).toEqual([RELAY_B, RELAY_A]);
+    expect(store.listRelayRows().map((row) => row.priority)).toEqual([0, 1]);
+  });
+
+  test('a relay in the r3 token but not in set-relays is not persisted', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    await appendSetRelays(tenant, [TABLE_B]);
+    const { result, store } = await joinTenant(tenant);
+
+    expect(result.relayUrls).toEqual([RELAY_B]);
+    expect(await tokenOf(store, RELAY_A)).toBeUndefined();
+    expect(await tokenOf(store, RELAY_B)).toEqual(TABLE_TOKEN_B);
+  });
+
+  test('the same url under another tenant in set-relays yields one row and no unique-key error', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    await appendSetRelays(tenant, [{ ...TABLE_B, url: RELAY_A }]);
+    const { result, store } = await joinTenant(tenant);
+
+    expect(result.relayUrls).toEqual([RELAY_A]);
+    expect(store.listRelayRows().map((row) => [row.url, row.tenantId])).toEqual([
+      [RELAY_A, TENANT_B],
+    ]);
+    expect(await tokenOf(store, RELAY_A)).toEqual(TABLE_TOKEN_B);
+  });
+
+  test('the persisted table is what the gateway reconcile writes', async () => {
+    const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
+    await appendSetRelays(tenant, [TABLE_B, TABLE_A]);
+    const { joiner, result, store } = await joinTenant(tenant);
+    const before = await snapshot(store);
+
+    const identity = await ensureNodeIdentity(joiner.identityStore);
+    const secrets = new RelaySecrets({
+      db: joiner.db,
+      identity: { nodeIdHex: identity.nodeIdHex, x25519PrivateKey: identity.x25519PrivateKey },
+      userIdOf: () => result.userId,
+    });
+    await secrets.reconcile();
+
+    expect(before).toHaveLength(2);
+    expect(await snapshot(store)).toEqual(before);
+  });
+
+  test('without set-relays the r3 relay table is persisted as is', async () => {
+    const tenant = await makeTenant([ENTRY_A, ENTRY_B]);
+    const { result, logs, store } = await joinTenant(tenant);
+
+    expect(result.relayUrls).toEqual([RELAY_A, RELAY_B]);
+    expect(await tokenOf(store, RELAY_A)).toEqual(TOKEN_A);
+    expect(await tokenOf(store, RELAY_B)).toEqual(TOKEN_B);
+    expect(logs).toContain(t('relay.join.alsoConfigured', { urls: RELAY_B }));
   });
 });
 

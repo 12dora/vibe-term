@@ -14,6 +14,7 @@ import {
   joinSelfAdmitAndPersist,
   joinUploadAndEnv,
 } from './relay-password-join-flow';
+import { persistedRelayUrls } from './relay-store';
 import { assertRekeyAccount, rekeyRelayToken } from './relay-token-rekey';
 
 export { RelayPasswordJoinError } from './relay-password-join-flow';
@@ -47,6 +48,8 @@ export type RelayPasswordJoinDeps = {
 export type RelayPasswordJoinResult = {
   userId: string;
   relayUrl: string;
+  /** 本机已配置的全部中继（含 `relayUrl`），顺序即 failover 顺序。 */
+  relayUrls: string[];
   tenantId: string;
   /** 本机已经是该租户的成员，这次只换发了中继令牌（没有重建本机用户，也不用重启）。 */
   rekeyed?: boolean;
@@ -238,7 +241,13 @@ export async function performRelayPasswordJoin(
           fingerprint: pin.fingerprint,
         });
       }
-      return { userId: done.userId, relayUrl, tenantId, rekeyed: true };
+      return {
+        userId: done.userId,
+        relayUrl,
+        relayUrls: persistedRelayUrls(deps.auth),
+        tenantId,
+        rekeyed: true,
+      };
     }
     const admit = await joinSelfAdmitAndPersist({
       auth: deps.auth,
@@ -249,7 +258,12 @@ export async function performRelayPasswordJoin(
     });
     metaKey = admit.metaKey;
     await joinUploadAndEnv({ auth: deps.auth, transport, pack, log, admit, pin });
-    return { userId: log.genesisUid, relayUrl, tenantId };
+    return {
+      userId: log.genesisUid,
+      relayUrl,
+      relayUrls: admit.relayUrls,
+      tenantId,
+    };
   } catch (error) {
     throw wrapJoinError(error);
   } finally {

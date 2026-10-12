@@ -5,6 +5,7 @@ import {
   type RelayPasswordJoinResult,
   performRelayPasswordJoin,
 } from '../lib/relay-password-join';
+import { alsoConfiguredLine } from '../lib/relay-store';
 import { asString } from '../lib/validate';
 import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import { applyRelayPasswordJoinEnv, commitRelayPasswordJoinEnv } from '../runtime/setup-shared';
@@ -69,7 +70,7 @@ export async function runRelayPasswordJoin(
     // 同一账户的令牌换发：本机角色与上级早就是中继了，不改 env、也不重启
     if (result.rekeyed) {
       (io.log ?? console.log)(
-        `refreshed the relay token for ${result.relayUrl} (tenant ${result.tenantId})`
+        t('relay.join.refreshed', { url: result.relayUrl, tenantId: result.tenantId })
       );
       return result;
     }
@@ -85,7 +86,11 @@ export async function runRelayPasswordJoin(
       await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
       await maybeRestart(parsed, io, ctx.installDir);
     }
-    (io.log ?? console.log)(`joined relay ${result.relayUrl} (tenant ${result.tenantId})`);
+    (io.log ?? console.log)(
+      t('relay.join.joined', { url: result.relayUrl, tenantId: result.tenantId })
+    );
+    const alsoConfigured = alsoConfiguredLine(result.relayUrl, result.relayUrls);
+    if (alsoConfigured) (io.log ?? console.log)(alsoConfigured);
     const next = applyRelayPasswordJoinEnv({
       VIBETERM_ROLES: ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? '',
     });

@@ -33,7 +33,7 @@ import { deriveRootKey } from './password';
 import { storeRelayCaPin } from './relay-ca';
 import { openRelayKeyLogPage, parseRelayKeyLogPage } from './relay-keylog';
 import { type AppendPairResult, appendAdmitThenMetaRetrying } from './relay-password-join-append';
-import { persistRelayUplink } from './relay-store';
+import { type RelayTargetRow, overlayRelayToken, persistRelayUplink } from './relay-store';
 
 export class RelayPasswordJoinError extends Error {
   readonly code: string;
@@ -72,6 +72,7 @@ export type JoinAdmitPhase = {
   appliedHash: Uint8Array;
   rootEpoch: number;
   metaKey: Uint8Array;
+  relayUrls: string[];
 };
 
 function tenantHeaders(token: Uint8Array): Record<string, string> {
@@ -98,25 +99,16 @@ export function pinHead(
   }
 }
 
+/** 密码加入必须经由根签名列表里的中继；落库的是整张 `set-relays` 表，只覆盖本次中继的令牌。 */
 export function relaysForPersist(
-  stateRelays: { url: string; tenantId: string; token: Uint8Array; priority: number }[] | undefined,
+  stateRelays: readonly RelayTargetRow[] | undefined,
   joined: { url: string; tenantId: string; token: Uint8Array }
-) {
-  const rows = [...(stateRelays ?? [])].sort((a, b) => a.priority - b.priority);
-  const match = rows.find(
-    (row) => row.url === joined.url && row.tenantId.toLowerCase() === joined.tenantId.toLowerCase()
-  );
-  if (!match) {
+): RelayTargetRow[] {
+  const rows = overlayRelayToken(stateRelays, joined);
+  if (!rows) {
     throw new RelayPasswordJoinError('relay_not_authorized', '该中继不在根签名的中继列表里');
   }
-  return rows.map((row, index) => ({
-    ...row,
-    token:
-      row.url === joined.url && row.tenantId.toLowerCase() === joined.tenantId.toLowerCase()
-        ? joined.token
-        : row.token,
-    priority: index,
-  }));
+  return rows;
 }
 
 async function downloadKeyLog(input: {
@@ -388,7 +380,7 @@ export async function joinSelfAdmitAndPersist(input: {
     throw new RelayPasswordJoinError('join_failed', `self-admit failed: ${applied.error}`);
   }
   const state = input.auth.userKeys.currentState(log.genesisUid);
-  await persistRelayUplink(input.auth, {
+  const relayUrls = await persistRelayUplink(input.auth, {
     relays: relaysForPersist(state.relays?.relays, {
       url: input.transport.relayUrl,
       tenantId: input.transport.tenantId,
@@ -405,6 +397,7 @@ export async function joinSelfAdmitAndPersist(input: {
     appliedHash: applied.hash,
     rootEpoch: state.rootEpoch,
     metaKey: built.metaKey,
+    relayUrls,
   };
 }
 

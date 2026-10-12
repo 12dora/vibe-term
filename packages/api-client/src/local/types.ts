@@ -141,6 +141,8 @@ export interface SetupRelayJoinRequest {
 export interface SetupRelayJoinResponse {
   ok: true;
   relayUrl: string;
+  /** 本机配置好的全部中继；旧网关不下发。 */
+  relayUrls?: string[];
   tenantId: string;
   username: string;
   direct: SetupDirectOutcome;

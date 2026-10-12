@@ -149,6 +149,7 @@ describe('relay password join identity membership', () => {
     expect(await f.join()).toEqual({
       userId: f.user.userId,
       relayUrl: RELAY_URL,
+      relayUrls: [RELAY_URL],
       tenantId: f.tenantId,
     });
     const identity = await ensureNodeIdentity(f.auth.identityStore);

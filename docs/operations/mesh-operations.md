@@ -120,10 +120,6 @@ bash install.sh --role relay --relay-public-url https://relay.example.com
 
 ```bash
 bash install.sh --role relay --no-interactive \
-  --install-dir "$HOME/.local/share/vibeterm" \
-  --host 127.0.0.1 --port 9883 \
-  --db-path "$HOME/.local/share/vibeterm/data/vibeterm.db" \
-  --autostart true \
   --relay-public-url https://relay.example.com
 ```
 
@@ -159,6 +155,8 @@ vibeterm relay enroll https://relay.example.com
 vibeterm relay join https://relay.example.com --tenant <租户编号> --password --name 书房
 vibeterm relay join https://relay.example.com --token r3.<加入串> --name 书房
 ```
+
+密码加入与 `r3.` 加入都会让本机配置 mesh 根签名 `set-relays` 里的全部中继：多中继 mesh 经由任意一台加入，另一台自动配置并接入，命令结束时会列出「同时配置」的中继。前提：另一台若是自签中继，仍需先按中继逐台钉扎其 CA（`vibeterm relay trust refresh <url> --fingerprint …`）；钉扎按 url 保存，加入只钉扎实际使用的那一台。
 
 约束：
 

@@ -239,6 +239,8 @@ CA 指纹只有一个，语义是「表里每台都必须出示指纹相符的 C
 `POST /api/mesh/relay/enrollments` 会把同一条 enrollment 并发写到 `mesh_relays` 里的每一台（HTTP `POST /api/relay/tenants/:id/enrollments`，每台 5 s 超时，`Promise.allSettled`；attached 那台 HTTP 够不着时才退回 uplink `relay.enroll.create`）。
 201 响应的 `relays` 是对象数组：接受的带 `token`，拒绝的带 `error`、不回令牌——浏览器用接受方拼 r3 串，不必再打一次 join-material。至少一台接受才保留本地 enrollment；全部失败则作废并 502 `RELAY_ENROLL_FANOUT_FAILED`。加入方遇到某台 404 `RELAY_ENROLLMENT_UNKNOWN` / `RELAY_NOT_FOUND` 时换下一台，CA 指纹不符仍直接失败。
 
+加入方落库的中继表：回放校验后的密钥日志有非空 `set-relays` 时原样落库（根签名的顺序与令牌，同 `reconcile()` 的写入结果），所以经由任意一台中继加入的节点都配置 mesh 里的全部中继，另一台无需额外请求——节点凭 admit sidecar 直接接入；没有 `set-relays` 才退回 r3 自带的中继表。铸造 r3 需要先处于中继模式（已有 `set-relays`），r3 令牌又取自 `set-relays` 的投影，不会比日志新，故不叠加、r3 独有的中继也不落库（`reconcile()` 无对应投影会清空表）；退回 r3 只服务于没有 `set-relays` 的夹具 / 旧日志。
+
 ## 5b. 密码加入（密封包）
 
 第二台机器可以用 **中继地址 + 租户编号 + mesh 账户密码** 加入已有租户，不必持有 `r3.` 加入码。
@@ -274,8 +276,8 @@ join 失败（错根、错 epoch、被踢）记入限流；成功则 `reset` 该
 1. 本机已有 mesh 用户或已绑定节点身份 → 失败 `local_user_exists`（standalone 本机登录账户不在此列，与 `relay join` 一致）。
 2. `GET …/kdf` → 校验 KDF 预算（`memory_kib ≤ 262144`、`iterations ≤ 10`、`parallelism ≤ 4`、salt 16 B）→ `deriveSeed` → 签 enroll proof → `POST /api/relay/enroll` `mode:'join'`。
 3. 开密封包；用包内令牌分页下载密钥日志并解密；`verifyKeyLogChain`；**`head_seq` 处记录的 hash 必须等于包内 `head_hash`**，日志更短也拒绝。
-4. 回放（passkey 走链内 replay verifier）。用户键入的规范化 `(url, tenantId)` **必须**出现在根签名的 `set-relays` 投影里，否则 `join_failed` / `该中继不在根签名的中继列表里`（拒绝把 pack/log 拷到未授权中继上加入）。
-5. **先**向中继追加 `admit-node`（带 `admit` sidecar）再追加换代 `meta-key`，每条都走中继 CAS（`seq = head+1`）。`SEQ_MISMATCH` 时重新下载日志、按新 head 重建两条记录再试（最多 4 次，与 CLI `relay join` 相同）。`member_ignored: true` 视为硬失败，中止且**不**写本机状态。两条都成功后才 `commitJoin` / 落证书 / `mesh_relays`（只替换命中行的 token，从不 `unshift` 未列出的 URL）/ `mesh_secrets`。
+4. 回放（passkey 走链内 replay verifier）。用户键入的规范化 `(url, tenantId)` **必须**出现在根签名的 `set-relays` 投影里，否则 `relay_not_authorized`（HTTP 403）/ `该中继不在根签名的中继列表里`（拒绝把 pack/log 拷到未授权中继上加入）。
+5. **先**向中继追加 `admit-node`（带 `admit` sidecar）再追加换代 `meta-key`，每条都走中继 CAS（`seq = head+1`）。`SEQ_MISMATCH` 时重新下载日志、按新 head 重建两条记录再试（最多 4 次，与 CLI `relay join` 相同）。`member_ignored: true` 视为硬失败，中止且**不**写本机状态。两条都成功后才 `commitJoin` / 落证书 / `mesh_relays`（整张 `set-relays` 表入库，只替换命中行的 token——这里密封包里的令牌可能比日志里的新；同一 URL 只落一行，也不会追加未列出的 URL，所以经由任意一台中继加入都会配置全部中继）/ `mesh_secrets`。
 6. 按新 head 重封并 `POST …/pack` → 写 env（`VIBETERM_ROLES=node` 或本机已跑 relay 时 `relay,node`，走 staged-env/promote）→ 重启。
 
 第二条追加失败时同样不写本机状态。此时中继上可能留下一条已承认、尚无本机 `K_meta` 的 **orphan pending node**（`node_id` 会出现在错误信息里）；运营者可在中继成员表里撤销该 pending 节点后让加入方重试。
@@ -454,7 +456,7 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 {
   "mode": "relay" | "none",
   "tenantId": "<32hex>" | null,
-  "relays": [{ "url": "...", "priority": 0, "online": false, "attached": false,
+  "relays": [{ "url": "...", "tenantId": "<32hex>", "priority": 0, "online": false, "attached": false,
                "role": "primary" | "secondary" | null,
                "rttMs": null, "peersOnline": null,
                "turn": { "url": "turn:…", "probeOk": true } | null,
@@ -478,6 +480,8 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 
 | 字段 | 含义 |
 |---|---|
+| `tenantId`（行级） | 该中继为本 mesh 签发的租户编号；每台中继各不相同，旧节点不下发。**永远与同一行的 `url` 配对**使用 |
+| `tenantId`（顶层） | 当前主中继那一行的租户编号；没有挂上任何中继时取 `priority` 最小的一行。旧客户端「主中继 url + 顶层 `tenantId`」因此仍是同一行 |
 | `role` | `primary`（写新记录、出名册、`switch` 的目标）/ `secondary` / `null`（未连接） |
 | `online` | **该行**已认证。`attached` 仍只对 primary 为真（2.2.x 前端靠它画「已挂载」） |
 | `rttMs` | 每条已连接 uplink 各自最近一次 ping→pong 时延（毫秒；重连清零；未测到为 null） |

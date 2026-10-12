@@ -96,6 +96,7 @@ export async function handleRelayJoinRequest(
     return jsonOk({
       ok: true,
       relayUrl: joined.relayUrl,
+      relayUrls: joined.relayUrls,
       tenantId: joined.tenantId,
       username: joined.userId,
       direct: direct.direct,

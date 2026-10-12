@@ -17,7 +17,6 @@ import {
   type RelayJoinTokenEntry,
   decodeRelayJoinToken,
   isRelayJoinToken,
-  normalizeRelayUrl,
 } from '../../../shared/src/relay';
 import { t } from '../i18n';
 import { requireFlagValue } from '../lib/args';
@@ -35,7 +34,7 @@ import {
   storeRelayCaPin,
 } from '../lib/relay-ca';
 import { openRelayKeyLogPage, parseRelayKeyLogPage } from '../lib/relay-keylog';
-import { persistRelayUplink } from '../lib/relay-store';
+import { alsoConfiguredLine, persistRelayUplink, relaysForTokenJoin } from '../lib/relay-store';
 import { asString } from '../lib/validate';
 import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import { applyRelayPasswordJoinEnv, relayJoinRoleName } from '../runtime/setup-shared';
@@ -44,6 +43,7 @@ import type { CliIo } from './cli-io';
 import { enableDirectForOnboarding } from './direct';
 import { JoinError, NODE_REVOKED_REJOIN_ERROR } from './join-error';
 import { assertChainUids } from './join-verify';
+import { orderRelayEntries } from './relay-join-entries';
 import {
   RELAY_REDEEM_RESPONSE_MAX_BYTES,
   RelayApiError,
@@ -53,7 +53,7 @@ import {
 import { maybeRestart } from './restart';
 import { withAuth } from './with-auth';
 
-export { relayJoinRoleName };
+export { orderRelayEntries, relayJoinRoleName };
 
 export type RelayJoinResult = {
   userId: string;
@@ -65,32 +65,6 @@ export type RelayJoinResult = {
 
 function log(io: CliIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
-}
-
-/** join 串里的中继表就是 failover 顺序；命令行给的 url 只能用来把其中一条提前。 */
-export function orderRelayEntries(
-  decoded: RelayJoinToken,
-  preferredRaw: string,
-  warn?: (message: string) => void
-): RelayJoinTokenEntry[] {
-  if (!preferredRaw) return [...decoded.relays];
-  let preferred: string;
-  try {
-    preferred = normalizeRelayUrl(preferredRaw);
-  } catch (error) {
-    throw new JoinError(
-      'invalid_url',
-      error instanceof Error ? error.message : 'invalid relay url'
-    );
-  }
-  const match = decoded.relays.find((entry) => entry.url === preferred);
-  if (!match) {
-    (warn ?? console.warn)(
-      `relay url is not listed in the join token and will be ignored: ${preferred}`
-    );
-    return [...decoded.relays];
-  }
-  return [match, ...decoded.relays.filter((entry) => entry.url !== preferred)];
 }
 
 export const RELAY_ENROLLMENT_LOOKUP_MISSING =
@@ -336,7 +310,7 @@ async function commitRelayJoin(input: {
   attempt: RelayAttempt;
   entries: RelayJoinTokenEntry[];
   name: string;
-}): Promise<{ userId: string; admitted: boolean }> {
+}): Promise<{ userId: string; admitted: boolean; relayUrls: string[] }> {
   const records = input.attempt.redeemed.keyLog;
   const prepared = input.attempt.prepared;
   // head hash 不能当「链尾」用：join 码生成之后租户完全可以继续追加记录。锚点语义（锚必须
@@ -384,17 +358,12 @@ async function commitRelayJoin(input: {
       fingerprint: input.attempt.pin.fingerprint,
     });
   }
-  await persistRelayUplink(input.ctx, {
-    relays: input.entries.map((item, index) => ({
-      url: item.url,
-      tenantId: item.tenantId,
-      token: item.token,
-      priority: index,
-    })),
+  const relayUrls = await persistRelayUplink(input.ctx, {
+    relays: relaysForTokenJoin(verified.state.relays?.relays, input.entries),
     logKey: input.decoded.logKey,
     name: input.name,
   });
-  return { userId: genesisUid, admitted: Boolean(admittedCert) };
+  return { userId: genesisUid, admitted: Boolean(admittedCert), relayUrls };
 }
 
 async function writeRelayNodeEnv(envPath: string): Promise<void> {
@@ -442,7 +411,9 @@ export async function runRelayJoin(
       await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
       await maybeRestart(parsed, io, ctx.installDir);
     }
-    log(io, `joined relay ${attempt.entry.url} (tenant ${attempt.entry.tenantId})`);
+    log(io, t('relay.join.joined', { url: attempt.entry.url, tenantId: attempt.entry.tenantId }));
+    const alsoConfigured = alsoConfiguredLine(attempt.entry.url, committed.relayUrls);
+    if (alsoConfigured) log(io, alsoConfigured);
     if (!committed.admitted) {
       log(io, t('relay.join.syncing'));
     }
@@ -456,7 +427,7 @@ export async function runRelayJoin(
     return {
       userId: committed.userId,
       relayUrl: attempt.entry.url,
-      relayUrls: entries.map((entry) => entry.url),
+      relayUrls: committed.relayUrls,
       tenantId: attempt.entry.tenantId,
       admitted: committed.admitted,
     };
@@ -484,7 +455,7 @@ export async function runRelayJoinCommand(
     return {
       userId: joined.userId,
       relayUrl: joined.relayUrl,
-      relayUrls: [joined.relayUrl],
+      relayUrls: joined.relayUrls,
       tenantId: joined.tenantId,
       admitted: true,
     };

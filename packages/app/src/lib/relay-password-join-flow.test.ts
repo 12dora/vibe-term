@@ -44,7 +44,7 @@ describe('relaysForPersist', () => {
     }
   });
 
-  test('replaces the token of the matching row and reindexes priorities', () => {
+  test('replaces the token of the matching row and keeps the signed priorities', () => {
     const oldToken = randomBytes(32);
     const joinedToken = randomBytes(32);
     const rows = relaysForPersist(
@@ -57,7 +57,22 @@ describe('relaysForPersist', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]?.url).toBe('https://a.example');
     expect(rows[0]?.token).toBe(joinedToken);
-    expect(rows[0]?.priority).toBe(0);
+    expect(rows[0]?.priority).toBe(2);
     expect(rows[1]?.token).toBe(oldToken);
+    expect(rows[1]?.priority).toBe(5);
+  });
+
+  test('a same-url row of another tenant is not the joined relay', () => {
+    const token = randomBytes(32);
+    expect(() =>
+      relaysForPersist(
+        [{ url: 'https://a.example', tenantId: 'bb'.repeat(16), token, priority: 0 }],
+        {
+          url: 'https://a.example',
+          tenantId: 'aa'.repeat(16),
+          token,
+        }
+      )
+    ).toThrow(RelayPasswordJoinError);
   });
 });

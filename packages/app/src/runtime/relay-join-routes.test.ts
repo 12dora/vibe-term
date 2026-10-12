@@ -61,11 +61,20 @@ describe('handleRelayJoinRequest', () => {
         ...base,
         performRelayPasswordJoin: async (input) => {
           seen = input;
-          return { relayUrl: input.relayUrl, tenantId: input.tenantId, userId: 'alice' };
+          return {
+            relayUrl: input.relayUrl,
+            relayUrls: [input.relayUrl, 'https://relay-b.example'],
+            tenantId: input.tenantId,
+            userId: 'alice',
+          };
         },
       }
     );
     expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      relayUrl: 'https://relay.example',
+      relayUrls: ['https://relay.example', 'https://relay-b.example'],
+    });
     expect(seen).toMatchObject({
       relayUrl: 'https://relay.example',
       tenantId: 'abc',
@@ -98,6 +107,7 @@ describe('handleRelayJoinRequest', () => {
         installDir: dir,
         performRelayPasswordJoin: async (input) => ({
           relayUrl: input.relayUrl,
+          relayUrls: [input.relayUrl],
           tenantId: input.tenantId,
           userId: 'alice',
         }),
@@ -205,6 +215,7 @@ describe('relay join 直连插件', () => {
           ...base,
           performRelayPasswordJoin: async (input) => ({
             relayUrl: input.relayUrl,
+            relayUrls: [input.relayUrl],
             tenantId: input.tenantId,
             userId: 'alice',
           }),
@@ -236,6 +247,7 @@ describe('relay join 直连插件', () => {
       ...base,
       performRelayPasswordJoin: async (input) => ({
         relayUrl: input.relayUrl,
+        relayUrls: [input.relayUrl],
         tenantId: input.tenantId,
         userId: 'alice',
       }),
