@@ -8,6 +8,7 @@ export const FILE_DELETE_LISTED_NAMES = 5;
 export interface FileDeleteDialogProps {
   open: boolean;
   names: string[];
+  /** 请求已发出：确认与取消都锁住，Esc / 点外面也关不掉（删除发出后无法撤回）。 */
   busy?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -46,7 +47,7 @@ export function FileDeleteDialog(props: FileDeleteDialogProps) {
       confirmLabel={t('files.ops.delete')}
       variant="destructive"
       onConfirm={onConfirm}
-      onCancel={onClose}
+      onCancel={busy ? undefined : onClose}
       cancelDisabled={busy}
       confirmDisabled={busy}
       confirmPending={busy}

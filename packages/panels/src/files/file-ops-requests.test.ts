@@ -32,18 +32,21 @@ describe('createFileOpsRequestStore', () => {
     store.requestNewFolder('r1', '/srv');
     expect(store.get()).toEqual({
       open: true,
+      seq: 1,
       request: { kind: 'newFolder', rootId: 'r1', dir: '/srv' },
     });
 
     store.requestRename('r1', '/srv/a.txt', 'a.txt', false);
     expect(store.get()).toEqual({
       open: true,
+      seq: 2,
       request: { kind: 'rename', rootId: 'r1', path: '/srv/a.txt', name: 'a.txt', isDir: false },
     });
 
     store.requestDelete('r1', [{ path: '/srv/a.txt', name: 'a.txt' }]);
     expect(store.get()).toEqual({
       open: true,
+      seq: 3,
       request: { kind: 'delete', rootId: 'r1', entries: [{ path: '/srv/a.txt', name: 'a.txt' }] },
     });
   });
@@ -53,7 +56,35 @@ describe('createFileOpsRequestStore', () => {
     store.requestRename('r1', '/srv/docs', 'docs', true);
     const { request } = store.get();
     store.close();
-    expect(store.get()).toEqual({ open: false, request });
+    expect(store.get()).toEqual({ open: false, seq: 1, request });
+  });
+
+  test('closeRequest 只关仍在显示的那条请求：上一条请求迟到的完成关不掉后来的对话框', () => {
+    const store = createFileOpsRequestStore();
+    store.requestDelete('r1', [{ path: '/srv/a.txt', name: 'a.txt' }]);
+    const stale = store.get().request;
+    if (!stale) throw new Error('request missing');
+    store.close();
+    store.requestRename('r1', '/srv/b.txt', 'b.txt', false);
+    const current = store.get().request;
+    if (!current) throw new Error('request missing');
+
+    store.closeRequest(stale);
+    expect(store.get().open).toBe(true);
+    expect(store.get().request).toBe(current);
+
+    store.closeRequest(current);
+    expect(store.get().open).toBe(false);
+  });
+
+  test('内容相同的两条请求也各有各的 seq（对话框按它换新实例）', () => {
+    const store = createFileOpsRequestStore();
+    store.requestNewFolder('r1', '/srv');
+    const first = store.get();
+    store.close();
+    store.requestNewFolder('r1', '/srv');
+    expect(store.get().seq).toBe(first.seq + 1);
+    expect(store.get().request).not.toBe(first.request);
   });
 
   test('空的删除请求不打开对话框', () => {
@@ -97,7 +128,7 @@ describe('listingNames', () => {
 });
 
 describe('nameRequestDir', () => {
-  test('新建看目标目录，重命名看上级目录，其余为 null', () => {
+  test('新建看目标目录，重命名看上级目录', () => {
     expect(nameRequestDir({ kind: 'newFolder', rootId: 'r1', dir: '/srv/docs' }, parentOf)).toBe(
       '/srv/docs'
     );
@@ -107,7 +138,5 @@ describe('nameRequestDir', () => {
         parentOf
       )
     ).toBe('/srv/docs');
-    expect(nameRequestDir({ kind: 'delete', rootId: 'r1', entries: [] }, parentOf)).toBeNull();
-    expect(nameRequestDir(null, parentOf)).toBeNull();
   });
 });

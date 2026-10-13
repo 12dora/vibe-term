@@ -11,7 +11,8 @@ import type {
   MoveFilesResponse,
 } from '@vibeterm/shared';
 import { dirname } from '@vibeterm/shared';
-import type { AppRuntime } from '@vibeterm/stores';
+import type { AppRuntime, ExplorerWorkspaceState } from '@vibeterm/stores';
+import { getExplorerStore } from '@vibeterm/stores/explorer';
 import { useRuntime } from '@vibeterm/stores/react';
 import type { TFunction } from 'i18next';
 import { useMemo } from 'react';
@@ -87,6 +88,28 @@ export function expandedPathsUnder(
   return hits;
 }
 
+/**
+ * `from` 改名 / 移动到 `to` 后，它名下每个展开键的去向：相对位置不变地换到 `to` 之下；
+ * `to` 为 null（删除、移出本 root）时没有去向，只需收起。
+ */
+export function relocatedExpansionPaths(
+  expandedKeys: Iterable<string>,
+  rootId: string,
+  from: string,
+  to: string | null
+): Array<{ from: string; to: string | null }> {
+  return expandedPathsUnder(expandedKeys, rootId, from).map((path) => ({
+    from: path,
+    to: to === null ? null : rebaseUnder(path, from, to),
+  }));
+}
+
+function rebaseUnder(path: string, from: string, to: string): string {
+  if (path === from) return to;
+  const relative = path.slice(from === '/' ? 1 : from.length + 1);
+  return joinChildPath(to, relative);
+}
+
 export type BatchFailure =
   | { kind: 'none' }
   | { kind: 'all'; code: FileOpItemResult['code'] }
@@ -147,12 +170,14 @@ function rootPathOf(ctx: OpsContext, rootId: string): string | null {
   return cached?.roots.find((root) => root.id === rootId)?.path ?? null;
 }
 
-// 路径已不在原处（删除 / 改名 / 移走）：收起侧栏里它及其后代的展开态，丢掉它名下的列表缓存
-// （同名目录日后重建时不该闪出旧内容），并让文件管理器的标签页历史改指新位置或退回上级。
+// 路径已不在原处（删除 / 改名 / 移走）：侧栏里它及其后代的展开态跟着搬到新位置（`to` 为 null
+// 即已不在本 root，直接收起），丢掉它名下的列表缓存（同名目录日后重建时不该闪出旧内容），
+// 并让文件管理器的标签页历史改指新位置或退回上级。
 function forgetPath(ctx: OpsContext, rootId: string, from: string, to: string | null): void {
   const fileTree = ctx.runtime.stores.fileTree.getState();
-  for (const path of expandedPathsUnder(Object.keys(fileTree.expanded), rootId, from)) {
-    fileTree.collapse(rootId, path);
+  for (const moved of relocatedExpansionPaths(Object.keys(fileTree.expanded), rootId, from, to)) {
+    fileTree.collapse(rootId, moved.from);
+    if (moved.to !== null) fileTree.expand(rootId, moved.to);
   }
   ctx.queryClient.removeQueries({
     predicate: ({ queryKey: key }) =>
@@ -162,10 +187,24 @@ function forgetPath(ctx: OpsContext, rootId: string, from: string, to: string | 
       typeof key[3] === 'string' &&
       isPathUnder(key[3], from),
   });
+  const explorer = getExplorerStore().getState();
+  dropStaleClipboard(explorer, ctx.runtime.nodeId, rootId, from);
   const rootPath = rootPathOf(ctx, rootId);
   if (rootPath === null) return;
-  const explorer = ctx.runtime.stores.explorer.getState();
   explorer.rebasePath(ctx.runtime.nodeId, rootId, from, to, rootPath);
+}
+
+// 剪贴板里记的是路径：条目被删 / 改名 / 移走后，同一路径上日后新建的东西会被当成「剪切的那个」
+// 粘贴出去。受影响的路径（及其后代）还在剪贴板里就整份作废。
+function dropStaleClipboard(
+  explorer: Pick<ExplorerWorkspaceState, 'clipboard' | 'setClipboard'>,
+  nodeId: string,
+  rootId: string,
+  from: string
+): void {
+  const { clipboard } = explorer;
+  if (!clipboard || clipboard.nodeId !== nodeId || clipboard.rootId !== rootId) return;
+  if (clipboard.paths.some((path) => isPathUnder(path, from))) explorer.setClipboard(null);
 }
 
 async function createFolder(

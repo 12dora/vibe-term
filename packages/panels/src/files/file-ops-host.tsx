@@ -51,23 +51,16 @@ export function useFileOpsRequest(): FileOpsRequestApi {
 type NameRequest = Extract<FileOpsRequest, { kind: 'newFolder' | 'rename' }>;
 type DeleteRequest = Extract<FileOpsRequest, { kind: 'delete' }>;
 
+// 每条请求各挂一份对话框（key = seq）：忙碌态归这一条请求所有，上一条请求迟到的完成回调
+// 既碰不到新对话框的按钮状态，也因为 `closeRequest` 认请求本身而关不掉它。
 function FileOpsDialogs({ store }: { store: FileOpsRequestStore }) {
-  const { request, open } = useSyncExternalStore(store.subscribe, store.get, closedSnapshot);
-  const nameRequest = request && request.kind !== 'delete' ? request : null;
-  const deleteRequest = request?.kind === 'delete' ? request : null;
-  return (
-    <>
-      <NameRequestDialog
-        request={nameRequest}
-        open={open && nameRequest !== null}
-        onClose={store.close}
-      />
-      <DeleteRequestDialog
-        request={deleteRequest}
-        open={open && deleteRequest !== null}
-        onClose={store.close}
-      />
-    </>
+  const { request, open, seq } = useSyncExternalStore(store.subscribe, store.get, closedSnapshot);
+  if (!request) return null;
+  const onClose = () => store.closeRequest(request);
+  return request.kind === 'delete' ? (
+    <DeleteRequestDialog key={seq} request={request} open={open} onClose={onClose} />
+  ) : (
+    <NameRequestDialog key={seq} request={request} open={open} onClose={onClose} />
   );
 }
 
@@ -76,7 +69,7 @@ function NameRequestDialog({
   open,
   onClose,
 }: {
-  request: NameRequest | null;
+  request: NameRequest;
   open: boolean;
   onClose: () => void;
 }) {
@@ -85,23 +78,23 @@ function NameRequestDialog({
   const queryClient = useQueryClient();
   const ops = useFileOps();
 
-  // 只在请求到来时读一次缓存：对话框开着的时候名称集合不该跟着轮询变
-  const takenNames = useMemo(() => {
-    const dir = nameRequestDir(request, parentDir);
-    if (!request || dir === null) return undefined;
-    return listingNames(
-      queryClient.getQueryData<ListFilesResponse>(fileListQueryKey(request.rootId, dir))
+  // 只在挂载时读一次缓存：对话框开着的时候名称集合与默认名不该跟着轮询变
+  const [{ takenNames, initialName }] = useState(() => {
+    const names = listingNames(
+      queryClient.getQueryData<ListFilesResponse>(
+        fileListQueryKey(request.rootId, nameRequestDir(request, parentDir))
+      )
     );
-  }, [request, queryClient]);
-
-  const isNewFolder = request?.kind === 'newFolder';
-  const initialName =
-    request?.kind === 'rename'
-      ? request.name
-      : uniqueChildName(t('files.ops.defaultFolderName'), namesOrEmpty(takenNames));
+    return {
+      takenNames: names,
+      initialName:
+        request.kind === 'rename'
+          ? request.name
+          : uniqueChildName(t('files.ops.defaultFolderName'), namesOrEmpty(names)),
+    };
+  });
 
   const submit = async (name: string): Promise<boolean> => {
-    if (!request) return true;
     if (request.kind === 'rename') {
       if (name === request.name) return true;
       return (await ops.rename(request.rootId, request.path, name)) !== null;
@@ -113,6 +106,7 @@ function NameRequestDialog({
     return true;
   };
 
+  const isNewFolder = request.kind === 'newFolder';
   return (
     <FileNameDialog
       open={open}
@@ -120,7 +114,7 @@ function NameRequestDialog({
       confirmLabel={t(isNewFolder ? 'files.ops.create' : 'files.ops.rename')}
       initialName={initialName}
       takenNames={takenNames}
-      selectStem={request?.kind === 'rename' && !request.isDir}
+      selectStem={request.kind === 'rename' && !request.isDir}
       onSubmit={submit}
       onClose={onClose}
     />
@@ -132,16 +126,16 @@ function DeleteRequestDialog({
   open,
   onClose,
 }: {
-  request: DeleteRequest | null;
+  request: DeleteRequest;
   open: boolean;
   onClose: () => void;
 }) {
   const ops = useFileOps();
   const [busy, setBusy] = useState(false);
-  const names = useMemo(() => request?.entries.map((entry) => entry.name) ?? [], [request]);
+  const names = useMemo(() => request.entries.map((entry) => entry.name), [request]);
 
   const confirm = async () => {
-    if (!request || busy) return;
+    if (busy) return;
     setBusy(true);
     try {
       // 失败的 Toast 由 useFileOps 负责；无论成败都收起确认框
@@ -155,6 +149,7 @@ function DeleteRequestDialog({
     }
   };
 
+  // 请求在途时 FileDeleteDialog 自己不再响应取消 / Esc / 点外面（发出去的删除撤不回）
   return (
     <FileDeleteDialog
       open={open}

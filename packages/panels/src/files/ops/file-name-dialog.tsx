@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from '@vibeterm/ui/dialog';
 import { Input } from '@vibeterm/ui/input';
-import { type FocusEvent, type FormEvent, useId, useRef, useState } from 'react';
+import { type FormEvent, type RefObject, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { fileNameErrorKey, splitStem, validateFileName } from './file-name';
 
@@ -22,7 +22,7 @@ export interface FileNameDialogProps {
   takenNames?: ReadonlySet<string>;
   /** 打开时只选中主名（最后一个点之前），用于文件重命名。 */
   selectStem?: boolean;
-  /** 返回 true 才关闭。 */
+  /** 返回 true 才关闭；对话框在结果回来之前已被关掉或重新打开时，这个结果作废。 */
   onSubmit: (name: string) => Promise<boolean> | boolean;
   onClose: () => void;
 }
@@ -41,11 +41,18 @@ export function fileNameDialogErrorKey(
 
 interface FileNameForm {
   value: string;
-  setValue: (value: string) => void;
   pending: boolean;
   errorKey: string | null;
-  selectOnFirstFocus: (event: FocusEvent<HTMLInputElement>) => void;
+  inputRef: RefObject<HTMLInputElement | null>;
+  onInputChange: (value: string) => void;
+  selectUntouched: () => void;
+  ensureFocus: (open: boolean) => void;
   submit: (event: FormEvent) => Promise<void>;
+}
+
+/** 打开时该选中的范围终点：文件重命名只选主名，其余全选。 */
+export function initialSelectionEnd(name: string, selectStem?: boolean): number {
+  return selectStem ? splitStem(name).stem.length : name.length;
 }
 
 function useFileNameForm(props: FileNameDialogProps): FileNameForm {
@@ -53,41 +60,70 @@ function useFileNameForm(props: FileNameDialogProps): FileNameForm {
   const [value, setValue] = useState(initialName);
   const [pending, setPending] = useState(false);
   const [prevOpen, setPrevOpen] = useState(open);
-  const selectionDone = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  // 用户动过输入之后就不再替他改选区
+  const touched = useRef(false);
+  // 每打开一次算一轮；提交结果回来时轮次对不上（已关掉 / 已重开）就作废
+  const session = useRef(0);
+  const openRef = useRef(open);
+  openRef.current = open;
 
   // 每次打开都从 initialName 重新开始（渲染期对齐，避免先闪一帧上次的输入）
   if (open !== prevOpen) {
     setPrevOpen(open);
     if (open) {
       setValue(initialName);
-      selectionDone.current = false;
+      setPending(false);
+      touched.current = false;
+      session.current += 1;
     }
   }
 
   const errorKey = fileNameDialogErrorKey(value, initialName, props.takenNames);
 
-  const selectOnFirstFocus = (event: FocusEvent<HTMLInputElement>) => {
-    if (selectionDone.current) return;
-    selectionDone.current = true;
-    const input = event.currentTarget;
-    const end = props.selectStem ? splitStem(input.value).stem.length : input.value.length;
-    input.setSelectionRange(0, end);
+  const selectUntouched = () => {
+    const input = inputRef.current;
+    if (!input || touched.current) return;
+    input.setSelectionRange(0, initialSelectionEnd(input.value, props.selectStem));
+  };
+
+  // 从右键菜单打开时，菜单收起会把焦点还给它的触发行，可能晚于对话框的初始聚焦；
+  // 开场动画结束后再确认一次，焦点不在输入框就拿回来（聚焦即按上面的规则选中）。
+  const ensureFocus = (nextOpen: boolean) => {
+    const input = inputRef.current;
+    if (nextOpen && input && input.ownerDocument.activeElement !== input) input.focus();
+  };
+
+  const onInputChange = (next: string) => {
+    touched.current = true;
+    setValue(next);
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (errorKey || pending) return;
+    const submitted = session.current;
     setPending(true);
     let done = false;
     try {
       done = await onSubmit(value);
     } finally {
-      setPending(false);
+      // 轮次变了说明对话框已经在为下一次打开服务，pending 已由那次打开清零
+      if (session.current === submitted) setPending(false);
     }
-    if (done) onClose();
+    if (done && openRef.current && session.current === submitted) onClose();
   };
 
-  return { value, setValue, pending, errorKey, selectOnFirstFocus, submit };
+  return {
+    value,
+    pending,
+    errorKey,
+    inputRef,
+    onInputChange,
+    selectUntouched,
+    ensureFocus,
+    submit,
+  };
 }
 
 export function FileNameDialog(props: FileNameDialogProps) {
@@ -95,12 +131,17 @@ export function FileNameDialog(props: FileNameDialogProps) {
   const { t } = useTranslation();
   const inputId = useId();
   const errorId = useId();
-  const { value, setValue, pending, errorKey, selectOnFirstFocus, submit } = useFileNameForm(props);
+  const form = useFileNameForm(props);
+  const { value, pending, errorKey } = form;
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent data-testid="file-name-dialog">
-        <form onSubmit={submit}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      onOpenChangeComplete={form.ensureFocus}
+    >
+      <DialogContent data-testid="file-name-dialog" initialFocus={form.inputRef}>
+        <form onSubmit={form.submit}>
           <DialogHeader>
             <DialogTitle>{props.title}</DialogTitle>
           </DialogHeader>
@@ -110,14 +151,14 @@ export function FileNameDialog(props: FileNameDialogProps) {
             </label>
             <Input
               id={inputId}
-              autoFocus
+              ref={form.inputRef}
               autoComplete="off"
               spellCheck={false}
               value={value}
               aria-invalid={errorKey ? true : undefined}
               aria-describedby={errorKey ? errorId : undefined}
-              onChange={(event) => setValue(event.target.value)}
-              onFocus={selectOnFirstFocus}
+              onChange={(event) => form.onInputChange(event.target.value)}
+              onFocus={form.selectUntouched}
               data-testid="file-name-input"
             />
             {errorKey ? (

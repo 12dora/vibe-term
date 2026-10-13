@@ -22,19 +22,25 @@ export interface FileOpsRequestApi {
   requestDelete(rootId: string, entries: FileOpsEntryRef[]): void;
 }
 
-/** 关闭后 `request` 保留到下一次请求：对话框退场动画期间标题与名称不该先消失。 */
+/**
+ * 关闭后 `request` 保留到下一次请求：对话框退场动画期间标题与名称不该先消失。
+ * `seq` 每来一条请求加一，宿主拿它当对话框的 key——每条请求各有一份全新的组件状态。
+ */
 export interface FileOpsRequestState {
   request: FileOpsRequest | null;
   open: boolean;
+  seq: number;
 }
 
 export interface FileOpsRequestStore extends FileOpsRequestApi {
   get: () => FileOpsRequestState;
   subscribe: (listener: () => void) => () => void;
   close: () => void;
+  /** 只在对话框仍显示着 `request` 这一条时才关：迟到的完成回调不该关掉后来的对话框。 */
+  closeRequest: (request: FileOpsRequest) => void;
 }
 
-export const CLOSED_FILE_OPS_STATE: FileOpsRequestState = { request: null, open: false };
+export const CLOSED_FILE_OPS_STATE: FileOpsRequestState = { request: null, open: false, seq: 0 };
 
 export function createFileOpsRequestStore(): FileOpsRequestStore {
   let state = CLOSED_FILE_OPS_STATE;
@@ -43,7 +49,10 @@ export function createFileOpsRequestStore(): FileOpsRequestStore {
     state = next;
     for (const listener of listeners) listener();
   };
-  const open = (request: FileOpsRequest) => set({ request, open: true });
+  const open = (request: FileOpsRequest) => set({ request, open: true, seq: state.seq + 1 });
+  const close = () => {
+    if (state.open) set({ ...state, open: false });
+  };
   return {
     get: () => state,
     subscribe: (listener) => {
@@ -52,8 +61,9 @@ export function createFileOpsRequestStore(): FileOpsRequestStore {
         listeners.delete(listener);
       };
     },
-    close: () => {
-      if (state.open) set({ request: state.request, open: false });
+    close,
+    closeRequest: (request) => {
+      if (state.request === request) close();
     },
     requestNewFolder: (rootId, dir) => open({ kind: 'newFolder', rootId, dir }),
     requestRename: (rootId, path, name, isDir) =>
@@ -71,14 +81,11 @@ export function listingNames(listing: ListFilesResponse | undefined): Set<string
 
 const NO_NAMES: ReadonlySet<string> = new Set();
 
+type NameRequest = Extract<FileOpsRequest, { kind: 'newFolder' | 'rename' }>;
+
 /** 名称对话框针对的目录：新建在 `dir` 里，重命名看的是它所在的上级目录。 */
-export function nameRequestDir(
-  request: FileOpsRequest | null,
-  parentOf: (path: string) => string
-): string | null {
-  if (request?.kind === 'newFolder') return request.dir;
-  if (request?.kind === 'rename') return parentOf(request.path);
-  return null;
+export function nameRequestDir(request: NameRequest, parentOf: (path: string) => string): string {
+  return request.kind === 'newFolder' ? request.dir : parentOf(request.path);
 }
 
 export function namesOrEmpty(names: ReadonlySet<string> | undefined): ReadonlySet<string> {

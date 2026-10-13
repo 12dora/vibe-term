@@ -7,6 +7,7 @@ import {
   joinChildPath,
   parentDir,
   partitionDeleteResults,
+  relocatedExpansionPaths,
   relocatedMoveItems,
   summarizeBatchFailure,
   touchedParentDirs,
@@ -62,6 +63,38 @@ describe('expandedPathsUnder', () => {
   test('只取该 root 下、位于目标路径（含自身）之下的展开键', () => {
     const keys = ['r1\n/srv/a', 'r1\n/srv/a/deep', 'r1\n/srv/ab', 'r2\n/srv/a', 'r1\n/srv'];
     expect(expandedPathsUnder(keys, 'r1', '/srv/a')).toEqual(['/srv/a', '/srv/a/deep']);
+  });
+});
+
+describe('relocatedExpansionPaths', () => {
+  const keys = ['r1\n/srv/a', 'r1\n/srv/a/deep/er', 'r1\n/srv/ab', 'r2\n/srv/a', 'r1\n/srv'];
+
+  test('改名：自身与后代的展开键换到新名字之下，相对位置不变', () => {
+    expect(relocatedExpansionPaths(keys, 'r1', '/srv/a', '/srv/b')).toEqual([
+      { from: '/srv/a', to: '/srv/b' },
+      { from: '/srv/a/deep/er', to: '/srv/b/deep/er' },
+    ]);
+  });
+
+  test('同 root 移动到别的目录（含根目录 /）', () => {
+    expect(relocatedExpansionPaths(keys, 'r1', '/srv/a', '/srv/ab/a')).toEqual([
+      { from: '/srv/a', to: '/srv/ab/a' },
+      { from: '/srv/a/deep/er', to: '/srv/ab/a/deep/er' },
+    ]);
+    expect(relocatedExpansionPaths(['r1\n/srv/a/x'], 'r1', '/srv/a', '/a')).toEqual([
+      { from: '/srv/a/x', to: '/a/x' },
+    ]);
+  });
+
+  test('删除 / 移出本 root：没有去向，只收起', () => {
+    expect(relocatedExpansionPaths(keys, 'r1', '/srv/a', null)).toEqual([
+      { from: '/srv/a', to: null },
+      { from: '/srv/a/deep/er', to: null },
+    ]);
+  });
+
+  test('没展开过的目录不产生任何迁移', () => {
+    expect(relocatedExpansionPaths(keys, 'r1', '/srv/zzz', '/srv/yyy')).toEqual([]);
   });
 });
 

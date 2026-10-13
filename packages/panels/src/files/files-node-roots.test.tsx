@@ -211,7 +211,8 @@ describe('目录行的结构', () => {
     )?.[0];
     expect(button).toBeDefined();
     expect(button).toContain('>打开</button>');
-    expect(button).toContain('aria-pressed="false"');
+    expect(button).toContain('data-state="closed"');
+    expect(button).not.toContain('aria-pressed');
     expect(html).not.toContain('书房');
   });
 

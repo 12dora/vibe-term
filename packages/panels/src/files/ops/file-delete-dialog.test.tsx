@@ -10,7 +10,12 @@ import { I18nextProvider } from 'react-i18next';
 
 mock.module('@vibeterm/ui/confirm-dialog', () => ({
   ConfirmDialog: (props: ConfirmDialogProps) => (
-    <div data-testid={props.testId} data-open={props.open} data-variant={props.variant}>
+    <div
+      data-testid={props.testId}
+      data-open={props.open}
+      data-variant={props.variant}
+      data-dismissable={props.onCancel !== undefined || props.onOpenChange !== undefined}
+    >
       <h2>{props.title}</h2>
       <p>{props.children}</p>
       {props.extra}
@@ -87,6 +92,11 @@ describe('FileDeleteDialog', () => {
     expect(html).toMatch(/data-role="cancel"[^>]*disabled/);
     expect(html).toMatch(/data-role="confirm"[^>]*disabled/);
     expect(html).toContain('data-pending="true"');
+  });
+
+  test('busy 时 Esc / 点外面也关不掉：不再给 ConfirmDialog 任何关闭回调', () => {
+    expect(renderDialog(['a'], true)).toContain('data-dismissable="false"');
+    expect(renderDialog(['a'])).toContain('data-dismissable="true"');
   });
 
   test('空闲时按钮可点', () => {

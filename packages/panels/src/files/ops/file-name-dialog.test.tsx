@@ -11,7 +11,14 @@ import { I18nextProvider } from 'react-i18next';
 type ShellProps = { children?: ReactNode } & Record<string, unknown>;
 const shell =
   (tag: 'div' | 'h2') =>
-  ({ children, open: _open, onOpenChange: _onOpenChange, ...rest }: ShellProps) => {
+  ({
+    children,
+    open: _open,
+    onOpenChange: _onOpenChange,
+    onOpenChangeComplete: _onOpenChangeComplete,
+    initialFocus: _initialFocus,
+    ...rest
+  }: ShellProps) => {
     const Tag = tag;
     return <Tag {...rest}>{children}</Tag>;
   };
@@ -25,7 +32,9 @@ mock.module('@vibeterm/ui/dialog', () => ({
   DialogFooter: shell('div'),
 }));
 
-const { FileNameDialog, fileNameDialogErrorKey } = await import('./file-name-dialog');
+const { FileNameDialog, fileNameDialogErrorKey, initialSelectionEnd } = await import(
+  './file-name-dialog'
+);
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -78,6 +87,20 @@ describe('fileNameDialogErrorKey', () => {
 
   test('不做 trim：带空格的名称与已有名称不算同名', () => {
     expect(fileNameDialogErrorKey('b.txt ', 'a.txt', new Set(['b.txt']))).toBeNull();
+  });
+});
+
+describe('initialSelectionEnd', () => {
+  test('默认全选', () => {
+    expect(initialSelectionEnd('notes.txt')).toBe(9);
+    expect(initialSelectionEnd('未命名文件夹', false)).toBe(6);
+  });
+
+  test('selectStem 只选到最后一个点之前；点文件与无扩展名整个选中', () => {
+    expect(initialSelectionEnd('notes.txt', true)).toBe(5);
+    expect(initialSelectionEnd('a.tar.gz', true)).toBe(5);
+    expect(initialSelectionEnd('.env', true)).toBe(4);
+    expect(initialSelectionEnd('Makefile', true)).toBe(8);
   });
 });
 

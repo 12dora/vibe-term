@@ -1,8 +1,8 @@
 // 根行尾部的「打开 / 关闭」按钮与 SSH 标记：bun test 无 DOM，用 react-dom/server 静态渲染断言 HTML。
-// 静态渲染下 zustand 读的是建店时的 state，所以「已在文件管理器中打开」用一个桩 store 来表达
-// （与 files-tab.test.tsx 里替换 fileTree 的做法相同）。
+// 文件管理器的 store 是全局单例（不挂在 runtime 上）：每个用例换一份独立存储的实例，用 openLocation
+// 预置标签页。静态渲染下 zustand 的 hook 读的是建店时的 state，所以注入的是一层读 getState() 的壳。
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import type { FileRootDto } from '@vibeterm/shared';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
@@ -16,6 +16,9 @@ installWindowStorage();
 
 const { I18N_RESOURCES } = await import('@vibeterm/shared');
 const { createAppRuntime } = await import('@vibeterm/stores');
+const { createExplorerStore, getExplorerStore, resetExplorerStoreForTest } = await import(
+  '@vibeterm/stores/explorer'
+);
 const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const i18next = (await import('i18next')).default;
 const { renderToStaticMarkup } = await import('react-dom/server');
@@ -62,33 +65,27 @@ interface OpenTab {
 }
 
 function renderControls(root: FileRootDto, openTabs: OpenTab[] = []): string {
-  const runtime = createAppRuntime({ storagePrefix: `root-explorer-test-${storageSeq++}:` });
-  const tabs = Object.fromEntries(
-    openTabs.map((tab, index) => [
-      `t${index}`,
-      {
-        id: `t${index}`,
-        nodeId: tab.nodeId ?? runtime.nodeId,
-        rootId: tab.rootId,
-        history: ['/srv'],
-        index: 0,
-      },
-    ])
+  const storagePrefix = `root-explorer-test-${storageSeq++}:`;
+  const runtime = createAppRuntime({ storagePrefix });
+  const real = createExplorerStore({ storagePrefix });
+  type ExplorerState = ReturnType<typeof real.getState>;
+  const live = Object.assign(
+    <T,>(selector: (state: ExplorerState) => T): T => selector(real.getState()),
+    { getState: real.getState, setState: real.setState, subscribe: real.subscribe }
   );
-  const explorerState = { ...runtime.stores.explorer.getState(), tabs };
-  const explorer = Object.assign(
-    <T,>(selector: (state: typeof explorerState) => T): T => selector(explorerState),
-    { getState: () => explorerState }
-  );
-  const stubbedRuntime = {
-    ...runtime,
-    stores: { ...runtime.stores, explorer },
-  } as unknown as typeof runtime;
-
+  resetExplorerStoreForTest(live as unknown as typeof real);
+  for (const tab of openTabs) {
+    getExplorerStore()
+      .getState()
+      .openLocation(
+        { nodeId: tab.nodeId ?? runtime.nodeId, rootId: tab.rootId, path: '/srv' },
+        { newTab: true }
+      );
+  }
   const html = renderToStaticMarkup(
     <MemoryRouter initialEntries={['/']}>
       <I18nextProvider i18n={i18n}>
-        <RuntimeProvider runtime={stubbedRuntime}>
+        <RuntimeProvider runtime={runtime}>
           <SidebarProvider>
             <RootExplorerControls root={root} />
           </SidebarProvider>
@@ -100,6 +97,10 @@ function renderControls(root: FileRootDto, openTabs: OpenTab[] = []): string {
   return html;
 }
 
+afterEach(() => {
+  resetExplorerStoreForTest();
+});
+
 function explorerButton(html: string, rootId: string): string {
   const match = html.match(
     new RegExp(`<button[^>]*data-testid="file-root-explorer-${rootId}"[^>]*>([^<]*)</button>`)
@@ -109,25 +110,26 @@ function explorerButton(html: string, rootId: string): string {
 }
 
 describe('RootExplorerControls 的打开 / 关闭按钮', () => {
-  test('文件管理器里没有该根目录的标签页：显示「打开」，未按下', () => {
+  test('文件管理器里没有该根目录的标签页：显示「打开」', () => {
     const button = explorerButton(renderControls(LOCAL_ROOT), LOCAL_ROOT.id);
     expect(button).toContain('>打开</button>');
-    expect(button).toContain('aria-pressed="false"');
+    expect(button).toContain('data-state="closed"');
     expect(button).toContain('type="button"');
     expect(button).not.toContain('text-primary');
   });
 
-  test('已有该根目录的标签页：显示「关闭」并标记为按下', () => {
+  test('已有该根目录的标签页：显示「关闭」，状态只由文案表达（不再叠加 aria-pressed）', () => {
     const html = renderControls(LOCAL_ROOT, [{ rootId: LOCAL_ROOT.id }]);
     const button = explorerButton(html, LOCAL_ROOT.id);
     expect(button).toContain('>关闭</button>');
-    expect(button).toContain('aria-pressed="true"');
+    expect(button).toContain('data-state="open"');
+    expect(button).not.toContain('aria-pressed');
     expect(button).toContain('text-primary');
   });
 
   test('别的根目录、或别的 node 上同 id 的根目录开着不算', () => {
     const otherRoot = renderControls(LOCAL_ROOT, [{ rootId: SSH_ROOT.id }]);
-    expect(explorerButton(otherRoot, LOCAL_ROOT.id)).toContain('aria-pressed="false"');
+    expect(explorerButton(otherRoot, LOCAL_ROOT.id)).toContain('data-state="closed"');
 
     const otherNode = renderControls(LOCAL_ROOT, [
       { nodeId: 'ffffffffffffffffffffffffffffffff', rootId: LOCAL_ROOT.id },

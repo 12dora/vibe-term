@@ -1,8 +1,9 @@
 // 侧栏通往文件管理器的入口：根行尾部的「打开 / 关闭」按钮，以及目录菜单里的「在文件管理器中打开」。
 
 import type { FileRootDto } from '@vibeterm/shared';
-import { EXPLORER_ROUTE, isExplorerRootOpen } from '@vibeterm/stores';
-import { useExplorerStore, useRuntime } from '@vibeterm/stores/react';
+import { EXPLORER_ROUTE } from '@vibeterm/stores';
+import { getExplorerStore, isExplorerRootOpen, useExplorerStore } from '@vibeterm/stores/explorer';
+import { useRuntime } from '@vibeterm/stores/react';
 import { cn } from '@vibeterm/ui';
 import { useSidebar } from '@vibeterm/ui/sidebar';
 import { Globe } from 'lucide-react';
@@ -17,27 +18,26 @@ export function useOpenInExplorer(): (rootId: string, path: string) => void {
   const { isMobile, setOpenMobile } = useSidebar();
   return useCallback(
     (rootId: string, path: string) => {
-      runtime.stores.explorer.getState().openLocation({ nodeId: runtime.nodeId, rootId, path });
+      getExplorerStore().getState().openLocation({ nodeId: runtime.nodeId, rootId, path });
       // 文件管理器路由不带 node 前缀，不走 hostAppPath
       navigate(EXPLORER_ROUTE);
       if (isMobile) setOpenMobile(false);
     },
-    [runtime, navigate, isMobile, setOpenMobile]
+    [runtime.nodeId, navigate, isMobile, setOpenMobile]
   );
 }
 
 /** 根行尾部：SSH 设备的小地球（悬停看设备名）+「打开 / 关闭」文件管理器按钮。 */
 export function RootExplorerControls({ root }: { root: FileRootDto }) {
   const { t } = useTranslation();
-  const runtime = useRuntime();
-  const { nodeId } = runtime;
+  const { nodeId } = useRuntime();
   const isOpen = useExplorerStore((state) => isExplorerRootOpen(state, nodeId, root.id));
   const openInExplorer = useOpenInExplorer();
 
   const onClick = (event: MouseEvent) => {
     // 按钮与行内的展开钮是兄弟节点，这里拦住冒泡只为不惊动树根的事件委托
     event.stopPropagation();
-    if (isOpen) runtime.stores.explorer.getState().closeLocation(nodeId, root.id);
+    if (isOpen) getExplorerStore().getState().closeLocation(nodeId, root.id);
     else openInExplorer(root.id, root.path);
   };
 
@@ -57,7 +57,7 @@ export function RootExplorerControls({ root }: { root: FileRootDto }) {
       )}
       <button
         type="button"
-        aria-pressed={isOpen}
+        data-state={isOpen ? 'open' : 'closed'}
         data-testid={`file-root-explorer-${root.id}`}
         onClick={onClick}
         className={cn(
