@@ -11,7 +11,7 @@ import type {
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { requestDispatchContext } from '../mesh/types';
-import { getTransferMeshBridge, streamsForTransport } from './bridge';
+import { getTransferMeshBridge, streamsForTransport, transferSelfNodeId } from './bridge';
 import { type TransferChannel, createLocalChannel } from './channel';
 import { resolveDestContext } from './dest';
 import { createGrant } from './grants';
@@ -47,13 +47,13 @@ function normalizeNodeId(raw: unknown, selfNodeId: string): string | null {
   return /^[0-9a-f]{32}$/.test(raw) ? raw : null;
 }
 
-function selfNodeIdOrNull(): string | null {
-  return getTransferMeshBridge()?.selfNodeId ?? null;
+/** 没有 mesh 时够不到别的节点：只有目标是本机的任务才能跑。 */
+function isUnreachable(toNodeId: string, selfNodeId: string): boolean {
+  return toNodeId !== selfNodeId && getTransferMeshBridge() === null;
 }
 
 async function handleCreateGrant(req: Request): Promise<Response> {
-  const selfNodeId = selfNodeIdOrNull();
-  if (!selfNodeId) return json({ error: 'unavailable', code: 'unavailable' }, 503);
+  const selfNodeId = transferSelfNodeId();
   const body = await readJsonObjectBody(req);
   const fromNodeId = normalizeNodeId(body?.fromNodeId, selfNodeId);
   const destRootId = typeof body?.destRootId === 'string' ? body.destRootId : '';
@@ -104,8 +104,7 @@ function pickChannel(
 }
 
 async function handleCreateJob(req: Request): Promise<Response> {
-  const selfNodeId = selfNodeIdOrNull();
-  if (!selfNodeId) return json({ error: 'unavailable', code: 'unavailable' }, 503);
+  const selfNodeId = transferSelfNodeId();
   const body = (await readJsonObjectBody(req)) as (CreateTransferJobRequest & object) | null;
   const toNodeId = normalizeNodeId(body?.toNodeId, selfNodeId);
   const items = readItems(body?.items);
@@ -115,6 +114,10 @@ async function handleCreateJob(req: Request): Promise<Response> {
   if (!toNodeId || !items || !destRootId || !destPath) return badRequest();
   if (!grant || typeof grant.grantId !== 'string' || typeof grant.token !== 'string') {
     return badRequest('grant_invalid');
+  }
+
+  if (isUnreachable(toNodeId, selfNodeId)) {
+    return json({ error: 'unavailable', code: 'unavailable' }, 503);
   }
 
   const uid = uidOf(req);

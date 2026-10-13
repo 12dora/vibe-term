@@ -1,14 +1,16 @@
 // 文件变更类 REST 端点：删除 / 移动 / 重命名 / 打包下载准备。
 
-import type {
-  DeleteFilesRequest,
-  DeleteFilesResponse,
-  MoveFilesRequest,
-  MoveFilesResponse,
-  PrepareArchiveRequest,
-  PrepareArchiveResponse,
-  RenameFileRequest,
-  RenameFileResponse,
+import {
+  type DeleteFilesRequest,
+  type DeleteFilesResponse,
+  FILE_OP_MAX_PATHS,
+  type FileOpItemResult,
+  type MoveFilesRequest,
+  type MoveFilesResponse,
+  type PrepareArchiveRequest,
+  type PrepareArchiveResponse,
+  type RenameFileRequest,
+  type RenameFileResponse,
 } from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { FileApiError, parseError } from './file-errors';
@@ -18,12 +20,38 @@ function postFileJson<T>(client: ApiClient, path: string, body: unknown): Promis
   return requestJson<T>(client, path, { method: 'POST', body, toError: parseError });
 }
 
+/**
+ * 网关单次请求最多收 `FILE_OP_MAX_PATHS` 条路径：超过就按序分批发，逐项结果拼回一份。
+ * 第一批的请求级错误原样抛出（什么都没发生）；后续批次出错时前面的已经生效，
+ * 不能再整体抛错丢掉它们的结果——该批及其后的路径逐项记为失败。
+ */
+async function postInChunks<R extends FileOpItemResult>(
+  paths: readonly string[],
+  send: (chunk: string[]) => Promise<{ results: R[] }>
+): Promise<{ results: R[] }> {
+  if (paths.length <= FILE_OP_MAX_PATHS) return send([...paths]);
+  const results: R[] = [];
+  for (let start = 0; start < paths.length; start += FILE_OP_MAX_PATHS) {
+    try {
+      results.push(...(await send(paths.slice(start, start + FILE_OP_MAX_PATHS))).results);
+    } catch (error) {
+      if (start === 0) throw error;
+      const code = error instanceof FileApiError ? (error.code ?? 'unknown') : 'unknown';
+      for (const path of paths.slice(start)) results.push({ path, ok: false, code } as R);
+      break;
+    }
+  }
+  return { results };
+}
+
 /** 批量删除；逐项结果在 `results`，单项失败不影响其余项。 */
 export function deleteFiles(
   body: DeleteFilesRequest,
   client: ApiClient = defaultApiClient
 ): Promise<DeleteFilesResponse> {
-  return postFileJson<DeleteFilesResponse>(client, '/api/files/delete', body);
+  return postInChunks(body.paths, (paths) =>
+    postFileJson<DeleteFilesResponse>(client, '/api/files/delete', { ...body, paths })
+  );
 }
 
 /** 批量移动到 `destDir`；逐项结果在 `results`。 */
@@ -31,7 +59,9 @@ export function moveFiles(
   body: MoveFilesRequest,
   client: ApiClient = defaultApiClient
 ): Promise<MoveFilesResponse> {
-  return postFileJson<MoveFilesResponse>(client, '/api/files/move', body);
+  return postInChunks(body.paths, (paths) =>
+    postFileJson<MoveFilesResponse>(client, '/api/files/move', { ...body, paths })
+  );
 }
 
 /** 同目录重命名；目标已存在时抛 `already_exists`。 */
