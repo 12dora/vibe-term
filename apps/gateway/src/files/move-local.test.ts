@@ -503,4 +503,46 @@ describe('moveLocal no-replace on one file system', () => {
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('theirs');
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('data');
   });
+
+  test('a retry after a committed link finishes the move in fail and overwrite modes', async () => {
+    for (const overwrite of [false, true]) {
+      const dir = sandbox();
+      writeFileSync(join(dir, 'f'), 'data');
+      linkSync(join(dir, 'f'), join(dir, 'dest', 'f'));
+
+      const outcomes = await run(batch(dir, [['f']], { overwrite }));
+
+      expect(outcomes.map(code)).toEqual(['ok']);
+      expect(existsSync(join(dir, 'f'))).toBe(false);
+      expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+    }
+  });
+
+  test('a real retry after the failed unlink completes instead of already_exists', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+    const unlink = spyOn(fileMoveIo, 'unlink').mockImplementationOnce(() => {
+      throw errno('EACCES');
+    });
+    spies.push(unlink);
+
+    const first = await run(batch(dir, [['f']]));
+    const retry = await run(batch(dir, [['f']]));
+
+    expect(first.map(code)).toEqual(['permission_denied']);
+    expect(retry.map(code)).toEqual(['ok']);
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+  });
+
+  test('different files with equal names are still a conflict', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'new');
+    writeFileSync(join(dir, 'dest', 'f'), 'old');
+
+    const outcomes = await run(batch(dir, [['f']]));
+
+    expect(outcomes.map(code)).toEqual(['already_exists']);
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+  });
 });

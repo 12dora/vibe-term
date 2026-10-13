@@ -56,7 +56,7 @@ describe('buildMoveScript', () => {
     expect(script).toContain("cd -- '/srv/root' || exit 60");
     expect(script).toContain("cd -- '/srv/root/de st' || exit 63");
     expect(script).toContain(`vt 0 '/srv/root/it'\\''s here' '-dash name' 'o'\\''ther'`);
-    expect(script).toContain('mv -n $T -- "$s" "$1"');
+    expect(script).toContain('mv -n $T -- "$1" "$2"');
     expect(script).toContain('s="./$n"');
     expect(script).toContain('ow=0');
   });
@@ -67,6 +67,18 @@ describe('buildMoveScript', () => {
     expect(script).toContain('inside()');
     expect(script).not.toContain('$(pwd -P)');
     expect(script).not.toContain('sh -c');
+  });
+
+  test('forces a stable locale before anything else runs', () => {
+    const script = buildMoveScript(makeBatch([item('/srv/root', 'a')]));
+    expect(script.startsWith('LC_ALL=C; export LC_ALL\n')).toBe(true);
+  });
+
+  test('-T detection accepts the GNU long option and the BusyBox short option', () => {
+    const script = buildMoveScript(makeBatch([item('/srv/root', 'a')]));
+    expect(script).toContain("grep -q -e '--no-target-directory' -e '-T'");
+    expect(script).toContain('DFS=$(fsid "$ddir")');
+    expect(script).not.toContain('rm -rf -- "$1"');
   });
 
   test('overwrite flag is encoded and indices follow batch order', () => {
@@ -307,7 +319,7 @@ describe('script semantics (executed with sh -s)', () => {
 
   test('no-replace holds when the pre-check is fooled (file and directory)', async () => {
     // 把预检 `gone "$dp"` 换成恒真，等价于「检查之后目标才被别人建出来」
-    viaLocalSh((script) => script.replace('if gone "$dp"; then mvn', 'if true; then mvn'));
+    viaLocalSh((script) => script.replace('if gone "$dp"; then put n', 'if true; then put n'));
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'new');
     writeFileSync(join(dir, 'dest', 'f'), 'old');
@@ -326,7 +338,7 @@ describe('script semantics (executed with sh -s)', () => {
   });
 
   test('rename onto an existing sibling keeps both files', async () => {
-    viaLocalSh((script) => script.replace('if gone "$dp"; then mvn', 'if true; then mvn'));
+    viaLocalSh((script) => script.replace('if gone "$dp"; then put n', 'if true; then put n'));
     const dir = sandbox();
     writeFileSync(join(dir, 'a'), 'a');
     writeFileSync(join(dir, 'b'), 'b');
@@ -382,7 +394,7 @@ describe('script semantics (executed with sh -s)', () => {
     viaLocalSh((script) =>
       script
         .replace(
-          'if mv --help </dev/null 2>&1 | grep -q -- --no-target-directory; then T=-T; fi',
+          "if mv --help </dev/null 2>&1 | grep -q -e '--no-target-directory' -e '-T'; then T=-T; fi",
           'T='
         )
         .replace('e=$(rm -f -- "$dp" 2>&1 </dev/null)', 'e=$(false)')

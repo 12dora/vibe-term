@@ -188,10 +188,10 @@ function dirCommit(src: string, dest: string): void {
 }
 
 /**
- * 符号链接、特殊文件以及不支持硬链接的文件系统：无法原子占位，只能在 rename 前再查一次，
- * 检查与 rename 之间仍有残余窗口（目标恰在此刻被建出来会被 rename 覆盖）。Node / Bun 没有暴露
- * `renameat2(RENAME_NOREPLACE)`，所以这个窗口无法在这里消除；它只对并发的外部写入者有意义，
- * 本进程内同一设备的操作已被设备队列串行化。
+ * 符号链接、特殊文件以及不支持硬链接的文件系统：平台没有原子的「不覆盖」rename 可用，只能尽力而为——
+ * rename 前再查一次，检查与 rename 之间仍有残余窗口（目标恰在此刻被建出来会被 rename 覆盖）。
+ * Node / Bun 没有暴露 `renameat2(RENAME_NOREPLACE)`，所以这个窗口无法在这里消除；它只对并发的
+ * 外部写入者有意义，本进程内同一设备的操作已被设备队列串行化。
  */
 function guardedRename(src: string, dest: string): void {
   if (existsNoFollow(dest)) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
@@ -248,6 +248,28 @@ function performMove(src: string, dest: string, st: Stats, destExisted: boolean)
   return copyThenRemove(src, dest, st, destExisted);
 }
 
+/**
+ * 上一次提交停在「link 成功、unlink 源失败」时，源与目标是同一 inode 的两个硬链接。
+ * 此时再走冲突检查会永远 already_exists，覆盖模式下 rename 两个同 inode 的链接又是成功的空操作，
+ * 源却还在；所以先识别这种已提交状态，只补删源，成功与否不看 rename 的返回值。
+ */
+function finishCommitted(srcReal: string, destPath: string, srcSt: Stats): MoveOutcome | null {
+  if (!srcSt.isFile()) return null;
+  let destSt: Stats;
+  try {
+    destSt = fileMoveIo.lstat(destPath);
+  } catch {
+    return null;
+  }
+  if (!destSt.isFile() || destSt.dev !== srcSt.dev || destSt.ino !== srcSt.ino) return null;
+  try {
+    fileMoveIo.unlink(srcReal);
+    return ok(undefined);
+  } catch (err) {
+    return moveError(err);
+  }
+}
+
 function moveOne(ctx: LocalCtx, item: MoveItem): MoveOutcome {
   const src = resolveSource(ctx, item);
   if (!src.ok) return src;
@@ -255,6 +277,8 @@ function moveOne(ctx: LocalCtx, item: MoveItem): MoveOutcome {
   if (realParent === ctx.realDestDir && item.name === item.destName) return ok(undefined);
   const destPath = posixJoin(ctx.realDestDir, item.destName);
   if (st.isDirectory() && isInsidePath(destPath, srcReal)) return fail('invalid');
+  const committed = finishCommitted(srcReal, destPath, st);
+  if (committed) return committed;
   const conflict = checkConflict(ctx, st, destPath);
   if (!conflict.ok) return conflict;
   return performMove(srcReal, destPath, st, conflict.data);

@@ -119,7 +119,7 @@ describe('transfer without a mesh bridge', () => {
   }
 
   test('self id falls back to the standalone constant', () => {
-    expect(STANDALONE_TRANSFER_NODE_ID).toMatch(/^[0-9a-f]{32}$/);
+    expect(STANDALONE_TRANSFER_NODE_ID).not.toMatch(/^[0-9a-f]{32}$/);
     expect(transferSelfNodeId()).toBe(STANDALONE_TRANSFER_NODE_ID);
   });
 
@@ -132,8 +132,9 @@ describe('transfer without a mesh bridge', () => {
     const finished = await startJob([join(srcDir, 'a.txt'), join(srcDir, 'tree')]);
     expect(finished.state).toBe('done');
     expect(finished.path).toBe('local');
-    expect(finished.fromNodeId).toBe(STANDALONE_TRANSFER_NODE_ID);
-    expect(finished.toNodeId).toBe(STANDALONE_TRANSFER_NODE_ID);
+    // 内部占位身份不外泄：浏览器看到的是 `self`
+    expect(finished.fromNodeId).toBe('self');
+    expect(finished.toNodeId).toBe('self');
     expect(readFileSync(join(dstDir, 'a.txt'), 'utf8')).toBe('hello');
     expect(readFileSync(join(dstDir, 'tree/one.txt'), 'utf8')).toBe('one');
     expect(readFileSync(join(dstDir, 'tree/sub/two.txt'), 'utf8')).toBe('two');
@@ -184,6 +185,36 @@ describe('transfer without a mesh bridge', () => {
     expect(existsSync(join(dstDir, 'f.txt'))).toBe(false);
   });
 
+  test('the all-zero or placeholder id from a client is not the local node', async () => {
+    writeFileSync(join(srcDir, 'z.txt'), 'x');
+    const grant = await issueGrant();
+    const zero = (await dispatch('POST', '/api/transfer/jobs', {
+      toNodeId: '0'.repeat(32),
+      items: [{ rootId: srcRootId, path: join(srcDir, 'z.txt') }],
+      destRootId: dstRootId,
+      destPath: dstDir,
+      grant,
+    })) as Response;
+    expect(zero.status).toBe(503);
+    expect(await zero.json()).toMatchObject({ code: 'unavailable' });
+    const placeholder = (await dispatch('POST', '/api/transfer/jobs', {
+      toNodeId: STANDALONE_TRANSFER_NODE_ID,
+      items: [{ rootId: srcRootId, path: join(srcDir, 'z.txt') }],
+      destRootId: dstRootId,
+      destPath: dstDir,
+      grant,
+    })) as Response;
+    expect(placeholder.status).toBe(400);
+    const forgedGrant = (await dispatch('POST', '/api/transfer/grants', {
+      fromNodeId: STANDALONE_TRANSFER_NODE_ID,
+      destRootId: dstRootId,
+      destPath: dstDir,
+    })) as Response;
+    expect(forgedGrant.status).toBe(400);
+    expect(listJobs('u1')).toHaveLength(0);
+    expect(existsSync(join(dstDir, 'z.txt'))).toBe(false);
+  });
+
   test('a grant issued for `self` cannot be consumed by another node', async () => {
     const grant = await issueGrant();
     const foreign = openSession({
@@ -192,6 +223,12 @@ describe('transfer without a mesh bridge', () => {
       peerNodeId: NODE_B,
     });
     expect(foreign).toMatchObject({ ok: false, code: 'peer_mismatch' });
+    const zero = openSession({
+      grantId: grant.grantId,
+      token: grant.token,
+      peerNodeId: '0'.repeat(32),
+    });
+    expect(zero).toMatchObject({ ok: false, code: 'peer_mismatch' });
     // 被拒的尝试不烧掉授权；本机身份仍能核销
     const own = openSession({
       grantId: grant.grantId,

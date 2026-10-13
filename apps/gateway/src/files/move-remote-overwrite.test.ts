@@ -55,9 +55,10 @@ const hasGnuMv = new TextDecoder()
   .decode(Bun.spawnSync(['mv', '--help']).stdout)
   .includes('--no-target-directory');
 
-const GNU_PROBE = 'if mv --help </dev/null 2>&1 | grep -q -- --no-target-directory; then T=-T; fi';
-const FINAL_MV = 'e=$(mv -f -- "$tp" "$dp" 2>&1 </dev/null)';
-const PRECHECK = 'if gone "$dp"; then mvn';
+const GNU_PROBE =
+  "if mv --help </dev/null 2>&1 | grep -q -e '--no-target-directory' -e '-T'; then T=-T; fi";
+const FINAL_MV = 'mvn "$tp" "$dp"\n';
+const PRECHECK = 'if gone "$dp"; then put n';
 
 /** 替换脚本里的一段文本；找不到就报错，避免补丁悄悄失效。 */
 function patch(script: string, from: string, to: string): string {
@@ -145,7 +146,7 @@ describe('overwrite onto a destination symlink', () => {
   });
 
   test('non-GNU: a failed final mv puts the staged data back at the source', async () => {
-    viaLocalSh((script) => patch(forceNonGnu(script), FINAL_MV, 'e=$(false)'));
+    viaLocalSh((script) => patch(forceNonGnu(script), FINAL_MV, '{ st=unknown; false; }\n'));
     const dir = sandbox();
     symlinkDestSetup(dir);
 
@@ -164,7 +165,7 @@ describe('overwrite onto a destination symlink', () => {
     mkdirSync(trap);
     // 最终 mv 失败的同时，源路径被换成了指向目录的符号链接
     viaLocalSh((script) =>
-      patch(forceNonGnu(script), FINAL_MV, `e=$(ln -s '${trap}' "$s"; false)`)
+      patch(forceNonGnu(script), FINAL_MV, `{ ln -s '${trap}' "$s"; st=unknown; false; }\n`)
     );
     symlinkDestSetup(dir);
 
@@ -178,8 +179,8 @@ describe('overwrite onto a destination symlink', () => {
     expect(readFileSync(join(dir, 'dest', temps[0] ?? ''), 'utf8')).toBe('new');
   });
 
-  test('non-GNU: a failed staging mv cleans its partial temp entry', async () => {
-    const stub = `mv() { for a; do d=$a; done; printf partial > "$d"; echo 'mv: write error: No space left on device' >&2; return 1; }`;
+  test('non-GNU: a failed staging mv changes nothing and removes nothing', async () => {
+    const stub = `mv() { echo 'mv: write error: No space left on device' >&2; return 1; }`;
     viaLocalSh((script) => inject(forceNonGnu(script), stub));
     const dir = sandbox();
     const target = symlinkDestSetup(dir);
@@ -191,15 +192,34 @@ describe('overwrite onto a destination symlink', () => {
     expect(readlinkSync(join(dir, 'dest', 'f'))).toBe(target);
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
   });
+
+  test.skipIf(!hasGnuMv)('BusyBox-style help that lists only -T still enables -T', async () => {
+    const logDir = sandbox();
+    const log = join(logDir, 'calls.log');
+    const stub = [
+      'mv() {',
+      `if [ "$1" = --help ]; then echo 'Usage: mv [-fin] [-T] SOURCE DEST'; return 0; fi`,
+      `printf '%s\\n' "mv $*" >> '${log}'; command mv "$@"`,
+      '}',
+    ].join('\n');
+    viaLocalSh((script) => patch(script, '\nT=\n', `\n${stub}\nT=\n`));
+    const dir = sandbox();
+    symlinkDestSetup(dir);
+
+    expect(await runOne(dir, { overwrite: true })).toBe('ok');
+    const lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+    expect(lines).toEqual([`mv -f -T -- ./f ${join(dir, 'dest')}/f`]);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
+  });
 });
 
 describe('no-replace outcome classification', () => {
   const failWith = (message: string, leaveCopy: boolean) =>
     `mv() { for a; do d=$a; done; ${leaveCopy ? `printf partial > "$d"; ` : ''}echo "${message}" >&2; return 1; }`;
 
-  test('an unrelated error is unknown and removes the partial destination', async () => {
+  test('an unrelated error is unknown and nothing is removed', async () => {
     viaLocalSh((script) =>
-      inject(script, failWith('mv: write error: No space left on device', true))
+      inject(script, failWith('mv: write error: No space left on device', false))
     );
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'new');
@@ -208,6 +228,20 @@ describe('no-replace outcome classification', () => {
 
     expect(status).toBe('unknown');
     expect(readdirSync(join(dir, 'dest'))).toEqual([]);
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+  });
+
+  test('a public destination is never deleted, even if a failing mv left something there', async () => {
+    viaLocalSh((script) =>
+      inject(script, failWith('mv: write error: No space left on device', true))
+    );
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'new');
+
+    const status = await runOne(dir);
+
+    expect(status).not.toBe('ok');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('partial');
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
   });
 
@@ -222,18 +256,6 @@ describe('no-replace outcome classification', () => {
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
   });
 
-  test('a failure while removing the source keeps the only complete copy', async () => {
-    viaLocalSh((script) =>
-      inject(script, failWith("mv: cannot remove './f': Permission denied", true))
-    );
-    const dir = sandbox();
-    writeFileSync(join(dir, 'f'), 'new');
-
-    expect(await runOne(dir)).toBe('permission_denied');
-    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('partial');
-    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
-  });
-
   test('not replacing and a silent skip are already_exists, destination kept', async () => {
     const stubs = [
       failWith("mv: not replacing './f'", false),
@@ -242,7 +264,7 @@ describe('no-replace outcome classification', () => {
     ];
     for (const stub of stubs) {
       // 预检被蒙过去：目标在检查之后才出现
-      viaLocalSh((script) => inject(patch(script, PRECHECK, 'if true; then mvn'), stub));
+      viaLocalSh((script) => inject(patch(script, PRECHECK, 'if true; then put n'), stub));
       const dir = sandbox();
       writeFileSync(join(dir, 'f'), 'new');
       writeFileSync(join(dir, 'dest', 'f'), 'old');

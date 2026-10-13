@@ -20,24 +20,50 @@ function postFileJson<T>(client: ApiClient, path: string, body: unknown): Promis
   return requestJson<T>(client, path, { method: 'POST', body, toError: parseError });
 }
 
+/** 单批路径的 JSON 字节预算：网关请求体上限 1 MiB，给其余字段与转义留足余量。 */
+const CHUNK_PATH_BYTES = 512 * 1024;
+
+const encoder = new TextEncoder();
+
+/** 按条数（`FILE_OP_MAX_PATHS`）与 JSON 字节数两个上限切批；单条超预算的路径自成一批。 */
+export function chunkPaths(paths: readonly string[]): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let bytes = 0;
+  for (const path of paths) {
+    const size = encoder.encode(JSON.stringify(path)).length + 1;
+    const full = current.length >= FILE_OP_MAX_PATHS || bytes + size > CHUNK_PATH_BYTES;
+    if (full && current.length > 0) {
+      chunks.push(current);
+      current = [];
+      bytes = 0;
+    }
+    current.push(path);
+    bytes += size;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
 /**
- * 网关单次请求最多收 `FILE_OP_MAX_PATHS` 条路径：超过就按序分批发，逐项结果拼回一份。
- * 第一批的请求级错误原样抛出（什么都没发生）；后续批次出错时前面的已经生效，
- * 不能再整体抛错丢掉它们的结果——该批及其后的路径逐项记为失败。
+ * 网关单次请求有条数与请求体大小两个上限：超过就按序分批发，逐项结果拼回一份。
+ * 第一批的请求级错误原样抛出；后续批次出错时前面的已经生效，不能再整体抛错丢掉它们的结果
+ * ——该批及其后的路径逐项记为失败（出错的那一批可能已部分生效，以随后的列表刷新为准）。
  */
 async function postInChunks<R extends FileOpItemResult>(
   paths: readonly string[],
   send: (chunk: string[]) => Promise<{ results: R[] }>
 ): Promise<{ results: R[] }> {
-  if (paths.length <= FILE_OP_MAX_PATHS) return send([...paths]);
+  const chunks = chunkPaths(paths);
+  if (chunks.length <= 1) return send([...paths]);
   const results: R[] = [];
-  for (let start = 0; start < paths.length; start += FILE_OP_MAX_PATHS) {
+  for (const [index, chunk] of chunks.entries()) {
     try {
-      results.push(...(await send(paths.slice(start, start + FILE_OP_MAX_PATHS))).results);
+      results.push(...(await send(chunk)).results);
     } catch (error) {
-      if (start === 0) throw error;
+      if (index === 0) throw error;
       const code = error instanceof FileApiError ? (error.code ?? 'unknown') : 'unknown';
-      for (const path of paths.slice(start)) results.push({ path, ok: false, code } as R);
+      for (const path of chunks.slice(index).flat()) results.push({ path, ok: false, code } as R);
       break;
     }
   }

@@ -11,7 +11,12 @@ import type {
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { requestDispatchContext } from '../mesh/types';
-import { getTransferMeshBridge, streamsForTransport, transferSelfNodeId } from './bridge';
+import {
+  getTransferMeshBridge,
+  publicTransferNodeId,
+  streamsForTransport,
+  transferSelfNodeId,
+} from './bridge';
 import { type TransferChannel, createLocalChannel } from './channel';
 import { resolveDestContext } from './dest';
 import { createGrant } from './grants';
@@ -40,7 +45,7 @@ function badRequest(code = 'invalid'): Response {
   return json({ error: code, code }, 400);
 }
 
-/** `self` 是浏览器对「入口节点」的写法，服务端一律折算成本机 node id。 */
+/** `self` 是浏览器对「入口节点」的写法，服务端一律折算成本机 node id；其余只认 32 位十六进制。 */
 function normalizeNodeId(raw: unknown, selfNodeId: string): string | null {
   if (typeof raw !== 'string' || raw.length === 0) return null;
   if (raw === SELF_NODE_ID) return selfNodeId;
@@ -130,8 +135,8 @@ async function handleCreateJob(req: Request): Promise<Response> {
   const job = createJob({
     jobId: randomBytes(12).toString('hex'),
     uid,
-    fromNodeId: selfNodeId,
-    toNodeId,
+    fromNodeId: publicTransferNodeId(selfNodeId),
+    toNodeId: publicTransferNodeId(toNodeId),
     destRootId,
     destPath,
     path: picked.path,

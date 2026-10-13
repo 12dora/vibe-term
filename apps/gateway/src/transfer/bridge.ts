@@ -33,15 +33,21 @@ export function getTransferMeshBridge(): TransferMeshBridge | null {
 }
 
 /**
- * 单机（未配置 mesh/中继）时本机在传输模块里的身份：固定的 32 位十六进制，与真实 node id
- * 同形，但全零不会是任何真实节点的 id（node id 派生自公钥哈希）。只用于同节点任务的授权与
- * 会话归属比对，永远不会出现在 mesh 链路上。
+ * 单机（未配置 mesh/中继）时本机在传输模块里的内部身份。刻意取 32 位十六进制之外的值：
+ * 真实 node id 是随机 16 字节、注册时接受任意 16 字节 id，没有任何十六进制值能保证不被占用，
+ * 所以该身份无法由客户端以 node id 的形式写出，只能经 `self` 别名落到这里。
+ * 只用于同节点任务的授权与会话归属比对，不上 mesh 链路，对浏览器一律以 `self` 暴露。
  */
-export const STANDALONE_TRANSFER_NODE_ID = '0'.repeat(32);
+export const STANDALONE_TRANSFER_NODE_ID = 'standalone';
 
 /** 传输模块里的「本机 node id」：有 mesh 用 mesh 身份，否则用单机占位身份。 */
 export function transferSelfNodeId(): string {
   return bridge?.selfNodeId ?? STANDALONE_TRANSFER_NODE_ID;
+}
+
+/** 任务快照里给浏览器看的 node id：单机占位身份折回 `self`，其余原样。 */
+export function publicTransferNodeId(nodeId: string): string {
+  return nodeId === STANDALONE_TRANSFER_NODE_ID ? 'self' : nodeId;
 }
 
 /** 中继链路按流计配额，压到 2 条；直连（含同机）默认 4 条。 */

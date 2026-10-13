@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ApiClient } from './client';
 import { FileApiError } from './file-errors';
 import {
+  chunkPaths,
   deleteFiles,
   isFileRouteUnsupported,
   moveFiles,
@@ -260,5 +261,28 @@ describe('超过单次上限的批量请求', () => {
       ok: false,
       code: 'connection_failed',
     });
+  });
+});
+
+describe('chunkPaths', () => {
+  test('条数与字节数任一超限就切批，顺序不变', () => {
+    const long = Array.from({ length: 501 }, (_, i) => `/${'d'.repeat(2400)}/f${i}`);
+    const chunks = chunkPaths(long);
+    expect(chunks.length).toBeGreaterThan(2);
+    expect(chunks.flat()).toEqual(long);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(500);
+      expect(new TextEncoder().encode(JSON.stringify(chunk)).length).toBeLessThan(600 * 1024);
+    }
+  });
+
+  test('不超限时只有一批；空输入没有批', () => {
+    expect(chunkPaths(['/a', '/b'])).toEqual([['/a', '/b']]);
+    expect(chunkPaths([])).toEqual([]);
+  });
+
+  test('多字节字符按 UTF-8 字节计', () => {
+    const paths = Array.from({ length: 400 }, (_, i) => `/${'文'.repeat(800)}/${i}`);
+    expect(chunkPaths(paths).length).toBeGreaterThan(1);
   });
 });
