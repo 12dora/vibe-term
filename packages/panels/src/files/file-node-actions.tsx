@@ -16,9 +16,9 @@ import type { DragEvent } from 'react';
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { downloadFileWithTransport } from './bulk-transfer';
+import { DeleteMenuSection, RenameMenuItem } from './file-ops-menu-items';
 import { CommonNodeMenuItems, NodeMenuHeader } from './node-menu';
-import { startTransferToast } from './transfer-toast';
+import { downloadSingleFile } from './transfer-flows';
 
 export interface FileNodeActions {
   download: (rootId: string, entry: FileEntryDto) => Promise<void>;
@@ -32,28 +32,7 @@ export function useFileNodeActions(): FileNodeActions {
 
   // 应用内下载：流式拉取 + 进度 Toast（可取消）→ 宿主 saveFile 保存。
   const download = useCallback(
-    async (rootId: string, entry: FileEntryDto) => {
-      const controller = new AbortController();
-      const tt = startTransferToast(entry.name, 'download', () => controller.abort(), {
-        nodeId: runtime.nodeId,
-        totalBytes: entry.size ?? undefined,
-      });
-      try {
-        const { name, blob } = await downloadFileWithTransport(
-          runtime.nodeId,
-          rootId,
-          entry.path,
-          entry.name,
-          { onLeg: tt.leg, signal: controller.signal, onPath: (p) => tt.setPath?.(p) },
-          runtime.apiClient
-        );
-        await runtime.host.saveFile({ name, blob });
-        tt.success(t('files.transfer.downloaded', { name: entry.name }));
-      } catch {
-        if (controller.signal.aborted) tt.cancel();
-        else tt.fail(t('files.transfer.downloadFailed', { name: entry.name }));
-      }
-    },
+    (rootId: string, entry: FileEntryDto) => downloadSingleFile({ runtime, t, rootId }, entry),
     [runtime, t]
   );
 
@@ -102,8 +81,10 @@ export function FileNodeMenuContent({
         <Download />
         {t('files.download')}
       </ContextMenuItem>
+      <RenameMenuItem rootId={root.id} path={entry.path} name={entry.name} isDir={false} />
       <ContextMenuSeparator />
       <CommonNodeMenuItems deviceId={root.deviceId} absPath={entry.path} rootPath={root.path} />
+      <DeleteMenuSection rootId={root.id} path={entry.path} name={entry.name} />
     </ContextMenuContent>
   );
 }

@@ -192,3 +192,54 @@ describe('大目录的 content-visibility 跳渲', () => {
     expect(rootRowTag).not.toContain(skip);
   });
 });
+
+describe('目录行的结构', () => {
+  const subDir: FileEntryDto = {
+    name: 'sub',
+    path: `${ROOT.path}/sub`,
+    type: 'dir',
+    category: 'directory',
+    size: null,
+    modifiedAt: null,
+    isSymlink: false,
+  };
+
+  test('根行尾部是「打开」按钮，不再显示设备名', () => {
+    const html = renderExpandedRoot([fileEntry(0)]);
+    const button = html.match(
+      new RegExp(`<button[^>]*data-testid="file-root-explorer-${ROOT.id}"[^>]*>[^<]*</button>`)
+    )?.[0];
+    expect(button).toBeDefined();
+    expect(button).toContain('>打开</button>');
+    expect(button).toContain('aria-pressed="false"');
+    expect(html).not.toContain('书房');
+  });
+
+  test('行是容器：展开钮与「打开」按钮是兄弟节点，按钮不套按钮', () => {
+    const html = renderExpandedRoot([fileEntry(0)]);
+    const triggerTags = html.match(/<[a-z]+[^>]*data-slot="context-menu-trigger"[^>]*>/g) ?? [];
+    expect(triggerTags.every((tag) => tag.startsWith('<div'))).toBe(true);
+
+    const toggle = html.match(
+      new RegExp(`<button[^>]*data-testid="file-dir-${ROOT.id}-${ROOT.path}"[^>]*>(.*?)</button>`)
+    );
+    expect(toggle).not.toBeNull();
+    expect(toggle?.[1]).not.toContain('<button');
+    expect(toggle?.[1]).toContain(ROOT.name);
+    // 「打开」按钮排在展开钮之后
+    expect(html.indexOf(`data-testid="file-root-explorer-${ROOT.id}"`)).toBeGreaterThan(
+      html.indexOf(`data-testid="file-dir-${ROOT.id}-${ROOT.path}"`)
+    );
+  });
+
+  test('非根目录行没有「打开」按钮（只走右键菜单）', () => {
+    const html = renderExpandedRoot([subDir, fileEntry(0)]);
+    expect(html).toContain(`data-testid="file-dir-${ROOT.id}-${subDir.path}"`);
+    expect(count(html, 'data-testid="file-root-explorer-')).toBe(1);
+  });
+
+  test('目录菜单在关闭态不产出任何内容', () => {
+    const html = renderExpandedRoot([subDir, fileEntry(0)]);
+    expect(html).not.toContain('在文件管理器中打开');
+  });
+});

@@ -14,8 +14,15 @@ import type { CSSProperties, ChangeEvent, ReactNode, RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SortableRow } from '../device-tree/device-tree-dnd';
 import { fileIconColor, fileIconFor } from './file-icon';
+import {
+  DeleteMenuSection,
+  NewFolderMenuItem,
+  OpenInExplorerMenuItem,
+  RenameMenuItem,
+} from './file-ops-menu-items';
 import { nodeBasename } from './file-tree-logic';
-import { CommonNodeMenuItems, DeviceBadge, NodeMenuHeader } from './node-menu';
+import { CommonNodeMenuItems, NodeMenuHeader } from './node-menu';
+import { RootExplorerControls } from './root-explorer-controls';
 import type { DropZoneProps } from './use-directory-upload';
 
 /**
@@ -47,6 +54,115 @@ export interface DirectoryNodeViewProps {
   children: ReactNode;
 }
 
+function RootDragHandle({ drag, rootId }: { drag: DirectoryDragHandle; rootId: string }) {
+  return (
+    <button
+      type="button"
+      ref={drag.sortable.setDragHandleRef}
+      {...drag.sortable.dragHandleProps}
+      aria-label={drag.label}
+      data-testid={`file-root-drag-${rootId}`}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute left-0 top-0 flex h-6 w-3.5 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/50 hover:text-muted-foreground [@media(any-pointer:coarse)]:h-7"
+    >
+      <GripVertical className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+interface DirectoryMenuContentProps {
+  root: FileRootDto;
+  rootId: string;
+  path: string;
+  name: string;
+  isRoot: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onPickFiles: () => void;
+}
+
+function DirectoryMenuContent({
+  root,
+  rootId,
+  path,
+  name,
+  isRoot,
+  expanded,
+  onToggle,
+  onPickFiles,
+}: DirectoryMenuContentProps) {
+  const { t } = useTranslation();
+  return (
+    <ContextMenuContent>
+      <NodeMenuHeader root={root} absPath={path} />
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={onToggle}>
+        <ChevronsUpDown />
+        {expanded ? t('files.menu.collapse') : t('files.menu.expand')}
+      </ContextMenuItem>
+      <OpenInExplorerMenuItem rootId={rootId} path={path} />
+      <ContextMenuSeparator />
+      <ContextMenuItem onClick={onPickFiles}>
+        <Upload />
+        {t('files.menu.upload')}
+      </ContextMenuItem>
+      <NewFolderMenuItem rootId={rootId} dir={path} />
+      {!isRoot && <RenameMenuItem rootId={rootId} path={path} name={name} isDir />}
+      <ContextMenuSeparator />
+      <CommonNodeMenuItems deviceId={root.deviceId} absPath={path} rootPath={root.path} />
+      {!isRoot && <DeleteMenuSection rootId={rootId} path={path} name={name} />}
+    </ContextMenuContent>
+  );
+}
+
+interface DirectoryToggleButtonProps {
+  testId: string;
+  root: FileRootDto;
+  name: string;
+  indent: number;
+  isRoot: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+function DirectoryToggleButton({
+  testId,
+  root,
+  name,
+  indent,
+  isRoot,
+  expanded,
+  onToggle,
+}: DirectoryToggleButtonProps) {
+  const Icon = fileIconFor({ category: 'directory', name: root.name, type: 'dir' }, { expanded });
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      data-testid={testId}
+      style={{ paddingLeft: indent }}
+      className={cn(
+        'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 pr-2 text-left text-foreground [@media(any-pointer:coarse)]:py-1.5',
+        isRoot && 'font-medium'
+      )}
+    >
+      <ChevronRight
+        className={cn(
+          'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
+          expanded && 'rotate-90'
+        )}
+      />
+      <Icon
+        className={cn(
+          'h-4 w-4 shrink-0',
+          isRoot ? 'text-muted-foreground' : fileIconColor('directory')
+        )}
+      />
+      <span className="min-w-0 flex-1 truncate text-xs">{name}</span>
+    </button>
+  );
+}
+
 export function DirectoryNodeView({
   root,
   rootId,
@@ -64,8 +180,7 @@ export function DirectoryNodeView({
   rowStyle,
   children,
 }: DirectoryNodeViewProps) {
-  const { t } = useTranslation();
-  const Icon = fileIconFor({ category: 'directory', name: root.name, type: 'dir' }, { expanded });
+  const name = isRoot ? root.name : nodeBasename(path);
 
   // 手柄占的是整节左侧的落槽（`pl-3.5` + 绝对定位），不进根行的缩进链——
   // 否则根行会比它自己的子目录还靠右。
@@ -75,67 +190,41 @@ export function DirectoryNodeView({
       style={rowStyle ? { ...drag?.sortable.style, ...rowStyle } : drag?.sortable.style}
       className={cn(drag && 'relative pl-3.5', drag?.sortable.isDragging && 'opacity-60')}
     >
-      {drag && (
-        <button
-          type="button"
-          ref={drag.sortable.setDragHandleRef}
-          {...drag.sortable.dragHandleProps}
-          aria-label={drag.label}
-          data-testid={`file-root-drag-${rootId}`}
-          onClick={(e) => e.stopPropagation()}
-          className="absolute left-0 top-0 flex h-6 w-3.5 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground/50 hover:text-muted-foreground [@media(any-pointer:coarse)]:h-7"
-        >
-          <GripVertical className="h-3.5 w-3.5" />
-        </button>
-      )}
+      {drag && <RootDragHandle drag={drag} rootId={rootId} />}
       <ContextMenu>
+        {/* 行是容器而不是按钮：根行尾部还有一个「打开 / 关闭」按钮，按钮不能套按钮 */}
         <ContextMenuTrigger
           render={
-            <button
-              type="button"
-              onClick={onToggle}
+            <div
               {...dropZoneProps}
-              data-testid={`file-dir-${rootId}-${path}`}
-              style={{ paddingLeft: indent }}
               className={cn(
-                'flex w-full min-w-0 items-center gap-1.5 rounded-md py-1 pr-2 text-left transition-colors hover:bg-sidebar-accent data-[popup-open]:bg-sidebar-accent data-[pressed]:bg-sidebar-accent [@media(any-pointer:coarse)]:py-1.5',
-                isRoot ? 'font-medium text-foreground' : 'text-foreground',
+                'flex w-full min-w-0 items-center rounded-md transition-colors hover:bg-sidebar-accent data-[popup-open]:bg-sidebar-accent data-[pressed]:bg-sidebar-accent',
                 dragActive && 'bg-primary/15 ring-1 ring-primary/40 ring-inset'
               )}
             >
-              <ChevronRight
-                className={cn(
-                  'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform',
-                  expanded && 'rotate-90'
-                )}
+              <DirectoryToggleButton
+                testId={`file-dir-${rootId}-${path}`}
+                root={root}
+                name={name}
+                indent={indent}
+                isRoot={isRoot}
+                expanded={expanded}
+                onToggle={onToggle}
               />
-              <Icon
-                className={cn(
-                  'h-4 w-4 shrink-0',
-                  isRoot ? 'text-muted-foreground' : fileIconColor('directory')
-                )}
-              />
-              <span className="min-w-0 flex-1 truncate text-xs">
-                {isRoot ? root.name : nodeBasename(path)}
-              </span>
-              {isRoot && <DeviceBadge root={root} />}
-            </button>
+              {isRoot && <RootExplorerControls root={root} />}
+            </div>
           }
         />
-        <ContextMenuContent>
-          <NodeMenuHeader root={root} absPath={path} />
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={onToggle}>
-            <ChevronsUpDown />
-            {expanded ? t('files.menu.collapse') : t('files.menu.expand')}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={onPickFiles}>
-            <Upload />
-            {t('files.menu.upload')}
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <CommonNodeMenuItems deviceId={root.deviceId} absPath={path} rootPath={root.path} />
-        </ContextMenuContent>
+        <DirectoryMenuContent
+          root={root}
+          rootId={rootId}
+          path={path}
+          name={name}
+          isRoot={isRoot}
+          expanded={expanded}
+          onToggle={onToggle}
+          onPickFiles={onPickFiles}
+        />
       </ContextMenu>
       <input ref={fileInputRef} type="file" multiple hidden onChange={onFileInputChange} />
 

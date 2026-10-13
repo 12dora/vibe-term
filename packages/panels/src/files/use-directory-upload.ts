@@ -1,14 +1,11 @@
 // 目录节点的上传入口：外部文件拖入 + 右键菜单选择文件，逐文件分块上传并显示可取消的进度 Toast。
 
 import { useQueryClient } from '@tanstack/react-query';
-import { SELF_NODE_ID, formatBytes, pickUploadStreams } from '@vibeterm/api-client';
 import { useFileTreeStore, useRuntime } from '@vibeterm/stores/react';
 import { type ChangeEvent, type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
-import { uploadFileWithTransport } from './bulk-transfer';
-import { dataTransferHasFiles, planUpload } from './file-tree-logic';
-import { startTransferToast } from './transfer-toast';
+import { dataTransferHasFiles } from './file-tree-logic';
+import { uploadFilesInto } from './transfer-flows';
 
 export function hasExternalFiles(e: DragEvent): boolean {
   return dataTransferHasFiles(e.dataTransfer.types);
@@ -52,39 +49,11 @@ export function useDirectoryUpload(
   const upload = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;
-      const { accepted, oversized } = planUpload(files, transferMaxBytes);
-      for (const file of oversized) {
-        toast.error(
-          t('files.transfer.tooLarge', { name: file.name, max: formatBytes(transferMaxBytes) })
-        );
-      }
-      // 回落到 REST 的那一段：本机是同机直传，远端节点要经中继，按中继配额压流数
-      const streams = pickUploadStreams(runtime.nodeId !== SELF_NODE_ID);
-      for (const file of accepted) {
-        const controller = new AbortController();
-        const tt = startTransferToast(file.name, 'upload', () => controller.abort(), {
-          nodeId: runtime.nodeId,
-          totalBytes: file.size,
-        });
-        try {
-          await uploadFileWithTransport(
-            runtime.nodeId,
-            rootId,
-            path,
-            file,
-            { onLeg: tt.leg, signal: controller.signal, streams, onPath: (p) => tt.setPath?.(p) },
-            runtime.apiClient
-          );
-          tt.success(t('files.upload.success', { name: file.name }));
-        } catch {
-          if (controller.signal.aborted) tt.cancel();
-          else tt.fail(t('files.upload.fail', { name: file.name }));
-        }
-      }
+      await uploadFilesInto({ runtime, t, rootId, transferMaxBytes }, files, path);
       expand(rootId, path);
       void queryClient.invalidateQueries({ queryKey: ['files', 'list', rootId, path] });
     },
-    [expand, path, queryClient, rootId, runtime.apiClient, runtime.nodeId, t, transferMaxBytes]
+    [expand, path, queryClient, rootId, runtime, t, transferMaxBytes]
   );
 
   // 稳定引用：目录节点每次重渲染都新建这组 handler 会连带刷新拖放区的 props

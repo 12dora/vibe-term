@@ -22,6 +22,7 @@ import { SortableVerticalList, useSortableRow } from '../device-tree/device-tree
 import { type DirectoryDragHandle, DirectoryNodeView } from './directory-node-view';
 import { fileIconColor, fileIconFor } from './file-icon';
 import { FileLeafContextMenu } from './file-leaf-menu';
+import { FileOpsHostProvider } from './file-ops-host';
 import { FilesNoRootsHint, FilesNoVisibleRootsHint } from './files-empty-hint';
 import { runCappedFileRootsFetch } from './files-roots-fetch';
 import { NodeError } from './node-menu';
@@ -178,17 +179,20 @@ export function FilesNodeRoots() {
     <SelectedFileProvider>
       <ShowAllEntriesProvider>
         {/* space-y-0.5 原本由宿主容器给根行之间加间距；这里多了一层 trigger，间距跟着下移一层 */}
-        <FileLeafContextMenu roots={roots} className="space-y-0.5">
-          <SortableVerticalList
-            ids={visibleIds}
-            onReorder={reorder.onReorder}
-            disabled={reorder.pending}
-          >
-            {roots.map((root) => (
-              <SortableRootNode key={root.id} root={root} ctx={ctx} />
-            ))}
-          </SortableVerticalList>
-        </FileLeafContextMenu>
+        {/* 新建文件夹 / 重命名 / 删除的对话框整棵树只挂这一份，菜单项往它投请求 */}
+        <FileOpsHostProvider>
+          <FileLeafContextMenu roots={roots} className="space-y-0.5">
+            <SortableVerticalList
+              ids={visibleIds}
+              onReorder={reorder.onReorder}
+              disabled={reorder.pending}
+            >
+              {roots.map((root) => (
+                <SortableRootNode key={root.id} root={root} ctx={ctx} />
+              ))}
+            </SortableVerticalList>
+          </FileLeafContextMenu>
+        </FileOpsHostProvider>
       </ShowAllEntriesProvider>
       {rootsQuery.isLoading && (
         <div className="px-2 py-3 text-center text-xs text-muted-foreground">

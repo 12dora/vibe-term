@@ -92,16 +92,6 @@ export function NodeMenuHeader({
   );
 }
 
-export function DeviceBadge({ root }: { root: FileRootDto }) {
-  const Icon = root.deviceType === 'ssh' ? Globe : Monitor;
-  return (
-    <span className="flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground/70">
-      <Icon className="h-3 w-3" />
-      <span className="max-w-24 truncate">{root.deviceName ?? '—'}</span>
-    </span>
-  );
-}
-
 export function NodeError({
   code,
   indent,
