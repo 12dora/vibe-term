@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -18,6 +20,8 @@ import { fileMoveRemoteIo, moveRemote } from './move-remote';
 import type { MoveBatch } from './move-types';
 import { remoteScriptIo } from './remote-script';
 import type { RsyncDeviceSpec } from './ssh-command';
+
+// 提交与覆盖语义：所有场景都在本机真实 `sh -s` 里跑生成的脚本，失败 / 竞态用 shell 函数桩或补丁注入。
 
 const fakeSpec: RsyncDeviceSpec = {
   targetPrefix: 'user@host:',
@@ -57,8 +61,6 @@ const hasGnuMv = new TextDecoder()
 
 const GNU_PROBE =
   "if mv --help </dev/null 2>&1 | grep -q -e '--no-target-directory' -e '-T'; then T=-T; fi";
-const FINAL_MV = 'mvn "$tp" "$dp"\n';
-const PRECHECK = 'if gone "$dp"; then put n';
 
 /** 替换脚本里的一段文本；找不到就报错，避免补丁悄悄失效。 */
 function patch(script: string, from: string, to: string): string {
@@ -66,12 +68,19 @@ function patch(script: string, from: string, to: string): string {
   return script.replace(from, () => to);
 }
 
-/** 在第一条 `vt` 调用之前（GNU 探测之后）插入 shell 定义。 */
+/** 在第一条 `vt` 调用之前插入 shell 定义（覆盖同名函数）。 */
 function inject(script: string, defs: string): string {
   return patch(script, '\nvt 0 ', `\n${defs}\nvt 0 `);
 }
 
-const forceNonGnu = (script: string) => patch(script, GNU_PROBE, 'T=');
+/** 蒙过 vt 预检与 cmt 的最后确认，只剩 `mv -n`（及 GNU 的 -T）把关。 */
+const skipChecks = 'cmt() { mvn "$1" "$2"; }';
+const openPrecheck = (script: string) =>
+  patch(script, 'elif gone "$dp"; then put n', 'elif true; then put n');
+
+/** 任何以私有项 tp 为参数的 mv 都失败：模拟提交 rename 出错（旧目标 / 备份的 mv 不受影响）。 */
+const failTpMv =
+  'mv() { for a in "$@"; do if [ "$a" = "$tp" ]; then echo "mv: boom" >&2; return 1; fi; done; command mv "$@"; }';
 
 function sandbox(): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-move-ow-')));
@@ -80,23 +89,19 @@ function sandbox(): string {
   return dir;
 }
 
-function viaLocalSh(transform: (script: string) => string) {
-  const scripts: string[] = [];
+function viaLocalSh(transform: (script: string) => string = (script) => script) {
   fileMoveRemoteIo.hooks = { buildSpec: async () => fakeSpec };
-  remoteScriptIo.spawn = (_argv, env, script) => {
-    scripts.push(script);
-    return originalSpawn(['sh', '-s'], env, transform(script));
-  };
-  return scripts;
+  remoteScriptIo.spawn = (_argv, env, script) =>
+    originalSpawn(['sh', '-s'], env, transform(script));
 }
 
-async function runOne(dir: string, over: Partial<MoveBatch> = {}): Promise<string> {
+async function runOne(dir: string, over: Partial<MoveBatch> = {}, name = 'f'): Promise<string> {
   const batch: MoveBatch = {
     rootPath: dir,
     destRootPath: dir,
     destDir: join(dir, 'dest'),
     overwrite: false,
-    items: [{ path: join(dir, 'f'), parent: dir, name: 'f', destName: 'f' }],
+    items: [{ path: join(dir, name), parent: dir, name, destName: name }],
     ...over,
   };
   const result = await moveRemote(device, batch);
@@ -105,92 +110,262 @@ async function runOne(dir: string, over: Partial<MoveBatch> = {}): Promise<strin
   return outcome?.ok ? 'ok' : (outcome?.code ?? 'missing');
 }
 
-const tempEntries = (dir: string) =>
-  readdirSync(join(dir, 'dest')).filter((name) => name.startsWith('.vtmv.'));
+/** 源父目录与目标目录里的私有项（`.vtmv.*`）。 */
+const leftovers = (dir: string) =>
+  [dir, join(dir, 'dest')].flatMap((d) => readdirSync(d).filter((n) => n.startsWith('.vtmv.')));
 
-/** 目标是指向目录的符号链接、源是新内容的覆盖场景。 */
-function symlinkDestSetup(dir: string): string {
+function symlinkDest(dir: string): string {
   const target = join(dir, 'target');
   mkdirSync(target);
   symlinkSync(target, join(dir, 'dest', 'f'));
-  writeFileSync(join(dir, 'f'), 'new');
   return target;
 }
 
-describe('overwrite onto a destination symlink', () => {
-  test.skipIf(!hasGnuMv)('GNU: one mv -T replaces the link, no rm, no temp', async () => {
+describe('commit and overwrite of a regular file', () => {
+  test('a plain move leaves neither temp nor backup and removes the source last', async () => {
+    viaLocalSh();
     const dir = sandbox();
-    const logDir = sandbox();
-    const log = join(logDir, 'calls.log');
-    const scripts = viaLocalSh((script) =>
-      inject(
-        script,
-        [
-          `mv() { printf '%s\\n' "mv $*" >> '${log}'; command mv "$@"; }`,
-          `rm() { printf '%s\\n' "rm $*" >> '${log}'; command rm "$@"; }`,
-        ].join('\n')
-      )
-    );
-    const target = symlinkDestSetup(dir);
+    writeFileSync(join(dir, 'f'), 'data');
 
-    const status = await runOne(dir, { overwrite: true });
-
-    expect(status).toBe('ok');
-    expect(scripts[0]).toContain('if [ -n "$T" ] || [ ! -L "$dp" ]; then');
-    const lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
-    expect(lines).toEqual([`mv -f -T -- ./f ${join(dir, 'dest')}/f`]);
-    expect(lstatSync(join(dir, 'dest', 'f')).isSymbolicLink()).toBe(false);
-    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
-    expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
-    expect(readdirSync(target)).toEqual([]);
+    expect(await runOne(dir)).toBe('ok');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(leftovers(dir)).toEqual([]);
   });
 
-  test('non-GNU: a failed final mv puts the staged data back at the source', async () => {
-    viaLocalSh((script) => patch(forceNonGnu(script), FINAL_MV, '{ st=unknown; false; }\n'));
+  test('overwrite atomically replaces an existing regular file', async () => {
+    viaLocalSh();
     const dir = sandbox();
-    symlinkDestSetup(dir);
+    writeFileSync(join(dir, 'f'), 'new');
+    writeFileSync(join(dir, 'dest', 'f'), 'old');
 
-    const status = await runOne(dir, { overwrite: true });
+    expect(await runOne(dir, { overwrite: true })).toBe('ok');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
+    expect(leftovers(dir)).toEqual([]);
+  });
 
-    expect(status).toBe('unknown');
+  test('a failed replace keeps the old destination and the source', async () => {
+    viaLocalSh((script) => inject(script, failTpMv));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'new');
+    writeFileSync(join(dir, 'dest', 'f'), 'old');
+
+    expect(await runOne(dir, { overwrite: true })).toBe('unknown');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
-    expect(tempEntries(dir)).toEqual([]);
-    // 非 GNU 分支无法避免的窗口：旧链接已经 rm 掉了
+    expect(leftovers(dir)).toEqual([]);
+  });
+
+  test('a failed commit in fail mode removes the private temp and keeps the source', async () => {
+    viaLocalSh((script) => inject(script, failTpMv));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'new');
+
+    expect(await runOne(dir)).toBe('unknown');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
     expect(readdirSync(join(dir, 'dest'))).toEqual([]);
   });
 
-  test('non-GNU: a rollback never uses an occupied source path as a container', async () => {
-    const dir = sandbox();
-    const trap = join(dir, 'trap');
-    mkdirSync(trap);
-    // 最终 mv 失败的同时，源路径被换成了指向目录的符号链接
-    viaLocalSh((script) =>
-      patch(forceNonGnu(script), FINAL_MV, `{ ln -s '${trap}' "$s"; st=unknown; false; }\n`)
-    );
-    symlinkDestSetup(dir);
+  test('an intruder file between obtaining the temp and the commit survives untouched', async () => {
+    for (const transform of [(s: string) => s, (s: string) => inject(s, skipChecks)]) {
+      viaLocalSh((script) =>
+        transform(patch(script, 'mkp || return 1', 'mkp || return 1; printf theirs > "$dp"'))
+      );
+      const dir = sandbox();
+      writeFileSync(join(dir, 'f'), 'mine');
 
-    const status = await runOne(dir, { overwrite: true });
-
-    expect(status).toBe('unknown');
-    expect(lstatSync(join(dir, 'f')).isSymbolicLink()).toBe(true);
-    expect(readdirSync(trap)).toEqual([]);
-    const temps = tempEntries(dir);
-    expect(temps).toHaveLength(1);
-    expect(readFileSync(join(dir, 'dest', temps[0] ?? ''), 'utf8')).toBe('new');
+      expect(await runOne(dir)).toBe('already_exists');
+      expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('theirs');
+      expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('mine');
+      expect(leftovers(dir)).toEqual([]);
+    }
   });
 
-  test('non-GNU: a failed staging mv changes nothing and removes nothing', async () => {
-    const stub = `mv() { echo 'mv: write error: No space left on device' >&2; return 1; }`;
-    viaLocalSh((script) => inject(forceNonGnu(script), stub));
+  test.skipIf(!hasGnuMv)('an intruder directory is not used as a container', async () => {
+    viaLocalSh((script) =>
+      inject(patch(script, 'mkp || return 1', 'mkp || return 1; mkdir "$dp"'), skipChecks)
+    );
     const dir = sandbox();
-    const target = symlinkDestSetup(dir);
+    writeFileSync(join(dir, 'f'), 'mine');
 
-    const status = await runOne(dir, { overwrite: true });
+    expect(await runOne(dir)).toBe('already_exists');
+    expect(readdirSync(join(dir, 'dest', 'f'))).toEqual([]);
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('mine');
+    expect(leftovers(dir)).toEqual([]);
+  });
 
-    expect(status).toBe('unknown');
-    expect(tempEntries(dir)).toEqual([]);
+  test('the fooled pre-check still cannot replace an existing file in fail mode', async () => {
+    viaLocalSh((script) => inject(openPrecheck(script), skipChecks));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'mine');
+    writeFileSync(join(dir, 'dest', 'f'), 'theirs');
+
+    expect(await runOne(dir)).toBe('already_exists');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('theirs');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('mine');
+    expect(leftovers(dir)).toEqual([]);
+  });
+});
+
+describe('overwrite onto a destination symlink', () => {
+  test('the link entry is replaced and nothing is written into its target', async () => {
+    viaLocalSh();
+    const dir = sandbox();
+    const target = symlinkDest(dir);
+    writeFileSync(join(dir, 'f'), 'new');
+
+    expect(await runOne(dir, { overwrite: true })).toBe('ok');
+    expect(lstatSync(join(dir, 'dest', 'f')).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
+    expect(readdirSync(target)).toEqual([]);
+    expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+  });
+
+  test('a forced commit failure puts the old symlink back and keeps the source', async () => {
+    viaLocalSh((script) => inject(script, failTpMv));
+    const dir = sandbox();
+    const target = symlinkDest(dir);
+    writeFileSync(join(dir, 'f'), 'new');
+
+    expect(await runOne(dir, { overwrite: true })).toBe('unknown');
     expect(readlinkSync(join(dir, 'dest', 'f'))).toBe(target);
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+    expect(readdirSync(target)).toEqual([]);
+    expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
+    expect(leftovers(dir)).toEqual([]);
+  });
+
+  test('a destination occupied during the swap is kept and the old link stays as backup', async () => {
+    viaLocalSh((script) => inject(script, 'cmt() { printf theirs > "$2"; mvn "$1" "$2"; }'));
+    const dir = sandbox();
+    const target = symlinkDest(dir);
+    writeFileSync(join(dir, 'f'), 'new');
+
+    expect(await runOne(dir, { overwrite: true })).toBe('already_exists');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('theirs');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+    const kept = leftovers(dir);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]).toMatch(/\.bak$/);
+    expect(readlinkSync(join(dir, 'dest', kept[0] ?? ''))).toBe(target);
+  });
+
+  test('a symlink source replaces a regular file as a link, with the same backup rules', async () => {
+    viaLocalSh();
+    const dir = sandbox();
+    writeFileSync(join(dir, 'real'), 'x');
+    symlinkSync('real', join(dir, 'f'));
+    writeFileSync(join(dir, 'dest', 'f'), 'old');
+
+    expect(await runOne(dir, { overwrite: true })).toBe('ok');
+    expect(readlinkSync(join(dir, 'dest', 'f'))).toBe('real');
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readFileSync(join(dir, 'real'), 'utf8')).toBe('x');
+    expect(leftovers(dir)).toEqual([]);
+  });
+
+  test('a failed symlink replace restores the old file and keeps the source link', async () => {
+    const failSource =
+      'mv() { for a in "$@"; do if [ "$a" = "$s" ]; then echo "mv: boom" >&2; return 1; fi; done; command mv "$@"; }';
+    viaLocalSh((script) => inject(script, failSource));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'real'), 'x');
+    symlinkSync('real', join(dir, 'f'));
+    writeFileSync(join(dir, 'dest', 'f'), 'old');
+
+    expect(await runOne(dir, { overwrite: true })).toBe('unknown');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
+    expect(readlinkSync(join(dir, 'f'))).toBe('real');
+    expect(leftovers(dir)).toEqual([]);
+  });
+});
+
+describe('source removal and the same-inode rule', () => {
+  const failSourceRm =
+    'rm() { case "$*" in *" -- ./f") echo "rm: cannot remove: Permission denied" >&2; return 1;; esac; command rm "$@"; }';
+
+  test('an unremovable source after commit reports permission_denied and a retry completes', async () => {
+    viaLocalSh((script) => inject(script, failSourceRm));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+
+    expect(await runOne(dir)).toBe('permission_denied');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('data');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+    expect(leftovers(dir)).toEqual([]);
+
+    viaLocalSh();
+    expect(await runOne(dir)).toBe('ok');
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+  });
+
+  test('a retry in overwrite mode also finishes instead of becoming a no-op', async () => {
+    viaLocalSh((script) => inject(script, failSourceRm));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+    expect(await runOne(dir, { overwrite: true })).toBe('permission_denied');
+
+    viaLocalSh();
+    expect(await runOne(dir, { overwrite: true })).toBe('ok');
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+  });
+
+  test('same parent, same inode: a plain rename that never removes a name', async () => {
+    const logDir = sandbox();
+    const log = join(logDir, 'calls.log');
+    viaLocalSh((script) =>
+      inject(script, `rm() { printf '%s\\n' "rm $*" >> '${log}'; command rm "$@"; }`)
+    );
+    const dir = sandbox();
+    writeFileSync(join(dir, 'a'), 'data');
+    // 同目录两个硬链接：脚本分不清它与「大小写别名」，两种情况都不得删除任何名字
+    linkSync(join(dir, 'a'), join(dir, 'b'));
+
+    for (const overwrite of [false, true]) {
+      const items = [{ path: join(dir, 'a'), parent: dir, name: 'a', destName: 'b' }];
+      expect(await runOne(dir, { destDir: dir, overwrite, items })).toBe('ok');
+      expect(readFileSync(join(dir, 'a'), 'utf8')).toBe('data');
+      expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('data');
+    }
+    expect(existsSync(log)).toBe(false);
+  });
+});
+
+describe('mv -T is only extra protection on mv -n commits', () => {
+  test.skipIf(!hasGnuMv)('GNU: commits use mv -n -T, never mv -f -T', async () => {
+    const logDir = sandbox();
+    const log = join(logDir, 'calls.log');
+    viaLocalSh((script) =>
+      inject(script, `mv() { printf '%s\\n' "mv $*" >> '${log}'; command mv "$@"; }`)
+    );
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+
+    expect(await runOne(dir)).toBe('ok');
+    const lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^mv -n -T -- \S+\/dest\/\.vtmv\.\d+\.0 \S+\/dest\/f$/);
+  });
+
+  test('without -T every scenario still behaves the same', async () => {
+    viaLocalSh((script) => patch(script, GNU_PROBE, 'T='));
+    const dir = sandbox();
+    const target = symlinkDest(dir);
+    writeFileSync(join(dir, 'f'), 'new');
+    writeFileSync(join(dir, 'g'), 'g-new');
+    writeFileSync(join(dir, 'dest', 'g'), 'g-old');
+
+    expect(await runOne(dir, { overwrite: true })).toBe('ok');
+    expect(await runOne(dir, { overwrite: true }, 'g')).toBe('ok');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
+    expect(readFileSync(join(dir, 'dest', 'g'), 'utf8')).toBe('g-new');
+    expect(readdirSync(target)).toEqual([]);
+    expect(leftovers(dir)).toEqual([]);
   });
 
   test.skipIf(!hasGnuMv)('BusyBox-style help that lists only -T still enables -T', async () => {
@@ -204,74 +379,10 @@ describe('overwrite onto a destination symlink', () => {
     ].join('\n');
     viaLocalSh((script) => patch(script, '\nT=\n', `\n${stub}\nT=\n`));
     const dir = sandbox();
-    symlinkDestSetup(dir);
+    writeFileSync(join(dir, 'f'), 'data');
 
-    expect(await runOne(dir, { overwrite: true })).toBe('ok');
+    expect(await runOne(dir)).toBe('ok');
     const lines = readFileSync(log, 'utf8').split('\n').filter(Boolean);
-    expect(lines).toEqual([`mv -f -T -- ./f ${join(dir, 'dest')}/f`]);
-    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
-  });
-});
-
-describe('no-replace outcome classification', () => {
-  const failWith = (message: string, leaveCopy: boolean) =>
-    `mv() { for a; do d=$a; done; ${leaveCopy ? `printf partial > "$d"; ` : ''}echo "${message}" >&2; return 1; }`;
-
-  test('an unrelated error is unknown and nothing is removed', async () => {
-    viaLocalSh((script) =>
-      inject(script, failWith('mv: write error: No space left on device', false))
-    );
-    const dir = sandbox();
-    writeFileSync(join(dir, 'f'), 'new');
-
-    const status = await runOne(dir);
-
-    expect(status).toBe('unknown');
-    expect(readdirSync(join(dir, 'dest'))).toEqual([]);
-    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
-  });
-
-  test('a public destination is never deleted, even if a failing mv left something there', async () => {
-    viaLocalSh((script) =>
-      inject(script, failWith('mv: write error: No space left on device', true))
-    );
-    const dir = sandbox();
-    writeFileSync(join(dir, 'f'), 'new');
-
-    const status = await runOne(dir);
-
-    expect(status).not.toBe('ok');
-    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('partial');
-    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
-  });
-
-  test('a permission error maps to permission_denied', async () => {
-    viaLocalSh((script) =>
-      inject(script, failWith("mv: cannot create '.': Permission denied", false))
-    );
-    const dir = sandbox();
-    writeFileSync(join(dir, 'f'), 'new');
-
-    expect(await runOne(dir)).toBe('permission_denied');
-    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
-  });
-
-  test('not replacing and a silent skip are already_exists, destination kept', async () => {
-    const stubs = [
-      failWith("mv: not replacing './f'", false),
-      failWith('mv: cannot move: File exists', false),
-      'mv() { return 0; }',
-    ];
-    for (const stub of stubs) {
-      // 预检被蒙过去：目标在检查之后才出现
-      viaLocalSh((script) => inject(patch(script, PRECHECK, 'if true; then put n'), stub));
-      const dir = sandbox();
-      writeFileSync(join(dir, 'f'), 'new');
-      writeFileSync(join(dir, 'dest', 'f'), 'old');
-
-      expect(await runOne(dir)).toBe('already_exists');
-      expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
-      expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
-    }
+    expect(lines.at(-1)).toMatch(/^mv -n -T -- /);
   });
 });

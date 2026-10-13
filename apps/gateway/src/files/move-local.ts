@@ -198,7 +198,10 @@ function guardedRename(src: string, dest: string): void {
   fileMoveIo.rename(src, dest);
 }
 
-/** 同一文件系统内把 src 落到 dest；`destExisted` 时按允许覆盖的 rename 原子替换，否则绝不替换。 */
+/**
+ * 同一文件系统内把 src 落到 dest；`destExisted` 时按允许覆盖的 rename 原子替换，
+ * 否则尽力不替换（符号链接 / 特殊文件只有 guardedRename 的检查，见其残余窗口说明）。
+ */
 function commitTo(st: Stats, src: string, dest: string, destExisted: boolean): void {
   if (destExisted) {
     fileMoveIo.rename(src, dest);
@@ -249,20 +252,32 @@ function performMove(src: string, dest: string, st: Stats, destExisted: boolean)
 }
 
 /**
- * 上一次提交停在「link 成功、unlink 源失败」时，源与目标是同一 inode 的两个硬链接。
- * 此时再走冲突检查会永远 already_exists，覆盖模式下 rename 两个同 inode 的链接又是成功的空操作，
- * 源却还在；所以先识别这种已提交状态，只补删源，成功与否不看 rename 的返回值。
+ * 源与目标是同一 inode 时有两种可能：
+ * - 上一次提交停在「link 成功、unlink 源失败」：两个父目录不同，必然是两个不同的目录项，
+ *   只补删源即可（再走冲突检查会永远 already_exists，覆盖模式下 rename 同 inode 的两个链接又是空操作）；
+ * - 大小写 / 规范化不敏感的文件系统上同一个目录项的两个别名（`report.txt` → `Report.txt`）：
+ *   父目录相同，只能做普通 rename，绝不能 unlink——那会删掉唯一的目录项。
  */
-function finishCommitted(srcReal: string, destPath: string, srcSt: Stats): MoveOutcome | null {
-  if (!srcSt.isFile()) return null;
+function finishCommitted(
+  ctx: LocalCtx,
+  realParent: string,
+  srcReal: string,
+  destPath: string,
+  srcSt: Stats
+): MoveOutcome | null {
   let destSt: Stats;
   try {
     destSt = fileMoveIo.lstat(destPath);
   } catch {
     return null;
   }
-  if (!destSt.isFile() || destSt.dev !== srcSt.dev || destSt.ino !== srcSt.ino) return null;
+  if (destSt.dev !== srcSt.dev || destSt.ino !== srcSt.ino) return null;
   try {
+    if (realParent === ctx.realDestDir) {
+      fileMoveIo.rename(srcReal, destPath);
+      return ok(undefined);
+    }
+    if (!srcSt.isFile() || !destSt.isFile()) return null;
     fileMoveIo.unlink(srcReal);
     return ok(undefined);
   } catch (err) {
@@ -277,7 +292,7 @@ function moveOne(ctx: LocalCtx, item: MoveItem): MoveOutcome {
   if (realParent === ctx.realDestDir && item.name === item.destName) return ok(undefined);
   const destPath = posixJoin(ctx.realDestDir, item.destName);
   if (st.isDirectory() && isInsidePath(destPath, srcReal)) return fail('invalid');
-  const committed = finishCommitted(srcReal, destPath, st);
+  const committed = finishCommitted(ctx, realParent, srcReal, destPath, st);
   if (committed) return committed;
   const conflict = checkConflict(ctx, st, destPath);
   if (!conflict.ok) return conflict;

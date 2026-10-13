@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -77,8 +78,17 @@ describe('buildMoveScript', () => {
   test('-T detection accepts the GNU long option and the BusyBox short option', () => {
     const script = buildMoveScript(makeBatch([item('/srv/root', 'a')]));
     expect(script).toContain("grep -q -e '--no-target-directory' -e '-T'");
-    expect(script).toContain('DFS=$(fsid "$ddir")');
     expect(script).not.toContain('rm -rf -- "$1"');
+  });
+
+  test('never lets mv copy data and has no file system heuristics', () => {
+    const script = buildMoveScript(makeBatch([item('/srv/root', 'a')]));
+    expect(script).not.toContain('df -P');
+    expect(script).not.toContain('fsid');
+    expect(script).not.toContain('mv -f -T');
+    expect(script).toContain('ln -- "$s" "$tp"');
+    expect(script).toContain('cp -p -- "$s" "$tp"');
+    expect(script).toContain('cp -Rp -- "$s" "$tp"');
   });
 
   test('overwrite flag is encoded and indices follow batch order', () => {
@@ -222,6 +232,16 @@ describe('script semantics (executed with sh -s)', () => {
     sandboxes.length = 0;
   });
 
+  const hasGnuMv = new TextDecoder()
+    .decode(Bun.spawnSync(['mv', '--help']).stdout)
+    .includes('--no-target-directory');
+
+  /** 跳过 vt 的存在性预检和 cmt 的最后确认，只剩 `mv -n` 本身（及 GNU 的 -T）把关。 */
+  function fooled(script: string): string {
+    const open = script.replace('elif gone "$dp"; then put n', 'elif true; then put n');
+    return open.replace('\nvt 0 ', '\ncmt() { mvn "$1" "$2"; }\nvt 0 ');
+  }
+
   function sandbox(): string {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-move-sh-')));
     sandboxes.push(dir);
@@ -266,7 +286,7 @@ describe('script semantics (executed with sh -s)', () => {
   test('moves files with awkward names, including a leading dash and quotes', async () => {
     viaLocalSh();
     const dir = sandbox();
-    const names = ['-dash.txt', "it's here.txt", 'a b.txt'];
+    const names = ['-dash.txt', "it's here.txt", 'a b.txt', '$HOME x.txt', 'line\nbreak.txt'];
     for (const name of names) writeFileSync(join(dir, name), name);
     const { request, statuses } = await run(
       batchIn(
@@ -275,7 +295,7 @@ describe('script semantics (executed with sh -s)', () => {
       )
     );
     expect(request).toBeUndefined();
-    expect(statuses).toEqual(['ok', 'ok', 'ok']);
+    expect(statuses).toEqual(['ok', 'ok', 'ok', 'ok', 'ok']);
     for (const name of names) {
       expect(existsSync(join(dir, name))).toBe(false);
       expect(readFileSync(join(dir, 'dest', name), 'utf8')).toBe(name);
@@ -317,9 +337,9 @@ describe('script semantics (executed with sh -s)', () => {
     expect(readdirSync(join(dir, 'dest', 'd'))).toEqual([]);
   });
 
-  test('no-replace holds when the pre-check is fooled (file and directory)', async () => {
-    // 把预检 `gone "$dp"` 换成恒真，等价于「检查之后目标才被别人建出来」
-    viaLocalSh((script) => script.replace('if gone "$dp"; then put n', 'if true; then put n'));
+  test.skipIf(!hasGnuMv)('no-replace holds when both checks are fooled', async () => {
+    // 蒙过两道存在性检查（vt 的预检与提交前的最后确认），等价于「检查之后目标才被别人建出来」
+    viaLocalSh(fooled);
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'new');
     writeFileSync(join(dir, 'dest', 'f'), 'old');
@@ -338,7 +358,7 @@ describe('script semantics (executed with sh -s)', () => {
   });
 
   test('rename onto an existing sibling keeps both files', async () => {
-    viaLocalSh((script) => script.replace('if gone "$dp"; then put n', 'if true; then put n'));
+    viaLocalSh(fooled);
     const dir = sandbox();
     writeFileSync(join(dir, 'a'), 'a');
     writeFileSync(join(dir, 'b'), 'b');
@@ -364,7 +384,7 @@ describe('script semantics (executed with sh -s)', () => {
     expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
   });
 
-  test.skipIf(isRoot)('an unmovable source leaves the old destination symlink alone', async () => {
+  test.skipIf(isRoot)('an unremovable source after commit keeps both copies', async () => {
     viaLocalSh();
     const dir = sandbox();
     mkdirSync(join(dir, 'src'));
@@ -384,32 +404,39 @@ describe('script semantics (executed with sh -s)', () => {
     } finally {
       chmodSync(join(dir, 'src'), 0o755);
     }
-    expect(readlinkSync(join(dir, 'dest', 'f'))).toBe(join(dir, 'target'));
+    // 目标已提交，不回滚；旧链接的目标目录不受影响，没有私有项残留
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
     expect(readFileSync(join(dir, 'src', 'f'), 'utf8')).toBe('new');
+    expect(readdirSync(join(dir, 'target'))).toEqual([]);
     expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
   });
 
-  test('a failed final replace puts the source back and keeps the old symlink', async () => {
-    // 只有非 GNU 分支才分「暂存 → 删旧链接 → 落位」三步：rm 失败时源已被挪到临时名，必须原样放回
-    viaLocalSh((script) =>
-      script
-        .replace(
-          "if mv --help </dev/null 2>&1 | grep -q -e '--no-target-directory' -e '-T'; then T=-T; fi",
-          'T='
-        )
-        .replace('e=$(rm -f -- "$dp" 2>&1 </dev/null)', 'e=$(false)')
-    );
+  test('a regular file moves through a hard link and leaves no temp entry', async () => {
+    viaLocalSh();
     const dir = sandbox();
-    writeFileSync(join(dir, 'f'), 'new');
-    mkdirSync(join(dir, 'target'));
-    symlinkSync(join(dir, 'target'), join(dir, 'dest', 'f'));
+    writeFileSync(join(dir, 'f'), 'data');
+    const inoBefore = lstatSync(join(dir, 'f')).ino;
 
-    const { statuses } = await run(batchIn(dir, [['f']], { overwrite: true }));
+    const { statuses } = await run(batchIn(dir, [['f']]));
 
-    expect(statuses).toEqual(['unknown']);
-    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
-    expect(readlinkSync(join(dir, 'dest', 'f'))).toBe(join(dir, 'target'));
+    expect(statuses).toEqual(['ok']);
+    expect(lstatSync(join(dir, 'dest', 'f')).ino).toBe(inoBefore);
+    expect(existsSync(join(dir, 'f'))).toBe(false);
     expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
+    expect(readdirSync(dir)).toEqual(['dest']);
+  });
+
+  test('two hard links in one directory: a rename never removes either name', async () => {
+    viaLocalSh();
+    const dir = sandbox();
+    writeFileSync(join(dir, 'a'), 'data');
+    linkSync(join(dir, 'a'), join(dir, 'b'));
+
+    const { statuses } = await run(batchIn(dir, [['a', 'b']], { destDir: dir }));
+
+    expect(statuses).toEqual(['ok']);
+    expect(readFileSync(join(dir, 'a'), 'utf8')).toBe('data');
+    expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('data');
   });
 
   test('directory into itself or a descendant is invalid', async () => {

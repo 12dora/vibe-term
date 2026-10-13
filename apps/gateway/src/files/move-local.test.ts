@@ -546,3 +546,75 @@ describe('moveLocal no-replace on one file system', () => {
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
   });
 });
+
+describe('moveLocal same-inode handling', () => {
+  /** 模拟大小写不敏感文件系统：两个名字解析到同一个目录项（lstat 返回完全相同的 dev/ino）。 */
+  function aliasLstat(alias: string, real: string) {
+    const realLstat = lstatSync;
+    spies.push(
+      spyOn(fileMoveIo, 'lstat').mockImplementation(((...args: Parameters<typeof lstatSync>) => {
+        const target = String(args[0]) === alias ? real : args[0];
+        return realLstat(target, args[1]);
+      }) as typeof lstatSync)
+    );
+  }
+
+  test('one directory entry seen under two names is renamed, never unlinked', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'report.txt'), 'only copy');
+    aliasLstat(join(dir, 'Report.txt'), join(dir, 'report.txt'));
+    const unlink = spyOn(fileMoveIo, 'unlink');
+    const rename = spyOn(fileMoveIo, 'rename');
+    spies.push(unlink, rename);
+
+    const outcomes = await run(batch(dir, [['report.txt', 'Report.txt']], { destDir: dir }));
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(rename).toHaveBeenCalledWith(join(dir, 'report.txt'), join(dir, 'Report.txt'));
+    expect(readFileSync(join(dir, 'Report.txt'), 'utf8')).toBe('only copy');
+  });
+
+  test('the alias rename also applies in overwrite mode and for directories', async () => {
+    const dir = sandbox();
+    mkdirSync(join(dir, 'docs'));
+    writeFileSync(join(dir, 'docs', 'inner'), 'inner');
+    aliasLstat(join(dir, 'Docs'), join(dir, 'docs'));
+    const unlink = spyOn(fileMoveIo, 'unlink');
+    spies.push(unlink);
+
+    const outcomes = await run(batch(dir, [['docs', 'Docs']], { destDir: dir, overwrite: true }));
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(readFileSync(join(dir, 'Docs', 'inner'), 'utf8')).toBe('inner');
+  });
+
+  test('two hard links in one directory keep both names', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'a'), 'data');
+    linkSync(join(dir, 'a'), join(dir, 'b'));
+
+    const outcomes = await run(batch(dir, [['a', 'b']], { destDir: dir }));
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(readFileSync(join(dir, 'a'), 'utf8')).toBe('data');
+    expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('data');
+  });
+
+  test('different parents with the same inode finish by unlinking the source', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+    linkSync(join(dir, 'f'), join(dir, 'dest', 'f'));
+    const unlink = spyOn(fileMoveIo, 'unlink');
+    spies.push(unlink);
+
+    const outcomes = await run(batch(dir, [['f']]));
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(unlink).toHaveBeenCalledTimes(1);
+    expect(unlink).toHaveBeenCalledWith(join(dir, 'f'));
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+  });
+});
