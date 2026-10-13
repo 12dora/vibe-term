@@ -11,6 +11,7 @@ const CODE_STATUS: Record<FileErrorCode, number> = {
   too_large: 413,
   binary: 415,
   permission_denied: 403,
+  already_exists: 409,
   device_not_found: 404,
   root_not_found: 404,
   root_disabled: 403,

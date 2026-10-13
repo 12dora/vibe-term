@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { fileDownloadUrl, fileRawUrl, filesApiUrl } from './file-urls';
+import { fileArchiveUrl, fileDownloadUrl, fileRawUrl, filesApiUrl } from './file-urls';
 import {
   CLIENT_NONCE_BYTES,
   InvalidNodeIdError,
@@ -211,6 +211,12 @@ describe('file-urls 带 nodeId', () => {
     expect(fileDownloadUrl(NODE_A, 'r1', '/a/b.png')).toBe(
       `/n/${NODE_A}/api/files/download?rootId=r1&path=%2Fa%2Fb.png`
     );
+  });
+
+  test('fileArchiveUrl：self 无前缀，非 self 带 /n/<id>，archiveId 做 URL 编码', () => {
+    expect(fileArchiveUrl('self', 'abc-123_X')).toBe('/api/files/archive/abc-123_X');
+    expect(fileArchiveUrl(NODE_A, 'abc-123_X')).toBe(`/n/${NODE_A}/api/files/archive/abc-123_X`);
+    expect(fileArchiveUrl('self', 'a/b?c#d')).toBe('/api/files/archive/a%2Fb%3Fc%23d');
   });
 
   test('filesApiUrl 仍为相对路径（由 ApiClient baseUrl 注入前缀）', () => {

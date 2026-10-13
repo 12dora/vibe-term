@@ -25,3 +25,8 @@ export function fileDownloadUrl(nodeId: string, rootId: string, path: string): s
   const params = new URLSearchParams({ rootId, path });
   return resolveNodeUrl(nodeId, `/api/files/download?${params.toString()}`);
 }
+
+// 打包下载（先 prepareArchive 取 archiveId）。同样直接进入 <a href>，不经 ApiClient。
+export function fileArchiveUrl(nodeId: string, archiveId: string): string {
+  return resolveNodeUrl(nodeId, `/api/files/archive/${encodeURIComponent(archiveId)}`);
+}

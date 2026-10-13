@@ -13,6 +13,13 @@ export {
   reorderFileRoots,
   updateFileRoot,
 } from './file-resources';
+export {
+  deleteFiles,
+  isFileRouteUnsupported,
+  moveFiles,
+  prepareArchive,
+  renameFile,
+} from './file-mutations';
 export { uploadFileChunked } from './upload-transfer';
 export { downloadFileWithProgress, type DownloadedFile } from './download-transfer';
 export type { LegProgress, OnLeg, TransferOpts } from './transfer-types';

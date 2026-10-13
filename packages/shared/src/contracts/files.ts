@@ -28,6 +28,7 @@ export type FileErrorCode =
   | 'too_large'
   | 'binary'
   | 'permission_denied'
+  | 'already_exists'
   | 'device_not_found'
   | 'root_not_found'
   | 'root_disabled'
@@ -125,6 +126,81 @@ export interface FileStatResponse {
   modifiedAt: string | null;
   mime: string | null;
   isSymlink: boolean;
+}
+
+// ---- 删除 / 移动 / 重命名 ----
+/** 单次删除、移动、打包请求最多携带的路径数 */
+export const FILE_OP_MAX_PATHS = 500;
+
+/** `POST /api/files/delete`：目录递归删除；符号链接只删链接本身。根目录自身不可删（逐项 `invalid`）。 */
+export interface DeleteFilesRequest {
+  rootId: string;
+  /** 绝对路径，须落在 root 内 */
+  paths: string[];
+}
+
+/** 批量操作的逐项结果；请求级错误（root 不存在、参数非法）仍走 `FileErrorCode` 的 HTTP 错误 */
+export interface FileOpItemResult {
+  path: string;
+  ok: boolean;
+  code?: FileErrorCode;
+}
+
+export interface DeleteFilesResponse {
+  results: FileOpItemResult[];
+}
+
+export type MoveConflictPolicy = 'fail' | 'overwrite';
+
+/**
+ * `POST /api/files/move`：同一设备内移动。源根与目标根必须绑定同一台设备，
+ * 否则请求级 `invalid`（detail `cross_device`）——跨设备 / 跨节点用传输任务复制。
+ */
+export interface MoveFilesRequest {
+  rootId: string;
+  /** 绝对路径，须落在源 root 内 */
+  paths: string[];
+  /** 缺省与 `rootId` 相同 */
+  destRootId?: string;
+  /** 目标目录绝对路径，须已存在且落在目标 root 内 */
+  destDir: string;
+  /** 目标已有同名项：`fail`（缺省）逐项回 `already_exists`；`overwrite` 仅替换非目录 */
+  onConflict?: MoveConflictPolicy;
+}
+
+export interface MoveFileItemResult extends FileOpItemResult {
+  /** 成功时的新绝对路径 */
+  dest?: string;
+}
+
+export interface MoveFilesResponse {
+  results: MoveFileItemResult[];
+}
+
+/** `POST /api/files/rename`：原地改名，`name` 不得含路径分隔符；同名已存在回 `already_exists` */
+export interface RenameFileRequest {
+  rootId: string;
+  path: string;
+  name: string;
+}
+
+export interface RenameFileResponse {
+  /** 改名后的绝对路径 */
+  path: string;
+}
+
+// ---- 打包下载 ----
+/** `POST /api/files/archive/prepare`：`paths` 须同属一个父目录 */
+export interface PrepareArchiveRequest {
+  rootId: string;
+  paths: string[];
+}
+
+/** 随后 `GET /api/files/archive/:archiveId` 流式返回 tar.gz（无 Content-Length） */
+export interface PrepareArchiveResponse {
+  archiveId: string;
+  /** 建议文件名，含 `.tar.gz` 后缀 */
+  name: string;
 }
 
 // ---- 分块上传协议 ----
