@@ -68,6 +68,8 @@ export interface DeviceManagementPanelProps {
    * 缺省按固定最小列宽自动填列（standalone 整页一张网格）。
    */
   fitCards?: boolean;
+  /** 列表还没到时摆几张占位卡（宿主预估的设备数，免得宽磁贴里一张卡撑满又变成几张）；缺省一张 */
+  skeletonCount?: number;
   className?: string;
   ref?: Ref<DeviceManagementPanelHandle>;
 }
@@ -136,6 +138,7 @@ export function DeviceManagementPanel({
   fallbackDevices,
   onDevicesLoaded,
   fitCards = false,
+  skeletonCount,
   className,
   ref,
 }: DeviceManagementPanelProps) {
@@ -181,7 +184,7 @@ export function DeviceManagementPanel({
       {state.status === 'error' ? (
         <LoadErrorCard error={state.error} onRetry={state.retry} />
       ) : state.status !== 'ready' ? (
-        <DeviceCardSkeleton fit={fitCards} />
+        <DeviceCardSkeleton fit={fitCards} count={skeletonCount} />
       ) : !empty ? (
         <DeviceGrid
           state={state}

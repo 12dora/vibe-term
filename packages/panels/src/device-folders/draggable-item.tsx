@@ -24,6 +24,8 @@ export interface DeviceFolderNodeShellProps {
   disabled?: boolean;
   /** 磁贴在节点网格里想占几列，原样写到 `data-span`（跨度类由 className 给） */
   span?: number | string;
+  /** 拖拽预览期间的视觉顺序（CSS `order`）；DOM 顺序始终是数据顺序。不在预览时不给 */
+  order?: number;
   className?: string;
   /** 拿到把手后渲染节点本体 */
   children: (dragControls: ReactNode) => ReactNode;
@@ -34,11 +36,13 @@ export function DeviceFolderNodeShell({
   containerId,
   disabled,
   span,
+  order,
   className,
   children,
 }: DeviceFolderNodeShellProps) {
   const { t } = useTranslation();
   const data = useMemo<SortableItemData>(() => ({ containerId }), [containerId]);
+  const elementId = nodeElementId(nodeId);
   const {
     attributes,
     listeners,
@@ -47,7 +51,7 @@ export function DeviceFolderNodeShell({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: nodeElementId(nodeId), data, disabled });
+  } = useSortable({ id: elementId, data, disabled });
 
   const dragControls = (
     <button
@@ -73,8 +77,9 @@ export function DeviceFolderNodeShell({
       data-testid={`device-folder-item-node:${nodeId}`}
       data-dragging={isDragging ? 'true' : undefined}
       data-span={span}
+      data-flip-id={elementId}
       className={cn('min-w-0', isDragging && 'opacity-40 motion-reduce:opacity-40', className)}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
+      style={{ order, transform: CSS.Translate.toString(transform), transition }}
     >
       {content}
     </div>

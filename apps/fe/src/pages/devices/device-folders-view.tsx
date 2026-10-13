@@ -92,11 +92,12 @@ export function DeviceFoldersView({ groups, showNodeHeaders }: DeviceFoldersView
           showHeader={showNodeHeaders}
           dragControls={ctx.dragControls}
           tile={showNodeHeaders}
+          deviceCount={countOf(nodeId)}
           onDeviceCount={report}
         />
       );
     },
-    [groupsById, showNodeHeaders, report]
+    [groupsById, showNodeHeaders, countOf, report]
   );
   const nodeSpan = useCallback(
     (nodeId: string): NodeTileSize => (showNodeHeaders ? nodeTileSpan(countOf(nodeId)) : 'full'),

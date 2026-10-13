@@ -16,17 +16,20 @@ mock.module('@vibeterm/panels/device-management', () => ({
     offline,
     fallbackDevices,
     fitCards,
+    skeletonCount,
   }: {
     listenOpenAddDeviceEvent?: boolean;
     offline?: boolean;
     fallbackDevices?: readonly { id: string }[];
     fitCards?: boolean;
+    skeletonCount?: number;
   }) => (
     <span
       data-testid="device-panel"
       data-listen={String(listenOpenAddDeviceEvent ?? true)}
       data-offline={String(offline ?? false)}
       data-fit={String(fitCards ?? false)}
+      data-skeleton={String(skeletonCount ?? 1)}
       data-fallback={(fallbackDevices ?? []).map((device) => device.id).join(',')}
     />
   ),
@@ -35,7 +38,9 @@ mock.module('@vibeterm/panels/device-management', () => ({
   ),
   // 分组与待同步占位都从这个模块拿骨架卡；mock 少了它，单独跑本文件会在导入期报缺导出
   // （合跑时被 DevicesPage.test 先注册的 mock 掩盖）。
-  DeviceCardSkeleton: () => <span data-testid="devices-loading" />,
+  DeviceCardSkeleton: ({ count }: { count?: number }) => (
+    <span data-testid="devices-loading" data-count={String(count ?? 1)} />
+  ),
 }));
 
 let layout: DeviceFolderLayout = { folders: [], placements: [] };
@@ -268,6 +273,50 @@ describe('DeviceFoldersView', () => {
     expect(slice(html, `device-folder-item-node:${OFFLINE_ID}`)).toContain('data-fit="true"');
   });
 
+  test('快照与 inventory 不一致时以快照为准（与离线面板画的卡片同一条规则）', () => {
+    // 快照只有 1 台、inventory 报 3 台：面板只画快照那 1 张卡，磁贴不能跨三格把它拉长
+    const STALE = group({
+      runtimeNodeId: OFFLINE_ID,
+      name: 'attic',
+      online: false,
+      inventory: { devices: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] },
+    });
+    localStorage.setItem(
+      `vibeterm:device-snapshot:${OFFLINE_ID}`,
+      JSON.stringify([{ id: 'snap', name: '快照', type: 'local', sortOrder: 0 }])
+    );
+    layout = { folders: [], placements: [] };
+    const html = render([SELF, STALE], true);
+
+    expect(tagOf(html, `device-folder-item-node:${OFFLINE_ID}`)).toContain('data-span="1"');
+    expect(slice(html, `device-folder-item-node:${OFFLINE_ID}`)).toContain('data-fallback="snap"');
+  });
+
+  test('占位卡片数 = 预估的设备数，封顶为磁贴跨度；待同步的节点就地摆同样多张', () => {
+    const WIDE = group({
+      runtimeNodeId: OFFLINE_ID,
+      name: 'attic',
+      online: false,
+      inventory: { devices: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] },
+    });
+    const PENDING = group({
+      runtimeNodeId: REMOTE_ID,
+      name: 'studio',
+      online: false,
+      pending: true,
+      inventory: { devices: [{ id: 'a' }, { id: 'b' }] },
+    });
+    layout = { folders: [], placements: [] };
+    const html = render([SELF, WIDE, PENDING], true);
+
+    expect(slice(html, 'device-folder-item-node:self')).toContain('data-skeleton="1"');
+    // 四台设备、磁贴封顶三格 → 三张占位
+    expect(slice(html, `device-folder-item-node:${OFFLINE_ID}`)).toContain('data-skeleton="3"');
+    const pending = slice(html, `device-folder-item-node:${REMOTE_ID}`);
+    expect(pending).toContain('data-state="pending"');
+    expect(pending).toContain('data-testid="devices-loading" data-count="2"');
+  });
+
   test('standalone：唯一的节点独占整行，卡片网格按固定列宽自动填列（与旧版式一致）', () => {
     localStorage.setItem(
       'vibeterm:device-snapshot:self',
@@ -282,6 +331,8 @@ describe('DeviceFoldersView', () => {
     expect(tagOf(html, 'device-folder-item-node:self')).toContain('data-span="full"');
     expect(tagOf(html, 'device-folder-item-node:self')).toContain('col-span-full');
     expect(slice(html, 'device-folder-item-node:self')).toContain('data-fit="false"');
+    // 不是磁贴：占位仍是一张，与旧版式一致
+    expect(slice(html, 'device-folder-item-node:self')).toContain('data-skeleton="1"');
   });
 
   test('页面级容器不在这里：主体只是 w-full，不再套 max-width / padding', () => {

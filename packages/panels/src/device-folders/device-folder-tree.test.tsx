@@ -15,7 +15,8 @@ import {
   dropZoneId,
   folderContainerId,
 } from './folder-tree-model';
-import { placeholderMinHeight } from './node-list';
+import { placeholderMinHeight, previewOrderMap } from './node-list';
+import { dragModeOf } from './use-tree-drag';
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -240,6 +241,42 @@ describe('节点磁贴网格', () => {
     const tag = tagOf(html, 'data-testid="device-folder-item-node:self"');
     expect(tag).toContain('data-span="2"');
     expect(tag).toContain('@[48rem]:col-span-2');
+  });
+
+  test('没在拖拽时条目不带 order，占位条不渲染；条目带回流过渡用的 id', () => {
+    const html = renderTree();
+    const tag = tagOf(html, 'data-testid="device-folder-item-node:n2"');
+    expect(tag).not.toContain('order:');
+    expect(tag).toContain('data-flip-id="node:n2"');
+    expect(html).not.toContain('data-testid="device-folder-drop-placeholder"');
+    // 不套拖拽外壳的节点也参与回流过渡
+    const plain = renderTree({ nodeDraggable: () => false });
+    expect(tagOf(plain, 'data-testid="device-folder-item-node:self"')).toContain(
+      'data-flip-id="node:self"'
+    );
+  });
+
+  test('previewOrderMap：视觉顺序与 DOM 顺序一致时不给 order，否则下标即视觉位置', () => {
+    const dom = ['node:a', 'node:b', 'node:c'];
+    expect(previewOrderMap(dom, dom)).toBeNull();
+    expect(previewOrderMap(dom, [...dom])).toBeNull();
+    const moved = previewOrderMap(dom, ['node:b', 'node:c', 'node:a']);
+    expect(moved?.get('node:a')).toBe(2);
+    expect(moved?.get('node:b')).toBe(0);
+    expect(moved?.get('node:c')).toBe(1);
+    // 占位条排在 DOM 末尾，视觉位置由 order 决定
+    const withPlaceholder = previewOrderMap(dom, ['node:a', '__placeholder__', 'node:b', 'node:c']);
+    expect(withPlaceholder?.get('__placeholder__')).toBe(1);
+    expect(withPlaceholder?.get('node:b')).toBe(2);
+  });
+
+  test('dragModeOf：只有键盘事件发起的拖拽算键盘模式', () => {
+    expect(dragModeOf(null)).toBe('pointer');
+    expect(dragModeOf(undefined)).toBe('pointer');
+    expect(dragModeOf(new Event('pointerdown'))).toBe('pointer');
+    if (typeof KeyboardEvent !== 'undefined') {
+      expect(dragModeOf(new KeyboardEvent('keydown', { code: 'Space' }))).toBe('keyboard');
+    }
   });
 
   test('占位条的高度不低于被拖磁贴量到的高度，量不到用兜底值', () => {

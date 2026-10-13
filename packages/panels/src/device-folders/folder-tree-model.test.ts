@@ -20,7 +20,9 @@ import {
   parseDropZoneId,
   parseFolderElementId,
   parseNodeElementId,
+  previewItemOrder,
   previewPlaceholder,
+  previewReorder,
   resolveDrop,
   rootFolderElementIds,
 } from './folder-tree-model';
@@ -430,6 +432,96 @@ describe('containerItemIds', () => {
     expect(
       containerItemIds('folder:a', nodeIds, { containerId: ROOT_CONTAINER_ID, index: 0 })
     ).toEqual(nodeIds);
+  });
+});
+
+describe('previewReorder / previewItemOrder（同容器重排的视觉顺序）', () => {
+  /** 分组 a 里 n1 / n2 / n3 / n4，根层 r1 / r2 */
+  const layout: DeviceFolderLayout = {
+    folders: [folder('a', 0)],
+    placements: [
+      placement('n1', 'a', 0),
+      placement('n2', 'a', 1),
+      placement('n3', 'a', 2),
+      placement('n4', 'a', 3),
+      placement('r1', null, 0),
+      placement('r2', null, 1),
+    ],
+  };
+  const containers = listContainers(layout, []);
+  const inA = containers.get('folder:a')?.nodeIds ?? [];
+  const inRoot = containers.get(ROOT_CONTAINER_ID)?.nodeIds ?? [];
+  const preview = (activeId: string, overId: string) =>
+    previewReorder(resolveDrop(activeId, overId, layout, [], containers), containers);
+
+  test('往后挪：被拖节点排到目标之后，中间的兄弟各往前让一位', () => {
+    const reorder = preview('node:n1', 'node:n3');
+    expect(reorder).toEqual({ containerId: 'folder:a', elementId: 'node:n1', index: 2 });
+    expect(previewItemOrder('folder:a', inA, null, reorder)).toEqual([
+      'node:n2',
+      'node:n3',
+      'node:n1',
+      'node:n4',
+    ]);
+  });
+
+  test('往前挪：被拖节点排到目标之前', () => {
+    const reorder = preview('node:n4', 'node:n2');
+    expect(previewItemOrder('folder:a', inA, null, reorder)).toEqual([
+      'node:n1',
+      'node:n4',
+      'node:n2',
+      'node:n3',
+    ]);
+  });
+
+  test('视觉顺序与松手之后的数据顺序一致', () => {
+    for (const [activeId, overId] of [
+      ['node:n1', 'node:n4'],
+      ['node:n3', 'node:n1'],
+      ['node:n2', 'node:n3'],
+      ['node:r2', 'node:r1'],
+    ] as const) {
+      const drop = resolveDrop(activeId, overId, layout, [], containers);
+      const next = applyDrop(layout, drop as NonNullable<typeof drop>);
+      const containerId = activeId.startsWith('node:r') ? ROOT_CONTAINER_ID : 'folder:a';
+      const nodeIds = containers.get(containerId)?.nodeIds ?? [];
+      const visual = previewItemOrder(containerId, nodeIds, null, previewReorder(drop, containers));
+      const dropped = listContainers(next as DeviceFolderLayout).get(containerId)?.nodeIds;
+      expect(visual).toEqual(dropped ?? []);
+    }
+  });
+
+  test('只影响被拖节点所在的容器，别的容器原样返回', () => {
+    const reorder = preview('node:n1', 'node:n3');
+    expect(previewItemOrder(ROOT_CONTAINER_ID, inRoot, null, reorder)).toEqual(inRoot);
+  });
+
+  test('跨容器 / 分组 / 无效落点不是同容器重排：返回 null，占位条照旧', () => {
+    const drop = resolveDrop('node:r1', 'node:n2', layout, [], containers);
+    expect(previewReorder(drop, containers)).toBeNull();
+    expect(previewReorder(null, containers)).toBeNull();
+    expect(previewReorder({ kind: 'folder', folderId: 'a', index: 0 }, containers)).toBeNull();
+    const placeholder = previewPlaceholder(layout, [], drop, containers);
+    expect(previewItemOrder('folder:a', inA, placeholder, null)).toEqual([
+      'node:n1',
+      PLACEHOLDER_ITEM_ID,
+      'node:n2',
+      'node:n3',
+      'node:n4',
+    ]);
+  });
+
+  test('下标越界时夹到两端；被拖节点不在这个容器里就不动', () => {
+    const far = { containerId: 'folder:a', elementId: 'node:n2', index: 99 };
+    expect(previewItemOrder('folder:a', inA, null, far)).toEqual([
+      'node:n1',
+      'node:n3',
+      'node:n4',
+      'node:n2',
+    ]);
+    const stray = { containerId: 'folder:a', elementId: 'node:zz', index: 0 };
+    expect(previewItemOrder('folder:a', inA, null, stray)).toEqual(inA);
   });
 });
 

@@ -3,8 +3,11 @@
 //
 // 落点判定全部在 `folder-tree-model.ts` / `collision.ts`（纯函数，有单测），本文件只做交互与
 // 呈现：命中高亮、折叠分组的悬停自动展开、跟手的卡片式拖拽预览、就地重命名 / 新建 / 删除确认，
-// 以及拖拽过程中的「腾位置」预览——跨容器时被拖的节点**留在原容器**（变暗），目标容器里插一条
-// 等高的占位条把兄弟顶开，松手才真的提交。
+// 以及拖拽过程中的「腾位置」预览（状态在 `use-tree-drag.ts`，呈现在 `node-list.tsx`）：
+//   - 预览就是松手之后的真实排布。同容器重排把被拖节点（变暗）直接摆到落点；跨容器时被拖的
+//     节点**留在原容器**（变暗，子树不重挂），目标容器里摆一条同跨度、等高的占位条。兄弟由
+//     网格真实回流让位，位置变化带 FLIP 过渡；松手才真的提交。
+//   - 键盘拖拽的同容器重排仍用 sortable 的位移预览（落点矩形不动，方向键的判定才稳定）。
 //
 // 版式（节点磁贴网格，规则在 `node-grid.ts`，实现在 `node-list.tsx`）：
 //   - 分组始终整行宽、上下排列；根层与每个分组内部各有一张节点网格，列数跟**容器宽度**走
@@ -16,8 +19,7 @@
 // 移到最外层没有按钮也没有落点条：整棵树本身就是一个落点区，把节点拖到所有分组虚线框
 // 之外的空白处松手即回到根层；指针离开整棵树（`over` 为空）则视为取消。
 
-import { DndContext, DragOverlay, MeasuringStrategy } from '@dnd-kit/core';
-import type { DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core';
+import { DndContext, DragOverlay, MeasuringStrategy, useDndContext } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { type DeviceFolder, type DeviceFolderLayout, countFolderItems } from '@vibeterm/shared';
 import { cn } from '@vibeterm/ui';
@@ -29,12 +31,11 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
   useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDeviceTreeSensors } from '../device-tree/device-tree-dnd-impl';
-import { deviceFolderCollisionDetection } from './collision';
+import { createDeviceFolderCollisionDetection } from './collision';
 import { useDropZone } from './drop-zone';
 import { FolderDeleteDialog } from './folder-delete-dialog';
 import { FolderNameEditor } from './folder-name-editor';
@@ -42,15 +43,11 @@ import { FolderSection } from './folder-section';
 import {
   type DeviceFolderDrop,
   ROOT_CONTAINER_ID,
-  containerFolderId,
-  dropTargetContainerId,
   dropZoneId,
   folderContainerId,
   listContainers,
   parseFolderElementId,
   parseNodeElementId,
-  previewPlaceholder,
-  resolveDrop,
   rootFolderElementIds,
 } from './folder-tree-model';
 import type { NodeTileSize } from './node-grid';
@@ -62,11 +59,28 @@ import {
   type TreeContextValue,
   useTree,
 } from './tree-context';
+import { useTreeDrag } from './use-tree-drag';
 
 export type { DeviceFolderNodeContext } from './tree-context';
 
-/** 拖过折叠分组多久自动展开 */
-const AUTO_EXPAND_MS = 600;
+/** 回流后隔多久再补量一次：等分组展开 / 收起的高度过渡走完 */
+const REMEASURE_SETTLE_MS = 250;
+
+/**
+ * 拖拽中条目换了位置（只是挪动，尺寸没变）时 dnd-kit 不会重量落点矩形，碰撞判定就还在用
+ * 回流之前的排布。预览每变一次就让它把全部落点重量一遍（量的是去掉 transform 的布局矩形，
+ * 回流过渡在飞也不影响）。
+ */
+function RemeasureOnReflow({ signal }: { signal: string }) {
+  const { measureDroppableContainers } = useDndContext();
+  useEffect(() => {
+    if (!signal) return;
+    measureDroppableContainers([]);
+    const timer = setTimeout(() => measureDroppableContainers([]), REMEASURE_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [signal, measureDroppableContainers]);
+  return null;
+}
 
 export interface DeviceFolderTreeHandle {
   /** 在列表末尾插入一行处于编辑态的新建分组（顶栏按钮用） */
@@ -211,8 +225,8 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
   } = props;
   const sensors = useDeviceTreeSensors();
 
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
+  // 键盘落点带锁（见 `collision.ts`），每棵树一份
+  const collisionDetection = useMemo(() => createDeviceFolderCollisionDetection(), []);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<DeviceFolder | null>(null);
@@ -240,52 +254,16 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
 
   useImperativeHandle(ref, () => ({ startNewFolder: () => setCreatingFolder(true) }), []);
 
-  const activeDrop = useMemo(
-    () =>
-      activeId && overId
-        ? resolveDrop(activeId, overId, layout, implicitRootNodeIds, containers)
-        : null,
-    [activeId, overId, layout, implicitRootNodeIds, containers]
-  );
-  const dropContainerId = dropTargetContainerId(activeDrop);
-  // 指针停在所有分组之外的空白：整棵树高亮，示意松手会移到最外层
-  const rootDropActive =
-    activeId !== null && overId === dropZoneId(ROOT_CONTAINER_ID) && activeDrop !== null;
-  // 目标分组还收着的时候不插占位条：内容区没挂载，插了也看不见（等自动展开之后再说）
-  const placeholder = useMemo(() => {
-    const next = previewPlaceholder(layout, implicitRootNodeIds, activeDrop, containers);
-    if (!next) return null;
-    const folderId = containerFolderId(next.containerId);
-    if (folderId && expanded[folderId] === false) return null;
-    return next;
-  }, [layout, implicitRootNodeIds, activeDrop, expanded, containers]);
-
-  // 拖过折叠的分组停留一会儿就自动展开，方便往里放
-  const autoExpandRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (autoExpandRef.current) clearTimeout(autoExpandRef.current);
-    if (!activeId || !dropContainerId) return;
-    const folderId = containerFolderId(dropContainerId);
-    if (!folderId || expanded[folderId] !== false) return;
-    autoExpandRef.current = setTimeout(() => onExpandedChange(folderId, true), AUTO_EXPAND_MS);
-    return () => {
-      if (autoExpandRef.current) clearTimeout(autoExpandRef.current);
-    };
-  }, [activeId, dropContainerId, expanded, onExpandedChange]);
-
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const dragId = String(event.active.id);
-      const dropId = event.over ? String(event.over.id) : null;
-      setActiveId(null);
-      setOverId(null);
-      // 指针离开整棵树（含拖出窗口）：取消，不动布局
-      if (disabled || dropId === null) return;
-      const drop = resolveDrop(dragId, dropId, layout, implicitRootNodeIds, containers);
-      if (drop) onDrop(drop);
-    },
-    [disabled, layout, implicitRootNodeIds, containers, onDrop]
-  );
+  const drag = useTreeDrag({
+    layout,
+    implicitRootNodeIds,
+    containers,
+    expanded,
+    onExpandedChange,
+    onDrop,
+    disabled,
+  });
+  const { activeId, dropContainerId, placeholder, reorder, reflow, tracking } = drag;
 
   const actions = useMemo<TreeContextValue['actions']>(
     () => ({
@@ -320,6 +298,9 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       expandedOf,
       dropContainerId,
       placeholder,
+      reorder,
+      reflow,
+      flipTracking: tracking,
       dragDisabled: disabled,
       creatingFolder,
       renamingFolderId,
@@ -337,6 +318,9 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       expandedOf,
       dropContainerId,
       placeholder,
+      reorder,
+      reflow,
+      tracking,
       disabled,
       creatingFolder,
       renamingFolderId,
@@ -352,19 +336,17 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     <TreeContext.Provider value={contextValue}>
       <DndContext
         sensors={sensors}
-        collisionDetection={deviceFolderCollisionDetection}
-        // 拖拽过程中条目会挪位置（折叠的分组自动展开、占位条插进插出挤动同行 / 后续各行），
-        // 必须持续重新测量
+        collisionDetection={collisionDetection}
+        // 落点矩形在拖拽前后都保持有效；拖拽中条目挪位置（占位条、同容器回流、分组自动展开）
+        // 不会触发 dnd-kit 自己重量，由 `RemeasureOnReflow` 在每次回流后补量
         measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-        onDragStart={(event: DragStartEvent) => setActiveId(String(event.active.id))}
-        onDragOver={(event: DragOverEvent) => setOverId(event.over ? String(event.over.id) : null)}
-        onDragCancel={() => {
-          setActiveId(null);
-          setOverId(null);
-        }}
-        onDragEnd={handleDragEnd}
+        onDragStart={drag.onDragStart}
+        onDragOver={drag.onDragOver}
+        onDragCancel={drag.onDragCancel}
+        onDragEnd={drag.onDragEnd}
       >
-        <TreeRoot active={rootDropActive} className={className}>
+        <RemeasureOnReflow signal={drag.reflowSignal} />
+        <TreeRoot active={drag.rootDropActive} className={className}>
           {folderElementIds.length > 0 && (
             <SortableContext
               items={folderElementIds}

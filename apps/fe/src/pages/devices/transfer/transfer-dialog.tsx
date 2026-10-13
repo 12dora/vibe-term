@@ -14,7 +14,7 @@ import {
 import { useEffect, useMemo, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { firstUsableNode, toDialogNodeOptions } from '../dialog-nodes';
+import { type DialogNodeOption, firstUsableNode, toDialogNodeOptions } from '../dialog-nodes';
 import { type SendLabel, sendLabel } from './pane-roots';
 import {
   type SendBlock,
@@ -38,18 +38,25 @@ export interface TransferDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export default function TransferDialog({ open, onOpenChange }: TransferDialogProps) {
+function useTransferNodeOptions(): DialogNodeOption[] {
   const { t } = useTranslation();
   const { meshEnabled, entryNodeId } = useSharedAuthMode();
   const { nodes } = useMeshNodes({ enabled: meshEnabled });
   const selfName = t('device.addTo.self');
-
   // 成员列表还在同步时不给任何选项：下拉显示「加载中」，而不是把本机列成唯一节点。
-  const { loading: nodesLoading } = useInventoryReadiness();
-  const options = useMemo(
-    () => toDialogNodeOptions(nodes, entryNodeId, selfName, { loading: nodesLoading }),
-    [nodes, entryNodeId, selfName, nodesLoading]
+  const { loading } = useInventoryReadiness();
+  // 未组网时对端 id 固定报 `self`：`/api/auth/mode` 仍可能带回本机 node id，
+  // 但没有 mesh 桥的网关只认 `self`（同节点传输任务两端都是它自己）。
+  const peerEntryId = meshEnabled ? entryNodeId : null;
+  return useMemo(
+    () => toDialogNodeOptions(nodes, peerEntryId, selfName, { loading }),
+    [nodes, peerEntryId, selfName, loading]
   );
+}
+
+export default function TransferDialog({ open, onOpenChange }: TransferDialogProps) {
+  const { t } = useTranslation();
+  const options = useTransferNodeOptions();
 
   const [left, dispatchLeft] = useReducer(transferPaneReducer, null, () =>
     createTransferPaneState(null)

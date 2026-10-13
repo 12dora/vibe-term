@@ -2,7 +2,11 @@
 
 import type { DeviceFolder } from '@vibeterm/shared';
 import { type ReactNode, createContext, useContext } from 'react';
-import type { DeviceFolderContainer, DeviceFolderPlaceholder } from './folder-tree-model';
+import type {
+  DeviceFolderContainer,
+  DeviceFolderPlaceholder,
+  DeviceFolderReorderPreview,
+} from './folder-tree-model';
 import type { NodeTileSize } from './node-grid';
 
 export interface DeviceFolderNodeContext {
@@ -26,6 +30,15 @@ export interface TreeContextValue {
   dropContainerId: string | null;
   /** 跨容器拖拽时占位条插在哪；同容器重排为 null */
   placeholder: DeviceFolderPlaceholder | null;
+  /** 同容器重排时被拖节点该显示在第几位（只改视觉顺序）；键盘拖拽 / 跨容器为 null */
+  reorder: DeviceFolderReorderPreview | null;
+  /**
+   * 预览靠真实回流（指针拖拽）：兄弟不加 sortable 位移。键盘拖拽为 false——那边仍用 sortable
+   * 的位移预览，落点矩形不随预览变，方向键的几何判定才稳定。
+   */
+  reflow: boolean;
+  /** 拖拽中 / 落下后等布局落定：节点网格持续记位置，给回流加过渡 */
+  flipTracking: boolean;
   dragDisabled: boolean;
   creatingFolder: boolean;
   renamingFolderId: string | null;

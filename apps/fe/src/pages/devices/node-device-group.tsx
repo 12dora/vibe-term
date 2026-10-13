@@ -32,6 +32,7 @@ import { isMeshNodePaused } from '@/node/merge-nodes';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import { nodeTileSpan } from '@vibeterm/panels/device-folders';
 import {
   type AddDevicePreset,
   DeviceCardSkeleton,
@@ -258,12 +259,14 @@ function NodeDevicePanel({
   panelRef,
   offline,
   tile,
+  skeletonCount,
   onDeviceCount,
 }: {
   node: NodeDeviceGroupEntry;
   panelRef: Ref<DeviceManagementPanelHandle>;
   offline: boolean;
   tile: boolean;
+  skeletonCount: number;
   onDeviceCount?: (runtimeNodeId: string, count: number) => void;
 }) {
   const { connection } = useGlobalDevice();
@@ -296,6 +299,7 @@ function NodeDevicePanel({
       fallbackDevices={fallbackDevices}
       onDevicesLoaded={onDevicesLoaded}
       fitCards={tile}
+      skeletonCount={skeletonCount}
       // entry 自身保留全局事件：外壳右上角的「添加设备」作用于 self。
       listenOpenAddDeviceEvent={node.isSelf}
     />
@@ -310,6 +314,11 @@ export interface NodeDeviceGroupProps {
   dragControls?: ReactNode;
   /** 该分组是节点网格里的一块磁贴：卡片均分磁贴宽度（单设备占满整格） */
   tile?: boolean;
+  /**
+   * 页面预估的设备数（见 `use-node-device-counts.ts`）：列表还没到时按它摆占位卡，封顶为磁贴
+   * 的跨度——宽磁贴里不会先是一张撑满的占位、再变成几张卡。缺省一张。
+   */
+  deviceCount?: number;
   /** 该节点的真实设备列表到了（含之后每次变化）：报上设备数，页面据此定磁贴跨度 */
   onDeviceCount?: (runtimeNodeId: string, count: number) => void;
 }
@@ -319,9 +328,11 @@ export function NodeDeviceGroup({
   showHeader = true,
   dragControls,
   tile = false,
+  deviceCount = 1,
   onDeviceCount,
 }: NodeDeviceGroupProps) {
   const panelRef = useRef<DeviceManagementPanelHandle>(null);
+  const skeletonCount = tile ? nodeTileSpan(deviceCount) : 1;
   const base = nodeDeviceGroupState(node);
   // 门闸只在「在线未登录」那一档开工；其余档位传 enabled:false，一个请求都不发，
   // 但仍然读得到别处（侧边栏、路由门闸）记下的失败，状态标记因此三处一致。
@@ -355,7 +366,7 @@ export function NodeDeviceGroup({
       )}
       {state === 'pending' ? (
         // 状态块还没解开：这台的设备一个都不作数（快照可能是上一代的），先摆卡片占位
-        <DeviceCardSkeleton fit={tile} />
+        <DeviceCardSkeleton fit={tile} count={skeletonCount} />
       ) : state === 'unreachable' ? (
         <UnreachableBody node={node} gate={gate} />
       ) : state === 'signedOut' ? (
@@ -372,6 +383,7 @@ export function NodeDeviceGroup({
               panelRef={panelRef}
               offline={state === 'offline'}
               tile={tile}
+              skeletonCount={skeletonCount}
               onDeviceCount={onDeviceCount}
             />
           </NodeRuntimeScope>

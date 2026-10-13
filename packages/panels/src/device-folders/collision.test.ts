@@ -8,7 +8,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { CollisionDetection } from '@dnd-kit/core';
 import type { DeviceFolder, DeviceFolderLayout } from '@vibeterm/shared';
-import { deviceFolderCollisionDetection, insertionTile, nearestTile } from './collision';
+import {
+  containingTile,
+  createDeviceFolderCollisionDetection,
+  deviceFolderCollisionDetection,
+  insertionTile,
+  keyboardLatchKey,
+  nearestTile,
+  reorderTargetId,
+} from './collision';
 import {
   ROOT_CONTAINER_ID,
   applyDrop,
@@ -86,6 +94,19 @@ function containerIdOfActive(activeId: string, zones: Zone[]): string {
   return zones.find((zone) => zone.id === activeId)?.containerId ?? ROOT_CONTAINER_ID;
 }
 
+/**
+ * 条目的 droppable data：所属容器 + sortable 挂上来的同容器数据顺序（节点与分组各排各的），
+ * 与真实的 `useSortable` 一致。放置区没有 data。
+ */
+function dataOf(zone: Zone | undefined, zones: Zone[]) {
+  if (!zone?.containerId) return {};
+  const kind = zone.id.split(':')[0];
+  const items = zones
+    .filter((other) => other.containerId === zone.containerId && other.id.startsWith(`${kind}:`))
+    .map((other) => other.id);
+  return { containerId: zone.containerId, sortable: { items } };
+}
+
 /** 指针在 (x, y)（键盘拖拽 y 传 null），被拖元素的碰撞矩形是吸在指针上的那张小卡片 */
 function args(activeId: string, y: number | null, zones: Zone[] = ZONES, x = 150): Args {
   const droppableRects = new Map(zones.map((zone) => [zone.id, zoneRect(zone)]));
@@ -95,13 +116,21 @@ function args(activeId: string, y: number | null, zones: Zone[] = ZONES, x = 150
     disabled: false,
     node: { current: null },
     rect: { current: zoneRect(zone) },
-    data: { current: zone.containerId ? { containerId: zone.containerId } : {} },
+    data: { current: dataOf(zone, zones) },
   }));
   const collisionRect = rect((y ?? 0) - 10, (y ?? 0) + 10, x - 40, x + 40);
   return {
     active: {
       id: activeId,
-      data: { current: { containerId: containerIdOfActive(activeId, zones) } },
+      data: {
+        current: {
+          containerId: containerIdOfActive(activeId, zones),
+          ...dataOf(
+            zones.find((zone) => zone.id === activeId),
+            zones
+          ),
+        },
+      },
       rect: { current: { initial: collisionRect, translated: collisionRect } },
     },
     collisionRect,
@@ -309,39 +338,60 @@ function gridOrder(activeId: string, x: number, y: number, containerId: string) 
   return orderAfter(GRID_LAYOUT, activeId, gridOver(activeId, x, y), containerId);
 }
 
-describe('网格 · 同容器重排', () => {
-  test('指针压着谁就是谁：压在宽磁贴靠边的位置也不会被隔壁窄磁贴的中心抢走', () => {
+describe('网格 · 同容器重排（落点 = 插入位置，被拖节点自己不参与）', () => {
+  const g = folderContainerId('g');
+
+  test('压在宽磁贴的左半区 → 插到它前面；靠边也不会被隔壁窄磁贴的中心抢走', () => {
     // (320, 100) 在 g2 里紧贴左边：离 g1 的中心（150）比离 g2 的中心（600）近得多
-    expect(gridOver('node:g4', 320, 100)).toBe('node:g2');
-    expect(gridOver('node:g4', 280, 100)).toBe('node:g1');
+    expect(gridOrder('node:g4', 320, 100, g)).toEqual(['node:g1', 'node:g4', 'node:g2', 'node:g3']);
+    // g1 的右半区：同样是插在 g1 与 g2 之间
+    expect(gridOrder('node:g4', 280, 100, g)).toEqual(['node:g1', 'node:g4', 'node:g2', 'node:g3']);
+    // g1 的左半区：插到最前
+    expect(gridOrder('node:g4', 100, 100, g)).toEqual(['node:g4', 'node:g1', 'node:g2', 'node:g3']);
   });
 
-  test('同一行两个磁贴之间的空隙归水平更近的那个', () => {
-    // 第 2 行的空隙是 290..310
-    expect(gridOver('node:g1', 302, 250)).toBe('node:g4');
-    expect(gridOver('node:g1', 296, 250)).toBe('node:g3');
+  test('同一行两个磁贴之间的空隙 → 插在两者之间', () => {
+    // 第 2 行的空隙是 290..310；g1 拖进去 → g3 与 g4 之间
+    for (const x of [296, 302]) {
+      expect(gridOrder('node:g1', x, 250, g)).toEqual(['node:g2', 'node:g3', 'node:g1', 'node:g4']);
+    }
   });
 
-  test('行尾空格归这一行的最后一个，而不是正上方那个', () => {
-    // (750, 250) 是第 2 行第 3 列的空格：正上方的 g2 更近（70 对 160），但那是另一行
+  test('行尾空格 → 挪到末尾，而不是被正上方的磁贴接走', () => {
+    // (750, 250) 是第 2 行第 3 列的空格：正上方的 g2 更近，但那是另一行
     expect(gridOver('node:g1', 750, 250)).toBe('node:g4');
-    expect(gridOrder('node:g1', 750, 250, folderContainerId('g'))).toEqual([
-      'node:g2',
-      'node:g3',
-      'node:g4',
-      'node:g1',
-    ]);
+    expect(gridOrder('node:g1', 750, 250, g)).toEqual(['node:g2', 'node:g3', 'node:g4', 'node:g1']);
   });
 
-  test('两行之间的空隙按到磁贴边的距离取最近', () => {
-    // 行间空隙 180..190
-    expect(gridOver('node:g4', 150, 183)).toBe('node:g1');
-    expect(gridOver('node:g4', 150, 188)).toBe('node:g3');
+  test('两行之间的空隙 → 插到下一行行首', () => {
+    // 行间空隙 180..190；g4 拖上来 → g2 与 g3 之间
+    for (const y of [183, 188]) {
+      expect(gridOrder('node:g4', 150, y, g)).toEqual(['node:g1', 'node:g2', 'node:g4', 'node:g3']);
+    }
   });
 
-  test('拖回自己原来的格子 → 选中自己', () => {
+  test('落点换算出来就是它现在的位置 → 选中自己（原地不动）', () => {
+    // g3 压在自己原来的格子上：排在它后面的第一个兄弟是 g4，「插到 g4 前面」正是它现在的位置
     expect(gridOver('node:g3', 150, 250)).toBe('node:g3');
+    // g3 与 g4 之间的空隙对 g3 来说也是原位
+    expect(gridOver('node:g3', 300, 250)).toBe('node:g3');
+    // 最后一个拖到行尾空格：已经在末尾
+    expect(gridOver('node:g4', 750, 250)).toBe('node:g4');
     expect(resolveDrop('node:g3', 'node:g3', GRID_LAYOUT)).toBeNull();
+  });
+
+  test('回流之后落点不变：被拖节点挪到哪儿都不影响判定（它自己不参与）', () => {
+    // g4 拖到 g1 与 g2 之间后的真实排布：g4 占第 2 列，g2 换行跨两列，g3 排到第 3 行
+    const reflowed = GRID.map((zone) => {
+      if (zone.id === 'node:g4') return { ...zone, top: 40, bottom: 180, left: 310, right: 590 };
+      if (zone.id === 'node:g2') return { ...zone, top: 190, bottom: 320, left: 10, right: 590 };
+      if (zone.id === 'node:g3') return { ...zone, top: 330, bottom: 460, left: 10, right: 290 };
+      if (zone.id === 'folder:g') return { ...zone, bottom: 470 };
+      return zone;
+    });
+    // 指针还在原处 (320, 100)：现在压着的是被拖节点自己，落点仍然是「g2 前面」
+    expect(gridOver('node:g4', 320, 100)).toBe('node:g2');
+    expect(gridOver('node:g4', 320, 100, reflowed)).toBe('node:g2');
   });
 });
 
@@ -468,5 +518,158 @@ describe('挑选规则（纯函数）', () => {
     // 独占一行 → 上下半区：a 的中线是 50
     expect(insertionTile({ x: 280, y: 20 }, column)?.id).toBe('a');
     expect(insertionTile({ x: 20, y: 80 }, column)?.id).toBe('b');
+  });
+});
+
+/**
+ * 键盘用的网格（都在根层，整棵树 0..900 × 0..330，三列 0..290 / 305..595 / 610..900）：
+ *   第 1 行 0..100     k1 k2 k3
+ *   第 2 行 115..215   kw 跨三列
+ *   第 3 行 230..330   k4 k5 k6
+ * 预览卡片是 160×40 的小卡片；每按一次方向键，`sortableKeyboardCoordinates` 把它的左上角对到
+ * 目标条目的左上角。
+ */
+const KEYS: Zone[] = [
+  { id: dropZoneId(ROOT_CONTAINER_ID), top: 0, bottom: 330, left: 0, right: 900 },
+  { id: 'node:k1', top: 0, bottom: 100, left: 0, right: 290, containerId: ROOT_CONTAINER_ID },
+  { id: 'node:k2', top: 0, bottom: 100, left: 305, right: 595, containerId: ROOT_CONTAINER_ID },
+  { id: 'node:k3', top: 0, bottom: 100, left: 610, right: 900, containerId: ROOT_CONTAINER_ID },
+  { id: 'node:kw', top: 115, bottom: 215, left: 0, right: 900, containerId: ROOT_CONTAINER_ID },
+  { id: 'node:k4', top: 230, bottom: 330, left: 0, right: 290, containerId: ROOT_CONTAINER_ID },
+  { id: 'node:k5', top: 230, bottom: 330, left: 305, right: 595, containerId: ROOT_CONTAINER_ID },
+  { id: 'node:k6', top: 230, bottom: 330, left: 610, right: 900, containerId: ROOT_CONTAINER_ID },
+];
+
+/** 键盘拖拽：预览卡片的左上角在 (left, top) */
+function keyboardArgs(activeId: string, left: number, top: number, zones: Zone[] = KEYS): Args {
+  const collisionRect = rect(top, top + 40, left, left + 160);
+  return { ...args(activeId, null, zones), collisionRect } as unknown as Args;
+}
+
+function keyboardOver(activeId: string, left: number, top: number, zones?: Zone[]): string | null {
+  const hits = deviceFolderCollisionDetection(keyboardArgs(activeId, left, top, zones));
+  return hits.length > 0 ? String(hits[0]?.id) : null;
+}
+
+describe('键盘拖拽 · 宽窄混排的网格', () => {
+  test('ArrowDown：从窄磁贴下到整行宽的磁贴（它的中心离左上角有半个容器远）', () => {
+    expect(keyboardOver('node:k1', 0, 115)).toBe('node:kw');
+    expect(keyboardOver('node:k3', 0, 115)).toBe('node:kw');
+    // 再往下：从宽磁贴到下一行
+    expect(keyboardOver('node:kw', 0, 230)).toBe('node:k4');
+  });
+
+  test('ArrowUp：从窄磁贴上到整行宽的磁贴，再上到第一行', () => {
+    expect(keyboardOver('node:k5', 0, 115)).toBe('node:kw');
+    expect(keyboardOver('node:k6', 0, 115)).toBe('node:kw');
+    expect(keyboardOver('node:kw', 0, 0)).toBe('node:k1');
+  });
+
+  test('ArrowRight / ArrowLeft：同一行里挪到相邻的磁贴', () => {
+    expect(keyboardOver('node:k1', 305, 0)).toBe('node:k2');
+    expect(keyboardOver('node:k2', 610, 0)).toBe('node:k3');
+    expect(keyboardOver('node:k3', 305, 0)).toBe('node:k2');
+    expect(keyboardOver('node:k5', 610, 230)).toBe('node:k6');
+    expect(keyboardOver('node:k5', 0, 230)).toBe('node:k4');
+  });
+
+  test('还没动 / 挪回自己的格子 → 选中自己', () => {
+    expect(keyboardOver('node:k2', 305, 0)).toBe('node:k2');
+    expect(keyboardOver('node:kw', 0, 115)).toBe('node:kw');
+  });
+
+  test('贴边对齐差了不到一个像素也认', () => {
+    expect(keyboardOver('node:k1', 304.4, -0.6)).toBe('node:k2');
+    expect(keyboardOver('node:k1', -0.4, 114.5)).toBe('node:kw');
+  });
+
+  test('左上角不在任何条目里（停在空隙）→ 退回最近四角，仍有落点', () => {
+    expect(keyboardOver('node:k1', 296, 104)).not.toBeNull();
+  });
+});
+
+describe('键盘落点的锁', () => {
+  // 跨容器时占位条会把目标兄弟挤走：kw 被挤到下一行，预览卡片底下换成了别人
+  const shifted = KEYS.map((zone) => {
+    if (zone.id === 'node:kw') return { ...zone, top: 230, bottom: 330 };
+    if (zone.id === 'node:k4') return { ...zone, top: 115, bottom: 215 };
+    return zone;
+  });
+  const over = (detect: ReturnType<typeof createDeviceFolderCollisionDetection>, input: Args) => {
+    const hits = detect(input);
+    return hits.length > 0 ? String(hits[0]?.id) : null;
+  };
+
+  test('预览卡片没动：沿用上一次的落点，回流不会让它自己跳走', () => {
+    const detect = createDeviceFolderCollisionDetection();
+    expect(over(detect, keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
+    // 无状态的判定照新的几何会改口
+    expect(keyboardOver('node:k1', 0, 115, shifted)).toBe('node:k4');
+    expect(over(detect, keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:kw');
+  });
+
+  test('预览卡片挪了（按了方向键）就重新算', () => {
+    const detect = createDeviceFolderCollisionDetection();
+    expect(over(detect, keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
+    expect(over(detect, keyboardArgs('node:k1', 305, 0, shifted))).toBe('node:k2');
+    expect(over(detect, keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:k4');
+  });
+
+  test('锁住的落点已经不在了 / 换了被拖元素 / 改用指针 → 不沿用', () => {
+    const detect = createDeviceFolderCollisionDetection();
+    expect(over(detect, keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
+    const withoutWide = shifted.filter((zone) => zone.id !== 'node:kw');
+    expect(over(detect, keyboardArgs('node:k1', 0, 115, withoutWide))).toBe('node:k4');
+
+    expect(over(detect, keyboardArgs('node:k1', 0, 230))).toBe('node:k4');
+    expect(over(detect, keyboardArgs('node:k2', 0, 230, shifted))).toBe('node:kw');
+
+    // 指针拖拽不上锁，并且会把键盘留下的锁清掉
+    expect(over(detect, args('node:k1', 50, KEYS, 850))).toBe('node:k3');
+    expect(over(detect, keyboardArgs('node:k2', 0, 230))).toBe('node:k4');
+  });
+
+  test('锁的键按像素取整：亚像素抖动不算挪动', () => {
+    expect(keyboardLatchKey('node:k1', { left: 304.6, top: 0.2 })).toBe('node:k1@305,0');
+    expect(keyboardLatchKey('node:k1', { left: 305.3, top: -0.4 })).toBe(
+      keyboardLatchKey('node:k1', { left: 304.6, top: 0.2 })
+    );
+    expect(keyboardLatchKey('node:k1', { left: 306, top: 0 })).not.toBe(
+      keyboardLatchKey('node:k1', { left: 305, top: 0 })
+    );
+  });
+});
+
+describe('同容器换算与包含判定（纯函数）', () => {
+  const order = ['a', 'b', 'c', 'd'];
+
+  test('reorderTargetId：插入位置 → sortable 的「占谁的位置」', () => {
+    // b 插到 d 前面：挪完在下标 2，那里原来是 c（往后挪 = 落在它前一个兄弟身上）
+    expect(reorderTargetId(order, 'b', 'd')).toBe('c');
+    // c 插到 a 前面：挪完在下标 0，那里原来是 a（往前挪 = 落在目标身上）
+    expect(reorderTargetId(order, 'c', 'a')).toBe('a');
+    // 末尾
+    expect(reorderTargetId(order, 'a', null)).toBe('d');
+  });
+
+  test('reorderTargetId：换算出来是原位 → 返回它自己', () => {
+    expect(reorderTargetId(order, 'b', 'c')).toBe('b');
+    expect(reorderTargetId(order, 'd', null)).toBe('d');
+    expect(reorderTargetId(['a'], 'a', null)).toBe('a');
+    // 目标不在这个容器里：不动
+    expect(reorderTargetId(order, 'b', 'zzz')).toBe('b');
+  });
+
+  test('containingTile：取包含该点的条目，重叠时取面积最小的', () => {
+    const tile = (id: string, top: number, bottom: number, left: number, right: number) => ({
+      id,
+      rect: rect(top, bottom, left, right),
+    });
+    const tiles = [tile('outer', 0, 300, 0, 300), tile('inner', 0, 40, 0, 300)];
+    expect(containingTile({ x: 10, y: 10 }, tiles)?.id).toBe('inner');
+    expect(containingTile({ x: 10, y: 100 }, tiles)?.id).toBe('outer');
+    expect(containingTile({ x: 10, y: 400 }, tiles)).toBeNull();
+    // 边界算包含
+    expect(containingTile({ x: 300, y: 300 }, tiles)?.id).toBe('outer');
   });
 });

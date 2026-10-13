@@ -6,18 +6,34 @@
 // 落到整棵树上（排到末尾）。
 //
 // 所以分两步：先用 `pointerWithin` 定下**指针所在的容器**（分组本体 → 整棵树），再在该容器
-// 的兄弟条目里按指针位置挑一个。节点列表是会换行的网格（见 `node-grid.ts`），兄弟不再只是
-// 上下排列，两种拖法各有各的挑法：
-//  - 同容器重排（没有占位条，靠 sortable 的 transform 腾位置）：指针压着谁就是谁；停在空隙
-//    或行尾空白时，先在**同一行**里找水平最近的，这一行没有兄弟才按到矩形的距离找最近的。
-//  - 跨容器（目标容器里插占位条）：落点是「插入位置」——按阅读顺序找第一个排在指针之后的
-//    兄弟，插到它前面；一个都没有就退回容器本身（= 追加到末尾）。排在插入位置之前的兄弟不会
-//    被占位条挤动，之后的只会往后挪，所以这条规则不会因为占位条插进来而来回抖。
+// 的兄弟条目里按指针位置挑一个。
+//
+// 拖节点（节点列表是会换行的网格，见 `node-grid.ts`）：落点一律是「插入位置」——按阅读顺序
+// 找第一个排在指针之后的兄弟，插到它前面；一个都没有就是末尾。算的时候**不看被拖节点自己**
+// （也不看占位条，它本来就不是落点）：预览会真的回流（同容器挪被拖节点的 `order`，跨容器插
+// 占位条），排在插入位置之前的兄弟不会被挤动，之后的只会往后挪，所以这条规则不会因为回流
+// 而来回抖。
+//  - 跨容器：直接返回那个兄弟（`resolveDrop` 把「落在节点上」解成「插到它的位置」）；没有
+//    就退回容器本身（= 追加到末尾）。
+//  - 同容器：`resolveDrop` 对同容器用的是 sortable 的「占谁的位置」语义，所以把插入位置换算
+//    成「挪完之后被拖节点所在下标上原来的那个条目」再返回（见 `reorderTargetId`）；换算出来
+//    是它自己就等于没动。
+// 拖分组（整行宽、上下排列，仍用 sortable 的位移预览）：指针压着谁就是谁，空隙归最近的。
+//
+// 键盘拖拽没有指针坐标：`sortableKeyboardCoordinates` 每按一次方向键就把预览卡片的左上角对到
+// 目标条目的左上角，所以取**包含这个角**的条目（比中心距离可靠：整行宽的磁贴中心离它的左上角
+// 有半个容器远）；一个都不包含才退回最近四角。带状态的版本（`create…`）还会在卡片没动时
+// 沿用上一次的结果，占位条挤动兄弟也不会让落点自己跳走。
 // 容器里没有兄弟（空分组 / 空根层）退回容器本身。指针在整棵树之外返回空，视为取消。
 
-import { closestCenter, pointerWithin } from '@dnd-kit/core';
+import { closestCorners, pointerWithin } from '@dnd-kit/core';
 import type { ClientRect, Collision, CollisionDetection, DroppableContainer } from '@dnd-kit/core';
-import { ROOT_CONTAINER_ID, collisionGroupIds, dropZoneId } from './folder-tree-model';
+import {
+  ROOT_CONTAINER_ID,
+  collisionGroupIds,
+  dropZoneId,
+  parseNodeElementId,
+} from './folder-tree-model';
 
 /** 挂在每个可排序条目的 droppable 上：它属于哪个容器（碰撞判定要按容器筛兄弟） */
 export interface SortableItemData {
@@ -49,6 +65,9 @@ const KEYBOARD_ROOT_STRIP_HEIGHT = 56;
  */
 const FULL_ROW_RATIO = 0.75;
 
+/** 键盘拖拽取落点用的探针：预览卡片左上角往里收一点，贴边对齐时的亚像素误差不至于落到外面 */
+const KEYBOARD_PROBE_INSET = 2;
+
 function containerIdOf(container: { data?: { current?: unknown } }): string | null {
   const data = container.data?.current as Partial<SortableItemData> | undefined;
   return typeof data?.containerId === 'string' ? data.containerId : null;
@@ -57,6 +76,13 @@ function containerIdOf(container: { data?: { current?: unknown } }): string | nu
 function bottomStrip(rect: ClientRect): ClientRect {
   const height = Math.min(rect.height, KEYBOARD_ROOT_STRIP_HEIGHT);
   return { ...rect, top: rect.bottom - height, height };
+}
+
+/** 被拖节点所在容器的数据顺序（sortable 挂在 droppable data 上的 `items`）；拿不到返回 null */
+function sortableOrder(active: { data?: { current?: unknown } }): string[] | null {
+  const data = active.data?.current as { sortable?: { items?: unknown } } | undefined;
+  const items = data?.sortable?.items;
+  return Array.isArray(items) ? items.map(String) : null;
 }
 
 function inRowBand(point: CollisionPoint, rect: ClientRect): boolean {
@@ -140,22 +166,58 @@ export function insertionTile(
   return first;
 }
 
+/**
+ * 同容器重排：把「插到 `beforeId` 前面」（null = 末尾）换算成 sortable 语义下该落在谁身上。
+ * `order` 是容器的数据顺序（含被拖节点）。被拖节点挪完之后的下标就是 `beforeId` 在「去掉
+ * 被拖节点的列表」里的下标，而 sortable 的「落在 X 上」= 挪到 X 现在的下标，所以答案是
+ * `order` 里那个下标上的条目；是它自己就等于原地不动。
+ */
+export function reorderTargetId(
+  order: readonly string[],
+  activeId: string,
+  beforeId: string | null
+): string {
+  const others = order.filter((id) => id !== activeId);
+  const insertAt = beforeId === null ? others.length : others.indexOf(beforeId);
+  if (insertAt < 0) return activeId;
+  return order[insertAt] ?? activeId;
+}
+
+/** 包含这个点的条目；嵌套 / 重叠时取面积最小（最具体）的那个 */
+export function containingTile(
+  point: CollisionPoint,
+  tiles: readonly CollisionTile[]
+): CollisionTile | null {
+  let best: CollisionTile | null = null;
+  for (const tile of tiles) {
+    if (rectDistance(point, tile.rect) > 0) continue;
+    const smaller =
+      best === null || tile.rect.width * tile.rect.height < best.rect.width * best.rect.height;
+    if (smaller) best = tile;
+  }
+  return best;
+}
+
 function pickContainers(args: Args, allowed: readonly string[]): DroppableContainer[] {
   const set = new Set(allowed);
   return args.droppableContainers.filter((container) => set.has(String(container.id)));
 }
 
-function toTiles(args: Args, containers: readonly DroppableContainer[]): CollisionTile[] {
+function toTiles(
+  rects: Args['droppableRects'],
+  containers: readonly DroppableContainer[]
+): CollisionTile[] {
   const tiles: CollisionTile[] = [];
   for (const container of containers) {
-    const rect = args.droppableRects.get(container.id);
+    const rect = rects.get(container.id);
     if (rect) tiles.push({ id: String(container.id), rect });
   }
   return tiles;
 }
 
-function collisionOf(tile: CollisionTile, containers: readonly DroppableContainer[]): Collision[] {
-  const droppableContainer = containers.find((container) => String(container.id) === tile.id);
+function collisionFor(id: string | null, containers: readonly DroppableContainer[]): Collision[] {
+  const droppableContainer =
+    id === null ? undefined : containers.find((container) => String(container.id) === id);
   return droppableContainer
     ? [{ id: droppableContainer.id, data: { droppableContainer, value: 0 } }]
     : [];
@@ -163,7 +225,6 @@ function collisionOf(tile: CollisionTile, containers: readonly DroppableContaine
 
 type Groups = ReturnType<typeof collisionGroupIds>;
 
-/** 键盘拖拽没有指针坐标（`pointerWithin` 恒为空），只能退回最近中心 */
 function keyboardCollisions(args: Args, groups: Groups): Collision[] {
   const rootZone = dropZoneId(ROOT_CONTAINER_ID);
   const candidates = pickContainers(args, [
@@ -171,25 +232,32 @@ function keyboardCollisions(args: Args, groups: Groups): Collision[] {
     ...groups.items,
     String(args.active.id),
   ]);
+  const probe = {
+    x: args.collisionRect.left + KEYBOARD_PROBE_INSET,
+    y: args.collisionRect.top + KEYBOARD_PROBE_INSET,
+  };
+  const hit = containingTile(probe, toTiles(args.droppableRects, candidates));
+  if (hit) return collisionFor(hit.id, candidates);
+
   const activeContainerId = containerIdOf(args.active);
   const rootRect = args.droppableRects.get(rootZone);
   // 节点在分组里时把根落点区也放进候选：根层没有兄弟节点的话，候选里根本没有任何指向根
-  // 容器的落点，键盘用户就永远出不了分组（「移出分组」按钮已经删掉了）。
-  if (
-    activeContainerId !== null &&
-    activeContainerId !== ROOT_CONTAINER_ID &&
-    groups.root.length > 0 &&
-    rootRect
-  ) {
-    const rects = new Map(args.droppableRects);
-    rects.set(rootZone, bottomStrip(rootRect));
-    return closestCenter({
-      ...args,
-      droppableRects: rects,
-      droppableContainers: [...candidates, ...pickContainers(args, groups.root)],
-    });
+  // 容器的落点，键盘用户就永远出不了分组（「移出分组」按钮已经删掉了）。整棵树的矩形太大，
+  // 只认树底部的一条窄带，而且排在真正的条目之后。
+  const inFolder = activeContainerId !== null && activeContainerId !== ROOT_CONTAINER_ID;
+  if (!rootRect || !inFolder || groups.root.length === 0) {
+    return closestCorners({ ...args, droppableContainers: candidates });
   }
-  return closestCenter({ ...args, droppableContainers: candidates });
+  const roots = pickContainers(args, groups.root);
+  const strip = bottomStrip(rootRect);
+  if (rectDistance(probe, strip) === 0) return collisionFor(rootZone, roots);
+  const rects = new Map(args.droppableRects);
+  rects.set(rootZone, strip);
+  return closestCorners({
+    ...args,
+    droppableRects: rects,
+    droppableContainers: [...candidates, ...roots],
+  });
 }
 
 /** 被拖元素来自别的容器（目标容器里会插占位条）；拖分组、或量不到来源容器时不算 */
@@ -198,12 +266,22 @@ function isCrossing(args: Args, containerId: string): boolean {
   return activeContainerId !== null && activeContainerId !== containerId;
 }
 
-function chooseTile(
+/** 指针在 `flow.containerId` 这个容器里时该落在哪个兄弟上；null = 落到容器本身 */
+function pointerTargetId(
+  args: Args,
   point: CollisionPoint,
   tiles: readonly CollisionTile[],
-  mode: { crossing: boolean; flowWidth?: number }
-): CollisionTile | null {
-  return mode.crossing ? insertionTile(point, tiles, mode.flowWidth) : nearestTile(point, tiles);
+  flow: { containerId: string; width?: number }
+): string | null {
+  const activeId = String(args.active.id);
+  if (isCrossing(args, flow.containerId)) {
+    return insertionTile(point, tiles, flow.width)?.id ?? null;
+  }
+  const order = parseNodeElementId(activeId) === null ? null : sortableOrder(args.active);
+  // 拖分组，或拿不到数据顺序：指针压着谁就是谁
+  if (!order) return nearestTile(point, tiles)?.id ?? null;
+  const others = tiles.filter((tile) => tile.id !== activeId);
+  return reorderTargetId(order, activeId, insertionTile(point, others, flow.width)?.id ?? null);
 }
 
 function pointerCollisions(args: Args, groups: Groups, point: CollisionPoint): Collision[] {
@@ -229,23 +307,53 @@ function pointerCollisions(args: Args, groups: Groups, point: CollisionPoint): C
   if (!containerHit) return [];
   const containerId = containerHits.length > 0 ? String(containerHit.id) : ROOT_CONTAINER_ID;
 
-  // 被拖元素自己（原位变暗的那个）也要参与（键盘分支同理）：指针回到原来的位置时选中自己，
-  // sortable 才会把已经退避的兄弟归位——否则最近的永远是邻居，邻居一直占着原位不回来。
+  // 被拖元素自己（原位变暗的那个）也是候选：换算出来「原地不动」时要能选中它自己
   const siblings = pickContainers(args, [...groups.items, String(args.active.id)]).filter(
     (container) => containerIdOf(container) === containerId
   );
-  const flowWidth = args.droppableRects.get(containerHit.id)?.width;
-  const target = chooseTile(point, toTiles(args, siblings), {
-    crossing: isCrossing(args, containerId),
-    flowWidth,
+  const targetId = pointerTargetId(args, point, toTiles(args.droppableRects, siblings), {
+    containerId,
+    width: args.droppableRects.get(containerHit.id)?.width,
   });
-  return target ? collisionOf(target, siblings) : fallback;
+  const hits = collisionFor(targetId, siblings);
+  return hits.length > 0 ? hits : fallback;
 }
 
-export const deviceFolderCollisionDetection: CollisionDetection = (args) => {
+function detect(args: Args): Collision[] {
   const ids = args.droppableContainers.map((container) => String(container.id));
   const groups = collisionGroupIds(String(args.active.id), ids);
   return args.pointerCoordinates
     ? pointerCollisions(args, groups, args.pointerCoordinates)
     : keyboardCollisions(args, groups);
-};
+}
+
+/** 无状态的判定：同样的输入永远给同样的结果（单测用它） */
+export const deviceFolderCollisionDetection: CollisionDetection = detect;
+
+/** 键盘落点的锁：预览卡片停在哪（取整到像素）+ 当时选中的落点 */
+export function keyboardLatchKey(activeId: string, rect: { left: number; top: number }): string {
+  return `${activeId}@${Math.round(rect.left)},${Math.round(rect.top)}`;
+}
+
+/**
+ * 给 `DndContext` 用的判定（每棵树建一个）。键盘拖拽时落点只在预览卡片**真的挪了位置**（按了
+ * 方向键 / 页面滚动）时才重新算：跨容器的占位条会把目标兄弟挤走，卡片底下换了人，照几何
+ * 重算会让落点自己跳到别处；卡片没动就沿用上一次的落点。指针拖拽不上锁（那边的规则本身
+ * 不受回流影响）。
+ */
+export function createDeviceFolderCollisionDetection(): CollisionDetection {
+  let latch: { key: string; id: string } | null = null;
+  return (args) => {
+    if (args.pointerCoordinates) {
+      latch = null;
+      return detect(args);
+    }
+    const key = keyboardLatchKey(String(args.active.id), args.collisionRect);
+    const held = latch?.key === key ? collisionFor(latch.id, args.droppableContainers) : [];
+    if (held.length > 0) return held;
+    const hits = detect(args);
+    const first = hits[0];
+    latch = first ? { key, id: String(first.id) } : null;
+    return hits;
+  };
+}

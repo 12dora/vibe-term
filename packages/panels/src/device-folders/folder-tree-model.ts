@@ -259,6 +259,49 @@ export function containerItemIds(
   return items;
 }
 
+/** 同容器重排的预览：被拖节点在自己的容器里要挪到第几位（`index` 是挪完之后的下标） */
+export interface DeviceFolderReorderPreview {
+  containerId: string;
+  /** 被拖节点的元素 id */
+  elementId: string;
+  index: number;
+}
+
+/**
+ * 同容器重排时被拖节点该显示在哪一位；跨容器（那是占位条的事）与无效落点返回 null。
+ * 节点本身不离开容器，宿主只改它的视觉顺序（CSS `order`），兄弟靠真实的网格回流让位——
+ * 预览出来的排布就是松手之后的排布，宽窄混排时也不会走样。
+ */
+export function previewReorder(
+  drop: DeviceFolderDrop | null,
+  containers: Map<string, DeviceFolderContainer>
+): DeviceFolderReorderPreview | null {
+  if (!drop || drop.kind !== 'node' || drop.index === null) return null;
+  const containerId = folderContainerId(drop.targetFolderId);
+  const elementId = nodeElementId(drop.nodeId);
+  const from = locateNode(containers, elementId);
+  if (from?.containerId !== containerId) return null;
+  return { containerId, elementId, index: drop.index };
+}
+
+/**
+ * 拖拽过程中一个容器的**视觉顺序**：同容器重排把被拖节点挪到落点；跨容器在落点插占位条；
+ * 与这次拖拽无关的容器原样返回。DOM 顺序始终是数据顺序，这里给的只是 `order`。
+ */
+export function previewItemOrder(
+  containerId: string,
+  nodeIds: readonly string[],
+  placeholder: DeviceFolderPlaceholder | null,
+  reorder: DeviceFolderReorderPreview | null
+): string[] {
+  if (!reorder || reorder.containerId !== containerId || !nodeIds.includes(reorder.elementId)) {
+    return containerItemIds(containerId, nodeIds, placeholder);
+  }
+  const items = nodeIds.filter((id) => id !== reorder.elementId);
+  items.splice(Math.max(0, Math.min(reorder.index, items.length)), 0, reorder.elementId);
+  return items;
+}
+
 /** 碰撞候选按用途分档，判定顺序见 `collision.ts` */
 export interface DeviceFolderCollisionGroups {
   /** 放置区：分组头、空分组内容区。最先判，避免被它内部的兄弟元素抢走 */

@@ -3,19 +3,29 @@
 // 版式规则见 `node-grid.ts`：列数跟容器宽度走，磁贴跨度 = min(设备数, 列数)，顺序不重排。
 // 网格项默认 `align-items: stretch`，同一行的磁贴外壳等高——碰撞判定（`collision.ts`）靠
 // 这一点认「同一行」，不要改成 `items-start`。
+//
+// 拖拽预览 = 松手之后的真实排布：DOM 顺序始终是数据顺序（被拖节点不重挂、焦点不丢），预览只改
+// 条目的 CSS `order`——同容器重排把被拖节点（变暗的那个）挪到落点，跨容器在落点摆占位条，
+// 兄弟由网格真的回流让位，宽窄混排时也不会走样；位置变化由 `flip.ts` 补过渡。所以指针拖拽时
+// sortable 不加任何位移（`noDisplacement`）。键盘拖拽例外：仍用 `rectSortingStrategy` 的位移
+// 预览、不改 `order`（见 `tree-context.ts` 的 `reflow`）。
 
 import { useDndContext } from '@dnd-kit/core';
-import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
+import { SortableContext, type SortingStrategy, rectSortingStrategy } from '@dnd-kit/sortable';
 import { cn } from '@vibeterm/ui';
+import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DeviceFolderNodeShell } from './draggable-item';
+import { useFlipReflow } from './flip';
 import { FolderDropArea } from './folder-section';
 import {
+  type DeviceFolderContainer,
   PLACEHOLDER_ITEM_ID,
   bodyDropZoneId,
   containerFolderId,
-  containerItemIds,
+  nodeElementId,
   parseNodeElementId,
+  previewItemOrder,
 } from './folder-tree-model';
 import {
   NODE_GRID_CLASS,
@@ -33,14 +43,32 @@ export function placeholderMinHeight(activeHeight: number | null | undefined): n
   return Math.max(activeHeight ?? 0, PLACEHOLDER_MIN_HEIGHT);
 }
 
+/** 兄弟一律不加位移：让位靠真实的网格回流 */
+const noDisplacement: SortingStrategy = () => null;
+
+/**
+ * 预览期间每个条目的 CSS `order`（下标即视觉位置）；视觉顺序与 DOM 顺序一致时返回 null
+ * （不在预览 / 预览落回原位），条目上就不留 `order`。
+ */
+export function previewOrderMap(
+  domOrder: readonly string[],
+  visualOrder: readonly string[]
+): Map<string, number> | null {
+  const same =
+    domOrder.length === visualOrder.length && domOrder.every((id, i) => id === visualOrder[i]);
+  return same ? null : new Map(visualOrder.map((id, index) => [id, index]));
+}
+
 function NodeItem({
   nodeId,
   containerId,
   folderId,
+  order,
 }: {
   nodeId: string;
   containerId: string;
   folderId: string | null;
+  order: number | undefined;
 }) {
   const { renderNode, nodeDraggable, dragDisabled, placedNodeIds, nodeSpan } = useTree();
   const implicit = !placedNodeIds.has(nodeId);
@@ -52,7 +80,9 @@ function NodeItem({
       <div
         data-testid={`device-folder-item-node:${nodeId}`}
         data-span={size}
+        data-flip-id={nodeElementId(nodeId)}
         className={cn('min-w-0', NODE_TILE_SPAN_CLASS[size])}
+        style={{ order }}
       >
         {content}
       </div>
@@ -64,6 +94,7 @@ function NodeItem({
       containerId={containerId}
       disabled={dragDisabled}
       span={size}
+      order={order}
       className={NODE_TILE_SPAN_CLASS[size]}
     >
       {(dragControls) => renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls })}
@@ -77,21 +108,31 @@ function NodeItem({
  * 兄弟顶开。它不是 droppable，不参与落点判定；被拖的节点自始至终留在原容器里（只是变暗），
  * 免得它的 React 子树（宿主的 runtime scope / QueryClientProvider / 面板）在拖拽途中重挂。
  */
-function DropPlaceholder({ folderId }: { folderId: string | null }) {
+function DropPlaceholder({ folderId, order }: { folderId: string | null; order: number }) {
   const { active, activeNodeRect } = useDndContext();
   const { nodeSpan } = useTree();
   const nodeId = active ? parseNodeElementId(String(active.id)) : null;
-  const size: NodeTileSize = nodeId ? nodeSpan(nodeId, folderId) : 1;
+  // 松手之后到布局落定之间占位条还在（见 `use-tree-drag.ts`），那时已经没有 active：
+  // 沿用拖拽中最后一次的跨度与高度，不让它在最后几帧缩成兜底尺寸。
+  const shape = useRef<{ size: NodeTileSize; minHeight: number } | null>(null);
+  if (nodeId) {
+    shape.current = {
+      size: nodeSpan(nodeId, folderId),
+      minHeight: placeholderMinHeight(activeNodeRect?.height),
+    };
+  }
+  const size = shape.current?.size ?? 1;
   return (
     <div
       aria-hidden="true"
       data-testid="device-folder-drop-placeholder"
       data-span={size}
+      data-flip-id={PLACEHOLDER_ITEM_ID}
       className={cn(
         'min-w-0 rounded-xl border-2 border-dashed border-ring/50 bg-accent/30',
         NODE_TILE_SPAN_CLASS[size]
       )}
-      style={{ minHeight: placeholderMinHeight(activeNodeRect?.height) }}
+      style={{ order, minHeight: shape.current?.minHeight ?? placeholderMinHeight(null) }}
     />
   );
 }
@@ -119,20 +160,27 @@ export function NodeList({ containerId }: { containerId: string }) {
     );
   }
 
-  const items = containerItemIds(containerId, container.nodeIds, tree.placeholder);
+  return <NodeGrid container={container} />;
+}
+
+function NodeGrid({ container }: { container: DeviceFolderContainer }) {
+  const tree = useTree();
+  const { containerId, folderId, nodeIds } = container;
+  const visual = previewItemOrder(containerId, nodeIds, tree.placeholder, tree.reorder);
+  const orders = previewOrderMap(nodeIds, visual);
+  const placeholderOrder = orders?.get(PLACEHOLDER_ITEM_ID);
+  const gridRef = useRef<HTMLDivElement>(null);
+  useFlipReflow(gridRef, visual.join('|'), tree.flipTracking);
 
   return (
     <SortableContext
-      items={container.nodeIds}
-      strategy={rectSortingStrategy}
+      items={nodeIds}
+      strategy={tree.reflow ? noDisplacement : rectSortingStrategy}
       disabled={tree.dragDisabled}
     >
       <div data-testid="devices-node-grid" className={NODE_GRID_CONTAINER_CLASS}>
-        <div className={NODE_GRID_CLASS}>
-          {items.map((elementId) => {
-            if (elementId === PLACEHOLDER_ITEM_ID) {
-              return <DropPlaceholder key={elementId} folderId={folderId} />;
-            }
+        <div ref={gridRef} className={NODE_GRID_CLASS}>
+          {nodeIds.map((elementId) => {
             const nodeId = parseNodeElementId(elementId);
             if (!nodeId) return null;
             return (
@@ -141,9 +189,14 @@ export function NodeList({ containerId }: { containerId: string }) {
                 nodeId={nodeId}
                 containerId={containerId}
                 folderId={folderId}
+                order={orders?.get(elementId)}
               />
             );
           })}
+          {/* 占位条排在 DOM 末尾，位置由 `order` 决定：落点换来换去也是同一个元素，回流有过渡 */}
+          {placeholderOrder !== undefined && (
+            <DropPlaceholder folderId={folderId} order={placeholderOrder} />
+          )}
         </div>
       </div>
     </SortableContext>
