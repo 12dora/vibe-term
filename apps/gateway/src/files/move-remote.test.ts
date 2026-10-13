@@ -378,8 +378,15 @@ describe('script semantics (executed with sh -s)', () => {
   });
 
   test('a failed final replace puts the source back and keeps the old symlink', async () => {
-    // rm 失败 = 换链接这一步没成功；此时源已被挪到临时名，必须原样放回
-    viaLocalSh((script) => script.replace('e=$(rm -f -- "$dp" 2>&1 </dev/null)', 'e=$(false)'));
+    // 只有非 GNU 分支才分「暂存 → 删旧链接 → 落位」三步：rm 失败时源已被挪到临时名，必须原样放回
+    viaLocalSh((script) =>
+      script
+        .replace(
+          'if mv --help </dev/null 2>&1 | grep -q -- --no-target-directory; then T=-T; fi',
+          'T='
+        )
+        .replace('e=$(rm -f -- "$dp" 2>&1 </dev/null)', 'e=$(false)')
+    );
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'new');
     mkdirSync(join(dir, 'target'));

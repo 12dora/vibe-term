@@ -167,13 +167,53 @@ describe('createArchiveStream', () => {
   });
 });
 
-describe('idle timeout covers the whole stream lifetime', () => {
-  test('a consumer that stops reading (back-pressure) trips the idle kill', async () => {
+describe('idle (waiting for tar) and stall (waiting for the consumer) timers', () => {
+  test('a consumer that pauses longer than idleMs but shorter than stallMs is not killed', async () => {
+    const stub = stubProcess();
+    install(stub);
+    const onClose = mock(() => {});
+    const stream = createArchiveStream({
+      argv: ['tar'],
+      maxBytes: 1024,
+      idleMs: 30,
+      stallMs: 600,
+      onClose,
+    });
+    const reader = stream.getReader();
+    const decoder = new TextDecoder();
+
+    stub.push('a');
+    stub.push('b');
+    expect(decoder.decode((await reader.read()).value)).toBe('a');
+    await Bun.sleep(120);
+    expect(stub.kill).not.toHaveBeenCalled();
+
+    stub.push('c');
+    stub.end(0);
+    let rest = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      rest += decoder.decode(value);
+    }
+
+    expect(rest).toBe('bc');
+    expect(stub.kill).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('a consumer that stops longer than stallMs is killed with archive_stall_timeout', async () => {
     silenceWarn();
     const stub = stubProcess();
     install(stub);
     const onClose = mock(() => {});
-    const stream = createArchiveStream({ argv: ['tar'], maxBytes: 1024, idleMs: 40, onClose });
+    const stream = createArchiveStream({
+      argv: ['tar'],
+      maxBytes: 1024,
+      idleMs: 5000,
+      stallMs: 40,
+      onClose,
+    });
     const reader = stream.getReader();
 
     stub.push('a');
@@ -183,7 +223,29 @@ describe('idle timeout covers the whole stream lifetime', () => {
 
     expect(stub.kill).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+    await expect(reader.read()).rejects.toThrow('archive_stall_timeout');
+  });
+
+  test('upstream silence while a pull is pending is killed with archive_idle_timeout', async () => {
+    silenceWarn();
+    const stub = stubProcess();
+    install(stub);
+    const onClose = mock(() => {});
+    const stream = createArchiveStream({
+      argv: ['tar'],
+      maxBytes: 1024,
+      idleMs: 30,
+      stallMs: 5000,
+      onClose,
+    });
+    const reader = stream.getReader();
+
+    stub.push('a');
+    expect((await reader.read()).done).toBe(false);
+
     await expect(reader.read()).rejects.toThrow('archive_idle_timeout');
+    expect(stub.kill).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   test('a steady consumer never trips the timer even when the total exceeds idleMs', async () => {
@@ -208,7 +270,13 @@ describe('idle timeout covers the whole stream lifetime', () => {
     const stub = stubProcess();
     install(stub);
     const onClose = mock(() => {});
-    const stream = createArchiveStream({ argv: ['tar'], maxBytes: 1024, idleMs: 30, onClose });
+    const stream = createArchiveStream({
+      argv: ['tar'],
+      maxBytes: 1024,
+      idleMs: 30,
+      stallMs: 30,
+      onClose,
+    });
     const reader = stream.getReader();
 
     stub.push('x');

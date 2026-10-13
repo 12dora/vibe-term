@@ -50,10 +50,10 @@ export const fileMoveRemoteIo: { exec: typeof execRemoteScript; hooks: DeviceRsy
 
 // 约定：脚本里所有可能读 stdin 的命令都带 `</dev/null`，否则会吃掉 `sh -s` 还没读到的脚本正文。
 //
-// 不覆盖语义：`mv -n` 不替换已存在的目标，结果以文件系统为准（源还在 = 没移动成功），不看退出码
-// （新版 GNU 在跳过时返回非零，旧版返回零）。纯 POSIX 工具无法彻底消除的残余风险：目标在检查与
-// mv 之间被换成「指向目录的符号链接」时，mv 会把源移进那个目录；`mv -T` 只有 GNU 有，所以
-// 探测到 GNU 才加 `-T`（变量 T），BSD / busybox 上保留这个极窄的窗口。
+// 不覆盖语义：`mv -n` 不替换已存在的目标，结果由「源是否还在」加退出码与 stderr 共同判定
+// （新版 GNU 在跳过时返回非零并提示 not replacing，旧版 GNU / BSD 静默返回零）。纯 POSIX 工具
+// 无法彻底消除的残余风险：目标在检查与 mv 之间被换成「指向目录的符号链接」时，mv 会把源移进那个
+// 目录；`mv -T` 只有 GNU 有，所以探测到 GNU 才加 `-T`（变量 T），BSD / busybox 上保留这个极窄的窗口。
 const SCRIPT_FUNCTIONS = [
   SH_PHYS_FN,
   SH_INSIDE_FN,
@@ -64,31 +64,44 @@ const SCRIPT_FUNCTIONS = [
   '*ermission*|*not\\ permitted*) echo permission_denied;;',
   '*) echo unknown;;',
   'esac; }',
-  // mvn <dest>：不覆盖地把 ./$s 移到 dest，结果放进 st
+  // mvn <dest> [1]：不覆盖地把 ./$s 移到 dest，结果放进 st。
+  // 第二个参数为 1 表示调用方在本项内已确认 dest 原先不存在：此时 mv 失败（如跨文件系统复制到一半
+  // ENOSPC）留下的半成品才可以删；stderr 为空（静默跳过）或提示源删不掉（源可能只剩一半，
+  // 目标是唯一完整的副本）时一律不删
   'mvn() {',
   'e=$(mv -n $T -- "$s" "$1" 2>&1 </dev/null); rc=$?',
   'if gone "$s"; then st=ok; return 0; fi',
+  'if [ "$rc" -eq 0 ]; then st=already_exists; return 1; fi',
   'case "$e" in',
+  '*not\\ replacing*|*File\\ exists*) st=already_exists; return 1;;',
   '*ermission*|*not\\ permitted*) st=permission_denied;;',
-  '*) if [ "$rc" -ne 0 ] && gone "$1"; then st=unknown; else st=already_exists; fi;;',
+  '*) st=unknown;;',
   'esac',
+  'case "$e" in *cannot\\ remove*) return 1;; esac',
+  'if [ "$2" = 1 ] && [ -n "$e" ]; then rm -rf -- "$1" 2>/dev/null </dev/null; fi',
   'return 1',
   '}',
-  // mvo：覆盖已存在的非目录目标，结果放进 st
+  // mvo：覆盖已存在的非目录目标，结果放进 st。
+  // GNU（T 非空）：一次 `mv -f -T` 即 rename(2)，原子替换目标目录项（符号链接也一样），
+  // 不暂存、不预删，失败时旧目标原样保留。
+  // 非 GNU 且目标是符号链接：没有 -T，直接 mv 会把源移进链接指向的目录，只能先把源挪到目标目录内的
+  // 临时名（失败则什么都没丢），再 rm 旧链接 + mv 临时项；rm 之后到 mv 成功之前有一个无法避免的窗口，
+  // 此时 mv 失败就把临时项放回源位置，但旧链接已经没了
   'mvo() {',
-  'if [ ! -L "$dp" ]; then',
+  'if [ -n "$T" ] || [ ! -L "$dp" ]; then',
   'if e=$(mv -f $T -- "$s" "$dp" 2>&1 </dev/null); then st=ok; else st=$(fe "$e"); fi',
   'return 0',
   'fi',
-  // 目标是符号链接：先把源挪到目标目录内的临时名（失败则什么都没丢），再换掉链接；
-  // 最后一步失败就把临时项放回源位置，旧链接不会白白消失
   'tp="${ddir%/}/.vtmv.$$.$i"',
-  'mvn "$tp" || return 1',
-  'if e=$(rm -f -- "$dp" 2>&1 </dev/null) && e=$(mv -f $T -- "$tp" "$dp" 2>&1 </dev/null); then',
+  'gone "$tp" || { st=unknown; return 1; }',
+  'mvn "$tp" 1 || return 1',
+  'if e=$(rm -f -- "$dp" 2>&1 </dev/null) && e=$(mv -f -- "$tp" "$dp" 2>&1 </dev/null); then',
   'st=ok; return 0',
   'fi',
   'st=$(fe "$e")',
-  'mv -n -- "$tp" "$s" 2>/dev/null </dev/null; gone "$tp" || st=unknown',
+  // 源位置已被占用（可能是指向目录的符号链接）就不动临时项，宁可留下数据也不当容器用
+  'if gone "$s"; then mv -n $T -- "$tp" "$s" 2>/dev/null </dev/null; fi',
+  'gone "$tp" || st=unknown',
   'return 1',
   '}',
   'vt() {',
@@ -107,7 +120,7 @@ const SCRIPT_FUNCTIONS = [
   'case "${ddir%/}/" in "${pr%/}/$n"/*) echo "VTOP $i invalid"; return 0;; esac',
   'fi',
   'st=unknown',
-  'if gone "$dp"; then mvn "$dp"',
+  'if gone "$dp"; then mvn "$dp" 1',
   'elif [ "$ow" = 1 ] && nodir "$s" && nodir "$dp"; then mvo',
   'else st=already_exists; fi',
   'echo "VTOP $i $st"',

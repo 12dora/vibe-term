@@ -160,7 +160,11 @@ function existsNoFollow(path: string): boolean {
   }
 }
 
-/** 普通文件：link 对已存在的目标原子地报 EEXIST；返回 false 表示需要退回通用路径。 */
+/**
+ * 普通文件：link 对已存在的目标原子地报 EEXIST；返回 false 表示需要退回通用路径。
+ * link 成功后删源失败时不回滚：此刻 dest 可能已被别的进程换成它们的文件，撤销会误删别人的数据，
+ * 所以保留 dest、把本项报为失败（数据同时存在于两处，绝不删除任何东西）。
+ */
 function linkCommit(src: string, dest: string): boolean {
   try {
     fileMoveIo.link(src, dest);
@@ -168,13 +172,7 @@ function linkCommit(src: string, dest: string): boolean {
     if (LINK_FALLBACK_CODES.has(errnoOf(err))) return false;
     throw err;
   }
-  try {
-    fileMoveIo.unlink(src);
-  } catch (err) {
-    // dest 是刚建的硬链接，撤销它不会碰到别人的数据
-    attempt(() => fileMoveIo.unlink(dest));
-    throw err;
-  }
+  fileMoveIo.unlink(src);
   return true;
 }
 
@@ -189,7 +187,12 @@ function dirCommit(src: string, dest: string): void {
   }
 }
 
-/** 符号链接等无法原子占位的类型：只能在 rename 前再查一次，仍有极窄的竞态窗口。 */
+/**
+ * 符号链接、特殊文件以及不支持硬链接的文件系统：无法原子占位，只能在 rename 前再查一次，
+ * 检查与 rename 之间仍有残余窗口（目标恰在此刻被建出来会被 rename 覆盖）。Node / Bun 没有暴露
+ * `renameat2(RENAME_NOREPLACE)`，所以这个窗口无法在这里消除；它只对并发的外部写入者有意义，
+ * 本进程内同一设备的操作已被设备队列串行化。
+ */
 function guardedRename(src: string, dest: string): void {
   if (existsNoFollow(dest)) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
   fileMoveIo.rename(src, dest);

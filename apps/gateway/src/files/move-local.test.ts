@@ -469,11 +469,30 @@ describe('moveLocal no-replace on one file system', () => {
     expect(existsSync(join(dir, 'f'))).toBe(false);
   });
 
-  test('a failed unlink after linking removes the new link and reports the error', async () => {
+  test('a failed unlink after linking keeps the new link and reports the error', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+    const unlink = spyOn(fileMoveIo, 'unlink').mockImplementation(() => {
+      throw errno('EACCES');
+    });
+    spies.push(unlink);
+
+    const outcomes = await run(batch(dir, [['f']]));
+
+    expect(outcomes.map(code)).toEqual(['permission_denied']);
+    expect(unlink).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('data');
+  });
+
+  test('a destination swapped in before the failed unlink is never deleted', async () => {
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'data');
     spies.push(
-      spyOn(fileMoveIo, 'unlink').mockImplementationOnce(() => {
+      spyOn(fileMoveIo, 'unlink').mockImplementation(() => {
+        // 别的进程在 link 与 unlink 之间把 dest 换成了它们的文件
+        rmSync(join(dir, 'dest', 'f'));
+        writeFileSync(join(dir, 'dest', 'f'), 'theirs');
         throw errno('EACCES');
       })
     );
@@ -481,7 +500,7 @@ describe('moveLocal no-replace on one file system', () => {
     const outcomes = await run(batch(dir, [['f']]));
 
     expect(outcomes.map(code)).toEqual(['permission_denied']);
-    expect(readdirSync(join(dir, 'dest'))).toEqual([]);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('theirs');
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('data');
   });
 });

@@ -9,7 +9,6 @@ import {
 import { config } from '../config';
 import { getDeviceById } from '../db';
 import {
-  ARCHIVE_IDLE_TIMEOUT_MS,
   type ArchiveLimits,
   createArchiveStream,
   createArchiveStreamFromProcess,
@@ -197,7 +196,6 @@ async function handlePrepare(req: Request): Promise<Response> {
 
 function streamLimits(onClose?: () => void): ArchiveLimits {
   return {
-    idleMs: ARCHIVE_IDLE_TIMEOUT_MS,
     maxBytes: sessionMaxBytes(config.transferMaxBytes),
     onClose,
   };
@@ -205,12 +203,26 @@ function streamLimits(onClose?: () => void): ArchiveLimits {
 
 type ArchiveBody = FileOpResult<ReadableStream<Uint8Array>>;
 
-/** 下载时再校验一遍：票据存活期间文件可能已被删除或被换成指向根外的链接。 */
-function openLocalArchive(device: Device, rootPath: string, ticket: ArchiveTicket): ArchiveBody {
+/**
+ * 下载时按「当前」根路径重新校验每个条目（词法；本机还会核对 realpath）：票据存活期间根可能
+ * 被改了路径，文件也可能被删除或换成指向根外的链接。返回值表示条目是否就是根本身。
+ */
+function revalidateTicket(
+  device: Device,
+  rootPath: string,
+  ticket: ArchiveTicket
+): FileOpResult<boolean> {
+  const full: string[] = [];
   for (const name of ticket.names) {
     const norm = checkAndNormalize(device, rootPath, posix.join(ticket.parentDir, name));
     if (!norm.ok) return fail(norm.code);
+    full.push(norm.path);
   }
+  // 根本身的父目录合法地落在根外，只有「唯一条目恰好是当前根」才允许免去物理父目录核对
+  return ok(full.length === 1 && full[0] === normalizedRoot(rootPath));
+}
+
+function openLocalArchive(ticket: ArchiveTicket): ArchiveBody {
   try {
     const argv = tarArchiveArgs(ticket.parentDir, ticket.names);
     return ok(createArchiveStream({ argv, ...streamLimits() }));
@@ -229,12 +241,16 @@ function dieWith(code: number, reason: string): string {
 
 /**
  * 路径只做过词法检查，符号链接可能把父目录带出根：在启动 tar 的同一次远端执行里比对物理路径，
- * tar 直接在核对过的工作目录里跑。父目录在根之外时条目就是根本身，无需核对。
+ * tar 直接在核对过的工作目录里跑。条目就是根本身时父目录在根之外，无需核对。
  */
-function buildRemoteTarScript(rootPath: string, ticket: ArchiveTicket): string {
+function buildRemoteTarScript(
+  rootPath: string,
+  ticket: ArchiveTicket,
+  rootItself: boolean
+): string {
   const q = quoteShellArg;
   const lines: string[] = [];
-  if (isInside(rootPath, ticket.parentDir)) {
+  if (!rootItself) {
     lines.push(
       SH_PHYS_FN,
       SH_INSIDE_FN,
@@ -271,12 +287,13 @@ async function remoteSpec(device: Device): Promise<FileOpResult<RsyncDeviceSpec>
 async function openRemoteArchive(
   device: Device,
   rootPath: string,
-  ticket: ArchiveTicket
+  ticket: ArchiveTicket,
+  rootItself: boolean
 ): Promise<ArchiveBody> {
   const spec = await remoteSpec(device);
   if (!spec.ok) return spec;
   try {
-    const proc = spawnRemoteScript(spec.data, buildRemoteTarScript(rootPath, ticket));
+    const proc = spawnRemoteScript(spec.data, buildRemoteTarScript(rootPath, ticket, rootItself));
     if (!proc) {
       spec.data.cleanup();
       return fail('unknown');
@@ -315,6 +332,9 @@ async function handleArchiveDownload(req: Request, id: string): Promise<Response
   const device = getDeviceById(resolved.root.deviceId);
   if (!device) return codeError('device_not_found');
 
+  const valid = revalidateTicket(device, resolved.root.path, ticket);
+  if (!valid.ok) return codeError(valid.code, valid.detail);
+
   // 先建响应头：构造失败时不能留下已启动的进程
   let headers: Record<string, string>;
   try {
@@ -324,8 +344,8 @@ async function handleArchiveDownload(req: Request, id: string): Promise<Response
   }
   const body =
     device.type === 'local'
-      ? openLocalArchive(device, resolved.root.path, ticket)
-      : await openRemoteArchive(device, resolved.root.path, ticket);
+      ? openLocalArchive(ticket)
+      : await openRemoteArchive(device, resolved.root.path, ticket, valid.data);
   if (!body.ok) return codeError(body.code, body.detail);
   return new Response(body.data, { status: 200, headers });
 }

@@ -1,8 +1,10 @@
 import { errorMessage } from '@vibeterm/shared';
 import { logAt } from '../log/level';
 
-/** 超过这么久没有任何输出就判定打包卡死。 */
+/** 正在等上游输出（有 pull 挂起）时，超过这么久没有任何数据就判定打包卡死。 */
 export const ARCHIVE_IDLE_TIMEOUT_MS = 120_000;
+/** 没有 pull 挂起（等下游来取）时，超过这么久没人取数据就判定客户端已断流。 */
+export const ARCHIVE_STALL_TIMEOUT_MS = 15 * 60_000;
 const STDERR_TAIL_CHARS = 2048;
 
 export interface ArchiveProcess {
@@ -42,8 +44,10 @@ export function tarArchiveArgs(parentDir: string, names: readonly string[]): str
 }
 
 export interface ArchiveLimits {
-  /** 流整个生命周期内，多久没有向下游交付新数据就终止，默认 `ARCHIVE_IDLE_TIMEOUT_MS`。 */
+  /** 仅在有 pull 挂起（等 tar 出数据）时计时，默认 `ARCHIVE_IDLE_TIMEOUT_MS`。 */
   idleMs?: number;
+  /** 仅在没有 pull 挂起（等客户端来取）时计时，默认 `ARCHIVE_STALL_TIMEOUT_MS`。 */
+  stallMs?: number;
   /** 累计输出字节上限，超过即终止。 */
   maxBytes: number;
   /** 流结束（正常 / 出错 / 取消）时恰好调用一次，用来释放 ssh spec。 */
@@ -58,6 +62,8 @@ export interface ArchiveStreamOptions extends ArchiveLimits {
 class ArchiveRun {
   private finished = false;
   private total = 0;
+  // 两种互斥的等待各用一个计时器：等上游（idle）与等下游（stall）。客户端慢但持续在读，
+  // 只会反复进入 stall 并被下一次 pull 解除，不会误杀；tar 真的不出数据时 idle 到点即杀。
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stderrTail = '';
   private readonly reader: ReadableStreamDefaultReader<Uint8Array>;
@@ -75,12 +81,12 @@ class ArchiveRun {
     this.settled = new Promise<undefined>((resolve) => {
       this.release = () => resolve(undefined);
     });
-    // 计时覆盖整个流的生命周期：客户端不读（背压）而连接不断时，进程也不能一直挂着
-    this.armIdle();
+    this.arm('stall');
   }
 
   async pull(): Promise<void> {
     if (this.finished) return;
+    this.arm('idle');
     try {
       const chunk = await Promise.race([this.reader.read(), this.settled]);
       if (!chunk || this.finished) return;
@@ -106,7 +112,7 @@ class ArchiveRun {
       return;
     }
     this.controller.enqueue(value);
-    this.armIdle();
+    this.arm('stall');
   }
 
   /** stdout 读完后还要等进程退出码：tar 失败时必须让浏览器看到下载中断，而不是一个被截断的“成功”。 */
@@ -140,7 +146,7 @@ class ArchiveRun {
   private settle(): boolean {
     if (this.finished) return false;
     this.finished = true;
-    this.disarmIdle();
+    this.disarm();
     this.release();
     return true;
   }
@@ -157,15 +163,17 @@ class ArchiveRun {
     }
   }
 
-  private armIdle(): void {
-    this.disarmIdle();
-    this.timer = setTimeout(
-      () => this.fail(new Error('archive_idle_timeout')),
-      this.opts.idleMs ?? ARCHIVE_IDLE_TIMEOUT_MS
-    );
+  private arm(kind: 'idle' | 'stall'): void {
+    this.disarm();
+    if (this.finished) return;
+    const ms =
+      kind === 'idle'
+        ? (this.opts.idleMs ?? ARCHIVE_IDLE_TIMEOUT_MS)
+        : (this.opts.stallMs ?? ARCHIVE_STALL_TIMEOUT_MS);
+    this.timer = setTimeout(() => this.fail(new Error(`archive_${kind}_timeout`)), ms);
   }
 
-  private disarmIdle(): void {
+  private disarm(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
@@ -208,7 +216,7 @@ export function createArchiveStreamFromProcess(
 }
 
 /**
- * 起进程并返回流：客户端取消即杀进程，非零退出 / 空闲超时 / 超过字节上限都会 `controller.error`。
+ * 起进程并返回流：客户端取消即杀进程，非零退出 / 空闲或停滞超时 / 超过字节上限都会 `controller.error`。
  * spawn 同步失败时先调 `onClose` 再抛出。
  */
 export function createArchiveStream(opts: ArchiveStreamOptions): ReadableStream<Uint8Array> {

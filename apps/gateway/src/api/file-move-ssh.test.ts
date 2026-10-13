@@ -70,6 +70,7 @@ describe('ssh devices', () => {
     await move({ rootId, paths: [`${path}/a`], destDir: path, onConflict: 'overwrite' });
 
     expect(commands[0]).toContain('ow=1');
+    expect(commands[0]).toContain('if [ -n "$T" ] || [ ! -L "$dp" ]; then');
   });
 
   test('a request with only invalid items never contacts the host', async () => {

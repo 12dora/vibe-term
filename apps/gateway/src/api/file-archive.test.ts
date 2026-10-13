@@ -13,8 +13,9 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { type Device, FILE_OP_MAX_PATHS, type FileStatResponse } from '@vibeterm/shared';
 import { createDevice } from '../db/devices';
-import { createFileRoot, deleteFileRoot } from '../db/file-roots';
+import { createFileRoot, deleteFileRoot, updateFileRoot } from '../db/file-roots';
 import { runMigrations } from '../db/migrate';
+import { fileArchiveIo } from '../files/archive-stream';
 import * as deviceStorage from '../files/device-storage';
 import { type RemoteScriptProcess, remoteScriptIo } from '../files/remote-script';
 import * as sshCommand from '../files/ssh-command';
@@ -358,6 +359,37 @@ describe('GET /api/files/archive/:id (local tar)', () => {
   });
 });
 
+describe('GET /api/files/archive/:id re-validates against the current root (local)', () => {
+  test('a root moved after prepare is 403 outside_roots and spawns nothing', async () => {
+    const { dir, rootId } = sandboxRoot();
+    fillSandbox(dir);
+    const moved = tmpSandbox('vibeterm-archive-moved-');
+    const spawn = track(spyOn(fileArchiveIo, 'spawn'));
+    const ticket = await prepared(rootId, [join(dir, 'sub/top.txt')]);
+    const rootTicket = await prepared(rootId, [dir]);
+    updateFileRoot(rootId, { path: moved });
+
+    for (const id of [ticket.archiveId, rootTicket.archiveId]) {
+      const res = await download(id);
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { code: string }).code).toBe('outside_roots');
+    }
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test('the root itself still downloads', async () => {
+    const { dir, rootId } = sandboxRoot();
+    fillSandbox(dir);
+    const ticket = await prepared(rootId, [dir]);
+
+    const res = await download(ticket.archiveId);
+
+    expect(res.status).toBe(200);
+    const extractDir = extract(new Uint8Array(await res.arrayBuffer()));
+    expect(readFileSync(join(extractDir, basename(dir), 'a b.txt'), 'utf8')).toBe('with spaces');
+  });
+});
+
 function realSandbox(prefix = 'vibeterm-archive-'): string {
   return realpathSync(tmpSandbox(prefix));
 }
@@ -642,6 +674,63 @@ describe('ssh devices', () => {
     expect(script).toContain("cd -- '/remote' ||");
     expect(script).not.toContain('inside');
     expect(script).toContain("exec tar -czf - './root'\n");
+  });
+
+  test('a root re-pointed after prepare is 403 outside_roots and spawns nothing', async () => {
+    const { rootId } = sshRoot('/safe');
+    stubStat();
+    stubSpec();
+    const spawn = mock(() => {
+      throw new Error('should not spawn');
+    });
+    remoteScriptIo.spawn = spawn;
+    const nested = await prepared(rootId, ['/safe/sub/secret']);
+    const rootTicket = await prepared(rootId, ['/safe']);
+    updateFileRoot(rootId, { path: '/restricted' });
+
+    for (const id of [nested.archiveId, rootTicket.archiveId]) {
+      const res = await download(id);
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { code: string }).code).toBe('outside_roots');
+    }
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test('a multi-entry ticket reaching outside the narrowed root is rejected before spawning', async () => {
+    const { rootId, path } = sshRoot();
+    stubStat();
+    stubSpec();
+    const spawn = mock(() => {
+      throw new Error('should not spawn');
+    });
+    remoteScriptIo.spawn = spawn;
+    const ticket = await prepared(rootId, [`${path}/sub/a`, `${path}/sub/b`]);
+    updateFileRoot(rootId, { path: `${path}/sub/a` });
+
+    const res = await download(ticket.archiveId);
+
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: string }).code).toBe('outside_roots');
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  test('a single entry that is no longer the root gets the physical boundary check', async () => {
+    const { rootId, path } = sshRoot();
+    stubStat();
+    stubSpec();
+    const fake = fakeProcess(new Response('').body as ReadableStream<Uint8Array>);
+    let script = '';
+    remoteScriptIo.spawn = (_argv, _env, text) => {
+      script = text;
+      return fake.proc;
+    };
+    const ticket = await prepared(rootId, [`${path}/sub`]);
+    updateFileRoot(rootId, { path: '/remote' });
+
+    await drain(await download(ticket.archiveId));
+
+    expect(script).toContain('inside "$PHYS" "$r" ||');
+    expect(script).toContain("cd -- '/remote' ||");
   });
 
   test('a parent that is a file is 400 not_a_directory; stat failures propagate', async () => {
