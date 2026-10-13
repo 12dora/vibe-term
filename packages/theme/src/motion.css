@@ -64,6 +64,121 @@
   animation-delay: calc(var(--vibeterm-stagger-index, 0) * var(--vibeterm-stagger-step));
 }
 
+/* 文件管理器：目录切换按方向入场，行逐项浮现，标签页 / 分栏展开，拖放目标与框选的反馈 */
+@keyframes vibeterm-explorer-slide-forward {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vibeterm-explorer-slide-back {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vibeterm-explorer-fade-scale {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes vibeterm-explorer-flash {
+  from {
+    background-color: color-mix(in oklab, var(--primary) 22%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@keyframes vibeterm-explorer-tab-in {
+  from {
+    opacity: 0;
+    max-width: 0;
+  }
+  to {
+    opacity: 1;
+    max-width: 14rem;
+  }
+}
+
+@keyframes vibeterm-explorer-pane-in {
+  from {
+    opacity: 0;
+    flex-grow: 0.0001;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes vibeterm-explorer-drop {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--primary) 55%, transparent);
+  }
+  50% {
+    box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--primary) 25%, transparent);
+  }
+}
+
+.vibeterm-explorer-enter-forward {
+  animation: vibeterm-explorer-slide-forward var(--vibeterm-motion-layout) var(--vibeterm-ease-out)
+    both;
+}
+
+.vibeterm-explorer-enter-back {
+  animation: vibeterm-explorer-slide-back var(--vibeterm-motion-layout) var(--vibeterm-ease-out)
+    both;
+}
+
+.vibeterm-explorer-enter-fade {
+  animation: vibeterm-explorer-fade-scale var(--vibeterm-motion-layout) var(--vibeterm-ease-out)
+    both;
+}
+
+/* 只给首屏的前若干行加：靠 --vibeterm-stagger-index 递增延迟，步长比通用列表更短 */
+.vibeterm-explorer-row-in {
+  animation: vibeterm-fade-up var(--vibeterm-motion-standard) var(--vibeterm-ease-out) both;
+  animation-delay: calc(var(--vibeterm-stagger-index, 0) * 12ms);
+}
+
+.vibeterm-explorer-flash {
+  animation: vibeterm-explorer-flash 900ms var(--vibeterm-ease-out) both;
+}
+
+.vibeterm-explorer-tab-in {
+  animation: vibeterm-explorer-tab-in var(--vibeterm-motion-layout) var(--vibeterm-ease-out) both;
+}
+
+.vibeterm-explorer-pane-in {
+  animation: vibeterm-explorer-pane-in var(--vibeterm-motion-slow) var(--vibeterm-ease-out) both;
+}
+
+.vibeterm-explorer-drop {
+  animation: vibeterm-explorer-drop 1200ms var(--vibeterm-ease-in-out) infinite;
+}
+
+.vibeterm-explorer-marquee {
+  animation: vibeterm-fade-in var(--vibeterm-motion-fast) var(--vibeterm-ease-out) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

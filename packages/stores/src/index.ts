@@ -64,6 +64,42 @@ export {
 } from './agent-node-state';
 export { NODE_OFFLINE_ERROR, isNodePaused } from './agent-node-offline';
 export { createFileTreeStore, fileNodeKey, type FileTreeStore } from './file-tree';
+export {
+  createExplorerStore,
+  type CreateExplorerStoreOptions,
+  type ExplorerStore,
+} from './explorer-workspace';
+export {
+  EXPLORER_DEFAULT_SORT,
+  EXPLORER_HISTORY_LIMIT,
+  EXPLORER_MAX_PANES,
+  EXPLORER_MIN_PANE_FRACTION,
+  EXPLORER_ROUTE,
+  createExplorerId,
+  createInitialExplorerData,
+  explorerActiveTab,
+  explorerCanGoBack,
+  explorerCanGoForward,
+  explorerParentPath,
+  explorerTabPath,
+  explorerTransitions,
+  findExplorerTabByLocation,
+  isExplorerRootOpen,
+  isPathWithin,
+  normalizeExplorerPaneSizes,
+  normalizeExplorerPath,
+  sanitizeExplorerData,
+  type ExplorerClipboard,
+  type ExplorerLocation,
+  type ExplorerPane,
+  type ExplorerSort,
+  type ExplorerSortKey,
+  type ExplorerTab,
+  type ExplorerViewMode,
+  type ExplorerWorkspaceActions,
+  type ExplorerWorkspaceData,
+  type ExplorerWorkspaceState,
+} from './explorer-workspace-model';
 
 export * from './agent-thread';
 export {

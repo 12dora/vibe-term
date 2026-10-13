@@ -1990,7 +1990,8 @@
         "rsync_missing_local": "rsync is not installed on the server",
         "rsync_missing_remote": "rsync is not installed on the remote device",
         "timeout": "Timed out",
-        "unknown": "Failed to load"
+        "unknown": "Failed to load",
+        "already_exists": "An item with this name already exists"
       },
       "retry": "Retry (collapse then expand)",
       "menu": {
@@ -2000,7 +2001,11 @@
         "expand": "Expand",
         "collapse": "Collapse",
         "upload": "Upload files here",
-        "open": "Open"
+        "open": "Open",
+        "newFolder": "New Folder",
+        "rename": "Rename",
+        "delete": "Delete",
+        "openInExplorer": "Open in File Manager"
       },
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed",
@@ -2036,6 +2041,36 @@
         "scopeLocal": "server",
         "scopeRemote": "remote",
         "prompt": "rsync is not installed on {{device}} ({{scope}}). Please install rsync using the appropriate command for this system (e.g. `brew install rsync`, `sudo apt-get install -y rsync`, or `sudo yum install -y rsync`), then reply once it is done."
+      },
+      "explorer": {
+        "open": "Open",
+        "close": "Close"
+      },
+      "ops": {
+        "newFolderTitle": "New Folder",
+        "renameTitle": "Rename",
+        "nameLabel": "Name",
+        "create": "Create",
+        "rename": "Rename",
+        "delete": "Delete",
+        "defaultFolderName": "untitled folder",
+        "nameEmpty": "Enter a name",
+        "nameInvalid": "Names can’t contain / or \\",
+        "nameTooLong": "Name is too long",
+        "nameTaken": "An item with this name already exists",
+        "deleteTitleOne": "Delete “{{name}}”?",
+        "deleteTitleMany": "Delete {{count}} items?",
+        "deleteDesc": "This can’t be undone.",
+        "deleteMore": "and {{count}} more",
+        "createFailed": "Couldn’t create the folder",
+        "renameFailed": "Couldn’t rename",
+        "deleteFailed": "Couldn’t delete",
+        "deletePartial_one": "{{count}} item couldn’t be deleted",
+        "deletePartial_other": "{{count}} items couldn’t be deleted",
+        "moveFailed": "Couldn’t move",
+        "movePartial_one": "{{count}} item couldn’t be moved",
+        "movePartial_other": "{{count}} items couldn’t be moved",
+        "unsupported": "Update this node to use this feature"
       }
     },
     "file": {
@@ -2045,6 +2080,138 @@
       "notPreviewable": "Preview is not available for this file type",
       "download": "Download",
       "openRaw": "Open raw"
+    },
+    "explorer": {
+      "title": "File Manager",
+      "empty": {
+        "title": "No folder open",
+        "desc": "Click Open next to a folder in the Files sidebar, or pick one below.",
+        "folder": "This folder is empty",
+        "filtered": "No matching items"
+      },
+      "state": {
+        "nodeMissing": "This node no longer exists",
+        "rootMissing": "This folder is no longer available",
+        "closeTab": "Close Tab"
+      },
+      "toolbar": {
+        "back": "Back",
+        "forward": "Forward",
+        "up": "Up",
+        "refresh": "Refresh",
+        "newFolder": "New Folder",
+        "upload": "Upload",
+        "viewList": "List",
+        "viewGrid": "Icons",
+        "showHidden": "Show Hidden Items",
+        "filter": "Filter",
+        "more": "More",
+        "shortcuts": "Keyboard Shortcuts",
+        "split": "Split View",
+        "transfers": "Transfers",
+        "editPath": "Edit Path",
+        "root": "Root Folder",
+        "clearFilter": "Clear"
+      },
+      "tab": {
+        "new": "New Tab",
+        "close": "Close Tab",
+        "closeOthers": "Close Other Tabs",
+        "duplicate": "Duplicate Tab",
+        "openInSplit": "Open in Split View",
+        "closePane": "Close Split"
+      },
+      "column": {
+        "name": "Name",
+        "size": "Size",
+        "kind": "Kind",
+        "modified": "Date Modified"
+      },
+      "kind": {
+        "directory": "Folder",
+        "code": "Code",
+        "markdown": "Markdown",
+        "image": "Image",
+        "pdf": "PDF",
+        "text": "Text",
+        "archive": "Archive",
+        "audio": "Audio",
+        "video": "Video",
+        "binary": "Binary",
+        "other": "File",
+        "symlink": "Link"
+      },
+      "status": {
+        "items_one": "{{count}} item",
+        "items_other": "{{count}} items",
+        "selected_one": "{{count}} selected",
+        "selected_other": "{{count}} selected",
+        "truncated": "Showing the first {{count}} items"
+      },
+      "menu": {
+        "open": "Open",
+        "openInNewTab": "Open in New Tab",
+        "download": "Download",
+        "cut": "Cut",
+        "copy": "Copy",
+        "paste": "Paste",
+        "rename": "Rename",
+        "delete": "Delete",
+        "copyPath": "Copy Path",
+        "newFolder": "New Folder",
+        "upload": "Upload Files",
+        "uploadFolder": "Upload Folder",
+        "selectAll": "Select All",
+        "refresh": "Refresh"
+      },
+      "drop": {
+        "move": "Move to “{{name}}”",
+        "copy": "Copy to “{{name}}”",
+        "upload": "Upload to “{{name}}”"
+      },
+      "conflict": {
+        "titleOne": "“{{name}}” already exists",
+        "titleMany": "{{count}} items already exist",
+        "desc": "Replacing overwrites the existing items in the destination.",
+        "replace": "Replace",
+        "skip": "Skip"
+      },
+      "transfer": {
+        "done_one": "Copied {{count}} item",
+        "done_other": "Copied {{count}} items",
+        "failed": "Copy didn’t finish",
+        "empty": "No transfers"
+      },
+      "archive": {
+        "preparing": "Preparing archive…",
+        "failed": "Couldn’t download the archive"
+      },
+      "shortcuts": {
+        "title": "Keyboard Shortcuts",
+        "move": "Move selection",
+        "extend": "Extend selection",
+        "typeAhead": "Jump to name",
+        "open": "Open",
+        "openInNewTab": "Open in new tab",
+        "up": "Go up",
+        "back": "Back",
+        "forward": "Forward",
+        "selectAll": "Select all",
+        "clearSelection": "Clear selection",
+        "rename": "Rename",
+        "delete": "Delete",
+        "copy": "Copy",
+        "cut": "Cut",
+        "paste": "Paste",
+        "newFolder": "New folder",
+        "focusFilter": "Filter",
+        "download": "Download",
+        "newTab": "New tab",
+        "closeTab": "Close tab",
+        "split": "Split view",
+        "refresh": "Refresh",
+        "showShortcuts": "Show shortcuts"
+      }
     },
     "auth": {
       "login": {

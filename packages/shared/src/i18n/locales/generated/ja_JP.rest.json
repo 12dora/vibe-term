@@ -1391,6 +1391,135 @@
       "download": "ダウンロード",
       "openRaw": "元ファイルを開く"
     },
+    "explorer": {
+      "title": "ファイルマネージャー",
+      "empty": {
+        "title": "開いているフォルダはありません",
+        "desc": "サイドバーの「ファイル」でフォルダ右側の「開く」をクリックするか、下から選択します。",
+        "folder": "このフォルダは空です",
+        "filtered": "一致する項目はありません"
+      },
+      "state": {
+        "nodeMissing": "このノードは存在しません",
+        "rootMissing": "このフォルダは利用できなくなりました",
+        "closeTab": "タブを閉じる"
+      },
+      "toolbar": {
+        "back": "戻る",
+        "forward": "進む",
+        "up": "上の階層へ",
+        "refresh": "更新",
+        "newFolder": "新規フォルダ",
+        "upload": "アップロード",
+        "viewList": "リスト",
+        "viewGrid": "アイコン",
+        "showHidden": "隠し項目を表示",
+        "filter": "フィルタ",
+        "more": "その他",
+        "shortcuts": "キーボードショートカット",
+        "split": "分割表示",
+        "transfers": "転送",
+        "editPath": "パスを編集",
+        "root": "ルートフォルダ",
+        "clearFilter": "クリア"
+      },
+      "tab": {
+        "new": "新規タブ",
+        "close": "タブを閉じる",
+        "closeOthers": "他のタブを閉じる",
+        "duplicate": "タブを複製",
+        "openInSplit": "分割表示で開く",
+        "closePane": "分割を閉じる"
+      },
+      "column": {
+        "name": "名前",
+        "size": "サイズ",
+        "kind": "種類",
+        "modified": "変更日"
+      },
+      "kind": {
+        "directory": "フォルダ",
+        "code": "コード",
+        "markdown": "Markdown",
+        "image": "画像",
+        "pdf": "PDF",
+        "text": "テキスト",
+        "archive": "アーカイブ",
+        "audio": "オーディオ",
+        "video": "ビデオ",
+        "binary": "バイナリ",
+        "other": "ファイル",
+        "symlink": "リンク"
+      },
+      "status": {
+        "items": "{{count}} 項目",
+        "selected": "{{count}} 項目を選択中",
+        "truncated": "最初の {{count}} 項目のみ表示"
+      },
+      "menu": {
+        "open": "開く",
+        "openInNewTab": "新規タブで開く",
+        "download": "ダウンロード",
+        "cut": "カット",
+        "copy": "コピー",
+        "paste": "ペースト",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "copyPath": "パスをコピー",
+        "newFolder": "新規フォルダ",
+        "upload": "ファイルをアップロード",
+        "uploadFolder": "フォルダをアップロード",
+        "selectAll": "すべて選択",
+        "refresh": "更新"
+      },
+      "drop": {
+        "move": "「{{name}}」に移動",
+        "copy": "「{{name}}」にコピー",
+        "upload": "「{{name}}」にアップロード"
+      },
+      "conflict": {
+        "titleOne": "「{{name}}」はすでに存在します",
+        "titleMany": "同じ名前の項目が {{count}} 個存在します",
+        "desc": "置き換えると、移動先の既存の項目が上書きされます。",
+        "replace": "置き換える",
+        "skip": "スキップ"
+      },
+      "transfer": {
+        "done": "{{count}} 項目をコピーしました",
+        "failed": "コピーを完了できませんでした",
+        "empty": "転送はありません"
+      },
+      "archive": {
+        "preparing": "アーカイブを準備中…",
+        "failed": "アーカイブをダウンロードできませんでした"
+      },
+      "shortcuts": {
+        "title": "キーボードショートカット",
+        "move": "選択を移動",
+        "extend": "選択範囲を拡張",
+        "typeAhead": "名前でジャンプ",
+        "open": "開く",
+        "openInNewTab": "新規タブで開く",
+        "up": "上の階層へ",
+        "back": "戻る",
+        "forward": "進む",
+        "selectAll": "すべて選択",
+        "clearSelection": "選択を解除",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "copy": "コピー",
+        "cut": "カット",
+        "paste": "ペースト",
+        "newFolder": "新規フォルダ",
+        "focusFilter": "フィルタ",
+        "download": "ダウンロード",
+        "newTab": "新規タブ",
+        "closeTab": "タブを閉じる",
+        "split": "分割表示",
+        "refresh": "更新",
+        "showShortcuts": "ショートカットを表示"
+      }
+    },
     "auth": {
       "security": {
         "changePassword": "パスワードを変更",

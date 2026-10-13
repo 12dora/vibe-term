@@ -611,7 +611,8 @@
         "rsync_missing_local": "rsync is not installed on the server",
         "rsync_missing_remote": "rsync is not installed on the remote device",
         "timeout": "Timed out",
-        "unknown": "Failed to load"
+        "unknown": "Failed to load",
+        "already_exists": "An item with this name already exists"
       },
       "retry": "Retry (collapse then expand)",
       "menu": {
@@ -621,7 +622,11 @@
         "expand": "Expand",
         "collapse": "Collapse",
         "upload": "Upload files here",
-        "open": "Open"
+        "open": "Open",
+        "newFolder": "New Folder",
+        "rename": "Rename",
+        "delete": "Delete",
+        "openInExplorer": "Open in File Manager"
       },
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed",
@@ -657,6 +662,36 @@
         "scopeLocal": "server",
         "scopeRemote": "remote",
         "prompt": "rsync is not installed on {{device}} ({{scope}}). Please install rsync using the appropriate command for this system (e.g. `brew install rsync`, `sudo apt-get install -y rsync`, or `sudo yum install -y rsync`), then reply once it is done."
+      },
+      "explorer": {
+        "open": "Open",
+        "close": "Close"
+      },
+      "ops": {
+        "newFolderTitle": "New Folder",
+        "renameTitle": "Rename",
+        "nameLabel": "Name",
+        "create": "Create",
+        "rename": "Rename",
+        "delete": "Delete",
+        "defaultFolderName": "untitled folder",
+        "nameEmpty": "Enter a name",
+        "nameInvalid": "Names can’t contain / or \\",
+        "nameTooLong": "Name is too long",
+        "nameTaken": "An item with this name already exists",
+        "deleteTitleOne": "Delete “{{name}}”?",
+        "deleteTitleMany": "Delete {{count}} items?",
+        "deleteDesc": "This can’t be undone.",
+        "deleteMore": "and {{count}} more",
+        "createFailed": "Couldn’t create the folder",
+        "renameFailed": "Couldn’t rename",
+        "deleteFailed": "Couldn’t delete",
+        "deletePartial_one": "{{count}} item couldn’t be deleted",
+        "deletePartial_other": "{{count}} items couldn’t be deleted",
+        "moveFailed": "Couldn’t move",
+        "movePartial_one": "{{count}} item couldn’t be moved",
+        "movePartial_other": "{{count}} items couldn’t be moved",
+        "unsupported": "Update this node to use this feature"
       }
     },
     "auth": {

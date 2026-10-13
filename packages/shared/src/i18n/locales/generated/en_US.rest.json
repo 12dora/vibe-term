@@ -1391,6 +1391,138 @@
       "download": "Download",
       "openRaw": "Open raw"
     },
+    "explorer": {
+      "title": "File Manager",
+      "empty": {
+        "title": "No folder open",
+        "desc": "Click Open next to a folder in the Files sidebar, or pick one below.",
+        "folder": "This folder is empty",
+        "filtered": "No matching items"
+      },
+      "state": {
+        "nodeMissing": "This node no longer exists",
+        "rootMissing": "This folder is no longer available",
+        "closeTab": "Close Tab"
+      },
+      "toolbar": {
+        "back": "Back",
+        "forward": "Forward",
+        "up": "Up",
+        "refresh": "Refresh",
+        "newFolder": "New Folder",
+        "upload": "Upload",
+        "viewList": "List",
+        "viewGrid": "Icons",
+        "showHidden": "Show Hidden Items",
+        "filter": "Filter",
+        "more": "More",
+        "shortcuts": "Keyboard Shortcuts",
+        "split": "Split View",
+        "transfers": "Transfers",
+        "editPath": "Edit Path",
+        "root": "Root Folder",
+        "clearFilter": "Clear"
+      },
+      "tab": {
+        "new": "New Tab",
+        "close": "Close Tab",
+        "closeOthers": "Close Other Tabs",
+        "duplicate": "Duplicate Tab",
+        "openInSplit": "Open in Split View",
+        "closePane": "Close Split"
+      },
+      "column": {
+        "name": "Name",
+        "size": "Size",
+        "kind": "Kind",
+        "modified": "Date Modified"
+      },
+      "kind": {
+        "directory": "Folder",
+        "code": "Code",
+        "markdown": "Markdown",
+        "image": "Image",
+        "pdf": "PDF",
+        "text": "Text",
+        "archive": "Archive",
+        "audio": "Audio",
+        "video": "Video",
+        "binary": "Binary",
+        "other": "File",
+        "symlink": "Link"
+      },
+      "status": {
+        "items_one": "{{count}} item",
+        "items_other": "{{count}} items",
+        "selected_one": "{{count}} selected",
+        "selected_other": "{{count}} selected",
+        "truncated": "Showing the first {{count}} items"
+      },
+      "menu": {
+        "open": "Open",
+        "openInNewTab": "Open in New Tab",
+        "download": "Download",
+        "cut": "Cut",
+        "copy": "Copy",
+        "paste": "Paste",
+        "rename": "Rename",
+        "delete": "Delete",
+        "copyPath": "Copy Path",
+        "newFolder": "New Folder",
+        "upload": "Upload Files",
+        "uploadFolder": "Upload Folder",
+        "selectAll": "Select All",
+        "refresh": "Refresh"
+      },
+      "drop": {
+        "move": "Move to “{{name}}”",
+        "copy": "Copy to “{{name}}”",
+        "upload": "Upload to “{{name}}”"
+      },
+      "conflict": {
+        "titleOne": "“{{name}}” already exists",
+        "titleMany": "{{count}} items already exist",
+        "desc": "Replacing overwrites the existing items in the destination.",
+        "replace": "Replace",
+        "skip": "Skip"
+      },
+      "transfer": {
+        "done_one": "Copied {{count}} item",
+        "done_other": "Copied {{count}} items",
+        "failed": "Copy didn’t finish",
+        "empty": "No transfers"
+      },
+      "archive": {
+        "preparing": "Preparing archive…",
+        "failed": "Couldn’t download the archive"
+      },
+      "shortcuts": {
+        "title": "Keyboard Shortcuts",
+        "move": "Move selection",
+        "extend": "Extend selection",
+        "typeAhead": "Jump to name",
+        "open": "Open",
+        "openInNewTab": "Open in new tab",
+        "up": "Go up",
+        "back": "Back",
+        "forward": "Forward",
+        "selectAll": "Select all",
+        "clearSelection": "Clear selection",
+        "rename": "Rename",
+        "delete": "Delete",
+        "copy": "Copy",
+        "cut": "Cut",
+        "paste": "Paste",
+        "newFolder": "New folder",
+        "focusFilter": "Filter",
+        "download": "Download",
+        "newTab": "New tab",
+        "closeTab": "Close tab",
+        "split": "Split view",
+        "refresh": "Refresh",
+        "showShortcuts": "Show shortcuts"
+      }
+    },
     "auth": {
       "security": {
         "changePassword": "Change password",

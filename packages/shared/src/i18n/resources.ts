@@ -1996,7 +1996,8 @@ export const I18N_RESOURCES = {
         "rsync_missing_local": "rsync is not installed on the server",
         "rsync_missing_remote": "rsync is not installed on the remote device",
         "timeout": "Timed out",
-        "unknown": "Failed to load"
+        "unknown": "Failed to load",
+        "already_exists": "An item with this name already exists"
       },
       "retry": "Retry (collapse then expand)",
       "menu": {
@@ -2006,7 +2007,11 @@ export const I18N_RESOURCES = {
         "expand": "Expand",
         "collapse": "Collapse",
         "upload": "Upload files here",
-        "open": "Open"
+        "open": "Open",
+        "newFolder": "New Folder",
+        "rename": "Rename",
+        "delete": "Delete",
+        "openInExplorer": "Open in File Manager"
       },
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed",
@@ -2042,6 +2047,36 @@ export const I18N_RESOURCES = {
         "scopeLocal": "server",
         "scopeRemote": "remote",
         "prompt": "rsync is not installed on {{device}} ({{scope}}). Please install rsync using the appropriate command for this system (e.g. `brew install rsync`, `sudo apt-get install -y rsync`, or `sudo yum install -y rsync`), then reply once it is done."
+      },
+      "explorer": {
+        "open": "Open",
+        "close": "Close"
+      },
+      "ops": {
+        "newFolderTitle": "New Folder",
+        "renameTitle": "Rename",
+        "nameLabel": "Name",
+        "create": "Create",
+        "rename": "Rename",
+        "delete": "Delete",
+        "defaultFolderName": "untitled folder",
+        "nameEmpty": "Enter a name",
+        "nameInvalid": "Names can’t contain / or \\",
+        "nameTooLong": "Name is too long",
+        "nameTaken": "An item with this name already exists",
+        "deleteTitleOne": "Delete “{{name}}”?",
+        "deleteTitleMany": "Delete {{count}} items?",
+        "deleteDesc": "This can’t be undone.",
+        "deleteMore": "and {{count}} more",
+        "createFailed": "Couldn’t create the folder",
+        "renameFailed": "Couldn’t rename",
+        "deleteFailed": "Couldn’t delete",
+        "deletePartial_one": "{{count}} item couldn’t be deleted",
+        "deletePartial_other": "{{count}} items couldn’t be deleted",
+        "moveFailed": "Couldn’t move",
+        "movePartial_one": "{{count}} item couldn’t be moved",
+        "movePartial_other": "{{count}} items couldn’t be moved",
+        "unsupported": "Update this node to use this feature"
       }
     },
     "file": {
@@ -2051,6 +2086,138 @@ export const I18N_RESOURCES = {
       "notPreviewable": "Preview is not available for this file type",
       "download": "Download",
       "openRaw": "Open raw"
+    },
+    "explorer": {
+      "title": "File Manager",
+      "empty": {
+        "title": "No folder open",
+        "desc": "Click Open next to a folder in the Files sidebar, or pick one below.",
+        "folder": "This folder is empty",
+        "filtered": "No matching items"
+      },
+      "state": {
+        "nodeMissing": "This node no longer exists",
+        "rootMissing": "This folder is no longer available",
+        "closeTab": "Close Tab"
+      },
+      "toolbar": {
+        "back": "Back",
+        "forward": "Forward",
+        "up": "Up",
+        "refresh": "Refresh",
+        "newFolder": "New Folder",
+        "upload": "Upload",
+        "viewList": "List",
+        "viewGrid": "Icons",
+        "showHidden": "Show Hidden Items",
+        "filter": "Filter",
+        "more": "More",
+        "shortcuts": "Keyboard Shortcuts",
+        "split": "Split View",
+        "transfers": "Transfers",
+        "editPath": "Edit Path",
+        "root": "Root Folder",
+        "clearFilter": "Clear"
+      },
+      "tab": {
+        "new": "New Tab",
+        "close": "Close Tab",
+        "closeOthers": "Close Other Tabs",
+        "duplicate": "Duplicate Tab",
+        "openInSplit": "Open in Split View",
+        "closePane": "Close Split"
+      },
+      "column": {
+        "name": "Name",
+        "size": "Size",
+        "kind": "Kind",
+        "modified": "Date Modified"
+      },
+      "kind": {
+        "directory": "Folder",
+        "code": "Code",
+        "markdown": "Markdown",
+        "image": "Image",
+        "pdf": "PDF",
+        "text": "Text",
+        "archive": "Archive",
+        "audio": "Audio",
+        "video": "Video",
+        "binary": "Binary",
+        "other": "File",
+        "symlink": "Link"
+      },
+      "status": {
+        "items_one": "{{count}} item",
+        "items_other": "{{count}} items",
+        "selected_one": "{{count}} selected",
+        "selected_other": "{{count}} selected",
+        "truncated": "Showing the first {{count}} items"
+      },
+      "menu": {
+        "open": "Open",
+        "openInNewTab": "Open in New Tab",
+        "download": "Download",
+        "cut": "Cut",
+        "copy": "Copy",
+        "paste": "Paste",
+        "rename": "Rename",
+        "delete": "Delete",
+        "copyPath": "Copy Path",
+        "newFolder": "New Folder",
+        "upload": "Upload Files",
+        "uploadFolder": "Upload Folder",
+        "selectAll": "Select All",
+        "refresh": "Refresh"
+      },
+      "drop": {
+        "move": "Move to “{{name}}”",
+        "copy": "Copy to “{{name}}”",
+        "upload": "Upload to “{{name}}”"
+      },
+      "conflict": {
+        "titleOne": "“{{name}}” already exists",
+        "titleMany": "{{count}} items already exist",
+        "desc": "Replacing overwrites the existing items in the destination.",
+        "replace": "Replace",
+        "skip": "Skip"
+      },
+      "transfer": {
+        "done_one": "Copied {{count}} item",
+        "done_other": "Copied {{count}} items",
+        "failed": "Copy didn’t finish",
+        "empty": "No transfers"
+      },
+      "archive": {
+        "preparing": "Preparing archive…",
+        "failed": "Couldn’t download the archive"
+      },
+      "shortcuts": {
+        "title": "Keyboard Shortcuts",
+        "move": "Move selection",
+        "extend": "Extend selection",
+        "typeAhead": "Jump to name",
+        "open": "Open",
+        "openInNewTab": "Open in new tab",
+        "up": "Go up",
+        "back": "Back",
+        "forward": "Forward",
+        "selectAll": "Select all",
+        "clearSelection": "Clear selection",
+        "rename": "Rename",
+        "delete": "Delete",
+        "copy": "Copy",
+        "cut": "Cut",
+        "paste": "Paste",
+        "newFolder": "New folder",
+        "focusFilter": "Filter",
+        "download": "Download",
+        "newTab": "New tab",
+        "closeTab": "Close tab",
+        "split": "Split view",
+        "refresh": "Refresh",
+        "showShortcuts": "Show shortcuts"
+      }
     },
     "auth": {
       "login": {
@@ -5852,7 +6019,8 @@ export const I18N_RESOURCES = {
         "rsync_missing_local": "服务器上未安装 rsync",
         "rsync_missing_remote": "远程设备上未安装 rsync",
         "timeout": "已超时",
-        "unknown": "加载失败"
+        "unknown": "加载失败",
+        "already_exists": "已存在同名项目"
       },
       "retry": "重试（收起后再展开）",
       "menu": {
@@ -5862,7 +6030,11 @@ export const I18N_RESOURCES = {
         "expand": "展开",
         "collapse": "收起",
         "upload": "上传文件到这个文件夹",
-        "open": "打开"
+        "open": "打开",
+        "newFolder": "新建文件夹",
+        "rename": "重命名",
+        "delete": "删除",
+        "openInExplorer": "在文件管理器中打开"
       },
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
@@ -5898,6 +6070,34 @@ export const I18N_RESOURCES = {
         "scopeLocal": "服务器",
         "scopeRemote": "远程",
         "prompt": "设备 {{device}}（{{scope}}）上未检测到 rsync。请根据系统选择合适的命令安装 rsync（例如 `brew install rsync`、`sudo apt-get install -y rsync` 或 `sudo yum install -y rsync`），安装完成后回复我。"
+      },
+      "explorer": {
+        "open": "打开",
+        "close": "关闭"
+      },
+      "ops": {
+        "newFolderTitle": "新建文件夹",
+        "renameTitle": "重命名",
+        "nameLabel": "名称",
+        "create": "创建",
+        "rename": "重命名",
+        "delete": "删除",
+        "defaultFolderName": "未命名文件夹",
+        "nameEmpty": "请输入名称",
+        "nameInvalid": "名称不能包含 / 或 \\",
+        "nameTooLong": "名称过长",
+        "nameTaken": "已存在同名项目",
+        "deleteTitleOne": "删除「{{name}}」？",
+        "deleteTitleMany": "删除 {{count}} 个项目？",
+        "deleteDesc": "删除后无法恢复。",
+        "deleteMore": "等 {{count}} 项",
+        "createFailed": "无法创建文件夹",
+        "renameFailed": "无法重命名",
+        "deleteFailed": "无法删除",
+        "deletePartial": "{{count}} 个项目未能删除",
+        "moveFailed": "无法移动",
+        "movePartial": "{{count}} 个项目未能移动",
+        "unsupported": "节点版本过低，请先升级"
       }
     },
     "file": {
@@ -5907,6 +6107,135 @@ export const I18N_RESOURCES = {
       "notPreviewable": "该文件类型不支持预览",
       "download": "下载",
       "openRaw": "打开原始文件"
+    },
+    "explorer": {
+      "title": "文件管理器",
+      "empty": {
+        "title": "尚未打开文件夹",
+        "desc": "在侧栏「文件」中点击文件夹右侧的「打开」，或从下方选择。",
+        "folder": "此文件夹为空",
+        "filtered": "没有匹配的项目"
+      },
+      "state": {
+        "nodeMissing": "节点已不存在",
+        "rootMissing": "该文件夹已不可用",
+        "closeTab": "关闭标签页"
+      },
+      "toolbar": {
+        "back": "后退",
+        "forward": "前进",
+        "up": "上一级",
+        "refresh": "刷新",
+        "newFolder": "新建文件夹",
+        "upload": "上传",
+        "viewList": "列表",
+        "viewGrid": "图标",
+        "showHidden": "显示隐藏项目",
+        "filter": "筛选",
+        "more": "更多",
+        "shortcuts": "键盘快捷键",
+        "split": "分栏",
+        "transfers": "传输",
+        "editPath": "编辑路径",
+        "root": "根目录",
+        "clearFilter": "清除"
+      },
+      "tab": {
+        "new": "新建标签页",
+        "close": "关闭标签页",
+        "closeOthers": "关闭其他标签页",
+        "duplicate": "复制标签页",
+        "openInSplit": "在分栏中打开",
+        "closePane": "关闭分栏"
+      },
+      "column": {
+        "name": "名称",
+        "size": "大小",
+        "kind": "类型",
+        "modified": "修改时间"
+      },
+      "kind": {
+        "directory": "文件夹",
+        "code": "代码",
+        "markdown": "Markdown",
+        "image": "图片",
+        "pdf": "PDF",
+        "text": "文本",
+        "archive": "压缩包",
+        "audio": "音频",
+        "video": "视频",
+        "binary": "二进制文件",
+        "other": "文件",
+        "symlink": "链接"
+      },
+      "status": {
+        "items": "{{count}} 个项目",
+        "selected": "已选择 {{count}} 项",
+        "truncated": "仅显示前 {{count}} 项"
+      },
+      "menu": {
+        "open": "打开",
+        "openInNewTab": "在新标签页中打开",
+        "download": "下载",
+        "cut": "剪切",
+        "copy": "复制",
+        "paste": "粘贴",
+        "rename": "重命名",
+        "delete": "删除",
+        "copyPath": "复制路径",
+        "newFolder": "新建文件夹",
+        "upload": "上传文件",
+        "uploadFolder": "上传文件夹",
+        "selectAll": "全选",
+        "refresh": "刷新"
+      },
+      "drop": {
+        "move": "移动到「{{name}}」",
+        "copy": "复制到「{{name}}」",
+        "upload": "上传到「{{name}}」"
+      },
+      "conflict": {
+        "titleOne": "「{{name}}」已存在",
+        "titleMany": "{{count}} 个同名项目已存在",
+        "desc": "替换将覆盖目标位置的现有项目。",
+        "replace": "替换",
+        "skip": "跳过"
+      },
+      "transfer": {
+        "done": "已复制 {{count}} 个项目",
+        "failed": "复制未完成",
+        "empty": "暂无传输"
+      },
+      "archive": {
+        "preparing": "正在打包…",
+        "failed": "打包下载失败"
+      },
+      "shortcuts": {
+        "title": "键盘快捷键",
+        "move": "移动选择",
+        "extend": "扩展选择",
+        "typeAhead": "按名称定位",
+        "open": "打开",
+        "openInNewTab": "在新标签页中打开",
+        "up": "上一级",
+        "back": "后退",
+        "forward": "前进",
+        "selectAll": "全选",
+        "clearSelection": "取消选择",
+        "rename": "重命名",
+        "delete": "删除",
+        "copy": "复制",
+        "cut": "剪切",
+        "paste": "粘贴",
+        "newFolder": "新建文件夹",
+        "focusFilter": "筛选",
+        "download": "下载",
+        "newTab": "新建标签页",
+        "closeTab": "关闭标签页",
+        "split": "分栏",
+        "refresh": "刷新",
+        "showShortcuts": "显示快捷键"
+      }
     },
     "auth": {
       "login": {
@@ -9699,7 +10028,8 @@ export const I18N_RESOURCES = {
         "rsync_missing_local": "サーバーに rsync がインストールされていません",
         "rsync_missing_remote": "リモートデバイスに rsync がインストールされていません",
         "timeout": "タイムアウトしました",
-        "unknown": "読み込みに失敗しました"
+        "unknown": "読み込みに失敗しました",
+        "already_exists": "同じ名前の項目がすでに存在します"
       },
       "retry": "再試行（折りたたんで再展開）",
       "menu": {
@@ -9709,7 +10039,11 @@ export const I18N_RESOURCES = {
         "expand": "展開",
         "collapse": "折りたたむ",
         "upload": "このフォルダにアップロード",
-        "open": "開く"
+        "open": "開く",
+        "newFolder": "新規フォルダ",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "openInExplorer": "ファイルマネージャーで開く"
       },
       "copied": "クリップボードにコピーしました",
       "copyFailed": "コピーに失敗しました",
@@ -9745,6 +10079,34 @@ export const I18N_RESOURCES = {
         "scopeLocal": "サーバー",
         "scopeRemote": "リモート",
         "prompt": "{{device}}（{{scope}}）に rsync が見つかりません。システムに合わせた方法で rsync をインストールし（例: `brew install rsync`、`sudo apt-get install -y rsync`、`sudo yum install -y rsync`）、完了したら返信してください。"
+      },
+      "explorer": {
+        "open": "開く",
+        "close": "閉じる"
+      },
+      "ops": {
+        "newFolderTitle": "新規フォルダ",
+        "renameTitle": "名前を変更",
+        "nameLabel": "名前",
+        "create": "作成",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "defaultFolderName": "名称未設定フォルダ",
+        "nameEmpty": "名前を入力してください",
+        "nameInvalid": "名前に / や \\ は使用できません",
+        "nameTooLong": "名前が長すぎます",
+        "nameTaken": "同じ名前の項目がすでに存在します",
+        "deleteTitleOne": "「{{name}}」を削除しますか？",
+        "deleteTitleMany": "{{count}} 項目を削除しますか？",
+        "deleteDesc": "この操作は取り消せません。",
+        "deleteMore": "ほか {{count}} 項目",
+        "createFailed": "フォルダを作成できませんでした",
+        "renameFailed": "名前を変更できませんでした",
+        "deleteFailed": "削除できませんでした",
+        "deletePartial": "{{count}} 項目を削除できませんでした",
+        "moveFailed": "移動できませんでした",
+        "movePartial": "{{count}} 項目を移動できませんでした",
+        "unsupported": "ノードを更新するとこの機能を利用できます"
       }
     },
     "file": {
@@ -9754,6 +10116,135 @@ export const I18N_RESOURCES = {
       "notPreviewable": "このファイル形式はプレビューできません",
       "download": "ダウンロード",
       "openRaw": "元ファイルを開く"
+    },
+    "explorer": {
+      "title": "ファイルマネージャー",
+      "empty": {
+        "title": "開いているフォルダはありません",
+        "desc": "サイドバーの「ファイル」でフォルダ右側の「開く」をクリックするか、下から選択します。",
+        "folder": "このフォルダは空です",
+        "filtered": "一致する項目はありません"
+      },
+      "state": {
+        "nodeMissing": "このノードは存在しません",
+        "rootMissing": "このフォルダは利用できなくなりました",
+        "closeTab": "タブを閉じる"
+      },
+      "toolbar": {
+        "back": "戻る",
+        "forward": "進む",
+        "up": "上の階層へ",
+        "refresh": "更新",
+        "newFolder": "新規フォルダ",
+        "upload": "アップロード",
+        "viewList": "リスト",
+        "viewGrid": "アイコン",
+        "showHidden": "隠し項目を表示",
+        "filter": "フィルタ",
+        "more": "その他",
+        "shortcuts": "キーボードショートカット",
+        "split": "分割表示",
+        "transfers": "転送",
+        "editPath": "パスを編集",
+        "root": "ルートフォルダ",
+        "clearFilter": "クリア"
+      },
+      "tab": {
+        "new": "新規タブ",
+        "close": "タブを閉じる",
+        "closeOthers": "他のタブを閉じる",
+        "duplicate": "タブを複製",
+        "openInSplit": "分割表示で開く",
+        "closePane": "分割を閉じる"
+      },
+      "column": {
+        "name": "名前",
+        "size": "サイズ",
+        "kind": "種類",
+        "modified": "変更日"
+      },
+      "kind": {
+        "directory": "フォルダ",
+        "code": "コード",
+        "markdown": "Markdown",
+        "image": "画像",
+        "pdf": "PDF",
+        "text": "テキスト",
+        "archive": "アーカイブ",
+        "audio": "オーディオ",
+        "video": "ビデオ",
+        "binary": "バイナリ",
+        "other": "ファイル",
+        "symlink": "リンク"
+      },
+      "status": {
+        "items": "{{count}} 項目",
+        "selected": "{{count}} 項目を選択中",
+        "truncated": "最初の {{count}} 項目のみ表示"
+      },
+      "menu": {
+        "open": "開く",
+        "openInNewTab": "新規タブで開く",
+        "download": "ダウンロード",
+        "cut": "カット",
+        "copy": "コピー",
+        "paste": "ペースト",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "copyPath": "パスをコピー",
+        "newFolder": "新規フォルダ",
+        "upload": "ファイルをアップロード",
+        "uploadFolder": "フォルダをアップロード",
+        "selectAll": "すべて選択",
+        "refresh": "更新"
+      },
+      "drop": {
+        "move": "「{{name}}」に移動",
+        "copy": "「{{name}}」にコピー",
+        "upload": "「{{name}}」にアップロード"
+      },
+      "conflict": {
+        "titleOne": "「{{name}}」はすでに存在します",
+        "titleMany": "同じ名前の項目が {{count}} 個存在します",
+        "desc": "置き換えると、移動先の既存の項目が上書きされます。",
+        "replace": "置き換える",
+        "skip": "スキップ"
+      },
+      "transfer": {
+        "done": "{{count}} 項目をコピーしました",
+        "failed": "コピーを完了できませんでした",
+        "empty": "転送はありません"
+      },
+      "archive": {
+        "preparing": "アーカイブを準備中…",
+        "failed": "アーカイブをダウンロードできませんでした"
+      },
+      "shortcuts": {
+        "title": "キーボードショートカット",
+        "move": "選択を移動",
+        "extend": "選択範囲を拡張",
+        "typeAhead": "名前でジャンプ",
+        "open": "開く",
+        "openInNewTab": "新規タブで開く",
+        "up": "上の階層へ",
+        "back": "戻る",
+        "forward": "進む",
+        "selectAll": "すべて選択",
+        "clearSelection": "選択を解除",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "copy": "コピー",
+        "cut": "カット",
+        "paste": "ペースト",
+        "newFolder": "新規フォルダ",
+        "focusFilter": "フィルタ",
+        "download": "ダウンロード",
+        "newTab": "新規タブ",
+        "closeTab": "タブを閉じる",
+        "split": "分割表示",
+        "refresh": "更新",
+        "showShortcuts": "ショートカットを表示"
+      }
     },
     "auth": {
       "login": {

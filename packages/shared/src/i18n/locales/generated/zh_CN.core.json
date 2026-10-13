@@ -611,7 +611,8 @@
         "rsync_missing_local": "服务器上未安装 rsync",
         "rsync_missing_remote": "远程设备上未安装 rsync",
         "timeout": "已超时",
-        "unknown": "加载失败"
+        "unknown": "加载失败",
+        "already_exists": "已存在同名项目"
       },
       "retry": "重试（收起后再展开）",
       "menu": {
@@ -621,7 +622,11 @@
         "expand": "展开",
         "collapse": "收起",
         "upload": "上传文件到这个文件夹",
-        "open": "打开"
+        "open": "打开",
+        "newFolder": "新建文件夹",
+        "rename": "重命名",
+        "delete": "删除",
+        "openInExplorer": "在文件管理器中打开"
       },
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
@@ -657,6 +662,34 @@
         "scopeLocal": "服务器",
         "scopeRemote": "远程",
         "prompt": "设备 {{device}}（{{scope}}）上未检测到 rsync。请根据系统选择合适的命令安装 rsync（例如 `brew install rsync`、`sudo apt-get install -y rsync` 或 `sudo yum install -y rsync`），安装完成后回复我。"
+      },
+      "explorer": {
+        "open": "打开",
+        "close": "关闭"
+      },
+      "ops": {
+        "newFolderTitle": "新建文件夹",
+        "renameTitle": "重命名",
+        "nameLabel": "名称",
+        "create": "创建",
+        "rename": "重命名",
+        "delete": "删除",
+        "defaultFolderName": "未命名文件夹",
+        "nameEmpty": "请输入名称",
+        "nameInvalid": "名称不能包含 / 或 \\",
+        "nameTooLong": "名称过长",
+        "nameTaken": "已存在同名项目",
+        "deleteTitleOne": "删除「{{name}}」？",
+        "deleteTitleMany": "删除 {{count}} 个项目？",
+        "deleteDesc": "删除后无法恢复。",
+        "deleteMore": "等 {{count}} 项",
+        "createFailed": "无法创建文件夹",
+        "renameFailed": "无法重命名",
+        "deleteFailed": "无法删除",
+        "deletePartial": "{{count}} 个项目未能删除",
+        "moveFailed": "无法移动",
+        "movePartial": "{{count}} 个项目未能移动",
+        "unsupported": "节点版本过低，请先升级"
       }
     },
     "auth": {

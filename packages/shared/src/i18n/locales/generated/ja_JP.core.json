@@ -611,7 +611,8 @@
         "rsync_missing_local": "サーバーに rsync がインストールされていません",
         "rsync_missing_remote": "リモートデバイスに rsync がインストールされていません",
         "timeout": "タイムアウトしました",
-        "unknown": "読み込みに失敗しました"
+        "unknown": "読み込みに失敗しました",
+        "already_exists": "同じ名前の項目がすでに存在します"
       },
       "retry": "再試行（折りたたんで再展開）",
       "menu": {
@@ -621,7 +622,11 @@
         "expand": "展開",
         "collapse": "折りたたむ",
         "upload": "このフォルダにアップロード",
-        "open": "開く"
+        "open": "開く",
+        "newFolder": "新規フォルダ",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "openInExplorer": "ファイルマネージャーで開く"
       },
       "copied": "クリップボードにコピーしました",
       "copyFailed": "コピーに失敗しました",
@@ -657,6 +662,34 @@
         "scopeLocal": "サーバー",
         "scopeRemote": "リモート",
         "prompt": "{{device}}（{{scope}}）に rsync が見つかりません。システムに合わせた方法で rsync をインストールし（例: `brew install rsync`、`sudo apt-get install -y rsync`、`sudo yum install -y rsync`）、完了したら返信してください。"
+      },
+      "explorer": {
+        "open": "開く",
+        "close": "閉じる"
+      },
+      "ops": {
+        "newFolderTitle": "新規フォルダ",
+        "renameTitle": "名前を変更",
+        "nameLabel": "名前",
+        "create": "作成",
+        "rename": "名前を変更",
+        "delete": "削除",
+        "defaultFolderName": "名称未設定フォルダ",
+        "nameEmpty": "名前を入力してください",
+        "nameInvalid": "名前に / や \\ は使用できません",
+        "nameTooLong": "名前が長すぎます",
+        "nameTaken": "同じ名前の項目がすでに存在します",
+        "deleteTitleOne": "「{{name}}」を削除しますか？",
+        "deleteTitleMany": "{{count}} 項目を削除しますか？",
+        "deleteDesc": "この操作は取り消せません。",
+        "deleteMore": "ほか {{count}} 項目",
+        "createFailed": "フォルダを作成できませんでした",
+        "renameFailed": "名前を変更できませんでした",
+        "deleteFailed": "削除できませんでした",
+        "deletePartial": "{{count}} 項目を削除できませんでした",
+        "moveFailed": "移動できませんでした",
+        "movePartial": "{{count}} 項目を移動できませんでした",
+        "unsupported": "ノードを更新するとこの機能を利用できます"
       }
     },
     "auth": {

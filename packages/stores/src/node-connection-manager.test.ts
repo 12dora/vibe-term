@@ -132,6 +132,9 @@ describe('NodeConnectionManager.get', () => {
     expect(a.runtime.stores.agent).not.toBe(b.runtime.stores.agent);
     // UI 偏好是宿主级的，所有 node 共用一份（key 仍为 vibeterm-ui）
     expect(a.runtime.stores.ui).toBe(b.runtime.stores.ui);
+    // 文件管理器工作区跨 node，同样全宿主一份
+    expect(a.runtime.stores.explorer).toBe(b.runtime.stores.explorer);
+    expect(manager.get('self').runtime.stores.explorer).toBe(a.runtime.stores.explorer);
     manager.disposeAll();
   });
 
