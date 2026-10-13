@@ -52,7 +52,12 @@ import { addResponseHook } from '@vibeterm/api-client/client';
 import { ConnectionIndicator } from '@vibeterm/panels';
 import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
 import { WatchEventsInit } from '@vibeterm/panels/watch';
-import { SELF_NODE_ID, migrateLocalStorageKey, useNodeRuntime } from '@vibeterm/stores';
+import {
+  EXPLORER_ROUTE,
+  SELF_NODE_ID,
+  migrateLocalStorageKey,
+  useNodeRuntime,
+} from '@vibeterm/stores';
 import { RuntimeProvider, useUIStore } from '@vibeterm/stores/react';
 import { whenFirstTerminalScreenPainted } from '@vibeterm/terminal-ui/components/hooks/terminal-surface-lifecycle-signal';
 import { useKeyboardAvoidance } from '@vibeterm/terminal-ui/hooks/use-keyboard-avoidance';
@@ -350,11 +355,6 @@ function pageRoutes() {
       path: 'file/:ref',
       element: <PageWrapper moduleLoader={filePageModule} />,
     },
-    // 文件管理器自带标签页与分栏，目录切换有自己的方向入场，不叠加整页入场动画。
-    {
-      path: 'explorer',
-      element: <PageWrapper moduleLoader={explorerPageModule} animateContent={false} />,
-    },
   ];
 }
 
@@ -376,10 +376,21 @@ const router = createBrowserRouter([
       // 不要变成 404。
       { path: '/nodes', element: <Navigate to="/settings?tab=nodes" replace /> },
       { path: '/account/security', element: <Navigate to="/settings?panel=security" replace /> },
+      // 文件管理器是跨节点共享的一个工作区（标签页各自带节点），只挂在入口节点下；
+      // 带节点前缀的写法在进节点登录门闸之前就折回去。
+      { path: '/n/:nodeId/explorer', element: <Navigate to={EXPLORER_ROUTE} replace /> },
       {
         path: '/',
         Component: RootLayout,
-        children: [...pageRoutes(), { path: 'n/:nodeId', children: pageRoutes() }],
+        children: [
+          ...pageRoutes(),
+          // 自带标签页与分栏，目录切换有自己的方向入场，不叠加整页入场动画。
+          {
+            path: 'explorer',
+            element: <PageWrapper moduleLoader={explorerPageModule} animateContent={false} />,
+          },
+          { path: 'n/:nodeId', children: pageRoutes() },
+        ],
       },
     ],
   },

@@ -2,7 +2,6 @@
 // 默认 runtime 在 index.ts 构造（首次 import 即建，与既有模块级单例时序等价）。
 
 import { createAgentStore } from './agent';
-import { createExplorerStore } from './explorer-workspace';
 import { createFileTreeStore } from './file-tree';
 import { type AppRuntimeOptions, type RuntimeCore, resolveRuntimeCore } from './runtime';
 import { createSiteStore } from './site';
@@ -16,7 +15,6 @@ export interface AppRuntime extends RuntimeCore {
     tmux: ReturnType<typeof createTmuxStore>;
     agent: ReturnType<typeof createAgentStore>;
     fileTree: ReturnType<typeof createFileTreeStore>;
-    explorer: ReturnType<typeof createExplorerStore>;
   };
   /** 注销全部 WS handler 与订阅（多实例宿主卸载实例时调用） */
   dispose(): void;
@@ -31,11 +29,10 @@ export function createAppRuntime(options: AppRuntimeOptions = {}): AppRuntime {
   const tmux = createTmuxStore(core, { getUI: () => ui, getSite: () => site }, disposers);
   const agent = createAgentStore(core, disposers);
   const fileTree = createFileTreeStore(core);
-  const explorer = options.explorerStore ?? createExplorerStore(core, { disposers });
 
   return {
     ...core,
-    stores: { ui, site, tmux, agent, fileTree, explorer },
+    stores: { ui, site, tmux, agent, fileTree },
     dispose() {
       for (const dispose of disposers.splice(0)) {
         try {

@@ -366,6 +366,33 @@ describe('preferences and clipboard', () => {
 });
 
 describe('invariants', () => {
+  test('prototype member names are never treated as tab ids', () => {
+    const data = threeTabs();
+    for (const id of ['constructor', '__proto__', 'toString', 'valueOf', '', '0']) {
+      expect(closeTab(data, id)).toBe(data);
+      expect(activateTab(data, id)).toBe(data);
+      expect(closeOtherTabs(data, id)).toBe(data);
+      expect(duplicateTab(data, id, 'd')).toBe(data);
+      expect(splitTab(data, id, { paneId: 'p2', tabId: 'd' })).toBe(data);
+      expect(navigate(data, id, '/r/x')).toBe(data);
+      expect(moveTab(data, id, 'p1', 0)).toBe(data);
+    }
+  });
+
+  test('a tab whose id is a prototype member name behaves like any other', () => {
+    let data = open(threeTabs(), 'constructor', '/r/k');
+    data = navigate(data, 'constructor', '/r/k/x');
+    expect(data.tabs.constructor).toMatchObject({ history: ['/r/k', '/r/k/x'], index: 1 });
+
+    data = rebasePath(data, ROOT, '/r/k', '/r/renamed');
+    expect(Object.keys(data.tabs).sort()).toEqual(['a', 'b', 'c', 'constructor']);
+    expect(Object.getPrototypeOf(data.tabs)).toBe(Object.prototype);
+
+    const closed = closeTab(data, 'constructor');
+    expect(Object.keys(closed.tabs).sort()).toEqual(['a', 'b', 'c']);
+    expect(tabIds(closed, 'p1')).toEqual(['a', 'b', 'c']);
+  });
+
   test('explorerTransitions exposes every transition', () => {
     expect(Object.keys(explorerTransitions)).toHaveLength(22);
     expect(explorerTransitions.navigate).toBe(navigate);

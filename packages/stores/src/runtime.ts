@@ -31,7 +31,6 @@ import {
   registerPaneSink,
 } from '@vibeterm/ws-client/pane-sink-registry';
 import i18next from 'i18next';
-import type { ExplorerStore } from './explorer-workspace';
 import { bridgeCloseMobileSidebar, bridgeIsMobile, bridgeOpenMobileSidebar } from './flow-bridges';
 import type { UIStore } from './ui';
 
@@ -110,8 +109,6 @@ export interface AppRuntimeOptions {
   storagePrefix?: string;
   /** 宿主共享的 UI 偏好 store（多 runtime 并存时传同一实例）；缺省按 storagePrefix 新建 */
   uiStore?: UIStore;
-  /** 宿主共享的文件管理器工作区 store（多 runtime 并存时传同一实例）；缺省按 storagePrefix 新建 */
-  explorerStore?: ExplorerStore;
   /**
    * 本 runtime 的站点设置是否驱动**全局** i18n 语言；缺省 true。
    * i18next 是浏览器级单例，多 node 宿主里只有 self / 宿主 runtime 允许为 true——

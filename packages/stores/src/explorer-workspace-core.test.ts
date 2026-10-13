@@ -10,6 +10,7 @@ import {
   explorerCanGoBack,
   explorerCanGoForward,
   explorerParentPath,
+  explorerTabOf,
   explorerTabPath,
   findExplorerTabByLocation,
   isExplorerRootOpen,
@@ -83,6 +84,20 @@ describe('selectors', () => {
     expect(find('/r/')?.id).toBe('b');
     expect(find('/r/x')?.id).toBe('a');
     expect(find('/r', 'n2')).toBeNull();
+  });
+
+  test('explorerTabOf and the selectors only see own tabs', () => {
+    const tabs = { a: tab('a', ['/r']) };
+    expect(explorerTabOf(tabs, 'a')).toBe(tabs.a);
+    for (const id of ['constructor', '__proto__', 'toString', 'valueOf', '', '0']) {
+      expect(explorerTabOf(tabs, id)).toBeUndefined();
+    }
+
+    const pane = { id: 'p1', tabIds: ['constructor', '__proto__', 'a'], activeTabId: 'toString' };
+    const data = { tabs, panes: [pane], activePaneId: 'p1' };
+    const here = { nodeId: 'self', rootId: 'r1', path: '/r' };
+    expect(explorerActiveTab(data)).toBeNull();
+    expect(findExplorerTabByLocation(data, here)?.id).toBe('a');
   });
 
   test('explorerActiveTab reads the active pane', () => {
@@ -268,6 +283,58 @@ describe('sanitizeExplorerData', () => {
     ]);
     expect(Object.keys(data.tabs).sort()).toEqual(['a', 'b']);
     expect(data.activePaneId).toBe('p1');
+  });
+
+  test('never resolves tab ids to inherited Object members', () => {
+    const hostile = ['constructor', '__proto__', 'toString', 'hasOwnProperty', '', '0', '12'];
+    const data = sanitizeExplorerData({
+      tabs: { a: tab('a', ['/a']) },
+      panes: [
+        { id: 'p1', tabIds: [...hostile, 0, 12, 'a'], activeTabId: 'constructor' },
+        { id: 'p2', tabIds: hostile, activeTabId: '__proto__' },
+        { id: 'p3', tabIds: ['toString'], activeTabId: 'toString' },
+      ],
+      activePaneId: 'p2',
+    });
+    expect(data.panes).toEqual([{ id: 'p1', tabIds: ['a'], activeTabId: 'a' }]);
+    expect(Object.keys(data.tabs)).toEqual(['a']);
+    expect(data.activePaneId).toBe('p1');
+    for (const pane of data.panes) {
+      for (const id of pane.tabIds) expect(explorerTabPath(data.tabs[id])).toBe('/a');
+    }
+    expect(explorerActiveTab(data)?.id).toBe('a');
+  });
+
+  test('prototype-named tab keys are ordinary tabs when valid, and dropped when not', () => {
+    // JSON.parse 会把 "__proto__" 建成自有属性，与真实落盘数据的形状一致
+    const protoTab = JSON.stringify({ ...tab('x', ['/p']), index: 0 });
+    const json = JSON.stringify({
+      tabs: {
+        constructor: tab('constructor', ['/c']),
+        toString: { id: 'toString', nodeId: 'self', rootId: 'r1', history: [] },
+        [String(7)]: tab('7', ['/seven']),
+        [String('')]: tab('', ['/empty']),
+      },
+      panes: [
+        {
+          id: 'p1',
+          tabIds: ['__proto__', 'constructor', 'toString', '7', '', 'valueOf'],
+          activeTabId: '__proto__',
+        },
+      ],
+      activePaneId: 'p1',
+    });
+    const raw = JSON.parse(json.replace('"tabs":{', `"tabs":{"__proto__":${protoTab},`));
+    expect(Object.keys(raw.tabs)).toContain('__proto__');
+
+    const data = sanitizeExplorerData(raw);
+    expect(Object.keys(data.tabs).sort()).toEqual(['7', 'constructor']);
+    expect(Object.getPrototypeOf(data.tabs)).toBe(Object.prototype);
+    expect(data.panes).toEqual([
+      { id: 'p1', tabIds: ['constructor', '7'], activeTabId: 'constructor' },
+    ]);
+    expect(explorerTabPath(data.tabs.constructor as unknown as ExplorerTab)).toBe('/c');
+    expect(data.tabs['7']).toEqual(tab('7', ['/seven']));
   });
 
   test('drops invalid and emptied panes and re-normalises sizes', () => {

@@ -5,8 +5,7 @@
 //   每条 socket 另带一个 client nonce `?cid=`（见 `createDefaultNodeConnection`）。
 // - REST：`new ApiClient(nodePathPrefix(id))`，端点函数照旧传 `/api/...`。
 // - storage：agent / file-tree 等 key 带 node 前缀；UI 偏好（主题、侧栏、终端字号）是
-//   宿主级偏好，所有 node 共用同一个 UIStore（key 仍为 `vibeterm-ui`）；文件管理器工作区
-//   （key `vibeterm-explorer`）同理共用一份。
+//   宿主级偏好，所有 node 共用同一个 UIStore（key 仍为 `vibeterm-ui`）。
 // - 路由：host.appPath 注入 `/n/<id>` 前缀，包内构造的应用内路径与 matchPath pattern 一并生效。
 
 import {
@@ -30,7 +29,6 @@ import {
 } from '@vibeterm/ws-client';
 import { useEffect } from 'react';
 import { type AppRuntime, createAppRuntime } from './app-runtime';
-import { type ExplorerStore, createExplorerStore } from './explorer-workspace';
 import {
   type NodeReloginResult,
   NodeSessionGuard,
@@ -132,7 +130,6 @@ interface EntryRecord {
 export class NodeConnectionManager {
   private readonly records = new Map<string, EntryRecord>();
   private sharedUiStore: UIStore | null = null;
-  private sharedExplorerStore: ExplorerStore | null = null;
   private guard: NodeSessionGuard | null = null;
 
   constructor(private readonly options: NodeConnectionManagerOptions = {}) {}
@@ -155,14 +152,6 @@ export class NodeConnectionManager {
   private uiStore(): UIStore {
     if (!this.sharedUiStore) this.sharedUiStore = createUIStore({ storagePrefix: '' });
     return this.sharedUiStore;
-  }
-
-  /** 文件管理器工作区跨 node（标签页自带 nodeId），同样全宿主一份（key 恒为 `vibeterm-explorer`）。 */
-  private explorerStore(): ExplorerStore {
-    if (!this.sharedExplorerStore) {
-      this.sharedExplorerStore = createExplorerStore({ storagePrefix: '' });
-    }
-    return this.sharedExplorerStore;
   }
 
   /**
@@ -233,7 +222,6 @@ export class NodeConnectionManager {
       apiClient,
       storagePrefix: nodeStoragePrefix(nodeId),
       uiStore: this.uiStore(),
-      explorerStore: this.explorerStore(),
       // 全局 i18n 语言只由 entry 自身的站点设置驱动；远端 node 的站点语言留在它自己的 store 里。
       controlsBrowserPrefs: nodeId === SELF_NODE_ID,
       host: createBrowserHostServices({

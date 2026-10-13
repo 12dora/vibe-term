@@ -1,7 +1,7 @@
 // 文件管理器工作区的基础层：类型、常量、路径 / 分栏比例工具与只读选择器（纯函数，不依赖 zustand）。
 
 /** 不带 node 前缀的应用路由（文件管理器恒挂在入口 node 的外壳下） */
-export const EXPLORER_ROUTE = '/explorer';
+export { EXPLORER_ROUTE } from './explorer-route';
 export const EXPLORER_MAX_PANES = 3;
 export const EXPLORER_HISTORY_LIMIT = 50;
 /** 单个分栏的最小宽度占比 */
@@ -99,6 +99,19 @@ export function explorerParentPath(path: string, rootPath: string): string | nul
   return parent === '' ? '/' : parent;
 }
 
+/**
+ * 按 id 取标签页，只认自有属性。
+ * 直接 `tabs[id]` 会把 `constructor` / `toString` 之类解析成 Object 的继承成员，
+ * 落盘数据被改坏时就会把一个函数当成标签页用，所有按 id 的查找都必须走这里。
+ */
+export function explorerTabOf(
+  tabs: Readonly<Record<string, ExplorerTab>>,
+  id: string
+): ExplorerTab | undefined {
+  // 不用 Object.hasOwn：apps/fe 的 lib / target 还是 ES2020
+  return Object.prototype.hasOwnProperty.call(tabs, id) ? tabs[id] : undefined;
+}
+
 export function explorerTabPath(tab: ExplorerTab): string {
   return tab.history[tab.index] ?? tab.history[tab.history.length - 1] ?? '/';
 }
@@ -127,7 +140,7 @@ export function findExplorerTabByLocation(
   const path = normalizeExplorerPath(loc.path);
   for (const pane of data.panes) {
     for (const tabId of pane.tabIds) {
-      const tab = data.tabs[tabId];
+      const tab = explorerTabOf(data.tabs, tabId);
       if (!tab || tab.nodeId !== loc.nodeId || tab.rootId !== loc.rootId) continue;
       if (explorerTabPath(tab) === path) return tab;
     }
@@ -140,7 +153,7 @@ export function explorerActiveTab(
   data: Pick<ExplorerWorkspaceData, 'tabs' | 'panes' | 'activePaneId'>
 ): ExplorerTab | null {
   const pane = data.panes.find((item) => item.id === data.activePaneId);
-  return (pane?.activeTabId ? data.tabs[pane.activeTabId] : null) ?? null;
+  return (pane?.activeTabId ? explorerTabOf(data.tabs, pane.activeTabId) : null) ?? null;
 }
 
 function equalPaneSizes(count: number): number[] {

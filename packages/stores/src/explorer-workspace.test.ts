@@ -1,5 +1,9 @@
-import { describe, expect, test } from 'bun:test';
-import { createExplorerStore } from './explorer-workspace';
+import { afterEach, describe, expect, test } from 'bun:test';
+import {
+  createExplorerStore,
+  getExplorerStore,
+  resetExplorerStoreForTest,
+} from './explorer-workspace';
 import {
   EXPLORER_MAX_PANES,
   type ExplorerClipboard,
@@ -284,14 +288,53 @@ describe('createExplorerStore persistence', () => {
   });
 });
 
-describe('shared instance', () => {
-  test('every holder of the same store sees the same workspace', () => {
-    const store = setup().create();
-    const viewA = store;
-    const viewB = store;
-    const tabId = viewA.getState().openLocation(loc('/r', 'r1', 'node-a'));
-    viewB.getState().openLocation(loc('/r', 'r9', 'node-b'));
-    expect(isExplorerRootOpen(viewA.getState(), 'node-b', 'r9')).toBe(true);
-    expect(viewB.getState().tabs[tabId].nodeId).toBe('node-a');
+describe('getExplorerStore singleton', () => {
+  const SHARED_KEY = 'vibeterm-explorer';
+
+  afterEach(() => {
+    resetExplorerStoreForTest();
+    globalThis.localStorage.removeItem(SHARED_KEY);
+  });
+
+  test('creates the store lazily and keeps returning the same instance', () => {
+    resetExplorerStoreForTest();
+    const store = getExplorerStore();
+    expect(getExplorerStore()).toBe(store);
+
+    const tabId = store.getState().openLocation(loc('/r', 'r1', 'node-a'));
+    getExplorerStore()
+      .getState()
+      .openLocation(loc('/r', 'r9', 'node-b'));
+    expect(isExplorerRootOpen(store.getState(), 'node-b', 'r9')).toBe(true);
+    expect(getExplorerStore().getState().tabs[tabId].nodeId).toBe('node-a');
+  });
+
+  test('persists under the un-prefixed key and restores after a reset', () => {
+    resetExplorerStoreForTest();
+    globalThis.localStorage.removeItem(SHARED_KEY);
+    const first = getExplorerStore();
+    const tabId = first.getState().openLocation(loc('/r/docs'));
+    first.getState().setClipboard(CLIPBOARD);
+
+    const persisted = JSON.parse(
+      globalThis.localStorage.getItem(SHARED_KEY) ?? 'null'
+    ) as PersistedBlob | null;
+    expect(persisted?.version).toBe(1);
+    expect(Object.keys(persisted?.state ?? {})).not.toContain('clipboard');
+
+    resetExplorerStoreForTest();
+    const second = getExplorerStore();
+    expect(second).not.toBe(first);
+    expect(explorerTabPath(second.getState().tabs[tabId])).toBe('/r/docs');
+    expect(second.getState().clipboard).toBeNull();
+  });
+
+  test('resetExplorerStoreForTest can install a specific instance', () => {
+    const injected = setup().create();
+    resetExplorerStoreForTest(injected);
+    expect(getExplorerStore()).toBe(injected);
+
+    resetExplorerStoreForTest();
+    expect(getExplorerStore()).not.toBe(injected);
   });
 });

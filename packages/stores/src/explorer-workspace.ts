@@ -1,5 +1,6 @@
 // 文件管理器工作区 store：只负责把纯状态迁移（explorer-workspace-model）接到 zustand + persist 上。
-// 与 UI 偏好一样是宿主级状态：多 node 宿主里所有 runtime 共用同一个实例（见 node-connection-manager）。
+// 宿主级状态（标签页自带 nodeId），全应用一份；只被懒加载的代码使用，所以不挂在 runtime 上，
+// 而是首次 getExplorerStore() 时才创建——入口路径上不得有任何模块求值期 / runtime 创建期的调用。
 
 import { type StoreApi, create } from 'zustand';
 import { persist } from 'zustand/middleware';
@@ -10,6 +11,7 @@ import {
   createExplorerId,
   createInitialExplorerData,
   explorerActiveTab,
+  explorerTabOf,
   sanitizeExplorerData,
   explorerTransitions as transitions,
 } from './explorer-workspace-model';
@@ -78,7 +80,7 @@ function layoutActions(set: SetState, get: GetState): LayoutActions {
       const next = transitions.openLocation(get(), loc, { ...opts, tabId });
       set(next);
       // 激活了已有标签页时新 id 不会入表，此时它就是活动分栏的活动标签页
-      return next.tabs[tabId] ? tabId : (explorerActiveTab(next)?.id ?? tabId);
+      return explorerTabOf(next.tabs, tabId) ? tabId : (explorerActiveTab(next)?.id ?? tabId);
     },
     closeLocation: (nodeId, rootId) => set((s) => transitions.closeLocation(s, nodeId, rootId)),
     closeTab: (tabId) => set((s) => transitions.closeTab(s, tabId)),
@@ -87,7 +89,7 @@ function layoutActions(set: SetState, get: GetState): LayoutActions {
       const newTabId = createExplorerId();
       const next = transitions.duplicateTab(get(), tabId, newTabId);
       set(next);
-      return next.tabs[newTabId] ? newTabId : tabId;
+      return explorerTabOf(next.tabs, newTabId) ? newTabId : tabId;
     },
     activateTab: (tabId) => set((s) => transitions.activateTab(s, tabId)),
     setActivePane: (paneId) => set((s) => transitions.setActivePane(s, paneId)),
@@ -160,3 +162,16 @@ export function createExplorerStore(
 }
 
 export type ExplorerStore = ReturnType<typeof createExplorerStore>;
+
+let sharedStore: ExplorerStore | null = null;
+
+/** 全应用共用的工作区 store：首次调用时创建（key 恒为 `vibeterm-explorer`），之后恒返回同一实例。 */
+export function getExplorerStore(): ExplorerStore {
+  if (!sharedStore) sharedStore = createExplorerStore({ storagePrefix: '' });
+  return sharedStore;
+}
+
+/** 测试专用：丢弃单例（下次 getExplorerStore 重新创建），或换成指定实例。 */
+export function resetExplorerStoreForTest(store?: ExplorerStore): void {
+  sharedStore = store ?? null;
+}

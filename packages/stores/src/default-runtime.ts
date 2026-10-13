@@ -14,4 +14,3 @@ export const useSiteStore = defaultRuntime.stores.site;
 export const useTmuxStore = defaultRuntime.stores.tmux;
 export const useAgentStore = defaultRuntime.stores.agent;
 export const useFileTreeStore = defaultRuntime.stores.fileTree;
-export const useExplorerStore = defaultRuntime.stores.explorer;

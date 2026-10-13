@@ -12,6 +12,7 @@ import {
   type ExplorerViewMode,
   type ExplorerWorkspaceData,
   explorerParentPath,
+  explorerTabOf,
   explorerTabPath,
   findExplorerTabByLocation,
   isPathWithin,
@@ -133,10 +134,8 @@ function dropEmptyPanes(data: Data): Data {
 
 function removeTabs(data: Data, removed: ReadonlySet<string>): Data {
   if (removed.size === 0) return dropEmptyPanes(data);
-  const tabs: Record<string, ExplorerTab> = {};
-  for (const [id, tab] of Object.entries(data.tabs)) {
-    if (!removed.has(id)) tabs[id] = tab;
-  }
+  // 用 fromEntries 而不是逐个赋值：`tabs['__proto__'] = …` 改的是原型而不是自有属性
+  const tabs = Object.fromEntries(Object.entries(data.tabs).filter(([id]) => !removed.has(id)));
   const panes = data.panes.map((pane) => {
     if (!pane.tabIds.some((id) => removed.has(id))) return pane;
     return {
@@ -169,7 +168,7 @@ function insertTab(data: Data, tab: ExplorerTab, paneIndex: number, at: number):
 }
 
 function withTab(data: Data, tabId: string, update: (tab: ExplorerTab) => ExplorerTab): Data {
-  const tab = data.tabs[tabId];
+  const tab = explorerTabOf(data.tabs, tabId);
   if (!tab) return data;
   const next = update(tab);
   return next === tab ? data : { ...data, tabs: { ...data.tabs, [tabId]: next } };
@@ -236,7 +235,7 @@ export function closeLocation(data: Data, nodeId: string, rootId: string): Data 
 }
 
 export function closeTab(data: Data, tabId: string): Data {
-  return data.tabs[tabId] ? removeTabs(data, new Set([tabId])) : data;
+  return explorerTabOf(data.tabs, tabId) ? removeTabs(data, new Set([tabId])) : data;
 }
 
 export function closeOtherTabs(data: Data, tabId: string): Data {
@@ -246,7 +245,7 @@ export function closeOtherTabs(data: Data, tabId: string): Data {
 }
 
 export function duplicateTab(data: Data, tabId: string, newTabId: string): Data {
-  const source = data.tabs[tabId];
+  const source = explorerTabOf(data.tabs, tabId);
   const paneIndex = paneIndexOfTab(data, tabId);
   if (!source || paneIndex < 0) return data;
   const at = data.panes[paneIndex].tabIds.indexOf(tabId) + 1;
@@ -279,7 +278,7 @@ export function moveTab(data: Data, tabId: string, toPaneId: string, toIndex: nu
 
 /** 已达分栏上限或标签页不存在时原样返回（调用方据引用相等判断是否生效） */
 export function splitTab(data: Data, tabId: string, ids: { paneId: string; tabId: string }): Data {
-  const source = data.tabs[tabId];
+  const source = explorerTabOf(data.tabs, tabId);
   const paneIndex = paneIndexOfTab(data, tabId);
   if (!source || paneIndex < 0 || data.panes.length >= EXPLORER_MAX_PANES) return data;
 
@@ -382,13 +381,13 @@ export function rebasePath(
   if (rule.to === from) return data;
 
   let changed = false;
-  const tabs: Record<string, ExplorerTab> = {};
-  for (const [id, tab] of Object.entries(data.tabs)) {
+  const entries = Object.entries(data.tabs).map(([id, tab]): [string, ExplorerTab] => {
     const affected = tab.nodeId === target.nodeId && tab.rootId === target.rootId;
-    tabs[id] = affected ? rebaseTab(tab, rule) : tab;
-    changed = changed || tabs[id] !== tab;
-  }
-  return changed ? { ...data, tabs } : data;
+    const next = affected ? rebaseTab(tab, rule) : tab;
+    changed = changed || next !== tab;
+    return [id, next];
+  });
+  return changed ? { ...data, tabs: Object.fromEntries(entries) } : data;
 }
 
 export function setViewMode(data: Data, viewMode: ExplorerViewMode): Data {

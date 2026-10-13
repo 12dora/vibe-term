@@ -7,7 +7,6 @@ import type { AgentState } from './agent';
 import { resolveAgentStore } from './agent-host-store';
 import { normalizeAgentNodeId } from './agent-session-map';
 import type { AppRuntime } from './app-runtime';
-import type { ExplorerWorkspaceState } from './explorer-workspace-model';
 import type { FileTreeState } from './file-tree';
 import type { SiteState } from './site';
 import type { TmuxState } from './tmux';
@@ -88,10 +87,6 @@ export function useAgentStore<T>(selector: (state: AgentState) => T): T {
 
 export function useFileTreeStore<T>(selector: (state: FileTreeState) => T): T {
   return useRuntime().stores.fileTree(selector);
-}
-
-export function useExplorerStore<T>(selector: (state: ExplorerWorkspaceState) => T): T {
-  return useRuntime().stores.explorer(selector);
 }
 
 /**

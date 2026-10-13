@@ -11,6 +11,7 @@ import {
   type ExplorerViewMode,
   type ExplorerWorkspaceData,
   createExplorerId,
+  explorerTabOf,
   normalizeExplorerPaneSizes,
   normalizeExplorerPath,
 } from './explorer-workspace-core';
@@ -58,17 +59,23 @@ function sanitizeTab(id: string, value: unknown): ExplorerTab | null {
   };
 }
 
-function sanitizeTabs(value: unknown): Record<string, ExplorerTab> {
-  const tabs: Record<string, ExplorerTab> = {};
-  if (!isRecord(value)) return tabs;
-  for (const [id, raw] of Object.entries(value)) {
-    const tab = id ? sanitizeTab(id, raw) : null;
-    if (tab) tabs[id] = tab;
-  }
-  return tabs;
+/** `__proto__` 作键时对象展开 / 赋值的语义都不同于普通键，这种 id 只可能来自被改坏的数据，直接拒收 */
+function isValidTabId(id: unknown): id is string {
+  return typeof id === 'string' && id.length > 0 && id !== '__proto__';
 }
 
-/** 只保留存在且尚未被别的分栏认领的标签 id */
+type TabEntry = [id: string, tab: ExplorerTab];
+
+function sanitizeTabs(value: unknown): Record<string, ExplorerTab> {
+  const entries: TabEntry[] = [];
+  for (const [id, raw] of isRecord(value) ? Object.entries(value) : []) {
+    const tab = isValidTabId(id) ? sanitizeTab(id, raw) : null;
+    if (tab) entries.push([id, tab]);
+  }
+  return Object.fromEntries(entries);
+}
+
+/** 只保留存在（自有属性，见 explorerTabOf）且尚未被别的分栏认领的标签 id */
 function claimTabIds(
   value: unknown,
   tabs: Record<string, ExplorerTab>,
@@ -76,7 +83,7 @@ function claimTabIds(
 ): string[] {
   const tabIds: string[] = [];
   for (const id of Array.isArray(value) ? value : []) {
-    if (typeof id !== 'string' || !tabs[id] || claimed.has(id)) continue;
+    if (!isValidTabId(id) || !explorerTabOf(tabs, id) || claimed.has(id)) continue;
     claimed.add(id);
     tabIds.push(id);
   }
@@ -141,10 +148,9 @@ export function sanitizeExplorerData(raw: unknown): ExplorerWorkspaceData {
   const allTabs = sanitizeTabs(source.tabs);
   const panes = sanitizePanes(source.panes, allTabs);
 
-  const tabs: Record<string, ExplorerTab> = {};
-  for (const pane of panes) {
-    for (const id of pane.tabIds) tabs[id] = allTabs[id];
-  }
+  // 只留下被某个分栏认领的标签页（claimTabIds 已保证这些 id 都是 allTabs 的自有键）
+  const claimed = new Set(panes.flatMap((pane) => pane.tabIds));
+  const tabs = Object.fromEntries(Object.entries(allTabs).filter(([id]) => claimed.has(id)));
 
   const rawPaneCount = Array.isArray(source.panes) ? source.panes.length : 0;
   const activePaneId = panes.some((pane) => pane.id === source.activePaneId)
