@@ -80,6 +80,12 @@
     -webkit-user-drag: none;
   }
 
+  /* 上面那条是为了挡掉图片、链接被误拖出残影；显式声明 draggable 的元素（文件行、标签页）
+     必须放行，否则 Chromium / Safari 根本不会发 dragstart。 */
+  [draggable="true"] {
+    -webkit-user-drag: element;
+  }
+
   body {
     @apply bg-background text-foreground;
     -webkit-user-select: none;
