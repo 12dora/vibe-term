@@ -10,25 +10,36 @@
 //
 // 拖节点（节点列表是会换行的网格，见 `node-grid.ts`）：落点一律是「插入位置」——按阅读顺序
 // 找第一个排在指针之后的兄弟，插到它前面；一个都没有就是末尾。算的时候**不看被拖节点自己**
-// （也不看占位条，它本来就不是落点）：预览会真的回流（同容器挪被拖节点的 `order`，跨容器插
-// 占位条），排在插入位置之前的兄弟不会被挤动，之后的只会往后挪，所以这条规则不会因为回流
-// 而来回抖。
+// （也不看占位条）。
 //  - 跨容器：直接返回那个兄弟（`resolveDrop` 把「落在节点上」解成「插到它的位置」）；没有
 //    就退回容器本身（= 追加到末尾）。
 //  - 同容器：`resolveDrop` 对同容器用的是 sortable 的「占谁的位置」语义，所以把插入位置换算
 //    成「挪完之后被拖节点所在下标上原来的那个条目」再返回（见 `reorderTargetId`）；换算出来
-//    是它自己就等于没动。
+//    是它自己就等于没动。换算只在**确实渲染了磁贴**的兄弟之间做（布局里可能留着已暂停 /
+//    已移除的节点，它们没有落点）。
 // 拖分组（整行宽、上下排列，仍用 sortable 的位移预览）：指针压着谁就是谁，空隙归最近的。
 //
-// 键盘拖拽没有指针坐标：`sortableKeyboardCoordinates` 每按一次方向键就把预览卡片的左上角对到
-// 目标条目的左上角，所以取**包含这个角**的条目（比中心距离可靠：整行宽的磁贴中心离它的左上角
-// 有半个容器远）；一个都不包含才退回最近四角。带状态的版本（`create…`）还会在卡片没动时
-// 沿用上一次的结果，占位条挤动兄弟也不会让落点自己跳走。
+// 指针拖节点时预览是**真实回流**（同容器挪被拖节点的 `order`，跨容器插占位条），落点矩形会
+// 跟着变，而上面的几何规则对回流并不封闭：回流会重组行（行高由同行最高的磁贴决定）、会让
+// 容器变矮，同一个指针位置在回流前后可能算出不同的落点，两个排布互相把对方算出来，指针
+// 不动也能无限来回翻。所以带状态的版本（`createDeviceFolderCollisionDetection`）加了迟滞：
+//  - 指针没动（距上一次真正计算不足 `POINTER_HYSTERESIS_PX`）就沿用上一次的落点——只是因为
+//    回流后重量矩形而重跑判定时，结果不变；
+//  - 指针压在被拖节点 / 占位条**当前**的矩形上时保持当前落点（预览已经摆在指针底下了）。
+// 另一半在宿主：拖拽期间容器高度被冻结（`use-frozen-heights.ts`），回流不会把容器从指针
+// 底下抽走。指针继续移动、穿过两种排布都说得通的窄带时落点仍可能换一次，但不会原地振荡。
+//
+// 键盘拖拽没有指针坐标：方向键每按一次，`keyboard-coordinates.ts` 把预览卡片的左上角对到
+// 目标条目的左上角，所以这里取**包含这个角**的条目（比中心 / 四角距离可靠：整行宽的磁贴
+// 中心离它的左上角有半个容器远）；一个都不包含才退回最近四角。带状态的版本还会在卡片
+// **相对整棵树**没动时沿用上一次的结果：跨容器的占位条挤动兄弟不会让落点自己跳走，而页面
+// 滚动（KeyboardSensor 有时只滚不移）会让卡片相对树的位置变化，照常重算。
 // 容器里没有兄弟（空分组 / 空根层）退回容器本身。指针在整棵树之外返回空，视为取消。
 
 import { closestCorners, pointerWithin } from '@dnd-kit/core';
 import type { ClientRect, Collision, CollisionDetection, DroppableContainer } from '@dnd-kit/core';
 import {
+  PLACEHOLDER_ITEM_ID,
   ROOT_CONTAINER_ID,
   collisionGroupIds,
   dropZoneId,
@@ -66,14 +77,17 @@ const KEYBOARD_ROOT_STRIP_HEIGHT = 56;
 const FULL_ROW_RATIO = 0.75;
 
 /** 键盘拖拽取落点用的探针：预览卡片左上角往里收一点，贴边对齐时的亚像素误差不至于落到外面 */
-const KEYBOARD_PROBE_INSET = 2;
+export const KEYBOARD_PROBE_INSET = 2;
 
-function containerIdOf(container: { data?: { current?: unknown } }): string | null {
+/** 指针至少挪了这么多像素才重新算落点（见文件头的迟滞说明） */
+export const POINTER_HYSTERESIS_PX = 4;
+
+export function containerIdOf(container: { data?: { current?: unknown } }): string | null {
   const data = container.data?.current as Partial<SortableItemData> | undefined;
   return typeof data?.containerId === 'string' ? data.containerId : null;
 }
 
-function bottomStrip(rect: ClientRect): ClientRect {
+export function bottomStrip(rect: ClientRect): ClientRect {
   const height = Math.min(rect.height, KEYBOARD_ROOT_STRIP_HEIGHT);
   return { ...rect, top: rect.bottom - height, height };
 }
@@ -280,8 +294,15 @@ function pointerTargetId(
   const order = parseNodeElementId(activeId) === null ? null : sortableOrder(args.active);
   // 拖分组，或拿不到数据顺序：指针压着谁就是谁
   if (!order) return nearestTile(point, tiles)?.id ?? null;
+  // 数据顺序里可能有没渲染磁贴的节点（已暂停 / 已移除但 placement 还在）：换算只在有落点的
+  // 条目之间做，否则会换算到一个不存在的落点上，整次拖拽落空
+  const rendered = new Set(tiles.map((tile) => tile.id));
   const others = tiles.filter((tile) => tile.id !== activeId);
-  return reorderTargetId(order, activeId, insertionTile(point, others, flow.width)?.id ?? null);
+  return reorderTargetId(
+    order.filter((id) => rendered.has(id)),
+    activeId,
+    insertionTile(point, others, flow.width)?.id ?? null
+  );
 }
 
 function pointerCollisions(args: Args, groups: Groups, point: CollisionPoint): Collision[] {
@@ -330,30 +351,101 @@ function detect(args: Args): Collision[] {
 /** 无状态的判定：同样的输入永远给同样的结果（单测用它） */
 export const deviceFolderCollisionDetection: CollisionDetection = detect;
 
-/** 键盘落点的锁：预览卡片停在哪（取整到像素）+ 当时选中的落点 */
-export function keyboardLatchKey(activeId: string, rect: { left: number; top: number }): string {
-  return `${activeId}@${Math.round(rect.left)},${Math.round(rect.top)}`;
+/** 上一次真正计算落点时指针在哪、算出了谁（null = 树外，没有落点） */
+export interface PointerHold {
+  point: CollisionPoint;
+  targetId: string | null;
 }
 
 /**
- * 给 `DndContext` 用的判定（每棵树建一个）。键盘拖拽时落点只在预览卡片**真的挪了位置**（按了
- * 方向键 / 页面滚动）时才重新算：跨容器的占位条会把目标兄弟挤走，卡片底下换了人，照几何
- * 重算会让落点自己跳到别处；卡片没动就沿用上一次的落点。指针拖拽不上锁（那边的规则本身
- * 不受回流影响）。
+ * 指针路径的迟滞：给定上一次的结果、指针现在的位置、被拖节点 / 占位条当前的矩形，决定沿用
+ * 还是重算。沿用时原样返回 `prev`（`point` 不更新，慢慢挪也会累计到阈值）。
  */
-export function createDeviceFolderCollisionDetection(): CollisionDetection {
-  let latch: { key: string; id: string } | null = null;
-  return (args) => {
-    if (args.pointerCoordinates) {
-      latch = null;
-      return detect(args);
-    }
-    const key = keyboardLatchKey(String(args.active.id), args.collisionRect);
-    const held = latch?.key === key ? collisionFor(latch.id, args.droppableContainers) : [];
+export function nextPointerTarget(
+  prev: PointerHold | null,
+  point: CollisionPoint,
+  ghost: ClientRect | null,
+  compute: () => string | null
+): PointerHold {
+  if (prev) {
+    const moved = Math.hypot(point.x - prev.point.x, point.y - prev.point.y);
+    if (moved < POINTER_HYSTERESIS_PX) return prev;
+    if (ghost && rectDistance(point, ghost) === 0) return prev;
+  }
+  return { point: { x: point.x, y: point.y }, targetId: compute() };
+}
+
+/**
+ * 键盘落点的锁的键：预览卡片的左上角**相对整棵树**在哪（取整到像素）。相对树而不是视口：
+ * 页面滚动时卡片在视口里不动，但它压着的条目变了，必须重算；占位条挤动的只是树里面的条目，
+ * 树的左上角不动，键不变。`origin` 量不到时退回视口坐标。
+ */
+export function keyboardLatchKey(
+  activeId: string,
+  rect: { left: number; top: number },
+  origin?: { left: number; top: number } | null
+): string {
+  const left = Math.round(rect.left - (origin?.left ?? 0));
+  const top = Math.round(rect.top - (origin?.top ?? 0));
+  return `${activeId}@${left},${top}`;
+}
+
+/** 被拖节点在预览里「现在摆在哪」：跨容器是占位条，同容器是它自己；拖分组（位移预览）没有 */
+function ghostRect(args: Args): ClientRect | null {
+  if (parseNodeElementId(String(args.active.id)) === null) return null;
+  return (
+    args.droppableRects.get(PLACEHOLDER_ITEM_ID) ?? args.droppableRects.get(args.active.id) ?? null
+  );
+}
+
+function firstId(hits: readonly Collision[]): string | null {
+  const first = hits[0];
+  return first ? String(first.id) : null;
+}
+
+export interface DeviceFolderCollision {
+  /** 交给 `DndContext` 的判定 */
+  detect: CollisionDetection;
+  /** 每次拖拽开始时调用：上一次拖拽留下的落点不能带进下一次 */
+  reset: () => void;
+}
+
+/**
+ * 给 `DndContext` 用的带状态判定（每棵树建一个），在无状态判定之上加两把「锁」，理由见文件头：
+ * 指针路径的迟滞（`nextPointerTarget`）与键盘落点的锁（`keyboardLatchKey`）。
+ * 锁住的落点如果已经不是有效落点（条目卸载了）就作废重算。
+ */
+export function createDeviceFolderCollisionDetection(): DeviceFolderCollision {
+  let keyboard: { key: string; id: string } | null = null;
+  let pointer: PointerHold | null = null;
+  const live = (args: Args, id: string | null) =>
+    id === null || collisionFor(id, args.droppableContainers).length > 0;
+
+  const detectPointer = (args: Args, point: CollisionPoint): Collision[] => {
+    keyboard = null;
+    const prev = pointer && live(args, pointer.targetId) ? pointer : null;
+    pointer = nextPointerTarget(prev, point, ghostRect(args), () => firstId(detect(args)));
+    return collisionFor(pointer.targetId, args.droppableContainers);
+  };
+
+  const detectKeyboard = (args: Args): Collision[] => {
+    pointer = null;
+    const origin = args.droppableRects.get(dropZoneId(ROOT_CONTAINER_ID));
+    const key = keyboardLatchKey(String(args.active.id), args.collisionRect, origin);
+    const held = keyboard?.key === key ? collisionFor(keyboard.id, args.droppableContainers) : [];
     if (held.length > 0) return held;
     const hits = detect(args);
-    const first = hits[0];
-    latch = first ? { key, id: String(first.id) } : null;
+    const id = firstId(hits);
+    keyboard = id === null ? null : { key, id };
     return hits;
+  };
+
+  return {
+    detect: (args) =>
+      args.pointerCoordinates ? detectPointer(args, args.pointerCoordinates) : detectKeyboard(args),
+    reset: () => {
+      keyboard = null;
+      pointer = null;
+    },
   };
 }

@@ -8,9 +8,10 @@
 // 条目的 CSS `order`——同容器重排把被拖节点（变暗的那个）挪到落点，跨容器在落点摆占位条，
 // 兄弟由网格真的回流让位，宽窄混排时也不会走样；位置变化由 `flip.ts` 补过渡。所以指针拖拽时
 // sortable 不加任何位移（`noDisplacement`）。键盘拖拽例外：仍用 `rectSortingStrategy` 的位移
-// 预览、不改 `order`（见 `tree-context.ts` 的 `reflow`）。
+// 预览、不改 `order`、也不开回流过渡（见 `tree-context.ts` 的 `reflow`）。
+// 回流会改变行数，网格高度在拖拽期间被冻结（`use-frozen-heights.ts`），不会从指针底下缩回去。
 
-import { useDndContext } from '@dnd-kit/core';
+import { useDndContext, useDroppable } from '@dnd-kit/core';
 import { SortableContext, type SortingStrategy, rectSortingStrategy } from '@dnd-kit/sortable';
 import { cn } from '@vibeterm/ui';
 import { useRef } from 'react';
@@ -34,6 +35,7 @@ import {
   type NodeTileSize,
 } from './node-grid';
 import { useTree } from './tree-context';
+import { FREEZE_HEIGHT_ATTR } from './use-frozen-heights';
 
 /** 量不到被拖节点高度时占位条的兜底高度 */
 const PLACEHOLDER_MIN_HEIGHT = 48;
@@ -105,11 +107,13 @@ function NodeItem({
 /**
  * 跨容器拖拽时插进目标容器的占位条：按被拖磁贴的跨度占格（宽度因此就是它落进来之后的宽度，
  * 而不是它在原容器里的像素宽——两边列数可能不同），高度不低于被拖磁贴量到的高度，把后面的
- * 兄弟顶开。它不是 droppable，不参与落点判定；被拖的节点自始至终留在原容器里（只是变暗），
- * 免得它的 React 子树（宿主的 runtime scope / QueryClientProvider / 面板）在拖拽途中重挂。
+ * 兄弟顶开。它注册成 droppable 只是为了让 dnd-kit 量出它当前的矩形（碰撞判定的迟滞要知道
+ * 「预览现在摆在哪」），不是落点，判定永远不会返回它；被拖的节点自始至终留在原容器里（只是
+ * 变暗），免得它的 React 子树（宿主的 runtime scope / QueryClientProvider / 面板）在拖拽途中重挂。
  */
 function DropPlaceholder({ folderId, order }: { folderId: string | null; order: number }) {
   const { active, activeNodeRect } = useDndContext();
+  const { setNodeRef } = useDroppable({ id: PLACEHOLDER_ITEM_ID });
   const { nodeSpan } = useTree();
   const nodeId = active ? parseNodeElementId(String(active.id)) : null;
   // 松手之后到布局落定之间占位条还在（见 `use-tree-drag.ts`），那时已经没有 active：
@@ -124,6 +128,7 @@ function DropPlaceholder({ folderId, order }: { folderId: string | null; order: 
   const size = shape.current?.size ?? 1;
   return (
     <div
+      ref={setNodeRef}
       aria-hidden="true"
       data-testid="device-folder-drop-placeholder"
       data-span={size}
@@ -170,7 +175,9 @@ function NodeGrid({ container }: { container: DeviceFolderContainer }) {
   const orders = previewOrderMap(nodeIds, visual);
   const placeholderOrder = orders?.get(PLACEHOLDER_ITEM_ID);
   const gridRef = useRef<HTMLDivElement>(null);
-  useFlipReflow(gridRef, visual.join('|'), tree.flipTracking);
+  // 键盘拖拽时兄弟带着 sortable 的内联位移，布局位置没变：不做回流过渡
+  useFlipReflow(gridRef, visual.join('|'), tree.flipTracking && tree.reflow);
+  const freeze = { [FREEZE_HEIGHT_ATTR]: '' };
 
   return (
     <SortableContext
@@ -179,7 +186,7 @@ function NodeGrid({ container }: { container: DeviceFolderContainer }) {
       disabled={tree.dragDisabled}
     >
       <div data-testid="devices-node-grid" className={NODE_GRID_CONTAINER_CLASS}>
-        <div ref={gridRef} className={NODE_GRID_CLASS}>
+        <div ref={gridRef} className={NODE_GRID_CLASS} {...freeze}>
           {nodeIds.map((elementId) => {
             const nodeId = parseNodeElementId(elementId);
             if (!nodeId) return null;

@@ -15,8 +15,13 @@ export const NODE_GRID_MAX_COLUMNS = 3;
 /** 容器查询的宿主：必须套在网格外面一层（容器查询只作用于后代，不作用于容器自己） */
 export const NODE_GRID_CONTAINER_CLASS = '@container min-w-0';
 
+/**
+ * `relative`：网格是磁贴的 offsetParent，回流过渡用 `offsetLeft/offsetTop` 量不含 transform 的
+ * 布局位置（见 `flip.ts`）。`content-start`：拖拽期间网格高度被冻结成 `min-height`
+ * （见 `use-frozen-heights.ts`），行数变少时多出来的高度留白，不能把剩下的行拉高。
+ */
 export const NODE_GRID_CLASS =
-  'grid min-w-0 grid-cols-1 gap-3 @[48rem]:grid-cols-2 @[80rem]:grid-cols-3';
+  'relative grid min-w-0 grid-cols-1 content-start gap-3 @[48rem]:grid-cols-2 @[80rem]:grid-cols-3';
 
 /** 单列时一律 `col-span-1`：写成 `col-span-2` 会凭空撑出第二条隐式轨道 */
 export const NODE_TILE_SPAN_CLASS: Record<NodeTileSize, string> = {

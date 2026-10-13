@@ -17,6 +17,7 @@ import {
   containerFolderId,
   dropTargetContainerId,
   dropZoneId,
+  parseNodeElementId,
   previewPlaceholder,
   previewReorder,
   resolveDrop,
@@ -33,6 +34,25 @@ export type TreeDragMode = 'pointer' | 'keyboard';
 export function dragModeOf(activatorEvent: Event | null | undefined): TreeDragMode {
   const keyboard = typeof KeyboardEvent !== 'undefined' && activatorEvent instanceof KeyboardEvent;
   return keyboard ? 'keyboard' : 'pointer';
+}
+
+/**
+ * 落点矩形该重新量的信号（dnd-kit 不会因为条目只是挪了位置就重量）：
+ *  - `reflow`：预览每变一次就变（占位条 / 同容器回流），立刻补量；
+ *  - `expand`：分组展开态的签名，变了之后等高度过渡走完再补量一次。
+ * 只在**拖节点**时给：拖分组用的是 sortable 的位移预览，落点矩形本来就不该动，那时补量反而
+ * 会把带着位移的分组头量成位移后的位置。没在拖 / 拖分组时两个都是空串。
+ */
+export function reflowSignals(
+  drag: Pick<TreeDrag, 'activeId' | 'placeholder' | 'reorder'>,
+  expanded: Record<string, boolean>
+): { reflow: string; expand: string } {
+  const { activeId } = drag;
+  if (!activeId || parseNodeElementId(activeId) === null) return { reflow: '', expand: '' };
+  return {
+    reflow: JSON.stringify([activeId, drag.placeholder, drag.reorder]),
+    expand: JSON.stringify(expanded),
+  };
 }
 
 export interface TreeDragInput {
@@ -57,8 +77,6 @@ export interface TreeDrag {
   reflow: boolean;
   /** 拖拽中或定格中 */
   tracking: boolean;
-  /** 预览 / 展开态一变就变的签名：落点矩形该重新量了。没在拖为空串 */
-  reflowSignal: string;
   onDragStart: (event: DragStartEvent) => void;
   onDragOver: (event: DragOverEvent) => void;
   onDragCancel: () => void;
@@ -188,7 +206,6 @@ export function useTreeDrag(input: TreeDragInput): TreeDrag {
     reorder,
     reflow,
     tracking: drag !== null || settle !== null,
-    reflowSignal: activeId ? JSON.stringify([activeId, placeholder, reorder, expanded]) : '',
     onDragStart,
     onDragOver,
     onDragCancel,

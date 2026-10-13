@@ -31,6 +31,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -50,6 +51,7 @@ import {
   parseNodeElementId,
   rootFolderElementIds,
 } from './folder-tree-model';
+import { deviceFolderKeyboardCoordinates } from './keyboard-coordinates';
 import type { NodeTileSize } from './node-grid';
 import { NodeList } from './node-list';
 import { snapCenterToCursor } from './snap-to-cursor';
@@ -59,26 +61,33 @@ import {
   type TreeContextValue,
   useTree,
 } from './tree-context';
-import { useTreeDrag } from './use-tree-drag';
+import { FREEZE_HEIGHT_ATTR, useFrozenHeights } from './use-frozen-heights';
+import { reflowSignals, useTreeDrag } from './use-tree-drag';
 
 export type { DeviceFolderNodeContext } from './tree-context';
 
-/** 回流后隔多久再补量一次：等分组展开 / 收起的高度过渡走完 */
+/** 分组展开 / 收起后隔多久补量：等高度过渡走完 */
 const REMEASURE_SETTLE_MS = 250;
 
 /**
  * 拖拽中条目换了位置（只是挪动，尺寸没变）时 dnd-kit 不会重量落点矩形，碰撞判定就还在用
- * 回流之前的排布。预览每变一次就让它把全部落点重量一遍（量的是去掉 transform 的布局矩形，
- * 回流过渡在飞也不影响）。
+ * 回流之前的排布。预览每变一次就让它把全部落点重量一遍（量的是去掉条目自身 transform 的
+ * 布局矩形，回流过渡在飞也不影响）；分组展开态变了则等过渡走完再量。信号见 `reflowSignals`。
  */
-function RemeasureOnReflow({ signal }: { signal: string }) {
+function RemeasureOnReflow({ reflow, expand }: { reflow: string; expand: string }) {
   const { measureDroppableContainers } = useDndContext();
   useEffect(() => {
-    if (!signal) return;
-    measureDroppableContainers([]);
+    if (reflow) measureDroppableContainers([]);
+  }, [reflow, measureDroppableContainers]);
+  // 只在拖拽途中展开态**变了**才排延时补量；刚开始拖的那一次不算
+  const expandRef = useRef('');
+  useEffect(() => {
+    const changed = expandRef.current !== '' && expand !== '' && expandRef.current !== expand;
+    expandRef.current = expand;
+    if (!changed) return;
     const timer = setTimeout(() => measureDroppableContainers([]), REMEASURE_SETTLE_MS);
     return () => clearTimeout(timer);
-  }, [signal, measureDroppableContainers]);
+  }, [expand, measureDroppableContainers]);
   return null;
 }
 
@@ -92,7 +101,7 @@ export interface DeviceFolderTreeProps {
   /** 没有 placement 的根层节点，按宿主给的顺序追加在显式节点之后 */
   implicitRootNodeIds: readonly string[];
   renderNode: (nodeId: string, ctx: DeviceFolderNodeContext) => ReactNode;
-  /** 拖拽预览与无障碍公告用的节点名称 */
+  /** 拖拽预览卡片上显示的节点名称（无障碍播报仍是 dnd-kit 的默认文案，没有接这个名称） */
   nodeLabel: (nodeId: string) => string;
   /** 返回 false 的节点不套拖拽外壳（该节点本来就不该被拖，如 standalone 下唯一的本机） */
   nodeDraggable?: (nodeId: string, ctx: { folderId: string | null }) => boolean;
@@ -180,18 +189,33 @@ function DragPreview({ activeId }: { activeId: string }) {
 /** 整棵树 = 根落点区：分组虚线框之外的空白都能接住节点，松手即回到最外层 */
 function TreeRoot({
   active,
+  frozen,
   className,
   children,
 }: {
   active: boolean;
+  /** 拖拽中 / 定格中：冻结整棵树与各节点网格的高度 */
+  frozen: boolean;
   className?: string;
   children: ReactNode;
 }) {
   const zone = useDropZone(dropZoneId(ROOT_CONTAINER_ID));
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useFrozenHeights(rootRef, frozen);
+  const { ref: zoneRef } = zone;
+  const setRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      rootRef.current = element;
+      zoneRef(element);
+    },
+    [zoneRef]
+  );
+  const freeze = { [FREEZE_HEIGHT_ATTR]: '' };
   return (
     <div
-      ref={zone.ref}
+      ref={setRef}
       {...zone.props}
+      {...freeze}
       data-testid="device-folder-tree"
       data-drop-target={active ? 'true' : undefined}
       className={cn(
@@ -223,10 +247,12 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     className,
     ref,
   } = props;
-  const sensors = useDeviceTreeSensors();
+  const sensors = useDeviceTreeSensors({
+    keyboardCoordinateGetter: deviceFolderKeyboardCoordinates,
+  });
 
-  // 键盘落点带锁（见 `collision.ts`），每棵树一份
-  const collisionDetection = useMemo(() => createDeviceFolderCollisionDetection(), []);
+  // 指针迟滞与键盘落点的锁都带状态（见 `collision.ts`），每棵树一份，每次拖拽开始时清空
+  const collision = useMemo(() => createDeviceFolderCollisionDetection(), []);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<DeviceFolder | null>(null);
@@ -264,6 +290,7 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     disabled,
   });
   const { activeId, dropContainerId, placeholder, reorder, reflow, tracking } = drag;
+  const signals = reflowSignals(drag, expanded);
 
   const actions = useMemo<TreeContextValue['actions']>(
     () => ({
@@ -336,17 +363,20 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     <TreeContext.Provider value={contextValue}>
       <DndContext
         sensors={sensors}
-        collisionDetection={collisionDetection}
+        collisionDetection={collision.detect}
         // 落点矩形在拖拽前后都保持有效；拖拽中条目挪位置（占位条、同容器回流、分组自动展开）
         // 不会触发 dnd-kit 自己重量，由 `RemeasureOnReflow` 在每次回流后补量
         measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-        onDragStart={drag.onDragStart}
+        onDragStart={(event) => {
+          collision.reset();
+          drag.onDragStart(event);
+        }}
         onDragOver={drag.onDragOver}
         onDragCancel={drag.onDragCancel}
         onDragEnd={drag.onDragEnd}
       >
-        <RemeasureOnReflow signal={drag.reflowSignal} />
-        <TreeRoot active={drag.rootDropActive} className={className}>
+        <RemeasureOnReflow reflow={signals.reflow} expand={signals.expand} />
+        <TreeRoot active={drag.rootDropActive} frozen={tracking} className={className}>
           {folderElementIds.length > 0 && (
             <SortableContext
               items={folderElementIds}

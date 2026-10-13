@@ -16,7 +16,8 @@ import {
   folderContainerId,
 } from './folder-tree-model';
 import { placeholderMinHeight, previewOrderMap } from './node-list';
-import { dragModeOf } from './use-tree-drag';
+import { FREEZE_HEIGHT_ATTR } from './use-frozen-heights';
+import { dragModeOf, reflowSignals } from './use-tree-drag';
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -268,6 +269,41 @@ describe('节点磁贴网格', () => {
     const withPlaceholder = previewOrderMap(dom, ['node:a', '__placeholder__', 'node:b', 'node:c']);
     expect(withPlaceholder?.get('__placeholder__')).toBe(1);
     expect(withPlaceholder?.get('node:b')).toBe(2);
+  });
+
+  test('整棵树与每张节点网格都标了冻结高度的记号；网格是磁贴的 offsetParent 且多余高度留白', () => {
+    const html = renderTree();
+    expect(tagOf(html, 'data-testid="device-folder-tree"')).toContain(FREEZE_HEIGHT_ATTR);
+    // 树根 + 分组 a 的网格 + 根层网格
+    expect(html.split(`${FREEZE_HEIGHT_ATTR}=`).length - 1).toBe(3);
+    const grid = html.slice(html.indexOf('data-testid="devices-node-grid"'));
+    const inner = grid.slice(0, grid.indexOf('data-testid="device-folder-item-node:n1"'));
+    expect(inner).toContain(FREEZE_HEIGHT_ATTR);
+    expect(inner).toContain('relative grid');
+    expect(inner).toContain('content-start');
+  });
+
+  test('reflowSignals：只在拖节点时给补量信号；拖分组 / 没在拖都是空串', () => {
+    const idle = { activeId: null, placeholder: null, reorder: null };
+    expect(reflowSignals(idle, { a: false })).toEqual({ reflow: '', expand: '' });
+    // 拖分组用的是位移预览，落点矩形不该重量（否则带着位移的分组头会被量歪）
+    const folderDrag = { ...idle, activeId: 'folder:a' };
+    expect(reflowSignals(folderDrag, { a: false })).toEqual({ reflow: '', expand: '' });
+
+    const nodeDrag = { ...idle, activeId: 'node:n1' };
+    const before = reflowSignals(nodeDrag, { a: false });
+    expect(before.reflow).not.toBe('');
+    // 预览变了 → reflow 变；展开态没变 → expand 不变
+    const reordered = reflowSignals(
+      { ...nodeDrag, reorder: { containerId: 'root', elementId: 'node:n1', index: 1 } },
+      { a: false }
+    );
+    expect(reordered.reflow).not.toBe(before.reflow);
+    expect(reordered.expand).toBe(before.expand);
+    // 展开态变了 → expand 变；预览没变 → reflow 不变
+    const expanded = reflowSignals(nodeDrag, { a: true });
+    expect(expanded.expand).not.toBe(before.expand);
+    expect(expanded.reflow).toBe(before.reflow);
   });
 
   test('dragModeOf：只有键盘事件发起的拖拽算键盘模式', () => {

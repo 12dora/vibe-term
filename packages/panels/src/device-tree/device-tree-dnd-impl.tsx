@@ -6,6 +6,7 @@ import {
   type CollisionDetection,
   DndContext,
   type DragEndEvent,
+  type KeyboardCoordinateGetter,
   KeyboardSensor,
   type Modifier,
   MouseSensor,
@@ -28,13 +29,17 @@ import type { ReactNode } from 'react';
 // device/window/pane 三层共用的拖拽 sensors：
 // - 鼠标走 distance 约束（按下移动 8px 即激活，无 delay），根治 PC「按下即拖」起不来；
 // - 触摸走 delay 约束（长按 250ms 激活，移动 >5px 视为滚动手势让位原生滚动）；
-// - 键盘走 sortable 的 coordinateGetter（可访问性）。
+// - 键盘走 sortable 的 coordinateGetter（可访问性）；条目不是「单列等宽」的宿主（设备页的节点
+//   磁贴网格）可以换成自己的 `keyboardCoordinateGetter`，缺省行为不变。
 // 注：旧版 @dnd-kit/core PointerSensor 无法按 pointerType 分别配约束，故必须拆 Mouse + Touch。
-export function useDeviceTreeSensors() {
+export function useDeviceTreeSensors(options?: {
+  keyboardCoordinateGetter?: KeyboardCoordinateGetter;
+}) {
+  const coordinateGetter = options?.keyboardCoordinateGetter ?? sortableKeyboardCoordinates;
   return useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(KeyboardSensor, { coordinateGetter })
   );
 }
 

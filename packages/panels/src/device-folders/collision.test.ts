@@ -15,6 +15,7 @@ import {
   insertionTile,
   keyboardLatchKey,
   nearestTile,
+  nextPointerTarget,
   reorderTargetId,
 } from './collision';
 import {
@@ -595,41 +596,69 @@ describe('键盘落点的锁', () => {
     if (zone.id === 'node:k4') return { ...zone, top: 115, bottom: 215 };
     return zone;
   });
-  const over = (detect: ReturnType<typeof createDeviceFolderCollisionDetection>, input: Args) => {
-    const hits = detect(input);
-    return hits.length > 0 ? String(hits[0]?.id) : null;
+  /** 页面往下滚了 `dy`：所有落点矩形（含整棵树）在视口里上移，预览卡片在视口里不动 */
+  const scrolled = (dy: number) =>
+    KEYS.map((zone) => ({ ...zone, top: zone.top - dy, bottom: zone.bottom - dy }));
+  const newDetector = () => {
+    const collision = createDeviceFolderCollisionDetection();
+    const over = (input: Args) => {
+      const hits = collision.detect(input);
+      return hits.length > 0 ? String(hits[0]?.id) : null;
+    };
+    return { over, reset: collision.reset };
   };
 
   test('预览卡片没动：沿用上一次的落点，回流不会让它自己跳走', () => {
-    const detect = createDeviceFolderCollisionDetection();
-    expect(over(detect, keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
+    const { over } = newDetector();
+    expect(over(keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
     // 无状态的判定照新的几何会改口
     expect(keyboardOver('node:k1', 0, 115, shifted)).toBe('node:k4');
-    expect(over(detect, keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:kw');
+    expect(over(keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:kw');
   });
 
   test('预览卡片挪了（按了方向键）就重新算', () => {
-    const detect = createDeviceFolderCollisionDetection();
-    expect(over(detect, keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
-    expect(over(detect, keyboardArgs('node:k1', 305, 0, shifted))).toBe('node:k2');
-    expect(over(detect, keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:k4');
+    const { over } = newDetector();
+    expect(over(keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
+    expect(over(keyboardArgs('node:k1', 305, 0, shifted))).toBe('node:k2');
+    expect(over(keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:k4');
+  });
+
+  test('页面滚动（KeyboardSensor 只滚不移）：卡片在视口里没动，但相对树挪了 → 重新算', () => {
+    const { over } = newDetector();
+    // 卡片停在视口 (0, 0)：压着 k1
+    expect(over(keyboardArgs('node:k3', 0, 0))).toBe('node:k1');
+    // 页面滚了一行（115px）：同一个视口位置现在压着的是 kw
+    expect(over(keyboardArgs('node:k3', 0, 0, scrolled(115)))).toBe('node:kw');
+    // 再滚一行：k4
+    expect(over(keyboardArgs('node:k3', 0, 0, scrolled(230)))).toBe('node:k4');
+    // 滚回来：又是 k1
+    expect(over(keyboardArgs('node:k3', 0, 0))).toBe('node:k1');
+  });
+
+  test('每次拖拽开始时清锁：上一次留下的落点不会带进下一次', () => {
+    const { over, reset } = newDetector();
+    expect(over(keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
+    // 同一个节点、同一个位置再次拾起，但排布已经变了：不清锁会直接沿用 kw
+    expect(over(keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:kw');
+    reset();
+    expect(over(keyboardArgs('node:k1', 0, 115, shifted))).toBe('node:k4');
   });
 
   test('锁住的落点已经不在了 / 换了被拖元素 / 改用指针 → 不沿用', () => {
-    const detect = createDeviceFolderCollisionDetection();
-    expect(over(detect, keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
+    const { over } = newDetector();
+    expect(over(keyboardArgs('node:k1', 0, 115))).toBe('node:kw');
     const withoutWide = shifted.filter((zone) => zone.id !== 'node:kw');
-    expect(over(detect, keyboardArgs('node:k1', 0, 115, withoutWide))).toBe('node:k4');
+    expect(over(keyboardArgs('node:k1', 0, 115, withoutWide))).toBe('node:k4');
 
-    expect(over(detect, keyboardArgs('node:k1', 0, 230))).toBe('node:k4');
-    expect(over(detect, keyboardArgs('node:k2', 0, 230, shifted))).toBe('node:kw');
+    expect(over(keyboardArgs('node:k1', 0, 230))).toBe('node:k4');
+    expect(over(keyboardArgs('node:k2', 0, 230, shifted))).toBe('node:kw');
 
-    // 指针拖拽不上锁，并且会把键盘留下的锁清掉
-    expect(over(detect, args('node:k1', 50, KEYS, 850))).toBe('node:k3');
-    expect(over(detect, keyboardArgs('node:k2', 0, 230))).toBe('node:k4');
+    // 指针拖拽会把键盘留下的锁清掉
+    expect(over(args('node:k1', 50, KEYS, 850))).toBe('node:k3');
+    expect(over(keyboardArgs('node:k2', 0, 230))).toBe('node:k4');
   });
 
-  test('锁的键按像素取整：亚像素抖动不算挪动', () => {
+  test('锁的键：相对树的位置按像素取整，亚像素抖动不算挪动', () => {
     expect(keyboardLatchKey('node:k1', { left: 304.6, top: 0.2 })).toBe('node:k1@305,0');
     expect(keyboardLatchKey('node:k1', { left: 305.3, top: -0.4 })).toBe(
       keyboardLatchKey('node:k1', { left: 304.6, top: 0.2 })
@@ -637,6 +666,116 @@ describe('键盘落点的锁', () => {
     expect(keyboardLatchKey('node:k1', { left: 306, top: 0 })).not.toBe(
       keyboardLatchKey('node:k1', { left: 305, top: 0 })
     );
+    // 树滚走了 115px：同一个视口位置，键不同
+    expect(keyboardLatchKey('node:k1', { left: 0, top: 0 }, { left: 0, top: -115 })).toBe(
+      'node:k1@0,115'
+    );
+    expect(keyboardLatchKey('node:k1', { left: 0, top: 0 }, null)).toBe('node:k1@0,0');
+  });
+});
+
+describe('指针迟滞（nextPointerTarget）', () => {
+  const ghost = rect(100, 200, 300, 500);
+  const counted = (id: string | null) => {
+    const state = { calls: 0 };
+    const compute = () => {
+      state.calls += 1;
+      return id;
+    };
+    return { state, compute };
+  };
+
+  test('第一次一定算；记下当时的指针位置', () => {
+    const { state, compute } = counted('node:a');
+    expect(nextPointerTarget(null, { x: 10, y: 20 }, null, compute)).toEqual({
+      point: { x: 10, y: 20 },
+      targetId: 'node:a',
+    });
+    expect(state.calls).toBe(1);
+  });
+
+  test('指针没动 / 只挪了不到 4px：沿用，不重算（回流后重量矩形重跑判定就是这种情况）', () => {
+    const prev = { point: { x: 10, y: 20 }, targetId: 'node:a' };
+    const { state, compute } = counted('node:b');
+    expect(nextPointerTarget(prev, { x: 10, y: 20 }, null, compute)).toBe(prev);
+    expect(nextPointerTarget(prev, { x: 12, y: 23 }, null, compute)).toBe(prev);
+    expect(state.calls).toBe(0);
+  });
+
+  test('挪够 4px 才重算；沿用时不更新基准点，慢慢挪也会累计到阈值', () => {
+    const prev = { point: { x: 10, y: 20 }, targetId: 'node:a' };
+    const { compute } = counted('node:b');
+    const held = nextPointerTarget(prev, { x: 12, y: 20 }, null, compute);
+    expect(held).toBe(prev);
+    // 相对上一步只挪了 2px，但相对基准点已经 4px
+    expect(nextPointerTarget(held, { x: 14, y: 20 }, null, compute)).toEqual({
+      point: { x: 14, y: 20 },
+      targetId: 'node:b',
+    });
+  });
+
+  test('指针压在被拖节点 / 占位条当前的矩形上：保持当前落点，挪多远都不重算', () => {
+    const prev = { point: { x: 10, y: 20 }, targetId: 'node:a' };
+    const { state, compute } = counted('node:b');
+    expect(nextPointerTarget(prev, { x: 400, y: 150 }, ghost, compute)).toBe(prev);
+    expect(state.calls).toBe(0);
+    // 离开那块矩形就照常重算
+    expect(nextPointerTarget(prev, { x: 600, y: 150 }, ghost, compute).targetId).toBe('node:b');
+  });
+
+  test('树外（没有落点）也是一种结果：同样沿用 / 重算', () => {
+    const outside = { point: { x: 10, y: 20 }, targetId: null };
+    const { compute } = counted('node:a');
+    expect(nextPointerTarget(outside, { x: 11, y: 20 }, null, compute)).toBe(outside);
+    expect(nextPointerTarget(outside, { x: 30, y: 20 }, null, compute).targetId).toBe('node:a');
+  });
+});
+
+describe('容器里有没渲染磁贴的节点（已暂停 / 已移除但 placement 还在）', () => {
+  // 数据顺序 [p1, p2, ghost, p3]，ghost 没有磁贴；两列：p1 p2 / p3
+  const zones: Zone[] = [
+    { id: dropZoneId(ROOT_CONTAINER_ID), top: 0, bottom: 220, left: 0, right: 600 },
+    { id: 'node:p1', top: 0, bottom: 100, left: 0, right: 290, containerId: ROOT_CONTAINER_ID },
+    { id: 'node:p2', top: 0, bottom: 100, left: 310, right: 600, containerId: ROOT_CONTAINER_ID },
+    { id: 'node:p3', top: 120, bottom: 220, left: 0, right: 290, containerId: ROOT_CONTAINER_ID },
+  ];
+  const order = ['node:p1', 'node:p2', 'node:ghost', 'node:p3'];
+  const layout: DeviceFolderLayout = {
+    folders: [],
+    placements: order.map((id, sortOrder) => ({
+      nodeId: id.slice('node:'.length),
+      folderId: null,
+      sortOrder,
+    })),
+  };
+  /** sortable 的 `items` 是容器的全部节点（含没渲染的），与真实的 SortableContext 一致 */
+  const detectWithGhost = (activeId: string, x: number, y: number) => {
+    const base = args(activeId, y, zones, x);
+    const withOrder = (data: { current: object }) => ({
+      current: { ...data.current, sortable: { items: order } },
+    });
+    const hits = deviceFolderCollisionDetection({
+      ...base,
+      active: { ...base.active, data: withOrder(base.active.data as { current: object }) },
+    } as unknown as Args);
+    return hits.length > 0 ? String(hits[0]?.id) : null;
+  };
+
+  test('把 p1 拖到 p2 与 p3 之间：落在有磁贴的 p2 上，而不是那个不存在的落点', () => {
+    // (100, 170) 压在 p3 的左半区 → 插到 p3 前面
+    const over = detectWithGhost('node:p1', 100, 170);
+    expect(over).toBe('node:p2');
+    expect(orderAfter(layout, 'node:p1', over, ROOT_CONTAINER_ID)).toEqual([
+      'node:p2',
+      'node:p1',
+      'node:ghost',
+      'node:p3',
+    ]);
+  });
+
+  test('拖到末尾 / 原位照常', () => {
+    expect(detectWithGhost('node:p1', 500, 170)).toBe('node:p3');
+    expect(detectWithGhost('node:p3', 100, 170)).toBe('node:p3');
   });
 });
 
