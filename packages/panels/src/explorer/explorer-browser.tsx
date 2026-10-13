@@ -194,6 +194,7 @@ function ExplorerOverlays({ c }: { c: ExplorerController }) {
         onClose={() => dialogs.setShortcutsOpen(false)}
       />
       {c.actions.fileInputs}
+      {c.actions.dialogs}
     </>
   );
 }

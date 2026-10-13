@@ -8,6 +8,7 @@ import {
   destDisplayName,
   explorerStatus,
   listingNames,
+  liveClipboard,
   menuEntriesOf,
   primaryEntry,
   selectedBytesOf,
@@ -194,5 +195,47 @@ describe('contentKindOf', () => {
     expect(contentKindOf(base)).toBe('empty');
     expect(contentKindOf({ ...base, total: 3 })).toBe('filtered');
     expect(contentKindOf({ ...base, hasPendingFolder: true })).toBe('view');
+  });
+});
+
+describe('liveClipboard', () => {
+  function clipboard(paths: string[], patch: Partial<ExplorerClipboard> = {}): ExplorerClipboard {
+    return { mode: 'cut', nodeId: 'self', rootId: 'r1', deviceId: 'dev1', paths, ...patch };
+  }
+  const here = { nodeId: 'self', rootId: 'r1', dir: '/root', entries: ENTRIES };
+
+  test('路径都还在列表里：原样返回同一个对象', () => {
+    const held = clipboard(['/root/a.txt', '/root/docs']);
+    expect(liveClipboard(held, here)).toBe(held);
+  });
+
+  test('已不在列表里的路径被剔掉，其余保留', () => {
+    const held = clipboard(['/root/a.txt', '/root/renamed-away.txt']);
+    expect(liveClipboard(held, here)).toEqual(clipboard(['/root/a.txt']));
+  });
+
+  test('全部失效时返回 null（调用方清空剪贴板、不粘贴）', () => {
+    expect(liveClipboard(clipboard(['/root/gone.txt']), here)).toBeNull();
+    expect(liveClipboard(clipboard([]), here)).toBeNull();
+  });
+
+  test('正在删除的路径同样视为失效', () => {
+    const held = clipboard(['/root/a.txt', '/root/b.txt']);
+    const vanishing = new Set(['/root/b.txt']);
+    expect(liveClipboard(held, { ...here, vanishing })?.paths).toEqual(['/root/a.txt']);
+  });
+
+  test('来源不是当前目录、另一个根或另一个节点时无从核对，原样返回', () => {
+    const elsewhere = clipboard(['/root/docs/x.txt']);
+    expect(liveClipboard(elsewhere, here)).toBe(elsewhere);
+    const otherRoot = clipboard(['/root/gone.txt'], { rootId: 'r2' });
+    expect(liveClipboard(otherRoot, here)).toBe(otherRoot);
+    const otherNode = clipboard(['/root/gone.txt'], { nodeId: 'n2' });
+    expect(liveClipboard(otherNode, here)).toBe(otherNode);
+  });
+
+  test('列表没拿到或被截断（不完整）时不做判断', () => {
+    const held = clipboard(['/root/beyond-the-cap.txt']);
+    expect(liveClipboard(held, { ...here, entries: undefined })).toBe(held);
   });
 });

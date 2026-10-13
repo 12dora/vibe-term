@@ -5,7 +5,7 @@ import { FileApiError, isFileRouteUnsupported } from '@vibeterm/api-client';
 import type { ExplorerTransferRequest } from '@vibeterm/panels/explorer';
 import type { TransferJobView } from '@vibeterm/panels/files/transfers';
 import type { FileRootDto, MoveFileItemResult, MoveFilesRequest } from '@vibeterm/shared';
-import type { ExplorerTab } from '@vibeterm/stores';
+import type { ExplorerClipboard, ExplorerTab } from '@vibeterm/stores';
 
 import type { SendTransferParams } from '../devices/transfer/send-transfer';
 
@@ -151,22 +151,60 @@ export function fileRequestErrorKey(error: unknown): string {
   return `files.error.${code ?? 'unknown'}`;
 }
 
+function sameClipboard(a: ExplorerClipboard, b: ExplorerClipboard): boolean {
+  if (a === b) return true;
+  if (a.mode !== b.mode || a.nodeId !== b.nodeId || a.rootId !== b.rootId) return false;
+  if (a.paths.length !== b.paths.length) return false;
+  return a.paths.every((path, index) => path === b.paths[index]);
+}
+
+/**
+ * 剪切粘贴落定后的剪贴板。`submitted` 是提交那一刻的剪贴板；期间用户换过内容（或它本就不是
+ * 剪切）就原样返回 `current`——调用方按引用判断要不要写回。否则只摘掉真正离开原处的路径
+ * （因重名被跳过、移动失败的仍留着可以再粘贴），一项不剩时清空。
+ */
+export function clipboardAfterCut(
+  current: ExplorerClipboard | null,
+  submitted: ExplorerClipboard | null,
+  takenPaths: readonly string[]
+): ExplorerClipboard | null {
+  if (!current || !submitted || submitted.mode !== 'cut') return current;
+  if (!sameClipboard(current, submitted) || takenPaths.length === 0) return current;
+  const taken = new Set(takenPaths);
+  const paths = current.paths.filter((path) => !taken.has(path));
+  if (paths.length === current.paths.length) return current;
+  return paths.length === 0 ? null : { ...current, paths };
+}
+
+/** 移动结果里成功的源路径（原地 no-op 也算：它已经在目标目录里了）。 */
+export function movedSourcePaths(results: readonly MoveFileItemResult[]): string[] {
+  return results.filter((item) => item.ok).map((item) => item.path);
+}
+
 export type TransferEnd =
   | { kind: 'pending' }
-  | { kind: 'done' }
+  /** 全部复制完成；`count` 是完成的条目数，条目状态一个都没见过时为 null。 */
+  | { kind: 'done'; count: number | null }
+  /** 复制了一部分：其余的因目标已存在被跳过（`skipped`），或有条目失败（`failed`）。 */
+  | { kind: 'partial'; count: number; rest: 'skipped' | 'failed' }
   /** 任务正常结束，但每一项都因目标已存在被跳过：什么也没复制。 */
   | { kind: 'skipped' }
   | { kind: 'cancelled' }
   | { kind: 'failed'; error: string | null };
 
+// 任务已落在 done：runner 遇到单项失败会继续往下传，所以既非 skipped 也非 failed 的都算传完了
+// （包括事件流里还没见过状态的条目）。
 function classifyDone(view: Pick<TransferJobView, 'itemStates' | 'error'>): TransferEnd {
-  // runner 遇到单项失败会继续往下传，任务最终仍可能落在 done
-  if (view.itemStates.some((state) => state === 'failed')) {
-    return { kind: 'failed', error: view.error ?? null };
+  const total = view.itemStates.length;
+  if (total === 0) return { kind: 'done', count: null };
+  const failed = view.itemStates.filter((state) => state === 'failed').length;
+  const skipped = view.itemStates.filter((state) => state === 'skipped').length;
+  const count = total - failed - skipped;
+  if (failed === 0 && skipped === 0) return { kind: 'done', count };
+  if (count === 0) {
+    return failed > 0 ? { kind: 'failed', error: view.error ?? null } : { kind: 'skipped' };
   }
-  const known = view.itemStates.filter((state) => state !== undefined);
-  if (known.length > 0 && known.every((state) => state === 'skipped')) return { kind: 'skipped' };
-  return { kind: 'done' };
+  return { kind: 'partial', count, rest: failed > 0 ? 'failed' : 'skipped' };
 }
 
 export function classifyTransferEnd(

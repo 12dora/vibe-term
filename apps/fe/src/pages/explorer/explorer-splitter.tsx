@@ -1,8 +1,9 @@
 // 分栏之间的分隔线：指针捕获拖动只更新预览占比，松手才提交（store 每次写入都会落盘）。
+// 拖动被打断（切窗口、手势接管、分栏在途中被关掉、分隔线被卸载）一律撤掉预览、什么都不提交。
 
-import { EXPLORER_MIN_PANE_FRACTION } from '@vibeterm/stores';
+import { EXPLORER_MIN_PANE_FRACTION } from '@vibeterm/stores/explorer';
 import { cn } from '@vibeterm/ui';
-import { type KeyboardEvent, type PointerEvent, useRef, useState } from 'react';
+import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from 'react';
 import { PANE_KEYBOARD_STEP, equalPaneSizes, resizePanes } from './pane-resize';
 
 export { resizePanes } from './pane-resize';
@@ -27,16 +28,26 @@ interface DragState {
   latest: number[] | null;
 }
 
-type SplitterDragProps = Pick<
-  ExplorerSplitterProps,
-  'index' | 'sizes' | 'getTrackWidth' | 'onPreview' | 'onCommit'
->;
+type SplitterPointerEvent = PointerEvent<HTMLDivElement>;
 
-function useSplitterDrag({ index, sizes, getTrackWidth, onPreview, onCommit }: SplitterDragProps) {
+function useSplitterDrag(props: ExplorerSplitterProps) {
+  const { index, sizes, getTrackWidth, onPreview, onCommit } = props;
   const drag = useRef<DragState | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  const endDrag = (event: PointerEvent<HTMLDivElement>, commit: boolean) => {
+  // 卸载时还在拖：预览状态在父级，得由这里撤掉
+  const previewRef = useRef(onPreview);
+  previewRef.current = onPreview;
+  useEffect(
+    () => () => {
+      if (drag.current === null) return;
+      drag.current = null;
+      previewRef.current(null);
+    },
+    []
+  );
+
+  const end = (event: SplitterPointerEvent, commit: boolean) => {
     const state = drag.current;
     if (!state || state.pointerId !== event.pointerId) return;
     drag.current = null;
@@ -44,11 +55,13 @@ function useSplitterDrag({ index, sizes, getTrackWidth, onPreview, onCommit }: S
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (commit && state.latest) onCommit(state.latest);
+    // 分栏数在拖动途中变了，起始占比已经对不上，同样不提交
+    const latest = state.latest?.length === sizes.length ? state.latest : null;
+    if (commit && latest) onCommit(latest);
     onPreview(null);
   };
 
-  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+  const onPointerDown = (event: SplitterPointerEvent) => {
     if (event.button !== 0) return;
     const width = getTrackWidth();
     if (width <= 0) return;
@@ -64,20 +77,34 @@ function useSplitterDrag({ index, sizes, getTrackWidth, onPreview, onCommit }: S
     setDragging(true);
   };
 
-  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+  const onPointerMove = (event: SplitterPointerEvent) => {
     const state = drag.current;
     if (!state || state.pointerId !== event.pointerId) return;
+    if (state.startSizes.length !== sizes.length) {
+      end(event, false);
+      return;
+    }
     const delta = (event.clientX - state.startX) / state.width;
     state.latest = resizePanes(state.startSizes, index, delta, EXPLORER_MIN_PANE_FRACTION);
     onPreview(state.latest);
   };
 
-  return { dragging, endDrag, onPointerDown, onPointerMove };
+  return {
+    dragging,
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp: (event: SplitterPointerEvent) => end(event, true),
+      onPointerCancel: (event: SplitterPointerEvent) => end(event, false),
+      // 正常松手时 pointerup 已经收过尾，这里只接住被浏览器打断的拖动
+      onLostPointerCapture: (event: SplitterPointerEvent) => end(event, false),
+    },
+  };
 }
 
 export function ExplorerSplitter(props: ExplorerSplitterProps) {
   const { index, sizes, onCommit } = props;
-  const { dragging, endDrag, onPointerDown, onPointerMove } = useSplitterDrag(props);
+  const { dragging, handlers } = useSplitterDrag(props);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
@@ -105,10 +132,7 @@ export function ExplorerSplitter(props: ExplorerSplitterProps) {
         'transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
         'hover:bg-primary/50 focus-visible:bg-primary/50 data-[dragging]:bg-primary/50'
       )}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={(event) => endDrag(event, true)}
-      onPointerCancel={(event) => endDrag(event, false)}
+      {...handlers}
       onDoubleClick={() => onCommit(equalPaneSizes(sizes.length))}
       onKeyDown={onKeyDown}
     />

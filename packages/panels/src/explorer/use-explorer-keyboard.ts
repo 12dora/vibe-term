@@ -4,7 +4,7 @@
 import type { RefObject } from 'react';
 import { useEffect } from 'react';
 import type { ExplorerMenuCommand } from './actions';
-import { isActivationTarget } from './command-policy';
+import { isActivationKey, isActivationTarget } from './command-policy';
 import {
   type ExplorerCommand,
   isApplePlatform,
@@ -28,10 +28,9 @@ export function commandForKey(event: KeyboardEvent, apple: boolean): ExplorerCom
   if (event.defaultPrevented || event.isComposing) return null;
   // 输入框里的所有按键（含 Escape）都归输入框自己
   if (isEditableTarget(event.target)) return null;
-  const command = matchExplorerCommand(event, apple);
-  // 焦点在按钮上时 Enter 是按下按钮
-  if (command === 'open' && event.key === 'Enter' && isActivationTarget(event.target)) return null;
-  return command;
+  // 焦点在按钮 / 复选框这类控件上时，Enter 与空格（含带修饰键的组合）归控件自己
+  if (isActivationKey(event.key) && isActivationTarget(event.target)) return null;
+  return matchExplorerCommand(event, apple);
 }
 
 export function useExplorerKeyboard(options: ExplorerKeyboardOptions): void {

@@ -59,3 +59,13 @@ export function shouldRefocusAfterNavigation(root: HTMLElement | null): boolean 
   if (root === null || !root.contains(active)) return false;
   return !isEditable(active) && !viewElement(root)?.contains(active);
 }
+
+/**
+ * 异步操作落定后能不能把焦点拿回视图：焦点丢了，或仍在本浏览器的非输入控件上。
+ * 用户已经去了别的分栏、或正在输入框里打字时不能抢。
+ */
+export function canReclaimFocus(root: HTMLElement | null): boolean {
+  const active = activeElement();
+  if (active === null) return true;
+  return root?.contains(active) === true && !isEditable(active);
+}

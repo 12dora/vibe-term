@@ -12,8 +12,8 @@ import type {
   MoveFilesRequest,
   MoveFilesResponse,
 } from '@vibeterm/shared';
-import type { AppRuntime, ExplorerTab } from '@vibeterm/stores';
-import { useRuntime } from '@vibeterm/stores/react';
+import type { ExplorerTab } from '@vibeterm/stores';
+import { getExplorerStore } from '@vibeterm/stores/explorer';
 import type { TFunction } from 'i18next';
 import {
   type ReactElement,
@@ -37,9 +37,11 @@ import { type ConflictAnswer, useConflictPrompt } from './explorer-conflict-dial
 import { useExplorerNodes } from './explorer-nodes';
 import {
   type CopyPlanParams,
+  clipboardAfterCut,
   conflictingNames,
   fileRequestErrorKey,
   moveFailureToast,
+  movedSourcePaths,
   planTransfer,
   relocatedMoveItems,
   resolveCopyParams,
@@ -66,11 +68,9 @@ interface ExecutorDeps {
   t: TFunction;
   ask: (names: string[]) => Promise<ConflictAnswer>;
   find: (nodeId: string) => DialogNodeOption | undefined;
-  explorer: AppRuntime['stores']['explorer'];
 }
 
 function afterMove(
-  deps: ExecutorDeps,
   request: ExplorerTransferRequest,
   body: MoveFilesRequest,
   res: MoveFilesResponse
@@ -86,18 +86,18 @@ function afterMove(
   if (rootPath === undefined) return;
   // 跨 root 的移动对源 root 的标签页而言等同于删除
   const sameRoot = destRootId === body.rootId;
-  const { rebasePath } = deps.explorer.getState();
+  const { rebasePath } = getExplorerStore().getState();
   for (const { from, to } of relocatedMoveItems(res.results)) {
     rebasePath(nodeId, body.rootId, from, sameRoot ? to : null, rootPath);
   }
 }
 
-/** 返回「是否已受理」：请求成功且至少有一项真的移走了。 */
+/** 返回已经离开原处的源路径；请求级失败为空。 */
 async function executeMove(
   deps: ExecutorDeps,
   request: ExplorerTransferRequest,
   body: MoveFilesRequest
-): Promise<boolean> {
+): Promise<string[]> {
   let res: MoveFilesResponse;
   try {
     res = await moveFiles(body, createNodeApiClient(request.dest.nodeId));
@@ -105,56 +105,62 @@ async function executeMove(
     toast.error(deps.t('files.ops.moveFailed'), {
       description: deps.t(fileRequestErrorKey(error)),
     });
-    return false;
+    return [];
   }
-  afterMove(deps, request, body, res);
+  afterMove(request, body, res);
   const failure = moveFailureToast(res.results);
   if (failure?.descriptionKey) {
     toast.error(deps.t(failure.key), { description: deps.t(failure.descriptionKey) });
   } else if (failure) {
     toast.error(deps.t(failure.key, { count: failure.count }));
   }
-  return res.results.some((item) => item.ok);
+  return movedSourcePaths(res.results);
 }
 
 async function executeCopy(
   deps: ExecutorDeps,
   request: ExplorerTransferRequest,
   params: CopyPlanParams
-): Promise<boolean> {
+): Promise<string[]> {
   const sourceNode = deps.find(params.source.nodeId);
   const destNode = deps.find(params.dest.nodeId);
   if (!sourceNode?.usable || !destNode?.usable) {
     toast.error(deps.t(transferErrorKey('node_unreachable')));
-    return false;
+    return [];
   }
   try {
     const job = await sendTransfer(resolveCopyParams(params, sourceNode.meshId, destNode.meshId));
     registerExplorerTransfer(transferJobKey(params.source.nodeId, job.jobId), {
+      sourceNodeId: params.source.nodeId,
       destNodeId: params.dest.nodeId,
       destRootId: params.dest.rootId,
       destDir: params.dest.path,
       count: request.source.paths.length,
     });
-    return true;
+    // 跨设备的剪切落成复制任务：建单成功即视为这批路径已交出去
+    return params.source.paths;
   } catch (error) {
     toast.error(deps.t(transferErrorKeyOf(error)));
-    return false;
+    return [];
   }
 }
 
 async function execute(deps: ExecutorDeps, request: ExplorerTransferRequest): Promise<void> {
+  // 提交那一刻的剪贴板：落定时只在它没被换过的前提下摘掉已处理的路径
+  const submitted = request.cut ? getExplorerStore().getState().clipboard : null;
   const conflicts = conflictingNames(request);
   const answer = conflicts.length > 0 ? await deps.ask(conflicts) : null;
   if (answer === 'cancel') return;
 
   const plan = planTransfer(request, answer);
   if (plan.kind === 'noop') return;
-  const accepted =
+  const taken =
     plan.kind === 'move'
       ? await executeMove(deps, request, plan.body)
       : await executeCopy(deps, request, plan.params);
-  if (accepted && request.cut) deps.explorer.getState().setClipboard(null);
+  const explorer = getExplorerStore().getState();
+  const next = clipboardAfterCut(explorer.clipboard, submitted, taken);
+  if (next !== explorer.clipboard) explorer.setClipboard(next);
 }
 
 async function requestForTabDrop(
@@ -207,15 +213,13 @@ const ExplorerTransferContext = createContext<ExplorerTransferActions | null>(nu
 
 export function ExplorerTransferProvider({ children }: { children: ReactNode }): ReactElement {
   const { t } = useTranslation();
-  const runtime = useRuntime();
   const { find } = useExplorerNodes();
   const prompt = useConflictPrompt();
 
-  const explorer = runtime.stores.explorer;
-  const depsRef = useRef<ExecutorDeps>({ t, ask: prompt.ask, find, explorer });
+  const depsRef = useRef<ExecutorDeps>({ t, ask: prompt.ask, find });
   useEffect(() => {
-    depsRef.current = { t, ask: prompt.ask, find, explorer };
-  }, [t, prompt.ask, find, explorer]);
+    depsRef.current = { t, ask: prompt.ask, find };
+  }, [t, prompt.ask, find]);
 
   const actions = useMemo(() => createExecutor(depsRef), []);
 

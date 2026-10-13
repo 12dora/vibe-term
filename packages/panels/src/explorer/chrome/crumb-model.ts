@@ -5,12 +5,6 @@ export interface ExplorerCrumb {
   path: string;
 }
 
-export interface CollapsedCrumbs {
-  head: ExplorerCrumb[];
-  hidden: ExplorerCrumb[];
-  tail: ExplorerCrumb[];
-}
-
 function stripTrailingSlash(path: string): string {
   const trimmed = path.replace(/\/+$/, '');
   return trimmed === '' ? '/' : trimmed;
@@ -35,21 +29,103 @@ export function explorerCrumbs(rootPath: string, rootName: string, path: string)
   return crumbs;
 }
 
+export interface CrumbFitMetrics {
+  /** 两级之间分隔符的宽度 */
+  separator: number;
+  /** 「…」折叠按钮的宽度 */
+  overflow: number;
+  /** 根这一级被压缩时至少保留的宽度 */
+  minRoot: number;
+  /** 当前目录被压缩时至少保留的宽度 */
+  minLast: number;
+}
+
+export const DEFAULT_CRUMB_METRICS: CrumbFitMetrics = {
+  separator: 12,
+  overflow: 26,
+  minRoot: 44,
+  minLast: 56,
+};
+
+export interface CrumbFit {
+  /** 根这一级是否仍在面包屑里（false 时它进了「…」菜单，`hidden` 含 0） */
+  rootVisible: boolean;
+  /** 收进「…」菜单的下标，升序 */
+  hidden: number[];
+  /** 根被压缩后的最大宽度；null 表示按自然宽度 */
+  rootMaxWidth: number | null;
+  /** 当前目录被压缩后的最大宽度；null 表示按自然宽度 */
+  lastMaxWidth: number | null;
+}
+
+function trailWidth(parts: readonly number[], separator: number): number {
+  const total = parts.reduce((sum, width) => sum + width, 0);
+  return total + separator * Math.max(0, parts.length - 1);
+}
+
+function indexRange(from: number, count: number): number[] {
+  return Array.from({ length: Math.max(0, count) }, (_, offset) => from + offset);
+}
+
+/** 根保持自然宽度时，最少要把几个中间级收进「…」才放得下；全收了仍放不下返回 null。 */
+function fewestHiddenMiddle(
+  widths: readonly number[],
+  available: number,
+  metrics: CrumbFitMetrics
+): number | null {
+  const middle = widths.length - 2;
+  for (let hiddenCount = 0; hiddenCount <= middle; hiddenCount += 1) {
+    const marker = hiddenCount > 0 ? [metrics.overflow] : [];
+    const parts = [widths[0] ?? 0, ...marker, ...widths.slice(1 + hiddenCount)];
+    if (trailWidth(parts, metrics.separator) <= available) return hiddenCount;
+  }
+  return null;
+}
+
 /**
- * 最多保留 `maxVisible` 级：根始终在 `head`，其余名额给末尾，中间的进 `hidden`。
- * 根与当前目录永远可见，所以 `maxVisible` 小于 2 时按 2 处理。
+ * 按量得的自然宽度决定面包屑怎么摆，当前目录（最后一级）优先级最高：
+ * 1. 先从靠根的一侧把中间级收进「…」；
+ * 2. 仍放不下就压缩根（不小于 `minRoot`）；
+ * 3. 再放不下，根也进「…」；此时当前目录独占剩余宽度，只有它自己都放不下才截断。
+ * `widths[0]` 是根，末位是当前目录；没有可用宽度（尚未量到）时全部按自然宽度显示。
  */
-export function collapseCrumbs(
-  crumbs: readonly ExplorerCrumb[],
-  maxVisible: number
-): CollapsedCrumbs {
-  const limit = Math.max(2, Math.floor(maxVisible));
-  if (crumbs.length <= limit) return { head: [...crumbs], hidden: [], tail: [] };
-  const tailStart = crumbs.length - (limit - 1);
+export function fitCrumbs(
+  widths: readonly number[],
+  available: number,
+  metrics: CrumbFitMetrics = DEFAULT_CRUMB_METRICS
+): CrumbFit {
+  const count = widths.length;
+  const natural: CrumbFit = {
+    rootVisible: count > 0,
+    hidden: [],
+    rootMaxWidth: null,
+    lastMaxWidth: null,
+  };
+  if (count === 0 || !(available > 0)) return natural;
+  const { separator, overflow, minRoot, minLast } = metrics;
+  const root = widths[0] ?? 0;
+  const last = widths[count - 1] ?? 0;
+  if (count === 1) {
+    return root <= available ? natural : { ...natural, lastMaxWidth: Math.max(minLast, available) };
+  }
+
+  const middle = count - 2;
+  const fitting = fewestHiddenMiddle(widths, available, metrics);
+  if (fitting !== null) return { ...natural, hidden: indexRange(1, fitting) };
+
+  const middleHidden = indexRange(1, middle);
+  const afterRoot = trailWidth(middle > 0 ? [overflow, last] : [last], separator) + separator;
+  const rootRoom = available - afterRoot;
+  if (rootRoom >= Math.min(root, minRoot)) {
+    return { rootVisible: true, hidden: middleHidden, rootMaxWidth: rootRoom, lastMaxWidth: null };
+  }
+
+  const lastRoom = available - overflow - separator;
   return {
-    head: crumbs.slice(0, 1),
-    hidden: crumbs.slice(1, tailStart),
-    tail: crumbs.slice(tailStart),
+    rootVisible: false,
+    hidden: [0, ...middleHidden],
+    rootMaxWidth: null,
+    lastMaxWidth: last <= lastRoom ? null : Math.max(minLast, lastRoom),
   };
 }
 

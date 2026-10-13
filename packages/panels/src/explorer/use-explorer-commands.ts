@@ -1,7 +1,8 @@
 // 命令分发：键盘快捷键、右键菜单、工具条按钮都走这一处，行为只有一份。
 
 import type { FileEntryDto } from '@vibeterm/shared';
-import { explorerParentPath } from '@vibeterm/stores';
+import { explorerParentPath } from '@vibeterm/stores/explorer';
+
 import type { RefObject } from 'react';
 import { useMemo } from 'react';
 import type { ExplorerActions, ExplorerMenuCommand, ExplorerMenuTarget } from './actions';

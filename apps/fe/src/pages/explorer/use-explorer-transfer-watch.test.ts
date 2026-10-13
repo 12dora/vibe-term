@@ -13,17 +13,26 @@ const { putTransferJobView, resetTransferJobsForTest, transferJobKey } = await i
 );
 const {
   pendingExplorerTransferCount,
+  pendingExplorerTransferNodeKey,
   registerExplorerTransfer,
   resetExplorerTransfersForTest,
   settleExplorerTransfers,
 } = await import('./use-explorer-transfer-watch');
 
 const REMOTE = '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f';
-const RECORD = { destNodeId: REMOTE, destRootId: 'r9', destDir: '/data', count: 2 };
+const RECORD = {
+  sourceNodeId: 'self',
+  destNodeId: REMOTE,
+  destRootId: 'r9',
+  destDir: '/data',
+  count: 2,
+};
 
 let translated: string[] = [];
-const t = ((key: string) => {
+let counts: number[] = [];
+const t = ((key: string, params?: { count?: number }) => {
   translated.push(key);
+  if (params?.count !== undefined) counts.push(params.count);
   return key;
 }) as unknown as TFunction;
 
@@ -55,6 +64,7 @@ beforeEach(() => {
   resetTransferJobsForTest();
   resetExplorerTransfersForTest();
   translated = [];
+  counts = [];
 });
 
 describe('settleExplorerTransfers', () => {
@@ -73,6 +83,7 @@ describe('settleExplorerTransfers', () => {
     settleExplorerTransfers(t);
     expect(pendingExplorerTransferCount()).toBe(0);
     expect(translated).toEqual(['explorer.transfer.done']);
+    expect(counts).toEqual([2]);
   });
 
   test('失败：报失败并带错误码文案', () => {
@@ -84,6 +95,23 @@ describe('settleExplorerTransfers', () => {
       'explorer.transfer.failed',
       'devices.transfer.errors.permission_denied',
     ]);
+  });
+
+  test('部分被跳过：只报真正复制的数量，并说明其余已存在', () => {
+    putTransferJobView(view('j1', { state: 'done', itemStates: ['done', 'skipped'] }));
+    registerExplorerTransfer(transferJobKey('self', 'j1'), RECORD);
+    settleExplorerTransfers(t);
+    expect(pendingExplorerTransferCount()).toBe(0);
+    expect(translated).toEqual(['explorer.transfer.done', 'devices.transfer.errors.dest_exists']);
+    expect(counts).toEqual([1]);
+  });
+
+  test('部分失败：报已复制的数量，描述为未完成', () => {
+    putTransferJobView(view('j1', { state: 'done', itemStates: ['done', 'done', 'failed'] }));
+    registerExplorerTransfer(transferJobKey('self', 'j1'), RECORD);
+    settleExplorerTransfers(t);
+    expect(translated).toEqual(['explorer.transfer.done', 'explorer.transfer.failed']);
+    expect(counts).toEqual([2]);
   });
 
   test('全部被跳过：按「目标已存在」报未完成', () => {
@@ -112,5 +140,26 @@ describe('settleExplorerTransfers', () => {
     putTransferJobView(view('other', { state: 'done', itemStates: ['done'] }));
     settleExplorerTransfers(t);
     expect(translated).toEqual([]);
+  });
+
+  test('条目状态没见过时退回发起时的项目数', () => {
+    putTransferJobView(view('j1', { state: 'done' }));
+    registerExplorerTransfer(transferJobKey('self', 'j1'), RECORD);
+    settleExplorerTransfers(t);
+    expect(counts).toEqual([RECORD.count]);
+  });
+});
+
+describe('pendingExplorerTransferNodeKey', () => {
+  test('列出未收尾任务的源节点，收尾后清掉', () => {
+    putTransferJobView(view('j1'));
+    putTransferJobView({ ...view('j2'), key: transferJobKey(REMOTE, 'j2'), nodeId: REMOTE });
+    registerExplorerTransfer(transferJobKey('self', 'j1'), RECORD);
+    registerExplorerTransfer(transferJobKey(REMOTE, 'j2'), { ...RECORD, sourceNodeId: REMOTE });
+    expect(pendingExplorerTransferNodeKey()).toBe([REMOTE, 'self'].sort().join(','));
+
+    putTransferJobView(view('j1', { state: 'cancelled' }));
+    settleExplorerTransfers(t);
+    expect(pendingExplorerTransferNodeKey()).toBe(REMOTE);
   });
 });

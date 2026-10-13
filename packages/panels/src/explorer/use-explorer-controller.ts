@@ -3,14 +3,15 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import type { FileEntryDto, FileRootDto } from '@vibeterm/shared';
-import { explorerParentPath } from '@vibeterm/stores';
+import { explorerParentPath } from '@vibeterm/stores/explorer';
+
 import { useRuntime } from '@vibeterm/stores/react';
 import type { MouseEvent, RefObject } from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useFileOps } from '../files/ops/use-file-ops';
 import { type ExplorerMenuTarget, useExplorerActions } from './actions';
-import { focusView, revealRow, scrollViewToTop } from './browser-dom';
+import { canReclaimFocus, focusView, revealRow, scrollViewToTop } from './browser-dom';
 import type { ExplorerBrowserProps } from './browser-types';
 import {
   contentKindOf,
@@ -20,6 +21,7 @@ import {
   selectedEntriesOf,
 } from './explorer-derive';
 import { filterEntries, sortEntries } from './model';
+import { pendingDeleteScope, usePendingDeletes } from './pending-deletes';
 import { useCoarsePointer } from './use-coarse-pointer';
 import {
   type ExplorerCommandContext,
@@ -34,7 +36,6 @@ import { useExplorerSelection } from './use-explorer-selection';
 import { useKeyedState, useLatest } from './use-keyed-state';
 
 const NO_ENTRIES: readonly FileEntryDto[] = [];
-const NO_PATHS: ReadonlySet<string> = new Set<string>();
 
 /** 目录被删（列表 404）时自动退到上一级；每个位置只触发一次，退到根为止。 */
 function useAutoUpOnMissing(locationKey: string, missing: boolean, onUp: () => void): void {
@@ -49,11 +50,12 @@ function useAutoUpOnMissing(locationKey: string, missing: boolean, onUp: () => v
 
 function useExplorerEntries(props: ExplorerBrowserProps, locationKey: string) {
   const { rootId, path, showHidden, sort } = props;
+  const { nodeId } = useRuntime();
   const listing = useExplorerListing(rootId, path);
   const allEntries = listing.entries ?? NO_ENTRIES;
   const [query, setQuery] = useKeyedState(locationKey, '');
-  // 正在删除的条目先从视图里拿掉
-  const [hiddenPaths, setHiddenPaths] = useKeyedState(locationKey, NO_PATHS);
+  // 正在删除的条目先从视图里拿掉；请求落定后自动恢复，与当时停在哪个目录无关
+  const hiddenPaths = usePendingDeletes(pendingDeleteScope(nodeId, rootId, path));
   const entries = useMemo(() => {
     const present =
       hiddenPaths.size > 0
@@ -72,7 +74,6 @@ function useExplorerEntries(props: ExplorerBrowserProps, locationKey: string) {
     order,
     query,
     setQuery,
-    setHiddenPaths,
     refresh,
   };
 }
@@ -132,8 +133,10 @@ function useExplorerCore(
     selection,
     dialogs,
     setQuery: data.setQuery,
-    setHiddenPaths: data.setHiddenPaths,
-    focusView: () => focusView(rootRef.current),
+    reclaimFocus: () => {
+      const root = rootRef.current;
+      if (props.active && !dialogs.overlayOpen && canReclaimFocus(root)) focusView(root);
+    },
     scrollViewToTop: () => scrollViewToTop(rootRef.current),
   };
   const ops = useExplorerOps(useLatest(opsContext));

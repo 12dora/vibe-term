@@ -168,6 +168,8 @@ function handleToggleFocus(ctx: Context): void {
 
 function handleKeyDown(ctx: Context, event: KeyboardEvent<HTMLElement>): void {
   if (event.defaultPrevented || isEditableTarget(event.target)) return;
+  // 触屏复选框自己处理空格 / 回车，不当成按名称定位
+  if (isCheckTarget(event.target)) return;
   const layout = ctx.getLayout();
   const intent = keyboardIntent(event, {
     grid: ctx.grid,

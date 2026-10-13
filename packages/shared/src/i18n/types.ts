@@ -1946,6 +1946,7 @@ export type TranslationKey =
   | 'explorer.archive'
   | 'explorer.archive.preparing'
   | 'explorer.archive.failed'
+  | 'explorer.archive.tooMany'
   | 'explorer.shortcuts'
   | 'explorer.shortcuts.title'
   | 'explorer.shortcuts.move'

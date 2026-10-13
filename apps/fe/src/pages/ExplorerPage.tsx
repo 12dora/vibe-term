@@ -2,15 +2,14 @@
 // PageTitle / PageActions 渲染在页面组件树之外（见 page-wrapper.tsx），只能用共享 store 与运行时 hook，
 // 拿不到 ExplorerTransferProvider 的 context。
 
-import { useNarrowLayout } from '@/components/use-narrow-layout';
-import { EXPLORER_MAX_PANES, explorerActiveTab } from '@vibeterm/stores';
-import { useExplorerStore } from '@vibeterm/stores/react';
+import { explorerActiveTab, useExplorerStore } from '@vibeterm/stores/explorer';
 import { Button } from '@vibeterm/ui/button';
 import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 import { Columns2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ExplorerTransfersButton } from './explorer/explorer-transfers-popover';
 import { ExplorerWorkspace } from './explorer/explorer-workspace';
+import { useCanSplit } from './explorer/use-can-split';
 import { ExplorerTransferProvider } from './explorer/use-explorer-transfer';
 import { useWorkspaceActions } from './explorer/workspace-actions';
 
@@ -30,10 +29,10 @@ export function PageTitle() {
 function SplitButton() {
   const { t } = useTranslation();
   const activeTabId = useExplorerStore((state) => explorerActiveTab(state)?.id ?? null);
-  const atMaxPanes = useExplorerStore((state) => state.panes.length >= EXPLORER_MAX_PANES);
-  const narrow = useNarrowLayout();
+  const canSplit = useCanSplit();
   const { splitTab } = useWorkspaceActions();
   const label = t('explorer.toolbar.split');
+  const enabled = canSplit && activeTabId !== null;
 
   return (
     <IconTooltip label={label}>
@@ -42,8 +41,10 @@ function SplitButton() {
         size="icon-sm"
         data-testid="explorer-split"
         aria-label={label}
-        disabled={activeTabId === null || atMaxPanes || narrow}
-        onClick={() => activeTabId !== null && splitTab(activeTabId)}
+        disabled={!enabled}
+        onClick={() => {
+          if (canSplit && activeTabId !== null) splitTab(activeTabId);
+        }}
       >
         <Columns2 className="h-4 w-4" />
       </Button>

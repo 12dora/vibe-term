@@ -7,7 +7,7 @@ import { memo, useCallback, useEffect, useRef } from 'react';
 import { fileIconColor, fileIconFor } from '../../files/file-icon';
 import { isDirectoryEntry } from '../model/entries';
 import { InlineNameEditor } from './inline-name-editor';
-import { gridColumnCount } from './keyboard-intent';
+import { columnsFromTemplate, gridColumnCount } from './keyboard-intent';
 import { INERT_ATTR, ROW_DIR_ATTR, ROW_PATH_ATTR, ROW_SELECTOR } from './row-target';
 import { useExplorerView } from './use-explorer-view';
 import type { ViewLayout } from './use-view-interactions';
@@ -52,11 +52,17 @@ function measureGrid(grid: HTMLElement): ViewLayout {
   const tile = grid.querySelector<HTMLElement>(ROW_SELECTOR);
   if (!tile) return FALLBACK_LAYOUT;
   const style = getComputedStyle(grid);
-  const inner = grid.clientWidth - pixels(style.paddingLeft) - pixels(style.paddingRight);
+  const box = tile.getBoundingClientRect();
   return {
-    columns: gridColumnCount(inner, tile.offsetWidth, pixels(style.columnGap)),
-    rowHeight: tile.offsetHeight + pixels(style.rowGap),
+    // 以浏览器实际排出的轨道数为准；量宽度估算在亚像素列宽下会少算一列
+    columns: columnsFromTemplate(style.gridTemplateColumns) ?? estimateColumns(grid, style, box),
+    rowHeight: box.height + pixels(style.rowGap),
   };
+}
+
+function estimateColumns(grid: HTMLElement, style: CSSStyleDeclaration, tile: DOMRect): number {
+  const inner = grid.clientWidth - pixels(style.paddingLeft) - pixels(style.paddingRight);
+  return gridColumnCount(inner, tile.width, pixels(style.columnGap));
 }
 
 /** 网格尺寸或「有没有磁贴」变化时重量一次，结果放进 ref，按键时直接读。 */

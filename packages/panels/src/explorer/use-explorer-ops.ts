@@ -11,12 +11,12 @@ import { uniqueChildName } from '../files/ops/file-name';
 import type { FileOps } from '../files/ops/use-file-ops';
 import { fileListQueryKey } from '../files/use-directory-listing';
 import type { ExplorerBrowserProps } from './browser-types';
-import { clipboardItems, listingNames } from './explorer-derive';
+import { clipboardItems, listingNames, liveClipboard } from './explorer-derive';
 import { type ExplorerDropDest, isDirectoryEntry } from './model';
+import { beginPendingDelete, pendingDeletePaths, pendingDeleteScope } from './pending-deletes';
 import { requestFromClipboard } from './transfer-request';
 import type { ExplorerDialogs } from './use-explorer-dialogs';
 import type { ExplorerSelectionApi } from './use-explorer-selection';
-import type { KeyedUpdate } from './use-keyed-state';
 
 export interface ExplorerOpsContext {
   props: ExplorerBrowserProps;
@@ -30,8 +30,8 @@ export interface ExplorerOpsContext {
   selection: ExplorerSelectionApi;
   dialogs: ExplorerDialogs;
   setQuery(query: string): void;
-  setHiddenPaths(update: KeyedUpdate<ReadonlySet<string>>): void;
-  focusView(): void;
+  /** 异步操作落定后把焦点交还视图——仅当本浏览器仍是键盘属主且焦点没有去别处 */
+  reclaimFocus(): void;
   scrollViewToTop(): void;
 }
 
@@ -74,9 +74,14 @@ function openEntry(ctx: ExplorerOpsContext, entry: FileEntryDto): void {
   host.navigate(hostAppPath(host, fileRoute(ctx.props.rootId, entry.path)));
 }
 
+/** 异步操作落定时，用户是否还停在发起它的那个目录。不在了就不能再动界面状态。 */
+function isStillAt(ctx: ExplorerOpsContext, rootId: string, dir: string): boolean {
+  return ctx.props.rootId === rootId && ctx.props.path === dir;
+}
+
 /** 新条目落在仍在显示的目录里时：等它进列表后选中并高亮。 */
 function revealCreated(ctx: ExplorerOpsContext, rootId: string, path: string): void {
-  if (ctx.props.rootId !== rootId || dirname(path) !== ctx.props.path) return;
+  if (!isStillAt(ctx, rootId, dirname(path))) return;
   ctx.selection.selectWhenListed(path);
   ctx.dialogs.flash(path);
 }
@@ -104,10 +109,11 @@ async function commitNewFolder(latest: Latest, name: string): Promise<void> {
   const { rootId, path } = ctx.props;
   ctx.dialogs.setPendingFolder(null);
   const created = await ctx.fileOps.createFolder(rootId, path, name);
-  if (created === null) return;
+  const after = latest.current;
+  if (created === null || !isStillAt(after, rootId, path)) return;
   // 筛选条件可能把新文件夹挡在外面
-  latest.current.setQuery('');
-  revealCreated(latest.current, rootId, created);
+  after.setQuery('');
+  revealCreated(after, rootId, created);
 }
 
 function dropRemovedFromCache(
@@ -132,18 +138,17 @@ async function confirmDelete(latest: Latest): Promise<void> {
   const { rootId, path } = ctx.props;
   const paths = targets.map((entry) => entry.path);
   ctx.dialogs.setDeleteTargets(null);
-  // 先从视图里拿掉，接口返回后再对账：失败的会原样回来
-  ctx.setHiddenPaths((current) => new Set([...current, ...paths]));
-  const outcome = await ctx.fileOps.remove(rootId, paths);
+  // 先从视图里拿掉；请求落定即撤销隐藏（成功的已从缓存里摘掉，失败的原样回来），
+  // 这一步与用户此刻在哪个目录无关
+  const settle = beginPendingDelete(pendingDeleteScope(ctx.runtime.nodeId, rootId, path), paths);
+  try {
+    const outcome = await ctx.fileOps.remove(rootId, paths);
+    dropRemovedFromCache(latest.current, rootId, path, outcome.removed);
+  } finally {
+    settle();
+  }
   const after = latest.current;
-  dropRemovedFromCache(after, rootId, path, outcome.removed);
-  if (after.props.rootId !== rootId || after.props.path !== path) return;
-  after.setHiddenPaths((current) => {
-    const next = new Set(current);
-    for (const item of paths) next.delete(item);
-    return next;
-  });
-  after.focusView();
+  if (isStillAt(after, rootId, path)) after.reclaimFocus();
 }
 
 function setClipboard(
@@ -161,10 +166,29 @@ function setClipboard(
   });
 }
 
+/** 当前目录的完整列表（未截断）；拿不到或不完整时为 undefined。 */
+function authoritativeEntries(ctx: ExplorerOpsContext): readonly FileEntryDto[] | undefined {
+  const key = fileListQueryKey(ctx.props.rootId, ctx.props.path);
+  const listing = ctx.queryClient.getQueryData<ListFilesResponse>(key);
+  return listing && !listing.truncated ? ctx.allEntries : undefined;
+}
+
 function paste(ctx: ExplorerOpsContext, destDir: string): void {
-  const { clipboard, rootId } = ctx.props;
+  const { rootId, path } = ctx.props;
+  const { nodeId } = ctx.runtime;
+  const held = ctx.props.clipboard;
+  if (!held) return;
+  const clipboard = liveClipboard(held, {
+    nodeId,
+    rootId,
+    dir: path,
+    entries: authoritativeEntries(ctx),
+    vanishing: pendingDeletePaths(pendingDeleteScope(nodeId, rootId, path)),
+  });
+  // 有路径已失效：先把剪贴板改正（全部失效则清空），免得下次再用到旧路径
+  if (clipboard !== held) ctx.props.onClipboardChange(clipboard);
   if (!clipboard) return;
-  const sameRoot = clipboard.nodeId === ctx.runtime.nodeId && clipboard.rootId === rootId;
+  const sameRoot = clipboard.nodeId === nodeId && clipboard.rootId === rootId;
   const items = clipboardItems(clipboard, sameRoot ? ctx.allEntries : []);
   const request = requestFromClipboard(
     clipboard,

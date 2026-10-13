@@ -83,7 +83,21 @@ export function typeAheadStep(
   return { buffer: next, prefix: next, fromIndex: Math.max(0, focusIndex) };
 }
 
-/** 一行能排下几列：`(inner + gap) / (tile + gap)`，至少 1。 */
+/**
+ * 从网格的 computed `grid-template-columns`（解析后的轨道列表，如 `104.8px 104.8px`）
+ * 读出真实列数；取不到（`none`、非像素轨道、空串）返回 null。
+ */
+export function columnsFromTemplate(template: string | null | undefined): number | null {
+  const tracks = (template ?? '').trim().split(/\s+/).filter(Boolean);
+  if (tracks.length === 0) return null;
+  return tracks.every((track) => /^\d*\.?\d+px$/.test(track)) ? tracks.length : null;
+}
+
+/**
+ * 按宽度估算一行能排下几列：`(inner + gap) / (tile + gap)`，至少 1。
+ * 只作兜底：`tileWidth` 多半来自取整后的 offsetWidth，亚像素列宽下会少算一列，
+ * 优先用 `columnsFromTemplate`。
+ */
 export function gridColumnCount(innerWidth: number, tileWidth: number, gap: number): number {
   if (!(tileWidth > 0) || !(innerWidth > 0)) return 1;
   // 亚像素取整误差留 0.5px 余量

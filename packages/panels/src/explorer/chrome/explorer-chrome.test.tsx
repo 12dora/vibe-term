@@ -8,7 +8,8 @@ import i18next from 'i18next';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
-import { ExplorerBreadcrumb } from './explorer-breadcrumb';
+import { explorerCrumbs } from './crumb-model';
+import { ExplorerBreadcrumb, buildTrail } from './explorer-breadcrumb';
 import { shortcutGroups } from './explorer-shortcuts-dialog';
 import { ExplorerStatusBar } from './explorer-status-bar';
 import { ExplorerToolbar, type ExplorerToolbarProps } from './explorer-toolbar';
@@ -191,6 +192,31 @@ describe('ExplorerBreadcrumb', () => {
     );
     expect(html).toContain('data-testid="explorer-path-edit"');
     expect(html).not.toContain('data-testid="explorer-path-input"');
+  });
+});
+
+describe('buildTrail', () => {
+  const crumbs = explorerCrumbs('/r', 'r', '/r/a/b/c');
+  const shape = (hidden: number[]) =>
+    buildTrail(crumbs, {
+      rootVisible: !hidden.includes(0),
+      hidden,
+      rootMaxWidth: null,
+      lastMaxWidth: null,
+    }).map((item) =>
+      item.kind === 'crumb' ? item.index : item.crumbs.map((crumb) => crumb.label).join(',')
+    );
+
+  test('不折叠时逐级排开', () => {
+    expect(shape([])).toEqual([0, 1, 2, 3]);
+  });
+
+  test('中间级折叠：折叠按钮紧跟在根之后', () => {
+    expect(shape([1, 2])).toEqual([0, 'a,b', 3]);
+  });
+
+  test('根也折叠：折叠按钮排最前，根在菜单第一项，当前目录保留', () => {
+    expect(shape([0, 1, 2])).toEqual(['r,a,b', 3]);
   });
 });
 

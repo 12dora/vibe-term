@@ -46,12 +46,38 @@ export function isCommandAllowed(
   return COMMAND_RULES[command]?.(state) ?? true;
 }
 
-const ACTIVATION_SELECTOR =
-  'button, a[href], summary, [role="button"], [role="menuitem"], [role="switch"], [role="tab"]';
+// 自己会响应 Enter / 空格的可聚焦控件：原生的按钮、链接，以及带这些 ARIA 角色的自绘控件
+// （Base UI 的复选框是 span[role="checkbox"]）。条目行是 role="option"，不在其列——
+// 行上的 Enter 就是「打开」；只有不代表条目的 option（表头、占位行）才算控件。
+const ACTIVATION_SELECTORS = [
+  'button',
+  'a[href]',
+  'summary',
+  '[role="button"]',
+  '[role="link"]',
+  '[role="checkbox"]',
+  '[role="radio"]',
+  '[role="switch"]',
+  '[role="tab"]',
+  '[role="combobox"]',
+  '[role="menuitem"]',
+  '[role="menuitemcheckbox"]',
+  '[role="menuitemradio"]',
+  '[role="option"][data-explorer-inert]',
+  '[data-explorer-check]',
+];
 
-/** 焦点在按钮这类控件上时，Enter 是「按下它」而不是「打开选中项」。 */
+const ACTIVATION_SELECTOR = ACTIVATION_SELECTORS.join(', ');
+
+/** 焦点在这类控件上时，Enter / 空格是「操作它」而不是文件管理器的命令。 */
 export function isActivationTarget(target: EventTarget | null): boolean {
   const element = target as { closest?: (selector: string) => unknown } | null;
   if (!element || typeof element.closest !== 'function') return false;
   return element.closest(ACTIVATION_SELECTOR) !== null;
+}
+
+const ACTIVATION_KEYS: ReadonlySet<string> = new Set(['Enter', ' ', 'Spacebar']);
+
+export function isActivationKey(key: string): boolean {
+  return ACTIVATION_KEYS.has(key);
 }

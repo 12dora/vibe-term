@@ -243,6 +243,28 @@ describe('list view details', () => {
   });
 });
 
+describe('list view drag sources', () => {
+  test('a selected row is draggable as a whole, an unselected one only by its name cell', () => {
+    const html = render(
+      <ExplorerListView {...viewProps({ selection: selectOnly('/srv/root/a.txt') })} />
+    );
+    expect(rowTag(html, 'a.txt')).toContain('draggable="true"');
+    expect(rowTag(html, 'b.md')).toContain('draggable="false"');
+    // 4 个名称单元格 + 1 个已选中的整行
+    expect(count(html, 'draggable="true"')).toBe(ENTRIES.length + 1);
+  });
+
+  test('a selected row being renamed or on a coarse pointer is not draggable', () => {
+    const selection = selectOnly('/srv/root/a.txt');
+    const renaming = render(
+      <ExplorerListView {...viewProps({ selection, renamingPath: '/srv/root/a.txt' })} />
+    );
+    expect(rowTag(renaming, 'a.txt')).toContain('draggable="false"');
+    const coarse = render(<ExplorerListView {...viewProps({ selection, coarsePointer: true })} />);
+    expect(coarse).not.toContain('draggable="true"');
+  });
+});
+
 describe('nextSort', () => {
   test('clicking the active column flips direction', () => {
     expect(nextSort({ key: 'name', dir: 'asc' }, 'name')).toEqual({ key: 'name', dir: 'desc' });

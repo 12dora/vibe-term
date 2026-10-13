@@ -3,7 +3,8 @@
 // 标签页重新激活时主体整体重挂，方向也回到 'none'。
 
 import type { ExplorerBrowserProps } from '@vibeterm/panels/explorer';
-import { type ExplorerTab, explorerTabPath } from '@vibeterm/stores';
+import type { ExplorerTab } from '@vibeterm/stores';
+import { explorerTabPath } from '@vibeterm/stores/explorer';
 import { useMemo, useState } from 'react';
 import { useWorkspaceStore } from './workspace-actions';
 

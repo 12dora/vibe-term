@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { collapseCrumbs, explorerCrumbs, resolveTypedPath } from './crumb-model';
+import { type CrumbFitMetrics, explorerCrumbs, fitCrumbs, resolveTypedPath } from './crumb-model';
 
 describe('explorerCrumbs', () => {
   test('根目录只有一级，标签用根的展示名', () => {
@@ -39,43 +39,125 @@ describe('explorerCrumbs', () => {
   });
 });
 
-describe('collapseCrumbs', () => {
-  const crumbs = explorerCrumbs('/r', 'r', '/r/a/b/c/d');
-  const labels = (list: { label: string }[]) => list.map((crumb) => crumb.label);
+describe('fitCrumbs', () => {
+  const metrics: CrumbFitMetrics = { separator: 10, overflow: 20, minRoot: 40, minLast: 50 };
+  // 根 100、三个中间级各 60、当前目录 80；全部摆开 = 360 + 4×10 = 400
+  const widths = [100, 60, 60, 60, 80];
+  const fit = (available: number, list: number[] = widths) => fitCrumbs(list, available, metrics);
 
-  test('放得下时全部留在 head', () => {
-    const result = collapseCrumbs(crumbs, 5);
-    expect(labels(result.head)).toEqual(['r', 'a', 'b', 'c', 'd']);
-    expect(result.hidden).toEqual([]);
-    expect(result.tail).toEqual([]);
+  test('放得下时全部按自然宽度显示', () => {
+    expect(fit(400)).toEqual({
+      rootVisible: true,
+      hidden: [],
+      rootMaxWidth: null,
+      lastMaxWidth: null,
+    });
   });
 
-  test('放不下时保留根与末尾，中间折叠', () => {
-    const result = collapseCrumbs(crumbs, 3);
-    expect(labels(result.head)).toEqual(['r']);
-    expect(labels(result.hidden)).toEqual(['a', 'b']);
-    expect(labels(result.tail)).toEqual(['c', 'd']);
+  test('放不下时先从靠根一侧收起中间级', () => {
+    // 收起 1 级：100 + 20 + 60 + 60 + 80 + 4×10 = 360
+    expect(fit(399).hidden).toEqual([1]);
+    expect(fit(360).hidden).toEqual([1]);
+    // 收起 2 级：100 + 20 + 60 + 80 + 3×10 = 290
+    expect(fit(359).hidden).toEqual([1, 2]);
+    // 收起 3 级：100 + 20 + 80 + 2×10 = 220
+    expect(fit(289).hidden).toEqual([1, 2, 3]);
+    const collapsed = fit(220);
+    expect(collapsed.rootVisible).toBe(true);
+    expect(collapsed.rootMaxWidth).toBeNull();
+    expect(collapsed.lastMaxWidth).toBeNull();
   });
 
-  test('根与当前目录永远可见', () => {
-    for (const max of [2, 1, 0, -3]) {
-      const result = collapseCrumbs(crumbs, max);
-      expect(labels(result.head)).toEqual(['r']);
-      expect(labels(result.hidden)).toEqual(['a', 'b', 'c']);
-      expect(labels(result.tail)).toEqual(['d']);
+  test('中间级收完仍放不下：压缩根，当前目录保持完整', () => {
+    // 根以外占 20 + 10 + 80 + 10 = 120
+    expect(fit(219)).toEqual({
+      rootVisible: true,
+      hidden: [1, 2, 3],
+      rootMaxWidth: 99,
+      lastMaxWidth: null,
+    });
+    expect(fit(160).rootMaxWidth).toBe(40);
+  });
+
+  test('根压到下限还放不下：根进折叠菜单，当前目录仍完整', () => {
+    expect(fit(159)).toEqual({
+      rootVisible: false,
+      hidden: [0, 1, 2, 3],
+      rootMaxWidth: null,
+      lastMaxWidth: null,
+    });
+    // 折叠按钮 + 分隔符 + 当前目录 = 110
+    expect(fit(110).lastMaxWidth).toBeNull();
+  });
+
+  test('只有当前目录自己都放不下时才截断，且不小于下限', () => {
+    expect(fit(109).lastMaxWidth).toBe(79);
+    expect(fit(70).lastMaxWidth).toBe(50);
+    expect(fit(1).lastMaxWidth).toBe(50);
+    expect(fit(1).rootVisible).toBe(false);
+  });
+
+  test('任何宽度下当前目录都不在折叠列表里', () => {
+    for (let available = 1; available <= 420; available += 7) {
+      const result = fit(available);
+      expect(result.hidden).not.toContain(widths.length - 1);
+      expect(result.hidden).toEqual([...result.hidden].sort((a, b) => a - b));
+      expect(result.rootVisible).toBe(!result.hidden.includes(0));
     }
   });
 
-  test('折叠前后顺序与总数不变', () => {
-    for (let max = 0; max <= 6; max += 1) {
-      const { head, hidden, tail } = collapseCrumbs(crumbs, max);
-      expect([...head, ...hidden, ...tail]).toEqual(crumbs);
-    }
+  test('只有根与当前目录两级：没有中间级可收，直接压缩根', () => {
+    // 实测场景：长根名 + 短目录名
+    const two = [160, 40];
+    expect(fit(210, two).hidden).toEqual([]);
+    expect(fit(150, two)).toEqual({
+      rootVisible: true,
+      hidden: [],
+      rootMaxWidth: 100,
+      lastMaxWidth: null,
+    });
+    // 根只剩 39 < 40：根进菜单，折叠按钮 + 当前目录 = 70 放得下
+    expect(fit(89, two)).toEqual({
+      rootVisible: false,
+      hidden: [0],
+      rootMaxWidth: null,
+      lastMaxWidth: null,
+    });
   });
 
-  test('空列表与单级列表原样返回', () => {
-    expect(collapseCrumbs([], 2)).toEqual({ head: [], hidden: [], tail: [] });
-    expect(collapseCrumbs(crumbs.slice(0, 1), 1).head).toHaveLength(1);
+  test('根本身比下限还窄时按自然宽度判断', () => {
+    // 根 30 < minRoot：30 + 10 + 80 = 120 放得下就不动
+    expect(fit(120, [30, 80])).toEqual({
+      rootVisible: true,
+      hidden: [],
+      rootMaxWidth: null,
+      lastMaxWidth: null,
+    });
+    expect(fit(119, [30, 80]).rootVisible).toBe(false);
+  });
+
+  test('只有根一级时它就是当前目录', () => {
+    expect(fit(100, [100]).lastMaxWidth).toBeNull();
+    expect(fit(80, [100])).toEqual({
+      rootVisible: true,
+      hidden: [],
+      rootMaxWidth: null,
+      lastMaxWidth: 80,
+    });
+    expect(fit(10, [100]).lastMaxWidth).toBe(50);
+  });
+
+  test('尚未量到宽度或没有面包屑时不做任何折叠', () => {
+    for (const available of [0, -1, Number.NaN]) {
+      expect(fit(available)).toEqual({
+        rootVisible: true,
+        hidden: [],
+        rootMaxWidth: null,
+        lastMaxWidth: null,
+      });
+    }
+    expect(fit(100, []).rootVisible).toBe(false);
+    expect(fit(100, []).hidden).toEqual([]);
   });
 });
 

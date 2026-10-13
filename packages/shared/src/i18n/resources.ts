@@ -2190,7 +2190,8 @@ export const I18N_RESOURCES = {
       },
       "archive": {
         "preparing": "Preparing archive…",
-        "failed": "Couldn’t download the archive"
+        "failed": "Couldn’t download the archive",
+        "tooMany": "You can archive up to {{count}} items at a time"
       },
       "shortcuts": {
         "title": "Keyboard Shortcuts",
@@ -6208,7 +6209,8 @@ export const I18N_RESOURCES = {
       },
       "archive": {
         "preparing": "正在打包…",
-        "failed": "打包下载失败"
+        "failed": "打包下载失败",
+        "tooMany": "一次最多打包 {{count}} 个项目"
       },
       "shortcuts": {
         "title": "键盘快捷键",
@@ -10217,7 +10219,8 @@ export const I18N_RESOURCES = {
       },
       "archive": {
         "preparing": "アーカイブを準備中…",
-        "failed": "アーカイブをダウンロードできませんでした"
+        "failed": "アーカイブをダウンロードできませんでした",
+        "tooMany": "一度にアーカイブできるのは {{count}} 項目までです"
       },
       "shortcuts": {
         "title": "キーボードショートカット",

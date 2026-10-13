@@ -3,7 +3,8 @@
 
 import { useNarrowLayout } from '@/components/use-narrow-layout';
 import type { ExplorerPane } from '@vibeterm/stores';
-import { useExplorerStore } from '@vibeterm/stores/react';
+import { useExplorerStore } from '@vibeterm/stores/explorer';
+
 import { cn } from '@vibeterm/ui';
 import { type DragEvent, Fragment, useEffect, useRef, useState } from 'react';
 import { ExplorerEmpty } from './explorer-empty';
@@ -16,18 +17,20 @@ import { useWorkspaceActions, useWorkspaceStore } from './workspace-actions';
 
 const SPLITTER_WIDTH_PX = 4;
 
-/** 成员表到齐后，清掉指向已不存在节点的标签页 */
+/**
+ * 成员表到齐后，清掉指向已不存在节点的标签页。
+ * 判据是「还是不是成员」而不是「在不在可选项里」：暂停 / 离线的节点仍是成员，标签页要留着。
+ */
 function usePruneStaleTabs(): void {
-  const nodes = useExplorerNodes();
+  const { ready, memberIds } = useExplorerNodes();
   const store = useWorkspaceStore();
   useEffect(() => {
-    if (!nodes.ready) return;
+    if (!ready) return;
     const state = store.getState();
-    const known = (nodeId: string) => nodes.find(nodeId) !== undefined;
     // 没有失效标签页就不动 store，免得白白落盘一次
-    if (Object.values(state.tabs).every((tab) => known(tab.nodeId))) return;
-    state.pruneTabs((tab) => known(tab.nodeId));
-  }, [nodes, store]);
+    if (Object.values(state.tabs).every((tab) => memberIds.has(tab.nodeId))) return;
+    state.pruneTabs((tab) => memberIds.has(tab.nodeId));
+  }, [ready, memberIds, store]);
 }
 
 /** 工作区挂载之后才出现的分栏算「新分出来的」，带一次入场动画 */
@@ -103,8 +106,9 @@ export function ExplorerWorkspace() {
       {!hasTabs || !activePane ? (
         <ExplorerEmpty />
       ) : narrow ? (
+        // 窄屏只画活动分栏，但它的标签栏列出所有分栏的标签页：别的分栏里的内容照样够得着
         <div className="flex min-h-0 flex-1">
-          <ExplorerPaneView paneId={activePane.id} />
+          <ExplorerPaneView paneId={activePane.id} mergedStrip />
         </div>
       ) : (
         <PaneRow panes={panes} />

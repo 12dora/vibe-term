@@ -32,22 +32,24 @@ function slotAt(row: HTMLElement | null, clientX: number): DropSlot | null {
   return { index, x: metrics.edges[index] ?? 0 };
 }
 
+/** `enabled` 为 false 时整条标签栏不接收标签页（窄屏合并栏：下标对不上任何一个分栏） */
 export function useTabStripDrop(
   paneId: string,
-  rowRef: RefObject<HTMLElement | null>
+  rowRef: RefObject<HTMLElement | null>,
+  enabled = true
 ): TabStripDrop {
   const store = useWorkspaceStore();
   const [slot, setSlot] = useState<DropSlot | null>(null);
 
   const onDragOver = useCallback(
     (event: DragEvent<HTMLElement>) => {
-      if (!hasTabDrag(event.dataTransfer)) return;
+      if (!enabled || !hasTabDrag(event.dataTransfer)) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
       const next = slotAt(rowRef.current, event.clientX);
       setSlot((prev) => (prev?.index === next?.index && prev?.x === next?.x ? prev : next));
     },
-    [rowRef]
+    [rowRef, enabled]
   );
 
   const onDragLeave = useCallback((event: DragEvent<HTMLElement>) => {
@@ -58,7 +60,7 @@ export function useTabStripDrop(
 
   const onDrop = useCallback(
     (event: DragEvent<HTMLElement>) => {
-      if (!hasTabDrag(event.dataTransfer)) return;
+      if (!enabled || !hasTabDrag(event.dataTransfer)) return;
       event.preventDefault();
       setSlot(null);
       const tabId = event.dataTransfer.getData(EXPLORER_TAB_MIME) || getDraggedTabId();
@@ -71,7 +73,7 @@ export function useTabStripDrop(
       const from = pane.tabIds.indexOf(tabId);
       state.moveTab(tabId, paneId, adjustIndexForSamePane(from, target.index));
     },
-    [paneId, rowRef, store]
+    [paneId, rowRef, store, enabled]
   );
 
   return { lineX: slot?.x ?? null, onDragOver, onDragLeave, onDrop };

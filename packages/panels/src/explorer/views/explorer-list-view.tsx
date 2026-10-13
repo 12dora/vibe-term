@@ -1,5 +1,5 @@
-// 详情列表视图：粘性表头 + 30px 行。只有「图标 + 名称」是拖拽源，
-// 行内其余空白处按下拖动是框选（与桌面文件管理器的详情视图一致）。
+// 详情列表视图：粘性表头 + 30px 行。未选中的行只有「图标 + 名称」是拖拽源，行内其余空白处
+// 按下拖动是框选；已选中的行整行可拖，免得从空白处起拖时框选把现有的多选冲掉。
 
 import { formatBytes } from '@vibeterm/api-client';
 import type { ExplorerSortKey } from '@vibeterm/stores';
@@ -100,6 +100,7 @@ const ListRow = memo(function ListRow(props: ListRowProps) {
       role="option"
       tabIndex={-1}
       aria-selected={selected}
+      draggable={selected && !props.coarse && !props.renaming}
       data-focused={focused ? '' : undefined}
       data-testid={`explorer-item-${entry.name}`}
       style={itemStyle(props.stagger, props.skipRender, SKIPPED_ROW_STYLE)}

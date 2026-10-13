@@ -2,12 +2,18 @@
 // 必须挂在该 node 的运行时下。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { FileEntryDto, FileRootDto, SystemInfo } from '@vibeterm/shared';
+import {
+  FILE_OP_MAX_PATHS,
+  type FileEntryDto,
+  type FileRootDto,
+  type SystemInfo,
+} from '@vibeterm/shared';
 import { useRuntime } from '@vibeterm/stores/react';
 import { type ChangeEvent, type ReactElement, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { nodeBasename } from '../../files/file-tree-logic';
+import { isDirectoryEntry } from '../model/entries';
 import {
   FolderUploadLimitError,
   type FolderUploadPlan,
@@ -15,13 +21,13 @@ import {
   filesFromDirectoryInput,
 } from './folder-upload';
 import {
+  type AskUploadConflict,
   type TransferFlowDeps,
   downloadArchive,
   downloadSingleFile,
-  invalidateListing,
-  uploadFilesInto,
-  uploadPlanInto,
+  uploadPlanGuarded,
 } from './transfer-flows';
+import { useUploadConflictPrompt } from './upload-conflict-dialog';
 
 const DEFAULT_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 
@@ -59,8 +65,20 @@ function useTransferMaxBytes(): number {
   return systemInfoQuery.data?.transferMaxBytes ?? DEFAULT_TRANSFER_MAX_BYTES;
 }
 
+export interface ExplorerActionElements {
+  /** 两个隐藏的 file input（文件 / 文件夹） */
+  fileInputs: ReactElement;
+  /** 上传同名冲突的询问框；不渲染它，遇到冲突的上传会一直等不到回答 */
+  dialogs: ReactElement;
+}
+
+interface UploadRunner {
+  deps: TransferFlowDeps;
+  ask: AskUploadConflict;
+}
+
 async function runPlanUpload(
-  deps: TransferFlowDeps,
+  { deps, ask }: UploadRunner,
   pending: Promise<FolderUploadPlan> | FolderUploadPlan,
   destDir: string
 ): Promise<void> {
@@ -73,7 +91,22 @@ async function runPlanUpload(
     toast.error(deps.t('files.upload.fail', { name }));
     return;
   }
-  await uploadPlanInto(deps, plan, destDir);
+  await uploadPlanGuarded(deps, plan, destDir, ask);
+}
+
+function startDownload(deps: TransferFlowDeps, entries: readonly FileEntryDto[]): void {
+  const [first] = entries;
+  if (!first) return;
+  // 指向目录的符号链接也是目录：只能走打包
+  if (entries.length === 1 && !isDirectoryEntry(first)) {
+    void downloadSingleFile(deps, first);
+    return;
+  }
+  if (entries.length > FILE_OP_MAX_PATHS) {
+    toast.error(deps.t('explorer.archive.tooMany', { count: FILE_OP_MAX_PATHS }));
+    return;
+  }
+  void downloadArchive(deps, entries);
 }
 
 async function copyEntryPath(deps: TransferFlowDeps, entry: FileEntryDto): Promise<void> {
@@ -86,32 +119,22 @@ async function copyEntryPath(deps: TransferFlowDeps, entry: FileEntryDto): Promi
 }
 
 function buildActions(
-  deps: () => TransferFlowDeps,
+  runner: () => UploadRunner,
   openPicker: ExplorerActions['openFilePicker']
 ): ExplorerActions {
   return {
-    download: (entries) => {
-      if (entries.length === 0) return;
-      const [first] = entries;
-      if (entries.length === 1 && first && first.type !== 'dir') {
-        void downloadSingleFile(deps(), first);
-        return;
-      }
-      void downloadArchive(deps(), entries);
-    },
-    uploadFiles: async (files, destDir) => {
-      if (files.length === 0) return;
-      const current = deps();
-      try {
-        await uploadFilesInto(current, files, destDir);
-      } finally {
-        invalidateListing(current, destDir);
-      }
+    download: (entries) => startDownload(runner().deps, entries),
+    uploadFiles: (files, destDir) => {
+      const plan: FolderUploadPlan = {
+        files: files.map((file) => ({ file, relDir: '' })),
+        dirs: [],
+      };
+      return runPlanUpload(runner(), plan, destDir);
     },
     // 不能是 async：collectDroppedItems 必须在 drop 回调的同步阶段抓走 entry
-    uploadDataTransfer: (dt, destDir) => runPlanUpload(deps(), collectDroppedItems(dt), destDir),
+    uploadDataTransfer: (dt, destDir) => runPlanUpload(runner(), collectDroppedItems(dt), destDir),
     openFilePicker: openPicker,
-    copyPath: (entry) => void copyEntryPath(deps(), entry),
+    copyPath: (entry) => void copyEntryPath(runner().deps, entry),
   };
 }
 
@@ -125,11 +148,12 @@ function readDirectoryPlan(fileList: FileList): Promise<FolderUploadPlan> {
 
 export function useExplorerActions(
   ctx: ExplorerActionContext
-): ExplorerActions & { fileInputs: ReactElement } {
+): ExplorerActions & ExplorerActionElements {
   const { t } = useTranslation();
   const runtime = useRuntime();
   const queryClient = useQueryClient();
   const transferMaxBytes = useTransferMaxBytes();
+  const conflictPrompt = useUploadConflictPrompt();
 
   // 动作对象保持稳定引用，每次调用时再读最新依赖
   const depsRef = useRef<TransferFlowDeps | null>(null);
@@ -141,16 +165,17 @@ export function useExplorerActions(
   const directoryInputRef = useRef<HTMLInputElement>(null);
   const pickerDestRef = useRef<string | null>(null);
 
+  const { ask } = conflictPrompt;
   const actions = useMemo(() => {
-    const deps = (): TransferFlowDeps => {
+    const runner = (): UploadRunner => {
       if (!depsRef.current) throw new Error('explorer actions used before mount');
-      return depsRef.current;
+      return { deps: depsRef.current, ask };
     };
-    return buildActions(deps, (destDir, opts) => {
+    return buildActions(runner, (destDir, opts) => {
       pickerDestRef.current = destDir;
       (opts?.directory ? directoryInputRef : filesInputRef).current?.click();
     });
-  }, []);
+  }, [ask]);
 
   const onFilesChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -161,15 +186,18 @@ export function useExplorerActions(
     [actions]
   );
 
-  const onDirectoryChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const deps = depsRef.current;
-    const fileList = event.target.files;
-    if (!deps || !fileList) return;
-    // 先同步读完 FileList 再清空 input：清空会让 FileList 变空
-    const pending = readDirectoryPlan(fileList);
-    event.target.value = '';
-    void runPlanUpload(deps, pending, pickerDestRef.current ?? fallbackDir.current);
-  }, []);
+  const onDirectoryChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const deps = depsRef.current;
+      const fileList = event.target.files;
+      if (!deps || !fileList) return;
+      // 先同步读完 FileList 再清空 input：清空会让 FileList 变空
+      const pending = readDirectoryPlan(fileList);
+      event.target.value = '';
+      void runPlanUpload({ deps, ask }, pending, pickerDestRef.current ?? fallbackDir.current);
+    },
+    [ask]
+  );
 
   const fileInputs = useMemo(
     () => (
@@ -188,5 +216,6 @@ export function useExplorerActions(
     [onFilesChange, onDirectoryChange]
   );
 
-  return useMemo(() => ({ ...actions, fileInputs }), [actions, fileInputs]);
+  const dialogs = conflictPrompt.element;
+  return useMemo(() => ({ ...actions, fileInputs, dialogs }), [actions, fileInputs, dialogs]);
 }

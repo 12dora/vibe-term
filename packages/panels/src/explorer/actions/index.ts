@@ -24,7 +24,19 @@ export {
   menuShortcut,
 } from './menu-model';
 export {
+  type UploadConflictChoice,
+  UploadConflictDialog,
+  type UploadConflictDialogProps,
+} from './upload-conflict-dialog';
+export {
+  type ExistingNamesByDir,
+  UPLOAD_CONFLICT_PROBE_LIMIT,
+  type UploadConflictPlan,
+  planUploadConflicts,
+} from './upload-conflicts';
+export {
   type ExplorerActionContext,
+  type ExplorerActionElements,
   type ExplorerActions,
   useExplorerActions,
 } from './use-explorer-actions';

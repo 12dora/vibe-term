@@ -6,11 +6,19 @@ export {
   type KeyboardLayout,
   TYPE_AHEAD_RESET_MS,
   type TypeAheadStep,
+  columnsFromTemplate,
   gridColumnCount,
   keyboardIntent,
   typeAheadStep,
 } from './keyboard-intent';
 export { nextSort } from './list-header';
+export {
+  type NameEditHandlers,
+  type NameEditRequest,
+  type NameEditSession,
+  createNameEditSession,
+  settleNameEdit,
+} from './name-edit-settle';
 export {
   type PathRect,
   type Point,

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { ExplorerMenuCommand } from './actions/menu-model';
-import { type ExplorerCommandState, isActivationTarget, isCommandAllowed } from './command-policy';
+import {
+  type ExplorerCommandState,
+  isActivationKey,
+  isActivationTarget,
+  isCommandAllowed,
+} from './command-policy';
 
 function state(patch: Partial<ExplorerCommandState> = {}): ExplorerCommandState {
   return {
@@ -99,15 +104,47 @@ describe('isCommandAllowed', () => {
   });
 });
 
+/** 只认 `closest`：自身（或祖先）命中选择器列表里的任意一项即返回非空 */
+function element(...own: string[]): EventTarget {
+  return {
+    closest: (selector: string) =>
+      selector.split(', ').some((item) => own.includes(item)) ? {} : null,
+  } as unknown as EventTarget;
+}
+
 describe('isActivationTarget', () => {
-  const element = (matches: boolean) => ({
-    closest: (_selector: string) => (matches ? {} : null),
+  test('原生按钮、链接与自绘控件都算', () => {
+    for (const selector of [
+      'button',
+      'a[href]',
+      '[role="button"]',
+      '[role="checkbox"]',
+      '[role="switch"]',
+      '[role="menuitem"]',
+      '[role="tab"]',
+      '[role="option"][data-explorer-inert]',
+      '[data-explorer-check]',
+    ]) {
+      expect(isActivationTarget(element(selector))).toBe(true);
+    }
   });
 
-  test('按钮类控件内算，其它元素与空目标不算', () => {
-    expect(isActivationTarget(element(true) as unknown as EventTarget)).toBe(true);
-    expect(isActivationTarget(element(false) as unknown as EventTarget)).toBe(false);
+  test('条目行（role="option"）不算：行上的 Enter 是「打开」', () => {
+    expect(isActivationTarget(element('[role="option"]'))).toBe(false);
+    expect(isActivationTarget(element('[role="listbox"]'))).toBe(false);
+  });
+
+  test('空目标与没有 closest 的目标不算', () => {
     expect(isActivationTarget(null)).toBe(false);
     expect(isActivationTarget({} as EventTarget)).toBe(false);
+  });
+});
+
+describe('isActivationKey', () => {
+  test('Enter 与空格是控件的激活键，其余不是', () => {
+    expect(isActivationKey('Enter')).toBe(true);
+    expect(isActivationKey(' ')).toBe(true);
+    expect(isActivationKey('Escape')).toBe(false);
+    expect(isActivationKey('a')).toBe(false);
   });
 });

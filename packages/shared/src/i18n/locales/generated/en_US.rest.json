@@ -1494,7 +1494,8 @@
       },
       "archive": {
         "preparing": "Preparing archive…",
-        "failed": "Couldn’t download the archive"
+        "failed": "Couldn’t download the archive",
+        "tooMany": "You can archive up to {{count}} items at a time"
       },
       "shortcuts": {
         "title": "Keyboard Shortcuts",

@@ -1,10 +1,11 @@
-// 地址栏：面包屑（溢出时中段折叠）与可编辑路径输入之间切换；每一级同时是拖放目标。
+// 地址栏：面包屑（按量得宽度摆放，当前目录优先）与可编辑路径输入之间切换；每一级同时是拖放目标。
 
 import type { FileRootDto } from '@vibeterm/shared';
 import { ChevronRight, Pencil } from 'lucide-react';
 import {
   type DragEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -15,13 +16,22 @@ import { useTranslation } from 'react-i18next';
 import {
   BreadcrumbPathInput,
   HiddenCrumbsMenu,
+  type RootChoice,
+  RootCrumbLabel,
   RootSwitcher,
   crumbClass,
+  crumbWidthStyle,
 } from './breadcrumb-parts';
-import { type ExplorerCrumb, collapseCrumbs, explorerCrumbs } from './crumb-model';
+import {
+  type CrumbFit,
+  DEFAULT_CRUMB_METRICS,
+  type ExplorerCrumb,
+  explorerCrumbs,
+  fitCrumbs,
+} from './crumb-model';
 
-export { collapseCrumbs, explorerCrumbs, resolveTypedPath } from './crumb-model';
-export type { CollapsedCrumbs, ExplorerCrumb } from './crumb-model';
+export { explorerCrumbs, fitCrumbs, resolveTypedPath } from './crumb-model';
+export type { CrumbFit, CrumbFitMetrics, ExplorerCrumb } from './crumb-model';
 
 export interface ExplorerBreadcrumbProps {
   rootPath: string;
@@ -35,47 +45,77 @@ export interface ExplorerBreadcrumbProps {
   onSwitchRoot?(rootId: string): void;
 }
 
-interface CrumbFit {
+type DropHandler = (path: string, event: DragEvent) => void;
+
+// 面包屑以外被占掉的宽度：编辑入口的最小宽度（min-w-6）+ 列表两侧留给焦点环的内边距（p-0.5）
+const RESERVED_WIDTH = 28;
+// 带下拉箭头的根至少要留出「约 4 个字 + 箭头」
+const SWITCHER_MIN_ROOT = 56;
+
+const NO_WIDTHS: number[] = [];
+
+interface MeasuredWidths {
   key: string;
-  width: number;
-  max: number;
+  widths: number[];
 }
 
 /**
- * 量出放得下几级：每次渲染后看列表是否溢出，溢出就少显示一级再量（绘制前同步收敛）；
- * 容器宽度或路径变化时从「全部显示」重新开始。观察的是不随内容伸缩的外层容器，避免自激。
+ * 量宽度：各级的自然宽度取自一层不可见的影子节点，只在路径变化时量一次；
+ * 容器宽度由 ResizeObserver 跟踪。两者都只是 fitCrumbs 的输入，摆放本身不再反复试排。
  */
-function useCrumbFit(count: number, resetKey: string) {
+function useCrumbMeasure(count: number, measureKey: string) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const listRef = useRef<HTMLElement | null>(null);
-  const [fit, setFit] = useState<CrumbFit>({ key: resetKey, width: -1, max: count });
-  const max = fit.key === resetKey ? Math.min(fit.max, count) : count;
+  const shadowRef = useRef<HTMLDivElement | null>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [measured, setMeasured] = useState<MeasuredWidths>({ key: '', widths: [] });
+  // 容器被隐藏（display: none）时量不到宽度，等它重新出现再量
+  const measurable = containerWidth > 0;
 
   useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list || max <= 2) return;
-    if (list.scrollWidth <= list.clientWidth + 1) return;
-    setFit({ key: resetKey, width: containerRef.current?.clientWidth ?? -1, max: max - 1 });
-  });
+    setContainerWidth(containerRef.current?.clientWidth ?? 0);
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
-      const width = container.clientWidth;
-      setFit((prev) =>
-        prev.width === width && prev.key === resetKey ? prev : { key: resetKey, width, max: count }
-      );
-    });
+    const observer = new ResizeObserver(() => setContainerWidth(container.clientWidth));
     observer.observe(container);
     return () => observer.disconnect();
-  }, [count, resetKey]);
+  }, []);
 
-  return { containerRef, listRef, max };
+  useLayoutEffect(() => {
+    const shadow = shadowRef.current;
+    if (!shadow || !measurable) return;
+    const widths = Array.from(shadow.children, (child) =>
+      Math.ceil(child.getBoundingClientRect().width)
+    );
+    setMeasured({ key: measureKey, widths });
+  }, [measureKey, measurable]);
+
+  const ready = measured.key === measureKey && measured.widths.length === count && measurable;
+  return {
+    containerRef,
+    shadowRef,
+    widths: ready ? measured.widths : NO_WIDTHS,
+    available: Math.max(1, containerWidth - RESERVED_WIDTH),
+  };
 }
 
-function useCrumbDrop(path: string, onDropOnCrumb?: (path: string, event: DragEvent) => void) {
+function useCrumbDrop(path: string, onDropOnCrumb?: DropHandler) {
   const [over, setOver] = useState(false);
+
+  // 拖拽被取消（Esc）或在别处结束时收不到 dragleave，靠全局 dragend / drop 兜底清掉高亮
+  useEffect(() => {
+    if (!over) return;
+    const clear = () => setOver(false);
+    window.addEventListener('dragend', clear, true);
+    window.addEventListener('drop', clear, true);
+    return () => {
+      window.removeEventListener('dragend', clear, true);
+      window.removeEventListener('drop', clear, true);
+    };
+  }, [over]);
+
   if (!onDropOnCrumb) return { over: false, handlers: {} };
   return {
     over,
@@ -97,19 +137,20 @@ function useCrumbDrop(path: string, onDropOnCrumb?: (path: string, event: DragEv
 interface CrumbProps {
   crumb: ExplorerCrumb;
   index: number;
-  tight: boolean;
+  maxWidth: number | null;
   onNavigate(path: string): void;
-  onDropOnCrumb?(path: string, event: DragEvent): void;
+  onDropOnCrumb?: DropHandler;
 }
 
-function CrumbButton({ crumb, index, tight, onNavigate, onDropOnCrumb }: CrumbProps) {
+function CrumbButton({ crumb, index, maxWidth, onNavigate, onDropOnCrumb }: CrumbProps) {
   const { over, handlers } = useCrumbDrop(crumb.path, onDropOnCrumb);
   return (
     <button
       type="button"
       data-testid={`explorer-crumb-${index}`}
       data-drop-over={over || undefined}
-      className={crumbClass({ current: false, interactive: true, tight, dropOver: over })}
+      className={crumbClass({ current: false, interactive: true, dropOver: over })}
+      style={crumbWidthStyle(maxWidth)}
       onClick={() => onNavigate(crumb.path)}
       {...handlers}
     >
@@ -118,12 +159,18 @@ function CrumbButton({ crumb, index, tight, onNavigate, onDropOnCrumb }: CrumbPr
   );
 }
 
-function CurrentCrumb({ crumb, index, tight }: Pick<CrumbProps, 'crumb' | 'index' | 'tight'>) {
+function CurrentCrumb({
+  crumb,
+  index,
+  maxWidth,
+}: Pick<CrumbProps, 'crumb' | 'index' | 'maxWidth'>) {
   return (
     <span
       data-testid={`explorer-crumb-${index}`}
       aria-current="location"
-      className={crumbClass({ current: true, interactive: false, tight })}
+      title={crumb.label}
+      className={crumbClass({ current: true, interactive: false })}
+      style={crumbWidthStyle(maxWidth)}
     >
       <span className="truncate">{crumb.label}</span>
     </span>
@@ -136,7 +183,7 @@ function RootDropZone({
   children,
 }: {
   path: string;
-  onDropOnCrumb?: (path: string, event: DragEvent) => void;
+  onDropOnCrumb?: DropHandler;
   children(over: boolean): ReactNode;
 }) {
   const { over, handlers } = useCrumbDrop(path, onDropOnCrumb);
@@ -147,81 +194,98 @@ function RootDropZone({
   );
 }
 
-type TrailItem =
+export type TrailItem =
   | { kind: 'crumb'; crumb: ExplorerCrumb; index: number }
   | { kind: 'hidden'; crumbs: ExplorerCrumb[] };
 
-function buildTrail(crumbs: readonly ExplorerCrumb[], max: number): TrailItem[] {
-  const { head, hidden, tail } = collapseCrumbs(crumbs, max);
-  const items: TrailItem[] = head.map((crumb, index) => ({ kind: 'crumb', crumb, index }));
-  if (hidden.length > 0) items.push({ kind: 'hidden', crumbs: hidden });
-  const tailStart = crumbs.length - tail.length;
-  tail.forEach((crumb, offset) => {
-    items.push({ kind: 'crumb', crumb, index: tailStart + offset });
+/** 摆放顺序：根（若仍可见）→「…」→ 其余可见级；根被收起时「…」排最前。 */
+export function buildTrail(crumbs: readonly ExplorerCrumb[], fit: CrumbFit): TrailItem[] {
+  const hidden = new Set(fit.hidden);
+  const items: TrailItem[] = [];
+  crumbs.forEach((crumb, index) => {
+    if (!hidden.has(index)) items.push({ kind: 'crumb', crumb, index });
   });
+  if (hidden.size > 0) {
+    const collapsed = crumbs.filter((_, index) => hidden.has(index));
+    items.splice(fit.rootVisible ? 1 : 0, 0, { kind: 'hidden', crumbs: collapsed });
+  }
   return items;
 }
 
-interface TrailProps extends ExplorerBreadcrumbProps {
-  items: TrailItem[];
+interface TrailContext {
+  fit: CrumbFit;
   lastIndex: number;
-  tight: boolean;
+  rootChoice?: RootChoice;
+  onNavigate(path: string): void;
+  onDropOnCrumb?: DropHandler;
 }
 
 type CrumbItem = Extract<TrailItem, { kind: 'crumb' }>;
 
-function TrailCrumb({ item, props }: { item: CrumbItem; props: TrailProps }) {
+function crumbMaxWidth(index: number, context: TrailContext): number | null {
+  if (index === context.lastIndex) return context.fit.lastMaxWidth;
+  return index === 0 ? context.fit.rootMaxWidth : null;
+}
+
+function TrailCrumb({ item, context }: { item: CrumbItem; context: TrailContext }) {
   const { crumb, index } = item;
-  const { roots, rootId, onSwitchRoot, onNavigate, onDropOnCrumb, tight, lastIndex } = props;
-  const current = index === lastIndex;
-  if (index === 0 && roots && roots.length > 1 && onSwitchRoot) {
-    const select = (id: string) => (id === rootId ? onNavigate(crumb.path) : onSwitchRoot(id));
+  const { rootChoice, onNavigate, onDropOnCrumb } = context;
+  const current = index === context.lastIndex;
+  const maxWidth = crumbMaxWidth(index, context);
+  if (index === 0 && rootChoice) {
     return (
       <RootDropZone path={crumb.path} onDropOnCrumb={current ? undefined : onDropOnCrumb}>
         {(over) => (
           <RootSwitcher
-            roots={roots}
-            rootId={rootId ?? ''}
+            {...rootChoice}
             rootName={crumb.label}
             testId="explorer-crumb-0"
-            className={crumbClass({ current, interactive: true, tight, dropOver: over })}
-            onSelect={select}
+            className={crumbClass({ current, interactive: true, dropOver: over })}
+            style={crumbWidthStyle(maxWidth)}
           />
         )}
       </RootDropZone>
     );
   }
-  if (current) return <CurrentCrumb crumb={crumb} index={index} tight={tight} />;
+  if (current) return <CurrentCrumb crumb={crumb} index={index} maxWidth={maxWidth} />;
   return (
     <CrumbButton
       crumb={crumb}
       index={index}
-      tight={tight}
+      maxWidth={maxWidth}
       onNavigate={onNavigate}
       onDropOnCrumb={onDropOnCrumb}
     />
   );
 }
 
-function CrumbTrail(props: TrailProps) {
+function HiddenItem({ crumbs, context }: { crumbs: ExplorerCrumb[]; context: TrailContext }) {
+  // 根也被收起且可切换：菜单顶部换成根列表（当前根 = 回到根目录），其余是中间各级
+  const rootChoice = context.fit.rootVisible ? undefined : context.rootChoice;
+  return (
+    <HiddenCrumbsMenu
+      crumbs={rootChoice ? crumbs.slice(1) : crumbs}
+      rootChoice={rootChoice}
+      onNavigate={context.onNavigate}
+    />
+  );
+}
+
+function CrumbTrail({ items, context }: { items: TrailItem[]; context: TrailContext }) {
   return (
     <>
-      {props.items.map((item, position) => (
+      {items.map((item, position) => (
         <span
           key={item.kind === 'crumb' ? item.crumb.path : 'hidden'}
-          className={
-            item.kind === 'crumb' && props.tight
-              ? 'flex min-w-0 items-center'
-              : 'flex shrink-0 items-center'
-          }
+          className="flex shrink-0 items-center"
         >
           {position > 0 && (
             <ChevronRight aria-hidden className="size-3 shrink-0 text-muted-foreground/60" />
           )}
           {item.kind === 'hidden' ? (
-            <HiddenCrumbsMenu crumbs={item.crumbs} onNavigate={props.onNavigate} />
+            <HiddenItem crumbs={item.crumbs} context={context} />
           ) : (
-            <TrailCrumb item={item} props={props} />
+            <TrailCrumb item={item} context={context} />
           )}
         </span>
       ))}
@@ -229,14 +293,73 @@ function CrumbTrail(props: TrailProps) {
   );
 }
 
+/** 不可见的影子节点：与真实面包屑同一套样式，各级按自然宽度排开，专供量宽度。 */
+function CrumbShadow({
+  crumbs,
+  switchable,
+  shadowRef,
+}: {
+  crumbs: readonly ExplorerCrumb[];
+  switchable: boolean;
+  shadowRef: RefObject<HTMLDivElement | null>;
+}) {
+  const lastIndex = crumbs.length - 1;
+  return (
+    <div
+      ref={shadowRef}
+      aria-hidden
+      className="pointer-events-none invisible absolute top-0 left-0 flex h-0 overflow-hidden whitespace-nowrap"
+    >
+      {crumbs.map((crumb, index) => (
+        <span
+          key={crumb.path}
+          className={crumbClass({ current: index === lastIndex, interactive: false })}
+        >
+          {index === 0 && switchable ? (
+            <RootCrumbLabel rootName={crumb.label} />
+          ) : (
+            <span className="truncate">{crumb.label}</span>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function resolveRootChoice(
+  props: ExplorerBreadcrumbProps,
+  rootCrumbPath: string
+): RootChoice | undefined {
+  const { roots, rootId, onSwitchRoot, onNavigate } = props;
+  if (!roots || roots.length <= 1 || !onSwitchRoot) return undefined;
+  return {
+    roots,
+    rootId: rootId ?? '',
+    onSelect: (id: string) => (id === rootId ? onNavigate(rootCrumbPath) : onSwitchRoot(id)),
+  };
+}
+
 export function ExplorerBreadcrumb(props: ExplorerBreadcrumbProps) {
-  const { rootPath, rootName, path, onNavigate } = props;
+  const { rootPath, rootName, path, onNavigate, onDropOnCrumb } = props;
   const { t } = useTranslation();
   const crumbs = useMemo(
     () => explorerCrumbs(rootPath, rootName, path),
     [rootPath, rootName, path]
   );
-  const { containerRef, listRef, max } = useCrumbFit(crumbs.length, `${rootPath}\n${path}`);
+  const rootChoice = resolveRootChoice(props, crumbs[0]?.path ?? rootPath);
+  const switchable = rootChoice !== undefined;
+  const { containerRef, shadowRef, widths, available } = useCrumbMeasure(
+    crumbs.length,
+    `${rootPath}\n${rootName}\n${path}\n${switchable}`
+  );
+  const fit = useMemo(
+    () =>
+      fitCrumbs(widths, widths.length > 0 ? available : 0, {
+        ...DEFAULT_CRUMB_METRICS,
+        minRoot: switchable ? SWITCHER_MIN_ROOT : DEFAULT_CRUMB_METRICS.minRoot,
+      }),
+    [widths, available, switchable]
+  );
   const [editing, setEditing] = useState(false);
   const editButtonRef = useRef<HTMLButtonElement | null>(null);
   const restoreFocusRef = useRef(false);
@@ -251,14 +374,16 @@ export function ExplorerBreadcrumb(props: ExplorerBreadcrumbProps) {
     if (restoreFocus) restoreFocusRef.current = true;
     setEditing(false);
   };
+  const context = { fit, lastIndex: crumbs.length - 1, rootChoice, onNavigate, onDropOnCrumb };
 
   return (
     <div
       ref={containerRef}
       data-testid="explorer-breadcrumb"
       data-editing={editing || undefined}
-      className="flex h-7 min-w-0 flex-1 items-center"
+      className="relative flex h-7 min-w-0 flex-1 items-center"
     >
+      <CrumbShadow crumbs={crumbs} switchable={switchable} shadowRef={shadowRef} />
       {editing ? (
         <BreadcrumbPathInput
           rootPath={rootPath}
@@ -268,30 +393,43 @@ export function ExplorerBreadcrumb(props: ExplorerBreadcrumbProps) {
         />
       ) : (
         <>
-          <nav ref={listRef} className="flex min-w-0 items-center overflow-hidden p-0.5">
-            <CrumbTrail
-              {...props}
-              items={buildTrail(crumbs, max)}
-              lastIndex={crumbs.length - 1}
-              tight={max <= 2}
-            />
+          <nav className="flex min-w-0 items-center overflow-hidden p-0.5">
+            <CrumbTrail items={buildTrail(crumbs, fit)} context={context} />
           </nav>
-          <button
-            ref={editButtonRef}
-            type="button"
-            data-testid="explorer-path-edit"
-            aria-label={t('explorer.toolbar.editPath')}
-            title={t('explorer.toolbar.editPath')}
-            className="group/edit flex h-7 min-w-6 flex-1 cursor-text items-center rounded-md px-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          <EditPathButton
+            buttonRef={editButtonRef}
+            label={t('explorer.toolbar.editPath')}
             onClick={() => setEditing(true)}
-          >
-            <Pencil
-              aria-hidden
-              className="size-3 text-muted-foreground opacity-0 transition-opacity duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none group-hover/edit:opacity-60 group-focus-visible/edit:opacity-60"
-            />
-          </button>
+          />
         </>
       )}
     </div>
+  );
+}
+
+function EditPathButton({
+  buttonRef,
+  label,
+  onClick,
+}: {
+  buttonRef: RefObject<HTMLButtonElement | null>;
+  label: string;
+  onClick(): void;
+}) {
+  return (
+    <button
+      ref={buttonRef}
+      type="button"
+      data-testid="explorer-path-edit"
+      aria-label={label}
+      title={label}
+      className="group/edit flex h-7 min-w-6 flex-1 cursor-text items-center rounded-md px-1 outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+      onClick={onClick}
+    >
+      <Pencil
+        aria-hidden
+        className="size-3 text-muted-foreground opacity-0 transition-opacity duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none group-hover/edit:opacity-60 group-focus-visible/edit:opacity-60"
+      />
+    </button>
   );
 }

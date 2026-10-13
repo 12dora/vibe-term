@@ -2,12 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import { FileApiError } from '@vibeterm/api-client';
 import type { ExplorerTransferRequest } from '@vibeterm/panels/explorer';
 import type { FileRootDto, TransferItemState } from '@vibeterm/shared';
-import type { ExplorerTab } from '@vibeterm/stores';
+import type { ExplorerClipboard, ExplorerTab } from '@vibeterm/stores';
+import { explorerNodeOptions } from './explorer-nodes';
 import {
   classifyTransferEnd,
+  clipboardAfterCut,
   conflictingNames,
   fileRequestErrorKey,
   moveFailureToast,
+  movedSourcePaths,
   planTransfer,
   relocatedMoveItems,
   resolveCopyParams,
@@ -270,22 +273,45 @@ describe('classifyTransferEnd', () => {
     expect(classifyTransferEnd(view('running', ['done', 'running']))).toEqual({ kind: 'pending' });
   });
 
-  test('全部完成（含部分跳过）→ done', () => {
-    expect(classifyTransferEnd(view('done', ['done', 'done']))).toEqual({ kind: 'done' });
-    expect(classifyTransferEnd(view('done', ['done', 'skipped']))).toEqual({ kind: 'done' });
+  test('全部完成 → done，带真实完成数', () => {
+    expect(classifyTransferEnd(view('done', ['done', 'done']))).toEqual({ kind: 'done', count: 2 });
   });
 
-  test('条目状态还没见过也按 done 算', () => {
-    expect(classifyTransferEnd(view('done'))).toEqual({ kind: 'done' });
-    expect(classifyTransferEnd(view('done', [undefined, 'done']))).toEqual({ kind: 'done' });
+  test('条目状态一个都没见过 → done 但数量未知；个别没见过的按已完成算', () => {
+    expect(classifyTransferEnd(view('done'))).toEqual({ kind: 'done', count: null });
+    expect(classifyTransferEnd(view('done', [undefined, 'done']))).toEqual({
+      kind: 'done',
+      count: 2,
+    });
+  });
+
+  test('部分完成、其余被跳过 → partial(skipped)，只数真正复制的', () => {
+    expect(classifyTransferEnd(view('done', ['done', 'skipped']))).toEqual({
+      kind: 'partial',
+      count: 1,
+      rest: 'skipped',
+    });
+  });
+
+  test('部分完成、有条目失败 → partial(failed)，失败优先于跳过', () => {
+    expect(classifyTransferEnd(view('done', ['done', 'failed']))).toEqual({
+      kind: 'partial',
+      count: 1,
+      rest: 'failed',
+    });
+    expect(classifyTransferEnd(view('done', ['done', 'done', 'skipped', 'failed']))).toEqual({
+      kind: 'partial',
+      count: 2,
+      rest: 'failed',
+    });
   });
 
   test('每一项都被跳过 → skipped', () => {
     expect(classifyTransferEnd(view('done', ['skipped', 'skipped']))).toEqual({ kind: 'skipped' });
   });
 
-  test('任务落在 done 但有条目失败 → failed', () => {
-    expect(classifyTransferEnd(view('done', ['done', 'failed'], 'permission_denied'))).toEqual({
+  test('任务落在 done 但一项都没成、且有失败 → failed', () => {
+    expect(classifyTransferEnd(view('done', ['failed', 'skipped'], 'permission_denied'))).toEqual({
       kind: 'failed',
       error: 'permission_denied',
     });
@@ -293,11 +319,99 @@ describe('classifyTransferEnd', () => {
   });
 
   test('失败带错误码，取消单独归类', () => {
-    expect(classifyTransferEnd(view('failed', [], 'node_unreachable'))).toEqual({
+    expect(classifyTransferEnd(view('failed', ['done'], 'node_unreachable'))).toEqual({
       kind: 'failed',
       error: 'node_unreachable',
     });
     expect(classifyTransferEnd(view('failed'))).toEqual({ kind: 'failed', error: null });
     expect(classifyTransferEnd(view('cancelled', ['done']))).toEqual({ kind: 'cancelled' });
+  });
+});
+
+describe('clipboardAfterCut', () => {
+  const clip = (overrides: Partial<ExplorerClipboard> = {}): ExplorerClipboard => ({
+    mode: 'cut',
+    nodeId: 'self',
+    rootId: 'r1',
+    deviceId: 'd1',
+    paths: ['/srv/a/x.txt', '/srv/a/y.txt', '/srv/a/docs'],
+    ...overrides,
+  });
+
+  test('全部移走 → 清空', () => {
+    const current = clip();
+    expect(clipboardAfterCut(current, current, current.paths)).toBeNull();
+  });
+
+  test('部分移走 → 只摘掉移走的，其余还能再粘贴', () => {
+    const current = clip();
+    expect(clipboardAfterCut(current, current, ['/srv/a/y.txt'])).toEqual(
+      clip({ paths: ['/srv/a/x.txt', '/srv/a/docs'] })
+    );
+  });
+
+  test('一项都没移走 → 原样返回同一引用', () => {
+    const current = clip();
+    expect(clipboardAfterCut(current, current, [])).toBe(current);
+    expect(clipboardAfterCut(current, current, ['/elsewhere'])).toBe(current);
+  });
+
+  test('期间换成了新的剪贴板 → 不动它', () => {
+    const submitted = clip();
+    const newer = clip({ paths: ['/srv/a/x.txt'] });
+    expect(clipboardAfterCut(newer, submitted, submitted.paths)).toBe(newer);
+    const otherRoot = clip({ rootId: 'r2' });
+    expect(clipboardAfterCut(otherRoot, submitted, submitted.paths)).toBe(otherRoot);
+    const copied = clip({ mode: 'copy' });
+    expect(clipboardAfterCut(copied, submitted, submitted.paths)).toBe(copied);
+  });
+
+  test('内容相同但对象换过（重新剪切了同一批）仍算同一份', () => {
+    const submitted = clip();
+    expect(clipboardAfterCut(clip(), submitted, submitted.paths)).toBeNull();
+  });
+
+  test('期间被清空，或提交时没有剪贴板 / 不是剪切 → 原样', () => {
+    const current = clip();
+    expect(clipboardAfterCut(null, current, current.paths)).toBeNull();
+    expect(clipboardAfterCut(current, null, current.paths)).toBe(current);
+    const copied = clip({ mode: 'copy' });
+    expect(clipboardAfterCut(copied, copied, copied.paths)).toBe(copied);
+  });
+});
+
+describe('movedSourcePaths', () => {
+  test('只取成功项的源路径', () => {
+    expect(
+      movedSourcePaths([
+        { path: '/a/x', ok: true, dest: '/b/x' },
+        { path: '/a/y', ok: false, code: 'already_exists' },
+        { path: '/a/z', ok: true, dest: '/a/z' },
+      ])
+    ).toEqual(['/a/x', '/a/z']);
+  });
+});
+
+describe('standalone 下的复制参数', () => {
+  test('两端 meshId 都是 self（没有 mesh 桥，同节点任务按 self 报）', () => {
+    // standalone 下 `/api/auth/mode` 仍可能带回本机 node id，不能漏进 meshId
+    const { options } = explorerNodeOptions({
+      modeLoaded: true,
+      meshEnabled: false,
+      entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+      nodes: [],
+      selfName: '本机',
+      inventoryReady: true,
+      inventoryLoading: false,
+    });
+    const self = options.find((option) => option.id === 'self');
+    expect(self?.meshId).toBe('self');
+
+    const dest = { nodeId: 'self', rootId: 'r2', deviceId: 'd2', dir: '/data' };
+    const plan = planTransfer(request({ kind: 'copy', dest }), null);
+    if (plan.kind !== 'copy' || !self) throw new Error('expected copy on self');
+    const params = resolveCopyParams(plan.params, self.meshId, self.meshId);
+    expect(params.source).toMatchObject({ nodeId: 'self', meshId: 'self', rootId: 'r1' });
+    expect(params.dest).toEqual({ nodeId: 'self', meshId: 'self', rootId: 'r2', path: '/data' });
   });
 });

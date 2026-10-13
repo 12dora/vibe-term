@@ -1,21 +1,19 @@
 // 一个分栏的标签栏：可横向滚动的标签页 + 滑动指示条 + 拖放插入线 + 末尾的「新建标签页」。
 
-import {
-  EXPLORER_MAX_PANES,
-  type ExplorerPane,
-  type ExplorerTab,
-  type ExplorerWorkspaceState,
-} from '@vibeterm/stores';
-import { useExplorerStore } from '@vibeterm/stores/react';
+import type { ExplorerPane, ExplorerTab, ExplorerWorkspaceState } from '@vibeterm/stores';
+import { useExplorerStore } from '@vibeterm/stores/explorer';
+
 import { cn } from '@vibeterm/ui';
 import { Button } from '@vibeterm/ui/button';
 import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 import { Plus } from 'lucide-react';
-import { type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useExplorerNodes } from './explorer-nodes';
 import { ExplorerTabItem } from './explorer-tab';
+import { neighbourTabId, stripTabsView } from './strip-view';
 import { hasMultipleNodes } from './tab-label';
+import { useCanSplit } from './use-can-split';
 import { useTabIndicator } from './use-tab-indicator';
 import { useTabStripDrop } from './use-tab-strip-drop';
 import { useTabStripScroll } from './use-tab-strip-scroll';
@@ -24,8 +22,8 @@ import { useWorkspaceActions } from './workspace-actions';
 const showsMultipleNodes = (state: ExplorerWorkspaceState) =>
   hasMultipleNodes(Object.values(state.tabs));
 
-function paneTabs(pane: ExplorerPane, tabs: Record<string, ExplorerTab>): ExplorerTab[] {
-  return pane.tabIds.flatMap((id) => (tabs[id] ? [tabs[id]] : []));
+function resolveTabs(tabIds: readonly string[], tabs: Record<string, ExplorerTab>): ExplorerTab[] {
+  return tabIds.flatMap((id) => (tabs[id] ? [tabs[id]] : []));
 }
 
 /** 本栏挂载之后才出现的标签页算「新开的」（挂载时已有的不播入场动画） */
@@ -39,19 +37,27 @@ function useNewTabCheck(tabIds: readonly string[]): (tabId: string) => boolean {
   return (tabId) => !known.has(tabId);
 }
 
+interface ArrowNavigationOptions {
+  tabIds: readonly string[];
+  rowRef: RefObject<HTMLElement | null>;
+  onKeyboardActivate?: (tabId: string) => void;
+}
+
 /** 方向键：切到相邻标签页并把焦点带过去（到头不循环） */
-function useArrowNavigation(pane: ExplorerPane, rowRef: RefObject<HTMLElement | null>) {
+function useArrowNavigation({ tabIds, rowRef, onKeyboardActivate }: ArrowNavigationOptions) {
   const { activateTab } = useWorkspaceActions();
   return useCallback(
     (tabId: string, delta: -1 | 1) => {
-      const nextId = pane.tabIds[pane.tabIds.indexOf(tabId) + delta];
-      if (!nextId) return;
+      const nextId = neighbourTabId(tabIds, tabId, delta);
+      if (nextId === null) return;
+      // 先登记「这次激活来自键盘」：新主体挂载后会抢焦点，分栏据此把焦点还给标签页
+      onKeyboardActivate?.(nextId);
       activateTab(nextId);
       const tabs = Array.from(rowRef.current?.children ?? []);
       const next = tabs.find((el) => el instanceof HTMLElement && el.dataset.tabId === nextId);
       if (next instanceof HTMLElement) next.focus();
     },
-    [pane.tabIds, rowRef, activateTab]
+    [tabIds, rowRef, activateTab, onKeyboardActivate]
   );
 }
 
@@ -77,22 +83,34 @@ function NewTabButton({ paneId, activeTabId }: { paneId: string; activeTabId: st
 
 const BAR_CLASS = 'pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-primary';
 
-export function ExplorerTabStrip({ pane }: { pane: ExplorerPane }) {
+export interface ExplorerTabStripProps {
+  pane: ExplorerPane;
+  /** 窄屏：把所有分栏的标签页并进这一条（此时不支持拖动重排） */
+  merged?: boolean;
+  /** 方向键切换标签页时通知分栏，好让它守住标签页上的焦点 */
+  onKeyboardActivate?: (tabId: string) => void;
+}
+
+export function ExplorerTabStrip(props: ExplorerTabStripProps) {
+  const { pane, merged = false, onKeyboardActivate } = props;
   const allTabs = useExplorerStore((state) => state.tabs);
-  const paneCount = useExplorerStore((state) => state.panes.length);
+  const panes = useExplorerStore((state) => state.panes);
   const showNode = useExplorerStore(showsMultipleNodes);
   const nodes = useExplorerNodes();
+  const canSplit = useCanSplit();
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowRef = useRef<HTMLDivElement | null>(null);
-  const tabs = paneTabs(pane, allTabs);
-  const layoutKey = pane.tabIds.join('|');
+  const view = useMemo(() => stripTabsView(panes, pane, merged), [panes, pane, merged]);
+  const tabs = resolveTabs(view.tabIds, allTabs);
+  const layoutKey = view.tabIds.join('|');
+  const multiPane = panes.length > 1;
 
-  const isNew = useNewTabCheck(pane.tabIds);
+  const isNew = useNewTabCheck(view.tabIds);
   const scroll = useTabStripScroll(scrollRef, pane.activeTabId, layoutKey);
   const indicator = useTabIndicator(rowRef, pane.activeTabId, layoutKey);
-  const drop = useTabStripDrop(pane.id, rowRef);
-  const onArrow = useArrowNavigation(pane, rowRef);
+  const drop = useTabStripDrop(pane.id, rowRef, !merged);
+  const onArrow = useArrowNavigation({ tabIds: view.tabIds, rowRef, onKeyboardActivate });
 
   return (
     <div
@@ -118,9 +136,10 @@ export function ExplorerTabStrip({ pane }: { pane: ExplorerPane }) {
               node={nodes.find(tab.nodeId)}
               showNode={showNode}
               isNew={isNew(tab.id)}
-              canSplit={paneCount < EXPLORER_MAX_PANES}
-              onlyTab={pane.tabIds.length === 1}
-              closablePaneId={paneCount > 1 ? pane.id : null}
+              canSplit={canSplit}
+              onlyTab={(view.ownerOf.get(tab.id)?.tabIds.length ?? 1) === 1}
+              closablePaneId={multiPane ? (view.ownerOf.get(tab.id)?.id ?? null) : null}
+              draggable={!merged}
               onArrow={onArrow}
             />
           ))}

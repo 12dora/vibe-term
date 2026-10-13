@@ -1,7 +1,8 @@
 // 标签栏里的一个标签页：节点在线点 + 可选的节点名前缀 + 标题 + 关闭按钮，自带右键菜单与拖拽。
 
 import type { DialogNodeOption } from '@/pages/devices/dialog-nodes';
-import { type ExplorerTab, explorerTabPath } from '@vibeterm/stores';
+import type { ExplorerTab } from '@vibeterm/stores';
+import { explorerTabPath } from '@vibeterm/stores/explorer';
 import { cn } from '@vibeterm/ui';
 import {
   ContextMenu,
@@ -34,6 +35,8 @@ export interface ExplorerTabItemProps {
   onlyTab: boolean;
   /** 所在分栏的 id；只有一个分栏时为 null（不出「关闭分栏」） */
   closablePaneId: string | null;
+  /** 能否拖动重排（窄屏合并栏里不行） */
+  draggable: boolean;
   /** 方向键在标签页之间移动 */
   onArrow(tabId: string, delta: -1 | 1): void;
 }
@@ -156,7 +159,7 @@ function useTabHandlers({ tab, onArrow }: ExplorerTabItemProps) {
 }
 
 export function ExplorerTabItem(props: ExplorerTabItemProps) {
-  const { tab, active, node, isNew } = props;
+  const { tab, active, node, isNew, draggable } = props;
   // 入场动画靠 max-width 展开，期间不能带最小宽度；播完再换回常规尺寸约束
   const [entering, setEntering] = useState(isNew);
   const handlers = useTabHandlers(props);
@@ -170,7 +173,7 @@ export function ExplorerTabItem(props: ExplorerTabItemProps) {
             role="tab"
             aria-selected={active}
             tabIndex={active ? 0 : -1}
-            draggable
+            draggable={draggable}
             title={tabTitle(node?.name, explorerTabPath(tab))}
             data-tab-id={tab.id}
             data-testid={`explorer-tab-${tab.id}`}

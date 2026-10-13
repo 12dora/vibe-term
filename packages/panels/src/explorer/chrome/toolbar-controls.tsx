@@ -23,6 +23,7 @@ import {
   formatChord,
   isApplePlatform,
 } from '../model/shortcuts';
+import { isImeKeyEvent } from './ime';
 
 const MOTION_CLASS = 'duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none';
 
@@ -112,7 +113,7 @@ export function ToolbarFilter({
   const label = t('explorer.toolbar.filter');
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key !== 'Escape') return;
+    if (event.key !== 'Escape' || isImeKeyEvent(event)) return;
     event.preventDefault();
     event.stopPropagation();
     onQueryChange('');

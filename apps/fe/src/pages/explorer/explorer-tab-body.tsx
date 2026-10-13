@@ -4,22 +4,23 @@
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import { lazyChunk } from '@/lazy-chunk';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
-import type { DialogNodeOption } from '@/pages/devices/dialog-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { ExplorerBrowserProps } from '@vibeterm/panels/explorer';
 import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
+import type { ExplorerTab } from '@vibeterm/stores';
 import {
-  type ExplorerTab,
   explorerCanGoBack,
   explorerCanGoForward,
   explorerTabPath,
-} from '@vibeterm/stores';
-import { useExplorerStore } from '@vibeterm/stores/react';
+  useExplorerStore,
+} from '@vibeterm/stores/explorer';
+
 import { CloudOff, FolderX, Loader2, LogIn, ServerOff } from 'lucide-react';
 import { Suspense, useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useExplorerNodes } from './explorer-nodes';
+import { explorerNodeState, useExplorerNodes } from './explorer-nodes';
 import { CloseTabButton, ExplorerStateScreen } from './explorer-state';
+import { useCanSplit } from './use-can-split';
 import { useExplorerTransferActions } from './use-explorer-transfer';
 import { useTabNavigation } from './use-tab-navigation';
 import { useWorkspaceActions } from './workspace-actions';
@@ -50,6 +51,7 @@ function TabBrowser({ tab, active, onRootMissing }: TabBrowserProps) {
   const actions = useWorkspaceActions();
   const { run } = useExplorerTransferActions();
   const navigation = useTabNavigation(tab);
+  const canSplit = useCanSplit();
   const { id: tabId, nodeId, rootId } = tab;
 
   const onOpenInNewTab = useCallback(
@@ -58,11 +60,12 @@ function TabBrowser({ tab, active, onRootMissing }: TabBrowserProps) {
   );
   const onCommand = useCallback(
     (command: 'newTab' | 'closeTab' | 'split') => {
-      if (command === 'split') actions.splitTab(tabId);
-      else if (command === 'newTab') actions.duplicateTab(tabId);
-      else actions.closeTab(tabId);
+      if (command === 'newTab') actions.duplicateTab(tabId);
+      else if (command === 'closeTab') actions.closeTab(tabId);
+      // 与顶栏按钮、标签页菜单同一个判据：分不了（窄屏 / 已到上限）时快捷键也不生效
+      else if (canSplit) actions.splitTab(tabId);
     },
-    [actions, tabId]
+    [actions, tabId, canSplit]
   );
   const onActivate = useCallback(() => actions.activateTab(tabId), [actions, tabId]);
 
@@ -92,20 +95,21 @@ function TabBrowser({ tab, active, onRootMissing }: TabBrowserProps) {
   );
 }
 
+type UnavailableState = 'loading' | 'missing' | 'offline' | 'signedOut';
+
 interface NodeGateProps {
   tab: ExplorerTab;
-  node: DialogNodeOption | undefined;
-  ready: boolean;
+  state: UnavailableState;
+  nodeName: string;
 }
 
-/** 节点不可用时的占位；可用返回 null */
-function NodeGate({ tab, node, ready }: NodeGateProps) {
+/** 节点不可用时的占位 */
+function NodeGate({ tab, state, nodeName }: NodeGateProps) {
   const { t } = useTranslation();
   const { closeTab } = useWorkspaceActions();
 
-  if (!node) {
-    // 成员表还没到齐时查不到不代表节点没了
-    if (!ready) return <LoadingState />;
+  if (state === 'loading') return <LoadingState />;
+  if (state === 'missing') {
     return (
       <ExplorerStateScreen
         kind="nodeMissing"
@@ -116,32 +120,38 @@ function NodeGate({ tab, node, ready }: NodeGateProps) {
       </ExplorerStateScreen>
     );
   }
-  if (!node.online) {
+  if (state === 'offline') {
     return <ExplorerStateScreen kind="offline" icon={CloudOff} text={t('files.nodeOffline')} />;
   }
-  if (!node.loggedIn) {
-    return (
-      <ExplorerStateScreen kind="signedOut" icon={LogIn} text={t('files.nodeSignInHint')}>
-        <NodeLoginButton nodeId={tab.nodeId} nodeName={node.name} />
-      </ExplorerStateScreen>
-    );
-  }
-  return null;
+  return (
+    <ExplorerStateScreen kind="signedOut" icon={LogIn} text={t('files.nodeSignInHint')}>
+      <NodeLoginButton nodeId={tab.nodeId} nodeName={nodeName} />
+    </ExplorerStateScreen>
+  );
+}
+
+/** 标签页所属节点此刻的状态；'ready' 之外都只画占位 */
+function useTabNodeState(nodeId: string): { state: UnavailableState | 'ready'; nodeName: string } {
+  const { find, memberIds, ready } = useExplorerNodes();
+  const node = find(nodeId);
+  const nodeName = node?.name ?? '';
+  // 成员表还没到齐时 memberIds 不可信：查不到不代表节点没了，先转圈
+  if (!node && !ready) return { state: 'loading', nodeName };
+  const state = explorerNodeState(node, memberIds.has(nodeId));
+  // 暂停的节点与离线同样处理：标签页留着，等它恢复
+  return { state: state === 'paused' ? 'offline' : state, nodeName };
 }
 
 export function ExplorerTabBody({ tab, active }: ExplorerTabBodyProps) {
   const { t } = useTranslation();
-  const nodes = useExplorerNodes();
   const { closeTab } = useWorkspaceActions();
+  const { state, nodeName } = useTabNodeState(tab.nodeId);
   // 记下失效的是哪个目录根：标签页换了根之后要重新给浏览器一次机会
   const [missingRootId, setMissingRootId] = useState<string | null>(null);
   const rootId = tab.rootId;
   const onRootMissing = useCallback(() => setMissingRootId(rootId), [rootId]);
 
-  const node = nodes.find(tab.nodeId);
-  if (!node || !node.online || !node.loggedIn) {
-    return <NodeGate tab={tab} node={node} ready={nodes.ready} />;
-  }
+  if (state !== 'ready') return <NodeGate tab={tab} state={state} nodeName={nodeName} />;
   if (missingRootId === rootId) {
     return (
       <ExplorerStateScreen kind="rootMissing" icon={FolderX} text={t('explorer.state.rootMissing')}>

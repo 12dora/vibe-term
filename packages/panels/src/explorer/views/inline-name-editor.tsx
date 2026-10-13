@@ -6,6 +6,7 @@ import type { KeyboardEvent, SyntheticEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { fileNameErrorKey, splitStem, validateFileName } from '../../files/ops/file-name';
+import { createNameEditSession, settleNameEdit } from './name-edit-settle';
 
 export interface InlineNameEditorProps {
   initialName: string;
@@ -41,8 +42,8 @@ export function InlineNameEditor({
   const { t } = useTranslation();
   const [value, setValue] = useState(initialName);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Enter / Esc 之后元素卸载还会触发一次 blur，只认第一次
-  const settled = useRef(false);
+  // 一次编辑只认第一个结果：Enter / Esc 之后挪焦点、元素卸载带出来的 blur 都不再算数
+  const session = useRef(createNameEditSession()).current;
   const error = validateFileName(value);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: 只在挂载时聚焦并选中一次
@@ -54,11 +55,17 @@ export function InlineNameEditor({
     input.setSelectionRange(0, end);
   }, []);
 
-  const settle = (commit: boolean): void => {
-    if (settled.current) return;
-    settled.current = true;
-    if (commit && (commitUnchanged || value !== initialName)) onCommit(value);
-    else onCancel();
+  const settle = (commit: boolean): boolean =>
+    settleNameEdit(
+      session,
+      { commit, value, initialName, commitUnchanged },
+      { onCommit, onCancel }
+    );
+
+  // 先定局、再把焦点还给列表：挪焦点会同步触发 blur，顺序反了 Esc 就成了提交
+  const finishByKey = (commit: boolean): void => {
+    const input = inputRef.current;
+    if (settle(commit)) restoreViewFocus(input);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
@@ -67,15 +74,12 @@ export function InlineNameEditor({
     if (event.nativeEvent.isComposing) return;
     if (event.key === 'Escape') {
       event.preventDefault();
-      restoreViewFocus(inputRef.current);
-      settle(false);
+      finishByKey(false);
       return;
     }
     if (event.key !== 'Enter') return;
     event.preventDefault();
-    if (error) return;
-    restoreViewFocus(inputRef.current);
-    settle(true);
+    if (!error) finishByKey(true);
   };
 
   return (

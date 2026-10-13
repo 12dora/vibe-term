@@ -52,10 +52,27 @@ describe('buildExplorerMenu — items', () => {
     ]);
   });
 
-  test('a symlink is treated as a non-directory', () => {
+  test('a symlink to a file is a non-directory', () => {
     const menu = buildExplorerMenu({ kind: 'items', entries: [entry('link', 'symlink')] }, WIN);
     expect(commands(menu)[0]).toEqual(['open']);
     expect(find(menu, 'paste')).toBeUndefined();
+  });
+
+  test('a symlink to a directory gets the directory menu', () => {
+    const link = { ...entry('link', 'symlink'), category: 'directory' } as FileEntryDto;
+    const menu = buildExplorerMenu({ kind: 'items', entries: [link] }, WIN);
+    expect(commands(menu)[0]).toEqual(['open', 'openInNewTab']);
+    expect(find(menu, 'paste')).toBeDefined();
+  });
+
+  test('paste never appears for a file or a multi selection, even with a clipboard', () => {
+    const file = buildExplorerMenu({ kind: 'items', entries: [entry('a.txt')] }, WIN);
+    const multi = buildExplorerMenu(
+      { kind: 'items', entries: [entry('src', 'dir'), entry('lib', 'dir')] },
+      WIN
+    );
+    expect(find(file, 'paste')).toBeUndefined();
+    expect(find(multi, 'paste')).toBeUndefined();
   });
 
   test('multi selection: only download / cut / copy / delete', () => {

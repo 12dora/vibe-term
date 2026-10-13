@@ -8,7 +8,7 @@ import type { DialogNodeOption } from '../devices/dialog-nodes';
 
 installWindowStorage();
 
-const { runningNodeJobCount, syncNodeIds, tabNodeKey } = await import(
+const { runningNodeJobCount, tabNodeKey, transferSyncNodeIds } = await import(
   './explorer-transfers-popover'
 );
 
@@ -80,16 +80,46 @@ describe('tabNodeKey', () => {
   });
 });
 
-describe('syncNodeIds', () => {
+describe('transferSyncNodeIds', () => {
   const options = [option('self', true), option(REMOTE, true), option(OFFLINE, false)];
   const find = (id: string) => options.find((item) => item.id === id);
+  const base = { tabNodeKey: '', jobs: [], pendingNodeKey: '', find };
 
-  test('只保留可用的节点', () => {
-    expect(syncNodeIds(['self', OFFLINE, REMOTE].join(','), find)).toEqual(['self', REMOTE]);
+  test('开着标签页的节点里只保留可用的', () => {
+    const tabNodeKey = ['self', OFFLINE, REMOTE].join(',');
+    expect(transferSyncNodeIds({ ...base, tabNodeKey })).toEqual([REMOTE, 'self'].sort());
   });
 
-  test('空串与已不在目录里的节点都不产生请求', () => {
-    expect(syncNodeIds('', find)).toEqual([]);
-    expect(syncNodeIds('gone', find)).toEqual([]);
+  test('源节点的标签页已关：store 里未结束的任务仍把它带进来', () => {
+    const jobs = [job({ key: `${REMOTE}:j1`, nodeId: REMOTE, state: 'running' })];
+    expect(transferSyncNodeIds({ ...base, tabNodeKey: 'self', jobs })).toEqual(
+      [REMOTE, 'self'].sort()
+    );
+  });
+
+  test('已结束的任务与浏览器上传 / 下载不算', () => {
+    const jobs = [
+      job({ key: 'a', nodeId: REMOTE, state: 'done' }),
+      job({ key: 'b', nodeId: REMOTE, kind: 'upload', state: 'running' }),
+    ];
+    expect(transferSyncNodeIds({ ...base, jobs })).toEqual([]);
+  });
+
+  test('登记表里等着收尾的任务所在节点也算', () => {
+    expect(transferSyncNodeIds({ ...base, pendingNodeKey: REMOTE })).toEqual([REMOTE]);
+  });
+
+  test('三路取并集并去重', () => {
+    const jobs = [job({ key: 'a', nodeId: 'self', state: 'queued' })];
+    expect(
+      transferSyncNodeIds({ ...base, tabNodeKey: 'self', jobs, pendingNodeKey: `${REMOTE},self` })
+    ).toEqual([REMOTE, 'self'].sort());
+  });
+
+  test('空串、不可用与已不在目录里的节点都不产生请求', () => {
+    expect(transferSyncNodeIds(base)).toEqual([]);
+    expect(transferSyncNodeIds({ ...base, tabNodeKey: 'gone', pendingNodeKey: OFFLINE })).toEqual(
+      []
+    );
   });
 });

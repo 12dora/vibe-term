@@ -2,6 +2,7 @@
 // 纯数据，渲染交给 explorer-context-menu.tsx。
 
 import type { FileEntryDto } from '@vibeterm/shared';
+import { isDirectoryEntry } from '../model/entries';
 import { EXPLORER_SHORTCUTS, type ExplorerCommand, formatChord } from '../model/shortcuts';
 
 export type ExplorerMenuCommand = ExplorerCommand | 'copyPath' | 'upload' | 'uploadFolder';
@@ -69,7 +70,7 @@ function itemsMenu(
   opts: ExplorerMenuOptions
 ): ExplorerMenuSection[] {
   const single = entries.length === 1 ? entries[0] : undefined;
-  const singleDir = single?.type === 'dir';
+  const singleDir = single !== undefined && isDirectoryEntry(single);
   const sections: ExplorerMenuSection[] = [];
   if (single) {
     const open = [item('open', opts)];

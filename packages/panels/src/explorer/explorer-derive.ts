@@ -1,9 +1,10 @@
 // 浏览器组合层用到的纯推导：状态栏数字、返回上级后该选中谁、剪贴板与目标目录的已知信息。
 
 import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@vibeterm/shared';
-import { basename } from '@vibeterm/shared';
+import { basename, dirname } from '@vibeterm/shared';
 import type { ExplorerClipboard } from '@vibeterm/stores';
-import { isPathWithin } from '@vibeterm/stores';
+import { isPathWithin } from '@vibeterm/stores/explorer';
+
 import { isDirectoryEntry } from './model';
 
 export interface ExplorerLocationRef {
@@ -103,6 +104,38 @@ export function clipboardItems(
     }
   }
   return { names: clipboard.paths.map((path) => basename(path)), hasDirectory };
+}
+
+export interface ClipboardHere {
+  nodeId: string;
+  rootId: string;
+  /** 当前目录 */
+  dir: string;
+  /** 当前目录的完整列表；没拿到或被截断（不完整）时传 undefined */
+  entries: readonly FileEntryDto[] | undefined;
+  /** 正在删除、已从视图隐藏的路径 */
+  vanishing?: ReadonlySet<string>;
+}
+
+/**
+ * 粘贴前核对剪贴板：来源正是当前节点 + 根 + 当前目录时，当前列表就是权威，
+ * 已经不在列表里的路径（被改名 / 移走 / 删除）要剔掉——否则之后在原路径新建的同名项会被误操作。
+ * 全部失效返回 null；无需核对或没有变化时返回原对象。
+ */
+export function liveClipboard(
+  clipboard: ExplorerClipboard,
+  here: ClipboardHere
+): ExplorerClipboard | null {
+  if (clipboard.paths.length === 0) return null;
+  if (clipboard.nodeId !== here.nodeId || clipboard.rootId !== here.rootId) return clipboard;
+  if (!here.entries || clipboard.paths.some((path) => dirname(path) !== here.dir)) {
+    return clipboard;
+  }
+  const present = new Set(here.entries.map((entry) => entry.path));
+  const gone = here.vanishing;
+  const alive = clipboard.paths.filter((path) => present.has(path) && !gone?.has(path));
+  if (alive.length === clipboard.paths.length) return clipboard;
+  return alive.length === 0 ? null : { ...clipboard, paths: alive };
 }
 
 /** 目录里已有的名称；列表没拿到或被截断（不完整）时为 null。 */

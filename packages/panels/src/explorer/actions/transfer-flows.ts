@@ -2,18 +2,35 @@
 // 目录或多选走网关打包后的浏览器原生下载，文件夹上传先建目录再逐文件上传。
 
 import type { QueryClient } from '@tanstack/react-query';
-import { fileArchiveUrl, mkdirPath, prepareArchive } from '@vibeterm/api-client';
+import {
+  FileApiError,
+  fetchFileList,
+  fetchFileStat,
+  fileArchiveUrl,
+  mkdirPath,
+  prepareArchive,
+} from '@vibeterm/api-client';
 import type { FileEntryDto } from '@vibeterm/shared';
 import { toast } from 'sonner';
 import { fileOpErrorKey, joinChildPath } from '../../files/ops';
 import { type FileUploadDeps, uploadFilesInto } from '../../files/transfer-flows';
 import type { FolderUploadFile, FolderUploadPlan } from './folder-upload';
+import type { UploadConflictChoice } from './upload-conflict-dialog';
+import {
+  type ConflictProbeIo,
+  conflictDisplayName,
+  planUploadConflicts,
+  probeExistingNames,
+} from './upload-conflicts';
 
 export { downloadSingleFile, uploadFilesInto } from '../../files/transfer-flows';
 
 export interface TransferFlowDeps extends FileUploadDeps {
   queryClient: QueryClient;
 }
+
+// 与文件管理器列表的 staleTime 一致：刚取过的列表不必为查冲突再取一遍
+const CONFLICT_LISTING_FRESH_MS = 2000;
 
 /** 相对目录（'' = 目标目录自身）落到目标目录下的绝对路径 */
 export function resolveUploadDir(destDir: string, relDir: string): string {
@@ -92,7 +109,15 @@ async function createDirectories(
   return true;
 }
 
-/** 上传一棵目录树：建目录 → 各文件传进对应目录 → 最后刷新一次目标目录。 */
+/** 一次上传触及的全部目录（绝对路径，去重）：目标目录、新建的目录、收到文件的目录 */
+export function touchedUploadDirs(plan: FolderUploadPlan, destDir: string): string[] {
+  const dirs = new Set<string>([destDir]);
+  for (const dir of plan.dirs) dirs.add(resolveUploadDir(destDir, dir));
+  for (const { relDir } of plan.files) dirs.add(resolveUploadDir(destDir, relDir));
+  return Array.from(dirs);
+}
+
+/** 上传一棵目录树：建目录 → 各文件传进对应目录 → 刷新所有触及目录的列表。 */
 export async function uploadPlanInto(
   deps: TransferFlowDeps,
   plan: FolderUploadPlan,
@@ -105,6 +130,69 @@ export async function uploadPlanInto(
       await uploadFilesInto(deps, files, resolveUploadDir(destDir, relDir));
     }
   } finally {
-    invalidateListing(deps, destDir);
+    // 别的分栏或侧栏可能正开着其中某个子目录，只刷目标目录会让它们停在旧列表上
+    for (const dir of touchedUploadDirs(plan, destDir)) invalidateListing(deps, dir);
   }
+}
+
+function isMissingDirError(error: unknown): boolean {
+  return (
+    error instanceof FileApiError &&
+    (error.code === 'not_found' || error.code === 'not_a_directory')
+  );
+}
+
+function conflictProbeIo(
+  { runtime, queryClient, rootId }: TransferFlowDeps,
+  destDir: string
+): ConflictProbeIo {
+  return {
+    // 缓存够新就直接用，否则现取一次（顺带更新缓存）
+    list: async (relDir) => {
+      const dir = resolveUploadDir(destDir, relDir);
+      try {
+        const listing = await queryClient.fetchQuery({
+          queryKey: ['files', 'list', rootId, dir],
+          queryFn: () => fetchFileList(rootId, dir, runtime.apiClient),
+          staleTime: CONFLICT_LISTING_FRESH_MS,
+        });
+        return {
+          names: listing.entries.map((entry) => entry.name),
+          truncated: listing.truncated,
+        };
+      } catch (error) {
+        return isMissingDirError(error) ? 'missing' : 'unknown';
+      }
+    },
+    exists: async (relDir, name) => {
+      const path = joinChildPath(resolveUploadDir(destDir, relDir), name);
+      await fetchFileStat(rootId, path, runtime.apiClient);
+      return true;
+    },
+  };
+}
+
+export type AskUploadConflict = (names: readonly string[]) => Promise<UploadConflictChoice>;
+
+/**
+ * 文件管理器的上传入口：先查同名冲突，有冲突就问用户（取消 / 跳过 / 替换）再传。
+ * 网关落盘是 rename 覆盖目标，不问就会静默丢掉原文件。
+ */
+export async function uploadPlanGuarded(
+  deps: TransferFlowDeps,
+  plan: FolderUploadPlan,
+  destDir: string,
+  ask: AskUploadConflict
+): Promise<void> {
+  if (plan.files.length === 0 && plan.dirs.length === 0) return;
+  const existing = await probeExistingNames(plan, conflictProbeIo(deps, destDir));
+  const { conflicts, clean } = planUploadConflicts(plan.files, existing);
+  if (conflicts.length === 0) {
+    await uploadPlanInto(deps, plan, destDir);
+    return;
+  }
+  const choice = await ask(conflicts.map(conflictDisplayName));
+  if (choice === 'cancel') return;
+  const files = choice === 'skip' ? clean : plan.files;
+  await uploadPlanInto(deps, { files, dirs: plan.dirs }, destDir);
 }

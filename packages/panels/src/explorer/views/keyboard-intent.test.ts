@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { ExplorerKeyEvent } from '../model/shortcuts';
 import {
   type KeyboardLayout,
+  columnsFromTemplate,
   gridColumnCount,
   keyboardIntent,
   typeAheadStep,
@@ -153,7 +154,25 @@ describe('typeAheadStep', () => {
   });
 });
 
-describe('gridColumnCount', () => {
+describe('columnsFromTemplate', () => {
+  test('counts the resolved tracks, including sub-pixel widths', () => {
+    // 内容宽 540、间距 4：浏览器排 5 列，每列 104.8px
+    expect(columnsFromTemplate('104.8px 104.8px 104.8px 104.8px 104.8px')).toBe(5);
+    expect(columnsFromTemplate('104px')).toBe(1);
+    expect(columnsFromTemplate('  120px   120px ')).toBe(2);
+  });
+
+  test('unresolved or missing values give null so the caller falls back', () => {
+    expect(columnsFromTemplate('none')).toBeNull();
+    expect(columnsFromTemplate('')).toBeNull();
+    expect(columnsFromTemplate(undefined)).toBeNull();
+    expect(columnsFromTemplate(null)).toBeNull();
+    expect(columnsFromTemplate('repeat(auto-fill, minmax(104px, 1fr))')).toBeNull();
+    expect(columnsFromTemplate('[a] 104px [b] 104px')).toBeNull();
+  });
+});
+
+describe('gridColumnCount (fallback estimate)', () => {
   test('counts the tracks that fit', () => {
     // 3 列：3 × 104 + 2 × 4 = 320
     expect(gridColumnCount(320, 104, 4)).toBe(3);
@@ -161,6 +180,12 @@ describe('gridColumnCount', () => {
     // 1fr 拉伸后的磁贴更宽，列数不变
     expect(gridColumnCount(400, 130.66, 4)).toBe(3);
     expect(gridColumnCount(100, 104, 4)).toBe(1);
+  });
+
+  test('exact sub-pixel tile widths are right; integer-rounded ones undercount', () => {
+    expect(gridColumnCount(540, 104.8, 4)).toBe(5);
+    // 这就是只把它留作兜底的原因：offsetWidth 取整成 105 后少算一列
+    expect(gridColumnCount(540, 105, 4)).toBe(4);
   });
 
   test('degenerate measurements fall back to one column', () => {

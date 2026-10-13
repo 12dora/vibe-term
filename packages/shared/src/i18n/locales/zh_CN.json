@@ -2179,7 +2179,8 @@
       },
       "archive": {
         "preparing": "正在打包…",
-        "failed": "打包下载失败"
+        "failed": "打包下载失败",
+        "tooMany": "一次最多打包 {{count}} 个项目"
       },
       "shortcuts": {
         "title": "键盘快捷键",

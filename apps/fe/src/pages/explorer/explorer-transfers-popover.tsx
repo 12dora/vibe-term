@@ -8,7 +8,8 @@ import {
   useTransferJobs,
 } from '@vibeterm/panels/files/transfers';
 import type { ExplorerTab } from '@vibeterm/stores';
-import { useExplorerStore } from '@vibeterm/stores/react';
+import { useExplorerStore } from '@vibeterm/stores/explorer';
+
 import { Button } from '@vibeterm/ui/button';
 import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 import { ArrowLeftRight } from 'lucide-react';
@@ -21,6 +22,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -29,7 +31,11 @@ import type { DialogNodeOption } from '../devices/dialog-nodes';
 import { TransferJobsList } from '../devices/transfer/transfer-list';
 import { useTransferJobsSync } from '../devices/transfer/use-transfer-jobs-sync';
 import { useExplorerNodes } from './explorer-nodes';
-import { useExplorerTransferWatch } from './use-explorer-transfer-watch';
+import {
+  pendingExplorerTransferNodeKey,
+  subscribeExplorerTransfers,
+  useExplorerTransferWatch,
+} from './use-explorer-transfer-watch';
 
 /** 22rem */
 export const TRANSFERS_POPOVER_WIDTH = 352;
@@ -44,12 +50,27 @@ export function tabNodeKey(tabs: Record<string, ExplorerTab>): string {
   return [...new Set(Object.values(tabs).map((tab) => tab.nodeId))].sort().join(',');
 }
 
-/** 只向在线且已登录的节点要任务列表，其余的请求注定失败。 */
-export function syncNodeIds(
-  key: string,
-  find: (nodeId: string) => DialogNodeOption | undefined
-): string[] {
-  return key.split(',').filter((id) => id !== '' && find(id)?.usable === true);
+export interface TransferSyncInput {
+  /** `tabNodeKey` 的结果。 */
+  tabNodeKey: string;
+  jobs: readonly TransferJobView[];
+  /** `pendingExplorerTransferNodeKey()` 的结果。 */
+  pendingNodeKey: string;
+  find: (nodeId: string) => DialogNodeOption | undefined;
+}
+
+/**
+ * 要拉任务列表并续订进度的节点：开着标签页的 ∪ store 里未结束任务所在的源节点 ∪ 登记表里
+ * 等着收尾的任务所在的源节点。后两项保证「源节点的标签页已经关了、离开页面又回来」时任务
+ * 仍能续上（否则角标卡住、没有完成提示、登记项也不会被摘掉）。
+ * 只向在线且已登录的节点要，其余的请求注定失败。
+ */
+export function transferSyncNodeIds(input: TransferSyncInput): string[] {
+  const ids = new Set<string>([...input.tabNodeKey.split(','), ...input.pendingNodeKey.split(',')]);
+  for (const job of input.jobs) {
+    if (job.kind === 'node' && !isTerminalTransferState(job.state)) ids.add(job.nodeId);
+  }
+  return [...ids].filter((id) => id !== '' && input.find(id)?.usable === true).sort();
 }
 
 // 无 DOM（SSR / bun test）时降级成 useEffect，避免 React 的 useLayoutEffect 警告。
@@ -182,7 +203,15 @@ export function ExplorerTransfersButton(): ReactElement {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
-  const nodeIds = useMemo(() => syncNodeIds(nodeKey, find), [nodeKey, find]);
+  const pendingNodeKey = useSyncExternalStore(
+    subscribeExplorerTransfers,
+    pendingExplorerTransferNodeKey,
+    pendingExplorerTransferNodeKey
+  );
+  const nodeIds = useMemo(
+    () => transferSyncNodeIds({ tabNodeKey: nodeKey, jobs, pendingNodeKey, find }),
+    [nodeKey, jobs, pendingNodeKey, find]
+  );
   useTransferJobsSync(true, nodeIds);
   useExplorerTransferWatch();
 
