@@ -131,7 +131,7 @@ export function menuScope(
   return {
     targets,
     primary: primaryEntry(targets, ctx.selection.selection.focus),
-    pasteDir: single?.type === 'dir' ? single.path : ctx.props.path,
+    pasteDir: single && isDirectoryEntry(single) ? single.path : ctx.props.path,
   };
 }
 

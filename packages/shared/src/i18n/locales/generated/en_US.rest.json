@@ -1482,6 +1482,7 @@
       "conflict": {
         "titleOne": "“{{name}}” already exists",
         "titleMany": "{{count}} items already exist",
+        "titleUnknown": "Items with the same names may already exist",
         "desc": "Replacing overwrites the existing items in the destination.",
         "replace": "Replace",
         "skip": "Skip"

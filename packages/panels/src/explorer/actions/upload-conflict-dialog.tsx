@@ -2,16 +2,20 @@
 // 同时来的多次询问排队逐个弹。
 
 import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
+import type { TFunction } from 'i18next';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FILE_DELETE_LISTED_NAMES } from '../../files/ops';
+import type { UploadConflictChoice } from './upload-conflicts';
 
-export type UploadConflictChoice = 'cancel' | 'skip' | 'replace';
+export type { UploadConflictChoice };
 
 export interface UploadConflictDialogProps {
   open: boolean;
   /** 会被覆盖的项目（展示用名称） */
   names: readonly string[];
+  /** 名单里有没能确认是否已存在的项目：标题不再断言「已存在」 */
+  uncertain?: boolean;
   onChoose(choice: UploadConflictChoice): void;
 }
 
@@ -33,12 +37,22 @@ function ConflictNameList({ names }: { names: readonly string[] }) {
   );
 }
 
-export function UploadConflictDialog({ open, names, onChoose }: UploadConflictDialogProps) {
+function conflictTitleOf(t: TFunction, names: readonly string[], uncertain: boolean): string {
+  // 有没查清存在性的项目时不能断言「已存在」
+  if (uncertain) return t('explorer.conflict.titleUnknown');
+  return names.length === 1
+    ? t('explorer.conflict.titleOne', { name: names[0] })
+    : t('explorer.conflict.titleMany', { count: names.length });
+}
+
+export function UploadConflictDialog({
+  open,
+  names,
+  uncertain = false,
+  onChoose,
+}: UploadConflictDialogProps) {
   const { t } = useTranslation();
-  const title =
-    names.length === 1
-      ? t('explorer.conflict.titleOne', { name: names[0] })
-      : t('explorer.conflict.titleMany', { count: names.length });
+  const title = conflictTitleOf(t, names, uncertain);
   return (
     <ConfirmDialog
       open={open}
@@ -50,7 +64,7 @@ export function UploadConflictDialog({ open, names, onChoose }: UploadConflictDi
       onOpenChange={(next) => {
         if (!next) onChoose('cancel');
       }}
-      extra={names.length > 1 ? <ConflictNameList names={names} /> : undefined}
+      extra={names.length > 1 || uncertain ? <ConflictNameList names={names} /> : undefined}
       testId="explorer-upload-conflict"
       actions={[
         {
@@ -80,11 +94,13 @@ export function UploadConflictDialog({ open, names, onChoose }: UploadConflictDi
 
 interface PendingPrompt {
   names: readonly string[];
+  uncertain: boolean;
   resolve(choice: UploadConflictChoice): void;
 }
 
 export interface UploadConflictPrompt {
-  ask(names: readonly string[]): Promise<UploadConflictChoice>;
+  /** `uncertain`：名单里有没能确认是否已存在的项目 */
+  ask(names: readonly string[], uncertain?: boolean): Promise<UploadConflictChoice>;
   element: ReactElement;
 }
 
@@ -97,24 +113,28 @@ export function useUploadConflictPrompt(): UploadConflictPrompt {
   const unmountedRef = useRef(false);
   // 关闭动画期间沿用上一次的名单，避免标题闪成「0 个」
   const shownNamesRef = useRef(NO_NAMES);
-  if (pending) shownNamesRef.current = pending.names;
+  const shownUncertainRef = useRef(false);
+  if (pending) {
+    shownNamesRef.current = pending.names;
+    shownUncertainRef.current = pending.uncertain;
+  }
 
-  const show = useCallback((names: readonly string[]) => {
+  const show = useCallback((names: readonly string[], uncertain: boolean) => {
     return new Promise<UploadConflictChoice>((resolve) => {
       // 组件已卸载就没人能回答了：按取消处理，绝不替用户覆盖
       if (unmountedRef.current) {
         resolve('cancel');
         return;
       }
-      const prompt: PendingPrompt = { names, resolve };
+      const prompt: PendingPrompt = { names, uncertain, resolve };
       pendingRef.current = prompt;
       setPending(prompt);
     });
   }, []);
 
   const ask = useCallback(
-    (names: readonly string[]) => {
-      const answer = queueTailRef.current.then(() => show(names));
+    (names: readonly string[], uncertain = false) => {
+      const answer = queueTailRef.current.then(() => show(names, uncertain));
       queueTailRef.current = answer;
       return answer;
     },
@@ -143,6 +163,7 @@ export function useUploadConflictPrompt(): UploadConflictPrompt {
       <UploadConflictDialog
         open={pending !== null}
         names={shownNamesRef.current}
+        uncertain={shownUncertainRef.current}
         onChoose={choose}
       />
     ),

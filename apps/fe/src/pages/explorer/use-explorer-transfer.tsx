@@ -12,7 +12,7 @@ import type {
   MoveFilesRequest,
   MoveFilesResponse,
 } from '@vibeterm/shared';
-import type { ExplorerTab } from '@vibeterm/stores';
+import type { ExplorerClipboard, ExplorerTab } from '@vibeterm/stores';
 import { getExplorerStore } from '@vibeterm/stores/explorer';
 import type { TFunction } from 'i18next';
 import {
@@ -38,6 +38,7 @@ import { useExplorerNodes } from './explorer-nodes';
 import {
   type CopyPlanParams,
   clipboardAfterCut,
+  clipboardTouchedByMove,
   conflictingNames,
   fileRequestErrorKey,
   moveFailureToast,
@@ -92,12 +93,20 @@ function afterMove(
   }
 }
 
-/** 返回已经离开原处的源路径；请求级失败为空。 */
+interface Settled {
+  /** 已经交出去的源路径（移动成功的项 / 复制任务受理的全部路径）。 */
+  taken: string[];
+  /** 真正换了位置的源路径：这些路径上以后出现的东西已经不是原来那个了。 */
+  relocated: string[];
+}
+
+const NOTHING_SETTLED: Settled = { taken: [], relocated: [] };
+
 async function executeMove(
   deps: ExecutorDeps,
   request: ExplorerTransferRequest,
   body: MoveFilesRequest
-): Promise<string[]> {
+): Promise<Settled> {
   let res: MoveFilesResponse;
   try {
     res = await moveFiles(body, createNodeApiClient(request.dest.nodeId));
@@ -105,7 +114,7 @@ async function executeMove(
     toast.error(deps.t('files.ops.moveFailed'), {
       description: deps.t(fileRequestErrorKey(error)),
     });
-    return [];
+    return NOTHING_SETTLED;
   }
   afterMove(request, body, res);
   const failure = moveFailureToast(res.results);
@@ -114,19 +123,22 @@ async function executeMove(
   } else if (failure) {
     toast.error(deps.t(failure.key, { count: failure.count }));
   }
-  return movedSourcePaths(res.results);
+  return {
+    taken: movedSourcePaths(res.results),
+    relocated: relocatedMoveItems(res.results).map((item) => item.from),
+  };
 }
 
 async function executeCopy(
   deps: ExecutorDeps,
   request: ExplorerTransferRequest,
   params: CopyPlanParams
-): Promise<string[]> {
+): Promise<Settled> {
   const sourceNode = deps.find(params.source.nodeId);
   const destNode = deps.find(params.dest.nodeId);
   if (!sourceNode?.usable || !destNode?.usable) {
     toast.error(deps.t(transferErrorKey('node_unreachable')));
-    return [];
+    return NOTHING_SETTLED;
   }
   try {
     const job = await sendTransfer(resolveCopyParams(params, sourceNode.meshId, destNode.meshId));
@@ -138,11 +150,26 @@ async function executeCopy(
       count: request.source.paths.length,
     });
     // 跨设备的剪切落成复制任务：建单成功即视为这批路径已交出去
-    return params.source.paths;
+    return { taken: params.source.paths, relocated: [] };
   } catch (error) {
     toast.error(deps.t(transferErrorKeyOf(error)));
-    return [];
+    return NOTHING_SETTLED;
   }
+}
+
+// 先按「这次剪切粘贴交出去了哪些」精确摘除（没移走的还能再粘贴），再查剩下的有没有指向已经
+// 搬走的路径或其后代——有就整份作废，否则日后在原路径上新建的东西会被当成剪切的那个粘贴出去。
+// 顺序不能反：反过来的话，部分成功的剪切粘贴会因为「剪贴板里有被移走的路径」而整份清空。
+function settleClipboard(
+  request: ExplorerTransferRequest,
+  submitted: ExplorerClipboard | null,
+  settled: Settled
+): void {
+  const explorer = getExplorerStore().getState();
+  const { nodeId, rootId } = request.source;
+  let next = clipboardAfterCut(explorer.clipboard, submitted, settled.taken);
+  if (clipboardTouchedByMove(next, nodeId, rootId, settled.relocated)) next = null;
+  if (next !== explorer.clipboard) explorer.setClipboard(next);
 }
 
 async function execute(deps: ExecutorDeps, request: ExplorerTransferRequest): Promise<void> {
@@ -154,13 +181,11 @@ async function execute(deps: ExecutorDeps, request: ExplorerTransferRequest): Pr
 
   const plan = planTransfer(request, answer);
   if (plan.kind === 'noop') return;
-  const taken =
+  const settled =
     plan.kind === 'move'
       ? await executeMove(deps, request, plan.body)
       : await executeCopy(deps, request, plan.params);
-  const explorer = getExplorerStore().getState();
-  const next = clipboardAfterCut(explorer.clipboard, submitted, taken);
-  if (next !== explorer.clipboard) explorer.setClipboard(next);
+  settleClipboard(request, submitted, settled);
 }
 
 async function requestForTabDrop(

@@ -1480,6 +1480,7 @@
       "conflict": {
         "titleOne": "「{{name}}」已存在",
         "titleMany": "{{count}} 个同名项目已存在",
+        "titleUnknown": "目标位置可能已有同名项目",
         "desc": "替换将覆盖目标位置的现有项目。",
         "replace": "替换",
         "skip": "跳过"

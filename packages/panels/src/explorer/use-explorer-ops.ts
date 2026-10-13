@@ -178,15 +178,16 @@ function paste(ctx: ExplorerOpsContext, destDir: string): void {
   const { nodeId } = ctx.runtime;
   const held = ctx.props.clipboard;
   if (!held) return;
-  const clipboard = liveClipboard(held, {
-    nodeId,
-    rootId,
-    dir: path,
-    entries: authoritativeEntries(ctx),
+  const here = { nodeId, rootId, dir: path, entries: authoritativeEntries(ctx) };
+  // 列表里已经没有的路径是确定失效的：把剪贴板改正（全部失效则清空），免得下次再用到旧路径
+  const settled = liveClipboard(held, here);
+  if (settled !== held) ctx.props.onClipboardChange(settled);
+  if (!settled) return;
+  // 正在删除的路径结果未定（删除可能失败）：只从这一次粘贴里拿掉，不改剪贴板
+  const clipboard = liveClipboard(settled, {
+    ...here,
     vanishing: pendingDeletePaths(pendingDeleteScope(nodeId, rootId, path)),
   });
-  // 有路径已失效：先把剪贴板改正（全部失效则清空），免得下次再用到旧路径
-  if (clipboard !== held) ctx.props.onClipboardChange(clipboard);
   if (!clipboard) return;
   const sameRoot = clipboard.nodeId === nodeId && clipboard.rootId === rootId;
   const items = clipboardItems(clipboard, sameRoot ? ctx.allEntries : []);

@@ -176,6 +176,26 @@ export function clipboardAfterCut(
   return paths.length === 0 ? null : { ...current, paths };
 }
 
+function isSelfOrUnder(path: string, base: string): boolean {
+  if (path === base) return true;
+  return path.startsWith(base === '/' ? '/' : `${base}/`);
+}
+
+/**
+ * 剪贴板里记的是路径：条目被移走后，同一路径上日后新建的东西会被当成「剪切 / 复制的那个」
+ * 粘贴出去。同节点同 root 下，只要有剪贴板路径等于某个已移走的路径或落在它之下（按路径段
+ * 判，`/a/b` 不算在 `/a/bc` 之下的反例亦然），整份剪贴板就该作废。
+ */
+export function clipboardTouchedByMove(
+  clipboard: ExplorerClipboard | null,
+  nodeId: string,
+  rootId: string,
+  movedFrom: readonly string[]
+): boolean {
+  if (!clipboard || clipboard.nodeId !== nodeId || clipboard.rootId !== rootId) return false;
+  return clipboard.paths.some((path) => movedFrom.some((from) => isSelfOrUnder(path, from)));
+}
+
 /** 移动结果里成功的源路径（原地 no-op 也算：它已经在目标目录里了）。 */
 export function movedSourcePaths(results: readonly MoveFileItemResult[]): string[] {
   return results.filter((item) => item.ok).map((item) => item.path);
@@ -183,7 +203,7 @@ export function movedSourcePaths(results: readonly MoveFileItemResult[]): string
 
 export type TransferEnd =
   | { kind: 'pending' }
-  /** 全部复制完成；`count` 是完成的条目数，条目状态一个都没见过时为 null。 */
+  /** 全部复制完成；`count` 是传完的条目数，条目状态一个都没见过时为 null。 */
   | { kind: 'done'; count: number | null }
   /** 复制了一部分：其余的因目标已存在被跳过（`skipped`），或有条目失败（`failed`）。 */
   | { kind: 'partial'; count: number; rest: 'skipped' | 'failed' }
@@ -192,24 +212,28 @@ export type TransferEnd =
   | { kind: 'cancelled' }
   | { kind: 'failed'; error: string | null };
 
+type EndedView = Pick<TransferJobView, 'state' | 'itemStates' | 'error' | 'progress'>;
+
 // 任务已落在 done：runner 遇到单项失败会继续往下传，所以既非 skipped 也非 failed 的都算传完了
 // （包括事件流里还没见过状态的条目）。
-function classifyDone(view: Pick<TransferJobView, 'itemStates' | 'error'>): TransferEnd {
+//
+// 目录条目本身也会报 done（目标侧「目录已存在」算成功），而行里只有条目状态、分不出目录与文件；
+// 所以「有跳过 / 失败，且一个字节都没传」一律按什么也没复制处理——整个文件夹的文件全被跳过时
+// 不能报成「已复制 1 个项目」。
+function classifyDone(view: EndedView): TransferEnd {
   const total = view.itemStates.length;
   if (total === 0) return { kind: 'done', count: null };
   const failed = view.itemStates.filter((state) => state === 'failed').length;
   const skipped = view.itemStates.filter((state) => state === 'skipped').length;
   const count = total - failed - skipped;
   if (failed === 0 && skipped === 0) return { kind: 'done', count };
-  if (count === 0) {
+  if (count === 0 || view.progress.transferredBytes <= 0) {
     return failed > 0 ? { kind: 'failed', error: view.error ?? null } : { kind: 'skipped' };
   }
   return { kind: 'partial', count, rest: failed > 0 ? 'failed' : 'skipped' };
 }
 
-export function classifyTransferEnd(
-  view: Pick<TransferJobView, 'state' | 'itemStates' | 'error'>
-): TransferEnd {
+export function classifyTransferEnd(view: EndedView): TransferEnd {
   switch (view.state) {
     case 'queued':
     case 'running':

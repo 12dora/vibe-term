@@ -2178,6 +2178,7 @@ export const I18N_RESOURCES = {
       "conflict": {
         "titleOne": "“{{name}}” already exists",
         "titleMany": "{{count}} items already exist",
+        "titleUnknown": "Items with the same names may already exist",
         "desc": "Replacing overwrites the existing items in the destination.",
         "replace": "Replace",
         "skip": "Skip"
@@ -6198,6 +6199,7 @@ export const I18N_RESOURCES = {
       "conflict": {
         "titleOne": "「{{name}}」已存在",
         "titleMany": "{{count}} 个同名项目已存在",
+        "titleUnknown": "目标位置可能已有同名项目",
         "desc": "替换将覆盖目标位置的现有项目。",
         "replace": "替换",
         "skip": "跳过"
@@ -10208,6 +10210,7 @@ export const I18N_RESOURCES = {
       "conflict": {
         "titleOne": "「{{name}}」はすでに存在します",
         "titleMany": "同じ名前の項目が {{count}} 個存在します",
+        "titleUnknown": "同じ名前の項目がすでに存在する可能性があります",
         "desc": "置き換えると、移動先の既存の項目が上書きされます。",
         "replace": "置き換える",
         "skip": "スキップ"

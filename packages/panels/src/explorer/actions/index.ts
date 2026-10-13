@@ -29,10 +29,14 @@ export {
   type UploadConflictDialogProps,
 } from './upload-conflict-dialog';
 export {
-  type ExistingNamesByDir,
+  type DirExistence,
+  type ExistenceByDir,
   UPLOAD_CONFLICT_PROBE_LIMIT,
+  UPLOAD_CONFLICT_STAT_THRESHOLD,
   type UploadConflictPlan,
+  conflictPromptNames,
   planUploadConflicts,
+  selectUploadFiles,
 } from './upload-conflicts';
 export {
   type ExplorerActionContext,

@@ -7,6 +7,7 @@ import { explorerNodeOptions } from './explorer-nodes';
 import {
   classifyTransferEnd,
   clipboardAfterCut,
+  clipboardTouchedByMove,
   conflictingNames,
   fileRequestErrorKey,
   moveFailureToast,
@@ -265,8 +266,14 @@ describe('classifyTransferEnd', () => {
   const view = (
     state: 'queued' | 'running' | 'done' | 'failed' | 'cancelled',
     itemStates: Array<TransferItemState | undefined> = [],
-    error?: string
-  ) => ({ state, itemStates, error });
+    error?: string,
+    transferredBytes = 10
+  ) => ({
+    state,
+    itemStates,
+    error,
+    progress: { transferredBytes, totalBytes: 10, ratePerSec: 0, etaSec: null },
+  });
 
   test('排队 / 进行中 → pending', () => {
     expect(classifyTransferEnd(view('queued'))).toEqual({ kind: 'pending' });
@@ -303,6 +310,25 @@ describe('classifyTransferEnd', () => {
       kind: 'partial',
       count: 2,
       rest: 'failed',
+    });
+  });
+
+  test('整个文件夹的文件都被跳过：目录条目自己报 done，但一个字节没传 → skipped', () => {
+    const folder = view('done', ['done', 'skipped', 'skipped'], undefined, 0);
+    expect(classifyTransferEnd(folder)).toEqual({ kind: 'skipped' });
+  });
+
+  test('一个字节没传且有失败 → failed，不算部分完成', () => {
+    expect(classifyTransferEnd(view('done', ['done', 'failed'], 'permission_denied', 0))).toEqual({
+      kind: 'failed',
+      error: 'permission_denied',
+    });
+  });
+
+  test('没有跳过 / 失败时零字节也算完成（空文件、空目录）', () => {
+    expect(classifyTransferEnd(view('done', ['done', 'done'], undefined, 0))).toEqual({
+      kind: 'done',
+      count: 2,
     });
   });
 
@@ -377,6 +403,62 @@ describe('clipboardAfterCut', () => {
     expect(clipboardAfterCut(current, null, current.paths)).toBe(current);
     const copied = clip({ mode: 'copy' });
     expect(clipboardAfterCut(copied, copied, copied.paths)).toBe(copied);
+  });
+});
+
+describe('clipboardTouchedByMove', () => {
+  const clip = (
+    paths: string[],
+    overrides: Partial<ExplorerClipboard> = {}
+  ): ExplorerClipboard => ({
+    mode: 'cut',
+    nodeId: 'self',
+    rootId: 'r1',
+    deviceId: 'd1',
+    paths,
+    ...overrides,
+  });
+
+  test('剪贴板路径就是被移走的那个', () => {
+    expect(clipboardTouchedByMove(clip(['/root/A/f']), 'self', 'r1', ['/root/A/f'])).toBe(true);
+  });
+
+  test('移走的是祖先目录：其下的剪贴板路径一并失效', () => {
+    expect(clipboardTouchedByMove(clip(['/root/A/f']), 'self', 'r1', ['/root/A'])).toBe(true);
+    expect(clipboardTouchedByMove(clip(['/root/A/sub/f']), 'self', 'r1', ['/root/A'])).toBe(true);
+  });
+
+  test('按路径段判：同前缀的兄弟不算', () => {
+    expect(clipboardTouchedByMove(clip(['/a/bc']), 'self', 'r1', ['/a/b'])).toBe(false);
+    expect(clipboardTouchedByMove(clip(['/a/b']), 'self', 'r1', ['/a/bc'])).toBe(false);
+  });
+
+  test('移走的是剪贴板路径的后代：不影响', () => {
+    expect(clipboardTouchedByMove(clip(['/root/A']), 'self', 'r1', ['/root/A/f'])).toBe(false);
+  });
+
+  test('多条路径里有一条命中即可；复制模式同样适用', () => {
+    const clipboard = clip(['/x/1', '/root/A/f'], { mode: 'copy' });
+    expect(clipboardTouchedByMove(clipboard, 'self', 'r1', ['/y', '/root/A'])).toBe(true);
+  });
+
+  test('别的节点 / 别的 root / 没有剪贴板 / 没有移走任何东西 → false', () => {
+    const clipboard = clip(['/root/A/f']);
+    expect(clipboardTouchedByMove(clipboard, REMOTE, 'r1', ['/root/A'])).toBe(false);
+    expect(clipboardTouchedByMove(clipboard, 'self', 'r2', ['/root/A'])).toBe(false);
+    expect(clipboardTouchedByMove(null, 'self', 'r1', ['/root/A'])).toBe(false);
+    expect(clipboardTouchedByMove(clipboard, 'self', 'r1', [])).toBe(false);
+  });
+
+  test('根目录作为被移走路径时不产生双斜杠误判', () => {
+    expect(clipboardTouchedByMove(clip(['/a']), 'self', 'r1', ['/'])).toBe(true);
+  });
+
+  test('与 clipboardAfterCut 串联：部分成功的剪切粘贴保留没移走的项', () => {
+    const submitted = clip(['/srv/a/x', '/srv/a/y']);
+    const rest = clipboardAfterCut(submitted, submitted, ['/srv/a/x']);
+    expect(rest).toEqual(clip(['/srv/a/y']));
+    expect(clipboardTouchedByMove(rest, 'self', 'r1', ['/srv/a/x'])).toBe(false);
   });
 });
 

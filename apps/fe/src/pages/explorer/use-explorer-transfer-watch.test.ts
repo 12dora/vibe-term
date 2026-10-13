@@ -36,6 +36,8 @@ const t = ((key: string, params?: { count?: number }) => {
   return key;
 }) as unknown as TFunction;
 
+const SOME_BYTES = { transferredBytes: 10, totalBytes: 20, ratePerSec: 0, etaSec: null };
+
 function view(jobId: string, overrides: Partial<TransferJobView> = {}): TransferJobView {
   return {
     key: transferJobKey('self', jobId),
@@ -98,7 +100,9 @@ describe('settleExplorerTransfers', () => {
   });
 
   test('部分被跳过：只报真正复制的数量，并说明其余已存在', () => {
-    putTransferJobView(view('j1', { state: 'done', itemStates: ['done', 'skipped'] }));
+    putTransferJobView(
+      view('j1', { state: 'done', itemStates: ['done', 'skipped'], progress: SOME_BYTES })
+    );
     registerExplorerTransfer(transferJobKey('self', 'j1'), RECORD);
     settleExplorerTransfers(t);
     expect(pendingExplorerTransferCount()).toBe(0);
@@ -107,11 +111,21 @@ describe('settleExplorerTransfers', () => {
   });
 
   test('部分失败：报已复制的数量，描述为未完成', () => {
-    putTransferJobView(view('j1', { state: 'done', itemStates: ['done', 'done', 'failed'] }));
+    putTransferJobView(
+      view('j1', { state: 'done', itemStates: ['done', 'done', 'failed'], progress: SOME_BYTES })
+    );
     registerExplorerTransfer(transferJobKey('self', 'j1'), RECORD);
     settleExplorerTransfers(t);
     expect(translated).toEqual(['explorer.transfer.done', 'explorer.transfer.failed']);
     expect(counts).toEqual([2]);
+  });
+
+  test('文件夹里的文件全被跳过（目录条目自己是 done、零字节）：不报「已复制」', () => {
+    putTransferJobView(view('j1', { state: 'done', itemStates: ['done', 'skipped', 'skipped'] }));
+    registerExplorerTransfer(transferJobKey('self', 'j1'), RECORD);
+    settleExplorerTransfers(t);
+    expect(translated).toEqual(['explorer.transfer.failed', 'devices.transfer.errors.dest_exists']);
+    expect(counts).toEqual([]);
   });
 
   test('全部被跳过：按「目标已存在」报未完成', () => {

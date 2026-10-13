@@ -1935,6 +1935,7 @@ export type TranslationKey =
   | 'explorer.conflict'
   | 'explorer.conflict.titleOne'
   | 'explorer.conflict.titleMany'
+  | 'explorer.conflict.titleUnknown'
   | 'explorer.conflict.desc'
   | 'explorer.conflict.replace'
   | 'explorer.conflict.skip'

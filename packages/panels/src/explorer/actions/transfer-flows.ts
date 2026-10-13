@@ -15,12 +15,13 @@ import { toast } from 'sonner';
 import { fileOpErrorKey, joinChildPath } from '../../files/ops';
 import { type FileUploadDeps, uploadFilesInto } from '../../files/transfer-flows';
 import type { FolderUploadFile, FolderUploadPlan } from './folder-upload';
-import type { UploadConflictChoice } from './upload-conflict-dialog';
 import {
   type ConflictProbeIo,
-  conflictDisplayName,
+  type UploadConflictChoice,
+  conflictPromptNames,
   planUploadConflicts,
-  probeExistingNames,
+  probeExistence,
+  selectUploadFiles,
 } from './upload-conflicts';
 
 export { downloadSingleFile, uploadFilesInto } from '../../files/transfer-flows';
@@ -164,19 +165,28 @@ function conflictProbeIo(
         return isMissingDirError(error) ? 'missing' : 'unknown';
       }
     },
+    // 只有明确的 not_found 才算「确定不存在」；其它错误原样抛出，由调用方记为没查清
     exists: async (relDir, name) => {
       const path = joinChildPath(resolveUploadDir(destDir, relDir), name);
-      await fetchFileStat(rootId, path, runtime.apiClient);
-      return true;
+      try {
+        await fetchFileStat(rootId, path, runtime.apiClient);
+        return true;
+      } catch (error) {
+        if (error instanceof FileApiError && error.code === 'not_found') return false;
+        throw error;
+      }
     },
   };
 }
 
-export type AskUploadConflict = (names: readonly string[]) => Promise<UploadConflictChoice>;
+export type AskUploadConflict = (
+  names: readonly string[],
+  uncertain?: boolean
+) => Promise<UploadConflictChoice>;
 
 /**
- * 文件管理器的上传入口：先查同名冲突，有冲突就问用户（取消 / 跳过 / 替换）再传。
- * 网关落盘是 rename 覆盖目标，不问就会静默丢掉原文件。
+ * 文件管理器的上传入口：先查同名冲突，有冲突或有没查清的就问用户（取消 / 跳过 / 替换）再传。
+ * 网关落盘是 rename 覆盖目标，不问就会静默丢掉原文件；「跳过」只传确定不存在的。
  */
 export async function uploadPlanGuarded(
   deps: TransferFlowDeps,
@@ -185,14 +195,14 @@ export async function uploadPlanGuarded(
   ask: AskUploadConflict
 ): Promise<void> {
   if (plan.files.length === 0 && plan.dirs.length === 0) return;
-  const existing = await probeExistingNames(plan, conflictProbeIo(deps, destDir));
-  const { conflicts, clean } = planUploadConflicts(plan.files, existing);
-  if (conflicts.length === 0) {
+  const existence = await probeExistence(plan, conflictProbeIo(deps, destDir));
+  const conflictPlan = planUploadConflicts(plan.files, existence);
+  const names = conflictPromptNames(conflictPlan);
+  if (names.length === 0) {
     await uploadPlanInto(deps, plan, destDir);
     return;
   }
-  const choice = await ask(conflicts.map(conflictDisplayName));
-  if (choice === 'cancel') return;
-  const files = choice === 'skip' ? clean : plan.files;
-  await uploadPlanInto(deps, { files, dirs: plan.dirs }, destDir);
+  const uncertain = conflictPlan.unknown.length > 0;
+  const files = selectUploadFiles(plan.files, conflictPlan, await ask(names, uncertain));
+  if (files) await uploadPlanInto(deps, { files, dirs: plan.dirs }, destDir);
 }

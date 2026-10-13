@@ -88,10 +88,14 @@ function useFileNameForm(props: FileNameDialogProps): FileNameForm {
   };
 
   // 从右键菜单打开时，菜单收起会把焦点还给它的触发行，可能晚于对话框的初始聚焦；
-  // 开场动画结束后再确认一次，焦点不在输入框就拿回来（聚焦即按上面的规则选中）。
+  // 开场动画结束后再确认一次，焦点跑到对话框外才拿回来（聚焦即按上面的规则选中）。
+  // 焦点已在对话框内（用户按 Tab 到了按钮上）就不动它。
   const ensureFocus = (nextOpen: boolean) => {
     const input = inputRef.current;
-    if (nextOpen && input && input.ownerDocument.activeElement !== input) input.focus();
+    if (!nextOpen || !input) return;
+    const active = input.ownerDocument.activeElement;
+    const dialog = input.closest('[role="dialog"]');
+    if (active !== input && !dialog?.contains(active)) input.focus();
   };
 
   const onInputChange = (next: string) => {
