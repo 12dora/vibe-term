@@ -50,6 +50,7 @@
 | [mobile-keyboard.md](./architecture/mobile-keyboard.md) | 移动端软键盘：避让三模式与唤起入口 |
 | [device-tree-reorder.md](./architecture/device-tree-reorder.md) | 设备 / 窗口 / pane 拖拽排序与顺序持久化 |
 | [file-transfer.md](./architecture/file-transfer.md) | 浏览器文件传输：分块上传、流式下载、进度、取消、`POST /api/files/mkdir`、本机免 rsync 与虚拟 `home` 根 |
+| [file-explorer.md](./architecture/file-explorer.md) | 文件管理器：删除 / 移动 / 重命名 / 打包下载接口、工作区模型、拖拽与剪贴板语义 |
 | [remote-exec.md](./architecture/remote-exec.md) | 非交互远程执行 `POST /api/exec` 与主机快照 `GET /api/system/facts` |
 | [node-to-node-transfer.md](./architecture/node-to-node-transfer.md) | 节点间文件传输：一次性授权、协议、限制与清理 |
 | [terminal-share.md](./architecture/terminal-share.md) | 终端分享：数据模型、接口、凭证与 ws 隔离、录制回放、安全边界 |
