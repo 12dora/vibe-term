@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Page, expect, test } from '@playwright/test';
@@ -143,4 +151,187 @@ test('explorer: 打开、导航、多选、文件操作、拖拽移动与分栏'
   await expect(page.getByTestId('explorer-empty')).toBeVisible();
   await expect(openToggle).toHaveText('Open');
   await shot(page, '07-empty');
+});
+
+test('explorer: 分栏间拖拽移动、剪切粘贴、图标视图与打包下载', async ({ page }) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-explorer2-')));
+  try {
+    mkdirSync(join(root, 'left'));
+    mkdirSync(join(root, 'right'));
+    writeFileSync(join(root, 'left', 'one.txt'), '1');
+    writeFileSync(join(root, 'left', 'two.txt'), '22');
+    writeFileSync(join(root, 'left', 'three.txt'), '333');
+
+    const devRes = await page.request.post('/api/devices', {
+      data: { name: `e2e-explorer2-${Date.now()}`, type: 'local', authMode: 'auto' },
+    });
+    const deviceId = (await devRes.json()).device.id as string;
+    const rootRes = await page.request.post('/api/files/roots', {
+      data: { deviceId, path: root, enabled: true },
+    });
+    const rootId = (await rootRes.json()).root.id as string;
+
+    await page.goto('/');
+    await page.getByTestId('sidebar-tab-files').click();
+    await page.getByTestId(`file-root-explorer-${rootId}`).click();
+    await expect(page.getByTestId('explorer-browser')).toHaveCount(1);
+
+    // 左右两栏：左栏进 left，右栏进 right
+    await page.getByTestId('explorer-split').click();
+    const panes = page.getByTestId('explorer-browser');
+    await expect(panes).toHaveCount(2);
+    const left = panes.nth(0);
+    const right = panes.nth(1);
+    await left.getByTestId('explorer-item-left').dblclick();
+    await expect(left.getByTestId('explorer-item-one.txt')).toBeVisible();
+    await right.getByTestId('explorer-item-right').dblclick();
+    await expect(right.getByTestId('explorer-status-items')).toContainText('0');
+
+    // 多选两项后从左栏拖到右栏空白处：同设备 = 移动
+    await left.getByTestId('explorer-item-one.txt').click();
+    await left.getByTestId('explorer-item-two.txt').click({ modifiers: ['ControlOrMeta'] });
+    await left
+      .getByTestId('explorer-item-one.txt')
+      .dragTo(right.getByTestId('explorer-content'), { sourcePosition: { x: 40, y: 15 } });
+    await expect(right.getByTestId('explorer-item-one.txt')).toBeVisible();
+    await expect(right.getByTestId('explorer-item-two.txt')).toBeVisible();
+    await expect(left.getByTestId('explorer-item-one.txt')).toHaveCount(0);
+    expect(existsSync(join(root, 'right', 'one.txt'))).toBe(true);
+    expect(existsSync(join(root, 'left', 'two.txt'))).toBe(false);
+    await shot(page, '10-cross-pane-move');
+
+    // 剪切 + 粘贴：把 three.txt 从左栏剪到右栏
+    await left.getByTestId('explorer-item-three.txt').click();
+    await page.keyboard.press('ControlOrMeta+x');
+    await right.getByTestId('explorer-view').click({ position: { x: 300, y: 300 } });
+    await page.keyboard.press('ControlOrMeta+v');
+    await expect(right.getByTestId('explorer-item-three.txt')).toBeVisible();
+    await expect.poll(() => existsSync(join(root, 'left', 'three.txt'))).toBe(false);
+
+    // 图标视图
+    await right.getByTestId('explorer-view-grid').click();
+    await expect(right.getByTestId('explorer-item-one.txt')).toBeVisible();
+    await shot(page, '11-grid-view');
+
+    // 全选后下载：多项打包为 tar.gz，由浏览器直接接管
+    await right.getByTestId('explorer-item-one.txt').click();
+    await page.keyboard.press('ControlOrMeta+a');
+    const download = page.waitForEvent('download');
+    await page.keyboard.press('ControlOrMeta+s');
+    expect((await download).suggestedFilename()).toBe('right.tar.gz');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('explorer: 侧栏新建 / 重命名 / 删除、Esc 取消行内编辑、上传同名先询问', async ({ page }) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-explorer3-')));
+  try {
+    mkdirSync(join(root, 'docs'));
+    writeFileSync(join(root, 'docs', 'note.txt'), 'old');
+    writeFileSync(join(root, 'keep.txt'), 'keep');
+
+    const devRes = await page.request.post('/api/devices', {
+      data: { name: `e2e-explorer3-${Date.now()}`, type: 'local', authMode: 'auto' },
+    });
+    const deviceId = (await devRes.json()).device.id as string;
+    const rootRes = await page.request.post('/api/files/roots', {
+      data: { deviceId, path: root, enabled: true },
+    });
+    const rootId = (await rootRes.json()).root.id as string;
+
+    await page.goto('/');
+    await page.getByTestId('sidebar-tab-files').click();
+    const rootRow = page.getByTestId(`file-dir-${rootId}-${root}`);
+    await rootRow.click();
+    const menuItem = (name: string) => page.getByRole('menuitem', { name, exact: true });
+
+    // 侧栏：右键根目录 → 新建文件夹。输入框自动聚焦并选中默认名，直接打字即可覆盖
+    await rootRow.click({ button: 'right' });
+    await menuItem('New Folder').click();
+    const nameInput = page.getByTestId('file-name-input');
+    await expect(nameInput).toBeFocused();
+    await expect(nameInput).toHaveValue('untitled folder');
+    await page.keyboard.type('inbox');
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('file-name-dialog')).toHaveCount(0);
+    await expect.poll(() => existsSync(join(root, 'inbox'))).toBe(true);
+    const inboxRow = page.getByTestId(`file-dir-${rootId}-${root}/inbox`);
+    await expect(inboxRow).toBeVisible();
+
+    // 侧栏：重命名文件（只选中主名，扩展名保留）
+    const keepRow = page.getByTestId(`file-item-${rootId}-${root}/keep.txt`);
+    await keepRow.click({ button: 'right' });
+    await menuItem('Rename').click();
+    await expect(nameInput).toBeFocused();
+    await page.keyboard.type('kept');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => existsSync(join(root, 'kept.txt'))).toBe(true);
+    expect(existsSync(join(root, 'keep.txt'))).toBe(false);
+
+    // 侧栏：删除文件夹需确认
+    await inboxRow.click({ button: 'right' });
+    await menuItem('Delete').click();
+    const confirm = page.getByRole('alertdialog');
+    await expect(confirm).toContainText('inbox');
+    await confirm.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect.poll(() => existsSync(join(root, 'inbox'))).toBe(false);
+    await shot(page, '20-sidebar-ops');
+
+    // 侧栏：在文件管理器中打开子目录
+    const docsRow = page.getByTestId(`file-dir-${rootId}-${root}/docs`);
+    await docsRow.click({ button: 'right' });
+    await menuItem('Open in File Manager').click();
+    await expect(page).toHaveURL(/\/explorer$/);
+    const browser = page.getByTestId('explorer-browser');
+    const item = (name: string) => browser.getByTestId(`explorer-item-${name}`);
+    await expect(item('note.txt')).toBeVisible();
+
+    // Esc 取消行内重命名：名称不变
+    await item('note.txt').click();
+    await page.keyboard.press('F2');
+    const editor = browser.locator('input[type="text"]:focus');
+    await expect(editor).toBeVisible();
+    await editor.fill('changed.txt');
+    await editor.press('Escape');
+    await expect(item('note.txt')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(existsSync(join(root, 'docs', 'note.txt'))).toBe(true);
+    expect(existsSync(join(root, 'docs', 'changed.txt'))).toBe(false);
+
+    // Esc 取消新建文件夹：不创建
+    await page.getByTestId('explorer-new-folder').click();
+    const pending = browser.getByTestId('explorer-pending-folder');
+    await expect(pending).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(pending).toHaveCount(0);
+    await page.waitForTimeout(300);
+    expect(existsSync(join(root, 'docs', 'untitled folder'))).toBe(false);
+
+    // 上传同名文件：先询问。跳过 → 原文件不变；替换 → 被覆盖
+    const upload = async (content: string) => {
+      const chooser = page.waitForEvent('filechooser');
+      await page.getByTestId('explorer-upload').click();
+      await (await chooser).setFiles({
+        name: 'note.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from(content),
+      });
+    };
+    await upload('new-1');
+    const conflict = page.getByRole('alertdialog');
+    await expect(conflict).toContainText('note.txt');
+    await shot(page, '21-upload-conflict');
+    await conflict.getByRole('button', { name: 'Skip', exact: true }).click();
+    await expect(conflict).toHaveCount(0);
+    await page.waitForTimeout(500);
+    expect(readFileSync(join(root, 'docs', 'note.txt'), 'utf8')).toBe('old');
+
+    await upload('new-2');
+    await expect(conflict).toContainText('note.txt');
+    await conflict.getByRole('button', { name: 'Replace', exact: true }).click();
+    await expect.poll(() => readFileSync(join(root, 'docs', 'note.txt'), 'utf8')).toBe('new-2');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
