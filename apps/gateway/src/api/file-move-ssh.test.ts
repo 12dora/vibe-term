@@ -60,7 +60,7 @@ describe('ssh devices', () => {
     expect(commands[0]).toContain("'/remote/root/dest dir'");
     expect(commands[0]).toContain("'a b.txt'");
     expect(commands[0]).toContain("'-c'");
-    expect(commands[0]).toContain('mv -f --');
+    expect(commands[0]).toContain('mv -n $T --');
   });
 
   test('overwrite is passed to the script', async () => {
@@ -114,9 +114,8 @@ describe('ssh devices', () => {
     const ok = await rename({ rootId, path: `${path}/sub/old`, name: "new 'name'" });
 
     expect(ok).toEqual({ status: 200, json: { path: `${path}/sub/new 'name'` } });
-    // 整段脚本外面还包了一层 `sh -c '…'`，脚本内的单引号都被再转义了一次
-    expect(commands[0]).toContain(`vt 0 '\\''/remote/root/sub'\\'' '\\''old'\\'' `);
-    expect(commands[0]).toContain('name');
+    expect(commands[0]).toContain(`vt 0 '/remote/root/sub' 'old' 'new '\\''name'\\'''`);
+    expect(commands[0]).not.toContain('sh -c');
     expect(commands[0]).toContain('ow=0');
 
     stubSsh({ stdout: enc('VTOP 0 already_exists\n') });

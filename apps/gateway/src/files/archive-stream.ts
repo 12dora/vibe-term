@@ -1,7 +1,5 @@
 import { errorMessage } from '@vibeterm/shared';
 import { logAt } from '../log/level';
-import { joinShellArgs } from '../tmux-client/command-builder';
-import type { RsyncDeviceSpec } from './ssh-command';
 
 /** 超过这么久没有任何输出就判定打包卡死。 */
 export const ARCHIVE_IDLE_TIMEOUT_MS = 120_000;
@@ -34,36 +32,27 @@ export const fileArchiveIo = {
   spawn: spawnArchiveProcess,
 };
 
-/** `tar` 的参数：名字一律以 `./` 开头，开头为 `-` 的文件名不会被当成选项。 */
+/** tar 的条目参数：名字一律以 `./` 开头，开头为 `-` 的文件名不会被当成选项；`.` 表示整个工作目录。 */
+export function tarNameArgs(names: readonly string[]): string[] {
+  return names.map((name) => (name === '.' ? '.' : `./${name}`));
+}
+
 export function tarArchiveArgs(parentDir: string, names: readonly string[]): string[] {
-  return ['tar', '-czf', '-', '-C', parentDir, ...names.map((name) => `./${name}`)];
+  return ['tar', '-czf', '-', '-C', parentDir, ...tarNameArgs(names)];
 }
 
-/** 与 `execSshCommand` 相同的 argv / env 拼法（那边没有导出，这里照搬几行）。 */
-export function buildSshInvocation(
-  spec: RsyncDeviceSpec,
-  tarArgs: readonly string[]
-): { argv: string[]; env: Record<string, string> } | null {
-  if (!spec.rsh) return null;
-  const dest = spec.targetPrefix.replace(/:$/, '');
-  const argv = [...spec.rsh.split(' '), dest, joinShellArgs(tarArgs)];
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) env[key] = value;
-  }
-  Object.assign(env, spec.env);
-  return { argv, env };
-}
-
-export interface ArchiveStreamOptions {
-  argv: string[];
-  env?: Record<string, string>;
-  /** 无输出多久后终止，默认 `ARCHIVE_IDLE_TIMEOUT_MS`。 */
+export interface ArchiveLimits {
+  /** 流整个生命周期内，多久没有向下游交付新数据就终止，默认 `ARCHIVE_IDLE_TIMEOUT_MS`。 */
   idleMs?: number;
   /** 累计输出字节上限，超过即终止。 */
   maxBytes: number;
   /** 流结束（正常 / 出错 / 取消）时恰好调用一次，用来释放 ssh spec。 */
   onClose?: () => void;
+}
+
+export interface ArchiveStreamOptions extends ArchiveLimits {
+  argv: string[];
+  env?: Record<string, string>;
 }
 
 class ArchiveRun {
@@ -79,18 +68,19 @@ class ArchiveRun {
   constructor(
     private readonly proc: ArchiveProcess,
     private readonly controller: ReadableStreamDefaultController<Uint8Array>,
-    private readonly opts: ArchiveStreamOptions
+    private readonly opts: ArchiveLimits
   ) {
     this.reader = proc.stdout.getReader();
     this.stderrDone = this.drainStderr(proc.stderr);
     this.settled = new Promise<undefined>((resolve) => {
       this.release = () => resolve(undefined);
     });
+    // 计时覆盖整个流的生命周期：客户端不读（背压）而连接不断时，进程也不能一直挂着
+    this.armIdle();
   }
 
   async pull(): Promise<void> {
     if (this.finished) return;
-    this.armIdle();
     try {
       const chunk = await Promise.race([this.reader.read(), this.settled]);
       if (!chunk || this.finished) return;
@@ -101,8 +91,6 @@ class ArchiveRun {
       this.push(chunk.value);
     } catch (error) {
       this.fail(error);
-    } finally {
-      this.disarmIdle();
     }
   }
 
@@ -118,6 +106,7 @@ class ArchiveRun {
       return;
     }
     this.controller.enqueue(value);
+    this.armIdle();
   }
 
   /** stdout 读完后还要等进程退出码：tar 失败时必须让浏览器看到下载中断，而不是一个被截断的“成功”。 */
@@ -199,9 +188,28 @@ class ArchiveRun {
   }
 }
 
+/** 把已启动的子进程 stdout 变成可直接作为 Response body 的流，语义同 `createArchiveStream`。 */
+export function createArchiveStreamFromProcess(
+  proc: ArchiveProcess,
+  limits: ArchiveLimits
+): ReadableStream<Uint8Array> {
+  let run: ArchiveRun | null = null;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      run = new ArchiveRun(proc, controller, limits);
+    },
+    pull() {
+      return run?.pull();
+    },
+    cancel() {
+      run?.cancel();
+    },
+  });
+}
+
 /**
- * 把子进程 stdout 变成可直接作为 Response body 的流：客户端取消即杀进程，
- * 非零退出 / 空闲超时 / 超过字节上限都会 `controller.error`。spawn 同步失败时先调 `onClose` 再抛出。
+ * 起进程并返回流：客户端取消即杀进程，非零退出 / 空闲超时 / 超过字节上限都会 `controller.error`。
+ * spawn 同步失败时先调 `onClose` 再抛出。
  */
 export function createArchiveStream(opts: ArchiveStreamOptions): ReadableStream<Uint8Array> {
   let proc: ArchiveProcess;
@@ -211,16 +219,5 @@ export function createArchiveStream(opts: ArchiveStreamOptions): ReadableStream<
     opts.onClose?.();
     throw error;
   }
-  let run: ArchiveRun | null = null;
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      run = new ArchiveRun(proc, controller, opts);
-    },
-    pull() {
-      return run?.pull();
-    },
-    cancel() {
-      run?.cancel();
-    },
-  });
+  return createArchiveStreamFromProcess(proc, opts);
 }

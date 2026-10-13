@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   rmSync,
@@ -17,15 +19,14 @@ import type { Device } from '@vibeterm/shared';
 import type { SshExecResult } from './directory-browse';
 import {
   type MoveStatus,
-  buildMoveCommand,
   buildMoveScript,
   fileMoveRemoteIo,
   moveRemote,
   outcomesFromStatuses,
   parseMoveOutput,
-  splitMoveBatch,
 } from './move-remote';
 import type { MoveBatch, MoveItem } from './move-types';
+import { remoteScriptIo } from './remote-script';
 import type { RsyncDeviceSpec } from './ssh-command';
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -55,9 +56,17 @@ describe('buildMoveScript', () => {
     expect(script).toContain("cd -- '/srv/root' || exit 60");
     expect(script).toContain("cd -- '/srv/root/de st' || exit 63");
     expect(script).toContain(`vt 0 '/srv/root/it'\\''s here' '-dash name' 'o'\\''ther'`);
-    expect(script).toContain('mv -f -- "$s" "$dp"');
+    expect(script).toContain('mv -n $T -- "$s" "$1"');
     expect(script).toContain('s="./$n"');
     expect(script).toContain('ow=0');
+  });
+
+  test('physical paths come from phys, never from a command substitution', () => {
+    const script = buildMoveScript(makeBatch([item('/srv/root', 'a')]));
+    expect(script).toContain('phys()');
+    expect(script).toContain('inside()');
+    expect(script).not.toContain('$(pwd -P)');
+    expect(script).not.toContain('sh -c');
   });
 
   test('overwrite flag is encoded and indices follow batch order', () => {
@@ -68,12 +77,6 @@ describe('buildMoveScript', () => {
     expect(script.indexOf("vt 0 '/srv/root' 'a' 'a'")).toBeLessThan(
       script.indexOf("vt 1 '/srv/root' 'b' 'b'")
     );
-  });
-
-  test('buildMoveCommand wraps the script in sh -c', () => {
-    const cmd = buildMoveCommand(makeBatch([item('/srv/root', 'a')]));
-    expect(cmd.startsWith("sh -c '")).toBe(true);
-    expect(cmd.endsWith("'")).toBe(true);
   });
 });
 
@@ -99,20 +102,6 @@ describe('parseMoveOutput', () => {
   });
 });
 
-describe('splitMoveBatch', () => {
-  test('keeps a normal request in one chunk and splits when over budget', () => {
-    const items = Array.from({ length: 6 }, (_, i) => item('/srv/root', `file-${i}`));
-    expect(splitMoveBatch(makeBatch(items))).toHaveLength(1);
-    const chunks = splitMoveBatch(makeBatch(items), 80);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.flatMap((c) => c.items)).toEqual(items);
-  });
-
-  test('empty batch yields one empty chunk', () => {
-    expect(splitMoveBatch(makeBatch([]))).toHaveLength(1);
-  });
-});
-
 const fakeSpec: RsyncDeviceSpec = {
   targetPrefix: 'user@host:',
   rsh: 'ssh -o BatchMode=yes',
@@ -134,10 +123,12 @@ const device: Device = {
 
 const originalExec = fileMoveRemoteIo.exec;
 const originalHooks = fileMoveRemoteIo.hooks;
+const originalSpawn = remoteScriptIo.spawn;
 
 afterEach(() => {
   fileMoveRemoteIo.exec = originalExec;
   fileMoveRemoteIo.hooks = originalHooks;
+  remoteScriptIo.spawn = originalSpawn;
 });
 
 function stubExec(responder: (command: string) => Partial<SshExecResult>): { commands: string[] } {
@@ -162,7 +153,7 @@ describe('moveRemote', () => {
     expect(commands).toHaveLength(1);
     expect(commands[0]).toContain("'a b'");
     expect(commands[0]).toContain("'-c'");
-    expect(commands[0]).toContain('mv -f --');
+    expect(commands[0]).toContain('mv -n $T --');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.data[0]).toEqual({ ok: true, data: undefined });
@@ -205,30 +196,17 @@ describe('moveRemote', () => {
       expect(result).toMatchObject({ ok: false, code });
     }
   });
-
-  test('later chunk failure only marks its own items', async () => {
-    let calls = 0;
-    stubExec(() => {
-      calls += 1;
-      return calls === 1 ? { stdout: enc('VTOP 0 ok\n') } : { exitCode: 255 };
-    });
-    const many = Array.from({ length: 900 }, (_, i) => item('/srv/root', `${'y'.repeat(100)}${i}`));
-    const result = await moveRemote(device, makeBatch(many));
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(result.data).toHaveLength(many.length);
-    expect(calls).toBeGreaterThan(1);
-    expect(result.data[0]).toEqual({ ok: true, data: undefined });
-    expect(result.data.at(-1)).toMatchObject({ ok: false, code: 'connection_failed' });
-  });
 });
 
-// 在本机真实执行脚本，验证 POSIX sh 语义
-describe('script semantics (executed with sh)', () => {
+// 脚本经 `sh -s` 在本机真实执行（把 remoteScriptIo.spawn 换成本机 sh），验证 POSIX sh 语义
+describe('script semantics (executed with sh -s)', () => {
   const sandboxes: string[] = [];
+  const isRoot = process.getuid?.() === 0;
 
   afterEach(() => {
-    for (const dir of sandboxes) rmSync(dir, { recursive: true, force: true });
+    for (const dir of sandboxes) {
+      rmSync(dir, { recursive: true, force: true });
+    }
     sandboxes.length = 0;
   });
 
@@ -239,9 +217,31 @@ describe('script semantics (executed with sh)', () => {
     return dir;
   }
 
-  function run(batch: MoveBatch): { exitCode: number; statuses: Map<number, MoveStatus> } {
-    const res = Bun.spawnSync(['sh', '-c', buildMoveScript(batch)]);
-    return { exitCode: res.exitCode, statuses: parseMoveOutput(new Uint8Array(res.stdout)) };
+  interface Call {
+    argv: string[];
+    script: string;
+  }
+
+  /** `transform` 用来在脚本里模拟竞态（例如让存在性预检看到「不存在」）。 */
+  function viaLocalSh(transform: (script: string) => string = (script) => script): Call[] {
+    const calls: Call[] = [];
+    fileMoveRemoteIo.hooks = { buildSpec: async () => fakeSpec };
+    remoteScriptIo.spawn = (argv, env, script) => {
+      calls.push({ argv, script });
+      return originalSpawn(['sh', '-s'], env, transform(script));
+    };
+    return calls;
+  }
+
+  interface RunResult {
+    request?: string;
+    statuses: string[];
+  }
+
+  async function run(batch: MoveBatch): Promise<RunResult> {
+    const result = await moveRemote(device, batch);
+    if (!result.ok) return { request: result.code, statuses: [] };
+    return { statuses: result.data.map((o) => (o.ok ? 'ok' : o.code)) };
   }
 
   function batchIn(dir: string, names: Array<[string, string?]>, over: Partial<MoveBatch> = {}) {
@@ -251,33 +251,40 @@ describe('script semantics (executed with sh)', () => {
     );
   }
 
-  test('moves files with awkward names, including a leading dash and quotes', () => {
+  test('moves files with awkward names, including a leading dash and quotes', async () => {
+    viaLocalSh();
     const dir = sandbox();
     const names = ['-dash.txt', "it's here.txt", 'a b.txt'];
     for (const name of names) writeFileSync(join(dir, name), name);
-    const entries = names.map((n): [string] => [n]);
-    const { exitCode, statuses } = run(batchIn(dir, entries));
-    expect(exitCode).toBe(0);
-    expect([...statuses.values()]).toEqual(['ok', 'ok', 'ok']);
+    const { request, statuses } = await run(
+      batchIn(
+        dir,
+        names.map((n): [string] => [n])
+      )
+    );
+    expect(request).toBeUndefined();
+    expect(statuses).toEqual(['ok', 'ok', 'ok']);
     for (const name of names) {
       expect(existsSync(join(dir, name))).toBe(false);
       expect(readFileSync(join(dir, 'dest', name), 'utf8')).toBe(name);
     }
   });
 
-  test('same parent and name is a no-op; rename within the parent works', () => {
+  test('same parent and name is a no-op; rename within the parent works', async () => {
+    viaLocalSh();
     const dir = sandbox();
     writeFileSync(join(dir, 'a.txt'), 'a');
-    const noop = run(batchIn(dir, [['a.txt']], { destDir: dir }));
-    expect(noop.statuses.get(0)).toBe('ok');
+    const noop = await run(batchIn(dir, [['a.txt']], { destDir: dir }));
+    expect(noop.statuses).toEqual(['ok']);
     expect(existsSync(join(dir, 'a.txt'))).toBe(true);
-    const renamed = run(batchIn(dir, [['a.txt', 'b.txt']], { destDir: dir }));
-    expect(renamed.statuses.get(0)).toBe('ok');
+    const renamed = await run(batchIn(dir, [['a.txt', 'b.txt']], { destDir: dir }));
+    expect(renamed.statuses).toEqual(['ok']);
     expect(existsSync(join(dir, 'a.txt'))).toBe(false);
     expect(readFileSync(join(dir, 'b.txt'), 'utf8')).toBe('a');
   });
 
-  test('conflict, overwrite rules and directory protection', () => {
+  test('conflict, overwrite rules and directory protection', async () => {
+    viaLocalSh();
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'new');
     writeFileSync(join(dir, 'dest', 'f'), 'old');
@@ -286,52 +293,130 @@ describe('script semantics (executed with sh)', () => {
     writeFileSync(join(dir, 'g'), 'g');
     mkdirSync(join(dir, 'dest', 'g'));
 
-    const failing = run(batchIn(dir, [['f']]));
-    expect(failing.statuses.get(0)).toBe('already_exists');
+    const failing = await run(batchIn(dir, [['f']]));
+    expect(failing.statuses).toEqual(['already_exists']);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
 
-    const over = run(batchIn(dir, [['f'], ['d'], ['g']], { overwrite: true }));
-    expect(over.statuses.get(0)).toBe('ok');
-    expect(over.statuses.get(1)).toBe('already_exists');
-    expect(over.statuses.get(2)).toBe('already_exists');
+    const over = await run(batchIn(dir, [['f'], ['d'], ['g']], { overwrite: true }));
+    expect(over.statuses).toEqual(['ok', 'already_exists', 'already_exists']);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
     expect(existsSync(join(dir, 'd'))).toBe(true);
+    expect(readdirSync(join(dir, 'dest', 'd'))).toEqual([]);
   });
 
-  test('overwriting a symlink to a directory replaces the link, not the target content', () => {
+  test('no-replace holds when the pre-check is fooled (file and directory)', async () => {
+    // 把预检 `gone "$dp"` 换成恒真，等价于「检查之后目标才被别人建出来」
+    viaLocalSh((script) => script.replace('if gone "$dp"; then mvn', 'if true; then mvn'));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'new');
+    writeFileSync(join(dir, 'dest', 'f'), 'old');
+    mkdirSync(join(dir, 'd'));
+    writeFileSync(join(dir, 'd', 'src-inner'), 'src');
+    mkdirSync(join(dir, 'dest', 'd'));
+    writeFileSync(join(dir, 'dest', 'd', 'keep'), 'keep');
+
+    const { statuses } = await run(batchIn(dir, [['f'], ['d']]));
+
+    expect(statuses).toEqual(['already_exists', 'already_exists']);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+    expect(readdirSync(join(dir, 'dest', 'd'))).toEqual(['keep']);
+    expect(readFileSync(join(dir, 'd', 'src-inner'), 'utf8')).toBe('src');
+  });
+
+  test('rename onto an existing sibling keeps both files', async () => {
+    viaLocalSh((script) => script.replace('if gone "$dp"; then mvn', 'if true; then mvn'));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'a'), 'a');
+    writeFileSync(join(dir, 'b'), 'b');
+
+    const { statuses } = await run(batchIn(dir, [['a', 'b']], { destDir: dir }));
+
+    expect(statuses).toEqual(['already_exists']);
+    expect(readFileSync(join(dir, 'a'), 'utf8')).toBe('a');
+    expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('b');
+  });
+
+  test('overwriting a symlink to a directory replaces the link only', async () => {
+    viaLocalSh();
     const dir = sandbox();
     mkdirSync(join(dir, 'target'));
     symlinkSync(join(dir, 'target'), join(dir, 'dest', 'f'));
     writeFileSync(join(dir, 'f'), 'new');
-    const { statuses } = run(batchIn(dir, [['f']], { overwrite: true }));
-    expect(statuses.get(0)).toBe('ok');
+    const { statuses } = await run(batchIn(dir, [['f']], { overwrite: true }));
+    expect(statuses).toEqual(['ok']);
     expect(lstatSync(join(dir, 'dest', 'f')).isSymbolicLink()).toBe(false);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
-    expect(existsSync(join(dir, 'target', 'f'))).toBe(false);
+    expect(readdirSync(join(dir, 'target'))).toEqual([]);
+    expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
   });
 
-  test('directory into itself or a descendant is invalid', () => {
+  test.skipIf(isRoot)('an unmovable source leaves the old destination symlink alone', async () => {
+    viaLocalSh();
+    const dir = sandbox();
+    mkdirSync(join(dir, 'src'));
+    writeFileSync(join(dir, 'src', 'f'), 'new');
+    mkdirSync(join(dir, 'target'));
+    symlinkSync(join(dir, 'target'), join(dir, 'dest', 'f'));
+    chmodSync(join(dir, 'src'), 0o555);
+    try {
+      const batch = makeBatch([item(join(dir, 'src'), 'f')], {
+        rootPath: dir,
+        destRootPath: dir,
+        destDir: join(dir, 'dest'),
+        overwrite: true,
+      });
+      const { statuses } = await run(batch);
+      expect(statuses).toEqual(['permission_denied']);
+    } finally {
+      chmodSync(join(dir, 'src'), 0o755);
+    }
+    expect(readlinkSync(join(dir, 'dest', 'f'))).toBe(join(dir, 'target'));
+    expect(readFileSync(join(dir, 'src', 'f'), 'utf8')).toBe('new');
+    expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
+  });
+
+  test('a failed final replace puts the source back and keeps the old symlink', async () => {
+    // rm 失败 = 换链接这一步没成功；此时源已被挪到临时名，必须原样放回
+    viaLocalSh((script) => script.replace('e=$(rm -f -- "$dp" 2>&1 </dev/null)', 'e=$(false)'));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'new');
+    mkdirSync(join(dir, 'target'));
+    symlinkSync(join(dir, 'target'), join(dir, 'dest', 'f'));
+
+    const { statuses } = await run(batchIn(dir, [['f']], { overwrite: true }));
+
+    expect(statuses).toEqual(['unknown']);
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+    expect(readlinkSync(join(dir, 'dest', 'f'))).toBe(join(dir, 'target'));
+    expect(readdirSync(join(dir, 'dest'))).toEqual(['f']);
+  });
+
+  test('directory into itself or a descendant is invalid', async () => {
+    viaLocalSh();
     const dir = sandbox();
     mkdirSync(join(dir, 'dest', 'inner'), { recursive: true });
-    const self = run(batchIn(dir, [['dest']], { destDir: join(dir, 'dest') }));
-    expect(self.statuses.get(0)).toBe('invalid');
-    const deep = run(batchIn(dir, [['dest']], { destDir: join(dir, 'dest', 'inner') }));
-    expect(deep.statuses.get(0)).toBe('invalid');
+    const self = await run(batchIn(dir, [['dest']], { destDir: join(dir, 'dest') }));
+    expect(self.statuses).toEqual(['invalid']);
+    const deep = await run(batchIn(dir, [['dest']], { destDir: join(dir, 'dest', 'inner') }));
+    expect(deep.statuses).toEqual(['invalid']);
     expect(existsSync(join(dir, 'dest', 'inner'))).toBe(true);
   });
 
-  test('symlinks are moved as links and missing sources report not_found', () => {
+  test('symlinks are moved as links and missing sources report not_found', async () => {
+    viaLocalSh();
     const dir = sandbox();
     writeFileSync(join(dir, 'real'), 'x');
     symlinkSync('real', join(dir, 'ln'));
-    const { statuses } = run(batchIn(dir, [['ln'], ['ghost']]));
-    expect(statuses.get(0)).toBe('ok');
-    expect(statuses.get(1)).toBe('not_found');
+    const { statuses } = await run(batchIn(dir, [['ln'], ['ghost']]));
+    expect(statuses).toEqual(['ok', 'not_found']);
     expect(readlinkSync(join(dir, 'dest', 'ln'))).toBe('real');
     expect(readFileSync(join(dir, 'real'), 'utf8')).toBe('x');
   });
 
-  test('source parent escaping the root through a symlink is outside_roots', () => {
+  test('source parent escaping the root through a symlink is outside_roots', async () => {
+    viaLocalSh();
     const dir = sandbox();
     const outside = sandbox();
     writeFileSync(join(outside, 'secret'), 's');
@@ -341,25 +426,83 @@ describe('script semantics (executed with sh)', () => {
       destRootPath: dir,
       destDir: join(dir, 'dest'),
     });
-    const { statuses } = run(batch);
-    expect(statuses.get(0)).toBe('outside_roots');
+    const { statuses } = await run(batch);
+    expect(statuses).toEqual(['outside_roots']);
     expect(existsSync(join(outside, 'secret'))).toBe(true);
   });
 
-  test('request-level exit codes for destDir problems', () => {
+  test('request-level errors for destDir problems', async () => {
+    viaLocalSh();
     const dir = sandbox();
     const outside = sandbox();
     writeFileSync(join(dir, 'file'), 'x');
     symlinkSync(outside, join(dir, 'esc'));
     const base = { rootPath: dir, destRootPath: dir };
-    const missing = run(makeBatch([item(dir, 'file')], { ...base, destDir: join(dir, 'nope') }));
-    expect(missing.exitCode).toBe(61);
-    const notDir = run(makeBatch([item(dir, 'file')], { ...base, destDir: join(dir, 'file') }));
-    expect(notDir.exitCode).toBe(62);
-    const escaped = run(makeBatch([item(dir, 'file')], { ...base, destDir: join(dir, 'esc') }));
-    expect(escaped.exitCode).toBe(64);
-    const noRoot = run(makeBatch([item(dir, 'file')], { ...base, rootPath: join(dir, 'gone') }));
-    expect(noRoot.exitCode).toBe(60);
+    const attempt = async (over: Partial<MoveBatch>) =>
+      (await run(makeBatch([item(dir, 'file')], { ...base, ...over }))).request;
+    expect(await attempt({ destDir: join(dir, 'nope') })).toBe('not_found');
+    expect(await attempt({ destDir: join(dir, 'file') })).toBe('not_a_directory');
+    expect(await attempt({ destDir: join(dir, 'esc') })).toBe('outside_roots');
+    expect(await attempt({ rootPath: join(dir, 'gone') })).toBe('root_not_found');
     expect(existsSync(join(dir, 'file'))).toBe(true);
+  });
+
+  test('a destination ending in a newline is not confused with its sibling', async () => {
+    viaLocalSh();
+    const dir = sandbox();
+    const outside = sandbox();
+    rmSync(join(dir, 'dest'), { recursive: true });
+    symlinkSync(outside, join(dir, 'dest'));
+    mkdirSync(join(dir, 'dest\n'));
+    writeFileSync(join(dir, 'f'), 'f');
+    writeFileSync(join(dir, 'g'), 'g');
+
+    const real = await run(batchIn(dir, [['f']], { destDir: join(dir, 'dest\n') }));
+    expect(real.statuses).toEqual(['ok']);
+    expect(readFileSync(join(dir, 'dest\n', 'f'), 'utf8')).toBe('f');
+
+    const sibling = await run(batchIn(dir, [['g']], { destDir: join(dir, 'dest') }));
+    expect(sibling.request).toBe('outside_roots');
+    expect(readdirSync(outside)).toEqual(['dest']);
+    expect(existsSync(join(dir, 'g'))).toBe(true);
+  });
+
+  test('a root ending in a newline is not confused with its sibling', async () => {
+    viaLocalSh();
+    const dir = sandbox();
+    const outside = sandbox();
+    mkdirSync(join(dir, 'r\n'));
+    writeFileSync(join(dir, 'r\n', 'x'), 'inside');
+    symlinkSync(outside, join(dir, 'r'));
+    writeFileSync(join(outside, 'x'), 'secret');
+    const base = { rootPath: join(dir, 'r\n'), destRootPath: dir };
+
+    const real = await run(makeBatch([item(join(dir, 'r\n'), 'x')], { ...base, destDir: dir }));
+    expect(real.statuses).toEqual(['ok']);
+    expect(readFileSync(join(dir, 'x'), 'utf8')).toBe('inside');
+
+    const sibling = await run(makeBatch([item(join(dir, 'r'), 'x')], { ...base, destDir: dir }));
+    expect(sibling.statuses).toEqual(['outside_roots']);
+    expect(readFileSync(join(outside, 'x'), 'utf8')).toBe('secret');
+  });
+
+  test('500 long names go out in a single round trip with the script on stdin', async () => {
+    const calls = viaLocalSh();
+    const dir = sandbox();
+    const names = Array.from({ length: 500 }, (_, i) => `${'n'.repeat(200)}-${i}`);
+
+    const { request, statuses } = await run(
+      batchIn(
+        dir,
+        names.map((n): [string] => [n])
+      )
+    );
+
+    expect(request).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.argv.at(-1)).toBe('sh -s');
+    expect(calls[0]?.script.length).toBeGreaterThan(128 * 1024);
+    expect(statuses).toHaveLength(500);
+    expect(new Set(statuses)).toEqual(new Set(['not_found']));
   });
 });

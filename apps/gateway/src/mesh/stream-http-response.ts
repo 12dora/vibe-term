@@ -1,4 +1,4 @@
-import type { LinkStream } from '@vibeterm/shared/link';
+import type { LinkStream, StreamChunk } from '@vibeterm/shared/link';
 import { parseContentLengthHeader } from './forwarder-attempt-deadline';
 import type { HttpHeadResult } from './stream-http-head';
 
@@ -9,6 +9,7 @@ type HttpBodyState = {
   sent: number;
   failed: boolean;
   aborted: boolean;
+  cancelled: boolean;
   controller: ReadableStreamDefaultController<Uint8Array> | null;
 };
 
@@ -49,53 +50,68 @@ function failHttpStreamBody(
   }
 }
 
-async function readHttpResponseChunks(
-  reader: ReadableStreamDefaultReader<{ bytes: Uint8Array }>,
-  controller: ReadableStreamDefaultController<Uint8Array>,
-  state: HttpBodyState
-): Promise<boolean> {
-  while (true) {
-    if (state.failed) return false;
-    const { done, value } = await reader.read();
-    if (done) return true;
-    if (value) {
-      state.sent += value.bytes.byteLength;
-      controller.enqueue(value.bytes);
-    }
-  }
-}
-
-async function pumpHttpResponseBody(input: {
+type HttpBodyPump = {
   stream: LinkStream;
   rest: Uint8Array[];
+  restIndex: number;
+  reader: ReadableStreamDefaultReader<StreamChunk> | null;
   expectedLength: number | null;
   state: HttpBodyState;
   fail: (err: unknown) => void;
-}): Promise<void> {
-  const controller = input.state.controller;
-  if (!controller) return;
-  if (input.state.aborted || input.state.failed) {
-    input.fail(new Error('http stream aborted'));
+};
+
+function finishHttpResponseBody(
+  pump: HttpBodyPump,
+  controller: ReadableStreamDefaultController<Uint8Array>
+): void {
+  const { state, expectedLength } = pump;
+  if (state.aborted) {
+    pump.fail(new Error('http stream aborted'));
     return;
   }
-  for (const chunk of input.rest) {
-    input.state.sent += chunk.byteLength;
-    controller.enqueue(chunk);
+  if (expectedLength !== null && state.sent < expectedLength) {
+    pump.fail(new Error(`http body truncated: sent=${state.sent} expected=${expectedLength}`));
+    return;
   }
-  const reader = input.stream.readable.getReader();
+  controller.close();
+}
+
+// 每次 pull 只推进一个 chunk：先吐已收到的 rest，再对上游 LinkStream 做恰好一次 read。
+// 消费者不拉就不读上游，窗口信用不回，背压沿 LinkStream 传回对端。
+async function pullHttpResponseBody(
+  pump: HttpBodyPump,
+  controller: ReadableStreamDefaultController<Uint8Array>
+): Promise<void> {
+  const { state } = pump;
+  if (state.cancelled) return;
+  if (state.aborted || state.failed) return pump.fail(new Error('http stream aborted'));
   try {
-    const finished = await readHttpResponseChunks(reader, controller, input.state);
-    if (!finished) return;
-    if (input.state.aborted) return input.fail(new Error('http stream aborted'));
-    if (input.expectedLength !== null && input.state.sent < input.expectedLength) {
-      return input.fail(
-        new Error(`http body truncated: sent=${input.state.sent} expected=${input.expectedLength}`)
-      );
+    const queued = pump.rest[pump.restIndex];
+    if (queued) {
+      pump.restIndex += 1;
+      state.sent += queued.byteLength;
+      controller.enqueue(queued);
+      return;
     }
-    controller.close();
+    pump.reader ??= pump.stream.readable.getReader();
+    while (true) {
+      const { done, value } = await pump.reader.read();
+      if (state.cancelled || state.failed) return;
+      if (done) return finishHttpResponseBody(pump, controller);
+      if (!value) continue;
+      state.sent += value.bytes.byteLength;
+      controller.enqueue(value.bytes);
+      return;
+    }
   } catch (err) {
-    input.fail(err);
+    pump.fail(err);
   }
+}
+
+function cancelHttpResponseBody(pump: HttpBodyPump, rst: () => void): void {
+  pump.state.cancelled = true;
+  rst();
+  pump.reader?.cancel().catch(() => {});
 }
 
 export function responseFromHttpHead(
@@ -104,8 +120,23 @@ export function responseFromHttpHead(
   rst: () => void
 ): Response {
   const expectedLength = parseContentLengthHeader(head.headers);
-  const state: HttpBodyState = { sent: 0, failed: false, aborted: false, controller: null };
+  const state: HttpBodyState = {
+    sent: 0,
+    failed: false,
+    aborted: false,
+    cancelled: false,
+    controller: null,
+  };
   const fail = (err: unknown) => failHttpStreamBody(state, expectedLength, head.status, err);
+  const pump: HttpBodyPump = {
+    stream,
+    rest: head.rest,
+    restIndex: 0,
+    reader: null,
+    expectedLength,
+    state,
+    fail,
+  };
 
   stream.onAbort(() => {
     state.aborted = true;
@@ -119,19 +150,12 @@ export function responseFromHttpHead(
   });
 
   const responseBody = new ReadableStream<Uint8Array>({
-    async start(controller) {
+    start(controller) {
       state.controller = controller;
-      await pumpHttpResponseBody({
-        stream,
-        rest: head.rest,
-        expectedLength,
-        state,
-        fail,
-      });
+      if (state.aborted) fail(new Error('http stream aborted'));
     },
-    cancel() {
-      rst();
-    },
+    pull: (controller) => pullHttpResponseBody(pump, controller),
+    cancel: () => cancelHttpResponseBody(pump, rst),
   });
   return new Response(responseBody, { status: head.status, headers: head.headers });
 }

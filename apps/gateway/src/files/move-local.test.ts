@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import {
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -8,12 +9,13 @@ import {
   readdirSync,
   readlinkSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileMoveIo, moveLocal } from './move-local';
 import type { MoveBatch, MoveOutcome } from './move-types';
 
@@ -210,13 +212,25 @@ describe('moveLocal', () => {
   });
 });
 
+const isTemp = (path: unknown) => basename(String(path)).startsWith('.vtmv-');
+
 describe('moveLocal EXDEV fallback', () => {
-  function stubRenameExdev() {
-    const spy = spyOn(fileMoveIo, 'rename').mockImplementation(() => {
-      throw errno('EXDEV');
+  /** 模拟目标在另一个文件系统：源→目标的 rename / link 报 EXDEV，临时项→目标（同目录）照常。 */
+  function stubCrossDevice() {
+    const rename = spyOn(fileMoveIo, 'rename').mockImplementation((from, to) => {
+      if (!isTemp(from)) throw errno('EXDEV');
+      renameSync(from, to);
     });
-    spies.push(spy);
-    return spy;
+    const link = spyOn(fileMoveIo, 'link').mockImplementation((from, to) => {
+      if (!isTemp(from)) throw errno('EXDEV');
+      linkSync(from, to);
+    });
+    spies.push(rename, link);
+    return rename;
+  }
+
+  function leftovers(dir: string): string[] {
+    return readdirSync(join(dir, 'dest')).filter((name) => name.startsWith('.vtmv-'));
   }
 
   test('copies then removes the source for files, directories and symlinks', async () => {
@@ -225,41 +239,48 @@ describe('moveLocal EXDEV fallback', () => {
     mkdirSync(join(dir, 'd'));
     writeFileSync(join(dir, 'd', 'inner'), 'inner');
     symlinkSync('inner', join(dir, 'd', 'ln'));
-    const spy = stubRenameExdev();
+    symlinkSync('f', join(dir, 'lnk'));
+    const spy = stubCrossDevice();
 
-    const outcomes = await run(batch(dir, [['f'], ['d']]));
+    const outcomes = await run(batch(dir, [['f'], ['d'], ['lnk']]));
 
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(outcomes.map(code)).toEqual(['ok', 'ok']);
+    expect(spy).toHaveBeenCalled();
+    expect(outcomes.map(code)).toEqual(['ok', 'ok', 'ok']);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('file');
     expect(readFileSync(join(dir, 'dest', 'd', 'inner'), 'utf8')).toBe('inner');
     expect(readlinkSync(join(dir, 'dest', 'd', 'ln'))).toBe('inner');
+    expect(readlinkSync(join(dir, 'dest', 'lnk'))).toBe('f');
     expect(existsSync(join(dir, 'f'))).toBe(false);
     expect(existsSync(join(dir, 'd'))).toBe(false);
+    expect(lstatSync(join(dir, 'lnk'), { throwIfNoEntry: false })).toBeUndefined();
+    expect(leftovers(dir)).toEqual([]);
+    expect(readdirSync(join(dir, 'dest')).sort()).toEqual(['d', 'f', 'lnk']);
   });
 
   test('overwrite goes through the copy path too', async () => {
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'new');
     writeFileSync(join(dir, 'dest', 'f'), 'old');
-    stubRenameExdev();
+    stubCrossDevice();
 
     const outcomes = await run(batch(dir, [['f']], { overwrite: true }));
 
     expect(outcomes.map(code)).toEqual(['ok']);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('new');
     expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(leftovers(dir)).toEqual([]);
   });
 
-  test('a failed copy removes the partial destination and keeps the source', async () => {
+  test('a failed copy removes only its temporary sibling and keeps the source', async () => {
     const dir = sandbox();
     mkdirSync(join(dir, 'd'));
     writeFileSync(join(dir, 'd', 'inner'), 'inner');
-    stubRenameExdev();
+    stubCrossDevice();
     spies.push(
-      spyOn(fileMoveIo, 'cp').mockImplementation((_src, dest) => {
-        mkdirSync(String(dest));
-        writeFileSync(join(String(dest), 'partial'), 'p');
+      spyOn(fileMoveIo, 'cp').mockImplementation((_src, tmp) => {
+        expect(isTemp(tmp)).toBe(true);
+        mkdirSync(String(tmp));
+        writeFileSync(join(String(tmp), 'partial'), 'p');
         throw errno('EACCES');
       })
     );
@@ -267,7 +288,60 @@ describe('moveLocal EXDEV fallback', () => {
     const outcomes = await run(batch(dir, [['d']]));
 
     expect(outcomes.map(code)).toEqual(['permission_denied']);
-    expect(existsSync(join(dir, 'dest', 'd'))).toBe(false);
+    expect(readdirSync(join(dir, 'dest'))).toEqual([]);
+    expect(readFileSync(join(dir, 'd', 'inner'), 'utf8')).toBe('inner');
+  });
+
+  test('a destination created concurrently survives a failed copy', async () => {
+    const dir = sandbox();
+    mkdirSync(join(dir, 'd'));
+    writeFileSync(join(dir, 'd', 'inner'), 'inner');
+    stubCrossDevice();
+    spies.push(
+      spyOn(fileMoveIo, 'cp').mockImplementation((_src, tmp) => {
+        mkdirSync(String(tmp));
+        // 别人在复制期间建出了最终目标
+        mkdirSync(join(dir, 'dest', 'd'));
+        writeFileSync(join(dir, 'dest', 'd', 'theirs'), 'theirs');
+        throw errno('ENOSPC');
+      })
+    );
+
+    const outcomes = await run(batch(dir, [['d']]));
+
+    expect(outcomes.map(code)).toEqual(['unknown']);
+    expect(readFileSync(join(dir, 'dest', 'd', 'theirs'), 'utf8')).toBe('theirs');
+    expect(leftovers(dir)).toEqual([]);
+    expect(readFileSync(join(dir, 'd', 'inner'), 'utf8')).toBe('inner');
+  });
+
+  test('a destination created during the copy is not replaced at commit time', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'mine');
+    mkdirSync(join(dir, 'd'));
+    writeFileSync(join(dir, 'd', 'inner'), 'inner');
+    stubCrossDevice();
+    const realCp = fileMoveIo.cp;
+    spies.push(
+      spyOn(fileMoveIo, 'cp').mockImplementation((src, tmp, options) => {
+        realCp(src, tmp, options);
+        // 复制期间别人建出了同名目标
+        if (basename(String(src)) === 'f') {
+          writeFileSync(join(dir, 'dest', 'f'), 'theirs');
+          return;
+        }
+        mkdirSync(join(dir, 'dest', 'd'));
+        writeFileSync(join(dir, 'dest', 'd', 'theirs'), 'theirs');
+      })
+    );
+
+    const outcomes = await run(batch(dir, [['f'], ['d']]));
+
+    expect(outcomes.map(code)).toEqual(['already_exists', 'already_exists']);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('theirs');
+    expect(readdirSync(join(dir, 'dest', 'd'))).toEqual(['theirs']);
+    expect(leftovers(dir)).toEqual([]);
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('mine');
     expect(readFileSync(join(dir, 'd', 'inner'), 'utf8')).toBe('inner');
   });
 
@@ -275,7 +349,7 @@ describe('moveLocal EXDEV fallback', () => {
     const dir = sandbox();
     writeFileSync(join(dir, 'f'), 'new');
     writeFileSync(join(dir, 'dest', 'f'), 'old');
-    stubRenameExdev();
+    stubCrossDevice();
     spies.push(
       spyOn(fileMoveIo, 'cp').mockImplementation(() => {
         throw errno('ENOSPC');
@@ -287,19 +361,127 @@ describe('moveLocal EXDEV fallback', () => {
     expect(outcomes.map(code)).toEqual(['unknown']);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+    expect(leftovers(dir)).toEqual([]);
+  });
+
+  test('a source that cannot be removed leaves the committed destination in place', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+    stubCrossDevice();
+    spies.push(
+      spyOn(fileMoveIo, 'rm').mockImplementation((path, options) => {
+        if (String(path) === join(dir, 'f')) throw errno('EACCES');
+        rmSync(path, options);
+      })
+    );
+
+    const outcomes = await run(batch(dir, [['f']]));
+
+    expect(outcomes.map(code)).toEqual(['permission_denied']);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('data');
+    expect(leftovers(dir)).toEqual([]);
   });
 
   test('rename races surface as already_exists', async () => {
     const dir = sandbox();
-    writeFileSync(join(dir, 'f'), 'x');
+    mkdirSync(join(dir, 'd'));
     spies.push(
       spyOn(fileMoveIo, 'rename').mockImplementation(() => {
         throw errno('ENOTEMPTY');
       })
     );
 
+    const outcomes = await run(batch(dir, [['d']]));
+
+    expect(outcomes.map(code)).toEqual(['already_exists']);
+    expect(readdirSync(join(dir, 'dest'))).toEqual([]);
+    expect(existsSync(join(dir, 'd'))).toBe(true);
+  });
+});
+
+describe('moveLocal no-replace on one file system', () => {
+  /** 让预检的 lstat 看到「目标不存在」，等价于预检之后目标才被别人建出来。 */
+  function foolPrecheck(missing: string[]) {
+    const realLstat = lstatSync;
+    spies.push(
+      spyOn(fileMoveIo, 'lstat').mockImplementation(((...args: Parameters<typeof lstatSync>) => {
+        if (missing.includes(String(args[0]))) throw errno('ENOENT');
+        return realLstat(...args);
+      }) as typeof lstatSync)
+    );
+  }
+
+  test('a file never replaces a destination that appeared after the check', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'new');
+    writeFileSync(join(dir, 'dest', 'f'), 'old');
+    foolPrecheck([join(dir, 'dest', 'f')]);
+
     const outcomes = await run(batch(dir, [['f']]));
 
     expect(outcomes.map(code)).toEqual(['already_exists']);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
+  });
+
+  test('a directory never replaces a destination that appeared after the check', async () => {
+    const dir = sandbox();
+    mkdirSync(join(dir, 'd'));
+    writeFileSync(join(dir, 'd', 'inner'), 'inner');
+    mkdirSync(join(dir, 'dest', 'd'));
+    writeFileSync(join(dir, 'dest', 'd', 'keep'), 'keep');
+    foolPrecheck([join(dir, 'dest', 'd')]);
+
+    const outcomes = await run(batch(dir, [['d']]));
+
+    expect(outcomes.map(code)).toEqual(['already_exists']);
+    expect(readdirSync(join(dir, 'dest', 'd'))).toEqual(['keep']);
+    expect(readFileSync(join(dir, 'd', 'inner'), 'utf8')).toBe('inner');
+  });
+
+  test('rename onto a sibling that appeared after the check keeps both', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'a'), 'a');
+    writeFileSync(join(dir, 'b'), 'b');
+    foolPrecheck([join(dir, 'b')]);
+
+    const outcomes = await run(batch(dir, [['a', 'b']], { destDir: dir }));
+
+    expect(outcomes.map(code)).toEqual(['already_exists']);
+    expect(readFileSync(join(dir, 'a'), 'utf8')).toBe('a');
+    expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('b');
+  });
+
+  test('file systems without hard links fall back to a checked rename', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+    spies.push(
+      spyOn(fileMoveIo, 'link').mockImplementation(() => {
+        throw errno('EPERM');
+      })
+    );
+
+    const outcomes = await run(batch(dir, [['f']]));
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+  });
+
+  test('a failed unlink after linking removes the new link and reports the error', async () => {
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'data');
+    spies.push(
+      spyOn(fileMoveIo, 'unlink').mockImplementationOnce(() => {
+        throw errno('EACCES');
+      })
+    );
+
+    const outcomes = await run(batch(dir, [['f']]));
+
+    expect(outcomes.map(code)).toEqual(['permission_denied']);
+    expect(readdirSync(join(dir, 'dest'))).toEqual([]);
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('data');
   });
 });

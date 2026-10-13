@@ -10,19 +10,22 @@ import { config } from '../config';
 import { getDeviceById } from '../db';
 import {
   ARCHIVE_IDLE_TIMEOUT_MS,
-  type ArchiveStreamOptions,
-  buildSshInvocation,
+  type ArchiveLimits,
   createArchiveStream,
+  createArchiveStreamFromProcess,
   tarArchiveArgs,
+  tarNameArgs,
 } from '../files/archive-stream';
 import { checkAndNormalize, statFile } from '../files/device-storage';
 import { resolveFileRoot } from '../files/file-root';
+import { SH_INSIDE_FN, SH_PHYS_FN, spawnRemoteScript } from '../files/remote-script';
 import { type FileOpResult, fail, ok } from '../files/rsync-operation';
-import { RsyncAuthError, buildRsyncDeviceSpec } from '../files/ssh-command';
+import { RsyncAuthError, type RsyncDeviceSpec, buildRsyncDeviceSpec } from '../files/ssh-command';
 import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
+import { quoteShellArg } from '../tmux-client/command-builder';
 import { sessionMaxBytes } from '../transfer/limits';
-import { attachmentHeaders, codeError } from './file-http';
+import { codeError } from './file-http';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 
@@ -87,22 +90,27 @@ function normalizeItems(
   for (const input of inputs) {
     const norm = checkAndNormalize(device, rootPath, input);
     if (!norm.ok) return fail(norm.code);
-    // 打包 `/` 本身没有 basename 可用，且没有意义
-    if (norm.path === '/') return fail('invalid');
-    const parent = posix.dirname(norm.path);
+    // `/` 没有 basename：以父目录 `/` + 条目 `.` 表示
+    const parent = norm.path === '/' ? '/' : posix.dirname(norm.path);
     if (parentDir !== null && parent !== parentDir) return fail('invalid');
     parentDir = parent;
-    const name = posix.basename(norm.path);
+    const name = norm.path === '/' ? '.' : posix.basename(norm.path);
     if (names.includes(name)) continue;
     names.push(name);
     paths.push(norm.path);
   }
   if (parentDir === null) return fail('invalid');
+  // `.` 已包含 `/` 下的全部内容，其余条目只会重复打包
+  if (names.includes('.')) return ok({ parentDir, names: ['.'], paths: ['/'] });
   return ok({ parentDir, names, paths });
 }
 
+function normalizedRoot(rootPath: string): string {
+  return posix.normalize(rootPath).replace(/\/+$/, '') || '/';
+}
+
 function isInside(rootPath: string, absPath: string): boolean {
-  const root = posix.normalize(rootPath).replace(/\/+$/, '') || '/';
+  const root = normalizedRoot(rootPath);
   if (absPath === root) return true;
   return absPath.startsWith(root === '/' ? '/' : `${root}/`);
 }
@@ -121,8 +129,8 @@ async function checkRemoteParent(
 }
 
 function suggestedName(items: NormalizedItems): string {
-  const base =
-    items.names.length === 1 ? items.names[0] : posix.basename(items.parentDir) || 'files';
+  const single = items.names.length === 1 && items.names[0] !== '.' ? items.names[0] : null;
+  const base = single ?? (posix.basename(items.parentDir) || 'files');
   return `${base}.tar.gz`;
 }
 
@@ -187,11 +195,11 @@ async function handlePrepare(req: Request): Promise<Response> {
   return json(result.data);
 }
 
-function streamOptions(argv: string[]): ArchiveStreamOptions {
+function streamLimits(onClose?: () => void): ArchiveLimits {
   return {
-    argv,
     idleMs: ARCHIVE_IDLE_TIMEOUT_MS,
     maxBytes: sessionMaxBytes(config.transferMaxBytes),
+    onClose,
   };
 }
 
@@ -205,9 +213,53 @@ function openLocalArchive(device: Device, rootPath: string, ticket: ArchiveTicke
   }
   try {
     const argv = tarArchiveArgs(ticket.parentDir, ticket.names);
-    return ok(createArchiveStream(streamOptions(argv)));
+    return ok(createArchiveStream({ argv, ...streamLimits() }));
   } catch {
     return fail('unknown');
+  }
+}
+
+const EXIT_ROOT = 60;
+const EXIT_PARENT = 61;
+const EXIT_OUTSIDE = 64;
+
+function dieWith(code: number, reason: string): string {
+  return `|| { echo ${quoteShellArg(reason)} >&2; exit ${code}; }`;
+}
+
+/**
+ * 路径只做过词法检查，符号链接可能把父目录带出根：在启动 tar 的同一次远端执行里比对物理路径，
+ * tar 直接在核对过的工作目录里跑。父目录在根之外时条目就是根本身，无需核对。
+ */
+function buildRemoteTarScript(rootPath: string, ticket: ArchiveTicket): string {
+  const q = quoteShellArg;
+  const lines: string[] = [];
+  if (isInside(rootPath, ticket.parentDir)) {
+    lines.push(
+      SH_PHYS_FN,
+      SH_INSIDE_FN,
+      `cd -- ${q(normalizedRoot(rootPath))} ${dieWith(EXIT_ROOT, 'archive_root_unreachable')}`,
+      `phys ${dieWith(EXIT_ROOT, 'archive_root_unreachable')}`,
+      'r=$PHYS',
+      `cd -- ${q(ticket.parentDir)} ${dieWith(EXIT_PARENT, 'archive_parent_unreachable')}`,
+      `phys ${dieWith(EXIT_PARENT, 'archive_parent_unreachable')}`,
+      `inside "$PHYS" "$r" ${dieWith(EXIT_OUTSIDE, 'archive_parent_outside_root')}`
+    );
+  } else {
+    lines.push(
+      `cd -- ${q(ticket.parentDir)} ${dieWith(EXIT_PARENT, 'archive_parent_unreachable')}`
+    );
+  }
+  lines.push(`exec tar -czf - ${tarNameArgs(ticket.names).map(q).join(' ')}`, '');
+  return lines.join('\n');
+}
+
+async function remoteSpec(device: Device): Promise<FileOpResult<RsyncDeviceSpec>> {
+  try {
+    return ok(await buildRsyncDeviceSpec(device));
+  } catch (error) {
+    if (error instanceof RsyncAuthError) return fail(error.code, error.message);
+    throw error;
   }
 }
 
@@ -216,37 +268,43 @@ function openLocalArchive(device: Device, rootPath: string, ticket: ArchiveTicke
  * 一次长下载会把同设备的其它文件操作全部堵住。这里直接建 spec，交给流的 `onClose` 在
  * 流结束 / 出错 / 取消时清理，保证 ssh 子进程存活期间密钥与 askpass 文件都在。
  */
-async function openRemoteArchive(device: Device, ticket: ArchiveTicket): Promise<ArchiveBody> {
-  let spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>;
+async function openRemoteArchive(
+  device: Device,
+  rootPath: string,
+  ticket: ArchiveTicket
+): Promise<ArchiveBody> {
+  const spec = await remoteSpec(device);
+  if (!spec.ok) return spec;
   try {
-    spec = await buildRsyncDeviceSpec(device);
-  } catch (error) {
-    if (error instanceof RsyncAuthError) return fail(error.code, error.message);
-    throw error;
-  }
-  const invocation = buildSshInvocation(spec, tarArchiveArgs(ticket.parentDir, ticket.names));
-  if (!invocation) {
-    spec.cleanup();
-    return fail('unknown');
-  }
-  try {
-    const stream = createArchiveStream({
-      ...streamOptions(invocation.argv),
-      env: invocation.env,
-      onClose: spec.cleanup,
-    });
-    return ok(stream);
+    const proc = spawnRemoteScript(spec.data, buildRemoteTarScript(rootPath, ticket));
+    if (!proc) {
+      spec.data.cleanup();
+      return fail('unknown');
+    }
+    return ok(createArchiveStreamFromProcess(proc, streamLimits(spec.data.cleanup)));
   } catch {
+    spec.data.cleanup();
     return fail('unknown');
   }
 }
 
-function archiveHeaders(name: string): Record<string, string> {
-  const base = attachmentHeaders(name, 'application/gzip', 0);
-  // 总长度未知：不能带 Content-Length，也不支持 Range
-  return Object.fromEntries(
-    Object.entries(base).filter(([key]) => key !== 'Content-Length' && key !== 'Accept-Ranges')
+/** `filename=` 回退值只留可打印 ASCII（非 ASCII、引号、反斜杠换成 `_`），完整名字放 `filename*=`。 */
+function contentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7E]|["\\]/gu, '_');
+  const encoded = encodeURIComponent(name).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
   );
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
+function archiveHeaders(name: string): Record<string, string> {
+  // 总长度未知：不能带 Content-Length，也不支持 Range
+  return {
+    'Content-Type': 'application/gzip',
+    'Content-Disposition': contentDisposition(name),
+    'Cache-Control': 'no-store',
+  };
 }
 
 async function handleArchiveDownload(req: Request, id: string): Promise<Response> {
@@ -257,12 +315,19 @@ async function handleArchiveDownload(req: Request, id: string): Promise<Response
   const device = getDeviceById(resolved.root.deviceId);
   if (!device) return codeError('device_not_found');
 
+  // 先建响应头：构造失败时不能留下已启动的进程
+  let headers: Record<string, string>;
+  try {
+    headers = archiveHeaders(ticket.name);
+  } catch {
+    return codeError('unknown');
+  }
   const body =
     device.type === 'local'
       ? openLocalArchive(device, resolved.root.path, ticket)
-      : await openRemoteArchive(device, ticket);
+      : await openRemoteArchive(device, resolved.root.path, ticket);
   if (!body.ok) return codeError(body.code, body.detail);
-  return new Response(body.data, { status: 200, headers: archiveHeaders(ticket.name) });
+  return new Response(body.data, { status: 200, headers });
 }
 
 export const fileArchiveRoutes: ApiRoute[] = [

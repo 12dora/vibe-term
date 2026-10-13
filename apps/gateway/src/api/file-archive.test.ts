@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -14,8 +15,8 @@ import { type Device, FILE_OP_MAX_PATHS, type FileStatResponse } from '@vibeterm
 import { createDevice } from '../db/devices';
 import { createFileRoot, deleteFileRoot } from '../db/file-roots';
 import { runMigrations } from '../db/migrate';
-import { type ArchiveProcess, fileArchiveIo } from '../files/archive-stream';
 import * as deviceStorage from '../files/device-storage';
+import { type RemoteScriptProcess, remoteScriptIo } from '../files/remote-script';
 import * as sshCommand from '../files/ssh-command';
 import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
@@ -31,6 +32,7 @@ beforeAll(() => {
   runMigrations();
 });
 
+const originalRemoteSpawn = remoteScriptIo.spawn;
 const createdRootIds: string[] = [];
 const sandboxes: string[] = [];
 const spies: Array<{ mockRestore: () => void }> = [];
@@ -41,6 +43,7 @@ function track<T extends { mockRestore: () => void }>(spy: T): T {
 }
 
 afterEach(() => {
+  remoteScriptIo.spawn = originalRemoteSpawn;
   while (spies.length > 0) spies.pop()?.mockRestore();
   for (const id of createdRootIds) deleteFileRoot(id);
   createdRootIds.length = 0;
@@ -355,8 +358,43 @@ describe('GET /api/files/archive/:id (local tar)', () => {
   });
 });
 
+function realSandbox(prefix = 'vibeterm-archive-'): string {
+  return realpathSync(tmpSandbox(prefix));
+}
+
+async function drain(res: Response): Promise<{ bytes: Uint8Array; error: unknown }> {
+  const chunks: Uint8Array[] = [];
+  const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+  } catch (error) {
+    return { bytes: Buffer.concat(chunks), error };
+  }
+  return { bytes: Buffer.concat(chunks), error: null };
+}
+
+function extract(bytes: Uint8Array): string {
+  const work = tmpSandbox('vibeterm-archive-out-');
+  const archivePath = join(work, 'out.tar.gz');
+  writeFileSync(archivePath, bytes);
+  const extractDir = join(work, 'x');
+  mkdirSync(extractDir);
+  const untar = Bun.spawnSync(['tar', '-xzf', archivePath, '-C', extractDir]);
+  expect(untar.exitCode).toBe(0);
+  return extractDir;
+}
+
 describe('ssh devices', () => {
-  function stubSsh(content: string) {
+  interface RemoteCall {
+    argv: string[];
+    script: string;
+  }
+
+  function stubSpec(overrides: Partial<sshCommand.RsyncDeviceSpec> = {}) {
     const cleanup = mock(() => {});
     track(
       spyOn(sshCommand, 'buildRsyncDeviceSpec').mockResolvedValue({
@@ -364,60 +402,246 @@ describe('ssh devices', () => {
         rsh: 'ssh -o BatchMode=yes',
         env: { SSH_AUTH_SOCK: '/sock' },
         cleanup,
+        ...overrides,
       })
     );
+    return cleanup;
+  }
+
+  function stubStat() {
+    return track(
+      spyOn(deviceStorage, 'statFile').mockImplementation(async (_root, path) => ({
+        ok: true,
+        data: fakeStat(path, 'dir'),
+      }))
+    );
+  }
+
+  /** 「远端」换成本机 sh：脚本原样交给 `sh -s`，路径落在临时沙箱里。 */
+  function runLocally(): RemoteCall[] {
+    const calls: RemoteCall[] = [];
+    remoteScriptIo.spawn = (argv, env, script) => {
+      calls.push({ argv, script });
+      return originalRemoteSpawn(['sh', '-s'], env, script);
+    };
+    return calls;
+  }
+
+  function fakeProcess(stdout: ReadableStream<Uint8Array>) {
     const kill = mock(() => {});
-    const proc: ArchiveProcess = {
-      stdout: new Response(content).body as ReadableStream<Uint8Array>,
-      stderr: null,
+    const proc: RemoteScriptProcess = {
+      stdout,
+      stderr: new Response('').body as ReadableStream<Uint8Array>,
       exited: Promise.resolve(0),
       kill,
     };
-    const spawn = track(spyOn(fileArchiveIo, 'spawn').mockImplementation(() => proc));
-    return { cleanup, spawn };
+    return { proc, kill };
   }
 
-  test('prepare stats the parent once; download spawns ssh and cleans the spec when done', async () => {
-    const { rootId, path } = sshRoot();
-    const stat = track(
-      spyOn(deviceStorage, 'statFile').mockResolvedValue({
-        ok: true,
-        data: fakeStat(path, 'dir'),
-      })
-    );
-    const { cleanup, spawn } = stubSsh('TARDATA');
+  test('prepare stats the parent once; download round-trips through sh -s and cleans up once', async () => {
+    const dir = realSandbox();
+    fillSandbox(dir);
+    const { rootId } = sshRoot(dir);
+    const stat = stubStat();
+    const cleanup = stubSpec();
+    const calls = runLocally();
 
-    const ticket = await prepared(rootId, [`${path}/x`, `${path}/y z`]);
+    const ticket = await prepared(rootId, [
+      join(dir, 'a b.txt'),
+      join(dir, '-dash'),
+      join(dir, 'sub'),
+    ]);
     expect(stat).toHaveBeenCalledTimes(1);
-    expect(stat.mock.calls[0]).toEqual([rootId, path]);
-    expect(ticket.name).toBe('root.tar.gz');
+    expect(stat.mock.calls[0]).toEqual([rootId, dir]);
+    expect(ticket.name).toBe(`${basename(dir)}.tar.gz`);
 
     const res = await download(ticket.archiveId);
     expect(res.status).toBe(200);
     expect(cleanup).not.toHaveBeenCalled();
-    expect(await res.text()).toBe('TARDATA');
+    const { bytes, error } = await drain(res);
 
-    const [argv, env] = spawn.mock.calls[0] as [string[], Record<string, string>];
-    expect(argv.slice(0, 3)).toEqual(['ssh', '-o', 'BatchMode=yes']);
-    expect(argv[3]).toBe('user@host');
-    expect(argv[4]).toBe(`'tar' '-czf' '-' '-C' '${path}' './x' './y z'`);
-    expect(env.SSH_AUTH_SOCK).toBe('/sock');
+    expect(error).toBeNull();
+    expect(calls[0]?.argv).toEqual(['ssh', '-o', 'BatchMode=yes', 'user@host', 'sh -s']);
+    const extractDir = extract(bytes);
+    expect(readFileSync(join(extractDir, 'a b.txt'), 'utf8')).toBe('with spaces');
+    expect(readFileSync(join(extractDir, '-dash'), 'utf8')).toBe('leading dash');
+    expect(readFileSync(join(extractDir, 'sub/nested/deep.txt'), 'utf8')).toBe('deep');
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
 
-  test('archiving the root itself stats the root and names the archive after it', async () => {
-    const { rootId, path } = sshRoot();
-    const stat = track(
-      spyOn(deviceStorage, 'statFile').mockResolvedValue({
-        ok: true,
-        data: fakeStat(path, 'dir'),
-      })
+  test('a symlinked parent leaving the root errors the stream, leaks nothing and still cleans up', async () => {
+    const dir = realSandbox();
+    const outside = realSandbox('vibeterm-archive-secret-');
+    writeFileSync(join(outside, 'secret'), 'TOP-SECRET');
+    symlinkSync(outside, join(dir, 'link'));
+    const { rootId } = sshRoot(dir);
+    stubStat();
+    const cleanup = stubSpec();
+    runLocally();
+    const warn = track(spyOn(console, 'warn').mockImplementation(() => {}));
+
+    const ticket = await prepared(rootId, [join(dir, 'link/secret')]);
+    const res = await download(ticket.archiveId);
+    const { bytes, error } = await drain(res);
+
+    expect(String(error)).toContain('archive_exit_64');
+    expect(Buffer.from(bytes).toString('latin1')).not.toContain('TOP-SECRET');
+    expect(bytes.byteLength).toBe(0);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('archive_parent_outside_root');
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  test('a root and parent directory with a trailing newline are archived correctly', async () => {
+    const base = realSandbox();
+    const root = join(base, 'root\n');
+    mkdirSync(join(root, 'd\n'), { recursive: true });
+    writeFileSync(join(root, 'd\n', 'f1'), 'inner');
+    const { rootId } = sshRoot(root);
+    stubStat();
+    stubSpec();
+    runLocally();
+
+    const ticket = await prepared(rootId, [join(root, 'd\n', 'f1')]);
+    const { bytes, error } = await drain(await download(ticket.archiveId));
+
+    expect(error).toBeNull();
+    expect(readFileSync(join(extract(bytes), 'f1'), 'utf8')).toBe('inner');
+  });
+
+  test('a newline-named root is not confused with its newline-less sibling', async () => {
+    const base = realSandbox();
+    const root = join(base, 'root\n');
+    mkdirSync(root);
+    mkdirSync(join(base, 'root'));
+    writeFileSync(join(base, 'root', 'secret'), 'SIBLING-SECRET');
+    symlinkSync(join(base, 'root'), join(root, 'link'));
+    const { rootId } = sshRoot(root);
+    stubStat();
+    stubSpec();
+    runLocally();
+    track(spyOn(console, 'warn').mockImplementation(() => {}));
+
+    const ticket = await prepared(rootId, [join(root, 'link', 'secret')]);
+    const { bytes, error } = await drain(await download(ticket.archiveId));
+
+    expect(String(error)).toContain('archive_exit_64');
+    expect(bytes.byteLength).toBe(0);
+  });
+
+  test('500 names of 255 bytes go through stdin, argv stays `sh -s`', async () => {
+    const dir = realSandbox();
+    const names = Array.from(
+      { length: FILE_OP_MAX_PATHS },
+      (_, i) => `${String(i).padStart(3, '0')}${'x'.repeat(252)}`
     );
+    for (const name of names) writeFileSync(join(dir, name), '');
+    const { rootId } = sshRoot(dir);
+    stubStat();
+    stubSpec();
+    const calls = runLocally();
+
+    const ticket = await prepared(
+      rootId,
+      names.map((name) => join(dir, name))
+    );
+    const { bytes, error } = await drain(await download(ticket.archiveId));
+
+    expect(error).toBeNull();
+    expect(calls[0]?.argv.at(-1)).toBe('sh -s');
+    expect(calls[0]?.argv.join(' ').length).toBeLessThan(200);
+    expect(calls[0]?.script.length).toBeGreaterThan(FILE_OP_MAX_PATHS * 255);
+    const extractDir = extract(bytes);
+    expect(readFileSync(join(extractDir, names[499] as string), 'utf8')).toBe('');
+  });
+
+  test('client cancel kills the remote process and cleans up once', async () => {
+    const { rootId, path } = sshRoot();
+    stubStat();
+    const cleanup = stubSpec();
+    const fake = fakeProcess(new ReadableStream<Uint8Array>({}));
+    remoteScriptIo.spawn = () => fake.proc;
+
+    const ticket = await prepared(rootId, [`${path}/x`]);
+    const res = await download(ticket.archiveId);
+    expect(res.status).toBe(200);
+    await res.body?.cancel();
+
+    expect(fake.kill).toHaveBeenCalledTimes(1);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  test('spawn throwing cleans up and answers 500', async () => {
+    const { rootId, path } = sshRoot();
+    stubStat();
+    const cleanup = stubSpec();
+    const ticket = await prepared(rootId, [`${path}/x`]);
+    remoteScriptIo.spawn = () => {
+      throw new Error('ENOENT ssh');
+    };
+
+    const res = await download(ticket.archiveId);
+
+    expect(res.status).toBe(500);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  test('a non-ssh spec spawns nothing, cleans up and answers 500', async () => {
+    const { rootId, path } = sshRoot();
+    stubStat();
+    const cleanup = stubSpec({ rsh: undefined });
+    const ticket = await prepared(rootId, [`${path}/x`]);
+    const spawn = mock(() => {
+      throw new Error('should not spawn');
+    });
+    remoteScriptIo.spawn = spawn;
+
+    const res = await download(ticket.archiveId);
+
+    expect(res.status).toBe(500);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+  });
+
+  test('the script verifies physical paths, quotes every value and execs tar without -C', async () => {
+    const { rootId, path } = sshRoot("/remote/it's root");
+    stubStat();
+    stubSpec();
+    const fake = fakeProcess(new Response('').body as ReadableStream<Uint8Array>);
+    let script = '';
+    remoteScriptIo.spawn = (_argv, _env, text) => {
+      script = text;
+      return fake.proc;
+    };
+
+    const ticket = await prepared(rootId, [`${path}/sub/x`, `${path}/sub/y z`]);
+    await drain(await download(ticket.archiveId));
+
+    expect(script).toContain("cd -- '/remote/it'\\''s root' ||");
+    expect(script).toContain("cd -- '/remote/it'\\''s root/sub' ||");
+    expect(script).toContain('inside "$PHYS" "$r" ||');
+    expect(script).toContain("exec tar -czf - './x' './y z'\n");
+    expect(script).not.toContain('-C');
+  });
+
+  test('the root itself (parent outside the root) skips the boundary check', async () => {
+    const { rootId, path } = sshRoot();
+    const stat = stubStat();
+    stubSpec();
+    const fake = fakeProcess(new Response('').body as ReadableStream<Uint8Array>);
+    let script = '';
+    remoteScriptIo.spawn = (_argv, _env, text) => {
+      script = text;
+      return fake.proc;
+    };
 
     const ticket = await prepared(rootId, [path]);
+    await drain(await download(ticket.archiveId));
 
     expect(stat.mock.calls[0]).toEqual([rootId, path]);
     expect(ticket.name).toBe('root.tar.gz');
+    expect(script).toContain("cd -- '/remote' ||");
+    expect(script).not.toContain('inside');
+    expect(script).toContain("exec tar -czf - './root'\n");
   });
 
   test('a parent that is a file is 400 not_a_directory; stat failures propagate', async () => {
@@ -438,20 +662,84 @@ describe('ssh devices', () => {
 
   test('spec auth failures surface as request errors and nothing is spawned', async () => {
     const { rootId, path } = sshRoot();
-    track(
-      spyOn(deviceStorage, 'statFile').mockResolvedValue({ ok: true, data: fakeStat(path, 'dir') })
-    );
+    stubStat();
     const ticket = await prepared(rootId, [`${path}/x`]);
     track(
       spyOn(sshCommand, 'buildRsyncDeviceSpec').mockRejectedValue(
         new sshCommand.RsyncAuthError('auth_unsupported', 'no key')
       )
     );
-    const spawn = track(spyOn(fileArchiveIo, 'spawn'));
+    const spawn = mock(() => {
+      throw new Error('should not spawn');
+    });
+    remoteScriptIo.spawn = spawn;
 
     const res = await download(ticket.archiveId);
 
     expect(res.status).toBe(400);
     expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('root path "/"', () => {
+  test('prepare names the archive files.tar.gz and the tar args archive "." from "/"', async () => {
+    const { rootId } = sshRoot('/');
+    track(
+      spyOn(deviceStorage, 'statFile').mockResolvedValue({ ok: true, data: fakeStat('/', 'dir') })
+    );
+    track(
+      spyOn(sshCommand, 'buildRsyncDeviceSpec').mockResolvedValue({
+        targetPrefix: 'user@host:',
+        rsh: 'ssh',
+        env: {},
+        cleanup: () => {},
+      })
+    );
+    let script = '';
+    remoteScriptIo.spawn = (_argv, _env, text) => {
+      script = text;
+      return {
+        stdout: new Response('').body as ReadableStream<Uint8Array>,
+        stderr: new Response('').body as ReadableStream<Uint8Array>,
+        exited: Promise.resolve(0),
+        kill: () => {},
+      };
+    };
+
+    const ticket = await prepared(rootId, ['/', '/etc']);
+    expect(ticket.name).toBe('files.tar.gz');
+    await drain(await download(ticket.archiveId));
+
+    expect(script).toContain("cd -- '/' ||");
+    expect(script).toContain("exec tar -czf - '.'\n");
+    expect(script).not.toContain('./etc');
+  });
+
+  test('a single entry below "/" keeps its own name', async () => {
+    const { rootId } = sshRoot('/');
+    track(
+      spyOn(deviceStorage, 'statFile').mockResolvedValue({ ok: true, data: fakeStat('/', 'dir') })
+    );
+    expect((await prepared(rootId, ['/etc'])).name).toBe('etc.tar.gz');
+  });
+});
+
+describe('Content-Disposition', () => {
+  test('a Chinese / emoji name gives an ASCII-only filename and the full UTF-8 filename*', async () => {
+    const { dir, rootId } = sandboxRoot();
+    // 名称里不放反斜杠：Bun 1.4 的 realpathSync 认不出带 `\\` 的路径，prepare 阶段就会回 not_found
+    const fileName = '报告 🙂 "q".txt';
+    writeFileSync(join(dir, fileName), 'x');
+    const ticket = await prepared(rootId, [join(dir, fileName)]);
+
+    const res = await download(ticket.archiveId);
+    const disposition = res.headers.get('Content-Disposition') ?? '';
+    const match = /^attachment; filename="([^"\\]*)"; filename\*=UTF-8''(\S+)$/.exec(disposition);
+
+    expect(match).not.toBeNull();
+    expect(match?.[1]).toMatch(/^[\x20-\x7E]*$/);
+    expect(match?.[1]).toContain('.txt.tar.gz');
+    expect(decodeURIComponent(match?.[2] ?? '')).toBe(`${fileName}.tar.gz`);
+    await res.body?.cancel();
   });
 });

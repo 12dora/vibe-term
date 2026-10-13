@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import {
   type ArchiveProcess,
-  buildSshInvocation,
   createArchiveStream,
+  createArchiveStreamFromProcess,
   fileArchiveIo,
   tarArchiveArgs,
+  tarNameArgs,
 } from './archive-stream';
-import type { RsyncDeviceSpec } from './ssh-command';
 
 const spies: Array<{ mockRestore: () => void }> = [];
 
@@ -167,7 +167,74 @@ describe('createArchiveStream', () => {
   });
 });
 
-describe('argv builders', () => {
+describe('idle timeout covers the whole stream lifetime', () => {
+  test('a consumer that stops reading (back-pressure) trips the idle kill', async () => {
+    silenceWarn();
+    const stub = stubProcess();
+    install(stub);
+    const onClose = mock(() => {});
+    const stream = createArchiveStream({ argv: ['tar'], maxBytes: 1024, idleMs: 40, onClose });
+    const reader = stream.getReader();
+
+    stub.push('a');
+    stub.push('b');
+    expect((await reader.read()).done).toBe(false);
+    await Bun.sleep(150);
+
+    expect(stub.kill).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await expect(reader.read()).rejects.toThrow('archive_idle_timeout');
+  });
+
+  test('a steady consumer never trips the timer even when the total exceeds idleMs', async () => {
+    const stub = stubProcess();
+    install(stub);
+    const onClose = mock(() => {});
+    const stream = createArchiveStream({ argv: ['tar'], maxBytes: 1024, idleMs: 150, onClose });
+
+    const text = new Response(stream).text();
+    for (let i = 0; i < 8; i++) {
+      stub.push(String(i));
+      await Bun.sleep(30);
+    }
+    stub.end(0);
+
+    expect(await text).toBe('01234567');
+    expect(stub.kill).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('cancel disarms the timer: no second close or kill afterwards', async () => {
+    const stub = stubProcess();
+    install(stub);
+    const onClose = mock(() => {});
+    const stream = createArchiveStream({ argv: ['tar'], maxBytes: 1024, idleMs: 30, onClose });
+    const reader = stream.getReader();
+
+    stub.push('x');
+    await reader.read();
+    await reader.cancel();
+    await Bun.sleep(100);
+
+    expect(stub.kill).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  test('createArchiveStreamFromProcess wraps an already started process', async () => {
+    const stub = stubProcess();
+    const onClose = mock(() => {});
+    const stream = createArchiveStreamFromProcess(stub.proc, { maxBytes: 1024, onClose });
+
+    const text = new Response(stream).text();
+    stub.push('ok');
+    stub.end(0);
+
+    expect(await text).toBe('ok');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('tar argument builders', () => {
   test('tarArchiveArgs prefixes names with ./ so leading dashes are not options', () => {
     expect(tarArchiveArgs('/data/dir', ['-rf', 'a b'])).toEqual([
       'tar',
@@ -180,24 +247,8 @@ describe('argv builders', () => {
     ]);
   });
 
-  test('buildSshInvocation quotes the remote command and merges spec env', () => {
-    const spec: RsyncDeviceSpec = {
-      targetPrefix: 'user@host:',
-      rsh: 'ssh -o BatchMode=yes -i /k',
-      env: { SSH_AUTH_SOCK: '/sock' },
-      cleanup: () => {},
-    };
-
-    const invocation = buildSshInvocation(spec, tarArchiveArgs("/p/it's", ['x y']));
-
-    expect(invocation?.argv.slice(0, 5)).toEqual(['ssh', '-o', 'BatchMode=yes', '-i', '/k']);
-    expect(invocation?.argv[5]).toBe('user@host');
-    expect(invocation?.argv[6]).toBe("'tar' '-czf' '-' '-C' '/p/it'\\''s' './x y'");
-    expect(invocation?.env.SSH_AUTH_SOCK).toBe('/sock');
-  });
-
-  test('buildSshInvocation returns null for a non-ssh spec', () => {
-    const spec: RsyncDeviceSpec = { targetPrefix: '', rsh: undefined, env: {}, cleanup: () => {} };
-    expect(buildSshInvocation(spec, ['tar'])).toBeNull();
+  test('the dot entry archives the working directory itself', () => {
+    expect(tarArchiveArgs('/', ['.'])).toEqual(['tar', '-czf', '-', '-C', '/', '.']);
+    expect(tarNameArgs(['.'])).toEqual(['.']);
   });
 });

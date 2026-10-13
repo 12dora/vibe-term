@@ -1,12 +1,26 @@
 // 本机设备的移动 / 重命名：全程 node:fs，源的最后一段用 lstat 寻址、永不跟随符号链接。
 
-import { type Stats, cpSync, lstatSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import {
+  type Stats,
+  cpSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  rmdirSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
 import { mapFsError } from './local-fs';
 import {
   type MoveBatch,
   type MoveItem,
   type MoveOutcome,
   isInsidePath,
+  posixDirname,
   posixJoin,
 } from './move-types';
 import { enqueueDeviceJob } from './queue';
@@ -15,6 +29,10 @@ import { type FileOpResult, fail, ok } from './rsync-operation';
 /** 暴露给测试替换（例如让 rename 抛 EXDEV 以覆盖跨文件系统回退）。 */
 export const fileMoveIo = {
   rename: renameSync,
+  link: linkSync,
+  unlink: unlinkSync,
+  mkdir: mkdirSync,
+  rmdir: rmdirSync,
   cp: cpSync,
   rm: rmSync,
   lstat: lstatSync,
@@ -114,11 +132,99 @@ function removeQuiet(path: string): void {
   }
 }
 
-function copyThenRemove(src: string, dest: string, destExisted: boolean): MoveOutcome {
+function attempt(action: () => void): void {
   try {
-    fileMoveIo.cp(src, dest, { recursive: true, verbatimSymlinks: true, force: true });
+    action();
+  } catch {
+    // 回滚只是尽力而为，不能盖掉原始错误
+  }
+}
+
+/** 文件系统不支持硬链接（或被策略禁止）时 link 的失败码，此时退回 lstat 检查 + rename。 */
+const LINK_FALLBACK_CODES: ReadonlySet<string> = new Set([
+  'EPERM',
+  'ENOTSUP',
+  'EOPNOTSUPP',
+  'ENOSYS',
+  'EXDEV',
+  'EMLINK',
+]);
+
+function existsNoFollow(path: string): boolean {
+  try {
+    fileMoveIo.lstat(path);
+    return true;
   } catch (err) {
-    if (!destExisted) removeQuiet(dest);
+    if (errnoOf(err) === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+/** 普通文件：link 对已存在的目标原子地报 EEXIST；返回 false 表示需要退回通用路径。 */
+function linkCommit(src: string, dest: string): boolean {
+  try {
+    fileMoveIo.link(src, dest);
+  } catch (err) {
+    if (LINK_FALLBACK_CODES.has(errnoOf(err))) return false;
+    throw err;
+  }
+  try {
+    fileMoveIo.unlink(src);
+  } catch (err) {
+    // dest 是刚建的硬链接，撤销它不会碰到别人的数据
+    attempt(() => fileMoveIo.unlink(dest));
+    throw err;
+  }
+  return true;
+}
+
+/** 目录：mkdir 原子占位，再用 rename 覆盖这个空目录；失败只 rmdir 自己建的空目录。 */
+function dirCommit(src: string, dest: string): void {
+  fileMoveIo.mkdir(dest);
+  try {
+    fileMoveIo.rename(src, dest);
+  } catch (err) {
+    attempt(() => fileMoveIo.rmdir(dest));
+    throw err;
+  }
+}
+
+/** 符号链接等无法原子占位的类型：只能在 rename 前再查一次，仍有极窄的竞态窗口。 */
+function guardedRename(src: string, dest: string): void {
+  if (existsNoFollow(dest)) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+  fileMoveIo.rename(src, dest);
+}
+
+/** 同一文件系统内把 src 落到 dest；`destExisted` 时按允许覆盖的 rename 原子替换，否则绝不替换。 */
+function commitTo(st: Stats, src: string, dest: string, destExisted: boolean): void {
+  if (destExisted) {
+    fileMoveIo.rename(src, dest);
+    return;
+  }
+  if (st.isFile() && linkCommit(src, dest)) return;
+  if (st.isDirectory()) {
+    dirCommit(src, dest);
+    return;
+  }
+  guardedRename(src, dest);
+}
+
+/**
+ * 跨文件系统：先复制到目标目录内的唯一临时同级项，再按同文件系统规则提交，最后才删源。
+ * 失败只清理自己的临时项；源删除失败时已提交的目标原样保留（不回滚用户数据）。
+ */
+function copyThenRemove(src: string, dest: string, st: Stats, destExisted: boolean): MoveOutcome {
+  const tmp = posixJoin(posixDirname(dest), `.vtmv-${randomBytes(6).toString('hex')}`);
+  try {
+    fileMoveIo.cp(src, tmp, {
+      recursive: true,
+      verbatimSymlinks: true,
+      force: false,
+      errorOnExist: true,
+    });
+    commitTo(st, tmp, dest, destExisted);
+  } catch (err) {
+    removeQuiet(tmp);
     return moveError(err);
   }
   try {
@@ -129,14 +235,14 @@ function copyThenRemove(src: string, dest: string, destExisted: boolean): MoveOu
   }
 }
 
-function performMove(src: string, dest: string, destExisted: boolean): MoveOutcome {
+function performMove(src: string, dest: string, st: Stats, destExisted: boolean): MoveOutcome {
   try {
-    fileMoveIo.rename(src, dest);
+    commitTo(st, src, dest, destExisted);
     return ok(undefined);
   } catch (err) {
     if (errnoOf(err) !== 'EXDEV') return moveError(err);
   }
-  return copyThenRemove(src, dest, destExisted);
+  return copyThenRemove(src, dest, st, destExisted);
 }
 
 function moveOne(ctx: LocalCtx, item: MoveItem): MoveOutcome {
@@ -148,7 +254,7 @@ function moveOne(ctx: LocalCtx, item: MoveItem): MoveOutcome {
   if (st.isDirectory() && isInsidePath(destPath, srcReal)) return fail('invalid');
   const conflict = checkConflict(ctx, st, destPath);
   if (!conflict.ok) return conflict;
-  return performMove(srcReal, destPath, conflict.data);
+  return performMove(srcReal, destPath, st, conflict.data);
 }
 
 /** 整批在同一个设备级队列任务内串行执行；单项失败不影响后续项。 */

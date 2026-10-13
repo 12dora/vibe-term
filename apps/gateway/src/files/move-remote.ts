@@ -1,11 +1,16 @@
 // ssh 设备的移动 / 重命名：一次 ssh 往返跑完整批，脚本逐项打印 `VTOP <index> <status>`。
-// 所有路径参数经 quoteShellArg 单引号包裹；源条目 cd 到其真实父目录后以 `./<name>` 寻址，
-// 因此以 `-` 开头的名字也安全，且最后一段永不被解引用。
+// 脚本走 stdin 交给 `sh -s`（无 argv 长度上限）；所有路径参数经 quoteShellArg 单引号包裹，
+// 源条目 cd 到其物理父目录后以 `./<name>` 寻址，因此以 `-` 开头的名字也安全，且最后一段永不被解引用。
 
 import type { Device, FileErrorCode } from '@vibeterm/shared';
 import { quoteShellArg } from '../tmux-client/command-builder';
-import { type SshExecResult, execSshCommand } from './directory-browse';
 import type { MoveBatch, MoveItem, MoveOutcome } from './move-types';
+import {
+  type RemoteScriptResult,
+  SH_INSIDE_FN,
+  SH_PHYS_FN,
+  execRemoteScript,
+} from './remote-script';
 import {
   type DeviceRsyncHooks,
   type FileOpResult,
@@ -13,11 +18,8 @@ import {
   ok,
   withDeviceRsync,
 } from './rsync-operation';
-import type { RsyncDeviceSpec } from './ssh-command';
 
 const MOVE_TIMEOUT_MS = 60_000;
-/** 单次 ssh 命令里逐项调用文本的字节预算（远小于内核单参数 128 KiB 上限）。 */
-const CHUNK_BUDGET_CHARS = 60_000;
 const STATUS_MARKER = 'VTOP ';
 
 const EXIT_CODES: Readonly<Record<number, FileErrorCode>> = {
@@ -40,38 +42,75 @@ const ITEM_CODES: ReadonlySet<string> = new Set<string>([
 
 export type MoveStatus = 'ok' | FileErrorCode;
 
-/** 测试注入点：ssh 执行器与 `withDeviceRsync` 的 hooks（跳过真实 buildSpec）。 */
-export const fileMoveRemoteIo: { exec: typeof execSshCommand; hooks: DeviceRsyncHooks } = {
-  exec: execSshCommand,
+/** 测试注入点：脚本执行器与 `withDeviceRsync` 的 hooks（跳过真实 buildSpec）。 */
+export const fileMoveRemoteIo: { exec: typeof execRemoteScript; hooks: DeviceRsyncHooks } = {
+  exec: execRemoteScript,
   hooks: {},
 };
 
+// 约定：脚本里所有可能读 stdin 的命令都带 `</dev/null`，否则会吃掉 `sh -s` 还没读到的脚本正文。
+//
+// 不覆盖语义：`mv -n` 不替换已存在的目标，结果以文件系统为准（源还在 = 没移动成功），不看退出码
+// （新版 GNU 在跳过时返回非零，旧版返回零）。纯 POSIX 工具无法彻底消除的残余风险：目标在检查与
+// mv 之间被换成「指向目录的符号链接」时，mv 会把源移进那个目录；`mv -T` 只有 GNU 有，所以
+// 探测到 GNU 才加 `-T`（变量 T），BSD / busybox 上保留这个极窄的窗口。
 const SCRIPT_FUNCTIONS = [
-  'inside() { case "$1" in "$2"|"$2"/*) return 0;; esac; [ "$2" = / ]; }',
+  SH_PHYS_FN,
+  SH_INSIDE_FN,
   'nodir() { [ -L "$1" ] || [ ! -d "$1" ]; }',
+  'gone() { [ ! -e "$1" ] && [ ! -L "$1" ]; }',
+  // fe：把 mv / rm 的 stderr 映射成状态词
+  'fe() { case "$1" in',
+  '*ermission*|*not\\ permitted*) echo permission_denied;;',
+  '*) echo unknown;;',
+  'esac; }',
+  // mvn <dest>：不覆盖地把 ./$s 移到 dest，结果放进 st
+  'mvn() {',
+  'e=$(mv -n $T -- "$s" "$1" 2>&1 </dev/null); rc=$?',
+  'if gone "$s"; then st=ok; return 0; fi',
+  'case "$e" in',
+  '*ermission*|*not\\ permitted*) st=permission_denied;;',
+  '*) if [ "$rc" -ne 0 ] && gone "$1"; then st=unknown; else st=already_exists; fi;;',
+  'esac',
+  'return 1',
+  '}',
+  // mvo：覆盖已存在的非目录目标，结果放进 st
+  'mvo() {',
+  'if [ ! -L "$dp" ]; then',
+  'if e=$(mv -f $T -- "$s" "$dp" 2>&1 </dev/null); then st=ok; else st=$(fe "$e"); fi',
+  'return 0',
+  'fi',
+  // 目标是符号链接：先把源挪到目标目录内的临时名（失败则什么都没丢），再换掉链接；
+  // 最后一步失败就把临时项放回源位置，旧链接不会白白消失
+  'tp="${ddir%/}/.vtmv.$$.$i"',
+  'mvn "$tp" || return 1',
+  'if e=$(rm -f -- "$dp" 2>&1 </dev/null) && e=$(mv -f $T -- "$tp" "$dp" 2>&1 </dev/null); then',
+  'st=ok; return 0',
+  'fi',
+  'st=$(fe "$e")',
+  'mv -n -- "$tp" "$s" 2>/dev/null </dev/null; gone "$tp" || st=unknown',
+  'return 1',
+  '}',
   'vt() {',
   'i=$1; p=$2; n=$3; dn=$4',
   '[ -e "$p" ] || { echo "VTOP $i not_found"; return 0; }',
   '[ -d "$p" ] || { echo "VTOP $i not_a_directory"; return 0; }',
   'cd -- "$p" || { echo "VTOP $i permission_denied"; return 0; }',
-  'pr=$(pwd -P)',
+  'phys || { echo "VTOP $i permission_denied"; return 0; }',
+  'pr=$PHYS',
   'inside "$pr" "$sr" || { echo "VTOP $i outside_roots"; return 0; }',
   's="./$n"',
-  'if [ ! -e "$s" ] && [ ! -L "$s" ]; then echo "VTOP $i not_found"; return 0; fi',
+  'if gone "$s"; then echo "VTOP $i not_found"; return 0; fi',
   'if [ "$pr" = "$ddir" ] && [ "$n" = "$dn" ]; then echo "VTOP $i ok"; return 0; fi',
   'dp="${ddir%/}/$dn"',
   'if [ -d "$s" ] && [ ! -L "$s" ]; then',
   'case "${ddir%/}/" in "${pr%/}/$n"/*) echo "VTOP $i invalid"; return 0;; esac',
   'fi',
-  'if [ -e "$dp" ] || [ -L "$dp" ]; then',
-  'if [ "$ow" = 1 ] && nodir "$s" && nodir "$dp"; then',
-  // 目标是指向目录的符号链接时 mv 会把源移进去，先只删链接本身
-  'if [ -L "$dp" ]; then rm -f -- "$dp" || { echo "VTOP $i permission_denied"; return 0; }; fi',
-  'else echo "VTOP $i already_exists"; return 0; fi',
-  'fi',
-  'if e=$(mv -f -- "$s" "$dp" 2>&1); then echo "VTOP $i ok"; else',
-  'case "$e" in *ermission*) echo "VTOP $i permission_denied";; *) echo "VTOP $i unknown";; esac',
-  'fi',
+  'st=unknown',
+  'if gone "$dp"; then mvn "$dp"',
+  'elif [ "$ow" = 1 ] && nodir "$s" && nodir "$dp"; then mvo',
+  'else st=already_exists; fi',
+  'echo "VTOP $i $st"',
   '}',
 ];
 
@@ -80,29 +119,29 @@ function itemCall(item: MoveItem, index: number): string {
   return `vt ${index} ${q(item.parent)} ${q(item.name)} ${q(item.destName)}`;
 }
 
-/** 脚本正文（未外包 `sh -c`）。退出码 60-64 为请求级错误，见 EXIT_CODES。 */
+/** 脚本正文。退出码 60-64 为请求级错误，见 EXIT_CODES。 */
 export function buildMoveScript(batch: MoveBatch): string {
   const q = quoteShellArg;
   const lines = [
     ...SCRIPT_FUNCTIONS,
+    'T=',
+    'if mv --help </dev/null 2>&1 | grep -q -- --no-target-directory; then T=-T; fi',
     `cd -- ${q(batch.rootPath)} || exit 60`,
-    'sr=$(pwd -P)',
+    'phys || exit 60',
+    'sr=$PHYS',
     `cd -- ${q(batch.destRootPath)} || exit 60`,
-    'dr=$(pwd -P)',
+    'phys || exit 60',
+    'dr=$PHYS',
     `[ -e ${q(batch.destDir)} ] || exit 61`,
     `[ -d ${q(batch.destDir)} ] || exit 62`,
     `cd -- ${q(batch.destDir)} || exit 63`,
-    'ddir=$(pwd -P)',
+    'phys || exit 63',
+    'ddir=$PHYS',
     'inside "$ddir" "$dr" || exit 64',
     `ow=${batch.overwrite ? 1 : 0}`,
     ...batch.items.map((item, index) => itemCall(item, index)),
   ];
   return lines.join('\n');
-}
-
-/** 远端登录 shell 未必是 POSIX sh，统一外包一层 `sh -c`。 */
-export function buildMoveCommand(batch: MoveBatch): string {
-  return `sh -c ${quoteShellArg(buildMoveScript(batch))}`;
 }
 
 function toStatus(word: string): MoveStatus {
@@ -134,53 +173,19 @@ export function outcomesFromStatuses(
   return outcomes;
 }
 
-function classifyExit(res: SshExecResult): FileOpResult<never> {
+function classifyExit(res: RemoteScriptResult): FileOpResult<never> {
   if (res.exitCode === 124) return fail('timeout', res.stderr);
   if (res.exitCode === 255) return fail('connection_failed', res.stderr);
   return fail(EXIT_CODES[res.exitCode] ?? 'unknown', res.stderr);
-}
-
-/** 按调用文本体量切批，避免超出 ssh 命令行参数上限；常规请求只有一批。 */
-export function splitMoveBatch(batch: MoveBatch, budget = CHUNK_BUDGET_CHARS): MoveBatch[] {
-  const chunks: MoveBatch[] = [];
-  let current: MoveItem[] = [];
-  let size = 0;
-  for (const item of batch.items) {
-    const len = itemCall(item, 0).length;
-    if (current.length > 0 && size + len > budget) {
-      chunks.push({ ...batch, items: current });
-      current = [];
-      size = 0;
-    }
-    current.push(item);
-    size += len;
-  }
-  if (current.length > 0 || chunks.length === 0) chunks.push({ ...batch, items: current });
-  return chunks;
-}
-
-async function runChunk(
-  spec: RsyncDeviceSpec,
-  chunk: MoveBatch
-): Promise<FileOpResult<MoveOutcome[]>> {
-  const res = await fileMoveRemoteIo.exec(spec, buildMoveCommand(chunk), MOVE_TIMEOUT_MS);
-  if (res.exitCode !== 0) return classifyExit(res);
-  return ok(outcomesFromStatuses(parseMoveOutput(res.stdout), chunk.items.length));
 }
 
 export function moveRemote(device: Device, batch: MoveBatch): Promise<FileOpResult<MoveOutcome[]>> {
   return withDeviceRsync<MoveOutcome[]>(
     device,
     async (spec) => {
-      const outcomes: MoveOutcome[] = [];
-      for (const [index, chunk] of splitMoveBatch(batch).entries()) {
-        const res = await runChunk(spec, chunk);
-        // 首批失败 = 请求级错误；后续批失败只标记其所属条目，已移动的不丢结果
-        if (!res.ok && index === 0) return res;
-        if (res.ok) outcomes.push(...res.data);
-        else outcomes.push(...chunk.items.map(() => res));
-      }
-      return ok(outcomes);
+      const res = await fileMoveRemoteIo.exec(spec, buildMoveScript(batch), MOVE_TIMEOUT_MS);
+      if (res.exitCode !== 0) return classifyExit(res);
+      return ok(outcomesFromStatuses(parseMoveOutput(res.stdout), batch.items.length));
     },
     fileMoveRemoteIo.hooks
   );

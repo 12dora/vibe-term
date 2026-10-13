@@ -4,6 +4,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -14,8 +15,8 @@ import { type Device, FILE_OP_MAX_PATHS } from '@vibeterm/shared';
 import { createDevice } from '../db/devices';
 import { createFileRoot, deleteFileRoot } from '../db/file-roots';
 import { runMigrations } from '../db/migrate';
-import { buildDeleteCommand, fileDeleteIo, parseDeleteOutput } from '../files/delete-remote';
-import type { SshExecResult } from '../files/directory-browse';
+import { buildDeleteCommand, parseDeleteOutput } from '../files/delete-remote';
+import { type RemoteScriptProcess, remoteScriptIo } from '../files/remote-script';
 import * as sshCommand from '../files/ssh-command';
 import { t } from '../i18n';
 import { fileDeleteRoutes } from './file-delete';
@@ -25,6 +26,7 @@ beforeAll(() => {
   runMigrations();
 });
 
+const originalSpawn = remoteScriptIo.spawn;
 const createdRootIds: string[] = [];
 const sandboxes: string[] = [];
 const spies: Array<{ mockRestore: () => void }> = [];
@@ -35,6 +37,7 @@ function track<T extends { mockRestore: () => void }>(spy: T): T {
 }
 
 afterEach(() => {
+  remoteScriptIo.spawn = originalSpawn;
   while (spies.length > 0) spies.pop()?.mockRestore();
   for (const id of createdRootIds) deleteFileRoot(id);
   createdRootIds.length = 0;
@@ -67,7 +70,7 @@ function registerRoot(path: string, type: Device['type']): string {
 }
 
 function sandbox(prefix = 'vibeterm-delete-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   sandboxes.push(dir);
   return dir;
 }
@@ -92,15 +95,44 @@ function stubSshSpec(): void {
   );
 }
 
-function stubExec(result: Partial<SshExecResult>) {
-  return track(
-    spyOn(fileDeleteIo, 'execSsh').mockResolvedValue({
-      stdout: new TextEncoder().encode(''),
-      stderr: '',
-      exitCode: 0,
-      ...result,
-    })
-  );
+interface SpawnCall {
+  argv: string[];
+  script: string;
+}
+
+function streamOf(text: string): ReadableStream<Uint8Array> {
+  const bytes = new TextEncoder().encode(text);
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+/** 不真起进程：记录 argv 与脚本，回放预设的 stdout / 退出码。 */
+function stubSpawn(result: { stdout?: string; stderr?: string; exitCode?: number }): SpawnCall[] {
+  const calls: SpawnCall[] = [];
+  remoteScriptIo.spawn = (argv, _env, script): RemoteScriptProcess => {
+    calls.push({ argv, script });
+    return {
+      stdout: streamOf(result.stdout ?? ''),
+      stderr: streamOf(result.stderr ?? ''),
+      exited: Promise.resolve(result.exitCode ?? 0),
+      kill: () => {},
+    };
+  };
+  return calls;
+}
+
+/** 把「远端」换成本机 `sh -s`：脚本照样走 stdin，argv 只用来断言。 */
+function runWithLocalSh(): SpawnCall[] {
+  const calls: SpawnCall[] = [];
+  remoteScriptIo.spawn = (argv, env, script) => {
+    calls.push({ argv, script });
+    return originalSpawn(['sh', '-s'], env, script);
+  };
+  return calls;
 }
 
 async function call(body: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
@@ -287,7 +319,9 @@ describe('remote delete script', () => {
       { index: 3, path: '/remote/ro\'ot/sub dir/$(x) "q"' },
     ]);
 
-    expect(script).toContain(`cd -- '/remote/ro'\\''ot' 2>/dev/null && pwd -P`);
+    expect(script).toContain(`cd -- '/remote/ro'\\''ot' 2>/dev/null || exit 60`);
+    expect(script).not.toContain('$(cd');
+    expect(script).toContain('inside "$PHYS" "$r"');
     expect(script).toContain(`rm -rf -- './-rf'`);
     expect(script).toContain(`cd -- '/remote/ro'\\''ot/sub dir' 2>/dev/null`);
     expect(script).toContain(`rm -rf -- './\$(x) "q"'`);
@@ -316,9 +350,7 @@ describe('POST /api/files/delete ssh', () => {
   test('sends one batched script and maps status lines, missing line is unknown', async () => {
     const { rootId, path } = sshRoot();
     stubSshSpec();
-    const exec = stubExec({
-      stdout: new TextEncoder().encode('VTOP 0 ok\nVTOP 3 not_found\n'),
-    });
+    const calls = stubSpawn({ stdout: 'VTOP 0 ok\nVTOP 3 not_found\n' });
     const paths = [`${path}/a`, `${path}/-weird name`, path, `${path}/gone`, `${path}/../out`];
 
     const { status, json } = await call({ rootId, paths });
@@ -333,19 +365,19 @@ describe('POST /api/files/delete ssh', () => {
         { path: '/remote/out', ok: false, code: 'outside_roots' },
       ],
     });
-    expect(exec).toHaveBeenCalledTimes(1);
-    const command = exec.mock.calls[0]?.[1] as string;
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.argv).toEqual(['ssh', '-p', '22', 'u@h', 'sh -s']);
+    const command = calls[0]?.script ?? '';
     expect(command).toContain(`rm -rf -- './-weird name'`);
     expect(command).toContain(`rm -rf -- './gone'`);
     expect(command).not.toContain('VTOP 2 ');
     expect(command).not.toContain('VTOP 4 ');
-    expect(exec.mock.calls[0]?.[2]).toBe(60_000);
   });
 
   test('does not contact the device when every item is rejected lexically', async () => {
     const { rootId, path } = sshRoot();
     stubSshSpec();
-    const exec = stubExec({});
+    const calls = stubSpawn({});
 
     const { status, json } = await call({ rootId, paths: [path, '/etc/passwd'] });
 
@@ -356,7 +388,7 @@ describe('POST /api/files/delete ssh', () => {
         { path: '/etc/passwd', ok: false, code: 'outside_roots' },
       ],
     });
-    expect(exec).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
   });
 
   test('ssh exit codes become request-level errors', async () => {
@@ -369,11 +401,10 @@ describe('POST /api/files/delete ssh', () => {
       [1, 500, 'unknown'],
     ];
     for (const [exitCode, httpStatus, code] of cases) {
-      stubExec({ exitCode, stderr: 'boom' });
+      stubSpawn({ exitCode, stderr: 'boom' });
       const { status, json } = await call({ rootId, paths: [`${path}/a`] });
       expect(status).toBe(httpStatus);
       expect(json).toMatchObject({ error: code, code });
-      spies.pop()?.mockRestore();
     }
   });
 
@@ -389,17 +420,7 @@ describe('POST /api/files/delete ssh', () => {
     symlinkSync(outside, join(dir, 'escape'));
     symlinkSync(join(outside, 'keep.txt'), join(dir, 'ln'));
     stubSshSpec();
-    track(
-      spyOn(fileDeleteIo, 'execSsh').mockImplementation(async (_spec, command) => {
-        const proc = Bun.spawn(['sh', '-c', command], { stdout: 'pipe', stderr: 'pipe' });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          new Response(proc.stdout).arrayBuffer(),
-          new Response(proc.stderr).text(),
-          proc.exited,
-        ]);
-        return { stdout: new Uint8Array(stdout), stderr, exitCode };
-      })
-    );
+    runWithLocalSh();
     const paths = [
       join(dir, '-rf'),
       join(dir, "it's here"),
