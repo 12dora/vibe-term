@@ -55,19 +55,27 @@ export const fileMoveRemoteIo: { exec: typeof execRemoteScript; hooks: DeviceRsy
 // 设计原则：绝不让 mv 复制数据（它跨设备时的隐式「复制 + 删除」在 GNU / BusyBox / BSD / macOS 上顺序与
 // 报错各不相同，无法控制）；绝不凭错误文案删除任何东西；源只在目标目录项已经提交之后才删除。
 // - 普通文件：先在目标目录内取得私有项 `.vtmv.<pid>.<index>`（`ln` 硬链接，原子且不复制；跨挂载点或
-//   不支持硬链接时退回显式 `cp -p`，失败只清理这份自己的半成品），再用同目录 rename 提交到目标；
-//   提交成功后才 `rm` 源。覆盖已有普通文件用 `mv -f` 原子替换；覆盖符号链接 / 其他非目录时先把旧项
-//   挪到私有备份 `.bak`，提交失败就挪回，成功才删备份——旧链接永远不会先被删掉。
-// - 符号链接和其他非目录：直接 `mv -n`（复制一个符号链接不会丢数据），结果只看文件系统；覆盖同样走备份。
+//   不支持硬链接时退回显式 `cp -a`，连同扩展属性 / ACL 尽力保留，失败只清理这份自己的半成品），再用同目录
+//   rename 提交到目标；提交成功后才 `rm` 源。覆盖已有普通文件用 `mv -f` 原子替换；覆盖符号链接 / 其他
+//   非目录时先把旧项挪到私有备份 `.bak`，提交失败就挪回，成功才删备份——旧链接永远不会先被删掉。
+// - 符号链接和其他非目录：直接 `mv -n`（复制一个符号链接不会丢数据），覆盖同样走备份。
 // - 目录：不覆盖。用「在源父目录建空探针文件并 ln 进目标目录」判断能否 rename（不看 df）；能就 `mv -n`，
-//   不做任何清理；不能就显式 `cp -Rp` 到目标目录内的私有项，同目录 rename 提交，最后 `rm -rf` 源。
-// - 同 inode：要么是上次提交后删源失败的残留（父目录不同，必为两个目录项，补删源），要么是大小写不
-//   敏感文件系统上同一个目录项的两个名字（父目录相同，只做普通 rename，绝不 rm）。
+//   不做任何清理；不能就显式 `cp -a` 到目标目录内的私有项，同目录 rename 提交，最后 `rm -rf` 源。
+// - 直接移动源（目录、符号链接）的 `mv -n` 之后若源仍在，状态只按 stderr 分类（permission_denied /
+//   unknown），不报 already_exists——目标在提交前的最后一次检查时并不存在，半成品也不清理。
+//   already_exists 只来自提交前的检查，或「私有项提交时目标被别人抢先建出」。
+// - 父目录身份：用 `[ . -ef "$ddir" ]`（此时 cwd 是源父目录）比较源父目录与目标目录是否同一个目录
+//   （路径字符串不同也可能是同一目录，例如 bind mount 别名）。同一目录时目标一律写成 `./<名字>`，
+//   即在源父目录内 rename，绝不经别名路径；同一目录且同名就是无操作。
+// - 同 inode：身份不同的两个父目录里必是两个目录项，是上次提交后删源失败的残留，补删源；身份相同的
+//   同一父目录里则可能是同一个目录项的两个别名（大小写不敏感文件系统），只做普通 rename，绝不 rm；
+//   rename 的退出码决定状态。
 // `-T`（GNU 长选项，或 BusyBox help 里只列的短选项）仅作为 `mv -n` 提交上的额外保护，正确性不依赖它。
 //
-// 残余窗口：没有原子「不覆盖」rename 的平台上，目标在最后一次存在性检查与 mv 之间被别人建出来，
-// 仍可能被 `mv -n` 当作容器（目录）收下；shell 在复制 / 提交中途被杀会在目标目录留下 `.vtmv.*`；
-// 极少数目录 rename 由 mv 隐式复制（如 overlayfs）失败时，半成品目标会被保留并报 unknown，不清理。
+// 残余窗口：没有原子「不覆盖」rename 的平台上（BusyBox 的 `mv -n` 也是先检查再 rename），目标在最后
+// 一次存在性检查与 mv 之间被别人建出来，目录会被当作容器收下，普通文件可能被覆盖；shell 在复制 / 提交
+// 中途被杀会在目标目录留下 `.vtmv.*`；极少数目录 rename 由 mv 隐式复制（如 overlayfs）失败时，
+// 半成品目标会被保留并按 stderr 报 unknown / permission_denied，不清理。
 const SCRIPT_FUNCTIONS = [
   SH_PHYS_FN,
   SH_INSIDE_FN,
@@ -90,6 +98,16 @@ const SCRIPT_FUNCTIONS = [
   '}',
   // cmt：提交前最后确认一次目标仍不存在（收窄窗口），再 mvn
   'cmt() { if ! gone "$2"; then st=already_exists; return 1; fi; mvn "$1" "$2"; }',
+  // mvd / cmd：同 mvn / cmt，但用于直接移动源本身（目录、符号链接）。源仍在时状态只按 stderr 分类
+  'mvd() {',
+  'e=$(mv -n $T -- "$1" "$2" 2>&1 </dev/null)',
+  'if gone "$1"; then',
+  'if gone "$2"; then st=unknown; return 1; fi',
+  'st=ok; return 0',
+  'fi',
+  'st=$(fe "$e"); return 1',
+  '}',
+  'cmd() { if ! gone "$2"; then st=already_exists; return 1; fi; mvd "$1" "$2"; }',
   // rms：提交之后删源；删不掉时数据同时存在于两处，目标不回滚
   'rms() {',
   'rm -f -- "$s" 2>/dev/null </dev/null',
@@ -99,7 +117,7 @@ const SCRIPT_FUNCTIONS = [
   'mkp() {',
   'gone "$tp" || { st=unknown; return 1; }',
   'ln -- "$s" "$tp" 2>/dev/null </dev/null && return 0',
-  'if e=$(cp -p -- "$s" "$tp" 2>&1 </dev/null); then return 0; fi',
+  'if e=$(cp -a -- "$s" "$tp" 2>&1 </dev/null); then return 0; fi',
   'rm -f -- "$tp" 2>/dev/null </dev/null',
   'st=$(fe "$e"); return 1',
   '}',
@@ -108,7 +126,9 @@ const SCRIPT_FUNCTIONS = [
   'gone "$bk" || { st=unknown; return 1; }',
   'e=$(mv -f -- "$dp" "$bk" 2>&1 </dev/null)',
   'if gone "$bk"; then st=$(fe "$e"); return 1; fi',
-  'if cmt "$1" "$dp"; then rm -f -- "$bk" 2>/dev/null </dev/null; return 0; fi',
+  'if [ "$1" = "$tp" ]; then cmt "$1" "$dp"; else cmd "$1" "$dp"; fi && {',
+  'rm -f -- "$bk" 2>/dev/null </dev/null; return 0',
+  '}',
   '_s=$st',
   'mv -n $T -- "$bk" "$dp" 2>/dev/null </dev/null',
   'if gone "$bk"; then st=$_s; elif [ "$_s" != already_exists ]; then st=unknown; fi',
@@ -130,18 +150,18 @@ const SCRIPT_FUNCTIONS = [
   'rms',
   '}',
   // putl <n|o>：符号链接和其他非目录，源本身直接提交
-  'putl() { if [ "$1" = o ]; then asd "$s"; else cmt "$s" "$dp"; fi; }',
+  'putl() { if [ "$1" = o ]; then asd "$s"; else cmd "$s" "$dp"; fi; }',
   // putd：目录（只会以 n 调用）。探针决定能否 rename，不能就显式复制再提交
   'putd() {',
-  'pf="./.vtmv.$$.$i.p"; pl="${ddir%/}/.vtmv.$$.$i.q"',
+  'pf="./.vtmv.$$.$i.p"; pl="$dd/.vtmv.$$.$i.q"',
   'gone "$pf" && gone "$pl" || { st=unknown; return 1; }',
   '( set -C; : >"$pf" ) 2>/dev/null </dev/null || { st=permission_denied; return 1; }',
   'lk=0',
   'ln -- "$pf" "$pl" 2>/dev/null </dev/null && lk=1',
   'rm -f -- "$pf" "$pl" 2>/dev/null </dev/null',
-  'if [ "$lk" = 1 ]; then cmt "$s" "$dp"; return; fi',
+  'if [ "$lk" = 1 ]; then cmd "$s" "$dp"; return; fi',
   'gone "$tp" || { st=unknown; return 1; }',
-  'if ! e=$(cp -Rp -- "$s" "$tp" 2>&1 </dev/null); then',
+  'if ! e=$(cp -a -- "$s" "$tp" 2>&1 </dev/null); then',
   'rm -rf -- "$tp" 2>/dev/null </dev/null; st=$(fe "$e"); return 1',
   'fi',
   'cmt "$tp" "$dp" || { rm -rf -- "$tp" 2>/dev/null </dev/null; return 1; }',
@@ -152,9 +172,8 @@ const SCRIPT_FUNCTIONS = [
   'same() {',
   'if [ -L "$s" ] || [ -L "$dp" ] || [ ! -e "$dp" ]; then return 1; fi',
   'if ! [ "$s" -ef "$dp" ]; then return 1; fi',
-  'if [ "$pr" = "$ddir" ]; then',
-  'mv -f -- "$s" "$dp" 2>/dev/null </dev/null',
-  'if gone "$dp"; then st=unknown; else st=ok; fi',
+  'if [ "$pi" = 1 ]; then',
+  'if e=$(mv -f -- "$s" "$dp" 2>&1 </dev/null); then st=ok; else st=$(fe "$e"); fi',
   'return 0',
   'fi',
   '[ -f "$s" ] || return 1',
@@ -177,9 +196,10 @@ const SCRIPT_FUNCTIONS = [
   'inside "$pr" "$sr" || { echo "VTOP $i outside_roots"; return 0; }',
   's="./$n"',
   'if gone "$s"; then echo "VTOP $i not_found"; return 0; fi',
-  'if [ "$pr" = "$ddir" ] && [ "$n" = "$dn" ]; then echo "VTOP $i ok"; return 0; fi',
-  'dp="${ddir%/}/$dn"',
-  'tp="${ddir%/}/.vtmv.$$.$i"',
+  'if [ . -ef "$ddir" ]; then pi=1; dd=.; else pi=0; dd=${ddir%/}; fi',
+  'if [ "$pi" = 1 ] && [ "$n" = "$dn" ]; then echo "VTOP $i ok"; return 0; fi',
+  'dp="$dd/$dn"',
+  'tp="$dd/.vtmv.$$.$i"',
   'bk="$tp.bak"',
   'if [ -d "$s" ] && [ ! -L "$s" ]; then',
   'case "${ddir%/}/" in "${pr%/}/$n"/*) echo "VTOP $i invalid"; return 0;; esac',

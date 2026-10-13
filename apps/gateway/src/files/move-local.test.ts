@@ -11,6 +11,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -615,6 +616,99 @@ describe('moveLocal same-inode handling', () => {
     expect(unlink).toHaveBeenCalledTimes(1);
     expect(unlink).toHaveBeenCalledWith(join(dir, 'f'));
     expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
+  });
+
+  /** 模拟 bind mount：`mirror` 路径不同，但 stat 身份（dev+ino）与 `source` 完全相同。 */
+  function mirrorOf(source: string, mirror: string) {
+    spies.push(
+      spyOn(fileMoveIo, 'stat').mockImplementation(((...args: Parameters<typeof statSync>) => {
+        const target = String(args[0]) === mirror ? source : args[0];
+        return statSync(target, args[1]);
+      }) as typeof statSync)
+    );
+  }
+
+  test('a destination that is the same directory under another path is a no-op', async () => {
+    const dir = sandbox();
+    mkdirSync(join(dir, 'source'));
+    mkdirSync(join(dir, 'mirror'));
+    writeFileSync(join(dir, 'source', 'report.txt'), 'only copy');
+    mirrorOf(join(dir, 'source'), join(dir, 'mirror'));
+    const unlink = spyOn(fileMoveIo, 'unlink');
+    spies.push(unlink);
+    const b = batch(dir, [['report.txt']], { destDir: join(dir, 'mirror') });
+    b.items[0] = {
+      path: join(dir, 'source', 'report.txt'),
+      parent: join(dir, 'source'),
+      name: 'report.txt',
+      destName: 'report.txt',
+    };
+
+    const outcomes = await run(b);
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(readFileSync(join(dir, 'source', 'report.txt'), 'utf8')).toBe('only copy');
+  });
+
+  test('the same directory under another path renames inside the source parent', async () => {
+    const dir = sandbox();
+    mkdirSync(join(dir, 'source'));
+    mkdirSync(join(dir, 'mirror'));
+    writeFileSync(join(dir, 'source', 'report.txt'), 'only copy');
+    mirrorOf(join(dir, 'source'), join(dir, 'mirror'));
+    // 两个名字同一目录项（大小写别名）：同 inode 且父目录身份相同
+    const realLstat = lstatSync;
+    spies.push(
+      spyOn(fileMoveIo, 'lstat').mockImplementation(((...args: Parameters<typeof lstatSync>) => {
+        const alias = String(args[0]) === join(dir, 'source', 'Report.txt');
+        return realLstat(alias ? join(dir, 'source', 'report.txt') : args[0], args[1]);
+      }) as typeof lstatSync)
+    );
+    const unlink = spyOn(fileMoveIo, 'unlink');
+    const rename = spyOn(fileMoveIo, 'rename');
+    spies.push(unlink, rename);
+    const b = batch(dir, [['report.txt', 'Report.txt']], { destDir: join(dir, 'mirror') });
+    b.items[0] = {
+      path: join(dir, 'source', 'report.txt'),
+      parent: join(dir, 'source'),
+      name: 'report.txt',
+      destName: 'Report.txt',
+    };
+
+    const outcomes = await run(b);
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(rename).toHaveBeenCalledWith(
+      join(dir, 'source', 'report.txt'),
+      join(dir, 'source', 'Report.txt')
+    );
+    expect(readFileSync(join(dir, 'source', 'Report.txt'), 'utf8')).toBe('only copy');
+    expect(readdirSync(join(dir, 'mirror'))).toEqual([]);
+  });
+
+  test('different parent identities with the same file inode still finish by unlinking', async () => {
+    const dir = sandbox();
+    mkdirSync(join(dir, 'source'));
+    writeFileSync(join(dir, 'source', 'f'), 'data');
+    linkSync(join(dir, 'source', 'f'), join(dir, 'dest', 'f'));
+    const unlink = spyOn(fileMoveIo, 'unlink');
+    spies.push(unlink);
+    const b = batch(dir, [['f']]);
+    b.items[0] = {
+      path: join(dir, 'source', 'f'),
+      parent: join(dir, 'source'),
+      name: 'f',
+      destName: 'f',
+    };
+
+    const outcomes = await run(b);
+
+    expect(outcomes.map(code)).toEqual(['ok']);
+    expect(unlink).toHaveBeenCalledWith(join(dir, 'source', 'f'));
+    expect(existsSync(join(dir, 'source', 'f'))).toBe(false);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('data');
   });
 });

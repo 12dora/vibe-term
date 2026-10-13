@@ -22,7 +22,7 @@ import { remoteScriptIo } from './remote-script';
 import type { RsyncDeviceSpec } from './ssh-command';
 
 // 跨挂载点路径：把脚本里的 `ln` 换成永远失败的 shell 函数，等价于「硬链接不可用」——
-// 普通文件退回显式 cp，目录探针失败退回显式 cp -Rp 暂存。mv 只剩同目录 rename，从不复制。
+// 普通文件退回显式 cp -a，目录探针失败退回显式 cp -a 暂存。mv 只剩同目录 rename，从不复制。
 
 const fakeSpec: RsyncDeviceSpec = {
   targetPrefix: 'user@host:',
@@ -137,7 +137,7 @@ describe('regular files without hard links: explicit copy, commit, then remove t
     expect(lstatSync(join(dir, 'dest', 'f')).mode & 0o777).toBe(0o640);
     expect(leftovers(dir)).toEqual([]);
     const lines = logLines(log);
-    expect(lines[0]).toMatch(/^cp -p -- \.\/f \S+\/dest\/\.vtmv\.\d+\.0$/);
+    expect(lines[0]).toMatch(/^cp -a -- \.\/f \S+\/dest\/\.vtmv\.\d+\.0$/);
     expect(lines.filter((line) => line.startsWith('mv '))).toHaveLength(1);
   });
 
@@ -225,7 +225,7 @@ describe('directories: probe decides, mv only ever renames', () => {
     expect(lines[0]).toMatch(/^mv -n (-T )?-- \.\/d \S+\/dest\/d$/);
   });
 
-  test('probe failure: staged cp -Rp with nested content, then rename and remove the source', async () => {
+  test('probe failure: staged cp -a with nested content, then rename and remove the source', async () => {
     const logDir = sandbox();
     const log = join(logDir, 'calls.log');
     viaLocalSh(withDefs(logged('cp', log)));
@@ -241,7 +241,7 @@ describe('directories: probe decides, mv only ever renames', () => {
     expect(readFileSync(join(dir, 'dest', 'd', '.hidden'), 'utf8')).toBe('hidden');
     expect(readlinkSync(join(dir, 'dest', 'd', 'ln'))).toBe('sub/inner');
     expect(leftovers(dir)).toEqual([]);
-    expect(logLines(log)[0]).toMatch(/^cp -Rp -- \.\/d \S+\/dest\/\.vtmv\.\d+\.0$/);
+    expect(logLines(log)[0]).toMatch(/^cp -a -- \.\/d \S+\/dest\/\.vtmv\.\d+\.0$/);
   });
 
   test('a failing staged copy keeps the source and removes only its own partial', async () => {
@@ -297,17 +297,43 @@ describe('directories: probe decides, mv only ever renames', () => {
     expect(leftovers(dir)).toEqual([]);
   });
 
-  test('a failed mv -n rename reports from the file system and cleans nothing', async () => {
+  test('a failed mv -n rename is classified from stderr and cleans nothing', async () => {
     const failMv =
       'mv() { printf partial > "$dp"; echo "mv: cannot move: Operation not permitted" >&2; return 1; }';
     viaLocalSh((script) => inject(script, failMv));
     const dir = sandbox();
     mkdirSync(join(dir, 'd'));
 
-    // 源仍在、目标出现：不是我们的东西，也不是我们能判断的半成品，保留并按 already_exists 报告
-    expect(await runNames(dir, ['d'])).toEqual(['already_exists']);
+    // 提交前检查时目标并不存在：半成品保留，状态只看 stderr，不报 already_exists
+    expect(await runNames(dir, ['d'])).toEqual(['permission_denied']);
     expect(readFileSync(join(dir, 'dest', 'd'), 'utf8')).toBe('partial');
     expect(existsSync(join(dir, 'd'))).toBe(true);
+  });
+
+  test('an implicit-copy leftover of a directory move is unknown, not already_exists', async () => {
+    const halfCopy =
+      'mv() { mkdir "$dp"; printf half > "$dp/x"; echo "mv: write error: No space left" >&2; return 1; }';
+    viaLocalSh((script) => inject(script, halfCopy));
+    const dir = sandbox();
+    mkdirSync(join(dir, 'd'));
+    writeFileSync(join(dir, 'd', 'x'), 'whole');
+
+    expect(await runNames(dir, ['d'])).toEqual(['unknown']);
+    expect(readFileSync(join(dir, 'd', 'x'), 'utf8')).toBe('whole');
+    expect(readFileSync(join(dir, 'dest', 'd', 'x'), 'utf8')).toBe('half');
+  });
+
+  test('a symlink whose removal failed after an implicit copy is permission_denied', async () => {
+    const copyThenFail =
+      'mv() { command cp -P "$s" "$dp"; echo "mv: cannot remove ./ln: Permission denied" >&2; return 1; }';
+    viaLocalSh((script) => inject(script, copyThenFail));
+    const dir = sandbox();
+    writeFileSync(join(dir, 'real'), 'x');
+    symlinkSync('real', join(dir, 'ln'));
+
+    expect(await runNames(dir, ['ln'])).toEqual(['permission_denied']);
+    expect(readlinkSync(join(dir, 'ln'))).toBe('real');
+    expect(readlinkSync(join(dir, 'dest', 'ln'))).toBe('real');
   });
 
   test.skipIf(isRoot)('a source parent that cannot hold the probe file fails safely', async () => {

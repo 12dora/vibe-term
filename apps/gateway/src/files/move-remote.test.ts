@@ -87,8 +87,20 @@ describe('buildMoveScript', () => {
     expect(script).not.toContain('fsid');
     expect(script).not.toContain('mv -f -T');
     expect(script).toContain('ln -- "$s" "$tp"');
-    expect(script).toContain('cp -p -- "$s" "$tp"');
-    expect(script).toContain('cp -Rp -- "$s" "$tp"');
+    expect(script).toContain('cp -a -- "$s" "$tp"');
+    expect(script).not.toContain('cp -p');
+    expect(script).not.toContain('cp -Rp');
+  });
+
+  test('the same-inode branch tests the parent identity with -ef before it can rm', () => {
+    const script = buildMoveScript(makeBatch([item('/srv/root', 'a')]));
+    const same = script.slice(script.indexOf('same() {'), script.indexOf('put() {'));
+    expect(script).toContain('if [ . -ef "$ddir" ]; then pi=1; dd=.; else pi=0; dd=${ddir%/}; fi');
+    expect(same.indexOf('[ "$pi" = 1 ]')).toBeGreaterThan(-1);
+    expect(same.indexOf('[ "$pi" = 1 ]')).toBeLessThan(same.indexOf('rms'));
+    // 无操作判断也只看父目录身份，不比较路径字符串
+    expect(script).toContain('if [ "$pi" = 1 ] && [ "$n" = "$dn" ]; then echo "VTOP $i ok"');
+    expect(script).not.toContain('"$pr" = "$ddir"');
   });
 
   test('overwrite flag is encoded and indices follow batch order', () => {
@@ -239,7 +251,8 @@ describe('script semantics (executed with sh -s)', () => {
   /** 跳过 vt 的存在性预检和 cmt 的最后确认，只剩 `mv -n` 本身（及 GNU 的 -T）把关。 */
   function fooled(script: string): string {
     const open = script.replace('elif gone "$dp"; then put n', 'elif true; then put n');
-    return open.replace('\nvt 0 ', '\ncmt() { mvn "$1" "$2"; }\nvt 0 ');
+    const defs = 'cmt() { mvn "$1" "$2"; }\ncmd() { mvd "$1" "$2"; }';
+    return open.replace('\nvt 0 ', `\n${defs}\nvt 0 `);
   }
 
   function sandbox(): string {
@@ -315,6 +328,59 @@ describe('script semantics (executed with sh -s)', () => {
     expect(readFileSync(join(dir, 'b.txt'), 'utf8')).toBe('a');
   });
 
+  // 模拟「目标目录与源父目录是同一个目录」（例如 bind mount 别名：路径不同、身份相同）：身份测试恒真
+  const forceAlias = (script: string) =>
+    script.replace('if [ . -ef "$ddir" ]; then pi=1;', 'if true; then pi=1;');
+
+  test('an aliased destination with the same name is a no-op and the entry survives', async () => {
+    viaLocalSh(forceAlias);
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'only');
+    linkSync(join(dir, 'f'), join(dir, 'dest', 'f'));
+
+    const { statuses } = await run(batchIn(dir, [['f']]));
+
+    expect(statuses).toEqual(['ok']);
+    expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('only');
+    expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('only');
+  });
+
+  test('an aliased destination renames inside the source parent and never removes', async () => {
+    viaLocalSh(forceAlias);
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'only');
+    mkdirSync(join(dir, 'd'));
+    writeFileSync(join(dir, 'd', 'inner'), 'inner');
+
+    const { statuses } = await run(
+      batchIn(dir, [
+        ['f', 'g'],
+        ['d', 'e'],
+      ])
+    );
+
+    expect(statuses).toEqual(['ok', 'ok']);
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+    expect(readFileSync(join(dir, 'g'), 'utf8')).toBe('only');
+    expect(readFileSync(join(dir, 'e', 'inner'), 'utf8')).toBe('inner');
+    expect(readdirSync(join(dir, 'dest'))).toEqual([]);
+    expect(readdirSync(dir).filter((name) => name.startsWith('.vtmv.'))).toEqual([]);
+  });
+
+  test('the same physical directory as source parent and destination renames in place', async () => {
+    viaLocalSh();
+    const dir = sandbox();
+    writeFileSync(join(dir, 'f'), 'only');
+
+    const noop = await run(batchIn(dir, [['f']], { destDir: dir }));
+    const renamed = await run(batchIn(dir, [['f', 'g']], { destDir: dir }));
+
+    expect(noop.statuses).toEqual(['ok']);
+    expect(renamed.statuses).toEqual(['ok']);
+    expect(readFileSync(join(dir, 'g'), 'utf8')).toBe('only');
+    expect(existsSync(join(dir, 'f'))).toBe(false);
+  });
+
   test('conflict, overwrite rules and directory protection', async () => {
     viaLocalSh();
     const dir = sandbox();
@@ -350,7 +416,8 @@ describe('script semantics (executed with sh -s)', () => {
 
     const { statuses } = await run(batchIn(dir, [['f'], ['d']]));
 
-    expect(statuses).toEqual(['already_exists', 'already_exists']);
+    // 文件经私有项提交被 mv -n 跳过 = 目标被抢先建出；目录直接 mv -n 源仍在 = 只按 stderr 分类
+    expect(statuses).toEqual(['already_exists', 'unknown']);
     expect(readFileSync(join(dir, 'dest', 'f'), 'utf8')).toBe('old');
     expect(readFileSync(join(dir, 'f'), 'utf8')).toBe('new');
     expect(readdirSync(join(dir, 'dest', 'd'))).toEqual(['keep']);
@@ -434,7 +501,8 @@ describe('script semantics (executed with sh -s)', () => {
 
     const { statuses } = await run(batchIn(dir, [['a', 'b']], { destDir: dir }));
 
-    expect(statuses).toEqual(['ok']);
+    // GNU mv 对同一文件的两个名字报错（unknown），别名文件系统上 rename 成功（ok）；两个名字都必须还在
+    expect(['ok', 'unknown']).toContain(statuses[0] ?? '');
     expect(readFileSync(join(dir, 'a'), 'utf8')).toBe('data');
     expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('data');
   });

@@ -252,19 +252,36 @@ function performMove(src: string, dest: string, st: Stats, destExisted: boolean)
 }
 
 /**
+ * 两个目录是不是同一个目录：比较 dev+ino，路径字符串不同也可能是同一目录（例如 bind mount 别名）。
+ * 任何一边取不到身份返回 undefined，调用方必须按「不确定」保守处理，不能当作不同。
+ */
+function sameDirectory(a: string, b: string): boolean | undefined {
+  if (a === b) return true;
+  try {
+    const sa = fileMoveIo.stat(a);
+    const sb = fileMoveIo.stat(b);
+    return sa.dev === sb.dev && sa.ino === sb.ino;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 源与目标是同一 inode 时有两种可能：
- * - 上一次提交停在「link 成功、unlink 源失败」：两个父目录不同，必然是两个不同的目录项，
+ * - 上一次提交停在「link 成功、unlink 源失败」：两个父目录身份不同（dev+ino），必然是两个不同的目录项，
  *   只补删源即可（再走冲突检查会永远 already_exists，覆盖模式下 rename 同 inode 的两个链接又是空操作）；
- * - 大小写 / 规范化不敏感的文件系统上同一个目录项的两个别名（`report.txt` → `Report.txt`）：
- *   父目录相同，只能做普通 rename，绝不能 unlink——那会删掉唯一的目录项。
+ * - 父目录身份相同：可能是大小写 / 规范化不敏感的文件系统上同一个目录项的两个别名
+ *   （`report.txt` → `Report.txt`），也可能是 bind mount 别名下的同一目录，只能做普通 rename，
+ *   绝不能 unlink——那会删掉唯一的目录项。此时 destPath 已经在源父目录内，不经别名路径。
+ * 父目录身份取不到（undefined）时什么都不做，交给冲突检查（已存在）。
  */
 function finishCommitted(
-  ctx: LocalCtx,
-  realParent: string,
+  sameParent: boolean | undefined,
   srcReal: string,
   destPath: string,
   srcSt: Stats
 ): MoveOutcome | null {
+  if (sameParent === undefined) return null;
   let destSt: Stats;
   try {
     destSt = fileMoveIo.lstat(destPath);
@@ -273,7 +290,7 @@ function finishCommitted(
   }
   if (destSt.dev !== srcSt.dev || destSt.ino !== srcSt.ino) return null;
   try {
-    if (realParent === ctx.realDestDir) {
+    if (sameParent) {
       fileMoveIo.rename(srcReal, destPath);
       return ok(undefined);
     }
@@ -289,10 +306,12 @@ function moveOne(ctx: LocalCtx, item: MoveItem): MoveOutcome {
   const src = resolveSource(ctx, item);
   if (!src.ok) return src;
   const { srcReal, realParent, st } = src.data;
-  if (realParent === ctx.realDestDir && item.name === item.destName) return ok(undefined);
-  const destPath = posixJoin(ctx.realDestDir, item.destName);
+  const sameParent = sameDirectory(realParent, ctx.realDestDir);
+  if (sameParent === true && item.name === item.destName) return ok(undefined);
+  // 父目录身份相同时目标写在源父目录内：重命名永远发生在同一个目录里，不经别名路径
+  const destPath = posixJoin(sameParent === true ? realParent : ctx.realDestDir, item.destName);
   if (st.isDirectory() && isInsidePath(destPath, srcReal)) return fail('invalid');
-  const committed = finishCommitted(ctx, realParent, srcReal, destPath, st);
+  const committed = finishCommitted(sameParent, srcReal, destPath, st);
   if (committed) return committed;
   const conflict = checkConflict(ctx, st, destPath);
   if (!conflict.ok) return conflict;

@@ -74,7 +74,7 @@ function inject(script: string, defs: string): string {
 }
 
 /** 蒙过 vt 预检与 cmt 的最后确认，只剩 `mv -n`（及 GNU 的 -T）把关。 */
-const skipChecks = 'cmt() { mvn "$1" "$2"; }';
+const skipChecks = 'cmt() { mvn "$1" "$2"; }\ncmd() { mvd "$1" "$2"; }';
 const openPrecheck = (script: string) =>
   patch(script, 'elif gone "$dp"; then put n', 'elif true; then put n');
 
@@ -328,7 +328,9 @@ describe('source removal and the same-inode rule', () => {
 
     for (const overwrite of [false, true]) {
       const items = [{ path: join(dir, 'a'), parent: dir, name: 'a', destName: 'b' }];
-      expect(await runOne(dir, { destDir: dir, overwrite, items })).toBe('ok');
+      // GNU mv 对同一文件的两个名字报错（unknown），别名文件系统上 rename 成功（ok）；名字都不得被删
+      const status = await runOne(dir, { destDir: dir, overwrite, items });
+      expect(['ok', 'unknown']).toContain(status);
       expect(readFileSync(join(dir, 'a'), 'utf8')).toBe('data');
       expect(readFileSync(join(dir, 'b'), 'utf8')).toBe('data');
     }
