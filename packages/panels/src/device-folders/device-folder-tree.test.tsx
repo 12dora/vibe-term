@@ -15,6 +15,7 @@ import {
   dropZoneId,
   folderContainerId,
 } from './folder-tree-model';
+import { placeholderMinHeight } from './node-list';
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -177,6 +178,75 @@ describe('DeviceFolderTree', () => {
     });
     expect(html).toContain('data-testid="device-folder-tree"');
     expect(html).not.toContain('data-testid="device-folder-item-');
+  });
+});
+
+describe('节点磁贴网格', () => {
+  test('根层与每个非空分组各有一张节点网格（容器查询的宿主套在网格外面）', () => {
+    const html = renderTree();
+    // 分组 a（n1）+ 根层（n2、self）；分组 b 是空的
+    expect(html.split('data-testid="devices-node-grid"').length - 1).toBe(2);
+    expect(tagOf(html, 'data-testid="devices-node-grid"')).toContain('@container');
+    const grid = html.slice(html.indexOf('data-testid="devices-node-grid"'));
+    expect(grid.slice(0, grid.indexOf('data-testid="device-folder-item-node:n1"'))).toContain(
+      '@[48rem]:grid-cols-2 @[80rem]:grid-cols-3'
+    );
+  });
+
+  test('空分组的落点提示不进网格：整行宽，哪一列都接得住', () => {
+    const html = renderTree();
+    const emptyFolder = html.slice(
+      html.indexOf('data-testid="device-folder-b"'),
+      html.indexOf('data-testid="device-folder-drop-b"')
+    );
+    expect(emptyFolder).not.toContain('data-testid="devices-node-grid"');
+  });
+
+  test('没给 nodeSpan 时每个磁贴占一格', () => {
+    const html = renderTree();
+    for (const nodeId of ['n1', 'n2', 'self']) {
+      const tag = tagOf(html, `data-testid="device-folder-item-node:${nodeId}"`);
+      expect(tag).toContain('data-span="1"');
+      expect(tag).toContain('col-span-1');
+      expect(tag).not.toContain('col-span-2');
+    }
+  });
+
+  test('nodeSpan 决定磁贴的 data-span 与跨度类；宿主拿得到节点所在的分组', () => {
+    const seen: [string, string | null][] = [];
+    const html = renderTree({
+      nodeSpan: (nodeId, ctx) => {
+        seen.push([nodeId, ctx.folderId]);
+        if (nodeId === 'n1') return 2;
+        return nodeId === 'n2' ? 3 : 'full';
+      },
+    });
+    const n1 = tagOf(html, 'data-testid="device-folder-item-node:n1"');
+    expect(n1).toContain('data-span="2"');
+    expect(n1).toContain('@[48rem]:col-span-2');
+    expect(n1).not.toContain('col-span-3');
+    const n2 = tagOf(html, 'data-testid="device-folder-item-node:n2"');
+    expect(n2).toContain('data-span="3"');
+    expect(n2).toContain('@[48rem]:col-span-2 @[80rem]:col-span-3');
+    const self = tagOf(html, 'data-testid="device-folder-item-node:self"');
+    expect(self).toContain('data-span="full"');
+    expect(self).toContain('col-span-full');
+    expect(seen).toContainEqual(['n1', 'a']);
+    expect(seen).toContainEqual(['n2', null]);
+  });
+
+  test('不套拖拽外壳的节点同样带跨度', () => {
+    const html = renderTree({ nodeDraggable: () => false, nodeSpan: () => 2 });
+    const tag = tagOf(html, 'data-testid="device-folder-item-node:self"');
+    expect(tag).toContain('data-span="2"');
+    expect(tag).toContain('@[48rem]:col-span-2');
+  });
+
+  test('占位条的高度不低于被拖磁贴量到的高度，量不到用兜底值', () => {
+    expect(placeholderMinHeight(180)).toBe(180);
+    expect(placeholderMinHeight(12)).toBe(48);
+    expect(placeholderMinHeight(null)).toBe(48);
+    expect(placeholderMinHeight(undefined)).toBe(48);
   });
 });
 

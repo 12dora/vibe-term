@@ -7,6 +7,15 @@ export {
 export { DeviceFolderNodeShell, type DeviceFolderNodeShellProps } from './draggable-item';
 export { FolderNameEditor, type FolderNameEditorProps } from './folder-name-editor';
 export { FolderDropArea, FolderSection } from './folder-section';
+export {
+  NODE_GRID_CLASS,
+  NODE_GRID_CONTAINER_CLASS,
+  NODE_GRID_MAX_COLUMNS,
+  NODE_TILE_SPAN_CLASS,
+  nodeTileSpan,
+  type NodeTileSize,
+  type NodeTileSpan,
+} from './node-grid';
 export { snapCenterToCursor, snapToCursorTransform } from './snap-to-cursor';
 export {
   PLACEHOLDER_ITEM_ID,

@@ -13,6 +13,10 @@
 //     「稍后自动重试」；额度用完了就换一句不承诺重试的，并给出「重试连接」——不给出口等于把人
 //     关在错误态里，看着一句不会兑现的话。
 //
+// 版式：mesh 下每个节点是节点网格里的一块磁贴（`tile`），磁贴占几列由设备数决定（见
+// `use-node-device-counts.ts`），里面的卡片均分磁贴宽度；standalone 那唯一的节点独占整行，
+// 卡片网格按固定最小列宽自动填列。
+//
 // 「添加设备」全页只有顶栏一个 +：ready 的分组把自己的 `openAddDevice` 登记到
 // `add-device-targets` 注册表，顶栏据此直接开或先让用户选节点；面板自身仍不监听全局事件
 // （多面板同时挂载会一起弹框），只有 entry 自身保留监听兜住其它派发方。
@@ -253,10 +257,14 @@ function NodeDevicePanel({
   node,
   panelRef,
   offline,
+  tile,
+  onDeviceCount,
 }: {
   node: NodeDeviceGroupEntry;
   panelRef: Ref<DeviceManagementPanelHandle>;
   offline: boolean;
+  tile: boolean;
+  onDeviceCount?: (runtimeNodeId: string, count: number) => void;
 }) {
   const { connection } = useGlobalDevice();
   const { runtimeNodeId, name: nodeName, isSelf: nodeIsSelf } = node;
@@ -267,8 +275,12 @@ function NodeDevicePanel({
     [runtimeNodeId, nodeName, nodeIsSelf]
   );
   const onDevicesLoaded = useCallback(
-    (devices: Device[]) => writeDeviceSnapshot(runtimeNodeId, devices),
-    [runtimeNodeId]
+    (devices: Device[]) => {
+      writeDeviceSnapshot(runtimeNodeId, devices);
+      // 真实列表的长度是权威的设备数：磁贴跨度据此放宽或收窄
+      onDeviceCount?.(runtimeNodeId, devices.length);
+    },
+    [runtimeNodeId, onDeviceCount]
   );
   // 只在离线时才去读快照 / inventory；在线时面板用的是真实列表
   const fallbackDevices = useMemo(
@@ -283,6 +295,7 @@ function NodeDevicePanel({
       offline={offline}
       fallbackDevices={fallbackDevices}
       onDevicesLoaded={onDevicesLoaded}
+      fitCards={tile}
       // entry 自身保留全局事件：外壳右上角的「添加设备」作用于 self。
       listenOpenAddDeviceEvent={node.isSelf}
     />
@@ -295,9 +308,19 @@ export interface NodeDeviceGroupProps {
   showHeader?: boolean;
   /** 分组列表给的拖拽把手（与「移出分组」按钮），放在分组头最左 */
   dragControls?: ReactNode;
+  /** 该分组是节点网格里的一块磁贴：卡片均分磁贴宽度（单设备占满整格） */
+  tile?: boolean;
+  /** 该节点的真实设备列表到了（含之后每次变化）：报上设备数，页面据此定磁贴跨度 */
+  onDeviceCount?: (runtimeNodeId: string, count: number) => void;
 }
 
-export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeDeviceGroupProps) {
+export function NodeDeviceGroup({
+  node,
+  showHeader = true,
+  dragControls,
+  tile = false,
+  onDeviceCount,
+}: NodeDeviceGroupProps) {
   const panelRef = useRef<DeviceManagementPanelHandle>(null);
   const base = nodeDeviceGroupState(node);
   // 门闸只在「在线未登录」那一档开工；其余档位传 enabled:false，一个请求都不发，
@@ -332,7 +355,7 @@ export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeD
       )}
       {state === 'pending' ? (
         // 状态块还没解开：这台的设备一个都不作数（快照可能是上一代的），先摆卡片占位
-        <DeviceCardSkeleton />
+        <DeviceCardSkeleton fit={tile} />
       ) : state === 'unreachable' ? (
         <UnreachableBody node={node} gate={gate} />
       ) : state === 'signedOut' ? (
@@ -344,7 +367,13 @@ export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeD
           data-offline={state === 'offline' ? 'true' : undefined}
         >
           <NodeRuntimeScope nodeId={node.runtimeNodeId} offline={state === 'offline'}>
-            <NodeDevicePanel node={node} panelRef={panelRef} offline={state === 'offline'} />
+            <NodeDevicePanel
+              node={node}
+              panelRef={panelRef}
+              offline={state === 'offline'}
+              tile={tile}
+              onDeviceCount={onDeviceCount}
+            />
           </NodeRuntimeScope>
         </div>
       )}

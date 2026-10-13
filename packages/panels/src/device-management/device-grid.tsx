@@ -25,7 +25,7 @@ import { type CSSProperties, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePruneStaleFilesVisibility } from '../files/use-prune-files-visibility';
 import { DeviceCardHost, type DeviceCardHostProps } from './device-card-host';
-import { DEVICE_GRID_CLASS } from './device-card-skeleton';
+import { deviceGridClass } from './device-card-skeleton';
 import { deviceGridCollisionDetection } from './device-grid-collision';
 import type { useDeviceManagementState } from './use-device-management-state';
 
@@ -100,9 +100,12 @@ const SortableDeviceCard = memo(function SortableDeviceCard({
 export function DeviceGrid({
   state,
   card,
+  fit,
 }: {
   state: ReturnType<typeof useDeviceManagementState>;
   card: CardProps;
+  /** 卡片均分容器宽度（面板放在节点磁贴里时），缺省按固定最小列宽自动填列 */
+  fit?: boolean;
 }) {
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
@@ -130,8 +133,7 @@ export function DeviceGrid({
       <SortableContext items={deviceIds} strategy={rectSortingStrategy} disabled={reorderDisabled}>
         <div
           data-testid="devices-grid"
-          // 自适应列数：每列至少 24rem，设备名与 SSH 目标才有地方放（窄屏退回单列）
-          className={cn(DEVICE_GRID_CLASS, state.staggering && 'vibeterm-stagger')}
+          className={cn(deviceGridClass(fit), state.staggering && 'vibeterm-stagger')}
           onAnimationEnd={state.onAnimationEnd}
         >
           {devices.map((device, index) => (

@@ -5,6 +5,11 @@
 // 分组布局只存在 entry 自己的库里，所有 `/api/device-folders/*` 请求都在本页顶层的 runtime
 // 上发（见 `devices/use-device-folders.ts`），远端 node 的运行时里不发这类请求。
 //
+// 版式：mesh 下节点不再一行一个，而是排进「节点磁贴网格」——根层与每个分组内部各一张网格，
+// 列数跟容器宽度走（1 / 2 / 3 列）；磁贴跨度 = min(设备数, 列数)，顺序不重排（视觉顺序永远
+// 等于数据顺序）。分组仍是整行宽的虚线框。列模型见 `@vibeterm/panels/device-folders` 的
+// `node-grid.ts`，设备数来源见 `devices/use-node-device-counts.ts`。
+//
 // 宽度 / 内边距只由 `DevicesPageContainer` 一处负责：loading、空态、错误态、就绪态共用，
 // 内层面板一律 `w-full`，不再各自套 max-width / padding。
 
@@ -40,11 +45,13 @@ function selfGroup(name: string): NodeDeviceGroupEntry {
   };
 }
 
+// 2xl 起放宽到 112rem：节点网格要容器够 80rem 才排得出第三列，旧的 80rem 上限扣掉内边距后
+// 永远够不着。更窄的屏幕（含手机单列）沿用原来的上限与内边距。
 export function DevicesPageContainer({ children }: { children: ReactNode }) {
   return (
     <div
       data-testid="devices-page-container"
-      className="mx-auto flex w-full max-w-6xl min-w-0 flex-col gap-3 px-4 py-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:gap-4 sm:px-6 sm:py-5 xl:max-w-7xl"
+      className="mx-auto flex w-full max-w-6xl min-w-0 flex-col gap-3 px-4 py-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:gap-4 sm:px-6 sm:py-5 xl:max-w-7xl 2xl:max-w-[112rem]"
     >
       {children}
     </div>

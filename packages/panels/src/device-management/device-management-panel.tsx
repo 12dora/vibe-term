@@ -63,6 +63,11 @@ export interface DeviceManagementPanelProps {
   fallbackDevices?: readonly Device[];
   /** 每次成功拿到设备列表时回调（宿主用来写离线快照） */
   onDevicesLoaded?: (devices: Device[]) => void;
+  /**
+   * 卡片均分面板宽度（面板放在节点磁贴里时）：单设备占满整格，多设备并排铺开。
+   * 缺省按固定最小列宽自动填列（standalone 整页一张网格）。
+   */
+  fitCards?: boolean;
   className?: string;
   ref?: Ref<DeviceManagementPanelHandle>;
 }
@@ -110,6 +115,18 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
   );
 }
 
+function OfflineEmptyState() {
+  const { t } = useTranslation();
+  return (
+    <div
+      data-testid="devices-offline-empty"
+      className="rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-3 text-xs text-muted-foreground/70"
+    >
+      {t('devices.nodes.noKnownDevices')}
+    </div>
+  );
+}
+
 export function DeviceManagementPanel({
   devicesQueryKey = defaultDevicesQueryKey,
   listenOpenAddDeviceEvent = true,
@@ -118,6 +135,7 @@ export function DeviceManagementPanel({
   offline = false,
   fallbackDevices,
   onDevicesLoaded,
+  fitCards = false,
   className,
   ref,
 }: DeviceManagementPanelProps) {
@@ -163,10 +181,11 @@ export function DeviceManagementPanel({
       {state.status === 'error' ? (
         <LoadErrorCard error={state.error} onRetry={state.retry} />
       ) : state.status !== 'ready' ? (
-        <DeviceCardSkeleton />
+        <DeviceCardSkeleton fit={fitCards} />
       ) : !empty ? (
         <DeviceGrid
           state={state}
+          fit={fitCards}
           card={{
             queryKey: devicesQueryKey,
             nodeContext: resolvedNodeContext,
@@ -175,12 +194,7 @@ export function DeviceManagementPanel({
           }}
         />
       ) : offline ? (
-        <div
-          data-testid="devices-offline-empty"
-          className="rounded-lg border border-dashed border-border/60 bg-muted/20 px-3 py-3 text-xs text-muted-foreground/70"
-        >
-          {t('devices.nodes.noKnownDevices')}
-        </div>
+        <OfflineEmptyState />
       ) : (
         <EmptyState onAdd={() => openAddDevice()} />
       )}

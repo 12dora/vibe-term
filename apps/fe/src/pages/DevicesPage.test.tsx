@@ -279,6 +279,8 @@ describe('DevicesPage', () => {
     expect(containerOf(ready)).toBe(containerOf(html));
     expect(containerOf(ready)).toContain('max-w-6xl');
     expect(containerOf(ready)).toContain('xl:max-w-7xl');
+    // 2xl 起放宽：节点网格要 80rem 的容器才排得出第三列
+    expect(containerOf(ready)).toContain('2xl:max-w-[112rem]');
   });
 
   test('mode 还没落地但本地有 mesh 缓存：直接照缓存画主体，不再转菊花', () => {

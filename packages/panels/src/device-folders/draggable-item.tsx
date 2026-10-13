@@ -22,6 +22,8 @@ export interface DeviceFolderNodeShellProps {
   /** 所在容器（根 / 分组）的 id：碰撞判定按容器筛兄弟，靠它认领 */
   containerId: string;
   disabled?: boolean;
+  /** 磁贴在节点网格里想占几列，原样写到 `data-span`（跨度类由 className 给） */
+  span?: number | string;
   className?: string;
   /** 拿到把手后渲染节点本体 */
   children: (dragControls: ReactNode) => ReactNode;
@@ -31,6 +33,7 @@ export function DeviceFolderNodeShell({
   nodeId,
   containerId,
   disabled,
+  span,
   className,
   children,
 }: DeviceFolderNodeShellProps) {
@@ -69,6 +72,7 @@ export function DeviceFolderNodeShell({
       ref={setNodeRef}
       data-testid={`device-folder-item-node:${nodeId}`}
       data-dragging={isDragging ? 'true' : undefined}
+      data-span={span}
       className={cn('min-w-0', isDragging && 'opacity-40 motion-reduce:opacity-40', className)}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >

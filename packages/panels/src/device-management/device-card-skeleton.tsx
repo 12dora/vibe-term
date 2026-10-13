@@ -6,13 +6,30 @@ import { cn } from '@vibeterm/ui';
 import { Card, CardContent } from '@vibeterm/ui/card';
 import { useTranslation } from 'react-i18next';
 
-/** 与 `device-grid` 的网格保持一致：列宽、间距对不上，切换时就会跳一下。 */
+/**
+ * 与 `device-grid` 的网格保持一致：列宽、间距对不上，切换时就会跳一下。
+ * 每列至少 20rem（设备名与 SSH 目标要有地方放），窄于它退回单列。
+ */
 export const DEVICE_GRID_CLASS =
-  'grid grid-cols-[repeat(auto-fill,minmax(min(24rem,100%),1fr))] gap-3';
+  'grid grid-cols-[repeat(auto-fill,minmax(min(20rem,100%),1fr))] gap-3';
+
+/**
+ * 节点磁贴里用的变体：`auto-fit` 把空轨道收掉，卡片均分磁贴的宽度——单设备节点的那张卡
+ * 占满整格，N 台设备的节点跨 N 格时正好并排 N 张。
+ */
+export const DEVICE_GRID_FIT_CLASS =
+  'grid grid-cols-[repeat(auto-fit,minmax(min(20rem,100%),1fr))] gap-3';
+
+/** 骨架与真实网格都从这里取类名，两边永远是同一套列模型 */
+export function deviceGridClass(fit = false): string {
+  return fit ? DEVICE_GRID_FIT_CLASS : DEVICE_GRID_CLASS;
+}
 
 export interface DeviceCardSkeletonProps {
   /** 占位卡片数量；缺省一张。 */
   count?: number;
+  /** 卡片均分容器宽度（节点磁贴里用），见 `DEVICE_GRID_FIT_CLASS` */
+  fit?: boolean;
   className?: string;
 }
 
@@ -20,12 +37,12 @@ function slotKeys(count: number): string[] {
   return Array.from({ length: Math.max(1, count) }, (_, index) => `device-skeleton-${index}`);
 }
 
-export function DeviceCardSkeleton({ count = 1, className }: DeviceCardSkeletonProps) {
+export function DeviceCardSkeleton({ count = 1, fit, className }: DeviceCardSkeletonProps) {
   const { t } = useTranslation();
   return (
     <div
       data-testid="devices-loading"
-      className={cn(DEVICE_GRID_CLASS, 'vibeterm-fade', className)}
+      className={cn(deviceGridClass(fit), 'vibeterm-fade', className)}
     >
       {slotKeys(count).map((key) => (
         <Card

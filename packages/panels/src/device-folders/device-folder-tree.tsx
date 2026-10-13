@@ -6,32 +6,26 @@
 // 以及拖拽过程中的「腾位置」预览——跨容器时被拖的节点**留在原容器**（变暗），目标容器里插一条
 // 等高的占位条把兄弟顶开，松手才真的提交。
 //
+// 版式（节点磁贴网格，规则在 `node-grid.ts`，实现在 `node-list.tsx`）：
+//   - 分组始终整行宽、上下排列；根层与每个分组内部各有一张节点网格，列数跟**容器宽度**走
+//     （不足 48rem 一列 / 48rem 起两列 / 80rem 起三列）。
+//   - 节点磁贴的跨度 = min(设备数, 列数)：单设备节点占一格，N 台设备的节点占 N 格（封顶为
+//     当前列数），里面的设备卡片并排铺开。设备数由宿主经 `nodeSpan` 给。
+//   - 顺序不重排：视觉顺序永远等于数据顺序，行尾放不下就整块换行，空着的格子不回填。
+//
 // 移到最外层没有按钮也没有落点条：整棵树本身就是一个落点区，把节点拖到所有分组虚线框
 // 之外的空白处松手即回到根层；指针离开整棵树（`over` 为空）则视为取消。
 
-import { DndContext, DragOverlay, MeasuringStrategy, useDndContext } from '@dnd-kit/core';
+import { DndContext, DragOverlay, MeasuringStrategy } from '@dnd-kit/core';
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { type DeviceFolder, type DeviceFolderLayout, countFolderItems } from '@vibeterm/shared';
 import { cn } from '@vibeterm/ui';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from '@vibeterm/ui/alert-dialog';
-import { Folder, Server, Trash2 } from 'lucide-react';
+import { Folder, Server } from 'lucide-react';
 import {
   type ReactNode,
   type Ref,
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -41,19 +35,14 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useDeviceTreeSensors } from '../device-tree/device-tree-dnd-impl';
 import { deviceFolderCollisionDetection } from './collision';
-import { DeviceFolderNodeShell } from './draggable-item';
 import { useDropZone } from './drop-zone';
+import { FolderDeleteDialog } from './folder-delete-dialog';
 import { FolderNameEditor } from './folder-name-editor';
-import { FolderDropArea, FolderSection } from './folder-section';
+import { FolderSection } from './folder-section';
 import {
-  type DeviceFolderContainer,
   type DeviceFolderDrop,
-  type DeviceFolderPlaceholder,
-  PLACEHOLDER_ITEM_ID,
   ROOT_CONTAINER_ID,
-  bodyDropZoneId,
   containerFolderId,
-  containerItemIds,
   dropTargetContainerId,
   dropZoneId,
   folderContainerId,
@@ -64,24 +53,20 @@ import {
   resolveDrop,
   rootFolderElementIds,
 } from './folder-tree-model';
+import type { NodeTileSize } from './node-grid';
+import { NodeList } from './node-list';
 import { snapCenterToCursor } from './snap-to-cursor';
+import {
+  type DeviceFolderNodeContext,
+  TreeContext,
+  type TreeContextValue,
+  useTree,
+} from './tree-context';
+
+export type { DeviceFolderNodeContext } from './tree-context';
 
 /** 拖过折叠分组多久自动展开 */
 const AUTO_EXPAND_MS = 600;
-
-/** 量不到被拖节点高度时占位条的兜底高度 */
-const PLACEHOLDER_MIN_HEIGHT = 48;
-
-export interface DeviceFolderNodeContext {
-  /** 节点所在分组；null = 根层 */
-  folderId: string | null;
-  /** 该节点没有 placement（还挂在根层的默认位置上） */
-  implicit: boolean;
-  /** 上一次布局提交还在飞，拖拽应当禁用 */
-  dragDisabled: boolean;
-  /** 拖拽把手；宿主放进节点头部。不可拖时为 null */
-  dragControls: ReactNode | null;
-}
 
 export interface DeviceFolderTreeHandle {
   /** 在列表末尾插入一行处于编辑态的新建分组（顶栏按钮用） */
@@ -97,6 +82,11 @@ export interface DeviceFolderTreeProps {
   nodeLabel: (nodeId: string) => string;
   /** 返回 false 的节点不套拖拽外壳（该节点本来就不该被拖，如 standalone 下唯一的本机） */
   nodeDraggable?: (nodeId: string, ctx: { folderId: string | null }) => boolean;
+  /**
+   * 节点磁贴在所在网格里想占几列（通常 = `nodeTileSpan(设备数)`）；`full` 独占整行。
+   * 缺省一列。拖拽占位条也用被拖节点的这个值。
+   */
+  nodeSpan?: (nodeId: string, ctx: { folderId: string | null }) => NodeTileSize;
   /** 分组展开态；缺键视为展开 */
   expanded: Record<string, boolean>;
   onExpandedChange: (folderId: string, expanded: boolean) => void;
@@ -108,131 +98,6 @@ export interface DeviceFolderTreeProps {
   disabled?: boolean;
   className?: string;
   ref?: Ref<DeviceFolderTreeHandle>;
-}
-
-interface TreeContextValue {
-  containers: Map<string, DeviceFolderContainer>;
-  foldersById: Map<string, DeviceFolder>;
-  itemCounts: Map<string, number>;
-  /** 有 placement 的节点 id：没有 placement 的节点还挂在根层的默认位置上 */
-  placedNodeIds: ReadonlySet<string>;
-  expandedOf: (folderId: string) => boolean;
-  dropContainerId: string | null;
-  /** 跨容器拖拽时占位条插在哪；同容器重排为 null */
-  placeholder: DeviceFolderPlaceholder | null;
-  dragDisabled: boolean;
-  creatingFolder: boolean;
-  renamingFolderId: string | null;
-  renderNode: DeviceFolderTreeProps['renderNode'];
-  nodeDraggable: DeviceFolderTreeProps['nodeDraggable'];
-  nodeLabel: DeviceFolderTreeProps['nodeLabel'];
-  actions: {
-    toggle: (folderId: string, expanded: boolean) => void;
-    startRename: (folderId: string) => void;
-    submitRename: (folderId: string, name: string) => void;
-    cancelRename: () => void;
-    submitNewFolder: (name: string) => void;
-    cancelNewFolder: () => void;
-    requestDelete: (folder: DeviceFolder) => void;
-  };
-}
-
-const TreeContext = createContext<TreeContextValue | null>(null);
-
-function useTree(): TreeContextValue {
-  const value = useContext(TreeContext);
-  if (!value) throw new Error('DeviceFolderTree 的子组件必须渲染在 DeviceFolderTree 内');
-  return value;
-}
-
-function NodeItem({
-  nodeId,
-  containerId,
-  folderId,
-}: {
-  nodeId: string;
-  containerId: string;
-  folderId: string | null;
-}) {
-  const { renderNode, nodeDraggable, dragDisabled, placedNodeIds } = useTree();
-  const implicit = !placedNodeIds.has(nodeId);
-  if (nodeDraggable && !nodeDraggable(nodeId, { folderId })) {
-    const content = renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls: null });
-    if (content === null || content === undefined || content === false) return null;
-    return <div data-testid={`device-folder-item-node:${nodeId}`}>{content}</div>;
-  }
-  return (
-    <DeviceFolderNodeShell nodeId={nodeId} containerId={containerId} disabled={dragDisabled}>
-      {(dragControls) => renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls })}
-    </DeviceFolderNodeShell>
-  );
-}
-
-/**
- * 跨容器拖拽时插进目标容器的占位条：只占一格高度，把后面的兄弟顶下去。
- * 它不是 droppable，不参与落点判定；被拖的节点自始至终留在原容器里（只是变暗），
- * 免得它的 React 子树（宿主的 runtime scope / QueryClientProvider / 面板）在拖拽途中重挂。
- */
-function DropPlaceholder() {
-  const { activeNodeRect } = useDndContext();
-  const height = Math.max(activeNodeRect?.height ?? 0, PLACEHOLDER_MIN_HEIGHT);
-  return (
-    <div
-      aria-hidden="true"
-      data-testid="device-folder-drop-placeholder"
-      className="rounded-xl border-2 border-dashed border-ring/50 bg-accent/30"
-      style={{ height }}
-    />
-  );
-}
-
-function NodeList({ containerId }: { containerId: string }) {
-  const { t } = useTranslation();
-  const tree = useTree();
-  const container = tree.containers.get(containerId);
-  const folderId = containerFolderId(containerId) ?? null;
-  if (!container) return null;
-
-  if (container.nodeIds.length === 0) {
-    if (folderId === null) return null;
-    return (
-      <FolderDropArea
-        zoneId={bodyDropZoneId(containerId)}
-        testId={`device-folder-drop-${folderId}`}
-        active={tree.dropContainerId === containerId}
-        label={t('devices.folders.empty')}
-        activeLabel={t('devices.folders.dropHere', {
-          name: tree.foldersById.get(folderId)?.name ?? '',
-        })}
-      />
-    );
-  }
-
-  const items = containerItemIds(containerId, container.nodeIds, tree.placeholder);
-
-  return (
-    <SortableContext
-      items={container.nodeIds}
-      strategy={verticalListSortingStrategy}
-      disabled={tree.dragDisabled}
-    >
-      <div className="flex min-w-0 flex-col gap-3">
-        {items.map((elementId) => {
-          if (elementId === PLACEHOLDER_ITEM_ID) return <DropPlaceholder key={elementId} />;
-          const nodeId = parseNodeElementId(elementId);
-          if (!nodeId) return null;
-          return (
-            <NodeItem
-              key={elementId}
-              nodeId={nodeId}
-              containerId={containerId}
-              folderId={folderId}
-            />
-          );
-        })}
-      </div>
-    </SortableContext>
-  );
 }
 
 function FolderNode({ folder }: { folder: DeviceFolder }) {
@@ -332,6 +197,7 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     implicitRootNodeIds,
     renderNode,
     nodeDraggable,
+    nodeSpan,
     nodeLabel,
     expanded,
     onExpandedChange,
@@ -343,7 +209,6 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     className,
     ref,
   } = props;
-  const { t } = useTranslation();
   const sensors = useDeviceTreeSensors();
 
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -368,6 +233,10 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
   const itemCounts = useMemo(() => countFolderItems(layout), [layout]);
 
   const expandedOf = useCallback((folderId: string) => expanded[folderId] !== false, [expanded]);
+  const spanOf = useCallback(
+    (nodeId: string, folderId: string | null) => nodeSpan?.(nodeId, { folderId }) ?? 1,
+    [nodeSpan]
+  );
 
   useImperativeHandle(ref, () => ({ startNewFolder: () => setCreatingFolder(true) }), []);
 
@@ -457,6 +326,7 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       renderNode,
       nodeDraggable,
       nodeLabel,
+      nodeSpan: spanOf,
       actions,
     }),
     [
@@ -473,6 +343,7 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       renderNode,
       nodeDraggable,
       nodeLabel,
+      spanOf,
       actions,
     ]
   );
@@ -482,7 +353,8 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       <DndContext
         sensors={sensors}
         collisionDetection={deviceFolderCollisionDetection}
-        // 拖拽过程中容器高度会变（折叠的分组自动展开、占位条插进插出），必须持续重新测量
+        // 拖拽过程中条目会挪位置（折叠的分组自动展开、占位条插进插出挤动同行 / 后续各行），
+        // 必须持续重新测量
         measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
         onDragStart={(event: DragStartEvent) => setActiveId(String(event.active.id))}
         onDragOver={(event: DragOverEvent) => setOverId(event.over ? String(event.over.id) : null)}
@@ -532,37 +404,11 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
         </DragOverlay>
       </DndContext>
 
-      <AlertDialog
-        open={deleteCandidate !== null}
-        onOpenChange={(open) => !open && setDeleteCandidate(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia className="bg-destructive/10">
-              <Trash2 className="h-5 w-5 text-destructive" />
-            </AlertDialogMedia>
-            <AlertDialogTitle>{t('devices.folders.deleteConfirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('devices.folders.deleteConfirmDescription', {
-                name: deleteCandidate?.name ?? '',
-              })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              data-testid="device-folder-delete-confirm"
-              onClick={() => {
-                if (deleteCandidate) onDeleteFolder(deleteCandidate.id);
-                setDeleteCandidate(null);
-              }}
-            >
-              {t('common.delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <FolderDeleteDialog
+        folder={deleteCandidate}
+        onConfirm={onDeleteFolder}
+        onClose={() => setDeleteCandidate(null)}
+      />
     </TreeContext.Provider>
   );
 }

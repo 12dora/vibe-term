@@ -3,14 +3,20 @@
 // 列表本身（拖拽、折叠、菜单、落点判定）在 `@vibeterm/panels/device-folders`，与业务解耦；
 // 这里只负责把节点 id 翻译成「一个 node 分组」（把手塞进分组头），以及把布局变更
 // 交给 `use-device-folders`（只打 self 节点），并把顶栏用的命令登记出去。
+//
+// 节点磁贴网格：mesh 下每个节点是网格里的一块磁贴，跨度 = min(设备数, 列数)，顺序不重排；
+// 设备数由 `use-node-device-counts` 汇总后经 `nodeSpan` 交给列表。standalone（不显示节点头）
+// 时那唯一的节点独占整行，就是原来那张整页宽的卡片网格。
 
 import {
   type DeviceFolderDrop,
   type DeviceFolderNodeContext,
   DeviceFolderTree,
   type DeviceFolderTreeHandle,
+  type NodeTileSize,
   applyDrop,
   implicitRootNodeIds,
+  nodeTileSpan,
 } from '@vibeterm/panels/device-folders';
 import { useUIStore } from '@vibeterm/stores/react';
 import { Button } from '@vibeterm/ui/button';
@@ -20,6 +26,7 @@ import { useTranslation } from 'react-i18next';
 import { NodeDeviceGroup, type NodeDeviceGroupEntry } from './node-device-group';
 import { registerDevicesPageCommands } from './page-commands';
 import { useDeviceFolders } from './use-device-folders';
+import { useNodeDeviceCounts } from './use-node-device-counts';
 
 /** 节点分组 → 列表的候选节点 id（顺序即根层隐式节点的顺序：self 在前，其余按名） */
 export function nodeCandidates(groups: readonly NodeDeviceGroupEntry[]): string[] {
@@ -32,9 +39,24 @@ export interface DeviceFoldersViewProps {
   showNodeHeaders: boolean;
 }
 
-export function DeviceFoldersView({ groups, showNodeHeaders }: DeviceFoldersViewProps) {
+function FoldersLoadError({ onRetry }: { onRetry: () => void }) {
   const { t } = useTranslation();
+  return (
+    <div
+      data-testid="devices-folders-error"
+      className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
+    >
+      <span>{t('devices.folders.loadFailed')}</span>
+      <Button type="button" size="xs" variant="outline" onClick={onRetry}>
+        {t('common.retry')}
+      </Button>
+    </div>
+  );
+}
+
+export function DeviceFoldersView({ groups, showNodeHeaders }: DeviceFoldersViewProps) {
   const folders = useDeviceFolders();
+  const { countOf, report } = useNodeDeviceCounts(groups);
   const expanded = useUIStore((state) => state.deviceFolderExpanded);
   const setExpanded = useUIStore((state) => state.setDeviceFolderExpanded);
   const treeRef = useRef<DeviceFolderTreeHandle>(null);
@@ -69,10 +91,16 @@ export function DeviceFoldersView({ groups, showNodeHeaders }: DeviceFoldersView
           node={group}
           showHeader={showNodeHeaders}
           dragControls={ctx.dragControls}
+          tile={showNodeHeaders}
+          onDeviceCount={report}
         />
       );
     },
-    [groupsById, showNodeHeaders]
+    [groupsById, showNodeHeaders, report]
+  );
+  const nodeSpan = useCallback(
+    (nodeId: string): NodeTileSize => (showNodeHeaders ? nodeTileSpan(countOf(nodeId)) : 'full'),
+    [showNodeHeaders, countOf]
   );
 
   const nodeLabel = useCallback(
@@ -94,17 +122,7 @@ export function DeviceFoldersView({ groups, showNodeHeaders }: DeviceFoldersView
 
   return (
     <Reveal data-testid="devices-folders-view" className="flex w-full min-w-0 flex-col gap-3">
-      {folders.isError && (
-        <div
-          data-testid="devices-folders-error"
-          className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs text-muted-foreground"
-        >
-          <span>{t('devices.folders.loadFailed')}</span>
-          <Button type="button" size="xs" variant="outline" onClick={folders.refetch}>
-            {t('common.retry')}
-          </Button>
-        </div>
-      )}
+      {folders.isError && <FoldersLoadError onRetry={folders.refetch} />}
       <DeviceFolderTree
         ref={treeRef}
         layout={layout}
@@ -112,6 +130,7 @@ export function DeviceFoldersView({ groups, showNodeHeaders }: DeviceFoldersView
         renderNode={renderNode}
         nodeLabel={nodeLabel}
         nodeDraggable={nodeDraggable}
+        nodeSpan={nodeSpan}
         expanded={expanded}
         onExpandedChange={setExpanded}
         onDrop={handleDrop}

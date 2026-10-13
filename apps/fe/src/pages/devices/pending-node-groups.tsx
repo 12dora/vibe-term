@@ -2,9 +2,12 @@
 //
 // 加入中继后重启，证书已经在、状态块还没解开：此时只画本机那一组，看起来就是「别的节点没了」。
 // 已经在成员列表里的那几台由各自的分组就地画占位，这里只补「列表里还没有」的那些，
-// 版式与真实分组一致（分组头 + 卡片网格）。
+// 版式与真实分组一致（分组头 + 卡片网格），并且和真实节点一样排进节点磁贴网格：每个占位
+// 占一格（还不知道它有几台设备）。
 
+import { NODE_GRID_CLASS, NODE_GRID_CONTAINER_CLASS } from '@vibeterm/panels/device-folders';
 import { DeviceCardSkeleton } from '@vibeterm/panels/device-management';
+import { cn } from '@vibeterm/ui';
 import { Skeleton } from '@vibeterm/ui/skeleton';
 import { useTranslation } from 'react-i18next';
 
@@ -40,16 +43,18 @@ export function PendingNodeGroups({ count }: { count: number }) {
 function PendingNodeGroupList({ keys }: { keys: string[] }) {
   const { t } = useTranslation();
   return (
-    <div data-testid="devices-pending-nodes" className="flex min-w-0 flex-col gap-3">
-      {keys.map((key) => (
-        <section key={key} className="flex min-w-0 flex-col gap-1.5">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Skeleton className="h-4 w-24" />
-            <span className="text-[11px] text-muted-foreground">{t('common.loading')}</span>
-          </div>
-          <DeviceCardSkeleton />
-        </section>
-      ))}
+    <div data-testid="devices-pending-nodes" className={cn(NODE_GRID_CONTAINER_CLASS, 'w-full')}>
+      <div className={NODE_GRID_CLASS}>
+        {keys.map((key) => (
+          <section key={key} data-span={1} className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Skeleton className="h-4 w-24" />
+              <span className="text-[11px] text-muted-foreground">{t('common.loading')}</span>
+            </div>
+            <DeviceCardSkeleton fit />
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

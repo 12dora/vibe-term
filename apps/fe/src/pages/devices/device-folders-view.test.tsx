@@ -15,15 +15,18 @@ mock.module('@vibeterm/panels/device-management', () => ({
     listenOpenAddDeviceEvent,
     offline,
     fallbackDevices,
+    fitCards,
   }: {
     listenOpenAddDeviceEvent?: boolean;
     offline?: boolean;
     fallbackDevices?: readonly { id: string }[];
+    fitCards?: boolean;
   }) => (
     <span
       data-testid="device-panel"
       data-listen={String(listenOpenAddDeviceEvent ?? true)}
       data-offline={String(offline ?? false)}
+      data-fit={String(fitCards ?? false)}
       data-fallback={(fallbackDevices ?? []).map((device) => device.id).join(',')}
     />
   ),
@@ -120,6 +123,13 @@ function slice(html: string, testId: string): string {
   const start = html.indexOf(`data-testid="${testId}"`);
   const next = html.indexOf('data-testid="device-folder-item-', start + 1);
   return html.slice(start, next === -1 ? undefined : next);
+}
+
+/** `testId` 那个元素的整段开标签 */
+function tagOf(html: string, testId: string): string {
+  const index = html.indexOf(`data-testid="${testId}"`);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return html.slice(html.lastIndexOf('<', index), html.indexOf('>', index));
 }
 
 beforeEach(() => {
@@ -228,6 +238,50 @@ describe('DeviceFoldersView', () => {
     expect(html).toContain('data-testid="device-folder-item-node:self"');
     expect(html).toContain('data-testid="device-folder-handle-self"');
     expect(html).not.toContain('device-folder-move-out-');
+  });
+
+  test('mesh：节点是网格里的磁贴，跨度来自已知的设备数（快照优先，其次 inventory）', () => {
+    const TRIPLE = group({
+      runtimeNodeId: REMOTE_ID,
+      name: 'studio',
+      online: false,
+      inventory: { devices: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] },
+    });
+    localStorage.setItem(
+      `vibeterm:device-snapshot:${OFFLINE_ID}`,
+      JSON.stringify([
+        { id: 's1', name: '快照 1', type: 'local', sortOrder: 0 },
+        { id: 's2', name: '快照 2', type: 'ssh', sortOrder: 1 },
+      ])
+    );
+    layout = { folders: [], placements: [] };
+    const html = render([SELF, OFFLINE, TRIPLE], true);
+
+    expect(html).toContain('data-testid="devices-node-grid"');
+    // 本机：没有快照也没有 inventory → 一格
+    expect(tagOf(html, 'device-folder-item-node:self')).toContain('data-span="1"');
+    // 快照里两台（inventory 只有一台，不合并）→ 两格
+    expect(tagOf(html, `device-folder-item-node:${OFFLINE_ID}`)).toContain('data-span="2"');
+    // inventory 里四台 → 封顶三格
+    expect(tagOf(html, `device-folder-item-node:${REMOTE_ID}`)).toContain('data-span="3"');
+    // 磁贴里的卡片均分磁贴宽度
+    expect(slice(html, `device-folder-item-node:${OFFLINE_ID}`)).toContain('data-fit="true"');
+  });
+
+  test('standalone：唯一的节点独占整行，卡片网格按固定列宽自动填列（与旧版式一致）', () => {
+    localStorage.setItem(
+      'vibeterm:device-snapshot:self',
+      JSON.stringify([
+        { id: 's1', name: '快照 1', type: 'local', sortOrder: 0 },
+        { id: 's2', name: '快照 2', type: 'local', sortOrder: 1 },
+      ])
+    );
+    layout = { folders: [], placements: [] };
+    const html = render([SELF], false);
+
+    expect(tagOf(html, 'device-folder-item-node:self')).toContain('data-span="full"');
+    expect(tagOf(html, 'device-folder-item-node:self')).toContain('col-span-full');
+    expect(slice(html, 'device-folder-item-node:self')).toContain('data-fit="false"');
   });
 
   test('页面级容器不在这里：主体只是 w-full，不再套 max-width / padding', () => {
