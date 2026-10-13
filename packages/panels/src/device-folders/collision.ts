@@ -351,7 +351,7 @@ function detect(args: Args): Collision[] {
 /** 无状态的判定：同样的输入永远给同样的结果（单测用它） */
 export const deviceFolderCollisionDetection: CollisionDetection = detect;
 
-/** 上一次真正计算落点时指针在哪、算出了谁（null = 树外，没有落点） */
+/** 上一次真正计算落点时指针在哪（`anchor` 坐标系）、算出了谁（null = 树外，没有落点） */
 export interface PointerHold {
   point: CollisionPoint;
   targetId: string | null;
@@ -360,19 +360,24 @@ export interface PointerHold {
 /**
  * 指针路径的迟滞：给定上一次的结果、指针现在的位置、被拖节点 / 占位条当前的矩形，决定沿用
  * 还是重算。沿用时原样返回 `prev`（`point` 不更新，慢慢挪也会累计到阈值）。
+ *
+ * `anchor` 是用来量「指针动没动」的坐标：传指针**相对整棵树**的位置。只看视口坐标的话，
+ * 指针不动而页面在滚（拖到边缘的自动滚动、滚轮）时位移恒为 0，落点会锁死在已经滚走的旧位置；
+ * 相对树的坐标随滚动变化，树内的回流又不会动它。缺省退回视口坐标。
  */
 export function nextPointerTarget(
   prev: PointerHold | null,
   point: CollisionPoint,
   ghost: ClientRect | null,
-  compute: () => string | null
+  compute: () => string | null,
+  anchor: CollisionPoint = point
 ): PointerHold {
   if (prev) {
-    const moved = Math.hypot(point.x - prev.point.x, point.y - prev.point.y);
+    const moved = Math.hypot(anchor.x - prev.point.x, anchor.y - prev.point.y);
     if (moved < POINTER_HYSTERESIS_PX) return prev;
     if (ghost && rectDistance(point, ghost) === 0) return prev;
   }
-  return { point: { x: point.x, y: point.y }, targetId: compute() };
+  return { point: { x: anchor.x, y: anchor.y }, targetId: compute() };
 }
 
 /**
@@ -390,12 +395,26 @@ export function keyboardLatchKey(
   return `${activeId}@${left},${top}`;
 }
 
-/** 被拖节点在预览里「现在摆在哪」：跨容器是占位条，同容器是它自己；拖分组（位移预览）没有 */
-function ghostRect(args: Args): ClientRect | null {
+/**
+ * 被拖节点在预览里「现在摆在哪」：跨容器是占位条，同容器是它自己；拖分组（位移预览）没有。
+ * 没有占位条时，只有上一次落点与被拖节点同容器，它自己的矩形才算预览——落点在别的容器
+ * （折叠的分组头、空分组、空根层）时它只是留在原地的原磁贴，指针回到上面必须重算。
+ */
+function ghostRect(args: Args, prevTargetId: string | null): ClientRect | null {
   if (parseNodeElementId(String(args.active.id)) === null) return null;
-  return (
-    args.droppableRects.get(PLACEHOLDER_ITEM_ID) ?? args.droppableRects.get(args.active.id) ?? null
-  );
+  const placeholder = args.droppableRects.get(PLACEHOLDER_ITEM_ID);
+  if (placeholder) return placeholder;
+  if (prevTargetId === null) return null;
+  const target = args.droppableContainers.find((item) => String(item.id) === prevTargetId);
+  const home = containerIdOf(args.active);
+  if (!target || home === null || containerIdOf(target) !== home) return null;
+  return args.droppableRects.get(args.active.id) ?? null;
+}
+
+/** 指针相对整棵树（根落点区）的位置；量不到根矩形时退回视口坐标 */
+function treeAnchor(args: Args, point: CollisionPoint): CollisionPoint {
+  const origin = args.droppableRects.get(dropZoneId(ROOT_CONTAINER_ID));
+  return origin ? { x: point.x - origin.left, y: point.y - origin.top } : point;
 }
 
 function firstId(hits: readonly Collision[]): string | null {
@@ -424,7 +443,13 @@ export function createDeviceFolderCollisionDetection(): DeviceFolderCollision {
   const detectPointer = (args: Args, point: CollisionPoint): Collision[] => {
     keyboard = null;
     const prev = pointer && live(args, pointer.targetId) ? pointer : null;
-    pointer = nextPointerTarget(prev, point, ghostRect(args), () => firstId(detect(args)));
+    pointer = nextPointerTarget(
+      prev,
+      point,
+      ghostRect(args, prev?.targetId ?? null),
+      () => firstId(detect(args)),
+      treeAnchor(args, point)
+    );
     return collisionFor(pointer.targetId, args.droppableContainers);
   };
 

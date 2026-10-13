@@ -723,6 +723,20 @@ describe('指针迟滞（nextPointerTarget）', () => {
     expect(nextPointerTarget(prev, { x: 600, y: 150 }, ghost, compute).targetId).toBe('node:b');
   });
 
+  test('指针在视口里不动、页面在滚：相对树的位置变了就重算', () => {
+    const prev = { point: { x: 100, y: 590 }, targetId: 'node:c' };
+    const { state, compute } = counted('node:d');
+    // 视口坐标没变，树向上滚了 212px → 相对树的位置下移 212px
+    const held = nextPointerTarget(prev, { x: 100, y: 590 }, null, compute, { x: 100, y: 802 });
+    expect(held.targetId).toBe('node:d');
+    expect(held.point).toEqual({ x: 100, y: 802 });
+    expect(state.calls).toBe(1);
+    // 滚动停了、指针仍不动：沿用
+    expect(nextPointerTarget(held, { x: 100, y: 590 }, null, compute, { x: 100, y: 802 })).toBe(
+      held
+    );
+  });
+
   test('树外（没有落点）也是一种结果：同样沿用 / 重算', () => {
     const outside = { point: { x: 10, y: 20 }, targetId: null };
     const { compute } = counted('node:a');
