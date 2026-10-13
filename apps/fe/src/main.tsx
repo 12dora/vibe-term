@@ -37,6 +37,7 @@ import {
   IDLE_PRELOAD_PAGE_MODULES,
   devicePageModule,
   devicesPageModule,
+  explorerPageModule,
   filePageModule,
   loginPageModule,
   settingsPageModule,
@@ -348,6 +349,11 @@ function pageRoutes() {
     {
       path: 'file/:ref',
       element: <PageWrapper moduleLoader={filePageModule} />,
+    },
+    // 文件管理器自带标签页与分栏，目录切换有自己的方向入场，不叠加整页入场动画。
+    {
+      path: 'explorer',
+      element: <PageWrapper moduleLoader={explorerPageModule} animateContent={false} />,
     },
   ];
 }

@@ -7,6 +7,7 @@ export const devicesPageModule: PageModuleLoader = () => import('./pages/Devices
 export const devicePageModule: PageModuleLoader = () => import('./pages/DevicePage');
 export const settingsPageModule: PageModuleLoader = () => import('./pages/SettingsPage');
 export const filePageModule: PageModuleLoader = () => import('./pages/FilePage');
+export const explorerPageModule: PageModuleLoader = () => import('./pages/ExplorerPage');
 export const loginPageModule: PageModuleLoader = () => import('./pages/LoginPage');
 export const sharePageModule: PageModuleLoader = () => import('./pages/SharePage');
 
