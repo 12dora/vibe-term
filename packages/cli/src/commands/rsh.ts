@@ -9,6 +9,7 @@ import { Output } from '../core/output';
 import { type RemoteRunOptions, runRemote } from '../core/remote-run';
 import { type RshInvocation, parseRshArgs } from '../core/rsh-args';
 import { cliVersion } from '../version';
+import { zeroTimeoutEnd } from './exec-body';
 import type { Command } from './types';
 
 /** ssh 约定：本地侧（用法、认证、网络、找不到）的失败一律 255，与远端退出码区分。 */
@@ -61,20 +62,29 @@ ssh://[用户@]节点[:端口][/设备]。命令词以单个空格拼接后交�
  * 无法区分；ssh 没有长选项，所以开头那段 `--<全局旗标>` 照常交给派发层，其余整体作为不透明载荷。
  */
 export function preprocessRshArgv(argv: readonly string[]): string[] {
+  const head: string[] = [];
   let index = 0;
   while (index < argv.length) {
     const token = argv[index];
+    const zero = zeroTimeoutEnd(argv, index);
+    if (zero !== null) {
+      // `--timeout 0` = 不限时，本来就是 rsh 的行为；全局解析只认正整数，所以在这里摘掉。
+      index = zero + 1;
+      continue;
+    }
     if (token === '-h') {
+      head.push(token);
       index += 1;
       continue;
     }
     if (!token.startsWith('--') || token === '--') break;
     const kind = GLOBAL_FLAGS[token.slice(2).split('=')[0]];
     if (!kind) break;
-    index += kind !== 'boolean' && !token.includes('=') ? 2 : 1;
+    const width = kind !== 'boolean' && !token.includes('=') ? 2 : 1;
+    head.push(...argv.slice(index, index + width));
+    index += width;
   }
-  const split = Math.min(index, argv.length);
-  return [...argv.slice(0, split), '--', ...argv.slice(split)];
+  return [...head, '--', ...argv.slice(Math.min(index, argv.length))];
 }
 
 function quietContext(ctx: CliContext): CliContext {

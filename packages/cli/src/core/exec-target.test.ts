@@ -80,8 +80,25 @@ describe('ExecTargets', () => {
 
     const second = await new ExecTargets(ctx).explicitRoute(explicit, false);
     expect(second.cached).toBe(true);
-    expect(second.route.nodeId).toBe(NODE);
+    expect(second.route).toEqual({
+      nodeId: NODE,
+      nodeName: 'office',
+      device: 'db',
+      expectName: 'office',
+    });
     expect(counter.mesh).toBe(1);
+  });
+
+  test('cached routes carry an expected name only for named nodes', async () => {
+    const { ctx, dir } = await testContext(meshFetch([], { mesh: 0 }));
+    const cache = TargetCache.open(dir, ENTRY);
+    cache.set(nodeKey(NODE), { nodeId: NODE, name: 'office' });
+    cache.set(nodeKey('lab'), { nodeId: NODE, name: NODE });
+    const byId = { kind: 'explicit', nodeRef: NODE, device: 'db' } as const;
+    const unnamed = { kind: 'explicit', nodeRef: 'lab', device: 'db' } as const;
+    const targets = new ExecTargets(ctx);
+    expect((await targets.explicitRoute(byId, false)).route).not.toHaveProperty('expectName');
+    expect((await targets.explicitRoute(unnamed, false)).route).not.toHaveProperty('expectName');
   });
 
   test('fresh skips the cache and rewrites it', async () => {
@@ -114,6 +131,7 @@ describe('ExecTargets', () => {
     expect(new ExecTargets(ctx).cachedBareRoute('office')).toEqual({
       nodeId: NODE,
       nodeName: 'office',
+      expectName: 'office',
     });
   });
 

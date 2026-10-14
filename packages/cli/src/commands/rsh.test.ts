@@ -63,6 +63,22 @@ describe('preprocessRshArgv', () => {
     expect(preprocessRshArgv(['--node=a', '-h'])).toEqual(['--node=a', '-h', '--']);
   });
 
+  test('a leading --timeout 0 (unlimited) is dropped so the global parser never sees it', () => {
+    expect(preprocessRshArgv(['--timeout', '0', '--json', 'host', 'ls'])).toEqual([
+      '--json',
+      '--',
+      'host',
+      'ls',
+    ]);
+    expect(preprocessRshArgv(['--timeout=0', 'host'])).toEqual(['--', 'host']);
+    expect(preprocessRshArgv(['--timeout', '5000', 'host'])).toEqual([
+      '--timeout',
+      '5000',
+      '--',
+      'host',
+    ]);
+  });
+
   test('flags after the destination are never taken for globals', () => {
     expect(preprocessRshArgv(['host', '--json'])).toEqual(['--', 'host', '--json']);
     expect(preprocessRshArgv(['--server', 'x'])).toEqual(['--', '--server', 'x']);
@@ -378,8 +394,8 @@ describe('rsh through runCli', () => {
 
   test('failures before the command runs are rsh failures too (255, `vibeterm rsh:`)', async () => {
     const { calls } = fakeRemote();
-    expect(await runCli(['--timeout', '0', 'rsh', 'node', 'true'])).toBe(255);
-    expect(stderrText).toBe('vibeterm rsh: --timeout must be a positive integer, got 0\n');
+    expect(await runCli(['--timeout', 'abc', 'rsh', 'node', 'true'])).toBe(255);
+    expect(stderrText).toBe('vibeterm rsh: --timeout expects a number, got "abc"\n');
     stderrText = '';
     const missing = join(dir, 'missing.pem');
     expect(await runCli(['--ca', missing, 'rsh', 'node', 'true'])).toBe(255);

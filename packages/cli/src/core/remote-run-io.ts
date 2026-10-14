@@ -29,16 +29,12 @@ export type StdinMode = 'auto' | 'none' | { file: string };
 
 export const PTY_NOT_ALLOCATED = '标准输入不是终端，未分配伪终端（-tt 可强制分配）';
 
-export function decidePty(
-  mode: TtyMode,
-  command: ExecCommand,
-  stdinIsTty: boolean,
-  stdoutIsTty: boolean
-): boolean {
+/** ssh 语义：自动分配只看 stdin 是否终端（无命令即登录 shell）；stdout 被重定向不影响。 */
+export function decidePty(mode: TtyMode, command: ExecCommand, stdinIsTty: boolean): boolean {
   if (mode === 'no') return false;
   if (mode === 'always') return true;
   if (mode === 'force') return stdinIsTty;
-  return command.kind === 'login' && stdinIsTty && stdoutIsTty;
+  return command.kind === 'login' && stdinIsTty;
 }
 
 const PTY_MIN = 1;
@@ -91,15 +87,13 @@ async function filePlan(path: string): Promise<StdinPlan> {
 }
 
 /**
- * auto：stdin 不是 TTY 时转发（管道 / 重定向）；TTY 且未分配 PTY 时不转发；
- * 分配了 PTY 时终端本身就是输入。
+ * auto：一律转发 stdin（与 ssh 一致）。TTY 且未分配 PTY 时按行模式（不进 raw 模式）读，
+ * Ctrl-D 即 EOF；分配了 PTY 时终端本身就是输入。`-n`（none）才不读取。
  */
 export async function planStdin(mode: StdinMode, term: Terminal, pty: boolean): Promise<StdinPlan> {
   if (mode === 'none') return NO_STDIN;
   if (typeof mode === 'object') return filePlan(mode.file);
-  const tty = isTty(term.stdin);
-  if (tty && !pty) return NO_STDIN;
-  const useTty = tty && pty;
+  const useTty = isTty(term.stdin) && pty;
   return {
     forward: true,
     useTty,

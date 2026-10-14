@@ -2,11 +2,11 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 import { EcKind } from '@vibeterm/shared/exec-channel';
 import { GLOBAL_FLAGS, splitGlobalFlags } from '../core/args';
 import type { CliContext } from '../core/context';
-import { AuthError, NetworkError, UsageError } from '../core/errors';
+import { AuthError, NetworkError, NotFoundError, UsageError } from '../core/errors';
 import type { ExecChannelResult } from '../core/exec-channel';
 import {
   EXIT_OK,
@@ -18,6 +18,7 @@ import {
   textBytes,
 } from '../core/exec-channel-fakes';
 import { EXEC_STREAM_CLOSED, ExecStreamClosedError } from '../core/exec-client';
+import { Output } from '../core/output';
 import { type RemoteRunOptions, runRemote } from '../core/remote-run';
 import {
   type FakeTerminalOptions,
@@ -90,6 +91,26 @@ describe('exec argv preprocessing', () => {
     ['repeated --tty', ['--tty', '--tty', 'box'], ['box', '--force-tty']],
     ['-T', ['-T', 'box', 'x'], ['--no-tty', 'box', '--', 'x']],
     ['clusters', ['-nT', 'box'], ['--no-stdin', '--no-tty', 'box']],
+    ['-t then -T: the last wins', ['-t', '-T', 'box'], ['--no-tty', 'box']],
+    ['-T then -t: the last wins', ['-T', 'box', '-t', 'top'], ['box', '--tty', '--', 'top']],
+    ['-tt then -T', ['-tt', '-T', 'box'], ['--no-tty', 'box']],
+    ['-T then -tt', ['-T', '-tt', 'box'], ['box', '--force-tty']],
+    ['--tty --no-tty', ['--tty', '--no-tty', 'box'], ['--no-tty', 'box']],
+    [
+      '--timeout 0 means unlimited',
+      ['--timeout', '0', 'box', 'x'],
+      ['box', '--no-timeout', '--', 'x'],
+    ],
+    [
+      '--timeout=0 after the target',
+      ['box', '--timeout=0', 'x'],
+      ['box', '--no-timeout', '--', 'x'],
+    ],
+    [
+      'a later positive --timeout cancels an earlier 0',
+      ['--timeout', '0', '--timeout', '5', 'box'],
+      ['--timeout', '5', 'box'],
+    ],
     ['-v and -q', ['-v', 'box', '-q', 'ls'], ['--verbose', 'box', '--quiet', '--', 'ls']],
     [
       'valued option before the target',
@@ -188,14 +209,32 @@ describe('vibeterm exec option mapping', () => {
     ).rejects.toBeInstanceOf(UsageError);
   });
 
-  test('tty flags map to ssh -t / -tt / -T and cannot be mixed', async () => {
+  test('tty flags map to ssh -t / -tt / -T and the last one wins', async () => {
     const { ctx } = await testContext(notFoundFetch);
     const { calls, command } = fakeRun();
     await runExec(command, ctx, ['-t', 'box', 'top']);
     await runExec(command, ctx, ['-tt', 'box', 'top']);
     await runExec(command, ctx, ['-T', 'box']);
-    expect(calls.map((call) => call.tty)).toEqual(['force', 'always', 'no']);
-    await expect(runExec(command, ctx, ['-t', '-T', 'box'])).rejects.toBeInstanceOf(UsageError);
+    await runExec(command, ctx, ['-t', '-T', 'box']);
+    await runExec(command, ctx, ['-T', '-t', 'box']);
+    await runExec(command, ctx, ['-T', '-tt', 'box']);
+    expect(calls.map((call) => call.tty)).toEqual([
+      'force',
+      'always',
+      'no',
+      'no',
+      'force',
+      'always',
+    ]);
+  });
+
+  test('--timeout 0 clears the command time limit instead of failing the global parser', async () => {
+    const { ctx } = await testContext(notFoundFetch, { timeoutMs: 5_000 });
+    const { calls, command } = fakeRun();
+    expect(await runExec(command, ctx, ['--timeout', '0', 'box', 'x'])).toBe(0);
+    expect(calls[0]?.timeoutMs).toBeUndefined();
+    await runExec(command, ctx, ['box', 'x']);
+    expect(calls[1]?.timeoutMs).toBe(5_000);
   });
 
   test('-n, --stdin-file and @path select the stdin source; --stdin is a no-op', async () => {
@@ -468,26 +507,159 @@ describe('vibeterm exec output modes', () => {
     expect(stderr.text()).toContain('--stdout-file');
   });
 
-  test('--json --stream emits stdout/stderr events then exit', async () => {
+  async function streamLines(
+    argv: string[],
+    script: (options: RemoteRunOptions) => Promise<void> | void,
+    result: Partial<ExecChannelResult> = {}
+  ) {
     const { ctx, stdout } = await testContext(notFoundFetch, { json: true });
-    const { command } = fakeRun(
+    const { command } = fakeRun(script, result);
+    const code = await runExec(command, ctx, argv);
+    const rows = stdout
+      .text()
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    return { code, rows };
+  }
+
+  test('--json --stream emits start, stdout/stderr events then exit', async () => {
+    const { rows } = await streamLines(
+      ['--stream', 'box', 'x'],
       async (options) => {
+        options.onReady?.(readyOf({ pid: 4321 }));
         await options.sinks?.stdout?.(textBytes('hi'));
         await options.sinks?.stderr?.(textBytes('e'));
       },
       { exitCode: 2 }
     );
-    await runExec(command, ctx, ['--stream', 'box', 'x']);
-    const lines = stdout
+    expect(rows).toEqual([
+      { type: 'start', pid: 4321, device: { id: 'dev-1', name: 'box', type: 'local' } },
+      { type: 'stdout', base64: Buffer.from('hi').toString('base64') },
+      { type: 'stderr', base64: Buffer.from('e').toString('base64') },
+      {
+        type: 'exit',
+        code: 2,
+        signal: null,
+        durationMs: 12,
+        truncated: { stdout: false, stderr: false },
+        reason: 'exit',
+      },
+    ]);
+  });
+
+  test('a reconnect READY does not emit a second start event', async () => {
+    const { rows } = await streamLines(['--stream', 'box', 'x'], (options) => {
+      options.onReady?.(readyOf());
+      options.onReady?.(readyOf({ resumed: true }));
+    });
+    expect(rows.filter((row) => row.type === 'start')).toHaveLength(1);
+  });
+
+  test('--json --stream reports a timeout as exit.reason exec_timeout plus an error event', async () => {
+    const { code, rows } = await streamLines(['--stream', 'box', 'x'], () => {}, {
+      exitCode: null,
+      signal: 'SIGTERM',
+      reason: 'timeout',
+    });
+    expect(code).toBe(124);
+    expect(rows).toEqual([
+      {
+        type: 'exit',
+        code: null,
+        signal: 'SIGTERM',
+        durationMs: 12,
+        truncated: { stdout: false, stderr: false },
+        reason: 'exec_timeout',
+      },
+      { type: 'error', code: 'exec_timeout', message: 'exec timed out' },
+    ]);
+  });
+
+  test('--json --stream passes the new killed reason through', async () => {
+    const { rows } = await streamLines(['--stream', 'box', 'x'], () => {}, {
+      exitCode: null,
+      signal: 'SIGKILL',
+      reason: 'killed',
+    });
+    expect(rows[0]).toMatchObject({ type: 'exit', reason: 'killed' });
+  });
+
+  test('--json --stream emits an error event with a legacy code when the run fails', async () => {
+    const { ctx, stdout } = await testContext(notFoundFetch, { json: true });
+    const failing = (error: Error) =>
+      buildExecCommand({
+        run: async () => {
+          throw error;
+        },
+      });
+    const missing = await runExec(failing(new NotFoundError('no such device')), ctx, [
+      '--stream',
+      'box',
+      'x',
+    ]).catch((err) => err);
+    expect(missing).toBeInstanceOf(NotFoundError);
+    const usage = await runExec(failing(new UsageError('bad body')), ctx, [
+      '--stream',
+      'box',
+      'x',
+    ]).catch((err) => err);
+    expect(usage).toBeInstanceOf(UsageError);
+    const rows = stdout
       .text()
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(lines).toEqual([
-      { type: 'stdout', base64: Buffer.from('hi').toString('base64') },
-      { type: 'stderr', base64: Buffer.from('e').toString('base64') },
-      { type: 'exit', code: 2, signal: null, durationMs: 12, reason: 'exit' },
+    expect(rows).toEqual([
+      { type: 'error', code: 'device_not_found', message: 'no such device' },
+      { type: 'error', code: 'invalid_body', message: 'bad body' },
     ]);
+  });
+
+  describe('a closed stdout pipe', () => {
+    function brokenCtx(base: Awaited<ReturnType<typeof testContext>>, failAfter: number) {
+      let writes = 0;
+      const broken = new Writable({
+        write(_chunk, _encoding, callback) {
+          writes += 1;
+          if (writes > failAfter) {
+            callback(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+            return;
+          }
+          callback();
+        },
+      });
+      const out = new Output({
+        json: true,
+        quiet: false,
+        color: false,
+        stdout: broken,
+        stderr: base.stderr.stream,
+      });
+      return { ...base.ctx, out } as CliContext;
+    }
+
+    test('the final --json object quietly exits 141 instead of throwing EPIPE', async () => {
+      const base = await testContext(notFoundFetch, { json: true });
+      const { command } = fakeRun();
+      expect(await runExec(command, brokenCtx(base, 0), ['box', 'x'])).toBe(141);
+      expect(base.stderr.text()).toBe('');
+    });
+
+    test('--json --stream stops at the first failed write with exit 141', async () => {
+      const base = await testContext(notFoundFetch, { json: true });
+      const sent: string[] = [];
+      const { command } = fakeRun(async (options) => {
+        for (const text of ['a', 'b', 'c']) {
+          await options.sinks?.stdout?.(textBytes(text));
+          sent.push(text);
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      });
+      expect(await runExec(command, brokenCtx(base, 1), ['--stream', 'box', 'x'])).toBe(141);
+      expect(sent.length).toBeLessThan(3);
+      expect(base.stderr.text()).toBe('');
+    });
   });
 
   test('a legacy stream death prints EXEC_STREAM_CLOSED JSON (with file paths) and rethrows', async () => {

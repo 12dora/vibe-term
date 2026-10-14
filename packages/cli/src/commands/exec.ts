@@ -5,7 +5,6 @@ import {
   type FlagValues,
   GLOBAL_FLAGS,
   flagBool,
-  flagNumber,
   flagString,
   flagStrings,
   parseArgv,
@@ -14,34 +13,24 @@ import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
 import { type ExecChannelResult, exitCodeOf } from '../core/exec-channel';
 import {
-  EXEC_INLINE_HINT_BYTES,
-  EXEC_MAX_MAX_BYTES,
-  EXEC_MIN_MAX_BYTES,
-  EXEC_STREAM_CLOSED,
-  ExecStreamClosedError,
-} from '../core/exec-client';
-import {
   type RemoteRunOptions,
   type RemoteRunSinks,
   type StdinMode,
   type TtyMode,
   runRemote,
 } from '../core/remote-run';
+import { isOutputClosed } from '../core/remote-run-io';
 import {
   type CommandMode,
+  NO_TIMEOUT_FLAG,
   commandFromWords,
   execTimeoutMs,
   parseEnvPairs,
   rewriteExecArgv,
   scriptCommand,
 } from './exec-body';
-import {
-  type ExecFiles,
-  StreamCollector,
-  closeExecFiles,
-  openExecFiles,
-  writeSink,
-} from './exec-sink';
+import { type JsonPlan, type OutputPlan, SIGPIPE_EXIT, jsonOutput, planJson } from './exec-json';
+import { type ExecFiles, closeExecFiles, openExecFiles, writeSink } from './exec-sink';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -64,6 +53,7 @@ const FLAGS = {
   tail: 'number',
   'stdout-file': 'string',
   'stderr-file': 'string',
+  'no-timeout': 'boolean',
 } as const;
 
 const USAGE = `用法：
@@ -85,7 +75,7 @@ const USAGE = `用法：
 
 选项：
   -t, --tty            分配伪终端（-tt 或重复 -t：即使 stdin 不是终端也强制分配）
-  -T, --no-tty         不分配伪终端
+  -T, --no-tty         不分配伪终端；-t 与 -T 同时给出时以最后一个为准
   -n, --no-stdin       不读取 stdin（命令的 stdin 为空）
   --stdin-file <path>  从文件读 stdin（目标后紧跟 @<path> 等价）
   --script <path>      把本地脚本作为 stdin 交给解释器（取 shebang，缺省 /bin/sh -s）
@@ -94,20 +84,23 @@ const USAGE = `用法：
   --shell              兼容旧用法：与 --sh 相同；配合 -- 时只接受一项（脚本）
   --cwd <dir>          工作目录（缺省为用户主目录）
   --env K=V            设置环境变量，可重复
-  --timeout <ms>       限制命令墙上时钟；缺省不限时
+  --timeout <ms>       限制命令墙上时钟；缺省或 0 不限时
   --stdout-file <path> 输出写入文件（0600），不再写 stdout
   --stderr-file <path> 同上，对应 stderr
   -v, --verbose        显示所选设备与重连提示
   -q, --quiet          不打印提示与警告
 
-stdin：非终端时自动转发（管道 / 重定向 / heredoc），终端上不读取；伪终端下终端即输入。
+stdin：自动转发（管道 / 重定向 / heredoc；终端上按行读取，Ctrl-D 结束），与 ssh 一致；
+命令不读 stdin 时请加 -n。无命令且 stdin 是终端时自动分配伪终端，伪终端下终端即输入。
 
 JSON 模式：
   --json               等待结束后输出一个 JSON 对象
                        {exitCode, signal, stdout, stderr, durationMs, truncated, reason}
   --max-bytes N        每路内联输出的上限（1 KiB .. 8 MiB，缺省 8 MiB），超出后 truncated
   --tail N             每路只保留最后 N 字节
-  --json --stream      逐块输出 NDJSON 事件 {type:"stdout"|"stderr", base64} 与 {type:"exit", ...}
+  --json --stream      逐块输出 NDJSON 事件：{type:"start", pid, device}、{type:"stdout"|"stderr", base64}、
+                       {type:"exit", code, signal, durationMs, truncated, reason}，失败时 {type:"error", code, message}
+                       exit.reason：exit | exec_timeout（超时，随后另有 error 事件）| killed（被本地或远端终止）
 
 示例：
   vibeterm exec box uname -a
@@ -152,24 +145,11 @@ function parseExecArgs(argv: string[]): ExecArgs {
   return { flags, target, words: tail ?? extra, mode };
 }
 
-function byteBound(flags: FlagValues, key: string, min: number): number | undefined {
-  const raw = flagNumber(flags, key);
-  if (raw === undefined) return undefined;
-  if (!Number.isInteger(raw) || raw < min || raw > EXEC_MAX_MAX_BYTES) {
-    throw new UsageError(`--${key} must be an integer between ${min} and ${EXEC_MAX_MAX_BYTES}`);
-  }
-  return raw;
-}
-
+/** preprocessArgv 已按「最后一个 -t / -T 生效」折叠成至多一个旗标。 */
 function ttyMode(flags: FlagValues): TtyMode {
-  const always = flagBool(flags, 'force-tty');
-  const force = flagBool(flags, 'tty');
-  if (flagBool(flags, 'no-tty')) {
-    if (always || force) throw new UsageError('-t and -T cannot be combined');
-    return 'no';
-  }
-  if (always) return 'always';
-  return force ? 'force' : 'auto';
+  if (flagBool(flags, 'no-tty')) return 'no';
+  if (flagBool(flags, 'force-tty')) return 'always';
+  return flagBool(flags, 'tty') ? 'force' : 'auto';
 }
 
 function stdinFile(flags: FlagValues): string | undefined {
@@ -224,33 +204,6 @@ async function planLaunch(args: ExecArgs): Promise<Launch> {
   return { command: loaded.command, stdin: { file: script }, scriptFallback: loaded.fallback };
 }
 
-type JsonPlan = {
-  enabled: boolean;
-  stream: boolean;
-  maxBytes: number;
-  tailBytes: number | undefined;
-};
-
-function planJson(ctx: CliContext, flags: FlagValues): JsonPlan {
-  const enabled = ctx.globals.json;
-  const stream = flagBool(flags, 'stream');
-  const maxBytes = byteBound(flags, 'max-bytes', EXEC_MIN_MAX_BYTES);
-  const tailBytes = byteBound(flags, 'tail', 1);
-  if (!enabled) {
-    if (stream) throw new UsageError('--stream requires --json');
-    if (maxBytes !== undefined) throw new UsageError('--max-bytes requires --json');
-    if (tailBytes !== undefined) throw new UsageError('--tail requires --json');
-  }
-  return { enabled, stream, maxBytes: maxBytes ?? EXEC_MAX_MAX_BYTES, tailBytes };
-}
-
-type Collectors = { stdout: StreamCollector; stderr: StreamCollector };
-
-type OutputPlan = {
-  sinks: Partial<RemoteRunSinks>;
-  finish(result: ExecChannelResult): void;
-};
-
 function fileSinks(files: ExecFiles): Partial<RemoteRunSinks> {
   return {
     ...(files.stdout ? { stdout: (bytes: Uint8Array) => writeSink(files.stdout, bytes) } : {}),
@@ -258,140 +211,68 @@ function fileSinks(files: ExecFiles): Partial<RemoteRunSinks> {
   };
 }
 
-function base64Of(bytes: Uint8Array): string {
-  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
-}
-
-type StreamName = 'stdout' | 'stderr';
-const STREAMS: readonly StreamName[] = ['stdout', 'stderr'];
-
-function pathOf(files: ExecFiles, name: StreamName): string | null {
-  return name === 'stdout' ? files.stdoutPath : files.stderrPath;
-}
-
-function jsonPayload(result: ExecChannelResult, files: ExecFiles, c: Collectors): unknown {
-  const row: Record<string, unknown> = {
-    exitCode: result.exitCode,
-    signal: result.signal,
-    durationMs: result.durationMs,
-    truncated: { stdout: c.stdout.truncated, stderr: c.stderr.truncated },
-    reason: result.reason,
-  };
-  for (const name of STREAMS) {
-    const path = pathOf(files, name);
-    if (path) {
-      row[`${name}Path`] = path;
-      row[`${name}Bytes`] = c[name].bytes;
-    } else {
-      row[name] = c[name].text();
-    }
-  }
-  return row;
-}
-
-function hintLargeInline(ctx: CliContext, files: ExecFiles, c: Collectors): void {
-  for (const name of STREAMS) {
-    if (pathOf(files, name) === null && c[name].bytes > EXEC_INLINE_HINT_BYTES) {
-      ctx.out.warn(
-        `${name} is ${c[name].bytes} bytes; pass --tail N or --${name}-file <path> to keep JSON small`
-      );
-    }
-  }
-}
-
-function jsonOutput(ctx: CliContext, json: JsonPlan, files: ExecFiles): OutputPlan {
-  const collect = (name: StreamName) =>
-    new StreamCollector({
-      inline: !pathOf(files, name) && !json.stream,
-      maxBytes: json.maxBytes,
-      tailBytes: json.tailBytes,
-    });
-  const collectors: Collectors = { stdout: collect('stdout'), stderr: collect('stderr') };
-  const tee = (name: StreamName) => async (bytes: Uint8Array) => {
-    await writeSink(files[name], bytes);
-    collectors[name].push(bytes);
-    if (json.stream) ctx.out.line(JSON.stringify({ type: name, base64: base64Of(bytes) }));
-  };
-  return {
-    sinks: { stdout: tee('stdout'), stderr: tee('stderr') },
-    finish(result) {
-      if (json.stream) {
-        const { exitCode: code, signal, durationMs, reason } = result;
-        ctx.out.line(JSON.stringify({ type: 'exit', code, signal, durationMs, reason }));
-        return;
-      }
-      ctx.out.line(JSON.stringify(jsonPayload(result, files, collectors)));
-      hintLargeInline(ctx, files, collectors);
-    },
-  };
-}
-
 function buildOutput(ctx: CliContext, json: JsonPlan, files: ExecFiles): OutputPlan {
   if (json.enabled) return jsonOutput(ctx, json, files);
-  return { sinks: fileSinks(files), finish: () => {} };
-}
-
-function emitStreamClosedJson(
-  ctx: CliContext,
-  error: ExecStreamClosedError,
-  files: ExecFiles
-): void {
-  const row: Record<string, unknown> = {
-    ok: false,
-    code: EXEC_STREAM_CLOSED,
-    reason: error.reason,
-    elapsedMs: error.elapsedMs,
-    stdoutBytes: error.stdoutBytes,
-    stderrBytes: error.stderrBytes,
-  };
-  if (files.stdoutPath) row.stdoutPath = files.stdoutPath;
-  if (files.stderrPath) row.stderrPath = files.stderrPath;
-  ctx.out.line(JSON.stringify(row));
+  return { sinks: fileSinks(files), finish: async () => {}, fail: async () => {} };
 }
 
 export type ExecDeps = {
   run: (ctx: CliContext, options: RemoteRunOptions) => Promise<ExecChannelResult>;
 };
 
-async function execute(deps: ExecDeps, ctx: CliContext, argv: string[]): Promise<number> {
-  const args = parseExecArgs(argv);
-  const json = planJson(ctx, args.flags);
-  const launch = await planLaunch(args);
-  const options: RemoteRunOptions = {
+function buildOptions(ctx: CliContext, args: ExecArgs, launch: Launch): RemoteRunOptions {
+  return {
     target: args.target,
     command: launch.command,
     ...(flagString(args.flags, 'cwd') ? { cwd: flagString(args.flags, 'cwd') } : {}),
     env: parseEnvPairs(flagStrings(args.flags, 'env')),
     tty: ttyMode(args.flags),
     stdin: launch.stdin,
-    timeoutMs: execTimeoutMs(ctx),
+    timeoutMs: execTimeoutMs(ctx, flagBool(args.flags, NO_TIMEOUT_FLAG)),
     verbose: flagBool(args.flags, 'verbose'),
     legacyFallback: true,
   };
+}
+
+type RunOutcome = { exitCode: number; failure: unknown };
+
+async function runAndReport(
+  deps: ExecDeps,
+  ctx: CliContext,
+  options: RemoteRunOptions,
+  output: OutputPlan
+): Promise<RunOutcome> {
+  try {
+    const result = await deps.run(ctx, {
+      ...options,
+      sinks: output.sinks,
+      ...(output.onReady ? { onReady: output.onReady } : {}),
+    });
+    await output.finish(result);
+    return { exitCode: exitCodeOf(result), failure: undefined };
+  } catch (error) {
+    if (isOutputClosed(error)) return { exitCode: SIGPIPE_EXIT, failure: undefined };
+    await output.fail(error).catch(() => {});
+    return { exitCode: 0, failure: error };
+  }
+}
+
+async function execute(deps: ExecDeps, ctx: CliContext, argv: string[]): Promise<number> {
+  const args = parseExecArgs(argv);
+  const json = planJson(ctx, args.flags);
+  const launch = await planLaunch(args);
+  const options = buildOptions(ctx, args, launch);
   if (launch.scriptFallback) {
     ctx.out.warn(
       `script shebang interpreter ${launch.scriptFallback} is not a supported shell; using /bin/sh -s`
     );
   }
   const files = openExecFiles(args.flags);
-  let failure: unknown;
-  let exitCode = 0;
-  try {
-    const output = buildOutput(ctx, json, files);
-    const result = await deps.run(ctx, { ...options, sinks: output.sinks });
-    output.finish(result);
-    exitCode = exitCodeOf(result);
-  } catch (error) {
-    if (error instanceof ExecStreamClosedError && json.enabled) {
-      emitStreamClosedJson(ctx, error, files);
-    }
-    failure = error;
-  } finally {
-    const closeError = await closeExecFiles(files);
-    if (failure === undefined && closeError !== undefined) failure = closeError;
-  }
-  if (failure !== undefined) throw failure;
-  return exitCode;
+  const outcome = await runAndReport(deps, ctx, options, buildOutput(ctx, json, files));
+  const closeError = await closeExecFiles(files);
+  if (outcome.failure !== undefined) throw outcome.failure;
+  if (closeError !== undefined) throw closeError;
+  return outcome.exitCode;
 }
 
 const SPEC = { ...GLOBAL_FLAGS, ...FLAGS };

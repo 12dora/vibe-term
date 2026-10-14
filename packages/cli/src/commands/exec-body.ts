@@ -21,9 +21,12 @@ export function parseEnvPairs(pairs: string[]): Record<string, string> {
   return env;
 }
 
-/** 只有显式 `--timeout` 才限时；缺省的 30 s 是请求超时，不是命令超时。 */
-export function execTimeoutMs(ctx: CliContext): number | undefined {
-  if (!ctx.globals.timeoutExplicit) return undefined;
+/** `--timeout 0`（不限时）改写成的隐藏开关：全局解析只认正整数，0 不能走全局旗标。 */
+export const NO_TIMEOUT_FLAG = 'no-timeout';
+
+/** 只有显式 `--timeout` 才限时；缺省的 30 s 是请求超时，不是命令超时；`--timeout 0` 不限时。 */
+export function execTimeoutMs(ctx: CliContext, noTimeout = false): number | undefined {
+  if (noTimeout || !ctx.globals.timeoutExplicit) return undefined;
   const raw = ctx.globals.timeoutMs;
   if (!Number.isInteger(raw) || raw <= 0) {
     throw new UsageError(`--timeout must be a positive integer, got ${raw}`);
@@ -38,12 +41,28 @@ const SHORT_FLAGS: Readonly<Record<string, string>> = {
   q: '--quiet',
 };
 
-type Rewrite = { head: string[]; ttyCount: number; targetSeen: boolean };
+type Rewrite = {
+  head: string[];
+  ttyCount: number;
+  targetSeen: boolean;
+  noTimeout: boolean;
+};
+
+/** -t / -T 以最后一个为准（ssh 语义）：-T 清掉此前的 -t 计数，-t 撤销此前的 -T。 */
+function applyTty(state: Rewrite, letter: 't' | 'T'): void {
+  if (letter === 'T') {
+    state.ttyCount = 0;
+    if (!state.head.includes('--no-tty')) state.head.push('--no-tty');
+    return;
+  }
+  state.ttyCount += 1;
+  state.head = state.head.filter((word) => word !== '--no-tty');
+}
 
 function expandCluster(token: string, state: Rewrite): void {
   for (const letter of token.slice(1)) {
-    if (letter === 't') {
-      state.ttyCount += 1;
+    if (letter === 't' || letter === 'T') {
+      applyTty(state, letter);
       continue;
     }
     const long = SHORT_FLAGS[letter];
@@ -57,6 +76,24 @@ function expandCluster(token: string, state: Rewrite): void {
   }
 }
 
+const LONG_TTY: Readonly<Record<string, readonly ('t' | 'T')[]>> = {
+  '--tty': ['t'],
+  '--no-tty': ['T'],
+  '--force-tty': ['t', 't'],
+};
+
+/** `--timeout 0` / `--timeout=0`：返回该选项最后一个 token 的下标，否则 null。 */
+export function zeroTimeoutEnd(argv: readonly string[], index: number): number | null {
+  const token = argv[index];
+  const isZero = (text: string | undefined): boolean =>
+    text !== undefined && text.trim() !== '' && Number(text) === 0;
+  if (token.startsWith('--timeout='))
+    return isZero(token.slice('--timeout='.length)) ? index : null;
+  if (token !== '--timeout') return null;
+  const next = argv[index + 1];
+  return next !== undefined && !next.startsWith('-') && isZero(next) ? index + 1 : null;
+}
+
 /** 取值型长选项连同下一个 token 一起收下（与派发层一致：以 `-` 开头的不算取值）。 */
 function takeLongOption(
   argv: readonly string[],
@@ -65,10 +102,17 @@ function takeLongOption(
   state: Rewrite
 ): number {
   const token = argv[index];
-  if (token === '--tty') {
-    state.ttyCount += 1;
+  const tty = LONG_TTY[token];
+  if (tty) {
+    for (const letter of tty) applyTty(state, letter);
     return index;
   }
+  const zero = zeroTimeoutEnd(argv, index);
+  if (zero !== null) {
+    state.noTimeout = true;
+    return zero;
+  }
+  if (token === '--timeout' || token.startsWith('--timeout=')) state.noTimeout = false;
   state.head.push(token);
   if (token.includes('=')) return index;
   const kind = spec[token.slice(2)];
@@ -82,6 +126,7 @@ function assemble(state: Rewrite, words: readonly string[], explicit: boolean): 
   const out = [...state.head];
   if (state.ttyCount === 1) out.push('--tty');
   if (state.ttyCount > 1) out.push('--force-tty');
+  if (state.noTimeout) out.push(`--${NO_TIMEOUT_FLAG}`);
   if (explicit) out.push('--argv');
   if (explicit || words.length > 0) out.push('--', ...words);
   return out;
@@ -94,7 +139,7 @@ function assemble(state: Rewrite, words: readonly string[], explicit: boolean): 
  * 目标后紧跟的 `@path` 等价 `--stdin-file`。
  */
 export function rewriteExecArgv(argv: readonly string[], spec: FlagSpec): string[] {
-  const state: Rewrite = { head: [], ttyCount: 0, targetSeen: false };
+  const state: Rewrite = { head: [], ttyCount: 0, targetSeen: false, noTimeout: false };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--') return assemble(state, argv.slice(index + 1), true);

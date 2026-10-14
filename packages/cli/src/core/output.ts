@@ -88,6 +88,11 @@ export class Output {
     this.stderr.write(`${this.style(text, 'red')}\n`);
   }
 
+  /** 绑定的 stdout 流：需要背压 / EPIPE 处理的调用方（exec --json）自己包 fdWriter。 */
+  stdoutStream(): NodeJS.WritableStream {
+    return this.stdout;
+  }
+
   /** 绑定的 stdout 是否是 TTY（term run / exec 的人读流式输出看这个）。 */
   isStdoutTty(): boolean {
     return streamIsTty(this.stdout);

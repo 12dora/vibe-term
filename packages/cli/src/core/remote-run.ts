@@ -50,9 +50,9 @@ export type RemoteRunOptions = {
   command: ExecCommand;
   cwd?: string;
   env?: Record<string, string>;
-  /** auto：仅登录 shell 且 stdin/stdout 都是 TTY 时分配 PTY；force = -t；always = -tt；no = -T。 */
+  /** auto：仅登录 shell 且 stdin 是 TTY 时分配 PTY；force = -t；always = -tt；no = -T。 */
   tty: TtyMode;
-  /** auto：stdin 不是 TTY 时转发（分配了 PTY 则终端即输入）；none = -n。 */
+  /** auto：一律转发 stdin（TTY 无 PTY 时按行模式，分配了 PTY 则终端即输入）；none = -n。 */
   stdin: StdinMode;
   /** 0 / 缺省 = 不限时。 */
   timeoutMs?: number;
@@ -67,6 +67,8 @@ export type RemoteRunOptions = {
   terminal?: Terminal;
   /** 测试注入：假 ws 连接与缩短的计时。 */
   channel?: Pick<ExecChannelOptions, 'connect' | 'timing'>;
+  /** 测试注入：兼容路径判定 stdin 空闲的时长（毫秒）。 */
+  legacyStdinIdleMs?: number;
 };
 
 const UNKNOWN_DEVICE = { id: '', name: '', type: 'local' } as const;
@@ -77,7 +79,7 @@ export async function runRemote(
 ): Promise<ExecChannelResult> {
   const term = opts.terminal ?? processTerminal();
   const plan = planExecTarget(ctx, opts.target, opts.node);
-  const pty = decidePty(opts.tty, opts.command, isTty(term.stdin), isTty(term.stdout));
+  const pty = decidePty(opts.tty, opts.command, isTty(term.stdin));
   if (opts.tty === 'force' && !pty) ctx.out.warn(PTY_NOT_ALLOCATED);
   const stdin = await planStdin(opts.stdin, term, pty);
   return new RemoteRun(ctx, opts, { term, plan, pty, stdin }).run();
@@ -137,8 +139,18 @@ class RemoteRun {
     return this.attempt((await this.targets.explicitRoute(plan, true)).route);
   }
 
-  /** 单段目标：缓存的 node → 入口上的设备 → 按 node 名解析（该 node 的默认设备）。 */
+  /**
+   * 单段目标：先当入口上的设备（设备优先于同名 node，缓存不得改变这个优先级，所以每次都先探），
+   * 再试缓存的 node，最后按 node 名解析（该 node 的默认设备）。缓存的 node 带期望名字，由它自检。
+   */
   private async viaBare(token: string): Promise<ExecChannelResult> {
+    try {
+      return await this.attempt({ nodeId: SELF_NODE_ID, nodeName: SELF_NODE_ID, device: token });
+    } catch (error) {
+      if (!(error instanceof NotFoundError) || this.ready) throw error;
+    } finally {
+      if (this.ready) this.targets.forget(this.prep.plan);
+    }
     const cached = this.targets.cachedBareRoute(token);
     if (cached) {
       try {
@@ -148,11 +160,6 @@ class RemoteRun {
         this.targets.forget(this.prep.plan);
       }
     }
-    try {
-      return await this.attempt({ nodeId: SELF_NODE_ID, nodeName: SELF_NODE_ID, device: token });
-    } catch (error) {
-      if (!(error instanceof NotFoundError) || this.ready) throw error;
-    }
     return this.attempt(await this.targets.bareNodeRoute(token));
   }
 
@@ -161,9 +168,11 @@ class RemoteRun {
     return missing && this.ready === null;
   }
 
-  private spec(device: string | undefined): ExecOpenSpec {
+  private spec(route: ExecRoute): ExecOpenSpec {
     const { opts, prep } = this;
+    const { device, expectName } = route;
     return {
+      ...(expectName ? { nodeName: expectName } : {}),
       ...(device ? { device } : {}),
       command: opts.command,
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
@@ -185,7 +194,7 @@ class RemoteRun {
       return await runExecChannel(
         this.ctx,
         route.nodeId,
-        this.spec(route.device),
+        this.spec(route),
         { stdin: stream, stdout: this.sinks.stdout, stderr: this.sinks.stderr, tty },
         {
           verbose: opts.verbose,
@@ -223,7 +232,8 @@ class RemoteRun {
 
   private async viaLegacy(): Promise<ExecChannelResult> {
     const { prep, opts } = this;
-    const stream = prep.stdin.forward ? prep.stdin.open() : null;
+    const terminalInput = opts.stdin === 'auto' && isTty(prep.term.stdin);
+    const stream = prep.stdin.forward && !terminalInput ? prep.stdin.open() : null;
     try {
       return await runLegacyExec(this.ctx, {
         target: legacyTargetText(prep.plan),
@@ -235,6 +245,7 @@ class RemoteRun {
         pty: prep.pty,
         verbose: opts.verbose === true,
         sinks: this.sinks,
+        ...(opts.legacyStdinIdleMs === undefined ? {} : { stdinIdleMs: opts.legacyStdinIdleMs }),
       });
     } finally {
       prep.stdin.release(stream);

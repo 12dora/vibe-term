@@ -1,17 +1,34 @@
 // exec / rsh 的目标解析：把用户写的 `<node>` | `<node>/<device>` | `<device>` 变成「去哪个 node、
 // 用哪台设备」。node 名册查询的结果落进 targets.json，之后的调用不再打 `GET /api/mesh/nodes`。
 
+import { isValidNodeId } from '@vibeterm/api-client/node-url';
 import type { CliContext } from './context';
 import { NotFoundError, UsageError } from './errors';
 import { isSelfAlias, parseTarget } from './resolve';
-import { TargetCache, bareKey, nodeKey } from './target-cache';
+import { type CachedTarget, TargetCache, bareKey, nodeKey } from './target-cache';
 
 export type ExecRoute = {
   nodeId: string;
   nodeName: string;
   /** 缺省由目标 node 选第一台 local 设备。 */
   device?: string;
+  /**
+   * 路由来自缓存时的 node 名；随 open 发给目标 node 自检，防止名字已易主（node 改名、名字被别的
+   * node 占用）而命令落到旧 node。按 id 写的目标与现查的路由不带。
+   */
+  expectName?: string;
 };
+
+function cachedRoute(ref: string, hit: CachedTarget, device?: string): ExecRoute {
+  const name = hit.name.trim();
+  const checkable = !isValidNodeId(ref) && name !== '' && !isValidNodeId(name);
+  return {
+    nodeId: hit.nodeId,
+    nodeName: hit.name,
+    ...(device ? { device } : {}),
+    ...(checkable ? { expectName: name } : {}),
+  };
+}
 
 export type ExecTargetPlan =
   | { kind: 'explicit'; nodeRef: string; device: string }
@@ -56,10 +73,7 @@ export class ExecTargets {
     const key = nodeKey(plan.nodeRef);
     const hit = fresh ? null : this.cache.get(key);
     if (hit) {
-      return {
-        route: { nodeId: hit.nodeId, nodeName: hit.name, device: plan.device },
-        cached: true,
-      };
+      return { route: cachedRoute(plan.nodeRef, hit, plan.device), cached: true };
     }
     const node = await this.ctx.resolver.resolveNode(plan.nodeRef);
     if (!isSelfAlias(plan.nodeRef)) this.cache.set(key, { nodeId: node.id, name: node.name });
@@ -72,7 +86,7 @@ export class ExecTargets {
   /** 单段目标上次被解析成 node 的结果；没有或已过期为 null。 */
   cachedBareRoute(token: string): ExecRoute | null {
     const hit = this.cache.get(bareKey(token));
-    return hit ? { nodeId: hit.nodeId, nodeName: hit.name } : null;
+    return hit ? cachedRoute(token, hit) : null;
   }
 
   /** 单段目标不是入口上的设备时，按 node 名 / id 解析；该 node 用它自己的默认设备。 */

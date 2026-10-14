@@ -107,24 +107,21 @@ function specOf(conn: ServerConn): ExecOpenSpec {
 }
 
 describe('decidePty', () => {
-  const cases: Array<
-    [Parameters<typeof decidePty>[0], ExecCommand['kind'], boolean, boolean, boolean]
-  > = [
-    ['auto', 'login', true, true, true],
-    ['auto', 'login', true, false, false],
-    ['auto', 'login', false, true, false],
-    ['auto', 'shell', true, true, false],
-    ['force', 'shell', true, false, true],
-    ['force', 'shell', false, true, false],
-    ['always', 'shell', false, false, true],
-    ['no', 'login', true, true, false],
+  const cases: Array<[Parameters<typeof decidePty>[0], ExecCommand['kind'], boolean, boolean]> = [
+    ['auto', 'login', true, true],
+    ['auto', 'login', false, false],
+    ['auto', 'shell', true, false],
+    ['force', 'shell', true, true],
+    ['force', 'shell', false, false],
+    ['always', 'shell', false, true],
+    ['no', 'login', true, false],
   ];
-  for (const [mode, kind, inTty, outTty, expected] of cases) {
-    test(`${mode} ${kind} stdinTty=${inTty} stdoutTty=${outTty} → ${expected}`, () => {
+  for (const [mode, kind, inTty, expected] of cases) {
+    test(`${mode} ${kind} stdinTty=${inTty} → ${expected}`, () => {
       const command = (
         kind === 'login' ? { kind: 'login' } : { kind: 'shell', script: 'x' }
       ) as ExecCommand;
-      expect(decidePty(mode, command, inTty, outTty)).toBe(expected);
+      expect(decidePty(mode, command, inTty)).toBe(expected);
     });
   }
 });
@@ -298,10 +295,23 @@ describe('runRemote stdin', () => {
     expect(conn.has(EcKind.STDIN_EOF)).toBe(true);
   });
 
-  test('a terminal stdin is not forwarded in auto mode', async () => {
+  test('a terminal stdin is forwarded in line mode without a pty (ssh semantics)', async () => {
+    const { ctx, terminal } = await setup({
+      terminal: { stdin: Readable.from([Buffer.from('line\n')]), stdinTty: true },
+    });
+    const link = fakeLink(serveStdin);
+    await runRemote(ctx, optionsOf(terminal, link));
+    const conn = link.conns[0] as ServerConn;
+    expect(specOf(conn)).toMatchObject({ stdin: true, pty: null });
+    expect(Buffer.from(conn.bytes(EcKind.STDIN)).toString()).toBe('line\n');
+    expect(conn.has(EcKind.STDIN_EOF)).toBe(true);
+    expect(terminal.rawModes).toEqual([]);
+  });
+
+  test('-n does not forward a terminal stdin either', async () => {
     const { ctx, terminal } = await setup({ terminal: { stdinTty: true } });
     const link = fakeLink(serveExit());
-    await runRemote(ctx, optionsOf(terminal, link));
+    await runRemote(ctx, optionsOf(terminal, link, { stdin: 'none' }));
     expect(specOf(link.conns[0] as ServerConn).stdin).toBe(false);
   });
 
@@ -377,6 +387,13 @@ describe('runRemote pty', () => {
     expect(stderr.text().match(/未分配伪终端/g)).toHaveLength(1);
   });
 
+  test('a login command gets a pty from stdin alone, even when stdout is redirected', async () => {
+    const { ctx, terminal } = await setup({ terminal: { stdinTty: true, stdoutTty: false } });
+    const link = fakeLink(serveExit());
+    await runRemote(ctx, optionsOf(terminal, link, { command: { kind: 'login' } }));
+    expect(specOf(link.conns[0] as ServerConn).pty).toMatchObject({ cols: 100, rows: 30 });
+  });
+
   test('a plain command never gets a pty in auto mode, and -T disables it', async () => {
     const { ctx, terminal, stderr } = await setup({
       terminal: { stdinTty: true, stdoutTty: true },
@@ -396,6 +413,23 @@ describe('runRemote target resolution', () => {
     onHello(conn, () =>
       conn.sendJson(EcKind.ERROR, { code: 'device_not_found', message: 'no such device' })
     );
+  }
+
+  /** 假 node：`names` 把 node id 映射到它**当前**的名字；open 带的 nodeName 对不上就 device_not_found。 */
+  function namedNodes(names: Record<string, string>) {
+    return (conn: ServerConn): void => {
+      const id = /\/n\/([0-9a-f]{32})/.exec(conn.target.url)?.[1];
+      if (!id) return deviceMissing(conn);
+      onHello(conn, (hello) => {
+        const expected = hello.op === 'open' ? hello.spec.nodeName : undefined;
+        if (expected && expected.toLowerCase() !== names[id]?.toLowerCase()) {
+          conn.sendJson(EcKind.ERROR, { code: 'device_not_found', message: 'node mismatch' });
+          return;
+        }
+        conn.sendJson(EcKind.READY, readyOf());
+        conn.sendJson(EcKind.EXIT, EXIT_OK);
+      });
+    };
   }
 
   test('a bare token is tried as a device on the entry first', async () => {
@@ -420,25 +454,47 @@ describe('runRemote target resolution', () => {
     expect(TargetCache.open(dir, ENTRY).get(bareKey('office'))?.nodeId).toBe(NODE);
   });
 
-  test('a cached bare token goes straight to the node without touching the roster', async () => {
+  test('a cached bare token reaches its node after the entry device probe misses', async () => {
     const { ctx, terminal, dir, fixture } = await setup();
     TargetCache.open(dir, ENTRY).set(bareKey('office'), { nodeId: NODE, name: 'office' });
-    const link = fakeLink(serveExit());
+    const link = fakeLink(namedNodes({ [NODE]: 'office' }));
     await runRemote(ctx, optionsOf(terminal, link, { target: 'office' }));
-    expect(link.conns).toHaveLength(1);
-    expect((link.conns[0] as ServerConn).target.url).toContain(NODE);
+    expect(link.conns).toHaveLength(2);
+    expect((link.conns[0] as ServerConn).target.url).not.toContain('/n/');
+    const second = link.conns[1] as ServerConn;
+    expect(second.target.url).toContain(NODE);
+    expect(specOf(second).nodeName).toBe('office');
     expect(fixture.mesh.calls).toBe(0);
   });
 
-  test('a stale bare cache is dropped on device_not_found and resolution restarts', async () => {
+  test('a device on the entry beats a same-named cached node and drops it', async () => {
     const { ctx, terminal, dir, fixture } = await setup();
-    TargetCache.open(dir, ENTRY).set(bareKey('office'), { nodeId: 'c'.repeat(32), name: 'old' });
-    const link = fakeLink((conn) => (conn.index < 2 ? deviceMissing(conn) : serveExit()(conn)));
+    TargetCache.open(dir, ENTRY).set(bareKey('db'), { nodeId: NODE, name: 'db' });
+    const link = fakeLink(serveExit());
+    await runRemote(ctx, optionsOf(terminal, link, { target: 'db' }));
+    expect(link.conns).toHaveLength(1);
+    const conn = link.conns[0] as ServerConn;
+    expect(conn.target.url).not.toContain('/n/');
+    expect(specOf(conn).device).toBe('db');
+    expect(specOf(conn)).not.toHaveProperty('nodeName');
+    expect(TargetCache.open(dir, ENTRY).get(bareKey('db'))).toBeNull();
+    expect(fixture.mesh.calls).toBe(0);
+  });
+
+  test('a renamed node rejects a stale bare cache, which is re-resolved once', async () => {
+    const { ctx, terminal, dir, fixture } = await setup();
+    const old = 'c'.repeat(32);
+    TargetCache.open(dir, ENTRY).set(bareKey('office'), { nodeId: old, name: 'office' });
+    const link = fakeLink(namedNodes({ [old]: 'office-retired', [NODE]: 'office' }));
     await runRemote(ctx, optionsOf(terminal, link, { target: 'office' }));
     expect(link.conns).toHaveLength(3);
-    expect((link.conns[0] as ServerConn).target.url).toContain('c'.repeat(32));
-    expect((link.conns[1] as ServerConn).target.url).not.toContain('/n/');
-    expect((link.conns[2] as ServerConn).target.url).toContain(NODE);
+    expect((link.conns[0] as ServerConn).target.url).not.toContain('/n/');
+    const stale = link.conns[1] as ServerConn;
+    expect(stale.target.url).toContain(old);
+    expect(specOf(stale).nodeName).toBe('office');
+    const fresh = link.conns[2] as ServerConn;
+    expect(fresh.target.url).toContain(NODE);
+    expect(specOf(fresh)).not.toHaveProperty('nodeName');
     expect(fixture.mesh.calls).toBe(1);
     expect(TargetCache.open(dir, ENTRY).get(bareKey('office'))?.nodeId).toBe(NODE);
   });
@@ -466,14 +522,29 @@ describe('runRemote target resolution', () => {
     expect(fixture.mesh.calls).toBe(1);
   });
 
-  test('a stale node/device cache is invalidated by NotFound and re-resolved once', async () => {
-    const { ctx, terminal, dir } = await setup();
-    TargetCache.open(dir, ENTRY).set(nodeKey('office'), { nodeId: 'c'.repeat(32), name: 'old' });
-    const link = fakeLink((conn) => (conn.index === 0 ? deviceMissing(conn) : serveExit()(conn)));
+  test('a renamed node rejects a stale node/device cache, re-resolved once', async () => {
+    const { ctx, terminal, dir, fixture } = await setup();
+    const old = 'c'.repeat(32);
+    TargetCache.open(dir, ENTRY).set(nodeKey('office'), { nodeId: old, name: 'office' });
+    const link = fakeLink(namedNodes({ [old]: 'office-retired', [NODE]: 'office' }));
     await runRemote(ctx, optionsOf(terminal, link, { target: 'office/db' }));
     expect(link.conns).toHaveLength(2);
-    expect((link.conns[1] as ServerConn).target.url).toContain(NODE);
+    const stale = link.conns[0] as ServerConn;
+    expect(stale.target.url).toContain(old);
+    expect(specOf(stale)).toMatchObject({ nodeName: 'office', device: 'db' });
+    const fresh = link.conns[1] as ServerConn;
+    expect(fresh.target.url).toContain(NODE);
+    expect(specOf(fresh)).not.toHaveProperty('nodeName');
+    expect(fixture.mesh.calls).toBe(1);
     expect(TargetCache.open(dir, ENTRY).get(nodeKey('office'))?.nodeId).toBe(NODE);
+  });
+
+  test('a node written as an id never carries an expected name', async () => {
+    const { ctx, terminal, dir } = await setup();
+    TargetCache.open(dir, ENTRY).set(nodeKey(NODE), { nodeId: NODE, name: 'office' });
+    const link = fakeLink(serveExit());
+    await runRemote(ctx, optionsOf(terminal, link, { target: `${NODE}/db` }));
+    expect(specOf(link.conns[0] as ServerConn)).not.toHaveProperty('nodeName');
   });
 
   test('a fresh (uncached) NotFound on an explicit target is not retried', async () => {
@@ -578,6 +649,37 @@ describe('runRemote legacy fallback', () => {
     expect(body.argv).toEqual(['cat', '-n']);
     expect(body).not.toHaveProperty('shell');
     expect(body.stdin).toEqual({ base64: Buffer.from([0xff, 0xfe, 0x00]).toString('base64') });
+  });
+
+  test('a never-closing stdin pipe is treated as empty after the idle window', async () => {
+    const harness = await setup({ terminal: { stdin: new Readable({ read() {} }) } });
+    const started = Date.now();
+    const result = await runRemote(harness.ctx, legacyOptions(harness, { legacyStdinIdleMs: 30 }));
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(exitCodeOf(result)).toBe(0);
+    expect(harness.fixture.posts[0]).not.toHaveProperty('stdin');
+    expect(harness.stderr.text().match(/加 -n/g)).toHaveLength(1);
+  });
+
+  test('a terminal stdin is not read by the compat path (it cannot stream)', async () => {
+    const harness = await setup({
+      terminal: { stdin: new Readable({ read() {} }), stdinTty: true },
+    });
+    await runRemote(harness.ctx, legacyOptions(harness));
+    expect(harness.fixture.posts[0]).not.toHaveProperty('stdin');
+    expect(harness.stderr.text()).not.toContain('加 -n');
+  });
+
+  test('a slow stdin that delivers data and closes within the window is still buffered', async () => {
+    const stdin = new Readable({ read() {} });
+    const harness = await setup({ terminal: { stdin } });
+    setTimeout(() => {
+      stdin.push(Buffer.from('late'));
+      stdin.push(null);
+    }, 10);
+    await runRemote(harness.ctx, legacyOptions(harness, { legacyStdinIdleMs: 500 }));
+    expect(harness.fixture.posts[0]).toMatchObject({ stdin: { text: 'late' } });
+    expect(harness.stderr.text()).not.toContain('加 -n');
   });
 
   test('timeout events map to the timeout exit', async () => {
