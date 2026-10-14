@@ -90,15 +90,50 @@ describe('LinkStreamTransport outbound', () => {
     expect(stream.resetReason).toBeUndefined();
   });
 
-  test('close with an error code flushes then resets with exec:<code>', async () => {
+  test('close with a signalling code flushes then resets with exec:<code>', async () => {
     const { stream, transport } = boot();
     stream.blockWrites();
     transport.send(bytes(7));
-    transport.close(4400, 'protocol_error');
+    transport.close(4409, 'taken_over');
     stream.releaseWrites();
     await until(() => stream.dead);
     expect(stream.written).toHaveLength(1);
+    expect(stream.resetReason).toBe('exec:4409');
+  });
+
+  test('close after an ERROR frame (4400/4403) flushes then ends instead of resetting', async () => {
+    for (const code of [4400, 4403]) {
+      const { stream, transport } = boot();
+      stream.blockWrites();
+      transport.send(bytes(7));
+      transport.close(code, 'protocol_error');
+      stream.releaseWrites();
+      await until(() => stream.ended);
+      expect(stream.written).toHaveLength(1);
+      expect(stream.dead).toBe(false);
+    }
+  });
+
+  test('an ended error close resets only if the peer never ends back', async () => {
+    const stream = new FakeLinkStream();
+    const transport = new LinkStreamTransport(stream, 2000, 20);
+    transport.bind(new RecordingInbound());
+    transport.close(4400, 'protocol_error');
+    await until(() => stream.ended);
+    expect(stream.dead).toBe(false);
+    await until(() => stream.dead);
     expect(stream.resetReason).toBe('exec:4400');
+  });
+
+  test('peer END after an ended error close cancels the fallback reset', async () => {
+    const stream = new FakeLinkStream();
+    const transport = new LinkStreamTransport(stream, 2000, 40);
+    transport.bind(new RecordingInbound());
+    transport.close(4403, 'forbidden');
+    await until(() => stream.ended);
+    transport.notifyInboundClosed();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(stream.dead).toBe(false);
   });
 
   test('close on an idle transport resets immediately', () => {

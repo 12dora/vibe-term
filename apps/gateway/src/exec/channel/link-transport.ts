@@ -4,6 +4,9 @@ import type { ExecChannelAuth, ExecChannelInbound, ExecTransport } from './trans
 
 export const LINK_TRANSPORT_DRAIN_BYTES = 256 * 1024;
 export const LINK_TRANSPORT_CLOSE_FLUSH_MS = 2000;
+export const LINK_TRANSPORT_END_LINGER_MS = 10_000;
+/** 关闭前一定已发出 ERROR 帧的码：以 END 收尾，入口读完 ERROR 后自行关 WS；RST 会清掉入口尚未读走的字节。 */
+const ERROR_FRAME_CLOSE_CODES = new Set([4400, 4403]);
 
 export class LinkStreamTransport implements ExecTransport {
   private readonly queue: Uint8Array[] = [];
@@ -19,7 +22,8 @@ export class LinkStreamTransport implements ExecTransport {
 
   constructor(
     private readonly stream: LinkStream,
-    private readonly closeFlushMs: number = LINK_TRANSPORT_CLOSE_FLUSH_MS
+    private readonly closeFlushMs: number = LINK_TRANSPORT_CLOSE_FLUSH_MS,
+    private readonly endLingerMs: number = LINK_TRANSPORT_END_LINGER_MS
   ) {}
 
   get bufferedBytes(): number {
@@ -93,14 +97,29 @@ export class LinkStreamTransport implements ExecTransport {
     if (this.finalized) return;
     this.finalized = true;
     this.clearFlushTimer();
-    const closing = this.closing;
+    const code = this.closing?.code ?? 1011;
     this.clearQueue();
     try {
-      if (closing?.code === 1000) void this.stream.end().catch(() => undefined);
-      else this.stream.reset(`exec:${closing?.code ?? 1011}`);
+      if (code === 1000) void this.stream.end().catch(() => undefined);
+      else if (ERROR_FRAME_CLOSE_CODES.has(code)) this.endThenReset(code);
+      else this.stream.reset(`exec:${code}`);
     } catch {
       // stream already dead
     }
+  }
+
+  /** END 让对端读完已排队的 ERROR 帧；对端迟迟不回 END 才退回 RST。 */
+  private endThenReset(code: number): void {
+    void this.stream.end().catch(() => undefined);
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      try {
+        this.stream.reset(`exec:${code}`);
+      } catch {
+        // stream already dead
+      }
+    }, this.endLingerMs);
+    this.flushTimer.unref?.();
   }
 
   private abortStream(reason: string): void {

@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import type { LinkStream } from '@vibeterm/shared/link';
+import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { attachExecChannelToLinkStream } from '../exec/channel/link-transport';
 import { FakeLinkStream } from '../exec/channel/test-link-stream';
 import {
+  EXEC_FORWARD_PREOPEN_MAX_BYTES,
   EXEC_FORWARD_QUEUE_MAX_BYTES,
   EXEC_FORWARD_WS_HIGH_WATER,
   ExecForwardPump,
@@ -91,15 +93,56 @@ describe('ExecForwardPump upstream', () => {
     expect(stream.dead).toBe(true);
   });
 
-  test('queue cap also applies before the stream is open', () => {
+  test('queue cap is 1 MiB before the stream is open', () => {
     const ws = new FakeWs();
     const pump = new ExecForwardPump(() => new Promise<LinkStream>(() => {}));
     pump.open(ws);
-    const mib = new Uint8Array(1024 * 1024);
-    for (let i = 0; i < 16; i += 1) pump.onMessage(mib);
+    const chunk = new Uint8Array(EXEC_FORWARD_PREOPEN_MAX_BYTES / 4);
+    for (let i = 0; i < 4; i += 1) pump.onMessage(chunk);
     expect(ws.closed).toBeNull();
-    pump.onMessage(mib);
+    pump.onMessage(bytes(1));
     expect(ws.closed?.code).toBe(1009);
+  });
+
+  test('many tiny messages are coalesced into few writes, in order', async () => {
+    const ws = new FakeWs();
+    const stream = new FakeLinkStream();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pump = new ExecForwardPump(async () => {
+      await gate;
+      return stream;
+    });
+    pump.open(ws);
+    const total = 200_000;
+    for (let i = 0; i < total; i += 1) pump.onMessage(bytes(i % 251));
+    expect(ws.closed).toBeNull();
+    release();
+    await waitUntil(() => stream.written.reduce((n, chunk) => n + chunk.byteLength, 0) === total);
+    expect(stream.written.length).toBeLessThan(10);
+    const flat = new Uint8Array(total);
+    let at = 0;
+    for (const chunk of stream.written) {
+      flat.set(chunk, at);
+      at += chunk.byteLength;
+    }
+    for (let i = 0; i < total; i += 1) expect(flat[i]).toBe(i % 251);
+  });
+
+  test('messages arriving while a write is in flight are not merged into that write', async () => {
+    const { stream, pump } = boot();
+    await tick();
+    stream.blockWrites();
+    pump.onMessage(bytes(1, 2));
+    await tick();
+    pump.onMessage(bytes(3));
+    pump.onMessage(bytes(4));
+    stream.releaseWrites();
+    await waitUntil(() => stream.written.length === 2);
+    expect(Array.from(stream.written[0] ?? [])).toEqual([1, 2]);
+    expect(Array.from(stream.written[1] ?? [])).toEqual([3, 4]);
   });
 
   test('text messages close with 4400', async () => {
@@ -110,14 +153,47 @@ describe('ExecForwardPump upstream', () => {
     expect(stream.dead).toBe(true);
   });
 
-  test('client close resets the stream with client-closed', async () => {
+  test('client close flushes queued bytes then half-closes instead of resetting', async () => {
+    const { ws, stream, pump } = boot();
+    await tick();
+    stream.blockWrites();
+    pump.onMessage(bytes(1));
+    pump.onMessage(bytes(2));
+    pump.onClose();
+    pump.onMessage(bytes(9));
+    expect(stream.ended).toBe(false);
+    expect(stream.dead).toBe(false);
+    stream.releaseWrites();
+    await waitUntil(() => stream.ended);
+    expect(stream.written.map((chunk) => Array.from(chunk))).toEqual([[1], [2]]);
+    expect(stream.dead).toBe(false);
+    expect(ws.closed).toBeNull();
+  });
+
+  test('client close on an idle pump half-closes immediately and discards downstream bytes', async () => {
     const { ws, stream, pump } = boot();
     await tick();
     pump.onClose();
-    expect(stream.resetReason).toBe('client-closed');
-    expect(ws.closed).toBeNull();
+    await waitUntil(() => stream.ended);
+    stream.push(bytes(5));
+    stream.peerEnd();
+    await tick();
+    expect(ws.sent).toHaveLength(0);
+    expect(stream.resetReason).toBeUndefined();
+  });
+
+  test('client close falls back to reset when the flush stalls', async () => {
+    const ws = new FakeWs();
+    const stream = new FakeLinkStream();
+    const pump = new ExecForwardPump(async () => stream, 30);
+    pump.open(ws);
+    await tick();
+    stream.blockWrites();
     pump.onMessage(bytes(1));
-    expect(stream.written).toHaveLength(0);
+    pump.onClose();
+    expect(stream.dead).toBe(false);
+    await waitUntil(() => stream.dead);
+    expect(stream.resetReason).toBe('client-closed');
   });
 
   test('client close before the stream opens resets it once it arrives', async () => {
@@ -179,12 +255,19 @@ describe('ExecForwardPump downstream', () => {
     await waitUntil(() => ws.sent.length === 2);
   });
 
-  test('a dropped send (socket gone) resets the stream', async () => {
-    const { ws, stream } = boot();
+  test('a dropped send (socket gone) is a client close: queued upload is flushed, then END', async () => {
+    const { ws, stream, pump } = boot();
+    await tick();
+    stream.blockWrites();
+    pump.onMessage(bytes(4));
     ws.sendResult = 0;
     stream.push(bytes(1));
-    await waitUntil(() => stream.dead);
-    expect(stream.resetReason).toBe('client-closed');
+    await tick();
+    expect(stream.ended).toBe(false);
+    stream.releaseWrites();
+    await waitUntil(() => stream.ended);
+    expect(stream.written.map((chunk) => Array.from(chunk))).toEqual([[4]]);
+    expect(stream.dead).toBe(false);
   });
 });
 
@@ -248,7 +331,79 @@ describe('ExecForwardPump close mapping', () => {
   test('execForwardCloseFor passes target close codes through', () => {
     expect(execForwardCloseFor({ reason: 'rst', message: 'exec:4409' }).code).toBe(4409);
     expect(execForwardCloseFor({ reason: 'rst', message: 'exec:4403' }).code).toBe(4403);
+    expect(execForwardCloseFor({ reason: 'rst', message: 'exec:4401' })).toEqual({
+      code: 4401,
+      reason: 'NODE_LOGIN_REQUIRED',
+    });
     expect(execForwardCloseFor({ reason: 'rst', message: 'exec:1011' }).code).toBe(4502);
     expect(execForwardCloseFor({ reason: 'rst' }).code).toBe(4502);
+  });
+});
+
+describe('ExecForwardPump over a real mux link', () => {
+  async function wire(congested = false) {
+    const [entry, target] = createInMemoryLinkPair();
+    const got: number[][] = [];
+    const state = { closed: false, closeOrder: -1, order: 0, transport: null as unknown };
+    target.onStream((stream) => {
+      attachExecChannelToLinkStream(stream, { uid: 'u', tokenId: null }, (transport) => {
+        state.transport = transport;
+        return {
+          onBytes: (chunk) => got.push(Array.from(chunk)),
+          onClose: () => {
+            state.closed = true;
+            state.closeOrder = got.length;
+          },
+        };
+      });
+    });
+    const ws = new FakeWs();
+    if (congested) ws.buffered = EXEC_FORWARD_WS_HIGH_WATER + 1;
+    const open = new TextEncoder().encode('{"type":"exec","credential":"x"}');
+    const pump = new ExecForwardPump(async () => entry.openStream(open));
+    pump.open(ws);
+    await tick();
+    return { ws, pump, got, state };
+  }
+
+  for (const preload of [0, 2 * 1024 * 1024]) {
+    test(`CLOSE immediately followed by client close reaches the target before END (preload ${preload})`, async () => {
+      const { pump, got, state } = await wire();
+      if (preload) pump.onMessage(new Uint8Array(preload));
+      pump.onMessage(bytes(0x15, 0, 0, 0, 0));
+      pump.onClose();
+      await waitUntil(() => state.closed);
+      const flat = got.flat();
+      expect(flat.length).toBe(preload + 5);
+      expect(flat.slice(-5)).toEqual([0x15, 0, 0, 0, 0]);
+      expect(state.closeOrder).toBe(got.length);
+    });
+  }
+
+  test('an ERROR frame followed by a 4400 close survives a congested entry websocket', async () => {
+    const { ws, pump, state } = await wire(true);
+    const transport = state.transport as {
+      send(frame: Uint8Array): void;
+      close(code: number, reason: string): void;
+    };
+    const frame = bytes(0x24, 0, 0, 0, 2, 123, 125);
+    transport.send(frame);
+    transport.close(4400, 'protocol_error');
+    await tick();
+    await tick();
+    expect(ws.sent).toHaveLength(0);
+    expect(ws.closed).toBeNull();
+    ws.buffered = 0;
+    pump.onDrain();
+    await waitUntil(() => ws.closed !== null);
+    expect(ws.sent.map((chunk) => Array.from(chunk))).toEqual([Array.from(frame)]);
+    expect(ws.closed?.code).toBe(1000);
+  });
+
+  test('a target-side 4401 termination maps to 4401 NODE_LOGIN_REQUIRED on the websocket', async () => {
+    const { ws, state } = await wire();
+    (state.transport as { close(code: number, reason: string): void }).close(4401, 'revoked');
+    await waitUntil(() => ws.closed !== null);
+    expect(ws.closed).toEqual({ code: 4401, reason: 'NODE_LOGIN_REQUIRED' });
   });
 });
