@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import nodeDataChannel, { type NativeWebSocketServer } from './node-datachannel';
-import { WebSocketServerConfiguration } from './types';
-import { WebSocket } from './websocket';
+import type { WebSocketServerConfiguration } from './types';
+import type { WebSocket } from './websocket';
 
 export class WebSocketServer extends EventEmitter {
   #server: NativeWebSocketServer | null;

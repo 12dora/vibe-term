@@ -7,9 +7,9 @@ export const STUN_SERVERS_FLAG_HELP =
 const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 
 Usage:
-  vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--no-linger] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
-  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
+  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   vibeterm user add <username>
   vibeterm user passwd <username> [--full-reset] [--yes]
@@ -43,8 +43,11 @@ Usage:
   vibeterm relay label <tenantId> <text>
 
 Client commands (talk to a gateway over HTTP/WS, same security boundary as the web UI):
-  vibeterm login|auth|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|system
+  vibeterm login|auth|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|rsh|forward|token|system
   Run vibeterm <group> --help for the options of one group.
+  rsh: ssh-compatible remote execution (works with rsync, git, scp); the vibeterm-rsh launcher is equivalent to vibeterm rsh.
+  forward: port forwarding (-L / -R).
+  token: manage access tokens.
 
 Password prompting (add / passwd / totp / reset-root / relay join):
   TTY: hidden input with confirmation where required; empty rejected.
@@ -63,6 +66,9 @@ Init shim ownership:
   --replace-shim: replace managed PATH shims owned by another install (or with unknown ownership).
   --stun-servers <list>: ${STUN_SERVERS_FLAG_HELP}.
 
+Service (init / upgrade):
+  --no-linger: skip enabling systemd linger (by default the Linux user service keeps running after logout).
+
 Global flags:
   --lang <en|zh-CN>
   --help`;
@@ -70,9 +76,9 @@ Global flags:
 const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 
 用法：
-  vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--no-linger] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
-  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
+  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   vibeterm user add <username>
   vibeterm user passwd <username> [--full-reset] [--yes]
@@ -106,8 +112,11 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm relay label <tenantId> <text>
 
 客户端命令（经 HTTP/WS 访问网关，安全边界与网页端完全一致）：
-  vibeterm login|auth|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|system
+  vibeterm login|auth|logout|whoami|api|nodes|devices|tmux|sessions|term|files|cp|port|share|watch|agent|settings|exec|rsh|forward|token|system
   用 vibeterm <组名> --help 查看某一组的用法。
+  rsh：与 ssh 兼容的远程执行（可用于 rsync、git、scp）；vibeterm-rsh 启动器等价于 vibeterm rsh。
+  forward：端口转发（-L / -R）。
+  token：管理访问令牌。
 
 密码输入（add / passwd / totp / reset-root / relay join）：
   TTY：隐藏输入，需要时二次确认；拒绝空密码。
@@ -125,6 +134,9 @@ relay join --token：
 初始化命令入口：
   --replace-shim：替换属于其他安装或归属未知的托管 PATH shim。
   --stun-servers <list>：默认使用随发行版分发的内置列表；\`none\` 表示禁用。
+
+服务（init / upgrade）：
+  --no-linger：不启用 systemd linger（默认启用，登出后 Linux 用户服务继续运行）。
 
 全局参数：
   --lang <en|zh-CN>

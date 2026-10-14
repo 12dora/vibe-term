@@ -1,5 +1,5 @@
 import { rm } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
@@ -105,6 +105,51 @@ WantedBy=default.target
 `;
 }
 
+const LINGER_TIMEOUT_MS = 15_000;
+
+type LingerOutcome = 'enabled' | 'already' | 'skipped' | 'failed';
+
+async function tryEnableLinger(
+  run: NonNullable<ServiceDeps['run']>,
+  user: string
+): Promise<Exclude<LingerOutcome, 'skipped'>> {
+  try {
+    const show = await run('loginctl', ['show-user', user, '-p', 'Linger'], {
+      timeoutMs: LINGER_TIMEOUT_MS,
+    });
+    if (show.code === 0 && show.stdout.trim() === 'Linger=yes') return 'already';
+    const enable = await run('loginctl', ['enable-linger', user], { timeoutMs: LINGER_TIMEOUT_MS });
+    return enable.code === 0 ? 'enabled' : 'failed';
+  } catch {
+    return 'failed';
+  }
+}
+
+/**
+ * systemd 用户服务默认随最后一个登录会话结束而停止；linger 让用户管理器常驻。
+ * 失败只告警：没有 polkit 授权、没有 loginctl 的环境不该让安装失败。
+ */
+export async function ensureSystemdLinger(
+  options: Pick<ServiceInstallOptions, 'autostart' | 'linger'>,
+  deps?: ServiceDeps
+): Promise<LingerOutcome> {
+  if (!options.autostart || options.linger === false) return 'skipped';
+  const {
+    run = runCommand,
+    username = userInfo().username,
+    log = console.log,
+    warn = console.warn,
+  } = deps ?? {};
+  const outcome = await tryEnableLinger(run, username);
+  if (outcome === 'enabled') {
+    log(`[service] ${t('service.systemd.lingerEnabled', { user: username })}`);
+  } else if (outcome === 'failed') {
+    const command = `sudo loginctl enable-linger ${username}`;
+    warn(`[service] ${t('service.systemd.lingerFailed', { command })}`);
+  }
+  return outcome;
+}
+
 async function installSystemdService(
   options: ServiceInstallOptions,
   deps?: ServiceDeps
@@ -135,6 +180,8 @@ async function installSystemdService(
       );
     }
   }
+
+  await ensureSystemdLinger(options, deps);
 
   const restart = await run('systemctl', ['--user', 'restart', options.serviceName]);
   if (restart.code !== 0) {

@@ -163,7 +163,11 @@ export interface IceUdpMuxRequest {
 }
 
 // Same as rtc::NalUnit::Separator
-export type NalUnitSeparator = 'Length' | 'ShortStartSequence' | 'LongStartSequence' | 'StartSequence';
+export type NalUnitSeparator =
+  | 'Length'
+  | 'ShortStartSequence'
+  | 'LongStartSequence'
+  | 'StartSequence';
 
 // Same as rtc::AV1RtpPacketizer::Packetization
 export type ObuPacketization = 'Obu' | 'TemporalUnit';

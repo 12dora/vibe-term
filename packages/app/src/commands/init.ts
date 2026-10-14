@@ -182,6 +182,7 @@ export async function buildInitConfig(
     ...uplink,
     stunServers: resolveInitStunServers(flags) ?? '',
     noService: asBoolean(flags['no-service']) ?? false,
+    linger: !(asBoolean(flags['no-linger']) ?? false),
   };
 }
 
@@ -384,6 +385,7 @@ async function startInstalledRuntime(config: InitConfig, runScriptPath: string):
       installDir: config.installDir,
       runScriptPath,
       autostart: config.autostart,
+      linger: config.linger,
     });
     return;
   }
@@ -522,6 +524,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
     cliVersion,
     bunPath: bun.path,
     serviceMode: config.noService ? 'none' : 'managed',
+    linger: config.linger,
     installSource: detectInstallSource(),
   };
   await writeInstallMeta(installLayout, meta);

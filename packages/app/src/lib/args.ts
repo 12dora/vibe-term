@@ -67,6 +67,7 @@ const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   'reset-tls',
   'replace-shim',
   'no-service',
+  'no-linger',
   'no-restart',
   'no-wait',
   'install-deps',
@@ -264,6 +265,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'peer-port',
     'stun-servers',
     'no-service',
+    'no-linger',
   ]),
   doctor: new Set([
     ...GLOBAL_FLAGS,

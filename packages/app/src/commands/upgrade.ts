@@ -12,6 +12,7 @@ import { getInstallHint } from '../lib/dep-install';
 import { readEnvFile } from '../lib/env-file';
 import { errorMessage } from '../lib/error-message';
 import { ensureDir, pathExists } from '../lib/fs-utils';
+import { writeInstallMeta } from '../lib/install';
 import {
   type InstallLayout,
   createInstallLayout,
@@ -347,7 +348,7 @@ async function runLockedUpgrade(opts: {
   const installDir = repaired.installDir;
   const installLayout =
     installDir === opts.installDir ? opts.installLayout : createInstallLayout(installDir);
-  meta = await readMetaAfterRepair(installLayout, meta);
+  meta = await readMetaAfterRepair(installLayout, meta, opts.parsed);
   const service = buildService({ installDir });
 
   const packageLayout = asString(opts.parsed.flags.txn)
@@ -376,10 +377,17 @@ async function runLockedUpgrade(opts: {
 /** repair 之后磁盘上的 meta 才是权威的（服务名可能刚被提交为 vibeterm，目录也可能已搬回）。 */
 async function readMetaAfterRepair(
   layout: InstallLayout,
-  fallback: InstallMeta
+  fallback: InstallMeta,
+  parsed: ParsedArgs
 ): Promise<InstallMeta> {
-  if (!(await pathExists(layout.metaPath))) return fallback;
-  return await readJsonFile<InstallMeta>(layout.metaPath).catch(() => fallback);
+  const onDisk = (await pathExists(layout.metaPath))
+    ? await readJsonFile<InstallMeta>(layout.metaPath).catch(() => fallback)
+    : fallback;
+  // `--no-linger` 写进 install-meta，之后每次升级重装 unit 都沿用这个选择。
+  if (asBoolean(parsed.flags['no-linger']) !== true || onDisk.linger === false) return onDisk;
+  const next = { ...onDisk, linger: false };
+  await writeInstallMeta(layout, next);
+  return next;
 }
 
 async function packageLayoutFromStaged(installDir: string, txnId: string) {

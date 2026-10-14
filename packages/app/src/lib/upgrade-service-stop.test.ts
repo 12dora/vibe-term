@@ -94,3 +94,39 @@ describe('createManagedServiceControl stop', () => {
     expect(probed.length).toBe(3);
   });
 });
+
+describe('managed service start re-applies linger', () => {
+  async function startWith(meta: { linger?: boolean }): Promise<string[][]> {
+    const installDir = await installDirWithPort(19999);
+    const calls: string[][] = [];
+    const control = createManagedServiceControl({
+      serviceName: 'vibeterm',
+      installDir,
+      autostart: true,
+      linger: meta.linger,
+      runScriptPath: join(installDir, 'run.sh'),
+      deps: {
+        manager: 'systemd-user',
+        homeDir: installDir,
+        oomConfigDir: join(installDir, 'systemd'),
+        username: 'alice',
+        log: () => {},
+        warn: () => {},
+        run: async (command, args) => {
+          calls.push([command, ...args]);
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      },
+    });
+    await control.start();
+    return calls.filter((call) => call[0] === 'loginctl');
+  }
+
+  test('upgrade start enables linger by default (how existing nodes get fixed)', async () => {
+    expect(await startWith({})).toContainEqual(['loginctl', 'enable-linger', 'alice']);
+  });
+
+  test('an install-meta opt-out is respected', async () => {
+    expect(await startWith({ linger: false })).toEqual([]);
+  });
+});

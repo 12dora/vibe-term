@@ -1,7 +1,6 @@
-import nodeDataChannel from './node-datachannel';
 import _DataChannelStream from './datachannel-stream';
-import { WebSocketServer } from './websocket-server';
-import {
+import nodeDataChannel from './node-datachannel';
+import type {
   Channel,
   DataChannelInitConfig,
   DescriptionType,
@@ -9,16 +8,17 @@ import {
   LogLevel,
   NalUnitSeparator,
   ObuPacketization,
-  RtcConfig,
   RTCIceConnectionState,
   RTCIceGatheringState,
   RTCPeerConnectionState,
   RTCSignalingState,
+  RtcConfig,
   SctpSettings,
   SelectedCandidateInfo,
 } from './types';
-import { WebSocket } from './websocket';
 import type { CertificateFingerprint, IceUdpMuxRequest, LocalDescriptionInit } from './types';
+import { WebSocket } from './websocket';
+import { WebSocketServer } from './websocket-server';
 
 export function preload(): void {
   nodeDataChannel.preload();
@@ -187,19 +187,25 @@ export const IceUdpMuxListener: {
 } = nodeDataChannel.IceUdpMuxListener;
 
 export interface RtpPacketizationConfig {
-  playoutDelayId: number,
-  playoutDelayMin: number,
-  playoutDelayMax: number,
-  timestamp: number,
-  get clockRate(): number
+  playoutDelayId: number;
+  playoutDelayMin: number;
+  playoutDelayMax: number;
+  timestamp: number;
+  get clockRate(): number;
 }
 
 export const RtpPacketizationConfig: {
-  new(ssrc: number, cname: string, payloadType: number, clockRate: number, videoOrientationId?: number): RtpPacketizationConfig
-} = nodeDataChannel.RtpPacketizationConfig
+  new (
+    ssrc: number,
+    cname: string,
+    payloadType: number,
+    clockRate: number,
+    videoOrientationId?: number
+  ): RtpPacketizationConfig;
+} = nodeDataChannel.RtpPacketizationConfig;
 
 export interface MediaHandler {
-  addToChain(handler: MediaHandler): void
+  addToChain(handler: MediaHandler): void;
 }
 
 export interface PacingHandler extends MediaHandler {}
@@ -217,42 +223,54 @@ export const RtcpReceivingSession: {
 export interface RtcpNackResponder extends MediaHandler {}
 
 export const RtcpNackResponder: {
-  new (maxSize?: number): RtcpNackResponder
+  new (maxSize?: number): RtcpNackResponder;
 } = nodeDataChannel.RtcpNackResponder;
 
 export interface RtcpSrReporter extends MediaHandler {
-  get rtpConfig(): RtpPacketizationConfig
+  get rtpConfig(): RtpPacketizationConfig;
 }
 
 export const RtcpSrReporter: {
-  new (rtpConfig: RtpPacketizationConfig): RtcpSrReporter
+  new (rtpConfig: RtpPacketizationConfig): RtcpSrReporter;
 } = nodeDataChannel.RtcpSrReporter;
 
 export interface RtpPacketizer extends MediaHandler {
-  get rtpConfig(): RtpPacketizationConfig
+  get rtpConfig(): RtpPacketizationConfig;
 }
 
 export const RtpPacketizer: {
-  new (rtpConfig: RtpPacketizationConfig): RtpPacketizer
+  new (rtpConfig: RtpPacketizationConfig): RtpPacketizer;
 } = nodeDataChannel.RtpPacketizer;
 
 export interface H264RtpPacketizer extends RtpPacketizer {}
 
 export const H264RtpPacketizer: {
-  new (separator: NalUnitSeparator, rtpConfig: RtpPacketizationConfig, maxFragmentSize?: number): H264RtpPacketizer
-} = nodeDataChannel.H264RtpPacketizer
+  new (
+    separator: NalUnitSeparator,
+    rtpConfig: RtpPacketizationConfig,
+    maxFragmentSize?: number
+  ): H264RtpPacketizer;
+} = nodeDataChannel.H264RtpPacketizer;
 
 export interface H265RtpPacketizer extends RtpPacketizer {}
 
 export const H265RtpPacketizer: {
-  new (separator: NalUnitSeparator, rtpConfig: RtpPacketizationConfig, maxFragmentSize?: number): H265RtpPacketizer
-} = nodeDataChannel.H265RtpPacketizer
+  new (
+    separator: NalUnitSeparator,
+    rtpConfig: RtpPacketizationConfig,
+    maxFragmentSize?: number
+  ): H265RtpPacketizer;
+} = nodeDataChannel.H265RtpPacketizer;
 
 export interface AV1RtpPacketizer extends RtpPacketizer {}
 
 export const AV1RtpPacketizer: {
-  new (packetization: ObuPacketization, rtpConfig: RtpPacketizationConfig, maxFragmentSize?: number): AV1RtpPacketizer
-} = nodeDataChannel.AV1RtpPacketizer
+  new (
+    packetization: ObuPacketization,
+    rtpConfig: RtpPacketizationConfig,
+    maxFragmentSize?: number
+  ): AV1RtpPacketizer;
+} = nodeDataChannel.AV1RtpPacketizer;
 
 export { WebSocketServer } from './websocket-server';
 export { WebSocket } from './websocket';

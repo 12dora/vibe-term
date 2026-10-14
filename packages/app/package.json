@@ -6,6 +6,7 @@
   "bin": {
     "vibeterm": "./bin/vibeterm.js",
     "tmex": "./bin/tmex.js",
+    "vibeterm-rsh": "./bin/vibeterm-rsh.js",
     "vibeterm-cli": "./bin/vibeterm.js"
   },
   "private": true,

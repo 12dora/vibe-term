@@ -37,7 +37,11 @@ async function makePackageRoot(): Promise<PackageLayout> {
       {
         name: 'vibeterm-cli',
         version: '2.0.0',
-        bin: { vibeterm: './bin/vibeterm.js', tmex: './bin/tmex.js' },
+        bin: {
+          vibeterm: './bin/vibeterm.js',
+          tmex: './bin/tmex.js',
+          'vibeterm-rsh': './bin/vibeterm-rsh.js',
+        },
       },
       null,
       2
@@ -50,6 +54,10 @@ async function makePackageRoot(): Promise<PackageLayout> {
   await writeFile(
     join(packageRoot, 'bin', 'tmex.js'),
     "#!/usr/bin/env node\nimport './vibeterm.js';\n"
+  );
+  await writeFile(
+    join(packageRoot, 'bin', 'vibeterm-rsh.js'),
+    "#!/usr/bin/env node\nprocess.argv.splice(2, 0, 'rsh');\n"
   );
   await writeFile(join(packageRoot, 'dist', 'cli-node.js'), 'export async function main() {}\n');
   return {
@@ -90,6 +98,9 @@ describe('deployCliPackage', () => {
     );
     expect(await readFile(join(installLayout.cliDir, 'dist', 'cli-node.js'), 'utf8')).toContain(
       'export async function main'
+    );
+    expect(await readFile(join(installLayout.cliDir, 'bin', 'vibeterm-rsh.js'), 'utf8')).toContain(
+      "'rsh'"
     );
   });
 });
@@ -711,6 +722,93 @@ describe('shim compatibility with the pre-rename layout', () => {
     expect(await readFile(join(installLayout.cliDir, 'bin', 'tmex.js'), 'utf8')).toBe(
       'legacy-entry\n'
     );
+    expect(await pathExists(join(installLayout.cliDir, 'bin', 'vibeterm-rsh.js'))).toBe(false);
+  });
+});
+
+describe('vibeterm-rsh launcher shim', () => {
+  async function installRsh(prefix: string, setup?: (localBinDir: string) => Promise<void>) {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const bunBinDir = join(root, 'bun-bin');
+    await mkdir(bunBinDir, { recursive: true });
+    await mkdir(localBinDir, { recursive: true });
+    await setup?.(localBinDir);
+    const installLayout = createInstallLayout(join(root, 'install'));
+    await deployCliPackage(packageLayout, installLayout);
+    const result = await installVibeTermShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir,
+      pathEnv: localBinDir,
+    });
+    return { root, localBinDir, bunBinDir, installLayout, result };
+  }
+
+  test('is created next to vibeterm, pointing only at bin/vibeterm-rsh.js', async () => {
+    const { localBinDir, bunBinDir, installLayout, result } = await installRsh('vibeterm-rsh-');
+
+    expect(result.rshShimPath).toBe(join(localBinDir, 'vibeterm-rsh'));
+    const shim = await readFile(result.rshShimPath, 'utf8');
+    expect(shim).toContain(VIBETERM_SHIM_MARKER);
+    expect(shim).toContain(`# vibeterm-install-dir: ${installLayout.installDir}`);
+    expect(shim).toContain(
+      join(installLayout.installDir, 'current', 'cli', 'bin', 'vibeterm-rsh.js')
+    );
+    expect(shim).not.toContain('tmex.js');
+    expect(shim).not.toContain('CLI_JS_LEGACY');
+    expect(((await stat(result.rshShimPath)).mode & 0o111) !== 0).toBe(true);
+    expect(spawnSync('bash', ['-n', result.rshShimPath], { encoding: 'utf8' }).status).toBe(0);
+    expect(await readlink(join(bunBinDir, 'vibeterm-rsh'))).toBe(result.rshShimPath);
+  });
+
+  test('a foreign file at vibeterm-rsh is never overwritten and nothing else is deployed', async () => {
+    const foreignPath = (dir: string) => join(dir, 'vibeterm-rsh');
+    const { localBinDir, result } = await installRsh('vibeterm-rsh-foreign-', async (dir) => {
+      await writeFile(foreignPath(dir), '#!/bin/sh\necho foreign-rsh\n', { mode: 0o755 });
+    });
+
+    expect(result.shimDeployed).toBe(false);
+    expect(result.skipWarning).toBe(t('cli.shim.skipForeign', { path: foreignPath(localBinDir) }));
+    expect(await readFile(foreignPath(localBinDir), 'utf8')).toBe('#!/bin/sh\necho foreign-rsh\n');
+    await expect(stat(join(localBinDir, 'vibeterm'))).rejects.toThrow();
+  });
+
+  test('a foreign symlink at ~/.bun/bin/vibeterm-rsh is left alone', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-rsh-bunlink-'));
+    tempDirs.push(root);
+    const bunBinDir = join(root, 'bun-bin');
+    await mkdir(bunBinDir, { recursive: true });
+    const foreignTarget = join(root, 'foreign-target');
+    await writeFile(foreignTarget, '#!/bin/sh\necho foreign\n', { mode: 0o755 });
+    await symlink(foreignTarget, join(bunBinDir, 'vibeterm-rsh'));
+    const packageLayout = await makePackageRoot();
+    const installLayout = createInstallLayout(join(root, 'install'));
+    await deployCliPackage(packageLayout, installLayout);
+
+    const result = await installVibeTermShim({
+      installLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir: join(root, 'local-bin'),
+      bunBinDir,
+      pathEnv: join(root, 'local-bin'),
+    });
+
+    expect(await readlink(join(bunBinDir, 'vibeterm-rsh'))).toBe(foreignTarget);
+    expect(result.shimDeployed).toBe(true);
+    expect(result.skipWarning).toContain(join(bunBinDir, 'vibeterm-rsh'));
+  });
+
+  test('uninstall removes it together with the other shims', async () => {
+    const { localBinDir, bunBinDir, installLayout } = await installRsh('vibeterm-rsh-rm-');
+
+    await removeVibeTermShims({ localBinDir, bunBinDir, installDir: installLayout.installDir });
+
+    await expect(stat(join(localBinDir, 'vibeterm-rsh'))).rejects.toThrow();
+    await expect(stat(join(bunBinDir, 'vibeterm-rsh'))).rejects.toThrow();
   });
 });
 
@@ -796,6 +894,24 @@ describe('shim entry resolution at exec time', () => {
     expect(run.stderr.trim()).toBe(
       `vibeterm: cli entry not found: ${join(ctx.cliBinDir, 'vibeterm.js')}`
     );
+  });
+
+  test('the vibeterm-rsh shim runs bin/vibeterm-rsh.js and never falls back to another entry', async () => {
+    const ctx = await installShimForEntryTest('vibeterm-shim-entry-rsh-');
+    const rshShim = join(ctx.root, 'local-bin', 'vibeterm-rsh');
+    await writeFile(join(ctx.cliBinDir, 'vibeterm.js'), 'entry\n');
+    await writeFile(join(ctx.cliBinDir, 'tmex.js'), 'legacy-entry\n');
+
+    const missing = runShim(rshShim, ctx.nodeBinDir);
+    expect(missing.status).toBe(127);
+    expect(missing.stderr.trim()).toBe(
+      `vibeterm: cli entry not found: ${join(ctx.cliBinDir, 'vibeterm-rsh.js')}`
+    );
+
+    await writeFile(join(ctx.cliBinDir, 'vibeterm-rsh.js'), 'rsh-entry\n');
+    const run = runShim(rshShim, ctx.nodeBinDir);
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe(`entry:${join(ctx.cliBinDir, 'vibeterm-rsh.js')}`);
   });
 
   test('the tmex alias shim resolves the same entry', async () => {

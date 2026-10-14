@@ -7,6 +7,7 @@ import {
   buildLaunchdPlist,
   buildLegacyLaunchdPlist,
   buildSystemdServiceContent,
+  ensureSystemdLinger,
   getServiceStatus,
   installLegacyLabelledService,
   installService,
@@ -266,5 +267,146 @@ describe('service name migration cleanup', () => {
     });
 
     expect(status.running).toBe(true);
+  });
+});
+
+describe('systemd linger', () => {
+  interface LingerOutcome {
+    show?: Partial<RunCommandResult> | 'throw';
+    enable?: Partial<RunCommandResult> | 'throw';
+  }
+
+  function lingerRunner(outcome: LingerOutcome = {}) {
+    const calls: Call[] = [];
+    const run = async (command: string, args: string[]): Promise<RunCommandResult> => {
+      calls.push([command, ...args]);
+      if (command !== 'loginctl') return { code: 0, stdout: '', stderr: '' };
+      const step = args[0] === 'show-user' ? outcome.show : outcome.enable;
+      if (step === 'throw') throw new Error('spawn loginctl ENOENT');
+      return { code: 0, stdout: '', stderr: '', ...step };
+    };
+    return { calls, run };
+  }
+
+  function loginctlCalls(calls: Call[]): Call[] {
+    return calls.filter((call) => call[0] === 'loginctl');
+  }
+
+  async function install(
+    outcome: LingerOutcome,
+    options: { autostart?: boolean; linger?: boolean; manager?: 'systemd-user' | 'launchd' } = {}
+  ) {
+    const home = await tempHome('vibeterm-svc-linger-');
+    const installDir = join(home, 'install');
+    await mkdir(installDir, { recursive: true });
+    const { calls, run } = lingerRunner(outcome);
+    const logs: string[] = [];
+    const warns: string[] = [];
+    await installService(
+      {
+        serviceName: 'vibeterm',
+        installDir,
+        runScriptPath: join(installDir, 'run.sh'),
+        autostart: options.autostart ?? true,
+        linger: options.linger,
+      },
+      {
+        manager: options.manager ?? 'systemd-user',
+        run,
+        homeDir: home,
+        oomConfigDir: join(home, '.config', 'systemd'),
+        username: 'alice',
+        log: (message) => logs.push(message),
+        warn: (message) => warns.push(message),
+      }
+    );
+    return { calls, logs, warns };
+  }
+
+  test('already enabled: checks only, changes nothing', async () => {
+    const { calls, logs, warns } = await install({ show: { stdout: 'Linger=yes\n' } });
+
+    expect(loginctlCalls(calls)).toEqual([['loginctl', 'show-user', 'alice', '-p', 'Linger']]);
+    expect(logs).toEqual([]);
+    expect(warns).toEqual([]);
+  });
+
+  test('not enabled: runs enable-linger for the current user before restarting', async () => {
+    const { calls, logs, warns } = await install({ show: { stdout: 'Linger=no\n' } });
+
+    expect(loginctlCalls(calls)).toEqual([
+      ['loginctl', 'show-user', 'alice', '-p', 'Linger'],
+      ['loginctl', 'enable-linger', 'alice'],
+    ]);
+    const enableAt = calls.findIndex((call) => call[1] === 'enable-linger');
+    const restartAt = calls.findIndex((call) => call[0] === 'systemctl' && call[2] === 'restart');
+    expect(enableAt).toBeGreaterThan(-1);
+    expect(enableAt).toBeLessThan(restartAt);
+    expect(logs).toHaveLength(1);
+    expect(warns).toEqual([]);
+  });
+
+  test('show-user failing (no user manager yet) still tries enable-linger', async () => {
+    const { calls, warns } = await install({ show: { code: 1, stderr: 'not logged in' } });
+
+    expect(loginctlCalls(calls)).toContainEqual(['loginctl', 'enable-linger', 'alice']);
+    expect(warns).toEqual([]);
+  });
+
+  test('enable-linger failing warns once with the manual command and does not fail the install', async () => {
+    const { calls, warns } = await install({
+      show: { stdout: 'Linger=no\n' },
+      enable: { code: 1, stderr: 'Access denied' },
+    });
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain('sudo loginctl enable-linger alice');
+    expect(calls).toContainEqual(['systemctl', '--user', 'restart', 'vibeterm']);
+  });
+
+  test('a missing loginctl warns instead of throwing', async () => {
+    const { calls, warns } = await install({ show: 'throw' });
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain('sudo loginctl enable-linger alice');
+    expect(calls).toContainEqual(['systemctl', '--user', 'restart', 'vibeterm']);
+  });
+
+  test('linger: false skips every loginctl call', async () => {
+    const { calls, logs, warns } = await install({}, { linger: false });
+
+    expect(loginctlCalls(calls)).toEqual([]);
+    expect(logs).toEqual([]);
+    expect(warns).toEqual([]);
+  });
+
+  test('autostart off skips linger', async () => {
+    const { calls } = await install({}, { autostart: false });
+
+    expect(loginctlCalls(calls)).toEqual([]);
+  });
+
+  test('launchd never touches loginctl', async () => {
+    const { calls } = await install({}, { manager: 'launchd' });
+
+    expect(loginctlCalls(calls)).toEqual([]);
+  });
+
+  test('ensureSystemdLinger reports the outcome', async () => {
+    const deps = (outcome: LingerOutcome) => ({
+      run: lingerRunner(outcome).run,
+      username: 'alice',
+      log: () => {},
+      warn: () => {},
+    });
+
+    expect(
+      await ensureSystemdLinger({ autostart: true }, deps({ show: { stdout: 'Linger=yes' } }))
+    ).toBe('already');
+    expect(await ensureSystemdLinger({ autostart: true }, deps({}))).toBe('enabled');
+    expect(await ensureSystemdLinger({ autostart: true }, deps({ enable: { code: 1 } }))).toBe(
+      'failed'
+    );
+    expect(await ensureSystemdLinger({ autostart: true, linger: false }, deps({}))).toBe('skipped');
   });
 });

@@ -17,13 +17,17 @@ VibeTerm 沿用 tmux 的哲学：只要业务 tmux 会话还在、用户随时�
 
 ## 2. linger（Linux）
 
-`KillMode=process` 只约束 per-unit 的 kill 行为，约束不了 user slice 级别的清理。用户级 systemd 默认 `KillUserProcesses=yes`，用户 logout 或系统 reboot 时整个 user slice 被拆除，无视任何 per-unit 的 `KillMode`。要让会话跨 logout 存活，需用户手动开启 linger：
+`KillMode=process` 只约束 per-unit 的 kill 行为，约束不了 user slice 级别的清理。用户级 systemd 默认 `KillUserProcesses=yes`，用户 logout 或系统 reboot 时整个 user slice 被拆除，无视任何 per-unit 的 `KillMode`。要让会话跨 logout 存活，需启用 linger。这同时决定 VibeTerm 服务本身：未启用时，最后一个 SSH / 登录会话退出约 10 秒后用户管理器停止，服务随之下线，直到下次登录才恢复。
+
+`vibeterm init` 与 `vibeterm upgrade` 在 systemd 用户服务且开启自启时默认为当前用户启用 linger：先 `loginctl show-user <user> -p Linger`，不是 `Linger=yes` 再执行 `loginctl enable-linger <user>`（标准 polkit 下用户可为自己启用，无需 root）。每次升级重装 unit 都会复查，所以存量节点升级一次即补齐。
+
+失败（无 polkit 授权、没有 `loginctl`）只告警，不中断安装，按提示手工执行：
 
 ```
-loginctl enable-linger <user>
+sudo loginctl enable-linger <user>
 ```
 
-VibeTerm 默认不代为启用 linger：这是账户级配置变更（用户的 systemd 实例常驻、不随登录会话退出而停止），应由用户知情后自行决定。
+不希望改动账户级配置时在 `init` / `upgrade` 加 `--no-linger`，选择写入 `install-meta.json` 的 `linger: false`，后续升级不再检查。已启用的 linger 不会被自动撤销，需要时手工 `sudo loginctl disable-linger <user>`。`--autostart false` 与 macOS 同样跳过此步。
 
 ## 3. tmux 3.6 的 pane scope 与 systemd OOMPolicy（Linux）
 

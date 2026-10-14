@@ -49,6 +49,10 @@ export const zhCN: Record<string, string> = {
   'service.systemd.daemonReloadFailed': 'systemctl daemon-reload 失败：{{detail}}',
   'service.systemd.enableFailed': 'systemctl enable 失败：{{detail}}',
   'service.systemd.restartFailed': 'systemctl restart 失败：{{detail}}',
+  'service.systemd.lingerEnabled':
+    '已为 {{user}} 启用 systemd linger，登出后服务继续运行（可用 --no-linger 关闭）。',
+  'service.systemd.lingerFailed':
+    '无法启用 systemd linger，最后一个登录会话退出后服务会停止。请手动执行：{{command}}',
   'service.launchd.bootstrapFailed': 'launchctl bootstrap 失败：{{detail}}',
   'service.status.none': '当前平台未集成服务管理：{{platform}}',
   'service.status.plistMissing': 'plist 不存在',

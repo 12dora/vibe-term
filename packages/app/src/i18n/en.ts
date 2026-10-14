@@ -54,6 +54,10 @@ export const en: Record<string, string> = {
   'service.systemd.daemonReloadFailed': 'systemctl daemon-reload failed: {{detail}}',
   'service.systemd.enableFailed': 'systemctl enable failed: {{detail}}',
   'service.systemd.restartFailed': 'systemctl restart failed: {{detail}}',
+  'service.systemd.lingerEnabled':
+    'Enabled systemd linger for {{user}} so the service keeps running after logout (opt out with --no-linger).',
+  'service.systemd.lingerFailed':
+    'Could not enable systemd linger; the service stops when your last login session ends. Run: {{command}}',
   'service.launchd.bootstrapFailed': 'launchctl bootstrap failed: {{detail}}',
   'service.status.none': 'Service manager is not integrated for platform: {{platform}}',
   'service.status.plistMissing': 'launchd plist not found',

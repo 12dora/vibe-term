@@ -22,6 +22,7 @@ export interface InitConfig {
   peerPort: number;
   stunServers: string;
   noService: boolean;
+  linger: boolean;
 }
 
 export type CheckLevel = 'pass' | 'warn' | 'fail';
@@ -49,6 +50,8 @@ export interface InstallMeta {
   cliVersion: string;
   bunPath?: string;
   serviceMode?: ServiceMode;
+  /** systemd 用户服务是否启用 linger；缺省按开启处理，false 为用户明确关闭。 */
+  linger?: boolean;
   /** 安装来源；老安装没有这一项（网关按 CLI 处理）。升级不覆盖已有值。 */
   installSource?: InstallSource;
 }

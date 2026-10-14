@@ -172,6 +172,14 @@ describe('assertKnownFlags', () => {
     ).not.toThrow();
   });
 
+  test('accepts --no-linger on init and upgrade without swallowing the next token', () => {
+    const init = parseArgs(['init', '--no-linger', '--install-dir', '/tmp']);
+    expect(init.flags['no-linger']).toBe(true);
+    expect(init.flags['install-dir']).toBe('/tmp');
+    expect(() => assertKnownFlags(init)).not.toThrow();
+    expect(() => assertKnownFlags(parseArgs(['upgrade', '--no-linger']))).not.toThrow();
+  });
+
   test('accepts upgrade --txn, --allow-unverified and --no-service together', () => {
     expect(() =>
       assertKnownFlags(

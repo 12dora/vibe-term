@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | 
 
 安装全程不提问，全部取默认值：角色 `standalone`（单机、无登录页）、监听 `127.0.0.1:9883`、peer 端口 `39001`、开机自启、服务名 `vibeterm`。默认的网关或 peer 端口被占用且未显式指定时，`init` 自动顺延到下一个空闲端口并打印一行说明。
 
-要改默认值，向 `install.sh` 追加 `init` 参数（交互与 `--no-interactive` 下一致，均为可选）：`--install-dir`、`--host`、`--port`、`--db-path`、`--autostart`、`--service-name`、`--role`、`--peer-port`。
+要改默认值，向 `install.sh` 追加 `init` 参数（交互与 `--no-interactive` 下一致，均为可选）：`--install-dir`、`--host`、`--port`、`--db-path`、`--autostart`、`--service-name`、`--role`、`--peer-port`、`--no-linger`。
 
 要做公网中继入口，改角色即可：
 
@@ -74,7 +74,7 @@ journalctl --user -u vibeterm.service -n 200 --no-pager
 journalctl --user -u vibeterm.service -f
 ```
 
-unit 使用 `KillMode=process`，stop / restart / crash 只杀 VibeTerm 主进程，不连带 tmux。跨 logout 存活需自行 `loginctl enable-linger <user>`，安装程序不会代开。详见 [tmux 进程存活](./tmux-process-survival.md)。
+unit 使用 `KillMode=process`，stop / restart / crash 只杀 VibeTerm 主进程，不连带 tmux。开机自启（`--autostart true`，默认）时，`init` 与 `upgrade` 会为当前用户启用 linger（`loginctl enable-linger`），最后一个登录会话退出后服务与 tmux 不再随用户 slice 被拆除；已启用则不做任何改动。无权限或没有 `loginctl` 时只打印一行告警和手工命令 `sudo loginctl enable-linger <user>`，不影响安装。不希望改动账户级配置时，`init` / `upgrade` 加 `--no-linger`，选择记入 `install-meta.json`（`linger: false`），之后的升级沿用。macOS 不涉及。详见 [tmux 进程存活](./tmux-process-survival.md)。
 
 **macOS（launchd）：** plist 含 `AbandonProcessGroup=true`，语义同上。用 `launchctl` 查看对应 job；标准输出进系统日志。
 

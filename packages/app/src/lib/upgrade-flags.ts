@@ -8,6 +8,7 @@ export const UPGRADE_FLAGS = new Set([
   'repair',
   'keep-backup',
   'no-service',
+  'no-linger',
   'apply-current-package',
   'txn',
   'service-name',
@@ -24,10 +25,11 @@ export const UPGRADE_PASSTHROUGH_FLAGS = [
   'bun-path',
   'keep-backup',
   'no-service',
+  'no-linger',
   'txn',
   'version',
   'allow-missing-native',
 ] as const;
 
 export const UPGRADE_USAGE =
-  'Usage: vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]';
+  'Usage: vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified]';

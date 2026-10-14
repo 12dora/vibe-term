@@ -30,6 +30,8 @@ export function createManagedServiceControl(opts: {
   serviceName: string;
   installDir: string;
   autostart: boolean;
+  /** 默认开启；install-meta 里 linger=false 才关闭 */
+  linger?: boolean;
   runScriptPath: string;
   /** 改名前注册用的服务名；停止 / 安装时要连它留下的注册一起拆掉 */
   legacyServiceName?: string;
@@ -73,6 +75,7 @@ export function createManagedServiceControl(opts: {
           runScriptPath: opts.runScriptPath,
           installDir: opts.installDir,
           autostart: opts.autostart,
+          linger: opts.linger,
           legacyServiceName: opts.legacyServiceName,
         },
         opts.deps
@@ -104,6 +107,7 @@ export function createServiceControl(opts: {
     legacyServiceName: opts.legacyServiceName,
     installDir: opts.installDir,
     autostart: opts.meta.autostart,
+    linger: opts.meta.linger,
     runScriptPath: layout.runScriptPath,
     legacyLabel: opts.legacyLabel,
   });

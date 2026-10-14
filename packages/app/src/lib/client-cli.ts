@@ -31,6 +31,9 @@ export const CLIENT_CLI_COMMANDS: ReadonlySet<string> = new Set([
   'agent',
   'settings',
   'exec',
+  'rsh',
+  'forward',
+  'token',
   'system',
 ]);
 

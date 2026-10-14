@@ -62,6 +62,7 @@ function rebuildInstallMeta(
     cliVersion: fromVersion,
     bunPath: bunPath ?? (typeof raw?.bunPath === 'string' ? raw.bunPath : undefined),
     serviceMode: raw?.serviceMode === 'none' ? 'none' : 'managed',
+    ...(raw?.linger === false ? { linger: false } : {}),
     ...(raw?.installSource === 'install-script' ||
     raw?.installSource === 'npx' ||
     raw?.installSource === 'cli'

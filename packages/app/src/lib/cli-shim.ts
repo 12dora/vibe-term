@@ -14,10 +14,21 @@ export const VIBETERM_INSTALL_DIR_PREFIX = '# vibeterm-install-dir:';
 export const LEGACY_SHIM_MARKER = '# tmex-cli shim; managed by tmex init/upgrade';
 export const LEGACY_INSTALL_DIR_PREFIX = '# tmex-install-dir:';
 
-/** 主命令在前，别名在后；别名 shim 内容与主命令完全一致，只是文件名不同。 */
-const SHIM_NAMES = ['vibeterm', 'tmex'] as const;
-
 const CLI_BIN_FILES = ['vibeterm.js', 'tmex.js'] as const;
+
+/** `vibeterm rsh` 的独立入口：给只能填「程序路径」的工具（scp -S、GIT_SSH、rsync -e）用。 */
+const RSH_BIN_FILE = 'vibeterm-rsh.js';
+
+/** 主命令在前，别名在后；别名 shim 内容与主命令完全一致，只是文件名不同。 */
+const PRIMARY_SHIM = 'vibeterm';
+const ALIAS_SHIM = 'tmex';
+const RSH_SHIM = 'vibeterm-rsh';
+const SHIMS: ReadonlyArray<{ name: string; entries: readonly string[] }> = [
+  { name: PRIMARY_SHIM, entries: CLI_BIN_FILES },
+  { name: ALIAS_SHIM, entries: CLI_BIN_FILES },
+  { name: RSH_SHIM, entries: [RSH_BIN_FILE] },
+];
+const SHIM_NAMES = SHIMS.map((shim) => shim.name);
 
 /** `[localBinDir, bunBinDir]`：shim 与 bun 软链的落点，永远显式传递。 */
 export type ShimDirs = [localBinDir: string, bunBinDir: string];
@@ -38,6 +49,7 @@ export function isDirOnPath(dir: string, pathEnv: string = process.env.PATH ?? '
 /**
  * 两个 bin 都部署到 `current/cli/bin/`：新 shim 走 `vibeterm.js`，旧 shim 与旧 gateway
  * 推包路径走 `tmex.js`。若包里只有旧 bin（从 legacy 资产驱动 apply），用它补出新名。
+ * `vibeterm-rsh.js` 是 2.13 起的新入口，旧包没有就不补。
  */
 export async function deployCliPackage(
   packageLayout: PackageLayout,
@@ -68,6 +80,9 @@ export async function deployCliPackage(
       join(installLayout.cliDir, 'bin', name)
     );
   }
+  if (await pathExists(join(binDir, RSH_BIN_FILE))) {
+    await copyFile(join(binDir, RSH_BIN_FILE), join(installLayout.cliDir, 'bin', RSH_BIN_FILE));
+  }
 
   await copyFile(packageLayout.cliDistPath, join(installLayout.cliDir, 'dist', 'cli-node.js'));
   // 客户端命令组的 bundle 与 cli-node.js 同级：`client-cli.ts` 按同级路径找它。
@@ -93,6 +108,7 @@ export interface InstallVibeTermShimResult {
   shimDeployed: boolean;
   shimPath: string;
   aliasShimPath: string;
+  rshShimPath: string;
   bunLinkPath: string | null;
   aliasBunLinkPath: string | null;
   pathHint: string | null;
@@ -103,30 +119,35 @@ export interface InstallVibeTermShimResult {
  * 入口在运行时解析：回滚到 1.x 版本目录后 `current/cli/bin/` 里只有 `tmex.js`，
  * shim 若把新名写死就会连 `upgrade --repair` 都跑不起来。
  */
-function buildShimScript(
-  cliJsPath: string,
-  legacyCliJsPath: string,
-  bunPath: string,
-  installDir: string
-): string {
-  const quotedCli = quotePosixShellArg(cliJsPath);
-  const quotedLegacyCli = quotePosixShellArg(legacyCliJsPath);
+function buildShimScript(entryPaths: string[], bunPath: string, installDir: string): string {
+  const [primary, fallback] = entryPaths.map(quotePosixShellArg);
   const quotedBun = quotePosixShellArg(bunPath);
+  const resolveEntry = fallback
+    ? [
+        `CLI_JS=${primary}`,
+        `CLI_JS_LEGACY=${fallback}`,
+        'if [ ! -f "$CLI_JS" ]; then',
+        '  if [ -f "$CLI_JS_LEGACY" ]; then',
+        '    CLI_JS="$CLI_JS_LEGACY"',
+        '  else',
+        '    echo "vibeterm: cli entry not found: $CLI_JS" >&2',
+        '    exit 127',
+        '  fi',
+        'fi',
+      ]
+    : [
+        `CLI_JS=${primary}`,
+        'if [ ! -f "$CLI_JS" ]; then',
+        '  echo "vibeterm: cli entry not found: $CLI_JS" >&2',
+        '  exit 127',
+        'fi',
+      ];
   return [
     '#!/usr/bin/env bash',
     VIBETERM_SHIM_MARKER,
     `${VIBETERM_INSTALL_DIR_PREFIX} ${installDir}`,
     'set -euo pipefail',
-    `CLI_JS=${quotedCli}`,
-    `CLI_JS_LEGACY=${quotedLegacyCli}`,
-    'if [ ! -f "$CLI_JS" ]; then',
-    '  if [ -f "$CLI_JS_LEGACY" ]; then',
-    '    CLI_JS="$CLI_JS_LEGACY"',
-    '  else',
-    '    echo "vibeterm: cli entry not found: $CLI_JS" >&2',
-    '    exit 127',
-    '  fi',
-    'fi',
+    ...resolveEntry,
     'if command -v node >/dev/null 2>&1; then',
     '  NODE_VER="$(node --version 2>/dev/null || true)"',
     '  NODE_MAJOR="${NODE_VER#v}"',
@@ -269,6 +290,22 @@ async function installBunLink(
   return { path: linkPath, skipped: null };
 }
 
+async function writeShims(
+  localBinDir: string,
+  cliBinDir: string,
+  bunPath: string,
+  installDir: string
+): Promise<Array<{ name: string; path: string }>> {
+  const written: Array<{ name: string; path: string }> = [];
+  for (const shim of SHIMS) {
+    const path = join(localBinDir, shim.name);
+    const entries = shim.entries.map((entry) => join(cliBinDir, entry));
+    await writeShimAtomic(path, buildShimScript(entries, bunPath, installDir));
+    written.push({ name: shim.name, path });
+  }
+  return written;
+}
+
 export async function installVibeTermShim(
   options: InstallVibeTermShimOptions
 ): Promise<InstallVibeTermShimResult> {
@@ -276,25 +313,17 @@ export async function installVibeTermShim(
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
   const cliBinDir = join(options.installLayout.installDir, 'current', 'cli', 'bin');
   const installDir = options.installLayout.installDir;
-  const content = buildShimScript(
-    join(cliBinDir, CLI_BIN_FILES[0]),
-    join(cliBinDir, CLI_BIN_FILES[1]),
-    options.bunPath,
-    installDir
-  );
+  const shimPathOf = (name: string) => join(localBinDir, name);
 
   for (const name of SHIM_NAMES) {
-    const warning = await shimReplacementWarning(
-      join(localBinDir, name),
-      installDir,
-      options.force
-    );
+    const warning = await shimReplacementWarning(shimPathOf(name), installDir, options.force);
     if (!warning) continue;
     console.warn(`[vibeterm] ${warning}`);
     return {
       shimDeployed: false,
-      shimPath: join(localBinDir, SHIM_NAMES[0]),
-      aliasShimPath: join(localBinDir, SHIM_NAMES[1]),
+      shimPath: shimPathOf(PRIMARY_SHIM),
+      aliasShimPath: shimPathOf(ALIAS_SHIM),
+      rshShimPath: shimPathOf(RSH_SHIM),
       bunLinkPath: null,
       aliasBunLinkPath: null,
       pathHint: null,
@@ -303,14 +332,8 @@ export async function installVibeTermShim(
   }
 
   await ensureDir(localBinDir);
-  const written: Array<{ name: string; path: string }> = [];
+  const written = await writeShims(localBinDir, cliBinDir, options.bunPath, installDir);
   const warnings: Array<string | null> = [];
-  for (const name of SHIM_NAMES) {
-    const path = join(localBinDir, name);
-    await writeShimAtomic(path, content);
-    written.push({ name, path });
-  }
-
   const bunLinks = new Map<string, string | null>();
   for (const entry of written) {
     const link = await installBunLink(entry.path, bunBinDir, entry.name, {
@@ -324,15 +347,15 @@ export async function installVibeTermShim(
     }
   }
 
-  const shimPath = join(localBinDir, SHIM_NAMES[0]);
-  const bunLinkPath = bunLinks.get(SHIM_NAMES[0]) ?? null;
+  const bunLinkPath = bunLinks.get(PRIMARY_SHIM) ?? null;
 
   return {
     shimDeployed: true,
-    shimPath,
-    aliasShimPath: join(localBinDir, SHIM_NAMES[1]),
+    shimPath: shimPathOf(PRIMARY_SHIM),
+    aliasShimPath: shimPathOf(ALIAS_SHIM),
+    rshShimPath: shimPathOf(RSH_SHIM),
     bunLinkPath,
-    aliasBunLinkPath: bunLinks.get(SHIM_NAMES[1]) ?? null,
+    aliasBunLinkPath: bunLinks.get(ALIAS_SHIM) ?? null,
     pathHint: pathHintFor(localBinDir, bunBinDir, bunLinkPath, pathEnv),
     skipWarning: joinSkipWarnings(...warnings),
   };
