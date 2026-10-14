@@ -1,7 +1,9 @@
 import { joinShellArgs, quoteShellArg } from '../tmux-client/command-builder';
 import type { ExecRequest } from './types';
 
-export function buildSshRemoteCommand(req: ExecRequest): string {
+export type SshRemoteCommandInput = Pick<ExecRequest, 'argv' | 'shell' | 'cwd' | 'env'>;
+
+export function buildSshRemoteCommand(req: SshRemoteCommandInput): string {
   const payload = req.shell
     ? `/bin/sh -c ${quoteShellArg(req.argv[0] ?? '')}`
     : joinShellArgs(req.argv);

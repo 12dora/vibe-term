@@ -282,3 +282,12 @@ export function buildLocalTmuxEnv(
 
   return nextEnv;
 }
+
+export function resolveLocalDefaultShell(): string | null {
+  return resolveDefaultShell({
+    env: process.env,
+    fileExists: existsSync,
+    platform: process.platform,
+    runSync: defaultRunSync,
+  });
+}
