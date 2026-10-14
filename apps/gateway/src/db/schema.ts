@@ -9,3 +9,4 @@ export * from './schema/mesh-relay';
 export * from './schema/share';
 export * from './schema/portmap';
 export * from './schema/login-records';
+export * from './schema/access-tokens';

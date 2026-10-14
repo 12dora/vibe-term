@@ -428,6 +428,13 @@
       "when": 1790428800000,
       "tag": "0060_login_records",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1790515200000,
+      "tag": "0061_access_tokens",
+      "breakpoints": true
     }
   ]
 }

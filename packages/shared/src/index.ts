@@ -101,6 +101,7 @@ export * from './contracts/local-auth';
 export * from './contracts/transfer';
 export * from './contracts/portmap';
 export * from './contracts/login-records';
+export * from './contracts/access-token';
 export * from './device-folders';
 
 // ==================== 运行时模块再导出 ====================

@@ -3,6 +3,7 @@ import {
   LOGIN_RECORD_PAGE_MAX_LIMIT,
   type LoginRecordOutcome,
 } from '@vibeterm/shared';
+import { isAccessTokenPath } from '../api/access-token-routes';
 import { readJsonObjectBody } from '../api/http';
 import { jsonBody, jsonError } from '../mesh/session-middleware';
 import {
@@ -20,8 +21,12 @@ type SessionGate = (
   fn: (req: Request, uid: string | null) => Response | Promise<Response>
 ) => Response | Promise<Response>;
 
-export function recordsOr405(req: Request, session: SessionGate): Response | Promise<Response> {
+export function recordsOr405(
+  req: Request,
+  session: SessionGate
+): Response | Promise<Response> | null {
   const path = new URL(req.url).pathname;
+  if (isAccessTokenPath(path)) return null;
   if (path === COLLECTION_PATH || path === SETTINGS_PATH) {
     return session((inner, uid) => dispatchLoginRecords(inner, uid, getLoginRecordService()));
   }
