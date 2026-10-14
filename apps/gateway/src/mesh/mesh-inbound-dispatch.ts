@@ -1,4 +1,9 @@
-import { type DispatchContext, requestDispatchContext, setMeshRequestContext } from './mesh-deps';
+import {
+  type DispatchContext,
+  mergeTokenFields,
+  requestDispatchContext,
+  setMeshRequestContext,
+} from './mesh-deps';
 
 /**
  * peer 入站请求的可信上下文：via / uid / sid 一律以流入口验过的值为准，OPEN 里的伪造值不参与。
@@ -14,10 +19,8 @@ export function applyInboundDispatchContext(
   const uid = trusted?.uid ?? ctx.uid;
   const sid = trusted?.sid ?? ctx.sid ?? null;
   const renewedExpiresAt = trusted?.renewedExpiresAt ?? ctx.renewedExpiresAt;
-  const tokenId = trusted?.tokenId ?? ctx.tokenId ?? null;
-  const tokenScopes = trusted?.tokenScopes ?? ctx.tokenScopes ?? null;
   const extra = renewedExpiresAt !== undefined ? { renewedExpiresAt } : {};
-  const tokenExtra = tokenId ? { tokenId, tokenScopes: tokenScopes ?? [] } : {};
+  const tokenExtra = mergeTokenFields(trusted, ctx);
   const dispatchContext: DispatchContext = {
     uid,
     viaNodeId: via,

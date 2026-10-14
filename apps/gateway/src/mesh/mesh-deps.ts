@@ -252,21 +252,26 @@ export type MeshHandleResult = Response | MeshRewritten | null | undefined;
 
 const requestContext = new WeakMap<Request, MeshRequestContext>();
 
+type TokenFields = Pick<MeshRequestContext, 'tokenId' | 'tokenScopes'>;
+
+/** 令牌字段合并：优先 primary，缺失回退 fallback；没有 tokenId 时整体省略。 */
+export function mergeTokenFields(primary?: TokenFields, fallback?: TokenFields): TokenFields {
+  const tokenId = primary?.tokenId ?? fallback?.tokenId ?? null;
+  if (!tokenId) return {};
+  return { tokenId, tokenScopes: primary?.tokenScopes ?? fallback?.tokenScopes ?? [] };
+}
+
 export function setMeshRequestContext(req: Request, ctx: MeshRequestContext): void {
   requestContext.set(req, ctx);
   const existing = requestDispatchContext.get(req);
   const sid = ctx.auth ?? ctx.sid ?? existing?.sid ?? null;
-  const tokenId = ctx.tokenId ?? existing?.tokenId ?? null;
+  const renewedExpiresAt = ctx.renewedExpiresAt ?? existing?.renewedExpiresAt;
   requestDispatchContext.set(req, {
     uid: ctx.uid ?? existing?.uid ?? null,
     viaNodeId: ctx.via,
     ...(sid ? { sid } : {}),
-    ...(tokenId ? { tokenId, tokenScopes: ctx.tokenScopes ?? existing?.tokenScopes ?? [] } : {}),
-    ...(ctx.renewedExpiresAt !== undefined
-      ? { renewedExpiresAt: ctx.renewedExpiresAt }
-      : existing?.renewedExpiresAt !== undefined
-        ? { renewedExpiresAt: existing.renewedExpiresAt }
-        : {}),
+    ...mergeTokenFields(ctx, existing),
+    ...(renewedExpiresAt !== undefined ? { renewedExpiresAt } : {}),
   });
 }
 
