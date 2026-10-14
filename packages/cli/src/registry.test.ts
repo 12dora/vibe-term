@@ -29,6 +29,7 @@ const DISPATCHED_GROUPS = [
   'agent',
   'settings',
   'exec',
+  'rsh',
   'token',
   'system',
 ];

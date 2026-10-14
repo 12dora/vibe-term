@@ -12,6 +12,7 @@ import { command as login } from './commands/login';
 import { command as logout } from './commands/logout';
 import { command as nodes } from './commands/nodes';
 import { command as port } from './commands/port';
+import { command as rsh } from './commands/rsh';
 import { command as sessions } from './commands/sessions';
 import { command as settings } from './commands/settings';
 import { command as share } from './commands/share';
@@ -43,6 +44,7 @@ export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   sessions,
   term,
   exec,
+  rsh,
   token,
   system,
 ];
