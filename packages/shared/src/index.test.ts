@@ -7,6 +7,11 @@
 import { describe, expect, it } from 'bun:test';
 
 const EXPECTED_RUNTIME_EXPORTS = [
+  'ACCESS_TOKEN_ACTIVE_LIMIT',
+  'ACCESS_TOKEN_EXPIRES_DAYS_MAX',
+  'ACCESS_TOKEN_NAME_MAX',
+  'ACCESS_TOKEN_SCOPES',
+  'ACCESS_TOKEN_SECRET_PREFIX',
   'API_VERSION',
   'BRAND_LOGO_SRC',
   'CLIENT_CAPABILITY_HELLO_SCREEN_INTENT_V1',
@@ -44,6 +49,9 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'MIN_TMUX_VERSION',
   'PANE_MODE_ALT_SCREEN',
   'PANE_MODE_FLAGS_PRESENT',
+  'PORT_MAP_LEASE_DEFAULT_MS',
+  'PORT_MAP_LEASE_MAX_MS',
+  'PORT_MAP_LEASE_MIN_MS',
   'PRODUCT_NAME',
   'RELEASE_API_LATEST_URL',
   'RELEASE_ASSET_RENAME_VERSION',
@@ -104,6 +112,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'getOsc11ResponseColor',
   'getTerminalTheme',
   'getTmuxWindowStyle',
+  'isAccessTokenScope',
   'isAllowedReleaseDownloadHost',
   'isDeviceFolderLayoutValid',
   'isEventType',
