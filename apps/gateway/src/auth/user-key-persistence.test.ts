@@ -23,7 +23,8 @@ import {
   signKeyLogRecordWithRoot,
 } from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
-import { nodeIdentity, userKeyLog } from '../db/schema';
+import { accessTokenEvents, nodeIdentity, userKeyLog } from '../db/schema';
+import { AccessTokenService, onAccessTokenRevoked } from './access-tokens';
 import { KeyLogStore } from './key-log-store';
 import { NodeSessionStore } from './node-session-store';
 import { createMigratedAuthDb } from './test-db';
@@ -196,6 +197,41 @@ describe('user-key-persistence', () => {
         stores.nodeSessionStore.verify(session.sid, { viaNodeId: 'self', now: 3_000 }).ok
       ).toBe(false);
     } finally {
+      close();
+    }
+  });
+
+  test('revokeAllSessions effect revokes every access token of the user through revoke()', () => {
+    const { db, close } = createMigratedAuthDb();
+    const fired: string[] = [];
+    const off = onAccessTokenRevoked((id) => fired.push(id));
+    try {
+      const stores = openStores(db);
+      seedUser(stores.userStore, 'user-1');
+      seedUser(stores.userStore, 'user-2');
+      const service = new AccessTokenService(db, { now: () => 2_000 });
+      const mint = (userId: string) =>
+        service.create(userId, { name: 'ci', scopes: ['exec'], expiresInDays: null }).token.id;
+      const mine = [mint('user-1'), mint('user-1')];
+      const other = mint('user-2');
+      persistApplied(
+        stores,
+        'user-1',
+        makeStep('user-1', 'reset-root', { effects: [{ type: 'revokeAllSessions' }] }),
+        3_000
+      );
+      expect(fired.sort()).toEqual([...mine].sort());
+      for (const id of mine) expect(service.isActive(id, 3_000)).toBe(false);
+      expect(service.isActive(other, 3_000)).toBe(true);
+      const events = db
+        .select()
+        .from(accessTokenEvents)
+        .where(eq(accessTokenEvents.event, 'revoked'))
+        .all();
+      expect(events.map((e) => e.tokenId).sort()).toEqual([...mine].sort());
+      expect(service.revokeAllForUser('user-1')).toBe(0);
+    } finally {
+      off();
       close();
     }
   });

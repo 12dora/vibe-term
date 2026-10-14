@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { EcKind } from '@vibeterm/shared/exec-channel';
 import { NODE_SESSION_TTL_MS, NodeSessionStore } from '../auth/node-session-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
 import { users } from '../db/schema';
+import { execCredentialValid } from '../exec/channel/credential-check';
 import { resetExecRegistryForTests } from '../exec/channel/registry';
-import { makeEnv, openSession } from '../exec/channel/test-harness';
+import { connect, flush, makeEnv, openSession, openSpec } from '../exec/channel/test-harness';
 import { verifyExecCredential } from './exec-credential';
 import {
   closeExecSessionsWithInvalidNodeSession,
@@ -125,6 +127,36 @@ describe('exec session recheck', () => {
       expect(exec.client.transport.closed?.code).toBe(4401);
     } finally {
       stop?.();
+      close();
+    }
+  });
+
+  test('a revoked session ends its pre-HELLO connection and cannot open afterwards', async () => {
+    const { store, issue, close } = boot();
+    const stop = startExecSessionRecheck(store, { intervalMs: 60_000, now: () => 2_000 });
+    try {
+      const env = makeEnv();
+      env.deps.credentialValid = execCredentialValid;
+      const dead = issue('self');
+      const waiting = connect(env, {
+        uid: 'user-1',
+        tokenId: null,
+        session: { sid: dead, viaNodeId: 'self' },
+      });
+      store.revoke(dead, 1_500);
+      closeExecSessionsWithInvalidNodeSession(store, 2_000);
+      expect(waiting.transport.closed?.code).toBe(4401);
+      const sneaky = connect(env, {
+        uid: 'user-1',
+        tokenId: null,
+        session: { sid: dead, viaNodeId: 'self' },
+      });
+      sneaky.send(EcKind.HELLO, { v: 1, op: 'open', spec: openSpec() });
+      await flush();
+      expect(sneaky.transport.closed?.code).toBe(4401);
+      expect(env.procs.length).toBe(0);
+    } finally {
+      stop();
       close();
     }
   });

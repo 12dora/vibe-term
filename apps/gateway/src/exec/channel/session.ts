@@ -40,7 +40,7 @@ export class ExecSession {
   readonly id: string;
   readonly uid: string | null;
   readonly tokenId: string | null;
-  readonly sessionRef: ExecSessionRef | null;
+  private boundSessionRef: ExecSessionRef | null;
   private readonly log = new OutputLog();
   private readonly stdin: StdinPump;
   private readonly startedAt: number;
@@ -62,7 +62,7 @@ export class ExecSession {
     this.id = init.id;
     this.uid = init.uid;
     this.tokenId = init.tokenId;
-    this.sessionRef = init.sessionRef ?? null;
+    this.boundSessionRef = init.sessionRef ?? null;
     this.spec = init.spec;
     this.device = init.device;
     this.proc = init.proc;
@@ -70,6 +70,15 @@ export class ExecSession {
     this.stdin = new StdinPump(init.proc, (written) =>
       this.sendControl(EcKind.STDIN_ACK, { stdin: written })
     );
+  }
+
+  get sessionRef(): ExecSessionRef | null {
+    return this.boundSessionRef;
+  }
+
+  /** 恢复连接换了节点会话：让按 sid 撤销命中当前持有的凭证。 */
+  rebindSessionRef(ref: ExecSessionRef | null): void {
+    this.boundSessionRef = ref;
   }
 
   start(): void {

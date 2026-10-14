@@ -21,6 +21,7 @@ import {
   commitSession,
   generateSessionId,
   getSession,
+  registerExecConnection,
   releaseSessionSlot,
   reserveSessionSlot,
 } from './registry';
@@ -72,6 +73,7 @@ class ExecConnection implements ExecChannelInbound {
   private lastSent: number;
   private lastRecv: number;
   private tickTimer: unknown = null;
+  private readonly unregister: () => void;
 
   constructor(
     transport: ExecTransport,
@@ -94,6 +96,12 @@ class ExecConnection implements ExecChannelInbound {
       },
     };
     transport.onDrain(() => this.session?.pump());
+    this.unregister = registerExecConnection({
+      uid: auth.uid,
+      tokenId: auth.tokenId,
+      sessionRef: auth.session ?? null,
+      terminate: (code, reason) => this.terminate(code, reason),
+    });
     this.armTick();
   }
 
@@ -119,8 +127,15 @@ class ExecConnection implements ExecChannelInbound {
     this.session?.detach(this.link);
   }
 
+  private terminate(code: number, reason: string): void {
+    if (this.phase === 'closed') return;
+    this.session?.detach(this.link);
+    this.link.close(code, reason);
+  }
+
   private shut(): void {
     this.phase = 'closed';
+    this.unregister();
     if (this.tickTimer !== null) this.deps.clock.clearTimeout(this.tickTimer);
     this.tickTimer = null;
   }
@@ -166,6 +181,10 @@ class ExecConnection implements ExecChannelInbound {
 
   private onHello(frame: EcFrame): void {
     if (frame.kind !== EcKind.HELLO) throw new ProtocolViolation('first frame must be HELLO');
+    if (!this.deps.credentialValid(this.auth)) {
+      this.terminate(4401, 'credential revoked');
+      return;
+    }
     const result = validateHello(decodeJson(frame.payload));
     if (!result.ok) {
       this.fail('invalid_request', result.message);
@@ -178,7 +197,7 @@ class ExecConnection implements ExecChannelInbound {
 
   private resume(hello: Extract<ValidatedExecHello, { op: 'resume' }>): void {
     const session = getSession(hello.sessionId);
-    if (!session || session.uid !== this.auth.uid) {
+    if (!session || !this.ownsSession(session)) {
       this.fail('session_not_found', 'session not found');
       return;
     }
@@ -187,19 +206,33 @@ class ExecConnection implements ExecChannelInbound {
       this.fail('resume_gap', 'output offset is no longer retained');
       return;
     }
+    if (this.auth.tokenId === null) session.rebindSessionRef(this.auth.session ?? null);
     this.link.send(encodeJsonFrame(EcKind.READY, session.ready(true, hello.out)));
     this.session = session;
     this.phase = 'active';
     session.attach(this.link, backlog);
   }
 
+  /** 只有创建时的同一凭证能恢复：令牌须同一枚；节点会话认证的则按 uid 放行并改挂当前会话。 */
+  private ownsSession(session: ExecSession): boolean {
+    return session.uid === this.auth.uid && session.tokenId === this.auth.tokenId;
+  }
+
   private async launch(spec: ResolvedExecOpenSpec): Promise<{ device: Device; proc: ExecProcess }> {
+    this.assertExpectedNode(spec.nodeName);
     const device = this.deps.resolveDevice(spec.device);
     if (!device) throw new ExecChannelError('device_not_found', 'device not found');
     if (device.type !== 'local' && device.type !== 'ssh') {
       throw new ExecChannelError('exec_unsupported_device', 'device type does not support exec');
     }
     return { device, proc: await this.deps.spawn(device, spec) };
+  }
+
+  private assertExpectedNode(expected: string | undefined): void {
+    const self = this.deps.selfNodeName?.();
+    if (expected && self && expected.toLowerCase() !== self.trim().toLowerCase()) {
+      throw new ExecChannelError('device_not_found', 'node mismatch');
+    }
   }
 
   private async open(spec: ResolvedExecOpenSpec): Promise<void> {

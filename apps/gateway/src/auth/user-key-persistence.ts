@@ -15,6 +15,7 @@ import {
 import { eq } from 'drizzle-orm';
 import { deleteAllPaneGrants, deletePaneGrantsForNode } from '../agent/pane-grant/store';
 import { nodeIdentity } from '../db/schema';
+import { AccessTokenService } from './access-tokens';
 import { toBuffer } from './binary';
 import { type KeyLogStore, projectPayloadJson } from './key-log-store';
 import { patchNode } from './node-persistence';
@@ -309,8 +310,10 @@ function applyEffects(
 ): void {
   const { userStore, nodeSessionStore } = stores;
   for (const effect of effects) {
-    if (effect.type === 'revokeAllSessions') nodeSessionStore.revokeAllForUser(userId, now);
-    else if (effect.type === 'revokeSessionsByCredential') {
+    if (effect.type === 'revokeAllSessions') {
+      nodeSessionStore.revokeAllForUser(userId, now);
+      new AccessTokenService(stores.db, { now: () => now }).revokeAllForUser(userId);
+    } else if (effect.type === 'revokeSessionsByCredential') {
       nodeSessionStore.revokeByCredential(decodeBase64url(effect.credentialId), now);
     } else if (effect.type === 'revokeSessionsVia') {
       nodeSessionStore.revokeVia(nodeIdToHex(effect.nodeId), now);

@@ -6,8 +6,16 @@ import type { Device } from '@vibeterm/shared';
 import type { Server } from 'bun';
 import { createDevice, deleteDevice } from '../db/devices';
 import { runMigrations } from '../db/migrate';
+import {
+  closeExecSessionsForSid,
+  closeExecSessionsForToken,
+  closeExecSessionsWithInactiveToken,
+  closeExecSessionsWithInvalidSession,
+  resetExecRegistryForTests,
+} from '../exec/channel/registry';
 import type { ExecProc } from '../exec/child';
 import { execIo } from '../exec/io';
+import { requestDispatchContext } from '../mesh/types';
 import { handleApiRequest } from './index';
 
 beforeAll(() => {
@@ -20,6 +28,7 @@ const originalSpawn = execIo.spawn;
 const originalResolve = execIo.resolveSsh;
 
 afterEach(() => {
+  resetExecRegistryForTests();
   execIo.spawn = originalSpawn;
   execIo.resolveSsh = originalResolve;
   for (const id of created.splice(0)) deleteDevice(id);
@@ -207,6 +216,76 @@ describe('POST /api/exec', () => {
     }
     expect(Date.now() - started).toBeLessThan(8_000);
     await expectPidGone(pid, 8_000 - (Date.now() - started));
+  });
+
+  describe('revocation of the calling credential', () => {
+    async function startSleep(
+      context: { tokenId?: string; sid?: string; viaNodeId?: string },
+      device = localDevice()
+    ) {
+      const req = new Request('http://localhost/api/exec', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: device.id, argv: ['/bin/sleep', '30'] }),
+      });
+      requestDispatchContext.set(req, { uid: 'u1', viaNodeId: 'self', ...context });
+      const res = (await handleApiRequest(req)) as Response;
+      const reader = res.body?.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+      return { reader, pid: await readStartPid(reader) };
+    }
+
+    async function drain(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+      try {
+        while (!(await reader.read()).done) {
+          /* drain */
+        }
+      } catch {
+        // 流被取消
+      }
+    }
+
+    test('token revoke, the token recheck and sid revoke abort only the matching runs', async () => {
+      const byToken = await startSleep({ tokenId: 'legacy-T' });
+      const other = await startSleep({ tokenId: 'legacy-other' });
+      closeExecSessionsForToken('legacy-T');
+      await drain(byToken.reader);
+      await expectPidGone(byToken.pid, 8_000);
+      expect(() => process.kill(other.pid, 0)).not.toThrow();
+
+      closeExecSessionsWithInactiveToken((id) => id === 'legacy-other');
+      expect(() => process.kill(other.pid, 0)).not.toThrow();
+      closeExecSessionsWithInactiveToken(() => false);
+      await drain(other.reader);
+      await expectPidGone(other.pid, 8_000);
+
+      const bySid = await startSleep({ sid: 'legacy-sid' });
+      closeExecSessionsForSid('legacy-sid');
+      await drain(bySid.reader);
+      await expectPidGone(bySid.pid, 8_000);
+
+      const recheck = await startSleep({ sid: 'legacy-sid-2', viaNodeId: 'peer' });
+      closeExecSessionsWithInvalidSession((ref) => ref.viaNodeId !== 'peer');
+      await drain(recheck.reader);
+      await expectPidGone(recheck.pid, 8_000);
+    });
+
+    test('a finished run leaves the registry', async () => {
+      const device = localDevice();
+      const req = new Request('http://localhost/api/exec', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: device.id, argv: ['/bin/echo', 'done'] }),
+      });
+      requestDispatchContext.set(req, { uid: 'u1', viaNodeId: 'self', tokenId: 'legacy-done' });
+      const events = await readEvents((await handleApiRequest(req)) as Response);
+      expect(events.find((e) => e.type === 'exit')).toMatchObject({ code: 0 });
+      let asked = 0;
+      closeExecSessionsWithInactiveToken(() => {
+        asked += 1;
+        return true;
+      });
+      expect(asked).toBe(0);
+    });
   });
 
   test('ssh configRef spawns OpenSSH with BatchMode, -T, and a quoted remote command', async () => {

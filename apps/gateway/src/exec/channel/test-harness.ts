@@ -204,6 +204,8 @@ export const LOCAL_DEVICE: Device = {
 };
 
 export type TestEnv = {
+  /** 复核结果开关：置 false 即模拟 HELLO 前凭证已被撤销。 */
+  credential: { valid: boolean };
   clock: FakeClock;
   procs: FakeProcess[];
   deps: ExecChannelDeps;
@@ -214,9 +216,11 @@ export function makeEnv(maxSessions = 64): TestEnv {
   const clock = new FakeClock();
   const procs: FakeProcess[] = [];
   const nextSpawn: TestEnv['nextSpawn'] = { proc: null, error: null };
+  const credential = { valid: true };
   const deps: ExecChannelDeps = {
     clock,
     maxSessions,
+    credentialValid: () => credential.valid,
     resolveDevice: (ref) => (ref === 'missing' ? null : LOCAL_DEVICE),
     spawn: async () => {
       if (nextSpawn.error) throw nextSpawn.error;
@@ -226,7 +230,7 @@ export function makeEnv(maxSessions = 64): TestEnv {
       return proc;
     },
   };
-  return { clock, procs, deps, nextSpawn };
+  return { clock, procs, deps, nextSpawn, credential };
 }
 
 export function connect(env: TestEnv, auth: ExecChannelAuth = { uid: 'u1', tokenId: null }) {

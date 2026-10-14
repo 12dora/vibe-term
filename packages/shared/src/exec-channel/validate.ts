@@ -141,6 +141,7 @@ function buildSpec(raw: Record<string, unknown>): ResolvedExecOpenSpec {
   }
   const device = unwrap(parseOptionalString(raw.device, 'device', MAX_DEVICE_CHARS));
   const cwd = unwrap(parseOptionalString(raw.cwd, 'cwd', MAX_PATH_CHARS));
+  const nodeName = unwrap(parseOptionalString(raw.nodeName, 'nodeName', MAX_DEVICE_CHARS));
   const spec: ResolvedExecOpenSpec = {
     command: unwrap(parseCommand(raw.command)),
     env: unwrap(parseEnv(raw.env)),
@@ -158,6 +159,7 @@ function buildSpec(raw: Record<string, unknown>): ResolvedExecOpenSpec {
   };
   if (device !== undefined) spec.device = device;
   if (cwd !== undefined) spec.cwd = cwd;
+  if (nodeName !== undefined) spec.nodeName = nodeName;
   return spec;
 }
 

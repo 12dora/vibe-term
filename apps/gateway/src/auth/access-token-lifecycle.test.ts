@@ -3,7 +3,7 @@ import {
   closeExecSessionsWithInactiveToken,
   resetExecRegistryForTests,
 } from '../exec/channel/registry';
-import { makeEnv, openSession } from '../exec/channel/test-harness';
+import { connect, makeEnv, openSession } from '../exec/channel/test-harness';
 import { type TokenFixture, bootTokenFixture } from '../mesh/token-test-support';
 import { startAccessTokenLifecycle, stopAccessTokenLifecycle } from './access-token-lifecycle';
 import { isAccessTokenActive } from './access-tokens';
@@ -34,6 +34,31 @@ describe('access token lifecycle', () => {
     expect(a.client.transport.closed?.code).toBe(4401);
     expect(b.proc.killCount).toBe(0);
     expect(c.proc.killCount).toBe(0);
+  });
+
+  test('revoking a token also closes its connection that has not sent HELLO yet', () => {
+    startAccessTokenLifecycle();
+    const env = makeEnv();
+    const revoked = fixture.mint(['exec']);
+    const kept = fixture.mint(['exec']);
+    const a = connect(env, { uid: 'tok-user', tokenId: revoked.id });
+    const b = connect(env, { uid: 'tok-user', tokenId: kept.id });
+    fixture.service.revoke('tok-user', revoked.id);
+    expect(a.transport.closed?.code).toBe(4401);
+    expect(b.transport.closed).toBeNull();
+  });
+
+  test('revoking every token of a user closes their sessions and pre-HELLO connections', async () => {
+    startAccessTokenLifecycle();
+    const env = makeEnv();
+    const first = fixture.mint(['exec']);
+    const second = fixture.mint(['exec']);
+    const session = await openSession(env, {}, { uid: 'tok-user', tokenId: first.id });
+    const pending = connect(env, { uid: 'tok-user', tokenId: second.id });
+    expect(fixture.service.revokeAllForUser('tok-user')).toBe(2);
+    expect(session.proc.killCount).toBe(1);
+    expect(session.client.transport.closed?.code).toBe(4401);
+    expect(pending.transport.closed?.code).toBe(4401);
   });
 
   test('stopping the lifecycle unsubscribes the revoke hook', async () => {

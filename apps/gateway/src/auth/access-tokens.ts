@@ -119,6 +119,16 @@ export class AccessTokenService {
     return true;
   }
 
+  /** 逐个走 `revoke()`，让撤销监听（关闭 exec 会话）与 `revoked` 审计事件一并触发；返回撤销数量。 */
+  revokeAllForUser(userId: string, ip?: string | null): number {
+    const rows = this.db
+      .select({ id: accessTokens.id })
+      .from(accessTokens)
+      .where(and(eq(accessTokens.userId, userId), isNull(accessTokens.revokedAt)))
+      .all();
+    return rows.filter((row) => this.revoke(userId, row.id, ip)).length;
+  }
+
   verify(secret: string, opts: AccessTokenVerifyOptions = {}): AccessTokenVerifyResult {
     if (typeof secret !== 'string' || !SECRET_PATTERN.test(secret)) {
       return { ok: false, reason: 'malformed' };

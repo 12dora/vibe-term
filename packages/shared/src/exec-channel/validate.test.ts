@@ -46,6 +46,12 @@ describe('validateOpenSpec defaults', () => {
     expect('cwd' in bare).toBe(false);
   });
 
+  it('keeps the expected node name only when present', () => {
+    expect(accepted({ ...base, nodeName: 'office' }).nodeName).toBe('office');
+    expect('nodeName' in accepted({ ...base, nodeName: null })).toBe(false);
+    expect('nodeName' in accepted(base)).toBe(false);
+  });
+
   it('defaults the pty terminal and keeps explicit values', () => {
     expect(accepted({ ...base, pty: { cols: 80, rows: 24 } }).pty).toEqual({
       cols: 80,
@@ -126,6 +132,13 @@ describe('validateOpenSpec rejections', () => {
     expect(rejected({ ...base, cwd: '' })).toContain('cwd');
     expect(rejected({ ...base, cwd: '/a\0b' })).toContain('cwd');
     expect(rejected({ ...base, cwd: '/'.repeat(4097) })).toContain('cwd');
+  });
+
+  it('rejects a malformed node name', () => {
+    expect(rejected({ ...base, nodeName: '' })).toContain('nodeName');
+    expect(rejected({ ...base, nodeName: 7 })).toContain('nodeName');
+    expect(rejected({ ...base, nodeName: 'a'.repeat(257) })).toContain('nodeName');
+    expect(rejected({ ...base, nodeName: 'a\0b' })).toContain('nodeName');
   });
 
   it('rejects bad env', () => {

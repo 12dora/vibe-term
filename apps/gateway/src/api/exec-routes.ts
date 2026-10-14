@@ -1,7 +1,9 @@
 import { getDeviceById } from '../db';
+import { registerExecConnection } from '../exec/channel/registry';
 import { execNdjsonResponse } from '../exec/ndjson';
 import { parseExecRequest } from '../exec/parse';
 import { runExec } from '../exec/service';
+import type { DispatchContext } from '../mesh/types';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, type ApiRouteContext, route } from './route';
 
@@ -12,6 +14,16 @@ function fail(code: string, message: string): Response {
 function disableIdleTimeout(req: Request, ctx: ApiRouteContext): void {
   // 0 = 本连接不受 Bun.serve idleTimeout 限制；mesh 转发靠 NDJSON ping 续入口空闲时钟。
   ctx.server?.timeout?.(req, 0);
+}
+
+/** 旧版 exec 最长跑 1 h：把凭证登记进 exec 注册表，令牌 / 会话被撤销或复核失败时中止进程。 */
+function registerLegacyRun(ac: AbortController, mesh: DispatchContext | undefined): () => void {
+  return registerExecConnection({
+    uid: mesh?.uid ?? null,
+    tokenId: mesh?.tokenId ?? null,
+    sessionRef: mesh?.sid ? { sid: mesh.sid, viaNodeId: mesh.viaNodeId } : null,
+    terminate: () => ac.abort(),
+  });
 }
 
 async function handleExec(req: Request, ctx: ApiRouteContext): Promise<Response> {
@@ -28,10 +40,16 @@ async function handleExec(req: Request, ctx: ApiRouteContext): Promise<Response>
   const ac = new AbortController();
   const onAbort = () => ac.abort();
   req.signal.addEventListener('abort', onAbort, { once: true });
+  const unregister = registerLegacyRun(ac, ctx.mesh);
   return execNdjsonResponse(
     (emit, isOpen) =>
-      runExec(device, parsed.value, { emit: (event) => emit(event), isOpen }, ac.signal),
-    () => ac.abort()
+      runExec(device, parsed.value, { emit: (event) => emit(event), isOpen }, ac.signal).finally(
+        unregister
+      ),
+    () => {
+      unregister();
+      ac.abort();
+    }
   );
 }
 

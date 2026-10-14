@@ -22,6 +22,7 @@ const handlers = createExecWebSocketHandlers((transport, auth) =>
     resolveDevice: () => testDevice(),
     clock: realClock,
     maxSessions: 8,
+    credentialValid: () => true,
   })
 );
 

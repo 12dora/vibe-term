@@ -12,6 +12,8 @@ export type ExecCommand =
 export type ExecPtySpec = { cols: number; rows: number; term?: string };
 
 export type ExecOpenSpec = {
+  /** 期望的目标 node 当前名称（来自客户端缓存）；与该 node 自己的名称不符时服务端返回 device_not_found。 */
+  nodeName?: string;
   device?: string;
   command: ExecCommand;
   cwd?: string;
@@ -23,6 +25,7 @@ export type ExecOpenSpec = {
 };
 
 export type ResolvedExecOpenSpec = {
+  nodeName?: string;
   device?: string;
   command: ExecCommand;
   cwd?: string;
