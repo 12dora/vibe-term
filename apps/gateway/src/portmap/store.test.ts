@@ -47,6 +47,23 @@ describe('portmap store', () => {
     expect(store.get('map-1')).toBeNull();
   });
 
+  test('lease columns round-trip and stay absent for persistent rows', () => {
+    const maps = new PortMapStore(migratedDb());
+    maps.insert({ ...row('leased'), leaseExpiresAt: 5_000 });
+    maps.insert(row('plain'));
+    expect(maps.get('leased')?.leaseExpiresAt).toBe(5_000);
+    expect('leaseExpiresAt' in (maps.get('plain') ?? {})).toBe(false);
+    maps.update('leased', { leaseExpiresAt: 9_000, updatedAt: 300 });
+    expect(maps.get('leased')?.leaseExpiresAt).toBe(9_000);
+
+    const exports = new PortMapExportStore(migratedDb());
+    const base = { mapId: 'e1', fromNodeId: NODE, host: '127.0.0.1', port: 1, enabled: true };
+    exports.insert({ ...base, createdAt: 1, leaseExpiresAt: 7_000 });
+    expect(exports.get('e1')?.leaseExpiresAt).toBe(7_000);
+    exports.insert({ ...base, createdAt: 2 });
+    expect('leaseExpiresAt' in (exports.get('e1') ?? {})).toBe(false);
+  });
+
   test('export rows are keyed by map id and upsert in place', () => {
     const store = new PortMapExportStore(migratedDb());
     store.insert({

@@ -24,6 +24,8 @@ export interface PortMapDto {
   bytesOut: number;
   createdAt: number;
   updatedAt: number;
+  /** 网关支持租约时才有；缺省 = 持久映射（或旧版网关）。 */
+  leaseExpiresAt?: number;
 }
 
 export interface PortMapExportDto {
@@ -33,6 +35,7 @@ export interface PortMapExportDto {
   port: number;
   enabled: boolean;
   createdAt: number;
+  leaseExpiresAt?: number;
 }
 
 export interface PortProbeDto {
@@ -57,6 +60,14 @@ export interface CreatePortMapInput {
   targetHost: string;
   targetPort: number;
   name?: string;
+  /** 租约时长（毫秒）：映射与放行行都带租约，需调用方周期续约。 */
+  leaseMs?: number;
+}
+
+export interface CreatedPortMap {
+  map: PortMapDto;
+  /** 目标节点返回的放行行；`leaseExpiresAt` 缺失说明目标节点不认租约（旧版网关）。 */
+  exported: PortMapExportDto;
 }
 
 export async function listPortMaps(ctx: CliContext, nodeId: string): Promise<PortMapDto[]> {
@@ -68,6 +79,13 @@ export async function createPortMapping(
   ctx: CliContext,
   input: CreatePortMapInput
 ): Promise<PortMapDto> {
+  return (await createPortMappingDetailed(ctx, input)).map;
+}
+
+export async function createPortMappingDetailed(
+  ctx: CliContext,
+  input: CreatePortMapInput
+): Promise<CreatedPortMap> {
   const listenMesh = await resolveMeshId(ctx, input.listenNodeId);
   const targetMesh = await resolveMeshId(ctx, input.targetNodeId);
   const exported = await filesJson<{ export: PortMapExportDto }>(
@@ -75,7 +93,12 @@ export async function createPortMapping(
     input.targetNodeId,
     'POST',
     '/api/portmap/exports',
-    { fromNodeId: listenMesh, host: input.targetHost, port: input.targetPort }
+    {
+      fromNodeId: listenMesh,
+      host: input.targetHost,
+      port: input.targetPort,
+      ...(input.leaseMs === undefined ? {} : { leaseMs: input.leaseMs }),
+    }
   );
   const mapId = exported.export.mapId;
   try {
@@ -92,12 +115,13 @@ export async function createPortMapping(
         targetHost: input.targetHost,
         targetPort: input.targetPort,
         mapId,
+        ...(input.leaseMs === undefined ? {} : { leaseMs: input.leaseMs }),
       }
     );
-    return created.map;
+    return { map: created.map, exported: exported.export };
   } catch (error) {
     const existing = await findPortMap(ctx, input.listenNodeId, mapId);
-    if (existing) return existing;
+    if (existing) return { map: existing, exported: exported.export };
     if (!isDefiniteRejection(error)) {
       throw keepExportError(mapId, input.targetNodeId, error);
     }
@@ -162,7 +186,7 @@ export async function patchPortMap(
   ctx: CliContext,
   nodeId: string,
   mapId: string,
-  body: { paused?: boolean; name?: string }
+  body: { paused?: boolean; name?: string; leaseMs?: number; renewLease?: boolean }
 ): Promise<PortMapDto> {
   const payload = await filesJson<{ map: PortMapDto }>(
     ctx.http,
@@ -172,6 +196,23 @@ export async function patchPortMap(
     body
   );
   return payload.map;
+}
+
+/** 续约放行行（目标节点）；旧版网关没有这条路由，会得到 NotFoundError。 */
+export async function renewPortExportLease(
+  ctx: CliContext,
+  nodeId: string,
+  mapId: string,
+  leaseMs: number
+): Promise<PortMapExportDto> {
+  const payload = await filesJson<{ export: PortMapExportDto }>(
+    ctx.http,
+    nodeId,
+    'PATCH',
+    `/api/portmap/exports/${encodeURIComponent(mapId)}`,
+    { leaseMs }
+  );
+  return payload.export;
 }
 
 export async function probeListen(

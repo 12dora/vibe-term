@@ -67,6 +67,7 @@ const MIGRATIONS = [
   '0059_login_policy_keylog.sql',
   '0060_login_records.sql',
   '0061_access_tokens.sql',
+  '0062_port_map_leases.sql',
 ] as const;
 
 /** 打包运行时嵌入的迁移清单；必须与 drizzle 目录 / journal 完全一致（见同名测试）。 */

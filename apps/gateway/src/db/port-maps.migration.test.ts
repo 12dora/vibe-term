@@ -63,3 +63,24 @@ describe('0050_port_maps migration', () => {
     }
   });
 });
+
+describe('0062_port_map_leases migration', () => {
+  test('adds nullable lease_expires_at to both tables and keeps old rows persistent', () => {
+    const sqlite = migratedUpTo('0062_port_map_leases.sql');
+    try {
+      sqlite.run(
+        "insert into port_maps (id, name, listen_port, target_node_id, target_port, created_at, updated_at) values ('m', 'n', 15432, 'a', 5432, 1, 1)"
+      );
+      sqlite.run(
+        "insert into port_map_exports (map_id, from_node_id, port, created_at) values ('m', 'a', 5432, 1)"
+      );
+      for (const statement of statementsOf('0062_port_map_leases.sql')) sqlite.run(statement);
+      const map = sqlite.query('select lease_expires_at from port_maps').get();
+      const exported = sqlite.query('select lease_expires_at from port_map_exports').get();
+      expect(map).toEqual({ lease_expires_at: null });
+      expect(exported).toEqual({ lease_expires_at: null });
+    } finally {
+      sqlite.close();
+    }
+  });
+});

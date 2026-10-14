@@ -14,6 +14,7 @@ export const portMaps = sqliteTable(
     paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    leaseExpiresAt: integer('lease_expires_at'),
   },
   (table) => [index('port_maps_listen_idx').on(table.listenHost, table.listenPort)]
 );
@@ -26,4 +27,5 @@ export const portMapExports = sqliteTable('port_map_exports', {
   port: integer('port').notNull(),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   createdAt: integer('created_at').notNull(),
+  leaseExpiresAt: integer('lease_expires_at'),
 });

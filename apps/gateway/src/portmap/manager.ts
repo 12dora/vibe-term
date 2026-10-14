@@ -1,9 +1,10 @@
-import type {
-  CreatePortMapRequest,
-  PortMapDto,
-  PortMapState,
-  PortProbeResponse,
-  UpdatePortMapRequest,
+import {
+  type CreatePortMapRequest,
+  PORT_MAP_LEASE_DEFAULT_MS,
+  type PortMapDto,
+  type PortMapState,
+  type PortProbeResponse,
+  type UpdatePortMapRequest,
 } from '@vibeterm/shared';
 import type { PortMapErrorCode } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
@@ -12,21 +13,26 @@ import { getDb } from '../db/client';
 import { tlsConfig } from '../db/schema';
 import { DEFAULT_TLS_PORT, TLS_CONFIG_ROW_ID } from '../tls/types';
 import { solePortMapPeers } from './binding';
+import { requestPeerExportRemoval } from './export-cleanup';
+import { startExportLeaseSweeper } from './export-lease';
 import { PortMapListener } from './listener';
 import { isPortFree } from './port-probe';
-import { PortMapStore, type PortMapStoreLike } from './store';
+import { PortMapStore, type PortMapStoreLike, defaultPortMapExportStore } from './store';
 import {
+  PORT_MAP_LEASE_SWEEP_MS,
   PORT_MAP_MAX_ROWS,
   type PortMapCounters,
   PortMapError,
   type PortMapPeers,
   type PortMapRow,
   assertHost,
+  assertLeaseMs,
   assertMapId,
   assertName,
   assertNodeId,
   assertPort,
   createPortMapCounters,
+  isLeaseExpired,
 } from './types';
 
 export type PortMapManagerDeps = {
@@ -36,7 +42,12 @@ export type PortMapManagerDeps = {
   now?: () => number;
   maxConnections?: number;
   peerStreamLimit?: number;
+  /** 租约到期回收时顺手清 B 的放行行；尽力而为。 */
+  removePeerExport?: (nodeId: string, mapId: string) => Promise<boolean>;
+  sweepIntervalMs?: number;
 };
+
+type RowChanges = { name?: string; paused?: boolean; leaseExpiresAt?: number };
 
 type Entry = {
   row: PortMapRow;
@@ -77,7 +88,10 @@ export class PortMapManager {
   private readonly now: () => number;
   private readonly maxConnections: number | undefined;
   private readonly peerStreamLimit: number | undefined;
+  private readonly removePeerExport: ((nodeId: string, mapId: string) => Promise<boolean>) | null;
+  private readonly sweepIntervalMs: number;
   private readonly entries = new Map<string, Entry>();
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
   private started = false;
 
   constructor(deps: PortMapManagerDeps) {
@@ -87,9 +101,11 @@ export class PortMapManager {
     this.now = deps.now ?? Date.now;
     this.maxConnections = deps.maxConnections;
     this.peerStreamLimit = deps.peerStreamLimit;
+    this.removePeerExport = deps.removePeerExport ?? null;
+    this.sweepIntervalMs = deps.sweepIntervalMs ?? PORT_MAP_LEASE_SWEEP_MS;
   }
 
-  /** 开机恢复：未暂停的行逐条起监听，端口被占的保留行并标 error。 */
+  /** 开机恢复：已过期的租约行先回收、不恢复；未暂停的行逐条起监听，端口被占的保留行并标 error。 */
   start(): void {
     if (this.started) return;
     this.started = true;
@@ -100,13 +116,45 @@ export class PortMapManager {
       console.error('[portmap] failed to load port maps', err);
       return;
     }
+    const now = this.now();
     for (const row of rows) {
+      if (isLeaseExpired(row, now)) {
+        this.discardExpired(row);
+        continue;
+      }
       const entry = this.adopt(row);
       if (!row.paused) this.startEntry(entry);
     }
+    this.sweepTimer = setInterval(() => this.sweepExpired(), this.sweepIntervalMs);
+    this.sweepTimer.unref?.();
+  }
+
+  /** 回收所有已过期的租约映射（停监听、删行、尽力清 B 的放行行），返回被回收的 id。 */
+  sweepExpired(): string[] {
+    const now = this.now();
+    const reaped: string[] = [];
+    for (const entry of [...this.entries.values()]) {
+      if (!isLeaseExpired(entry.row, now)) continue;
+      this.stopEntry(entry);
+      this.entries.delete(entry.row.id);
+      this.discardExpired(entry.row);
+      reaped.push(entry.row.id);
+    }
+    return reaped;
+  }
+
+  private discardExpired(row: PortMapRow): void {
+    try {
+      this.store.remove(row.id);
+    } catch (err) {
+      console.error('[portmap] failed to remove expired port map', err);
+    }
+    console.warn(`[portmap] lease expired, removed port map ${row.id} (${row.name})`);
+    this.removePeerExport?.(row.targetNodeId, row.id).catch(() => undefined);
   }
 
   list(): PortMapDto[] {
+    this.sweepExpired();
     return [...this.entries.values()]
       .map((entry) => this.toDto(entry))
       .sort((a, b) => a.createdAt - b.createdAt);
@@ -117,6 +165,7 @@ export class PortMapManager {
   }
 
   create(input: CreatePortMapRequest): PortMapDto {
+    this.sweepExpired();
     if (this.entries.size >= PORT_MAP_MAX_ROWS) {
       throw new PortMapError('limit_reached', `at most ${PORT_MAP_MAX_ROWS} port maps`);
     }
@@ -142,26 +191,39 @@ export class PortMapManager {
    */
   update(id: string, patch: UpdatePortMapRequest): PortMapDto {
     const entry = this.require(id);
-    const name = patch.name === undefined ? undefined : assertName(patch.name, 'name');
-    const paused = patch.paused;
-    if (paused !== undefined && typeof paused !== 'boolean') {
-      throw new PortMapError('invalid_request', 'paused must be a boolean');
-    }
-    if (paused === true) this.stopEntry(entry);
-    if (paused === false && !entry.listener) this.resumeEntry(entry);
+    const changes = this.parsePatch(entry, patch);
+    if (changes.paused === true) this.stopEntry(entry);
+    if (changes.paused === false && !entry.listener) this.resumeEntry(entry);
     const updatedAt = this.now();
-    this.store.update(id, {
-      updatedAt,
-      ...(name === undefined ? {} : { name }),
-      ...(paused === undefined ? {} : { paused }),
-    });
-    entry.row = {
-      ...entry.row,
-      ...(name === undefined ? {} : { name }),
-      ...(paused === undefined ? {} : { paused }),
-      updatedAt,
-    };
+    this.store.update(id, { updatedAt, ...changes });
+    entry.row = { ...entry.row, ...changes, updatedAt };
     return this.toDto(entry);
+  }
+
+  private parsePatch(entry: Entry, patch: UpdatePortMapRequest): RowChanges {
+    const changes: RowChanges = {};
+    if (patch.name !== undefined) changes.name = assertName(patch.name, 'name');
+    if (patch.paused !== undefined) {
+      if (typeof patch.paused !== 'boolean') {
+        throw new PortMapError('invalid_request', 'paused must be a boolean');
+      }
+      changes.paused = patch.paused;
+    }
+    const leaseExpiresAt = this.nextLease(entry, patch);
+    if (leaseExpiresAt !== undefined) changes.leaseExpiresAt = leaseExpiresAt;
+    return changes;
+  }
+
+  /** `leaseMs` 显式续约（持久行也可借此加租约）；`renewLease` 只续已带租约的行，持久行保持不变。 */
+  private nextLease(entry: Entry, patch: UpdatePortMapRequest): number | undefined {
+    if (patch.renewLease !== undefined && typeof patch.renewLease !== 'boolean') {
+      throw new PortMapError('invalid_request', 'renewLease must be a boolean');
+    }
+    if (patch.leaseMs !== undefined) return this.now() + assertLeaseMs(patch.leaseMs, 'leaseMs');
+    if (patch.renewLease === true && entry.row.leaseExpiresAt !== undefined) {
+      return this.now() + PORT_MAP_LEASE_DEFAULT_MS;
+    }
+    return undefined;
   }
 
   private resumeEntry(entry: Entry): void {
@@ -185,6 +247,7 @@ export class PortMapManager {
   probe(host: string, port: number): PortProbeResponse {
     const listenHost = assertHost(host, 'host');
     const listenPort = assertPort(port, 'port');
+    this.sweepExpired();
     const usedByMapId = this.findByPort(listenHost, listenPort, null);
     const reserved = this.reservedPorts().includes(listenPort);
     return {
@@ -197,12 +260,15 @@ export class PortMapManager {
   }
 
   stop(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
+    this.sweepTimer = null;
     for (const entry of this.entries.values()) this.stopEntry(entry);
     this.entries.clear();
     this.started = false;
   }
 
   private require(id: string): Entry {
+    this.sweepExpired();
     const entry = this.entries.get(id);
     if (!entry) throw new PortMapError('not_found', `port map ${id} not found`);
     return entry;
@@ -265,6 +331,9 @@ export class PortMapManager {
       paused: false,
       createdAt: now,
       updatedAt: now,
+      ...(input.leaseMs === undefined
+        ? {}
+        : { leaseExpiresAt: now + assertLeaseMs(input.leaseMs, 'leaseMs') }),
     };
   }
 
@@ -313,14 +382,22 @@ let instance: PortMapManager | null = null;
 
 /** 网关级单例：路由与 runtime 生命周期都用它，链路由 mesh 绑定后按 nodeId 解析。 */
 export function portMapManager(): PortMapManager {
-  instance ??= new PortMapManager({ store: new PortMapStore(getDb()) });
+  instance ??= new PortMapManager({
+    store: new PortMapStore(getDb()),
+    removePeerExport: requestPeerExportRemoval,
+  });
   return instance;
 }
 
+let stopExportSweeper: (() => void) | null = null;
+
 export function startPortMaps(): void {
   portMapManager().start();
+  stopExportSweeper ??= startExportLeaseSweeper(defaultPortMapExportStore);
 }
 
 export function stopPortMaps(): void {
   instance?.stop();
+  stopExportSweeper?.();
+  stopExportSweeper = null;
 }

@@ -16,6 +16,7 @@ import {
   PORT_MAP_MAX_PEER_STREAMS,
   type PortMapExportRow,
   createPortMapCounters,
+  isLeaseExpired,
 } from './types';
 
 export type AcceptTcpStreamContext = {
@@ -23,6 +24,7 @@ export type AcceptTcpStreamContext = {
   exports: PortMapExportStoreLike;
   connectTimeoutMs?: number;
   peerStreamLimit?: number;
+  now?: () => number;
 };
 
 type Requested = { mapId: string; host: string; port: number };
@@ -37,9 +39,14 @@ function parseRequest(stream: LinkStream): Requested | null {
   return { mapId, host, port };
 }
 
-/** 放行必须三项全中：映射 id 存在、来源节点即握手认证的对端、且未停用。 */
-function allows(row: PortMapExportRow | null, peerNodeId: string, req: Requested): boolean {
-  if (!row || !row.enabled) return false;
+/** 放行必须四项全中：映射 id 存在、来源节点即握手认证的对端、未停用、租约未过期。 */
+function allows(
+  row: PortMapExportRow | null,
+  peerNodeId: string,
+  req: Requested,
+  now: number
+): boolean {
+  if (!row || !row.enabled || isLeaseExpired(row, now)) return false;
   if (row.fromNodeId !== peerNodeId) return false;
   return row.host === req.host && row.port === req.port;
 }
@@ -58,7 +65,7 @@ export async function acceptTcpStream(
     return;
   }
   const row = ctx.exports.get(req.mapId);
-  if (!allows(row, ctx.peerNodeId, req) || !row) {
+  if (!allows(row, ctx.peerNodeId, req, (ctx.now ?? Date.now)()) || !row) {
     stream.reset('portmap-forbidden');
     return;
   }

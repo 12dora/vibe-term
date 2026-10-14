@@ -7,6 +7,7 @@ import type { PortMapExportRow, PortMapRow } from './types';
 export type PortMapPatch = {
   name?: string;
   paused?: boolean;
+  leaseExpiresAt?: number;
   updatedAt: number;
 };
 
@@ -40,6 +41,7 @@ function toRow(row: PortMapDbRow): PortMapRow {
     paused: Boolean(row.paused),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ...(row.leaseExpiresAt === null ? {} : { leaseExpiresAt: row.leaseExpiresAt }),
   };
 }
 
@@ -51,6 +53,7 @@ function toExportRow(row: PortMapExportDbRow): PortMapExportRow {
     port: row.port,
     enabled: Boolean(row.enabled),
     createdAt: row.createdAt,
+    ...(row.leaseExpiresAt === null ? {} : { leaseExpiresAt: row.leaseExpiresAt }),
   };
 }
 
@@ -74,6 +77,7 @@ export class PortMapStore implements PortMapStoreLike {
     const values: Partial<PortMapDbRow> = { updatedAt: patch.updatedAt };
     if (patch.name !== undefined) values.name = patch.name;
     if (patch.paused !== undefined) values.paused = patch.paused;
+    if (patch.leaseExpiresAt !== undefined) values.leaseExpiresAt = patch.leaseExpiresAt;
     this.db.update(portMaps).set(values).where(eq(portMaps.id, id)).run();
   }
 
@@ -106,6 +110,7 @@ export class PortMapExportStore implements PortMapExportStoreLike {
           port: row.port,
           enabled: row.enabled,
           createdAt: row.createdAt,
+          leaseExpiresAt: row.leaseExpiresAt ?? null,
         },
       })
       .run();
@@ -139,6 +144,7 @@ export class MemoryPortMapStore implements PortMapStoreLike {
       ...row,
       ...(patch.name !== undefined ? { name: patch.name } : {}),
       ...(patch.paused !== undefined ? { paused: patch.paused } : {}),
+      ...(patch.leaseExpiresAt !== undefined ? { leaseExpiresAt: patch.leaseExpiresAt } : {}),
       updatedAt: patch.updatedAt,
     });
   }

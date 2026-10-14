@@ -1,4 +1,8 @@
-import type { PortMapErrorCode } from '@vibeterm/shared';
+import {
+  PORT_MAP_LEASE_MAX_MS,
+  PORT_MAP_LEASE_MIN_MS,
+  type PortMapErrorCode,
+} from '@vibeterm/shared';
 import type { LinkSession } from '@vibeterm/shared/link';
 
 /** A 侧持久化的映射行。 */
@@ -13,6 +17,8 @@ export type PortMapRow = {
   paused: boolean;
   createdAt: number;
   updatedAt: number;
+  /** 租约到期时间（ms）；缺省 = 持久映射。 */
+  leaseExpiresAt?: number;
 };
 
 /** B 侧持久化的放行行。 */
@@ -23,6 +29,8 @@ export type PortMapExportRow = {
   port: number;
   enabled: boolean;
   createdAt: number;
+  /** 租约到期时间（ms）；缺省 = 持久放行。 */
+  leaseExpiresAt?: number;
 };
 
 export type PortMapPeers = {
@@ -55,6 +63,13 @@ export const PORT_MAP_CONNECT_TIMEOUT_MS = 5_000;
 /** getLink + openStream 的总时限：拨号期间 socket 是暂停的，不能无限期占着名额。 */
 export const PORT_MAP_DIAL_DEADLINE_MS = 15_000;
 export const PORT_MAP_TARGET_PROBE_TIMEOUT_MS = 1_500;
+
+/** 租约过期扫描间隔。 */
+export const PORT_MAP_LEASE_SWEEP_MS = 10_000;
+
+export function isLeaseExpired(row: { leaseExpiresAt?: number }, now: number): boolean {
+  return row.leaseExpiresAt !== undefined && row.leaseExpiresAt <= now;
+}
 
 export class PortMapError extends Error {
   constructor(
@@ -113,6 +128,21 @@ export function assertPort(value: unknown, field: string): number {
 export function assertHost(value: unknown, field: string): string {
   if (typeof value !== 'string' || !HOST_RE.test(value)) {
     throw new PortMapError('invalid_request', `${field} is not a valid host`);
+  }
+  return value;
+}
+
+export function assertLeaseMs(value: unknown, field: string): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < PORT_MAP_LEASE_MIN_MS ||
+    value > PORT_MAP_LEASE_MAX_MS
+  ) {
+    throw new PortMapError(
+      'invalid_request',
+      `${field} must be between ${PORT_MAP_LEASE_MIN_MS} and ${PORT_MAP_LEASE_MAX_MS} ms`
+    );
   }
   return value;
 }

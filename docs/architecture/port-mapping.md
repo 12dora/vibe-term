@@ -40,6 +40,7 @@ TCP 客户端 ──connect──> [A: net.createServer 127.0.0.1:5678]
 - `port_maps`：A 侧监听行（`listen_host` 默认 `127.0.0.1`、`listen_port`、`target_node_id`、
   `target_host`、`target_port`、`paused`），`(listen_host, listen_port)` 有索引。
 - `port_map_exports`：B 侧放行行，主键即 `map_id`。
+- 迁移 `0062_port_map_leases.sql` 给两张表各加可空的 `lease_expires_at`（毫秒时间戳）：`NULL` = 持久行，非空 = 带租约，见下文「租约」。
 
 存储层 `PortMapStore` / `PortMapExportStore`（drizzle）与对应的 Memory 实现藏在接口后面，形状照抄
 `tunnel/config-store.ts`。
@@ -55,6 +56,16 @@ TCP 客户端 ──connect──> [A: net.createServer 127.0.0.1:5678]
   行仍是 `paused`，端口空出来后再 PATCH 一次还能重试；只要请求的状态是未暂停且当前没有监听就重试
   绑定，开机时端口被占（`state:'error'`）的行也走这条路。
 - 删除 = 暂停 + 删行，并尽力而为地让 B 删掉对应的放行行（见下）。
+
+### 租约
+
+用于前台 `vibeterm forward`：客户端被强杀、崩溃或断网时没人来撤销映射，`-R *:port` 还会把公网端口一直开着，所以映射与放行行都可以带租约，不续约就由网关自己回收。
+
+- 创建时 `leaseMs`（30 s ~ 10 min，超出范围 400 `invalid_request`）写入 `lease_expires_at = now + leaseMs`；不传则为持久行，行为与此前完全一致。
+- 续约走 PATCH：`{leaseMs}` 从现在起延长到指定时长（也可以把持久行改成带租约）；`{renewLease:true}` 按缺省 90 s 延长，且只对已带租约的行生效，持久行不会被它悄悄加上租约。响应的 `leaseExpiresAt` 就是新的到期时间。已过期的行按不存在处理（404 `not_found`）。
+- A 侧由 `PortMapManager` 回收：每 10 s 扫描一次（`PORT_MAP_LEASE_SWEEP_MS`），`list` / `get` / `create` / `update` / `probe` 入口也会先扫一遍，过期的映射停监听、删行，并像删除那样尽力清理 B 的放行行。**开机恢复前**先清掉已过期的租约行，过期映射不会被恢复。
+- B 侧放行行同样会过期：`startPortMaps()` 启动即扫描一次并每 10 s 复扫（`export-lease.ts`）；`acceptTcpStream` 另外在每次放行时检查租约，过期但还没被扫到的放行行不再授权；`GET /api/portmap/exports` 不返回已过期的行。
+- 两侧各自计时、互不依赖：A 回收时清理 B 失败，B 的放行行也会在自己的租约到期时消失。
 
 ### 为什么两侧都用 `node:net`
 
@@ -153,8 +164,8 @@ FFI 取不到时退化为只看句柄，行为不比改动前差。健康连接�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/portmap` | 列表，含实时计数（`activeConnections`/`totalConnections`/`bytesIn`/`bytesOut`） |
-| POST | `/api/portmap` | 创建；`mapId` 可指定以对齐 B 的放行行；409 `port_in_use` / `port_reserved` |
-| PATCH | `/api/portmap/:id` | 改名 / 暂停 / 恢复 |
+| POST | `/api/portmap` | 创建；`mapId` 可指定以对齐 B 的放行行；可带 `leaseMs`；409 `port_in_use` / `port_reserved` |
+| PATCH | `/api/portmap/:id` | 改名 / 暂停 / 恢复 / 续约（`leaseMs` 或 `renewLease`） |
 | DELETE | `/api/portmap/:id` | 删除，同时停监听；返回 `{ ok, exportRemoved }`，`exportRemoved` 表示 B 上的放行行是否已一并清掉 |
 | GET | `/api/portmap/probe?host=&port=` | 本机端口占用探测（`free`/`reserved`/`usedByMapId`） |
 
@@ -163,7 +174,8 @@ FFI 取不到时退化为只看句柄，行为不比改动前差。健康连接�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/portmap/exports` | 放行列表 |
-| POST | `/api/portmap/exports` | 建放行行，返回 `mapId` |
+| POST | `/api/portmap/exports` | 建放行行，返回 `mapId`；可带 `leaseMs` |
+| PATCH | `/api/portmap/exports/:mapId` | 续约放行行（`leaseMs` 或 `renewLease`）；已过期或不存在返回 404 |
 | DELETE | `/api/portmap/exports/:mapId` | 删放行行 |
 | GET | `/api/portmap/target-probe?host=&port=` | 目标端口是否有服务在监听（1.5 s 超时） |
 
@@ -188,8 +200,10 @@ CLI 把 `ssh -L` / `-R` 的写法映射成上面的「监听行 + 放行行」�
 
 两种生命周期：
 
-- **前台（缺省）**：映射命名为 `fwd:<进程号 36 进制>:<L|R><端口>`。CLI 保持运行，每 30 s 查询监听行状态，异常（映射消失、端口被占、暂停、节点不可达）与恢复各提示一次；Ctrl-C 或 SIGTERM / SIGHUP 逆序撤销监听行与放行行后退出，清理期间再来一次信号则放弃等待（退出码 130）。CLI 被强杀时映射会遗留在网关里：下次用相同监听地址与目标重建遇到 `port_in_use` 时，如果占用者是同名模式的临时映射、其进程号在本机已不存在，就先删除再重建；判断只看本机进程号，其它主机上遗留的同模式映射也会被当作遗留清理。
-- **`--persist`**：建立后立即退出，映射作为普通持久行由网关保活——开机恢复、链路断开后新连接自动重新开流。名称缺省 `fwd:<L|R><端口>`，`--name` 指定（多条时追加 `-<L|R><端口>`），之后用 `vibeterm port ls` / `port rm <id>` 管理，`-R` 的行在 `<node>` 上，需 `--on <node>`。
+- **前台（缺省）**：映射命名为 `fwd:<主机标识>:<进程号 36 进制>:<L|R><端口>`，主机标识是 `sha256(hostname + machine-id)` 的前 8 位十六进制（machine-id 读不到时只用主机名）。监听行与放行行都带 90 s 租约，CLI 每 30 s 先续约（两者各 PATCH 一次）再查询监听行状态，异常（映射消失、端口被占、暂停、节点不可达）与恢复各提示一次；续约失败每条只提示一次，下个间隔重试，连续失败到租约到期网关就会回收。Ctrl-C 或 SIGTERM / SIGHUP 逆序撤销监听行与放行行后退出，清理期间再来一次信号则放弃等待（退出码 130）；在建立转发的过程中收到信号则不再建立后续转发，撤销已建立的部分后退出，不会输出「转发已就绪」。CLI 被强杀、崩溃或断网时，租约到期后由网关回收映射与放行，不再依赖手工清理。
+  - **旧版网关**：不认 `leaseMs` 的网关不会返回 `leaseExpiresAt`，CLI 据此判断该侧不支持租约，只输出一条警告（节点名 + 转发会保留到被撤销），不再对该侧续约，其余行为不变。
+  - **遗留清理**：租约之外保留的兜底——重建时遇到 `port_in_use`，且占用者是临时命名的映射、主机标识等于本机、进程号在本机已确认不存在（`kill(pid, 0)` 返回 ESRCH），才先删除再重建。EPERM（别的用户的进程）按存活处理；主机标识不同（别的机器创建）、旧格式（不含主机标识）的名字一律不回收。
+- **`--persist`**：不带租约，建立后立即退出，映射作为普通持久行由网关保活——开机恢复、链路断开后新连接自动重新开流。名称缺省 `fwd:<L|R><端口>`，`--name` 指定（多条时追加 `-<L|R><端口>`），之后用 `vibeterm port ls` / `port rm <id>` 管理，`-R` 的行在 `<node>` 上，需 `--on <node>`。
 
 链路断开时在途 TCP 连接被复位（无重放点，见「半关闭与中断」），监听端口保留，链路恢复后的新连接直接可用。
 

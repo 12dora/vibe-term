@@ -1,120 +1,24 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { CliError, UsageError } from '../core/errors';
+import { localHostId } from '../core/forward-names';
 import type { FetchLike } from '../core/http';
 import type { PortMapDto } from '../core/portmap-ops';
 import { jsonResponse, testContext } from './cli-test-harness';
-import {
-  type ForwardEntry,
-  cleanupForwards,
-  command as forward,
-  holdForwards,
-  pollForwards,
-} from './forward';
+import { cleanupForwards, command as forward, holdForwards, pollForwards } from './forward';
+import { NODE_A, NODE_B, entry, fakeGateway, findCall, mapDto } from './forward-fake-gateway';
 
-const NODE_A = 'a'.repeat(32);
-const NODE_B = 'b'.repeat(32);
 const dirs: string[] = [];
 
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-interface Call {
-  method: string;
-  node: string;
-  path: string;
-  body: Record<string, unknown> | null;
-}
-
-interface FakeOptions {
-  /** 第 n 次（从 1 起）创建映射时返回 409 port_in_use。 */
-  failMapCreate?: number;
-  stale?: Array<{ node: string; map: Partial<PortMapDto> }>;
-}
-
-function mapDto(body: Record<string, unknown>): PortMapDto {
-  return {
-    id: String(body.mapId),
-    name: String(body.name ?? ''),
-    listenHost: String(body.listenHost),
-    listenPort: Number(body.listenPort),
-    targetNodeId: String(body.targetNodeId),
-    targetHost: String(body.targetHost),
-    targetPort: Number(body.targetPort),
-    paused: false,
-    state: 'listening',
-    activeConnections: 0,
-    totalConnections: 0,
-    bytesIn: 0,
-    bytesOut: 0,
-    createdAt: 1,
-    updatedAt: 1,
-  };
-}
-
-function fakeGateway(options: FakeOptions = {}) {
-  const calls: Call[] = [];
-  const maps = new Map<string, PortMapDto[]>();
-  let exportSeq = 0;
-  let createSeq = 0;
-  for (const row of options.stale ?? []) {
-    const list = maps.get(row.node) ?? [];
-    list.push({ ...mapDto({ mapId: 'stale1', ...row.map }), ...row.map } as PortMapDto);
-    maps.set(row.node, list);
-  }
-  const fetchImpl: FetchLike = async (input, init) => {
-    const request = new Request(input, init as RequestInit);
-    const url = new URL(request.url);
-    const match = /^\/n\/([0-9a-f]{32})(\/.*)$/.exec(url.pathname);
-    const node = match ? match[1] : 'self';
-    const path = match ? match[2] : url.pathname;
-    const text = request.method === 'GET' ? '' : await request.text();
-    const body = text ? (JSON.parse(text) as Record<string, unknown>) : null;
-    calls.push({ method: request.method, node, path, body });
-    const list = maps.get(node) ?? [];
-    if (path === '/api/mesh/nodes') {
-      return jsonResponse({
-        nodes: [
-          { id: NODE_A, name: 'office', publicKey: 'x', online: true, loggedIn: true },
-          { id: NODE_B, name: 'lab', publicKey: 'y', online: true, loggedIn: true },
-        ],
-      });
-    }
-    if (path === '/api/auth/mode') return jsonResponse({ mode: 'mesh', nodeId: NODE_A });
-    if (path === '/api/portmap/exports' && request.method === 'POST') {
-      exportSeq += 1;
-      return jsonResponse({
-        export: { mapId: `m${exportSeq}`, ...body, enabled: true, createdAt: 1 },
-      });
-    }
-    if (path.startsWith('/api/portmap/exports/') && request.method === 'DELETE') {
-      return new Response(null, { status: 204 });
-    }
-    if (path === '/api/portmap' && request.method === 'POST' && body) {
-      createSeq += 1;
-      const clash = list.some(
-        (row) => row.listenHost === body.listenHost && row.listenPort === body.listenPort
-      );
-      if (clash || options.failMapCreate === createSeq) {
-        return jsonResponse({ error: { code: 'port_in_use', message: 'occupied' } }, 409);
-      }
-      const dto = mapDto(body);
-      maps.set(node, [...list, dto]);
-      return jsonResponse({ map: dto });
-    }
-    if (path === '/api/portmap' && request.method === 'GET') return jsonResponse({ maps: list });
-    const del = /^\/api\/portmap\/([^/]+)$/.exec(path);
-    if (del && request.method === 'DELETE') {
-      maps.set(
-        node,
-        list.filter((row) => row.id !== del[1])
-      );
-      return jsonResponse({ ok: true, exportRemoved: true });
-    }
-    return jsonResponse({ error: 'not_found' }, 404);
-  };
-  return { fetch: fetchImpl, calls, maps };
+/** 一个刚退出的子进程的 pid：确定不存在，且短时间内不会被复用。 */
+async function deadPid(): Promise<number> {
+  const child = Bun.spawn(['true']);
+  await child.exited;
+  return child.pid;
 }
 
 async function setup(fetchImpl: FetchLike, options: { json?: boolean } = {}) {
@@ -122,9 +26,6 @@ async function setup(fetchImpl: FetchLike, options: { json?: boolean } = {}) {
   dirs.push(made.dir);
   return made;
 }
-
-const findCall = (calls: Call[], method: string, node: string, path: string) =>
-  calls.find((call) => call.method === method && call.node === node && call.path === path);
 
 describe('vibeterm forward --persist', () => {
   test('-L exports on the remote node and maps on the entry node', async () => {
@@ -250,7 +151,7 @@ describe('vibeterm forward rollback and stale cleanup', () => {
           node: 'self',
           map: {
             id: 'old1',
-            name: 'fwd:zzzzzz:L8080',
+            name: `fwd:${localHostId()}:${(await deadPid()).toString(36)}:L8080`,
             listenHost: '127.0.0.1',
             listenPort: 8080,
             targetNodeId: NODE_B,
@@ -275,9 +176,10 @@ describe('vibeterm forward rollback and stale cleanup', () => {
       targetHost: '127.0.0.1',
       targetPort: 80,
     };
+    const dead = `${localHostId()}:${(await deadPid()).toString(36)}`;
     for (const map of [
       { ...base, name: 'fwd:L8080' },
-      { ...base, name: 'fwd:zzzzzz:L8080', targetPort: 81 },
+      { ...base, name: `fwd:${dead}:L8080`, targetPort: 81 },
     ]) {
       const fake = fakeGateway({ stale: [{ node: 'self', map }] });
       const { ctx } = await setup(fake.fetch);
@@ -304,7 +206,8 @@ describe('vibeterm forward foreground', () => {
       (row) => row.name
     );
     const tag = process.pid.toString(36);
-    expect(names).toEqual([`fwd:${tag}:L8080`, `fwd:${tag}:R9000`]);
+    const prefix = `fwd:${localHostId()}:${tag}`;
+    expect(names).toEqual([`${prefix}:L8080`, `${prefix}:R9000`]);
 
     process.emit('SIGTERM');
     expect(await running).toBeUndefined();
@@ -388,24 +291,3 @@ describe('vibeterm forward foreground', () => {
     expect(stderr.text()).toContain('映射已不存在');
   });
 });
-
-function entry(
-  kind: 'L' | 'R',
-  listenNodeId: string,
-  targetNodeId: string,
-  map: PortMapDto
-): ForwardEntry {
-  return {
-    spec: {
-      kind,
-      bindHost: map.listenHost,
-      port: map.listenPort,
-      host: map.targetHost,
-      hostPort: map.targetPort,
-    },
-    listenNodeId,
-    targetNodeId,
-    nodeName: 'lab',
-    map,
-  };
-}

@@ -74,6 +74,23 @@ describe('portmap acceptTcpStream', () => {
     expect(echo.connections).toBe(1);
   });
 
+  test('rejects an expired lease and accepts a live one', async () => {
+    echo = startEchoServer();
+    const payload = { type: 'tcp', mapId: MAP_ID, host: '127.0.0.1', port: echo.port };
+    const expired = new MemoryPortMapExportStore();
+    expired.insert(exportRow(echo.port, { leaseExpiresAt: Date.now() - 1 }));
+    const rejected = await (await openTcpStream(expired, payload)).closed;
+    expect(rejected.message).toContain('portmap-forbidden');
+    expect(echo.connections).toBe(0);
+
+    const live = new MemoryPortMapExportStore();
+    live.insert(exportRow(echo.port, { leaseExpiresAt: Date.now() + 60_000 }));
+    const stream = await openTcpStream(live, payload);
+    await stream.write(new TextEncoder().encode('ok'));
+    const chunk = await stream.readable.getReader().read();
+    expect(new TextDecoder().decode(chunk.value?.bytes)).toBe('ok');
+  });
+
   test('rejects an unknown map id', async () => {
     echo = startEchoServer();
     const stream = await openTcpStream(new MemoryPortMapExportStore(), {

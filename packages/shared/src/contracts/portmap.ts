@@ -2,6 +2,11 @@
 // 放行记录（`port_map_exports`）；两条记录都由浏览器分别以各节点会话创建，A→B 的 tcp 流
 // 只需 peer 身份 + mapId 匹配即可放行。
 
+/** 租约时长范围与缺省续约时长（毫秒）：前台转发靠租约兜底，客户端失联后网关自动回收。 */
+export const PORT_MAP_LEASE_MIN_MS = 30_000;
+export const PORT_MAP_LEASE_MAX_MS = 600_000;
+export const PORT_MAP_LEASE_DEFAULT_MS = 90_000;
+
 export type PortMapState = 'listening' | 'paused' | 'error';
 
 export type PortMapErrorCode =
@@ -36,6 +41,8 @@ export interface PortMapDto {
   pendingBytes?: number;
   createdAt: number;
   updatedAt: number;
+  /** 租约到期时间（毫秒时间戳）；缺省表示持久映射。过期未续约的映射会被网关回收。 */
+  leaseExpiresAt?: number;
 }
 
 export interface CreatePortMapRequest {
@@ -47,11 +54,17 @@ export interface CreatePortMapRequest {
   targetPort: number;
   /** 由浏览器先在 B 上创建放行记录得到的 id；A 侧记录与其同 id */
   mapId?: string;
+  /** 租约时长（毫秒，30 s..10 min）；不传则为持久映射。 */
+  leaseMs?: number;
 }
 
 export interface UpdatePortMapRequest {
   name?: string;
   paused?: boolean;
+  /** 续约：按缺省时长（90 s）从现在起延长；仅对带租约的映射生效。 */
+  renewLease?: boolean;
+  /** 续约：从现在起延长到指定时长（毫秒，30 s..10 min）；可把持久映射改为带租约。 */
+  leaseMs?: number;
 }
 
 export interface PortMapResponse {
@@ -83,6 +96,8 @@ export interface PortMapExportDto {
   port: number;
   enabled: boolean;
   createdAt: number;
+  /** 租约到期时间（毫秒时间戳）；缺省表示持久放行。过期后不再放行并被回收。 */
+  leaseExpiresAt?: number;
 }
 
 export interface CreatePortMapExportRequest {
@@ -90,6 +105,13 @@ export interface CreatePortMapExportRequest {
   fromNodeId: string;
   host?: string;
   port: number;
+  /** 租约时长（毫秒，30 s..10 min）；不传则为持久放行。 */
+  leaseMs?: number;
+}
+
+export interface UpdatePortMapExportRequest {
+  renewLease?: boolean;
+  leaseMs?: number;
 }
 
 export interface PortMapExportResponse {
