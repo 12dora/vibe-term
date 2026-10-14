@@ -7,6 +7,7 @@ import { command as cp } from './commands/cp';
 import { command as devices } from './commands/devices';
 import { command as exec } from './commands/exec';
 import { command as files } from './commands/files';
+import { command as forward } from './commands/forward';
 import { command as login } from './commands/login';
 import { command as logout } from './commands/logout';
 import { command as nodes } from './commands/nodes';
@@ -30,6 +31,7 @@ export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   files,
   cp,
   port,
+  forward,
   nodes,
   devices,
   share,
@@ -42,7 +44,7 @@ export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   exec,
   system,
 ];
-/** 十九个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
+/** 二十个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
 export const RESERVED_COMMANDS: readonly Command[] = [];
 export const COMMANDS: readonly Command[] = [...IMPLEMENTED_COMMANDS, ...RESERVED_COMMANDS];
 

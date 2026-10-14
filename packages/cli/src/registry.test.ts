@@ -23,6 +23,7 @@ const DISPATCHED_GROUPS = [
   'files',
   'cp',
   'port',
+  'forward',
   'share',
   'watch',
   'agent',
