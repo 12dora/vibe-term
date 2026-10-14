@@ -51,6 +51,7 @@ export {
   forwardLinkDeadlineFor,
   setForwardLinkDeadlineMs,
 } from './forwarder-deadline';
+import { EXEC_WS_REST_PATH, upgradeExecForward } from './forwarder-exec-upgrade';
 import {
   copyUpstreamHeaders,
   filterRequestHeaders,
@@ -161,6 +162,9 @@ export class Forwarder {
     }
     if (parsed.rest === '/ws') {
       return this.handleRemoteWs(req, server, parsed.nodeId);
+    }
+    if (parsed.rest === EXEC_WS_REST_PATH) {
+      return this.handleRemoteExecWs(req, server, parsed.nodeId);
     }
     if (parsed.rest === '/api' || parsed.rest.startsWith('/api/')) {
       if (parsed.rest.startsWith('/api/mesh-internal')) {
@@ -518,6 +522,13 @@ export class Forwarder {
     return upgradeRemoteWs(req, server, nodeId, {
       peers: this.deps.peers,
       streams: this.deps.streams,
+      deadlineMs: forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId), this.deps.peers),
+    });
+  }
+
+  private handleRemoteExecWs(req: Request, server: MeshUpgradeServer, nodeId: string) {
+    return upgradeExecForward(req, server, nodeId, {
+      peers: this.deps.peers,
       deadlineMs: forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId), this.deps.peers),
     });
   }

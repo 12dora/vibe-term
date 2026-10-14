@@ -20,6 +20,12 @@ import { getDb as getOrmDb } from './db/client';
 import { runMigrations } from './db/migrate';
 import { eventNotifier } from './events';
 import { registerEventNotifyBroadcaster } from './events/broadcaster';
+import { execWebSocketHandlers, isExecWsSocket } from './exec/channel/ws-handlers';
+import {
+  authenticateOpenExecUpgrade,
+  handleExecWsUpgrade,
+  isExecWsPath,
+} from './exec/channel/ws-upgrade';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
 import { t } from './i18n';
 import { logMemoryProfileOnce } from './memory-profile';
@@ -272,6 +278,10 @@ export async function createGatewayRuntime(
     handleRequest(req, bunServer) {
       const url = new URL(req.url);
 
+      if (isExecWsPath(url.pathname)) {
+        return handleExecWsUpgrade(req, bunServer, authenticateOpenExecUpgrade);
+      }
+
       if (url.pathname === '/ws') {
         const result = wsServer.handleUpgrade(req, bunServer);
         if (result === false) {
@@ -301,17 +311,21 @@ export async function createGatewayRuntime(
       backpressureLimit: GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES,
       closeOnBackpressureLimit: true,
       open(ws, opts) {
+        if (isExecWsSocket(ws)) return execWebSocketHandlers.open(ws);
         wsServer.handleOpen(ws as Bun.ServerWebSocket<GatewaySocketData>, opts);
       },
       message(ws, message) {
+        if (isExecWsSocket(ws)) return execWebSocketHandlers.message(ws, message);
         wsServer.handleMessage(ws as Bun.ServerWebSocket<GatewaySocketData>, message);
       },
       drain(ws) {
+        if (isExecWsSocket(ws)) return execWebSocketHandlers.drain(ws);
         const data = (ws as Bun.ServerWebSocket<GatewaySocketData>).data;
         if (!data?.session || data.session.closed) return;
         wsServer.handleDrain(data.session, data.carrier);
       },
       close(ws, code, reason) {
+        if (isExecWsSocket(ws)) return execWebSocketHandlers.close(ws);
         const data = (ws as Bun.ServerWebSocket<GatewaySocketData>).data;
         if (!data?.session || !data.carrier) return;
         wsServer.handleCarrierClose(data.session, data.carrier, code, reason);

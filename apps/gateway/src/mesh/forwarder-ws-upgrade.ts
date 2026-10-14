@@ -124,7 +124,7 @@ async function openForwardLink(
   return { stream, transport: transportOfLink(link) ?? deps.peers.transportOf?.(nodeId) ?? null };
 }
 
-function raceLink(
+export function raceLink(
   getLink: Promise<LinkSession>,
   deadlineMs: number,
   signal: AbortSignal

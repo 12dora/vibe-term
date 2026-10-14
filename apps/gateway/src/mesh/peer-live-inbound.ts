@@ -2,6 +2,7 @@ import type { LinkStream } from '@vibeterm/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { dispatchTcpStream } from '../portmap/dispatch';
 import type { WebSocketServer } from '../ws';
+import { acceptExecStream } from './exec-stream-target';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import type { DispatchHttp } from './types';
 import type { GatewaySessionClose } from './ws-stream-target';
@@ -37,6 +38,14 @@ export function handlePeerInboundStream(
   const kind = classifyOpenPayload(stream.openPayload);
   if (kind === 'tcp') {
     dispatchTcpStream(stream, { peerNodeId, selfNodeId: host.selfNodeId });
+    return;
+  }
+  if (kind === 'exec') {
+    if (!host.sessionStore) {
+      stream.reset('exec-not-configured');
+      return;
+    }
+    acceptExecStream(stream, { peerNodeId, sessionStore: host.sessionStore, now: host.now });
     return;
   }
   if (kind === 'http') {

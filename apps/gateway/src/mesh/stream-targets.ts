@@ -339,10 +339,11 @@ export async function openHttpStream(
 
 export function classifyOpenPayload(
   bytes: Uint8Array
-): 'http' | 'ws' | 'tcp' | 'relay' | 'unknown' {
+): 'http' | 'ws' | 'tcp' | 'exec' | 'relay' | 'unknown' {
   const open = parseOpenPayload(bytes);
   if (!open) return 'unknown';
   if (open.type === 'tcp') return 'tcp';
+  if (open.type === 'exec') return 'exec';
   if (open.type === 'http' || (typeof open.method === 'string' && typeof open.path === 'string')) {
     return 'http';
   }

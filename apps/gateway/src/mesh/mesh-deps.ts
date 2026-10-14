@@ -49,6 +49,7 @@ export const MESH_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
 
 export const MESH_WS_KIND = 'mesh-event';
 export const MESH_FORWARD_WS_KIND = 'mesh-forward-ws';
+export const MESH_EXEC_FORWARD_KIND = 'exec-forward';
 export const MESH_REJECT_4401_KIND = 'mesh-reject-4401';
 export const MESH_GATEWAY_WS_KIND = 'gateway-ws';
 export const MESH_SHARE_WS_KIND = 'gateway-share-ws';

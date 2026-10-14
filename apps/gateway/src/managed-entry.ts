@@ -131,6 +131,7 @@ async function runManagedGateway(): Promise<void> {
     { createGatewayRuntime },
     { getDisplayVersion, getManagementMode, getUpdateOwner },
     { guardedGatewayFetch },
+    { execWebSocketHandlers, isExecWsSocket },
   ] = await Promise.all([
     import('./api/system-managed'),
     import('./config'),
@@ -138,6 +139,7 @@ async function runManagedGateway(): Promise<void> {
     import('./runtime'),
     import('./system/info-public'),
     import('./tunnel/access-guard'),
+    import('./exec/channel/ws-handlers'),
   ]);
 
   const managedHost = resolveManagedEndpointHost(config.bindHost);
@@ -183,6 +185,7 @@ async function runManagedGateway(): Promise<void> {
         backpressureLimit: initialWebSocket.backpressureLimit,
         closeOnBackpressureLimit: initialWebSocket.closeOnBackpressureLimit,
         open(ws) {
+          if (isExecWsSocket(ws)) return execWebSocketHandlers.open(ws);
           const runtime = activeRuntime;
           if (!runtime) {
             ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
@@ -195,6 +198,7 @@ async function runManagedGateway(): Promise<void> {
           }
         },
         message(ws, message) {
+          if (isExecWsSocket(ws)) return execWebSocketHandlers.message(ws, message);
           const session = socketSession(ws);
           const runtime = session ? socketOwners.get(session) : undefined;
           if (!runtime) {
@@ -204,11 +208,13 @@ async function runManagedGateway(): Promise<void> {
           runtime.websocket.message(ws, message);
         },
         drain(ws) {
+          if (isExecWsSocket(ws)) return execWebSocketHandlers.drain(ws);
           const session = socketSession(ws);
           if (!session) return;
           socketOwners.get(session)?.websocket.drain(ws);
         },
         close(ws, code, reason) {
+          if (isExecWsSocket(ws)) return execWebSocketHandlers.close(ws);
           const session = socketSession(ws);
           const runtime = session ? socketOwners.get(session) : undefined;
           if (session) socketOwners.delete(session);

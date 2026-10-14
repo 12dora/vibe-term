@@ -9,6 +9,7 @@ import {
 } from '../../../../apps/gateway/src/api/system-routes';
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
+import { isExecWsPath } from '../../../../apps/gateway/src/exec/channel/ws-upgrade';
 import {
   MESH_VIA_SELF,
   type MeshRewritten,
@@ -148,6 +149,10 @@ async function meshHttp(
 ): Promise<HttpResult> {
   if (!surface) return null;
   const path = new URL(req.url).pathname;
+  if (isExecWsPath(path, surface.nodeId)) {
+    const execGuard = surface.guardGatewayWebSocket(req, server);
+    if (execGuard !== null) return execGuard ?? undefined;
+  }
   if (path.startsWith('/api/')) {
     const blocked = surface.localUiGuard(req);
     if (blocked) return blocked;
@@ -172,7 +177,10 @@ async function gatewayHttp(
   const gatewayResp = await gateway.handleRequest(req, server);
   if (gatewayResp instanceof Response)
     return renewSession ? applyLocalRenewal(req, gatewayResp) : gatewayResp;
-  if (gatewayResp === undefined && new URL(req.url).pathname === '/ws') return undefined;
+  if (gatewayResp === undefined) {
+    const path = new URL(req.url).pathname;
+    if (path === '/ws' || isExecWsPath(path)) return undefined;
+  }
   return null;
 }
 

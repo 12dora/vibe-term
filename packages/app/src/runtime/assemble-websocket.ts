@@ -1,4 +1,12 @@
 import {
+  execWebSocketHandlers,
+  isExecWsSocket,
+} from '../../../../apps/gateway/src/exec/channel/ws-handlers';
+import {
+  execForwardWebsocket,
+  isExecForwardSocket,
+} from '../../../../apps/gateway/src/mesh/forwarder-exec-upgrade';
+import {
   MESH_FORWARD_WS_KIND,
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
@@ -85,6 +93,8 @@ export function routeWebsocket(
     backpressureLimit: gw.backpressureLimit,
     closeOnBackpressureLimit: gw.closeOnBackpressureLimit,
     open(ws) {
+      if (isExecWsSocket(ws)) return execWebSocketHandlers.open(ws);
+      if (isExecForwardSocket(ws)) return execForwardWebsocket.open(ws);
       if (relay?.isUplinkSocket(uplinkView(ws))) {
         relay.handleUplinkOpen(ws as unknown as RelayServerWebSocket);
         return;
@@ -98,6 +108,8 @@ export function routeWebsocket(
       if (isGatewayBoundKind(kind)) openGatewayBound(gw, mesh, ws, kind);
     },
     message(ws, message) {
+      if (isExecWsSocket(ws)) return execWebSocketHandlers.message(ws, message);
+      if (isExecForwardSocket(ws)) return execForwardWebsocket.message(ws, message);
       if (relay?.isUplinkSocket(uplinkView(ws))) {
         relay.handleUplinkMessage(ws as unknown as RelayServerWebSocket, message);
         return;
@@ -116,6 +128,8 @@ export function routeWebsocket(
       gw.message(ws, message);
     },
     drain(ws) {
+      if (isExecWsSocket(ws)) return execWebSocketHandlers.drain(ws);
+      if (isExecForwardSocket(ws)) return execForwardWebsocket.drain(ws);
       if (relay?.isUplinkSocket(uplinkView(ws))) {
         relay.handleUplinkDrain(ws as unknown as RelayServerWebSocket);
         return;
@@ -127,6 +141,8 @@ export function routeWebsocket(
       gw.drain(ws);
     },
     close(ws, code, reason) {
+      if (isExecWsSocket(ws)) return execWebSocketHandlers.close(ws);
+      if (isExecForwardSocket(ws)) return execForwardWebsocket.close(ws);
       if (relay?.isUplinkSocket(uplinkView(ws))) {
         relay.handleUplinkClose(ws as unknown as RelayServerWebSocket, code, reason);
         return;

@@ -637,6 +637,14 @@ describe('assembleVibeTerm role matrix', () => {
     const ws = await assembled.fetch(new Request('http://127.0.0.1/ws'), server);
     expect(await ws?.text()).toBe('blocked-ws');
     expect(seen).toEqual(['ws:/ws']);
+
+    const execPaths = ['/api/exec/ws', '/n/self/api/exec/ws', `/n/${'ab'.repeat(16)}/api/exec/ws`];
+    for (const path of execPaths) {
+      seen.length = 0;
+      const exec = await assembled.fetch(new Request(`http://127.0.0.1${path}`), server);
+      expect(await exec?.text()).toBe('blocked-ws');
+      expect(seen).toEqual([`ws:${path}`]);
+    }
   });
 
   test('local gateway responses get the session-renewed header from attached auth', async () => {
