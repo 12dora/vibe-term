@@ -2363,6 +2363,52 @@
             "maxBelowBase": "初回ロック時間より短くできません。",
             "invalid": "設定が無効です。"
           }
+        },
+        "tokens": {
+          "title": "アクセストークン",
+          "description": "CLI ツールやスクリプトからこのノードにアクセスするためのものです（vibeterm exec、cp、forward など）。",
+          "create": "トークンを作成",
+          "empty": "アクセストークンはありません。",
+          "loadFailed": "アクセストークンを読み込めませんでした：{{error}}",
+          "createdAt": "{{date}} に作成",
+          "lastUsed": "最終使用 {{time}}",
+          "neverUsed": "未使用",
+          "expiresAt": "{{date}} に期限切れ",
+          "neverExpires": "無期限",
+          "expired": "期限切れ",
+          "revoke": "取り消す",
+          "revokeTitle": "アクセストークンを取り消す",
+          "revokeBody": "「{{name}}」を取り消すと、これを使うコマンドはただちに使えなくなります。",
+          "scope": {
+            "exec": "実行",
+            "files": "ファイル",
+            "forward": "ポート転送"
+          },
+          "expiry": {
+            "d30": "30 日",
+            "d90": "90 日",
+            "d365": "1 年",
+            "never": "無期限"
+          },
+          "form": {
+            "title": "アクセストークンを作成",
+            "name": "名前",
+            "namePlaceholder": "例：CI デプロイ",
+            "nameRequired": "名前を入力してください。",
+            "nameTooLong": "名前は {{max}} 文字以内にしてください。",
+            "scopes": "権限",
+            "scopeRequired": "権限を 1 つ以上選んでください。",
+            "expiry": "有効期間",
+            "submit": "作成"
+          },
+          "created": {
+            "title": "トークンを作成しました",
+            "note": "今すぐコピーしてください。閉じると再表示できません。",
+            "done": "完了"
+          },
+          "errors": {
+            "limit": "トークン数が上限（{{max}}）に達しています。"
+          }
         }
       },
       "credential": {

@@ -1599,6 +1599,52 @@
             "maxBelowBase": "不能短于首次锁定时长。",
             "invalid": "设置无效。"
           }
+        },
+        "tokens": {
+          "title": "访问令牌",
+          "description": "供命令行工具和脚本访问本节点，如 vibeterm exec、cp、forward。",
+          "create": "创建令牌",
+          "empty": "暂无访问令牌。",
+          "loadFailed": "访问令牌加载失败：{{error}}",
+          "createdAt": "创建于 {{date}}",
+          "lastUsed": "最近使用 {{time}}",
+          "neverUsed": "从未使用",
+          "expiresAt": "{{date}} 过期",
+          "neverExpires": "永不过期",
+          "expired": "已过期",
+          "revoke": "撤销",
+          "revokeTitle": "撤销访问令牌",
+          "revokeBody": "撤销「{{name}}」后，使用它的命令将立即失效。",
+          "scope": {
+            "exec": "执行",
+            "files": "文件",
+            "forward": "端口转发"
+          },
+          "expiry": {
+            "d30": "30 天",
+            "d90": "90 天",
+            "d365": "1 年",
+            "never": "永不过期"
+          },
+          "form": {
+            "title": "创建访问令牌",
+            "name": "名称",
+            "namePlaceholder": "例如：CI 部署",
+            "nameRequired": "请输入名称。",
+            "nameTooLong": "名称不能超过 {{max}} 个字符。",
+            "scopes": "权限",
+            "scopeRequired": "请至少选择一项权限。",
+            "expiry": "有效期",
+            "submit": "创建"
+          },
+          "created": {
+            "title": "令牌已创建",
+            "note": "请立即复制，关闭后将无法再次查看。",
+            "done": "完成"
+          },
+          "errors": {
+            "limit": "令牌数量已达上限（{{max}}）"
+          }
         }
       }
     },

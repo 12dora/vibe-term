@@ -2374,6 +2374,52 @@ export const I18N_RESOURCES = {
             "maxBelowBase": "Must not be shorter than the first IP lock.",
             "invalid": "Invalid settings."
           }
+        },
+        "tokens": {
+          "title": "Access tokens",
+          "description": "Let CLI tools and scripts access this node, e.g. vibeterm exec, cp and forward.",
+          "create": "Create token",
+          "empty": "No access tokens.",
+          "loadFailed": "Couldn't load access tokens: {{error}}",
+          "createdAt": "Created {{date}}",
+          "lastUsed": "Last used {{time}}",
+          "neverUsed": "Never used",
+          "expiresAt": "Expires {{date}}",
+          "neverExpires": "Never expires",
+          "expired": "Expired",
+          "revoke": "Revoke",
+          "revokeTitle": "Revoke access token",
+          "revokeBody": "Commands using “{{name}}” will stop working immediately.",
+          "scope": {
+            "exec": "Exec",
+            "files": "Files",
+            "forward": "Port forwarding"
+          },
+          "expiry": {
+            "d30": "30 days",
+            "d90": "90 days",
+            "d365": "1 year",
+            "never": "Never"
+          },
+          "form": {
+            "title": "Create access token",
+            "name": "Name",
+            "namePlaceholder": "e.g. CI deploy",
+            "nameRequired": "Enter a name.",
+            "nameTooLong": "Name must be {{max}} characters or fewer.",
+            "scopes": "Permissions",
+            "scopeRequired": "Select at least one permission.",
+            "expiry": "Expiration",
+            "submit": "Create"
+          },
+          "created": {
+            "title": "Token created",
+            "note": "Copy it now. You won't be able to see it again.",
+            "done": "Done"
+          },
+          "errors": {
+            "limit": "Token limit reached ({{max}})."
+          }
         }
       },
       "credential": {
@@ -6394,6 +6440,52 @@ export const I18N_RESOURCES = {
             "maxBelowBase": "不能短于首次锁定时长。",
             "invalid": "设置无效。"
           }
+        },
+        "tokens": {
+          "title": "访问令牌",
+          "description": "供命令行工具和脚本访问本节点，如 vibeterm exec、cp、forward。",
+          "create": "创建令牌",
+          "empty": "暂无访问令牌。",
+          "loadFailed": "访问令牌加载失败：{{error}}",
+          "createdAt": "创建于 {{date}}",
+          "lastUsed": "最近使用 {{time}}",
+          "neverUsed": "从未使用",
+          "expiresAt": "{{date}} 过期",
+          "neverExpires": "永不过期",
+          "expired": "已过期",
+          "revoke": "撤销",
+          "revokeTitle": "撤销访问令牌",
+          "revokeBody": "撤销「{{name}}」后，使用它的命令将立即失效。",
+          "scope": {
+            "exec": "执行",
+            "files": "文件",
+            "forward": "端口转发"
+          },
+          "expiry": {
+            "d30": "30 天",
+            "d90": "90 天",
+            "d365": "1 年",
+            "never": "永不过期"
+          },
+          "form": {
+            "title": "创建访问令牌",
+            "name": "名称",
+            "namePlaceholder": "例如：CI 部署",
+            "nameRequired": "请输入名称。",
+            "nameTooLong": "名称不能超过 {{max}} 个字符。",
+            "scopes": "权限",
+            "scopeRequired": "请至少选择一项权限。",
+            "expiry": "有效期",
+            "submit": "创建"
+          },
+          "created": {
+            "title": "令牌已创建",
+            "note": "请立即复制，关闭后将无法再次查看。",
+            "done": "完成"
+          },
+          "errors": {
+            "limit": "令牌数量已达上限（{{max}}）"
+          }
         }
       },
       "credential": {
@@ -10404,6 +10496,52 @@ export const I18N_RESOURCES = {
             "integer": "整数を入力してください。",
             "maxBelowBase": "初回ロック時間より短くできません。",
             "invalid": "設定が無効です。"
+          }
+        },
+        "tokens": {
+          "title": "アクセストークン",
+          "description": "CLI ツールやスクリプトからこのノードにアクセスするためのものです（vibeterm exec、cp、forward など）。",
+          "create": "トークンを作成",
+          "empty": "アクセストークンはありません。",
+          "loadFailed": "アクセストークンを読み込めませんでした：{{error}}",
+          "createdAt": "{{date}} に作成",
+          "lastUsed": "最終使用 {{time}}",
+          "neverUsed": "未使用",
+          "expiresAt": "{{date}} に期限切れ",
+          "neverExpires": "無期限",
+          "expired": "期限切れ",
+          "revoke": "取り消す",
+          "revokeTitle": "アクセストークンを取り消す",
+          "revokeBody": "「{{name}}」を取り消すと、これを使うコマンドはただちに使えなくなります。",
+          "scope": {
+            "exec": "実行",
+            "files": "ファイル",
+            "forward": "ポート転送"
+          },
+          "expiry": {
+            "d30": "30 日",
+            "d90": "90 日",
+            "d365": "1 年",
+            "never": "無期限"
+          },
+          "form": {
+            "title": "アクセストークンを作成",
+            "name": "名前",
+            "namePlaceholder": "例：CI デプロイ",
+            "nameRequired": "名前を入力してください。",
+            "nameTooLong": "名前は {{max}} 文字以内にしてください。",
+            "scopes": "権限",
+            "scopeRequired": "権限を 1 つ以上選んでください。",
+            "expiry": "有効期間",
+            "submit": "作成"
+          },
+          "created": {
+            "title": "トークンを作成しました",
+            "note": "今すぐコピーしてください。閉じると再表示できません。",
+            "done": "完了"
+          },
+          "errors": {
+            "limit": "トークン数が上限（{{max}}）に達しています。"
           }
         }
       },
