@@ -222,14 +222,15 @@ describe('fetchLatestGithubRelease / requireLatestUpgradeRelease', () => {
 });
 
 describe('requirePublishedUpgradeRelease', () => {
-  test('returns the tagged release when SHA256SUMS lists the tarball', async () => {
+  test('returns the tagged release when SHA256SUMS lists the tarball, without fetching notes', async () => {
     mockRoutes(releaseRoutes('1.2.3', 'notes'));
     await expect(requirePublishedUpgradeRelease('1.2.3')).resolves.toEqual({
       latestVersion: '1.2.3',
-      changelog: 'notes',
+      changelog: null,
       publishedAt: LAST_MODIFIED_ISO,
     });
     expect(captures.map((c) => c.url)).toContain(releaseSumsUrl('1.2.3'));
+    expect(hits(releaseChangelogUrl('1.2.3'))).toBe(0);
     expect(hits(RELEASE_LATEST_URL)).toBe(0);
   });
 

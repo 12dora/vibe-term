@@ -143,10 +143,13 @@ async function fetchReleaseChangelog(version: string): Promise<string | null> {
 }
 
 /** 指定版本的发行信息；SHA256SUMS 404 抛 ReleaseNotFoundError，其余失败抛 ReleaseUnavailableError。 */
-export async function lookupRelease(version: string): Promise<LatestGithubRelease> {
+export async function lookupRelease(
+  version: string,
+  options: { changelog?: boolean } = {}
+): Promise<LatestGithubRelease> {
   const [sums, changelog] = await Promise.all([
     fetchReleaseSums(version),
-    fetchReleaseChangelog(version),
+    options.changelog === false ? null : fetchReleaseChangelog(version),
   ]);
   return { latestVersion: version, changelog, ...sums };
 }

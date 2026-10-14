@@ -14,7 +14,7 @@ export type { LatestGithubRelease };
 
 /** latest 指向的版本发布后基本不变；更新提示晚几分钟无妨，换来对 GitHub 的低频访问。 */
 const LATEST_RELEASE_TTL_MS = 10 * 60_000;
-/** latest 已发 tag 但资产还没传完（发版窗口期）：短缓存，尽快看到可升级。 */
+/** latest 已发 tag 但资产还没传完（发版窗口期）或更新日志没取到：短缓存，尽快补齐。 */
 const LATEST_PENDING_TTL_MS = 60_000;
 /** 指定版本的发行不可变，成功结果长缓存。 */
 const PUBLISHED_RELEASE_TTL_MS = 60 * 60_000;
@@ -27,7 +27,10 @@ function failureTtlMs(err: unknown): number {
 }
 
 const latestLookup = new TtlLookup<LatestGithubRelease>({
-  successTtlMs: (release) => (release.hasTarball ? LATEST_RELEASE_TTL_MS : LATEST_PENDING_TTL_MS),
+  successTtlMs: (release) =>
+    release.hasTarball && release.changelog !== null
+      ? LATEST_RELEASE_TTL_MS
+      : LATEST_PENDING_TTL_MS,
   failureTtlMs,
 });
 
@@ -73,9 +76,9 @@ export async function fetchLatestGithubRelease(): Promise<LatestGithubRelease> {
   return await latestLookup.get('latest', lookupLatestRelease);
 }
 
-/** 指定 tag 的发行；SHA256SUMS 404 视为未发布（ReleaseNotFoundError）。 */
+/** 指定 tag 的发行（只用于确认可升级，不取更新日志）；SHA256SUMS 404 视为未发布。 */
 export async function fetchPublishedGithubRelease(version: string): Promise<LatestGithubRelease> {
-  return await publishedLookup.get(version, () => lookupRelease(version));
+  return await publishedLookup.get(version, () => lookupRelease(version, { changelog: false }));
 }
 
 export type UpgradeRelease = {
