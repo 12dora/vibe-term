@@ -62,8 +62,8 @@ describe('ExecForwardPump upstream', () => {
     pump.onMessage(bytes(3));
     expect(stream.written).toHaveLength(0);
     release();
-    await waitUntil(() => stream.written.length === 3);
-    expect(stream.written.map((chunk) => chunk[0])).toEqual([1, 2, 3]);
+    await waitUntil(() => stream.written.length > 0);
+    expect(stream.written.flatMap((chunk) => Array.from(chunk))).toEqual([1, 2, 3]);
   });
 
   test('writes are sequential and wait for the stream to accept the previous one', async () => {

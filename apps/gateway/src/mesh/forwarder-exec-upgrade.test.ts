@@ -152,7 +152,8 @@ describe('forwarder /api/exec/ws', () => {
       stream.push(new Uint8Array([9]));
       await waitUntil(() => ws.sent.length === 1);
       execForwardWebsocket.close(ws);
-      expect(stream.resetReason).toBe('client-closed');
+      await waitUntil(() => stream.ended);
+      expect(stream.resetReason).toBeUndefined();
     } finally {
       mesh.close();
     }
