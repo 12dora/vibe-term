@@ -30,6 +30,19 @@ export class ExecChannelUnsupportedError extends CliError {
   }
 }
 
+/** 本地 stdout / stderr 已关闭（EPIPE，如 `| head`）：远端已收到 CLOSE{kill:true}，调用方应静默退出。 */
+export class LocalOutputClosedError extends CliError {
+  constructor() {
+    super('local output closed');
+    this.name = 'LocalOutputClosedError';
+  }
+}
+
+export function isBrokenPipe(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED';
+}
+
 export const SESSION_ENDED_MESSAGE = 'connection lost and the remote session has ended';
 
 export function errorFromFrame(payload: ExecErrorPayload): CliError {
@@ -43,9 +56,11 @@ export function errorFromFrame(payload: ExecErrorPayload): CliError {
       return new PermissionError(message, 'forbidden');
     case 'session_not_found':
     case 'resume_gap':
-      return new NetworkError(SESSION_ENDED_MESSAGE);
-    default:
+      return new NotFoundError(SESSION_ENDED_MESSAGE);
+    case 'protocol_error':
       return new NetworkError(message);
+    default:
+      return new CliError(message);
   }
 }
 

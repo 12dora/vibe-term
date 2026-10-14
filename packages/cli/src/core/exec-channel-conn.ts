@@ -8,6 +8,7 @@ import {
   EC_PING_MS,
   type EcFrame,
   EcKind,
+  EcProtocolError,
   type ExecHello,
   type ExecReady,
   FrameDecoder,
@@ -48,6 +49,11 @@ export interface ConnHandlers {
 }
 
 const EMPTY = new Uint8Array(0);
+
+function normalizeError(error: unknown): unknown {
+  if (!(error instanceof EcProtocolError)) return error;
+  return new NetworkError(`exec channel protocol error: ${errorText(error)}`);
+}
 const FINISH_GRACE_MS = 2000;
 
 export class ExecConnection {
@@ -57,7 +63,7 @@ export class ExecConnection {
   private outcome: ConnEnd | null = null;
   private resolveSettled: (end: ConnEnd) => void = () => {};
   private readonly decoder = new FrameDecoder();
-  private readonly queue = new OrderedQueue((error) => this.fail(error));
+  private readonly queue = new OrderedQueue((error) => this.fail(normalizeError(error)));
   private lastRecv = Date.now();
   private lastSend = Date.now();
   private readonly timer: ReturnType<typeof setInterval>;
@@ -91,6 +97,10 @@ export class ExecConnection {
 
   sendJson(kind: number, body: unknown): boolean {
     return this.write(() => encodeJsonFrame(kind, body));
+  }
+
+  get isOpen(): boolean {
+    return this.opened && this.outcome === null;
   }
 
   /** 客户端主动收尾（已收到 EXIT / 二次信号）：优雅关闭，不再等对端回应。 */

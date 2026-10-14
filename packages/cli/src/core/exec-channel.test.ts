@@ -11,8 +11,19 @@ import {
   type ExecReady,
   encodeJsonFrame,
 } from '@vibeterm/shared/exec-channel';
-import { AuthError, NetworkError, NotFoundError, PermissionError, UsageError } from './errors';
-import { ExecChannelUnsupportedError, runExecChannel } from './exec-channel';
+import {
+  AuthError,
+  CliError,
+  NetworkError,
+  NotFoundError,
+  PermissionError,
+  UsageError,
+} from './errors';
+import {
+  ExecChannelUnsupportedError,
+  LocalOutputClosedError,
+  runExecChannel,
+} from './exec-channel';
 import {
   DEVICE,
   EXIT_OK,
@@ -169,6 +180,44 @@ describe('stdin flow control', () => {
   });
 });
 
+describe('stdin window with oversized chunks', () => {
+  test('a single chunk larger than the window is sent only as credit arrives', async () => {
+    const { ctx } = await testCtx();
+    const window = 128 * 1024;
+    const data = Buffer.alloc(700 * 1024);
+    for (let i = 0; i < data.length; i += 1) data[i] = (i * 13 + 5) & 255;
+    let received = 0;
+    let acked = 0;
+    let maxOutstanding = 0;
+    const link = fakeLink((conn) => {
+      conn.onFrame = (frame) => {
+        if (frame.kind === EcKind.HELLO) {
+          conn.sendJson(EcKind.READY, readyOf({ window: { stdin: window, out: window } }));
+        } else if (frame.kind === EcKind.STDIN) {
+          received += frame.payload.byteLength;
+          maxOutstanding = Math.max(maxOutstanding, received - acked);
+          setTimeout(() => {
+            acked = received;
+            conn.sendJson(EcKind.STDIN_ACK, { stdin: acked });
+          }, 3);
+        } else if (frame.kind === EcKind.STDIN_EOF) {
+          conn.sendJson(EcKind.EXIT, EXIT_OK);
+        }
+      };
+    });
+    const { io } = collectIo({ stdin: Readable.from([data]) });
+    const result = await runExecChannel(ctx, 'self', { ...SPEC, stdin: true }, io, {
+      connect: link.connect,
+      timing: FAST,
+    });
+    expect(result.exitCode).toBe(0);
+    const conn = link.conns[0] as ServerConn;
+    expect(Buffer.from(conn.bytes(EcKind.STDIN)).equals(data)).toBe(true);
+    expect(maxOutstanding).toBeLessThanOrEqual(window);
+    expect(maxOutstanding).toBeGreaterThan(EC_CHUNK_BYTES);
+  });
+});
+
 describe('ACK cadence', () => {
   test('acks at 256 KiB or after the delay, and only for frames already written', async () => {
     const { ctx } = await testCtx();
@@ -217,16 +266,18 @@ describe('ACK cadence', () => {
 });
 
 describe('error mapping', () => {
-  const cases: Array<[ExecChannelErrorCode, new (...args: never[]) => Error]> = [
-    ['device_not_found', NotFoundError],
-    ['invalid_request', UsageError],
-    ['forbidden', PermissionError],
-    ['exec_unsupported_device', NetworkError],
-    ['exec_spawn_failed', NetworkError],
-    ['pty_unsupported', NetworkError],
-    ['session_limit', NetworkError],
+  const cases: Array<[ExecChannelErrorCode, new (...args: never[]) => Error, number]> = [
+    ['device_not_found', NotFoundError, 4],
+    ['invalid_request', UsageError, 2],
+    ['forbidden', PermissionError, 1],
+    ['exec_unsupported_device', CliError, 1],
+    ['exec_spawn_failed', CliError, 1],
+    ['pty_unsupported', CliError, 1],
+    ['session_limit', CliError, 1],
+    ['session_not_found', NotFoundError, 4],
+    ['protocol_error', NetworkError, 5],
   ];
-  for (const [code, errorClass] of cases) {
+  for (const [code, errorClass, exitCode] of cases) {
     test(`ERROR ${code} maps to ${errorClass.name}`, async () => {
       const { ctx } = await testCtx();
       const link = fakeLink((conn) =>
@@ -241,7 +292,10 @@ describe('error mapping', () => {
         timing: FAST,
       }).catch((err) => err);
       expect(error).toBeInstanceOf(errorClass);
-      expect((error as Error).message).toBe(`server says ${code}`);
+      expect((error as CliError).exitCode).toBe(exitCode);
+      if (code !== 'session_not_found') {
+        expect((error as Error).message).toBe(`server says ${code}`);
+      }
       expect(link.conns).toHaveLength(1);
     });
   }
@@ -262,6 +316,46 @@ describe('error mapping', () => {
     }).catch((err) => err);
     expect(error).toBeInstanceOf(NetworkError);
     expect(writes).toHaveLength(1);
+  });
+
+  test('malformed EXIT JSON becomes a NetworkError', async () => {
+    const { ctx } = await testCtx();
+    const link = fakeLink((conn) =>
+      onHello(conn, () => {
+        conn.sendJson(EcKind.READY, readyOf());
+        conn.send(EcKind.EXIT, textBytes('not json'));
+      })
+    );
+    const { io } = collectIo();
+    const error = await runExecChannel(ctx, 'self', SPEC, io, {
+      connect: link.connect,
+      timing: FAST,
+    }).catch((err) => err);
+    expect(error).toBeInstanceOf(NetworkError);
+    expect((error as Error).message).toContain('protocol error');
+  });
+
+  test('EPIPE from the local writer kills the session (LocalOutputClosedError)', async () => {
+    const { ctx } = await testCtx();
+    const link = fakeLink((conn) =>
+      onHello(conn, () => {
+        conn.sendJson(EcKind.READY, readyOf());
+        conn.send(EcKind.STDOUT, textBytes('x'));
+      })
+    );
+    const { io } = collectIo({
+      stdout: () => {
+        throw Object.assign(new Error('write EPIPE'), { code: 'EPIPE' });
+      },
+    });
+    const error = await runExecChannel(ctx, 'self', SPEC, io, {
+      connect: link.connect,
+      timing: FAST,
+    }).catch((err) => err);
+    expect(error).toBeInstanceOf(LocalOutputClosedError);
+    const conn = link.conns[0] as ServerConn;
+    await waitFor(() => conn.has(EcKind.CLOSE));
+    expect(conn.json(EcKind.CLOSE)).toEqual([{ kill: true }]);
   });
 
   const closes: Array<[number, new (...args: never[]) => Error]> = [

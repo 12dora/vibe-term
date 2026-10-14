@@ -111,13 +111,16 @@ function toBytes(chunk: unknown): Uint8Array {
 
 /**
  * stdin 发送：读本地流 → outbox（保留未确认字节）→ STDIN 帧。
- * 未确认字节逼近窗口时 pause 本地流，STDIN_ACK 释放后 resume；链路断开期间只入 outbox，
- * 重连后由 `resend` 从服务端已接收的偏移补发。
+ * 上线（已写出）的字节永远不超过 `acked + window`：超出部分留在 outbox，等 STDIN_ACK 再发；
+ * 未确认字节逼近窗口时同时 pause 本地流。链路断开期间只入 outbox，重连后由 `resend`
+ * 从服务端已接收的偏移补发。
  */
 export class StdinPump {
   private readonly outbox = new StdinOutbox();
   private ended = false;
+  private eofSent = false;
   private paused = false;
+  private wire = 0;
   private windowBytes = EC_WINDOW_BYTES;
   private readonly onData = (chunk: unknown) => this.handleData(toBytes(chunk));
   private readonly onEnd = () => this.handleEnd();
@@ -148,16 +151,17 @@ export class StdinPump {
 
   ack(offset: number): void {
     this.outbox.ack(offset);
+    this.pump();
     this.updateFlow();
   }
 
   /** 重连后按服务端已接收偏移补发；偏移不可信（超出已发送范围 / 已被丢弃）返回 false。 */
   resend(stdinOffset: number, stdinClosed: boolean): boolean {
     if (!this.outbox.ack(stdinOffset)) return false;
-    const pending = this.outbox.pendingFrom(stdinOffset);
-    if (!pending) return false;
-    for (const chunk of pending) this.send(EcKind.STDIN, chunk);
-    if (this.ended && !stdinClosed) this.send(EcKind.STDIN_EOF, new Uint8Array(0));
+    if (!this.outbox.pendingFrom(stdinOffset)) return false;
+    this.wire = stdinOffset;
+    this.eofSent = stdinClosed;
+    this.pump();
     this.updateFlow();
     return true;
   }
@@ -165,19 +169,38 @@ export class StdinPump {
   private handleData(bytes: Uint8Array): void {
     if (bytes.byteLength === 0) return;
     this.outbox.push(bytes);
-    for (let pos = 0; pos < bytes.byteLength; pos += EC_CHUNK_BYTES) {
-      this.send(EcKind.STDIN, bytes.subarray(pos, pos + EC_CHUNK_BYTES));
-    }
+    this.pump();
     this.updateFlow();
   }
 
   private handleEnd(): void {
     if (this.ended) return;
     this.ended = true;
-    this.send(EcKind.STDIN_EOF, new Uint8Array(0));
+    this.pump();
   }
 
-  /** 单个数据块可能比窗口余量大，所以提前一个块长停读，保证未确认字节不越过窗口。 */
+  /** 把 outbox 里允许上线的部分发出去；链路不通时 send 返回 false，偏移不前进。 */
+  private pump(): void {
+    this.wire = Math.max(this.wire, this.outbox.acked);
+    const allowed = Math.min(this.outbox.sent, this.outbox.acked + this.windowBytes);
+    if (allowed > this.wire) this.sendRange(allowed - this.wire);
+    if (this.ended && !this.eofSent && this.wire === this.outbox.sent) {
+      this.eofSent = this.send(EcKind.STDIN_EOF, new Uint8Array(0));
+    }
+  }
+
+  private sendRange(budget: number): void {
+    let left = budget;
+    for (const chunk of this.outbox.pendingFrom(this.wire) ?? []) {
+      if (left <= 0) return;
+      const piece = chunk.byteLength <= left ? chunk : chunk.subarray(0, left);
+      if (!this.send(EcKind.STDIN, piece)) return;
+      this.wire += piece.byteLength;
+      left -= piece.byteLength;
+    }
+  }
+
+  /** 单个数据块可能比窗口余量大，所以提前一个块长停读，尽量让 outbox 不越过窗口。 */
   private updateFlow(): void {
     if (this.ended) return;
     const limit = Math.max(1, this.windowBytes - EC_CHUNK_BYTES);

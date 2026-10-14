@@ -16,7 +16,7 @@ import {
   decodeJson,
 } from '@vibeterm/shared/exec-channel';
 import type { CliContext } from './context';
-import { CliError, NetworkError, errorText } from './errors';
+import { NetworkError, errorText } from './errors';
 import {
   type ConnEnd,
   type ConnHandlers,
@@ -24,30 +24,32 @@ import {
   type ExecChannelTiming,
   ExecConnection,
 } from './exec-channel-conn';
-import { errorFromFrame } from './exec-channel-errors';
+import { LocalOutputClosedError, errorFromFrame, isBrokenPipe } from './exec-channel-errors';
+import { InterruptState, interruptedResult } from './exec-channel-interrupt';
 import { OutputSink, StdinPump } from './exec-channel-io';
 import {
   type ForwardedSignal,
   enterRawMode,
   installSignalHandlers,
-  signalNumber,
   ttySize,
   watchResize,
 } from './exec-channel-pty';
 import type { ExecChannelIo, ExecChannelOptions, ExecChannelResult } from './exec-channel-result';
-import { ReconnectBudget, assertRetryable } from './exec-channel-retry';
+import { ReconnectBudget, Sleeper, assertRetryable } from './exec-channel-retry';
 import {
   type ExecSocketConnect,
   connectWsExecSocket,
   execSocketTarget,
 } from './exec-channel-socket';
 
-export { ExecChannelUnsupportedError } from './exec-channel-errors';
+export { ExecChannelUnsupportedError, LocalOutputClosedError } from './exec-channel-errors';
 export { exitCodeOf } from './exec-channel-result';
 export type { ExecChannelIo, ExecChannelOptions, ExecChannelResult } from './exec-channel-result';
 export type { ExecChannelTiming } from './exec-channel-conn';
 
-const FALLBACK_SIGNO = 2;
+const RESUME_KILL_MS = 3000;
+const READY_KILL_MS = 1500;
+const KILL_RETRY_MS = 100;
 
 export async function runExecChannel(
   ctx: CliContext,
@@ -70,10 +72,9 @@ class ExecChannelRun {
   private ready: ExecReady | null = null;
   private stdin: StdinPump | null = null;
   private result: ExecChannelResult | null = null;
-  private interrupt: ForwardedSignal | null = null;
-  private signalCount = 0;
+  private readonly intr: InterruptState;
   private readonly budget: ReconnectBudget;
-  private wake: (() => void) | null = null;
+  private readonly sleeper = new Sleeper();
 
   constructor(
     private readonly ctx: CliContext,
@@ -84,6 +85,7 @@ class ExecChannelRun {
   ) {
     this.timing = { ...DEFAULT_TIMING, ...opts.timing };
     this.connect = opts.connect ?? connectWsExecSocket;
+    this.intr = new InterruptState(Boolean(spec.pty));
     this.budget = new ReconnectBudget(
       spec.detachGraceMs ?? EC_DEFAULT_DETACH_GRACE_MS,
       this.timing.backoffMs
@@ -106,6 +108,7 @@ class ExecChannelRun {
   }
 
   private dispose(): void {
+    this.intr.disarm();
     this.conn?.abort();
     this.sink.dispose();
     this.stdin?.stop();
@@ -115,17 +118,24 @@ class ExecChannelRun {
   private async loop(): Promise<ExecChannelResult> {
     for (;;) {
       const end = await this.attempt();
-      if (this.interrupt) return this.interruptedResult(this.interrupt);
+      const signal = this.intr.signal;
+      if (signal && this.intr.shouldStop(end.kind, this.ready !== null)) {
+        return interruptedResult(signal, this.ready, this.startedAt);
+      }
       if (end.kind === 'done' && this.result) return this.result;
       if (end.kind === 'fatal') throw end.error;
       if (end.kind !== 'lost') throw new NetworkError('exec channel closed unexpectedly');
+      if (this.intr.killPending) {
+        await this.sleeper.sleep(KILL_RETRY_MS);
+        continue;
+      }
       assertRetryable(this.nodeId, end, this.ready !== null);
       await this.backoff();
     }
   }
 
   private async attempt(): Promise<ConnEnd> {
-    if (this.interrupt) return { kind: 'aborted' };
+    if (this.intr.signal && !this.intr.killPending) return { kind: 'aborted' };
     let conn: ExecConnection;
     try {
       const socket = this.connect(execSocketTarget(this.ctx, this.nodeId));
@@ -156,22 +166,14 @@ class ExecChannelRun {
     if (this.opts.verbose) {
       this.ctx.out.warn(`connection lost, reconnecting (attempt ${this.budget.attempt})`);
     }
-    await this.sleep(delay);
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      this.wake = () => {
-        clearTimeout(timer);
-        resolve();
-      };
-    }).finally(() => {
-      this.wake = null;
-    });
+    await this.sleeper.sleep(delay);
   }
 
   private onReady(ready: ExecReady): void {
+    if (this.intr.killPending) {
+      this.killOnReady(ready);
+      return;
+    }
     const resuming = this.ready !== null;
     if (resuming && (!ready.resumed || ready.out !== this.sink.offset)) {
       throw new NetworkError('exec channel resume was rejected by the node');
@@ -228,7 +230,7 @@ class ExecChannelRun {
       await this.sink.write(frame.kind, frame.payload);
     } catch (error) {
       this.conn?.sendJson(EcKind.CLOSE, { kill: true });
-      throw error;
+      throw isBrokenPipe(error) ? new LocalOutputClosedError() : error;
     }
   }
 
@@ -248,31 +250,43 @@ class ExecChannelRun {
   }
 
   private onSignal(signal: ForwardedSignal): void {
-    this.signalCount += 1;
-    if (this.ready && this.signalCount === 1) {
+    if (this.intr.press(signal, this.ready !== null) === 'forward') {
       if (!this.sendLiveJson(EcKind.SIGNAL, { signal })) this.pendingSignals.push(signal);
       return;
     }
-    this.interrupt = signal;
-    if (this.ready) {
-      this.conn?.sendJson(EcKind.CLOSE, { kill: true });
-      this.conn?.finish(true);
-    } else {
-      this.conn?.abort();
-    }
-    this.wake?.();
+    this.beginKill();
   }
 
-  private interruptedResult(signal: ForwardedSignal): ExecChannelResult {
-    if (!this.ready) {
-      throw new CliError('interrupted', 128 + (signalNumber(signal) ?? FALLBACK_SIGNO));
+  /** 结束会话：链路通则立即 CLOSE{kill:true}；链路不通则限时重连 / 等 READY 后投递。 */
+  private beginKill(): void {
+    if (this.intr.killPending) {
+      this.giveUpKill();
+      return;
     }
-    return {
-      exitCode: null,
-      signal,
-      reason: 'killed',
-      durationMs: Date.now() - this.startedAt,
-      device: this.ready.device,
-    };
+    const conn = this.conn;
+    if (conn?.live) {
+      this.sendKill(conn);
+    } else if (this.ready || conn?.isOpen) {
+      this.intr.arm(this.ready ? RESUME_KILL_MS : READY_KILL_MS, () => this.giveUpKill());
+    } else {
+      conn?.abort();
+    }
+    this.sleeper.wake();
+  }
+
+  private killOnReady(ready: ExecReady): void {
+    this.ready ??= ready;
+    if (this.conn) this.sendKill(this.conn);
+  }
+
+  private sendKill(conn: ExecConnection): void {
+    conn.sendJson(EcKind.CLOSE, { kill: true });
+    conn.finish(true);
+  }
+
+  private giveUpKill(): void {
+    this.intr.disarm();
+    this.conn?.abort();
+    this.sleeper.wake();
   }
 }
