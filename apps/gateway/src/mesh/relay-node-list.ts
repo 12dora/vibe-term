@@ -127,6 +127,15 @@ function notifyCachedCapability(
   }
 }
 
+function relayLastSeenAt(
+  online: boolean,
+  existing: { lastSeenAt: number | null } | null | undefined,
+  now: number
+): number | null {
+  if (online) return now;
+  return existing?.lastSeenAt ?? null;
+}
+
 function cacheAdmittedRelayNode(
   node: Extract<RelayCtlMessage, { t: 'relay.list' }>['nodes'][number],
   blob: RelayStatusBlob,
@@ -150,7 +159,7 @@ function cacheAdmittedRelayNode(
     endpointsJson: jsonText(blob.endpoints),
     inventoryJson: keepCaps ? existing.inventoryJson : inventoryJson,
     directCapable: keepCaps ? existing.directCapable : blob.direct_capable,
-    lastSeenAt: node.online ? ctx.now : (existing?.lastSeenAt ?? null),
+    lastSeenAt: relayLastSeenAt(node.online, existing, ctx.now),
     listVersion,
     version: keepCaps ? existing.version : version,
   });
