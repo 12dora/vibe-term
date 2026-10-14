@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { type WriteStream, chmodSync, closeSync, createWriteStream, openSync } from 'node:fs';
 import { type FlagValues, flagString } from '../core/args';
 import { UsageError } from '../core/errors';
+import { concatTail, decodeUtf8Tail } from '../core/exec-client';
 
 export type FileSink = {
   path: string;
@@ -83,4 +84,47 @@ export async function closeExecFiles(files: ExecFiles): Promise<unknown> {
   await closeSink(files.stdout).catch(take);
   await closeSink(files.stderr).catch(take);
   return first;
+}
+
+export type CollectOptions = {
+  /** false：这一路输出去了文件，不在内存里留副本。 */
+  inline: boolean;
+  /** 内联部分的字节上限，超出丢弃并标记 truncated。 */
+  maxBytes: number;
+  /** 只保留最后 N 字节（在 maxBytes 之后生效）。 */
+  tailBytes?: number;
+};
+
+/** `--json` 收集模式：一路输出的内联副本 + 总字节数。 */
+export class StreamCollector {
+  bytes = 0;
+  truncated = false;
+  private kept = 0;
+  private readonly chunks: Uint8Array[] = [];
+  private tail: Uint8Array = new Uint8Array(0);
+
+  constructor(private readonly options: CollectOptions) {}
+
+  push(chunk: Uint8Array): void {
+    this.bytes += chunk.byteLength;
+    if (!this.options.inline) return;
+    const room = Math.max(0, this.options.maxBytes - this.kept);
+    if (chunk.byteLength > room) this.truncated = true;
+    const piece = Uint8Array.from(chunk.subarray(0, room));
+    if (piece.byteLength === 0) return;
+    this.kept += piece.byteLength;
+    const limit = this.options.tailBytes;
+    if (limit === undefined) {
+      this.chunks.push(piece);
+      return;
+    }
+    const next = concatTail(this.tail, piece, limit);
+    this.tail = next.bytes;
+    if (next.dropped) this.truncated = true;
+  }
+
+  text(): string {
+    if (this.options.tailBytes !== undefined) return decodeUtf8Tail(this.tail);
+    return Buffer.concat(this.chunks).toString('utf8');
+  }
 }

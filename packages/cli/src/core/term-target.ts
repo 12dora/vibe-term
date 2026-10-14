@@ -55,7 +55,8 @@ async function deviceNotFoundOnNode(
 /** 解析目标里的 node 与 device（只打 REST，不建 WS）。`--node` 只在目标没写 node 时生效。 */
 export async function resolveTargetDevice(
   ctx: CliContext,
-  raw: string
+  raw: string,
+  options: { notice?: boolean } = {}
 ): Promise<ResolvedTargetDevice> {
   const target = parseTarget(raw);
   const node = await ctx.resolver.resolveNode(target.node ?? ctx.globals.node);
@@ -68,7 +69,9 @@ export async function resolveTargetDevice(
     if (error instanceof NotFoundError && !target.node && !ctx.globals.node) {
       const fallback = await ctx.resolver.resolveNodeLocalDevice(target.device);
       if (fallback) {
-        ctx.out.info(`using device ${fallback.device.name} on node ${fallback.node.name}`);
+        if (options.notice !== false) {
+          ctx.out.info(`using device ${fallback.device.name} on node ${fallback.node.name}`);
+        }
         return {
           target: { ...target, node: fallback.node.name, device: fallback.device.name },
           nodeId: fallback.node.id,

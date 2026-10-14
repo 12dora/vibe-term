@@ -1,32 +1,62 @@
-// `vibeterm exec`：在设备上以独立进程跑命令（非交互，真实退出码）。
+// `vibeterm exec`：在设备上跑命令，行为对齐 `ssh host cmd`（原样 stdio、退出码透传、断线续传）。
 
-import { type FlagValues, flagBool, flagNumber, flagString, parseArgv } from '../core/args';
+import type { ExecCommand } from '@vibeterm/shared/exec-channel';
+import {
+  type FlagValues,
+  GLOBAL_FLAGS,
+  flagBool,
+  flagNumber,
+  flagString,
+  flagStrings,
+  parseArgv,
+} from '../core/args';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
+import { type ExecChannelResult, exitCodeOf } from '../core/exec-channel';
 import {
   EXEC_INLINE_HINT_BYTES,
   EXEC_MAX_MAX_BYTES,
   EXEC_MIN_MAX_BYTES,
   EXEC_STREAM_CLOSED,
-  type ExecCollect,
-  type ExecResult,
   ExecStreamClosedError,
-  createExecCollect,
-  execProcessExit,
-  runExecRequest,
 } from '../core/exec-client';
-import { parseTarget } from '../core/resolve';
-import { resolveTargetDevice } from '../core/term-target';
-import { buildExecBody } from './exec-body';
-import { type ExecFiles, closeExecFiles, openExecFiles, writeSink } from './exec-sink';
+import {
+  type RemoteRunOptions,
+  type RemoteRunSinks,
+  type StdinMode,
+  type TtyMode,
+  runRemote,
+} from '../core/remote-run';
+import {
+  type CommandMode,
+  commandFromWords,
+  execTimeoutMs,
+  parseEnvPairs,
+  rewriteExecArgv,
+  scriptCommand,
+} from './exec-body';
+import {
+  type ExecFiles,
+  StreamCollector,
+  closeExecFiles,
+  openExecFiles,
+  writeSink,
+} from './exec-sink';
 import type { Command } from './types';
 
 const FLAGS = {
   cwd: 'string',
   env: 'strings',
   stdin: 'boolean',
-  'stdin-file': 'string',
+  'stdin-file': 'strings',
+  'no-stdin': 'boolean',
   shell: 'boolean',
+  sh: 'boolean',
+  tty: 'boolean',
+  'force-tty': 'boolean',
+  'no-tty': 'boolean',
+  verbose: 'boolean',
+  argv: 'boolean',
   stream: 'boolean',
   script: 'string',
   interpreter: 'string',
@@ -37,166 +67,268 @@ const FLAGS = {
 } as const;
 
 const USAGE = `用法：
-  vibeterm exec [--node <node>] [<node>/]<device> [--cwd <dir>] [--env K=V]...
-                [--stdin | --stdin-file <path> | @<path>] [--timeout <ms>] [--shell]
-                [--script <path>] [--interpreter <bin>] [--max-bytes N] [--tail N]
-                [--stdout-file <path>] [--stderr-file <path>] -- <argv...>
+  vibeterm exec [选项] <目标> [命令 [参数...]]
 
-在设备上以独立进程运行命令（不经过共享 pane）。local 设备走 Bun.spawn，
-ssh 设备走 OpenSSH BatchMode。shell:true 时 argv 只能有一项，经 /bin/sh -c
-执行（不用 bash -lc）。
+在设备上运行命令，用法与 ssh 一致：stdin / stdout / stderr 原样透传（二进制安全、不限大小），
+退出码即远端退出码（信号为 128+n，超时为 124），链路中断后自动重连并续传输出。
 
-  --cwd <dir>            工作目录
-  --env K=V              覆盖环境变量，可重复
-  --stdin                把 stdin 作为进程 stdin
-  --stdin-file <path>    从文件读 stdin
-  @<path>                -- 之前最后一个 token，等价 --stdin-file
-  --script <path>        把文件作为 stdin，argv 默认 /bin/sh -s；与 argv / --shell / --stdin* 互斥
-  --interpreter <bin>    覆盖 --script 的解释器（仍带 -s）
-  --timeout <ms>         只约束远端子进程墙上时钟。只有显式给出时才写入请求体 timeoutMs。
-                         省略则由网关默认 600000（10 分钟），上限 3600000。不控制 HTTP 空闲。
-  --shell                argv 只有一项，交给 /bin/sh -c
-  --max-bytes N          每路输出的服务端上限（1 KiB .. 8 MiB）；超出后 truncated 且子进程继续
-  --tail N               JSON 字段只保留每路最后 N 字节（先应用服务端 --max-bytes）
-  --stdout-file <path>   边收边写入文件；JSON 用 stdoutPath/stdoutBytes，不含内联字符串
-  --stderr-file <path>   同上，对应 stderr
-  --json                 结束后打一个 JSON 对象到 stdout
-  --json --stream        原样转发服务端 NDJSON 事件（含 ping）
+目标：
+  <node>               该节点的默认设备（第一台 local 设备）
+  <node>/<device>      指定节点上的设备（名称或 id）
+  <device>             入口节点上的设备
 
-非 TTY 或缺省 --json：stdout 为一行
-  {exitCode, signal, stdout, stderr, durationMs, truncated, reason}
-reason 为 exit | timeout | error。流在 exit 前断开时 --json 为
-  {ok:false, code:"EXEC_STREAM_CLOSED", reason, elapsedMs, stdoutBytes, stderrBytes}
-  以及（若用了文件）stdoutPath/stderrPath，退出码 5。
-TTY 且未 --json 时 stdout/stderr 按块写回本机对应 fd，CLI 退出码 = 远端退出码
-（timeout → 124；校验/网络错误 → 2/4/3/5）。`;
+命令：
+  （省略）             登录 shell：在终端中为交互会话；stdin 是管道时按脚本执行
+  命令 [参数...]       用空格拼接后交给目标用户的 shell（$SHELL -c），与 ssh 相同
+  -- 命令 [参数...]    精确 argv，不经 shell
+  命令之后的内容（包括 -la 这类）原样属于命令，选项必须写在命令之前。
 
-interface ParsedExecArgs {
+选项：
+  -t, --tty            分配伪终端（-tt 或重复 -t：即使 stdin 不是终端也强制分配）
+  -T, --no-tty         不分配伪终端
+  -n, --no-stdin       不读取 stdin（命令的 stdin 为空）
+  --stdin-file <path>  从文件读 stdin（目标后紧跟 @<path> 等价）
+  --script <path>      把本地脚本作为 stdin 交给解释器（取 shebang，缺省 /bin/sh -s）
+  --interpreter <bin>  覆盖 --script 的解释器（仍带 -s）
+  --sh                 用 /bin/sh -c 代替目标用户的 shell
+  --shell              兼容旧用法：与 --sh 相同；配合 -- 时只接受一项（脚本）
+  --cwd <dir>          工作目录（缺省为用户主目录）
+  --env K=V            设置环境变量，可重复
+  --timeout <ms>       限制命令墙上时钟；缺省不限时
+  --stdout-file <path> 输出写入文件（0600），不再写 stdout
+  --stderr-file <path> 同上，对应 stderr
+  -v, --verbose        显示所选设备与重连提示
+  -q, --quiet          不打印提示与警告
+
+stdin：非终端时自动转发（管道 / 重定向 / heredoc），终端上不读取；伪终端下终端即输入。
+
+JSON 模式：
+  --json               等待结束后输出一个 JSON 对象
+                       {exitCode, signal, stdout, stderr, durationMs, truncated, reason}
+  --max-bytes N        每路内联输出的上限（1 KiB .. 8 MiB，缺省 8 MiB），超出后 truncated
+  --tail N             每路只保留最后 N 字节
+  --json --stream      逐块输出 NDJSON 事件 {type:"stdout"|"stderr", base64} 与 {type:"exit", ...}
+
+示例：
+  vibeterm exec box uname -a
+  vibeterm exec box 'pg_dump -Fc db' > db.dump
+  vibeterm exec box 'tar -C /data -cf - dir' | tar -xf -
+  cat big.tar | vibeterm exec box 'tar -C /srv -xf -'
+  vibeterm exec box 'bash -s' <<'EOF'
+  set -e; hostname
+  EOF
+  vibeterm exec -t box sudo systemctl status app
+  vibeterm exec --json box 'df -h'
+
+需要 ssh 的工具（rsync、git、scp 等）请使用 vibeterm rsh。`;
+
+type ExecArgs = {
   flags: FlagValues;
   target: string;
-  commandArgv: string[];
-  atFile: string | null;
-  maxBytes: number | undefined;
-  tailBytes: number | undefined;
-}
+  words: string[];
+  mode: CommandMode;
+};
 
-function splitDashDash(argv: string[]): { head: string[]; tail: string[] | null } {
+function splitAtDashDash(argv: string[]): { head: string[]; tail: string[] | null } {
   const index = argv.indexOf('--');
   if (index < 0) return { head: [...argv], tail: null };
   return { head: argv.slice(0, index), tail: argv.slice(index + 1) };
 }
 
-function takeAtFile(positionals: string[]): { rest: string[]; file: string | null } {
-  if (positionals.length === 0) return { rest: positionals, file: null };
-  const last = positionals[positionals.length - 1];
-  if (!last.startsWith('@')) return { rest: positionals, file: null };
-  const file = last.slice(1);
-  if (!file) throw new UsageError('@file path is empty');
-  return { rest: positionals.slice(0, -1), file };
+function parseExecArgs(argv: string[]): ExecArgs {
+  const { head, tail } = splitAtDashDash(argv);
+  const { flags, positionals } = parseArgv(head, FLAGS);
+  const target = positionals[0];
+  if (!target) throw new UsageError('vibeterm exec needs a target', USAGE);
+  const extra = positionals.slice(1);
+  if (tail && extra.length > 0) {
+    throw new UsageError('put the command after --', 'vibeterm exec <target> -- <argv...>');
+  }
+  const mode: CommandMode = {
+    exact: tail !== null && flagBool(flags, 'argv'),
+    shell: flagBool(flags, 'shell'),
+    sh: flagBool(flags, 'sh'),
+  };
+  return { flags, target, words: tail ?? extra, mode };
 }
 
-function parseByteBound(
-  flags: FlagValues,
-  key: string,
-  min: number,
-  max: number
-): number | undefined {
+function byteBound(flags: FlagValues, key: string, min: number): number | undefined {
   const raw = flagNumber(flags, key);
   if (raw === undefined) return undefined;
-  if (!Number.isInteger(raw) || raw < min || raw > max) {
-    throw new UsageError(`--${key} must be an integer between ${min} and ${max}`);
+  if (!Number.isInteger(raw) || raw < min || raw > EXEC_MAX_MAX_BYTES) {
+    throw new UsageError(`--${key} must be an integer between ${min} and ${EXEC_MAX_MAX_BYTES}`);
   }
   return raw;
 }
 
-function assertScriptExclusive(
-  flags: FlagValues,
-  commandArgv: string[],
-  atFile: string | null
-): void {
-  if (commandArgv.length > 0) {
-    throw new UsageError('--script cannot be combined with a command argv');
+function ttyMode(flags: FlagValues): TtyMode {
+  const always = flagBool(flags, 'force-tty');
+  const force = flagBool(flags, 'tty');
+  if (flagBool(flags, 'no-tty')) {
+    if (always || force) throw new UsageError('-t and -T cannot be combined');
+    return 'no';
   }
-  if (flagBool(flags, 'shell')) {
-    throw new UsageError('--script cannot be combined with --shell');
+  if (always) return 'always';
+  return force ? 'force' : 'auto';
+}
+
+function stdinFile(flags: FlagValues): string | undefined {
+  const files = flagStrings(flags, 'stdin-file');
+  if (files.length > 1) throw new UsageError('use only one of --stdin-file or @path');
+  const file = files[0];
+  if (files.length === 1 && !file) throw new UsageError('--stdin-file path is empty');
+  return file;
+}
+
+function stdinMode(flags: FlagValues, file: string | undefined): StdinMode {
+  if (flagBool(flags, 'no-stdin')) {
+    if (file) throw new UsageError('-n cannot be combined with --stdin-file');
+    return 'none';
   }
-  if (flagBool(flags, 'stdin') || flagString(flags, 'stdin-file') || atFile) {
-    throw new UsageError('--script cannot be combined with --stdin, --stdin-file, or @path');
+  return file ? { file } : 'auto';
+}
+
+function assertScriptExclusive(args: ExecArgs): void {
+  const { flags } = args;
+  if (args.words.length > 0) {
+    throw new UsageError('--script cannot be combined with a command');
+  }
+  if (flagBool(flags, 'shell') || flagBool(flags, 'sh')) {
+    throw new UsageError('--script cannot be combined with --shell or --sh');
+  }
+  if (flagBool(flags, 'stdin') || flagBool(flags, 'no-stdin') || stdinFile(flags)) {
+    throw new UsageError('--script cannot be combined with --stdin, --stdin-file, -n, or @path');
   }
 }
 
-function assertExecArgv(flags: FlagValues, commandArgv: string[], atFile: string | null): void {
-  if (flagString(flags, 'script')) {
-    assertScriptExclusive(flags, commandArgv, atFile);
-    return;
+type Launch = {
+  command: ExecCommand;
+  stdin: StdinMode;
+  scriptFallback: string | null;
+};
+
+async function planLaunch(args: ExecArgs): Promise<Launch> {
+  const script = flagString(args.flags, 'script');
+  if (!script) {
+    if (flagString(args.flags, 'interpreter')) {
+      throw new UsageError('--interpreter requires --script');
+    }
+    return {
+      command: commandFromWords(args.words, args.mode),
+      stdin: stdinMode(args.flags, stdinFile(args.flags)),
+      scriptFallback: null,
+    };
   }
-  if (flagString(flags, 'interpreter')) {
-    throw new UsageError('--interpreter requires --script');
-  }
-  if (commandArgv.length === 0) {
-    throw new UsageError('vibeterm exec needs a command after --');
-  }
-  if (flagBool(flags, 'shell') && commandArgv.length !== 1) {
-    throw new UsageError('--shell requires exactly one argv element (the script for /bin/sh -c)');
-  }
+  assertScriptExclusive(args);
+  const loaded = await scriptCommand(script, flagString(args.flags, 'interpreter'));
+  return { command: loaded.command, stdin: { file: script }, scriptFallback: loaded.fallback };
 }
 
-function parseExecArgs(argv: string[]): ParsedExecArgs {
-  const { head, tail } = splitDashDash(argv);
-  const { flags, positionals } = parseArgv(head, FLAGS);
-  const { rest, file: atFile } = takeAtFile(positionals);
-  const target = rest[0];
-  if (!target) throw new UsageError('vibeterm exec needs a device target', USAGE);
-  const extra = rest.slice(1);
-  const commandArgv = tail ?? extra;
-  if (tail && extra.length > 0) {
-    throw new UsageError('put the command after --', 'vibeterm exec <device> -- <argv...>');
+type JsonPlan = {
+  enabled: boolean;
+  stream: boolean;
+  maxBytes: number;
+  tailBytes: number | undefined;
+};
+
+function planJson(ctx: CliContext, flags: FlagValues): JsonPlan {
+  const enabled = ctx.globals.json;
+  const stream = flagBool(flags, 'stream');
+  const maxBytes = byteBound(flags, 'max-bytes', EXEC_MIN_MAX_BYTES);
+  const tailBytes = byteBound(flags, 'tail', 1);
+  if (!enabled) {
+    if (stream) throw new UsageError('--stream requires --json');
+    if (maxBytes !== undefined) throw new UsageError('--max-bytes requires --json');
+    if (tailBytes !== undefined) throw new UsageError('--tail requires --json');
   }
-  assertExecArgv(flags, commandArgv, atFile);
+  return { enabled, stream, maxBytes: maxBytes ?? EXEC_MAX_MAX_BYTES, tailBytes };
+}
+
+type Collectors = { stdout: StreamCollector; stderr: StreamCollector };
+
+type OutputPlan = {
+  sinks: Partial<RemoteRunSinks>;
+  finish(result: ExecChannelResult): void;
+};
+
+function fileSinks(files: ExecFiles): Partial<RemoteRunSinks> {
   return {
-    flags,
-    target,
-    commandArgv,
-    atFile,
-    maxBytes: parseByteBound(flags, 'max-bytes', EXEC_MIN_MAX_BYTES, EXEC_MAX_MAX_BYTES),
-    tailBytes: parseByteBound(flags, 'tail', 1, EXEC_MAX_MAX_BYTES),
+    ...(files.stdout ? { stdout: (bytes: Uint8Array) => writeSink(files.stdout, bytes) } : {}),
+    ...(files.stderr ? { stderr: (bytes: Uint8Array) => writeSink(files.stderr, bytes) } : {}),
   };
 }
 
-function jsonPayload(result: ExecResult): unknown {
+function base64Of(bytes: Uint8Array): string {
+  return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
+}
+
+type StreamName = 'stdout' | 'stderr';
+const STREAMS: readonly StreamName[] = ['stdout', 'stderr'];
+
+function pathOf(files: ExecFiles, name: StreamName): string | null {
+  return name === 'stdout' ? files.stdoutPath : files.stderrPath;
+}
+
+function jsonPayload(result: ExecChannelResult, files: ExecFiles, c: Collectors): unknown {
   const row: Record<string, unknown> = {
     exitCode: result.exitCode,
     signal: result.signal,
     durationMs: result.durationMs,
-    truncated: result.truncated,
+    truncated: { stdout: c.stdout.truncated, stderr: c.stderr.truncated },
     reason: result.reason,
   };
-  if (result.stdoutPath) {
-    row.stdoutPath = result.stdoutPath;
-    row.stdoutBytes = result.stdoutBytes;
-  } else {
-    row.stdout = result.stdout;
-  }
-  if (result.stderrPath) {
-    row.stderrPath = result.stderrPath;
-    row.stderrBytes = result.stderrBytes;
-  } else {
-    row.stderr = result.stderr;
+  for (const name of STREAMS) {
+    const path = pathOf(files, name);
+    if (path) {
+      row[`${name}Path`] = path;
+      row[`${name}Bytes`] = c[name].bytes;
+    } else {
+      row[name] = c[name].text();
+    }
   }
   return row;
 }
 
-function hintLargeInline(ctx: CliContext, result: ExecResult): void {
-  if (result.stdoutPath === null && result.stdoutBytes > EXEC_INLINE_HINT_BYTES) {
-    ctx.out.warn(
-      `stdout is ${result.stdoutBytes} bytes; pass --tail N or --stdout-file <path> to keep JSON small`
-    );
+function hintLargeInline(ctx: CliContext, files: ExecFiles, c: Collectors): void {
+  for (const name of STREAMS) {
+    if (pathOf(files, name) === null && c[name].bytes > EXEC_INLINE_HINT_BYTES) {
+      ctx.out.warn(
+        `${name} is ${c[name].bytes} bytes; pass --tail N or --${name}-file <path> to keep JSON small`
+      );
+    }
   }
-  if (result.stderrPath === null && result.stderrBytes > EXEC_INLINE_HINT_BYTES) {
-    ctx.out.warn(
-      `stderr is ${result.stderrBytes} bytes; pass --tail N or --stderr-file <path> to keep JSON small`
-    );
-  }
+}
+
+function jsonOutput(ctx: CliContext, json: JsonPlan, files: ExecFiles): OutputPlan {
+  const collect = (name: StreamName) =>
+    new StreamCollector({
+      inline: !pathOf(files, name) && !json.stream,
+      maxBytes: json.maxBytes,
+      tailBytes: json.tailBytes,
+    });
+  const collectors: Collectors = { stdout: collect('stdout'), stderr: collect('stderr') };
+  const tee = (name: StreamName) => async (bytes: Uint8Array) => {
+    await writeSink(files[name], bytes);
+    collectors[name].push(bytes);
+    if (json.stream) ctx.out.line(JSON.stringify({ type: name, base64: base64Of(bytes) }));
+  };
+  return {
+    sinks: { stdout: tee('stdout'), stderr: tee('stderr') },
+    finish(result) {
+      if (json.stream) {
+        const { exitCode: code, signal, durationMs, reason } = result;
+        ctx.out.line(JSON.stringify({ type: 'exit', code, signal, durationMs, reason }));
+        return;
+      }
+      ctx.out.line(JSON.stringify(jsonPayload(result, files, collectors)));
+      hintLargeInline(ctx, files, collectors);
+    },
+  };
+}
+
+function buildOutput(ctx: CliContext, json: JsonPlan, files: ExecFiles): OutputPlan {
+  if (json.enabled) return jsonOutput(ctx, json, files);
+  return { sinks: fileSinks(files), finish: () => {} };
 }
 
 function emitStreamClosedJson(
@@ -217,109 +349,62 @@ function emitStreamClosedJson(
   ctx.out.line(JSON.stringify(row));
 }
 
-function collectOptions(parsed: ParsedExecArgs, files: ExecFiles): ExecCollect {
-  return createExecCollect({
-    tailBytes: parsed.tailBytes,
-    omitStdout: Boolean(files.stdoutPath),
-    omitStderr: Boolean(files.stderrPath),
-  });
-}
+export type ExecDeps = {
+  run: (ctx: CliContext, options: RemoteRunOptions) => Promise<ExecChannelResult>;
+};
 
-function bindLive(
-  ctx: CliContext,
-  asJson: boolean,
-  files: ExecFiles
-): {
-  stdout: (bytes: Uint8Array) => Promise<void>;
-  stderr: (bytes: Uint8Array) => Promise<void>;
-} | null {
-  if (asJson && !files.stdout && !files.stderr) return null;
-  return {
-    stdout: async (bytes) => {
-      await writeSink(files.stdout, bytes);
-      if (!asJson) ctx.out.raw(bytes);
-    },
-    stderr: async (bytes) => {
-      await writeSink(files.stderr, bytes);
-      if (!asJson) ctx.out.rawErr(bytes);
-    },
+async function execute(deps: ExecDeps, ctx: CliContext, argv: string[]): Promise<number> {
+  const args = parseExecArgs(argv);
+  const json = planJson(ctx, args.flags);
+  const launch = await planLaunch(args);
+  const options: RemoteRunOptions = {
+    target: args.target,
+    command: launch.command,
+    ...(flagString(args.flags, 'cwd') ? { cwd: flagString(args.flags, 'cwd') } : {}),
+    env: parseEnvPairs(flagStrings(args.flags, 'env')),
+    tty: ttyMode(args.flags),
+    stdin: launch.stdin,
+    timeoutMs: execTimeoutMs(ctx),
+    verbose: flagBool(args.flags, 'verbose'),
+    legacyFallback: true,
   };
-}
-
-function warnScriptFallback(ctx: CliContext, fallback: string | null): void {
-  if (!fallback) return;
-  ctx.out.warn(`script shebang interpreter ${fallback} is not a supported shell; using /bin/sh -s`);
-}
-
-function printJsonResult(
-  ctx: CliContext,
-  asJson: boolean,
-  stream: boolean,
-  result: ExecResult
-): void {
-  if (!asJson || stream) return;
-  ctx.out.line(JSON.stringify(jsonPayload(result)));
-  hintLargeInline(ctx, result);
-}
-
-function reportStreamClosed(
-  ctx: CliContext,
-  asJson: boolean,
-  error: unknown,
-  files: ExecFiles
-): void {
-  if (error instanceof ExecStreamClosedError && asJson) emitStreamClosedJson(ctx, error, files);
-}
-
-async function runParsed(
-  ctx: CliContext,
-  parsedArgs: ParsedExecArgs,
-  files: ExecFiles,
-  asJson: boolean,
-  stream: boolean
-): Promise<number> {
-  const parsed = await resolveTargetDevice(ctx, parsedArgs.target);
-  const built = await buildExecBody(ctx, parsed.device.id, parsedArgs);
-  warnScriptFallback(ctx, built.scriptFallback);
-  const result = await runExecRequest(ctx, parsed.nodeId, built.body, {
-    live: bindLive(ctx, asJson, files),
-    streamJson: stream ? (event) => ctx.out.line(JSON.stringify(event)) : null,
-    collect: collectOptions(parsedArgs, files),
-  });
-  result.stdoutPath = files.stdoutPath;
-  result.stderrPath = files.stderrPath;
-  printJsonResult(ctx, asJson, stream, result);
-  return execProcessExit(result);
-}
-
-async function run(ctx: CliContext, argv: string[]): Promise<number> {
-  const parsedArgs = parseExecArgs(argv);
-  if (parseTarget(parsedArgs.target).location) {
-    throw new UsageError('vibeterm exec does not take a window/pane location');
+  if (launch.scriptFallback) {
+    ctx.out.warn(
+      `script shebang interpreter ${launch.scriptFallback} is not a supported shell; using /bin/sh -s`
+    );
   }
-  const stream = flagBool(parsedArgs.flags, 'stream');
-  if (stream && !ctx.globals.json) throw new UsageError('--stream requires --json');
-  const asJson = ctx.globals.json || !ctx.out.isStdoutTty();
-  const files = openExecFiles(parsedArgs.flags);
-  let runError: unknown;
+  const files = openExecFiles(args.flags);
+  let failure: unknown;
   let exitCode = 0;
   try {
-    exitCode = await runParsed(ctx, parsedArgs, files, asJson, stream);
+    const output = buildOutput(ctx, json, files);
+    const result = await deps.run(ctx, { ...options, sinks: output.sinks });
+    output.finish(result);
+    exitCode = exitCodeOf(result);
   } catch (error) {
-    reportStreamClosed(ctx, asJson, error, files);
-    runError = error;
+    if (error instanceof ExecStreamClosedError && json.enabled) {
+      emitStreamClosedJson(ctx, error, files);
+    }
+    failure = error;
   } finally {
     const closeError = await closeExecFiles(files);
-    if (runError === undefined && closeError !== undefined) runError = closeError;
+    if (failure === undefined && closeError !== undefined) failure = closeError;
   }
-  if (runError !== undefined) throw runError;
+  if (failure !== undefined) throw failure;
   return exitCode;
 }
 
-export const command: Command = {
-  name: 'exec',
-  summary: '在设备上以独立进程运行命令（非交互，真实退出码）',
-  usage: USAGE,
-  flags: FLAGS,
-  run,
-};
+const SPEC = { ...GLOBAL_FLAGS, ...FLAGS };
+
+export function buildExecCommand(deps: ExecDeps = { run: runRemote }): Command {
+  return {
+    name: 'exec',
+    summary: '在设备上运行命令（用法同 ssh：原样 stdio、退出码透传）',
+    usage: USAGE,
+    flags: FLAGS,
+    preprocessArgv: (argv) => rewriteExecArgv(argv, SPEC),
+    run: (ctx, argv) => execute(deps, ctx, argv),
+  };
+}
+
+export const command: Command = buildExecCommand();
