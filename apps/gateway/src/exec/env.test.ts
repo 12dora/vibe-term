@@ -15,6 +15,8 @@ function seedInternal(): void {
   process.env.TMEX_TOKEN = 'legacy';
   process.env.DATABASE_URL = './x.db';
   process.env.NODE_ENV = 'production';
+  process.env.GATEWAY_PORT = '9883';
+  process.env.FE_PORT = '5173';
   process.env.KEEP_ME = 'yes';
 }
 
@@ -26,6 +28,8 @@ describe('scrubbedBaseEnv', () => {
     expect(env.TMEX_TOKEN).toBeUndefined();
     expect(env.DATABASE_URL).toBeUndefined();
     expect(env.NODE_ENV).toBeUndefined();
+    expect(env.GATEWAY_PORT).toBeUndefined();
+    expect(env.FE_PORT).toBeUndefined();
     expect(env.KEEP_ME).toBe('yes');
   });
 
@@ -70,5 +74,17 @@ describe('buildChannelEnv', () => {
     const env = buildChannelEnv({ shell: '/bin/sh', path: null, term: null });
     expect(env.PATH).toBe('/inherited/bin');
     expect(env.TERM).toBeUndefined();
+  });
+
+  test('falls back to a UTF-8 locale like tmux sessions, and the overlay still wins', () => {
+    delete process.env.LC_ALL;
+    delete process.env.LC_CTYPE;
+    process.env.LANG = 'C';
+    expect(buildChannelEnv({ shell: '/bin/sh', path: null, term: null }).LC_ALL).toBe('C.UTF-8');
+    expect(
+      buildChannelEnv({ shell: '/bin/sh', path: null, term: null, overlay: { LC_ALL: 'C' } }).LC_ALL
+    ).toBe('C');
+    process.env.LANG = 'en_US.UTF-8';
+    expect(buildChannelEnv({ shell: '/bin/sh', path: null, term: null }).LC_ALL).toBeUndefined();
   });
 });

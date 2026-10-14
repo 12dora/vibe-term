@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { EcKind, type ExecExit, type ExecReady, encodeFrame } from '@vibeterm/shared/exec-channel';
+import {
+  EC_CHUNK_BYTES,
+  EC_WINDOW_BYTES,
+  EcKind,
+  type ExecExit,
+  type ExecReady,
+  encodeFrame,
+} from '@vibeterm/shared/exec-channel';
+import { createClock } from './deps';
 import { liveSessionCount, resetExecRegistryForTests } from './registry';
 import { type TestEnv, bytes, connect, flush, makeEnv, openSession, text } from './test-harness';
 
@@ -132,6 +140,26 @@ describe('detach and resume', () => {
     const exit = client.transport.json<ExecExit>(EcKind.EXIT)[0] as ExecExit;
     expect(exit).toMatchObject({ reason: 'timeout', signal: 'SIGTERM' });
   });
+
+  test('a 30-day timeout is armed in steps within the 2^31-1 ms timer cap', async () => {
+    const env = makeEnv();
+    const delays: number[] = [];
+    env.deps.clock = createClock(
+      {
+        setTimeout: (fn, ms) => {
+          delays.push(ms);
+          return env.clock.setTimeout(fn, ms);
+        },
+        clearTimeout: (handle) => env.clock.clearTimeout(handle),
+      },
+      () => env.clock.now()
+    );
+    const { proc } = await openSession(env, { timeoutMs: 30 * 24 * 3600 * 1000 });
+    expect(delays).toContain(2 ** 31 - 1);
+    expect(Math.max(...delays)).toBeLessThanOrEqual(2 ** 31 - 1);
+    await env.clock.advance(10_000);
+    expect(proc.killCount).toBe(0);
+  });
 });
 
 describe('stdin', () => {
@@ -171,6 +199,44 @@ describe('stdin', () => {
     client.send(EcKind.STDIN_EOF);
     stdinFrame(client, bytes('x'));
     expect(errorOf(client.transport)?.code).toBe('protocol_error');
+  });
+
+  test('stdin beyond window + one chunk of unwritten bytes is a protocol error', async () => {
+    const { client, proc } = await openSession(makeEnv());
+    proc.writeGate = new Promise<void>(() => undefined);
+    const frames = EC_WINDOW_BYTES / EC_CHUNK_BYTES + 1;
+    for (let i = 0; i < frames; i++) stdinFrame(client, new Uint8Array(EC_CHUNK_BYTES));
+    expect(errorOf(client.transport)).toBeUndefined();
+    stdinFrame(client, bytes('x'));
+    expect(errorOf(client.transport)?.code).toBe('protocol_error');
+    expect(errorOf(client.transport)?.message).toContain('window');
+  });
+
+  test('resume reports the committed offset and drops unwritten queued stdin', async () => {
+    const env = makeEnv();
+    const { client, proc, sessionId } = await openSession(env);
+    let release!: () => void;
+    proc.writeGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stdinFrame(client, bytes('ab'));
+    stdinFrame(client, bytes('cd'));
+    stdinFrame(client, bytes('ef'));
+    client.send(EcKind.STDIN_EOF);
+    client.inbound.onClose();
+    const resumed = await resumeClient(env, sessionId, 0);
+    expect(resumed.transport.json<ExecReady>(EcKind.READY)[0]).toMatchObject({
+      stdin: 2,
+      stdinClosed: false,
+    });
+    release();
+    await flush();
+    stdinFrame(resumed, bytes('cdef'));
+    resumed.send(EcKind.STDIN_EOF);
+    await flush();
+    expect(proc.stdinWrites.map(text)).toEqual(['ab', 'cdef']);
+    expect(proc.stdinEnded).toBe(true);
+    expect(acks(resumed).at(-1)).toBe(6);
   });
 
   test('READY after resume reports accepted stdin and EOF state', async () => {

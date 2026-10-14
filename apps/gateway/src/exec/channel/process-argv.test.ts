@@ -49,7 +49,19 @@ describe('buildSshArgv', () => {
       target,
       openSpec({ command: { kind: 'argv', argv: ['git', 'log'] } })
     );
-    expect(argv).toEqual(['ssh', '-p', '22', '-T', 'dev@host.example', '--', "exec 'git' 'log'"]);
+    expect(argv).toEqual([
+      'ssh',
+      '-p',
+      '22',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=3',
+      '-T',
+      'dev@host.example',
+      '--',
+      "exec 'git' 'log'",
+    ]);
   });
 
   test('pty switches to -tt', () => {
@@ -57,7 +69,7 @@ describe('buildSshArgv', () => {
       target,
       openSpec({ command: { kind: 'argv', argv: ['top'] }, pty: { cols: 80, rows: 24 } })
     );
-    expect(argv.slice(3, 5)).toEqual(['-tt', 'dev@host.example']);
+    expect(argv.slice(7, 11)).toEqual(['-tt', '-e', 'none', 'dev@host.example']);
   });
 
   test('shell sends the raw script for the remote user shell', () => {
@@ -81,21 +93,43 @@ describe('buildSshArgv', () => {
       `cd '/srv/my app' && env A='x'\\''y' 'id'`
     );
     expect(buildSshRemote(openSpec({ ...base, command: { kind: 'shell', script: 'pwd' } }))).toBe(
-      `export A='x'\\''y'; cd '/srv/my app' && pwd`
+      `export A='x'\\''y'; cd '/srv/my app' || exit 1; pwd`
     );
     expect(buildSshRemote(openSpec({ ...base, command: { kind: 'login' } }))).toBe(
-      `export A='x'\\''y'; cd '/srv/my app' && exec "$SHELL" -l`
+      `export A='x'\\''y'; cd '/srv/my app' || exit 1; exec "$SHELL" -l`
     );
   });
 
   test('login without context has no remote command', () => {
     const plain = buildSshArgv(target, openSpec({ command: { kind: 'login' }, stdin: true }));
-    expect(plain).toEqual(['ssh', '-p', '22', '-T', 'dev@host.example']);
+    expect(plain).toEqual([
+      'ssh',
+      '-p',
+      '22',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=3',
+      '-T',
+      'dev@host.example',
+    ]);
     const tty = buildSshArgv(
       target,
       openSpec({ command: { kind: 'login' }, pty: { cols: 80, rows: 24 } })
     );
-    expect(tty).toEqual(['ssh', '-p', '22', '-tt', 'dev@host.example']);
+    expect(tty).toEqual([
+      'ssh',
+      '-p',
+      '22',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=3',
+      '-tt',
+      '-e',
+      'none',
+      'dev@host.example',
+    ]);
   });
 
   test('subsystem uses -s and ignores pty', () => {
@@ -103,6 +137,18 @@ describe('buildSshArgv', () => {
       target,
       openSpec({ command: { kind: 'subsystem', name: 'sftp' }, pty: { cols: 80, rows: 24 } })
     );
-    expect(argv).toEqual(['ssh', '-p', '22', '-T', '-s', 'dev@host.example', 'sftp']);
+    expect(argv).toEqual([
+      'ssh',
+      '-p',
+      '22',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=3',
+      '-T',
+      '-s',
+      'dev@host.example',
+      'sftp',
+    ]);
   });
 });

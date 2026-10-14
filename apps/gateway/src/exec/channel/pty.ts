@@ -145,7 +145,11 @@ class PtyProcess implements ExecProcess {
     onExit: () => void
   ) {
     this.control = new GroupControl(proc.pid, () => this.hasExited);
-    events.onOverflow = () => this.control.signal('SIGKILL');
+    output.flow = { pause: () => this.control.stop(), resume: () => this.control.resume() };
+    events.onOverflow = () => {
+      this.output.stopFlowControl();
+      this.control.signal('SIGKILL');
+    };
     events.onFinish = () => this.closeTerminal();
     this.exited = proc.exited.then((rawCode) => {
       this.hasExited = true;
@@ -187,10 +191,12 @@ class PtyProcess implements ExecProcess {
   }
 
   signal(sig: ExecSignal): void {
+    this.output.releasePause();
     this.control.signal(sig);
   }
 
   kill(): void {
+    this.output.stopFlowControl();
     this.control.kill();
   }
 

@@ -1,11 +1,10 @@
 import { userInfo } from 'node:os';
-
-const SCRUBBED_ENV_KEY = /^(VIBETERM_|TMEX_)|^(DATABASE_URL|NODE_ENV)$/;
+import { applyUtf8LocaleFallback, isVibeTermInjectedEnvKey } from '../tmux/local-shell-path';
 
 export function scrubbedBaseEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(base)) {
-    if (value !== undefined && !SCRUBBED_ENV_KEY.test(key)) out[key] = value;
+    if (value !== undefined && !isVibeTermInjectedEnvKey(key, false)) out[key] = value;
   }
   return out;
 }
@@ -24,12 +23,13 @@ export type ChannelEnvInput = {
   overlay?: Record<string, string>;
 };
 
-/** exec 通道本地子进程的环境：剔除服务内部变量，补登录 shell 的 PATH 与用户身份，最后叠加 spec.env。 */
+/** exec 通道本地子进程的环境：剔除服务内部变量，补登录 shell 的 PATH、用户身份与 UTF-8 locale（同 tmux 会话），最后叠加 spec.env。 */
 export function buildChannelEnv(input: ChannelEnvInput): Record<string, string> {
   const out = scrubbedBaseEnv();
   if (input.path) out.PATH = input.path;
   out.SHELL = input.shell;
   applyUserIdentity(out);
+  applyUtf8LocaleFallback(out);
   if (input.term) out.TERM = input.term;
   if (input.overlay) Object.assign(out, input.overlay);
   return out;

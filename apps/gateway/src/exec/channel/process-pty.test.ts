@@ -69,4 +69,32 @@ describe('local pty process', () => {
     await proc.endStdin();
     proc.resize(100, 30);
   });
+
+  ptyTest(
+    'a slow reader receives all of a large output without the child being killed',
+    async () => {
+      const total = 20_000_000;
+      const proc = await spawnExecProcess(device, ptySpec(`yes | head -c ${total} | tr '\\n' x`));
+      let received = 0;
+      let reads = 0;
+      for (;;) {
+        const chunk = await proc.readStdout();
+        if (chunk === null) break;
+        received += chunk.byteLength;
+        if (++reads % 5 === 0) await Bun.sleep(10);
+      }
+      expect(received).toBe(total);
+      expect(await proc.exited).toEqual({ code: 0, signal: null });
+    },
+    30_000
+  );
+
+  ptyTest('kill ends a flooding pty process group whose output is not being read', async () => {
+    const proc = await spawnExecProcess(device, ptySpec('yes | tr "\\n" x'));
+    await readUntil(proc, 'yxyx');
+    await Bun.sleep(300);
+    proc.kill();
+    const exit = await proc.exited;
+    expect(exit.signal).toBe('SIGTERM');
+  });
 });

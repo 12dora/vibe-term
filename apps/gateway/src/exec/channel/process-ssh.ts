@@ -31,6 +31,7 @@ function hasEnv(env: Record<string, string> | undefined): env is Record<string, 
   return env !== undefined && Object.keys(env).length > 0;
 }
 
+// 远端 shell 按 POSIX 语法解析 export / `||`；csh 系登录 shell 不受支持，需用 sh 模式。
 function withContext(
   script: string,
   cwd: string | undefined,
@@ -41,19 +42,20 @@ function withContext(
         .map(([key, value]) => `${key}=${quoteShellArg(value)}`)
         .join(' ')}; `
     : '';
-  const chdir = cwd ? `cd ${quoteShellArg(cwd)} && ` : '';
+  const chdir = cwd ? `cd ${quoteShellArg(cwd)} || exit 1; ` : '';
   return `${exports}${chdir}${script}`;
 }
 
+const SSH_KEEPALIVE_ARGS = ['-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3'];
+
 export function buildSshArgv(target: SshTarget, spec: ExecOpenSpec): string[] {
-  if (spec.command.kind === 'subsystem') {
-    return [...target.sshArgs, '-T', '-s', target.dest, 'sftp'];
-  }
-  const flag = spec.pty ? '-tt' : '-T';
+  const head = [...target.sshArgs, ...SSH_KEEPALIVE_ARGS];
+  if (spec.command.kind === 'subsystem') return [...head, '-T', '-s', target.dest, 'sftp'];
+  const flags = spec.pty ? ['-tt', '-e', 'none'] : ['-T'];
   const remote = buildSshRemote(spec);
   return remote === null
-    ? [...target.sshArgs, flag, target.dest]
-    : [...target.sshArgs, flag, target.dest, '--', remote];
+    ? [...head, ...flags, target.dest]
+    : [...head, ...flags, target.dest, '--', remote];
 }
 
 function unsupported(message: string): ExecChannelError {

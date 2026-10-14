@@ -70,9 +70,13 @@ describe('ssh exec process', () => {
     const { stdout, exit } = await collectAll(proc);
     expect(exit.code).toBe(0);
     const lines = stdout.split('\n');
-    expect(lines.slice(0, 6)).toEqual([
+    expect(lines.slice(0, 10)).toEqual([
       '-p',
       '22',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=3',
       '-T',
       'dev@host.example',
       '--',
@@ -96,7 +100,7 @@ describe('ssh exec process', () => {
     );
     expect(proc.pty).toBe(true);
     const { stdout } = await collectAll(proc);
-    expect(stdout).toContain('-tt');
+    expect(stdout.split(/\r?\n/).slice(6, 9)).toEqual(['-tt', '-e', 'none']);
     expect(stdout).toContain('TERM=vt100');
   });
 

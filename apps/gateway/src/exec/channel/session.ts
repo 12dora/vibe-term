@@ -77,14 +77,17 @@ export class ExecSession {
   }
 
   ready(resumed: boolean, out: number): ExecReady {
+    const stdin = resumed
+      ? this.stdin.rewind()
+      : { stdin: this.stdin.received, closed: this.stdin.eof };
     return {
       sessionId: this.id,
       resumed,
       pid: this.proc.pid,
       device: { id: this.device.id, name: this.device.name, type: this.device.type },
       pty: this.proc.pty,
-      stdin: this.stdin.received,
-      stdinClosed: this.stdin.eof,
+      stdin: stdin.stdin,
+      stdinClosed: stdin.closed,
       out,
       window: { stdin: EC_WINDOW_BYTES, out: EC_WINDOW_BYTES },
     };
@@ -117,6 +120,9 @@ export class ExecSession {
   onStdin(bytes: Uint8Array): void {
     if (!this.spec.stdin) throw new ProtocolViolation('stdin is disabled for this session');
     if (this.stdin.eof) throw new ProtocolViolation('STDIN after STDIN_EOF');
+    if (this.stdin.pending + bytes.byteLength > EC_WINDOW_BYTES + EC_CHUNK_BYTES) {
+      throw new ProtocolViolation('stdin window exceeded');
+    }
     this.stdin.push(bytes);
   }
 

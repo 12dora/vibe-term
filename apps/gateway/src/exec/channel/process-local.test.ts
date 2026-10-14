@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { ExecChannelError } from './errors';
 import { spawnExecProcess } from './process';
 import {
@@ -9,6 +12,7 @@ import {
   testDevice,
   waitGone,
 } from './process-test-util';
+import { shellProbe } from './shell';
 
 const device = testDevice();
 const saved = { ...process.env };
@@ -152,6 +156,22 @@ describe('local pipe process', () => {
     expect(home.stdout.trim().length).toBeGreaterThan(0);
     const tmp = await collectAll(await spawnArgv(['pwd'], { cwd: '/usr' }));
     expect(tmp.stdout.trim()).toBe('/usr');
+  });
+
+  test('a relative cwd resolves against the home directory, not the gateway cwd', async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), 'vt-home-')));
+    mkdirSync(join(home, 'proj'));
+    const originalHome = shellProbe.home;
+    shellProbe.home = () => home;
+    try {
+      const rel = await collectAll(await spawnArgv(['pwd', '-P'], { cwd: 'proj' }));
+      expect(rel.stdout.trim()).toBe(join(home, 'proj'));
+      const missing = await spawnArgv(['true'], { cwd: 'nope' }).catch((e) => e);
+      expect(missing.message).toContain(join(home, 'nope'));
+    } finally {
+      shellProbe.home = originalHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   test('the shell kind runs under /bin/sh when sh is set', async () => {

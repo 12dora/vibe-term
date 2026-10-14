@@ -243,7 +243,7 @@ const VIBETERM_INJECTED_ENV_EXACT = new Set([
 ]);
 const VIBETERM_INJECTED_ENV_PREFIXES = ['VIBETERM_', 'TMEX_'];
 
-function isVibeTermInjectedEnvKey(key: string, caseInsensitive: boolean): boolean {
+export function isVibeTermInjectedEnvKey(key: string, caseInsensitive: boolean): boolean {
   const normalized = caseInsensitive ? key.toUpperCase() : key;
   return (
     VIBETERM_INJECTED_ENV_PREFIXES.some((prefix) => normalized.startsWith(prefix)) ||
@@ -253,6 +253,15 @@ function isVibeTermInjectedEnvKey(key: string, caseInsensitive: boolean): boolea
 
 function isUtf8Locale(value: string | undefined): boolean {
   return typeof value === 'string' && /utf-?8/i.test(value);
+}
+
+export function applyUtf8LocaleFallback(env: NodeJS.ProcessEnv, caseInsensitive = false): void {
+  const lcAll = getEnvValue(env, 'LC_ALL', caseInsensitive);
+  const lcCtype = getEnvValue(env, 'LC_CTYPE', caseInsensitive);
+  const lang = getEnvValue(env, 'LANG', caseInsensitive);
+  if (!isUtf8Locale(lcAll) && (lcAll || (!isUtf8Locale(lcCtype) && !isUtf8Locale(lang)))) {
+    setEnvValue(env, 'LC_ALL', 'C.UTF-8', caseInsensitive);
+  }
 }
 
 export function buildLocalTmuxEnv(
@@ -273,12 +282,7 @@ export function buildLocalTmuxEnv(
     setEnvValue(nextEnv, 'PATH', resolvedPath, caseInsensitive);
   }
 
-  const lcAll = getEnvValue(nextEnv, 'LC_ALL', caseInsensitive);
-  const lcCtype = getEnvValue(nextEnv, 'LC_CTYPE', caseInsensitive);
-  const lang = getEnvValue(nextEnv, 'LANG', caseInsensitive);
-  if (!isUtf8Locale(lcAll) && (lcAll || (!isUtf8Locale(lcCtype) && !isUtf8Locale(lang)))) {
-    setEnvValue(nextEnv, 'LC_ALL', 'C.UTF-8', caseInsensitive);
-  }
+  applyUtf8LocaleFallback(nextEnv, caseInsensitive);
 
   return nextEnv;
 }

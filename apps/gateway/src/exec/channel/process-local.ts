@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { ExecCommand, ExecOpenSpec } from '@vibeterm/shared/exec-channel';
 import { getLocalShellPath } from '../../tmux/local-shell-path';
 import { buildChannelEnv } from '../env';
@@ -21,7 +22,8 @@ export function buildLocalArgv(command: ExecCommand, userShell: string): string[
 }
 
 function resolveCwd(cwd: string | undefined): string {
-  const target = cwd ?? shellProbe.home();
+  const home = shellProbe.home();
+  const target = cwd === undefined ? home : resolve(home, cwd);
   let isDir = false;
   try {
     isDir = statSync(target).isDirectory();
