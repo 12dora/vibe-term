@@ -99,14 +99,7 @@ interface AccountSecurityProps {
   publishFeedback: (next: SecurityActionFeedback | null) => void;
 }
 
-function AccountSecurity({
-  mode: rawMode,
-  api,
-  reloadMode,
-  feedback,
-  publishFeedback,
-}: AccountSecurityProps) {
-  const { t } = useTranslation();
+function usePasskeys(api: AuthApi) {
   const [passkeys, setPasskeys] = useState<PasskeySummary[]>([]);
   const [passkeysError, setPasskeysError] = useState<string | null>(null);
 
@@ -124,6 +117,18 @@ function AccountSecurity({
   }, [api]);
 
   useEffect(() => reloadPasskeys(), [reloadPasskeys]);
+  return { passkeys, passkeysError, reloadPasskeys };
+}
+
+function AccountSecurity({
+  mode: rawMode,
+  api,
+  reloadMode,
+  feedback,
+  publishFeedback,
+}: AccountSecurityProps) {
+  const { t } = useTranslation();
+  const { passkeys, passkeysError, reloadPasskeys } = usePasskeys(api);
 
   // 除 rotate-root（必须要旧根钥）与 set-totp（要 seed 派生 k_totp）外，
   // 其余动作都可以用密码或本 origin 的 passkey 授权。

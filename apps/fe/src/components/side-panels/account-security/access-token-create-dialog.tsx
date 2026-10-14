@@ -44,11 +44,7 @@ export interface AccessTokenCreateDialogProps {
   onCreate: (body: CreateAccessTokenRequest) => Promise<CreateAccessTokenResponse>;
 }
 
-export function AccessTokenCreateDialog({
-  open,
-  onOpenChange,
-  onCreate,
-}: AccessTokenCreateDialogProps) {
+function useCreateTokenState(open: boolean, onCreate: AccessTokenCreateDialogProps['onCreate']) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<TokenDraft>(emptyTokenDraft);
   const [errors, setErrors] = useState<TokenDraftErrors>({});
@@ -82,6 +78,25 @@ export function AccessTokenCreateDialog({
     }
   };
 
+  const changeDraft = (next: TokenDraft) => {
+    setDraft(next);
+    setSubmitError(null);
+  };
+
+  return { draft, errors, submitError, busy, secret, submit, changeDraft };
+}
+
+export function AccessTokenCreateDialog({
+  open,
+  onOpenChange,
+  onCreate,
+}: AccessTokenCreateDialogProps) {
+  const { t } = useTranslation();
+  const { draft, errors, submitError, busy, secret, submit, changeDraft } = useCreateTokenState(
+    open,
+    onCreate
+  );
+
   return (
     <Dialog
       open={open}
@@ -94,18 +109,7 @@ export function AccessTokenCreateDialog({
         data-testid="security-token-dialog"
       >
         {secret ? (
-          <>
-            <DialogHeader>
-              <DialogTitle>{t(`${TOKENS_NS}.created.title`)}</DialogTitle>
-              <DialogDescription>{t(`${TOKENS_NS}.created.note`)}</DialogDescription>
-            </DialogHeader>
-            <AccessTokenSecret secret={secret} />
-            <DialogFooter>
-              <Button onClick={() => onOpenChange(false)} data-testid="security-token-done">
-                {t(`${TOKENS_NS}.created.done`)}
-              </Button>
-            </DialogFooter>
-          </>
+          <CreatedSecretView secret={secret} onDone={() => onOpenChange(false)} />
         ) : (
           <>
             <DialogHeader>
@@ -115,10 +119,7 @@ export function AccessTokenCreateDialog({
               draft={draft}
               errors={errors}
               busy={busy}
-              onChange={(next) => {
-                setDraft(next);
-                setSubmitError(null);
-              }}
+              onChange={changeDraft}
               onSubmit={() => void submit()}
             />
             {submitError ? <Feedback tone="error" text={submitError} /> : null}
@@ -142,6 +143,31 @@ export function AccessTokenCreateDialog({
   );
 }
 
+function CreatedSecretView({ secret, onDone }: { secret: string; onDone: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>{t(`${TOKENS_NS}.created.title`)}</DialogTitle>
+        <DialogDescription>{t(`${TOKENS_NS}.created.note`)}</DialogDescription>
+      </DialogHeader>
+      <AccessTokenSecret secret={secret} />
+      <DialogFooter>
+        <Button onClick={onDone} data-testid="security-token-done">
+          {t(`${TOKENS_NS}.created.done`)}
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+interface TokenFieldProps {
+  draft: TokenDraft;
+  errors: TokenDraftErrors;
+  busy: boolean;
+  onChange: (next: TokenDraft) => void;
+}
+
 /** 表单本体（无请求）：Dialog 走 portal，单测静态渲染这一块。 */
 export function AccessTokenForm({
   draft,
@@ -149,13 +175,7 @@ export function AccessTokenForm({
   busy,
   onChange,
   onSubmit,
-}: {
-  draft: TokenDraft;
-  errors: TokenDraftErrors;
-  busy: boolean;
-  onChange: (next: TokenDraft) => void;
-  onSubmit: () => void;
-}) {
+}: TokenFieldProps & { onSubmit: () => void }) {
   const { t } = useTranslation();
   return (
     <form
@@ -184,55 +204,66 @@ export function AccessTokenForm({
         {errors.name ? <Feedback tone="error" text={errors.name} /> : null}
       </div>
 
-      <fieldset className="flex flex-col gap-2" data-testid="security-token-scopes">
-        <legend className="mb-1.5 text-sm font-medium">{t(`${TOKENS_NS}.form.scopes`)}</legend>
-        {ACCESS_TOKEN_SCOPES.map((scope) => {
-          const id = `security-token-scope-${scope}`;
-          return (
-            <label key={scope} className="flex items-center gap-2 text-sm" htmlFor={id}>
-              <Checkbox
-                id={id}
-                checked={draft.scopes.includes(scope)}
-                disabled={busy}
-                onCheckedChange={(checked) =>
-                  onChange({ ...draft, scopes: toggleScope(draft.scopes, scope, checked === true) })
-                }
-                data-testid={id}
-              />
-              <span>{scopeText(t, scope)}</span>
-              <code className="text-xs text-muted-foreground">{TOKEN_SCOPE_COMMANDS[scope]}</code>
-            </label>
-          );
-        })}
-        {errors.scopes ? <Feedback tone="error" text={errors.scopes} /> : null}
-      </fieldset>
-
-      <div className="flex flex-col gap-1.5">
-        <span className="text-sm font-medium">{t(`${TOKENS_NS}.form.expiry`)}</span>
-        <Select
-          value={draft.expiry}
-          onValueChange={(next) =>
-            next && onChange({ ...draft, expiry: next as TokenExpiryOption })
-          }
-        >
-          <SelectTrigger
-            className="w-40"
-            disabled={busy}
-            aria-label={t(`${TOKENS_NS}.form.expiry`)}
-            data-testid="security-token-expiry"
-          >
-            <SelectValue>{expiryOptionText(t, draft.expiry)}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {TOKEN_EXPIRY_OPTIONS.map((option) => (
-              <SelectItem key={option} value={option}>
-                {expiryOptionText(t, option)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      <TokenScopeFieldset draft={draft} errors={errors} busy={busy} onChange={onChange} />
+      <TokenExpirySelect draft={draft} busy={busy} onChange={onChange} />
     </form>
+  );
+}
+
+function TokenScopeFieldset({ draft, errors, busy, onChange }: TokenFieldProps) {
+  const { t } = useTranslation();
+  return (
+    <fieldset className="flex flex-col gap-2" data-testid="security-token-scopes">
+      <legend className="mb-1.5 text-sm font-medium">{t(`${TOKENS_NS}.form.scopes`)}</legend>
+      {ACCESS_TOKEN_SCOPES.map((scope) => {
+        const id = `security-token-scope-${scope}`;
+        return (
+          <label key={scope} className="flex items-center gap-2 text-sm" htmlFor={id}>
+            <Checkbox
+              id={id}
+              checked={draft.scopes.includes(scope)}
+              disabled={busy}
+              onCheckedChange={(checked) =>
+                onChange({ ...draft, scopes: toggleScope(draft.scopes, scope, checked === true) })
+              }
+              data-testid={id}
+            />
+            <span>{scopeText(t, scope)}</span>
+            <code className="text-xs text-muted-foreground">{TOKEN_SCOPE_COMMANDS[scope]}</code>
+          </label>
+        );
+      })}
+      {errors.scopes ? <Feedback tone="error" text={errors.scopes} /> : null}
+    </fieldset>
+  );
+}
+
+function TokenExpirySelect({ draft, busy, onChange }: Omit<TokenFieldProps, 'errors'>) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-sm font-medium">{t(`${TOKENS_NS}.form.expiry`)}</span>
+      <Select
+        value={draft.expiry}
+        onValueChange={(next) => next && onChange({ ...draft, expiry: next as TokenExpiryOption })}
+      >
+        <SelectTrigger
+          className="w-40"
+          disabled={busy}
+          aria-label={t(`${TOKENS_NS}.form.expiry`)}
+          data-testid="security-token-expiry"
+        >
+          <SelectValue>{expiryOptionText(t, draft.expiry)}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          {TOKEN_EXPIRY_OPTIONS.map((option) => (
+            <SelectItem key={option} value={option}>
+              {expiryOptionText(t, option)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 

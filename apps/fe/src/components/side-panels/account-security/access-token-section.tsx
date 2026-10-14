@@ -37,7 +37,7 @@ export function AccessTokenSectionView({
   const { t } = useTranslation();
   const [createOpen, setCreateOpen] = useState(false);
   const [pendingRevoke, setPendingRevoke] = useState<AccessTokenDto | null>(null);
-  const { tokens, loadError, revokingId, revokeError } = state;
+  const { tokens, loadError, revokeError } = state;
 
   return (
     <Section title={t(`${TOKENS_NS}.title`)} description={t(`${TOKENS_NS}.description`)}>
@@ -46,28 +46,11 @@ export function AccessTokenSectionView({
           <Feedback tone="error" text={t(`${TOKENS_NS}.loadFailed`, { error: loadError })} />
         ) : null}
 
-        {tokens === null ? (
-          loadError ? null : (
-            <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
-          )
-        ) : tokens.length === 0 ? (
-          <p className="text-xs text-muted-foreground" data-testid="security-tokens-empty">
-            {t(`${TOKENS_NS}.empty`)}
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-1" data-testid="security-token-list">
-            {tokens.map((token) => (
-              <AccessTokenRow
-                key={token.id}
-                token={token}
-                now={now}
-                busy={revokingId === token.id}
-                disabled={revokingId !== null}
-                onRevoke={() => setPendingRevoke(token)}
-              />
-            ))}
-          </ul>
-        )}
+        <AccessTokenListBody
+          state={state}
+          now={now}
+          onRevoke={(token) => setPendingRevoke(token)}
+        />
 
         {revokeError ? <Feedback tone="error" text={revokeError} /> : null}
 
@@ -90,25 +73,83 @@ export function AccessTokenSectionView({
         onCreate={state.create}
       />
 
-      <ConfirmDialog
-        open={pendingRevoke !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingRevoke(null);
-        }}
-        title={t(`${TOKENS_NS}.revokeTitle`)}
-        cancelLabel={t('common.cancel')}
-        confirmLabel={t(`${TOKENS_NS}.revoke`)}
-        testId="security-token-revoke-dialog"
-        confirmTestId="security-token-revoke-confirm"
-        onConfirm={() => {
-          const target = pendingRevoke;
-          setPendingRevoke(null);
-          if (target) void state.revoke(target.id);
-        }}
-      >
-        {t(`${TOKENS_NS}.revokeBody`, { name: pendingRevoke?.name ?? '' })}
-      </ConfirmDialog>
+      <RevokeConfirm
+        target={pendingRevoke}
+        onClose={() => setPendingRevoke(null)}
+        onRevoke={(id) => void state.revoke(id)}
+      />
     </Section>
+  );
+}
+
+function AccessTokenListBody({
+  state,
+  now,
+  onRevoke,
+}: {
+  state: AccessTokensState;
+  now: number;
+  onRevoke: (token: AccessTokenDto) => void;
+}) {
+  const { t } = useTranslation();
+  const { tokens, loadError, revokingId } = state;
+  return (
+    <>
+      {tokens === null ? (
+        loadError ? null : (
+          <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
+        )
+      ) : tokens.length === 0 ? (
+        <p className="text-xs text-muted-foreground" data-testid="security-tokens-empty">
+          {t(`${TOKENS_NS}.empty`)}
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-1" data-testid="security-token-list">
+          {tokens.map((token) => (
+            <AccessTokenRow
+              key={token.id}
+              token={token}
+              now={now}
+              busy={revokingId === token.id}
+              disabled={revokingId !== null}
+              onRevoke={() => onRevoke(token)}
+            />
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+function RevokeConfirm({
+  target,
+  onClose,
+  onRevoke,
+}: {
+  target: AccessTokenDto | null;
+  onClose: () => void;
+  onRevoke: (id: string) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <ConfirmDialog
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={t(`${TOKENS_NS}.revokeTitle`)}
+      cancelLabel={t('common.cancel')}
+      confirmLabel={t(`${TOKENS_NS}.revoke`)}
+      testId="security-token-revoke-dialog"
+      confirmTestId="security-token-revoke-confirm"
+      onConfirm={() => {
+        const pending = target;
+        onClose();
+        if (pending) onRevoke(pending.id);
+      }}
+    >
+      {t(`${TOKENS_NS}.revokeBody`, { name: target?.name ?? '' })}
+    </ConfirmDialog>
   );
 }
 
