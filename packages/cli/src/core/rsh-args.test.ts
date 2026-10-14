@@ -76,12 +76,12 @@ describe('rsh destination and command words', () => {
   });
 
   test('a destination starting with - is refused', () => {
-    expect(rejection(['--', '-evil'])).toContain('目标无效');
+    expect(rejection(['--', '-evil'])).toContain('invalid destination');
   });
 
   test('missing destination is a usage error', () => {
-    expect(rejection([])).toContain('缺少目标主机');
-    expect(rejection(['-q', '-T'])).toContain('缺少目标主机');
+    expect(rejection([])).toContain('missing destination host');
+    expect(rejection(['-q', '-T'])).toContain('missing destination host');
   });
 });
 
@@ -146,14 +146,24 @@ describe('rsh option grammar', () => {
     expect(run(['node', '--', '-n', 'x']).stdin).toBe('auto');
   });
 
+  test('-- before the destination ends option parsing for good', () => {
+    const invocation = run(['--', 'node', '-v', '-n', 'ls']);
+    expect(invocation.target).toBe('node');
+    expect(invocation.command).toEqual({ kind: 'shell', script: '-v -n ls' });
+    expect(invocation.verbose).toBe(0);
+    expect(invocation.stdin).toBe('auto');
+    expect(run(['-q', '--', 'node', '-N']).command).toEqual({ kind: 'shell', script: '-N' });
+    expect(run(['--', 'node', '--', 'x']).command).toEqual({ kind: 'shell', script: '-- x' });
+  });
+
   test('a lone - is a word, not an option', () => {
     expect(run(['node', '-']).command).toEqual({ kind: 'shell', script: '-' });
   });
 
   test('option without its argument and unknown options are errors', () => {
-    expect(rejection(['node', '-l'])).toContain('-l 缺少参数');
-    expect(rejection(['-Z', 'node'])).toContain('未知选项：-Z');
-    expect(rejection(['--entry', 'x', 'node'])).toContain('未知选项：--entry');
+    expect(rejection(['node', '-l'])).toContain('option -l requires an argument');
+    expect(rejection(['-Z', 'node'])).toContain('unknown option: -Z');
+    expect(rejection(['--entry', 'x', 'node'])).toContain('unknown option: --entry');
   });
 
   test('-V short-circuits to version output', () => {
@@ -221,8 +231,8 @@ describe('rsh subsystem', () => {
   });
 
   test('other subsystems and a missing name are errors', () => {
-    expect(rejection(['-s', 'node', 'netconf'])).toContain('不支持子系统 netconf');
-    expect(rejection(['-s', 'node'])).toContain('-s 需要子系统名');
+    expect(rejection(['-s', 'node', 'netconf'])).toContain('unsupported subsystem: netconf');
+    expect(rejection(['-s', 'node'])).toContain('-s requires a subsystem name');
   });
 });
 
@@ -309,7 +319,7 @@ describe('rsh -G', () => {
   });
 
   test('still needs a destination', () => {
-    expect(rejection(['-G'])).toContain('缺少目标主机');
+    expect(rejection(['-G'])).toContain('missing destination host');
   });
 });
 
@@ -320,28 +330,28 @@ describe('rsh rejections', () => {
     ['-D', ['-D', '1080', 'node'], 'vibeterm forward'],
     ['-W', ['-W', 'host:22', 'node'], 'vibeterm forward'],
     ['-N', ['-N', 'node'], 'vibeterm forward'],
-    ['-J', ['-J', 'jump', 'node'], '跳板机'],
-    ['-O', ['-O', 'check', 'node'], '控制命令'],
-    ['-f', ['-f', 'node', 'sleep', '1'], '后台'],
-    ['-Q', ['-Q', 'cipher'], '算法'],
+    ['-J', ['-J', 'jump', 'node'], 'jump hosts'],
+    ['-O', ['-O', 'check', 'node'], 'control commands'],
+    ['-f', ['-f', 'node', 'sleep', '1'], 'background'],
+    ['-Q', ['-Q', 'cipher'], 'algorithms'],
     ['-w', ['-w', '0:0', 'node'], 'tun'],
   ];
 
   for (const [flag, args, fragment] of CASES) {
     test(`${flag} is refused with a clear message`, () => {
       const message = rejection(args);
-      expect(message).toContain(`不支持 ${flag}`);
+      expect(message).toContain(`${flag} is not supported`);
       expect(message).toContain(fragment);
     });
   }
 
   test('forwarding flags are refused inside clusters and attached forms', () => {
-    expect(rejection(['-xL80:h:80', 'node'])).toContain('不支持 -L');
-    expect(rejection(['-fN', 'node'])).toContain('不支持 -f');
+    expect(rejection(['-xL80:h:80', 'node'])).toContain('-L is not supported');
+    expect(rejection(['-fN', 'node'])).toContain('-f is not supported');
   });
 
   test('rejected flags after the destination are refused too, but not inside the command', () => {
-    expect(rejection(['node', '-N'])).toContain('不支持 -N');
+    expect(rejection(['node', '-N'])).toContain('-N is not supported');
     expect(run(['node', 'ssh', '-N', 'x']).command).toEqual({ kind: 'shell', script: 'ssh -N x' });
   });
 });

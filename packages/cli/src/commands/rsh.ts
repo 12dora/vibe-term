@@ -2,8 +2,9 @@
 
 import { GLOBAL_FLAGS } from '../core/args';
 import type { CliContext } from '../core/context';
-import { InterruptError, errorText, hintOf } from '../core/errors';
+import { InterruptError } from '../core/errors';
 import { exitCodeOf } from '../core/exec-channel-result';
+import { reportPrefixedFailure } from '../core/failure-report';
 import { Output } from '../core/output';
 import { type RemoteRunOptions, runRemote } from '../core/remote-run';
 import { type RshInvocation, parseRshArgs } from '../core/rsh-args';
@@ -12,6 +13,7 @@ import type { Command } from './types';
 
 /** ssh 约定：本地侧（用法、认证、网络、找不到）的失败一律 255，与远端退出码区分。 */
 export const RSH_FAILURE_EXIT = 255;
+const RSH_ERROR_PREFIX = 'vibeterm rsh';
 
 /** 测试替换点：单测不依赖 runRemote 的内部实现。 */
 export const rshDeps = { runRemote };
@@ -48,7 +50,8 @@ ssh://[用户@]节点[:端口][/设备]。命令词以单个空格拼接后交�
   其余 -o 选项，以及 -4 -6 -A -a -C -g -K -k -M -X -x -Y -y、-p -l -i -F -c -m -b -E -e -S -B -I -P，
   接受并忽略。-L -R -D -W -J -O -f -N -Q -w 不支持（端口转发请使用 vibeterm forward）。
 
-配置：rsh 不接受 --entry、--node、--json 等 vibeterm 全局旗标（会与 ssh 的参数冲突），请用环境变量：
+配置：命令名之后的词一律按 ssh 参数解析，--entry、--node 等 vibeterm 全局旗标只能写在 rsh 之前
+（vibeterm --entry <url> rsh …），或改用环境变量：
   VIBETERM_ENTRY          网关入口地址
   VIBETERM_SESSION_FILE   会话文件路径
   VIBETERM_TOKENS_FILE    访问令牌文件路径（无人值守场景，见 vibeterm token）`;
@@ -108,7 +111,9 @@ async function runRsh(ctx: CliContext, argv: string[]): Promise<number> {
   }
   const { invocation } = parsed;
   if (invocation.verbose > 0 && invocation.user) {
-    ctx.out.info(`vibeterm rsh: 忽略用户名 ${invocation.user}，命令以节点服务用户的身份运行`);
+    ctx.out.info(
+      `vibeterm rsh: ignoring user ${invocation.user}; the command runs as the node service user`
+    );
   }
   const runCtx = invocation.quiet && invocation.verbose === 0 ? quietContext(ctx) : ctx;
   const result = await rshDeps.runRemote(runCtx, remoteRunOptions(invocation));
@@ -117,9 +122,7 @@ async function runRsh(ctx: CliContext, argv: string[]): Promise<number> {
 
 function reportFailure(ctx: CliContext, error: unknown): number {
   if (error instanceof InterruptError) return error.exitCode;
-  ctx.out.error(`vibeterm rsh: ${errorText(error)}`);
-  const hint = hintOf(error);
-  if (hint) ctx.out.error(`  ${hint}`);
+  reportPrefixedFailure(ctx.out, RSH_ERROR_PREFIX, error);
   return RSH_FAILURE_EXIT;
 }
 
@@ -128,6 +131,8 @@ export const command: Command = {
   summary: 'OpenSSH 兼容入口：rsync / git / scp 把 ssh 换成它即可经 vibeterm 执行',
   usage: USAGE,
   preprocessArgv: preprocessRshArgv,
+  failureExitCode: RSH_FAILURE_EXIT,
+  errorPrefix: RSH_ERROR_PREFIX,
   async run(ctx, argv) {
     try {
       return await runRsh(ctx, argv);

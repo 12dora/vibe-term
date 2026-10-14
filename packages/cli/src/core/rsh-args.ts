@@ -32,18 +32,18 @@ export type RshParse =
 const NO_ARG = new Set('46AaCfGgKkMNnqsTtVvXxYy');
 const WITH_ARG = new Set('BbcDEeFIiJLlmOoPpQRSWw');
 
-const FORWARD_HINT = '端口转发请使用 vibeterm forward';
+const FORWARD_HINT = 'use vibeterm forward for port forwarding';
 const REJECTED: Readonly<Record<string, string>> = {
   L: FORWARD_HINT,
   R: FORWARD_HINT,
   D: FORWARD_HINT,
   W: FORWARD_HINT,
-  N: `不执行命令的连接没有意义；${FORWARD_HINT}`,
-  J: '不支持跳板机，请直接使用 <节点>/<设备> 目标',
-  O: '不支持连接复用的控制命令',
-  f: '不支持转入后台',
-  Q: '不支持查询算法',
-  w: '不支持 tun 设备转发',
+  N: `a connection without a command is pointless; ${FORWARD_HINT}`,
+  J: 'jump hosts are not supported; address the device as <node>/<device>',
+  O: 'connection-multiplexing control commands are not supported',
+  f: 'going to the background is not supported',
+  Q: 'querying algorithms is not supported',
+  w: 'tun device forwarding is not supported',
 };
 
 const DEFAULT_PORT = 22;
@@ -65,6 +65,8 @@ type ParseState = {
   remoteCommand: string | null | undefined;
   setEnv: Record<string, string>;
   sendEnv: string[];
+  /** 目标之前出现过 `--`：OpenSSH 此后不再解析选项（opt_terminated）。 */
+  optionsEnded: boolean;
 };
 
 function newState(): ParseState {
@@ -82,6 +84,7 @@ function newState(): ParseState {
     remoteCommand: undefined,
     setEnv: {},
     sendEnv: [],
+    optionsEnded: false,
   };
 }
 
@@ -116,7 +119,7 @@ function parseRequestTty(value: string): RshTty {
     case 'auto':
       return 'auto';
     default:
-      throw new UsageError(`RequestTTY 取值无效：${value}`, '可选 yes、force、no、auto');
+      throw new UsageError(`invalid RequestTTY value: ${value} (use yes, force, no or auto)`);
   }
 }
 
@@ -125,7 +128,7 @@ function applySetEnv(state: ParseState, value: string): void {
     const eq = word.indexOf('=');
     const key = eq < 0 ? word : word.slice(0, eq);
     if (eq < 0 || !ENV_KEY.test(key)) {
-      throw new UsageError(`SetEnv 取值无效：${word}`, '格式为 SetEnv=NAME=value');
+      throw new UsageError(`invalid SetEnv value: ${word} (expected NAME=value)`);
     }
     // 与 ssh 一致：同名变量先出现者生效。
     if (!(key in state.setEnv)) state.setEnv[key] = word.slice(eq + 1);
@@ -134,7 +137,7 @@ function applySetEnv(state: ParseState, value: string): void {
 
 function applyConfigOption(state: ParseState, text: string): void {
   const match = /^\s*([A-Za-z0-9]+)(?:(?:\s*=\s*|\s+)([\s\S]*))?$/.exec(text);
-  if (!match) throw new UsageError(`无法解析 -o 选项：${text}`);
+  if (!match) throw new UsageError(`cannot parse -o option: ${text}`);
   const key = match[1].toLowerCase();
   const value = unquote(match[2] ?? '');
   switch (key) {
@@ -199,7 +202,7 @@ function applyValued(state: ParseState, flag: string, value: string): void {
 }
 
 function rejectOption(flag: string): never {
-  throw new UsageError(`不支持 -${flag}：${REJECTED[flag]}`);
+  throw new UsageError(`-${flag} is not supported: ${REJECTED[flag]}`);
 }
 
 /** 解析一个旗标簇（`-xq`、`-p22`、`-o` 加下一词），返回下一个待处理词的下标。 */
@@ -209,7 +212,7 @@ function scanCluster(
   next: number,
   state: ParseState
 ): number {
-  if (arg.startsWith('--')) throw new UsageError(`未知选项：${arg}`);
+  if (arg.startsWith('--')) throw new UsageError(`unknown option: ${arg}`);
   for (let at = 1; at < arg.length; at += 1) {
     const flag = arg[at];
     if (flag in REJECTED) rejectOption(flag);
@@ -217,13 +220,13 @@ function scanCluster(
       applyFlag(state, flag);
       continue;
     }
-    if (!WITH_ARG.has(flag)) throw new UsageError(`未知选项：-${flag}`);
+    if (!WITH_ARG.has(flag)) throw new UsageError(`unknown option: -${flag}`);
     const attached = arg.slice(at + 1);
     if (attached !== '') {
       applyValued(state, flag, attached);
       return next;
     }
-    if (next >= args.length) throw new UsageError(`选项 -${flag} 缺少参数`);
+    if (next >= args.length) throw new UsageError(`option -${flag} requires an argument`);
     applyValued(state, flag, args[next]);
     return next + 1;
   }
@@ -235,7 +238,10 @@ function scanOptions(args: readonly string[], start: number, state: ParseState):
   let index = start;
   while (index < args.length) {
     const arg = args[index];
-    if (arg === '--') return index + 1;
+    if (arg === '--') {
+      state.optionsEnded = true;
+      return index + 1;
+    }
     if (arg.length < 2 || !arg.startsWith('-')) return index;
     index = scanCluster(args, arg, index + 1, state);
     if (state.version) return args.length;
@@ -254,7 +260,7 @@ function safeDecode(value: string): string {
 /** `ssh://[user@]node[:port][/device]`：路径段（若有）即设备，对应 `<node>/<device>`。 */
 function parseSshUrl(text: string): { user: string | null; target: string } {
   const match = /^ssh:\/\/(?:([^@/]+)@)?(\[[^\]]+\]|[^:/@]+)(?::(\d+))?(?:\/([^?#]*))?$/.exec(text);
-  if (!match) throw new UsageError(`无法解析 ssh:// 目标：${text}`);
+  if (!match) throw new UsageError(`cannot parse ssh:// destination: ${text}`);
   const device = match[4] ? safeDecode(match[4]).replace(/\/+$/, '') : '';
   const host = safeDecode(match[2]);
   return {
@@ -276,7 +282,7 @@ export function parseDestination(text: string): Destination {
         };
       })();
   if (parsed.target === '' || parsed.target.startsWith('-')) {
-    throw new UsageError(`目标无效：${text}`);
+    throw new UsageError(`invalid destination: ${text}`);
   }
   return parsed;
 }
@@ -309,9 +315,11 @@ export function resolveSendEnv(patterns: readonly string[], env: Env): Record<st
 function buildCommand(state: ParseState, words: readonly string[]): ExecCommand {
   const joined = words.join(' ');
   if (state.subsystem) {
-    if (joined === '') throw new UsageError('-s 需要子系统名', '例如：vibeterm rsh -s <目标> sftp');
+    if (joined === '') {
+      throw new UsageError('-s requires a subsystem name (only sftp is supported)');
+    }
     if (joined !== 'sftp') {
-      throw new UsageError(`不支持子系统 ${joined}`, '目前只支持 sftp');
+      throw new UsageError(`unsupported subsystem: ${joined} (only sftp is supported)`);
     }
     return { kind: 'subsystem', name: 'sftp' };
   }
@@ -352,13 +360,11 @@ export function parseRshArgs(args: readonly string[], env: Env = process.env): R
   const state = newState();
   let index = scanOptions(args, 0, state);
   if (!state.version && index >= args.length) {
-    throw new UsageError(
-      '缺少目标主机',
-      '用法：vibeterm rsh [选项] [用户@]<目标> [命令]，详见 vibeterm rsh --help'
-    );
+    throw new UsageError('missing destination host');
   }
   const destination = state.version ? null : parseDestination(args[index]);
-  if (destination) index = scanOptions(args, index + 1, state);
+  if (destination && !state.optionsEnded) index = scanOptions(args, index + 1, state);
+  else if (destination) index += 1;
   if (state.version || !destination) return { kind: 'version' };
   if (state.printConfig) return configDump(state, destination, env);
   return invocationOf(state, destination, args.slice(index), env);

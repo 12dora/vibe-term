@@ -129,7 +129,7 @@ class ExecChannelRun {
         await this.sleeper.sleep(KILL_RETRY_MS);
         continue;
       }
-      assertRetryable(this.nodeId, end, this.ready !== null);
+      assertRetryable(this.ctx.http.entry, this.nodeId, end, this.ready !== null);
       await this.backoff();
     }
   }
@@ -250,11 +250,15 @@ class ExecChannelRun {
   }
 
   private onSignal(signal: ForwardedSignal): void {
-    if (this.intr.press(signal, this.ready !== null) === 'forward') {
-      if (!this.sendLiveJson(EcKind.SIGNAL, { signal })) this.pendingSignals.push(signal);
+    const action = this.intr.press(signal, this.ready !== null);
+    if (action === 'kill') {
+      this.beginKill();
       return;
     }
-    this.beginKill();
+    if (!this.sendLiveJson(EcKind.SIGNAL, { signal })) this.pendingSignals.push(signal);
+    if (action === 'graceful') {
+      this.intr.armGrace(signal, this.timing.termGraceMs, () => this.beginKill());
+    }
   }
 
   /** 结束会话：链路通则立即 CLOSE{kill:true}；链路不通则限时重连 / 等 READY 后投递。 */

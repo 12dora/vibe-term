@@ -155,6 +155,13 @@ describe('rsh command.run', () => {
     }
   });
 
+  test('only auth errors print a hint; other hints are dropped', async () => {
+    const network = await run(['node', 'true'], new NetworkError('refused', 'check the entry'));
+    expect(network.stderr).toBe('vibeterm rsh: refused\n');
+    const missing = await run(['node', 'true'], new NotFoundError('nope', 'try again'));
+    expect(missing.stderr).toBe('vibeterm rsh: nope\n');
+  });
+
   test('a hint is printed on its own indented line', async () => {
     const error = new AuthError('login required', 'vibeterm login');
     const { stderr } = await run(['node', 'true'], error);
@@ -192,7 +199,7 @@ describe('rsh command.run', () => {
   test('-v echoes the ignored user and asks for verbose output', async () => {
     const { calls, stderr } = await run(['-v', 'alice@node', 'true']);
     expect(calls[0].opts.verbose).toBe(true);
-    expect(stderr).toContain('忽略用户名 alice');
+    expect(stderr).toContain('ignoring user alice');
   });
 
   test('the user is not mentioned without -v', async () => {
@@ -366,7 +373,31 @@ describe('rsh through runCli', () => {
     const code = await runCli(['rsh', '--bogus', 'node']);
     expect(code).toBe(255);
     expect(calls).toHaveLength(0);
-    expect(stderrText).toContain('vibeterm rsh: 未知选项：--bogus');
+    expect(stderrText).toContain('vibeterm rsh: unknown option: --bogus');
+  });
+
+  test('failures before the command runs are rsh failures too (255, `vibeterm rsh:`)', async () => {
+    const { calls } = fakeRemote();
+    expect(await runCli(['--timeout', '0', 'rsh', 'node', 'true'])).toBe(255);
+    expect(stderrText).toBe('vibeterm rsh: --timeout must be a positive integer, got 0\n');
+    stderrText = '';
+    const missing = join(dir, 'missing.pem');
+    expect(await runCli(['--ca', missing, 'rsh', 'node', 'true'])).toBe(255);
+    expect(stderrText).toStartWith(`vibeterm rsh: --ca cannot read ${missing}`);
+    expect(stderrText.trimEnd().split('\n')).toHaveLength(1);
+    expect(calls).toHaveLength(0);
+  });
+
+  test('other commands keep the generic prefix and exit code for such failures', async () => {
+    stderrText = '';
+    expect(await runCli(['--timeout', '0', 'devices'])).toBe(2);
+    expect(stderrText).toStartWith('vibeterm: --timeout must be a positive integer');
+  });
+
+  test('the help describes where global flags may go', async () => {
+    expect(await runCli(['rsh', '--help'])).toBe(0);
+    expect(stdoutText).toContain('只能写在 rsh 之前');
+    expect(stdoutText).not.toContain('rsh 不接受');
   });
 
   test('remote exit code passes through, local failures are 255', async () => {

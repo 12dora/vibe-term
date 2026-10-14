@@ -26,6 +26,8 @@ export interface ExecChannelTiming {
   ackDelayMs: number;
   /** 重连退避序列，用尽后沿用最后一项。 */
   backoffMs: readonly number[];
+  /** 非 PTY 的 SIGTERM / SIGHUP 转发后，远端不退出时等多久再杀会话。 */
+  termGraceMs: number;
 }
 
 export const DEFAULT_TIMING: ExecChannelTiming = {
@@ -33,6 +35,7 @@ export const DEFAULT_TIMING: ExecChannelTiming = {
   deadMs: EC_DEAD_MS,
   ackDelayMs: EC_ACK_DELAY_MS,
   backoffMs: [500, 1000, 2000, 4000, 8000, 10_000],
+  termGraceMs: 2000,
 };
 
 export type ConnEnd =

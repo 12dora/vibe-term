@@ -6,7 +6,8 @@ import type { ConnEnd } from './exec-channel-conn';
 import { type ForwardedSignal, signalNumber } from './exec-channel-pty';
 import type { ExecChannelResult } from './exec-channel-result';
 
-export type SignalAction = 'forward' | 'kill';
+/** forward：只转发；graceful：转发并开始宽限，到点仍未退出则杀会话；kill：立即杀会话。 */
+export type SignalAction = 'forward' | 'graceful' | 'kill';
 
 export class InterruptState {
   /** 已决定结束本次运行的信号；null 表示还在正常运行。 */
@@ -15,20 +16,41 @@ export class InterruptState {
   killPending = false;
   private presses = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly pty: boolean) {}
 
   /**
-   * 非 PTY：首个信号转发给远端进程，再来一个就杀会话。
+   * 非 PTY：首个信号转发给远端进程，再来一个就杀会话；首个是 SIGTERM / SIGHUP 时
+   * 另起宽限（见 armGrace），远端忽略它也不会让本进程挂住。
    * PTY：SIGINT 只是 raw 模式下的一个字节，外部发来的 SIGINT 同样先转发；
    * SIGTERM / SIGHUP 像 ssh 一样直接结束会话并还原终端。
    */
   press(signal: ForwardedSignal, hasSession: boolean): SignalAction {
     this.presses += 1;
     const terminating = this.pty && signal !== 'SIGINT';
-    if (hasSession && this.presses === 1 && !terminating) return 'forward';
+    if (hasSession && this.presses === 1 && !terminating) {
+      return signal === 'SIGINT' ? 'forward' : 'graceful';
+    }
+    this.clearGrace();
     this.signal = signal;
     return 'kill';
+  }
+
+  /** 宽限到点：记下结束本次运行的信号并交给调用方杀会话。 */
+  armGrace(signal: ForwardedSignal, ms: number, onExpire: () => void): void {
+    this.clearGrace();
+    this.graceTimer = setTimeout(() => {
+      this.graceTimer = null;
+      this.signal = signal;
+      onExpire();
+    }, ms);
+  }
+
+  private clearGrace(): void {
+    if (!this.graceTimer) return;
+    clearTimeout(this.graceTimer);
+    this.graceTimer = null;
   }
 
   /** 这次连接结束后是否应当停止循环（而不是继续重连投递 CLOSE）。 */
@@ -42,6 +64,7 @@ export class InterruptState {
   }
 
   disarm(): void {
+    this.clearGrace();
     this.killPending = false;
     if (!this.timer) return;
     clearTimeout(this.timer);

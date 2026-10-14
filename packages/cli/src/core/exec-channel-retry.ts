@@ -11,6 +11,7 @@ import { EXEC_CLOSE_UNSUPPORTED } from './exec-channel-socket';
  * 调用方会据此回退旧路径并重跑命令。
  */
 export function assertRetryable(
+  entry: string,
   nodeId: string,
   end: Extract<ConnEnd, { kind: 'lost' }>,
   hasSession: boolean
@@ -19,11 +20,12 @@ export function assertRetryable(
   const terminal = errorFromClose(nodeId, end.code, end.reason);
   if (terminal) throw terminal;
   if (hasSession) return;
-  const detail = end.reason ? `: ${end.reason}` : ` (close ${end.code})`;
+  const where = `${entry} (node ${nodeId})`;
+  const detail = end.reason ? `: ${end.reason}` : '';
   throw new NetworkError(
     end.opened
-      ? `exec channel to node ${nodeId} closed before the session started${detail}`
-      : `cannot reach exec channel of node ${nodeId}${detail}`
+      ? `connection to ${where} closed before the session started${detail}`
+      : `cannot reach ${where}${detail}`
   );
 }
 

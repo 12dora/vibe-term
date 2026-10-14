@@ -7,8 +7,9 @@ import {
   flagString,
   splitGlobalFlags,
 } from './core/args';
-import { buildContext } from './core/context';
+import { type CliContext, buildContext } from './core/context';
 import { EXIT_OK, UsageError } from './core/errors';
+import { reportPrefixedFailure } from './core/failure-report';
 import { type Output, captureDiagnostics } from './core/output';
 import { loadTlsSettings, prepareProcessTls } from './core/tls';
 import { COMMANDS, findCommand } from './registry';
@@ -99,7 +100,7 @@ export function prepareCommand(argv: string[]): PreparedCommand {
   };
 }
 
-async function executeCommand(prepared: PreparedCommand, out: Output): Promise<number> {
+async function prepareContext(prepared: PreparedCommand, out: Output): Promise<CliContext> {
   captureDiagnostics(prepared.quiet || prepared.json || !out.isStdoutTty());
   const tls = loadTlsSettings(prepared.ca, prepared.insecure);
   if (tls.insecure) {
@@ -116,17 +117,33 @@ async function executeCommand(prepared: PreparedCommand, out: Output): Promise<n
     ...(prepared.timeout === undefined ? {} : { timeoutMs: prepared.timeout }),
   });
   await prepareProcessTls(ctx.globals.entry, tls);
-  const code = await prepared.command.run(ctx, prepared.commandArgv);
-  return typeof code === 'number' ? code : EXIT_OK;
+  return ctx;
+}
+
+type Preparation = { help: true } | { help: false; prepared: PreparedCommand; ctx: CliContext };
+
+async function prepareRun(argv: string[], out: Output): Promise<Preparation> {
+  const prepared = prepareCommand(argv);
+  if (prepared.showHelp) return { help: true };
+  return { help: false, prepared, ctx: await prepareContext(prepared, out) };
 }
 
 async function runKnownCommand(argv: string[], out: Output): Promise<number> {
-  const prepared = prepareCommand(argv);
-  if (prepared.showHelp) {
-    out.line(prepared.command.usage);
+  const command = requireCommand(findCommandToken(argv).name as string);
+  let preparation: Preparation;
+  try {
+    preparation = await prepareRun(argv, out);
+  } catch (error) {
+    if (command.failureExitCode === undefined) throw error;
+    reportPrefixedFailure(out, command.errorPrefix ?? 'vibeterm', error);
+    return command.failureExitCode;
+  }
+  if (preparation.help) {
+    out.line(command.usage);
     return EXIT_OK;
   }
-  return executeCommand(prepared, out);
+  const code = await command.run(preparation.ctx, preparation.prepared.commandArgv);
+  return typeof code === 'number' ? code : EXIT_OK;
 }
 
 type DispatchHandler = {
