@@ -2158,6 +2158,7 @@ export type TranslationKey =
   | 'auth.security.tokens.created.done'
   | 'auth.security.tokens.errors'
   | 'auth.security.tokens.errors.limit'
+  | 'auth.security.tokens.errors.generic'
   | 'auth.credential'
   | 'auth.credential.title'
   | 'auth.credential.hint'

@@ -2380,7 +2380,7 @@ export const I18N_RESOURCES = {
           "description": "Let CLI tools and scripts access this node, e.g. vibeterm exec, cp and forward.",
           "create": "Create token",
           "empty": "No access tokens.",
-          "loadFailed": "Couldn't load access tokens: {{error}}",
+          "loadFailed": "Couldn't load access tokens.",
           "createdAt": "Created {{date}}",
           "lastUsed": "Last used {{time}}",
           "neverUsed": "Never used",
@@ -2418,7 +2418,8 @@ export const I18N_RESOURCES = {
             "done": "Done"
           },
           "errors": {
-            "limit": "Token limit reached ({{max}})."
+            "limit": "Token limit reached ({{max}}).",
+            "generic": "Something went wrong. Please try again."
           }
         }
       },
@@ -6446,7 +6447,7 @@ export const I18N_RESOURCES = {
           "description": "供命令行工具和脚本访问本节点，如 vibeterm exec、cp、forward。",
           "create": "创建令牌",
           "empty": "暂无访问令牌。",
-          "loadFailed": "访问令牌加载失败：{{error}}",
+          "loadFailed": "访问令牌加载失败。",
           "createdAt": "创建于 {{date}}",
           "lastUsed": "最近使用 {{time}}",
           "neverUsed": "从未使用",
@@ -6484,7 +6485,8 @@ export const I18N_RESOURCES = {
             "done": "完成"
           },
           "errors": {
-            "limit": "令牌数量已达上限（{{max}}）"
+            "limit": "令牌数量已达上限（{{max}}）。",
+            "generic": "操作失败，请重试。"
           }
         }
       },
@@ -10503,7 +10505,7 @@ export const I18N_RESOURCES = {
           "description": "CLI ツールやスクリプトからこのノードにアクセスするためのものです（vibeterm exec、cp、forward など）。",
           "create": "トークンを作成",
           "empty": "アクセストークンはありません。",
-          "loadFailed": "アクセストークンを読み込めませんでした：{{error}}",
+          "loadFailed": "アクセストークンを読み込めませんでした。",
           "createdAt": "{{date}} に作成",
           "lastUsed": "最終使用 {{time}}",
           "neverUsed": "未使用",
@@ -10541,7 +10543,8 @@ export const I18N_RESOURCES = {
             "done": "完了"
           },
           "errors": {
-            "limit": "トークン数が上限（{{max}}）に達しています。"
+            "limit": "トークン数が上限（{{max}}）に達しています。",
+            "generic": "操作に失敗しました。もう一度お試しください。"
           }
         }
       },

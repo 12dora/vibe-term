@@ -52,14 +52,19 @@ function useCreateTokenState(open: boolean, onCreate: AccessTokenCreateDialogPro
   const [busy, setBusy] = useState(false);
   const [secret, setSecret] = useState<string | null>(null);
 
-  // 开关都当场重置：关掉的对话框只是隐藏，密钥不该继续留在 state 里。
-  const [lastOpen, setLastOpen] = useState(open);
-  if (lastOpen !== open) {
-    setLastOpen(open);
+  const reset = () => {
     setDraft(emptyTokenDraft());
     setErrors({});
     setSubmitError(null);
     setSecret(null);
+  };
+
+  // 打开时重置；关闭时等退场动画结束（onOpenChangeComplete）再清，避免动画中闪回表单，
+  // 也不让密钥在隐藏的对话框里长留。
+  const [lastOpen, setLastOpen] = useState(open);
+  if (lastOpen !== open) {
+    setLastOpen(open);
+    if (open) reset();
   }
 
   const submit = async () => {
@@ -83,7 +88,7 @@ function useCreateTokenState(open: boolean, onCreate: AccessTokenCreateDialogPro
     setSubmitError(null);
   };
 
-  return { draft, errors, submitError, busy, secret, submit, changeDraft };
+  return { draft, errors, submitError, busy, secret, submit, changeDraft, reset };
 }
 
 export function AccessTokenCreateDialog({
@@ -92,19 +97,23 @@ export function AccessTokenCreateDialog({
   onCreate,
 }: AccessTokenCreateDialogProps) {
   const { t } = useTranslation();
-  const { draft, errors, submitError, busy, secret, submit, changeDraft } = useCreateTokenState(
-    open,
-    onCreate
-  );
+  const { draft, errors, submitError, busy, secret, submit, changeDraft, reset } =
+    useCreateTokenState(open, onCreate);
 
   return (
     <Dialog
       open={open}
+      // 密钥只显示一次：显示期间点外部 / Esc 都不关，只能点「完成」。
+      disablePointerDismissal={secret !== null}
       onOpenChange={(next) => {
-        if (!busy) onOpenChange(next);
+        if (!busy && secret === null) onOpenChange(next);
+      }}
+      onOpenChangeComplete={(next) => {
+        if (!next) reset();
       }}
     >
       <DialogContent
+        showCloseButton={secret === null}
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md"
         data-testid="security-token-dialog"
       >

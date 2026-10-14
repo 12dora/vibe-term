@@ -51,6 +51,7 @@ function state(patch: Partial<AccessTokensState> = {}): AccessTokensState {
     revokeError: null,
     create: () => Promise.reject(new Error('unexpected')),
     revoke: () => Promise.resolve(),
+    reload: () => undefined,
     ...patch,
   };
 }
@@ -115,10 +116,18 @@ describe('行内文案', () => {
     );
   });
 
-  test('token_limit 映射为上限文案，其余透出原始错误', () => {
+  test('token_limit 映射为上限文案，其余一律本地化兜底、不透出原文', () => {
     const limit = new ApiError(409, 'token_limit', { code: 'token_limit' });
     expect(tokenErrorText(t, limit)).toBe('auth.security.tokens.errors.limit{"max":50}');
-    expect(tokenErrorText(t, new Error('boom'))).toBe('boom');
+    const generic = 'auth.security.tokens.errors.generic';
+    expect(tokenErrorText(t, new Error('boom'))).toBe(generic);
+    expect(tokenErrorText(t, new ApiError(400, 'invalid_body', { code: 'invalid_body' }))).toBe(
+      generic
+    );
+    expect(tokenErrorText(t, new ApiError(401, 'UNAUTHORIZED', { code: 'UNAUTHORIZED' }))).toBe(
+      generic
+    );
+    expect(tokenErrorText(t, new TypeError('Failed to fetch'))).toBe(generic);
   });
 });
 
@@ -159,11 +168,18 @@ describe('AccessTokenSectionView', () => {
     expect(html).toContain('data-testid="security-token-revoke-tok-1"');
   });
 
-  test('加载失败显示错误', () => {
+  test('加载失败显示错误与重试按钮，创建按钮不被永久禁用', () => {
     const html = renderToStaticMarkup(
       <AccessTokenSectionView state={state({ tokens: null, loadError: 'offline' })} now={NOW} />
     );
     expect(html).toContain('auth.security.tokens.loadFailed');
+    expect(tagOf(html, 'security-tokens-retry')).not.toContain('disabled');
+    expect(tagOf(html, 'security-token-create')).not.toContain('disabled');
+  });
+
+  test('加载成功不显示重试按钮', () => {
+    const html = renderToStaticMarkup(<AccessTokenSectionView state={state()} now={NOW} />);
+    expect(html).not.toContain('security-tokens-retry');
   });
 });
 

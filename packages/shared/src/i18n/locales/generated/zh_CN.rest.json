@@ -1605,7 +1605,7 @@
           "description": "供命令行工具和脚本访问本节点，如 vibeterm exec、cp、forward。",
           "create": "创建令牌",
           "empty": "暂无访问令牌。",
-          "loadFailed": "访问令牌加载失败：{{error}}",
+          "loadFailed": "访问令牌加载失败。",
           "createdAt": "创建于 {{date}}",
           "lastUsed": "最近使用 {{time}}",
           "neverUsed": "从未使用",
@@ -1643,7 +1643,8 @@
             "done": "完成"
           },
           "errors": {
-            "limit": "令牌数量已达上限（{{max}}）"
+            "limit": "令牌数量已达上限（{{max}}）。",
+            "generic": "操作失败，请重试。"
           }
         }
       }

@@ -9,7 +9,6 @@ import {
   type AccessTokenDto,
   type AccessTokenScope,
   type CreateAccessTokenRequest,
-  errorMessage,
 } from '@vibeterm/shared';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -121,5 +120,6 @@ export function tokenErrorText(t: Translate, err: unknown): string {
   if (isApiErrorCode(err, 'token_limit')) {
     return t(`${TOKENS_NS}.errors.limit`, { max: ACCESS_TOKEN_ACTIVE_LIMIT });
   }
-  return errorMessage(err);
+  // 其余错误（invalid_body / UNAUTHORIZED / TOKEN_SCOPE / 网络）一律给本地化兜底，不透出服务端原文。
+  return t(`${TOKENS_NS}.errors.generic`);
 }

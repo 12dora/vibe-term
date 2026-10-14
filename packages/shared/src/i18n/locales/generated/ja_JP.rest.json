@@ -1605,7 +1605,7 @@
           "description": "CLI ツールやスクリプトからこのノードにアクセスするためのものです（vibeterm exec、cp、forward など）。",
           "create": "トークンを作成",
           "empty": "アクセストークンはありません。",
-          "loadFailed": "アクセストークンを読み込めませんでした：{{error}}",
+          "loadFailed": "アクセストークンを読み込めませんでした。",
           "createdAt": "{{date}} に作成",
           "lastUsed": "最終使用 {{time}}",
           "neverUsed": "未使用",
@@ -1643,7 +1643,8 @@
             "done": "完了"
           },
           "errors": {
-            "limit": "トークン数が上限（{{max}}）に達しています。"
+            "limit": "トークン数が上限（{{max}}）に達しています。",
+            "generic": "操作に失敗しました。もう一度お試しください。"
           }
         }
       }

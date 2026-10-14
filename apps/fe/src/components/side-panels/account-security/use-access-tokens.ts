@@ -22,6 +22,7 @@ export interface AccessTokensState {
   revokeError: string | null;
   create: (body: CreateAccessTokenRequest) => Promise<CreateAccessTokenResponse>;
   revoke: (id: string) => Promise<void>;
+  reload: () => void;
 }
 
 export function useAccessTokens(client: ApiClient = defaultApiClient): AccessTokensState {
@@ -34,6 +35,7 @@ export function useAccessTokens(client: ApiClient = defaultApiClient): AccessTok
 
   const load = useCallback(() => {
     const run = ++runRef.current;
+    setLoadError(null);
     const controller = new AbortController();
     listAccessTokens(client, controller.signal)
       .then((res) => {
@@ -80,5 +82,9 @@ export function useAccessTokens(client: ApiClient = defaultApiClient): AccessTok
     [client, t]
   );
 
-  return { tokens, loadError, revokingId, revokeError, create, revoke };
+  const reload = useCallback(() => {
+    load();
+  }, [load]);
+
+  return { tokens, loadError, revokingId, revokeError, create, revoke, reload };
 }

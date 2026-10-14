@@ -43,7 +43,21 @@ export function AccessTokenSectionView({
     <Section title={t(`${TOKENS_NS}.title`)} description={t(`${TOKENS_NS}.description`)}>
       <div className="flex flex-col gap-3" data-testid="security-tokens">
         {loadError ? (
-          <Feedback tone="error" text={t(`${TOKENS_NS}.loadFailed`, { error: loadError })} />
+          <div
+            className="flex flex-wrap items-center gap-2"
+            data-testid="security-tokens-load-failed"
+          >
+            <Feedback tone="error" text={t(`${TOKENS_NS}.loadFailed`)} />
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              onClick={state.reload}
+              data-testid="security-tokens-retry"
+            >
+              {t('common.retry')}
+            </Button>
+          </div>
         ) : null}
 
         <AccessTokenListBody
@@ -57,7 +71,7 @@ export function AccessTokenSectionView({
         <div>
           <Button
             type="button"
-            disabled={tokens === null}
+            disabled={tokens === null && !loadError}
             onClick={() => setCreateOpen(true)}
             data-testid="security-token-create"
           >

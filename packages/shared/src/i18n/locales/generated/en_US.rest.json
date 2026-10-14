@@ -1608,7 +1608,7 @@
           "description": "Let CLI tools and scripts access this node, e.g. vibeterm exec, cp and forward.",
           "create": "Create token",
           "empty": "No access tokens.",
-          "loadFailed": "Couldn't load access tokens: {{error}}",
+          "loadFailed": "Couldn't load access tokens.",
           "createdAt": "Created {{date}}",
           "lastUsed": "Last used {{time}}",
           "neverUsed": "Never used",
@@ -1646,7 +1646,8 @@
             "done": "Done"
           },
           "errors": {
-            "limit": "Token limit reached ({{max}})."
+            "limit": "Token limit reached ({{max}}).",
+            "generic": "Something went wrong. Please try again."
           }
         }
       }
