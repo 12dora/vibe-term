@@ -10,7 +10,7 @@
 
 | | packages/app（原有） | packages/cli（本文） |
 | --- | --- | --- |
-| 命令 | `init` `doctor` `upgrade` `uninstall` `user` `relay` `mesh` `tls` `direct` | `login` `logout` `whoami` `auth` `api` `nodes` `devices` `tmux` `sessions` `term` `exec` `system` `files` `cp` `port` `share` `watch` `agent` `settings`（十九个组） |
+| 命令 | `init` `doctor` `upgrade` `uninstall` `user` `relay` `mesh` `tls` `direct` | `login` `logout` `whoami` `auth` `api` `nodes` `devices` `tmux` `sessions` `term` `exec` `rsh` `system` `files` `cp` `port` `forward` `token` `share` `watch` `agent` `settings`（二十二个组） |
 | 依赖 | 本机安装目录、SQLite、主密钥；`user`/`relay`/`mesh` 那组还要 bun 运行时 | 只有 `fetch` 与 WebSocket |
 | 运行时 | Node（`init` 等）+ bun（`cli-auth-entry.ts`） | Node ≥ 20（bundle 也能在 bun 下跑） |
 | 权限 | 本机 root 级配置 | 与一个浏览器会话完全等价 |
@@ -30,7 +30,7 @@
 ```
 packages/cli/src/
   main.ts                入口：找命令、拆全局旗标、建 ctx、翻译退出码；dispatch 表驱动在 `dispatch.ts`
-  registry.ts            命令注册表（十九个已落地组）
+  registry.ts            命令注册表（二十二个已落地组）
   version.ts             自报版本（网关的 canonical v1.1 版本门要用）
   commands/
     types.ts             Command 契约
@@ -88,8 +88,8 @@ export const command: Command = {
 };
 ```
 
-2. 在 `src/registry.ts` 的 `IMPLEMENTED_COMMANDS` 登记（十九个组已全部落地，`RESERVED_COMMANDS` 为空）。
-3. `packages/app/src/lib/client-cli.ts` 的 `CLIENT_CLI_COMMANDS` 已经把十九个组全部登记好了，**新增组名时两处都要改**——`registry.test.ts` 会比对两份名单。本机运维新增子命令（如 `relay metrics`）还要挂 `cli-auth-entry.ts` 的 `HANDLERS` 与 `AUTH_COMMANDS`，否则 parse 成功却 dispatch 失败。
+2. 在 `src/registry.ts` 的 `IMPLEMENTED_COMMANDS` 登记（二十二个组已全部落地，`RESERVED_COMMANDS` 为空）。
+3. `packages/app/src/lib/client-cli.ts` 的 `CLIENT_CLI_COMMANDS` 已经把二十二个组全部登记好了，**新增组名时两处都要改**——`registry.test.ts` 会比对两份名单。本机运维新增子命令（如 `relay metrics`）还要挂 `cli-auth-entry.ts` 的 `HANDLERS` 与 `AUTH_COMMANDS`，否则 parse 成功却 dispatch 失败。
 
 `dispatch.ts` 的 `prepareCommand` 在 `splitGlobalFlags` **之前**调用可选的 `Command.preprocessArgv`（命令名已剥掉）。`main.ts` 已经替命令做完这些事：解析并校验全局旗标（未知旗标在这里就报用法错误）、处理 `--help`、把全局旗标从 argv 里摘掉、构造 `ctx`、把抛出的 `CliError` 翻成退出码与提示。命令拿到的 `argv` 里只剩自己的旗标与位置参数。
 
@@ -109,8 +109,8 @@ interface CliContext {
 ```
 
 - `ctx.http.json(nodeId, method, path, body?)`：非 2xx 直接抛。401、以及 body 里 `error`/`code` 是会话判词的 403（`UNAUTHORIZED`、`via_mismatch`、`expired`、`revoked`、`SESSION_*`、`*LOGIN_REQUIRED`）→ 退出码 3 并带 `vibeterm login --node <id>` 提示；其余 403（`outside_roots`、`FORBIDDEN`、`UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，抛 `PermissionError` → 退出码 1 且 message 带上服务端的业务码；404 → 4，其余 → 1，传输失败 → 5。JSON 错误体里的 `code` 会挂到抛出的 `CliError.code`（`json` / `ndjson` 同一条路径），命令组不要再从 message 里正则抠。这套映射只有 `httpStatusError()` 一份，文件族不再有自己的翻译层。
-- `ctx.globals.timeoutExplicit`：命令行是否真的写了 `--timeout`。HTTP 客户端的等待上限仍用 `timeoutMs`（缺省 30000）；`exec` 只有显式时才把 `timeoutMs` 放进 `POST /api/exec` 请求体，否则省略，让网关走 600000 默认。该字段只是子进程墙上时钟，不关 HTTP 空闲。
-- `runExecRequest`：`AuthError` / `NetworkError` / `NotFoundError` 原样上抛（退出码 3/5/4）；其余 HTTP 失败才按业务 `code` remap（`invalid_body` → 2，`device_not_found` → 4，`exec_unsupported_device` / `exec_spawn_failed` / 无码 400 → 5）。NDJSON 迭代器在 `exit` 前抛出 `terminated` / `AbortError` / 套接字关闭，或流结束却没有 `exit` 时，抛 `ExecStreamClosedError`（`NetworkError`，退出码 5，`code=EXEC_STREAM_CLOSED`）。未知事件（含网关 `{"type":"ping","t"}`）忽略；`--json --stream` 原样转发其它事件、丢弃 `ping`。
+- `ctx.globals.timeoutExplicit`：命令行是否真的写了 `--timeout`。HTTP 客户端的等待上限仍用 `timeoutMs`（缺省 30000）；`exec` / `rsh` 只有显式时才把 `timeoutMs` 放进 exec 通道的 `spec`，否则不限时。该字段只是子进程墙上时钟，不关链路空闲。
+- `runExecRequest`（旧节点兼容路径 `POST /api/exec`）：`AuthError` / `NetworkError` / `NotFoundError` 原样上抛（退出码 3/5/4）；其余 HTTP 失败才按业务 `code` remap（`invalid_body` → 2，`device_not_found` → 4，`exec_unsupported_device` / `exec_spawn_failed` / 无码 400 → 5）。NDJSON 迭代器在 `exit` 前抛出 `terminated` / `AbortError` / 套接字关闭，或流结束却没有 `exit` 时，抛 `ExecStreamClosedError`（`NetworkError`，退出码 5，`code=EXEC_STREAM_CLOSED`）。未知事件（含网关 `{"type":"ping","t"}`）忽略；`--json --stream` 原样转发其它事件、丢弃 `ping`。
 - `ctx.http.fetch(nodeId, path, init)`：不对状态码做判断，自己处理时用它；`ctx.http.assertOk()` 补上统一翻译。
 - `ctx.http.ndjson(nodeId, path)`：逐行 yield 已解析对象，默认不设超时（`timeoutMs: null`），并且给 Bun `fetch` 传 `timeout: false`，避免 `BUN_CONFIG_HTTP_IDLE_TIMEOUT` 掐断 body。
 - `ctx.http.bytes(nodeId, path)`：二进制。`RequestOptions.timeoutMs` 可按请求覆盖 `--timeout`，`null` 表示不设。
@@ -254,7 +254,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm cp`
 
-`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`./`、`../`、`~`、操作系统绝对路径）。节点侧的 `<path>` 是相对该根的路径；**前导 `/` 表示文件系统绝对路径，会被 `outside_roots` 拒绝**。`home` 解析自根列表中的虚拟根 `home-root`（`$HOME`）；用户创建的启用根名为 `home` 时优先。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 `code: route_not_found`，无该字段时回退英文 `Not found`；区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。`rsync_missing_local`（HTTP 502 或 NDJSON error）映射为退出 5 与固定中文提示。
+`cp [-r] <src> <dst>`：scp 语义，冒号前不含 `/` 的是远端 `<node>:<path>`，其余一律是本地路径；默认冲突覆盖（`--on-conflict` 可改）。路径落到文件根由 `core/files-cp-path.ts` 完成：绝对路径取最长前缀的启用根，相对路径先认旧式 `<root>/`（根 id 或名称）再落 home；节点没有用户启用根时合成 `fs-root`；不在任何根内的绝对路径被拒绝。`home` 解析自根列表中的虚拟根 `home-root`（`$HOME`）；用户创建的启用根名为 `home` 时优先。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 `code: route_not_found`，无该字段时回退英文 `Not found`；区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。`rsync_missing_local`（HTTP 502 或 NDJSON error）映射为退出 5 与固定中文提示。
 
 `--json` 时 stdout 仅为 NDJSON 进度：`type=progress` 含 `ratePerSec` / `etaSec` / `file`（未知为 null），`done` 带 `files` / `skipped` / `errors` / `truncated`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
 
@@ -266,9 +266,9 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm nodes`
 
-子命令：`ls`、`show`、`rename`、`relay`、`ports`、`allow`、`disallow`、`revoke`、`enroll`、`meta-key`、`upgrade`（含 `cancel` / `--ids`）、`op clear`、`uninstall`、`rtc-config`、`pause`、`resume`。实现拆在 `commands/nodes.ts` 与 `nodes-relay.ts` / `nodes-ports.ts` / `nodes-ops.ts`；名册助手在 `core/nodes-roster.ts`（原 `nodes-hub.ts` 已改名，没有 `nodes-hub-role.ts`）。`ls` 合并 `GET /api/mesh/nodes` 与 `pendingMemberIds` 待批准行（`status=pending`），列含 ADDRESS（`nodeAddressOf`）与 PAUSED；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线拼相对时间（`listedOnline`，如 `no · 3h ago`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。REACH 为 `reachOf`：`lan/dc` 这类 `reach/transport`，中继收成 `relay`（机器 token，不本地化）。行类型 `MeshNode` 从 `@vibeterm/shared` 的 `contracts/mesh-node` 读，不在 CLI 自镜像。`pause` / `resume` 打 entry `POST /api/mesh/nodes/:id/pause|resume`；`CANNOT_PAUSE_SELF` 翻成 `cannot pause this machine (CODE)`。`show` 人读增加 PORTS 表，并打印 `address`、`lastSeenAt`。`rename` 走 keylog `rename-node`（需中继上联）。`relay ls|switch|unpin|rm|readmit|password` 是租户侧 status / switch / keylog / 加入密码；`relay ls` 多一列 ATTACHED，人读表后打 `quota <url>: nodes u/N  streams u/N  bandwidth u/N KB/s  max-file N MB`（`core/nodes-relay-quota.ts`），与本机运维 `relay list` 不是同一条命令。`relay password [<url>]` 打 `GET /api/mesh/relay/password`（默认已挂中继）；`relay password set <url>` 打 `POST`（`--clear` → `next: null`，默认 `keep`，`--kick`/`--clear` 非 TTY 要 `--yes`，密钥走 `VIBETERM_RELAY_JOIN_PASSWORD`）。429 `RELAY_RATE_LIMITED`（及小写别名）翻成 `rate limited (CODE); retry after Ns`（`retryAfterMs` 向上取整到秒）。`ports <node> [--probe]` 读 `MeshNode.ports[]`。`upgrade cancel <node>` 打 `DELETE …/upgrade`，非 TTY 必须 `--yes`；`--ids a,b,c` 与 `--all` 互斥、隐含 `--wait`。`--version <ver>` 写入 `POST /api/mesh/nodes/:id/upgrade` body（未发布 tag → `400 RELEASE_NOT_FOUND`）。`op clear` 打 `DELETE …/operation`。`allow` 看 `pendingMemberIds`：待批准则给该节点 wrap `K_meta`，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）；非 TTY 必须 `--yes`。`enroll --password` 仍是开关：`preprocessArgv` 把裸 `--password` 改写成 `--password=`（`core/nodes-relay.ts` 的 `rewriteBarePasswordFlag`），只打印 `vibeterm relay join <url> --tenant <id> --password`（租户编号来自 `GET /api/mesh/relay/status` 的 `tenantId`），不会把后面的 `--name` 当口令吃掉；默认路径签 enrollment 并打印 `vibeterm relay join … --token`。未挂中继时 enroll / rename 报 `NODE_NOT_ON_RELAY`。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`。`--all` **强制** `--wait`：按组（其它节点 → 本机）等上一组全部收尾再开下一组；只升 online、已登录、未暂停、版本严格低于 latest 的节点；任一 `failed` / `timeout` / `unconfirmed` 退出码 1。`uninstall`：`POST /api/mesh/nodes/:id/uninstall` 后签 `revoke-node`（吊销失败即失败）；非 TTY 必须 `--yes`。
+子命令：`ls`、`show`、`rename`、`relay`、`ports`、`allow`、`disallow`、`revoke`、`enroll`、`meta-key`、`upgrade`（含 `cancel` / `--ids`）、`op clear`、`uninstall`、`rtc-config`、`pause`、`resume`。实现拆在 `commands/nodes.ts` 与 `nodes-relay.ts` / `nodes-ports.ts` / `nodes-ops.ts`；名册助手在 `core/nodes-roster.ts`（原 `nodes-hub.ts` 已改名，没有 `nodes-hub-role.ts`）。`ls` 合并 `GET /api/mesh/nodes` 与 `pendingMemberIds` 待批准行（`status=pending`），列为 NAME ID STATE LAST SEEN LOGIN REACH VERSION ADDRESS PAUSED RTT：STATE / LAST SEEN 由 `nodeStateOf` / `lastSeenOf` 派生（离线给相对时间，如 `3h ago`），LOGIN 由 `loginStateOf` 只看本地会话与令牌文件（`session` / `token` / `-`），ADDRESS 由 `nodeAddressOf` 推导。`--json` 透传 `paused`、`lastSeenAt`、`address`。REACH 为 `reachOf`：`lan/dc` 这类 `reach/transport`，中继收成 `relay`（机器 token，不本地化）。行类型 `MeshNode` 从 `@vibeterm/shared` 的 `contracts/mesh-node` 读，不在 CLI 自镜像。`pause` / `resume` 打 entry `POST /api/mesh/nodes/:id/pause|resume`；`CANNOT_PAUSE_SELF` 翻成 `cannot pause this machine (CODE)`。`show` 人读增加 PORTS 表，并打印 `address`、`lastSeenAt`。`rename` 走 keylog `rename-node`（需中继上联）。`relay ls|switch|unpin|rm|readmit|password` 是租户侧 status / switch / keylog / 加入密码；`relay ls` 多一列 ATTACHED，人读表后打 `quota <url>: nodes u/N  streams u/N  bandwidth u/N KB/s  max-file N MB`（`core/nodes-relay-quota.ts`），与本机运维 `relay list` 不是同一条命令。`relay password [<url>]` 打 `GET /api/mesh/relay/password`（默认已挂中继）；`relay password set <url>` 打 `POST`（`--clear` → `next: null`，默认 `keep`，`--kick`/`--clear` 非 TTY 要 `--yes`，密钥走 `VIBETERM_RELAY_JOIN_PASSWORD`）。429 `RELAY_RATE_LIMITED`（及小写别名）翻成 `rate limited (CODE); retry after Ns`（`retryAfterMs` 向上取整到秒）。`ports <node> [--probe]` 读 `MeshNode.ports[]`。`upgrade cancel <node>` 打 `DELETE …/upgrade`，非 TTY 必须 `--yes`；`--ids a,b,c` 与 `--all` 互斥、隐含 `--wait`。`--version <ver>` 写入 `POST /api/mesh/nodes/:id/upgrade` body（未发布 tag → `400 RELEASE_NOT_FOUND`）。`op clear` 打 `DELETE …/operation`。`allow` 看 `pendingMemberIds`：待批准则给该节点 wrap `K_meta`，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）；非 TTY 必须 `--yes`。`enroll --password` 仍是开关：`preprocessArgv` 把裸 `--password` 改写成 `--password=`（`core/nodes-relay.ts` 的 `rewriteBarePasswordFlag`），只打印 `vibeterm relay join <url> --tenant <id> --password`（租户编号来自 `GET /api/mesh/relay/status` 的 `tenantId`），不会把后面的 `--name` 当口令吃掉；默认路径签 enrollment 并打印 `vibeterm relay join … --token`。未挂中继时 enroll / rename 报 `NODE_NOT_ON_RELAY`。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`。`--all` **强制** `--wait`：按组（其它节点 → 本机）等上一组全部收尾再开下一组；只升 online、已登录、未暂停、版本严格低于 latest 的节点；任一 `failed` / `timeout` / `unconfirmed` 退出码 1。`uninstall`：`POST /api/mesh/nodes/:id/uninstall` 后签 `revoke-node`（吊销失败即失败）；非 TTY 必须 `--yes`。
 
-`--json` 形状：`{ nodes }`（含 `status`、`paused`、`address`、`lastSeenAt`） / `MeshNode & { address }` / `{ node, ports }` / `{ ok, node }`（op clear / pause / resume） / `{ node, action, result }`（allow） / `{ node, result }`（revoke） / `{ latest, outcomes }`（`outcome` 含 `unconfirmed`） / `{ node, cancelled: true }`（upgrade cancel） / `{ node, scheduled, revoked }`（uninstall） / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }` / `{ known, password, passwordEpoch }`（relay password GET） / `{ ok, passwordEpoch }`（relay password set）。
+`--json` 形状：`{ nodes }`（含 `status`、`state`、`login`、`paused`、`address`、`lastSeenAt`） / `MeshNode & { address }` / `{ node, ports }` / `{ ok, node }`（op clear / pause / resume） / `{ node, action, result }`（allow） / `{ node, result }`（revoke） / `{ latest, outcomes }`（`outcome` 含 `unconfirmed`） / `{ node, cancelled: true }`（upgrade cancel） / `{ node, scheduled, revoked }`（uninstall） / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }` / `{ known, password, passwordEpoch }`（relay password GET） / `{ ok, passwordEpoch }`（relay password set）。
 
 ## `vibeterm devices`
 
@@ -350,17 +350,17 @@ dispatcher 在 `commands/settings.ts`，主题拆到 `settings-http.ts` / `setti
 
 ## `vibeterm sessions`
 
-`commands/sessions.ts` + `core/sessions-memory.ts`。无子命令：`GET /api/sessions/memory`（尊重 `--node`）。`connected: true` 的设备用 HTTP 行；`connected: false`（或缺字段时按 `windows.length > 0 || supported` 推断）走 `openDeviceSession` 补窗口列表。`--memory` 时保持这条 WS，收集 `window-memory` 事件直到所列窗口都有样本，或 `2 × sampleIntervalSec + 3 s`（间隔 `GET /api/settings/window-memory`，默认 5 s）；HELLO 无 `window-memory-v1` 则 `supported: false`。并发上限 `SESSIONS_WS_CONCURRENCY = 4`。人读表 `DEVICE` / `WINDOW` / `PANES`；`--memory` 加 `SCOPE` / `SOURCE`（`cgroup` / `RSS`）/ `MEM` / `HIGH` / `MAX` / `OOM`，未采样窗口（`sampledAt === 0`）这几列一律 `-`。非 TTY 默认 JSON（与 `exec` 相同）。`--json` 打填过 WS 之后的 payload。口径见 [窗口内存](../operations/window-memory-limits.md)。
+`commands/sessions.ts` + `core/sessions-memory.ts`。无子命令：`GET /api/sessions/memory`（尊重 `--node`）。`connected: true` 的设备用 HTTP 行；`connected: false`（或缺字段时按 `windows.length > 0 || supported` 推断）走 `openDeviceSession` 补窗口列表。`--memory` 时保持这条 WS，收集 `window-memory` 事件直到所列窗口都有样本，或 `2 × sampleIntervalSec + 3 s`（间隔 `GET /api/settings/window-memory`，默认 5 s）；HELLO 无 `window-memory-v1` 则 `supported: false`。并发上限 `SESSIONS_WS_CONCURRENCY = 4`。人读表 `DEVICE` / `WINDOW` / `PANES`；`--memory` 加 `SCOPE` / `SOURCE`（`cgroup` / `RSS`）/ `MEM` / `HIGH` / `MAX` / `OOM`，未采样窗口（`sampledAt === 0`）这几列一律 `-`。非 TTY 默认 JSON。`--json` 打填过 WS 之后的 payload。口径见 [窗口内存](../operations/window-memory-limits.md)。
 
-## `vibeterm exec`
+## `vibeterm exec` / `rsh`
 
-`POST /api/exec` 的客户端（`commands/exec.ts`），契约见 [远程执行](../architecture/remote-exec.md)，旗标与退出码见 [命令行使用手册](../operations/cli-usage.md)。与 `term run` 的边界：新子进程、分路 stdout/stderr、真实退出码。
+两条命令共用 `core/remote-run.ts` 的 `runRemote`：目标解析（`core/exec-target.ts`，解析结果缓存在 `<配置目录>/targets.json`，0600、24 h TTL，目标 NotFound 时丢弃）→ exec 通道客户端（`core/exec-channel*.ts`，EC1 会话层：输出落盘 + ACK、stdin 流控、信号 / PTY、断线重连与 resume）→ 旧节点时回退 `core/remote-run-legacy.ts`（`POST /api/exec`，仅在 READY 之前）。协议契约见 [远程执行](../architecture/remote-exec.md)，旗标与退出码见 [命令行使用手册](../operations/cli-usage.md)。
 
-- `--timeout` 只在命令行显式给出时写入请求体 `timeoutMs`（子进程墙上时钟，网关默认 600000）；不下发时不要把全局 HTTP 缺省 30000 当成用户意图。HTTP 空闲靠网关每 10 s 一条 `{"type":"ping","t"}` 与 CLI `ndjson(..., { timeoutMs: null })` + Bun `timeout: false`。
-- `--max-bytes`（1 KiB..8 MiB）→ 请求体 `maxBytes`，服务端截断该路、子进程继续。`--tail N` 是 CLI 环形缓冲；`--stdout-file` / `--stderr-file` 落盘后 JSON 只回路径与字节数。
-- `--script <path>` 把文件当 stdin，argv 默认 `['/bin/sh','-s']`；shebang 为 `sh|bash|zsh|dash|ksh` 时改用该解释器 `-s`，`--interpreter` 覆盖。与位置 argv / `--shell` / `--stdin*` / `@path` 互斥。
-- 流在 `exit` 前断开（`terminated` / `AbortError` / 套接字关闭 / 无 `exit` 就结束）→ `ExecStreamClosedError`（`code=EXEC_STREAM_CLOSED`，退出码 5）；远端子进程收 SIGTERM。未知事件（含 `ping`）忽略；`--json --stream` 原样转发其它事件、丢弃 `ping`。
-- CLI 退出码 = 远端退出码；timeout → **124**；未知设备 4、未登录 3、用法 2、spawn/网络 5。没有短时 exec 令牌，会话文件见上文 `$VIBETERM_SESSION_FILE`（[KI-16](../known-issues.md)）。
+- `commands/exec.ts` 只做参数与输出整形（原样 stdio 为默认，`--json` 才缓冲成对象）；`commands/rsh.ts` + `core/rsh-args.ts` 实现 OpenSSH 的 getopt 语法子集，vibeterm 侧失败一律退出 255，不接受 vibeterm 全局旗标（配置走 `VIBETERM_ENTRY` / `VIBETERM_SESSION_FILE` / `VIBETERM_TOKENS_FILE`）。`packages/app` 另装 `vibeterm-rsh` 启动器（等价 `vibeterm rsh`）给只能填程序路径的工具。
+- `@vibeterm/shared/exec-channel` 必须保持平台中立（浏览器可达，不得引入 `node:*`）；`packages/cli` 保持 Node 兼容（WebSocket 用 npm `ws`，不用 `Bun.*`）。
+- `--timeout` 只在命令行显式给出时写入 `spec.timeoutMs`；缺省 30 s 是请求超时，不是命令超时。
+- 凭据：`HttpClient.cookieHeader` 同一节点有有效会话时只发会话，否则发令牌 cookie `vibeterm_t_<nodeId>`；WS 握手头每次建连重算。
+- 退出码由 `exitCodeOf` 统一：远端码透传，信号 `128+n`，超时 124，本地输出端关闭 141。
 
 ## `vibeterm term`
 

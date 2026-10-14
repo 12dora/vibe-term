@@ -143,12 +143,12 @@ iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不�
 
 处置只有一个：把两端都升到 ≥ 2.3.0。
 
-## KI-16：没有短时、作用域收窄的 exec 令牌
+## KI-16：exec 令牌只按 scope 收窄，不能限定设备或命令
 
-`POST /api/exec` 与其它 `/api/*` 一样走完整 node-session，没有「只许跑这一条命令、过期即废」的服务端 scoped bearer。
-AI agent / CI 目前只能把完整会话能力交给调用方：默认 `~/.config/vibeterm/session.json`，或用
-`$VIBETERM_SESSION_FILE` 指到独立路径（0600，group/world 可读会拒绝加载）。拿到该文件等于拿到一个浏览器会话。
-后续若做短时 exec token，应在网关签发、按设备 / 命令 / TTL 收窄，并让 CLI 优先于会话 cookie 出示。
+`exec` / `rsh` 现在支持[访问令牌](./security/access-tokens.md)：按节点签发、scope 为 `exec`（还可有 `files` / `forward`）、可吊销、可审计，无人值守的 agent / CI 不必再持有完整 node-session。
+但令牌只在「命令执行」这一级收窄：`exec` 令牌能在该节点的任意设备上以服务用户身份跑任意命令，等同于该账号的 shell；服务端没有「只许跑这一条命令」「只许某台设备」或单次使用的令牌，也没有按命令白名单。
+需要更细的限制时，只能把该用途放到单独的节点上，并给令牌设置较短的有效期。
+后续若做更细的收窄，应在网关签发时写入设备 / 命令约束，并在 exec 通道的 `open` 阶段校验。
 见 [远程执行](./architecture/remote-exec.md)、[CLI 使用手册](./operations/cli-usage.md)。
 
 ## KI-17：libdatachannel DTLS / libjuice 死锁会永久卡住网关主线程

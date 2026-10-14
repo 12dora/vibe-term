@@ -11,7 +11,7 @@
 | [path-selection.md](./path-selection.md) | 路径优选与选路模式：智能 / 直连 / 中继、单一晋升门、会话绑定、滞环与升回、重掷协议、五元组 ECMP、WS 开链竞速、上行 `path-rerace` |
 | [relay.md](./relay.md) | 公共中继角色的完整参考 |
 | [relay-limits-and-metrics.md](./relay-limits-and-metrics.md) | 中继级限额、带宽公平分配、指标接口 |
-| [port-mapping.md](./port-mapping.md) | 节点间 TCP 端口映射 |
+| [port-mapping.md](./port-mapping.md) | 节点间 TCP 端口映射与 `vibeterm forward`（-L / -R） |
 | [site-settings-node-linkage.md](./site-settings-node-linkage.md) | 站点名 / 访问地址与节点身份联动 |
 | [mesh-notification-sink.md](./mesh-notification-sink.md) | 多节点通知汇聚 |
 | [agent-remote-pane-grant.md](./agent-remote-pane-grant.md) | 远程 agent 窗格授权 |
@@ -39,7 +39,7 @@
 | [device-tree-reorder.md](./device-tree-reorder.md) | 设备树拖拽排序 |
 | [file-transfer.md](./file-transfer.md) | 浏览器文件传输：分块上传、流式下载、`POST /api/files/mkdir`、本机免 rsync 与虚拟 `home` 根 |
 | [file-explorer.md](./file-explorer.md) | 文件管理器：删除 / 移动 / 重命名 / 打包下载接口、工作区模型、拖拽与剪贴板语义 |
-| [remote-exec.md](./remote-exec.md) | 非交互远程执行 `POST /api/exec` 与主机快照 `GET /api/system/facts` |
+| [remote-exec.md](./remote-exec.md) | 远程执行：exec 通道（EC1，WebSocket / mesh 流、断线续传、PTY、进程模型）、旧接口 `POST /api/exec` 与主机快照 `GET /api/system/facts` |
 
 ## Agent、Watch、通知与消息
 

@@ -1,10 +1,10 @@
 # vibeterm 命令行使用手册
 
-用 `vibeterm` 在终端里做网页端能做的事：登录、接进任意节点上的某个终端窗格（像 ssh 一样）、以及让 AI coding agent 非交互地在别的机器上跑命令、看画面。面向使用者；想加命令组的看[客户端 CLI 架构](../development/cli-architecture.md)。
+用 `vibeterm` 在终端里做网页端能做的事：登录、接进任意节点上的某个终端窗格（像 ssh 一样）、让 AI coding agent 非交互地在别的机器上跑命令、看画面，以及让 rsync / git / scp 经 vibeterm 走（`rsh`）。面向使用者；想加命令组的看[客户端 CLI 架构](../development/cli-architecture.md)。
 
 ## 它是什么，不是什么
 
-`vibeterm login|whoami|auth|api|nodes|devices|tmux|sessions|term|exec|system|files|cp|port|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
+`vibeterm login|whoami|auth|api|nodes|devices|tmux|sessions|term|exec|rsh|system|files|cp|port|forward|token|share|watch|agent|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，凭登录会话时权限与一个浏览器会话完全等价（凭访问令牌时收窄到令牌的 scope），因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
 
 `vibeterm init|doctor|upgrade|uninstall|user|relay|mesh|tls|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` 不加参数时不提问，默认角色 `standalone`，各项均可用旗标覆盖；`relay join` 把 `standalone` 自动切为 `node` 并重启服务。`init` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。中继机本地另有 `vibeterm relay metrics [--members] [--json]`（`GET /api/relay/metrics`）。本机用户用 `vibeterm user add|passwd|totp`。
 
@@ -113,7 +113,7 @@ vibeterm tmux stack <window> <cols>x<rows>
 vibeterm sessions [--node <node>] [--memory] [--json]
 ```
 
-`GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的会再开一条设备 WS 补窗口列表。带 `--memory` 时这条会话等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`。`--memory` 再加 `SCOPE`（该窗口第一个 systemd scope，多个时 `+N`，没有为 `-`）、`SOURCE`（`cgroup` / `RSS`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（内核 oom_kill 次数；窗口有粘性 OOM 标记时后缀 `!`）。未采样窗口（`sampledAt === 0`）的 `SOURCE` / `MEM` / `HIGH` / `MAX` / `OOM` 一律为 `-`，不要把 `0 B` 当读数。读数过期的窗口同样打 `-`：`stale === true`，或 `sampledAgeMs` 超过 `max(6 × 采样间隔, 60 s)`，或目标较老、没有 `sampledAgeMs` 时按本机时钟算 `sampledAt` 已超过该阈值再加 60 s 时钟偏差余量（`stale` 与 `sampledAgeMs` 不加余量）。`limitsSupported: false` 的设备在 `--memory` 模式下于其行后打印 `(limits unavailable)`；能限额但采不到读数（`supported: false`）则打印 `(cannot sample memory)`，两条不会叠印。非 TTY 默认 JSON（与 `exec` 相同）；`--json` 打填过 WS 之后的 payload（未采样窗口不带 `source`，以免被当成 cgroup）。口径与排障见 [窗口内存限额](./window-memory-limits.md)。
+`GET /api/sessions/memory`。`connected: true` 的设备直接用 HTTP 行；`connected: false` 的会再开一条设备 WS 补窗口列表。带 `--memory` 时这条会话等到每个窗口都有 `window-memory` 样本，或 `2 × sampleIntervalSec + 3 s` 耗尽（间隔取 `GET /api/settings/window-memory`）；HELLO 没有 `window-memory-v1` 或等不到样本则内存列为 `-`。同时最多 4 台设备开 WS。人读表列为 `DEVICE`、`WINDOW`（`@id name`）、`PANES`。`--memory` 再加 `SCOPE`（该窗口第一个 systemd scope，多个时 `+N`，没有为 `-`）、`SOURCE`（`cgroup` / `RSS`）、`MEM`（当前用量）、`HIGH` / `MAX`（`0` 为 `∞`）、`OOM`（内核 oom_kill 次数；窗口有粘性 OOM 标记时后缀 `!`）。未采样窗口（`sampledAt === 0`）的 `SOURCE` / `MEM` / `HIGH` / `MAX` / `OOM` 一律为 `-`，不要把 `0 B` 当读数。读数过期的窗口同样打 `-`：`stale === true`，或 `sampledAgeMs` 超过 `max(6 × 采样间隔, 60 s)`，或目标较老、没有 `sampledAgeMs` 时按本机时钟算 `sampledAt` 已超过该阈值再加 60 s 时钟偏差余量（`stale` 与 `sampledAgeMs` 不加余量）。`limitsSupported: false` 的设备在 `--memory` 模式下于其行后打印 `(limits unavailable)`；能限额但采不到读数（`supported: false`）则打印 `(cannot sample memory)`，两条不会叠印。非 TTY 默认 JSON；`--json` 打填过 WS 之后的 payload（未采样窗口不带 `source`，以免被当成 cgroup）。口径与排障见 [窗口内存限额](./window-memory-limits.md)。
 
 ## 接进一个终端（交互）
 
@@ -140,27 +140,91 @@ vibeterm term attach office/dev-box:build.1 --history 65536
 
 ## 给 AI agent 用（非交互）
 
-跑在一台机器上的 coding agent 可以用下面的命令去调试别的节点。stdout 是结果，提示走 stderr。要可靠的退出码、分 stdout/stderr、喂 stdin：**优先 `vibeterm exec`**，不要往共享 pane 打键。
+跑在一台机器上的 coding agent 可以用下面的命令去调试别的节点。要可靠的退出码、分 stdout/stderr、喂 stdin、跑长任务：**优先 `vibeterm exec`**（或需要 ssh 兼容时用 `vibeterm rsh`），不要往共享 pane 打键。
 
 ### 独立进程（`exec`）
 
 ```bash
-vibeterm exec office/dev-box -- echo hello
-vibeterm exec office --shell -- 'apt-get update && apt-get install -y jq'
-echo 'payload' | vibeterm exec laptop --stdin -- cat
-vibeterm exec laptop @script.sh -- bash
-vibeterm exec laptop --script setup.sh
-vibeterm exec laptop --max-bytes 65536 --tail 4096 -- ip -br addr
-vibeterm exec laptop --stdout-file /tmp/out.txt -- dmesg
+vibeterm exec office/dev-box uname -a
+vibeterm exec office 'apt-get update && apt-get install -y jq'
+vibeterm exec office 'pg_dump -Fc db' > db.dump
+cat big.tar | vibeterm exec office 'tar -C /srv -xf -'
+vibeterm exec office 'bash -s' <<'EOS'
+set -e; hostname
+EOS
+vibeterm exec -t office sudo systemctl status app
+vibeterm exec office -- ls -la /tmp          # 精确 argv，不经 shell
+vibeterm exec --script setup.sh office
+vibeterm exec --json office 'df -h'
 ```
 
-- 目标 `[<node>/]<device>`。只写节点名、当前 node 上又没有同名设备时，落到该节点 sortOrder 最低的 **local** 设备。
-- `POST /api/exec` NDJSON。`--timeout` **只约束远端子进程的墙上时钟**：只有命令行显式给出时才写入请求体 `timeoutMs`；省略则字段不下发，由网关默认 600000 ms（10 分钟，上限 3600000）。它不控制 Bun.serve / `fetch` 空闲超时；长静默命令靠网关每 10 秒一条 `{"type":"ping","t":…}` 续上连接。不要把全局缺省 30000 当成「用户要 30 秒」。`shell:true` 时 argv 只能有一项，经 **`/bin/sh -c`**（不用 `bash -lc`）。CLI **不会**隐式加 `DEBIAN_FRONTEND` 之类环境变量。
-- `--script <path>`：把文件当 stdin，argv 默认 `['/bin/sh','-s']`。文件以 `sh|bash|zsh|dash|ksh` shebang 开头时改用该解释器 `-s`；其它解释器回退 `/bin/sh -s` 并警告。`--interpreter <bin>` 覆盖。与位置 argv / `--shell` / `--stdin*` / `@path` 互斥。stdin 上限约 0.75 MiB，超出请先 `vibeterm cp`。`--shell` 里写 heredoc 仍要按 argv 转义，优先 `--script`。
-- `--max-bytes N`（1 KiB .. 8 MiB）：发给网关的每路输出上限，超出后 `truncated.<stream>=true`，子进程继续跑。`--tail N`：CLI 侧环形缓冲，JSON 字段只留每路最后 N 字节（若同时给 `--max-bytes`，先截服务端）。`--stdout-file` / `--stderr-file`：边收边写文件，JSON 用 `stdoutPath`/`stderrPath` + `stdoutBytes`/`stderrBytes`，不再内嵌字符串。非 TTY 默认仍是内联 JSON；某路超过 64 KiB 时 stderr 提示改用 `--tail` / `--stdout-file`。
-- 非 TTY 或 `--json`：一行 `{exitCode, signal, stdout, stderr, durationMs, truncated, reason}`，`reason` 为 `exit|timeout|error`。`--json --stream` 原样转发 NDJSON 事件（保活 `ping` 除外）。TTY 且未 `--json` 时 stdout/stderr 按块写回本机对应 fd。
-- NDJSON 在收到 `exit` 前被掐断（Bun `terminated` / AbortError / 套接字关闭）时：stderr 写 `exec stream closed before exit (reason: …); the remote child receives SIGTERM`；`--json` 另打 `{ "ok": false, "code": "EXEC_STREAM_CLOSED", "reason", "elapsedMs" }`；退出码 **5**。
-- CLI 退出码 = 远端退出码；timeout → **124**；未知设备 4、未登录 3、用法 2、spawn/网络 5。
+- 目标 `<node>`（该节点第一台 `local` 设备）、`<node>/<device>`，或入口上的 `<device>`。目标之前的选项属于 `exec`，**命令之后的内容（含 `-la` 之类）原样属于命令**。
+- 命令：多个词以空格拼接，交给目标用户的登录 shell 执行（`$SHELL -c`，`PATH` 来自登录 shell，`~/.local/bin` 里的工具可直接用；与 `ssh host cmd` 相同）。省略命令是登录 shell：终端里是交互会话，stdin 是管道时按脚本执行。`--` 之后是精确 argv，不经 shell。`--sh` 改用 `/bin/sh -c`；`--shell` 是旧写法，等价 `--sh`。
+- **stdio 原样透传**：stdout / stderr 写回本机对应 fd，二进制安全、无大小上限、带背压，可以直接 `> file` 或接管道。stdin 是管道 / 重定向 / heredoc 时自动流式转发，是终端时不转发；`-n` 不读 stdin，`--stdin-file <path>`（目标后紧跟 `@<path>` 等价）从文件读。`--script <path>` 把本地脚本作为 stdin 交给解释器：shebang 为 `sh|bash|zsh|dash|ksh` 时用该解释器 `-s`，其它回退 `/bin/sh -s` 并警告，`--interpreter <bin>` 覆盖；与命令、`--sh`、`-n`、`--stdin-file` 互斥。
+- **PTY**：`-t` 在 stdin 是终端时分配伪终端（否则提示并忽略），`-tt` 强制分配，`-T` 不分配；不带命令且 stdin、stdout 都是终端时自动分配。PTY 下终端进入 raw 模式，窗口大小变化同步到远端，Ctrl-C 只是一个字节；stderr 并入 stdout。
+- **长任务**：不因空闲断开（双向心跳），链路中断后自动重连并按偏移续传输出与 stdin，命令不受影响；自首次断线起最长重连 5 分钟（会话在节点上保留的时长），超过则以 5 退出。`--timeout <ms>` 限制命令墙上时钟，到点以 124 退出；缺省不限时。本机收到 SIGINT / SIGTERM / SIGHUP 时首次转发给远端进程组，再来一次终止会话并以 130 / 143 / 129 退出。
+- 提示：缺省不打印任何提示；`-v` 打印 `using device X on node Y` 与重连提示，`-q` 屏蔽 vibeterm 自己的警告。`--cwd <dir>`、`--env K=V`（可重复）设置工作目录与环境变量。`--stdout-file` / `--stderr-file <path>` 把输出写入文件（0600）而不写 fd。
+- **JSON 模式**（`--json`）：等命令结束后输出一个对象 `{exitCode, signal, stdout, stderr, durationMs, truncated, reason}`，`reason` 为 `exit|timeout|killed`；`--max-bytes N`（1 KiB..8 MiB，缺省 8 MiB）限制每路内联字节，`--tail N` 只留每路最后 N 字节，`--stdout-file` / `--stderr-file` 时改用 `stdoutPath` / `stdoutBytes`；`--json --stream` 逐块输出 NDJSON `{type:"stdout"|"stderr", base64}` 与 `{type:"exit", …}`。非 TTY 默认是原样输出，不再是 JSON。
+- 退出码：远端退出码透传；被信号终止为 `128+n`；超时 124；输出端关闭（`| head`）141。vibeterm 一侧的失败：用法 2、未登录 3、未知 node / 设备 4、网络 / 重连预算用尽 5。
+- 旧节点（没有 exec 通道）：会话建立前自动回退到 `POST /api/exec`，打一次兼容告警；此时 stdin 整体缓冲、上限约 740 KiB，每路输出上限 8 MiB，不支持 `-t` 与无命令的登录 shell。升级节点后恢复完整行为。协议见 [远程执行](../architecture/remote-exec.md)。
+
+### ssh 兼容入口（`rsh`）
+
+```bash
+vibeterm rsh [选项] [用户@]<目标> [命令 [参数…]]
+vibeterm-rsh [选项] [用户@]<目标> [命令 [参数…]]     # 同一个程序，给只能填「程序路径」的工具用
+```
+
+把 rsync、git、scp、docker 等依赖 ssh 的工具里的 `ssh` 换成它即可经 vibeterm 在节点上执行命令。参数语法同 OpenSSH（旗标可成簇，选项可出现在目标之后，`--` 结束选项）；目标可写 `<node>`、`<node>/<device>`、入口上的设备名或 `ssh://[用户@]节点[:端口][/设备]`。语义与 `exec` 一致，差别：
+
+- vibeterm 一侧的失败（用法、认证、网络、找不到目标）一律以 **255** 退出，并在 stderr 打 `vibeterm rsh: 原因`，与远端退出码区分（ssh 约定）。
+- 用户名（`user@`、`-l`）被忽略，命令以节点服务用户运行。`-p -i -F -c -m -b -E -e -S -B -I -P` 与其余 `-o` 选项、`-4 -6 -A -a -C -g -K -k -M -X -x -Y -y` 接受并忽略。
+- `-t` / `-tt` / `-T`（或 `-o RequestTTY=…`）、`-n`、`-q`、`-v`（可重复）、`-V`、`-s`（子系统，目前只有 `sftp`，供 scp / sftp 使用）、`-G`（打印最小配置，供 git 识别 OpenSSH 变体）、`-o SetEnv=K=V`、`-o SendEnv=PATTERN`、`-o RemoteCommand=C` 有效。
+- `-L -R -D -W -J -O -f -N -Q -w` 不支持并给出提示，端口转发请用 `vibeterm forward`。
+- 不接受 `--entry`、`--node`、`--json` 等 vibeterm 全局旗标（会与 ssh 参数冲突）。配置走环境变量：`VIBETERM_ENTRY`（网关入口）、`VIBETERM_SESSION_FILE`（会话文件）、`VIBETERM_TOKENS_FILE`（访问令牌文件，见下文 `token`）。
+
+```bash
+rsync -a -e 'vibeterm rsh' --rsync-path='sudo rsync' office:/data/dir/ ./dir/
+GIT_SSH_COMMAND='vibeterm rsh' git clone office:/srv/repo.git
+scp -S vibeterm-rsh office:/etc/hosts ./hosts
+```
+
+### ssh 用法 → vibeterm 等价写法
+
+| 场景 | ssh | vibeterm |
+| --- | --- | --- |
+| 一次性命令 | `ssh host uname -a` | `vibeterm exec host uname -a` |
+| 二进制 / 大流量导出 | `ssh host 'pg_dump -Fc db' > db.dump` | `vibeterm exec host 'pg_dump -Fc db' > db.dump` |
+| tar 管道 | `ssh host 'tar -C /data -cf - dir' \| tar -xf -` | `vibeterm exec host 'tar -C /data -cf - dir' \| tar -xf -`；反向 `cat a.tar \| vibeterm exec host 'tar -C /srv -xf -'` |
+| heredoc 脚本 | `ssh host 'bash -s' <<'EOF' … EOF` | `vibeterm exec host 'bash -s' <<'EOF' … EOF`，或 `vibeterm exec --script x.sh host` |
+| rsync | `rsync -a -e ssh host:/d/ ./d/` | `rsync -a -e 'vibeterm rsh' --rsync-path='sudo rsync' host:/d/ ./d/` |
+| scp | `scp host:/etc/hosts .` | `scp -S vibeterm-rsh host:/etc/hosts .`（任意路径）；或 `vibeterm cp host:/etc/hosts .`（限文件根内） |
+| git | `GIT_SSH_COMMAND=ssh git clone host:/r.git` | `GIT_SSH_COMMAND='vibeterm rsh' git clone host:/r.git` |
+| sudo / 交互程序 | `ssh -t host sudo systemctl status app` | `vibeterm exec -t host sudo systemctl status app` |
+| 交互 shell | `ssh host` | `vibeterm exec host`（终端里自动分配 PTY）；接 tmux 窗格用 `vibeterm term attach` |
+| 长任务 | `ssh host 'sleep 1800; echo done'` | 同写法，断线自动续传；限时加 `--timeout <ms>` |
+| 端口转发 | `ssh -L 15432:127.0.0.1:5432 host`、`ssh -R 8080:127.0.0.1:3000 host` | `vibeterm forward -L 15432:127.0.0.1:5432 host`、`vibeterm forward -R 8080:127.0.0.1:3000 host` |
+| 退出码 | `ssh host false; echo $?` → 1 | `vibeterm exec host false; echo $?` → 1（`rsh` 的本地失败为 255） |
+| 机器凭据 | 专用密钥（`restrict`、`permitlisten=`） | 访问令牌：`vibeterm token create host --name ci --scope exec`，见下文 `token` |
+
+### 机器访问令牌（`token`）
+
+给 agent / CI 这类无人值守的调用方：免登录执行 `exec` / `rsh` / 文件拷贝 / 端口转发，不必持有完整浏览器会话。令牌按节点签发、按 scope 授权（`exec` 远程命令、`files` 文件读写与传输、`forward` 端口转发）、可吊销、可审计，模型见 [访问令牌](../security/access-tokens.md)。
+
+```bash
+vibeterm token create office --name agent --scope exec,files --expires 90d
+vibeterm token ls office
+vibeterm token rm office agent
+vibeterm token create office --name ci --no-save --expires 30d        # 只打印 secret，交给别的机器
+echo "$SECRET" | vibeterm token add --id <32位节点id> office -        # 在无会话的机器上保存
+```
+
+- `create [<node>] --name <名称> [--scope exec,files,forward] [--expires 30d|90d|1y|never|<N>d]`：缺省 scope 为 `exec`、有效期 90 天（上限 3650 天）。默认保存到本机（`<配置目录>/tokens.json`，0600，`$VIBETERM_TOKENS_FILE` 改路径）；`--print` 保存后把 secret 打印到 stdout，`--no-save` 不保存、只打印 secret。**secret 只在创建时返回一次。**
+- `ls [<node>]`：`ID NAME SCOPES CREATED LAST USED EXPIRES SAVED`；`rm [<node>] <id|名称>` 吊销并清掉本机副本，已建立的 exec 会话随即终止；`rm --local [<node>]` 只清本机副本、不联系服务端。
+- `add [<node>] <secret|-> [--id <32位节点id>]`：保存一个已有的 secret（网页端「账号安全 → 访问令牌」创建的，或 `--no-save` 输出的）。先向节点验证再落盘，`-` 读 stdin。CI 机器没有会话、无法按名字解析节点，所以给 32 位节点 id 或用 `--id`（此时位置参数只是别名）；`add` 导入的令牌拿不到服务端 id，`ls` 的 SAVED 为 `no`，吊销要在有会话的机器上 `rm`，再用 `rm --local` 清本机副本。
+- 创建、查看、吊销必须用真实登录会话；令牌调用这些接口得到 `TOKEN_SCOPE`，CLI 提示先 `vibeterm login`。
+- 同一节点同时有有效会话和令牌时，用会话；令牌只在没有会话时生效。`vibeterm nodes ls` 的 LOGIN 列显示 `session` / `token`。
+- CI 流程：在已登录的机器上 `token create <node> --name ci --no-save --expires 30d`，把 secret 经密文渠道（CI secret）交给流水线；流水线里 `echo "$VT_TOKEN" | vibeterm token add --id <节点id> <别名> -` 后即可 `vibeterm --entry https://vt.example.com exec <别名> …`（或设 `VIBETERM_ENTRY`）；`VIBETERM_TOKENS_FILE` 指到工作目录内的临时路径，用完删除。
 
 ### 往已有窗格打命令（`term run`）
 
@@ -279,7 +343,15 @@ vibeterm nodes meta-key rotate [--exclude <node>...]
 vibeterm nodes revoke <node> --yes
 ```
 
-`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`。`ls` 列为 NAME ID ROLE STATUS REACH VERSION ADDRESS ONLINE PAUSED RTT。STATUS 仍是 `admitted` / `pending`；ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列。ADDRESS 与管理页地址列同一套推导（live `peerAddress` → 广告 endpoint → 中继 host）。REACH 仍是机器 token：`lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 透传 `paused`、`lastSeenAt`、`address`。`nodes show` 打印 `address`、`lastSeenAt`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`--version <ver>` 写入 POST body，网关必须是已发布且带 CLI tarball 的 tag，否则 400 `RELEASE_NOT_FOUND`；缺省仍走 latest。失败行 ERROR 列原文展示聚合投递串（如 `github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
+`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。本机 → `cannot pause this machine (CANNOT_PAUSE_SELF)`。`ls` 列为 NAME ID STATE LAST SEEN LOGIN REACH VERSION ADDRESS PAUSED RTT：
+
+| 列 | 含义 |
+| --- | --- |
+| STATE | `online` 在线、`offline` 离线、`pending` 待准入（尚未加入 mesh） |
+| LAST SEEN | 在线为 `now`；离线为距最近一次在线的时间（`5m ago` / `3h ago` / `2d ago`），未知为 `-` |
+| LOGIN | 本 CLI 是否持有该节点的凭据：`session` 有效登录会话；`token` 无会话但存有有效访问令牌；`-` 都没有。只表示本地凭据，不代表节点可用——未登录的在线节点同样可达，离线节点即使有会话也不可达 |
+
+ADDRESS 与管理页地址列同一套推导（live `peerAddress` → 广告 endpoint → 中继 host）。REACH 仍是机器 token：`lan/dc`、`wan/ws-secure` 或 `relay`（self / 离线 / pending 为 `-`）。`--json` 每行带 `state`、`login`、`status`（`admitted` / `pending`）、`paused`、`lastSeenAt`、`address`；`nodes show` 逐行打印 `state`、`last seen`、`login`、`address` 等字段（离线时 `last seen` 附绝对时间）。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。`--ids` 与 `--all` 互斥，过滤规则同 `--all`（online、已登录、版本低于 latest、非 paused），隐含 `--wait`。`--version <ver>` 写入 POST body，网关必须是已发布且带 CLI tarball 的 tag，否则 400 `RELEASE_NOT_FOUND`；缺省仍走 latest。失败行 ERROR 列原文展示聚合投递串（如 `github(node): slow 12KB/3s; push: timeout; github(node, forced): fetch failed`）。`upgrade cancel` 打 `DELETE /api/mesh/nodes/:id/upgrade`，非 TTY 必须 `--yes`。`op clear` 打 `DELETE /api/mesh/nodes/:id/operation` 清失败长事务。`ports` 打印 `MeshNode.ports[]`；`--probe` 先 `POST …/ports/probe`。
 
 `nodes relay ls` 是客户端租户侧 `GET /api/mesh/relay/status`（表头对齐本机 `relay list`，多一列 ATTACHED）；人读在表后再打配额行 `quota <url>: nodes u/N  streams u/N  bandwidth u/N KB/s  max-file N MB`（未设限为 `∞`，缺用量为 `-`）；`--json` 仍是网关原样（配额在 payload 里）。本机运维 `vibeterm relay list` 仍打本机回环。写配额走本机 `vibeterm relay quota`，不要和租户侧 `ls` 搞混。`relay password` 读 / 改**加入密码**（`GET/POST /api/mesh/relay/password`，默认 URL 为当前已挂上的中继；未挂退出码 4）。`set` 必须给 `--password` / `--password-stdin` / `--password-file` / `VIBETERM_RELAY_JOIN_PASSWORD` 之一，或 `--clear`（`next: null`）；默认 `--keep`，`--kick` 会踢掉已用旧密码加入的成员。`--kick` / `--clear` 非 TTY 必须 `--yes`。最短 8 位。`set` 遇 429 `RELAY_RATE_LIMITED` 时人读 `rate limited (RELAY_RATE_LIMITED); retry after Ns`（`retryAfterMs` 向上取整到秒，不足 1 s 按 1 s）。这与本机运维 `vibeterm relay passwd`（管理员改中继机密码）不是同一条命令。`relay switch` 不签 keylog（本机换上行，并写入 `preferredUrl` 固定主中继）。`relay unpin` 清掉固定（`POST /api/mesh/relay/unpin`，honours 全局 `--node`），人读打印 `unpinned` 或 `nothing pinned`。`relay rm` / `readmit` 要签名。最后一条中继回 `RELAY_LAST`，提示走本机 `relay leave`。`vibeterm relay enroll <url>` 是追加，不是替换；最多 `16` 条中继（`RELAY_RECORD_MAX_RELAYS`）。主中继由自动优选选出，除非用户 `switch` 固定。
 
@@ -302,13 +374,24 @@ CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分是否已接中继（`Rela
 ## 文件拷贝
 
 ```bash
-vibeterm cp ./patch.diff office:home/tmp/patch.diff
-vibeterm cp office:home/app/dist ./dist -r
+vibeterm cp ./patch.diff office:tmp/patch.diff
+vibeterm cp office:/srv/app/dist ./dist -r
 ```
 
-节点侧路径是**相对该文件根**的：`[<node>:]<root>/<path>`。`home` 是节点上的虚拟根（id `home-root`，路径为该节点 `$HOME`），由 `GET /api/files/roots` 下发且带 `virtual: true`，无需先 `files roots add`；若用户自己建了展示名为 `home` 的启用根，则用户根优先（列表不再附带虚拟项，但 `home-root` id 仍解析到该用户根，与网关一致）。id 形式：`home-root:`、`office:home-root/rel`。虚拟 `home-root` 不使 `fs-root` 失效：节点没有用户启用根时仍可用 `fs-root:`。前导 `/` 会被当成文件系统绝对路径并被 `outside_roots` 拒绝，不要写成 `office:/home/u/file`。本地路径才用 `./`、`../`、`~` 或操作系统绝对路径。
+语法与 scp 一致：冒号前不含 `/` 的是远端 `<node>:<path>`，其余一律是本机路径（`dir`、`a/b`、`./x`、`~/x`、绝对路径、`C:\x` 均为本机）；两端都在本机时请用系统 `cp`。`-r` / `-R` 递归（`-rp` 这类组合里的 `p` 被忽略，其余短旗标不支持）。**同名冲突默认覆盖**，`--on-conflict skip|rename` 改策略（`rename` 仅限本机 ↔ 节点，node ↔ node 只支持 `overwrite|skip`），`--fail-on-skip` 让有条目被跳过时退出码为 1。
 
-`--json` 时 stdout 为 NDJSON。`type=progress` 额外带 `ratePerSec`（number 或 null）、`etaSec`（number 或 null）、`file`（当前 relPath 或 basename，未知为 null）。
+远端路径 `<node>:<path>`，`<node>` 是节点名、id，或 `self` / `local` / `.`（入口节点）：
+
+| 写法 | 含义 |
+| --- | --- |
+| `<node>:` | 节点的 home 目录 |
+| `<node>:/abs/path` | 设备上的绝对路径，须位于某个已启用的文件根内（取最长前缀的根）；节点没有用户启用的根且未指定 `--device` 时，落到整个文件系统（`fs-root`） |
+| `<node>:rel/path` | 相对 home；首段恰为文件根 id 或名称时按该根解析（旧写法 `<node>:<root>/<rel>`、`office:home/tmp/x` 仍可用） |
+| `<rootId>:<rel>`、`fs-root:<rel>`、`home-root:<rel>` | 入口节点上的旧式根写法 |
+
+不在任何文件根内的绝对路径会被拒绝：在设置里添加文件根，或改用 `rsync -e 'vibeterm rsh'` / `scp -S vibeterm-rsh` 访问任意路径。`home` 是节点上的虚拟根（id `home-root`，路径为该节点 `$HOME`），由 `GET /api/files/roots` 下发且带 `virtual: true`，无需先 `files roots add`；用户自建了展示名为 `home` 的启用根时，用户根优先。默认复制到节点的首个 `local` 设备，多设备用 `--device <id|name>`（node ↔ node 不支持）。
+
+`--json` 时 stdout 为 NDJSON。`type=progress` 带 `ratePerSec`（number 或 null）、`etaSec`（number 或 null）、`file`（当前 relPath 或 basename，未知为 null）。进度默认只在 TTY 的 stderr 显示（`--progress` / `--no-progress`）。出现错误或目录列表被截断退出码为 1；SIGINT / SIGTERM 退出码 130，并先清理进行中的上传 / 下载会话；会话丢失 3。`vibeterm cp jobs ls|cancel <id>` 管理 node ↔ node 的传输任务。
 
 目标节点返回 `rsync_missing_local`（HTTP 502，或 upload commit / download prepare 的 NDJSON `error`）时退出 5，提示「目标节点未安装 rsync（本地设备已无需 rsync；SSH 设备请在该节点安装 rsync）」。本地设备的浏览与拷贝已不再依赖 rsync；SSH 设备仍需在该节点安装 rsync。
 
@@ -335,13 +418,27 @@ vibeterm devices folders reset [--yes]
 
 `devices connect` 向本条 CLI WebSocket 发 `connect-device`，等到 `device-connected` 或第一份 `metadata-snapshot` 后默认**一直持有**这条连接（像 GUI 页签），直到 Ctrl-C / SIGTERM 或 socket 断开；`--once` 只确认一次就退出。网关在最后一个客户端离开约 5 s 后释放设备运行时，所以给后续 `tmux` / `term` 预热时不要加 `--once`。`devices disconnect` 只向**本条** CLI WebSocket 发 `disconnect-device` 并等 `device-disconnected`，**不先** `connect-device`。两者都不会拆掉 GUI 或其他客户端已经连上的设备。`folders reset` 非 TTY 必须 `--yes`。
 
-## 端口映射
+## 端口映射与转发
 
 ```bash
 vibeterm port map 8080 office:127.0.0.1:8080     # 把 office 上的 8080 映到本机
 ```
 
 监听节点和目标节点必须是两台不同的机器（含 `self` 与它自己的 mesh id）。网关没有同节点短路，self→self 的映射会显示 `listening`，但连上去每条都 `bad_signature`。
+
+`vibeterm forward` 是 `ssh -L` / `-R` 的等价写法，建立在端口映射之上，两端节点都不用改 sshd 配置：
+
+```bash
+vibeterm forward -L 15432:127.0.0.1:5432 db-node         # 本机 15432 → db-node 上的 5432
+vibeterm forward -R 8080:127.0.0.1:3000 edge --persist   # edge 的 8080 → 本机 3000，常驻
+vibeterm forward -L 8080:127.0.0.1:80 -R 9000:127.0.0.1:9000 lab
+```
+
+- `-L [bind:]port:host:hostport`：入口节点（本机）监听 `port`，流量由 `<node>` 去连 `host:hostport`。`-R` 相反：在 `<node>` 上监听 `port`，由入口节点去连 `host:hostport`。`bind` 缺省 `127.0.0.1`，`*` 等同 `0.0.0.0`，IPv6 写 `[::1]`；`-L` / `-R` 可重复。入口节点自身不能作为 `<node>`。
+- 默认前台运行：建立后保持，每 30 秒巡检映射状态，异常与恢复各提示一次，Ctrl-C 撤销全部转发后退出（清理时再按一次放弃等待，退出码 130）。`--persist` 建立持久映射后立即退出，由网关负责保活（重启、链路断开后自动恢复），名称缺省 `fwd:<L|R><port>`，可用 `--name` 指定，之后用 `vibeterm port ls` / `port rm <id>` 管理（`-R` 的映射在 `<node>` 上，加 `--on <node>`）。
+- 授权在目标节点完成：每条转发都会在目标节点登记一条放行，只允许来源节点访问该 `host:hostport`，其余地址一律拒绝，等价 sshd 的 `PermitOpen` / `PermitListen`。无人值守时用 `forward` 作用域的访问令牌调用（见 `token`）。
+- 前台转发的映射名为 `fwd:<进程号>:<L|R><端口>`；进程被强杀后遗留的映射，会在下次用同样的端口与目标重建时自动清理。
+
 
 ## 设置
 
@@ -429,11 +526,12 @@ vibeterm watch rules state <id> [on|off]
 
 ## 安全说明
 
-- **边界与网页端完全一致**。CLI 没有任何「本机特权」：它拿的是和浏览器一样的会话 cookie，能做的事一条不多。访问别的节点走 entry 的 `/n/<nodeId>/…` 转发并带**那个节点自己的**会话，和网页端一模一样；CLI 从不使用本机节点的 mesh 身份、数据库或主密钥去碰别的机器。
-- **会话随时可撤销**。`vibeterm logout` 会让服务端撤销该账号的会话，等同于网页端退出登录。会话文件里只有 sid 与到期时刻，拿到它也只等于拿到一个浏览器会话；真要止血就 `logout`，必要时再在网页端改密码。`exec` 没有短时 scoped bearer，`$VIBETERM_SESSION_FILE` 只换路径、不缩小权限（见 [KI-16](../known-issues.md)）。
+- **边界与网页端完全一致**。CLI 没有任何「本机特权」：它拿的是和浏览器一样的会话 cookie（或收窄 scope 的访问令牌），能做的事一条不多。访问别的节点走 entry 的 `/n/<nodeId>/…` 转发并带**那个节点自己的**会话，和网页端一模一样；CLI 从不使用本机节点的 mesh 身份、数据库或主密钥去碰别的机器。
+- **会话随时可撤销**。`vibeterm logout` 会让服务端撤销该账号的会话，等同于网页端退出登录。会话文件里只有 sid 与到期时刻，拿到它也只等于拿到一个浏览器会话；真要止血就 `logout`，必要时再在网页端改密码。无人值守的 agent / CI 不要共用会话文件，改用按 scope 授权、可吊销的[访问令牌](../security/access-tokens.md)（`vibeterm token`）；`$VIBETERM_SESSION_FILE` 只换路径、不缩小权限（见 [KI-16](../known-issues.md)）。
 - **窗格是共享的**。`term send` / `term run` 打进去的字符和真人敲的没有区别，会被同一个窗格的其他观看者看到，也会进 shell 历史。别把口令、令牌当按键发；要传密钥用 `vibeterm cp`。
 - **`term run` 会执行任意命令**。给 AI agent 用之前想清楚它能碰到哪些节点——权限就是那个账号的权限。需要收紧就为它单独建账号 / 单独的节点授权，而不是共用管理员会话。
-- 非交互场景把密码放 `VIBETERM_PASSWORD`、TOTP 放 `VIBETERM_TOTP`，不要写进命令行参数（会进 shell 历史与进程列表）。
+- 非交互场景把密码放 `VIBETERM_PASSWORD`、TOTP 放 `VIBETERM_TOTP`，不要写进命令行参数（会进 shell 历史与进程列表）。令牌 secret 同理：用 `token add … -` 从 stdin 读，别放在参数里；令牌文件 `tokens.json` 与会话文件一样是完整凭据（0600，group/world 可读会拒绝）。
+- `exec` / `rsh` 以节点服务用户的身份跑命令，`exec` 作用域的令牌等同于该账号在节点上的 shell；签发时只给需要的 scope，并设置较短的有效期。
 
 ## 排障
 
@@ -441,7 +539,10 @@ vibeterm watch rules state <id> [on|off]
 | --- | --- |
 | 退出码 3 | 会话过期或没登录：`vibeterm login`（跨节点加 `--node`） |
 | 退出码 4 | node / device / 窗口 / 窗格不存在：`vibeterm nodes ls`、`vibeterm devices ls`、`vibeterm tmux ls` 逐层确认 |
-| 退出码 5 | 连不上、握手超时，或改动没在 `--timeout` 内落地。`exec` 在收到 `exit` 前被掐断也是 5（`EXEC_STREAM_CLOSED`） |
+| 退出码 5 | 连不上、握手超时，或改动没在 `--timeout` 内落地。`exec` 重连预算用尽（自首次断线起 5 分钟）也是 5；回退到旧接口的 `exec` 在收到 `exit` 前被掐断为 `EXEC_STREAM_CLOSED` |
+| `rsh` 退出码 255 | vibeterm 一侧失败（认证、网络、找不到目标），原因在 stderr 的 `vibeterm rsh: …`；远端命令自己的退出码原样透传 |
+| `TOKEN_SCOPE`（403） | 令牌的 scope 不含该请求（`exec` / `files` / `forward`），或在用令牌管理令牌；换会话登录，或重新签发带该 scope 的令牌 |
+| 提示「目标节点版本过旧」 | 目标节点没有 exec 通道，已回退到兼容接口；`-t`、登录 shell、超过约 740 KiB 的 stdin 在兼容模式下不可用，升级该节点 |
 | `attach` 退出码 2 | 当前不是交互终端：脚本里请用 `term run|send|capture` |
 | `run` 的输出里混着提示符 | 见上面的「尽力而为」说明，加 `--marker` |
 | `run` 退出码 1、`reason` 是 timeout / truncated | 输出没收全：加大 `--timeout`、缩小输出，或明确接受半截结果时加 `--allow-timeout` |

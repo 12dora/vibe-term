@@ -8,7 +8,7 @@
 | --- | --- |
 | [`architecture/`](./architecture/README.md) | 系统如何工作：多节点互联（mesh / 中继 / 直连 / 端口映射）、WebSocket 协议与状态机、终端底座与视口、文件传输、远程执行、分享、Agent、Watch、通知与消息指令 |
 | [`operations/`](./operations/README.md) | 部署与运维手册：安装、mesh 与中继运维、容器节点、HTTPS / 端口 / 隧道、进程存活、事件循环看门狗、发版 / 签名 / 升级 / 改名迁移 |
-| [`security/`](./security/README.md) | 登录面安全模型与访问策略（mesh 的威胁模型在 `architecture/mesh-architecture.md`） |
+| [`security/`](./security/README.md) | 登录面安全模型、访问令牌与访问策略（mesh 的威胁模型在 `architecture/mesh-architecture.md`） |
 | [`development/`](./development/README.md) | 开发与测试：环境变量、前端包结构与外壳行为、性能基准、字体流水线、实测 harness |
 | `images/` | 根 README 引用的截图 |
 | [`known-issues.md`](./known-issues.md) | 尚未解决的已知问题登记簿；解决后从中移除 |
@@ -19,7 +19,7 @@
 - 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍、直连慢于中继：[路径优选](./architecture/path-selection.md)。
 - 装在 ≤ 2 GiB 的小内存机上：[小内存主机](./operations/small-memory.md)。想知道某个 tmux 窗口吃了多少内存、或想在 Linux 上把它限住：[窗口内存](./operations/window-memory-limits.md)。
 - 服务显示 running 但 HTTP / 中继不通：[事件循环看门狗](./operations/gateway-loop-watchdog.md)。
-- 登录相关（密码、通行密钥、TOTP、登录限制、登录历史、公网暴露）：[登录面安全](./security/login-security.md)。
+- 登录相关（密码、通行密钥、TOTP、登录限制、登录历史、公网暴露）：[登录面安全](./security/login-security.md)；agent / CI 免登录凭据：[访问令牌](./security/access-tokens.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
 - 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)；改共享口径先看 [单一上游](./development/code-conventions.md)。
@@ -37,7 +37,7 @@
 | [path-selection.md](./architecture/path-selection.md) | 路径优选与选路模式：智能 / 直连 / 中继、单一晋升门、会话绑定、滞环与升回、重掷协议、五元组 ECMP、WS 开链竞速、上行 `path-rerace` |
 | [relay.md](./architecture/relay.md) | 公共中继角色：盲中继协议、租户密钥、密钥日志记录、加入串与密码加入、存储、HTTP / uplink 接口、CLI 与网页、运维、边界、令牌换发 |
 | [relay-limits-and-metrics.md](./architecture/relay-limits-and-metrics.md) | 中继运营限额（租户数、总带宽、公平分配、单文件上限）与 `/api/relay/metrics` |
-| [port-mapping.md](./architecture/port-mapping.md) | 端口映射：node A 的 TCP 监听经 peer 流复用器隧道到 node B |
+| [port-mapping.md](./architecture/port-mapping.md) | 端口映射：node A 的 TCP 监听经 peer 流复用器隧道到 node B；`vibeterm forward`（-L / -R）的映射与授权 |
 | [site-settings-node-linkage.md](./architecture/site-settings-node-linkage.md) | 站点名 / 访问地址与 mesh 节点身份联动 |
 | [ws-borsh-v1-spec.md](./architecture/ws-borsh-v1-spec.md) | `vibeterm-ws-borsh-v1` wire 格式的唯一真源：kind 编号、payload schema、作废号段、能力协商 |
 | [ws-state-machines.md](./architecture/ws-state-machines.md) | 两端状态机：连接、设备、canonical 首屏 / 订阅 / resize / bell / feed，附屏障历史对应 |
@@ -51,7 +51,7 @@
 | [device-tree-reorder.md](./architecture/device-tree-reorder.md) | 设备 / 窗口 / pane 拖拽排序与顺序持久化 |
 | [file-transfer.md](./architecture/file-transfer.md) | 浏览器文件传输：分块上传、流式下载、进度、取消、`POST /api/files/mkdir`、本机免 rsync 与虚拟 `home` 根 |
 | [file-explorer.md](./architecture/file-explorer.md) | 文件管理器：删除 / 移动 / 重命名 / 打包下载接口、工作区模型、拖拽与剪贴板语义 |
-| [remote-exec.md](./architecture/remote-exec.md) | 非交互远程执行 `POST /api/exec` 与主机快照 `GET /api/system/facts` |
+| [remote-exec.md](./architecture/remote-exec.md) | 远程执行：exec 通道（EC1，WebSocket / mesh 流、断线续传、PTY、进程模型）、旧接口 `POST /api/exec` 与主机快照 `GET /api/system/facts` |
 | [node-to-node-transfer.md](./architecture/node-to-node-transfer.md) | 节点间文件传输：一次性授权、协议、限制与清理 |
 | [terminal-share.md](./architecture/terminal-share.md) | 终端分享：数据模型、接口、凭证与 ws 隔离、录制回放、安全边界 |
 | [terminal-agent.md](./architecture/terminal-agent.md) | 终端 AI Agent：数据模型、接口、生命周期、系统提示词、终端工具与 `run_command`、凭证处理 |
@@ -82,7 +82,7 @@
 | [self-update.md](./operations/self-update.md) | 程序内自更新：版本注入、`canSelfUpdate`、状态机、发行包缓存与租约 |
 | [remote-upgrade.md](./operations/remote-upgrade.md) | 远程升级：三通道投递、推包续传与进度 |
 | [bun-path-resolution.md](./operations/bun-path-resolution.md) | CLI 的 bun 路径解析与 `run.sh` 约束 |
-| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、登录历史与登录限制、目标语法、tmux 结构、窗口内存、像 ssh 一样接进任意节点的终端、AI agent 会话与 run / capture / send、节点 / 设置 / 文件 / 设备命令、安全边界与退出码 |
+| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、登录历史与登录限制、目标语法、tmux 结构、窗口内存、像 ssh 一样接进任意节点的终端、exec / rsh（含 ssh 用法对照表）、访问令牌 token、AI agent 会话与 run / capture / send、节点 / 设置 / 文件拷贝 / 设备 / 端口转发 forward 命令、安全边界与退出码 |
 | [rename-migration.md](./operations/rename-migration.md) | tmex → VibeTerm 改名迁移：命名表、冻结值、兼容桥、目录迁移、升级手册 |
 
 ### security/
@@ -91,6 +91,7 @@
 | --- | --- |
 | [login-security.md](./security/login-security.md) | 登录失败模糊化、客户端 IP、登录限制与登录历史、二次验证「TOTP 或本 origin 通行密钥」二选一、公网安全评估 |
 | [domain-access-policy.md](./security/domain-access-policy.md) | 按节点的「允许域名访问」开关 |
+| [access-tokens.md](./security/access-tokens.md) | 机器访问令牌：scope、出示方式、会话优先、管理与吊销、审计、CLI 与 CI 流程 |
 
 ### development/
 

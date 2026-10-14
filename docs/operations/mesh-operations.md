@@ -23,7 +23,7 @@
 
 中继角色详见 [公共中继（relay）角色](../architecture/relay.md)。
 
-请求顺序（mesh 角色）：中继（若有，`/relay/uplink`、`/api/relay/*`）→ mesh 本地守卫 → mesh（`/api/auth/*`、`/api/mesh/*`、`/mesh/ws`、`/n/:id/*`）→ gateway → 前端 SPA（覆盖 `/login`、`/nodes`、`/n/:id/...`）。standalone 不构造 mesh，只挂轻量 `GET /api/auth/mode`。纯 `relay` 不提供前端。
+请求顺序（mesh 角色）：中继（若有，`/relay/uplink`、`/api/relay/*`）→ mesh 本地守卫 → mesh（`/api/auth/*`、`/api/mesh/*`、`/mesh/ws`、`/n/:id/*`）→ gateway → 前端 SPA（覆盖 `/login`、`/nodes`、`/n/:id/...`）。standalone 不构造 mesh，只挂轻量 `GET /api/auth/mode`。纯 `relay` 不提供前端，也不把请求交给 gateway：除中继路径、本机 `/api/local/*`、`/api/tls*` 与 `GET /healthz` 外一律 404。
 
 关停（`roles.node || roles.relay` 装 SIGINT/SIGTERM）：relay → agent → mesh → auth → gateway，预算 20 s。standalone 不装信号处理器。
 
@@ -198,7 +198,7 @@ CLI：`vibeterm settings mesh route-mode get|set <auto|direct|relay>`（`--json`
 
 本机卡「网络 → 端口」行按角色列出端口计划（`relay` / `relay,node` 含 443 与 TURN，其余为 peer + RTC），标签固定为「端口」，不再按角色换标题，也没有图例行；节点详情框仍用「入站端口」。三态灯：`open` 绿、`blocked` 红、`unknown` 或无 `MeshPortReach` 行灰点，灯的 `title` / `aria-label` 即「已开通 / 未开通 / 未探测」。探测中保持原灯 + 按钮 spinner。能解析到 self id（`mode.nodeId` 或 mesh `entryNodeId`）时行末显示「重新检测」，打 `POST /api/mesh/nodes/<self>/ports/probe`；standalone / 无 self 不画该按钮。灯表示「别人探本机 advertised peer endpoint」，不是安全组扫描。只有内网地址的云主机会额外广播 STUN mapped 多数派公网 IPv4（或 `VIBETERM_PEER_PUBLIC_HOST`），所以安全组已放行 39001 的云主机也能变绿；`refused` 一次即红，`timeout` 两击。「重新检测」让对端 30 s 内重探（经 `peer_reach_epoch`）。中继主机的 443 与 TURN 行由成员在线数与成员 TURN 统计派生。
 
-`GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`，以及 `lastSeenAt`（毫秒，来自 `peer_cache.last_seen_at`；self 恒 `null`；旧入口不下发）。前端行模型优先 mesh `lastSeenAt`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。CLI `vibeterm nodes ls` 有 ADDRESS 列，ONLINE 在线为 `yes · signed-in` / `yes · signed-out`，离线合进同一列（`no · 3h ago` / `no`），不加 LOGIN 列；`--json` 带 `paused`、`lastSeenAt`、`address`；`nodes show` 仍打印 `loggedIn`。详见 [命令行使用手册](./cli-usage.md)。
+`GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`，以及 `lastSeenAt`（毫秒，来自 `peer_cache.last_seen_at`；self 恒 `null`；旧入口不下发）。前端行模型优先 mesh `lastSeenAt`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。CLI `vibeterm nodes ls` 的列为 NAME ID STATE LAST SEEN LOGIN REACH VERSION ADDRESS PAUSED RTT：STATE 为 `online` / `offline` / `pending`，LAST SEEN 在线为 `now`、离线为距最近在线的时间（`3h ago`），LOGIN 为本 CLI 持有的凭据（`session` / `token` / `-`，只表示本地凭据，不代表节点可用）；`--json` 带 `state`、`login`、`paused`、`lastSeenAt`、`address`；`nodes show` 打印 `state`、`last seen`、`login`、`address` 等。详见 [命令行使用手册](./cli-usage.md)。
 
 node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请求只发生在较大 id 一侧时，该侧会经已认证的中继 `rtc.signal` 通道发一条签名 wake（`sdp` 内 `type=rtc.wake`，对 `{domain:vibeterm-rtc-wake, from, to, rtcSession, nonce, issued_at}` 用发送方节点 Ed25519 私钥签名）唤醒较小 id 去 `getLink`；中继只转发、不解释、不验签。接收端用 `node_certs` 验签，拒绝坏签名、时钟偏差 > 60s、重放 nonce，以及自己并非该对 offerer 的 wake；每对端有接收冷却。发送侧 5s 冷却若挡住了仍需要的 wake，会在 `nextEligibleAt` 补发（DC 到达或本次拨号结束则取消）。已是 `dc` 的忽略。`node.list` / 对端 `direct_capable` 翻成 true 时两边都会 `maybeUpgrade()`。已打开的 node↔node stream 留在旧链路上，**不会**随 carrier-switch 迁到 DC（carrier-switch 只服务浏览器 `sess`）；新 stream 在 `waitForTransport(id, 'dc')` 成功后再开才会走 DC。
 
