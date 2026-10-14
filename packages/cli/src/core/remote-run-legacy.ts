@@ -49,23 +49,21 @@ function launchOf(command: ExecCommand): LegacyLaunch {
   throw new UsageError(UPGRADE_MESSAGE);
 }
 
-/** 兼容路径需要整体缓冲 stdin：首个字节迟迟不来（终端 / 永不关闭的管道）就按空输入处理。 */
+/** 兼容路径需要整体缓冲 stdin 并一直读到 EOF；首个字节迟迟不来时只提示一次，不截断。 */
 const STDIN_IDLE_MS = 2000;
-const STDIN_IDLE_HINT =
-  `兼容模式下标准输入 ${STDIN_IDLE_MS / 1000} 秒内没有数据，已按空输入处理；` +
-  '命令不需要 stdin 时请加 -n';
+const STDIN_IDLE_HINT = '兼容模式正在等待标准输入结束；命令不需要 stdin 时请加 -n';
 
 function hasFilePath(stream: NodeJS.ReadableStream): boolean {
   const path = (stream as { path?: unknown }).path;
   return typeof path === 'string' && path.length > 0;
 }
 
-/** 读到 EOF 或超过 cap；`idleMs` 内没有任何数据返回 null（不销毁流，调用方负责 pause）。 */
+/** 读到 EOF 或超过 cap；`idleMs` 内没有任何数据时调用一次 `onIdle`，继续等待。 */
 function readCapped(
   stream: NodeJS.ReadableStream,
   cap: number,
-  idleMs: number | null
-): Promise<Buffer | null> {
+  idle: { ms: number; onIdle: () => void } | null
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
@@ -100,7 +98,12 @@ function readCapped(
       return;
     }
     stream.resume();
-    if (idleMs !== null) timer = setTimeout(() => settle(() => resolve(null)), idleMs);
+    if (idle) {
+      timer = setTimeout(() => {
+        timer = null;
+        idle.onIdle();
+      }, idle.ms);
+    }
   });
 }
 
@@ -128,10 +131,10 @@ function limits(run: LegacyRun): Pick<ExecRequestBody, 'cwd' | 'env' | 'timeoutM
 
 async function bufferStdin(ctx: CliContext, run: LegacyRun): Promise<Buffer | null> {
   if (!run.stdin) return null;
-  const idleMs = hasFilePath(run.stdin) ? null : (run.stdinIdleMs ?? STDIN_IDLE_MS);
-  const bytes = await readCapped(run.stdin, MAX_EXEC_STDIN_BYTES, idleMs);
-  if (bytes === null) ctx.out.warn(STDIN_IDLE_HINT);
-  return bytes;
+  const idle = hasFilePath(run.stdin)
+    ? null
+    : { ms: run.stdinIdleMs ?? STDIN_IDLE_MS, onIdle: () => ctx.out.warn(STDIN_IDLE_HINT) };
+  return readCapped(run.stdin, MAX_EXEC_STDIN_BYTES, idle);
 }
 
 async function buildBody(

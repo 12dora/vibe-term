@@ -419,7 +419,10 @@ describe('runRemote target resolution', () => {
   function namedNodes(names: Record<string, string>) {
     return (conn: ServerConn): void => {
       const id = /\/n\/([0-9a-f]{32})/.exec(conn.target.url)?.[1];
-      if (!id) return deviceMissing(conn);
+      if (!id) {
+        deviceMissing(conn);
+        return;
+      }
       onHello(conn, (hello) => {
         const expected = hello.op === 'open' ? hello.spec.nodeName : undefined;
         if (expected && expected.toLowerCase() !== names[id]?.toLowerCase()) {
@@ -651,13 +654,16 @@ describe('runRemote legacy fallback', () => {
     expect(body.stdin).toEqual({ base64: Buffer.from([0xff, 0xfe, 0x00]).toString('base64') });
   });
 
-  test('a never-closing stdin pipe is treated as empty after the idle window', async () => {
-    const harness = await setup({ terminal: { stdin: new Readable({ read() {} }) } });
-    const started = Date.now();
+  test('a slow stdin pipe gets one hint after the idle window and is still read to EOF', async () => {
+    const stdin = new Readable({ read() {} });
+    const harness = await setup({ terminal: { stdin } });
+    setTimeout(() => {
+      stdin.push(Buffer.from('late data'));
+      stdin.push(null);
+    }, 120);
     const result = await runRemote(harness.ctx, legacyOptions(harness, { legacyStdinIdleMs: 30 }));
-    expect(Date.now() - started).toBeLessThan(2_000);
     expect(exitCodeOf(result)).toBe(0);
-    expect(harness.fixture.posts[0]).not.toHaveProperty('stdin');
+    expect(harness.fixture.posts[0]).toMatchObject({ stdin: { text: 'late data' } });
     expect(harness.stderr.text().match(/加 -n/g)).toHaveLength(1);
   });
 
