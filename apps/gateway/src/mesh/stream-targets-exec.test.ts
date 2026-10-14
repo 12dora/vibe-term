@@ -51,7 +51,9 @@ describe('acceptExecStream', () => {
       { peerNodeId: 'entry-a', sessionStore: sessionStore(verifyOk, seen), now: () => 5 },
       (s, auth) => attached.push([s, auth])
     );
-    expect(attached).toEqual([[stream, { uid: 'user-1', tokenId: null }]]);
+    expect(attached).toEqual([
+      [stream, { uid: 'user-1', tokenId: null, session: { sid: 'sid-1', viaNodeId: 'entry-a' } }],
+    ]);
     expect(seen).toEqual([['sid-1', { viaNodeId: 'entry-a', now: 5 }]]);
     expect(stream.dead).toBe(false);
   });

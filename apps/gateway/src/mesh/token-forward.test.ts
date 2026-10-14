@@ -312,12 +312,20 @@ describe('local exec websocket upgrade', () => {
         upgrade({ cookie: `vibeterm_s_self=${sid}; vibeterm_t_self=${files.secret}` }),
         deps
       );
-      expect(auth).toEqual({ uid: mesh.boot.userId, tokenId: null });
+      expect(auth).toEqual({
+        uid: mesh.boot.userId,
+        tokenId: null,
+        session: { sid, viaNodeId: 'self' },
+      });
       const withBadToken = authenticateExecUpgrade(
         upgrade({ cookie: `vibeterm_s_self=${sid}`, authorization: 'Bearer vtk_bad' }),
         deps
       );
-      expect(withBadToken).toEqual({ uid: mesh.boot.userId, tokenId: null });
+      expect(withBadToken).toEqual({
+        uid: mesh.boot.userId,
+        tokenId: null,
+        session: { sid, viaNodeId: 'self' },
+      });
     } finally {
       mesh.close();
     }

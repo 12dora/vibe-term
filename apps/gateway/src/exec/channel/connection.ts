@@ -24,7 +24,7 @@ import {
   releaseSessionSlot,
   reserveSessionSlot,
 } from './registry';
-import { ExecSession, ProtocolViolation } from './session';
+import { ExecSession, type ExecSessionInit, ProtocolViolation } from './session';
 import type { ExecChannelAuth, ExecChannelInbound, ExecTransport } from './transport-types';
 
 const TICK_MS = 1000;
@@ -233,8 +233,12 @@ class ExecConnection implements ExecChannelInbound {
     session.start();
   }
 
-  private principal(): { uid: string | null; tokenId: string | null } {
-    return { uid: this.auth.uid, tokenId: this.auth.tokenId };
+  private principal(): Pick<ExecSessionInit, 'uid' | 'tokenId' | 'sessionRef'> {
+    return {
+      uid: this.auth.uid,
+      tokenId: this.auth.tokenId,
+      sessionRef: this.auth.session ?? null,
+    };
   }
 }
 

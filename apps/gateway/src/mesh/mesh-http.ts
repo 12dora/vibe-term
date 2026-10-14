@@ -5,9 +5,13 @@ import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
 import type { LocalAuthStoreLike } from '../db/local-auth-settings';
-import { closeExecSessionsForUser } from '../exec/channel/registry';
+import { closeExecSessionsForSid, closeExecSessionsForUser } from '../exec/channel/registry';
 import { isExecWsPath } from '../exec/channel/ws-upgrade';
 import { type AuthKeyLogPublisher, AuthRoutes, isAuthPublicPath } from './auth-routes';
+import {
+  closeExecSessionsWithInvalidNodeSession,
+  startExecSessionRecheck,
+} from './exec-session-recheck';
 import { guardExecWebSocket } from './exec-ws-guard';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
@@ -150,6 +154,7 @@ export class MeshHttpRuntime {
   private readonly authSurfaceOnly: boolean;
   private readonly onSessionsRevoked: MeshHttpRuntimeOptions['onSessionsRevoked'];
   private relayRoutes: RelayRoutes | null = null;
+  private readonly stopExecRecheck: () => void;
 
   constructor(opts: MeshHttpRuntimeOptions) {
     this.roles = opts.roles;
@@ -211,6 +216,7 @@ export class MeshHttpRuntime {
       localAuth: opts.localAuth,
     });
     this.forwarder.setAuthRateLimits(this.auth.rateLimits);
+    this.stopExecRecheck = startExecSessionRecheck(opts.nodeSessionStore, { now: this.now });
   }
 
   /** 由 mesh-runtime 在装配后注入：中继模式的 `/api/mesh/relay/*`。 */
@@ -219,6 +225,7 @@ export class MeshHttpRuntime {
   }
 
   stop(): void {
+    this.stopExecRecheck();
     this.mesh.stop();
     this.sockets.clear();
   }
@@ -288,6 +295,7 @@ export class MeshHttpRuntime {
   }
 
   closeSocketsForSid(sid: string): void {
+    closeExecSessionsForSid(sid);
     for (const entry of [...this.sockets]) {
       if (entry.sid === sid) {
         this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
@@ -541,6 +549,7 @@ export class MeshHttpRuntime {
 
   private sweepInvalidSockets(): void {
     const now = this.now();
+    closeExecSessionsWithInvalidNodeSession(this.sessionDeps.nodeSessionStore, now);
     for (const entry of [...this.sockets]) {
       const verified = this.sessionDeps.nodeSessionStore.verify(entry.sid, {
         viaNodeId: MESH_VIA_SELF,

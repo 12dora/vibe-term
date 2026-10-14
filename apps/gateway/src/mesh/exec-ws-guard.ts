@@ -1,5 +1,5 @@
 import { type ExecUpgradeAuth, handleExecWsUpgrade } from '../exec/channel/ws-upgrade';
-import type { MeshUpgradeServer } from './mesh-deps';
+import { MESH_VIA_SELF, type MeshUpgradeServer } from './mesh-deps';
 import { type SessionMiddlewareDeps, authenticateRequest, jsonError } from './session-middleware';
 import { localTokenPrincipal } from './token-guard';
 
@@ -12,7 +12,10 @@ export function authenticateExecUpgrade(
   deps: SessionMiddlewareDeps
 ): ExecUpgradeAuth | Response {
   const auth = authenticateRequest(req, deps);
-  if (auth.ok) return { uid: auth.userId, tokenId: null };
+  if (auth.ok) {
+    const session = auth.sid ? { sid: auth.sid, viaNodeId: MESH_VIA_SELF } : null;
+    return { uid: auth.userId, tokenId: null, session };
+  }
   const principal = localTokenPrincipal(req);
   if (!principal) return jsonError('UNAUTHORIZED', 401);
   if (!principal.scopes.includes('exec')) return jsonError('TOKEN_SCOPE', 403);

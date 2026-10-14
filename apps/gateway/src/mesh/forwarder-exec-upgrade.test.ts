@@ -81,6 +81,40 @@ describe('forwarder /api/exec/ws', () => {
     }
   });
 
+  test('upgrade from a foreign browser origin -> 403 FORBIDDEN_ORIGIN', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { captured, server } = captureServer();
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(EXEC_URL, {
+            headers: upgradeHeaders({
+              cookie: `vibeterm_s_${OTHER}=sid-1`,
+              origin: 'http://evil.example',
+            }),
+          }),
+          server
+        )
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'FORBIDDEN_ORIGIN' });
+      expect(captured.calls).toBe(0);
+      const same = await mesh.runtime.handleRequest(
+        new Request(EXEC_URL, {
+          headers: upgradeHeaders({
+            cookie: `vibeterm_s_${OTHER}=sid-1`,
+            origin: 'http://localhost',
+          }),
+        }),
+        server
+      );
+      expect(same).toBeUndefined();
+      expect(captured.calls).toBe(1);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('plain HTTP request -> 400 upgrade_required', async () => {
     const mesh = await bootMesh();
     try {

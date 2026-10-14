@@ -44,7 +44,12 @@ describe('verifyExecCredential', () => {
     const { sessionStore, sid, close } = boot();
     try {
       const ctx = { peerNodeId: 'entry-a', sessionStore, now: () => 2_000 };
-      expect(verifyExecCredential(sid, ctx)).toEqual({ ok: true, uid: 'user-1', tokenId: null });
+      expect(verifyExecCredential(sid, ctx)).toEqual({
+        ok: true,
+        uid: 'user-1',
+        tokenId: null,
+        session: { sid, viaNodeId: 'entry-a' },
+      });
     } finally {
       close();
     }

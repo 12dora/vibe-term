@@ -27,7 +27,7 @@ export function createExecWebSocketHandlers(attach: AttachExecChannel = attachEx
       const conn = new ExecWsConnection(ws);
       data.conn = conn;
       try {
-        conn.attach(attach(conn, { uid: data.uid, tokenId: data.tokenId }));
+        conn.attach(attach(conn, { uid: data.uid, tokenId: data.tokenId, session: data.session }));
       } catch {
         conn.close(WS_CLOSE_INTERNAL, 'exec channel unavailable');
       }

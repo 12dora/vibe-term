@@ -3,7 +3,7 @@ import { MemoryLocalAuthStore } from '../../db/local-auth-settings';
 import { NODE_ID, bootMesh, challengeAndLogin } from '../../mesh/auth-routes.test';
 import { liveSessionCount, resetExecRegistryForTests } from './registry';
 import { makeEnv, openSession } from './test-harness';
-import { EXEC_WS_KIND, handleExecWsUpgrade, isExecWsPath } from './ws-upgrade';
+import { EXEC_WS_KIND, type ExecWsData, handleExecWsUpgrade, isExecWsPath } from './ws-upgrade';
 
 afterEach(() => resetExecRegistryForTests());
 
@@ -121,6 +121,7 @@ describe('MeshHttpRuntime exec websocket guard', () => {
           kind: EXEC_WS_KIND,
           uid: mesh.boot.userId,
           tokenId: null,
+          session: { sid, viaNodeId: 'self' },
         });
       }
     } finally {
@@ -165,7 +166,12 @@ describe('MeshHttpRuntime exec websocket guard', () => {
       expect(
         mesh.runtime.guardGatewayWebSocket(wsRequest('/api/exec/ws'), spy.server)
       ).toBeUndefined();
-      expect(spy.calls[0]?.data).toEqual({ kind: EXEC_WS_KIND, uid: null, tokenId: null });
+      expect(spy.calls[0]?.data).toEqual({
+        kind: EXEC_WS_KIND,
+        uid: null,
+        tokenId: null,
+        session: null,
+      });
     } finally {
       mesh.close();
     }
@@ -207,6 +213,57 @@ describe('MeshHttpRuntime exec websocket guard', () => {
           spy.server
         )
       ).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  async function loggedInExecSession(mesh: Awaited<ReturnType<typeof bootMesh>>) {
+    const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+    const spy = upgradeSpy();
+    mesh.runtime.guardGatewayWebSocket(
+      wsRequest('/api/exec/ws', { cookie: `vibeterm_s_self=${sid}` }),
+      spy.server
+    );
+    const data = spy.calls[0]?.data as ExecWsData;
+    const env = makeEnv();
+    const bound = await openSession(
+      env,
+      {},
+      { uid: data.uid, tokenId: null, session: data.session }
+    );
+    const unbound = await openSession(env, {}, { uid: data.uid, tokenId: null });
+    return { sid, bound, unbound };
+  }
+
+  test('closeSocketsForSid terminates the exec session of that sid', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid, bound, unbound } = await loggedInExecSession(mesh);
+      mesh.runtime.closeSocketsForSid('another-sid');
+      expect(bound.proc.killCount).toBe(0);
+      mesh.runtime.closeSocketsForSid(sid);
+      expect(bound.proc.killCount).toBe(1);
+      expect(bound.client.transport.closed?.code).toBe(4401);
+      expect(unbound.proc.killCount).toBe(0);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('a session-revoking key log effect sweeps exec sessions', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid, bound, unbound } = await loggedInExecSession(mesh);
+      mesh.runtime.applyKeyLogEffects(mesh.boot.userId, [{ type: 'revokeAllSessions' }]);
+      expect(bound.proc.killCount).toBe(0);
+      mesh.nodeSessionStore.revoke(sid);
+      mesh.runtime.applyKeyLogEffects(mesh.boot.userId, [{ type: 'clearPeerCache' }]);
+      expect(bound.proc.killCount).toBe(0);
+      mesh.runtime.applyKeyLogEffects(mesh.boot.userId, [{ type: 'revokeAllSessions' }]);
+      expect(bound.proc.killCount).toBe(1);
+      expect(bound.client.transport.closed?.code).toBe(4401);
+      expect(unbound.proc.killCount).toBe(0);
     } finally {
       mesh.close();
     }

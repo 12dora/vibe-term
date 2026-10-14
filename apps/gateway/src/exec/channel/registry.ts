@@ -1,4 +1,5 @@
 import type { ExecSession } from './session';
+import type { ExecSessionRef } from './transport-types';
 
 const sessions = new Map<string, ExecSession>();
 let pendingOpens = 0;
@@ -54,6 +55,24 @@ export function closeExecSessionsWithInactiveToken(isActive: (tokenId: string) =
     if (!verdicts.has(id)) verdicts.set(id, isActive(id));
     return verdicts.get(id) === false;
   }, 'token revoked');
+}
+
+export function closeExecSessionsForSid(sid: string): void {
+  terminateWhere((session) => session.sessionRef?.sid === sid, 'session revoked');
+}
+
+/** 依附的节点会话已失效（过期 / 撤销 / 行被删）的 exec 会话一并终止；`isValid` 对每个会话只问一次。 */
+export function closeExecSessionsWithInvalidSession(
+  isValid: (ref: ExecSessionRef) => boolean
+): void {
+  const verdicts = new Map<string, boolean>();
+  terminateWhere((session) => {
+    const ref = session.sessionRef;
+    if (!ref) return false;
+    const key = `${ref.viaNodeId}\0${ref.sid}`;
+    if (!verdicts.has(key)) verdicts.set(key, isValid(ref));
+    return verdicts.get(key) === false;
+  }, 'session revoked');
 }
 
 export function closeExecSessionsForUser(uid: string): void {

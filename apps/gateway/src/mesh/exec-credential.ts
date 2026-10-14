@@ -4,6 +4,7 @@ import {
   readTokenCredentialSecret,
 } from '../auth/access-token-auth';
 import type { NodeSessionStore } from '../auth/node-session-store';
+import type { ExecSessionRef } from '../exec/channel/transport-types';
 import { parseShareAuth } from './share-credential';
 import { tokenClientIp } from './stream-token-auth';
 
@@ -18,7 +19,7 @@ export type ExecCredentialContext = {
 };
 
 export type ExecCredentialResult =
-  | { ok: true; uid: string; tokenId: string | null }
+  | { ok: true; uid: string; tokenId: string | null; session?: ExecSessionRef }
   | { ok: false; reason: string };
 
 /**
@@ -39,7 +40,12 @@ export function verifyExecCredential(
     now: ctx.now?.() ?? Date.now(),
   });
   if (!result.ok) return { ok: false, reason: result.reason };
-  return { ok: true, uid: result.session.userId, tokenId: null };
+  return {
+    ok: true,
+    uid: result.session.userId,
+    tokenId: null,
+    session: { sid: credential, viaNodeId: ctx.peerNodeId },
+  };
 }
 
 /** exec 通道只收带 `exec` 作用域的令牌；失败原因对外只有「无效」和「作用域不足」两种。 */

@@ -17,7 +17,7 @@ import type { ExecClock } from './deps';
 import type { ExecProcess } from './process';
 import { removeSession } from './registry';
 import { StdinPump } from './session-stdin';
-import type { ExecTransport } from './transport-types';
+import type { ExecSessionRef, ExecTransport } from './transport-types';
 
 const TRANSPORT_BUFFER_LIMIT = 1024 * 1024;
 
@@ -27,6 +27,7 @@ export interface ExecSessionInit {
   id: string;
   uid: string | null;
   tokenId: string | null;
+  sessionRef?: ExecSessionRef | null;
   device: Device;
   spec: ResolvedExecOpenSpec;
   proc: ExecProcess;
@@ -39,6 +40,7 @@ export class ExecSession {
   readonly id: string;
   readonly uid: string | null;
   readonly tokenId: string | null;
+  readonly sessionRef: ExecSessionRef | null;
   private readonly log = new OutputLog();
   private readonly stdin: StdinPump;
   private readonly startedAt: number;
@@ -60,6 +62,7 @@ export class ExecSession {
     this.id = init.id;
     this.uid = init.uid;
     this.tokenId = init.tokenId;
+    this.sessionRef = init.sessionRef ?? null;
     this.spec = init.spec;
     this.device = init.device;
     this.proc = init.proc;

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { Device } from '@vibeterm/shared';
 import { type DeviceSource, resolveExecDevice } from './device-resolve';
 import {
+  closeExecSessionsForSid,
   closeExecSessionsForToken,
   closeExecSessionsForUser,
+  closeExecSessionsWithInvalidSession,
   generateSessionId,
   liveSessionCount,
   resetExecRegistryForTests,
@@ -30,6 +32,28 @@ describe('registry', () => {
     resetExecRegistryForTests();
     expect(c.proc.killCount).toBe(1);
     expect(liveSessionCount()).toBe(0);
+  });
+
+  test('closes sessions per sid and rechecks each session ref once', async () => {
+    const env = makeEnv();
+    const ref = (sid: string, viaNodeId = 'self') => ({ sid, viaNodeId });
+    const a = await openSession(env, {}, { uid: 'u1', tokenId: null, session: ref('s1') });
+    const b = await openSession(env, {}, { uid: 'u1', tokenId: null, session: ref('s1') });
+    const c = await openSession(env, {}, { uid: 'u1', tokenId: null, session: ref('s2', 'peer') });
+    const d = await openSession(env, {}, { uid: 'u1', tokenId: null, session: ref('s3') });
+    const e = await openSession(env, {}, { uid: null, tokenId: null });
+    closeExecSessionsForSid('s3');
+    expect(d.proc.killCount).toBe(1);
+    expect(d.client.transport.closed?.code).toBe(4401);
+    const asked: string[] = [];
+    closeExecSessionsWithInvalidSession((r) => {
+      asked.push(`${r.viaNodeId}:${r.sid}`);
+      return r.sid !== 's2';
+    });
+    expect(asked).toEqual(['self:s1', 'peer:s2']);
+    expect(c.proc.killCount).toBe(1);
+    expect(c.client.transport.closed?.code).toBe(4401);
+    expect([a.proc.killCount, b.proc.killCount, e.proc.killCount]).toEqual([0, 0, 0]);
   });
 
   test('session ids are 32 lowercase hex and unique', () => {

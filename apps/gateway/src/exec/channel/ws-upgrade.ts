@@ -1,3 +1,4 @@
+import type { ExecSessionRef } from './transport-types';
 import type { ExecWsConnection } from './ws-transport';
 
 export const EXEC_WS_KIND = 'exec-ws';
@@ -6,10 +7,15 @@ export type ExecWsData = {
   kind: typeof EXEC_WS_KIND;
   uid: string | null;
   tokenId: string | null;
+  session: ExecSessionRef | null;
   conn?: ExecWsConnection;
 };
 
-export type ExecUpgradeAuth = { uid: string | null; tokenId: string | null };
+export type ExecUpgradeAuth = {
+  uid: string | null;
+  tokenId: string | null;
+  session?: ExecSessionRef | null;
+};
 
 export type ExecUpgradeServer = {
   upgrade(req: Request, options?: { data?: unknown }): boolean;
@@ -46,10 +52,11 @@ function hostOf(value: string | null): string | null {
 }
 
 /**
- * 浏览器发起的升级带 `Origin`，且必须与访问的主机一致，挡住其他站点页面借已登录会话（或免登录部署）
- * 拉起 shell；CLI 等非浏览器客户端不带或带同主机 origin。
+ * 浏览器发起的升级带 `Origin`，且必须与访问的主机一致，挡住其他站点页面的跨站 WebSocket 劫持
+ * （借已登录会话拉起 shell）；CLI 等非浏览器客户端不带或带同主机 origin。
+ * 只比对 Origin 与 Host，不防 DNS 重绑定（重绑定后二者同为攻击者域名），那类风险靠绑定地址与登录门兜底。
  */
-function isForeignBrowserOrigin(req: Request): boolean {
+export function isForeignBrowserOrigin(req: Request): boolean {
   const origin = req.headers.get('origin');
   if (!origin) return false;
   const originHost = hostOf(origin);
@@ -77,6 +84,11 @@ export function handleExecWsUpgrade(
   if (isForeignBrowserOrigin(req)) return json('FORBIDDEN_ORIGIN', 403);
   const auth = authenticate(req);
   if (auth instanceof Response) return auth;
-  const data: ExecWsData = { kind: EXEC_WS_KIND, uid: auth.uid, tokenId: auth.tokenId };
+  const data: ExecWsData = {
+    kind: EXEC_WS_KIND,
+    uid: auth.uid,
+    tokenId: auth.tokenId,
+    session: auth.session ?? null,
+  };
   return server.upgrade(req, { data }) ? undefined : json('upgrade_failed', 500);
 }

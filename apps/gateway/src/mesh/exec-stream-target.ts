@@ -21,7 +21,11 @@ export function acceptExecStream(
     stream.reset(`auth:${verified.reason}`);
     return;
   }
-  attach(stream, { uid: verified.uid, tokenId: verified.tokenId });
+  attach(stream, {
+    uid: verified.uid,
+    tokenId: verified.tokenId,
+    ...(verified.session ? { session: verified.session } : {}),
+  });
 }
 
 function safeVerify(credential: unknown, ctx: ExecCredentialContext): ExecCredentialResult {
