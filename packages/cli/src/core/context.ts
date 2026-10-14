@@ -13,6 +13,7 @@ import { Output, shouldUseColor } from './output';
 import { Resolver } from './resolve';
 import { SessionStore } from './session-store';
 import { DEFAULT_TLS, type TlsSettings } from './tls';
+import { TokenStore } from './token-store';
 import { type GatewaySocket, type OpenGatewaySocketOptions, openGatewaySocket } from './ws';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -36,6 +37,7 @@ export interface CliContext {
   readonly out: Output;
   readonly http: HttpClient;
   readonly sessions: SessionStore;
+  readonly tokens: TokenStore;
   readonly resolver: Resolver;
   readonly configDir: string;
   /** `--node` 解析成 node id；未给即 `self`。 */
@@ -65,6 +67,7 @@ export function buildContext(options: BuildContextOptions): CliContext {
   const env = options.env ?? process.env;
   const dir = options.configDir ?? defaultConfigDir(env);
   const sessions = SessionStore.open(dir, env);
+  const tokens = TokenStore.open(dir, env);
   const entry = pickEntry({
     flag: options.entryFlag,
     env: env.VIBETERM_ENTRY?.trim() || undefined,
@@ -90,6 +93,7 @@ export function buildContext(options: BuildContextOptions): CliContext {
     timeoutMs,
     tls,
     jar: createSessionCookieJar(sessions, entry),
+    tokens: tokens.source(entry),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
   const out = new Output({
@@ -107,6 +111,7 @@ export function buildContext(options: BuildContextOptions): CliContext {
     out,
     http,
     sessions,
+    tokens,
     resolver,
     configDir: dir,
     async targetNodeId() {

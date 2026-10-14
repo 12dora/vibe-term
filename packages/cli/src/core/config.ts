@@ -7,6 +7,7 @@ import { UsageError } from './errors';
 
 export const DEFAULT_ENTRY = 'http://127.0.0.1:9883';
 export const SESSION_FILE_NAME = 'session.json';
+export const TOKENS_FILE_NAME = 'tokens.json';
 
 export type ConfigEnv = Record<string, string | undefined>;
 
@@ -27,6 +28,13 @@ export function sessionFilePath(dir: string, env: ConfigEnv = process.env): stri
   const override = env.VIBETERM_SESSION_FILE?.trim();
   if (override) return resolve(override);
   return join(dir, SESSION_FILE_NAME);
+}
+
+/** 令牌文件路径：`$VIBETERM_TOKENS_FILE` 覆盖默认 `<config dir>/tokens.json`。同样是完整凭据，按 0600 保护。 */
+export function tokensFilePath(dir: string, env: ConfigEnv = process.env): string {
+  const override = env.VIBETERM_TOKENS_FILE?.trim();
+  if (override) return resolve(override);
+  return join(dir, TOKENS_FILE_NAME);
 }
 
 /** 安装目录：与 packages/app 的 `defaultInstallDir` 同规则（新名优先，回落改名前的目录）。 */

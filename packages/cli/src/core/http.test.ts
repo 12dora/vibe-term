@@ -8,6 +8,7 @@ import {
   parseSessionSetCookie,
   parseSetSessionHeader,
 } from './http';
+import type { TokenSource } from './token-store';
 
 const ENTRY = 'http://entry.example:9883';
 const NODE = 'a'.repeat(32);
@@ -345,5 +346,97 @@ describe('HttpClient', () => {
     expect(rows).toEqual([{ a: 1 }]);
     expect(seen.signal).toBeUndefined();
     expect(seen.timeout).toBe(false);
+  });
+});
+
+describe('token cookies', () => {
+  function withTokens(tokens: Record<string, string>, jar = createMemoryCookieJar()): HttpClient {
+    const source: TokenSource = {
+      get: (nodeId) => (tokens[nodeId] ? { secret: tokens[nodeId] } : null),
+    };
+    return new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 1000,
+      jar,
+      tokens: source,
+      fetchImpl: async () => new Response('{}'),
+    });
+  }
+
+  test('self-only request sends vibeterm_t_self when there is no session', () => {
+    const http = withTokens({ self: 'vtk_self' });
+    expect(http.cookieHeader('self')).toBe('vibeterm_t_self=vtk_self');
+  });
+
+  test('forwarded request names the token cookie after the target node', () => {
+    const http = withTokens({ self: 'vtk_self', [NODE]: 'vtk_node' });
+    const header = http.cookieHeader(NODE);
+    expect(header).toContain('vibeterm_t_self=vtk_self');
+    expect(header).toContain(`vibeterm_t_${NODE}=vtk_node`);
+    expect(header).not.toContain('vibeterm_s_');
+  });
+
+  test('a live session suppresses the token for that node only', () => {
+    const jar = createMemoryCookieJar();
+    jar.set(NODE, 'sid-node', Date.now() + 60_000);
+    const http = withTokens({ self: 'vtk_self', [NODE]: 'vtk_node' }, jar);
+    const header = http.cookieHeader(NODE);
+    expect(header).toContain(`vibeterm_s_${NODE}=sid-node`);
+    expect(header).not.toContain(`vibeterm_t_${NODE}`);
+    expect(header).not.toContain('vtk_node');
+    expect(header).toContain('vibeterm_t_self=vtk_self');
+  });
+
+  test('a session without an expiry counts as live', () => {
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-self', 0);
+    const http = withTokens({ self: 'vtk_self' }, jar);
+    expect(http.cookieHeader('self')).not.toContain('vtk_self');
+  });
+
+  test('an expired session is replaced by the live token', () => {
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-old', Date.now() - 1000);
+    const http = withTokens({ self: 'vtk_self' }, jar);
+    expect(http.cookieHeader('self')).toBe('vibeterm_t_self=vtk_self');
+  });
+
+  test('an expired session with no token is still sent as before', () => {
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-old', Date.now() - 1000);
+    const http = withTokens({}, jar);
+    expect(http.cookieHeader('self')).toContain('vibeterm_s_self=sid-old');
+  });
+
+  test('cookieOverride replaces the whole cookie header', async () => {
+    const cookies: Array<string | null> = [];
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-self', 0);
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 1000,
+      jar,
+      tokens: { get: () => ({ secret: 'vtk_x' }) },
+      fetchImpl: async (_url, init) => {
+        cookies.push(new Headers(init?.headers).get('cookie'));
+        return new Response('{}');
+      },
+    });
+    await http.fetch('self', '/api/devices', { cookieOverride: 'vibeterm_t_self=vtk_probe' });
+    expect(cookies[0]).toBe('vibeterm_t_self=vtk_probe');
+  });
+
+  test('403 TOKEN_SCOPE says the token lacks the scope instead of asking for login', async () => {
+    const http = client(
+      async () => new Response(JSON.stringify({ code: 'TOKEN_SCOPE' }), { status: 403 })
+    );
+    const error = (await http
+      .json('self', 'GET', '/api/files/list')
+      .catch((err) => err)) as PermissionError;
+    expect(error).toBeInstanceOf(PermissionError);
+    expect(error.code).toBe('TOKEN_SCOPE');
+    expect(error.message).toContain('令牌');
+    expect(error.message).toContain('/api/files/list');
+    expect(error.message).not.toContain('vibeterm login');
   });
 });

@@ -133,4 +133,29 @@ describe('nodeAddressOf / reachOf / listedOnline', () => {
     expect(loginStateOf(cli, NODE, NODE, now)).toBe('session');
     expect(loginStateOf(cli, NODE, null, now)).toBe('-');
   });
+
+  test('loginStateOf：无会话但有有效令牌为 token，会话优先，过期令牌为 -', async () => {
+    const cli = await ctx({});
+    const entry = cli.globals.entry;
+    const now = 1_700_000_000_000;
+    const peer = 'b'.repeat(32);
+    const stored = (expiresAt: number | null) => ({
+      tokenId: 't',
+      secret: 'vtk_x',
+      name: 'ci',
+      scopes: ['exec'],
+      expiresAt,
+      createdAt: 1,
+    });
+    cli.tokens.put(entry, [peer], stored(now + 1000));
+    expect(loginStateOf(cli, peer, null, now)).toBe('token');
+    cli.http.jar.set(peer, 'sid', now + 1000);
+    expect(loginStateOf(cli, peer, null, now)).toBe('session');
+    cli.http.jar.clear(peer);
+    cli.tokens.put(entry, [peer], stored(now - 1));
+    expect(loginStateOf(cli, peer, null, now)).toBe('-');
+    cli.tokens.put(entry, ['self'], stored(null));
+    expect(loginStateOf(cli, NODE, NODE, now)).toBe('token');
+    expect(loginStateOf(cli, NODE, null, now)).toBe('-');
+  });
 });

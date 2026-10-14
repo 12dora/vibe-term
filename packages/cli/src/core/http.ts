@@ -17,12 +17,15 @@ import {
   NotFoundError,
   PermissionError,
 } from './errors';
-import type { NodeSession, SessionStore } from './session-store';
+import { type NodeSession, type SessionStore, isLiveNodeSession } from './session-store';
 import { DEFAULT_TLS, type TlsSettings, fetchTlsInit } from './tls';
+import type { TokenSource } from './token-store';
 
 /** 与 apps/gateway/src/auth/cookies.ts 保持一致；混合版本期两个名字都发。 */
 export const NODE_SESSION_COOKIE_PREFIX = 'vibeterm_s_';
 export const LEGACY_NODE_SESSION_COOKIE_PREFIX = 'tmex_s_';
+/** 机器访问令牌 cookie：`vibeterm_t_self`（本机）/ `vibeterm_t_<nodeId>`（转发）。 */
+export const NODE_TOKEN_COOKIE_PREFIX = 'vibeterm_t_';
 
 /** Bun 认 `timeout: false` 关掉 `BUN_CONFIG_HTTP_IDLE_TIMEOUT`；其它运行时忽略。 */
 export type FetchInit = RequestInit & { timeout?: number | false };
@@ -136,6 +139,8 @@ export interface HttpClientOptions {
   fetchImpl?: FetchLike;
   /** `--ca` / `--insecure`；缺省为「按系统信任库校验」。 */
   tls?: TlsSettings;
+  /** 已保存的机器访问令牌；某节点没有有效会话时才会发出。 */
+  tokens?: TokenSource;
 }
 
 export interface RequestOptions extends Omit<FetchInit, 'signal'> {
@@ -148,6 +153,8 @@ export interface RequestOptions extends Omit<FetchInit, 'signal'> {
    * CLI 默认只带 self + 请求目标。
    */
   withNodeCookies?: readonly string[];
+  /** 整个替换 cookie 头（`token add` 只带待验证的令牌，不混入会话）。 */
+  cookieOverride?: string;
 }
 
 function combineSignals(signals: AbortSignal[]): AbortSignal | undefined {
@@ -179,7 +186,10 @@ export class HttpClient {
     return `${this.entry}${resolveNodeUrl(nodeId, path)}`;
   }
 
-  /** entry 自身的会话 + 目标 node 的会话（及 `extraNodeIds`）；转发链路至少前两者都要看。 */
+  /**
+   * entry 自身的会话 + 目标 node 的会话（及 `extraNodeIds`）；转发链路至少前两者都要看。
+   * 某个 node 没有有效会话、但存有有效令牌时改发令牌 cookie；有有效会话时绝不发令牌。
+   */
   cookieHeader(nodeId: string, extraNodeIds: readonly string[] = []): string {
     const parts: string[] = [];
     const seen = new Set<string>();
@@ -187,6 +197,11 @@ export class HttpClient {
       if (seen.has(id)) continue;
       seen.add(id);
       const session = this.options.jar.get(id);
+      const token = isLiveNodeSession(session) ? null : (this.options.tokens?.get(id) ?? null);
+      if (token) {
+        parts.push(`${NODE_TOKEN_COOKIE_PREFIX}${id}=${token.secret}`);
+        continue;
+      }
       if (!session) continue;
       parts.push(`${NODE_SESSION_COOKIE_PREFIX}${id}=${session.sid}`);
       parts.push(`${LEGACY_NODE_SESSION_COOKIE_PREFIX}${id}=${session.sid}`);
@@ -196,11 +211,11 @@ export class HttpClient {
 
   /** 发一次请求；非 2xx 不抛（交给 `assertOk` 或调用方），网络层失败抛 NetworkError。 */
   async fetch(nodeId: string, path: string, options: RequestOptions = {}): Promise<Response> {
-    const { timeoutMs, signal, headers, withNodeCookies, ...rest } = options;
+    const { timeoutMs, signal, headers, withNodeCookies, cookieOverride, ...rest } = options;
     const requestHeaders = new Headers(headers);
     requestHeaders.set('origin', this.origin);
     requestHeaders.set('accept', requestHeaders.get('accept') ?? 'application/json, */*');
-    const cookie = this.cookieHeader(nodeId, withNodeCookies ?? []);
+    const cookie = cookieOverride ?? this.cookieHeader(nodeId, withNodeCookies ?? []);
     if (cookie) requestHeaders.set('cookie', cookie);
 
     const effectiveTimeout = timeoutMs === undefined ? this.options.timeoutMs : timeoutMs;
@@ -397,6 +412,17 @@ function forbiddenError(path: string, code: string | null, body: string): Permis
   return new PermissionError(`${path} → ${code ?? 'forbidden'}${detail}`.trim(), code ?? undefined);
 }
 
+export const TOKEN_SCOPE_CODE = 'TOKEN_SCOPE';
+
+/** 令牌调用方越权：重新登录救不了，要换一把带对应 scope 的令牌。 */
+function tokenScopeError(path: string): PermissionError {
+  return new PermissionError(
+    `当前令牌没有访问 ${path} 的权限（TOKEN_SCOPE）`,
+    TOKEN_SCOPE_CODE,
+    '用带所需 scope 的新令牌：vibeterm token create --scope exec,files,forward；或先登录：vibeterm login'
+  );
+}
+
 /**
  * 非 2xx 响应 → CliError：401 与会话类 403 提示重新登录（退出码 3），其余 403 是权限
  * 不足（退出码 1，message 带服务端的业务码），404 → 4，其它 → 1。
@@ -411,6 +437,7 @@ export function httpStatusError(
   if (status === 401 || (status === 403 && isAuthErrorCode(code))) {
     return loginRequiredError(nodeId, body);
   }
+  if (status === 403 && code === TOKEN_SCOPE_CODE) return tokenScopeError(path);
   if (status === 403) return forbiddenError(path, code, body);
   if (status === 404 || (status === 405 && isUnupgradedAuthPath(path))) {
     const detail = status === 405 ? 'needs upgrade to 2.10.0' : body || 'not found';

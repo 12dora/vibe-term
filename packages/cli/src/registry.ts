@@ -18,6 +18,7 @@ import { command as share } from './commands/share';
 import { command as system } from './commands/system';
 import { command as term } from './commands/term';
 import { command as tmux } from './commands/tmux';
+import { command as token } from './commands/token';
 import type { Command } from './commands/types';
 import { command as watch } from './commands/watch';
 import { command as whoami } from './commands/whoami';
@@ -42,6 +43,7 @@ export const IMPLEMENTED_COMMANDS: readonly Command[] = [
   sessions,
   term,
   exec,
+  token,
   system,
 ];
 /** 二十个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */

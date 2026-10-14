@@ -251,16 +251,23 @@ export async function selfNodeIdOf(ctx: CliContext): Promise<string | null> {
 }
 
 /**
- * LOGIN：本 CLI 是否持有该节点的凭据（只看本地 session jar，不看服务端 `loggedIn`——
- * 后者只反映单次列表请求带没带 cookie）。本机的会话存在 jar 的 `self` 键下。
+ * LOGIN：本 CLI 是否持有该节点的凭据（只看本地 session jar 与令牌文件，不看服务端 `loggedIn`——
+ * 后者只反映单次列表请求带没带 cookie）。本机的凭据存在 `self` 键下。
+ * 有效会话优先（session）；没有会话但存有有效机器令牌为 token；都没有为 `-`。
  */
 export function loginStateOf(
   ctx: CliContext,
   nodeId: string,
   selfId: string | null = null,
   now = Date.now()
-): 'session' | '-' {
+): 'session' | 'token' | '-' {
   const jar = ctx.http.jar;
-  const session = nodeId === selfId ? (jar.get(SELF_NODE_ID) ?? jar.get(nodeId)) : jar.get(nodeId);
-  return isLiveNodeSession(session, now) ? 'session' : '-';
+  const isSelf = nodeId === selfId;
+  const session = isSelf ? (jar.get(SELF_NODE_ID) ?? jar.get(nodeId)) : jar.get(nodeId);
+  if (isLiveNodeSession(session, now)) return 'session';
+  const entry = ctx.globals.entry;
+  const token = isSelf
+    ? (ctx.tokens.get(entry, SELF_NODE_ID, now) ?? ctx.tokens.get(entry, nodeId, now))
+    : ctx.tokens.get(entry, nodeId, now);
+  return token ? 'token' : '-';
 }
