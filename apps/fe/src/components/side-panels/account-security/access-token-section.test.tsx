@@ -173,8 +173,8 @@ describe('AccessTokenSectionView', () => {
       <AccessTokenSectionView state={state({ tokens: null, loadError: 'offline' })} now={NOW} />
     );
     expect(html).toContain('auth.security.tokens.loadFailed');
-    expect(tagOf(html, 'security-tokens-retry')).not.toContain('disabled');
-    expect(tagOf(html, 'security-token-create')).not.toContain('disabled');
+    expect(tagOf(html, 'security-tokens-retry')).not.toMatch(/\sdisabled(=|\s|>)/);
+    expect(tagOf(html, 'security-token-create')).not.toMatch(/\sdisabled(=|\s|>)/);
   });
 
   test('加载成功不显示重试按钮', () => {
