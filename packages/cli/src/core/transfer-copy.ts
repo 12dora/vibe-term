@@ -5,13 +5,8 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { CliContext } from './context';
 import { CliError, InterruptError, UsageError, errorText, throwIfAborted } from './errors';
-import {
-  type FileStatDto,
-  MkdirUnsupportedError,
-  mkdirRemote,
-  resolveCpPath,
-  statRemote,
-} from './files-api';
+import { type FileStatDto, MkdirUnsupportedError, mkdirRemote, statRemote } from './files-api';
+import { resolveCpPath } from './files-cp-path';
 import {
   type CpFileRef,
   isLocalPath,
