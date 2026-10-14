@@ -36,13 +36,13 @@ VibeTerm 以 `vibeterm-cli` 包（`packages/app`）发布。除终端 `vibeterm 
 
 `apps/gateway/src/system/update-check.ts`（发行源是本仓库 GitHub Releases，见 [发布流程](./release-process.md)）：
 
-- `fetchLatestGithubRelease()` 读 `RELEASE_API_LATEST_URL`（`releases/latest`，`no-store`、10 s 超时），
-  `tag_name` 去掉前缀 `v` 即 latest 版本；changelog 直接取 release body（markdown），空则 `null`。
-- 资产里没有 `vibeterm-cli-<version>.tgz` 时仍回报 `latestVersion`，但 `hasUpdate=false`——避免前端提供一个
-  下载不到包的升级按钮。403 / 404 / 429 直接抛错，不回退 npm。
-- **成功结果在进程内缓存 60 s，并发调用合并成一次请求**（`resetLatestReleaseCache()` 供测试复位）。
-  未认证的 GitHub API 只有 60 次/小时，而「全部升级」会为每个节点各发一次 start；没有这层缓存时
-  N 个节点就是 N 次查询，一次批量升级即可能把配额打光。失败不缓存，下一次照常重试。
+- `fetchLatestGithubRelease()` 不访问 `api.github.com`（未认证 REST 仅 60 次/小时，会被更新检查与批量升级耗尽），只用不占配额的端点：
+  1. `GET RELEASE_LATEST_URL`（`releases/latest`，`redirect:'manual'`、10 s 超时），由 302 `Location` 经 `parseReleaseTagLocation()` 取最新版本；
+  2. `GET releases/download/v<ver>/SHA256SUMS`：200 表示该版本已发布，`last-modified` 作发布时间，清单里列出 `vibeterm-cli-<ver>.tgz`（或旧名 `tmex-cli-<ver>.tgz`）才算可升级；404 表示 release 不存在；
+  3. `GET raw.githubusercontent.com/.../v<ver>/packages/app/CHANGELOG.md` 作 changelog（best-effort，失败为 `null`，不影响升级）。
+- 缺 tarball 时仍回报 `latestVersion`，但 `hasUpdate=false`——避免前端提供一个下载不到包的升级按钮。latest 不可达抛 `ReleaseUnavailableError`，指定版本 404 或清单无 tarball 抛 `ReleaseNotFoundError`；不回退 npm。
+- 缓存：latest 成功缓存 10 min；失败负缓存 60 s（403 / 429 按 `Retry-After`，缺省 5 min）；并发调用合并成一次请求（`resetLatestReleaseCache()` 供测试复位）。按版本的发布查询成功缓存 1 h（已发布版本不可变），404 缓存 60 s。「全部升级」为每个节点各发一次 start，这层缓存避免 N 个节点打出 N 轮请求。
+- CLI（`packages/app/src/lib/release-fetch.ts`）的 `resolveReleaseVersion('latest')` 同样走 `releases/latest` 的 302（`redirect:'manual'`）；无 Location 或 404 报 `upgrade.latestLookupFailed`，网络失败报 `upgrade.networkFailed`。`install.sh` 也用该重定向，失败按 1 / 2 / 4 s 退避重试 3 次，不回退 API，最终提示 `VIBETERM_VERSION=<ver>` 钉版本。
 
 ## 升级状态机与执行
 

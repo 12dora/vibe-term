@@ -8,7 +8,7 @@ import { compareSemver } from '../semver';
 
 export const RELEASE_REPO = '12dora/vibe-term';
 export const RELEASE_REPO_URL = `https://github.com/${RELEASE_REPO}`;
-export const RELEASE_API_LATEST_URL = `https://api.github.com/repos/${RELEASE_REPO}/releases/latest`;
+export const RELEASE_LATEST_URL = `${RELEASE_REPO_URL}/releases/latest`;
 export const INSTALL_SCRIPT_URL = `https://raw.githubusercontent.com/${RELEASE_REPO}/main/install.sh`;
 export const INSTALL_COMMAND = `curl -fsSL ${INSTALL_SCRIPT_URL} | bash`;
 
@@ -58,8 +58,37 @@ export function legacyReleaseTarballUrl(version: string): string {
   return `${RELEASE_REPO_URL}/releases/download/${releaseTag(version)}/${legacyReleaseTarballName(version)}`;
 }
 
-export function releaseApiUrl(version: string): string {
-  return `https://api.github.com/repos/${RELEASE_REPO}/releases/tags/${releaseTag(version)}`;
+export function releaseSumsUrl(version: string): string {
+  return `${RELEASE_REPO_URL}/releases/download/${releaseTag(version)}/SHA256SUMS`;
+}
+
+export function releaseChangelogUrl(version: string): string {
+  return `https://raw.githubusercontent.com/${RELEASE_REPO}/${releaseTag(version)}/packages/app/CHANGELOG.md`;
+}
+
+const RELEASE_TAG_PATH_PREFIX = `/${RELEASE_REPO}/releases/tag/`;
+const RELEASE_TAG_VERSION_PATTERN = /^v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)$/;
+
+/**
+ * 解析 `releases/latest` 重定向的 Location（绝对或相对均可），
+ * 只认本仓库 `/releases/tag/v<semver>`，返回去掉前缀 v 的版本号；其余返回 null。
+ */
+export function parseReleaseTagLocation(location: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(location, `${RELEASE_REPO_URL}/releases/latest`);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.hostname.toLowerCase() !== RELEASE_GITHUB_HOST) return null;
+  if (!url.pathname.startsWith(RELEASE_TAG_PATH_PREFIX)) return null;
+  let tag: string;
+  try {
+    tag = decodeURIComponent(url.pathname.slice(RELEASE_TAG_PATH_PREFIX.length));
+  } catch {
+    return null;
+  }
+  return RELEASE_TAG_VERSION_PATTERN.exec(tag)?.[1] ?? null;
 }
 
 /**

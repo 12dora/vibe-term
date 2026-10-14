@@ -16,6 +16,11 @@ import {
   waitForRemoteUpgradeJob,
 } from '../system/remote-upgrade-job';
 import { resetLatestReleaseCache } from '../system/update-check';
+import {
+  type ReleaseLookupMockOptions,
+  isReleaseLookupRequest,
+  releaseLookupFetch,
+} from '../test-support/release-lookup-mock';
 import { restoreSigningKeys, signSums, useTestSigningKeys } from '../test-support/release-signing';
 import {
   FakePeers,
@@ -1307,32 +1312,8 @@ class RecordingStreams extends FakeStreams {
   }
 }
 
-function mockGithubLatest(
-  version: string,
-  opts?: {
-    tarball?: boolean;
-    changelog?: string | null;
-    publishedAt?: string | null;
-    status?: number;
-  }
-): void {
-  globalThis.fetch = (async (_input: RequestInfo | URL) => {
-    if (opts?.status && opts.status !== 200) {
-      return new Response('unavailable', { status: opts.status });
-    }
-    return new Response(
-      JSON.stringify({
-        tag_name: `v${version}`,
-        published_at: opts?.publishedAt ?? '2026-08-30T00:00:00.000Z',
-        body: opts?.changelog === undefined ? 'notes' : opts.changelog,
-        assets:
-          opts?.tarball === false
-            ? []
-            : [{ name: releaseTarballName(version) }, { name: legacyReleaseTarballName(version) }],
-      }),
-      { status: 200, headers: { 'content-type': 'application/json' } }
-    );
-  }) as typeof fetch;
+function mockGithubLatest(version: string, opts?: ReleaseLookupMockOptions): void {
+  globalThis.fetch = releaseLookupFetch(version, opts);
 }
 
 function enrollPeer(
@@ -1859,7 +1840,7 @@ describe('mesh upgrade routes', () => {
     const latestFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       if (url.includes('SHA256SUMS')) {
         const body =
           `${hex}  ${releaseTarballName('9.9.9')}\n` +
@@ -1981,8 +1962,7 @@ describe('mesh upgrade routes', () => {
       releaseTarball = resolve;
     });
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       await gate;
       return new Response('nope', { status: 500 });
     }) as typeof fetch;
@@ -2083,7 +2063,7 @@ describe('mesh upgrade routes', () => {
     const latestFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       if (url.includes('SHA256SUMS')) {
         const body =
           `${hex}  ${releaseTarballName('9.9.9')}\n` +

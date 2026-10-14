@@ -145,7 +145,7 @@ export const zhCN: Record<string, string> = {
   'upgrade.summary.installDir': '安装目录',
   'upgrade.versionNotFound': '未找到版本 {{version}}（HTTP 404）。',
   'upgrade.networkFailed': '无法访问 GitHub Releases：{{detail}}',
-  'upgrade.latestLookupFailed': 'GitHub latest-release 响应缺少 tag_name。',
+  'upgrade.latestLookupFailed': 'GitHub releases/latest 未重定向到发行 tag。',
   'upgrade.assetMissing': '版本 {{version}} 的解压结果缺少 package/bin/vibeterm.js。',
   'upgrade.extractFailed': '解压发行包失败（退出码 {{code}}）。',
   'upgrade.lockHeld': '另有升级正在进行（pid {{pid}}）。若该进程已退出，请重试；锁文件：{{path}}。',

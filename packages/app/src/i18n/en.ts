@@ -156,7 +156,7 @@ export const en: Record<string, string> = {
   'upgrade.summary.installDir': 'Install dir',
   'upgrade.versionNotFound': 'Release not found: {{version}} (HTTP 404).',
   'upgrade.networkFailed': 'Failed to reach GitHub Releases: {{detail}}',
-  'upgrade.latestLookupFailed': 'GitHub latest-release response is missing tag_name.',
+  'upgrade.latestLookupFailed': 'GitHub releases/latest did not redirect to a release tag.',
   'upgrade.assetMissing':
     'Extracted release is missing package/bin/vibeterm.js for version {{version}}.',
   'upgrade.extractFailed': 'Failed to extract the release tarball (exit {{code}}).',

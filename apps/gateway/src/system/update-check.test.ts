@@ -1,105 +1,71 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { RELEASE_API_LATEST_URL, releaseApiUrl, releaseTarballName } from '@vibeterm/shared';
+import { describe, expect, test } from 'bun:test';
+import {
+  RELEASE_LATEST_URL,
+  legacyReleaseTarballName,
+  releaseChangelogUrl,
+  releaseSumsUrl,
+} from '@vibeterm/shared';
+import {
+  LAST_MODIFIED_ISO,
+  type Route,
+  captures,
+  hits,
+  mockRoutes,
+  redirectTo,
+  releaseRoutes,
+  sumsBody,
+  sumsRoute,
+  tagLocation,
+  text,
+  useReleaseTestEnv,
+} from '../test-support/release-routes';
 import {
   ReleaseNotFoundError,
+  ReleaseUnavailableError,
   checkForUpdate,
   fetchLatestGithubRelease,
   requireLatestUpgradeRelease,
   requirePublishedUpgradeRelease,
-  resetLatestReleaseCache,
 } from './update-check';
 import { getBaseVersion } from './version';
 
-const originalFetch = globalThis.fetch;
-
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-  resetLatestReleaseCache();
-});
-
-interface GithubReleaseFixture {
-  tag_name?: string;
-  published_at?: string | null;
-  body?: string | null;
-  assets?: Array<{ name: string }>;
-}
-
-interface CapturedFetch {
-  url: string;
-  accept: string | null;
-  apiVersion: string | null;
-  cache: RequestCache | undefined;
-}
-
-const captures: CapturedFetch[] = [];
-
-function headerOf(headers: HeadersInit | undefined, name: string): string | null {
-  if (!headers) return null;
-  if (headers instanceof Headers) return headers.get(name);
-  if (Array.isArray(headers)) {
-    const found = headers.find(([key]) => key.toLowerCase() === name.toLowerCase());
-    return found?.[1] ?? null;
-  }
-  const rec = headers as Record<string, string>;
-  const key = Object.keys(rec).find((k) => k.toLowerCase() === name.toLowerCase());
-  return key ? rec[key] : null;
-}
-
-function mockGithub(status: number, body: GithubReleaseFixture | string): void {
-  captures.length = 0;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    captures.push({
-      url,
-      accept: headerOf(init?.headers, 'accept'),
-      apiVersion: headerOf(init?.headers, 'X-GitHub-Api-Version'),
-      cache: init?.cache,
-    });
-    const payload = typeof body === 'string' ? body : JSON.stringify(body);
-    return new Response(payload, {
-      status,
-      headers: { 'content-type': 'application/json' },
-    });
-  }) as typeof fetch;
-}
+useReleaseTestEnv();
 
 describe('checkForUpdate', () => {
-  test('newer GitHub release with tarball asset → hasUpdate true and changelog', async () => {
+  test('newer release with tarball → hasUpdate true, changelog and publishedAt from last-modified', async () => {
     const current = getBaseVersion();
     expect(current).not.toBe('unknown');
-
-    const latest = '99.0.0';
-    const publishedAt = '2026-08-01T12:00:00Z';
-    const changelog = '## 99.0.0\n\n- GitHub release notes';
-    mockGithub(200, {
-      tag_name: `v${latest}`,
-      published_at: publishedAt,
-      body: changelog,
-      assets: [{ name: releaseTarballName(latest) }],
-    });
+    const changelog = '## 99.0.0\n\n- notes';
+    mockRoutes(releaseRoutes('99.0.0', changelog));
 
     const result = await checkForUpdate();
 
-    expect(result.currentVersion).toBe(current);
-    expect(result.latestVersion).toBe(latest);
-    expect(result.hasUpdate).toBe(true);
-    expect(result.changelog).toBe(changelog);
-    expect(result.publishedAt).toBe(publishedAt);
-    expect(captures).toHaveLength(1);
-    expect(captures[0]?.url).toBe(RELEASE_API_LATEST_URL);
-    expect(captures[0]?.accept).toBe('application/vnd.github+json');
-    expect(captures[0]?.apiVersion).toBe('2022-11-28');
-    expect(captures[0]?.cache).toBe('no-store');
+    expect(result).toEqual({
+      currentVersion: current,
+      latestVersion: '99.0.0',
+      hasUpdate: true,
+      changelog,
+      publishedAt: LAST_MODIFIED_ISO,
+    });
+  });
+
+  test('never touches the GitHub REST API host; latest uses redirect:manual and sends a vibeterm User-Agent', async () => {
+    mockRoutes(releaseRoutes('99.0.0'));
+    await checkForUpdate();
+
+    expect(captures.map((c) => c.url).sort()).toEqual(
+      [RELEASE_LATEST_URL, releaseSumsUrl('99.0.0'), releaseChangelogUrl('99.0.0')].sort()
+    );
+    expect(captures.some((c) => new URL(c.url).hostname.startsWith('api.'))).toBe(false);
+    const latest = captures.find((c) => c.url === RELEASE_LATEST_URL);
+    expect(latest?.redirect).toBe('manual');
+    expect(captures.every((c) => c.userAgent === `vibeterm/${getBaseVersion()}`)).toBe(true);
+    expect(captures.every((c) => c.hasSignal)).toBe(true);
   });
 
   test('same version → hasUpdate false', async () => {
     const current = getBaseVersion();
-    mockGithub(200, {
-      tag_name: `v${current}`,
-      published_at: '2026-01-01T00:00:00Z',
-      body: 'same',
-      assets: [{ name: releaseTarballName(current) }],
-    });
+    mockRoutes(releaseRoutes(current, 'same'));
 
     const result = await checkForUpdate();
     expect(result.latestVersion).toBe(current);
@@ -107,197 +73,205 @@ describe('checkForUpdate', () => {
     expect(result.changelog).toBe('same');
   });
 
-  test('newer tag without matching tarball asset → hasUpdate false, latestVersion still reported', async () => {
-    mockGithub(200, {
-      tag_name: 'v99.0.0',
-      published_at: '2026-08-01T00:00:00Z',
-      body: 'notes',
-      assets: [{ name: 'source.tar.gz' }],
+  test('SHA256SUMS without a tarball → hasUpdate false, latestVersion still reported', async () => {
+    mockRoutes({
+      ...releaseRoutes('99.0.0'),
+      [releaseSumsUrl('99.0.0')]: sumsRoute('99.0.0', ['install.sh']),
     });
 
     const result = await checkForUpdate();
     expect(result.latestVersion).toBe('99.0.0');
     expect(result.hasUpdate).toBe(false);
-    expect(result.changelog).toBe('notes');
   });
 
-  test('HTTP 403 throws a GitHub Releases error and never falls back to npm', async () => {
-    mockGithub(403, '{"message":"API rate limit exceeded"}');
-
-    await expect(checkForUpdate()).rejects.toThrow(/GitHub Releases API HTTP 403/i);
-    expect(captures.every((c) => !c.url.includes('registry.npmjs.org'))).toBe(true);
-    expect(captures.every((c) => !c.url.includes('jsdelivr'))).toBe(true);
+  test('legacy-name-only SHA256SUMS still counts as a tarball', async () => {
+    mockRoutes({
+      ...releaseRoutes('99.0.0'),
+      [releaseSumsUrl('99.0.0')]: sumsRoute('99.0.0', [legacyReleaseTarballName('99.0.0')]),
+    });
+    expect((await checkForUpdate()).hasUpdate).toBe(true);
   });
 
-  test('empty release body → changelog null', async () => {
-    mockGithub(200, {
-      tag_name: 'v99.0.0',
-      published_at: '2026-08-01T00:00:00Z',
-      body: '   ',
-      assets: [{ name: releaseTarballName('99.0.0') }],
+  test('latest tag without uploaded assets yet (SHA256SUMS 404) → no tarball, not an error', async () => {
+    mockRoutes({
+      [RELEASE_LATEST_URL]: redirectTo(tagLocation('99.0.0')),
+      [releaseChangelogUrl('99.0.0')]: text(200, 'notes'),
     });
 
     const result = await checkForUpdate();
     expect(result.latestVersion).toBe('99.0.0');
-    expect(result.hasUpdate).toBe(true);
+    expect(result.hasUpdate).toBe(false);
+    expect(result.publishedAt).toBeNull();
     expect(result.changelog).toBeNull();
   });
 
-  test('HTTP 404 throws a clear GitHub Releases error', async () => {
-    mockGithub(404, '{"message":"Not Found"}');
-    await expect(checkForUpdate()).rejects.toThrow(/GitHub Releases API HTTP 404/i);
+  test('missing last-modified → publishedAt null', async () => {
+    mockRoutes({
+      ...releaseRoutes('99.0.0'),
+      [releaseSumsUrl('99.0.0')]: text(200, sumsBody('99.0.0')),
+    });
+    const result = await checkForUpdate();
+    expect(result.hasUpdate).toBe(true);
+    expect(result.publishedAt).toBeNull();
   });
 });
 
-describe('fetchLatestGithubRelease', () => {
-  test('returns latestVersion, changelog, publishedAt and hasTarball without comparing the local node', async () => {
-    mockGithub(200, {
-      tag_name: 'v2.3.4',
-      published_at: '2026-08-30T00:00:00.000Z',
-      body: '## 2.3.4',
-      assets: [{ name: releaseTarballName('2.3.4') }],
+describe('changelog is best-effort', () => {
+  const failures: Array<[string, Route]> = [
+    ['404', text(404, 'Not Found')],
+    ['500', text(500, 'boom')],
+    ['blank body', text(200, '  \n ')],
+    [
+      'network error',
+      () => {
+        throw new Error('ECONNRESET');
+      },
+    ],
+  ];
+
+  for (const [label, route] of failures) {
+    test(`${label} → changelog null, release still upgradable`, async () => {
+      mockRoutes({ ...releaseRoutes('99.0.0'), [releaseChangelogUrl('99.0.0')]: route });
+      const result = await checkForUpdate();
+      expect(result.hasUpdate).toBe(true);
+      expect(result.changelog).toBeNull();
     });
+  }
+});
+
+describe('latest redirect parsing', () => {
+  function latestVia(route: Route): void {
+    mockRoutes({ ...releaseRoutes('2.3.4'), [RELEASE_LATEST_URL]: route });
+  }
+
+  test('absolute Location', async () => {
+    latestVia(redirectTo(tagLocation('2.3.4')));
+    expect((await fetchLatestGithubRelease()).latestVersion).toBe('2.3.4');
+  });
+
+  test('relative Location', async () => {
+    latestVia(redirectTo('/12dora/vibe-term/releases/tag/v2.3.4'));
+    expect((await fetchLatestGithubRelease()).latestVersion).toBe('2.3.4');
+  });
+
+  for (const location of [
+    'https://example.com/elsewhere',
+    '/12dora/vibe-term/releases',
+    'not a url',
+    'https://github.com/other/repo/releases/tag/v2.3.4',
+  ]) {
+    test(`garbage Location ${JSON.stringify(location)} → ReleaseUnavailableError`, async () => {
+      latestVia(redirectTo(location));
+      await expect(fetchLatestGithubRelease()).rejects.toBeInstanceOf(ReleaseUnavailableError);
+    });
+  }
+
+  test('redirect without Location → ReleaseUnavailableError', async () => {
+    latestVia(() => new Response(null, { status: 302 }));
+    await expect(fetchLatestGithubRelease()).rejects.toBeInstanceOf(ReleaseUnavailableError);
+  });
+
+  test('200 instead of a redirect → ReleaseUnavailableError', async () => {
+    latestVia(text(200, '<html></html>'));
+    await expect(fetchLatestGithubRelease()).rejects.toBeInstanceOf(ReleaseUnavailableError);
+  });
+
+  test('network error → ReleaseUnavailableError', async () => {
+    latestVia(() => {
+      throw new Error('ENOTFOUND');
+    });
+    await expect(fetchLatestGithubRelease()).rejects.toThrow(ReleaseUnavailableError);
+  });
+});
+
+describe('fetchLatestGithubRelease / requireLatestUpgradeRelease', () => {
+  test('returns the plain release shape without comparing the local node', async () => {
+    mockRoutes(releaseRoutes('2.3.4', '## 2.3.4'));
 
     const result = await fetchLatestGithubRelease();
     expect(result).toEqual({
       latestVersion: '2.3.4',
       changelog: '## 2.3.4',
-      publishedAt: '2026-08-30T00:00:00.000Z',
+      publishedAt: LAST_MODIFIED_ISO,
       hasTarball: true,
     });
     expect('hasUpdate' in result).toBe(false);
   });
 
-  test('missing tarball asset → hasTarball false but latestVersion still present', async () => {
-    mockGithub(200, {
-      tag_name: 'v2.3.4',
-      published_at: '2026-08-30T00:00:00.000Z',
-      body: 'notes',
-      assets: [{ name: 'source.tar.gz' }],
-    });
-
-    const result = await fetchLatestGithubRelease();
-    expect(result.latestVersion).toBe('2.3.4');
-    expect(result.hasTarball).toBe(false);
-  });
-});
-
-describe('requireLatestUpgradeRelease', () => {
-  test('returns concrete version when tarball asset exists', async () => {
-    mockGithub(200, {
-      tag_name: 'v2.3.4',
-      published_at: '2026-08-30T00:00:00.000Z',
-      body: 'notes',
-      assets: [{ name: releaseTarballName('2.3.4') }],
-    });
-
+  test('requireLatestUpgradeRelease returns the concrete version when a tarball exists', async () => {
+    mockRoutes(releaseRoutes('2.3.4', 'notes'));
     await expect(requireLatestUpgradeRelease()).resolves.toEqual({
       latestVersion: '2.3.4',
       changelog: 'notes',
-      publishedAt: '2026-08-30T00:00:00.000Z',
+      publishedAt: LAST_MODIFIED_ISO,
     });
   });
 
-  test('throws when the matching tarball asset is missing', async () => {
-    mockGithub(200, {
-      tag_name: 'v2.3.4',
-      published_at: '2026-08-30T00:00:00.000Z',
-      body: 'notes',
-      assets: [],
+  test('requireLatestUpgradeRelease throws ReleaseUnavailableError without a tarball', async () => {
+    mockRoutes({
+      ...releaseRoutes('2.3.4'),
+      [releaseSumsUrl('2.3.4')]: sumsRoute('2.3.4', []),
     });
-
-    await expect(requireLatestUpgradeRelease()).rejects.toThrow(/RELEASE_UNAVAILABLE|tarball/i);
+    await expect(requireLatestUpgradeRelease()).rejects.toBeInstanceOf(ReleaseUnavailableError);
   });
 
-  test('throws when GitHub Releases is unavailable', async () => {
-    mockGithub(502, '{"message":"bad gateway"}');
-    await expect(requireLatestUpgradeRelease()).rejects.toThrow(/GitHub Releases API HTTP 502/i);
+  test('requireLatestUpgradeRelease surfaces an unreachable latest as ReleaseUnavailableError', async () => {
+    mockRoutes({ [RELEASE_LATEST_URL]: text(502, 'bad gateway') });
+    await expect(requireLatestUpgradeRelease()).rejects.toThrow(/HTTP 502/);
   });
 });
 
 describe('requirePublishedUpgradeRelease', () => {
-  test('returns the tagged release when the tarball exists', async () => {
-    mockGithub(200, {
-      tag_name: 'v1.2.3',
-      published_at: '2026-01-01T00:00:00.000Z',
-      body: 'notes',
-      assets: [{ name: releaseTarballName('1.2.3') }],
-    });
+  test('returns the tagged release when SHA256SUMS lists the tarball', async () => {
+    mockRoutes(releaseRoutes('1.2.3', 'notes'));
     await expect(requirePublishedUpgradeRelease('1.2.3')).resolves.toEqual({
       latestVersion: '1.2.3',
       changelog: 'notes',
-      publishedAt: '2026-01-01T00:00:00.000Z',
+      publishedAt: LAST_MODIFIED_ISO,
     });
-    expect(captures[0]?.url).toBe(releaseApiUrl('1.2.3'));
+    expect(captures.map((c) => c.url)).toContain(releaseSumsUrl('1.2.3'));
+    expect(hits(RELEASE_LATEST_URL)).toBe(0);
   });
 
-  test('404 is RELEASE_NOT_FOUND', async () => {
-    mockGithub(404, '{"message":"Not Found"}');
+  test('SHA256SUMS 404 → ReleaseNotFoundError', async () => {
+    mockRoutes({});
     await expect(requirePublishedUpgradeRelease('0.0.1')).rejects.toBeInstanceOf(
       ReleaseNotFoundError
     );
   });
 
-  test('tag mismatch is RELEASE_NOT_FOUND', async () => {
-    mockGithub(200, {
-      tag_name: 'v9.9.9',
-      published_at: '2026-01-01T00:00:00.000Z',
-      body: 'notes',
-      assets: [{ name: releaseTarballName('9.9.9') }],
-    });
+  test('SHA256SUMS without a tarball → ReleaseNotFoundError', async () => {
+    mockRoutes({ [releaseSumsUrl('1.2.3')]: sumsRoute('1.2.3', ['other.tgz']) });
     await expect(requirePublishedUpgradeRelease('1.2.3')).rejects.toBeInstanceOf(
       ReleaseNotFoundError
     );
   });
-});
 
-describe('latest release 缓存', () => {
-  test('成功结果 60 s 内复用，checkForUpdate 与远程升级共享同一次查询', async () => {
-    mockGithub(200, {
-      tag_name: 'v9.9.9',
-      published_at: '2026-08-30T00:00:00.000Z',
-      body: 'notes',
-      assets: [{ name: releaseTarballName('9.9.9') }],
-    });
-
-    await fetchLatestGithubRelease();
-    await requireLatestUpgradeRelease();
-    await checkForUpdate();
-
-    expect(captures.length).toBe(1);
+  test('SHA256SUMS HTTP 500 → ReleaseUnavailableError, not NotFound', async () => {
+    mockRoutes({ [releaseSumsUrl('1.2.3')]: text(500, 'boom') });
+    const err = await requirePublishedUpgradeRelease('1.2.3').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ReleaseUnavailableError);
+    expect(err).not.toBeInstanceOf(ReleaseNotFoundError);
   });
 
-  test('并发调用合并成一次请求', async () => {
-    mockGithub(200, {
-      tag_name: 'v9.9.9',
-      assets: [{ name: releaseTarballName('9.9.9') }],
+  test('follows a redirect to githubusercontent for SHA256SUMS', async () => {
+    const cdn = 'https://release-assets.githubusercontent.com/sums-1.2.3';
+    mockRoutes({
+      ...releaseRoutes('1.2.3'),
+      [releaseSumsUrl('1.2.3')]: redirectTo(cdn),
+      [cdn]: sumsRoute('1.2.3'),
     });
-
-    const all = await Promise.all([
-      fetchLatestGithubRelease(),
-      fetchLatestGithubRelease(),
-      fetchLatestGithubRelease(),
-    ]);
-
-    expect(captures.length).toBe(1);
-    expect(all.every((r) => r.latestVersion === '9.9.9')).toBe(true);
+    const result = await requirePublishedUpgradeRelease('1.2.3');
+    expect(result.publishedAt).toBe(LAST_MODIFIED_ISO);
+    expect(hits(cdn)).toBe(1);
   });
 
-  test('失败不缓存，下一次照常重试', async () => {
-    mockGithub(502, 'bad gateway');
-    await expect(fetchLatestGithubRelease()).rejects.toThrow(/HTTP 502/);
-    await expect(fetchLatestGithubRelease()).rejects.toThrow(/HTTP 502/);
-    expect(captures.length).toBe(2);
-  });
-
-  test('resetLatestReleaseCache 后重新查询', async () => {
-    mockGithub(200, {
-      tag_name: 'v9.9.9',
-      assets: [{ name: releaseTarballName('9.9.9') }],
-    });
-    await fetchLatestGithubRelease();
-    resetLatestReleaseCache();
-    await fetchLatestGithubRelease();
-    expect(captures.length).toBe(2);
+  test('refuses a redirect to a foreign host', async () => {
+    const evil = 'https://evil.example.com/SHA256SUMS';
+    mockRoutes({ [releaseSumsUrl('1.2.3')]: redirectTo(evil), [evil]: sumsRoute('1.2.3') });
+    await expect(requirePublishedUpgradeRelease('1.2.3')).rejects.toBeInstanceOf(
+      ReleaseUnavailableError
+    );
+    expect(hits(evil)).toBe(0);
   });
 });

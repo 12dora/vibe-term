@@ -4,13 +4,17 @@ import { describe, expect, it } from 'bun:test';
 import {
   INSTALL_COMMAND,
   INSTALL_SCRIPT_URL,
+  RELEASE_LATEST_URL,
   RELEASE_REPO,
   isReleaseAssetNameFor,
   isReleaseTarballName,
   legacyReleaseTarballName,
   legacyReleaseTarballUrl,
+  parseReleaseTagLocation,
   parseReleaseTarballName,
   releaseAssetNames,
+  releaseChangelogUrl,
+  releaseSumsUrl,
   releaseTarballName,
   releaseTarballUrl,
   selectReleaseAssetForTarget,
@@ -79,5 +83,49 @@ describe('selectReleaseAssetForTarget', () => {
     expect(selectReleaseAssetForTarget(null, '2.0.0')).toBe('tmex-cli-2.0.0.tgz');
     expect(selectReleaseAssetForTarget(undefined, '2.0.0')).toBe('tmex-cli-2.0.0.tgz');
     expect(selectReleaseAssetForTarget('2.0.0_dev', '2.0.0')).toBe('tmex-cli-2.0.0.tgz');
+  });
+});
+
+describe('无 API 的发行查询地址', () => {
+  it('latest / SHA256SUMS / CHANGELOG 地址', () => {
+    expect(RELEASE_LATEST_URL).toBe('https://github.com/12dora/vibe-term/releases/latest');
+    expect(releaseSumsUrl('2.13.0')).toBe(
+      'https://github.com/12dora/vibe-term/releases/download/v2.13.0/SHA256SUMS'
+    );
+    expect(releaseChangelogUrl('2.13.0')).toBe(
+      'https://raw.githubusercontent.com/12dora/vibe-term/v2.13.0/packages/app/CHANGELOG.md'
+    );
+  });
+});
+
+describe('parseReleaseTagLocation', () => {
+  it('绝对 Location', () => {
+    expect(
+      parseReleaseTagLocation('https://github.com/12dora/vibe-term/releases/tag/v2.13.0')
+    ).toBe('2.13.0');
+    expect(
+      parseReleaseTagLocation('https://github.com/12dora/vibe-term/releases/tag/v2.14.0-rc.1')
+    ).toBe('2.14.0-rc.1');
+  });
+
+  it('相对 Location', () => {
+    expect(parseReleaseTagLocation('/12dora/vibe-term/releases/tag/v2.13.0')).toBe('2.13.0');
+  });
+
+  it('拒绝无关、畸形或别的仓库 / 主机的 Location', () => {
+    expect(parseReleaseTagLocation('')).toBeNull();
+    expect(parseReleaseTagLocation('not a url at all')).toBeNull();
+    expect(parseReleaseTagLocation('/12dora/vibe-term/releases')).toBeNull();
+    expect(parseReleaseTagLocation('/12dora/vibe-term/releases/tag/2.13.0')).toBeNull();
+    expect(parseReleaseTagLocation('/12dora/vibe-term/releases/tag/vnext')).toBeNull();
+    expect(parseReleaseTagLocation('/12dora/vibe-term/releases/tag/v2.13.0/extra')).toBeNull();
+    expect(parseReleaseTagLocation('/other/repo/releases/tag/v2.13.0')).toBeNull();
+    expect(
+      parseReleaseTagLocation('https://evil.example.com/12dora/vibe-term/releases/tag/v2.13.0')
+    ).toBeNull();
+    expect(
+      parseReleaseTagLocation('http://github.com/12dora/vibe-term/releases/tag/v2.13.0')
+    ).toBeNull();
+    expect(parseReleaseTagLocation('/12dora/vibe-term/releases/tag/%E0%A4%A')).toBeNull();
   });
 });

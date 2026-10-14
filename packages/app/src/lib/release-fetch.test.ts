@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  RELEASE_API_LATEST_URL,
+  RELEASE_LATEST_URL,
   legacyReleaseTarballName,
   legacyReleaseTarballUrl,
   releaseTarballName,
@@ -13,7 +13,6 @@ import { t } from '../i18n';
 import {
   downloadReleaseTarball,
   fetchReleaseSha256Sums,
-  parseLatestReleaseVersion,
   releaseSha256SumsUrl,
   resolveReleaseVersion,
   versionFromTagName,
@@ -34,21 +33,8 @@ describe('versionFromTagName', () => {
   });
 });
 
-describe('parseLatestReleaseVersion', () => {
-  test('reads tag_name from GitHub latest-release JSON', () => {
-    expect(parseLatestReleaseVersion('{"tag_name":"v1.1.0","name":"1.1.0"}')).toBe('1.1.0');
-    expect(
-      parseLatestReleaseVersion('{\n  "url": "https://example",\n  "tag_name": "v2.0.0"\n}')
-    ).toBe('2.0.0');
-  });
-
-  test('rejects JSON without tag_name', () => {
-    expect(() => parseLatestReleaseVersion('{"name":"nope"}')).toThrow();
-  });
-});
-
 describe('resolveReleaseVersion', () => {
-  test('uses an explicit version without calling the API', async () => {
+  test('uses an explicit version without any lookup', async () => {
     const calls: string[] = [];
     const version = await resolveReleaseVersion('v1.2.3', async (url) => {
       calls.push(String(url));
@@ -71,26 +57,51 @@ describe('resolveReleaseVersion', () => {
     await expect(resolveReleaseVersion('v1.2.3-beta.1')).resolves.toBe('1.2.3-beta.1');
   });
 
-  test('fetches latest when requested version is latest or empty', async () => {
-    const version = await resolveReleaseVersion('latest', async (url) => {
-      expect(String(url)).toBe(RELEASE_API_LATEST_URL);
-      return jsonResponse(200, '{"tag_name":"v1.4.0"}');
+  function redirectResponse(location: string | null, status = 302): Response {
+    return new Response(null, {
+      status,
+      headers: location === null ? {} : { Location: location },
+    });
+  }
+
+  test('resolves latest from the releases/latest 302 without following it', async () => {
+    const calls: Array<{ url: string; redirect: RequestRedirect | undefined }> = [];
+    const version = await resolveReleaseVersion('latest', async (url, init) => {
+      calls.push({ url: String(url), redirect: init?.redirect });
+      return redirectResponse('https://github.com/12dora/vibe-term/releases/tag/v1.4.0');
     });
     expect(version).toBe('1.4.0');
+    expect(calls).toEqual([{ url: RELEASE_LATEST_URL, redirect: 'manual' }]);
   });
 
-  test('maps HTTP 404 to a version-not-found error', async () => {
+  test('resolves an empty request as latest and accepts a relative Location', async () => {
+    const version = await resolveReleaseVersion('', async () =>
+      redirectResponse('/12dora/vibe-term/releases/tag/v2.0.0-rc.1')
+    );
+    expect(version).toBe('2.0.0-rc.1');
+  });
+
+  test('maps HTTP 404 and garbage Location to latestLookupFailed', async () => {
     await expect(
       resolveReleaseVersion('latest', async () => jsonResponse(404, '{"message":"Not Found"}'))
-    ).rejects.toThrow(t('upgrade.versionNotFound', { version: 'latest' }));
+    ).rejects.toThrow(t('upgrade.latestLookupFailed'));
+    await expect(
+      resolveReleaseVersion('latest', async () => redirectResponse('https://github.com/login'))
+    ).rejects.toThrow(t('upgrade.latestLookupFailed'));
+    await expect(
+      resolveReleaseVersion('latest', async () => redirectResponse(null))
+    ).rejects.toThrow(t('upgrade.latestLookupFailed'));
   });
 
-  test('maps network failure to a clear error', async () => {
+  test('maps other HTTP failures and network errors to networkFailed', async () => {
+    await expect(
+      resolveReleaseVersion('latest', async () => jsonResponse(503, 'down'))
+    ).rejects.toThrow(t('upgrade.networkFailed', { detail: 'HTTP 503' }));
     await expect(
       resolveReleaseVersion('latest', async () => {
         throw new Error('getaddrinfo ENOTFOUND');
       })
-    ).rejects.toThrow(/GitHub|网络|getaddrinfo/i);
+    ).rejects.toThrow(t('upgrade.networkFailed', { detail: 'getaddrinfo ENOTFOUND' }));
   });
 });
 

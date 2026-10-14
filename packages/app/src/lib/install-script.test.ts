@@ -225,29 +225,10 @@ describe('install.sh helpers', () => {
     expect(empty.stdout.trim()).toBe('');
   });
 
-  test('vibeterm_parse_tag_name reads compact and pretty GitHub JSON', () => {
-    const compact = sourceEval(`vibeterm_parse_tag_name '{"tag_name":"v1.1.0","name":"x"}'`);
-    expect(compact.status).toBe(0);
-    expect(compact.stdout.trim()).toBe('v1.1.0');
-
-    const pretty = sourceEval(`vibeterm_parse_tag_name "$(cat <<'JSON'
-{
-  "url": "https://api.github.com/repos/12dora/vibe-term/releases/1",
-  "tag_name": "v2.3.4",
-  "assets": []
-}
-JSON
-)"`);
-    expect(pretty.status).toBe(0);
-    expect(pretty.stdout.trim()).toBe('v2.3.4');
-  });
-
-  test('vibeterm_parse_tag_name takes the first tag_name, not one embedded in the body', () => {
-    const result = sourceEval(
-      `vibeterm_parse_tag_name '{"tag_name":"v1.1.0","body":"mentions \\"tag_name\\": \\"v9.9.9\\""}'`
-    );
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe('v1.1.0');
+  test('install.sh no longer references the GitHub REST API', () => {
+    const text = readFileSync(installSh, 'utf8');
+    expect(text).not.toContain('api.github.com');
+    expect(text).not.toContain('tag_name');
   });
 
   test('vibeterm_tag_from_location_headers reads the last path segment case-insensitively', () => {
@@ -290,6 +271,79 @@ HDR
     const bad = sourceEval('vibeterm_resolve_version', 'VIBETERM_VERSION=../etc/passwd');
     expect(bad.status).not.toBe(0);
     expect(bad.stderr).toMatch(/invalid VIBETERM_VERSION/i);
+  });
+
+  describe('latest resolution via the releases/latest redirect', () => {
+    function runLatest(opts: { okOnAttempt: number | null; location?: string }): {
+      status: number;
+      stdout: string;
+      stderr: string;
+      attempts: number;
+    } {
+      const root = mkdtempSync(join(tmpdir(), 'vibeterm-install-latest-'));
+      sandboxDirs.push(root);
+      const bin = join(root, 'bin');
+      mkdirSync(bin);
+      const counter = join(root, 'curl.count');
+      writeExec(
+        join(bin, 'curl'),
+        `#!/usr/bin/env bash
+n=0
+[ -f "$FAKE_CURL_COUNTER" ] && n="$(cat "$FAKE_CURL_COUNTER")"
+n=$((n + 1))
+printf '%s' "$n" > "$FAKE_CURL_COUNTER"
+if [ -n "$FAKE_CURL_OK_ON" ] && [ "$n" -ge "$FAKE_CURL_OK_ON" ]; then
+  printf 'HTTP/2 302\\r\\nlocation: %s\\r\\n\\r\\n' "$FAKE_CURL_LOCATION"
+  exit 0
+fi
+printf 'HTTP/2 502\\r\\n\\r\\n'
+exit 0
+`
+      );
+      writeExec(join(bin, 'sleep'), '#!/usr/bin/env bash\nexit 0\n');
+      const result = sourceEval('vibeterm_resolve_version', 'unset VIBETERM_VERSION TMEX_VERSION', {
+        env: {
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          FAKE_CURL_COUNTER: counter,
+          FAKE_CURL_OK_ON: opts.okOnAttempt === null ? '' : String(opts.okOnAttempt),
+          FAKE_CURL_LOCATION:
+            opts.location ?? 'https://github.com/12dora/vibe-term/releases/tag/v2.13.0',
+        },
+      });
+      const attempts = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0;
+      return { ...result, attempts };
+    }
+
+    test('reads the version from the 302 Location on the first attempt', () => {
+      const result = runLatest({ okOnAttempt: 1 });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe('2.13.0');
+      expect(result.attempts).toBe(1);
+    });
+
+    test('retries transient failures and succeeds on the last retry', () => {
+      const result = runLatest({ okOnAttempt: 4 });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe('2.13.0');
+      expect(result.attempts).toBe(4);
+    });
+
+    test('fails after 4 attempts with a VIBETERM_VERSION hint and never calls the API', () => {
+      const result = runLatest({ okOnAttempt: null });
+      expect(result.status).not.toBe(0);
+      expect(result.attempts).toBe(4);
+      expect(result.stderr).toContain('VIBETERM_VERSION=<ver>');
+      expect(result.stderr).not.toContain('api.github.com');
+    });
+
+    test('treats a non-semver redirect target as a failed attempt', () => {
+      const result = runLatest({
+        okOnAttempt: 1,
+        location: 'https://github.com/login?return_to=x',
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.attempts).toBe(4);
+    });
   });
 
   test('vibeterm_node_version_ok requires major >= 20', () => {

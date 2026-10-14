@@ -10,10 +10,6 @@
 VIBETERM_RELEASE_REPO='12dora/vibe-term'
 VIBETERM_MIN_BUN_VERSION='1.3.0'
 
-vibeterm_parse_tag_name() {
-  printf '%s' "$1" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
-}
-
 vibeterm_version_from_tag() {
   local tag="$1"
   tag="${tag#v}"
@@ -157,18 +153,28 @@ vibeterm_ensure_bun() {
   fi
 }
 
-vibeterm_github_json() {
-  local url="$1"
-  curl -fsSL \
-    -H 'Accept: application/vnd.github+json' \
-    -H 'User-Agent: vibeterm-install' \
-    "$url"
-}
-
 vibeterm_tag_from_latest_redirect() {
   local headers
-  headers="$(curl -sI -H 'User-Agent: vibeterm-install' "https://github.com/${VIBETERM_RELEASE_REPO}/releases/latest")" || return 1
+  headers="$(curl -sI -m 15 -H 'User-Agent: vibeterm-install' "https://github.com/${VIBETERM_RELEASE_REPO}/releases/latest")" || return 1
   vibeterm_tag_from_location_headers "$headers"
+}
+
+# `releases/latest` 的 302 不占 REST 配额，只会因网络抖动失败：按 1/2/4 s 退避重试，不再回退任何 API。
+vibeterm_latest_version_with_retry() {
+  local delays="${VIBETERM_LATEST_RETRY_DELAYS:-1 2 4}"
+  local delay tag version
+  while :; do
+    tag="$(vibeterm_tag_from_latest_redirect 2>/dev/null || true)"
+    version="$(vibeterm_version_from_tag "$tag")"
+    if vibeterm_is_semver "$version"; then
+      printf '%s' "$version"
+      return 0
+    fi
+    [ -n "$delays" ] || return 1
+    delay="${delays%% *}"
+    if [ "$delays" = "$delay" ]; then delays=''; else delays="${delays#* }"; fi
+    sleep "$delay"
+  done
 }
 
 vibeterm_release_asset_url() {
@@ -188,21 +194,12 @@ vibeterm_resolve_version() {
     printf '%s' "$pinned"
     return 0
   fi
-  local tag version
-  tag="$(vibeterm_tag_from_latest_redirect 2>/dev/null || true)"
-  if [ -z "$tag" ]; then
-    local json
-    json="$(vibeterm_github_json "https://api.github.com/repos/${VIBETERM_RELEASE_REPO}/releases/latest")" || {
-      echo "vibeterm install: failed to query GitHub Releases" >&2
-      exit 1
-    }
-    tag="$(vibeterm_parse_tag_name "$json")"
-  fi
-  version="$(vibeterm_version_from_tag "$tag")"
-  if [ -z "$version" ]; then
-    echo "vibeterm install: latest release is missing a tag" >&2
+  local version
+  version="$(vibeterm_latest_version_with_retry)" || {
+    echo "vibeterm install: could not resolve the latest release from github.com/${VIBETERM_RELEASE_REPO}/releases/latest after 4 attempts" >&2
+    echo "vibeterm install: check your network, or pin a version, e.g. VIBETERM_VERSION=<ver> bash install.sh" >&2
     exit 1
-  fi
+  }
   printf '%s' "$version"
 }
 

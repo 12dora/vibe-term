@@ -6,10 +6,11 @@ import {
   logReleaseDownload,
 } from '../../../shared/src/release/ranged-download';
 import {
-  RELEASE_API_LATEST_URL,
+  RELEASE_LATEST_URL,
   RELEASE_REPO_URL,
   legacyReleaseTarballName,
   legacyReleaseTarballUrl,
+  parseReleaseTagLocation,
   releaseTag,
   releaseTarballName,
   releaseTarballUrl,
@@ -40,53 +41,27 @@ export function versionFromTagName(tagName: string): string {
   return tagName.trim().replace(/^v/i, '');
 }
 
-export function parseLatestReleaseVersion(body: string): string {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    throw new Error(t('upgrade.latestLookupFailed'));
-  }
-  if (typeof parsed !== 'object' || parsed === null) {
-    throw new Error(t('upgrade.latestLookupFailed'));
-  }
-  const tag = (parsed as { tag_name?: unknown }).tag_name;
-  if (typeof tag !== 'string' || !tag.trim()) {
-    throw new Error(t('upgrade.latestLookupFailed'));
-  }
-  return versionFromTagName(tag);
-}
-
 function networkError(detail: string): Error {
   return new Error(t('upgrade.networkFailed', { detail }));
 }
 
-/** 404 返回 null（调用方据此决定是否回退到旧资产名），其余失败一律抛错。 */
-async function githubFetchOrNull(url: string, fetchFn: ReleaseFetch): Promise<Response | null> {
+/** `releases/latest` 的 302 不占 REST API 配额；版本号取自 Location 里的 tag 段。 */
+async function resolveLatestVersion(fetchFn: ReleaseFetch): Promise<string> {
   let response: Response;
   try {
-    response = await fetchFn(url, { headers: GITHUB_HEADERS, redirect: 'follow' });
+    response = await fetchFn(RELEASE_LATEST_URL, {
+      headers: { 'User-Agent': GITHUB_HEADERS['User-Agent'] },
+      redirect: 'manual',
+    });
   } catch (error) {
-    const detail = errorMessage(error);
-    throw networkError(detail);
+    throw networkError(errorMessage(error));
   }
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw networkError(`HTTP ${response.status}`);
-  }
-  return response;
-}
-
-async function githubFetch(
-  url: string,
-  fetchFn: ReleaseFetch,
-  versionLabel: string
-): Promise<Response> {
-  const response = await githubFetchOrNull(url, fetchFn);
-  if (response === null) {
-    throw new Error(t('upgrade.versionNotFound', { version: versionLabel }));
-  }
-  return response;
+  if (response.status === 404) throw new Error(t('upgrade.latestLookupFailed'));
+  const redirected = response.status >= 300 && response.status < 400;
+  if (!redirected && !response.ok) throw networkError(`HTTP ${response.status}`);
+  const version = parseReleaseTagLocation(response.headers.get('location') || response.url);
+  if (version === null) throw new Error(t('upgrade.latestLookupFailed'));
+  return version;
 }
 
 export async function resolveReleaseVersion(
@@ -97,9 +72,7 @@ export async function resolveReleaseVersion(
   if (trimmed && trimmed !== 'latest') {
     return assertReleaseVersion(versionFromTagName(trimmed));
   }
-  const response = await githubFetch(RELEASE_API_LATEST_URL, fetchFn, 'latest');
-  const body = await response.text();
-  return parseLatestReleaseVersion(body);
+  return resolveLatestVersion(fetchFn);
 }
 
 /**

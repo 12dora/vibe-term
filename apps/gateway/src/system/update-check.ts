@@ -1,56 +1,45 @@
+import { type UpdateCheckResult, compareSemver } from '@vibeterm/shared';
 import {
-  RELEASE_API_LATEST_URL,
-  type UpdateCheckResult,
-  compareSemver,
-  legacyReleaseTarballName,
-  releaseApiUrl,
-  releaseTarballName,
-} from '@vibeterm/shared';
+  type LatestGithubRelease,
+  ReleaseNotFoundError,
+  ReleaseUnavailableError,
+  lookupLatestRelease,
+  lookupRelease,
+} from './release-lookup';
+import { TtlLookup } from './ttl-lookup';
 import { getBaseVersion } from './version';
 
-const FETCH_TIMEOUT_MS = 10_000;
-/** 一次「全部升级」会连发 N 个 start，每个都问一次 GitHub；未认证 API 只有 60 次/小时。 */
-const LATEST_RELEASE_CACHE_TTL_MS = 60_000;
+export { ReleaseNotFoundError, ReleaseUnavailableError };
+export type { LatestGithubRelease };
 
-interface GithubReleaseAsset {
-  name?: string;
+/** latest 指向的版本发布后基本不变；更新提示晚几分钟无妨，换来对 GitHub 的低频访问。 */
+const LATEST_RELEASE_TTL_MS = 10 * 60_000;
+/** latest 已发 tag 但资产还没传完（发版窗口期）：短缓存，尽快看到可升级。 */
+const LATEST_PENDING_TTL_MS = 60_000;
+/** 指定版本的发行不可变，成功结果长缓存。 */
+const PUBLISHED_RELEASE_TTL_MS = 60 * 60_000;
+const FAILURE_TTL_MS = 60_000;
+
+function failureTtlMs(err: unknown): number {
+  return err instanceof ReleaseUnavailableError && err.retryAfterMs !== null
+    ? err.retryAfterMs
+    : FAILURE_TTL_MS;
 }
 
-interface GithubRelease {
-  tag_name?: string;
-  published_at?: string | null;
-  body?: string | null;
-  assets?: GithubReleaseAsset[];
-}
+const latestLookup = new TtlLookup<LatestGithubRelease>({
+  successTtlMs: (release) => (release.hasTarball ? LATEST_RELEASE_TTL_MS : LATEST_PENDING_TTL_MS),
+  failureTtlMs,
+});
 
-export type LatestGithubRelease = {
-  latestVersion: string | null;
-  changelog: string | null;
-  publishedAt: string | null;
-  hasTarball: boolean;
-};
-
-export class ReleaseUnavailableError extends Error {
-  readonly code = 'RELEASE_UNAVAILABLE' as const;
-
-  constructor(message = 'RELEASE_UNAVAILABLE') {
-    super(message);
-    this.name = 'ReleaseUnavailableError';
-  }
-}
-
-export class ReleaseNotFoundError extends Error {
-  readonly code = 'RELEASE_NOT_FOUND' as const;
-
-  constructor(message = 'RELEASE_NOT_FOUND') {
-    super(message);
-    this.name = 'ReleaseNotFoundError';
-  }
-}
+const publishedLookup = new TtlLookup<LatestGithubRelease>({
+  successTtlMs: () => PUBLISHED_RELEASE_TTL_MS,
+  failureTtlMs,
+  maxEntries: 64,
+});
 
 /**
- * 查询本仓库 GitHub Releases 最新版（不再走 npm registry）。
- * changelog 取 release body（markdown）；空则 null。缺少对应 tarball 资产时
+ * 查询本仓库 GitHub Releases 最新版（不走 GitHub REST API，也不走 npm registry）。
+ * changelog 取该 tag 的 CHANGELOG.md；缺少对应 tarball 资产时
  * 仍回报 latestVersion，但 hasUpdate=false，避免前端提供无法完成的升级。
  */
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
@@ -71,83 +60,22 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   };
 }
 
-let latestReleaseCache: { at: number; value: LatestGithubRelease } | null = null;
-let latestReleaseInflight: Promise<LatestGithubRelease> | null = null;
-
 export function resetLatestReleaseCache(): void {
-  latestReleaseCache = null;
-  latestReleaseInflight = null;
+  latestLookup.reset();
+  publishedLookup.reset();
 }
 
 /**
  * 解析 GitHub latest Release；不与本机版本比较（远程升级不能用入口节点 hasUpdate）。
- * 成功结果缓存 60 s 并合并并发请求；失败不缓存，下一次照常重试。
+ * 成功缓存 10 min，失败短时负缓存（403/429 遵循 Retry-After），并发请求合并。
  */
 export async function fetchLatestGithubRelease(): Promise<LatestGithubRelease> {
-  const cached = latestReleaseCache;
-  if (cached && Date.now() - cached.at < LATEST_RELEASE_CACHE_TTL_MS) return cached.value;
-  const pending = latestReleaseInflight ?? fetchLatestGithubReleaseUncached();
-  latestReleaseInflight = pending;
-  try {
-    const value = await pending;
-    latestReleaseCache = { at: Date.now(), value };
-    return value;
-  } finally {
-    if (latestReleaseInflight === pending) latestReleaseInflight = null;
-  }
+  return await latestLookup.get('latest', lookupLatestRelease);
 }
 
-async function fetchGithubReleaseJson(
-  url: string,
-  notFound: 'unavailable' | 'missing'
-): Promise<GithubRelease> {
-  const res = await fetch(url, {
-    cache: 'no-store',
-    headers: {
-      accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-    },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    throw githubReleasesHttpError(res.status, notFound);
-  }
-  return (await res.json()) as GithubRelease;
-}
-
-function parseGithubRelease(release: GithubRelease): LatestGithubRelease {
-  const latest = stripLeadingV(release.tag_name);
-  const publishedAt = latest ? (release.published_at ?? null) : null;
-  const changelog = releaseChangelog(release.body);
-  // 新旧资产任一存在即可升级：改名后的 release 两份都传，混合版本的节点各取所需。
-  const hasTarball =
-    latest !== null &&
-    Array.isArray(release.assets) &&
-    release.assets.some(
-      (asset) =>
-        asset.name === releaseTarballName(latest) || asset.name === legacyReleaseTarballName(latest)
-    );
-  return {
-    latestVersion: latest,
-    changelog,
-    publishedAt,
-    hasTarball,
-  };
-}
-
-async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> {
-  return parseGithubRelease(await fetchGithubReleaseJson(RELEASE_API_LATEST_URL, 'unavailable'));
-}
-
-/** 指定 tag 的发行；404 / 无 tarball 视为未发布。 */
+/** 指定 tag 的发行；SHA256SUMS 404 视为未发布（ReleaseNotFoundError）。 */
 export async function fetchPublishedGithubRelease(version: string): Promise<LatestGithubRelease> {
-  const release = parseGithubRelease(
-    await fetchGithubReleaseJson(releaseApiUrl(version), 'missing')
-  );
-  if (release.latestVersion !== version) {
-    throw new ReleaseNotFoundError(`release tag mismatch for ${version}`);
-  }
-  return release;
+  return await publishedLookup.get(version, () => lookupRelease(version));
 }
 
 export type UpgradeRelease = {
@@ -180,28 +108,4 @@ export async function requirePublishedUpgradeRelease(version: string): Promise<U
     changelog: release.changelog,
     publishedAt: release.publishedAt,
   };
-}
-
-function stripLeadingV(tag: string | undefined): string | null {
-  if (typeof tag !== 'string' || tag.length === 0) return null;
-  return tag.replace(/^v/, '') || null;
-}
-
-function releaseChangelog(body: string | null | undefined): string | null {
-  if (typeof body !== 'string') return null;
-  return body.trim() ? body : null;
-}
-
-function githubReleasesHttpError(
-  status: number,
-  notFound: 'unavailable' | 'missing' = 'unavailable'
-): Error {
-  if (status === 403 || status === 429) {
-    return new Error(`GitHub Releases API HTTP ${status}: rate-limited or forbidden`);
-  }
-  if (status === 404) {
-    if (notFound === 'missing') return new ReleaseNotFoundError();
-    return new Error('GitHub Releases API HTTP 404: release not found');
-  }
-  return new Error(`GitHub Releases API HTTP ${status}`);
 }

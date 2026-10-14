@@ -3,9 +3,15 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
+import { RELEASE_LATEST_URL, legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import type { SystemInfo } from '@vibeterm/shared';
 import type { UserStore } from '../auth/user-store';
+import {
+  isReleaseLookupRequest,
+  releaseLookupFetch,
+  requestUrl,
+  withPublishedRelease,
+} from '../test-support/release-lookup-mock';
 import { restoreSigningKeys, signSums, useTestSigningKeys } from '../test-support/release-signing';
 import * as infoPublic from './info-public';
 import { resetReleaseDownloadForTests, retainReleaseVersion } from './release-download';
@@ -371,8 +377,7 @@ describe('handleMeshNodeUpgradeStart staged-package job', () => {
     mockGithubLatest('9.9.9');
     const latestFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       await gate;
       return new Response('nope', { status: 500 });
     }) as typeof fetch;
@@ -449,19 +454,6 @@ describe('handleMeshNodeUpgradeStart staged-package job', () => {
 
   test('unpublished version is 400 RELEASE_NOT_FOUND', async () => {
     mockGithubLatest('9.9.9');
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('/releases/tags/')) {
-        return new Response('{"message":"Not Found"}', { status: 404 });
-      }
-      return new Response(
-        JSON.stringify({
-          tag_name: 'v9.9.9',
-          assets: [{ name: releaseTarballName('9.9.9') }],
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } }
-      );
-    }) as typeof fetch;
     const res = await handleMeshNodeUpgradeStart({
       req: authedRequest(nodeId, { version: '0.0.1' }),
       nodeId,
@@ -599,22 +591,12 @@ describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
   test('N 个节点连发 start，GitHub latest 只查一次', async () => {
     releaseCacheTempDir();
     const nodeIds = ['a1'.repeat(16), 'b2'.repeat(16), 'c3'.repeat(16)];
-    let apiHits = 0;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) {
-        apiHits += 1;
-        return new Response(
-          JSON.stringify({
-            tag_name: 'v9.9.9',
-            published_at: '2026-08-30T00:00:00.000Z',
-            body: 'notes',
-            assets: [{ name: releaseTarballName('9.9.9') }],
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      return new Response('nope', { status: 500 });
+    let latestHits = 0;
+    const lookup = releaseLookupFetch('9.9.9');
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!isReleaseLookupRequest(input, init)) return new Response('nope', { status: 500 });
+      if (requestUrl(input) === RELEASE_LATEST_URL) latestHits += 1;
+      return lookup(input, init);
     }) as typeof fetch;
 
     for (const nodeId of nodeIds) {
@@ -628,7 +610,7 @@ describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
       expect(res.status).toBe(200);
     }
 
-    expect(apiHits).toBe(1);
+    expect(latestHits).toBe(1);
     await Promise.all(nodeIds.map((id) => waitForRemoteUpgradeJob(id).catch(() => {})));
   }, 8_000);
 });
@@ -645,8 +627,7 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     mockGithubLatest('9.9.9');
     const latestFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       await gate;
       return new Response('nope', { status: 500 });
     }) as typeof fetch;
@@ -718,8 +699,7 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     mockGithubLatest('8.8.8');
     const latestFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       return new Response('nope', { status: 403 });
     }) as typeof fetch;
     const forwarded: string[] = [];
@@ -1041,8 +1021,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     mockGithubLatest('9.9.9');
     const latestFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       await gate;
       return new Response('nope', { status: 500 });
     }) as typeof fetch;
@@ -1108,8 +1087,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     mockGithubLatest('9.9.9');
     const latestFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('api.github.com')) return latestFetch(input, init);
+      if (isReleaseLookupRequest(input, init)) return latestFetch(input, init);
       await gate;
       return new Response('nope', { status: 500 });
     }) as typeof fetch;
@@ -1577,22 +1555,7 @@ function authedRequest(nodeId: string, body?: Record<string, unknown>): Request 
 }
 
 function mockGithubTag(version: string): void {
-  const latestFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes(`/releases/tags/v${version}`)) {
-      return new Response(
-        JSON.stringify({
-          tag_name: `v${version}`,
-          published_at: '2026-01-01T00:00:00.000Z',
-          body: 'notes',
-          assets: [{ name: releaseTarballName(version) }],
-        }),
-        { status: 200, headers: { 'content-type': 'application/json' } }
-      );
-    }
-    return latestFetch(input, init);
-  }) as typeof fetch;
+  globalThis.fetch = withPublishedRelease(globalThis.fetch, version);
 }
 
 function selfUpdateInfo(overrides: Partial<SystemInfo>): SystemInfo {
@@ -1619,16 +1582,7 @@ function mockGithubFailure(): () => number {
 }
 
 function mockGithubLatest(version: string): void {
-  globalThis.fetch = (async (_input: RequestInfo | URL) =>
-    new Response(
-      JSON.stringify({
-        tag_name: `v${version}`,
-        published_at: '2026-08-30T00:00:00.000Z',
-        body: 'notes',
-        assets: [{ name: releaseTarballName(version) }],
-      }),
-      { status: 200, headers: { 'content-type': 'application/json' } }
-    )) as typeof fetch;
+  globalThis.fetch = releaseLookupFetch(version);
 }
 
 function cancellableResponse(
