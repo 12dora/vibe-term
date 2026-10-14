@@ -14,14 +14,25 @@ export function applyInboundDispatchContext(
   const uid = trusted?.uid ?? ctx.uid;
   const sid = trusted?.sid ?? ctx.sid ?? null;
   const renewedExpiresAt = trusted?.renewedExpiresAt ?? ctx.renewedExpiresAt;
+  const tokenId = trusted?.tokenId ?? ctx.tokenId ?? null;
+  const tokenScopes = trusted?.tokenScopes ?? ctx.tokenScopes ?? null;
   const extra = renewedExpiresAt !== undefined ? { renewedExpiresAt } : {};
+  const tokenExtra = tokenId ? { tokenId, tokenScopes: tokenScopes ?? [] } : {};
   const dispatchContext: DispatchContext = {
     uid,
     viaNodeId: via,
     ...(sid ? { sid } : {}),
+    ...tokenExtra,
     ...extra,
   };
-  setMeshRequestContext(request, { via, uid, auth: sid, clientIp: `peer:${via}`, ...extra });
+  setMeshRequestContext(request, {
+    via,
+    uid,
+    auth: sid,
+    clientIp: `peer:${via}`,
+    ...tokenExtra,
+    ...extra,
+  });
   requestDispatchContext.set(request, dispatchContext);
   return dispatchContext;
 }

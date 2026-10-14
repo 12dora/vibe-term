@@ -12,7 +12,6 @@ export {
 } from './forwarder-ws-upgrade';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { readJsonObjectBody } from '../api/http';
-import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import { recordEntryLogin429 } from '../auth/login-records-forward';
 import type { LoginMethod } from './auth-login-limiter';
 import { loginLimiterIp, peekLoginMethod } from './auth-login-policy-http';
@@ -51,11 +50,13 @@ export {
   forwardLinkDeadlineFor,
   setForwardLinkDeadlineMs,
 } from './forwarder-deadline';
+import { forwardedAuthFor, sessionOrTokenCredential } from './forwarder-credential';
 import { EXEC_WS_REST_PATH, upgradeExecForward } from './forwarder-exec-upgrade';
 import {
   copyUpstreamHeaders,
   filterRequestHeaders,
   stampForwardedAuthHeaders,
+  stampedAuthorizedHeaders,
 } from './forwarder-headers';
 import { runForwardInternalHttp } from './forwarder-internal-http';
 import { rejectClosedLink } from './forwarder-link-state';
@@ -79,7 +80,6 @@ import {
 } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { jsonError } from './session-middleware';
-import { readShareCookie, shareAuthValue } from './share-credential';
 import { ShareLoginQuota, shareLoginShareId } from './share-login-quota';
 
 type ForwarderDeps = {
@@ -103,19 +103,6 @@ function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): num
   if (requested === undefined) return idempotent ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
   if (!Number.isFinite(requested)) return 1;
   return Math.min(Math.max(Math.trunc(requested), 1), HTTP_FAILOVER_MAX_ATTEMPTS);
-}
-
-/**
- * 转发到目标节点的凭证：分享公开面用 `share:<token>`（`vibeterm_sh_<nodeId>` cookie），
- * 登录前公开面不带凭证，其余用节点会话 cookie。
- */
-function forwardedAuthFor(req: Request, nodeId: string, rest: string): string | null {
-  if (isShareAccessPath(rest, req.method)) {
-    const token = readShareCookie(req, nodeId);
-    return token ? shareAuthValue(token) : null;
-  }
-  if (AUTH_SKIP.has(rest)) return null;
-  return readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId);
 }
 
 export class Forwarder {
@@ -221,12 +208,12 @@ export class Forwarder {
     },
     signal?: AbortSignal
   ): Promise<Response> {
-    const auth = readNodeSessionCookie(parseCookies(req.headers.get('cookie')), input.nodeId);
+    const auth = sessionOrTokenCredential(req, input.nodeId);
     if (!auth) return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
     const abort = input.signal ?? signal ?? req.signal;
     const method = input.method.toUpperCase();
     const idempotent = IDEMPOTENT_HTTP.has(method);
-    const headers: Record<string, string> = { ...(input.headers ?? {}) };
+    const headers = stampedAuthorizedHeaders(req, input.headers, auth);
     let uploaded = 0;
     const rawBody = idempotent ? null : (input.rawBody ?? null);
     const progress = input.onProgress ? throttledProgress(input.onProgress) : null;
@@ -379,8 +366,8 @@ export class Forwarder {
     const gated = await this.gateForwardedAuth(req, nodeId, rest);
     if (gated.response) return gated.response;
     const headers = filterRequestHeaders(req);
-    stampForwardedAuthHeaders(headers, req, rest);
     const auth = forwardedAuthFor(req, nodeId, rest);
+    stampForwardedAuthHeaders(headers, req, rest, auth);
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
     const replay = await bufferReplayableBody(req);
     const floorMs = forwardLinkDeadlineFor(

@@ -8,10 +8,10 @@ import {
   bindAccessTokenService,
   createAccessToken,
   hashAccessTokenSecret,
-  isTokenPrincipal,
+  isAccessTokenActive,
   listAccessTokens,
-  markTokenPrincipal,
   onAccessTokenRevoked,
+  pruneAccessTokens,
   revokeAccessToken,
   verifyAccessToken,
 } from './access-tokens';
@@ -209,18 +209,20 @@ describe('access tokens', () => {
     expect(events(token.id)).toEqual(['created', 'used', 'used']);
   });
 
-  test('last_used is written at most once a minute unless the ip changes', () => {
+  test('last_used is written at most once a minute even when the ip alternates', () => {
     const { secret } = createAccessToken('u1', REQ);
     verifyAccessToken(secret, { ip: '203.0.113.1', now: clock + 1 });
-    verifyAccessToken(secret, { ip: '203.0.113.1', now: clock + 30_000 });
-    expect(listAccessTokens('u1')[0]?.lastUsedAt).toBe(clock + 1);
-    verifyAccessToken(secret, { ip: '203.0.113.2', now: clock + 40_000 });
+    verifyAccessToken(secret, { ip: '203.0.113.2', now: clock + 30_000 });
+    verifyAccessToken(secret, { ip: '203.0.113.1', now: clock + 40_000 });
     expect(listAccessTokens('u1')[0]).toMatchObject({
-      lastUsedAt: clock + 40_000,
+      lastUsedAt: clock + 1,
+      lastUsedIp: '203.0.113.1',
+    });
+    verifyAccessToken(secret, { ip: '203.0.113.2', now: clock + 1 + MIN_MS });
+    expect(listAccessTokens('u1')[0]).toMatchObject({
+      lastUsedAt: clock + 1 + MIN_MS,
       lastUsedIp: '203.0.113.2',
     });
-    verifyAccessToken(secret, { ip: '203.0.113.2', now: clock + 40_000 + MIN_MS });
-    expect(listAccessTokens('u1')[0]?.lastUsedAt).toBe(clock + 40_000 + MIN_MS);
   });
 
   test('deleting the user cascades to their tokens', () => {
@@ -229,11 +231,31 @@ describe('access tokens', () => {
     expect(verifyAccessToken(secret)).toEqual({ ok: false, reason: 'unknown' });
   });
 
-  test('token principal marker is per request', () => {
-    const req = new Request('http://localhost/api/x');
-    expect(isTokenPrincipal(req)).toBe(false);
-    markTokenPrincipal(req, { tokenId: 't', userId: 'u1' });
-    expect(isTokenPrincipal(req)).toBe(true);
-    expect(isTokenPrincipal(new Request('http://localhost/api/x'))).toBe(false);
+  test('prune drops revoked and long-expired-unrevoked rows but keeps recent ones', () => {
+    const expired = createAccessToken('u1', { ...REQ, name: 'old', expiresInDays: 1 }).token;
+    const recentlyExpired = createAccessToken('u1', { ...REQ, name: 'recent', expiresInDays: 150 });
+    const live = createAccessToken('u1', { ...REQ, name: 'live', expiresInDays: null }).token;
+    clock += 182 * DAY_MS;
+    pruneAccessTokens();
+    const ids = db
+      .select({ id: accessTokens.id })
+      .from(accessTokens)
+      .all()
+      .map((row) => row.id);
+    expect(ids).not.toContain(expired.id);
+    expect(ids).toContain(recentlyExpired.token.id);
+    expect(ids).toContain(live.id);
+  });
+
+  test('isAccessTokenActive follows revoke, expiry and row deletion', () => {
+    const { token } = createAccessToken('u1', { ...REQ, expiresInDays: 1 });
+    expect(isAccessTokenActive(token.id)).toBe(true);
+    clock += 2 * DAY_MS;
+    expect(isAccessTokenActive(token.id)).toBe(false);
+    const second = createAccessToken('u1', REQ).token;
+    expect(isAccessTokenActive(second.id)).toBe(true);
+    revokeAccessToken('u1', second.id);
+    expect(isAccessTokenActive(second.id)).toBe(false);
+    expect(isAccessTokenActive('missing')).toBe(false);
   });
 });

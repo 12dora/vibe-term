@@ -68,11 +68,11 @@ describe('acceptExecStream', () => {
     expect(attached).toHaveLength(0);
   });
 
-  test('tok: credentials reset with auth:unsupported until token auth lands', () => {
+  test('malformed tok: credentials reset with auth:token_invalid', () => {
     const stream = new FakeLinkStream(encodeJsonBytes({ type: 'exec', credential: 'tok:vtk_x' }));
     const ctx = { peerNodeId: 'entry-a', sessionStore: sessionStore(verifyOk) };
     acceptExecStream(stream, ctx, () => {});
-    expect(stream.resetReason).toBe('auth:unsupported');
+    expect(stream.resetReason).toBe('auth:token_invalid');
   });
 
   test('a missing credential resets with auth:missing auth', () => {

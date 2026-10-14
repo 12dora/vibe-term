@@ -6,11 +6,7 @@ import {
   type CreateAccessTokenRequest,
   isAccessTokenScope,
 } from '@vibeterm/shared';
-import {
-  AccessTokenLimitError,
-  getAccessTokenService,
-  isTokenPrincipal,
-} from '../auth/access-tokens';
+import { AccessTokenLimitError, getAccessTokenService } from '../auth/access-tokens';
 import { loginRecordIp } from '../auth/login-records-meta';
 import { requestDispatchContext } from '../mesh/types';
 import { json, readJsonObjectBody } from './http';
@@ -28,14 +24,17 @@ function fail(code: string, status: number, message: string): Response {
   return json({ code, message }, status);
 }
 
-/** 管理接口只认真实节点会话：令牌调用方一律拒绝，没有用户（standalone 开放模式）也无从归属。 */
+/**
+ * 管理接口只认真实节点会话：可信上下文带 tokenId 的令牌调用方一律拒绝（fail-closed：
+ * 有 uid 但没有会话 id 这一正向标记也不放行）；没有用户（standalone 开放模式）也无从归属。
+ */
 function sessionUid(req: Request): string | Response {
-  if (isTokenPrincipal(req)) {
+  const ctx = requestDispatchContext.get(req);
+  if (ctx?.tokenId) {
     return fail('TOKEN_SCOPE', 403, 'access tokens cannot manage access tokens');
   }
-  const uid = requestDispatchContext.get(req)?.uid;
-  if (!uid) return fail('UNAUTHORIZED', 401, 'login required');
-  return uid;
+  if (!ctx?.uid || !ctx.sid) return fail('UNAUTHORIZED', 401, 'login required');
+  return ctx.uid;
 }
 
 function clientIp(req: Request): string | null {

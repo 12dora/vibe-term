@@ -85,7 +85,10 @@ function httpDispatchContext(
   return {
     uid: verified.uid,
     viaNodeId: peerNodeId,
-    ...(verified.uid && auth ? { sid: auth } : {}),
+    ...(verified.uid && auth && !verified.token ? { sid: auth } : {}),
+    ...(verified.token
+      ? { tokenId: verified.token.tokenId, tokenScopes: verified.token.scopes }
+      : {}),
     ...(verified.renewedExpiresAt !== undefined
       ? { renewedExpiresAt: verified.renewedExpiresAt }
       : {}),

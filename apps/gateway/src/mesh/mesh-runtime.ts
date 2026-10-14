@@ -111,6 +111,7 @@ import {
 } from './rtc/stun-effective';
 import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import { openHttpStream } from './stream-targets';
+import { tokenScopeDenied } from './token-guard';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
 import type { UplinkWsFactory } from './uplink-constants';
 import { startUplinkPathSamplingFromCandidates } from './uplink-path-sampler';
@@ -671,11 +672,10 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool) {
   const noopUpgrade: MeshUpgradeServer = { upgrade: () => false };
   const dispatchInboundHttp = async (request: Request, ctx: DispatchContext): Promise<Response> => {
     const dispatchContext = applyInboundDispatchContext(request, ctx);
-    const meshHttp = d.httpHolder.runtime;
-    if (meshHttp) {
-      const meshRes = await meshHttp.handleRequest(request, noopUpgrade);
-      if (meshRes instanceof Response) return meshRes;
-    }
+    const denied = tokenScopeDenied(request);
+    if (denied) return denied;
+    const meshRes = await d.httpHolder.runtime?.handleRequest(request, noopUpgrade);
+    if (meshRes instanceof Response) return meshRes;
     for (const extension of opts.inboundHttpExtensions ?? []) {
       const response = await extension(request, dispatchContext);
       if (response) return response;

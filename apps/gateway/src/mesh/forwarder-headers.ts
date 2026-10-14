@@ -3,6 +3,7 @@ import {
   assignHeaderPair,
   isVibeTermHeaderName,
 } from '@vibeterm/shared/http/mesh-headers';
+import { isTokenCredential } from '../auth/access-token-auth';
 import { clientIpFromRequest } from './client-ip';
 import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL, isTrustedLocalClient } from './client-source';
 
@@ -99,13 +100,27 @@ export function filterRequestHeaders(req: Request): Record<string, string> {
   return out;
 }
 
+/** `forwardAuthorizedHttp` 的出站头：调用方给的头 + 令牌凭证所需的入口客户端 IP。 */
+export function stampedAuthorizedHeaders(
+  req: Request,
+  given: Record<string, string> | undefined,
+  auth: string | null
+): Record<string, string> {
+  const headers: Record<string, string> = { ...(given ?? {}) };
+  deleteHeader(headers, ENTRY_CLIENT_IP_HEADER);
+  const ip = isTokenCredential(auth) ? clientIpFromRequest(req) : undefined;
+  if (ip) headers[ENTRY_CLIENT_IP_HEADER] = ip;
+  return headers;
+}
+
 export function stampForwardedAuthHeaders(
   headers: Record<string, string>,
   req: Request,
-  rest: string
+  rest: string,
+  auth: string | null = null
 ): void {
   deleteHeader(headers, ENTRY_CLIENT_IP_HEADER);
-  if (!FORWARDED_AUTH_PATHS.has(rest)) return;
+  if (!FORWARDED_AUTH_PATHS.has(rest) && !isTokenCredential(auth)) return;
   const ip = clientIpFromRequest(req);
   if (ip) headers[ENTRY_CLIENT_IP_HEADER] = ip;
   copyIfMissing(headers, req, VIBETERM_CLIENT_HEADER);

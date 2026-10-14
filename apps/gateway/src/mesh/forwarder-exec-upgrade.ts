@@ -1,6 +1,7 @@
-import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
+import { clientIpFromRequest } from './client-ip';
 import { encodeJsonBytes } from './ctl';
 import { ExecForwardPump, type ExecForwardSocket } from './exec-forward-pump';
+import { sessionOrTokenCredential } from './forwarder-credential';
 import { rejectClosedLink } from './forwarder-link-state';
 import { raceLink } from './forwarder-ws-upgrade';
 import { MESH_EXEC_FORWARD_KIND, type MeshUpgradeServer, type PeerLinkProvider } from './mesh-deps';
@@ -17,9 +18,9 @@ export type ExecForwardSocketData = {
 
 type ExecForwardSocketLike = ExecForwardSocket & { data?: unknown };
 
-/** 转发 exec 通道到目标节点用的凭证；令牌凭证（`tok:<secret>`）在这里接入。 */
+/** 转发 exec 通道到目标节点用的凭证：会话优先，没有会话才用令牌（`tok:<secret>`）。 */
 export function execForwardCredential(req: Request, nodeId: string): string | null {
-  return readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId);
+  return sessionOrTokenCredential(req, nodeId);
 }
 
 function isWebSocketUpgrade(req: Request): boolean {
@@ -35,10 +36,12 @@ export function upgradeExecForward(
   if (!isWebSocketUpgrade(req)) return jsonError('upgrade_required', 400);
   const credential = execForwardCredential(req, nodeId);
   if (!credential) return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId });
+  const clientIp = clientIpFromRequest(req);
   const pump = new ExecForwardPump(async (signal) => {
     const link = await raceLink(deps.peers.getLink(nodeId), deps.deadlineMs, signal);
     await rejectClosedLink(link);
-    return link.openStream(encodeJsonBytes({ type: 'exec', credential }));
+    const open = { type: 'exec', credential, ...(clientIp ? { clientIp } : {}) };
+    return link.openStream(encodeJsonBytes(open));
   });
   const data: ExecForwardSocketData = { kind: MESH_EXEC_FORWARD_KIND, nodeId, credential, pump };
   if (!server.upgrade(req, { data })) return jsonError('upgrade_failed', 500);

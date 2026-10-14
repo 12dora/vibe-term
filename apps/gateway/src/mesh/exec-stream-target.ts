@@ -15,7 +15,8 @@ export function acceptExecStream(
   attach: AttachExec = attachExecChannelToLinkStream
 ): void {
   const open = parseOpenPayload(stream.openPayload);
-  const verified = safeVerify(open?.credential, ctx);
+  const clientIp = typeof open?.clientIp === 'string' ? open.clientIp : undefined;
+  const verified = safeVerify(open?.credential, clientIp ? { ...ctx, clientIp } : ctx);
   if (!verified.ok) {
     stream.reset(`auth:${verified.reason}`);
     return;

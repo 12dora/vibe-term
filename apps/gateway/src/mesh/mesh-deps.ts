@@ -1,4 +1,5 @@
 import {
+  type AccessTokenScope,
   type MeshNode,
   type MeshNodeReach,
   type MeshNodeTransport,
@@ -241,6 +242,8 @@ export type MeshRequestContext = {
   uid?: string | null;
   renewedExpiresAt?: number;
   trustProxy?: boolean;
+  tokenId?: string | null;
+  tokenScopes?: readonly AccessTokenScope[] | null;
 };
 
 export type MeshRewritten = { rewritten: Request };
@@ -253,10 +256,12 @@ export function setMeshRequestContext(req: Request, ctx: MeshRequestContext): vo
   requestContext.set(req, ctx);
   const existing = requestDispatchContext.get(req);
   const sid = ctx.auth ?? ctx.sid ?? existing?.sid ?? null;
+  const tokenId = ctx.tokenId ?? existing?.tokenId ?? null;
   requestDispatchContext.set(req, {
     uid: ctx.uid ?? existing?.uid ?? null,
     viaNodeId: ctx.via,
     ...(sid ? { sid } : {}),
+    ...(tokenId ? { tokenId, tokenScopes: ctx.tokenScopes ?? existing?.tokenScopes ?? [] } : {}),
     ...(ctx.renewedExpiresAt !== undefined
       ? { renewedExpiresAt: ctx.renewedExpiresAt }
       : existing?.renewedExpiresAt !== undefined
@@ -278,6 +283,8 @@ export function getMeshRequestContext(req: Request): MeshRequestContext {
     uid: dispatch?.uid ?? local?.uid ?? null,
     renewedExpiresAt: dispatch?.renewedExpiresAt ?? local?.renewedExpiresAt,
     trustProxy: local?.trustProxy,
+    tokenId: dispatch?.tokenId ?? local?.tokenId ?? null,
+    tokenScopes: dispatch?.tokenScopes ?? local?.tokenScopes ?? null,
   };
 }
 

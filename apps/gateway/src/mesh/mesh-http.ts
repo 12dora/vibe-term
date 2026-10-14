@@ -47,7 +47,6 @@ import {
   consumeSetSessionForBrowser,
   isStandaloneOpenAuth,
   jsonBody,
-  jsonError,
 } from './session-middleware';
 import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import {
@@ -57,6 +56,7 @@ import {
   shareWsParam,
   verifyShareAccessToken,
 } from './share-credential';
+import { authenticateApiRequest, tokenScopeDenied } from './token-guard';
 import type { UplinkStatus } from './types';
 import type { AttachedUplink } from './uplink-pool';
 
@@ -228,6 +228,8 @@ export class MeshHttpRuntime {
   }
 
   async handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
+    const scopeDenied = tokenScopeDenied(req);
+    if (scopeDenied) return scopeDenied;
     const safeReq = isPeerInboundRequest(req) ? req : stripMeshPeerMarkerFromRequest(req);
     if (this.authSurfaceOnly) {
       return this.finalizeHandle(safeReq, await this.dispatchLocal(safeReq, server));
@@ -439,13 +441,9 @@ export class MeshHttpRuntime {
       if (isLocalRelayStatusRequest(req, path)) {
         return null;
       }
-      const auth = authenticateRequest(req, this.sessionDeps);
-      if (!auth.ok) {
-        return jsonError('UNAUTHORIZED', 401);
-      }
-    } else {
-      authenticateRequest(req, this.sessionDeps);
+      return authenticateApiRequest(req, this.sessionDeps);
     }
+    authenticateRequest(req, this.sessionDeps);
     return null;
   }
 

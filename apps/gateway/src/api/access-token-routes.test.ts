@@ -3,7 +3,6 @@ import { ACCESS_TOKEN_ACTIVE_LIMIT } from '@vibeterm/shared';
 import {
   AccessTokenService,
   bindAccessTokenService,
-  markTokenPrincipal,
   verifyAccessToken,
 } from '../auth/access-tokens';
 import { recordsOr405 } from '../auth/login-records-routes';
@@ -34,7 +33,7 @@ function seedUser(db: AuthDb, id: string): void {
 function call(
   method: string,
   path: string,
-  opts: { uid?: string | null; body?: unknown; token?: boolean } = {}
+  opts: { uid?: string | null; body?: unknown; token?: boolean; sid?: string | null } = {}
 ): Response | Promise<Response> {
   const req = new Request(`http://localhost${path}`, {
     method,
@@ -42,9 +41,14 @@ function call(
     ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
   });
   if ('uid' in opts) {
-    requestDispatchContext.set(req, { uid: opts.uid ?? null, viaNodeId: MESH_VIA_SELF });
+    const sid = 'sid' in opts ? opts.sid : 's1';
+    requestDispatchContext.set(req, {
+      uid: opts.uid ?? null,
+      viaNodeId: MESH_VIA_SELF,
+      ...(sid && !opts.token ? { sid } : {}),
+      ...(opts.token ? { tokenId: 'tok', tokenScopes: ['exec'] } : {}),
+    });
   }
-  if (opts.token) markTokenPrincipal(req, { tokenId: 'tok', userId: opts.uid ?? 'u1' });
   return handleApiRequest(req);
 }
 
@@ -126,7 +130,7 @@ describe('access token routes', () => {
       method: 'POST',
       body: 'nope',
     });
-    requestDispatchContext.set(notJson, { uid: 'u1', viaNodeId: MESH_VIA_SELF });
+    requestDispatchContext.set(notJson, { uid: 'u1', sid: 'sid-u1', viaNodeId: MESH_VIA_SELF });
     expect((await handleApiRequest(notJson)).status).toBe(400);
   });
 
@@ -187,6 +191,11 @@ describe('access token routes', () => {
       expect(res.status).toBe(403);
       expect(((await res.json()) as { code: string }).code).toBe('TOKEN_SCOPE');
     }
+  });
+
+  test('a uid without a session marker is rejected (fail-closed)', async () => {
+    const res = await call('GET', '/api/auth/tokens', { uid: 'u1', sid: null });
+    expect(res.status).toBe(401);
   });
 
   test('requests without a user are 401', async () => {

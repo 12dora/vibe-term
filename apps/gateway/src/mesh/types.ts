@@ -1,3 +1,4 @@
+import type { AccessTokenScope } from '@vibeterm/shared';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { MeshUplinkCtlMessage } from '@vibeterm/shared/uplink';
 
@@ -69,6 +70,9 @@ export type DispatchContext = {
   /** 入口转发过来的节点会话 id（已在流入口验过）。目标节点按它查这条浏览器连接。 */
   sid?: string | null;
   renewedExpiresAt?: number;
+  /** 访问令牌调用方（流入口/守卫验过）：此时没有会话，管理路由必须拒绝。 */
+  tokenId?: string | null;
+  tokenScopes?: readonly AccessTokenScope[] | null;
 };
 
 /** Trusted mesh routing context for a Request built by `acceptHttpStream`. */

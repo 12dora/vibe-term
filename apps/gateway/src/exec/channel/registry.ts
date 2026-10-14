@@ -45,6 +45,17 @@ export function closeExecSessionsForToken(tokenId: string): void {
   terminateWhere((session) => session.tokenId === tokenId, 'token revoked');
 }
 
+/** 令牌已失效（撤销 / 过期 / 行被级联删除）的 exec 会话一并终止；`isActive` 对每个令牌只问一次。 */
+export function closeExecSessionsWithInactiveToken(isActive: (tokenId: string) => boolean): void {
+  const verdicts = new Map<string, boolean>();
+  terminateWhere((session) => {
+    const id = session.tokenId;
+    if (id === null) return false;
+    if (!verdicts.has(id)) verdicts.set(id, isActive(id));
+    return verdicts.get(id) === false;
+  }, 'token revoked');
+}
+
 export function closeExecSessionsForUser(uid: string): void {
   terminateWhere((session) => session.uid === uid, 'user closed');
 }

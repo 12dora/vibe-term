@@ -135,8 +135,7 @@ export class AccessTokenService {
   }
 
   private touch(row: TokenRow, ip: string | null, now: number): void {
-    const stale = row.lastUsedAt === null || now - row.lastUsedAt >= LAST_USED_WRITE_MS;
-    if (stale || (ip !== null && ip !== row.lastUsedIp)) {
+    if (row.lastUsedAt === null || now - row.lastUsedAt >= LAST_USED_WRITE_MS) {
       this.db
         .update(accessTokens)
         .set({ lastUsedAt: now, lastUsedIp: ip ?? row.lastUsedIp })
@@ -216,10 +215,26 @@ export class AccessTokenService {
     this.db.insert(accessTokenEvents).values({ tokenId, userId, event, ip, at }).run();
   }
 
-  private prune(now: number): void {
+  /** 清理审计事件、早已撤销以及过期超过保留期仍未撤销的令牌行。 */
+  prune(now: number = this.now()): void {
     const cutoff = now - AUDIT_RETENTION_MS;
     this.db.delete(accessTokenEvents).where(lt(accessTokenEvents.at, cutoff)).run();
     this.db.delete(accessTokens).where(lt(accessTokens.revokedAt, cutoff)).run();
+    this.db
+      .delete(accessTokens)
+      .where(and(isNull(accessTokens.revokedAt), lt(accessTokens.expiresAt, cutoff)))
+      .run();
+  }
+
+  /** 令牌行仍在、未撤销、未过期。长连接（exec 会话）周期性复核用。 */
+  isActive(tokenId: string, now: number = this.now()): boolean {
+    const row = this.db
+      .select({ revokedAt: accessTokens.revokedAt, expiresAt: accessTokens.expiresAt })
+      .from(accessTokens)
+      .where(eq(accessTokens.id, tokenId))
+      .get();
+    if (!row || row.revokedAt !== null) return false;
+    return row.expiresAt === null || row.expiresAt > now;
   }
 }
 
@@ -310,16 +325,10 @@ function notifyAccessTokenRevoked(tokenId: string): void {
   }
 }
 
-/** 守卫在请求通过令牌鉴权后标记；管理路由据此拒绝令牌调用方。 */
-const tokenPrincipals = new WeakMap<Request, { tokenId: string; userId: string }>();
-
-export function markTokenPrincipal(
-  req: Request,
-  principal: { tokenId: string; userId: string }
-): void {
-  tokenPrincipals.set(req, principal);
+export function isAccessTokenActive(tokenId: string): boolean {
+  return getAccessTokenService().isActive(tokenId);
 }
 
-export function isTokenPrincipal(req: Request): boolean {
-  return tokenPrincipals.has(req);
+export function pruneAccessTokens(): void {
+  getAccessTokenService().prune();
 }

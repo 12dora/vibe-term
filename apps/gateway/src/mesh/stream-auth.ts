@@ -6,6 +6,7 @@ import {
   readHeaderPairFromRecord,
 } from '@vibeterm/shared/http/mesh-headers';
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
+import { isTokenCredential } from '../auth/access-token-auth';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { isAuthLoginPublicPath, isShareAccessPath } from './auth-public-paths';
 import { SHARE_WS_VERIFY_MS } from './mesh-deps';
@@ -20,6 +21,7 @@ import {
   verifyShareAccessToken,
 } from './share-credential';
 import { encodeTerminalStreamClose } from './stream-close-code';
+import { type StreamTokenPrincipal, authorizeTokenHttpStream } from './stream-token-auth';
 
 export type StreamAuthContext = {
   peerNodeId: string;
@@ -37,6 +39,8 @@ export type StreamAuthOk = {
   share?: StreamShareAuth;
   /** 分享凭证已失效但请求落在分享公开面：降级为匿名，并让响应清掉这枚死 cookie。 */
   clearShare?: boolean;
+  /** 访问令牌凭证：uid 为令牌属主，没有会话；只允许作用域表内的接口。 */
+  token?: StreamTokenPrincipal;
 };
 
 export type StreamAuthFail = {
@@ -107,6 +111,9 @@ export function authorizeHttpStream(
   ctx: StreamAuthContext,
   headers: Record<string, string>
 ): StreamAuthResult {
+  if (isTokenCredential(auth)) {
+    return authorizeTokenHttpStream(auth, method, pathname, ctx.peerNodeId, headers);
+  }
   const publicShare = isShareAccessPath(pathname, method);
   const verified = verifyStreamAuth(auth, pathname, ctx);
   if (!verified.ok) {

@@ -100,7 +100,7 @@ describe('verifyExecCredential', () => {
     }
   });
 
-  test('tok: credentials are not supported yet', () => {
+  test('malformed tok: credentials are refused with the generic token reason', () => {
     const { sessionStore, close } = boot();
     try {
       const result = verifyExecCredential('tok:vtk_secret', {
@@ -108,7 +108,7 @@ describe('verifyExecCredential', () => {
         sessionStore,
         now: () => 2_000,
       });
-      expect(result).toEqual({ ok: false, reason: 'unsupported' });
+      expect(result).toEqual({ ok: false, reason: 'token_invalid' });
     } finally {
       close();
     }
