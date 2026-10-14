@@ -9,12 +9,13 @@ import {
   type FileStatDto,
   MkdirUnsupportedError,
   mkdirRemote,
-  resolveRemotePath,
+  resolveCpPath,
   statRemote,
 } from './files-api';
 import {
+  type CpFileRef,
   isLocalPath,
-  parseRemoteFileRef,
+  parseCpFileRef,
   posixBasename,
   posixDirname,
   posixJoin,
@@ -29,6 +30,8 @@ export interface CopyFlags {
   recursive: boolean;
   onConflict: OnConflict;
   failOnSkip: boolean;
+  /** 远端侧设备（id 或名称）；省略 = 节点首个本机设备。 */
+  device?: string;
   signal?: AbortSignal;
 }
 
@@ -84,40 +87,25 @@ export async function runCopy(
     throw new UsageError('local-to-local copy is not handled by vibeterm cp', 'use the system cp');
   }
   if (srcLocal && !dstLocal) {
-    return copyLocalToNode(
-      ctx,
-      expandLocalPath(srcArg),
-      parseRemoteFileRef(dstArg),
-      flags,
-      progress
-    );
+    return copyLocalToNode(ctx, expandLocalPath(srcArg), parseCpFileRef(dstArg), flags, progress);
   }
   if (!srcLocal && dstLocal) {
-    return copyNodeToLocal(
-      ctx,
-      parseRemoteFileRef(srcArg),
-      expandLocalPath(dstArg),
-      flags,
-      progress
-    );
+    return copyNodeToLocal(ctx, parseCpFileRef(srcArg), expandLocalPath(dstArg), flags, progress);
   }
-  return copyNodeToNode(
-    ctx,
-    parseRemoteFileRef(srcArg),
-    parseRemoteFileRef(dstArg),
-    flags,
-    progress
-  );
+  if (flags.device) {
+    throw new UsageError('node 到 node 复制不支持 --device', '改为先 cp 到本机，或用绝对路径');
+  }
+  return copyNodeToNode(ctx, parseCpFileRef(srcArg), parseCpFileRef(dstArg), flags, progress);
 }
 
 async function copyLocalToNode(
   ctx: CliContext,
   localPath: string,
-  destRef: ReturnType<typeof parseRemoteFileRef>,
+  destRef: CpFileRef,
   flags: CopyFlags,
   progress: CopyProgress
 ): Promise<CopyResult> {
-  const dest = await resolveRemotePath(ctx, destRef);
+  const dest = await resolveCpPath(ctx, destRef, flags);
   const source = await stat(localPath);
   if (source.isDirectory()) {
     if (!flags.recursive) throw new UsageError(`source is a directory: ${localPath}`, 'pass -r');
@@ -165,7 +153,7 @@ async function copyLocalToNode(
 async function uploadTree(
   ctx: CliContext,
   localRoot: string,
-  dest: Awaited<ReturnType<typeof resolveRemotePath>>,
+  dest: Awaited<ReturnType<typeof resolveCpPath>>,
   flags: CopyFlags,
   progress: CopyProgress
 ): Promise<CopyResult> {
@@ -197,7 +185,7 @@ async function uploadTree(
 async function uploadTreeFiles(
   ctx: CliContext,
   localRoot: string,
-  dest: Awaited<ReturnType<typeof resolveRemotePath>>,
+  dest: Awaited<ReturnType<typeof resolveCpPath>>,
   destBase: string,
   entries: Array<{ abs: string; rel: string; size: number; dir: boolean }>,
   flags: CopyFlags,
@@ -257,12 +245,12 @@ async function uploadTreeFiles(
 
 async function copyNodeToLocal(
   ctx: CliContext,
-  srcRef: ReturnType<typeof parseRemoteFileRef>,
+  srcRef: CpFileRef,
   localPath: string,
   flags: CopyFlags,
   progress: CopyProgress
 ): Promise<CopyResult> {
-  const src = await resolveRemotePath(ctx, srcRef);
+  const src = await resolveCpPath(ctx, srcRef, flags);
   const remote = await statRemote(ctx.http, src.nodeId, src.root.id, src.absPath);
   if (remote.type === 'dir') {
     if (!flags.recursive) throw new UsageError(`source is a directory: ${src.absPath}`, 'pass -r');
@@ -294,7 +282,7 @@ async function copyNodeToLocal(
 
 async function downloadTree(
   ctx: CliContext,
-  src: Awaited<ReturnType<typeof resolveRemotePath>>,
+  src: Awaited<ReturnType<typeof resolveCpPath>>,
   remote: FileStatDto,
   localPath: string,
   flags: CopyFlags,
@@ -364,13 +352,13 @@ async function downloadTree(
 
 async function copyNodeToNode(
   ctx: CliContext,
-  srcRef: ReturnType<typeof parseRemoteFileRef>,
-  dstRef: ReturnType<typeof parseRemoteFileRef>,
+  srcRef: CpFileRef,
+  dstRef: CpFileRef,
   flags: CopyFlags,
   progress: CopyProgress
 ): Promise<CopyResult> {
-  const src = await resolveRemotePath(ctx, srcRef);
-  const dest = await resolveRemotePath(ctx, dstRef);
+  const src = await resolveCpPath(ctx, srcRef, flags);
+  const dest = await resolveCpPath(ctx, dstRef, flags);
   const remote = await statRemote(ctx.http, src.nodeId, src.root.id, src.absPath);
   if (remote.type === 'dir' && !flags.recursive) {
     throw new UsageError(`source is a directory: ${src.absPath}`, 'pass -r');
@@ -432,7 +420,7 @@ async function statRemoteSafe(
 
 async function pickRemoteDest(
   ctx: CliContext,
-  dest: Awaited<ReturnType<typeof resolveRemotePath>>,
+  dest: Awaited<ReturnType<typeof resolveCpPath>>,
   destStat: FileStatDto | null,
   sourceName: string,
   flags: CopyFlags
@@ -453,7 +441,7 @@ async function pickRemoteDest(
 
 async function uniqueRemoteName(
   ctx: CliContext,
-  dest: Awaited<ReturnType<typeof resolveRemotePath>>,
+  dest: Awaited<ReturnType<typeof resolveCpPath>>,
   name: string
 ): Promise<string> {
   const dir = posixDirname(dest.absPath);
@@ -535,6 +523,6 @@ function emptyResult(
   return { src, dst, kind, files: 0, skipped, errors: 0, truncated: false };
 }
 
-function destRefDisplay(dest: Awaited<ReturnType<typeof resolveRemotePath>>): string {
+function destRefDisplay(dest: Awaited<ReturnType<typeof resolveCpPath>>): string {
   return `${dest.nodeId}:${dest.root.name}${dest.absPath}`;
 }

@@ -4,7 +4,11 @@ import {
   VIRTUAL_FS_ROOT_ID,
   VIRTUAL_HOME_ROOT_ID,
   isLocalPath,
+  isPathInside,
+  isRemoteSpec,
   joinRootPath,
+  normalizePosixPath,
+  parseCpFileRef,
   parseRemoteFileRef,
   posixBasename,
   posixDirname,
@@ -14,20 +18,102 @@ import {
 const UUID = '11111111-1111-4111-8111-111111111111';
 const NODE = 'a'.repeat(32);
 
-describe('isLocalPath', () => {
-  test('recognizes unix and home paths', () => {
-    expect(isLocalPath('/tmp/a')).toBe(true);
-    expect(isLocalPath('./a')).toBe(true);
-    expect(isLocalPath('../a')).toBe(true);
-    expect(isLocalPath('~/.ssh')).toBe(true);
-    expect(isLocalPath('.')).toBe(true);
-    expect(isLocalPath('C:\\Windows')).toBe(true);
+describe('isLocalPath / isRemoteSpec (scp rules)', () => {
+  const LOCAL = [
+    '/tmp/a',
+    './a',
+    '../a',
+    '~/.ssh',
+    '~',
+    '.',
+    '..',
+    'dir',
+    'a/b',
+    'a/b:c',
+    './a:b',
+    'C:\\Windows',
+    'c:/tmp/x',
+    'file:///tmp/x',
+    ':x',
+    '~user:x',
+  ];
+  const REMOTE = [
+    'office:',
+    'office:home/docs',
+    'office:/etc/hosts',
+    'office:rel',
+    'self:x',
+    '.:x',
+    'C:foo',
+    `${UUID}:src/a.ts`,
+    `${NODE}:${UUID}:src`,
+    `${VIRTUAL_FS_ROOT_ID}:/etc`,
+    `${VIRTUAL_HOME_ROOT_ID}:`,
+  ];
+
+  test.each(LOCAL)('local: %s', (input) => {
+    expect(isLocalPath(input)).toBe(true);
+    expect(isRemoteSpec(input)).toBe(false);
   });
 
-  test('remote specs are not local', () => {
-    expect(isLocalPath('office:home/docs')).toBe(false);
-    expect(isLocalPath('home/docs')).toBe(false);
-    expect(isLocalPath(`${UUID}:src/a.ts`)).toBe(false);
+  test.each(REMOTE)('remote: %s', (input) => {
+    expect(isLocalPath(input)).toBe(false);
+    expect(isRemoteSpec(input)).toBe(true);
+  });
+
+  test('empty is neither', () => {
+    expect(isLocalPath('')).toBe(false);
+    expect(isRemoteSpec('')).toBe(false);
+  });
+});
+
+describe('parseCpFileRef', () => {
+  const TABLE: Array<[string, unknown]> = [
+    ['office:', { form: 'path', node: 'office', path: '' }],
+    ['office:/etc/hosts', { form: 'path', node: 'office', path: '/etc/hosts' }],
+    ['office:docs/a.txt', { form: 'path', node: 'office', path: 'docs/a.txt' }],
+    ['office:home/docs', { form: 'path', node: 'office', path: 'home/docs' }],
+    ['self:x', { form: 'path', node: 'self', path: 'x' }],
+    ['.:x', { form: 'path', node: '.', path: 'x' }],
+    [`${NODE}:x`, { form: 'path', node: NODE, path: 'x' }],
+    [`${UUID}:src/a.ts`, { form: 'root', node: null, root: UUID, relpath: 'src/a.ts' }],
+    [`${UUID}:/etc`, { form: 'root', node: null, root: UUID, relpath: '/etc' }],
+    [`${UUID}:`, { form: 'root', node: null, root: UUID, relpath: '' }],
+    [`${VIRTUAL_FS_ROOT_ID}:/etc`, { form: 'root', node: null, root: 'fs-root', relpath: '/etc' }],
+    [`${VIRTUAL_HOME_ROOT_ID}:x`, { form: 'root', node: null, root: 'home-root', relpath: 'x' }],
+    [`${NODE}:${UUID}:src`, { form: 'root', node: NODE, root: UUID, relpath: 'src' }],
+    [
+      `office:${VIRTUAL_HOME_ROOT_ID}:x`,
+      { form: 'root', node: 'office', root: 'home-root', relpath: 'x' },
+    ],
+  ];
+
+  test.each(TABLE)('%s', (input, expected) => {
+    expect(parseCpFileRef(input)).toEqual(expected as never);
+  });
+
+  test('rejects local, empty and .. input', () => {
+    expect(() => parseCpFileRef('')).toThrow(UsageError);
+    expect(() => parseCpFileRef('dir')).toThrow(UsageError);
+    expect(() => parseCpFileRef('a/b')).toThrow(UsageError);
+    expect(() => parseCpFileRef('C:\\x')).toThrow(UsageError);
+    expect(() => parseCpFileRef('office:a/../b')).toThrow(UsageError);
+    expect(() => parseCpFileRef(`${UUID}:a/../b`)).toThrow(UsageError);
+  });
+});
+
+describe('normalizePosixPath / isPathInside', () => {
+  test('normalizes and rejects ..', () => {
+    expect(normalizePosixPath('/a//b/./c/')).toBe('/a/b/c');
+    expect(normalizePosixPath('/')).toBe('/');
+    expect(() => normalizePosixPath('/a/../b')).toThrow(UsageError);
+  });
+
+  test('prefix is segment-aware', () => {
+    expect(isPathInside('/data', '/data')).toBe(true);
+    expect(isPathInside('/data', '/data/x')).toBe(true);
+    expect(isPathInside('/data', '/data2')).toBe(false);
+    expect(isPathInside('/', '/anything')).toBe(true);
   });
 });
 

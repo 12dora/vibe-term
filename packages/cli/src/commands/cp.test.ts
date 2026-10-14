@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { buildContext } from '../core/context';
 import { type CliError, NetworkError, UsageError } from '../core/errors';
-import { type FileRootDto, RSYNC_MISSING_LOCAL_MESSAGE } from '../core/files-api';
+import { type FileRootDto, RSYNC_MISSING_LOCAL_MESSAGE, locateCpPath } from '../core/files-api';
 import { VIRTUAL_HOME_ROOT_ID } from '../core/files-path';
 import type { FetchLike } from '../core/http';
 import { command as cp } from './cp';
@@ -290,7 +290,7 @@ describe('vibeterm cp', () => {
     const src = await writeSrc('a.txt', 'abc');
     const state: RouterState = { puts: [], bodies: [] };
     const { ctx } = await testContext(router(state));
-    await cp.run(ctx, [src, 'home/docs']);
+    await cp.run(ctx, [src, 'office:home/docs']);
     expect(state.puts.length).toBeGreaterThan(0);
     expect(Buffer.concat(state.bodies).toString('utf8')).toBe('abc');
     expect(state.mkdirs?.length).toBeGreaterThan(0);
@@ -301,7 +301,7 @@ describe('vibeterm cp', () => {
     dirs.push(tmp);
     const dest = join(tmp, 'out.txt');
     const { ctx } = await testContext(router({ puts: [], bodies: [] }));
-    await cp.run(ctx, ['home/a.txt', dest]);
+    await cp.run(ctx, ['office:home/a.txt', dest]);
     expect(await readFile(dest, 'utf8')).toBe('abc');
   });
 
@@ -330,7 +330,7 @@ describe('vibeterm cp', () => {
     const tmp = await mkdtemp(join(tmpdir(), 'vibeterm-cli-dir-'));
     dirs.push(tmp);
     const { ctx } = await testContext(router({ puts: [], bodies: [] }));
-    await expect(cp.run(ctx, [tmp, 'home/docs'])).rejects.toThrow(UsageError);
+    await expect(cp.run(ctx, [tmp, 'office:home/docs'])).rejects.toThrow(UsageError);
   });
 
   test('mkdir is memoised per directory on recursive upload', async () => {
@@ -342,7 +342,7 @@ describe('vibeterm cp', () => {
     await writeFile(join(tmp, 'sub', 'b.txt'), 'abc');
     const state: RouterState = { puts: [], bodies: [] };
     const { ctx } = await testContext(router(state));
-    await cp.run(ctx, ['-r', tmp, 'home/docs']);
+    await cp.run(ctx, ['-r', tmp, 'office:home/docs']);
     const mkdirs = state.mkdirs ?? [];
     const unique = [...new Set(mkdirs)];
     expect(unique.length).toBe(mkdirs.length);
@@ -354,7 +354,7 @@ describe('vibeterm cp', () => {
     dirs.push(tmp);
     await writeFile(join(tmp, 'a.txt'), 'abc');
     const { ctx } = await testContext(router({ puts: [], bodies: [], noMkdir: true }));
-    await expect(cp.run(ctx, ['-r', tmp, 'home/docs'])).rejects.toThrow(
+    await expect(cp.run(ctx, ['-r', tmp, 'office:home/docs'])).rejects.toThrow(
       /does not support POST \/api\/files\/mkdir/
     );
   });
@@ -363,7 +363,7 @@ describe('vibeterm cp', () => {
     const src = await writeSrc('a.txt', 'abcdefghijklmnop');
     const state: RouterState = { puts: [], bodies: [], putStatus: 409 };
     const { ctx } = await testContext(router(state));
-    await cp.run(ctx, [src, 'home/docs']);
+    await cp.run(ctx, [src, 'office:home/docs']);
     expect(state.statusGets).toBeGreaterThan(0);
     expect(state.puts.length).toBeGreaterThan(1);
   });
@@ -374,7 +374,7 @@ describe('vibeterm cp', () => {
     const dest = join(tmp, 'out.txt');
     const state: RouterState = { puts: [], bodies: [], putStatus: 206 };
     const { ctx } = await testContext(router(state));
-    await cp.run(ctx, ['home/a.txt', dest]);
+    await cp.run(ctx, ['office:home/a.txt', dest]);
     expect(await readFile(dest, 'utf8')).toBe('abc');
     expect(state.contentAttempts).toBeGreaterThan(1);
   });
@@ -388,7 +388,7 @@ describe('vibeterm cp', () => {
         commitEvents: [{ type: 'error', code: 'disk_full', detail: 'disk full' }],
       })
     );
-    await expect(cp.run(ctx, [src, 'home/docs'])).rejects.toThrow(/disk full/);
+    await expect(cp.run(ctx, [src, 'office:home/docs'])).rejects.toThrow(/disk full/);
   });
 
   test('prepare error event fails the copy', async () => {
@@ -401,7 +401,7 @@ describe('vibeterm cp', () => {
         prepareEvents: [{ type: 'error', code: 'too_large', detail: 'file too large' }],
       })
     );
-    await expect(cp.run(ctx, ['home/a.txt', join(tmp, 'out.txt')])).rejects.toThrow(
+    await expect(cp.run(ctx, ['office:home/a.txt', join(tmp, 'out.txt')])).rejects.toThrow(
       /file too large/
     );
   });
@@ -420,14 +420,30 @@ describe('vibeterm cp', () => {
     expect(stdout.text()).toContain('"type":"done"');
   });
 
-  test('skip on conflict exits 0 unless --fail-on-skip', async () => {
+  test('default on-conflict overwrites an existing remote file', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const state: RouterState = { puts: [], bodies: [] };
+    const { ctx, stdout } = await testContext(router(state), { json: true });
+    const code = await cp.run(ctx, [src, 'office:home/a.txt']);
+    expect(code).toBeUndefined();
+    expect(state.puts.length).toBeGreaterThan(0);
+    expect(stdout.text()).toContain('"skipped":0');
+  });
+
+  test('--on-conflict skip exits 0 unless --fail-on-skip', async () => {
     const src = await writeSrc('a.txt', 'abc');
     const { ctx, stdout } = await testContext(router({ puts: [], bodies: [] }), { json: true });
-    const code = await cp.run(ctx, [src, 'home/a.txt']);
+    const code = await cp.run(ctx, [src, 'office:home/a.txt', '--on-conflict', 'skip']);
     expect(code).toBeUndefined();
     expect(stdout.text()).toContain('"skipped":1');
     const fail = await testContext(router({ puts: [], bodies: [] }), { json: true });
-    const failed = await cp.run(fail.ctx, [src, 'home/a.txt', '--fail-on-skip']);
+    const failed = await cp.run(fail.ctx, [
+      src,
+      'office:home/a.txt',
+      '--on-conflict',
+      'skip',
+      '--fail-on-skip',
+    ]);
     expect(failed).toBe(1);
   });
 
@@ -435,7 +451,7 @@ describe('vibeterm cp', () => {
     const src = await writeSrc('a.txt', 'abc');
     const state: RouterState = { puts: [], bodies: [] };
     const { ctx } = await testContext(router(state));
-    await cp.run(ctx, [src, 'home/a.txt', '--on-conflict', 'overwrite']);
+    await cp.run(ctx, [src, 'office:home/a.txt', '--on-conflict', 'overwrite']);
     expect(state.puts.length).toBeGreaterThan(0);
   });
 
@@ -446,7 +462,7 @@ describe('vibeterm cp', () => {
       router({ puts: [], bodies: [], listTruncated: true }),
       { json: true }
     );
-    const code = await cp.run(ctx, ['-r', 'home/docs', tmp]);
+    const code = await cp.run(ctx, ['-r', 'office:home/docs', tmp]);
     expect(code).toBe(1);
     expect(stdout.text()).toContain('"truncated":true');
   });
@@ -465,7 +481,7 @@ describe('vibeterm cp', () => {
     await symlink(join(tmp, 'a.txt'), join(tmp, 'link.txt'));
     const state: RouterState = { puts: [], bodies: [] };
     const { ctx, stdout } = await testContext(router(state), { json: true });
-    await cp.run(ctx, ['-r', tmp, 'home/docs']);
+    await cp.run(ctx, ['-r', tmp, 'office:home/docs']);
     expect(stdout.text()).toContain('"reason":"symlink"');
   });
 
@@ -534,7 +550,7 @@ describe('vibeterm cp', () => {
       ],
     };
     const { ctx } = await testContext(router(state));
-    await cp.run(ctx, [src, 'home/docs']);
+    await cp.run(ctx, [src, 'office:home/docs']);
     expect(state.inits?.[0]?.rootId).toBe(ROOT_ID);
   });
 
@@ -549,7 +565,7 @@ describe('vibeterm cp', () => {
   test('502 rsync_missing_local prints the agent hint and exits 5', async () => {
     const src = await writeSrc('a.txt', 'abc');
     const { ctx } = await testContext(router({ puts: [], bodies: [], rsyncMissing: 'stat' }));
-    const error = (await cp.run(ctx, [src, 'home/docs']).catch((err) => err)) as CliError;
+    const error = (await cp.run(ctx, [src, 'office:home/docs']).catch((err) => err)) as CliError;
     expect(error).toBeInstanceOf(NetworkError);
     expect(error.exitCode).toBe(5);
     expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
@@ -558,7 +574,7 @@ describe('vibeterm cp', () => {
   test('commit 502 rsync_missing_local is the same exit 5', async () => {
     const src = await writeSrc('a.txt', 'abc');
     const { ctx } = await testContext(router({ puts: [], bodies: [], rsyncMissing: 'commit' }));
-    const error = (await cp.run(ctx, [src, 'home/docs']).catch((err) => err)) as CliError;
+    const error = (await cp.run(ctx, [src, 'office:home/docs']).catch((err) => err)) as CliError;
     expect(error).toBeInstanceOf(NetworkError);
     expect(error.exitCode).toBe(5);
     expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
@@ -569,7 +585,7 @@ describe('vibeterm cp', () => {
     dirs.push(tmp);
     const dest = join(tmp, 'out.txt');
     const { ctx } = await testContext(router({ puts: [], bodies: [], rsyncMissing: 'prepare' }));
-    const error = (await cp.run(ctx, ['home/a.txt', dest]).catch((err) => err)) as CliError;
+    const error = (await cp.run(ctx, ['office:home/a.txt', dest]).catch((err) => err)) as CliError;
     expect(error).toBeInstanceOf(NetworkError);
     expect(error.exitCode).toBe(5);
     expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
@@ -584,9 +600,163 @@ describe('vibeterm cp', () => {
         commitEvents: [{ type: 'error', code: 'rsync_missing_local', detail: 'missing' }],
       })
     );
-    const error = (await cp.run(ctx, [src, 'home/docs']).catch((err) => err)) as CliError;
+    const error = (await cp.run(ctx, [src, 'office:home/docs']).catch((err) => err)) as CliError;
     expect(error).toBeInstanceOf(NetworkError);
     expect(error.exitCode).toBe(5);
     expect(error.message).toBe(RSYNC_MISSING_LOCAL_MESSAGE);
+  });
+
+  test('bare names are local, so two of them is local-to-local', async () => {
+    const { ctx } = await testContext(router({ puts: [], bodies: [] }));
+    await expect(cp.run(ctx, ['dir', 'a/b'])).rejects.toThrow(/local-to-local/);
+  });
+
+  test('absolute remote path picks the longest enabled root prefix', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const inner = '33333333-3333-4333-8333-333333333333';
+    const state: RouterState = {
+      puts: [],
+      bodies: [],
+      roots: [ROOT, { ...ROOT, id: inner, name: 'work', path: '/home/me/work', sortOrder: 1 }],
+    };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, [src, 'office:/home/me/work/sub/a.txt']);
+    expect(state.inits?.[0]?.rootId).toBe(inner);
+    expect(state.mkdirs).toContain('/home/me/work/sub');
+  });
+
+  test('absolute remote path outside every root is a usage error', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const { ctx } = await testContext(router({ puts: [], bodies: [] }));
+    const error = (await cp.run(ctx, [src, 'office:/etc/a.txt']).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error.message).toBe(
+      "路径 /etc/a.txt 不在 office 的文件根内；可在设置中添加文件根，或改用 rsync -e 'vibeterm rsh'"
+    );
+  });
+
+  test('node: alone targets the home directory', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const state: RouterState = { puts: [], bodies: [] };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, [src, 'office:']);
+    expect(state.inits?.[0]?.rootId).toBe(ROOT_ID);
+    expect(state.mkdirs).toContain('/home/me');
+  });
+
+  test('relative path that is not a root name is relative to home (scp)', async () => {
+    const src = await writeSrc('x.txt', 'abc');
+    const state: RouterState = { puts: [], bodies: [] };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, [src, 'office:projects/x.txt']);
+    expect(state.inits?.[0]?.rootId).toBe(ROOT_ID);
+    expect(state.mkdirs).toContain('/home/me/projects');
+  });
+
+  test('virtual home-root serves node: when no user root exists', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const state: RouterState = {
+      puts: [],
+      bodies: [],
+      roots: [{ ...ROOT, id: VIRTUAL_HOME_ROOT_ID, virtual: true }],
+    };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, [src, 'office:']);
+    expect(state.inits?.[0]?.rootId).toBe(VIRTUAL_HOME_ROOT_ID);
+    await cp.run(ctx, [src, 'office:/home/me/docs']);
+    expect(state.inits?.[1]?.rootId).toBe(VIRTUAL_HOME_ROOT_ID);
+  });
+
+  test('combined short flags: -rp recurses, other short flags are rejected', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'vibeterm-cli-short-'));
+    dirs.push(tmp);
+    await writeFile(join(tmp, 'a.txt'), 'abc');
+    const state: RouterState = { puts: [], bodies: [] };
+    const { ctx } = await testContext(router(state));
+    await cp.run(ctx, ['-rp', tmp, 'office:home/docs']);
+    expect(state.puts.length).toBeGreaterThan(0);
+    await cp.run(ctx, ['-R', tmp, 'office:home/docs']);
+    await expect(cp.run(ctx, ['-P', '22', tmp, 'office:home/docs'])).rejects.toThrow(
+      /不支持选项 -P/
+    );
+    await expect(cp.run(ctx, ['-rq', tmp, 'office:home/docs'])).rejects.toThrow(UsageError);
+  });
+});
+
+describe('locateCpPath', () => {
+  function root(id: string, path: string, extra: Partial<FileRootDto> = {}): FileRootDto {
+    return {
+      id,
+      deviceId: 'd-1',
+      deviceName: 'laptop',
+      deviceType: 'local',
+      path,
+      name: path === '/' ? '/' : path.slice(path.lastIndexOf('/') + 1),
+      enabled: true,
+      sortOrder: 0,
+      ...extra,
+    };
+  }
+  const scope = { deviceId: 'd-1', explicit: false };
+
+  test('longest segment-aware prefix wins; disabled roots are ignored', () => {
+    const roots = [
+      root('r-data', '/data'),
+      root('r-deep', '/data/deep/er'),
+      root('r-off', '/data/deep', { enabled: false }),
+    ];
+    expect(locateCpPath(roots, '/data/deep/er/x', scope, 'n').root.id).toBe('r-deep');
+    expect(locateCpPath(roots, '/data/deep/x', scope, 'n').root.id).toBe('r-data');
+    expect(() => locateCpPath(roots, '/data2/x', scope, 'n')).toThrow(UsageError);
+  });
+
+  test('a user root beats the virtual home on equal paths', () => {
+    const roots = [
+      root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' }),
+      root('r-user', '/home/me', { name: 'me' }),
+    ];
+    expect(locateCpPath(roots, '/home/me/a', scope, 'n').root.id).toBe('r-user');
+  });
+
+  test('fs-root covers everything when no user root is enabled', () => {
+    const roots = [root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' })];
+    const found = locateCpPath(roots, '/etc/hosts', scope, 'n');
+    expect(found.root.id).toBe('fs-root');
+    expect(found.absPath).toBe('/etc/hosts');
+    expect(locateCpPath(roots, '/home/me/a', scope, 'n').root.id).toBe(VIRTUAL_HOME_ROOT_ID);
+  });
+
+  test('explicit device excludes roots of other devices and fs-root', () => {
+    const roots = [
+      root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' }),
+      root('r-ssh', '/srv', { deviceId: 'd-2', deviceType: 'ssh' }),
+    ];
+    const ssh = { deviceId: 'd-2', explicit: true };
+    expect(locateCpPath(roots, '/srv/x', ssh, 'n').root.id).toBe('r-ssh');
+    expect(() => locateCpPath(roots, '/home/me/x', ssh, 'n')).toThrow(UsageError);
+    expect(() => locateCpPath(roots, 'docs/x', ssh, 'n')).toThrow(UsageError);
+  });
+
+  test('relative: legacy root id / name first, otherwise home', () => {
+    const roots = [
+      root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' }),
+      root('r-proj', '/srv/proj'),
+    ];
+    expect(locateCpPath(roots, 'proj/a/b', scope, 'n')).toMatchObject({
+      root: { id: 'r-proj' },
+      absPath: '/srv/proj/a/b',
+    });
+    expect(locateCpPath(roots, 'r-proj', scope, 'n').absPath).toBe('/srv/proj');
+    expect(locateCpPath(roots, 'other/a', scope, 'n')).toMatchObject({
+      root: { id: VIRTUAL_HOME_ROOT_ID },
+      absPath: '/home/me/other/a',
+    });
+    expect(locateCpPath(roots, '', scope, 'n').absPath).toBe('/home/me');
+    expect(locateCpPath(roots, './a', scope, 'n').absPath).toBe('/home/me/a');
+  });
+
+  test('.. never escapes', () => {
+    const roots = [root('r-data', '/data')];
+    expect(() => locateCpPath(roots, '/data/../etc', scope, 'n')).toThrow(UsageError);
   });
 });
