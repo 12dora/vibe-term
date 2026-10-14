@@ -676,4 +676,91 @@ describe('relayListToNodeList', () => {
       close();
     }
   });
+
+  test('lastSeenAt 仅在中继报告在线时推进，离线保留旧值', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const online = 'ab'.repeat(16);
+      const offline = 'ef'.repeat(16);
+      const fresh = '12'.repeat(16);
+      for (const nodeId of [online, offline, fresh]) {
+        userStore.upsertCert({
+          nodeId,
+          userId: 'user-1',
+          admitRecordSeq: 1,
+          certificateBytes: new Uint8Array(8),
+          certSig: new Uint8Array(64),
+          authorizationBytes: new Uint8Array(8),
+          authorizationSig: new Uint8Array(64),
+        });
+      }
+      for (const nodeId of [online, offline]) {
+        userStore.upsertPeer({
+          nodeId,
+          name: nodeId,
+          endpointsJson: '[]',
+          inventoryJson: '{}',
+          directCapable: false,
+          lastSeenAt: 100,
+          listVersion: 1,
+          version: '2.8.0',
+        });
+      }
+      const metaKey = generateTenantKey();
+      const blob = await sealEnvelope(
+        metaKey,
+        'status',
+        encodeRelayStatusBlob({
+          name: 'peer',
+          version: '2.8.0',
+          tmux: true,
+          direct_capable: false,
+          inventory: null,
+          endpoints: [],
+        }),
+        1
+      );
+      const entry = (id: string, isOnline: boolean) => ({
+        id,
+        online: isOnline,
+        status: 'admitted' as const,
+        epoch: 1,
+        blob,
+      });
+      await relayListToNodeList(
+        {
+          t: 'relay.list',
+          version: 2,
+          nodes: [entry(online, true), entry(offline, false), entry(fresh, false)],
+          rtc: { stun: [], turn: null },
+          key_log_head_seq: 0,
+        },
+        {
+          selfNodeId: 'cd'.repeat(16),
+          userId: 'user-1',
+          userStore,
+          secrets: {
+            metaKey: async (epoch: number) => (epoch === 1 ? metaKey : null),
+          } as unknown as RelaySecrets,
+          now: 5000,
+        }
+      );
+      expect(userStore.getPeer(online)?.lastSeenAt).toBe(5000);
+      expect(userStore.getPeer(offline)?.lastSeenAt).toBe(100);
+      expect(userStore.getPeer(fresh)?.lastSeenAt).toBeNull();
+    } finally {
+      close();
+    }
+  });
 });

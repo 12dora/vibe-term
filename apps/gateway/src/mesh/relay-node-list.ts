@@ -150,7 +150,7 @@ function cacheAdmittedRelayNode(
     endpointsJson: jsonText(blob.endpoints),
     inventoryJson: keepCaps ? existing.inventoryJson : inventoryJson,
     directCapable: keepCaps ? existing.directCapable : blob.direct_capable,
-    lastSeenAt: ctx.now,
+    lastSeenAt: node.online ? ctx.now : (existing?.lastSeenAt ?? null),
     listVersion,
     version: keepCaps ? existing.version : version,
   });

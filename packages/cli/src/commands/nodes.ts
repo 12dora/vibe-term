@@ -36,13 +36,15 @@ import {
   findAdminNode,
   findMeshNode,
   isTrustedPublicUrl,
+  lastSeenOf,
   listListedNodes,
   listMeshNodesDetailed,
-  listedOnline,
+  loginStateOf,
   nodeAddressOf,
+  nodeStateOf,
   passwordJoinCommand,
   reachOf,
-  roleOf,
+  selfNodeIdOf,
 } from '../core/nodes-roster';
 import {
   fetchUpgradeLatest,
@@ -83,7 +85,7 @@ const USAGE = [
   'Usage: vibeterm nodes <subcommand>',
   '',
   'Subcommands:',
-  '  ls                         list mesh nodes',
+  '  ls                         list mesh nodes (columns: see below)',
   '  show <node>                full projection (directFailure, dcBreaker, endpoints, ports)',
   '  rename <node> <name>       signed keylog rename-node (needs a relay uplink)',
   '  relay ls                   GET /api/mesh/relay/status (quota lines in human output)',
@@ -112,9 +114,14 @@ const USAGE = [
   '  pause <node>               POST …/pause (entry local; skips user traffic)',
   '  resume <node>              POST …/resume',
   '  rtc-config                 GET /api/mesh/rtc-config (includes probes)',
+  'nodes ls 列说明:',
+  '  STATE      online 在线 | offline 离线 | pending 待准入（尚未加入 mesh）',
+  '  LAST SEEN  在线为 now；离线为距最近一次在线的时间（5m ago / 3h ago / 2d ago），未知为 -',
+  '  LOGIN      session = 本 CLI 持有该节点的有效登录会话；- = 无。',
+  '             仅表示本 CLI 是否持有凭据，不代表节点可用性：未登录的在线节点同样可达。',
   '--json shapes:',
-  '  ls          { nodes: (MeshNode & { status: "admitted"|"pending"; address: string })[] }',
-  '  show        MeshNode & { address: string }',
+  '  ls          { nodes: (MeshNode & { status: "admitted"|"pending"; state: "online"|"offline"|"pending"; login: "session"|"-"; address: string })[] }',
+  '  show        MeshNode & { state: string; login: string; address: string }',
   '  rename      { ok, id, name }',
   '  relay ls    RelayTenantStatus',
   '  relay password  { known, password, passwordEpoch }',
@@ -154,41 +161,52 @@ function requireRelayUplink(isRelay: boolean): void {
 
 const ls: SubHandler = async (ctx, _flags, positionals) => {
   rejectExtra(positionals, 0);
-  const nodes = (await listListedNodes(ctx)).map((row) => ({
+  const rows = await listListedNodes(ctx);
+  const selfId = await selfNodeIdOf(ctx);
+  const nodes = rows.map((row) => ({
     ...row,
+    state: nodeStateOf(row),
+    login: loginStateOf(ctx, row.id, selfId),
     address: nodeAddressOf(row),
   }));
   emit(ctx, { nodes }, () => {
     ctx.out.table(nodes, [
       { header: 'NAME', value: (row) => row.name },
       { header: 'ID', value: (row) => shortId(row.id) },
-      { header: 'ROLE', value: roleOf },
-      { header: 'STATUS', value: (row) => row.status },
+      { header: 'STATE', value: (row) => row.state },
+      { header: 'LAST SEEN', value: (row) => lastSeenOf(row) },
+      { header: 'LOGIN', value: (row) => row.login },
       { header: 'REACH', value: reachOf },
       { header: 'VERSION', value: (row) => dash(row.version) },
       { header: 'ADDRESS', value: (row) => row.address },
-      { header: 'ONLINE', value: (row) => listedOnline(row) },
       { header: 'PAUSED', value: (row) => yn(row.paused) },
       { header: 'RTT', value: rtt },
     ]);
   });
 };
 
+function lastSeenDetail(node: MeshNode): string {
+  const rel = lastSeenOf(node);
+  if (nodeStateOf(node) !== 'offline' || rel === '-' || !node.lastSeenAt) return rel;
+  return `${rel} (${new Date(node.lastSeenAt).toISOString()})`;
+}
+
 const show: SubHandler = async (ctx, _flags, positionals) => {
   const ref = requireArg(positionals, 0, 'node');
   rejectExtra(positionals, 1);
   const node = await findMeshNode(ctx, ref);
   const address = nodeAddressOf(node);
-  emit(ctx, { ...node, address }, () => {
+  const state = nodeStateOf(node);
+  const login = loginStateOf(ctx, node.id, await selfNodeIdOf(ctx));
+  emit(ctx, { ...node, state, login, address }, () => {
     ctx.out.line(`name           ${node.name}`);
     ctx.out.line(`id             ${node.id}`);
-    ctx.out.line(`role           ${roleOf(node)}`);
-    ctx.out.line(`online         ${yn(node.online)}`);
-    ctx.out.line(`loggedIn       ${yn(node.loggedIn)}`);
+    ctx.out.line(`state          ${state}`);
+    ctx.out.line(`last seen      ${lastSeenDetail(node)}`);
+    ctx.out.line(`login          ${login}`);
     ctx.out.line(`reach          ${reachOf(node)}`);
     ctx.out.line(`version        ${dash(node.version)}`);
     ctx.out.line(`address        ${address}`);
-    ctx.out.line(`lastSeenAt     ${dash(node.lastSeenAt)}`);
     ctx.out.line(`rttMs          ${dash(node.rttMs)}`);
     ctx.out.line(`peerAddress    ${dash(node.peerAddress)}`);
     ctx.out.line(`directCapable  ${yn(node.direct_capable)}`);

@@ -8,8 +8,10 @@ import {
   formatRelativeLastSeen,
   isTrustedPublicUrl,
   joinCommand,
-  listedOnline,
+  lastSeenOf,
+  loginStateOf,
   nodeAddressOf,
+  nodeStateOf,
   passwordJoinCommand,
   reachOf,
 } from './nodes-roster';
@@ -101,14 +103,34 @@ describe('nodeAddressOf / reachOf / listedOnline', () => {
     expect(reachOf(row({ online: false, reach: 'lan', transport: 'dc' }))).toBe('-');
   });
 
-  test('listedOnline 离线拼相对时间', () => {
+  test('nodeStateOf / lastSeenOf：在线 now，离线相对时间，未知 -，pending -', () => {
     const now = 1_700_000_000_000;
-    expect(listedOnline(row({ online: true, loggedIn: true }), now)).toBe('yes · signed-in');
-    expect(listedOnline(row({ online: true, loggedIn: false }), now)).toBe('yes · signed-out');
-    expect(listedOnline(row({ online: false, lastSeenAt: now - 3 * 3600_000 }), now)).toBe(
-      'no · 3h ago'
+    expect(nodeStateOf(row({ online: true }))).toBe('online');
+    expect(nodeStateOf(row({ online: false }))).toBe('offline');
+    expect(nodeStateOf({ ...row(), status: 'pending' })).toBe('pending');
+    expect(lastSeenOf(row({ online: true, lastSeenAt: null }), now)).toBe('now');
+    expect(lastSeenOf(row({ online: false, lastSeenAt: now - 3 * 3600_000 }), now)).toBe('3h ago');
+    expect(lastSeenOf(row({ online: false, lastSeenAt: now - 5 * 60_000 }), now)).toBe('5m ago');
+    expect(lastSeenOf(row({ online: false, lastSeenAt: now - 2 * 86_400_000 }), now)).toBe(
+      '2d ago'
     );
-    expect(listedOnline(row({ online: false, lastSeenAt: null }), now)).toBe('no');
+    expect(lastSeenOf(row({ online: false, lastSeenAt: null }), now)).toBe('-');
+    const pending = { ...row({ online: false, lastSeenAt: now - 1000 }), status: 'pending' };
+    expect(lastSeenOf(pending, now)).toBe('-');
     expect(formatRelativeLastSeen(now - 5000, now)).toBe('just now');
+  });
+
+  test('loginStateOf 只看本地 jar：有效会话 session，过期 / 缺失 -，本机用 self 键', async () => {
+    const cli = await ctx({});
+    const now = 1_700_000_000_000;
+    const peer = 'b'.repeat(32);
+    expect(loginStateOf(cli, peer, null, now)).toBe('-');
+    cli.http.jar.set(peer, 'sid', now + 1000);
+    expect(loginStateOf(cli, peer, null, now)).toBe('session');
+    cli.http.jar.set(peer, 'sid', now - 1);
+    expect(loginStateOf(cli, peer, null, now)).toBe('-');
+    cli.http.jar.set('self', 'sid-self', 0);
+    expect(loginStateOf(cli, NODE, NODE, now)).toBe('session');
+    expect(loginStateOf(cli, NODE, null, now)).toBe('-');
   });
 });

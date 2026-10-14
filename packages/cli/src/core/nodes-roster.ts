@@ -2,8 +2,10 @@
 
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import type { MeshNode } from '@vibeterm/shared';
+import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError } from './errors';
+import { isLiveNodeSession } from './session-store';
 
 export interface MeshNodesList {
   nodes: MeshNode[];
@@ -119,10 +121,6 @@ export function passwordJoinCommand(publicUrl: string, tenantId: string): string
   return `vibeterm relay join ${shellQuote(publicUrl)} --tenant ${shellQuote(tenant)} --password`;
 }
 
-export function roleOf(_node: MeshNode): string {
-  return 'node';
-}
-
 function relayOnlyLabel(reach: string, transport: string): string | null {
   if (reach === 'relay' && (!transport || transport === 'relay')) return 'relay';
   if (transport === 'relay' && (!reach || reach === 'relay')) return 'relay';
@@ -231,8 +229,38 @@ export function formatRelativeLastSeen(
   return `${Math.floor(elapsed / DAY_MS)}d ago`;
 }
 
-export function listedOnline(node: MeshNode, now = Date.now()): string {
-  if (node.online) return node.loggedIn ? 'yes · signed-in' : 'yes · signed-out';
-  const rel = formatRelativeLastSeen(node.lastSeenAt, now);
-  return rel ? `no · ${rel}` : 'no';
+export type NodeState = 'online' | 'offline' | 'pending';
+
+export function nodeStateOf(node: MeshNode & { status?: string }): NodeState {
+  if (node.status === 'pending') return 'pending';
+  return node.online ? 'online' : 'offline';
+}
+
+/** LAST SEEN：在线（含本机）为 `now`；离线取相对时间；未知为 `-`。 */
+export function lastSeenOf(node: MeshNode & { status?: string }, now = Date.now()): string {
+  const state = nodeStateOf(node);
+  if (state === 'online') return 'now';
+  if (state === 'pending') return '-';
+  return formatRelativeLastSeen(node.lastSeenAt, now) ?? '-';
+}
+
+/** 本机网关的 node id；开放实例或探测失败为 null。 */
+export async function selfNodeIdOf(ctx: CliContext): Promise<string | null> {
+  const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID).catch(() => null);
+  return mode?.nodeId ?? null;
+}
+
+/**
+ * LOGIN：本 CLI 是否持有该节点的凭据（只看本地 session jar，不看服务端 `loggedIn`——
+ * 后者只反映单次列表请求带没带 cookie）。本机的会话存在 jar 的 `self` 键下。
+ */
+export function loginStateOf(
+  ctx: CliContext,
+  nodeId: string,
+  selfId: string | null = null,
+  now = Date.now()
+): 'session' | '-' {
+  const jar = ctx.http.jar;
+  const session = nodeId === selfId ? (jar.get(SELF_NODE_ID) ?? jar.get(nodeId)) : jar.get(nodeId);
+  return isLiveNodeSession(session, now) ? 'session' : '-';
 }

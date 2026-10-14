@@ -71,7 +71,7 @@ describe('vibeterm nodes', () => {
     expect(payload.nodes[0]?.lastSeenAt).toBe(1_700_000_000_000);
   });
 
-  test('ls table shows ADDRESS and last seen on offline ONLINE', async () => {
+  test('ls table splits STATE / LAST SEEN / LOGIN and drops ROLE / ONLINE', async () => {
     const { ctx: cli, stdout } = await ctx(
       {
         'GET /api/mesh/nodes': () => ({
@@ -80,6 +80,7 @@ describe('vibeterm nodes', () => {
               online: false,
               reach: null,
               transport: null,
+              loggedIn: true,
               lastSeenAt: Date.now() - 3 * 60 * 60 * 1000,
               endpoints: ['wss://edge.example:39001/peer'],
             }),
@@ -90,26 +91,109 @@ describe('vibeterm nodes', () => {
     );
     await nodes.run(cli, ['ls']);
     const text = stdout.text();
-    expect(text).toContain('ADDRESS');
-    expect(text).toContain('ONLINE');
+    const header = text
+      .split('\n')[0]
+      ?.trim()
+      .split(/\s{2,}/);
+    expect(header).toEqual([
+      'NAME',
+      'ID',
+      'STATE',
+      'LAST SEEN',
+      'LOGIN',
+      'REACH',
+      'VERSION',
+      'ADDRESS',
+      'PAUSED',
+      'RTT',
+    ]);
     expect(text).toContain('edge.example:39001');
-    expect(text).toMatch(/no · 3h ago/);
+    expect(text).toMatch(/offline\s+3h ago\s+-\s/);
+    expect(text).not.toContain('signed-');
   });
 
-  test('ls table folds login into ONLINE when signed in', async () => {
+  test('ls online node shows now; LOGIN follows the CLI jar, not server loggedIn', async () => {
+    const peer = 'b'.repeat(32);
     const { ctx: cli, stdout } = await ctx(
       {
         'GET /api/mesh/nodes': () => ({
-          nodes: [meshNode({ online: true, loggedIn: true })],
+          nodes: [
+            meshNode({ online: true, loggedIn: false }),
+            meshNode({ id: peer, name: 'peer', online: true, loggedIn: true }),
+          ],
         }),
       },
       false
     );
+    cli.http.jar.set(NODE, 'sid-office', Date.now() + 60_000);
     await nodes.run(cli, ['ls']);
+    const lines = stdout.text().split('\n');
+    expect(lines.find((line) => line.startsWith('office'))).toMatch(/online\s+now\s+session\s/);
+    expect(lines.find((line) => line.startsWith('peer'))).toMatch(/online\s+now\s+-\s/);
+  });
+
+  test('ls ignores an expired jar session', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode()] }),
+    });
+    cli.http.jar.set(NODE, 'sid-old', Date.now() - 1000);
+    await nodes.run(cli, ['ls']);
+    const payload = JSON.parse(stdout.text()) as { nodes: Array<{ login: string }> };
+    expect(payload.nodes[0]?.login).toBe('-');
+  });
+
+  test('ls --json adds state and login; pending ids are state=pending', async () => {
+    const pending = 'c'.repeat(32);
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/nodes': () => ({
+        nodes: [meshNode({ online: false, lastSeenAt: null })],
+        pendingMemberIds: [pending],
+      }),
+    });
+    cli.http.jar.set(NODE, 'sid-office', 0);
+    await nodes.run(cli, ['ls']);
+    const payload = JSON.parse(stdout.text()) as {
+      nodes: Array<{ id: string; status: string; state: string; login: string }>;
+    };
+    expect(payload.nodes[0]).toMatchObject({
+      status: 'admitted',
+      state: 'offline',
+      login: 'session',
+    });
+    expect(payload.nodes[1]).toMatchObject({
+      id: pending,
+      status: 'pending',
+      state: 'pending',
+      login: '-',
+    });
+  });
+
+  test('ls treats the self gateway session (jar key self) as LOGIN=session', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/auth/mode': () => ({ mode: 'passkey', nodeId: NODE }),
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ loggedIn: false })] }),
+    });
+    cli.http.jar.set('self', 'sid-self', Date.now() + 60_000);
+    await nodes.run(cli, ['ls']);
+    const payload = JSON.parse(stdout.text()) as { nodes: Array<{ login: string }> };
+    expect(payload.nodes[0]?.login).toBe('session');
+  });
+
+  test('show prints State / Last seen / Login lines', async () => {
+    const { ctx: cli, stdout } = await ctx(
+      {
+        'GET /api/mesh/nodes': () => ({
+          nodes: [meshNode({ online: false, loggedIn: true, lastSeenAt: 1_700_000_000_000 })],
+        }),
+      },
+      false
+    );
+    await nodes.run(cli, ['show', 'office']);
     const text = stdout.text();
-    expect(text).toContain('ONLINE');
-    expect(text).toContain('yes · signed-in');
-    expect(text).not.toContain('LOGIN');
+    expect(text).toMatch(/^state\s+offline$/m);
+    expect(text).toMatch(/^last seen\s+\d+d ago \(2023-11-14T22:13:20\.000Z\)$/m);
+    expect(text).toMatch(/^login\s+-$/m);
+    expect(text).not.toMatch(/^(role|online|loggedIn|lastSeenAt)\s/m);
   });
 
   test('pause and resume POST to the entry', async () => {
