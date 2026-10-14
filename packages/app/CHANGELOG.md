@@ -1,28 +1,29 @@
-# 2.12.0
+# 2.13.0
 
-_2026-10-13_
+_2026-10-14_
 
 ## English
 
 ### New
 
-- File Manager: open a folder from the Files sidebar — "Open" next to a root folder, or "Open in File Manager" in any folder's menu — and browse it in the main area, Finder / Explorer style, with list and icon views, sorting, filtering, breadcrumbs and Back / Forward / Up.
-- Tabs and split view with up to three panes. Drag tabs to reorder them or move them between panes.
-- Select several items with click, Ctrl/⌘-click, Shift-click, drag-to-select or Select All, and work from the keyboard: arrow keys, Enter, Backspace, F2, Delete, cut / copy / paste and more. Press `?` in the File Manager to see every shortcut.
-- Drag and drop to organise files: dragging within one device moves, dragging to another device or node copies (sent directly between nodes). Drop onto folders, breadcrumbs or tabs. Cut, copy and paste work across tabs.
-- New Folder, Rename and Delete for files and folders, both in the File Manager and in the Files sidebar menus. Deleting always asks for confirmation.
-- Download a folder, or several items at once, as a single `.tar.gz` archive. Upload whole folders by dropping them in.
-- When an item with the same name already exists you are asked whether to replace or skip it — for moves, copies and uploads.
+- `vibeterm exec` now works like `ssh host cmd`: output goes straight to your terminal or pipe (binary-safe, no size limit), stdin is forwarded automatically, the exit code passes through, and commands run in your login shell with your usual `PATH`. `vibeterm exec node 'cmd'` is enough — no more `--shell --`.
+- Long-running commands survive network drops: the connection reconnects on its own and output continues exactly where it stopped. Use `--timeout` only when you want a limit.
+- `vibeterm rsh`: an ssh-compatible entry point, so tools that expect ssh just work — `rsync -e 'vibeterm rsh'`, `GIT_SSH_COMMAND='vibeterm rsh'`, `scp -S vibeterm-rsh`. A `vibeterm-rsh` launcher is installed next to `vibeterm`.
+- Interactive sessions: `vibeterm exec -t` (or no command at all) opens a real terminal on the remote side, for `sudo` prompts, `top`, `vim` and so on.
+- `vibeterm forward -L / -R`: ssh-style port forwarding between this machine and a node. Forwards end when the command exits (and are cleaned up automatically if it is killed); `--persist` keeps them as permanent port mappings.
+- Access tokens for scripts and agents: create one with `vibeterm token create` or under Account Security, limit it to remote commands, files or port forwarding, and revoke it at any time. Commands keep working without an interactive login.
 
 ### Improvements
 
-- Manage Devices now arranges nodes in a responsive grid: nodes with one device sit side by side, nodes with several devices take more columns. While dragging a node, the page shows exactly where it will land.
-- Copying files between folders on the same machine now also works on installations that have not joined a relay.
-- Large downloads that pass through another node no longer pile up in memory on the way.
+- `vibeterm cp` follows scp rules: `node:/absolute/path` and `node:path` (relative to home) are remote, everything else is local, and existing files are overwritten by default.
+- `vibeterm nodes ls` shows connection state, last seen time and whether this CLI is signed in to the node in separate columns.
+- On Linux, installing or upgrading now keeps the service running after you log out (systemd linger). Use `--no-linger` to opt out.
+- `exec` no longer prints "using device …" on every call; add `-v` to see it.
 
 ### Fixes
 
-- Fixed dragging a file from the Files sidebar to the desktop not starting in Chrome and Safari.
+- Offline nodes no longer show "last seen: just now".
+- Nodes that only run a relay no longer expose the terminal and remote-command interfaces.
 
 ---
 
@@ -30,20 +31,21 @@ _2026-10-13_
 
 ### 新增
 
-- 文件管理器：在侧栏「文件」中点击根目录右侧的「打开」，或在任意文件夹的菜单里选择「在文件管理器中打开」，即可在主区域像访达 / 资源管理器一样浏览，支持列表与图标视图、排序、筛选、面包屑，以及后退 / 前进 / 上一级。
-- 标签页与分栏（最多三栏）。标签页可拖动排序，也可拖到其他分栏。
-- 多选与键盘操作：单击、Ctrl/⌘ 点选、Shift 连选、框选、全选；方向键、Enter、Backspace、F2、Delete、剪切 / 复制 / 粘贴等。在文件管理器中按 `?` 查看全部快捷键。
-- 拖拽整理文件：同一设备内拖拽为移动，拖到其他设备或节点为复制（节点之间直接传输）。可拖到文件夹、面包屑或标签页上。剪切、复制、粘贴可跨标签页使用。
-- 文件与文件夹支持新建文件夹、重命名、删除，文件管理器与侧栏「文件」的菜单中均可使用。删除前会要求确认。
-- 文件夹或多个项目可一次打包下载为一个 `.tar.gz`。把文件夹拖进来即可整个上传。
-- 目标位置已有同名项目时会先询问替换还是跳过，移动、复制、上传均如此。
+- `vibeterm exec` 用法与 `ssh 主机 命令` 一致：输出原样写到终端或管道（支持二进制、不限大小），标准输入自动转发，退出码原样返回，命令在你的登录 shell 中运行，`PATH` 与平时一致。直接写 `vibeterm exec 节点 '命令'` 即可，不再需要 `--shell --`。
+- 长时间运行的命令不再因网络中断而失败：连接自动重连，输出从中断处继续，不丢不重。需要限时时再加 `--timeout`。
+- 新增 `vibeterm rsh`：与 ssh 兼容的入口，依赖 ssh 的工具可直接使用，如 `rsync -e 'vibeterm rsh'`、`GIT_SSH_COMMAND='vibeterm rsh'`、`scp -S vibeterm-rsh`。安装时会在 `vibeterm` 旁边一并放置 `vibeterm-rsh` 启动器。
+- 交互式会话：`vibeterm exec -t`（或不带命令）在远端分配真实终端，可用于 `sudo` 密码提示、`top`、`vim` 等。
+- `vibeterm forward -L / -R`：ssh 风格的端口转发。命令退出时转发随之结束（进程被强制结束也会自动回收）；加 `--persist` 则保留为常驻端口映射。
+- 访问令牌：供脚本与代理使用。可用 `vibeterm token create` 或在「账号安全」中创建，按远程命令、文件、端口转发限定权限，随时可撤销。无需交互登录即可执行命令。
 
 ### 改进
 
-- 「管理设备」改为自适应网格：只有一台设备的节点并排显示，有多台设备的节点占更多列。拖动节点时，页面会直接显示它松手后的位置。
-- 未加入中继的单机安装也可以在本机的文件夹之间复制文件。
-- 经其他节点中转的大文件下载不再在途中占用大量内存。
+- `vibeterm cp` 遵循 scp 规则：`节点:/绝对路径` 与 `节点:路径`（相对家目录）为远端，其余为本地；目标已存在时默认覆盖。
+- `vibeterm nodes ls` 将连接状态、最后在线时间、本机 CLI 是否已登录该节点分列显示。
+- Linux 上安装或升级后，退出登录也不会停止服务（systemd linger）。如不需要，可加 `--no-linger`。
+- `exec` 不再每次输出「using device …」，加 `-v` 时显示。
 
 ### 修复
 
-- 修复在 Chrome 与 Safari 中无法把侧栏「文件」里的文件拖到桌面的问题。
+- 离线节点不再显示「刚刚在线」。
+- 仅运行中继的节点不再对外提供终端与远程命令接口。
