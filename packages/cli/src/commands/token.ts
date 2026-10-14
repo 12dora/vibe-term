@@ -1,11 +1,10 @@
 // `vibeterm token`：机器访问令牌（无人值守的 agent / CI 用，不必登录）。
 
-import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import { SELF_NODE_ID, isValidNodeId } from '@vibeterm/api-client/node-url';
 import {
   ACCESS_TOKEN_EXPIRES_DAYS_MAX,
   ACCESS_TOKEN_NAME_MAX,
   ACCESS_TOKEN_SCOPES,
-  ACCESS_TOKEN_SECRET_PREFIX,
   type AccessTokenDto,
   type AccessTokenListResponse,
   type AccessTokenScope,
@@ -19,7 +18,7 @@ import type { CliContext } from '../core/context';
 import { AuthError, PermissionError, UsageError } from '../core/errors';
 import { NODE_TOKEN_COOKIE_PREFIX, TOKEN_SCOPE_CODE } from '../core/http';
 import { readAllStdin } from '../core/prompt';
-import { isLiveToken } from '../core/token-store';
+import { type StoredToken, isLiveToken, isValidTokenSecret } from '../core/token-store';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -28,6 +27,8 @@ const FLAGS = {
   expires: 'string',
   print: 'boolean',
   'no-save': 'boolean',
+  local: 'boolean',
+  id: 'string',
 } as const;
 
 const DEFAULT_SCOPE: AccessTokenScope = 'exec';
@@ -48,19 +49,25 @@ const USAGE = [
   '                               --no-save  不保存，只把 secret 打印到 stdout（交给别的机器）',
   '  ls [<node>]                  列出令牌：ID NAME SCOPES CREATED LAST USED EXPIRES SAVED',
   '  rm [<node>] <id|名称>        吊销令牌，并清掉本机保存的副本',
-  '  add [<node>] <secret|->      保存一个已有的 secret（如网页端创建的）；先验证再落盘，- 表示读 stdin',
+  '  rm --local [<node>]          只清掉本机保存的该节点令牌，不联系服务端（add 导入的令牌用这个清）',
+  '  add [<node>] <secret|-> [--id <32位节点id>]',
+  '                               保存一个已有的 secret（如网页端创建的）；先验证再落盘，- 表示读 stdin',
+  '                               没有登录会话时无法按名字解析节点：直接给节点 id，或用 --id 并把名字当别名',
   '',
   'scope：exec = 远程命令（exec / rsh）；files = 文件读写与传输；forward = 端口转发。',
   '本机保存位置：<配置目录>/tokens.json（0600），可用 VIBETERM_TOKENS_FILE 改路径。',
   '同一节点有登录会话时优先用会话，令牌只在没有会话时生效；vibeterm nodes ls 的 LOGIN 列显示 session / token。',
+  '保存令牌时会记下节点名，之后没有会话也能用该名字寻址这台节点（名册要登录才能读）。',
+  'add 导入的令牌拿不到服务端 id：ls 的 SAVED 显示 no；在有会话的机器上 rm 吊销后，用 rm --local 清本机副本。',
   '',
   '示例：',
   '  # agent：登录一次、创建令牌，之后 exec / rsh 不再需要登录',
   '  vibeterm login && vibeterm token create office --name agent --scope exec,files',
   '  vibeterm exec office -- uptime',
-  '  # CI：在已登录的机器上生成，在 CI 机器上保存',
+  '  # CI：在已登录的机器上生成但不保存，secret 经安全渠道交给 CI 机器',
   '  vibeterm token create office --name ci --no-save --expires 30d   # 输出 secret',
-  '  echo "$SECRET" | vibeterm token add office -                    # 在 CI 机器上执行',
+  '  # 在 CI 机器上保存（无登录会话：节点用 32 位 id；--id 同时把 office 记作别名）',
+  '  echo "$SECRET" | vibeterm token add --id <32位节点id> office -',
   '',
   '--json 形状：',
   '  create  { token: AccessTokenDto, saved: boolean, secret?: string }  （--print / --no-save 才含 secret）',
@@ -73,11 +80,19 @@ interface NodeTarget {
   id: string;
   /** 给人看的名字：用户敲的 node 引用，缺省为 self。 */
   label: string;
+  /** 保存令牌时记下的节点名；不知道为空串。 */
+  name: string;
+}
+
+function knownName(resolved: { id: string; name: string }): string {
+  return resolved.name === resolved.id || resolved.name === SELF_NODE_ID ? '' : resolved.name;
 }
 
 async function resolveTarget(ctx: CliContext, ref: string | undefined): Promise<NodeTarget> {
-  if (ref) return { id: (await ctx.resolver.resolveNode(ref)).id, label: ref };
-  return { id: await ctx.targetNodeId(), label: ctx.globals.node ?? SELF_NODE_ID };
+  const raw = ref ?? ctx.globals.node;
+  if (!raw) return { id: SELF_NODE_ID, label: SELF_NODE_ID, name: '' };
+  const resolved = await ctx.resolver.resolveNode(raw);
+  return { id: resolved.id, label: raw, name: knownName(resolved) };
 }
 
 /** 令牌管理接口只认真实会话；令牌调用方被拒（TOKEN_SCOPE）时给出明确的下一步。 */
@@ -130,6 +145,18 @@ async function storageKeys(ctx: CliContext, nodeId: string): Promise<string[]> {
   return entryNodeId ? [SELF_NODE_ID, entryNodeId] : [SELF_NODE_ID];
 }
 
+type SavedFields = Omit<StoredToken, 'nodeId' | 'nodeName'>;
+
+async function saveToken(ctx: CliContext, target: NodeTarget, fields: SavedFields): Promise<void> {
+  const keys = await storageKeys(ctx, target.id);
+  ctx.tokens.put(ctx.globals.entry, keys, {
+    ...fields,
+    nodeId: keys[keys.length - 1],
+    nodeName: target.name,
+  });
+  ctx.tokens.save();
+}
+
 function formatTime(at: number | null | undefined, empty = '-'): string {
   if (at === null || at === undefined || !Number.isFinite(at)) return empty;
   return new Date(at).toISOString().slice(0, 16).replace('T', ' ');
@@ -159,10 +186,10 @@ function parseCreateOptions(flags: FlagValues): CreateOptions {
 
 async function saveCreatedToken(
   ctx: CliContext,
-  nodeId: string,
+  target: NodeTarget,
   created: CreateAccessTokenResponse
 ): Promise<void> {
-  ctx.tokens.put(ctx.globals.entry, await storageKeys(ctx, nodeId), {
+  await saveToken(ctx, target, {
     tokenId: created.token.id,
     secret: created.secret,
     name: created.token.name,
@@ -170,7 +197,6 @@ async function saveCreatedToken(
     expiresAt: created.token.expiresAt,
     createdAt: created.token.createdAt,
   });
-  ctx.tokens.save();
 }
 
 function reportCreatedToken(
@@ -209,7 +235,7 @@ const create: SubHandler = async (ctx, flags, positionals) => {
   const created = await asSessionOnly(target, () =>
     ctx.http.json<CreateAccessTokenResponse>(target.id, 'POST', '/api/auth/tokens', body)
   );
-  if (!opts.noSave) await saveCreatedToken(ctx, target.id, created);
+  if (!opts.noSave) await saveCreatedToken(ctx, target, created);
   reportCreatedToken(ctx, target.label, opts, created);
 };
 
@@ -248,11 +274,8 @@ function pickToken(tokens: readonly AccessTokenDto[], ref: string): AccessTokenD
   throw new UsageError(`找不到令牌：${ref}`, '先看列表：vibeterm token ls');
 }
 
-const rm: SubHandler = async (ctx, _flags, positionals) => {
-  const ref = requireArg(positionals, positionals.length - 1, '令牌 id 或名称');
-  rejectExtra(positionals, 2);
-  const target = await resolveTarget(ctx, positionals.length === 2 ? positionals[0] : undefined);
-  const token = await asSessionOnly(target, async () => {
+async function revokeRemote(ctx: CliContext, target: NodeTarget, ref: string) {
+  return await asSessionOnly(target, async () => {
     const { tokens } = await ctx.http.json<AccessTokenListResponse>(
       target.id,
       'GET',
@@ -262,20 +285,62 @@ const rm: SubHandler = async (ctx, _flags, positionals) => {
     await ctx.http.json(target.id, 'DELETE', `/api/auth/tokens/${encodeURIComponent(picked.id)}`);
     return picked;
   });
+}
+
+async function rmLocal(ctx: CliContext, positionals: string[]): Promise<void> {
+  rejectExtra(positionals, 1);
+  const target = await resolveTarget(ctx, positionals[0]);
+  const removed = ctx.tokens.removeKeys(ctx.globals.entry, await storageKeys(ctx, target.id));
+  if (removed > 0) ctx.tokens.save();
+  emit(ctx, { ok: true, node: target.id, removed }, () =>
+    ctx.out.line(
+      removed > 0 ? `已清除本机保存的 ${target.label} 令牌` : `本机没有保存 ${target.label} 的令牌`
+    )
+  );
+}
+
+const rm: SubHandler = async (ctx, flags, positionals) => {
+  if (flagBool(flags, 'local')) return await rmLocal(ctx, positionals);
+  const ref = requireArg(positionals, positionals.length - 1, '令牌 id 或名称');
+  rejectExtra(positionals, 2);
+  const target = await resolveTarget(ctx, positionals.length === 2 ? positionals[0] : undefined);
+  const token = await revokeRemote(ctx, target, ref);
   if (ctx.tokens.removeById(ctx.globals.entry, token.id) > 0) ctx.tokens.save();
   emit(ctx, { ok: true, id: token.id }, () =>
     ctx.out.line(`已吊销 ${target.label} 上的令牌 ${token.name}`)
   );
 };
 
-const add: SubHandler = async (ctx, _flags, positionals) => {
-  const raw = requireArg(positionals, positionals.length - 1, 'secret（或 - 读 stdin）');
-  rejectExtra(positionals, 2);
-  const secret = (raw === '-' ? await readAllStdin() : raw).trim();
-  if (!secret.startsWith(ACCESS_TOKEN_SECRET_PREFIX)) {
-    throw new UsageError(`secret 应以 ${ACCESS_TOKEN_SECRET_PREFIX} 开头`);
+/** `--id` 直接给节点 id（无登录会话时的唯一可靠寻址）；位置参数此时只是别名。 */
+async function resolveAddTarget(
+  ctx: CliContext,
+  flags: FlagValues,
+  ref: string | undefined
+): Promise<NodeTarget> {
+  const idFlag = flagString(flags, 'id');
+  if (idFlag !== undefined) {
+    if (!isValidNodeId(idFlag)) throw new UsageError('--id 需要 32 位十六进制节点 id');
+    const target = await resolveTarget(ctx, idFlag);
+    const alias = ref && !isValidNodeId(ref) && ref !== SELF_NODE_ID ? ref : '';
+    return { ...target, label: ref ?? target.label, name: alias || target.name };
   }
-  const target = await resolveTarget(ctx, positionals.length === 2 ? positionals[0] : undefined);
+  try {
+    return await resolveTarget(ctx, ref);
+  } catch (error) {
+    if (!(error instanceof AuthError) || !ref) throw error;
+    throw new AuthError(`无法解析节点名 ${ref}：需要先登录；或直接给 32 位节点 id / 用 --id 指定`);
+  }
+}
+
+const add: SubHandler = async (ctx, flags, positionals) => {
+  const last = requireArg(positionals, positionals.length - 1, 'secret（或 - 读 stdin）');
+  rejectExtra(positionals, 2);
+  const secret = (last === '-' ? await readAllStdin() : last).trim();
+  if (!isValidTokenSecret(secret)) {
+    throw new UsageError('secret 格式无效', '应为 vtk_ 加 43 位 base64url 字符');
+  }
+  const nodeRef = positionals.length === 2 ? positionals[0] : undefined;
+  const target = await resolveAddTarget(ctx, flags, nodeRef);
 
   const response = await ctx.http.fetch(target.id, '/api/devices', {
     cookieOverride: `${NODE_TOKEN_COOKIE_PREFIX}${target.id}=${secret}`,
@@ -285,7 +350,7 @@ const add: SubHandler = async (ctx, _flags, positionals) => {
   }
   await ctx.http.assertOk(target.id, response, '/api/devices');
 
-  ctx.tokens.put(ctx.globals.entry, await storageKeys(ctx, target.id), {
+  await saveToken(ctx, target, {
     tokenId: '',
     secret,
     name: 'imported',
@@ -293,7 +358,6 @@ const add: SubHandler = async (ctx, _flags, positionals) => {
     expiresAt: null,
     createdAt: Date.now(),
   });
-  ctx.tokens.save();
   emit(ctx, { ok: true, node: target.id }, () => ctx.out.line(`已保存 ${target.label} 的令牌`));
 };
 

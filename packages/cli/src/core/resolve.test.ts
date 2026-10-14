@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
-import { UsageError } from './errors';
+import { AuthError, UsageError } from './errors';
 import { HttpClient, createMemoryCookieJar } from './http';
 import {
   Resolver,
@@ -191,5 +191,41 @@ describe('Resolver.resolveNodeLocalDevice', () => {
     const fallback = await resolver.resolveNodeLocalDevice('office');
     expect(fallback?.node.name).toBe('office');
     expect(fallback?.device.name).toBe('box');
+  });
+});
+
+describe('Resolver.resolveNode token-name fallback', () => {
+  const OFFICE = 'a'.repeat(32);
+
+  function resolverWith(
+    nodeByName: (name: string) => { id: string; name: string } | null
+  ): Resolver {
+    const http = new HttpClient({
+      entry: 'http://entry.example:9883',
+      timeoutMs: 1000,
+      jar: createMemoryCookieJar(),
+      tokens: { get: () => null, nodeByName },
+      fetchImpl: async (url) =>
+        url.endsWith('/api/mesh/nodes')
+          ? new Response('{"code":"UNAUTHORIZED"}', { status: 401 })
+          : new Response('{}', { status: 404 }),
+    });
+    return new Resolver(http);
+  }
+
+  test('a saved node name resolves when the roster needs a login', async () => {
+    const resolver = resolverWith((name) => (name === 'office' ? { id: OFFICE, name } : null));
+    const node = await resolver.resolveNode('office');
+    expect(node).toEqual({ id: OFFICE, name: 'office', isSelf: false, row: null });
+  });
+
+  test('the entry node saved under self resolves as self', async () => {
+    const resolver = resolverWith((name) => ({ id: 'self', name }));
+    expect((await resolver.resolveNode('hub')).isSelf).toBe(true);
+  });
+
+  test('an unknown name keeps the original login error', async () => {
+    const resolver = resolverWith(() => null);
+    await expect(resolver.resolveNode('nowhere')).rejects.toBeInstanceOf(AuthError);
   });
 });

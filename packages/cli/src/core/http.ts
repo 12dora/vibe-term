@@ -27,6 +27,22 @@ export const LEGACY_NODE_SESSION_COOKIE_PREFIX = 'tmex_s_';
 /** 机器访问令牌 cookie：`vibeterm_t_self`（本机）/ `vibeterm_t_<nodeId>`（转发）。 */
 export const NODE_TOKEN_COOKIE_PREFIX = 'vibeterm_t_';
 
+/**
+ * 登录流程的请求（challenge / login / passkey / 节点列表 / 分享入口）不带令牌 cookie：
+ * 带上会让网关把调用方当成令牌身份，`vibeterm login` 反而走不通。`/api/auth/mode` 无害，照常带。
+ */
+const AUTH_FLOW_PATHS: ReadonlySet<string> = new Set([
+  '/api/auth/nodes',
+  '/api/auth/challenge',
+  '/api/auth/login',
+]);
+const AUTH_FLOW_PREFIXES = ['/api/auth/passkey/', '/api/share-access/'];
+
+export function isAuthFlowPath(path: string): boolean {
+  const pathname = path.split(/[?#]/, 1)[0];
+  return AUTH_FLOW_PATHS.has(pathname) || AUTH_FLOW_PREFIXES.some((p) => pathname.startsWith(p));
+}
+
 /** Bun 认 `timeout: false` 关掉 `BUN_CONFIG_HTTP_IDLE_TIMEOUT`；其它运行时忽略。 */
 export type FetchInit = RequestInit & { timeout?: number | false };
 export type FetchLike = (input: string, init?: FetchInit) => Promise<Response>;
@@ -190,14 +206,15 @@ export class HttpClient {
    * entry 自身的会话 + 目标 node 的会话（及 `extraNodeIds`）；转发链路至少前两者都要看。
    * 某个 node 没有有效会话、但存有有效令牌时改发令牌 cookie；有有效会话时绝不发令牌。
    */
-  cookieHeader(nodeId: string, extraNodeIds: readonly string[] = []): string {
+  cookieHeader(nodeId: string, extraNodeIds: readonly string[] = [], includeTokens = true): string {
     const parts: string[] = [];
     const seen = new Set<string>();
     for (const id of [SELF_NODE_ID, nodeId, ...extraNodeIds]) {
       if (seen.has(id)) continue;
       seen.add(id);
       const session = this.options.jar.get(id);
-      const token = isLiveNodeSession(session) ? null : (this.options.tokens?.get(id) ?? null);
+      const useToken = includeTokens && !isLiveNodeSession(session);
+      const token = useToken ? (this.options.tokens?.get(id) ?? null) : null;
       if (token) {
         parts.push(`${NODE_TOKEN_COOKIE_PREFIX}${id}=${token.secret}`);
         continue;
@@ -209,13 +226,19 @@ export class HttpClient {
     return parts.join('; ');
   }
 
+  /** 名册不可用时，按保存令牌时记下的节点名找节点（见 `Resolver.resolveNode`）。 */
+  tokenNodeByName(name: string): { id: string; name: string } | null {
+    return this.options.tokens?.nodeByName?.(name) ?? null;
+  }
+
   /** 发一次请求；非 2xx 不抛（交给 `assertOk` 或调用方），网络层失败抛 NetworkError。 */
   async fetch(nodeId: string, path: string, options: RequestOptions = {}): Promise<Response> {
     const { timeoutMs, signal, headers, withNodeCookies, cookieOverride, ...rest } = options;
     const requestHeaders = new Headers(headers);
     requestHeaders.set('origin', this.origin);
     requestHeaders.set('accept', requestHeaders.get('accept') ?? 'application/json, */*');
-    const cookie = cookieOverride ?? this.cookieHeader(nodeId, withNodeCookies ?? []);
+    const cookie =
+      cookieOverride ?? this.cookieHeader(nodeId, withNodeCookies ?? [], !isAuthFlowPath(path));
     if (cookie) requestHeaders.set('cookie', cookie);
 
     const effectiveTimeout = timeoutMs === undefined ? this.options.timeoutMs : timeoutMs;
@@ -426,9 +449,9 @@ export const TOKEN_SCOPE_CODE = 'TOKEN_SCOPE';
 /** 令牌调用方越权：重新登录救不了，要换一把带对应 scope 的令牌。 */
 function tokenScopeError(path: string): PermissionError {
   return new PermissionError(
-    `当前令牌没有访问 ${path} 的权限（TOKEN_SCOPE）`,
+    `access token lacks the scope for ${path} (TOKEN_SCOPE)`,
     TOKEN_SCOPE_CODE,
-    '用带所需 scope 的新令牌：vibeterm token create --scope exec,files,forward；或先登录：vibeterm login'
+    'create a token with the needed scope: vibeterm token create --name <name> --scope exec,files,forward; or log in: vibeterm login'
   );
 }
 

@@ -14,6 +14,8 @@ import {
 
 const ENTRY = 'http://entry:1';
 const NODE = 'a'.repeat(32);
+const SECRET = `vtk_${'s'.repeat(43)}`;
+const OTHER_SECRET = `vtk_${'o'.repeat(43)}`;
 const dirs: string[] = [];
 
 afterEach(async () => {
@@ -29,7 +31,9 @@ async function tempDir(): Promise<string> {
 function token(overrides: Partial<StoredToken> = {}): StoredToken {
   return {
     tokenId: 'tok-1',
-    secret: 'vtk_secret',
+    nodeId: '',
+    nodeName: '',
+    secret: SECRET,
     name: 'ci',
     scopes: ['exec'],
     expiresAt: null,
@@ -55,6 +59,8 @@ describe('isLiveToken', () => {
     expect(isLiveToken(token({ expiresAt: now + 1 }), now)).toBe(true);
     expect(isLiveToken(token({ expiresAt: now }), now)).toBe(false);
     expect(isLiveToken(token({ secret: '' }), now)).toBe(false);
+    expect(isLiveToken(token({ secret: 'vtk_short' }), now)).toBe(false);
+    expect(isLiveToken(token({ secret: `${SECRET};x=1` }), now)).toBe(false);
   });
 });
 
@@ -67,10 +73,10 @@ describe('TokenStore', () => {
 
     const reopened = TokenStore.open(dir, {});
     expect(reopened.get(ENTRY, 'self')).toEqual(token());
-    expect(reopened.get(ENTRY, NODE)?.secret).toBe('vtk_secret');
+    expect(reopened.get(ENTRY, NODE)?.secret).toBe(SECRET);
     expect(reopened.get(ENTRY, 'b'.repeat(32))).toBeNull();
     expect(reopened.get('http://other:1', 'self')).toBeNull();
-    expect(reopened.source(ENTRY).get('self')?.secret).toBe('vtk_secret');
+    expect(reopened.source(ENTRY).get('self')?.secret).toBe(SECRET);
   });
 
   test('expired tokens are ignored by get and the token source', async () => {
@@ -87,13 +93,48 @@ describe('TokenStore', () => {
     const dir = await tempDir();
     const store = TokenStore.open(dir, {});
     store.put(ENTRY, ['self', NODE], token({ tokenId: 'tok-1' }));
-    store.put(ENTRY, ['c'.repeat(32)], token({ tokenId: 'tok-2', secret: 'vtk_other' }));
+    store.put(ENTRY, ['c'.repeat(32)], token({ tokenId: 'tok-2', secret: OTHER_SECRET }));
     expect(store.removeById(ENTRY, 'tok-1')).toBe(2);
     expect(store.get(ENTRY, 'self')).toBeNull();
     expect(store.get(ENTRY, NODE)).toBeNull();
-    expect(store.get(ENTRY, 'c'.repeat(32))?.secret).toBe('vtk_other');
+    expect(store.get(ENTRY, 'c'.repeat(32))?.secret).toBe(OTHER_SECRET);
     expect(store.removeById(ENTRY, '')).toBe(0);
     expect(store.removeById('http://other:1', 'tok-2')).toBe(0);
+  });
+
+  test('nodeByName finds a live token by saved name, case-insensitively', async () => {
+    const store = TokenStore.open(await tempDir(), {});
+    store.put(ENTRY, [NODE], token({ nodeId: NODE, nodeName: 'Office' }));
+    expect(store.nodeByName(ENTRY, 'office')).toEqual({ id: NODE, name: 'Office' });
+    expect(store.source(ENTRY).nodeByName?.('OFFICE')?.id).toBe(NODE);
+    expect(store.nodeByName(ENTRY, 'nope')).toBeNull();
+    expect(store.nodeByName(ENTRY, '')).toBeNull();
+    expect(store.nodeByName('http://other:1', 'office')).toBeNull();
+  });
+
+  test('nodeByName prefers self for the entry node and ignores expired or ambiguous names', async () => {
+    const store = TokenStore.open(await tempDir(), {});
+    const now = 1_700_000_000_000;
+    store.put(ENTRY, ['self', NODE], token({ nodeId: NODE, nodeName: 'hub' }));
+    expect(store.nodeByName(ENTRY, 'hub')?.id).toBe('self');
+    store.put(
+      ENTRY,
+      ['d'.repeat(32)],
+      token({ nodeId: 'd'.repeat(32), nodeName: 'dup', expiresAt: now - 1 })
+    );
+    expect(store.nodeByName(ENTRY, 'dup', now)).toBeNull();
+    store.put(ENTRY, ['e'.repeat(32)], token({ nodeId: 'e'.repeat(32), nodeName: 'twin' }));
+    store.put(ENTRY, ['f'.repeat(32)], token({ nodeId: 'f'.repeat(32), nodeName: 'twin' }));
+    expect(store.nodeByName(ENTRY, 'twin')).toBeNull();
+  });
+
+  test('removeKeys drops the given addressing keys regardless of server id', async () => {
+    const store = TokenStore.open(await tempDir(), {});
+    store.put(ENTRY, ['self', NODE], token({ tokenId: '' }));
+    store.put(ENTRY, ['c'.repeat(32)], token({ tokenId: '', secret: OTHER_SECRET }));
+    expect(store.removeKeys(ENTRY, ['self', NODE, 'z'.repeat(32)])).toBe(2);
+    expect(store.get(ENTRY, 'c'.repeat(32))?.secret).toBe(OTHER_SECRET);
+    expect(store.removeKeys('http://other:1', ['self'])).toBe(0);
   });
 
   test('writes the file 0600 and the directory 0700', async () => {
@@ -116,7 +157,7 @@ describe('TokenStore', () => {
     store.save();
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect((await stat(join(dir, 'agent'))).mode & 0o777).toBe(0o700);
-    expect(TokenStore.open(dir, env).get(ENTRY, 'self')?.secret).toBe('vtk_secret');
+    expect(TokenStore.open(dir, env).get(ENTRY, 'self')?.secret).toBe(SECRET);
   });
 
   test('refuses a group/world readable token file', async () => {
@@ -180,13 +221,14 @@ describe('TokenStore', () => {
             nodes: {
               self: {
                 tokenId: 't',
-                secret: 'vtk_a',
+                secret: SECRET,
                 name: 'n',
                 scopes: ['exec', 3],
                 expiresAt: 9,
                 createdAt: 2,
               },
               bad: { tokenId: 't' },
+              badSecret: { tokenId: 't', secret: 'vtk_short' },
               worse: 'nope',
             },
           },
@@ -197,7 +239,9 @@ describe('TokenStore', () => {
     expect(Object.keys(file.entries)).toEqual([ENTRY]);
     expect(file.entries[ENTRY].nodes.self).toEqual({
       tokenId: 't',
-      secret: 'vtk_a',
+      nodeId: '',
+      nodeName: '',
+      secret: SECRET,
       name: 'n',
       scopes: ['exec'],
       expiresAt: 9,

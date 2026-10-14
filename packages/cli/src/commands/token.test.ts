@@ -8,7 +8,7 @@ import { ENTRY, NODE, jsonResponse, routeFetch, testContext } from './cli-test-h
 import { parseExpiresDays, command as token } from './token';
 
 const ENTRY_NODE = 'f'.repeat(32);
-const SECRET = 'vtk_abcdefghijklmnopqrstuvwxyz012345678901234';
+const SECRET = `vtk_${'k'.repeat(43)}`;
 const dirs: string[] = [];
 
 afterEach(async () => {
@@ -199,6 +199,8 @@ describe('vibeterm token ls / rm', () => {
     });
     ctx.tokens.put(ENTRY, ['self'], {
       tokenId: 'tok-1',
+      nodeId: '',
+      nodeName: '',
       secret: SECRET,
       name: 'agent',
       scopes: ['exec'],
@@ -258,6 +260,8 @@ describe('vibeterm token ls / rm', () => {
     });
     ctx.tokens.put(ENTRY, ['self', ENTRY_NODE], {
       tokenId: 'tok-1',
+      nodeId: '',
+      nodeName: '',
       secret: SECRET,
       name: 'agent',
       scopes: ['exec'],
@@ -301,6 +305,120 @@ describe('vibeterm token ls / rm', () => {
     await expect(token.run(ctx, ['rm', 'agent'])).rejects.toBeInstanceOf(UsageError);
     await expect(token.run(ctx, ['rm'])).rejects.toBeInstanceOf(UsageError);
     expect(deletes).toBe(0);
+  });
+});
+
+describe('node names without a session', () => {
+  test('create by node name records the name and entry node id', async () => {
+    const { ctx, reopen } = await setup({
+      'GET /api/mesh/nodes': () => ({
+        nodes: [{ id: NODE, name: 'office', publicKey: 'pk', online: true }],
+      }),
+      [`POST /n/${NODE}/api/auth/tokens`]: () =>
+        jsonResponse({ token: dto(), secret: SECRET }, 201),
+    });
+    await token.run(ctx, ['create', 'office', '--name', 'agent']);
+    const saved = reopen().get(ENTRY, NODE);
+    expect(saved?.nodeName).toBe('office');
+    expect(saved?.nodeId).toBe(NODE);
+  });
+
+  test('the saved name resolves to the node id while the roster needs a login', async () => {
+    const { ctx } = await setup({
+      'GET /api/mesh/nodes': () => jsonResponse({ code: 'UNAUTHORIZED' }, 401),
+    });
+    ctx.tokens.put(ENTRY, [NODE], {
+      tokenId: 'tok-1',
+      nodeId: NODE,
+      nodeName: 'office',
+      secret: SECRET,
+      name: 'agent',
+      scopes: ['exec'],
+      expiresAt: null,
+      createdAt: 1,
+    });
+    expect((await ctx.resolver.resolveNode('office')).id).toBe(NODE);
+  });
+
+  test('add --id works without a session and keeps the positional as an alias', async () => {
+    let cookie: string | null = null;
+    const { ctx, reopen } = await setup({
+      'GET /api/mesh/nodes': () => jsonResponse({ code: 'UNAUTHORIZED' }, 401),
+      [`GET /n/${NODE}/api/devices`]: (_url, init) => {
+        cookie = new Headers(init?.headers).get('cookie');
+        return { devices: [] };
+      },
+    });
+    await token.run(ctx, ['add', '--id', NODE, 'office', SECRET]);
+    expect(cookie).toBe(`vibeterm_t_${NODE}=${SECRET}`);
+    const saved = reopen().get(ENTRY, NODE);
+    expect(saved?.nodeName).toBe('office');
+    expect(saved?.tokenId).toBe('');
+  });
+
+  test('add by name without a session or --id explains what to do', async () => {
+    const { ctx, dir } = await setup({
+      'GET /api/mesh/nodes': () => jsonResponse({ code: 'UNAUTHORIZED' }, 401),
+    });
+    const error = (await token
+      .run(ctx, ['add', 'office', SECRET])
+      .catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.message).toContain('--id');
+    expect(existsSync(join(dir, 'tokens.json'))).toBe(false);
+  });
+
+  test('add rejects a malformed --id', async () => {
+    const { ctx } = await setup({});
+    await expect(token.run(ctx, ['add', '--id', 'xyz', SECRET])).rejects.toBeInstanceOf(UsageError);
+  });
+});
+
+describe('vibeterm token rm --local', () => {
+  test('drops the saved token for the node without contacting the server', async () => {
+    let calls = 0;
+    const { ctx, stdout, reopen } = await setup({
+      [`DELETE /n/${NODE}/api/auth/tokens/x`]: () => {
+        calls += 1;
+        return new Response(null, { status: 204 });
+      },
+    });
+    ctx.tokens.put(ENTRY, [NODE], {
+      tokenId: '',
+      nodeId: NODE,
+      nodeName: '',
+      secret: SECRET,
+      name: 'imported',
+      scopes: [],
+      expiresAt: null,
+      createdAt: 1,
+    });
+    ctx.tokens.save();
+    await token.run(ctx, ['rm', '--local', NODE]);
+    expect(stdout.text()).toContain('已清除本机保存的');
+    expect(reopen().get(ENTRY, NODE)).toBeNull();
+    expect(calls).toBe(0);
+    await token.run(ctx, ['rm', '--local', NODE]);
+    expect(stdout.text()).toContain('本机没有保存');
+  });
+
+  test('--local on the entry node clears both self and its mesh id', async () => {
+    const { ctx, reopen } = await setup({});
+    ctx.tokens.put(ENTRY, ['self', ENTRY_NODE], {
+      tokenId: '',
+      nodeId: ENTRY_NODE,
+      nodeName: '',
+      secret: SECRET,
+      name: 'imported',
+      scopes: [],
+      expiresAt: null,
+      createdAt: 1,
+    });
+    ctx.tokens.save();
+    await token.run(ctx, ['rm', '--local']);
+    const store = reopen();
+    expect(store.get(ENTRY, 'self')).toBeNull();
+    expect(store.get(ENTRY, ENTRY_NODE)).toBeNull();
   });
 });
 
@@ -350,6 +468,10 @@ describe('vibeterm token add', () => {
   test('a secret without the vtk_ prefix is a usage error', async () => {
     const { ctx } = await setup({});
     await expect(token.run(ctx, ['add', 'self', 'hunter2'])).rejects.toBeInstanceOf(UsageError);
+    await expect(token.run(ctx, ['add', 'self', 'vtk_short'])).rejects.toBeInstanceOf(UsageError);
+    await expect(token.run(ctx, ['add', 'self', `${SECRET};a=b`])).rejects.toBeInstanceOf(
+      UsageError
+    );
     await expect(token.run(ctx, ['add'])).rejects.toBeInstanceOf(UsageError);
   });
 });

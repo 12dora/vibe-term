@@ -6,7 +6,7 @@
 import type { MeshNode } from '@vibeterm/api-client/auth/types';
 import type { DeviceWithRuntime } from '@vibeterm/api-client/devices';
 import { SELF_NODE_ID, isValidNodeId, normalizeNodeId } from '@vibeterm/api-client/node-url';
-import { NotFoundError, UsageError } from './errors';
+import { AuthError, NotFoundError, UsageError } from './errors';
 import type { HttpClient } from './http';
 
 export interface TargetPart {
@@ -167,7 +167,12 @@ export class Resolver {
         (await this.asSelfIfEntry(id, row)) ?? { id, name: row?.name ?? id, isSelf: false, row }
       );
     }
-    const nodes = await this.listNodes();
+    const nodes = await this.listNodes().catch((error: unknown) => {
+      const saved = error instanceof AuthError ? this.savedTokenNode(raw) : null;
+      if (saved) return saved;
+      throw error;
+    });
+    if (!Array.isArray(nodes)) return nodes;
     const matches = nodes.filter((node) => node.name === raw);
     if (matches.length === 1) return await this.rowResult(matches[0]);
     if (matches.length > 1) {
@@ -179,6 +184,13 @@ export class Resolver {
     const insensitive = nodes.filter((node) => node.name.toLowerCase() === raw.toLowerCase());
     if (insensitive.length === 1) return await this.rowResult(insensitive[0]);
     throw new NotFoundError(`unknown node: ${raw}`, 'run: vibeterm nodes ls');
+  }
+
+  /** 没有名册会话时，用 `vibeterm token create|add` 记下的节点名兜底（只认保存过令牌的节点）。 */
+  private savedTokenNode(raw: string): ResolvedNode | null {
+    const saved = this.http.tokenNodeByName(raw);
+    if (!saved) return null;
+    return { id: saved.id, name: saved.name, isSelf: saved.id === SELF_NODE_ID, row: null };
   }
 
   private async rowResult(row: MeshNode): Promise<ResolvedNode> {

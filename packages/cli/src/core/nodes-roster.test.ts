@@ -141,7 +141,9 @@ describe('nodeAddressOf / reachOf / listedOnline', () => {
     const peer = 'b'.repeat(32);
     const stored = (expiresAt: number | null) => ({
       tokenId: 't',
-      secret: 'vtk_x',
+      nodeId: '',
+      nodeName: '',
+      secret: `vtk_${'x'.repeat(43)}`,
       name: 'ci',
       scopes: ['exec'],
       expiresAt,

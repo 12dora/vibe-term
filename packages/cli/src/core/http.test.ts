@@ -5,6 +5,7 @@ import {
   type FetchLike,
   HttpClient,
   createMemoryCookieJar,
+  isAuthFlowPath,
   parseSessionSetCookie,
   parseSetSessionHeader,
 } from './http';
@@ -426,6 +427,49 @@ describe('token cookies', () => {
     expect(cookies[0]).toBe('vibeterm_t_self=vtk_probe');
   });
 
+  test('auth-flow requests never carry the token cookie, /api/auth/mode still does', async () => {
+    const seen: Record<string, string | null> = {};
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-old', Date.now() - 1000);
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 1000,
+      jar,
+      tokens: { get: () => ({ secret: 'vtk_x' }) },
+      fetchImpl: async (url, init) => {
+        seen[new URL(url).pathname] = new Headers(init?.headers).get('cookie');
+        return new Response('{}');
+      },
+    });
+    for (const path of [
+      '/api/auth/challenge',
+      '/api/auth/login',
+      '/api/auth/nodes',
+      '/api/auth/passkey/login/options',
+      '/api/auth/mode',
+      '/api/devices',
+    ]) {
+      await http.fetch('self', path);
+    }
+    for (const path of [
+      '/api/auth/challenge',
+      '/api/auth/login',
+      '/api/auth/nodes',
+      '/api/auth/passkey/login/options',
+    ]) {
+      expect(seen[path] ?? '').not.toContain('vibeterm_t_');
+    }
+    expect(seen['/api/auth/mode']).toContain('vibeterm_t_self=vtk_x');
+    expect(seen['/api/devices']).toContain('vibeterm_t_self=vtk_x');
+  });
+
+  test('isAuthFlowPath ignores query strings and covers share-access', () => {
+    expect(isAuthFlowPath('/api/auth/login?x=1')).toBe(true);
+    expect(isAuthFlowPath('/api/share-access/abc/login')).toBe(true);
+    expect(isAuthFlowPath('/api/auth/mode')).toBe(false);
+    expect(isAuthFlowPath('/api/auth/tokens')).toBe(false);
+  });
+
   test('403 TOKEN_SCOPE says the token lacks the scope instead of asking for login', async () => {
     const http = client(
       async () => new Response(JSON.stringify({ code: 'TOKEN_SCOPE' }), { status: 403 })
@@ -435,8 +479,9 @@ describe('token cookies', () => {
       .catch((err) => err)) as PermissionError;
     expect(error).toBeInstanceOf(PermissionError);
     expect(error.code).toBe('TOKEN_SCOPE');
-    expect(error.message).toContain('令牌');
+    expect(error.message).toContain('lacks the scope');
     expect(error.message).toContain('/api/files/list');
-    expect(error.message).not.toContain('vibeterm login');
+    expect(error.hint).toContain('vibeterm token create --name');
+    expect(error.hint).toContain('vibeterm login');
   });
 });
