@@ -162,13 +162,6 @@ async function assemblePreflightVibeTerm(
   };
 }
 
-async function relayOnlyFrontend(): Promise<Response> {
-  return new Response(JSON.stringify({ error: { code: 'RELAY_NO_FRONTEND' } }), {
-    status: 404,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
 function applySiteSettingsLink(
   roles: VibeTermRoles,
   mesh: MeshRuntime | null,
@@ -223,8 +216,7 @@ async function assembleCore(opts: AssembleVibeTermOptions): Promise<AssembleCore
     const { createMeshRuntime } = await loadMeshRuntimeModule();
     return createMeshRuntime({ ...meshOpts, inboundHttpExtensions });
   };
-  const serveFrontend =
-    opts.serveFrontend ?? (isRelayOnly(roles) ? relayOnlyFrontend : defaultServeFrontend);
+  const serveFrontend = opts.serveFrontend ?? defaultServeFrontend;
   const gateway = await createGateway();
   const tlsSlot: { service?: TlsService } = {};
   const { auth, mesh, authHttp, degraded } = await createAssembleAuthSurface({
@@ -287,6 +279,7 @@ async function assembleHttpAndLifecycle(core: AssembleCore): Promise<AssembledVi
     routeDeps,
   });
   const http = buildHttpAndWs({
+    roles: core.roles,
     gateway: core.gateway,
     mesh: core.mesh,
     relay,

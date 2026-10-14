@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { parseVibeTermRoles as parseGatewayVibeTermRoles } from '../../../../apps/gateway/src/config';
-import { parseVibeTermRoleName, parseVibeTermRoles } from './roles';
+import { parseVibeTermRoleName, parseVibeTermRoles, servesGatewayApp } from './roles';
 
 const STANDALONE = { node: false, relay: false };
 const NODE = { node: true, relay: false };
@@ -75,5 +75,14 @@ describe('gateway vs app VIBETERM_ROLES wrappers', () => {
       expect(() => parseGatewayVibeTermRoles(raw)).toThrow(ROLE_ERROR);
       expect(() => parseVibeTermRoles(raw)).toThrow(ROLE_ERROR);
     }
+  });
+});
+
+describe('servesGatewayApp', () => {
+  test('only pure relay skips the gateway app surface', () => {
+    expect(servesGatewayApp(STANDALONE)).toBe(true);
+    expect(servesGatewayApp(NODE)).toBe(true);
+    expect(servesGatewayApp(RELAY_NODE)).toBe(true);
+    expect(servesGatewayApp(RELAY)).toBe(false);
   });
 });

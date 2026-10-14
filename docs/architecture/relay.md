@@ -21,7 +21,7 @@ relay 的目标是把上级做成**盲中继**：
 
 | 取值 | 说明 |
 |---|---|
-| `relay` | 纯中继。不建 mesh、不建 standalone 登录面、没有前端（`/` 与所有非 `/api/relay/*` 请求回 404 `RELAY_NO_FRONTEND`），只处理 `/api/relay/*` 与 `/relay/uplink` |
+| `relay` | 纯中继。不建 mesh、不建 standalone 登录面、没有前端，也不挂网关应用面（`/api/*`、`/ws`、`/api/exec/ws`、`/n/*` 一律回 404 `RELAY_NO_FRONTEND`，请求不进 gateway），只处理 `/relay/uplink`、`/api/relay/*`、本机 `/api/local/*` 与 `/api/tls*`，以及 `GET /healthz` |
 | `relay,node` | 中继 + 本机 node。有完整前端与本机用户，运营者界面就在设置页 |
 
 挂载顺序（`packages/app/src/runtime/assemble-routes.ts`）：TLS/local → setup → **relay** → mesh → gateway → 静态。

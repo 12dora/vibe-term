@@ -35,10 +35,11 @@ import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { detectCurrentNativePin } from '../lib/native-manifest';
-import type { VibeTermRoles } from '../lib/roles';
+import { type VibeTermRoles, servesGatewayApp } from '../lib/roles';
 import { AcmeHttp01Challenge } from '../tls/acme-challenge';
 import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
+import { relayHttp, relayOnlyGatewayHttp, relayOnlyNotFound } from './assemble-relay-http';
 import { type GatewayWsAuth, routeWebsocket } from './assemble-websocket';
 import { jsonErr } from './http';
 import { type LocalRouteDeps, handleLocalRequest } from './local-routes';
@@ -350,6 +351,7 @@ export function buildLocalRouteDeps(input: {
 }
 
 export function buildHttpAndWs(input: {
+  roles: VibeTermRoles;
   gateway: GatewayRuntime;
   mesh: MeshRuntime | null;
   relay?: RelayRuntime | null;
@@ -359,20 +361,32 @@ export function buildHttpAndWs(input: {
   staticRoot: string;
 }): HttpAndWs {
   const authSurface = input.mesh ?? input.authHttp;
+  const appSurface = servesGatewayApp(input.roles);
+  if (appSurface && !authSurface) {
+    throw new Error('gateway app surface requires an auth surface');
+  }
   const relay = input.relay ?? null;
   let tlsHandler: TlsHandler = async () => null;
-  const fetch = createHttpDispatch([
+  const common: HttpHandler[] = [
     (req) => tlsHandler(req),
     (req) => handleLocalRequest(req, input.routeDeps),
     (req) => handleSetupRequest(req, input.routeDeps),
-    (req, server) =>
-      relay
-        ? relay.handleRequest(req, server).then((r) => (r instanceof Response ? r : null))
-        : null,
-    (req, server) => meshHttp(authSurface, req, server),
-    (req, server) => gatewayHttp(input.gateway, Boolean(authSurface), req, server),
-    (req) => input.serveFrontend(req, input.staticRoot),
-  ]);
+    (req, server) => relayHttp(relay, req, server),
+  ];
+  const fetch = createHttpDispatch(
+    appSurface
+      ? [
+          ...common,
+          (req, server) => meshHttp(authSurface, req, server),
+          (req, server) => gatewayHttp(input.gateway, Boolean(authSurface), req, server),
+          (req) => input.serveFrontend(req, input.staticRoot),
+        ]
+      : [
+          ...common,
+          (req, server) => relayOnlyGatewayHttp(input.gateway, req, server),
+          () => relayOnlyNotFound(),
+        ]
+  );
   const websocket = routeWebsocket(input.gateway, input.mesh ?? wsAuthFrom(input.authHttp), relay);
   return {
     fetch,
