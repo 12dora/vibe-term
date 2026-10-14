@@ -29,43 +29,39 @@ export type PeerInboundStreamHost = {
     | undefined;
 };
 
-export function handlePeerInboundStream(
+type InboundAcceptor = (
   host: PeerInboundStreamHost,
   peerNodeId: string,
   stream: LinkStream
-): void {
-  if (stream.dead) return;
-  const kind = classifyOpenPayload(stream.openPayload);
-  if (kind === 'tcp') {
-    dispatchTcpStream(stream, { peerNodeId, selfNodeId: host.selfNodeId });
+) => void;
+
+function acceptTcp(host: PeerInboundStreamHost, peerNodeId: string, stream: LinkStream): void {
+  dispatchTcpStream(stream, { peerNodeId, selfNodeId: host.selfNodeId });
+}
+
+function acceptExec(host: PeerInboundStreamHost, peerNodeId: string, stream: LinkStream): void {
+  if (!host.sessionStore) {
+    stream.reset('exec-not-configured');
     return;
   }
-  if (kind === 'exec') {
-    if (!host.sessionStore) {
-      stream.reset('exec-not-configured');
-      return;
-    }
-    acceptExecStream(stream, { peerNodeId, sessionStore: host.sessionStore, now: host.now });
+  acceptExecStream(stream, { peerNodeId, sessionStore: host.sessionStore, now: host.now });
+}
+
+function acceptHttp(host: PeerInboundStreamHost, peerNodeId: string, stream: LinkStream): void {
+  const dispatchHttp = host.dispatchHttp();
+  if (!dispatchHttp || !host.sessionStore) {
+    stream.reset('http-not-configured');
     return;
   }
-  if (kind === 'http') {
-    const dispatchHttp = host.dispatchHttp();
-    if (!dispatchHttp || !host.sessionStore) {
-      stream.reset('http-not-configured');
-      return;
-    }
-    void acceptHttpStream(stream, {
-      peerNodeId,
-      sessionStore: host.sessionStore,
-      dispatchHttp,
-      now: host.now,
-    });
-    return;
-  }
-  if (kind !== 'ws') {
-    stream.reset('unknown-stream-type');
-    return;
-  }
+  void acceptHttpStream(stream, {
+    peerNodeId,
+    sessionStore: host.sessionStore,
+    dispatchHttp,
+    now: host.now,
+  });
+}
+
+function acceptWs(host: PeerInboundStreamHost, peerNodeId: string, stream: LinkStream): void {
   if (!host.wsServer || !host.sessionStore) {
     stream.reset('ws-not-configured');
     return;
@@ -78,4 +74,26 @@ export function handlePeerInboundStream(
     onGatewaySession: host.onGatewaySession ?? undefined,
     onGatewaySessionClose: host.onGatewaySessionClose ?? undefined,
   });
+}
+
+const INBOUND_ACCEPTORS: Partial<Record<ReturnType<typeof classifyOpenPayload>, InboundAcceptor>> =
+  {
+    tcp: acceptTcp,
+    exec: acceptExec,
+    http: acceptHttp,
+    ws: acceptWs,
+  };
+
+export function handlePeerInboundStream(
+  host: PeerInboundStreamHost,
+  peerNodeId: string,
+  stream: LinkStream
+): void {
+  if (stream.dead) return;
+  const accept = INBOUND_ACCEPTORS[classifyOpenPayload(stream.openPayload)];
+  if (!accept) {
+    stream.reset('unknown-stream-type');
+    return;
+  }
+  accept(host, peerNodeId, stream);
 }

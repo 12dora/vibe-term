@@ -3,19 +3,14 @@
 // 存的是机器访问令牌的明文 secret（只在创建时返回一次），本身就是完整凭据：
 // 权限与符号链接检查与会话文件一致，过期令牌一律当作不存在。
 
-import {
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, resolve } from 'node:path';
 import { type ConfigEnv, tokensFilePath } from './config';
-import { CliError, UsageError } from './errors';
+import type { UsageError } from './errors';
+import {
+  type SecureFileKind,
+  loadSecureJson,
+  saveSecureJson,
+  securePrivacyError,
+} from './secure-json-file';
 
 export const TOKENS_FILE_VERSION = 1;
 
@@ -96,32 +91,18 @@ export function parseTokenFile(text: string): TokenFile {
   return file;
 }
 
+const TOKEN_FILE_KIND: SecureFileKind = {
+  noun: 'token',
+  sensitivity: 'this file holds usable access tokens, protect it',
+};
+
 /** 符号链接一律拒绝；win32 的 mode 恒为 0666/0444，跳过权限位。 */
 export function tokenFilePrivacyError(
   path: string,
   info: { isSymbolicLink(): boolean; mode: number },
   platform: NodeJS.Platform = process.platform
 ): UsageError | null {
-  if (info.isSymbolicLink()) {
-    return new UsageError(
-      `token file ${path} is a symlink; refuse to load a redirected token file`
-    );
-  }
-  if (platform === 'win32') return null;
-  if ((info.mode & 0o077) !== 0) {
-    return new UsageError(
-      `token file ${path} is group/world readable; chmod 0600 (this file holds usable access tokens, protect it)`
-    );
-  }
-  return null;
-}
-
-function directoryExists(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
+  return securePrivacyError(TOKEN_FILE_KIND, path, info, platform);
 }
 
 export class TokenStore {
@@ -138,15 +119,7 @@ export class TokenStore {
   }
 
   private load(): TokenFile {
-    if (this.data) return this.data;
-    try {
-      const error = tokenFilePrivacyError(this.path, lstatSync(this.path));
-      if (error) throw error;
-      this.data = parseTokenFile(readFileSync(this.path, 'utf8'));
-    } catch (error) {
-      if (error instanceof CliError) throw error;
-      this.data = emptyFile();
-    }
+    this.data ??= loadSecureJson(TOKEN_FILE_KIND, this.path, parseTokenFile, emptyFile);
     return this.data;
   }
 
@@ -187,22 +160,7 @@ export class TokenStore {
     return removed;
   }
 
-  /** 原子写：先写同目录临时文件（0600）再 rename。 */
   save(): void {
-    const file = this.load();
-    const dir = dirname(this.path);
-    const existed = directoryExists(dir);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const isOwnDir = this.ownDir !== null && resolve(dir) === resolve(this.ownDir);
-    if (!existed || isOwnDir) chmodSync(dir, 0o700);
-    const tmp = `${this.path}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      chmodSync(tmp, 0o600);
-      renameSync(tmp, this.path);
-    } catch (error) {
-      rmSync(tmp, { force: true });
-      throw error;
-    }
+    saveSecureJson(this.path, this.ownDir, this.load());
   }
 }

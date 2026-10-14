@@ -6,12 +6,9 @@ import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
 import type { LocalAuthStoreLike } from '../db/local-auth-settings';
 import { closeExecSessionsForUser } from '../exec/channel/registry';
-import {
-  type ExecUpgradeAuth,
-  handleExecWsUpgrade,
-  isExecWsPath,
-} from '../exec/channel/ws-upgrade';
+import { isExecWsPath } from '../exec/channel/ws-upgrade';
 import { type AuthKeyLogPublisher, AuthRoutes, isAuthPublicPath } from './auth-routes';
+import { guardExecWebSocket } from './exec-ws-guard';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
   connectionIdOf,
@@ -254,7 +251,7 @@ export class MeshHttpRuntime {
   guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined {
     const url = new URL(req.url);
     if (isExecWsPath(url.pathname, this.nodeId)) {
-      return this.guardExecWebSocket(req, server);
+      return guardExecWebSocket(req, server, this.sessionDeps);
     }
     if (!isGatewayWsPath(url.pathname, this.nodeId)) {
       return null;
@@ -276,17 +273,6 @@ export class MeshHttpRuntime {
       return null;
     }
     return rejectGatewayWs(req, server, token ? shareWsCloseFor(shareIdOfToken(token)) : null);
-  }
-
-  /** exec 通道升级：只认常规会话（standalone 开放短路为无主身份），分享凭证不能开 shell。 */
-  guardExecWebSocket(req: Request, server: MeshUpgradeServer): Response | undefined {
-    return handleExecWsUpgrade(req, server, (request) => this.authenticateExecUpgrade(request));
-  }
-
-  private authenticateExecUpgrade(req: Request): ExecUpgradeAuth | Response {
-    const auth = authenticateRequest(req, this.sessionDeps);
-    if (!auth.ok) return jsonError('UNAUTHORIZED', 401);
-    return { uid: auth.userId, tokenId: null };
   }
 
   closeSocketsForUser(uid: string): void {

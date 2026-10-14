@@ -9,6 +9,7 @@
 
 import { applyLegacyEnvAliases } from '../../../packages/shared/src/env/load-env';
 import { formatHttpEndpoint } from '../../../packages/shared/src/network';
+import type { createExecWebSocketHandlers } from './exec/channel/ws-handlers';
 import { applyManagedTmuxNamespace, parseManagedGatewayArgs } from './managed-args';
 import type { GatewaySession } from './ws/gateway-session';
 import type { GatewaySocketData } from './ws/types';
@@ -106,6 +107,60 @@ function embeddedVersion(): string {
   return 'unknown';
 }
 
+type ExecSocketRouting = {
+  handlers: ReturnType<typeof createExecWebSocketHandlers>;
+  isSocket: (ws: { data?: unknown }) => boolean;
+};
+
+function buildManagedWebSocketHandlers(opts: {
+  getRuntime: () => ManagedGatewayRuntime | null;
+  socketOwners: Map<GatewaySession, ManagedGatewayRuntime>;
+  initialWebSocket: ManagedGatewayRuntime['websocket'];
+  exec: ExecSocketRouting;
+}): Bun.WebSocketHandler<unknown> {
+  const { getRuntime, socketOwners, initialWebSocket, exec } = opts;
+  return {
+    backpressureLimit: initialWebSocket.backpressureLimit,
+    closeOnBackpressureLimit: initialWebSocket.closeOnBackpressureLimit,
+    open(ws) {
+      if (exec.isSocket(ws)) return exec.handlers.open(ws);
+      const runtime = getRuntime();
+      if (!runtime) {
+        ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
+        return;
+      }
+      runtime.websocket.open(ws);
+      const session = socketSession(ws);
+      if (session) {
+        socketOwners.set(session, runtime);
+      }
+    },
+    message(ws, message) {
+      if (exec.isSocket(ws)) return exec.handlers.message(ws, message);
+      const session = socketSession(ws);
+      const runtime = session ? socketOwners.get(session) : undefined;
+      if (!runtime) {
+        ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
+        return;
+      }
+      runtime.websocket.message(ws, message);
+    },
+    drain(ws) {
+      if (exec.isSocket(ws)) return exec.handlers.drain(ws);
+      const session = socketSession(ws);
+      if (!session) return;
+      socketOwners.get(session)?.websocket.drain(ws);
+    },
+    close(ws, code, reason) {
+      if (exec.isSocket(ws)) return exec.handlers.close(ws);
+      const session = socketSession(ws);
+      const runtime = session ? socketOwners.get(session) : undefined;
+      if (session) socketOwners.delete(session);
+      runtime?.websocket.close(ws, code, reason);
+    },
+  };
+}
+
 async function runManagedGateway(): Promise<void> {
   // managed 入口不读仓库 env 文件（变量由 companion CLI 注入），但仍要把旧前缀镜像过来：
   // 改名前安装的实例注入的是 TMEX_*。
@@ -181,46 +236,12 @@ async function runManagedGateway(): Promise<void> {
           bunServer
         );
       },
-      websocket: {
-        backpressureLimit: initialWebSocket.backpressureLimit,
-        closeOnBackpressureLimit: initialWebSocket.closeOnBackpressureLimit,
-        open(ws) {
-          if (isExecWsSocket(ws)) return execWebSocketHandlers.open(ws);
-          const runtime = activeRuntime;
-          if (!runtime) {
-            ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
-            return;
-          }
-          runtime.websocket.open(ws);
-          const session = socketSession(ws);
-          if (session) {
-            socketOwners.set(session, runtime);
-          }
-        },
-        message(ws, message) {
-          if (isExecWsSocket(ws)) return execWebSocketHandlers.message(ws, message);
-          const session = socketSession(ws);
-          const runtime = session ? socketOwners.get(session) : undefined;
-          if (!runtime) {
-            ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
-            return;
-          }
-          runtime.websocket.message(ws, message);
-        },
-        drain(ws) {
-          if (isExecWsSocket(ws)) return execWebSocketHandlers.drain(ws);
-          const session = socketSession(ws);
-          if (!session) return;
-          socketOwners.get(session)?.websocket.drain(ws);
-        },
-        close(ws, code, reason) {
-          if (isExecWsSocket(ws)) return execWebSocketHandlers.close(ws);
-          const session = socketSession(ws);
-          const runtime = session ? socketOwners.get(session) : undefined;
-          if (session) socketOwners.delete(session);
-          runtime?.websocket.close(ws, code, reason);
-        },
-      },
+      websocket: buildManagedWebSocketHandlers({
+        getRuntime: () => activeRuntime,
+        socketOwners,
+        initialWebSocket,
+        exec: { handlers: execWebSocketHandlers, isSocket: isExecWsSocket },
+      }),
     });
 
     const actualPort = server.port;

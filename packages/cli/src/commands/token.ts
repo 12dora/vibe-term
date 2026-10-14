@@ -13,7 +13,7 @@ import {
   type CreateAccessTokenResponse,
   isAccessTokenScope,
 } from '@vibeterm/shared';
-import { flagBool, flagString } from '../core/args';
+import { type FlagValues, flagBool, flagString } from '../core/args';
 import { type SubHandler, emit, rejectExtra, requireArg, runSubs } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { AuthError, PermissionError, UsageError } from '../core/errors';
@@ -135,8 +135,15 @@ function formatTime(at: number | null | undefined, empty = '-'): string {
   return new Date(at).toISOString().slice(0, 16).replace('T', ' ');
 }
 
-const create: SubHandler = async (ctx, flags, positionals) => {
-  rejectExtra(positionals, 1);
+type CreateOptions = {
+  name: string;
+  scopes: AccessTokenScope[];
+  expiresInDays: number | null;
+  noSave: boolean;
+  print: boolean;
+};
+
+function parseCreateOptions(flags: FlagValues): CreateOptions {
   const name = flagString(flags, 'name')?.trim();
   if (!name) throw new UsageError('缺少 --name', '例：vibeterm token create --name ci');
   if (name.length > ACCESS_TOKEN_NAME_MAX) {
@@ -147,28 +154,35 @@ const create: SubHandler = async (ctx, flags, positionals) => {
   const noSave = flagBool(flags, 'no-save');
   const print = flagBool(flags, 'print');
   if (noSave && print) throw new UsageError('--print 与 --no-save 不能同时使用');
+  return { name, scopes, expiresInDays, noSave, print };
+}
 
-  const target = await resolveTarget(ctx, positionals[0]);
-  const body: CreateAccessTokenRequest = { name, scopes, expiresInDays };
-  const created = await asSessionOnly(target, () =>
-    ctx.http.json<CreateAccessTokenResponse>(target.id, 'POST', '/api/auth/tokens', body)
-  );
+async function saveCreatedToken(
+  ctx: CliContext,
+  nodeId: string,
+  created: CreateAccessTokenResponse
+): Promise<void> {
+  ctx.tokens.put(ctx.globals.entry, await storageKeys(ctx, nodeId), {
+    tokenId: created.token.id,
+    secret: created.secret,
+    name: created.token.name,
+    scopes: created.token.scopes,
+    expiresAt: created.token.expiresAt,
+    createdAt: created.token.createdAt,
+  });
+  ctx.tokens.save();
+}
 
-  if (!noSave) {
-    ctx.tokens.put(ctx.globals.entry, await storageKeys(ctx, target.id), {
-      tokenId: created.token.id,
-      secret: created.secret,
-      name: created.token.name,
-      scopes: created.token.scopes,
-      expiresAt: created.token.expiresAt,
-      createdAt: created.token.createdAt,
-    });
-    ctx.tokens.save();
-  }
-
+function reportCreatedToken(
+  ctx: CliContext,
+  label: string,
+  opts: CreateOptions,
+  created: CreateAccessTokenResponse
+): void {
+  const { name, scopes, expiresInDays, noSave, print } = opts;
   const showSecret = print || noSave;
   const expiry = expiresInDays === null ? '永不过期' : `有效期 ${expiresInDays} 天`;
-  const summary = `已为 ${target.label} 创建令牌 ${name}（${scopes.join(',')}，${expiry}）${noSave ? '，未保存' : '并保存'}`;
+  const summary = `已为 ${label} 创建令牌 ${name}（${scopes.join(',')}，${expiry}）${noSave ? '，未保存' : '并保存'}`;
   if (ctx.globals.json) {
     ctx.out.data({
       token: created.token,
@@ -181,6 +195,22 @@ const create: SubHandler = async (ctx, flags, positionals) => {
   } else {
     ctx.out.line(summary);
   }
+}
+
+const create: SubHandler = async (ctx, flags, positionals) => {
+  rejectExtra(positionals, 1);
+  const opts = parseCreateOptions(flags);
+  const target = await resolveTarget(ctx, positionals[0]);
+  const body: CreateAccessTokenRequest = {
+    name: opts.name,
+    scopes: opts.scopes,
+    expiresInDays: opts.expiresInDays,
+  };
+  const created = await asSessionOnly(target, () =>
+    ctx.http.json<CreateAccessTokenResponse>(target.id, 'POST', '/api/auth/tokens', body)
+  );
+  if (!opts.noSave) await saveCreatedToken(ctx, target.id, created);
+  reportCreatedToken(ctx, target.label, opts, created);
 };
 
 const ls: SubHandler = async (ctx, _flags, positionals) => {

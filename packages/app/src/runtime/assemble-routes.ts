@@ -142,6 +142,19 @@ export async function tryStop(run: () => unknown, label?: string): Promise<void>
   }
 }
 
+function isGatewayWsRoute(path: string, nodeId: string): boolean {
+  return path === '/ws' || path === '/n/self/ws' || path === `/n/${nodeId}/ws`;
+}
+
+function guardMeshUpgrade(
+  surface: HttpAuthSurface,
+  req: Request,
+  server: Bun.Server<unknown>,
+  applies: boolean
+): HttpResult {
+  return applies ? surface.guardGatewayWebSocket(req, server) : null;
+}
+
 async function meshHttp(
   surface: HttpAuthSurface | null,
   req: Request,
@@ -149,18 +162,14 @@ async function meshHttp(
 ): Promise<HttpResult> {
   if (!surface) return null;
   const path = new URL(req.url).pathname;
-  if (isExecWsPath(path, surface.nodeId)) {
-    const execGuard = surface.guardGatewayWebSocket(req, server);
-    if (execGuard !== null) return execGuard ?? undefined;
-  }
+  const execGuard = guardMeshUpgrade(surface, req, server, isExecWsPath(path, surface.nodeId));
+  if (execGuard !== null) return execGuard;
   if (path.startsWith('/api/')) {
     const blocked = surface.localUiGuard(req);
     if (blocked) return blocked;
   }
-  if (path === '/ws' || path === '/n/self/ws' || path === `/n/${surface.nodeId}/ws`) {
-    const wsGuard = surface.guardGatewayWebSocket(req, server);
-    if (wsGuard !== null) return wsGuard ?? undefined;
-  }
+  const wsGuard = guardMeshUpgrade(surface, req, server, isGatewayWsRoute(path, surface.nodeId));
+  if (wsGuard !== null) return wsGuard;
   const meshResp = await surface.handleRequest(req, server);
   if (isMeshRewritten(meshResp) || meshResp == null) return meshResp;
   const next =

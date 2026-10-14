@@ -3,19 +3,15 @@
 // 只存会话 cookie（sid）与它的到期时刻，**绝不落盘密码、根种子或会话私钥**：
 // 会话过期后重新 `vibeterm login` 即可，落盘私钥换来的只是一点便利和一个长期把柄。
 
-import {
-  chmodSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { rmSync } from 'node:fs';
 import { type ConfigEnv, sessionFilePath } from './config';
-import { CliError, UsageError } from './errors';
+import type { UsageError } from './errors';
+import {
+  type SecureFileKind,
+  loadSecureJson,
+  saveSecureJson,
+  securePrivacyError,
+} from './secure-json-file';
 
 export const SESSION_FILE_VERSION = 1;
 
@@ -104,32 +100,18 @@ export function parseSessionFile(text: string): SessionFile {
   return file;
 }
 
+const SESSION_FILE_KIND: SecureFileKind = {
+  noun: 'session',
+  sensitivity: 'this file is a full session capability, protect it',
+};
+
 /** 符号链接一律拒绝；win32 的 mode 恒为 0666/0444，跳过权限位。 */
 export function sessionFilePrivacyError(
   path: string,
   info: { isSymbolicLink(): boolean; mode: number },
   platform: NodeJS.Platform = process.platform
 ): UsageError | null {
-  if (info.isSymbolicLink()) {
-    return new UsageError(
-      `session file ${path} is a symlink; refuse to load a redirected session file`
-    );
-  }
-  if (platform === 'win32') return null;
-  if ((info.mode & 0o077) !== 0) {
-    return new UsageError(
-      `session file ${path} is group/world readable; chmod 0600 (this file is a full session capability, protect it)`
-    );
-  }
-  return null;
-}
-
-function directoryExists(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
+  return securePrivacyError(SESSION_FILE_KIND, path, info, platform);
 }
 
 export class SessionStore {
@@ -146,20 +128,8 @@ export class SessionStore {
   }
 
   /** 已有文件必须是 0600：group/world 可读就是把完整会话能力泄露出去。 */
-  private assertPrivateFile(): void {
-    const error = sessionFilePrivacyError(this.path, lstatSync(this.path));
-    if (error) throw error;
-  }
-
   private load(): SessionFile {
-    if (this.data) return this.data;
-    try {
-      this.assertPrivateFile();
-      this.data = parseSessionFile(readFileSync(this.path, 'utf8'));
-    } catch (error) {
-      if (error instanceof CliError) throw error;
-      this.data = emptyFile();
-    }
+    this.data ??= loadSecureJson(SESSION_FILE_KIND, this.path, parseSessionFile, emptyFile);
     return this.data;
   }
 
@@ -218,24 +188,8 @@ export class SessionStore {
     if (file.lastEntry === entry) file.lastEntry = null;
   }
 
-  /** 原子写：先写同目录临时文件（0600）再 rename，避免半截文件被下次读到。 */
   save(): void {
-    const file = this.load();
-    const dir = dirname(this.path);
-    const existed = directoryExists(dir);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const isOwnDir = this.ownDir !== null && resolve(dir) === resolve(this.ownDir);
-    // 只 chmod 本次新建的目录，或 CLI 自有 config dir；用户指定的已存在目录原样保留。
-    if (!existed || isOwnDir) chmodSync(dir, 0o700);
-    const tmp = `${this.path}.${process.pid}.${Date.now()}.tmp`;
-    try {
-      writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      chmodSync(tmp, 0o600);
-      renameSync(tmp, this.path);
-    } catch (error) {
-      rmSync(tmp, { force: true });
-      throw error;
-    }
+    saveSecureJson(this.path, this.ownDir, this.load());
   }
 
   remove(): void {

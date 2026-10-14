@@ -412,6 +412,15 @@ function forbiddenError(path: string, code: string | null, body: string): Permis
   return new PermissionError(`${path} → ${code ?? 'forbidden'}${detail}`.trim(), code ?? undefined);
 }
 
+function isNotFoundStatus(status: number, path: string): boolean {
+  return status === 404 || (status === 405 && isUnupgradedAuthPath(path));
+}
+
+function notFoundError(path: string, status: number, body: string): NotFoundError {
+  const detail = status === 405 ? 'needs upgrade to 2.10.0' : body || 'not found';
+  return new NotFoundError(`${path} → ${status} ${detail}`);
+}
+
 export const TOKEN_SCOPE_CODE = 'TOKEN_SCOPE';
 
 /** 令牌调用方越权：重新登录救不了，要换一把带对应 scope 的令牌。 */
@@ -437,12 +446,10 @@ export function httpStatusError(
   if (status === 401 || (status === 403 && isAuthErrorCode(code))) {
     return loginRequiredError(nodeId, body);
   }
-  if (status === 403 && code === TOKEN_SCOPE_CODE) return tokenScopeError(path);
-  if (status === 403) return forbiddenError(path, code, body);
-  if (status === 404 || (status === 405 && isUnupgradedAuthPath(path))) {
-    const detail = status === 405 ? 'needs upgrade to 2.10.0' : body || 'not found';
-    return new NotFoundError(`${path} → ${status} ${detail}`);
+  if (status === 403) {
+    return code === TOKEN_SCOPE_CODE ? tokenScopeError(path) : forbiddenError(path, code, body);
   }
+  if (isNotFoundStatus(status, path)) return notFoundError(path, status, body);
   return new CliError(
     `${path} → HTTP ${status} ${body}`.trim(),
     EXIT_GENERIC,
