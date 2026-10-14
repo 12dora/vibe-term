@@ -15,13 +15,14 @@ const FLAGS = {
   'no-progress': 'boolean',
   'on-conflict': 'string',
   'fail-on-skip': 'boolean',
+  verbose: 'boolean',
 } as const;
 
 const CONFLICTS = new Set<OnConflict>(['overwrite', 'skip', 'rename']);
 
 const SHORT_TOKEN_RE = /^-[A-Za-z]+$/;
 
-/** scp 习惯：`-r`/`-R` 递归，组合写法里的 `p` 忽略；其余短旗标明确拒绝。 */
+/** scp 习惯：`-r`/`-R` 递归，`-v` 打印汇总行，组合写法里的 `p` 忽略；其余短旗标明确拒绝。 */
 function expandShort(argv: string[]): string[] {
   const out: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
@@ -35,11 +36,12 @@ function expandShort(argv: string[]): string[] {
       continue;
     }
     const letters = [...token.slice(1)];
-    const unsupported = letters.find((letter) => !'rRp'.includes(letter));
+    const unsupported = letters.find((letter) => !'rRpv'.includes(letter));
     if (unsupported) {
-      throw new UsageError(`cp 不支持选项 -${unsupported}`, '仅支持 -r（递归）；其余见 --help');
+      throw new UsageError(`cp 不支持选项 -${unsupported}`, '仅支持 -r（递归）、-v；其余见 --help');
     }
     if (letters.some((letter) => letter === 'r' || letter === 'R')) out.push('--recursive');
+    if (letters.includes('v')) out.push('--verbose');
   }
   return out;
 }
@@ -110,7 +112,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
       truncated: result.truncated,
     });
     if (abort.signal.aborted) throw new InterruptError();
-    if (!ctx.globals.json) {
+    if (!ctx.globals.json && (flagBool(flags, 'verbose') || ctx.out.isStderrTty())) {
       ctx.out.info(
         `copied ${result.files} file(s), skipped ${result.skipped}, errors ${result.errors} (${result.kind})`
       );
@@ -165,7 +167,8 @@ export const command: Command = {
     '远端路径 <node>:<path>：',
     '  <node>:              节点的 home 目录；<node> 可为节点名、节点 id，或 self / local / .（入口节点）',
     '  <node>:/abs/path     设备上的绝对路径，须位于某个已启用的文件根内（取最长前缀的根）',
-    '  <node>:rel/path      相对 home；首段恰为文件根 id 或名称时按该根解析（兼容旧写法 <node>:<root>/<rel>）',
+    '  <node>:rel/path      相对 home（scp 语义）。例外（兼容旧写法 <node>:<root>/<rel>）：首段恰为默认设备上某',
+    '                       文件根的 id 或名称、且 home 下不存在同名条目时，按该根解析；否则一律相对 home',
     '  <rootId>:<rel>、fs-root:<rel>、home-root:<rel>   入口节点上的旧式根写法，行为不变',
     "  不在任何文件根内的路径会被拒绝；可在设置中添加文件根，或改用 rsync -e 'vibeterm rsh'。",
     '',
@@ -173,6 +176,7 @@ export const command: Command = {
     '',
     'Options:',
     '  -r, -R, --recursive          复制目录（组合写法如 -rp 可用，p 被忽略；其余短旗标不支持）',
+    '  -v, --verbose                结束时在 stderr 打印汇总行（默认仅 stderr 为 TTY 时打印；脚本中保持静默）',
     '  --device <id|name>           远端设备，默认节点的首个本机设备（node↔node 不支持）',
     '  --on-conflict overwrite|skip|rename   同名冲突策略，默认 overwrite（rename 仅限本机↔节点）',
     '  --fail-on-skip               有条目被跳过（冲突 / 符号链接等）时退出码为 1',

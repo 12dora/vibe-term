@@ -1,4 +1,5 @@
-// scp 风格 `<node>:<path>` 到文件根的解析（cp 用）：绝对路径取最长前缀根，相对路径先认 `<root>/` 再落 home。
+// scp 风格 `<node>:<path>` 到文件根的解析（cp 用）：绝对路径取最长前缀根，相对路径默认相对 home；
+// 仅当首段恰为默认设备上某文件根的 id / 名称、且 home 下不存在同名条目时，才按旧式 `<root>/<rel>` 解析。
 
 import type { CliContext } from './context';
 import { NotFoundError, UsageError } from './errors';
@@ -8,6 +9,7 @@ import {
   listFileRoots,
   resolveFileRoot,
   resolveVirtualFsRoot,
+  statRemote,
 } from './files-api';
 import {
   type CpFileRef,
@@ -79,30 +81,64 @@ function pickLongestRoot(candidates: readonly FileRootDto[], absPath: string): F
   return best?.root ?? null;
 }
 
-/** scp 语义的 `<node>:<path>` 落到具体文件根：绝对路径取最长前缀根；相对路径先认旧式 `<root>/`，否则相对 home。 */
-export function locateCpPath(
+/** home 下是否存在名为 `name` 的条目（旧式 `<root>/` 写法被 home 内同名目录遮蔽的判定）。 */
+export type HomeProbe = (home: FileRootDto, name: string) => Promise<boolean>;
+
+export function statHomeProbe(ctx: CliContext, nodeId: string): HomeProbe {
+  return async (home, name) => {
+    try {
+      await statRemote(ctx.http, nodeId, home.id, joinRootPath(home.path, name));
+      return true;
+    } catch (error) {
+      if (error instanceof NotFoundError) return false;
+      throw error;
+    }
+  };
+}
+
+function exactLegacyRoot(
   roots: readonly FileRootDto[],
-  path: string,
+  scope: CpPathScope,
+  first: string
+): FileRootDto | null {
+  if (scope.explicit || !scope.deviceId) return null;
+  const matches = rootsOnDevice(roots, scope).filter(
+    (root) => root.enabled && (root.id === first || root.name === first)
+  );
+  return tryResolveRoot(matches, first);
+}
+
+function homeFallback(
+  roots: readonly FileRootDto[],
+  segments: readonly string[],
   scope: CpPathScope,
   label: string
 ): LocatedPath {
+  const home = homeRootOrThrow(roots, label);
+  if (scope.explicit && scope.deviceId && home.deviceId !== scope.deviceId) {
+    throw new UsageError(`该设备在 ${label} 上没有 home 根`, '请使用绝对路径');
+  }
+  return { root: home, absPath: joinRootPath(home.path, segments.join('/')) };
+}
+
+/** scp 语义的 `<node>:<path>` 落到具体文件根：绝对路径取最长前缀根；相对路径相对 home，仅在 home 下无同名条目时兼容旧式 `<root>/<rel>`。 */
+export async function locateCpPath(
+  roots: readonly FileRootDto[],
+  path: string,
+  scope: CpPathScope,
+  label: string,
+  homeHas: HomeProbe
+): Promise<LocatedPath> {
   if (path.startsWith('/')) return locateAbsolute(roots, normalizePosixPath(path), scope, label);
   const segments = path.split('/').filter((segment) => segment !== '' && segment !== '.');
-  if (segments.length > 0) {
-    const pool = scope.explicit ? rootsOnDevice(roots, scope) : roots;
-    const legacy = tryResolveRoot(pool, segments[0]);
-    if (legacy) {
+  const legacy = segments.length > 0 ? exactLegacyRoot(roots, scope, segments[0]) : null;
+  if (legacy) {
+    const home = tryResolveRoot(roots, VIRTUAL_HOME_ROOT_ID);
+    if (!home || !(await homeHas(home, segments[0]))) {
       return { root: legacy, absPath: joinRootPath(legacy.path, segments.slice(1).join('/')) };
     }
   }
-  const home = homeRootOrThrow(roots, label);
-  if (scope.explicit && scope.deviceId && home.deviceId !== scope.deviceId) {
-    throw new UsageError(
-      `该设备在 ${label} 上没有 home 根`,
-      '请使用绝对路径，或 <node>:<root>/<path> 形式'
-    );
-  }
-  return { root: home, absPath: joinRootPath(home.path, segments.join('/')) };
+  return homeFallback(roots, segments, scope, label);
 }
 
 function locateAbsolute(
@@ -150,5 +186,12 @@ export async function resolveCpPath(
     return { nodeId, root, absPath: joinRootPath(root.path, ref.relpath) };
   }
   const scope = await cpScope(ctx, nodeId, roots, options.device);
-  return { nodeId, ...locateCpPath(roots, ref.path, scope, ref.node ?? '当前节点') };
+  const located = await locateCpPath(
+    roots,
+    ref.path,
+    scope,
+    ref.node ?? '当前节点',
+    statHomeProbe(ctx, nodeId)
+  );
+  return { nodeId, ...located };
 }

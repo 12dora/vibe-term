@@ -257,11 +257,15 @@ function router(state: RouterState): FetchLike {
   };
 }
 
-async function testContext(fetchImpl: FetchLike, options: { json?: boolean } = {}) {
+async function testContext(
+  fetchImpl: FetchLike,
+  options: { json?: boolean; stderrTty?: boolean } = {}
+) {
   const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-cp-'));
   dirs.push(dir);
   const stdout = collector();
   const stderr = collector();
+  if (options.stderrTty) Object.assign(stderr.stream, { isTTY: true });
   const ctx = buildContext({
     entryFlag: ENTRY,
     node: null,
@@ -295,6 +299,25 @@ describe('vibeterm cp', () => {
     expect(state.puts.length).toBeGreaterThan(0);
     expect(Buffer.concat(state.bodies).toString('utf8')).toBe('abc');
     expect(state.mkdirs?.length).toBeGreaterThan(0);
+  });
+
+  test('summary line is quiet unless stderr is a TTY or -v is given', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const quiet = await testContext(router({ puts: [], bodies: [] }));
+    await cp.run(quiet.ctx, [src, 'office:home/docs']);
+    expect(quiet.stderr.text()).not.toContain('copied');
+    const verbose = await testContext(router({ puts: [], bodies: [] }));
+    await cp.run(verbose.ctx, ['-v', src, 'office:home/docs']);
+    expect(verbose.stderr.text()).toContain('copied 1 file(s)');
+    const tty = await testContext(router({ puts: [], bodies: [] }), { stderrTty: true });
+    await cp.run(tty.ctx, [src, 'office:home/docs']);
+    expect(tty.stderr.text()).toContain('copied 1 file(s)');
+    const asJson = await testContext(router({ puts: [], bodies: [] }), {
+      json: true,
+      stderrTty: true,
+    });
+    await cp.run(asJson.ctx, ['-v', src, 'office:home/docs']);
+    expect(asJson.stderr.text()).not.toContain('copied');
   });
 
   test('downloads to a local path', async () => {
@@ -654,6 +677,22 @@ describe('vibeterm cp', () => {
     expect(state.mkdirs).toContain('/home/me/projects');
   });
 
+  test('a home entry shadows a same-named root, otherwise the legacy root wins', async () => {
+    const src = await writeSrc('a.txt', 'abc');
+    const other = '44444444-4444-4444-8444-444444444444';
+    const roots = [
+      ROOT,
+      { ...ROOT, id: other, name: 'docs', path: '/srv/docs', sortOrder: 1 },
+      { ...ROOT, id: '55555555-5555-4555-8555-555555555555', name: 'misc', path: '/srv/misc' },
+    ];
+    const shadowed: RouterState = { puts: [], bodies: [], roots };
+    await cp.run((await testContext(router(shadowed))).ctx, [src, 'office:docs/a.txt']);
+    expect(shadowed.inits?.[0]?.rootId).toBe(ROOT_ID);
+    const legacy: RouterState = { puts: [], bodies: [], roots };
+    await cp.run((await testContext(router(legacy))).ctx, [src, 'office:misc/a.txt']);
+    expect(legacy.inits?.[0]?.rootId).toBe('55555555-5555-4555-8555-555555555555');
+  });
+
   test('virtual home-root serves node: when no user root exists', async () => {
     const src = await writeSrc('a.txt', 'abc');
     const state: RouterState = {
@@ -699,65 +738,112 @@ describe('locateCpPath', () => {
     };
   }
   const scope = { deviceId: 'd-1', explicit: false };
+  const homeLacks = async (): Promise<boolean> => false;
+  const homeHas =
+    (...names: string[]) =>
+    async (_home: FileRootDto, name: string): Promise<boolean> =>
+      names.includes(name);
+  const homeRoot = (): FileRootDto =>
+    root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' });
 
-  test('longest segment-aware prefix wins; disabled roots are ignored', () => {
+  test('longest segment-aware prefix wins; disabled roots are ignored', async () => {
     const roots = [
       root('r-data', '/data'),
       root('r-deep', '/data/deep/er'),
       root('r-off', '/data/deep', { enabled: false }),
     ];
-    expect(locateCpPath(roots, '/data/deep/er/x', scope, 'n').root.id).toBe('r-deep');
-    expect(locateCpPath(roots, '/data/deep/x', scope, 'n').root.id).toBe('r-data');
-    expect(() => locateCpPath(roots, '/data2/x', scope, 'n')).toThrow(UsageError);
+    expect((await locateCpPath(roots, '/data/deep/er/x', scope, 'n', homeLacks)).root.id).toBe(
+      'r-deep'
+    );
+    expect((await locateCpPath(roots, '/data/deep/x', scope, 'n', homeLacks)).root.id).toBe(
+      'r-data'
+    );
+    await expect(locateCpPath(roots, '/data2/x', scope, 'n', homeLacks)).rejects.toThrow(
+      UsageError
+    );
   });
 
-  test('a user root beats the virtual home on equal paths', () => {
-    const roots = [
-      root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' }),
-      root('r-user', '/home/me', { name: 'me' }),
-    ];
-    expect(locateCpPath(roots, '/home/me/a', scope, 'n').root.id).toBe('r-user');
+  test('a user root beats the virtual home on equal paths', async () => {
+    const roots = [homeRoot(), root('r-user', '/home/me', { name: 'me' })];
+    expect((await locateCpPath(roots, '/home/me/a', scope, 'n', homeLacks)).root.id).toBe('r-user');
   });
 
-  test('fs-root covers everything when no user root is enabled', () => {
-    const roots = [root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' })];
-    const found = locateCpPath(roots, '/etc/hosts', scope, 'n');
+  test('fs-root covers everything when no user root is enabled', async () => {
+    const roots = [homeRoot()];
+    const found = await locateCpPath(roots, '/etc/hosts', scope, 'n', homeLacks);
     expect(found.root.id).toBe('fs-root');
     expect(found.absPath).toBe('/etc/hosts');
-    expect(locateCpPath(roots, '/home/me/a', scope, 'n').root.id).toBe(VIRTUAL_HOME_ROOT_ID);
+    expect((await locateCpPath(roots, '/home/me/a', scope, 'n', homeLacks)).root.id).toBe(
+      VIRTUAL_HOME_ROOT_ID
+    );
   });
 
-  test('explicit device excludes roots of other devices and fs-root', () => {
-    const roots = [
-      root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' }),
-      root('r-ssh', '/srv', { deviceId: 'd-2', deviceType: 'ssh' }),
-    ];
+  test('explicit device excludes roots of other devices and fs-root', async () => {
+    const roots = [homeRoot(), root('r-ssh', '/srv', { deviceId: 'd-2', deviceType: 'ssh' })];
     const ssh = { deviceId: 'd-2', explicit: true };
-    expect(locateCpPath(roots, '/srv/x', ssh, 'n').root.id).toBe('r-ssh');
-    expect(() => locateCpPath(roots, '/home/me/x', ssh, 'n')).toThrow(UsageError);
-    expect(() => locateCpPath(roots, 'docs/x', ssh, 'n')).toThrow(UsageError);
+    expect((await locateCpPath(roots, '/srv/x', ssh, 'n', homeLacks)).root.id).toBe('r-ssh');
+    await expect(locateCpPath(roots, '/home/me/x', ssh, 'n', homeLacks)).rejects.toThrow(
+      UsageError
+    );
+    await expect(locateCpPath(roots, 'docs/x', ssh, 'n', homeLacks)).rejects.toThrow(UsageError);
   });
 
-  test('relative: legacy root id / name first, otherwise home', () => {
-    const roots = [
-      root(VIRTUAL_HOME_ROOT_ID, '/home/me', { virtual: true, name: 'home' }),
-      root('r-proj', '/srv/proj'),
-    ];
-    expect(locateCpPath(roots, 'proj/a/b', scope, 'n')).toMatchObject({
+  test('relative: legacy root only when home lacks the first segment', async () => {
+    const roots = [homeRoot(), root('r-proj', '/srv/proj')];
+    expect(await locateCpPath(roots, 'proj/a/b', scope, 'n', homeLacks)).toMatchObject({
       root: { id: 'r-proj' },
       absPath: '/srv/proj/a/b',
     });
-    expect(locateCpPath(roots, 'r-proj', scope, 'n').absPath).toBe('/srv/proj');
-    expect(locateCpPath(roots, 'other/a', scope, 'n')).toMatchObject({
+    expect((await locateCpPath(roots, 'r-proj', scope, 'n', homeLacks)).absPath).toBe('/srv/proj');
+    expect(await locateCpPath(roots, 'other/a', scope, 'n', homeLacks)).toMatchObject({
       root: { id: VIRTUAL_HOME_ROOT_ID },
       absPath: '/home/me/other/a',
     });
-    expect(locateCpPath(roots, '', scope, 'n').absPath).toBe('/home/me');
-    expect(locateCpPath(roots, './a', scope, 'n').absPath).toBe('/home/me/a');
+    expect((await locateCpPath(roots, '', scope, 'n', homeLacks)).absPath).toBe('/home/me');
+    expect((await locateCpPath(roots, './a', scope, 'n', homeLacks)).absPath).toBe('/home/me/a');
   });
 
-  test('.. never escapes', () => {
+  test('relative: an entry of the same name in home shadows the legacy root', async () => {
+    const roots = [homeRoot(), root('r-data', '/srv/data')];
+    expect(await locateCpPath(roots, 'data/x', scope, 'n', homeHas('data'))).toMatchObject({
+      root: { id: VIRTUAL_HOME_ROOT_ID },
+      absPath: '/home/me/data/x',
+    });
+    expect(await locateCpPath(roots, 'data/x', scope, 'n', homeLacks)).toMatchObject({
+      root: { id: 'r-data' },
+      absPath: '/srv/data/x',
+    });
+  });
+
+  test('relative: roots on other devices or with only a case-insensitive match never shadow home', async () => {
+    const roots = [
+      homeRoot(),
+      root('r-ssh-data', '/srv/data', { deviceId: 'd-2', deviceType: 'ssh' }),
+      root('r-docs', '/srv/Docs'),
+    ];
+    expect(await locateCpPath(roots, 'data/x', scope, 'n', homeLacks)).toMatchObject({
+      root: { id: VIRTUAL_HOME_ROOT_ID },
+      absPath: '/home/me/data/x',
+    });
+    expect(await locateCpPath(roots, 'docs/x', scope, 'n', homeLacks)).toMatchObject({
+      root: { id: VIRTUAL_HOME_ROOT_ID },
+      absPath: '/home/me/docs/x',
+    });
+  });
+
+  test('relative: explicit device never uses the legacy root form', async () => {
+    const roots = [
+      homeRoot(),
+      root('r-ssh-data', '/srv/data', { deviceId: 'd-2', deviceType: 'ssh' }),
+    ];
+    const ssh = { deviceId: 'd-2', explicit: true };
+    await expect(locateCpPath(roots, 'data/x', ssh, 'n', homeLacks)).rejects.toThrow(UsageError);
+  });
+
+  test('.. never escapes', async () => {
     const roots = [root('r-data', '/data')];
-    expect(() => locateCpPath(roots, '/data/../etc', scope, 'n')).toThrow(UsageError);
+    await expect(locateCpPath(roots, '/data/../etc', scope, 'n', homeLacks)).rejects.toThrow(
+      UsageError
+    );
   });
 });
