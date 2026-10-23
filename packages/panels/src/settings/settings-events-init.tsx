@@ -34,6 +34,7 @@ export const SETTINGS_NAMESPACE_QUERY_KEYS: ReadonlyMap<string, readonly Setting
     ['devices', [devicesQueryKey]],
     ['device-folders', [deviceFoldersQueryKey]],
     ['notifications-mesh', [['notifications-mesh']]],
+    ['mesh-proxy', [['mesh-proxy']]],
     ['tree-order', NO_KEYS],
   ]);
 

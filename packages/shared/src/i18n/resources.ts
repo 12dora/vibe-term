@@ -500,6 +500,19 @@ export const I18N_RESOURCES = {
             "title": "Relay",
             "description": "Everything via relay"
           }
+        },
+        "meshProxy": {
+          "title": "Node connection proxy",
+          "loadFailed": "Couldn’t load proxy setting: {{message}}",
+          "saveFailed": "Couldn’t save proxy setting: {{message}}",
+          "direct": {
+            "title": "Direct",
+            "description": "Connect to nodes and relays without the system proxy"
+          },
+          "system": {
+            "title": "System proxy",
+            "description": "Use HTTP_PROXY / HTTPS_PROXY to reach nodes and relays"
+          }
         }
       },
       "terminal": {
@@ -4599,6 +4612,19 @@ export const I18N_RESOURCES = {
             "title": "中继",
             "description": "全部经中继转发"
           }
+        },
+        "meshProxy": {
+          "title": "节点连接代理",
+          "loadFailed": "代理设置读取失败：{{message}}",
+          "saveFailed": "代理设置保存失败：{{message}}",
+          "direct": {
+            "title": "直连",
+            "description": "连接节点和中继不经过系统代理"
+          },
+          "system": {
+            "title": "系统代理",
+            "description": "使用 HTTP_PROXY / HTTPS_PROXY 连接节点和中继"
+          }
         }
       },
       "terminal": {
@@ -8680,6 +8706,19 @@ export const I18N_RESOURCES = {
           "relay": {
             "title": "中継",
             "description": "すべて中継経由"
+          }
+        },
+        "meshProxy": {
+          "title": "ノード接続のプロキシ",
+          "loadFailed": "プロキシ設定を読み込めませんでした：{{message}}",
+          "saveFailed": "プロキシ設定を保存できませんでした：{{message}}",
+          "direct": {
+            "title": "直接接続",
+            "description": "ノードとリレーへの接続にシステムプロキシを使わない"
+          },
+          "system": {
+            "title": "システムプロキシ",
+            "description": "HTTP_PROXY / HTTPS_PROXY を使ってノードとリレーに接続"
           }
         }
       },

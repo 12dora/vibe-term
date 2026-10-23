@@ -494,6 +494,19 @@
             "title": "中继",
             "description": "全部经中继转发"
           }
+        },
+        "meshProxy": {
+          "title": "节点连接代理",
+          "loadFailed": "代理设置读取失败：{{message}}",
+          "saveFailed": "代理设置保存失败：{{message}}",
+          "direct": {
+            "title": "直连",
+            "description": "连接节点和中继不经过系统代理"
+          },
+          "system": {
+            "title": "系统代理",
+            "description": "使用 HTTP_PROXY / HTTPS_PROXY 连接节点和中继"
+          }
         }
       },
       "terminal": {

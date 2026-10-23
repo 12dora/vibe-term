@@ -15,6 +15,7 @@ import { HttpsSection } from './https/https-section';
 import { LocalMachineCard } from './local-machine-card';
 import { NodesManagement } from './management/nodes-management';
 import { type SetupIntent, type SetupIntentRecord, takeSetupIntent } from './membership/intent';
+import { MeshProxyCard } from './mesh-proxy-card';
 import { RouteModeCard } from './route-mode-card';
 import { takeSelfRelayFollowUp } from './setup/self-relay-followup';
 import { SetupTransitionProvider } from './setup/setup-transition';
@@ -88,11 +89,7 @@ export function NodesTab() {
           />
         </Reveal>
 
-        {!standalone && (
-          <Reveal delayMs={60}>
-            <RouteModeCard />
-          </Reveal>
-        )}
+        {!standalone && <MeshNetworkCards />}
 
         {/* HTTPS 是安装态，与角色无关：node / relay,node / standalone 都要自己的公开入口。 */}
         {standalone ? (
@@ -133,5 +130,19 @@ function NodesTabSkeleton() {
       <Skeleton className="h-28 w-full" />
       <Skeleton className="h-56 w-full" />
     </div>
+  );
+}
+
+/** mesh 节点的连接策略：选路模式与节点连接代理。 */
+function MeshNetworkCards() {
+  return (
+    <>
+      <Reveal delayMs={60}>
+        <RouteModeCard />
+      </Reveal>
+      <Reveal delayMs={60}>
+        <MeshProxyCard />
+      </Reveal>
+    </>
   );
 }

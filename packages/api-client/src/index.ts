@@ -20,6 +20,7 @@ export * from './telegram';
 export * from './weixin';
 export * from './domain-access';
 export * from './mesh-route';
+export * from './mesh-proxy';
 export * from './terminal-shortcuts';
 export * from './transfer';
 export * from './watch';

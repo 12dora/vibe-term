@@ -129,6 +129,7 @@ describe('NodesTab standalone', () => {
     expect(html).not.toContain('data-testid="https-hub-url-hint"');
     expect(html).not.toContain('data-testid="nodes-table"');
     expect(html).not.toContain('data-testid="mesh-route-mode-card"');
+    expect(html).not.toContain('data-testid="mesh-proxy-card"');
     // standalone 没有账号安全 / 节点页入口
     expect(html).not.toContain('data-testid="local-machine-account-security"');
   });
@@ -159,6 +160,9 @@ describe('NodesTab mesh', () => {
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="local-machine-card"');
     expect(html).toContain('data-testid="mesh-route-mode-card"');
+    expect(html.indexOf('data-testid="mesh-proxy-card"')).toBeGreaterThan(
+      html.indexOf('data-testid="mesh-route-mode-card"')
+    );
     expect(html).toContain('data-testid="nodes-table"');
     expect(html).toContain('data-testid="https-section"');
     expect(html).not.toContain('data-testid="https-hub-url-hint"');

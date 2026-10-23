@@ -285,6 +285,19 @@
             "title": "Relay",
             "description": "Everything via relay"
           }
+        },
+        "meshProxy": {
+          "title": "Node connection proxy",
+          "loadFailed": "Couldn’t load proxy setting: {{message}}",
+          "saveFailed": "Couldn’t save proxy setting: {{message}}",
+          "direct": {
+            "title": "Direct",
+            "description": "Connect to nodes and relays without the system proxy"
+          },
+          "system": {
+            "title": "System proxy",
+            "description": "Use HTTP_PROXY / HTTPS_PROXY to reach nodes and relays"
+          }
         }
       },
       "terminal": {
