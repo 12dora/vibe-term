@@ -37,12 +37,13 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 | 端点 | 作用 |
 | --- | --- |
 | `POST /api/files/mkdir` | 在文件根下建目录（`0755`；`recursive: true` 等价 `mkdir -p`）。路径规则与 `upload/init` 相同；已存在目录幂等返回 `created: false` |
-| `POST /api/files/upload/init` | 校验 destDir 是已存在目录 + `size ≤ transferMaxBytes` + 文件名消毒；建会话与临时文件；返回 `{uploadId, chunkSize}` |
-| `PUT /api/files/upload/:id?offset=N` | 顺序追加 chunk 到临时文件（流式落盘，有界内存） |
+| `POST /api/files/upload/init` | 校验 destDir 是已存在目录 + `size ≤ transferMaxBytes` + 文件名消毒；建会话与临时文件；返回 `{uploadId, chunkSize, ranged, commitProgress}`（`commitProgress`：提交段是否逐步回报进度，本机 `copyFile` 为 `false`、SSH rsync 为 `true`，旧节点缺省按 `true`） |
+| `PUT /api/files/upload/:id?offset=N&length=M` | 按区间写入临时文件，允许乱序与并行（重叠区间 409，客户端退避续传） |
 | `POST /api/files/upload/:id/commit` | 推送到设备（本机 `copyFile`，SSH rsync），**流式 NDJSON** 回传进度（`{type:'progress'|'done'|'error'}`），完成/失败/取消后清理 |
 | `DELETE /api/files/upload/:id` | 取消：中止进行中的 rsync + 删临时文件 |
 
-- 阶段一（浏览器→服务器）进度由前端按已发 chunk 本地计算；阶段二（服务器→设备 rsync）由 commit 流回传，**即"最终上传流"速度**。
+- 阶段一（浏览器→服务器）：`ApiClient.upload()` 用 XHR 发 PUT，按 `upload.onprogress` 逐字节回报（经网关闸门的远端节点同样走 XHR）；失败的区间回滚已计字节，总量不会超过「已落盘 + 在途」。阶段二（服务器→设备）由 commit 流回传。
+- 两段合成一条进度时按 `onLegWeights` 加权：上传 `[1, commitProgress ? 1 : 0]`，下载 `[准备段有逐步进度 ? 1 : 0, 1]`；未完成前封顶 99%。
 - 每个 chunk PUT ≤ chunkSize（8MB），远低于 Bun 默认 128MB body 上限，故 2GB 文件无需调高 `maxRequestBodySize`。
 - 会话懒式 GC：>30min 未完成的僵尸会话在下次 create 时清理。
 - 前端 `uploadFileChunked`（`packages/api-client/src/upload-transfer.ts`）串起 init→chunk→commit，`signal` 取消时 `DELETE` 会话。
@@ -54,18 +55,22 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 - `sanitizeUploadName(raw)`：只取路径最后一段，拒绝空串、`.`、`..`，以及含 `/`、`\`、NUL 的名字，防目录穿越。
 - **目标文件不存在时不能对目标文件跑 `checkAndNormalize`**：local 分支的 `realpathSync` 会因路径不存在直接报 `not_found`。正确顺序是——校验**已存在的** `destDir` 落在 root 内，再 `statViaRsync` 确认它确实是目录（否则 `not_a_directory`），最后 `posixJoin(destDir, sanitizeUploadName(name))` 拼出远端路径。
 - 上传**不创建**远端父目录，`destDir` 必须已存在。CLI `cp -r` 本地→节点前应先调 `POST /api/files/mkdir`：请求体 `{ rootId, path, recursive? }`，`path` 与 `statFile` / `upload/init` 相同（root 内绝对路径，经同一套词法规范化；`..` 越界、绝对路径逃逸、禁用根、root 外走 `file-http.ts` 既有 403 码）。成功 200 `{ path, created }`（已存在且为目录则 `created: false`）；目标是文件 400 `not_a_directory`（与 `upload/init` 共用 `CODE_STATUS`）；路径上的符号链接（含指向 root 外的目标）403 `outside_roots`；非 recursive 且父目录缺失 404 `not_found`；权限不足 403 `permission_denied`。`recursive` 超过 64 段或路径超过 4096 字节返回 400 `invalid`。本机创建后 `chmod 0755`（绕开 umask）；远端走 `mkdir -m 0755 --`。
-- 所有 rsync 推送经 `enqueueDeviceJob`（`apps/gateway/src/files/queue.ts`）单设备串行，避免同设备并发 rsync 互相踩。
+- 设备 IO 经 `enqueueDeviceJob(deviceId, kind, job)`（`apps/gateway/src/files/queue.ts`）按三类排队：`transfer`（拉取 / 推送，同设备并发 3）、`read`（列目录 / stat / 读文本，同设备并发 4，不占传输名额）、`mutation`（改名 / 删除 / 建目录，独占）。排在 mutation 之后的任务一律等它完成，mutation 之间保持 FIFO；全局并发上限 8。推送到 SSH 设备时建目录与 rsync 分开排队。
 - `rsyncUploadArgs` 与 `rsyncCopyArgs` 对称地调换源/目标，且上传**不加** `-L`（不跟随符号链接）。
 
 ## 下载（流式 + 进度 + 取消）
 
 - `GET /api/files/download?rootId=&path=`：`pullFileFromDevice` 把文件准备到可读路径（本机设备直接读原文件；SSH 用 rsync 拉到 gateway 临时文件），校验 `size ≤ transferMaxBytes`，再流式返回。SSH 路径流结束/取消后删临时文件；本机路径的 `cleanup` 是空操作。
-- 前端 `downloadFileWithProgress`（`packages/api-client/src/download-transfer.ts`）：`fetch` 读响应流 → 进度/速度（阶段二 服务器→浏览器）→ `Blob` 触发 `<a download>` 保存；resolve 前为"准备中"（阶段一 设备→服务器 rsync）。`AbortSignal` 取消。
+- 前端 `downloadFileWithProgress`（`packages/api-client/src/download-transfer.ts` + `ranged-download.ts`）：prepare 后按 8 MiB 分块，以 `streams` 条并行 `Range: bytes=a-b` 拉取（本机 4、经中继 2），首块取得强 `ETag` 后其余块带 `If-Range`；源文件变化回 200 即报「传输期间源文件发生变化」。节点不支持区间时退回单流续传。每个请求中断后从自身已收偏移续传；只要有新进度就重置失败计数，连续 4 次零进度才报 `TransferInterruptedError`；4xx（408/429 除外）立即失败。分块按序组装为 `Blob` 保存。
+- 文件端点（`download/:id/content`、`download`、`raw`）统一带强 `ETag`（源文件身份的哈希，SSH 临时副本按源文件 size + mtime + 路径生成）、`Last-Modified`、`Accept-Ranges`、`X-VibeTerm-Entity-Length`；`If-Range` 只认强 ETag；畸形或多段 Range 忽略并回 200。
+- 经入口转发到远端节点时，路由切换 / 直连重掷会关闭旧链路；转发层对可续传的 GET 响应（强 ETag + 长度已知 + `Accept-Ranges`）在新链路上以 `Range` + `If-Range` 无缝接续，浏览器无感知。不可续传的流（如打包下载）两端按流计数，提速类切换等其结束再退役旧链路。强制下载分支保留消毒后的文件名，打包下载经转发仍是 `*.tar.gz`。
 - 拖到桌面（`DownloadURL`）改指向 `/api/files/download`（浏览器原生下载，支持大文件流式，无应用内进度）。`/api/files/raw` 仍用于文件查看器内联预览（小文件）。
 
 ## 进度 Toast（`packages/panels/src/files/transfer-toast.tsx`）
 
-- 每个文件一个可更新的 sonner Toast：文件名 + 阶段标签 + 进度条（`packages/ui/src/components/progress.tsx`）+ 速度 + 取消按钮。
+- 一次传输（单个或一批文件）一张 sonner Toast。单文件：文件名 + 直连/中转标记（仅远端节点）+ 一条进度条 + 阶段 + 速率与字节。批量：整体进度（按字节加权）+ `已完成 x/N` + 各文件小进度条与阶段。
+- 批量上传由 `transfer-batch.ts` 并发调度：本机 3 个文件、经中继 2 个；所有文件共享 4 条流的预算（单文件仍用满 `pickTransferStreams`），避免占满浏览器 HTTP/1.1 每主机 6 连接。
+- 失败卡片给出具体原因（`describeTransferError`：网络中断、需要登录该节点、节点不可达、超过大小上限、源文件变化、浏览器保存失败或文件操作错误码）；批量失败列出前 3 个 `文件名：原因`。
 - **工作态 `duration: Infinity` + `dismissible: false`**：不会自动消失、也不可手动关闭，唯一中止途径是取消按钮（触发 `AbortController`）。完成后短暂停留自动消失；失败/取消保留可手动关闭。
 
 ## 测试
@@ -84,6 +89,6 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 ## 注意 / 限制
 
 - 下载在浏览器侧用 `Blob` 累积全部分块再保存：2GB 接近浏览器 Blob 内存上限（Chrome 通常会落盘），超大文件可能吃紧。
-- 下载的「设备→服务器 rsync」段显示为「准备中」（不带逐字节速度）。
+- 下载的「设备→服务器 rsync」段显示为「准备中」。
 - 下载临时文件落在 gateway 磁盘（rsync 机制所限），靠流结束删 + 取消清理。
 - 拖到桌面为浏览器原生，无应用内进度/取消。
