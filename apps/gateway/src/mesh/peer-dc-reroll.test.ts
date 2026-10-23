@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
   DC_REROLL_MAX_PER_HOUR,
   DC_REROLL_MIN_INTERVAL_MS,
   DC_REROLL_RESULT_DEADLINE_MS,
   DC_REROLL_WINDOW_MS,
 } from './dc-reroll-policy';
+import {
+  noteHttpResponseHead,
+  releaseLiveHttpStream,
+  trackLiveHttpStream,
+} from './live-http-migratable';
 import type { RtcSignalMessage } from './mesh-deps';
 import {
   DC_REROLL_CANDIDATE_INBOX_CAP,
@@ -51,6 +56,7 @@ function makeLive(
     initiatedBy: SELF,
     generation: 0,
     streams: 0,
+    nonMigratable: 0,
     rttMs: 200,
     rttSamples: 2,
     rttSpikeIgnored: false,
@@ -505,6 +511,70 @@ describe('DcRerollCoordinator 结算与搬流', () => {
     expect(
       lines.some((row) => row.includes('reroll_rehome') && row.includes('transport=ws-secure'))
     ).toBe(true);
+  });
+
+  test('不可迁移流 > 0 时 rehome 不立刻 retired，留给 drain', () => {
+    const { h, old } = triggered();
+    old.streams = 2;
+    old.nonMigratable = 1;
+    old.retiring = true;
+    h.state.retiring.set(PEER, new Set([old]));
+    const next = makeLive(h.state, {
+      rttSamples: 0,
+      rttMs: 90,
+      linkSinceAt: h.scheduler.nowMs,
+    });
+    h.coordinator.onRttSample(next, 90);
+    h.coordinator.onRttSample(next, 90);
+    h.coordinator.onRttSample(next, 90);
+    expect(h.retired).toHaveLength(0);
+    expect(h.state.retiring.get(PEER)?.has(old)).toBe(true);
+    expect(old.pendingOptimisationRetire).toBe(true);
+  });
+
+  test('远端写入不可续传头后，非入口侧 rehome 也推迟', () => {
+    const { h, old } = triggered();
+    old.retiring = true;
+    h.state.retiring.set(PEER, new Set([old]));
+    const stream = { id: 7 } as LinkStream;
+    trackLiveHttpStream(old, stream, 1);
+    noteHttpResponseHead(stream, 'GET', 200, { 'content-type': 'application/zip' });
+    expect(old.nonMigratable).toBe(1);
+    const next = makeLive(h.state, {
+      rttSamples: 0,
+      rttMs: 90,
+      linkSinceAt: h.scheduler.nowMs,
+    });
+    h.coordinator.onRttSample(next, 90);
+    h.coordinator.onRttSample(next, 90);
+    h.coordinator.onRttSample(next, 90);
+    expect(h.retired).toHaveLength(0);
+    expect(old.pendingOptimisationRetire).toBe(true);
+  });
+
+  test('不可迁移计数归零后立刻 retired 剩下的可迁移流', () => {
+    const { h, old } = triggered();
+    old.retiring = true;
+    h.state.retiring.set(PEER, new Set([old]));
+    const archive = { id: 1 } as LinkStream;
+    const other = { id: 2 } as LinkStream;
+    trackLiveHttpStream(old, archive, 1);
+    trackLiveHttpStream(old, other, 1);
+    noteHttpResponseHead(archive, 'GET', 200, { 'content-type': 'application/json' });
+    const next = makeLive(h.state, {
+      rttSamples: 0,
+      rttMs: 90,
+      linkSinceAt: h.scheduler.nowMs,
+    });
+    h.coordinator.onRttSample(next, 90);
+    h.coordinator.onRttSample(next, 90);
+    h.coordinator.onRttSample(next, 90);
+    expect(h.retired).toHaveLength(0);
+    expect(old.pendingOptimisationRetire).toBe(true);
+    releaseLiveHttpStream(old, archive, 2, (live, reason) => h.retired.push({ live, reason }));
+    expect(old.nonMigratable).toBe(0);
+    expect(old.streams).toBe(1);
+    expect(h.retired).toEqual([{ live: old, reason: 'retired' }]);
   });
 
   test('新链路没快多少就只记结果，不动在途流', () => {

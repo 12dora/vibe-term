@@ -1,5 +1,6 @@
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { classifyPeerReach } from './address-class';
+import { releaseLiveHttpStream, trackLiveHttpStream } from './live-http-migratable';
 import {
   UnstableDcBackoff,
   applyRouteCloseCooldown,
@@ -350,9 +351,7 @@ export class PeerLiveRegistry {
 
   private onLocalStream(live: LivePeer, stream: LinkStream): void {
     noteLiveRelayStream(live, stream);
-    live.streams += 1;
-    live.lastStreamAt = this.state.scheduler.now();
-    live.zeroStreamsSince = 0;
+    trackLiveHttpStream(live, stream, this.state.scheduler.now());
     this.clearIdle(live);
     if (live.retiring) {
       live.gotQuiesceAck = false;
@@ -360,10 +359,11 @@ export class PeerLiveRegistry {
       this.deps.armRetireTimer(live);
     }
     void stream.closed.then(() => {
-      live.streams = Math.max(0, live.streams - 1);
-      live.lastStreamAt = this.state.scheduler.now();
-      if (live.streams === 0) live.zeroStreamsSince = this.state.scheduler.now();
-      if (live.streams > 0) return;
+      const now = this.state.scheduler.now();
+      const leftover = releaseLiveHttpStream(live, stream, now, (row, reason) =>
+        this.deps.finishRetire(row, reason)
+      );
+      if (leftover > 0) return;
       if (live.retiring) {
         this.deps.restartQuiesce(live);
         this.deps.maybeFinishRetire(live);

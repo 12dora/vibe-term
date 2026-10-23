@@ -159,7 +159,7 @@ describe('createMeshRuntime', () => {
     });
     fixtures.push({ close, stop: () => mesh.stop() });
     await mesh.start();
-    const port = mesh.peers.listenPort;
+    const port = mesh.peers.listenPort ?? 0;
     expect(port).toBeGreaterThan(0);
     const res = await fetch(`http://127.0.0.1:${port}/peer`);
     expect(res.status).toBe(426);

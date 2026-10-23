@@ -304,13 +304,14 @@ describe('forwarder', () => {
       { err: new DOMException('The operation was aborted.', 'AbortError'), reason: 'timeout' },
       { err: new Error('https://evil.example/token=secret'), reason: 'link_lost' },
     ];
-    for (const { err, reason } of cases) {
-      const peers = new FakePeers();
-      peers.links.set(OTHER, dummyLink);
-      const streams = new FakeStreams();
-      streams.httpOpenError = err instanceof Error ? err : new Error(String(err));
-      const mesh = await bootMesh({ peers, streams });
-      try {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    // 只起一次 runtime：每次 bootMesh 都要 migrate+KDF，11 次会超过 bun:test 默认 5s。
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      for (const { err, reason } of cases) {
+        streams.httpOpenError = err instanceof Error ? err : new Error(String(err));
         const res = asResponse(
           await mesh.runtime.handleRequest(
             new Request(`http://localhost/n/${OTHER}/api/ping`, { method: 'POST' }),
@@ -323,9 +324,9 @@ describe('forwarder', () => {
           nodeId: OTHER,
           reason,
         });
-      } finally {
-        mesh.close();
       }
+    } finally {
+      mesh.close();
     }
   });
 

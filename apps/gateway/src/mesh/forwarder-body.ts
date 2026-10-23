@@ -31,6 +31,22 @@ export function countStreamBytes(
   );
 }
 
+export async function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return;
+  if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new DOMException('The operation was aborted.', 'AbortError'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 /**
  * 转发没成功时收掉包装过的请求体：传输层还没接手，没人再会去读它，
  * 不主动 cancel 的话源端的读取管道与文件句柄就一直挂着。

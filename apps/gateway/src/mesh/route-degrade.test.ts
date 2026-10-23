@@ -61,6 +61,10 @@ function liveOf(
     session,
     rttMs,
     generation: 1,
+    streams: 0,
+    nonMigratable: 0,
+    retiring: false,
+    finishRetired: false,
   } as LivePeer;
 }
 
@@ -88,6 +92,7 @@ function makeHarness(
   });
   const installed: Array<{ transport: PeerTransportKind; session: LinkSession }> = [];
   const retired: LinkSession[] = [];
+  const finished: Array<{ live: LivePeer; reason: string }> = [];
   const relays: LinkSession[] = [];
   const upgrades: string[] = [];
   const coord = new RouteDegradeCoordinator({
@@ -113,14 +118,15 @@ function makeHarness(
       if (prev && prev.session !== session) retired.push(prev.session);
       return session;
     },
-    finishRetire: (live) => {
+    finishRetire: (live, reason) => {
       retired.push(live.session);
+      finished.push({ live, reason });
     },
     maybeUpgrade: (nodeId) => {
       upgrades.push(nodeId);
     },
   });
-  return { coord, state, mode, scheduler, installed, retired, relays, upgrades };
+  return { coord, state, mode, scheduler, installed, retired, finished, relays, upgrades };
 }
 
 describe('RouteDegradeCoordinator hysteresis', () => {
@@ -142,6 +148,23 @@ describe('RouteDegradeCoordinator hysteresis', () => {
     expect(h.relays).toHaveLength(1);
     expect(h.coord.isDegraded(PEER)).toBe(true);
     expect(h.state.live.get(PEER)?.transport).toBe('relay');
+    h.coord.dispose();
+  });
+
+  test('dc→relay 因 dc 失败仍立刻 retired，无视不可迁移流', async () => {
+    const h = makeHarness();
+    const dc = stubSession();
+    const live = liveOf(PEER, 'dc', dc, 225);
+    live.nonMigratable = 1;
+    live.streams = 1;
+    h.state.live.set(PEER, live);
+    h.coord.onRttSample(live, 225);
+    h.scheduler.nowMs += 15_000;
+    h.coord.onRttSample(live, 225);
+    h.coord.onRttSample(live, 225);
+    await Promise.resolve();
+    expect(h.relays).toHaveLength(1);
+    expect(h.finished).toEqual([{ live, reason: 'retired' }]);
     h.coord.dispose();
   });
 
@@ -229,7 +252,9 @@ describe('RouteDegradeCoordinator make-before-break promotion', () => {
     await Promise.resolve();
     h.scheduler.nowMs += 2 * 60 * 1000;
     const relayLive = h.state.live.get(PEER);
-    expect(relayLive?.transport).toBe('relay');
+    if (relayLive?.transport !== 'relay') throw new Error('expected relay live');
+    // 前置降级（dc→relay）已退役原直连，只看之后的退役
+    h.finished.length = 0;
     return { h, relayLive };
   }
 
@@ -308,6 +333,53 @@ describe('RouteDegradeCoordinator make-before-break promotion', () => {
     expect(dc.closedReason).toBe('route-measure-reject');
     expect(h.state.live.get(PEER)?.transport).toBe('relay');
     expect(h.coord.allowsOutboundDirect(PEER)).toBe(false);
+    h.coord.dispose();
+  });
+
+  test('relay→dc 优化切换：无不可迁移流时立刻 retired', async () => {
+    const { h, relayLive } = await degradedRelay();
+    const dc = stubSession();
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: h.state.identity.nodeId,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:9',
+      prev: relayLive,
+    });
+    h.state.live.get(PEER)!.rttMs = 100;
+    h.coord.noteCandidateSample(PEER, 40);
+    h.coord.noteCandidateSample(PEER, 42);
+    h.coord.noteCandidateSample(PEER, 41);
+    expect(h.state.live.get(PEER)?.transport).toBe('dc');
+    expect(h.finished).toEqual([{ live: relayLive, reason: 'retired' }]);
+    h.coord.dispose();
+  });
+
+  test('relay→dc 优化切换：有不可迁移流时推迟 retired', async () => {
+    const { h, relayLive } = await degradedRelay();
+    relayLive.nonMigratable = 1;
+    relayLive.streams = 1;
+    const dc = stubSession();
+    h.coord.interceptTrack({
+      session: dc,
+      peerNodeId: PEER,
+      transport: 'dc',
+      initiatedBy: h.state.identity.nodeId,
+      gen: 1,
+      remoteAddress: null,
+      dcAttemptId: 'dc:9',
+      prev: relayLive,
+    });
+    h.state.live.get(PEER)!.rttMs = 100;
+    h.coord.noteCandidateSample(PEER, 40);
+    h.coord.noteCandidateSample(PEER, 42);
+    h.coord.noteCandidateSample(PEER, 41);
+    expect(h.state.live.get(PEER)?.transport).toBe('dc');
+    expect(h.finished).toHaveLength(0);
+    expect(relayLive.pendingOptimisationRetire).toBe(true);
     h.coord.dispose();
   });
 });

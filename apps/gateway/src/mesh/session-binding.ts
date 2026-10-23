@@ -96,6 +96,10 @@ export function touchSession(session: LinkSession): void {
   ensure(session);
 }
 
+export function sessionOwner(session: LinkSession): object | null {
+  return bindings.get(session)?.owner ?? null;
+}
+
 export function claimSession(session: LinkSession, handlers: BindingHandlers): void {
   const binding = ensure(session);
   binding.role = handlers.role;

@@ -15,28 +15,25 @@ import { readJsonObjectBody } from '../api/http';
 import { recordEntryLogin429 } from '../auth/login-records-forward';
 import type { LoginMethod } from './auth-login-limiter';
 import { loginLimiterIp, peekLoginMethod } from './auth-login-policy-http';
-import { isShareAccessPath } from './auth-public-paths';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
-import {
-  ForwardDeadlineError,
-  authorizedAttemptBudgetsMs,
-  runLinkThenTransfer,
-  withHttpStreamUploadDeadline,
-} from './forwarder-attempt-deadline';
-import {
-  AUTH_CHALLENGE_PATHS,
-  AUTH_LOGIN_PATH,
-  AUTH_SKIP,
-  applyAuthPolicy,
-  peekJsonCode,
-} from './forwarder-auth-policy';
-import { cancelForwardBody, countStreamBytes, throttledProgress } from './forwarder-body';
+import { authorizedAttemptBudgetsMs, runLinkThenTransfer } from './forwarder-attempt-deadline';
+import { AUTH_CHALLENGE_PATHS, AUTH_LOGIN_PATH, peekJsonCode } from './forwarder-auth-policy';
+import { cancelForwardBody, countStreamBytes, sleepMs, throttledProgress } from './forwarder-body';
 import {
   authorizedHttpDeadlineMs,
   forwardLinkDeadlineFor,
   forwardResponseBudgetMs,
 } from './forwarder-deadline';
+import {
+  type ForwardResumeCtx,
+  acquireForwardLink,
+  adaptForwardedResponse,
+  buildForwardResumeCtx,
+  forwardLinkPurpose,
+  openHttpOnLink,
+  skipForwardAuth,
+} from './forwarder-dispatch';
 import {
   bufferReplayableBody,
   captureLink,
@@ -53,13 +50,11 @@ export {
 import { forwardedAuthFor, sessionOrTokenCredential } from './forwarder-credential';
 import { EXEC_WS_REST_PATH, upgradeExecForward } from './forwarder-exec-upgrade';
 import {
-  copyUpstreamHeaders,
   filterRequestHeaders,
   stampForwardedAuthHeaders,
   stampedAuthorizedHeaders,
 } from './forwarder-headers';
 import { runForwardInternalHttp } from './forwarder-internal-http';
-import { rejectClosedLink } from './forwarder-link-state';
 import { parseNodePrefix } from './forwarder-path';
 import { rewriteRequest } from './forwarder-rewrite';
 export { getSelfRewrite, rewriteSelf } from './forwarder-rewrite';
@@ -113,7 +108,7 @@ export class Forwarder {
   private authRateLimits: AuthRateLimits | null;
 
   constructor(private readonly deps: ForwarderDeps) {
-    this.sleep = deps.sleep ?? defaultSleep;
+    this.sleep = deps.sleep ?? sleepMs;
     const sink = deps.log ?? ((line: string) => console.info(line));
     this.log = (line) => sink(stamp(line));
     this.authRateLimits = deps.authRateLimits ?? null;
@@ -214,6 +209,18 @@ export class Forwarder {
     const method = input.method.toUpperCase();
     const idempotent = IDEMPOTENT_HTTP.has(method);
     const headers = stampedAuthorizedHeaders(req, input.headers, auth);
+    const origin = req.headers.get('origin') ?? new URL(req.url).origin;
+    const resumeBase = buildForwardResumeCtx({
+      nodeId: input.nodeId,
+      method,
+      path: input.path,
+      query: input.query,
+      headers,
+      origin,
+      auth,
+      purpose: 'management',
+      signal: abort,
+    });
     let uploaded = 0;
     const rawBody = idempotent ? null : (input.rawBody ?? null);
     const progress = input.onProgress ? throttledProgress(input.onProgress) : null;
@@ -227,7 +234,6 @@ export class Forwarder {
     const openedLink = { current: null as LinkSession | null };
     const nextBody = (): ReadableStream<Uint8Array> | null =>
       idempotent ? null : (countedRaw ?? buildJsonStreamBody(input.body, headers));
-    let lastError: unknown;
     const rttMs = this.deps.peers.rttOf?.(input.nodeId);
     const budgets = authorizedAttemptBudgetsMs({
       linkMs: forwardLinkDeadlineFor(input.nodeId, rttMs, this.deps.peers),
@@ -235,60 +241,20 @@ export class Forwarder {
       headers,
       hasRawBody: Boolean(rawBody),
     });
-    const deadlineAt = Date.now() + budgets.overallMs;
-    for (let attempt = 0; attempt < HTTP_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
-      if (abort.aborted || Date.now() >= deadlineAt) break;
-      if (attempt > 0) {
-        try {
-          await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, abort);
-        } catch {
-          break;
-        }
-      }
-      openedLink.current = null;
-      const remaining = Math.max(0, deadlineAt - Date.now());
-      try {
-        return await runLinkThenTransfer({
-          parent: abort,
-          linkBudgetMs: Math.min(remaining, budgets.linkMs),
-          transferBudgetMs: xferBudget(remaining, budgets.transferMs, budgets.linkMs),
-          getLink: captureLink(
-            this.deps.peers.getLink(input.nodeId, { purpose: 'management' }),
-            openedLink
-          ),
-          transfer: async (link, signal) => {
-            await rejectClosedLink(link);
-            const origin = req.headers.get('origin') ?? new URL(req.url).origin;
-            return this.deps.streams
-              .openHttpStream(
-                link,
-                {
-                  method,
-                  path: input.path,
-                  query: input.query ?? '',
-                  headers,
-                  origin,
-                  auth,
-                },
-                nextBody(),
-                signal
-              )
-              .then((res) => this.adaptResponse(req, res, input.nodeId));
-          },
-        });
-      } catch (err) {
-        lastError = err;
-        if (rawBody) warnRawAbort(input.nodeId, uploaded, err);
-        if (
-          !shouldRetryAuthorized(err, attempt, attempts, rawBody, {
-            method,
-            nodeId: input.nodeId,
-            link: openedLink.current,
-          })
-        )
-          break;
-      }
-    }
+    const lastError = await this.runAuthorizedAttempts({
+      req,
+      abort,
+      budgets,
+      openedLink,
+      nextBody,
+      resumeBase,
+      method,
+      nodeId: input.nodeId,
+      rawBody,
+      attempts,
+      uploadedBytes: () => uploaded,
+    });
+    if (lastError instanceof Response) return lastError;
     await cancelForwardBody(countedRaw);
     return nodeUnreachableResponse(
       input.nodeId,
@@ -299,6 +265,72 @@ export class Forwarder {
         : undefined,
       Boolean(openedLink.current)
     );
+  }
+
+  private async runAuthorizedAttempts(opts: {
+    req: Request;
+    abort: AbortSignal;
+    budgets: { linkMs: number; transferMs: number; overallMs: number };
+    openedLink: { current: LinkSession | null };
+    nextBody: () => ReadableStream<Uint8Array> | null;
+    resumeBase: Omit<ForwardResumeCtx, 'link'>;
+    method: string;
+    nodeId: string;
+    rawBody: ReadableStream<Uint8Array> | null;
+    attempts: number;
+    uploadedBytes: () => number;
+  }): Promise<unknown> {
+    const deadlineAt = Date.now() + opts.budgets.overallMs;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < HTTP_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
+      if (opts.abort.aborted || Date.now() >= deadlineAt) break;
+      if (attempt > 0) {
+        try {
+          await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, opts.abort);
+        } catch {
+          break;
+        }
+      }
+      opts.openedLink.current = null;
+      const remaining = Math.max(0, deadlineAt - Date.now());
+      try {
+        return await runLinkThenTransfer({
+          parent: opts.abort,
+          linkBudgetMs: Math.min(remaining, opts.budgets.linkMs),
+          transferBudgetMs: xferBudget(remaining, opts.budgets.transferMs, opts.budgets.linkMs),
+          getLink: captureLink(
+            this.deps.peers.getLink(opts.nodeId, { purpose: 'management' }),
+            opts.openedLink
+          ),
+          transfer: async (link, signal) => {
+            const ctx = { ...opts.resumeBase, link };
+            return this.adaptResponse(
+              opts.req,
+              await openHttpOnLink({
+                ...ctx,
+                streams: this.deps.streams,
+                body: opts.nextBody(),
+                signal,
+                transferMs: opts.budgets.linkMs,
+              }),
+              ctx
+            );
+          },
+        });
+      } catch (err) {
+        lastError = err;
+        if (opts.rawBody) warnRawAbort(opts.nodeId, opts.uploadedBytes(), err);
+        if (
+          !shouldRetryAuthorized(err, attempt, opts.attempts, opts.rawBody, {
+            method: opts.method,
+            nodeId: opts.nodeId,
+            link: opts.openedLink.current,
+          })
+        )
+          break;
+      }
+    }
+    return lastError;
   }
 
   private isLocalNode(id: string): boolean {
@@ -332,28 +364,15 @@ export class Forwarder {
   }
 
   /** 取链路，最多等到 deadline；超时抛 ForwardDeadlineError，未认领的链路留给下次复用。 */
-  private async linkBefore(nodeId: string, deadlineAt: number, rest?: string) {
-    const remaining = deadlineAt - Date.now();
-    if (remaining <= 0) throw new ForwardDeadlineError();
-    // 节点详情里的域名访问 / 直连插件等管理调用对已暂停节点也要能通
-    const purpose = rest?.startsWith('/api/system/') ? 'management' : 'user';
-    const pending = this.deps.peers.getLink(nodeId, { purpose });
-    const timeout = new AbortController();
-    const expired = this.sleep(remaining, timeout.signal).then(
-      () => null,
-      () => null
-    );
-    try {
-      const link = await Promise.race([pending, expired]);
-      if (link) return link;
-      // 墙钟没真的走过 deadline（测试注入的零延时 sleep）：不认这次超时。
-      if (Date.now() < deadlineAt) return await pending;
-      void pending.catch(() => undefined);
-      this.log(`[mesh] forward link deadline node=${nodeId} waited_ms=${remaining}`);
-      throw new ForwardDeadlineError();
-    } finally {
-      timeout.abort();
-    }
+  private linkBefore(nodeId: string, deadlineAt: number, rest: string, signal: AbortSignal) {
+    return acquireForwardLink({
+      pending: this.deps.peers.getLink(nodeId, { purpose: forwardLinkPurpose(rest) }),
+      nodeId,
+      deadlineAt,
+      sleep: this.sleep,
+      log: this.log,
+      signal,
+    });
   }
 
   private async forwardHttp(
@@ -369,6 +388,16 @@ export class Forwarder {
     const auth = forwardedAuthFor(req, nodeId, rest);
     stampForwardedAuthHeaders(headers, req, rest, auth);
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
+    const resumeBase = buildForwardResumeCtx({
+      nodeId,
+      method: req.method,
+      path: rest,
+      query: search,
+      headers,
+      origin,
+      auth,
+      signal,
+    });
     const replay = await bufferReplayableBody(req);
     const floorMs = forwardLinkDeadlineFor(
       nodeId,
@@ -389,21 +418,20 @@ export class Forwarder {
       }
       link = null;
       try {
-        const opened = await this.linkBefore(nodeId, deadlineAt, rest);
+        const opened = await this.linkBefore(nodeId, deadlineAt, rest, signal);
         link = opened;
-        await rejectClosedLink(opened);
-        const transferMs = forwardResponseBudgetMs(deadlineAt - Date.now(), floorMs);
+        const ctx: ForwardResumeCtx = { ...resumeBase, link: opened };
         const upstream = await this.adaptResponse(
           req,
-          await withHttpStreamUploadDeadline(signal, transferMs, headers, replay.hasBody, (s) =>
-            this.deps.streams.openHttpStream(
-              opened,
-              { method: req.method, path: rest, query: search, headers, origin, auth },
-              replay.next(),
-              s
-            )
-          ),
-          nodeId
+          await openHttpOnLink({
+            ...ctx,
+            streams: this.deps.streams,
+            link: opened,
+            body: replay.next(),
+            signal,
+            transferMs: forwardResponseBudgetMs(deadlineAt - Date.now(), floorMs),
+          }),
+          ctx
         );
         await this.recordForwardedLoginFailure(req, gated, rest, upstream);
         return upstream;
@@ -520,18 +548,18 @@ export class Forwarder {
     });
   }
 
-  private async adaptResponse(req: Request, upstream: Response, nodeId: string): Promise<Response> {
-    const headers = copyUpstreamHeaders(upstream);
-    const rest = parseNodePrefix(new URL(req.url).pathname)?.rest ?? '';
-    return (
-      (await applyAuthPolicy(
-        req,
-        headers,
-        upstream,
-        nodeId,
-        AUTH_SKIP.has(rest) || isShareAccessPath(rest, req.method)
-      )) ?? new Response(upstream.body, { status: upstream.status, headers })
-    );
+  private adaptResponse(
+    req: Request,
+    upstream: Response,
+    ctx: ForwardResumeCtx
+  ): Promise<Response> {
+    return adaptForwardedResponse(req, upstream, ctx, {
+      peers: this.deps.peers,
+      streams: this.deps.streams,
+      log: this.log,
+      sleep: this.sleep,
+      skipAuth: skipForwardAuth(ctx.path, ctx.method),
+    });
   }
 }
 
@@ -550,20 +578,4 @@ async function settleForwardedLoginLimit(
   if (code === 'TOTP_REQUIRED' || code === 'PASSKEY_REQUIRED') return;
   if (gated.uidHint && authUidTooLong(gated.uidHint)) return;
   limits.recordLoginFailure(req, gated.uidHint, gated.ip);
-}
-
-async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  if (ms <= 0) return;
-  if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
-  await new Promise<void>((resolve, reject) => {
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(new DOMException('The operation was aborted.', 'AbortError'));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
 }

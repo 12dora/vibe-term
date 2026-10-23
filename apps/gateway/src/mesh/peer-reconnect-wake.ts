@@ -44,6 +44,10 @@ export type LivePeer = {
   initiatedBy: string;
   generation: number;
   streams: number;
+  /** 正在转发、无法 Range 续传的 HTTP 体。rehome 见此 > 0 就留给 replaced 排空。 */
+  nonMigratable: number;
+  /** 优化换链因不可迁移流推迟；计数归零后立刻 retired。 */
+  pendingOptimisationRetire?: boolean;
   lastStreamAt: number;
   idleTimer: { clear: () => void } | null;
   pingTimer: { clear: () => void } | null;
@@ -83,6 +87,17 @@ export type LivePeer = {
   /** 产出本条 DC 的 ICE epoch；ws-secure / relay 或旧路径未带回时缺省。 */
   rtcEpoch?: number;
 };
+
+export function isLivePeer(value: unknown): value is LivePeer {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as LivePeer;
+  return (
+    typeof row.peerNodeId === 'string' &&
+    typeof row.streams === 'number' &&
+    typeof row.nonMigratable === 'number' &&
+    typeof row.retiring === 'boolean'
+  );
+}
 
 const DRAIN_DROP_REASONS = new Set(['missed-pong', 'idle']);
 

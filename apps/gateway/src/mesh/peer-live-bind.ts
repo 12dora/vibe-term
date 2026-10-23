@@ -43,6 +43,7 @@ export function buildInstalledPeer(input: {
     initiatedBy: input.initiatedBy,
     generation: input.gen,
     streams: 0,
+    nonMigratable: 0,
     lastStreamAt: input.now,
     idleTimer: null,
     pingTimer: null,

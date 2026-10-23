@@ -20,6 +20,7 @@ import {
 } from './peer-dc-reroll-offer';
 import { winningDialInitiator } from './peer-direct-attempt';
 import { type PeerManagerState, RTC_PEER_INBOX_MAX_MESSAGES } from './peer-manager-state';
+import { retireOptimisationSwitch } from './peer-optimisation-retire';
 import { PEER_LINK_REROLL_REQUEST, parseLinkRerollRequest } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import { RTC_SIGNAL_INBOX_TTL_MS, type RtcSignalInboxEntry } from './peer-rtc-wake';
@@ -440,7 +441,7 @@ export class DcRerollCoordinator {
 
   /**
    * 新链路确实更快时把旧链路上的在途流搬过去：用 `retired` 关旧 session，
-   * 转发层的 failover 会在当前 live 上重开流并按 canonical 回放，hub/relay 侧不会 abortBoth。
+   * 转发层 failover / HTTP Range 续传会在当前 live 上重开。不可迁移的 HTTP 体留给 replaced 排空。
    */
   private rehome(
     nodeId: string,
@@ -452,13 +453,13 @@ export class DcRerollCoordinator {
     if (!set) return;
     for (const row of [...set]) {
       if (row.session !== prevSession || row.streams === 0) continue;
+      if (!retireOptimisationSwitch(row, this.deps.finishRetire)) continue;
       rtcLog('reroll_rehome', {
         peer: id8(nodeId),
         transport,
         streams: row.streams,
         gain_pct: Math.round(gain * 100),
       });
-      this.deps.finishRetire(row, 'retired');
     }
   }
 

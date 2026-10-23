@@ -8,6 +8,7 @@ import {
   missedPongExceeded,
   parseEchoedSentAt,
 } from './peer-manager-state';
+import { maybeRetireOptimisation } from './peer-optimisation-retire';
 import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import { quiet } from './peer-ws-race';
@@ -381,9 +382,7 @@ export class CandidateHold {
     const live = this.host.live(candidate.peerId);
     adoptSessionRtcUnsub(candidate.session, live);
     this.noteInstalled(candidate, live ?? prev, directMs, relayMs, prev?.session !== kept);
-    if (candidate.kind === 'degraded' && prev && prev.session !== kept) {
-      this.host.finishRetire(prev, 'retired');
-    }
+    maybeRetireOptimisation(candidate.kind, prev, kept, this.host.finishRetire);
   }
 
   private end(session: LinkSession, peerId: string, reason: string, epoch?: number): void {

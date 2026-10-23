@@ -6,6 +6,7 @@ import {
   httpHeadTimeoutMs,
   wrapUploadDestination,
 } from './forwarder-attempt-deadline';
+import { noteHttpResponseHead } from './live-http-migratable';
 import { parseOpenPayload } from './peer-protocol';
 import { attachMeshPeerMarker } from './peer-request-marker';
 import {
@@ -172,9 +173,7 @@ export async function acceptHttpStream(
   const responseHeaders = authResponseHeaders(headerRecord(response.headers), verified);
 
   try {
-    await stream.write(encodeJsonBytes({ status: response.status, headers: responseHeaders }), {
-      head: true,
-    });
+    await writeHttpHead(stream, method, response.status, responseHeaders);
     responseReader = response.body?.getReader() ?? null;
     if (
       !(await pumpToLink(responseReader, stream, () => {
@@ -195,6 +194,16 @@ export async function acceptHttpStream(
   }
 }
 
+async function writeHttpHead(
+  stream: LinkStream,
+  method: string,
+  status: number,
+  headers: Record<string, string>
+): Promise<void> {
+  noteHttpResponseHead(stream, method, status, headers);
+  await stream.write(encodeJsonBytes({ status, headers }), { head: true });
+}
+
 async function writeHttpResponse(
   stream: LinkStream,
   status: number,
@@ -202,7 +211,7 @@ async function writeHttpResponse(
   body: string
 ): Promise<void> {
   try {
-    await stream.write(encodeJsonBytes({ status, headers }), { head: true });
+    await writeHttpHead(stream, 'GET', status, headers);
     if (body) await stream.write(new TextEncoder().encode(body));
     await stream.end();
   } catch {
@@ -324,6 +333,7 @@ export async function openHttpStream(
     } catch {
       // writer stopped
     }
+    noteHttpResponseHead(stream, payload.method, head.status, head.headers, link);
     return responseFromHttpHead(stream, head, rst);
   } catch (err) {
     if (signal?.aborted) throw signal.reason ?? err;

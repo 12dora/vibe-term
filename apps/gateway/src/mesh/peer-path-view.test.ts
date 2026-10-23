@@ -16,6 +16,7 @@ function live(partial: Partial<LivePeer> & Pick<LivePeer, 'transport'>): LivePee
     initiatedBy: 'bb'.repeat(16),
     generation: 1,
     streams: 0,
+    nonMigratable: 0,
     lastStreamAt: 0,
     idleTimer: null,
     pingTimer: null,
