@@ -301,3 +301,29 @@ describe('meshFetch body', () => {
     }
   });
 });
+
+describe('meshFetch user-agent', () => {
+  test('直连路径默认带 vibeterm UA，调用方显式给的不覆盖', async () => {
+    saveEnv();
+    clearProxyEnv();
+    setMeshProxyPolicyForTests('direct');
+    const seen: (string | null)[] = [];
+    const target = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get('user-agent'));
+        return new Response('ok');
+      },
+    });
+    try {
+      const url = `http://127.0.0.1:${target.port}/`;
+      await (await meshFetch(url)).text();
+      await (await meshFetch(url, { headers: { 'User-Agent': 'custom/1' } })).text();
+      expect(seen[0]).toMatch(/^vibeterm\//);
+      expect(seen[1]).toBe('custom/1');
+    } finally {
+      target.stop(true);
+    }
+  });
+});

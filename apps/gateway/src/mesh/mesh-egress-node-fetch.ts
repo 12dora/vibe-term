@@ -8,6 +8,7 @@ import http, {
 import https, { type RequestOptions } from 'node:https';
 import { Readable } from 'node:stream';
 import type { PeerCertificate } from 'node:tls';
+import { getBaseVersion } from '../system/version';
 import { stripHostBrackets } from './mesh-egress-noproxy';
 
 export type MeshFetchTls = {
@@ -51,7 +52,7 @@ export async function nodeMeshFetch(
   init?: MeshFetchInit
 ): Promise<Response> {
   const fromReq = input instanceof Request ? input : null;
-  const headers = headerRecord(init?.headers ?? fromReq?.headers);
+  const headers = withDefaultUserAgent(headerRecord(init?.headers ?? fromReq?.headers));
   const bodyInit = init && 'body' in init ? init.body : fromReq?.body;
   return dispatchNodeRequest({
     url: requestUrl(input),
@@ -170,6 +171,12 @@ function incomingToHeaders(raw: IncomingHttpHeaders): Headers {
     }
   }
   return headers;
+}
+
+/** node:http 不像 Bun fetch 那样自带 UA；部分前置（如浏览器完整性检查）会拦空 UA。 */
+function withDefaultUserAgent(headers: Record<string, string>): Record<string, string> {
+  if (Object.keys(headers).some((key) => key.toLowerCase() === 'user-agent')) return headers;
+  return { ...headers, 'user-agent': `vibeterm/${getBaseVersion()}` };
 }
 
 function headerRecord(headers?: HeadersInit): Record<string, string> {
