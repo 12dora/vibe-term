@@ -271,10 +271,12 @@ describe('uploadFileWithTransport', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
   });
 
-  test('self 永不走直连', async () => {
+  test('self 永不走直连，也不报告传输通道', async () => {
     const gw = uploadGateway();
     let resolved = 0;
-    const path = await uploadFileWithTransport('self', 'r1', '/dest', fileOf(10), {}, gw.client, {
+    const paths: string[] = [];
+    const opts = { onPath: (p: string) => paths.push(p) };
+    const path = await uploadFileWithTransport('self', 'r1', '/dest', fileOf(10), opts, gw.client, {
       resolveBulk: () => {
         resolved += 1;
         return fakeBulk();
@@ -282,6 +284,7 @@ describe('uploadFileWithTransport', () => {
     });
     expect(path).toBe('relay');
     expect(resolved).toBe(0);
+    expect(paths).toEqual([]);
     expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0&length=10');
   });
 

@@ -77,6 +77,9 @@ function pushRow(row: LocalTransferHandle | null, view: BatchView, net: Transfer
   });
 }
 
+// sonner 按 id 更新时把新旧选项合并：工作态的「取消」action 与 content 样式必须显式清掉。
+const SETTLED = { action: undefined, classNames: undefined } as const;
+
 // 启动批的进度 Toast，复用 app 统一的 sonner 卡片样式。
 // 工作态：duration:Infinity + dismissible:false + closeButton:false（不自动消失/不可手动关闭，
 // 仅取消按钮可终止）。完成 success 卡片（短暂后消失）；失败 error 卡片（保留可关闭）；取消直接收起。
@@ -137,6 +140,7 @@ export function startBatchToast(options: BatchToastOptions): BatchToast {
         toast.dismiss(id);
       } else if (result.kind === 'success') {
         toast.success(<span data-testid="transfer-toast">{result.message}</span>, {
+          ...SETTLED,
           id,
           duration: 4000,
           dismissible: true,
@@ -144,6 +148,7 @@ export function startBatchToast(options: BatchToastOptions): BatchToast {
         });
       } else {
         toast.error(<span data-testid="transfer-toast">{result.message}</span>, {
+          ...SETTLED,
           id,
           description: result.description,
           duration: Number.POSITIVE_INFINITY,

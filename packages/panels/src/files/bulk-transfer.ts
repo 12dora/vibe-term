@@ -17,9 +17,9 @@ import {
   type ApiClient,
   type DownloadedFile,
   FileApiError,
-  SELF_NODE_ID,
   defaultApiClient,
   downloadFileWithProgress,
+  isSelfNode,
   uploadFileChunked,
 } from '@vibeterm/api-client';
 import { prepareDownload } from '@vibeterm/api-client/download-transfer';
@@ -50,7 +50,7 @@ export interface FileBulkClient {
 }
 
 export interface TransferPathOpts extends TransferOpts {
-  /** 路径确定后回调一次，用于进度 UI 上的 direct / relay 徽标。 */
+  /** 远端节点的路径确定后回调一次，用于进度 UI 上的 direct / relay 徽标；本机传输不经任何通道，不回调。 */
   onPath?: (path: TransferPath) => void;
 }
 
@@ -82,7 +82,7 @@ function rethrowIfCanceled(err: unknown, signal?: AbortSignal | null): void {
 }
 
 function pickBulk(nodeId: string, deps?: BulkTransferDeps): FileBulkClient | null {
-  if (!nodeId || nodeId === SELF_NODE_ID) return null;
+  if (isSelfNode(nodeId)) return null;
   const resolve = deps?.resolveBulk ?? ((id: string) => getBulkClient(id) as FileBulkClient | null);
   const client = resolve(nodeId);
   if (!client) return null;
@@ -123,7 +123,7 @@ export async function uploadFileWithTransport(
       // 落到下面的 REST 整次重传（bulk 会话已回收，不会重复 commit）
     }
   }
-  opts.onPath?.('relay');
+  if (!isSelfNode(nodeId)) opts.onPath?.('relay');
   await uploadFileChunked(rootId, destDir, file, opts, client);
   return 'relay';
 }
@@ -219,7 +219,7 @@ export async function downloadFileWithTransport(
       // 回落：重跑一次完整 REST（prepare 会重新拉一份临时文件）
     }
   }
-  opts.onPath?.('relay');
+  if (!isSelfNode(nodeId)) opts.onPath?.('relay');
   const file = await downloadFileWithProgress(rootId, path, name, opts, client);
   return { ...file, transferPath: 'relay' };
 }

@@ -9,9 +9,16 @@ let downloadImpl: DownloadImpl = async () => ({ name: 'x', blob: new Blob([]) })
 
 // sonner 是浏览器 UI 库（dismiss 内部用 requestAnimationFrame），无 DOM 的单测里换成记录型替身
 const toasts: string[] = [];
+const settled: Array<Record<string, unknown>> = [];
 const fakeToast = Object.assign(() => 'id', {
-  success: () => toasts.push('success'),
-  error: () => toasts.push('error'),
+  success: (_m: unknown, opts: Record<string, unknown>) => {
+    settled.push(opts);
+    toasts.push('success');
+  },
+  error: (_m: unknown, opts: Record<string, unknown>) => {
+    settled.push(opts);
+    toasts.push('error');
+  },
   dismiss: () => toasts.push('dismiss'),
 });
 mock.module('sonner', () => ({ toast: fakeToast }));
@@ -31,6 +38,7 @@ const t = ((key: string) => key) as unknown as TFunction;
 
 beforeEach(() => {
   toasts.length = 0;
+  settled.length = 0;
   resetTransferJobsForTest();
   uploadStub = createUploadStub();
 });
@@ -101,6 +109,8 @@ describe('uploadFilesInto', () => {
     expect(uploadStub.calls).toHaveLength(4);
     expect(getTransferJobsSnapshot()[0]).toMatchObject({ state: 'failed', itemsDone: 3 });
     expect(toasts).toContain('error');
+    // 同 id 更新会合并旧选项：结束态必须显式清掉工作态的「取消」按钮
+    expect(settled.at(-1)).toHaveProperty('action', undefined);
   });
 
   test('取消整批：在途中止，没开始的不再上传', async () => {
