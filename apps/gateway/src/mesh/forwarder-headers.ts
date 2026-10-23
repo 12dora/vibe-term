@@ -3,6 +3,7 @@ import {
   assignHeaderPair,
   isVibeTermHeaderName,
 } from '@vibeterm/shared/http/mesh-headers';
+import { sanitizeContentDisposition } from '../api/content-disposition';
 import { isTokenCredential } from '../auth/access-token-auth';
 import { clientIpFromRequest } from './client-ip';
 import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL, isTrustedLocalClient } from './client-source';
@@ -69,13 +70,10 @@ export function copyUpstreamHeaders(upstream: Response): Headers {
     if (RESPONSE_ALLOW.has(lower) || isVibeTermHeaderName(lower)) headers.set(key, value);
   });
   const mime = baseMime(contentType);
-  if (mime && MESH_ALLOWED_MIME.has(mime)) {
-    headers.set('content-type', contentType || mime);
-    if (contentDisposition) headers.set('content-disposition', contentDisposition);
-  } else {
-    headers.set('content-type', 'application/octet-stream');
-    headers.set('content-disposition', 'attachment');
-  }
+  const allowed = Boolean(mime && MESH_ALLOWED_MIME.has(mime));
+  if (allowed) headers.set('content-type', contentType || mime);
+  else headers.set('content-type', 'application/octet-stream');
+  applySafeDisposition(headers, contentDisposition, allowed);
   headers.set('content-security-policy', MESH_FORWARD_CSP);
   headers.set('x-content-type-options', 'nosniff');
   return headers;
@@ -143,6 +141,11 @@ function deleteHeader(headers: Record<string, string>, name: string): void {
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === lower) delete headers[key];
   }
+}
+
+function applySafeDisposition(headers: Headers, raw: string | null, allowed: boolean): void {
+  const safe = sanitizeContentDisposition(raw, !allowed);
+  if (safe) headers.set('content-disposition', safe);
 }
 
 function baseMime(contentType: string): string {

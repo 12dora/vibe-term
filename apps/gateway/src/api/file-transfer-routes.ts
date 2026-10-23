@@ -1,9 +1,9 @@
 import { config } from '../config';
 import {
+  probeUploadTarget,
   pullFileFromDevice,
   pushFileToDevice,
   sanitizeUploadName,
-  statFile,
 } from '../files/device-storage';
 import { transferMaxBytesNow } from '../files/transfer-limit';
 import {
@@ -17,17 +17,9 @@ import {
 } from '../files/transfer-session';
 import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
-import {
-  type ContentRange,
-  attachmentHeaders,
-  codeError,
-  ndjsonResponse,
-  parseNonNegativeSafeInt,
-  parseRangeHeader,
-  streamFileRange,
-  streamTempFile,
-} from './file-http';
+import { codeError, ndjsonResponse, parseNonNegativeSafeInt } from './file-http';
 import { handleMkdir } from './file-mkdir';
+import { serveFileBytes, servePulledFile, sessionValidators } from './file-serve';
 import { cleanupDownload, cleanupUpload, rememberTransferUid } from './file-transfer-sessions';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
@@ -59,13 +51,17 @@ async function handleUploadInit(req: Request): Promise<Response> {
   const maxBytes = transferMaxBytesNow(config.transferMaxBytes);
   if (size > maxBytes) return tooLargeFor(maxBytes);
 
-  const stat = await statFile(rootId, destDir);
-  if (!stat.ok) return codeError(stat.code, stat.detail);
-  if (stat.data.type !== 'dir') return codeError('not_a_directory');
+  const target = await probeUploadTarget(rootId, destDir);
+  if (!target.ok) return codeError(target.code, target.detail);
 
   const session = createUploadSession({ rootId, destDir, name, size });
   rememberTransferUid(session.id, uidFromRequest(req));
-  return json({ uploadId: session.id, chunkSize: UPLOAD_CHUNK_SIZE, ranged: true });
+  return json({
+    uploadId: session.id,
+    chunkSize: UPLOAD_CHUNK_SIZE,
+    ranged: true,
+    commitProgress: target.data.commitProgress,
+  });
 }
 
 /** 本次 PUT 声明的字节数：优先 `length` 查询参数，其次 content-length。 */
@@ -210,34 +206,16 @@ function handleDownloadContent(req: Request, id: string): Response {
     cleanupDownload(id);
     return codeError('invalid', 'source changed');
   }
-  const range = parseRangeHeader(req.headers.get('range'), session.size);
-  if (range === 'unsatisfiable') {
-    return new Response(null, {
-      status: 416,
-      headers: { 'Content-Range': `bytes */${session.size}`, 'Cache-Control': 'no-store' },
-    });
-  }
   // 会话只由客户端显式 DELETE 或 TTL 回收：读到文件尾不代表客户端真的收全了，
-  // 就地清掉会让紧接着的续传请求撞上 404。
-  const body = streamFileRange(session.tmpPath, range);
-  if (!body) return codeError('unknown');
-  if (range === null) {
-    return new Response(body, {
-      status: 200,
-      headers: attachmentHeaders(session.name, session.mime, session.size),
-    });
-  }
-  return new Response(body, { status: 206, headers: rangeHeaders(session, range) });
-}
-
-function rangeHeaders(
-  session: { name: string; mime: string | null; size: number },
-  range: ContentRange
-): Record<string, string> {
-  return {
-    ...attachmentHeaders(session.name, session.mime, range.end - range.start),
-    'Content-Range': `bytes ${range.start}-${range.end - 1}/${session.size}`,
-  };
+  // 就地清掉会让紧接着的续传请求撞上 404。SSH 会话临时文件不可变，校验器取自会话。
+  return serveFileBytes(req, {
+    path: session.tmpPath,
+    name: session.name,
+    mime: session.mime,
+    entityLength: session.size,
+    validators: sessionValidators(session),
+    attachment: true,
+  });
 }
 
 function handleDownloadCancel(id: string): Response {
@@ -255,10 +233,7 @@ async function handleDownload(req: Request, url: URL): Promise<Response> {
     onProgress: () => {},
   });
   if (!result.ok) return codeError(result.code, result.detail);
-  const { tmpPath, size, name, mime, cleanup } = result.data;
-  const body = streamTempFile(tmpPath, cleanup);
-  if (!body) return codeError('unknown');
-  return new Response(body, { status: 200, headers: attachmentHeaders(name, mime, size) });
+  return servePulledFile(req, result.data, true);
 }
 
 export const fileTransferRoutes: ApiRoute[] = [

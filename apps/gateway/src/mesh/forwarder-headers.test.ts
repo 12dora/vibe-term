@@ -68,6 +68,70 @@ describe('copyUpstreamHeaders', () => {
     expect(headers.get('content-type')).toBe('application/octet-stream');
     expect(headers.get('content-disposition')).toBe('attachment');
   });
+
+  test('gzip 归档强制 attachment 但保留 x.tar.gz 文件名', () => {
+    const headers = copyUpstreamHeaders(
+      new Response(null, {
+        headers: {
+          'content-type': 'application/gzip',
+          'content-disposition': 'attachment; filename="x.tar.gz"; filename*=UTF-8\'\'x.tar.gz',
+        },
+      })
+    );
+    expect(headers.get('content-type')).toBe('application/octet-stream');
+    expect(headers.get('content-disposition')).toBe(
+      'attachment; filename="x.tar.gz"; filename*=UTF-8\'\'x.tar.gz'
+    );
+  });
+
+  test('UTF-8 filename* 经消毒后原样可解码', () => {
+    const headers = copyUpstreamHeaders(
+      new Response(null, {
+        headers: {
+          'content-type': 'application/gzip',
+          'content-disposition':
+            'attachment; filename="__.tar.gz"; filename*=UTF-8\'\'%E6%8A%A5%E5%91%8A.tar.gz',
+        },
+      })
+    );
+    const disposition = headers.get('content-disposition') ?? '';
+    expect(disposition.startsWith('attachment;')).toBe(true);
+    const encoded = disposition.split("filename*=UTF-8''")[1];
+    expect(decodeURIComponent(encoded ?? '')).toBe('报告.tar.gz');
+  });
+
+  test('header 注入与路径穿越不会进入 Content-Disposition', () => {
+    const crlf = copyUpstreamHeaders(
+      new Response('x', {
+        headers: {
+          'content-type': 'application/gzip',
+          // 原始 CRLF 进不了 Headers；能带进来的只有 filename* 里的百分号编码
+          'content-disposition': "attachment; filename*=UTF-8''evil%0D%0AX-Injected%3A%201.txt",
+        },
+      })
+    );
+    const value = crlf.get('content-disposition') ?? '';
+    expect(value).not.toMatch(/[\r\n]/);
+    expect(value).not.toContain('\nX-Injected');
+
+    const path = copyUpstreamHeaders(
+      new Response('x', {
+        headers: {
+          'content-type': 'image/png',
+          'content-disposition': 'inline; filename="../../x.png"',
+        },
+      })
+    );
+    expect(path.get('content-type')).toBe('image/png');
+    expect(path.get('content-disposition')).toContain('filename="....x.png"');
+  });
+
+  test('上游没有 filename 时强制下载分支只写裸 attachment', () => {
+    const headers = copyUpstreamHeaders(
+      new Response('x', { headers: { 'content-type': 'application/gzip' } })
+    );
+    expect(headers.get('content-disposition')).toBe('attachment');
+  });
 });
 
 describe('filterRequestHeaders', () => {

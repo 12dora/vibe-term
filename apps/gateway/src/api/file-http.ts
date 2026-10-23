@@ -1,5 +1,6 @@
 import type { FileErrorCode } from '@vibeterm/shared';
 import { openRange } from '@vibeterm/transfer/node';
+import { contentDisposition } from './content-disposition';
 import { json } from './http';
 
 const CODE_STATUS: Record<FileErrorCode, number> = {
@@ -45,12 +46,10 @@ export function attachmentHeaders(
   mime: string | null,
   size: number
 ): Record<string, string> {
-  const encoded = encodeURIComponent(name);
-  const ascii = name.replace(/["\\\r\n]/g, '_');
   return {
     'Content-Type': mime ?? 'application/octet-stream',
     'Content-Length': String(size),
-    'Content-Disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
+    'Content-Disposition': contentDisposition(name),
     'Cache-Control': 'no-store',
     'Accept-Ranges': 'bytes',
   };
@@ -121,13 +120,6 @@ export function streamFileRange(
       cleanupAfter();
     },
   });
-}
-
-export function streamTempFile(
-  tmpPath: string,
-  cleanupAfter: () => void
-): ReadableStream<Uint8Array> | null {
-  return streamFileRange(tmpPath, null, cleanupAfter);
 }
 
 export function ndjsonResponse(handlers: {

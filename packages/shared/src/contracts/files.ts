@@ -220,6 +220,12 @@ export interface UploadInitResponse {
    * 旧节点无此字段，客户端退回单流顺序追加。
    */
   ranged?: boolean;
+  /**
+   * commit 阶段（第二段）是否会流式回报增量进度。
+   * SSH 设备走 rsync（`parseRsyncProgress`）为 true；本机 `copyFile` 只发一条最终进度，为 false。
+   * 旧节点省略此字段，客户端按 true 处理。
+   */
+  commitProgress?: boolean;
 }
 
 /** `GET /api/files/upload/:id`：断线重连后据此只补发缺口 */

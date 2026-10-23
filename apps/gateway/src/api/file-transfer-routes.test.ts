@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as deviceStorage from '../files/device-storage';
 import {
   createDownloadSession,
   createUploadSession,
@@ -11,6 +12,7 @@ import {
   removeDownloadSession,
   removeUploadSession,
 } from '../files/transfer-session';
+import { ENTITY_LENGTH_HEADER, sessionValidators } from './file-serve';
 import { filesRoutes } from './files';
 import { dispatchRoutes } from './route';
 
@@ -323,5 +325,206 @@ describe('分块 PUT 的硬上限与下载会话保留', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ code: 'invalid' });
     expect(getDownloadSession(session.id)).toBeUndefined();
+  });
+});
+
+describe('GET /api/files/download/:id/content validators and If-Range', () => {
+  const ids: string[] = [];
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const id of ids) removeDownloadSession(id);
+    ids.length = 0;
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  function sessionOf(payload = 'hello') {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
+    dirs.push(dir);
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, Buffer.from(payload));
+    const session = createDownloadSession({
+      tmpPath,
+      size: payload.length,
+      name: 'a.bin',
+      mime: 'application/octet-stream',
+      cleanup: () => {},
+    });
+    ids.push(session.id);
+    return session;
+  }
+
+  test('200 带强 ETag、Last-Modified、Accept-Ranges 与 entity-length', async () => {
+    const session = sessionOf('hello');
+    const expected = sessionValidators(session);
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`)
+    )) as Response;
+    expect(res.status).toBe(200);
+    expect(res.headers.get('ETag')).toBe(expected.etag);
+    expect(res.headers.get('Last-Modified')).toBe(expected.lastModified);
+    expect(res.headers.get('Accept-Ranges')).toBe('bytes');
+    expect(res.headers.get(ENTITY_LENGTH_HEADER)).toBe('5');
+    expect(res.headers.get('Content-Length')).toBe('5');
+    expect(await res.text()).toBe('hello');
+  });
+
+  test('闭区间 bytes=a-b 返回 206 且 entity-length 仍是全文件大小', async () => {
+    const session = sessionOf('hello');
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=1-3' },
+      })
+    )) as Response;
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe('ell');
+    expect(res.headers.get('Content-Range')).toBe('bytes 1-3/5');
+    expect(res.headers.get('Content-Length')).toBe('3');
+    expect(res.headers.get(ENTITY_LENGTH_HEADER)).toBe('5');
+    expect(res.headers.get('Accept-Ranges')).toBe('bytes');
+  });
+
+  test('If-Range 命中则 206，未命中则忽略 Range 回 200 全文', async () => {
+    const session = sessionOf('hello');
+    const { etag, lastModified } = sessionValidators(session);
+    const matched = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=1-3', 'If-Range': etag },
+      })
+    )) as Response;
+    expect(matched.status).toBe(206);
+    expect(await matched.text()).toBe('ell');
+
+    const byDate = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=1-3', 'If-Range': lastModified ?? '' },
+      })
+    )) as Response;
+    expect(byDate.status).toBe(206);
+
+    const missed = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=1-3', 'If-Range': '"nope"' },
+      })
+    )) as Response;
+    expect(missed.status).toBe(200);
+    expect(await missed.text()).toBe('hello');
+    expect(missed.headers.get(ENTITY_LENGTH_HEADER)).toBe('5');
+  });
+
+  test('越界 Range 为 416 且不回收会话', async () => {
+    const session = sessionOf('hello');
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=8-9' },
+      })
+    )) as Response;
+    expect(res.status).toBe(416);
+    expect(res.headers.get('Content-Range')).toBe('bytes */5');
+    expect(getDownloadSession(session.id)).toBeDefined();
+  });
+});
+
+describe('GET /api/files/download validators', () => {
+  const spies: Array<ReturnType<typeof spyOn>> = [];
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const spy of spies) spy.mockRestore();
+    spies.length = 0;
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  test('200/206 带 ETag 与 entity-length；If-Range 未命中回全文', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
+    dirs.push(dir);
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, Buffer.from('hello'));
+    spies.push(
+      spyOn(deviceStorage, 'pullFileFromDevice').mockResolvedValue({
+        ok: true,
+        data: {
+          tmpPath,
+          size: 5,
+          name: 'a.bin',
+          mime: 'application/octet-stream',
+          cleanup: () => {},
+        },
+      })
+    );
+    const full = (await dispatch(
+      new Request('http://localhost/api/files/download?rootId=r&path=%2Fa.bin')
+    )) as Response;
+    expect(full.status).toBe(200);
+    expect(full.headers.get('ETag')).toBeTruthy();
+    expect(full.headers.get('Accept-Ranges')).toBe('bytes');
+    expect(full.headers.get(ENTITY_LENGTH_HEADER)).toBe('5');
+    const etag = full.headers.get('ETag') ?? '';
+    expect(await full.text()).toBe('hello');
+
+    const ranged = (await dispatch(
+      new Request('http://localhost/api/files/download?rootId=r&path=%2Fa.bin', {
+        headers: { Range: 'bytes=0-1', 'If-Range': etag },
+      })
+    )) as Response;
+    expect(ranged.status).toBe(206);
+    expect(await ranged.text()).toBe('he');
+
+    const missed = (await dispatch(
+      new Request('http://localhost/api/files/download?rootId=r&path=%2Fa.bin', {
+        headers: { Range: 'bytes=0-1', 'If-Range': '"stale"' },
+      })
+    )) as Response;
+    expect(missed.status).toBe(200);
+    expect(await missed.text()).toBe('hello');
+  });
+});
+
+describe('POST /api/files/upload/init commitProgress', () => {
+  const spies: Array<ReturnType<typeof spyOn>> = [];
+  const ids: string[] = [];
+  afterEach(() => {
+    for (const spy of spies) spy.mockRestore();
+    spies.length = 0;
+    for (const id of ids) removeUploadSession(id);
+    ids.length = 0;
+  });
+
+  async function init(): Promise<Response> {
+    return (await dispatch(
+      new Request('http://localhost/api/files/upload/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rootId: 'root-1', path: '/tmp', name: 'a.bin', size: 1 }),
+      })
+    )) as Response;
+  }
+
+  test('提交段是否流式回报进度原样取自上传目标探测', async () => {
+    for (const commitProgress of [false, true]) {
+      const spy = spyOn(deviceStorage, 'probeUploadTarget').mockResolvedValue({
+        ok: true,
+        data: { commitProgress },
+      });
+      spies.push(spy);
+      const res = await init();
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { uploadId: string; commitProgress: boolean };
+      ids.push(body.uploadId);
+      expect(body.commitProgress).toBe(commitProgress);
+      spy.mockRestore();
+    }
+  });
+
+  test('目标不是目录时拒绝建会话', async () => {
+    spies.push(
+      spyOn(deviceStorage, 'probeUploadTarget').mockResolvedValue({
+        ok: false,
+        code: 'not_a_directory',
+      })
+    );
+    const res = await init();
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { code: string }).code).toBe('not_a_directory');
   });
 });

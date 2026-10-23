@@ -1,7 +1,8 @@
 import { listDirectory, readRawFile, readTextFile, statFile } from '../files/device-storage';
 import { browseDirectory } from '../files/directory-browse';
 import { t } from '../i18n';
-import { codeError, streamTempFile } from './file-http';
+import { codeError } from './file-http';
+import { servePulledFile } from './file-serve';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
 
@@ -42,28 +43,15 @@ async function handleStat(url: URL): Promise<Response> {
   return json(result.data);
 }
 
-async function handleRaw(url: URL): Promise<Response> {
+async function handleRaw(req: Request, url: URL): Promise<Response> {
   const rootId = url.searchParams.get('rootId');
   const path = url.searchParams.get('path');
   if (!rootId || !path) return json({ error: t('apiError.invalidRequest') }, 400);
   const result = await readRawFile(rootId, path);
   if (!result.ok) return codeError(result.code, result.detail);
 
-  const { tmpPath, size, name, mime, cleanup } = result.data;
-  const body = streamTempFile(tmpPath, cleanup);
-  if (!body) return codeError('unknown');
-
-  const headers: Record<string, string> = {
-    'Content-Type': mime ?? 'application/octet-stream',
-    'Content-Length': String(size),
-  };
   const download = url.searchParams.get('download');
-  if (download === '1' || download === 'true') {
-    const encoded = encodeURIComponent(name);
-    const ascii = name.replace(/["\\\r\n]/g, '_');
-    headers['Content-Disposition'] = `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
-  }
-  return new Response(body, { status: 200, headers });
+  return servePulledFile(req, result.data, download === '1' || download === 'true');
 }
 
 export const fileBrowserRoutes: ApiRoute[] = [
@@ -79,5 +67,9 @@ export const fileBrowserRoutes: ApiRoute[] = [
     handler: (req) => handleContent(new URL(req.url)),
   }),
   route({ method: 'GET', path: '/api/files/stat', handler: (req) => handleStat(new URL(req.url)) }),
-  route({ method: 'GET', path: '/api/files/raw', handler: (req) => handleRaw(new URL(req.url)) }),
+  route({
+    method: 'GET',
+    path: '/api/files/raw',
+    handler: (req) => handleRaw(req, new URL(req.url)),
+  }),
 ];

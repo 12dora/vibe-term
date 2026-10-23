@@ -50,7 +50,29 @@ describe('GET /api/files/raw streams the temp file', () => {
     expect(res.headers.get('Content-Type')).toBe('image/png');
     expect(res.headers.get('Content-Length')).toBe(String(raw.size));
     expect(res.headers.get('Content-Disposition')).toContain('filename="a.png"');
+    expect(res.headers.get('Accept-Ranges')).toBe('bytes');
+    expect(res.headers.get('ETag')).toBeTruthy();
+    expect(res.headers.get('Last-Modified')).toBeTruthy();
+    expect(res.headers.get('X-VibeTerm-Entity-Length')).toBe(String(raw.size));
     expect(await res.text()).toBe('PNGDATA');
+    expect(existsSync(raw.tmpPath)).toBe(false);
+  });
+
+  test('Range 闭区间返回 206，entity-length 仍是全文件', async () => {
+    const raw = tempRaw('PNGDATA', 'a.png');
+    spies.push(
+      spyOn(deviceStorage, 'readRawFile').mockResolvedValue({ ok: true, data: { ...raw } })
+    );
+    const res = (await dispatch(
+      new Request('http://localhost/api/files/raw?rootId=r1&path=%2Fa.png', {
+        headers: { Range: 'bytes=1-3' },
+      })
+    )) as Response;
+    expect(res.status).toBe(206);
+    expect(await res.text()).toBe('NGD');
+    expect(res.headers.get('Content-Range')).toBe('bytes 1-3/7');
+    expect(res.headers.get('X-VibeTerm-Entity-Length')).toBe('7');
+    expect(res.headers.get('Accept-Ranges')).toBe('bytes');
     expect(existsSync(raw.tmpPath)).toBe(false);
   });
 

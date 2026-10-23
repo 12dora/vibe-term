@@ -24,6 +24,7 @@ import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
 import { quoteShellArg } from '../tmux-client/command-builder';
 import { sessionMaxBytes } from '../transfer/limits';
+import { contentDisposition } from './content-disposition';
 import { codeError } from './file-http';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
@@ -280,8 +281,8 @@ async function remoteSpec(device: Device): Promise<FileOpResult<RsyncDeviceSpec>
 }
 
 /**
- * 不用 `withDeviceRsync`：它在回调 resolve 时就清理 spec，而且会占着该设备的串行队列——
- * 一次长下载会把同设备的其它文件操作全部堵住。这里直接建 spec，交给流的 `onClose` 在
+ * 不用 `withDeviceRsync`：它在回调 resolve 时就清理 spec，而且会占着该设备的队列槽位——
+ * 一次长下载会一直挤占同设备的传输并发、并挡住其后的改名 / 删除。这里直接建 spec，交给流的 `onClose` 在
  * 流结束 / 出错 / 取消时清理，保证 ssh 子进程存活期间密钥与 askpass 文件都在。
  */
 async function openRemoteArchive(
@@ -303,16 +304,6 @@ async function openRemoteArchive(
     spec.data.cleanup();
     return fail('unknown');
   }
-}
-
-/** `filename=` 回退值只留可打印 ASCII（非 ASCII、引号、反斜杠换成 `_`），完整名字放 `filename*=`。 */
-function contentDisposition(name: string): string {
-  const ascii = name.replace(/[^\x20-\x7E]|["\\]/gu, '_');
-  const encoded = encodeURIComponent(name).replace(
-    /['()*]/g,
-    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`
-  );
-  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 function archiveHeaders(name: string): Record<string, string> {

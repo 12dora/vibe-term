@@ -278,18 +278,9 @@ describe('HTTP transfer uid binding', () => {
 
   test('upload/init remembers the request uid on the transfer owner', async () => {
     spies.push(
-      spyOn(deviceStorage, 'statFile').mockResolvedValue({
+      spyOn(deviceStorage, 'probeUploadTarget').mockResolvedValue({
         ok: true,
-        data: {
-          path: '/tmp',
-          name: 'tmp',
-          type: 'dir',
-          category: 'directory',
-          size: 0,
-          modifiedAt: null,
-          mime: null,
-          isSymlink: false,
-        },
+        data: { commitProgress: false },
       })
     );
 
@@ -361,26 +352,17 @@ describe('transfer uid cleanup', () => {
     return id;
   }
 
-  function mockStatDir() {
+  function mockUploadTarget() {
     spies.push(
-      spyOn(deviceStorage, 'statFile').mockResolvedValue({
+      spyOn(deviceStorage, 'probeUploadTarget').mockResolvedValue({
         ok: true,
-        data: {
-          path: '/tmp',
-          name: 'tmp',
-          type: 'dir',
-          category: 'directory',
-          size: 0,
-          modifiedAt: null,
-          mime: null,
-          isSymlink: false,
-        },
+        data: { commitProgress: false },
       })
     );
   }
 
   async function initOwnedUpload(uid: string, size: number): Promise<string> {
-    mockStatDir();
+    mockUploadTarget();
     const response = await dispatchWithUid('POST', '/api/files/upload/init', uid, {
       rootId: 'root-1',
       path: '/tmp',

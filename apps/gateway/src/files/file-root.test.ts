@@ -8,7 +8,7 @@ import { createDevice } from '../db/devices';
 import { createFileRoot } from '../db/file-roots';
 import { runMigrations } from '../db/migrate';
 import { devices, fileRoots } from '../db/schema';
-import { listDirectory, pushFileToDevice, statFile } from './device-storage';
+import { listDirectory, probeUploadTarget, pushFileToDevice, statFile } from './device-storage';
 import { hasEnabledFileRoots, resolveFileRoot, virtualHomeRootForList } from './file-root';
 import * as rsyncMod from './rsync';
 
@@ -187,5 +187,20 @@ describe('resolveFileRoot', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  test('本机上传目标：目录返回 commitProgress=false，文件判为非目录', async () => {
+    const deviceId = seedDevice('local');
+    const dir = tempDir();
+    writeFileSync(join(dir, 'a.txt'), 'hello');
+    const created = createFileRoot({ deviceId, path: dir });
+    expect(await probeUploadTarget(created.id, dir)).toEqual({
+      ok: true,
+      data: { commitProgress: false },
+    });
+    expect(await probeUploadTarget(created.id, join(dir, 'a.txt'))).toEqual({
+      ok: false,
+      code: 'not_a_directory',
+    });
   });
 });

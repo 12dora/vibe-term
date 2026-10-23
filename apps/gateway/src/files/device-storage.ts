@@ -216,24 +216,42 @@ export async function statFile(
   rootId: string,
   inputPath: string
 ): Promise<FileOpResult<FileStatResponse>> {
-  return withNormalized(rootId, inputPath, async ({ path, device }) => {
-    if (device.type === 'local') return statLocalPath(path);
-    return withDeviceRsync(device, 'transfer', async (spec) => {
-      const st = await statViaRsync(spec, path);
-      if (!st.ok) return st;
-      const name = posixBasename(path);
-      const isDir = st.data.type === 'dir';
-      const type = isDir ? 'dir' : st.data.type === 'symlink' ? 'symlink' : 'file';
-      return ok<FileStatResponse>({
-        path,
-        name,
-        type,
-        category: isDir ? 'directory' : categorize(name),
-        size: isDir ? 0 : (st.data.size ?? 0),
-        modifiedAt: st.data.modifiedAt,
-        mime: isDir ? null : mimeOf(name),
-        isSymlink: st.data.type === 'symlink',
-      });
+  return withNormalized(rootId, inputPath, ({ path, device }) => statOnDevice(device, path));
+}
+
+/**
+ * 上传目标：确认是目录，并告知提交段是否流式回报进度——本机落盘是一次 copyFile（只有最终一条），
+ * SSH 走 rsync（逐步回报）。与 `pushFileToDevice` 的分支同源。
+ */
+export async function probeUploadTarget(
+  rootId: string,
+  destDir: string
+): Promise<FileOpResult<{ commitProgress: boolean }>> {
+  return withNormalized(rootId, destDir, async ({ path, device }) => {
+    const st = await statOnDevice(device, path);
+    if (!st.ok) return st;
+    if (st.data.type !== 'dir') return fail('not_a_directory');
+    return ok({ commitProgress: device.type !== 'local' });
+  });
+}
+
+async function statOnDevice(device: Device, path: string): Promise<FileOpResult<FileStatResponse>> {
+  if (device.type === 'local') return statLocalPath(path);
+  return withDeviceRsync(device, 'transfer', async (spec) => {
+    const st = await statViaRsync(spec, path);
+    if (!st.ok) return st;
+    const name = posixBasename(path);
+    const isDir = st.data.type === 'dir';
+    const type = isDir ? 'dir' : st.data.type === 'symlink' ? 'symlink' : 'file';
+    return ok<FileStatResponse>({
+      path,
+      name,
+      type,
+      category: isDir ? 'directory' : categorize(name),
+      size: isDir ? 0 : (st.data.size ?? 0),
+      modifiedAt: st.data.modifiedAt,
+      mime: isDir ? null : mimeOf(name),
+      isSymlink: st.data.type === 'symlink',
     });
   });
 }
