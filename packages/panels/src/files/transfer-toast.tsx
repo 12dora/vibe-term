@@ -115,8 +115,9 @@ export function startBatchToast(options: BatchToastOptions): BatchToast {
       // 取消用 sonner 的 action 按钮（位于卡片右侧区域）。注意：sonner 的 cancel 按钮在
       // dismissible:false 时会被禁用（源码 `if (!dismissible) return`），故必须用 action。
       action: { label: i18next.t('files.transfer.cancel'), onClick: () => onCancel() },
-      // sonner 的 content 默认按内容宽度收缩 → 进度条不满；flex-1 让内容占满可用区域（取消按钮之外）
-      classNames: { content: 'flex-1' },
+      // flex-1 让内容占满取消按钮之外的区域（否则进度条不满）；min-w-0 让它能收缩到卡片宽度，
+      // 否则 flex 子项的 min-width:auto 会被内部不换行的统计行撑宽，把 action 挤出卡片
+      classNames: { content: 'min-w-0 flex-1' },
     });
   };
   renderWorking();

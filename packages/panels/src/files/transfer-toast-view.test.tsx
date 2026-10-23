@@ -26,8 +26,7 @@ describe('ToastBody 单个条目', () => {
     expect(html).toContain('big.iso');
     expect(html).toContain('files.transfer.pathRelay');
     expect(html).toContain('files.transfer.stage.transferring');
-    expect(html).toContain('1.0 KB/s');
-    expect(html).toContain('1.0 KB / 2.0 KB');
+    expect(html).toContain('1.0 KB/s · 1.0 KB / 2.0 KB');
     expect(html).not.toContain('files.transfer.leg');
     expect(count(html, 'bg-primary')).toBe(1);
     expect(html).toContain('width:50%');
@@ -66,6 +65,14 @@ describe('ToastBody 批量', () => {
     expect(html).toContain('two.txt');
     expect(html).toContain('three.txt');
     expect(html).toContain('2.0 KB/s');
+  });
+
+  test('统计行：左侧完成计数，右侧速率与字节明细合成一段，没有占位的空盒子', () => {
+    const html = render(batch(), 'title', 2048);
+    expect(html).toContain('2.0 KB/s · 0.1 KB / 0.3 KB');
+    expect(count(html, 'data-testid="transfer-rate-detail"')).toBe(1);
+    expect(html).not.toContain('min-w-[21ch]');
+    expect(html).not.toContain('min-w-[11ch]');
   });
 
   test('列表行：传输中显示百分比，其它阶段显示阶段名', () => {

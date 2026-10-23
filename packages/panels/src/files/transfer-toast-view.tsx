@@ -41,22 +41,18 @@ function Header({ title, path, t }: TProps & { title: string; path: TransferPath
   );
 }
 
-// 速率与「已传 / 总量」各自定宽：拼成一个字符串就会随位数变化把文件名挤来挤去。
+// 速率与「已传 / 总量」合成一段靠右的文本：数字等宽（tabular-nums）所以位数变化不会抖，
+// 不再给每一项预留最大宽度，否则会留下孤零零的分隔点和一大片空白。
 function RateDetail({ model }: { model: ToastBodyModel }) {
   const { ratePerSec, view } = model;
-  const hasRate = ratePerSec > 0;
-  const hasDetail = view.totalBytes > 0;
+  const parts: string[] = [];
+  if (ratePerSec > 0) parts.push(formatRate(ratePerSec));
+  if (view.totalBytes > 0) parts.push(formatBytesPair(view.transferredBytes, view.totalBytes));
+  if (parts.length === 0) return null;
   return (
-    <span className="flex shrink-0 items-center gap-1">
-      {hasRate && <ByteRate>{formatRate(ratePerSec)}</ByteRate>}
-      {hasRate && hasDetail && <span aria-hidden>·</span>}
-      {/* 21ch = `1023.9 MB / 1023.9 MB`，`formatBytesPair` 的最长合法内容。 */}
-      {hasDetail && (
-        <ByteRate minWidthClass="min-w-[21ch]">
-          {formatBytesPair(view.transferredBytes, view.totalBytes)}
-        </ByteRate>
-      )}
-    </span>
+    <ByteRate minWidthClass="min-w-0" className="shrink-0" data-testid="transfer-rate-detail">
+      {parts.join(' · ')}
+    </ByteRate>
   );
 }
 
@@ -64,7 +60,7 @@ function SingleBody({ model, t }: TProps & { model: ToastBodyModel }) {
   const { title, view } = model;
   const stage = view.rows[0]?.stage ?? 'transferring';
   return (
-    <div className="flex w-full flex-col gap-2" data-testid="transfer-toast">
+    <div className="flex w-full min-w-0 flex-col gap-2" data-testid="transfer-toast">
       <Header title={title} path={view.path} t={t} />
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate" data-testid="transfer-stage">
@@ -95,7 +91,7 @@ function ItemRow({ row, t }: TProps & { row: ItemView }) {
 function BatchBody({ model, t }: TProps & { model: ToastBodyModel }) {
   const { title, view } = model;
   return (
-    <div className="flex w-full flex-col gap-2" data-testid="transfer-toast">
+    <div className="flex w-full min-w-0 flex-col gap-2" data-testid="transfer-toast">
       <Header title={title} path={view.path} t={t} />
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate" data-testid="transfer-batch-progress">
