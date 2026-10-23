@@ -26,6 +26,13 @@ describe('sanitizeFilename', () => {
     expect(sanitizeFilename('../../x.tar.gz')).toBe('....x.tar.gz');
     expect(sanitizeFilename('a"b\r\nc')).toBe('abc');
   });
+
+  test('去掉双向控制符，避免伪装扩展名', () => {
+    expect(sanitizeFilename('invoice\u202Efdp.exe')).toBe('invoicefdp.exe');
+    expect(sanitizeFilename('a\u202A\u202B\u202C\u202D\u202Eb')).toBe('ab');
+    expect(sanitizeFilename('a\u2066\u2067\u2068\u2069b')).toBe('ab');
+    expect(sanitizeFilename('a\u200E\u200F\u061Cb')).toBe('ab');
+  });
 });
 
 describe('sanitizeContentDisposition', () => {

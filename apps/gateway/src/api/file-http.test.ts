@@ -17,12 +17,23 @@ describe('parseRangeHeader', () => {
     expect(parseRangeHeader('bytes=-2', 5)).toEqual({ start: 3, end: 5 });
   });
 
-  test('越界或畸形为 unsatisfiable', () => {
+  test('合法单段起点落在 EOF 及之后才是 unsatisfiable', () => {
     expect(parseRangeHeader('bytes=5-6', 5)).toBe('unsatisfiable');
-    expect(parseRangeHeader('bytes=4-1', 5)).toBe('unsatisfiable');
-    expect(parseRangeHeader('bytes=', 5)).toBe('unsatisfiable');
-    expect(parseRangeHeader('bytes=0-1,2-3', 5)).toBe('unsatisfiable');
-    expect(parseRangeHeader('bytes=0-2', 0)).toBe('unsatisfiable');
+    expect(parseRangeHeader('bytes=5-', 5)).toBe('unsatisfiable');
+  });
+
+  test('畸形或不支持的 Range 忽略（整文件）', () => {
+    expect(parseRangeHeader('bytes=4-1', 5)).toBeNull();
+    expect(parseRangeHeader('bytes=', 5)).toBeNull();
+    expect(parseRangeHeader('bytes=0-1,2-3', 5)).toBeNull();
+    expect(parseRangeHeader('bytes=abc', 5)).toBeNull();
+    expect(parseRangeHeader('items=0-1', 5)).toBeNull();
+  });
+
+  test('空文件上的任何 Range 忽略（整文件）', () => {
+    expect(parseRangeHeader('bytes=0-2', 0)).toBeNull();
+    expect(parseRangeHeader('bytes=0-', 0)).toBeNull();
+    expect(parseRangeHeader('bytes=-1', 0)).toBeNull();
   });
 
   test('end 超出文件尾时截到 size', () => {

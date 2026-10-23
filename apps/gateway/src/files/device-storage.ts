@@ -21,6 +21,7 @@ import {
   looksBinary,
   pushLocalFile,
   readLocalTextFile,
+  remoteFileHandle,
   statLocalPath,
 } from './local-fs';
 import { enqueueDeviceJob } from './queue';
@@ -191,7 +192,7 @@ export async function listDirectory(
 ): Promise<FileOpResult<ListFilesResponse>> {
   return withNormalized(rootId, inputPath, async ({ path, device }) => {
     if (device.type === 'local') return listLocalDirectory(path);
-    return withDeviceRsync(device, 'transfer', (spec) => listRemoteDirectory(spec, path));
+    return withDeviceRsync(device, 'read', (spec) => listRemoteDirectory(spec, path));
   });
 }
 
@@ -237,7 +238,7 @@ export async function probeUploadTarget(
 
 async function statOnDevice(device: Device, path: string): Promise<FileOpResult<FileStatResponse>> {
   if (device.type === 'local') return statLocalPath(path);
-  return withDeviceRsync(device, 'transfer', async (spec) => {
+  return withDeviceRsync(device, 'read', async (spec) => {
     const st = await statViaRsync(spec, path);
     if (!st.ok) return st;
     const name = posixBasename(path);
@@ -306,7 +307,7 @@ export async function readTextFile(
 ): Promise<FileOpResult<FileContentResponse>> {
   return withNormalized(rootId, inputPath, async ({ path, device }) => {
     if (device.type === 'local') return readLocalTextFile(path);
-    return withDeviceRsync(device, 'transfer', async (spec) => {
+    return withDeviceRsync(device, 'read', async (spec) => {
       const st = await statViaRsync(spec, path);
       if (!st.ok) return st;
       if (st.data.type === 'dir') return fail('is_directory');
@@ -348,14 +349,7 @@ export async function readRawFile(
         copied.data.cleanup();
         return fail('too_large');
       }
-      const name = posixBasename(path);
-      return ok<RawFileData>({
-        tmpPath: copied.data.tmpPath,
-        size: copied.data.size,
-        name,
-        mime: mimeOf(name),
-        cleanup: copied.data.cleanup,
-      });
+      return ok<RawFileData>(remoteFileHandle(path, copied.data, st.data));
     });
   });
 }
@@ -452,7 +446,6 @@ async function pullRemoteFile(
   );
   if (!res.ok) return res;
   if (res.data.exitCode !== 0) return rsyncFail(res.data.exitCode, res.data.stderr, cleanup);
-  const name = posixBasename(path);
   let size = st.data.size ?? 0;
   try {
     size = statSync(dest).size;
@@ -463,7 +456,7 @@ async function pullRemoteFile(
     cleanup();
     return fail('too_large', String(maxBytes));
   }
-  return ok<PulledFile>({ tmpPath: dest, size, name, mime: mimeOf(name), cleanup });
+  return ok<PulledFile>(remoteFileHandle(path, { tmpPath: dest, size, cleanup }, st.data));
 }
 
 export async function pullFileFromDevice(

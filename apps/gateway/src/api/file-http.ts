@@ -58,30 +58,55 @@ export function attachmentHeaders(
 /** 半开区间 `[start, end)`；`unsatisfiable` 对应 416。 */
 export type ContentRange = { start: number; end: number };
 
+type ParsedByteRange =
+  | { kind: 'suffix'; length: number }
+  | { kind: 'int'; start: number; last: number | null };
+
 /**
- * 只支持单段 `bytes=a-b` / `bytes=a-` / `bytes=-n`——下载续传用不到多段。
- * 没有 Range 头返回 null（整文件）。
+ * 只支持单段 `bytes=a-b` / `bytes=a-` / `bytes=-n`。
+ * 解析失败或不支持的形式返回 null（忽略 Range，发 200 全文）；
+ * 仅「合法单段且起点落在 EOF 及之后」为 unsatisfiable（416）。
  */
 export function parseRangeHeader(
   header: string | null,
   size: number
 ): ContentRange | null | 'unsatisfiable' {
   if (!header) return null;
+  const parsed = parseSingleByteRange(header);
+  if (!parsed) return null;
+  return satisfyByteRange(parsed, size);
+}
+
+function parseSingleByteRange(header: string): ParsedByteRange | null {
   const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
-  if (!match) return 'unsatisfiable';
-  const [, rawStart, rawEnd] = match;
-  if (!rawStart && !rawEnd) return 'unsatisfiable';
-  if (size <= 0) return 'unsatisfiable';
+  if (!match) return null;
+  const rawStart = match[1];
+  const rawEnd = match[2];
+  if (!rawStart && !rawEnd) return null;
   if (!rawStart) {
-    const suffix = Number(rawEnd);
-    if (!Number.isSafeInteger(suffix) || suffix <= 0) return 'unsatisfiable';
-    return { start: Math.max(0, size - suffix), end: size };
+    const length = Number(rawEnd);
+    if (!Number.isSafeInteger(length) || length <= 0) return null;
+    return { kind: 'suffix', length };
   }
   const start = Number(rawStart);
-  if (!Number.isSafeInteger(start) || start >= size) return 'unsatisfiable';
-  const end = rawEnd ? Number(rawEnd) + 1 : size;
-  if (!Number.isSafeInteger(end) || end <= start) return 'unsatisfiable';
-  return { start, end: Math.min(end, size) };
+  if (!Number.isSafeInteger(start)) return null;
+  if (!rawEnd) return { kind: 'int', start, last: null };
+  const last = Number(rawEnd);
+  if (!Number.isSafeInteger(last) || last < start) return null;
+  return { kind: 'int', start, last };
+}
+
+function satisfyByteRange(
+  parsed: ParsedByteRange,
+  size: number
+): ContentRange | null | 'unsatisfiable' {
+  if (size <= 0) return null;
+  if (parsed.kind === 'suffix') {
+    return { start: Math.max(0, size - parsed.length), end: size };
+  }
+  if (parsed.start >= size) return 'unsatisfiable';
+  const end = parsed.last === null ? size : Math.min(parsed.last + 1, size);
+  return { start: parsed.start, end };
 }
 
 /**

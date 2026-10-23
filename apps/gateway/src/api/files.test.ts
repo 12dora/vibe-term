@@ -307,7 +307,9 @@ describe('HTTP transfer uid binding', () => {
           size: 4,
           name: 'a.bin',
           mime: 'application/octet-stream',
+          temporary: true,
           cleanup: () => {},
+          source: { size: 4, mtimeMs: 0, path: '/tmp/a.bin' },
         },
       })
     );
@@ -388,7 +390,9 @@ describe('transfer uid cleanup', () => {
           size: payload.length,
           name: 'a.bin',
           mime: 'application/octet-stream',
+          temporary: true,
           cleanup: () => rmSync(dir, { recursive: true, force: true }),
+          source: { size: payload.length, mtimeMs: 0, path: '/tmp/a.bin' },
         },
       })
     );

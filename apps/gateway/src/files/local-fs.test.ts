@@ -18,6 +18,7 @@ import {
   mapFsError,
   pushLocalFile,
   readLocalTextFile,
+  remoteFileHandle,
   statLocalPath,
 } from './local-fs';
 
@@ -119,10 +120,31 @@ describe('readLocalTextFile / localFileHandle', () => {
     if (!okHandle.ok) return;
     expect(okHandle.data.tmpPath).toBe(file);
     expect(okHandle.data.size).toBe(5);
+    expect(okHandle.data.temporary).toBe(false);
+    expect(okHandle.data.source).toMatchObject({ size: 5 });
+    expect('ino' in okHandle.data.source).toBe(true);
     okHandle.data.cleanup();
     expect(existsSync(file)).toBe(true);
     expect(localFileHandle(file, 4)).toMatchObject({ ok: false, code: 'too_large', detail: '4' });
     expect(localFileHandle(root, 100)).toEqual({ ok: false, code: 'is_directory' });
+  });
+
+  test('remoteFileHandle 用源 size/mtime/path，标记为临时副本', () => {
+    const root = sandbox();
+    const tmpPath = join(root, 'f');
+    writeFileSync(tmpPath, 'hello');
+    const handle = remoteFileHandle(
+      '/data/a.bin',
+      { tmpPath, size: 5, cleanup: () => {} },
+      { size: 5, modifiedAt: '2026-06-14T15:06:34' }
+    );
+    expect(handle.temporary).toBe(true);
+    expect(handle.source).toEqual({
+      size: 5,
+      mtimeMs: Date.parse('2026-06-14T15:06:34'),
+      path: '/data/a.bin',
+    });
+    expect('ino' in handle.source).toBe(false);
   });
 });
 

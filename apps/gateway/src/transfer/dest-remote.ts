@@ -1,5 +1,5 @@
-// ssh 目标的落位。字节先在本机暂存目录收齐，再一次 ssh 往返「核对边界 + 建目录 + 探测冲突」，
-// 最后一次 rsync 推过去；`skip` 用 rsync 的 `--ignore-existing` 兜底，避免探测与推送之间的抢跑。
+// ssh 目标的落位。字节先在本机暂存目录收齐；建目录是短 mutation，rsync 推送是 transfer
+//（默认临时文件再 rename，skip 另加 `--ignore-existing`）。
 //
 // 残余风险：远端目录不在本进程控制下，核对与 rsync 之间仍有 TOCTOU 窗口（对端 root 可在两步之间
 // 把目录换成符号链接）。本机目标没有这个窗口（逐段 lstat + realpath 复核）。
@@ -91,14 +91,17 @@ async function walkRemote(
   return ok({ dir: parsed.dir, name, exists: parsed.exists });
 }
 
-function uploadArgs(
+/**
+ * 推送参数：`--ignore-existing` 兜 skip；不加 `--inplace`，rsync 默认先写隐藏临时文件再 rename，
+ * 与同设备上的 read 并发安全，故推送走 transfer 道。
+ */
+export function remotePushArgs(
   spec: RsyncDeviceSpec,
   localSource: string,
   remoteDest: string,
   noClobber: boolean
 ): string[] {
   const args: string[] = ['--progress'];
-  // 目标已存在就整个跳过：探测与推送之间的抢跑由 rsync 自己挡掉，不会覆盖别人刚落的文件
   if (noClobber) args.push('--ignore-existing');
   if (spec.rsh) args.push('-e', spec.rsh);
   args.push(localSource, rsyncTargetArg(spec, remoteDest));
@@ -110,26 +113,13 @@ export interface RemotePlacement {
   skipped: boolean;
 }
 
-/**
- * 把本机暂存文件放到 ssh 目标上。一次 withDeviceRsync 内完成核对与推送，
- * 避免两次排队之间目录状态再变一次。
- */
-export async function placeFileOnRemote(
-  ctx: DestContext,
-  input: {
-    rel: string;
-    localPath: string;
-    onConflict: 'skip' | 'overwrite';
-    signal?: AbortSignal;
-  }
+async function rsyncPushToRemote(
+  device: DestContext['device'],
+  input: { localPath: string; remoteDest: string; noClobber: boolean; signal?: AbortSignal }
 ): Promise<FileOpResult<RemotePlacement>> {
-  return withDeviceRsync<RemotePlacement>(ctx.device, 'mutation', async (spec) => {
-    const walked = await walkRemote(spec, ctx, input.rel);
-    if (!walked.ok) return walked;
-    if (walked.data.exists && input.onConflict === 'skip') return ok({ skipped: true });
-    const remoteDest = `${walked.data.dir}/${walked.data.name}`;
+  return withDeviceRsync(device, 'transfer', async (spec) => {
     const res = await runRsync(
-      uploadArgs(spec, input.localPath, remoteDest, input.onConflict === 'skip'),
+      remotePushArgs(spec, input.localPath, input.remoteDest, input.noClobber),
       {
         env: spec.env,
         idleTimeoutMs: PUSH_IDLE_TIMEOUT_MS,
@@ -141,6 +131,32 @@ export async function placeFileOnRemote(
       return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
     }
     return ok({ skipped: false });
+  });
+}
+
+/**
+ * 把本机暂存文件放到 ssh 目标上。建目录是短 mutation；字节推送是 transfer
+ *（rsync 临时文件再 rename，不覆盖正在读的 inode）。
+ */
+export async function placeFileOnRemote(
+  ctx: DestContext,
+  input: {
+    rel: string;
+    localPath: string;
+    onConflict: 'skip' | 'overwrite';
+    signal?: AbortSignal;
+  }
+): Promise<FileOpResult<RemotePlacement>> {
+  const walked = await withDeviceRsync(ctx.device, 'mutation', (spec) =>
+    walkRemote(spec, ctx, input.rel)
+  );
+  if (!walked.ok) return walked;
+  if (walked.data.exists && input.onConflict === 'skip') return ok({ skipped: true });
+  return rsyncPushToRemote(ctx.device, {
+    localPath: input.localPath,
+    remoteDest: `${walked.data.dir}/${walked.data.name}`,
+    noClobber: input.onConflict === 'skip',
+    signal: input.signal,
   });
 }
 

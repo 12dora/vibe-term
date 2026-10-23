@@ -58,6 +58,8 @@ describe('pullFileFromDevice 对本机设备的直读', () => {
     expect(res.data.tmpPath).toBe(file);
     expect(res.data.size).toBe(5);
     expect(res.data.name).toBe('a.txt');
+    expect(res.data.temporary).toBe(false);
+    expect('ino' in res.data.source).toBe(true);
     res.data.cleanup();
     expect(existsSync(file)).toBe(true);
   });

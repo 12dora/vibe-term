@@ -27,14 +27,17 @@ describe('GET /api/files/raw streams the temp file', () => {
     dirs.push(dir);
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, bytes);
+    const size = Buffer.byteLength(bytes);
     return {
       tmpPath,
-      size: Buffer.byteLength(bytes),
+      size,
       name,
       mime: 'image/png',
+      temporary: true,
       cleanup: () => {
         rmSync(dir, { recursive: true, force: true });
       },
+      source: { size, mtimeMs: 1_700_000_000_000, path: `/${name}` },
     };
   }
 
@@ -74,6 +77,62 @@ describe('GET /api/files/raw streams the temp file', () => {
     expect(res.headers.get('X-VibeTerm-Entity-Length')).toBe('7');
     expect(res.headers.get('Accept-Ranges')).toBe('bytes');
     expect(existsSync(raw.tmpPath)).toBe(false);
+  });
+
+  test('合法单段起点越界返回 416', async () => {
+    const raw = tempRaw('PNGDATA', 'a.png');
+    spies.push(
+      spyOn(deviceStorage, 'readRawFile').mockResolvedValue({ ok: true, data: { ...raw } })
+    );
+    const res = (await dispatch(
+      new Request('http://localhost/api/files/raw?rootId=r1&path=%2Fa.png', {
+        headers: { Range: 'bytes=7-' },
+      })
+    )) as Response;
+    expect(res.status).toBe(416);
+    expect(res.headers.get('Content-Range')).toBe('bytes */7');
+  });
+
+  test('畸形或多段 Range 忽略，回 200 全文', async () => {
+    const raw = tempRaw('PNGDATA', 'a.png');
+    spies.push(
+      spyOn(deviceStorage, 'readRawFile').mockResolvedValue({ ok: true, data: { ...raw } })
+    );
+    const res = (await dispatch(
+      new Request('http://localhost/api/files/raw?rootId=r1&path=%2Fa.png', {
+        headers: { Range: 'bytes=0-1,2-3' },
+      })
+    )) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('PNGDATA');
+  });
+
+  test('本机直读 temporary=false 不删除源文件', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rfile-local-'));
+    dirs.push(dir);
+    const tmpPath = join(dir, 'a.png');
+    writeFileSync(tmpPath, 'PNGDATA');
+    spies.push(
+      spyOn(deviceStorage, 'readRawFile').mockResolvedValue({
+        ok: true,
+        data: {
+          tmpPath,
+          size: 7,
+          name: 'a.png',
+          mime: 'image/png',
+          temporary: false,
+          cleanup: () => rmSync(tmpPath, { force: true }),
+          source: { size: 7, mtimeMs: 9, ino: 1 },
+        },
+      })
+    );
+    const res = (await dispatch(
+      new Request('http://localhost/api/files/raw?rootId=r1&path=%2Fa.png')
+    )) as Response;
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Length')).toBe('7');
+    expect(await res.text()).toBe('PNGDATA');
+    expect(existsSync(tmpPath)).toBe(true);
   });
 
   test('cancel cleans up the temp file', async () => {

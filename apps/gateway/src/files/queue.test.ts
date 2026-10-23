@@ -1,13 +1,24 @@
 import { describe, expect, test } from 'bun:test';
-import { DEVICE_TRANSFER_CONCURRENCY, GLOBAL_MAX_CONCURRENT, enqueueDeviceJob } from './queue';
+import {
+  DEVICE_TRANSFER_CONCURRENCY,
+  type DeviceJobKind,
+  GLOBAL_MAX_CONCURRENT,
+  enqueueDeviceJob,
+} from './queue';
 
-function deferred(): PromiseWithResolvers<void> {
-  return Promise.withResolvers<void>();
+type Deferred = { promise: Promise<void>; resolve: () => void };
+
+function deferred(): Deferred {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
 
 function hold(
   deviceId: string,
-  kind: 'transfer' | 'mutation',
+  kind: DeviceJobKind,
   events: string[],
   id: string,
   gate: Promise<void>
@@ -160,6 +171,84 @@ describe('enqueueDeviceJob', () => {
     const p2 = enqueueDeviceJob('fail-m', 'mutation', () => Promise.resolve('ok'));
     await expect(p1).rejects.toThrow('boom');
     await expect(p2).resolves.toBe('ok');
+  });
+
+  test('a failing read does not block the next job on the same device', async () => {
+    const p1 = enqueueDeviceJob('fail-r', 'read', () => Promise.reject(new Error('boom')));
+    const p2 = enqueueDeviceJob('fail-r', 'transfer', () => Promise.resolve('ok'));
+    await expect(p1).rejects.toThrow('boom');
+    await expect(p2).resolves.toBe('ok');
+  });
+
+  test('reads proceed while 3 transfers run and do not take a transfer slot', async () => {
+    const events: string[] = [];
+    const gates = Array.from({ length: 5 }, () => deferred());
+    const jobs = [
+      hold('read-lane', 'transfer', events, 't0', gates[0].promise),
+      hold('read-lane', 'transfer', events, 't1', gates[1].promise),
+      hold('read-lane', 'transfer', events, 't2', gates[2].promise),
+      hold('read-lane', 'read', events, 'r0', gates[3].promise),
+      hold('read-lane', 'read', events, 'r1', gates[4].promise),
+    ];
+
+    expect(events).toEqual(['start:t0', 'start:t1', 'start:t2', 'start:r0', 'start:r1']);
+
+    const t3 = deferred();
+    const p3 = hold('read-lane', 'transfer', events, 't3', t3.promise);
+    expect(events).not.toContain('start:t3');
+
+    gates[0].resolve();
+    await jobs[0];
+    expect(events).toContain('start:t3');
+
+    for (const g of gates.slice(1)) g.resolve();
+    t3.resolve();
+    await Promise.all([...jobs, p3]);
+  });
+
+  test('reads still wait for a queued mutation', async () => {
+    const events: string[] = [];
+    const t1 = deferred();
+    const m = deferred();
+    const r = deferred();
+    const p1 = hold('read-after-m', 'transfer', events, 't1', t1.promise);
+    const pm = hold('read-after-m', 'mutation', events, 'm', m.promise);
+    const pr = hold('read-after-m', 'read', events, 'r', r.promise);
+
+    expect(events).toEqual(['start:t1']);
+    t1.resolve();
+    await p1;
+    expect(events).toEqual(['start:t1', 'end:t1', 'start:m']);
+
+    m.resolve();
+    await pm;
+    expect(events).toEqual(['start:t1', 'end:t1', 'start:m', 'end:m', 'start:r']);
+
+    r.resolve();
+    await pr;
+  });
+
+  test('a mutation waits for running reads', async () => {
+    const events: string[] = [];
+    const r1 = deferred();
+    const r2 = deferred();
+    const m = deferred();
+    const p1 = hold('mut-after-read', 'read', events, 'r1', r1.promise);
+    const p2 = hold('mut-after-read', 'read', events, 'r2', r2.promise);
+    const pm = hold('mut-after-read', 'mutation', events, 'm', m.promise);
+
+    expect(events).toEqual(['start:r1', 'start:r2']);
+    r1.resolve();
+    await p1;
+    expect(events).toEqual(['start:r1', 'start:r2', 'end:r1']);
+
+    r2.resolve();
+    await p2;
+    expect(events).toEqual(['start:r1', 'start:r2', 'end:r1', 'end:r2', 'start:m']);
+
+    m.resolve();
+    await pm;
+    expect(events.at(-1)).toBe('end:m');
   });
 
   test('mutations on one device run exclusively in FIFO order', async () => {

@@ -400,7 +400,8 @@ describe('GET /api/files/download/:id/content validators and If-Range', () => {
         headers: { Range: 'bytes=1-3', 'If-Range': lastModified ?? '' },
       })
     )) as Response;
-    expect(byDate.status).toBe(206);
+    expect(byDate.status).toBe(200);
+    expect(await byDate.text()).toBe('hello');
 
     const missed = (await dispatch(
       new Request(`http://localhost/api/files/download/${session.id}/content`, {
@@ -410,6 +411,18 @@ describe('GET /api/files/download/:id/content validators and If-Range', () => {
     expect(missed.status).toBe(200);
     expect(await missed.text()).toBe('hello');
     expect(missed.headers.get(ENTITY_LENGTH_HEADER)).toBe('5');
+  });
+
+  test('畸形 Range 忽略，回 200 全文且不回收会话', async () => {
+    const session = sessionOf('hello');
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=0-1,2-3' },
+      })
+    )) as Response;
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('hello');
+    expect(getDownloadSession(session.id)).toBeDefined();
   });
 
   test('越界 Range 为 416 且不回收会话', async () => {
@@ -448,7 +461,9 @@ describe('GET /api/files/download validators', () => {
           size: 5,
           name: 'a.bin',
           mime: 'application/octet-stream',
+          temporary: true,
           cleanup: () => {},
+          source: { size: 5, mtimeMs: 1_700_000_000_000, path: '/a.bin' },
         },
       })
     );

@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import type { FileSourceIdentity, LocalFileHandle } from '../files/local-fs';
 import {
   type ContentRange,
   attachmentHeaders,
@@ -32,26 +33,10 @@ export function httpDate(mtimeMs: number): string {
   return new Date(mtimeMs).toUTCString();
 }
 
-export function statFileIdentity(path: string): {
-  size: number;
-  mtimeMs: number;
-  ino: number;
-} | null {
-  try {
-    const st = statSync(path);
-    return { size: st.size, mtimeMs: st.mtimeMs, ino: Number(st.ino) };
-  } catch {
-    return null;
-  }
-}
-
-export function identityValidators(id: {
-  size: number;
-  mtimeMs: number;
-  ino: number;
-}): FileValidators {
+export function identityValidators(id: FileSourceIdentity): FileValidators {
+  const key = 'path' in id ? id.path : id.ino;
   return {
-    etag: strongEtag([id.size, id.mtimeMs, id.ino]),
+    etag: strongEtag([id.size, id.mtimeMs, key]),
     lastModified: httpDate(id.mtimeMs),
   };
 }
@@ -67,35 +52,23 @@ export function sessionValidators(session: {
   };
 }
 
-/** RFC 9110 §13.1.5：etag 用强比较；日期与 Last-Modified 精确相等。 */
+/** 这些端点一律发强 ETag：If-Range 只接受精确强 ETag；日期或弱 ETag 忽略 Range。 */
 export function ifRangeAllowsPartial(ifRange: string | null, validators: FileValidators): boolean {
   if (ifRange === null) return true;
-  const value = ifRange.trim();
-  if (looksLikeEtag(value)) return strongEtagMatch(value, validators.etag);
-  return validators.lastModified !== null && value === validators.lastModified;
+  return strongEtagMatch(ifRange.trim(), validators.etag);
 }
 
-export type PulledFileBody = {
-  tmpPath: string;
-  name: string;
-  mime: string | null;
-  cleanup: () => void;
-};
+export type PulledFileBody = LocalFileHandle;
 
 export function servePulledFile(req: Request, file: PulledFileBody, attachment: boolean): Response {
-  const identity = statFileIdentity(file.tmpPath);
-  if (!identity) {
-    file.cleanup();
-    return codeError('unknown');
-  }
   return serveFileBytes(req, {
     path: file.tmpPath,
     name: file.name,
     mime: file.mime,
-    entityLength: identity.size,
-    validators: identityValidators(identity),
+    entityLength: file.size,
+    validators: identityValidators(file.source),
     attachment,
-    cleanupAfter: file.cleanup,
+    cleanupAfter: file.temporary ? file.cleanup : undefined,
   });
 }
 
@@ -183,11 +156,6 @@ function openFileBody(
   }
   const file = Bun.file(path);
   return range ? file.slice(range.start, range.end) : file;
-}
-
-function looksLikeEtag(value: string): boolean {
-  if (value.startsWith('"')) return true;
-  return value.length >= 3 && value.startsWith('W/') && value[2] === '"';
 }
 
 function strongEtagMatch(received: string, ours: string): boolean {

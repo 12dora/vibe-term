@@ -11,13 +11,16 @@ export function contentDisposition(name: string, type: DispositionType = 'attach
   return `${type}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
-/** 去掉路径分隔、控制字符、引号；空结果视为没有文件名。 */
+/** 去掉路径分隔、控制字符、引号与双向控制符；空结果视为没有文件名。 */
 export function sanitizeFilename(name: string): string {
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要去掉控制字符
-  return name
-    .replace(/[/\\]/g, '')
-    .replace(/[\x00-\x1F\x7F"]/g, '')
-    .trim();
+  return (
+    name
+      .replace(/[/\\]/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要去掉控制字符
+      .replace(/[\x00-\x1F\x7F"]/g, '')
+      .replace(/[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+      .trim()
+  );
 }
 
 /**

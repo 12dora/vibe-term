@@ -183,12 +183,47 @@ export function readLocalTextFile(absPath: string): FileOpResult<FileContentResp
   }
 }
 
+/** 本机文件用 inode 区分同秒写入；SSH 临时副本用规范化路径，不用副本 inode。 */
+export type FileSourceIdentity =
+  | { size: number; mtimeMs: number; ino: number }
+  | { size: number; mtimeMs: number; path: string };
+
 export interface LocalFileHandle {
   tmpPath: string;
   size: number;
   name: string;
   mime: string | null;
+  /** 为 true 时才在响应结束后删临时副本；本机直读为 false，走 Bun.file。 */
+  temporary: boolean;
   cleanup: () => void;
+  source: FileSourceIdentity;
+}
+
+export function modifiedAtMs(modifiedAt: string | null): number {
+  if (!modifiedAt) return 0;
+  const ms = Date.parse(modifiedAt);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+export function remoteFileHandle(
+  path: string,
+  copied: { tmpPath: string; size: number; cleanup: () => void },
+  st: { size: number | null; modifiedAt: string | null }
+): LocalFileHandle {
+  const name = posixBasename(path);
+  return {
+    tmpPath: copied.tmpPath,
+    size: copied.size,
+    name,
+    mime: mimeOf(name),
+    temporary: true,
+    cleanup: copied.cleanup,
+    source: {
+      size: st.size ?? copied.size,
+      mtimeMs: modifiedAtMs(st.modifiedAt),
+      path,
+    },
+  };
 }
 
 export function localFileHandle(absPath: string, maxBytes: number): FileOpResult<LocalFileHandle> {
@@ -197,7 +232,15 @@ export function localFileHandle(absPath: string, maxBytes: number): FileOpResult
     if (st.isDirectory()) return fail('is_directory');
     if (st.size > maxBytes) return fail('too_large', String(maxBytes));
     const name = posixBasename(absPath);
-    return ok({ tmpPath: absPath, size: st.size, name, mime: mimeOf(name), cleanup: () => {} });
+    return ok({
+      tmpPath: absPath,
+      size: st.size,
+      name,
+      mime: mimeOf(name),
+      temporary: false,
+      cleanup: () => {},
+      source: { size: st.size, mtimeMs: st.mtimeMs, ino: Number(st.ino) },
+    });
   } catch (err) {
     return mapFsError(err);
   }
