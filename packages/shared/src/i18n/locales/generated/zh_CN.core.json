@@ -651,7 +651,28 @@
         "pathDirect": "直连",
         "pathRelay": "中转",
         "pathDirectHint": "与设备点对点直连传输",
-        "pathRelayHint": "经中继传输"
+        "pathRelayHint": "经中继传输",
+        "uploadBatch": "上传 {{count}} 个文件",
+        "uploadedBatch": "已上传 {{count}} 个文件",
+        "uploadBatchFailed": "{{count}} 个文件上传失败",
+        "batchProgress": "{{done}}/{{total}} 已完成",
+        "stage": {
+          "queued": "等待中",
+          "preparing": "准备中",
+          "transferring": "传输中",
+          "writing": "写入中",
+          "done": "已完成",
+          "failed": "失败",
+          "cancelled": "已取消"
+        },
+        "error": {
+          "too_large": "超过传输大小上限",
+          "truncated": "连接中断，传输未完成",
+          "source_changed": "传输期间源文件发生变化",
+          "save_failed": "浏览器无法保存文件",
+          "network": "网络连接中断",
+          "login_required": "需要登录该节点"
+        }
       },
       "agentLaunch": {
         "connectFailed": "连接设备失败",
@@ -665,7 +686,9 @@
       },
       "explorer": {
         "open": "打开",
-        "close": "关闭"
+        "close": "关闭",
+        "show": "展开文件管理器",
+        "hide": "收起文件管理器"
       },
       "ops": {
         "newFolderTitle": "新建文件夹",

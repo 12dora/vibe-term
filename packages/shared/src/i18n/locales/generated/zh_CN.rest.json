@@ -1389,7 +1389,10 @@
       "isDirectory": "这是一个目录",
       "notPreviewable": "该文件类型不支持预览",
       "download": "下载",
-      "openRaw": "打开原始文件"
+      "openRaw": "打开原始文件",
+      "back": "返回文件管理器",
+      "previous": "上一个",
+      "next": "下一个"
     },
     "explorer": {
       "title": "文件管理器",

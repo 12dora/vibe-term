@@ -651,7 +651,28 @@
         "pathDirect": "直接接続",
         "pathRelay": "中継",
         "pathDirectHint": "デバイスとの P2P 直接転送",
-        "pathRelayHint": "中継経由で転送"
+        "pathRelayHint": "中継経由で転送",
+        "uploadBatch": "{{count}} 個のファイルをアップロード",
+        "uploadedBatch": "{{count}} 個のファイルをアップロードしました",
+        "uploadBatchFailed": "{{count}} 個のファイルをアップロードできませんでした",
+        "batchProgress": "{{done}}/{{total}} 完了",
+        "stage": {
+          "queued": "待機中",
+          "preparing": "準備中",
+          "transferring": "転送中",
+          "writing": "書き込み中",
+          "done": "完了",
+          "failed": "失敗",
+          "cancelled": "キャンセル済み"
+        },
+        "error": {
+          "too_large": "転送サイズの上限を超えています",
+          "truncated": "転送完了前に接続が切れました",
+          "source_changed": "転送中に元のファイルが変更されました",
+          "save_failed": "ブラウザーでファイルを保存できませんでした",
+          "network": "ネットワーク接続が切れました",
+          "login_required": "このノードへのサインインが必要です"
+        }
       },
       "agentLaunch": {
         "connectFailed": "デバイスへの接続に失敗しました",
@@ -665,7 +686,9 @@
       },
       "explorer": {
         "open": "開く",
-        "close": "閉じる"
+        "close": "閉じる",
+        "show": "ファイルマネージャーを表示",
+        "hide": "ファイルマネージャーを隠す"
       },
       "ops": {
         "newFolderTitle": "新規フォルダ",

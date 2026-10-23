@@ -2030,7 +2030,31 @@
         "pathDirect": "Direct",
         "pathRelay": "Relay",
         "pathDirectHint": "Peer-to-peer transfer with the device",
-        "pathRelayHint": "Transferred via relay"
+        "pathRelayHint": "Transferred via relay",
+        "uploadBatch_one": "Uploading {{count}} file",
+        "uploadBatch_other": "Uploading {{count}} files",
+        "uploadedBatch_one": "Uploaded {{count}} file",
+        "uploadedBatch_other": "Uploaded {{count}} files",
+        "uploadBatchFailed_one": "{{count}} file failed to upload",
+        "uploadBatchFailed_other": "{{count}} files failed to upload",
+        "batchProgress": "{{done}}/{{total}} done",
+        "stage": {
+          "queued": "Queued",
+          "preparing": "Preparing",
+          "transferring": "Transferring",
+          "writing": "Writing",
+          "done": "Done",
+          "failed": "Failed",
+          "cancelled": "Cancelled"
+        },
+        "error": {
+          "too_large": "Exceeds the transfer size limit",
+          "truncated": "Connection lost before the transfer finished",
+          "source_changed": "The source file changed during the transfer",
+          "save_failed": "The browser couldn’t save the file",
+          "network": "Network connection lost",
+          "login_required": "Sign in to this node first"
+        }
       },
       "agentLaunch": {
         "connectFailed": "Failed to connect to the device",
@@ -2044,7 +2068,9 @@
       },
       "explorer": {
         "open": "Open",
-        "close": "Close"
+        "close": "Close",
+        "show": "Show File Manager",
+        "hide": "Hide File Manager"
       },
       "ops": {
         "newFolderTitle": "New Folder",
@@ -2079,7 +2105,10 @@
       "isDirectory": "This is a directory",
       "notPreviewable": "Preview is not available for this file type",
       "download": "Download",
-      "openRaw": "Open raw"
+      "openRaw": "Open raw",
+      "back": "Back to File Manager",
+      "previous": "Previous",
+      "next": "Next"
     },
     "explorer": {
       "title": "File Manager",

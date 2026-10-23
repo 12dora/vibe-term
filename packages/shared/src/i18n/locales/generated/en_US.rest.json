@@ -1389,7 +1389,10 @@
       "isDirectory": "This is a directory",
       "notPreviewable": "Preview is not available for this file type",
       "download": "Download",
-      "openRaw": "Open raw"
+      "openRaw": "Open raw",
+      "back": "Back to File Manager",
+      "previous": "Previous",
+      "next": "Next"
     },
     "explorer": {
       "title": "File Manager",

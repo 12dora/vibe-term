@@ -1389,7 +1389,10 @@
       "isDirectory": "これはディレクトリです",
       "notPreviewable": "このファイル形式はプレビューできません",
       "download": "ダウンロード",
-      "openRaw": "元ファイルを開く"
+      "openRaw": "元ファイルを開く",
+      "back": "ファイルマネージャーに戻る",
+      "previous": "前へ",
+      "next": "次へ"
     },
     "explorer": {
       "title": "ファイルマネージャー",

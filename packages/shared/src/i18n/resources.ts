@@ -2036,7 +2036,31 @@ export const I18N_RESOURCES = {
         "pathDirect": "Direct",
         "pathRelay": "Relay",
         "pathDirectHint": "Peer-to-peer transfer with the device",
-        "pathRelayHint": "Transferred via relay"
+        "pathRelayHint": "Transferred via relay",
+        "uploadBatch_one": "Uploading {{count}} file",
+        "uploadBatch_other": "Uploading {{count}} files",
+        "uploadedBatch_one": "Uploaded {{count}} file",
+        "uploadedBatch_other": "Uploaded {{count}} files",
+        "uploadBatchFailed_one": "{{count}} file failed to upload",
+        "uploadBatchFailed_other": "{{count}} files failed to upload",
+        "batchProgress": "{{done}}/{{total}} done",
+        "stage": {
+          "queued": "Queued",
+          "preparing": "Preparing",
+          "transferring": "Transferring",
+          "writing": "Writing",
+          "done": "Done",
+          "failed": "Failed",
+          "cancelled": "Cancelled"
+        },
+        "error": {
+          "too_large": "Exceeds the transfer size limit",
+          "truncated": "Connection lost before the transfer finished",
+          "source_changed": "The source file changed during the transfer",
+          "save_failed": "The browser couldn’t save the file",
+          "network": "Network connection lost",
+          "login_required": "Sign in to this node first"
+        }
       },
       "agentLaunch": {
         "connectFailed": "Failed to connect to the device",
@@ -2050,7 +2074,9 @@ export const I18N_RESOURCES = {
       },
       "explorer": {
         "open": "Open",
-        "close": "Close"
+        "close": "Close",
+        "show": "Show File Manager",
+        "hide": "Hide File Manager"
       },
       "ops": {
         "newFolderTitle": "New Folder",
@@ -2085,7 +2111,10 @@ export const I18N_RESOURCES = {
       "isDirectory": "This is a directory",
       "notPreviewable": "Preview is not available for this file type",
       "download": "Download",
-      "openRaw": "Open raw"
+      "openRaw": "Open raw",
+      "back": "Back to File Manager",
+      "previous": "Previous",
+      "next": "Next"
     },
     "explorer": {
       "title": "File Manager",
@@ -6108,7 +6137,28 @@ export const I18N_RESOURCES = {
         "pathDirect": "直连",
         "pathRelay": "中转",
         "pathDirectHint": "与设备点对点直连传输",
-        "pathRelayHint": "经中继传输"
+        "pathRelayHint": "经中继传输",
+        "uploadBatch": "上传 {{count}} 个文件",
+        "uploadedBatch": "已上传 {{count}} 个文件",
+        "uploadBatchFailed": "{{count}} 个文件上传失败",
+        "batchProgress": "{{done}}/{{total}} 已完成",
+        "stage": {
+          "queued": "等待中",
+          "preparing": "准备中",
+          "transferring": "传输中",
+          "writing": "写入中",
+          "done": "已完成",
+          "failed": "失败",
+          "cancelled": "已取消"
+        },
+        "error": {
+          "too_large": "超过传输大小上限",
+          "truncated": "连接中断，传输未完成",
+          "source_changed": "传输期间源文件发生变化",
+          "save_failed": "浏览器无法保存文件",
+          "network": "网络连接中断",
+          "login_required": "需要登录该节点"
+        }
       },
       "agentLaunch": {
         "connectFailed": "连接设备失败",
@@ -6122,7 +6172,9 @@ export const I18N_RESOURCES = {
       },
       "explorer": {
         "open": "打开",
-        "close": "关闭"
+        "close": "关闭",
+        "show": "展开文件管理器",
+        "hide": "收起文件管理器"
       },
       "ops": {
         "newFolderTitle": "新建文件夹",
@@ -6155,7 +6207,10 @@ export const I18N_RESOURCES = {
       "isDirectory": "这是一个目录",
       "notPreviewable": "该文件类型不支持预览",
       "download": "下载",
-      "openRaw": "打开原始文件"
+      "openRaw": "打开原始文件",
+      "back": "返回文件管理器",
+      "previous": "上一个",
+      "next": "下一个"
     },
     "explorer": {
       "title": "文件管理器",
@@ -10166,7 +10221,28 @@ export const I18N_RESOURCES = {
         "pathDirect": "直接接続",
         "pathRelay": "中継",
         "pathDirectHint": "デバイスとの P2P 直接転送",
-        "pathRelayHint": "中継経由で転送"
+        "pathRelayHint": "中継経由で転送",
+        "uploadBatch": "{{count}} 個のファイルをアップロード",
+        "uploadedBatch": "{{count}} 個のファイルをアップロードしました",
+        "uploadBatchFailed": "{{count}} 個のファイルをアップロードできませんでした",
+        "batchProgress": "{{done}}/{{total}} 完了",
+        "stage": {
+          "queued": "待機中",
+          "preparing": "準備中",
+          "transferring": "転送中",
+          "writing": "書き込み中",
+          "done": "完了",
+          "failed": "失敗",
+          "cancelled": "キャンセル済み"
+        },
+        "error": {
+          "too_large": "転送サイズの上限を超えています",
+          "truncated": "転送完了前に接続が切れました",
+          "source_changed": "転送中に元のファイルが変更されました",
+          "save_failed": "ブラウザーでファイルを保存できませんでした",
+          "network": "ネットワーク接続が切れました",
+          "login_required": "このノードへのサインインが必要です"
+        }
       },
       "agentLaunch": {
         "connectFailed": "デバイスへの接続に失敗しました",
@@ -10180,7 +10256,9 @@ export const I18N_RESOURCES = {
       },
       "explorer": {
         "open": "開く",
-        "close": "閉じる"
+        "close": "閉じる",
+        "show": "ファイルマネージャーを表示",
+        "hide": "ファイルマネージャーを隠す"
       },
       "ops": {
         "newFolderTitle": "新規フォルダ",
@@ -10213,7 +10291,10 @@ export const I18N_RESOURCES = {
       "isDirectory": "これはディレクトリです",
       "notPreviewable": "このファイル形式はプレビューできません",
       "download": "ダウンロード",
-      "openRaw": "元ファイルを開く"
+      "openRaw": "元ファイルを開く",
+      "back": "ファイルマネージャーに戻る",
+      "previous": "前へ",
+      "next": "次へ"
     },
     "explorer": {
       "title": "ファイルマネージャー",
