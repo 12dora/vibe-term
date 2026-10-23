@@ -66,7 +66,7 @@ mesh 之前的「多设备」是 gateway 通过 SSH 主动连接远程主机（`
 4. **中继兜底**：peer link 建不起来时（跨 NAT 且穿透失败、对端无 native addon），entry 经 uplink 请求中继打开 `relay` 流到目标 node；其上跑的是 node↔node 端到端加密的 `SecureChannel`（§3），中继只能搬字节。
 5. **`relay,node` 同机**：本机 node 拨本机中继时走回环（`resolveRelayDialUrl`），避开 hairpin NAT；认证签名仍绑公网 host。
 
-出站：mesh / 中继 / 对端的 HTTP 与 WebSocket 默认直连（`meshProxy=direct`，不读 `HTTP_PROXY`）；可在设置里改成走系统代理（仅公网目标；私网字面量与 `NO_PROXY` 仍直连；DoH 查询同策略）。上网类功能（LLM、搜索、升级、cloudflared、ACME）不受此项影响。见 [mesh 运维「出站代理」](../operations/mesh-operations.md)。
+出站：mesh / 中继 / 对端的 HTTP 与 WebSocket 默认直连（`meshProxy=direct`，不读 `HTTP_PROXY`）；可在设置里改成走系统代理（仅公网目标；私网字面量与 `NO_PROXY` 仍直连；拨号 DoH 同策略，STUN 主机名解析不受影响）。上网类功能（LLM、搜索、升级、cloudflared、ACME）不受此项影响。见 [mesh 运维「出站代理」](../operations/mesh-operations.md)。
 
 peer link 传输选择（自动，按序）：
 

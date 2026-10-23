@@ -190,7 +190,7 @@ CLI：`vibeterm settings mesh route-mode get|set <auto|direct|relay>`（`--json`
 
 mesh / 中继 / 对端的 HTTP 探测与 WebSocket 拨号**默认直连**，不走 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`。本机必须经系统代理才能到达中继或对端时，把「出站代理」改成「系统代理」。LLM、联网搜索、GitHub 升级、cloudflared、ACME、通知等上网功能仍始终尊重代理环境变量。
 
-拨号过程中的 DoH 查询（`dial-resolve-host`、STUN 解析器）走同一套 mesh 出站策略，因为它们服务于 mesh 拨号。
+节点 / 中继拨号时的 DoH 查询（`dial-resolve-host`）走同一套 mesh 出站策略。STUN 主机名解析（`rtc/stun-resolver`，与命令行共用）仍按系统代理设置发起 DoH，不受此项影响。
 
 | 选项 | 落库值 | 行为 |
 |---|---|---|
