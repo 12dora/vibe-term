@@ -327,13 +327,13 @@ export async function openHttpStream(
       abort: signal,
     });
     gotHead = true;
+    noteHttpResponseHead(stream, payload.method, head.status, head.headers);
     if (!stopUpload.signal.aborted) stopUpload.abort();
     try {
       await upload.reader?.cancel();
     } catch {
       // writer stopped
     }
-    noteHttpResponseHead(stream, payload.method, head.status, head.headers, link);
     return responseFromHttpHead(stream, head, rst);
   } catch (err) {
     if (signal?.aborted) throw signal.reason ?? err;

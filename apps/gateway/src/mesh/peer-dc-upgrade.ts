@@ -3,6 +3,14 @@ import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs } from './ctl';
 import { isNodePaused } from './node-pause';
 import {
+  type DcUpgradeLivePeer,
+  type DcUpgradePorts,
+  type DcUpgradeRetry,
+  type UpgradeGate,
+  deferBlockedUpgrade,
+  isUpgradeBlockedByInflight,
+} from './peer-dc-upgrade-block';
+import {
   attachPermanentHoldClear,
   backgroundUpgradeSkipsDc,
   isBackgroundDcUpgradeBlocked,
@@ -15,7 +23,13 @@ import {
   createGatewayRtcDialBreaker,
 } from './rtc/rtc-dial-breaker';
 import { forceProbeJitterMs } from './rtc/rtc-force-probe';
-import type { MeshScheduler, PeerTransportKind } from './types';
+export {
+  BLOCKED_UPGRADE_RETRY_MS,
+  type DcUpgradeLivePeer,
+  type DcUpgradePorts,
+  type DcUpgradeRetry,
+  type UpgradeGate,
+} from './peer-dc-upgrade-block';
 export const PEER_UPGRADE_COOLDOWN_MS = 10_000;
 export const PEER_UPGRADE_SCAN_MS = 15_000;
 export const PEER_UPGRADE_BACKOFF_CAP_MS = 5 * 60 * 1000;
@@ -29,50 +43,6 @@ export {
   sanitizeEndpoints,
 } from './peer-endpoint-parse';
 
-export type UpgradeGate = {
-  nextEligibleAt: number;
-  failures: number;
-  coalesced: boolean;
-  scheduled: boolean;
-};
-export type DcUpgradeRetry = {
-  attempt: number;
-  abort: AbortController | null;
-};
-export type DcUpgradeLivePeer = {
-  retiring: boolean;
-  transport: PeerTransportKind;
-  peerNodeId: string;
-  quiesceCapable: boolean;
-  session: LinkSession;
-  dcAttemptId: string | null;
-  linkSinceAt?: number;
-};
-
-export type DcUpgradePorts = {
-  scheduler: MeshScheduler;
-  live: () => Map<string, DcUpgradeLivePeer>;
-  dialDc: (nodeId: string, opts?: { skipDc?: boolean }) => Promise<LinkSession>;
-  shouldTryDc: (nodeId: string) => boolean;
-  dcCapable: (nodeId: string) => boolean;
-  emitLinkInfo: (live: DcUpgradeLivePeer) => void;
-  log: (event: string, fields?: Record<string, unknown>) => void;
-  stopped: () => boolean;
-  stopSignal: () => AbortSignal;
-  isTrusted: (nodeId: string) => boolean;
-  pending: () => Map<string, Promise<LinkSession>>;
-  upgrading: () => Map<string, Promise<LinkSession>>;
-  hasDcInflight: (nodeId: string) => boolean;
-  probeQuiesce: (live: DcUpgradeLivePeer) => void;
-  hasWsSecureCandidate: (nodeId: string) => boolean;
-  lostDirect: () => Set<string>;
-  clearUnstableStreak?: (nodeId?: string) => void;
-  canDialDirect?: (nodeId: string, opts: { peerInitiated: boolean }) => boolean;
-  allowsUpgrade?: (nodeId: string) => boolean;
-  peerCapability?: (nodeId: string) => { version: string | null; directCapable: boolean } | null;
-  dcProven?: (nodeId: string) => boolean;
-};
-
 export class DcUpgradeCoordinator {
   readonly upgradeGate = new Map<string, UpgradeGate>();
   readonly dcUpgradeRetry = new Map<string, DcUpgradeRetry>();
@@ -82,6 +52,7 @@ export class DcUpgradeCoordinator {
   readonly upgradeWaiters: Array<() => void> = [];
   upgradeScan: { clear: () => void } | null = null;
   private readonly wsUpgradeInflight = new Set<string>();
+  private readonly blockedWatches = new Set<string>();
   private readonly presenceGap = new RelayPresenceGap();
   private readonly ports: DcUpgradePorts;
   private readonly capSnap = new Map<
@@ -199,6 +170,7 @@ export class DcUpgradeCoordinator {
     for (const nodeId of [...this.dcUpgradeRetry.keys()]) this.cancelDcUpgradeRetry(nodeId);
     this.presenceGap.reset();
     this.capSnap.clear();
+    this.blockedWatches.clear();
     this.dcBreaker.reset();
   }
 
@@ -299,15 +271,14 @@ export class DcUpgradeCoordinator {
       this.ensureGate(nodeId).coalesced = true;
       return;
     }
-    const wsSecure = live.transport === 'relay' && this.ports.hasWsSecureCandidate(nodeId);
-    if (
-      !(wsSecure && !this.wsUpgradeInflight.has(nodeId)) &&
-      (this.ports.pending().has(nodeId) ||
-        this.ports.upgrading().has(nodeId) ||
-        this.ports.hasDcInflight(nodeId))
-    ) {
-      // 本次 dial 的 finally 会按冷却重挂；这里再 schedule 会在 nextEligibleAt=0 时空转
-      this.ensureGate(nodeId).coalesced = true;
+    if (isUpgradeBlockedByInflight(this.ports, this.wsUpgradeInflight, live, nodeId)) {
+      deferBlockedUpgrade({
+        nodeId,
+        ports: this.ports,
+        gate: this.ensureGate(nodeId),
+        watching: this.blockedWatches,
+        retry: () => this.maybeUpgrade(nodeId, { cooldown: true }),
+      });
       return;
     }
     const gate = this.ensureGate(nodeId);

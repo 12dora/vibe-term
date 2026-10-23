@@ -34,9 +34,8 @@ export function httpDate(mtimeMs: number): string {
 }
 
 export function identityValidators(id: FileSourceIdentity): FileValidators {
-  const key = 'path' in id ? id.path : id.ino;
   return {
-    etag: strongEtag([id.size, id.mtimeMs, key]),
+    etag: strongEtag([identityDigest(id)]),
     lastModified: httpDate(id.mtimeMs),
   };
 }
@@ -79,22 +78,17 @@ export function serveFileBytes(req: Request, file: ServeFileInput): Response {
     cleanup();
     return unsatisfiableResponse(file.entityLength);
   }
-  const body = openFileBody(file.path, range, file.cleanupAfter ? cleanup : undefined);
-  if (!body) {
-    cleanup();
-    return codeError('unknown');
+  const length = range ? range.end - range.start : file.entityLength;
+  const headers = fileHeaders(file, length);
+  if (range) {
+    headers['Content-Range'] = `bytes ${range.start}-${range.end - 1}/${file.entityLength}`;
   }
-  if (!range) {
-    return new Response(body, { status: 200, headers: fileHeaders(file, file.entityLength) });
-  }
-  const length = range.end - range.start;
-  return new Response(body, {
-    status: 206,
-    headers: {
-      ...fileHeaders(file, length),
-      'Content-Range': `bytes ${range.start}-${range.end - 1}/${file.entityLength}`,
-    },
-  });
+  return sendOpenedFile(file, range, range ? 206 : 200, headers, cleanup);
+}
+
+function identityDigest(id: FileSourceIdentity): string {
+  const key = 'path' in id ? `p:${id.path}` : `i:${id.ino}`;
+  return Bun.hash(`${id.size}:${id.mtimeMs}:${key}`).toString(16);
 }
 
 function resolveRange(
@@ -139,23 +133,49 @@ function unsatisfiableResponse(size: number): Response {
   });
 }
 
+function sendOpenedFile(
+  file: ServeFileInput,
+  range: ContentRange | null,
+  status: number,
+  headers: Record<string, string>,
+  cleanup: () => void
+): Response {
+  let body: BodyInit | null = null;
+  try {
+    const hdrs = new Headers(headers);
+    const onClose = file.cleanupAfter ? cleanup : undefined;
+    body = openFileBody(file.path, range, file.entityLength, onClose);
+    if (!body) {
+      cleanup();
+      return codeError('unknown');
+    }
+    return new Response(body, { status, headers: hdrs });
+  } catch {
+    if (body instanceof ReadableStream) void body.cancel();
+    cleanup();
+    return codeError('unknown');
+  }
+}
+
 /**
  * 无 cleanup 时用 `Bun.file`（有确定大小，Bun 会发真实 Content-Length）。
  * 需要在流结束删临时文件时退回 ReadableStream，Bun 会改成 chunked。
+ * 无 Range 时按 stat 时的 entityLength 切片，避免本地文件增长后多发字节。
  */
 function openFileBody(
   path: string,
   range: ContentRange | null,
+  entityLength: number,
   cleanupAfter?: () => void
 ): BodyInit | null {
-  if (cleanupAfter) return streamFileRange(path, range, cleanupAfter);
+  const span = range ?? { start: 0, end: entityLength };
+  if (cleanupAfter) return streamFileRange(path, span, cleanupAfter);
   try {
     statSync(path);
   } catch {
     return null;
   }
-  const file = Bun.file(path);
-  return range ? file.slice(range.start, range.end) : file;
+  return Bun.file(path).slice(span.start, span.end);
 }
 
 function strongEtagMatch(received: string, ours: string): boolean {

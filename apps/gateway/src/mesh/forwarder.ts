@@ -10,6 +10,7 @@ export {
   setPendingForwardStreamTtlMs,
   takePendingForwardStream,
 } from './forwarder-ws-upgrade';
+import { combineAbortSignals } from '@vibeterm/shared/async';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { readJsonObjectBody } from '../api/http';
 import { recordEntryLogin429 } from '../auth/login-records-forward';
@@ -205,7 +206,7 @@ export class Forwarder {
   ): Promise<Response> {
     const auth = sessionOrTokenCredential(req, input.nodeId);
     if (!auth) return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
-    const abort = input.signal ?? signal ?? req.signal;
+    const abort = combineAbortSignals(input.signal, signal, req.signal) ?? req.signal;
     const method = input.method.toUpperCase();
     const idempotent = IDEMPOTENT_HTTP.has(method);
     const headers = stampedAuthorizedHeaders(req, input.headers, auth);
@@ -558,7 +559,7 @@ export class Forwarder {
       streams: this.deps.streams,
       log: this.log,
       sleep: this.sleep,
-      skipAuth: skipForwardAuth(ctx.path, ctx.method),
+      skipAuth: skipForwardAuth(parseNodePrefix(new URL(req.url).pathname)?.rest ?? '', req.method),
     });
   }
 }

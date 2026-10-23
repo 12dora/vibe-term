@@ -5,7 +5,7 @@ import {
   MESH_PEER_HEADER,
   SESSION_RENEWED_HEADER,
 } from '@vibeterm/shared/http/mesh-headers';
-import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
 import { handleApiRequest } from '../api';
 import { dispatchRoutes } from '../api/route';
@@ -27,6 +27,7 @@ import {
   setUploadStallMs,
 } from './forwarder-attempt-deadline';
 import { LinkStreamCarrier } from './link-stream-carrier';
+import { releaseLiveHttpStream, trackLiveHttpStream } from './live-http-migratable';
 import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS, setMeshRequestContext } from './mesh-deps';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import {
@@ -421,6 +422,49 @@ describe('http/ws stream targets', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('hello');
+  });
+
+  test('head 与 END 同批到达时 nonMigratable 计数回到 0', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const live = {
+      session: a,
+      peerNodeId: 'aa'.repeat(16),
+      streams: 0,
+      nonMigratable: 0,
+      retiring: false,
+      finishRetired: false,
+    } as LivePeer;
+    const orig = a.openStream.bind(a);
+    let opened = null as LinkStream | null;
+    a.openStream = async (payload: Uint8Array) => {
+      const stream = await orig(payload);
+      opened = stream;
+      trackLiveHttpStream(live, stream, 1);
+      void stream.closed.then(() => releaseLiveHttpStream(live, stream, 2, () => {}));
+      return stream;
+    };
+    b.onStream(async (stream) => {
+      await stream.write(
+        new TextEncoder().encode(
+          '{"status":200,"headers":{"content-type":"application/zip","content-length":"0"}}'
+        ),
+        { head: true }
+      );
+      await stream.end();
+    });
+    const res = await openHttpStream(a, {
+      type: 'http',
+      method: 'GET',
+      path: '/api/archive',
+      origin: 'http://entry',
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    await res.arrayBuffer();
+    expect(opened).not.toBeNull();
+    await opened?.closed;
+    expect(live.streams).toBe(0);
+    expect(live.nonMigratable).toBe(0);
   });
 
   test('openHttpStream strips hop-by-hop and identity headers from OPEN', async () => {

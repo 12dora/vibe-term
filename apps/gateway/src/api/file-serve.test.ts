@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LocalFileHandle } from '../files/local-fs';
@@ -7,6 +7,7 @@ import {
   httpDate,
   identityValidators,
   ifRangeAllowsPartial,
+  serveFileBytes,
   servePulledFile,
   sessionValidators,
   strongEtag,
@@ -42,16 +43,26 @@ describe('validators', () => {
     expect(v.lastModified).toBe(httpDate(42));
   });
 
-  test('本机身份含 size / mtime / inode', () => {
+  test('本机身份 ETag 为不透明 ASCII，同 inode 相同、不同则变', () => {
     const v = identityValidators({ size: 3, mtimeMs: 9, ino: 7 });
-    expect(v.etag).toBe('"3:9:7"');
+    expect(v.etag).toMatch(/^"[0-9a-f]+"$/);
+    expect(v.etag).toBe(identityValidators({ size: 3, mtimeMs: 9, ino: 7 }).etag);
+    expect(v.etag).not.toBe(identityValidators({ size: 3, mtimeMs: 9, ino: 8 }).etag);
     expect(v.lastModified).toBe(httpDate(9));
   });
 
-  test('SSH 源身份含 size / mtime / 规范化路径，不用 inode', () => {
-    const v = identityValidators({ size: 5, mtimeMs: 9, path: '/data/a.bin' });
-    expect(v.etag).toBe('"5:9:/data/a.bin"');
-    expect(v.lastModified).toBe(httpDate(9));
+  test('SSH 源身份哈希路径，中文与引号也可作响应头', () => {
+    const chinese = identityValidators({ size: 5, mtimeMs: 9, path: '/home/u/中文 文件.mp4' });
+    const quoted = identityValidators({ size: 5, mtimeMs: 9, path: '/home/u/a"b.mp4' });
+    expect(chinese.etag).toMatch(/^"[0-9a-f]+"$/);
+    expect(quoted.etag).toMatch(/^"[0-9a-f]+"$/);
+    expect(chinese.etag).not.toBe(quoted.etag);
+    expect(chinese.etag).toBe(
+      identityValidators({ size: 5, mtimeMs: 9, path: '/home/u/中文 文件.mp4' }).etag
+    );
+    expect(() => new Headers({ ETag: chinese.etag })).not.toThrow();
+    expect(() => new Headers({ ETag: quoted.etag })).not.toThrow();
+    expect(chinese.lastModified).toBe(httpDate(9));
   });
 });
 
@@ -149,6 +160,65 @@ describe('servePulledFile 源身份与临时副本', () => {
       false
     );
     expect(res.status).toBe(200);
+    expect(await res.text()).toBe('hello');
+  });
+
+  test('中文与引号路径的 /raw 与 /download 都能发 ASCII ETag', async () => {
+    const source = { size: 5, mtimeMs: 1_700_000_000_000, path: '/home/u/中文 "文件.mp4' };
+    const a = copyOf('hello');
+    const raw = servePulledFile(
+      new Request('http://localhost/api/files/raw'),
+      remoteHandle(a.tmpPath, source, true, () => rmSync(a.dir, { recursive: true, force: true })),
+      false
+    );
+    const b = copyOf('hello');
+    const download = servePulledFile(
+      new Request('http://localhost/api/files/download'),
+      remoteHandle(b.tmpPath, source, true, () => rmSync(b.dir, { recursive: true, force: true })),
+      true
+    );
+    expect(raw.status).toBe(200);
+    expect(download.status).toBe(200);
+    expect(raw.headers.get('ETag')).toBe(identityValidators(source).etag);
+    expect(download.headers.get('ETag')).toBe(raw.headers.get('ETag'));
+    expect(raw.headers.get('ETag')).toMatch(/^"[0-9a-f]+"$/);
+    expect(download.headers.get('Content-Disposition')).toContain('attachment');
+    expect(await raw.text()).toBe('hello');
+    expect(await download.text()).toBe('hello');
+  });
+
+  test('Response 构造失败时回收临时目录', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-serve-fail-'));
+    dirs.push(dir);
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, 'hello');
+    const res = serveFileBytes(new Request('http://localhost/raw'), {
+      path: tmpPath,
+      name: 'a.bin',
+      mime: 'application/octet-stream',
+      entityLength: 5,
+      validators: { etag: `"5:9:/home/u/中文 文件.mp4"`, lastModified: null },
+      attachment: false,
+      cleanupAfter: () => rmSync(dir, { recursive: true, force: true }),
+    });
+    expect(res.status).toBe(500);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test('无 Range 时只发 stat 时的 entityLength，忽略随后增长的字节', async () => {
+    const { tmpPath } = copyOf('hello');
+    appendFileSync(tmpPath, 'XXXXX');
+    const res = serveFileBytes(new Request('http://localhost/raw'), {
+      path: tmpPath,
+      name: 'a.bin',
+      mime: 'application/octet-stream',
+      entityLength: 5,
+      validators: identityValidators({ size: 5, mtimeMs: 9, ino: 1 }),
+      attachment: false,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Length')).toBe('5');
+    expect(res.headers.get('X-VibeTerm-Entity-Length')).toBe('5');
     expect(await res.text()).toBe('hello');
   });
 });

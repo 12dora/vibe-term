@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
-  liveOwnerOf,
   noteHttpResponseHead,
   releaseLiveHttpStream,
   trackLiveHttpStream,
@@ -89,19 +88,7 @@ describe('live HTTP migratable accounting', () => {
     expect(finished).toEqual([{ live, reason: 'retired' }]);
   });
 
-  test('候选 owner 不是 LivePeer 时不记账', () => {
-    const session = createInMemoryLinkPair()[0];
-    claimSession(session, {
-      role: 'candidate',
-      peerId: 'aa'.repeat(16),
-      owner: { kind: 'degraded' },
-    });
-    const stream = fakeStream();
-    noteHttpResponseHead(stream, 'GET', 200, ARCHIVE, session);
-    expect(liveOwnerOf(session)).toBeNull();
-  });
-
-  test('claimSession 绑到 LivePeer 时，未 track 也能按 session 回落到 live', () => {
+  test('未 track 的流不记账，即使 session 已绑到 LivePeer', () => {
     const live = livePeer();
     claimSession(live.session, {
       role: 'live',
@@ -109,7 +96,18 @@ describe('live HTTP migratable accounting', () => {
       owner: live,
     });
     const stream = fakeStream();
-    noteHttpResponseHead(stream, 'GET', 200, ARCHIVE, live.session);
-    expect(live.nonMigratable).toBe(1);
+    noteHttpResponseHead(stream, 'GET', 200, ARCHIVE);
+    expect(live.nonMigratable).toBe(0);
+    expect(live.streams).toBe(0);
+  });
+
+  test('已 release 的晚到 head 不再加计数', () => {
+    const live = livePeer();
+    const stream = fakeStream();
+    trackLiveHttpStream(live, stream, 1);
+    releaseLiveHttpStream(live, stream, 2, () => {});
+    noteHttpResponseHead(stream, 'GET', 200, ARCHIVE);
+    expect(live.streams).toBe(0);
+    expect(live.nonMigratable).toBe(0);
   });
 });

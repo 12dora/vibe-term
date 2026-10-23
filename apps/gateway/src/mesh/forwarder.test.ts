@@ -2409,6 +2409,68 @@ describe('forwardAuthorizedHttp', () => {
     expect(streams.lastOpen?.method).toBe('GET');
   });
 
+  test('skipAuth 用 req.url 的 rest，不用 input.path', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response(JSON.stringify({ error: 'invalid' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams, sleep: async () => {} });
+    const res = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+        headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+      }),
+      { nodeId: OTHER, method: 'POST', path: '/api/auth/login' }
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ code: 'NODE_LOGIN_REQUIRED', nodeId: OTHER });
+  });
+
+  test('input.signal 存在时 req.signal abort 仍取消转发', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let opened = false;
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      opened = true;
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(signal.reason ?? new Error('aborted'));
+        if (signal.aborted) {
+          fail();
+          return;
+        }
+        signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams, sleep: async () => {} });
+    setForwardLinkDeadlineMs(5_000);
+    try {
+      const reqAbort = new AbortController();
+      const inputAbort = new AbortController();
+      const pending = forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+          signal: reqAbort.signal,
+        }),
+        {
+          nodeId: OTHER,
+          method: 'GET',
+          path: '/api/system/upgrade',
+          signal: inputAbort.signal,
+        }
+      );
+      await waitUntil(() => opened);
+      reqAbort.abort();
+      const res = await pending;
+      expect(res.status).toBe(503);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+    }
+  });
+
   test('missing target session → NODE_LOGIN_REQUIRED without opening a stream', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@vibeterm/shared/link';
 import {
+  BLOCKED_UPGRADE_RETRY_MS,
   DcUpgradeCoordinator,
   type DcUpgradeLivePeer,
   type DcUpgradePorts,
@@ -131,7 +132,7 @@ function makeCoordinator(
     lostDirect: () => lostDirect,
   };
   const coordinator = new DcUpgradeCoordinator(ports);
-  return { coordinator, live, dials, skips, lostDirect, stop, availability };
+  return { coordinator, live, dials, skips, lostDirect, stop, availability, pending };
 }
 
 function disablePeer(coordinator: DcUpgradeCoordinator, peer: string): void {
@@ -491,7 +492,8 @@ describe('DcUpgradeCoordinator.willAttemptUpgrade', () => {
     live.set(peer, livePeer(peer, 'ws-secure'));
     coordinator.maybeUpgrade(peer, { cooldown: false });
     expect(coordinator.upgradeGate.get(peer)?.coalesced).toBe(true);
-    expect(scheduler.sleeps).toEqual([]);
+    expect(scheduler.sleeps).toEqual([BLOCKED_UPGRADE_RETRY_MS]);
+    expect(scheduler.sleeps.every((ms) => ms > 0)).toBe(true);
     coordinator.dispose();
   });
 
@@ -521,6 +523,51 @@ describe('DcUpgradeCoordinator.willAttemptUpgrade', () => {
     expect(lost.coordinator.willAttemptUpgrade(peer)).toBe(false);
     cooling.coordinator.dispose();
     lost.coordinator.dispose();
+  });
+});
+
+describe('DcUpgradeCoordinator blocked inflight resume', () => {
+  test('pending dial completion resumes a coalesced upgrade', async () => {
+    const { coordinator, live, pending, dials } = makeCoordinator({ hasWsSecure: () => false });
+    const peer = 'peer-pending';
+    live.set(peer, livePeer(peer, 'ws-secure'));
+    const held = Promise.withResolvers<LinkSession>();
+    pending.set(peer, held.promise);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    expect(dials).toEqual([]);
+    expect(coordinator.upgradeGate.get(peer)?.coalesced).toBe(true);
+
+    pending.delete(peer);
+    held.resolve(fakeSession());
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+    coordinator.dispose();
+  });
+
+  test('dc inflight uses a short cooldown then dials once clear', async () => {
+    let inflight = true;
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials } = makeCoordinator({
+      scheduler,
+      dcInflight: () => inflight,
+      hasWsSecure: () => false,
+    });
+    const peer = 'peer-dc-block';
+    live.set(peer, livePeer(peer, 'ws-secure'));
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    expect(dials).toEqual([]);
+    expect(scheduler.sleeps).toEqual([BLOCKED_UPGRADE_RETRY_MS]);
+
+    await scheduler.advance(BLOCKED_UPGRADE_RETRY_MS);
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+    expect(scheduler.sleeps.filter((ms) => ms === BLOCKED_UPGRADE_RETRY_MS).length).toBe(2);
+
+    inflight = false;
+    await scheduler.advance(BLOCKED_UPGRADE_RETRY_MS);
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+    coordinator.dispose();
   });
 });
 
