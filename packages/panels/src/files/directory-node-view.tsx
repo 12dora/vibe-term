@@ -21,8 +21,8 @@ import {
   RenameMenuItem,
 } from './file-ops-menu-items';
 import { nodeBasename } from './file-tree-logic';
+import { FolderExplorerControl } from './folder-explorer-control';
 import { CommonNodeMenuItems, NodeMenuHeader } from './node-menu';
-import { RootExplorerControls } from './root-explorer-controls';
 import type { DropZoneProps } from './use-directory-upload';
 
 /**
@@ -192,13 +192,13 @@ export function DirectoryNodeView({
     >
       {drag && <RootDragHandle drag={drag} rootId={rootId} />}
       <ContextMenu>
-        {/* 行是容器而不是按钮：根行尾部还有一个「打开 / 关闭」按钮，按钮不能套按钮 */}
+        {/* 行是容器而不是按钮：行尾还有一个「打开 / 关闭」按钮，按钮不能套按钮 */}
         <ContextMenuTrigger
           render={
             <div
               {...dropZoneProps}
               className={cn(
-                'flex w-full min-w-0 items-center rounded-md transition-colors hover:bg-sidebar-accent data-[popup-open]:bg-sidebar-accent data-[pressed]:bg-sidebar-accent',
+                'group/dir-row flex w-full min-w-0 items-center rounded-md transition-colors hover:bg-sidebar-accent data-[popup-open]:bg-sidebar-accent data-[pressed]:bg-sidebar-accent',
                 dragActive && 'bg-primary/15 ring-1 ring-primary/40 ring-inset'
               )}
             >
@@ -211,7 +211,7 @@ export function DirectoryNodeView({
                 expanded={expanded}
                 onToggle={onToggle}
               />
-              {isRoot && <RootExplorerControls root={root} />}
+              <FolderExplorerControl root={root} path={path} name={name} isRoot={isRoot} />
             </div>
           }
         />

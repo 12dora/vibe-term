@@ -639,10 +639,6 @@
         "fail": "Failed to upload {{name}}"
       },
       "transfer": {
-        "legUserToVibeTerm": "Browser → VibeTerm",
-        "legVibeTermToServer": "VibeTerm → Server",
-        "legServerToVibeTerm": "Server → VibeTerm",
-        "legVibeTermToUser": "VibeTerm → Browser",
         "cancel": "Cancel",
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",
@@ -691,7 +687,9 @@
         "open": "Open",
         "close": "Close",
         "show": "Show File Manager",
-        "hide": "Hide File Manager"
+        "hide": "Hide File Manager",
+        "openNamed": "Open {{name}} in File Manager",
+        "closeNamed": "Close {{name}} in File Manager"
       },
       "ops": {
         "newFolderTitle": "New Folder",

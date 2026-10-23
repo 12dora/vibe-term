@@ -27,7 +27,7 @@ export {
   explorerTabPath,
   explorerTransitions,
   findExplorerTabByLocation,
-  isExplorerRootOpen,
+  isExplorerLocationOpen,
   isPathWithin,
   normalizeExplorerPaneSizes,
   normalizeExplorerPath,

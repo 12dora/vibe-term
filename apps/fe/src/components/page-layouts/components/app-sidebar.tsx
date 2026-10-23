@@ -30,6 +30,7 @@ import {
 } from './sidebar-device-list';
 import type { SidebarNodeEntry } from './sidebar-node-section';
 import { SidebarTitle } from './sidebar-title';
+import { useSidebarMainRoute } from './use-sidebar-main-route';
 
 // AgentTab / FilesTab 仅在选中对应 tab 时才渲染，改 React.lazy 懒加载，
 // 把 agent / files 两个子系统（含各自 store + 重组件链）移出首屏 entry chunk。
@@ -210,7 +211,7 @@ const manageDevicesItem: NavMainItem = {
 export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   const { t } = useTranslation();
   const sidebarTab = useUIStore((state) => state.sidebarTab);
-  const setSidebarTab = useUIStore((state) => state.setSidebarTab);
+  const onSidebarTabChange = useSidebarMainRoute();
   // 外壳常驻在 self 运行时下；智能体 / 文件两个标签服务的是当前路由所在的 node，
   // 单独套一层该 node 的运行时（切 node 时这两块重挂是预期的，设备树不受影响）
   const routeNodeId = useRouteNodeId();
@@ -239,7 +240,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
         <Tabs
           className="-mt-px mb-2.5"
           value={sidebarTab}
-          onValueChange={(value) => setSidebarTab(value as typeof sidebarTab)}
+          onValueChange={(value) => onSidebarTabChange(value as typeof sidebarTab)}
         >
           <TabsList className="w-full p-1 rounded-xl border border-border/60 group-data-horizontal/tabs:h-11">
             <TabsTrigger

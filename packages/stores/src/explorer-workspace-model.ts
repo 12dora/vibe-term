@@ -26,8 +26,8 @@ export { sanitizeExplorerData } from './explorer-workspace-sanitize';
 export interface ExplorerWorkspaceActions {
   /** 激活当前位置等于 `loc` 的已有标签页（任意分栏），否则在活动分栏（或 `paneId`）新开；`newTab` 恒新开。返回标签 id。 */
   openLocation(loc: ExplorerLocation, opts?: { newTab?: boolean; paneId?: string }): string;
-  /** 关闭该 node + root 的全部标签页 */
-  closeLocation(nodeId: string, rootId: string): void;
+  /** 关闭当前正好停在 `loc` 的全部标签页（node + root + 路径精确相等） */
+  closeLocation(loc: ExplorerLocation): void;
   /** 关闭后激活右邻，否则左邻；分栏被清空且还有别的分栏时一并移除 */
   closeTab(tabId: string): void;
   /** 只作用于它所在的分栏 */
@@ -230,8 +230,12 @@ export function openLocation(
   return insertTab(data, tab, paneIndex, data.panes[paneIndex].tabIds.length);
 }
 
-export function closeLocation(data: Data, nodeId: string, rootId: string): Data {
-  return removeTabsWhere(data, (tab) => tab.nodeId === nodeId && tab.rootId === rootId);
+export function closeLocation(data: Data, loc: ExplorerLocation): Data {
+  const path = normalizeExplorerPath(loc.path);
+  return removeTabsWhere(
+    data,
+    (tab) => tab.nodeId === loc.nodeId && tab.rootId === loc.rootId && explorerTabPath(tab) === path
+  );
 }
 
 export function closeTab(data: Data, tabId: string): Data {

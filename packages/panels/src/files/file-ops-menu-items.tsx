@@ -4,7 +4,7 @@ import { ContextMenuItem, ContextMenuSeparator } from '@vibeterm/ui/context-menu
 import { FolderOpen, FolderPlus, Pencil, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useFileOpsRequest } from './file-ops-host';
-import { useOpenInExplorer } from './root-explorer-controls';
+import { useOpenInExplorer } from './folder-explorer-control';
 
 interface OpsTarget {
   rootId: string;

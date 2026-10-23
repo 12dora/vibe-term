@@ -13,7 +13,7 @@ import {
   explorerTabOf,
   explorerTabPath,
   findExplorerTabByLocation,
-  isExplorerRootOpen,
+  isExplorerLocationOpen,
   isPathWithin,
   normalizeExplorerPaneSizes,
   normalizeExplorerPath,
@@ -67,11 +67,18 @@ describe('selectors', () => {
     expect(explorerCanGoForward(tab('b', ['/r'], 0))).toBe(false);
   });
 
-  test('isExplorerRootOpen matches node and root together', () => {
-    const data = { tabs: { a: tab('a', ['/r']) } };
-    expect(isExplorerRootOpen(data, 'self', 'r1')).toBe(true);
-    expect(isExplorerRootOpen(data, 'self', 'r2')).toBe(false);
-    expect(isExplorerRootOpen(data, 'other', 'r1')).toBe(false);
+  test('isExplorerLocationOpen matches node, root and the exact current path', () => {
+    const data = {
+      tabs: { a: tab('a', ['/r', '/r/x'], 1) },
+      panes: [{ id: 'p1', tabIds: ['a'], activeTabId: 'a' }],
+    };
+    const at = (path: string, rootId = 'r1', nodeId = 'self') => ({ nodeId, rootId, path });
+    expect(isExplorerLocationOpen(data, at('/r/x'))).toBe(true);
+    expect(isExplorerLocationOpen(data, at('/r/x/'))).toBe(true);
+    expect(isExplorerLocationOpen(data, at('/r'))).toBe(false);
+    expect(isExplorerLocationOpen(data, at('/r/x/y'))).toBe(false);
+    expect(isExplorerLocationOpen(data, at('/r/x', 'r2'))).toBe(false);
+    expect(isExplorerLocationOpen(data, at('/r/x', 'r1', 'other'))).toBe(false);
   });
 
   test('findExplorerTabByLocation compares the current path only', () => {

@@ -170,21 +170,32 @@ describe('closing tabs', () => {
     expect(closeOtherTabs(data, 'ghost')).toBe(data);
   });
 
-  test('closeLocation closes every tab of that node + root and drops emptied panes', () => {
+  test('closeLocation closes every tab showing exactly that location and drops emptied panes', () => {
     let data = open(threeTabs(), 'x', '/other', 'r2');
     data = splitTab(data, 'x', { paneId: 'p2', tabId: 'x2' });
     expect(data.activePaneId).toBe('p2');
 
-    const closed = closeLocation(data, 'self', 'r2');
+    const closed = closeLocation(data, loc('/other/', 'r2'));
     expect(paneIds(closed)).toEqual(['p1']);
     expect(tabIds(closed, 'p1')).toEqual(['a', 'b', 'c']);
     expect(activeTabId(closed, 'p1')).toBe('c');
     expect(closed.activePaneId).toBe('p1');
     expectSizes(closed, [1]);
 
-    expect(closeLocation(data, 'n2', 'r2')).toBe(data);
-    const all = closeLocation(closed, 'self', 'r1');
+    expect(closeLocation(data, loc('/other', 'r2', 'n2'))).toBe(data);
+    expect(closeLocation(data, loc('/other', 'r1'))).toBe(data);
+    let all = closed;
+    for (const path of ['/r/a', '/r/b', '/r/c']) all = closeLocation(all, loc(path));
     expect(all.panes).toEqual([{ id: 'p1', tabIds: [], activeTabId: null }]);
+  });
+
+  test('closeLocation leaves tabs on parent or child paths and compares the current path only', () => {
+    let data = open(createInitialExplorerData('p1'), 'a', '/r');
+    data = open(data, 'b', '/r/sub');
+    data = navigate(data, 'b', '/r/sub/deep');
+    expect(closeLocation(data, loc('/r/sub'))).toBe(data);
+    const closed = closeLocation(data, loc('/r'));
+    expect(Object.keys(closed.tabs)).toEqual(['b']);
   });
 
   test('pruneTabs drops tabs failing the predicate', () => {

@@ -1,4 +1,4 @@
-// 文件侧栏的外壳：标题 + 刷新 + 可滚动区。
+// 文件侧栏的外壳：标题 + 展开/收起文件管理器 + 刷新 + 可滚动区。
 //
 // 单 node 宿主直接渲染当前运行时的文件树；多 node 宿主把每个 node 的分节
 // （`FilesNodeSection`，各自套自己的运行时）作为 `sections` 传进来，外壳只管头部与滚动。
@@ -13,6 +13,7 @@ import { RotateCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { ExplorerToggleButton } from './explorer-toggle';
 import {
   FilesNoRootsHint,
   FilesNoVisibleRootsHint,
@@ -78,15 +79,18 @@ function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
           <span className="truncate text-xs font-medium text-muted-foreground">
             {t('files.title')}
           </span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={refresh}
-            title={t('files.refresh')}
-            data-testid="files-refresh"
-          >
-            <RotateCw className={cn('h-3.5 w-3.5', isFetching > 0 && 'animate-spin')} />
-          </Button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <ExplorerToggleButton />
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={refresh}
+              title={t('files.refresh')}
+              data-testid="files-refresh"
+            >
+              <RotateCw className={cn('h-3.5 w-3.5', isFetching > 0 && 'animate-spin')} />
+            </Button>
+          </div>
         </div>
       )}
       {/* 只纵向滚：拖拽时被拖的行若横移，横向溢出会把侧栏拽偏（见 device-tree-dnd 的 modifier） */}

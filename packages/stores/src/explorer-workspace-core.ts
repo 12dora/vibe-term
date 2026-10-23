@@ -124,14 +124,6 @@ export function explorerCanGoForward(tab: ExplorerTab): boolean {
   return tab.index < tab.history.length - 1;
 }
 
-export function isExplorerRootOpen(
-  data: Pick<ExplorerWorkspaceData, 'tabs'>,
-  nodeId: string,
-  rootId: string
-): boolean {
-  return Object.values(data.tabs).some((tab) => tab.nodeId === nodeId && tab.rootId === rootId);
-}
-
 /** 按分栏顺序、栏内标签顺序找当前位置等于 `loc` 的标签页 */
 export function findExplorerTabByLocation(
   data: Pick<ExplorerWorkspaceData, 'tabs' | 'panes'>,
@@ -209,4 +201,12 @@ export function createInitialExplorerData(
     sort: EXPLORER_DEFAULT_SORT,
     clipboard: null,
   };
+}
+
+/** 是否有标签页当前正好停在该位置（node + root + 路径精确相等；侧栏文件夹的「打开 / 关闭」据此判定） */
+export function isExplorerLocationOpen(
+  data: Pick<ExplorerWorkspaceData, 'tabs' | 'panes'>,
+  loc: ExplorerLocation
+): boolean {
+  return findExplorerTabByLocation(data, loc) !== null;
 }

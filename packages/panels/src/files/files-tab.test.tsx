@@ -61,7 +61,12 @@ const SSH_ROOT: FileRootDto = {
 let storageSeq = 0;
 
 function renderFilesTab(
-  options: { roots?: FileRootDto[]; nodeOffline?: boolean; sections?: ReactNode } = {}
+  options: {
+    roots?: FileRootDto[];
+    nodeOffline?: boolean;
+    sections?: ReactNode;
+    path?: string;
+  } = {}
 ): string {
   const runtime = createAppRuntime({ storagePrefix: `files-tab-test-${storageSeq++}:` });
   const queryClient = new QueryClient();
@@ -69,7 +74,7 @@ function renderFilesTab(
     queryClient.setQueryData(['files', 'roots'], { roots: options.roots });
   }
   const html = renderToStaticMarkup(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[options.path ?? '/']}>
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider client={queryClient}>
           <RuntimeProvider runtime={runtime}>
@@ -133,6 +138,37 @@ describe('FilesTab 的多 node 聚合', () => {
   });
 });
 
+describe('FilesTab 的文件管理器开关', () => {
+  test('位于刷新按钮左侧', () => {
+    const html = renderFilesTab({ roots: [LOCAL_ROOT] });
+    const toggle = html.indexOf('data-testid="files-explorer-toggle"');
+    expect(toggle).toBeGreaterThan(-1);
+    expect(toggle).toBeLessThan(html.indexOf('data-testid="files-refresh"'));
+  });
+
+  test('主区不在文件管理器时提示展开', () => {
+    const html = renderFilesTab({ roots: [LOCAL_ROOT], path: '/devices/d1' });
+    expect(html).toContain('aria-label="展开文件管理器"');
+    expect(html).not.toContain('aria-pressed');
+  });
+
+  test('文件预览页也算未展开', () => {
+    const html = renderFilesTab({ roots: [LOCAL_ROOT], path: '/file/abc' });
+    expect(html).toContain('aria-label="展开文件管理器"');
+  });
+
+  test('主区正是文件管理器时提示收起（只靠切换文案表达状态，不叠加 aria-pressed）', () => {
+    const html = renderFilesTab({ roots: [LOCAL_ROOT], path: '/explorer' });
+    expect(html).toContain('aria-label="收起文件管理器"');
+    expect(html).not.toContain('aria-pressed');
+  });
+
+  test('聚合视图的头部同样带开关', () => {
+    const html = renderFilesTab({ sections: <div>分节</div> });
+    expect(html).toContain('data-testid="files-explorer-toggle"');
+  });
+});
+
 describe('FilesTab 在 node 离线时', () => {
   test('只留一行「节点离线」，不显示陈旧目录，也没有错误/重试入口', () => {
     const html = renderFilesTab({ roots: [LOCAL_ROOT], nodeOffline: true });
@@ -141,6 +177,7 @@ describe('FilesTab 在 node 离线时', () => {
     expect(html).not.toContain('/srv/local');
     expect(html).not.toContain('data-testid="files-roots-error"');
     expect(html).not.toContain('data-testid="files-refresh"');
+    expect(html).not.toContain('data-testid="files-explorer-toggle"');
   });
 
   test('node 在线时不出现离线提示', () => {

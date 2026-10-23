@@ -8,7 +8,7 @@ import {
   EXPLORER_MAX_PANES,
   type ExplorerClipboard,
   explorerTabPath,
-  isExplorerRootOpen,
+  isExplorerLocationOpen,
 } from './explorer-workspace-model';
 import { createMemoryStorage, installWindowStorage } from './test-utils';
 
@@ -112,9 +112,10 @@ describe('createExplorerStore actions', () => {
     store.getState().navigate(tabId, '/mnt/a');
     store.getState().goUp(tabId, '/mnt');
     expect(explorerTabPath(store.getState().tabs[tabId])).toBe('/mnt');
-    expect(isExplorerRootOpen(store.getState(), 'self', 'r2')).toBe(true);
+    expect(isExplorerLocationOpen(store.getState(), loc('/mnt', 'r2'))).toBe(true);
+    expect(isExplorerLocationOpen(store.getState(), loc('/mnt/a', 'r2'))).toBe(false);
 
-    store.getState().closeLocation('self', 'r2');
+    store.getState().closeLocation(loc('/mnt', 'r2'));
     expect(store.getState().tabs).toEqual({});
     expect(store.getState().panes).toHaveLength(1);
   });
@@ -305,7 +306,7 @@ describe('getExplorerStore singleton', () => {
     getExplorerStore()
       .getState()
       .openLocation(loc('/r', 'r9', 'node-b'));
-    expect(isExplorerRootOpen(store.getState(), 'node-b', 'r9')).toBe(true);
+    expect(isExplorerLocationOpen(store.getState(), loc('/r', 'r9', 'node-b'))).toBe(true);
     expect(getExplorerStore().getState().tabs[tabId].nodeId).toBe('node-a');
   });
 

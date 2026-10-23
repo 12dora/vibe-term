@@ -82,7 +82,7 @@ function layoutActions(set: SetState, get: GetState): LayoutActions {
       // 激活了已有标签页时新 id 不会入表，此时它就是活动分栏的活动标签页
       return explorerTabOf(next.tabs, tabId) ? tabId : (explorerActiveTab(next)?.id ?? tabId);
     },
-    closeLocation: (nodeId, rootId) => set((s) => transitions.closeLocation(s, nodeId, rootId)),
+    closeLocation: (loc) => set((s) => transitions.closeLocation(s, loc)),
     closeTab: (tabId) => set((s) => transitions.closeTab(s, tabId)),
     closeOtherTabs: (tabId) => set((s) => transitions.closeOtherTabs(s, tabId)),
     duplicateTab: (tabId) => {

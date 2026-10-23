@@ -2018,10 +2018,6 @@
         "fail": "{{name}} のアップロードに失敗しました"
       },
       "transfer": {
-        "legUserToVibeTerm": "ブラウザ → VibeTerm",
-        "legVibeTermToServer": "VibeTerm → サーバー",
-        "legServerToVibeTerm": "サーバー → VibeTerm",
-        "legVibeTermToUser": "VibeTerm → ブラウザ",
         "cancel": "キャンセル",
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
@@ -2067,7 +2063,9 @@
         "open": "開く",
         "close": "閉じる",
         "show": "ファイルマネージャーを表示",
-        "hide": "ファイルマネージャーを隠す"
+        "hide": "ファイルマネージャーを隠す",
+        "openNamed": "{{name}} をファイルマネージャーで開く",
+        "closeNamed": "{{name}} をファイルマネージャーで閉じる"
       },
       "ops": {
         "newFolderTitle": "新規フォルダ",

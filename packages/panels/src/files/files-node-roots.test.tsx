@@ -233,14 +233,25 @@ describe('目录行的结构', () => {
     );
   });
 
-  test('非根目录行没有「打开」按钮（只走右键菜单）', () => {
+  test('子目录行也有自己的「打开」按钮，不占用根行的 testid；文件行没有', () => {
     const html = renderExpandedRoot([subDir, fileEntry(0)]);
     expect(html).toContain(`data-testid="file-dir-${ROOT.id}-${subDir.path}"`);
     expect(count(html, 'data-testid="file-root-explorer-')).toBe(1);
+    expect(count(html, 'data-testid="file-dir-explorer-')).toBe(1);
+    const buttonId = `file-dir-explorer-${ROOT.id}-${subDir.path}`;
+    const button = html.match(
+      new RegExp(`<button[^>]*data-testid="${buttonId}"[^>]*>[^<]*</button>`)
+    )?.[0];
+    expect(button).toContain('>打开</button>');
+    // 按钮排在该行展开钮之后
+    expect(html.indexOf(`data-testid="${buttonId}"`)).toBeGreaterThan(
+      html.indexOf(`data-testid="file-dir-${ROOT.id}-${subDir.path}"`)
+    );
   });
 
   test('目录菜单在关闭态不产出任何内容', () => {
     const html = renderExpandedRoot([subDir, fileEntry(0)]);
-    expect(html).not.toContain('在文件管理器中打开');
+    // 按钮的读屏标签也含「在文件管理器中打开」，所以认菜单项节点而不是文案
+    expect(html).not.toContain('data-slot="context-menu-item"');
   });
 });

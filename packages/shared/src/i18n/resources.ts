@@ -2024,10 +2024,6 @@ export const I18N_RESOURCES = {
         "fail": "Failed to upload {{name}}"
       },
       "transfer": {
-        "legUserToVibeTerm": "Browser → VibeTerm",
-        "legVibeTermToServer": "VibeTerm → Server",
-        "legServerToVibeTerm": "Server → VibeTerm",
-        "legVibeTermToUser": "VibeTerm → Browser",
         "cancel": "Cancel",
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",
@@ -2076,7 +2072,9 @@ export const I18N_RESOURCES = {
         "open": "Open",
         "close": "Close",
         "show": "Show File Manager",
-        "hide": "Hide File Manager"
+        "hide": "Hide File Manager",
+        "openNamed": "Open {{name}} in File Manager",
+        "closeNamed": "Close {{name}} in File Manager"
       },
       "ops": {
         "newFolderTitle": "New Folder",
@@ -6125,10 +6123,6 @@ export const I18N_RESOURCES = {
         "fail": "上传 {{name}} 失败"
       },
       "transfer": {
-        "legUserToVibeTerm": "用户 → VibeTerm",
-        "legVibeTermToServer": "VibeTerm → 服务器",
-        "legServerToVibeTerm": "服务器 → VibeTerm",
-        "legVibeTermToUser": "VibeTerm → 用户",
         "cancel": "取消",
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",
@@ -6174,7 +6168,9 @@ export const I18N_RESOURCES = {
         "open": "打开",
         "close": "关闭",
         "show": "展开文件管理器",
-        "hide": "收起文件管理器"
+        "hide": "收起文件管理器",
+        "openNamed": "在文件管理器中打开 {{name}}",
+        "closeNamed": "在文件管理器中关闭 {{name}}"
       },
       "ops": {
         "newFolderTitle": "新建文件夹",
@@ -10209,10 +10205,6 @@ export const I18N_RESOURCES = {
         "fail": "{{name}} のアップロードに失敗しました"
       },
       "transfer": {
-        "legUserToVibeTerm": "ブラウザ → VibeTerm",
-        "legVibeTermToServer": "VibeTerm → サーバー",
-        "legServerToVibeTerm": "サーバー → VibeTerm",
-        "legVibeTermToUser": "VibeTerm → ブラウザ",
         "cancel": "キャンセル",
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
@@ -10258,7 +10250,9 @@ export const I18N_RESOURCES = {
         "open": "開く",
         "close": "閉じる",
         "show": "ファイルマネージャーを表示",
-        "hide": "ファイルマネージャーを隠す"
+        "hide": "ファイルマネージャーを隠す",
+        "openNamed": "{{name}} をファイルマネージャーで開く",
+        "closeNamed": "{{name}} をファイルマネージャーで閉じる"
       },
       "ops": {
         "newFolderTitle": "新規フォルダ",
