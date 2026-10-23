@@ -11,6 +11,7 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import { meshProxySettingsRoutes } from '../settings/mesh-proxy';
 import { meshRouteSettingsRoutes } from '../settings/mesh-route';
 import { windowMemorySettingsRoutes } from '../settings/window-memory-route';
 import { json } from './http';
@@ -101,5 +102,6 @@ export const settingsRoutes: ApiRoute[] = [
     handler: () => handleRestartGateway(),
   }),
   ...meshRouteSettingsRoutes,
+  ...meshProxySettingsRoutes,
   ...windowMemorySettingsRoutes,
 ];

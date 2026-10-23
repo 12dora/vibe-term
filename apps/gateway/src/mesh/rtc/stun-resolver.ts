@@ -7,6 +7,7 @@ import {
   isUnusableEdgeIp,
   resolveHostnameViaDoh,
 } from '../../tunnel/edge-resolver';
+import { meshFetch } from '../mesh-egress';
 import { stamp } from '../mesh-log';
 import type { IceServer } from './native';
 
@@ -277,7 +278,7 @@ async function dohAddresses(
   const doh = opts.doh ?? resolveHostnameViaDoh;
   try {
     return await doh(hostname, {
-      fetchImpl: opts.fetchImpl,
+      fetchImpl: opts.fetchImpl ?? meshFetch,
       signal,
       now: opts.now,
       budgetMs,

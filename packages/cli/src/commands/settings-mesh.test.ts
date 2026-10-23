@@ -57,3 +57,40 @@ describe('vibeterm settings mesh route-mode', () => {
     await expect(settings.run(cli, ['mesh', 'latency', 'get'])).rejects.toBeInstanceOf(UsageError);
   });
 });
+
+describe('vibeterm settings mesh proxy', () => {
+  test('get prints the gateway payload', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/settings/mesh-proxy': () => ({ meshProxy: 'direct' }),
+    });
+    await settings.run(cli, ['mesh', 'proxy', 'get']);
+    expect(JSON.parse(stdout.text())).toEqual({ meshProxy: 'direct' });
+  });
+
+  test('set puts { meshProxy } and prints the response', async () => {
+    let body = '';
+    const { ctx: cli, stdout } = await ctx({
+      'PUT /api/settings/mesh-proxy': (_url, init) => {
+        body = String(init?.body);
+        return { meshProxy: 'system' };
+      },
+    });
+    await settings.run(cli, ['mesh', 'proxy', 'set', 'system']);
+    expect(JSON.parse(body)).toEqual({ meshProxy: 'system' });
+    expect(JSON.parse(stdout.text())).toEqual({ meshProxy: 'system' });
+  });
+
+  test('set rejects unknown modes before calling the gateway', async () => {
+    let put = false;
+    const { ctx: cli } = await ctx({
+      'PUT /api/settings/mesh-proxy': () => {
+        put = true;
+        return { meshProxy: 'direct' };
+      },
+    });
+    await expect(settings.run(cli, ['mesh', 'proxy', 'set', 'off'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+    expect(put).toBe(false);
+  });
+});

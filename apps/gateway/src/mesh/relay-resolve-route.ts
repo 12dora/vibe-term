@@ -3,9 +3,15 @@
 // 浏览器不能直接探中继（跨域 + 混合内容），一律由本机 gateway 代探；enroll proof 绑的是
 // `hostFromUrl(url)`（含端口），所以端口必须在 `proof-material` 之前定下来。
 
-import { type PortProbeResult, parseProbeTarget, probeAddressPorts } from '@vibeterm/shared/net';
+import {
+  type PortProbeResult,
+  type ProbeFetch,
+  parseProbeTarget,
+  probeAddressPorts,
+} from '@vibeterm/shared/net';
 import { normalizeRelayUrl } from '@vibeterm/shared/relay';
 import { readJsonObjectBody } from '../api/http';
+import { meshFetch } from './mesh-egress';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import { jsonBody, jsonError } from './session-middleware';
 
@@ -63,7 +69,7 @@ export async function resolveRelayAddress(
   const options = {
     kind: 'relay' as const,
     timeoutMs: deps.timeoutMs ?? RELAY_RESOLVE_TIMEOUT_MS,
-    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+    fetchImpl: deps.fetchImpl ?? (meshFetch as ProbeFetch),
     // 候选端口的拨号改写保持精确比对（host 含端口）：只有真正等于本机公网地址的那一条
     // 才走回环，其余候选照常走网络，回环的回答不会被算到别的端口头上。
     resolveDialUrl: (base: string) => resolveRelayDialUrl(base, ctx),

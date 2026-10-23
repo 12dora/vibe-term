@@ -27,6 +27,7 @@ import {
   resolveDialHost,
   stripBrackets,
 } from './dial-resolve-host';
+import { meshFetch, meshWebSocket } from './mesh-egress';
 import { wsDialRaceCount } from './ws-dial-race-config';
 import {
   WS_RACE_OPEN_TIMEOUT_MS,
@@ -142,7 +143,8 @@ export function createDialWsFactory(
   tlsCa?: string[] | null,
   deps: DialWsFactoryDeps = {}
 ): DialWsFactory {
-  const wsCtor = deps.wsCtor ?? defaultWsCtor;
+  const wsCtor =
+    deps.wsCtor ?? ((url, opts) => meshWebSocket(url, opts) as WebSocketTransportInput);
   const resolve =
     deps.resolve ?? ((hostname, resolveOpts) => resolveDialHost(hostname, resolveOpts));
   const baseTls = tlsCa && tlsCa.length > 0 ? { ca: tlsCa } : undefined;
@@ -337,10 +339,6 @@ async function raceOrOpen(
   return ws;
 }
 
-function defaultWsCtor(url: string, opts?: DialSocketOpts): WebSocketTransportInput {
-  return new WebSocket(url, opts as never) as WebSocketTransportInput;
-}
-
 type FallbackArgs = {
   url: string;
   host: string | null;
@@ -403,7 +401,7 @@ function bindFetchSession(
 ): FetchSession {
   const hostname = hostOfDialUrl(url);
   const headerHost = hostHeaderOfDialUrl(url);
-  const doFetch = opts.fetchImpl ?? ((input, requestInit) => fetch(input, requestInit));
+  const doFetch = opts.fetchImpl ?? meshFetch;
   const resolve = opts.resolve ?? ((host, resolveOpts) => resolveDialHost(host, resolveOpts));
   const parent = init.signal ?? undefined;
   return {

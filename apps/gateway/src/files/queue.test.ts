@@ -343,8 +343,6 @@ describe('enqueueDeviceJob', () => {
     for (const g of gates) g.resolve();
     t.resolve();
     await Promise.all([...jobs, pt]);
-    expect(events.filter((e) => e.startsWith('start:r'))).toHaveLength(
-      DEVICE_READ_CONCURRENCY + 2
-    );
+    expect(events.filter((e) => e.startsWith('start:r'))).toHaveLength(DEVICE_READ_CONCURRENCY + 2);
   });
 });

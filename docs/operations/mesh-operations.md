@@ -186,6 +186,19 @@ CA 指纹从中继本机 `GET /api/tls` 的 `caFingerprint` 读取（64 位小�
 
 CLI：`vibeterm settings mesh route-mode get|set <auto|direct|relay>`（`--json` 与兄弟命令一致）。HTTP `GET/PUT /api/settings/mesh-route`，非法值 `400 INVALID_MESH_ROUTE_MODE`。进程内立刻生效，不经 `SETTINGS_EVENT`。阈值与重掷协议见 [路径优选](../architecture/path-selection.md)。
 
+## 出站代理
+
+mesh / 中继 / 对端的 HTTP 探测与 WebSocket 拨号**默认直连**，不走 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`。本机必须经系统代理才能到达中继或对端时，把「出站代理」改成「系统代理」。LLM、联网搜索、GitHub 升级、cloudflared、ACME、通知等上网功能仍始终尊重代理环境变量。
+
+拨号过程中的 DoH 查询（`dial-resolve-host`、STUN 解析器）走同一套 mesh 出站策略，因为它们服务于 mesh 拨号。
+
+| 选项 | 落库值 | 行为 |
+|---|---|---|
+| 直连 | `direct`（默认） | HTTP 走 `node:http` / `https`（Bun `fetch` 无法按请求关闭代理）；WebSocket 不带 `proxy` |
+| 系统代理 | `system` | 仅公网目标走代理。环回（`127/8`、`::1`）、RFC1918、CGNAT `100.64/10`、链路本地（`169.254/16`、`fe80::/10`）、ULA（`fc00::/7`）等 **IP 字面量**一律直连。其余目标由 HTTP 与 WebSocket **共用同一套**判定：命中 `NO_PROXY`（CIDR、括号 IPv6、端口、前导点后缀、`*`）则直连，否则 HTTP 走全局 `fetch`（环境代理），WebSocket 显式带 http(s) 代理。环境变量给出的代理若为 socks 且没有可用的 http(s) 代理，直连并打一条日志（写明实际命中的变量名） |
+
+CLI：`vibeterm settings mesh proxy get|set <direct|system>`。HTTP `GET/PUT /api/settings/mesh-proxy`，体 `{ meshProxy }`，非法值 `400 INVALID_MESH_PROXY_MODE`。改值不拆已建立的链路；随后的拨号、探测、重连采用新策略，并广播 `SETTINGS_UPDATE` 命名空间 `mesh-proxy`。
+
 ## Nodes 页
 
 路由 `/nodes`，任意已登录的 mesh 入口可用。standalone 整页不渲染。

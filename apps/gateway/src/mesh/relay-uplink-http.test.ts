@@ -2,6 +2,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@vibeterm/shared/link';
+import { installMeshFetchForTests } from './mesh-egress';
 import type { RelayDialContext } from './relay-dial';
 import {
   defaultRelayWsFactory,
@@ -22,15 +23,16 @@ const originalFetch = globalThis.fetch;
 function captureFetch(ok = true): { urls: string[]; inits: (RequestInit | undefined)[] } {
   const urls: string[] = [];
   const inits: (RequestInit | undefined)[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  installMeshFetchForTests(async (input, init) => {
     urls.push(String(input));
     inits.push(init);
     return new Response(null, { status: ok ? 200 : 503 });
-  }) as typeof fetch;
+  });
   return { urls, inits };
 }
 
 afterEach(() => {
+  installMeshFetchForTests(null);
   globalThis.fetch = originalFetch;
 });
 
@@ -61,7 +63,7 @@ describe('probeRelayHealth', () => {
   test('非 2xx 与网络错误都判为不健康', async () => {
     captureFetch(false);
     expect(await probeRelayHealth('https://other.example', null, 1_000, SELF)).toBe(false);
-    globalThis.fetch = (() => Promise.reject(new Error('boom'))) as unknown as typeof fetch;
+    installMeshFetchForTests(() => Promise.reject(new Error('boom')));
     expect(await probeRelayHealth('https://other.example', null, 1_000, SELF)).toBe(false);
   });
 });

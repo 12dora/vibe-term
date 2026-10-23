@@ -25,11 +25,12 @@ import type { LivePeer } from './peer-reconnect-wake';
 import { type PeerUpgradeOpts, RtcWakeGate } from './peer-rtc-wake';
 import { PeerServer } from './peer-server';
 import { PeerStatusSync } from './peer-status-sync';
-import { defaultPeerWsFactory, sharedDirectDialLimiter } from './peer-ws-race';
+import { sharedDirectDialLimiter } from './peer-ws-race';
 import { RouteDegradeCoordinator, defaultRouteModeHolder } from './route-degrade';
 import { rtcLog } from './rtc/rtc-log';
 import { bindIceConfigRearm } from './rtc/stun-effective';
 import type { MeshIdentity, MeshScheduler } from './types';
+import { defaultPeerWsFactory } from './ws-open-race';
 
 export type PeerWireHooks = {
   maybeUpgrade: (nodeId: string, opts: PeerUpgradeOpts) => void;

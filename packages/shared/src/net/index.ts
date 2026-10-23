@@ -53,3 +53,4 @@ export {
 export * from './stun-defaults';
 export * from './adaptive-deadline';
 export * from './route-mode';
+export * from './mesh-proxy';

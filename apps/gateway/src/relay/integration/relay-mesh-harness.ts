@@ -17,6 +17,7 @@ import {
   loginSelf,
   selfCookie,
 } from '../../mesh/integration/mesh-http-helpers';
+import { installMeshFetchForTests } from '../../mesh/mesh-egress';
 import { createMeshRuntime } from '../../mesh/mesh-runtime';
 import { RelayUplinkClient } from '../../mesh/relay-uplink-client';
 import { fakeSocketPair, waitUntil } from '../../mesh/test-support';
@@ -87,7 +88,10 @@ function installRelayFetch(relays: Map<string, RelayHarness>): () => void {
   }) as typeof fetch;
   patched.preconnect = original.preconnect?.bind(original) ?? (() => {});
   globalThis.fetch = patched;
+  // 直连策略走 node:http，必须再包一层 meshFetch，测试里对 globalThis.fetch 的包装仍生效。
+  installMeshFetchForTests((input, init) => globalThis.fetch(input as RequestInfo, init));
   return () => {
+    installMeshFetchForTests(null);
     globalThis.fetch = original;
   };
 }

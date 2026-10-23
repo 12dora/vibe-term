@@ -13,7 +13,8 @@ export type SettingsNamespace =
   | 'devices'
   | 'tree-order'
   | 'device-folders'
-  | 'notifications-mesh';
+  | 'notifications-mesh'
+  | 'mesh-proxy';
 
 type SettingsBroadcaster = (namespace: SettingsNamespace) => void;
 

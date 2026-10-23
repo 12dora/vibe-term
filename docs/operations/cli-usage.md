@@ -455,6 +455,8 @@ vibeterm settings local direct [--node <id>]
 vibeterm settings system update-check
 vibeterm settings mesh route-mode get
 vibeterm settings mesh route-mode set auto|direct|relay
+vibeterm settings mesh proxy get
+vibeterm settings mesh proxy set direct|system
 vibeterm settings memory get
 vibeterm settings memory set [--enabled on|off] [--high <MB>] [--max <MB>] [--swap-max <MB>] [--interval <sec>]
 vibeterm settings notifications mesh get
@@ -486,6 +488,7 @@ vibeterm settings weixin users approve <account> <user>
 - `totp enable` 打印 secret + otpauth，用 `--code` / `VIBETERM_TOTP` 本地校验后再 `set-totp`。TTY 里码不对就用**同一条** secret 再问一次，Ctrl-C 中止。非 TTY 失败时，提示带上 `--totp-secret <刚打印的 secret>` 重跑，二维码才仍然有效。`totp disable` 非 TTY 必须 `--yes`。
 - `passkey ls` 人类输出带「注册只能在浏览器」hint。
 - `mesh route-mode get|set`：读写本机选路模式（`auto` / `direct` / `relay`），打 `GET/PUT /api/settings/mesh-route`。非法值用法错误。语义见 [mesh 运维「延迟优化」](./mesh-operations.md) 与 [路径优选](../architecture/path-selection.md)。
+- `mesh proxy get|set`：读写本机 mesh / 中继 / 对端出站代理（`direct` / `system`，缺省 `direct`），打 `GET/PUT /api/settings/mesh-proxy`。非法值用法错误。语义见 [mesh 运维「出站代理」](./mesh-operations.md)。
 - `memory get|set`：读写该节点的窗口内存限额（`GET/PUT /api/settings/window-memory`）。`set` 先 GET 再按旗标合并，整包 PUT；MB 为整数 `0…1048576`，周期 2–60 秒，软限额不得大于硬限额（两者都非 0 时）。尊重 `--node`。口径见 [窗口内存限额](./window-memory-limits.md)。
 - `notifications mesh set`：先签 `notification-sink`（需 `VIBETERM_PASSWORD`，`POST /api/auth/keylog?hub=sync`；查询名冻结），记录未落地（`ok !== true` 或 `hubAck === false`）则不 PUT；成功后再 `PUT /api/notifications/mesh {enabled}`。见 [多节点通知汇聚](../architecture/mesh-notification-sink.md)。
 - `llm providers enable|disable`：`PATCH {enabled}`。`models` 全量覆盖 `manualModels` / `disabledModels`（`--clear-manual` / `--clear-disabled` 写成空数组；与 `--manual` / `--disable` 互斥）。`default` 要同时给 `--provider` 与 `--model`。`search set` 的密钥走 `--tavily-key*` / `--brave-key*` / `VIBETERM_TAVILY_API_KEY` / `VIBETERM_BRAVE_API_KEY`（argv 警告）；`--clear-keys` 把两把 key 写成空串。

@@ -1,5 +1,6 @@
 import { waitSocketOpen } from '@vibeterm/shared/net';
 import { classifyRemoteAddress, hostFromWsUrl } from './address-class';
+import { meshWebSocket } from './mesh-egress';
 import { logLine } from './mesh-log';
 import { clampWsDialRace, wsDialRaceCount } from './ws-dial-race-config';
 
@@ -168,4 +169,9 @@ export function withWsOpenRace<T>(
       log: opts?.log,
       now: opts?.now,
     });
+}
+
+/** peer ws-secure 默认拨号器：公网目标按 `VIBETERM_WS_DIAL_RACE` 竞速，局域网只开一条。 */
+export function defaultPeerWsFactory() {
+  return withWsOpenRace((url: string) => meshWebSocket(url));
 }

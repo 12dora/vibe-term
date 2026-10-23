@@ -1,6 +1,7 @@
 import { bytesToHex, encodeBase64url, sha256 } from '@vibeterm/shared/auth';
 import { decodeBase64url } from '@vibeterm/shared/auth';
 import { RELAY_TOKEN_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
+import { meshFetch } from './mesh-egress';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import { readRelayErrorCode } from './relay-routes-input';
 
@@ -78,7 +79,7 @@ export function parseRetryAfterMs(res: Response): number | undefined {
 
 /** 本机代租户 POST 中继租户面；网络层失败 status=0。 */
 export async function relayTenantPost(input: RelayTenantPostInput): Promise<RelayTenantPostResult> {
-  const doFetch = input.fetchImpl ?? fetch;
+  const doFetch = input.fetchImpl ?? (meshFetch as typeof fetch);
   const dialUrl = resolveRelayDialUrl(input.url, input.dial ?? relayDialContextFromEnv());
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), RELAY_ENROLL_FETCH_TIMEOUT_MS);

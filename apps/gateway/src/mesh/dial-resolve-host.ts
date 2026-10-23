@@ -10,6 +10,7 @@ import {
   resolveHostnameViaDoh,
 } from '../tunnel/edge-resolver';
 import { classifyRemoteAddress, isFakeIpv4, isIpAddressLiteral } from './address-class';
+import { meshFetch } from './mesh-egress';
 import { logLine, stamp } from './mesh-log';
 
 export const DIAL_DNS_FALLBACK_ENV = 'VIBETERM_DIAL_DNS_FALLBACK';
@@ -197,7 +198,7 @@ async function tryDoh(
   try {
     const dohIp = pickDohDialIp(
       await doh(hostname, {
-        fetchImpl: opts.fetchImpl,
+        fetchImpl: opts.fetchImpl ?? meshFetch,
         now: opts.now,
         signal: opts.signal,
         budgetMs: DIAL_DOH_BUDGET_MS,

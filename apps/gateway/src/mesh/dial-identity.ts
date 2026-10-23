@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { meshFetch } from './mesh-egress';
 import { stamp } from './mesh-log';
 
 export const DIAL_IDENTITY_PATH_HEALTHZ = '/healthz';
@@ -34,7 +35,7 @@ export function identityCheckUrl(opts: CheckDialIdentityOpts): string {
 }
 
 export async function checkDialIdentity(opts: CheckDialIdentityOpts): Promise<boolean> {
-  const doFetch = opts.fetchImpl ?? ((input, init) => fetch(input, init));
+  const doFetch = opts.fetchImpl ?? meshFetch;
   const url = identityCheckUrl(opts);
   try {
     const init: RequestInit = {

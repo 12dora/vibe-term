@@ -17,6 +17,7 @@ import { readJsonObjectBody } from '../api/http';
 import type { UserKeyService } from '../auth';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { UserStore } from '../auth/user-store';
+import { meshFetch } from './mesh-egress';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import {
   RELAY_ENROLL_FETCH_TIMEOUT_MS,
@@ -438,7 +439,7 @@ export class RelayRoutes {
       secrets: this.deps.secrets,
       rows,
       payload: prepared.payload,
-      fetchImpl: this.deps.fetchImpl ?? fetch,
+      fetchImpl: this.deps.fetchImpl ?? (meshFetch as typeof fetch),
       dial: this.deps.dial ?? relayDialContextFromEnv(),
       timeoutMs: this.deps.enrollmentFanoutTimeoutMs ?? RELAY_ENROLLMENT_FANOUT_TIMEOUT_MS,
       attachedUrl,

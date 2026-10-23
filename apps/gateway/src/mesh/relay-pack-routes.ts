@@ -8,6 +8,7 @@ import {
 } from '@vibeterm/shared/relay';
 import { readJsonObjectBody } from '../api/http';
 import { decodeB64url } from '../api/route-input';
+import { meshFetch } from './mesh-egress';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import type { RelaySecrets } from './relay-secrets';
 import { jsonBody, jsonError } from './session-middleware';
@@ -191,7 +192,7 @@ export async function handleMeshRelayPack(
   if (!parsed) return jsonError('MALFORMED', 400);
   const rows = deps.secrets.relayRows();
   if (rows.length === 0) return jsonError('RELAY_NOT_CONFIGURED', 409);
-  const doFetch = deps.fetchImpl ?? fetch;
+  const doFetch = deps.fetchImpl ?? (meshFetch as typeof fetch);
   const dial = deps.dial ?? relayDialContextFromEnv();
   const results: PackForwardResult[] = [];
   if (parsed.legacySinglePack) {

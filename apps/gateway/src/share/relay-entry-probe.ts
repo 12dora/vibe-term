@@ -1,3 +1,5 @@
+import { meshFetch } from '../mesh/mesh-egress';
+
 export type RelayProbeState = 'ok' | 'bad' | 'unknown';
 
 export const RELAY_PROBE_OK_TTL_MS = 10 * 60_000;
@@ -52,7 +54,7 @@ export class RelayEntryProbe {
   private readonly badTtlMs: number;
 
   constructor(private readonly options: RelayEntryProbeOptions) {
-    this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
+    this.fetchImpl = options.fetch ?? meshFetch;
     this.now = options.now ?? Date.now;
     this.timeoutMs = options.timeoutMs ?? RELAY_PROBE_TIMEOUT_MS;
     this.okTtlMs = options.okTtlMs ?? RELAY_PROBE_OK_TTL_MS;

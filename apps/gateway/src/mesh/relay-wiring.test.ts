@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import type { UserStore } from '../auth/user-store';
+import { installMeshFetchForTests } from './mesh-egress';
 import { RelayUplinkClient } from './relay-uplink-client';
 import { type RelayWiring, relayUplinkOverrides } from './relay-wiring';
 import { fakeSocketPair, waitUntil } from './test-support';
@@ -59,6 +60,7 @@ function restoreEnv(): void {
 }
 
 afterEach(() => {
+  installMeshFetchForTests(null);
   globalThis.fetch = originalFetch;
   restoreEnv();
 });
@@ -174,10 +176,10 @@ describe('relayUplinkOverrides dial', () => {
   test('健康探测使用同一份 dial 快照', async () => {
     saveEnv();
     const seen: string[] = [];
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    installMeshFetchForTests(async (input) => {
       seen.push(String(input));
       return new Response(null, { status: 200 });
-    }) as typeof fetch;
+    });
     const overrides = relayUplinkOverrides(stubWiring(), {
       nameProvider: () => 'n',
       dial: { roles: { relay: true }, relayPublicUrl: RELAY_URL, gatewayPort: 19111 },
