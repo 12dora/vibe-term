@@ -789,8 +789,8 @@ describe('PeerManager', () => {
     const out = await linkA.openStream(open);
     const inn = await incoming;
     expect(inn.openPayload).toEqual(open);
-    out.end();
-    inn.end();
+    void out.end().catch(() => undefined);
+    void inn.end().catch(() => undefined);
   });
 
   test('getLink refuses un-admitted nodes and does not dial a reachable endpoint', async () => {
@@ -1042,7 +1042,7 @@ describe('PeerManager', () => {
     managerA.onRevoked(peer.nodeId);
     expect((await oldClosed).reason).toBeTruthy();
     expect((await newClosed).reason).toBeTruthy();
-    incoming.end();
+    void incoming.end().catch(() => undefined);
   });
 
   test('failed DC attempts unsubscribe signaling listeners so the count stays stable', async () => {
@@ -1159,7 +1159,7 @@ describe('PeerManager', () => {
       link.openStream(new TextEncoder().encode('{"type":"http","method":"GET","path":"/"}'))
     ).rejects.toThrow('too-many-streams');
     pendingHttp.resolve?.(new Response('ok'));
-    first.end();
+    void first.end().catch(() => undefined);
     await first.closed.catch(() => undefined);
   });
 
@@ -2574,7 +2574,7 @@ describe('PeerManager', () => {
       if (value) chunks.push(new TextDecoder().decode(value.bytes));
     }
     expect(chunks.join('')).toBe('before-failafter-fail');
-    inbound.end();
+    void inbound.end().catch(() => undefined);
   });
 
   test('after DC loss with relay alive, getLink never binds a stream to a DC dial that fails after 5s', async () => {
@@ -2664,7 +2664,7 @@ describe('PeerManager', () => {
     }
     expect(chunks.join('')).toBe('payload-ok');
     expect(await manager.getLink(peer.nodeId)).toBe(relayLocal);
-    inbound.end();
+    void inbound.end().catch(() => undefined);
   });
 
   test('getLink waiting on a DC-first dial returns as soon as a live fallback is established', async () => {
