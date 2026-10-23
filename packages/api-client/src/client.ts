@@ -3,6 +3,9 @@
 
 import { adaptiveDeadlineMs } from '@vibeterm/shared/net';
 import { NODE_LOGIN_REQUIRED } from './auth/types';
+import { type UploadInit, type XhrCtor, xhrUpload } from './xhr-upload';
+
+export type { UploadInit } from './xhr-upload';
 
 const LATENCY_EWMA_ALPHA = 0.2;
 const REQUEST_TIMEOUT_MIN_MS = 8_000;
@@ -39,7 +42,7 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
  * `timeout: false` 跳过默认 `AbortSignal.timeout`：该 signal 会在期限到点后中止响应体，
  * NDJSON / 下载等长流必须显式关掉。调用方自带 `signal` 时同样不套默认期限。
  */
-export type ApiFetchInit = RequestInit & { timeout?: false };
+export type ApiFetchInit = RequestInit & { timeout?: false; purpose?: RequestPurpose };
 
 /**
  * 响应钩子上下文。
@@ -53,6 +56,31 @@ export interface ResponseHookContext {
   path: string;
   url: string;
   pathname: string;
+}
+
+/**
+ * 请求用途。`transfer` = 文件传输自己的数据请求（上传 PUT / 状态查询、下载内容 GET、
+ * prepare / commit 流）：它们有自己的重试与退避，不该被宿主的「按 node 退避」挡住，
+ * 也不该因为一条 lane 断线就把整个 node 记成打不通。
+ */
+export type RequestPurpose = 'transfer';
+
+export interface RequestMeta {
+  method: string;
+  purpose?: RequestPurpose;
+}
+
+/**
+ * 请求门：同时挂在 `fetch()` 与 `upload()` 上，宿主据此做「按 node 退避」之类的记账，
+ * 不必再包一层 transport（包了 transport，上传就退不到 XHR 的字节级进度）。
+ */
+export interface RequestGate {
+  /** 发出前调用；抛错则请求不进网络（如退避窗口里的读）。 */
+  admit?(req: RequestMeta): void;
+  /** 拿到了 HTTP 响应（任意状态码）。 */
+  onResponse?(res: Response, req: RequestMeta): void;
+  /** 请求在拿到响应之前失败（含用户取消）。 */
+  onFailure?(error: unknown, req: RequestMeta): void;
 }
 
 /** 响应钩子：只读观察，不得消费 body（需要读 body 请先 `res.clone()`）。 */
@@ -96,7 +124,8 @@ export class ApiClient {
 
   constructor(
     readonly baseUrl: string = '',
-    private readonly transport?: FetchLike
+    private readonly transport?: FetchLike,
+    private readonly gate?: RequestGate
   ) {}
 
   url(path: string): string {
@@ -108,9 +137,7 @@ export class ApiClient {
   }
 
   fetch(path: string, init?: ApiFetchInit): Promise<Response> {
-    const url = this.url(path);
-    const started = performance.now();
-    const { timeout, ...request } = init ?? {};
+    const { timeout, purpose, ...request } = init ?? {};
     const skipDefault = timeout === false || request.signal != null;
     const nextInit: RequestInit = skipDefault
       ? request
@@ -120,17 +147,63 @@ export class ApiClient {
             requestTimeoutMs(this.ewmaMs, isForwardedUrl(this.baseUrl, path))
           ),
         };
+    const url = this.url(path);
     // 每次调用时读取 globalThis.fetch，禁止在模块加载或构造时捕获。
-    const pending = this.transport
-      ? this.transport(url, nextInit)
-      : globalThis.fetch(url, nextInit);
-    return pending.then((res) => {
-      this.noteLatency(performance.now() - started);
-      if (responseHooks.size > 0) {
-        runResponseHooks(res, { path, url, pathname: urlPathname(url) });
+    return this.dispatch(path, { method: request.method ?? 'GET', purpose }, () =>
+      this.transport ? this.transport(url, nextInit) : globalThis.fetch(url, nextInit)
+    );
+  }
+
+  /**
+   * 与 `fetch` 同语义（baseUrl、同源 cookie、请求门、延迟 EWMA、响应钩子、AbortError），
+   * 额外通过 `onUploadProgress` 汇报请求体已发出的字节数。没有 XMLHttpRequest（CLI / 测试）
+   * 或注入了自定义 transport 时退回 `fetch`，只在整个请求体送达后汇报一次。
+   * 不套默认请求期限：大块上传的期限由调用方的 signal 管。
+   */
+  upload(path: string, init: UploadInit): Promise<Response> {
+    const Xhr = this.transport
+      ? undefined
+      : (globalThis as { XMLHttpRequest?: XhrCtor }).XMLHttpRequest;
+    if (!Xhr) return this.uploadViaFetch(path, init);
+    const url = this.url(path);
+    const meta: RequestMeta = { method: init.method ?? 'POST', purpose: init.purpose };
+    return this.dispatch(path, meta, () => xhrUpload(Xhr, url, init));
+  }
+
+  private async uploadViaFetch(path: string, init: UploadInit): Promise<Response> {
+    const { onUploadProgress, ...request } = init;
+    const res = await this.fetch(path, { ...request, timeout: false });
+    if (res.ok) onUploadProgress?.(init.body.size);
+    return res;
+  }
+
+  /** 两条请求通道共用的收口：请求门 → 发送 → 延迟 EWMA → 响应钩子。 */
+  private dispatch(
+    path: string,
+    meta: RequestMeta,
+    send: () => Promise<Response>
+  ): Promise<Response> {
+    try {
+      this.gate?.admit?.(meta);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const url = this.url(path);
+    const started = performance.now();
+    return send().then(
+      (res) => {
+        this.gate?.onResponse?.(res, meta);
+        this.noteLatency(performance.now() - started);
+        if (responseHooks.size > 0) {
+          runResponseHooks(res, { path, url, pathname: urlPathname(url) });
+        }
+        return res;
+      },
+      (error: unknown) => {
+        this.gate?.onFailure?.(error, meta);
+        throw error;
       }
-      return res;
-    });
+    );
   }
 
   private noteLatency(ms: number): void {

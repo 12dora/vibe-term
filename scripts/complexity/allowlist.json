@@ -2125,10 +2125,6 @@
     "reason": "round46 收紧门禁时冻结的存量",
     "cc": 13
   },
-  "packages/api-client/src/download-transfer.ts:fetchContentOnce": {
-    "reason": "round46 收紧门禁时冻结的存量",
-    "cc": 14
-  },
   "packages/api-client/src/download-transfer.ts:prepareDownload": {
     "reason": "round46 收紧门禁时冻结的存量",
     "params": 6

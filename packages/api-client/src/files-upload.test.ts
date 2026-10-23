@@ -1,6 +1,8 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { ApiClient } from './client';
+import { FakeXhr, resetFakeXhr } from './fake-xhr.testing';
 import { uploadFileChunked } from './files';
+import type { LegProgress } from './transfer-types';
 
 function ndjsonText(lines: object[]): string {
   return `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`;
@@ -105,7 +107,7 @@ describe('uploadFileChunked', () => {
     const file = new File([new Uint8Array(2)], 'c.bin');
     await expect(
       uploadFileChunked('root-1', '/dest', file, {}, new ApiClient('', transport))
-    ).rejects.toMatchObject({ status: 500, code: 'unknown' });
+    ).rejects.toMatchObject({ name: 'TransferInterruptedError', receivedBytes: 2, totalBytes: 2 });
     expect(deleted).toEqual(['/api/files/upload/up-3']);
   });
 
@@ -178,5 +180,228 @@ describe('uploadFileChunked 的取消与期限', () => {
     expect(putSignals[0]).not.toBe(controller.signal);
     expect(putSignals[0]?.aborted).toBe(true);
     expect(deleted).toEqual(['/api/files/upload/up-5']);
+  });
+});
+
+describe('uploadFileChunked 两段权重', () => {
+  async function weightsFor(init: object): Promise<Array<readonly [number, number]>> {
+    const transport = mock(async (input: string) => {
+      if (input.endsWith('/api/files/upload/init')) {
+        return new Response(JSON.stringify({ uploadId: 'up-w', chunkSize: 4, ...init }), {
+          status: 200,
+        });
+      }
+      if (PUT_URL.test(input)) return new Response(null, { status: 200 });
+      if (input.endsWith('/commit')) {
+        return new Response(ndjsonText([{ type: 'done', uploaded: '/d/w.bin' }]), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+    const seen: Array<readonly [number, number]> = [];
+    await uploadFileChunked(
+      'root-1',
+      '/dest',
+      new File([new Uint8Array(3)], 'w.bin'),
+      { onLegWeights: (w) => seen.push(w) },
+      new ApiClient('', transport)
+    );
+    return seen;
+  }
+
+  test('init 之后立刻给权重；服务端声明不推 commit 进度时 leg2 权重为 0', async () => {
+    expect(await weightsFor({})).toEqual([[1, 1]]);
+    expect(await weightsFor({ commitProgress: true })).toEqual([[1, 1]]);
+    expect(await weightsFor({ commitProgress: false })).toEqual([[1, 0]]);
+  });
+});
+
+describe('uploadFileChunked 字节级进度', () => {
+  const originalXhr = (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest;
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    resetFakeXhr();
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = FakeXhr;
+  });
+
+  afterEach(() => {
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = originalXhr;
+    globalThis.fetch = originalFetch;
+  });
+
+  function stubGateway(commitEvents: object[], chunkSize = 8): void {
+    globalThis.fetch = mock(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/api/files/upload/init')) {
+        return new Response(JSON.stringify({ uploadId: 'up-x', chunkSize, ranged: true }), {
+          status: 200,
+        });
+      }
+      if (url.endsWith('/commit')) return new Response(ndjsonText(commitEvents), { status: 200 });
+      if (/\/api\/files\/upload\/up-x$/.test(url)) {
+        return new Response(JSON.stringify({ received: 0, ranges: [] }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }) as never;
+  }
+
+  test('XHR 上行字节作为区间内进度转发：bytes 精确、单调，整块落地后才到 100%', async () => {
+    stubGateway([
+      { type: 'progress', transferred: 4, pct: 50, rate: '1 B/s' },
+      { type: 'done', uploaded: '/d/a.bin' },
+    ]);
+    resetFakeXhr(() => ({ progress: [2, 5, 8], status: 200 }));
+    const legs: Array<[1 | 2, LegProgress]> = [];
+
+    await uploadFileChunked(
+      'root-1',
+      '/d',
+      new File([new Uint8Array(8)], 'a.bin'),
+      { onLeg: (leg, p) => legs.push([leg, p]) },
+      new ApiClient('')
+    );
+
+    expect(FakeXhr.instances).toHaveLength(1);
+    expect(FakeXhr.instances[0].url).toContain('/api/files/upload/up-x?offset=0&length=8');
+    const leg1 = legs.filter(([leg]) => leg === 1).map(([, p]) => p);
+    expect(leg1.map((p) => p.bytes)).toEqual([0, 0, 2, 5, 8, 8, 8]);
+    expect(leg1.every((p) => p.totalBytes === 8)).toBe(true);
+    // 字节全部发出、整段确认收尾之前最多 99%
+    expect(leg1.map((p) => p.pct)).toEqual([0, 0, 25, 62, 99, 99, 100]);
+    const leg2 = legs.filter(([leg]) => leg === 2).map(([, p]) => p);
+    expect(leg2.some((p) => p.bytes === 4 && p.totalBytes === 8)).toBe(true);
+    expect(leg2.at(-1)).toMatchObject({ pct: 100, bytes: 8, totalBytes: 8 });
+  });
+
+  test('一次尝试失败：该区间已报字节回滚，总数不超过落地 + 在飞，重试后完成', async () => {
+    stubGateway([{ type: 'done', uploaded: '/d/b.bin' }]);
+    let puts = 0;
+    resetFakeXhr(() => {
+      puts += 1;
+      return puts === 1 ? { progress: [6], outcome: 'error' } : { progress: [3, 8], status: 200 };
+    });
+    const bytes: number[] = [];
+
+    await uploadFileChunked(
+      'root-1',
+      '/d',
+      new File([new Uint8Array(8)], 'b.bin'),
+      { onLeg: (leg, p) => leg === 1 && bytes.push(p.bytes ?? -1) },
+      new ApiClient('')
+    );
+
+    const peak = bytes.indexOf(6);
+    expect(peak).toBeGreaterThan(-1);
+    // 失败后立刻回到 0，而不是停在 6 直到重试
+    expect(bytes[peak + 1]).toBe(0);
+    expect(Math.max(...bytes)).toBe(8);
+    expect(bytes.at(-1)).toBe(8);
+  });
+
+  test('PUT 被永久拒绝（413）：抛服务端给的 FileApiError，不包成传输中断', async () => {
+    stubGateway([]);
+    resetFakeXhr(() => ({
+      status: 413,
+      body: JSON.stringify({ error: 'too_large', code: 'too_large' }),
+    }));
+
+    await expect(
+      uploadFileChunked(
+        'root-1',
+        '/d',
+        new File([new Uint8Array(8)], 'c.bin'),
+        {},
+        new ApiClient('')
+      )
+    ).rejects.toMatchObject({ name: 'FileApiError', status: 413, code: 'too_large' });
+  });
+  test('并行流里一条被永久拒绝（403）：其余在飞请求被收掉，用户看到的仍是 403 而不是传输中断', async () => {
+    stubGateway([], 2);
+    resetFakeXhr(async (xhr) => {
+      if (xhr.url.includes('offset=0&')) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          status: 403,
+          body: JSON.stringify({ error: 'permission_denied', code: 'permission_denied' }),
+        };
+      }
+      return { outcome: 'hang' };
+    });
+
+    const error = await uploadFileChunked(
+      'root-1',
+      '/d',
+      new File([new Uint8Array(8)], 'd.bin'),
+      { streams: 4 },
+      new ApiClient('')
+    ).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({ name: 'FileApiError', status: 403, code: 'permission_denied' });
+    expect(FakeXhr.instances.length).toBe(4);
+    expect(FakeXhr.instances.filter((x) => x.aborted).length).toBe(3);
+  });
+
+  test('init 阶段断网：抛 TransferInterruptedError 而不是裸 TypeError', async () => {
+    globalThis.fetch = (async () => {
+      throw new TypeError('Failed to fetch');
+    }) as never;
+    const error = await uploadFileChunked(
+      'root-1',
+      '/d',
+      new File([new Uint8Array(8)], 'e.bin'),
+      {},
+      new ApiClient('')
+    ).catch((e: unknown) => e);
+    expect(error).toMatchObject({ name: 'TransferInterruptedError', totalBytes: 8 });
+  });
+
+  test('commit 流没有 done 就结束：抛 TransferInterruptedError', async () => {
+    stubGateway([{ type: 'progress', transferred: 1, pct: 10, rate: '' }]);
+    resetFakeXhr(() => ({ status: 200 }));
+    const error = await uploadFileChunked(
+      'root-1',
+      '/d',
+      new File([new Uint8Array(8)], 'f.bin'),
+      {},
+      new ApiClient('')
+    ).catch((e: unknown) => e);
+    expect(error).toMatchObject({ name: 'TransferInterruptedError', receivedBytes: 8 });
+  });
+  test('node 在退避窗口里：状态查询仍被放行，断线后只补缺口而不是从 0 重推', async () => {
+    stubGateway([{ type: 'done', uploaded: '/d/g.bin' }], 2);
+    const offsets: number[] = [];
+    let puts = 0;
+    resetFakeXhr((xhr) => {
+      offsets.push(Number(/offset=(\d+)/.exec(xhr.url)?.[1]));
+      puts += 1;
+      return puts === 2 ? { outcome: 'error' } : { status: 200 };
+    });
+    const admitted: Array<string | undefined> = [];
+    // 模拟宿主的退避门：退避窗口里普通 GET 一律短路，传输请求放行
+    const client = new ApiClient('', undefined, {
+      admit: ({ method, purpose }) => {
+        admitted.push(`${method}:${purpose ?? '-'}`);
+        if (method === 'GET' && purpose !== 'transfer') throw new Error('backoff');
+      },
+    });
+    const base = globalThis.fetch;
+    globalThis.fetch = mock(async (input: string | URL | Request, init?: RequestInit) => {
+      if (/\/api\/files\/upload\/up-x$/.test(String(input)) && init?.method !== 'DELETE') {
+        return new Response(JSON.stringify({ received: 2, ranges: [[0, 2]] }), { status: 200 });
+      }
+      return base(input, init);
+    }) as never;
+
+    await uploadFileChunked(
+      'root-1',
+      '/d',
+      new File([new Uint8Array(4)], 'g.bin'),
+      { streams: 1 },
+      client
+    );
+
+    // 第一轮 0、2（2 失败），第二轮靠状态查询得知 [0,2) 已落地，只补 2
+    expect(offsets).toEqual([0, 2, 2]);
+    expect(admitted).toContain('GET:transfer');
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { ApiClient } from './client';
+import { TransferInterruptedError } from './file-errors';
 import { downloadFileWithProgress } from './files';
 
 function ndjson(lines: object[]): Uint8Array {
@@ -180,9 +181,11 @@ describe('downloadFileWithProgress transport', () => {
     });
 
     const client = new ApiClient('', transport);
-    await expect(downloadFileWithProgress('r', '/p', 'n', {}, client)).rejects.toMatchObject({
-      message: 'connection reset',
-    });
+    const error = await downloadFileWithProgress('r', '/p', 'n', {}, client).catch(
+      (e: unknown) => e
+    );
+    expect(error).toBeInstanceOf(TransferInterruptedError);
+    expect(((error as TransferInterruptedError).cause as Error).message).toBe('connection reset');
     expect(deleted).toEqual(['/api/files/download/dl-cut']);
   });
 
@@ -223,10 +226,9 @@ describe('downloadFileWithProgress transport', () => {
     });
 
     const client = new ApiClient('', transport);
-    await expect(downloadFileWithProgress('r', '/p', 'n', {}, client)).rejects.toMatchObject({
-      status: 500,
-      code: 'unknown',
-    });
+    await expect(downloadFileWithProgress('r', '/p', 'n', {}, client)).rejects.toBeInstanceOf(
+      TransferInterruptedError
+    );
     expect(calls).toEqual(['POST /api/files/download/prepare']);
   });
 });

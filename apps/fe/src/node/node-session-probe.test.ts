@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ApiClient, sessionProbeTimeoutMs } from '@vibeterm/api-client';
+import { FakeXhr, resetFakeXhr } from '@vibeterm/api-client/fake-xhr.testing';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
@@ -142,6 +143,38 @@ describe('createGatedNodeApiClient', () => {
     expect(isNodeRequestBlocked(NODE_A)).toBe(true);
   });
 
+  test('传输自己的数据请求（purpose: transfer）在退避窗口里照常放行，普通读仍被挡', async () => {
+    stubFetch(() => jsonResponse({ ok: true }));
+    const client = createGatedNodeApiClient(NODE_A);
+    noteNodeUnreachable(NODE_A);
+
+    await expect(client.fetch('/api/files/upload/u')).rejects.toBeInstanceOf(
+      NodeBackoffSkippedError
+    );
+    const res = await client.fetch('/api/files/upload/u', { purpose: 'transfer' });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    // purpose 只给请求门看，不会漏进真正的 fetch
+    expect(calls[0]?.init).not.toHaveProperty('purpose');
+  });
+
+  test('并行传输请求同时断线不累计退避：不会把 node 判成打不通', async () => {
+    stubFetchRejecting(new TypeError('Failed to fetch'));
+    const client = createGatedNodeApiClient(NODE_A);
+
+    const results = await Promise.allSettled(
+      Array.from({ length: 4 }, () =>
+        client.fetch('/api/files/download/d/content', { purpose: 'transfer' })
+      )
+    );
+    expect(results.every((r) => r.status === 'rejected')).toBe(true);
+    expect(isNodeRequestBlocked(NODE_A)).toBe(false);
+
+    // 同样的断线若发生在普通读上，照旧记一次打不通
+    await client.fetch('/api/devices').catch(() => undefined);
+    expect(isNodeRequestBlocked(NODE_A)).toBe(true);
+  });
+
   test('self 不设门', async () => {
     stubFetch(() => jsonResponse({ devices: [] }));
     const client = createGatedNodeApiClient('self');
@@ -236,5 +269,51 @@ describe('probeNodeSession', () => {
       AbortSignal.timeout = originalTimeout;
       ApiClient.prototype.lastLatencyMs = originalLatency;
     }
+  });
+});
+
+describe('createGatedNodeApiClient 的上传', () => {
+  const originalXhr = (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest;
+
+  beforeEach(() => {
+    resetFakeXhr();
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = FakeXhr;
+  });
+
+  afterEach(() => {
+    (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = originalXhr;
+  });
+
+  test('带门的客户端 upload() 走 XHR 并汇报字节进度，不碰 fetch；写请求不受退避挡，成功后解除退避', async () => {
+    stubFetch(() => jsonResponse({}));
+    resetFakeXhr(() => ({ progress: [3, 8], status: 200 }));
+    noteNodeUnreachable(NODE_A);
+    const loaded: number[] = [];
+
+    const client = createGatedNodeApiClient(NODE_A);
+    const res = await client.upload('/api/files/upload/u?offset=0&length=8', {
+      method: 'PUT',
+      body: new Blob([new Uint8Array(8)]),
+      onUploadProgress: (n) => loaded.push(n),
+    });
+
+    expect(res.status).toBe(200);
+    expect(loaded).toEqual([3, 8]);
+    expect(calls).toHaveLength(0);
+    expect(FakeXhr.instances[0]?.url).toBe(`/n/${NODE_A}/api/files/upload/u?offset=0&length=8`);
+    expect(isNodeRequestBlocked(NODE_A)).toBe(false);
+  });
+
+  test('上传的网络失败照样记进退避（门对 upload 同样生效）', async () => {
+    resetFakeXhr(() => ({ outcome: 'error' }));
+    const client = createGatedNodeApiClient(NODE_A);
+
+    await expect(
+      client.upload('/api/files/upload/u?offset=0&length=1', {
+        method: 'PUT',
+        body: new Blob(['a']),
+      })
+    ).rejects.toBeInstanceOf(TypeError);
+    expect(isNodeRequestBlocked(NODE_A)).toBe(true);
   });
 });

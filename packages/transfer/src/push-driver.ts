@@ -146,11 +146,14 @@ async function runAttempt(
       const range = ranges[cursor];
       cursor += 1;
       if (range === undefined) return;
+      // 这一段结案后传输层再补报的进度一律忽略，免得盖掉回滚/落地后的计数
+      let live = true;
       const outcome = normalizeOutcome(
         await transport.put(range, {
           signal: scope.signal,
           deadlineMs: opts.deadlineMs,
           onProgress: (n) => {
+            if (!live) return;
             uploaded.set(range.offset, Math.max(0, Math.min(n, range.length)));
             report();
           },
@@ -158,7 +161,9 @@ async function runAttempt(
         opts,
         scope
       );
-      if (outcome.kind === 'landed') uploaded.set(range.offset, range.length);
+      live = false;
+      // 失败的区间对端未必收全，已报的区间内字节回滚；下一轮协商会按对端实际所收重新计数。
+      uploaded.set(range.offset, outcome.kind === 'landed' ? range.length : 0);
       report();
       if (OUTCOME_RANK[outcome.kind] > OUTCOME_RANK[worst.kind]) worst = outcome;
       // 本轮已经出结论：把还在飞的请求一起中止，不必等它们各自超时。

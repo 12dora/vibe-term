@@ -1,6 +1,6 @@
 // 文件模块门面：保持既有 import 路径，实现拆分在 REST 端点、上传/下载传输与 NDJSON 分帧四个模块中。
 
-export { FileApiError } from './file-errors';
+export { FileApiError, TransferInterruptedError } from './file-errors';
 export {
   browseDirectory,
   createFileRoot,
@@ -21,10 +21,14 @@ export {
   renameFile,
 } from './file-mutations';
 export { uploadFileChunked } from './upload-transfer';
-export { downloadFileWithProgress, type DownloadedFile } from './download-transfer';
+export {
+  downloadFileWithProgress,
+  type DownloadedFile,
+  type DownloadOpts,
+} from './download-transfer';
 export type { LegProgress, OnLeg, TransferOpts } from './transfer-types';
 export {
-  DIRECT_UPLOAD_STREAMS,
-  RELAY_UPLOAD_STREAMS,
-  pickUploadStreams,
+  DIRECT_TRANSFER_STREAMS,
+  RELAY_TRANSFER_STREAMS,
+  pickTransferStreams,
 } from './transfer-types';

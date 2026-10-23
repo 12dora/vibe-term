@@ -22,7 +22,7 @@
 
 import {
   ApiClient,
-  type FetchLike,
+  type RequestGate,
   createNodeApiClient,
   fetchDevices,
   isNodeLoginRequiredError,
@@ -42,9 +42,9 @@ import {
 export const SESSION_PROBE_TIMEOUT_MS = 8_000;
 
 /** 只有幂等读请求才受退避门约束。 */
-function isIdempotentRead(init?: RequestInit): boolean {
-  const method = (init?.method ?? 'GET').toUpperCase();
-  return method === 'GET' || method === 'HEAD';
+function isIdempotentRead(method: string): boolean {
+  const upper = method.toUpperCase();
+  return upper === 'GET' || upper === 'HEAD';
 }
 
 /**
@@ -72,24 +72,30 @@ export function resetGatedNodeApiClients(): void {
   gatedClients.clear();
 }
 
+/**
+ * 门挂在 ApiClient 的请求门上而不是包一层 transport：上传要走 XHR 才有字节级进度，
+ * 包了 transport 就只能退回 fetch。`fetch()` 与 `upload()` 共用这一道门。
+ */
 function buildGatedNodeApiClient(nodeId: string): ApiClient {
-  const transport: FetchLike = (url, init) => {
-    if (isIdempotentRead(init) && isNodeRequestBlocked(nodeId)) {
-      return Promise.reject(new NodeBackoffSkippedError(nodeId));
-    }
-    return fetch(url, init).then(
-      (res) => {
-        // 2xx 才算「答上话了」：转发器打不通目标时回的也是一个正常的 HTTP 响应（503）。
-        if (res.ok) noteNodeReachable(nodeId);
-        return res;
-      },
-      (error: unknown) => {
-        noteNodeRequestOutcome(nodeId, error);
-        throw error;
+  const gate: RequestGate = {
+    admit({ method, purpose }) {
+      // 传输自己的数据请求有各自的重试与退避，退避窗口不能把它们短路掉
+      if (purpose === 'transfer') return;
+      if (isIdempotentRead(method) && isNodeRequestBlocked(nodeId)) {
+        throw new NodeBackoffSkippedError(nodeId);
       }
-    );
+    },
+    // 2xx 才算「答上话了」：转发器打不通目标时回的也是一个正常的 HTTP 响应（503）。
+    onResponse(res) {
+      if (res.ok) noteNodeReachable(nodeId);
+    },
+    // 传输请求的失败不记账：并行 lane 一次断线会各记一次，指数退避被成倍放大；
+    // 链路真断了由界面轮询的读请求照常发现并记一次。
+    onFailure(error, { purpose }) {
+      if (purpose !== 'transfer') noteNodeRequestOutcome(nodeId, error);
+    },
   };
-  return new ApiClient(nodePathPrefix(nodeId), transport);
+  return new ApiClient(nodePathPrefix(nodeId), undefined, gate);
 }
 
 /**

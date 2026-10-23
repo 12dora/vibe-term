@@ -362,3 +362,66 @@ describe('runPush cancellation and deadlines', () => {
     expect(signals.every((s) => s.aborted)).toBe(true);
   });
 });
+
+describe('runPush in-range progress', () => {
+  test('区间内进度实时计入，失败的区间回滚，总数不超过已落地 + 在飞字节', async () => {
+    const progress: number[] = [];
+    let call = 0;
+    const transport: PushTransport = {
+      async status() {
+        return { receivedBytes: 0, ranges: [], complete: false };
+      },
+      async put(range, opts) {
+        call += 1;
+        if (call === 1) {
+          opts.onProgress(range.length / 2);
+          return { kind: 'retry', error: 'reset' };
+        }
+        opts.onProgress(range.length / 4);
+        opts.onProgress(range.length);
+        return { kind: 'landed' };
+      },
+    };
+    const res = await runPush(transport, {
+      totalBytes: 1000,
+      deadlineMs: Date.now() + 60_000,
+      signal: NEVER_ABORT,
+      sleep: async () => {},
+      onProgress: (n) => progress.push(n),
+    });
+    expect(res.kind).toBe('done');
+    // 0（协商）→ 500（半截）→ 0（失败回滚）→ 0（重试协商）→ 250 → 1000
+    expect(progress).toEqual([0, 500, 0, 0, 250, 1000, 1000]);
+    expect(Math.max(...progress)).toBeLessThanOrEqual(1000);
+  });
+
+  test('并行流：一条失败只回滚它自己的字节，其余在飞字节保留', async () => {
+    const progress: number[] = [];
+    const transport: PushTransport = {
+      async status() {
+        return { receivedBytes: 0, ranges: [], complete: false };
+      },
+      async put(range, opts) {
+        if (range.offset === 0) {
+          opts.onProgress(100);
+          return { kind: 'fail', error: 'HTTP 400 BAD' };
+        }
+        opts.onProgress(200);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { kind: 'cancelled' };
+      },
+    };
+    const res = await runPush(transport, {
+      totalBytes: 2000,
+      streams: 2,
+      maxRangeBytes: 1000,
+      deadlineMs: Date.now() + 60_000,
+      signal: NEVER_ABORT,
+      sleep: async () => {},
+      onProgress: (n) => progress.push(n),
+    });
+    expect(res).toEqual({ kind: 'failed', error: 'HTTP 400 BAD' });
+    expect(progress.slice(0, 4)).toEqual([0, 100, 300, 200]);
+    expect(progress[progress.length - 1]).toBe(0);
+  });
+});

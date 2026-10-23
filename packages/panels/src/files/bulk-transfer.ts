@@ -20,17 +20,13 @@ import {
   SELF_NODE_ID,
   defaultApiClient,
   downloadFileWithProgress,
-  formatBytesFixed,
-  formatBytesPair,
-  formatRate,
   uploadFileChunked,
 } from '@vibeterm/api-client';
 import { prepareDownload } from '@vibeterm/api-client/download-transfer';
-import { parseError } from '@vibeterm/api-client/file-errors';
-import { readNdjsonStream } from '@vibeterm/api-client/ndjson-stream';
+import { abortError } from '@vibeterm/api-client/file-errors';
+import { createLegReporter } from '@vibeterm/api-client/leg-progress';
 import type { TransferOpts } from '@vibeterm/api-client/transfer-types';
-import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@vibeterm/shared';
-import { ProgressTracker } from '@vibeterm/transfer';
+import { commitUpload, initUpload } from '@vibeterm/api-client/upload-transfer';
 import { getBulkClient } from '@vibeterm/ws-client/direct/bulk-client';
 
 /** 本次传输实际走的通道：`direct` = 浏览器↔node 直连，`relay` = 经中继中转的 REST。 */
@@ -75,13 +71,6 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
 }
 
-function abortError(): Error {
-  if (typeof DOMException === 'function') return new DOMException('Aborted', 'AbortError');
-  const err = new Error('Aborted');
-  err.name = 'AbortError';
-  return err;
-}
-
 /**
  * 取消语义：清理（DELETE 回收）期间用户点了取消时，抛的必须是标准 `AbortError`，
  * 否则调用方按 `err.name === 'AbortError'` 判断会漏判。已经是 AbortError 的原样上抛。
@@ -106,7 +95,7 @@ function pickBulk(nodeId: string, deps?: BulkTransferDeps): FileBulkClient | nul
 
 async function deleteQuietly(client: ApiClient, path: string): Promise<void> {
   try {
-    await client.fetch(path, { method: 'DELETE' });
+    await client.fetch(path, { method: 'DELETE', purpose: 'transfer' });
   } catch {
     // best-effort 回收
   }
@@ -147,48 +136,14 @@ async function uploadViaBulk(
   client: ApiClient,
   bulk: FileBulkClient
 ): Promise<void> {
-  const { onLeg, signal } = opts;
+  const { signal } = opts;
   const total = file.size;
-  const detail = (n: number) => formatBytesPair(n, total);
   let uploadId = '';
 
   try {
-    const initBody: UploadInitRequest = { rootId, path: destDir, name: file.name, size: total };
-    const initRes = await client.fetch('/api/files/upload/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(initBody),
-      signal,
-    });
-    if (!initRes.ok) throw await parseError(initRes);
-    uploadId = ((await initRes.json()) as UploadInitResponse).uploadId;
+    uploadId = (await initUpload(client, rootId, destDir, file, opts)).uploadId;
     if (!uploadId) throw new FileApiError(500, 'unknown', 'unknown');
-
-    // leg1：浏览器 → node（直连 DataChannel）
-    onLeg?.(1, { pct: total === 0 ? 100 : 0, detail: detail(0) });
-    const tracker = new ProgressTracker({ totalBytes: total });
-    // 送出的字节数必须与 init 登记的一致：多了 bulk 客户端自己会 abort，少了 node 会回
-    // `{ok:false, invalid}`；这里再自己核一遍，避免任何一侧漏判后把截断文件 commit 上去。
-    let sentBytes = 0;
-    const result = await bulk.upload({
-      transferId: uploadId,
-      size: total,
-      source: file,
-      signal,
-      onProgress: (sent) => {
-        sentBytes = sent;
-        tracker.set(sent);
-        onLeg?.(1, {
-          pct: total > 0 ? Math.round((sent / total) * 100) : 100,
-          rate: tracker.ratePerSec() > 0 ? formatRate(tracker.ratePerSec()) : undefined,
-          detail: detail(sent),
-        });
-      },
-    });
-    if (!result.ok) throw new FileApiError(500, `bulk_${result.code}`);
-    if (sentBytes !== total)
-      throw new FileApiError(500, `bulk_size_mismatch:${sentBytes}/${total}`);
-    onLeg?.(1, { pct: 100, detail: detail(total) });
+    await sendViaBulk(bulk, uploadId, file, opts);
   } catch (err) {
     if (uploadId) await deleteQuietly(client, `/api/files/upload/${uploadId}`);
     rethrowIfCanceled(err, signal);
@@ -197,39 +152,39 @@ async function uploadViaBulk(
 
   // leg2：node → 服务器（rsync）。commit 一旦开始就不再回落，避免重复写入。
   try {
-    onLeg?.(2, { pct: 0, detail: detail(0) });
-    await commitUpload(client, uploadId, opts, detail);
-    onLeg?.(2, { pct: 100, detail: detail(total) });
+    await commitUpload(client, uploadId, opts, total);
   } catch (err) {
     await deleteQuietly(client, `/api/files/upload/${uploadId}`);
     throw err;
   }
 }
 
-async function commitUpload(
-  client: ApiClient,
+// leg1：浏览器 → node（直连 DataChannel）。
+async function sendViaBulk(
+  bulk: FileBulkClient,
   uploadId: string,
-  opts: TransferPathOpts,
-  detail: (n: number) => string
+  file: File,
+  opts: TransferPathOpts
 ): Promise<void> {
-  const { onLeg, signal } = opts;
-  const res = await client.fetch(`/api/files/upload/${uploadId}/commit`, {
-    method: 'POST',
-    signal,
+  const total = file.size;
+  const leg1 = createLegReporter(1, total, opts.onLeg);
+  leg1.report(0);
+  // 送出的字节数必须与 init 登记的一致：多了 bulk 客户端自己会 abort，少了 node 会回
+  // `{ok:false, invalid}`；这里再自己核一遍，避免任何一侧漏判后把截断文件 commit 上去。
+  let sentBytes = 0;
+  const result = await bulk.upload({
+    transferId: uploadId,
+    size: total,
+    source: file,
+    signal: opts.signal,
+    onProgress: (sent) => {
+      sentBytes = sent;
+      leg1.report(sent);
+    },
   });
-  if (!res.ok || !res.body) throw await parseError(res);
-
-  let done = false;
-  await readNdjsonStream<UploadCommitEvent>(res.body, (ev) => {
-    if (ev.type === 'progress') {
-      onLeg?.(2, { pct: ev.pct, rate: ev.rate, detail: detail(ev.transferred) });
-    } else if (ev.type === 'done') {
-      done = true;
-    } else if (ev.type === 'error') {
-      throw new FileApiError(500, ev.detail ?? ev.code, ev.code);
-    }
-  });
-  if (!done) throw new FileApiError(500, 'unknown', 'unknown');
+  if (!result.ok) throw new FileApiError(500, `bulk_${result.code}`);
+  if (sentBytes !== total) throw new FileApiError(500, `bulk_size_mismatch:${sentBytes}/${total}`);
+  leg1.finish();
 }
 
 // ========== 下载 ==========
@@ -255,7 +210,6 @@ export async function downloadFileWithTransport(
       const prepared = await prepareDownload(rootId, path, name, opts, client, (id) => {
         downloadId = id;
       });
-      opts.onLeg?.(1, { pct: 100, detail: formatBytesFixed(prepared.size) });
       const blob = await drainBulkDownload(bulk, downloadId, prepared.size, opts);
       await deleteQuietly(client, `/api/files/download/${downloadId}`);
       return { name: prepared.name, blob, transferPath: 'direct' };
@@ -276,21 +230,12 @@ async function drainBulkDownload(
   size: number,
   opts: TransferPathOpts
 ): Promise<Blob> {
-  const { onLeg, signal } = opts;
-  const detail = (n: number) => formatBytesPair(n, size);
-  onLeg?.(2, { pct: 0, detail: detail(0) });
-  const tracker = new ProgressTracker({ totalBytes: size });
+  const leg2 = createLegReporter(2, size, opts.onLeg);
+  leg2.report(0);
   const stream = bulk.download({
     transferId: downloadId,
-    signal,
-    onProgress: (received) => {
-      tracker.set(received);
-      onLeg?.(2, {
-        pct: size > 0 ? Math.round((received / size) * 100) : 0,
-        rate: tracker.ratePerSec() > 0 ? formatRate(tracker.ratePerSec()) : undefined,
-        detail: detail(received),
-      });
-    },
+    signal: opts.signal,
+    onProgress: (received) => leg2.report(received),
   });
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
@@ -319,6 +264,6 @@ async function drainBulkDownload(
     }
     throw err;
   }
-  onLeg?.(2, { pct: 100, detail: detail(size) });
+  leg2.finish();
   return new Blob(chunks as BlobPart[]);
 }

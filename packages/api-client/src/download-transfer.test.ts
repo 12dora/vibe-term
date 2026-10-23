@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { ApiClient } from './client';
 import { downloadFileWithProgress, prepareDownload } from './download-transfer';
-import { FileApiError } from './file-errors';
+import { FileApiError, TransferInterruptedError } from './file-errors';
 import type { LegProgress } from './transfer-types';
 
 function ndjson(lines: object[]): Response {
@@ -59,10 +59,71 @@ describe('prepareDownload', () => {
     expect(calls[0].init?.signal).toBeUndefined();
     expect(prepared).toEqual({ downloadId: 'dl-1', size: 13, name: 'server-name.txt' });
     expect(onDownloadId).toHaveBeenCalledWith('dl-1');
-    expect(legs.map(([leg]) => leg)).toEqual([1, 1]);
+    expect(legs.map(([leg]) => leg)).toEqual([1, 1, 1]);
     expect(legs[0][1].pct).toBe(0);
     // detail 走宽度稳定的 `formatBytesFixed`：进度每几百毫秒刷一次，位数不能跟着变
-    expect(legs[1][1]).toEqual({ pct: 40, rate: '1 B/s', detail: '0.0 KB' });
+    expect(legs[1][1]).toEqual({ pct: 40, rate: '1 B/s', detail: '0.0 KB', bytes: 4 });
+    // prepare 结束时 leg1 收尾，bytes/totalBytes 都是 size
+    expect(legs[2][1]).toMatchObject({ pct: 100, bytes: 13, totalBytes: 13 });
+  });
+
+  test('onLegWeights：出现过增量进度 → [1,1]；直接 done（本机 stat）→ [0,1]', async () => {
+    const incremental = prepareClient([
+      ndjson([
+        { type: 'progress', pct: 50, transferred: 5 },
+        { type: 'done', downloadId: 'dl-w1', size: 10 },
+      ]),
+    ]);
+    const seen: Array<readonly [number, number]> = [];
+    await prepareDownload(
+      'r',
+      '/a',
+      'a',
+      { onLegWeights: (w) => seen.push(w) },
+      incremental.client,
+      () => {}
+    );
+    const instant = prepareClient([
+      ndjson([
+        { type: 'progress', pct: 0 },
+        { type: 'progress', pct: 100 },
+        { type: 'done', downloadId: 'dl-w2', size: 10 },
+      ]),
+    ]);
+    await prepareDownload(
+      'r',
+      '/a',
+      'a',
+      { onLegWeights: (w) => seen.push(w) },
+      instant.client,
+      () => {}
+    );
+    expect(seen).toEqual([
+      [1, 1],
+      [0, 1],
+    ]);
+  });
+
+  test('error 事件还原 HTTP 状态：too_large → 413，带 detail', async () => {
+    const { client } = prepareClient([
+      ndjson([{ type: 'error', code: 'too_large', detail: '2147483648' }]),
+    ]);
+    const error = await prepareDownload('r', '/a', 'a', {}, client, () => {}).catch(
+      (e: unknown) => e
+    );
+    expect(error).toMatchObject({ status: 413, code: 'too_large', detail: '2147483648' });
+  });
+
+  test('HTTP 错误包里的转发层错误码原样保留', async () => {
+    const { client } = prepareClient([
+      jsonResponse({ code: 'NODE_LOGIN_REQUIRED', nodeId: 'abc' }, 401),
+    ]);
+    const error = await prepareDownload('r', '/a', 'a', {}, client, () => {}).catch(
+      (e: unknown) => e
+    );
+    expect(error).toBeInstanceOf(FileApiError);
+    expect(error).toMatchObject({ status: 401, code: 'NODE_LOGIN_REQUIRED' });
+    expect((error as FileApiError).message).toBe('NODE_LOGIN_REQUIRED');
   });
 
   test('done 事件缺 name 时退回调用方传入的文件名', async () => {
@@ -133,15 +194,37 @@ describe('prepareDownload', () => {
     expect(seen).toEqual(['dl-3']);
   });
 
-  test('流结束仍无 downloadId 时抛 unknown', async () => {
+  test('流结束仍无 downloadId：连接被切断，抛 TransferInterruptedError 而不是伪造的服务端错误', async () => {
     const { client } = prepareClient([ndjson([{ type: 'progress', pct: 10 }])]);
 
     const error = await prepareDownload('root-1', '/a', 'a', {}, client, () => {}).catch(
       (e: unknown) => e
     );
 
-    expect(error).toBeInstanceOf(FileApiError);
-    expect((error as FileApiError).message).toBe('unknown');
+    expect(error).toBeInstanceOf(TransferInterruptedError);
+  });
+
+  test('prepare 请求本身断网 / 响应体中途被切：同样是 TransferInterruptedError', async () => {
+    const down = new ApiClient('', () => Promise.reject(new TypeError('Failed to fetch')));
+    const cut = new ApiClient('', () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.error(new TypeError('network error'));
+            },
+          }),
+          { status: 200 }
+        )
+      )
+    );
+    for (const client of [down, cut]) {
+      const error = await prepareDownload('r', '/a', 'a', {}, client, () => {}).catch(
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(TransferInterruptedError);
+      expect((error as TransferInterruptedError).cause).toBeInstanceOf(TypeError);
+    }
   });
 
   test('signal 透传给 prepare 请求；取消时 AbortError 原样上抛', async () => {
@@ -167,49 +250,62 @@ describe('prepareDownload', () => {
   });
 });
 
-describe('downloadFileWithProgress content retry', () => {
-  function prepared(payload: string): Response {
-    return ndjson([{ type: 'done', downloadId: 'dl-r', size: payload.length, name: 'r.txt' }]);
+describe('downloadFileWithProgress content', () => {
+  function prepared(size: number): Response {
+    return ndjson([{ type: 'done', downloadId: 'dl-r', size, name: 'r.bin' }]);
   }
 
-  test('建连阶段被 RST 也走重试，已收字节保留并在收全后回收会话', async () => {
+  test('并行分块下载：blob 精确、leg2 的 bytes/totalBytes 单调且收尾，收全后才回收会话', async () => {
+    const data = Uint8Array.from({ length: 50 }, (_, i) => i);
     const calls: Call[] = [];
-    let contentCall = 0;
     const client = new ApiClient('', (url, init) => {
       calls.push({ url, init });
-      if (url.endsWith('/prepare')) return Promise.resolve(prepared('hello'));
+      if (url.endsWith('/prepare')) return Promise.resolve(prepared(data.length));
       if (url.endsWith('/content')) {
-        contentCall += 1;
-        if (contentCall === 1) return Promise.reject(new TypeError('network error'));
-        if (contentCall === 2) {
-          return Promise.resolve(new Response(new TextEncoder().encode('he'), { status: 200 }));
-        }
+        const m = /bytes=(\d+)-(\d+)/.exec((init?.headers as Record<string, string>).Range);
+        const [from, to] = [Number(m?.[1]), Number(m?.[2])];
         return Promise.resolve(
-          new Response(new TextEncoder().encode('llo'), {
+          new Response(data.slice(from, to + 1), {
             status: 206,
-            headers: { 'Content-Range': 'bytes 2-4/5' },
+            headers: { 'Content-Range': `bytes ${from}-${to}/50`, ETag: '"e"' },
           })
         );
       }
       return Promise.resolve(new Response(null, { status: 204 }));
     });
+    const legs: Array<[1 | 2, LegProgress]> = [];
+    const weights: Array<readonly [number, number]> = [];
 
-    const file = await downloadFileWithProgress('root-1', '/r.txt', 'r.txt', {}, client);
-    expect(await file.blob.text()).toBe('hello');
-    // 第二次是 Range 续传，不是整份重来
-    const ranged = calls.filter((c) => c.url.endsWith('/content'));
-    expect(ranged).toHaveLength(3);
-    expect((ranged[2].init?.headers as Record<string, string>).Range).toBe('bytes=2-');
-    // 收全并校验长度之后才删远端会话
+    const file = await downloadFileWithProgress(
+      'root-1',
+      '/r.bin',
+      'r.bin',
+      {
+        chunkBytes: 20,
+        streams: 3,
+        onLeg: (leg, p) => legs.push([leg, p]),
+        onLegWeights: (w) => weights.push(w),
+      },
+      client
+    );
+
+    expect(Array.from(new Uint8Array(await file.blob.arrayBuffer()))).toEqual(Array.from(data));
+    expect(weights).toEqual([[0, 1]]);
+    const leg2 = legs.filter(([leg]) => leg === 2).map(([, p]) => p);
+    expect(leg2[0]).toMatchObject({ pct: 0, bytes: 0, totalBytes: 50 });
+    expect(leg2.every((p, i) => i === 0 || (p.bytes ?? 0) >= (leg2[i - 1].bytes ?? 0))).toBe(true);
+    expect(leg2.slice(0, -1).every((p) => p.pct < 100)).toBe(true);
+    expect(leg2.at(-1)).toMatchObject({ pct: 100, bytes: 50, totalBytes: 50 });
+    expect(calls.filter((c) => c.url.endsWith('/content'))).toHaveLength(3);
     expect(calls.at(-1)?.init?.method).toBe('DELETE');
     expect(calls.at(-1)?.url).toBe('/api/files/download/dl-r');
   });
 
-  test('永久性 HTTP 错误立即失败，不再重试', async () => {
+  test('永久性 HTTP 错误立即失败并回收会话', async () => {
     const calls: Call[] = [];
     const client = new ApiClient('', (url, init) => {
       calls.push({ url, init });
-      if (url.endsWith('/prepare')) return Promise.resolve(prepared('hello'));
+      if (url.endsWith('/prepare')) return Promise.resolve(prepared(5));
       if (url.endsWith('/content')) {
         return Promise.resolve(jsonResponse({ error: 'not_found', code: 'not_found' }, 404));
       }
@@ -223,14 +319,23 @@ describe('downloadFileWithProgress content retry', () => {
     expect(calls.at(-1)?.init?.method).toBe('DELETE');
   });
 
-  test('三次都失败时上抛最后一个链路错误', async () => {
-    const client = new ApiClient('', (url) => {
-      if (url.endsWith('/prepare')) return Promise.resolve(prepared('hello'));
+  test('网络一直不通：TransferInterruptedError，且会话已回收', async () => {
+    const calls: Call[] = [];
+    const client = new ApiClient('', (url, init) => {
+      calls.push({ url, init });
+      if (url.endsWith('/prepare')) return Promise.resolve(prepared(5));
       if (url.endsWith('/content')) return Promise.reject(new TypeError('boom'));
       return Promise.resolve(new Response(null, { status: 204 }));
     });
-    await expect(
-      downloadFileWithProgress('root-1', '/r.txt', 'r.txt', {}, client)
-    ).rejects.toMatchObject({ message: 'boom' });
+    const error = await downloadFileWithProgress(
+      'root-1',
+      '/r.txt',
+      'r.txt',
+      { sleep: async () => {} },
+      client
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(TransferInterruptedError);
+    expect((error as TransferInterruptedError).cause).toBeInstanceOf(TypeError);
+    expect(calls.at(-1)?.init?.method).toBe('DELETE');
   });
 });
