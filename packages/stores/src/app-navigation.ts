@@ -1,5 +1,5 @@
 // 把 toast / 浏览器通知里的 app 内跳转做成「sidebar device list 点击同款」：
-// - pane 路由：先 dispatch vibeterm:user-initiated-selection（2s 内防自动跟踪覆盖该选择），再走 router SPA 导航（replace）。
+// - pane 路由：先 dispatch vibeterm:user-initiated-selection（2s 内防自动跟踪覆盖该选择），再走 router SPA 导航（默认 replace）。
 // - 其它页面路由（如无 window 时降级的 /devices/:id、将来的 settings 等）：只走 router 导航。
 // 一律不再用 window.location.href，避免整页刷新 / 被服务端持久化的 siteUrl 污染 origin（issue #32）。
 import { SELF_NODE_ID } from '@vibeterm/api-client';
@@ -41,7 +41,12 @@ export function routeNodeIdForEvent(pathNodeId: string, fallback: string): strin
   return entry && pathNodeId === entry ? SELF_NODE_ID : pathNodeId;
 }
 
-export function navigateToAppUrl(url: string, nodeId: string = SELF_NODE_ID): void {
+/** 默认 replace（toast / 通知跳转不该堆历史）；调用方显式传 `replace: false` 才压栈。 */
+export function navigateToAppUrl(
+  url: string,
+  nodeId: string = SELF_NODE_ID,
+  opts?: { replace?: boolean }
+): void {
   const path = toAppPath(url);
   const match = PANE_URL_RE.exec(path);
   const eventNodeId = routeNodeIdForEvent(parseNodeIdFromPath(path), nodeId);
@@ -55,6 +60,6 @@ export function navigateToAppUrl(url: string, nodeId: string = SELF_NODE_ID): vo
       paneId: safeDecodePaneParam(encodedPaneId) ?? encodedPaneId,
     });
   }
-  bridgeNavigate(path, { replace: true });
+  bridgeNavigate(path, { replace: opts?.replace !== false });
   bridgeCloseMobileSidebar();
 }

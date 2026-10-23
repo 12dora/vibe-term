@@ -40,7 +40,7 @@ export interface SaveFileInput {
 }
 
 export interface HostServices {
-  /** 应用内跳转（toast/通知点击等），语义等同 navigateToAppUrl */
+  /** 应用内跳转（toast/通知点击等），语义等同 navigateToAppUrl；默认 replace，`replace: false` 压栈 */
   navigate(to: string, opts?: { replace?: boolean }): void;
   /**
    * 把包内构造的应用内路径（如 /devices/…、/file/…）映射为宿主路由形状；缺省恒等。
@@ -246,9 +246,8 @@ export function createBrowserHostServices(options: BrowserHostOptions = {}): Hos
     // navigate 接收的一律是「已是宿主路由形状」的路径（调用方负责先过 hostAppPath），
     // 否则 watch / rsync 等已显式 hostAppPath 的调用点会被二次加前缀。
     navigate(to, opts) {
-      void opts;
       // 路径自带 /n/<id> 时由 navigateToAppUrl 解析并折叠入口 id；这里只给无前缀路径兜底。
-      navigateViaAppNavigation(to, options.nodeId ?? SELF_NODE_ID);
+      navigateViaAppNavigation(to, options.nodeId ?? SELF_NODE_ID, opts);
     },
     ...(options.appPath ? { appPath: toAppPath } : {}),
     isMobile: bridgeIsMobile,

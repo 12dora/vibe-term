@@ -171,3 +171,14 @@ describe('navigateToAppUrl', () => {
     expect(navCalls[1]?.to).toBe('/devices/d1/windows/@1/panes/%zz');
   });
 });
+
+describe('navigateToAppUrl 的 replace 选项', () => {
+  test('显式 replace:false 压栈；省略或 true 仍是 replace', () => {
+    navigateToAppUrl('/file/abc', 'self', { replace: false });
+    navigateToAppUrl('/file/abc', 'self', {});
+    navigateToAppUrl('/file/abc', 'self', { replace: true });
+    navigateToAppUrl('/file/abc');
+
+    expect(navCalls.map((call) => call.opts?.replace)).toEqual([false, true, true, true]);
+  });
+});

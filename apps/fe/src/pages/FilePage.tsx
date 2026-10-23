@@ -1,28 +1,31 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { FileCategory, FileStatResponse } from '@vibeterm/shared';
+import type { FileCategory, FileEntryDto } from '@vibeterm/shared';
 import { basename, dirname } from '@vibeterm/shared';
-import { Download, ExternalLink, FileWarning, Loader2, RotateCw } from 'lucide-react';
+import { ArrowLeft, Download, ExternalLink, FileWarning, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, Suspense, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
-import i18n from '@/i18n';
 import { lazyChunk } from '@/lazy-chunk';
 import {
   type ApiClient,
   type FileApiError,
-  downloadFileWithProgress,
   fetchFileContent,
-  fetchFileStat,
+  fileRawUrl,
+  formatBytes,
 } from '@vibeterm/api-client';
-import { formatBytes } from '@vibeterm/api-client';
-import { fileRawUrl } from '@vibeterm/api-client';
 import { CodeViewer } from '@vibeterm/panels/code-viewer';
-import { startTransferToast } from '@vibeterm/panels/files';
-import { type AppRuntime, type FileRef, decodeFileRef } from '@vibeterm/stores';
+import { downloadSingleFile } from '@vibeterm/panels/files/transfer-flows';
+import { type FileRef, decodeFileRef } from '@vibeterm/stores';
 import { useRuntime } from '@vibeterm/stores/react';
 import { Button } from '@vibeterm/ui/button';
 import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
+import { backToFileManager } from './file/back-to-manager';
+import { fileEntryFromStat } from './file/file-entry';
+import { SiblingHeaderButtons } from './file/header-arrows';
+import { TEXT_CATEGORIES } from './file/preview-categories';
+import { PreviewFrame } from './file/preview-frame';
+import { useFileStat } from './file/use-file-stat';
 
 // Markdown 渲染链（react-markdown + katex + mermaid 等）约 137 KiB gzip，只有 markdown 文件用得到，
 // 代码 / 纯文本预览不该为它买单。
@@ -33,39 +36,6 @@ const MarkdownPreview = lazyChunk(() =>
 function useFileRef(ref?: string): FileRef | null {
   return useMemo(() => (ref ? decodeFileRef(ref) : null), [ref]);
 }
-
-// 应用内下载（与文件树菜单一致）：两段进度 Toast + 可取消；传输与宿主 save 分离。
-// 传输与保存都走当前 runtime（多 node 下不能落到 entry 的 client / host）。
-function triggerDownload(
-  runtime: Pick<AppRuntime, 'apiClient' | 'host' | 'nodeId'>,
-  rootId: string,
-  path: string,
-  name: string
-): void {
-  const controller = new AbortController();
-  const tt = startTransferToast(name, 'download', () => controller.abort(), {
-    nodeId: runtime.nodeId,
-  });
-  void downloadFileWithProgress(
-    rootId,
-    path,
-    name,
-    { onLeg: tt.leg, signal: controller.signal },
-    runtime.apiClient
-  )
-    .then((file) => runtime.host.saveFile(file))
-    .then(() => tt.success(i18n.t('files.transfer.downloaded', { name })))
-    .catch(() => {
-      if (controller.signal.aborted) tt.cancel();
-      else tt.fail(i18n.t('files.transfer.downloadFailed', { name }));
-    });
-}
-
-const TEXT_CATEGORIES: ReadonlySet<FileCategory> = new Set<FileCategory>([
-  'code',
-  'markdown',
-  'text',
-]);
 
 function CenteredMessage({ icon, text }: { icon?: ReactNode; text: string }) {
   return (
@@ -84,10 +54,9 @@ function errorText(error: FileApiError | null | undefined, t: (k: string) => str
 
 function DownloadFallback({
   rootId,
-  path,
-  name,
+  entry,
   text,
-}: { rootId: string; path: string; name: string; text: string }) {
+}: { rootId: string; entry: FileEntryDto; text: string }) {
   const { t } = useTranslation();
   const runtime = useRuntime();
   return (
@@ -97,7 +66,7 @@ function DownloadFallback({
       <Button
         variant="default"
         size="sm"
-        onClick={() => triggerDownload(runtime, rootId, path, name)}
+        onClick={() => void downloadSingleFile({ runtime, t, rootId }, entry)}
       >
         <Download className="h-4 w-4" />
         {t('file.download')}
@@ -106,14 +75,13 @@ function DownloadFallback({
   );
 }
 
-function FallbackCard({ rootId, stat }: { rootId: string; stat: FileStatResponse }) {
+function FallbackCard({ rootId, entry }: { rootId: string; entry: FileEntryDto }) {
   const { t } = useTranslation();
-  const sizeText = stat.size > 0 ? formatBytes(stat.size) : '';
+  const sizeText = entry.size ? formatBytes(entry.size) : '';
   return (
     <DownloadFallback
       rootId={rootId}
-      path={stat.path}
-      name={stat.name}
+      entry={entry}
       text={`${t('file.notPreviewable')}${sizeText ? ` · ${sizeText}` : ''}`}
     />
   );
@@ -178,18 +146,15 @@ function TextView({
   nodeId,
   apiClient,
   rootId,
-  path,
-  category,
-  name,
+  entry,
 }: {
   nodeId: string;
   apiClient: ApiClient;
   rootId: string;
-  path: string;
-  category: FileCategory;
-  name: string;
+  entry: FileEntryDto;
 }) {
   const { t } = useTranslation();
+  const { path, name, category } = entry;
   const query = useQuery({
     queryKey: ['files', 'content', rootId, path],
     queryFn: () => fetchFileContent(rootId, path, apiClient),
@@ -209,14 +174,7 @@ function TextView({
   if (query.isError) {
     const err = query.error as FileApiError;
     if (err.code === 'too_large' || err.code === 'binary') {
-      return (
-        <DownloadFallback
-          rootId={rootId}
-          path={path}
-          name={name}
-          text={t(`files.error.${err.code}`)}
-        />
-      );
+      return <DownloadFallback rootId={rootId} entry={entry} text={t(`files.error.${err.code}`)} />;
     }
     return <CenteredMessage icon={<FileWarning className="size-8" />} text={errorText(err, t)} />;
   }
@@ -246,26 +204,31 @@ function TextView({
   return <CodeViewer code={content} fileName={name} className="h-full" />;
 }
 
-export default function FilePage() {
-  const { ref } = useParams();
+function PreviewBody({ fileRef, entry }: { fileRef: FileRef; entry: FileEntryDto }) {
   const { nodeId, apiClient } = useRuntime();
-  const fileRef = useFileRef(ref);
-  const { t } = useTranslation();
-
-  const statQuery = useQuery({
-    queryKey: ['files', 'stat', fileRef?.rootId, fileRef?.path],
-    queryFn: () => fetchFileStat(fileRef?.rootId as string, fileRef?.path as string, apiClient),
-    enabled: Boolean(fileRef),
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-
-  if (!fileRef) {
-    return (
-      <CenteredMessage icon={<FileWarning className="size-8" />} text={t('file.invalidRef')} />
-    );
+  const { rootId, path } = fileRef;
+  switch (entry.category) {
+    case 'image':
+      return <ImageView nodeId={nodeId} rootId={rootId} path={path} name={entry.name} />;
+    case 'pdf':
+      return <PdfView nodeId={nodeId} rootId={rootId} path={path} name={entry.name} />;
+    case 'audio':
+    case 'video':
+      return <MediaView nodeId={nodeId} rootId={rootId} path={path} category={entry.category} />;
+    default:
+      if (TEXT_CATEGORIES.has(entry.category)) {
+        return <TextView nodeId={nodeId} apiClient={apiClient} rootId={rootId} entry={entry} />;
+      }
+      return <FallbackCard rootId={rootId} entry={entry} />;
   }
+}
 
+/** stat 的加载 / 失败 / 目录都在这里换内容；外层 PreviewFrame 不随之卸载。 */
+function StatContent({
+  fileRef,
+  statQuery,
+}: { fileRef: FileRef; statQuery: ReturnType<typeof useFileStat> }) {
+  const { t } = useTranslation();
   if (statQuery.isLoading) {
     return (
       <CenteredMessage
@@ -274,7 +237,6 @@ export default function FilePage() {
       />
     );
   }
-
   if (statQuery.isError) {
     return (
       <CenteredMessage
@@ -283,7 +245,6 @@ export default function FilePage() {
       />
     );
   }
-
   const stat = statQuery.data;
   if (!stat) {
     return (
@@ -293,36 +254,48 @@ export default function FilePage() {
   if (stat.type === 'dir' || stat.category === 'directory') {
     return <CenteredMessage text={t('file.isDirectory')} />;
   }
+  return <PreviewBody fileRef={fileRef} entry={fileEntryFromStat(stat, fileRef.path)} />;
+}
 
-  const { rootId, path } = fileRef;
-  switch (stat.category) {
-    case 'image':
-      return <ImageView nodeId={nodeId} rootId={rootId} path={path} name={stat.name} />;
-    case 'pdf':
-      return <PdfView nodeId={nodeId} rootId={rootId} path={path} name={stat.name} />;
-    case 'audio':
-    case 'video':
-      return <MediaView nodeId={nodeId} rootId={rootId} path={path} category={stat.category} />;
-    default:
-      if (TEXT_CATEGORIES.has(stat.category)) {
-        return (
-          <TextView
-            nodeId={nodeId}
-            apiClient={apiClient}
-            rootId={rootId}
-            path={path}
-            category={stat.category}
-            name={stat.name}
-          />
-        );
-      }
-      return <FallbackCard rootId={rootId} stat={stat} />;
+export default function FilePage() {
+  const { ref } = useParams();
+  const fileRef = useFileRef(ref);
+  const { t } = useTranslation();
+  const statQuery = useFileStat(fileRef);
+
+  if (!fileRef) {
+    return (
+      <CenteredMessage icon={<FileWarning className="size-8" />} text={t('file.invalidRef')} />
+    );
   }
+  return (
+    <PreviewFrame fileRef={fileRef} category={statQuery.data?.category}>
+      <StatContent fileRef={fileRef} statQuery={statQuery} />
+    </PreviewFrame>
+  );
 }
 
 export function PageTitle({ ref }: { ref?: string }) {
+  const { t } = useTranslation();
+  const runtime = useRuntime();
   const fileRef = ref ? decodeFileRef(ref) : null;
-  return <span className="truncate font-mono">{fileRef ? basename(fileRef.path) : ''}</span>;
+  if (!fileRef) return null;
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <IconTooltip label={t('file.back')}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => backToFileManager(runtime, fileRef)}
+          aria-label={t('file.back')}
+          data-testid="file-back"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+      </IconTooltip>
+      <span className="truncate font-mono">{basename(fileRef.path)}</span>
+    </span>
+  );
 }
 
 export function PageActions({ ref }: { ref?: string }) {
@@ -331,6 +304,7 @@ export function PageActions({ ref }: { ref?: string }) {
   const runtime = useRuntime();
   const nodeId = runtime.nodeId;
   const fileRef = ref ? decodeFileRef(ref) : null;
+  const stat = useFileStat(fileRef).data;
   if (!fileRef) return null;
   const { rootId, path } = fileRef;
 
@@ -338,9 +312,13 @@ export function PageActions({ ref }: { ref?: string }) {
     void queryClient.invalidateQueries({ queryKey: ['files', 'stat', rootId, path] });
     void queryClient.invalidateQueries({ queryKey: ['files', 'content', rootId, path] });
   };
+  const download = () => {
+    if (stat) void downloadSingleFile({ runtime, t, rootId }, fileEntryFromStat(stat, path));
+  };
 
   return (
     <>
+      <SiblingHeaderButtons fileRef={fileRef} category={stat?.category} />
       <IconTooltip label={t('common.refresh')}>
         <Button
           variant="ghost"
@@ -369,9 +347,10 @@ export function PageActions({ ref }: { ref?: string }) {
         <Button
           variant="ghost"
           size="icon-sm"
+          disabled={!stat}
           data-testid="file-download-action"
           aria-label={t('file.download')}
-          onClick={() => triggerDownload(runtime, rootId, path, basename(path))}
+          onClick={download}
         >
           <Download className="h-4 w-4" />
         </Button>

@@ -71,7 +71,8 @@ function openEntry(ctx: ExplorerOpsContext, entry: FileEntryDto): void {
     return;
   }
   const { host } = ctx.runtime;
-  host.navigate(hostAppPath(host, fileRoute(ctx.props.rootId, entry.path)));
+  // 压栈而非替换：预览页要能靠浏览器后退回到文件管理器
+  host.navigate(hostAppPath(host, fileRoute(ctx.props.rootId, entry.path)), { replace: false });
 }
 
 /** 异步操作落定时，用户是否还停在发起它的那个目录。不在了就不能再动界面状态。 */
