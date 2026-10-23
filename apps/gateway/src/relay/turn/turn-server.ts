@@ -14,7 +14,7 @@ import {
   clampTurnAllocations,
 } from './turn-limits';
 import { guardTurnHandler, handleClientChannelData } from './turn-relay-io';
-import { closeSocket, listenUdpOrWildcard } from './turn-udp';
+import { bindUdp, closeSocket, listenUdpOrWildcard } from './turn-udp';
 import { UnauthResponseLimiter } from './turn-unauth-limit';
 
 class TurnServerImpl implements TurnServer {
@@ -46,8 +46,11 @@ class TurnServerImpl implements TurnServer {
     });
     this.ctx.options.listenHost = resolved;
     this.ctx.stats.bindHost = resolved;
-    const bound = await listenUdpOrWildcard(this.ctx.options.listenPort, resolved, (line) =>
-      this.ctx.options.log(line)
+    const bound = await listenUdpOrWildcard(
+      this.ctx.options.listenPort,
+      resolved,
+      (line) => this.ctx.options.log(line),
+      this.ctx.options.bindUdp
     );
     this.ctx.options.listenHost = bound.host;
     this.ctx.stats.bindHost = bound.host;
@@ -141,6 +144,7 @@ function resolveOptions(options: TurnServerOptions): ResolvedTurnOptions {
     bytesPerSecPerAllocation: options.bytesPerSecPerAllocation ?? 0,
     log: options.log ?? noop,
     now: options.now ?? Date.now,
+    bindUdp: options.bindUdp ?? bindUdp,
   };
 }
 

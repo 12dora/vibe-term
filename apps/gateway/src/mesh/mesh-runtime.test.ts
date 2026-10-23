@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import net from 'node:net';
 import { UserStore } from '../auth';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
@@ -17,6 +18,32 @@ import {
 } from './mesh-runtime';
 import { RelaySecondaryAttach } from './relay-secondary-attach';
 import { fakeSocketPair, seedUser } from './test-support';
+
+function connectTcp(host: string, port: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({
+      host,
+      port,
+      family: host.includes(':') ? 6 : 4,
+    });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      const err = Object.assign(new Error(`connect timeout ${host}:${port}`), {
+        code: 'ETIMEDOUT',
+      });
+      reject(err);
+    }, 1000);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve();
+    });
+    socket.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
   return {
@@ -136,7 +163,12 @@ describe('createMeshRuntime', () => {
     expect(port).toBeGreaterThan(0);
     const res = await fetch(`http://127.0.0.1:${port}/peer`);
     expect(res.status).toBe(426);
-    await expect(fetch(`http://[::1]:${port}/peer`)).rejects.toThrow();
+    // fetch 走 HTTP_PROXY；`[::1]` 对不上 NO_PROXY 的 `::1`。裸 TCP 才表示没绑 IPv6。
+    await expect(connectTcp('::1', port)).rejects.toMatchObject({
+      code: expect.stringMatching(
+        /^(ECONNREFUSED|EADDRNOTAVAIL|EAFNOSUPPORT|EHOSTUNREACH|ENETUNREACH)$/
+      ),
+    });
   });
 
   test('does not start uplink when users/certs are empty or ambiguous', async () => {

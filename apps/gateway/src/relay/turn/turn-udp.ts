@@ -23,6 +23,8 @@ export function isAddrNotAvail(err: unknown): boolean {
   return udpErrorCode(err) === 'EADDRNOTAVAIL';
 }
 
+export type BindUdpFn = (host: string, port: number) => Promise<dgram.Socket>;
+
 export async function bindUdp(host: string, port: number): Promise<dgram.Socket> {
   const socket = dgram.createSocket('udp4');
   try {
@@ -48,24 +50,15 @@ export async function bindUdpResult(host: string, port: number): Promise<BindUdp
 export async function listenUdpOrWildcard(
   port: number,
   host: string,
-  log: (line: string) => void
+  log: (line: string) => void,
+  bind: BindUdpFn = bindUdp
 ): Promise<{ socket: dgram.Socket; host: string }> {
-  const first = dgram.createSocket('udp4');
   try {
-    await listenUdp(first, port, host);
-    return { socket: first, host };
+    return { socket: await bind(host, port), host };
   } catch (err) {
-    await closeSocket(first);
     if (!isAddrNotAvail(err) || host === '0.0.0.0') throw err;
     log(`turn: bind ${host} failed (EADDRNOTAVAIL), falling back to 0.0.0.0`);
-    const fallback = dgram.createSocket('udp4');
-    try {
-      await listenUdp(fallback, port, '0.0.0.0');
-      return { socket: fallback, host: '0.0.0.0' };
-    } catch (fallbackErr) {
-      fallback.close();
-      throw fallbackErr;
-    }
+    return { socket: await bind('0.0.0.0', port), host: '0.0.0.0' };
   }
 }
 

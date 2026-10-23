@@ -32,7 +32,7 @@ import {
   MAX_XOR_PEERS_PER_REQUEST,
   UNAUTH_PER_IP_BURST,
 } from './turn-limits';
-import { closeSocket, listenUdp } from './turn-udp';
+import { bindUdp, closeSocket, listenUdp } from './turn-udp';
 
 const USER = 'alice';
 const PASS = 'secret';
@@ -300,9 +300,19 @@ describe('STUN Binding and Allocate', () => {
 
   test('EADDRNOTAVAIL at bind time falls back to 0.0.0.0', async () => {
     const logs: string[] = [];
+    const missing = '203.0.113.99';
     const { server, port } = await boot({
-      listenHost: '203.0.113.99',
+      listenHost: missing,
       log: (line) => logs.push(line),
+      // ip_nonlocal_bind=1 时该地址能 bind 成功；注入 factory 固定走 EADDRNOTAVAIL 回退。
+      bindUdp: async (host, port) => {
+        if (host === missing) {
+          throw Object.assign(new Error(`bind EADDRNOTAVAIL ${host}`), {
+            code: 'EADDRNOTAVAIL',
+          });
+        }
+        return bindUdp(host, port);
+      },
     });
     expect(server.snapshot().bindHost).toBe('0.0.0.0');
     expect(logs.some((line) => line.includes('EADDRNOTAVAIL'))).toBe(true);

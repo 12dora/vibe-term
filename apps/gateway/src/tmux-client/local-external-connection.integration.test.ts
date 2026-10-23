@@ -767,7 +767,7 @@ describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () =>
       const tracker = (connection as any).themeSubscriptions;
 
       // pane 内 shell 声明订阅后用 cat 落盘后续 stdin（isig 保留以便 Ctrl-C 回到 shell）
-      connection.sendInput(
+      await connection.sendInput(
         subPane,
         `printf '\\033[?2031h'; stty raw isig -echo; cat > ${recvFile}\r`
       );
@@ -790,17 +790,19 @@ describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () =>
       // 未订阅 pane 零注入（tracker 无记录 → signalThemeChange no-op）
       expect(tracker.has(idlePane)).toBe(false);
 
-      // Ctrl-C 退出 cat 回 shell，打印 prompt marker → 清位
-      connection.sendInput(subPane, '\x03');
-      await Bun.sleep(200);
-      connection.sendInput(subPane, `printf '\\033]133;A\\033\\\\'\r`);
+      // Ctrl-C 退出 cat 回 shell；tmux 3.6 在 ?2031h 时自己往 stdin 打过 ?997;1n，
+      // recvFile 里的 1n 不能当作清位后的注入。清位看 tracker 状态跃迁。
+      await connection.sendInput(subPane, '\x03');
+      await waitFor(async () => {
+        const info = await connection.getPaneInfo(subPane);
+        return (info.currentCommand ?? '') === 'cat' ? null : true;
+      });
+      await connection.sendInput(subPane, `printf '\\033]133;A\\033\\\\'\r`);
       await waitFor(() => (tracker.has(subPane) ? null : true));
+      expect(tracker.has(subPane)).toBe(false);
 
-      // 清位后注入不再发生
       connection.signalThemeChange(subPane, 'dark');
-      await Bun.sleep(300);
-      const after = await Bun.file(recvFile).text();
-      expect(after).not.toContain('\x1b[?997;1n');
+      expect(tracker.has(subPane)).toBe(false);
     } finally {
       connection.disconnect();
       cleanupSocket(socketName);

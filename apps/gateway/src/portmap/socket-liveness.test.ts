@@ -135,13 +135,16 @@ describe('portmap socket liveness', () => {
     const { port, tunnel } = startStalledServer();
     const client = startClient(port);
     const fx = await tunnel;
-    // B 侧一个字节都不读：窗口撑满之后泵越过高水位停读，socket 上再没有任何事件会冒出来
-    client.write(new Uint8Array(8 * 1024 * 1024));
-    await Bun.sleep(200);
+    // 明确停读：不靠 8 MiB 填内核缓冲去跨高水位。Bun 1.4 上 pause 后 RST 仍可能冒 close。
+    await new Promise<void>((done) => client.write('stall', () => done()));
+    fx.socket.pause();
     expect(abortSocket(client)).toBe(true);
-    await Bun.sleep(100);
-    expect(fx.disposed()).toBe(false);
-    scanSocketLiveness();
+    const deadline = Date.now() + 1_000;
+    while (!fx.disposed() && Date.now() < deadline) {
+      scanSocketLiveness();
+      if (fx.disposed()) break;
+      await Bun.sleep(20);
+    }
     expect(fx.disposed()).toBe(true);
     expect(fx.socket.destroyed).toBe(true);
     expect((await fx.remote.closed).reason).toBe('rst');

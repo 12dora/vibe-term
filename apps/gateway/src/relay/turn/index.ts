@@ -1,3 +1,5 @@
+import type { BindUdpFn } from './turn-udp';
+
 export type TurnCredentialLookup = (username: string) => string | null;
 export type TurnServerOptions = {
   listenHost?: string;
@@ -13,6 +15,8 @@ export type TurnServerOptions = {
   bytesPerSecPerAllocation?: number;
   log?: (line: string) => void;
   now?: () => number;
+  /** 控制面 UDP bind，缺省系统 dgram。 */
+  bindUdp?: BindUdpFn;
 };
 export type TurnServerStats = {
   listening: boolean;

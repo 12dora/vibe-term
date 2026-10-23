@@ -1,6 +1,7 @@
 import type { AllocationTable } from './allocation-table';
 import type { TurnCredentialLookup, TurnServerStats } from './index';
 import type { NonceStore } from './turn-auth';
+import type { BindUdpFn } from './turn-udp';
 import type { UnauthResponseLimiter } from './turn-unauth-limit';
 
 export type SocketAddress = { address: string; port: number };
@@ -19,6 +20,7 @@ export type ResolvedTurnOptions = {
   bytesPerSecPerAllocation: number;
   log: (line: string) => void;
   now: () => number;
+  bindUdp?: BindUdpFn;
 };
 
 export type MutableStats = TurnServerStats & {

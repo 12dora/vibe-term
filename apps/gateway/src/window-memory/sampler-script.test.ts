@@ -30,6 +30,8 @@ describe('buildSamplerScript', () => {
     expect(script).toContain('PSTAB=$(ps -Ao pid=,ppid=,rss= 2>/dev/null)');
     expect(script).toContain('PSTAB=$(ps -o pid=,ppid=,rss= 2>/dev/null)');
     expect(script).toContain('$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/');
+    expect(script).toContain('CGROUP_FS="${VTMEM_CGROUP_FS:-/sys/fs/cgroup}"');
+    expect(script).toContain('PROC_FS="${VTMEM_PROC_FS:-/proc}"');
   });
 
   test('pins cgroup source only after memory.current is actually read', () => {
@@ -89,10 +91,13 @@ printf 'empty=[%s]\\n' "$(cgroup_num '${dir}/empty')"
   });
 
   test('falls back to process-tree RSS when the host has no cgroup v2', async () => {
-    if (process.platform === 'linux') return;
     const pid = process.pid;
     const script = buildSamplerScript([{ paneId: "%1'oops", pid }]);
-    const proc = Bun.spawn(['sh', '-c', script], { stdout: 'pipe', stderr: 'pipe' });
+    const proc = Bun.spawn(['sh', '-c', script], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { ...process.env, VTMEM_CGROUP_FS: '/no-such-cgroup-fs' },
+    });
     const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
     expect(exitCode).toBe(0);
     const parsed = parseSamplerOutput(stdout);
@@ -147,7 +152,11 @@ exec /bin/ps -Ao pid=,ppid=,rss=
       const proc = Bun.spawn(['sh', '-c', script], {
         stdout: 'pipe',
         stderr: 'pipe',
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? '/bin:/usr/bin'}` },
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH ?? '/bin:/usr/bin'}`,
+          VTMEM_CGROUP_FS: join(dir, 'no-cgroup2'),
+        },
       });
       const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
       expect(exitCode).toBe(0);
@@ -177,7 +186,11 @@ echo "  $$ alicia    9999 S    sh"
       const proc = Bun.spawn(['sh', '-c', script], {
         stdout: 'pipe',
         stderr: 'pipe',
-        env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? '/bin:/usr/bin'}` },
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH ?? '/bin:/usr/bin'}`,
+          VTMEM_CGROUP_FS: join(dir, 'no-cgroup2'),
+        },
       });
       const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
       expect(exitCode).toBe(0);
