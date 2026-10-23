@@ -306,8 +306,8 @@ export class DcUpgradeCoordinator {
         this.ports.upgrading().has(nodeId) ||
         this.ports.hasDcInflight(nodeId))
     ) {
+      // 本次 dial 的 finally 会按冷却重挂；这里再 schedule 会在 nextEligibleAt=0 时空转
       this.ensureGate(nodeId).coalesced = true;
-      this.scheduleCoalescedUpgrade(nodeId);
       return;
     }
     const gate = this.ensureGate(nodeId);

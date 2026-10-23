@@ -106,11 +106,12 @@ class ExecConnection implements ExecChannelInbound {
   }
 
   onBytes(chunk: Uint8Array): void {
-    if (this.phase === 'closed') return;
+    if (this.closed()) return;
     this.lastRecv = this.deps.clock.now();
     try {
       for (const frame of this.decoder.push(chunk)) {
-        if (this.phase === 'closed') break;
+        // handle() 同步 fail/terminate 后同一 chunk 余下的帧不再处理
+        if (this.closed()) break;
         this.handle(frame);
       }
     } catch (error) {
@@ -127,8 +128,12 @@ class ExecConnection implements ExecChannelInbound {
     this.session?.detach(this.link);
   }
 
+  private closed(): boolean {
+    return this.phase === 'closed';
+  }
+
   private terminate(code: number, reason: string): void {
-    if (this.phase === 'closed') return;
+    if (this.closed()) return;
     this.session?.detach(this.link);
     this.link.close(code, reason);
   }
@@ -157,7 +162,7 @@ class ExecConnection implements ExecChannelInbound {
   }
 
   private fail(code: ExecChannelErrorCode, message: string): void {
-    if (this.phase === 'closed') return;
+    if (this.closed()) return;
     this.link.send(encodeJsonFrame(EcKind.ERROR, { code, message }));
     this.session?.detach(this.link);
     this.link.close(code === 'forbidden' ? 4403 : 4400, code);

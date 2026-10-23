@@ -284,10 +284,16 @@ describe('relay password keep 保持成员在线', () => {
     });
     expect(rotated.status).toBe(200);
 
-    // 成员链路断开（模拟网络抖动），池子会自己重拨
-    h.relay.runtime.registry.get(tenantId, b.nodeId)?.link.close('test-drop');
-    await waitUntil(() => h.relay.runtime.registry.get(tenantId, b.nodeId) == null, 8_000);
-    await waitUntil(() => h.relay.runtime.registry.get(tenantId, b.nodeId) != null, 8_000);
+    // put() 会就地替换旧链路，注册表可能从不经过 null；等 reconnects 增加才是重连完成
+    const liveBefore = h.relay.runtime.registry.get(tenantId, b.nodeId);
+    const reconnectsBefore = h.relay.runtime.registry.reconnectsOf(tenantId, b.nodeId);
+    expect(liveBefore).toBeTruthy();
+    liveBefore?.link.close('test-drop');
+    await waitUntil(() => {
+      const live = h.relay.runtime.registry.get(tenantId, b.nodeId);
+      return live != null && live.reconnects > reconnectsBefore;
+    }, 8_000);
+    await waitUntil(() => b.mesh.uplink.state === 'online', 8_000);
 
     expect(b.relayStore.listRelayRows()[0]?.kicked).toBe(false);
     const status = await b.json<RelayStatus>('/api/mesh/relay/status');

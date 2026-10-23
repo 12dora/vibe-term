@@ -480,6 +480,21 @@ describe('DcUpgradeCoordinator.willAttemptUpgrade', () => {
     coordinator.dispose();
   });
 
+  test('in-flight maybeUpgrade marks coalesced without a 0-wait reschedule', () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live } = makeCoordinator({
+      scheduler,
+      dcInflight: () => true,
+      hasWsSecure: () => false,
+    });
+    const peer = 'peer-inflight';
+    live.set(peer, livePeer(peer, 'ws-secure'));
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    expect(coordinator.upgradeGate.get(peer)?.coalesced).toBe(true);
+    expect(scheduler.sleeps).toEqual([]);
+    coordinator.dispose();
+  });
+
   test('只是在等 quiesce 探测回包时不算即将拨号', () => {
     const { coordinator, live } = makeCoordinator();
     const peer = 'peer-quiesce';

@@ -1398,7 +1398,7 @@ describe('PeerManager', () => {
     store.upsertPeer({
       nodeId: peer.nodeId,
       name: 'peer',
-      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      endpointsJson: '[]',
       inventoryJson: '{}',
       directCapable: false,
       lastSeenAt: Date.now(),

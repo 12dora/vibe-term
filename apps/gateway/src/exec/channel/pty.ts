@@ -8,6 +8,15 @@ const PTY_CLOSE_GRACE_MS = 500;
 const PTY_WRITE_DRAIN_TIMEOUT_MS = 5_000;
 const EOT = new Uint8Array([0x04]);
 
+/** Bun.Terminal.write 的 DOM BufferSource 只收 ArrayBuffer 视图，SharedArrayBuffer 后备要拷一份。 */
+function toArrayBufferBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  const { buffer, byteOffset, byteLength } = bytes;
+  if (buffer instanceof ArrayBuffer) return new Uint8Array(buffer, byteOffset, byteLength);
+  const copy = new Uint8Array(byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
 export type PtySpawnOptions = {
   cwd?: string;
   env: Record<string, string>;
@@ -204,7 +213,7 @@ class PtyProcess implements ExecProcess {
     const run = this.writeTail.then(async () => {
       if (this.hasExited || this.terminal.closed) return;
       try {
-        this.terminal.write(bytes);
+        this.terminal.write(toArrayBufferBytes(bytes));
       } catch {
         return;
       }
