@@ -1,134 +1,110 @@
-// 传输进度 Toast。自 round 32 起它只是 `transfer-jobs-store` 的渲染器之一：
-// 每个 Toast 背后都有一行 store 条目，设备页的传输弹窗读的就是同一份列表。
-
-import { toast } from 'sonner';
+// 传输进度 Toast。每个批（单个文件也是只有一个条目的批）对应一张 sonner 卡片和一行
+// `transfer-jobs-store` 条目，设备页的传输弹窗读的就是同一份列表。
+// 卡片本身只是 `BatchProgress` 的渲染器：进度数字全部来自 `progress.view()`。
 
 import type { LegProgress } from '@vibeterm/api-client';
-import { ByteRate } from '@vibeterm/ui/byte-rate';
-import { Progress } from '@vibeterm/ui/progress';
+import type { TransferProgress } from '@vibeterm/shared';
 import i18next from 'i18next';
-import { type LocalTransferHandle, combineLegPct, startLocalTransfer } from './transfer-jobs-store';
+import { toast } from 'sonner';
+import type { TransferPath } from './bulk-transfer';
+import type { BatchFinish } from './transfer-batch';
+import {
+  type LocalTransferHandle,
+  createRateEstimator,
+  startLocalTransfer,
+} from './transfer-jobs-store';
+import {
+  BatchProgress,
+  type BatchView,
+  type LegWeights,
+  type TransferDirection,
+} from './transfer-progress';
+import { ToastBody } from './transfer-toast-view';
 
-export type TransferDirection = 'upload' | 'download';
+export type { TransferDirection } from './transfer-progress';
 
 /** 本次传输实际走的通道（与 `bulk-transfer.ts` 的 `TransferPath` 同义）。 */
-export type TransferToastPath = 'direct' | 'relay';
+export type TransferToastPath = TransferPath;
 
-interface ToastModel {
-  fileName: string;
-  direction: TransferDirection;
-  legs: [LegProgress, LegProgress];
-  path: TransferToastPath | null;
+/** 工作态的重绘间隔下限；状态切换不受限。 */
+const RENDER_INTERVAL_MS = 100;
+
+export interface BatchToastOptions {
+  progress: BatchProgress;
+  /** 单个文件为文件名，批量为批标题。 */
+  title: string;
+  /** 另一端的节点（`self` 或 32 位 hex）；不传则只出 Toast、列表里不留行。 */
+  nodeId?: string;
+  onCancel: () => void;
 }
 
-function PathBadge({ path }: { path: TransferToastPath }) {
-  const direct = path === 'direct';
-  return (
-    <span
-      data-testid="transfer-path-badge"
-      title={i18next.t(direct ? 'files.transfer.pathDirectHint' : 'files.transfer.pathRelayHint')}
-      className="shrink-0 rounded border px-1 text-[10px] leading-4 text-muted-foreground transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none"
-    >
-      {i18next.t(direct ? 'files.transfer.pathDirect' : 'files.transfer.pathRelay')}
-    </span>
-  );
+export interface BatchToast {
+  /** 进度或状态有变化；`immediate` 跳过节流。 */
+  notify: (immediate: boolean) => void;
+  finish: (result: BatchFinish) => void;
 }
 
-function legLabel(direction: TransferDirection, leg: 1 | 2): string {
-  if (direction === 'upload') {
-    return leg === 1
-      ? i18next.t('files.transfer.legUserToVibeTerm')
-      : i18next.t('files.transfer.legVibeTermToServer');
-  }
-  return leg === 1
-    ? i18next.t('files.transfer.legServerToVibeTerm')
-    : i18next.t('files.transfer.legVibeTermToUser');
+function toastId(title: string): string {
+  return `transfer-${title}-${performance.now()}`;
 }
 
-function LegRow({ label, leg }: { label: string; leg: LegProgress }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span className="truncate">{label}</span>
-        {/* 速率与「已传 / 总量」各自定宽：拼成一个字符串就会随位数变化把文件名挤来挤去。 */}
-        <span className="flex shrink-0 items-center gap-1">
-          {leg.rate && <ByteRate>{leg.rate}</ByteRate>}
-          {leg.rate && leg.detail && <span aria-hidden>·</span>}
-          {/* 21ch = `1023.9 MB / 1023.9 MB`，`formatBytesPair` 的最长合法内容。 */}
-          {leg.detail && <ByteRate minWidthClass="min-w-[21ch]">{leg.detail}</ByteRate>}
-        </span>
-      </div>
-      <Progress value={leg.pct} />
-    </div>
-  );
+function openRow(options: BatchToastOptions, id: string): LocalTransferHandle | null {
+  const { progress, nodeId } = options;
+  if (nodeId === undefined) return null;
+  const view = progress.view();
+  return startLocalTransfer({
+    id,
+    kind: progress.direction,
+    title: options.title,
+    nodeId,
+    totalBytes: view.totalBytes,
+    itemsTotal: view.itemsTotal,
+    onCancel: options.onCancel,
+  });
 }
 
-// 工作态内容：渲染在 sonner 默认卡片内，同时显示两段进度（leg1 / leg2）。
-// 取消按钮用 sonner 的 action（右侧区域），不在此自绘。
-function WorkingBody({ m }: { m: ToastModel }) {
-  return (
-    <div className="flex w-full flex-col gap-2" data-testid="transfer-toast">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="min-w-0 truncate text-sm font-medium">{m.fileName}</span>
-        {m.path ? <PathBadge path={m.path} /> : null}
-      </div>
-      <LegRow label={legLabel(m.direction, 1)} leg={m.legs[0]} />
-      <LegRow label={legLabel(m.direction, 2)} leg={m.legs[1]} />
-    </div>
-  );
+function pushRow(row: LocalTransferHandle | null, view: BatchView, net: TransferProgress): void {
+  row?.update({
+    pct: view.pct,
+    progress: {
+      transferredBytes: view.transferredBytes,
+      totalBytes: view.totalBytes,
+      ratePerSec: net.ratePerSec,
+      etaSec: net.etaSec,
+    },
+    itemsDone: view.itemsDone,
+    itemsTotal: view.itemsTotal,
+  });
 }
 
-/** 登记到传输列表所需的上下文；不传则只出 Toast（列表里不留行）。 */
-export interface TransferToastEntry {
-  /** 另一端的节点 id（`self` 或 32 位 hex）。 */
-  nodeId: string;
-  /** 已知总字节数；未知时列表只显示百分比。 */
-  totalBytes?: number;
-}
-
-export interface TransferToast {
-  leg: (n: 1 | 2, p: LegProgress) => void;
-  /** 传输路径确定后调用，在文件名旁显示 direct / relay 徽标。 */
-  setPath?: (path: TransferToastPath) => void;
-  success: (message: string) => void;
-  fail: (message: string) => void;
-  cancel: () => void;
-}
-
-// 启动传输进度 Toast，复用 app 统一的 sonner 卡片样式，并同时展示两段进度条。
+// 启动批的进度 Toast，复用 app 统一的 sonner 卡片样式。
 // 工作态：duration:Infinity + dismissible:false + closeButton:false（不自动消失/不可手动关闭，
-// 仅取消按钮可终止）。完成 success 卡片（短暂后消失）；失败/取消 error 卡片（保留可关闭）。
-export function startTransferToast(
-  fileName: string,
-  direction: TransferDirection,
-  onCancel: () => void,
-  entry?: TransferToastEntry
-): TransferToast {
-  const id = `transfer-${fileName}-${performance.now()}`;
-  const model: ToastModel = {
-    fileName,
-    direction,
-    legs: [{ pct: 0 }, { pct: 0 }],
-    path: null,
+// 仅取消按钮可终止）。完成 success 卡片（短暂后消失）；失败 error 卡片（保留可关闭）；取消直接收起。
+export function startBatchToast(options: BatchToastOptions): BatchToast {
+  const { progress, title, onCancel } = options;
+  const id = toastId(title);
+  const row = openRow(options, id);
+  let rowPath: TransferPath | null = null;
+  const estimator = createRateEstimator();
+  let lastRender = Number.NEGATIVE_INFINITY;
+
+  // 速率只看网络那一段，用真实字节差分；与进度条（两段合成）无关
+  const flush = (): { view: BatchView; ratePerSec: number } => {
+    const now = performance.now();
+    lastRender = now;
+    const view = progress.view();
+    const net = estimator.sample(view.networkBytes, view.totalBytes, now);
+    pushRow(row, view, net);
+    if (view.path && view.path !== rowPath) {
+      rowPath = view.path;
+      row?.setPath(view.path);
+    }
+    return { view, ratePerSec: net.ratePerSec };
   };
-  let lastRender = 0;
-  const row: LocalTransferHandle | null = entry
-    ? startLocalTransfer({
-        id,
-        kind: direction,
-        title: fileName,
-        nodeId: entry.nodeId,
-        totalBytes: entry.totalBytes,
-        onCancel,
-      })
-    : null;
 
   const renderWorking = () => {
-    const snapshot: ToastModel = {
-      ...model,
-      legs: [{ ...model.legs[0] }, { ...model.legs[1] }],
-    };
-    toast(<WorkingBody m={snapshot} />, {
+    const { view, ratePerSec } = flush();
+    toast(<ToastBody model={{ title, view, ratePerSec }} t={i18next.t} />, {
       id,
       duration: Number.POSITIVE_INFINITY,
       dismissible: false,
@@ -142,44 +118,92 @@ export function startTransferToast(
   };
   renderWorking();
 
+  const finishRow = (result: BatchFinish) => {
+    const view = progress.view();
+    pushRow(row, view, estimator.sample(view.networkBytes, view.totalBytes, performance.now()));
+    if (result.kind === 'success') row?.done();
+    else if (result.kind === 'failure') row?.fail();
+    else row?.cancelled();
+  };
+
+  return {
+    notify(immediate) {
+      if (!immediate && performance.now() - lastRender < RENDER_INTERVAL_MS) return;
+      renderWorking();
+    },
+    finish(result) {
+      finishRow(result);
+      if (result.kind === 'cancel') {
+        toast.dismiss(id);
+      } else if (result.kind === 'success') {
+        toast.success(<span data-testid="transfer-toast">{result.message}</span>, {
+          id,
+          duration: 4000,
+          dismissible: true,
+          closeButton: true,
+        });
+      } else {
+        toast.error(<span data-testid="transfer-toast">{result.message}</span>, {
+          id,
+          description: result.description,
+          duration: Number.POSITIVE_INFINITY,
+          dismissible: true,
+          closeButton: true,
+          classNames: { description: 'whitespace-pre-line' },
+        });
+      }
+    },
+  };
+}
+
+/** 登记到传输列表所需的上下文；不传则只出 Toast（列表里不留行）。 */
+export interface TransferToastEntry {
+  /** 另一端的节点 id（`self` 或 32 位 hex）。 */
+  nodeId: string;
+  /** 已知总字节数；未知时列表只显示百分比。 */
+  totalBytes?: number;
+}
+
+/** 单个文件的命令式句柄：由传输函数的回调推进。 */
+export interface TransferToast {
+  leg: (n: 1 | 2, p: LegProgress) => void;
+  legWeights: (weights: LegWeights) => void;
+  /** 传输路径确定后调用，在文件名旁显示 direct / relay 徽标。 */
+  setPath: (path: TransferToastPath) => void;
+  success: (message: string) => void;
+  /** `description` 放具体原因，见 `describeTransferError`。 */
+  fail: (message: string, description?: string) => void;
+  cancel: () => void;
+}
+
+export function startTransferToast(
+  fileName: string,
+  direction: TransferDirection,
+  onCancel: () => void,
+  entry?: TransferToastEntry
+): TransferToast {
+  const progress = new BatchProgress(direction, [{ name: fileName, size: entry?.totalBytes ?? 0 }]);
+  progress.setStatus(0, 'running');
+  const batch = startBatchToast({ progress, title: fileName, nodeId: entry?.nodeId, onCancel });
+  const settle = (status: 'done' | 'failed' | 'cancelled', result: BatchFinish) => {
+    progress.setStatus(0, status);
+    batch.finish(result);
+  };
   return {
     leg(n, p) {
-      model.legs[n - 1] = p;
-      row?.setPct(combineLegPct(model.legs[0].pct, model.legs[1].pct));
-      const now = performance.now();
-      // 100% 立即渲染（保证完成段显示满格），否则节流
-      if (p.pct < 100 && now - lastRender < 100) return;
-      lastRender = now;
-      renderWorking();
+      progress.leg(0, n, p);
+      batch.notify(p.pct >= 100);
+    },
+    legWeights(weights) {
+      progress.weights(0, weights);
+      batch.notify(false);
     },
     setPath(path) {
-      if (model.path === path) return;
-      model.path = path;
-      row?.setPath(path);
-      lastRender = performance.now();
-      renderWorking();
+      progress.setPath(path);
+      batch.notify(true);
     },
-    success(message) {
-      row?.done();
-      toast.success(<span data-testid="transfer-toast">{message}</span>, {
-        id,
-        duration: 4000,
-        dismissible: true,
-        closeButton: true,
-      });
-    },
-    fail(message) {
-      row?.fail();
-      toast.error(<span data-testid="transfer-toast">{message}</span>, {
-        id,
-        duration: Number.POSITIVE_INFINITY,
-        dismissible: true,
-        closeButton: true,
-      });
-    },
-    cancel() {
-      row?.cancelled();
-      toast.dismiss(id);
-    },
+    success: (message) => settle('done', { kind: 'success', message }),
+    fail: (message, description) => settle('failed', { kind: 'failure', message, description }),
+    cancel: () => settle('cancelled', { kind: 'cancel' }),
   };
 }

@@ -1,5 +1,5 @@
-// 文件管理器的下载 / 上传流程（非 hook）：单文件下载与逐文件上传复用 files/transfer-flows，
-// 目录或多选走网关打包后的浏览器原生下载，文件夹上传先建目录再逐文件上传。
+// 文件管理器的下载 / 上传流程（非 hook）：单文件下载与批量上传复用 files/transfer-flows，
+// 目录或多选走网关打包后的浏览器原生下载，文件夹上传先建目录再把全部文件作为一批并发上传。
 
 import type { QueryClient } from '@tanstack/react-query';
 import {
@@ -13,8 +13,8 @@ import {
 import type { FileEntryDto } from '@vibeterm/shared';
 import { toast } from 'sonner';
 import { fileOpErrorKey, joinChildPath } from '../../files/ops';
-import { type FileUploadDeps, uploadFilesInto } from '../../files/transfer-flows';
-import type { FolderUploadFile, FolderUploadPlan } from './folder-upload';
+import { type FileUploadDeps, uploadFilesToDirs } from '../../files/transfer-flows';
+import type { FolderUploadPlan } from './folder-upload';
 import {
   type ConflictProbeIo,
   type UploadConflictChoice,
@@ -36,17 +36,6 @@ const CONFLICT_LISTING_FRESH_MS = 2000;
 /** 相对目录（'' = 目标目录自身）落到目标目录下的绝对路径 */
 export function resolveUploadDir(destDir: string, relDir: string): string {
   return relDir ? joinChildPath(destDir, relDir) : destDir;
-}
-
-/** 按相对目录分组，保持首次出现的顺序 */
-export function groupByRelDir(files: readonly FolderUploadFile[]): Map<string, File[]> {
-  const groups = new Map<string, File[]>();
-  for (const { file, relDir } of files) {
-    const group = groups.get(relDir);
-    if (group) group.push(file);
-    else groups.set(relDir, [file]);
-  }
-  return groups;
 }
 
 // 打包流没有 Content-Length，也不经 ApiClient：交给浏览器原生下载，进度看浏览器下载区。
@@ -118,7 +107,7 @@ export function touchedUploadDirs(plan: FolderUploadPlan, destDir: string): stri
   return Array.from(dirs);
 }
 
-/** 上传一棵目录树：建目录 → 各文件传进对应目录 → 刷新所有触及目录的列表。 */
+/** 上传一棵目录树：建目录 → 所有文件作为一批并发传进各自目录 → 刷新所有触及目录的列表。 */
 export async function uploadPlanInto(
   deps: TransferFlowDeps,
   plan: FolderUploadPlan,
@@ -127,9 +116,10 @@ export async function uploadPlanInto(
   if (plan.files.length === 0 && plan.dirs.length === 0) return;
   try {
     if (!(await createDirectories(deps, plan.dirs, destDir))) return;
-    for (const [relDir, files] of groupByRelDir(plan.files)) {
-      await uploadFilesInto(deps, files, resolveUploadDir(destDir, relDir));
-    }
+    await uploadFilesToDirs(
+      deps,
+      plan.files.map(({ file, relDir }) => ({ file, destDir: resolveUploadDir(destDir, relDir) }))
+    );
   } finally {
     // 别的分栏或侧栏可能正开着其中某个子目录，只刷目标目录会让它们停在旧列表上
     for (const dir of touchedUploadDirs(plan, destDir)) invalidateListing(deps, dir);

@@ -9,7 +9,6 @@ export {
   applyTransferJobEvent,
   cancelTransferJobEntry,
   clearFinishedTransferJobs,
-  combineLegPct,
   createRateEstimator,
   getTransferJobView,
   getTransferJobsSnapshot,
@@ -31,6 +30,7 @@ export {
 export type {
   LocalTransferHandle,
   LocalTransferOptions,
+  LocalTransferUpdate,
   RateEstimator,
   TransferEntryKind,
   TransferJobView,

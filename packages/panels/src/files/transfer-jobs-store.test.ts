@@ -5,7 +5,6 @@ import {
   applyTransferJobEvent,
   cancelTransferJobEntry,
   clearFinishedTransferJobs,
-  combineLegPct,
   countFinishedItems,
   createRateEstimator,
   getTransferJobView,
@@ -76,13 +75,6 @@ describe('纯函数', () => {
     expect(
       transferPct({ transferredBytes: 500, totalBytes: 200, ratePerSec: 0, etaSec: null })
     ).toBe(100);
-  });
-
-  test('两段进度各占一半', () => {
-    expect(combineLegPct(0, 0)).toBe(0);
-    expect(combineLegPct(100, 0)).toBe(50);
-    expect(combineLegPct(100, 100)).toBe(100);
-    expect(combineLegPct(Number.NaN, 50)).toBe(25);
   });
 });
 
@@ -315,9 +307,19 @@ describe('浏览器任务', () => {
     expect(view()?.toNodeId).toBe('self');
     expect(view()?.cancellable).toBe(false);
 
-    handle.setPct(50);
+    handle.update({
+      pct: 50,
+      progress: { transferredBytes: 500, totalBytes: 1000, ratePerSec: 250, etaSec: 2 },
+      itemsDone: 0,
+      itemsTotal: 1,
+    });
     expect(view()?.pct).toBe(50);
-    expect(view()?.progress.transferredBytes).toBe(500);
+    expect(view()?.progress).toEqual({
+      transferredBytes: 500,
+      totalBytes: 1000,
+      ratePerSec: 250,
+      etaSec: 2,
+    });
 
     handle.setPath('direct');
     expect(view()?.path).toBe('direct');
@@ -325,6 +327,9 @@ describe('浏览器任务', () => {
     handle.done();
     expect(view()?.state).toBe('done');
     expect(view()?.pct).toBe(100);
+    expect(view()?.progress.transferredBytes).toBe(1000);
+    expect(view()?.progress.ratePerSec).toBe(0);
+    expect(view()?.itemsDone).toBe(1);
     expect(view()?.cancellable).toBe(false);
   });
 
@@ -350,6 +355,33 @@ describe('浏览器任务', () => {
     expect(getTransferJobView(handle.key)?.state).toBe('cancelled');
   });
 
+  test('批量任务一行带条目数与真实字节', () => {
+    const handle = startLocalTransfer({
+      id: 'b1',
+      kind: 'upload',
+      title: '上传 3 个文件',
+      nodeId: 'self',
+      totalBytes: 300,
+      itemsTotal: 3,
+    });
+    expect(getTransferJobView(handle.key)?.itemsTotal).toBe(3);
+    expect(getTransferJobView(handle.key)?.progress.totalBytes).toBe(300);
+
+    handle.update({
+      pct: 40,
+      progress: { transferredBytes: 120, totalBytes: 300, ratePerSec: 60, etaSec: 3 },
+      itemsDone: 1,
+      itemsTotal: 3,
+    });
+    const view = getTransferJobView(handle.key);
+    expect(view?.itemsDone).toBe(1);
+    expect(view?.progress.transferredBytes).toBe(120);
+
+    handle.fail();
+    expect(getTransferJobView(handle.key)?.state).toBe('failed');
+    expect(getTransferJobView(handle.key)?.itemsDone).toBe(1);
+  });
+
   test('总量未知时进度只有百分比', () => {
     const handle = startLocalTransfer({
       id: 'd2',
@@ -357,7 +389,12 @@ describe('浏览器任务', () => {
       title: 'c.bin',
       nodeId: 'self',
     });
-    handle.setPct(40);
+    handle.update({
+      pct: 40,
+      progress: { transferredBytes: 0, totalBytes: 0, ratePerSec: 0, etaSec: null },
+      itemsDone: 0,
+      itemsTotal: 1,
+    });
     expect(getTransferJobView(handle.key)?.pct).toBe(40);
     expect(getTransferJobView(handle.key)?.progress.totalBytes).toBe(0);
     expect(getTransferJobView(handle.key)?.progress.etaSec).toBeNull();

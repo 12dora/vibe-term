@@ -1,4 +1,4 @@
-// 目录节点的上传入口：外部文件拖入 + 右键菜单选择文件，逐文件分块上传并显示可取消的进度 Toast。
+// 目录节点的上传入口：外部文件拖入 + 右键菜单选择文件，并发分块上传（一批一张可取消的进度 Toast）。
 
 import { useQueryClient } from '@tanstack/react-query';
 import { useFileTreeStore, useRuntime } from '@vibeterm/stores/react';
@@ -45,7 +45,7 @@ export function useDirectoryUpload(
     setDragActive(false);
   }, []);
 
-  // 上传到本目录：逐文件分块上传 + 进度 Toast（可取消）；完成后展开并刷新该目录列表。
+  // 上传到本目录：一批文件并发上传 + 一张进度 Toast（可取消）；完成后展开并刷新该目录列表。
   const upload = useCallback(
     async (files: File[]) => {
       if (files.length === 0) return;

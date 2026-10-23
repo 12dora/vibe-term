@@ -35,7 +35,7 @@ export interface TransferJobView {
   title: string;
   state: TransferJobState;
   progress: TransferProgress;
-  /** 0–100。节点任务由字节算出，浏览器任务由两段进度合成。 */
+  /** 0–100。节点任务由字节算出，浏览器任务由 `transfer-progress` 的批进度给出。 */
   pct: number;
   path: TransferPath | null;
   /** 按下标记住每个条目的状态；done / skipped 的个数即 `itemsDone`（失败的条目不算完成）。 */
@@ -70,12 +70,6 @@ export function transferPct(progress: TransferProgress): number {
   if (progress.totalBytes <= 0) return 0;
   const pct = (progress.transferredBytes / progress.totalBytes) * 100;
   return Math.max(0, Math.min(100, Math.round(pct)));
-}
-
-/** 两段式传输合成一条进度：两段各占一半。 */
-export function combineLegPct(leg1: number, leg2: number): number {
-  const clamp = (n: number) => (Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 0);
-  return Math.round((clamp(leg1) + clamp(leg2)) / 2);
 }
 
 function currentTitle(job: TransferJobSnapshot): string {
@@ -318,30 +312,40 @@ export interface LocalTransferOptions {
   /** 行的唯一 id（同一文件可能同时传多次，调用方自带序号）。 */
   id: string;
   kind: 'upload' | 'download';
+  /** 单个文件取文件名，批量取批标题。 */
   title: string;
   /** 另一端的节点（`self` 或 32 位 hex）。 */
   nodeId: string;
   /** 已知总字节数；未知时列表只显示百分比。 */
   totalBytes?: number;
+  /** 批里的条目数；缺省按单个文件。 */
+  itemsTotal?: number;
   onCancel?: () => void;
+}
+
+/** 推给一行的真实进度：数值都来自 `BatchProgress`，store 不再自己推算。 */
+export interface LocalTransferUpdate {
+  /** 0–100。 */
+  pct: number;
+  progress: TransferProgress;
+  itemsDone: number;
+  itemsTotal: number;
 }
 
 export interface LocalTransferHandle {
   key: string;
-  setPct(pct: number): void;
+  update(update: LocalTransferUpdate): void;
   setPath(path: TransferPath): void;
   done(): void;
   fail(error?: string): void;
   cancelled(): void;
 }
 
-/** 登记一条浏览器任务；返回的句柄由 `startTransferToast` 与 bulk 传输推进。 */
+/** 登记一条浏览器任务（一个文件或一批文件）；返回的句柄由 `startTransferToast` 推进。 */
 export function startLocalTransfer(options: LocalTransferOptions): LocalTransferHandle {
   const key = `local:${options.kind}:${options.id}`;
-  const total = options.totalBytes ?? 0;
   const upload = options.kind === 'upload';
   const now = Date.now();
-  const estimator = createRateEstimator();
 
   putTransferJobView({
     key,
@@ -352,12 +356,12 @@ export function startLocalTransfer(options: LocalTransferOptions): LocalTransfer
     toNodeId: upload ? options.nodeId : BROWSER_ENDPOINT_ID,
     title: options.title,
     state: 'running',
-    progress: { ...EMPTY_PROGRESS, totalBytes: total },
+    progress: { ...EMPTY_PROGRESS, totalBytes: options.totalBytes ?? 0 },
     pct: 0,
     path: null,
     itemStates: [],
     itemsDone: 0,
-    itemsTotal: 1,
+    itemsTotal: options.itemsTotal ?? 1,
     createdAt: now,
     updatedAt: now,
     finishedAt: null,
@@ -365,28 +369,36 @@ export function startLocalTransfer(options: LocalTransferOptions): LocalTransfer
   });
   if (options.onCancel) registerTransferCancel(key, options.onCancel);
 
-  const patch = (next: Partial<TransferJobView>) => {
+  const patch = (next: (view: TransferJobView) => Partial<TransferJobView>) => {
     const view = entries.get(key);
     if (!view) return;
-    entries.set(key, { ...view, ...next, updatedAt: Date.now() });
+    entries.set(key, { ...view, ...next(view), updatedAt: Date.now() });
     publish();
   };
 
   const settle = (state: TransferJobState, error?: string) =>
-    patch({ state, error, cancellable: false, finishedAt: Date.now() });
+    patch(() => ({ state, error, cancellable: false, finishedAt: Date.now() }));
 
   return {
     key,
-    setPct(pct) {
-      const clamped = Math.max(0, Math.min(100, Math.round(pct)));
-      const transferred = total > 0 ? Math.round((total * clamped) / 100) : 0;
-      patch({ pct: clamped, progress: estimator.sample(transferred, total, Date.now()) });
+    update({ pct, progress, itemsDone, itemsTotal }) {
+      const clamped = Math.max(0, Math.min(100, Math.floor(pct)));
+      patch(() => ({ pct: clamped, progress, itemsDone, itemsTotal }));
     },
     setPath(path) {
-      patch({ path });
+      patch(() => ({ path }));
     },
     done() {
-      patch({ pct: 100 });
+      patch((view) => ({
+        pct: 100,
+        itemsDone: view.itemsTotal,
+        progress: {
+          ...view.progress,
+          transferredBytes: view.progress.totalBytes,
+          ratePerSec: 0,
+          etaSec: null,
+        },
+      }));
       settle('done');
     },
     fail(error) {
