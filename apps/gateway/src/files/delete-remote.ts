@@ -78,7 +78,7 @@ export function deleteRemoteTargets(
   rootPath: string,
   targets: readonly DeleteTarget[]
 ): Promise<FileOpResult<DeleteOutcome>> {
-  return withDeviceRsync(device, async (spec) => {
+  return withDeviceRsync(device, 'mutation', async (spec) => {
     const res = await execRemoteScript(
       spec,
       buildDeleteCommand(rootPath, targets),

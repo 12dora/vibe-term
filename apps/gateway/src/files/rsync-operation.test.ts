@@ -20,12 +20,13 @@ describe('withDeviceRsync', () => {
     const events: string[] = [];
     const result = await withDeviceRsync(
       localDevice(),
+      'transfer',
       async () => {
         events.push('op');
         return ok(42);
       },
       {
-        enqueue: async (_deviceId, job) => {
+        enqueue: async (_deviceId, _kind, job) => {
           events.push('queue');
           return job();
         },
@@ -52,11 +53,12 @@ describe('withDeviceRsync', () => {
     await expect(
       withDeviceRsync(
         localDevice(),
+        'transfer',
         async () => {
           throw new Error('boom');
         },
         {
-          enqueue: async (_deviceId, job) => job(),
+          enqueue: async (_deviceId, _kind, job) => job(),
           buildSpec: async () => ({
             targetPrefix: '',
             rsh: undefined,
@@ -75,12 +77,13 @@ describe('withDeviceRsync', () => {
     let ran = false;
     const result = await withDeviceRsync(
       localDevice(),
+      'transfer',
       async () => {
         ran = true;
         return ok(true);
       },
       {
-        enqueue: async (_deviceId, job) => job(),
+        enqueue: async (_deviceId, _kind, job) => job(),
         buildSpec: async () => {
           throw new RsyncAuthError('auth_unsupported', 'no auth');
         },
@@ -94,7 +97,7 @@ describe('withDeviceRsync', () => {
   test('reuses the real local spec path and still cleans up', async () => {
     const specRef: { current: RsyncDeviceSpec | null } = { current: null };
     let cleaned = false;
-    const result = await withDeviceRsync(localDevice('rsync-op-real'), async (spec) => {
+    const result = await withDeviceRsync(localDevice('rsync-op-real'), 'transfer', async (spec) => {
       specRef.current = spec;
       const original = spec.cleanup;
       spec.cleanup = () => {

@@ -123,7 +123,7 @@ export async function placeFileOnRemote(
     signal?: AbortSignal;
   }
 ): Promise<FileOpResult<RemotePlacement>> {
-  return withDeviceRsync<RemotePlacement>(ctx.device, async (spec) => {
+  return withDeviceRsync<RemotePlacement>(ctx.device, 'mutation', async (spec) => {
     const walked = await walkRemote(spec, ctx, input.rel);
     if (!walked.ok) return walked;
     if (walked.data.exists && input.onConflict === 'skip') return ok({ skipped: true });
@@ -149,7 +149,7 @@ export async function probeRemoteTarget(
   ctx: DestContext,
   rel: string
 ): Promise<FileOpResult<{ dir: string; name: string; exists: boolean }>> {
-  return withDeviceRsync(ctx.device, (spec) => walkRemote(spec, ctx, rel));
+  return withDeviceRsync(ctx.device, 'mutation', (spec) => walkRemote(spec, ctx, rel));
 }
 
 /** 只建目录（空目录条目走这条）：与文件落位共用同一套边界核对。 */
@@ -157,7 +157,7 @@ export async function ensureRemoteDir(
   ctx: DestContext,
   rel: string
 ): Promise<FileOpResult<{ dir: string }>> {
-  return withDeviceRsync(ctx.device, async (spec) => {
+  return withDeviceRsync(ctx.device, 'mutation', async (spec) => {
     const walked = await walkRemote(spec, ctx, `${rel}/.keep`);
     if (!walked.ok) return walked;
     return ok({ dir: walked.data.dir });

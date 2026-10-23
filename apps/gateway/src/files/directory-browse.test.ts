@@ -45,7 +45,7 @@ const fakeSpec: RsyncDeviceSpec = {
 function depsFor(device: Device, extra: Partial<DirectoryBrowseDeps> = {}): DirectoryBrowseDeps {
   return {
     getDevice: (id) => (id === device.id ? device : null),
-    enqueue: async (_deviceId, job) => job(),
+    enqueue: async (_deviceId, _kind, job) => job(),
     buildSpec: async () => fakeSpec,
     execSsh: async () => {
       throw new Error('execSsh should not be called');

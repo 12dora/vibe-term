@@ -78,7 +78,7 @@ export function deleteLocalTargets(
   rootPath: string,
   targets: readonly DeleteTarget[]
 ): Promise<FileOpResult<DeleteOutcome>> {
-  return enqueueDeviceJob(deviceId, async () => {
+  return enqueueDeviceJob(deviceId, 'mutation', async () => {
     let realRoot: string;
     try {
       realRoot = realpathSync(rootPath);

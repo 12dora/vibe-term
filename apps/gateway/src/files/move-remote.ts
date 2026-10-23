@@ -282,6 +282,7 @@ function classifyExit(res: RemoteScriptResult): FileOpResult<never> {
 export function moveRemote(device: Device, batch: MoveBatch): Promise<FileOpResult<MoveOutcome[]>> {
   return withDeviceRsync<MoveOutcome[]>(
     device,
+    'mutation',
     async (spec) => {
       const res = await fileMoveRemoteIo.exec(spec, buildMoveScript(batch), MOVE_TIMEOUT_MS);
       if (res.exitCode !== 0) return classifyExit(res);

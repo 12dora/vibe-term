@@ -274,6 +274,7 @@ export async function browseDirectory(
 
   return withDeviceRsync(
     device,
+    'transfer',
     (spec) =>
       browseSsh(spec, normalized.data, includeHidden, deps.execSsh ?? directoryBrowseIo.execSsh),
     {

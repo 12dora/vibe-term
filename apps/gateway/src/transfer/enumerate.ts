@@ -56,7 +56,7 @@ export async function enumerateTree(
   if (!norm.ok) return { ok: false, code: norm.code };
 
   const base = parentOf(norm.path);
-  const result = await withDeviceRsync(device, async (spec) => {
+  const result = await withDeviceRsync(device, 'transfer', async (spec) => {
     const collector = createListOnlyCollector(opts.maxEntries);
     const res = await runRsync(listArgs(spec, norm.path), {
       env: spec.env,

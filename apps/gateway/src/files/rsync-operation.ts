@@ -1,6 +1,8 @@
 import type { Device, FileErrorCode } from '@vibeterm/shared';
-import { enqueueDeviceJob } from './queue';
+import { type DeviceJobKind, enqueueDeviceJob } from './queue';
 import { RsyncAuthError, type RsyncDeviceSpec, buildRsyncDeviceSpec } from './ssh-command';
+
+export type { DeviceJobKind };
 
 export type FileOpResult<T> =
   | { ok: true; data: T }
@@ -24,12 +26,13 @@ export interface DeviceRsyncHooks {
 
 export async function withDeviceRsync<T>(
   device: Device,
+  kind: DeviceJobKind,
   fn: (spec: RsyncDeviceSpec) => Promise<FileOpResult<T>>,
   hooks: DeviceRsyncHooks = {}
 ): Promise<FileOpResult<T>> {
   const enqueue = hooks.enqueue ?? enqueueDeviceJob;
   const buildSpec = hooks.buildSpec ?? buildRsyncDeviceSpec;
-  return enqueue(device.id, async () => {
+  return enqueue(device.id, kind, async () => {
     let spec: Awaited<ReturnType<typeof buildSpec>>;
     try {
       spec = await buildSpec(device);

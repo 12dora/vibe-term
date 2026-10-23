@@ -323,7 +323,7 @@ export function moveLocal(
   deviceId: string,
   batch: MoveBatch
 ): Promise<FileOpResult<MoveOutcome[]>> {
-  return enqueueDeviceJob<FileOpResult<MoveOutcome[]>>(deviceId, async () => {
+  return enqueueDeviceJob<FileOpResult<MoveOutcome[]>>(deviceId, 'mutation', async () => {
     const ctx = resolveContext(batch);
     if (!ctx.ok) return ctx;
     return ok(batch.items.map((item) => moveOne(ctx.data, item)));

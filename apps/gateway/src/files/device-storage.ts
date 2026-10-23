@@ -191,7 +191,7 @@ export async function listDirectory(
 ): Promise<FileOpResult<ListFilesResponse>> {
   return withNormalized(rootId, inputPath, async ({ path, device }) => {
     if (device.type === 'local') return listLocalDirectory(path);
-    return withDeviceRsync(device, (spec) => listRemoteDirectory(spec, path));
+    return withDeviceRsync(device, 'transfer', (spec) => listRemoteDirectory(spec, path));
   });
 }
 
@@ -218,7 +218,7 @@ export async function statFile(
 ): Promise<FileOpResult<FileStatResponse>> {
   return withNormalized(rootId, inputPath, async ({ path, device }) => {
     if (device.type === 'local') return statLocalPath(path);
-    return withDeviceRsync(device, async (spec) => {
+    return withDeviceRsync(device, 'transfer', async (spec) => {
       const st = await statViaRsync(spec, path);
       if (!st.ok) return st;
       const name = posixBasename(path);
@@ -288,7 +288,7 @@ export async function readTextFile(
 ): Promise<FileOpResult<FileContentResponse>> {
   return withNormalized(rootId, inputPath, async ({ path, device }) => {
     if (device.type === 'local') return readLocalTextFile(path);
-    return withDeviceRsync(device, async (spec) => {
+    return withDeviceRsync(device, 'transfer', async (spec) => {
       const st = await statViaRsync(spec, path);
       if (!st.ok) return st;
       if (st.data.type === 'dir') return fail('is_directory');
@@ -319,7 +319,7 @@ export async function readRawFile(
 ): Promise<FileOpResult<RawFileData>> {
   return withNormalized(rootId, inputPath, async ({ path, device }) => {
     if (device.type === 'local') return localFileHandle(path, RAW_MAX_BYTES);
-    return withDeviceRsync(device, async (spec) => {
+    return withDeviceRsync(device, 'transfer', async (spec) => {
       const st = await statViaRsync(spec, path);
       if (!st.ok) return st;
       if (st.data.type === 'dir') return fail('is_directory');
@@ -389,9 +389,13 @@ export async function pushFileToDevice(
   if (!safeName) return fail('invalid');
   return withNormalized(rootId, destDir, async ({ path, device }) => {
     if (device.type === 'local') {
-      return enqueueDeviceJob(device.id, async () => pushLocalFile(path, srcPath, safeName, opts));
+      return enqueueDeviceJob(device.id, 'transfer', async () =>
+        pushLocalFile(path, srcPath, safeName, opts)
+      );
     }
-    return withDeviceRsync(device, (spec) => pushRemoteFile(spec, path, srcPath, safeName, opts));
+    return withDeviceRsync(device, 'transfer', (spec) =>
+      pushRemoteFile(spec, path, srcPath, safeName, opts)
+    );
   });
 }
 
@@ -453,6 +457,6 @@ export async function pullFileFromDevice(
     if (device.type === 'local') {
       return localFileHandle(path, transferMaxBytesNow(config.transferMaxBytes));
     }
-    return withDeviceRsync(device, (spec) => pullRemoteFile(spec, path, opts));
+    return withDeviceRsync(device, 'transfer', (spec) => pullRemoteFile(spec, path, opts));
   });
 }
