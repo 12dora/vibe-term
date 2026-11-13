@@ -1,11 +1,16 @@
-import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
+import {
+  CLIENT_SOURCE_HEADER,
+  VIA_HEADER,
+  addHeaderNames,
+} from '@vibeterm/shared/http/mesh-headers';
 import { isRecord } from './ctl';
 import { MESH_PEER_HEADER } from './peer-request-marker';
 
 const BLOCKED_REQUEST_HEADERS = addHeaderNames(
   new Set(['cookie', 'authorization', 'host', 'connection', 'upgrade']),
   VIA_HEADER,
-  MESH_PEER_HEADER
+  MESH_PEER_HEADER,
+  CLIENT_SOURCE_HEADER
 );
 
 export function stripForwardedRequestHeaders(

@@ -7,6 +7,7 @@ import {
   createOrUpdatePendingTelegramChat,
   createTelegramBot,
   getTelegramChatByBotAndChatId,
+  listTelegramChatsByBot,
   pendingTelegramUserIdForUpsert,
 } from './telegram';
 
@@ -30,13 +31,16 @@ function seedBot(id: string): void {
 }
 
 describe('createOrUpdatePendingTelegramChat user_id', () => {
-  test('pendingTelegramUserIdForUpsert freezes authorized rows', () => {
+  test('pendingTelegramUserIdForUpsert freezes authorized rows and first pending sender', () => {
     expect(pendingTelegramUserIdForUpsert(null, '1')).toBe('1');
     expect(pendingTelegramUserIdForUpsert({ status: 'pending' } as never, '2')).toBe('2');
+    expect(
+      pendingTelegramUserIdForUpsert({ status: 'pending', userId: '1' } as never, '2')
+    ).toBeUndefined();
     expect(pendingTelegramUserIdForUpsert({ status: 'authorized' } as never, '3')).toBeUndefined();
   });
 
-  test('pending rows may update user_id; authorized rows may not', () => {
+  test('pending rows keep the first user_id; authorized rows may not change it', () => {
     const botId = crypto.randomUUID();
     seedBot(botId);
     const now = new Date().toISOString();
@@ -58,7 +62,7 @@ describe('createOrUpdatePendingTelegramChat user_id', () => {
       userId: '11',
     });
     expect(rebound.status).toBe('pending');
-    expect(rebound.userId).toBe('11');
+    expect(rebound.userId).toBe('10');
 
     approveTelegramChat(botId, '-1');
     createOrUpdatePendingTelegramChat({
@@ -71,7 +75,36 @@ describe('createOrUpdatePendingTelegramChat user_id', () => {
     });
     const frozen = getTelegramChatByBotAndChatId(botId, '-1');
     expect(frozen?.status).toBe('authorized');
-    expect(frozen?.userId).toBe('11');
+    expect(frozen?.userId).toBe('10');
     expect(frozen?.displayName).toBe('g2');
+  });
+
+  test('listTelegramChatsByBot 暴露 boundUserId / boundUserName', () => {
+    const botId = crypto.randomUUID();
+    seedBot(botId);
+    const now = new Date().toISOString();
+    createOrUpdatePendingTelegramChat({
+      botId,
+      chatId: '-100',
+      chatType: 'group',
+      displayName: 'ops',
+      appliedAt: now,
+      userId: '42',
+    });
+    createOrUpdatePendingTelegramChat({
+      botId,
+      chatId: '7',
+      chatType: 'private',
+      displayName: 'Alice',
+      appliedAt: now,
+      userId: '7',
+    });
+    const rows = listTelegramChatsByBot(botId);
+    const group = rows.find((row) => row.chatId === '-100');
+    const dm = rows.find((row) => row.chatId === '7');
+    expect(group?.boundUserId).toBe('42');
+    expect(group?.boundUserName).toBeNull();
+    expect(dm?.boundUserId).toBe('7');
+    expect(dm?.boundUserName).toBe('Alice');
   });
 });

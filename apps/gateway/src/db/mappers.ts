@@ -97,13 +97,16 @@ export function toTelegramBotConfigRecord(
 }
 
 export function toTelegramChat(row: typeof telegramBotChats.$inferSelect): TelegramBotChat {
+  const chatType = (row.chatType || 'unknown') as TelegramChatType;
   return {
     id: row.id,
     botId: row.botId,
     chatId: row.chatId,
-    chatType: (row.chatType || 'unknown') as TelegramChatType,
+    chatType,
     displayName: row.displayName,
     userId: row.userId ?? null,
+    boundUserId: row.userId ?? '',
+    boundUserName: chatType === 'private' && row.displayName ? row.displayName : null,
     status: row.status as TelegramChatStatus,
     appliedAt: row.appliedAt,
     authorizedAt: row.authorizedAt ?? null,

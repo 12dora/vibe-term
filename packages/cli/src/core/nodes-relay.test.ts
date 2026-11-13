@@ -433,7 +433,7 @@ describe('signed relay commands', () => {
     expect(payload.caFingerprint).toBeNull();
     expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBeUndefined();
     expect(payload.joinCommand).toBe(
-      `vibeterm relay join 'https://relay.example' --token ${payload.joinToken} --name studio`
+      `VIBETERM_RELAY_JOIN_TOKEN='${payload.joinToken}' vibeterm relay join 'https://relay.example' --name studio`
     );
     expect(payload.publicUrl).toBe('https://relay.example');
     expect(hits).toEqual(['relay-enroll']);
@@ -493,19 +493,25 @@ describe('signed relay commands', () => {
     test('primary accepted: it leads, the rest keep their order', async () => {
       const { payload, urls } = await enrollWith([SH_URL, JP_URL, TK_URL]);
       expect(urls).toEqual([JP_URL, SH_URL, TK_URL]);
-      expect(payload.joinCommand).toContain(`vibeterm relay join '${JP_URL}' --token`);
+      expect(payload.joinCommand).toContain(`VIBETERM_RELAY_JOIN_TOKEN='${payload.joinToken}'`);
+      expect(payload.joinCommand).toContain(`vibeterm relay join '${JP_URL}'`);
+      expect(payload.joinCommand).not.toContain('--token');
     });
 
     test('primary not accepted: the first accepted relay leads', async () => {
       const { payload, urls } = await enrollWith([TK_URL, SH_URL]);
       expect(urls).toEqual([TK_URL, SH_URL]);
-      expect(payload.joinCommand).toContain(`vibeterm relay join '${TK_URL}' --token`);
+      expect(payload.joinCommand).toContain(`VIBETERM_RELAY_JOIN_TOKEN='${payload.joinToken}'`);
+      expect(payload.joinCommand).toContain(`vibeterm relay join '${TK_URL}'`);
+      expect(payload.joinCommand).not.toContain('--token');
     });
 
     test('legacy gateway returning accepted urls as strings: primary still leads', async () => {
       const { payload, urls } = await enrollWith([SH_URL, JP_URL, TK_URL], true);
       expect(urls).toEqual([JP_URL, SH_URL, TK_URL]);
-      expect(payload.joinCommand).toContain(`vibeterm relay join '${JP_URL}' --token`);
+      expect(payload.joinCommand).toContain(`VIBETERM_RELAY_JOIN_TOKEN='${payload.joinToken}'`);
+      expect(payload.joinCommand).toContain(`vibeterm relay join '${JP_URL}'`);
+      expect(payload.joinCommand).not.toContain('--token');
     });
 
     test('legacy gateway string urls without the primary: first accepted leads', async () => {

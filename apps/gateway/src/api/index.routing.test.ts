@@ -107,6 +107,8 @@ describe('handleApiRequest production route table', () => {
         chatType: 'private',
         displayName: 'n',
         userId: null,
+        boundUserId: '',
+        boundUserName: null,
         status: 'authorized',
         appliedAt: now,
         authorizedAt: now,

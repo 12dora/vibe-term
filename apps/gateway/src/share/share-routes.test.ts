@@ -5,6 +5,7 @@ import type { Server } from 'bun';
 import { handleApiRequest } from '../api';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { isAuthLoginPublicPath } from '../mesh/auth-public-paths';
+import { requestDispatchContext } from '../mesh/types';
 import { type ShareService, createShareService, setShareServiceForTests } from './share-service';
 import { ShareStore } from './share-store';
 import {
@@ -40,14 +41,16 @@ function snapshot(deviceId: string, windowIds: string[]): StateSnapshotPayload {
 async function call(
   method: string,
   path: string,
-  options: { body?: unknown; headers?: Record<string, string> } = {}
+  options: { body?: unknown; headers?: Record<string, string>; via?: string } = {}
 ): Promise<{ status: number; body: Record<string, unknown>; headers: Headers }> {
   const init: RequestInit = { method, headers: { ...options.headers } };
   if (options.body !== undefined) {
     init.headers = { ...init.headers, 'Content-Type': 'application/json' };
     init.body = JSON.stringify(options.body);
   }
-  const response = await handleApiRequest(new Request(`http://localhost${path}`, init), fakeServer);
+  const req = new Request(`http://localhost${path}`, init);
+  if (options.via) requestDispatchContext.set(req, { uid: 'user-1', viaNodeId: options.via });
+  const response = await handleApiRequest(req, fakeServer);
   const text = await response.text();
   return {
     status: response.status,
@@ -110,6 +113,17 @@ describe('分享方 HTTP', () => {
     expect(created.body.password).toBe('secret123');
     expect(share.url).toBe(`https://site.example.com/s/${share.id}`);
     expect(share.state).toBe('active');
+    expect(share.issuedVia).toBe('self');
+  });
+
+  test('POST /api/share 经入口转发时记下入口节点', async () => {
+    const entry = 'a'.repeat(32);
+    const created = await call('POST', '/api/share', {
+      body: { deviceId: 'dev-1', windowId: '@1', password: 'secret123', expiresInMs: 3_600_000 },
+      via: entry,
+    });
+    expect(created.status).toBe(200);
+    expect((created.body.share as ShareRecord).issuedVia).toBe(entry);
   });
 
   test('POST /api/share 校验：口令过短 400、窗口不存在 404、body 非法 400', async () => {

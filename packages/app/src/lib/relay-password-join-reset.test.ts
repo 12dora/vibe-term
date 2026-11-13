@@ -60,6 +60,14 @@ async function fixture() {
   if (!enrolled.token) throw new Error('missing relay token');
   const token = decodeBase64url(enrolled.token);
   const tenantId = enrolled.tenant_id;
+  relay.runtime.tenants.upsertNode({
+    tenantId,
+    nodeId: identity.nodeIdHex,
+    edPk: identity.edPublicKey,
+    x25519Pk: identity.x25519PublicKey,
+    status: 'admitted',
+    now: relay.now(),
+  });
   const logKey = new Uint8Array(32).fill(4);
   const fetcher: FetchLike = async (input, init) => {
     const url = new URL(String(input));
@@ -82,7 +90,13 @@ async function fixture() {
   async function publish() {
     const remoteHead = relay.runtime.keyLog.head(tenantId);
     for (const row of auth.keyLogStore.list(user.userId).filter((row) => row.seq > remoteHead)) {
-      await appendOneJoinRecord({ ...transport, token, logKey, record: row });
+      await appendOneJoinRecord({
+        ...transport,
+        token,
+        logKey,
+        record: row,
+        identity: { nodeId: identity.nodeIdHex, edPrivateKey: identity.edPrivateKey },
+      });
     }
     const head = auth.keyLogStore.head(user.userId);
     const localUser = auth.userStore.getById(user.userId);

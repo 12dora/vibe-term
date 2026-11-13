@@ -147,6 +147,23 @@ describe('GET/POST /api/mesh/relay/password', () => {
     }
   });
 
+  test('POST next:null / empty is 400 MALFORMED', async () => {
+    const b = await boot();
+    try {
+      await attach(b);
+      for (const next of [null, '', undefined]) {
+        const res = await b.call('/api/mesh/relay/password', {
+          method: 'POST',
+          body: JSON.stringify({ url: RELAY_URL, next }),
+        });
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({ code: 'MALFORMED' });
+      }
+    } finally {
+      b.close();
+    }
+  });
+
   test('POST forwards to rotate and stores next on success', async () => {
     const calls: Array<{ url: string; token: string | null; body: Record<string, unknown> }> = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {

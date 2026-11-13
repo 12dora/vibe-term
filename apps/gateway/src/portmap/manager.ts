@@ -7,22 +7,25 @@ import {
   type UpdatePortMapRequest,
 } from '@vibeterm/shared';
 import type { PortMapErrorCode } from '@vibeterm/shared';
-import { eq } from 'drizzle-orm';
-import { config } from '../config';
 import { getDb } from '../db/client';
-import { tlsConfig } from '../db/schema';
-import { DEFAULT_TLS_PORT, TLS_CONFIG_ROW_ID } from '../tls/types';
 import { solePortMapPeers } from './binding';
 import { requestPeerExportRemoval } from './export-cleanup';
 import { startExportLeaseSweeper } from './export-lease';
 import { PortMapListener } from './listener';
 import { isPortFree } from './port-probe';
-import { PortMapStore, type PortMapStoreLike, defaultPortMapExportStore } from './store';
+import {
+  PortMapStore,
+  type PortMapStoreLike,
+  defaultPortMapExportStore,
+  onPortMapRowsRevoked,
+} from './store';
+import { selfServicePorts } from './target-policy';
 import {
   PORT_MAP_LEASE_SWEEP_MS,
   PORT_MAP_MAX_ROWS,
   type PortMapCounters,
   PortMapError,
+  type PortMapOrigin,
   type PortMapPeers,
   type PortMapRow,
   assertHost,
@@ -33,6 +36,7 @@ import {
   assertPort,
   createPortMapCounters,
   isLeaseExpired,
+  portMapOriginFields,
 } from './types';
 
 export type PortMapManagerDeps = {
@@ -60,27 +64,6 @@ function randomMapId(): string {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
-/** 本机 HTTPS 监听端口也不能被映射占用，否则下次重启时监听会失败。 */
-function tlsListenPort(): number | null {
-  try {
-    const row = getDb()
-      .select({ tlsPort: tlsConfig.tlsPort })
-      .from(tlsConfig)
-      .where(eq(tlsConfig.id, TLS_CONFIG_ROW_ID))
-      .get();
-    return row?.tlsPort ?? DEFAULT_TLS_PORT;
-  } catch {
-    return DEFAULT_TLS_PORT;
-  }
-}
-
-function defaultReservedPorts(): number[] {
-  const ports = [config.port, config.peerPort];
-  const tls = tlsListenPort();
-  if (tls !== null) ports.push(tls);
-  return ports;
-}
-
 export class PortMapManager {
   private readonly store: PortMapStoreLike;
   private readonly peers: () => PortMapPeers | null;
@@ -92,12 +75,13 @@ export class PortMapManager {
   private readonly sweepIntervalMs: number;
   private readonly entries = new Map<string, Entry>();
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
+  private offRevoked: (() => void) | null = null;
   private started = false;
 
   constructor(deps: PortMapManagerDeps) {
     this.store = deps.store;
     this.peers = deps.peers ?? solePortMapPeers;
-    this.reservedPorts = deps.reservedPorts ?? defaultReservedPorts;
+    this.reservedPorts = deps.reservedPorts ?? selfServicePorts;
     this.now = deps.now ?? Date.now;
     this.maxConnections = deps.maxConnections;
     this.peerStreamLimit = deps.peerStreamLimit;
@@ -109,6 +93,7 @@ export class PortMapManager {
   start(): void {
     if (this.started) return;
     this.started = true;
+    this.offRevoked = onPortMapRowsRevoked((rows) => this.forget(rows));
     let rows: PortMapRow[];
     try {
       rows = this.store.list();
@@ -164,12 +149,12 @@ export class PortMapManager {
     return this.toDto(this.require(id));
   }
 
-  create(input: CreatePortMapRequest): PortMapDto {
+  create(input: CreatePortMapRequest, origin?: PortMapOrigin): PortMapDto {
     this.sweepExpired();
     if (this.entries.size >= PORT_MAP_MAX_ROWS) {
       throw new PortMapError('limit_reached', `at most ${PORT_MAP_MAX_ROWS} port maps`);
     }
-    const row = this.buildRow(input);
+    const row = this.buildRow(input, origin);
     if (this.entries.has(row.id)) {
       throw new PortMapError('invalid_request', 'map id already exists');
     }
@@ -244,6 +229,18 @@ export class PortMapManager {
     this.store.remove(id);
   }
 
+  /** 行已被吊销级联从库里删掉：停监听、丢运行态，并尽力清 B 的放行行。 */
+  private forget(rows: readonly PortMapRow[]): void {
+    for (const row of rows) {
+      const entry = this.entries.get(row.id);
+      if (entry) {
+        this.stopEntry(entry);
+        this.entries.delete(row.id);
+      }
+      this.removePeerExport?.(row.targetNodeId, row.id).catch(() => undefined);
+    }
+  }
+
   probe(host: string, port: number): PortProbeResponse {
     const listenHost = assertHost(host, 'host');
     const listenPort = assertPort(port, 'port');
@@ -262,6 +259,8 @@ export class PortMapManager {
   stop(): void {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
     this.sweepTimer = null;
+    this.offRevoked?.();
+    this.offRevoked = null;
     for (const entry of this.entries.values()) this.stopEntry(entry);
     this.entries.clear();
     this.started = false;
@@ -314,7 +313,7 @@ export class PortMapManager {
     entry.error = null;
   }
 
-  private buildRow(input: CreatePortMapRequest): PortMapRow {
+  private buildRow(input: CreatePortMapRequest, origin?: PortMapOrigin): PortMapRow {
     const listenHost =
       input.listenHost === undefined ? '127.0.0.1' : assertHost(input.listenHost, 'listenHost');
     const targetHost =
@@ -334,6 +333,7 @@ export class PortMapManager {
       ...(input.leaseMs === undefined
         ? {}
         : { leaseExpiresAt: now + assertLeaseMs(input.leaseMs, 'leaseMs') }),
+      ...portMapOriginFields(origin),
     };
   }
 

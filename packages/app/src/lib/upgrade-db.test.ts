@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathExists } from './fs-utils';
@@ -31,6 +31,7 @@ describe('restoreDbTrio', () => {
     expect(await readFile(destDb, 'utf8')).toBe('old-db');
     expect(await pathExists(`${destDb}-wal`)).toBe(false);
     expect(await pathExists(`${destDb}-shm`)).toBe(false);
+    expect((await lstat(destDb)).mode & 0o777).toBe(0o600);
   });
 
   test('restores wal and shm when the backup contains them', async () => {
@@ -66,6 +67,8 @@ describe('copyDbTrio', () => {
     expect(copied).toHaveLength(2);
     expect(await readFile(join(dest, 'vibeterm.db'), 'utf8')).toBe('db');
     expect(await pathExists(join(dest, 'vibeterm.db-shm'))).toBe(false);
+    expect((await lstat(join(dest, 'vibeterm.db'))).mode & 0o777).toBe(0o600);
+    expect((await lstat(join(dest, 'vibeterm.db-wal'))).mode & 0o777).toBe(0o600);
   });
 });
 

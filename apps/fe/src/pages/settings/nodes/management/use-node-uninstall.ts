@@ -11,6 +11,7 @@
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { NodeRow } from '@/node/mesh-nodes';
+import type { RelayRekeyResult } from '@/node/relay-rekey';
 import { defaultApiClient } from '@vibeterm/api-client';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import type { MeshUninstallErrorCode } from '@vibeterm/shared';
@@ -18,6 +19,7 @@ import { compareSemver } from '@vibeterm/shared';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { type RekeyDeps, reportRekey, revokeAndRekey } from './relay-rekey-after-revoke';
 import type {
   NodeUninstallController,
   ResolvedMode,
@@ -223,6 +225,36 @@ export function uninstallSummaryToast(t: Translate, summary: UninstallBatchSumma
   else toast.error(text);
 }
 
+/**
+ * 整批一次凭据：签名者只活在 `withSigner` 回调里，返回即清零。
+ * 返回中继令牌刷新的结论，由调用方在批次收尾之后再落提示。
+ */
+async function uninstallBatchWithRekey(
+  rekeyDeps: RekeyDeps,
+  batch: Omit<UninstallBatchParams, 'revoke'>
+): Promise<RelayRekeyResult | null> {
+  const { api, mode, t } = rekeyDeps;
+  const outcome = await rekeyDeps.prompt.withSigner(
+    (signer) =>
+      revokeAndRekey(rekeyDeps, signer, async () => {
+        const value = await runUninstallBatch({
+          ...batch,
+          revoke: async (row) => {
+            const attempt = await revokeNodeRecord(signer, row, '', { api, mode, t });
+            // 欠着 `meta-key` 换代也算移除成功（节点已经不在成员表里），
+            // 那一条由节点页的重试回路继续送。
+            return revokeLanded(attempt);
+          },
+        });
+        return { value, landed: value.revoked > 0 };
+      }),
+    { purpose: 'revoke' }
+  );
+  if (!outcome) return null;
+  uninstallSummaryToast(t, outcome.value);
+  return outcome.rekey;
+}
+
 /** 卸载只用到签名与吊销那几样依赖；`mode` 未确认（缺 uid / kdf）时整个动作不可用。 */
 export interface UninstallDeps {
   api: AuthApi;
@@ -268,36 +300,25 @@ export function useNodeUninstall(
     }
     setRunning(true);
     void (async () => {
+      let rekey: RelayRekeyResult | null = null;
       try {
-        // 整批一次凭据：签名者只活在这个回调里，返回即清零。
-        const summary = await prompt.withSigner(
-          (signer) =>
-            runUninstallBatch({
-              targets,
-              io,
-              t,
-              onScheduled: (nodeId) => setScheduledIds((prev) => new Set(prev).add(nodeId)),
-              onFailed: (name, message) => toast.error(`${name}：${message}`),
-              canWrite: () => writableRef.current,
-              revoke: async (row) => {
-                const attempt = await revokeNodeRecord(signer, row, '', {
-                  api,
-                  mode,
-                  t,
-                });
-                // 欠着 `meta-key` 换代也算移除成功（节点已经不在成员表里），
-                // 那一条由节点页的重试回路继续送。
-                return revokeLanded(attempt);
-              },
-            }),
-          { purpose: 'revoke' }
+        rekey = await uninstallBatchWithRekey(
+          { api, mode, t, prompt },
+          {
+            targets,
+            io,
+            t,
+            onScheduled: (nodeId) => setScheduledIds((prev) => new Set(prev).add(nodeId)),
+            onFailed: (name, message) => toast.error(`${name}：${message}`),
+            canWrite: () => writableRef.current,
+          }
         );
-        if (summary) uninstallSummaryToast(t, summary);
       } finally {
         setRunning(false);
         setPlan(null);
         onChanged();
       }
+      await reportRekey({ api, mode, t, prompt }, rekey);
     })();
   }, [api, io, mode, onChanged, plan, prompt, t]);
 

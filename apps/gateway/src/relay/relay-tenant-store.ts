@@ -1,14 +1,16 @@
+import { bytesEqual } from '@vibeterm/shared/auth';
 import type { RelayQuota } from '@vibeterm/shared/relay';
 import { and, eq, isNull, lt, lte, or, sql } from 'drizzle-orm';
-import { toBuffer, toBytes } from '../auth/binary';
+import { toBuffer } from '../auth/binary';
 import type { AuthDb } from '../auth/types';
 import { relayEnrollments, relayNodes, relayTenants } from '../db/schema';
-import { parseRelayQuotaJson, serializeRelayQuota } from './relay-quota';
+import { serializeRelayQuota } from './relay-quota';
+import { type RelayTenantRow, toEnrollment, toNode, toTenant } from './relay-tenant-mappers';
 import {
-  RELAY_PREV_TOKEN_LIMIT,
-  relayPreviousTokens,
   relayTokenHashAccepted,
   relayTokenHashState,
+  relayTokensAfterReissue,
+  relayTokensAfterRevoke,
 } from './relay-token-grace';
 import type {
   RelayEnrollmentRecord,
@@ -17,87 +19,7 @@ import type {
   RelayTenantRecord,
 } from './types';
 
-type TenantRow = typeof relayTenants.$inferSelect;
-type NodeRow = typeof relayNodes.$inferSelect;
-type EnrollmentRow = typeof relayEnrollments.$inferSelect;
-
-function readPreviousTokens(row: TenantRow) {
-  if (row.previousTokensJson == null) return relayPreviousTokens(row);
-  try {
-    const parsed: unknown = JSON.parse(row.previousTokensJson);
-    if (!Array.isArray(parsed)) return [];
-    const ring = parsed
-      .filter(
-        (entry) =>
-          entry &&
-          typeof entry.hash === 'string' &&
-          typeof entry.issued_at === 'number' &&
-          Number.isFinite(entry.issued_at)
-      )
-      .slice(0, RELAY_PREV_TOKEN_LIMIT)
-      .map((entry) => ({ hash: entry.hash as string, issued_at: entry.issued_at as number }));
-    const newest = ring[0];
-    if (newest?.hash !== row.prevTokenHash || newest?.issued_at !== row.prevTokenIssuedAt) {
-      return relayPreviousTokens(row);
-    }
-    return ring;
-  } catch {
-    return [];
-  }
-}
-
-function toTenant(row: TenantRow): RelayTenantRecord {
-  return {
-    id: row.id,
-    rootPublicKey: toBytes(row.rootPublicKey),
-    rootEpoch: row.rootEpoch,
-    tokenHash: row.tokenHash,
-    tokenEpoch: row.tokenEpoch,
-    prevTokenHash: row.prevTokenHash,
-    prevTokenIssuedAt: row.prevTokenIssuedAt,
-    previousTokens: readPreviousTokens(row),
-    quota: parseRelayQuotaJson(row.quotaJson),
-    label: row.label,
-    kicked: row.kicked,
-    createdAt: row.createdAt,
-    lastSeenAt: row.lastSeenAt,
-    bytesIn: row.bytesIn,
-    bytesOut: row.bytesOut,
-    keyLogHeadSeq: BigInt(row.keyLogHeadSeq),
-    kdfParamsJson: row.kdfParamsJson,
-    sealedPack: row.sealedPack ? toBytes(row.sealedPack) : null,
-    sealedPackUpdatedAt: row.sealedPackUpdatedAt,
-  };
-}
-
-function toNode(row: NodeRow): RelayNodeRecord {
-  return {
-    tenantId: row.tenantId,
-    nodeId: row.nodeId,
-    edPk: toBytes(row.edPk),
-    x25519Pk: toBytes(row.x25519Pk),
-    status: row.status as RelayNodeStatusValue,
-    admitSeq: row.admitSeq,
-    lastSeenAt: row.lastSeenAt,
-    protoVersion: row.protoVersion,
-    clientVersion: row.clientVersion,
-    createdAt: row.createdAt,
-  };
-}
-
-function toEnrollment(row: EnrollmentRow): RelayEnrollmentRecord {
-  return {
-    id: row.id,
-    tenantId: row.tenantId,
-    enrollPk: toBytes(row.enrollPk),
-    authorizationBytes: toBytes(row.authorizationBytes),
-    authorizationSig: toBytes(row.authorizationSig),
-    expiresAt: row.expiresAt,
-    usedAt: row.usedAt,
-    nodeId: row.nodeId,
-    createdAt: row.createdAt,
-  };
-}
+export type RelayNodeWriteOutcome = 'created' | 'unchanged' | 'promoted' | 'conflict' | 'revoked';
 
 export class RelayTenantStore {
   constructor(private readonly db: AuthDb) {}
@@ -175,12 +97,7 @@ export class RelayTenantStore {
   }): void {
     const current = this.get(input.tenantId);
     const previousTokens =
-      input.keepPrevious && current
-        ? [
-            { hash: current.tokenHash, issued_at: input.now },
-            ...relayPreviousTokens(current),
-          ].slice(0, RELAY_PREV_TOKEN_LIMIT)
-        : [];
+      input.keepPrevious && current ? relayTokensAfterReissue(current, input.now) : [];
     this.db
       .update(relayTenants)
       .set({
@@ -193,6 +110,26 @@ export class RelayTenantStore {
         lastSeenAt: input.now,
       })
       .where(eq(relayTenants.id, input.tenantId))
+      .run();
+  }
+
+  /**
+   * 根签名的 `revoke-node` 落库：吊销前签发的全部令牌（含当前）立刻对凭令牌的 HTTP 接口失效，
+   * 只剩 uplink 宽限（uplink 另要已准入节点签名，被吊销节点用不了）；当前令牌仍是当前令牌，
+   * 但下一次 enroll 必定换发，且不再给它 HTTP 宽限。
+   */
+  restrictTokensAfterRevoke(tenantId: string, now: number): void {
+    const current = this.get(tenantId);
+    if (!current) return;
+    const ring = relayTokensAfterRevoke(current, now);
+    this.db
+      .update(relayTenants)
+      .set({
+        prevTokenHash: ring[0]?.hash ?? null,
+        prevTokenIssuedAt: ring[0]?.issued_at ?? null,
+        previousTokensJson: JSON.stringify(ring),
+      })
+      .where(eq(relayTenants.id, tenantId))
       .run();
   }
 
@@ -319,7 +256,7 @@ export class RelayTenantStore {
     tenantId: string,
     patch: { quota?: RelayQuota | null; label?: string | null }
   ): RelayTenantRecord | null {
-    const values: Partial<TenantRow> = {};
+    const values: Partial<RelayTenantRow> = {};
     if (patch.quota !== undefined) {
       values.quotaJson = patch.quota === null ? null : serializeRelayQuota(patch.quota);
     }
@@ -386,7 +323,12 @@ export class RelayTenantStore {
     return this.listNodes(tenantId).filter((node) => node.status !== 'revoked').length;
   }
 
-  /** `revoked` 是终态：任何 upsert 都不能把它抬回 pending/admitted（重放旧 admit 的入口）。 */
+  /**
+   * 准入注册表写入口：节点公钥**只在建行时写入**，之后任何路径都不能改（中继验不了 passkey
+   * 签名，公钥只能来自建行那一次）。同一 node_id 带不同公钥 → `conflict`。
+   *
+   * 状态只升不降：pending → admitted；`revoked` 是终态，只能经 `patchNode` 由根签名的 revoke 写入。
+   */
   upsertNode(input: {
     tenantId: string;
     nodeId: string;
@@ -395,36 +337,46 @@ export class RelayTenantStore {
     status: RelayNodeStatusValue;
     admitSeq?: number | null;
     now: number;
-  }): RelayNodeRecord {
+  }): { node: RelayNodeRecord; outcome: RelayNodeWriteOutcome } {
     const existing = this.getNode(input.tenantId, input.nodeId);
-    if (existing?.status === 'revoked') return existing;
-    this.db
-      .insert(relayNodes)
-      .values({
-        tenantId: input.tenantId,
-        nodeId: input.nodeId,
-        edPk: toBuffer(input.edPk),
-        x25519Pk: toBuffer(input.x25519Pk),
-        status: input.status,
-        admitSeq: input.admitSeq ?? null,
-        lastSeenAt: null,
-        protoVersion: null,
-        clientVersion: null,
-        createdAt: input.now,
-      })
-      .onConflictDoUpdate({
-        target: [relayNodes.tenantId, relayNodes.nodeId],
-        set: {
+    if (!existing) {
+      this.db
+        .insert(relayNodes)
+        .values({
+          tenantId: input.tenantId,
+          nodeId: input.nodeId,
           edPk: toBuffer(input.edPk),
           x25519Pk: toBuffer(input.x25519Pk),
           status: input.status,
-          ...(input.admitSeq === undefined ? {} : { admitSeq: input.admitSeq }),
-        },
+          admitSeq: input.admitSeq ?? null,
+          lastSeenAt: null,
+          protoVersion: null,
+          clientVersion: null,
+          createdAt: input.now,
+        })
+        .run();
+      const node = this.getNode(input.tenantId, input.nodeId);
+      if (!node) throw new Error('relay node insert failed');
+      return { node, outcome: 'created' };
+    }
+    if (existing.status === 'revoked') return { node: existing, outcome: 'revoked' };
+    if (!bytesEqual(existing.edPk, input.edPk) || !bytesEqual(existing.x25519Pk, input.x25519Pk)) {
+      return { node: existing, outcome: 'conflict' };
+    }
+    if (existing.status === 'admitted' || input.status !== 'admitted') {
+      return { node: existing, outcome: 'unchanged' };
+    }
+    this.db
+      .update(relayNodes)
+      .set({
+        status: 'admitted',
+        ...(input.admitSeq === undefined ? {} : { admitSeq: input.admitSeq }),
       })
+      .where(and(eq(relayNodes.tenantId, input.tenantId), eq(relayNodes.nodeId, input.nodeId)))
       .run();
     const node = this.getNode(input.tenantId, input.nodeId);
-    if (!node) throw new Error('relay node upsert failed');
-    return node;
+    if (!node) throw new Error('relay node update failed');
+    return { node, outcome: 'promoted' };
   }
 
   patchNode(
@@ -442,6 +394,33 @@ export class RelayTenantStore {
       .update(relayNodes)
       .set(patch)
       .where(and(eq(relayNodes.tenantId, tenantId), eq(relayNodes.nodeId, nodeId)))
+      .run();
+  }
+
+  /**
+   * 根签名 revoke 落库：已有行改为 `revoked`；中继从没见过的 node_id 也插一条 `revoked` 行
+   * （公钥置零，终态行不参与验签），它以后再也无法被 admit 或 redeem。
+   */
+  markNodeRevoked(tenantId: string, nodeId: string, now: number): void {
+    if (this.getNode(tenantId, nodeId)) {
+      this.patchNode(tenantId, nodeId, { status: 'revoked' });
+      return;
+    }
+    const zero = new Uint8Array(32);
+    this.db
+      .insert(relayNodes)
+      .values({
+        tenantId,
+        nodeId,
+        edPk: toBuffer(zero),
+        x25519Pk: toBuffer(zero),
+        status: 'revoked',
+        admitSeq: null,
+        lastSeenAt: null,
+        protoVersion: null,
+        clientVersion: null,
+        createdAt: now,
+      })
       .run();
   }
 

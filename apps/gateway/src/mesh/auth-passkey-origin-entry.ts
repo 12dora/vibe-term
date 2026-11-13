@@ -55,7 +55,17 @@ function relayUrls(): string[] {
   );
 }
 
-/** 本实例对外提供的全部入口地址（未去重，比对时按规范化 origin 判等）。 */
+/** 本机就是中继时，中继自己的公网地址。 */
+function ownRelayUrl(): string | null {
+  return config.roles.relay ? config.relayPublicUrl || null : null;
+}
+
+/** 只属于本实例自己的入口：站点 URL、隧道、本机中继；不含其它已接入的中继。 */
+export function ownEntryOrigins(): Array<string | null> {
+  return [config.baseUrl || null, siteUrl(), tunnelUrl(), ownRelayUrl()];
+}
+
+/** 通行密钥 origin 范围：站点 URL、隧道与已接入的中继（未去重，比对时按规范化 origin 判等）。 */
 export function defaultEntryOrigins(_deps: EntryOriginDeps = {}): Array<string | null> {
   return [config.baseUrl || null, siteUrl(), tunnelUrl(), ...relayUrls()];
 }

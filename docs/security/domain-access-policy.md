@@ -4,7 +4,7 @@
 
 ## 背景
 
-节点加入 mesh 后，入口（本机公网地址、同时担任 node 的中继、或隧道）会把流量转发到各节点；同时节点自己也可能被配置成公开域名（tunnel、反代、自签公开地址）。有些机器只希望在局域网里被人用，公网域名只用来跑 mesh 自身的服务流量。每个节点因此有一个开关：关掉之后，**经公开域名进来的用户流量**被拒，局域网 IP / localhost / `.local` 与 mesh 服务路由照常。
+节点加入 mesh 后，入口（本机公网地址、同时担任 node 的中继、或隧道）会把流量转发到各节点；同时节点自己也可能被配置成公开域名（tunnel、反代、自签公开地址）。有些机器只希望在局域网里被人用，公网域名只用来跑 mesh 自身的服务流量。每个节点因此有一个开关：关掉之后，**经公开域名进来的用户流量**被拒，局域网 IP / localhost / 本机 mDNS 名（`<hostname>.local`）与 mesh 服务路由照常。
 
 默认 `allowed = true`，不开启就没有任何行为变化。
 
@@ -24,13 +24,18 @@
 | `/ws`、`/n/:id/ws`、`/mesh/ws` | 同上 JSON 403（在 upgrade 之前拒绝） |
 | 其它（SPA、静态资源…） | `403` `text/plain`：`Domain access is disabled for this host.` |
 
-**源地址豁免**（这些来源即使带着域名 Host 也照常可用）：loopback、RFC1918 私网、链路本地、CGNAT `100.64/10`（Tailscale）、IPv6 ULA / 链路本地 / loopback，以及它们的 IPv4-mapped 写法。源地址取自 `client-ip.ts`：默认是 socket 对端地址；`VIBETERM_TRUST_PROXY` 开启时按 `cf-connecting-ip → x-real-ip → XFF 最后一段`。解析不出源地址时按公网处理（fail closed）。**反向代理部署必须开启信任代理头**，否则判定的是代理自身的 socket 地址（通常是私网，会误放行）。
+**源地址豁免**（这些来源即使带着域名 Host 也照常可用）：loopback、RFC1918 私网、链路本地、CGNAT `100.64/10`（Tailscale）、IPv6 ULA / 链路本地 / loopback，以及它们的 IPv4-mapped 写法。源地址取自 `client-ip.ts` 的 `trustedSourceIp`，只有两种来源算数：
+
+- 直连：请求没有任何经代理的迹象（`forwarded`、`x-forwarded-for`、`x-real-ip`、`cf-connecting-ip`、`x-forwarded-proto`、`x-forwarded-host`、`via`、`true-client-ip`、`x-client-ip`），按 socket 对端地址判；
+- 受信反代那一跳：`VIBETERM_TRUST_PROXY` 开启且 socket 对端是回环 / 内网时，按 `clientIpFromRequest` 解析出的客户端地址判（只读 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头，缺省 `x-forwarded-for` 取最右一项，隧道向导写 `cf-connecting-ip`）。
+
+其余情况一律按公网处理（fail closed）：经代理却没开信任代理头时，代理自己的回环 / 内网 socket **不**算本机来源；配置头缺失或不合法时同样拒绝。这里不看 `Host`，经未配置的局域网域名直连的内网客户端照常豁免。**反向代理部署要开启信任代理头并选对头**，否则关闭开关后所有经代理的访问都会被拒。
 
 **服务白名单**（公网仍可访问）：`/relay/uplink`、`/healthz`、`GET /api/relay/health`、`/.well-known/acme-challenge/*`、`POST /api/relay/enroll`、`POST/GET /api/relay/tenants/:id/enrollments`（含 redeem）、`GET /api/relay/tenants/:id/kdf`。所以中继 uplink、健康检查、ACME 续期与加入码兑换不会被这个开关打断。没有 `/hub/uplink` 或 `/api/hub/*`。peer 入站（`via=<nodeId>`）不经过这个守卫。Cloudflare Access 豁免路径见 `apps/gateway/src/tunnel/access-paths.ts`（同样不含 Hub 路径）。
 
 ### `hosts` 与 `viaDomain`（仅供界面提示）
 
-`listDomainAccessHosts()` 汇总：`VIBETERM_BASE_URL`（`config.baseUrl`）、数据库里的 `site_settings.site_url` 与 mesh 投影后的有效地址（两者都算）、`tunnel_config.hostname`、运行中隧道的 `publicUrl`。不含已删除的 `VIBETERM_HUB_PUBLIC_URL` / `mesh_hubs`，也不读证书 SAN。规范化后小写、去尾点、剥默认端口；IP 字面量、`localhost`、`*.local` 不进集合。
+`listDomainAccessHosts()` 汇总：`VIBETERM_BASE_URL`（`config.baseUrl`）、数据库里的 `site_settings.site_url` 与 mesh 投影后的有效地址（两者都算）、`tunnel_config.hostname`、运行中隧道的 `publicUrl`。不含已删除的 `VIBETERM_HUB_PUBLIC_URL` / `mesh_hubs`，也不读证书 SAN。规范化后小写、去尾点、剥默认端口；IP 字面量、`localhost`、本机 mDNS 名不进集合（其它 `.local` 名按普通域名处理）。
 
 `viaDomain` = 当前请求的有效 URL（`publicRequestUrl(req)`，仅在 `VIBETERM_TRUST_PROXY` 且 `via=self` 时采信 `X-Forwarded-Host`）命中 `hosts`。它只用来在关开关时提醒「你正经域名访问，关闭后会失联」，不参与拦截。
 

@@ -9,12 +9,19 @@ export function isCanonicalIpv4(host: string): boolean {
   return parts.length === 4 && parts.every((part) => CANONICAL_IPV4_OCTET.test(part));
 }
 
-export function isPrivateIpv4(a: number, b: number): boolean {
-  if (a === 0 || a === 10 || a === 127) return true;
-  if (a === 169 && b === 254) return true;
+function isPrivateIpv4Block(a: number, b: number): boolean {
+  if (a === 10) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a >= 224) return true;
   return false;
+}
+
+export function isPrivateIpv4(a: number, b: number): boolean {
+  if (a === 0 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  return isPrivateIpv4Block(a, b);
 }
 
 export function parseIpv6ToBytes(text: string): Uint8Array | null {

@@ -1,5 +1,7 @@
 import type { Server } from 'bun';
+import { runWithFileAccessPrincipal } from '../auth/token-scope';
 import { t } from '../i18n';
+import { getMeshRequestContext } from '../mesh/mesh-deps';
 import { portMapRoutes } from '../portmap/routes';
 import { shareAccessRoutes, shareRoutes } from '../share';
 import { transferRoutes } from '../transfer/routes';
@@ -58,9 +60,14 @@ export function handleApiRequest(
   _server?: Server<unknown>,
   systemApiHandler?: SystemApiHandler
 ): Response | Promise<Response> {
-  const path = new URL(req.url).pathname;
-  const ctx: ApiRouteContext = { server: _server, path, systemApiHandler };
-  const matched = dispatchRoutes(req, path, apiRoutes, ctx);
-  if (matched) return matched;
-  return json({ error: t('apiError.notFound'), code: 'route_not_found' }, 404);
+  return runWithFileAccessPrincipal(
+    getMeshRequestContext(req).tokenId ? 'token' : 'session',
+    () => {
+      const path = new URL(req.url).pathname;
+      const ctx: ApiRouteContext = { server: _server, path, systemApiHandler };
+      const matched = dispatchRoutes(req, path, apiRoutes, ctx);
+      if (matched) return matched;
+      return json({ error: t('apiError.notFound'), code: 'route_not_found' }, 404);
+    }
+  );
 }

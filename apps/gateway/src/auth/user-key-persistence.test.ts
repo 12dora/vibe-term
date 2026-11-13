@@ -24,9 +24,12 @@ import {
 } from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
 import { accessTokenEvents, nodeIdentity, userKeyLog } from '../db/schema';
+import { PortMapStore, onPortMapRowsRevoked } from '../portmap/store';
+import { ShareStore, onSharesRevoked } from '../share/share-store';
 import { AccessTokenService, onAccessTokenRevoked } from './access-tokens';
 import { KeyLogStore } from './key-log-store';
 import { NodeSessionStore } from './node-session-store';
+import { withKeyLogCommitSideEffects } from './revocation-after-commit';
 import { createMigratedAuthDb } from './test-db';
 import {
   type AppliedKeyLogStep,
@@ -236,7 +239,7 @@ describe('user-key-persistence', () => {
     }
   });
 
-  test('persistApplied rotate-root-keep keeps keys and sessions; nested totp sets totpRecordSeq', () => {
+  test('persistApplied rotate-root-keep keeps keys, revokes sessions; nested totp sets totpRecordSeq', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const stores = openStores(db);
@@ -284,13 +287,21 @@ describe('user-key-persistence', () => {
           },
         },
       });
-      persistApplied(stores, 'user-1', makeStep('user-1', 'rotate-root-keep', { payload }), 3_000);
+      persistApplied(
+        stores,
+        'user-1',
+        makeStep('user-1', 'rotate-root-keep', {
+          payload,
+          effects: [{ type: 'revokeAllSessions' }],
+        }),
+        3_000
+      );
       expect(stores.userStore.listKeysByUser('user-1')).toHaveLength(1);
       expect(stores.userStore.listCertsByUser('user-1')).toHaveLength(1);
       expect(stores.userStore.getById('user-1')?.totpRecordSeq).toBe(4);
       expect(
         stores.nodeSessionStore.verify(session.sid, { viaNodeId: 'self', now: 3_000 }).ok
-      ).toBe(true);
+      ).toBe(false);
 
       persistApplied(
         stores,
@@ -335,6 +346,94 @@ describe('user-key-persistence', () => {
       expect(proto.userStore.getById('user-1')?.keyLogHeadSeq).toBe(0);
       expect(proto.userStore.getById('user-1')?.totpRecordSeq).toBe(3);
     } finally {
+      close();
+    }
+  });
+
+  test('rolled-back key log commit does not tear down shares, port maps or token listeners', () => {
+    const { db, close } = createMigratedAuthDb();
+    const sharesFired: string[][] = [];
+    const mapsFired: string[][] = [];
+    const tokensFired: string[] = [];
+    const offShare = onSharesRevoked((ids) => sharesFired.push([...ids]));
+    const offMaps = onPortMapRowsRevoked((rows) => mapsFired.push(rows.map((row) => row.id)));
+    const offTokens = onAccessTokenRevoked((id) => tokensFired.push(id));
+    try {
+      const proto = openStores(db);
+      seedUser(proto.userStore);
+      const now = 2_000;
+      new ShareStore(db).insert({
+        id: 'share-1',
+        name: 'share-1',
+        deviceId: 'dev-1',
+        windowId: '@1',
+        windowName: 'main',
+        state: 'active',
+        endReason: null,
+        origin: 'https://example.com',
+        url: 'https://example.com/share/share-1',
+        recordLog: false,
+        logBytes: 0,
+        logTruncated: false,
+        logSeq: 0,
+        logPurgedAt: null,
+        createdAt: now,
+        expiresAt: null,
+        endedAt: null,
+        issuedVia: 'self',
+        passwordHash: 'hash',
+      });
+      const token = new AccessTokenService(db, { now: () => now }).create('user-1', {
+        name: 'ci',
+        scopes: ['forward'],
+        expiresInDays: null,
+      });
+      new PortMapStore(db).insert({
+        id: 'map-1',
+        name: 'map-1',
+        listenHost: '127.0.0.1',
+        listenPort: 15_432,
+        targetNodeId: 'd'.repeat(32),
+        targetHost: '127.0.0.1',
+        targetPort: 5432,
+        paused: false,
+        createdAt: now,
+        updatedAt: now,
+        createdByTokenId: token.token.id,
+      });
+      const step = makeStep('user-1', 'rotate-root-keep', {
+        payload: encodeRotateRootKeepPayload({
+          root_public_key: new Uint8Array(32).fill(5),
+          kdf_params: generateKdfParams(),
+          totp: null,
+        }),
+        effects: [{ type: 'revokeAllSessions' }],
+      });
+      expect(() =>
+        withKeyLogCommitSideEffects(db, () => {
+          db.transaction((tx) => {
+            persistApplied(
+              createTxStores(tx, proto.userStore, proto.keyLogStore, proto.nodeSessionStore),
+              'user-1',
+              step,
+              now
+            );
+            throw new Error('rollback');
+          });
+        })
+      ).toThrow('rollback');
+      expect(sharesFired).toEqual([]);
+      expect(mapsFired).toEqual([]);
+      expect(tokensFired).toEqual([]);
+      expect(new ShareStore(db).get('share-1')?.state).toBe('active');
+      expect(new AccessTokenService(db, { now: () => now }).isActive(token.token.id, now)).toBe(
+        true
+      );
+      expect(new PortMapStore(db).get('map-1')).not.toBeNull();
+    } finally {
+      offShare();
+      offMaps();
+      offTokens();
       close();
     }
   });

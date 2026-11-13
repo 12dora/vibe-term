@@ -37,6 +37,16 @@ export const RELAY_ENROLL_FAILURE_WINDOW_MS = 15 * 60 * 1000;
  */
 export const RELAY_PREV_TOKEN_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** 每租户密钥日志上限：行数与已存字节数，超出回 507 `TENANT_LOG_FULL`。 */
+export const RELAY_TENANT_LOG_MAX_ROWS = 100_000;
+export const RELAY_TENANT_LOG_MAX_BYTES = 64 * 1024 * 1024;
+/** 旧版 CLI 口令加入：根签名 admit 之后这么久内，紧随其后的一条令牌追加归属给该节点。 */
+export const RELAY_JOIN_FOLLOWUP_WINDOW_MS = 2 * 60 * 1000;
+/** redeem 响应里随带的日志前缀上限（字节）；更长的部分由加入方分页 `GET …/keylog` 取。 */
+export const RELAY_REDEEM_KEYLOG_MAX_BYTES = 8 * 1024 * 1024;
+/** 未设置 `max_tenants`（null）时的默认租户上限；运营者可在管理面或 `VIBETERM_RELAY_MAX_TENANTS` 覆盖。 */
+export const RELAY_DEFAULT_MAX_TENANTS = 50;
+
 export const RELAY_TENANT_ID_BYTES = 16;
 export const RELAY_TOKEN_BYTES = 32;
 export const RELAY_ADMIN_TOKEN_BYTES = 32;
@@ -68,6 +78,8 @@ export type RelayRuntimeConfig = {
   peerPort?: number;
   /** `VIBETERM_RELAY_ADMIN_TOKEN`；缺失时首启生成。 */
   adminToken?: string | null;
+  /** `VIBETERM_RELAY_MAX_TENANTS`：管理面未设租户上限时的默认值；缺省 `RELAY_DEFAULT_MAX_TENANTS`。 */
+  defaultMaxTenants?: number;
   version?: string;
 };
 
@@ -133,6 +145,8 @@ export type RelayUpgradeServer = {
 export type RelayUplinkSocketData = {
   kind: typeof RELAY_UPLINK_WS_KIND;
   clientIp?: string;
+  /** 升级前已占用的未认证名额键（`clientLimiterKey`）；null 只计全局上限。 */
+  preauthKey: string | null;
 };
 
 export type RelayServerWebSocket = {

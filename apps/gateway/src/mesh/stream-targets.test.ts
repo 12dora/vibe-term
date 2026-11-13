@@ -2,6 +2,7 @@ import { afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
 import {
   CLEAR_SHARE_HEADER,
+  CLIENT_SOURCE_HEADER,
   MESH_PEER_HEADER,
   SESSION_RENEWED_HEADER,
 } from '@vibeterm/shared/http/mesh-headers';
@@ -16,11 +17,7 @@ import { runMigrations } from '../db/migrate';
 import { createGatewayRuntime } from '../runtime';
 import { WebSocketServer } from '../ws';
 import { adaptWsStream } from './adapted-ws-stream';
-import {
-  CLIENT_SOURCE_HEADER,
-  CLIENT_SOURCE_LOCAL,
-  waivesPasskeySecondFactor,
-} from './client-source';
+import { waivesPasskeySecondFactor } from './client-source';
 import {
   httpHeadTimeoutMs,
   setHttpHeadDeadlineMs,
@@ -501,7 +498,7 @@ describe('http/ws stream targets', () => {
         'x-tmex-via': 'forged',
         'content-type': 'application/json',
         'x-custom': 'keep',
-        [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL,
+        [CLIENT_SOURCE_HEADER.name]: 'local',
       },
     });
     expect(res.status).toBe(200);
@@ -515,25 +512,27 @@ describe('http/ws stream targets', () => {
     expect(openHeaders['x-tmex-via']).toBeUndefined();
     expect(openHeaders['content-type']).toBe('application/json');
     expect(openHeaders['x-custom']).toBe('keep');
-    expect(openHeaders[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(openHeaders[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
   });
 
-  test('stripForwardedRequestHeaders 保留 x-vibeterm-client-source', () => {
+  test('stripForwardedRequestHeaders 剥掉 x-vibeterm-client-source（新旧两种拼写）', () => {
     const out = stripForwardedRequestHeaders({
       cookie: 'secret=1',
       authorization: 'Bearer x',
-      [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL,
+      [CLIENT_SOURCE_HEADER.name]: 'local',
+      [CLIENT_SOURCE_HEADER.legacy]: 'local',
       'x-forwarded-for': '1.2.3.4',
       'x-custom': 'keep',
     });
-    expect(out[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
+    expect(out[CLIENT_SOURCE_HEADER.legacy]).toBeUndefined();
     expect(out['x-custom']).toBe('keep');
     expect(out.cookie).toBeUndefined();
     expect(out.authorization).toBeUndefined();
     expect(out['x-forwarded-for']).toBeUndefined();
   });
 
-  test('acceptHttpStream 对公开登录路径允许 auth:null，并带上 x-vibeterm-client-source', async () => {
+  test('acceptHttpStream 对公开登录路径允许 auth:null，且不带 x-vibeterm-client-source', async () => {
     for (const path of ['/api/auth/mode', '/api/auth/passkey/login/options']) {
       const [a, b] = createInMemoryLinkPair();
       const dispatched = { path: null as string | null, source: null as string | null };
@@ -557,10 +556,10 @@ describe('http/ws stream targets', () => {
         path,
         origin: 'http://localhost',
         auth: null,
-        headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
+        headers: { [CLIENT_SOURCE_HEADER.name]: 'local' },
       });
       expect(res.status).toBe(200);
-      expect(dispatched).toEqual({ path, source: CLIENT_SOURCE_LOCAL });
+      expect(dispatched).toEqual({ path, source: null });
     }
   });
 
@@ -632,7 +631,7 @@ describe('http/ws stream targets', () => {
   });
 
   test.each([CLIENT_SOURCE_HEADER.name, CLIENT_SOURCE_HEADER.legacy])(
-    'acceptHttpStream 把 %s 带到 inbound peer Request',
+    'acceptHttpStream 剥掉 inbound peer Request 上的 %s，目标不豁免通行密钥',
     async (headerName) => {
       const [a, b] = createInMemoryLinkPair();
       const seen = { header: null as string | null, waived: false, via: '' };
@@ -659,11 +658,11 @@ describe('http/ws stream targets', () => {
         path: '/api/auth/mode',
         origin: 'http://localhost',
         auth: 'sid',
-        headers: { [headerName]: CLIENT_SOURCE_LOCAL },
+        headers: { [headerName]: 'local' },
       });
-      expect(seen.header).toBe(CLIENT_SOURCE_LOCAL);
+      expect(seen.header).toBeNull();
       expect(seen.via).toBe('entry-1');
-      expect(seen.waived).toBe(true);
+      expect(seen.waived).toBe(false);
     }
   );
 

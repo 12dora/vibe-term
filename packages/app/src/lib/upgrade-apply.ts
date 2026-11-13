@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { t } from '../i18n';
 import type { InstallMeta } from '../types';
+import { hardenInstallTree } from './fs-utils';
 import { createInstallLayout, hasCurrentLayout, packageLayoutFromRoot } from './install-layout';
 import { readJsonFile } from './json-file';
 import { restoreDbTrio } from './upgrade-db';
@@ -51,6 +52,7 @@ export async function applyUpgrade(
   const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
   const { installDir, toVersion, packageLayout, bunPath } = options;
+  await hardenInstallTree(installDir);
   const layout = createInstallLayout(installDir);
   const meta = await readJsonFile<InstallMeta>(layout.metaPath);
   const fromVersion = (await readCurrentVersion(installDir)) || meta.cliVersion;

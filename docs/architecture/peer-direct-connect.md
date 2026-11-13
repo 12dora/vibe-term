@@ -25,6 +25,10 @@
 
 真正挡住 docker 网桥的是**网卡名过滤**；地址段规则只是补漏。运营商把 `100.64` 配在 `en0` / `ppp0` 上时仍会广播，由接收侧退避消化。**两侧都升级才彻底干净**：广播端升级后别人才看不到它的 docker 地址；接收端的退避用来保护面对尚未升级的旧广播者。
 
+### 入站端点消毒（`sanitizeEndpoints`）
+
+对端 `node.status` 与中继 `relay.list` 状态块里的 `endpoints` 走同一套 `peer-endpoint-parse.ts` 消毒：只留 `ws://` / `wss://`、路径必须是网关 peer 口的 `/peer`、禁止 userinfo / query / fragment，并丢掉未指定、链路本地、组播主机。回环（同机多节点）与 RFC1918 LAN 地址保留；2.14.0 对端若广播带 query 或其它路径的 URL，新节点静默丢掉这些条目，不改变 hello/sig 协议。
+
 ### 拨号端负向缓存（`PeerEndpointBackoff`）
 
 key 是 `(nodeId, canonical host, port)`——canonical 会把 IPv4-mapped 形式归一，同一地址的不同写法算同一条。

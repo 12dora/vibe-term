@@ -9,7 +9,7 @@ const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 Usage:
   vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--no-linger] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
-  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified]
+  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified] [--allow-downgrade]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   vibeterm user add <username>
   vibeterm user passwd <username> [--full-reset] [--yes]
@@ -21,7 +21,7 @@ Usage:
   vibeterm mesh passkey remove-all [<username>]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
-  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart] [--no-wait]
+  vibeterm relay join <url> --token <r3.…>|--token-stdin [--name <n>] [--no-restart] [--no-wait]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
   vibeterm relay resend-token
@@ -57,7 +57,8 @@ Password prompting (add / passwd / totp / reset-root / relay join):
   user totp: verify a code (--code or VIBETERM_TOTP) before saving; a mismatch writes nothing
 
 relay join --token:
-  Waits for approval by default (up to 10 minutes, also without a TTY); approve with "Confirm join" on the device that created the join code.
+  Prefer --token-stdin (one line on stdin) or VIBETERM_RELAY_JOIN_TOKEN; --token stays on argv and is visible to other local users (a one-line warning is printed).
+  After redeem, prints a confirmation code to compare with the web UI, then waits for approval by default (up to 10 minutes, also without a TTY); approve with "Confirm join" on the device that created the join code.
   --no-wait: print the pending state and exit 0 right away; the node appears on the other devices once approved. Scripts should pass it.
   Exit codes: 0 joined (or --no-wait); 1 failed or no approval in time (the request stays pending); 130 Ctrl+C (stops waiting, the request stays pending).
   With --no-restart or without a service manager, restart VibeTerm after approval; the final line says so.
@@ -78,7 +79,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 用法：
   vibeterm init [--role standalone|node|relay|relay,node] [--install-dir <path>] [--host <host>] [--port <port>] [--db-path <path>] [--autostart <true|false>] [--service-name <name>] [--no-interactive] [--bun-path <path>] [--install-deps] [--skip-dep-check] [--force] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--no-linger] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
-  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified]
+  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified] [--allow-downgrade]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
   vibeterm user add <username>
   vibeterm user passwd <username> [--full-reset] [--yes]
@@ -90,7 +91,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm mesh passkey remove-all [<username>]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
-  vibeterm relay join <url> --token <r3.…> [--name <n>] [--no-restart] [--no-wait]
+  vibeterm relay join <url> --token <r3.…>|--token-stdin [--name <n>] [--no-restart] [--no-wait]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
   vibeterm relay resend-token
@@ -126,7 +127,8 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   user totp：先核对验证码（--code 或 VIBETERM_TOTP）再写入；不匹配则不保存
 
 relay join --token：
-  默认等待批准（最长 10 分钟，非 TTY 同样等待）；请在生成加入码的设备上点「确认加入」。
+  优先用 --token-stdin（从标准输入读一行）或环境变量 VIBETERM_RELAY_JOIN_TOKEN；--token 会留在进程参数里，本机其他用户可见（会打印一行警告）。
+  兑换成功后打印确认码，请与网页「确认加入」核对；默认等待批准（最长 10 分钟，非 TTY 同样等待）。
   --no-wait：只提示等待批准并立即以 0 退出，批准后本机出现在其他设备的节点页；脚本应加此参数。
   退出码：0 已加入（或 --no-wait）；1 失败或超时未批准（申请仍然有效）；130 Ctrl+C（只停止等待，申请仍然有效）。
   使用 --no-restart 或平台没有服务管理器时，批准后需手动重启 VibeTerm，最后一行会提示。

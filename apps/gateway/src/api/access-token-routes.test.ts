@@ -33,7 +33,13 @@ function seedUser(db: AuthDb, id: string): void {
 function call(
   method: string,
   path: string,
-  opts: { uid?: string | null; body?: unknown; token?: boolean; sid?: string | null } = {}
+  opts: {
+    uid?: string | null;
+    body?: unknown;
+    token?: boolean;
+    sid?: string | null;
+    via?: string;
+  } = {}
 ): Response | Promise<Response> {
   const req = new Request(`http://localhost${path}`, {
     method,
@@ -44,7 +50,7 @@ function call(
     const sid = 'sid' in opts ? opts.sid : 's1';
     requestDispatchContext.set(req, {
       uid: opts.uid ?? null,
-      viaNodeId: MESH_VIA_SELF,
+      viaNodeId: opts.via ?? MESH_VIA_SELF,
       ...(sid && !opts.token ? { sid } : {}),
       ...(opts.token ? { tokenId: 'tok', tokenScopes: ['exec'] } : {}),
     });
@@ -92,6 +98,20 @@ describe('access token routes', () => {
     expect(JSON.parse(text)).toEqual({
       tokens: [{ ...created.token, lastUsedAt: expect.any(Number) }],
     });
+  });
+
+  test('records the entry node the create request came through', async () => {
+    const entry = 'a'.repeat(32);
+    const viaEntry = await call('POST', '/api/auth/tokens', { uid: 'u1', body: VALID, via: entry });
+    const local = await call('POST', '/api/auth/tokens', { uid: 'u1', body: VALID });
+    const viaToken = ((await viaEntry.json()) as { token: { issuedVia: string } }).token;
+    const localToken = ((await local.json()) as { token: { issuedVia: string } }).token;
+    expect(viaToken.issuedVia).toBe(entry);
+    expect(localToken.issuedVia).toBe('self');
+    const listed = (await (await call('GET', '/api/auth/tokens', { uid: 'u1' })).json()) as {
+      tokens: Array<{ issuedVia: string }>;
+    };
+    expect(listed.tokens.map((token) => token.issuedVia).sort()).toEqual([entry, 'self']);
   });
 
   test('expiresInDays may be null or omitted (never expires)', async () => {

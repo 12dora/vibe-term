@@ -9,6 +9,7 @@ import type {
   FileStatResponse,
   ListFilesResponse,
 } from '@vibeterm/shared';
+import { isTokenFileAccess } from '../auth/token-scope';
 import { config } from '../config';
 import { getDeviceById } from '../db';
 import type { FileRootRecord } from '../db/file-roots';
@@ -24,6 +25,7 @@ import {
   remoteFileHandle,
   statLocalPath,
 } from './local-fs';
+import { posixBasename, posixJoin, posixNormalize } from './posix-path';
 import { enqueueDeviceJob } from './queue';
 import {
   type RsyncEntry,
@@ -37,43 +39,58 @@ import {
 } from './rsync';
 import { type FileOpResult, fail, ok, withDeviceRsync } from './rsync-operation';
 import { type RsyncDeviceSpec, rsyncCopyArgs, rsyncListArgs, rsyncUploadArgs } from './ssh-command';
+import { tokenLocalPathDenied, tokenMutationDenied } from './token-deny-set';
 import { transferMaxBytesNow } from './transfer-limit';
 
 export type { FileOpResult };
+export {
+  installDataDirsFromDatabaseUrl,
+  tokenDenyEnv,
+  tokenLocalPathDenied,
+  tokenMutationDenied,
+} from './token-deny-set';
 
 const RAW_MAX_BYTES = 50 * 1024 * 1024;
 const LIST_TIMEOUT_MS = 20_000;
 const COPY_TIMEOUT_MS = 60_000;
 const TRANSFER_IDLE_TIMEOUT_MS = 120_000;
 
-function posixNormalize(p: string): string {
-  const isAbs = p.startsWith('/');
-  const out: string[] = [];
-  for (const seg of p.split('/')) {
-    if (seg === '' || seg === '.') continue;
-    if (seg === '..') {
-      if (out.length && out[out.length - 1] !== '..') out.pop();
-      else if (!isAbs) out.push('..');
-      continue;
-    }
-    out.push(seg);
+export type CheckNormalizeOpts = {
+  tokenPrincipal?: boolean;
+};
+
+function checkLocalNormalizedPath(
+  normRoot: string,
+  normPath: string,
+  opts?: CheckNormalizeOpts
+): { ok: true; path: string } | { ok: false; code: FileErrorCode } {
+  let realRoot: string;
+  let realTarget: string;
+  try {
+    realRoot = realpathSync(normRoot);
+  } catch {
+    return { ok: false, code: 'root_not_found' };
   }
-  const joined = out.join('/');
-  return isAbs ? `/${joined}` : joined;
-}
-function posixJoin(dir: string, name: string): string {
-  return dir === '/' ? `/${name}` : `${dir}/${name}`;
-}
-function posixBasename(p: string): string {
-  const i = p.lastIndexOf('/');
-  const base = i >= 0 ? p.slice(i + 1) : p;
-  return base || p;
+  try {
+    realTarget = realpathSync(normPath);
+  } catch {
+    return { ok: false, code: 'not_found' };
+  }
+  const rPrefix = realRoot === '/' ? '/' : `${realRoot}/`;
+  if (!(realTarget === realRoot || realTarget.startsWith(rPrefix))) {
+    return { ok: false, code: 'outside_roots' };
+  }
+  if ((opts?.tokenPrincipal ?? isTokenFileAccess()) && tokenLocalPathDenied(realTarget)) {
+    return { ok: false, code: 'permission_denied' };
+  }
+  return { ok: true, path: normPath };
 }
 
 export function checkAndNormalize(
   device: Device,
   rootPath: string,
-  inputPath: string
+  inputPath: string,
+  opts?: CheckNormalizeOpts
 ): { ok: true; path: string } | { ok: false; code: FileErrorCode } {
   if (!inputPath || !inputPath.startsWith('/')) return { ok: false, code: 'invalid' };
   const normRoot = posixNormalize(rootPath);
@@ -82,26 +99,7 @@ export function checkAndNormalize(
   if (!(normPath === normRoot || normPath.startsWith(prefix))) {
     return { ok: false, code: 'outside_roots' };
   }
-
-  if (device.type === 'local') {
-    let realRoot: string;
-    let realTarget: string;
-    try {
-      realRoot = realpathSync(normRoot);
-    } catch {
-      return { ok: false, code: 'root_not_found' };
-    }
-    try {
-      realTarget = realpathSync(normPath);
-    } catch {
-      return { ok: false, code: 'not_found' };
-    }
-    const rPrefix = realRoot === '/' ? '/' : `${realRoot}/`;
-    if (!(realTarget === realRoot || realTarget.startsWith(rPrefix))) {
-      return { ok: false, code: 'outside_roots' };
-    }
-  }
-
+  if (device.type === 'local') return checkLocalNormalizedPath(normRoot, normPath, opts);
   return { ok: true, path: normPath };
 }
 
@@ -400,6 +398,9 @@ export async function pushFileToDevice(
   const safeName = sanitizeUploadName(name);
   if (!safeName) return fail('invalid');
   return withNormalized(rootId, destDir, async ({ path, device }) => {
+    if (tokenMutationDenied(device, null, posixJoin(path, safeName))) {
+      return fail('permission_denied');
+    }
     if (device.type === 'local') {
       return enqueueDeviceJob(device.id, 'transfer', async () =>
         pushLocalFile(path, srcPath, safeName, opts)

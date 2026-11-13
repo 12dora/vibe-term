@@ -202,7 +202,7 @@ CLI：`vibeterm relay join <https-url> --tenant <id> --password [<p>]`（与 `--
 - uplink 认证：node 连 `wss://<relay>/relay/uplink`，中继在 `ctl` 流发 32 字节 nonce，node 回 `tmex/uplink-auth/v1` 签名（Borsh 字段 `hub_host` 绑中继公开地址的 host），中继用 `relay_nodes` 中的 `ed_pk` 验签；`revoked` / 被踢直接断开。
 - peer link 握手（双向，DataChannel 与 relay 共用）：
   1. 双方交换 `hello = {node_id, nonce(32B), eph_x25519_pk?, dtls_fingerprint?}`。DataChannel 路径：本端指纹在 `setLocalDescription()` 之后从 `localDescription().sdp` 的 `a=fingerprint` 行解析（`{algorithm, value}`，规范化为小写算法名 + 大写十六进制），对端指纹取 `remoteFingerprint()`（返回 `{value, algorithm}`）；relay 路径不带指纹但带 `eph_x25519_pk`。
-  2. `transcript = borsh({domain:'tmex/peer/v1', path:'dc'|'relay', hello_lo, hello_hi})`，其中 `hello_lo / hello_hi` 按 `node_id` 字典序排列——两端得到**完全相同的字节**；各自对 transcript 签名，对方用 `node_certs` 中的 `ed_pk` 验签；DataChannel 路径再核对对方 hello 里的指纹与实际 `remoteFingerprint()` 一致——信令被失陷中继篡改成两条 DTLS 通道时指纹不匹配，握手失败。
+  2. 收到 hello 后、**产生本端签名之前**：拒绝对端 `node_id` 等于本机；拨号方再核对该 id 与预期 peer 一致（不符即 `protocol` 失败）。transcript 字节格式不变。`transcript = borsh({domain:'tmex/peer/v1', path:'dc'|'relay', hello_lo, hello_hi})`，其中 `hello_lo / hello_hi` 按 `node_id` 字典序排列——两端得到**完全相同的字节**；各自对 transcript 签名，对方用 `node_certs` 中的 `ed_pk` 验签；DataChannel 路径再核对对方 hello 里的指纹与实际 `remoteFingerprint()` 一致，不一致则握手失败。`PeerLiveRegistry` 也不会把 peer=self 的链路装成 live。
   3. 密钥（仅 relay 路径）：`ss = X25519(eph_sk_self, eph_pk_peer)`，`k = HKDF-SHA-256(ss, salt = sha256(transcript), info = "tmex-sc/v1/" ‖ sender_node_id ‖ "->" ‖ receiver_node_id)`，两个方向各派生一把；AES-256-GCM，tag 16 字节，nonce = 32 位方向常量 ‖ 64 位计数器（LE），计数器接近上限即重新握手；每次握手全新密钥，重连不复用。DataChannel 路径在 DTLS 之上不再重复加密，也不做 ECDH，只做上述身份与指纹绑定。
 - 证书不在 `node_certs` 或已 `revoke-node` 的一律拒绝。
 
@@ -219,7 +219,7 @@ CLI：`vibeterm relay join <https-url> --tenant <id> --password [<p>]`（与 `--
 
 ### 帧格式（uplink、peer link、relay 共用）
 
-`[streamId u32][op u8][flags u8][len u32][payload]`，op ∈ `OPEN=1 / DATA=2 / END=3 / RST=4 / WINDOW=5`。stream 0 固定 `ctl`；链路发起方奇数 id，接收方偶数 id。每流初始窗口 1 MiB，接收方消费后回 `WINDOW{delta}`；单帧上限 1 MiB；单条链路未确认缓冲上限 32 MiB，超出即断开重连。发送侧按整片发（要么整条消息，要么满 256 KiB），不会因为窗口只剩零头就把一条消息切碎——接收方按 DATA 边界还原消息。编解码器位于 `packages/shared/src/link/`；`LinkSession` 接口 `openStream / onStream / close`，实现：`WebSocketLink`（uplink、peer 信令）、`DataChannelLink`（peer 数据面）、`SecureChannelLink`（中继流：以 §2 握手派生的每连接方向密钥 AES-256-GCM 逐帧加密，AAD = 帧头，nonce = 32 位方向常量 ‖ 64 位计数器，计数器溢出前重新握手）、`InMemoryLink`（测试与同进程双端）。
+`[streamId u32][op u8][flags u8][len u32][payload]`，op ∈ `OPEN=1 / DATA=2 / END=3 / RST=4 / WINDOW=5`。stream 0 固定 `ctl`；链路发起方奇数 id，接收方偶数 id。每流初始窗口 1 MiB，接收方消费后回 `WINDOW{delta}`；单帧上限 1 MiB；单条链路未确认缓冲上限 32 MiB，超出即断开重连。发送侧按整片发（要么整条消息，要么满 256 KiB），不会因为窗口只剩零头就把一条消息切碎——接收方按 DATA 边界还原消息。peer 监听口的 WebSocket 层把单帧硬顶设在 mux 上限之上（约 2 MiB），握手完成前另按源 IP / 全局限制并发未认证套接字。编解码器位于 `packages/shared/src/link/`；`LinkSession` 接口 `openStream / onStream / close`，实现：`WebSocketLink`（uplink、peer 信令）、`DataChannelLink`（peer 数据面）、`SecureChannelLink`（中继流：以 §2 握手派生的每连接方向密钥 AES-256-GCM 逐帧加密，AAD = 帧头，nonce = 32 位方向常量 ‖ 64 位计数器，计数器溢出前重新握手）、`InMemoryLink`（测试与同进程双端）。
 
 流的关闭语义：`END` 只关闭**发送方向**（half-close），每个方向各自 `END`；`http` 流请求体 `END` 后仍等待响应，响应 `END` 后流结束；`RST` 立即终止双向并传播为对端 `Request.signal` abort / 响应流 cancel；目标提前响应（未读完请求体）时目标发响应后对请求方向发 `RST`，entry 停止转发请求体。
 
@@ -268,7 +268,7 @@ RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live �
 
 ### 响应头策略（entry 转发 `/n/:id/*` 响应）
 
-目标 node 的响应体在 **entry origin** 下呈现，失陷 node 可返回 HTML/SVG 造成同源 XSS。entry 对所有 `/n/:id/*` 响应采用**响应头 allowlist**（只透传 `content-type / content-length / content-range / accept-ranges / cache-control / etag / last-modified / content-disposition / x-vibeterm-*`，其余一律丢弃），并强制：`Content-Security-Policy: sandbox; default-src 'none'; base-uri 'none'; form-action 'none'`（导航打开时在 opaque origin 渲染，脚本无法触及 entry origin 的 cookie 与 API）、`X-Content-Type-Options: nosniff`；`Content-Type` 采用精确 allowlist：`image/png image/jpeg image/gif image/webp image/avif video/mp4 video/webm audio/mpeg audio/ogg audio/wav text/plain application/json application/x-ndjson application/pdf application/octet-stream`，不在其中（含 `image/svg+xml`、任何 `*/xml`、`text/html`）的一律**覆盖**为 `application/octet-stream` + `Content-Disposition: attachment`。PDF 预览在 sandbox 下仍可 iframe 内联。
+目标 node 的响应体在 **entry origin** 下呈现，失陷 node 可返回 HTML/SVG 造成同源 XSS。entry 对所有 `/n/:id/*` 响应采用**响应头 allowlist**（只透传 `content-type / content-length / content-range / accept-ranges / cache-control / etag / last-modified / content-disposition / x-vibeterm-*`，其余一律丢弃），类型、处置与 CSP 交给与本机文件响应共用的 `applySafeFileHeaders`（`apps/gateway/src/files/safe-file-headers.ts`，规则见 [浏览器文件传输 · 文件字节响应头](./file-transfer.md#文件字节响应头)）。内联与否按 entry 收到的浏览器请求判定，与目标版本无关。
 
 ### 直连授权（浏览器 ↔ 目标 node 的 `sess` 通道）
 
@@ -299,7 +299,7 @@ RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live �
 ### node 侧
 
 - `RelayUplinkClient`（`uplink_kind = 'relay'`）：指数退避 1 s → 60 s 带抖动；连接后先 `relay.auth`，再上报密封状态块；收到 `relay.list` 解开后落 `peer_cache`（仅元数据）、密钥日志落后时拉密封块逐条验签应用（含 `admit-node` → `node_certs`）。`uplink_kind = 'none'` 时不构造 client、不拨号。
-- `PeerManager`：维护到每个 peer 的 `LinkSession`（懒建、空闲 5 分钟关闭）；peer 监听端口只接受签名信令与 `ctl`，证书不在 `node_certs` 或验签失败即关，按源 ip 限速；数据面 `DataChannelLink`（握手绑定 DTLS 指纹）；建不起来时经中继流起 `SecureChannelLink`。中继不可达时依次尝试 `peer_cache.endpoints_json` 中的全部缓存地址。
+- `PeerManager`：维护到每个 peer 的 `LinkSession`（懒建、空闲 5 分钟关闭）；peer 监听端口只接受签名信令与 `ctl`，证书不在 `node_certs` 或验签失败即关，按源 IP 限速（每 IP 每分钟 30 次升级）；WebSocket `maxPayloadLength` 为合法 mux 帧（头 + 1 MiB payload + GCM tag）再加 1 MiB 余量，背压沿用 Bun 缺省（不因背压主动断开）；只有未完成 peer 握手的连接计入未认证名额：按 `limiterIpKey` 归桶（IPv6 按 /64），每桶最多 16 条、全局 256 条，超出在升级前 429；握手成功即释放名额，失败或握手超时随 socket 关闭释放。握手限速同样按 `limiterIpKey` 计。数据面 `DataChannelLink`（握手绑定 DTLS 指纹）；建不起来时经中继流起 `SecureChannelLink`。中继不可达时依次尝试 `peer_cache.endpoints_json` 中的全部缓存地址。旧节点发出的帧尺寸相同，无需抬协议。
 - `RtcPeerManager`：浏览器↔node 与 node↔node 共用 `node-datachannel` 装载与 ICE 配置（来自中继下发与本机 env，开启 IPv6）；浏览器为 offerer；node↔node 由 nodeId 字典序小者 offer。Bun 侧适配器使用 `bufferedAmount() / setBufferedAmountLowThreshold() / onBufferedAmountLow() / maxMessageSize() / remoteFingerprint()`，浏览器侧用对应属性与事件，两套实现同一 `Carrier` 语义。装载方式：`build-runtime` 内联 node-datachannel 的 JS 层（含 `detect-libc` 逻辑）并把原生绑定改为按绝对路径 `require('<installDir>/native/node_datachannel.node')`，manifest 记录 tarball 内 addon 路径与 N-API 版本，启动时探测失败即 `direct_capable=false`。
 - 默认 `VIBETERM_BIND_HOST=127.0.0.1`（本地 UI），peer 端口独立绑定。
 - `relay,node` 同机拨本机中继走回环，见 §1。
@@ -316,7 +316,7 @@ bulk（与现有 REST 分块协议独立）：上传 REST `init`（经 entry 转
 
 - 登录页（用户名 + 密码/TOTP；passkey 按钮；「注册本入口的 passkey」入口）所有 node 共用，由 `GET /api/auth/mode → {mode:'none'|'mesh', nodeId, username, kdfParams, passkeysForThisOrigin: bool, passkeyAvailable: bool}` 驱动；standalone 不渲染。密码派生、`delegation`、登录签名在 `packages/shared/src/auth/`（浏览器与 Bun 共用，`hash-wasm` + `@noble/curves`）。`passkeyAvailable` = `isSecureContext && host 为域名或 localhost`。
 - 401 统一拦截：`api-client` 收到 401 → 跳 `/login?next=`；WS 关闭码 4401 同理；`NODE_LOGIN_REQUIRED` 不跳全局登录页，在该 node 行显示「登录此节点」（`sk_sess` 仍在内存时自动完成）。
-- **Nodes 管理页** `/nodes`（任意 entry 可用）：列表（状态：「在线 · 已登录 / 未登录」或「离线 · N 小时前」，REACH 为本地化组合如「局域网 · 直连」/「中继」，无独立登录列，地址列替换公钥指纹，版本、直连能力）、生成 enrollment（生成 enroll 密钥对、签授权、展示 `r3.` join 串与可复制的 `vibeterm relay join …` 命令；join 完成后自动签 `admit-node`，页面已关则显示「待确认」）、重命名（`rename-node`）、吊销（签 `revoke-node`）；行内升级显示阶段（下载中 / 推送中带字节 / 执行中），稳定错误码翻中文、通道聚合串原文；目标 `upgradeCapabilities` 含 `release-speed-probe`（速度门控自拉）与 `staged-package-ranged`（乱序推包），见 [远程升级](../operations/remote-upgrade.md)；**账号安全**区：修改密码（提示将注销所有 passkey 与 TOTP）、设置 TOTP、注册/移除 passkey（均生成签名记录）。未挂中继的成员显示接入中继的号召，不渲染已删除角色的文案。`GET /api/mesh/nodes` 行 DTO 为 `@vibeterm/shared` 的 `MeshNode`（`lastSeenAt` 来自 `peer_cache.last_seen_at`，毫秒；self 恒 `null`，旧入口不下发）。指纹与最近在线只在详情。列语义与「延迟优化」见 [mesh 运维「Nodes 页」](../operations/mesh-operations.md)；选路见 [路径优选](./path-selection.md)。
+- **Nodes 管理页** `/nodes`（任意 entry 可用）：列表（状态：「在线 · 已登录 / 未登录」或「离线 · N 小时前」，REACH 为本地化组合如「局域网 · 直连」/「中继」，无独立登录列，地址列替换公钥指纹，版本、直连能力）、生成 enrollment（生成 enroll 密钥对、签授权、展示 `r3.` join 串与可复制的 `VIBETERM_RELAY_JOIN_TOKEN='r3.…' vibeterm relay join …` 命令；join 完成后确认卡亮出确认码，用户与新机器上显示的确认码比对一致后点击才签 `admit-node`，从不自动签；页面已关则显示「待确认」）、重命名（`rename-node`）、吊销（签 `revoke-node`）；行内升级显示阶段（下载中 / 推送中带字节 / 执行中），稳定错误码翻中文、通道聚合串原文；目标 `upgradeCapabilities` 含 `release-speed-probe`（速度门控自拉）与 `staged-package-ranged`（乱序推包），见 [远程升级](../operations/remote-upgrade.md)；**账号安全**区：修改密码（提示其他设备将退出登录；勾选全量重置另会清除 passkey 与 TOTP；改密撤销全部节点的会话，当前页面用内存里的新密码静默重登 entry，其余节点由既有的 401 静默重登补上，接不回就清本地会话并回登录页）、设置 TOTP、注册/移除 passkey（均生成签名记录）。未挂中继的成员显示接入中继的号召，不渲染已删除角色的文案。`GET /api/mesh/nodes` 行 DTO 为 `@vibeterm/shared` 的 `MeshNode`（`lastSeenAt` 来自 `peer_cache.last_seen_at`，毫秒；self 恒 `null`，旧入口不下发）。指纹与最近在线只在详情。列语义与「延迟优化」见 [mesh 运维「Nodes 页」](../operations/mesh-operations.md)；选路见 [路径优选](./path-selection.md)。
 
 ### 每 node 一套运行时
 
@@ -384,7 +384,7 @@ bulk（与现有 REST 分块协议独立）：上传 REST `init`（经 entry 转
 |---|---|---|
 | 普通 node（用户未在其上登录） | 该机 tmux；用户公钥、passkey 公钥、TOTP 密文；节点证书与内网地址；该 node 自己签的 `node-session` | **否**：没有任何其他 node 接受的凭证；node 私钥只能证明「我是这台机」。弱口令可被离线爆破（此时 TOTP 一并失效），防线是口令强度与 argon2id 成本 |
 | 中继机 | 租户编号、根公钥、节点编号与链路公钥、流量字节、密封日志块 | **否**：解不开 K_log / K_meta；签不出任何用户凭证或节点证书；未 admit 的节点被所有 node 忽略；篡改信令做 DTLS 中间人被指纹绑定识破；掉包公钥骗不过绑定 `target_pk` 的签名 |
-| 用户**正在使用**的 entry | 在其 `node-session` 有效窗口内（最后一次使用起 18 小时滑动，绝对上限 7 天）以用户身份操作各已登录 node，并可读取/篡改经它的流量（含直连信令）——它是流量代理并持有 cookie，任何 web 架构都挡不住；密码登录时键入的密码 | 窗口内是；密码泄露后到 `passwd`（新 epoch）前是，攻击者若抢先 `rotate-root` 则走本机 `mesh reset-root` 恢复。passkey 登录只泄露该窗口：临时钥签不了任何持久记录 |
+| 用户**正在使用**的 entry | 在其 `node-session` 有效窗口内（最后一次使用起 18 小时滑动，绝对上限 7 天）以用户身份操作各已登录 node，并可读取/篡改经它的流量（含直连信令）——它是流量代理并持有 cookie，任何 web 架构都挡不住；密码登录时键入的密码 | 窗口内是。窗口由两件事截断：吊销该 entry（`revoke-node`）作废经它进来的会话，以及经它签发的访问令牌、终端分享、窗格授权、端口映射与放行；改密（默认 `passwd` 即 `rotate-root-keep`，或 `--full-reset`）作废全部会话、令牌、窗格授权与分享。窗口内经 shell 留下的持久化（如 `authorized_keys`）不在级联范围内；sid 尚未与客户端密钥绑定，见 [KI-21](../known-issues.md#ki-21会话-sid-尚未与客户端密钥绑定) |
 | 中继离线 / 未挂中继 | 无变化：登录不经中继；内网 peer 用缓存直连 | — |
 
 另：目标 node 响应经 entry 的响应头策略隔离，失陷 node 不能在 entry origin 执行脚本；所有 `/n/:id/*`、中继流校验租户与凭证 `uid` 一致（单用户 v1 下即常量校验，多用户时不改结构）。

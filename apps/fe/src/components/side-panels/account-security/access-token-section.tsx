@@ -1,6 +1,7 @@
 // 账号安全面板的「访问令牌」：给 `vibeterm exec / rsh / cp / forward` 等非交互调用用的机器凭据。
 // 令牌按节点存储；面板只管本机（entry），与同面板其他区块一致。
 
+import { IssuedVia } from '@/components/issued-via';
 import type { AccessTokenDto } from '@vibeterm/shared';
 import { Badge } from '@vibeterm/ui/badge';
 import { Button } from '@vibeterm/ui/button';
@@ -215,6 +216,7 @@ function AccessTokenRow({
           <span className={expired ? 'text-destructive' : undefined}>
             {expiresText(t, token, now)}
           </span>
+          <IssuedVia issuedVia={token.issuedVia} testId={`security-token-issued-via-${token.id}`} />
         </div>
       </div>
       <Button

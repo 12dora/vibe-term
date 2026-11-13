@@ -39,7 +39,7 @@ export function offlineMembersGuard(
     : null;
 }
 
-/** 改口令核心：哈希、kick 离线守卫、epoch、踢链路。admin 与租户 rotate 共用。 */
+/** 运营者改口令：可清除口令；kick 抬全局 `minTokenEpoch`，作废全部租户的旧令牌。 */
 export async function applyRelayPasswordRotation(
   deps: RelayPasswordRotateCoreDeps,
   input: RelayPasswordRotateInput
@@ -68,10 +68,9 @@ export function readRotateMode(mode: unknown): 'keep' | 'kick' | null {
   return null;
 }
 
-export function readRotateNext(next: unknown): string | null | undefined {
-  if (next === null) return null;
-  if (typeof next !== 'string') return undefined;
-  return next === '' ? null : next;
+/** 租户侧只能换成新口令，清除口令只走运营者路由。 */
+export function readRotateNext(next: unknown): string | undefined {
+  return typeof next === 'string' && next !== '' ? next : undefined;
 }
 
 function readOptionalString(
@@ -85,7 +84,7 @@ function readOptionalString(
 type TenantRotateBody = {
   tenantId: string;
   current: string;
-  next: string | null;
+  next: string;
   mode: 'keep' | 'kick';
 };
 
@@ -93,7 +92,6 @@ function parseTenantRotateBody(body: Record<string, unknown> | null): TenantRota
   if (!body || typeof body.tenantId !== 'string' || !body.tenantId) return null;
   const current = readOptionalString(body, 'current');
   if (current === false) return null;
-  if (!('next' in body)) return null;
   const next = readRotateNext(body.next);
   const mode = readRotateMode(body.mode);
   if (next === undefined || !mode) return null;
@@ -106,17 +104,54 @@ function parseTenantRotateBody(body: Record<string, unknown> | null): TenantRota
 }
 
 async function currentPasswordMatches(
-  passwordHash: string | null,
+  deps: RelayPublicRoutesDeps,
+  ip: string,
+  passwordHash: string,
   current: string
-): Promise<boolean> {
-  if (!passwordHash) return current.length === 0;
-  if (!current) return false;
-  return verifyRelayPassword(passwordHash, current);
+): Promise<boolean | Response> {
+  if (current.length === 0) {
+    deps.limiter.recordFailure(ip);
+    return false;
+  }
+  const slot = deps.limiter.reserveKdf(ip);
+  if (!slot.ok) {
+    return relayError(RelayErrorCode.rateLimited, 429, { retryAfterMs: slot.retryAfterMs });
+  }
+  let ok = false;
+  try {
+    ok = await verifyRelayPassword(passwordHash, current);
+  } finally {
+    slot.done(ok);
+  }
+  return ok;
 }
 
 /**
- * 租户凭令牌改全站接入口令。`current` 对得上才转；`next` 最短 8（空/null 表示清除）。
+ * 租户改口令只推进 `passwordEpoch`，不动全局 `minTokenEpoch`，其它租户的令牌照旧有效。
+ * kick 只作废调用租户自己：置 `kicked`、清历史令牌、断其链路，须用新口令重新 enroll（`recover`）。
  */
+async function applyTenantPasswordRotation(
+  deps: RelayPasswordRotateCoreDeps,
+  tenantId: string,
+  input: { next: string; mode: 'keep' | 'kick' }
+): Promise<Response> {
+  if (input.mode === 'kick') {
+    const blocked = offlineMembersGuard(deps, [tenantId], false);
+    if (blocked) return blocked;
+  }
+  const next = deps.configStore.rotatePassword({
+    passwordHash: await hashRelayPassword(input.next),
+    kick: false,
+    now: deps.now(),
+  });
+  if (input.mode === 'kick') {
+    deps.tenants.setKicked(tenantId, true);
+    deps.uplink.kickTenant(tenantId, 'password_rotated');
+  }
+  return relayJson({ ok: true, passwordEpoch: next.passwordEpoch });
+}
+
+/** 租户凭令牌改全站接入口令。`current` 对得上才转；`next` 必须是至少 8 位的新口令。 */
 export async function handleRelayPasswordRotate(
   deps: RelayPublicRoutesDeps,
   req: Request
@@ -131,7 +166,7 @@ export async function handleRelayPasswordRotate(
   if (!parsed) return relayError(RelayErrorCode.invalidBody, 400);
   const tenant = authenticateRelayTenant(deps, req, parsed.tenantId);
   if (tenant instanceof Response) return tenant;
-  if (typeof parsed.next === 'string' && relayPasswordTooShort(parsed.next)) {
+  if (relayPasswordTooShort(parsed.next)) {
     return relayError(RelayErrorCode.enrollPasswordTooShort, 400);
   }
   const config = deps.configStore.ensure(deps.now());
@@ -140,12 +175,10 @@ export async function handleRelayPasswordRotate(
       message: 'the relay has no access password; the operator sets the first one',
     });
   }
-  if (!(await currentPasswordMatches(config.passwordHash, parsed.current))) {
-    deps.limiter.recordFailure(ip);
-    return relayError(RelayErrorCode.enrollPasswordInvalid, 401);
-  }
-  deps.limiter.reset(ip);
-  return applyRelayPasswordRotation(deps, {
+  const matches = await currentPasswordMatches(deps, ip, config.passwordHash, parsed.current);
+  if (matches instanceof Response) return matches;
+  if (!matches) return relayError(RelayErrorCode.enrollPasswordInvalid, 401);
+  return applyTenantPasswordRotation(deps, tenant.id, {
     next: parsed.next,
     mode: parsed.mode,
   });

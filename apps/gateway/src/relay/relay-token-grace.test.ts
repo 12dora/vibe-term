@@ -1,9 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type RelayTokenGraceRow,
+  relayCurrentTokenPredatesRevoke,
   relayPreviousTokens,
   relayTokenHashAccepted,
   relayTokenHashState,
+  relayTokensAfterReissue,
+  relayTokensAfterRevoke,
 } from './relay-token-grace';
 import { RELAY_PREV_TOKEN_GRACE_MS } from './types';
 
@@ -45,5 +48,54 @@ describe('relay previous token ring', () => {
     expect(relayTokenHashAccepted({ ...legacy, prevTokenIssuedAt: null }, 'legacy', 100)).toBe(
       false
     );
+  });
+});
+
+describe('relay tokens after a revoke', () => {
+  test('吊销后历史令牌对凭令牌的 HTTP 立刻失效，只剩 uplink 宽限', () => {
+    const revoked: RelayTokenGraceRow = {
+      ...row,
+      previousTokens: relayTokensAfterRevoke(row, 200),
+    };
+    for (const hash of ['third', 'second']) {
+      expect(relayTokenHashAccepted(revoked, hash, 300)).toBe(false);
+      expect(relayTokenHashAccepted(revoked, hash, 300, 'uplink')).toBe(true);
+    }
+    expect(relayTokenHashState(revoked, 'current', 300)).toBe('current');
+    expect(relayCurrentTokenPredatesRevoke(revoked)).toBe(true);
+    expect(relayCurrentTokenPredatesRevoke(row)).toBe(false);
+  });
+
+  test('吊销之前签发的当前令牌在换发后不再有 HTTP 宽限', () => {
+    const revoked: RelayTokenGraceRow = {
+      ...row,
+      previousTokens: relayTokensAfterRevoke(row, 200),
+    };
+    const reissued: RelayTokenGraceRow = {
+      tokenHash: 'fresh',
+      prevTokenHash: 'current',
+      prevTokenIssuedAt: 400,
+      previousTokens: relayTokensAfterReissue(revoked, 400),
+    };
+    expect(relayTokenHashAccepted(reissued, 'current', 500)).toBe(false);
+    expect(relayTokenHashAccepted(reissued, 'current', 500, 'uplink')).toBe(true);
+    expect(relayCurrentTokenPredatesRevoke(reissued)).toBe(false);
+    const again: RelayTokenGraceRow = {
+      tokenHash: 'newer',
+      prevTokenHash: 'fresh',
+      prevTokenIssuedAt: 600,
+      previousTokens: relayTokensAfterReissue(reissued, 600),
+    };
+    expect(relayTokenHashAccepted(again, 'fresh', 700)).toBe(true);
+  });
+
+  test('没有吊销时换发照旧给上一代完整宽限', () => {
+    const reissued: RelayTokenGraceRow = {
+      tokenHash: 'fresh',
+      prevTokenHash: 'current',
+      prevTokenIssuedAt: 400,
+      previousTokens: relayTokensAfterReissue(row, 400),
+    };
+    expect(relayTokenHashAccepted(reissued, 'current', 500)).toBe(true);
   });
 });

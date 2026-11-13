@@ -6,10 +6,11 @@
 // 哪一代 tmux server」，源节点每次 RPC 都必须带上。滑动过期：每次使用续 7 天，从签发起最多 30 天。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, eq, lte } from 'drizzle-orm';
+import { and, eq, lte, or } from 'drizzle-orm';
 import type { AuthDb } from '../../auth/types';
 import { getDb } from '../../db/client';
 import { agentPaneGrants, nodeCerts } from '../../db/schema';
+import { MESH_VIA_SELF } from '../../mesh/mesh-deps';
 
 export const PANE_GRANT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const PANE_GRANT_MAX_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
@@ -25,6 +26,8 @@ export interface PaneGrantRecord {
   createdAt: number;
   lastUsedAt: number;
   expiresAt: number;
+  /** 签发请求的入口节点（mesh `via`）；本机直接签发为 `'self'`。 */
+  issuedVia: string;
 }
 
 export interface IssuedPaneGrant {
@@ -63,6 +66,7 @@ export function issuePaneGrant(input: {
   deviceId: string;
   paneId: string;
   serverEpoch: string;
+  issuedVia?: string;
   now?: number;
 }): IssuedPaneGrant {
   const now = input.now ?? Date.now();
@@ -81,6 +85,7 @@ export function issuePaneGrant(input: {
       createdAt: now,
       lastUsedAt: now,
       expiresAt: now + PANE_GRANT_TTL_MS,
+      issuedVia: input.issuedVia ?? MESH_VIA_SELF,
     })
     .run();
   return { grantId: id, token, expiresAt: now + PANE_GRANT_TTL_MS };
@@ -109,14 +114,16 @@ export function deletePaneGrant(id: string): boolean {
 }
 
 /**
- * 节点被吊销：它手上的授权全部作废（吊销后重新准入必须重新签发）。
+ * 节点被吊销：它手上的授权、以及经它签发的授权全部作废（吊销后重新准入必须重新签发）。
  * `db` 用于在吊销记录落库的同一个事务里删除——事务回滚时授权也跟着回来，两者不会各说各话。
  */
-export function deletePaneGrantsForNode(fromNodeId: string, db: AuthDb = getDb()): void {
-  db.delete(agentPaneGrants).where(eq(agentPaneGrants.fromNodeId, fromNodeId)).run();
+export function deletePaneGrantsForNode(nodeId: string, db: AuthDb = getDb()): void {
+  db.delete(agentPaneGrants)
+    .where(or(eq(agentPaneGrants.fromNodeId, nodeId), eq(agentPaneGrants.issuedVia, nodeId)))
+    .run();
 }
 
-/** 根密钥重置会删光全部节点证书，随之作废所有授权。 */
+/** 吊销全部会话（改密、根密钥轮换 / 重置）时随之作废所有授权。 */
 export function deleteAllPaneGrants(db: AuthDb = getDb()): void {
   db.delete(agentPaneGrants).run();
 }

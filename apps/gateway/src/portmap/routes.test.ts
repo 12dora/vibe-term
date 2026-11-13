@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { ApiRoute } from '../api/route';
 import { dispatchRoutes } from '../api/route';
+import { requestDispatchContext } from '../mesh/types';
 import { PortMapManager } from './manager';
 import { createPortMapRoutes } from './routes';
 import { MemoryPortMapExportStore, MemoryPortMapStore } from './store';
+import { assertTargetAllowed } from './target-policy';
 
 const NODE = 'e'.repeat(32);
+const GATEWAY_PORT = 19_663;
+const TARGET_POLICY = {
+  resolver: async (host: string) => {
+    if (host === 'self.example.com') return ['127.0.0.1'];
+    if (host === 'db.example.com') return ['10.0.0.5'];
+    throw new Error(`ENOTFOUND ${host}`);
+  },
+  selfPorts: () => [GATEWAY_PORT, 19_883],
+  localAddresses: () => ['127.0.0.1', '::1', '203.0.113.7'],
+};
 
 function freePort(): number {
   const server = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
@@ -27,7 +39,7 @@ function harness(exportRemoved = false): Harness {
   const manager = new PortMapManager({
     store: new MemoryPortMapStore(),
     peers: () => null,
-    reservedPorts: () => [19_663],
+    reservedPorts: () => [GATEWAY_PORT],
   });
   managers.push(manager);
   manager.start();
@@ -44,6 +56,7 @@ function harness(exportRemoved = false): Harness {
         cleanups.push({ nodeId, mapId });
         return exportRemoved;
       },
+      assertTarget: (host, port) => assertTargetAllowed(host, port, TARGET_POLICY),
     }),
   };
 }
@@ -158,6 +171,7 @@ describe('portmap routes', () => {
       port: 5432,
       enabled: true,
       createdAt: expect.any(Number),
+      issuedVia: 'self',
     });
     expect((await call(h, 'GET', '/api/portmap/exports')).json.exports as unknown[]).toHaveLength(
       1
@@ -173,6 +187,52 @@ describe('portmap routes', () => {
     );
     const invalid = await call(h, 'POST', '/api/portmap/exports', { fromNodeId: 'x', port: 1 });
     expect(invalid.status).toBe(400);
+  });
+
+  test('refuses export targets that point back at the node or at metadata', async () => {
+    const h = harness();
+    const cases = [
+      { host: '127.0.0.1', port: GATEWAY_PORT },
+      { port: GATEWAY_PORT },
+      { host: '::ffff:127.0.0.1', port: 19_883 },
+      { host: '203.0.113.7', port: GATEWAY_PORT },
+      { host: '169.254.169.254', port: 80 },
+      { host: 'self.example.com', port: GATEWAY_PORT },
+    ];
+    for (const target of cases) {
+      const res = await call(h, 'POST', '/api/portmap/exports', { fromNodeId: NODE, ...target });
+      expect(res.status).toBe(403);
+      expect(res.json.code).toBe('target_forbidden');
+      expect((res.json.error as { code: string }).code).toBe('target_forbidden');
+    }
+    expect(h.exports.list()).toEqual([]);
+
+    const allowed = await call(h, 'POST', '/api/portmap/exports', {
+      fromNodeId: NODE,
+      host: '10.0.0.5',
+      port: 22,
+    });
+    expect(allowed.status).toBe(201);
+    const byName = await call(h, 'POST', '/api/portmap/exports', {
+      fromNodeId: NODE,
+      host: 'db.example.com',
+      port: 5432,
+    });
+    expect(byName.status).toBe(201);
+    expect(h.exports.list()).toHaveLength(2);
+  });
+
+  test('refuses to probe a forbidden target', async () => {
+    const h = harness();
+    for (const query of [
+      `host=127.0.0.1&port=${GATEWAY_PORT}`,
+      'host=169.254.169.254&port=80',
+      `host=self.example.com&port=${GATEWAY_PORT}`,
+    ]) {
+      const res = await call(h, 'GET', `/api/portmap/target-probe?${query}`);
+      expect(res.status).toBe(403);
+      expect(res.json.code).toBe('target_forbidden');
+    }
   });
 
   test('probes a target port on this node', async () => {
@@ -212,5 +272,46 @@ describe('portmap routes', () => {
     const missing = await call(stubborn, 'DELETE', '/api/portmap/nope');
     expect(missing.status).toBe(404);
     expect(stubborn.cleanups).toHaveLength(1);
+  });
+
+  test('stamps the entry node and the creating token on maps and exports', async () => {
+    const h = harness();
+    const entry = 'a'.repeat(32);
+    const send = async (path: string, body: unknown) => {
+      const url = `http://node${path}`;
+      const req = new Request(url, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: { 'content-type': 'application/json' },
+      });
+      requestDispatchContext.set(req, {
+        uid: 'user-1',
+        viaNodeId: entry,
+        tokenId: 'tok-1',
+        tokenScopes: ['forward'],
+      });
+      const res = await dispatchRoutes(req, path, h.routes, { path });
+      if (!res) throw new Error(`no route for ${path}`);
+      return (await res).status;
+    };
+    expect(
+      await send('/api/portmap', {
+        listenPort: freePort(),
+        targetNodeId: NODE,
+        targetPort: 22,
+        mapId: 'token-map-001',
+      })
+    ).toBe(201);
+    expect(
+      await send('/api/portmap/exports', { mapId: 'token-map-002', fromNodeId: NODE, port: 22 })
+    ).toBe(201);
+    expect(h.manager.get('token-map-001')).toMatchObject({
+      issuedVia: entry,
+      createdByTokenId: 'tok-1',
+    });
+    expect(h.exports.get('token-map-002')).toMatchObject({
+      issuedVia: entry,
+      createdByTokenId: 'tok-1',
+    });
   });
 });

@@ -25,6 +25,8 @@ export interface ShareRecord {
   logBytes: number;
   logTruncated: boolean;
   recordLog: boolean;
+  /** 创建请求的入口节点 id；本机直接创建为 `'self'`。该节点被吊销时分享随之结束。 */
+  issuedVia: string;
 }
 
 export interface ShareSettings {

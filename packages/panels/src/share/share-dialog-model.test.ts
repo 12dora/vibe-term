@@ -49,6 +49,7 @@ function record(overrides: Partial<ShareRecord> = {}): ShareRecord {
     logBytes: 0,
     logTruncated: false,
     recordLog: true,
+    issuedVia: 'self',
     ...overrides,
   };
 }

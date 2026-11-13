@@ -366,10 +366,10 @@ describe('unified IP classifier (per-caller semantics)', () => {
   });
 
   test.each([
-    [undefined, true],
-    [null, true],
-    ['', true],
-    ['local', true],
+    [undefined, false],
+    [null, false],
+    ['', false],
+    ['local', false],
     ['127.0.0.1', true],
     ['127.0.0.2', true],
     ['127.1.2.3', true],

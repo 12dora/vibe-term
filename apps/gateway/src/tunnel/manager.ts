@@ -101,8 +101,7 @@ import {
   tunnelProcessState,
 } from './status-view';
 import { TunnelSupervisor } from './supervisor';
-type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
-type ReadHostEnv = () => Promise<boolean | null>;
+import { type PatchHostEnv, type ReadHostEnv, TrustProxyEnvState } from './trust-proxy-env';
 
 export type TunnelManagerOptions = {
   tunnelDir?: string;
@@ -126,6 +125,7 @@ export type TunnelManagerOptions = {
   healthzStartedAt?: number;
   trustProxy?: boolean;
   configuredTrustProxy?: boolean;
+  clientIpHeader?: string;
   probeVersionOnStart?: boolean;
   runningWaitMs?: number;
   loginEnforced?: () => boolean;
@@ -195,11 +195,7 @@ export class TunnelManager {
   private connectorProbeInFlight: Promise<TunnelConnectorStatus> | null = null;
   private logTailCache: { at: number; path: string; lines: string[] } | null = null;
   private loginEnforcedFn: () => boolean;
-  private trustProxy: boolean;
-  private configuredTrustProxy: boolean;
-  private patchHostEnv: PatchHostEnv | null;
-  private readHostEnv: ReadHostEnv | null;
-  private restartRequired = false;
+  private readonly trustEnv: TrustProxyEnvState;
   private job: TunnelJobStatus | null = null;
   private loginHandle: { kill: (signal?: NodeJS.Signals) => void; exited: Promise<number> } | null =
     null;
@@ -224,17 +220,15 @@ export class TunnelManager {
     this.which = opts.which ?? ((cmd) => Bun.which(cmd) ?? null);
     this.downloader = opts.downloader ?? defaultDownloader;
     this.fetchImpl = opts.fetchImpl ?? fetch;
-    this.patchHostEnv = opts.patchHostEnv ?? null;
-    this.readHostEnv = opts.readHostEnv ?? null;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => Bun.sleep(ms));
     this.loginTimeoutMs = opts.loginTimeoutMs ?? LOGIN_TIMEOUT_MS;
     this.loginPollMs = opts.loginPollMs ?? LOGIN_POLL_MS;
     this.healthzStartedAt = opts.healthzStartedAt ?? PROCESS_STARTED_AT;
     this.runningWaitMs = opts.runningWaitMs ?? 30_000;
-    this.trustProxy = opts.trustProxy ?? config.trustProxy;
-    this.configuredTrustProxy = opts.configuredTrustProxy ?? this.trustProxy;
-    this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
+    const trustProxy = opts.trustProxy ?? config.trustProxy;
+    const clientIpHeader = opts.clientIpHeader ?? config.clientIpHeader;
+    this.trustEnv = new TrustProxyEnvState({ trustProxy, clientIpHeader }, opts);
     this.probeVersionOnStart = opts.probeVersionOnStart ?? false;
     this.loginEnforcedFn = opts.loginEnforced ?? (() => defaultLoginEnforced());
     this.hasMeshRole = opts.hasMeshRole ?? config.roles.node;
@@ -318,11 +312,11 @@ export class TunnelManager {
   }
 
   setPatchHostEnv(fn: PatchHostEnv | null): void {
-    this.patchHostEnv = fn;
+    this.trustEnv.patch = fn;
   }
   setReadHostEnv(fn: ReadHostEnv | null): void {
-    this.readHostEnv = fn;
-    void this.refreshConfiguredTrustProxy();
+    this.trustEnv.read = fn;
+    void this.trustEnv.refresh();
   }
   setLoginEnforced(fn: () => boolean): void {
     this.loginEnforcedFn = fn;
@@ -331,7 +325,7 @@ export class TunnelManager {
   async start(): Promise<void> {
     await mkdir(this.tunnelDir, { recursive: true }).catch(() => {});
     this.refreshBinaryPresence();
-    await this.refreshConfiguredTrustProxy();
+    await this.trustEnv.refresh();
     if ((this.probeVersionOnStart || !config.isTest) && this.binary.path) {
       await this.probeVersion();
     }
@@ -391,9 +385,7 @@ export class TunnelManager {
       loginEnforced,
       exposureProtected: this.isExposureProtected(persisted, access, loginEnforced),
       job: this.job,
-      trustProxy: this.trustProxy,
-      configuredTrustProxy: this.configuredTrustProxy,
-      restartRequired: this.restartRequired,
+      ...this.trustEnv.view(),
       log: this.statusLog(),
     });
   }
@@ -995,12 +987,9 @@ export class TunnelManager {
   }
 
   private async setTrustProxy(trustProxy: boolean): Promise<void> {
-    if (!this.patchHostEnv) {
+    if (!(await this.trustEnv.set(trustProxy))) {
       throw new TunnelError('not_configured', HOST_ENV_MESSAGE);
     }
-    await this.patchHostEnv(trustProxy);
-    this.configuredTrustProxy = trustProxy;
-    this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
   }
 
   private async setAccessCredentials(apiTokenRaw: string, accountIdRaw: string): Promise<void> {
@@ -1202,14 +1191,6 @@ export class TunnelManager {
       externallyManaged: true,
       autoStart: false,
     });
-  }
-
-  private async refreshConfiguredTrustProxy(): Promise<void> {
-    if (this.readHostEnv) {
-      const saved = await this.readHostEnv();
-      this.configuredTrustProxy = saved ?? this.trustProxy;
-    }
-    this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
   }
 
   private async startProcess(mode: TunnelMode): Promise<void> {

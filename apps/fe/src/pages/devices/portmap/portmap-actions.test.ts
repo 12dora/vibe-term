@@ -338,6 +338,9 @@ describe('portMapErrorKey', () => {
     expect(portMapErrorKey(new ApiError(409, 'busy', { code: 'port_in_use' }))).toBe(
       'devices.portmap.errors.port_in_use'
     );
+    expect(portMapErrorKey(new ApiError(403, 'forbidden', { code: 'target_forbidden' }))).toBe(
+      'devices.portmap.errors.target_forbidden'
+    );
     expect(portMapErrorKey(new ApiError(500, 'boom', { code: 'weird' }))).toBe(
       'devices.portmap.errors.unknown'
     );

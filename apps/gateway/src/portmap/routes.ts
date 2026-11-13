@@ -8,13 +8,16 @@ import {
 } from '@vibeterm/shared';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
+import { getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestPeerExportRemoval } from './export-cleanup';
 import { type PortMapManager, portMapManager } from './manager';
 import { isPortListening } from './port-probe';
 import { type PortMapExportStoreLike, defaultPortMapExportStore } from './store';
+import { assertTargetAllowed } from './target-policy';
 import {
   PortMapError,
   type PortMapExportRow,
+  type PortMapOrigin,
   assertHost,
   assertLeaseMs,
   assertMapId,
@@ -23,6 +26,7 @@ import {
   assertPort,
   isLeaseExpired,
   portMapHttpStatus,
+  portMapOriginFields,
 } from './types';
 
 type Deps = {
@@ -31,6 +35,8 @@ type Deps = {
   /** 删除映射时顺手清 B 的放行行；尽力而为，返回是否已清掉。 */
   removePeerExport: (nodeId: string, mapId: string) => Promise<boolean>;
   now: () => number;
+  /** 放行目标与目标探测都要过目标策略；被禁时抛 `target_forbidden`。 */
+  assertTarget: (host: string, port: number) => Promise<void>;
 };
 
 /** 顶层再放一份 code：api-client 的 `toApiError` 只认顶层 `code` 字段。 */
@@ -50,6 +56,12 @@ function errorResponse(err: unknown): Response {
 
 function toExportDto(row: PortMapExportRow): PortMapExportDto {
   return { ...row };
+}
+
+/** 记下创建请求经哪个入口进来、是否令牌调用方：入口被吊销、令牌撤销时据此级联删除。 */
+function requestOrigin(req: Request): PortMapOrigin {
+  const ctx = getMeshRequestContext(req);
+  return { issuedVia: ctx.via, createdByTokenId: ctx.tokenId ?? null };
 }
 
 function randomMapId(): string {
@@ -136,7 +148,7 @@ function listRoutes(deps: Deps): ApiRoute[] {
       path: '/api/portmap',
       handler: async (req) => {
         try {
-          const map = deps.manager().create(parseCreate(await jsonBody(req)));
+          const map = deps.manager().create(parseCreate(await jsonBody(req)), requestOrigin(req));
           return json({ map }, 201);
         } catch (err) {
           return errorResponse(err);
@@ -166,6 +178,7 @@ function probeRoutes(deps: Deps): ApiRoute[] {
       handler: async (req) => {
         try {
           const { host, port } = queryHostPort(req);
+          await deps.assertTarget(host, port);
           return json({ host, port, listening: await isPortListening(host, port) });
         } catch (err) {
           return errorResponse(err);
@@ -221,6 +234,7 @@ function exportRoutes(deps: Deps): ApiRoute[] {
       handler: async (req) => {
         try {
           const input = parseCreateExport(await jsonBody(req));
+          await deps.assertTarget(input.host ?? '127.0.0.1', input.port);
           const now = deps.now();
           const row: PortMapExportRow = {
             mapId: input.mapId ?? randomMapId(),
@@ -230,6 +244,7 @@ function exportRoutes(deps: Deps): ApiRoute[] {
             enabled: true,
             createdAt: now,
             ...(input.leaseMs === undefined ? {} : { leaseExpiresAt: now + input.leaseMs }),
+            ...portMapOriginFields(requestOrigin(req)),
           };
           deps.exports().insert(row);
           return json({ export: toExportDto(row) }, 201);
@@ -300,6 +315,7 @@ export function createPortMapRoutes(deps: Partial<Deps> = {}): ApiRoute[] {
     exports: deps.exports ?? defaultPortMapExportStore,
     removePeerExport: deps.removePeerExport ?? requestPeerExportRemoval,
     now: deps.now ?? Date.now,
+    assertTarget: deps.assertTarget ?? ((host, port) => assertTargetAllowed(host, port)),
   };
   return [
     ...probeRoutes(resolved),

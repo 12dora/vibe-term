@@ -173,6 +173,13 @@ export function TelegramBotChatsModal({
   );
 }
 
+/** 待授权群当前绑定的指令人：有名字写「名字 (id)」，没有就只写 id。 */
+export function boundUserLabel(chat: TelegramBotChat): string | null {
+  if (!chat.boundUserId) return null;
+  const name = chat.boundUserName?.trim();
+  return name ? `${name} (${chat.boundUserId})` : chat.boundUserId;
+}
+
 interface ChatRowProps {
   chat: TelegramBotChat;
   pending: boolean;
@@ -184,6 +191,7 @@ interface ChatRowProps {
 function ChatRow({ chat, pending, onApprove, onDelete, onTest }: ChatRowProps) {
   const { t } = useTranslation();
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
+  const boundUser = pending ? boundUserLabel(chat) : null;
   return (
     <div className="space-y-2 rounded border-0 bg-background p-3">
       <div className="truncate text-sm font-medium" title={chat.displayName}>
@@ -192,6 +200,15 @@ function ChatRow({ chat, pending, onApprove, onDelete, onTest }: ChatRowProps) {
       <div className="text-xs text-muted-foreground">
         {t('telegram.chatId')}：{chat.chatId}
       </div>
+      {boundUser && (
+        <div
+          className="truncate text-xs text-muted-foreground"
+          title={boundUser}
+          data-testid={`telegram-chat-bound-user-${chat.chatId}`}
+        >
+          {t('telegram.boundUser', { user: boundUser })}
+        </div>
+      )}
       <div className="text-xs text-muted-foreground">
         {formatDateTime(chat.appliedAt, language)}
       </div>

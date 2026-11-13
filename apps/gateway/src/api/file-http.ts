@@ -1,6 +1,5 @@
 import type { FileErrorCode } from '@vibeterm/shared';
 import { openRange } from '@vibeterm/transfer/node';
-import { contentDisposition } from './content-disposition';
 import { json } from './http';
 
 const CODE_STATUS: Record<FileErrorCode, number> = {
@@ -39,20 +38,6 @@ export function parseNonNegativeSafeInt(raw: string | null): number | null {
   const n = Number(raw);
   if (!Number.isSafeInteger(n) || n < 0) return null;
   return n;
-}
-
-export function attachmentHeaders(
-  name: string,
-  mime: string | null,
-  size: number
-): Record<string, string> {
-  return {
-    'Content-Type': mime ?? 'application/octet-stream',
-    'Content-Length': String(size),
-    'Content-Disposition': contentDisposition(name),
-    'Cache-Control': 'no-store',
-    'Accept-Ranges': 'bytes',
-  };
 }
 
 /** 半开区间 `[start, end)`；`unsatisfiable` 对应 416。 */

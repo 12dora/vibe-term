@@ -232,6 +232,8 @@ export interface RelayEnrollInput {
    * 抛出的异常按接入失败处理，所以调用方必须自己把失败咽掉（见 `use-relay-actions.ts`）。
    */
   afterEnroll?: (rootKey: RootKey) => Promise<void> | void;
+  /** 仅吊销之后的换发置 `true`：不让中继按「本机持有当前令牌」判成沿用。 */
+  forceRotate?: boolean;
 }
 
 /**
@@ -264,14 +266,14 @@ export async function enrollRelay(
 }
 
 /**
- * 根钥校验通过之后的三步。顺序是硬要求：远端 `enroll` 一落地就换发租户令牌并踢掉所有持旧
+ * 根钥校验通过之后的三步（吊销之后刷新各中继令牌也直接走这里）。顺序是硬要求：远端 `enroll` 一落地就换发租户令牌并踢掉所有持旧
  * 令牌的链路（不可逆），补签放在它后面，任何一次可预期的失败（版本门禁、通行密钥、上级超时）
  * 都会留下「旧令牌已作废、`set-relays` 又没落账」的死状态。所以先在本机把 `readmit-node`
  * 全部签完——没有陈旧成员时 prepare 回空表，这一步是无操作。
  */
-async function enrollWithRootKey(
+export async function enrollWithRootKey(
   deps: RelayFlowDeps,
-  input: RelayEnrollInput,
+  input: Omit<RelayEnrollInput, 'rootPassword'>,
   rootKey: RootKey
 ): Promise<RelayFlowResult> {
   const signer: RecordSigner = { kind: 'root', rootKey };
@@ -308,7 +310,11 @@ async function enrollWithRootKey(
 }
 
 /** 换发租户令牌那一步：拿归一化地址与时间戳，签 proof，换回 `set-relays` 的 payload。 */
-async function enrollRemote(deps: RelayFlowDeps, input: RelayEnrollInput, rootKey: RootKey) {
+async function enrollRemote(
+  deps: RelayFlowDeps,
+  input: Omit<RelayEnrollInput, 'rootPassword'>,
+  rootKey: RootKey
+) {
   const material = await deps.relayApi.proofMaterial(input.url);
   const proof = signRelayEnrollProof(rootKey, { relayHost: material.relayHost, ts: material.ts });
   return await deps.relayApi.enroll({
@@ -316,6 +322,7 @@ async function enrollRemote(deps: RelayFlowDeps, input: RelayEnrollInput, rootKe
     url: material.url,
     password: input.password ?? null,
     proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+    ...(input.forceRotate ? { force_rotate: true as const } : {}),
   });
 }
 

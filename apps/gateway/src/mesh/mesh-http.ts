@@ -42,6 +42,7 @@ import {
   isStandaloneRoles,
 } from './mesh-deps';
 import { handleMeshInternalTmuxRequest, isMeshInternalPath } from './mesh-internal-tmux-routes';
+import { isUnguardedLocalUiPath } from './mesh-local-ui-paths';
 import { MeshRoutes } from './mesh-routes';
 import { isPeerInboundRequest, stripMeshPeerMarkerFromRequest } from './peer-request-marker';
 import { type RelayRoutes, isLocalRelayStatusRequest } from './relay-routes';
@@ -99,7 +100,7 @@ export type MeshHttpRuntimeOptions = {
   onSessionsRevoked?: (target: { uid?: string; sid?: string }) => void;
 };
 
-const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
+const OPEN_ACCESS_PROBE = new Request('http://localhost/');
 
 const INERT_PEERS: PeerLinkProvider = {
   getLink: async (nodeId) => {
@@ -425,15 +426,14 @@ export class MeshHttpRuntime {
     },
   };
 
+  /** 免登录单机：与 `authenticateRequest` 的开放短路同一判定。 */
+  isOpenAccess(): boolean {
+    return isStandaloneOpenAuth(authenticateRequest(OPEN_ACCESS_PROBE, this.sessionDeps));
+  }
+
   localUiGuard(req: Request): Response | null {
     const path = new URL(req.url).pathname;
-    if (path === '/login' || path.startsWith('/login/')) {
-      return null;
-    }
-    if (isStaticAsset(path)) {
-      return null;
-    }
-    if (isMeshInternalPath(path)) {
+    if (isUnguardedLocalUiPath(path, req.method)) {
       return null;
     }
     if (
@@ -560,12 +560,4 @@ export class MeshHttpRuntime {
       }
     }
   }
-}
-
-function isStaticAsset(path: string): boolean {
-  for (const prefix of STATIC_PREFIXES) {
-    if (path === prefix.slice(0, -1) || path.startsWith(prefix)) return true;
-  }
-  const last = path.split('/').pop() ?? '';
-  return last.includes('.') && !last.startsWith('.');
 }

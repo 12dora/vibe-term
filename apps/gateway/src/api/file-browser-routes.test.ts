@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as deviceStorage from '../files/device-storage';
+import { requestDispatchContext } from '../mesh/types';
 import { fileBrowserRoutes } from './file-browser-routes';
 import { dispatchRoutes } from './route';
 
@@ -147,5 +148,21 @@ describe('GET /api/files/raw streams the temp file', () => {
     expect(existsSync(raw.tmpPath)).toBe(true);
     await res.body?.cancel();
     expect(existsSync(raw.tmpPath)).toBe(false);
+  });
+});
+
+describe('GET /api/files/browse token principal', () => {
+  test('token principal is 403 TOKEN_SCOPE; session is not', async () => {
+    const tokenReq = new Request('http://localhost/api/files/browse?deviceId=d1&path=%2Ftmp');
+    requestDispatchContext.set(tokenReq, { uid: 'tok-user', viaNodeId: 'self', tokenId: 'tok-1' });
+    const denied = (await dispatch(tokenReq)) as Response;
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: 'TOKEN_SCOPE' });
+
+    const sessionReq = new Request('http://localhost/api/files/browse?path=%2Ftmp');
+    requestDispatchContext.set(sessionReq, { uid: 'user-1', viaNodeId: 'self', sid: 'sid-1' });
+    const session = (await dispatch(sessionReq)) as Response;
+    expect(session.status).toBe(400);
+    expect(await session.json()).toMatchObject({ code: 'invalid' });
   });
 });

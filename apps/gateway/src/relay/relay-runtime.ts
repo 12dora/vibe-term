@@ -1,7 +1,7 @@
 import { type ServerSocketAdapter, WebSocketLink } from '@vibeterm/shared/link';
 import { matchPath } from '../api/route';
 import type { AuthDb } from '../auth/types';
-import { observedIpv4FromClientIp } from '../mesh/client-ip';
+import { clientLimiterKey, observedIpv4FromClientIp } from '../mesh/client-ip';
 import {
   type RelayAdminAuth,
   type RelayLocalAuthCheck,
@@ -20,10 +20,10 @@ import {
   withMembersProbe,
 } from './relay-admin-routes';
 import { RelayConfigStore } from './relay-config-store';
-import { RelayEnrollLimiter } from './relay-enroll-limiter';
+import { RELAY_ENROLL_LIMITER_MAX_KEYS, RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { RelayKeyLogStore } from './relay-key-log-store';
-import { relayLimitTotals } from './relay-limits';
+import { relayLimitTotals, relayStartupWarnings } from './relay-limits';
 import { RelayMetering } from './relay-metering';
 import { RelayMetricsCollector } from './relay-metrics';
 import { dispatchRelayPublic } from './relay-public-routes';
@@ -39,6 +39,9 @@ import {
 } from './relay-turn-service';
 import { RelayUplinkServer } from './relay-uplink-server';
 import {
+  RELAY_DEFAULT_MAX_TENANTS,
+  RELAY_ENROLL_FAILURE_LIMIT,
+  RELAY_ENROLL_FAILURE_WINDOW_MS,
   RELAY_UPLINK_PATH,
   RELAY_UPLINK_WS_KIND,
   type RelayRuntimeConfig,
@@ -138,6 +141,7 @@ export class RelayRuntime {
   private readonly startedAt: number;
   private readonly version: string;
   private readonly publicUrl: string;
+  private readonly defaultMaxTenants: number;
   private readonly publicDeps: RelayPublicRoutesDeps;
   private readonly adminDeps: RelayAdminDeps;
 
@@ -146,6 +150,7 @@ export class RelayRuntime {
     this.startedAt = opts.startedAt ?? this.now();
     this.version = opts.version ?? opts.config.version ?? 'unknown';
     this.publicUrl = opts.config.publicUrl;
+    this.defaultMaxTenants = opts.config.defaultMaxTenants ?? RELAY_DEFAULT_MAX_TENANTS;
     this.tenants = new RelayTenantStore(opts.db);
     this.keyLog = new RelayKeyLogStore(opts.db);
     this.configStore = new RelayConfigStore(opts.db);
@@ -153,7 +158,13 @@ export class RelayRuntime {
     this.metering = new RelayMetering(this.tenants, this.now, opts.meterFlushIntervalMs, () =>
       this.uplink.sweepEnrollments()
     );
-    this.limiter = new RelayEnrollLimiter(this.now);
+    this.limiter = new RelayEnrollLimiter(
+      this.now,
+      RELAY_ENROLL_FAILURE_LIMIT,
+      RELAY_ENROLL_FAILURE_WINDOW_MS,
+      RELAY_ENROLL_LIMITER_MAX_KEYS,
+      opts.log
+    );
     this.adminAuth = adminAuth;
     this.turn = turn;
     this.uplink = new RelayUplinkServer({
@@ -183,6 +194,7 @@ export class RelayRuntime {
       registry: this.registry,
       publicUrl: opts.config.publicUrl,
       relayHost: this.uplink.relayHost,
+      defaultMaxTenants: this.defaultMaxTenants,
       now: this.now,
       clientIp: opts.clientIp ?? (() => ''),
     };
@@ -195,7 +207,8 @@ export class RelayRuntime {
       startedAt: this.startedAt,
       version: this.version,
       quotaFor: (tenantId) => this.uplink.quotaFor(tenantId),
-      limits: () => relayLimitTotals(this.configStore.ensure(this.now()).limits),
+      limits: () =>
+        relayLimitTotals(this.configStore.ensure(this.now()).limits, this.defaultMaxTenants),
       onSample: () => this.uplink.pushQuotaUsageIfChanged(),
     });
     this.uplink.bindTenantRates((tenantId) => this.metrics.tenantRates(tenantId));
@@ -221,10 +234,16 @@ export class RelayRuntime {
         return relayError(RelayErrorCode.methodNotAllowed, 405);
       }
       const clientIp = this.publicDeps.clientIp(req);
+      const preauthKey = clientLimiterKey(req);
+      if (!this.uplink.reservePreauth(preauthKey)) {
+        return relayError(RelayErrorCode.rateLimited, 429);
+      }
       const ok = server.upgrade(req, {
-        data: { kind: RELAY_UPLINK_WS_KIND, clientIp } satisfies RelayUplinkSocketData,
+        data: { kind: RELAY_UPLINK_WS_KIND, clientIp, preauthKey } satisfies RelayUplinkSocketData,
       });
-      return ok ? undefined : relayError(RelayErrorCode.upgradeFailed, 426);
+      if (ok) return undefined;
+      this.uplink.releasePreauthReservation(preauthKey);
+      return relayError(RelayErrorCode.upgradeFailed, 426);
     }
     if (!path.startsWith('/api/relay/')) return undefined;
     return (await this.routePublic(req, path)) ?? (await this.routeAdmin(req, path));
@@ -303,6 +322,8 @@ export class RelayRuntime {
     ws.data.adapter = adapter;
     this.uplink.accept(new WebSocketLink(adapter, { role: 'acceptor' }), {
       observedIpv4: observedIpv4FromClientIp(ws.data.clientIp),
+      clientIp: ws.data.preauthKey ?? null,
+      preauthReserved: true,
     });
   }
 
@@ -387,6 +408,15 @@ export async function createRelayRuntime(opts: RelayRuntimeOptions): Promise<Rel
       ...opts.turnDeps,
     });
   const runtime = new RelayRuntime(opts, adminAuth, turn);
+  const config = configStore.ensure(now());
+  for (const line of relayStartupWarnings({
+    hasPassword: Boolean(config.passwordHash),
+    limits: config.limits,
+    tenantCount: runtime.tenants.count(),
+    defaultMaxTenants: opts.config.defaultMaxTenants ?? RELAY_DEFAULT_MAX_TENANTS,
+  })) {
+    (opts.log ?? console.warn)(line);
+  }
   turn.setOnAdvertisementChange(() => {
     for (const tenant of runtime.tenants.list()) runtime.uplink.scheduleList(tenant.id);
   });

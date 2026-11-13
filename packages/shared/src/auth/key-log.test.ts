@@ -844,7 +844,7 @@ const SAMPLE_TOTP = {
 };
 
 describe('rotate-root-keep', () => {
-  it('keeps passkeys, totp and certs; emits no effects', async () => {
+  it('keeps passkeys, totp and certs; revokes every session', async () => {
     const oldRoot = root(1);
     const newRoot = root(2);
     let state = emptyUserKeyState(oldRoot.publicKey);
@@ -897,7 +897,7 @@ describe('rotate-root-keep', () => {
     expect(rotated.state.totp?.alg).toBe('A256GCM');
     expect(bytesEqual(rotated.state.totp?.tag ?? new Uint8Array(), wrapped.tag)).toBe(true);
     expect(rotated.state.nodeCerts.size).toBe(1);
-    expect(rotated.effects).toEqual([]);
+    expect(rotated.effects).toEqual([{ type: 'revokeAllSessions' }]);
 
     const stale = buildKeyLogRecord(rotated.state.head, rotated.state.rootEpoch, {
       uid: UID,
@@ -977,7 +977,7 @@ describe('rotate-root-keep', () => {
     );
     expect(rotated.state.totp).toBeNull();
     expect(rotated.state.rootEpoch).toBe(1);
-    expect(rotated.effects).toEqual([]);
+    expect(rotated.effects).toEqual([{ type: 'revokeAllSessions' }]);
   });
 
   it('rejects passkey-signed rotate-root-keep before verifying the assertion', async () => {

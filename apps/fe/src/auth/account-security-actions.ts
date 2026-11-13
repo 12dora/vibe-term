@@ -21,7 +21,7 @@ export type {
   MetaKeyRotationOutcome,
   SignedPasswordChange,
 } from './account-security-password-change';
-export { changePassword } from './account-security-password-change';
+export { changePassword, settleRelayAfterPasswordChange } from './account-security-password-change';
 export type {
   BeginTotpSetupInput,
   ConfirmTotpSetupInput,

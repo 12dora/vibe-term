@@ -76,7 +76,9 @@ const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   'keep-backup',
   'allow-missing-native',
   'allow-unverified',
+  'allow-downgrade',
   'apply-current-package',
+  'token-stdin',
 ]);
 
 function equalsFlagValue(key: string, value: string): string | boolean {
@@ -337,6 +339,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'ca-fingerprint',
     'no-restart',
     'no-wait',
+    'token-stdin',
   ]),
   'relay.reauth': RELAY_TENANT_FLAGS,
   'relay.pack.upload': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),

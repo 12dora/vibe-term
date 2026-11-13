@@ -1,6 +1,7 @@
 import { bytesToHex, encodeBase64url, sha256 } from '@vibeterm/shared/auth';
 import { decodeBase64url } from '@vibeterm/shared/auth';
 import { RELAY_TOKEN_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
+import { RELAY_ENROLL_REVOKED_MAX } from '../relay/relay-enroll-revoke';
 import { meshFetch } from './mesh-egress';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import { readRelayErrorCode } from './relay-routes-input';
@@ -36,6 +37,10 @@ export type RelayEnrollCallInput = {
   proof: { bytes: Uint8Array; sig: Uint8Array };
   /** 本机已持有的令牌哈希；与中继当前令牌一致时中继不再换发。 */
   knownTokenHash?: string;
+  /** 吊销节点后的换发：中继必定换发，并把当前令牌降为 `node_only`（旧中继忽略）。 */
+  forceRotate?: boolean;
+  /** 随 `forceRotate` 发给中继的本机已吊销 node_id（中继据此标记吊销并断链；旧中继忽略）。 */
+  revokedNodeIds?: string[];
   fetchImpl?: typeof fetch;
   dial?: RelayDialContext;
   persistStore?: PersistEnrollPasswordStore;
@@ -109,6 +114,33 @@ export async function relayTenantPost(input: RelayTenantPostInput): Promise<Rela
   }
 }
 
+type CertRevocation = { nodeId: string; revokedLogSeq: number | null };
+
+/** 本机密钥日志投影里已吊销的节点，最近吊销的在前，至多 `RELAY_ENROLL_REVOKED_MAX` 个。 */
+export function revokedNodeIdsFrom(certs: readonly CertRevocation[]): string[] {
+  const revoked = certs
+    .filter((cert) => cert.revokedLogSeq != null)
+    .sort((a, b) => (b.revokedLogSeq ?? 0) - (a.revokedLogSeq ?? 0))
+    .map((cert) => cert.nodeId.toLowerCase());
+  return [...new Set(revoked)].slice(0, RELAY_ENROLL_REVOKED_MAX);
+}
+
+/**
+ * `POST /api/mesh/relay/enroll` 请求体里透传给中继的字段；`force_rotate` 时附上本机已吊销的节点，
+ * 让中继在根证明过的换发里把它们标为吊销。
+ */
+export function enrollPassThrough(
+  body: Record<string, unknown> | null,
+  certs: readonly CertRevocation[]
+): Pick<RelayEnrollCallInput, 'password' | 'forceRotate' | 'revokedNodeIds'> {
+  return {
+    ...(typeof body?.password === 'string' ? { password: body.password } : {}),
+    ...(body?.force_rotate === true
+      ? { forceRotate: true, revokedNodeIds: revokedNodeIdsFrom(certs) }
+      : {}),
+  };
+}
+
 /** 与中继 `sha256Hex(token)` 同口径：令牌原文是 b64url 串，先转 UTF-8 再摘要。 */
 export function relayTokenHashHex(token: Uint8Array): string {
   return bytesToHex(sha256(new TextEncoder().encode(encodeBase64url(token))));
@@ -136,6 +168,10 @@ function enrollRequestBody(input: RelayEnrollCallInput): Record<string, unknown>
   return {
     ...(input.password !== undefined ? { password: input.password } : {}),
     ...(input.knownTokenHash ? { known_token_hash: input.knownTokenHash } : {}),
+    ...(input.forceRotate ? { force_rotate: true } : {}),
+    ...(input.forceRotate && input.revokedNodeIds?.length
+      ? { revoked_node_ids: input.revokedNodeIds }
+      : {}),
     root_public_key: encodeBase64url(input.rootPublicKey),
     root_epoch: input.rootEpoch,
     proof: {

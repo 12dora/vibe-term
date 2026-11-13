@@ -2,13 +2,10 @@ import {
   type PeerHello,
   buildPeerTranscript,
   decodeBase64url,
-  decodeCertificate,
   derivePeerSessionKeys,
   encodeBase64url,
   encodePeerTranscript,
-  generateX25519KeyPair,
   hexToBytes,
-  nodeIdToHex,
   signTranscript,
   verifyTranscript,
 } from '@vibeterm/shared/auth';
@@ -28,6 +25,13 @@ import {
 import type { UserStore } from '../auth/user-store';
 import { decodeJsonBytes, encodeCtlMessage, isRecord, requireString } from './ctl';
 import { withPeerHandshakeTimeout } from './peer-handshake-timeout';
+import {
+  assertAcceptableHandshakePeer,
+  createSelfHello,
+  lookupPeerEdPk,
+  parseHello,
+  selfHelloWire,
+} from './peer-hello';
 import { type MeshIdentity, PeerHandshakeError, type PeerTransportKind } from './types';
 import { adoptRelayStreamOwner } from './uplink-relay-drain';
 
@@ -138,78 +142,10 @@ export function decodePeerCtl(bytes: Uint8Array): Record<string, unknown> {
   return parsed;
 }
 
-function parseHello(msg: Record<string, unknown>): { hello: PeerHello; nodeIdHex: string } {
-  if (msg.t !== 'hello') {
-    throw new PeerHandshakeError('protocol', `expected hello, got ${String(msg.t)}`);
-  }
-  const nodeIdHex = requireString(msg.node_id, 'node_id').toLowerCase();
-  const nonce = decodeBase64url(requireString(msg.nonce, 'nonce'));
-  const eph = decodeBase64url(requireString(msg.eph_x25519_pk, 'eph_x25519_pk'));
-  if (nonce.byteLength !== 32) {
-    throw new PeerHandshakeError('protocol', 'hello nonce must be 32 bytes');
-  }
-  if (eph.byteLength !== 32) {
-    throw new PeerHandshakeError('protocol', 'hello eph_x25519_pk must be 32 bytes');
-  }
-  const nodeId = hexToBytes(nodeIdHex);
-  if (nodeId.byteLength !== 16) {
-    throw new PeerHandshakeError('protocol', 'hello node_id must be 16 bytes');
-  }
-  let dtls: PeerHello['dtls_fingerprint'] = null;
-  if (msg.dtls_fingerprint && isRecord(msg.dtls_fingerprint)) {
-    dtls = {
-      algorithm: requireString(msg.dtls_fingerprint.algorithm, 'dtls_fingerprint.algorithm'),
-      value: requireString(msg.dtls_fingerprint.value, 'dtls_fingerprint.value'),
-    };
-  }
-  return {
-    nodeIdHex,
-    hello: {
-      node_id: nodeId,
-      nonce,
-      eph_x25519_pk: eph,
-      dtls_fingerprint: dtls,
-    },
-  };
-}
-
-function lookupPeerEdPk(userStore: UserStore, nodeIdHex: string): Uint8Array {
-  const cert = userStore.getCert(nodeIdHex);
-  if (!cert) {
-    throw new PeerHandshakeError('unknown', `no node_certs for ${nodeIdHex}`);
-  }
-  if (cert.revokedLogSeq != null) {
-    throw new PeerHandshakeError('revoked', `node ${nodeIdHex} is revoked`);
-  }
-  const decoded = decodeCertificate(cert.certificateBytes);
-  if (nodeIdToHex(decoded.node_id) !== nodeIdHex) {
-    throw new PeerHandshakeError('protocol', 'certificate node_id mismatch');
-  }
-  return decoded.ed_pk;
-}
-
 type CtlIo = {
   send: (bytes: Uint8Array) => void | Promise<void>;
   recv: () => Promise<Uint8Array>;
 };
-
-function ctlPushRecv(
-  onMessage: (cb: (bytes: Uint8Array) => void) => void
-): () => Promise<Uint8Array> {
-  const pending: Uint8Array[] = [];
-  const waiters: Array<(bytes: Uint8Array) => void> = [];
-  onMessage((bytes) => {
-    const waiter = waiters.shift();
-    if (waiter) waiter(bytes);
-    else pending.push(bytes);
-  });
-  return () => {
-    if (pending.length > 0) {
-      return Promise.resolve(pending.shift() as Uint8Array);
-    }
-    return new Promise((resolve) => waiters.push(resolve));
-  };
-}
 
 async function exchangeHelloAndSig(
   io: CtlIo,
@@ -218,6 +154,7 @@ async function exchangeHelloAndSig(
     userStore: UserStore;
     path: 'dc' | 'relay';
     timeoutMs: number;
+    expectedPeerId?: string;
   }
 ): Promise<{
   peerNodeId: string;
@@ -226,27 +163,8 @@ async function exchangeHelloAndSig(
   transcriptBytes: Uint8Array;
   ephSk: Uint8Array;
 }> {
-  const selfId = hexToBytes(opts.identity.nodeId);
-  if (selfId.byteLength !== 16) {
-    throw new PeerHandshakeError('protocol', 'identity.nodeId must be 16 bytes hex');
-  }
-  const eph = generateX25519KeyPair();
-  const selfHello: PeerHello = {
-    node_id: selfId,
-    nonce: crypto.getRandomValues(new Uint8Array(32)),
-    eph_x25519_pk: eph.publicKey,
-    dtls_fingerprint: null,
-  };
-
-  await io.send(
-    encodePeerCtl({
-      t: 'hello',
-      node_id: nodeIdToHex(selfHello.node_id),
-      nonce: encodeBase64url(selfHello.nonce),
-      eph_x25519_pk: encodeBase64url(selfHello.eph_x25519_pk as Uint8Array),
-      dtls_fingerprint: null,
-    })
-  );
+  const { selfHello, ephSk } = createSelfHello(opts.identity);
+  await io.send(encodePeerCtl(selfHelloWire(selfHello)));
 
   let peerHello: PeerHello | null = null;
   let peerNodeId = '';
@@ -255,6 +173,7 @@ async function exchangeHelloAndSig(
 
   const sendSigIfReady = async () => {
     if (sentSig || !peerHello) return;
+    assertAcceptableHandshakePeer(peerNodeId, opts.identity, opts.expectedPeerId);
     const transcript = buildPeerTranscript(opts.path, selfHello, peerHello);
     const sig = signTranscript(opts.identity.edSecretKey, transcript);
     sentSig = true;
@@ -283,6 +202,7 @@ async function exchangeHelloAndSig(
   if (!peerHello || !gotSig) {
     throw new PeerHandshakeError('protocol', 'incomplete handshake');
   }
+  assertAcceptableHandshakePeer(peerNodeId, opts.identity, opts.expectedPeerId);
   await sendSigIfReady();
 
   const edPk = lookupPeerEdPk(opts.userStore, peerNodeId);
@@ -296,7 +216,7 @@ async function exchangeHelloAndSig(
     peerHello,
     selfHello,
     transcriptBytes,
-    ephSk: eph.secretKey,
+    ephSk,
   };
 }
 
@@ -382,6 +302,7 @@ export async function handshakeWsDirect(opts: {
   identity: MeshIdentity;
   userStore: UserStore;
   timeoutMs?: number;
+  expectedPeerId?: string;
 }): Promise<PeerHandshakeResult> {
   const inner = websocketTransport(opts.socket);
   const gate = createHandshakeGate(inner);
@@ -396,6 +317,7 @@ export async function handshakeWsDirect(opts: {
         userStore: opts.userStore,
         path: WS_SECURE_TRANSCRIPT_PATH,
         timeoutMs: opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS,
+        expectedPeerId: opts.expectedPeerId,
       }
     );
     const peerEph = result.peerHello.eph_x25519_pk;
@@ -435,6 +357,7 @@ export async function handshakeRelay(opts: {
   identity: MeshIdentity;
   userStore: UserStore;
   timeoutMs?: number;
+  expectedPeerId?: string;
 }): Promise<PeerHandshakeResult> {
   const reader = opts.stream.readable.getReader();
   try {
@@ -454,6 +377,7 @@ export async function handshakeRelay(opts: {
         userStore: opts.userStore,
         path: 'relay',
         timeoutMs: opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS,
+        expectedPeerId: opts.expectedPeerId,
       }
     );
     try {

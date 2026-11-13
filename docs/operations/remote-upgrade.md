@@ -23,6 +23,7 @@
 进度：`progress.channel = 'node-github' | 'push' | 'node-github-forced'`。job running 时：`push` + `phase=start` → `UpgradeStatus.state=executing`，其余 `downloading`（`phase=push` 时前端仍靠 `transfer.kind==='push'` 显示推送）。旧入口不上报 `channel`。
 
 本机 `POST /api/system/upgrade` / `vibeterm upgrade` 不走第二通道，见 [自更新](./self-update.md)。
+从别的节点转发的升级若目标版本低于当前运行版本，节点回 409 `UPGRADE_DOWNGRADE_REFUSED`（在签名下限判定之后）。本机 CLI 降级须显式 `--allow-downgrade`。旧节点（2.14.0）没有这条拒绝，混合版本 mesh 里只有已升级的目标会挡住远程降级；不 bump 协议。
 
 线兼容：2.3.6 入口不发 `requireFastSource`、不读 `ranges`、不广告新能力；解析器忽略未知 JSON 字段。旧节点无 `release-speed-probe` → 今日「入口下再推」，推失败才强制 `source:'release'`（旧节点忽略该 flag，照常自拉）。
 

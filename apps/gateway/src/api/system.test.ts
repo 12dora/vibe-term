@@ -1059,6 +1059,18 @@ describe('POST /api/system/upgrade 远程降级防护', () => {
       infoSpy.mockRestore();
     }
   });
+
+  test('入口让节点装回比当前更旧、但已过签名下限的版本：拒绝', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await start({ version: '1.1.39', source: 'release' }, { remote: true });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ code: 'UPGRADE_DOWNGRADE_REFUSED' });
+      expect(upgradeController.status().state).toBe('idle');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
 });
 
 describe('POST /api/system/upgrade/package/manifest + PUT 双资产', () => {

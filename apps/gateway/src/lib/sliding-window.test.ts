@@ -67,16 +67,16 @@ describe('SlidingWindowCounter', () => {
     expect(counter.count('fresh')).toBe(1);
   });
 
-  test('expired-only eviction keeps live buckets even above maxKeys', () => {
-    const counter = new SlidingWindowCounter({
-      windowMs: 100,
-      now: () => 1_000,
-      maxKeys: 2,
-      evict: 'expired-only',
-    });
-    for (const key of ['a', 'b', 'c', 'd']) counter.hit(key);
-    expect(counter.size).toBe(4);
-    expect(counter.count('a')).toBe(1);
+  test('key count stays bounded under high-cardinality hits', () => {
+    let now = 1_000;
+    const counter = new SlidingWindowCounter({ windowMs: 60_000, now: () => now, maxKeys: 64 });
+    for (let i = 0; i < 10_000; i++) {
+      counter.hit(`ip-${i}`);
+      now += 1;
+    }
+    expect(counter.size).toBe(64);
+    expect(counter.count('ip-9999')).toBe(1);
+    expect(counter.count('ip-0')).toBe(0);
   });
 
   test('oldest eviction drops the least recently started bucket first', () => {

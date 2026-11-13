@@ -164,6 +164,7 @@ export async function runPeerHandshake(opts: {
       localFingerprint: localFp,
       timeoutMs: remainingDeadlineMs(deadline, 'peer handshake timeout'),
       queue,
+      expectedPeerId: peerNodeId,
     });
     if (!channel.isOpen()) {
       throw new PeerHandshakeError('protocol', 'datachannel closed during handshake handoff');

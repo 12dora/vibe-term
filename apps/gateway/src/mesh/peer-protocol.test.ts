@@ -68,6 +68,68 @@ describe('peer handshake', () => {
     stream.end();
   });
 
+  test('rejects self node_id before producing a signature', async () => {
+    const { store, a } = setup();
+    const [wsA, wsB] = fakeSocketPair();
+    const results = await Promise.allSettled([
+      handshakeWsDirect({
+        socket: wsA,
+        role: 'initiator',
+        identity: a,
+        userStore: store,
+        timeoutMs: 500,
+      }),
+      handshakeWsDirect({
+        socket: wsB,
+        role: 'acceptor',
+        identity: a,
+        userStore: store,
+        timeoutMs: 500,
+      }),
+    ]);
+    const rejected = results.filter((row) => row.status === 'rejected') as PromiseRejectedResult[];
+    expect(rejected.length).toBeGreaterThan(0);
+    expect(
+      rejected.some(
+        (row) =>
+          row.reason instanceof PeerHandshakeError &&
+          row.reason.code === 'protocol' &&
+          row.reason.message.includes('must not be self')
+      )
+    ).toBe(true);
+  });
+
+  test('dialer rejects unexpected peer id before signing', async () => {
+    const { store, a, b } = setup();
+    const [wsA, wsB] = fakeSocketPair();
+    const results = await Promise.allSettled([
+      handshakeWsDirect({
+        socket: wsA,
+        role: 'initiator',
+        identity: a,
+        userStore: store,
+        expectedPeerId: 'ff'.repeat(16),
+        timeoutMs: 500,
+      }),
+      handshakeWsDirect({
+        socket: wsB,
+        role: 'acceptor',
+        identity: b,
+        userStore: store,
+        timeoutMs: 500,
+      }),
+    ]);
+    expect(
+      results.some(
+        (row) =>
+          row.status === 'rejected' &&
+          row.reason instanceof PeerHandshakeError &&
+          row.reason.code === 'protocol' &&
+          (row.reason as PeerHandshakeError).message.includes('mismatch')
+      )
+    ).toBe(true);
+  });
+
   test('rejects unknown peer certificate', async () => {
     const { store, a } = setup();
     const { db, close } = createMigratedAuthDb();

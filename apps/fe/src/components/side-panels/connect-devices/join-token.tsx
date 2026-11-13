@@ -8,6 +8,7 @@ import { PasskeyTwiceHint } from '@/auth/passkey-twice-hint';
 import type { PendingEnrollment } from '@/node/enrollment';
 import {
   AdmitOutcome,
+  EnrollmentCode,
   admitFailureText,
   admitStepLabel,
 } from '@/pages/settings/nodes/management/admit-rows';
@@ -106,8 +107,7 @@ export function JoinTokenFields({ enrollment }: { enrollment: JoinEnrollment }) 
 /**
  * 步骤 6「确认加入」：只反映本次会话那条 enrollment。
  *
- * 根钥用户的证书一到就由引擎自动签，用户只会看到「等待新节点加入」→「已加入」；
- * passkey 用户签名必须由手势触发，证书到达后这里给出「确认加入」按钮。
+ * 证书到达后这里亮出确认码与「确认加入」按钮：用户与新机器上的确认码核对一致再点，引擎从不自动签。
  * 中继模式下加入分两步，进行中的步骤与「成员密钥待补发」由 `AdmitOutcome` 给出，与设置页同一套。
  */
 export function JoinConfirmStatus({ enrollment }: { enrollment: JoinEnrollment }) {
@@ -158,6 +158,7 @@ function JoinPendingStatus({ enrollment, id }: { enrollment: JoinEnrollment; id:
   const unconfirmed = engine.unconfirmedIds.includes(id);
   const failureKey = engine.failureById[id];
   const retry = unconfirmed || Boolean(failureKey);
+  const sas = engine.certificateSasById[id];
   return (
     <>
       {failureKey ? (
@@ -169,7 +170,10 @@ function JoinPendingStatus({ enrollment, id }: { enrollment: JoinEnrollment; id:
           {unconfirmed ? t('nodes.enrollment.relayNotConfirmed') : t('nodes.enrollment.pending')}
         </p>
       )}
-      {(retry || engine.certificateReadyIds.includes(id)) && (
+      {sas && !unconfirmed && (
+        <EnrollmentCode sas={sas} testId="connect-join-code" className="text-xs" />
+      )}
+      {(unconfirmed || sas) && (
         <JoinConfirmAction enrollment={enrollment} id={id} retry={retry} resendOnly={unconfirmed} />
       )}
     </>

@@ -11,7 +11,12 @@ import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
 import { confirmDestructiveReset } from './destructive-confirm';
 import type { LocalAuthContext } from './local-auth';
-import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
+import {
+  assertAccountPassword,
+  assertRootKeyMatches,
+  deriveRootKey,
+  resolvePassword,
+} from './password';
 import { uploadRelayPackFromLocal } from './relay-pack-upload';
 
 export type PasswdMode = 'keep' | 'full-reset';
@@ -108,6 +113,7 @@ export async function applyUserPasswd(
     prompt: 'New password',
     confirmPrompt: 'Confirm new password',
   });
+  assertAccountPassword(newPassword, username);
   const kdfParams = generateKdfParams();
   const newKey = await deriveRootKey(newPassword, kdfParams);
   const mode: PasswdMode = fullReset ? 'full-reset' : 'keep';

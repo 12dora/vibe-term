@@ -1,6 +1,6 @@
 import type dgram from 'node:dgram';
 import { AllocationTable } from './allocation-table';
-import { DEFAULT_DENIED_PEER_CIDRS, createPeerPolicy } from './denied-peers';
+import { DEFAULT_DENIED_PEER_CIDRS, PeerDenySet } from './denied-peers';
 import type { TurnServer, TurnServerOptions, TurnServerStats } from './index';
 import { resolveTurnListenHost } from './local-address';
 import { decodeMessage, isChannelData, verifyFingerprint } from './stun-message';
@@ -32,11 +32,15 @@ class TurnServerImpl implements TurnServer {
       table: new AllocationTable(resolved),
       nonce: new NonceStore(resolved.now),
       unauthLimit: new UnauthResponseLimiter(resolved.now),
-      denied: createPeerPolicy(resolved.deniedPeerCidrs),
+      denied: new PeerDenySet({
+        cidrs: resolved.deniedPeerCidrs,
+        denySelf: resolved.denySelfAddresses,
+      }),
       send: (buf, addr) => {
         this.control?.send(buf, addr.port, addr.address);
       },
     };
+    this.refreshDenied();
   }
 
   async start(): Promise<{ port: number }> {
@@ -55,6 +59,7 @@ class TurnServerImpl implements TurnServer {
     this.ctx.options.listenHost = bound.host;
     this.ctx.stats.bindHost = bound.host;
     this.attachControl(bound.socket);
+    this.refreshDenied();
     return { port: this.ctx.stats.port };
   }
 
@@ -79,10 +84,16 @@ class TurnServerImpl implements TurnServer {
 
   setExternalIp(ip: string): void {
     const next = ip.trim();
-    if (!next || next === this.ctx.options.externalIp) return;
-    this.ctx.options.externalIp = next;
-    this.ctx.stats.externalIp = next;
-    this.ctx.options.log(`turn: external ip ${next}`);
+    if (next && next !== this.ctx.options.externalIp) {
+      this.ctx.options.externalIp = next;
+      this.ctx.stats.externalIp = next;
+      this.ctx.options.log(`turn: external ip ${next}`);
+    }
+    this.refreshDenied();
+  }
+
+  private refreshDenied(): void {
+    this.ctx.denied.refresh([this.ctx.options.externalIp, this.ctx.options.listenHost]);
   }
 
   private attachControl(socket: dgram.Socket): void {
@@ -141,6 +152,7 @@ function resolveOptions(options: TurnServerOptions): ResolvedTurnOptions {
     maxAllocationsPerUser: caps.maxAllocationsPerUser,
     maxLifetimeSec: options.maxLifetimeSec ?? DEFAULT_MAX_LIFETIME_SEC,
     deniedPeerCidrs: options.deniedPeerCidrs ?? DEFAULT_DENIED_PEER_CIDRS,
+    denySelfAddresses: options.denySelfAddresses ?? true,
     bytesPerSecPerAllocation: options.bytesPerSecPerAllocation ?? 0,
     log: options.log ?? noop,
     now: options.now ?? Date.now,

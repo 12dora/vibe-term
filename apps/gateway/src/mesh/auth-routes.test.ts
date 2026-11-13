@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import {
   DELEGATION_TTL_MS,
+  DOMAIN_CERTIFICATE,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
   buildLogin,
@@ -8,6 +9,7 @@ import {
   createDelegation,
   decodeBase64url,
   encodeBase64url,
+  encodeCertificate,
   encodeClearTotpPayload,
   encodeDelegation,
   encodeLogin,
@@ -16,6 +18,7 @@ import {
   encryptTotpSecret,
   generateEd25519KeyPair,
   generateKdfParams,
+  hexToBytes,
   rootKeyFromSeed,
   sha256,
   signLogin,
@@ -33,6 +36,7 @@ import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
 import { MemoryLocalAuthStore } from '../db/local-auth-settings';
 import { type AuthKeyLogPublisher, authModeDisplayUsername } from './auth-routes';
+import type { ClientIpHeader } from './client-ip-header';
 import {
   CHALLENGE_RATE_LIMIT,
   LOGIN_RATE_WINDOW_MS,
@@ -293,15 +297,17 @@ export async function call(
     clientIp?: string;
     authSid?: string;
     trustProxy?: boolean;
+    clientIpHeader?: ClientIpHeader;
   }
 ): Promise<Response> {
   const req = new Request(url, init);
   if (init?.via || init?.clientIp || init?.authSid || init?.trustProxy) {
     setMeshRequestContext(req, {
       via: init.via ?? 'self',
-      clientIp: init.clientIp,
+      clientIp: init.clientIp ?? (init.trustProxy ? '127.0.0.1' : undefined),
       auth: init.authSid,
       trustProxy: init.trustProxy,
+      clientIpHeader: init.clientIpHeader,
     });
   }
   let res = await runtime.handleRequest(req, dummyServer);
@@ -1454,7 +1460,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('rotate-root-keep keeps the session cookie and totp-record returns the nested payload', async () => {
+  test('rotate-root-keep revokes the session cookie and totp-record returns the nested payload', async () => {
     const mesh = await bootMesh({ roles: { node: true, relay: false } });
     try {
       const {
@@ -1547,18 +1553,8 @@ describe('auth-routes', () => {
       });
       expect(appended.status).toBe(200);
 
-      const still = await call(mesh.runtime, 'http://localhost/api/auth/keylog/head', cookie);
-      expect(still.status).toBe(200);
-      const totpRec = await call(mesh.runtime, 'http://localhost/api/auth/totp-record', cookie);
-      expect(totpRec.status).toBe(200);
-      const body = (await totpRec.json()) as {
-        record_seq: number | string;
-        root_epoch: number;
-        payload: string;
-      };
-      expect(body.root_epoch).toBe(state.rootEpoch + 1);
-      expect(body.record_seq).toBe(Number(state.head.seq + 1n));
-      expect(decodeBase64url(body.payload)).toEqual(encodeSetTotpPayload(wrapped));
+      const revoked = await call(mesh.runtime, 'http://localhost/api/auth/keylog/head', cookie);
+      expect(revoked.status).toBe(401);
 
       const after = mesh.keyLogService.currentState(mesh.boot.userId);
       // 换一把 sess_pk 再用同一 30s 码会被重放缓存拒绝；±1 step 仍在接受窗口内。
@@ -1570,6 +1566,19 @@ describe('auth-routes', () => {
       );
       expect(login.res.status).toBe(200);
       expect(after.totp?.alg).toBe('A256GCM');
+
+      const totpRec = await call(mesh.runtime, 'http://localhost/api/auth/totp-record', {
+        headers: { cookie: `vibeterm_s_self=${login.sid}` },
+      });
+      expect(totpRec.status).toBe(200);
+      const body = (await totpRec.json()) as {
+        record_seq: number | string;
+        root_epoch: number;
+        payload: string;
+      };
+      expect(body.root_epoch).toBe(state.rootEpoch + 1);
+      expect(body.record_seq).toBe(Number(state.head.seq + 1n));
+      expect(decodeBase64url(body.payload)).toEqual(encodeSetTotpPayload(wrapped));
     } finally {
       mesh.close();
     }
@@ -1948,7 +1957,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('trustProxy keys login limiter on CF-Connecting-IP; ignored when untrusted', async () => {
+  test('login limiter reads only the configured client-IP header; others share one bucket', async () => {
     const failLogin = (
       runtime: MeshHttpRuntime,
       opts: { clientIp: string; trustProxy: boolean; cfIp: string }
@@ -1962,6 +1971,7 @@ describe('auth-routes', () => {
         body: JSON.stringify({}),
         clientIp: opts.clientIp,
         trustProxy: opts.trustProxy,
+        clientIpHeader: 'cf-connecting-ip',
       });
 
     const mesh = await bootMesh();
@@ -1992,39 +2002,48 @@ describe('auth-routes', () => {
       mesh.close();
     }
 
+    const unconfigured = await bootMesh();
+    try {
+      const rotating = (i: number) =>
+        call(unconfigured.runtime, 'http://localhost/api/auth/login', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-real-ip': `203.0.113.${i + 1}` },
+          body: JSON.stringify({}),
+          clientIp: '10.0.0.1',
+          trustProxy: true,
+        });
+      for (let i = 0; i < 10; i++) expect((await rotating(i)).status).toBe(400);
+      const blocked = await rotating(42);
+      expect(blocked.status).toBe(429);
+      expect((await blocked.json()).code).toBe('RATE_LIMITED');
+    } finally {
+      unconfigured.close();
+    }
+
     const untrusted = await bootMesh();
     try {
-      const socket = '10.0.0.1';
       for (let i = 0; i < 10; i++) {
         const res = await failLogin(untrusted.runtime, {
-          clientIp: socket,
-          trustProxy: false,
-          cfIp: `203.0.113.${i + 1}`,
-        });
-        expect(res.status).toBe(400);
-      }
-      const otherClaim = await failLogin(untrusted.runtime, {
-        clientIp: socket,
-        trustProxy: false,
-        cfIp: '198.51.100.9',
-      });
-      expect(otherClaim.status).toBe(400);
-      for (let i = 0; i < 8; i++) {
-        const res = await failLogin(untrusted.runtime, {
-          clientIp: socket,
+          clientIp: '10.0.0.1',
           trustProxy: false,
           cfIp: '198.51.100.9',
         });
         expect(res.status).toBe(400);
       }
-      const tenth = await failLogin(untrusted.runtime, {
-        clientIp: socket,
+      const otherClaim = await failLogin(untrusted.runtime, {
+        clientIp: '10.0.0.1',
+        trustProxy: false,
+        cfIp: '198.51.100.10',
+      });
+      expect(otherClaim.status).toBe(400);
+      const publicSpoof = await failLogin(untrusted.runtime, {
+        clientIp: '203.0.113.50',
         trustProxy: false,
         cfIp: '198.51.100.9',
       });
-      expect(tenth.status).toBe(400);
+      expect(publicSpoof.status).toBe(400);
       const blocked = await failLogin(untrusted.runtime, {
-        clientIp: socket,
+        clientIp: '10.0.0.1',
         trustProxy: false,
         cfIp: '198.51.100.9',
       });
@@ -2241,7 +2260,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('bootstrap loopback ignores spoofed XFF unless trustProxy; CF-Connecting-IP is never local', async () => {
+  test('bootstrap loopback requires a direct socket: any forwarding header is never local', async () => {
     const bootstrap = (
       runtime: MeshHttpRuntime,
       opts: { clientIp: string; trustProxy?: boolean; headers?: Record<string, string> }
@@ -2306,7 +2325,8 @@ describe('auth-routes', () => {
         trustProxy: false,
         headers: { 'x-forwarded-for': '203.0.113.5' },
       });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
+      expect((await res.json()).code).toBe('LOCAL_ONLY');
     } finally {
       d.close();
     }
@@ -2553,16 +2573,95 @@ describe('auth-routes', () => {
     }
   });
 
-  test('GET /api/auth/nodes is public and returns only id/name/online', async () => {
+  test('GET /api/auth/nodes anonymous response is only the current node id', async () => {
+    const otherId = 'bb'.repeat(16);
     const mesh = await bootMesh();
     try {
+      mesh.userStore.upsertCert({
+        nodeId: otherId,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(otherId),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.userStore.upsertPeer({
+        nodeId: otherId,
+        name: 'studio',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: true,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
       const res = await call(mesh.runtime, 'http://localhost/api/auth/nodes');
       expect(res.status).toBe(200);
       const body = (await res.json()) as { nodes: Array<Record<string, unknown>> };
-      expect(body.nodes.length).toBeGreaterThan(0);
+      expect(body.nodes).toEqual([{ id: NODE_ID }]);
+      expect(body.nodes.some((node) => node.id === otherId)).toBe(false);
+      expect(body.nodes[0]?.name).toBeUndefined();
+      expect(body.nodes[0]?.online).toBeUndefined();
+      const bogus = await call(mesh.runtime, 'http://localhost/api/auth/nodes', {
+        headers: { cookie: 'vibeterm_s_self=not-a-session' },
+      });
+      expect(((await bogus.json()) as { nodes: Array<{ id: string }> }).nodes).toEqual([
+        { id: NODE_ID },
+      ]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/nodes authenticated response keeps id/name/online for the mesh', async () => {
+    const otherId = 'bb'.repeat(16);
+    const mesh = await bootMesh();
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: otherId,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(otherId),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.userStore.upsertPeer({
+        nodeId: otherId,
+        name: 'studio',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: true,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/nodes', {
+        headers: { cookie: `vibeterm_s_self=${sid}` },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { nodes: Array<Record<string, unknown>> };
+      expect(body.nodes.map((node) => node.id).sort()).toEqual([otherId, NODE_ID].sort());
       for (const node of body.nodes) {
         expect(Object.keys(node).sort()).toEqual(['id', 'name', 'online']);
       }
+      expect(typeof body.nodes.find((node) => node.id === otherId)?.name).toBe('string');
     } finally {
       mesh.close();
     }
@@ -2972,6 +3071,25 @@ describe('auth-routes', () => {
     }
   });
 
+  test('a loopback socket with an unrecognised Host does not waive the passkey', async () => {
+    const mesh = await bootMesh();
+    try {
+      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: 'http://localhost:19663',
+        rpId: 'localhost',
+        fill: 44,
+      });
+      const login = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '127.0.0.1',
+        headers: { host: 'rebind.example.com:9883', origin: 'http://localhost:19663' },
+      });
+      expect(login.res.status).toBe(401);
+      expect((await login.res.json()).code).toBe('PASSKEY_REQUIRED');
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('trusted local waiver still requires TOTP when it is enrolled', async () => {
     const mesh = await bootMesh();
     try {
@@ -2992,7 +3110,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('peer x-vibeterm-client-source: local waives passkey; header on a public direct request does not', async () => {
+  test('x-vibeterm-client-source: local never waives passkey, from a peer or a direct client', async () => {
     const mesh = await bootMesh();
     try {
       insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
@@ -3001,26 +3119,15 @@ describe('auth-routes', () => {
         fill: 42,
       });
       const entry = 'ab'.repeat(16);
-      const waived = await challengeAndLogin(mesh.runtime, mesh.boot, {
-        via: entry,
-        clientIp: `peer:${entry}`,
-        headers: { [CLIENT_SOURCE_HEADER.name]: 'local', origin: 'http://localhost:19663' },
-      });
-      expect(waived.res.status).toBe(200);
-      const legacyWaived = await challengeAndLogin(mesh.runtime, mesh.boot, {
-        via: entry,
-        clientIp: `peer:${entry}`,
-        headers: { [CLIENT_SOURCE_HEADER.legacy]: 'local', origin: 'http://localhost:19663' },
-      });
-      expect(legacyWaived.res.status).toBe(200);
-
-      const peerNoHeader = await challengeAndLogin(mesh.runtime, mesh.boot, {
-        via: entry,
-        clientIp: `peer:${entry}`,
-        headers: { origin: 'http://localhost:19663' },
-      });
-      expect(peerNoHeader.res.status).toBe(401);
-      expect((await peerNoHeader.res.json()).code).toBe('PASSKEY_REQUIRED');
+      for (const name of [CLIENT_SOURCE_HEADER.name, CLIENT_SOURCE_HEADER.legacy]) {
+        const peer = await challengeAndLogin(mesh.runtime, mesh.boot, {
+          via: entry,
+          clientIp: `peer:${entry}`,
+          headers: { [name]: 'local', origin: 'http://localhost:19663' },
+        });
+        expect(peer.res.status).toBe(401);
+        expect((await peer.res.json()).code).toBe('PASSKEY_REQUIRED');
+      }
 
       const forgedDirect = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '203.0.113.10',

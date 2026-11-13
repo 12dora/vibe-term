@@ -177,6 +177,7 @@ POST /api/mesh-internal/notifications
   inventory 不再被读），也不能替别人撤销声明；被攻陷的中继同样伪造不出记录——
   链是 prev_hash 串起来的，签名者只能是 root 或 passkey，改一条就整链验不过。
 - 转发件的来源同样不可伪造：`origin.nodeId` 必须与已认证的对端标记一致，否则 400。
+- 入站忽略对端带来的可点击链接（`tmux.paneUrl` 以及 payload 里的 `paneUrl` / `url` / `link` / `href` / `actionUrl` / `clickUrl`，以及看起来像 URL 的字符串）。汇聚机用本机站点 URL + 来源 `nodeId` + 设备 / pane 标识，按与本地通知相同的 `buildPaneUrl` 重建深链。标题等文本字段保留，但截到 2048 字符。2.14.0 发送方即使仍带自己的 paneUrl，新汇聚机也不会采用。
 - 声明撤销即时生效于**发送侧**：队列每次投递前复核，桥的 `deliver()` 再兜一道（未授权就地
   回 403 不出网）。不能只靠汇聚机自己回 404——被攻陷的汇聚机不会拒收。
 

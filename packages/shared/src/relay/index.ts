@@ -173,3 +173,12 @@ export type {
   RelayMetricsTenant,
   RelayMetricsTotals,
 } from './metrics';
+export { enrollSas } from './enroll-sas';
+
+export {
+  DOMAIN_RELAY_KEYLOG_APPEND,
+  relayEnvelopeDigest,
+  relayKeyLogAppendMessage,
+  signRelayKeyLogAppend,
+  verifyRelayKeyLogAppend,
+} from './relay-append-proof';

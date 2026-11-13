@@ -5,6 +5,7 @@
 
 import { errorMessage } from '@vibeterm/shared';
 import type { RsyncDeviceSpec } from './ssh-command';
+import { sshRemoteArgv } from './ssh-target';
 
 export interface RemoteScriptResult {
   stdout: Uint8Array;
@@ -77,7 +78,7 @@ export function spawnRemoteScript(
 ): RemoteScriptProcess | null {
   if (!spec.rsh) return null;
   const dest = spec.targetPrefix.replace(/:$/, '');
-  return remoteScriptIo.spawn([...spec.rsh.split(' '), dest, REMOTE_SHELL], spawnEnv(spec), script);
+  return remoteScriptIo.spawn(sshRemoteArgv(spec.rsh, dest, REMOTE_SHELL), spawnEnv(spec), script);
 }
 
 /** 跑完整段脚本并收齐输出。 */

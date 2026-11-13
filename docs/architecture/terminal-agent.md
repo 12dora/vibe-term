@@ -22,7 +22,7 @@ VibeTerm 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 
 | AgentSupervisor | `agent/supervisor.ts` | 单例调度：单 session 互斥（`Map<sessionId, ActiveRun>`）、用户消息入队启动 run、确认决策续跑、stop、重启恢复 |
 | AgentRun | `agent/run.ts` | 单轮 turn 执行器：`streamText` + `stopWhen: stepCountIs(maxStepsPerTurn)`，消费 fullStream 广播 delta，`onStepFinish` 落库完整消息 |
 | 终端工具 | `agent/tools/terminal.ts`、`agent/tools/run-command.ts` | `read_screen` / `send_input` / `get_pane_info` / `run_command`，见 §5 |
-| Web 工具 | `agent/tools/web.ts` | `web_search`（Tavily/Brave，未配 key 不注册）、`fetch_url`（15s 超时 / 2MB 体积上限 / 正文截 16KB / 最多 3 跳重定向） |
+| Web 工具 | `agent/tools/web.ts` | `web_search`（Tavily/Brave，未配 key 不注册）、`fetch_url`（15s 超时 / 2MB 体积上限 / 正文截 16KB / 最多 5 跳重定向；解析后钉 IP） |
 | AgentWsHub | `agent/ws-hub.ts` | `sessionId → Set<ServerWebSocket>` 订阅管理；SUBSCRIBE 即回 `sync` 事件（由 supervisor 提供 syncProvider） |
 | Provider 注册 | `llm/provider-registry.ts` | 按 protocol 分发：`openai-responses` → `createOpenAI().responses()`；`openai-chat` → `createOpenAICompatible().chatModel()` |
 | REST | `api/agent*.ts`、`api/llm.ts` | session CRUD、消息投递、stop、确认决策、provider/settings 管理 |
@@ -31,7 +31,7 @@ VibeTerm 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 
 
 ### 数据表（`apps/gateway/src/db/schema.ts`）
 
-- `llm_providers`：协议、baseUrl、apiKeyEnc（加密）、模型列表缓存。
+- `llm_providers`：协议、baseUrl、apiKeyEnc（加密）、模型列表缓存。编辑表单改了 baseUrl 或协议时 API Key 必填（网关否则 400 `API_KEY_REQUIRED`），已存的 Key 不会发给新地址。
 - `agent_settings`（单行）：搜索 provider 及 key、全局默认 provider/model。
 - `agent_sessions`：绑定 deviceId/paneId、provider/model、writeMode（`confirm`/`auto`，默认 confirm）、status（`idle`/`running`/`waiting_confirmation`/`stopped`/`error`）、maxStepsPerTurn（默认 25）；远端窗格会话另有加密的 `remote_grant`。
 - `agent_messages`：会话内 seq 单调递增，content 为 AI SDK ModelMessage 原样 JSON。
@@ -142,21 +142,20 @@ agent 操作终端不是「屏幕抓取」而是**服务端 headless ghostty 渲
 ## 7. 安全与隐私
 
 - **写终端确认**：`send_input` 的 `needsApproval` 按 session writeMode 判定，默认 confirm；pane 绑定在 session 上而非工具参数，模型无法越界写其它 pane。
-- **SSRF 防护**：`fetch_url` 默认拒绝回环/链路本地/私有网段地址，重定向逐跳重新校验（最多 3 跳）；env `VIBETERM_AGENT_ALLOW_PRIVATE_FETCH=1` 放行。
+- **SSRF 防护**：`fetch_url` 默认拒绝回环 / 链路本地 / 私有网段 / CGNAT `100.64/10` / 组播与保留地址。对主机名先 `Bun.dns.lookup`，**任一**解析地址落在拒绝表则整次拒绝；随后用该 IP 发请求，并把原主机名放进 `Host` 与 TLS SNI（钉住解析结果，避免 DNS rebinding）。重定向 `manual`、逐跳重新解析与校验，最多 5 跳。env `VIBETERM_AGENT_ALLOW_PRIVATE_FETCH=1` 放行私网（测试用）。
 - **隐私提示**：`read_screen` 会把终端可见内容（可能含密钥回显）发给第三方 LLM，session 切换菜单底部常驻提示文案。
 - **auto 模式中断重放风险**：进程死在「终端已写入但 step 未落库」窗口时，重启恢复会重写一遍输入。confirm 模式有确认兜底；auto 模式接受此风险。
 - **API key**：providers / 搜索 key 均加密落库，REST 只写不回显（掩码展示）。
 
 ## 8. 已知限制
 
-1. **DNS rebinding**：fetch_url 的私网判断基于 hostname 字面/解析一次，未做连接时二次校验。
-2. **token 用量统计**：未实现（usage 数据 AI SDK 有暴露，表结构未留字段）。
-3. **agent 跨多 pane 操作**：单 session 单 pane 绑定，跨 pane 需多 session。
-4. **同回合多确认须全部决定后才续跑**：AI SDK 的 `collectToolApprovals` 只消费最后一条 tool 消息的 approval responses，supervisor 按「全部决定后合并一条 tool 消息」处理（`appendApprovalResponsesIfReady`）。
-5. **WS 背压**：delta 广播未做按订阅者背压控制，慢消费者可能积压（前端有 40ms 节流缓解）。
-6. **error 重试链路时长**：SDK 内部重试 × run 级重试全程约 60-70s，前端无进度感知。
-7. **agent_turn_finished 通知**：仅 deps 级开关（默认开），无用户级持久化设置项。
-8. **端到端集成测试**：真 tmux → control 流 → parser → emulator → run_command 的全链路集成测试未补；各层单测分别覆盖（真 OSC 字节、真 ghostty wasm、run_command 全分支）。
+1. **token 用量统计**：未实现（usage 数据 AI SDK 有暴露，表结构未留字段）。
+2. **agent 跨多 pane 操作**：单 session 单 pane 绑定，跨 pane 需多 session。
+3. **同回合多确认须全部决定后才续跑**：AI SDK 的 `collectToolApprovals` 只消费最后一条 tool 消息的 approval responses，supervisor 按「全部决定后合并一条 tool 消息」处理（`appendApprovalResponsesIfReady`）。
+4. **WS 背压**：delta 广播未做按订阅者背压控制，慢消费者可能积压（前端有 40ms 节流缓解）。
+5. **error 重试链路时长**：SDK 内部重试 × run 级重试全程约 60-70s，前端无进度感知。
+6. **agent_turn_finished 通知**：仅 deps 级开关（默认开），无用户级持久化设置项。
+7. **端到端集成测试**：真 tmux → control 流 → parser → emulator → run_command 的全链路集成测试未补；各层单测分别覆盖（真 OSC 字节、真 ghostty wasm、run_command 全分支）。
 
 ## 9. 测试
 

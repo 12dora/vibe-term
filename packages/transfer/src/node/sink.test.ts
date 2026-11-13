@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { utimesSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -610,5 +618,27 @@ describe('ResumableSink review regressions', () => {
       spy.mockRestore();
     }
     expect(cancelled).toBe(true);
+  });
+});
+
+describe('ResumableSink refuses to follow a .part symlink', () => {
+  test('append create does not write through a planted symlink', async () => {
+    const dir = tempDir();
+    const outside = join(dir, 'secret');
+    writeFileSync(outside, 'keep-me');
+    const destPath = join(dir, 'pkg.tgz');
+    const bytes = payload(4);
+    const d: SinkDescriptor = { destPath, sha256: sha256(bytes), totalBytes: 4 };
+    const part = partPathOf(d);
+    symlinkSync(outside, part);
+    const sink = new ResumableSink();
+    const result = await sink.write(d, bodyOf(bytes), {
+      offset: 0,
+      contentLength: 4,
+    });
+    expect(result.ok).toBe(true);
+    expect(readFileSync(outside, 'utf8')).toBe('keep-me');
+    expect(existsSync(part)).toBe(true);
+    expect(lstatSync(part).isSymbolicLink()).toBe(false);
   });
 });

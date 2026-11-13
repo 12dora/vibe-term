@@ -1,4 +1,4 @@
-import { uplinkAuthMessage, verifyEd25519 } from '@vibeterm/shared/auth';
+import { bytesEqual, uplinkAuthMessage, verifyEd25519 } from '@vibeterm/shared/auth';
 import type { LinkSession } from '@vibeterm/shared/link';
 import {
   RELAY_PROTO_VERSION,
@@ -10,7 +10,7 @@ import { decodeB64url } from '../api/route-input';
 import { nodeVersionMeets } from '../mesh/node-version';
 import type { RelayConfigStore } from './relay-config-store';
 import type { RelayKeyLogStore } from './relay-key-log-store';
-import { verifyRelayMemberProof } from './relay-member';
+import { type RelayMemberAdmit, verifyRelayMemberProof } from './relay-member';
 import { sha256Hex } from './relay-password';
 import type { RelayLiveNode, RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
@@ -36,6 +36,8 @@ export type RelayAuthHost = {
   send(link: LinkSession, msg: RelayCtlMessage): void;
   startHeartbeat(live: RelayLiveNode): void;
   notifyQuota(tenantId: string): void;
+  /** 租户节点配额（与 redeem 同口径：pending + admitted 计数）。 */
+  maxNodes(tenantId: string): number;
   scheduleList(tenantId: string): void;
   rtcConfig(): RelayRtcConfig;
 };
@@ -55,7 +57,7 @@ export function liveAuthStillValid(
   if (tenant.kicked) return false;
   if (live.tokenEpoch < minTokenEpoch) return false;
   if (live.tokenHash === tenant.tokenHash) return live.tokenEpoch >= tenant.tokenEpoch;
-  return relayPrevTokenUsable(tenant, now, live.tokenHash);
+  return relayPrevTokenUsable(tenant, now, live.tokenHash, 'uplink');
 }
 
 /** 只有仍在宽限内的历史令牌属于换代；过期、未知令牌和显式踢出均不可恢复上联。 */
@@ -64,7 +66,8 @@ function staleLinkKickReason(
   tenant: RelayTenantRecord,
   now: number
 ): 'password_rotated' | 'kicked' {
-  return !tenant.kicked && relayTokenHashState(tenant, live.tokenHash, now) === 'password_rotated'
+  return !tenant.kicked &&
+    relayTokenHashState(tenant, live.tokenHash, now, 'uplink') === 'password_rotated'
     ? 'password_rotated'
     : 'kicked';
 }
@@ -127,6 +130,11 @@ export async function handleRelayAuth(
     host.reject(link, 'unauthorized');
     return;
   }
+  const rejected = admitted.admit ? writeAdmit(host, tenant, msg.node_id, admitted.admit) : null;
+  if (rejected) {
+    host.reject(link, rejected);
+    return;
+  }
   await (host.authBarrier?.() ?? Promise.resolve());
   finishAuth(host, link, msg, pending);
 }
@@ -153,21 +161,28 @@ function checkAuthPreconditions(
     host.reject(link, 'token-epoch');
     return null;
   }
-  if (!relayTokenHashAccepted(tenant, sha256Hex(msg.token), host.now())) {
+  if (!relayTokenHashAccepted(tenant, sha256Hex(msg.token), host.now(), 'uplink')) {
     host.reject(link, 'bad-token');
     return null;
   }
   return tenant;
 }
 
+/**
+ * 已准入的行直接用库里的公钥验签；未准入时用 member 记录里的公钥验签，**验过 nonce 签名之后**
+ * 才写注册表（`writeAdmit`）。同一 node_id 已有不同公钥的行 → `member-conflict`，绝不改公钥。
+ *
+ * passkey 签的 admit 中继验不了：它只能认领中继上**已有**且公钥一致的 pending 行，
+ * 不建行、不升行；passkey admit 进注册表只走已准入链路节点的 `relay.keylog.append`。
+ */
 function admitNode(
   host: RelayAuthHost,
   tenant: RelayTenantRecord,
   msg: Extract<RelayCtlMessage, { t: 'relay.auth' }>
-): { ok: true; edPk: Uint8Array } | { ok: false; reason: string } {
+): { ok: true; edPk: Uint8Array; admit: RelayMemberAdmit | null } | { ok: false; reason: string } {
   const node = host.tenants.getNode(tenant.id, msg.node_id);
   if (node?.status === 'revoked') return { ok: false, reason: 'revoked' };
-  if (node?.status === 'admitted') return { ok: true, edPk: node.edPk };
+  if (node?.status === 'admitted') return { ok: true, edPk: node.edPk, admit: null };
   if (!msg.member) return { ok: false, reason: 'member-required' };
   const tolerantAdmit = host.tenants.listNodes(tenant.id).some((row) => row.status === 'admitted');
   const member = verifyRelayMemberProof({
@@ -180,17 +195,44 @@ function admitNode(
   });
   if (!member.ok) return { ok: false, reason: `member-${member.error}` };
   if (member.op !== 'admit') return { ok: false, reason: 'member-type_mismatch' };
-  const upserted = host.tenants.upsertNode({
+  if (
+    node &&
+    (!bytesEqual(node.edPk, member.edPk) || !bytesEqual(node.x25519Pk, member.x25519Pk))
+  ) {
+    return { ok: false, reason: 'member-conflict' };
+  }
+  if (member.signer === 'passkey') {
+    return node
+      ? { ok: true, edPk: node.edPk, admit: null }
+      : { ok: false, reason: 'member-passkey_unadmitted' };
+  }
+  return { ok: true, edPk: member.edPk, admit: member };
+}
+
+/** 只写根签名 admit；新建行前查节点配额（与 redeem 的 `countActiveNodes` 同口径）。 */
+function writeAdmit(
+  host: RelayAuthHost,
+  tenant: RelayTenantRecord,
+  nodeId: string,
+  member: RelayMemberAdmit
+): string | null {
+  if (
+    !host.tenants.getNode(tenant.id, nodeId) &&
+    host.tenants.countActiveNodes(tenant.id) >= host.maxNodes(tenant.id)
+  ) {
+    return 'quota-nodes';
+  }
+  const written = host.tenants.upsertNode({
     tenantId: tenant.id,
-    nodeId: msg.node_id,
+    nodeId,
     edPk: member.edPk,
     x25519Pk: member.x25519Pk,
     status: 'admitted',
     admitSeq: Number(member.seq),
     now: host.now(),
   });
-  if (upserted.status !== 'admitted') return { ok: false, reason: 'revoked' };
-  return { ok: true, edPk: member.edPk };
+  if (written.outcome === 'conflict') return 'member-conflict';
+  return written.node.status === 'admitted' ? null : 'revoked';
 }
 
 function finishAuth(
@@ -207,7 +249,7 @@ function finishAuth(
     return;
   }
   const presentedHash = sha256Hex(msg.token);
-  if (!relayTokenHashAccepted(fresh, presentedHash, host.now())) {
+  if (!relayTokenHashAccepted(fresh, presentedHash, host.now(), 'uplink')) {
     host.reject(link, 'bad-token');
     return;
   }
@@ -238,7 +280,7 @@ function finishAuth(
   host.send(link, {
     t: 'auth.ok',
     tenant_id: fresh.id,
-    token_rotated: relayTokenHashState(fresh, presentedHash, now) === 'password_rotated',
+    token_rotated: relayTokenHashState(fresh, presentedHash, now, 'uplink') === 'password_rotated',
     key_log_head_seq: relaySeqToWire(host.tenants.get(fresh.id)?.keyLogHeadSeq ?? 0n),
     rtc: host.rtcConfig(),
     ...(pending.observedIpv4 ? { observedIpv4: pending.observedIpv4 } : {}),

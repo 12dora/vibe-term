@@ -132,6 +132,7 @@ export const agentPaneGrants = sqliteTable(
     createdAt: integer('created_at').notNull(),
     lastUsedAt: integer('last_used_at').notNull(),
     expiresAt: integer('expires_at').notNull(),
+    issuedVia: text('issued_via').notNull().default('self'),
   },
   (table) => [index('agent_pane_grants_from_node_idx').on(table.fromNodeId)]
 );

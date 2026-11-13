@@ -3,7 +3,7 @@ import { noteAuthLoginFailure } from '../auth/login-records-hooks';
 import { peekLoginMethod } from '../auth/login-records-meta';
 import { logAuthLoginFailed } from './auth-audit-log';
 import type { LoginLimitHit } from './auth-login-limiter';
-import { clientIpFromRequest } from './client-ip';
+import { UNKNOWN_CLIENT_KEY, clientIpFromRequest } from './client-ip';
 import { isPeerRequest } from './client-source';
 import { jsonError } from './session-middleware';
 
@@ -21,7 +21,7 @@ export function loginRequestContext(req: Request): { peer: boolean; ip: string }
   // 入口 forwarder 会丢掉 x-forwarded-* / CF-Connecting-IP，目标节点看到的是
   // `peer:<入口>`。对端自带的转发头也不可信（成员节点可伪造），因此转发登录的
   // IP 桶留空，只按 uid 计；真实客户端 IP 的限速在入口执行。
-  const ip = peer ? '' : (clientIpFromRequest(req) ?? 'local');
+  const ip = peer ? '' : (clientIpFromRequest(req) ?? UNKNOWN_CLIENT_KEY);
   const ctx = { peer, ip };
   loginCtxRequest.set(ctx, req);
   return ctx;

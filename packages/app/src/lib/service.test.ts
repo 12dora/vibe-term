@@ -34,6 +34,7 @@ describe('buildSystemdServiceContent', () => {
     expect(content).toContain('StandardOutput=journal');
     expect(content).toContain('StandardError=journal');
     expect(content).toContain('KillMode=process');
+    expect(content).not.toContain('UMask=');
   });
 });
 
@@ -54,6 +55,7 @@ describe('buildLaunchdPlist', () => {
     );
     expect(content).toContain('<key>StandardOutPath</key>');
     expect(content).toContain('<key>StandardErrorPath</key>');
+    expect(content).not.toContain('<key>Umask</key>');
   });
 });
 

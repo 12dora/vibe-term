@@ -147,7 +147,12 @@ describe('guardDomainAccess is not applied on the API route itself', () => {
 describe('guardDomainAccess enforces by client source, not Host', () => {
   function req(
     url: string,
-    ctx: { clientIp?: string; trustProxy?: boolean; via?: string },
+    ctx: {
+      clientIp?: string;
+      trustProxy?: boolean;
+      clientIpHeader?: 'x-forwarded-for' | 'x-real-ip' | 'cf-connecting-ip';
+      via?: string;
+    },
     headers?: Record<string, string>
   ): Request {
     const request = new Request(url, headers ? { headers } : undefined);
@@ -155,6 +160,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
       via: ctx.via ?? MESH_VIA_SELF,
       clientIp: ctx.clientIp,
       trustProxy: ctx.trustProxy,
+      clientIpHeader: ctx.clientIpHeader,
     });
     return request;
   }
@@ -207,17 +213,21 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     ).toBe(403);
   });
 
-  test('VIBETERM_TRUST_PROXY=false with spoofed XFF is judged by socket address', () => {
+  test('VIBETERM_TRUST_PROXY=false: a forwarded request is never a local source', () => {
     disable();
-    expect(
-      guardDomainAccess(
-        req(
-          'https://vibeterm.example.com/',
-          { clientIp: '10.0.0.8', trustProxy: false },
-          { 'x-forwarded-for': '203.0.113.9' }
-        )
-      )
-    ).toBeNull();
+    for (const socket of ['127.0.0.1', '10.0.0.8']) {
+      for (const headers of [
+        { 'x-forwarded-for': '198.51.100.7' },
+        { 'x-forwarded-proto': 'https' },
+        { via: '1.1 proxy' },
+      ] as Record<string, string>[]) {
+        expect(
+          guardDomainAccess(
+            req('https://vibeterm.example.com/', { clientIp: socket, trustProxy: false }, headers)
+          )?.status
+        ).toBe(403);
+      }
+    }
     expect(
       guardDomainAccess(
         req(
@@ -229,14 +239,14 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     ).toBe(403);
   });
 
-  test('VIBETERM_TRUST_PROXY=true uses XFF last segment', () => {
+  test('VIBETERM_TRUST_PROXY=true reads the rightmost XFF entry from a local proxy hop only', () => {
     disable();
     expect(
       guardDomainAccess(
         req(
           'https://vibeterm.example.com/',
           { clientIp: '10.0.0.8', trustProxy: true },
-          { 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }
+          { 'x-forwarded-for': '10.0.0.1, 203.0.113.9' }
         )
       )?.status
     ).toBe(403);
@@ -247,6 +257,59 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
           { clientIp: '203.0.113.9', trustProxy: true },
           { 'x-forwarded-for': '1.2.3.4, 10.0.0.8' }
         )
+      )?.status
+    ).toBe(403);
+  });
+
+  test('X-Real-IP / CF-Connecting-IP are ignored when another client-IP header is configured', () => {
+    disable();
+    expect(
+      guardDomainAccess(
+        req(
+          'https://vibeterm.example.com/api/devices',
+          { clientIp: '127.0.0.1', trustProxy: true },
+          { 'x-real-ip': '127.0.0.1', 'x-forwarded-for': '198.51.100.7' }
+        )
+      )?.status
+    ).toBe(403);
+    expect(
+      guardDomainAccess(
+        req(
+          'https://vibeterm.example.com/api/devices',
+          { clientIp: '127.0.0.1', trustProxy: true },
+          { 'cf-connecting-ip': '10.0.0.1', 'x-forwarded-for': '198.51.100.7' }
+        )
+      )?.status
+    ).toBe(403);
+    expect(
+      guardDomainAccess(
+        req(
+          'https://vibeterm.example.com/api/devices',
+          { clientIp: '127.0.0.1', trustProxy: true },
+          { 'cf-connecting-ip': '10.0.0.1' }
+        )
+      )?.status
+    ).toBe(403);
+  });
+
+  test('clientIpHeader=cf-connecting-ip: tunnel traffic is judged by CF-Connecting-IP', () => {
+    disable();
+    const tunnel = {
+      clientIp: '127.0.0.1',
+      trustProxy: true,
+      clientIpHeader: 'cf-connecting-ip',
+    } as const;
+    expect(
+      guardDomainAccess(
+        req('https://vibeterm.example.com/', tunnel, {
+          'cf-connecting-ip': '198.51.100.7',
+          'x-forwarded-for': '10.0.0.1',
+        })
+      )?.status
+    ).toBe(403);
+    expect(
+      guardDomainAccess(
+        req('https://vibeterm.example.com/', tunnel, { 'cf-connecting-ip': '192.168.1.5' })
       )
     ).toBeNull();
   });

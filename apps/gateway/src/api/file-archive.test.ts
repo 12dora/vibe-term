@@ -493,7 +493,7 @@ describe('ssh devices', () => {
     const { bytes, error } = await drain(res);
 
     expect(error).toBeNull();
-    expect(calls[0]?.argv).toEqual(['ssh', '-o', 'BatchMode=yes', 'user@host', 'sh -s']);
+    expect(calls[0]?.argv).toEqual(['ssh', '-o', 'BatchMode=yes', '--', 'user@host', 'sh -s']);
     const extractDir = extract(bytes);
     expect(readFileSync(join(extractDir, 'a b.txt'), 'utf8')).toBe('with spaces');
     expect(readFileSync(join(extractDir, '-dash'), 'utf8')).toBe('leading dash');

@@ -1,28 +1,26 @@
-export type SlidingWindowEviction = 'oldest' | 'expired-only';
+export type SlidingWindowEviction = 'oldest';
 
 export type SlidingWindowOptions = {
   windowMs: number;
   now?: () => number;
   maxKeys?: number;
+  /** 唯一的驱逐策略；保留字段只为让调用方显式写明。 */
   evict?: SlidingWindowEviction;
 };
 
 /**
- * 按 key 记时间戳列表的滑动窗口计数器。`evict` 决定超过 `maxKeys` 时的取舍：
- * `expired-only` 只回收窗口已过期的桶（仍在窗口内或已触达上限的桶永不被挤掉），
- * `oldest` 在回收过期桶后仍超限时，继续按最早一次命中的时间驱逐。
+ * 按 key 记时间戳列表的滑动窗口计数器。超过 `maxKeys` 时先回收队首附近已过期的桶，
+ * 没有就驱逐最早开始计数的桶（Map 插入序即开始序），单次命中的代价有上界，key 数也有上界。
  */
 export class SlidingWindowCounter {
   private readonly buckets = new Map<string, number[]>();
   private readonly windowMs: number;
   private readonly maxKeys: number;
-  private readonly eviction: SlidingWindowEviction;
   private readonly clock: () => number;
 
   constructor(options: SlidingWindowOptions) {
     this.windowMs = options.windowMs;
     this.maxKeys = options.maxKeys ?? Number.POSITIVE_INFINITY;
-    this.eviction = options.evict ?? 'oldest';
     this.clock = options.now ?? Date.now;
   }
 
@@ -38,7 +36,7 @@ export class SlidingWindowCounter {
     const next = this.live(key, now);
     next.push(now);
     this.buckets.set(key, next);
-    if (this.buckets.size > this.maxKeys) this.sweep(now);
+    while (this.buckets.size > this.maxKeys) this.evictOne(key, now);
     return next.length;
   }
 
@@ -70,12 +68,24 @@ export class SlidingWindowCounter {
     for (const [key, times] of this.buckets) {
       this.retain(key, prune(times, now, this.windowMs));
     }
-    if (this.eviction === 'expired-only') return;
-    while (this.buckets.size > this.maxKeys) {
-      const victim = this.oldestKey();
-      if (victim === null) break;
-      this.buckets.delete(victim);
+  }
+
+  /** 从队首起最多看 `EVICT_SCAN` 个桶：有过期的先回收，否则驱逐队首（最早开始计数的那个）。 */
+  private evictOne(keep: string, now: number): void {
+    let victim: string | null = null;
+    let scanned = 0;
+    for (const [key, times] of this.buckets) {
+      if (key === keep) continue;
+      if (victim === null) victim = key;
+      if (prune(times, now, this.windowMs).length === 0) {
+        this.buckets.delete(key);
+        return;
+      }
+      scanned += 1;
+      if (scanned >= EVICT_SCAN) break;
     }
+    if (victim === null) return;
+    this.buckets.delete(victim);
   }
 
   private live(key: string, now: number): number[] {
@@ -87,20 +97,9 @@ export class SlidingWindowCounter {
     else this.buckets.set(key, times);
     return times;
   }
-
-  private oldestKey(): string | null {
-    let oldestKey: string | null = null;
-    let oldest = Number.POSITIVE_INFINITY;
-    for (const [key, times] of this.buckets) {
-      const first = times[0] ?? Number.NEGATIVE_INFINITY;
-      if (first < oldest) {
-        oldest = first;
-        oldestKey = key;
-      }
-    }
-    return oldestKey;
-  }
 }
+
+const EVICT_SCAN = 16;
 
 function prune(times: number[], now: number, windowMs: number): number[] {
   return times.filter((at) => now - at < windowMs);

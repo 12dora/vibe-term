@@ -3,6 +3,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -23,10 +24,12 @@ import { createGrant, resetTransferGrantsForTests } from './grants';
 import {
   type TransferSession,
   closeSession,
+  ensurePrivateStagingDir,
   forgetTransferSessionsForTests,
   getSession,
   openSession,
   resetTransferSessionsForTests,
+  transferStagingRoot,
 } from './receiver';
 import { commitFile, fileStatus, makeDirectory, writeFileRange } from './receiver-files';
 import { sweepTransferOrphans } from './sweep';
@@ -323,5 +326,81 @@ describe('receiver on the virtual fs root', () => {
         onConflict: 'skip',
       })
     ).toMatchObject({ ok: false, code: 'root_not_found' });
+  });
+});
+
+describe('SSH receiver staging is private under the install dir', () => {
+  let installDir = '';
+  let previousInstall: string | undefined;
+
+  beforeAll(() => runMigrations());
+
+  beforeEach(async () => {
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    resetTransferGrantsForTests();
+    await resetTransferSessionsForTests();
+    installDir = tempDir();
+    previousInstall = process.env.VIBETERM_INSTALL_DIR;
+    process.env.VIBETERM_INSTALL_DIR = installDir;
+    const now = new Date().toISOString();
+    deviceId = `ssh-${Math.random().toString(16).slice(2)}`;
+    createDevice({
+      id: deviceId,
+      name: 'ssh',
+      type: 'ssh',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      authMode: 'key',
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    rootId = createFileRoot({ deviceId, path: '/srv' }).id;
+  });
+
+  afterEach(async () => {
+    await resetTransferSessionsForTests();
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    if (previousInstall === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+    else process.env.VIBETERM_INSTALL_DIR = previousInstall;
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('staging lives under install/staging, not os.tmpdir, mode 0700', () => {
+    const session = open('overwrite', '/srv/inbox');
+    expect(session.stagingDir).toBeTruthy();
+    expect(session.stagingDir?.startsWith(join(installDir, 'staging'))).toBe(true);
+    expect(transferStagingRoot()).toBe(join(installDir, 'staging'));
+    expect(transferStagingRoot()).not.toBe(tmpdir());
+    expect(lstatSync(session.stagingDir as string).mode & 0o777).toBe(0o700);
+  });
+
+  test('openSession refuses when the computed staging dir is a symlink', async () => {
+    const first = open('overwrite', '/srv/inbox');
+    const staging = first.stagingDir as string;
+    await closeSession(first.id);
+    rmSync(staging, { recursive: true, force: true });
+    symlinkSync(tempDir(), staging);
+    expect(ensurePrivateStagingDir(staging)).toBe(false);
+    const grant = createGrant({
+      fromNodeId: NODE_A,
+      destRootId: rootId,
+      destPath: '/srv/inbox',
+      uid: 'u1',
+    });
+    expect(
+      openSession({
+        grantId: grant.id,
+        token: grant.token,
+        peerNodeId: NODE_A,
+        onConflict: 'overwrite',
+      })
+    ).toMatchObject({ ok: false, code: 'permission_denied' });
   });
 });

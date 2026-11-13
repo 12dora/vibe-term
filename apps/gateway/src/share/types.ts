@@ -24,7 +24,8 @@ export type ShareLoginErrorCode =
   | 'SHARE_NOT_FOUND'
   | 'SHARE_ENDED'
   | 'SHARE_PASSWORD_INVALID'
-  | 'SHARE_LOGIN_LOCKED';
+  | 'SHARE_LOGIN_LOCKED'
+  | 'SHARE_LOGIN_BUSY';
 
 export type ShareCreateInput = {
   deviceId: string;
@@ -33,6 +34,8 @@ export type ShareCreateInput = {
   password: string;
   expiresInMs: number | null;
   origin?: string | null;
+  /** 创建请求的入口节点（mesh `via`）；缺省为本机。 */
+  issuedVia?: string;
 };
 
 export type ShareCreateResult =

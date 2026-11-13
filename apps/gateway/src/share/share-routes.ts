@@ -3,6 +3,7 @@ import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { CryptoDecryptError } from '../crypto/errors';
 import { t } from '../i18n';
+import { getMeshRequestContext } from '../mesh/mesh-deps';
 import { getShareService } from './share-service';
 import type { ShareErrorCode } from './types';
 
@@ -115,6 +116,7 @@ export const shareRoutes: ApiRoute[] = [
         password,
         expiresInMs,
         origin: optionalString(body.origin) ?? null,
+        issuedVia: getMeshRequestContext(req).via,
       });
       if (!result.ok) return shareError(result.code);
       return json({ share: result.share, password: result.password });

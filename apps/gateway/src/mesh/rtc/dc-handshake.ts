@@ -15,6 +15,7 @@ import {
 import type { UserStore } from '../../auth/user-store';
 import { decodeJsonBytes, isRecord, requireString } from '../ctl';
 import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
+import { assertAcceptableHandshakePeer } from '../peer-hello';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import { type FanoutDataChannel, fanoutMaxPendingBytes } from './channel-fanout';
@@ -334,6 +335,7 @@ async function exchangeHandshake(opts: {
   userStore: UserStore;
   selfHello: PeerHello;
   stopHello: () => void;
+  expectedPeerId?: string;
 }): Promise<HandshakeProgress> {
   const progress: HandshakeProgress = {
     peerHello: null,
@@ -347,6 +349,7 @@ async function exchangeHandshake(opts: {
   const send = (msg: { t: string } & Record<string, unknown>) => sendHandshake(opts.channel, msg);
   const sendSigIfReady = () => {
     if (progress.sentSig || !progress.peerHello) return;
+    assertAcceptableHandshakePeer(progress.peerNodeId, opts.identity, opts.expectedPeerId);
     const transcript = buildPeerTranscript('dc', opts.selfHello, progress.peerHello);
     progress.sentSig = true;
     send({ t: 'sig', sig: encodeBase64url(signTranscript(opts.identity.edSecretKey, transcript)) });
@@ -406,6 +409,7 @@ export async function handshakeDataChannel(opts: {
   localFingerprint: DtlsFingerprint;
   timeoutMs?: number;
   queue?: HandshakeRecv;
+  expectedPeerId?: string;
 }): Promise<{ peerNodeId: string; peerHello: PeerHello }> {
   const timeoutMs = opts.timeoutMs ?? DC_HANDSHAKE_TIMEOUT_MS;
   const localFp = normalizeFingerprint(opts.localFingerprint);
@@ -433,6 +437,7 @@ export async function handshakeDataChannel(opts: {
         userStore: opts.userStore,
         selfHello,
         stopHello,
+        expectedPeerId: opts.expectedPeerId,
       }),
       timeoutMs,
       'dc handshake timed out'

@@ -272,4 +272,19 @@ describe('handleTermInput / handleTermPaste', () => {
     handleTermPaste(fixture.host, 'device-missing', '%1', 'x');
     expect(fixture.flushCalls).toEqual([]);
   });
+
+  test('非法 paneId 在边界抛 ERROR_TMUX_TARGET_NOT_FOUND，不发输入', () => {
+    const { host, ws, inputs } = inputFixture();
+    try {
+      handleTermInput(host, 'device-a', '%1;id', 'a');
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(wsBorsh.WsBorshError);
+      expect((err as InstanceType<typeof wsBorsh.WsBorshError>).code).toBe(
+        wsBorsh.ERROR_TMUX_TARGET_NOT_FOUND
+      );
+    }
+    expect(inputs).toEqual([]);
+    sessionStateStore.delete(ws);
+  });
 });

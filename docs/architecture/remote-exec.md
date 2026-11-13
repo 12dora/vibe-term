@@ -146,7 +146,7 @@ CLI 的退出码映射见 [CLI 使用手册](../operations/cli-usage.md)：远�
 
 - **认证**：本机升级与 `/api/*` 同一套：`authenticateRequest` 取有效节点会话；standalone 开放部署无认证面，按无主身份放行。没有会话才认访问令牌（`Authorization: Bearer` 或 cookie `vibeterm_t_self`），且令牌必须含 `exec` 作用域，否则 403 `TOKEN_SCOPE`；无凭证 401 `UNAUTHORIZED`。会话优先，令牌不遮蔽也不补充会话。分享凭证不能开 shell。
 - **mesh 流**：目标节点按 `verifyStreamAuth` 同口径校验会话 sid（`viaNodeId` 取握手对端），或 `tok:<secret>` 令牌（须含 `exec`）；分享凭证被拒绝。失败原因对外只分「无效」「作用域不足」。
-- **Origin 检查**：浏览器发起的升级会带 `Origin`，必须与访问主机（含 `X-Forwarded-Host`）一致，否则 403 `FORBIDDEN_ORIGIN`，防止其它站点借已登录会话拉起 shell；CLI 等非浏览器客户端不带或带同主机 origin。
+- **Origin 检查**：与 `/ws` 等所有 WebSocket 升级共用装配分发入口的浏览器请求门（[登录面安全 §10](../security/login-security.md)）：带 `Origin` 时必须同源或是已配置的入口地址，`Sec-Fetch-Site: cross-site` 直接拒，否则 403 `FOREIGN_ORIGIN`；exec 升级处理器与转发器自身不再判 Origin。CLI 不带或带同源 origin。
 - **会话复核**：握手时校验一次后，网关每 30 s 复核依附的节点会话与令牌，并在撤销时立即复核：会话过期 / 被撤销 / 行被删除，或令牌撤销 / 过期，对应 exec 会话以 4401 终止并杀进程组；用户登出终止其名下全部 exec 会话。复核读库失败时不误杀。令牌撤销（`DELETE /api/auth/tokens/:id`）即时终止该令牌的所有会话。
 - **resume 绑定主体**：只有创建会话的 `uid` 才能 resume，会话 id 是 128 位随机数，不能当凭证。
 - **权限等价于账号**：命令以网关服务用户运行，权限就是该账号的权限；`exec` 作用域的令牌等同于该账号在节点上的 shell，签发要按最小范围与有效期。

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import type { EventType, MeshNotificationForwardRequest, WebhookEvent } from '@vibeterm/shared';
 import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@vibeterm/shared';
 import { dispatchRoutes } from '../api/route';
+import { buildPaneUrl, normalizeHttpUrl } from '../events/channels/pane-url';
 import {
   type MeshInternalNotificationDeps,
   createMeshInternalNotificationRoutes,
@@ -114,6 +115,17 @@ describe('mesh-internal notifications route', () => {
       windowId: '@1',
       windowIndex: 2,
       paneTitle: 'vim',
+      paneUrl:
+        normalizeHttpUrl(
+          buildPaneUrl({
+            eventType: 'terminal_bell',
+            timestamp: '',
+            site: { name: '汇聚机', url: 'https://sink.example' },
+            device: { id: 'dev-1', name: '开发机', type: 'ssh', host: 'h' },
+            tmux: { paneId: '%3', windowId: '@1', windowIndex: 2, paneTitle: 'vim' },
+            payload: { nodeId: 'node-b' },
+          })
+        ) ?? undefined,
     });
     expect(entry.event.payload).toEqual({
       source: 'osc9',
@@ -184,6 +196,57 @@ describe('mesh-internal notifications route', () => {
     const { deps, received } = makeDeps({ nodeName: () => null });
     await call(deps, request(forwardBody({ origin: { nodeId: 'node-b', nodeName: '伪造' } })));
     expect(received[0]?.event.payload).toMatchObject({ nodeId: 'node-b', nodeName: 'node-b' });
+  });
+
+  test('忽略远端 paneUrl / 可点击链接，按本机站点重建', async () => {
+    const { deps, received } = makeDeps();
+    const body = forwardBody();
+    body.event = {
+      ...body.event,
+      tmux: {
+        ...body.event.tmux,
+        paneUrl: 'https://evil.example/phish',
+      },
+      payload: {
+        source: 'osc9',
+        url: 'https://evil.example/click',
+        href: 'javascript:alert(1)',
+        actionUrl: 'https://evil.example/action',
+      },
+    };
+    expect((await call(deps, request(body))).status).toBe(202);
+    expect(received[0]?.event.tmux?.paneUrl).toBe(
+      normalizeHttpUrl(
+        buildPaneUrl({
+          eventType: 'terminal_bell',
+          timestamp: '',
+          site: { name: '汇聚机', url: 'https://sink.example' },
+          device: { id: 'dev-1', name: '开发机', type: 'ssh', host: 'h' },
+          tmux: { paneId: '%3', windowId: '@1', windowIndex: 2, paneTitle: 'vim' },
+          payload: { nodeId: 'node-b' },
+        })
+      ) ?? undefined
+    );
+    expect(received[0]?.event.tmux?.paneUrl).not.toContain('evil.example');
+    expect(received[0]?.event.payload).toEqual({
+      source: 'osc9',
+      nodeId: 'node-b',
+      nodeName: 'B 机',
+    });
+  });
+
+  test('远端文本字段截到 2048 字节字符', async () => {
+    const { deps, received } = makeDeps();
+    const longTitle = 't'.repeat(3000);
+    const body = forwardBody();
+    body.event = {
+      ...body.event,
+      tmux: { ...body.event.tmux, paneTitle: longTitle },
+      device: { ...body.event.device, name: `n${'x'.repeat(3000)}` },
+    };
+    expect((await call(deps, request(body))).status).toBe(202);
+    expect(received[0]?.event.tmux?.paneTitle).toBe('t'.repeat(2048));
+    expect(received[0]?.event.device.name.length).toBe(2048);
   });
 
   test('本机渠道扇出慢不拖住发送方：先回 202 再扇出', async () => {

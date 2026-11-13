@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import dgram from 'node:dgram';
 import { type Allocation, AllocationTable, peerKey } from './allocation-table';
+import { PeerDenySet } from './denied-peers';
 import { decodeChannelData, isChannelData, maxDataIndicationPayload } from './stun-message';
 import { NonceStore } from './turn-auth';
 import type { MutableStats, TurnContext } from './turn-context';
@@ -60,6 +61,7 @@ function makeCtx(): { ctx: TurnContext; sent: Buffer[] } {
       maxAllocationsPerUser: 8,
       maxLifetimeSec: 3600,
       deniedPeerCidrs: [],
+      denySelfAddresses: false,
       bytesPerSecPerAllocation: 0,
       log: () => {},
       now,
@@ -68,7 +70,7 @@ function makeCtx(): { ctx: TurnContext; sent: Buffer[] } {
     table,
     nonce: new NonceStore(now),
     unauthLimit: new UnauthResponseLimiter(now),
-    denied: () => false,
+    denied: new PeerDenySet({ cidrs: [], denySelf: false }),
     send: (buf) => {
       sent.push(buf);
     },

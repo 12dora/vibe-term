@@ -8,12 +8,18 @@ import {
 } from '../../../../apps/gateway/src/mesh/relay-payloads';
 import { RelaySecrets } from '../../../../apps/gateway/src/mesh/relay-secrets';
 import {
+  decodeBase64url,
   decodeKeyLogRecord,
   encodeBase64url,
   encodeMetaKeyPayload,
+  generateEd25519KeyPair,
 } from '../../../shared/src/auth';
 import { RELAY_TOKEN_HEADER } from '../../../shared/src/http/mesh-headers';
-import { openRelayKeyLogRecord, sealRelayKeyLogRecord } from '../../../shared/src/relay';
+import {
+  openRelayKeyLogRecord,
+  sealRelayKeyLogRecord,
+  verifyRelayKeyLogAppend,
+} from '../../../shared/src/relay';
 import type { FetchLike } from './fetch-like';
 import { type LocalAuthContext, openLocalAuth } from './local-auth';
 import type { JoinLogPhase, JoinPackPhase } from './relay-password-join-flow';
@@ -90,7 +96,7 @@ async function fixture() {
       now: pack.now,
     });
   }
-  return { auth, user, secrets, log, pack, readLog, appendToken, run };
+  return { auth, identity, user, secrets, log, pack, readLog, appendToken, run };
 }
 
 describe('relay token rekey', () => {
@@ -141,6 +147,28 @@ describe('relay token rekey', () => {
       const record = await openRelayKeyLogRecord(LOG_KEY, body.blob);
       expect(decodeKeyLogRecord(record.bytes).type).toBe('set-relays');
       expect(body.seq).toBe(f.log.records.length + 1);
+      expect(body.node_id).toBe(f.identity.nodeIdHex);
+      expect(typeof body.node_sig).toBe('string');
+      const proof = {
+        relayHost: 'relay.example',
+        tenantId: TENANT_ID,
+        seq: BigInt(body.seq),
+        envelope: body.blob,
+      };
+      expect(
+        verifyRelayKeyLogAppend(
+          decodeBase64url(String(body.node_sig)),
+          f.identity.edPublicKey,
+          proof
+        )
+      ).toBe(true);
+      expect(
+        verifyRelayKeyLogAppend(
+          decodeBase64url(String(body.node_sig)),
+          generateEd25519KeyPair().publicKey,
+          proof
+        )
+      ).toBe(false);
       expect(f.readLog().records).toEqual(f.log.records);
       expect((await f.secrets.store.getRelay(RELAY_URL))?.token).toEqual(OLD_TOKEN);
       return Response.json({ ok: true });

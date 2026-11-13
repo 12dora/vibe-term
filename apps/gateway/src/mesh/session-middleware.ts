@@ -14,6 +14,7 @@ import {
   readNodeSessionCookie,
 } from '../auth/cookies';
 import type { NodeSessionRecord, NodeSessionStore } from '../auth/node-session-store';
+import { isTrustedProxyHop } from './client-ip';
 import {
   MESH_VIA_SELF,
   type MeshRoles,
@@ -249,9 +250,8 @@ export function isHttps(req: Request): boolean {
 }
 
 export function publicRequestUrl(req: Request): URL {
-  const ctx = getMeshRequestContext(req);
   const fallback = new URL(req.url);
-  if (!ctx.trustProxy || ctx.via !== MESH_VIA_SELF) {
+  if (!isTrustedProxyHop(req)) {
     return fallback;
   }
   const proto = firstForwarded(req.headers.get('x-forwarded-proto'));

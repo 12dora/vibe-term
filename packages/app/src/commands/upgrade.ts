@@ -4,6 +4,7 @@ import { parsePort } from '../../../shared/src/env/parse';
 import { DEFAULT_GATEWAY_PORT } from '../../../shared/src/net';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
 import { releaseTarballName } from '../../../shared/src/release/source';
+import { compareSemver } from '../../../shared/src/semver';
 import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
@@ -44,6 +45,7 @@ import {
   printUdpSegmentUnifiedNotice,
   takeWrittenPortEnvKeys,
 } from '../lib/upgrade-port-env';
+import { readCurrentVersion } from '../lib/upgrade-switch';
 import { assertReleaseIntegrity, assertReleaseSignature } from '../lib/upgrade-verify';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
@@ -112,6 +114,14 @@ async function firstExistingPath(candidates: string[]): Promise<string | null> {
   return null;
 }
 
+export function refuseCliDowngrade(target: string, current: string | null, allow: boolean): void {
+  if (allow || !current) return;
+  const cmp = compareSemver(target, current);
+  if (cmp !== null && cmp < 0) {
+    throw new Error(t('upgrade.downgradeRefused', { version: target, current }));
+  }
+}
+
 export async function delegateUpgrade(
   parsed: ParsedArgs,
   targetVersion: string,
@@ -124,6 +134,11 @@ export async function delegateUpgrade(
   const version = await resolveReleaseVersion(targetVersion, fetchFn);
   const installDir = resolveInstallDir(
     asString(parsed.flags['install-dir']) || defaultInstallDir(process.platform)
+  );
+  refuseCliDowngrade(
+    version,
+    await readCurrentVersion(installDir),
+    asBoolean(parsed.flags['allow-downgrade']) === true
   );
   const txnId = createTxnId();
   const stagingDir = join(installDir, 'staging', txnId);

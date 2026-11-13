@@ -34,7 +34,7 @@ function bearerToken(req: Request): string | null {
  * 首启补齐管理令牌：
  * 1. env 给了就用 env 的（只把 hash 落库，方便运维核对）；
  * 2. 否则库里已有 hash 就沿用（令牌只在生成那次可见）；
- * 3. 否则生成一枚，尽力写进 app.env（production 才有 patchEnv），并打印一次。
+ * 3. 否则生成一枚，尽力写进 app.env（production 才有 patchEnv）；日志只提示去 app.env 查看，绝不打印令牌。
  */
 export async function ensureRelayAdminToken(opts: RelayAdminAuthOptions): Promise<string | null> {
   const now = opts.now();
@@ -60,8 +60,8 @@ export async function ensureRelayAdminToken(opts: RelayAdminAuthOptions): Promis
   }
   log(
     persisted
-      ? `[relay] generated admin token and wrote VIBETERM_RELAY_ADMIN_TOKEN to app.env: ${token}`
-      : `[relay] generated admin token (not persisted, set VIBETERM_RELAY_ADMIN_TOKEN to keep it): ${token}`
+      ? '[relay] generated admin token and wrote it to app.env; see VIBETERM_RELAY_ADMIN_TOKEN in app.env'
+      : '[relay] generated admin token but did not persist it; set VIBETERM_RELAY_ADMIN_TOKEN in app.env and restart to use token-based admin access'
   );
   return token;
 }

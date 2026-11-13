@@ -98,8 +98,14 @@ export function isTrustedPublicUrl(value: string | null | undefined): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
 }
 
+const JOIN_TOKEN_ENV = 'VIBETERM_RELAY_JOIN_TOKEN';
+
+function singleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 function shellQuote(value: string): string {
-  return /^[A-Za-z0-9._-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
+  return /^[A-Za-z0-9._-]+$/.test(value) ? value : singleQuote(value);
 }
 
 export function joinCommand(publicUrl: string, token: string, name?: string | null): string {
@@ -107,7 +113,7 @@ export function joinCommand(publicUrl: string, token: string, name?: string | nu
     throw new CliError('public url is missing or not https; cannot print a join command');
   }
   const suffix = name?.trim() ? ` --name ${shellQuote(name.trim())}` : '';
-  return `vibeterm relay join ${shellQuote(publicUrl)} --token ${shellQuote(token)}${suffix}`;
+  return `${JOIN_TOKEN_ENV}=${singleQuote(token)} vibeterm relay join ${shellQuote(publicUrl)}${suffix}`;
 }
 
 export function passwordJoinCommand(publicUrl: string, tenantId: string): string {

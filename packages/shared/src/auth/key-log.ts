@@ -449,7 +449,7 @@ function applyRotateRootKeep(state: UserKeyState, record: KeyLogRecord): ApplyKe
   if (payload.totp) {
     state.totp = payload.totp.payload;
   }
-  return { ok: true, state, effects: [] };
+  return { ok: true, state, effects: [{ type: 'revokeAllSessions' }] };
 }
 
 async function applyAdmitNode(

@@ -17,6 +17,7 @@ import {
   withDeviceRsync,
 } from './rsync-operation';
 import type { RsyncDeviceSpec } from './ssh-command';
+import { sshRemoteArgv } from './ssh-target';
 
 const posix = path.posix;
 const BROWSE_TIMEOUT_MS = 20_000;
@@ -169,7 +170,7 @@ export async function execSshCommand(
     return { stdout: new Uint8Array(), stderr: 'not an ssh device', exitCode: 255 };
   }
   const dest = spec.targetPrefix.replace(/:$/, '');
-  const argv = [...spec.rsh.split(' '), dest, command];
+  const argv = sshRemoteArgv(spec.rsh, dest, command);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined) env[key] = value;

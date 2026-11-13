@@ -22,8 +22,9 @@ import {
 import { Input } from '@vibeterm/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 
-import { createLlmProvider, updateLlmProvider } from '@vibeterm/api-client';
+import { createLlmProvider, isApiErrorCode, updateLlmProvider } from '@vibeterm/api-client';
 import { useRuntime } from '@vibeterm/stores/react';
+import { apiKeyRequiredOnEdit } from './llm-provider-form';
 
 const PROTOCOL_OPTIONS: LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
 
@@ -34,6 +35,148 @@ interface LlmProviderFormModalProps {
   onOpenChange: (open: boolean) => void;
   /** 缺省表示新增模式 */
   provider?: LlmProviderDto;
+}
+
+interface LlmProviderFieldsProps {
+  values: { name: string; baseUrl: string; protocol: LlmProviderProtocol; apiKey: string };
+  onName: (value: string) => void;
+  onBaseUrl: (value: string) => void;
+  onProtocol: (value: LlmProviderProtocol) => void;
+  onApiKey: (value: string) => void;
+  provider?: LlmProviderDto;
+  keyRequired: boolean;
+}
+
+function ProtocolField({
+  value,
+  onChange,
+}: {
+  value: LlmProviderProtocol;
+  onChange: (value: LlmProviderProtocol) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-sm font-medium" htmlFor="llm-form-protocol">
+        {t('settings.llm.protocol')}
+      </label>
+      <Select
+        value={value}
+        onValueChange={(next) => {
+          if (!next) return;
+          onChange(next as LlmProviderProtocol);
+        }}
+      >
+        <SelectTrigger
+          id="llm-form-protocol"
+          data-testid="llm-provider-protocol-select"
+          className={FIELD_CLASS}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {PROTOCOL_OPTIONS.map((option) => (
+            <SelectItem key={option} value={option}>
+              {option}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function ApiKeyField({
+  value,
+  onChange,
+  provider,
+  keyRequired,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  provider?: LlmProviderDto;
+  keyRequired: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-sm font-medium" htmlFor="llm-form-apikey">
+        {t('settings.llm.apiKey')}
+      </label>
+      <Input
+        id="llm-form-apikey"
+        data-testid="llm-provider-apikey-input"
+        data-key-set={provider?.hasApiKey ? 'true' : 'false'}
+        type="password"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-required={keyRequired}
+        placeholder={
+          provider?.hasApiKey && !keyRequired
+            ? t('settings.llm.apiKeySetPlaceholder')
+            : t('settings.llm.apiKeyPlaceholder')
+        }
+        className={FIELD_CLASS}
+      />
+      {provider && keyRequired && (
+        <p className="text-xs text-muted-foreground" data-testid="llm-provider-apikey-required">
+          {t('settings.llm.apiKeyRequiredOnChange')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function LlmProviderFields({
+  values,
+  onName,
+  onBaseUrl,
+  onProtocol,
+  onApiKey,
+  provider,
+  keyRequired,
+}: LlmProviderFieldsProps) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium" htmlFor="llm-form-name">
+          {t('settings.llm.name')}
+        </label>
+        <Input
+          id="llm-form-name"
+          data-testid="llm-provider-name-input"
+          value={values.name}
+          onChange={(event) => onName(event.target.value)}
+          placeholder={t('settings.llm.namePlaceholder')}
+          className={FIELD_CLASS}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium" htmlFor="llm-form-baseurl">
+          {t('settings.llm.baseUrl')}
+        </label>
+        <Input
+          id="llm-form-baseurl"
+          data-testid="llm-provider-baseurl-input"
+          value={values.baseUrl}
+          onChange={(event) => onBaseUrl(event.target.value)}
+          placeholder={t('settings.llm.baseUrlPlaceholder')}
+          className={FIELD_CLASS}
+        />
+        <p className="text-xs text-muted-foreground">{t('settings.llm.baseUrlHint')}</p>
+      </div>
+
+      <ProtocolField value={values.protocol} onChange={onProtocol} />
+      <ApiKeyField
+        value={values.apiKey}
+        onChange={onApiKey}
+        provider={provider}
+        keyRequired={keyRequired}
+      />
+    </div>
+  );
 }
 
 export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProviderFormModalProps) {
@@ -107,13 +250,20 @@ export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProvid
       onOpenChange(false);
     },
     onError: (err) => {
+      if (isApiErrorCode(err, 'API_KEY_REQUIRED')) {
+        toast.error(t('settings.llm.apiKeyRequiredOnChange'));
+        return;
+      }
       toast.error(err instanceof Error ? err.message : t('common.error'));
     },
   });
 
+  const keyRequired = !provider || apiKeyRequiredOnEdit(provider, { baseUrl, protocol });
   const isPending = createMutation.isPending || updateMutation.isPending;
   const canSubmit =
-    name.trim().length > 0 && baseUrl.trim().length > 0 && (isEdit || apiKey.trim().length > 0);
+    name.trim().length > 0 &&
+    baseUrl.trim().length > 0 &&
+    (!keyRequired || apiKey.trim().length > 0);
 
   const handleSubmit = () => {
     if (!canSubmit || isPending) {
@@ -139,84 +289,15 @@ export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProvid
           <DialogDescription>{t('settings.llm.formHint')}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="llm-form-name">
-              {t('settings.llm.name')}
-            </label>
-            <Input
-              id="llm-form-name"
-              data-testid="llm-provider-name-input"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={t('settings.llm.namePlaceholder')}
-              className={FIELD_CLASS}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="llm-form-baseurl">
-              {t('settings.llm.baseUrl')}
-            </label>
-            <Input
-              id="llm-form-baseurl"
-              data-testid="llm-provider-baseurl-input"
-              value={baseUrl}
-              onChange={(event) => setBaseUrl(event.target.value)}
-              placeholder={t('settings.llm.baseUrlPlaceholder')}
-              className={FIELD_CLASS}
-            />
-            <p className="text-xs text-muted-foreground">{t('settings.llm.baseUrlHint')}</p>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="llm-form-protocol">
-              {t('settings.llm.protocol')}
-            </label>
-            <Select
-              value={protocol}
-              onValueChange={(value) => {
-                if (!value) return;
-                setProtocol(value as LlmProviderProtocol);
-              }}
-            >
-              <SelectTrigger
-                id="llm-form-protocol"
-                data-testid="llm-provider-protocol-select"
-                className={FIELD_CLASS}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {PROTOCOL_OPTIONS.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {option}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="llm-form-apikey">
-              {t('settings.llm.apiKey')}
-            </label>
-            <Input
-              id="llm-form-apikey"
-              data-testid="llm-provider-apikey-input"
-              data-key-set={provider?.hasApiKey ? 'true' : 'false'}
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              placeholder={
-                provider?.hasApiKey
-                  ? t('settings.llm.apiKeySetPlaceholder')
-                  : t('settings.llm.apiKeyPlaceholder')
-              }
-              className={FIELD_CLASS}
-            />
-          </div>
-        </div>
+        <LlmProviderFields
+          values={{ name, baseUrl, protocol, apiKey }}
+          onName={setName}
+          onBaseUrl={setBaseUrl}
+          onProtocol={setProtocol}
+          onApiKey={setApiKey}
+          provider={provider}
+          keyRequired={keyRequired}
+        />
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>

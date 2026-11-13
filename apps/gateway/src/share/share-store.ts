@@ -9,13 +9,50 @@ import {
   type ShareSettings,
   type ShareState,
 } from '@vibeterm/shared/share';
-import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, gt, inArray, lt, sql } from 'drizzle-orm';
+import { runAfterKeyLogCommit } from '../auth/revocation-after-commit';
 import type { AuthDb } from '../auth/types';
 import { getDb as getOrmDb } from '../db/client';
 import { shareAccessTokens, shareLogs, shareSettings, shares } from '../db/schema';
 import { hashRelayPassword, verifyRelayPassword } from '../relay/relay-password';
 
 export const SHARE_SETTINGS_ID = 1;
+
+type SharesRevokedListener = (ids: readonly string[], reason: ShareEndReason) => void;
+
+const revokedListeners = new Set<SharesRevokedListener>();
+
+/** 运行中的分享服务订阅：级联结束的分享要收掉录屏、到期定时器与在线连接。返回取消订阅函数。 */
+export function onSharesRevoked(listener: SharesRevokedListener): () => void {
+  revokedListeners.add(listener);
+  return () => {
+    revokedListeners.delete(listener);
+  };
+}
+
+/**
+ * 吊销级联（key log 投影）：在调用方的库连接（即 key log 事务）里结束分享并清凭证。
+ * 运行态拆除（关连接、停录屏）等事务提交后再通知；回滚则不拆。
+ * `issuedVia` 缺省表示全部进行中的分享。
+ */
+export function endSharesForRevocation(
+  db: AuthDb,
+  filter: { issuedVia?: string },
+  now: number
+): string[] {
+  const ids = new ShareStore(db).endActive(filter, 'revoked', now);
+  if (ids.length === 0) return ids;
+  runAfterKeyLogCommit(() => {
+    for (const listener of [...revokedListeners]) {
+      try {
+        listener(ids, 'revoked');
+      } catch (error) {
+        console.error('[share] revocation listener failed:', error);
+      }
+    }
+  });
+  return ids;
+}
 
 export type ShareRow = {
   id: string;
@@ -35,6 +72,7 @@ export type ShareRow = {
   createdAt: number;
   expiresAt: number | null;
   endedAt: number | null;
+  issuedVia: string;
 };
 
 export type ShareInsert = ShareRow & { passwordHash: string; passwordEnc?: string | null };
@@ -84,6 +122,7 @@ function toRow(row: typeof shares.$inferSelect): ShareRow {
     createdAt: row.createdAt,
     expiresAt: row.expiresAt ?? null,
     endedAt: row.endedAt ?? null,
+    issuedVia: row.issuedVia,
   };
 }
 
@@ -160,6 +199,23 @@ export class ShareStore {
       .run();
     this.db.delete(shareAccessTokens).where(eq(shareAccessTokens.shareId, id)).run();
     return this.get(id);
+  }
+
+  /** 批量结束仍在进行的分享（缺省全部，或只限某入口节点签发的），连同访问凭证；返回被结束的 id。 */
+  endActive(filter: { issuedVia?: string }, reason: ShareEndReason, at: number): string[] {
+    const conditions: SQL[] = [eq(shares.state, 'active')];
+    if (filter.issuedVia !== undefined) conditions.push(eq(shares.issuedVia, filter.issuedVia));
+    const ids = this.db
+      .update(shares)
+      .set({ state: 'ended', endReason: reason, endedAt: at })
+      .where(and(...conditions))
+      .returning({ id: shares.id })
+      .all()
+      .map((row) => row.id);
+    if (ids.length > 0) {
+      this.db.delete(shareAccessTokens).where(inArray(shareAccessTokens.shareId, ids)).run();
+    }
+    return ids;
   }
 
   remove(id: string): boolean {

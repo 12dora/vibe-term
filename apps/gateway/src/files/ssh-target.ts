@@ -8,6 +8,43 @@ import { resolveSshConnectConfig } from '../tmux-client/ssh-connect-config';
 
 export const SSH_BASE_OPTS = ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=10'];
 
+function hasControlOrSpace(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code <= 0x20 || code === 0x7f || /\s/.test(ch)) return true;
+  }
+  return false;
+}
+
+export type SshIdentityFields = {
+  host?: string | null;
+  username?: string | null;
+  sshConfigRef?: string | null;
+};
+
+export function validateSshIdentityFields(
+  fields: SshIdentityFields
+): { ok: true } | { ok: false; message: string } {
+  for (const [kind, raw] of [
+    ['host', fields.host],
+    ['username', fields.username],
+    ['sshConfigRef', fields.sshConfigRef],
+  ] as const) {
+    if (raw == null) continue;
+    const value = raw;
+    if (value === '') continue;
+    if (hasControlOrSpace(value) || value.startsWith('-')) {
+      return { ok: false, message: `invalid ssh ${kind}` };
+    }
+  }
+  return { ok: true };
+}
+
+/** Direct ssh argv: rsh tokens, then `--` so dest cannot be parsed as an option. */
+export function sshRemoteArgv(rsh: string, dest: string, command: string): string[] {
+  return [...rsh.split(' '), '--', dest, command];
+}
+
 export type OpenSshTarget = {
   dest: string;
   sshArgs: string[];
@@ -57,6 +94,10 @@ export async function resolveOpenSshTarget(
   decrypt: DecryptFn = decryptWithContext,
   resolveConfig: ResolveConfigFn = resolveSshConnectConfig
 ): Promise<OpenSshTargetResult> {
+  const identity = validateSshIdentityFields(device);
+  if (!identity.ok) {
+    return { ok: false, code: 'connection_failed', message: identity.message };
+  }
   if (device.authMode === 'configRef' && device.sshConfigRef?.trim()) {
     return configRefTarget(device.sshConfigRef.trim());
   }

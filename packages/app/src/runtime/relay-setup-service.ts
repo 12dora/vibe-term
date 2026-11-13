@@ -15,7 +15,7 @@ import {
 } from './setup-service';
 import {
   SetupError,
-  assertPassword,
+  assertAccountPassword,
   assertStandalone,
   assertUsername,
   isUniqueConstraintFailure,
@@ -98,7 +98,7 @@ async function bootstrapRelayNodeUser(
   deps: SetupServiceDeps
 ): Promise<string> {
   const username = assertUsername(input.username ?? '');
-  const password = assertPassword(input.password ?? '');
+  const password = assertAccountPassword(input.password ?? '', username);
   if (deps.auth.userStore.getByUsername(username)) {
     throw new SetupError('user_exists', `user already exists: ${username}`, 409);
   }

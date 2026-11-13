@@ -22,7 +22,7 @@
 | test | `test` | `env/test.env`（+ `env/test.env.local`），接线键由各测试入口注入 | preload / 应用 `loadEnv()` |
 | production | `production` | 安装版 `app.env`（`buildAppEnvValues`，7 个核心键）+ `run.sh` export 的 `VIBETERM_FE_DIST_DIR`/`VIBETERM_MIGRATIONS_DIR` | `run.sh` 经 shell 注入 |
 
-- `buildAppEnvValues` 只在 `VIBETERM_ROLES` 含 `relay` 时额外写入 `VIBETERM_RELAY_PUBLIC_URL`（必填，中继对外地址）与 `VIBETERM_RELAY_ADMIN_TOKEN`（缺失时首启生成）；其它角色的 `app.env` 不含这两个键。中继角色首启若自行生成了管理令牌，**只有 production 会写回 `app.env`**，dev / test 只在启动日志里打印一次（见 [公共中继（relay）角色](../architecture/relay.md)）。
+- `buildAppEnvValues` 只在 `VIBETERM_ROLES` 含 `relay` 时额外写入 `VIBETERM_RELAY_PUBLIC_URL`（必填，中继对外地址）与 `VIBETERM_RELAY_ADMIN_TOKEN`（缺失时首启生成）；其它角色的 `app.env` 不含这两个键。中继角色首启若自行生成了管理令牌，**只有 production 会写回 `app.env`**，dev / test 不落盘；日志只说明已生成、从不打印令牌本身，需要 bearer 调管理接口时显式设置 `VIBETERM_RELAY_ADMIN_TOKEN`（见 [公共中继（relay）角色](../architecture/relay.md)）。
 - `development.env` / `test.env` 提交进库（仅含开发/测试用公开值，dev master key 本就公开）；`*.env.local` 忽略，供个人临时覆盖。
 - 可选 `VIBETERM_*` 调优项（throttle / tmux / ssh-reconnect / language）在 `apps/gateway/src/config.ts` 均有默认值，**这些默认值即生产行为**。生产 `app.env` 保持精简，不扩容；老安装无需迁移。
 
@@ -71,7 +71,7 @@
 
 ## 变量前缀与 tmex 时期的别名
 
-应用自有的环境变量统一以 `VIBETERM_` 为前缀（`VIBETERM_MASTER_KEY`、`VIBETERM_BIND_HOST`、`VIBETERM_BASE_URL`、`VIBETERM_GATEWAY_URL`、`VIBETERM_FE_DIST_DIR`、`VIBETERM_MIGRATIONS_DIR`、`VIBETERM_NATIVE_DIR`、`VIBETERM_ROLES`、`VIBETERM_SITE_NAME`、`VIBETERM_TRUST_PROXY`、`VIBETERM_BUN_PATH` 等）。三个无前缀键沿用通用名：`NODE_ENV`、`DATABASE_URL`、`GATEWAY_PORT` / `FE_PORT`。`init` / `upgrade` 不再写入任何 `VIBETERM_HUB_*`；升级会从安装版 `app.env` 删掉残留的 Hub 键。
+应用自有的环境变量统一以 `VIBETERM_` 为前缀（`VIBETERM_MASTER_KEY`、`VIBETERM_BIND_HOST`、`VIBETERM_BASE_URL`、`VIBETERM_GATEWAY_URL`、`VIBETERM_FE_DIST_DIR`、`VIBETERM_MIGRATIONS_DIR`、`VIBETERM_NATIVE_DIR`、`VIBETERM_ROLES`、`VIBETERM_SITE_NAME`、`VIBETERM_TRUST_PROXY`、`VIBETERM_CLIENT_IP_HEADER`、`VIBETERM_BUN_PATH` 等）。三个无前缀键沿用通用名：`NODE_ENV`、`DATABASE_URL`、`GATEWAY_PORT` / `FE_PORT`。`init` / `upgrade` 不再写入任何 `VIBETERM_HUB_*`；升级会从安装版 `app.env` 删掉残留的 Hub 键。
 
 改名前（2.0.0 之前，产品名 tmex）这些键的前缀是 `TMEX_`。2.0.0 的升级器会把安装版 `app.env` 的键整体改写成 `VIBETERM_*`（原文件备份进 `backups/`），但 shell 里可能还残留旧变量、回滚后的 `app.env` 也可能是旧键，因此保留一层运行时别名：
 
@@ -93,6 +93,7 @@
 | `VIBETERM_LOOP_WATCHDOG_STALL_SEC` | `30`（最小 5） | 服务已启动后的心跳超时秒数；低于最小值回退默认 |
 | `VIBETERM_LOOP_WATCHDOG_BOOT_SEC` | `180`（最小 10） | 启动完成前的心跳超时秒数；低于最小值回退默认 |
 | `VIBETERM_LOOP_WATCHDOG_SIGNAL` | `SIGKILL` | 超时后发给本进程的信号，仅 `SIGABRT` \| `SIGKILL` |
+| `VIBETERM_RELAY_MAX_TENANTS` | `50` | **仅中继角色**：管理面未设 `maxTenants` 时的默认租户上限。正整数，上限 65536；非法值启动失败。见 [mesh 运维](../operations/mesh-operations.md) |
 
 ## 注意事项
 

@@ -17,7 +17,7 @@ import { recordEntryLogin429 } from '../auth/login-records-forward';
 import type { LoginMethod } from './auth-login-limiter';
 import { loginLimiterIp, peekLoginMethod } from './auth-login-policy-http';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
-import { clientIpFromRequest } from './client-ip';
+import { UNKNOWN_CLIENT_KEY, clientIpFromRequest } from './client-ip';
 import { authorizedAttemptBudgetsMs, runLinkThenTransfer } from './forwarder-attempt-deadline';
 import { AUTH_CHALLENGE_PATHS, AUTH_LOGIN_PATH, peekJsonCode } from './forwarder-auth-policy';
 import { cancelForwardBody, countStreamBytes, sleepMs, throttledProgress } from './forwarder-body';
@@ -469,7 +469,7 @@ export class Forwarder {
     req: Request,
     rest: string
   ): Promise<{ response: Response | null; uidHint: string; ip: string; shareId?: string }> {
-    const ip = clientIpFromRequest(req) ?? 'local';
+    const ip = clientIpFromRequest(req) ?? UNKNOWN_CLIENT_KEY;
     const empty = { response: null, uidHint: '', ip };
     const shareId = shareLoginShareId(req.method, rest);
     if (shareId) return { ...empty, shareId, response: this.gateShareLogin(shareId, ip) };

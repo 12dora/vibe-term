@@ -8,7 +8,12 @@ import {
   randomBytes,
   verifyTotpCode,
 } from '../../../shared/src/auth';
-import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
+import {
+  assertAccountPassword,
+  assertRootKeyMatches,
+  deriveRootKey,
+  resolvePassword,
+} from '../lib/password';
 import { isInteractiveStdin, promptPassword } from '../lib/prompt';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { applyUserPasswd } from '../lib/user-passwd';
@@ -38,6 +43,7 @@ export async function runUserAdd(
     prompt: 'New password',
     confirmPrompt: 'Confirm password',
   });
+  assertAccountPassword(password, username);
   return await withAuth(parsed, io, async (ctx) => {
     if (ctx.userStore.getByUsername(username)) {
       throw new Error(`user already exists: ${username} (use mesh reset-root to replace the root)`);

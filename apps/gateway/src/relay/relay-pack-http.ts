@@ -12,7 +12,7 @@ import { decodeB64url } from '../api/route-input';
 import type { RelayConfigStore } from './relay-config-store';
 import type { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError, relayJson, relayNoStore } from './relay-http';
-import { appendRelayKeyLog, pageRelayKeyLog } from './relay-key-log-service';
+import { type RelayAppendError, appendRelayKeyLog, pageRelayKeyLog } from './relay-key-log-service';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { parseRelayEnvelopeJson } from './relay-key-log-store';
 import { sha256Hex } from './relay-password';
@@ -65,7 +65,7 @@ export function handleRelayTenantKdf(
   tenantId: string
 ): Response {
   const ip = deps.clientIp(req);
-  if (deps.limiter.isLimited(ip, tenantId)) return relayError(RelayErrorCode.rateLimited, 429);
+  if (deps.limiter.isLimited(ip)) return relayError(RelayErrorCode.rateLimited, 429);
   if (!isRelayTenantId(tenantId)) {
     deps.limiter.recordFailure(ip, tenantId);
     return relayError(RelayErrorCode.tenantNotFound, 404);
@@ -88,7 +88,7 @@ export function handleRelayJoin(
   parsed: { rootPublicKey: Uint8Array; rootEpoch: number; tenantId: string },
   ip: string
 ): Response {
-  if (deps.limiter.isLimited(ip, parsed.tenantId)) {
+  if (deps.limiter.isLimited(ip)) {
     return relayError(RelayErrorCode.rateLimited, 429);
   }
   if (!isRelayTenantId(parsed.tenantId)) {
@@ -117,7 +117,7 @@ export function handleRelayJoin(
     deps.limiter.recordFailure(ip, parsed.tenantId);
     return relayError(RelayErrorCode.packMissing, 404);
   }
-  deps.limiter.reset(ip, parsed.tenantId);
+  deps.limiter.reset(ip);
   return relayNoStore({
     tenant_id: tenant.id,
     kdf_params: kdfParamsToWire(kdf),
@@ -223,22 +223,44 @@ export function handleRelayKeyLogPage(
   });
 }
 
-function keyLogAppendFailure(outcome: { error: string; head: bigint }): Response {
-  if (outcome.error === 'TENANT_KICKED') return relayError(RelayErrorCode.tenantKicked, 401);
-  if (outcome.error === 'UNAUTHORIZED') return relayError(RelayErrorCode.tokenInvalid, 401);
-  return relayJson(
-    {
-      error: {
-        code:
-          outcome.error === RELAY_KEYLOG_SEQ_MISMATCH
-            ? RELAY_KEYLOG_SEQ_MISMATCH
-            : RelayErrorCode.invalidBody,
-        message: outcome.error,
-        head: relaySeqToWire(outcome.head),
-      },
-    },
-    409
-  );
+function keyLogAppendFailure(outcome: { error: RelayAppendError; head: bigint }): Response {
+  switch (outcome.error) {
+    case 'TENANT_KICKED':
+      return relayError(RelayErrorCode.tenantKicked, 401);
+    case 'UNAUTHORIZED':
+      return relayError(RelayErrorCode.tokenInvalid, 401);
+    case 'APPEND_UNATTRIBUTED':
+      return relayError(RelayErrorCode.appendUnattributed, 403);
+    case 'NODE_NOT_ADMITTED':
+      return relayError(RelayErrorCode.nodeNotAdmitted, 403);
+    case 'TENANT_LOG_FULL':
+      return relayError(RelayErrorCode.tenantLogFull, 507);
+    default:
+      return relayJson(
+        {
+          error: {
+            code:
+              outcome.error === RELAY_KEYLOG_SEQ_MISMATCH
+                ? RELAY_KEYLOG_SEQ_MISMATCH
+                : RelayErrorCode.invalidBody,
+            message: outcome.error,
+            head: relaySeqToWire(outcome.head),
+          },
+        },
+        409
+      );
+  }
+}
+
+/** 可选的节点签名（`node_id` + `node_sig`）：新版加入方据此把 HTTP 追加归属到自己。 */
+function parseNodeProof(body: Record<string, unknown>): { nodeId: string; sig: Uint8Array } | null {
+  if (typeof body.node_id !== 'string' || typeof body.node_sig !== 'string') return null;
+  if (!/^[0-9a-f]{32}$/.test(body.node_id)) return null;
+  try {
+    return { nodeId: body.node_id, sig: decodeB64url(body.node_sig, 64) };
+  } catch {
+    return null;
+  }
 }
 
 function finishKeyLogAppend(
@@ -250,6 +272,7 @@ function finishKeyLogAppend(
     deps.uplink.disconnectNode(tenantId, outcome.revokedNodeId, 'revoked');
   }
   if (!outcome.memberIgnored) deps.uplink.notifyQuota(tenantId);
+  deps.uplink.broadcast(tenantId, { t: 'relay.keylog.push', records: [outcome.record] });
   deps.uplink.scheduleList(tenantId);
   return relayJson({
     ok: true,
@@ -290,8 +313,11 @@ export function applyRelayKeyLogAppend(
       ...(member ? { member } : {}),
     },
     {
+      kind: 'http',
       tokenHash: sha256Hex(presentedToken),
       minTokenEpoch: deps.configStore.ensure(deps.now()).minTokenEpoch,
+      relayHost: deps.uplink.relayHost,
+      nodeProof: parseNodeProof(body),
     }
   );
   if (!outcome.ok) return keyLogAppendFailure(outcome);

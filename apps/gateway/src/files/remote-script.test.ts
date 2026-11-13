@@ -47,7 +47,7 @@ describe('execRemoteScript', () => {
   test('脚本走 stdin，argv 末尾只有 `sh -s`', async () => {
     const calls = runLocally();
     const res = await execRemoteScript(sshSpec, 'printf ok; exit 3', 5_000);
-    expect(calls[0]).toEqual(['ssh', '-p', '2222', 'user@host', 'sh -s']);
+    expect(calls[0]).toEqual(['ssh', '-p', '2222', '--', 'user@host', 'sh -s']);
     expect(new TextDecoder().decode(res.stdout)).toBe('ok');
     expect(res.exitCode).toBe(3);
   });

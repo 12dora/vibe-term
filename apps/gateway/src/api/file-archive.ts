@@ -15,7 +15,7 @@ import {
   tarArchiveArgs,
   tarNameArgs,
 } from '../files/archive-stream';
-import { checkAndNormalize, statFile } from '../files/device-storage';
+import { checkAndNormalize, statFile, tokenMutationDenied } from '../files/device-storage';
 import { resolveFileRoot } from '../files/file-root';
 import { SH_INSIDE_FN, SH_PHYS_FN, spawnRemoteScript } from '../files/remote-script';
 import { type FileOpResult, fail, ok } from '../files/rsync-operation';
@@ -90,6 +90,7 @@ function normalizeItems(
   for (const input of inputs) {
     const norm = checkAndNormalize(device, rootPath, input);
     if (!norm.ok) return fail(norm.code);
+    if (tokenMutationDenied(device, norm.path, null)) return fail('permission_denied');
     // `/` 没有 basename：以父目录 `/` + 条目 `.` 表示
     const parent = norm.path === '/' ? '/' : posix.dirname(norm.path);
     if (parentDir !== null && parent !== parentDir) return fail('invalid');
@@ -217,6 +218,7 @@ function revalidateTicket(
   for (const name of ticket.names) {
     const norm = checkAndNormalize(device, rootPath, posix.join(ticket.parentDir, name));
     if (!norm.ok) return fail(norm.code);
+    if (tokenMutationDenied(device, norm.path, null)) return fail('permission_denied');
     full.push(norm.path);
   }
   // 根本身的父目录合法地落在根外，只有「唯一条目恰好是当前根」才允许免去物理父目录核对

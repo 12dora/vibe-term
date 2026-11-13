@@ -11,6 +11,7 @@ import { DEFAULT_PEER_PORT, parsePortRange, parseStunServersEnv } from '@vibeter
 import { parseBoolEnv, parsePort } from '../../../packages/shared/src/env/parse';
 import { resolveMemoryProfile } from './memory-profile';
 import { classifyRemoteAddress, isCgnatIpv4, isFakeIpv4 } from './mesh/address-class';
+import { parseClientIpHeader } from './mesh/client-ip-header';
 import {
   parseTurnExternalIp,
   parseTurnHost,
@@ -18,6 +19,7 @@ import {
   parseTurnRelayPortRange,
 } from './relay/relay-turn-config';
 import { parseTurnBindHost } from './relay/turn/local-address';
+import { RELAY_DEFAULT_MAX_TENANTS } from './relay/types';
 
 export type { VibeTermRoles };
 
@@ -222,6 +224,21 @@ export const RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS = 60_000;
 export const RELAY_AUTO_SELECT_INTERVAL_MIN_MS = 1_000;
 export const RELAY_AUTO_SELECT_INTERVAL_MAX_MS = 24 * 60 * 60 * 1000;
 
+export const RELAY_MAX_TENANTS_CAP = 65536;
+
+/** `VIBETERM_RELAY_MAX_TENANTS`：未设 / 空白 → 默认 50；非法或越界启动失败。 */
+export function parseRelayMaxTenants(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return RELAY_DEFAULT_MAX_TENANTS;
+  const value = raw.trim();
+  const invalid = new Error(
+    `VIBETERM_RELAY_MAX_TENANTS must be a positive integer ≤ ${RELAY_MAX_TENANTS_CAP}`
+  );
+  if (!/^\d+$/.test(value)) throw invalid;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > RELAY_MAX_TENANTS_CAP) throw invalid;
+  return n;
+}
+
 export function parseRelayAutoSelectIntervalMs(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === '') return RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS;
   const value = raw.trim();
@@ -331,6 +348,7 @@ export const config = {
   roles: parseVibeTermRoles(process.env.VIBETERM_ROLES),
   relayPublicUrl: getOptionalEnv('VIBETERM_RELAY_PUBLIC_URL'),
   relayAdminToken: getOptionalEnv('VIBETERM_RELAY_ADMIN_TOKEN'),
+  relayMaxTenants: parseRelayMaxTenants(process.env.VIBETERM_RELAY_MAX_TENANTS),
   relayAutoSelect: parseRelayAutoSelect(process.env.VIBETERM_RELAY_AUTO_SELECT),
   relayAutoSelectIntervalMs: parseRelayAutoSelectIntervalMs(
     process.env.VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS
@@ -353,6 +371,8 @@ export const config = {
   // x-forwarded-host for public origin, Secure cookies, and passkeyAvailable.
   // Never applied to forwarded (via ≠ self) requests. Default false.
   trustProxy: getBooleanEnv('VIBETERM_TRUST_PROXY', false),
+  // 仅在 trustProxy 开启且套接字对端是回环/内网（代理那一跳）时才读，且只读这一个头。
+  clientIpHeader: parseClientIpHeader(process.env.VIBETERM_CLIENT_IP_HEADER),
 
   // 环境
   isDev: getEnv('NODE_ENV', 'development') === 'development',

@@ -10,6 +10,7 @@ import {
 } from '@vibeterm/shared';
 import { getDeviceById } from '../db';
 import type { FileRootRecord } from '../db/file-roots';
+import { tokenMutationDenied } from '../files/device-storage';
 import { resolveFileRoot } from '../files/file-root';
 import { moveLocal } from '../files/move-local';
 import { moveRemote } from '../files/move-remote';
@@ -92,7 +93,15 @@ export async function moveUnderRoot(
   const destDir = lexicalInside(dest.data.root.path, req.destDir);
   if (!destDir.ok) return fail(destDir.code);
 
-  const plan = req.paths.map((path) => planItem(src.data.root.path, path));
+  const plan = req.paths.map((path) => {
+    const entry = planItem(src.data.root.path, path);
+    if (!('item' in entry)) return entry;
+    const destPath = posixJoin(destDir.path, entry.item.destName);
+    if (tokenMutationDenied(src.data.device, entry.path, destPath)) {
+      return { path: entry.path, code: 'permission_denied' as const };
+    }
+    return entry;
+  });
   const items = plan.flatMap((entry) => ('item' in entry ? [entry.item] : []));
   let outcomes: MoveOutcome[] = [];
   if (items.length > 0) {
@@ -120,6 +129,9 @@ export async function renameUnderRoot(
   const plan = planItem(root.path, req.path);
   if (!('item' in plan)) return fail(plan.code);
   const item: MoveItem = { ...plan.item, destName: req.name };
+  if (tokenMutationDenied(device, item.path, posixJoin(item.parent, req.name))) {
+    return fail('permission_denied');
+  }
   const ran = await runBatch(device, {
     rootPath: root.path,
     destRootPath: root.path,

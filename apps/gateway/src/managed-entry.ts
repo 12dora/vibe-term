@@ -193,7 +193,7 @@ async function runManagedGateway(): Promise<void> {
     import('./db/managed-migrations'),
     import('./runtime'),
     import('./system/info-public'),
-    import('./tunnel/access-guard'),
+    import('./tunnel/gateway-fetch'),
     import('./exec/channel/ws-handlers'),
   ]);
 

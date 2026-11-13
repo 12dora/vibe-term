@@ -21,7 +21,8 @@
   X 在建会话时用 `forwardAuthorizedHttp` 代浏览器发这一次请求（带的是浏览器的
   `vibeterm_s_<Y>` cookie）。
 - **绑定**：授权表 `agent_pane_grants`（id、token_hash、from_node_id、device_id、pane_id、
-  server_epoch、created_at、last_used_at、expires_at）。经 mesh 转发签发时，`from_node_id` 一律取
+  server_epoch、created_at、last_used_at、expires_at、issued_via）。`issued_via` 是签发请求的入口节点
+  （mesh `via`，本机为 `self`；0063 迁移前的旧授权记为 `self`）。经 mesh 转发签发时，`from_node_id` 一律取
   peer 标记，请求体里的值只做一致性校验，签发方无法把授权签给别的节点。
 - **窗格世代**：tmux 的窗格号在同一个 server 内不复用，但 server 重启后从 `%0` 重新开始——
   只绑窗格号等于把「同一个号」当成「同一个窗格」。因此签发时一并绑上该设备当前的
@@ -35,11 +36,13 @@
 - **失效**：`DELETE /api/agent/pane-grants/:id` 显式吊销。被顶替、被丢弃、会话已删的授权 id 进
   待吊销队列，随下一次带 cookie 的请求重试，目标明确回答「删了 / 没这张」才摘掉（冲不掉的
   最多留 64 条，其余靠自然过期）。
-- **吊销节点**：`revoke-node` 记录**落库的同一个事务**里删掉该节点全部授权（`apply` 与
-  `applyMany` 两条路都经过同一处投影，对端 key log 同步 / 中继补日志因此同样生效）；
-  提交后的投影再就地断链并广播 `revoked` 事件。此外 `verifyPaneGrant` 自己也会查证书：
+- **吊销节点**：`revoke-node` 的 `revokeSessionsVia` 效果在记录**落库的同一个事务**里删掉该节点持有的
+  授权（`from_node_id = X`）与经它签发的授权（`issued_via = X`），与同一效果下的令牌、分享、端口映射级联
+  同处处理（`apply` 与 `applyMany` 两条路都经过同一处投影，对端 key log 同步 / 中继补日志因此同样生效）；
+  运行态拆除在提交之后。此外 `verifyPaneGrant` 自己也会查证书：
   `node_certs.revoked_log_seq` 非空即拒并清掉该节点余下的授权——链路还没断也进不来。
-  `reset-root` 删光证书时同样清空全部授权。
+- **吊销全部会话**：改密（含默认 `rotate-root-keep`）、`rotate-root`、`reset-root` 的 `revokeAllSessions`
+  效果清空全部授权。`agent_pane_grants` 无 owner 列，按单用户节点处理；源节点之后要凭用户新登录的会话重新签发。
 - **替换**：同一会话的补签串行（每会话一条 Promise 链），落库前再确认绑定没被改过（密文先算好，
   检查与写入之间不留 await），被顶替的那张立刻进待吊销队列——否则旧窗格的 token 会在源节点手上
   一直有效到 30 天上限。

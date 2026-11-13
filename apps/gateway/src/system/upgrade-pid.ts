@@ -5,7 +5,7 @@ import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../pack
 export type PidFileRecord = { pid: number; identity?: string | null };
 export type ProcessStartIdentityFn = (pid: number) => string | null;
 
-function parsePidFileRecord(raw: string): PidFileRecord | null {
+export function parsePidFileRecord(raw: string): PidFileRecord | null {
   const record = parseSharedPidFileRecord(raw, { allowNumericStringPid: true });
   return record ? { pid: record.pid, identity: record.identity ?? null } : null;
 }

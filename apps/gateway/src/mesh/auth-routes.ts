@@ -83,7 +83,7 @@ import { defaultEntryOrigins } from './auth-passkey-origin-entry';
 import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
 import { TotpLoginGuard, verifyLoginTotp } from './auth-totp-guard';
 import { handleTotpRecordRequest } from './auth-totp-record';
-import { clientIpFromRequest } from './client-ip';
+import { clientIpFromRequest, limiterIpKey } from './client-ip';
 import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
 import {
   AUTH_UID_MAX_BYTES,
@@ -250,7 +250,7 @@ export class AuthRoutes {
       requireSession(this.sessionDeps, (r, auth) => fn(r, auth.userId))(req);
     const routes: Record<string, () => Response | Promise<Response>> = {
       'GET /api/auth/mode': () => this.handleMode(req),
-      'GET /api/auth/nodes': () => this.handlePublicNodes(),
+      'GET /api/auth/nodes': () => this.handlePublicNodes(req),
       'POST /api/auth/challenge': () => this.handleChallenge(req),
       'POST /api/auth/login': () => this.handleLogin(req),
       'POST /api/auth/logout': () => session((r, uid) => this.handleLogout(r, uid)),
@@ -327,11 +327,13 @@ export class AuthRoutes {
     };
   }
 
-  private handlePublicNodes(): Response {
+  private handlePublicNodes(req: Request): Response {
     const nodes = this.deps.listPublicNodes?.() ?? [
       { id: this.deps.nodeId, name: 'self', online: true },
     ];
-    return jsonBody({ nodes });
+    const auth = authenticateRequest(req, this.sessionDeps);
+    if (auth.ok && auth.userId) return jsonBody({ nodes });
+    return jsonBody({ nodes: [{ id: this.deps.nodeId }] });
   }
 
   private async handleChallenge(req: Request): Promise<Response> {
@@ -702,8 +704,7 @@ export class AuthRoutes {
 
   private consumeChallengeQuota(req: Request): Response | null {
     if (isPeerRequest(req)) return null;
-    const ip = clientIpFromRequest(req) ?? 'local';
-    const key = `ip:${ip}`;
+    const key = `ip:${limiterIpKey(clientIpFromRequest(req))}`;
     if (this.challengeLimiter.count(key) >= CHALLENGE_RATE_LIMIT) {
       return jsonError('RATE_LIMITED', 429);
     }

@@ -41,6 +41,7 @@ import { type NodeIdentityKeys, selfSignedNodeCertificate } from './node-identit
 import type { SaveNodeIdentityInput } from './node-identity-store';
 import type { NodeSessionStore } from './node-session-store';
 import type { DeferredPasskeyVerification } from './passkey';
+import { withKeyLogCommitSideEffects } from './revocation-after-commit';
 import type { AuthDb } from './types';
 import {
   type AppliedKeyLogStep,
@@ -187,6 +188,11 @@ export class UserKeyService {
     this.onApplied = deps.onApplied;
   }
 
+  /** key log 落库的唯一提交点：事务回滚则不拆除分享连接 / 端口映射 / exec。 */
+  private commitTx<T>(work: (tx: unknown) => T): T {
+    return withKeyLogCommitSideEffects(this.db, () => this.db.transaction((tx) => work(tx)));
+  }
+
   currentState(userId: string): UserKeyState {
     const user = this.userStore.getById(userId);
     if (!user) {
@@ -282,7 +288,7 @@ export class UserKeyService {
   ): Promise<ApplyKeyLogServiceResult> {
     const now = Date.now();
     try {
-      this.db.transaction((tx) => {
+      this.commitTx((tx) => {
         const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
         const again = stores.keyLogStore.getAtSeq(userId, Number(step.record.seq));
         if (
@@ -358,7 +364,7 @@ export class UserKeyService {
     steps: JoinReplayStep[],
     casHead: { seq: bigint; hash: Uint8Array }
   ): void {
-    this.db.transaction((tx) => {
+    this.commitTx((tx) => {
       const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
       const current = stores.userStore.getById(userId);
       if (!current) throw new UnknownUser();
@@ -599,7 +605,7 @@ export class UserKeyService {
       throw new Error(`bootstrap admit-node apply failed: ${admitStep.error}`);
     }
 
-    this.db.transaction((tx) => {
+    this.commitTx((tx) => {
       const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
       const { userStore, keyLogStore, nodeSessionStore } = stores;
       if (!existing) {
@@ -748,7 +754,7 @@ export class UserKeyService {
     }
 
     let replacedStaleUsername: string | undefined;
-    this.db.transaction((tx) => {
+    this.commitTx((tx) => {
       const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
       const { userStore, keyLogStore, nodeSessionStore } = stores;
       const byId = userStore.getById(genesisUid);

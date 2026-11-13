@@ -10,6 +10,7 @@ import {
   updateDevice,
 } from '../db';
 import { listDevicesWithRuntimeStatus } from '../db/devices';
+import { validateSshIdentityFields } from '../files/ssh-target';
 import { t } from '../i18n';
 import { connectionAlertNotifier } from '../push/connection-alerts';
 import { pushSupervisor } from '../push/supervisor';
@@ -55,6 +56,18 @@ function listEnrichedDevices() {
   return listDevicesWithRuntimeStatus();
 }
 
+function missingDeviceCreateFields(body: CreateDeviceRequest): boolean {
+  return !body.name || !body.type || !body.authMode;
+}
+
+function sshCreateMissingHost(body: CreateDeviceRequest): boolean {
+  return body.type === 'ssh' && !body.host && !body.sshConfigRef;
+}
+
+async function encryptOptionalSecret(value: string | undefined): Promise<string | undefined> {
+  return value ? await encrypt(value) : undefined;
+}
+
 async function handleGetDevices(): Promise<Response> {
   return json({ devices: listEnrichedDevices() });
 }
@@ -70,12 +83,21 @@ async function handleGetDevice(id: string): Promise<Response> {
 async function handleCreateDevice(req: Request): Promise<Response> {
   const body = (await req.json()) as CreateDeviceRequest;
 
-  if (!body.name || !body.type || !body.authMode) {
+  if (missingDeviceCreateFields(body)) {
     return json({ error: t('apiError.missingFields') }, 400);
   }
 
-  if (body.type === 'ssh' && !body.host && !body.sshConfigRef) {
+  if (sshCreateMissingHost(body)) {
     return json({ error: t('apiError.sshRequiresHost') }, 400);
+  }
+
+  const identity = validateSshIdentityFields({
+    host: body.host,
+    username: body.username,
+    sshConfigRef: body.sshConfigRef,
+  });
+  if (!identity.ok) {
+    return json({ error: t('apiError.invalidRequest') }, 400);
   }
 
   const now = new Date().toISOString();
@@ -90,11 +112,9 @@ async function handleCreateDevice(req: Request): Promise<Response> {
     session: body.session ?? 'vibeterm',
     defaultWorkingDir: body.defaultWorkingDir?.trim() || undefined,
     authMode: body.authMode,
-    passwordEnc: body.password ? await encrypt(body.password) : undefined,
-    privateKeyEnc: body.privateKey ? await encrypt(body.privateKey) : undefined,
-    privateKeyPassphraseEnc: body.privateKeyPassphrase
-      ? await encrypt(body.privateKeyPassphrase)
-      : undefined,
+    passwordEnc: await encryptOptionalSecret(body.password),
+    privateKeyEnc: await encryptOptionalSecret(body.privateKey),
+    privateKeyPassphraseEnc: await encryptOptionalSecret(body.privateKeyPassphrase),
     // 实际 sort_order 由 createDevice 计算（排到末尾），此处占位
     sortOrder: 0,
     createdAt: now,

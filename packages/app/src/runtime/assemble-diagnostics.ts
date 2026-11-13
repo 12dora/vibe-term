@@ -1,9 +1,10 @@
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import { nodeIdentity } from '../../../../apps/gateway/src/db/schema';
+import { requestIsLoopback } from '../../../../apps/gateway/src/mesh/client-ip';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import { computeRecordHash, encodeBase64url } from '../../../shared/src/auth';
 import type { LocalAuthContext } from '../lib/local-auth';
-import type { AssembledFetch } from './assemble-routes';
+import { type AssembledFetch, seedLocalContext } from './assemble-routes';
 
 function diagnosticUser(auth: LocalAuthContext) {
   const identity = auth.db.select({ userId: nodeIdentity.userId }).from(nodeIdentity).get();
@@ -68,14 +69,8 @@ export function withRuntimeDiagnostics(
   return async (req, server) => {
     const path = new URL(req.url).pathname;
     if (path === '/api/mesh/keylog/status') {
-      const address = server.requestIP?.(req)?.address;
-      const forwarded = ['forwarded', 'x-forwarded-for', 'x-real-ip', 'cf-connecting-ip'].some(
-        (name) => req.headers.has(name)
-      );
-      if (
-        forwarded ||
-        (address !== '::1' && !/^(?:::ffff:)?127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(address ?? ''))
-      ) {
+      seedLocalContext(req, server);
+      if (!requestIsLoopback(req)) {
         return Response.json({ error: { code: 'LOOPBACK_REQUIRED' } }, { status: 403 });
       }
       if (req.method !== 'GET')

@@ -43,12 +43,8 @@ const {
   toggleAllSelection,
   toggleSelection,
 } = await import('./bulk-actions-menu');
-const {
-  canAutoSignAdmit,
-  invalidCertificateKey,
-  resetEnrollmentEngineForTest,
-  setEnrollmentEngineStateForTest,
-} = await import('@/node/enrollment-engine');
+const { invalidCertificateKey, resetEnrollmentEngineForTest, setEnrollmentEngineStateForTest } =
+  await import('@/node/enrollment-engine');
 const { resolvePublicUrl } = await import('./enrollment-section');
 const {
   createUninstallIo,
@@ -70,7 +66,6 @@ const {
   upgradeErrorText,
   upgradePhaseText,
 } = await import('./use-node-upgrade');
-const { rootKeyFromSeed } = await import('@vibeterm/shared/auth');
 
 const MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -1510,19 +1505,6 @@ describe('classifyPollFailure', () => {
     expect(classifyPollFailure(400, 'BAD_REQUEST')).toBe('definitive');
     // 业务码明确时不看状态码
     expect(classifyPollFailure(503, 'UPGRADE_UNSUPPORTED')).toBe('definitive');
-  });
-});
-
-describe('canAutoSignAdmit', () => {
-  test('根钥可以后台自动签 admit-node', () => {
-    expect(
-      canAutoSignAdmit({ kind: 'root', rootKey: rootKeyFromSeed(new Uint8Array(32).fill(1)) })
-    ).toBe(true);
-  });
-
-  test('passkey 不行：认证器仪式必须由用户手势触发，留在「待确认」', () => {
-    expect(canAutoSignAdmit({ kind: 'passkey', credentialId: 'a' })).toBe(false);
-    expect(canAutoSignAdmit(null)).toBe(false);
   });
 });
 

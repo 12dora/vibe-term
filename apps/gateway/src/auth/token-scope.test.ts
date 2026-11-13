@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AccessTokenScope } from '@vibeterm/shared';
-import { tokenScopeAllows } from './token-scope';
+import { isTokenFileAccess, runWithFileAccessPrincipal, tokenScopeAllows } from './token-scope';
 
 const allow = (method: string, path: string, scopes: AccessTokenScope[]) =>
   tokenScopeAllows(method, path, scopes);
@@ -40,11 +40,18 @@ describe('tokenScopeAllows', () => {
       expect(allow('POST', path, ['files'])).toBe(true);
       expect(allow('POST', path, ['exec', 'forward'])).toBe(false);
     }
+    expect(allow('GET', '/api/files/list', ['files'])).toBe(true);
+    expect(allow('GET', '/api/files/browse', ['files'])).toBe(false);
     expect(allow('GET', '/api/files/roots', ['files'])).toBe(true);
     expect(allow('POST', '/api/files/roots', ['files'])).toBe(false);
     expect(allow('DELETE', '/api/files/roots/abc', ['files'])).toBe(false);
     expect(allow('GET', '/api/files', ['files'])).toBe(false);
     expect(allow('GET', '/api/filesystem/x', ['files'])).toBe(false);
+  });
+
+  test('files scope does not open GET /api/files/browse', () => {
+    expect(allow('GET', '/api/files/browse', ['files'])).toBe(false);
+    expect(allow('GET', '/api/files/browse', ['exec', 'files', 'forward'])).toBe(false);
   });
 
   test('forward scope opens /api/portmap and below', () => {
@@ -75,5 +82,26 @@ describe('tokenScopeAllows', () => {
 
   test('method matching is case-insensitive', () => {
     expect(allow('post', '/api/exec', ['exec'])).toBe(true);
+  });
+
+  test('does not bind a token file-access principal onto the caller', () => {
+    expect(allow('GET', '/api/files/list', ['files'])).toBe(true);
+    expect(isTokenFileAccess()).toBe(false);
+  });
+});
+
+describe('runWithFileAccessPrincipal', () => {
+  test('a session request after a token request in the same async chain is not treated as token', async () => {
+    const seen: boolean[] = [];
+    await runWithFileAccessPrincipal('token', async () => {
+      seen.push(isTokenFileAccess());
+      await Promise.resolve();
+      seen.push(isTokenFileAccess());
+    });
+    seen.push(isTokenFileAccess());
+    await runWithFileAccessPrincipal('session', async () => {
+      seen.push(isTokenFileAccess());
+    });
+    expect(seen).toEqual([true, true, false, false]);
   });
 });

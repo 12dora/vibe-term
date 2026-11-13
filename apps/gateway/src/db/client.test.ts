@@ -1,10 +1,10 @@
 import { Database } from 'bun:sqlite';
 import { afterAll, describe, expect, it } from 'bun:test';
-import { unlinkSync } from 'node:fs';
+import { lstatSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { applyPragmas, sqliteCacheSizeKib } from './client';
+import { applyPragmas, chmodDbTrioSync, sqliteCacheSizeKib } from './client';
 
 const tmpPath = join(tmpdir(), `vibeterm-client-test-${process.pid}-${Date.now()}.db`);
 
@@ -32,8 +32,24 @@ describe('applyPragmas', () => {
       expect(db.query('PRAGMA wal_autocheckpoint').get()).toEqual({ wal_autocheckpoint: 500 });
       const cache = db.query('PRAGMA cache_size').get() as { cache_size: number };
       expect(cache.cache_size === -4000 || cache.cache_size === -2000).toBe(true);
+      chmodDbTrioSync(tmpPath);
+      expect(lstatSync(tmpPath).mode & 0o777).toBe(0o600);
     } finally {
       db.close();
+    }
+  });
+
+  it('skips a symlink when chmodding the db trio', () => {
+    const secret = `${tmpPath}.secret`;
+    writeFileSync(secret, 'secret', { mode: 0o644 });
+    const link = `${tmpPath}.link.db`;
+    symlinkSync(secret, link);
+    try {
+      chmodDbTrioSync(link);
+      expect(lstatSync(secret).mode & 0o777).toBe(0o644);
+    } finally {
+      unlinkSync(link);
+      unlinkSync(secret);
     }
   });
 

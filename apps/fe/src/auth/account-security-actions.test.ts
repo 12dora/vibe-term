@@ -27,7 +27,6 @@ import {
   verifyKeyLogRecord,
 } from '@vibeterm/shared/auth';
 import { totpCode } from '@vibeterm/shared/auth';
-import { openRelayPack } from '@vibeterm/shared/relay';
 import {
   beginTotpSetup,
   changePassword,
@@ -68,11 +67,9 @@ const RELAY_URL = 'https://r.example';
 
 /**
  * 中继侧 API 的替身：`status` 说本机走中继，`meta-key/prepare` 回一段固定 payload，
- * `join-material` / `pack` 支撑改密之后的密封包重封。
+ * `pack` 只用来证明改密当场不会去重封密封包。
  */
-function mockRelayApi(
-  options: { mode?: 'relay' | 'none'; prepareStatus?: number; packStatus?: number } = {}
-): {
+function mockRelayApi(options: { mode?: 'relay' | 'none'; prepareStatus?: number } = {}): {
   relayApi: RelayTenantApi;
   prepareCalls: number;
   packs: RelayPackUpload[];
@@ -109,11 +106,6 @@ function mockRelayApi(
       );
     }
     if (url === '/api/mesh/relay/pack') {
-      if (options.packStatus) {
-        return Promise.resolve(
-          Response.json({ code: 'RELAY_PACK_FORWARD_FAILED' }, { status: options.packStatus })
-        );
-      }
       packs.push(JSON.parse(String(init?.body)) as RelayPackUpload);
       return Promise.resolve(Response.json({ ok: true }));
     }
@@ -131,10 +123,6 @@ function mockRelayApi(
 function mockApi(
   options: {
     keylogStatus?: number;
-    /** 第 n 次 `POST /api/auth/keylog` 的状态码；缺省沿用 `keylogStatus`。 */
-    keylogStatuses?: number[];
-    /** 第 n 次 `POST /api/auth/keylog` 的 200 响应体；缺省是空体（等价于只有 `ok`）。 */
-    keylogBodies?: (Record<string, unknown> | undefined)[];
     totpRecord?: TotpRecordFixture;
     totpRecordError?: { status: number; code: string };
   } = {}
@@ -163,9 +151,7 @@ function mockApi(
     if (url === '/api/auth/keylog') {
       const body = JSON.parse(String(init?.body)) as { bytes: string; sig: string };
       posted.push({ bytes: decodeBase64url(body.bytes), sig: decodeBase64url(body.sig) });
-      const status = options.keylogStatuses?.[posted.length - 1] ?? options.keylogStatus ?? 200;
-      const payload = options.keylogBodies?.[posted.length - 1];
-      if (status === 200 && payload) return Promise.resolve(Response.json(payload));
+      const status = options.keylogStatus ?? 200;
       return Promise.resolve(new Response('', { status }));
     }
     return Promise.resolve(new Response('not found', { status: 404 }));
@@ -222,107 +208,72 @@ describe('changePassword', () => {
     expect(bytesEqual(payload.root_public_key, rootKeyFromSeed(newSeed).publicKey)).toBe(true);
   }, 20000);
 
-  test('中继模式：rotate 之后紧接一条 meta-key，由新根钥签、接在 rotate 的哈希上', async () => {
-    clearPendingMetaKeysForTest();
-    const { api, posted } = mockApi();
-    const relay = mockRelayApi();
-    const result = await changePassword({
-      api,
-      relayApi: relay.relayApi,
-      uid: UID,
-      oldPassword: 'old-secret',
-      newPassword: 'new-secret',
-      currentKdfParams: KDF_JSON,
-    });
-    expect(result).toMatchObject({ ok: true, metaKey: { ok: true } });
-    expect(relay.prepareCalls).toBe(1);
-    expect(posted).toHaveLength(2);
+  test.each([
+    ['常规改密（rotate-root-keep）', false],
+    ['全量重置（rotate-root）', true],
+  ])(
+    '中继模式·%s：会话随记录作废，meta-key 由新根钥签好记成欠账，不发任何请求',
+    async (_title, fullReset) => {
+      clearPendingMetaKeysForTest();
+      clearRelayPackDebtForTest();
+      const { api, posted } = mockApi();
+      const relay = mockRelayApi();
+      const result = await changePassword({
+        api,
+        relayApi: relay.relayApi,
+        uid: UID,
+        oldPassword: 'old-secret',
+        newPassword: 'new-secret',
+        currentKdfParams: KDF_JSON,
+        fullReset,
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        metaKey: { ok: false, code: 'RELAY_META_KEY_DEFERRED' },
+      });
+      expect(relay.prepareCalls).toBe(1);
+      expect(posted).toHaveLength(1);
+      expect(relay.packs).toHaveLength(0);
+      expect(relayPackDebt()).toBe(true);
 
-    const rotate = decodeKeyLogRecord(posted[0].bytes);
-    expect(rotate.type).toBe('rotate-root-keep');
-    expect(rotate.seq).toBe(BigInt(HEAD_SEQ) + 1n);
+      const rotate = decodeKeyLogRecord(posted[0].bytes);
+      expect(rotate.type).toBe(fullReset ? 'rotate-root' : 'rotate-root-keep');
+      const newRootPublicKey = (fullReset ? decodeRotateRootPayload : decodeRotateRootKeepPayload)(
+        rotate.payload
+      ).root_public_key;
 
-    const meta = decodeKeyLogRecord(posted[1].bytes);
-    expect(meta.type).toBe('meta-key');
-    // 紧挨着：seq 加一、prev_hash 就是 rotate 那条记录的哈希、root_epoch 已经是新的。
-    expect(meta.seq).toBe(BigInt(HEAD_SEQ) + 2n);
-    expect(meta.root_epoch).toBe(EPOCH + 1);
-    expect(bytesEqual(meta.prev_hash, computeRecordHash(posted[0].bytes, posted[0].sig))).toBe(
-      true
-    );
-    expect(meta.payload).toEqual(META_PAYLOAD);
+      const pending = listPendingMetaKeys();
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.reason).toBe('rotateRoot');
+      const queued = pending[0]?.record;
+      expect(queued?.type).toBe('meta-key');
+      const bytes = decodeBase64url(queued?.bytes ?? '');
+      const sig = decodeBase64url(queued?.sig ?? '');
+      const meta = decodeKeyLogRecord(bytes);
+      expect(meta.seq).toBe(BigInt(HEAD_SEQ) + 2n);
+      expect(meta.root_epoch).toBe(EPOCH + 1);
+      expect(meta.payload).toEqual(META_PAYLOAD);
+      const verified = await verifyKeyLogRecord(bytes, sig, {
+        head: {
+          seq: BigInt(HEAD_SEQ) + 1n,
+          hash: computeRecordHash(posted[0].bytes, posted[0].sig),
+        },
+        rootEpoch: EPOCH + 1,
+        rootPublicKey: newRootPublicKey,
+        resolvePasskey: () => null,
+      });
+      expect(verified.ok).toBe(true);
+      clearPendingMetaKeysForTest();
+      clearRelayPackDebtForTest();
+    },
+    20000
+  );
 
-    // 签名者是**轮换之后**那把根钥（rotate payload 里的新根公钥）。
-    const newRootPublicKey = decodeRotateRootKeepPayload(rotate.payload).root_public_key;
-    const verified = await verifyKeyLogRecord(posted[1].bytes, posted[1].sig, {
-      head: {
-        seq: BigInt(HEAD_SEQ) + 1n,
-        hash: computeRecordHash(posted[0].bytes, posted[0].sig),
-      },
-      rootEpoch: EPOCH + 1,
-      rootPublicKey: newRootPublicKey,
-      resolvePasskey: () => null,
-    });
-    expect(verified.ok).toBe(true);
-    expect(listPendingMetaKeys()).toHaveLength(0);
-  }, 20000);
-
-  test('中继模式：meta-key 没送出去时不算成功，欠账留给节点页重试', async () => {
-    clearPendingMetaKeysForTest();
-    // 第二条（meta-key）撞 401：`rotate-root` 会当场撤销全部会话，这是全量重置的必然结局。
-    const { api, posted } = mockApi({ keylogStatuses: [200, 401] });
-    const relay = mockRelayApi();
-    const result = await changePassword({
-      api,
-      relayApi: relay.relayApi,
-      uid: UID,
-      oldPassword: 'old-secret',
-      newPassword: 'new-secret',
-      currentKdfParams: KDF_JSON,
-      fullReset: true,
-    });
-    expect(result).toMatchObject({ ok: true, metaKey: { ok: false } });
-    expect(posted).toHaveLength(2);
-    const pending = listPendingMetaKeys();
-    expect(pending).toHaveLength(1);
-    expect(pending[0]?.reason).toBe('rotateRoot');
-    // 字节留着：head 没动，重新登录后原样重发即可落账。
-    expect(pending[0]?.record?.type).toBe('meta-key');
-    clearPendingMetaKeysForTest();
-  }, 20000);
-
-  test('中继模式：meta-key 落了本机但中继没确认，同样留欠账', async () => {
-    clearPendingMetaKeysForTest();
-    // 入口在中继模式下先本地落库再发布：HTTP 仍是 200，送没送到只看 `relayAck`。
-    const { api, posted } = mockApi({
-      keylogBodies: [
-        { ok: true, hubAck: true, relayAck: true },
-        { ok: true, hubAck: true, relayAck: false, relayError: 'timeout' },
-      ],
-    });
-    const relay = mockRelayApi();
-    const result = await changePassword({
-      api,
-      relayApi: relay.relayApi,
-      uid: UID,
-      oldPassword: 'old-secret',
-      newPassword: 'new-secret',
-      currentKdfParams: KDF_JSON,
-    });
-    expect(result).toMatchObject({ ok: true, metaKey: { ok: false, code: 'timeout' } });
-    expect(posted).toHaveLength(2);
-    const pending = listPendingMetaKeys();
-    expect(pending).toHaveLength(1);
-    // 字节留着：重发同一条会让入口重新尝试发布到中继。
-    expect(pending[0]?.record?.type).toBe('meta-key');
-    clearPendingMetaKeysForTest();
-  }, 20000);
-
-  test('常规改密：用新根种子 / 新 kdf 参数 / 新 epoch 重封密封包并销掉欠账', async () => {
+  test('中继模式：meta-key 没准备成功时同样记欠账，不带字节，重试时重新要凭据', async () => {
     clearPendingMetaKeysForTest();
     clearRelayPackDebtForTest();
     const { api, posted } = mockApi();
-    const relay = mockRelayApi();
+    const relay = mockRelayApi({ prepareStatus: 409 });
     const result = await changePassword({
       api,
       relayApi: relay.relayApi,
@@ -331,62 +282,14 @@ describe('changePassword', () => {
       newPassword: 'new-secret',
       currentKdfParams: KDF_JSON,
     });
-    expect(result).toMatchObject({ ok: true });
-    expect(relay.packs).toHaveLength(1);
-    const body = relay.packs[0];
-    expect(body.root_epoch).toBe(EPOCH + 1);
-    expect(body.packs.map((row) => row.url)).toEqual([RELAY_URL]);
-    expect(relayPackDebt()).toBe(false);
-
-    // kdf 参数与密封包都必须对得上 rotate 记录里签下的那一份新根身份。
-    const rotate = decodeKeyLogRecord(posted[0].bytes);
-    const payload = decodeRotateRootKeepPayload(rotate.payload);
-    expect(body.kdf_params.salt).toBe(encodeBase64url(payload.kdf_params.salt));
-    const newSeed = await deriveSeed('new-secret', payload.kdf_params);
-    const opened = await openRelayPack({
-      rootSeed: newSeed,
-      tenantId: RELAY_TENANT_ID,
-      rootPublicKey: payload.root_public_key,
-      rootEpoch: EPOCH + 1,
-      sealedPack: decodeBase64url(body.packs[0].sealed_pack),
+    expect(result).toMatchObject({
+      ok: true,
+      metaKey: { ok: false, code: 'RELAY_META_KEY_PREPARE_FAILED' },
     });
-    expect(opened.token).toEqual(new Uint8Array(32).fill(0x22));
-  }, 20000);
-
-  test('常规改密时密封包没送上去：记一笔欠账，等重新输密码补', async () => {
-    clearPendingMetaKeysForTest();
-    clearRelayPackDebtForTest();
-    const { api } = mockApi();
-    const relay = mockRelayApi({ packStatus: 502 });
-    await changePassword({
-      api,
-      relayApi: relay.relayApi,
-      uid: UID,
-      oldPassword: 'old-secret',
-      newPassword: 'new-secret',
-      currentKdfParams: KDF_JSON,
-    });
-    expect(relay.packs).toHaveLength(0);
-    expect(relayPackDebt()).toBe(true);
-    clearRelayPackDebtForTest();
-  }, 20000);
-
-  test('全量重置：会话当场作废，密封包只能记欠账，一个请求都不发', async () => {
-    clearPendingMetaKeysForTest();
-    clearRelayPackDebtForTest();
-    const { api } = mockApi();
-    const relay = mockRelayApi();
-    await changePassword({
-      api,
-      relayApi: relay.relayApi,
-      uid: UID,
-      oldPassword: 'old-secret',
-      newPassword: 'new-secret',
-      currentKdfParams: KDF_JSON,
-      fullReset: true,
-    });
-    expect(relay.packs).toHaveLength(0);
-    expect(relayPackDebt()).toBe(true);
+    expect(posted).toHaveLength(1);
+    const pending = listPendingMetaKeys();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.record).toBeNull();
     clearPendingMetaKeysForTest();
     clearRelayPackDebtForTest();
   }, 20000);

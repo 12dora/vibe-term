@@ -25,6 +25,10 @@ export const SET_SESSION_HEADER = headerPair('set-session');
 export const SESSION_RENEWED_HEADER = headerPair('session-renewed');
 export const CONNECTION_HEADER = headerPair('connection');
 export const MESH_PEER_HEADER = headerPair('mesh-peer');
+/**
+ * 已停用的「入口声称本机来源」头：不再发、也不再认。名字只留给两处剥离——入口丢掉浏览器自带的
+ * （旧版目标仍会认），目标从 peer 入站请求里剥掉旧版入口盖的。
+ */
 export const CLIENT_SOURCE_HEADER = headerPair('client-source');
 export const SET_SHARE_HEADER = headerPair('set-share');
 export const SET_SHARE_MAX_AGE_HEADER = headerPair('set-share-max-age');

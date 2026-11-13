@@ -19,7 +19,7 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 
 ## 虚拟 `home` 根
 
-`GET /api/files/roots` 会附带一条不落库的虚拟根：`id = home-root`，`name = home`，`path = realpath(os.homedir())`，绑定 `sortOrder` 最低的本机设备，`virtual: true`。`resolveFileRoot('home-root')` 无论是否已有其它白名单根都成立，因此 `node:home/rel` 无需先 `files roots add`。
+`GET /api/files/roots` 会附带一条不落库的虚拟根：`id = home-root`，`name = home`，`path = realpath(os.homedir())`，绑定 `sortOrder` 最低的本机设备，`virtual: true`。`resolveFileRoot('home-root')` 无论是否已有其它白名单根都成立，因此 `node:home/rel` 无需先 `files roots add`。访问令牌除外：令牌调用方的根列表不含虚拟根，`home-root` / `fs-root` 对令牌一律 `root_not_found`，令牌只能用管理员显式配置并启用的根（见 [访问令牌](../security/access-tokens.md)）。
 
 用户创建的**启用**根展示名为 `home`（路径 basename）时，该用户根胜出：`resolveFileRoot('home-root')` 返回用户根，列表不再附带虚拟项。禁用的 `home` 名根不遮蔽。`PATCH` / `DELETE /api/files/roots/home-root` 返回 `400 root_virtual`。节点间 grant 的 `destRootId` 接受 `home-root`，边界仍是 grant 绑定的那个目录。
 
@@ -53,6 +53,7 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 上传写远端路径，是文件子系统里唯一的写入面，规则固定在 `apps/gateway/src/files/device-storage.ts`：
 
 - `sanitizeUploadName(raw)`：只取路径最后一段，拒绝空串、`.`、`..`，以及含 `/`、`\`、NUL 的名字，防目录穿越。
+- 令牌对本机根的改动另有不可覆盖拒绝集（`tokenMutationDenied`）：删除 / 移动 / 改名 / 建目录 / 上传提交 / 打包共用同一判定。源路径含祖先；目标按最终落点含祖先。会话调用方不走这套闸门。见 [访问令牌](../security/access-tokens.md)。
 - **目标文件不存在时不能对目标文件跑 `checkAndNormalize`**：local 分支的 `realpathSync` 会因路径不存在直接报 `not_found`。正确顺序是——校验**已存在的** `destDir` 落在 root 内，再 `statViaRsync` 确认它确实是目录（否则 `not_a_directory`），最后 `posixJoin(destDir, sanitizeUploadName(name))` 拼出远端路径。
 - 上传**不创建**远端父目录，`destDir` 必须已存在。CLI `cp -r` 本地→节点前应先调 `POST /api/files/mkdir`：请求体 `{ rootId, path, recursive? }`，`path` 与 `statFile` / `upload/init` 相同（root 内绝对路径，经同一套词法规范化；`..` 越界、绝对路径逃逸、禁用根、root 外走 `file-http.ts` 既有 403 码）。成功 200 `{ path, created }`（已存在且为目录则 `created: false`）；目标是文件 400 `not_a_directory`（与 `upload/init` 共用 `CODE_STATUS`）；路径上的符号链接（含指向 root 外的目标）403 `outside_roots`；非 recursive 且父目录缺失 404 `not_found`；权限不足 403 `permission_denied`。`recursive` 超过 64 段或路径超过 4096 字节返回 400 `invalid`。本机创建后 `chmod 0755`（绕开 umask）；远端走 `mkdir -m 0755 --`。
 - 设备 IO 经 `enqueueDeviceJob(deviceId, kind, job)`（`apps/gateway/src/files/queue.ts`）按三类排队：`transfer`（拉取 / 推送，同设备并发 3）、`read`（列目录 / stat / 读文本，同设备并发 4，不占传输名额）、`mutation`（改名 / 删除 / 建目录，独占）。排在 mutation 之后的任务一律等它完成，mutation 之间保持 FIFO；全局并发上限 8。推送到 SSH 设备时建目录与 rsync 分开排队。
@@ -65,6 +66,16 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 - 文件端点（`download/:id/content`、`download`、`raw`）统一带强 `ETag`（源文件身份的哈希，SSH 临时副本按源文件 size + mtime + 路径生成）、`Last-Modified`、`Accept-Ranges`、`X-VibeTerm-Entity-Length`；`If-Range` 只认强 ETag；畸形或多段 Range 忽略并回 200。
 - 经入口转发到远端节点时，路由切换 / 直连重掷会关闭旧链路；转发层对可续传的 GET 响应（强 ETag + 长度已知 + `Accept-Ranges`）在新链路上以 `Range` + `If-Range` 无缝接续，浏览器无感知。不可续传的流（如打包下载）两端按流计数，提速类切换等其结束再退役旧链路。强制下载分支保留消毒后的文件名，打包下载经转发仍是 `*.tar.gz`。
 - 拖到桌面（`DownloadURL`）改指向 `/api/files/download`（浏览器原生下载，支持大文件流式，无应用内进度）。`/api/files/raw` 仍用于文件查看器内联预览（小文件）。
+
+## 文件字节响应头
+
+文件字节在入口 origin 下回给浏览器，带脚本的文件（SVG、HTML）不得按可执行类型内联。本机 `serveFileBytes`（`raw`、`download`、`download/:id/content`）与入口转发的 `/n/:id/*` 响应共用 `applySafeFileHeaders`（`apps/gateway/src/files/safe-file-headers.ts`），同一文件经本机或经转发访问，浏览器行为一致：
+
+- 只有白名单类型可内联：`image/png image/jpeg image/gif image/webp image/avif video/mp4 video/webm audio/mpeg audio/ogg audio/wav text/plain application/json application/x-ndjson application/pdf application/octet-stream`。其余（`text/html`、任何 XML、脚本类型等）改为 `application/octet-stream` + `Content-Disposition: attachment`。
+- SVG 例外：浏览器以图片目的地拉取（`Sec-Fetch-Dest: image`，即 `<img>`、CSS 背景，脚本不会执行）时按 `image/svg+xml` 回，文件查看器与 Markdown 里的 SVG 图照常显示；直接打开（「打开原文件」、地址栏）时按附件下载。响应带 `Vary: Sec-Fetch-Dest`。不发 `Sec-Fetch-Dest` 的旧浏览器一律下载。
+- 一律带 `X-Content-Type-Options: nosniff` 与 `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`：导航打开时在 opaque origin 渲染，碰不到入口的 cookie 与 API。PDF 在 sandbox 下仍可 iframe 内联（Chrome 91+、Safari 18.4+）。
+- `download=1` 与下载端点仍是附件；附件的 `Content-Type` 只保留白名单类型，其余为 `application/octet-stream`。
+- 打包下载固定 `application/gzip` + 附件，不经这条规则。
 
 ## 进度 Toast（`packages/panels/src/files/transfer-toast.tsx`）
 
@@ -80,7 +91,7 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 
 ## 临时文件清理与权限
 
-- **临时目录位置/权限**：上传会话（`vibeterm-up-*`）与下载拉取（`vibeterm-dl-*`）均用 `os.tmpdir()` + `mkdtempSync`（每用户临时区，目录权限 `0700`）。`os.tmpdir()` 在 Linux(`/tmp` 或 `$TMPDIR`)/macOS(`$TMPDIR`) 均为当前用户可写，rsync 子进程同用户可读写，无跨平台权限问题；不触碰安装目录。
+- **临时目录位置/权限**：浏览器经网关的上传会话（`vibeterm-up-*`）与下载拉取（`vibeterm-dl-*`）均用 `os.tmpdir()` + `mkdtempSync`（每用户临时区，目录权限 `0700`）。节点间传到 SSH 设备的本机暂存不走这里，见 [节点间传输](./node-to-node-transfer.md)。
 - **清理三重保障**（成功 / 失败 / 中断 / 取消都妥善清理）：
   1. **显式清理**：上传 commit 的 `.finally` 与流 `cancel`、`DELETE` 端点均 `removeUploadSession`（中止 rsync + 删临时）；下载流 `pull` 完成 / `cancel` / `error` 均 `cleanup`，rsync 失败/超限路径也先 `cleanup`；下载拉取成功后若构造响应流同步失败也兜底 `cleanup`。
   2. **周期 GC**：每 5min 扫描内存会话，清理 >30min 未完成的遗弃会话（如客户端关页面未发 DELETE）；定时器 `unref`，不阻塞退出。

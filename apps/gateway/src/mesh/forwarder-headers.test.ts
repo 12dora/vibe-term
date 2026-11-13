@@ -1,17 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL } from './client-source';
+import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
+import { FILE_RESPONSE_CSP } from '../files/safe-file-headers';
 import {
   ENTRY_CLIENT_IP_HEADER,
   copyUpstreamHeaders,
   filterRequestHeaders,
   stampForwardedAuthHeaders,
 } from './forwarder-headers';
-import {
-  MESH_FORWARD_CSP,
-  MESH_VIA_SELF,
-  SET_SESSION_HEADER,
-  setMeshRequestContext,
-} from './mesh-deps';
+import { MESH_VIA_SELF, SET_SESSION_HEADER, setMeshRequestContext } from './mesh-deps';
 
 function reqWith(headers: Record<string, string>, ip = '127.0.0.1'): Request {
   const req = new Request('http://localhost/n/peer/api/file', { headers });
@@ -19,9 +15,13 @@ function reqWith(headers: Record<string, string>, ip = '127.0.0.1'): Request {
   return req;
 }
 
+function upstreamHeaders(upstream: Response, req = reqWith({})): Headers {
+  return copyUpstreamHeaders(upstream, req);
+}
+
 describe('copyUpstreamHeaders', () => {
   test('SVG/HTML → octet-stream attachment；PNG 放行；未知头丢弃；CSP 固定', () => {
-    const svg = copyUpstreamHeaders(
+    const svg = upstreamHeaders(
       new Response('<svg></svg>', {
         headers: {
           'content-type': 'image/svg+xml',
@@ -37,17 +37,17 @@ describe('copyUpstreamHeaders', () => {
     expect(svg.get('x-evil')).toBeNull();
     expect(svg.get('set-cookie')).toBeNull();
     expect(svg.get(SET_SESSION_HEADER.name)).toBeNull();
-    expect(svg.get('content-security-policy')).toBe(MESH_FORWARD_CSP);
+    expect(svg.get('content-security-policy')).toBe(FILE_RESPONSE_CSP);
     expect(svg.get('x-content-type-options')).toBe('nosniff');
     expect(svg.get('cache-control')).toBe('no-store');
 
-    const html = copyUpstreamHeaders(
+    const html = upstreamHeaders(
       new Response('<html></html>', { headers: { 'content-type': 'text/html; charset=utf-8' } })
     );
     expect(html.get('content-type')).toBe('application/octet-stream');
     expect(html.get('content-disposition')).toBe('attachment');
 
-    const png = copyUpstreamHeaders(
+    const png = upstreamHeaders(
       new Response(new Uint8Array([1, 2, 3]), {
         headers: { 'content-type': 'image/png', 'content-disposition': 'inline' },
       })
@@ -56,8 +56,20 @@ describe('copyUpstreamHeaders', () => {
     expect(png.get('content-disposition')).toBe('inline');
   });
 
+  test('SVG 只在入口请求是图片目的地时按 image/svg+xml 内联，导航打开仍是附件', () => {
+    const svg = () => new Response('<svg></svg>', { headers: { 'content-type': 'image/svg+xml' } });
+    const asImage = upstreamHeaders(svg(), reqWith({ 'sec-fetch-dest': 'image' }));
+    expect(asImage.get('content-type')).toBe('image/svg+xml');
+    expect(asImage.get('content-security-policy')).toBe(FILE_RESPONSE_CSP);
+    expect(asImage.get('x-content-type-options')).toBe('nosniff');
+    expect(asImage.get('vary')).toBe('Sec-Fetch-Dest');
+    const asDocument = upstreamHeaders(svg(), reqWith({ 'sec-fetch-dest': 'document' }));
+    expect(asDocument.get('content-type')).toBe('application/octet-stream');
+    expect(asDocument.get('content-disposition')).toBe('attachment');
+  });
+
   test('允许 x-vibeterm-* / x-tmex-* 透传，空 content-type 当 octet-stream', () => {
-    const headers = copyUpstreamHeaders(
+    const headers = upstreamHeaders(
       new Response('x', {
         headers: { 'x-vibeterm-foo': 'baz', 'x-tmex-foo': 'bar', etag: '"a"' },
       })
@@ -70,7 +82,7 @@ describe('copyUpstreamHeaders', () => {
   });
 
   test('gzip 归档强制 attachment 但保留 x.tar.gz 文件名', () => {
-    const headers = copyUpstreamHeaders(
+    const headers = upstreamHeaders(
       new Response(null, {
         headers: {
           'content-type': 'application/gzip',
@@ -85,7 +97,7 @@ describe('copyUpstreamHeaders', () => {
   });
 
   test('UTF-8 filename* 经消毒后原样可解码', () => {
-    const headers = copyUpstreamHeaders(
+    const headers = upstreamHeaders(
       new Response(null, {
         headers: {
           'content-type': 'application/gzip',
@@ -101,7 +113,7 @@ describe('copyUpstreamHeaders', () => {
   });
 
   test('header 注入与路径穿越不会进入 Content-Disposition', () => {
-    const crlf = copyUpstreamHeaders(
+    const crlf = upstreamHeaders(
       new Response('x', {
         headers: {
           'content-type': 'application/gzip',
@@ -114,7 +126,7 @@ describe('copyUpstreamHeaders', () => {
     expect(value).not.toMatch(/[\r\n]/);
     expect(value).not.toContain('\nX-Injected');
 
-    const path = copyUpstreamHeaders(
+    const path = upstreamHeaders(
       new Response('x', {
         headers: {
           'content-type': 'image/png',
@@ -127,7 +139,7 @@ describe('copyUpstreamHeaders', () => {
   });
 
   test('上游没有 filename 时强制下载分支只写裸 attachment', () => {
-    const headers = copyUpstreamHeaders(
+    const headers = upstreamHeaders(
       new Response('x', { headers: { 'content-type': 'application/gzip' } })
     );
     expect(headers.get('content-disposition')).toBe('attachment');
@@ -170,11 +182,19 @@ describe('filterRequestHeaders', () => {
     expect(out['x-forwarded-for']).toBeUndefined();
   });
 
-  test('受信本机入口盖上 x-vibeterm-client-source: local，浏览器伪造会被丢掉再盖回', () => {
+  test('入口不再声明 client-source，本机客户端伪造的同名头也被丢掉', () => {
     const out = filterRequestHeaders(
-      reqWith({ accept: '*/*', [CLIENT_SOURCE_HEADER.name]: 'forged' }, '127.0.0.1')
+      reqWith(
+        {
+          accept: '*/*',
+          [CLIENT_SOURCE_HEADER.name]: 'local',
+          [CLIENT_SOURCE_HEADER.legacy]: 'local',
+        },
+        '127.0.0.1'
+      )
     );
-    expect(out[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
+    expect(out[CLIENT_SOURCE_HEADER.legacy]).toBeUndefined();
     expect(out.accept).toBe('*/*');
   });
 });

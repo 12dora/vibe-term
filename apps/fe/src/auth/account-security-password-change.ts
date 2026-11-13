@@ -1,11 +1,14 @@
-// 改密：rotate-root / rotate-root-keep，以及中继模式下紧随其后的 meta-key 换代与密封包重封。
+// 改密：rotate-root / rotate-root-keep，以及中继模式下随之而来的 meta-key 换代与密封包重封。
+// 记录落账后会话作废，这两件事先记成欠账，重新登录成功后由 `settleRelayAfterPasswordChange` 当场补上。
 
 import { fetchRelayMode } from '@/node/mesh-relay';
-import { relayAckError } from '@/node/relay-ack';
+import type { RelayFlowDeps } from '@/node/relay-enroll';
 import {
   forgetRelayPackDebt,
+  listPendingMetaKeys,
   rememberPendingMetaKey,
   rememberRelayPackDebt,
+  retryPendingMetaKey,
 } from '@/node/relay-meta-key-pending';
 import { refreshRelayPack } from '@/node/relay-pack';
 import type {
@@ -29,7 +32,7 @@ import {
   generateKdfParams,
   rewrapTotpSecret as rewrapTotpCiphertext,
 } from '@vibeterm/shared/auth';
-import { appendKeyLog, rootKeyFrom } from './account-security-keylog';
+import { appendKeyLog, rootKeyFrom, withRootSigner } from './account-security-keylog';
 import {
   buildMetaKeyRecord,
   buildRotateRootKeepRecord,
@@ -47,8 +50,9 @@ export interface ChangePasswordInput {
   /** 当前 kdf 参数（来自 `/api/auth/mode`）。 */
   currentKdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number };
   /**
-   * 全量重置：清空所有 passkey 与 TOTP 并注销全部会话（`rotate-root`）。
-   * 缺省 `false` = 常规改密（`rotate-root-keep`），登录方式与会话原样保留。
+   * 全量重置：清空所有 passkey 与 TOTP（`rotate-root`）。
+   * 缺省 `false` = 常规改密（`rotate-root-keep`），登录方式原样保留。
+   * 两条路径应用后服务端都会撤销全部会话，调用方要用新密码重新登录。
    */
   fullReset?: boolean;
   /** 账号当前是否启用 TOTP（来自 `/api/auth/mode`）：常规改密要据此重新封装密文。 */
@@ -59,7 +63,7 @@ export interface ChangePasswordInput {
   relayApi?: RelayTenantApi;
   /**
    * key log 写锁。页面传 `withKeyLogLock`（`@/node/enrollment-engine`）——`取 head → 签名 →
-   * append` 与 admit / revoke 抢同一个头，且改密与紧随其后的 `meta-key` 必须连成一段。
+   * append` 与 admit / revoke 抢同一个头，且改密与随后待发的 `meta-key` 必须连成一段。
    * 缺省不加锁（与旧行为一致，供单测直接调用）。
    */
   lock?: <T>(run: () => Promise<T>) => Promise<T>;
@@ -128,10 +132,10 @@ function withSigned(
 /**
  * 改密之后那一条 `meta-key`（plan §1.3：根轮换即换 `K_meta`）。
  *
- * **必须在 rotate 记录送出去之前就准备并签好**：`rotate-root`（全量重置）一落账就撤销全部会话，
- * 之后任何 `/api/mesh/relay/*` 与 `/api/auth/keylog` 都是 401，再想补这一条已经没有会话了。
- * 于是这里按「rotate 之后的头」（seq+1、prev_hash = rotate 记录的哈希）与**新** root_epoch，
- * 用**新根钥**签好待发；rotate 一 ack 就紧接着送出去，两条记录背靠背落在链上。
+ * **必须在 rotate 记录送出去之前就准备并签好**：`rotate-root` 与 `rotate-root-keep` 一落账
+ * 都会撤销全部会话，之后任何 `/api/mesh/relay/*` 与 `/api/auth/keylog` 都是 401，
+ * 再想补这一条已经没有会话了。于是这里按「rotate 之后的头」（seq+1、prev_hash = rotate 记录的哈希）
+ * 与**新** root_epoch，用**新根钥**签好，不当场发送，改记进暂存待办，等重新登录后由节点页重发。
  */
 async function prepareMetaKeyAfterRotate(input: {
   relayApi: RelayTenantApi;
@@ -158,77 +162,31 @@ async function prepareMetaKeyAfterRotate(input: {
   }
 }
 
-/** 送那条 `meta-key`；没落账就记欠账（节点页会一直挂告警并重试）。 */
-async function submitMetaKeyAfterRotate(
-  api: AuthApi,
-  record: KeyLogSignedRecord | null
-): Promise<MetaKeyRotationOutcome> {
-  if (!record) {
-    rememberPendingMetaKey({ id: META_KEY_AFTER_ROTATE_ID, reason: 'rotateRoot', op: ROTATE_OP });
-    return { ok: false, code: 'RELAY_META_KEY_PREPARE_FAILED' };
-  }
-  const result = await appendKeyLog(api, record).catch(
-    () => ({ ok: false, code: 'NETWORK' }) as const
-  );
-  // 中继没确认：成员拿不到新的 `K_meta`，被吊销的节点还解得开元数据。
-  // `hubAck` 是冻结线名，只把明确的 `false` 当失败；缺省视为本机已落账。优先看 `relayAck`。
-  // 记录已在本地生效，重发同一份字节会让入口重新尝试发布，所以照样留欠账。
-  if (result.ok && result.relayAck !== false && result.hubAck !== false) return { ok: true };
-  const code = result.ok
-    ? (relayAckError(result) ??
-      (result.hubAck === false ? (result.hubError ?? 'RELAY_UNCONFIRMED') : 'RELAY_UNCONFIRMED'))
-    : result.code;
+/**
+ * 把签好的 `meta-key` 记成欠账（节点页重新登录后自动重发，字节原样、head 没动仍然接得上）。
+ * 没签成（`null`）也记，重试时再要一次凭据重签。
+ */
+function deferMetaKeyAfterRotate(record: KeyLogSignedRecord | null): MetaKeyRotationOutcome {
   rememberPendingMetaKey({
     id: META_KEY_AFTER_ROTATE_ID,
     reason: 'rotateRoot',
     op: ROTATE_OP,
-    record: {
-      type: 'meta-key',
-      bytes: encodeBase64url(record.bytes),
-      sig: encodeBase64url(record.sig),
-    },
+    ...(record
+      ? {
+          record: {
+            type: 'meta-key' as const,
+            bytes: encodeBase64url(record.bytes),
+            sig: encodeBase64url(record.sig),
+          },
+        }
+      : {}),
   });
-  return { ok: false, code };
+  return { ok: false, code: record ? META_KEY_DEFERRED : 'RELAY_META_KEY_PREPARE_FAILED' };
 }
 
 const META_KEY_AFTER_ROTATE_ID = 'rotate-root';
+const META_KEY_DEFERRED = 'RELAY_META_KEY_DEFERRED';
 const ROTATE_OP = { op: 'rotate' } as const;
-
-/**
- * 改密之后重封中继密封包（docs/architecture/relay.md §5b）。
- *
- * root_epoch 一变，旧密封包的 AAD 就对不上（`rotate-root` 还会被中继侧的根轮换 sidecar 直接
- * 清空），不重封则别的机器再也无法用「租户编号 + 密码」加入。
- *
- * 全量重置那一路**当场没得重封**：`rotate-root` 一落账全部会话即失效，之后每个请求都是 401。
- * 根种子绝不落存储，因此只记一笔欠账，等用户重新登录后带密码补上。
- */
-async function refreshPackAfterRotate(input: {
-  api: AuthApi;
-  relayApi: RelayTenantApi;
-  fullReset: boolean;
-  newRootKey: RootKey;
-  newKdfParams: KdfParams;
-  nextRootEpoch: number;
-}): Promise<void> {
-  if (input.fullReset) {
-    rememberRelayPackDebt();
-    return;
-  }
-  const result = await refreshRelayPack({
-    rootSeed: input.newRootKey.seed,
-    api: input.api,
-    relayApi: input.relayApi,
-    kdfParams: kdfParamsToJson(input.newKdfParams),
-    rootEpoch: input.nextRootEpoch,
-  });
-  if (result.ok) {
-    forgetRelayPackDebt();
-    return;
-  }
-  // 逐台回执里失败的那几台精确留账；请求整个没打通时哪几台不明，整份留账。
-  rememberRelayPackDebt(result.transportError ? undefined : result.failed);
-}
 
 async function signPasswordRotation(input: {
   api: AuthApi;
@@ -276,7 +234,12 @@ async function signPasswordRotation(input: {
   };
 }
 
-/** 改密这一段的锁内主体：取头 → 签 rotate → 预备 meta-key → 送 rotate → 送 meta-key。 */
+/**
+ * 改密这一段的锁内主体：取头 → 签 rotate → 预备 meta-key → 送 rotate。
+ *
+ * rotate 一落账会话就没了，所以 `meta-key` 与密封包重封（根种子不落存储，要用户重新输密码）
+ * 都只记欠账，不在这里发请求。
+ */
 async function runPasswordRotation(input: {
   api: AuthApi;
   relayApi: RelayTenantApi;
@@ -306,24 +269,17 @@ async function runPasswordRotation(input: {
     : null;
   const appended = await appendKeyLog(api, rotated);
   if (!appended.ok || !input.relayMode) return withSigned(appended, signed);
-  const metaKey = await submitMetaKeyAfterRotate(api, metaKeyRecord);
-  await refreshPackAfterRotate({
-    api,
-    relayApi: input.relayApi,
-    fullReset: request.fullReset === true,
-    newRootKey: input.newRootKey,
-    newKdfParams: input.newKdfParams,
-    nextRootEpoch: signed.nextRootEpoch,
-  });
-  return withSigned(appended, signed, metaKey);
+  rememberRelayPackDebt();
+  return withSigned(appended, signed, deferMetaKeyAfterRotate(metaKeyRecord));
 }
 
 /**
  * 改密：两条路径都由**旧**根钥签名，payload 都是新根公钥 + 新 kdf 参数，应用后 root_epoch += 1。
  *
- * - 常规（缺省）：`rotate-root-keep`，保留 passkey、TOTP 与全部会话；开了 TOTP 时把密文
+ * - 常规（缺省）：`rotate-root-keep`，保留 passkey 与 TOTP；开了 TOTP 时把密文
  *   随记录一起换封（`rewrapTotpSecret`），否则新密码解不开旧密文，账号会被远程锁死。
- * - `fullReset`：`rotate-root`，清空 passkey 与 TOTP 并注销全部会话——UI 必须提前告知。
+ * - `fullReset`：`rotate-root`，清空 passkey 与 TOTP——UI 必须提前告知。
+ * - 两者应用后服务端都会撤销全部会话（含当前这份）。
  *
  * 成功时连**签进记录的那两个值**一起返回：`/api/auth/mode` 是异步应用的，改密刚回来时
  * 很可能还给着旧 epoch 与旧 kdf 参数，拿它去重建会话必然签出一份验不过的 delegation。
@@ -358,5 +314,61 @@ export async function changePassword(input: ChangePasswordInput): Promise<Change
     }
   } finally {
     oldRootKey.seed.fill(0);
+  }
+}
+
+export interface SettleRelayInput {
+  api: AuthApi;
+  relayApi?: RelayTenantApi;
+  lock: RelayFlowDeps['lock'];
+  uid: string;
+  /** 新密码：重新登录刚用过，根钥由它按新 kdf 参数就地派生，用完清零。 */
+  password: string;
+  signed: SignedPasswordChange;
+}
+
+/**
+ * 重新登录成功之后立刻还掉改密留下的两笔欠账：先送那条预签的 `meta-key`（它会推进密钥日志头），
+ * 再按新头、新 kdf 参数、新 root_epoch 重封密封包。送不出去的照旧留在欠账里
+ * （localStorage，节点页挂告警并自动重试 / 手动重试）。返回 `meta-key` 这一笔的最终结论；
+ * 本次没有这笔欠账（非中继模式）时为 `undefined`。绝不抛异常：密码已经改成功。
+ */
+export async function settleRelayAfterPasswordChange(
+  input: SettleRelayInput
+): Promise<MetaKeyRotationOutcome | undefined> {
+  try {
+    const entry = listPendingMetaKeys().find((row) => row.id === META_KEY_AFTER_ROTATE_ID);
+    const relayApi = input.relayApi ?? defaultRelayTenantApi;
+    const deps: RelayFlowDeps = {
+      api: input.api,
+      relayApi,
+      lock: input.lock,
+      mode: {
+        uid: input.uid,
+        rootEpoch: input.signed.nextRootEpoch,
+        kdfParams: input.signed.newKdfParams,
+      },
+    };
+    return await withRootSigner(input.password, input.signed.newKdfParams, async (signer) => {
+      let metaKey: MetaKeyRotationOutcome | undefined;
+      if (entry) {
+        const retried = await retryPendingMetaKey(deps, entry, signer);
+        metaKey = retried.ok ? { ok: true } : { ok: false, code: retried.code };
+      }
+      if (signer.kind === 'root') {
+        const packed = await refreshRelayPack({
+          rootSeed: signer.rootKey.seed,
+          api: input.api,
+          relayApi,
+          kdfParams: input.signed.newKdfParams,
+          rootEpoch: input.signed.nextRootEpoch,
+        });
+        if (packed.ok) forgetRelayPackDebt();
+        else rememberRelayPackDebt(packed.transportError ? undefined : packed.failed);
+      }
+      return metaKey;
+    });
+  } catch {
+    return undefined;
   }
 }

@@ -87,6 +87,7 @@ describe('access tokens', () => {
       expiresAt: null,
       lastUsedAt: null,
       lastUsedIp: null,
+      issuedVia: 'self',
     });
     const row = db.select().from(accessTokens).where(eq(accessTokens.id, token.id)).get();
     expect(row?.secretHash).toBe(hashAccessTokenSecret(secret));
@@ -257,5 +258,35 @@ describe('access tokens', () => {
     revokeAccessToken('u1', second.id);
     expect(isAccessTokenActive(second.id)).toBe(false);
     expect(isAccessTokenActive('missing')).toBe(false);
+  });
+
+  test('records the entry node and revokes only tokens issued through it', () => {
+    const entry = 'a'.repeat(32);
+    const viaEntry = createAccessToken('u1', REQ, null, entry);
+    const viaEntryOther = createAccessToken('u2', REQ, null, entry);
+    const local = createAccessToken('u1', REQ);
+    expect(viaEntry.token.issuedVia).toBe(entry);
+    expect(local.token.issuedVia).toBe('self');
+    expect(
+      listAccessTokens('u1')
+        .map((token) => token.issuedVia)
+        .sort()
+    ).toEqual([entry, 'self']);
+    const seen: Array<{ id: string; db: AuthDb }> = [];
+    const off = onAccessTokenRevoked((id, at) => seen.push({ id, db: at }));
+    try {
+      expect(service.revokeIssuedVia(entry)).toBe(2);
+      expect(seen.map((item) => item.id).sort()).toEqual(
+        [viaEntry.token.id, viaEntryOther.token.id].sort()
+      );
+      expect(seen.every((item) => item.db === db)).toBe(true);
+      expect(verifyAccessToken(viaEntry.secret)).toEqual({ ok: false, reason: 'revoked' });
+      expect(verifyAccessToken(viaEntryOther.secret)).toEqual({ ok: false, reason: 'revoked' });
+      expect(verifyAccessToken(local.secret).ok).toBe(true);
+      expect(events(viaEntry.token.id)).toEqual(['created', 'revoked']);
+      expect(service.revokeIssuedVia(entry)).toBe(0);
+    } finally {
+      off();
+    }
   });
 });

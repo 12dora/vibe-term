@@ -2,9 +2,11 @@ import {
   type KdfParams,
   type RootKey,
   bytesEqual,
+  checkAccountPassword,
   deriveSeed,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
+import { t } from '../i18n';
 import { promptPassword } from './prompt';
 
 export async function resolvePassword(options: {
@@ -25,6 +27,13 @@ export async function resolvePassword(options: {
     confirm: options.confirm,
     confirmMessage: options.confirmPrompt,
   });
+}
+
+export function assertAccountPassword(password: string, username?: string): string {
+  const issue = checkAccountPassword(password, { username });
+  if (issue === 'too_short') throw new Error(t('password.tooShort'));
+  if (issue === 'too_simple') throw new Error(t('password.tooSimple'));
+  return password;
 }
 
 export async function deriveRootKey(password: string, kdfParams: KdfParams): Promise<RootKey> {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { RELAY_TOKEN_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { type RelayHarness, bootRelayHarness } from './relay-test-harness';
+import { enrollRelayRoot } from './relay-test-tenant';
 import { RELAY_ENROLL_FAILURE_LIMIT } from './types';
 
 let harness: RelayHarness | null = null;
@@ -165,5 +166,112 @@ describe('POST /api/relay/password/rotate', () => {
       'RELAY_RATE_LIMITED'
     );
     expect(limited.headers.get('retry-after')).toBeTruthy();
+  });
+
+  test('next null, empty or missing is 400 and never clears the relay password', async () => {
+    harness = await bootRelayHarness({ password: 'correct-password' });
+    const tenant = await harness.createTenant({ password: 'correct-password' });
+    const before = harness.runtime.configStore.read();
+    expect(before?.passwordHash).toBeTruthy();
+    for (const next of [{ next: null }, { next: '' }, {}]) {
+      const res = await rotate(
+        harness,
+        { tenantId: tenant.id, current: 'correct-password', mode: 'keep', ...next },
+        tenant.token
+      );
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+        'RELAY_INVALID_BODY'
+      );
+    }
+    expect(harness.runtime.configStore.read()).toEqual(before);
+  });
+
+  test('kick revokes only the calling tenant and leaves other tenants untouched', async () => {
+    harness = await bootRelayHarness({ password: 'correct-password' });
+    const a = await harness.createTenant({ password: 'correct-password' });
+    const b = await harness.createTenant({ password: 'correct-password' });
+    const aLive = await a.connect(a.addNode());
+    await aLive.inbox.takeOf('auth.ok');
+    const bLive = await b.connect(b.addNode());
+    await bLive.inbox.takeOf('auth.ok');
+    const bGone = await b.connect(b.addNode());
+    await bGone.inbox.takeOf('auth.ok');
+    bGone.close();
+    const reissued = await enrollRelayRoot(harness, b.root, { password: 'correct-password' });
+    expect(reissued.token).toBeTruthy();
+    const bBefore = harness.runtime.tenants.get(b.id);
+    expect(bBefore?.previousTokens?.length).toBeGreaterThan(0);
+    const epochBefore = harness.runtime.configStore.read()?.passwordEpoch ?? 0;
+
+    const res = await rotate(
+      harness,
+      { tenantId: a.id, current: 'correct-password', next: 'rotated-pw', mode: 'kick' },
+      a.token
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { passwordEpoch: number }).passwordEpoch).toBe(epochBefore + 1);
+    const config = harness.runtime.configStore.read();
+    expect(config?.minTokenEpoch).toBe(0);
+    expect(config?.passwordEpoch).toBe(epochBefore + 1);
+
+    const kicked = await aLive.inbox.takeOf('relay.kicked');
+    expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('password_rotated');
+    expect(harness.runtime.tenants.get(a.id)?.kicked).toBe(true);
+    expect(harness.runtime.tenants.get(a.id)?.previousTokens ?? []).toEqual([]);
+    const aDenied = await rotate(
+      harness,
+      { tenantId: a.id, current: 'rotated-pw', next: 'another-pw', mode: 'keep' },
+      a.token
+    );
+    expect(aDenied.status).toBe(401);
+
+    await Bun.sleep(10);
+    expect(bLive.inbox.drain().some((msg) => msg.t === 'relay.kicked')).toBe(false);
+    expect(harness.runtime.registry.listTenant(b.id)).toHaveLength(1);
+    const bAfter = harness.runtime.tenants.get(b.id);
+    expect(bAfter?.kicked).toBe(false);
+    expect(bAfter?.tokenHash).toBe(bBefore?.tokenHash ?? '');
+    expect(bAfter?.tokenEpoch).toBe(bBefore?.tokenEpoch ?? -1);
+    expect(bAfter?.previousTokens).toEqual(bBefore?.previousTokens);
+    const bOld = await b.connect(b.addNode());
+    await bOld.inbox.takeOf('auth.ok');
+    const bNew = await b.connect(b.addNode(), { token: reissued.token ?? '' });
+    await bNew.inbox.takeOf('auth.ok');
+
+    const recovered = await enrollRelayRoot(harness, a.root, { password: 'rotated-pw' });
+    expect(recovered.token).toBeTruthy();
+    expect(harness.runtime.tenants.get(a.id)?.kicked).toBe(false);
+  });
+
+  test('kick guard counts only the calling tenant members', async () => {
+    harness = await bootRelayHarness({ password: 'correct-password' });
+    const a = await harness.createTenant({ password: 'correct-password' });
+    const b = await harness.createTenant({ password: 'correct-password' });
+    const aLive = await a.connect(a.addNode());
+    await aLive.inbox.takeOf('auth.ok');
+    const aGone = await a.connect(a.addNode());
+    await aGone.inbox.takeOf('auth.ok');
+    aGone.close();
+    for (let n = 0; n < 2; n += 1) {
+      const bGone = await b.connect(b.addNode());
+      await bGone.inbox.takeOf('auth.ok');
+      bGone.close();
+    }
+    const before = harness.runtime.configStore.read();
+    const denied = await rotate(
+      harness,
+      { tenantId: a.id, current: 'correct-password', next: 'rotated-pw', mode: 'kick' },
+      a.token
+    );
+    expect(denied.status).toBe(409);
+    const body = (await denied.json()) as {
+      error: { code: string; online: number; admitted: number };
+    };
+    expect(body.error.code).toBe('relay_members_offline');
+    expect(body.error.online).toBe(1);
+    expect(body.error.admitted).toBe(2);
+    expect(harness.runtime.configStore.read()).toEqual(before);
+    expect(harness.runtime.tenants.get(a.id)?.kicked).toBe(false);
   });
 });

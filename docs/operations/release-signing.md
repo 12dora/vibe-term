@@ -42,20 +42,15 @@
 
 ## 流水线
 
-`.github/workflows/release.yml` 在 `shasum` 之后多一步：
+`.github/workflows/release.yml` 拆成三个 job：
 
-```yaml
-- name: Sign SHA256SUMS
-  env:
-    VIBETERM_RELEASE_SIGNING_KEY: ${{ secrets.VIBETERM_RELEASE_SIGNING_KEY }}
-  run: |
-    bun scripts/release/sign-sums.ts packages/app/SHA256SUMS
-    cat packages/app/SHA256SUMS.sig
-```
+1. **build**（`permissions: contents: read`）：checkout 该 tag、`bun-version: 1.3.14`、`bun install`、build、`npm pack`，把两个 tarball 作为 artifact 上传。这一步看不到签名私钥。
+2. **sign**（`environment: release`，同样 `contents: read`）：只 download 构建产物，**重新计算** `SHA256SUMS`，再用 `scripts/release/sign-sums.ts` 签名。该脚本只用 Bun 内置 WebCrypto Ed25519，**不跑 `bun install`**。只有这一步能读 secret `TMEX_RELEASE_SIGNING_KEY`（导出为 `VIBETERM_RELEASE_SIGNING_KEY`）。GitHub 环境 `release` 必须在仓库设置里配成需要审查才能跑。
+3. **publish**（`permissions: contents: write`）：download 已签名资产并 `gh release create` / `upload`。若该 tag 的 release **已经带有资产，直接失败**，不再 `--clobber`。`inputs.tag` 经 `env:` 传入 `run:`，不把 `${{ inputs.tag }}` 嵌进脚本。
 
-`scripts/release/sign-sums.ts` 读 secret、签名、**自验一遍**再写 `packages/app/SHA256SUMS.sig`；
+`scripts/release/sign-sums.ts` 读 secret、对照 `RELEASE_SIGNING_KEYS` 签名、**自验一遍**再写 `SHA256SUMS.sig`；
 secret 缺失、种子不是 32 字节、公钥不在钥表里、自验不过，任何一种都 `exit 1`，不会发出一个验不过的 release。
-`SHA256SUMS.sig` 与 `vibeterm-cli-<version>.tgz`、兼容资产 `tmex-cli-<version>.tgz`、`SHA256SUMS` 一起作为 release 资产上传（create 与 edit 两条分支都传）。
+`SHA256SUMS.sig` 与 `vibeterm-cli-<version>.tgz`、兼容资产 `tmex-cli-<version>.tgz`、`SHA256SUMS` 一起作为 release 资产上传。
 
 `SHA256SUMS` 从 2.0.0 起有**两行**：改名后的 `vibeterm-cli-<version>.tgz` 与内容等价、`package.json.name` 改回 `tmex-cli` 的兼容资产 `tmex-cli-<version>.tgz`（`scripts/release/build-legacy-asset.ts` 生成）。两行进同一份 `SHA256SUMS`，由同一把私钥签一次，所以新旧节点验的是同一个签名。留兼容资产的原因见 [发布流程](./release-process.md#兼容资产-tmex-cli-versiontgz)：≤ 1.1.40 的节点只会按旧文件名找摘要、只认 `package.json.name === 'tmex-cli'`。全网升到 2.0.0 之后的某个版本删掉这一行。
 
@@ -83,9 +78,7 @@ tmex-release-sig v1 <keyId> <base64(64 字节签名)>
 
 - **推来的包，没有可验签的清单就永远装不上。** 被攻陷的入口能做的最多是浪费节点的带宽和磁盘。
 - **签名坏了永远拒绝**，不因为版本老而放行；只有「完全没有签名」才享受版本兼容。
-- **降级也关死**：缺签名的历史版本只留给本机操作者（本机 CLI、未经转发的本地请求）。否则被攻陷的
-  入口可以让能上网的节点先自下载一个还没有验签逻辑的老版本，再往那个版本推任意代码——两步就绕开了
-  整条信任链。判定用的是「请求是不是从别的节点转发进来的」（dispatch 上下文的 `viaNodeId` /
+- **降级也关死**：缺签名的历史版本只留给本机操作者（本机 CLI、未经转发的本地请求）。远程转发另外拒绝目标版本低于当前运行版本（`UPGRADE_DOWNGRADE_REFUSED`），升级始终经过带验签逻辑的版本。判定用的是「请求是不是从别的节点转发进来的」（dispatch 上下文的 `viaNodeId` /
   `clientIp` 的 `peer:` 前缀），不是 `source` 字段。
 
 清单 sidecar 落在 `<installDir>/staging/staged/vibeterm-cli-<version>.manifest.json`，比字节先到，

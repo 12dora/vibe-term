@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { LocalFileHandle } from '../files/local-fs';
+import { FILE_RESPONSE_CSP } from '../files/safe-file-headers';
 import {
   httpDate,
   identityValidators,
@@ -220,5 +221,81 @@ describe('servePulledFile 源身份与临时副本', () => {
     expect(res.headers.get('Content-Length')).toBe('5');
     expect(res.headers.get('X-VibeTerm-Entity-Length')).toBe('5');
     expect(await res.text()).toBe('hello');
+  });
+});
+
+describe('serveFileBytes 安全响应头', () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  function serve(
+    name: string,
+    mime: string,
+    headers: Record<string, string> = {},
+    attachment = false
+  ): Response {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-safe-'));
+    dirs.push(dir);
+    const path = join(dir, name);
+    const body = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>';
+    writeFileSync(path, body);
+    return serveFileBytes(new Request('http://localhost/api/files/raw', { headers }), {
+      path,
+      name,
+      mime,
+      entityLength: Buffer.byteLength(body),
+      validators: { etag: '"x"', lastModified: null },
+      attachment,
+    });
+  }
+
+  test('直接打开 .svg 不按 image/svg+xml 内联，带 nosniff 与 sandbox CSP', () => {
+    for (const headers of [
+      {},
+      { 'sec-fetch-dest': 'document' },
+      { 'sec-fetch-dest': 'iframe' },
+    ] as Record<string, string>[]) {
+      const res = serve('x.svg', 'image/svg+xml', headers);
+      expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
+      expect(res.headers.get('Content-Disposition')).toStartWith('attachment;');
+      expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(res.headers.get('Content-Security-Policy')).toBe(FILE_RESPONSE_CSP);
+    }
+  });
+
+  test('<img> 拉 .svg（Sec-Fetch-Dest: image）按图片内联，仍带 sandbox CSP', () => {
+    const res = serve('x.svg', 'image/svg+xml', { 'sec-fetch-dest': 'image' });
+    expect(res.headers.get('Content-Type')).toBe('image/svg+xml');
+    expect(res.headers.get('Content-Disposition')).toStartWith('inline;');
+    expect(res.headers.get('Content-Security-Policy')).toBe(FILE_RESPONSE_CSP);
+    expect(res.headers.get('Vary')).toBe('Sec-Fetch-Dest');
+  });
+
+  test('HTML / XML 一律附件下载', () => {
+    for (const [name, mime] of [
+      ['x.html', 'text/html'],
+      ['x.xml', 'application/xml'],
+      ['x.xhtml', 'application/xhtml+xml'],
+    ] as const) {
+      const res = serve(name, mime, { 'sec-fetch-dest': 'image' });
+      expect(res.headers.get('Content-Type')).toBe('application/octet-stream');
+      expect(res.headers.get('Content-Disposition')).toStartWith('attachment;');
+    }
+  });
+
+  test('PNG / PDF 仍可内联预览；download=1 仍是附件', () => {
+    const png = serve('x.png', 'image/png');
+    expect(png.headers.get('Content-Type')).toBe('image/png');
+    expect(png.headers.get('Content-Disposition')).toStartWith('inline;');
+    expect(png.headers.get('X-Content-Type-Options')).toBe('nosniff');
+    const pdf = serve('x.pdf', 'application/pdf', { 'sec-fetch-dest': 'iframe' });
+    expect(pdf.headers.get('Content-Type')).toBe('application/pdf');
+    expect(pdf.headers.get('Content-Disposition')).toStartWith('inline;');
+    const download = serve('x.png', 'image/png', {}, true);
+    expect(download.headers.get('Content-Type')).toBe('image/png');
+    expect(download.headers.get('Content-Disposition')).toStartWith('attachment;');
   });
 });

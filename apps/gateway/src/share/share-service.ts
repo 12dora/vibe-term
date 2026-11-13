@@ -7,16 +7,13 @@ import {
   type ShareRecord,
   type ShareScope,
   type ShareSettings,
-  buildShareUrl,
-  normalizeShareOrigin,
 } from '@vibeterm/shared/share';
 import { getDeviceById } from '../db';
-import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { getDeviceSnapshot } from '../tmux/snapshot-directory';
 import { ShareAccessManager } from './share-access-tokens';
+import { buildActiveShareRow, resolveCreatedShareOrigin } from './share-create';
 import {
   type ShareOriginContext,
-  type ShareOriginSources,
   buildShareOriginContext,
   defaultShareOriginSources,
   resolveSharePrefix,
@@ -29,7 +26,7 @@ import {
   defaultReleaseRuntime,
   normalizeDefaultOrigin,
 } from './share-service-support';
-import { type ShareLogAppend, type ShareRow, ShareStore } from './share-store';
+import { type ShareLogAppend, type ShareRow, ShareStore, onSharesRevoked } from './share-store';
 import { generateShareId } from './share-token';
 import type {
   ShareCreateInput,
@@ -66,6 +63,7 @@ class ShareServiceImpl implements ShareService {
   private viewerCounter: ShareViewerCounter | null = null;
   private authRequired: () => boolean = () => true;
   private watchTimer: ReturnType<typeof setInterval> | null = null;
+  private offRevoked: (() => void) | null = null;
   private retentionTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
@@ -124,6 +122,7 @@ class ShareServiceImpl implements ShareService {
       logBytes: row.logBytes,
       logTruncated: row.logTruncated,
       recordLog: row.recordLog,
+      issuedVia: row.issuedVia,
     };
   }
 
@@ -138,34 +137,20 @@ class ShareServiceImpl implements ShareService {
     if (!window) return { ok: false, code: 'SHARE_WINDOW_NOT_FOUND' };
 
     const context = this.originContext();
-    const origin = input.origin
-      ? normalizeShareOrigin(input.origin)
-      : (context.candidates[0]?.url ?? null);
+    const origin = resolveCreatedShareOrigin(input.origin, context);
     if (!origin) return { ok: false, code: 'SHARE_ORIGIN_INVALID' };
 
     const settings = this.store.getSettings();
     const now = this.now();
-    const id = generateShareId();
-    const windowName = window.customName?.trim() || window.name;
-    const row: ShareRow = {
-      id,
-      name: input.name?.trim() || windowName,
-      deviceId: input.deviceId,
-      windowId: input.windowId,
-      windowName,
-      state: 'active',
-      endReason: null,
+    const row = buildActiveShareRow({
+      id: generateShareId(),
+      input,
+      window,
       origin,
-      url: buildShareUrl(origin, resolveSharePrefix(context, origin), id),
+      context,
       recordLog: settings.recordLogs,
-      logBytes: 0,
-      logTruncated: false,
-      logSeq: 0,
-      logPurgedAt: null,
-      createdAt: now,
-      expiresAt: input.expiresInMs === null ? null : now + Math.max(0, input.expiresInMs),
-      endedAt: null,
-    };
+      now,
+    });
     const [hash, enc] = await Promise.all([
       this.passwords.hash(password),
       this.passwords.encrypt(password),
@@ -234,6 +219,12 @@ class ShareServiceImpl implements ShareService {
     // 先同步刷出缓冲：改成 ended 之后 appendLog 的 active 检查会丢掉最后一批录屏数据。
     this.recorders.get(id)?.flush();
     const ended = this.store.end(id, reason, this.now());
+    this.releaseEnded(id, reason);
+    return ended ? this.toRecord(ended) : null;
+  }
+
+  /** 库里已标为结束之后的运行时收尾：停定时器与录屏，通知在线连接断开。 */
+  private releaseEnded(id: string, reason: ShareEndReason): void {
     this.clearExpiry(id);
     void this.stopRecorder(id);
     const event: ShareEndedEvent = { shareId: id, reason };
@@ -244,7 +235,6 @@ class ShareServiceImpl implements ShareService {
         console.error('[share] onEnded listener failed:', error);
       }
     }
-    return ended ? this.toRecord(ended) : null;
   }
 
   readLog(id: string, options: { after?: number; limit?: number } = {}): ShareLogPage | null {
@@ -342,6 +332,9 @@ class ShareServiceImpl implements ShareService {
   startSweeper(): void {
     if (this.running) return;
     this.running = true;
+    this.offRevoked = onSharesRevoked((ids, reason) => {
+      for (const id of ids) this.releaseEnded(id, reason);
+    });
     this.store.sweepAccessTokens(this.now());
     for (const row of this.store.listActive()) {
       if (this.expireIfDue(row)) continue;
@@ -361,6 +354,8 @@ class ShareServiceImpl implements ShareService {
 
   async stop(): Promise<void> {
     this.running = false;
+    this.offRevoked?.();
+    this.offRevoked = null;
     if (this.watchTimer) clearInterval(this.watchTimer);
     if (this.retentionTimer) clearInterval(this.retentionTimer);
     this.watchTimer = null;

@@ -22,7 +22,7 @@
 | 登录态 | 输对口令后保持到到期或终止，允许多人同时在线 |
 | 日志 | 录屏式（输出 + 输入 + 尺寸，带时间戳），时间轴回放；默认开启，保留 30 天，单条上限 50 MB |
 | 期限 | 1 h / 24 h / 7 d / 永久 + 自定义，默认 24 h |
-| 安全 | 口令最短 6 位、默认 8 位随机、只存哈希；按（分享，来源 IP）限速；分享凭证独立 cookie，拿不到任何常规 `/api/*` |
+| 安全 | 口令最短 6 位、默认 8 位随机、只存哈希；按（分享，来源 IP）与分享全局失败桶限速，口令校验进程级限并发；分享凭证独立 cookie，拿不到任何常规 `/api/*` |
 
 ## 数据模型
 
@@ -30,7 +30,7 @@
 
 | 表 | 关键列 |
 |---|---|
-| `shares` | `id`（22 位 base64url）、`name`、`device_id`、`window_id`、`window_name`（创建时快照）、`state`(`active`/`ended`)、`end_reason`、`password_hash`、`origin`、`url`、`record_log`、`log_bytes`、`log_truncated`、`log_seq`、`created_at`、`expires_at`（null = 永久）、`ended_at` |
+| `shares` | `id`（22 位 base64url）、`name`、`device_id`、`window_id`、`window_name`（创建时快照）、`state`(`active`/`ended`)、`end_reason`、`password_hash`、`origin`、`url`、`record_log`、`log_bytes`、`log_truncated`、`log_seq`、`created_at`、`expires_at`（null = 永久）、`ended_at`、`issued_via`（创建请求的入口节点 id，本机为 `self`；0063 迁移前的旧分享记为 `self`） |
 | `share_access_tokens` | `id`、`share_id`、`token_hash`（SHA-256 唯一）、`client_ip`、`expires_at`、`last_seen_at`；`ON DELETE cascade` |
 | `share_logs` | 主键 `(share_id, seq)`，`at`、`kind`(`out`/`in`/`resize`/`checkpoint`)、`pane_id`、`cols`、`rows`、`data BLOB` |
 | `share_settings` | `id = 1` 单例：`record_logs`、`log_retention_days`、`log_max_bytes`、`default_origin` |
@@ -67,7 +67,7 @@
     同地址只留一条，**自建域名让路**。前端 key 加 `kind` 前缀，展示层再滤一遍。
   手填的「默认分享地址」若与某个转发型候选（`relay`）同主机，
   会继承该候选的 `/n/<nodeId>` 前缀，否则生成的是打不开的死链。
-- `share-rate-limit.ts` —— `ShareLoginLimiter`：按（shareId, IP）15 min 窗口 10 次失败锁 15 min。
+- `share-rate-limit.ts` —— `ShareLoginLimiter`：按（shareId, IP）15 min 窗口 10 次失败锁 15 min；按 shareId 不分来源 1 h 内 50 次失败后整个分享降速为每 30 s 最多一次校验；进程内同时最多 4 个口令校验。
 - 巡检：开机全扫一遍，之后每 5 s 判到期（`expired`）、设备消失（`device_removed`）、window 关闭
   （`window_closed`）；每小时按 `logRetentionDays` 删日志行、清过期凭证。
 
@@ -127,7 +127,7 @@
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/share-access/:id` | `{ id, name, state, expiresAt, authenticated }`，认证后附 `deviceId`/`windowId` |
-| POST | `/api/share-access/:id/login` | `{ password }` → 200 / 401 `SHARE_PASSWORD_INVALID` / 429 `SHARE_LOGIN_LOCKED{retryAfterMs}` / 410 `SHARE_ENDED` |
+| POST | `/api/share-access/:id/login` | `{ password }` → 200 / 401 `SHARE_PASSWORD_INVALID` / 429 `SHARE_LOGIN_LOCKED{retryAfterMs}`（失败次数触发的锁定或降速）/ 429 `SHARE_LOGIN_BUSY{retryAfterMs}`（并发上限，稍后重试）/ 410 `SHARE_ENDED` |
 | POST | `/api/share-access/:id/logout` | 清凭证 |
 
 `/api/share-access/*` 整个前缀进 `auth-public-paths`，`localUiGuard` 与节点侧流入口同时放行；
@@ -277,12 +277,18 @@ checkpoint 快进到当前时刻；网格变化不会再引起网格变化，无
 ## 限速与开放模式
 
 - **节点侧**：`ShareLoginLimiter.begin()` 在 argon2 验证**之前**预占额度（在途尝试计入上限），`settle()`
-  结算——成功清空、失败落账；同（分享, IP）并发验证上限 2，超出直接 429。第 10 次失败单独记
+  结算——成功清空、失败落账；同（分享, IP）并发验证上限 2，超出直接 429 `SHARE_LOGIN_BUSY`。第 10 次失败单独记
   `lockedUntil = now + 15 min`，与滑动窗口分开维护（否则解锁时间从最早一次失败算，可能只锁 1 ms）。
+  IP 键经 `limiterIpKey` 归一：IPv6 按 /64 归桶，轮换同一前缀内的源地址不换桶。
+- **分享全局桶**：同一分享不分来源，1 h 内失败（含在途）达 50 次后进入降速：整个分享同一时刻只允许一次校验，
+  两次校验至少间隔 30 s（`SHARE_LOGIN_SHARE_SLOWDOWN_MS`），其余请求 429 `SHARE_LOGIN_LOCKED` 并带剩余等待。
+  成功登录不清这只桶。持正确口令的访客最多等一个间隔；轮换来源的猜测被压到每分享每小时约 120 次。
+- **进程级并发**：全进程同时在跑的分享口令 argon2 校验最多 4 个，超出立即 429 `SHARE_LOGIN_BUSY`（`retryAfterMs=1000`），
+  不排队，限制未登录请求占用的 CPU。
 - **入口转发侧**：节点看到的 clientIp 是 `peer:<入口 nodeId>`，真实浏览器 IP 不过 mesh。因此
   `mesh/share-login-quota.ts` 在 `Forwarder.gateForwardedAuth()` 里对
   `POST /api/share-access/:id/login` 复用同一个 `ShareLoginLimiter`，分桶键是（真实来源 IP, shareId）：
-  锁定则**转发前**返回 429 + `retry-after`，上游 401 记一次失败、2xx 清桶。
+  锁定则**转发前**返回 429 + `retry-after`，上游 401 记一次失败、2xx 清（IP, 分享）桶；分享全局桶在入口侧同样累计。
 - **开放模式禁止创建**：`ShareService.setAuthRequiredResolver()` 在未启用登录保护的 standalone 部署上返回
   false，`POST /api/share` 直接 409 `SHARE_AUTH_REQUIRED`。这类部署上升级出来的连接没有 shareScope，
   分享无法兑现隔离承诺，只能从源头堵住。
@@ -299,7 +305,7 @@ checkpoint 快进到当前时刻；网格变化不会再引起网格变化，无
   访客被钉死在这一个 tab 上。`installSessionInterceptor` 对分享路径不跳登录页。
   分享模式（`features.shareViewer`）下工具栏不渲染分屏按钮，「更多」菜单也不含分享项，分屏视图不渲染 pane 关闭按钮、
   标题栏不可拖动；splitter 拖拽（resize-pane）与尺寸仲裁保留。
-- **设置 → 分享**：进行中表、历史表（删除）、日志回放、设置区（记录日志 / 保留天数 / 单条上限 / 默认地址）。
+- **设置 → 分享**：进行中表（经其他节点签发的分享在名称下点名签发节点 `issuedVia`，本机签发的不显示）、历史表（删除）、日志回放、设置区（记录日志 / 保留天数 / 单条上限 / 默认地址）。
 - **i18n**：分享方 `share.*`、设置 `settings.share.*` 在 rest 包；被分享页 `shareAccess.*` 进
   `I18N_CORE_KEY_PREFIXES`（页面在懒加载路由之外）。错误统一经 `shareErrorKey(error)` → `share.error.<CODE>`，
   未知码落 `share.error.generic`。
@@ -313,6 +319,9 @@ checkpoint 快进到当前时刻；网格变化不会再引起网格变化，无
 - **不同步剪贴板**、**不放行结构性操作**（分屏、关闭 pane、改窗口样式都是写操作）。
 - **被分享人参与尺寸仲裁**：这是有意的产品决策，等价于多开一个客户端；最小可见客户端拥有 PTY 尺寸的策略不变
   （见 [终端视口策略](./terminal-viewport-policy.md)）。
+- **吊销级联**：吊销节点 X 时，`issued_via = X` 的进行中分享在 key log 投影里结束（原因 `revoked`），访问凭证删除；
+  在线连接与录屏在事务提交后再拆（回滚不拆）。改密（含默认 `rotate-root-keep`）、轮换或重置根密钥结束全部进行中的分享。
+  `shares` 表无 owner 列，改密按单用户节点处理。分享列表以 `issuedVia` 返回签发入口。实现见 `endSharesForRevocation` 与 [访问令牌 §4](../security/access-tokens.md#4-管理)。
 - **无 pane 归属的设备事件**（disconnected / reconnecting / error）不发给分享连接。想让访客看到「设备已断开」，
   需要单独定义一条不含设备信息的提示帧。
 

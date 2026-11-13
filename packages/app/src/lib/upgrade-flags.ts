@@ -15,6 +15,7 @@ export const UPGRADE_FLAGS = new Set([
   'yes',
   'allow-missing-native',
   'allow-unverified',
+  'allow-downgrade',
 ]);
 
 export const UPGRADE_PASSTHROUGH_FLAGS = [
@@ -32,4 +33,4 @@ export const UPGRADE_PASSTHROUGH_FLAGS = [
 ] as const;
 
 export const UPGRADE_USAGE =
-  'Usage: vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified]';
+  'Usage: vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--no-linger] [--allow-missing-native] [--allow-unverified] [--allow-downgrade]';

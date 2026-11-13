@@ -3,6 +3,7 @@
 // 进行中那张表有八列、历史六列，390px 下动作列整列被裁在屏幕外，复制链接与终止都点不到。
 // 卡片把名称 / 终端 / 时间摊成两条弱化信息行，动作留在卡底；testid 与表里逐个对齐。
 
+import { IssuedVia } from '@/components/issued-via';
 import {
   RecordCard,
   RecordCardEmpty,
@@ -57,6 +58,7 @@ export function ActiveSharesCardList({
                   {share.nodeName}
                 </span>
               )}
+              <IssuedVia issuedVia={share.issuedVia} testId={`share-issued-via-${share.id}`} />
             </RecordCardMeta>
 
             <RecordCardMeta>

@@ -3,7 +3,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
-import { resolveMeshNodeName } from './node-names';
+import { issuerNodeName, resolveMeshNodeName } from './node-names';
 
 function node(id: string, name: string): MeshNode {
   return {
@@ -41,6 +41,22 @@ describe('resolveMeshNodeName', () => {
     setMeshNodesStateForTest({ entryNodeId: null });
     expect(resolveMeshNodeName('self')).toBeNull();
     expect(resolveMeshNodeName('n1')).toBe('demo-app');
+
+    resetMeshNodesStateForTest();
+  });
+});
+
+describe('issuerNodeName', () => {
+  test('本机签发不点名；其他节点用目录里的名字，查不到退回编号前缀', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: 'entry',
+      nodes: [node('n1-0123456789abcdef', 'demo-app'), node('entry', 'entry-box')],
+    });
+
+    expect(issuerNodeName('self')).toBeNull();
+    expect(issuerNodeName('')).toBeNull();
+    expect(issuerNodeName('n1-0123456789abcdef')).toBe('demo-app');
+    expect(issuerNodeName('ffeeddcc00112233')).toBe('ffeeddcc');
 
     resetMeshNodesStateForTest();
   });

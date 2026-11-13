@@ -186,7 +186,7 @@ export class AuthApi {
   }
 
   /**
-   * `GET /api/auth/nodes`（**公开**）：只有 `{id, name, online}`。
+   * `GET /api/auth/nodes`：匿名只返回 `{id}`，带会话时另含 `name` / `online`。
    * 登录页在拿到会话 cookie 之前只能用它——公钥要登录后才下发。
    */
   async listPublicNodes(): Promise<PublicNode[]> {

@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
-import { CLIENT_SOURCE_LOCAL } from './client-source';
 import {
   headerRecord,
   stringHeaders,
@@ -9,7 +8,7 @@ import {
 } from './stream-http-headers';
 
 describe('stream-http-headers', () => {
-  test('stripForwardedRequestHeaders 丢掉 hop-by-hop / via / mesh-peer / 转发头', () => {
+  test('stripForwardedRequestHeaders 丢掉 hop-by-hop / via / mesh-peer / client-source / 转发头', () => {
     const out = stripForwardedRequestHeaders({
       cookie: 'secret=1',
       authorization: 'Bearer x',
@@ -21,7 +20,8 @@ describe('stream-http-headers', () => {
       'x-vibeterm-mesh-peer': 'aa'.repeat(16),
       'proxy-authorization': 'basic',
       'x-forwarded-for': '1.2.3.4',
-      [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL,
+      [CLIENT_SOURCE_HEADER.name]: 'local',
+      [CLIENT_SOURCE_HEADER.legacy]: 'local',
       'content-type': 'application/json',
       'x-custom': 'keep',
     });
@@ -35,7 +35,8 @@ describe('stream-http-headers', () => {
     expect(out['x-vibeterm-mesh-peer']).toBeUndefined();
     expect(out['proxy-authorization']).toBeUndefined();
     expect(out['x-forwarded-for']).toBeUndefined();
-    expect(out[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
+    expect(out[CLIENT_SOURCE_HEADER.legacy]).toBeUndefined();
     expect(out['content-type']).toBe('application/json');
     expect(out['x-custom']).toBe('keep');
   });

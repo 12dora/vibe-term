@@ -2,6 +2,7 @@ import { config } from '../config';
 import { getSiteSettings, getStoredSiteSettings } from '../db';
 import { getDb as getOrmDb } from '../db/client';
 import { type DomainAccessStore, domainAccessStore } from '../db/domain-access';
+import { trustedSourceIp } from '../mesh/client-ip';
 import {
   collectConfiguredHosts,
   decideDomainAccess,
@@ -98,9 +99,7 @@ export function guardDomainAccess(req: Request): Response | null {
   const decision = decideDomainAccess({
     viaSelf,
     allowed,
-    clientIp: ctx.clientIp,
-    trustProxy: ctx.trustProxy === true,
-    headers: req.headers,
+    clientIp: trustedSourceIp(req),
     method: req.method,
     pathname: new URL(req.url).pathname,
   });

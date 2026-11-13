@@ -23,6 +23,7 @@ export interface ShareLoginResult {
 export type ShareAccessErrorCode =
   | 'SHARE_PASSWORD_INVALID'
   | 'SHARE_LOGIN_LOCKED'
+  | 'SHARE_LOGIN_BUSY'
   | 'SHARE_ENDED'
   | 'SHARE_NOT_FOUND'
   | 'SHARE_REQUEST_FAILED';
@@ -48,6 +49,7 @@ export function shareAccessUrl(nodeBase: string, shareId: string, suffix = ''): 
 const KNOWN_CODES = new Set<string>([
   'SHARE_PASSWORD_INVALID',
   'SHARE_LOGIN_LOCKED',
+  'SHARE_LOGIN_BUSY',
   'SHARE_ENDED',
   'SHARE_NOT_FOUND',
 ]);

@@ -148,7 +148,7 @@ export type RelayEnrollPasswordView = {
 export type RelayRotateEnrollPasswordRequest = {
   url: string;
   current?: string;
-  next: string | null;
+  next: string;
   mode: 'keep' | 'kick';
 };
 

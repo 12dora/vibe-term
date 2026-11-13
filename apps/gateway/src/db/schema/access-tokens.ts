@@ -18,6 +18,7 @@ export const accessTokens = sqliteTable(
     lastUsedAt: integer('last_used_at'),
     lastUsedIp: text('last_used_ip'),
     revokedAt: integer('revoked_at'),
+    issuedVia: text('issued_via').notNull().default('self'),
   },
   (table) => [
     uniqueIndex('access_tokens_secret_hash_unique').on(table.secretHash),

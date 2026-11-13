@@ -33,6 +33,7 @@ export const shares = sqliteTable(
     createdAt: integer('created_at').notNull(),
     expiresAt: integer('expires_at'),
     endedAt: integer('ended_at'),
+    issuedVia: text('issued_via').notNull().default('self'),
   },
   (table) => [
     check('shares_state_check', sql`${table.state} in ('active', 'ended')`),

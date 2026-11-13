@@ -3,6 +3,7 @@ import { isTmuxPaneId } from '../tmux-client/snapshot-format';
 import { parseWindowLayoutSize } from './frame-utils';
 import type { GatewaySession } from './gateway-session';
 import type { TmuxCommandHost } from './tmux-command-handlers';
+import { assertTmuxPaneId } from './tmux-pane-id';
 import type { DeviceConnectionEntry } from './types';
 import {
   type ViewportWinner,
@@ -201,6 +202,7 @@ export function handleTermViewport(
     visible: boolean;
   }
 ): void {
+  assertTmuxPaneId(decoded.paneId);
   recordViewportClaim(host, session, decoded, { applyUnknown: false });
 }
 
@@ -415,7 +417,8 @@ export function handleResizePaneById(
   rows?: number
 ): void {
   const entry = host.connections.get(deviceId);
-  if (!entry || !isTmuxPaneId(paneId)) return;
+  assertTmuxPaneId(paneId);
+  if (!entry) return;
   if (cols === undefined && rows === undefined) return;
   entry.runtime.resizePaneById(paneId, { cols, rows });
 }

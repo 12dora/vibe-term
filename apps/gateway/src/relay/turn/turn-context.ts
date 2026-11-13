@@ -1,4 +1,5 @@
 import type { AllocationTable } from './allocation-table';
+import type { PeerDenySet } from './denied-peers';
 import type { TurnCredentialLookup, TurnServerStats } from './index';
 import type { NonceStore } from './turn-auth';
 import type { BindUdpFn } from './turn-udp';
@@ -17,6 +18,7 @@ export type ResolvedTurnOptions = {
   maxAllocationsPerUser: number;
   maxLifetimeSec: number;
   deniedPeerCidrs: readonly string[];
+  denySelfAddresses: boolean;
   bytesPerSecPerAllocation: number;
   log: (line: string) => void;
   now: () => number;
@@ -36,6 +38,6 @@ export type TurnContext = {
   table: AllocationTable;
   nonce: NonceStore;
   unauthLimit: UnauthResponseLimiter;
-  denied: (address: string) => boolean;
+  denied: PeerDenySet;
   send: (buf: Buffer, addr: SocketAddress) => void;
 };

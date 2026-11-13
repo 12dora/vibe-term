@@ -366,7 +366,7 @@ describe('POST /api/files/delete ssh', () => {
       ],
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.argv).toEqual(['ssh', '-p', '22', 'u@h', 'sh -s']);
+    expect(calls[0]?.argv).toEqual(['ssh', '-p', '22', '--', 'u@h', 'sh -s']);
     const command = calls[0]?.script ?? '';
     expect(command).toContain(`rm -rf -- './-weird name'`);
     expect(command).toContain(`rm -rf -- './gone'`);

@@ -124,6 +124,8 @@ export type RelayTenant = {
   ): Promise<Response>;
   /** 旧根签一条 `rotate-root-keep` 并等中继跟上；返回新的根钥。 */
   rotateRoot(): Promise<RootKey>;
+  /** 根轮换作废全部会话后，用新根把主节点与已同步的在线成员重新登录。 */
+  reloginAfterRootRotation(): Promise<void>;
 };
 
 export type RelayMeshHarness = {

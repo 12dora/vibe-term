@@ -25,6 +25,28 @@ export function admitFailureText(t: Translate, key: string): string {
   return t(key, { defaultValue: t('nodes.enrollment.admitFailed') });
 }
 
+/** 新证书的确认码：用户必须与新设备上显示的核对一致后才点确认。 */
+export function EnrollmentCode({
+  sas,
+  testId,
+  className,
+}: {
+  sas: string;
+  testId: string;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <p className={className} data-testid={testId}>
+      <span className="text-muted-foreground">{t('nodes.enrollment.code.label')}</span>{' '}
+      <span className="font-mono font-medium tracking-wider" data-testid={`${testId}-value`}>
+        {sas}
+      </span>
+      <span className="block text-muted-foreground">{t('nodes.enrollment.code.hint')}</span>
+    </p>
+  );
+}
+
 function outcomeText(t: Translate, progress: AdmitProgress, doneText: string): string {
   if (progress.phase === 'done') return doneText;
   if (progress.phase === 'keyPending') return t('nodes.enrollment.memberKeyPending');
@@ -174,6 +196,56 @@ function PendingStatus({ id, engine }: { id: string; engine: EnrollmentEngineSta
     : t('nodes.enrollment.pending');
 }
 
+type PendingActionsProps = Pick<
+  AdmitRowsProps,
+  'engine' | 'writable' | 'blockedHint' | 'onConfirm' | 'onCancel'
+> & { pending: PendingEnrollment };
+
+function PendingActions({
+  pending,
+  engine,
+  writable,
+  blockedHint,
+  onConfirm,
+  onCancel,
+}: PendingActionsProps) {
+  const { t } = useTranslation();
+  const id = pending.hubEnrollmentId;
+  // 正在跑 admit 时确认与取消都要禁用——取消一条 append 未定的记录会丢字节。
+  const busy = engine.busyIds.includes(id);
+  const unconfirmed = engine.unconfirmedIds.includes(id);
+  const retry = unconfirmed || Boolean(engine.failureById[id]);
+  const idleLabel = retry ? t('nodes.enrollment.retry') : t('nodes.enrollment.confirmPending');
+  const stepLabel = busy ? admitStepLabel(t, engine.progressById[id]) : null;
+  const sas = engine.certificateSasById[id];
+  return (
+    <span className="flex shrink-0 items-center gap-1">
+      <Button
+        type="button"
+        size="xs"
+        disabled={busy || !writable || (!sas && !unconfirmed)}
+        title={writable ? undefined : blockedHint}
+        onClick={() => onConfirm(pending)}
+        data-testid={`nodes-pending-confirm-${id}`}
+      >
+        {busy ? <Loader2 className="animate-spin" /> : <Check />}
+        {stepLabel ?? idleLabel}
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="xs"
+        disabled={busy}
+        onClick={() => onCancel(pending)}
+        data-testid={`nodes-pending-cancel-${id}`}
+      >
+        <X />
+        {t('nodes.enrollment.cancelPending')}
+      </Button>
+    </span>
+  );
+}
+
 /** 一条待确认记录。上级未确认或上次确认失败时，按钮换成「重试」口径。 */
 function PendingRow({
   pending,
@@ -184,14 +256,9 @@ function PendingRow({
   onCancel,
   passkeyTwice,
 }: Omit<AdmitRowsProps, 'pendings' | 'onResendKey'> & { pending: PendingEnrollment }) {
-  const { t } = useTranslation();
   const id = pending.hubEnrollmentId;
-  // 正在跑 admit 时确认与取消都要禁用——取消一条 append 未定的记录会丢字节。
-  const busy = engine.busyIds.includes(id);
   const unconfirmed = engine.unconfirmedIds.includes(id);
-  const retry = unconfirmed || Boolean(engine.failureById[id]);
-  const idleLabel = retry ? t('nodes.enrollment.retry') : t('nodes.enrollment.confirmPending');
-  const stepLabel = busy ? admitStepLabel(t, engine.progressById[id]) : null;
+  const sas = engine.certificateSasById[id];
   return (
     <li
       className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-xs"
@@ -203,30 +270,17 @@ function PendingRow({
           {pending.name ?? pending.enrollPk.slice(0, 12)}
         </span>
       </span>
-      <span className="flex shrink-0 items-center gap-1">
-        <Button
-          type="button"
-          size="xs"
-          disabled={busy || !writable}
-          title={writable ? undefined : blockedHint}
-          onClick={() => onConfirm(pending)}
-          data-testid={`nodes-pending-confirm-${id}`}
-        >
-          {busy ? <Loader2 className="animate-spin" /> : <Check />}
-          {stepLabel ?? idleLabel}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          disabled={busy}
-          onClick={() => onCancel(pending)}
-          data-testid={`nodes-pending-cancel-${id}`}
-        >
-          <X />
-          {t('nodes.enrollment.cancelPending')}
-        </Button>
-      </span>
+      <PendingActions
+        pending={pending}
+        engine={engine}
+        writable={writable}
+        blockedHint={blockedHint}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+      {sas && !unconfirmed && (
+        <EnrollmentCode sas={sas} testId={`nodes-pending-code-${id}`} className="basis-full" />
+      )}
       {/* 未确认时只重发已签好的那条，第一次验证早做过了，不再说「两次」。 */}
       {!unconfirmed && (
         <PasskeyTwiceHint

@@ -131,7 +131,7 @@ describe('UserKeyService', () => {
     }
   });
 
-  test('signAndApply rotate-root-keep keeps passkeys/totp/sessions and reconstructs totp from the keep record', async () => {
+  test('signAndApply rotate-root-keep keeps passkeys/totp, revokes sessions and reconstructs totp from the keep record', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const { service, userStore, nodeSessionStore } = createService(db);
@@ -194,7 +194,7 @@ describe('UserKeyService', () => {
       });
       expect(rotated.ok).toBe(true);
       if (rotated.ok) {
-        expect(rotated.effects).toEqual([]);
+        expect(rotated.effects).toEqual([{ type: 'revokeAllSessions' }]);
       }
 
       const after = service.currentState(boot.userId);
@@ -206,9 +206,10 @@ describe('UserKeyService', () => {
       expect(bytesEqual(after.totp?.tag ?? new Uint8Array(), wrapped.tag)).toBe(true);
       expect(userStore.listKeysByUser(boot.userId)).toHaveLength(1);
       expect(userStore.getById(boot.userId)?.totpRecordSeq).toBe(Number(before.head.seq + 1n));
-      expect(nodeSessionStore.verify(session.sid, { viaNodeId: 'self', now: Date.now() }).ok).toBe(
-        true
-      );
+      expect(nodeSessionStore.verify(session.sid, { viaNodeId: 'self', now: Date.now() })).toEqual({
+        ok: false,
+        reason: 'revoked',
+      });
 
       const stale = await service.signAndApply(boot.userId, boot.rootKey, {
         type: 'clear-totp',

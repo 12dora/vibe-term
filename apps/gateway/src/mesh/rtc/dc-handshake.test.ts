@@ -594,6 +594,69 @@ describeRtc('handshakeDataChannel', () => {
     expect(pair.fanB.isOpen()).toBe(true);
   });
 
+  test('rejects self node_id before producing a signature', async () => {
+    const pair = setupPair();
+    const results = await Promise.allSettled([
+      handshakeDataChannel({
+        channel: pair.fanA,
+        pc: pair.pcA,
+        identity: pair.a,
+        userStore: pair.store,
+        localFingerprint: pair.pcA.fingerprint,
+        timeoutMs: 500,
+      }),
+      handshakeDataChannel({
+        channel: pair.fanB,
+        pc: pair.pcB,
+        identity: pair.a,
+        userStore: pair.store,
+        localFingerprint: pair.pcB.fingerprint,
+        timeoutMs: 500,
+      }),
+    ]);
+    expect(
+      results.some(
+        (row) =>
+          row.status === 'rejected' &&
+          row.reason instanceof PeerHandshakeError &&
+          row.reason.code === 'protocol' &&
+          row.reason.message.includes('must not be self')
+      )
+    ).toBe(true);
+  });
+
+  test('dialer rejects unexpected peer id before signing', async () => {
+    const pair = setupPair();
+    const results = await Promise.allSettled([
+      handshakeDataChannel({
+        channel: pair.fanA,
+        pc: pair.pcA,
+        identity: pair.a,
+        userStore: pair.store,
+        localFingerprint: pair.pcA.fingerprint,
+        expectedPeerId: 'ff'.repeat(16),
+        timeoutMs: 500,
+      }),
+      handshakeDataChannel({
+        channel: pair.fanB,
+        pc: pair.pcB,
+        identity: pair.b,
+        userStore: pair.store,
+        localFingerprint: pair.pcB.fingerprint,
+        timeoutMs: 500,
+      }),
+    ]);
+    expect(
+      results.some(
+        (row) =>
+          row.status === 'rejected' &&
+          row.reason instanceof PeerHandshakeError &&
+          row.reason.code === 'protocol' &&
+          row.reason.message.includes('mismatch')
+      )
+    ).toBe(true);
+  });
+
   test('malformed JSON ctl is dropped; valid ctl is queued with binary mux in arrival order', () => {
     const { pc } = setup();
     const [local, remote] = pairDataChannels('peer');

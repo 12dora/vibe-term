@@ -8,6 +8,7 @@ import {
 } from '@vibeterm/shared';
 import type { LinkSession } from '@vibeterm/shared/link';
 import type { ShareScope } from '@vibeterm/shared/share';
+import type { ClientIpHeader } from './client-ip-header';
 import { type DispatchContext, requestDispatchContext } from './types';
 
 export { isStandaloneRoles, requestDispatchContext };
@@ -55,26 +56,6 @@ export const MESH_REJECT_4401_KIND = 'mesh-reject-4401';
 export const MESH_GATEWAY_WS_KIND = 'gateway-ws';
 export const MESH_SHARE_WS_KIND = 'gateway-share-ws';
 export const WS_CLOSE_LOGIN_REQUIRED = 4401;
-
-export const MESH_FORWARD_CSP = "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'";
-
-export const MESH_ALLOWED_MIME = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-  'image/avif',
-  'video/mp4',
-  'video/webm',
-  'audio/mpeg',
-  'audio/ogg',
-  'audio/wav',
-  'text/plain',
-  'application/json',
-  'application/x-ndjson',
-  'application/pdf',
-  'application/octet-stream',
-]);
 
 export type MeshRoles = VibeTermRoles;
 
@@ -242,6 +223,7 @@ export type MeshRequestContext = {
   uid?: string | null;
   renewedExpiresAt?: number;
   trustProxy?: boolean;
+  clientIpHeader?: ClientIpHeader;
   tokenId?: string | null;
   tokenScopes?: readonly AccessTokenScope[] | null;
 };
@@ -288,6 +270,7 @@ export function getMeshRequestContext(req: Request): MeshRequestContext {
     uid: dispatch?.uid ?? local?.uid ?? null,
     renewedExpiresAt: dispatch?.renewedExpiresAt ?? local?.renewedExpiresAt,
     trustProxy: local?.trustProxy,
+    clientIpHeader: local?.clientIpHeader,
     tokenId: dispatch?.tokenId ?? local?.tokenId ?? null,
     tokenScopes: dispatch?.tokenScopes ?? local?.tokenScopes ?? null,
   };

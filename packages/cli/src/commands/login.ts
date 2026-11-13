@@ -203,6 +203,51 @@ async function loginEntry(
   return selfOutcome;
 }
 
+export interface PasswordLoginOptions {
+  password: string;
+  totpFlag?: string;
+  nodeRef: string | null;
+  timeoutMs: number;
+  concurrency: number;
+  /** 默认打印结果表（`--json` 时输出一个对象）；`passwd` 自己合并输出。 */
+  report?: (outcomes: TargetOutcome[]) => void;
+}
+
+/** 用口令登录入口与名单里其余节点；`passwd` 改密后（旧会话已全部吊销）也走这里重新登录。 */
+export async function loginWithPassword(
+  ctx: CliContext,
+  mode: AuthMode,
+  opts: PasswordLoginOptions
+): Promise<number | undefined> {
+  const totp = { code: await readTotp(mode, opts.totpFlag) };
+  const material = await buildSessionMaterial({ password: opts.password, mode });
+  try {
+    const selfOutcome = await loginEntry(ctx, mode, material, totp, opts.timeoutMs);
+    const roster = await ctx.resolver.listNodes();
+    verifySelfPublicKey(ctx, mode, roster, selfOutcome.nodePk);
+    const rest = await loginOthers({
+      ctx,
+      targets: await otherTargets(ctx, mode, opts.nodeRef, roster),
+      totp,
+      hasTotpKey: Boolean(material.kTotp),
+      interactive: isInteractive(),
+      promptTotp: () => promptLine('Two-step verification code: '),
+      concurrency: opts.concurrency,
+      attempt: (target) =>
+        loginOne(ctx, target, material, totp, {
+          timeoutMs: opts.timeoutMs,
+          allowPrompt: false,
+          treatUnreachableAsOutcome: true,
+        }),
+    });
+    const outcomes = [selfOutcome, ...rest];
+    (opts.report ?? ((rows) => reportLoginOutcomes(ctx, rows)))(outcomes);
+    return reportLoginFailures(ctx, mode, outcomes, Boolean(opts.nodeRef));
+  } finally {
+    material.destroy();
+  }
+}
+
 async function run(ctx: CliContext, argv: string[]): Promise<number | undefined> {
   const { flags } = parseArgv(argv, FLAGS);
   const nodeRef = ctx.globals.node;
@@ -227,33 +272,13 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   assertUserMatches(mode, flagString(flags, 'user'));
 
   const password = await readPassword(ctx, flagBool(flags, 'password-stdin'));
-  const totp = { code: await readTotp(mode, flagString(flags, 'totp')) };
-  const material = await buildSessionMaterial({ password, mode });
-  try {
-    const selfOutcome = await loginEntry(ctx, mode, material, totp, timeoutMs);
-    const roster = await ctx.resolver.listNodes();
-    verifySelfPublicKey(ctx, mode, roster, selfOutcome.nodePk);
-    const rest = await loginOthers({
-      ctx,
-      targets: await otherTargets(ctx, mode, nodeRef, roster),
-      totp,
-      hasTotpKey: Boolean(material.kTotp),
-      interactive: isInteractive(),
-      promptTotp: () => promptLine('Two-step verification code: '),
-      concurrency,
-      attempt: (target) =>
-        loginOne(ctx, target, material, totp, {
-          timeoutMs,
-          allowPrompt: false,
-          treatUnreachableAsOutcome: true,
-        }),
-    });
-    const outcomes = [selfOutcome, ...rest];
-    reportLoginOutcomes(ctx, outcomes);
-    return reportLoginFailures(ctx, mode, outcomes, Boolean(nodeRef));
-  } finally {
-    material.destroy();
-  }
+  return loginWithPassword(ctx, mode, {
+    password,
+    totpFlag: flagString(flags, 'totp'),
+    nodeRef,
+    timeoutMs,
+    concurrency,
+  });
 }
 
 export const command: Command = {

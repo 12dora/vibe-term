@@ -107,6 +107,7 @@ describe('TURN control socket Binding', () => {
       realm: 'vibeterm',
       credentials: () => null,
       deniedPeerCidrs: [],
+      denySelfAddresses: false,
     });
     const client = dgram.createSocket('udp4');
     try {
@@ -197,6 +198,7 @@ describe.skipIf(!nativeMod)('TURN relay with node-datachannel / libjuice', () =>
       realm: 'vibeterm',
       credentials: (user) => (user === 'integration' ? 'integration-password' : null),
       deniedPeerCidrs: [],
+      denySelfAddresses: false,
     });
     const { port: turnPort } = await server.start();
     const ice = {

@@ -10,6 +10,7 @@ import {
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
 import { isExecWsPath } from '../../../../apps/gateway/src/exec/channel/ws-upgrade';
+import { guardBrowserRequest } from '../../../../apps/gateway/src/mesh/browser-request-guard';
 import {
   MESH_VIA_SELF,
   type MeshRewritten,
@@ -31,7 +32,7 @@ import { guardEntryAccess } from '../../../../apps/gateway/src/tunnel/access-gua
 import { tunnelManager } from '../../../../apps/gateway/src/tunnel/manager';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { disableDirect, enableDirect } from '../commands/direct';
-import { readEnvFile, writeEnvFile } from '../lib/env-file';
+import { readEnvFileIfExists, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { detectCurrentNativePin } from '../lib/native-manifest';
@@ -104,7 +105,7 @@ function createRouteAuthenticate(
   };
 }
 
-function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): void {
+export function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): void {
   const existing = getMeshRequestContext(req);
   let clientIp = existing.clientIp;
   try {
@@ -115,6 +116,7 @@ function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): void {
     via: existing.via || MESH_VIA_SELF,
     clientIp,
     trustProxy: gatewayConfig.trustProxy,
+    clientIpHeader: gatewayConfig.clientIpHeader,
   });
 }
 
@@ -194,7 +196,7 @@ async function gatewayHttp(
   return null;
 }
 
-function createHttpDispatch(handlers: HttpHandler[]): AssembledFetch {
+function createHttpDispatch(handlers: HttpHandler[], openAccess: () => boolean): AssembledFetch {
   const dispatch = async (
     req: Request,
     bunServer: Bun.Server<unknown>,
@@ -202,6 +204,8 @@ function createHttpDispatch(handlers: HttpHandler[]): AssembledFetch {
   ): Promise<Response | undefined> => {
     seedLocalContext(req, bunServer);
     if (!rewritten) {
+      const foreign = guardBrowserRequest(req, { openAccess });
+      if (foreign) return foreign;
       const denied = await guardEntryAccess(req);
       if (denied) return denied;
       const domainDenied = guardDomainAccess(req);
@@ -256,34 +260,13 @@ function buildTlsLifecycle(
     onStatusChange: hooks?.onStatusChange,
   });
   tlsSlot.service = tls;
-  tunnelManager.setPatchHostEnv(async (trustProxy) => {
+  tunnelManager.setPatchHostEnv(async (update) => {
     const envPath = resolveSetupEnvPath();
     await withEnvLock(async () => {
-      let existing: Record<string, string> = {};
-      try {
-        existing = await readEnvFile(envPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      }
-      await writeEnvFile(envPath, {
-        ...existing,
-        VIBETERM_TRUST_PROXY: trustProxy ? 'true' : 'false',
-      });
+      await writeEnvFile(envPath, update((await readEnvFileIfExists(envPath)) ?? {}));
     });
   });
-  tunnelManager.setReadHostEnv(async () => {
-    const envPath = resolveSetupEnvPath();
-    try {
-      const existing = await readEnvFile(envPath);
-      const raw = existing.VIBETERM_TRUST_PROXY;
-      if (raw === undefined) return null;
-      const value = raw.trim().toLowerCase();
-      return value === '1' || value === 'true' || value === 'yes';
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw error;
-    }
-  });
+  tunnelManager.setReadHostEnv(() => readEnvFileIfExists(resolveSetupEnvPath()));
   return {
     tls,
     httpsListener,
@@ -385,7 +368,8 @@ export function buildHttpAndWs(input: {
           ...common,
           (req, server) => relayOnlyGatewayHttp(input.gateway, req, server),
           () => relayOnlyNotFound(),
-        ]
+        ],
+    () => input.authHttp?.isOpenAccess() ?? false
   );
   const websocket = routeWebsocket(input.gateway, input.mesh ?? wsAuthFrom(input.authHttp), relay);
   return {

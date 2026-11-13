@@ -1,12 +1,28 @@
+import { runWithFileAccessPrincipal } from '../auth/token-scope';
 import { listDirectory, readRawFile, readTextFile, statFile } from '../files/device-storage';
 import { browseDirectory } from '../files/directory-browse';
 import { t } from '../i18n';
+import { getMeshRequestContext } from '../mesh/mesh-deps';
+import { jsonError } from '../mesh/session-middleware';
+import { requestDispatchContext } from '../mesh/types';
 import { codeError } from './file-http';
 import { servePulledFile } from './file-serve';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
 
-async function handleBrowse(url: URL): Promise<Response> {
+function requestIsTokenPrincipal(req: Request): boolean {
+  return Boolean(requestDispatchContext.get(req)?.tokenId ?? getMeshRequestContext(req).tokenId);
+}
+
+function withReqFileAccess<T>(req: Request, fn: () => T): T {
+  return runWithFileAccessPrincipal(requestIsTokenPrincipal(req) ? 'token' : 'session', fn);
+}
+
+async function handleBrowse(req: Request): Promise<Response> {
+  if (requestIsTokenPrincipal(req)) {
+    return jsonError('TOKEN_SCOPE', 403, { message: 'token scope does not allow this request' });
+  }
+  const url = new URL(req.url);
   const deviceId = url.searchParams.get('deviceId');
   if (!deviceId) return codeError('invalid');
   const path = url.searchParams.get('path') ?? '';
@@ -58,18 +74,26 @@ export const fileBrowserRoutes: ApiRoute[] = [
   route({
     method: 'GET',
     path: '/api/files/browse',
-    handler: (req) => handleBrowse(new URL(req.url)),
+    handler: (req) => handleBrowse(req),
   }),
-  route({ method: 'GET', path: '/api/files/list', handler: (req) => handleList(new URL(req.url)) }),
+  route({
+    method: 'GET',
+    path: '/api/files/list',
+    handler: (req) => withReqFileAccess(req, () => handleList(new URL(req.url))),
+  }),
   route({
     method: 'GET',
     path: '/api/files/content',
-    handler: (req) => handleContent(new URL(req.url)),
+    handler: (req) => withReqFileAccess(req, () => handleContent(new URL(req.url))),
   }),
-  route({ method: 'GET', path: '/api/files/stat', handler: (req) => handleStat(new URL(req.url)) }),
+  route({
+    method: 'GET',
+    path: '/api/files/stat',
+    handler: (req) => withReqFileAccess(req, () => handleStat(new URL(req.url))),
+  }),
   route({
     method: 'GET',
     path: '/api/files/raw',
-    handler: (req) => handleRaw(req, new URL(req.url)),
+    handler: (req) => withReqFileAccess(req, () => handleRaw(req, new URL(req.url))),
   }),
 ];

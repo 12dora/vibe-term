@@ -3,6 +3,7 @@ import { type NodeUnreachableReason, wsBorsh } from '@vibeterm/shared';
 import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { LinkError, type LinkSession } from '@vibeterm/shared/link';
 import { DEFAULT_DIAL_RTT_MS, adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
+import { FILE_RESPONSE_CSP } from '../files/safe-file-headers';
 import {
   FakePeers,
   FakeStreams,
@@ -31,7 +32,6 @@ import {
 import { STREAM_FAILOVER_NO_HELLO_LIMIT } from './forwarder-failover';
 import {
   CHALLENGE_RATE_LIMIT,
-  MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
   MESH_REJECT_4401_KIND,
   type MeshServerWebSocket,
@@ -371,7 +371,7 @@ describe('forwarder', () => {
       expect(svg.headers.get('content-disposition')).toBe('attachment');
       expect(svg.headers.get('x-evil')).toBeNull();
       expect(svg.headers.get('set-cookie')).toBeNull();
-      expect(svg.headers.get('content-security-policy')).toBe(MESH_FORWARD_CSP);
+      expect(svg.headers.get('content-security-policy')).toBe(FILE_RESPONSE_CSP);
       expect(svg.headers.get('x-content-type-options')).toBe('nosniff');
       expect(svg.headers.get('cache-control')).toBe('no-store');
       expect(streams.lastOpen?.headers.cookie).toBeUndefined();
@@ -414,46 +414,35 @@ describe('forwarder', () => {
     }
   });
 
-  test('stamps x-vibeterm-client-source: local for trusted entry clients and drops browser forgeries', async () => {
+  test('never asserts client-source to the target and drops forged client-source headers', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
-    streams.nextResponse = new Response('{}', { headers: { 'content-type': 'application/json' } });
     const mesh = await bootMesh({ peers, streams });
     try {
-      const local = await call(mesh.runtime, `http://localhost/n/${OTHER}/api/auth/mode`, {
-        clientIp: '127.0.0.1',
-        headers: { 'x-tmex-client-source': 'forged' },
-      });
-      expect(local.status).toBe(200);
-      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBe('local');
-      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBe('local');
-      expect(streams.lastOpen?.path).toBe('/api/auth/mode');
-
-      streams.nextResponse = new Response('{}', {
-        headers: { 'content-type': 'application/json' },
-      });
-      const lan = await call(mesh.runtime, `http://localhost/n/${OTHER}/api/auth/login`, {
-        method: 'POST',
-        clientIp: '192.168.1.5',
-        headers: { 'content-type': 'application/json' },
-        body: '{}',
-      });
-      expect(lan.status).toBe(200);
-      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBe('local');
-      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBe('local');
-      expect(streams.lastOpen?.path).toBe('/api/auth/login');
-
-      streams.nextResponse = new Response('{}', {
-        headers: { 'content-type': 'application/json' },
-      });
-      const publicSrc = await call(mesh.runtime, `http://localhost/n/${OTHER}/api/auth/mode`, {
-        clientIp: '203.0.113.10',
-        headers: { 'x-tmex-client-source': 'local' },
-      });
-      expect(publicSrc.status).toBe(200);
-      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
-      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBeUndefined();
+      for (const [path, clientIp] of [
+        ['/api/auth/mode', '127.0.0.1'],
+        ['/api/auth/login', '192.168.1.5'],
+        ['/api/auth/mode', '203.0.113.10'],
+      ] as const) {
+        streams.nextResponse = new Response('{}', {
+          headers: { 'content-type': 'application/json' },
+        });
+        const res = await call(mesh.runtime, `http://localhost/n/${OTHER}${path}`, {
+          method: path === '/api/auth/login' ? 'POST' : 'GET',
+          clientIp,
+          headers: {
+            'content-type': 'application/json',
+            [CLIENT_SOURCE_HEADER.name]: 'local',
+            [CLIENT_SOURCE_HEADER.legacy]: 'local',
+          },
+          ...(path === '/api/auth/login' ? { body: '{}' } : {}),
+        });
+        expect(res.status).toBe(200);
+        expect(streams.lastOpen?.path).toBe(path);
+        expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
+        expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBeUndefined();
+      }
     } finally {
       mesh.close();
     }

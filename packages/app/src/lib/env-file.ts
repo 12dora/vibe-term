@@ -63,6 +63,17 @@ export async function readEnvFile(filePath: string): Promise<Record<string, stri
   return applyLegacyEnvAliases(parseEnvContent(content));
 }
 
+export async function readEnvFileIfExists(
+  filePath: string
+): Promise<Record<string, string> | null> {
+  try {
+    return await readEnvFile(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 const MAX_SYMLINK_HOPS = 32;
 
 function symlinkResolveError(filePath: string): Error {

@@ -53,7 +53,7 @@ export type RelayPasswordRotateMode = 'keep' | 'kick';
 export type RelayRotateEnrollPasswordRequest = {
   url: string;
   current?: string;
-  next: string | null;
+  next: string;
   mode?: RelayPasswordRotateMode;
 };
 export type RelayRotateEnrollPasswordResponse = { ok: true; passwordEpoch: number };
@@ -150,6 +150,8 @@ export interface RelayEnrollRequest {
   url: string;
   password?: string | null;
   proof: { bytes: string; sig: string };
+  /** 吊销之后的换发：要求中继无条件换发令牌并作废旧令牌。旧中继忽略该字段。 */
+  force_rotate?: true;
 }
 
 /**

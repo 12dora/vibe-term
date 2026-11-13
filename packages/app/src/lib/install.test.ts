@@ -140,6 +140,7 @@ describe('writeRunScript', () => {
     expect(script).toContain('export VIBETERM_MIGRATIONS_DIR=');
     expect(script).toContain('export VIBETERM_INSTALL_DIR=');
     expect(script).toContain('printf \'%s\\n\' "$$" > "$SCRIPT_DIR/vibeterm.pid"');
+    expect(script).toContain('chmod 600 "$SCRIPT_DIR/vibeterm.pid"');
     // run.sh 只导出 VIBETERM_*：迁移后不支持降级到 2.0 以下，事务回滚会还原旧 run.sh。
     expect(script).not.toContain('TMEX_');
     expect(spawnSync('bash', ['-n', '-c', script], { encoding: 'utf8' }).status).toBe(0);

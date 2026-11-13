@@ -1,8 +1,8 @@
 import type { ThemeMode } from '@vibeterm/shared';
 import type { DeviceTreeOrderRecord } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
-import { isTmuxPaneId } from '../tmux-client/snapshot-format';
 import type { GatewaySession } from './gateway-session';
+import { assertTmuxPaneId } from './tmux-pane-id';
 import { canSelectPane, canSelectWindow } from './tmux-selection-handlers';
 import type { DeviceConnectionEntry, WebSocketServerDeps } from './types';
 
@@ -39,12 +39,15 @@ export interface TmuxCommandHost {
   storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord;
 }
 
+export { assertTmuxPaneId } from './tmux-pane-id';
+
 export function handleTermInput(
   host: TmuxCommandHost,
   deviceId: string,
   paneId: string,
   data: string
 ): void {
+  assertTmuxPaneId(paneId);
   const entry = host.connections.get(deviceId);
   if (!entry) return;
   entry.runtime.sendInput(paneId, data);
@@ -56,6 +59,7 @@ export function handleTermPaste(
   paneId: string,
   data: string
 ): void {
+  assertTmuxPaneId(paneId);
   const entry = host.connections.get(deviceId);
   if (!entry) return;
 
@@ -83,6 +87,7 @@ export function handleCloseWindow(host: TmuxCommandHost, deviceId: string, windo
 }
 
 export function handleClosePane(host: TmuxCommandHost, deviceId: string, paneId: string): void {
+  assertTmuxPaneId(paneId);
   const entry = host.connections.get(deviceId);
   if (!entry) return;
   entry.runtime.closePane(paneId);
@@ -94,7 +99,7 @@ export function renamePane(
   paneId: string,
   name: string
 ): void {
-  if (!isTmuxPaneId(paneId)) return;
+  assertTmuxPaneId(paneId);
   const trimmed = name.trim().slice(0, 64);
   const names = host.paneCustomNames.get(deviceId);
 
@@ -112,7 +117,8 @@ export function renamePane(
 
 export function handleBreakPane(host: TmuxCommandHost, deviceId: string, paneId: string): void {
   const entry = host.connections.get(deviceId);
-  if (!entry || !isTmuxPaneId(paneId)) return;
+  assertTmuxPaneId(paneId);
+  if (!entry) return;
   entry.runtime.breakPane(paneId);
 }
 
@@ -124,7 +130,9 @@ export function handleMovePane(
   position: number
 ): void {
   const entry = host.connections.get(deviceId);
-  if (!entry || !isTmuxPaneId(srcPaneId) || !isTmuxPaneId(dstPaneId)) return;
+  assertTmuxPaneId(srcPaneId);
+  assertTmuxPaneId(dstPaneId);
+  if (!entry) return;
   if (srcPaneId === dstPaneId) return;
   const positionMap: Record<number, 'left' | 'right' | 'top' | 'bottom'> = {
     1: 'left',
@@ -208,6 +216,7 @@ export function reorderPanes(
   paneIds: string[]
 ): void {
   const currentOrder = host.getCachedDeviceTreeOrder(deviceId);
+  for (const paneId of paneIds) assertTmuxPaneId(paneId);
   host.deps.savePaneOrder(deviceId, windowId, paneIds);
   host.storeDeviceTreeOrder({
     deviceId,
@@ -266,7 +275,8 @@ export function handleSplitPane(
   cwd?: string
 ): void {
   const entry = host.connections.get(deviceId);
-  if (!entry || !isTmuxPaneId(paneId)) return;
+  assertTmuxPaneId(paneId);
+  if (!entry) return;
   const dir = direction === 2 ? 'v' : 'h';
   entry.runtime.splitPane(paneId, dir, cwd);
 }

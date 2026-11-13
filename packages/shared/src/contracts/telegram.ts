@@ -26,6 +26,10 @@ export interface TelegramBotChat {
   chatType: TelegramChatType;
   displayName: string;
   userId: string | null;
+  /** 当前绑定的指令人 id；未绑定为空串。 */
+  boundUserId: string;
+  /** 私聊时的显示名；其余为 `null`。 */
+  boundUserName: string | null;
   status: TelegramChatStatus;
   appliedAt: string;
   authorizedAt: string | null;

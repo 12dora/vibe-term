@@ -706,10 +706,14 @@ describe('RelayTenantApi 接入密码', () => {
     expect(bodyOf(calls[0])).toEqual(body);
   });
 
-  test('rotateEnrollPassword 可省略 current、next 为 null、mode 为 kick', async () => {
+  test('rotateEnrollPassword 可省略 current、mode 为 kick', async () => {
     const { api, calls } = recorder([ok({ ok: true, passwordEpoch: 5 })]);
-    await api.rotateEnrollPassword({ url: 'https://r.example', next: null, mode: 'kick' });
-    expect(bodyOf(calls[0])).toEqual({ url: 'https://r.example', next: null, mode: 'kick' });
+    await api.rotateEnrollPassword({ url: 'https://r.example', next: 'new-secret', mode: 'kick' });
+    expect(bodyOf(calls[0])).toEqual({
+      url: 'https://r.example',
+      next: 'new-secret',
+      mode: 'kick',
+    });
   });
 
   test('rotateEnrollPassword 把契约错误码透传成类型化错误', async () => {

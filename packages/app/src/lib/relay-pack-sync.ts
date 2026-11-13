@@ -1,3 +1,4 @@
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { RELAY_KEYLOG_MAX_PAGES } from '../../../../apps/gateway/src/mesh/relay-key-log-sync';
 import { bytesEqual, encodeBase64url } from '../../../shared/src/auth';
 import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
@@ -66,6 +67,8 @@ async function readRemotePrefix(input: PackSyncInput): Promise<bigint> {
 }
 
 async function publishMissing(input: PackSyncInput, remoteHead: bigint): Promise<void> {
+  const node = await ensureNodeIdentity(input.ctx.identityStore);
+  const identity = { nodeId: node.nodeIdHex, edPrivateKey: node.edPrivateKey };
   let cursor = remoteHead;
   for (let page = 0; cursor < input.headSeq && page < RELAY_KEYLOG_MAX_PAGES; page += 1) {
     const records = input.ctx.keyLogStore.list(input.userId, Number(cursor + 1n), 64);
@@ -73,7 +76,7 @@ async function publishMissing(input: PackSyncInput, remoteHead: bigint): Promise
     for (const record of records) {
       if (BigInt(record.seq) > input.headSeq) return;
       try {
-        await appendOneJoinRecord({ ...input, record });
+        await appendOneJoinRecord({ ...input, record, identity });
       } catch (error) {
         if (!isRelaySeqMismatch(error)) throw error;
         if (!(await recordIsPublished(input, BigInt(record.seq)))) throw error;

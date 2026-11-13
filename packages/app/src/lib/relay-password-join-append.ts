@@ -1,13 +1,22 @@
 import { relayMemberFromRecord } from '../../../../apps/gateway/src/mesh/relay-key-log-sync';
 import { decodeKeyLogRecord, encodeBase64url } from '../../../shared/src/auth';
 import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
-import { RELAY_KEYLOG_SEQ_MISMATCH, sealRelayKeyLogRecord } from '../../../shared/src/relay';
+import {
+  RELAY_KEYLOG_SEQ_MISMATCH,
+  sealRelayKeyLogRecord,
+  signRelayKeyLogAppend,
+} from '../../../shared/src/relay';
 import { RelayApiError, joinRelayUrl, requestRelayJson } from '../commands/relay-shared';
 import type { FetchLike } from './fetch-like';
 
 export const RELAY_JOIN_APPEND_ATTEMPTS = 4;
 
 export type JoinRecord = { bytes: Uint8Array; sig: Uint8Array };
+
+export type JoinAppendIdentity = {
+  nodeId: string;
+  edPrivateKey: Uint8Array;
+};
 
 export type AppendPairResult =
   | { ok: true }
@@ -32,12 +41,26 @@ export async function appendOneJoinRecord(input: {
   token: Uint8Array;
   logKey: Uint8Array;
   record: JoinRecord;
+  identity?: JoinAppendIdentity;
   fetcher?: FetchLike;
   timeoutMs?: number;
 }): Promise<Record<string, unknown>> {
   const seq = decodeKeyLogRecord(input.record.bytes).seq;
   const blob = await sealRelayKeyLogRecord(input.logKey, input.record);
   const member = relayMemberFromRecord(input.record);
+  const nodeProof = input.identity
+    ? {
+        node_id: input.identity.nodeId,
+        node_sig: encodeBase64url(
+          signRelayKeyLogAppend(input.identity.edPrivateKey, {
+            relayHost: new URL(input.relayUrl).host,
+            tenantId: input.tenantId,
+            seq,
+            envelope: blob,
+          })
+        ),
+      }
+    : {};
   return await requestRelayJson({
     fetcher: input.fetcher,
     url: joinRelayUrl(input.relayUrl, `/api/relay/tenants/${input.tenantId}/keylog`),
@@ -47,6 +70,7 @@ export async function appendOneJoinRecord(input: {
       seq: Number(seq) <= Number.MAX_SAFE_INTEGER ? Number(seq) : seq.toString(),
       blob,
       ...(member ? { member } : {}),
+      ...nodeProof,
     },
     label: 'relay key log append',
     timeoutMs: input.timeoutMs,
@@ -64,6 +88,7 @@ export async function appendAdmitThenMeta(input: {
   logKey: Uint8Array;
   admit: JoinRecord;
   meta: JoinRecord;
+  identity: JoinAppendIdentity;
   fetcher?: FetchLike;
   timeoutMs?: number;
 }): Promise<AppendPairResult> {

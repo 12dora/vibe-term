@@ -5,6 +5,7 @@ import { createDevice } from '../../db/devices';
 import { runMigrations } from '../../db/migrate';
 import { agentPaneGrants } from '../../db/schema';
 import { MESH_PEER_HEADER } from '../../mesh/peer-request-marker';
+import { requestDispatchContext } from '../../mesh/types';
 import { PANE_GRANT_ROUTE, createPaneGrantRoutes } from './routes';
 import { getPaneGrant, issuePaneGrant } from './store';
 
@@ -43,7 +44,7 @@ beforeEach(() => {
 async function call(
   method: string,
   path: string,
-  options: { body?: unknown; peer?: string } = {}
+  options: { body?: unknown; peer?: string; via?: string } = {}
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (options.peer) headers[MESH_PEER_HEADER.name] = options.peer;
@@ -52,6 +53,7 @@ async function call(
     headers,
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });
+  if (options.via) requestDispatchContext.set(req, { uid: 'user-1', viaNodeId: options.via });
   const res = await dispatchRoutes(req, path, routes, { path });
   if (!res) throw new Error(`no route for ${method} ${path}`);
   const resolved = await res;
@@ -71,7 +73,17 @@ describe('POST /api/agent/pane-grants', () => {
       deviceId: DEVICE,
       paneId: '%1',
       serverEpoch: EPOCH,
+      issuedVia: 'self',
     });
+  });
+
+  test('经入口转发的签发记下入口节点', async () => {
+    const res = await call('POST', PANE_GRANT_ROUTE, {
+      body: { fromNodeId: NODE_X, deviceId: DEVICE, paneId: '%2' },
+      via: NODE_Z,
+    });
+    expect(res.status).toBe(201);
+    expect(getPaneGrant(res.json.grantId as string)?.issuedVia).toBe(NODE_Z);
   });
 
   test('经 mesh 转发：授权绑到 peer 标记，请求体不一致直接拒', async () => {

@@ -177,6 +177,18 @@ describe('mapForwardedUpgradeResponse', () => {
     expect(await mapped.json()).toEqual({ code: 'UPGRADE_IN_PROGRESS', nodeId });
   });
 
+  test('409 UPGRADE_DOWNGRADE_REFUSED is forwarded', async () => {
+    const mapped = await mapForwardedUpgradeResponse(
+      nodeId,
+      new Response(JSON.stringify({ code: 'UPGRADE_DOWNGRADE_REFUSED' }), {
+        status: 409,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    expect(mapped.status).toBe(409);
+    expect(await mapped.json()).toEqual({ code: 'UPGRADE_DOWNGRADE_REFUSED', nodeId });
+  });
+
   test('200 JSON status is passed through', async () => {
     const body = {
       state: 'downloading',

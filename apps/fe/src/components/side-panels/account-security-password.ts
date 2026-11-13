@@ -7,6 +7,7 @@ import {
   type MetaKeyRotationOutcome,
   type SignedPasswordChange,
   changePassword,
+  settleRelayAfterPasswordChange,
 } from '@/auth/account-security-actions';
 import { clearLocalDeviceCaches } from '@/auth/logout-local-caches';
 import { clearSessionKey, getSessionKey } from '@/auth/session-key-store';
@@ -14,7 +15,9 @@ import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import { type RelayAckFields, relayAckError, relayAckErrorText } from '@/node/relay-ack';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
-import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@vibeterm/shared/auth';
+import { handleGlobalUnauthorized } from '@vibeterm/api-client/auth/index';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES, checkAccountPassword } from '@vibeterm/shared/auth';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -30,22 +33,21 @@ export function securityActionErrorText(t: Translate, code: string): string {
 // 改密
 // ---------------------------------------------------------------------------
 
-export type PasswordChangeFollowUp = 'clear-session' | 'resume-session' | 'keep-session';
+export type PasswordChangeFollowUp = 'resume-session' | 'sign-in';
 
 /**
- * 改密成功后拿浏览器这份会话怎么办。
+ * 改密成功后拿浏览器这份会话怎么办。任何改密（常规与全量重置）都会让服务端撤销**全部**节点上的
+ * 会话、包括当前这份，本地手上的旧会话已经是废的：
  *
- * - `clear-session`：全量重置撤销了全部会话，本地连 IndexedDB 一起清掉；
- * - `resume-session`：常规改密不撤销会话，用新密码重建 delegation 再登录一次 entry；
- * - `keep-session`：开了 TOTP 却没给验证码，重新登录做不了，保留手上这份仍然有效的会话。
+ * - `resume-session`：用内存里的新密码重建 delegation 再登录一次 entry，其余节点由既有的静默重登补上；
+ * - `sign-in`：开了 TOTP 却没给验证码（全量重置会清掉 TOTP，不受影响），静默登录做不了，直接回登录页。
  */
 export function passwordChangeFollowUp(input: {
   fullReset: boolean;
   totpEnabled: boolean;
   totpCode: string;
 }): PasswordChangeFollowUp {
-  if (input.fullReset) return 'clear-session';
-  if (input.totpEnabled && !/^\d{6}$/.test(input.totpCode)) return 'keep-session';
+  if (!input.fullReset && input.totpEnabled && !/^\d{6}$/.test(input.totpCode)) return 'sign-in';
   return 'resume-session';
 }
 
@@ -85,6 +87,8 @@ interface ResumeSessionInput {
   nodeId: string;
   signed: SignedPasswordChange;
   sleep?: (ms: number) => Promise<void>;
+  /** 中继模式：重新登录成功后还掉改密留下的 `meta-key` 与密封包欠账。 */
+  relay?: { relayApi?: RelayTenantApi };
 }
 
 /**
@@ -92,7 +96,7 @@ interface ResumeSessionInput {
  *
  * kdf 参数与 root_epoch 以**本次签进记录的值**为准，`/api/auth/mode` 只是拿来确认；确认不上
  * 也照样按签进去的那份重建。任何失败都只是「没接上」——密码已经改成功了，不能反过来报成
- * 改密失败；旧会话由 `replaceSessionKey()` 保住，调用方只给一行提示。
+ * 改密失败；调用方据返回值决定回登录页。
  */
 async function resumeSession(input: ResumeSessionInput): Promise<boolean> {
   try {
@@ -120,27 +124,62 @@ async function resumeSession(input: ResumeSessionInput): Promise<boolean> {
 export interface PasswordChangeFeedback {
   tone: 'ok' | 'notice';
   text: string;
+  /** 重新登录后当场补发 `meta-key` 的最终结论；没有补发时缺省。 */
+  metaKey?: MetaKeyRotationOutcome;
 }
 
-/** 改密成功后的收尾：只有全量重置才清会话钥；常规改密走两阶段替换，失败也不动旧会话。 */
+/** 回登录页：带上当前地址作 `next`，由会话拦截器注入的路由跳转执行。 */
+function redirectToLogin(): void {
+  handleGlobalUnauthorized('/api/auth/keylog');
+}
+
+/**
+ * 改密成功后的收尾：静默接回会话；接不回（没给验证码、重登失败或抛异常）就把已被服务端撤销的
+ * 本地会话连 IndexedDB 一起清掉，干净地回登录页——密码已经改成功，不能报成改密失败。
+ */
 export async function finishPasswordChange(
-  input: ResumeSessionInput & { follow: PasswordChangeFollowUp; t: Translate }
+  input: ResumeSessionInput & {
+    follow: PasswordChangeFollowUp;
+    t: Translate;
+    toLogin?: () => void;
+  }
 ): Promise<PasswordChangeFeedback> {
-  if (input.follow === 'clear-session') {
-    // rotate-root 撤销所有会话：等盘上那份也删掉再往下走，否则用户随手刷新一下，
-    // IndexedDB 里那份已被服务端撤销的会话钥又会被恢复出来。
-    await clearSessionKey();
-    // 全量重置后必须重新登录，按 node 落盘的拓扑与设备快照一并清掉。
-    clearLocalDeviceCaches();
-    return { tone: 'ok', text: input.t('auth.security.changePasswordDone') };
+  if (input.follow === 'resume-session' && (await resumeSession(input))) {
+    // 新会话已经建好、新密码还在内存里：欠账趁现在还，别留给「用户记得回节点页」。
+    const metaKey = input.relay
+      ? await settleRelayAfterPasswordChange({
+          api: input.api,
+          relayApi: input.relay.relayApi,
+          lock: withKeyLogLock,
+          uid: input.uid,
+          password: input.password,
+          signed: input.signed,
+        })
+      : undefined;
+    return {
+      tone: 'ok',
+      text: input.t('auth.security.changePasswordDone'),
+      ...(metaKey ? { metaKey } : {}),
+    };
   }
-  if (input.follow === 'keep-session') {
-    return { tone: 'notice', text: input.t('auth.security.sessionResumeSkipped') };
-  }
-  const resumed = await resumeSession(input);
-  return resumed
-    ? { tone: 'ok', text: input.t('auth.security.changePasswordKeepDone') }
-    : { tone: 'notice', text: input.t('auth.security.sessionResumeFailed') };
+  // 清盘要等删完再跳：否则新 document 会把这份已撤销的会话钥恢复出来，登录页又被弹回。
+  await clearSessionKey();
+  clearLocalDeviceCaches();
+  (input.toLogin ?? redirectToLogin)();
+  return { tone: 'notice', text: input.t('auth.security.changePasswordSignIn') };
+}
+
+export function passwordInputError(
+  t: Translate,
+  input: { oldPassword: string; newPassword: string; confirm: string },
+  username: string | null
+): string | null {
+  if (!input.oldPassword || !input.newPassword) return t('auth.security.passwordRequired');
+  if (input.newPassword !== input.confirm) return t('auth.security.passwordMismatch');
+  const issue = checkAccountPassword(input.newPassword, { username: username ?? undefined });
+  if (issue === 'too_short') return t('auth.security.passwordTooShort');
+  if (issue === 'too_simple') return t('auth.security.passwordTooSimple');
+  return null;
 }
 
 export interface PasswordChangeRequest {
@@ -154,6 +193,7 @@ export interface PasswordChangeRequest {
   totpEnabled: boolean;
   totpCode: string;
   t: Translate;
+  relayApi?: RelayTenantApi;
 }
 
 type PasswordChangeOutcome = { tone: 'error'; text: string } | PasswordChangeFeedback;
@@ -169,7 +209,8 @@ export async function submitPasswordChange(
     currentKdfParams: input.kdfParams,
     fullReset: input.fullReset,
     totpEnabled: input.totpEnabled,
-    // 改密与紧随其后的 `meta-key` 必须连成一段，且与 admit / revoke 抢同一个 key log 头。
+    relayApi: input.relayApi,
+    // 改密与随后待发的 `meta-key` 必须连成一段，且与 admit / revoke 抢同一个 key log 头。
     lock: withKeyLogLock,
   });
   if (!result.ok) {
@@ -181,14 +222,20 @@ export async function submitPasswordChange(
     nodeId: input.nodeId,
     password: input.newPassword,
     totpCode: input.totpCode,
-    totpEnabled: input.totpEnabled,
+    // 全量重置会清掉 TOTP：重新登录不再需要验证码。
+    totpEnabled: input.totpEnabled && !input.fullReset,
     // 服务端还没应用完记录时 `/api/auth/mode` 给的是旧 epoch；重建会话只认这两个签进去的值。
     signed: { nextRootEpoch: result.nextRootEpoch, newKdfParams: result.newKdfParams },
     follow: passwordChangeFollowUp(input),
     t: input.t,
+    relay: result.metaKey ? { relayApi: input.relayApi } : undefined,
   });
   // 两条补充说明各自独立：元数据密钥没换代、以及这条改密记录没上中继。
-  return withRelayAckNotice(withMetaKeyNotice(feedback, result.metaKey, input.t), result, input.t);
+  return withRelayAckNotice(
+    withMetaKeyNotice(feedback, feedback.metaKey ?? result.metaKey, input.t),
+    result,
+    input.t
+  );
 }
 
 /**
@@ -208,8 +255,8 @@ export function withRelayAckNotice(
 
 /**
  * 中继模式下改密要顺带换一代元数据密钥（plan §1.3）。没换成不能当没事发生：
- * 全量重置（`rotate-root`）会当场撤销全部会话，那条记录必然要等重新登录后才送得出去——
- * 它已经签好并落在待办里，节点页会一直挂告警直到送达。
+ * 记录落账时会话就被撤销，那条记录只能在重新登录之后送出——先由 `finishPasswordChange` 当场补发，
+ * 补不上（没接回会话、中继离线）就留在待办里，节点页会一直挂告警直到送达。
  */
 export function withMetaKeyNotice(
   feedback: PasswordChangeFeedback,

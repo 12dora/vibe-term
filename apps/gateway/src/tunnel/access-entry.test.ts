@@ -3,13 +3,13 @@ import { setMeshRequestContext } from '../mesh/mesh-deps';
 import {
   accessEnforcementActive,
   guardEntryAccess,
-  guardedGatewayFetch,
   resetAccessGuardForTests,
   setAccessGuardFetch,
   setAccessGuardSnapshot,
 } from './access-guard';
 import { generateAccessTestKey, signAccessJwt } from './access-jwt';
 import { isAccessGuardExemptPath } from './access-paths';
+import { guardedGatewayFetch } from './gateway-fetch';
 
 const TEAM = 'team.cloudflareaccess.com';
 const AUD = 'aud-1';
@@ -152,6 +152,56 @@ describe('guardedGatewayFetch', () => {
     );
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('uplink');
+  });
+});
+
+describe('guardedGatewayFetch: browser request guard', () => {
+  const upgrade = (origin: string) => ({
+    upgrade: 'websocket',
+    connection: 'upgrade',
+    origin,
+  });
+
+  test('foreign Origin on WebSocket upgrades is 403 before the inner handler', async () => {
+    for (const path of ['/api/exec/ws', '/ws']) {
+      let inner = 0;
+      const res = await guardedGatewayFetch(
+        new Request(`http://127.0.0.1:9883${path}`, { headers: upgrade('https://evil.example') }),
+        async () => {
+          inner += 1;
+          return new Response('ok');
+        },
+        dummyServer
+      );
+      expect(res.status).toBe(403);
+      expect(inner).toBe(0);
+    }
+  });
+
+  test('same-origin upgrade and Origin-less clients reach the inner handler', async () => {
+    const same = await guardedGatewayFetch(
+      new Request('http://127.0.0.1:9883/api/exec/ws', {
+        headers: upgrade('http://127.0.0.1:9883'),
+      }),
+      async () => new Response('inner'),
+      dummyServer
+    );
+    expect(same.status).toBe(200);
+    const cli = await guardedGatewayFetch(
+      new Request('http://127.0.0.1:9883/api/exec', { method: 'POST' }),
+      async () => new Response('inner'),
+      dummyServer
+    );
+    expect(cli.status).toBe(200);
+  });
+
+  test('an unrecognised Host is 421 (the runtime has no login gate)', async () => {
+    const res = await guardedGatewayFetch(
+      new Request('http://rebind.example.com:9883/api/devices'),
+      async () => new Response('inner'),
+      dummyServer
+    );
+    expect(res.status).toBe(421);
   });
 });
 

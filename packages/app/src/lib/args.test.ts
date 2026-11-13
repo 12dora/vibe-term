@@ -103,6 +103,18 @@ describe('resolveNestedCommand', () => {
     expect(() => assertKnownFlags(join)).not.toThrow();
   });
 
+  test('relay join accepts --token-stdin as a boolean flag', () => {
+    const join = parseArgs(['relay', 'join', '--token-stdin', '--no-wait']);
+    expect(join.flags['token-stdin']).toBe(true);
+    expect(() => assertKnownFlags(join)).not.toThrow();
+  });
+
+  test('upgrade accepts --allow-downgrade', () => {
+    const parsed = parseArgs(['upgrade', '--version', '1.0.0', '--allow-downgrade']);
+    expect(parsed.flags['allow-downgrade']).toBe(true);
+    expect(() => assertKnownFlags(parsed)).not.toThrow();
+  });
+
   test('resolves mesh reset-root and direct', () => {
     expect(resolveNestedCommand(parseArgs(['mesh', 'reset-root'])).name).toBe('mesh.reset-root');
     const direct = resolveNestedCommand(parseArgs(['direct', 'enable']));
@@ -213,7 +225,9 @@ describe('cli help', () => {
     );
     expect(cliHelpText('zh-CN')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
     expect(help).toContain('vibeterm relay join');
-    expect(help).toContain('--token <r3.…>');
+    expect(help).toContain('--token <r3.…>|--token-stdin');
+    expect(help).toContain('--allow-downgrade');
+    expect(help).toContain('VIBETERM_RELAY_JOIN_TOKEN');
     expect(help).toContain('--no-restart');
     expect(help).toContain('vibeterm mesh reset-root');
     expect(help).toContain('VIBETERM_PASSWORD');

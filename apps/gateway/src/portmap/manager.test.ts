@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@vibeterm/shared/link';
+import { createMigratedAuthDb } from '../auth/test-db';
 import { resetPeerStreamSlots } from './budget';
 import { PortMapManager } from './manager';
 import { isPortFree } from './port-probe';
-import { MemoryPortMapStore } from './store';
+import { MemoryPortMapStore, PortMapStore, removePortMapsForRevocation } from './store';
 import { PortMapError, type PortMapPeers, type PortMapRow } from './types';
 
 const TARGET_NODE = 'c'.repeat(32);
@@ -303,5 +304,43 @@ describe('portmap manager', () => {
     expect(refused).toBe(true);
     expect(manager.get(second.id).activeConnections).toBe(0);
     held.terminate();
+  });
+
+  test('a revocation cascade deletes the rows and stops the listener of a running manager', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const removed: string[] = [];
+    const manager = new PortMapManager({
+      store: new PortMapStore(db),
+      peers: () => null,
+      reservedPorts: () => [19_663, 19_883],
+      removePeerExport: async (nodeId, mapId) => {
+        removed.push(`${nodeId}/${mapId}`);
+        return true;
+      },
+    });
+    managers.push(manager);
+    try {
+      manager.start();
+      const port = freePort();
+      const dto = manager.create(
+        { listenPort: port, targetNodeId: TARGET_NODE, targetPort: 22 },
+        { issuedVia: 'e'.repeat(32), createdByTokenId: 'tok-1' }
+      );
+      const kept = manager.create({
+        listenPort: freePort(),
+        targetNodeId: TARGET_NODE,
+        targetPort: 23,
+      });
+      expect(isPortFree('127.0.0.1', port)).toBe(false);
+      expect(removePortMapsForRevocation(db, { createdByTokenId: 'tok-1' })).toEqual([dto.id]);
+      expect(manager.list().map((item) => item.id)).toEqual([kept.id]);
+      expect(isPortFree('127.0.0.1', port)).toBe(true);
+      await Promise.resolve();
+      expect(removed).toEqual([`${TARGET_NODE}/${dto.id}`]);
+      manager.stop();
+      expect(removePortMapsForRevocation(db, { issuedVia: 'self' })).toEqual([kept.id]);
+    } finally {
+      close();
+    }
   });
 });

@@ -1192,8 +1192,14 @@ describe('assembleVibeTerm standalone auth surface', () => {
     });
   }
 
-  async function json(assembled: Awaited<ReturnType<typeof assembleVibeTerm>>, req: Request) {
-    const res = await assembled.fetch(req, dummyServer);
+  const loopbackServer = serverWithClientIp('127.0.0.1');
+
+  async function json(
+    assembled: Awaited<ReturnType<typeof assembleVibeTerm>>,
+    req: Request,
+    server: Bun.Server<unknown> = dummyServer
+  ) {
+    const res = await assembled.fetch(req, server);
     if (!res) throw new Error(`no response for ${req.url}`);
     return { res, body: (await res.json()) as Record<string, unknown> };
   }
@@ -1283,7 +1289,8 @@ describe('assembleVibeTerm standalone auth surface', () => {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ username: 'owner', password: 'vibeterm-test-pass' }),
-        })
+        }),
+        loopbackServer
       );
       expect(boot.res.status).toBe(200);
 
@@ -1293,7 +1300,8 @@ describe('assembleVibeTerm standalone auth surface', () => {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ enabled: true }),
-        })
+        }),
+        loopbackServer
       );
       expect(enabled.res.status).toBe(200);
       expect((enabled.body.localAuth as { effective: boolean }).effective).toBe(true);
@@ -1485,7 +1493,8 @@ describe('assembleVibeTerm standalone auth surface', () => {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ username: 'owner', password: 'vibeterm-test-pass' }),
-        })
+        }),
+        loopbackServer
       );
       await json(
         assembled,
@@ -1493,7 +1502,8 @@ describe('assembleVibeTerm standalone auth surface', () => {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ enabled: true }),
-        })
+        }),
+        loopbackServer
       );
 
       let upgradeData: { kind?: string } | undefined;
@@ -1817,6 +1827,7 @@ describe('assembleVibeTerm domain access guard', () => {
   }
 
   test('default allowed does not change public dispatch', async () => {
+    setDomainAccessGuardForTests({ hosts: HOSTS });
     const assembled = await assembleVibeTerm({
       roles: { node: false, relay: false },
       serveFrontend: async () => new Response('spa'),
@@ -1924,7 +1935,7 @@ describe('assembleVibeTerm domain access guard', () => {
     expect(unknown?.status).toBe(403);
   });
 
-  test('untrusted spoofed XFF is judged by the socket address', async () => {
+  test('without trusted proxy, a forwarded request is never a local source', async () => {
     const assembled = await assembleDisabled();
     const lanSocket = await assembled.fetch(
       new Request('https://vibeterm.example.com/', {
@@ -1932,7 +1943,7 @@ describe('assembleVibeTerm domain access guard', () => {
       }),
       serverWithClientIp('10.0.0.8')
     );
-    expect(lanSocket?.status).toBe(200);
+    expect(lanSocket?.status).toBe(403);
     const publicSocket = await assembled.fetch(
       new Request('https://vibeterm.example.com/', {
         headers: { 'x-forwarded-for': '10.0.0.8' },
@@ -1983,5 +1994,139 @@ describe('assembleVibeTerm preflight', () => {
     expect(frontendCalls).toBe(0);
     await assembled.tls.startup();
     await assembled.stop();
+  });
+});
+
+describe('browser request guard in the dispatch', () => {
+  const originalRoles = process.env.VIBETERM_ROLES;
+  afterEach(() => {
+    if (originalRoles === undefined) {
+      process.env.VIBETERM_ROLES = undefined;
+    } else {
+      process.env.VIBETERM_ROLES = originalRoles;
+    }
+  });
+
+  const ENTRY = 'http://127.0.0.1:9883';
+  const NODE = 'ab'.repeat(16);
+  const wsHeaders = (extra: Record<string, string> = {}) => ({
+    upgrade: 'websocket',
+    connection: 'Upgrade',
+    ...extra,
+  });
+
+  async function nodeEntry() {
+    const reached: string[] = [];
+    const assembled = await assembleVibeTerm({
+      roles: { node: true, relay: false },
+      createGatewayRuntime: async () =>
+        fakeGateway({
+          handleRequest(req) {
+            reached.push(`gateway:${req.method}:${new URL(req.url).pathname}`);
+            return new Response('gw');
+          },
+        }),
+      createMeshRuntime: async () =>
+        fakeMesh({
+          nodeId: NODE,
+          guardGatewayWebSocket(req) {
+            reached.push(`ws:${new URL(req.url).pathname}`);
+            return new Response('ws-reached');
+          },
+        }),
+      serveFrontend: async () => new Response('spa'),
+    });
+    return { assembled, reached };
+  }
+
+  test('/ws, /n/:id/ws and exec ws refuse a same-site foreign origin', async () => {
+    const { assembled, reached } = await nodeEntry();
+    for (const path of ['/ws', `/n/${NODE}/ws`, '/api/exec/ws', `/n/${NODE}/api/exec/ws`]) {
+      const res = await assembled.fetch(
+        new Request(`${ENTRY}${path}`, { headers: wsHeaders({ origin: 'http://127.0.0.1:8080' }) }),
+        dummyServer
+      );
+      expect(res?.status).toBe(403);
+    }
+    expect(reached).toEqual([]);
+  });
+
+  test('/ws upgrade with same origin or without origin reaches the ws guard', async () => {
+    const { assembled, reached } = await nodeEntry();
+    const same = await assembled.fetch(
+      new Request(`${ENTRY}/ws`, { headers: wsHeaders({ origin: ENTRY }) }),
+      dummyServer
+    );
+    expect(await same?.text()).toBe('ws-reached');
+    const none = await assembled.fetch(
+      new Request(`${ENTRY}/ws`, { headers: wsHeaders() }),
+      dummyServer
+    );
+    expect(await none?.text()).toBe('ws-reached');
+    expect(reached).toEqual(['ws:/ws', 'ws:/ws']);
+  });
+
+  test('CSRF: POST /api/exec with a foreign origin or Sec-Fetch-Site cross-site is 403', async () => {
+    const { assembled, reached } = await nodeEntry();
+    const post = (headers: Record<string, string>) =>
+      assembled.fetch(
+        new Request(`${ENTRY}/api/exec`, {
+          method: 'POST',
+          headers: { 'content-type': 'text/plain', ...headers },
+          body: '{"deviceId":"d","argv":["id"]}',
+        }),
+        dummyServer
+      );
+    const foreign = await post({ origin: 'https://evil.example' });
+    expect(foreign?.status).toBe(403);
+    expect(await foreign?.json()).toEqual({ error: { code: 'FOREIGN_ORIGIN' } });
+    expect((await post({ origin: 'null' }))?.status).toBe(403);
+    expect((await post({ 'sec-fetch-site': 'cross-site' }))?.status).toBe(403);
+    expect(reached).toEqual([]);
+    expect(await (await post({ origin: ENTRY }))?.text()).toBe('gw');
+    expect(await (await post({}))?.text()).toBe('gw');
+  });
+
+  test('authenticated mesh entry does not enforce the Host rule', async () => {
+    const { assembled } = await nodeEntry();
+    const res = await assembled.fetch(
+      new Request('http://attacker.example/api/devices'),
+      dummyServer
+    );
+    expect(await res?.text()).toBe('gw');
+  });
+
+  test('open standalone refuses a rebinding Host with 421', async () => {
+    process.env.VIBETERM_ROLES = 'standalone';
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const assembled = await assembleVibeTerm({
+        createGatewayRuntime: async () =>
+          fakeGateway({ db, handleRequest: () => new Response('gw') }),
+        createMeshRuntime: async () => {
+          throw new Error('standalone must not construct mesh');
+        },
+        serveFrontend: async () => new Response('spa'),
+      });
+      const rebound = await assembled.fetch(
+        new Request('http://attacker.example:9883/api/devices'),
+        dummyServer
+      );
+      expect(rebound?.status).toBe(421);
+      expect(await rebound?.json()).toEqual({ error: { code: 'MISDIRECTED_HOST' } });
+      const page = await assembled.fetch(new Request('http://attacker.example/'), dummyServer);
+      expect(page?.status).toBe(421);
+      for (const host of ['127.0.0.1:9883', 'localhost:9883', 'vt.localhost', '[::1]:9883']) {
+        const ok = await assembled.fetch(new Request(`http://${host}/api/devices`), dummyServer);
+        expect(await ok?.text()).toBe('gw');
+      }
+      const ws = await assembled.fetch(
+        new Request(`${ENTRY}/ws`, { headers: wsHeaders({ origin: 'https://evil.example' }) }),
+        dummyServer
+      );
+      expect(ws?.status).toBe(403);
+    } finally {
+      close();
+    }
   });
 });

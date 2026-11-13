@@ -115,6 +115,27 @@ describe('GET /api/devices query batching', () => {
   });
 });
 
+describe('POST /api/devices ssh identity', () => {
+  test('host 前导短横线 → 400', async () => {
+    const response = await handleApiRequest(
+      new Request('http://localhost/api/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'evil',
+          type: 'ssh',
+          authMode: 'password',
+          host: '-oProxyCommand=true',
+          username: 'u',
+          password: 'x',
+        }),
+      }),
+      fakeServer
+    );
+    expect(response.status).toBe(400);
+  });
+});
+
 describe('DELETE /api/devices/:id', () => {
   test('删除设备时清掉该设备的 window-memory OOM 标记', async () => {
     resetWindowOomMarkStoreForTests();

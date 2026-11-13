@@ -17,6 +17,8 @@ export type AccessTokenDto = {
   expiresAt: number | null;
   lastUsedAt: number | null;
   lastUsedIp: string | null;
+  /** 创建请求的入口节点 id；本机直接创建为 `'self'`。该节点被吊销时令牌随之撤销。 */
+  issuedVia: string;
 };
 
 export type CreateAccessTokenRequest = {

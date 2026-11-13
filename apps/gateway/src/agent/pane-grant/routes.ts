@@ -4,6 +4,7 @@
 import { json, readJsonObjectBody } from '../../api/http';
 import { type ApiRoute, route } from '../../api/route';
 import { getDeviceById } from '../../db';
+import { getMeshRequestContext } from '../../mesh/mesh-deps';
 import { readMeshPeerMarker } from '../../mesh/peer-request-marker';
 import { tmuxRuntimeRegistry } from '../../tmux-client/registry';
 import { isTmuxPaneId } from '../../tmux-client/snapshot-format';
@@ -79,7 +80,16 @@ async function handleIssue(req: Request, deps: PaneGrantRouteDeps): Promise<Resp
   if (!serverEpoch) {
     return json({ error: 'pane_unavailable' }, 503);
   }
-  return json(issuePaneGrant({ fromNodeId: fromNodeId.value, deviceId, paneId, serverEpoch }), 201);
+  return json(
+    issuePaneGrant({
+      fromNodeId: fromNodeId.value,
+      deviceId,
+      paneId,
+      serverEpoch,
+      issuedVia: getMeshRequestContext(req).via,
+    }),
+    201
+  );
 }
 
 function handleRevoke(id: string): Response {

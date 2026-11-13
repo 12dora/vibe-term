@@ -6,7 +6,7 @@ import type { ShareOriginSources } from './share-origins';
 import { SHARE_LOGIN_MAX_CONCURRENT, SHARE_LOGIN_MAX_FAILURES } from './share-rate-limit';
 import type { ShareRecorderRuntime } from './share-recorder';
 import { type ShareService, type ShareServiceDeps, createShareService } from './share-service';
-import { ShareStore } from './share-store';
+import { ShareStore, endSharesForRevocation } from './share-store';
 import { SHARE_ACCESS_TTL_MS, parseShareToken } from './share-token';
 import type { ShareEndedEvent } from './types';
 
@@ -409,6 +409,27 @@ describe('登录限流', () => {
       ok: true,
     });
   });
+
+  test('并发上限返回 SHARE_LOGIN_BUSY，与失败锁定区分', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = makeService({
+      verifyPassword: async () => {
+        await gate;
+        return false;
+      },
+    });
+    const created = await createShare(service, { expiresInMs: null });
+    const running = Array.from({ length: SHARE_LOGIN_MAX_CONCURRENT }, () =>
+      service.loginAccess(created.share.id, 'nope', '198.51.100.9')
+    );
+    const busy = await service.loginAccess(created.share.id, 'nope', '198.51.100.9');
+    expect(busy).toMatchObject({ ok: false, code: 'SHARE_LOGIN_BUSY' });
+    release();
+    await Promise.all(running);
+  });
 });
 
 describe('创建前置条件', () => {
@@ -730,5 +751,31 @@ describe('口令查看与修改', () => {
       ok: false,
       code: 'SHARE_ENDED',
     });
+  });
+});
+
+describe('吊销级联', () => {
+  test('记录签发入口；按入口结束时运行中的服务收到 revoked 事件，已停止的服务不再收', async () => {
+    const entry = 'a'.repeat(32);
+    const service = makeService({ watchIntervalMs: 3_600_000, retentionSweepMs: 3_600_000 });
+    const events: ShareEndedEvent[] = [];
+    service.onEnded((event) => events.push(event));
+    service.startSweeper();
+    try {
+      const viaEntry = await createShare(service, { issuedVia: entry });
+      const local = await createShare(service);
+      expect(viaEntry.share.issuedVia).toBe(entry);
+      expect(local.share.issuedVia).toBe('self');
+      expect(endSharesForRevocation(harness.db, { issuedVia: entry }, clock)).toEqual([
+        viaEntry.share.id,
+      ]);
+      expect(events).toEqual([{ shareId: viaEntry.share.id, reason: 'revoked' }]);
+      expect(service.get(viaEntry.share.id)?.endReason).toBe('revoked');
+      expect(service.get(local.share.id)?.state).toBe('active');
+    } finally {
+      await service.stop();
+    }
+    endSharesForRevocation(harness.db, {}, clock);
+    expect(events).toHaveLength(1);
   });
 });

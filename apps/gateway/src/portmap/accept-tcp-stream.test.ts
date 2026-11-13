@@ -4,6 +4,7 @@ import { encodeJsonBytes } from '../mesh/ctl';
 import { acceptTcpStream } from './accept-tcp-stream';
 import { peerStreamSlotsInUse, resetPeerStreamSlots } from './budget';
 import { MemoryPortMapExportStore } from './store';
+import type { TargetPolicyOptions } from './target-policy';
 import { type EchoServer, startEchoServer } from './test-echo-server';
 import type { PortMapExportRow } from './types';
 
@@ -29,7 +30,8 @@ async function openTcpStream(
   exports: MemoryPortMapExportStore,
   payload: Record<string, unknown>,
   peerNodeId = PEER,
-  peerStreamLimit?: number
+  peerStreamLimit?: number,
+  targetPolicy?: TargetPolicyOptions
 ): Promise<LinkStream> {
   const [linkA, linkB] = createInMemoryLinkPair();
   links.push(linkA, linkB);
@@ -39,6 +41,7 @@ async function openTcpStream(
       exports,
       connectTimeoutMs: 500,
       ...(peerStreamLimit === undefined ? {} : { peerStreamLimit }),
+      ...(targetPolicy === undefined ? {} : { targetPolicy }),
     });
   });
   return linkA.openStream(encodeJsonBytes(payload));
@@ -166,6 +169,26 @@ describe('portmap acceptTcpStream', () => {
       port,
     });
     expect((await stream.closed).message).toContain('portmap-connect-failed');
+  });
+
+  test('refuses an export whose target is one of the node own ports', async () => {
+    echo = startEchoServer();
+    const exports = new MemoryPortMapExportStore();
+    exports.insert(exportRow(echo.port));
+    const selfPort = echo.port;
+    const stream = await openTcpStream(
+      exports,
+      { type: 'tcp', mapId: MAP_ID, host: '127.0.0.1', port: echo.port },
+      PEER,
+      undefined,
+      { selfPorts: () => [selfPort], localAddresses: () => [] }
+    );
+    const info = await stream.closed;
+    expect(info.reason).toBe('rst');
+    expect(info.message).toContain('portmap-forbidden');
+    await Bun.sleep(30);
+    expect(echo.connections).toBe(0);
+    expect(peerStreamSlotsInUse(PEER)).toBe(0);
   });
 
   test('refuses a stream once the peer link budget is used up', async () => {

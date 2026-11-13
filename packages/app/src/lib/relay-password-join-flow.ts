@@ -305,6 +305,7 @@ export async function joinSelfAdmitAndPersist(input: {
     tenantId: input.transport.tenantId,
     token: input.pack.pack.token,
     logKey: input.pack.pack.log_key,
+    identity: { nodeId: identity.nodeIdHex, edPrivateKey: identity.edPrivateKey },
     fetcher: input.transport.fetcher,
     timeoutMs: input.transport.timeoutMs,
     load: async () => {

@@ -157,6 +157,7 @@ async function rotateTenantRootByPassword(
     () => h.relay.runtime.tenants.get(tenantId)?.rootEpoch === tenant.rootEpoch,
     8_000
   );
+  await tenant.reloginAfterRootRotation();
   return next;
 }
 

@@ -120,18 +120,6 @@ export function nodeIdFromAdmitRecord(record: SignedRecord): string | null {
 }
 
 /**
- * 这条 pending 现在该做什么。
- *
- * **`resend` 永远优先于 `sign`**：只要手上还有一份未确认的记录，就原样重发它。
- * 轮询每 5 s 会重新看到同一张证书，若那时按新 head 再签一条，就会造出另一个 seq，
- * 对端缺了中间那条便永久 `seq_gap`。
- */
-export function admitPlan(pendingId: string, canSign: boolean): 'resend' | 'sign' | 'wait' {
-  if (unconfirmedRecords.has(pendingId)) return 'resend';
-  return canSign ? 'sign' : 'wait';
-}
-
-/**
  * 送一条**已签好**的 admit 记录，并按结果决定要不要把它留着重发。
  *
  * 重试路径拿的就是这里存下的对象（`unconfirmedRecord()`），字节完全相同——重试**绝不**重新

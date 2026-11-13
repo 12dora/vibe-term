@@ -57,24 +57,12 @@ describe('handleExecWsUpgrade', () => {
     expect(spy.calls).toHaveLength(0);
   });
 
-  test('a foreign browser origin is refused before authentication', async () => {
-    const spy = upgradeSpy();
-    const res = handleExecWsUpgrade(
-      wsRequest('/api/exec/ws', { origin: 'http://evil.example' }),
-      spy.server,
-      () => ({ uid: 'u', tokenId: null })
-    );
-    expect(res?.status).toBe(403);
-    expect(await res?.json()).toEqual({ code: 'FORBIDDEN_ORIGIN' });
-    expect(spy.calls).toHaveLength(0);
-  });
-
-  test('same-host origin and missing origin pass', () => {
+  test('origin is not judged here: the entry browser guard owns it', () => {
     const spy = upgradeSpy();
     const auth = () => ({ uid: 'u', tokenId: null });
     expect(
       handleExecWsUpgrade(
-        wsRequest('/api/exec/ws', { origin: 'http://localhost' }),
+        wsRequest('/api/exec/ws', { origin: 'http://evil.example' }),
         spy.server,
         auth
       )

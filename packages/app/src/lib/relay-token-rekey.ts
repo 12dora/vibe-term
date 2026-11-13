@@ -20,7 +20,11 @@ import {
 import { findWrapEntry, unwrapKeyForNode } from '../../../shared/src/relay';
 import { joinUserKeyService } from './keylog-passkey-replay';
 import type { LocalAuthContext } from './local-auth';
-import { appendOneJoinRecord, isRelaySeqMismatch } from './relay-password-join-append';
+import {
+  type JoinAppendIdentity,
+  appendOneJoinRecord,
+  isRelaySeqMismatch,
+} from './relay-password-join-append';
 import {
   type JoinLogPhase,
   type JoinPackPhase,
@@ -206,7 +210,8 @@ async function buildRekeySetRelays(input: {
 async function appendToRelay(
   transport: JoinTransport,
   pack: JoinPackPhase,
-  record: RekeyRecord
+  record: RekeyRecord,
+  identity: JoinAppendIdentity
 ): Promise<'ok' | 'seq_mismatch'> {
   try {
     await appendOneJoinRecord({
@@ -215,6 +220,7 @@ async function appendToRelay(
       token: pack.pack.token,
       logKey: pack.pack.log_key,
       record,
+      identity,
       ...(transport.fetcher ? { fetcher: transport.fetcher } : {}),
       ...(transport.timeoutMs !== undefined ? { timeoutMs: transport.timeoutMs } : {}),
     });
@@ -238,7 +244,7 @@ const REKEY_APPEND_ATTEMPTS = 3;
 async function ensureCurrentRelayToken(input: {
   auth: LocalAuthContext;
   secrets: RelaySecrets;
-  identity: { nodeIdHex: string; x25519PrivateKey: Uint8Array };
+  identity: { nodeIdHex: string; x25519PrivateKey: Uint8Array; edPrivateKey: Uint8Array };
   userId: string;
   transport: JoinTransport;
   pack: JoinPackPhase;
@@ -259,7 +265,10 @@ async function ensureCurrentRelayToken(input: {
       transport,
       pack,
     });
-    const appended = await appendToRelay(transport, pack, record);
+    const appended = await appendToRelay(transport, pack, record, {
+      nodeId: identity.nodeIdHex,
+      edPrivateKey: identity.edPrivateKey,
+    });
     if (appended === 'seq_mismatch') {
       log = await joinDownloadVerifyReplay(transport, pack);
       assertRekeyAccount(auth, userId, log);
@@ -297,7 +306,11 @@ export async function rekeyRelayToken(input: {
   const published = await ensureCurrentRelayToken({
     auth,
     secrets,
-    identity: { nodeIdHex: identity.nodeIdHex, x25519PrivateKey: identity.x25519PrivateKey },
+    identity: {
+      nodeIdHex: identity.nodeIdHex,
+      x25519PrivateKey: identity.x25519PrivateKey,
+      edPrivateKey: identity.edPrivateKey,
+    },
     userId,
     transport,
     pack,

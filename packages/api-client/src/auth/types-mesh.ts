@@ -33,11 +33,11 @@ export interface MeshNodesResponse {
   pendingMemberIds?: string[];
 }
 
-/** `GET /api/auth/nodes` 的单行（**公开**，不含公钥 / inventory）。登录页在登录前用它。 */
+/** `GET /api/auth/nodes` 的单行（不含公钥 / inventory）。匿名请求只有 `id`，`name` / `online` 仅会话鉴权后下发。 */
 export interface PublicNode {
   id: string;
-  name: string;
-  online: boolean;
+  name?: string;
+  online?: boolean;
 }
 
 export interface PublicNodesResponse {

@@ -135,6 +135,9 @@ export {
 } from './root-key';
 export type { Ed25519KeyPair, RootKey, X25519KeyPair } from './root-key';
 
+export { ACCOUNT_PASSWORD_MIN_LENGTH, checkAccountPassword } from './password-policy';
+export type { AccountPasswordIssue } from './password-policy';
+
 export {
   DELEGATION_CLOCK_SKEW_MS,
   DELEGATION_TTL_MS,

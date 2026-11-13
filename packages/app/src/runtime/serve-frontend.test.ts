@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { brotliDecompressSync, gunzipSync } from 'node:zlib';
-import { resolveRequestedFile, serveFrontend } from './serve-frontend';
+import { SPA_CSP, resolveRequestedFile, serveFrontend } from './serve-frontend';
 import { resetCompressionCacheForTests } from './static-compression';
 
 const tempDirs: string[] = [];
@@ -83,11 +83,26 @@ describe('serveFrontend', () => {
     const response = await serveFrontend(req('/index.html'), root);
     expect(response.status).toBe(200);
     expect(response.headers.get('Cache-Control')).toBe('no-cache');
-    expect(response.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'");
+    expect(response.headers.get('Content-Security-Policy')).toBe(SPA_CSP);
     expect(response.headers.get('ETag')).toMatch(/^W\/"\d+-\d+"$/);
     expect(response.headers.get('Last-Modified')).toBeTruthy();
     expect(response.headers.get('Vary')).toBe('Accept-Encoding');
     expect(await response.text()).toBe(INDEX_HTML);
+  });
+
+  test('SPA CSP only allows same-origin scripts and wasm, never inline or eval', () => {
+    const directives = new Map(
+      SPA_CSP.split(';').map((part) => {
+        const [name, ...values] = part.trim().split(/\s+/);
+        return [name, values] as const;
+      })
+    );
+    expect(directives.get('script-src')).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    expect(directives.get('object-src')).toEqual(["'none'"]);
+    expect(directives.get('base-uri')).toEqual(["'none'"]);
+    expect(directives.get('frame-ancestors')).toEqual(["'self'"]);
+    expect(SPA_CSP).not.toContain('unsafe-inline');
+    expect(SPA_CSP).not.toContain("'unsafe-eval'");
   });
 
   test('returns 304 when If-None-Match matches the ETag', async () => {
@@ -100,7 +115,7 @@ describe('serveFrontend', () => {
     const again = await serveFrontend(req('/index.html', { 'If-None-Match': etag! }), root);
     expect(again.status).toBe(304);
     expect(again.headers.get('ETag')).toBe(etag);
-    expect(again.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'self'");
+    expect(again.headers.get('Content-Security-Policy')).toBe(SPA_CSP);
     expect(again.headers.get('Cache-Control')).toBe('no-cache');
     expect(await again.text()).toBe('');
   });

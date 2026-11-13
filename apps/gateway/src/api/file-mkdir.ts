@@ -1,7 +1,7 @@
-import { realpathSync } from 'node:fs';
-import type { FileErrorCode, FileStatResponse } from '@vibeterm/shared';
+import { lstatSync, realpathSync } from 'node:fs';
+import type { Device, FileErrorCode, FileStatResponse } from '@vibeterm/shared';
 import { getDeviceById } from '../db';
-import { statFile } from '../files/device-storage';
+import { statFile, tokenMutationDenied } from '../files/device-storage';
 import { resolveFileRoot } from '../files/file-root';
 import { type FileOpResult, fail, ok } from '../files/rsync-operation';
 import { t } from '../i18n';
@@ -142,6 +142,27 @@ async function mkdirRemote(
   return createRemoteDir(rootId, rootPath, absPath, segs, recursive);
 }
 
+/** 递归新建时，中间每一级将要新建（当前不存在）的目录也过同一道令牌闸门。 */
+function mkdirTouchesDenied(device: Device, rootPath: string, segs: readonly string[]): boolean {
+  if (device.type !== 'local') return false;
+  let dir = posixNormalize(rootPath);
+  for (const seg of segs) {
+    dir = joinPosix(dir, seg);
+    if (pathExists(dir)) continue;
+    if (tokenMutationDenied(device, null, dir)) return true;
+  }
+  return false;
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function mkdirUnderRoot(
   rootId: string,
   inputPath: string,
@@ -156,6 +177,8 @@ export async function mkdirUnderRoot(
   if (!lexical.ok) return fail(lexical.code);
   const segs = segmentsUnder(posixNormalize(resolved.root.path), lexical.path);
   if (exceedsMkdirCap(lexical.path, recursive, segs)) return fail('invalid');
+  if (tokenMutationDenied(device, null, lexical.path)) return fail('permission_denied');
+  if (mkdirTouchesDenied(device, resolved.root.path, segs)) return fail('permission_denied');
 
   if (device.type === 'local') return mkdirLocal(resolved.root.path, lexical.path, recursive);
   return mkdirRemote(rootId, resolved.root.path, lexical.path, recursive);

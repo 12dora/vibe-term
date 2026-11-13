@@ -23,11 +23,12 @@ export type AcceptDeps = {
   rememberKeys: (session: LinkSession, sendKey?: Uint8Array, recvKey?: Uint8Array) => void;
 };
 
-/** 入站 ws-secure：握手成功即按 ws-secure 登记，对端为发起方。 */
+/** 入站 ws-secure：握手成功即通知 `handshakeDone`（释放未认证名额），并按 ws-secure 登记，对端为发起方。 */
 export async function acceptDirectSession(
   deps: AcceptDeps,
   socket: ServerSocketAdapter,
-  remoteAddress: string | null
+  remoteAddress: string | null,
+  handshakeDone?: () => void
 ): Promise<void> {
   const { state } = deps;
   const gen = state.generation;
@@ -38,6 +39,7 @@ export async function acceptDirectSession(
       identity: state.identity,
       userStore: state.userStore,
     });
+    handshakeDone?.();
     if (peerStale(state, gen)) {
       quiet(() => result.session.close('stopped'));
       return;

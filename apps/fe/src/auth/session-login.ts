@@ -248,12 +248,12 @@ interface ResumeAfterPasswordChangeOptions extends EstablishFromPasswordOptions 
 }
 
 /**
- * 常规改密（`rotate-root-keep`）之后接回会话：用新密码、新 kdf 参数与新 root_epoch 重建
- * delegation，再登录一次 entry 换新的入口 cookie。
+ * 改密（`rotate-root` / `rotate-root-keep`）之后接回会话：用新密码、新 kdf 参数与新 root_epoch
+ * 重建 delegation，再登录一次 entry 换新的入口 cookie。
  *
  * 顺序不能反——记录追加成功之前服务端只认旧根钥，新 delegation 一定验不过。整段走
- * `replaceSessionKey()`：新登录没成功就把旧会话原样装回，用户手上那份仍然有效（这条路径
- * 不撤销任何会话），页面不该因此掉线。
+ * `replaceSessionKey()`：替换期间压住 401 触发的登录页跳转，新会话被接受才落盘。改密已让服务端撤销
+ * 全部会话，失败时装回的旧会话同样是废的，由调用方清掉并回登录页（见 `finishPasswordChange`）。
  */
 export async function resumeSessionAfterPasswordChange(
   opts: ResumeAfterPasswordChangeOptions

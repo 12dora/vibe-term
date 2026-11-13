@@ -1,8 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { eq, isNotNull, or } from 'drizzle-orm';
+import { runAfterKeyLogCommit } from '../auth/revocation-after-commit';
 import type { AuthDb } from '../auth/types';
 import { getDb } from '../db/client';
 import { portMapExports, portMaps } from '../db/schema';
-import type { PortMapExportRow, PortMapRow } from './types';
+import { MESH_VIA_SELF } from '../mesh/mesh-deps';
+import type { PortMapExportRow, PortMapRevocation, PortMapRow } from './types';
 
 export type PortMapPatch = {
   name?: string;
@@ -42,6 +44,8 @@ function toRow(row: PortMapDbRow): PortMapRow {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     ...(row.leaseExpiresAt === null ? {} : { leaseExpiresAt: row.leaseExpiresAt }),
+    issuedVia: row.issuedVia,
+    ...(row.createdByTokenId === null ? {} : { createdByTokenId: row.createdByTokenId }),
   };
 }
 
@@ -54,7 +58,87 @@ function toExportRow(row: PortMapExportDbRow): PortMapExportRow {
     enabled: Boolean(row.enabled),
     createdAt: row.createdAt,
     ...(row.leaseExpiresAt === null ? {} : { leaseExpiresAt: row.leaseExpiresAt }),
+    issuedVia: row.issuedVia,
+    ...(row.createdByTokenId === null ? {} : { createdByTokenId: row.createdByTokenId }),
   };
+}
+
+type RevokedRowsListener = (rows: readonly PortMapRow[]) => void;
+
+const revokedRowsListeners = new Set<RevokedRowsListener>();
+
+/** 运行中的管理器订阅：级联删掉的映射行要停监听、丢运行态。返回取消订阅函数。 */
+export function onPortMapRowsRevoked(listener: RevokedRowsListener): () => void {
+  revokedRowsListeners.add(listener);
+  return () => {
+    revokedRowsListeners.delete(listener);
+  };
+}
+
+/**
+ * 吊销级联（入口节点被吊销 / 令牌撤销或失效）：在调用方的库连接（可以是 key log 事务）里删行。
+ * 运行态拆除（停监听）等事务提交后再通知；回滚则不停。返回被删映射行的 id。
+ */
+export function removePortMapsForRevocation(db: AuthDb, match: PortMapRevocation): string[] {
+  const rows = deletePortMapRowsForRevocation(db, match);
+  if (rows.length === 0) return [];
+  runAfterKeyLogCommit(() => {
+    for (const listener of [...revokedRowsListeners]) {
+      try {
+        listener(rows);
+      } catch (error) {
+        console.error('[portmap] revocation listener failed:', error);
+      }
+    }
+  });
+  return rows.map((row) => row.id);
+}
+
+/** 令牌已失效（过期、行被清理或撤销时网关不在线）但它建的映射还在：补一次级联。 */
+export function removePortMapsOfInactiveTokens(
+  db: AuthDb,
+  isTokenActive: (tokenId: string) => boolean
+): string[] {
+  return listPortMapCreatorTokenIds(db)
+    .filter((tokenId) => !isTokenActive(tokenId))
+    .flatMap((tokenId) => removePortMapsForRevocation(db, { createdByTokenId: tokenId }));
+}
+
+/** 映射行与放行行里出现过的创建令牌 id（去重）。 */
+function listPortMapCreatorTokenIds(db: AuthDb): string[] {
+  const maps = db
+    .selectDistinct({ id: portMaps.createdByTokenId })
+    .from(portMaps)
+    .where(isNotNull(portMaps.createdByTokenId))
+    .all();
+  const exports = db
+    .selectDistinct({ id: portMapExports.createdByTokenId })
+    .from(portMapExports)
+    .where(isNotNull(portMapExports.createdByTokenId))
+    .all();
+  const ids = new Set<string>();
+  for (const row of [...maps, ...exports]) if (row.id) ids.add(row.id);
+  return [...ids];
+}
+
+/**
+ * 吊销级联的库操作：删掉匹配的映射行（A 侧）与放行行（B 侧），返回被删的映射行。
+ * 入口节点被吊销时，以它为来源节点的放行行一并删除（与窗格授权「持有方或签发入口」同口径）。
+ */
+function deletePortMapRowsForRevocation(db: AuthDb, match: PortMapRevocation): PortMapRow[] {
+  const mapWhere =
+    'issuedVia' in match
+      ? eq(portMaps.issuedVia, match.issuedVia)
+      : eq(portMaps.createdByTokenId, match.createdByTokenId);
+  const exportWhere =
+    'issuedVia' in match
+      ? or(
+          eq(portMapExports.issuedVia, match.issuedVia),
+          eq(portMapExports.fromNodeId, match.issuedVia)
+        )
+      : eq(portMapExports.createdByTokenId, match.createdByTokenId);
+  db.delete(portMapExports).where(exportWhere).run();
+  return db.delete(portMaps).where(mapWhere).returning().all().map(toRow);
 }
 
 export class PortMapStore implements PortMapStoreLike {
@@ -111,6 +195,8 @@ export class PortMapExportStore implements PortMapExportStoreLike {
           enabled: row.enabled,
           createdAt: row.createdAt,
           leaseExpiresAt: row.leaseExpiresAt ?? null,
+          issuedVia: row.issuedVia ?? MESH_VIA_SELF,
+          createdByTokenId: row.createdByTokenId ?? null,
         },
       })
       .run();

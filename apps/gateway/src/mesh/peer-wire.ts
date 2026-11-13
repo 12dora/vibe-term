@@ -304,8 +304,12 @@ function wireDialerAndServer(ctx: WireCtx): void {
     port: opts.peerPort,
     hostname: opts.hostname,
     scheduler,
-    onAccept: (socket, remoteIp) => {
-      void parts.dialer.acceptDirect(socket, remoteIp === 'unknown' ? null : remoteIp);
+    onAccept: (socket, remoteIp, handshakeDone) => {
+      void parts.dialer.acceptDirect(
+        socket,
+        remoteIp === 'unknown' ? null : remoteIp,
+        handshakeDone
+      );
     },
   });
 }

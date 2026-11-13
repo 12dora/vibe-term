@@ -62,7 +62,7 @@ export function RelayLimitsDialogBody({
           <Input
             id="relay-limits-max-tenants"
             inputMode="numeric"
-            placeholder={t('relay.admin.quota.unlimitedValue')}
+            placeholder={t('relay.admin.limits.maxTenantsPlaceholder')}
             value={draft.maxTenants}
             disabled={busy}
             onChange={(event) => onChange({ maxTenants: event.target.value })}

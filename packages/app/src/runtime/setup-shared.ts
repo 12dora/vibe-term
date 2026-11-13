@@ -2,6 +2,10 @@ import { randomBytes } from 'node:crypto';
 import { rename as fsRename, rm as fsRm, writeFile as fsWriteFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
+import {
+  ACCOUNT_PASSWORD_MIN_LENGTH,
+  checkAccountPassword,
+} from '../../../../packages/shared/src/auth';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import {
   readEnvFile as defaultReadEnvFile,
@@ -166,9 +170,21 @@ export function assertUsername(username: string): string {
   return username;
 }
 
-export function assertPassword(password: string): string {
-  if (password.length < 8) {
-    throw new SetupError('weak_password', 'password must be at least 8 characters', 400);
+export function assertAccountPassword(password: string, username: string): string {
+  const issue = checkAccountPassword(password, { username });
+  if (issue === 'too_short') {
+    throw new SetupError(
+      'password_too_short',
+      `password must be at least ${ACCOUNT_PASSWORD_MIN_LENGTH} characters`,
+      400
+    );
+  }
+  if (issue === 'too_simple') {
+    throw new SetupError(
+      'password_too_simple',
+      'password is too easy to guess: avoid sequences, repeats, common passwords and the username',
+      400
+    );
   }
   return password;
 }

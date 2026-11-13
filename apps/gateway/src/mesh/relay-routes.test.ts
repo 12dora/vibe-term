@@ -102,14 +102,20 @@ async function boot(
       : {}),
     ...(opts.switchTimeoutMs !== undefined ? { switchTimeoutMs: opts.switchTimeoutMs } : {}),
   });
-  const session = nodeSessionStore.issue({
-    userId: user.userId,
-    viaNodeId: MESH_VIA_SELF,
-    sessPublicKey: new Uint8Array(32).fill(1),
-    delegationMethod: 'root',
-    now: Date.now(),
-  });
-  const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${session.sid}`;
+  const issueCookie = () => {
+    const session = nodeSessionStore.issue({
+      userId: user.userId,
+      viaNodeId: MESH_VIA_SELF,
+      sessPublicKey: new Uint8Array(32).fill(1),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    return `${nodeSessionCookieName(MESH_VIA_SELF)}=${session.sid}`;
+  };
+  let cookie = issueCookie();
+  const reissueSession = () => {
+    cookie = issueCookie();
+  };
   const call = async (path: string, init?: RequestInit) => {
     const req = new Request(`http://localhost${path}`, {
       ...init,
@@ -119,7 +125,7 @@ async function boot(
     if (!res) throw new Error(`no route for ${path}`);
     return res;
   };
-  return { db, close, userStore, service, identity, user, secrets, routes, call };
+  return { db, close, userStore, service, identity, user, secrets, routes, call, reissueSession };
 }
 
 async function configureRelays(
@@ -471,6 +477,8 @@ describe('RelayRoutes', () => {
         }),
       });
       expect(rotated.ok).toBe(true);
+      expect((await b.call('/api/mesh/relay/readmit/prepare')).status).toBe(401);
+      b.reissueSession();
       const user = b.userStore.getById(b.user.userId);
       if (!user) throw new Error('missing user');
       const prepared = (await (await b.call('/api/mesh/relay/readmit/prepare')).json()) as {

@@ -100,7 +100,7 @@ describe('AccountCredentialFields', () => {
         values={{ username: '', password: 'short', confirmPassword: 'nope' }}
         errors={{
           username: 'nodes.setup.errors.invalid_username',
-          password: 'nodes.setup.errors.weak_password',
+          password: 'nodes.setup.errors.password_too_short',
           confirmPassword: 'nodes.setup.errors.password_mismatch',
         }}
         onChange={() => {}}

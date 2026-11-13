@@ -152,8 +152,39 @@ describe('加入的步骤与结果留在行里', () => {
   });
 });
 
+describe('确认码', () => {
+  const buttonTag = (html: string) => {
+    const at = html.indexOf('data-testid="nodes-pending-confirm-e-1"');
+    return html.slice(html.lastIndexOf('<button', at), html.indexOf('>', at) + 1);
+  };
+
+  test('证书已到：卡片亮出确认码与核对提示，确认按钮可点', () => {
+    const html = render({ certificateSasById: { 'e-1': '1234-5678' } });
+    expect(html).toContain('data-testid="nodes-pending-code-e-1-value"');
+    expect(html).toContain('1234-5678');
+    expect(html).toContain('nodes.enrollment.code.label');
+    expect(html).toContain('nodes.enrollment.code.hint');
+    expect(buttonTag(html)).not.toContain('disabled=""');
+  });
+
+  test('证书还没到：没有确认码，确认按钮禁用，点不了就签不了', () => {
+    const html = render({});
+    expect(html).not.toContain('data-testid="nodes-pending-code-e-1"');
+    expect(buttonTag(html)).toContain('disabled=""');
+  });
+
+  test('上级未确认：重发已签好的字节，不再亮确认码，按钮可点', () => {
+    const html = render({
+      unconfirmedIds: ['e-1'],
+      certificateSasById: { 'e-1': '1234-5678' },
+    });
+    expect(html).not.toContain('data-testid="nodes-pending-code-e-1"');
+    expect(buttonTag(html)).not.toContain('disabled=""');
+  });
+});
+
 describe('确认按钮旁的「通行密钥需验证两次」', () => {
-  const READY: EnginePatch = { certificateReadyIds: ['e-1'] };
+  const READY: EnginePatch = { certificateSasById: { 'e-1': '1234-5678' } };
   const HINT = 'data-testid="nodes-pending-passkey-twice-e-1"';
   const PASSKEYS: PasskeyTwiceContext = { twoStep: true, passkeysAvailable: true };
 

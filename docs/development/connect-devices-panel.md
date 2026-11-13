@@ -35,7 +35,11 @@
 
 面板本身包在面板级错误边界里、按需 chunk 走 `lazyChunk`，详见 [应用级错误边界](./app-error-boundary.md)。
 
-## 确认加入：准入 + 下发成员密钥
+## 确认加入：确认码 + 准入 + 下发成员密钥
+
+**加入必须由用户点击，并比对确认码。** 持有加入码的人都能在真机之前 redeem，所以证书到达时引擎只把它记进 `EnrollmentEngineState.certificateSasById[id]`（`enrollSas(证书字节)`，形如 `1234-5678`，来自 `@vibeterm/shared/relay`），确认卡（设置页待确认行与面板「确认加入」步骤共用 `EnrollmentCode`）亮出该码与一句提示，要求与新机器上 `vibeterm relay join` 打印的确认码一致后再确认。没有确认码时确认按钮禁用；点击后引擎只签界面已亮出确认码的那张证书，回读到的证书与亮出的码对不上就不签，亮出新码并提示重新核对（`nodes.enrollment.codeChanged`）。网页端没有用 `r3.` 码 redeem 的加入流程（网页加入走租户编号 + 密码），确认码只在 CLI 加入时出现。
+
+加入命令把加入码放进环境变量，不进 argv（`/proc/*/cmdline` 对本机其他用户可见）：`VIBETERM_RELAY_JOIN_TOKEN='r3.…' vibeterm relay join <中继地址> [--name <名称>]`（`joinCommand()`）。
 
 中继模式下「确认加入」要签两条密钥日志记录：`admit-node`（承认新节点）与 `meta-key {op:'admit'}`（把成员密钥交给新节点，缺了它新节点解不开元数据块）。界面把它们当作**一次操作的两步**，设置页的待确认列表与面板的「确认加入」步骤读同一份引擎状态，文案与按钮一致。
 
@@ -43,7 +47,7 @@
 
 - 「通行密钥需验证两次。」有两处：凭据框（`passkeyCeremonies: 2`），以及确认按钮旁的常驻提示 `PasskeyTwiceHint`（`apps/fe/src/auth/passkey-twice-hint.tsx`，设置页待确认行与面板共用）。后者是主路径：生成加入码时用过的 passkey 还在 5 分钟复用窗口里，点确认不再弹框。提示在「有第二步」且「将要用的签名者是 passkey」时出现——复用窗口里是 passkey，或窗口为空而当前入口有可用 passkey；窗口里是根钥、只能用密码、没有第二步、或这次只是重发未确认记录时不出现。
 - 第二次仪式在同一次用户操作里紧接着发起（`admit-node` 落账、写锁放开后直接跑，不另排定时器）。它并不在点击的用户激活窗口内——前面已经隔了第一次仪式和几次网络往返；浏览器若不放行第二次验证，状态落到 `keyPending`，由「补发成员密钥」按钮（一次新的用户手势）补上。
-- 不是用户手势发起的 admit（轮询 / 推送自动签、未确认记录的自动重发）只有手上是根钥时才自动跑第二步；否则直接进 `keyPending`，不从定时器里起 passkey 仪式。
+- 不是用户手势发起的 admit（只剩未确认记录的后台重发）不自动跑第二步，直接进 `keyPending`，由用户点「补发成员密钥」；引擎从不替用户签 `admit-node`，也不从定时器里起 passkey 仪式。
 
 状态在 `EnrollmentEngineState.progressById[enrollmentId]`（`apps/fe/src/node/admit-progress.ts` 维护）：
 

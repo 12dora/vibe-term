@@ -29,6 +29,7 @@ import {
 } from '../../auth';
 import { MeshRelayStore, RELAY_LOG_KEY_EPOCH } from '../../auth/mesh-relay-store';
 import { createMigratedAuthDb } from '../../auth/test-db';
+import { loginSelf, selfCookie } from '../../mesh/integration/mesh-http-helpers';
 import { waitUntil } from '../../mesh/test-support';
 import { encodeRedeemPopMessage } from '../redeem-pop';
 import {
@@ -111,7 +112,35 @@ export async function rotateTenantRoot(
     () => harness.relay.runtime.tenants.get(tenantId)?.rootEpoch === tenant.rootEpoch,
     8_000
   );
+  await reloginAfterRootRotation(tenant);
   return next;
+}
+
+/**
+ * `rotate-root-keep` 会作废账户下全部会话：主节点立刻用新根重新登录；其余在线且未被吊销的成员
+ * 要等这条记录同步到本机、本地根公钥跟上之后再重新登录。离线成员留给调用方自行处理。
+ */
+export async function reloginAfterRootRotation(tenant: RelayTenant): Promise<void> {
+  const rootPk = encodeBase64url(tenant.rootPublicKey);
+  for (const node of tenant.nodes) {
+    if (node !== tenant.owner) {
+      if (node.mesh.uplink.state !== 'online') continue;
+      if (tenant.owner.userStore.getCert(node.nodeId)?.revokedLogSeq != null) continue;
+      await waitUntilAsync(async () => {
+        const local = node.userStore.getById(tenant.userId)?.rootPublicKey;
+        if (local && encodeBase64url(local) === rootPk) return true;
+        node.relayClient()?.requestCatchUpNow();
+        return false;
+      }, 8_000);
+    }
+    const sid = await loginSelf(node.mesh, {
+      userId: tenant.userId,
+      rootKey: tenant.rootKey,
+      rootPublicKey: tenant.rootPublicKey,
+      rootEpoch: tenant.rootEpoch,
+    });
+    node.cookie = selfCookie(sid);
+  }
 }
 
 export async function submitRecord(

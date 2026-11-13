@@ -278,7 +278,7 @@ describe('viewport claims', () => {
     const { server, recorder, large } = setupTwoClients();
     server.handleTermViewport(large, {
       deviceId: 'device-a',
-      paneId: '%missing',
+      paneId: '%99',
       cols: 200,
       rows: 60,
       visible: true,
@@ -286,6 +286,19 @@ describe('viewport claims', () => {
     expect(recorder.resizePaneCalls).toEqual([]);
     expect(large.viewportClaims.size).toBe(0);
     expect(decodePolicies(large)).toEqual([]);
+  });
+
+  test('invalid pane id viewport throws protocol error', () => {
+    const { server, large } = setupTwoClients();
+    expect(() =>
+      server.handleTermViewport(large, {
+        deviceId: 'device-a',
+        paneId: '%1;id',
+        cols: 200,
+        rows: 60,
+        visible: true,
+      })
+    ).toThrow(wsBorsh.WsBorshError);
   });
 
   test('device detach drops claims and recomputes', () => {

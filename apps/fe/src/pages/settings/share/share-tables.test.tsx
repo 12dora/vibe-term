@@ -36,6 +36,7 @@ function record(patch: Partial<ShareRow> = {}): ShareRow {
     logBytes: 0,
     logTruncated: false,
     recordLog: true,
+    issuedVia: 'self',
     ...patch,
   };
 }
@@ -43,6 +44,25 @@ function record(patch: Partial<ShareRow> = {}): ShareRow {
 const deviceName = (row: ShareRow) => (row.deviceId === 'dev1' ? 'MacBook' : null);
 
 describe('ActiveSharesTable', () => {
+  test('本机签发的分享不显示签发节点；经其他节点签发的点名', () => {
+    const render = (share: ShareRow) =>
+      renderToStaticMarkup(
+        <ActiveSharesTable
+          showNode={false}
+          shares={[share]}
+          now={NOW}
+          busyRowKey={null}
+          deviceName={deviceName}
+          onStop={() => undefined}
+          onPasswordAction={() => undefined}
+        />
+      );
+    expect(render(record())).not.toContain('data-testid="share-issued-via-sh1"');
+    expect(render(record({ issuedVia: 'bb'.repeat(16) }))).toContain(
+      'data-testid="share-issued-via-sh1"'
+    );
+  });
+
   test('一行一条分享，摆出在线人数、终端与地址', () => {
     const html = renderToStaticMarkup(
       <ActiveSharesTable

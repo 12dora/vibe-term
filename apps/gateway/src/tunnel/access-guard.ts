@@ -73,22 +73,6 @@ export async function guardEntryAccess(req: Request): Promise<Response | null> {
   return enforceTunnelAccessJwt(req);
 }
 
-export async function guardedGatewayFetch(
-  req: Request,
-  handle: (
-    req: Request,
-    bunServer: Bun.Server<unknown>
-  ) => Response | Promise<Response | undefined> | undefined,
-  bunServer: Bun.Server<unknown>,
-  notFound: () => Response = () => new Response('Not Found', { status: 404 })
-): Promise<Response> {
-  const denied = await guardEntryAccess(req);
-  if (denied) return denied;
-  const response = await handle(req, bunServer);
-  if (response !== undefined) return response;
-  return notFound();
-}
-
 export async function enforceTunnelAccessJwt(req: Request): Promise<Response | null> {
   return enforceAccessJwt(req, {
     snapshot: snapshotFn,

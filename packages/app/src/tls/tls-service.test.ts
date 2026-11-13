@@ -1,6 +1,6 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
@@ -185,6 +185,26 @@ describe('TlsService', () => {
     expect(status.restartRequired).toBe(true);
     const env = await readFile(ctx.envPath, 'utf8');
     expect(env).toContain('VIBETERM_TRUST_PROXY=true');
+  });
+
+  test('external drops a tunnel-era VIBETERM_CLIENT_IP_HEADER so the proxy XFF is used', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    await writeFile(ctx.envPath, 'VIBETERM_CLIENT_IP_HEADER=cf-connecting-ip\n');
+    await ctx.service.applyMode({ mode: 'external', trustProxy: true });
+    const env = await readFile(ctx.envPath, 'utf8');
+    expect(env).toContain('VIBETERM_TRUST_PROXY=true');
+    expect(env).not.toContain('VIBETERM_CLIENT_IP_HEADER');
+  });
+
+  test('external keeps a client-IP header the user set', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    await writeFile(ctx.envPath, 'VIBETERM_CLIENT_IP_HEADER=x-real-ip\n');
+    await ctx.service.applyMode({ mode: 'external', trustProxy: true });
+    const env = await readFile(ctx.envPath, 'utf8');
+    expect(env).toContain('VIBETERM_TRUST_PROXY=true');
+    expect(env).toContain('VIBETERM_CLIENT_IP_HEADER=x-real-ip');
   });
 
   test('external env failure rolls back: mode and listener stay unchanged', async () => {

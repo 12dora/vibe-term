@@ -10,7 +10,8 @@
 | 字段 | `name`（1..64 字符）、`scopes`（`exec` / `files` / `forward`，非空、不重复）、有效期（1..3650 天或永不过期）、创建时间、最近使用时间与来源 IP |
 | secret | `vtk_` + base64url(32 字节随机数)，43 个字符。**只在创建响应里返回一次**，服务端只存 `sha256` 十六进制，比对用定时安全比较 |
 | 数量 | 每个用户最多 50 个有效令牌，超出 409 `token_limit` |
-| 吊销 | 保留行并写入 `revoked_at`，不参与列表与校验；吊销即时终止该令牌名下的 exec 会话 |
+| 签发来源 | `issued_via`：创建请求经哪个入口节点转发而来（入口节点 id），本机直接创建为 `self`；列表接口以 `issuedVia` 返回。0063 迁移之前的旧令牌一律记为 `self`，不参与按入口的级联吊销 |
+| 吊销 | 保留行并写入 `revoked_at`，不参与列表与校验；吊销即时终止该令牌名下的 exec 会话，并删除它创建的端口映射与放行（见第 4 节） |
 | 审计 | `access_token_events` 记录 `created` / `revoked` / `used`（附来源 IP）；`used` 对每个「令牌 + IP」每 10 分钟至多记一条；`last_used_at` 至多每分钟写一次 |
 | 保留 | 事件与早已吊销 / 过期超过 180 天的令牌行由后台清理（启动、创建时及每 6 小时） |
 
@@ -35,7 +36,7 @@
 | --- | --- |
 | 始终允许（只读基础面） | `GET /api/auth/mode`、`GET /api/devices`、`GET /api/mesh/nodes`，以及登录前的公开路径 |
 | `exec` | `POST /api/exec`、`GET /api/exec/ws`（exec 通道升级也要求令牌含 `exec`） |
-| `files` | `/api/files/*`（浏览、上传下载、`mkdir`、打包、移动、删除等）。`/api/files/roots` 的写操作会改动文件浏览根，属于节点配置，令牌只能 `GET` |
+| `files` | `/api/files/*`（上传下载、`mkdir`、打包、移动、删除、按根 list/stat/raw 等），**只允许管理员已配置并启用的文件根**（`/api/files/roots` 落库行）。合成根 `home-root` / `fs-root` 对令牌一律 404 `root_not_found`（前端与 CLI 已处理该码）。`GET /api/files/browse` 忽略文件根，令牌得到 403 `TOKEN_SCOPE`。`/api/files/roots` 的写操作会改动文件浏览根，属于节点配置，令牌只能 `GET` |
 | `forward` | `/api/portmap` 与 `/api/portmap/*`（映射与放行的增删查） |
 
 不在表内的能力令牌一概没有：tmux / 终端 WebSocket（`/ws`）、设置、Agent、分享、节点管理、node ↔ node 传输（`/api/transfer/*`）、登录与账号安全接口，以及令牌管理本身。
@@ -46,10 +47,19 @@
 
 入口：
 
-- 网页端「账号安全 → 访问令牌」：创建（名称、scope、有效期）、列表、撤销；secret 仅在创建后的对话框里显示一次。
+- 网页端「账号安全 → 访问令牌」：创建（名称、scope、有效期）、列表、撤销；secret 仅在创建后的对话框里显示一次。经其他节点签发的令牌（`issuedVia` ≠ `self`）在行内点名签发节点，本机签发的不显示。
 - CLI `vibeterm token create|ls|rm|add`（需要登录会话；见下节）。
 
-撤销与失效：撤销令牌立即终止它名下所有存活的 exec 会话、尚未发 HELLO 的通道连接与旧版 `POST /api/exec` 运行；过期或令牌行被删除（如退出 mesh 清库）由网关每 30 秒复核，同样终止。exec 连接在 HELLO（open / resume）时再复核一次令牌与节点会话，等待期间被撤销的凭证不能再开会话；resume 只认创建时的同一枚令牌（会话认证的则改挂当前会话）。轮换 / 重置根密钥触发的「撤销全部会话」会一并撤销该用户所有访问令牌。其余已发出的 HTTP 请求不受影响，下一次请求即被拒绝。
+撤销与失效：撤销令牌立即终止它名下所有存活的 exec 会话、尚未发 HELLO 的通道连接与旧版 `POST /api/exec` 运行，并删除该令牌创建的端口映射（`port_maps.created_by_token_id`，连同监听）与放行（`port_map_exports.created_by_token_id`）；过期或令牌行被删除（如退出 mesh 清库）由网关每 30 秒复核，同样终止并删除。exec 连接在 HELLO（open / resume）时再复核一次令牌与节点会话，等待期间被撤销的凭证不能再开会话；resume 只认创建时的同一枚令牌（会话认证的则改挂当前会话）。其余已发出的 HTTP 请求不受影响，下一次请求即被拒绝。
+
+级联吊销（key log 投影，每个节点各自确定性执行，库变更与记录落库同一个事务；关 exec 会话、停端口映射监听、拆分享连接等运行态在**事务提交之后**才拆除，回滚不拆）：
+
+| 事件 | 作废范围 |
+| --- | --- |
+| 吊销节点 X（`revoke-node`，效果 `revokeSessionsVia`） | 经 X 进来的会话；`issued_via = X` 的令牌、终端分享、窗格授权、端口映射与放行；X 持有的窗格授权与以 X 为来源节点的放行 |
+| 改密（默认 `rotate-root-keep`）、完整轮换 `rotate-root`、重置 `reset-root`（效果 `revokeAllSessions`） | 该用户全部会话与访问令牌；全部窗格授权与全部进行中的终端分享（结束原因 `revoked`）。`shares` / `agent_pane_grants` 无 owner 列，按单用户节点处理，多本地用户会互相影响；令牌创建的端口映射随令牌一并删除，会话创建的保留 |
+
+改密后所有登录都要重新进行：网页端由前端用新口令静默重新登录，CLI `vibeterm settings passwd` 改密后打印级联说明并用新口令重新登录入口与名单内其余节点。混跑时旧版本（2.14.0 及以前）节点不认识 `issued_via`，也不会因 `rotate-root-keep` 吊销会话与令牌，这部分要等节点升级后才生效。
 
 ## 5. CLI 流程
 
@@ -67,7 +77,9 @@ vibeterm token rm office agent               # 吊销，并终止其 exec 会话
 
 ## 6. 风险与边界
 
-- 令牌的能力就是 scope 的能力：`exec` 令牌等同于该账号在节点上的 shell，`files` 令牌能读写该账号可见的文件根，`forward` 令牌能创建 / 删除端口映射与放行。按需要的最小 scope 签发，有效期尽量短，一个用途一个令牌。
+- 令牌的能力就是 scope 的能力：`exec` 令牌等同于该账号在节点上的 shell，`forward` 令牌能创建 / 删除端口映射与放行。按需要的最小 scope 签发，有效期尽量短，一个用途一个令牌。
+- `files` 令牌只读写管理员显式配置并启用的文件根，不能用合成的 `home-root` / `fs-root`（这两条对**会话**用户仍可用，UX 不变）。对本机路径还有一套不可覆盖的拒绝集（按 realpath，只约束令牌；darwin 上大小写不敏感）：`DATABASE_URL` 所在目录及其上一级安装目录、`$VIBETERM_INSTALL_DIR`（若设置）、`$XDG_CONFIG_HOME/vibeterm`、`$VIBETERM_CLI_HOME`、遗留 `~/.local/share/tmex` 与 `~/Library/Application Support/{vibeterm,tmex}`、`~/.config/vibeterm`、`~/.ssh`，以及 shell rc / 用户服务单元（`~/.bashrc`、`~/.zshrc`、`~/.profile`、`~/.bash_profile`、`~/.zprofile`、`~/.config/systemd/user`、`~/Library/LaunchAgents`）。改名、移动、删除、建目录、上传提交与打包都走同一闸门：源路径含祖先，目标路径按**最终落点**含祖先（因此把名为 `.ssh` / `user` 的目录移到位会被拒绝）。打包拒绝集条目及其祖先（例如 `~`、`~/.config`）。
+- 已知限制：若某个已配置根覆盖了 `$HOME`，拒绝集之外的家目录路径对令牌仍可写。签发 `files` 令牌前应把根收窄到业务目录，不要把整个家目录配成根。
 - 泄露处置：立即在网页端或 `vibeterm token rm` 撤销；secret 不可恢复，也无法事后查看。
 - 令牌不跨节点：访问另一台节点需要在那台节点上另签一个。
 - 与 [KI-16](../known-issues.md)：exec 已有按 scope 收窄的令牌；仍没有按设备 / 具体命令收窄与单次使用的令牌。

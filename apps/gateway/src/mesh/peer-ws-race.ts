@@ -365,6 +365,7 @@ async function handshakeOrClose(
         identity: opts.identity,
         userStore: opts.userStore,
         timeoutMs: handshakeTimeoutMs,
+        expectedPeerId: opts.expectedId,
       }).then((row) => {
         handshakeSession = row.session;
         return row;

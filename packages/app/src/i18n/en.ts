@@ -192,6 +192,8 @@ export const en: Record<string, string> = {
     'This install is not managed by a service (serviceMode=none) and has no live pid file. Stop the running process, then retry.',
   'upgrade.repairStartFailed': 'Repair could not start {{version}}: {{error}}',
   'upgrade.alreadyCurrent': 'Already running {{version}}; nothing to upgrade.',
+  'upgrade.downgradeRefused':
+    'Refusing to downgrade (current {{current}}, target {{version}}). Pass --allow-downgrade to override on this machine.',
   'upgrade.checksumHttpFailed': 'Failed to fetch SHA256SUMS: {{detail}}',
   'upgrade.integrityRequired':
     'Release {{version}} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue.',
@@ -256,6 +258,10 @@ export const en: Record<string, string> = {
   'relay.join.relay': 'Relay: {{url}} (tenant {{tenantId}})',
   'relay.join.refreshed': 'refreshed the relay token for {{url}} (tenant {{tenantId}})',
   'relay.join.alsoConfigured': 'also configured: {{urls}}',
+  'relay.join.enrollSas':
+    'Confirmation code: {{code}} (compare this when confirming the join in the web UI)',
+  'relay.join.tokenArgvWarning':
+    'Warning: --token is visible to other local users via process arguments. Prefer --token-stdin or VIBETERM_RELAY_JOIN_TOKEN.',
   'relay.join.pending':
     'Join request sent. Waiting for approval: click "Confirm join" on the device that created the join code.',
   'relay.join.pendingLater': 'Once approved, this node appears on the other devices.',
@@ -296,10 +302,14 @@ export const en: Record<string, string> = {
   'relay.trust.pinned': 'relay CA pinned: {{url}} SHA256 SPKI {{fingerprint}}',
   'relay.trust.restartHint': 'Restart VibeTerm to apply the new relay CA pin.',
 
+  'password.tooShort': 'Use at least 12 characters',
+  'password.tooSimple':
+    'Password is too easy to guess. Avoid sequences, repeats and common passwords',
+
   'user.passwd.nodesTooOld': 'Some nodes are older than 1.1.16. Update every node first.',
   'user.passwd.failed': 'password update failed: {{error}}',
   'user.passwd.doneKeep':
-    'password updated for {{username}} (keep): existing sign-in methods remain',
+    'password updated for {{username}} (keep: passkeys and two-step verification kept); all sessions, access tokens, terminal shares and pane grants were revoked',
   'user.passwd.doneFullReset':
     'password updated for {{username}} (full-reset): passkeys, two-step verification, and sessions were removed',
 

@@ -2,10 +2,18 @@
 // mesh-internal 路由与「A 就是 B」的本机复制都走这一份，保证两条路径的语义完全一致。
 
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, rmdirSync } from 'node:fs';
+import {
+  constants,
+  closeSync,
+  fchmodSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  rmdirSync,
+} from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { TransferCapability, TransferErrorCode } from '@vibeterm/shared';
 import type { SinkDescriptor } from '@vibeterm/transfer/node';
 import { config } from '../config';
@@ -93,9 +101,47 @@ function scopeKeyOf(grant: TransferGrant, dest: DestContext): string {
   return `${grant.destRootId}\0${dest.realDestDir}`;
 }
 
-function stagingDirFor(scopeKey: string): string {
+/** ssh 暂存根：安装目录下的 0700 `staging/`，不再用共享 /tmp。 */
+export function transferStagingRoot(): string {
+  const install = process.env.VIBETERM_INSTALL_DIR?.trim();
+  if (install) return join(install, 'staging');
+  const db = config.databaseUrl;
+  if (db && db !== ':memory:' && !db.includes(':memory:')) {
+    return join(dirname(db), 'transfer-staging');
+  }
+  return join(process.cwd(), 'vibeterm-transfer-staging');
+}
+
+export function stagingDirFor(scopeKey: string): string {
   const digest = createHash('sha256').update(scopeKey).digest('hex').slice(0, 16);
-  return join(tmpdir(), `vibeterm-rx-${digest}`);
+  return join(transferStagingRoot(), `vibeterm-rx-${digest}`);
+}
+
+const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+
+export function ensurePrivateStagingDir(path: string): boolean {
+  try {
+    try {
+      const existing = lstatSync(path);
+      if (existing.isSymbolicLink() || !existing.isDirectory()) return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return false;
+      mkdirSync(path, { recursive: true, mode: 0o700 });
+    }
+    const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | O_NOFOLLOW);
+    try {
+      fchmodSync(fd, 0o700);
+      const st = fstatSync(fd);
+      if ((st.mode & 0o777) !== 0o700) return false;
+      const uid = process.getuid?.();
+      if (typeof uid === 'number' && st.uid !== uid) return false;
+      return true;
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
 }
 
 function countSessionsFor(peerNodeId: string): number {
@@ -167,12 +213,12 @@ function startSession(
     abort: new AbortController(),
     idleWaiters: [],
   };
-  if (session.stagingDir) {
-    try {
-      mkdirSync(session.stagingDir, { recursive: true, mode: 0o700 });
-    } catch {
-      return receiverFail('permission_denied');
-    }
+  if (
+    session.stagingDir &&
+    (!ensurePrivateStagingDir(transferStagingRoot()) ||
+      !ensurePrivateStagingDir(session.stagingDir))
+  ) {
+    return receiverFail('permission_denied');
   }
   sessions.set(session.id, session);
   return {

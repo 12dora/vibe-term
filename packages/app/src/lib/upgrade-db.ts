@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { copyFile, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { ensureDir, fsyncDirBestEffort, fsyncPath, pathExists } from './fs-utils';
+import { chmodPrivateFile, ensureDir, fsyncDirBestEffort, fsyncPath, pathExists } from './fs-utils';
 
 export const DB_SUFFIXES = ['', '-wal', '-shm'] as const;
 
@@ -17,6 +17,7 @@ export async function copyDbTrio(srcDb: string, destDir: string): Promise<string
     const dest = join(destDir, `${base}${suffix}`);
     await copyFile(src, dest);
     fsyncPath(dest);
+    await chmodPrivateFile(dest);
     copied.push(dest);
   }
   fsyncDirBestEffort(destDir);
@@ -35,6 +36,7 @@ export async function restoreDbTrio(backupDir: string, destDb: string): Promise<
     const dest = `${destDb}${suffix}`;
     await copyFile(src, dest);
     fsyncPath(dest);
+    await chmodPrivateFile(dest);
   }
   fsyncDirBestEffort(dirname(destDb));
 }
@@ -67,6 +69,7 @@ export async function copyPreflightDb(
   });
   if (result.status === 0 && (await pathExists(dest))) {
     fsyncPath(dest);
+    await chmodPrivateFile(dest);
     fsyncDirBestEffort(destDir);
     return;
   }

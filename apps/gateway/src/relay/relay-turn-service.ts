@@ -21,6 +21,7 @@ import {
   formatTurnPortRange,
   isRetryableBindError,
   parsePortFromTurnUrl,
+  parseTurnDeniedPeers,
   turnResolveHost,
 } from './relay-turn-config';
 import { type TurnLongTermCredential, loadOrCreateTurnCredentials } from './relay-turn-credentials';
@@ -51,6 +52,8 @@ export type RelayTurnServiceOptions = {
   clearIntervalFn?: (id: ReturnType<typeof setInterval>) => void;
   refreshIntervalMs?: number;
   onAdvertisementChange?: () => void;
+  /** 缺省读 `VIBETERM_TURN_DENIED_PEERS`。 */
+  deniedPeersEnv?: string;
 };
 
 const PREFIX = '[relay][turn]';
@@ -77,6 +80,7 @@ export class RelayTurnService {
   private readonly setIntervalFn: (cb: () => void, ms: number) => ReturnType<typeof setInterval>;
   private readonly clearIntervalFn: (id: ReturnType<typeof setInterval>) => void;
   private readonly refreshIntervalMs: number;
+  private readonly deniedPeerCidrs: readonly string[];
   private onAdvertisementChange: (() => void) | undefined;
   private source: TurnSource;
   private error: string | null = null;
@@ -109,6 +113,10 @@ export class RelayTurnService {
     this.refreshIntervalMs = opts.refreshIntervalMs ?? TURN_REFRESH_INTERVAL_MS;
     this.onAdvertisementChange = opts.onAdvertisementChange;
     this.source = decideTurnMode(opts.config);
+    this.deniedPeerCidrs = parseTurnDeniedPeers(
+      opts.deniedPeersEnv ?? process.env.VIBETERM_TURN_DENIED_PEERS,
+      (line) => this.log(line)
+    );
   }
 
   setOnAdvertisementChange(cb: (() => void) | undefined): void {
@@ -289,6 +297,7 @@ export class RelayTurnService {
       relayPortRange: this.relayRange,
       externalIp: this.externalIp,
       realm: TURN_REALM,
+      deniedPeerCidrs: this.deniedPeerCidrs,
       credentials: (username) => (username === creds.username ? creds.credential : null),
       log: (line) => this.log(line),
       now: this.now,
@@ -343,9 +352,9 @@ export class RelayTurnService {
   }
 
   private applyExternalIp(ip: string): boolean {
+    this.server?.setExternalIp(ip);
     if (ip === this.externalIp) return false;
     this.externalIp = ip;
-    this.server?.setExternalIp(ip);
     return true;
   }
 

@@ -32,6 +32,7 @@ function record(patch: Partial<ShareRow> = {}): ShareRow {
     logBytes: 0,
     logTruncated: false,
     recordLog: true,
+    issuedVia: 'self',
     ...patch,
   };
 }
@@ -64,6 +65,13 @@ function history(shares: ShareRow[]): string {
 }
 
 describe('窄屏分享记录卡', () => {
+  test('进行中：只有经其他节点签发的才点名签发节点', () => {
+    expect(active([record()])).not.toContain('data-testid="share-issued-via-sh1"');
+    expect(active([record({ issuedVia: 'bb'.repeat(16) })])).toContain(
+      'data-testid="share-issued-via-sh1"'
+    );
+  });
+
   test('进行中：复制链接 / 终止 / ⋯ 都在，容器 testid 不变', () => {
     const html = active([record()]);
     expect(html).not.toContain('<table');

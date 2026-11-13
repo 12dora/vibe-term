@@ -189,6 +189,7 @@ async function handshakeWithPrimaryRetry(
       identity,
       userStore,
       timeoutMs: opened.timeoutMs,
+      expectedPeerId: nodeId,
     });
   try {
     return { result: await handshake(opened.stream), viaRelay: opened.viaRelay };

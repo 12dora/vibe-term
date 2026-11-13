@@ -196,3 +196,22 @@ iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不�
 根因：晋升有两张门（`DcPromoteGate` 与 `RouteDegrade`）。两边都对同一条已经 live 的 session 调用 `installLive`，注册表不幂等，于是留下一个非当前的 `LivePeer`。它既不是 live 也不是正在退役，就对之后所有流回 `stale-link`，而且不关 session，所以会一直留着。mux 在流已经被 RST 之后仍交给后面的监听。
 
 现在只剩 `RouteDegrade` 一张晋升门，`installLive` 对当前 session 幂等。每条 session 只有一份流 / ctl 监听；非当前、非退役的绑定标 `dead`，RST `stale-link` 并只关一次。对端看到 `stale-link` 时同样关掉本端 session，不再把这条拒绝留在可重放集合里。机制见 [路径优选](./architecture/path-selection.md)「晋升：一条门」。
+
+## KI-21：会话 sid 尚未与客户端密钥绑定
+
+`node-session` 的 sid（浏览器 cookie `vibeterm_s_<nodeId>`、CLI 的 `session.json`）只绑定签发时的入口 `via`，尚未与持有者的客户端密钥绑定；会话窗口为最后一次使用起 18 小时滑动、7 天上限。
+
+现有机制：吊销入口（`revoke-node`）作废经它进来的会话，以及经它签发的访问令牌、终端分享、窗格授权、端口映射与放行；改密（含默认 `rotate-root-keep`）作废全部会话、令牌、窗格授权与分享。会话窗口内经 shell 留下的持久化不在级联范围内。0063 迁移之前创建的令牌、分享、授权与映射记为本机签发（`self`），不参与按入口的级联。
+
+计划：给 sid 加持有证明，请求由登录时的临时会话私钥签名。见 [mesh 架构 §5 安全边界](./architecture/mesh-architecture.md)、[访问令牌 §4](./security/access-tokens.md#4-管理)。
+
+## KI-22：受信代理那一跳必须从回环 / 内网 / CGNAT 连进来
+
+`VIBETERM_TRUST_PROXY` 只对套接字对端是回环、私网、链路本地或 CGNAT（`100.64/10`）的那一跳生效（`client-ip.ts` `isTrustedProxyHop`、`session-middleware.ts` `publicRequestUrl`）。代理从公网地址连进来时（Cloudflare 橙云直连源站端口、另一台 VPS 上的反代），转发头一律不采信：
+
+- 不读 `X-Forwarded-Proto`，`isHttps` 为假，cookie 不带 `Secure`，通行密钥不可用；
+- 客户端地址取代理 / CDN 的套接字地址，所有访客共用一个登录限流桶。
+
+`X-Forwarded-Host` / `X-Forwarded-Proto` 取最左一项，`X-Forwarded-For` 取最右一项；只经一跳代理时两者一致。
+
+规避：代理与 VibeTerm 放在同一主机或同一内网，或改用 Cloudflare Tunnel。计划：增加 `VIBETERM_TRUSTED_PROXY_CIDRS`，缺省仍为回环 / 内网 / CGNAT，运维可追加 CDN 网段，并让 `X-Forwarded-Host` / `-Proto` 与 `X-Forwarded-For` 取同一跳。

@@ -23,11 +23,11 @@ import {
   requireLatestUpgradeRelease,
   requirePublishedUpgradeRelease,
 } from './update-check';
+import { discardUpstreamBody, readBoundedJsonObject } from './upgrade-forward-body';
 
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 /** 一次「全部升级」会连发 N 个 start，缓存清扫按目录+目标版本做短时记忆，只做一次。 */
 const RELEASE_CACHE_SWEEP_MEMO_MS = 30_000;
-const REMOTE_UPGRADE_JSON_MAX_BYTES = 64 * 1024;
 const UPGRADE_STATES = new Set<UpgradeState>(['idle', 'downloading', 'executing']);
 
 export type AuthorizedUpgradeForwardInput = {
@@ -265,7 +265,8 @@ export async function startLocalUpgradeAttempt(
         | 'UPGRADE_NOT_ALLOWED'
         | 'UPGRADE_IN_PROGRESS'
         | 'PACKAGE_NOT_STAGED'
-        | 'UPGRADE_SIGNATURE_REQUIRED';
+        | 'UPGRADE_SIGNATURE_REQUIRED'
+        | 'UPGRADE_DOWNGRADE_REFUSED';
       status: UpgradeStatus;
     }
   | {
@@ -344,6 +345,10 @@ export async function mapForwardedUpgradeResponse(
   if (upstream.status === 409) {
     const parsed = await readBoundedJsonObject(upstream);
     const extra = parsed.ok ? pickUpgradeStatusFields(parsed.value) : {};
+    const rawCode = parsed.ok ? parsed.value.code : null;
+    if (rawCode === 'UPGRADE_DOWNGRADE_REFUSED' || rawCode === 'UPGRADE_SIGNATURE_REQUIRED') {
+      return jsonError(rawCode, 409, { ...extra, nodeId });
+    }
     return jsonError('UPGRADE_IN_PROGRESS', 409, { ...extra, nodeId });
   }
   return upstream;
@@ -369,6 +374,12 @@ async function startLocalMeshUpgrade(nodeId: string, latestVersion: string): Pro
   const result = await startLocalUpgradeAttempt(latestVersion);
   if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return jsonError('UPGRADE_NOT_ALLOWED', 403, { nodeId });
+  }
+  if (!result.ok && result.code === 'UPGRADE_DOWNGRADE_REFUSED') {
+    return jsonError('UPGRADE_DOWNGRADE_REFUSED', 409, { nodeId, ...result.status });
+  }
+  if (!result.ok && result.code === 'UPGRADE_SIGNATURE_REQUIRED') {
+    return jsonError('UPGRADE_SIGNATURE_REQUIRED', 409, { nodeId, ...result.status });
   }
   if (!result.ok) {
     return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId, ...result.status });
@@ -531,51 +542,4 @@ function pickUpgradeStatusFields(raw: Record<string, unknown>): Record<string, u
     if (typeof value === 'string' || value === null) extra[key] = value;
   }
   return extra;
-}
-
-function discardUpstreamBody(res: Response): void {
-  void res.body?.cancel().catch(() => {});
-}
-
-type BoundedJson = { ok: true; value: Record<string, unknown> } | { ok: false };
-
-async function readBoundedJsonObject(res: Response): Promise<BoundedJson> {
-  const raw = await readBodyLimited(res, REMOTE_UPGRADE_JSON_MAX_BYTES);
-  if (!raw.ok) return { ok: false };
-  try {
-    const parsed: unknown = JSON.parse(raw.text);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return { ok: true, value: parsed as Record<string, unknown> };
-    }
-  } catch {
-    // unparsable or empty
-  }
-  return { ok: false };
-}
-
-async function readBodyLimited(
-  response: Response,
-  limit: number
-): Promise<{ ok: true; text: string } | { ok: false }> {
-  const reader = response.body?.getReader();
-  if (!reader) return { ok: false };
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value?.byteLength) continue;
-      if (total + value.byteLength > limit) {
-        await reader.cancel().catch(() => {});
-        return { ok: false };
-      }
-      chunks.push(value);
-      total += value.byteLength;
-    }
-  } catch {
-    await reader.cancel().catch(() => {});
-    return { ok: false };
-  }
-  return { ok: true, text: new TextDecoder().decode(Buffer.concat(chunks, total)) };
 }

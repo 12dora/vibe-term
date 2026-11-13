@@ -1,5 +1,6 @@
 import { dialTcp } from './dial';
 import { destroySocket } from './socket-handlers';
+import type { TargetPolicyOptions } from './target-policy';
 import { PORT_MAP_TARGET_PROBE_TIMEOUT_MS } from './types';
 
 /** 绑定再立刻释放：能绑上即视为空闲。不做重试，调用方拿到 false 就报端口占用。 */
@@ -19,13 +20,14 @@ export function isPortFree(host: string, port: number): boolean {
   }
 }
 
-/** 目标端口是否有服务在监听：连上即算，连不上或超时算否（超时的连接由 dialTcp 收拾）。 */
+/** 目标端口是否有服务在监听：连上即算；连不上、超时或目标被禁都算否（超时的连接由 dialTcp 收拾）。 */
 export async function isPortListening(
   host: string,
   port: number,
-  timeoutMs = PORT_MAP_TARGET_PROBE_TIMEOUT_MS
+  timeoutMs = PORT_MAP_TARGET_PROBE_TIMEOUT_MS,
+  policy?: TargetPolicyOptions
 ): Promise<boolean> {
-  const dial = dialTcp({ host, port }, timeoutMs);
+  const dial = dialTcp({ host, port }, timeoutMs, policy);
   try {
     destroySocket(await dial.result);
     return true;

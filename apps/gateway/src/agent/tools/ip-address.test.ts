@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { isPrivateIpv6Bytes, isPrivateIpv6Hostname, parseIpv6ToBytes } from './ip-address';
+import {
+  isPrivateIpv4,
+  isPrivateIpv6Bytes,
+  isPrivateIpv6Hostname,
+  parseIpv6ToBytes,
+} from './ip-address';
 
 function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -13,6 +18,17 @@ function requireBytes(text: string): Uint8Array {
   }
   return bytes;
 }
+
+describe('isPrivateIpv4', () => {
+  test('含 CGNAT / 组播 / 保留段', () => {
+    expect(isPrivateIpv4(100, 64)).toBe(true);
+    expect(isPrivateIpv4(100, 127)).toBe(true);
+    expect(isPrivateIpv4(100, 63)).toBe(false);
+    expect(isPrivateIpv4(224, 0)).toBe(true);
+    expect(isPrivateIpv4(240, 0)).toBe(true);
+    expect(isPrivateIpv4(8, 8)).toBe(false);
+  });
+});
 
 describe('parseIpv6ToBytes', () => {
   test('解析 ::1 与 [::1]', () => {

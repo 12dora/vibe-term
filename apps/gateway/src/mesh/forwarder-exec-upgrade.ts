@@ -1,4 +1,3 @@
-import { isForeignBrowserOrigin } from '../exec/channel/ws-upgrade';
 import { clientIpFromRequest } from './client-ip';
 import { encodeJsonBytes } from './ctl';
 import { ExecForwardPump, type ExecForwardSocket } from './exec-forward-pump';
@@ -35,7 +34,6 @@ export function upgradeExecForward(
   deps: { peers: PeerLinkProvider; deadlineMs: number }
 ): Response | undefined {
   if (!isWebSocketUpgrade(req)) return jsonError('upgrade_required', 400);
-  if (isForeignBrowserOrigin(req)) return jsonError('FORBIDDEN_ORIGIN', 403);
   const credential = execForwardCredential(req, nodeId);
   if (!credential) return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId });
   const clientIp = clientIpFromRequest(req);

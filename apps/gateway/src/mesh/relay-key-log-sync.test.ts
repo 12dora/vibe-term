@@ -576,3 +576,100 @@ describe('RelayKeyLogSync prefix-verified secondary', () => {
     }
   });
 });
+
+describe('RelayKeyLogSync 本机记录被中继拒收', () => {
+  type AppendMsg = Extract<RelayCtlMessage, { t: 'relay.keylog.append' }>;
+  type ReqMsg = Extract<RelayCtlMessage, { t: 'relay.keylog.req' }>;
+
+  function appendsOf(h: Harness): AppendMsg[] {
+    return h.sent.filter((msg) => msg.t === 'relay.keylog.append') as AppendMsg[];
+  }
+
+  function reqsOf(h: Harness): ReqMsg[] {
+    return h.sent.filter((msg) => msg.t === 'relay.keylog.req') as ReqMsg[];
+  }
+
+  async function firstAppendRejected(error: string, head: bigint): Promise<Harness> {
+    const local = chainedTotpRecords(3);
+    const h = harness(3n, local);
+    h.sync.noteRemoteHead(2n);
+    await waitUntil(() => appendsOf(h).length === 1, 2_000);
+    const first = appendsOf(h)[0];
+    if (!first) throw new Error('missing append');
+    expect(relaySeqFromWire(first.seq)).toBe(3n);
+    h.sync.handleAck({
+      t: 'relay.keylog.ack',
+      id: first.id,
+      ok: false,
+      error,
+      head: relaySeqToWire(head),
+    });
+    await waitUntil(() => h.sync.remoteHead === head, 2_000);
+    return h;
+  }
+
+  test('本地超前而中继拒收本机记录：记 blockedSeq、不报 caughtUp；重连后清掉重试', async () => {
+    const h = await firstAppendRejected('NODE_NOT_ADMITTED', 2n);
+    await waitUntil(() => h.sync.blockedSeq === 3n, 2_000);
+    expect(h.sync.caughtUp).toBe(false);
+    h.sync.noteRemoteHead(2n);
+    await waitUntil(() => appendsOf(h).length === 2, 2_000);
+    expect(h.sync.blockedSeq).toBe(3n);
+    expect(h.sync.caughtUp).toBe(false);
+    h.sync.reset();
+    expect(h.sync.blockedSeq).toBeNull();
+  });
+
+  test('拒收后重推被接受即解除 blockedSeq 并追平', async () => {
+    const h = await firstAppendRejected('NODE_NOT_ADMITTED', 2n);
+    await waitUntil(() => h.sync.blockedSeq === 3n, 2_000);
+    h.sync.noteRemoteHead(2n);
+    await waitUntil(() => appendsOf(h).length === 2, 2_000);
+    const retry = appendsOf(h)[1];
+    if (!retry) throw new Error('missing retry');
+    h.sync.handleAck({ t: 'relay.keylog.ack', id: retry.id, ok: true, seq: relaySeqToWire(3n) });
+    await waitUntil(() => h.sync.caughtUp, 2_000);
+    expect(h.sync.blockedSeq).toBeNull();
+  });
+
+  test('SEQ_MISMATCH 且中继 head 已不低于该 seq（别的节点先推了）不记 blockedSeq', async () => {
+    const h = await firstAppendRejected(RELAY_KEYLOG_SEQ_MISMATCH, 3n);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.sync.blockedSeq).toBeNull();
+    expect(appendsOf(h)).toHaveLength(1);
+  });
+
+  test('中继 head 不会因推送变小；拉取卡住的 blockedSeq 在越过卡点后解除', async () => {
+    const h = harness(1n);
+    h.sync.noteRemoteHead(2n);
+    await waitUntil(() => reqsOf(h).length === 1, 2_000);
+    h.sync.handleRes({
+      t: 'relay.keylog.res',
+      records: [
+        {
+          seq: relaySeqToWire(2n),
+          blob: await sealRelayKeyLogRecord(generateTenantKey(), {
+            bytes: totpRecordBytes(2n),
+            sig: LOCAL_SIG,
+          }),
+        },
+      ],
+    });
+    await waitUntil(() => h.sync.blockedSeq === 2n, 2_000);
+    h.sync.handlePush({
+      t: 'relay.keylog.push',
+      records: [
+        {
+          seq: relaySeqToWire(2n),
+          blob: await sealRelayKeyLogRecord(LOG_KEY, {
+            bytes: totpRecordBytes(2n),
+            sig: new Uint8Array(64),
+          }),
+        },
+      ],
+    });
+    await waitUntil(() => h.applied.length === 1, 2_000);
+    await waitUntil(() => h.sync.blockedSeq === null, 2_000);
+    expect(h.sync.remoteHead).toBe(2n);
+  });
+});

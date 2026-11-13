@@ -4,13 +4,14 @@
 // 前端先拦一遍只是为了少一次往返，后端仍是权威。
 
 import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { checkAccountPassword } from '@vibeterm/shared/auth';
 import { normalizeRelayUrl } from '@vibeterm/shared/relay';
 
 export type NodeEnv = LocalStatusResponse['nodeEnv'];
 
 const USERNAME_PATTERN = /^[A-Za-z0-9._-]{1,64}$/;
 const LOCAL_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_RELAY_PASSWORD_LENGTH = 8;
 const MAX_NAME_LENGTH = 64;
 
 const ERROR_PREFIX = 'nodes.setup.errors.';
@@ -68,18 +69,18 @@ export function validateBecomeRelay(
   }
 
   const relayPassword = values.relayPassword.trim();
-  if (relayPassword && relayPassword.length < MIN_PASSWORD_LENGTH) {
+  if (relayPassword && relayPassword.length < MIN_RELAY_PASSWORD_LENGTH) {
     errors.relayPassword = `${ERROR_PREFIX}weak_password`;
   }
 
   if (!values.alsoNode) return errors;
 
-  if (!USERNAME_PATTERN.test(values.username.trim())) {
+  const username = values.username.trim();
+  if (!USERNAME_PATTERN.test(username)) {
     errors.username = `${ERROR_PREFIX}invalid_username`;
   }
-  if (values.password.length < MIN_PASSWORD_LENGTH) {
-    errors.password = `${ERROR_PREFIX}weak_password`;
-  }
+  const passwordIssue = checkAccountPassword(values.password, { username });
+  if (passwordIssue) errors.password = `${ERROR_PREFIX}password_${passwordIssue}`;
   if (values.confirmPassword !== values.password) {
     errors.confirmPassword = `${ERROR_PREFIX}password_mismatch`;
   }
@@ -163,6 +164,8 @@ const KNOWN_ERROR_CODES = new Set([
   'invalid_role',
   'invalid_username',
   'weak_password',
+  'password_too_short',
+  'password_too_simple',
   'user_exists',
   'invalid_token',
   'node_revoked',

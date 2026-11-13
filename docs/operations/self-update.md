@@ -72,7 +72,8 @@ VibeTerm 以 `vibeterm-cli` 包（`packages/app`）发布。除终端 `vibeterm 
 只服务入口推包，本机不用。
 
 远程节点的升级（三通道投递：节点自拉 → 入口推 → 强制自拉）见
-[远程升级](./remote-upgrade.md)。
+[远程升级](./remote-upgrade.md)。从别的节点转发进来的 `POST /api/system/upgrade` 在签名下限之外还会拒绝
+`compareSemver(目标, 当前) < 0`，回 409 `UPGRADE_DOWNGRADE_REFUSED`；本机 `vibeterm upgrade --version <更旧>` 须加 `--allow-downgrade`。
 
 ## 发行包缓存与清扫
 

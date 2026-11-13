@@ -27,11 +27,22 @@ import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
 import { relayQuotaCtl, relayQuotaUsageFingerprint } from './relay-quota-ctl';
-import { type RelayLiveNode, type RelayRegistry, noteRelayPing } from './relay-registry';
+import type { RelayLiveNode, RelayRegistry } from './relay-registry';
 import { acceptRelayStream } from './relay-stream-router';
 import type { RelayTenantStore } from './relay-tenant-store';
 import { handleRelayAuth, revalidateRelayLive } from './relay-uplink-auth';
 import { type RelayUplinkHost, dispatchRelayAuthedCtl } from './relay-uplink-handlers';
+import {
+  type RelayHeartbeatHost,
+  clearRelayHeartbeat,
+  startRelayHeartbeat,
+} from './relay-uplink-heartbeat';
+import { kickRelayLink } from './relay-uplink-kick';
+import {
+  RELAY_PREAUTH_GLOBAL,
+  RELAY_PREAUTH_PER_IP,
+  RelayUplinkPreauth,
+} from './relay-uplink-preauth';
 import {
   RELAY_AUTH_TIMEOUT_MS,
   RELAY_ENROLLMENT_USED_RETENTION_MS,
@@ -41,7 +52,17 @@ import {
   type RelayRuntimeConfig,
   type RelayTenantRecord,
 } from './types';
+
+export { RELAY_PREAUTH_GLOBAL, RELAY_PREAUTH_PER_IP } from './relay-uplink-preauth';
+
 type PendingAuth = { nonce: Uint8Array; observedIpv4?: string };
+
+export type RelayUplinkAcceptOpts = {
+  observedIpv4?: string;
+  /** 未认证名额键；null = 不代表单个客户端，只计全局上限。 */
+  clientIp?: string | null;
+  preauthReserved?: boolean;
+};
 
 export type RelayUplinkServerOptions = {
   db: AuthDb;
@@ -66,6 +87,8 @@ export type RelayUplinkServerOptions = {
     bandwidthBytesPerSec: number;
   };
   turnProvider?: () => RelayRtcConfig['turn'];
+  preauthPerIp?: number;
+  preauthGlobal?: number;
 };
 export class RelayUplinkServer implements RelayUplinkHost {
   readonly relayHost: string;
@@ -79,14 +102,11 @@ export class RelayUplinkServer implements RelayUplinkHost {
   private readonly config: RelayRuntimeConfig;
   private readonly sleep: RelaySleep | undefined;
   private readonly heartbeatIntervalMs: number;
-  private readonly heartbeatMissLimit: number;
-  private readonly authTimeoutMs: number;
   private readonly listDebounceMs: number;
   private readonly minClientVersion: string;
   private readonly authBarrier: (() => Promise<void>) | undefined;
   private readonly pending = new WeakMap<LinkSession, PendingAuth>();
   private readonly accepted = new Set<LinkSession>();
-  private readonly authTimers = new Map<LinkSession, ReturnType<typeof setTimeout>>();
   private readonly ctlQueue = new RelayCtlQueue();
   private readonly listTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly buckets = new Map<string, RelayTokenBucket>();
@@ -106,6 +126,8 @@ export class RelayUplinkServer implements RelayUplinkHost {
     | undefined;
   private readonly lastUsagePush = new Map<string, string>();
   private readonly turnProvider: (() => RelayRtcConfig['turn']) | undefined;
+  private readonly preauth: RelayUplinkPreauth;
+  private readonly heartbeatHost: RelayHeartbeatHost;
 
   constructor(opts: RelayUplinkServerOptions) {
     this.db = opts.db;
@@ -119,13 +141,25 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? RELAY_HEARTBEAT_INTERVAL_MS;
-    this.heartbeatMissLimit = opts.heartbeatMissLimit ?? RELAY_HEARTBEAT_MISS_LIMIT;
-    this.authTimeoutMs = opts.authTimeoutMs ?? RELAY_AUTH_TIMEOUT_MS;
     this.listDebounceMs = opts.listDebounceMs ?? RELAY_LIST_DEBOUNCE_MS;
     this.minClientVersion = opts.minClientVersion ?? MIN_RELAY_CLIENT_VERSION;
     this.authBarrier = opts.authBarrier;
     this.tenantRates = opts.tenantRates;
     this.turnProvider = opts.turnProvider;
+    this.preauth = new RelayUplinkPreauth(
+      opts.preauthPerIp ?? RELAY_PREAUTH_PER_IP,
+      opts.preauthGlobal ?? RELAY_PREAUTH_GLOBAL,
+      opts.authTimeoutMs ?? RELAY_AUTH_TIMEOUT_MS,
+      (link) => !this.registry.fromLink(link) && this.accepted.has(link),
+      (link) => this.reject(link, 'auth-timeout')
+    );
+    this.heartbeatHost = {
+      registry: this.registry,
+      heartbeatMissLimit: opts.heartbeatMissLimit ?? RELAY_HEARTBEAT_MISS_LIMIT,
+      now: this.now,
+      revalidate: (live) => this.revalidate(live),
+      send: (link, msg) => this.send(link, msg),
+    };
     this.bandwidth = createRelayBandwidthLimiter(
       this.configStore.ensure(this.now()).limits,
       this.now,
@@ -148,15 +182,29 @@ export class RelayUplinkServer implements RelayUplinkHost {
     return this.accepted.size;
   }
 
-  accept(link: LinkSession, opts?: { observedIpv4?: string }): void {
+  /** 升级前占用未认证名额；失败时调用方应 `releasePreauthReservation`。 */
+  reservePreauth(key: string | null): boolean {
+    return this.preauth.reserve(key);
+  }
+
+  releasePreauthReservation(key: string | null): void {
+    this.preauth.releaseReservation(key);
+  }
+
+  accept(link: LinkSession, opts?: RelayUplinkAcceptOpts): void {
     if (this.stopped) {
       link.close('relay-stop');
+      return;
+    }
+    const key = opts?.clientIp !== undefined ? opts.clientIp : (opts?.observedIpv4 ?? null);
+    if (!this.preauth.claim(link, key, opts?.preauthReserved)) {
+      link.close('too-many-preauth');
       return;
     }
     const nonce = randomBytes(32);
     this.accepted.add(link);
     this.pending.set(link, { nonce, observedIpv4: opts?.observedIpv4 });
-    this.armAuthTimer(link);
+    this.preauth.armAuthTimer(link);
     this.send(link, { t: 'auth.challenge', nonce: encodeBase64url(nonce) });
     link.ctl.onMessage((bytes) => {
       void this.enqueueCtl(link, bytes);
@@ -316,15 +364,8 @@ export class RelayUplinkServer implements RelayUplinkHost {
     }
   }
 
-  /** ctl 发送是异步排空的，立刻 close 会把 `relay.kicked` 丢掉，所以下一个宏任务再断。 */
   private kickLink(live: RelayLiveNode, reason: RelayKickReason): void {
-    this.send(live.link, { t: 'relay.kicked', reason });
-    const link = live.link;
-    const timer = setTimeout(() => {
-      this.closeTimers.delete(timer);
-      link.close(`relay-${reason}`);
-    }, 0);
-    this.closeTimers.add(timer);
+    kickRelayLink(live, reason, (target, msg) => this.send(target, msg), this.closeTimers);
   }
 
   scheduleList(tenantId: string): void {
@@ -357,14 +398,13 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.stopped = true;
     for (const timer of this.listTimers.values()) clearTimeout(timer);
     this.listTimers.clear();
-    for (const live of this.registry.all()) this.clearHeartbeat(live);
+    for (const live of this.registry.all()) clearRelayHeartbeat(live);
     this.registry.clear();
-    for (const timer of this.authTimers.values()) clearTimeout(timer);
-    this.authTimers.clear();
     for (const timer of this.closeTimers) clearTimeout(timer);
     this.closeTimers.clear();
     for (const link of [...this.accepted]) link.close('relay-stop');
     this.accepted.clear();
+    this.preauth.clear();
     for (const bucket of this.buckets.values()) bucket.cancelAll();
     this.buckets.clear();
     this.bandwidth.clear();
@@ -440,7 +480,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
   ): Promise<void> {
     const pending = this.pending.get(link);
     this.pending.delete(link);
-    this.clearAuthTimer(link);
+    this.preauth.clearAuthTimer(link);
     await handleRelayAuth(
       {
         tenants: this.tenants,
@@ -455,8 +495,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
         authBarrier: this.authBarrier,
         reject: (target, reason) => this.reject(target, reason),
         send: (target, ctl) => this.send(target, ctl),
-        startHeartbeat: (live) => this.startHeartbeat(live),
+        startHeartbeat: (live) =>
+          startRelayHeartbeat(this.heartbeatHost, live, this.heartbeatIntervalMs),
         notifyQuota: (tenantId) => this.notifyQuota(tenantId),
+        maxNodes: (tenantId) => this.quotaFor(tenantId).maxNodes,
         scheduleList: (tenantId) => this.scheduleList(tenantId),
         rtcConfig: () => this.rtcConfig(),
       },
@@ -464,6 +506,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
       msg,
       pending
     );
+    if (this.registry.fromLink(link)) this.preauth.drop(link);
   }
 
   private async onIncomingStream(link: LinkSession, stream: LinkStream): Promise<void> {
@@ -494,76 +537,18 @@ export class RelayUplinkServer implements RelayUplinkHost {
 
   private reject(link: LinkSession, reason: string): void {
     this.pending.delete(link);
-    this.clearAuthTimer(link);
+    this.preauth.clearAuthTimer(link);
     link.close(reason);
   }
 
-  private startHeartbeat(live: RelayLiveNode): void {
-    this.clearHeartbeat(live);
-    if (this.heartbeatIntervalMs <= 0) return;
-    live.heartbeat = setInterval(() => {
-      this.beat(live);
-    }, this.heartbeatIntervalMs);
-  }
-
-  private beat(live: RelayLiveNode): void {
-    if (this.registry.fromLink(live.link) !== live) {
-      this.clearHeartbeat(live);
-      return;
-    }
-    // 只跑数据流的链路从不进 dispatchAuthenticated，宽限到期只能靠这一拍收掉
-    const tenant = this.revalidate(live);
-    if (!tenant) return;
-    if (live.awaitingPong) {
-      if (live.byteFlowSeq !== live.pingByteFlowSeq) {
-        live.misses = 0;
-        live.pingByteFlowSeq = live.byteFlowSeq;
-        return;
-      }
-      live.misses += 1;
-      if (live.misses >= this.heartbeatMissLimit) {
-        live.link.close('heartbeat-timeout');
-      }
-      return;
-    }
-    live.awaitingPong = true;
-    noteRelayPing(live, this.now());
-    this.send(live.link, { t: 'ping', token_rotated: live.tokenHash !== tenant.tokenHash });
-  }
-
-  private clearHeartbeat(live: RelayLiveNode): void {
-    if (live.heartbeat !== null) {
-      clearInterval(live.heartbeat);
-      live.heartbeat = null;
-    }
-  }
-
-  private armAuthTimer(link: LinkSession): void {
-    this.clearAuthTimer(link);
-    const timer = setTimeout(() => {
-      this.authTimers.delete(link);
-      if (!this.registry.fromLink(link) && this.accepted.has(link)) {
-        this.reject(link, 'auth-timeout');
-      }
-    }, this.authTimeoutMs);
-    this.authTimers.set(link, timer);
-  }
-
-  private clearAuthTimer(link: LinkSession): void {
-    const timer = this.authTimers.get(link);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      this.authTimers.delete(link);
-    }
-  }
-
   private onLinkClosed(link: LinkSession): void {
+    this.preauth.drop(link);
     this.pending.delete(link);
-    this.clearAuthTimer(link);
+    this.preauth.clearAuthTimer(link);
     this.accepted.delete(link);
     const live = this.registry.removeLink(link);
     if (!live) return;
-    this.clearHeartbeat(live);
+    clearRelayHeartbeat(live);
     if (this.stopped) return;
     this.tenants.patchNode(live.tenantId, live.nodeId, { lastSeenAt: this.now() });
     this.scheduleList(live.tenantId);

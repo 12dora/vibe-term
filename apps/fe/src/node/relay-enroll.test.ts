@@ -285,6 +285,7 @@ describe('enrollRelay', () => {
     };
     expect(body.url).toBe('https://r.example');
     expect(body.password).toBe('relay-pw');
+    expect('force_rotate' in body).toBe(false);
     const proof = decodeRelayEnrollProof(decodeBase64url(body.proof.bytes));
     expect(proof.relay_host).toBe('r.example');
     expect(proof.domain).toBe('tmex/relay-enroll/v1');

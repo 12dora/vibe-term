@@ -27,7 +27,12 @@ import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
 import type { LocalAuthContext } from './local-auth';
 import { cliPasswordLoginBlockedByPasskey, fetchAuthMode, loginWithRootKey } from './node-client';
-import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
+import {
+  assertAccountPassword,
+  assertRootKeyMatches,
+  deriveRootKey,
+  resolvePassword,
+} from './password';
 import { promptPassword, promptText } from './prompt';
 import { asString } from './validate';
 
@@ -94,6 +99,7 @@ async function createLocalUser(
     prompt: 'New password',
     confirmPrompt: 'Confirm password',
   });
+  assertAccountPassword(password, username);
   const identity = await ensureNodeIdentity(ctx.identityStore);
   const boot = await ctx.userKeys.bootstrapUserWithSelfAdmit({
     username,

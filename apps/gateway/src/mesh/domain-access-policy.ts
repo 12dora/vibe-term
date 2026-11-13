@@ -1,3 +1,4 @@
+import { hostname as osHostname } from 'node:os';
 import {
   classifyRemoteAddress,
   isCgnatIpv4,
@@ -5,7 +6,6 @@ import {
   isLoopbackHostLiteral,
   looksLikeIpv6,
 } from './address-class';
-import { resolveClientIp } from './client-ip';
 
 const DEFAULT_PORTS = new Set(['80', '443']);
 
@@ -43,8 +43,18 @@ export function isLocalName(host: string): boolean {
   const hostname = stripBrackets(hostnameOf(normalizeHost(host) || host.toLowerCase()));
   if (!hostname) return false;
   if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
-  if (hostname === 'local' || hostname.endsWith('.local')) return true;
+  if (hostname.endsWith('.local')) return hostname === ownMdnsName();
   return isLoopbackHostLiteral(hostname);
+}
+
+/** 本机的 mDNS 名：`<os.hostname()>.local`（macOS 的 hostname 可能已带 `.local`）。 */
+export function ownMdnsName(): string {
+  const base = osHostname()
+    .trim()
+    .toLowerCase()
+    .replace(/\.+$/, '')
+    .replace(/\.local$/, '');
+  return `${base}.local`;
 }
 
 export function collectConfiguredHosts(sources: Iterable<string | null | undefined>): string[] {
@@ -104,25 +114,17 @@ export function isJsonDeniedPath(pathname: string): boolean {
   return rest === 'ws' || rest.startsWith('api/');
 }
 
+/** `clientIp` 必须是可信来源地址（`client-ip.ts` 的 `trustedSourceIp`）：经代理但未受信的请求传 null。 */
 export function decideDomainAccess(input: {
   viaSelf: boolean;
   allowed: boolean;
   clientIp?: string | null;
-  trustProxy?: boolean;
-  headers?: Headers;
   method: string;
   pathname: string;
 }): DomainAccessDecision {
   if (!input.viaSelf || input.allowed) return 'allow';
   if (isServicePath(input.method, input.pathname)) return 'allow';
-  // Reverse-proxy deployments must enable VIBETERM_TRUST_PROXY, otherwise the proxy's
-  // own socket IP is judged (typically private → allowed).
-  const ip = resolveClientIp({
-    socketIp: input.clientIp,
-    headers: input.headers ?? new Headers(),
-    trustProxy: input.trustProxy === true,
-  });
-  if (isLocalClientSource(ip)) return 'allow';
+  if (isLocalClientSource(input.clientIp)) return 'allow';
   return isJsonDeniedPath(input.pathname) ? 'deny-json' : 'deny-text';
 }
 

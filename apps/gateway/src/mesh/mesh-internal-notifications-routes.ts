@@ -11,6 +11,7 @@ import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { getSiteSettings } from '../db';
 import { eventNotifier } from '../events';
+import { buildPaneUrl, normalizeHttpUrl } from '../events/channels/pane-url';
 import { getMeshAgentBridge } from './mesh-agent-bridge';
 import { getMeshNotificationBridge } from './notification-mesh-bridge';
 import { resolveMeshNodeDisplayName } from './notification-origin-name';
@@ -71,8 +72,21 @@ export function resetMeshNotificationRateLimit(): void {
   buckets.clear();
 }
 
+const REMOTE_TEXT_MAX = 2048;
+const PAYLOAD_LINK_KEYS = new Set(['paneUrl', 'url', 'link', 'href', 'actionUrl', 'clickUrl']);
+
 function str(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function cappedStr(value: unknown): string | undefined {
+  const raw = str(value);
+  if (raw === undefined) return undefined;
+  return raw.length > REMOTE_TEXT_MAX ? raw.slice(0, REMOTE_TEXT_MAX) : raw;
+}
+
+function looksLikeUrl(value: string): boolean {
+  return /^(https?|wss?):\/\//i.test(value);
 }
 
 function num(value: unknown): number | undefined {
@@ -82,11 +96,11 @@ function num(value: unknown): number | undefined {
 function parseDevice(raw: unknown): WebhookEvent['device'] | null {
   if (!raw || typeof raw !== 'object') return null;
   const row = raw as Record<string, unknown>;
-  const id = str(row.id);
-  const name = str(row.name);
+  const id = cappedStr(row.id);
+  const name = cappedStr(row.name);
   const type = row.type === 'ssh' || row.type === 'local' ? (row.type as DeviceType) : null;
   if (!id || !name || !type) return null;
-  const host = str(row.host);
+  const host = cappedStr(row.host);
   return { id, name, type, ...(host ? { host } : {}) };
 }
 
@@ -94,16 +108,9 @@ function parseTmux(raw: unknown): WebhookEvent['tmux'] | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const row = raw as Record<string, unknown>;
   const out: NonNullable<WebhookEvent['tmux']> = {};
-  const texts = [
-    'sessionName',
-    'windowId',
-    'paneId',
-    'paneUrl',
-    'paneTitle',
-    'paneCurrentCommand',
-  ] as const;
+  const texts = ['sessionName', 'windowId', 'paneId', 'paneTitle', 'paneCurrentCommand'] as const;
   for (const key of texts) {
-    const value = str(row[key]);
+    const value = cappedStr(row[key]);
     if (value !== undefined) out[key] = value;
   }
   for (const key of ['windowIndex', 'paneIndex'] as const) {
@@ -114,9 +121,44 @@ function parseTmux(raw: unknown): WebhookEvent['tmux'] | undefined {
 }
 
 function parsePayload(raw: unknown): Record<string, unknown> {
-  return raw && typeof raw === 'object' && !Array.isArray(raw)
-    ? { ...(raw as Record<string, unknown>) }
-    : {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return sanitizePayload(raw as Record<string, unknown>, 0);
+}
+
+function sanitizePayload(raw: Record<string, unknown>, depth: number): Record<string, unknown> {
+  if (depth > 3) return {};
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (PAYLOAD_LINK_KEYS.has(key)) continue;
+    if (typeof value === 'string') {
+      if (looksLikeUrl(value)) continue;
+      out[key] = value.length > REMOTE_TEXT_MAX ? value.slice(0, REMOTE_TEXT_MAX) : value;
+    } else if (typeof value === 'number' || typeof value === 'boolean') {
+      out[key] = value;
+    } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+      out[key] = sanitizePayload(value as Record<string, unknown>, depth + 1);
+    }
+  }
+  return out;
+}
+
+function rebuildRemotePaneUrl(
+  site: { name: string; url: string },
+  device: WebhookEvent['device'],
+  tmux: WebhookEvent['tmux'],
+  originNodeId: string
+): string | undefined {
+  const paneUrl = normalizeHttpUrl(
+    buildPaneUrl({
+      eventType: 'terminal_bell',
+      timestamp: '',
+      site,
+      device,
+      tmux,
+      payload: { nodeId: originNodeId },
+    })
+  );
+  return paneUrl ?? undefined;
 }
 
 type ParsedBody = {
@@ -160,12 +202,15 @@ async function handleForward(req: Request, deps: MeshInternalNotificationDeps): 
   const parsed = parseForwardBody(raw, originNodeId);
   if (!parsed) return json({ error: 'invalid_request' }, 400);
   const originName = deps.nodeName(originNodeId) ?? originNodeId;
+  const site = deps.site();
+  const paneUrl = rebuildRemotePaneUrl(site, parsed.device, parsed.tmux, originNodeId);
+  const tmux = parsed.tmux ? { ...parsed.tmux, ...(paneUrl ? { paneUrl } : {}) } : undefined;
   // 不等本机渠道扇出完成：webhook 慢一秒就会把发送方那条队列卡住，这里只负责收下。
   void deps
     .notify(parsed.eventType, {
-      site: deps.site(),
+      site,
       device: parsed.device,
-      ...(parsed.tmux ? { tmux: parsed.tmux } : {}),
+      ...(tmux ? { tmux } : {}),
       payload: { ...parsed.payload, nodeId: originNodeId, nodeName: originName },
     })
     .catch((err: unknown) => {

@@ -120,6 +120,20 @@ describe('buildRsyncDeviceSpec', () => {
     spec.cleanup();
   });
 
+  test('option-injection host is rejected before rsync -e', async () => {
+    await expect(
+      buildRsyncDeviceSpec(
+        device({
+          authMode: 'password',
+          host: '-oProxyCommand=true',
+          username: 'u',
+          passwordEnc: 'x',
+        }),
+        noopDecrypt
+      )
+    ).rejects.toBeInstanceOf(RsyncAuthError);
+  });
+
   test('no usable auth → unsupported', async () => {
     const resolveConfig = (async () =>
       ({ host: 'h', port: 22, username: 'u' }) as ConnectConfig) as never;

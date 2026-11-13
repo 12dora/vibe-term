@@ -1,5 +1,4 @@
 import {
-  bytesEqual,
   computeRecordHash,
   decodeKeyLogRecord,
   encodeBase64url,
@@ -8,6 +7,7 @@ import {
 import {
   RELAY_KEYLOG_PAGE_DEFAULT_LIMIT,
   RELAY_KEYLOG_PAGE_MAX_LIMIT,
+  RELAY_KEYLOG_SEQ_MISMATCH,
   type RelayCtlMessage,
   type RelayEnvelope,
   type RelayKeyLogEntry,
@@ -19,6 +19,8 @@ import {
   sealRelayKeyLogRecord,
 } from '@vibeterm/shared/relay';
 import { stamp } from './mesh-log';
+import { openRelayKeyLogPage } from './relay-key-log-page';
+import { RelayKeyLogPrefix } from './relay-key-log-prefix';
 import type { KeyLogApplier, MeshScheduler } from './types';
 
 export const RELAY_KEYLOG_ACK_TIMEOUT_MS = 10_000;
@@ -86,18 +88,22 @@ export class RelayKeyLogSync {
   remoteHead: bigint | null = null;
   /** 拉下来但解不开 / 应用不了的记录数（诊断用，前端展示）。 */
   skipped = 0;
-  /** 第一条卡住的中继 seq；非 null 表示本地日志永远追不平它之后的内容。 */
+  /**
+   * 第一条卡住的 seq：拉取时解不开 / 应用不了的中继记录，或本地超前时被中继拒收的本机记录。
+   * 非 null 时不报 caughtUp；重连时清掉重试。
+   */
   blockedSeq: bigint | null = null;
   /** 上一轮追平是否真的追平了（`onSynced` 只在追平时触发）。 */
   caughtUp = false;
-  /** secondary 发现远端日志不是本地前缀；仅本连接有效，重连后清掉。 */
-  diverged = false;
 
   private readonly host: RelayKeyLogSyncHost;
   private readonly applier: KeyLogApplier;
   private readonly timeoutMs: number;
   private pushMode: RelayKeyLogPushMode;
-  private divergedLogged = false;
+  /** secondary 的前缀校验与分叉状态。 */
+  private readonly prefix: RelayKeyLogPrefix;
+  /** `blockedSeq` 来自补推被拒（而不是拉取卡住）：本地追到它也不能解除。 */
+  private pushRefused = false;
   private readonly pendingAcks = new Map<string, (ack: RelayKeyLogAck) => void>();
   private pendingReq: {
     from: bigint;
@@ -113,6 +119,17 @@ export class RelayKeyLogSync {
     this.applier = opts.applier;
     this.timeoutMs = opts.timeoutMs ?? RELAY_KEYLOG_ACK_TIMEOUT_MS;
     this.pushMode = opts.pushMode ?? 'publish';
+    this.prefix = new RelayKeyLogPrefix({
+      generation: () => this.host.generation(),
+      applier: this.applier,
+      readRemoteAt: (seq) => this.readKeyLogAt(seq),
+      url: () => this.host.url?.() ?? '',
+    });
+  }
+
+  /** secondary 发现远端日志不是本地前缀；仅本连接有效，重连后清掉。 */
+  get diverged(): boolean {
+    return this.prefix.diverged;
   }
 
   setPushMode(mode: RelayKeyLogPushMode): void {
@@ -124,9 +141,9 @@ export class RelayKeyLogSync {
     this.remoteHead = null;
     // 重连后重试一次：卡住的原因可能是密钥还没到（`set-relays` / `meta-key` 迟到）
     this.blockedSeq = null;
+    this.pushRefused = false;
+    this.prefix.reset();
     this.caughtUp = false;
-    this.diverged = false;
-    this.divergedLogged = false;
     const req = this.pendingReq;
     this.pendingReq = null;
     req?.reject(new Error(reason));
@@ -174,11 +191,12 @@ export class RelayKeyLogSync {
     const generation = this.host.generation();
     this.enqueue(async () => {
       const outcome = await this.applyPage(msg.records, generation);
-      if (outcome.applied > 0 && (this.remoteHead === null || highest > this.remoteHead)) {
-        this.remoteHead = highest;
+      if (outcome.applied > 0) {
+        if (this.remoteHead === null || highest > this.remoteHead) this.remoteHead = highest;
+        await this.clearBlockedIfPassed();
         return;
       }
-      if (outcome.applied === 0) this.noteRemoteHead(highest);
+      this.noteRemoteHead(highest);
     });
   }
 
@@ -298,26 +316,42 @@ export class RelayKeyLogSync {
       console.warn(stamp('[relay] key-log catch-up skipped: empty userId'));
       return;
     }
-    let local = await this.applier.head(userId);
-    if (generation !== this.host.generation()) return;
-    if (local.seq < remote && this.blockedSeq !== local.seq + 1n) {
-      await this.pullPages(generation, userId, local.seq, remote);
-      local = await this.applier.head(userId);
-    }
-    if (generation !== this.host.generation()) return;
-    const pushed = await this.maybePushAhead(
-      generation,
-      userId,
-      this.remoteHead ?? remote,
-      local.seq
-    );
+    const localSeq = await this.pullBehind(generation, userId, remote);
+    if (localSeq === null || generation !== this.host.generation()) return;
+    await this.clearBlockedIfPassed();
+    const target = this.remoteHead ?? remote;
+    const pushed = await this.maybePushAhead(generation, userId, target, localSeq);
     if (pushed === null || generation !== this.host.generation()) return;
-    this.caughtUp = !this.diverged && pushed === (this.remoteHead ?? remote);
+    this.finishCatchUp(pushed === (this.remoteHead ?? remote));
+  }
+
+  /** 本地落后且没卡在下一条时一页页拉；返回拉完后的本地 head，世代已变返回 null。 */
+  private async pullBehind(
+    generation: number,
+    userId: string,
+    remote: bigint
+  ): Promise<bigint | null> {
+    const local = await this.applier.head(userId);
+    if (generation !== this.host.generation()) return null;
+    if (local.seq >= remote || this.blockedSeq === local.seq + 1n) return local.seq;
+    await this.pullPages(generation, userId, local.seq, remote);
+    return (await this.applier.head(userId)).seq;
+  }
+
+  private finishCatchUp(pushedToHead: boolean): void {
+    this.caughtUp = !this.prefix.diverged && this.blockedSeq === null && pushedToHead;
     // 只有真的两边一致才算同步完成：卡住的日志不该让上层以为一切正常
     if (this.caughtUp) this.host.onSynced?.();
   }
 
-  /** 本地超前才补推；secondary 还要先确认远端是本地前缀。失败返回 null。 */
+  private async clearBlockedIfPassed(): Promise<void> {
+    if (this.blockedSeq === null || this.pushRefused) return;
+    const userId = this.host.userId();
+    if (!userId) return;
+    if ((await this.applier.head(userId)).seq >= this.blockedSeq) this.blockedSeq = null;
+  }
+
+  /** 本地超前才补推；secondary 还要先确认远端是本地前缀（主中继是本机新记录的发布路径，无条件补推）。失败返回 null。 */
   private async maybePushAhead(
     generation: number,
     userId: string,
@@ -325,66 +359,13 @@ export class RelayKeyLogSync {
     localSeq: bigint
   ): Promise<bigint | null> {
     const verify = this.pushMode === 'prefix-verified' && localSeq >= remoteNow;
-    if (verify && !(await this.canPushMissing(generation, userId, remoteNow, localSeq))) {
+    if (verify && !(await this.prefix.verify(generation, userId, remoteNow, localSeq))) {
+      this.caughtUp = false;
       return null;
     }
     if (localSeq <= remoteNow) return localSeq;
     await this.pushMissing(generation, userId, remoteNow);
     return (await this.applier.head(userId)).seq;
-  }
-
-  /**
-   * secondary 只向「远端是本地前缀」的中继补推：空日志可引导新中继；对不上则记分叉、不 push。
-   * 主中继仍无条件补推（它是本机新记录的发布路径）。
-   */
-  private async canPushMissing(
-    generation: number,
-    userId: string,
-    remote: bigint,
-    localSeq: bigint
-  ): Promise<boolean> {
-    if (this.pushMode !== 'prefix-verified') return true;
-    const prefix = await this.remoteIsLocalPrefix(generation, userId, remote, localSeq);
-    if (prefix === 'prefix') return true;
-    if (prefix === 'diverged') this.noteDiverged(remote, localSeq);
-    this.caughtUp = false;
-    return false;
-  }
-
-  /**
-   * 记录是 prev_hash 哈希链：每条 bytes 含前驱 `hash = sha256(pred.bytes ‖ pred.sig)`，
-   * sig 覆盖整条 bytes。比对远端 head 的 bytes+sig 即提交了整个 `1..head` 前缀——
-   * 中间被截断、重排或分叉都会改变后续 prev_hash，head 必然对不上。
-   * 另校验远端 head seq ≤ 本地，且解出的 seq 与声称的 head 一致（`readKeyLogAt`）。
-   */
-  private async remoteIsLocalPrefix(
-    generation: number,
-    userId: string,
-    remote: bigint,
-    localSeq: bigint
-  ): Promise<'prefix' | 'diverged' | 'unknown'> {
-    if (remote > localSeq) return 'unknown';
-    if (remote === 0n) return 'prefix';
-    const remoteRec = await this.readKeyLogAt(remote);
-    if (!remoteRec || generation !== this.host.generation()) return 'unknown';
-    const localRows = (await this.applier.list?.(userId, remote, undefined, 1)) ?? [];
-    const localRec = localRows.find((row) => row.seq === remote);
-    if (!localRec) return 'diverged';
-    return bytesEqual(remoteRec.bytes, localRec.bytes) && bytesEqual(remoteRec.sig, localRec.sig)
-      ? 'prefix'
-      : 'diverged';
-  }
-
-  private noteDiverged(remote: bigint, local: bigint): void {
-    this.diverged = true;
-    if (this.divergedLogged) return;
-    this.divergedLogged = true;
-    const url = this.host.url?.() ?? '';
-    console.warn(
-      stamp(
-        `[mesh][relay] key-log diverged url=${url} remote_head=${String(remote)} local_head=${String(local)}`
-      )
-    );
   }
 
   /**
@@ -432,27 +413,8 @@ export class RelayKeyLogSync {
     const idle: RelayApplyPageOutcome = { applied: 0, skipped: 0, maxSeq: 0n };
     const key = await this.host.logKey();
     if (!key || generation !== this.host.generation()) return idle;
-    const sorted = [...rows].sort((a, b) => {
-      const as = relaySeqFromWire(a.seq);
-      const bs = relaySeqFromWire(b.seq);
-      return as < bs ? -1 : as > bs ? 1 : 0;
-    });
-    const records: RelayKeyLogRecord[] = [];
-    let skipped = 0;
-    let maxSeq = 0n;
-    for (const row of sorted) {
-      const seq = relaySeqFromWire(row.seq);
-      if (seq > maxSeq) maxSeq = seq;
-      try {
-        records.push(await openRelayKeyLogRecord(key, row.blob));
-      } catch {
-        // 解不开就跳过这一条：中继上的密文由（可能已被攻陷的）同租户节点写入，不能让它堵死同步
-        console.warn(stamp(`[relay] key-log blob undecryptable seq=${String(row.seq)}`));
-        skipped += 1;
-        this.skipped += 1;
-        break;
-      }
-    }
+    const { records, skipped, maxSeq } = await openRelayKeyLogPage(key, rows);
+    this.skipped += skipped;
     if (records.length === 0) return { applied: 0, skipped, maxSeq };
     const result = await this.applier.applyMany(this.host.userId(), records);
     if (result.error) {
@@ -483,14 +445,33 @@ export class RelayKeyLogSync {
           generation
         );
         if (!ack.ok) {
-          if (ack.head !== undefined) this.remoteHead = ack.head;
-          console.warn(stamp(`[relay] key-log append rejected err=${ack.error ?? 'unknown'}`));
+          this.noteRefusedPush(row.seq, ack);
           return;
         }
         cursor = row.seq;
-        if (ack.seq !== undefined) this.remoteHead = ack.seq;
+        this.notePushAccepted(row.seq, ack);
       }
     }
+  }
+
+  private notePushAccepted(seq: bigint, ack: RelayKeyLogAck): void {
+    if (ack.seq !== undefined) this.remoteHead = ack.seq;
+    if (!this.pushRefused || this.blockedSeq === null || seq < this.blockedSeq) return;
+    this.pushRefused = false;
+    this.blockedSeq = null;
+  }
+
+  /**
+   * 中继拒收本机记录：SEQ_MISMATCH 且中继 head 已不低于该 seq 是别的节点先推了，下一轮照常拉取；
+   * 其余拒绝（未准入、日志满等）记 `blockedSeq`，不报 caughtUp。超时 / 离线不算拒绝。
+   */
+  private noteRefusedPush(seq: bigint, ack: RelayKeyLogAck): void {
+    console.warn(stamp(`[relay] key-log append rejected err=${ack.error ?? 'unknown'}`));
+    if (ack.head === undefined) return;
+    this.remoteHead = ack.head;
+    if (ack.error === RELAY_KEYLOG_SEQ_MISMATCH && ack.head >= seq) return;
+    if (this.blockedSeq === null || seq < this.blockedSeq) this.blockedSeq = seq;
+    this.pushRefused = true;
   }
 
   private request(from: bigint, limit: number): Promise<RelayKeyLogRecordWire[]> {

@@ -80,9 +80,38 @@ describe('validateBecomeRelay', () => {
       )
     ).toEqual({
       username: 'nodes.setup.errors.invalid_username',
-      password: 'nodes.setup.errors.weak_password',
+      password: 'nodes.setup.errors.password_too_short',
       confirmPassword: 'nodes.setup.errors.password_mismatch',
     });
+  });
+
+  test('账号密码过于简单、含用户名时拒绝；接入口令仍只要 8 位', () => {
+    for (const password of ['123456789012', 'aaaaaaaaaaaa', 'qwerty123456', 'xK9#alice#mP2$vL']) {
+      expect(
+        validateBecomeRelay(relayValues({ password, confirmPassword: password }), 'production')
+      ).toEqual({ password: 'nodes.setup.errors.password_too_simple' });
+    }
+    expect(
+      validateBecomeRelay(
+        relayValues({ relayPassword: 'short', password: 'x', confirmPassword: 'x' }),
+        'production'
+      )
+    ).toEqual({
+      relayPassword: 'nodes.setup.errors.weak_password',
+      password: 'nodes.setup.errors.password_too_short',
+    });
+    expect(validateBecomeRelay(relayValues({ relayPassword: '12345678' }), 'production')).toEqual(
+      {}
+    );
+  });
+
+  test('账号密码 8 位也不再够用', () => {
+    expect(
+      validateBecomeRelay(
+        relayValues({ password: 'k3Qz8TnW', confirmPassword: 'k3Qz8TnW' }),
+        'production'
+      )
+    ).toEqual({ password: 'nodes.setup.errors.password_too_short' });
   });
 
   test('纯中继不建账号：账号字段全空也不报错', () => {
@@ -123,6 +152,8 @@ describe('setupErrorKey', () => {
       'invalid_url',
       'invalid_username',
       'weak_password',
+      'password_too_short',
+      'password_too_simple',
       'user_exists',
       'invalid_token',
       'node_revoked',

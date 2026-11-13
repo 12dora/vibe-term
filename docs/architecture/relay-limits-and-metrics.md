@@ -12,12 +12,16 @@
 限额单独列而不是塞进 `default_quota_json`：默认配额是「每个租户各得这么多」的语义，且会原样推给租户节点；中继级限额是「全中继一共这么多」，绝不能进 `relay.quota` 帧。
 
 - `RelayQuota.maxFileBytes: number | null`：可选字段，天花板 1 TiB，默认 `null` 不限。codec 里是可选字段，`null` 与缺失一样表示不限，旧中继 / 旧节点互通不受影响。
-- `RelayLimits = { maxTenants: number | null, totalBandwidthBytesPerSec: number | null, fairShare: boolean }`：上限分别 65536 与 10 GiB/s，默认不限 + 公平分配开。`fair_share` 列 `NOT NULL DEFAULT 1`：升级上来的老库默认开公平分配，未配总带宽时令牌桶是 no-op，行为不变。
+- `RelayLimits = { maxTenants: number | null, totalBandwidthBytesPerSec: number | null, fairShare: boolean }`：上限分别 65536 与 10 GiB/s。`maxTenants: null` 表示跟随默认上限 50（`VIBETERM_RELAY_MAX_TENANTS` 覆盖，经 `RelayRuntimeConfig.defaultMaxTenants` 注入），要放开须显式设大值；总带宽默认不限，公平分配默认开。`fair_share` 列 `NOT NULL DEFAULT 1`：升级上来的老库默认开公平分配，未配总带宽时令牌桶是 no-op，行为不变。
 - `RELAY_QUOTA_LIMITS.maxNodes` 在 api-client 与服务端统一为 256（`RELAY_CTL_MAX_NODES`），由契约测试钉住。
 
 ## 2. 最大租户数
 
-判定放在 `handleRelayEnroll` 里、**口令校验之后**：满员的中继若先判满员再判口令，就成了「口令对不对」的探测器。只拦建新租户；同一根公钥的重发令牌（被踢后重新输口令的路径）与密码加入（`mode: 'join'`）都不受影响，否则租户被踢一次就再也回不来。超限回 `409 RELAY_QUOTA_TENANTS`。
+判定放在 `handleRelayEnroll` 里、**口令校验之后**：满员的中继若先判满员再判口令，就成了「口令对不对」的探测器。只拦建新租户；同一根公钥的重发令牌（被踢后重新输口令的路径）与密码加入（`mode: 'join'`）都不受影响，否则租户被踢一次就再也回不来。超限回 `409 RELAY_QUOTA_TENANTS`。生效上限 = `limits.maxTenants ?? defaultMaxTenants`（`effectiveMaxTenants`），开放中继（未设接入密码）也受它约束；开放中继启动时另打一条警告日志。
+
+## 2b. 每租户密钥日志上限
+
+`appendRelayKeyLog` 在同一事务里检查：seq 超过 100000 行或已存字节（`blob` 列 UTF-8 长度，含写入者元数据）加上本行超过 64 MiB → uplink ack `TENANT_LOG_FULL`、HTTP 507 `TENANT_LOG_FULL`。字节数由 `RelayKeyLogStore` 按租户缓存：首次求和，追加时累加，截断、删租户与事务回滚时失效重算。redeem 响应只随带不超过 8 MiB 的日志前缀并置 `has_more`，不再一次读出整条日志。
 
 `checkEnrollPassword()` 是异步的（argon2）。租户上限在这段 `await` **之后**重新读一次配置，紧挨着后面同步的「计数—判断—建租户」三步，中间不再有 `await`；否则运营者在校验期间调小上限，在途的 enroll 仍按旧上限放行。口令哈希与 `passwordEpoch` 仍用校验前那次读到的值——它们必须与实际校验过的口令对应。
 
@@ -64,7 +68,7 @@ vibeterm relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] 
 
 ### 网页
 
-- 「设置 → 中继管理」页头「更多」→「中继限额…」，弹窗三项：最大租户数、总带宽上限（KB/s）、租户带宽公平分配开关。前两项留空即不限。
+- 「设置 → 中继管理」页头「更多」→「中继限额…」，弹窗三项：最大租户数、总带宽上限（KB/s）、租户带宽公平分配开关。最大租户数留空表示默认上限（占位「默认 50」）；总带宽留空即不限。
 - 默认配额弹窗与单租户配额弹窗共用的 `QuotaFields` 第四项「单文件上限（MB）」，留空即不限。
 - 网页表单里带宽按 KB/s、单文件按 MB 取整显示。草稿记下打开表单时的**原始字节值**（`QuotaOrigin` / `LimitsOrigin`）：某个字段的文本没被改过就原样回传原值，只有真被改过才做单位换算——否则 512 B/s 会在改别的字段时被改写成 1024 B/s。
 - 租户侧「设置 → 节点 → 连接详情」的配额行有「单文件上限」。
@@ -84,7 +88,7 @@ vibeterm relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] 
 | `totals.*PerSec` | 相邻样本累计值之差 / 间隔 | 累计值回绕视为计数器复位，从 0 起算 |
 | `totals.framesIn/OutPerSec` | `LinkMux.stats()`（在线链路之和 + 已移除链路折入的 `retired` 累计） | 链路关闭或替换不会让速率跌成 0 |
 | `totals.bandwidthBytesPerSec` | 令牌桶放行字节的相邻样本差 / 间隔（`RelayMetering.recordAdmitted`） | 与限额同口径：被延迟的字节不计入；不要用 `bytesIn + bytesOut` |
-| `totals.bandwidthLimitBytesPerSec / maxTenants / fairShare` | `relay_config` 的中继级限额 | 两个上限为 `null` 即不限；旧中继不下发这三项 |
+| `totals.bandwidthLimitBytesPerSec / maxTenants / fairShare` | `relay_config` 的中继级限额 | `maxTenants` 为生效值（未设置时是默认上限）；带宽上限 `null` 即不限；旧中继不下发这三项 |
 | `tenants[].quota` / `tenants[].usage` | 生效配额（租户覆盖 ?? 默认）与当前用量 | `maxFileBytes` 为 `null` 或缺失即不限；运营者侧 `GET /api/relay/status` 的 `tenants[n].quota` 仍是原始覆盖值 |
 | `members[].rttMs / connectedAt / reconnects / activeStreams / bytes*PerSec` | uplink 服务端 ping 时间戳、registry 记账、stream router 记账 | 等待 pong 期间不再重发 ping，RTT 对应原始 ping；吊销成员与删除租户时清理记账 |
 | `tenants[].pack.sizeBytes / updatedAt` | `relay_tenants.sealed_pack` 与 `sealed_pack_updated_at`（迁移 0046） | 根轮换时清空时间戳 |

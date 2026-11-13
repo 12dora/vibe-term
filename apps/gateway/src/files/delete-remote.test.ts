@@ -153,7 +153,7 @@ describe('远端删除：脚本走 stdin', () => {
     expect(calls).toHaveLength(1);
     const call = calls[0];
     expect(call?.script.length).toBeGreaterThan(128 * 1024);
-    expect(call?.argv).toEqual(['ssh', '-p', '22', 'u@h', 'sh -s']);
+    expect(call?.argv).toEqual(['ssh', '-p', '22', '--', 'u@h', 'sh -s']);
     expect(call?.argv.every((arg) => arg.length < 64)).toBe(true);
     expect(codes.every((code) => code === 'ok')).toBe(true);
     for (const path of paths) expect(gone(path)).toBe(true);

@@ -3,8 +3,9 @@
 // 追加模式（streams=1）保持它们的全部语义，另加乱序区间写入模式供并行推送使用。
 
 import { createHash } from 'node:crypto';
+import { constants } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
-import { chmod, link, mkdir, open, rename, rm } from 'node:fs/promises';
+import { link, mkdir, open, rename, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { coveredBytes, rangesCover } from '../ranges';
 import type { ByteRange, ReceivedState } from '../types';
@@ -16,6 +17,7 @@ import {
   reserveWrite,
   serializeCommit,
 } from './part-gate';
+import { type SinkWriteOptions, type WriteTally, pumpToHandle } from './sink-pump';
 import {
   PART_TTL_MS,
   deterministicPartPath,
@@ -25,6 +27,8 @@ import {
   sweepPartFiles,
 } from './sink-state';
 import { hashFilePrefix, sha256File } from './source';
+
+export type { SinkWriteOptions };
 
 export { PART_TTL_MS, deterministicPartPath, sweepPartFiles } from './sink-state';
 
@@ -62,21 +66,6 @@ export type SinkWriteResult =
   | { ok: true; receivedBytes: number; complete: boolean; digest: string | null }
   | SinkFailure;
 
-export interface SinkWriteOptions {
-  offset?: number;
-  /**
-   * 本次请求声明的字节数（content-length）。链路被 RST 时请求体往往「干净地结束」而不是报错，
-   * 只有拿它对一下才分得清「传完了但内容坏了」与「传到一半断了」。
-   */
-  contentLength?: number;
-  /** 本次写入允许接收的最大字节数；超出即判为越界（body 比声明的长）。 */
-  maxWriteBytes?: number;
-  /** 供调用方在外部顶掉这次写入（如同一目标的新请求到达）。 */
-  registerCancel?: (cancel: () => void) => void;
-  /** 会话级取消：一 abort 就停止读 body 并尽快关掉文件句柄。 */
-  signal?: AbortSignal;
-}
-
 /** 目标已存在时的落位策略；`skip` 在落位那一刻原子判定，不做「先查后改名」。 */
 export type CommitOptions = { onConflict?: 'overwrite' | 'skip' };
 
@@ -86,6 +75,39 @@ export type CommitResult =
 
 export function partPathOf(d: SinkDescriptor): string {
   return deterministicPartPath(d.destPath, d.key ?? d.sha256 ?? d.destPath);
+}
+
+const O_NOFOLLOW = constants.O_NOFOLLOW ?? 0;
+const CREATE_EXCL = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW;
+const APPEND_NOFOLLOW = constants.O_WRONLY | constants.O_APPEND | O_NOFOLLOW;
+const RDWR_NOFOLLOW = constants.O_RDWR | O_NOFOLLOW;
+const CREATE_RDWR_EXCL = constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW;
+
+async function openPartCreate(partPath: string, rdwr = false): Promise<FileHandle> {
+  if (!rdwr) {
+    await rm(partPath, { force: true }).catch(() => {});
+    return open(partPath, CREATE_EXCL, 0o600);
+  }
+  try {
+    return await open(partPath, CREATE_RDWR_EXCL, 0o600);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') return open(partPath, RDWR_NOFOLLOW, 0o600);
+    if (code === 'ELOOP') {
+      await rm(partPath, { force: true }).catch(() => {});
+      return open(partPath, CREATE_RDWR_EXCL, 0o600);
+    }
+    throw error;
+  }
+}
+
+async function chmodNoFollow(path: string, mode: number): Promise<void> {
+  const fh = await open(path, constants.O_WRONLY | O_NOFOLLOW);
+  try {
+    await fh.chmod(mode);
+  } finally {
+    await fh.close();
+  }
 }
 
 function modeOf(d: SinkDescriptor): SinkMode {
@@ -115,135 +137,6 @@ export async function readSinkState(d: SinkDescriptor): Promise<ReceivedState> {
     ranges: size > 0 ? [{ offset: 0, length: size }] : [],
     complete,
   };
-}
-
-type WriteTally = { bytes: number; aborted: boolean; failed: boolean; overflow: boolean };
-
-/**
- * `write(2)` 允许短写。按返回的 `bytesWritten` 推进游标，直到整块写完；
- * 一次都没推进说明设备出问题了，当 IO 错误抛出，绝不能把没写进去的字节记成已收。
- */
-async function writeAll(
-  handle: FileHandle,
-  chunk: Uint8Array,
-  position: number | null,
-  onWritten: (slice: Uint8Array) => void
-): Promise<void> {
-  let done = 0;
-  while (done < chunk.byteLength) {
-    const remaining = chunk.byteLength - done;
-    const res =
-      position === null
-        ? await handle.write(chunk, done, remaining)
-        : await handle.write(chunk, done, remaining, position + done);
-    const written = Math.max(0, Math.min(res.bytesWritten ?? 0, remaining));
-    if (written === 0) throw new Error('sink: zero-length write');
-    onWritten(chunk.subarray(done, done + written));
-    done += written;
-  }
-}
-
-async function cancelBody(body: ReadableStream<Uint8Array>): Promise<void> {
-  await body.cancel().catch(() => {});
-}
-
-type SinkFn = (chunk: Uint8Array, advance: (n: number) => void) => Promise<void>;
-
-async function pumpBody(
-  body: ReadableStream<Uint8Array>,
-  opts: SinkWriteOptions,
-  sink: SinkFn,
-  limit: number
-): Promise<WriteTally> {
-  const reader = body.getReader();
-  const tally: WriteTally = { bytes: 0, aborted: false, failed: false, overflow: false };
-  const cancel = (): void => {
-    void reader.cancel().catch(() => {});
-  };
-  const onAbort = (): void => {
-    tally.aborted = true;
-    cancel();
-  };
-  opts.registerCancel?.(onAbort);
-  const signal = opts.signal;
-  if (signal?.aborted) onAbort();
-  else signal?.addEventListener('abort', onAbort, { once: true });
-  const advance = (n: number): void => {
-    tally.bytes += n;
-  };
-  let drained = false;
-  try {
-    while (!tally.aborted) {
-      const { done, value } = await reader.read();
-      if (done) {
-        drained = true;
-        break;
-      }
-      if (!value?.byteLength) continue;
-      if (tally.bytes + value.byteLength > limit) {
-        tally.overflow = true;
-        break;
-      }
-      await sink(value, advance);
-    }
-  } catch {
-    tally.failed = true;
-  } finally {
-    signal?.removeEventListener('abort', onAbort);
-    // 提前退出必须把 body 掐掉，否则发送端会一直往一个没人读的流里灌。
-    // 唯一的例外是越界：中途 cancel 源流会让 413 回不到发送端（见 upgrade 的 413 语义），
-    // 这时靠调用方立刻回响应来让对端自己停。
-    if (!drained && !tally.overflow) cancel();
-    try {
-      reader.releaseLock();
-    } catch {
-      // already released
-    }
-  }
-  return tally;
-}
-
-async function pumpToHandle(input: {
-  openHandle: () => Promise<FileHandle>;
-  body: ReadableStream<Uint8Array>;
-  opts: SinkWriteOptions;
-  limit: number;
-  /** 定位写的起点；`null` 表示按文件当前位置追加。 */
-  position: number | null;
-  onWritten?: (slice: Uint8Array) => void;
-}): Promise<WriteTally> {
-  const { openHandle, body, opts, limit, position, onWritten } = input;
-  if (opts.signal?.aborted) {
-    await cancelBody(body);
-    return { bytes: 0, aborted: true, failed: false, overflow: false };
-  }
-  let handle: FileHandle;
-  try {
-    handle = await openHandle();
-  } catch {
-    await cancelBody(body);
-    return { bytes: 0, aborted: false, failed: true, overflow: false };
-  }
-  let cursor = position;
-  const tally = await pumpBody(
-    body,
-    opts,
-    async (chunk, advance) => {
-      const base = cursor;
-      await writeAll(handle, chunk, base, (slice) => {
-        if (cursor !== null) cursor += slice.byteLength;
-        onWritten?.(slice);
-        advance(slice.byteLength);
-      });
-    },
-    limit
-  );
-  try {
-    await handle.close();
-  } catch {
-    tally.failed = true;
-  }
-  return tally;
 }
 
 /** 落盘接收端。无状态（除了旁挂位图与进程内的并发闸门），同一进程内共用一个实例即可。 */
@@ -315,7 +208,8 @@ export class ResumableSink {
   ): Promise<WriteTally> {
     try {
       return await pumpToHandle({
-        openHandle: () => open(partPath, offset > 0 ? 'a' : 'w', 0o600),
+        openHandle: () =>
+          offset > 0 ? open(partPath, APPEND_NOFOLLOW, 0o600) : openPartCreate(partPath),
         body,
         opts,
         limit: cap,
@@ -425,7 +319,7 @@ async function placePart(
     }
     if (onConflict === 'skip') await rm(partPath, { force: true });
     else await rename(partPath, d.destPath);
-    await chmod(d.destPath, d.fileMode ?? 0o600).catch(() => {});
+    await chmodNoFollow(d.destPath, d.fileMode ?? 0o600).catch(() => {});
     await removeReceivedRanges(partPath);
     return { ok: true, path: d.destPath, bytes, committed: true, skipped: false };
   } catch {
@@ -473,13 +367,16 @@ function rangedPlan(d: SinkDescriptor, opts: SinkWriteOptions): RangedPlan {
 async function openPreallocated(partPath: string, total: number): Promise<FileHandle> {
   let fh: FileHandle;
   try {
-    fh = await open(partPath, 'r+', 0o600);
+    fh = await open(partPath, RDWR_NOFOLLOW, 0o600);
   } catch {
-    const created = await open(partPath, 'a', 0o600);
-    await created.close();
-    fh = await open(partPath, 'r+', 0o600);
+    fh = await openPartCreate(partPath, true);
   }
-  if (fileSizeOrZero(partPath) < total) await fh.truncate(total);
+  try {
+    if (fileSizeOrZero(partPath) < total) await fh.truncate(total);
+  } catch (error) {
+    await fh.close().catch(() => {});
+    throw error;
+  }
   return fh;
 }
 

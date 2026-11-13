@@ -38,6 +38,7 @@ import {
   type RelayJoinTokenEntry,
   encodeRelayJoinToken,
   encodeRelayKeyLogPlaintext,
+  enrollSas,
   generateTenantKey,
   sealEnvelope,
 } from '../../../shared/src/relay';
@@ -287,6 +288,8 @@ type RelayOptions = {
   unknownEnrollmentOrigins?: string[];
   /** redeem 时现有设备立刻批准：返回的密钥日志已含本机的 admit-node。 */
   admitOnRedeem?: boolean;
+  /** redeem 只回前 N 条并置 has_more：加入方必须再 GET …/keylog。 */
+  redeemPrefixRows?: number;
 };
 
 type RelayCall = {
@@ -376,13 +379,17 @@ function fakeRelay(tenant: Tenant, options: RelayOptions = {}) {
       const redeemBody = JSON.parse(String(init?.body ?? '{}')) as RedeemBody;
       redeemBodies.push(redeemBody);
       if (options.admitOnRedeem) await admitJoiner(tenant, redeemBody);
-      const keyLog = await sealKeyLogRows(tenant, options.keyLogOverride ?? tenant.keyLog);
+      const allRows = options.keyLogOverride ?? tenant.keyLog;
+      const prefixRows =
+        options.redeemPrefixRows != null ? allRows.slice(0, options.redeemPrefixRows) : allRows;
+      const hasMore = options.redeemPrefixRows != null && allRows.length > options.redeemPrefixRows;
       return new Response(
         JSON.stringify({
           tenant_id: entry.tenantId,
           relays: [url.origin],
           rtc: { stun: [], turn: null },
-          key_log: keyLog,
+          key_log: await sealKeyLogRows(tenant, prefixRows),
+          has_more: hasMore,
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }
       );
@@ -559,7 +566,8 @@ describe('relay join with an r3 token', () => {
     expect(await store.getSecret('log', 0)).toEqual(tenant.logKey);
     const stored = await store.getRelay(RELAY_A);
     expect(stored?.token).toEqual(TOKEN_A);
-    expect(logs[0]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
+    expect(logs[0]).toMatch(/\d{4}-\d{4}/);
+    expect(logs[1]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
     expect(logs.some((line) => /39001\/tcp/.test(line) && /40000-40099\/udp/.test(line))).toBe(
       true
     );
@@ -746,6 +754,52 @@ describe('relay join with an r3 token', () => {
     expect(readRelayUplink(joiner).kind).toBe('none');
   });
 
+  test('redeem has_more pages GET keylog before committing', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const token = joinTokenFor(tenant);
+    await appendRootMetaKey(tenant, 1);
+    await appendRootMetaKey(tenant, 2);
+    const joiner = await openAuth();
+    const { calls, keyLogFromSeqs, fetcher } = fakeRelay(tenant, { redeemPrefixRows: 1 });
+    const result = await runRelayJoin(parseArgs(['relay', 'join']), '', token, {
+      auth: joiner,
+      fetcher,
+      skipRestart: true,
+      log: () => undefined,
+    });
+    expect(result.userId).toBe(tenant.userId);
+    expect(calls.some((call) => call.path.endsWith('/keylog') && call.method === 'GET')).toBe(true);
+    expect(keyLogFromSeqs[0]).toBe(2);
+    expect(joiner.keyLogStore.list(tenant.userId)).toHaveLength(tenant.keyLog.length);
+  });
+
+  test('redeem has_more does not commit when GET keylog fails', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const token = joinTokenFor(tenant);
+    await appendRootMetaKey(tenant, 1);
+    const joiner = await openAuth();
+    const inner = fakeRelay(tenant, { redeemPrefixRows: 1 });
+    const fetcher: FetchLike = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/keylog') && (init?.method ?? 'GET') === 'GET') {
+        return new Response(JSON.stringify({ error: { code: 'UNAUTHORIZED' } }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return inner.fetcher(input, init);
+    };
+    await expect(
+      runRelayJoin(parseArgs(['relay', 'join']), '', token, {
+        auth: joiner,
+        fetcher,
+        skipRestart: true,
+        log: () => undefined,
+      })
+    ).rejects.toThrow();
+    expect(readRelayUplink(joiner).kind).toBe('none');
+  });
+
   test('records appended after the join code was created are accepted', async () => {
     const tenant = await makeTenant([ENTRY_A]);
     const token = joinTokenFor(tenant);
@@ -858,8 +912,9 @@ describe('r3 join against a multi-relay set-relays table', () => {
     expect(await tokenOf(store, RELAY_B)).toEqual(TABLE_TOKEN_B);
     expect(result.relayUrl).toBe(RELAY_A);
     expect(result.relayUrls).toEqual([RELAY_A, RELAY_B]);
-    expect(logs[0]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
-    expect(logs[1]).toBe(t('relay.join.alsoConfigured', { urls: RELAY_B }));
+    expect(logs[0]).toMatch(/\d{4}-\d{4}/);
+    expect(logs[1]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
+    expect(logs[2]).toBe(t('relay.join.alsoConfigured', { urls: RELAY_B }));
   });
 
   test('r3 tokens that differ from the table never replace the root-signed ones', async () => {
@@ -1119,6 +1174,102 @@ describe('relay join --token dispatch', () => {
     ).rejects.toThrow(t('relay.join.failed', { reason: t('relay.join.reason.codeInvalid') }));
   });
 
+  test('--token prints an argv-visibility warning and enrollSas after redeem', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    const { fetcher } = fakeRelay(tenant);
+    const token = joinTokenFor(tenant);
+    const logs: string[] = [];
+    const warnings: string[] = [];
+    await runRelayJoinCommand(parseArgs(['relay', 'join', '--token', token, '--no-wait']), {
+      auth: joiner,
+      fetcher,
+      skipRestart: true,
+      log: (line) => logs.push(line),
+      warn: (line) => warnings.push(line),
+    });
+    expect(warnings).toEqual([t('relay.join.tokenArgvWarning')]);
+    const certJson = JSON.parse((await joiner.identityStore.load())?.certificateJson ?? '{}') as {
+      certificate?: string;
+    };
+    expect(logs[0]).toBe(
+      t('relay.join.enrollSas', { code: enrollSas(decodeBase64url(certJson.certificate ?? '')) })
+    );
+  });
+
+  test('--token-stdin reads one line and does not warn', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    const { fetcher } = fakeRelay(tenant);
+    const token = joinTokenFor(tenant);
+    const warnings: string[] = [];
+    const joined = await runRelayJoinCommand(
+      parseArgs(['relay', 'join', '--token-stdin', '--no-wait']),
+      {
+        auth: joiner,
+        fetcher,
+        skipRestart: true,
+        log: () => undefined,
+        warn: (line) => warnings.push(line),
+        readStdinLine: async () => token,
+      }
+    );
+    expect(joined.relayUrl).toBe(RELAY_A);
+    expect(warnings).toEqual([]);
+  });
+
+  test('VIBETERM_RELAY_JOIN_TOKEN is accepted without --token', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    const { fetcher } = fakeRelay(tenant);
+    const token = joinTokenFor(tenant);
+    const previous = process.env.VIBETERM_RELAY_JOIN_TOKEN;
+    process.env.VIBETERM_RELAY_JOIN_TOKEN = token;
+    try {
+      const joined = await runRelayJoinCommand(parseArgs(['relay', 'join', '--no-wait']), {
+        auth: joiner,
+        fetcher,
+        skipRestart: true,
+        log: () => undefined,
+      });
+      expect(joined.relayUrl).toBe(RELAY_A);
+    } finally {
+      if (previous === undefined) delete process.env.VIBETERM_RELAY_JOIN_TOKEN;
+      else process.env.VIBETERM_RELAY_JOIN_TOKEN = previous;
+    }
+  });
+
+  test('positional relay URL plus VIBETERM_RELAY_JOIN_TOKEN is accepted', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const joiner = await openAuth();
+    const { fetcher } = fakeRelay(tenant);
+    const token = joinTokenFor(tenant);
+    const previous = process.env.VIBETERM_RELAY_JOIN_TOKEN;
+    process.env.VIBETERM_RELAY_JOIN_TOKEN = token;
+    try {
+      const joined = await runRelayJoinCommand(parseArgs(['relay', 'join', RELAY_A, '--no-wait']), {
+        auth: joiner,
+        fetcher,
+        skipRestart: true,
+        log: () => undefined,
+      });
+      expect(joined.relayUrl).toBe(RELAY_A);
+    } finally {
+      if (previous === undefined) delete process.env.VIBETERM_RELAY_JOIN_TOKEN;
+      else process.env.VIBETERM_RELAY_JOIN_TOKEN = previous;
+    }
+  });
+
+  test('--token and --token-stdin are mutually exclusive', async () => {
+    await expect(
+      runRelayJoinCommand(parseArgs(['relay', 'join', '--token', 'r3.x', '--token-stdin']))
+    ).rejects.toThrow(
+      t('relay.join.failed', {
+        reason: 'relay join --token and --token-stdin are mutually exclusive',
+      })
+    );
+  });
+
   test('a positional url that is not in the token is ignored with a warning', async () => {
     const tenant = await makeTenant([ENTRY_A]);
     const joiner = await openAuth();
@@ -1191,11 +1342,12 @@ describe('relay join --token waits for approval', () => {
     const result = await run();
 
     expect(result.relayUrl).toBe(RELAY_A);
-    expect(logs).toHaveLength(4);
-    expect(logs[0]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
-    expect(logs[1]).toMatch(/39001\/tcp/);
-    expect(logs[2]).toBe(t('relay.join.pending'));
-    expect(logs[3]).toBe(t('relay.join.done'));
+    expect(logs).toHaveLength(5);
+    expect(logs[0]).toMatch(/\d{4}-\d{4}/);
+    expect(logs[1]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
+    expect(logs[2]).toMatch(/39001\/tcp/);
+    expect(logs[3]).toBe(t('relay.join.pending'));
+    expect(logs[4]).toBe(t('relay.join.done'));
     expect(relay.keyLogFromSeqs).toEqual([logLength + 1, logLength + 1, logLength + 1]);
   });
 
@@ -1275,7 +1427,8 @@ describe('relay join --token waits for approval', () => {
     const result = await run();
 
     expect(result.admitted).toBe(true);
-    expect(logs[0]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
+    expect(logs[0]).toMatch(/\d{4}-\d{4}/);
+    expect(logs[1]).toBe(t('relay.join.relay', { url: RELAY_A, tenantId: TENANT_A }));
     expect(logs.at(-1)).toBe(t('relay.join.done'));
     expect(logs).not.toContain(t('relay.join.pending'));
     expect(relay.keyLogFromSeqs).toEqual([]);

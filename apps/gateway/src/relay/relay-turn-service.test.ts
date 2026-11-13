@@ -367,3 +367,29 @@ describe('RelayTurnService builtin', () => {
     await svc.stop();
   });
 });
+
+describe('RelayTurnService denied peers', () => {
+  test('VIBETERM_TURN_DENIED_PEERS extends the defaults and warns once on bad entries', async () => {
+    const handle = createMigratedAuthDb();
+    dbs.push(handle);
+    const logs: string[] = [];
+    let captured: TurnServerOptions | undefined;
+    const svc = createRelayTurnService({
+      db: handle.db,
+      config: baseConfig(),
+      log: (line) => logs.push(line),
+      deniedPeersEnv: '4.2.2.0/24, bogus 4.2.2.9',
+      createServer: (opts) => {
+        captured = opts;
+        return fakeServer();
+      },
+    });
+    await svc.start();
+    expect(captured?.deniedPeerCidrs).toContain('100.64.0.0/10');
+    expect(captured?.deniedPeerCidrs).toContain('4.2.2.0/24');
+    expect(captured?.deniedPeerCidrs).toContain('4.2.2.9/32');
+    expect(logs.filter((line) => line.includes('VIBETERM_TURN_DENIED_PEERS'))).toHaveLength(1);
+    expect(logs.some((line) => line.includes('bogus'))).toBe(true);
+    await svc.stop();
+  });
+});

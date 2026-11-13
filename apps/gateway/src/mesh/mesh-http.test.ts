@@ -359,6 +359,41 @@ describe('mesh-http', () => {
     }
   });
 
+  test('dotted /api paths are never treated as public static assets', async () => {
+    const mesh = await bootMesh();
+    try {
+      for (const path of ['/api/devices/x.y', '/api/folders/a.b', '/api/share/evil.svg']) {
+        const res = mesh.runtime.localUiGuard(new Request(`http://localhost${path}`));
+        expect(res?.status).toBe(401);
+      }
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/vibeterm.png'))).toBeNull();
+      expect(
+        mesh.runtime.localUiGuard(new Request('http://localhost/api/manifest.webmanifest'))
+      ).toBeNull();
+      const post = mesh.runtime.localUiGuard(
+        new Request('http://localhost/api/manifest.webmanifest', { method: 'POST' })
+      );
+      expect(post?.status).toBe(401);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('isOpenAccess is true only for standalone without the local login gate', async () => {
+    const node = await bootMesh();
+    try {
+      expect(node.runtime.isOpenAccess()).toBe(false);
+    } finally {
+      node.close();
+    }
+    const standalone = await bootMesh({ roles: { node: false, relay: false } });
+    try {
+      expect(standalone.runtime.isOpenAccess()).toBe(true);
+    } finally {
+      standalone.close();
+    }
+  });
+
   test('localUiGuard 对可信本机 GET /api/mesh/relay/status 放行', async () => {
     const mesh = await bootMesh();
     try {

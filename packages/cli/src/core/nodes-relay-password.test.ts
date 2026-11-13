@@ -199,28 +199,18 @@ describe('vibeterm nodes relay password', () => {
     expect(body).toEqual({ url: RELAY_URL, next: 'file-secret', mode: 'keep' });
   });
 
-  test('set --clear sends next: null and requires --yes off-tty', async () => {
-    let body: unknown;
-    const { ctx: cli, stdout } = await ctx(
-      {
-        'POST /api/mesh/relay/password': (_url, init) => {
-          body = JSON.parse(String(init?.body));
-          return { ok: true, passwordEpoch: 9 };
-        },
+  test('set --clear is rejected; tenant path cannot clear the relay password', async () => {
+    let posted = false;
+    const { ctx: cli } = await ctx({
+      'POST /api/mesh/relay/password': () => {
+        posted = true;
+        return { ok: true, passwordEpoch: 9 };
       },
-      false
-    );
-    await nodes.run(cli, ['relay', 'password', 'set', RELAY_URL, '--clear', '--yes']);
-    expect(body).toEqual({ url: RELAY_URL, next: null, mode: 'keep' });
-    expect(stdout.text()).toContain(`cleared enroll password for ${RELAY_URL}`);
-    expect(stdout.text()).toContain('epoch 9');
-  });
-
-  test('set --clear without --yes is a usage error off-tty', async () => {
-    const { ctx: cli } = await ctx({});
+    });
     await expect(
-      nodes.run(cli, ['relay', 'password', 'set', RELAY_URL, '--clear'])
+      nodes.run(cli, ['relay', 'password', 'set', RELAY_URL, '--clear', '--yes'])
     ).rejects.toBeInstanceOf(UsageError);
+    expect(posted).toBe(false);
   });
 
   test('set --kick sends mode kick and includes --current', async () => {

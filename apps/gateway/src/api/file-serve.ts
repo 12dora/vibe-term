@@ -1,12 +1,8 @@
 import { statSync } from 'node:fs';
 import type { FileSourceIdentity, LocalFileHandle } from '../files/local-fs';
-import {
-  type ContentRange,
-  attachmentHeaders,
-  codeError,
-  parseRangeHeader,
-  streamFileRange,
-} from './file-http';
+import { applySafeFileHeaders } from '../files/safe-file-headers';
+import { contentDisposition } from './content-disposition';
+import { type ContentRange, codeError, parseRangeHeader, streamFileRange } from './file-http';
 
 export const ENTITY_LENGTH_HEADER = 'X-VibeTerm-Entity-Length';
 
@@ -73,17 +69,22 @@ export function servePulledFile(req: Request, file: PulledFileBody, attachment: 
 
 export function serveFileBytes(req: Request, file: ServeFileInput): Response {
   const cleanup = once(file.cleanupAfter);
-  const range = resolveRange(req, file.entityLength, file.validators);
-  if (range === 'unsatisfiable') {
+  try {
+    const range = resolveRange(req, file.entityLength, file.validators);
+    if (range === 'unsatisfiable') {
+      cleanup();
+      return unsatisfiableResponse(file.entityLength);
+    }
+    const length = range ? range.end - range.start : file.entityLength;
+    const headers = fileHeaders(req, file, length);
+    if (range) {
+      headers.set('Content-Range', `bytes ${range.start}-${range.end - 1}/${file.entityLength}`);
+    }
+    return sendOpenedFile(file, range, range ? 206 : 200, headers, cleanup);
+  } catch {
     cleanup();
-    return unsatisfiableResponse(file.entityLength);
+    return codeError('unknown');
   }
-  const length = range ? range.end - range.start : file.entityLength;
-  const headers = fileHeaders(file, length);
-  if (range) {
-    headers['Content-Range'] = `bytes ${range.start}-${range.end - 1}/${file.entityLength}`;
-  }
-  return sendOpenedFile(file, range, range ? 206 : 200, headers, cleanup);
 }
 
 function identityDigest(id: FileSourceIdentity): string {
@@ -102,24 +103,21 @@ function resolveRange(
   return parseRangeHeader(header, size);
 }
 
-function fileHeaders(file: ServeFileInput, bodyLength: number): Record<string, string> {
-  const headers = file.attachment
-    ? attachmentHeaders(file.name, file.mime, bodyLength)
-    : inlineHeaders(file.mime, bodyLength);
-  headers.ETag = file.validators.etag;
-  headers[ENTITY_LENGTH_HEADER] = String(file.entityLength);
-  if (!file.attachment) headers['Content-Disposition'] = 'inline';
-  if (file.validators.lastModified) headers['Last-Modified'] = file.validators.lastModified;
-  return headers;
-}
-
-function inlineHeaders(mime: string | null, bodyLength: number): Record<string, string> {
-  return {
-    'Content-Type': mime ?? 'application/octet-stream',
+function fileHeaders(req: Request, file: ServeFileInput, bodyLength: number): Headers {
+  const headers = new Headers({
     'Content-Length': String(bodyLength),
     'Cache-Control': 'no-store',
     'Accept-Ranges': 'bytes',
-  };
+    ETag: file.validators.etag,
+    [ENTITY_LENGTH_HEADER]: String(file.entityLength),
+  });
+  if (file.validators.lastModified) headers.set('Last-Modified', file.validators.lastModified);
+  applySafeFileHeaders(headers, {
+    contentType: file.mime,
+    disposition: contentDisposition(file.name, file.attachment ? 'attachment' : 'inline'),
+    req,
+  });
+  return headers;
 }
 
 function unsatisfiableResponse(size: number): Response {
@@ -137,19 +135,18 @@ function sendOpenedFile(
   file: ServeFileInput,
   range: ContentRange | null,
   status: number,
-  headers: Record<string, string>,
+  headers: Headers,
   cleanup: () => void
 ): Response {
   let body: BodyInit | null = null;
   try {
-    const hdrs = new Headers(headers);
     const onClose = file.cleanupAfter ? cleanup : undefined;
     body = openFileBody(file.path, range, file.entityLength, onClose);
     if (!body) {
       cleanup();
       return codeError('unknown');
     }
-    return new Response(body, { status, headers: hdrs });
+    return new Response(body, { status, headers });
   } catch {
     if (body instanceof ReadableStream) void body.cancel();
     cleanup();

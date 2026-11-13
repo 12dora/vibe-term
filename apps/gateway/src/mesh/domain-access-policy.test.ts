@@ -9,6 +9,7 @@ import {
   isServicePath,
   isViaDomain,
   normalizeHost,
+  ownMdnsName,
 } from './domain-access-policy';
 import { MESH_VIA_SELF, setMeshRequestContext } from './mesh-deps';
 import { publicRequestUrl } from './session-middleware';
@@ -43,11 +44,13 @@ describe('isIpLiteral / isLocalName', () => {
     expect(isIpLiteral('localhost')).toBe(false);
   });
 
-  test('localhost, *.localhost, *.local, loopback', () => {
+  test("localhost, *.localhost, this machine's .local name, loopback", () => {
     expect(isLocalName('localhost')).toBe(true);
     expect(isLocalName('Foo.Localhost')).toBe(true);
-    expect(isLocalName('vibeterm.local')).toBe(true);
-    expect(isLocalName('printer.local:8443')).toBe(true);
+    expect(isLocalName(ownMdnsName())).toBe(true);
+    expect(isLocalName(`${ownMdnsName().toUpperCase()}:8443`)).toBe(true);
+    expect(isLocalName(`other-${ownMdnsName()}`)).toBe(false);
+    expect(isLocalName('local')).toBe(false);
     expect(isLocalName('127.0.0.1')).toBe(true);
     expect(isLocalName('127.1.2.3:9883')).toBe(true);
     expect(isLocalName('::1')).toBe(true);
@@ -68,7 +71,7 @@ describe('collectConfiguredHosts', () => {
         'https://a.example.com:9443/',
         'http://127.0.0.1:8085',
         'http://localhost:19663',
-        'vibeterm.local',
+        ownMdnsName(),
         'https://B.example.com.',
         'named.example.com',
         null,
@@ -99,11 +102,13 @@ describe('isViaDomain', () => {
     expect(isViaDomain(new URL('https://alt.example.com:443/'), hosts)).toBe(false);
   });
 
-  test('IP literals, localhost and .local are never via-domain', () => {
+  test("IP literals, localhost and this machine's .local name are never via-domain", () => {
     expect(isViaDomain(new URL('http://192.168.1.5/'), ['192.168.1.5'])).toBe(false);
     expect(isViaDomain(new URL('http://[::1]/'), ['::1'])).toBe(false);
     expect(isViaDomain(new URL('http://localhost/'), ['localhost'])).toBe(false);
-    expect(isViaDomain(new URL('http://vibeterm.local/'), ['vibeterm.local'])).toBe(false);
+    const mdns = ownMdnsName();
+    expect(isViaDomain(new URL(`http://${mdns}/`), [mdns])).toBe(false);
+    expect(isViaDomain(new URL('http://other-box.local/'), ['other-box.local'])).toBe(true);
   });
 });
 
@@ -120,7 +125,7 @@ describe('x-forwarded-host via publicRequestUrl', () => {
     const req = new Request('http://192.168.1.5/', {
       headers: { 'x-forwarded-host': 'vibeterm.example.com, other.example' },
     });
-    setMeshRequestContext(req, { via: MESH_VIA_SELF, trustProxy: true });
+    setMeshRequestContext(req, { via: MESH_VIA_SELF, trustProxy: true, clientIp: '127.0.0.1' });
     expect(isViaDomain(publicRequestUrl(req), ['vibeterm.example.com'])).toBe(true);
   });
 
@@ -258,28 +263,10 @@ describe('decideDomainAccess', () => {
     ).toBe('allow');
   });
 
-  test('Host is ignored: public client with localhost or IP-literal Host is denied', () => {
+  test('the decision only looks at the resolved client IP', () => {
     expect(decideDomainAccess({ ...base, clientIp: publicIp, method: 'GET', pathname: '/' })).toBe(
       'deny-text'
     );
-    expect(
-      decideDomainAccess({
-        ...base,
-        clientIp: publicIp,
-        method: 'GET',
-        pathname: '/',
-        headers: new Headers({ host: 'localhost' }),
-      })
-    ).toBe('deny-text');
-    expect(
-      decideDomainAccess({
-        ...base,
-        clientIp: publicIp,
-        method: 'GET',
-        pathname: '/',
-        headers: new Headers({ host: '203.0.113.10' }),
-      })
-    ).toBe('deny-text');
   });
 
   test('LAN, loopback and CGNAT clients are allowed regardless of Host', () => {
@@ -299,52 +286,5 @@ describe('decideDomainAccess', () => {
     expect(decideDomainAccess({ ...base, clientIp: null, method: 'GET', pathname: '/api/x' })).toBe(
       'deny-json'
     );
-  });
-
-  test('VIBETERM_TRUST_PROXY=false uses socket IP and ignores spoofed XFF', () => {
-    const spoofed = new Headers({ 'x-forwarded-for': '203.0.113.9' });
-    expect(
-      decideDomainAccess({
-        ...base,
-        clientIp: '10.0.0.8',
-        trustProxy: false,
-        headers: spoofed,
-        method: 'GET',
-        pathname: '/',
-      })
-    ).toBe('allow');
-    expect(
-      decideDomainAccess({
-        ...base,
-        clientIp: '203.0.113.9',
-        trustProxy: false,
-        headers: new Headers({ 'x-forwarded-for': '10.0.0.8' }),
-        method: 'GET',
-        pathname: '/',
-      })
-    ).toBe('deny-text');
-  });
-
-  test('VIBETERM_TRUST_PROXY=true judges XFF last segment', () => {
-    expect(
-      decideDomainAccess({
-        ...base,
-        clientIp: '10.0.0.8',
-        trustProxy: true,
-        headers: new Headers({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }),
-        method: 'GET',
-        pathname: '/',
-      })
-    ).toBe('deny-text');
-    expect(
-      decideDomainAccess({
-        ...base,
-        clientIp: '203.0.113.9',
-        trustProxy: true,
-        headers: new Headers({ 'x-forwarded-for': '1.2.3.4, 10.0.0.8' }),
-        method: 'GET',
-        pathname: '/',
-      })
-    ).toBe('allow');
   });
 });

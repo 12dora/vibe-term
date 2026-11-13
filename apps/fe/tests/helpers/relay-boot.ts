@@ -2,7 +2,7 @@
 // relay e2e 的进程主管：从源码拉起三个 VibeTerm runtime——
 //   R = `relay,node`（公共中继 + 本机 node）
 //   A = `node`（未接入时无上级），用 `vibeterm relay enroll` 在 R 上开租户，成为该租户的主节点
-//   B = `standalone`，用 A 生成的 `r3.` 加入码经 `vibeterm relay join <url> --token` 并入同一租户
+//   B = `standalone`，用 A 生成的 `r3.` 加入码经 `VIBETERM_RELAY_JOIN_TOKEN=… vibeterm relay join <url>` 并入同一租户
 // 然后把连接信息（端口、节点编号、租户编号、管理令牌、可直接给 curl 用的 Cookie 头）
 // 写进 state JSON。收到 SIGTERM/SIGINT 时回收全部子进程、tmux socket 与临时目录。
 //
@@ -389,15 +389,13 @@ async function joinNodeB(input: {
       'relay',
       'join',
       input.publicUrl,
-      '--token',
-      pending.token,
       '--name',
       NODE_B_NAME,
       '--no-restart',
       '--install-dir',
       input.bDir,
     ],
-    { VIBETERM_PASSWORD: input.meshPassword }
+    { VIBETERM_PASSWORD: input.meshPassword, VIBETERM_RELAY_JOIN_TOKEN: pending.token }
   );
   log('node B redeemed the join token');
   const nodeId = await admitRelayNode(input.session, pending);

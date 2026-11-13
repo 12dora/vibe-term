@@ -12,7 +12,7 @@ export async function recordEntryLogin429(
   if (!response || response.status !== 429) return;
   try {
     const code = (await peekJsonCode(response.clone())) || 'RATE_LIMITED';
-    if (code === 'SHARE_LOGIN_LOCKED') return;
+    if (code === 'SHARE_LOGIN_LOCKED' || code === 'SHARE_LOGIN_BUSY') return;
     recordForwardedAuthRejected({
       req,
       entryNodeId,

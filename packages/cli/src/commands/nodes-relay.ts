@@ -1,7 +1,7 @@
 // `vibeterm nodes relay ls|switch|rm|readmit|unpin`
 
 import { RELAY_RECORD_MAX_RELAYS } from '@vibeterm/shared/auth';
-import { flagBool, flagString } from '../core/args';
+import { flagBool } from '../core/args';
 import {
   type SubHandler,
   confirmOrYes,
@@ -181,14 +181,6 @@ const passwordGet: SubHandler = async (ctx, _flags, positionals) => {
   emit(ctx, payload, () => printEnrollPassword(ctx, enrollPasswordView(payload)));
 };
 
-function hasPasswordSource(flags: Parameters<SubHandler>[1]): boolean {
-  return (
-    Boolean(flagString(flags, 'password')) ||
-    flagBool(flags, 'password-stdin') ||
-    Boolean(flagString(flags, 'password-file'))
-  );
-}
-
 function rotateMode(flags: Parameters<SubHandler>[1]): 'keep' | 'kick' {
   const kick = flagBool(flags, 'kick');
   const keep = flagBool(flags, 'keep');
@@ -198,13 +190,10 @@ function rotateMode(flags: Parameters<SubHandler>[1]): 'keep' | 'kick' {
 
 async function readNextEnrollPassword(
   ctx: Parameters<SubHandler>[0],
-  flags: Parameters<SubHandler>[1],
-  clear: boolean
-): Promise<string | null> {
-  if (clear) {
-    if (hasPasswordSource(flags))
-      throw new UsageError('--clear cannot be combined with --password');
-    return null;
+  flags: Parameters<SubHandler>[1]
+): Promise<string> {
+  if (flagBool(flags, 'clear')) {
+    throw new UsageError('--clear is not supported; tenant path cannot clear the relay password');
   }
   const next = await readSecretField(ctx, flags, {
     flag: 'password',
@@ -213,7 +202,7 @@ async function readNextEnrollPassword(
     prompt: 'New enroll password: ',
   });
   if (next === undefined) {
-    throw new UsageError('missing --password, --password-stdin, --password-file, or --clear');
+    throw new UsageError('missing --password, --password-stdin, or --password-file');
   }
   if (next.length < ENROLL_PASSWORD_MIN_LENGTH) {
     throw new UsageError(
@@ -223,25 +212,21 @@ async function readNextEnrollPassword(
   return next;
 }
 
-function rotateConfirmMessage(url: string, clear: boolean, mode: 'keep' | 'kick'): string | null {
-  if (!clear && mode !== 'kick') return null;
-  if (clear && mode === 'kick') return `clear enroll password for ${url} and kick members`;
-  if (clear) return `clear enroll password for ${url}`;
-  return `change enroll password for ${url} and kick members`;
+function rotateConfirmMessage(url: string, mode: 'keep' | 'kick'): string | null {
+  return mode === 'kick' ? `change enroll password for ${url} and kick members` : null;
 }
 
 const passwordSet: SubHandler = async (ctx, flags, positionals) => {
   const url = requireArg(positionals, 0, 'url');
   rejectExtra(positionals, 1);
-  const clear = flagBool(flags, 'clear');
-  const next = await readNextEnrollPassword(ctx, flags, clear);
+  const next = await readNextEnrollPassword(ctx, flags);
   const current = await readSecretField(ctx, flags, {
     flag: 'current',
     required: false,
     prompt: 'Current enroll password: ',
   });
   const mode = rotateMode(flags);
-  const confirm = rotateConfirmMessage(url, clear, mode);
+  const confirm = rotateConfirmMessage(url, mode);
   if (confirm) await confirmOrYes(flags, confirm);
   const result = await rotateEnrollPassword(ctx, {
     url,
@@ -250,7 +235,7 @@ const passwordSet: SubHandler = async (ctx, flags, positionals) => {
     mode,
   });
   emit(ctx, result, () => {
-    ctx.out.line(`${clear ? 'cleared' : 'rotated'} enroll password for ${url}`);
+    ctx.out.line(`rotated enroll password for ${url}`);
     ctx.out.line(
       `epoch ${dash(typeof result.passwordEpoch === 'number' ? result.passwordEpoch : null)}`
     );

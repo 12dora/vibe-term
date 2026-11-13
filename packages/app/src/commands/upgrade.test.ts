@@ -18,7 +18,12 @@ import {
 import { applyUpgrade, repairUpgrade } from '../lib/upgrade-apply';
 import { readJournal } from '../lib/upgrade-state';
 import { readCurrentVersion, switchCurrent } from '../lib/upgrade-switch';
-import { delegateUpgrade, reenableDirectAfterUpgrade, runUpgrade } from './upgrade';
+import {
+  delegateUpgrade,
+  reenableDirectAfterUpgrade,
+  refuseCliDowngrade,
+  runUpgrade,
+} from './upgrade';
 
 const tempDirs: string[] = [];
 
@@ -218,6 +223,15 @@ describe('reenableDirectAfterUpgrade', () => {
   });
 });
 
+describe('refuseCliDowngrade', () => {
+  test('refuses a lower target unless --allow-downgrade', () => {
+    expect(() => refuseCliDowngrade('1.0.0', '2.14.0', false)).toThrow(/1\.0\.0/);
+    expect(() => refuseCliDowngrade('1.0.0', '2.14.0', true)).not.toThrow();
+    expect(() => refuseCliDowngrade('9.9.9', '2.14.0', false)).not.toThrow();
+    expect(() => refuseCliDowngrade('1.0.0', null, false)).not.toThrow();
+  });
+});
+
 describe('delegateUpgrade', () => {
   test('downloads the GitHub release tarball and re-execs upgrade --apply-current-package', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-dl-'));
@@ -341,6 +355,28 @@ describe('delegateUpgrade', () => {
     } finally {
       process.exitCode = previous ?? 0;
     }
+  });
+
+  test('refuses a downgrade when current is already installed', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-down-'));
+    tempDirs.push(installDir);
+    await mkdir(join(installDir, 'versions', '2.14.0'), { recursive: true });
+    await switchCurrent(installDir, '2.14.0');
+    const spawned: string[] = [];
+    await expect(
+      delegateUpgrade(
+        { command: 'upgrade', positionals: [], flags: { 'install-dir': installDir } },
+        '1.1.39',
+        {
+          fetch: async () => new Response('nope', { status: 404 }),
+          runCommand: async (command) => {
+            spawned.push(command);
+            return { code: 0, stdout: '', stderr: '' };
+          },
+        }
+      )
+    ).rejects.toThrow(/1\.1\.39/);
+    expect(spawned).toEqual([]);
   });
 
   test('does not spawn npx on 404', async () => {

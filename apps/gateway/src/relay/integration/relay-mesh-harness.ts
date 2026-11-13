@@ -39,6 +39,7 @@ import {
   admitNode,
   callRelayEnroll,
   joinNode,
+  reloginAfterRootRotation,
   revokeNode,
   rotateMetaKey,
   rotateTenantRoot,
@@ -314,6 +315,7 @@ async function createTenant(
     submitPrepared: (res, type) => submitPrepared(tenant, res, type),
     submitRecord: (node, type, payload) => submitRecord(tenant, node, type, payload),
     rotateRoot: () => rotateTenantRoot(harness, tenant),
+    reloginAfterRootRotation: () => reloginAfterRootRotation(tenant),
   };
   return tenant;
 }

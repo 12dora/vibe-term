@@ -3,7 +3,7 @@ import { handleSystemApiRequest } from './api/system';
 import { config } from './config';
 import { createGatewayRuntime } from './runtime';
 import { getDisplayVersion } from './system/version';
-import { guardedGatewayFetch } from './tunnel/access-guard';
+import { guardedGatewayFetch } from './tunnel/gateway-fetch';
 
 interface RunningRuntime {
   stop: () => Promise<void>;

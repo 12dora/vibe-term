@@ -33,8 +33,8 @@ export interface EnrollmentEngineState {
    * 语义：`hubAck === false` 或 `relayAck === false`（`hubAck` 是冻结的 legacy 响应字段名）。
    */
   unconfirmedIds: string[];
-  /** 已收到**有效**证书、等待签 admit 的 pending id（passkey 用户要手动点确认）。 */
-  certificateReadyIds: string[];
+  /** 已收到**有效**证书的 pending id → 证书的确认码；用户核对确认码后手动点确认才会签 admit。 */
+  certificateSasById: Record<string, string>;
   /** 证书判定失败的 pending id → 提示用的 i18n key。 */
   invalidById: Record<string, string>;
   /** 最近一次确认失败的 pending id → 行内提示用的 i18n key；下一次确认开始时清掉。 */
@@ -51,7 +51,7 @@ const EMPTY_STATE: EnrollmentEngineState = {
   cancelledIds: [],
   clearedIds: [],
   unconfirmedIds: [],
-  certificateReadyIds: [],
+  certificateSasById: {},
   invalidById: {},
   failureById: {},
   progressById: {},
@@ -98,9 +98,8 @@ function withoutKey<T>(map: Record<string, T>, id: string): Record<string, T> | 
 /** 这条 id 的全部过程投影（证书已到 / 判定失败 / 确认失败）；终态与取消时一并清掉。 */
 function clearProjections(id: string): Partial<EnrollmentEngineState> {
   const patch: Partial<EnrollmentEngineState> = {};
-  if (state.certificateReadyIds.includes(id)) {
-    patch.certificateReadyIds = state.certificateReadyIds.filter((row) => row !== id);
-  }
+  const certificateSasById = withoutKey(state.certificateSasById, id);
+  if (certificateSasById) patch.certificateSasById = certificateSasById;
   const invalidById = withoutKey(state.invalidById, id);
   if (invalidById) patch.invalidById = invalidById;
   const failureById = withoutKey(state.failureById, id);
@@ -127,13 +126,14 @@ export function commitTerminal(id: string, outcome: keyof typeof TERMINAL_FIELD)
 export const NO_CERTIFICATE_YET_KEY = 'nodes.enrollment.noCertificateYet';
 
 /**
- * 收到一张**有效**证书：记下「证书已到」，同时抹掉这条 id 之前的判定失败提示与「新节点尚未响应」。
- * 其它确认失败的提示不动：轮询每拍都会走到这里，一并清掉等于失败原因只显示几秒。
+ * 收到一张**有效**证书：记下它的确认码（界面据此亮出确认卡），同时抹掉这条 id 之前的判定失败提示
+ * 与「新节点尚未响应」。其它确认失败的提示不动：轮询每拍都会走到这里，一并清掉等于失败原因只显示几秒。
  */
-export function markCertificateReady(id: string): void {
+export function markCertificateReady(id: string, sas: string): void {
   const patch: Partial<EnrollmentEngineState> = {};
-  const ready = appendId(state.certificateReadyIds, id);
-  if (ready) patch.certificateReadyIds = ready;
+  if (state.certificateSasById[id] !== sas) {
+    patch.certificateSasById = { ...state.certificateSasById, [id]: sas };
+  }
   const invalidById = withoutKey(state.invalidById, id);
   if (invalidById) patch.invalidById = invalidById;
   if (state.failureById[id] === NO_CERTIFICATE_YET_KEY) {

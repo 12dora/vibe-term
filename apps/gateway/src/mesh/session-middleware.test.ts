@@ -177,16 +177,25 @@ describe('session-middleware', () => {
     }
   });
 
-  test('VIBETERM_TRUST_PROXY only applies to via=self', () => {
+  test('VIBETERM_TRUST_PROXY only applies to via=self from a loopback/LAN proxy hop', () => {
     const req = new Request('http://127.0.0.1:19663/api/auth/mode', {
       headers: {
         'x-forwarded-proto': 'https',
         'x-forwarded-host': 'app.example.com',
       },
     });
-    setMeshRequestContext(req, { via: 'self', trustProxy: true });
+    setMeshRequestContext(req, { via: 'self', trustProxy: true, clientIp: '127.0.0.1' });
     expect(publicRequestUrl(req).origin).toBe('https://app.example.com');
     expect(isHttps(req)).toBe(true);
+
+    const direct = new Request('http://127.0.0.1:19663/api/auth/mode', {
+      headers: {
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'attacker.example',
+      },
+    });
+    setMeshRequestContext(direct, { via: 'self', trustProxy: true, clientIp: '203.0.113.9' });
+    expect(publicRequestUrl(direct).origin).toBe('http://127.0.0.1:19663');
 
     const forwarded = new Request('http://127.0.0.1:19663/api/auth/mode', {
       headers: {

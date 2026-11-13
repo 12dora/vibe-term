@@ -6,6 +6,9 @@ import type { DirectEnableResult, EnableDirectOptions } from './direct';
 export type CliIo = {
   enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
   log?: (message: string) => void;
+  warn?: (message: string) => void;
+  /** 测试用：`--token-stdin` 读入的那一行。 */
+  readStdinLine?: () => Promise<string>;
   password?: string;
   oldPassword?: string;
   newPassword?: string;

@@ -188,6 +188,9 @@ export function resolveRequestedFile(staticRoot: string, pathname: string): stri
   return absolutePath;
 }
 
+export const SPA_CSP =
+  "script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'";
+
 export async function serveFrontend(req: Request, staticRoot: string): Promise<Response> {
   const target = lookupStaticFile(req, staticRoot);
   if (target instanceof Response) return target;
@@ -198,7 +201,7 @@ export async function serveFrontend(req: Request, staticRoot: string): Promise<R
     headers.set('Content-Type', type);
   }
   if (type?.startsWith('text/html')) {
-    headers.set('Content-Security-Policy', "frame-ancestors 'self'");
+    headers.set('Content-Security-Policy', SPA_CSP);
   }
 
   const compressible = isCompressiblePath(target);

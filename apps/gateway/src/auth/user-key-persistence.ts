@@ -15,6 +15,8 @@ import {
 import { eq } from 'drizzle-orm';
 import { deleteAllPaneGrants, deletePaneGrantsForNode } from '../agent/pane-grant/store';
 import { nodeIdentity } from '../db/schema';
+import { removePortMapsForRevocation } from '../portmap/store';
+import { endSharesForRevocation } from '../share/share-store';
 import { AccessTokenService } from './access-tokens';
 import { toBuffer } from './binary';
 import { type KeyLogStore, projectPayloadJson } from './key-log-store';
@@ -169,11 +171,7 @@ function projectRecord(
   if (record.type === 'rotate-root' || record.type === 'reset-root') {
     userStore.deleteKeysByUser(userId);
     userStore.setTotpRecordSeq(userId, null, now);
-    if (record.type === 'reset-root') {
-      userStore.deleteCertsByUser(userId);
-      // 证书全没了，凭证书说话的窗格授权也不该留
-      deleteAllPaneGrants(stores.db);
-    }
+    if (record.type === 'reset-root') userStore.deleteCertsByUser(userId);
   }
   const byType: Partial<Record<KeyLogRecord['type'], () => void>> = {
     'set-totp': () => userStore.setTotpRecordSeq(userId, seq, now),
@@ -210,8 +208,6 @@ function projectRecord(
       const hex = nodeIdToHex(decodeRevokeNodePayload(record.payload).node_id);
       userStore.markCertRevoked(hex, seq);
       userStore.deletePeer(hex);
-      // 与吊销记录同一个事务：这台节点手上的窗格授权当场作废，不依赖任何事后事件
-      deletePaneGrantsForNode(hex, stores.db);
     },
     'rename-node': () => persistRenameNode(stores, record),
   };
@@ -311,12 +307,37 @@ function applyEffects(
   const { userStore, nodeSessionStore } = stores;
   for (const effect of effects) {
     if (effect.type === 'revokeAllSessions') {
-      nodeSessionStore.revokeAllForUser(userId, now);
-      new AccessTokenService(stores.db, { now: () => now }).revokeAllForUser(userId);
+      revokeAllGrants(stores, userId, now);
     } else if (effect.type === 'revokeSessionsByCredential') {
       nodeSessionStore.revokeByCredential(decodeBase64url(effect.credentialId), now);
     } else if (effect.type === 'revokeSessionsVia') {
-      nodeSessionStore.revokeVia(nodeIdToHex(effect.nodeId), now);
+      revokeGrantsVia(stores, nodeIdToHex(effect.nodeId), now);
     } else if (effect.type === 'clearPeerCache') userStore.deleteAllPeers();
   }
+}
+
+/**
+ * 改密 / 根密钥轮换 / 重置：会话、访问令牌、窗格授权、终端分享全部作废。
+ * 会话与令牌按 `userId` 过滤。`shares` / `agent_pane_grants` 无 owner 列，本节点按单用户
+ * 处理：结束全部进行中的分享并删除全部窗格授权（`vibeterm user add` 的第二用户会被连坐）。
+ * 库变更在 key log 事务内完成；关分享连接、停端口映射监听、关 exec 会话等运行态拆除
+ * 等事务提交后再通知（见 `withKeyLogCommitSideEffects`）。
+ */
+function revokeAllGrants(stores: AuthStores, userId: string, now: number): void {
+  stores.nodeSessionStore.revokeAllForUser(userId, now);
+  new AccessTokenService(stores.db, { now: () => now }).revokeAllForUser(userId);
+  deleteAllPaneGrants(stores.db);
+  endSharesForRevocation(stores.db, {}, now);
+}
+
+/**
+ * 节点被吊销：经它进来的会话，以及经它签发的令牌、分享、窗格授权（含它自己持有的）、
+ * 端口映射与放行全部作废。旧行（0063 之前）记为 `self`，不在此列。
+ */
+function revokeGrantsVia(stores: AuthStores, nodeId: string, now: number): void {
+  stores.nodeSessionStore.revokeVia(nodeId, now);
+  new AccessTokenService(stores.db, { now: () => now }).revokeIssuedVia(nodeId);
+  deletePaneGrantsForNode(nodeId, stores.db);
+  endSharesForRevocation(stores.db, { issuedVia: nodeId }, now);
+  removePortMapsForRevocation(stores.db, { issuedVia: nodeId });
 }

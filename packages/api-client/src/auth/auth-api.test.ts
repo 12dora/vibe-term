@@ -172,6 +172,13 @@ describe('AuthApi', () => {
     expect(calls[0].url).toBe('/api/auth/nodes');
   });
 
+  test('listPublicNodes 匿名响应只有 id', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ nodes: [{ id: 'a' }] }), { status: 200 }),
+    ]);
+    expect(await api.listPublicNodes()).toEqual([{ id: 'a' }]);
+  });
+
   test('appendKeyLog(hubSync) 走 ?hub=sync 并透出 hubAck', async () => {
     const { api, calls } = recorder([
       new Response(JSON.stringify({ ok: true, seq: 9, hash: 'HH', hubAck: true }), { status: 200 }),

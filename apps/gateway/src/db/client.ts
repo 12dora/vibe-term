@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite';
+import { chmodSync, lstatSync } from 'node:fs';
 import { type BunSQLiteDatabase, drizzle } from 'drizzle-orm/bun-sqlite';
 import { config } from '../config';
 import { getMemoryProfile } from '../memory-profile';
@@ -21,10 +22,25 @@ export function applyPragmas(database: Database, profile = getMemoryProfile()): 
   database.run('PRAGMA wal_autocheckpoint = 500');
 }
 
+export function chmodDbTrioSync(dbPath: string): void {
+  if (!dbPath || dbPath === ':memory:' || dbPath.includes(':memory:')) return;
+  for (const suffix of ['', '-wal', '-shm'] as const) {
+    const path = `${dbPath}${suffix}`;
+    try {
+      const st = lstatSync(path);
+      if (st.isSymbolicLink() || !st.isFile()) continue;
+      chmodSync(path, 0o600);
+    } catch {
+      // WAL/SHM may not exist yet
+    }
+  }
+}
+
 function ensureSqliteClient(): Database {
   if (!sqliteClient) {
     sqliteClient = new Database(config.databaseUrl);
     applyPragmas(sqliteClient);
+    chmodDbTrioSync(config.databaseUrl);
   }
 
   return sqliteClient;

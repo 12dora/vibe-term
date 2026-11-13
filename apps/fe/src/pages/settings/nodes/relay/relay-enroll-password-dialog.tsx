@@ -1,4 +1,4 @@
-// 租户侧修改中继接入密码：须知道当前密码（本机已记录则可省略）；空的新密码只有勾选清除后才提交。
+// 租户侧修改中继接入密码：须知道当前密码（本机已记录则可省略）；新密码不可为空，清除接入密码只能由中继运营者操作。
 
 import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
 import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
@@ -51,11 +51,10 @@ export type EnrollPasswordDraft = {
   current: string;
   next: string;
   kick: boolean;
-  clear: boolean;
 };
 
 export function emptyEnrollPasswordDraft(): EnrollPasswordDraft {
-  return { current: '', next: '', kick: false, clear: false };
+  return { current: '', next: '', kick: false };
 }
 
 export function enrollPasswordError(error: unknown): EnrollPasswordError {
@@ -92,7 +91,7 @@ export type ParsedEnrollPassword =
   | {
       ok: true;
       current?: string;
-      next: string | null;
+      next: string;
       mode: RelayPasswordRotateMode;
     }
   | { ok: false; errorKey: string };
@@ -105,15 +104,7 @@ export function parseEnrollPasswordDraft(
     return { ok: false, errorKey: `${ERROR_KEY_PREFIX}current_required` };
   }
   if (draft.next.length === 0) {
-    if (!draft.clear) {
-      return { ok: false, errorKey: `${ERROR_KEY_PREFIX}next_required` };
-    }
-    return {
-      ok: true,
-      ...(known ? {} : { current: draft.current }),
-      next: null,
-      mode: draft.kick ? 'kick' : 'keep',
-    };
+    return { ok: false, errorKey: `${ERROR_KEY_PREFIX}next_required` };
   }
   if (draft.next.length < ENROLL_PASSWORD_MIN_LENGTH) {
     return { ok: false, errorKey: `${ERROR_KEY_PREFIX}relay_password_too_short` };
@@ -131,9 +122,7 @@ export async function rotateEnrollPasswordDraft(
   draft: EnrollPasswordDraft,
   known: boolean,
   api: RelayTenantApi = defaultRelayTenantApi
-): Promise<
-  { ok: true; cleared: boolean } | ({ ok: false; storedRejected?: boolean } & EnrollPasswordError)
-> {
+): Promise<{ ok: true } | ({ ok: false; storedRejected?: boolean } & EnrollPasswordError)> {
   const parsed = parseEnrollPasswordDraft(draft, known);
   if (!parsed.ok) return { ok: false, key: parsed.errorKey };
   try {
@@ -143,7 +132,7 @@ export async function rotateEnrollPasswordDraft(
       mode: parsed.mode,
       ...(parsed.current === undefined ? {} : { current: parsed.current }),
     });
-    return { ok: true, cleared: parsed.next === null };
+    return { ok: true };
   } catch (error) {
     const mapped = enrollPasswordError(error);
     return {
@@ -252,17 +241,10 @@ export function RelayEnrollPasswordDialogBody({
         <PasswordFieldWithGenerate
           id="nodes-relay-enroll-password-next"
           value={draft.next}
-          disabled={busy || draft.clear}
+          disabled={busy}
           onChange={(next) => onChange({ next })}
         />
       </FormField>
-      <EnrollPasswordCheck
-        id="nodes-relay-enroll-password-clear"
-        checked={draft.clear}
-        disabled={busy}
-        titleKey="relay.tenant.enrollPassword.clear"
-        onChange={(clear) => onChange(clear ? { clear, next: '' } : { clear })}
-      />
       <EnrollPasswordCheck
         id="nodes-relay-enroll-password-kick"
         checked={draft.kick}
@@ -289,12 +271,6 @@ export interface RelayEnrollPasswordDialogProps {
   onDone: () => void;
   /** 用本机存的旧密码改密被中继拒绝：节点已清掉副本，调用方应刷新状态让用户手输当前密码。 */
   onStoredRejected?: () => void;
-}
-
-function toastRotateDone(t: (key: string) => string, cleared: boolean): void {
-  toast.success(
-    t(cleared ? 'relay.tenant.enrollPassword.cleared' : 'relay.tenant.enrollPassword.done')
-  );
 }
 
 function EnrollPasswordFooter({
@@ -356,7 +332,7 @@ export function RelayEnrollPasswordDialog({
         return;
       }
       setDraft(emptyEnrollPasswordDraft());
-      toastRotateDone(t, result.cleared);
+      toast.success(t('relay.tenant.enrollPassword.done'));
       onDone();
       onOpenChange(false);
     });

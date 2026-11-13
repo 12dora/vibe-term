@@ -7,7 +7,7 @@ import {
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { parseCookies } from '../auth/cookies';
-import { clientIpFromRequest } from '../mesh/client-ip';
+import { UNKNOWN_CLIENT_KEY, clientIpFromRequest } from '../mesh/client-ip';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { getShareService } from './share-service';
 import {
@@ -71,7 +71,7 @@ export const shareAccessRoutes: ApiRoute[] = [
     handler: async (req, params) => {
       const body = await readJsonObjectBody(req);
       const password = typeof body?.password === 'string' ? body.password : '';
-      const clientIp = clientIpFromRequest(req) ?? 'local';
+      const clientIp = clientIpFromRequest(req) ?? UNKNOWN_CLIENT_KEY;
       const result = await getShareService().loginAccess(params.id, password, clientIp);
       if (result.ok) {
         const issued: Record<string, string> = {};
@@ -83,11 +83,12 @@ export const shareAccessRoutes: ApiRoute[] = [
       if (result.code === 'SHARE_ENDED') {
         return json({ error: 'Share has ended.', code: 'SHARE_ENDED' }, 410);
       }
-      if (result.code === 'SHARE_LOGIN_LOCKED') {
+      if (result.code === 'SHARE_LOGIN_LOCKED' || result.code === 'SHARE_LOGIN_BUSY') {
+        const busy = result.code === 'SHARE_LOGIN_BUSY';
         return json(
           {
-            error: 'Too many failed attempts.',
-            code: 'SHARE_LOGIN_LOCKED',
+            error: busy ? 'Too many login requests.' : 'Too many failed attempts.',
+            code: result.code,
             retryAfterMs: result.retryAfterMs ?? 0,
           },
           429,

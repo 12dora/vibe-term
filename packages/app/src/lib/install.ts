@@ -13,7 +13,14 @@ import {
 import { formatHttpEndpoint } from '../../../shared/src/network';
 import { normalizeLegacyRoleName } from '../../../shared/src/roles';
 import type { InstallMeta } from '../types';
-import { copyDirectory, ensureDir, pathExists, readText, writeTextAtomic } from './fs-utils';
+import {
+  copyDirectory,
+  ensureDir,
+  hardenInstallTree,
+  pathExists,
+  readText,
+  writeTextAtomic,
+} from './fs-utils';
 import { type InstallLayout, type PackageLayout, currentRuntimePaths } from './install-layout';
 import { writeJsonFile } from './json-file';
 import { DEFAULT_PEER_PORT, type VibeTermRoleName } from './roles';
@@ -110,17 +117,10 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
 }
 
 export async function ensureInstallDir(installDir: string, force: boolean): Promise<void> {
-  if (!(await pathExists(installDir))) {
-    await ensureDir(installDir);
-    return;
+  if (force && (await pathExists(installDir))) {
+    await rm(installDir, { recursive: true, force: true });
   }
-
-  if (!force) {
-    return;
-  }
-
-  await rm(installDir, { recursive: true, force: true });
-  await ensureDir(installDir);
+  await hardenInstallTree(installDir);
 }
 
 export async function deployRuntimeFiles(
@@ -189,6 +189,7 @@ export function buildRunScriptContent(installDir: string, bunPath: string): stri
     ...ghosttyWasmPathExport(current.runtimeDir),
     '',
     'printf \'%s\\n\' "$$" > "$SCRIPT_DIR/vibeterm.pid"',
+    'chmod 600 "$SCRIPT_DIR/vibeterm.pid" 2>/dev/null || true',
     `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(current.runtimeServerPath)}`,
     '',
   ];

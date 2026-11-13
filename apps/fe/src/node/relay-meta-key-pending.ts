@@ -1,7 +1,7 @@
 // 没落账的 `meta-key` 换代：吊销 / 根轮换 / admit 补发之后那一条记录如果没送上去，
 // 元数据密钥就停在旧世代——被吊销的节点仍能解出中继转发的元数据块（plan §1.4、§1.12）。
 //
-// 因此它不能只弹一条 toast 了事：意向落 sessionStorage，页面刷新、切标签、重开设置页之后
+// 因此它不能只弹一条 toast 了事：意向落 localStorage，页面刷新、关掉标签、重开浏览器之后
 // 仍然看得到「还欠一条」，并且能自动重发。
 //
 // **存的是公开数据**：`op` 里只有节点 id，`record` 是已签好的密钥日志记录字节（payload 里的
@@ -37,7 +37,11 @@ let loaded = false;
 const listeners = new Set<() => void>();
 
 function storage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
-  return (globalThis as { sessionStorage?: Storage }).sessionStorage ?? null;
+  try {
+    return (globalThis as { localStorage?: Storage }).localStorage ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function parseEntry(raw: unknown): PendingMetaKey | null {
@@ -84,7 +88,7 @@ function persist(): void {
     if (entries.length === 0) store.removeItem(RELAY_META_KEY_STORAGE_KEY);
     else store.setItem(RELAY_META_KEY_STORAGE_KEY, JSON.stringify(entries));
   } catch {
-    // 隐私模式下 sessionStorage 会抛；内存态仍然有效，刷新后丢失即可。
+    // 隐私模式下 localStorage 会抛；内存态仍然有效，刷新后丢失即可。
   }
 }
 
@@ -246,7 +250,7 @@ function setPackDebt(next: RelayPackDebt): void {
     if (packDebt === NO_PACK_DEBT) store.removeItem(RELAY_PACK_DEBT_STORAGE_KEY);
     else store.setItem(RELAY_PACK_DEBT_STORAGE_KEY, JSON.stringify(packDebt));
   } catch {
-    // 隐私模式下 sessionStorage 会抛；内存态仍然有效。
+    // 隐私模式下 localStorage 会抛；内存态仍然有效。
   } finally {
     for (const listener of [...packDebtListeners]) listener();
   }

@@ -339,8 +339,17 @@ describe('远程发起的升级要过签名下限', () => {
 
   test('远程 + 下限之上的版本照常放行（走下载路径自己验签）', async () => {
     const controller = stubbedController(tempInstall());
-    expect(await controller.tryStart('1.1.39', { remote: true })).toEqual({ ok: true });
+    expect(await controller.tryStart('9.9.9', { remote: true })).toEqual({ ok: true });
     expect(controller.status().state).toBe('downloading');
+  });
+
+  test('远程不允许降到当前版本之下（签名下限之上也拒绝）', async () => {
+    const controller = stubbedController(tempInstall());
+    expect(await controller.tryStart('1.1.39', { remote: true })).toEqual({
+      ok: false,
+      code: 'UPGRADE_DOWNGRADE_REFUSED',
+    });
+    expect(controller.status().state).toBe('idle');
   });
 });
 

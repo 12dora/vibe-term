@@ -5,6 +5,7 @@ import {
   parsePortRange,
 } from '@vibeterm/shared/net';
 import type { RelayRtcConfig } from '@vibeterm/shared/relay';
+import { DEFAULT_DENIED_PEER_CIDRS, parseDeniedPeerList } from './turn/denied-peers';
 
 export { DEFAULT_TURN_PORT, DEFAULT_TURN_RELAY_PORT_RANGE };
 export const DEFAULT_TURN_RELAY_PORT_BEGIN = DEFAULT_TURN_RELAY_PORT_RANGE.begin;
@@ -84,6 +85,20 @@ export function parseTurnExternalIp(raw: string | undefined): string | null {
     throw new Error('VIBETERM_TURN_EXTERNAL_IP must be an IPv4 address');
   }
   return value;
+}
+
+/** `VIBETERM_TURN_DENIED_PEERS` 追加到内置拒绝名单之后；非法项告警一次并跳过。 */
+export function parseTurnDeniedPeers(
+  raw: string | undefined,
+  warn: (line: string) => void
+): string[] {
+  const { cidrs, invalid } = parseDeniedPeerList(raw);
+  if (invalid.length > 0) {
+    warn(
+      `VIBETERM_TURN_DENIED_PEERS: ignoring invalid entries (expected IPv4 CIDR or address): ${invalid.join(', ')}`
+    );
+  }
+  return [...DEFAULT_DENIED_PEER_CIDRS, ...cidrs];
 }
 
 export function parseTurnHost(raw: string | undefined): string | null {

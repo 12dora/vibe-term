@@ -3,6 +3,7 @@ import {
   type UpdateFileRootRequest,
   VIRTUAL_HOME_ROOT_ID,
 } from '@vibeterm/shared';
+import { isTokenFileAccess } from '../auth/token-scope';
 import { getDeviceById } from '../db';
 import {
   type FileRootRecord,
@@ -37,7 +38,7 @@ function toRootDto(root: FileRootRecord, virtual = false): FileRootDto {
 
 function listRootDtos(): FileRootDto[] {
   const persisted = getFileRoots().map((root) => toRootDto(root));
-  const home = virtualHomeRootForList();
+  const home = isTokenFileAccess() ? null : virtualHomeRootForList();
   return home ? [...persisted, toRootDto(home, true)] : persisted;
 }
 

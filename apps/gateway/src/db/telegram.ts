@@ -93,7 +93,7 @@ export function getTelegramChatByBotAndChatId(
 }
 
 /**
- * 已授权行禁止改 user_id（防群成员 /start 接管）。仅 pending 可写入本次 from.id。
+ * 已授权行禁止改 user_id。pending 也冻结首次 /start 的 from.id，后来的发送者不能覆盖。
  * 历史 authorized + user_id IS NULL 的群须删除后再绑定，不能靠 /start 认领。
  */
 export function pendingTelegramUserIdForUpsert(
@@ -101,6 +101,7 @@ export function pendingTelegramUserIdForUpsert(
   incoming: string | null | undefined
 ): string | null | undefined {
   if (existing?.status === 'authorized') return undefined;
+  if (existing?.status === 'pending' && existing.userId) return undefined;
   return incoming;
 }
 

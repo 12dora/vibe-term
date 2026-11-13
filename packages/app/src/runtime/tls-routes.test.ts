@@ -42,6 +42,7 @@ function requestWithForwarded(init: {
     setMeshRequestContext(req, {
       via: init.via ?? 'self',
       trustProxy: init.trustProxy,
+      ...(init.trustProxy ? { clientIp: '127.0.0.1' } : {}),
     });
   }
   return req;

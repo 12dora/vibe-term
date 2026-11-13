@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { canonicalPublicUrl } from '../../../shared/src/auth';
 import {
   DEFAULT_PUBLIC_HTTPS_PORT,
@@ -22,7 +22,7 @@ import {
 import { writeEnvFile } from '../lib/env-file';
 import { errorMessage } from '../lib/error-message';
 import { type CanBind, canBindPort, pickFreePort } from '../lib/free-port';
-import { ensureDir, pathExists } from '../lib/fs-utils';
+import { hardenInstallTree, pathExists } from '../lib/fs-utils';
 import {
   buildAppEnvValues,
   deployRuntimeFiles,
@@ -486,7 +486,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   const cliVersion = await readPackageVersion(packageLayout.packageRoot);
 
   await ensureInstallDir(config.installDir, config.force);
-  await ensureDir(dirname(config.databasePath));
+  await hardenInstallTree(config.installDir, config.databasePath);
 
   const versionLayout = createVersionLayout(config.installDir, cliVersion);
   await deployRuntimeFiles(packageLayout, versionLayout);

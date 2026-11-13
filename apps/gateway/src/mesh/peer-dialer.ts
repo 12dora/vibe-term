@@ -536,8 +536,8 @@ export class PeerDialer {
     );
   }
 
-  async acceptDirect(socket: ServerSocketAdapter, remoteAddress: string | null): Promise<void> {
-    await acceptDirectSession(this.acceptDeps(), socket, remoteAddress);
+  async acceptDirect(socket: ServerSocketAdapter, ip: string | null, done?: () => void) {
+    await acceptDirectSession(this.acceptDeps(), socket, ip, done);
   }
 
   async acceptRelay(stream: LinkStream, from: string, viaRelay?: string): Promise<void> {

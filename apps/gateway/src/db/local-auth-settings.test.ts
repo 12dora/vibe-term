@@ -145,10 +145,14 @@ describe('decideLocalAuthBootstrap', () => {
 });
 
 describe('isLoopbackClientIp', () => {
-  test('缺失 / local / 127/::1 为本机', () => {
-    expect(isLoopbackClientIp(undefined)).toBe(true);
-    expect(isLoopbackClientIp(null)).toBe(true);
-    expect(isLoopbackClientIp('local')).toBe(true);
+  test('缺失 / local 不是本机', () => {
+    expect(isLoopbackClientIp(undefined)).toBe(false);
+    expect(isLoopbackClientIp(null)).toBe(false);
+    expect(isLoopbackClientIp('')).toBe(false);
+    expect(isLoopbackClientIp('local')).toBe(false);
+  });
+
+  test('127/::1 为本机', () => {
     expect(isLoopbackClientIp('127.0.0.1')).toBe(true);
     expect(isLoopbackClientIp('127.0.0.2')).toBe(true);
     expect(isLoopbackClientIp('::1')).toBe(true);

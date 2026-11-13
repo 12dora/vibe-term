@@ -9,6 +9,7 @@ import {
   bootRelayHarness,
   enrollRelayRoot,
 } from './relay-test-harness';
+import { type RelayHeartbeatHost, beatRelay } from './relay-uplink-heartbeat';
 
 let harness: RelayHarness | null = null;
 
@@ -100,7 +101,7 @@ describe('relay uplink auth', () => {
       }
     );
     expect(res).toBeUndefined();
-    expect(data).toEqual({ kind: 'relay-uplink', clientIp: '203.0.113.9' });
+    expect(data).toEqual({ kind: 'relay-uplink', clientIp: '203.0.113.9', preauthKey: null });
   });
 
   test('auth.ok and relay.list send empty stun when stunSource is not custom', async () => {
@@ -208,7 +209,7 @@ describe('relay uplink auth', () => {
     expect(relay.runtime.tenants.getNode(tenant.id, node.nodeId)?.clientVersion).toBe('1.1.23_dev');
   });
 
-  test('accepts a passkey-signed admit only when the tenant already has an admitted node', async () => {
+  test('a passkey-signed admit never creates a node row on relay.auth; the admit must arrive via keylog.append first', async () => {
     const relay = await boot();
     const tenant = await relay.createTenant();
     const first = tenant.addNode({ admitSigner: 'passkey' });
@@ -219,9 +220,15 @@ describe('relay uplink auth', () => {
     const rootClient = await tenant.connect(rootNode);
     await rootClient.inbox.takeOf('auth.ok');
     const second = tenant.addNode({ admitSigner: 'passkey' });
-    const tolerated = await tenant.connect(second);
-    const ok = await tolerated.inbox.takeOf('auth.ok');
-    expect(ok.t).toBe('auth.ok');
+    const early = await tenant.connect(second);
+    expect(await closed(early)).toBe('member-passkey_unadmitted');
+    expect(relay.runtime.tenants.getNode(tenant.id, second.nodeId)).toBeNull();
+
+    const ack = await tenant.appendMember(rootClient, 'admit', second.admit);
+    expect(ack.ok).toBe(true);
+    expect(relay.runtime.tenants.getNode(tenant.id, second.nodeId)?.status).toBe('admitted');
+    const admitted = await tenant.connect(second);
+    expect((await admitted.inbox.takeOf('auth.ok')).t).toBe('auth.ok');
   });
 
   test('rejects a member proof whose certificate is for another node', async () => {
@@ -656,9 +663,9 @@ describe('relay streams', () => {
     await clientB.inbox.takeOf('auth.ok');
     const live = relay.runtime.registry.get(tenant.id, a.nodeId);
     if (!live) throw new Error('missing relay live node');
-    const beat = (relay.runtime.uplink as unknown as { beat(live: RelayLiveNode): void }).beat.bind(
-      relay.runtime.uplink
-    );
+    const host = (relay.runtime.uplink as unknown as { heartbeatHost: RelayHeartbeatHost })
+      .heartbeatHost;
+    const beat = (node: RelayLiveNode) => beatRelay(host, node);
     beat(live);
     const incoming = new Promise<LinkStream>((resolve) => clientB.onStream(resolve));
     const out = await clientA.openRelay(b.nodeId);

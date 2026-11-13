@@ -56,9 +56,15 @@ describe('findAdminNode', () => {
 });
 
 describe('joinCommand / isTrustedPublicUrl', () => {
-  test('prints vibeterm relay join with the flags relay join accepts', () => {
+  test('prints vibeterm relay join with the env token form relay join accepts', () => {
     expect(joinCommand('https://relay.example', 'r3.token', 'studio')).toBe(
-      "vibeterm relay join 'https://relay.example' --token r3.token --name studio"
+      "VIBETERM_RELAY_JOIN_TOKEN='r3.token' vibeterm relay join 'https://relay.example' --name studio"
+    );
+    expect(joinCommand('https://relay.example', 'r3.TOKEN', null)).toBe(
+      "VIBETERM_RELAY_JOIN_TOKEN='r3.TOKEN' vibeterm relay join 'https://relay.example'"
+    );
+    expect(joinCommand('https://relay.example', "a'b", null)).toContain(
+      "VIBETERM_RELAY_JOIN_TOKEN='a'\\''b' vibeterm"
     );
     expect(passwordJoinCommand('https://relay.example', 'ab'.repeat(16))).toBe(
       `vibeterm relay join 'https://relay.example' --tenant ${'ab'.repeat(16)} --password`

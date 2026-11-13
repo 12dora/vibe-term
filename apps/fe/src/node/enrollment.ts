@@ -469,21 +469,28 @@ export function isTrustedPublicUrl(value: string | null | undefined): boolean {
   return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
 }
 
+const JOIN_TOKEN_ENV = 'VIBETERM_RELAY_JOIN_TOKEN';
+
 /**
  * 展示给用户的 join 命令。
  * `publicUrl` 必须来自 enrollment 创建响应（中继地址）：用当前页面 origin 会把新设备
  * 指到没有中继 enrollment 路由的机器上，redeem 直接 404。
  *
- * URL 与 token 一律经 `shellQuote()`；URL 还必须先过 `isTrustedPublicUrl()`。
+ * 加入码走环境变量 `VIBETERM_RELAY_JOIN_TOKEN`、不进 argv：命令行参数对本机其他用户可见（`/proc/<pid>/cmdline`）。
+ * URL 与 token 一律加引号；URL 还必须先过 `isTrustedPublicUrl()`。
  */
 export function joinCommand(publicUrl: string, token: string, name?: string | null): string {
   if (!isTrustedPublicUrl(publicUrl)) {
     throw new Error('public url must be an https url');
   }
   const suffix = name?.trim() ? ` --name ${shellQuote(name.trim())}` : '';
-  return `vibeterm relay join ${shellQuote(publicUrl)} --token ${shellQuote(token)}${suffix}`;
+  return `${JOIN_TOKEN_ENV}=${singleQuote(token)} vibeterm relay join ${shellQuote(publicUrl)}${suffix}`;
+}
+
+function singleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function shellQuote(value: string): string {
-  return /^[A-Za-z0-9._-]+$/.test(value) ? value : `'${value.replace(/'/g, "'\\''")}'`;
+  return /^[A-Za-z0-9._-]+$/.test(value) ? value : singleQuote(value);
 }

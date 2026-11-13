@@ -26,7 +26,10 @@
 `lstat` 下探：遇到符号链接直接判 `outside_roots`，缺失的段就地创建后再复核 realpath 仍在边界内；
 半成品文件名（`.part-<hash>`）也一并检查，那个命名空间里出现符号链接只可能是攻击。
 ssh 目标在远端用一条 `sh` 命令完成同样的核对（root → destDir 的 realpath 包含关系、
-每段不是符号链接、缺失目录就地创建），字节先落本机暂存目录，再 rsync 推到核对过的真实目录。
+每段不是符号链接、缺失目录就地创建），字节先落安装目录下的私有暂存
+（`<installDir>/staging/vibeterm-rx-<hash>`，`0700`，`lstat` 核对本 uid、拒绝符号链接），
+再 rsync 推到核对过的真实目录。`.part` 以 `O_EXCL|O_NOFOLLOW` 创建，chmod 走 fd、不跟随符号链接。
+不再使用共享 `/tmp`。
 
 残余风险：ssh 目标的核对与 rsync 之间存在 TOCTOU 窗口（对端有写权限的进程可在两步之间把目录
 换成符号链接）。本机目标没有这个窗口。
@@ -94,5 +97,5 @@ DELETE /sessions/:sid                       → { ok }                      // �
   会话在写（进程内声明），第二个会话拿到 `dest_conflict`。
 - **孤儿清扫**（`transfer/sweep.ts`）：开机 30 s 后跑一次，之后每 6 小时一次。
   本机 root 下按广度优先扫 `.part-<16 位十六进制>`（目录数 ≤ 2000、层级 ≤ 6，不跟符号链接），
-  ssh 暂存目录 `vibeterm-rx-*` 整目录按 TTL（24 小时）回收；正在被会话使用的一律跳过。
+  ssh 暂存目录（安装树 `staging/vibeterm-rx-*`，以及升级前残留在 `tmpdir` 里的同名目录）整目录按 TTL（24 小时）回收；正在被会话使用的一律跳过。
   测试环境（`NODE_ENV=test`）不挂这两个定时器。

@@ -44,6 +44,30 @@ describe('mesh reset-root', () => {
     ).rejects.toThrow(/standalone/);
   });
 
+  test('refuses a weak new password without touching the root', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'node',
+      },
+    });
+    handles.push(auth);
+    const added = await runUserAdd(parsed, 'erin', {
+      auth,
+      password: 'first-pass-word',
+      log: () => undefined,
+    });
+    for (const password of ['short', '123456789012', 'erin-k9Q2vL7xT']) {
+      await expect(
+        runMeshResetRoot(parseArgs(['--yes']), { auth, password, log: () => undefined })
+      ).rejects.toThrow(/at least 12|too easy/);
+    }
+    expect(auth.userStore.getById(added.userId)?.rootEpoch).toBe(added.rootEpoch);
+    expect(auth.keyLogStore.list(added.userId).map((row) => row.seq)).toEqual([1, 2]);
+  });
+
   test('bumps epoch, clears old certs, and re-admits this machine', async () => {
     const auth = await openLocalAuth({
       memory: true,

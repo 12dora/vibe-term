@@ -10,16 +10,18 @@ import { readJsonObjectBody } from '@vibeterm/shared/http';
 import { RELAY_TOKEN_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import {
   RELAY_ENROLL_PROOF_MAX_SKEW_MS,
-  relaySeqToWire,
+  type RelayKeyLogRecordWire,
   verifyRelayEnrollProof,
 } from '@vibeterm/shared/relay';
 import { decodeB64url, requireB64url } from '../api/route-input';
 import { encodeRedeemPopMessage } from './redeem-pop';
 import type { RelayConfigStore } from './relay-config-store';
 import type { RelayEnrollLimiter } from './relay-enroll-limiter';
+import { applyEnrollRevocations, parseEnrollRevokedNodeIds } from './relay-enroll-revoke';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
+import { toRelayKeyLogWire } from './relay-key-log-page';
 import type { RelayKeyLogStore } from './relay-key-log-store';
-import { parseRelayEnvelopeJson } from './relay-key-log-store';
+import { effectiveMaxTenants } from './relay-limits';
 import { handleRelayJoin } from './relay-pack-http';
 import {
   constantTimeEqual,
@@ -30,9 +32,13 @@ import {
 } from './relay-password';
 import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
-import { relayTokenHashAccepted } from './relay-token-grace';
+import { relayCurrentTokenPredatesRevoke, relayTokenHashAccepted } from './relay-token-grace';
 import type { RelayUplinkServer } from './relay-uplink-server';
-import type { RelayEnrollmentRecord, RelayTenantRecord } from './types';
+import {
+  RELAY_REDEEM_KEYLOG_MAX_BYTES,
+  type RelayEnrollmentRecord,
+  type RelayTenantRecord,
+} from './types';
 
 export { RELAY_TOKEN_HEADER };
 
@@ -45,6 +51,7 @@ export type RelayPublicRoutesDeps = {
   registry: RelayRegistry;
   publicUrl: string;
   relayHost: string;
+  defaultMaxTenants: number;
   now: () => number;
   clientIp: (req: Request) => string;
 };
@@ -59,6 +66,10 @@ type ParsedEnroll = {
   tenantId: string | null;
   /** 调用方手上那份令牌的 sha256（十六进制）；与中继当前令牌一致时不再换发。 */
   knownTokenHash: string | null;
+  /** 吊销后的换发（`force_rotate: true`）：必定换发，当前令牌降为 `node_only`。 */
+  forceRotate: boolean;
+  /** 随 `force_rotate` 带来的已吊销 node_id；只在命中已有租户（根证明成立）且强制换发时生效。 */
+  revokedNodeIds: string[];
 };
 
 type EnrollShape = {
@@ -94,7 +105,8 @@ function readEnrollShape(body: Record<string, unknown>): EnrollShape | null {
 
 function parseEnrollBody(body: Record<string, unknown>): ParsedEnroll | null {
   const shape = readEnrollShape(body);
-  if (!shape) return null;
+  const revokedNodeIds = parseEnrollRevokedNodeIds(body.revoked_node_ids);
+  if (!shape || !revokedNodeIds) return null;
   try {
     return {
       rootPublicKey: requireB64url(body, 'root_public_key', 32),
@@ -105,6 +117,8 @@ function parseEnrollBody(body: Record<string, unknown>): ParsedEnroll | null {
       mode: shape.mode,
       tenantId: shape.tenantId,
       knownTokenHash: shape.knownTokenHash,
+      forceRotate: body.force_rotate === true,
+      revokedNodeIds,
     };
   } catch {
     return null;
@@ -119,9 +133,17 @@ async function checkEnrollPassword(
 ): Promise<Response | null> {
   if (!passwordHash) return null;
   if (parsed.password === null) return relayError(RelayErrorCode.passwordRequired, 401);
-  if (await verifyRelayPassword(passwordHash, parsed.password)) return null;
-  deps.limiter.recordFailure(ip);
-  return relayError(RelayErrorCode.passwordInvalid, 401);
+  const slot = deps.limiter.reserveKdf(ip);
+  if (!slot.ok) {
+    return relayError(RelayErrorCode.rateLimited, 429, { retryAfterMs: slot.retryAfterMs });
+  }
+  let ok = false;
+  try {
+    ok = await verifyRelayPassword(passwordHash, parsed.password);
+  } finally {
+    slot.done(ok);
+  }
+  return ok ? null : relayError(RelayErrorCode.passwordInvalid, 401);
 }
 
 type ReissueDecision = 'reuse' | 'recover' | 'rotate';
@@ -132,8 +154,10 @@ type ReissueDecision = 'reuse' | 'recover' | 'rotate';
  * - `reuse`：租户健康且调用方出示的哈希**就是当前令牌** → 一动不动。改完接入口令再走一次接入
  *   （网页「重新输入接入密码」/ CLI `relay reauth`）落在这里，成员节点因此不掉线。
  * - `recover`：被踢或令牌代次低于门槛 → 换发并断掉旧链路（旧令牌本来就该死）。
- * - `rotate`：租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失、手上只剩上一代）→ 换发，
- *   但保留上一代供成员在宽限期内继续认证，也不主动断链。
+ * - `rotate`：租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失、手上只剩上一代），
+ *   当前令牌签发于一次吊销之前，或调用方显式要求（`force_rotate`，FE 吊销节点后的换发）→ 换发，
+ *   保留上一代供成员在宽限期内继续认证，也不主动断链（吊销前签发的那一代只保留 uplink 宽限，
+ *   见 `relayTokensAfterReissue`）。
  *
  * **只认当前令牌**：手持上一代的调用方必须拿到一份新令牌，否则它会把那份即将过期的旧令牌
  * 再写进 `set-relays` / 密封包，等宽限期一到全网又一起断。
@@ -141,11 +165,12 @@ type ReissueDecision = 'reuse' | 'recover' | 'rotate';
 function shouldReissueToken(
   existing: RelayTenantRecord,
   minTokenEpoch: number,
-  knownTokenHash: string | null
+  parsed: Pick<ParsedEnroll, 'knownTokenHash' | 'forceRotate'>
 ): ReissueDecision {
   if (existing.kicked || existing.tokenEpoch < minTokenEpoch) return 'recover';
-  if (!knownTokenHash) return 'rotate';
-  return constantTimeEqual(knownTokenHash, existing.tokenHash) ? 'reuse' : 'rotate';
+  const known = parsed.knownTokenHash;
+  if (!known || parsed.forceRotate || relayCurrentTokenPredatesRevoke(existing)) return 'rotate';
+  return constantTimeEqual(known, existing.tokenHash) ? 'reuse' : 'rotate';
 }
 
 /**
@@ -176,8 +201,13 @@ function issueTenantToken(
     });
     return { tenantId, token };
   }
-  const decision = shouldReissueToken(existing, minTokenEpoch, parsed.knownTokenHash);
+  if (parsed.forceRotate) applyEnrollRevocations(deps, existing.id, parsed.revokedNodeIds);
+  const decision = shouldReissueToken(existing, minTokenEpoch, parsed);
   if (decision === 'reuse') return { tenantId: existing.id, token: null };
+  // 显式的吊销后换发：中继可能没见到那条吊销（passkey 签名 / 别的中继），由这里补上收紧
+  if (decision === 'rotate' && parsed.forceRotate) {
+    deps.tenants.restrictTokensAfterRevoke(existing.id, now);
+  }
   const token = generateRelayToken();
   const tokenHash = sha256Hex(token);
   deps.tenants.reissueToken({
@@ -229,13 +259,14 @@ export async function handleRelayEnroll(
   const config = deps.configStore.ensure(deps.now());
   const rejected = await checkEnrollPassword(deps, parsed, config.passwordHash, ip);
   if (rejected) return rejected;
-  deps.limiter.reset(ip);
   // 满员判定放在口令校验之后：否则一个满员的中继会变成「口令对不对」的探测器。
   // 口令校验是异步的，期间运营者可能刚把租户上限调小，所以这里重新读一次配置，
   // 紧挨着后面同步的「计数—判断—建租户」三步，中间不再有 await。
-  const maxTenants = deps.configStore.ensure(deps.now()).limits.maxTenants;
+  const maxTenants = effectiveMaxTenants(
+    deps.configStore.ensure(deps.now()).limits,
+    deps.defaultMaxTenants
+  );
   if (
-    maxTenants !== null &&
     !deps.tenants.getByRootPublicKey(parsed.rootPublicKey) &&
     deps.tenants.count() >= maxTenants
   ) {
@@ -376,6 +407,13 @@ export async function handleRelayRedeem(
   const existing = deps.tenants.getNode(tenant.id, nodeId);
   if (existing?.status === 'revoked') return relayError(RelayErrorCode.nodeRevoked, 409);
   if (
+    existing &&
+    (!bytesEqual(existing.edPk, input.certificate.ed_pk) ||
+      !bytesEqual(existing.x25519Pk, input.certificate.x25519_pk))
+  ) {
+    return relayError(RelayErrorCode.memberConflict, 409);
+  }
+  if (
     !existing &&
     deps.tenants.countActiveNodes(tenant.id) >= deps.uplink.quotaFor(tenant.id).maxNodes
   ) {
@@ -389,7 +427,7 @@ export async function handleRelayRedeem(
     nodeId,
     edPk: input.certificate.ed_pk,
     x25519Pk: input.certificate.x25519_pk,
-    status: existing?.status === 'admitted' ? 'admitted' : 'pending',
+    status: 'pending',
     now,
   });
   deps.uplink.broadcast(tenant.id, {
@@ -405,11 +443,36 @@ export async function handleRelayRedeem(
     tenant_id: tenant.id,
     relays: [deps.publicUrl],
     rtc: deps.uplink.rtcConfig(),
-    key_log: deps.keyLog
-      .listAll(tenant.id)
-      .map((row) => ({ seq: relaySeqToWire(row.seq), blob: parseRelayEnvelopeJson(row.blob) }))
-      .filter((row) => row.blob !== null),
+    ...redeemKeyLogPrefix(deps.keyLog, tenant.id),
   });
+}
+
+const REDEEM_SCAN_PAGE = 256;
+
+/**
+ * redeem 随带的日志前缀：从 seq 1 起按页读，累计不超过 `RELAY_REDEEM_KEYLOG_MAX_BYTES`，
+ * 超出置 `has_more`，其余由加入方分页 `GET …/keylog` 取。
+ */
+function redeemKeyLogPrefix(
+  keyLog: RelayKeyLogStore,
+  tenantId: string
+): { key_log: RelayKeyLogRecordWire[]; has_more: boolean } {
+  const out: RelayKeyLogRecordWire[] = [];
+  let bytes = 0;
+  let from = 1n;
+  for (;;) {
+    const rows = keyLog.list(tenantId, from, REDEEM_SCAN_PAGE);
+    for (const row of rows) {
+      const record = toRelayKeyLogWire(row);
+      if (!record) continue;
+      const size = JSON.stringify(record).length + 1;
+      if (bytes + size > RELAY_REDEEM_KEYLOG_MAX_BYTES) return { key_log: out, has_more: true };
+      bytes += size;
+      out.push(record);
+    }
+    if (rows.length < REDEEM_SCAN_PAGE) return { key_log: out, has_more: false };
+    from = (rows[rows.length - 1]?.seq ?? from) + 1n;
+  }
 }
 
 export function relayHealth(input: {

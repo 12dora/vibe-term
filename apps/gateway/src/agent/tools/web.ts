@@ -14,7 +14,7 @@ const WEB_SEARCH_RESULT_MAX_BYTES = 8 * 1024;
 const FETCH_URL_TIMEOUT_MS = 15_000;
 const FETCH_URL_MAX_BODY_BYTES = 2 * 1024 * 1024;
 const FETCH_URL_TEXT_MAX_BYTES = 16 * 1024;
-const FETCH_URL_MAX_REDIRECTS = 3;
+const FETCH_URL_MAX_REDIRECTS = 5;
 
 export interface WebSearchResultItem {
   title: string;
@@ -109,6 +109,58 @@ export function validateFetchUrl(rawUrl: string): { url: URL } | { error: string
     return { error: `Refusing to fetch private/internal address: ${url.hostname}` };
   }
   return { url };
+}
+
+export type FetchLookup = (hostname: string) => Promise<string[]>;
+
+async function defaultLookup(hostname: string): Promise<string[]> {
+  const entries = await Bun.dns.lookup(hostname, { backend: 'system' });
+  return [...new Set(entries.map((entry) => entry.address))];
+}
+
+function isIpLiteralHostname(hostname: string): boolean {
+  const host = normalizeHostname(hostname);
+  return isCanonicalIpv4(host) || host.includes(':');
+}
+
+export function isBlockedResolvedAddress(address: string): boolean {
+  return isPrivateHostname(address);
+}
+
+async function pinFetchUrl(
+  url: URL,
+  lookup: FetchLookup
+): Promise<{ url: URL; pinHost: string } | { error: string }> {
+  const hostname = normalizeHostname(url.hostname);
+  if (isIpLiteralHostname(url.hostname)) {
+    if (!allowPrivateFetch() && isBlockedResolvedAddress(hostname)) {
+      return { error: `Refusing to fetch private/internal address: ${url.hostname}` };
+    }
+    return { url, pinHost: hostname };
+  }
+  let addresses: string[];
+  try {
+    addresses = await lookup(hostname);
+  } catch (error) {
+    return { error: `Fetch failed: DNS lookup failed for ${hostname}: ${errorMessage(error)}` };
+  }
+  if (addresses.length === 0) {
+    return { error: `Fetch failed: DNS lookup returned no addresses for ${hostname}` };
+  }
+  if (!allowPrivateFetch() && addresses.some((addr) => isBlockedResolvedAddress(addr))) {
+    return { error: `Refusing to fetch private/internal address: ${hostname}` };
+  }
+  const pin = addresses[0] ?? '';
+  const pinned = new URL(url.toString());
+  pinned.hostname = pin.includes(':') ? `[${pin}]` : pin;
+  return { url: pinned, pinHost: hostname };
+}
+
+function hostHeaderFor(url: URL, pinHost: string): string {
+  const port = url.port;
+  const defaultPort = url.protocol === 'https:' ? '443' : url.protocol === 'http:' ? '80' : '';
+  if (!port || port === defaultPort) return pinHost;
+  return `${pinHost}:${port}`;
 }
 
 // ========== web_search ==========
@@ -344,12 +396,44 @@ async function extractHtmlText(html: string): Promise<string> {
     .trim();
 }
 
+function pinnedFetchInit(
+  validatedUrl: URL,
+  pinHost: string
+): RequestInit & { tls?: { serverName: string } } {
+  const headers: Record<string, string> = {
+    Accept: 'text/html,application/xhtml+xml,text/plain,*/*',
+    Host: hostHeaderFor(validatedUrl, pinHost),
+  };
+  const init: RequestInit & { tls?: { serverName: string } } = {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
+    headers,
+  };
+  if (validatedUrl.protocol === 'https:') {
+    init.tls = { serverName: pinHost };
+  }
+  return init;
+}
+
+function isHtmlContentType(contentType: string): boolean {
+  return contentType.includes('text/html') || contentType.includes('application/xhtml');
+}
+
+function fetchFailureMessage(error: unknown): string {
+  if (error instanceof DOMException && error.name === 'TimeoutError') {
+    return `Fetch failed: timeout after ${FETCH_URL_TIMEOUT_MS}ms`;
+  }
+  return `Fetch failed: ${errorMessage(error)}`;
+}
+
 export interface CreateFetchUrlToolOptions {
   fetchImpl?: typeof fetch;
+  lookup?: FetchLookup;
 }
 
 export function createFetchUrlTool(options: CreateFetchUrlToolOptions = {}): Tool {
   const fetchImpl = options.fetchImpl ?? fetch;
+  const lookup = options.lookup ?? defaultLookup;
 
   return getAiTool()({
     description:
@@ -365,12 +449,15 @@ export function createFetchUrlTool(options: CreateFetchUrlToolOptions = {}): Too
           if ('error' in validated) {
             return validated.error;
           }
+          const pinned = await pinFetchUrl(validated.url, lookup);
+          if ('error' in pinned) {
+            return pinned.error;
+          }
 
-          const response = await fetchImpl(validated.url.toString(), {
-            redirect: 'manual',
-            signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
-            headers: { Accept: 'text/html,application/xhtml+xml,text/plain,*/*' },
-          });
+          const response = await fetchImpl(
+            pinned.url.toString(),
+            pinnedFetchInit(validated.url, pinned.pinHost)
+          );
 
           if (response.status >= 300 && response.status < 400) {
             const location = response.headers.get('location');
@@ -387,20 +474,15 @@ export function createFetchUrlTool(options: CreateFetchUrlToolOptions = {}): Too
 
           const contentType = response.headers.get('content-type') ?? '';
           const body = await readBodyWithLimit(response, FETCH_URL_MAX_BODY_BYTES);
-
-          if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+          if (isHtmlContentType(contentType)) {
             const text = await extractHtmlText(body);
             return wrapUntrusted(truncateUtf8(text, FETCH_URL_TEXT_MAX_BYTES), 'web');
           }
-
           return wrapUntrusted(truncateUtf8(body, FETCH_URL_TEXT_MAX_BYTES), 'web');
         }
         return `Fetch failed: too many redirects (>${FETCH_URL_MAX_REDIRECTS})`;
       } catch (error) {
-        if (error instanceof DOMException && error.name === 'TimeoutError') {
-          return `Fetch failed: timeout after ${FETCH_URL_TIMEOUT_MS}ms`;
-        }
-        return `Fetch failed: ${errorMessage(error)}`;
+        return fetchFailureMessage(error);
       }
     },
   });

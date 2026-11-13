@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import { buildKeyLogRecord, encodeKeyLogRecord, randomBytes } from '../../../shared/src/auth';
+import {
+  buildKeyLogRecord,
+  decodeBase64url,
+  encodeKeyLogRecord,
+  generateEd25519KeyPair,
+  randomBytes,
+} from '../../../shared/src/auth';
+import { verifyRelayKeyLogAppend } from '../../../shared/src/relay';
 import { RelayApiError } from '../commands/relay-shared';
 import type { FetchLike } from './fetch-like';
 import {
@@ -20,6 +27,18 @@ const rec = {
     })
   ),
   sig: randomBytes(64),
+};
+
+const ed = generateEd25519KeyPair();
+const identity = { nodeId: 'ab'.repeat(16), edPrivateKey: ed.secretKey };
+const joinInput = {
+  relayUrl: 'https://relay.example',
+  tenantId: 'aa'.repeat(16),
+  token: randomBytes(32),
+  logKey: randomBytes(32),
+  admit: rec,
+  meta: rec,
+  identity,
 };
 
 function jsonRes(body: unknown, status = 200): Response {
@@ -46,15 +65,7 @@ describe('appendAdmitThenMeta', () => {
       urls.push(String(input));
       return jsonRes({ error: { code: 'UNAUTHORIZED', message: 'bad' } }, 401);
     };
-    const result = await appendAdmitThenMeta({
-      relayUrl: 'https://relay.example',
-      tenantId: 'aa'.repeat(16),
-      token: randomBytes(32),
-      logKey: randomBytes(32),
-      admit: rec,
-      meta: rec,
-      fetcher,
-    });
+    const result = await appendAdmitThenMeta({ ...joinInput, fetcher });
     expect(result).toMatchObject({ ok: false, kind: 'admit_failed' });
     expect(urls).toHaveLength(1);
   });
@@ -65,15 +76,7 @@ describe('appendAdmitThenMeta', () => {
       urls.push(String(input));
       return jsonRes({ ok: true, member_ignored: true });
     };
-    const result = await appendAdmitThenMeta({
-      relayUrl: 'https://relay.example',
-      tenantId: 'aa'.repeat(16),
-      token: randomBytes(32),
-      logKey: randomBytes(32),
-      admit: rec,
-      meta: rec,
-      fetcher,
-    });
+    const result = await appendAdmitThenMeta({ ...joinInput, fetcher });
     expect(result).toEqual({ ok: false, kind: 'member_ignored' });
     expect(urls).toHaveLength(1);
   });
@@ -85,17 +88,45 @@ describe('appendAdmitThenMeta', () => {
       if (n === 1) return jsonRes({ ok: true });
       return jsonRes({ error: { code: 'SEQ_MISMATCH', message: 'SEQ_MISMATCH' } }, 409);
     };
-    const result = await appendAdmitThenMeta({
-      relayUrl: 'https://relay.example',
-      tenantId: 'aa'.repeat(16),
-      token: randomBytes(32),
-      logKey: randomBytes(32),
-      admit: rec,
-      meta: rec,
-      fetcher,
-    });
+    const result = await appendAdmitThenMeta({ ...joinInput, fetcher });
     expect(result).toEqual({ ok: false, kind: 'meta_failed', error: expect.any(RelayApiError) });
     expect(n).toBe(2);
+  });
+
+  test('admit and meta both carry a node_id/node_sig that verifies with the joining node key', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetcher: FetchLike = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>);
+      return jsonRes({ ok: true });
+    };
+    const result = await appendAdmitThenMeta({ ...joinInput, fetcher });
+    expect(result).toEqual({ ok: true });
+    expect(bodies).toHaveLength(2);
+    const other = generateEd25519KeyPair();
+    for (const body of bodies) {
+      expect(body.node_id).toBe(identity.nodeId);
+      expect(typeof body.node_sig).toBe('string');
+      const blob = body.blob as { v: 1; n: string; ct: string; epoch?: number };
+      const seq = BigInt(body.seq as number);
+      const proof = {
+        relayHost: 'relay.example',
+        tenantId: joinInput.tenantId,
+        seq,
+        envelope: blob,
+      };
+      expect(
+        verifyRelayKeyLogAppend(decodeBase64url(String(body.node_sig)), ed.publicKey, proof)
+      ).toBe(true);
+      expect(
+        verifyRelayKeyLogAppend(decodeBase64url(String(body.node_sig)), other.publicKey, proof)
+      ).toBe(false);
+      expect(
+        verifyRelayKeyLogAppend(decodeBase64url(String(body.node_sig)), ed.publicKey, {
+          ...proof,
+          seq: seq + 1n,
+        })
+      ).toBe(false);
+    }
   });
 });
 
@@ -109,6 +140,7 @@ describe('appendAdmitThenMetaRetrying', () => {
       tenantId: 'aa'.repeat(16),
       token: randomBytes(32),
       logKey: randomBytes(32),
+      identity,
       load: async () => {
         loads.push(1);
         return { admit: dummy, meta: dummy, nodeId: 'n1' };
@@ -132,6 +164,7 @@ describe('appendAdmitThenMetaRetrying', () => {
       tenantId: 'aa'.repeat(16),
       token: randomBytes(32),
       logKey: randomBytes(32),
+      identity,
       load: async () => {
         loads += 1;
         return { admit: dummy, meta: dummy, nodeId: 'pending-node' };
@@ -150,6 +183,7 @@ describe('appendAdmitThenMetaRetrying', () => {
       tenantId: 'aa'.repeat(16),
       token: randomBytes(32),
       logKey: randomBytes(32),
+      identity,
       load: async () => {
         loads += 1;
         return { admit: dummy, meta: dummy, nodeId: 'n1' };

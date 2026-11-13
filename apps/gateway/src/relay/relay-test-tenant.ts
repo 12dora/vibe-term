@@ -98,7 +98,13 @@ export type RelayTenantHandle = {
 export async function enrollRelayRoot(
   harness: RelayHarness,
   root: RootKey,
-  opts?: { password?: string; rootEpoch?: number; knownTokenHash?: string }
+  opts?: {
+    password?: string;
+    rootEpoch?: number;
+    knownTokenHash?: string;
+    forceRotate?: boolean;
+    revokedNodeIds?: string[];
+  }
 ): Promise<{
   tenant_id: string;
   token: string | null;
@@ -115,6 +121,8 @@ export async function enrollRelayRoot(
     body: JSON.stringify({
       ...(opts?.password === undefined ? {} : { password: opts.password }),
       ...(opts?.knownTokenHash === undefined ? {} : { known_token_hash: opts.knownTokenHash }),
+      ...(opts?.forceRotate ? { force_rotate: true } : {}),
+      ...(opts?.revokedNodeIds ? { revoked_node_ids: opts.revokedNodeIds } : {}),
       root_public_key: encodeBase64url(root.publicKey),
       root_epoch: opts?.rootEpoch ?? 0,
       proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },

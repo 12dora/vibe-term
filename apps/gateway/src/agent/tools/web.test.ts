@@ -10,6 +10,7 @@ import {
   createWebSearchTool,
   getSearchProvider,
   getSearchProviders,
+  isBlockedResolvedAddress,
   isPrivateHostname,
   registerSearchProvider,
   validateFetchUrl,
@@ -61,6 +62,10 @@ describe('isPrivateHostname / validateFetchUrl（SSRF 拒绝表）', () => {
     '172.31.255.255',
     '192.168.1.1',
     '169.254.169.254',
+    '100.64.0.1',
+    '100.127.255.255',
+    '224.0.0.1',
+    '240.0.0.1',
     '::1',
     '[::1]',
     'fd00::1',
@@ -113,6 +118,10 @@ describe('isPrivateHostname / validateFetchUrl（SSRF 拒绝表）', () => {
   test('validateFetchUrl 拒绝私有地址', () => {
     expect(validateFetchUrl('http://127.0.0.1:9883/api')).toHaveProperty('error');
     expect(validateFetchUrl('http://[::1]/x')).toHaveProperty('error');
+    expect(validateFetchUrl('http://100.64.0.1/')).toHaveProperty('error');
+    expect(isBlockedResolvedAddress('100.64.1.2')).toBe(true);
+    expect(isBlockedResolvedAddress('169.254.169.254')).toBe(true);
+    expect(isBlockedResolvedAddress('203.0.113.10')).toBe(false);
   });
 
   test('validateFetchUrl 拒绝非规范数字形式 IPv4 URL', () => {
@@ -331,10 +340,50 @@ describe('createWebSearchTool 注册条件', () => {
 });
 
 describe('fetch_url', () => {
+  const publicLookup = async () => ['203.0.113.10'];
+
   test('SSRF：私有地址直接拒绝', async () => {
     const tool = createFetchUrlTool() as unknown as ExecutableTool;
     const output = (await tool.execute({ url: 'http://192.168.1.1/admin' }, execOptions)) as string;
     expect(output).toContain('Refusing to fetch private/internal address');
+  });
+
+  test('DNS rebinding：任一解析地址为私网则拒绝且不发请求', async () => {
+    const requested: string[] = [];
+    const fetchImpl: typeof fetch = (async (input: string | URL | Request) => {
+      requested.push(String(input instanceof Request ? input.url : input));
+      return new Response('ok');
+    }) as typeof fetch;
+    const tool = createFetchUrlTool({
+      fetchImpl,
+      lookup: async () => ['203.0.113.10', '127.0.0.1'],
+    }) as unknown as ExecutableTool;
+    const output = (await tool.execute(
+      { url: 'http://public.example.com/x' },
+      execOptions
+    )) as string;
+    expect(output).toContain('Refusing to fetch private/internal address');
+    expect(requested).toEqual([]);
+  });
+
+  test('解析后钉到已校验 IP，Host / SNI 仍用原名', async () => {
+    const seen: Array<{ url: string; host: string | null }> = [];
+    const fetchImpl: typeof fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const headers = new Headers(init?.headers);
+      seen.push({ url, host: headers.get('host') });
+      return new Response('hello', { headers: { 'Content-Type': 'text/plain' } });
+    }) as typeof fetch;
+    const tool = createFetchUrlTool({
+      fetchImpl,
+      lookup: publicLookup,
+    }) as unknown as ExecutableTool;
+    const output = (await tool.execute(
+      { url: 'http://public.example.com/page' },
+      execOptions
+    )) as string;
+    expect(output).toContain('hello');
+    expect(seen).toEqual([{ url: 'http://203.0.113.10/page', host: 'public.example.com' }]);
   });
 
   test('HTML 抽取正文（去 script/style/nav）', async () => {
@@ -403,7 +452,10 @@ describe('fetch_url', () => {
       });
     }) as typeof fetch;
 
-    const tool = createFetchUrlTool({ fetchImpl }) as unknown as ExecutableTool;
+    const tool = createFetchUrlTool({
+      fetchImpl,
+      lookup: publicLookup,
+    }) as unknown as ExecutableTool;
     const output = (await tool.execute(
       { url: 'http://public.example.com/redirect' },
       execOptions
@@ -411,7 +463,31 @@ describe('fetch_url', () => {
 
     expect(output).toContain('Refusing to fetch private/internal address');
     // 只有第一跳真正发出请求，metadata 地址未被访问
-    expect(requestedUrls).toEqual(['http://public.example.com/redirect']);
+    expect(requestedUrls).toEqual(['http://203.0.113.10/redirect']);
+  });
+
+  test('重定向到另一主机时重新 lookup，命中私网则停', async () => {
+    const requestedUrls: string[] = [];
+    const fetchImpl: typeof fetch = (async (input: string | URL | Request) => {
+      const url = String(input instanceof Request ? input.url : input);
+      requestedUrls.push(url);
+      return new Response(null, {
+        status: 302,
+        headers: { Location: 'http://meta.example.com/latest' },
+      });
+    }) as typeof fetch;
+    const lookup = async (hostname: string) => {
+      if (hostname === 'public.example.com') return ['203.0.113.10'];
+      if (hostname === 'meta.example.com') return ['169.254.169.254'];
+      return [];
+    };
+    const tool = createFetchUrlTool({ fetchImpl, lookup }) as unknown as ExecutableTool;
+    const output = (await tool.execute(
+      { url: 'http://public.example.com/start' },
+      execOptions
+    )) as string;
+    expect(output).toContain('Refusing to fetch private/internal address');
+    expect(requestedUrls).toEqual(['http://203.0.113.10/start']);
   });
 
   test('超过最大重定向次数报错', async () => {
@@ -424,12 +500,16 @@ describe('fetch_url', () => {
       });
     }) as unknown as typeof fetch;
 
-    const tool = createFetchUrlTool({ fetchImpl }) as unknown as ExecutableTool;
+    const tool = createFetchUrlTool({
+      fetchImpl,
+      lookup: publicLookup,
+    }) as unknown as ExecutableTool;
     const output = (await tool.execute(
       { url: 'http://public.example.com/start' },
       execOptions
     )) as string;
     expect(output).toContain('too many redirects');
+    expect(counter).toBe(6);
   });
 
   test('HTTP 错误码返回错误文本', async () => {

@@ -11,8 +11,10 @@ import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { actionErrorText } from './errors';
+import { reportRekey, revokeAndRekey } from './relay-rekey-after-revoke';
 import {
   reportRevokeAttempt,
+  revokeLanded,
   revokeNodeRecord,
   revokeNodesSequentially,
 } from './revoke-node-record';
@@ -83,12 +85,18 @@ export function useNodeRowActions(row: NodeRow, { mode, api, prompt, onChanged }
     async (reason: string) => {
       setBusy(true);
       try {
-        const attempt = await prompt.withSigner(
-          (signer) => revokeNodeRecord(signer, row, reason, { api, mode, t }),
+        const rekeyDeps = { api, mode, t, prompt };
+        const outcome = await prompt.withSigner(
+          (signer) =>
+            revokeAndRekey(rekeyDeps, signer, async () => {
+              const attempt = await revokeNodeRecord(signer, row, reason, { api, mode, t });
+              return { value: attempt, landed: revokeLanded(attempt) };
+            }),
           { purpose: 'revoke' }
         );
-        if (!attempt) return;
-        if (reportRevokeAttempt(t, attempt)) onChanged();
+        if (!outcome) return;
+        if (reportRevokeAttempt(t, outcome.value)) onChanged();
+        await reportRekey(rekeyDeps, outcome.rekey);
       } finally {
         setBusy(false);
       }
@@ -150,13 +158,23 @@ export function useBulkRevoke({ mode, api, prompt, onChanged }: BulkRevokeDeps):
       if (!mode) return;
       setBusy(true);
       try {
-        const summary = await prompt.withSigner(
-          (signer) => revokeNodesSequentially(signer, targets, reason, { api, mode, t }),
+        const rekeyDeps = { api, mode, t, prompt };
+        const outcome = await prompt.withSigner(
+          (signer) =>
+            revokeAndRekey(rekeyDeps, signer, async () => {
+              const summary = await revokeNodesSequentially(signer, targets, reason, {
+                api,
+                mode,
+                t,
+              });
+              return { value: summary, landed: summary.succeeded > 0 };
+            }),
           { purpose: 'revoke' }
         );
-        if (!summary) return;
-        reportBulkRevokeSummary(t, summary);
+        if (!outcome) return;
+        reportBulkRevokeSummary(t, outcome.value);
         onChanged();
+        await reportRekey(rekeyDeps, outcome.rekey);
       } finally {
         setBusy(false);
       }

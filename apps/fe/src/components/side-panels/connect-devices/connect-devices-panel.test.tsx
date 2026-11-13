@@ -506,7 +506,11 @@ describe('加入码折叠区', () => {
     expect(html).toContain('nodes.enrollment.create');
     expect(html).toContain('connectDevices.computer.join.token.meshDescription');
     expect(html).toContain('relay.example.com');
-    expect(html).toContain(`--token ${TOKEN_KEY} --name ${NAME_KEY}`);
+    expect(html).toContain(
+      `VIBETERM_RELAY_JOIN_TOKEN=&#x27;${TOKEN_KEY}&#x27; vibeterm relay join`
+    );
+    expect(html).toContain(`--name ${NAME_KEY}`);
+    expect(html).not.toContain('--token');
     expect(html).toContain('data-testid="connect-join-generate"');
     expect(html).not.toContain('data-testid="connect-join-generate" disabled');
   });
@@ -549,7 +553,7 @@ describe('joinCommandPreview', () => {
         namePlaceholder: '<node-name>',
       })
     ).toBe(
-      "vibeterm relay join 'https://vibeterm.example.com' --token <join-token> --name <node-name>"
+      "VIBETERM_RELAY_JOIN_TOKEN='<join-token>' vibeterm relay join 'https://vibeterm.example.com' --name <node-name>"
     );
   });
 
@@ -561,7 +565,9 @@ describe('joinCommandPreview', () => {
         tokenPlaceholder: '<join-token>',
         namePlaceholder: '<node-name>',
       })
-    ).toBe(`vibeterm relay join '${PUBLIC_URL}' --token <join-token> --name 'my node'`);
+    ).toBe(
+      `VIBETERM_RELAY_JOIN_TOKEN='<join-token>' vibeterm relay join '${PUBLIC_URL}' --name 'my node'`
+    );
   });
 
   test('不可信的对外地址一律不进命令（畸形值等于命令注入）', () => {
@@ -572,7 +578,9 @@ describe('joinCommandPreview', () => {
         tokenPlaceholder: '<t>',
         namePlaceholder: '<n>',
       })
-    ).toBe("vibeterm relay join 'https://vibeterm.example.com' --token <t> --name a");
+    ).toBe(
+      "VIBETERM_RELAY_JOIN_TOKEN='<t>' vibeterm relay join 'https://vibeterm.example.com' --name a"
+    );
   });
 });
 
@@ -632,17 +640,24 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     expect(html).toContain('data-testid="connect-join-pending"');
     expect(html).toContain('nodes.enrollment.pending');
     expect(html).not.toContain('data-testid="connect-join-confirm"');
+    expect(html).not.toContain('data-testid="connect-join-code"');
   });
 
-  test('证书已到（passkey 用户签不了）：给出「确认加入」按钮', () => {
-    const html = confirmStatus({ certificateReadyIds: ['e-1'] });
+  test('证书已到：亮出确认码与核对提示，并给出「确认加入」按钮', () => {
+    const html = confirmStatus({ certificateSasById: { 'e-1': '1234-5678' } });
+    expect(html).toContain('data-testid="connect-join-code-value"');
+    expect(html).toContain('1234-5678');
+    expect(html).toContain('nodes.enrollment.code.label');
+    expect(html).toContain('nodes.enrollment.code.hint');
     expect(html).toContain('data-testid="connect-join-confirm"');
     expect(html).toContain('nodes.enrollment.confirmPending');
     expect(confirmButton(html)).not.toContain('disabled=""');
   });
 
   test('中继状态还没拉到：确认按钮禁用并转圈——此时还不知道有没有第二步', () => {
-    const html = confirmStatus({ certificateReadyIds: ['e-1'] }, SESSION, { confirmReady: false });
+    const html = confirmStatus({ certificateSasById: { 'e-1': '1234-5678' } }, SESSION, {
+      confirmReady: false,
+    });
     expect(confirmButton(html)).toContain('disabled=""');
     expect(html).toContain('animate-spin');
     expect(html).toContain('nodes.enrollment.confirmPending');
@@ -652,18 +667,18 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
     const HINT = 'data-testid="connect-join-passkey-twice"';
     // 复用窗口为空：提示只跟着入口有没有 passkey 走。
     forgetSigner();
-    const withPasskeys = confirmStatus({ certificateReadyIds: ['e-1'] }, SESSION, {
+    const withPasskeys = confirmStatus({ certificateSasById: { 'e-1': '1234-5678' } }, SESSION, {
       passkeyTwice: { twoStep: true, passkeysAvailable: true },
     });
     expect(withPasskeys).toContain(HINT);
     expect(withPasskeys).toContain('auth.credential.passkeyTwice');
-    expect(confirmStatus({ certificateReadyIds: ['e-1'] })).not.toContain(HINT);
-    const singleStep = confirmStatus({ certificateReadyIds: ['e-1'] }, SESSION, {
+    expect(confirmStatus({ certificateSasById: { 'e-1': '1234-5678' } })).not.toContain(HINT);
+    const singleStep = confirmStatus({ certificateSasById: { 'e-1': '1234-5678' } }, SESSION, {
       passkeyTwice: { twoStep: false, passkeysAvailable: true },
     });
     expect(singleStep).not.toContain(HINT);
     // 还没到能点确认的时候（证书未到）不提前说。
-    const waiting = confirmStatus({ certificateReadyIds: [] }, SESSION, {
+    const waiting = confirmStatus({ certificateSasById: {} }, SESSION, {
       passkeyTwice: { twoStep: true, passkeysAvailable: true },
     });
     expect(waiting).not.toContain(HINT);
@@ -688,7 +703,7 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
 
   test('第一步进行中：确认按钮标出「1/2」', () => {
     const html = confirmStatus({
-      certificateReadyIds: ['e-1'],
+      certificateSasById: { 'e-1': '1234-5678' },
       busyIds: ['e-1'],
       progressById: progress('admitting'),
     });
@@ -725,7 +740,10 @@ describe('JoinSteps 步骤 6「确认加入」', () => {
   });
 
   test('确认失败：行内给出原因，按钮换成重试', () => {
-    const html = confirmStatus({ failureById: { 'e-1': 'nodes.enrollment.admitFailed' } });
+    const html = confirmStatus({
+      certificateSasById: { 'e-1': '1234-5678' },
+      failureById: { 'e-1': 'nodes.enrollment.admitFailed' },
+    });
     expect(html).toMatch(/role="alert"[^>]*data-testid="connect-join-failure"/);
     expect(html).toContain('nodes.enrollment.admitFailed');
     expect(html).toContain('nodes.enrollment.retry');

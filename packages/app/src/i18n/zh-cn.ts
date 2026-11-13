@@ -177,6 +177,8 @@ export const zhCN: Record<string, string> = {
     '本机安装未托管服务（serviceMode=none），且没有存活的 pid 文件。请先停止正在运行的进程，再重试。',
   'upgrade.repairStartFailed': '修复未能启动 {{version}}：{{error}}',
   'upgrade.alreadyCurrent': '当前已是 {{version}}，无需升级。',
+  'upgrade.downgradeRefused':
+    '不允许降级到旧版本（当前 {{current}}，目标 {{version}}）。本机降级请加 --allow-downgrade。',
   'upgrade.checksumHttpFailed': '获取 SHA256SUMS 失败：{{detail}}',
   'upgrade.integrityRequired':
     '版本 {{version}} 必须提供 SHA256SUMS（HTTP 200 且摘要匹配），拒绝继续。',
@@ -236,6 +238,9 @@ export const zhCN: Record<string, string> = {
   'relay.join.relay': '中继：{{url}}（租户 {{tenantId}}）',
   'relay.join.refreshed': '已更新 {{url}} 的中继令牌（租户 {{tenantId}}）',
   'relay.join.alsoConfigured': '同时配置：{{urls}}',
+  'relay.join.enrollSas': '确认码：{{code}}（在网页确认加入时核对）',
+  'relay.join.tokenArgvWarning':
+    '警告：--token 会出现在本机其他用户可见的进程参数里。请改用 --token-stdin 或环境变量 VIBETERM_RELAY_JOIN_TOKEN。',
   'relay.join.pending': '已提交加入申请，等待批准：请在生成加入码的设备上点「确认加入」。',
   'relay.join.pendingLater': '批准后，本机会出现在其他设备的节点页。',
   'relay.join.pendingLaterRestart': '批准后请重启 VibeTerm，本机随后会出现在其他设备的节点页。',
@@ -267,9 +272,13 @@ export const zhCN: Record<string, string> = {
   'relay.trust.pinned': '已钉扎中继 CA：{{url}} SHA256 SPKI {{fingerprint}}',
   'relay.trust.restartHint': '请重启 VibeTerm 以使新的中继 CA 钉扎生效。',
 
+  'password.tooShort': '密码至少 12 位',
+  'password.tooSimple': '密码过于简单，请避免连续、重复字符或常见密码',
+
   'user.passwd.nodesTooOld': '有节点版本低于 1.1.16，须先升级全部节点。',
   'user.passwd.failed': '密码更新失败：{{error}}',
-  'user.passwd.doneKeep': '已更新 {{username}} 的密码（保留）：现有登录方式保持不变。',
+  'user.passwd.doneKeep':
+    '已更新 {{username}} 的密码（保留通行密钥与两步验证）；全部登录会话、访问令牌、终端分享与窗格授权已撤销。',
   'user.passwd.doneFullReset':
     '已更新 {{username}} 的密码（全量重置）：已移除通行密钥、两步验证并注销全部会话。',
 

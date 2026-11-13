@@ -19,6 +19,10 @@ export type PortMapRow = {
   updatedAt: number;
   /** 租约到期时间（ms）；缺省 = 持久映射。 */
   leaseExpiresAt?: number;
+  /** 创建请求的入口节点（mesh `via`）；缺省为本机。该节点被吊销时映射随之删除。 */
+  issuedVia?: string;
+  /** 由访问令牌创建时的令牌 id；令牌撤销或过期时映射随之删除。 */
+  createdByTokenId?: string;
 };
 
 /** B 侧持久化的放行行。 */
@@ -31,7 +35,27 @@ export type PortMapExportRow = {
   createdAt: number;
   /** 租约到期时间（ms）；缺省 = 持久放行。 */
   leaseExpiresAt?: number;
+  /** 同 `PortMapRow.issuedVia`。 */
+  issuedVia?: string;
+  /** 同 `PortMapRow.createdByTokenId`。 */
+  createdByTokenId?: string;
 };
+
+/** 创建请求的来源：入口节点与（令牌调用方时的）令牌 id。 */
+export type PortMapOrigin = { issuedVia: string; createdByTokenId: string | null };
+
+/** 吊销级联的匹配条件：某入口节点被吊销，或某令牌被撤销 / 过期。 */
+export type PortMapRevocation = { issuedVia: string } | { createdByTokenId: string };
+
+export function portMapOriginFields(
+  origin: PortMapOrigin | undefined
+): Pick<PortMapRow, 'issuedVia' | 'createdByTokenId'> {
+  if (!origin) return {};
+  return {
+    issuedVia: origin.issuedVia,
+    ...(origin.createdByTokenId ? { createdByTokenId: origin.createdByTokenId } : {}),
+  };
+}
 
 export type PortMapPeers = {
   getLink(nodeId: string): Promise<LinkSession>;
@@ -85,6 +109,8 @@ export function portMapHttpStatus(code: PortMapErrorCode): number {
   switch (code) {
     case 'invalid_request':
       return 400;
+    case 'target_forbidden':
+      return 403;
     case 'not_found':
       return 404;
     case 'port_in_use':

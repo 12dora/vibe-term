@@ -1,21 +1,27 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   closeSync,
   existsSync,
+  fchmodSync,
   openSync,
   readFileSync,
   readdirSync,
   realpathSync,
   rmSync,
 } from 'node:fs';
-import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@vibeterm/shared';
-import { errorMessage, releaseSignatureRequired, releaseTarballName } from '@vibeterm/shared';
+import {
+  UPGRADE_CANCELLED,
+  type UpgradeState,
+  type UpgradeStatus,
+  compareSemver,
+  errorMessage,
+  releaseSignatureRequired,
+  releaseTarballName,
+} from '@vibeterm/shared';
 import { processCommandLine, processStartIdentity } from '@vibeterm/shared/process';
 import { partPathOf } from '@vibeterm/transfer/node';
-import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import {
   downloadVerifiedRelease,
@@ -25,6 +31,7 @@ import {
   sha256File,
   sweepReleaseCache,
 } from './release-download';
+import { extractCliTarball } from './upgrade-extract';
 import {
   type PackageManifestResult,
   persistStagedManifest,
@@ -35,6 +42,7 @@ import {
   verifyPackageManifest,
 } from './upgrade-manifest';
 import { identityMatches, pidIsAlive, readNoneModePidRecord } from './upgrade-pid';
+import { waitForSpawnAndDetach } from './upgrade-spawn';
 import { type ReleaseSpeedProbeFn, evaluateReleaseSpeedGate } from './upgrade-speed-gate';
 import { StagingWriteGate } from './upgrade-stage-gate';
 import {
@@ -50,8 +58,12 @@ import {
   stagedRecordPath,
   writeStagedPackage,
 } from './upgrade-staging';
+import { getBaseVersion } from './version';
 
 export { parseSha256Sums, releaseSha256SumsUrl, sha256Hex } from './release-download';
+export { assertExtractedCliPackage, extractCliTarball } from './upgrade-extract';
+export { parsePidFileRecord, type PidFileRecord } from './upgrade-pid';
+export { waitForSpawnAndDetach } from './upgrade-spawn';
 export { processCommandLine, processStartIdentity };
 export type {
   StagePackageOpts,
@@ -118,7 +130,11 @@ export type UpgradeStartResult =
   | { ok: true }
   | {
       ok: false;
-      code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' | 'UPGRADE_SIGNATURE_REQUIRED';
+      code:
+        | 'UPGRADE_IN_PROGRESS'
+        | 'PACKAGE_NOT_STAGED'
+        | 'UPGRADE_SIGNATURE_REQUIRED'
+        | 'UPGRADE_DOWNGRADE_REFUSED';
     }
   | {
       ok: false;
@@ -135,6 +151,20 @@ export type UpgradeCancelResult =
       code: 'UPGRADE_NOT_CANCELLABLE' | 'UPGRADE_NOT_RUNNING';
       status: UpgradeStatus;
     };
+
+function refuseRemoteUpgradeStart(version: string, remote?: boolean): UpgradeStartResult | null {
+  // 远程发起：版本必须在签名下限之上，装的东西才一定经过验签（含 source:'release' 的自下载）。
+  if (!remote) return null;
+  if (!releaseSignatureRequired(version)) {
+    return { ok: false, code: 'UPGRADE_SIGNATURE_REQUIRED' };
+  }
+  const current = getBaseVersion();
+  const cmp = compareSemver(version, current);
+  if (cmp !== null && cmp < 0) {
+    return { ok: false, code: 'UPGRADE_DOWNGRADE_REFUSED' };
+  }
+  return null;
+}
 
 /**
  * 全局唯一升级状态机：idle / downloading / executing。
@@ -218,10 +248,8 @@ export class UpgradeController {
 
   private commitStart(version: string, opts?: UpgradeStartOpts): UpgradeStartResult {
     if (this.isBusy() || this.stagingInFlight) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
-    // 远程发起：版本必须在签名下限之上，装的东西才一定经过验签（含 source:'release' 的自下载）。
-    if (opts?.remote && !releaseSignatureRequired(version)) {
-      return { ok: false, code: 'UPGRADE_SIGNATURE_REQUIRED' };
-    }
+    const remoteRefuse = refuseRemoteUpgradeStart(version, opts?.remote);
+    if (remoteRefuse) return remoteRefuse;
     const source = opts?.source ?? 'release';
     let staged: StagedPackageRecord | null = null;
     if (source === 'staged') {
@@ -847,7 +875,11 @@ export class UpgradeController {
 
     let logFd: number | null = null;
     try {
-      logFd = openSync(join(installDir, 'upgrade.log'), 'a');
+      const logPath = join(installDir, 'upgrade.log');
+      logFd = openSync(logPath, 'a', 0o600);
+      try {
+        fchmodSync(logFd, 0o600);
+      } catch {}
     } catch {
       logFd = null;
     }
@@ -893,68 +925,6 @@ export class UpgradeController {
   }
 }
 
-export function waitForSpawnAndDetach(child: ChildProcess, onSettled?: () => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
-      onSettled?.();
-      fn();
-    };
-    child.once('error', (err) => {
-      finish(() => reject(err instanceof Error ? err : new Error(String(err))));
-    });
-    child.once('spawn', () => {
-      finish(() => {
-        child.unref();
-        resolve();
-      });
-    });
-  });
-}
-
-function hasBinEntry(bin: unknown): boolean {
-  if (typeof bin === 'string' && bin.length > 0) return true;
-  if (typeof bin !== 'object' || bin === null) return false;
-  return Object.keys(bin as Record<string, unknown>).length > 0;
-}
-
-/** 解压后的 npm pack 布局必须能通过 resolvePackageLayout 的路径检查。 */
-export function assertExtractedCliPackage(packageRoot: string): void {
-  const pkgPath = join(packageRoot, 'package.json');
-  if (!existsSync(pkgPath)) {
-    throw new Error(`extracted package.json not found at ${pkgPath}`);
-  }
-  let parsed: { name?: unknown; bin?: unknown };
-  try {
-    parsed = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: unknown; bin?: unknown };
-  } catch {
-    throw new Error(`extracted package.json is invalid at ${pkgPath}`);
-  }
-  // 改名前的资产包名仍是 tmex-cli：向 <2.0.0 的节点推的正是那份，本机也可能解到它。
-  if (parsed.name !== 'vibeterm-cli' && parsed.name !== 'tmex-cli') {
-    throw new Error(
-      `extracted package name is ${String(parsed.name)}, expected vibeterm-cli or tmex-cli`
-    );
-  }
-  if (!hasBinEntry(parsed.bin)) {
-    throw new Error('extracted package.json is missing a bin entry');
-  }
-
-  const required = [
-    join(packageRoot, 'dist', 'cli-node.js'),
-    join(packageRoot, 'dist', 'runtime', 'server.js'),
-    join(packageRoot, 'resources', 'fe-dist'),
-    join(packageRoot, 'resources', 'gateway-drizzle'),
-  ];
-  for (const path of required) {
-    if (!existsSync(path)) {
-      throw new Error(`extracted package is missing ${path}`);
-    }
-  }
-}
-
 function resolvedPathOrSelf(path: string): string | null {
   try {
     return realpathSync(path);
@@ -992,13 +962,6 @@ export function cmdlineOwnsInstallRuntime(cmdline: string, installDir: string): 
   return false;
 }
 
-export type PidFileRecord = { pid: number; identity?: string | null };
-
-export function parsePidFileRecord(raw: string): PidFileRecord | null {
-  const record = parseSharedPidFileRecord(raw, { allowNumericStringPid: true });
-  return record ? { pid: record.pid, identity: record.identity ?? null } : null;
-}
-
 /**
  * 下载 GitHub Release tarball 并解压到 stageDir（npm pack 布局：package/）。
  * 返回 CLI 入口路径 `<stageDir>/package/bin/vibeterm.js`（旧包回退到 `bin/tmex.js`）。
@@ -1022,62 +985,6 @@ export async function stageGithubRelease(
   } finally {
     releaseLease();
   }
-}
-
-export async function extractCliTarball(
-  tarballPath: string,
-  stageDir: string,
-  signal?: AbortSignal
-): Promise<string> {
-  await extractTarball(tarballPath, stageDir, signal);
-  const packageRoot = join(stageDir, 'package');
-  // 改名前的资产只有 bin/tmex.js。
-  const binPath = ['vibeterm.js', 'tmex.js']
-    .map((name) => join(packageRoot, 'bin', name))
-    .find((path) => existsSync(path));
-  if (!binPath) {
-    throw new Error(`downloaded CLI binary not found in ${join(packageRoot, 'bin')}`);
-  }
-  assertExtractedCliPackage(packageRoot);
-  return binPath;
-}
-
-function extractTarball(
-  tarballPath: string,
-  stageDir: string,
-  signal?: AbortSignal
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const finish = (fn: () => void): void => {
-      if (settled) return;
-      settled = true;
-      fn();
-    };
-    const child = spawn('tar', ['-xzf', tarballPath, '-C', stageDir], {
-      stdio: 'ignore',
-    });
-    const onAbort = (): void => {
-      child.kill('SIGTERM');
-      const err = new Error(UPGRADE_CANCELLED);
-      err.name = 'AbortError';
-      finish(() => reject(err));
-    };
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener('abort', onAbort, { once: true });
-    child.on('error', (err) => {
-      signal?.removeEventListener('abort', onAbort);
-      finish(() => reject(err));
-    });
-    child.on('close', (code) => {
-      signal?.removeEventListener('abort', onAbort);
-      if (code === 0) finish(() => resolve());
-      else finish(() => reject(new Error(`tar extract exited with code ${code ?? 'null'}`)));
-    });
-  });
 }
 
 export const upgradeController = new UpgradeController();

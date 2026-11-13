@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createServer } from 'node:net';
 import { dialTcp, withDeadline } from './dial';
 import { destroySocket } from './socket-handlers';
+import { PortMapError } from './types';
 
 function listenCounting(): {
   port: number;
@@ -63,6 +64,84 @@ describe('portmap dial', () => {
     } finally {
       server.stop();
     }
+  });
+
+  test('refuses a forbidden target without connecting', async () => {
+    const server = listenCounting();
+    try {
+      const policy = { selfPorts: () => [server.port], localAddresses: () => [] };
+      const dial = dialTcp({ host: '127.0.0.1', port: server.port }, 2_000, policy);
+      const err = await dial.result.then(
+        () => null,
+        (reason: unknown) => reason
+      );
+      expect(err).toBeInstanceOf(PortMapError);
+      expect((err as PortMapError).code).toBe('target_forbidden');
+      await Bun.sleep(50);
+      expect(server.opened()).toBe(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test('refuses cloud metadata addresses', async () => {
+    const dial = dialTcp({ host: '169.254.169.254', port: 80 }, 2_000);
+    await expect(dial.result).rejects.toThrow(/not an allowed port map target/);
+  });
+
+  test('connects to the checked address instead of resolving the hostname again', async () => {
+    const server = listenCounting();
+    try {
+      const resolved: string[] = [];
+      const policy = {
+        resolver: async (host: string) => {
+          resolved.push(host);
+          return ['127.0.0.1'];
+        },
+        selfPorts: () => [],
+        localAddresses: () => [],
+      };
+      const socket = await dialTcp({ host: 'echo.example.com', port: server.port }, 2_000, policy)
+        .result;
+      expect(resolved).toEqual(['echo.example.com']);
+      expect(socket.remoteAddress).toBe('127.0.0.1');
+      destroySocket(socket);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test('cancelling during resolution never opens a socket', async () => {
+    const server = listenCounting();
+    try {
+      let release: (addresses: string[]) => void = () => {};
+      const policy = {
+        resolver: () =>
+          new Promise<string[]>((resolve) => {
+            release = resolve;
+          }),
+        selfPorts: () => [],
+        localAddresses: () => [],
+      };
+      const dial = dialTcp({ host: 'slow.example.com', port: server.port }, 2_000, policy);
+      dial.cancel();
+      await expect(dial.result).rejects.toThrow('portmap-dial-cancelled');
+      release(['127.0.0.1']);
+      await Bun.sleep(50);
+      expect(server.opened()).toBe(0);
+    } finally {
+      server.stop();
+    }
+  });
+
+  test('the timeout covers a slow resolution', async () => {
+    const policy = {
+      resolver: () => new Promise<string[]>(() => {}),
+      selfPorts: () => [],
+      localAddresses: () => [],
+    };
+    const dial = dialTcp({ host: 'hang.example.com', port: 22 }, 30, policy);
+    await expect(dial.result).rejects.toThrow('portmap-dial-timeout');
   });
 
   test('withDeadline hands the late value to the cleanup', async () => {

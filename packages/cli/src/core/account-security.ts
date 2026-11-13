@@ -3,8 +3,10 @@
 import type { PasskeySummary } from '@vibeterm/api-client/auth/types';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import {
+  ACCOUNT_PASSWORD_MIN_LENGTH,
   TOTP_DEFAULT_DIGITS,
   TOTP_DEFAULT_STEP,
+  checkAccountPassword,
   decodeBase32,
   decodeBase64url,
   decodeSetTotpPayload,
@@ -190,11 +192,28 @@ async function totpForKeep(input: {
   });
 }
 
+function assertAccountPasswordStrength(
+  password: string,
+  username: string | null | undefined
+): void {
+  const issue = checkAccountPassword(password, { username: username ?? undefined });
+  if (issue === 'too_short') {
+    throw new UsageError(`new password must be at least ${ACCOUNT_PASSWORD_MIN_LENGTH} characters`);
+  }
+  if (issue === 'too_simple') {
+    throw new UsageError(
+      'new password is too easy to guess',
+      'avoid sequences, repeats, common passwords and your username; use a password manager'
+    );
+  }
+}
+
 export async function changeAccountPassword(
   ctx: CliContext,
   input: { fullReset: boolean; oldPassword: string; newPassword: string }
 ): Promise<unknown> {
   const mode = await requireMeshMode(ctx);
+  assertAccountPasswordStrength(input.newPassword, mode.username);
   const oldRoot = await deriveRootFromMode(mode, input.oldPassword);
   const newKdf = generateKdfParams();
   noteDerivingKey();

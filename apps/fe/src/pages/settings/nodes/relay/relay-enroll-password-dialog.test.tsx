@@ -21,19 +21,14 @@ function draft(patch: Partial<EnrollPasswordDraft> = {}): EnrollPasswordDraft {
 }
 
 describe('parseEnrollPasswordDraft', () => {
-  test('已知：空 next 且未勾选清除是校验错误', () => {
+  test('已知：空 next 是校验错误，租户侧没有清除密码的路径', () => {
     expect(parseEnrollPasswordDraft(draft(), true)).toEqual({
       ok: false,
       errorKey: 'relay.tenant.enrollPassword.errors.next_required',
     });
   });
 
-  test('已知：勾选清除后空 next 才是清除', () => {
-    expect(parseEnrollPasswordDraft(draft({ clear: true }), true)).toEqual({
-      ok: true,
-      next: null,
-      mode: 'keep',
-    });
+  test('已知：非空 next 通过，kick 决定 mode', () => {
     expect(parseEnrollPasswordDraft(draft({ next: 'abcdefgh', kick: true }), true)).toEqual({
       ok: true,
       next: 'abcdefgh',
@@ -119,11 +114,11 @@ describe('rotateEnrollPasswordDraft', () => {
       true,
       api
     );
-    expect(result).toEqual({ ok: true, cleared: false });
+    expect(result).toEqual({ ok: true });
     expect(calls).toEqual([{ url: 'https://r.example', next: 'newpassw', mode: 'kick' }]);
   });
 
-  test('未勾选清除的空 next 不发请求', async () => {
+  test('空 next 不发请求', async () => {
     let called = 0;
     const api = {
       rotateEnrollPassword: () => {
@@ -139,7 +134,7 @@ describe('rotateEnrollPasswordDraft', () => {
     expect(called).toBe(0);
   });
 
-  test('未知时带 current；勾选清除后空 next 为清除', async () => {
+  test('未知时带 current', async () => {
     const calls: unknown[] = [];
     const api = {
       rotateEnrollPassword: (body: unknown) => {
@@ -149,12 +144,14 @@ describe('rotateEnrollPasswordDraft', () => {
     } as unknown as RelayTenantApi;
     const result = await rotateEnrollPasswordDraft(
       'https://r.example',
-      draft({ current: 'old', clear: true }),
+      draft({ current: 'old', next: 'newpassw' }),
       false,
       api
     );
-    expect(result).toEqual({ ok: true, cleared: true });
-    expect(calls).toEqual([{ url: 'https://r.example', current: 'old', next: null, mode: 'keep' }]);
+    expect(result).toEqual({ ok: true });
+    expect(calls).toEqual([
+      { url: 'https://r.example', current: 'old', next: 'newpassw', mode: 'keep' },
+    ]);
   });
 
   test('提交前校验失败不发请求', async () => {
@@ -247,7 +244,7 @@ describe('RelayEnrollPasswordDialogBody', () => {
     expect(html).toContain('data-testid="nodes-relay-enroll-password-body"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-current"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-next"');
-    expect(html).toContain('data-testid="nodes-relay-enroll-password-clear"');
+    expect(html).not.toContain('nodes-relay-enroll-password-clear');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-kick"');
     expect(html).not.toContain('data-testid="nodes-relay-enroll-password-error"');
   });
@@ -265,7 +262,7 @@ describe('RelayEnrollPasswordDialogBody', () => {
     expect(html).not.toContain('data-testid="nodes-relay-enroll-password-current"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-next"');
     expect(html).toContain('data-testid="nodes-relay-enroll-password-next-generate"');
-    expect(html).toContain('data-testid="nodes-relay-enroll-password-clear"');
+    expect(html).not.toContain('nodes-relay-enroll-password-clear');
   });
 
   test('提交失败时正文摆错误', () => {

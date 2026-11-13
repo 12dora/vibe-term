@@ -22,6 +22,7 @@ import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } f
 import {
   RELAY_ENROLL_FETCH_TIMEOUT_MS,
   callRelayEnroll,
+  enrollPassThrough,
   relayTokenHashHex,
 } from './relay-enroll-call';
 import {
@@ -245,13 +246,12 @@ export class RelayRoutes {
     if (readmitRequired > 0) {
       return jsonError('readmit_required', 409, { count: readmitRequired });
     }
-    const password = typeof body?.password === 'string' ? body.password : undefined;
     // 本机已持有的那份令牌：与中继当前令牌一致时中继不再换发，成员节点因此不掉线
     const stored = await this.deps.secrets.store.getRelay(url).catch(() => null);
     const remote = await callRelayEnroll(url, {
       fetchImpl: this.deps.fetchImpl,
       dial: this.deps.dial,
-      password,
+      ...enrollPassThrough(body, this.deps.userStore.listCertsByUser(userId)),
       persistStore: this.deps.secrets.store,
       rootPublicKey: user.rootPublicKey,
       rootEpoch: user.rootEpoch,

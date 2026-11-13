@@ -58,6 +58,12 @@ describe('shareAccessErrorFrom', () => {
     expect(shareAccessErrorFrom(400, { code: 'SHARE_ENDED' }).code).toBe('SHARE_ENDED');
   });
 
+  test('429 SHARE_LOGIN_BUSY 与锁定区分，不带锁定倒计时', () => {
+    const error = shareAccessErrorFrom(429, { code: 'SHARE_LOGIN_BUSY', retryAfterMs: 1_000 });
+    expect(error.code).toBe('SHARE_LOGIN_BUSY');
+    expect(error.retryAfterMs).toBeNull();
+  });
+
   test('未知契约码回落到状态码', () => {
     expect(shareAccessErrorFrom(404, { code: 'WHATEVER' }).code).toBe('SHARE_NOT_FOUND');
   });

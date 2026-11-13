@@ -12,6 +12,7 @@ import { useShareNow } from './use-share-now';
 const ERROR_KEYS: Record<ShareAccessErrorCode, string> = {
   SHARE_PASSWORD_INVALID: 'shareAccess.passwordInvalid',
   SHARE_LOGIN_LOCKED: 'shareAccess.locked',
+  SHARE_LOGIN_BUSY: 'shareAccess.busy',
   SHARE_ENDED: 'shareAccess.ended',
   SHARE_NOT_FOUND: 'shareAccess.notFound',
   SHARE_REQUEST_FAILED: 'shareAccess.requestFailed',

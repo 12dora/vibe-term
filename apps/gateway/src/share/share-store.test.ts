@@ -24,6 +24,7 @@ function row(overrides: Partial<ShareRow> = {}): ShareRow {
     createdAt: 1_000,
     expiresAt: null,
     endedAt: null,
+    issuedVia: 'self',
     ...overrides,
   };
 }
@@ -263,5 +264,38 @@ describe('ShareStore 口令密文与批量踢人', () => {
     expect(store.findAccessToken('hash1')).toBeNull();
     expect(store.findAccessToken('hash3')?.shareId).toBe('b');
     expect(store.deleteAccessTokensByShare('a')).toBe(0);
+  });
+
+  test('endActive 按签发入口批量结束并清凭证；缺省结束全部进行中的分享', () => {
+    const entry = 'a'.repeat(32);
+    store.insert({ ...row({ id: 'via', issuedVia: entry }), passwordHash: 'h' });
+    store.insert({ ...row({ id: 'local' }), passwordHash: 'h' });
+    store.insert({
+      ...row({ id: 'done', issuedVia: entry, state: 'ended', endReason: 'expired', endedAt: 5 }),
+      passwordHash: 'h',
+    });
+    for (const shareId of ['via', 'local']) {
+      store.createAccessToken({
+        id: `t-${shareId}`,
+        shareId,
+        tokenHash: `hash-${shareId}`,
+        clientIp: null,
+        createdAt: 1,
+        expiresAt: 9_999_999_999_999,
+      });
+    }
+    expect(store.get('via')?.issuedVia).toBe(entry);
+    expect(store.endActive({ issuedVia: entry }, 'revoked', 2_000)).toEqual(['via']);
+    expect(store.get('via')).toMatchObject({
+      state: 'ended',
+      endReason: 'revoked',
+      endedAt: 2_000,
+    });
+    expect(store.get('done')?.endReason).toBe('expired');
+    expect(store.findAccessToken('hash-via')).toBeNull();
+    expect(store.findAccessToken('hash-local')).not.toBeNull();
+    expect(store.endActive({}, 'revoked', 3_000)).toEqual(['local']);
+    expect(store.listActive()).toEqual([]);
+    expect(store.findAccessToken('hash-local')).toBeNull();
   });
 });

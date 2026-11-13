@@ -3,7 +3,7 @@
 // 为什么必须是单例：`admit-node` 是签在本地 key log 头上的记录。若两个 UI（设置页的节点管理
 // 与「接入更多设备」侧滑面板）各自跑一套监听 + admit，同一张证书会被两处同时签出两条 seq
 // 相邻的记录，对端只收得下其中一条，另一条永远 `seq_gap`——这是不可恢复的分叉
-// （见 `enrollment.ts` 的 `admitPlan` 与 `key-log-actions.ts`）。
+// （见 `admit-record.ts` 与 `key-log-actions.ts`）。
 //
 // 因此：
 //   - 监听回路（`/mesh/ws` 推送 + 5s 轮询）按注册数引用计数，只跑一份；
@@ -13,24 +13,21 @@
 //   - 每条 admit 是一次带**不可变上下文快照**的事务：只认快照里的 api / enrollment 通道 / 用户身份，
 //     槽位换人或引擎重置都不会让它写进新状态；
 //   - 取消在事务期间只记意向，等处置明朗再兑现，绝不在 append 未定之前扔掉可重发字节；
-//   - 手动确认绑定发起它的那个消费方槽位，后台自动签则挑一个凭据齐备的槽位。
+//   - `admit-node` 只由用户点击发起，且只签界面已亮出确认码的那张证书；后台回路只负责收证书、
+//     重发已签好的字节，绝不替用户签名；
+//   - 手动确认绑定发起它的那个消费方槽位，后台重发则挑一个凭据齐备的槽位。
 
-import {
-  forgetSigner,
-  leaseSigner,
-  resetSignerLeasesForTest,
-  takeRememberedSigner,
-} from '@/auth/credential-prompt';
+import { forgetSigner, leaseSigner, resetSignerLeasesForTest } from '@/auth/credential-prompt';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type RecordSigner, headFromResponse } from '@/auth/key-log-actions';
-import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
 import type { KeyLogHead } from '@vibeterm/shared/auth';
 import { encodeBase64url } from '@vibeterm/shared/auth';
+import { enrollSas } from '@vibeterm/shared/relay';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import {
-  type AdmitFollowUp,
   type MemberKeyStep,
   abandonAdmit,
   awaitMemberKey,
@@ -46,7 +43,6 @@ import {
 import {
   NODE_ID_REUSED,
   type SignedRecord,
-  admitPlan,
   clearUnconfirmedRecords,
   forgetUnconfirmedRecord,
   listUnconfirmedRecordIds,
@@ -79,11 +75,8 @@ import {
   resetEnrollmentEngineState,
   subscribeEnrollmentEngine,
 } from './enrollment-engine-state';
-import {
-  canAutoSignAdmit,
-  invalidCertificateKey,
-  uplinkNotConfirmedKey,
-} from './enrollment-policy';
+import type { AdmitContext, AdmitMode, EnrollmentEngineHandle } from './enrollment-engine-types';
+import { invalidCertificateKey, uplinkNotConfirmedKey } from './enrollment-policy';
 import {
   type CertificateOutcome,
   ENROLLMENT_POLL_INTERVAL_MS,
@@ -94,7 +87,7 @@ import {
 import { resetKeyLogLockForTest, withKeyLogLock } from './key-log-lock';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
-export { canAutoSignAdmit, invalidCertificateKey } from './enrollment-policy';
+export { invalidCertificateKey } from './enrollment-policy';
 export { withKeyLogLock };
 export {
   getEnrollmentEngineState,
@@ -110,33 +103,6 @@ type AdmitOutcome = Extract<CertificateOutcome, { kind: 'admit' }>;
  * （`AuthApi` 没有 abort 通道）：飞行中的操作各自带着代次，对不上就整条作废（见 R5 #9）。
  */
 let engineGeneration = 0;
-
-/** 签 admit 记录所需的用户身份；`ResolvedMode` 天然满足。 */
-export interface AdmitMode extends Pick<AuthModeResponse, 'rootEpoch'> {
-  uid: string;
-}
-
-export interface AdmitContext {
-  api: AuthApi;
-  /** 缺 uid / kdf 参数（还没有主用户）时为 `null`：这个消费方不参与签名。 */
-  mode: AdmitMode | null;
-  enrollmentApi: EnrollmentApi | null;
-  prompt: CredentialPromptHandle;
-  /** admit 之后还要补的那一步（中继模式下发成员密钥）；没有则 admit 落账即完成。 */
-  followUp?: AdmitFollowUp | null;
-  /** admit 成功后刷新列表。 */
-  onDone: () => void;
-  /** 消费方的翻译函数：引擎在模块级，拿不到 React 的 i18n 上下文。 */
-  t: (key: string, options?: Record<string, unknown>) => string;
-}
-
-/** 绑定到某个消费方槽位的动作。 */
-export interface EnrollmentEngineHandle {
-  /** 「待确认 / 重试」按钮：只认 enrollment id，pending 一律从权威 store 现取。 */
-  confirmManually(enrollmentId: string): Promise<void>;
-  /** 「补发成员密钥」：节点已加入、第二步没签成时只补这一条。 */
-  resendMemberKey(enrollmentId: string): Promise<void>;
-}
 
 // 未确认集合是 `admit-record.ts` 的模块级 store，直接镜像进来，消费方只订阅一处。
 subscribeUnconfirmedRecords(() =>
@@ -180,7 +146,7 @@ function activeContext(): AdmitContext | null {
 }
 
 /**
- * 后台自动签用的上下文：最近一个**凭据齐备**（`mode` 非空）的槽位。
+ * 后台重发用的上下文：最近一个**凭据齐备**（`mode` 非空）的槽位。
  *
  * 侧滑面板可能先于 `/api/auth/mode` 返回就注册进来，此时它的 `mode` 还是 `null`；
  * 跟着「最后注册的槽位」走会让设置页那个可用上下文被一个空壳挡住（见 R4 #4）。
@@ -257,9 +223,9 @@ interface OperationContext {
   mode: AdmitMode;
   prompt: CredentialPromptHandle;
   t: AdmitContext['t'];
-  /** 签名者取用口：自动路径到用时才从复用窗口现取，手动路径固定用刚拿到的那个。 */
+  /** 签名者取用口：用到时才取，固定是用户点确认时刚拿到的那个；后台重发没有签名者。 */
   signer: () => RecordSigner | null;
-  /** 由用户手势（按钮）发起；轮询 / 推送发起的为假，第二步不能替 passkey 用户自动起仪式。 */
+  /** 由用户手势（按钮）发起；轮询 / 推送发起的为假，第二步（成员密钥）不能替用户自动签名。 */
   gesture: boolean;
   slot: ContextSlot;
   slotGeneration: number;
@@ -551,8 +517,7 @@ async function submitAdmit(
     return;
   }
   awaitMemberKey(id, nodeId);
-  const auto = op.gesture || canAutoSignAdmit(op.signer());
-  txn.afterLock = () => distributeMemberKey(step, auto);
+  txn.afterLock = () => distributeMemberKey(step, op.gesture);
 }
 
 function memberKeyStep(slot: ContextSlot, id: string): MemberKeyStep | null {
@@ -623,7 +588,10 @@ function markInvalid(t: AdmitContext['t'] | null, id: string, reason: string): v
   if (markCertificateInvalid(id, key) && t) toast.error(t(key));
 }
 
-/** 轮询 / 推送检测出的结果。已过期或签名坏的直接告警；能自动签就自动签。 */
+/**
+ * 轮询 / 推送检测出的结果。已过期或签名坏的直接告警；有效证书只亮出确认码等用户确认，
+ * 绝不替用户签 `admit-node`。唯一的后台动作是重发用户早先已签好、但上级没确认的那份字节。
+ */
 async function handleOutcome(outcome: CertificateOutcome): Promise<void> {
   if (outcome.kind === 'unknown') {
     const context = activeContext();
@@ -638,14 +606,11 @@ async function handleOutcome(outcome: CertificateOutcome): Promise<void> {
     markInvalid(activeContext()?.t ?? null, id, outcome.reason);
     return;
   }
-  markCertificateReady(id);
-  // 去重在取签名者之前：重复的 outcome 不该白白消耗复用窗口里的凭证。
-  if (transactions.has(id)) return;
+  markCertificateReady(id, enrollSas(outcome.certificateBytes));
+  if (transactions.has(id) || !unconfirmedRecord(id)) return;
   const slot = signingSlot();
   if (!slot) return;
-  // 复用窗口已过、或窗口里是 passkey：都留在「待确认」，等用户点按钮。
-  if (admitPlan(id, canAutoSignAdmit(takeRememberedSigner(nowMs()))) === 'wait') return;
-  const op = openOperation(slot, () => takeRememberedSigner(nowMs()), false);
+  const op = openOperation(slot, () => null, false);
   if (!op) return;
   await runAdmit(op, id, () => admitInLock(op, id, outcome));
 }
@@ -681,7 +646,7 @@ async function confirmFromSlot(slot: ContextSlot, id: string): Promise<void> {
     return;
   }
   try {
-    // request() 会把签名者放进 5 分钟复用窗口，后续自动 admit 直接用它。
+    // request() 会把签名者放进 5 分钟复用窗口：第二步（成员密钥）与同窗口内的下一次确认直接用它。
     const passkeyCeremonies = slot.value?.followUp ? 2 : 1;
     signer = await op.prompt.request({ purpose: 'admit', reuse: true, passkeyCeremonies });
   } catch (err) {
@@ -689,7 +654,7 @@ async function confirmFromSlot(slot: ContextSlot, id: string): Promise<void> {
     return;
   }
   if (!signer) return;
-  // 凭据交互期间可能已被后台自动 admit / 被取消，槽位也可能换了通道或换了用户。
+  // 凭据交互期间可能已被别处 admit / 被取消，槽位也可能换了通道或换了用户。
   if (!opAlive(op) || !livePending(id, enrollPk)) return;
   await runAdmit(op, id, () => confirmInLock(op, id, enrollPk));
 }
@@ -698,6 +663,19 @@ async function resendInLock(op: OperationContext, id: string, enrollPk: string):
   if (!opAlive(op) || !livePending(id, enrollPk)) return;
   const stored = unconfirmedRecord(id);
   if (stored) await submitAdmit(op, id, stored);
+}
+
+/**
+ * 只签用户看过确认码的那张证书。确认卡亮出的码与这次要签的证书对不上（还没亮过、或证书换了），
+ * 就把新码亮出来并停下，由用户重新核对后再点——点击才等于「我核对过这个码」。
+ */
+function sasShown(op: OperationContext, id: string, outcome: AdmitOutcome): boolean {
+  const sas = enrollSas(outcome.certificateBytes);
+  const shown = getEnrollmentEngineState().certificateSasById[id];
+  if (shown === sas) return true;
+  markCertificateReady(id, sas);
+  if (shown) failAdmit(op.t, id, 'nodes.enrollment.codeChanged');
+  return false;
 }
 
 async function confirmInLock(op: OperationContext, id: string, enrollPk: string): Promise<void> {
@@ -712,7 +690,7 @@ async function confirmInLock(op: OperationContext, id: string, enrollPk: string)
   for (const candidate of candidates) {
     const outcome = offerCertificate([fresh], candidate, nowMs());
     if (outcome.kind === 'admit') {
-      markCertificateReady(id);
+      if (!sasShown(op, id, outcome)) return;
       await signAdmit(op, fresh, outcome);
       return;
     }

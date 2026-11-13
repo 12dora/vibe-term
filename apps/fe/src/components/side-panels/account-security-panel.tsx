@@ -29,6 +29,7 @@ export {
   type PasswordChangeFollowUp,
   finishPasswordChange,
   passwordChangeFollowUp,
+  passwordInputError,
   securityActionErrorText,
   withRelayAckNotice,
 } from './account-security-password';

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { AccessTokenScope } from '@vibeterm/shared';
 
 const ALWAYS_ALLOWED: ReadonlyArray<{ method: string; path: string }> = [
@@ -8,7 +9,21 @@ const ALWAYS_ALLOWED: ReadonlyArray<{ method: string; path: string }> = [
 
 const FILES_PREFIX = '/api/files/';
 const FILE_ROOTS_PATH = '/api/files/roots';
+const FILE_BROWSE_PATH = '/api/files/browse';
 const PORTMAP_PATH = '/api/portmap';
+
+export type FileAccessPrincipal = 'token' | 'session';
+
+const fileAccessAls = new AsyncLocalStorage<FileAccessPrincipal>();
+
+/** 当前异步上下文是否为访问令牌调用方；未绑定视为会话。 */
+export function isTokenFileAccess(): boolean {
+  return fileAccessAls.getStore() === 'token';
+}
+
+export function runWithFileAccessPrincipal<T>(kind: FileAccessPrincipal, fn: () => T): T {
+  return fileAccessAls.run(kind, fn);
+}
 
 function isExecPath(method: string, path: string): boolean {
   if (method === 'POST') return path === '/api/exec';
@@ -17,6 +32,7 @@ function isExecPath(method: string, path: string): boolean {
 
 function isFilesPath(method: string, path: string): boolean {
   if (!path.startsWith(FILES_PREFIX)) return false;
+  if (path === FILE_BROWSE_PATH) return false;
   const rootsConfig = path === FILE_ROOTS_PATH || path.startsWith(`${FILE_ROOTS_PATH}/`);
   return !rootsConfig || method === 'GET';
 }
@@ -28,6 +44,7 @@ function isForwardPath(path: string): boolean {
 /**
  * 令牌调用方的作用域表：基础只读面始终放行，其余按 scope 逐类放行，表外一律拒绝。
  * `/api/files/roots` 的写操作会改动文件浏览根，属于节点配置，令牌不得调用。
+ * `/api/files/browse` 忽略文件根，只会话可调用。
  */
 export function tokenScopeAllows(
   method: string,

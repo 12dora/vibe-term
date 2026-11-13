@@ -191,7 +191,7 @@ export async function adaptForwardedResponse(
     skipAuth: boolean;
   }
 ): Promise<Response> {
-  const headers = copyUpstreamHeaders(upstream);
+  const headers = copyUpstreamHeaders(upstream, req);
   const gated = await applyAuthPolicy(req, headers, upstream, ctx.nodeId, host.skipAuth);
   if (gated) return gated;
   const signal = ctx.signal ?? req.signal;

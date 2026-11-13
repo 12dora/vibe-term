@@ -8,6 +8,7 @@ import { MemoryTunnelAccessStore } from './access-store';
 import { MemoryTunnelConfigStore } from './config-store';
 import { FakeSpawner, argsInclude } from './fake-spawn';
 import { TunnelManager } from './manager';
+import type { HostEnv } from './trust-proxy-env';
 
 async function waitJob(manager: TunnelManager, timeoutMs = 2_000) {
   const start = Date.now();
@@ -285,13 +286,23 @@ describe('TunnelManager', () => {
     expect(missing.httpStatus).toBe(400);
     expect('error' in missing.payload && missing.payload.error.code).toBe('not_configured');
 
-    const writes: boolean[] = [];
-    ctx.manager.setPatchHostEnv(async (value) => {
-      writes.push(value);
+    let env: HostEnv = { OTHER: 'kept' };
+    const writes: HostEnv[] = [];
+    ctx.manager.setPatchHostEnv(async (update) => {
+      env = update(env);
+      writes.push(env);
     });
     const ok = await ctx.manager.handleAction({ action: 'set_trust_proxy', trustProxy: true });
     expect(ok.httpStatus).toBe(200);
-    expect(writes).toEqual([true]);
+    expect(writes).toEqual([
+      {
+        OTHER: 'kept',
+        VIBETERM_TRUST_PROXY: 'true',
+        VIBETERM_CLIENT_IP_HEADER: 'cf-connecting-ip',
+      },
+    ]);
+    await ctx.manager.handleAction({ action: 'set_trust_proxy', trustProxy: false });
+    expect(writes[1]).toEqual({ OTHER: 'kept', VIBETERM_TRUST_PROXY: 'false' });
     if ('status' in ok.payload) {
       expect(ok.payload.status.restartRequired).toBe(true);
       expect(ok.payload.status.trustProxy).toBe(false);
@@ -492,9 +503,10 @@ describe('TunnelManager', () => {
   });
 
   test('configuredTrustProxy comes from host-env and drives restartRequired', async () => {
-    let saved: boolean | null = true;
+    let saved: HostEnv | null = { VIBETERM_TRUST_PROXY: 'true' };
     const ctx = await setup({
       trustProxy: false,
+      clientIpHeader: 'x-forwarded-for',
       readHostEnv: async () => saved,
     });
     dirs.push(ctx.dir);
@@ -503,8 +515,8 @@ describe('TunnelManager', () => {
     expect(ctx.manager.status().configuredTrustProxy).toBe(true);
     expect(ctx.manager.status().restartRequired).toBe(true);
 
-    ctx.manager.setPatchHostEnv(async (value) => {
-      saved = value;
+    ctx.manager.setPatchHostEnv(async (update) => {
+      saved = update(saved ?? {});
     });
     const ok = await ctx.manager.handleAction({ action: 'set_trust_proxy', trustProxy: false });
     expect(ok.httpStatus).toBe(200);
@@ -513,6 +525,39 @@ describe('TunnelManager', () => {
       expect(ok.payload.status.trustProxy).toBe(false);
       expect(ok.payload.status.restartRequired).toBe(false);
     }
+  });
+
+  test('a client-IP header change alone requires a restart', async () => {
+    let saved: HostEnv | null = { VIBETERM_TRUST_PROXY: 'true' };
+    const ctx = await setup({
+      trustProxy: true,
+      clientIpHeader: 'x-forwarded-for',
+      readHostEnv: async () => saved,
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.start();
+    expect(ctx.manager.status().restartRequired).toBe(false);
+    ctx.manager.setPatchHostEnv(async (update) => {
+      saved = update(saved ?? {});
+    });
+    const ok = await ctx.manager.handleAction({ action: 'set_trust_proxy', trustProxy: true });
+    expect(saved?.VIBETERM_CLIENT_IP_HEADER).toBe('cf-connecting-ip');
+    if ('status' in ok.payload) {
+      expect(ok.payload.status.trustProxy).toBe(true);
+      expect(ok.payload.status.configuredTrustProxy).toBe(true);
+      expect(ok.payload.status.restartRequired).toBe(true);
+    }
+  });
+
+  test('turning tunnel trust off keeps a client-IP header the user set', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    let env: HostEnv = { VIBETERM_TRUST_PROXY: 'true', VIBETERM_CLIENT_IP_HEADER: 'x-real-ip' };
+    ctx.manager.setPatchHostEnv(async (update) => {
+      env = update(env);
+    });
+    await ctx.manager.handleAction({ action: 'set_trust_proxy', trustProxy: false });
+    expect(env).toEqual({ VIBETERM_TRUST_PROXY: 'false', VIBETERM_CLIENT_IP_HEADER: 'x-real-ip' });
   });
 
   test('set_access_credentials validates via organizations and stores teamDomain', async () => {

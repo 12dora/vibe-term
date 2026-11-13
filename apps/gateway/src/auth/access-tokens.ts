@@ -8,9 +8,11 @@ import {
   type CreateAccessTokenResponse,
   isAccessTokenScope,
 } from '@vibeterm/shared';
-import { and, desc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gt, isNull, lt, or, sql } from 'drizzle-orm';
 import { getDb as getOrmDb } from '../db/client';
 import { accessTokenEvents, accessTokens } from '../db/schema';
+import { MESH_VIA_SELF } from '../mesh/mesh-deps';
+import { keyLogCommitDb, runAfterKeyLogCommit } from './revocation-after-commit';
 import type { AuthDb } from './types';
 
 const DAY_MS = 86_400_000;
@@ -37,7 +39,8 @@ export class AccessTokenLimitError extends Error {
 }
 
 type TokenRow = typeof accessTokens.$inferSelect;
-type RevokedListener = (tokenId: string) => void;
+/** `db` 是令牌行所在的库连接（key log 级联时即其事务），级联删除应落在同一处。 */
+type RevokedListener = (tokenId: string, db: AuthDb) => void;
 
 const revokedListeners = new Set<RevokedListener>();
 
@@ -54,7 +57,7 @@ export class AccessTokenService {
   private readonly usedAudit = new Map<string, number>();
 
   constructor(
-    private readonly db: AuthDb = getOrmDb(),
+    readonly db: AuthDb = getOrmDb(),
     opts: { now?: () => number } = {}
   ) {
     this.now = opts.now ?? (() => Date.now());
@@ -63,7 +66,8 @@ export class AccessTokenService {
   create(
     userId: string,
     req: CreateAccessTokenRequest,
-    ip?: string | null
+    ip?: string | null,
+    issuedVia: string = MESH_VIA_SELF
   ): CreateAccessTokenResponse {
     const now = this.now();
     if (this.activeCount(userId, now) >= ACCESS_TOKEN_ACTIVE_LIMIT) {
@@ -81,6 +85,7 @@ export class AccessTokenService {
       lastUsedAt: null,
       lastUsedIp: null,
       revokedAt: null,
+      issuedVia,
     };
     this.db.insert(accessTokens).values(row).run();
     this.audit(row.id, userId, 'created', normalizeIp(ip), now);
@@ -115,18 +120,27 @@ export class AccessTokenService {
     if (hit.length === 0) return false;
     this.audit(id, userId, 'revoked', normalizeIp(ip), now);
     this.forgetThrottle(id);
-    notifyAccessTokenRevoked(id);
+    notifyAccessTokenRevoked(id, this.db);
     return true;
   }
 
-  /** 逐个走 `revoke()`，让撤销监听（关闭 exec 会话）与 `revoked` 审计事件一并触发；返回撤销数量。 */
+  /** 逐个走 `revoke()`，让撤销监听（关闭 exec 会话、删除令牌建的端口映射）与 `revoked` 审计事件一并触发；返回撤销数量。 */
   revokeAllForUser(userId: string, ip?: string | null): number {
+    return this.revokeWhere(eq(accessTokens.userId, userId), ip);
+  }
+
+  /** 经某入口节点签发的令牌：该节点被吊销时一并撤销。 */
+  revokeIssuedVia(nodeId: string): number {
+    return this.revokeWhere(eq(accessTokens.issuedVia, nodeId));
+  }
+
+  private revokeWhere(filter: SQL, ip?: string | null): number {
     const rows = this.db
-      .select({ id: accessTokens.id })
+      .select({ id: accessTokens.id, userId: accessTokens.userId })
       .from(accessTokens)
-      .where(and(eq(accessTokens.userId, userId), isNull(accessTokens.revokedAt)))
+      .where(and(filter, isNull(accessTokens.revokedAt)))
       .all();
-    return rows.filter((row) => this.revoke(userId, row.id, ip)).length;
+    return rows.filter((row) => this.revoke(row.userId, row.id, ip)).length;
   }
 
   verify(secret: string, opts: AccessTokenVerifyOptions = {}): AccessTokenVerifyResult {
@@ -277,6 +291,7 @@ function toDto(row: TokenRow): AccessTokenDto {
     expiresAt: row.expiresAt,
     lastUsedAt: row.lastUsedAt,
     lastUsedIp: row.lastUsedIp,
+    issuedVia: row.issuedVia,
   };
 }
 
@@ -297,9 +312,10 @@ export function getAccessTokenService(): AccessTokenService {
 export function createAccessToken(
   userId: string,
   req: CreateAccessTokenRequest,
-  ip?: string | null
+  ip?: string | null,
+  issuedVia?: string
 ): CreateAccessTokenResponse {
-  return getAccessTokenService().create(userId, req, ip);
+  return getAccessTokenService().create(userId, req, ip, issuedVia);
 }
 
 export function listAccessTokens(userId: string): AccessTokenDto[] {
@@ -317,7 +333,7 @@ export function verifyAccessToken(
   return getAccessTokenService().verify(secret, opts);
 }
 
-/** 任一服务实例撤销令牌后回调（如关闭该令牌的 exec 会话）；返回取消订阅函数。 */
+/** 任一服务实例撤销令牌后回调（关闭该令牌的 exec 会话、删除它建的端口映射）；返回取消订阅函数。 */
 export function onAccessTokenRevoked(listener: RevokedListener): () => void {
   revokedListeners.add(listener);
   return () => {
@@ -325,14 +341,17 @@ export function onAccessTokenRevoked(listener: RevokedListener): () => void {
   };
 }
 
-function notifyAccessTokenRevoked(tokenId: string): void {
-  for (const listener of [...revokedListeners]) {
-    try {
-      listener(tokenId);
-    } catch {
-      // 监听方异常不影响撤销本身
+function notifyAccessTokenRevoked(tokenId: string, db: AuthDb): void {
+  runAfterKeyLogCommit(() => {
+    const conn = keyLogCommitDb() ?? db;
+    for (const listener of [...revokedListeners]) {
+      try {
+        listener(tokenId, conn);
+      } catch {
+        // 监听方异常不影响撤销本身
+      }
     }
-  }
+  });
 }
 
 export function isAccessTokenActive(tokenId: string): boolean {

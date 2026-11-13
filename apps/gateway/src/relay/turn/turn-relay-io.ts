@@ -44,7 +44,7 @@ export function isDeniedPeer(ctx: TurnContext, ip: string, port: number): boolea
 
 function matchDenied(ctx: TurnContext, ip: string): boolean {
   try {
-    return ctx.denied(ip);
+    return ctx.denied.has(ip);
   } catch {
     return true;
   }

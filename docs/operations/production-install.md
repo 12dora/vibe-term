@@ -20,6 +20,8 @@ curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | 
 
 安装全程不提问，全部取默认值：角色 `standalone`（单机、无登录页）、监听 `127.0.0.1:9883`、peer 端口 `39001`、开机自启、服务名 `vibeterm`。默认的网关或 peer 端口被占用且未显式指定时，`init` 自动顺延到下一个空闲端口并打印一行说明。
 
+无登录页的单机只接受 IP、`localhost` / `*.localhost`、本机 mDNS 名（`<主机名>.local`）或已配置域名作为 `Host`，其它域名回 421（防 DNS 重绑定）；用自定义域名访问前先把它填进站点 URL 或 `VIBETERM_BASE_URL`。规则见 [登录面安全 §10](../security/login-security.md)。
+
 要改默认值，向 `install.sh` 追加 `init` 参数（交互与 `--no-interactive` 下一致，均为可选）：`--install-dir`、`--host`、`--port`、`--db-path`、`--autostart`、`--service-name`、`--role`、`--peer-port`、`--no-linger`。
 
 要做公网中继入口，改角色即可：
@@ -41,6 +43,8 @@ bash install.sh --role relay --relay-public-url https://<中继域名>
 - 部署 `runtime/server.js`、前端静态资源、drizzle 迁移；
 - 写 `run.sh`（导出 `VIBETERM_FE_DIST_DIR` / `VIBETERM_MIGRATIONS_DIR` / `VIBETERM_NATIVE_DIR` 后 exec Bun）；
 - 按平台安装 launchd plist 或 systemd 用户单元。
+
+安装树权限：`init` / `upgrade` apply 把安装根与 `data/`、`versions/`、`backups/`、`staging/` 收成 `0700`（已存在的目录也会 chmod）。目录若是符号链接，只在解析后的目标属于当前 uid 时 chmod 目标，否则告警并继续；`EPERM` / `EACCES` 同样告警、不阻断安装或升级。只有进程自己新建的目录失败才会让 `init` / `upgrade` 失败。`vibeterm.db` 及 `-wal`/`-shm`、备份副本、日志与 pid 文件为 `0600`（gateway 打开库之后也会再 chmod 一次）。不设 systemd `UMask` / launchd `Umask`，以免 tmux 窗格与 `exec` 子进程继承 077、把用户文件默默收成 `0600`/`0700`。
 
 默认 HTTP：`127.0.0.1:9883`。本机浏览器打开该地址即可。需要局域网访问时再把 `app.env` 的 `VIBETERM_BIND_HOST` 改为 `0.0.0.0` 并重启，同时收紧防火墙。
 
@@ -74,9 +78,9 @@ journalctl --user -u vibeterm.service -n 200 --no-pager
 journalctl --user -u vibeterm.service -f
 ```
 
-unit 使用 `KillMode=process`，stop / restart / crash 只杀 VibeTerm 主进程，不连带 tmux。开机自启（`--autostart true`，默认）时，`init` 与 `upgrade` 会为当前用户启用 linger（`loginctl enable-linger`），最后一个登录会话退出后服务与 tmux 不再随用户 slice 被拆除；已启用则不做任何改动。无权限或没有 `loginctl` 时只打印一行告警和手工命令 `sudo loginctl enable-linger <user>`，不影响安装。不希望改动账户级配置时，`init` / `upgrade` 加 `--no-linger`，选择记入 `install-meta.json`（`linger: false`），之后的升级沿用。macOS 不涉及。详见 [tmux 进程存活](./tmux-process-survival.md)。
+unit 使用 `KillMode=process`，stop / restart / crash 只杀 VibeTerm 主进程，不连带 tmux。安装树与库文件的权限由上面的显式 `0700` / `0600` 负责，单元不设 `UMask`。开机自启（`--autostart true`，默认）时，`init` 与 `upgrade` 会为当前用户启用 linger（`loginctl enable-linger`），最后一个登录会话退出后服务与 tmux 不再随用户 slice 被拆除；已启用则不做任何改动。无权限或没有 `loginctl` 时只打印一行告警和手工命令 `sudo loginctl enable-linger <user>`，不影响安装。不希望改动账户级配置时，`init` / `upgrade` 加 `--no-linger`，选择记入 `install-meta.json`（`linger: false`），之后的升级沿用。macOS 不涉及。详见 [tmux 进程存活](./tmux-process-survival.md)。
 
-**macOS（launchd）：** plist 含 `AbandonProcessGroup=true`，语义同上。用 `launchctl` 查看对应 job；标准输出进系统日志。
+**macOS（launchd）：** plist 含 `AbandonProcessGroup=true`，不含 `Umask`。用 `launchctl` 查看对应 job；标准输出进系统日志。
 
 健康检查（mesh 下无会话只返回 `{status:'ok'}`）：
 
@@ -86,7 +90,7 @@ curl -sS http://127.0.0.1:9883/healthz
 
 ## HTTPS 与反向代理
 
-生产建议在前面加 HTTPS（nginx、Caddy、Cloudflare Tunnel 均可）。Tunnel 指到 `127.0.0.1:9883` 时，必须在 `app.env` 设置 `VIBETERM_TRUST_PROXY=true` 并重启，否则 cookie 的 `Secure` 与 passkey origin 会按本机 HTTP 计算。细节与 WebSocket 反代注意点见运维指南「Cloudflare Tunnel」一节。
+生产建议在前面加 HTTPS（nginx、Caddy、Cloudflare Tunnel 均可）。Tunnel 指到 `127.0.0.1:9883` 时，必须在 `app.env` 设置 `VIBETERM_TRUST_PROXY=true` 并重启，否则 cookie 的 `Secure` 与 passkey origin 会按本机 HTTP 计算。客户端 IP 只读 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头：Cloudflare Tunnel 设 `cf-connecting-ip`，nginx / Caddy 保持缺省 `x-forwarded-for`（取最右一项）。细节与 WebSocket 反代注意点见运维指南「Cloudflare Tunnel」一节。
 
 不要再为「登录」配置 JWT 或 OIDC；应用层会话由各 node 签发的 `node-session` cookie 承担。
 
@@ -106,7 +110,7 @@ CLI 安装且 `canSelfUpdate` 时，设置页「版本与更新」可在程序�
 
 ## SSH 设备配置
 
-加入 mesh 之后，每台 node 内部仍是原来的 `local` / `ssh` 设备。在设备管理里添加 SSH 远程设备：
+加入 mesh 之后，每台 node 内部仍是原来的 `local` / `ssh` 设备。在设备管理里添加 SSH 远程设备。主机、用户名与 ssh_config 别名在创建 / 修改与每次连接时校验：不得以 `-` 开头，不得含空白或控制字符；`_`、IPv6 字面量与 ssh_config 别名可用。OpenSSH argv 在目标前插入 `--`，避免目标被当成选项。
 
 ### 密码认证
 
@@ -185,8 +189,9 @@ mesh 角色下无 cookie 的 `/ws` 会以 **4401** 关闭并跳登录页，这�
 1. 生产必须设置强随机 `VIBETERM_MASTER_KEY`，并与数据库一起备份。
 2. 口令按 argon2id 成本假设可被离线爆破来选；独立第二因素用 passkey。
 3. 对公网只暴露 HTTPS 反代；peer 口仅内网需要。
-4. Cloudflare Tunnel 等场景打开 `VIBETERM_TRUST_PROXY`，且反代不要把未校验的 `X-Forwarded-*` 传给不可信客户端后再绕过。
-5. 定期 `upgrade`；不要把生产 `app.env` 提交进 git。
+4. Cloudflare Tunnel 等场景打开 `VIBETERM_TRUST_PROXY` 并按代理设置 `VIBETERM_CLIENT_IP_HEADER`；网关端口不要让公网绕过反代直连。
+5. 不要用 TCP 层转发（frp、`ssh -R`、socat 等不加 HTTP 头的方式）把网关端口暴露到公网：经它来的请求在网关看来就是本机，会免掉通行密钥与登录限流（见 [登录面安全](../security/login-security.md) §7）。确需如此时关闭 `exemptLocal`，并先在本机完成初始化。
+6. 定期 `upgrade`；不要把生产 `app.env` 提交进 git。
 
 ## 参考
 

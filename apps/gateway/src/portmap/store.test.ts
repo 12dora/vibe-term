@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../auth/test-db';
-import { PortMapExportStore, PortMapStore } from './store';
+import {
+  PortMapExportStore,
+  PortMapStore,
+  onPortMapRowsRevoked,
+  removePortMapsForRevocation,
+  removePortMapsOfInactiveTokens,
+} from './store';
 import type { PortMapRow } from './types';
 
 const NODE = 'd'.repeat(32);
@@ -37,7 +43,7 @@ describe('portmap store', () => {
     const store = new PortMapStore(migratedDb());
     expect(store.list()).toEqual([]);
     store.insert(row('map-1'));
-    expect(store.get('map-1')).toEqual(row('map-1'));
+    expect(store.get('map-1')).toEqual({ ...row('map-1'), issuedVia: 'self' });
     store.update('map-1', { name: 'renamed', paused: true, updatedAt: 200 });
     const updated = store.get('map-1');
     expect(updated?.name).toBe('renamed');
@@ -90,8 +96,49 @@ describe('portmap store', () => {
       port: 6543,
       enabled: false,
       createdAt: 2,
+      issuedVia: 'self',
     });
     store.remove('map-1');
     expect(store.list()).toEqual([]);
+  });
+
+  test('origin columns round-trip; revocation deletes rows by entry node or creator token', () => {
+    const db = migratedDb();
+    const maps = new PortMapStore(db);
+    const exports = new PortMapExportStore(db);
+    const entry = 'e'.repeat(32);
+    maps.insert({ ...row('via-entry'), issuedVia: entry });
+    maps.insert({ ...row('by-token'), createdByTokenId: 'tok-1' });
+    maps.insert(row('local'));
+    const base = { host: '127.0.0.1', port: 22, enabled: true, createdAt: 1 };
+    exports.insert({ ...base, mapId: 'x-via', fromNodeId: NODE, issuedVia: entry });
+    exports.insert({ ...base, mapId: 'x-from', fromNodeId: entry });
+    exports.insert({ ...base, mapId: 'x-tok', fromNodeId: NODE, createdByTokenId: 'tok-1' });
+    exports.insert({ ...base, mapId: 'x-local', fromNodeId: NODE });
+
+    expect(maps.get('via-entry')?.issuedVia).toBe(entry);
+    expect(maps.get('by-token')?.createdByTokenId).toBe('tok-1');
+    expect('createdByTokenId' in (maps.get('local') ?? {})).toBe(false);
+
+    const notified: string[][] = [];
+    const off = onPortMapRowsRevoked((rows) => notified.push(rows.map((item) => item.id)));
+    try {
+      expect(removePortMapsForRevocation(db, { issuedVia: entry })).toEqual(['via-entry']);
+      expect(
+        exports
+          .list()
+          .map((item) => item.mapId)
+          .sort()
+      ).toEqual(['x-local', 'x-tok']);
+
+      expect(removePortMapsOfInactiveTokens(db, (id) => id === 'tok-1')).toEqual([]);
+      expect(removePortMapsOfInactiveTokens(db, () => false)).toEqual(['by-token']);
+      expect(maps.list().map((item) => item.id)).toEqual(['local']);
+      expect(exports.list().map((item) => item.mapId)).toEqual(['x-local']);
+      expect(removePortMapsForRevocation(db, { createdByTokenId: 'tok-1' })).toEqual([]);
+      expect(notified).toEqual([['via-entry'], ['by-token']]);
+    } finally {
+      off();
+    }
   });
 });

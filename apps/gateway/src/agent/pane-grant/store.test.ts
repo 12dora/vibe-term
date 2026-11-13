@@ -64,13 +64,20 @@ function seedCert(nodeId: string, revokedLogSeq: number | null): void {
 
 function issue(
   now: number,
-  overrides: { fromNodeId?: string; deviceId?: string; paneId?: string; serverEpoch?: string } = {}
+  overrides: {
+    fromNodeId?: string;
+    deviceId?: string;
+    paneId?: string;
+    serverEpoch?: string;
+    issuedVia?: string;
+  } = {}
 ) {
   return issuePaneGrant({
     fromNodeId: overrides.fromNodeId ?? NODE_X,
     deviceId: overrides.deviceId ?? DEVICE,
     paneId: overrides.paneId ?? PANE,
     serverEpoch: overrides.serverEpoch ?? EPOCH,
+    ...(overrides.issuedVia ? { issuedVia: overrides.issuedVia } : {}),
     now,
   });
 }
@@ -166,6 +173,17 @@ describe('pane grant store', () => {
     deletePaneGrantsForNode(NODE_X);
     expect(listPaneGrantsForNode(NODE_X)).toEqual([]);
     expect(getPaneGrant(other.grantId)).not.toBeNull();
+  });
+
+  test('按节点清空同时覆盖经该节点签发的授权', () => {
+    const now = 1_000_000;
+    const local = issue(now, { fromNodeId: NODE_Z });
+    const viaX = issue(now, { fromNodeId: NODE_Z, paneId: '%9', issuedVia: NODE_X });
+    expect(getPaneGrant(local.grantId)?.issuedVia).toBe('self');
+    expect(getPaneGrant(viaX.grantId)?.issuedVia).toBe(NODE_X);
+    deletePaneGrantsForNode(NODE_X);
+    expect(getPaneGrant(viaX.grantId)).toBeNull();
+    expect(getPaneGrant(local.grantId)).not.toBeNull();
   });
 
   test('清扫只删过期的', () => {

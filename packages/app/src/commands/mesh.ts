@@ -6,7 +6,12 @@ import { DEFAULT_GATEWAY_PORT } from '../../../shared/src/net';
 import { t } from '../i18n';
 import { confirmDestructiveReset } from '../lib/destructive-confirm';
 import type { FetchLike } from '../lib/fetch-like';
-import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
+import {
+  assertAccountPassword,
+  assertRootKeyMatches,
+  deriveRootKey,
+  resolvePassword,
+} from '../lib/password';
 import { isStandaloneRoles, parseVibeTermRoles } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
 import { resetTlsConfig } from '../tls/tls-recovery';
@@ -45,6 +50,7 @@ export async function runMeshResetRoot(
       throw new Error('no local user to reset; run `vibeterm user add` first');
     }
     const username = first.username;
+    assertAccountPassword(password, username);
     const identity = await ensureNodeIdentity(ctx.identityStore);
     const boot = await ctx.userKeys.bootstrapUserWithSelfAdmit({
       username,

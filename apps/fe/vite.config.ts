@@ -203,7 +203,6 @@ export default defineConfig(({ mode }) => {
       proxy: {
         '/api': {
           target: gatewayUrl,
-          changeOrigin: true,
         },
         '/ws': {
           target: gatewayWsUrl,

@@ -4,10 +4,12 @@
 // `fs-root`：节点一条启用的白名单根都没有时，折算成本机设备的 `/`；一旦存在启用根即失效。
 // `home-root`：绑定本机设备 `$HOME`（realpath），不论是否已有其它根都可解析；
 // 用户创建的启用根展示名为 `home` 时，该用户根胜出（resolve 返回用户根，列表不再附带虚拟项）。
+// 访问令牌只能使用 `/api/files/roots` 落库且启用的根，合成 `fs-root` / `home-root` 一律 `root_not_found`。
 
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { type FileErrorCode, VIRTUAL_FS_ROOT_ID, VIRTUAL_HOME_ROOT_ID } from '@vibeterm/shared';
+import { isTokenFileAccess } from '../auth/token-scope';
 import { getAllDevices } from '../db';
 import { type FileRootRecord, getFileRootById, getFileRoots } from '../db/file-roots';
 
@@ -87,7 +89,15 @@ export function virtualHomeRootForList(): FileRootRecord | null {
   return made.ok ? made.root : null;
 }
 
-export function resolveFileRoot(rootId: string): ResolveFileRootResult {
+export type ResolveFileRootOpts = {
+  tokenPrincipal?: boolean;
+};
+
+export function resolveFileRoot(rootId: string, opts?: ResolveFileRootOpts): ResolveFileRootResult {
+  const forToken = opts?.tokenPrincipal ?? isTokenFileAccess();
+  if (forToken && (rootId === VIRTUAL_FS_ROOT_ID || rootId === VIRTUAL_HOME_ROOT_ID)) {
+    return { ok: false, code: 'root_not_found' };
+  }
   if (rootId === VIRTUAL_FS_ROOT_ID) return virtualFsRoot();
   if (rootId === VIRTUAL_HOME_ROOT_ID) return virtualHomeRoot();
   const root = getFileRootById(rootId);

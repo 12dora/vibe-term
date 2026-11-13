@@ -73,6 +73,15 @@ describe('i18n', () => {
     }
   });
 
+  test('account password strength messages exist in both languages', () => {
+    setLang('en');
+    expect(t('password.tooShort')).toBe('Use at least 12 characters');
+    expect(t('password.tooSimple')).toContain('too easy to guess');
+    setLang('zh-CN');
+    expect(t('password.tooShort')).toBe('密码至少 12 位');
+    expect(t('password.tooSimple')).toBe('密码过于简单，请避免连续、重复字符或常见密码');
+  });
+
   // 两个结局都要说清：密码会话与两步验证留着，用被删凭证建立的会话会掉线。
   test('mesh.passkey.removed states both session outcomes', () => {
     setLang('en');

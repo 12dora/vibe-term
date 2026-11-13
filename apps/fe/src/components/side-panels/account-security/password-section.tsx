@@ -7,7 +7,7 @@ import { OtpInput } from '@vibeterm/ui/otp-input';
 import { AlertTriangle, KeyRound, Loader2 } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { submitPasswordChange } from '../account-security-password';
+import { passwordInputError, submitPasswordChange } from '../account-security-password';
 import { Feedback, Section } from './section';
 import type { ResolvedMode, SecurityActionFeedback } from './types';
 
@@ -45,6 +45,9 @@ function PasswordFields({
         data-testid="security-new-password"
         onChange={(event) => onNewPassword(event.target.value)}
       />
+      <p className="text-xs text-muted-foreground" data-testid="security-new-password-hint">
+        {t('auth.security.newPasswordHint')}
+      </p>
       <Input
         type="password"
         autoComplete="new-password"
@@ -57,7 +60,7 @@ function PasswordFields({
   );
 }
 
-/** 常规改密后要重新登录一次 entry；开了 TOTP 就得当场给一个码，留空则跳过。 */
+/** 改密会让所有会话失效，静默重新登录一次 entry；开了 TOTP 就得当场给一个码，留空则回登录页。 */
 function ReloginCodeField({
   value,
   onChange,
@@ -115,6 +118,23 @@ function FullResetOption({
   );
 }
 
+function ChangePasswordButton({ busy, onClick }: { busy: boolean; onClick: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <div>
+      <Button
+        type="button"
+        disabled={busy}
+        onClick={onClick}
+        data-testid="security-change-password"
+      >
+        {busy ? <Loader2 className="animate-spin" /> : <KeyRound />}
+        {t('auth.security.changePassword')}
+      </Button>
+    </div>
+  );
+}
+
 /** 单独导出供测试静态渲染：`initialFullReset` 只用来摆出勾选后的形态。 */
 export function PasswordSection({
   mode,
@@ -147,12 +167,9 @@ export function PasswordSection({
   const submit = useCallback(async () => {
     setError(null);
     publishFeedback(null);
-    if (!oldPassword || !newPassword) {
-      setError(t('auth.security.passwordRequired'));
-      return;
-    }
-    if (newPassword !== confirm) {
-      setError(t('auth.security.passwordMismatch'));
+    const invalid = passwordInputError(t, { oldPassword, newPassword, confirm }, mode.username);
+    if (invalid) {
+      setError(invalid);
       return;
     }
     setBusy(true);
@@ -191,6 +208,7 @@ export function PasswordSection({
     fullReset,
     mode.kdfParams,
     mode.nodeId,
+    mode.username,
     newPassword,
     oldPassword,
     onDone,
@@ -211,23 +229,16 @@ export function PasswordSection({
         onNewPassword={setNewPassword}
         onConfirm={setConfirm}
       />
+      <p className="text-xs text-muted-foreground" data-testid="password-signout-hint">
+        {t('auth.security.changePasswordHint')}
+      </p>
       {totpEnabled && !fullReset ? (
         <ReloginCodeField value={totpCode} onChange={setTotpCode} />
       ) : null}
       <FullResetOption checked={fullReset} onChange={setFullReset} />
       {error ? <Feedback tone="error" text={error} /> : null}
       {ownFeedback ? <Feedback tone={ownFeedback.tone} text={ownFeedback.text} /> : null}
-      <div>
-        <Button
-          type="button"
-          disabled={busy}
-          onClick={() => void submit()}
-          data-testid="security-change-password"
-        >
-          {busy ? <Loader2 className="animate-spin" /> : <KeyRound />}
-          {t('auth.security.changePassword')}
-        </Button>
-      </div>
+      <ChangePasswordButton busy={busy} onClick={() => void submit()} />
     </Section>
   );
 }

@@ -123,6 +123,7 @@ async function boot(overrides: Partial<TurnServerOptions> = {}): Promise<Harness
     realm: REALM,
     credentials: (user) => (user === USER ? PASS : null),
     deniedPeerCidrs: [],
+    denySelfAddresses: false,
     ...overrides,
     now: overrides.now ?? (() => now),
   });
@@ -510,6 +511,29 @@ describe('TURN error codes', () => {
       port
     );
     expect(errorCodeOf(await recvStun(client.inbox))).toBe(403);
+  });
+
+  test('403 for the relay external IP, refreshed by setExternalIp', async () => {
+    const { server, port } = await boot({ denySelfAddresses: true, externalIp: '4.2.2.2' });
+    const client = await openClient();
+    const { nonce } = await allocate(client, port);
+    const permit = async (address: string) => {
+      const tx = randomBytes(12);
+      client.send(
+        authed(
+          METHOD.CREATE_PERMISSION,
+          nonce,
+          [addressAttribute(ATTR.XOR_PEER_ADDRESS, { address, port: 9 }, tx)],
+          tx
+        ),
+        port
+      );
+      return recvStun(client.inbox);
+    };
+    expect(errorCodeOf(await permit('4.2.2.2'))).toBe(403);
+    server.setExternalIp('4.2.2.3');
+    expect((await permit('4.2.2.2')).class).toBe(CLASS.SUCCESS);
+    expect(errorCodeOf(await permit('4.2.2.3'))).toBe(403);
   });
 });
 

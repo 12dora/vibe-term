@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  SHARE_LOGIN_BUSY_RETRY_MS,
   SHARE_LOGIN_LOCK_MS,
   SHARE_LOGIN_MAX_CONCURRENT,
   SHARE_LOGIN_MAX_FAILURES,
+  SHARE_LOGIN_SHARE_MAX_FAILURES,
+  SHARE_LOGIN_SHARE_SLOWDOWN_MS,
+  SHARE_LOGIN_SHARE_WINDOW_MS,
   SHARE_LOGIN_WINDOW_MS,
+  SHARE_VERIFY_MAX_INFLIGHT,
   ShareLoginLimiter,
 } from './share-rate-limit';
 
@@ -82,5 +87,72 @@ describe('ShareLoginLimiter', () => {
     limiter.recordFailure('s1', 'ip1');
     limiter.clear();
     expect(limiter.size).toBe(0);
+  });
+
+  test('rotating source IPs reach the per-share bucket, which then allows one verification per interval', () => {
+    let now = 0;
+    const limiter = new ShareLoginLimiter(() => now);
+    for (let i = 0; i < SHARE_LOGIN_SHARE_MAX_FAILURES; i++) {
+      const ip = `198.51.${Math.floor(i / 200)}.${i % 200}`;
+      expect(limiter.begin('s1', ip)).toEqual({ ok: true });
+      limiter.settle('s1', ip, false);
+    }
+    expect(limiter.begin('s1', '203.0.113.200')).toEqual({
+      ok: false,
+      reason: 'locked',
+      retryAfterMs: SHARE_LOGIN_SHARE_SLOWDOWN_MS,
+    });
+    expect(limiter.begin('s2', '203.0.113.200')).toEqual({ ok: true });
+    limiter.settle('s2', '203.0.113.200', true);
+    now += SHARE_LOGIN_SHARE_SLOWDOWN_MS;
+    expect(limiter.lockedFor('s1', '203.0.113.200')).toBe(0);
+    expect(limiter.begin('s1', '203.0.113.200')).toEqual({ ok: true });
+    expect(limiter.begin('s1', '203.0.113.201').ok).toBe(false);
+    limiter.settle('s1', '203.0.113.200', true);
+    now += 1_000;
+    expect(limiter.lockedFor('s1', '203.0.113.201')).toBe(SHARE_LOGIN_SHARE_SLOWDOWN_MS - 1_000);
+    now += SHARE_LOGIN_SHARE_WINDOW_MS;
+    expect(limiter.lockedFor('s1', '203.0.113.201')).toBe(0);
+  });
+
+  test('the concurrency cap reports busy, not locked', () => {
+    const limiter = new ShareLoginLimiter(() => 0);
+    for (let i = 0; i < SHARE_LOGIN_MAX_CONCURRENT; i++) limiter.begin('s1', 'ip1');
+    expect(limiter.begin('s1', 'ip1')).toEqual({
+      ok: false,
+      reason: 'busy',
+      retryAfterMs: SHARE_LOGIN_BUSY_RETRY_MS,
+    });
+  });
+
+  test('a successful login does not clear the per-share bucket', () => {
+    const limiter = new ShareLoginLimiter(() => 0);
+    for (let i = 0; i < SHARE_LOGIN_SHARE_MAX_FAILURES - 1; i++) {
+      limiter.recordFailure('s1', `198.51.100.${i}`);
+    }
+    expect(limiter.begin('s1', '203.0.113.1')).toEqual({ ok: true });
+    limiter.settle('s1', '203.0.113.1', true);
+    limiter.recordFailure('s1', '203.0.113.2');
+    expect(limiter.lockedFor('s1', '203.0.113.3')).toBeGreaterThan(0);
+  });
+
+  test('process-wide verification cap rejects immediately across shares and IPs', () => {
+    const limiter = new ShareLoginLimiter(() => 0);
+    for (let i = 0; i < SHARE_VERIFY_MAX_INFLIGHT; i++) {
+      expect(limiter.begin(`s${i}`, `198.51.100.${i}`)).toEqual({ ok: true });
+    }
+    const busy = limiter.begin('other', '203.0.113.9');
+    expect(busy.ok).toBe(false);
+    limiter.settle('s0', '198.51.100.0', false);
+    expect(limiter.begin('other', '203.0.113.9')).toEqual({ ok: true });
+  });
+
+  test('IPv6 sources inside one /64 share a bucket', () => {
+    const limiter = new ShareLoginLimiter(() => 0);
+    for (let i = 0; i < SHARE_LOGIN_MAX_FAILURES; i++) {
+      limiter.recordFailure('s1', `2001:db8:1:2::${(i + 1).toString(16)}`);
+    }
+    expect(limiter.lockedFor('s1', '2001:db8:1:2:ffff::1')).toBeGreaterThan(0);
+    expect(limiter.lockedFor('s1', '2001:db8:1:3::1')).toBe(0);
   });
 });

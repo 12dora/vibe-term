@@ -6,6 +6,7 @@ import {
   loginWithPassword,
   logout,
   meshUrl,
+  openDevicesPage,
   readMeshState,
   signInToNodeFromDevicesPage,
 } from './helpers/mesh-e2e';
@@ -19,10 +20,11 @@ const PASSKEY_NOT_HERE_COPY = /No passkey is registered for this address|此地�
 /**
  * 强路径用例声明的「公网来源」。
  *
- * entry 把来源判成 trusted-local（loopback / 私网 / CGNAT）的登录一律豁免通行密钥二次验证，
- * 而 Playwright 的浏览器正是从 loopback 连过来的。mesh 实例因此以 `VIBETERM_TRUST_PROXY=true` 启动
- * （见 helpers/relay-boot.ts），用例给自己的 context 挂上 `x-forwarded-for` 就能把来源声明成公网，
- * 强制走严格路径。TEST-NET-3（RFC 5737）地址，永远不会撞上真实网段。
+ * entry 把来源判成 trusted-local（socket 是 loopback / 私网 / CGNAT，且不带任何转发头）的登录
+ * 豁免通行密钥二次验证，而 Playwright 的浏览器正是从 loopback 连过来的。mesh 实例因此以
+ * `VIBETERM_TRUST_PROXY=true` 启动（见 helpers/relay-boot.ts），用例给自己的 context 挂上
+ * `x-forwarded-for`：带转发头的请求不再算本机，来源取头里的公网地址，强制走严格路径。
+ * TEST-NET-3（RFC 5737）地址，永远不会撞上真实网段。
  */
 const FORWARDED_PUBLIC_IP = '203.0.113.9';
 
@@ -110,21 +112,22 @@ test('mesh: after a passkey is registered, password login requires the passkey',
 });
 
 /**
- * 来源被 entry 判成 trusted-local 时，通行密钥二次验证整体豁免。
+ * 来源被 entry 判成 trusted-local 时，通行密钥二次验证只在 entry 自己豁免，不会带到远端 node。
  *
- * 这条用例刻意不带 `x-forwarded-for`，也刻意不给这个 context 挂虚拟认证器：浏览器直接从
- * loopback 连 entry，密码登录必须一次过，且全程不能触发任何 WebAuthn 仪式
- * （`navigator.credentials.get` 的调用次数是硬证据）。
+ * 这条用例刻意不带 `x-forwarded-for`，登录 entry 时也不挂虚拟认证器：浏览器直接从 loopback 连
+ * entry，密码登录必须一次过，且全程不能触发任何 WebAuthn 仪式（`navigator.credentials.get`
+ * 的调用次数是硬证据）。
  *
- * 只登 entry 证不了多少事：`/n/<entryNodeId>` 会在本机自重写，走的还是本地那条路。
- * 因此还要按需登录**远端 node**——这条链路是 entry → forwarder → 已认证 peer link →
- * 远端的 `/api/auth/login`，豁免完全依赖入口给转发请求盖上 `x-vibeterm-client-source: local`（兼容旧名 `x-tmex-client-source`）
- * （`forwarder.ts` 的 `filterRequestHeaders`）且目标认这枚章
- * （`client-source.ts` 的 `waivesPasskeySecondFactor`）。任一端回退，远端就会回 `PASSKEY_REQUIRED`，
- * 而这个 context 手上一把凭证都没有，按需登录必然失败。
+ * 「本机」只由这一跳的 socket 决定，不随转发请求跨节点传递：entry → forwarder → peer link →
+ * 远端 `/api/auth/login` 这条链上，远端看到的是一条来自 peer 的请求，不认任何来源章
+ * （入口既不再盖 `x-vibeterm-client-source`，目标也会丢弃带来的同名头）。所以通行密钥复制到远端之后，
+ * 远端的 `/api/auth/mode` 报 `passkeySecondFactor: true`，按需登录远端必须过通行密钥，
+ * 而这个 context 手上一把凭证都没有，登录必然失败。
  */
-test('mesh: a loopback client source waives the passkey second factor', async ({ browser }) => {
-  // 两次登录（entry + 远端 node）加一次复制轮询，90s 的默认档不够宽裕。
+test('mesh: a loopback source waives the passkey on the entry only, not on a remote node', async ({
+  browser,
+}) => {
+  // entry 登录、一次复制轮询、一次被拒的远端登录，90s 的默认档不够宽裕。
   test.setTimeout(180_000);
   const local = await browser.newContext();
   await local.addInitScript(() => {
@@ -155,27 +158,34 @@ test('mesh: a loopback client source waives the passkey second factor', async ({
     expect(await passkeyGetCalls(localPage)).toBe(0);
     expect(await meshNodesStatus(localPage)).toBe(200);
 
-    // 远端 node 的二次验证只有在通行密钥复制过去之后才会真的生效，否则下面那条按需登录
-    // 是空转的（目标名下没有凭证，`checkPasskeySecondFactor` 直接放行）。
+    // 远端 node 的二次验证只有在通行密钥复制过去之后才会真的生效，否则下面的断言是空转的
+    // （目标名下没有凭证，`checkPasskeySecondFactor` 直接放行）。
     await waitForRemotePasskeyReplication(browser);
 
-    // 跨节点按需登录：走 entry → forwarder → peer link → 远端 `/api/auth/login`。
-    await signInToNodeFromDevicesPage(localPage, state.remoteNodeId);
-    expect(await nodeLoggedIn(localPage, state.remoteNodeId)).toBe(true);
-    // 更硬的一条：远端**受保护**接口带着该 node 的会话 cookie 走 peer link 回了 200。
-    expect(await nodeApiStatus(localPage, state.remoteNodeId, '/api/devices')).toBe(200);
-    // 整条链路依旧一次仪式都没有（SPA 内部跳转，计数器跨这一步不会被重置）。
-    expect(await passkeyGetCalls(localPage)).toBe(0);
+    // 同一个 loopback 来源看远端：二次验证生效且没有被豁免。
+    expect(await remoteAuthModeFlag(localPage, state.remoteNodeId, 'passkeySecondFactor')).toBe(
+      true
+    );
+    expect(
+      await remoteAuthModeFlag(localPage, state.remoteNodeId, 'passkeySecondFactorWaived')
+    ).not.toBe(true);
 
-    // 设置 →「多节点互联」：节点表能列出入口机与远端两台，说明这次登录被 mesh 侧接受。
-    await localPage.goto(meshUrl(state, '/settings?tab=nodes'), { waitUntil: 'domcontentloaded' });
-    await expect(localPage.getByTestId('nodes-management')).toBeVisible({ timeout: 60_000 });
-    await expect(localPage.getByTestId(`nodes-row-${state.entryNodeId}`)).toBeVisible({
-      timeout: 60_000,
-    });
-    await expect(localPage.getByTestId(`nodes-row-${state.remoteNodeId}`)).toBeVisible({
-      timeout: 60_000,
-    });
+    // 按需登录远端：服务端回 `PASSKEY_REQUIRED`，前端补一次通行密钥仪式。这个 context 里的认证器
+    // 是空的，仪式必然失败，所以远端始终登不上。entry 那一步已经断言过计数为 0，现在才挂认证器。
+    await addVirtualAuthenticator(localPage);
+    await openDevicesPage(localPage);
+    const manualLogin = localPage.getByTestId(`devices-node-login-${state.remoteNodeId}`);
+    await expect(manualLogin).toBeVisible({ timeout: 60_000 });
+    await manualLogin.getByTestId(`node-login-${state.remoteNodeId}`).click();
+    await expect
+      .poll(
+        async () =>
+          (await passkeyGetCalls(localPage)) > 0 || new URL(localPage.url()).pathname === '/login',
+        { timeout: 60_000, message: '远端没有索要通行密钥' }
+      )
+      .toBe(true);
+    expect(await nodeLoggedIn(localPage, state.remoteNodeId)).toBe(false);
+    expect(await nodeApiStatus(localPage, state.remoteNodeId, '/api/devices')).not.toBe(200);
   } finally {
     await local.close();
   }
@@ -291,9 +301,9 @@ test('mesh: a cancelled passkey check keeps the user on the login page', async (
   }
 });
 
-// 常规改密（不勾「同时移除…」）走 rotate-root-keep：passkey、TOTP 与全部会话都保留，
-// 当前页面不该掉线，登出后原来那把 passkey 仍然能登录。
-test('mesh: a routine password change keeps the passkey and the current session', async () => {
+// 常规改密（不勾「同时移除…」）走 rotate-root-keep：passkey 与 TOTP 保留，服务端撤销全部会话，
+// 页面用新密码静默重登所以不该掉线，登出后原来那把 passkey 仍然能登录。
+test('mesh: a routine password change keeps the passkey and silently re-signs in', async () => {
   await logout(page);
   await loginWithPassword(page, state);
 
@@ -311,7 +321,7 @@ test('mesh: a routine password change keeps the passkey and the current session'
     rotated = true;
     await changePassword(state.password, nextPassword);
 
-    // 会话没被撤销：无需重新登录，侧边栏与通行密钥列表都还在。
+    // 改密撤销了全部会话，页面用内存里的新密码静默重登：无需手动登录，侧边栏与通行密钥列表都还在。
     await expect(page.getByTestId('sidebar')).toBeVisible({ timeout: 30_000 });
     await page.goto(meshUrl(state, '/?panel=security'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('security-passkey-list')).toBeVisible({ timeout: 30_000 });
@@ -356,11 +366,9 @@ async function authModeFlag(target: Page, field: string): Promise<boolean | unde
 /**
  * 等通行密钥复制到远端 node（key log 复制有延迟，超时 20s）。
  *
- * 探测刻意另起一个**公网来源**的 context，而不是复用 loopback 那个：远端 `/api/auth/mode` 的
- * `passkeySecondFactor` 是 `hasPasskeys && !waived`，从 loopback 探时入口会盖上
- * `x-vibeterm-client-source: local`（兼容旧名 `x-tmex-client-source`），字段恒为 false，「还没复制过来」与「已经豁免」分不开。
- * 带上 XFF 入口就不盖章，读到的是远端 key log 的真实状态——这一步于是只证明「复制完成」，
- * 盖章有没有坏留给后面那条按需登录去暴露，两个信号不互相掩盖。
+ * 探测另起一个**公网来源**的 context：远端 `/api/auth/mode` 的 `passkeySecondFactor` 是
+ * `hasPasskeys && !waived`，公网来源恒不豁免，字段为 true 就只意味着「复制完成」。
+ * 调用方随后再从 loopback 来源读同一个字段，证明那边同样没有被豁免。
  *
  * `/n/<id>/api/auth/mode` 属于登录前公开面（`AUTH_LOGIN_PUBLIC_PATHS`），转发也不要求
  * 入口会话，所以这个 context 不用登录任何节点。

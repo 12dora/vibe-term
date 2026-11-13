@@ -4,6 +4,7 @@
 //
 // 列表跨节点汇总，行里带着自己的节点：多节点时多一列点名是哪台，单机时这一列没有信息量，不出。
 
+import { IssuedVia } from '@/components/issued-via';
 import { useNarrowLayout } from '@/components/use-narrow-layout';
 import { Button } from '@vibeterm/ui/button';
 import { Square } from 'lucide-react';
@@ -120,7 +121,14 @@ function ActiveRow({
       className="border-b border-border/60 last:border-0 hover:bg-muted/40"
       data-testid={`share-active-row-${share.id}`}
     >
-      <Td className="max-w-48 truncate">{share.name}</Td>
+      <Td className="max-w-48">
+        <div className="truncate">{share.name}</div>
+        <IssuedVia
+          issuedVia={share.issuedVia}
+          className="block truncate text-muted-foreground"
+          testId={`share-issued-via-${share.id}`}
+        />
+      </Td>
       {showNode && (
         <Td className="max-w-36 truncate" testId={`share-node-${share.id}`} title={share.nodeName}>
           {share.nodeName}

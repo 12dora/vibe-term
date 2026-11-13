@@ -1,9 +1,13 @@
 // 「访问令牌」：表单解析、行内文案与列表 / 表单 / 密钥的静态渲染。
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { ApiError } from '@vibeterm/api-client';
 import type { AccessTokenDto } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import { renderToStaticMarkup } from 'react-dom/server';
+
+installWindowStorage();
+
 import { AccessTokenForm, AccessTokenSecret } from './access-token-create-dialog';
 import {
   emptyTokenDraft,
@@ -14,8 +18,14 @@ import {
   toggleScope,
   tokenErrorText,
 } from './access-token-format';
-import { AccessTokenSectionView } from './access-token-section';
 import type { AccessTokensState } from './use-access-tokens';
+
+const { AccessTokenSectionView } = await import('./access-token-section');
+const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
+
+afterEach(() => {
+  resetMeshNodesStateForTest();
+});
 
 const t = (key: string, options?: Record<string, unknown>) =>
   options ? `${key}${JSON.stringify(options)}` : key;
@@ -39,6 +49,7 @@ function token(patch: Partial<AccessTokenDto> = {}): AccessTokenDto {
     expiresAt: null,
     lastUsedAt: null,
     lastUsedIp: null,
+    issuedVia: 'self',
     ...patch,
   };
 }
@@ -166,6 +177,30 @@ describe('AccessTokenSectionView', () => {
     }
     expect(html).toContain('203.0.113.7');
     expect(html).toContain('data-testid="security-token-revoke-tok-1"');
+  });
+
+  test('本机签发的令牌不显示签发节点', () => {
+    const html = renderToStaticMarkup(
+      <AccessTokenSectionView state={state({ tokens: [token()] })} now={NOW} />
+    );
+    expect(html).not.toContain('security-token-issued-via-tok-1');
+  });
+
+  test('经其他节点签发的令牌点名签发节点', () => {
+    const ISSUER = 'bb'.repeat(16);
+    setMeshNodesStateForTest({
+      entryNodeId: 'aa'.repeat(16),
+      nodes: [{ id: ISSUER, name: 'laptop', online: true }] as never,
+    });
+    const html = renderToStaticMarkup(
+      <AccessTokenSectionView
+        state={state({ tokens: [token({ issuedVia: ISSUER }), token({ id: 'tok-2' })] })}
+        now={NOW}
+      />
+    );
+    expect(html).toContain('data-testid="security-token-issued-via-tok-1"');
+    expect(html).toContain('common.issuedVia');
+    expect(html).not.toContain('security-token-issued-via-tok-2');
   });
 
   test('加载失败显示错误与重试按钮，创建按钮不被永久禁用', () => {

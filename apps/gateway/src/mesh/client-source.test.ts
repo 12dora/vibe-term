@@ -1,11 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  CLIENT_SOURCE_HEADER,
-  CLIENT_SOURCE_LOCAL,
-  isPeerRequest,
-  isTrustedLocalClient,
-  waivesPasskeySecondFactor,
-} from './client-source';
+import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
+import { isPeerRequest, isTrustedLocalClient, waivesPasskeySecondFactor } from './client-source';
 import { MESH_VIA_SELF, setMeshRequestContext } from './mesh-deps';
 
 const ENTRY = 'ab'.repeat(16);
@@ -14,6 +9,7 @@ function makeReq(opts: {
   ip?: string;
   via?: string;
   trustProxy?: boolean;
+  clientIpHeader?: 'x-forwarded-for' | 'x-real-ip' | 'cf-connecting-ip';
   headers?: Record<string, string>;
 }): Request {
   const req = new Request('http://localhost/api/auth/login', { headers: opts.headers });
@@ -21,6 +17,7 @@ function makeReq(opts: {
     via: opts.via ?? MESH_VIA_SELF,
     clientIp: opts.ip,
     trustProxy: opts.trustProxy,
+    clientIpHeader: opts.clientIpHeader,
   });
   return req;
 }
@@ -128,16 +125,32 @@ describe('isTrustedLocalClient', () => {
     ).toBe(false);
   });
 
-  test('loopback socket + XFF private with trustProxy is trusted', () => {
-    expect(
-      isTrustedLocalClient(
-        makeReq({
+  test('forwarded headers never make a request local, even when they claim loopback / LAN', () => {
+    for (const clientIpHeader of ['x-forwarded-for', 'x-real-ip', 'cf-connecting-ip'] as const) {
+      for (const claim of ['127.0.0.1', '192.168.1.5', '::1']) {
+        const req = makeReq({
           ip: '127.0.0.1',
           trustProxy: true,
-          headers: { 'x-forwarded-for': '192.168.1.5' },
-        })
-      )
-    ).toBe(true);
+          clientIpHeader,
+          headers: { [clientIpHeader]: claim },
+        });
+        expect(isTrustedLocalClient(req)).toBe(false);
+        expect(waivesPasskeySecondFactor(req)).toBe(false);
+      }
+    }
+    expect(
+      isTrustedLocalClient(makeReq({ ip: '127.0.0.1', headers: { forwarded: 'for=127.0.0.1' } }))
+    ).toBe(false);
+  });
+
+  test('X-Real-IP: 127.0.0.1 behind a proxy that rewrote XFF is not local', () => {
+    const req = makeReq({
+      ip: '127.0.0.1',
+      trustProxy: true,
+      headers: { 'x-real-ip': '127.0.0.1', 'x-forwarded-for': '198.51.100.7' },
+    });
+    expect(isTrustedLocalClient(req)).toBe(false);
+    expect(waivesPasskeySecondFactor(req)).toBe(false);
   });
 
   test('loopback socket + XFF public with trustProxy is not trusted', () => {
@@ -185,15 +198,12 @@ describe('isTrustedLocalClient', () => {
 });
 
 describe('waivesPasskeySecondFactor', () => {
-  test('peer request with header is waived', () => {
-    const req = makeReq({
-      via: ENTRY,
-      ip: `peer:${ENTRY}`,
-      headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
-    });
-    expect(isPeerRequest(req)).toBe(true);
-    expect(isTrustedLocalClient(req)).toBe(false);
-    expect(waivesPasskeySecondFactor(req)).toBe(true);
+  test('peer request asserting client-source local is not waived', () => {
+    for (const name of [CLIENT_SOURCE_HEADER.name, CLIENT_SOURCE_HEADER.legacy]) {
+      const req = makeReq({ via: ENTRY, ip: `peer:${ENTRY}`, headers: { [name]: 'local' } });
+      expect(isPeerRequest(req)).toBe(true);
+      expect(waivesPasskeySecondFactor(req)).toBe(false);
+    }
   });
 
   test('peer request without header is not waived', () => {
@@ -204,7 +214,7 @@ describe('waivesPasskeySecondFactor', () => {
   test('direct request with header and public ip is not waived', () => {
     const req = makeReq({
       ip: '203.0.113.10',
-      headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
+      headers: { [CLIENT_SOURCE_HEADER.name]: 'local' },
     });
     expect(isPeerRequest(req)).toBe(false);
     expect(waivesPasskeySecondFactor(req)).toBe(false);

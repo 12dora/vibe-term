@@ -8,7 +8,7 @@ export const RELAY_LIMITS_MAX_BANDWIDTH = 10 * 1024 * 1024 * 1024;
 export const RELAY_LIMITS_MAX_TENANTS = 65_536;
 
 export type RelayLimits = {
-  /** 最多容纳的租户数；`null` 不限。 */
+  /** 最多容纳的租户数；`null` = 跟随默认（`effectiveMaxTenants`），要放开就显式设一个大值。 */
   maxTenants: number | null;
   /** 全中继转发速率上限（字节/秒）；`null` 不限。 */
   totalBandwidthBytesPerSec: number | null;
@@ -51,6 +51,32 @@ export function normalizeRelayLimits(value: unknown): RelayLimits | null {
   };
 }
 
+/** 实际生效的租户上限：未设置时用运行时默认值。 */
+export function effectiveMaxTenants(limits: RelayLimits, defaultMaxTenants: number): number {
+  return limits.maxTenants ?? defaultMaxTenants;
+}
+
+/** 启动时的配置告警：未设接入口令；存量租户已超默认上限而运营者没显式设上限。 */
+export function relayStartupWarnings(input: {
+  hasPassword: boolean;
+  limits: RelayLimits;
+  tenantCount: number;
+  defaultMaxTenants: number;
+}): string[] {
+  const out: string[] = [];
+  if (!input.hasPassword) {
+    out.push(
+      '[relay] warning: no relay access password is set; anyone can create tenants (up to the tenant limit). Set one with `vibeterm relay passwd`.'
+    );
+  }
+  if (input.limits.maxTenants === null && input.tenantCount > input.defaultMaxTenants) {
+    out.push(
+      `[relay] warning: ${input.tenantCount} tenants exceed the default tenant limit ${input.defaultMaxTenants} and no max_tenants is configured; new tenants are refused until max_tenants (or VIBETERM_RELAY_MAX_TENANTS) is raised.`
+    );
+  }
+  return out;
+}
+
 export function defaultRelayLimits(): RelayLimits {
   return { ...RELAY_DEFAULT_LIMITS };
 }
@@ -63,10 +89,10 @@ export type RelayLimitTotals = {
   fairShare: boolean;
 };
 
-export function relayLimitTotals(limits: RelayLimits): RelayLimitTotals {
+export function relayLimitTotals(limits: RelayLimits, defaultMaxTenants: number): RelayLimitTotals {
   return {
     bandwidthLimitBytesPerSec: limits.totalBandwidthBytesPerSec,
-    maxTenants: limits.maxTenants,
+    maxTenants: effectiveMaxTenants(limits, defaultMaxTenants),
     fairShare: limits.fairShare,
   };
 }

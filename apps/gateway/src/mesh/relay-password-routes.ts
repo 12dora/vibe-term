@@ -64,7 +64,7 @@ export async function handleMeshRelayPasswordGet(
 type RotateBody = {
   url: string;
   current?: string;
-  next: string | null;
+  next: string;
   mode: 'keep' | 'kick';
 };
 
@@ -142,7 +142,7 @@ async function callRelayPasswordRotate(input: {
   tenantId: string;
   token: Uint8Array;
   current: string;
-  next: string | null;
+  next: string;
   mode: 'keep' | 'kick';
   fetchImpl?: typeof fetch;
   dial?: RelayDialContext;

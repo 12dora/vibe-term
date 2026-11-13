@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { PART_TTL_MS, rangesSidecarPath } from '@vibeterm/transfer/node';
 import { getDeviceById } from '../db';
 import { getFileRoots } from '../db/file-roots';
-import { activeStagingDirs, isPartClaimed } from './receiver';
+import { activeStagingDirs, isPartClaimed, transferStagingRoot } from './receiver';
 
 /** 只认本模块自己造的名字：`<目标名>.part-<16 位十六进制>`。 */
 const PART_NAME = /\.part-[0-9a-f]{16}$/;
@@ -92,24 +92,26 @@ async function sweepLocalRoots(now: number, ttlMs: number): Promise<number> {
 /** ssh 目标的本机暂存目录：整目录按 TTL 回收，正在被会话使用的跳过。 */
 function sweepStagingDirs(now: number, ttlMs: number): number {
   const live = activeStagingDirs();
-  const base = tmpdir();
-  let names: string[];
-  try {
-    names = readdirSync(base);
-  } catch {
-    return 0;
-  }
+  const bases = [...new Set([transferStagingRoot(), tmpdir()])];
   let removed = 0;
-  for (const name of names) {
-    if (!STAGING_NAME.test(name)) continue;
-    const full = join(base, name);
-    if (live.has(full)) continue;
-    if (!expired(full, now, ttlMs)) continue;
+  for (const base of bases) {
+    let names: string[];
     try {
-      rmSync(full, { recursive: true, force: true });
-      removed += 1;
+      names = readdirSync(base);
     } catch {
-      // best-effort
+      continue;
+    }
+    for (const name of names) {
+      if (!STAGING_NAME.test(name)) continue;
+      const full = join(base, name);
+      if (live.has(full)) continue;
+      if (!expired(full, now, ttlMs)) continue;
+      try {
+        rmSync(full, { recursive: true, force: true });
+        removed += 1;
+      } catch {
+        // best-effort
+      }
     }
   }
   return removed;

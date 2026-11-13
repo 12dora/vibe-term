@@ -17,7 +17,8 @@ export type PortMapErrorCode =
   | 'not_found'
   | 'target_unreachable'
   | 'export_missing'
-  | 'limit_reached';
+  | 'limit_reached'
+  | 'target_forbidden';
 
 export interface PortMapDto {
   id: string;

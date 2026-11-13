@@ -168,6 +168,10 @@ describe('parseDeviceUpdateFields', () => {
     { name: 'password 非字符串', body: { password: 1 } },
     { name: 'privateKey 非字符串', body: { privateKey: 1 } },
     { name: 'privateKeyPassphrase 非字符串', body: { privateKeyPassphrase: 1 } },
+    { name: 'host 前导短横线', body: { host: '-oProxyCommand=true' } },
+    { name: 'host 含空白', body: { host: 'evil host' } },
+    { name: 'username 前导短横线', body: { username: '-oBatchMode=no' } },
+    { name: 'sshConfigRef 前导短横线', body: { sshConfigRef: '-F/tmp/ssh' } },
   ];
 
   for (const { name, body } of invalidCases) {

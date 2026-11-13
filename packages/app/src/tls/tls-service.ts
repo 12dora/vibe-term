@@ -7,7 +7,6 @@ import type {
   TlsMode,
   TlsPrivateMaterial,
 } from '../../../../apps/gateway/src/tls/types';
-import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
@@ -36,6 +35,7 @@ import { DnspodDnsClient } from './dnspod-dns';
 import { TlsApiError } from './errors';
 import type { HttpsListenerConfig, HttpsListenerState } from './https-listener';
 
+import { readTrustProxy, writeTrustProxy } from './tls-trust-proxy';
 import {
   validateBindHost,
   validateDomain,
@@ -701,26 +701,4 @@ export async function rotateSelfSignedCa(
     certNotAfter: parsed.notAfter,
   });
   return { fingerprint: await spkiFingerprint(ca.certPem) };
-}
-
-async function readTrustProxy(envPath: string): Promise<boolean | null> {
-  try {
-    const raw = (await readEnvFile(envPath)).VIBETERM_TRUST_PROXY;
-    if (raw === undefined) return null;
-    const normalized = raw.trim().toLowerCase();
-    return normalized === '1' || normalized === 'true' || normalized === 'yes';
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
-  }
-}
-
-async function writeTrustProxy(envPath: string, trustProxy: boolean): Promise<void> {
-  let existing: Record<string, string> = {};
-  try {
-    existing = await readEnvFile(envPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  await writeEnvFile(envPath, { ...existing, VIBETERM_TRUST_PROXY: trustProxy ? 'true' : 'false' });
 }

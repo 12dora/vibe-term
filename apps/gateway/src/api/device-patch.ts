@@ -1,4 +1,5 @@
 import type { AuthMode, Device } from '@vibeterm/shared';
+import { validateSshIdentityFields } from '../files/ssh-target';
 import { t } from '../i18n';
 import {
   type ConfigFieldSpec,
@@ -54,6 +55,16 @@ function parsePlainString(raw: unknown): FieldParseResult<string> {
   return { ok: true, value: raw };
 }
 
+function parseSshIdentityString(
+  kind: 'host' | 'username' | 'sshConfigRef',
+  raw: unknown
+): FieldParseResult<string> {
+  if (typeof raw !== 'string') return { ok: false, error: invalidRequest() };
+  const checked = validateSshIdentityFields({ [kind]: raw });
+  if (!checked.ok) return { ok: false, error: invalidRequest() };
+  return { ok: true, value: raw };
+}
+
 function parseWorkingDir(raw: unknown): FieldParseResult<string | undefined> {
   if (typeof raw !== 'string') return { ok: false, error: invalidRequest() };
   return { ok: true, value: raw.trim() || undefined };
@@ -61,10 +72,10 @@ function parseWorkingDir(raw: unknown): FieldParseResult<string | undefined> {
 
 const DEVICE_UPDATE_FIELDS: ConfigFieldSpec<unknown>[] = [
   { name: 'name', parse: parsePlainString },
-  { name: 'host', parse: parsePlainString },
+  { name: 'host', parse: (raw) => parseSshIdentityString('host', raw) },
   { name: 'port', parse: (raw) => parseIntegerField(raw, invalidRequest()) },
-  { name: 'username', parse: parsePlainString },
-  { name: 'sshConfigRef', parse: parsePlainString },
+  { name: 'username', parse: (raw) => parseSshIdentityString('username', raw) },
+  { name: 'sshConfigRef', parse: (raw) => parseSshIdentityString('sshConfigRef', raw) },
   { name: 'session', parse: parsePlainString },
   { name: 'defaultWorkingDir', parse: parseWorkingDir },
   { name: 'authMode', parse: (raw) => parseEnumField(raw, AUTH_MODES, invalidRequest()) },

@@ -3,6 +3,8 @@
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
@@ -17,6 +19,7 @@ mock.module('@/auth/session-login', () => ({
   resumeSessionAfterPasswordChange: resumed,
 }));
 
+const pending = await import('@/node/relay-meta-key-pending');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const panelModule = await import('./account-security-panel');
 const AccountSecurityPanel = panelModule.default;
@@ -24,6 +27,7 @@ const {
   PasswordSection,
   finishPasswordChange,
   passwordChangeFollowUp,
+  passwordInputError,
   securityActionErrorText,
   securityPanelView,
   withRelayAckNotice,
@@ -138,18 +142,30 @@ describe('AccountSecurityPanel', () => {
     );
   });
 
+  test('改密前就说明所有设备需重新登录、令牌 / 分享 / 授权会被撤销', () => {
+    const html = renderPasswordSection();
+    expect(html).toContain('data-testid="password-signout-hint"');
+    expect(html).toContain('auth.security.changePasswordHint');
+  });
+
+  test('新密码旁给出一行生成建议', () => {
+    const html = renderPasswordSection();
+    expect(html).toContain('data-testid="security-new-password-hint"');
+    expect(html).toContain('auth.security.newPasswordHint');
+  });
+
   test('动作反馈来自面板级 state，按 section 摆回对应区块', () => {
     const ok: SecurityActionFeedback = {
       section: 'password',
       tone: 'ok',
-      text: 'auth.security.changePasswordKeepDone',
+      text: 'auth.security.changePasswordDone',
     };
     const html = renderPasswordSection({ feedback: ok });
     expect(html).toContain('data-testid="security-ok"');
-    expect(html).toContain('auth.security.changePasswordKeepDone');
+    expect(html).toContain('auth.security.changePasswordDone');
 
     const notice = renderPasswordSection({
-      feedback: { section: 'password', tone: 'notice', text: 'auth.security.sessionResumeFailed' },
+      feedback: { section: 'password', tone: 'notice', text: 'auth.security.changePasswordSignIn' },
     });
     expect(notice).toContain('data-testid="security-notice"');
 
@@ -190,8 +206,43 @@ describe('securityPanelView', () => {
   });
 });
 
+describe('passwordInputError', () => {
+  const t = (key: string) => key;
+  const check = (
+    newPassword: string,
+    over: { username?: string | null; confirm?: string; oldPassword?: string } = {}
+  ) =>
+    passwordInputError(
+      t,
+      {
+        oldPassword: over.oldPassword ?? 'old',
+        newPassword,
+        confirm: over.confirm ?? newPassword,
+      },
+      over.username === undefined ? 'alice' : over.username
+    );
+
+  test('空值与两次不一致先于强度检查', () => {
+    expect(check('x', { oldPassword: '' })).toBe('auth.security.passwordRequired');
+    expect(check('')).toBe('auth.security.passwordRequired');
+    expect(check('xK9#mP2$vL7@qR4n', { confirm: 'other' })).toBe('auth.security.passwordMismatch');
+  });
+
+  test('过短、过于简单、含用户名都拒绝', () => {
+    expect(check('new-secret')).toBe('auth.security.passwordTooShort');
+    expect(check('123456789012')).toBe('auth.security.passwordTooSimple');
+    expect(check('xK9#alice#mP2$vL')).toBe('auth.security.passwordTooSimple');
+    expect(check('password1234', { username: null })).toBe('auth.security.passwordTooSimple');
+  });
+
+  test('足够强的密码放行，用户名缺失时不做包含检查', () => {
+    expect(check('xK9#mP2$vL7@qR4n')).toBeNull();
+    expect(check('xK9#alice#mP2$vL', { username: null })).toBeNull();
+  });
+});
+
 describe('passwordChangeFollowUp', () => {
-  test('常规改密不清会话：拿新密码重建 delegation 再登录一次 entry', () => {
+  test('改密撤销了全部会话：拿内存里的新密码重建 delegation 再登录一次 entry', () => {
     expect(passwordChangeFollowUp({ fullReset: false, totpEnabled: false, totpCode: '' })).toBe(
       'resume-session'
     );
@@ -200,21 +251,21 @@ describe('passwordChangeFollowUp', () => {
     ).toBe('resume-session');
   });
 
-  test('开了 TOTP 却没给验证码：跳过重新登录，保留手上这份仍然有效的会话', () => {
+  test('开了 TOTP 却没给验证码：静默登录做不了，直接回登录页', () => {
     expect(passwordChangeFollowUp({ fullReset: false, totpEnabled: true, totpCode: '' })).toBe(
-      'keep-session'
+      'sign-in'
     );
     expect(passwordChangeFollowUp({ fullReset: false, totpEnabled: true, totpCode: '12' })).toBe(
-      'keep-session'
+      'sign-in'
     );
   });
 
-  test('全量重置：服务端撤销了全部会话，本地必须清掉', () => {
+  test('全量重置同样静默接回：TOTP 已被清掉，不再要验证码', () => {
     expect(passwordChangeFollowUp({ fullReset: true, totpEnabled: false, totpCode: '' })).toBe(
-      'clear-session'
+      'resume-session'
     );
-    expect(passwordChangeFollowUp({ fullReset: true, totpEnabled: true, totpCode: '123456' })).toBe(
-      'clear-session'
+    expect(passwordChangeFollowUp({ fullReset: true, totpEnabled: true, totpCode: '' })).toBe(
+      'resume-session'
     );
   });
 });
@@ -272,6 +323,8 @@ describe('finishPasswordChange', () => {
 
   type FinishInput = Parameters<typeof finishPasswordChange>[0];
 
+  const toLogin = mock(() => undefined);
+
   function finish(overrides: Partial<FinishInput> = {}) {
     return finishPasswordChange({
       api: modeApi([SIGNED.nextRootEpoch]).api,
@@ -282,6 +335,7 @@ describe('finishPasswordChange', () => {
       totpEnabled: false,
       signed: SIGNED,
       follow: 'resume-session',
+      toLogin,
       t,
       // 单测不等真的 200ms 轮询间隔。
       sleep: () => Promise.resolve(),
@@ -301,43 +355,41 @@ describe('finishPasswordChange', () => {
 
   beforeEach(() => {
     cleared.mockClear();
+    toLogin.mockClear();
     resumed.mockClear();
     resumed.mockImplementation(async () => ({ ok: true }));
   });
 
-  test('常规改密成功后不清会话钥，只用新密码重新建立一次会话', async () => {
+  test('改密成功后静默接回会话：用新密码重建一次，不清会话钥、不回登录页', async () => {
     const feedback = await finish();
     expect(cleared).not.toHaveBeenCalled();
+    expect(toLogin).not.toHaveBeenCalled();
     expect(resumed).toHaveBeenCalledTimes(1);
-    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordKeepDone' });
+    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordDone' });
   });
 
-  test('重新登录没成功：保留旧会话，只给一行提示', async () => {
+  test('重新登录没成功：旧会话已被服务端撤销，清掉本地那份并回登录页', async () => {
     resumed.mockImplementation(async () => ({ ok: false, code: 'BAD_SIGNATURE' }));
     const feedback = await finish();
-    expect(cleared).not.toHaveBeenCalled();
-    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
+    expect(cleared).toHaveBeenCalledTimes(1);
+    expect(toLogin).toHaveBeenCalledTimes(1);
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.changePasswordSignIn' });
   });
 
-  test('重新登录过程中抛异常也只当作没接上，不报成改密失败', async () => {
+  test('重新登录过程中抛异常也只当作没接上：同样清会话回登录页，不报成改密失败', async () => {
     resumed.mockImplementation(() => Promise.reject(new Error('argon2 out of memory')));
     const feedback = await finish();
-    expect(cleared).not.toHaveBeenCalled();
-    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
-  });
-
-  test('跳过重新登录时既不清会话也不发请求', async () => {
-    const feedback = await finish({ follow: 'keep-session' });
-    expect(cleared).not.toHaveBeenCalled();
-    expect(resumed).not.toHaveBeenCalled();
-    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeSkipped' });
-  });
-
-  test('全量重置后清掉会话钥（含 IndexedDB 那份）', async () => {
-    const feedback = await finish({ follow: 'clear-session' });
     expect(cleared).toHaveBeenCalledTimes(1);
+    expect(toLogin).toHaveBeenCalledTimes(1);
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.changePasswordSignIn' });
+  });
+
+  test('没给验证码无从静默登录：不发请求，清会话回登录页', async () => {
+    const feedback = await finish({ follow: 'sign-in' });
     expect(resumed).not.toHaveBeenCalled();
-    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordDone' });
+    expect(cleared).toHaveBeenCalledTimes(1);
+    expect(toLogin).toHaveBeenCalledTimes(1);
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.changePasswordSignIn' });
   });
 
   test('mode 先给旧 epoch：poll 到新 epoch 后按服务端那份参数重建', async () => {
@@ -346,7 +398,7 @@ describe('finishPasswordChange', () => {
     expect(state.count).toBe(3);
     expect(resumedArgs().kdfParams).toEqual(SERVER_KDF);
     expect(resumedArgs().rootEpoch).toBe(SIGNED.nextRootEpoch);
-    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordKeepDone' });
+    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordDone' });
   });
 
   test('mode 一直停在旧 epoch：最多问 3 次，然后回落到签进记录的新参数', async () => {
@@ -364,7 +416,7 @@ describe('finishPasswordChange', () => {
     } as unknown as AuthApi;
     const feedback = await finish({ api });
     expect(resumedArgs().kdfParams).toEqual(SIGNED.newKdfParams);
-    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordKeepDone' });
+    expect(feedback).toEqual({ tone: 'ok', text: 'auth.security.changePasswordDone' });
   });
 
   test('开了 TOTP：验证码原样转给重新登录，mode 没追上也知道还开着 TOTP', async () => {
@@ -374,11 +426,142 @@ describe('finishPasswordChange', () => {
     expect(resumedArgs().hasTotp).toBe(true);
   });
 
-  test('验证码不对：重新登录被拒，旧会话保留，只给一行提示', async () => {
+  test('验证码不对：重新登录被拒，清会话回登录页重新输入', async () => {
     resumed.mockImplementation(async () => ({ ok: false, code: 'TOTP_INVALID' }));
     const feedback = await finish({ totpEnabled: true, totpCode: '000000' });
-    expect(cleared).not.toHaveBeenCalled();
-    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
+    expect(cleared).toHaveBeenCalledTimes(1);
+    expect(toLogin).toHaveBeenCalledTimes(1);
+    expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.changePasswordSignIn' });
+  });
+});
+
+describe('finishPasswordChange：重新登录后还中继欠账', () => {
+  const CHEAP_SIGNED = {
+    nextRootEpoch: 1,
+    newKdfParams: {
+      salt: 'BBBBBBBBBBBBBBBBBBBBBB',
+      memory_kib: 64,
+      iterations: 1,
+      parallelism: 1,
+    },
+  };
+  const QUEUED = { type: 'meta-key' as const, bytes: 'YWJj', sig: 'ZGVm' };
+
+  function relayFixture(options: { appendResult?: unknown; uploadFails?: boolean } = {}) {
+    const appended: { bytes: string; sig: string }[] = [];
+    const uploads: { root_epoch: number }[] = [];
+    const api = {
+      getMode: () =>
+        Promise.resolve({
+          ...MESH_MODE,
+          rootEpoch: CHEAP_SIGNED.nextRootEpoch,
+          kdfParams: CHEAP_SIGNED.newKdfParams,
+        }),
+      keyLogHead: () =>
+        Promise.resolve({
+          seq: 6,
+          hash: encodeBase64url(new Uint8Array(32).fill(7)),
+          rootEpoch: CHEAP_SIGNED.nextRootEpoch,
+        }),
+      appendKeyLog: (body: { bytes: string; sig: string }) => {
+        appended.push(body);
+        return Promise.resolve(options.appendResult ?? { ok: true, hubAck: true });
+      },
+    } as unknown as AuthApi;
+    const relayApi = {
+      joinMaterial: () =>
+        Promise.resolve({
+          logKey: encodeBase64url(new Uint8Array(32).fill(0x11)),
+          relays: [
+            {
+              url: 'https://r.example',
+              tenantId: 'ab'.repeat(16),
+              token: encodeBase64url(new Uint8Array(32).fill(0x22)),
+            },
+          ],
+        }),
+      uploadPack: (body: { root_epoch: number }) => {
+        if (options.uploadFails) return Promise.reject(new Error('offline'));
+        uploads.push(body);
+        return Promise.resolve({ ok: true });
+      },
+    } as unknown as RelayTenantApi;
+    return { api, relayApi, appended, uploads };
+  }
+
+  function finishRelay(fixture: ReturnType<typeof relayFixture>) {
+    return finishPasswordChange({
+      api: fixture.api,
+      uid: 'user-1',
+      nodeId: MESH_MODE.nodeId,
+      password: 'new-secret-password',
+      totpCode: '',
+      totpEnabled: false,
+      signed: CHEAP_SIGNED,
+      follow: 'resume-session',
+      relay: { relayApi: fixture.relayApi },
+      toLogin: () => undefined,
+      t,
+      sleep: () => Promise.resolve(),
+    });
+  }
+
+  beforeEach(() => {
+    cleared.mockClear();
+    resumed.mockClear();
+    resumed.mockImplementation(async () => ({ ok: true }));
+    pending.clearPendingMetaKeysForTest();
+    pending.clearRelayPackDebtForTest();
+    pending.rememberPendingMetaKey({
+      id: 'rotate-root',
+      reason: 'rotateRoot',
+      op: { op: 'rotate' },
+      record: QUEUED,
+    });
+    pending.rememberRelayPackDebt();
+  });
+
+  test('会话接回后立刻送预签的 meta-key、再按新 epoch 重封密封包，欠账全部销掉', async () => {
+    const fixture = relayFixture();
+    const feedback = await finishRelay(fixture);
+    expect(fixture.appended).toEqual([{ bytes: QUEUED.bytes, sig: QUEUED.sig }]);
+    expect(fixture.uploads).toHaveLength(1);
+    expect(fixture.uploads[0].root_epoch).toBe(CHEAP_SIGNED.nextRootEpoch);
+    expect(pending.listPendingMetaKeys()).toHaveLength(0);
+    expect(pending.relayPackDebt()).toBe(false);
+    expect(feedback).toEqual({
+      tone: 'ok',
+      text: 'auth.security.changePasswordDone',
+      metaKey: { ok: true },
+    });
+  });
+
+  test('密封包没送上去：meta-key 照样送出，密封包欠账留着等节点页重试', async () => {
+    const fixture = relayFixture({ uploadFails: true });
+    const feedback = await finishRelay(fixture);
+    expect(fixture.appended).toHaveLength(1);
+    expect(pending.listPendingMetaKeys()).toHaveLength(0);
+    expect(pending.relayPackDebt()).toBe(true);
+    expect(feedback.metaKey).toEqual({ ok: true });
+  });
+
+  test('meta-key 被拒：欠账与失败结论都留着，密封包仍然照常重封', async () => {
+    const fixture = relayFixture({ appendResult: { ok: false, code: 'seq_gap' } });
+    const feedback = await finishRelay(fixture);
+    expect(feedback.metaKey).toEqual({ ok: false, code: 'seq_gap' });
+    expect(pending.listPendingMetaKeys()).toHaveLength(1);
+    expect(fixture.uploads).toHaveLength(1);
+    expect(pending.relayPackDebt()).toBe(false);
+  });
+
+  test('没接回会话：一个中继请求都不发，欠账原样留着', async () => {
+    resumed.mockImplementation(async () => ({ ok: false, code: 'BAD_SIGNATURE' }));
+    const fixture = relayFixture();
+    await finishRelay(fixture);
+    expect(fixture.appended).toHaveLength(0);
+    expect(fixture.uploads).toHaveLength(0);
+    expect(pending.listPendingMetaKeys()).toHaveLength(1);
+    expect(pending.relayPackDebt()).toBe(true);
   });
 });
 

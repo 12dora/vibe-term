@@ -12,6 +12,8 @@ export type TurnServerOptions = {
   maxAllocationsPerUser?: number;
   maxLifetimeSec?: number;
   deniedPeerCidrs?: readonly string[];
+  /** 缺省 true：拒绝中继自身外网 IP、监听地址与本机网卡地址作为 peer。 */
+  denySelfAddresses?: boolean;
   bytesPerSecPerAllocation?: number;
   log?: (line: string) => void;
   now?: () => number;
@@ -41,7 +43,7 @@ export type TurnServer = {
   start(): Promise<{ port: number }>;
   stop(): Promise<void>;
   snapshot(): TurnServerStats;
-  /** 已有 allocation 保留 relay 端口；之后的 Allocate 使用新的 XOR-RELAYED-ADDRESS。 */
+  /** 已有 allocation 保留 relay 端口；之后的 Allocate 使用新的 XOR-RELAYED-ADDRESS。每次调用都重算本机拒绝集。 */
   setExternalIp(ip: string): void;
 };
 export { createTurnServer } from './turn-server';

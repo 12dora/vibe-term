@@ -164,6 +164,38 @@ describe('resolveFileRoot', () => {
     expect(virtualHomeRootForList()).toBeNull();
   });
 
+  test('令牌调用方不能解析合成 home-root / fs-root，配置根照旧可用', () => {
+    const deviceId = seedDevice('local');
+    expect(resolveFileRoot(VIRTUAL_FS_ROOT_ID).ok).toBe(true);
+    expect(resolveFileRoot(VIRTUAL_FS_ROOT_ID, { tokenPrincipal: true })).toEqual({
+      ok: false,
+      code: 'root_not_found',
+    });
+    expect(resolveFileRoot(VIRTUAL_HOME_ROOT_ID, { tokenPrincipal: true })).toEqual({
+      ok: false,
+      code: 'root_not_found',
+    });
+    const path = tempDir();
+    const created = createFileRoot({ deviceId, path });
+    const resolved = resolveFileRoot(created.id, { tokenPrincipal: true });
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.root).toMatchObject({ id: created.id, path });
+    expect(resolveFileRoot(VIRTUAL_HOME_ROOT_ID).ok).toBe(true);
+  });
+
+  test('令牌调用方即使用户根遮蔽 home 也不能走 home-root id', () => {
+    const deviceId = seedDevice('local');
+    const homePath = join(tempDir(), 'home');
+    mkdirSync(homePath);
+    const created = createFileRoot({ deviceId, path: homePath });
+    expect(resolveFileRoot(VIRTUAL_HOME_ROOT_ID).ok).toBe(true);
+    expect(resolveFileRoot(VIRTUAL_HOME_ROOT_ID, { tokenPrincipal: true })).toEqual({
+      ok: false,
+      code: 'root_not_found',
+    });
+    expect(resolveFileRoot(created.id, { tokenPrincipal: true }).ok).toBe(true);
+  });
+
   test('本机 list/stat/push 不 spawn rsync', async () => {
     const deviceId = seedDevice('local');
     const dir = tempDir();

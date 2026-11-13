@@ -8,6 +8,7 @@ import {
 } from '@vibeterm/shared';
 import { AccessTokenLimitError, getAccessTokenService } from '../auth/access-tokens';
 import { loginRecordIp } from '../auth/login-records-meta';
+import { getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestDispatchContext } from '../mesh/types';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
@@ -86,7 +87,10 @@ async function handleCreate(req: Request): Promise<Response> {
   const parsed = body ? parseCreateRequest(body) : null;
   if (!parsed) return fail('invalid_body', 400, 'invalid access token request');
   try {
-    return json(getAccessTokenService().create(uid, parsed, clientIp(req)), 201);
+    return json(
+      getAccessTokenService().create(uid, parsed, clientIp(req), getMeshRequestContext(req).via),
+      201
+    );
   } catch (err) {
     if (err instanceof AccessTokenLimitError) {
       return fail('token_limit', 409, 'too many active access tokens');

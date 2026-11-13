@@ -3,7 +3,7 @@
 //
 // 单独成文件而不是并进 `mesh-nodes.ts`：后者已经顶着文件行数门禁的存量上限（只降不升）。
 
-import { SELF_NODE_ID } from '@vibeterm/api-client';
+import { SELF_NODE_ID, isSelfNode } from '@vibeterm/api-client';
 import { getMeshNodesState } from './mesh-nodes';
 
 /**
@@ -15,4 +15,10 @@ export function resolveMeshNodeName(nodeId: string): string | null {
   const target = nodeId === SELF_NODE_ID ? entryNodeId : nodeId;
   if (!target) return null;
   return nodes.find((node) => node.id === target)?.name.trim() || null;
+}
+
+/** 令牌 / 分享的签发入口节点名：本机签发返回 null（不必点名）；目录里查不到时退回编号前缀。 */
+export function issuerNodeName(issuedVia: string): string | null {
+  if (isSelfNode(issuedVia)) return null;
+  return resolveMeshNodeName(issuedVia) ?? issuedVia.slice(0, 8);
 }

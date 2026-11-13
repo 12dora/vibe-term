@@ -315,4 +315,38 @@ describe('user commands', () => {
     ).rejects.toThrow(/already exists/);
     expect(auth.userStore.getByUsername('alice')).toBeTruthy();
   });
+
+  test('user add refuses a weak account password before creating anything', async () => {
+    const auth = await openUserAuth();
+    authHandles.push(auth);
+    await expect(
+      runUserAdd(parsed, 'alice', { auth, password: 'short', log: () => undefined })
+    ).rejects.toThrow(t('password.tooShort'));
+    for (const password of ['123456789012', 'password1234', 'x-alice-k9Q2vL7']) {
+      await expect(
+        runUserAdd(parsed, 'alice', { auth, password, log: () => undefined })
+      ).rejects.toThrow(t('password.tooSimple'));
+    }
+    expect(auth.userStore.getByUsername('alice')).toBeNull();
+  });
+
+  test('user passwd refuses a weak new password and leaves the root untouched', async () => {
+    const auth = await openUserAuth();
+    authHandles.push(auth);
+    await runUserAdd(parsed, 'bob', { auth, password: 'old-pass-word', log: () => undefined });
+    const before = must(auth.userStore.getByUsername('bob'), 'bob');
+    for (const newPassword of ['another', 'abcdefghijkl', 'bob-k9Q2vL7xT']) {
+      await expect(
+        runUserPasswd(parsed, 'bob', {
+          auth,
+          oldPassword: 'old-pass-word',
+          newPassword,
+          log: () => undefined,
+        })
+      ).rejects.toThrow(/at least 12|too easy/);
+    }
+    const after = must(auth.userStore.getByUsername('bob'), 'bob after');
+    expect(after.rootEpoch).toBe(before.rootEpoch);
+    expect(auth.keyLogStore.list(before.id).length).toBe(2);
+  });
 });

@@ -9,12 +9,16 @@ import {
   relaySeqToWire,
 } from '@vibeterm/shared/relay';
 import type { AuthDb } from '../auth/types';
+import { AppendRejected, attributeAppend, rootOpOf } from './relay-key-log-attribution';
 import { trimRelayKeyLogPage } from './relay-key-log-page';
-import type { RelayKeyLogStore } from './relay-key-log-store';
+import { type RelayKeyLogAttribution, RelayKeyLogStore } from './relay-key-log-store';
 import { type RelayMemberResult, verifyRelayMemberProof } from './relay-member';
 import type { RelayTenantStore } from './relay-tenant-store';
-import { relayTokenHashAccepted } from './relay-token-grace';
-import type { RelayTenantRecord } from './types';
+import {
+  RELAY_TENANT_LOG_MAX_BYTES,
+  RELAY_TENANT_LOG_MAX_ROWS,
+  type RelayTenantRecord,
+} from './types';
 
 export type RelayAppendOutcome =
   | {
@@ -28,13 +32,46 @@ export type RelayAppendOutcome =
       rootRotated: boolean;
       record: RelayKeyLogRecordWire;
     }
-  | { ok: false; error: string; head: bigint };
+  | { ok: false; error: RelayAppendError; head: bigint };
+
+export type RelayAppendError =
+  | 'BAD_SEQ'
+  | typeof RELAY_KEYLOG_SEQ_MISMATCH
+  | 'TENANT_KICKED'
+  | 'UNAUTHORIZED'
+  | 'NODE_NOT_ADMITTED'
+  | 'APPEND_UNATTRIBUTED'
+  | 'TENANT_LOG_FULL'
+  | 'APPEND_FAILED';
+
+/**
+ * 追加的写入者：
+ * - `uplink`：已认证的 uplink 链路，写入者就是链路上的节点；
+ * - `http`：凭租户令牌的 HTTP 追加，另需已准入节点签名（`nodeProof`），或是口令加入的自我 admit。
+ */
+export type RelayAppendAuth =
+  | { kind: 'uplink'; nodeId: string }
+  | {
+      kind: 'http';
+      tokenHash: string;
+      minTokenEpoch: number;
+      relayHost: string;
+      nodeProof: { nodeId: string; sig: Uint8Array } | null;
+    };
 
 export type RelayKeyLogDeps = {
   db: AuthDb;
   tenants: RelayTenantStore;
   keyLog: RelayKeyLogStore;
   now: () => number;
+  logCaps?: RelayKeyLogCaps;
+};
+
+export type RelayKeyLogCaps = { maxRows: number; maxBytes: number };
+
+export const RELAY_KEYLOG_DEFAULT_CAPS: RelayKeyLogCaps = {
+  maxRows: RELAY_TENANT_LOG_MAX_ROWS,
+  maxBytes: RELAY_TENANT_LOG_MAX_BYTES,
 };
 
 type MemberOutcome = { result: RelayMemberResult | null; error: string | null };
@@ -68,11 +105,11 @@ function applyMemberInTx(
   deps: RelayKeyLogDeps,
   tenant: RelayTenantRecord,
   member: RelayMemberResult
-): { revokedNodeId: string | null; rootRotated: boolean; refused: boolean } {
-  const idle = { revokedNodeId: null, rootRotated: false, refused: false };
+): { revokedNodeId: string | null; rootRotated: boolean; refused: string | null } {
+  const idle = { revokedNodeId: null, rootRotated: false, refused: null };
   if (!member.ok) return idle;
   if (member.op === 'admit') {
-    const node = deps.tenants.upsertNode({
+    const written = deps.tenants.upsertNode({
       tenantId: tenant.id,
       nodeId: member.nodeId,
       edPk: member.edPk,
@@ -81,13 +118,15 @@ function applyMemberInTx(
       admitSeq: Number(member.seq),
       now: deps.now(),
     });
+    if (written.outcome === 'conflict') return { ...idle, refused: 'member_conflict' };
     // `revoked` 是终态：被吊销的节点永远不会因为一条（可能是重放的）admit 复活
-    return { ...idle, refused: node.status !== 'admitted' };
+    return { ...idle, refused: written.node.status === 'admitted' ? null : 'effect_refused' };
   }
   if (member.op === 'revoke') {
-    if (!deps.tenants.getNode(tenant.id, member.nodeId)) return { ...idle, refused: true };
-    deps.tenants.patchNode(tenant.id, member.nodeId, { status: 'revoked' });
-    return { revokedNodeId: member.nodeId, rootRotated: false, refused: false };
+    // 中继从没见过的节点（纯 LAN 节点）同样持有令牌与 K_log：照样收紧令牌，并留一条 revoked 行
+    deps.tenants.markNodeRevoked(tenant.id, member.nodeId, deps.now());
+    deps.tenants.restrictTokensAfterRevoke(tenant.id, deps.now());
+    return { ...idle, revokedNodeId: member.nodeId };
   }
   const rotated = deps.tenants.rotateRoot({
     tenantId: tenant.id,
@@ -95,21 +134,99 @@ function applyMemberInTx(
     rootPublicKey: member.newRootPublicKey,
     rootEpoch: member.nextRootEpoch,
   });
-  return { revokedNodeId: null, rootRotated: rotated, refused: !rotated };
+  return { ...idle, rootRotated: rotated, refused: rotated ? null : 'effect_refused' };
+}
+
+function attributionOf(
+  auth: RelayAppendAuth,
+  appendedBy: string,
+  member: RelayMemberResult | null
+): RelayKeyLogAttribution {
+  const rootOp = rootOpOf(member);
+  return {
+    appendedBy,
+    rootOp,
+    via: auth.kind,
+    admittedNodeId:
+      rootOp === 'admit' && member?.ok && member.op === 'admit' ? member.nodeId : null,
+  };
+}
+
+function enforceCaps(
+  deps: RelayKeyLogDeps,
+  tenantId: string,
+  seq: bigint,
+  storedBytes: number,
+  head: bigint
+): void {
+  const caps = deps.logCaps ?? RELAY_KEYLOG_DEFAULT_CAPS;
+  if (seq > BigInt(caps.maxRows)) throw new AppendRejected('TENANT_LOG_FULL', head);
+  if (deps.keyLog.bytes(tenantId) + storedBytes > caps.maxBytes) {
+    throw new AppendRejected('TENANT_LOG_FULL', head);
+  }
+}
+
+type MemberEffects = ReturnType<typeof applyMemberInTx>;
+
+const IDLE_EFFECTS: MemberEffects = { revokedNodeId: null, rootRotated: false, refused: null };
+
+type AppendTxInput = {
+  msg: Extract<RelayCtlMessage, { t: 'relay.keylog.append' }>;
+  seq: bigint;
+  head: bigint;
+  member: MemberOutcome;
+  now: number;
+};
+
+/** 事务体：复查 head → 归属 → 上限 → 落行与 head → 成员副作用。`state.touched` 标记已动过存储。 */
+function writeAppendInTx(
+  deps: RelayKeyLogDeps,
+  tenant: RelayTenantRecord,
+  auth: RelayAppendAuth,
+  input: AppendTxInput,
+  state: { touched: boolean }
+): MemberEffects {
+  const { msg, seq, head, member, now } = input;
+  const current = deps.tenants.get(tenant.id);
+  if (!current || current.keyLogHeadSeq !== head) {
+    throw new AppendRejected(RELAY_KEYLOG_SEQ_MISMATCH, current?.keyLogHeadSeq ?? head);
+  }
+  const appendedBy = attributeAppend(
+    deps,
+    current,
+    auth,
+    {
+      seq,
+      head,
+      envelope: msg.blob,
+      member: member.result,
+      hasMember: msg.member !== undefined,
+    },
+    now
+  );
+  const attribution = attributionOf(auth, appendedBy, member.result);
+  const stored = RelayKeyLogStore.storedJson({ envelope: msg.blob, ...attribution });
+  enforceCaps(deps, tenant.id, seq, RelayKeyLogStore.storedBytes(stored), head);
+  state.touched = true;
+  deps.keyLog.append({ tenantId: tenant.id, seq, envelope: msg.blob, ...attribution, now });
+  deps.tenants.setKeyLogHead(tenant.id, seq);
+  return member.result ? applyMemberInTx(deps, tenant, member.result) : IDLE_EFFECTS;
 }
 
 /**
  * 追加一条密钥日志：`seq` 必须等于 head+1，日志行 / head / 成员副作用在同一个 SQLite 事务里提交。
  *
- * `member` 的明文记录必须**就是本次 seq 的那一条**且 `root_epoch` 等于租户当前根 epoch
- * （见 `verifyRelayMemberProof`）；不满足就整条忽略并回 `member_ignored`，日志本身照旧落库
- * （中继看不到密文，无从判断内容，成员表只是链路准入缓存）。
+ * - 写入必须可归属（`attributeAppend`），行上记下写入者、写入路径与根签名 admit 准入的节点；
+ * - `member` 的明文记录必须**就是本次 seq 的那一条**且 `root_epoch` 等于租户当前根 epoch
+ *   （见 `verifyRelayMemberProof`）；不满足就忽略并回 `member_ignored`，日志本身照旧落库；
+ * - 中继从不改写已有的行：任何 `seq <= head` 的追加（包括根签名记录）都回 SEQ_MISMATCH；
+ * - 只有事务里已动过存储或内部失败时才丢字节缓存；被拒的请求不碰缓存。
  */
 export function appendRelayKeyLog(
   deps: RelayKeyLogDeps,
   tenant: RelayTenantRecord,
   msg: Extract<RelayCtlMessage, { t: 'relay.keylog.append' }>,
-  writeAuth?: { tokenHash: string; minTokenEpoch: number }
+  auth: RelayAppendAuth
 ): RelayAppendOutcome {
   const head = tenant.keyLogHeadSeq;
   let seq: bigint;
@@ -123,47 +240,26 @@ export function appendRelayKeyLog(
   }
   const member = verifyMember(deps, tenant, msg, seq);
   const now = deps.now();
-  let effects = { revokedNodeId: null as string | null, rootRotated: false, refused: false };
-  let conflictHead: bigint | null = null;
-  let authError: 'TENANT_KICKED' | 'UNAUTHORIZED' | null = null;
+  const state = { touched: false };
+  let effects: MemberEffects = IDLE_EFFECTS;
   try {
     deps.db.transaction(() => {
-      const current = deps.tenants.get(tenant.id);
-      if (!current || current.keyLogHeadSeq !== head) {
-        conflictHead = current?.keyLogHeadSeq ?? head;
-        throw new Error('relay-keylog-head-conflict');
-      }
-      if (writeAuth) {
-        if (current.kicked) {
-          authError = 'TENANT_KICKED';
-          throw new Error('relay-keylog-auth');
-        }
-        if (
-          !relayTokenHashAccepted(current, writeAuth.tokenHash, now) ||
-          current.tokenEpoch < writeAuth.minTokenEpoch
-        ) {
-          authError = 'UNAUTHORIZED';
-          throw new Error('relay-keylog-auth');
-        }
-      }
-      deps.keyLog.append({ tenantId: tenant.id, seq, envelope: msg.blob, now });
-      deps.tenants.setKeyLogHead(tenant.id, seq);
-      if (member.result) effects = applyMemberInTx(deps, tenant, member.result);
+      effects = writeAppendInTx(deps, tenant, auth, { msg, seq, head, member, now }, state);
     });
   } catch (err) {
-    if (authError) return { ok: false, error: authError, head };
-    if (conflictHead !== null) {
-      return { ok: false, error: RELAY_KEYLOG_SEQ_MISMATCH, head: conflictHead };
-    }
+    const rejected = err instanceof AppendRejected;
+    if (state.touched || !rejected) deps.keyLog.forgetBytes(tenant.id);
+    if (rejected) return { ok: false, error: err.code, head: err.head };
     console.warn(`[relay] key-log append failed tenant=${tenant.id} err=${String(err)}`);
     return { ok: false, error: 'APPEND_FAILED', head };
   }
+  const memberError = member.error ?? effects.refused;
   return {
     ok: true,
     seq,
     head: seq,
-    memberIgnored: member.error !== null || effects.refused,
-    memberError: member.error ?? (effects.refused ? 'effect_refused' : null),
+    memberIgnored: memberError !== null,
+    memberError,
     revokedNodeId: effects.revokedNodeId,
     rootRotated: effects.rootRotated,
     record: { seq: relaySeqToWire(seq), blob: msg.blob },

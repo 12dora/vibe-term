@@ -195,7 +195,7 @@ export function buildRotateRootRecord(input: {
 }
 
 /**
- * 常规改密：`rotate-root-keep` 同样由**旧**根钥签，但应用后保留 passkey、TOTP 与全部会话。
+ * 常规改密：`rotate-root-keep` 同样由**旧**根钥签，应用后保留 passkey 与 TOTP；与 `rotate-root` 一样，各 node 撤销全部会话。
  *
  * `totp` 是把现有 TOTP 密文按新 epoch / 新记录 seq 重新封装的结果，契约固定为
  * `root_epoch === 记录 root_epoch + 1`、`seq === 记录自身 seq`；账号没开 TOTP 时传 `null`。

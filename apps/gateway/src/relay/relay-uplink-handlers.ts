@@ -88,7 +88,8 @@ export function handleRelayKeyLogAppend(
   const outcome = appendRelayKeyLog(
     { db: host.db, tenants: host.tenants, keyLog: host.keyLog, now: host.now },
     tenant,
-    msg
+    msg,
+    { kind: 'uplink', nodeId: live.nodeId }
   );
   if (!outcome.ok) {
     host.send(live.link, {

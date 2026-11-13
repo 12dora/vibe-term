@@ -5,6 +5,7 @@ import {
   RELAY_AUTO_SELECT_INTERVAL_DEFAULT_MS,
   RELAY_AUTO_SELECT_INTERVAL_MAX_MS,
   RELAY_AUTO_SELECT_INTERVAL_MIN_MS,
+  RELAY_MAX_TENANTS_CAP,
   originUrlFromBindHost,
   parseLinkStreamInflightBytes,
   parsePeerBindHost,
@@ -12,6 +13,7 @@ import {
   parsePeerPublicHost,
   parseRelayAutoSelect,
   parseRelayAutoSelectIntervalMs,
+  parseRelayMaxTenants,
   parseRtcPortRange,
   parseTurnBindHost,
   parseTurnExternalIp,
@@ -48,6 +50,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   turnBindHost: string;
   originUrl: string;
   trustProxy: boolean;
+  clientIpHeader: string;
 }> {
   const saved = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(env)) {
@@ -82,6 +85,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         turnHost: string | null;
         turnBindHost: string;
         trustProxy: boolean;
+        clientIpHeader: string;
         originUrl: string;
       };
     };
@@ -493,6 +497,26 @@ describe('config.trustProxy', () => {
   });
 });
 
+describe('config.clientIpHeader', () => {
+  test('defaults to x-forwarded-for and accepts exactly one supported header', async () => {
+    const unset = await loadConfigWith({ VIBETERM_CLIENT_IP_HEADER: undefined });
+    expect(unset.clientIpHeader).toBe('x-forwarded-for');
+    const cf = await loadConfigWith({ VIBETERM_CLIENT_IP_HEADER: ' CF-Connecting-IP ' });
+    expect(cf.clientIpHeader).toBe('cf-connecting-ip');
+    const real = await loadConfigWith({ VIBETERM_CLIENT_IP_HEADER: 'x-real-ip' });
+    expect(real.clientIpHeader).toBe('x-real-ip');
+  });
+
+  test('rejects unknown headers and fallback lists at startup', async () => {
+    await expect(loadConfigWith({ VIBETERM_CLIENT_IP_HEADER: 'forwarded' })).rejects.toThrow(
+      'VIBETERM_CLIENT_IP_HEADER must be one of'
+    );
+    await expect(
+      loadConfigWith({ VIBETERM_CLIENT_IP_HEADER: 'cf-connecting-ip,x-real-ip' })
+    ).rejects.toThrow('VIBETERM_CLIENT_IP_HEADER must be one of');
+  });
+});
+
 describe('config.originUrl', () => {
   test('maps bind host wildcards to a connectable origin', async () => {
     expect(originUrlFromBindHost('0.0.0.0', 19883)).toBe('http://127.0.0.1:19883');
@@ -554,6 +578,20 @@ describe('relay auto-select and stream inflight env', () => {
     expect(() =>
       parseRelayAutoSelectIntervalMs(String(RELAY_AUTO_SELECT_INTERVAL_MAX_MS + 1))
     ).toThrow('VIBETERM_RELAY_AUTO_SELECT_INTERVAL_MS');
+  });
+
+  test('VIBETERM_RELAY_MAX_TENANTS 缺省 50，只收 1..65536 的正整数', () => {
+    expect(parseRelayMaxTenants(undefined)).toBe(50);
+    expect(parseRelayMaxTenants('')).toBe(50);
+    expect(parseRelayMaxTenants(' 80 ')).toBe(80);
+    expect(parseRelayMaxTenants(String(RELAY_MAX_TENANTS_CAP))).toBe(RELAY_MAX_TENANTS_CAP);
+    expect(() => parseRelayMaxTenants('0')).toThrow('VIBETERM_RELAY_MAX_TENANTS');
+    expect(() => parseRelayMaxTenants('-1')).toThrow('VIBETERM_RELAY_MAX_TENANTS');
+    expect(() => parseRelayMaxTenants('nope')).toThrow('VIBETERM_RELAY_MAX_TENANTS');
+    expect(() => parseRelayMaxTenants('1e2')).toThrow('VIBETERM_RELAY_MAX_TENANTS');
+    expect(() => parseRelayMaxTenants(String(RELAY_MAX_TENANTS_CAP + 1))).toThrow(
+      'VIBETERM_RELAY_MAX_TENANTS'
+    );
   });
 });
 

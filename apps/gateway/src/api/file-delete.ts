@@ -8,6 +8,7 @@ import {
   posixNormalize,
 } from '../files/delete-local';
 import { deleteRemoteTargets } from '../files/delete-remote';
+import { tokenMutationDenied } from '../files/device-storage';
 import { resolveFileRoot } from '../files/file-root';
 import { type FileOpResult, fail, ok } from '../files/rsync-operation';
 import { t } from '../i18n';
@@ -59,7 +60,13 @@ export async function deleteUnderRoot(
   if (!device) return fail('device_not_found');
 
   const rootPath = posixNormalize(resolved.root.path);
-  const plans = paths.map((p) => planPath(rootPath, p));
+  const plans = paths.map((p) => {
+    const plan = planPath(rootPath, p);
+    if (!plan.rejected && tokenMutationDenied(device, plan.path, null)) {
+      return { path: plan.path, rejected: 'permission_denied' as const };
+    }
+    return plan;
+  });
   const targets = toTargets(plans);
   let outcome: FileOpResult<DeleteOutcome> = ok(new Map());
   if (targets.length > 0) {

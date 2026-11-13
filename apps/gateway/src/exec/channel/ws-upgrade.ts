@@ -42,38 +42,15 @@ function isUpgradeRequest(req: Request): boolean {
   return req.headers.get('upgrade')?.toLowerCase() === 'websocket';
 }
 
-function hostOf(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    return new URL(value).host.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 浏览器发起的升级带 `Origin`，且必须与访问的主机一致，挡住其他站点页面的跨站 WebSocket 劫持
- * （借已登录会话拉起 shell）；CLI 等非浏览器客户端不带或带同主机 origin。
- * 只比对 Origin 与 Host，不防 DNS 重绑定（重绑定后二者同为攻击者域名），那类风险靠绑定地址与登录门兜底。
- */
-export function isForeignBrowserOrigin(req: Request): boolean {
-  const origin = req.headers.get('origin');
-  if (!origin) return false;
-  const originHost = hostOf(origin);
-  if (!originHost) return true;
-  const forwarded = req.headers.get('x-forwarded-host')?.split(',')[0]?.trim().toLowerCase();
-  const hosts = [new URL(req.url).host.toLowerCase(), req.headers.get('host')?.toLowerCase()];
-  return ![...hosts, forwarded].includes(originHost);
-}
-
 /** 免登录的 bare gateway：与 `/ws` 一致，没有鉴权面，统一按无主身份放行。 */
 export function authenticateOpenExecUpgrade(): ExecUpgradeAuth {
   return { uid: null, tokenId: null };
 }
 
 /**
- * 升级入口：非升级请求 400、跨源浏览器 403，鉴权由调用方提供的 `authenticate` 决定
+ * 升级入口：非升级请求 400，鉴权由调用方提供的 `authenticate` 决定
  * （返回 Response 即拒绝，原样回给客户端）。成功升级返回 undefined。
+ * 浏览器 Origin 由入口分发的 `guardBrowserRequest` 统一校验。
  */
 export function handleExecWsUpgrade(
   req: Request,
@@ -81,7 +58,6 @@ export function handleExecWsUpgrade(
   authenticate: (req: Request) => ExecUpgradeAuth | Response
 ): Response | undefined {
   if (!isUpgradeRequest(req)) return json('upgrade_required', 400);
-  if (isForeignBrowserOrigin(req)) return json('FORBIDDEN_ORIGIN', 403);
   const auth = authenticate(req);
   if (auth instanceof Response) return auth;
   const data: ExecWsData = {

@@ -223,6 +223,7 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<PortMapErrorCode>([
   'bind_failed',
   'not_found',
   'target_unreachable',
+  'target_forbidden',
   'export_missing',
   'limit_reached',
 ]);

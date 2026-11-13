@@ -219,7 +219,7 @@ describe('llm provider api', () => {
     expect(JSON.stringify(payload)).not.toContain('sk-secret-key');
   });
 
-  test('patch provider: omitted/empty apiKey keeps existing key, baseUrl change refetches models', async () => {
+  test('patch provider: omitted/empty apiKey keeps existing key; baseUrl change requires apiKey', async () => {
     const upstream = createMockModelsServer({ models: ['m1'] });
     const createResponse = await callApi('POST', '/api/llm/providers', {
       name: 'patch-target',
@@ -229,7 +229,6 @@ describe('llm provider api', () => {
     });
     const created = ((await createResponse.json()) as { provider: LlmProviderDto }).provider;
 
-    // 只改名字：不重拉模型、key 不变
     const renameResponse = await callApi('PATCH', `/api/llm/providers/${created.id}`, {
       name: 'patch-renamed',
       apiKey: '',
@@ -239,20 +238,28 @@ describe('llm provider api', () => {
     expect(renamed.name).toBe('patch-renamed');
     expect(await decrypt(getLlmProviderById(created.id)?.apiKeyEnc ?? '')).toBe('sk-original');
 
-    // 改 baseUrl：自动重拉模型
     const upstream2 = createMockModelsServer({ models: ['m2', 'm0'] });
+    const denied = await callApi('PATCH', `/api/llm/providers/${created.id}`, {
+      baseUrl: upstream2.baseUrl,
+    });
+    expect(denied.status).toBe(400);
+    expect(await denied.json()).toEqual({ error: 'API_KEY_REQUIRED' });
+    expect(getLlmProviderById(created.id)?.baseUrl).toBe(upstream.baseUrl);
+
+    const deniedProtocol = await callApi('PATCH', `/api/llm/providers/${created.id}`, {
+      protocol: 'openai-responses',
+    });
+    expect(deniedProtocol.status).toBe(400);
+    expect(await deniedProtocol.json()).toEqual({ error: 'API_KEY_REQUIRED' });
+    expect(getLlmProviderById(created.id)?.protocol).toBe('openai-chat');
+
     const moveResponse = await callApi('PATCH', `/api/llm/providers/${created.id}`, {
       baseUrl: upstream2.baseUrl,
+      apiKey: 'sk-rotated',
     });
     expect(moveResponse.status).toBe(200);
     const moved = ((await moveResponse.json()) as { provider: LlmProviderDto }).provider;
     expect(moved.models).toEqual(['m0', 'm2']);
-
-    // 改 apiKey：生效且重拉
-    const rekeyResponse = await callApi('PATCH', `/api/llm/providers/${created.id}`, {
-      apiKey: 'sk-rotated',
-    });
-    expect(rekeyResponse.status).toBe(200);
     expect(await decrypt(getLlmProviderById(created.id)?.apiKeyEnc ?? '')).toBe('sk-rotated');
   });
 
@@ -405,6 +412,7 @@ describe('llm provider api', () => {
     const broadcasts = captureLlmBroadcasts(name);
     const pending = callApi('PATCH', `/api/llm/providers/${created.id}`, {
       baseUrl: upstream.baseUrl,
+      apiKey: 'sk-update',
     });
     await upstream.started;
     expect(broadcasts).toEqual([]);

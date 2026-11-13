@@ -116,6 +116,9 @@ export class PeerLiveRegistry {
       return keep;
     };
     if (peerStale(this.state, gen)) return reject('stale');
+    if (peerNodeId.toLowerCase() === this.state.identity.nodeId.toLowerCase()) {
+      return reject('self');
+    }
     if (!isPeerTrusted(this.state, peerNodeId)) return reject('not-trusted');
     const prev = this.state.live.get(peerNodeId);
     const resolvedAddress =
@@ -156,18 +159,7 @@ export class PeerLiveRegistry {
       reject,
     } = input;
     if (consumeForcedSession(this.bypassRank, session)) {
-      return this.installForced({
-        session,
-        peerNodeId,
-        transport,
-        initiatedBy,
-        gen,
-        quiesceCapable,
-        remoteAddress: resolvedAddress,
-        dcAttemptId,
-        rtcEpoch,
-        prev,
-      });
+      return this.installForced(input);
     }
     const early = earlyTrackResult(
       this.deps.interceptTrack?.({
@@ -241,18 +233,7 @@ export class PeerLiveRegistry {
       dcAttemptId
     );
   }
-  private installForced(input: {
-    session: LinkSession;
-    peerNodeId: string;
-    transport: PeerTransportKind;
-    initiatedBy: string;
-    gen: number;
-    quiesceCapable: boolean;
-    remoteAddress: string | null;
-    dcAttemptId: string | null;
-    rtcEpoch?: number;
-    prev: LivePeer | undefined;
-  }): LinkSession {
+  private installForced(input: TrackOpenInput): LinkSession {
     const { session, prev } = input;
     if (prev?.session === session || this.state.live.get(input.peerNodeId)?.session === session) {
       return session;
@@ -265,7 +246,7 @@ export class PeerLiveRegistry {
       input.initiatedBy,
       input.gen,
       input.quiesceCapable,
-      input.remoteAddress,
+      input.resolvedAddress,
       input.dcAttemptId,
       input.rtcEpoch
     );
@@ -282,6 +263,10 @@ export class PeerLiveRegistry {
     dcAttemptId: string | null = null,
     rtcEpoch?: number
   ): LinkSession {
+    if (peerNodeId.toLowerCase() === this.state.identity.nodeId.toLowerCase()) {
+      quiet(() => session.close('self'));
+      return session;
+    }
     if (this.state.live.get(peerNodeId)?.session === session) return session;
     const keys = this.state.sessionKeys.get(session);
     const live = buildInstalledPeer({

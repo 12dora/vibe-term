@@ -127,6 +127,7 @@ describe('0047 share tables', () => {
         'expires_at',
         'ended_at',
         'password_enc',
+        'issued_via',
       ]);
       insertShare(sqlite, 's1');
       const row = sqlite.query('SELECT * FROM shares WHERE id = ?').get('s1') as {
@@ -135,12 +136,14 @@ describe('0047 share tables', () => {
         expires_at: number | null;
         ended_at: number | null;
         log_truncated: number;
+        issued_via: string;
       };
       expect(row.state).toBe('active');
       expect(row.end_reason).toBeNull();
       expect(row.expires_at).toBeNull();
       expect(row.ended_at).toBeNull();
       expect(row.log_truncated).toBe(0);
+      expect(row.issued_via).toBe('self');
     } finally {
       sqlite.close();
     }

@@ -242,6 +242,77 @@ describe('relayListToNodeList', () => {
     }
   });
 
+  test('状态块 endpoints 走 sanitizeEndpoints：丢掉链路本地/userinfo/query，保留回环与 RFC1918', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const nodeId = 'ab'.repeat(16);
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const metaKey = generateTenantKey();
+      const sealed = await sealEnvelope(
+        metaKey,
+        'status',
+        encodeRelayStatusBlob({
+          name: 'peer-b',
+          version: '2.2.4',
+          tmux: true,
+          direct_capable: true,
+          inventory: {},
+          endpoints: [
+            'ws://169.254.1.1:39001/peer',
+            'ws://user:pass@10.0.0.8:39001/peer',
+            'ws://10.0.0.8:39001/peer?x=1',
+            'ws://10.0.0.8:39001/peer',
+            'https://10.0.0.8:39001/peer',
+          ],
+        }),
+        1
+      );
+      const listed = await relayListToNodeList(
+        {
+          t: 'relay.list',
+          version: 4,
+          nodes: [{ id: nodeId, online: true, status: 'admitted', epoch: 1, blob: sealed }],
+          rtc: { stun: [], turn: null },
+          key_log_head_seq: 0,
+        },
+        {
+          selfNodeId: 'cd'.repeat(16),
+          userId: 'user-1',
+          userStore,
+          secrets: {
+            metaKey: async (epoch: number) => (epoch === 1 ? metaKey : null),
+          } as unknown as RelaySecrets,
+          now: 2,
+        }
+      );
+      expect(listed.nodes[0]?.endpoints).toEqual(['ws://10.0.0.8:39001/peer']);
+      expect(JSON.parse(userStore.getPeer(nodeId)?.endpointsJson ?? '[]')).toEqual([
+        'ws://10.0.0.8:39001/peer',
+      ]);
+    } finally {
+      close();
+    }
+  });
+
   test('解不开状态块且 cache 无 version 时不写入空 version 行', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

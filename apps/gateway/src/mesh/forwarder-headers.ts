@@ -1,12 +1,11 @@
 import {
+  CLIENT_SOURCE_HEADER,
   addHeaderNames,
-  assignHeaderPair,
   isVibeTermHeaderName,
 } from '@vibeterm/shared/http/mesh-headers';
-import { sanitizeContentDisposition } from '../api/content-disposition';
 import { isTokenCredential } from '../auth/access-token-auth';
+import { applySafeFileHeaders } from '../files/safe-file-headers';
 import { clientIpFromRequest } from './client-ip';
-import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL, isTrustedLocalClient } from './client-source';
 
 /** 入口把真实客户端 IP 交给目标，只用于登录记录。浏览器自带的同名头一律丢掉。 */
 export const ENTRY_CLIENT_IP_HEADER = 'x-vibeterm-entry-client-ip';
@@ -17,7 +16,7 @@ const FORWARDED_AUTH_PATHS = new Set([
   '/api/auth/login',
   '/api/auth/passkey/login/options',
 ]);
-import { MESH_ALLOWED_MIME, MESH_FORWARD_CSP, SET_SESSION_HEADER } from './mesh-deps';
+import { SET_SESSION_HEADER } from './mesh-deps';
 import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';
 
 /** 内部凭证头：Hub 翻成 Set-Cookie 后不得再回给浏览器。 */
@@ -52,9 +51,10 @@ const DROP_REQUEST_HEADERS = addHeaderNames(
   CLIENT_SOURCE_HEADER
 );
 
-export function copyUpstreamHeaders(upstream: Response): Headers {
+/** `req` 是入口收到的浏览器请求：内联与否按它的 `Sec-Fetch-Dest` 判定，与本机文件响应同一规则。 */
+export function copyUpstreamHeaders(upstream: Response, req: Request): Headers {
   const headers = new Headers();
-  let contentType = '';
+  let contentType: string | null = null;
   let contentDisposition: string | null = null;
   upstream.headers.forEach((value, key) => {
     const lower = key.toLowerCase();
@@ -69,13 +69,7 @@ export function copyUpstreamHeaders(upstream: Response): Headers {
     }
     if (RESPONSE_ALLOW.has(lower) || isVibeTermHeaderName(lower)) headers.set(key, value);
   });
-  const mime = baseMime(contentType);
-  const allowed = Boolean(mime && MESH_ALLOWED_MIME.has(mime));
-  if (allowed) headers.set('content-type', contentType || mime);
-  else headers.set('content-type', 'application/octet-stream');
-  applySafeDisposition(headers, contentDisposition, allowed);
-  headers.set('content-security-policy', MESH_FORWARD_CSP);
-  headers.set('x-content-type-options', 'nosniff');
+  applySafeFileHeaders(headers, { contentType, disposition: contentDisposition, req });
   return headers;
 }
 
@@ -92,9 +86,6 @@ export function filterRequestHeaders(req: Request): Record<string, string> {
     }
     out[key] = value;
   });
-  if (isTrustedLocalClient(req)) {
-    assignHeaderPair(out, CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL);
-  }
   return out;
 }
 
@@ -141,13 +132,4 @@ function deleteHeader(headers: Record<string, string>, name: string): void {
   for (const key of Object.keys(headers)) {
     if (key.toLowerCase() === lower) delete headers[key];
   }
-}
-
-function applySafeDisposition(headers: Headers, raw: string | null, allowed: boolean): void {
-  const safe = sanitizeContentDisposition(raw, !allowed);
-  if (safe) headers.set('content-disposition', safe);
-}
-
-function baseMime(contentType: string): string {
-  return contentType.trim().toLowerCase().split(';')[0]?.trim() ?? '';
 }

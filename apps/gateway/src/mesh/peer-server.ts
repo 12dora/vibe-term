@@ -1,5 +1,11 @@
-import type { ServerSocketAdapter } from '@vibeterm/shared/link';
+import {
+  FRAME_HEADER_SIZE,
+  GCM_TAG_LENGTH,
+  MAX_FRAME_PAYLOAD,
+  type ServerSocketAdapter,
+} from '@vibeterm/shared/link';
 import { SlidingWindowCounter } from '../lib/sliding-window';
+import { limiterIpKey } from './client-ip';
 import { defaultScheduler } from './ctl';
 import { wrapBunPeerSocket } from './peer-protocol';
 import { DEFAULT_PEER_BIND_HOSTS, type MeshScheduler, type PeerBindHost } from './types';
@@ -9,18 +15,62 @@ export const PEER_HANDSHAKE_RATE_LIMIT = 30;
 export const PEER_HANDSHAKE_RATE_WINDOW_MS = 60_000;
 export const PEER_RATE_LIMIT_MAX_KEYS = 4096;
 
+/** 合法 mux 帧 = 头 + 1 MiB payload + GCM tag；再留 1 MiB 余量。 */
+export const PEER_WS_MAX_PAYLOAD_LENGTH =
+  FRAME_HEADER_SIZE + MAX_FRAME_PAYLOAD + GCM_TAG_LENGTH + 1024 * 1024;
+/** 只计未完成握手的连接：握手成功即释放名额，失败或超时随 socket close 释放。按 `limiterIpKey` 归桶。 */
+export const PEER_PREAUTH_PER_IP = 16;
+export const PEER_PREAUTH_GLOBAL = 256;
+
 type PeerSocketData = {
   adapter: ReturnType<typeof wrapBunPeerSocket>;
   ip: string;
+  releasePreauth: () => void;
 };
 
 export type PeerServerOptions = {
   port: number;
   hostname?: PeerBindHost;
-  onAccept: (socket: ServerSocketAdapter, remoteIp: string) => void;
+  /** `handshakeDone` 在 peer 握手成功时调用，释放未认证名额。 */
+  onAccept: (socket: ServerSocketAdapter, remoteIp: string, handshakeDone: () => void) => void;
   handshakeLimitPerMin?: number;
+  preauthPerIp?: number;
+  preauthGlobal?: number;
   scheduler?: MeshScheduler;
 };
+
+/** `key === null`：键不能代表单个客户端（如未受信代理后的地址），只计全局上限。 */
+export class PreauthSocketLimiter {
+  private readonly perIp = new Map<string, number>();
+  private global = 0;
+
+  constructor(
+    private readonly maxPerIp: number,
+    private readonly maxGlobal: number
+  ) {}
+
+  tryAcquire(key: string | null): boolean {
+    if (this.global >= this.maxGlobal) return false;
+    if (key !== null && (this.perIp.get(key) ?? 0) >= this.maxPerIp) return false;
+    this.global += 1;
+    if (key !== null) this.perIp.set(key, (this.perIp.get(key) ?? 0) + 1);
+    return true;
+  }
+
+  release(key: string | null): void {
+    if (key !== null) {
+      const n = this.perIp.get(key) ?? 0;
+      if (n <= 1) this.perIp.delete(key);
+      else this.perIp.set(key, n - 1);
+    }
+    if (this.global > 0) this.global -= 1;
+  }
+
+  clear(): void {
+    this.perIp.clear();
+    this.global = 0;
+  }
+}
 
 export function isWebSocketUpgradeRequest(req: Request): boolean {
   const upgrade = req.headers.get('upgrade')?.toLowerCase();
@@ -60,6 +110,7 @@ class SlidingWindowLimiter {
 export class PeerServer {
   private readonly opts: PeerServerOptions;
   private readonly limiter: SlidingWindowLimiter;
+  private readonly preauth: PreauthSocketLimiter;
   private servers: Array<ReturnType<typeof Bun.serve<PeerSocketData>>> = [];
 
   constructor(opts: PeerServerOptions) {
@@ -70,6 +121,10 @@ export class PeerServer {
       PEER_HANDSHAKE_RATE_WINDOW_MS,
       () => scheduler.now(),
       PEER_RATE_LIMIT_MAX_KEYS
+    );
+    this.preauth = new PreauthSocketLimiter(
+      opts.preauthPerIp ?? PEER_PREAUTH_PER_IP,
+      opts.preauthGlobal ?? PEER_PREAUTH_GLOBAL
     );
   }
 
@@ -122,6 +177,7 @@ export class PeerServer {
       }
     }
     this.servers = [];
+    this.preauth.clear();
   }
 
   private snapshot(): { port: number; urls: string[] } {
@@ -137,6 +193,7 @@ export class PeerServer {
   private listen(hostname: string, port: number) {
     const onAccept = this.opts.onAccept;
     const limiter = this.limiter;
+    const preauth = this.preauth;
     return Bun.serve<PeerSocketData>({
       hostname,
       port,
@@ -149,25 +206,39 @@ export class PeerServer {
           return new Response('Upgrade Required', { status: 426 });
         }
         const ip = server.requestIP(req)?.address ?? 'unknown';
-        if (!limiter.allow(ip)) {
+        const key = limiterIpKey(ip);
+        if (!preauth.tryAcquire(key)) {
           return new Response('Too Many Requests', { status: 429 });
         }
+        if (!limiter.allow(key)) {
+          preauth.release(key);
+          return new Response('Too Many Requests', { status: 429 });
+        }
+        let released = false;
+        const releasePreauth = () => {
+          if (released) return;
+          released = true;
+          preauth.release(key);
+        };
         const upgraded = server.upgrade(req, {
           data: {
             adapter: null as unknown as PeerSocketData['adapter'],
             ip,
+            releasePreauth,
           },
         });
         if (!upgraded) {
+          releasePreauth();
           return new Response('Upgrade failed', { status: 500 });
         }
         return undefined as unknown as Response;
       },
       websocket: {
+        maxPayloadLength: PEER_WS_MAX_PAYLOAD_LENGTH,
         open: (ws) => {
           const adapter = wrapBunPeerSocket(ws);
           ws.data.adapter = adapter;
-          onAccept(adapter, ws.data.ip);
+          onAccept(adapter, ws.data.ip, ws.data.releasePreauth);
         },
         message: (ws, message) => {
           ws.data.adapter?.ingestMessage(message);
@@ -176,6 +247,7 @@ export class PeerServer {
           ws.data.adapter?.ingestDrain();
         },
         close: (ws) => {
+          ws.data.releasePreauth();
           ws.data.adapter?.ingestClose('ws-closed');
         },
       },

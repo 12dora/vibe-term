@@ -20,6 +20,7 @@ import {
   peerCapabilitiesChanged,
   tagRelayCapabilityChanges,
 } from './peer-capability-change';
+import { sanitizeEndpoints } from './peer-endpoint-parse';
 import { ingestPeerReachEpoch, ingestPeerReachMap, ingestTurnOk } from './port-reach';
 import type { RelaySecrets } from './relay-secrets';
 import type { UplinkStatus } from './types';
@@ -153,10 +154,11 @@ function cacheAdmittedRelayNode(
   });
   if (capsChanged) changed.push(node.id);
   const keepCaps = existing != null && !capsChanged;
+  const endpoints = sanitizeEndpoints(blob.endpoints);
   ctx.userStore.upsertPeer({
     nodeId: node.id,
     name: blob.name || node.id,
-    endpointsJson: jsonText(blob.endpoints),
+    endpointsJson: jsonText(endpoints),
     inventoryJson: keepCaps ? existing.inventoryJson : inventoryJson,
     directCapable: keepCaps ? existing.directCapable : blob.direct_capable,
     lastSeenAt: relayLastSeenAt(node.online, existing, ctx.now),
@@ -171,7 +173,7 @@ function cacheAdmittedRelayNode(
     id: node.id,
     name: blob.name || node.id,
     online: node.online,
-    endpoints: blob.endpoints,
+    endpoints,
     inventory: blob.inventory,
     direct_capable: blob.direct_capable,
     version,

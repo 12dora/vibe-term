@@ -235,7 +235,20 @@ describe('becomeRelay', () => {
         },
         deps
       )
-    ).rejects.toMatchObject({ code: 'weak_password', httpStatus: 400 });
+    ).rejects.toMatchObject({ code: 'password_too_short', httpStatus: 400 });
+    for (const password of ['123456789012', 'password1234', 'xK9#alice#mP2$vL']) {
+      await expect(
+        becomeRelay(
+          {
+            role: 'relay,node',
+            relayPublicUrl: 'https://relay.example',
+            username: 'alice',
+            password,
+          },
+          deps
+        )
+      ).rejects.toMatchObject({ code: 'password_too_simple', httpStatus: 400 });
+    }
     await expect(
       becomeRelay(
         {

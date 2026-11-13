@@ -62,7 +62,8 @@ export class ShareAccessManager {
     if (!opening.ok) return opening;
     const attempt = this.limiter.begin(shareId, clientIp);
     if (!attempt.ok) {
-      return { ok: false, code: 'SHARE_LOGIN_LOCKED', retryAfterMs: attempt.retryAfterMs };
+      const code = attempt.reason === 'busy' ? 'SHARE_LOGIN_BUSY' : 'SHARE_LOGIN_LOCKED';
+      return { ok: false, code, retryAfterMs: attempt.retryAfterMs };
     }
     const stored = this.store.passwordHash(shareId);
     let valid = false;

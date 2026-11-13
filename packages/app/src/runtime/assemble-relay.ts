@@ -94,6 +94,7 @@ export async function createAssembledRelay(input: {
           : gatewayConfig.rtcPortRange,
       peerPort: parsePeerPort(process.env.VIBETERM_PEER_PORT),
       adminToken: process.env.VIBETERM_RELAY_ADMIN_TOKEN?.trim() || gatewayConfig.relayAdminToken,
+      defaultMaxTenants: gatewayConfig.relayMaxTenants,
     },
     version: getBaseVersion(),
     startedAt: PROCESS_STARTED_AT,

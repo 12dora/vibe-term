@@ -41,6 +41,7 @@ TCP 客户端 ──connect──> [A: net.createServer 127.0.0.1:5678]
   `target_host`、`target_port`、`paused`），`(listen_host, listen_port)` 有索引。
 - `port_map_exports`：B 侧放行行，主键即 `map_id`。
 - 迁移 `0062_port_map_leases.sql` 给两张表各加可空的 `lease_expires_at`（毫秒时间戳）：`NULL` = 持久行，非空 = 带租约，见下文「租约」。
+- 迁移 `0063_issued_via.sql` 给两张表各加 `issued_via`（创建请求的入口节点 id，本机为 `self`）与可空的 `created_by_token_id`（由访问令牌创建时的令牌 id）。旧行记为 `self` / `NULL`，不参与下文的级联删除。
 
 存储层 `PortMapStore` / `PortMapExportStore`（drizzle）与对应的 Memory 实现藏在接口后面，形状照抄
 `tunnel/config-store.ts`。
@@ -56,6 +57,9 @@ TCP 客户端 ──connect──> [A: net.createServer 127.0.0.1:5678]
   行仍是 `paused`，端口空出来后再 PATCH 一次还能重试；只要请求的状态是未暂停且当前没有监听就重试
   绑定，开机时端口被占（`state:'error'`）的行也走这条路。
 - 删除 = 暂停 + 删行，并尽力而为地让 B 删掉对应的放行行（见下）。
+- 级联删除（`removePortMapsForRevocation`）：在调用方的库连接里删行；运行中的管理器停监听、丢运行态发生在 key log 事务提交之后（回滚则不停），并像删除那样尽力清 B 的放行行。触发点有两个：
+  - 令牌撤销或失效：`created_by_token_id` 等于该令牌的映射与放行一并删除（撤销即时触发，过期与行被清理由每 30 s 的令牌复核补上，开机后的首次复核同样会清掉停机期间失效令牌留下的行）。
+  - 吊销节点 X（key log `revokeSessionsVia` 效果）：`issued_via = X` 的映射与放行，以及 `from_node_id = X` 的放行。
 
 ### 租约
 
@@ -174,10 +178,10 @@ FFI 取不到时退化为只看句柄，行为不比改动前差。健康连接�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/portmap/exports` | 放行列表 |
-| POST | `/api/portmap/exports` | 建放行行，返回 `mapId`；可带 `leaseMs` |
+| POST | `/api/portmap/exports` | 建放行行，返回 `mapId`；可带 `leaseMs`；目标被禁止时 403 `target_forbidden`（见「限制」） |
 | PATCH | `/api/portmap/exports/:mapId` | 续约放行行（`leaseMs` 或 `renewLease`）；已过期或不存在返回 404 |
 | DELETE | `/api/portmap/exports/:mapId` | 删放行行 |
-| GET | `/api/portmap/target-probe?host=&port=` | 目标端口是否有服务在监听（1.5 s 超时） |
+| GET | `/api/portmap/target-probe?host=&port=` | 目标端口是否有服务在监听（1.5 s 超时）；目标被禁止时 403 `target_forbidden`，不探测 |
 
 节点间（peer 身份，`apps/gateway/src/portmap/internal-routes.ts`）：
 
@@ -222,4 +226,9 @@ CLI 把 `ssh -L` / `-R` 的写法映射成上面的「监听行 + 放行行」�
   `server.address()` 立刻为 `null` 就说明端口被占，`PortMapListener.start()` 据此照旧同步抛
   `PortMapError('port_in_use')`；异步才冒出来的 `error` 事件走 `onBindFailed`，把行改回 `error` 态。
 - `listen_host` 默认 `127.0.0.1`；填 `0.0.0.0` 等于把 B 的服务开放给 A 所在的局域网，需要使用者自己承担。
-- 端口保留：网关端口与 `VIBETERM_PEER_PORT` 拒绝映射（`port_reserved`）。
+- 端口保留：网关端口、`VIBETERM_PEER_PORT`、HTTPS 端口与 TURN 端口（`VIBETERM_TURN_PORT`，非 0 时）拒绝映射（`port_reserved`）。这份「本节点服务端口」清单由 `target-policy.ts` 的 `selfServicePorts()` 统一给出，监听保留与下文的目标限制共用。
+- **放行目标限制**（`target-policy.ts`）：B 侧拒绝两类目标，HTTP 403 `target_forbidden`：
+  1. 本节点服务端口（同上清单）落在任一本机地址上：回环（`127.0.0.0/8`、`::1` 及 IPv4 映射形式）、`0.0.0.0` / `::`、`localhost`、任一本机网卡地址。一律不放。
+  2. 链路本地与云元数据地址，不论端口：`169.254.0.0/16`、`fe80::/10`、`100.100.100.200`、`fd00:ec2::254`。
+
+  主机名会被解析，**每一个**解析结果都要通过检查；`POST /api/portmap/exports` 与 `GET /api/portmap/target-probe` 在落库 / 探测前检查。实际拨号（`dialTcp`）再解析一次并逐个检查，然后直接连已检查过的 IP，不再二次解析，规避 DNS rebinding；0063 之前建的放行行与解析结果变化因此同样受约束，被拒的入站流 `portmap-forbidden`。本轮不提供白名单配置。

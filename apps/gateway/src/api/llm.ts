@@ -206,6 +206,20 @@ function parseUpdateProviderFields(
   return { ok: true, draft: parsed.fields };
 }
 
+function providerEndpointChanged(
+  existing: LlmProviderRecord,
+  fieldUpdates: UpdateLlmProviderInput
+): boolean {
+  return (
+    (fieldUpdates.baseUrl !== undefined && fieldUpdates.baseUrl !== existing.baseUrl) ||
+    (fieldUpdates.protocol !== undefined && fieldUpdates.protocol !== existing.protocol)
+  );
+}
+
+function providerDtoPayload(provider: LlmProviderRecord, modelsError: string | undefined) {
+  return { provider: toProviderDto(provider), ...(modelsError ? { modelsError } : {}) };
+}
+
 async function handleUpdateProvider(req: Request, id: string): Promise<Response> {
   const existing = getLlmProviderById(id);
   if (!existing) return json({ error: t('apiError.llmProviderNotFound') }, 404);
@@ -217,15 +231,18 @@ async function handleUpdateProvider(req: Request, id: string): Promise<Response>
   if (!parsed.ok) return json({ error: parsed.error }, 400);
 
   const { apiKey, ...fieldUpdates } = parsed.draft;
+  const endpointChanged = providerEndpointChanged(existing, fieldUpdates);
+  if (endpointChanged && !apiKey) {
+    return json({ error: 'API_KEY_REQUIRED' }, 400);
+  }
+
   const updates: UpdateLlmProviderInput = { ...fieldUpdates };
   if (apiKey) updates.apiKeyEnc = await encrypt(apiKey);
 
   let provider = updateLlmProvider(id, updates);
   if (!provider) return json({ error: t('apiError.llmProviderNotFound') }, 404);
 
-  const credentialsChanged =
-    (updates.baseUrl !== undefined && updates.baseUrl !== existing.baseUrl) ||
-    updates.apiKeyEnc !== undefined;
+  const credentialsChanged = endpointChanged || updates.apiKeyEnc !== undefined;
 
   let modelsError: string | undefined;
   if (credentialsChanged) {
@@ -235,7 +252,7 @@ async function handleUpdateProvider(req: Request, id: string): Promise<Response>
   }
 
   broadcastSettingsUpdate('llm');
-  return json({ provider: toProviderDto(provider), ...(modelsError ? { modelsError } : {}) });
+  return json(providerDtoPayload(provider, modelsError));
 }
 
 async function handleDeleteProvider(id: string): Promise<Response> {

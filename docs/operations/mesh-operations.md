@@ -42,6 +42,7 @@
 | `VIBETERM_STUN_SERVERS` | **不写入** | 只有 `init --stun-servers <list>` 显式给出才写入。未设置 = 用随发行版分发的内置列表，见下节 |
 | `VIBETERM_RELAY_PUBLIC_URL` | 空 | **仅 relay 角色写入**，且必填。中继对外地址，uplink 认证签名绑定其 host |
 | `VIBETERM_RELAY_ADMIN_TOKEN` | 首启生成 | **仅 relay 角色写入**。管理令牌；缺失时首启生成一枚并写回 `app.env`，库里只存 sha256 |
+| `VIBETERM_RELAY_MAX_TENANTS` | `50` | **仅中继角色，不由 init 写入**。管理面 `maxTenants` 为 null 时的默认租户上限，注入 `RelayRuntimeConfig.defaultMaxTenants`。正整数 ≤ 65536；未设 / 空白用 50；非法值启动失败 |
 
 `init` 另支持 `--peer-port`、`--stun-servers`、`--relay-public-url`、`--public-port`。不再写入任何 `VIBETERM_HUB_*`。
 
@@ -83,8 +84,10 @@
 | `VIBETERM_TURN_RELAY_PORT_RANGE` | `40001-40049` | **仅中继角色**：内置 TURN 的中继端口段，每个 allocation 占一个 UDP 端口。旧默认 `49160-49259` |
 | `VIBETERM_TURN_EXTERNAL_IP` | 未设 | **仅中继角色**：写进 `XOR-RELAYED-ADDRESS` 的公网 IPv4；未设时自动解析（DNS + STUN 自检） |
 | `VIBETERM_TURN_HOST` | 未设 | **仅中继角色**：广告出去的 host；未设时广告解析到的公网 IPv4 字面量 |
+| `VIBETERM_TURN_DENIED_PEERS` | 空 | **仅中继角色**：追加到内置 TURN peer 拒绝名单的 IPv4 CIDR，逗号或空白分隔，裸 IPv4 视为 `/32`；非法项告警一次并跳过。内置名单与本机地址拒绝规则见 [中继架构](../architecture/relay.md) |
 | `VIBETERM_TURN_BIND_HOST` | `auto` | **仅中继角色**：控制口与分配口绑定的本机地址。`auto` = 主出站 IPv4；也可写 IPv4 或 `0.0.0.0`（TUN 宿主上通配会吞 Binding 回包，见 [KI-4](../known-issues.md)） |
-| `VIBETERM_TRUST_PROXY` | `false` | 仅 **本机 Bun socket（via=self）** 信任 `X-Forwarded-Proto` / `X-Forwarded-Host`，用于公网 origin、`Secure` cookie、passkey 可用性。转发请求永不信任。Cloudflare Tunnel 等反代场景必须设 `true` |
+| `VIBETERM_TRUST_PROXY` | `false` | 仅 **本机 Bun socket（via=self）** 信任 `X-Forwarded-Proto` / `X-Forwarded-Host`，用于公网 origin、`Secure` cookie、passkey 可用性；同时允许从回环 / 内网代理那一跳读取客户端 IP（见下一行）。转发请求永不信任。Cloudflare Tunnel 等反代场景必须设 `true` |
+| `VIBETERM_CLIENT_IP_HEADER` | `x-forwarded-for` | 信任代理时读取客户端 IP 的**唯一**头：`x-forwarded-for`（取最右一项）、`x-real-ip`、`cf-connecting-ip` 三选一，其它值启动失败。只在 `VIBETERM_TRUST_PROXY=true` 且 socket 对端是回环 / 内网时生效。隧道向导开「信任代理」时写 `cf-connecting-ip`、关时删除；nginx（`proxy_add_x_forwarded_for`）与 Caddy 用缺省值。本机特权判定（通行密钥豁免、`exemptLocal`、setup / bootstrap）从不读这个头，带任何转发头都不算本机 |
 | `VIBETERM_NATIVE_DIR` | `run.sh` 导出 `<installDir>/native` | native addon 目录。未设则 loader 返回 `null`，`direct_capable=false`。不要指向本机生产安装目录去做开发验证 |
 | `RTC_LIVENESS_INTERVAL_MS` | `3000` | node↔node DataChannel 空闲时发 ping 的间隔。通道上有入站流量则重置，不给忙通道加 ping |
 | `RTC_LIVENESS_TIMEOUT_MS` | `10000` | 连续无任何入站（含 ping/pong 与业务帧）超过此时长则判定直连死亡，关闭 DC/PC 并回落 relay。须大于 `RTC_LIVENESS_INTERVAL_MS` |
@@ -153,7 +156,7 @@ vibeterm relay enroll https://relay.example.com
 
 ```bash
 vibeterm relay join https://relay.example.com --tenant <租户编号> --password --name 书房
-vibeterm relay join https://relay.example.com --token r3.<加入串> --name 书房
+VIBETERM_RELAY_JOIN_TOKEN='r3.<加入串>' vibeterm relay join https://relay.example.com --name 书房
 ```
 
 密码加入与 `r3.` 加入都会让本机配置 mesh 根签名 `set-relays` 里的全部中继：多中继 mesh 经由任意一台加入，另一台自动配置并接入，命令结束时会列出「同时配置」的中继。前提：另一台若是自签中继，仍需先按中继逐台钉扎其 CA（`vibeterm relay trust refresh <url> --fingerprint …`）；钉扎按 url 保存，加入只钉扎实际使用的那一台。
@@ -218,11 +221,11 @@ node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请�
 | 动作 | 行为 |
 |---|---|
 | 新增节点 | 凭据对话框（密码或本 origin 的 passkey）签 enrollment 授权，经中继材料出 `r3.` 加入码。签名者进入 5 分钟复用窗口 |
-| 自动 admit | 对端 `relay join` redeem 后，名单来自 `GET /api/mesh/nodes` 的 `pendingMemberIds`。**仅根钥签名者**会在证书到达时后台自动签 `admit-node`；passkey 必须用户点「确认」（浏览器 user activation） |
+| 确认加入 | 对端 `relay join` redeem 后，名单来自 `GET /api/mesh/nodes` 的 `pendingMemberIds`。**从不自动签 `admit-node`**：证书到达后确认卡亮出确认码（`enrollSas(证书字节)`，形如 `1234-5678`），用户与新机器上 `relay join` 打印的确认码比对一致后点「确认」才签；点击时引擎只签界面已亮出确认码的那张证书，证书对不上就停下重新核对。唯一的后台动作是重发已签好但上级未确认的字节 |
 | 待确认 / 重试 | 页面已关、窗口过期、或 `POST /api/auth/keylog?hub=sync`（查询名冻结）未落地（`ok !== true`）时保留 pending。409 / 504 不当成成功。`hubAck` 是遗留字段，成功时恒为 `true`；fan-out 看 `relayAck` |
 | 重命名 | 已接入中继时可改名（keylog `rename-node`） |
 | 暂停 / 恢复 | `POST /api/mesh/nodes/:id/pause|resume`，幂等；self → 400 `CANNOT_PAUSE_SELF`。pause 退役对本端的出站链路，resume 不主动拨号。前端另拦当前 `/n/:id` 转发节点的暂停。CLI：`vibeterm nodes pause|resume`（`CANNOT_PAUSE_SELF` → `cannot pause this machine (CODE)`） |
-| 吊销 | 每次都要当场确认凭据（不进复用窗口），只走 `keylog?hub=sync` 写 `revoke-node`。记录未落地则告警、不刷新列表 |
+| 吊销 | 每次都要当场确认凭据（不进复用窗口），只走 `keylog?hub=sync` 写 `revoke-node`。记录未落地则告警、不刷新列表。中继模式下落账后紧接 `meta-key` 换代，并对每条已配置的中继自动换发租户令牌（根钥签名者直接沿用；通行密钥需再输入账户密码）；换发失败只提示一行并可重试，吊销不回滚 |
 
 ### 中继模式：「成员密钥未送达」
 
@@ -281,9 +284,9 @@ node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请�
 
 ### 改密
 
-日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；中继模式下，未出现在 `peer_cache` 的未吊销证书也按版本未知阻断。该版本门没有绕过手段，以免旧节点按未知类型丢弃记录、造成状态分裂。
+日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey 与已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）；全部 `node-session`、访问令牌、窗格授权与终端分享作废（见[访问令牌 §4](../security/access-tokens.md#4-管理)）。窗格授权与分享无 owner 列，按单用户节点处理。网页端与 CLI 改密后用新密码自动重新登录；CLI 另打印一行级联说明，名册节点若尚未收到记录会短重试。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；中继模式下，未出现在 `peer_cache` 的未吊销证书也按版本未知阻断。该版本门没有绕过手段，以免旧节点按未知类型丢弃记录、造成状态分裂。
 
-`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。两条 CLI 路径对照：
+`rotate-root` 是破坏性改密：在上述作废之外再清空 passkey 与 TOTP，须在各入口重新注册。两条 CLI 路径对照：
 
 | | 本机运维 `vibeterm user passwd <username>` | 客户端 `vibeterm settings passwd [--full-reset]` |
 |---|---|---|
@@ -309,7 +312,7 @@ vibeterm direct disable
 
 **v1 支持的平台：** macOS arm64 / x64，Linux glibc x64 / arm64。**musl、Windows、其它 arch 不支持**（`lookupNativePin` 返回 `null`，enable 失败且不阻断）。缺失或装载失败 → `direct_capable=false`。authorize 在没有 RTC provider 时回 503 `DIRECT_UNAVAILABLE` `reason=disabled`，原生栈没就绪回 `reason=native-missing`。这两档客户端停放 10 分钟，只有用户重试才再问。指纹超时、中止、内部失败、名额满回 `DIRECT_BUSY`（带 `retryAfterMs`），走熔断，不停放。名额是每会话 2、每用户 8、全节点 64。
 
-ICE 顺序（自动）：同内网 host → IPv6 → IPv4 STUN → TURN（可达探测通过的，最多两条）→ 中继转发。未实现 UPnP / NAT-PMP。空 ICE 服务器列表在 PoC 中会长时间超时，因此缺省带内置 STUN；可用 `VIBETERM_STUN_SERVERS` 换成本网可达的列表，或 `none` 显式禁用（仅局域网/全中继场景）。
+ICE 顺序（自动）：同内网 host → IPv6 → IPv4 STUN → TURN（可达探测通过的，最多两条）→ 中继转发。未实现 UPnP / NAT-PMP。空 ICE 服务器列表在早期原型测试中会长时间超时，因此缺省带内置 STUN；可用 `VIBETERM_STUN_SERVERS` 换成本网可达的列表，或 `none` 显式禁用（仅局域网/全中继场景）。
 
 设备页（非 `self`）两枚徽标：浏览器↔node 路径（`lan` / `v6` / `v4-p2p` / `turn` / `relay` 与 RTT）和 entry↔node 的 `reach`。直连断开时切回 primary，并对已订阅 pane 做一次 resume；浏览器→node 方向在断开瞬间可能丢最近输入，界面提示「直连已断开，最近输入可能未送达」。
 
@@ -378,11 +381,11 @@ Cloudflare Tunnel / Access 可放在中继或任一 node 前面。推荐：
 
 1. `VIBETERM_BIND_HOST=127.0.0.1`，cloudflared 指到本机 `9883`；
 2. 中继把 `VIBETERM_RELAY_PUBLIC_URL` 写成隧道的 `https://` 域名；node 把对外 origin 配成该域名；
-3. **`app.env` 增加 `VIBETERM_TRUST_PROXY=true` 后重启**，否则：
+3. **`app.env` 增加 `VIBETERM_TRUST_PROXY=true` 与 `VIBETERM_CLIENT_IP_HEADER=cf-connecting-ip` 后重启**（远程访问向导里的「信任代理」开关会同时写这两项），否则：
    - cookie 可能缺 `Secure`；
    - passkey 的 origin / `passkeyAvailable` 按 `http://127.0.0.1` 计算，公网域名下无法注册或登录。
 
-该开关只作用于本机 UI 的 origin 计算，**不会**把转发来的 `X-Forwarded-*` 当成客户端 IP。
+客户端 IP 只从 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头读取，且只认回环 / 内网 socket 来的请求；经隧道来的请求永远不算「本机」（不免通行密钥、不豁免登录限流）。
 
 ### 连接器健康
 
@@ -459,7 +462,7 @@ vibeterm mesh keylog status
 | `PROTOCOL_MISMATCH` | `/api/auth/mode` 缺 `rootEpoch` / `rootPublicKey` 等 mesh 必填字段 | 服务角色不是 mesh，或旧进程未起来 |
 | join 失败 `https` / `--insecure-local` | 非 HTTPS，或 production 用了 insecure | 换成系统信任链下的 HTTPS |
 | join `key log rejected` / `epoch_changed` | 签发 token 之后发生了 `rotate-root` / `rotate-root-keep` / `reset-root` | 重新 enroll |
-| enroll 一直「待确认」 | 证书未到本会话，或 passkey 路径需手动确认，或 keylog 未落地 | 等 join 完成再点确认；查中继是否在线；根钥路径才自动 admit |
+| enroll 一直「待确认」 | 证书未到本会话（确认按钮禁用，没有确认码），或等你核对确认码后点确认，或 keylog 未落地 | 等 join 完成、比对确认码后点确认；查中继是否在线 |
 | 登录页没有 passkey | `passkeyAvailable=false` 或本 origin 无凭证 | 用域名 HTTPS（加 `VIBETERM_TRUST_PROXY`）；先在本入口注册 |
 | TOTP 登录 `TOTP_INVALID` | epoch 与派生盐不一致，或验证码过期 | 确认用的是当前 epoch 的密码；日常改密会重封装 TOTP，无需重设；破坏性 `rotate-root` 后须重设 |
 | `systemctl is-active` 为 active，但本机 `curl /healthz` 超时、`relay list` 显示离线；`ss` 上 9883 的 Recv-Q ≥ Send-Q | 主线程卡在同步 N-API（libdatachannel DTLS / libjuice 死锁），listen backlog 打满；`EventLoopLagSampler` 看不见 | 重启前 `eu-stack -p <pid>` 核对 `getSelectedCandidatePair` / `handleTimeout` / `agent_send`，再 SIGKILL 拉起。看门狗会把挂死变成约 10–20 s 重启。见 [事件循环看门狗](./gateway-loop-watchdog.md)、[KI-17](../known-issues.md) |

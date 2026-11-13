@@ -1,6 +1,6 @@
 # 登录面安全：失败模糊化、客户端 IP、通行密钥二次验证与公网评估
 
-本文汇总 VibeTerm 账号密码登录暴露到公网时的安全机制：登录失败模糊化、客户端 IP 解析与 bootstrap 限制、登录限制与登录历史、未登录面的资源上限、通行密钥二次验证（按 origin 生效 + 可信本地来源豁免 + TOTP/通行密钥 OR）、认证审计日志、以及公网暴露的安全评估结论；面向运维与改动 `apps/gateway/src/mesh/auth-*.ts` 的开发者。身份与密钥模型（根钥、delegation、node-session、密钥日志）见 [多节点架构 §2](../architecture/mesh-architecture.md)。
+本文汇总 VibeTerm 账号密码登录暴露到公网时的安全机制：登录失败模糊化、客户端 IP 解析与 bootstrap 限制、登录限制与登录历史、未登录面的资源上限、通行密钥二次验证（按 origin 生效 + 可信本地来源豁免 + TOTP/通行密钥 OR）、认证审计日志、浏览器请求入口门（Origin / Host），以及公网暴露的安全评估结论；面向运维与改动 `apps/gateway/src/mesh/auth-*.ts` 的开发者。身份与密钥模型（根钥、delegation、node-session、密钥日志）见 [多节点架构 §2](../architecture/mesh-architecture.md)。
 
 ## 1. 现有机制（比常规密码登录强）
 
@@ -10,6 +10,17 @@
 - **passkey**：严格 origin/RP 绑定；**mesh peer 端口（39001）**用节点证书 + 握手签名鉴权，与用户密码无关。
 - **文件 API**：目录根限定、路径穿越与符号链接逃逸有检查；Telegram/微信为轮询，无入站 webhook。
 - 跨节点静默登录使用持久化的会话钥（[架构 §2「会话钥的跨文档持久化」](../architecture/mesh-architecture.md)），不改变节点侧校验：节点 B 仍要求根钥签的 delegation + 一次性 challenge + `target/target_pk` 绑定，A 的 SID / login 不能重放到 B。持久化的私钥为 WebCrypto 不可导出 CryptoKey，风险等级与既有 HttpOnly cookie 相同，上限为 delegation 18 h。
+
+### 1.1 账号密码强度规则
+
+每台节点的数据库都保存根公钥与 KDF 参数，在线限流（§7）不覆盖离线场景。KDF 参数不变，在**设置或修改账号密码**时强制下列规则：
+
+- 至少 12 位（NFKC 归一化后按 Unicode 码点计，与 KDF 的归一化一致）。
+- 拒绝过于简单的密码：单一字符占 60% 以上、整串是连续序列（`123456789012`、`abcdefghijkl`、键盘行 `qwertyuiop…`）、短片段重复三次以上（`abcabcabcabc`）、包含用户名（不分大小写，用户名至少 3 位）、命中内置的少量常见长密码（`password1234` 等）。
+- 规则只有一份：`packages/shared/src/auth/password-policy.ts` 的 `checkAccountPassword`，网页（设置向导、账号安全面板的修改密码）、`vibeterm user add|passwd`、`mesh reset-root`、`relay join` 建本机用户、`vibeterm settings passwd` 与设置向导的服务端（`POST /api/setup/relay`，错误码 `password_too_short` / `password_too_simple`）都调用它。
+- 登录不检查强度：已有的弱密码照常可用，不强制更换，只在下次改密时受新规则约束。接入口令、单机本地口令、分享口令都由服务端在线校验，不在此规则内。
+- 规则不替代随机密码：界面建议用密码管理器生成；需要更强保护时用通行密钥。
+- 混合版本：规则只在设置密码的客户端执行，不产生新的协议字段。旧版本节点或旧客户端设置的弱密码照常被接受，网关不校验强度。
 
 ## 2. 登录失败模糊化
 
@@ -35,16 +46,15 @@
 
 经 Cloudflare Tunnel 或反向代理时，所有访客共享隧道 agent 的 socket IP：不解析转发头会让一人打满误伤全站，分布式撞库则绕过 IP 桶。
 
-`resolveClientIp({ socketIp, headers, trustProxy })`：
+`client-ip.ts` 的 `resolveClientIp({ socketIp, headers, trustProxy, clientIpHeader })` 是全进程唯一的「客户端是谁」解析：
 
-- `VIBETERM_TRUST_PROXY` 未开启：始终用 socket IP，忽略转发头。
-- 已开启时按序取第一个**合法 IPv4/IPv6 字面量**（trim；非法则跳过）：
-  1. `CF-Connecting-IP`
-  2. `X-Real-IP`（nginx 的 `$remote_addr`，客户端无法伪造）
-  3. `X-Forwarded-For` 的**最后一个非空**条目（`proxy_add_x_forwarded_for` 把真实客户端追加在末尾；首段由客户端自带、可伪造）。末段不是合法字面量时不回退到更早的条目。
-  4. 回退 socket IP
+- `VIBETERM_TRUST_PROXY` 未开启，或套接字对端不是回环 / 内网（不是代理那一跳）：始终用 socket IP，忽略转发头。
+- 已开启且对端是回环 / 内网时，**只读一个头**，由 `VIBETERM_CLIENT_IP_HEADER` 决定（`x-forwarded-for` | `x-real-ip` | `cf-connecting-ip`，缺省 `x-forwarded-for`，其它值启动即报错）。其余转发头一律不看，不存在跨头回退。
+  - `x-forwarded-for` 取**最右一项**（受信代理追加的那一项；左侧由客户端自带、可伪造）。最右一项为空或不是合法字面量时不回退到更早的条目。
+  - 配置的头缺失、但请求带了其它转发头，或值不合法：结果为未知（`undefined`），不退回代理自己的套接字地址。请求不带任何转发头（本机直连）时才用 socket IP。配置的头缺失而其它转发头存在时，进程对每种头组合打一行 `[client-ip]` 告警：这类访客共用 `unknown` 限流桶，应把 `VIBETERM_CLIENT_IP_HEADER` 改成代理实际发送的头。
+- `VIBETERM_TRUST_PROXY` 与 `VIBETERM_CLIENT_IP_HEADER` 由同一套写入规则维护（`apps/gateway/src/tunnel/trust-proxy-env.ts` `patchTrustProxyEnv`），隧道开关与 TLS 外部模式共用：隧道打开「信任代理」时写 `VIBETERM_CLIENT_IP_HEADER=cf-connecting-ip`（Cloudflare 边缘会覆写该头）；隧道关闭信任、或切到 TLS 外部模式（本机反代）时，只在该键等于 `cf-connecting-ip` 时删掉它回到缺省，用户自己设的其它值保留。隧道状态的「需要重启」同时比较这两个键。自建 nginx / Caddy 用缺省的 `x-forwarded-for` 即可；只在代理确实覆写 `X-Real-IP` 时才配 `x-real-ip`。同一实例既走隧道又走本机反代时两者都从回环进来、无法区分，`cf-connecting-ip` 会采信反代透传的同名头，这种组合应只保留一种入口。
 
-`resolveClientIp` 的结果用于挑战限速、审计和直连登录记录。Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`；不要在不可信跳数前开启。未开启时，登录 IP 阶梯不把所有访客挤进同一个回环套接字：带了 `CF-Connecting-IP` / `X-Real-IP` / `X-Forwarded-For` / `Forwarded` 的请求单独进 `proxied:<声称地址>` 桶（声称值截断 128 字符，可伪造，只做隔离）。写进登录记录和审计日志的仍是套接字地址。
+解析结果用于挑战限速、登录 IP 阶梯、分享登录限速、域名访问策略、审计和直连登录记录；缺失时限流桶键为 `unknown`。限流桶键统一经 `limiterIpKey`：IPv6 按 /64 归桶（同一前缀内轮换源地址不换桶），v4-mapped 还原成点分 IPv4。Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`；不要在不可信跳数前开启。未开启时，登录 IP 阶梯不把经本机 / 内网反代来的访客挤进同一个套接字桶：带转发头的请求进 `proxied:<配置头里声称的地址>` 桶（可伪造，只做隔离；配置头缺失即 `proxied:unknown`）；公网套接字无论带什么头都按套接字计。写进登录记录和审计日志的仍是套接字地址。
 
 **转发登录**：入口 `forwarder` 会丢掉 `x-forwarded-*` / `CF-Connecting-IP`。入口只按真实客户端 IP 计登录阶梯，不计账号桶。目标节点看到的是 `peer:<入口>`，登录阶梯不按 IP 计，只按规范 uid 计账号软顶（用户名与 uid 共用这只桶）。TOTP 错码桶同样只按 uid（每节点一份内存表）。登录记录用的入口 IP 头见 §8，与这里的限流桶不是同一条规则。
 
@@ -54,11 +64,11 @@
 - 同一节点上已通过的验证码按 `(uid, code, delegation.sess_pk)` 缓存，TTL = 接受窗口（3 step × 30 s = 90 s）。同一 delegation 重试放行；换一把会话钥再用同一码 → `TOTP_INVALID`。
 - 多节点登录 fan-out 时，各节点有自己的缓存：同一验证码在窗口内被不同节点各自接受，这是有意为之。
 
-**Bootstrap loopback**：未 bootstrap 的实例若经隧道连到 `127.0.0.1`，socket IP 会被当成 loopback，远端可调用 `/api/auth/local/bootstrap` 创建首个账户。判定规则：
+**Bootstrap loopback**：未 bootstrap 的实例若经隧道连到 `127.0.0.1`，socket IP 会被当成 loopback，远端可调用 `/api/auth/local/bootstrap` 创建首个账户。本机判定（`requestIsLoopback`）与 §4「可信本地来源」共用 `client-ip.ts` 的 `localClientClass`，并额外要求套接字是回环：
 
-- 请求带 `CF-Connecting-IP`（Cloudflare 才会加；本机直连不会带）即视为非本机，与是否信任代理无关——信任模式下也不解析其值。
-- 否则 `trustProxy=true`：用上面解析出的客户端 IP（隧道访客不是 127.0.0.1，因此不能 bootstrap）。
-- 否则 `trustProxy=false`：仍用 socket IP；`X-Forwarded-For` 在未信任时忽略。
+- 请求带任何经代理的迹象即视为非本机，与是否信任代理无关，也不解析头里的地址：转发头 `forwarded`、`x-forwarded-for`、`x-real-ip`、`cf-connecting-ip`，以及 `x-forwarded-proto`、`x-forwarded-host`、`via`、`true-client-ip`、`x-client-ip`（空值也算）。
+- 请求 `Host` 必须是本机认得的名字：IP 字面量、`localhost` / `*.localhost`、本机 mDNS 名（`<os.hostname()>.local`）或已配置的域名（`apps/gateway/src/mesh/request-authority.ts`，与 §10 免登录单机的 Host 规则同一实现）。其它域名即使套接字是回环也不算本机。
+- 否则看套接字对端：回环才算本机；`peer:` 与缺失一律否。
 
 首次部署应先在本机完成 bootstrap，再对外暴露隧道。
 
@@ -111,20 +121,19 @@ RP ID **不会**改成配置项：WebAuthn 要求 RP ID 是当前 origin 的可�
 
 ### 可信本地来源豁免
 
-WebAuthn 不允许 IP 字面量 origin（`http://127.0.0.1:9883`、`http://192.168.1.5:9883`），这些地址永远无法注册通行密钥。因此与 [域名访问策略](./domain-access-policy.md) 同一套分类：**判定对象是客户端源 IP，不是 Host / Origin**。入口节点直达请求（`via=self`）满足以下全部条件即为可信本地来源（`apps/gateway/src/mesh/client-source.ts` `isTrustedLocalClient`）：
+WebAuthn 不允许 IP 字面量 origin（`http://127.0.0.1:9883`、`http://192.168.1.5:9883`），这些地址永远无法注册通行密钥。因此与 [域名访问策略](./domain-access-policy.md) 同一套分类：**判定对象是客户端源 IP，不看 Origin**；`Host` 只用来确认请求确实是发给本机的名字。入口节点直达请求（`via=self`）满足以下全部条件即为可信本地来源（`apps/gateway/src/mesh/client-source.ts` `isTrustedLocalClient`）：
 
-- 套接字对端地址本身必须是回环或本地（`isLoopbackClientIp || isLocalClientSource`）。公网套接字对端一律不豁免，无论它带了什么 `x-real-ip` / `x-forwarded-for`。经反代时，反代必须在本机或局域网；
-- 没有 `cf-connecting-ip` 头（出现即远端，空值也算出现）；
-- `VIBETERM_TRUST_PROXY` 关闭时请求不带 `x-forwarded-for` / `x-real-ip`（fail-closed：头存在即否）；
-- 解析出的客户端 IP（信任代理时取 `cf-connecting-ip → x-real-ip → XFF 末段`，否则取套接字对端）属于回环 / RFC1918 / link-local / IPv6 ULA / CGNAT 100.64/10；缺失即否。信任代理开启时，套接字对端与解析出的客户端 IP 都必须是本地。
+- 套接字对端地址本身是回环或本地（`isLoopbackClientIp || isLocalClientSource`），且不是 `peer:`；
+- 请求不带任何经代理的迹象（§3 列出的九个头，空值也算）；
+- 请求 `Host` 是本机认得的名字（§3）。
+
+判定只看套接字，**永远不采信转发头里的地址**，与 `VIBETERM_TRUST_PROXY` 无关（`client-ip.ts` `localClientClass`，`isTrustedLocalClient`、`requestIsLoopback`、`loginIpExempt`、中继状态免密、setup 路由共用）。代价：经本机 / 局域网反代访问的浏览器不再享受豁免，需在反代域名上注册通行密钥。
 
 可信本地来源的密码登录不要求通行密钥断言；`GET /api/auth/mode` 返回 `passkeySecondFactor=false`、`passkeySecondFactorWaived=true`，`secondFactorPolicy` 在未开 TOTP 时为 `none`、开了 TOTP 时为 `totp`。密码、TOTP、限速照旧。通行密钥直接登录不受影响。
 
-**下游传递**：入口 forwarder 转发 `/n/<id>/...` 时，若浏览器源为可信本地，则在转发头加 `x-vibeterm-client-source: local`（兼容期同时发 `x-tmex-client-source`）；浏览器自带的该头一律丢弃。目标节点只在请求来自认证 peer 链路（`clientIp=peer:<入口>`）时认这个头，直达请求带此头无效。
+**不跨节点传递**：每个节点只按自己的套接字判定。经入口转发到目标节点的登录，目标看到的是 `peer:<入口>`，永远不豁免；目标从 peer 入站请求里剥掉 `x-vibeterm-client-source`（及旧名 `x-tmex-client-source`），入口也不再盖这个头。目标节点不采信 peer 入站请求里声称的客户端来源。混跑期：2.14.0 入口仍会盖头，新目标剥掉不认；2.14.0 目标仍认这个头，新入口不再发、并丢弃浏览器自带的同名头，因此旧目标经新入口不再豁免。经本机入口登录远端节点、且账号策略要求通行密钥时，需要在入口 origin 上注册通行密钥（IP 字面量入口无法注册，改用域名或 `localhost`）。
 
-信任的是 mesh 成员身份（认证 peer 链路），不是头本身。被攻陷的成员节点可以为经它登录的浏览器免掉通行密钥——该节点本就能中转该用户的终端会话，属于既有信任面。不做签名断言，不提供关闭开关。
-
-e2e：Playwright 浏览器的源地址就是回环。mesh e2e 实例以 `VIBETERM_TRUST_PROXY=true` 启动，严格路径用例给 context 加 `x-forwarded-for: 203.0.113.9` 模拟公网源。
+e2e：Playwright 浏览器的源地址就是回环。严格路径用例给 context 加任一转发头（如 `x-forwarded-for: 203.0.113.9`）即模拟非本机源。
 
 ### 逃生口
 
@@ -154,26 +163,27 @@ vibeterm mesh passkey remove-all [<username>]
 | 高（条件） | 未 bootstrap 的新实例经隧道连 `127.0.0.1` 时可远程创建首个账户 | 已修（§3）；运维上仍应先在本机 bootstrap 再暴露 |
 | 高（条件） | 裸 `@vibeterm/gateway start` 入口不装会话守卫 | 不改：该入口仅开发用，打包运行时（`packages/app` 装配）才是公网形态 |
 | 高 | HTTP 直连暴露时会话可被嗅探；cookie `Secure` 依赖 HTTPS 探测 | 不改代码：公网一律走 Tunnel HTTPS 或自配 TLS，反代后开 `VIBETERM_TRUST_PROXY` |
-| 中 | 限流 IP 桶在隧道后全员共桶 | 已修（§3、§7）：反代后开 `VIBETERM_TRUST_PROXY`；未开时按声称地址拆桶，记录仍是套接字地址 |
-| 中 | 密码最短 8 位、无复杂度要求；拿到 DB 可离线撞根公钥 | 不改：argon2id 已足够贵；建议用密码管理器生成 16+ 位或改用 passkey。**不加复杂度规则** |
+| 中 | 限流 IP 桶在隧道后全员共桶 | 已修（§3、§7）：反代后开 `VIBETERM_TRUST_PROXY` 并按代理选 `VIBETERM_CLIENT_IP_HEADER`；未开时按配置头声称地址拆桶，记录仍是套接字地址 |
+| 中 | 账号密码强度 | 设置 / 修改账号密码时强制 12 位下限与弱密码规则（§1.1）；KDF 参数不变，已有密码不强制更换；建议用密码管理器生成 16+ 位或改用 passkey |
 | 中 | agent 会话 / 文件传输 API 无按用户归属检查 | 不改：VibeTerm 每节点单用户（`findPrimaryUser`），不承诺多用户隔离 |
 | 低 | 登录可枚举用户名 | 用户名枚举已由失败模糊化收口（§2）；用户名不是安全边界 |
-| 低 | 无通用 Origin 校验，CSRF 依赖 `SameSite=Lax` + 无 CORS 放行 | 不改：当前威胁模型足够 |
+| 中 | 浏览器请求的 Origin / Host 校验 | 分发入口统一校验 Origin / `Sec-Fetch-Site`，免登录单机另校验 Host（§10） |
 | 低 | TOTP 由同一密码派生，不是独立第二因子 | 不改；不宣传为 MFA，需要第二因子用 passkey |
+| 低 | 未登录 `GET /api/auth/nodes` 的返回范围 | 匿名只回当前节点 `{id}`；完整 `{id,name,online}` 仅有效会话。登录页实际只打 `/api/auth/mode`，不依赖这份名册 |
 
-**明确不做的事（避免过度防御）**：服务端 bcrypt/argon2 密码哈希（现有 challenge 签名设计更优）；全站锁定、密码复杂度规则；JWT / localStorage token / WS `?token=`；给 peer 握手再加口令层；收紧 passkey 域名绑定。IP 阶梯与账号暂停见 §7，不再把「不做指数退避」当成结论。
+**明确不做的事（避免过度防御）**：服务端 bcrypt/argon2 密码哈希（现有 challenge 签名设计更优）；全站锁定；JWT / localStorage token / WS `?token=`；给 peer 握手再加口令层；收紧 passkey 域名绑定。IP 阶梯与账号暂停见 §7，不再把「不做指数退避」当成结论。
 
 下面几项评估过、这一版不加：
 
 | 项 | 原因 |
 |---|---|
-| 对已登录会话隐藏 `GET /api/auth/nodes` | 名册是 fan-out 与节点管理的输入，会话门已经挡在前面 |
+| 对已登录会话隐藏 `GET /api/auth/nodes` | 名册是 fan-out 与节点管理的输入；匿名面已收成当前节点 id，会话门后面仍给完整 `{id,name,online}` |
 | 收掉中继 `healthz` 的字段 | 拨号与自动优选用这份探测；不在登录面收口 |
 | 加长分享口令最短长度 | 分享口令规则保持现状 |
 | 把登录各分支的耗时对齐 | challenge 签名路径不做密码哈希比较，不另加填充 |
-| HSTS、脚本 CSP、CSRF token | HTML 只加 `Content-Security-Policy: frame-ancestors 'self'`（§9）。HSTS 会打坏 localhost 与自签。CSRF 仍靠 `SameSite=Lax` 与不放行 CORS |
+| HSTS、CSRF token | HSTS 会打坏 localhost 与自签。CSRF 由 §10 的 Origin 门挡住，不另发 token |
 
-**暴力破解的现实评估**：在线速率由 §7 的策略决定（缺省同一 IP 15 min 内 10 次失败即锁定，账号每小时超过 50 次则暂停密码登录）。argon2 在浏览器侧，不构成服务端成本。分布式源 IP 仍受账号软顶约束；通行密钥直接登录不受这道暂停影响。离线需先拿到 DB（根公钥 + KDF 参数），argon2id 64 MiB 单次派生成本高，随机 16+ 位密码即可忽略。重启会清掉内存里的锁定，这是有意的。
+**暴力破解的现实评估**：在线速率由 §7 的策略决定（缺省同一 IP 15 min 内 10 次失败即锁定，账号每小时超过 50 次则暂停密码登录）。argon2 在浏览器侧，不构成服务端成本。分布式源 IP 仍受账号软顶约束；通行密钥直接登录不受这道暂停影响。离线需先拿到 DB（根公钥 + KDF 参数），argon2id 64 MiB 单次派生成本高，随机 16+ 位密码即可忽略；账号密码的最低要求见 §1.1。重启会清掉内存里的锁定，这是有意的。
 
 ## 6. 审计日志
 
@@ -203,13 +213,17 @@ vibeterm mesh passkey remove-all [<username>]
 
 **账号软顶**：该 uid 在滚动 60 min 内的失败次数超过 `accountFailPerHour` 时，暂停 `method=root` 的密码登录 `accountLockMs`。通行密钥直接登录（`method=passkey`）不停。暂停开始时清空该 uid 的失败窗口，暂停期间的失败不入窗口；到期后要重新累计超过 `accountFailPerHour` 次失败才会再次暂停，单次请求不能把账号重新打回暂停。`TOTP_REQUIRED` / `PASSKEY_REQUIRED` 不计。TOTP 自己的桶不变。
 
-**`exemptLocal`**：同时跳过 IP 阶梯和账号软顶。条件与通行密钥本地豁免的严格本地判定一致：策略打开、不是 peer 入站、请求不带任何代理头（`x-forwarded-for`、`x-real-ip`、`cf-connecting-ip`、`forwarded`）、套接字是回环或局域网。这些失败仍写入登录历史，但不进两道限流的窗口，所以本机失败既不会锁自己，也不能用来暂停公网的密码登录。反代后面要让真实客户端 IP 进阶梯，打开 `VIBETERM_TRUST_PROXY`；不开则走 §3 的 `proxied:` 桶，豁免也不会命中。
+**`exemptLocal`**：同时跳过 IP 阶梯和账号软顶。判定就是 §4 的可信本地来源（`isTrustedLocalClient`）：策略打开、入口直达且不是 peer 入站、请求没有经代理的迹象、`Host` 是本机认得的名字、套接字是回环或局域网。这些失败仍写入登录历史，但不进两道限流的窗口，所以本机失败既不会锁自己，也不能用来暂停公网的密码登录。反代后面要让真实客户端 IP 进阶梯，打开 `VIBETERM_TRUST_PROXY`；不开则走 §3 的 `proxied:` 桶，豁免也不会命中。
 
 入口转发的登录只计 IP。目标节点只计规范 uid。账号桶不会因为经过入口而记两次。
 
 IP 表与 uid 表各自硬顶 1 万条，超出时按最久未触碰淘汰空闲条目；全是活跃锁时，淘汰最早到期的锁。状态只在进程内，重启即清。
 
-**残余风险**：落到回环的 TCP 隧道（`frp`、`ssh -R`）若不带转发头，会被判为严格本地，两道锁都豁免，在尚无凭据时也能通过 setup；HTTP 层无法与真实本机客户端区分，这类部署应关闭 `exemptLocal`。反代后未开 `VIBETERM_TRUST_PROXY` 时，轮换 `proxied:` 声称值可以各自获得失败行配额（见 §8），但不能冲掉 2 万行上限以外的记录。
+**已知限制**：
+
+- 「本机」指本机任意 uid 与整个局域网，不区分用户。多用户主机（共享开发机、跳板机）应关闭 `exemptLocal`，并用通行密钥或 TOTP 作为强因素。
+- 落到回环 / 局域网的 TCP 层转发（`frp`、`ssh -R`、socat、LXD `proxy` 设备不带 `nat=true` 等）不加 HTTP 头，在 HTTP 层与本机客户端无法区分。这类部署应关闭 `exemptLocal`，并先在本机完成初始化再暴露端口；能改成 HTTP 反代（带转发头）的优先改。
+- 反代后未开 `VIBETERM_TRUST_PROXY` 时，按配置头的声称值分别计失败行配额（见 §8），总量仍受 2 万行上限约束。
 
 `GET /api/auth/login-policy`（要会话，本节点）：`{ policy, source: 'default'|'keylog', writable, blockers }`。`blockers` 是未吊销且低于最低版本的节点。写入与 TOTP 相同：客户端签 `login-policy`，`POST /api/auth/keylog`，服务端用 `validateLoginPolicy` 验载荷。`source === 'keylog'` 时，低于 2.10.0 的节点放不回这条记录；接纳或重新接纳之前应先升级。接口不因此拒绝接纳。网页在「账号安全 → 登录限制」里改预设或自定义字段，保存时走与 TOTP 相同的凭据签名；`writable=false` 时列出阻挡节点。CLI 见 [命令行使用手册](../operations/cli-usage.md)。
 
@@ -235,5 +249,24 @@ IP 表与 uid 表各自硬顶 1 万条，超出时按最久未触碰淘汰空闲
 
 `/api/setup/*`（含 `precheck`）：已经有用户，或本机认证已生效时，要求与其它 `/api/*` 相同的有效会话，否则 `UNAUTHORIZED`。在那之前只允许回环套接字且不带代理头，否则 `403 LOOPBACK_REQUIRED`。设置向导把这两个码显示成「请先登录。」与「请在本机完成初始化。」
 
-装配运行时的 HTML 响应带 `Content-Security-Policy: frame-ancestors 'self'`，只有这一条指令。没有 HSTS，也没有脚本 CSP。
+装配运行时的 HTML 响应带 `Content-Security-Policy: script-src 'self' 'wasm-unsafe-eval'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'`（`packages/app/src/runtime/serve-frontend.ts` `SPA_CSP`）：只允许同源脚本文件与 ghostty 的 WebAssembly 编译，不允许内联脚本与 `eval` / `new Function`。前端构建产物不含内联脚本；mermaid 依赖里 d3-dsv 的 `new Function` 只在解析 CSV 时调用，图表渲染用不到。没有 HSTS。
+
+## 10. 浏览器请求入口门（Origin / Host）
+
+`packages/app/src/runtime/assemble-routes.ts` `createHttpDispatch` 在所有处理器（含各类 WebSocket 升级）之前调用 `guardBrowserRequest`（`apps/gateway/src/mesh/browser-request-guard.ts`），只看本机直连请求（`via=self`），节点间转发进来的流不受影响。exec 通道原先各自做的 Origin 检查已并入这里。不经装配分发的独立入口（裸 dev gateway `apps/gateway/src/index.ts`、managed 二进制 `managed-entry.ts`）在 `guardedGatewayFetch`（`apps/gateway/src/tunnel/gateway-fetch.ts`）里调用同一个门，并按免登录单机处理（这两个运行时本身没有登录门）。peer 端口不是浏览器入口，不经这道门。
+
+| 请求 | 规则 | 拒绝 |
+| --- | --- | --- |
+| 每个 WebSocket 升级（`/ws`、`/n/:id/ws`、`/api/exec/ws`、`/n/:id/api/exec/ws`、分享 WS、`/relay/uplink` 等）与每个 `POST` / `PUT` / `PATCH` / `DELETE` | `Sec-Fetch-Site: cross-site` 直接拒；带 `Origin` 时必须与请求同源（按 `publicRequestUrl` 的 scheme + host + port；页面 https、本机看到 http 的同主机也算同源），或是本实例自己的入口地址（`VIBETERM_BASE_URL`、站点 URL、隧道域名、本机担任中继时的 `VIBETERM_RELAY_PUBLIC_URL`、分享默认地址；不含已接入的其它中继——经中继访问的请求在本节点是 peer 入站，不经这道门）。`Origin: null` 与非 http(s) origin 一律视为外来 | `403 FOREIGN_ORIGIN`（`/api/*`、`/n/:id/api/*` 回 JSON `{error:{code}}`，其余回 text/plain） |
+| 不带 `Origin` 的请求（CLI、curl、节点拨中继、同源 GET） | 放行 | — |
+| 免登录单机（standalone 且本机登录门未生效）的所有请求 | `Host`（信任代理时连同 `X-Forwarded-Host`）必须是 IP 字面量、`localhost` / `*.localhost`、本机 mDNS 名 `<os.hostname()>.local`，或已配置的域名（`listDomainAccessHosts` 与上面的入口地址）；其它 `.local` 名不算 | `421 MISDIRECTED_HOST` |
+
+要点：
+
+- 已登录模式不回 421，但同一 Host 规则用在 §3 / §4 的本机判定里：`Host` 不是本机认得的名字时，回环 / 局域网套接字也不享受通行密钥豁免、`exemptLocal`、setup 与本机 bootstrap。
+- 用自定义域名访问免登录单机时，先把它写进站点 URL 或 `VIBETERM_BASE_URL`，否则 421。
+- 反代改写了 `Host` 却没开 `VIBETERM_TRUST_PROXY` 时，浏览器的 `Origin` 只能靠「已配置入口地址」放行；站点 URL 留空会导致 403。
+- CLI 带 `Origin` = 入口 URL，与请求同源，不受影响。
+- 裸开发入口经 vite 代理时，`/api` 代理保留浏览器的 `Host`（不改写为 gateway 地址），与 `Origin` 同源。
+- 混跑：只影响本节点的浏览器入口，不改任何节点间协议；2.14.0 入口仍按旧行为放行，它转发到新目标的请求在目标侧是 peer 入站，不重复校验。
 

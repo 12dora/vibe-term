@@ -11,6 +11,7 @@ import {
   prepareSocket,
 } from './socket-handlers';
 import type { PortMapExportStoreLike } from './store';
+import { type TargetPolicyOptions, isTargetForbiddenError } from './target-policy';
 import {
   PORT_MAP_CONNECT_TIMEOUT_MS,
   PORT_MAP_MAX_PEER_STREAMS,
@@ -25,9 +26,31 @@ export type AcceptTcpStreamContext = {
   connectTimeoutMs?: number;
   peerStreamLimit?: number;
   now?: () => number;
+  targetPolicy?: TargetPolicyOptions;
 };
 
 type Requested = { mapId: string; host: string; port: number };
+
+function ctxNow(ctx: AcceptTcpStreamContext): number {
+  return (ctx.now ?? Date.now)();
+}
+
+function ctxPeerStreamLimit(ctx: AcceptTcpStreamContext): number {
+  return ctx.peerStreamLimit ?? PORT_MAP_MAX_PEER_STREAMS;
+}
+
+function ctxConnectTimeoutMs(ctx: AcceptTcpStreamContext): number {
+  return ctx.connectTimeoutMs ?? PORT_MAP_CONNECT_TIMEOUT_MS;
+}
+
+function resetDialFailure(
+  stream: LinkStream,
+  err: unknown,
+  data: ReturnType<typeof createPumpSocketData>
+): void {
+  stream.reset(isTargetForbiddenError(err) ? 'portmap-forbidden' : 'portmap-connect-failed');
+  disposePumpSocketData(data);
+}
 
 function parseRequest(stream: LinkStream): Requested | null {
   const open = parseOpenPayload(stream.openPayload);
@@ -65,14 +88,11 @@ export async function acceptTcpStream(
     return;
   }
   const row = ctx.exports.get(req.mapId);
-  if (!allows(row, ctx.peerNodeId, req, (ctx.now ?? Date.now)()) || !row) {
+  if (!allows(row, ctx.peerNodeId, req, ctxNow(ctx)) || !row) {
     stream.reset('portmap-forbidden');
     return;
   }
-  const slot = acquirePeerStreamSlot(
-    ctx.peerNodeId,
-    ctx.peerStreamLimit ?? PORT_MAP_MAX_PEER_STREAMS
-  );
+  const slot = acquirePeerStreamSlot(ctx.peerNodeId, ctxPeerStreamLimit(ctx));
   if (!slot) {
     stream.reset('portmap-peer-limit');
     return;
@@ -90,17 +110,13 @@ export async function acceptTcpStream(
     disposePumpSocketData(data);
     return;
   }
-  dial = dialTcp(
-    { host: row.host, port: row.port },
-    ctx.connectTimeoutMs ?? PORT_MAP_CONNECT_TIMEOUT_MS
-  );
+  dial = dialTcp({ host: row.host, port: row.port }, ctxConnectTimeoutMs(ctx), ctx.targetPolicy);
   if (aborted) dial.cancel();
   let socket: Socket;
   try {
     socket = await dial.result;
-  } catch {
-    stream.reset('portmap-connect-failed');
-    disposePumpSocketData(data);
+  } catch (err) {
+    resetDialFailure(stream, err, data);
     return;
   }
   if (aborted) {

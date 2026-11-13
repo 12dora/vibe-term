@@ -3,21 +3,20 @@ import { RelayCaPinStore } from '../../../../apps/gateway/src/auth/relay-ca-pin-
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/relay/redeem-pop';
 import {
   createNodeCertificate,
-  decodeAuthorization,
-  decodeBase64url,
   decodeKeyLogRecord,
   encodeBase64url,
   rootKeyFromSeed,
   signEd25519,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
-import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
 import {
   type RelayJoinToken,
   type RelayJoinTokenEntry,
   decodeRelayJoinToken,
+  enrollSas,
   isRelayJoinToken,
 } from '../../../shared/src/relay';
+import { t } from '../i18n';
 import { requireFlagValue } from '../lib/args';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
@@ -30,7 +29,6 @@ import {
   resolveRelayJoinCaFingerprint,
   storeRelayCaPin,
 } from '../lib/relay-ca';
-import { openRelayKeyLogPage, parseRelayKeyLogPage } from '../lib/relay-keylog';
 import { persistRelayUplink, relaysForTokenJoin } from '../lib/relay-store';
 import { asString } from '../lib/validate';
 import { applyRelayPasswordJoinEnv, relayJoinRoleName } from '../runtime/setup-shared';
@@ -40,15 +38,16 @@ import { enableDirectForOnboarding } from './direct';
 import { JoinError, NODE_REVOKED_REJOIN_ERROR } from './join-error';
 import { assertChainUids } from './join-verify';
 import { orderRelayEntries } from './relay-join-entries';
-import {
-  RELAY_ENROLLMENT_LOOKUP_MISSING,
-  isBareNotFound,
-  shouldTryNextRelay,
-} from './relay-join-failover';
+import { shouldTryNextRelay } from './relay-join-failover';
 import { joinFailureMessage } from './relay-join-failure';
+import {
+  type RelayRedeemResponse,
+  fetchEnrollmentUid,
+  redeemAtRelay,
+  relayHeaders,
+} from './relay-join-redeem';
 import { logRelayJoinSummary } from './relay-join-summary';
 import { type RelayAdmissionWatch, settleRelayAdmission } from './relay-join-wait';
-import { RELAY_REDEEM_RESPONSE_MAX_BYTES, joinRelayUrl, requestRelayJson } from './relay-shared';
 import { type RestartOutcome, maybeRestart } from './restart';
 import { withAuth } from './with-auth';
 
@@ -72,93 +71,42 @@ function log(io: CliIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
 }
 
-/** 每台中继的租户令牌都是它自己签发的，跨中继复用只会被拒。 */
-function relayHeaders(entry: RelayJoinTokenEntry): Record<string, string> {
-  return assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(entry.token));
+function warn(io: CliIo | undefined, message: string): void {
+  (io?.warn ?? console.error)(message);
 }
 
-/**
- * 证书里的 uid 必须与租户 genesis 一致（`applyAdmitNode` 会比对），而 redeem 之前节点只有
- * join 串，所以先按 enroll_pk 取回中继保存的 authorization，从中读出 uid。
- */
-async function fetchEnrollmentUid(input: {
-  entry: RelayJoinTokenEntry;
-  enrollPk: Uint8Array;
-  fetcher?: FetchLike;
-  timeoutMs?: number;
-}): Promise<string> {
-  let body: Record<string, unknown>;
-  try {
-    body = await requestRelayJson({
-      fetcher: input.fetcher,
-      url: joinRelayUrl(
-        input.entry.url,
-        `/api/relay/tenants/${input.entry.tenantId}/enrollments/${encodeURIComponent(
-          encodeBase64url(input.enrollPk)
-        )}`
-      ),
-      headers: relayHeaders(input.entry),
-      label: 'relay enrollment lookup',
-      timeoutMs: input.timeoutMs,
-    });
-  } catch (error) {
-    if (isBareNotFound(error)) {
-      throw new JoinError('join_failed', RELAY_ENROLLMENT_LOOKUP_MISSING);
-    }
-    throw error;
+async function readStdinLine(): Promise<string> {
+  let buf = '';
+  for await (const chunk of process.stdin) {
+    buf += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+    const nl = buf.search(/\r?\n/);
+    if (nl >= 0) return buf.slice(0, nl);
   }
-  const authorization = body.authorization;
-  if (typeof authorization !== 'string') {
-    throw new JoinError('join_failed', 'relay enrollment lookup returned no authorization');
+  return buf;
+}
+
+const RELAY_JOIN_TOKEN_ENV = 'VIBETERM_RELAY_JOIN_TOKEN';
+
+async function resolveRelayJoinToken(parsed: ParsedArgs, io: CliIo): Promise<string | undefined> {
+  const fromFlag = requireFlagValue(parsed.flags, 'token');
+  const fromStdin = parsed.flags['token-stdin'] === true;
+  if (fromFlag && fromStdin) {
+    throw new Error('relay join --token and --token-stdin are mutually exclusive');
   }
-  return decodeAuthorization(decodeBase64url(authorization)).uid;
+  if (fromFlag) {
+    warn(io, t('relay.join.tokenArgvWarning'));
+    return fromFlag;
+  }
+  if (fromStdin) {
+    const line = (await (io.readStdinLine ?? readStdinLine)()).trim();
+    if (!line) throw new Error(t('errors.validate.emptyField', { field: '--token-stdin' }));
+    return line;
+  }
+  const fromEnv = process.env[RELAY_JOIN_TOKEN_ENV]?.trim();
+  return fromEnv || undefined;
 }
 
-export type RelayRedeemResponse = {
-  keyLog: Awaited<ReturnType<typeof openRelayKeyLogPage>>;
-  relays: string[];
-  tenantId: string;
-};
-
-async function redeemAtRelay(input: {
-  entry: RelayJoinTokenEntry;
-  decoded: RelayJoinToken;
-  certificate: Uint8Array;
-  certSig: Uint8Array;
-  pop: string;
-  fetcher?: FetchLike;
-  timeoutMs?: number;
-}): Promise<RelayRedeemResponse> {
-  const body = await requestRelayJson({
-    fetcher: input.fetcher,
-    url: joinRelayUrl(
-      input.entry.url,
-      `/api/relay/tenants/${input.entry.tenantId}/enrollments/redeem`
-    ),
-    method: 'POST',
-    headers: relayHeaders(input.entry),
-    body: {
-      certificate: encodeBase64url(input.certificate),
-      cert_sig: encodeBase64url(input.certSig),
-      pop: input.pop,
-    },
-    label: 'relay redeem',
-    maxBytes: RELAY_REDEEM_RESPONSE_MAX_BYTES,
-    timeoutMs: input.timeoutMs,
-  });
-  const keyLog = await openRelayKeyLogPage(
-    input.decoded.logKey,
-    parseRelayKeyLogPage(body.key_log)
-  );
-  const relays = Array.isArray(body.relays)
-    ? body.relays.filter((url): url is string => typeof url === 'string')
-    : [];
-  return {
-    keyLog,
-    relays,
-    tenantId: typeof body.tenant_id === 'string' ? body.tenant_id : input.entry.tenantId,
-  };
-}
+export type { RelayRedeemResponse };
 
 type PreparedJoin = {
   identity: Awaited<ReturnType<typeof ensureNodeIdentity>>;
@@ -413,6 +361,7 @@ export async function runRelayJoin(
 
   return await withAuth(parsed, io, async (ctx) => {
     const attempt = await redeemAgainstRelays({ ctx, decoded, entries, io, caFingerprint });
+    log(io, t('relay.join.enrollSas', { code: enrollSas(attempt.prepared.certificate) }));
     const committed = await commitRelayJoin({ ctx, decoded, attempt, entries, name });
     const restart = await applyNodeSetup(ctx, parsed, io);
     logRelayJoinSummary((message) => log(io, message), {
@@ -441,7 +390,7 @@ export function relayJoinUrlFromParsed(parsed: ParsedArgs): string {
 }
 
 async function dispatchRelayJoin(parsed: ParsedArgs, io: CliIo): Promise<RelayJoinResult> {
-  const token = requireFlagValue(parsed.flags, 'token');
+  const token = await resolveRelayJoinToken(parsed, io);
   const tenant = asString(parsed.flags.tenant);
   if (token && (Object.hasOwn(parsed.flags, 'password') || tenant)) {
     throw new Error('relay join --token and --tenant/--password are mutually exclusive');

@@ -89,6 +89,20 @@ describe('account-security keylog', () => {
     expect(typeof body.sig).toBe('string');
   });
 
+  test('changeAccountPassword refuses a weak new password before signing anything', async () => {
+    const { ctx, keylog } = await signedCtx('old-pass-word');
+    for (const newPassword of ['short', '123456789012', 'password1234', 'x-admin-k9Q2vL7']) {
+      await expect(
+        changeAccountPassword(ctx, {
+          fullReset: false,
+          oldPassword: 'old-pass-word',
+          newPassword,
+        })
+      ).rejects.toBeInstanceOf(UsageError);
+    }
+    expect(keylog()).toBe('');
+  });
+
   test('changeAccountPassword fullReset posts rotate-root', async () => {
     const { ctx, keylog } = await signedCtx('old-pass-word');
     await changeAccountPassword(ctx, {

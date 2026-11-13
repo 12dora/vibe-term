@@ -37,7 +37,6 @@ import {
 } from '@vibeterm/shared/auth';
 import {
   admitDisposition,
-  admitPlan,
   clearUnconfirmedRecords,
   forgetUnconfirmedRecord,
   listUnconfirmedRecordIds,
@@ -709,13 +708,23 @@ describe('凭据复用窗口', () => {
 });
 
 describe('joinCommand', () => {
-  test('带名称时加 --name，特殊字符加引号', () => {
-    expect(joinCommand('https://relay.example', 'TOKEN', 'studio')).toBe(
-      "vibeterm relay join 'https://relay.example' --token TOKEN --name studio"
+  test('加入码走环境变量不进 argv；带名称时加 --name，特殊字符加引号', () => {
+    expect(joinCommand('https://relay.example', 'r3.TOKEN', 'studio')).toBe(
+      "VIBETERM_RELAY_JOIN_TOKEN='r3.TOKEN' vibeterm relay join 'https://relay.example' --name studio"
     );
-    expect(joinCommand('https://relay.example', 'TOKEN', 'my node')).toContain("--name 'my node'");
-    expect(joinCommand('https://relay.example', 'TOKEN', null)).toBe(
-      "vibeterm relay join 'https://relay.example' --token TOKEN"
+    expect(joinCommand('https://relay.example', 'r3.TOKEN', 'my node')).toContain(
+      "--name 'my node'"
+    );
+    const bare = joinCommand('https://relay.example', 'r3.TOKEN', null);
+    expect(bare).toBe(
+      "VIBETERM_RELAY_JOIN_TOKEN='r3.TOKEN' vibeterm relay join 'https://relay.example'"
+    );
+    expect(bare).not.toContain('--token');
+  });
+
+  test('加入码里的单引号被转义，不会截断命令', () => {
+    expect(joinCommand('https://relay.example', "a'b", null)).toContain(
+      "VIBETERM_RELAY_JOIN_TOKEN='a'\\''b' vibeterm"
     );
   });
 
@@ -723,7 +732,7 @@ describe('joinCommand', () => {
     const command = joinCommand('https://relay.example/x?a=1&b=2', 'TOKEN');
     expect(command).toContain("'https://relay.example/x?a=1&b=2'");
     expect(command).not.toContain('& b');
-    expect(command.split("'")[0]).toBe('vibeterm relay join ');
+    expect(command.startsWith("VIBETERM_RELAY_JOIN_TOKEN='TOKEN' vibeterm relay join ")).toBe(true);
   });
 
   test('注入型 URL 直接拒绝，不是「引起来就算了」', () => {
@@ -861,17 +870,6 @@ describe('submitAdmitRecord', () => {
     expect(listUnconfirmedRecordIds()).toEqual([]);
   });
 
-  test('自动路径：手上有未确认记录时一律重发，不再现签（轮询每 5 s 会重来一次）', async () => {
-    const api = fakeApi([{ ok: false, code: 'HUB_TIMEOUT' }]);
-    expect(admitPlan('e-plan', true)).toBe('sign');
-    expect(admitPlan('e-plan', false)).toBe('wait');
-
-    await submitAdmitRecord(api, 'e-plan', RECORD);
-    // 根钥签名者还在复用窗口里，但已经有未确认记录 → 只能重发
-    expect(admitPlan('e-plan', true)).toBe('resend');
-    expect(admitPlan('e-plan', false)).toBe('resend');
-  });
-
   test('确认成功后不再留着可重发的记录', async () => {
     const api = fakeApi([{ ok: true, hubAck: true }]);
     expect(await submitAdmitRecord(api, 'e-4', RECORD)).toEqual({ kind: 'admitted' });
@@ -888,7 +886,6 @@ describe('submitAdmitRecord', () => {
     await expect(submitAdmitRecord(api, 'e-throw', RECORD)).rejects.toThrow('connection reset');
     // 服务端到底落没落库无从判断：唯一安全的重试就是原样重发这份字节。
     expect(unconfirmedRecord('e-throw')).toEqual(RECORD);
-    expect(admitPlan('e-throw', true)).toBe('resend');
   });
 
   test('终态拒绝（签名坏等）不留记录：重发重签都没用', async () => {

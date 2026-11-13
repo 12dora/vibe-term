@@ -1,4 +1,4 @@
-import type { StartUpgradeRequest } from '@vibeterm/shared';
+import type { StartUpgradeRequest, UpgradeStatus } from '@vibeterm/shared';
 import { t } from '../i18n';
 import { isPeerRequest } from '../mesh/client-source';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
@@ -221,6 +221,40 @@ async function parseStartUpgradeRequest(req: Request): Promise<StartUpgradeParse
   return { version, source, sha256, requireFastSource };
 }
 
+function startUpgradeErrorResponse(result: {
+  ok: false;
+  code: string;
+  status: UpgradeStatus;
+  verdict?: 'slow' | 'unreachable';
+  elapsedMs?: number;
+  bytes?: number;
+}): Response {
+  if (result.code === 'UPGRADE_NOT_ALLOWED') {
+    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
+  }
+  if (result.code === 'PACKAGE_NOT_STAGED') {
+    return json({ code: 'PACKAGE_NOT_STAGED' }, 409);
+  }
+  if (result.code === 'UPGRADE_SIGNATURE_REQUIRED') {
+    return json({ code: 'UPGRADE_SIGNATURE_REQUIRED' }, 409);
+  }
+  if (result.code === 'UPGRADE_DOWNGRADE_REFUSED') {
+    return json({ code: 'UPGRADE_DOWNGRADE_REFUSED' }, 409);
+  }
+  if (result.code === 'RELEASE_SLOW' || result.code === 'RELEASE_UNREACHABLE') {
+    return json(
+      {
+        code: result.code,
+        verdict: result.verdict,
+        elapsedMs: result.elapsedMs,
+        bytes: result.bytes,
+      },
+      409
+    );
+  }
+  return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);
+}
+
 async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   const parsed = await parseStartUpgradeRequest(req);
   if ('error' in parsed) return parsed.error;
@@ -234,29 +268,7 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
     remote: requestIsRemotelyInitiated(req),
     requireFastSource: parsed.requireFastSource,
   });
-  if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
-    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
-  }
-  if (!result.ok && result.code === 'PACKAGE_NOT_STAGED') {
-    return json({ code: 'PACKAGE_NOT_STAGED' }, 409);
-  }
-  if (!result.ok && result.code === 'UPGRADE_SIGNATURE_REQUIRED') {
-    return json({ code: 'UPGRADE_SIGNATURE_REQUIRED' }, 409);
-  }
-  if (!result.ok && (result.code === 'RELEASE_SLOW' || result.code === 'RELEASE_UNREACHABLE')) {
-    return json(
-      {
-        code: result.code,
-        verdict: result.verdict,
-        elapsedMs: result.elapsedMs,
-        bytes: result.bytes,
-      },
-      409
-    );
-  }
-  if (!result.ok) {
-    return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);
-  }
+  if (!result.ok) return startUpgradeErrorResponse(result);
   return json(result.status);
 }
 

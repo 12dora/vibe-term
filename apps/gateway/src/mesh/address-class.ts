@@ -461,12 +461,11 @@ function unwrapHost(raw: string): string {
 }
 
 /**
- * 缺失 / `local` 视为本机（兼容未拿到 socket IP 的本机入口）；`peer:` 前缀一律否。
+ * 缺失 / 空值 / 非地址值一律否（未知来源不得当成本机）；`peer:` 前缀一律否。
  * mapped 只认 dotted `::ffff:127.x.x.x`，与 `classifyRemoteAddress` 的 hex mapped 解包不同。
  */
 export function isLoopbackClientIp(ip: string | null | undefined): boolean {
-  if (ip == null || ip === '' || ip === 'local') return true;
-  if (ip.startsWith('peer:')) return false;
+  if (!ip || ip.startsWith('peer:')) return false;
   const host = unwrapHost(ip);
   if (host === 'localhost') return true;
   if (host === '::1') return true;

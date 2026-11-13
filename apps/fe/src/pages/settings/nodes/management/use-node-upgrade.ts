@@ -84,6 +84,7 @@ const ERROR_KEYS: Record<string, string> = {
   UPGRADE_NOT_ALLOWED: 'nodes.upgrade.notAllowed',
   UPGRADE_IN_PROGRESS: 'nodes.upgrade.inProgress',
   UPGRADE_UNSUPPORTED: 'nodes.upgrade.unsupported',
+  UPGRADE_DOWNGRADE_REFUSED: 'nodes.upgrade.downgradeRefused',
   RELEASE_UNAVAILABLE: 'nodes.upgrade.releaseUnavailable',
   UPGRADE_OFFSET_MISMATCH: 'nodes.upgrade.pushFailed',
 };

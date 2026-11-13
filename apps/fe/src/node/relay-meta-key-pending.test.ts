@@ -1,11 +1,13 @@
 // 元数据密钥换代的欠账：记账 / 覆盖 / 重发 / 重签。
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { encodeBase64url } from '@vibeterm/shared/auth';
 import type { RelayFlowDeps } from './relay-enroll';
 import {
+  RELAY_META_KEY_STORAGE_KEY,
+  RELAY_PACK_DEBT_STORAGE_KEY,
   clearPendingMetaKeysForTest,
   clearRelayPackDebtForTest,
   forgetPendingMetaKey,
@@ -129,7 +131,7 @@ describe('relay 密封包欠账', () => {
   test('欠账只记地址，不携带任何密钥材料', () => {
     rememberRelayPackDebt();
     expect(relayPackDebt()).toBe(true);
-    // 没有 sessionStorage 的环境（bun test）退化成内存态，语义不变。
+    // 没有 localStorage 的环境（bun test）退化成内存态，语义不变。
     forgetRelayPackDebt();
     expect(relayPackDebt()).toBe(false);
   });
@@ -155,5 +157,64 @@ describe('relay 密封包欠账', () => {
     expect(relayPackDebtDetail()).toEqual({ all: true, urls: ['https://a.example'] });
     forgetRelayPackDebt();
     expect(relayPackDebtDetail()).toEqual({ all: false, urls: [] });
+  });
+});
+
+describe('欠账落 localStorage', () => {
+  const holder = globalThis as { localStorage?: unknown };
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+
+  beforeEach(() => {
+    clearPendingMetaKeysForTest();
+    clearRelayPackDebtForTest();
+  });
+
+  afterEach(() => {
+    if (original) Object.defineProperty(globalThis, 'localStorage', original);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+    clearPendingMetaKeysForTest();
+    clearRelayPackDebtForTest();
+  });
+
+  test('meta-key 欠账与密封包欠账写进 localStorage，销账后摘掉', () => {
+    const rows = new Map<string, string>();
+    holder.localStorage = {
+      getItem: (key: string) => rows.get(key) ?? null,
+      setItem: (key: string, value: string) => void rows.set(key, value),
+      removeItem: (key: string) => void rows.delete(key),
+    };
+    rememberPendingMetaKey({
+      id: 'rotate-root',
+      reason: 'rotateRoot',
+      op: { op: 'rotate' },
+      record: RECORD,
+    });
+    rememberRelayPackDebt(['https://a.example']);
+    expect(JSON.parse(rows.get(RELAY_META_KEY_STORAGE_KEY) ?? 'null')[0].id).toBe('rotate-root');
+    expect(JSON.parse(rows.get(RELAY_PACK_DEBT_STORAGE_KEY) ?? 'null').urls).toEqual([
+      'https://a.example',
+    ]);
+    forgetPendingMetaKey('rotate-root');
+    forgetRelayPackDebt();
+    expect(rows.has(RELAY_META_KEY_STORAGE_KEY)).toBe(false);
+    expect(rows.has(RELAY_PACK_DEBT_STORAGE_KEY)).toBe(false);
+  });
+
+  test('读 localStorage 本身就抛（隐私模式 / 被禁用）时退化成内存态，不抛出', () => {
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    rememberPendingMetaKey({
+      id: 'rotate-root',
+      reason: 'rotateRoot',
+      op: { op: 'rotate' },
+      record: RECORD,
+    });
+    rememberRelayPackDebt();
+    expect(listPendingMetaKeys()).toHaveLength(1);
+    expect(relayPackDebt()).toBe(true);
   });
 });
