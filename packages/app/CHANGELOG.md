@@ -1,41 +1,47 @@
-# 2.14.0
+# 2.15.0
 
-_2026-10-24_
+_2026-11-14_
 
 ## English
 
-### New
+### Security hardening
 
-- File preview: a back button returns to the folder in the File Manager, and Previous / Next buttons (or ← / → for images, PDFs, audio and video) step through the files in the same folder, in File Manager order. Browser Back also returns to the File Manager now.
-- Files sidebar: switching to the Files tab opens the File Manager; a new button left of Refresh shows or hides it; every folder (not only roots) has Open / Close to show that folder in the File Manager.
-- Uploads run several files at once and downloads fetch parts of a file in parallel. One progress card shows the overall progress plus a bar per file, based on real bytes sent and received.
-- Node settings: new "Node connection proxy". Connections to nodes and relays go direct by default; choose "System proxy" to send them through HTTP_PROXY / HTTPS_PROXY. Local and private addresses always connect directly. Internet features (AI models, search, upgrades) keep using the system proxy as before. CLI: `vibeterm settings mesh proxy get|set`.
+This release tightens security across the web UI, node-to-node links, relays, access tokens and installation. Upgrade relays and nodes together: nodes still on 2.14 cannot recover a relay password join against an upgraded relay until they are upgraded too.
 
-### Fixes
+### What changes for you
 
-- Downloading a folder or several files from a remote node saved a file without an extension; it is now `name.tar.gz`.
-- Downloads from remote nodes no longer fail when the connection switches between relay and direct mid-transfer: the transfer continues where it stopped.
-- Failed transfers now say why (connection lost, sign-in required, node unreachable, size limit, file changed during transfer, …) instead of only "Download failed".
-- Upload progress no longer jumps in 8 MB steps or sits at 50 %; finished cards no longer keep a Cancel button.
-- Files with Chinese or other non-Latin names on SSH devices preview and download correctly; video seeking on files served by VibeTerm works.
-- Browsing an SSH device no longer waits behind long-running downloads on the same device.
+- **Password change signs out everywhere.** Changing your account password now signs out all devices and revokes access tokens, terminal shares and pane grants. The browser and CLI you changed it from sign back in automatically; create new access tokens afterwards. Passkeys and two-step verification are kept.
+- **New account passwords need at least 12 characters** and must not be an obvious sequence, repeat or common password. Existing passwords keep working.
+- **Adding a device needs your confirmation.** The new device shows a confirmation code (`vibeterm relay join` prints it); confirm on the Nodes page only if it matches. Devices are no longer added automatically.
+- **Join command:** the copied command now passes the join code through `VIBETERM_RELAY_JOIN_TOKEN` (or `--token-stdin`) instead of the command line.
+- **Removing a node** also revokes the access tokens, terminal shares, pane grants and port maps created through it, and the relay credentials are renewed.
+- **Access tokens with the `files` scope** only work in file roots you configured; the automatic home folder is not available to tokens, and VibeTerm's own data, SSH keys and shell startup files are always refused. Revoking a token removes the port maps it created.
+- **Port maps** can no longer forward to the node's own VibeTerm ports or cloud metadata addresses.
+- **Browser:** requests and terminal connections from other websites are refused. Files such as SVG, HTML and XML open as downloads instead of in the page.
+- **Reverse proxies:** set `VIBETERM_CLIENT_IP_HEADER` to the header your proxy sets (`x-forwarded-for` by default, `cf-connecting-ip` for Cloudflare Tunnel, which is set automatically). Forwarded headers are only trusted from a proxy on the same host or LAN.
+- **Upgrades:** remote upgrades never install an older version; locally use `vibeterm upgrade --version <v> --allow-downgrade`.
+- **Relays** accept at most 50 tenants by default (`VIBETERM_RELAY_MAX_TENANTS`) and limit password checks to protect the relay under load.
+- Installation folders and the database are now readable only by the VibeTerm user.
 
 ---
 
 ## 中文
 
-### 新增
+### 安全加固
 
-- 文件预览：新增「返回文件管理器」，回到文件所在目录；新增上一个 / 下一个（图片、PDF、音视频也可按 ← / →），按文件管理器的排序在同目录内切换。浏览器后退也能回到文件管理器。
-- 文件侧栏：切到「文件」后右侧自动打开文件管理器；刷新按钮左侧新增展开 / 收起按钮；每个文件夹（不只是根目录）都可「打开 / 关闭」，在文件管理器中打开或关闭该目录。
-- 上传多个文件时并发进行，下载时分段并行拉取；一张进度卡同时显示整体进度和每个文件的进度，按实际收发的字节计算。
-- 节点设置新增「节点连接代理」：连接节点和中继默认直连，选「系统代理」则经 HTTP_PROXY / HTTPS_PROXY。本机与内网地址始终直连；大模型、搜索、升级等上网功能仍照常使用系统代理。命令行：`vibeterm settings mesh proxy get|set`。
+本版本在网页、节点间连接、中继、访问令牌与安装等方面全面加强安全性。请将中继与节点一起升级：仍是 2.14 的节点在中继升级后，需先升级才能通过中继密码重新加入。
 
-### 修复
+### 使用上的变化
 
-- 从远程节点下载文件夹或多个文件时，保存的文件没有扩展名；现在为 `名称.tar.gz`。
-- 从远程节点下载时，链路在中继与直连之间切换不再导致下载失败，会从断点继续。
-- 传输失败时显示具体原因（网络中断、需要登录该节点、节点不可达、超过大小上限、传输期间源文件变化等），不再只提示「下载失败」。
-- 上传进度不再按 8 MB 跳变或卡在 50%；完成后的提示不再残留「取消」按钮。
-- SSH 设备上中文等非拉丁字符命名的文件可正常预览和下载；由 VibeTerm 提供的视频可以拖动进度。
-- 同一 SSH 设备有长时间下载时，浏览目录不再被阻塞。
+- **修改密码会退出所有设备**：修改账号密码后，所有设备需重新登录，访问令牌、终端分享与窗格授权一并撤销。发起修改的浏览器与 CLI 会自动重新登录；访问令牌需重新创建。通行密钥与两步验证保留。
+- **新设置的账号密码至少 12 位**，且不能是明显的连续、重复字符或常见密码；已有密码不受影响。
+- **添加设备需要人工确认**：新设备会显示确认码（`vibeterm relay join` 会打印），在「节点」页核对一致后再确认；不再自动加入。
+- **加入命令**：复制的命令改为通过 `VIBETERM_RELAY_JOIN_TOKEN`（或 `--token-stdin`）传入加入码，不再写在命令行参数里。
+- **移除节点**时，经该节点创建的访问令牌、终端分享、窗格授权与端口映射一并撤销，中继凭据随之换发。
+- **`files` 权限的访问令牌**只能使用已配置的文件根，自动的主目录根对令牌不可用；VibeTerm 自身数据、SSH 密钥与 shell 启动文件一律拒绝。撤销令牌会同时删除它创建的端口映射。
+- **端口映射**不能再指向本节点自身的 VibeTerm 端口或云厂商元数据地址。
+- **浏览器**：来自其它网站的请求与终端连接一律拒绝；SVG、HTML、XML 等文件改为下载，不在页面中打开。
+- **反向代理**：通过 `VIBETERM_CLIENT_IP_HEADER` 指定代理设置的头（默认 `x-forwarded-for`，Cloudflare Tunnel 为 `cf-connecting-ip`，开启隧道时自动设置）；只信任同机或局域网内代理转发的头。
+- **升级**：远程升级不会安装更旧的版本；本机降级需 `vibeterm upgrade --version <v> --allow-downgrade`。
+- **中继**默认最多 50 个租户（`VIBETERM_RELAY_MAX_TENANTS`），并限制密码校验频率，避免中继在高负载下失去响应。
+- 安装目录与数据库改为仅 VibeTerm 运行用户可读。
