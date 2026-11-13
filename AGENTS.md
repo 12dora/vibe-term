@@ -26,6 +26,8 @@
 
 ## 执行原则（重要）
 
+- 日常单测用 `bun run test:changed`（相对 HEAD 的改动；空工作区立刻退出 0）；发布 / CI 仍 `bun run test:unit`。不要跑 `bun run --filter '*' test`。
+
 ## **始终参考代码和文档，禁止猜测**
 
 - 每次使用各种库的 API 前，必须查阅源码 docs.rs 或 Context7 文档

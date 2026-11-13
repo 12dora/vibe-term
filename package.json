@@ -20,6 +20,7 @@
     "pack": "bun run build && bun run --filter vibeterm-cli pack",
     "test": "bun run --filter '*' test",
     "test:unit": "bun scripts/ci/unit-tests.ts",
+    "test:changed": "bun scripts/ci/unit-tests.ts --changed",
     "test:app": "bun run --filter vibeterm-cli test",
     "lint": "biome check . && bun scripts/complexity/gate.ts",
     "lint:fix": "biome check . --write",
