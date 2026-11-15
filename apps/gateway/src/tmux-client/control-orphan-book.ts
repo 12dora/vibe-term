@@ -2,6 +2,7 @@
 export interface OrphanControlBlock {
   literal: boolean;
   deadline: number;
+  timeoutMs: number;
   headSince: number;
   poisonOnStall: boolean;
   seq?: number;
@@ -26,11 +27,13 @@ export class ControlOrphanBook {
     return this.orphans.some((orphan) => orphan.poisonOnStall);
   }
 
-  /** 只有已拿到 command-number 的 orphan 会按截止时间淘汰，无号的不参与定时。 */
-  earliestDeadline(): number {
+  /** 只有已拿到 command-number 且块未在接收中的 orphan 会按截止时间淘汰，其余不参与定时。 */
+  earliestDeadline(protectedSeq?: number): number {
     let at = Number.POSITIVE_INFINITY;
     for (const orphan of this.orphans) {
-      if (orphan.seq !== undefined) at = Math.min(at, orphan.deadline);
+      if (orphan.seq !== undefined && orphan.seq !== protectedSeq) {
+        at = Math.min(at, orphan.deadline);
+      }
     }
     return at;
   }
@@ -49,11 +52,13 @@ export class ControlOrphanBook {
    * 无号 orphan 在流上的顺位仍在：一直保留到它的 `%begin` 到达，从不回的通道交给卡死判定整条重建。
    * 返回是否丢掉了计入卡死判定的 orphan（tmux 仍欠它一个回执）。
    */
-  prune(now: number): boolean {
+  prune(now: number, protectedSeq?: number): boolean {
     let droppedStallCandidate = false;
     while (this.orphans.length > 0) {
       const head = this.orphans[0];
-      if (!head || head.seq === undefined || head.deadline > now) break;
+      if (!head || head.seq === undefined || head.seq === protectedSeq || head.deadline > now) {
+        break;
+      }
       this.orphans.shift();
       if (head.poisonOnStall) droppedStallCandidate = true;
       this.rememberDiscardedSeq(head.seq);
@@ -62,11 +67,15 @@ export class ControlOrphanBook {
   }
 
   /** `%begin` 归属 orphan 时返回其 literal 标记；undefined 表示交给 pending。 */
-  literalForBegin(seq: number | undefined): boolean | undefined {
+  literalForBegin(seq: number | undefined, now: number): boolean | undefined {
     if (seq !== undefined && this.discardedSeqs.includes(seq)) return false;
     const orphan = this.orphanForBegin(seq);
     if (!orphan) return undefined;
-    stampSeq(orphan, seq);
+    if (orphan.seq === undefined && seq !== undefined) {
+      // 迟到的 %begin 才让它拿到编号：截止时间从此刻重算，避免正文还在流时被当成过期淘汰。
+      orphan.seq = seq;
+      orphan.deadline = Math.max(orphan.deadline, now + orphan.timeoutMs);
+    }
     return orphan.literal;
   }
 

@@ -320,3 +320,94 @@ describe('unnumbered orphans keep FIFO alignment', () => {
     queue.dispose();
   });
 });
+
+describe('late blocks and the attach slot', () => {
+  test('a %begin after the orphan deadline, streamed across a timer tick, ends healthy', () => {
+    const { clock, queue, events, poisoned } = createQueue();
+    void queue.execute(() => {}, 'a', { timeoutMs: 100, transform: () => 'a' }).catch(() => {});
+    clock.advance(500);
+    queue.noteActivity();
+    expect(queue.nextBlockIsLiteral('1 5 0')).toBe(false);
+    clock.advance(150);
+    queue.noteActivity();
+    clock.advance(500);
+    queue.noteActivity();
+    expect(queue.handleBlock(block(['late-a'], '1 5 0'))).toBe(true);
+    expect(queue.busy).toBe(false);
+    expect(events.map((event) => event.kind)).toEqual(['slow', 'recovered']);
+    clock.advance(100_000);
+    expect(poisoned()).toBe(0);
+    queue.dispose();
+  });
+
+  test('a late block whose numbered orphan was discarded still reports recovery', () => {
+    const { clock, queue, events, poisoned } = createQueue();
+    void queue.execute(() => {}, 'a', { timeoutMs: 100, transform: () => 'a' }).catch(() => {});
+    expect(queue.nextBlockIsLiteral('1 3 0')).toBe(false);
+    queue.handleBlock(block(['partial'], '1 2 0'));
+    clock.advance(300);
+    queue.noteActivity();
+    expect(queue.handleBlock(block(['late-a'], '1 3 0'))).toBe(true);
+    expect(events.map((event) => event.kind)).toEqual(['slow', 'recovered']);
+    clock.advance(100_000);
+    expect(poisoned()).toBe(0);
+    queue.dispose();
+  });
+
+  test('the attach slot times out like a command, prepares the probe and counts for stalls', () => {
+    let prepared = 0;
+    const clock = createFakeClock();
+    const { sink, events } = createSink();
+    let poisoned = 0;
+    const queue = new ControlModeCommandQueue(
+      () => {
+        poisoned += 1;
+      },
+      undefined,
+      {
+        clock,
+        defaultTimeoutMs: () => 100,
+        stallTimeoutMs: () => 1_000,
+        health: sink,
+        stallProbe: {
+          check: () => 'unknown',
+          prepare: () => {
+            prepared += 1;
+          },
+        },
+      }
+    );
+    void queue.expectAttach().catch(() => {});
+    void queue
+      .execute(() => {}, 'probe', { poisonOnTimeout: false, transform: () => 0 })
+      .catch(() => {});
+    clock.advance(100);
+    expect(prepared).toBe(1);
+    expect(events.map((event) => event.kind)).toEqual(['slow']);
+    clock.advance(900);
+    expect(poisoned).toBe(1);
+  });
+
+  test('an attach block arriving after the slot timed out still keeps later replies aligned', async () => {
+    const clock = createFakeClock();
+    const queue = new ControlModeCommandQueue(undefined, undefined, {
+      clock,
+      defaultTimeoutMs: () => 100,
+      stallTimeoutMs: () => 600_000,
+    });
+    const attach = queue.expectAttach();
+    attach.catch(() => {});
+    clock.advance(100);
+    await expect(attach).rejects.toThrow(/timed out: attach-session/);
+    const sub = queue.execute(() => {}, 'refresh-client -B', {
+      timeoutMs: 10_000,
+      transform: (blk) => blk.lines[0],
+    });
+    expect(queue.nextBlockIsLiteral('1 1 0')).toBe(false);
+    expect(queue.handleBlock(block([], '1 1 0'))).toBe(true);
+    expect(queue.nextBlockIsLiteral('1 2 0')).toBe(false);
+    expect(queue.handleBlock(block(['sub-out'], '1 2 0'))).toBe(true);
+    await expect(sub).resolves.toBe('sub-out');
+    queue.dispose();
+  });
+});

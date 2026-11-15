@@ -80,6 +80,7 @@ export class ControlModeCommandQueue {
   private probePrepared = false;
   /** 过期丢弃的 orphan 一直没等到回执：仍算有命令在途，卡死判定不能因此失明。 */
   private unanswered = false;
+  private openBlockSeq: number | undefined;
   private lastFullWarnAt = 0;
 
   constructor(
@@ -152,18 +153,18 @@ export class ControlModeCommandQueue {
 
   /**
    * 占住 `attach-session` 自己的首个 `%begin/%end`：attach 就绪前入队的命令排在它后面，
-   * 不会认领它的空块。不写 stdin、不计时、不计入卡死判定。
+   * 不会认领它的空块。不写 stdin；按普通命令计时与参与卡死判定，超时后转为无号 orphan 仍占顺位。
    */
   expectAttach(): Promise<void> {
     if (this.poisoned) return Promise.reject(new Error('tmux control command queue is closed'));
     return new Promise<void>((resolve, reject) => {
-      const options = { poisonOnTimeout: false, transform: () => undefined };
       this.enqueue(
-        buildPendingCommand('attach-session', options, resolve, reject, {
-          timeoutMs: Number.POSITIVE_INFINITY,
+        buildPendingCommand('attach-session', { transform: () => undefined }, resolve, reject, {
+          timeoutMs: this.defaultTimeoutMs(),
           now: this.clock.now(),
         })
       );
+      this.armTimer();
     });
   }
 
@@ -175,9 +176,11 @@ export class ControlModeCommandQueue {
   }
 
   nextBlockIsLiteral(args?: string): boolean {
-    this.pruneExpiredOrphans(this.clock.now());
+    const now = this.clock.now();
+    this.pruneExpiredOrphans(now);
     const seq = args === undefined ? undefined : parseCommandNumber(args);
-    const orphanLiteral = this.orphans.literalForBegin(seq);
+    this.openBlockSeq = seq;
+    const orphanLiteral = this.orphans.literalForBegin(seq, now);
     if (orphanLiteral !== undefined) return orphanLiteral;
     const pending = this.pending[0];
     if (pending) stampSeq(pending, seq);
@@ -187,13 +190,14 @@ export class ControlModeCommandQueue {
   handleBlock(block: ControlModeBlock): boolean {
     const now = this.clock.now();
     this.stall.noteActivity(now);
+    const seq = parseCommandNumber(block.args);
+    this.pruneExpiredOrphans(now, seq);
+    this.openBlockSeq = undefined;
     this.unanswered = false;
-    this.pruneExpiredOrphans(now);
-    if (this.orphans.consume(parseCommandNumber(block.args))) {
+    if (this.orphans.consume(seq) || this.swallowUnmatched(seq)) {
       this.afterProgress(now, false);
       return true;
     }
-    if (this.swallowUnmatched(block)) return true;
     const pending = this.pending.shift();
     if (!pending) return false;
     this.afterProgress(now, !pending.settled);
@@ -287,7 +291,7 @@ export class ControlModeCommandQueue {
   private nextDeadline(): number {
     let at = Number.POSITIVE_INFINITY;
     for (const pending of this.pending) at = Math.min(at, this.deadlineOf(pending));
-    at = Math.min(at, this.orphans.earliestDeadline());
+    at = Math.min(at, this.orphans.earliestDeadline(this.openBlockSeq));
     if (this.hasStallCandidates()) at = Math.min(at, this.stall.nextCheckAt());
     return at;
   }
@@ -344,6 +348,7 @@ export class ControlModeCommandQueue {
     this.orphans.add({
       literal: pending.literal,
       deadline: now + pending.timeoutMs,
+      timeoutMs: pending.timeoutMs,
       headSince: pending.headSince,
       poisonOnStall: pending.poisonOnStall,
       seq: pending.seq,
@@ -391,14 +396,14 @@ export class ControlModeCommandQueue {
     this.latency?.onSample(this.latencyNow() - pending.sampleStartedAt);
   }
 
-  private pruneExpiredOrphans(now: number): void {
-    if (this.orphans.prune(now)) this.unanswered = true;
+  /** 正在流式接收正文的块（已到 %begin、未到 %end）不淘汰。 */
+  private pruneExpiredOrphans(now: number, protectedSeq = this.openBlockSeq): void {
+    if (this.orphans.prune(now, protectedSeq)) this.unanswered = true;
     this.promoteHead(now);
   }
 
   /** 过期后迟到、对不上 pending 的块直接丢弃，避免落到下一条用户命令上。 */
-  private swallowUnmatched(block: ControlModeBlock): boolean {
-    const seq = parseCommandNumber(block.args);
+  private swallowUnmatched(seq: number | undefined): boolean {
     if (seq === undefined) return false;
     if (this.orphans.takeDiscardedSeq(seq)) return true;
     const pending = this.pending[0];
