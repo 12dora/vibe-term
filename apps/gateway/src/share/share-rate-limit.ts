@@ -90,11 +90,11 @@ function touch<T>(map: Map<string, T>, key: string, value: T): void {
   map.set(key, value);
 }
 
-function evictLru<T extends { inflight?: number }>(map: Map<string, T>, maxKeys: number): void {
+function evictLru<T extends object>(map: Map<string, T>, maxKeys: number): void {
   if (map.size <= maxKeys) return;
   for (const [key, row] of map) {
     if (map.size <= maxKeys) return;
-    if ((row.inflight ?? 0) > 0) continue;
+    if ('inflight' in row && (row as { inflight: number }).inflight > 0) continue;
     map.delete(key);
   }
   while (map.size > maxKeys) {
