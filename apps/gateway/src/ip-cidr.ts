@@ -49,9 +49,11 @@ export function parseCidrRule(text: string): CidrRule {
   const slash = text.lastIndexOf('/');
   const addressText = slash < 0 ? text : text.slice(0, slash);
   const parsed = parseCidrAddress(addressText);
-  const prefix = slash < 0 ? parsed.bits : Number(text.slice(slash + 1));
-  if (!Number.isInteger(prefix) || prefix < 0 || prefix > parsed.bits)
+  const prefixText = slash < 0 ? null : text.slice(slash + 1);
+  if (prefixText !== null && !/^(?:0|[1-9]\d{0,2})$/.test(prefixText))
     throw new Error(`Invalid CIDR prefix: ${text}`);
+  const prefix = prefixText === null ? parsed.bits : Number(prefixText);
+  if (prefix > parsed.bits) throw new Error(`Invalid CIDR prefix: ${text}`);
   if (parsed.family === 6) {
     const mapped = mappedIpv4(parsed.value);
     if (mapped !== null && prefix >= 96) return { family: 4, value: mapped, bits: prefix - 96 };

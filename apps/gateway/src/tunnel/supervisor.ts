@@ -207,7 +207,14 @@ export class TunnelSupervisor {
     this.backoffMs = Math.min(this.maxBackoffMs, this.backoffMs * 2);
     await this.deps.sleep(wait);
     if (!this.enabled || generation !== this.generation) return;
-    await this.spawnChild(opts, generation);
+    try {
+      await this.spawnChild(opts, generation);
+    } catch (error) {
+      if (generation !== this.generation) return;
+      this.enabled = false;
+      this.state = 'error';
+      this.lastError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   private async terminate(child: SpawnHandle): Promise<void> {

@@ -29,5 +29,16 @@ describe('parseTrustedProxyCidrs', () => {
     expect(() => parseTrustedProxyCidrs('2001:db8::/129')).toThrow(
       'VIBETERM_TRUSTED_PROXY_CIDRS contains invalid CIDR 2001:db8::/129'
     );
+    for (const bad of [
+      '203.0.113.0/',
+      '2001:db8::/',
+      '10.0.0.0/0x8',
+      '10.0.0.0/+8',
+      '10.0.0.0/08',
+    ]) {
+      expect(() => parseTrustedProxyCidrs(bad)).toThrow(
+        `VIBETERM_TRUSTED_PROXY_CIDRS contains invalid CIDR ${bad}`
+      );
+    }
   });
 });

@@ -98,3 +98,34 @@ describe('TunnelSupervisor edge connections', () => {
     expect(supervisor.edgeConnections).toBe(0);
   });
 });
+
+describe('TunnelSupervisor restart failures', () => {
+  test('a spawn failure on crash restart ends in error instead of hanging in starting', async () => {
+    const first = new FakeHandle({ hold: true });
+    let calls = 0;
+    const provider = {
+      spawnNamedRun: async () => {
+        calls += 1;
+        if (calls === 1) return first;
+        throw new Error('cloudflared failed integrity verification');
+      },
+      spawnQuickRun: async () => first,
+    } as unknown as CloudflaredProvider;
+    const supervisor = new TunnelSupervisor({
+      provider,
+      logs: new LogRingBuffer(50),
+      sleep: async () => {},
+      killTimeoutMs: 20,
+    });
+    await supervisor.start({
+      bin: '/usr/bin/cloudflared',
+      mode: 'named',
+      originUrl: 'http://127.0.0.1:19883',
+      configPath: '/tmp/config.yml',
+    });
+    first.exit(1);
+    await waitFor(() => supervisor.state === 'error');
+    expect(supervisor.lastError).toContain('integrity verification');
+    expect(calls).toBe(2);
+  });
+});
