@@ -31,14 +31,14 @@ const ERROR_TYPE_TO_BADGE_KEY: Record<string, string> = {
   tmux_busy: 'tmux_busy',
 };
 
-/** 主机繁忙属于可自行恢复的状态：用告警色，tooltip 只给固定说明，不附带原始 tmux 信息。 */
+/** 主机繁忙属于可自行恢复的状态：用告警色，tooltip 只给网关下发的说明，不附带原始 tmux 信息。 */
 const SELF_RECOVERING_TYPES = new Set(['tmux_busy']);
 
 export function buildDeviceErrorBadge(error: DeviceErrorLike, t: Translate): DeviceErrorBadgeModel {
   const badgeKey = ERROR_TYPE_TO_BADGE_KEY[error.type] ?? 'unknown';
   const label = t(`deviceStatus.errorBadge.${badgeKey}`);
   if (SELF_RECOVERING_TYPES.has(error.type)) {
-    return { label, tooltip: t(`sshError.${badgeKey}`), tone: 'warning' };
+    return { label, tooltip: error.message?.split('\n')[0] || label, tone: 'warning' };
   }
   const tooltip = [label, error.message, error.rawMessage].filter(Boolean).join('\n');
   return { label, tooltip, tone: 'error' };

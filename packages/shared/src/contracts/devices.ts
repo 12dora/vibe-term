@@ -3,7 +3,7 @@
 export type DeviceType = 'local' | 'ssh';
 export type AuthMode = 'password' | 'key' | 'agent' | 'configRef' | 'auto';
 
-export const DEVICE_CONNECTION_ERROR_TYPES = [
+const DEVICE_CONNECTION_ERROR_TYPES = [
   'ssh_config_ref_not_supported',
   'agent_unavailable',
   'agent_no_identity',

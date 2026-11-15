@@ -21,6 +21,8 @@ const defaultTimers: TmuxBusyTimers = {
 let timers: TmuxBusyTimers = defaultTimers;
 const pending = new Map<string, unknown>();
 const raised = new Set<string>();
+/** 本进程里已核对过持久化错误的设备：之后只有出过事故才需要再查库，快照热路径不读 SQLite。 */
+const settledDevices = new Set<string>();
 const rememberedDevices = new Map<string, Device>();
 
 export function setTmuxBusyTimersForTest(next: TmuxBusyTimers | null): void {
@@ -31,6 +33,7 @@ export function resetTmuxBusyIncidentsForTest(): void {
   for (const id of pending.values()) timers.clearTimeout(id);
   pending.clear();
   raised.clear();
+  settledDevices.clear();
   rememberedDevices.clear();
 }
 
@@ -85,6 +88,9 @@ export function handleControlHealth(event: ControlHealthEvent): void {
 }
 
 export function noteControlChannelProgress(deviceId: string): void {
+  const incident = pending.has(deviceId) || raised.has(deviceId);
+  if (!incident && settledDevices.has(deviceId)) return;
+  settledDevices.add(deviceId);
   clearControlChannelError(deviceId);
 }
 
@@ -100,7 +106,12 @@ export function isClearableControlError(
 export function clearControlChannelError(deviceId: string): void {
   cancelPending(deviceId);
   raised.delete(deviceId);
-  const status = getDeviceRuntimeStatus(deviceId);
+  let status: ReturnType<typeof getDeviceRuntimeStatus>;
+  try {
+    status = getDeviceRuntimeStatus(deviceId);
+  } catch {
+    return;
+  }
   if (!isClearableControlError(status.lastErrorType, status.lastError)) return;
   updateDeviceRuntimeStatus(deviceId, {
     lastSeenAt: new Date().toISOString(),
