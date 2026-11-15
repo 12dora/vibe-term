@@ -219,3 +219,24 @@ describe('ShareLoginLimiter', () => {
     expect(limiter.lockedFor('s1', '2001:db8:1:3::1')).toBe(0);
   });
 });
+
+describe('网格入口转发来源（peer:<入口>）', () => {
+  test('节点不对 peer 来源做按来源退避与并发限制，失败仍计入分享级窗口', () => {
+    const clock = { now: 1_000 };
+    const limiter = new ShareLoginLimiter(() => clock.now);
+    const peer = 'peer:0123456789abcdef0123456789abcdef';
+    for (let i = 0; i < SHARE_LOGIN_SHARE_MAX_FAILURES; i++) {
+      expect(limiter.begin('s', peer).ok).toBe(true);
+      limiter.settle('s', peer, false);
+    }
+    expect(limiter.lockedFor('s', peer)).toBe(0);
+    const inflight = Array.from({ length: SHARE_LOGIN_MAX_CONCURRENT + 1 }, () =>
+      limiter.begin('s', peer)
+    );
+    expect(inflight.every((attempt) => attempt.ok)).toBe(true);
+    for (const _ of inflight) limiter.settle('s', peer, true);
+    failTimes(limiter, 's', '203.0.113.7', 1);
+    expect(limiter.lockedFor('s', '203.0.113.7')).toBeGreaterThan(0);
+    expect(limiter.lockedFor('s', '203.0.113.8')).toBe(0);
+  });
+});

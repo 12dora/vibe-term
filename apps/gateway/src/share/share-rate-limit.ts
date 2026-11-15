@@ -57,6 +57,11 @@ function ipBackoffRemaining(entry: IpBucket | null, now: number): number {
   return Math.max(0, entry.lastFailureAt + wait - now);
 }
 
+/** 经网格入口转发来的请求：节点只看得到 `peer:<入口>`，按来源退避由入口按真实 IP 执行。 */
+function isPeerClient(clientIp: string): boolean {
+  return clientIp.startsWith('peer:');
+}
+
 function isUnknownClient(clientIp: string): boolean {
   return limiterIpKey(clientIp) === UNKNOWN_CLIENT_KEY;
 }
@@ -154,6 +159,7 @@ export class ShareLoginLimiter {
     share: ShareBucket | null,
     now: number
   ): number {
+    if (isPeerClient(clientIp)) return 0;
     const shareWait = shareSlowdownRemaining(clientIp, entry, share, now);
     return Math.max(ipBackoffRemaining(entry, now), shareWait);
   }
@@ -175,7 +181,7 @@ export class ShareLoginLimiter {
     const share = this.liveShare(shareId, now) ?? emptyShare();
     const blocked = this.delayMs(clientIp, entry, share, now);
     if (blocked > 0) return { ok: false, reason: 'locked', retryAfterMs: blocked };
-    const concurrent = entry.inflight >= SHARE_LOGIN_MAX_CONCURRENT;
+    const concurrent = !isPeerClient(clientIp) && entry.inflight >= SHARE_LOGIN_MAX_CONCURRENT;
     const saturated = this.verifying >= SHARE_VERIFY_MAX_INFLIGHT;
     if (concurrent || saturated) {
       return { ok: false, reason: 'busy', retryAfterMs: SHARE_LOGIN_BUSY_RETRY_MS };
@@ -208,6 +214,11 @@ export class ShareLoginLimiter {
     const key = this.key(shareId, clientIp);
     const entry = this.entries.get(key);
     if (entry) entry.inflight = Math.max(0, entry.inflight - 1);
+    if (isPeerClient(clientIp)) {
+      if (entry && entry.inflight === 0 && entry.failureCount === 0) this.entries.delete(key);
+      if (!success) this.bookShare(shareId);
+      return;
+    }
     if (success) this.rememberSuccess(key);
     else this.book(shareId, key);
   }
@@ -237,6 +248,11 @@ export class ShareLoginLimiter {
     entry.failureCount += 1;
     entry.lastFailureAt = now;
     touch(this.entries, key, entry);
+    this.bookShare(shareId);
+  }
+
+  private bookShare(shareId: string): void {
+    const now = this.now();
     const share = this.liveShare(shareId, now) ?? emptyShare();
     share.failures.push(now);
     share.lastAttemptAt = now;
