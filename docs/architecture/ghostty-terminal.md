@@ -138,6 +138,12 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 鼠标上报模式下的滚轮 / 触控板滚动走同一条 `onData` 路径，但不是逐行发送：`mouse-report-batcher.ts` 把一次手势的所有 SGR 序列合成一条数据、16 ms 内的后续手势并入同一条，节点网关再按序列拆开、一次只写一个进 pty（原因与取舍见 [热路径性能](../development/performance-hot-paths.md) 第 10 节：Claude Code 会整块丢弃含多个鼠标序列的读取）。键盘 / 粘贴 / 非滚轮鼠标事件会先冲刷待发批次，保证顺序。
 
+鼠标跟踪模式的约束（避免向未开启鼠标模式的程序注入 `ESC[<35;col;rowM` 之类的报告）：
+
+- 1000 / 1002 / 1003 互斥：内核逐位记录，因此 `mouse-tracking-scanner.ts` 流式扫描输出里的 `CSI ? Pm h|l`，由 `TerminalInputBridge.observeOutput` 按 xterm 语义纠正——任一 DECRST 整体关闭跟踪，DECSET 则切换为该模式；1006 只改编码，不影响跟踪。
+- 裸悬停（无按钮 motion）只在 1003 下上报；拖拽 motion 只在按住按钮且为 1002 / 1003 时上报。拖到窗口外松开导致 `mouseup` 丢失时，下一次 `buttons=0` 的移动补发释放并结束拖拽，不再发按钮为空的 motion。
+- `TerminalSurface` 在收到 rebase（缺口、重连、缓存淘汰）的瞬间调用 `clearMouseTrackingModes()` 静音鼠标上报，恢复期间到达的 live 字节与 history 重排之后也会再次静音，直到下一份 canonical 快照落地；快照带 bit7 模式位图时由位图重新决定，旧版 gateway（无 bit7）保持关闭。静音期间指针行为等同普通终端（本地选区可用）。
+
 ## IME 与移动端输入
 
 当前实现保留了一个最小、可测的 IME 处理策略：

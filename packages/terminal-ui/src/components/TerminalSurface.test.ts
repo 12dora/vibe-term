@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PANE_MODE_FLAGS_PRESENT } from '@vibeterm/shared';
+import { EMPTY_PANE_MODE_FLAGS, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@vibeterm/shared';
 import type {
   GatewayHistoryCursor,
   GatewayPaneHistoryPage,
@@ -31,6 +31,9 @@ interface RecordingTarget extends CanonicalSnapshotTarget, TerminalSurfaceTarget
   repaints: number;
   sizes: Array<{ cols: number; rows: number }>;
   disposed: boolean;
+  /** 终端是否仍在上报 1003 悬停；reset / clear 关掉，restoreModeSnapshot 按位图重设 */
+  hoverReporting: boolean;
+  mouseClears: number;
   scrolls: number[];
   /** 记录 write / scrollLines 的先后，用于断言还原发生在 live 回放之后 */
   calls: string[];
@@ -53,6 +56,8 @@ function createTarget(): RecordingTarget {
     repaints: 0,
     sizes: [],
     disposed: false,
+    hoverReporting: false,
+    mouseClears: 0,
     scrolls: [],
     calls: [],
     liveOutputEndedWithCR: false,
@@ -65,6 +70,7 @@ function createTarget(): RecordingTarget {
         target.resets += 1;
         target.writeCallsPerFlush.push(0);
         target.calls.push('reset');
+        target.hoverReporting = false;
         // 真实终端 reset 之后视口回到底部
         active.viewportY = 0;
         active.baseY = 0;
@@ -78,7 +84,13 @@ function createTarget(): RecordingTarget {
         if (index >= 0) target.writeCallsPerFlush[index] += 1;
         target.calls.push('write');
       },
-      restoreModeSnapshot: () => {},
+      restoreModeSnapshot: (modes) => {
+        target.hoverReporting = modes.mouseAny;
+      },
+      clearMouseTrackingModes: () => {
+        target.mouseClears += 1;
+        target.hoverReporting = false;
+      },
       forceFullRepaint: () => {
         target.repaints += 1;
         target.calls.push('repaint');
@@ -491,5 +503,70 @@ describe('TerminalSurface history paging', () => {
     const lines = Array.from({ length: pageCount }, (_, index) => `l${index + 1}`);
     expect(harness.stream().endsWith(`${lines.join('\r\n')}\r\ncurrent\r\n`)).toBe(true);
     expect(harness.surface.getDiagnosticState().historyPages).toBe(pageCount);
+  });
+});
+
+describe('TerminalSurface 恢复期间的鼠标上报', () => {
+  const MOUSE_ANY_MODES =
+    PANE_MODE_FLAGS_PRESENT | encodePaneModes({ ...EMPTY_PANE_MODE_FLAGS, mouseAll: true });
+
+  async function harnessWithHover(): Promise<Harness> {
+    const harness = await createHarness();
+    harness.surface.replace({ ...snapshotOf(SNAPSHOT_BODY, cursorOf(6)), modes: MOUSE_ANY_MODES });
+    expect(harness.target.hoverReporting).toBe(true);
+    return harness;
+  }
+
+  test('rebase 一开始就关掉鼠标上报，悬停不再产生报告', async () => {
+    const harness = await harnessWithHover();
+
+    harness.surface.rebase('cache_evicted');
+
+    expect(harness.target.hoverReporting).toBe(false);
+    expect(harness.target.mouseClears).toBe(1);
+  });
+
+  test('恢复期间到达的 live 字节重新打开的模式会被再次关掉', async () => {
+    const harness = await harnessWithHover();
+    harness.surface.rebase('cache_evicted');
+    harness.target.hoverReporting = true;
+
+    harness.surface.write({ deviceId: 'device-1', paneId: '%1', data: encoder.encode('x') });
+
+    expect(harness.target.hoverReporting).toBe(false);
+  });
+
+  test('恢复期间 history 重排不会把旧快照的鼠标位图恢复回来', async () => {
+    const harness = await harnessWithHover();
+    harness.surface.applyHistoryPage(PAGE_NEWEST);
+    harness.surface.rebase('cache_evicted');
+
+    harness.runScheduled();
+
+    expect(harness.target.hoverReporting).toBe(false);
+  });
+
+  test('带 1003 位图的快照落地后重新开启，无位图的旧版快照保持关闭', async () => {
+    const harness = await harnessWithHover();
+    harness.surface.rebase('cache_evicted');
+
+    harness.surface.replace({ ...snapshotOf(SNAPSHOT_BODY, null), modes: MOUSE_ANY_MODES });
+    expect(harness.target.hoverReporting).toBe(true);
+
+    harness.surface.rebase('cache_evicted');
+    harness.surface.replace({ ...snapshotOf(SNAPSHOT_BODY, null), modes: 0 });
+    expect(harness.target.hoverReporting).toBe(false);
+  });
+
+  test('快照落地后 live 字节不再触发静音', async () => {
+    const harness = await harnessWithHover();
+    harness.surface.rebase('cache_evicted');
+    harness.surface.replace({ ...snapshotOf(SNAPSHOT_BODY, null), modes: MOUSE_ANY_MODES });
+    const clears = harness.target.mouseClears;
+
+    harness.surface.write({ deviceId: 'device-1', paneId: '%1', data: encoder.encode('x') });
+
+    expect(harness.target.mouseClears).toBe(clears);
+    expect(harness.target.hoverReporting).toBe(true);
   });
 });

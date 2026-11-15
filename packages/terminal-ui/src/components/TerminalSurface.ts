@@ -27,6 +27,16 @@ export interface TerminalSurfaceTarget {
   dispose(): void;
 }
 
+interface MouseMutableTarget {
+  terminal?: { clearMouseTrackingModes?(): void };
+}
+
+// 恢复期间终端状态不可信（DECRST 可能落在缺口里）：鼠标上报必须关掉，
+// 否则悬停会向已退出 TUI 的 shell 注入 SGR 报告；新快照的模式位图随后重新决定。
+function muteMouseReporting(target: TerminalSurfaceTarget): void {
+  (target as TerminalSurfaceTarget & MouseMutableTarget).terminal?.clearMouseTrackingModes?.();
+}
+
 export type TerminalSurfaceRecoveryState = 'initializing' | 'live' | 'recovering' | 'disposed';
 
 export interface TerminalSurfaceDiagnosticState {
@@ -199,6 +209,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     // 攒着的 history 重排会 reset 终端，live 字节必须写在重排之后
     this.flushHistory();
     this.options.writeLive(this.target, frame.data);
+    if (this.recoveryRequested) muteMouseReporting(this.target);
   }
 
   replace(snapshot: GatewayPaneScreenSnapshot): void {
@@ -309,6 +320,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     const commit = this.options.writeSnapshot(target, snapshot, this.historyPages, {
       preserveViewport: true,
     });
+    if (this.recoveryRequested) muteMouseReporting(target);
     this.scheduleViewportRestore(target, commit.viewportAnchor);
     this.options.onSnapshotApplied?.(target, snapshot, commit);
   }
@@ -338,6 +350,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
   private requestRecovery(reason: GatewayRebaseReason): void {
     const changed = this.recoveryReason !== reason;
     this.recoveryReason = reason;
+    if (this.target) muteMouseReporting(this.target);
     // 同一 reason 的恢复请求在途时抑制重复请求，避免请求风暴；但 reason 变化必须继续上报：
     // 首屏一直取不回来时，重试耗尽后的 resource_exhausted 正是靠这条路径把失败态交给渲染层，
     // 被吞掉就只能永远停在 Loading。

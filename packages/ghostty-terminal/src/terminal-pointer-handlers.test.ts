@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createPointerListeners } from './terminal-pointer-handlers';
 import { SYNTHETIC_MOUSE_SUPPRESS_MS, createMouseInputState } from './terminal-pointer-shared';
-import type { PointerEventContext } from './terminal-pointer-shared';
+import type { MouseInputRequest, PointerEventContext } from './terminal-pointer-shared';
 
 function createContext(overrides: Partial<PointerEventContext> = {}): {
   context: PointerEventContext;
@@ -108,5 +108,98 @@ describe('指针焦点判定', () => {
     listeners.click();
 
     expect(calls).toEqual(['focus']);
+  });
+});
+
+function moveEvent(buttons: number, shiftKey = false): MouseEvent {
+  const event = { buttons, clientX: 30, clientY: 20, shiftKey };
+  Object.setPrototypeOf(event, FakeMouseEvent.prototype);
+  return event as unknown as MouseEvent;
+}
+
+function createReportingContext(options: { anyEvent: boolean; reporting?: boolean }): {
+  context: PointerEventContext;
+  requests: MouseInputRequest[];
+  calls: string[];
+} {
+  const requests: MouseInputRequest[] = [];
+  const { context, calls } = createContext({
+    getInputRoutingState: () => ({ mouseReporting: options.reporting ?? true, altScroll: false }),
+    isAnyEventTrackingEnabled: () => options.anyEvent,
+    emitMouseInput: (request) => {
+      requests.push(request);
+      return true;
+    },
+    finishPointerSelection: () => calls.push('finishSelection'),
+  });
+  return { context, requests, calls };
+}
+
+describe('鼠标上报的 motion 约束', () => {
+  test('裸悬停只在 1003 下上报，1002 / 1000 下不发任何 motion', () => {
+    const anyEvent = createReportingContext({ anyEvent: true });
+    createPointerListeners(anyEvent.context).mousemove(moveEvent(0));
+    expect(anyEvent.requests).toHaveLength(1);
+    expect(anyEvent.requests[0]).toMatchObject({
+      action: 'motion',
+      button: null,
+      anyButtonPressed: false,
+    });
+
+    const buttonOnly = createReportingContext({ anyEvent: false });
+    createPointerListeners(buttonOnly.context).mousemove(moveEvent(0));
+    expect(buttonOnly.requests).toHaveLength(0);
+  });
+
+  test('Shift 悬停与上报被静音时都不发 motion', () => {
+    const shifted = createReportingContext({ anyEvent: true });
+    createPointerListeners(shifted.context).mousemove(moveEvent(0, true));
+    expect(shifted.requests).toHaveLength(0);
+
+    const muted = createReportingContext({ anyEvent: false, reporting: false });
+    createPointerListeners(muted.context).mousemove(moveEvent(0));
+    expect(muted.requests).toHaveLength(0);
+  });
+
+  test('静音时 mousedown 走本地选区而不是上报，拖拽结束收尾选区', () => {
+    const { context, requests, calls } = createReportingContext({
+      anyEvent: false,
+      reporting: false,
+    });
+    const listeners = createPointerListeners(context);
+
+    listeners.mousedown(mousedownEvent());
+    listeners.dragMove(moveEvent(0));
+
+    expect(requests).toHaveLength(0);
+    expect(calls).toEqual(['focus', 'beginSelection', 'finishSelection']);
+  });
+
+  test('按住按钮的拖拽带着按下状态上报 motion', () => {
+    const { context, requests } = createReportingContext({ anyEvent: false });
+    context.mouse.dragActive = true;
+    context.mouse.pressedButtons.add(1);
+
+    createPointerListeners(context).dragMove(moveEvent(1));
+
+    expect(requests).toEqual([
+      expect.objectContaining({ action: 'motion', button: 1, anyButtonPressed: true }),
+    ]);
+  });
+
+  test('mouseup 丢失后按钮已抬起：补发释放并结束拖拽，不再发按钮为空的 motion', () => {
+    const { context, requests } = createReportingContext({ anyEvent: false });
+    context.mouse.dragActive = true;
+    context.mouse.pressedButtons.add(1);
+
+    const listeners = createPointerListeners(context);
+    listeners.dragMove(moveEvent(0));
+    listeners.dragMove(moveEvent(0));
+
+    expect(requests).toEqual([
+      expect.objectContaining({ action: 'release', button: 1, anyButtonPressed: false }),
+    ]);
+    expect(context.mouse.dragActive).toBe(false);
+    expect(context.mouse.pressedButtons.size).toBe(0);
   });
 });

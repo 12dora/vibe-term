@@ -84,7 +84,13 @@ function createHarness(
       modeQueries.push(mode);
       return activeModes.has(mode);
     },
-    setTerminalMode: () => {},
+    setTerminalMode: (_terminal: number, mode: number, enabled: boolean) => {
+      if (enabled) {
+        activeModes.add(mode);
+      } else {
+        activeModes.delete(mode);
+      }
+    },
     resetMouseEncoder: () => {},
     encodeMouseEvent: (_encoder: number, _terminal: number, options: MouseEncodeOptions) => {
       mouseCalls.push(options);
@@ -346,5 +352,73 @@ describe('TerminalInputBridge 滚轮上报的合并窗口', () => {
     // 同一代缓存内每个模式至多问一次 WASM
     expect(modeQueries.length).toBe(new Set(modeQueries).size);
     expect(modeQueries.length).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('TerminalInputBridge.observeOutput 鼠标跟踪互斥', () => {
+  // WASM 内核逐位记录模式：1003h 之后 1000l 只会清掉 1000 位，1003 仍然残留
+  test('DECRST 1000 在 1003 之后：整体关闭，悬停与滚轮上报都停止', () => {
+    const { bridge, setMode } = createHarness(new Set([1003, 1006]));
+    expect(bridge.routingState().mouseReporting).toBe(true);
+
+    setMode(1000, false);
+    bridge.observeOutput('\x1b[?1000l');
+
+    expect(bridge.isModeEnabled(1003)).toBe(false);
+    expect(bridge.routingState().mouseReporting).toBe(false);
+    expect(bridge.isModeEnabled(1006)).toBe(true);
+  });
+
+  test('1002 / 1003 的 DECRST 同样整体关闭', () => {
+    for (const reset of ['\x1b[?1002l', '\x1b[?1003l']) {
+      const { bridge } = createHarness(new Set([1002, 1003, 1006]));
+      bridge.observeOutput(reset);
+      expect(bridge.routingState().mouseReporting).toBe(false);
+    }
+  });
+
+  test('1006l 只改编码，跟踪保持', () => {
+    const { bridge, setMode } = createHarness(new Set([1003, 1006]));
+
+    setMode(1006, false);
+    bridge.observeOutput('\x1b[?1006l');
+
+    expect(bridge.isModeEnabled(1003)).toBe(true);
+    expect(bridge.routingState().mouseReporting).toBe(true);
+  });
+
+  test('DECSET 切换跟踪级别：新模式取代旧模式', () => {
+    const { bridge, setMode } = createHarness(new Set([1003, 1006]));
+
+    setMode(1000, true);
+    bridge.observeOutput('\x1b[?1000h');
+
+    expect(bridge.isModeEnabled(1000)).toBe(true);
+    expect(bridge.isModeEnabled(1003)).toBe(false);
+    expect(bridge.isModeEnabled(1006)).toBe(true);
+  });
+
+  test('跨 write 拆开的序列照样生效，并丢弃挂起的滚轮字节', () => {
+    const { bridge, emitted, clock } = createHarness(new Set([1000, 1003, 1006]));
+    bridge.handleViewportGesture(wheel(0, CELL_HEIGHT));
+    clock.advance(2);
+    bridge.handleViewportGesture(wheel(0, CELL_HEIGHT));
+
+    bridge.observeOutput('\x1b[?10');
+    expect(bridge.routingState().mouseReporting).toBe(true);
+    bridge.observeOutput('03l');
+
+    clock.advance(50);
+    expect(emitted).toEqual(['mouse:5']);
+    expect(bridge.routingState().mouseReporting).toBe(false);
+  });
+
+  test('clearMouseTrackingModes 之后悬停链路无上报，1006 保留', () => {
+    const { bridge } = createHarness(new Set([1003, 1006]));
+
+    bridge.clearMouseTrackingModes();
+
+    expect(bridge.routingState().mouseReporting).toBe(false);
+    expect(bridge.isModeEnabled(1006)).toBe(true);
   });
 });

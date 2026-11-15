@@ -318,6 +318,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     const prevAltScreen = this.input.isAltScreenActive();
     this.bindings.writeVt(this.handles.terminal, data);
     this.renderCoordinator.noteOutput();
+    this.input.observeOutput(data);
     this.input.invalidateModeCache();
     if (prevAltScreen && !this.input.isAltScreenActive()) {
       this.clearMouseTrackingModes();
@@ -366,6 +367,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.renderCoordinator.invalidateLines();
     this.clearSelectionState(false);
     this.bindings.resetTerminal(this.handles.terminal);
+    this.input.resetOutputObserver();
     this.input.invalidateModeCache();
     this.renderCoordinator.schedule();
   }

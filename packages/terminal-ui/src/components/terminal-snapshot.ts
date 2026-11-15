@@ -20,6 +20,7 @@ export interface CanonicalSnapshotTerminal {
   resize(cols: number, rows: number): void;
   write(data: string | Uint8Array): void;
   restoreModeSnapshot?(snapshot: GhosttyTerminalModeSnapshot): void;
+  clearMouseTrackingModes?(): void;
   forceFullRepaint?(): void;
   // biome-ignore lint/suspicious/noConfusingVoidType: 兼容返回 void 的旧实现
   scrollLines?(amount: number): boolean | void;

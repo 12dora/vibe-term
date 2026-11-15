@@ -166,19 +166,46 @@ function createWheelListener(context: PointerEventContext): (event: WheelEvent) 
   };
 }
 
+// 拖到窗口外松开时 mouseup 不会派发：按钮已全部抬起却仍带着按下记录的拖拽就此结束。
+// 补发释放让应用侧状态收尾；不能再把这次移动当按钮拖拽上报（否则按钮 null 的 motion
+// 会在 1002 下变成应用从未请求的悬停报告）。
+function endLostReportedDrag(context: PointerEventContext, event: MouseEvent): void {
+  const mouse = context.mouse;
+  const stale = [...mouse.pressedButtons];
+  mouse.pressedButtons.clear();
+  mouse.dragActive = false;
+  stale.forEach((button, index) => {
+    context.emitMouseInput({
+      action: 'release',
+      button,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      mods: context.pointerMods(event),
+      anyButtonPressed: index < stale.length - 1,
+    });
+  });
+  if (stale.length === 0) {
+    context.finishPointerSelection(event);
+  }
+}
+
 function createDragMoveListener(context: PointerEventContext): (event: MouseEvent) => void {
   return (event: MouseEvent): void => {
     if (!context.mouse.dragActive) {
       return;
     }
     if (context.getInputRoutingState().mouseReporting && !context.mouse.reportBypassed) {
+      if (event.buttons === 0) {
+        endLostReportedDrag(context, event);
+        return;
+      }
       context.emitMouseInput({
         action: 'motion',
         button: mouseButtonFromButtons(event.buttons),
         clientX: event.clientX,
         clientY: event.clientY,
         mods: context.pointerMods(event),
-        anyButtonPressed: context.mouse.pressedButtons.size > 0 || event.buttons > 0,
+        anyButtonPressed: true,
       });
       return;
     }

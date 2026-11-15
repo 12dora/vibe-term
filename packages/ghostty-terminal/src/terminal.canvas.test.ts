@@ -1133,6 +1133,84 @@ describe('GhosttyTerminalController canvas baseline', () => {
     expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
   });
 
+  function hoverAt(screen: FakeElement | null, x: number): void {
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: x,
+        clientY: 20,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+  }
+
+  // 重连 / 缺口 / rebase：快照落地前终端状态不可信，悬停不得再上报
+  test('clearMouseTrackingModes mutes hover until a snapshot restores 1003', async () => {
+    dom = installCanvasDom();
+    const { bindings, terminal, screen } = await setupMouseTerminal([1003, 1006]);
+
+    hoverAt(screen, 50);
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(1);
+
+    terminal.clearMouseTrackingModes();
+    hoverAt(screen, 150);
+    hoverAt(screen, 250);
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(1);
+    expect(terminal.isMouseReporting()).toBeFalse();
+    expect(bindings.modeState?.has(1006)).toBeTrue();
+
+    terminal.restoreModeSnapshot({
+      ...terminal.exportModeSnapshot(),
+      mouseAny: true,
+      mouseSgr: true,
+    });
+    hoverAt(screen, 350);
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(2);
+  });
+
+  test('snapshot without any mouse bits leaves tracking off', async () => {
+    dom = installCanvasDom();
+    const { bindings, terminal, screen } = await setupMouseTerminal([1003, 1006]);
+
+    terminal.clearMouseTrackingModes();
+    terminal.reset();
+    hoverAt(screen, 50);
+
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
+    expect(terminal.isMouseReporting()).toBeFalse();
+  });
+
+  // 内核对 1000/1002/1003 逐位记录：1003h 之后收到 1000l，1003 位仍在，悬停会继续上报
+  test('DECRST 1000 after 1003 turns tracking off entirely', async () => {
+    dom = installCanvasDom();
+    const { bindings, terminal, screen } = await setupMouseTerminal([1003, 1006]);
+    bindings.writeVt = () => {
+      bindings.modeState?.delete(1000);
+    };
+
+    hoverAt(screen, 50);
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(1);
+
+    terminal.write('\x1b[?1000l');
+    hoverAt(screen, 150);
+
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(1);
+    expect(terminal.isMouseReporting()).toBeFalse();
+  });
+
+  test('1006l keeps tracking on and only changes the encoding', async () => {
+    dom = installCanvasDom();
+    const { bindings, terminal, screen } = await setupMouseTerminal([1003, 1006]);
+    bindings.writeVt = () => {
+      bindings.modeState?.delete(1006);
+    };
+
+    terminal.write('\x1b[?1006l');
+    hoverAt(screen, 50);
+
+    expect(terminal.isMouseReporting()).toBeTrue();
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(1);
+  });
+
   // 水平滚轮：SGR 按钮 6/7（66/67），仅上报模式消费 deltaX
   test('horizontal wheel emits buttons 6/7 when mouse reporting is enabled', async () => {
     dom = installCanvasDom();

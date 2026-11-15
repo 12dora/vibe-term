@@ -1,6 +1,7 @@
 import { getGhosttyKeyCode, getUnshiftedCodepoint } from './ghostty-keycodes';
 import { type GhosttyBindings, keyboardEventToGhosttyMods } from './ghostty-wasm';
 import { MouseReportBatcher, type MouseReportBatcherOptions } from './mouse-report-batcher';
+import { MouseTrackingScanner } from './mouse-tracking-scanner';
 import {
   DEFAULT_CELL_HEIGHT,
   DEFAULT_CELL_WIDTH,
@@ -103,6 +104,7 @@ export class TerminalInputBridge {
   // 传给 encodeMouseEvent 的模式查询入口：一次手势内命中同一代缓存，N 行上报只查一轮。
   private readonly modeLookup = (mode: number): boolean => this.isModeEnabled(mode);
   private readonly mouseReports: MouseReportBatcher;
+  private readonly trackingScanner = new MouseTrackingScanner();
 
   constructor(
     private readonly bindings: GhosttyBindings,
@@ -202,6 +204,28 @@ export class TerminalInputBridge {
     this.invalidateModeCache();
     this.bindings.resetMouseEncoder(this.handles.mouseEncoder);
     this.mouse.lastMotionCell = null;
+  }
+
+  // 把一段 VT 输出里的鼠标跟踪 DECSET/DECRST 按 xterm 互斥语义落到内核：
+  // 内核对 1000/1002/1003 逐位独立记录，DECRST 1000 之后 1003 仍会残留，悬停继续上报。
+  // 1006 只改编码，不在此列。
+  observeOutput(data: string | Uint8Array): void {
+    const change = this.trackingScanner.feed(data);
+    if (change === null) {
+      return;
+    }
+    for (const mode of MOUSE_TRACKING_MODES) {
+      this.bindings.setTerminalMode(
+        this.handles.terminal,
+        mode,
+        change.enabled && mode === change.mode
+      );
+    }
+    this.invalidateModeCache();
+  }
+
+  resetOutputObserver(): void {
+    this.trackingScanner.reset();
   }
 
   clearMouseTrackingModes(): void {

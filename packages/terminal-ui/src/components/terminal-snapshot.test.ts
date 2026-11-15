@@ -197,6 +197,30 @@ describe('writeCanonicalSnapshot', () => {
     expect(legacy.modes).toHaveLength(0);
   });
 
+  test('1003 位图恢复任意事件跟踪；缺位图的旧版快照不会凭空打开它', () => {
+    const modern = createTarget();
+    writeCanonicalSnapshot(
+      modern,
+      snapshotOf(
+        'x',
+        PANE_MODE_FLAGS_PRESENT | encodePaneModes({ ...EMPTY_PANE_MODE_FLAGS, mouseAll: true })
+      ),
+      []
+    );
+    expect(modern.modes[0]?.mouseAny).toBe(true);
+    expect(modern.modes[0]?.mouseButton).toBe(false);
+    expect(modern.modes[0]?.mouseNormal).toBe(false);
+
+    const legacy = createTarget();
+    writeCanonicalSnapshot(
+      legacy,
+      snapshotOf('x', encodePaneModes({ ...EMPTY_PANE_MODE_FLAGS, mouseAll: true })),
+      []
+    );
+    expect(legacy.resets).toBe(1);
+    expect(legacy.modes).toHaveLength(0);
+  });
+
   test('emits history pages between the clear prefix and the snapshot body', () => {
     const target = createTarget();
     writeCanonicalSnapshot(target, snapshotOf('\x1b[2J\x1b[Hlive'), [pageOf('old\n')]);
