@@ -208,7 +208,7 @@ export class PaneInputPacer {
     this.panes.delete(paneId);
     const error = new Error('tmux input lane cancelled');
     for (const entry of lane.inFlight) {
-      entry.submission.cancel();
+      entry.submission.cancelQueued();
       entry.reject(error);
     }
     for (const entry of lane.pending) entry.reject(error);
