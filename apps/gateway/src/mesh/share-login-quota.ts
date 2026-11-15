@@ -1,10 +1,11 @@
 import {
-  SHARE_LOGIN_MAX_FAILURES,
-  SHARE_LOGIN_WINDOW_MS,
+  SHARE_LOGIN_BACKOFF_CAP_MS,
+  SHARE_LOGIN_GRACE_FAILURES,
+  SHARE_LOGIN_SHARE_MAX_FAILURES,
   ShareLoginLimiter,
 } from '../share/share-rate-limit';
 
-export { SHARE_LOGIN_MAX_FAILURES, SHARE_LOGIN_WINDOW_MS };
+export { SHARE_LOGIN_BACKOFF_CAP_MS, SHARE_LOGIN_GRACE_FAILURES, SHARE_LOGIN_SHARE_MAX_FAILURES };
 
 const SHARE_LOGIN_PATH = /^\/api\/share-access\/([^/]+)\/login$/;
 
@@ -17,7 +18,10 @@ export function shareLoginShareId(method: string, path: string): string | null {
   return id.length > 0 && id.length <= 128 ? id : null;
 }
 
-/** 按（来源 IP，分享 id）计失败：窗口内累计到上限即 429，语义与节点侧 `SHARE_LOGIN_LOCKED` 一致。 */
+/**
+ * 入口侧与节点共用 `ShareLoginLimiter`：干净 IP 不被其它来源的失败 429。
+ * 只在上游 401 时记失败；节点进程另有一份计数，阈值各自按完整宽限计算、并不对半。
+ */
 export class ShareLoginQuota {
   private readonly limiter: ShareLoginLimiter;
 

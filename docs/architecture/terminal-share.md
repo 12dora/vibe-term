@@ -67,7 +67,7 @@
     同地址只留一条，**自建域名让路**。前端 key 加 `kind` 前缀，展示层再滤一遍。
   手填的「默认分享地址」若与某个转发型候选（`relay`）同主机，
   会继承该候选的 `/n/<nodeId>` 前缀，否则生成的是打不开的死链。
-- `share-rate-limit.ts` —— `ShareLoginLimiter`：按（shareId, IP）15 min 窗口 10 次失败锁 15 min；按 shareId 不分来源 1 h 内 50 次失败后整个分享降速为每 30 s 最多一次校验；进程内同时最多 4 个口令校验。
+- `share-rate-limit.ts` —— `ShareLoginLimiter`：按（shareId, IP /64）前 3 次失败不限制，之后指数退避 2 s、4 s、8 s … 封顶 15 min；按 shareId 1 h 内 50 次失败后只降速脏来源（每 30 s 一次），干净 IP 与近 24 h 成功过来源不延迟；进程内同时最多 4 个口令校验。细则见 [分享口令登录限流](../security/share-login.md)。
 - 巡检：开机全扫一遍，之后每 5 s 判到期（`expired`）、设备消失（`device_removed`）、window 关闭
   （`window_closed`）；每小时按 `logRetentionDays` 删日志行、清过期凭证。
 
@@ -276,19 +276,21 @@ checkpoint 快进到当前时刻；网格变化不会再引起网格变化，无
 
 ## 限速与开放模式
 
-- **节点侧**：`ShareLoginLimiter.begin()` 在 argon2 验证**之前**预占额度（在途尝试计入上限），`settle()`
-  结算——成功清空、失败落账；同（分享, IP）并发验证上限 2，超出直接 429 `SHARE_LOGIN_BUSY`。第 10 次失败单独记
-  `lockedUntil = now + 15 min`，与滑动窗口分开维护（否则解锁时间从最早一次失败算，可能只锁 1 ms）。
-  IP 键经 `limiterIpKey` 归一：IPv6 按 /64 归桶，轮换同一前缀内的源地址不换桶。
-- **分享全局桶**：同一分享不分来源，1 h 内失败（含在途）达 50 次后进入降速：整个分享同一时刻只允许一次校验，
-  两次校验至少间隔 30 s（`SHARE_LOGIN_SHARE_SLOWDOWN_MS`），其余请求 429 `SHARE_LOGIN_LOCKED` 并带剩余等待。
-  成功登录不清这只桶。持正确口令的访客最多等一个间隔；轮换来源的猜测被压到每分享每小时约 120 次。
+- **节点侧**：`ShareLoginLimiter.begin()` 在 argon2 验证**之前**预占额度，`settle()` 结算。同（分享, IP）
+  并发验证上限 2，超出直接 429 `SHARE_LOGIN_BUSY`。前 3 次失败不限制；之后按下一次校验前退避
+  `min(15 min, 2 s × 2^(n-3))`（n 为该桶失败次数），`retryAfterMs` 从最近一次失败时刻起算。成功清空该
+  (分享, IP) 失败并记住 24 h。IP 键经 `limiterIpKey` 归一：IPv6 按 /64 归桶。
+- **分享全局桶**：同一分享 1 h 内失败达 50 次后，**只**对脏来源降速为每 30 s 最多一次校验：该 (分享, IP)
+  已有失败、或来源为 `unknown`。零失败的干净 IP，以及近 24 h 成功过的 IP，不被其它来源的失败拖住。
+  任一 IP 的成功不清分享失败窗，也不清其它 IP 的退避。`unknown` 永远按脏来源处理。
 - **进程级并发**：全进程同时在跑的分享口令 argon2 校验最多 4 个，超出立即 429 `SHARE_LOGIN_BUSY`（`retryAfterMs=1000`），
-  不排队，限制未登录请求占用的 CPU。
+  不排队，限制未登录请求占用的 CPU。跟踪键上限 1 万，LRU 淘汰。
 - **入口转发侧**：节点看到的 clientIp 是 `peer:<入口 nodeId>`，真实浏览器 IP 不过 mesh。因此
   `mesh/share-login-quota.ts` 在 `Forwarder.gateForwardedAuth()` 里对
   `POST /api/share-access/:id/login` 复用同一个 `ShareLoginLimiter`，分桶键是（真实来源 IP, shareId）：
-  锁定则**转发前**返回 429 + `retry-after`，上游 401 记一次失败、2xx 清（IP, 分享）桶；分享全局桶在入口侧同样累计。
+  预检与节点同一套干净 / 脏规则，锁定则**转发前**返回 429 + `retry-after`；上游 401 记一次失败、2xx 记该 IP
+  成功。入口与节点是两份进程内计数器，宽限与退避阈值各自完整计算、并不对半（详见
+  [分享口令登录限流](../security/share-login.md)）。
 - **开放模式禁止创建**：`ShareService.setAuthRequiredResolver()` 在未启用登录保护的 standalone 部署上返回
   false，`POST /api/share` 直接 409 `SHARE_AUTH_REQUIRED`。这类部署上升级出来的连接没有 shareScope，
   分享无法兑现隔离承诺，只能从源头堵住。

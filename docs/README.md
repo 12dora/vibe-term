@@ -90,6 +90,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [login-security.md](./security/login-security.md) | 登录失败模糊化、客户端 IP、登录限制与登录历史、二次验证「TOTP 或本 origin 通行密钥」二选一、公网安全评估 |
+| [share-login.md](./security/share-login.md) | 分享链接口令登录限流：每 IP 指数退避、分享级反轮换不误伤干净来源 |
 | [domain-access-policy.md](./security/domain-access-policy.md) | 按节点的「允许域名访问」开关 |
 | [access-tokens.md](./security/access-tokens.md) | 机器访问令牌：scope、出示方式、会话优先、管理与吊销、审计、CLI 与 CI 流程 |
 

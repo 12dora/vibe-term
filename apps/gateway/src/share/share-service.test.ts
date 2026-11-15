@@ -3,7 +3,12 @@ import type { StateSnapshotPayload } from '@vibeterm/shared';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { PaneRetentionConsumerCallbacks } from '../tmux-client/pane-retention';
 import type { ShareOriginSources } from './share-origins';
-import { SHARE_LOGIN_MAX_CONCURRENT, SHARE_LOGIN_MAX_FAILURES } from './share-rate-limit';
+import {
+  SHARE_LOGIN_BACKOFF_START_MS,
+  SHARE_LOGIN_GRACE_FAILURES,
+  SHARE_LOGIN_MAX_CONCURRENT,
+  SHARE_LOGIN_SHARE_MAX_FAILURES,
+} from './share-rate-limit';
 import type { ShareRecorderRuntime } from './share-recorder';
 import { type ShareService, type ShareServiceDeps, createShareService } from './share-service';
 import { ShareStore, endSharesForRevocation } from './share-store';
@@ -309,18 +314,18 @@ describe('凭证登录与校验', () => {
     expect(service.verifyAccessToken(login.token)?.renewed).toBe(false);
   });
 
-  test('口令错误返回 SHARE_PASSWORD_INVALID；10 次后锁定 15 分钟', async () => {
+  test('口令错误返回 SHARE_PASSWORD_INVALID；宽限后指数退避', async () => {
     const service = makeService();
     const created = await createShare(service, { expiresInMs: null });
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < SHARE_LOGIN_GRACE_FAILURES - 1; i++) {
       const failed = await service.loginAccess(created.share.id, 'nope', '203.0.113.5');
       expect(failed).toEqual({ ok: false, code: 'SHARE_PASSWORD_INVALID' });
     }
-    const tenth = await service.loginAccess(created.share.id, 'nope', '203.0.113.5');
-    expect(tenth.ok).toBe(false);
-    if (tenth.ok) return;
-    expect(tenth.code).toBe('SHARE_LOGIN_LOCKED');
-    expect(tenth.retryAfterMs).toBeGreaterThan(0);
+    const locked = await service.loginAccess(created.share.id, 'nope', '203.0.113.5');
+    expect(locked.ok).toBe(false);
+    if (locked.ok) return;
+    expect(locked.code).toBe('SHARE_LOGIN_LOCKED');
+    expect(locked.retryAfterMs).toBe(SHARE_LOGIN_BACKOFF_START_MS);
 
     const correctButLocked = await service.loginAccess(
       created.share.id,
@@ -332,9 +337,28 @@ describe('凭证登录与校验', () => {
     const otherIp = await service.loginAccess(created.share.id, 'secret123', '203.0.113.6');
     expect(otherIp.ok).toBe(true);
 
-    clock += 15 * 60 * 1000 + 1;
-    const afterWindow = await service.loginAccess(created.share.id, 'secret123', '203.0.113.5');
-    expect(afterWindow.ok).toBe(true);
+    clock += SHARE_LOGIN_BACKOFF_START_MS + 1;
+    const afterBackoff = await service.loginAccess(created.share.id, 'secret123', '203.0.113.5');
+    expect(afterBackoff.ok).toBe(true);
+  });
+
+  test('50 个轮换 IP 失败后，新 IP 正确口令立即成功', async () => {
+    const service = makeService();
+    const created = await createShare(service, { expiresInMs: null });
+    for (let i = 0; i < SHARE_LOGIN_SHARE_MAX_FAILURES - 1; i++) {
+      const failed = await service.loginAccess(
+        created.share.id,
+        'nope',
+        `198.51.${Math.floor(i / 200)}.${i % 200}`
+      );
+      expect(failed).toEqual({ ok: false, code: 'SHARE_PASSWORD_INVALID' });
+    }
+    const last = await service.loginAccess(created.share.id, 'nope', '198.51.1.0');
+    expect(last).toMatchObject({ ok: false, code: 'SHARE_LOGIN_LOCKED' });
+    const clean = await service.loginAccess(created.share.id, 'secret123', '203.0.113.9');
+    expect(clean.ok).toBe(true);
+    const dirty = await service.loginAccess(created.share.id, 'secret123', '198.51.0.0');
+    expect(dirty).toMatchObject({ ok: false, code: 'SHARE_LOGIN_LOCKED' });
   });
 
   test('分享结束 / 到期后凭证失效', async () => {
@@ -401,7 +425,7 @@ describe('登录限流', () => {
         )
       );
     }
-    expect(calls).toBeLessThanOrEqual(SHARE_LOGIN_MAX_FAILURES);
+    expect(calls).toBeLessThanOrEqual(SHARE_LOGIN_GRACE_FAILURES + SHARE_LOGIN_MAX_CONCURRENT);
     expect(peak).toBeLessThanOrEqual(SHARE_LOGIN_MAX_CONCURRENT);
     const locked = await service.loginAccess(created.share.id, 'secret123', '198.51.100.7');
     expect(locked).toMatchObject({ ok: false, code: 'SHARE_LOGIN_LOCKED' });

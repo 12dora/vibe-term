@@ -5,5 +5,6 @@
 | 文档 | 内容 |
 | --- | --- |
 | [login-security.md](./login-security.md) | 登录失败模糊化、客户端 IP 与登录限制、登录历史、未登录面资源上限、通行密钥二次验证（按 origin 生效 + 可信本地来源豁免 + TOTP/通行密钥 OR + 逃生口）、公网暴露的安全评估与明确不做的事 |
+| [share-login.md](./share-login.md) | 分享链接口令登录的公平限流：每 IP 指数退避、分享级反轮换不误伤干净来源、入口与节点分进程计数 |
 | [domain-access-policy.md](./domain-access-policy.md) | 按节点的「允许域名访问」开关：拦截规则、服务白名单、锁死自救 |
 | [access-tokens.md](./access-tokens.md) | 机器访问令牌：按节点签发、scope（exec / files / forward）、出示方式、会话优先、管理与吊销、审计、CLI 与 CI 流程 |

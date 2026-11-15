@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  SHARE_LOGIN_MAX_FAILURES,
-  SHARE_LOGIN_WINDOW_MS,
+  SHARE_LOGIN_BACKOFF_START_MS,
+  SHARE_LOGIN_SHARE_MAX_FAILURES,
+  SHARE_LOGIN_SHARE_SLOWDOWN_MS,
+} from '../share/share-rate-limit';
+import { UNKNOWN_CLIENT_KEY } from './client-ip';
+import {
+  SHARE_LOGIN_BACKOFF_CAP_MS,
+  SHARE_LOGIN_GRACE_FAILURES,
   ShareLoginQuota,
   shareLoginShareId,
 } from './share-login-quota';
@@ -23,29 +29,39 @@ describe('shareLoginShareId', () => {
 });
 
 describe('ShareLoginQuota', () => {
-  test('按（分享，来源 IP）分桶，达到上限后返回剩余锁定时间', () => {
+  test('按（分享，来源 IP）分桶，宽限后返回剩余退避时间', () => {
     let now = 1_000;
     const quota = new ShareLoginQuota(() => now);
-    for (let i = 0; i < SHARE_LOGIN_MAX_FAILURES - 1; i += 1) {
-      quota.recordFailure('sh1', '1.1.1.1');
-      expect(quota.lockedFor('sh1', '1.1.1.1')).toBe(0);
+    for (let i = 0; i < SHARE_LOGIN_GRACE_FAILURES - 1; i += 1) {
+      quota.recordFailure('sh1', '203.0.113.1');
+      expect(quota.lockedFor('sh1', '203.0.113.1')).toBe(0);
     }
-    quota.recordFailure('sh1', '1.1.1.1');
-    expect(quota.lockedFor('sh1', '1.1.1.1')).toBeGreaterThan(0);
-    // 同一 Hub 上的其它来源 IP 与其它分享不受牵连。
-    expect(quota.lockedFor('sh1', '2.2.2.2')).toBe(0);
-    expect(quota.lockedFor('sh2', '1.1.1.1')).toBe(0);
+    quota.recordFailure('sh1', '203.0.113.1');
+    expect(quota.lockedFor('sh1', '203.0.113.1')).toBe(SHARE_LOGIN_BACKOFF_START_MS);
+    expect(quota.lockedFor('sh1', '203.0.113.2')).toBe(0);
+    expect(quota.lockedFor('sh2', '203.0.113.1')).toBe(0);
 
-    now += SHARE_LOGIN_WINDOW_MS + 1;
-    expect(quota.lockedFor('sh1', '1.1.1.1')).toBe(0);
+    now += SHARE_LOGIN_BACKOFF_CAP_MS + 1;
+    expect(quota.lockedFor('sh1', '203.0.113.1')).toBe(0);
   });
 
-  test('登录成功清桶', () => {
+  test('登录成功清该 IP 失败，24 h 内仍算干净', () => {
     const quota = new ShareLoginQuota(() => 1_000);
-    for (let i = 0; i < SHARE_LOGIN_MAX_FAILURES; i += 1) quota.recordFailure('sh1', '1.1.1.1');
-    expect(quota.lockedFor('sh1', '1.1.1.1')).toBeGreaterThan(0);
-    quota.reset('sh1', '1.1.1.1');
-    expect(quota.lockedFor('sh1', '1.1.1.1')).toBe(0);
-    expect(quota.size).toBe(0);
+    for (let i = 0; i < SHARE_LOGIN_GRACE_FAILURES; i += 1) {
+      quota.recordFailure('sh1', '203.0.113.1');
+    }
+    expect(quota.lockedFor('sh1', '203.0.113.1')).toBeGreaterThan(0);
+    quota.reset('sh1', '203.0.113.1');
+    expect(quota.lockedFor('sh1', '203.0.113.1')).toBe(0);
+  });
+
+  test('入口预检：轮换失败不 429 干净 IP，unknown 视为脏', () => {
+    const quota = new ShareLoginQuota(() => 0);
+    for (let i = 0; i < SHARE_LOGIN_SHARE_MAX_FAILURES; i += 1) {
+      quota.recordFailure('sh1', `198.51.100.${i}`);
+    }
+    expect(quota.lockedFor('sh1', '203.0.113.9')).toBe(0);
+    expect(quota.lockedFor('sh1', '198.51.100.0')).toBe(SHARE_LOGIN_SHARE_SLOWDOWN_MS);
+    expect(quota.lockedFor('sh1', UNKNOWN_CLIENT_KEY)).toBe(SHARE_LOGIN_SHARE_SLOWDOWN_MS);
   });
 });

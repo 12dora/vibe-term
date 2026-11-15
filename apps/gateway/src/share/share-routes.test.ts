@@ -6,6 +6,7 @@ import { handleApiRequest } from '../api';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { isAuthLoginPublicPath } from '../mesh/auth-public-paths';
 import { requestDispatchContext } from '../mesh/types';
+import { SHARE_LOGIN_GRACE_FAILURES } from './share-rate-limit';
 import { type ShareService, createShareService, setShareServiceForTests } from './share-service';
 import { ShareStore } from './share-store';
 import {
@@ -305,7 +306,7 @@ describe('被分享人 HTTP', () => {
   test('口令错误 401，锁定后 429 带 retryAfterMs', async () => {
     const created = await createShare();
     const share = created.body.share as ShareRecord;
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < SHARE_LOGIN_GRACE_FAILURES - 1; i++) {
       const failed = await call('POST', `/api/share-access/${share.id}/login`, {
         body: { password: 'nope' },
       });
