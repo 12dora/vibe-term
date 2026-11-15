@@ -19,7 +19,6 @@ import {
   defaultAuthApi,
 } from '@vibeterm/api-client/auth/index';
 import { resetDirectAuthorizeBreakers } from '@vibeterm/ws-client/direct/direct-authorize-breaker';
-import { startNavTicketRefresher, whenNavTicketsReady } from './nav-ticket-refresher';
 import { acquireLoginLane, releaseLoginLane, resetLoginLanesForTest } from './node-login-lanes';
 import { noteNodeLoginFailure, noteNodeLoginSuccess } from './node-login-retry';
 import {
@@ -47,7 +46,8 @@ let current: SessionKeySecrets | null = null;
 
 // 持有证明（PoP）的签名与导航凭证续期随常驻的会话钥模块一并挂上；真正的签名实现按需再加载。
 installSessionPop();
-startNavTicketRefresher();
+const loadNavTickets = () => import('./nav-ticket-refresher');
+void loadNavTickets().then((module) => module.startNavTicketRefresher());
 
 /**
  * 这一份文档有没有做过「从 IndexedDB 恢复」。
@@ -162,7 +162,7 @@ export function restoreSessionKey(): Promise<SessionKeyInfo | null> {
 
 /** 恢复出会话后，工作区挂载前先等首轮导航凭证，免得图片 / 预览在 cookie 到位前先 401。 */
 async function awaitNavTickets(info: SessionKeyInfo | null): Promise<SessionKeyInfo | null> {
-  if (info) await whenNavTicketsReady();
+  if (info) await (await loadNavTickets()).whenNavTicketsReady();
   return info;
 }
 
