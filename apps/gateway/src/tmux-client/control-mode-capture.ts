@@ -191,9 +191,9 @@ export class ControlModeCommandQueue {
     const now = this.clock.now();
     this.stall.noteActivity(now);
     const seq = parseCommandNumber(block.args);
+    this.unanswered = false;
     this.pruneExpiredOrphans(now, seq);
     this.openBlockSeq = undefined;
-    this.unanswered = false;
     if (this.orphans.consume(seq) || this.swallowUnmatched(seq)) {
       this.afterProgress(now, false);
       return true;
