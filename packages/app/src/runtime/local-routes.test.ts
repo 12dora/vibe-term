@@ -150,6 +150,22 @@ describe('GET /api/local/status', () => {
     expect(body).toEqual({ error: { code: 'UNAUTHORIZED', message: 'login required' } });
   });
 
+  test('a session failing PoP gets the top-level POP code instead of UNAUTHORIZED', async () => {
+    for (const path of ['/api/local/status', '/api/local/leave']) {
+      const { status, body } = await jsonOf(
+        await handleLocalRequest(
+          new Request(`http://127.0.0.1${path}`, { method: 'POST' }),
+          deps({
+            roles: { node: true, relay: false },
+            authenticate: () => ({ ok: false, pop: 'POP_INVALID' }),
+          })
+        )
+      );
+      expect(status).toBe(401);
+      expect(body).toEqual({ code: 'POP_INVALID' });
+    }
+  });
+
   test('mesh with a valid session returns 200', async () => {
     const { status, body } = await jsonOf(
       await handleLocalRequest(

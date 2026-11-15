@@ -6,8 +6,9 @@ import {
   isVibeTermHeaderName,
 } from '@vibeterm/shared/http/mesh-headers';
 import { isTokenCredential } from '../auth/access-token-auth';
+import { toBase64Url } from '../auth/binary';
 import { parseCookies, readNavTicketCookie } from '../auth/cookies';
-import { POP_ENTRY_PROVEN_HEADER, requestPopProven } from '../auth/session-pop';
+import { POP_ENTRY_PROVEN_HEADER, requestPopProvenKey } from '../auth/session-pop';
 import { applySafeFileHeaders } from '../files/safe-file-headers';
 import { clientIpFromRequest } from './client-ip';
 
@@ -107,10 +108,10 @@ export function stampedAuthorizedHeaders(
   deleteHeader(headers, POP_ENTRY_PROVEN_HEADER);
   const ip = isTokenCredential(auth) ? clientIpFromRequest(req) : undefined;
   if (ip) headers[ENTRY_CLIENT_IP_HEADER] = ip;
-  // 服务端代发的调用签不了浏览器的证明：本机已验过这次请求的 PoP，就替它向目标担保。
-  if (auth && !isTokenCredential(auth) && requestPopProven(req)) {
-    headers[POP_ENTRY_PROVEN_HEADER] = '1';
-  }
+  // 服务端代发的调用签不了浏览器的证明：本机已凭签名头验过这次请求，就带上那条会话的公钥替它担保，
+  // 目标只在自己的会话出自同一次登录（同一把 sk_sess）时认。
+  const provenPk = auth && !isTokenCredential(auth) ? requestPopProvenKey(req) : null;
+  if (provenPk) headers[POP_ENTRY_PROVEN_HEADER] = toBase64Url(provenPk);
   return headers;
 }
 

@@ -58,7 +58,7 @@ export type StreamAuthFail = {
 /** 目标节点对 mesh 入站会话的 PoP 判定输入；缺省等于「没带证明」。 */
 export type StreamPopCheck = {
   evidence: PopEvidence | null;
-  acceptResumed?: (sid: string, proof: string) => boolean;
+  acceptResumed?: (sid: string, proof: string, query: string) => boolean;
 };
 
 export type StreamAuthResult = StreamAuthOk | StreamAuthFail;

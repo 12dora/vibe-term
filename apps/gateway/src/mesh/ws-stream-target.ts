@@ -122,6 +122,10 @@ export async function acceptWsStream(
   }
 }
 
+function popQueryOf(open: Record<string, unknown>): string {
+  return typeof open.popQuery === 'string' ? open.popQuery : '';
+}
+
 /** 升级证明的判定输入 + 流挂上后按这份证明登记续接窗口（入口 failover 重开流时复用）。 */
 function wsStreamPop(
   open: Record<string, unknown>,
@@ -131,9 +135,10 @@ function wsStreamPop(
   return {
     check: {
       evidence: streamUpgradeEvidence('/ws', open),
-      acceptResumed: (sid, proof) => resume.accepts(sid, proof, opts.now?.() ?? Date.now()),
+      acceptResumed: (sid, proof, query) =>
+        resume.accepts(sid, proof, query, opts.now?.() ?? Date.now()),
     },
-    attach: (sid, proof) => (proof ? resume.attach(sid, proof) : () => {}),
+    attach: (sid, proof) => (proof ? resume.attach(sid, proof, popQueryOf(open)) : () => {}),
   };
 }
 
@@ -231,6 +236,7 @@ export async function openWsStream(
     ...(cid ? { cid } : {}),
     ...(share ? { share } : {}),
     ...(pop ? { pop: pop.proof, popQuery: pop.query } : {}),
+    popForwarding: true,
   };
   const stream = await link.openStream(encodeJsonBytes(payload));
   return {

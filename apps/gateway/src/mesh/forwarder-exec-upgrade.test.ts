@@ -145,6 +145,7 @@ describe('forwarder /api/exec/ws', () => {
       expect(decodeJsonBytes(payloads[0] as Uint8Array)).toEqual({
         type: 'exec',
         credential: 'sid-1',
+        popForwarding: true,
       });
       execForwardWebsocket.message(ws, new Uint8Array([1, 2, 3]));
       await waitUntil(() => stream.written.length === 1);

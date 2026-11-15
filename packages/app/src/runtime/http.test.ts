@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readJsonBody } from './http';
+import { authFailure, readJsonBody } from './http';
 
 function jsonRequest(body: string, headers?: Record<string, string>): Request {
   return new Request('http://127.0.0.1/', {
@@ -41,5 +41,21 @@ describe('readJsonBody', () => {
   test('returns null for malformed JSON', async () => {
     expect(await readJsonBody(jsonRequest('{'))).toBeNull();
     expect(await readJsonBody(jsonRequest('not-json'))).toBeNull();
+  });
+});
+
+describe('authFailure', () => {
+  test('PoP failures keep a top-level code; other failures keep the error envelope', async () => {
+    const pop = authFailure({ ok: false, pop: 'POP_REQUIRED' });
+    expect(pop.status).toBe(401);
+    expect(await pop.json()).toEqual({ code: 'POP_REQUIRED' });
+    const plain = authFailure({ ok: false }, 'unauthorized');
+    expect(plain.status).toBe(401);
+    expect(await plain.json()).toEqual({
+      error: { code: 'unauthorized', message: 'login required' },
+    });
+    expect(await authFailure(undefined).json()).toEqual({
+      error: { code: 'UNAUTHORIZED', message: 'login required' },
+    });
   });
 });

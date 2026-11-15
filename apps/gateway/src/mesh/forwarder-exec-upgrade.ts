@@ -46,6 +46,7 @@ export function upgradeExecForward(
       credential,
       ...(clientIp ? { clientIp } : {}),
       ...(pop ? { pop: pop.proof, popQuery: pop.query } : {}),
+      popForwarding: true,
     };
     return link.openStream(encodeJsonBytes(open));
   });

@@ -18,6 +18,7 @@ import {
   PopNonceCache,
   WsPopResume,
   enforceRequestPop,
+  popLoginAllowed,
   streamUpgradeEvidence,
 } from '../auth/session-pop';
 import { createMigratedAuthDb } from '../auth/test-db';
@@ -216,7 +217,9 @@ describe('mesh inbound HTTP (target node)', () => {
       })
     ).toBeNull();
     const vouched = stampedAuthorizedHeaders(proven, {}, fx.popSid);
-    expect(vouched[POP_ENTRY_PROVEN_HEADER]).toBe('1');
+    expect(vouched[POP_ENTRY_PROVEN_HEADER]).toBe(
+      Buffer.from(pair.publicKey).toString('base64url')
+    );
     expect(
       stampedAuthorizedHeaders(proven, {}, 'tok:vtk_x')[POP_ENTRY_PROVEN_HEADER]
     ).toBeUndefined();
@@ -224,6 +227,39 @@ describe('mesh inbound HTTP (target node)', () => {
       (await forward(link, 'POST', '/api/system/upgrade', '', vouched, fx.popSid)).status
     ).toBe(200);
     expect(dispatched.at(-1)?.headers.get(POP_ENTRY_PROVEN_HEADER)).toBeNull();
+  });
+
+  test('a vouch from an entry session of another login does not unlock the target session', async () => {
+    const { link, dispatched } = targetLink();
+    const url = 'http://localhost/api/system/upgrade/remote';
+    const attacker = generateEd25519KeyPair();
+    const proof = await signPop(
+      (m) => signEd25519(attacker.secretKey, m),
+      popTargetFromUrl('POST', url)
+    );
+    const req = new Request(url, { method: 'POST', headers: { [POP_HEADER]: proof } });
+    const own = { sid: 'attacker-sid', popRequired: true, sessPublicKey: attacker.publicKey };
+    const d = { now: Date.now(), navKey: () => new Uint8Array(32), nonces: new PopNonceCache() };
+    expect(enforceRequestPop(req, own, d)).toBeNull();
+    const headers = stampedAuthorizedHeaders(req, {}, fx.popSid);
+    expect(headers[POP_ENTRY_PROVEN_HEADER]).toBeTruthy();
+    const res = await forward(link, 'POST', '/api/system/upgrade', '', headers, fx.popSid);
+    expect(res).toEqual({ status: 401, body: { code: 'POP_REQUIRED', error: 'POP_REQUIRED' } });
+    expect(dispatched).toHaveLength(0);
+  });
+
+  test('new entries mark every stream as PoP-forwarding; streams from old entries are not', async () => {
+    const { link, dispatched } = targetLink();
+    await forward(link, 'GET', '/api/auth/mode', '', {}, fx.legacySid);
+    const fromNew = dispatched.at(-1);
+    expect(fromNew && popLoginAllowed(fromNew, ENTRY, true)).toBe(true);
+    const legacyOpen = { method: 'GET', path: '/api/auth/mode', origin: 'http://localhost' };
+    const stream = await link.openStream(new TextEncoder().encode(JSON.stringify(legacyOpen)));
+    await stream.end();
+    for (let i = 0; i < 50 && dispatched.length < 2; i += 1) await Bun.sleep(5);
+    const fromOld = dispatched.at(-1);
+    expect(dispatched).toHaveLength(2);
+    expect(fromOld && popLoginAllowed(fromOld, ENTRY, true)).toBe(false);
   });
 
   test('the browser cannot send the entry marker or nav headers through the entry', () => {
@@ -262,6 +298,7 @@ describe('mesh WS / exec streams', () => {
       cid: 'c1',
       pop: 'v1.q',
       popQuery: 'cid=c1',
+      popForwarding: true,
     });
   });
 
@@ -281,15 +318,20 @@ describe('mesh WS / exec streams', () => {
 
     const later = { ...streamCtx(), now: () => Date.now() + 5 * 60_000 };
     const resume = new WsPopResume();
-    const accept = (sid: string, p: string) => resume.accepts(sid, p, Date.now());
+    const accept = (sid: string, p: string, q: string) => resume.accepts(sid, p, q, Date.now());
     expect(
       verifyStreamAuth(fx.popSid, '/ws', later, null, { evidence, acceptResumed: accept }).ok
     ).toBe(false);
-    const release = resume.attach(fx.popSid, proof);
+    const release = resume.attach(fx.popSid, proof, 'cid=c2');
+    expect(
+      verifyStreamAuth(fx.popSid, '/ws', later, null, { evidence, acceptResumed: accept }).ok
+    ).toBe(false);
+    release();
+    const sameCid = resume.attach(fx.popSid, proof, 'cid=c1');
     expect(
       verifyStreamAuth(fx.popSid, '/ws', later, null, { evidence, acceptResumed: accept }).ok
     ).toBe(true);
-    release();
+    sameCid();
     expect(verifyStreamAuth(fx.legacySid, '/ws', streamCtx(), null, { evidence: null })).toEqual({
       ok: true,
       uid: 'user-1',

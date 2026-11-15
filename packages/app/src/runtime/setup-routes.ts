@@ -5,7 +5,7 @@ import {
 import { requestIsLoopback } from '../../../../apps/gateway/src/mesh/client-ip';
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import { isStandaloneRoles } from '../lib/roles';
-import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
+import { authFailure, jsonErr, jsonOk, mapError, readJsonBody } from './http';
 import { handleRelayJoinRequest } from './relay-join-routes';
 import { becomeRelay } from './relay-setup-service';
 import { type SetupServiceDeps, precheckRelayUrl } from './setup-service';
@@ -94,7 +94,7 @@ function denySetupAccess(req: Request, deps: SetupRouteDeps): Response | null {
     const auth = deps.authenticate?.(req);
     if (auth?.ok && auth.userId) return null;
     if (auth?.ok) return strictLoopbackOrDeny(req);
-    return jsonErr('UNAUTHORIZED', 'login required', 401);
+    return authFailure(auth);
   }
   return strictLoopbackOrDeny(req);
 }

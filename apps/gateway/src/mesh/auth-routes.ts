@@ -23,6 +23,7 @@ import {
   makeVerifyDelegationPasskey,
   verifyRegistration,
 } from '../auth/passkey';
+import { popLoginAllowed } from '../auth/session-pop';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserKeyRecord, UserRecord, UserStore } from '../auth/user-store';
 import {
@@ -421,7 +422,7 @@ export class AuthRoutes {
         user.id,
         challenge.entryNodeId,
         envelope.delegation,
-        { now, popRequired: rec.pop === true },
+        { now, popRequired: popLoginAllowed(req, challenge.entryNodeId, rec.pop) },
         fail
       );
       logAuthLoginSuccessIfOk(issued, {

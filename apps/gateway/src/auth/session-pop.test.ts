@@ -17,8 +17,10 @@ import {
   WsPopResume,
   enforceRequestPop,
   evaluatePop,
+  markPopForwardingRequest,
+  popLoginAllowed,
   requestPopEvidence,
-  requestPopProven,
+  requestPopProvenKey,
 } from './session-pop';
 
 const NOW = 1_800_000_000_000;
@@ -100,15 +102,23 @@ describe('evaluatePop policy', () => {
     expect(evaluatePop(session, { ...ev, proof: null }, deps())).toBe(POP_REQUIRED);
     const resumed = {
       ...deps(),
-      acceptResumed: (sid: string, p: string) => sid === 'sid-a' && p === proof,
+      acceptResumed: (sid: string, p: string, q: string) =>
+        sid === 'sid-a' && p === proof && q === 'cid=c1',
     };
     expect(evaluatePop(session, ev, resumed)).toBeNull();
+    const otherCid = { ...ev, target: popTargetFromUrl('GET', '/ws?cid=c2') };
+    expect(evaluatePop(session, otherCid, resumed)).toBe(POP_INVALID);
   });
 
-  test('entry-proven inbound calls and OPTIONS skip the proof', () => {
+  test('entry vouching counts only for the same login key; OPTIONS skips the proof', () => {
+    const same = new Uint8Array(pair.publicKey);
     expect(
-      evaluatePop(session, evidence('POST', '/api/x', { entryProven: true }), deps())
+      evaluatePop(session, evidence('POST', '/api/x', { entryProvenPk: same }), deps())
     ).toBeNull();
+    const other = generateEd25519KeyPair().publicKey;
+    expect(evaluatePop(session, evidence('POST', '/api/x', { entryProvenPk: other }), deps())).toBe(
+      POP_REQUIRED
+    );
     expect(evaluatePop(session, evidence('OPTIONS', '/api/x'), deps())).toBeNull();
   });
 });
@@ -126,28 +136,32 @@ describe('PopNonceCache', () => {
 });
 
 describe('WsPopResume', () => {
-  test('accepts a proof while its stream lives and for the grace window after', () => {
+  test('accepts one replacement for the same cid while the stream lives and for the grace window', () => {
     let clock = 0;
     const resume = new WsPopResume(1_000, 10, () => clock);
-    expect(resume.accepts('s', 'p', 0)).toBe(false);
-    const release = resume.attach('s', 'p');
+    expect(resume.accepts('s', 'p', 'cid=1', 0)).toBe(false);
+    const release = resume.attach('s', 'p', 'cid=1');
     clock = 50_000;
-    expect(resume.accepts('s', 'p', clock)).toBe(true);
+    expect(resume.accepts('s', 'p', 'cid=1', clock)).toBe(true);
+    expect(resume.accepts('s', 'p', 'cid=2', clock)).toBe(false);
+    const replacement = resume.attach('s', 'p', 'cid=1');
+    expect(resume.accepts('s', 'p', 'cid=1', clock)).toBe(false);
+    replacement();
     release();
     release();
-    expect(resume.accepts('s', 'p', clock + 999)).toBe(true);
-    expect(resume.accepts('s', 'p', clock + 1_000)).toBe(false);
-    expect(resume.accepts('other', 'p', clock)).toBe(false);
+    expect(resume.accepts('s', 'p', 'cid=1', clock + 999)).toBe(true);
+    expect(resume.accepts('s', 'p', 'cid=1', clock + 1_000)).toBe(false);
+    expect(resume.accepts('other', 'p', 'cid=1', clock)).toBe(false);
   });
 
   test('evicts idle entries first when full', () => {
     const resume = new WsPopResume(0, 2, () => 10);
-    resume.attach('a', 'p')();
-    resume.attach('b', 'p');
-    resume.attach('c', 'p');
+    resume.attach('a', 'p', 'q')();
+    resume.attach('b', 'p', 'q');
+    resume.attach('c', 'p', 'q');
     expect(resume.size).toBe(2);
-    expect(resume.accepts('b', 'p', 10)).toBe(true);
-    expect(resume.accepts('c', 'p', 10)).toBe(true);
+    expect(resume.accepts('b', 'p', 'q', 10)).toBe(true);
+    expect(resume.accepts('c', 'p', 'q', 10)).toBe(true);
   });
 });
 
@@ -177,9 +191,28 @@ describe('request evidence', () => {
     const d = { now: Date.now(), navKey: () => navKey, nonces: new PopNonceCache() };
     expect(enforceRequestPop(req, session, d)).toBeNull();
     expect(enforceRequestPop(req, session, d)).toBeNull();
-    expect(requestPopProven(req)).toBe(true);
+    expect(requestPopProvenKey(req)).toEqual(pair.publicKey);
     const copy = new Request(url, { method: 'POST', headers: { [POP_HEADER]: proof } });
     expect(enforceRequestPop(copy, session, d)).toBe(POP_INVALID);
-    expect(requestPopProven(copy)).toBe(false);
+    expect(requestPopProvenKey(copy)).toBeNull();
+  });
+
+  test('a request passing only by nav ticket is not proven for vouching', () => {
+    const url = 'http://localhost/api/mesh/nodes/x/upgrade';
+    const nav = issueNavTicket(navKey, session.sid, Date.now()).ticket;
+    const req = new Request(url, { headers: { cookie: `vibeterm_n_self=${nav}` } });
+    const d = { now: Date.now(), navKey: () => navKey, nonces: new PopNonceCache() };
+    expect(enforceRequestPop(req, session, d)).toBeNull();
+    expect(requestPopProvenKey(req)).toBeNull();
+  });
+
+  test('pop_required is granted only for local logins or via a PoP-forwarding entry', () => {
+    const local = new Request('http://localhost/api/auth/login', { method: 'POST' });
+    expect(popLoginAllowed(local, 'self', true)).toBe(true);
+    expect(popLoginAllowed(local, 'self', 'yes')).toBe(false);
+    expect(popLoginAllowed(local, 'entry-a', true)).toBe(false);
+    markPopForwardingRequest(local, true);
+    expect(popLoginAllowed(local, 'entry-a', true)).toBe(true);
+    expect(popLoginAllowed(local, 'entry-a', false)).toBe(false);
   });
 });

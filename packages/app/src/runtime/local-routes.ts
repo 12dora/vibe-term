@@ -2,7 +2,7 @@ import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/sessi
 import type { TlsMode } from '../../../../apps/gateway/src/tls/types';
 import type { PortSpec } from '../../../shared/src/net';
 import { roleNameFromFlags } from '../lib/roles';
-import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
+import { authFailure, jsonErr, jsonOk, mapError, readJsonBody } from './http';
 import { type PortPlanEnv, portPlanFromEnv } from './local-port-plan';
 import { isLeavableRoleName, leaveMesh, parseLeaveTargetRole } from './membership-reset';
 import {
@@ -51,7 +51,7 @@ async function handleLeave(req: Request, deps: LocalRouteDeps): Promise<Response
   }
   const auth = deps.authenticate(req);
   if (!auth.ok) {
-    return jsonErr('unauthorized', 'login required', 401);
+    return authFailure(auth, 'unauthorized');
   }
   if (req.method !== 'POST') {
     return jsonErr('method_not_allowed', 'POST required', 405);
@@ -82,7 +82,7 @@ export async function handleLocalRequest(
 
   const auth = deps.authenticate(req);
   if (!auth.ok) {
-    return jsonErr('UNAUTHORIZED', 'login required', 401);
+    return authFailure(auth);
   }
 
   if (path === '/api/local/status') {

@@ -109,8 +109,12 @@ export type HttpStreamOpenPayload = {
   headers?: Record<string, string>;
   origin: string;
   auth?: string | null;
-  /** 入口已替这次服务端发起的调用验过浏览器会话的 PoP（只由入口写入，浏览器碰不到 OPEN）。 */
+  /** 入口已凭 PoP 头替这次服务端代发调用验过浏览器会话（只由入口写入，浏览器碰不到 OPEN）。 */
   popEntry?: boolean;
+  /** 入口那条已验会话的 `sess_public_key`（b64url）；目标会话公钥相同才认 `popEntry`。 */
+  popEntryPk?: string;
+  /** 入口能转发 PoP（导航票据、ws 证明、代发担保）；目标节点据此才签 `pop_required` 会话。 */
+  popForwarding?: boolean;
 };
 
 export type WsStreamOpenPayload = {
@@ -123,6 +127,7 @@ export type WsStreamOpenPayload = {
   /** 浏览器升级 URL 上的会话持有证明（`?pop=`）与去掉 `pop` 的原始查询串，目标节点据此验签。 */
   pop?: string;
   popQuery?: string;
+  popForwarding?: boolean;
 };
 
 export type TcpStreamOpenPayload = {

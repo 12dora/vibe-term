@@ -187,7 +187,7 @@ mesh_secrets        PK(kind, epoch), kind CHECK in ('log','meta'), key_enc, crea
 
 **目标**：只偷到 sid（浏览器 cookie `vibeterm_s_<nodeId>`、CLI `session.json` 里的 sid）而没有会话私钥时，会话不可用。复用登录时的 `sk_sess`，公钥就是 `node_sessions.sess_public_key`，不引入新密钥。访问令牌（`vtk_…`）与分享 cookie 不在范围内。
 
-**开启**：登录体带 `pop: true`（客户端能在会话全程持有私钥时才发）→ 该行 `pop_required = 1`（迁移 `0064_session_pop`）。未声明的会话行为与以前完全一致，旧客户端不受影响。
+**开启**：登录体带 `pop: true`（客户端能在会话全程持有私钥时才发）→ 该行 `pop_required = 1`（迁移 `0064_session_pop`）。经入口登录时，只有入口在流 OPEN 上带了能力标记 `popForwarding: true`（新版入口的每条 HTTP / ws / exec 流都带）才这样签；旧入口转不了导航票据、ws 证明与代发担保，经它登录的会话按普通会话签发，避免被锁在外面。未声明的会话行为与以前完全一致，旧客户端不受影响。
 
 **证明格式**：`x-vibeterm-pop: v1.<tsMs>.<nonce16>.<sig>`，签名覆盖 `vibeterm/pop/v1`、方法、目标路径、去掉 `pop` 参数的原始查询串、时间戳、nonce（`packages/shared/src/auth/session-pop.ts`）。目标路径是目标节点实际分发的路径：浏览器侧的 `/n/<nodeId>` / `/n/self` 前缀不参与签名。时间窗 ±60 s。
 
@@ -207,8 +207,8 @@ mesh_secrets        PK(kind, epoch), kind CHECK in ('log','meta'), key_enc, crea
 
 - B 不读 cookie：B 的响应带内部头 `x-vibeterm-set-nav: <ticket>;<maxAgeSec>`，A 像 `x-vibeterm-set-session` 一样换成 `Set-Cookie: vibeterm_n_<B>` 并去掉该头；之后 A 把 `vibeterm_n_<B>` cookie 填进流请求头 `x-vibeterm-nav`。浏览器自带的 `x-vibeterm-nav` / `x-vibeterm-set-nav` 一律丢弃。
 - `x-vibeterm-pop` 原样转发，A 不验（没有 B 会话的公钥），B 在流入口 `authorizeHttpStream` / `verifyStreamAuth` 处、分发之前按 `rest` 路径验证。B 的 POP 401 原样透传给浏览器，不改写成 `NODE_LOGIN_REQUIRED`，也不清 cookie。
-- WS：A 把 `?pop=`（或 CLI 的头）与去掉 `pop` 的查询串放进 ws 流 OPEN（`pop` / `popQuery`），B 验签。入口切链路重开流时沿用这份证明：B 只在原流仍挂着或断开后 10 分钟内认它（`WsPopResume`）。exec 流同样带 `pop` / `popQuery`。
-- 服务端代发（升级、卸载、窗格授权等 `forwardAuthorizedHttp`）签不了浏览器的证明：A 只在本次请求的本机会话已验过 PoP 时，在流 OPEN 上标 `popEntry`，B 据此放行。该字段只由入口写入，浏览器碰不到；B 的会话又绑定了入口 `via`，其它节点无法冒用。
+- WS：A 把 `?pop=`（或 CLI 的头）与去掉 `pop` 的查询串放进 ws 流 OPEN（`pop` / `popQuery`），B 验签。入口切链路重开流时沿用这份证明：B 只对同一 sid + 证明 + 升级查询串（含 `cid`）认它，且只在原流仍挂着时多容一条替身流、或原流断开后 10 分钟内（`WsPopResume`）；换 `cid` 或再开并发连接都要新证明。exec 流同样带 `pop` / `popQuery`。
+- 服务端代发（升级、卸载、窗格授权等 `forwardAuthorizedHttp`）签不了浏览器的证明：A 只在本次请求的本机会话凭 **PoP 签名头**（导航票据不算）验过时，在流 OPEN 上标 `popEntry` 并带上那条会话的公钥 `popEntryPk`；B 只在自己的会话同样 `pop_required` 且 `sess_public_key` 与之相同（同一次登录、同一把 `sk_sess`）时放行，否则照常要求证明。这些字段只由入口写入，浏览器碰不到；B 的会话又绑定了入口 `via`，其它节点无法冒用。
 
 **浏览器**：私钥是不可导出的 WebCrypto `CryptoKey`，存 IndexedDB 库 `vibeterm-auth-pop`（私钥 + 每节点 7 天硬过期），与 18 小时的 delegation 记录分开——delegation 过期只影响登录新节点，已签发的会话在硬过期前都能继续签名。只有私钥能持久化时才发 `pop: true`（`@noble` 内存回退不发）。每个 API 请求签一次（重试重签），WS 在打开前把证明写进 `pop` 查询参数；每 4 分钟（及登录、启动、标签页隐藏超过 4 分钟后回到前台）为每个 PoP 节点刷新导航票据，404 视为节点不支持并停止。登出或已无任何节点会话时删除私钥。
 

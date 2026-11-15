@@ -42,7 +42,7 @@ import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
 import { relayHttp, relayOnlyGatewayHttp, relayOnlyNotFound } from './assemble-relay-http';
 import { type GatewayWsAuth, routeWebsocket } from './assemble-websocket';
-import { jsonErr } from './http';
+import { authFailure } from './http';
 import { type LocalRouteDeps, handleLocalRequest } from './local-routes';
 import { handleSetupRequest } from './setup-routes';
 import { resolveSetupEnvPath } from './setup-service';
@@ -273,8 +273,10 @@ function buildTlsLifecycle(
     httpsListener,
     tlsHandler: createTlsRoutes({
       service: tls,
-      authorize: async (req) =>
-        routeDeps.authenticate(req).ok ? null : jsonErr('UNAUTHORIZED', 'login required', 401),
+      authorize: async (req) => {
+        const auth = routeDeps.authenticate(req);
+        return auth.ok ? null : authFailure(auth);
+      },
       onApplied: hooks?.onTlsApplied,
       configuredPublicUrl: gatewayConfig.baseUrl,
     }),

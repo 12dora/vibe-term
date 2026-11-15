@@ -2,7 +2,12 @@ import { canonicalPopQuery } from '@vibeterm/shared/auth';
 import { NAV_TICKET_HEADER, POP_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
-import { POP_ENTRY_PROVEN_HEADER, headerValue } from '../auth/session-pop';
+import { fromBase64Url } from '../auth/binary';
+import {
+  POP_ENTRY_PROVEN_HEADER,
+  headerValue,
+  markPopForwardingRequest,
+} from '../auth/session-pop';
 import { encodeJsonBytes } from './ctl';
 import {
   UploadStallError,
@@ -117,9 +122,15 @@ function httpStreamPop(
       proof: headerValue(headers, POP_HEADER),
       nav: headerValue(headers, NAV_TICKET_HEADER),
       upgrade: false,
-      entryProven: open.popEntry === true,
+      entryProvenPk: entryProvenPk(open),
     },
   };
+}
+
+function entryProvenPk(open: Record<string, unknown>): Uint8Array | null {
+  if (open.popEntry !== true || typeof open.popEntryPk !== 'string') return null;
+  const pk = fromBase64Url(open.popEntryPk);
+  return pk.byteLength === 32 ? new Uint8Array(pk) : null;
 }
 
 /** 持有证明失败带 `code`（客户端据此区分「需重新签名」与「会话失效」），其余沿用 `{ error }`。 */
@@ -135,18 +146,18 @@ function writeAuthFailure(stream: LinkStream, verified: { reason: string; pop?: 
   );
 }
 
-/** 入口出站：进程内的「已验 PoP」标记换成 OPEN 字段，不作为头上线路。 */
+/** 入口出站：进程内的「已验 PoP」标记（值为入口会话公钥）换成 OPEN 字段，不作为头上线路。 */
 function splitEntryProof(headers: Record<string, string> | undefined): {
   headers: Record<string, string>;
-  popEntry: boolean;
+  popEntryPk: string | null;
 } {
   const out: Record<string, string> = {};
-  let popEntry = false;
+  let popEntryPk: string | null = null;
   for (const [key, value] of Object.entries(headers ?? {})) {
-    if (key.toLowerCase() === POP_ENTRY_PROVEN_HEADER) popEntry = value === '1';
+    if (key.toLowerCase() === POP_ENTRY_PROVEN_HEADER) popEntryPk = value || null;
     else out[key] = value;
   }
-  return { headers: out, popEntry };
+  return { headers: out, popEntryPk };
 }
 
 export async function acceptHttpStream(
@@ -203,6 +214,7 @@ export async function acceptHttpStream(
     body: requestBody ?? undefined,
     signal: abort.signal,
   });
+  markPopForwardingRequest(request, open.popForwarding);
 
   let response: Response;
   try {
@@ -340,7 +352,8 @@ export async function openHttpStream(
     type: 'http',
     ...openPayload,
     headers: stripForwardedRequestHeaders(split.headers),
-    ...(split.popEntry ? { popEntry: true } : {}),
+    popForwarding: true,
+    ...(split.popEntryPk ? { popEntry: true, popEntryPk: split.popEntryPk } : {}),
   };
   const stream = await link.openStream(encodeJsonBytes(payload));
   const rst = () => {

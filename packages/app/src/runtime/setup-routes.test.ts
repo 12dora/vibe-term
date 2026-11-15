@@ -178,6 +178,24 @@ describe('setup routes gating', () => {
     expect(local.status).toBe(200);
   });
 
+  test('a session failing PoP gets the top-level POP code', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://relay.example.com' }),
+        deps({
+          auth: {
+            userStore: { listUsers: () => [{ id: 'u1' }], getByUsername: () => null },
+          } as unknown as LocalAuthContext,
+          authenticate: () => ({ ok: false, pop: 'POP_REQUIRED' }),
+        } as Partial<SetupServiceDeps> & {
+          authenticate: () => { ok: false; pop: 'POP_REQUIRED' };
+        })
+      )
+    );
+    expect(status).toBe(401);
+    expect(body).toEqual({ code: 'POP_REQUIRED' });
+  });
+
   test('a valid session proceeds after credentials exist', async () => {
     const { status } = await jsonOf(
       await handleSetupRequest(

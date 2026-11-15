@@ -137,6 +137,7 @@ describe('entry: which credential goes to the target', () => {
         type: 'exec',
         credential: 'tok:vtk_abc',
         clientIp: '203.0.113.9',
+        popForwarding: true,
       });
     } finally {
       mesh.close();

@@ -39,8 +39,11 @@ export type PopEvidence = {
   proof: string | null;
   nav: string | null;
   upgrade: boolean;
-  /** mesh 入站：入口节点已替这次服务端发起的调用验过浏览器的 PoP。 */
-  entryProven?: boolean;
+  /**
+   * mesh 入站：入口已凭 PoP 头验过本次服务端代发调用背后的浏览器请求，这是入口那条会话的公钥。
+   * 只有目标会话同属一次登录（`sess_public_key` 相同）时才算数。
+   */
+  entryProvenPk?: Uint8Array | null;
 };
 
 export type PopCheckDeps = {
@@ -48,7 +51,7 @@ export type PopCheckDeps = {
   navKey: () => Uint8Array;
   nonces?: PopNonceCache;
   /** ws 流续接：同一证明在原连接存活期内（及其后的宽限期）可再次打开流。 */
-  acceptResumed?: (sid: string, proof: string) => boolean;
+  acceptResumed?: (sid: string, proof: string, query: string) => boolean;
 };
 
 export class PopNonceCache {
@@ -98,7 +101,8 @@ type ResumeEntry = { live: number; idleUntil: number };
 
 /**
  * mesh ws 流的续接窗口。入口切链路时用升级时那份证明重开流，证明早已超出 60 s 时间窗；
- * 只要原来那条流还挂着（或刚断不到宽限期），目标节点就认这份已验过的证明。
+ * 只要原来那条流还挂着（或刚断不到宽限期），目标节点就认这份已验过的证明。键含升级查询串
+ * （带 cid），只能续同一条连接；同时最多再挂一条替身流，不能借它开任意多条并发连接。
  */
 export class WsPopResume {
   private readonly entries = new Map<string, ResumeEntry>();
@@ -109,14 +113,15 @@ export class WsPopResume {
     private readonly clock: () => number = () => Date.now()
   ) {}
 
-  accepts(sid: string, proof: string, now: number): boolean {
-    const entry = this.entries.get(resumeKey(sid, proof));
-    return entry !== undefined && (entry.live > 0 || entry.idleUntil > now);
+  accepts(sid: string, proof: string, query: string, now: number): boolean {
+    const entry = this.entries.get(resumeKey(sid, proof, query));
+    if (!entry) return false;
+    return entry.live === 1 || (entry.live === 0 && entry.idleUntil > now);
   }
 
   /** 记一条挂上的流，返回释放函数（幂等）。 */
-  attach(sid: string, proof: string): () => void {
-    const key = resumeKey(sid, proof);
+  attach(sid: string, proof: string, query: string): () => void {
+    const key = resumeKey(sid, proof, query);
     const entry = this.entries.get(key) ?? { live: 0, idleUntil: 0 };
     entry.live += 1;
     this.entries.delete(key);
@@ -153,8 +158,8 @@ export class WsPopResume {
   }
 }
 
-function resumeKey(sid: string, proof: string): string {
-  return `${sid}\n${proof}`;
+function resumeKey(sid: string, proof: string, query: string): string {
+  return `${sid}\n${proof}\n${query}`;
 }
 
 export const wsPopResume = new WsPopResume();
@@ -171,7 +176,7 @@ function checkUpgrade(
   const { proof } = evidence;
   if (!proof) return POP_REQUIRED;
   if (proofValid(session, proof, { ...evidence.target, method: 'GET' }, deps.now)) return null;
-  return deps.acceptResumed?.(session.sid, proof) ? null : POP_INVALID;
+  return deps.acceptResumed?.(session.sid, proof, evidence.target.query) ? null : POP_INVALID;
 }
 
 function checkSafe(
@@ -208,12 +213,17 @@ export function evaluatePop(
 ): PopFailureCode | null {
   if (!session.popRequired) return null;
   if (!evidence) return POP_REQUIRED;
-  if (evidence.entryProven) return null;
+  if (entryVouches(session, evidence.entryProvenPk)) return null;
   if (evidence.upgrade) return checkUpgrade(session, evidence, deps);
   const method = evidence.target.method.toUpperCase();
   if (method === 'OPTIONS') return null;
   if (SAFE_METHODS.has(method)) return checkSafe(session, evidence, deps);
   return checkUnsafe(session, evidence, deps);
+}
+
+function entryVouches(session: PopSession, pk: Uint8Array | null | undefined): boolean {
+  if (!pk || pk.byteLength !== session.sessPublicKey.byteLength) return false;
+  return pk.every((byte, i) => byte === session.sessPublicKey[i]);
 }
 
 export function isPopFailureCode(value: unknown): value is PopFailureCode {
@@ -242,7 +252,7 @@ export function requestPopEvidence(req: Request): PopEvidence {
 }
 
 const requestOutcomes = new WeakMap<Request, Map<string, PopFailureCode | null>>();
-const provenRequests = new WeakSet<Request>();
+const provenKeys = new WeakMap<Request, Uint8Array>();
 
 /**
  * 同一个 Request 会被多处鉴权（localUiGuard、路由的 requireSession…），结果按 sid 记在请求上，
@@ -259,13 +269,37 @@ export function enforceRequestPop(
   const outcome = evaluatePop(session, requestPopEvidence(req), deps);
   memo.set(session.sid, outcome);
   requestOutcomes.set(req, memo);
-  if (outcome === null) provenRequests.add(req);
+  if (outcome === null && provedByHeader(session, req, deps.now)) {
+    provenKeys.set(req, session.sessPublicKey);
+  }
   return outcome;
 }
 
-/** 本次请求的会话是否 `pop_required` 且已证明持有私钥。 */
-export function requestPopProven(req: Request): boolean {
-  return provenRequests.has(req);
+/** 只认签名头（或升级证明）：导航票据只是 GET 的替代凭证，不能拿来替代发调用担保。 */
+function provedByHeader(session: PopSession, req: Request, now: number): boolean {
+  const evidence = requestPopEvidence(req);
+  const method = evidence.upgrade ? 'GET' : evidence.target.method;
+  return proofValid(session, evidence.proof, { ...evidence.target, method }, now);
+}
+
+/** 本次请求凭 PoP 头证明过持有私钥的 `pop_required` 会话公钥；没有则为 null。 */
+export function requestPopProvenKey(req: Request): Uint8Array | null {
+  return provenKeys.get(req) ?? null;
+}
+
+const popForwardingRequests = new WeakSet<Request>();
+
+/**
+ * 入口能力标记：新版入口在每条转发流的 OPEN 上带 `popForwarding: true`（导航票据、ws 证明、代发担保
+ * 都能转）。经旧入口登录时没有这个标记，目标节点就签普通会话，避免客户端被锁在旧入口后面。
+ */
+export function markPopForwardingRequest(req: Request, flag: unknown): void {
+  if (flag === true) popForwardingRequests.add(req);
+}
+
+/** 登录声明了 `pop: true` 时是否真的签 `pop_required`：本机登录，或经能转发 PoP 的新版入口。 */
+export function popLoginAllowed(req: Request, via: string, requested: unknown): boolean {
+  return requested === true && (via === 'self' || popForwardingRequests.has(req));
 }
 
 export function headerValue(headers: Record<string, string>, name: string): string | null {

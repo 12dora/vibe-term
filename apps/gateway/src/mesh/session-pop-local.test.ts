@@ -237,6 +237,19 @@ describe('auth routes', () => {
       const legacyRow = verify(legacyLogin.sid);
       expect(legacyRow.ok && legacyRow.session.popRequired).toBe(false);
 
+      const oldEntry = 'ee'.repeat(16);
+      const viaOldEntry = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        sess,
+        pop: true,
+        via: oldEntry,
+      });
+      expect(viaOldEntry.res.status).toBe(200);
+      const oldEntryRow = mesh.nodeSessionStore.verify(viaOldEntry.sid, {
+        viaNodeId: oldEntry,
+        now: Date.now(),
+      });
+      expect(oldEntryRow.ok && oldEntryRow.session.popRequired).toBe(false);
+
       const url = 'http://localhost/api/auth/nav';
       const cookie = `vibeterm_s_self=${popLogin.sid}`;
       const denied = await call(mesh.runtime, url, { method: 'POST', headers: { cookie } });
