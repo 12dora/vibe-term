@@ -90,6 +90,7 @@ After=network.target
 
 [Service]
 Type=simple
+Slice=session.slice
 KillMode=process
 WorkingDirectory=${escapedInstallDir}
 SyslogIdentifier=vibeterm

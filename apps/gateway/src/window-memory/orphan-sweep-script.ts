@@ -5,7 +5,7 @@
 import { withUserBus } from './user-bus';
 
 export const ORPHAN_SWEEP_MARK = 'VTORPHAN_SWEEP';
-export const SCOPE_NAME = /^tmux-spawn-[A-Za-z0-9_-]+\.scope$/;
+export const SCOPE_NAME = /^(?:tmux-spawn|vibeterm-pane)-[A-Za-z0-9_-]+\.scope$/;
 
 const SWEEP_BEFORE = `# ${ORPHAN_SWEEP_MARK}
 if ! command -v systemctl >/dev/null 2>&1; then
@@ -45,7 +45,7 @@ if [ -z "$server_cg" ]; then
   printf '%s\\n' 'VTORPHAN 0 no-server-cgroup'
   exit 0
 fi
-units=$(systemctl --user list-units 'tmux-spawn-*.scope' --all --no-legend --no-pager 2>/dev/null) || {
+units=$(systemctl --user list-units 'tmux-spawn-*.scope' 'vibeterm-pane-*.scope' --all --no-legend --no-pager 2>/dev/null) || {
   printf '%s\\n' 'VTORPHAN 0 list-failed'
   exit 0
 }
@@ -54,7 +54,7 @@ while IFS= read -r line || [ -n "$line" ]; do
   line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//')
   name=\${line%% *}
   case "$name" in
-    tmux-spawn-*.scope) ;;
+    tmux-spawn-*.scope|vibeterm-pane-*.scope) ;;
     *) continue ;;
   esac
 VT_LIVE_SKIP
@@ -105,7 +105,7 @@ mem_limited() {
 flush_unit() {
   [ -n "$id" ] || return 0
   case "$id" in
-    tmux-spawn-*.scope) ;;
+    tmux-spawn-*.scope|vibeterm-pane-*.scope) ;;
     *) id=; desc=; high=; maxmem=; swap=; cg=; return 0 ;;
   esac
   limited=0

@@ -100,7 +100,7 @@ const SCRIPT_HEAD = [
   '    cg_line=$(sed -n \'s/^0:://p\' "$PROC_FS/${pid}/cgroup" | head -n 1)',
   '    last=${cg_line##*/}',
   '    case "$last" in',
-  '      tmux-spawn-*.scope)',
+  '      tmux-spawn-*.scope|vibeterm-pane-*.scope)',
   '        cg_dir="$CGROUP_FS$cg_line"',
   '        current=$(cgroup_num "$cg_dir/memory.current")',
   '        if [ -n "$current" ]; then',

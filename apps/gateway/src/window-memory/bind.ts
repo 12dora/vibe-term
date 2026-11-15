@@ -1,6 +1,7 @@
 import type { TmuxWindow } from '@vibeterm/shared';
 
 import type { TmuxConnectionOptions } from '../tmux-client/connection-types';
+import { type CgroupPlacement, getCgroupPlacement } from '../tmux/cgroup-placement';
 import { getAppliedTripleBook } from './applied-triples';
 import { type WindowMemoryTrackerHandle, createWindowMemoryTracker } from './tracker';
 import type { HostShellRunner } from './types';
@@ -55,17 +56,33 @@ export function bindWindowMemoryTracker(
   });
 }
 
+/** 返回值是本次 pane 归位的完成信号，调用方可以不等；测试据此确定性地等待。 */
 export function onWindowMemorySnapshot(
   tracker: WindowMemoryTrackerHandle | null,
   started: { value: boolean },
   prevIds: string[],
-  windows: Map<string, TmuxWindow>
-): void {
-  if (!tracker) return;
+  windows: Map<string, TmuxWindow>,
+  placement: CgroupPlacement = getCgroupPlacement()
+): Promise<void> {
+  if (!tracker) return Promise.resolve();
   if (!started.value) {
     started.value = true;
     tracker.start();
-    return;
+    return placeSnapshotPanes(tracker, windows, placement);
   }
-  if (!samePaneIds(prevIds, paneIdsFromWindows(windows))) tracker.requestTickSoon();
+  if (samePaneIds(prevIds, paneIdsFromWindows(windows))) return Promise.resolve();
+  tracker.requestTickSoon();
+  return placeSnapshotPanes(tracker, windows, placement);
+}
+
+/** 新 pane 搬进 workload scope 后再采一次，限额 / stop 才会落到新 scope 上。 */
+async function placeSnapshotPanes(
+  tracker: WindowMemoryTrackerHandle,
+  windows: Map<string, TmuxWindow>,
+  placement: CgroupPlacement
+): Promise<void> {
+  if (!placement.isDeviceEnabled(tracker.deviceId)) return;
+  const pids = panesFromWindows(windows).flatMap((pane) => (pane.pid ? [pane.pid] : []));
+  const moved = await placement.placePanes(tracker.deviceId, pids);
+  if (moved > 0) tracker.requestTickSoon();
 }

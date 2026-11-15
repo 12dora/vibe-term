@@ -25,6 +25,11 @@ import { retryAfterSocketRecovery } from '../socket-recovery';
 import { TmuxTargetMissingError, isTargetMissingMessage } from '../target-missing';
 import { TmuxCommandFailedError } from '../tmux-command-error';
 import { resolveTmuxWindowStyle } from '../window-style';
+import {
+  placeCreatedPane,
+  startConnectPlacement,
+  withPanePidOutput,
+} from './cgroup-placement-wiring';
 import { logTmuxDestroy } from './destroy-log';
 import { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './helpers';
 import {
@@ -102,7 +107,7 @@ export function buildSplitPaneArgv(paneId: string, direction: 'h' | 'v', cwd: st
     cwd,
     '-P',
     '-F',
-    `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
+    `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_pid}`,
   ];
 }
 
@@ -168,9 +173,12 @@ export class SessionCommands {
 
   createWindow(name?: string, cwd?: string, detached?: boolean): void {
     const dir = cwd ?? this.host.resolveDefaultWorkingDir();
-    this.fire(() =>
-      this.runAndRefresh(buildCreateWindowArgv(this.host.sessionName, dir, name, detached))
-    );
+    const argv = buildCreateWindowArgv(this.host.sessionName, dir, name, detached);
+    this.fire(async () => {
+      const { stdout } = await this.runTmux(withPanePidOutput(this.host, argv));
+      void placeCreatedPane(this.host, stdout);
+      await this.host.requestSnapshotInternal();
+    });
   }
 
   closeWindow(windowId: string): void {
@@ -413,24 +421,20 @@ export class SessionCommands {
   }
 
   async ensureSession(): Promise<{ created: boolean }> {
-    const exists = await this.host.runTmuxAllowFailure([
-      'has-session',
-      '-t',
-      this.host.sessionName,
-    ]);
-    if (exists.exitCode === 0) {
-      return { created: false };
+    const name = this.host.sessionName;
+    const exists = await this.host.runTmuxAllowFailure(['has-session', '-t', name]);
+    if (exists.exitCode !== 0) {
+      await this.runTmux([
+        'new-session',
+        '-d',
+        '-c',
+        this.host.resolveDefaultWorkingDir(),
+        '-s',
+        name,
+      ]);
     }
-
-    await this.runTmux([
-      'new-session',
-      '-d',
-      '-c',
-      this.host.resolveDefaultWorkingDir(),
-      '-s',
-      this.host.sessionName,
-    ]);
-    return { created: true };
+    void startConnectPlacement(this.host);
+    return { created: exists.exitCode !== 0 };
   }
 
   async configureSessionOptions(): Promise<void> {
@@ -569,6 +573,7 @@ export class SessionCommands {
       true
     );
     this.noteCreatedPane(result.stdout);
+    void placeCreatedPane(this.host, result.stdout.trim().split(SNAPSHOT_FIELD_SEPARATOR)[2]);
     await this.host.requestSnapshotInternal();
   }
 

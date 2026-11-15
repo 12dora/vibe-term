@@ -173,6 +173,25 @@ describe('orphan scope ownership', () => {
     expect(stdout).toBe('keep tmux-spawn-c.scope\n');
   });
 
+  test('vibeterm-pane scopes are listed, parsed, and owned via the launcher pid', () => {
+    const script = buildOrphanSweepScript([4242], ['vibeterm-pane-abc.scope']);
+    expect(script).toContain("list-units 'tmux-spawn-*.scope' 'vibeterm-pane-*.scope'");
+    expect(script).toContain('tmux-spawn-*.scope|vibeterm-pane-*.scope) ;;');
+    expect(script).toContain('vibeterm-pane-abc.scope) continue ;;');
+    const session = '/user.slice/user-1.slice/user@1.service/session.slice/vibeterm-tmux-1.scope';
+    const parsed = parseOrphanSweep(
+      [
+        'VTORPHAN 1 ok',
+        `SERVER\t99\t${session}`,
+        `UNIT\tvibeterm-pane-x.scope\t99\t${SLICE}/vibeterm-pane-x.scope\t100\tinfinity\t-\t0\t1`,
+        `UNIT\tvibeterm-tmux-1.scope\t99\t${session}\t100\tinfinity\t-\t0\t1`,
+      ].join('\n')
+    );
+    expect(parsed.units.map((row) => row.scope)).toEqual(['vibeterm-pane-x.scope']);
+    const pane = parsed.units[0];
+    expect(pane && orphanOwnedByServer(pane, 99, session)).toBe(true);
+  });
+
   test('an exited tmux server is rejected once and not released', async () => {
     const info = spyOn(console, 'info').mockImplementation(() => {});
     const high = 8192 * 1_048_576;

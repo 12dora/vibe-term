@@ -6,6 +6,7 @@ import {
   parseTmuxVersion,
   tmuxClientMatchesServer,
 } from '../tmux-client/tmux-version';
+import { type PlacementStatus, getCgroupPlacement } from '../tmux/cgroup-placement';
 import { buildLocalTmuxEnv, getLocalShellPath } from '../tmux/local-shell-path';
 
 export type TmuxHealthReason =
@@ -22,6 +23,8 @@ export interface TmuxHealth {
   clientProvenance: string | null;
   serverVersion: string | null;
   reason: TmuxHealthReason;
+  /** 本机 cgroup 归属（server 保护 / pane 归位）；不含路径。 */
+  placement?: PlacementStatus;
 }
 
 interface CommandResult {
@@ -147,7 +150,8 @@ export function getTmuxHealth(): Promise<TmuxHealth> {
     return inFlight;
   }
   inFlight = probeTmuxHealth(defaultRunner)
-    .then((value) => {
+    .then((probed) => {
+      const value: TmuxHealth = { ...probed, placement: getCgroupPlacement().getStatus() };
       cached = { expiresAt: Date.now() + CACHE_MS, value };
       return value;
     })

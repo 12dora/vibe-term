@@ -1,7 +1,7 @@
 import type { PaneMemorySource, PaneScopeSample } from './types';
 
 const HEADER_RE = /^VTMEM 2 (\d+) ([01]) (ok|no-cgroup2|no-user-systemd)$/;
-const SCOPE_RE = /^(?:-)$|^tmux-spawn-[^/\t]+\.scope$/;
+const SCOPE_RE = /^(?:-)$|^(?:tmux-spawn|vibeterm-pane)-[^/\t]+\.scope$/;
 const SOURCE_RE = /^(cgroup|rss|none)$/;
 
 export type SamplerHeaderReason = 'ok' | 'no-cgroup2' | 'no-user-systemd';

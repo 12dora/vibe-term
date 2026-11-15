@@ -1,6 +1,6 @@
 # tmux 进程存活：服务 kill 策略、linger 与 systemd OOMPolicy
 
-本文说明 VibeTerm 崩溃 / 重启 / 被 OOM 波及时，业务 tmux 会话为什么会（或不会）跟着消失，以及安装程序做了什么、用户还要做什么；面向 Linux / macOS 运维。
+本文说明 VibeTerm 崩溃 / 重启 / 被 OOM 波及时，业务 tmux 会话为什么会（或不会）跟着消失，tmux server 与 pane 各自落在哪个 cgroup，以及安装程序做了什么、用户还要做什么；面向 Linux / macOS 运维。
 
 VibeTerm 沿用 tmux 的哲学：只要业务 tmux 会话还在、用户随时能 attach，VibeTerm 进程本身的崩溃或重启就不应该带走这些会话。`tmux new-session -d` 已让会话以 daemon 形式脱离 VibeTerm 的控制终端，但进程是否真正存活最终由服务管理器的 kill 策略与 systemd 的 OOM 策略决定。
 
@@ -100,7 +100,7 @@ VibeTerm 为自己创建的会话开启 `remain-on-exit on`，并在 UI 上把 `
 
 ### 与窗口内存限额的关系
 
-`DefaultOOMPolicy=continue` 只决定「内核杀了 cgroup 里某个进程之后，systemd 要不要把整个 `tmux-spawn-*.scope` 停掉」。它不限制进程能吃多少内存。VibeTerm 另外通过 `systemctl --user set-property --runtime … MemoryHigh/MemoryMax/MemorySwapMax` 给每个 pane scope 套上限：软限额触发回收 / 限速，硬限额才由内核 OOM 杀超限进程。关窗前会先 `systemctl --user stop` 该 scope。宿主没有 pane scope（tmux < 3.6 等）时限额不生效，读数改按进程树 RSS 统计。完整说明（设置项、GUI 徽标、远程/批量设限、`vibeterm sessions --memory` 与排障命令）见 [窗口内存](./window-memory-limits.md)。
+`DefaultOOMPolicy=continue` 只决定「内核杀了 cgroup 里某个进程之后，systemd 要不要把整个 pane scope（`tmux-spawn-*.scope`，或被归位后的 `vibeterm-pane-*.scope`，见第 5 节）停掉」。它不限制进程能吃多少内存。VibeTerm 另外通过 `systemctl --user set-property --runtime … MemoryHigh/MemoryMax/MemorySwapMax` 给每个 pane scope 套上限：软限额触发回收 / 限速，硬限额才由内核 OOM 杀超限进程。关窗前会先 `systemctl --user stop` 该 scope。宿主没有 pane scope（tmux < 3.6 等）时限额不生效，读数改按进程树 RSS 统计。完整说明（设置项、GUI 徽标、远程/批量设限、`vibeterm sessions --memory` 与排障命令）见 [窗口内存](./window-memory-limits.md)。
 
 ## 4. 套接字不可达：server 还活着，新命令却连不上
 
@@ -126,6 +126,8 @@ VibeTerm 为自己创建的会话开启 `remain-on-exit on`，并在 UI 上把 `
 
 命令重新跑通后，网关清掉设备上滞留的 `lastError` 并广播 `reconnected`，前端据此撤下错误提示——此前 `lastError` 只在重连成功时才清，而这类故障下连接从不断开，错误会一直挂着。
 
+控制通道在宿主过载下变慢（`tmux control command timed out` 等）时，网关把错误归为 `tmux_busy`，而不是 SSH 的 `timeout` / `unknown`。单次慢命令不告警；慢状态持续 ≥15 s 或通道 `stalled` 才落库并广播。控制通道 `recovered`、控制客户端重挂成功、或随后快照/命令成功时，只清 `tmux_busy`（及历史上被标成 `unknown` 的同类控制通道文案），并广播 `reconnected`；不会用控制通道恢复掩盖 SSH / 认证失败。
+
 ### 需要用户自己做的
 
 自动恢复只治标。挂载被换掉是运维动作，要么在起 tmux 前把 `/tmp` 的挂载定下来（fstab 里的 bind 在 `local-fs.target` 前完成，重启后即正常），要么别在 tmux server 运行期间重挂 `/tmp`。排查用：
@@ -134,4 +136,44 @@ VibeTerm 为自己创建的会话开启 `remain-on-exit on`，并在 UI 上把 `
 findmnt /tmp                      # 同一挂载点上是否叠了两层
 ss -xlp | grep tmux               # server 仍在哪个路径 LISTEN
 ls -la /tmp/tmux-$(id -u)/        # 当前可见的 /tmp 里有没有那个套接字
+```
+
+## 5. 进程归属与 cgroup（Linux）
+
+背景：宿主常在 `app.slice` 上设 `memory.high`。tmux 3.6 把每个 pane 放进 `tmux-spawn-<uuid>.scope`，且与 tmux server **同一个 slice**。server 若也在 `app.slice`，就会和编译、agent 等重负载一起被限速，控制命令超时，网页终端卡顿，而 SSH 登录（`session-N.scope`）照常流畅。
+
+目标：网关与 tmux server 在受保护的 slice，pane 负载留在 workload slice，宿主限额只压负载。
+
+| 进程 | 位置 |
+|---|---|
+| 网关 `vibeterm.service` | 单元写 `Slice=session.slice`（安装 / 升级时渲染；未改 CPUWeight / IOWeight / Nice） |
+| tmux server | 原在 workload slice 的某个 `.scope` 里时，搬进受保护 slice 的 `vibeterm-tmux-<socket 路径哈希>.scope` |
+| pane 进程树 | 落在受保护 slice 的 `tmux-spawn-*.scope` 时，整组 pid 搬进 workload slice 的 `vibeterm-pane-<uuid>.scope` |
+
+实现见 `apps/gateway/src/tmux/cgroup-placement.ts`：经用户管理器 D-Bus（`busctl --user call … StartTransientUnit`，`PIDs` 属性，`CollectMode=inactive-or-failed`，`Delegate=true`）搬迁现有进程，不重启进程，`pane_pid`、子进程与进程树不变；被搬空的 `tmux-spawn` scope 由 systemd 回收。`StartTransientUnit` 只是排队一个 job，网关每 50 ms 查一次 `/proc/<pid>/cgroup`，最多 1.5 s，确认进程已进新 unit 后再读一次旧 scope 的 `cgroup.procs`，把仍留在旧 scope 的进程（期间新 fork 的）用 `AttachProcessesToUnit` 补进去。`AttachProcessesToUnit` 只接受 delegated unit，所以两类 scope 都带 `Delegate=true`；对 pane scope 的 `set-property MemoryHigh/MemoryMax` 不受影响。只搬当前 uid 的进程。
+
+时机：本机设备每次连上会话后保护 server 并把该 server 上已有的 pane（`list-panes -a`）归位一次；之后网关新建窗口 / 分屏、以及快照里出现新 pane 时逐个归位。其他客户端在**别的会话**里新建的 pane 要等下次连接才归位。归位后窗口内存采样改读 `vibeterm-pane-*.scope`，限额、stop 与孤儿清扫都跟着新 scope 走（scope 的 Description 沿用 tmux 的 `launched by process <server pid>` 格式）。
+
+环境变量（写进 `app.env`）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `VIBETERM_CGROUP_PLACEMENT` | `auto` | `off` 关闭；`NODE_ENV=test` 时默认 `off` |
+| `VIBETERM_PROTECTED_SLICE` | `session.slice` | tmux server 的目标 slice |
+| `VIBETERM_WORKLOAD_SLICE` | `app.slice` | pane 的目标 slice，也是「需要保护」的判据 |
+
+slice 名必须以 `.slice` 结尾且不含 `/`，否则回退默认值并打 warn。
+
+注意：
+
+- **已在运行的 server**：升级后网关重启（`KillMode=process` 不杀 tmux），下次连接时按上表搬迁，无需重启 tmux。
+- **server 在别人的 `.service` 里**（例如旧版单元下由网关拉起、仍挂在 `app.slice/vibeterm.service`）：不搬，否则 systemd 会认为该服务的进程变动；只打一行 info，建议让该服务以 `Slice=session.slice` 运行。VibeTerm 自己的单元升级后即满足，重启 tmux server 后生效。
+- **不生效的平台**：SSH 设备、macOS、Windows、无 cgroup v2、无 `busctl`、用户管理器不可达、网关不在 `user@<uid>.service` 下（如从 SSH 会话直接起的开发实例），全部 no-op。
+- 宿主若把 `memory.high` 设在 `user.slice` 上，`session.slice` 一样受限，不在本机制范围内。
+
+排查：每次连接打一行 `[tmux] placement server_cgroup=… panes_slice=… mode=auto|off|unsupported:<原因>`；`/healthz` 的 `tmux.placement` 给出模式与已搬迁的 server / pane 计数（不含路径）。
+
+```bash
+cat /proc/$(tmux display-message -p '#{pid}')/cgroup     # server 所在 cgroup
+systemctl --user list-units 'vibeterm-*.scope' --all       # 归位产生的 scope
 ```

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,7 +36,7 @@ describe('buildSamplerScript', () => {
 
   test('pins cgroup source only after memory.current is actually read', () => {
     const script = buildSamplerScript([]);
-    const caseIdx = script.indexOf('tmux-spawn-*.scope)');
+    const caseIdx = script.indexOf('tmux-spawn-*.scope|vibeterm-pane-*.scope)');
     const currentIdx = script.indexOf('current=$(cgroup_num "$cg_dir/memory.current")', caseIdx);
     const sourceIdx = script.indexOf("source='cgroup'", caseIdx);
     expect(caseIdx).toBeGreaterThan(-1);
@@ -198,6 +198,53 @@ echo "  $$ alicia    9999 S    sh"
       expect(parsed.panes).toHaveLength(1);
       expect(parsed.panes[0]?.source).toBe('none');
       expect(parsed.panes[0]?.current).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('reads cgroup memory for both tmux-spawn and vibeterm-pane scopes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vtmem-scope-'));
+    const base = '/user.slice/user-1.slice/user@1.service/app.slice';
+    const scopes = { 11: 'tmux-spawn-aaa.scope', 22: 'vibeterm-pane-bbb.scope' } as const;
+    try {
+      writeFileSync(join(dir, 'systemctl'), '#!/bin/sh\nexit 0\n');
+      chmodSync(join(dir, 'systemctl'), 0o755);
+      const cgroupFs = join(dir, 'cg');
+      const procFs = join(dir, 'proc');
+      mkdirSync(cgroupFs, { recursive: true });
+      writeFileSync(join(cgroupFs, 'cgroup.controllers'), 'memory\n');
+      for (const [pid, scope] of Object.entries(scopes)) {
+        const cgDir = join(cgroupFs, base, scope);
+        mkdirSync(cgDir, { recursive: true });
+        writeFileSync(join(cgDir, 'memory.current'), '4096\n');
+        writeFileSync(join(cgDir, 'memory.high'), 'max\n');
+        writeFileSync(join(cgDir, 'memory.max'), 'max\n');
+        writeFileSync(join(cgDir, 'memory.swap.max'), 'max\n');
+        mkdirSync(join(procFs, pid), { recursive: true });
+        writeFileSync(join(procFs, pid, 'cgroup'), `0::${base}/${scope}\n`);
+      }
+      const script = buildSamplerScript([
+        { paneId: '%1', pid: 11 },
+        { paneId: '%2', pid: 22 },
+      ]);
+      const proc = Bun.spawn(['sh', '-c', script], {
+        stdout: 'pipe',
+        stderr: 'pipe',
+        env: {
+          ...process.env,
+          PATH: `${dir}:${process.env.PATH ?? '/bin:/usr/bin'}`,
+          VTMEM_CGROUP_FS: cgroupFs,
+          VTMEM_PROC_FS: procFs,
+        },
+      });
+      const [stdout, exitCode] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      const parsed = parseSamplerOutput(stdout);
+      expect(parsed.panes.map((pane) => [pane.scope, pane.source, pane.current])).toEqual([
+        ['tmux-spawn-aaa.scope', 'cgroup', 4096],
+        ['vibeterm-pane-bbb.scope', 'cgroup', 4096],
+      ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

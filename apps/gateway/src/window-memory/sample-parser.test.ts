@@ -114,6 +114,19 @@ describe('parseSamplerOutput', () => {
     );
   });
 
+  test('accepts vibeterm-pane scopes alongside tmux-spawn scopes', () => {
+    const parsed = parseSamplerOutput(
+      'VTMEM 2 1000 1 ok\n%1\t4242\tvibeterm-pane-0b6c.scope\t1048576\t0\t0\t0\t0\t0\tcgroup\n%2\t4243\ttmux-spawn-abc.scope\t1\t0\t0\t0\t0\t0\tcgroup'
+    );
+    expect(parsed.panes.map((pane) => pane.scope)).toEqual([
+      'vibeterm-pane-0b6c.scope',
+      'tmux-spawn-abc.scope',
+    ]);
+    expect(() =>
+      parseSamplerOutput('VTMEM 2 1 1 ok\n%1\t1\tvibeterm-tmux-abc.scope\t0\t0\t0\t0\t0\t0\tcgroup')
+    ).toThrow(SamplerParseError);
+  });
+
   test('rejects garbage output', () => {
     expect(() => parseSamplerOutput('')).toThrow(SamplerParseError);
     expect(() => parseSamplerOutput('hello')).toThrow(SamplerParseError);

@@ -44,6 +44,7 @@ export interface WindowMemorySchedule {
 }
 
 export interface WindowMemoryTrackerHandle extends WindowMemoryTracker {
+  readonly deviceId: string;
   requestTickSoon(): void;
 }
 
@@ -90,7 +91,7 @@ function emptyState(pane: MemoryPaneRef): PaneMemoryState {
 class WindowMemoryTrackerImpl implements WindowMemoryTrackerHandle {
   supported: boolean | null = null;
   limitsSupported: boolean | null = null;
-  private readonly deviceId: string;
+  readonly deviceId: string;
   private readonly host: HostShellRunner;
   private readonly hooks: WindowMemoryConnectionHooks;
   private readonly getPanes: () => MemoryPaneRef[];

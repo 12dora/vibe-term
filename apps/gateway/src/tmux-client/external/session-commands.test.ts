@@ -129,7 +129,7 @@ describe('session command builders', () => {
       '/tmp',
       '-P',
       '-F',
-      `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
+      `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_pid}`,
     ]);
     expect(buildSplitPaneArgv('%1', 'v', '/tmp')).toEqual([
       'split-window',
@@ -140,7 +140,7 @@ describe('session command builders', () => {
       '/tmp',
       '-P',
       '-F',
-      `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
+      `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_pid}`,
     ]);
     expect(buildBreakPaneArgv('%3', 'vibeterm')).toEqual([
       'break-pane',
@@ -469,8 +469,8 @@ describe('SessionCommands', () => {
   test('splitPaneInternal emits pane-active from the formatted tmux response', async () => {
     const { host, events, snapshots, responses } = createHost();
     responses.set(
-      `split-window -h -t %1 -c /tmp/work -P -F #{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
-      ok(`@2${SNAPSHOT_FIELD_SEPARATOR}%8\n`)
+      `split-window -h -t %1 -c /tmp/work -P -F #{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_pid}`,
+      ok(`@2${SNAPSHOT_FIELD_SEPARATOR}%8${SNAPSHOT_FIELD_SEPARATOR}4321\n`)
     );
     await new SessionCommands(host).splitPaneInternal('%1', 'h');
     expect(host.activeWindowId).toBe('@2');

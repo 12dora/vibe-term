@@ -4,7 +4,7 @@
 import type { WindowMemorySettings } from '@vibeterm/shared';
 
 /**
- * 单个 pane 读数的来源。`cgroup` = pane 落在 `tmux-spawn-*.scope` 里（可限额）；
+ * 单个 pane 读数的来源。`cgroup` = pane 落在 `tmux-spawn-*.scope` 或 `vibeterm-pane-*.scope` 里（可限额）；
  * `rss` = 宿主没有 pane scope（tmux < 3.6 / 未编 systemd / macOS），退回进程树 RSS 合计；
  * `none` = 连 RSS 都取不到（进程已退出、`ps` 不可用）。
  */
@@ -27,7 +27,7 @@ export interface HostShellRunner {
 export interface PaneScopeSample {
   paneId: string;
   pid: number;
-  /** `tmux-spawn-*.scope`，pane 不在 scope 里时为 null。 */
+  /** `tmux-spawn-*.scope` / `vibeterm-pane-*.scope`，pane 不在 scope 里时为 null。 */
   scope: string | null;
   current: number;
   high: number;

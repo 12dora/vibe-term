@@ -34,6 +34,8 @@ describe('buildSystemdServiceContent', () => {
     expect(content).toContain('StandardOutput=journal');
     expect(content).toContain('StandardError=journal');
     expect(content).toContain('KillMode=process');
+    expect(content).toContain('Slice=session.slice');
+    expect(content).not.toMatch(/CPUWeight|IOWeight|Nice=/);
     expect(content).not.toContain('UMask=');
   });
 });
