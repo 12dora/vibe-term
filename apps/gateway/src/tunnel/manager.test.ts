@@ -1,14 +1,28 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { CloudflareAccessClient } from './access-client';
 import { MemoryTunnelAccessStore } from './access-store';
+import type { CloudflaredPin } from './cloudflared-pins';
 import { MemoryTunnelConfigStore } from './config-store';
 import { FakeSpawner, argsInclude } from './fake-spawn';
 import { TunnelManager } from './manager';
 import type { HostEnv } from './trust-proxy-env';
+
+const FAKE_CLOUDFLARED = 'fake-cloudflared';
+const FAKE_CLOUDFLARED_SHA256 = createHash('sha256').update(FAKE_CLOUDFLARED).digest('hex');
+const TEST_CLOUDFLARED_PIN: CloudflaredPin = {
+  id: 'linux-arm64',
+  version: '2025.8.1',
+  fileName: 'cloudflared-linux-arm64',
+  url: 'https://github.com/cloudflare/cloudflared/releases/download/2025.8.1/cloudflared-linux-arm64',
+  tgz: false,
+  downloadSha256: FAKE_CLOUDFLARED_SHA256,
+  binarySha256: FAKE_CLOUDFLARED_SHA256,
+};
 
 async function waitJob(manager: TunnelManager, timeoutMs = 2_000) {
   const start = Date.now();
@@ -46,8 +60,9 @@ async function setup(overrides: ConstructorParameters<typeof TunnelManager>[0] =
     store,
     spawner: spawner.spawn,
     which: () => '/usr/bin/cloudflared',
+    cloudflaredPin: TEST_CLOUDFLARED_PIN,
     downloader: async (_url, dest) => {
-      await Bun.write(dest, 'fake-cloudflared');
+      await Bun.write(dest, FAKE_CLOUDFLARED);
     },
     sleep: (ms) => Bun.sleep(Math.min(ms, 5)),
     loginTimeoutMs: 200,

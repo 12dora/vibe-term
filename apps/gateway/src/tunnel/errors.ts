@@ -40,6 +40,7 @@ export function tunnelHttpStatus(code: TunnelErrorCode, override?: number): numb
     case 'not_configured':
     case 'unsupported_platform':
     case 'binary_missing':
+    case 'binary_checksum_mismatch':
     case 'not_logged_in':
     case 'access_api_failed':
       return 400;

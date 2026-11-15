@@ -135,12 +135,16 @@ describe('platform', () => {
 
   test('download URL uses amd64 and darwin tgz', () => {
     expect(cloudflaredDownloadSpec('linux', 'x64')).toEqual({
-      url: 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64',
+      url: 'https://github.com/cloudflare/cloudflared/releases/download/2026.10.7/cloudflared-linux-amd64',
       fileName: 'cloudflared-linux-amd64',
       tgz: false,
     });
+    expect(cloudflaredDownloadSpec('linux', 'x64').url).not.toContain('/latest/');
     expect(cloudflaredDownloadSpec('darwin', 'arm64').fileName).toBe(
       'cloudflared-darwin-arm64.tgz'
+    );
+    expect(cloudflaredDownloadSpec('darwin', 'arm64').url).toContain(
+      '/releases/download/2026.10.7/'
     );
     expect(cloudflaredDownloadSpec('darwin', 'arm64').tgz).toBe(true);
   });

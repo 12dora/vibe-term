@@ -35,6 +35,7 @@ import {
   type TunnelAccessStoreLike,
   emptyAccessStatus,
 } from './access-store';
+import { type CloudflaredPin, lookupCloudflaredPin } from './cloudflared-pins';
 import {
   DEFAULT_TUNNEL_CONFIG,
   TunnelConfigStore,
@@ -50,7 +51,12 @@ import {
   readLogTail,
 } from './connector-health';
 import { ConnectorPollLoop } from './connector-poll';
-import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
+import {
+  type Downloader,
+  defaultDownloader,
+  installCloudflaredBinary,
+  reconcileManagedCloudflared,
+} from './download';
 import { gatewayKvEdgeCache } from './edge-cache';
 import { type EdgeRecoveryToken, TunnelEdgeRecovery } from './edge-recovery';
 import { resolveEdge } from './edge-resolver';
@@ -114,6 +120,7 @@ export type TunnelManagerOptions = {
   spawner?: Spawner;
   which?: (cmd: string) => string | null;
   downloader?: Downloader;
+  cloudflaredPin?: CloudflaredPin | null;
   fetchImpl?: TunnelFetch;
   patchHostEnv?: PatchHostEnv | null;
   readHostEnv?: ReadHostEnv | null;
@@ -166,6 +173,7 @@ export class TunnelManager {
   private readonly store: TunnelConfigStoreLike;
   private readonly which: (cmd: string) => string | null;
   private readonly downloader: Downloader;
+  private readonly pin: CloudflaredPin | null;
   private readonly fetchImpl: TunnelFetch;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -219,6 +227,7 @@ export class TunnelManager {
     this.store = opts.store ?? new TunnelConfigStore(getOrmDb());
     this.which = opts.which ?? ((cmd) => Bun.which(cmd) ?? null);
     this.downloader = opts.downloader ?? defaultDownloader;
+    this.pin = opts.cloudflaredPin ?? lookupCloudflaredPin(this.platform, this.arch);
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => Bun.sleep(ms));
@@ -298,6 +307,7 @@ export class TunnelManager {
       {
         resolveEdge: () => this.resolveEdgeFn(),
         log: (message) => this.warn(message),
+        pin: this.pin,
       }
     );
     this.supervisor = new TunnelSupervisor({
@@ -666,10 +676,19 @@ export class TunnelManager {
     }
   }
 
-  private requireBinary(): string {
+  private async requireBinary(): Promise<string> {
     this.refreshBinaryPresence();
-    if (!this.binary.path) {
-      throw new TunnelError('binary_missing', 'cloudflared is not installed');
+    if (!this.binary.path) throw new TunnelError('binary_missing', 'cloudflared is not installed');
+    if (this.binary.source === 'managed' && this.pin) {
+      await reconcileManagedCloudflared({
+        tunnelDir: this.tunnelDir,
+        destPath: this.binary.path,
+        platform: this.platform,
+        arch: this.arch,
+        downloader: this.downloader,
+        pin: this.pin,
+        claimedVersion: this.binary.version,
+      });
     }
     return this.binary.path;
   }
@@ -729,7 +748,6 @@ export class TunnelManager {
 
   private async jobInstall(step: (name: string) => void): Promise<void> {
     this.requireSupported();
-    await mkdir(this.tunnelDir, { recursive: true });
     const dest = managedBinaryPath(this.tunnelDir);
     step('download');
     step('extract');
@@ -739,6 +757,7 @@ export class TunnelManager {
       platform: this.platform,
       arch: this.arch,
       downloader: this.downloader,
+      pin: this.pin,
     });
     this.binary = { path: dest, source: 'managed', version: null };
     step('verify');
@@ -751,7 +770,7 @@ export class TunnelManager {
 
   private async jobLogin(step: (name: string) => void): Promise<void> {
     this.requireSupported();
-    const bin = this.requireBinary();
+    const bin = await this.requireBinary();
     await mkdir(this.tunnelDir, { recursive: true });
     if (ensureManagedOriginCert(this.tunnelDir, this.homeDir)) {
       step('wait_cert');
@@ -813,7 +832,7 @@ export class TunnelManager {
     step: (name: string) => void
   ): Promise<void> {
     this.requireSupported();
-    const bin = this.requireBinary();
+    const bin = await this.requireBinary();
     this.requireLogin();
     const hostname = normalizeTunnelHostname(hostnameRaw);
     if (!hostname) {
@@ -857,7 +876,7 @@ export class TunnelManager {
 
   private async jobQuickStart(step: (name: string) => void): Promise<void> {
     this.requireSupported();
-    this.requireBinary();
+    await this.requireBinary();
     this.store.save({
       mode: 'quick',
       hostname: null,
@@ -870,7 +889,7 @@ export class TunnelManager {
 
   private async jobStart(step: (name: string) => void): Promise<void> {
     this.requireSupported();
-    this.requireBinary();
+    await this.requireBinary();
     const persisted = this.store.get();
     if (persisted.mode === 'off') {
       throw new TunnelError('not_configured', 'tunnel is not configured');
@@ -1197,7 +1216,7 @@ export class TunnelManager {
     if (mode === 'off') {
       throw new TunnelError('not_configured', 'tunnel is not configured');
     }
-    const bin = this.requireBinary();
+    const bin = await this.requireBinary();
     this.resetConnector();
     this.edgeRecovery.reset();
     if (this.isManagedProcessActive()) {

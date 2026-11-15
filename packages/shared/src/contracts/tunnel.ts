@@ -32,6 +32,7 @@ export type TunnelErrorCode =
   | 'unsupported_platform'
   | 'binary_missing'
   | 'download_failed'
+  | 'binary_checksum_mismatch'
   | 'not_logged_in'
   | 'login_timeout'
   | 'invalid_hostname'

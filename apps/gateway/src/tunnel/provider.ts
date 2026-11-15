@@ -1,5 +1,11 @@
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { TunnelEdgeResolution } from '@vibeterm/shared';
+import {
+  type CloudflaredPin,
+  ManagedBinaryHashCache,
+  assertPinnedManagedHash,
+  checksumMismatch,
+} from './cloudflared-pins';
 import { describeEdge } from './edge-resolver';
 import { TunnelError } from './errors';
 import {
@@ -108,6 +114,8 @@ export type EdgeResolver = () => Promise<TunnelEdgeResolution | null>;
 export type CloudflaredProviderOptions = {
   resolveEdge?: EdgeResolver;
   log?: (message: string) => void;
+  pin?: CloudflaredPin | null;
+  hashCache?: ManagedBinaryHashCache;
 };
 
 /**
@@ -127,6 +135,8 @@ export function edgeArgs(edge: TunnelEdgeResolution | null): string[] {
 export class CloudflaredProvider {
   private readonly resolveEdgeFn: EdgeResolver;
   private readonly log: (message: string) => void;
+  private readonly pin: CloudflaredPin | null;
+  private readonly hashCache: ManagedBinaryHashCache;
 
   constructor(
     private readonly spawner: Spawner,
@@ -136,6 +146,8 @@ export class CloudflaredProvider {
   ) {
     this.resolveEdgeFn = opts.resolveEdge ?? (async () => null);
     this.log = opts.log ?? ((message) => console.log(message));
+    this.pin = opts.pin ?? null;
+    this.hashCache = opts.hashCache ?? new ManagedBinaryHashCache();
   }
 
   /** `override` 来自自愈流程刚解析出的结果：直接用于本次 spawn，不再重新解析。 */
@@ -156,7 +168,20 @@ export class CloudflaredProvider {
   }
 
   spawn(command: string, args: string[], env?: Record<string, string>): SpawnHandle {
+    this.assertManagedExecutable(command);
     return this.spawner({ command, args, env, cwd: this.tunnelDir });
+  }
+
+  private assertManagedExecutable(command: string): void {
+    const pin = this.pin;
+    if (!pin) return;
+    if (resolve(command) !== resolve(managedBinaryPath(this.tunnelDir))) return;
+    try {
+      assertPinnedManagedHash(this.hashCache.hash(command), pin);
+    } catch (error) {
+      if (error instanceof TunnelError) throw error;
+      throw checksumMismatch();
+    }
   }
 
   async version(bin: string): Promise<string | null> {

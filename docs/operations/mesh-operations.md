@@ -387,6 +387,10 @@ Cloudflare Tunnel / Access 可放在中继或任一 node 前面。推荐：
 
 客户端 IP 只从 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头读取，且只认回环 / 内网 socket 来的请求；经隧道来的请求永远不算「本机」（不免通行密钥、不豁免登录限流）。
 
+### 安装与校验
+
+向导里的「安装 cloudflared」从 GitHub Releases 拉取钉死的版本（当前 `2026.10.7`，URL 为 `/releases/download/<ver>/…`，不用 `/latest/`）。下载后先校验 sha256（darwin 先校验 `.tgz` 再校验解压出的二进制）再 chmod / 写入数据目录；校验失败返回 `binary_checksum_mismatch`，已安装文件保持不动。每次拉起 VibeTerm 自己装进隧道目录的二进制前会再校验一次（按 inode + mtime + size 缓存，内容未变则不重算）。系统 PATH 里的 cloudflared 不钉版本。旧版未钉哈希的托管二进制会在下次安装或启动时自动换成钉住的版本；只有声称已是钉住版本但哈希不对的文件才报校验失败。升级钉住版本时改 `apps/gateway/src/tunnel/cloudflared-pins.ts` 并同步测试。
+
 ### 连接器健康
 
 cloudflared 进程存活不等于边缘连通。本机代理 / TUN 抖动时进程常驻，日志里会出现 `TLS handshake with edge error` / `Unable to establish connection with Cloudflare edge`，公网地址随之不可达。
