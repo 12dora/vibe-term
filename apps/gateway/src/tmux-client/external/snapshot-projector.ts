@@ -4,9 +4,6 @@ import type { TmuxConnectionOptions } from '../connection-types';
 import type { ControlModeSubscription } from '../control-mode-subscription';
 import type { ConnectionLifecycleEmitter } from '../lifecycle-emitter';
 import {
-  PANE_SNAPSHOT_FORMAT,
-  SNAPSHOT_FIELD_SEPARATOR,
-  WINDOW_SNAPSHOT_FORMAT,
   formatSnapshotRowForLog,
   isTmuxSessionId,
   parsePaneSnapshotRow,
@@ -15,6 +12,12 @@ import {
 } from '../snapshot-format';
 import { isParkingWindowName } from './constants';
 import { isTmuxServerGoneMessage } from './helpers';
+import {
+  buildSnapshotQueryArgv,
+  logSnapshotBatchFallback,
+  parseCombinedSnapshotOutput,
+  snapshotResultsFromSections,
+} from './snapshot-batch';
 import type { CommandResult } from './types';
 
 export interface SnapshotLogContext {
@@ -247,31 +250,21 @@ export class SnapshotProjector {
     return host.connected && host.connectGeneration === generation;
   }
 
-  private fetchSnapshotResults(): Promise<[CommandResult, CommandResult, CommandResult]> {
+  private async fetchSnapshotResults(): Promise<[CommandResult, CommandResult, CommandResult]> {
     const host = this.host;
+    const queries = buildSnapshotQueryArgv(host.sessionName);
+    const combined = await host.runTmuxAllowFailure(queries.combined);
+    if (combined.exitCode === 0) {
+      const sections = parseCombinedSnapshotOutput(combined.stdout);
+      if (sections) {
+        return snapshotResultsFromSections(combined, sections);
+      }
+    }
+    logSnapshotBatchFallback(host.logPrefix, host.deviceId);
     return Promise.all([
-      host.runTmuxAllowFailure([
-        'display-message',
-        '-p',
-        '-t',
-        host.sessionName,
-        ['#{session_id}', '#{session_name}'].join(SNAPSHOT_FIELD_SEPARATOR),
-      ]),
-      host.runTmuxAllowFailure([
-        'list-windows',
-        '-t',
-        host.sessionName,
-        '-F',
-        WINDOW_SNAPSHOT_FORMAT,
-      ]),
-      host.runTmuxAllowFailure([
-        'list-panes',
-        '-s',
-        '-t',
-        host.sessionName,
-        '-F',
-        PANE_SNAPSHOT_FORMAT,
-      ]),
+      host.runTmuxAllowFailure(queries.session),
+      host.runTmuxAllowFailure(queries.windows),
+      host.runTmuxAllowFailure(queries.panes),
     ]);
   }
 

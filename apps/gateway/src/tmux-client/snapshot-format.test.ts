@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   PANE_SNAPSHOT_FORMAT,
+  SESSION_SNAPSHOT_FORMAT,
   SNAPSHOT_FIELD_SEPARATOR,
   WINDOW_SNAPSHOT_FORMAT,
   formatSnapshotRowForLog,
@@ -22,6 +23,10 @@ import {
 describe('snapshot format helpers', () => {
   test('uses a locale-stable visible ASCII field separator', () => {
     expect(SNAPSHOT_FIELD_SEPARATOR).toBe('|');
+  });
+
+  test('SESSION_SNAPSHOT_FORMAT field order matches the session parser', () => {
+    expect(SESSION_SNAPSHOT_FORMAT.split('|')).toEqual(['#{session_id}', '#{session_name}']);
   });
 
   test('keeps separator characters inside flexible middle fields', () => {

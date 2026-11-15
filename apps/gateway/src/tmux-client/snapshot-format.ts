@@ -42,6 +42,10 @@ export function formatSnapshotRowForLog(line: string, limit = 160): string {
 // 字段序原则：定长字段（id/数字/0-1 标志/layout）前置，自由文本（name/title/command/path）后置，
 // 使含 `|` 的自由文本可以通过两端锚定安全还原。
 
+export const SESSION_SNAPSHOT_FORMAT = ['#{session_id}', '#{session_name}'].join(
+  SNAPSHOT_FIELD_SEPARATOR
+);
+
 export const WINDOW_SNAPSHOT_FORMAT = [
   '#{window_id}',
   '#{window_index}',

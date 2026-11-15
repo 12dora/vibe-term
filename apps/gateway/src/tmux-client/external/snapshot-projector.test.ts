@@ -1,12 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload, TmuxWindow } from '@vibeterm/shared';
 
-import {
-  PANE_SNAPSHOT_FORMAT,
-  SNAPSHOT_FIELD_SEPARATOR,
-  WINDOW_SNAPSHOT_FORMAT,
-} from '../snapshot-format';
 import { PARKING_WINDOW_NAME } from './constants';
+import { buildSnapshotQueryArgv, snapshotSectionSentinel } from './snapshot-batch';
 import {
   SnapshotProjector,
   type SnapshotProjectorHost,
@@ -18,6 +14,20 @@ import {
   parseSnapshotWindows,
 } from './snapshot-projector';
 import type { CommandResult } from './types';
+
+const snapshotQueries = buildSnapshotQueryArgv('vibeterm');
+
+function combinedSnapshotStdout(session: string, windows: string, panes: string): string {
+  const trimEnd = (part: string) => part.replace(/(?:\r?\n)+$/, '');
+  return [
+    trimEnd(session),
+    snapshotSectionSentinel(1),
+    trimEnd(windows),
+    snapshotSectionSentinel(2),
+    trimEnd(panes),
+    '',
+  ].join('\n');
+}
 
 const ctx = { logPrefix: '[test]', deviceId: 'dev-1', warnings: [] as string[] };
 
@@ -435,42 +445,48 @@ describe('SnapshotProjector.performSnapshot', () => {
     expect(host.calls).toEqual([]);
   });
 
-  function installSnapshotGates(host: FakeHost) {
-    const sessionGate = deferred<CommandResult>();
-    const windowsGate = deferred<CommandResult>();
-    const panesGate = deferred<CommandResult>();
-    const gates: Record<string, ReturnType<typeof deferred<CommandResult>>> = {
-      'display-message': sessionGate,
-      'list-windows': windowsGate,
-      'list-panes': panesGate,
-    };
+  const sampleSession = '$1|vibeterm\n';
+  const sampleWindows = '@1|0|1|ba9d,80x24,0,0,1|main\n';
+  const samplePanes = '%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n';
+
+  function installCombinedGate(host: FakeHost) {
+    const combinedGate = deferred<CommandResult>();
     host.runTmuxAllowFailure = async (argv) => {
-      const command = argv[0] ?? '';
-      const gate = gates[command];
-      if (!gate) {
-        throw new Error(`unexpected snapshot query: ${command}`);
-      }
       host.calls.push(argv);
-      return gate.promise;
+      if (argv.join(' ') !== snapshotQueries.combined.join(' ')) {
+        throw new Error(`unexpected snapshot query: ${argv.join(' ')}`);
+      }
+      return combinedGate.promise;
     };
     return {
-      resolveAll() {
-        sessionGate.resolve(ok('$1|vibeterm\n'));
-        windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
-        panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n'));
+      resolve(result?: CommandResult) {
+        combinedGate.resolve(
+          result ?? ok(combinedSnapshotStdout(sampleSession, sampleWindows, samplePanes))
+        );
       },
     };
   }
 
+  function installSeparateResponses(
+    host: FakeHost,
+    session: CommandResult,
+    windows: CommandResult,
+    panes: CommandResult
+  ) {
+    host.setResponse(snapshotQueries.session.join(' '), session);
+    host.setResponse(snapshotQueries.windows.join(' '), windows);
+    host.setResponse(snapshotQueries.panes.join(' '), panes);
+  }
+
   test('does not emit or mutate snapshot state when disconnected while commands are in flight', async () => {
     const host = createHost();
-    const gates = installSnapshotGates(host);
+    const gate = installCombinedGate(host);
     const done = new SnapshotProjector(host).performSnapshot();
-    expect(host.calls).toHaveLength(3);
+    expect(host.calls).toEqual([snapshotQueries.combined]);
 
     host.connected = false;
     host.connectGeneration += 1;
-    gates.resolveAll();
+    gate.resolve();
     await done;
 
     expect(host.snapshots).toEqual([]);
@@ -482,12 +498,12 @@ describe('SnapshotProjector.performSnapshot', () => {
 
   test('does not emit when connect generation changes while snapshot commands are in flight', async () => {
     const host = createHost();
-    const gates = installSnapshotGates(host);
+    const gate = installCombinedGate(host);
     const done = new SnapshotProjector(host).performSnapshot();
-    expect(host.calls).toHaveLength(3);
+    expect(host.calls).toHaveLength(1);
 
     host.connectGeneration += 1;
-    gates.resolveAll();
+    gate.resolve();
     await done;
 
     expect(host.snapshots).toEqual([]);
@@ -496,28 +512,16 @@ describe('SnapshotProjector.performSnapshot', () => {
     expect(host.success).toBe(0);
   });
 
-  test('fetches session/windows/panes in parallel, projects, then restores theme', async () => {
+  test('issues one combined tmux query, projects, then restores theme', async () => {
     const host = createHost();
     const timeline: string[] = [];
-    const sessionGate = deferred<CommandResult>();
-    const windowsGate = deferred<CommandResult>();
-    const panesGate = deferred<CommandResult>();
-    const gates: Record<string, ReturnType<typeof deferred<CommandResult>>> = {
-      'display-message': sessionGate,
-      'list-windows': windowsGate,
-      'list-panes': panesGate,
-    };
+    const combinedGate = deferred<CommandResult>();
 
     host.runTmuxAllowFailure = async (argv) => {
-      const command = argv[0] ?? '';
-      const gate = gates[command];
-      if (!gate) {
-        throw new Error(`unexpected snapshot query: ${command}`);
-      }
       host.calls.push(argv);
-      timeline.push(`query:start:${command}`);
-      const result = await gate.promise;
-      timeline.push(`query:resolve:${command}`);
+      timeline.push('query:start:combined');
+      const result = await combinedGate.promise;
+      timeline.push('query:resolve:combined');
       return result;
     };
     const restoreTheme = host.restoreThemeSubscriptionsOnce;
@@ -538,38 +542,18 @@ describe('SnapshotProjector.performSnapshot', () => {
 
     const done = new SnapshotProjector(host).performSnapshot();
 
-    expect(host.calls).toEqual([
-      [
-        'display-message',
-        '-p',
-        '-t',
-        'vibeterm',
-        `#{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ],
-      ['list-windows', '-t', 'vibeterm', '-F', WINDOW_SNAPSHOT_FORMAT],
-      ['list-panes', '-s', '-t', 'vibeterm', '-F', PANE_SNAPSHOT_FORMAT],
-    ]);
-    expect(timeline).toEqual([
-      'query:start:display-message',
-      'query:start:list-windows',
-      'query:start:list-panes',
-    ]);
+    expect(host.calls).toEqual([snapshotQueries.combined]);
+    expect(timeline).toEqual(['query:start:combined']);
     expect(host.restored).toBe(0);
     expect(host.snapshots).toEqual([]);
     expect(host.closures).toBe(0);
 
-    sessionGate.resolve(ok('$1|vibeterm\n'));
-    windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
-    panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|1000|bash|node|/home/user\n'));
+    combinedGate.resolve(ok(combinedSnapshotStdout(sampleSession, sampleWindows, samplePanes)));
     await done;
 
     expect(timeline).toEqual([
-      'query:start:display-message',
-      'query:start:list-windows',
-      'query:start:list-panes',
-      'query:resolve:display-message',
-      'query:resolve:list-windows',
-      'query:resolve:list-panes',
+      'query:start:combined',
+      'query:resolve:combined',
       'theme-restore',
       'snapshot-emit',
       'closure',
@@ -602,22 +586,19 @@ describe('SnapshotProjector.performSnapshot', () => {
   test('performSnapshot emits the same windows for shuffled tmux list output', async () => {
     const host = createHost();
     host.setResponse(
-      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ok('$1|vibeterm\n')
-    );
-    host.setResponse(
-      `list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`,
-      ok('@2|1|0|layout-b|mid\n@1|0|1|layout-a|main\n')
-    );
-    host.setResponse(
-      `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
+      snapshotQueries.combined.join(' '),
       ok(
-        '%2|@1|1|0|40|24|40|0|1|1000|side|vim|/src\n%1|@1|0|1|40|24|0|0|1|1000|bash|node|/home\n%3|@2|0|0|80|24|0|0|0|1000|only|sh|/opt\n'
+        combinedSnapshotStdout(
+          '$1|vibeterm\n',
+          '@2|1|0|layout-b|mid\n@1|0|1|layout-a|main\n',
+          '%2|@1|1|0|40|24|40|0|1|1000|side|vim|/src\n%1|@1|0|1|40|24|0|0|1|1000|bash|node|/home\n%3|@2|0|0|80|24|0|0|0|1000|only|sh|/opt\n'
+        )
       )
     );
 
     await new SnapshotProjector(host).performSnapshot();
 
+    expect(host.calls).toEqual([snapshotQueries.combined]);
     expect(host.pruned).toEqual([['%1', '%2', '%3']]);
     expect(host.snapshots[0]?.payload.session?.windows.map((window) => window.id)).toEqual([
       '@1',
@@ -630,9 +611,66 @@ describe('SnapshotProjector.performSnapshot', () => {
     ).toEqual([['%1', '%2'], ['%3']]);
   });
 
+  test('falls back to three queries when a combined section sentinel is missing', async () => {
+    const host = createHost();
+    const debugs: string[] = [];
+    const originalDebug = console.debug;
+    console.debug = (message) => {
+      debugs.push(String(message));
+    };
+    host.setResponse(snapshotQueries.combined.join(' '), ok('$1|vibeterm\n'));
+    installSeparateResponses(host, ok(sampleSession), ok(sampleWindows), ok(samplePanes));
+
+    try {
+      await new SnapshotProjector(host).performSnapshot();
+    } finally {
+      console.debug = originalDebug;
+    }
+
+    expect(host.calls).toEqual([
+      snapshotQueries.combined,
+      snapshotQueries.session,
+      snapshotQueries.windows,
+      snapshotQueries.panes,
+    ]);
+    expect(debugs).toEqual([
+      '[test] combined snapshot query failed; falling back to three calls on dev-1',
+    ]);
+    expect(host.snapshotSession).toEqual({ id: '$1', name: 'vibeterm' });
+    expect(host.activePaneId).toBe('%1');
+    expect(host.success).toBe(1);
+  });
+
+  test('falls back to three queries when the combined call fails', async () => {
+    const host = createHost();
+    host.setResponse(snapshotQueries.combined.join(' '), fail('tmux: server error'));
+    installSeparateResponses(host, ok(sampleSession), ok(sampleWindows), ok(samplePanes));
+
+    const originalDebug = console.debug;
+    console.debug = () => {};
+    try {
+      await new SnapshotProjector(host).performSnapshot();
+    } finally {
+      console.debug = originalDebug;
+    }
+
+    expect(host.calls).toEqual([
+      snapshotQueries.combined,
+      snapshotQueries.session,
+      snapshotQueries.windows,
+      snapshotQueries.panes,
+    ]);
+    expect(host.snapshotSession).toEqual({ id: '$1', name: 'vibeterm' });
+  });
+
   test('aborts before parsing when shouldAbortSnapshot returns true', async () => {
     const host = createHost({ shouldAbortSnapshot: () => true });
+    host.setResponse(
+      snapshotQueries.combined.join(' '),
+      ok(combinedSnapshotStdout(sampleSession, sampleWindows, samplePanes))
+    );
     await new SnapshotProjector(host).performSnapshot();
+    expect(host.calls).toEqual([snapshotQueries.combined]);
     expect(host.snapshotSession).toBeNull();
     expect(host.success).toBe(0);
     expect(host.snapshots).toEqual([]);
@@ -640,19 +678,20 @@ describe('SnapshotProjector.performSnapshot', () => {
 
   test('shuts down when snapshot stderr shows a gone tmux server', async () => {
     const host = createHost();
-    host.setResponse(
-      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      fail("can't find session: vibeterm\n")
-    );
-    host.setResponse(`list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`, fail(''));
-    host.setResponse(`list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`, fail(''));
+    host.setResponse(snapshotQueries.combined.join(' '), fail("can't find session: vibeterm\n"));
+    installSeparateResponses(host, fail("can't find session: vibeterm\n"), fail(''), fail(''));
 
     const closed: string[] = [];
     host.lifecycle.notifySessionClosed = (message) => {
       closed.push(message);
     };
-
-    await new SnapshotProjector(host).performSnapshot();
+    const originalDebug = console.debug;
+    console.debug = () => {};
+    try {
+      await new SnapshotProjector(host).performSnapshot();
+    } finally {
+      console.debug = originalDebug;
+    }
 
     expect(host.unavailable).toEqual(["can't find session: vibeterm"]);
     expect(closed).toEqual(["can't find session: vibeterm"]);
@@ -662,14 +701,16 @@ describe('SnapshotProjector.performSnapshot', () => {
 
   test('emits a null snapshot when commands fail for a non-gone reason', async () => {
     const host = createHost();
-    host.setResponse(
-      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      fail('permission denied')
-    );
-    host.setResponse(`list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`, fail(''));
-    host.setResponse(`list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`, fail(''));
+    host.setResponse(snapshotQueries.combined.join(' '), fail('permission denied'));
+    installSeparateResponses(host, fail('permission denied'), fail(''), fail(''));
 
-    await new SnapshotProjector(host).performSnapshot();
+    const originalDebug = console.debug;
+    console.debug = () => {};
+    try {
+      await new SnapshotProjector(host).performSnapshot();
+    } finally {
+      console.debug = originalDebug;
+    }
 
     expect(host.unavailable).toEqual([]);
     expect(host.shutdowns).toEqual([]);
@@ -681,13 +722,14 @@ describe('SnapshotProjector.performSnapshot', () => {
   test('drops underscore-rendered snapshot rows instead of emitting composite tmux ids', async () => {
     const host = createHost();
     host.setResponse(
-      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ok('$1_vibeterm\n')
-    );
-    host.setResponse(`list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`, ok('@0_0_bash_1\n'));
-    host.setResponse(
-      `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
-      ok('%1_@0_0_bash_1_80_24_1_node_/home/user\n')
+      snapshotQueries.combined.join(' '),
+      ok(
+        combinedSnapshotStdout(
+          '$1_vibeterm\n',
+          '@0_0_bash_1\n',
+          '%1_@0_0_bash_1_80_24_1_node_/home/user\n'
+        )
+      )
     );
 
     const originalWarn = console.warn;
@@ -698,6 +740,7 @@ describe('SnapshotProjector.performSnapshot', () => {
       console.warn = originalWarn;
     }
 
+    expect(host.calls).toEqual([snapshotQueries.combined]);
     expect(host.snapshots).toHaveLength(1);
     expect(host.snapshots[0]).toEqual({
       payload: { deviceId: 'dev-1', session: null },
@@ -712,22 +755,19 @@ describe('SnapshotProjector.performSnapshot', () => {
     host.activeWindowId = '@1';
     host.activePaneId = '%1';
     host.setResponse(
-      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ok('$1|vibeterm\n')
-    );
-    host.setResponse(
-      `list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`,
-      ok(`@1|0|0|ba9d,80x24,0,0,1|main\n@9|1|1|ba9d,80x24,0,0,2|${PARKING_WINDOW_NAME}\n`)
-    );
-    host.setResponse(
-      `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
+      snapshotQueries.combined.join(' '),
       ok(
-        '%1|@1|0|1|80|24|0|0|0|1000|bash|node|/home/user\n%9|@9|0|1|80|24|0|0|1|1000|park|sleep|/tmp\n'
+        combinedSnapshotStdout(
+          '$1|vibeterm\n',
+          `@1|0|0|ba9d,80x24,0,0,1|main\n@9|1|1|ba9d,80x24,0,0,2|${PARKING_WINDOW_NAME}\n`,
+          '%1|@1|0|1|80|24|0|0|0|1000|bash|node|/home/user\n%9|@9|0|1|80|24|0|0|1|1000|park|sleep|/tmp\n'
+        )
       )
     );
 
     await new SnapshotProjector(host).performSnapshot();
 
+    expect(host.calls).toEqual([snapshotQueries.combined]);
     expect(host.activeWindowId).toBe('@1');
     expect(host.activePaneId).toBe('%1');
     expect(host.snapshots.at(-1)?.payload.session?.windows.map((window) => window.id)).toEqual([
