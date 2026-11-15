@@ -1,4 +1,4 @@
-# 2.15.1
+# 2.15.2
 
 _2026-11-15_
 
@@ -7,7 +7,7 @@ _2026-11-15_
 ### Responsiveness under heavy load
 
 - **No more false "connection failed".** When the host is busy, a slow tmux is no longer treated as a lost connection. The device shows **Host busy** instead and the badge clears by itself once the host catches up. The connection is only rebuilt when tmux has stopped responding entirely.
-- **The web terminal stays responsive when the host is loaded.** On Linux with a systemd user session, VibeTerm moves the tmux server into the protected `session.slice` and keeps the programs running in your panes in `app.slice`, so memory or CPU limits on your workloads no longer stall the terminal itself. The service unit now runs in `session.slice` too. Set `VIBETERM_CGROUP_PLACEMENT=off` to disable.
+- **The web terminal stays responsive when the host is loaded.** On Linux with a systemd user session, VibeTerm moves the tmux server into the protected `session.slice` and keeps the programs running in your panes in `app.slice`, so memory or CPU limits on your workloads no longer stall the terminal itself. Panes opened outside VibeTerm on the same tmux server are moved back within 15 seconds. The service unit now runs in `session.slice` too. Set `VIBETERM_CGROUP_PLACEMENT=off` to disable.
 - Fewer tmux processes per screen refresh, and keystrokes queued during a slowdown are sent together.
 
 ### Terminal
@@ -29,7 +29,7 @@ _2026-11-15_
 ### 高负载下的响应
 
 - **不再误报「连接失败」**：主机繁忙时，tmux 响应变慢不再被当成断线，设备显示「主机繁忙」，主机恢复后自动消失；只有 tmux 完全停止响应时才会重建连接。
-- **主机负载高时网页终端保持流畅**：在使用 systemd 用户会话的 Linux 上，VibeTerm 会把 tmux 服务端移入受保护的 `session.slice`，窗格里运行的程序留在 `app.slice`，针对工作负载的内存或 CPU 限制不再拖慢终端本身；服务单元也改为运行在 `session.slice`。设置 `VIBETERM_CGROUP_PLACEMENT=off` 可关闭。
+- **主机负载高时网页终端保持流畅**：在使用 systemd 用户会话的 Linux 上，VibeTerm 会把 tmux 服务端移入受保护的 `session.slice`，窗格里运行的程序留在 `app.slice`，针对工作负载的内存或 CPU 限制不再拖慢终端本身；绕过 VibeTerm 在同一 tmux 服务端上新建的窗格会在 15 秒内移回；服务单元也改为运行在 `session.slice`。设置 `VIBETERM_CGROUP_PLACEMENT=off` 可关闭。
 - 每次界面刷新调用的 tmux 进程更少，变慢期间排队的按键合并发送。
 
 ### 终端
