@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import type { Device } from '@vibeterm/shared';
 
 import * as db from '../db';
 import { runMigrations } from '../db/migrate';
+import { connectionAlertNotifier } from '../push/connection-alerts';
 import type { CommandResult } from './external/types';
 import {
   CONTROL_RECONNECT_POLICY,
@@ -282,4 +284,79 @@ describe('reconnectControlChannel', () => {
     expect(host.captured).toEqual([]);
     expect(String(warns[0]?.[0])).toContain('[local] control client restart failed on dev-1');
   });
+
+  test('successful reattach clears tmux_busy lastError and broadcasts recovered', async () => {
+    const deviceId = 'r2151-reattach-busy';
+    db.createDevice(makeReconnectDevice(deviceId));
+    db.updateDeviceRuntimeStatus(deviceId, {
+      lastError: 'tmux control command timed out: send-keys',
+      lastErrorType: 'tmux_busy',
+    });
+    const recovered: string[] = [];
+    connectionAlertNotifier.setBroadcaster((id, payload) => {
+      recovered.push(`${id}:${payload.type}`);
+    });
+    const host = createHost({ deviceId });
+    try {
+      await reconnectControlChannel(policy, {
+        host,
+        sleep: async () => undefined,
+        onGaveUp: () => {
+          throw new Error('should not give up');
+        },
+        onAttempt: () => undefined,
+        classifyProbe: () => 'alive',
+        now: () => 0,
+      });
+      expect(db.getDeviceRuntimeStatus(deviceId).lastErrorType).toBeNull();
+      expect(db.getDeviceRuntimeStatus(deviceId).lastError).toBeNull();
+      expect(recovered).toEqual([`${deviceId}:reconnected`]);
+    } finally {
+      connectionAlertNotifier.setBroadcaster(null);
+    }
+  });
+
+  test('successful reattach does not clear an unrelated SSH auth error', async () => {
+    const deviceId = 'r2151-reattach-auth';
+    db.createDevice(makeReconnectDevice(deviceId));
+    db.updateDeviceRuntimeStatus(deviceId, {
+      lastError: 'Authentication failed',
+      lastErrorType: 'auth_failed',
+    });
+    const recovered: string[] = [];
+    connectionAlertNotifier.setBroadcaster((id, payload) => {
+      recovered.push(`${id}:${payload.type}`);
+    });
+    const host = createHost({ deviceId });
+    try {
+      await reconnectControlChannel(policy, {
+        host,
+        sleep: async () => undefined,
+        onGaveUp: () => {
+          throw new Error('should not give up');
+        },
+        onAttempt: () => undefined,
+        classifyProbe: () => 'alive',
+        now: () => 0,
+      });
+      expect(db.getDeviceRuntimeStatus(deviceId).lastErrorType).toBe('auth_failed');
+      expect(db.getDeviceRuntimeStatus(deviceId).lastError).toBe('Authentication failed');
+      expect(recovered).toEqual([]);
+    } finally {
+      connectionAlertNotifier.setBroadcaster(null);
+    }
+  });
 });
+
+function makeReconnectDevice(id: string): Device {
+  return {
+    id,
+    name: id,
+    type: 'local',
+    session: 'vibeterm',
+    authMode: 'auto',
+    sortOrder: 0,
+    createdAt: '2026-11-15T00:00:00.000Z',
+    updatedAt: '2026-11-15T00:00:00.000Z',
+  };
+}

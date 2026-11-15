@@ -1,6 +1,10 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
 
+import {
+  resetTmuxBusyIncidentsForTest,
+  setTmuxBusyTimersForTest,
+} from '../tmux-client/runtime-error-alert';
 import { TmuxCommandFailedError } from '../tmux-client/tmux-command-error';
 import { DeviceFeedBroadcaster, type DeviceFeedHost } from './device-feed-broadcaster';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
@@ -91,5 +95,35 @@ describe('device error 去重', () => {
 
     feed.broadcastError('dev', new Error('boom'));
     expect(host.kinds).toEqual([wsBorsh.KIND_DEVICE_EVENT]);
+  });
+
+  test('tmux_busy errors are not broadcast on the WS path until the shared incident fires', () => {
+    const host = makeErrorHost();
+    host.connections.set('dev', {
+      clients: new Set<GatewaySession>([{} as GatewaySession]),
+    } as DeviceConnectionEntry);
+    const feed = new DeviceFeedBroadcaster(host);
+    const scheduled: Array<{ fn: () => void; cancelled: boolean }> = [];
+    setTmuxBusyTimersForTest({
+      setTimeout: (fn) => {
+        const entry = { fn, cancelled: false };
+        scheduled.push(entry);
+        return entry;
+      },
+      clearTimeout: (id) => {
+        (id as { cancelled: boolean }).cancelled = true;
+      },
+    });
+    try {
+      feed.broadcastError(
+        'dev',
+        new Error('tmux control command timed out: send-keys -H -t %1 1b 5b')
+      );
+      expect(host.kinds).toEqual([]);
+      expect(scheduled).toHaveLength(1);
+    } finally {
+      resetTmuxBusyIncidentsForTest();
+      setTmuxBusyTimersForTest(null);
+    }
   });
 });

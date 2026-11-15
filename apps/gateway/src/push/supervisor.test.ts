@@ -1,9 +1,13 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import type { Device, SiteSettings, StateSnapshotPayload } from '@vibeterm/shared';
 import type {
   DeviceSessionRuntime,
   DeviceSessionRuntimeListener,
 } from '../tmux-client/device-session-runtime';
+import {
+  resetTmuxBusyIncidentsForTest,
+  setTmuxBusyTimersForTest,
+} from '../tmux-client/runtime-error-alert';
 import { PushSupervisor } from './supervisor';
 
 function mockRuntime(
@@ -383,4 +387,132 @@ describe('PushSupervisor', () => {
       }
     }
   );
+});
+
+describe('PushSupervisor tmux_busy', () => {
+  afterEach(() => {
+    resetTmuxBusyIncidentsForTest();
+    setTmuxBusyTimersForTest(null);
+  });
+
+  test('onError 对控制通道超时去抖，同一事故只告警一次', async () => {
+    const device = createDevice('r2151-push-busy');
+    const attached: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
+    const broadcasts: string[] = [];
+    const scheduled: Array<{ fn: () => void; cancelled: boolean }> = [];
+    const { connectionAlertNotifier } = await import('./connection-alerts');
+    connectionAlertNotifier.setSettingsProvider(() => createSettings());
+    connectionAlertNotifier.setPersister(() => {});
+    connectionAlertNotifier.setBroadcaster((_deviceId, payload) => {
+      broadcasts.push(payload.type);
+    });
+    setTmuxBusyTimersForTest({
+      setTimeout: (fn) => {
+        const entry = { fn, cancelled: false };
+        scheduled.push(entry);
+        return entry;
+      },
+      clearTimeout: (id) => {
+        (id as { cancelled: boolean }).cancelled = true;
+      },
+    });
+
+    const supervisor = new PushSupervisor({
+      deps: {
+        listDevices: () => [device],
+        getDevice: () => device,
+        getSettings: () => createSettings(),
+        acquireRuntime: async () =>
+          mockRuntime({
+            subscribe(next) {
+              attached.listener = next;
+              return () => {
+                attached.listener = null;
+              };
+            },
+          }),
+        releaseRuntime: async () => {},
+      },
+    });
+
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      await supervisor.start();
+      const err = new Error('tmux control command timed out: send-keys -H -t %1 1b 5b');
+      attached.listener?.onError?.(err);
+      attached.listener?.onError?.(err);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(broadcasts).toEqual([]);
+      expect(scheduled.filter((item) => !item.cancelled)).toHaveLength(1);
+      scheduled[0]?.fn();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(broadcasts).toEqual(['error']);
+    } finally {
+      console.error = originalError;
+      await supervisor.stopAll();
+      connectionAlertNotifier.setBroadcaster(null);
+      connectionAlertNotifier.clear(device.id);
+    }
+  });
+
+  test('snapshot 成功会撤掉未发出的 tmux_busy 去抖', async () => {
+    const device = createDevice('r2151-push-busy-snap');
+    const attached: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
+    const broadcasts: string[] = [];
+    const scheduled: Array<{ fn: () => void; cancelled: boolean }> = [];
+    const { connectionAlertNotifier } = await import('./connection-alerts');
+    connectionAlertNotifier.setSettingsProvider(() => createSettings());
+    connectionAlertNotifier.setPersister(() => {});
+    connectionAlertNotifier.setBroadcaster((_deviceId, payload) => {
+      broadcasts.push(payload.type);
+    });
+    setTmuxBusyTimersForTest({
+      setTimeout: (fn) => {
+        const entry = { fn, cancelled: false };
+        scheduled.push(entry);
+        return entry;
+      },
+      clearTimeout: (id) => {
+        (id as { cancelled: boolean }).cancelled = true;
+      },
+    });
+
+    const supervisor = new PushSupervisor({
+      deps: {
+        listDevices: () => [device],
+        getDevice: () => device,
+        getSettings: () => createSettings(),
+        acquireRuntime: async () =>
+          mockRuntime({
+            subscribe(next) {
+              attached.listener = next;
+              return () => {
+                attached.listener = null;
+              };
+            },
+          }),
+        releaseRuntime: async () => {},
+      },
+    });
+
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      await supervisor.start();
+      attached.listener?.onError?.(new Error('tmux control command timed out: send-keys'));
+      attached.listener?.onSnapshot?.({
+        deviceId: device.id,
+        session: { id: '$1', name: 'VibeTerm', windows: [] },
+      });
+      expect(scheduled[0]?.cancelled).toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(broadcasts).toEqual([]);
+    } finally {
+      console.error = originalError;
+      await supervisor.stopAll();
+      connectionAlertNotifier.setBroadcaster(null);
+      connectionAlertNotifier.clear(device.id);
+    }
+  });
 });

@@ -5,6 +5,7 @@ import {
   CONTROL_STABLE_RESET_MS,
 } from './external/constants';
 import type { CommandResult } from './external/types';
+import { clearControlChannelError } from './runtime-error-alert';
 
 export const CONTROL_RECONNECT_POLICY = {
   maxRestarts: CONTROL_MAX_RESTARTS,
@@ -90,5 +91,6 @@ export async function reconnectControlChannel(
     `${host.logPrefix} control client reattached device=${host.deviceId} attempt=${host.controlRestartCount} session=${host.sessionName}`
   );
   host.requestSnapshot();
+  clearControlChannelError(host.deviceId);
   if (host.activePaneId) void host.capturePaneHistory(host.activePaneId).catch(() => undefined);
 }

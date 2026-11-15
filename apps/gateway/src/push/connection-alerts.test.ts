@@ -179,6 +179,25 @@ describe('ConnectionAlertNotifier', () => {
     const occurrences = notifier.persisted[0].message.split(rawText).length - 1;
     expect(occurrences).toBe(1);
   });
+
+  test('strips send-keys argv from persisted tmux_busy raw messages', async () => {
+    const device = makeDevice('d1');
+    const result = await notifier.notifier.notify({
+      device,
+      error: new Error(
+        'tmux control command timed out: send-keys -H -t %1 1b 5b 3c 33 35 3b 32 31'
+      ),
+      source: 'runtime',
+    });
+
+    expect(result.errorType).toBe('tmux_busy');
+    expect(result.rawMessage).toBe('tmux control command timed out: send-keys');
+    expect(result.rawMessage).not.toContain('1b 5b');
+    expect(notifier.persisted[0].type).toBe('tmux_busy');
+    expect(notifier.persisted[0].message).toContain('send-keys');
+    expect(notifier.persisted[0].message).not.toContain('1b 5b');
+    expect(notifier.broadcasts[0].errorType).toBe('tmux_busy');
+  });
 });
 
 describe('ConnectionAlertNotifier event bridge', () => {

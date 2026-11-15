@@ -8,7 +8,7 @@ import type {
 import { getSiteSettings, updateDeviceRuntimeStatus } from '../db';
 import { DEVICE_CONNECTION_ERROR_EVENT } from '../events/channels/types';
 import { t } from '../i18n';
-import { classifySshError } from '../ws/error-classify';
+import { classifySshError, sanitizeTmuxErrorMessage } from '../ws/error-classify';
 import {
   buildConnectionBridgeEvent,
   isWithinThrottleWindow,
@@ -110,13 +110,8 @@ export class ConnectionAlertNotifier {
     const errObj = toErrorObject(error);
     const classified = classifySshError(errObj);
     const friendlyMessage = t(classified.messageKey, { ...classified.messageParams });
-    const rawMessage = errObj.message;
-    // 持久化时把真实错误一并保留，避免设备页只看到归类后的兜底文案（刷新后 raw 不丢）；
-    // unknown 类的友好文案模板已内嵌 raw（"Connection failed: {{message}}"），用 includes 去重避免重复拼接
-    const persistedMessage =
-      rawMessage && !friendlyMessage.includes(rawMessage)
-        ? `${friendlyMessage}\n${rawMessage}`
-        : friendlyMessage;
+    const rawMessage = sanitizeTmuxErrorMessage(errObj.message);
+    const persistedMessage = composePersistedMessage(friendlyMessage, rawMessage);
 
     console.error(
       `[conn-alert] device ${device.id} (${device.name}) source=${source} type=${classified.type}: ${rawMessage}`
@@ -283,33 +278,30 @@ export class ConnectionAlertNotifier {
   }
 }
 
-function toBadgeKey(errorType: string): string {
-  switch (errorType) {
-    case 'auth_failed':
-      return 'authFailed';
-    case 'agent_unavailable':
-      return 'agentUnavailable';
-    case 'agent_no_identity':
-      return 'agentNoIdentity';
-    case 'ssh_config_ref_not_supported':
-      return 'configRefNotSupported';
-    case 'network_unreachable':
-      return 'networkUnreachable';
-    case 'connection_refused':
-      return 'connectionRefused';
-    case 'timeout':
-      return 'timeout';
-    case 'host_not_found':
-      return 'hostNotFound';
-    case 'handshake_failed':
-      return 'handshakeFailed';
-    case 'tmux_unavailable':
-      return 'tmuxUnavailable';
-    case 'connection_closed':
-      return 'connectionClosed';
-    default:
-      return 'unknown';
+const BADGE_KEY_BY_ERROR_TYPE: Record<string, string> = {
+  auth_failed: 'authFailed',
+  agent_unavailable: 'agentUnavailable',
+  agent_no_identity: 'agentNoIdentity',
+  ssh_config_ref_not_supported: 'configRefNotSupported',
+  network_unreachable: 'networkUnreachable',
+  connection_refused: 'connectionRefused',
+  timeout: 'timeout',
+  host_not_found: 'hostNotFound',
+  handshake_failed: 'handshakeFailed',
+  tmux_unavailable: 'tmuxUnavailable',
+  tmux_busy: 'tmux_busy',
+  connection_closed: 'connectionClosed',
+};
+
+function composePersistedMessage(friendlyMessage: string, rawMessage: string): string {
+  if (rawMessage && !friendlyMessage.includes(rawMessage)) {
+    return `${friendlyMessage}\n${rawMessage}`;
   }
+  return friendlyMessage;
+}
+
+function toBadgeKey(errorType: string): string {
+  return BADGE_KEY_BY_ERROR_TYPE[errorType] ?? 'unknown';
 }
 
 export const connectionAlertNotifier = new ConnectionAlertNotifier();

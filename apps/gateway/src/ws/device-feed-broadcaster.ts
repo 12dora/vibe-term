@@ -3,9 +3,10 @@ import { wsBorsh } from '@vibeterm/shared';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { TmuxEvent } from '../tmux-client/events';
+import { considerTmuxBusyError } from '../tmux-client/runtime-error-alert';
 import { isReportedTmuxError } from '../tmux-client/tmux-command-error';
 import { resolvePaneContext } from '../tmux/bell-context';
-import { classifySshError } from './error-classify';
+import { classifySshError, sanitizeTmuxErrorMessage } from './error-classify';
 import {
   deliverBell,
   deliverGenericEvent,
@@ -177,6 +178,7 @@ export class DeviceFeedBroadcaster {
   broadcastError(deviceId: string, err: Error): void {
     // 已上报过的一次性 tmux 命令失败：连接告警那一路已经广播过 device error，别再发一条。
     if (isReportedTmuxError(err)) return;
+    if (considerTmuxBusyError(deviceId, err)) return;
     const entry = this.host.connections.get(deviceId);
     if (!entry) return;
 
@@ -187,7 +189,7 @@ export class DeviceFeedBroadcaster {
       type: 'error',
       errorType: errorInfo.type,
       message: t(errorInfo.messageKey, { ...errorInfo.messageParams }),
-      rawMessage: err.message,
+      rawMessage: sanitizeTmuxErrorMessage(err.message),
     });
 
     for (const client of this.recipients(entry.clients, deviceId, null)) {

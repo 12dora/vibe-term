@@ -3,6 +3,24 @@
 export type DeviceType = 'local' | 'ssh';
 export type AuthMode = 'password' | 'key' | 'agent' | 'configRef' | 'auto';
 
+export const DEVICE_CONNECTION_ERROR_TYPES = [
+  'ssh_config_ref_not_supported',
+  'agent_unavailable',
+  'agent_no_identity',
+  'auth_failed',
+  'network_unreachable',
+  'connection_refused',
+  'timeout',
+  'host_not_found',
+  'handshake_failed',
+  'tmux_unavailable',
+  'tmux_busy',
+  'connection_closed',
+  'unknown',
+] as const;
+
+export type DeviceConnectionErrorType = (typeof DEVICE_CONNECTION_ERROR_TYPES)[number];
+
 export interface Device {
   id: string;
   name: string;
@@ -64,7 +82,7 @@ export interface TestConnectionResult {
   success: boolean;
   tmuxAvailable: boolean;
   phase: 'connect' | 'bootstrap' | 'ready';
-  errorType?: string;
+  errorType?: DeviceConnectionErrorType;
   message?: string;
   rawMessage?: string;
 }

@@ -9,11 +9,20 @@ import { notifyDeviceClose } from '../agent/device-close-bus';
 import { getAllDevices, getDeviceById, getSiteSettings } from '../db';
 import { eventNotifier } from '../events';
 import { t } from '../i18n';
-import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
+import type {
+  DeviceSessionRuntime,
+  DeviceSessionRuntimeListener,
+} from '../tmux-client/device-session-runtime';
 import type { TmuxEvent } from '../tmux-client/events';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
+import {
+  considerTmuxBusyError,
+  handleControlHealth,
+  noteControlChannelProgress,
+} from '../tmux-client/runtime-error-alert';
 import { isReportedTmuxError } from '../tmux-client/tmux-command-error';
 import { resolvePaneContext } from '../tmux/bell-context';
+import { sanitizeTmuxErrorMessage } from '../ws/error-classify';
 import { connectionAlertNotifier } from './connection-alerts';
 import { dispatchTmuxPushEvent } from './tmux-push-events';
 
@@ -250,7 +259,7 @@ export class PushSupervisor {
 
     const generation = entry.generation;
     const runtime = await this.deps.acquireRuntime(entry.deviceId);
-    const detachRuntime = runtime.subscribe({
+    const listener: DeviceSessionRuntimeListener = {
       onEvent: (event) => {
         void this.handleTmuxEvent(entry.deviceId, generation, runtime, event);
       },
@@ -258,19 +267,16 @@ export class PushSupervisor {
         this.handleSnapshot(entry.deviceId, generation, runtime, payload);
       },
       onError: (error) => {
-        console.error(`[push] tmux error on device ${entry.deviceId}:`, error);
-        // 一次性 tmux 命令失败在抛出前已上报过，这里再 notify 会让同一次失败弹两次。
-        if (isReportedTmuxError(error)) return;
-        void connectionAlertNotifier.notify({
-          device,
-          error,
-          source: 'runtime',
-        });
+        this.handleRuntimeError(entry.deviceId, device, error);
+      },
+      onControlHealth: (event) => {
+        handleControlHealth(event);
       },
       onClose: () => {
         void this.handleClose(entry.deviceId, generation, runtime, device);
       },
-    });
+    };
+    const detachRuntime = runtime.subscribe(listener);
 
     entry.runtime = runtime;
     entry.detachRuntime = detachRuntime;
@@ -376,6 +382,20 @@ export class PushSupervisor {
     this.scheduleReconnect(entry);
   }
 
+  private handleRuntimeError(deviceId: string, device: Device, error: Error): void {
+    console.error(
+      `[push] tmux error on device ${deviceId}:`,
+      sanitizeTmuxErrorMessage(error.message)
+    );
+    if (isReportedTmuxError(error)) return;
+    if (considerTmuxBusyError(deviceId, error, device)) return;
+    void connectionAlertNotifier.notify({
+      device,
+      error,
+      source: 'runtime',
+    });
+  }
+
   private handleSnapshot(
     deviceId: string,
     generation: number,
@@ -388,6 +408,7 @@ export class PushSupervisor {
     }
 
     entry.lastSnapshot = payload;
+    noteControlChannelProgress(deviceId);
   }
 
   private async handleTmuxEvent(
