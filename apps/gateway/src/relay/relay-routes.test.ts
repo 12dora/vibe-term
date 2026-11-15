@@ -3,10 +3,13 @@ import {
   decodeAuthorization,
   decodeBase64url,
   encodeBase64url,
+  hexToBytes,
   randomBytes,
   rootKeyFromSeed,
+  signEd25519,
 } from '@vibeterm/shared/auth';
 import { sealRelayPack, signRelayEnrollProof } from '@vibeterm/shared/relay';
+import { encodeRedeemPopMessage } from './redeem-pop';
 import {
   RELAY_TEST_PUBLIC_URL,
   type RelayHarness,
@@ -39,6 +42,32 @@ function enrollBody(
     root_epoch: 0,
     proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
     ...extra,
+  });
+}
+
+function errorCode(body: unknown): string {
+  return (body as { error: { code: string } }).error.code;
+}
+
+function redeemEnrollmentBody(node: {
+  enroll: { publicKey: Uint8Array };
+  nodeId: string;
+  ed: { secretKey: Uint8Array };
+  certBytes: Uint8Array;
+  certSig: Uint8Array;
+}): string {
+  const pop = signEd25519(
+    node.ed.secretKey,
+    encodeRedeemPopMessage({
+      enrollmentId: encodeBase64url(node.enroll.publicKey),
+      nodeId: hexToBytes(node.nodeId),
+      certBytes: node.certBytes,
+    })
+  );
+  return JSON.stringify({
+    certificate: encodeBase64url(node.certBytes),
+    cert_sig: encodeBase64url(node.certSig),
+    pop: encodeBase64url(pop),
   });
 }
 
@@ -338,6 +367,48 @@ describe('relay redeem', () => {
     expect(((await missing.json()) as { error: { code: string } }).error.code).toBe(
       'RELAY_NOT_FOUND'
     );
+  });
+
+  test('force_rotate: old join token is stale, garbage is invalid, current still works', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const first = tenant.addNode();
+    const client = await tenant.connect(first);
+    await client.inbox.takeOf('auth.ok');
+    const joiner = tenant.addNode();
+    await tenant.createEnrollment(joiner, client);
+    const rotated = await enrollRelayRoot(relay, tenant.root, { forceRotate: true });
+    const current = rotated.token;
+    if (!current) throw new Error('expected a rotated tenant token');
+
+    const staleLookup = await tenant.lookupEnrollment(joiner, tenant.token);
+    expect(staleLookup.status).toBe(401);
+    expect(await staleLookup.json()).toEqual({
+      error: { code: 'RELAY_JOIN_CODE_STALE', message: 'RELAY_JOIN_CODE_STALE' },
+    });
+    const staleRedeem = await tenant.redeem(joiner);
+    expect(staleRedeem.status).toBe(401);
+    expect(errorCode(await staleRedeem.json())).toBe('RELAY_JOIN_CODE_STALE');
+
+    const garbageLookup = await tenant.lookupEnrollment(joiner, 'not-the-token');
+    expect(garbageLookup.status).toBe(401);
+    expect(errorCode(await garbageLookup.json())).toBe('RELAY_TOKEN_INVALID');
+    const garbageRedeem = await relay.tenantFetch(
+      `/api/relay/tenants/${tenant.id}/enrollments/redeem`,
+      'not-the-token',
+      { method: 'POST', body: redeemEnrollmentBody(joiner) }
+    );
+    expect(garbageRedeem.status).toBe(401);
+    expect(errorCode(await garbageRedeem.json())).toBe('RELAY_TOKEN_INVALID');
+
+    const okLookup = await tenant.lookupEnrollment(joiner, current);
+    expect(okLookup.status).toBe(200);
+    const okRedeem = await relay.tenantFetch(
+      `/api/relay/tenants/${tenant.id}/enrollments/redeem`,
+      current,
+      { method: 'POST', body: redeemEnrollmentBody(joiner) }
+    );
+    expect(okRedeem.status).toBe(200);
   });
 
   test('another tenant cannot read an enrollment it does not own', async () => {

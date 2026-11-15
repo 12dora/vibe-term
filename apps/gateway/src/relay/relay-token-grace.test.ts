@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   type RelayTokenGraceRow,
   relayCurrentTokenPredatesRevoke,
+  relayPresentedTokenIsNodeOnly,
   relayPreviousTokens,
   relayTokenHashAccepted,
   relayTokenHashState,
@@ -87,6 +88,25 @@ describe('relay tokens after a revoke', () => {
       previousTokens: relayTokensAfterReissue(reissued, 600),
     };
     expect(relayTokenHashAccepted(again, 'fresh', 700)).toBe(true);
+  });
+
+  test('node_only 出示（含当前令牌的吊销标记）可识别，未知哈希不是', () => {
+    const revoked: RelayTokenGraceRow = {
+      ...row,
+      previousTokens: relayTokensAfterRevoke(row, 200),
+    };
+    expect(relayPresentedTokenIsNodeOnly(revoked, 'current')).toBe(true);
+    expect(relayPresentedTokenIsNodeOnly(revoked, 'third')).toBe(true);
+    expect(relayPresentedTokenIsNodeOnly(revoked, 'unknown')).toBe(false);
+    const reissued: RelayTokenGraceRow = {
+      tokenHash: 'fresh',
+      prevTokenHash: 'current',
+      prevTokenIssuedAt: 400,
+      previousTokens: relayTokensAfterReissue(revoked, 400),
+    };
+    expect(relayPresentedTokenIsNodeOnly(reissued, 'current')).toBe(true);
+    expect(relayPresentedTokenIsNodeOnly(reissued, 'fresh')).toBe(false);
+    expect(relayPresentedTokenIsNodeOnly(row, 'current')).toBe(false);
   });
 
   test('没有吊销时换发照旧给上一代完整宽限', () => {

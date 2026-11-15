@@ -431,6 +431,7 @@ PoP（`encodeRedeemPopMessage`，用证书里的 `ed_pk` 验，必填）→ 节�
 消费 enrollment → `relay_nodes` 建 `pending` 行（已有行不改）→ 向该租户全部在线节点广播 `enroll.redeemed`。
 
 错误码：`RELAY_UNAUTHORIZED` 401 / `RELAY_TOKEN_INVALID` 401（令牌不符或 epoch 过旧）/
+`RELAY_JOIN_CODE_STALE` 401（加入码里的租户令牌已因撤销节点轮换失效，lookup 与 redeem 均返回）/
 `RELAY_TENANT_KICKED` 401 / `RELAY_TENANT_NOT_FOUND` 404 / `RELAY_INVALID_BODY` 400 /
 `RELAY_BAD_CERTIFICATE` 400 / `RELAY_ENROLLMENT_UNKNOWN` 400（含跨租户，不区分以免泄露）/
 `RELAY_ENROLLMENT_USED` 400 / `RELAY_ENROLLMENT_EXPIRED` 400 / `RELAY_BAD_CERT_SIG` 400 /

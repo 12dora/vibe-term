@@ -32,7 +32,11 @@ import {
 } from './relay-password';
 import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
-import { relayCurrentTokenPredatesRevoke, relayTokenHashAccepted } from './relay-token-grace';
+import {
+  relayCurrentTokenPredatesRevoke,
+  relayPresentedTokenIsNodeOnly,
+  relayTokenHashAccepted,
+} from './relay-token-grace';
 import type { RelayUplinkServer } from './relay-uplink-server';
 import {
   RELAY_REDEEM_KEYLOG_MAX_BYTES,
@@ -217,8 +221,7 @@ function issueTenantToken(
     keepPrevious: decision === 'rotate',
     now,
   });
-  // 踢出恢复：旧令牌的链路必须立刻断开，否则被踢的一方只要连着就永远不复查令牌。
-  // `rotate` 不断链——新令牌还在密钥日志里没送到成员手上。
+  // 踢出恢复：旧令牌的链路必须立刻断开，否则被踢的一方只要连着就永远不复查令牌；`rotate` 不断链——新令牌还在密钥日志里没送到成员手上。
   if (decision === 'recover') deps.uplink.enforceTokenReissue(existing.id, tokenHash);
   return { tenantId: existing.id, token };
 }
@@ -283,17 +286,21 @@ export async function handleRelayEnroll(
     passwordVerified,
   });
 }
-
 export function authenticateRelayTenant(
   deps: RelayPublicRoutesDeps,
   req: Request,
-  tenantId: string
+  tenantId: string,
+  forJoin = false
 ): RelayTenantRecord | Response {
   const presented = readHeaderPair(req.headers, RELAY_TOKEN_HEADER)?.trim();
   if (!presented) return relayError(RelayErrorCode.unauthorized, 401);
   const tenant = deps.tenants.get(tenantId);
   if (!tenant) return relayError(RelayErrorCode.tenantNotFound, 404);
-  if (!relayTokenHashAccepted(tenant, sha256Hex(presented), deps.now())) {
+  const presentedHash = sha256Hex(presented);
+  if (forJoin && relayPresentedTokenIsNodeOnly(tenant, presentedHash)) {
+    return relayError(RelayErrorCode.joinCodeStale, 401);
+  }
+  if (!relayTokenHashAccepted(tenant, presentedHash, deps.now())) {
     return relayError(RelayErrorCode.tokenInvalid, 401);
   }
   if (tenant.kicked) return relayError(RelayErrorCode.tenantKicked, 401);
@@ -314,7 +321,7 @@ export function handleRelayEnrollmentLookup(
   tenantId: string,
   enrollPkRaw: string
 ): Response {
-  const tenant = authenticateRelayTenant(deps, req, tenantId);
+  const tenant = authenticateRelayTenant(deps, req, tenantId, true);
   if (tenant instanceof Response) return tenant;
   let enrollPk: Uint8Array;
   try {
@@ -394,7 +401,7 @@ export async function handleRelayRedeem(
   req: Request,
   tenantId: string
 ): Promise<Response> {
-  const tenant = authenticateRelayTenant(deps, req, tenantId);
+  const tenant = authenticateRelayTenant(deps, req, tenantId, true);
   if (tenant instanceof Response) return tenant;
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);

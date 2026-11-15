@@ -1590,6 +1590,25 @@ describe('relay join failure reporting', () => {
     );
   }
 
+  test('a stale join code after a device-list change is reported as such', async () => {
+    const tenant = await makeTenant([ENTRY_A]);
+    const { fetcher } = fakeRelay(tenant, {
+      redeemStatus: 401,
+      redeemCode: 'RELAY_JOIN_CODE_STALE',
+    });
+    const joiner = await openAuth();
+    const error = await runRelayJoinCommand(
+      parseArgs(['relay', 'join', '--token', joinTokenFor(tenant)]),
+      { auth: joiner, fetcher, skipRestart: true, log: () => undefined }
+    ).catch((caught) => caught);
+
+    expect(error.message).toBe(
+      t('relay.join.failed', { reason: t('relay.join.reason.joinCodeStale') })
+    );
+    expect(error.message.match(/Join failed/g)).toHaveLength(1);
+    expect(error.cause).toMatchObject({ name: 'RelayApiError', code: 'RELAY_JOIN_CODE_STALE' });
+  });
+
   test('a used join code becomes one prefixed human-readable line, with the cause kept', async () => {
     const tenant = await makeTenant([ENTRY_A]);
     const { fetcher } = fakeRelay(tenant, { redeemStatus: 409 });

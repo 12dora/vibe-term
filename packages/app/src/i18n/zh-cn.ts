@@ -256,6 +256,7 @@ export const zhCN: Record<string, string> = {
   'relay.join.reason.codeUsed': '加入码已被使用，请重新生成加入码',
   'relay.join.reason.codeExpired': '加入码已过期，请重新生成加入码',
   'relay.join.reason.tokenRejected': '中继已不接受该加入码，请重新生成加入码',
+  'relay.join.reason.joinCodeStale': '设备列表已变更，此加入码已失效，请重新生成。',
   'relay.join.reason.tenantNotFound': '中继上找不到该租户，请核对租户编号和中继地址',
   'relay.join.reason.tenantKicked': '该租户已被中继管理员移除',
   'relay.join.reason.wrongPassword': '密码错误',

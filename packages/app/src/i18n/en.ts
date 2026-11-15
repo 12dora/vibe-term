@@ -282,6 +282,8 @@ export const en: Record<string, string> = {
   'relay.join.reason.codeExpired': 'the join code has expired; generate a new one',
   'relay.join.reason.tokenRejected':
     'the relay no longer accepts this join code; generate a new one',
+  'relay.join.reason.joinCodeStale':
+    'This join code is no longer valid because the device list changed. Generate a new one.',
   'relay.join.reason.tenantNotFound':
     'the relay has no such tenant; check the tenant ID and the relay address',
   'relay.join.reason.tenantKicked': 'this tenant was removed by the relay administrator',

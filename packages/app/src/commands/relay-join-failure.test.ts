@@ -20,6 +20,7 @@ describe('joinFailureMessage', () => {
     [new RelayApiError(400, 'RELAY_ENROLLMENT_EXPIRED', 'x'), 'relay.join.reason.codeExpired'],
     [new RelayApiError(404, 'RELAY_TENANT_NOT_FOUND', 'x'), 'relay.join.reason.tenantNotFound'],
     [new RelayApiError(401, 'RELAY_TOKEN_INVALID', 'x'), 'relay.join.reason.tokenRejected'],
+    [new RelayApiError(401, 'RELAY_JOIN_CODE_STALE', 'x'), 'relay.join.reason.joinCodeStale'],
     [new RelayApiError(429, 'RELAY_RATE_LIMITED', 'x'), 'relay.join.reason.rateLimited'],
     [new RelayApiError(409, 'RELAY_NODE_REVOKED', 'x'), 'relay.join.reason.nodeRevoked'],
     [new JoinError('invalid_token', 'x'), 'relay.join.reason.codeInvalid'],
@@ -69,6 +70,9 @@ describe('joinFailureMessage', () => {
     setLang('zh-CN');
     expect(joinFailureMessage(new RelayApiError(404, 'RELAY_NOT_FOUND', 'x'))).toBe(
       '加入失败：加入码无效或已过期，请重新生成加入码'
+    );
+    expect(joinFailureMessage(new RelayApiError(401, 'RELAY_JOIN_CODE_STALE', 'x'))).toBe(
+      '加入失败：设备列表已变更，此加入码已失效，请重新生成。'
     );
   });
 });

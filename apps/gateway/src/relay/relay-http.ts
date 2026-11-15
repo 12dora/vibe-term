@@ -14,6 +14,7 @@ export const RelayErrorCode = {
   badProof: 'RELAY_BAD_PROOF',
   tokenInvalid: 'RELAY_TOKEN_INVALID',
   tokenNotCurrent: 'RELAY_TOKEN_NOT_CURRENT',
+  joinCodeStale: 'RELAY_JOIN_CODE_STALE',
   tenantKicked: 'RELAY_TENANT_KICKED',
   membersOffline: 'relay_members_offline',
   enrollPasswordInvalid: 'relay_password_invalid',

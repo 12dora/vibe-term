@@ -22,6 +22,7 @@ const API_REASONS: Record<string, string> = {
   RELAY_TOKEN_INVALID: 'relay.join.reason.tokenRejected',
   RELAY_TOKEN_NOT_CURRENT: 'relay.join.reason.tokenRejected',
   RELAY_UNAUTHORIZED: 'relay.join.reason.tokenRejected',
+  RELAY_JOIN_CODE_STALE: 'relay.join.reason.joinCodeStale',
   RELAY_TENANT_NOT_FOUND: TENANT_NOT_FOUND,
   RELAY_TENANT_KICKED: 'relay.join.reason.tenantKicked',
   RELAY_NODE_REVOKED: NODE_REVOKED,
