@@ -815,6 +815,7 @@
           "unsupported_platform": "このプラットフォームで利用できる cloudflared がないため、Cloudflare Tunnel は利用できません。",
           "binary_missing": "cloudflared が見つかりません。「cloudflared のインストール」を先に完了してください。",
           "download_failed": "cloudflared のダウンロードに失敗しました。このマシンから github.com に到達できるか確認して、再試行してください。",
+          "binary_checksum_mismatch": "cloudflared の整合性検証に失敗したため、起動を中止しました。",
           "not_logged_in": "Cloudflare の認可が完了していません。「Cloudflare にログイン」に戻って認可を済ませてください。",
           "login_timeout": "Cloudflare の認可がタイムアウトしました。ログインをやり直し、開いたページでドメインを選択してください。",
           "invalid_hostname": "ホスト名の形式が正しくありません。vibeterm.example.com のような小文字のホスト名を入力してください。",
@@ -1525,6 +1526,7 @@
       "handshakeFailed": "ハンドシェイクに失敗しました：安全な接続を確立できません。キー交換アルゴリズムが互換性がない可能性があります。",
       "tmuxUnavailable": "リモート tmux が利用できないか起動に失敗しました。tmux がインストールされ、リモート shell の PATH から参照できることを確認してください。",
       "connectionClosed": "接続が切断されました。再接続を試みています",
+      "tmux_busy": "ホストの負荷が高く、ターミナルの応答が遅くなっています。回復すると自動的に解消されます。",
       "unknown": "接続に失敗しました：{{message}}",
       "reconnecting": "接続が中断されました。{{delay}} 秒後に再接続します（{{attempt}}/{{maxRetries}}）",
       "reconnectFailed": "自動再接続に失敗しました。手動で再試行してください",
@@ -1543,6 +1545,7 @@
         "handshakeFailed": "ハンドシェイク失敗",
         "tmuxUnavailable": "tmux 利用不可",
         "connectionClosed": "切断",
+        "tmux_busy": "ホスト高負荷",
         "unknown": "接続エラー"
       }
     },
@@ -2324,7 +2327,10 @@
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
         "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。",
-        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。"
+        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。",
+        "POP_REQUIRED": "セッションが無効になりました。もう一度サインインしてください。",
+        "POP_INVALID": "セッションが無効になりました。もう一度サインインしてください。",
+        "RELAY_JOIN_CODE_STALE": "デバイス一覧が変更されたため、この参加コードは無効です。新しく生成してください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
@@ -3318,7 +3324,8 @@
           "relay": {
             "join_failed": "中継が参加要求を拒否しました。",
             "node_revoked": "この機体は中継から削除されています。再度参加する前にリセットしてください。",
-            "node_exists": "この機体の識別情報は、中継上で別のマシンに使われています。"
+            "node_exists": "この機体の識別情報は、中継上で別のマシンに使われています。",
+            "join_code_stale": "デバイス一覧が変更されたため、この参加コードは無効です。新しく生成してください。"
           },
           "relay_password_invalid": "パスワードが正しくありません。確認してからやり直してください。",
           "relay_tenant_unknown": "中継にそのテナント ID は存在しません。ID をご確認ください。",

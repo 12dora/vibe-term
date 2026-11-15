@@ -815,6 +815,7 @@
           "unsupported_platform": "当前系统没有可用的 cloudflared，无法使用 Cloudflare Tunnel。",
           "binary_missing": "找不到 cloudflared。请先在「安装 cloudflared」完成安装。",
           "download_failed": "下载 cloudflared 失败。请检查本机网络是否能访问 github.com，然后重试。",
+          "binary_checksum_mismatch": "cloudflared 校验失败，已停止启动。",
           "not_logged_in": "尚未完成 Cloudflare 授权。请回到「登录 Cloudflare」完成授权。",
           "login_timeout": "Cloudflare 授权超时。请重新发起登录，并在打开的页面里选择域名完成授权。",
           "invalid_hostname": "主机名格式不正确，请填写形如 vibeterm.example.com 的小写域名。",
@@ -1525,6 +1526,7 @@
       "handshakeFailed": "握手失败：无法建立安全连接，可能是密钥交换算法不兼容",
       "tmuxUnavailable": "远端 tmux 不可用或启动失败，请检查远端是否已安装 tmux，且远端 shell PATH 可找到 tmux",
       "connectionClosed": "连接已断开，尝试重连中",
+      "tmux_busy": "主机负载过高，终端响应变慢，恢复后自动消失。",
       "unknown": "连接失败：{{message}}",
       "reconnecting": "连接中断，{{delay}} 秒后自动重连（{{attempt}}/{{maxRetries}}）",
       "reconnectFailed": "自动重连失败，请手动重试",
@@ -1543,6 +1545,7 @@
         "handshakeFailed": "握手失败",
         "tmuxUnavailable": "tmux 不可用",
         "connectionClosed": "连接已断开",
+        "tmux_busy": "主机繁忙",
         "unknown": "连接异常"
       }
     },
@@ -2324,7 +2327,10 @@
         "invalidCredentials": "用户名或密码错误。",
         "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。",
-        "PASSWORD_LOGIN_PAUSED": "密码登录已暂停，请稍后再试。"
+        "PASSWORD_LOGIN_PAUSED": "密码登录已暂停，请稍后再试。",
+        "POP_REQUIRED": "会话已失效，请重新登录。",
+        "POP_INVALID": "会话已失效，请重新登录。",
+        "RELAY_JOIN_CODE_STALE": "设备列表已变更，此加入码已失效，请重新生成。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -3318,7 +3324,8 @@
           "relay": {
             "join_failed": "中继拒绝了本次加入请求。",
             "node_revoked": "本机已被中继移除。请先重置本机，再重新加入。",
-            "node_exists": "中继上已有另一台机器占用了本机的身份。"
+            "node_exists": "中继上已有另一台机器占用了本机的身份。",
+            "join_code_stale": "设备列表已变更，此加入码已失效，请重新生成。"
           },
           "relay_password_invalid": "账号密码不对。请核对后重试。",
           "relay_tenant_unknown": "中继上没有这个租户编号。请核对租户编号。",

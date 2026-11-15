@@ -601,6 +601,7 @@
           "unsupported_platform": "No cloudflared is available for this platform, so Cloudflare Tunnel can't be used.",
           "binary_missing": "cloudflared wasn't found. Complete the \"Install cloudflared\" step first.",
           "download_failed": "Downloading cloudflared failed. Check that this machine can reach github.com, then try again.",
+          "binary_checksum_mismatch": "cloudflared failed integrity verification and was not started.",
           "not_logged_in": "Cloudflare authorization isn't complete. Go back to \"Sign in to Cloudflare\" and finish it.",
           "login_timeout": "The Cloudflare authorization timed out. Start the sign-in again and pick a domain on the page that opens.",
           "invalid_hostname": "That hostname isn't valid. Use a lowercase name such as vibeterm.example.com.",
@@ -1311,6 +1312,7 @@
       "handshakeFailed": "Handshake failed: Unable to establish secure connection. Possibly incompatible key exchange algorithm.",
       "tmuxUnavailable": "Remote tmux unavailable or failed to start. Please ensure tmux is installed and available in the remote shell PATH.",
       "connectionClosed": "Connection closed, attempting to reconnect",
+      "tmux_busy": "The host is under heavy load. The terminal responds slowly and recovers automatically.",
       "unknown": "Connection failed: {{message}}",
       "reconnecting": "Connection interrupted, reconnecting in {{delay}} seconds ({{attempt}}/{{maxRetries}})",
       "reconnectFailed": "Auto-reconnect failed, please retry manually",
@@ -2508,7 +2510,8 @@
           "relay": {
             "join_failed": "The relay rejected this request.",
             "node_revoked": "This machine was removed from the relay. Reset it before joining again.",
-            "node_exists": "Another machine is already registered on the relay under this identity."
+            "node_exists": "Another machine is already registered on the relay under this identity.",
+            "join_code_stale": "This join code is no longer valid because the device list changed. Generate a new one."
           },
           "relay_password_invalid": "That password is not correct. Check it and try again.",
           "relay_tenant_unknown": "The relay does not know that tenant ID. Check the ID and try again.",

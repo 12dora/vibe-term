@@ -22,12 +22,27 @@ const DETAIL_BEARING_CODES = new Set([
 /**
  * 这几个码的通用文案是旧口径，中继路径必须换一套。
  */
-const RELAY_SPECIFIC_CODES = new Set(['join_failed', 'node_revoked', 'node_exists']);
+const RELAY_SPECIFIC_CODES = new Set([
+  'join_failed',
+  'join_code_stale',
+  'node_revoked',
+  'node_exists',
+]);
+
+/** 中继原始错误码（大写）与设置接口小写错误码的别名。 */
+const CODE_ALIASES: Record<string, string> = {
+  hub_unreachable: 'relay_unreachable',
+  RELAY_JOIN_CODE_STALE: 'join_code_stale',
+};
+
+function canonicalCode(code: string): string {
+  return CODE_ALIASES[code] ?? code;
+}
 
 /** 中继路径优先取专用键；没有专用文案的码回落到通用键。 */
 export function setupErrorKeyFor(code: string): string | null {
   // `hub_unreachable` 是冻结的 legacy 错误码，映射到中继不可达。
-  const mapped = code === 'hub_unreachable' ? 'relay_unreachable' : code;
+  const mapped = canonicalCode(code);
   const base = setupErrorKey(mapped);
   if (!base) return null;
   if (RELAY_SPECIFIC_CODES.has(mapped)) {
@@ -39,7 +54,7 @@ export function setupErrorKeyFor(code: string): string | null {
 /** 后端错误码优先走本地化文案；未知码退化成「未知错误 + 原始 message」。 */
 export function describeSetupError(t: Translate, error: unknown): string {
   if (error instanceof SetupApiError) {
-    const mapped = error.code === 'hub_unreachable' ? 'relay_unreachable' : error.code;
+    const mapped = canonicalCode(error.code);
     const key = setupErrorKeyFor(mapped);
     if (!key) return t('nodes.setup.errors.unknown', { message: error.message || error.code });
     const base = t(key);

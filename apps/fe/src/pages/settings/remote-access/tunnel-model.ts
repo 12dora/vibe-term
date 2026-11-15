@@ -1,5 +1,4 @@
-// 远程访问（Cloudflare Tunnel）的纯推导：状态徽标、向导步进、主机名校验、错误与进度文案键。
-// 全部与 React 无关，便于脱离 DOM 直接测。
+// 远程访问（Cloudflare Tunnel）的纯推导：状态徽标、向导步进、主机名校验、错误与进度文案键，与 React 无关，便于脱离 DOM 直接测。
 
 import { TunnelApiError } from '@vibeterm/api-client/local/tunnel-api';
 import { errorMessage } from '@vibeterm/shared';
@@ -382,6 +381,7 @@ const ERROR_CODES = new Set<TunnelErrorCode>([
   'unsupported_platform',
   'binary_missing',
   'download_failed',
+  'binary_checksum_mismatch',
   'not_logged_in',
   'login_timeout',
   'invalid_hostname',

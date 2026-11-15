@@ -821,6 +821,7 @@ export const I18N_RESOURCES = {
           "unsupported_platform": "No cloudflared is available for this platform, so Cloudflare Tunnel can't be used.",
           "binary_missing": "cloudflared wasn't found. Complete the \"Install cloudflared\" step first.",
           "download_failed": "Downloading cloudflared failed. Check that this machine can reach github.com, then try again.",
+          "binary_checksum_mismatch": "cloudflared failed integrity verification and was not started.",
           "not_logged_in": "Cloudflare authorization isn't complete. Go back to \"Sign in to Cloudflare\" and finish it.",
           "login_timeout": "The Cloudflare authorization timed out. Start the sign-in again and pick a domain on the page that opens.",
           "invalid_hostname": "That hostname isn't valid. Use a lowercase name such as vibeterm.example.com.",
@@ -1531,6 +1532,7 @@ export const I18N_RESOURCES = {
       "handshakeFailed": "Handshake failed: Unable to establish secure connection. Possibly incompatible key exchange algorithm.",
       "tmuxUnavailable": "Remote tmux unavailable or failed to start. Please ensure tmux is installed and available in the remote shell PATH.",
       "connectionClosed": "Connection closed, attempting to reconnect",
+      "tmux_busy": "The host is under heavy load. The terminal responds slowly and recovers automatically.",
       "unknown": "Connection failed: {{message}}",
       "reconnecting": "Connection interrupted, reconnecting in {{delay}} seconds ({{attempt}}/{{maxRetries}})",
       "reconnectFailed": "Auto-reconnect failed, please retry manually",
@@ -1549,6 +1551,7 @@ export const I18N_RESOURCES = {
         "handshakeFailed": "Handshake failed",
         "tmuxUnavailable": "Tmux unavailable",
         "connectionClosed": "Disconnected",
+        "tmux_busy": "Host busy",
         "unknown": "Connection error"
       }
     },
@@ -2338,7 +2341,10 @@ export const I18N_RESOURCES = {
         "invalidCredentials": "Incorrect username or password.",
         "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again.",
-        "PASSWORD_LOGIN_PAUSED": "Password sign-in is paused. Try again later."
+        "PASSWORD_LOGIN_PAUSED": "Password sign-in is paused. Try again later.",
+        "POP_REQUIRED": "Your session is no longer valid. Sign in again.",
+        "POP_INVALID": "Your session is no longer valid. Sign in again.",
+        "RELAY_JOIN_CODE_STALE": "This join code is no longer valid because the device list changed. Generate a new one."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
@@ -3337,7 +3343,8 @@ export const I18N_RESOURCES = {
           "relay": {
             "join_failed": "The relay rejected this request.",
             "node_revoked": "This machine was removed from the relay. Reset it before joining again.",
-            "node_exists": "Another machine is already registered on the relay under this identity."
+            "node_exists": "Another machine is already registered on the relay under this identity.",
+            "join_code_stale": "This join code is no longer valid because the device list changed. Generate a new one."
           },
           "relay_password_invalid": "That password is not correct. Check it and try again.",
           "relay_tenant_unknown": "The relay does not know that tenant ID. Check the ID and try again.",
@@ -4952,6 +4959,7 @@ export const I18N_RESOURCES = {
           "unsupported_platform": "当前系统没有可用的 cloudflared，无法使用 Cloudflare Tunnel。",
           "binary_missing": "找不到 cloudflared。请先在「安装 cloudflared」完成安装。",
           "download_failed": "下载 cloudflared 失败。请检查本机网络是否能访问 github.com，然后重试。",
+          "binary_checksum_mismatch": "cloudflared 校验失败，已停止启动。",
           "not_logged_in": "尚未完成 Cloudflare 授权。请回到「登录 Cloudflare」完成授权。",
           "login_timeout": "Cloudflare 授权超时。请重新发起登录，并在打开的页面里选择域名完成授权。",
           "invalid_hostname": "主机名格式不正确，请填写形如 vibeterm.example.com 的小写域名。",
@@ -5662,6 +5670,7 @@ export const I18N_RESOURCES = {
       "handshakeFailed": "握手失败：无法建立安全连接，可能是密钥交换算法不兼容",
       "tmuxUnavailable": "远端 tmux 不可用或启动失败，请检查远端是否已安装 tmux，且远端 shell PATH 可找到 tmux",
       "connectionClosed": "连接已断开，尝试重连中",
+      "tmux_busy": "主机负载过高，终端响应变慢，恢复后自动消失。",
       "unknown": "连接失败：{{message}}",
       "reconnecting": "连接中断，{{delay}} 秒后自动重连（{{attempt}}/{{maxRetries}}）",
       "reconnectFailed": "自动重连失败，请手动重试",
@@ -5680,6 +5689,7 @@ export const I18N_RESOURCES = {
         "handshakeFailed": "握手失败",
         "tmuxUnavailable": "tmux 不可用",
         "connectionClosed": "连接已断开",
+        "tmux_busy": "主机繁忙",
         "unknown": "连接异常"
       }
     },
@@ -6461,7 +6471,10 @@ export const I18N_RESOURCES = {
         "invalidCredentials": "用户名或密码错误。",
         "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。",
-        "PASSWORD_LOGIN_PAUSED": "密码登录已暂停，请稍后再试。"
+        "PASSWORD_LOGIN_PAUSED": "密码登录已暂停，请稍后再试。",
+        "POP_REQUIRED": "会话已失效，请重新登录。",
+        "POP_INVALID": "会话已失效，请重新登录。",
+        "RELAY_JOIN_CODE_STALE": "设备列表已变更，此加入码已失效，请重新生成。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -7455,7 +7468,8 @@ export const I18N_RESOURCES = {
           "relay": {
             "join_failed": "中继拒绝了本次加入请求。",
             "node_revoked": "本机已被中继移除。请先重置本机，再重新加入。",
-            "node_exists": "中继上已有另一台机器占用了本机的身份。"
+            "node_exists": "中继上已有另一台机器占用了本机的身份。",
+            "join_code_stale": "设备列表已变更，此加入码已失效，请重新生成。"
           },
           "relay_password_invalid": "账号密码不对。请核对后重试。",
           "relay_tenant_unknown": "中继上没有这个租户编号。请核对租户编号。",
@@ -9066,6 +9080,7 @@ export const I18N_RESOURCES = {
           "unsupported_platform": "このプラットフォームで利用できる cloudflared がないため、Cloudflare Tunnel は利用できません。",
           "binary_missing": "cloudflared が見つかりません。「cloudflared のインストール」を先に完了してください。",
           "download_failed": "cloudflared のダウンロードに失敗しました。このマシンから github.com に到達できるか確認して、再試行してください。",
+          "binary_checksum_mismatch": "cloudflared の整合性検証に失敗したため、起動を中止しました。",
           "not_logged_in": "Cloudflare の認可が完了していません。「Cloudflare にログイン」に戻って認可を済ませてください。",
           "login_timeout": "Cloudflare の認可がタイムアウトしました。ログインをやり直し、開いたページでドメインを選択してください。",
           "invalid_hostname": "ホスト名の形式が正しくありません。vibeterm.example.com のような小文字のホスト名を入力してください。",
@@ -9776,6 +9791,7 @@ export const I18N_RESOURCES = {
       "handshakeFailed": "ハンドシェイクに失敗しました：安全な接続を確立できません。キー交換アルゴリズムが互換性がない可能性があります。",
       "tmuxUnavailable": "リモート tmux が利用できないか起動に失敗しました。tmux がインストールされ、リモート shell の PATH から参照できることを確認してください。",
       "connectionClosed": "接続が切断されました。再接続を試みています",
+      "tmux_busy": "ホストの負荷が高く、ターミナルの応答が遅くなっています。回復すると自動的に解消されます。",
       "unknown": "接続に失敗しました：{{message}}",
       "reconnecting": "接続が中断されました。{{delay}} 秒後に再接続します（{{attempt}}/{{maxRetries}}）",
       "reconnectFailed": "自動再接続に失敗しました。手動で再試行してください",
@@ -9794,6 +9810,7 @@ export const I18N_RESOURCES = {
         "handshakeFailed": "ハンドシェイク失敗",
         "tmuxUnavailable": "tmux 利用不可",
         "connectionClosed": "切断",
+        "tmux_busy": "ホスト高負荷",
         "unknown": "接続エラー"
       }
     },
@@ -10575,7 +10592,10 @@ export const I18N_RESOURCES = {
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
         "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。",
-        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。"
+        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。",
+        "POP_REQUIRED": "セッションが無効になりました。もう一度サインインしてください。",
+        "POP_INVALID": "セッションが無効になりました。もう一度サインインしてください。",
+        "RELAY_JOIN_CODE_STALE": "デバイス一覧が変更されたため、この参加コードは無効です。新しく生成してください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
@@ -11569,7 +11589,8 @@ export const I18N_RESOURCES = {
           "relay": {
             "join_failed": "中継が参加要求を拒否しました。",
             "node_revoked": "この機体は中継から削除されています。再度参加する前にリセットしてください。",
-            "node_exists": "この機体の識別情報は、中継上で別のマシンに使われています。"
+            "node_exists": "この機体の識別情報は、中継上で別のマシンに使われています。",
+            "join_code_stale": "デバイス一覧が変更されたため、この参加コードは無効です。新しく生成してください。"
           },
           "relay_password_invalid": "パスワードが正しくありません。確認してからやり直してください。",
           "relay_tenant_unknown": "中継にそのテナント ID は存在しません。ID をご確認ください。",

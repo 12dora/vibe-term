@@ -231,6 +231,7 @@
         "handshakeFailed": "ハンドシェイク失敗",
         "tmuxUnavailable": "tmux 利用不可",
         "connectionClosed": "切断",
+        "tmux_busy": "ホスト高負荷",
         "unknown": "接続エラー"
       }
     },
@@ -788,7 +789,10 @@
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
         "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。",
-        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。"
+        "PASSWORD_LOGIN_PAUSED": "パスワードでのサインインは一時停止中です。しばらくしてからお試しください。",
+        "POP_REQUIRED": "セッションが無効になりました。もう一度サインインしてください。",
+        "POP_INVALID": "セッションが無効になりました。もう一度サインインしてください。",
+        "RELAY_JOIN_CODE_STALE": "デバイス一覧が変更されたため、この参加コードは無効です。新しく生成してください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {

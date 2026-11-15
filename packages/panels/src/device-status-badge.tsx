@@ -3,20 +3,12 @@ import { cn } from '@vibeterm/ui';
 import { Badge } from '@vibeterm/ui/badge';
 import { AlertCircle, RefreshCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { buildDeviceErrorBadge } from './device-status-badge-model';
 
-const ERROR_TYPE_TO_BADGE_KEY: Record<string, string> = {
-  auth_failed: 'authFailed',
-  agent_unavailable: 'agentUnavailable',
-  agent_no_identity: 'agentNoIdentity',
-  ssh_config_ref_not_supported: 'configRefNotSupported',
-  network_unreachable: 'networkUnreachable',
-  connection_refused: 'connectionRefused',
-  timeout: 'timeout',
-  host_not_found: 'hostNotFound',
-  handshake_failed: 'handshakeFailed',
-  tmux_unavailable: 'tmuxUnavailable',
-  connection_closed: 'connectionClosed',
-};
+const TONE_CLASS = {
+  error: 'border-red-400/40 bg-red-500/10 text-red-700 dark:text-red-300',
+  warning: 'border-amber-400/40 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+} as const;
 
 interface DeviceStatusBadgeProps {
   deviceId: string;
@@ -45,18 +37,13 @@ export function DeviceStatusBadge({ deviceId, className }: DeviceStatusBadgeProp
   }
 
   if (error) {
-    const badgeKey = ERROR_TYPE_TO_BADGE_KEY[error.type] ?? 'unknown';
-    const label = t(`deviceStatus.errorBadge.${badgeKey}` as any);
-    const tooltip = [label, error.message, error.rawMessage].filter(Boolean).join('\n');
+    const { label, tooltip, tone } = buildDeviceErrorBadge(error, (key) => t(key as any));
 
     return (
       <Badge
         variant="outline"
         title={tooltip}
-        className={cn(
-          'h-5 gap-1 border-red-400/40 bg-red-500/10 px-1.5 text-[10px] font-normal text-red-700 dark:text-red-300',
-          className
-        )}
+        className={cn('h-5 gap-1 px-1.5 text-[10px] font-normal', TONE_CLASS[tone], className)}
       >
         <AlertCircle className="h-3 w-3" />
         <span className="truncate max-w-[120px]">{label}</span>

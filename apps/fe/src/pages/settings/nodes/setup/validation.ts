@@ -171,6 +171,7 @@ const KNOWN_ERROR_CODES = new Set([
   'node_revoked',
   'node_exists',
   'join_failed',
+  'join_code_stale',
   'env_write_failed',
   'direct_unsupported',
   'direct_download_failed',

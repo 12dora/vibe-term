@@ -1114,6 +1114,12 @@ describe('错误映射', () => {
     );
   });
 
+  test('二进制校验失败有自己的文案', () => {
+    expect(tunnelErrorKey('binary_checksum_mismatch')).toBe(
+      'settings.remoteAccess.errors.binary_checksum_mismatch'
+    );
+  });
+
   test('Access API 失败带上服务端的原始描述', () => {
     expect(describeTunnelError(t, { code: 'access_api_failed', message: 'token invalid' })).toBe(
       'settings.remoteAccess.errors.access_api_failed:{"message":"token invalid"}'

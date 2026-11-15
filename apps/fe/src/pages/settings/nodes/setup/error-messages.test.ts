@@ -88,6 +88,14 @@ describe('describeSetupError 的中继口径', () => {
     ).toBe('nodes.setup.errors.relay_unreachable');
   });
 
+  test('加入码失效（小写与中继原始大写码）走中继专用键，且不附原因', () => {
+    for (const code of ['join_code_stale', 'RELAY_JOIN_CODE_STALE']) {
+      expect(describeSetupError(t, new SetupApiError(code, 'stale token', 401))).toBe(
+        'nodes.setup.errors.relay.join_code_stale'
+      );
+    }
+  });
+
   test('没有中继专用文案的码回落到通用键', () => {
     expect(describeSetupError(t, new SetupApiError('invalid_url', 'invalid_url', 400))).toBe(
       'nodes.setup.errors.invalid_url'

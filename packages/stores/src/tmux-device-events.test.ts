@@ -449,6 +449,18 @@ describe('handleDeviceEvent', () => {
     expect(h.state().deviceReconnecting['device-1']).toBeUndefined();
   });
 
+  test('tmux_busy 写入 deviceErrors，恢复事件到达后清除', () => {
+    const h = makeHarness();
+    handleDeviceEvent(
+      h.ctx,
+      deviceEvent({ type: 'error', errorType: 'tmux_busy', message: 'Host busy' })
+    );
+    expect(h.state().deviceErrors['device-1']?.type).toBe('tmux_busy');
+    handleDeviceEvent(h.ctx, deviceEvent({ type: 'reconnected' }));
+    expect(h.state().deviceErrors['device-1']).toBeUndefined();
+    expect(h.state().deviceConnected['device-1']).toBe(true);
+  });
+
   test('tmux-missing 无副作用', () => {
     const h = makeHarness();
     handleDeviceEvent(h.ctx, deviceEvent({ type: 'tmux-missing', message: 'no tmux' }));

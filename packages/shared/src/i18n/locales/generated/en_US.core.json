@@ -231,6 +231,7 @@
         "handshakeFailed": "Handshake failed",
         "tmuxUnavailable": "Tmux unavailable",
         "connectionClosed": "Disconnected",
+        "tmux_busy": "Host busy",
         "unknown": "Connection error"
       }
     },
@@ -793,7 +794,10 @@
         "invalidCredentials": "Incorrect username or password.",
         "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
         "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again.",
-        "PASSWORD_LOGIN_PAUSED": "Password sign-in is paused. Try again later."
+        "PASSWORD_LOGIN_PAUSED": "Password sign-in is paused. Try again later.",
+        "POP_REQUIRED": "Your session is no longer valid. Sign in again.",
+        "POP_INVALID": "Your session is no longer valid. Sign in again.",
+        "RELAY_JOIN_CODE_STALE": "This join code is no longer valid because the device list changed. Generate a new one."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
