@@ -22,6 +22,7 @@ export class PaneInputLifecycle {
       },
       onInputTransportReady: () => {
         this.lane.readyTransport();
+        for (const paneId of this.mountedPanes()) this.lane.refreshMouseState(paneId);
         options.onInputTransportReady?.();
       },
       onTerminalOutput: (paneId, bytes) => {
@@ -35,6 +36,8 @@ export class PaneInputLifecycle {
       },
       onSourceMetadata: (event) => {
         options.onSourceMetadata?.(event);
+        if (event.type === 'pane-current-command')
+          this.lane.noteCurrentCommand(event.paneId, event.currentCommand);
         if (event.type === 'window-close') this.lane.retainPanes(hasPane);
       },
       onSnapshot: (payload, revision) => {
@@ -69,10 +72,20 @@ export class PaneInputLifecycle {
   private updateMounted(lease: PaneRetentionConsumerLease, next: Set<string>): void {
     if (this.disposed) return;
     const previous = this.mounted.get(lease);
+    const added = [...next].filter((paneId) => !this.isMounted(paneId));
     this.mounted.set(lease, next);
+    for (const paneId of added) this.lane.refreshMouseState(paneId);
     for (const paneId of previous ?? []) {
       if (!this.isMounted(paneId)) this.lane.dropPane(paneId);
     }
+  }
+
+  private mountedPanes(): Set<string> {
+    const panes = new Set<string>();
+    for (const mounted of this.mounted.values()) {
+      for (const paneId of mounted) panes.add(paneId);
+    }
+    return panes;
   }
 
   private isMounted(paneId: string): boolean {

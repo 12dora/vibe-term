@@ -233,7 +233,7 @@ describe('input lane review regressions', () => {
     h.output('\x1b[?1000;1002h');
     h.send(mouse().repeat(3));
     h.ack(0);
-    h.output('\x1b[?1000l');
+    h.output('\x1b[?1015l');
     h.clock.tick(8);
     expect(h.writes).toHaveLength(2);
     h.ack(1);
@@ -323,7 +323,7 @@ describe('input lane review regressions', () => {
     }
   );
 
-  test('incompatible motion backlog is bounded without merging buttons, release or wheels', () => {
+  test('drag backlog is bounded while hover keeps only the latest report', () => {
     const h = harness();
     h.send(mouse(35));
     const motions = Array.from({ length: 120 }, (_, index) =>
@@ -339,13 +339,14 @@ describe('input lane review regressions', () => {
     }
     expect(h.writes.map((write) => write.text)).toEqual([
       mouse(35),
-      ...motions.slice(0, 8),
+      ...[3, 5, 7, 9, 11, 13, 15].map((col) => mouse(32, col)),
+      mouse(35, 120),
       ...boundary,
     ]);
     h.pacer.dispose();
   });
 
-  test('press and release separate compatible motion groups', () => {
+  test('pending hover collapses across presses and releases without reordering buttons', () => {
     const h = harness();
     const events = [
       mouse(35),
@@ -356,12 +357,17 @@ describe('input lane review regressions', () => {
       mouse(35, 4),
     ];
     h.send(events.join(''));
-    for (let index = 0; index < events.length; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       h.ack(index);
       h.output();
       h.clock.tick(8);
     }
-    expect(h.writes.map((write) => write.text)).toEqual(events);
+    expect(h.writes.map((write) => write.text)).toEqual([
+      mouse(35),
+      mouse(0),
+      mouse(0, 1, 'm'),
+      mouse(35, 4),
+    ]);
     h.pacer.dispose();
   });
 });

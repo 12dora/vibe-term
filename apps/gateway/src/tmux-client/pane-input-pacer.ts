@@ -2,6 +2,12 @@ import { isQueueFullError } from './input-command-window';
 import { InputSubmission } from './input-submission';
 import { MouseReportingScanner } from './mouse-reporting-scanner';
 import { type MouseSequence, splitMouseSequences } from './mouse-sequence';
+import {
+  PaneMouseGate,
+  type PaneMouseLane,
+  type PaneMouseQuery,
+  mouseLaneFields,
+} from './pane-mouse-gate';
 
 export interface InputLaneClock {
   now(): number;
@@ -25,7 +31,7 @@ interface InputEntry {
   reject(error: unknown): void;
 }
 
-interface PaneLane {
+interface PaneLane extends PaneMouseLane {
   pending: InputEntry[];
   active: InputEntry | null;
   inFlight: Set<InputEntry>;
@@ -70,6 +76,8 @@ export interface PaneInputPacerOptions {
    * 能一次消化小块多事件，逐帧等待反而让快速滚动慢一拍。
    */
   outputGate?: boolean;
+  /** 丢弃 pane 未请求的鼠标上报时的调试日志（每 pane 每分钟至多一条） */
+  debug?: (message: string) => void;
 }
 
 export class PaneInputPacer {
@@ -78,6 +86,7 @@ export class PaneInputPacer {
   private disposed = false;
   private transportReady = true;
   private generation = 0;
+  private readonly mouseGate: PaneMouseGate;
 
   constructor(
     private readonly write: (
@@ -93,6 +102,36 @@ export class PaneInputPacer {
     options: PaneInputPacerOptions = {}
   ) {
     this.outputGate = options.outputGate ?? false;
+    const debug = options.debug ?? ((message: string) => console.debug(message));
+    this.mouseGate = new PaneMouseGate({
+      now: () => this.clock.now(),
+      debug,
+      isLive: (paneId, lane) => this.isCurrent(paneId, lane as PaneLane),
+      onDisabled: (paneId, lane) => {
+        this.discardMouse(lane as PaneLane);
+        this.pump(paneId, lane as PaneLane);
+      },
+    });
+  }
+
+  /** pane 未请求而被丢弃的鼠标上报总数（mouse_reports_dropped） */
+  get mouseReportsDropped(): number {
+    return this.mouseGate.mouseReportsDropped;
+  }
+
+  /** 注入按 tmux 标志校准鼠标状态的查询；未注入时状态未知的上报全部放行 */
+  setMouseQuery(query: PaneMouseQuery | null): void {
+    this.mouseGate.setQuery(query);
+  }
+
+  refreshMouseState(paneId: string): void {
+    if (this.disposed || !this.transportReady) return;
+    this.mouseGate.refresh(paneId, this.getLane(paneId));
+  }
+
+  noteCurrentCommand(paneId: string, command: string): void {
+    const lane = this.panes.get(paneId);
+    if (lane && this.isCurrent(paneId, lane)) this.mouseGate.noteCommand(paneId, lane, command);
   }
 
   sendInputBytes(paneId: string, bytes: Uint8Array): Promise<void> {
@@ -102,7 +141,10 @@ export class PaneInputPacer {
       return rejected;
     }
     const lane = this.getLane(paneId);
-    const sequences = splitMouseSequences(bytes);
+    const sequences = splitMouseSequences(bytes)?.filter((mouse) =>
+      this.mouseGate.admit(paneId, lane, mouse)
+    );
+    if (sequences?.length === 0) return Promise.resolve();
     const completions = (sequences ?? [null]).map(
       (mouse) =>
         new Promise<void>((resolve, reject) => {
@@ -111,7 +153,7 @@ export class PaneInputPacer {
             enqueuedAt: this.clock.now(),
             mouse,
             generation: this.generation,
-            submission: new InputSubmission(() => this.isCurrent(paneId, lane)),
+            submission: this.submissionFor(paneId, lane, mouse),
             resolve,
             reject,
           };
@@ -209,10 +251,27 @@ export class PaneInputPacer {
         timerAt: null,
         dropped: 0,
         lastDropLogAt: Number.NEGATIVE_INFINITY,
+        ...mouseLaneFields(),
       };
       this.panes.set(paneId, lane);
     }
     return lane;
+  }
+
+  /**
+   * 连续的键盘/粘贴输入共用一个提交对象，命令窗口才能把仍在等待的 send-keys 合并；
+   * 鼠标输入保留逐条提交对象，丢弃时只撤销对应那一条。
+   */
+  private submissionFor(
+    paneId: string,
+    lane: PaneLane,
+    mouse: MouseSequence | null
+  ): InputSubmission {
+    if (!mouse) {
+      const tail = lane.pending.at(-1) ?? [...lane.inFlight].at(-1);
+      if (tail && !tail.mouse && tail.submission.isValid()) return tail.submission;
+    }
+    return new InputSubmission(() => this.isCurrent(paneId, lane));
   }
 
   private enqueue(paneId: string, lane: PaneLane, entry: InputEntry): void {
@@ -220,6 +279,7 @@ export class PaneInputPacer {
       entry.reject(new Error('tmux input transport changed'));
       return;
     }
+    if (entry.mouse?.kind === 'hover') this.dropPendingHover(lane);
     const previous = lane.pending.at(-1);
     const motion = entry.mouse?.motionKey;
     if (motion && previous === lane.lastMotion && previous?.mouse?.motionKey === motion) {
@@ -239,6 +299,17 @@ export class PaneInputPacer {
     lane.lastMotion = motion ? entry : null;
     lane.pending.push(entry);
     this.pump(paneId, lane);
+  }
+
+  /** 积压时无按键移动只保留最新一条：只描述指针位置，旧的没有意义 */
+  private dropPendingHover(lane: PaneLane): void {
+    if (!lane.pending.some((pending) => pending.mouse?.kind === 'hover')) return;
+    lane.pending = lane.pending.filter((pending) => {
+      if (pending.mouse?.kind !== 'hover') return true;
+      if (pending === lane.lastMotion) lane.lastMotion = null;
+      pending.resolve();
+      return false;
+    });
   }
 
   private discardMouse(lane: PaneLane): void {

@@ -28,6 +28,7 @@ import {
 } from './pane-history-reader';
 import { PaneInputLifecycle } from './pane-input-lifecycle';
 import { PaneInputPacer } from './pane-input-pacer';
+import type { PaneMouseFlags } from './pane-mouse-state';
 import {
   type PaneIdentity,
   type PaneReplayPlan,
@@ -101,6 +102,8 @@ export interface DeviceSessionRuntimeConnection {
     maxOutputBytes: number
   ): Promise<string>;
   probeHostLatency?(): Promise<undefined | 'busy'>;
+  /** 经控制通道读 pane 鼠标标志与前台命令（见 queryPaneMouseFlags） */
+  queryPaneMouse?(paneId: string): Promise<PaneMouseFlags | null>;
   windowMemory?: WindowMemoryTracker | null;
 }
 
@@ -197,6 +200,8 @@ export class DeviceSessionRuntime extends WindowMemoryRuntimeFacade {
       onHostLatencySample: (rttMs, hop) => this.hostLatency.record(rttMs, hop),
       windowMemory: this.windowMemoryRuntime.hooks,
     });
+    const queryPaneMouse = this.connection.queryPaneMouse;
+    this.inputLane.setMouseQuery(queryPaneMouse ? queryPaneMouse.bind(this.connection) : null);
     this.paneHistoryReader = new PaneHistoryReader(this.connection);
     this.screenCapture = new CanonicalScreenCapture({
       getPaneIdentity: (paneId) => this.getPaneIdentity(paneId),
@@ -351,7 +356,13 @@ export class DeviceSessionRuntime extends WindowMemoryRuntimeFacade {
     paneId: string,
     byteLimit: number
   ): Promise<PaneScreenCheckpoint | null> {
-    return this.screenCapture.capture(paneId, byteLimit);
+    const checkpoint = await this.screenCapture.capture(paneId, byteLimit);
+    this.inputLane.refreshMouseState(paneId);
+    return checkpoint;
+  }
+
+  get mouseReportsDropped(): number {
+    return this.inputLane.mouseReportsDropped;
   }
 
   setCustomName(kind: 'window' | 'pane', nativeId: string, name: string | null): void {
