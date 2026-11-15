@@ -4,7 +4,9 @@ import type { CgroupPlacement, PlacementProbe } from '../../tmux/cgroup-placemen
 import {
   type PlacementWiringHost,
   placeCreatedPane,
+  runPlacementSweep,
   startConnectPlacement,
+  stopPlacementSweep,
   withPanePidOutput,
 } from './cgroup-placement-wiring';
 import type { CommandResult } from './types';
@@ -49,6 +51,7 @@ const ok = (stdout: string): CommandResult => ({ exitCode: 0, stdout, stderr: ''
 const SUPPORTED: PlacementProbe = { supported: true, userRoot: '/u', ownCgroup: '/u/s' };
 
 afterEach(() => {
+  stopPlacementSweep('dev-1');
   mock.restore();
 });
 
@@ -111,5 +114,29 @@ describe('created pane helpers', () => {
     expect(await placeCreatedPane(local, undefined, stub.placement)).toBe(0);
     expect(await placeCreatedPane(local, '%8', stub.placement)).toBe(0);
     expect(stub.placed).toEqual([['dev-1', [4321]]]);
+  });
+});
+
+describe('periodic placement sweep', () => {
+  test('places panes from every session while the device is enabled', async () => {
+    const stub = stubPlacement(SUPPORTED);
+    stub.enabled.add('dev-1');
+    const { host: local, calls } = host('[local]', {
+      'list-panes -a -F #{pane_pid}': ok('800\n801\n'),
+    });
+    await runPlacementSweep(local, stub.placement);
+    expect(calls).toEqual(['list-panes -a -F #{pane_pid}']);
+    expect(stub.placed).toEqual([['dev-1', [800, 801]]]);
+  });
+
+  test('a disabled device or a gone server issues nothing more', async () => {
+    const stub = stubPlacement(SUPPORTED);
+    const { host: local, calls } = host('[local]');
+    await runPlacementSweep(local, stub.placement);
+    expect(calls).toEqual([]);
+    stub.enabled.add('dev-1');
+    await runPlacementSweep(local, stub.placement);
+    expect(calls).toEqual(['list-panes -a -F #{pane_pid}']);
+    expect(stub.placed).toEqual([]);
   });
 });

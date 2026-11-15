@@ -3,6 +3,9 @@ import type { CommandResult } from './types';
 
 const LOCAL_LOG_PREFIX = '[local]';
 const PLACEMENT_TMUX_TIMEOUT_MS = 5_000;
+/** 其它客户端直接在同一 tmux 服务端上建的窗口不经过 VibeTerm，靠定期巡检归位。 */
+export const PLACEMENT_SWEEP_INTERVAL_MS = 15_000;
+const sweepTimers = new Map<string, ReturnType<typeof setInterval>>();
 
 export interface PlacementWiringHost {
   deviceId: string;
@@ -53,6 +56,7 @@ async function runConnectPlacement(
     panes.exitCode === 0
       ? await placement.placePanes(host.deviceId, parsePidLines(panes.stdout))
       : 0;
+  startPlacementSweep(host, placement);
   console.info(
     `[tmux] placement server_cgroup=${server.cgroup ?? '-'} panes_slice=${placement.config.workloadSlice} mode=${placement.modeLabel()} server=${server.action} moved_panes=${moved}`
   );
@@ -89,4 +93,46 @@ export function placeCreatedPane(
   const pid = parsePid(rawPid);
   if (pid === null) return Promise.resolve(0);
   return placement.placePanes(host.deviceId, [pid]);
+}
+
+export async function runPlacementSweep(
+  host: PlacementWiringHost,
+  placement: CgroupPlacement
+): Promise<void> {
+  if (!placement.isDeviceEnabled(host.deviceId)) {
+    stopPlacementSweep(host.deviceId);
+    return;
+  }
+  const panes = await host.runTmuxAllowFailure(
+    ['list-panes', '-a', '-F', '#{pane_pid}'],
+    PLACEMENT_TMUX_TIMEOUT_MS
+  );
+  if (panes.exitCode !== 0) {
+    stopPlacementSweep(host.deviceId);
+    return;
+  }
+  await placement.placePanes(host.deviceId, parsePidLines(panes.stdout));
+}
+
+function startPlacementSweep(host: PlacementWiringHost, placement: CgroupPlacement): void {
+  stopPlacementSweep(host.deviceId);
+  let running = false;
+  const timer = setInterval(() => {
+    if (running) return;
+    running = true;
+    void runPlacementSweep(host, placement)
+      .catch(() => undefined)
+      .finally(() => {
+        running = false;
+      });
+  }, PLACEMENT_SWEEP_INTERVAL_MS);
+  (timer as { unref?: () => void }).unref?.();
+  sweepTimers.set(host.deviceId, timer);
+}
+
+export function stopPlacementSweep(deviceId: string): void {
+  const timer = sweepTimers.get(deviceId);
+  if (timer === undefined) return;
+  clearInterval(timer);
+  sweepTimers.delete(deviceId);
 }

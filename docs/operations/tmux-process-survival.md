@@ -159,7 +159,7 @@ ls -la /tmp/tmux-$(id -u)/        # 当前可见的 /tmp 里有没有那个套�
 
 实现见 `apps/gateway/src/tmux/cgroup-placement.ts`：经用户管理器 D-Bus（`busctl --user call … StartTransientUnit`，`PIDs` 属性，`CollectMode=inactive-or-failed`，`Delegate=true`）搬迁现有进程，不重启进程，`pane_pid`、子进程与进程树不变；被搬空的 `tmux-spawn` scope 由 systemd 回收。`StartTransientUnit` 只是排队一个 job，网关每 50 ms 查一次 `/proc/<pid>/cgroup`，最多 1.5 s，确认进程已进新 unit 后再读一次旧 scope 的 `cgroup.procs`，把仍留在旧 scope 的进程（期间新 fork 的）用 `AttachProcessesToUnit` 补进去。`AttachProcessesToUnit` 只接受 delegated unit，所以两类 scope 都带 `Delegate=true`；对 pane scope 的 `set-property MemoryHigh/MemoryMax` 不受影响。只搬当前 uid 的进程。
 
-时机：本机设备每次连上会话后保护 server 并把该 server 上已有的 pane（`list-panes -a`）归位一次；之后网关新建窗口 / 分屏、以及快照里出现新 pane 时逐个归位。其他客户端在**别的会话**里新建的 pane 要等下次连接才归位。归位后窗口内存采样改读 `vibeterm-pane-*.scope`，限额、stop 与孤儿清扫都跟着新 scope 走（scope 的 Description 沿用 tmux 的 `launched by process <server pid>` 格式）。
+时机：本机设备每次连上会话后保护 server 并把该 server 上已有的 pane（`list-panes -a`）归位一次；之后网关新建窗口 / 分屏、以及快照里出现新 pane 时逐个归位。其他客户端直接在同一 server 上新建的 pane（包括别的会话）由每 15 秒一次的 `list-panes -a` 巡检归位。归位后窗口内存采样改读 `vibeterm-pane-*.scope`，限额、stop 与孤儿清扫都跟着新 scope 走（scope 的 Description 沿用 tmux 的 `launched by process <server pid>` 格式）。
 
 环境变量（写进 `app.env`）：
 
