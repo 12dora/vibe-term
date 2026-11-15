@@ -10,6 +10,7 @@ import {
 } from './client';
 import type { DirectDiagnosticsSource } from './direct/types';
 import { PaneSinkRegistry } from './pane-sink-registry';
+import { createPopCloseGate, openSignedSocket } from './socket-pop';
 import { type GatewayTransport, WebSocketGatewayTransport } from './transport';
 
 export interface GatewayConnectionOptions {
@@ -43,22 +44,28 @@ export interface GatewayConnectionOptions {
 
 /**
  * 把关闭码透出给宿主：在 socket 与 client 之间插一层薄壳，
- * 自己占住真 socket 的 `onclose`，先调 `onClose(code)` 再转给 client 的处理函数。
+ * 自己占住真 socket 的 `onclose`，先调 `onClose(code)` 再转给 client 的处理函数（POP 类拒绝除外，见下）。
  * client 侧代码完全不变（它拿到的仍是一个 `WebSocketLike`）。
  */
 function withCloseCode(
   factory: SocketFactory,
   onClose: (code: number, reason: string) => void
 ): SocketFactory {
+  const absorbPopClose = createPopCloseGate();
   return (url) => {
     const socket = factory(url);
     let downstream: ((event?: unknown) => void) | null = null;
     socket.onclose = (event) => {
-      const { code, reason } = (event ?? {}) as { code?: unknown; reason?: unknown };
-      try {
-        onClose(typeof code === 'number' ? code : 1006, typeof reason === 'string' ? reason : '');
-      } catch {
-        // 宿主回调异常不得影响连接收敛
+      const raw = (event ?? {}) as { code?: unknown; reason?: unknown };
+      const code = typeof raw.code === 'number' ? raw.code : 1006;
+      const reason = typeof raw.reason === 'string' ? raw.reason : '';
+      // 持有证明被拒（4401 + POP_*）不是登出：不通知宿主，让客户端按正常重连路径重新签名再连。
+      if (!absorbPopClose(code, reason, url)) {
+        try {
+          onClose(code, reason);
+        } catch {
+          // 宿主回调异常不得影响连接收敛
+        }
       }
       downstream?.(event);
     };
@@ -112,7 +119,8 @@ function withUrlFactory(factory: SocketFactory, wsUrlFactory: () => string): Soc
   return () => factory(wsUrlFactory());
 }
 
-const browserSocketFactory: SocketFactory = (url) => new WebSocket(url) as unknown as WebSocketLike;
+const browserSocketFactory: SocketFactory = (url) =>
+  openSignedSocket(url, (target) => new WebSocket(target) as unknown as WebSocketLike);
 
 export interface GatewayConnection {
   client: BorshWebSocketClient;

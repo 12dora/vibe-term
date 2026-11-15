@@ -1,6 +1,5 @@
 // 会话钥的建立与登录签名实现：argon2id 派生、Ed25519 delegation/login 签名、passkey 仪式。
-// 这些依赖（hash-wasm、@noble/curves、WebAuthn 客户端）都只在用户真的登录时才用到，
-// 因此本模块**不进常驻路径**——`session-key-store.ensureNodeLogin()` 与登录页各自按需加载。
+// 这些依赖（hash-wasm、@noble/curves、WebAuthn 客户端）都只在用户真的登录时才用到，因此本模块**不进常驻路径**——`session-key-store.ensureNodeLogin()` 与登录页各自按需加载。
 
 import { markLoggedIn } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
@@ -49,6 +48,7 @@ import {
   setPasskeyAssertion,
 } from './session-key-store';
 import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-types';
+import { loginWithPop } from './session-pop-client';
 
 /**
  * WebAuthn 断言仪式。真实实现来自 `@vibeterm/api-client`，测试用 `setPasskeyCeremonyForTest()`
@@ -647,7 +647,7 @@ async function signAndLogin(args: {
           }
         : undefined,
   };
-  const result = await api.login(nodeId, body).catch(() => null);
+  const result = await loginWithPop(api, nodeId, body, secrets).catch(() => null);
   if (!result) return { ok: false, code: 'NETWORK_ERROR' };
   return result.ok ? { ok: true } : withRetryAfter({ ok: false, code: result.code }, result);
 }

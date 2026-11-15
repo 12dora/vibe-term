@@ -3,8 +3,16 @@
 //   * `/n/:id/*` 转发回来的 401 `{code:'NODE_LOGIN_REQUIRED', nodeId}` → 只派发事件，
 //     由该 node 所在的行/侧边栏显示「登录此节点」，绝不把整页踢去登录页。
 //   * 登录仪式自身的 401 → 什么都不做，见 `isLoginCeremonyPath`。
+//   * `POP_REQUIRED` / `POP_INVALID`：能替该 node 签名时不是「登出」（`ApiClient` 已重签重试过一次，
+//     剩下的错误交给调用方展示）；会话钥已丢失或该 node 的会话不是这把钥登的，与会话过期同义，走下面同样的登录流程。
 
-import { type ResponseHook, addResponseHook, urlPathname } from '../client';
+import {
+  type ResponseHook,
+  addResponseHook,
+  getRequestPopProvider,
+  isPopErrorCode,
+  urlPathname,
+} from '../client';
 import { SELF_NODE_ID, isValidNodeId } from '../node-url';
 import { NODE_LOGIN_REQUIRED } from './types';
 
@@ -169,6 +177,7 @@ export async function handleUnauthorized(res: Response, path: string): Promise<v
     emit({ nodeId: resolveNodeLoginTarget(body.nodeId, path), scope: 'node', path });
     return;
   }
+  if (isPopErrorCode(body.code) && getRequestPopProvider()?.canSign(path)) return;
   const nodeId = nodeIdFromPath(path);
   if (nodeId !== SELF_NODE_ID) {
     // 没有 code 的转发 401 同样只影响该 node。

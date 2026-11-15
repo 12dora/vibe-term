@@ -1,8 +1,9 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { BorshWebSocketClient, defaultWsUrl } from './client';
 import { createGatewayConnection } from './connection';
 import { DEFAULT_PANE_OUTPUT_FLUSH_MS } from './pane-output-coalescer';
 import type { PaneSink } from './pane-sink-registry';
+import { setWsPopRecovery } from './socket-pop';
 import { createSharedGatewayTransport } from './transport';
 
 function collectingSink(outputs: Uint8Array[]): PaneSink {
@@ -119,6 +120,66 @@ describe('onClose 关闭码回调', () => {
     expect(codes).toEqual([4401]);
     expect(conn.client.getState()).not.toBe('READY');
     conn.dispose();
+  });
+
+  describe('4401 + POP_*：持有证明被拒不是登出', () => {
+    function connect(onClose: (code: number, reason: string) => void) {
+      const sockets: ReturnType<typeof fakeSocket>[] = [];
+      const conn = createGatewayConnection({
+        wsUrl: 'ws://x/ws',
+        socketFactory: () => {
+          const socket = fakeSocket();
+          sockets.push(socket);
+          return socket;
+        },
+        onClose,
+      });
+      conn.client.connect();
+      const drop = (index: number, event: unknown) =>
+        (sockets[index] as unknown as { onclose: (event: unknown) => void }).onclose(event);
+      return { conn, sockets, drop };
+    }
+
+    afterEach(() => setWsPopRecovery(null));
+
+    test('钥还能签：不通知宿主（宿主不会停连接 / 判登出），照常交给 client 重连', () => {
+      setWsPopRecovery(() => true);
+      const codes: Array<[number, string]> = [];
+      const { conn, drop } = connect((code, reason) => codes.push([code, reason]));
+      drop(0, { code: 4401, reason: 'POP_INVALID' });
+      expect(codes).toEqual([]);
+      expect(conn.client.getState()).not.toBe('READY');
+      conn.dispose();
+    });
+
+    test('钥签不了：照旧上报 4401，由宿主走会话失效流程', () => {
+      setWsPopRecovery(() => false);
+      const codes: Array<[number, string]> = [];
+      const { conn, drop } = connect((code, reason) => codes.push([code, reason]));
+      drop(0, { code: 4401, reason: 'POP_REQUIRED' });
+      expect(codes).toEqual([[4401, 'POP_REQUIRED']]);
+      conn.dispose();
+    });
+
+    test('窗口内第二次仍被拒：上报给宿主', () => {
+      setWsPopRecovery(() => true);
+      const codes: number[] = [];
+      const { conn, drop } = connect((code) => codes.push(code));
+      drop(0, { code: 4401, reason: 'POP_INVALID' });
+      drop(0, { code: 4401, reason: 'POP_INVALID' });
+      expect(codes).toEqual([4401]);
+      conn.dispose();
+    });
+
+    test('无原因的 4401 与其它关闭码不受影响', () => {
+      setWsPopRecovery(() => true);
+      const codes: number[] = [];
+      const { conn, drop } = connect((code) => codes.push(code));
+      drop(0, { code: 4401 });
+      drop(0, { code: 1006, reason: 'POP_INVALID' });
+      expect(codes).toEqual([4401, 1006]);
+      conn.dispose();
+    });
   });
 
   test('取不到 code 时按 1006 上报', () => {

@@ -19,6 +19,7 @@ import {
   defaultAuthApi,
 } from '@vibeterm/api-client/auth/index';
 import { resetDirectAuthorizeBreakers } from '@vibeterm/ws-client/direct/direct-authorize-breaker';
+import { startNavTicketRefresher, whenNavTicketsReady } from './nav-ticket-refresher';
 import { acquireLoginLane, releaseLoginLane, resetLoginLanesForTest } from './node-login-lanes';
 import { noteNodeLoginFailure, noteNodeLoginSuccess } from './node-login-retry';
 import {
@@ -28,6 +29,7 @@ import {
   savePersistedSession,
 } from './session-key-persistence';
 import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-types';
+import { clearSessionPop, installSessionPop } from './session-pop-client';
 
 export { NODE_LOGIN_FANOUT } from './node-login-lanes';
 export type {
@@ -42,6 +44,10 @@ export type {
 // ---------------------------------------------------------------------------
 
 let current: SessionKeySecrets | null = null;
+
+// 持有证明（PoP）的签名与导航凭证续期随常驻的会话钥模块一并挂上；真正的签名实现按需再加载。
+installSessionPop();
+startNavTicketRefresher();
 
 /**
  * 这一份文档有没有做过「从 IndexedDB 恢复」。
@@ -91,7 +97,8 @@ function replacedSessionInfo(): SessionKeyInfo | null {
 export function getSessionKey(): SessionKeyInfo | null {
   if (!current) return replacedSessionInfo();
   if (Date.now() >= current.info.expiresAt) {
-    void clearSessionKey();
+    // delegation 过期只丢 delegation：PoP 钥要活到 node 会话的硬上限，不在这里清。
+    void dropSession();
     return null;
   }
   return current.info;
@@ -119,6 +126,10 @@ export function whenSessionReplacementSettled(): Promise<void> {
  * `getSessionKey()` 过期清理等）不 await 也没关系。
  */
 export function clearSessionKey(): Promise<boolean> {
+  return Promise.all([dropSession(), clearSessionPop()]).then(([a, b]) => a && b);
+}
+
+function dropSession(): Promise<boolean> {
   if (pendingReplacement) pendingReplacement.cancelled = true;
   generation += 1;
   resetDirectAuthorizeBreakers();
@@ -145,8 +156,14 @@ export function clearSessionKey(): Promise<boolean> {
 export function restoreSessionKey(): Promise<SessionKeyInfo | null> {
   const live = getSessionKey();
   if (live) return Promise.resolve(live);
-  if (!restorePromise) restorePromise = readPersistedSession();
+  if (!restorePromise) restorePromise = readPersistedSession().then(awaitNavTickets);
   return restorePromise;
+}
+
+/** 恢复出会话后，工作区挂载前先等首轮导航凭证，免得图片 / 预览在 cookie 到位前先 401。 */
+async function awaitNavTickets(info: SessionKeyInfo | null): Promise<SessionKeyInfo | null> {
+  if (info) await whenNavTicketsReady();
+  return info;
 }
 
 async function readPersistedSession(): Promise<SessionKeyInfo | null> {

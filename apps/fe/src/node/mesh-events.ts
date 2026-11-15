@@ -4,6 +4,7 @@
 // 该连接**只属于 entry（self）**：mesh 事件是入口对整张 mesh 的视图，不按 node 分身。
 
 import { handleGlobalUnauthorized } from '@vibeterm/api-client/auth/index';
+import { createPopCloseGate } from '@vibeterm/ws-client/socket-pop';
 import {
   type EnrollRedeemedPayload,
   type NodeEventPayload,
@@ -11,6 +12,7 @@ import {
   decodeMeshFrame,
   encodeRtcSignal,
 } from './mesh-events-codec';
+import { closeCodeOf, closeReasonOf, openMeshSocket, toBytes } from './mesh-events-socket';
 import { type RecoverySubscribe, isPageVisible, onPageRecovery } from './mesh-recovery';
 import {
   MESH_WS_PING_INTERVAL_MS,
@@ -53,6 +55,8 @@ export interface MeshSocketLike {
   send(data: Uint8Array): void;
   close(): void;
 }
+
+export { openMeshSocket } from './mesh-events-socket';
 
 export type MeshSocketFactory = (url: string) => MeshSocketLike;
 
@@ -172,25 +176,6 @@ function onPageshow(listener: () => void): () => void {
   return () => g.removeEventListener?.('pageshow', listener);
 }
 
-function closeCodeOf(event: unknown): number | null {
-  const code = (event as { code?: unknown } | null | undefined)?.code;
-  return typeof code === 'number' ? code : null;
-}
-
-function defaultSocketFactory(url: string): MeshSocketLike {
-  const ctor = (globalThis as { WebSocket?: new (url: string) => MeshSocketLike }).WebSocket;
-  if (!ctor) throw new Error('WebSocket unavailable');
-  const socket = new ctor(url);
-  socket.binaryType = 'arraybuffer';
-  return socket;
-}
-
-function toBytes(data: unknown): Uint8Array | null {
-  if (data instanceof Uint8Array) return data;
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  return null;
-}
-
 /**
  * `/mesh/ws` 订阅：指数退避重连、NODE_EVENT 多播、RTC_SIGNAL 单一 handler（Phase 3 的钩子）。
  *
@@ -234,6 +219,7 @@ export class MeshEventSource {
   private openedAt = 0;
   private sawValidFrame = false;
   private unauthorizedFlag = false;
+  private readonly absorbPopClose: ReturnType<typeof createPopCloseGate>;
 
   private readonly nodeListeners = new Set<(event: NodeEventPayload) => void>();
   private readonly statusListeners = new Set<() => void>();
@@ -242,7 +228,7 @@ export class MeshEventSource {
 
   constructor(options: MeshEventSourceOptions = {}) {
     this.url = options.url ?? meshWsUrl();
-    this.socketFactory = options.socketFactory ?? defaultSocketFactory;
+    this.socketFactory = options.socketFactory ?? openMeshSocket;
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
     this.stableAfterMs = options.stableAfterMs ?? DEFAULT_STABLE_AFTER_MS;
@@ -253,6 +239,7 @@ export class MeshEventSource {
       ((handle) => (globalThis as typeof global).clearTimeout(handle as never));
     this.random = options.random ?? Math.random;
     this.now = options.nowFn ?? Date.now;
+    this.absorbPopClose = createPopCloseGate(() => this.now());
     this.onUnauthorized = options.onUnauthorized ?? (() => handleGlobalUnauthorized('/mesh/ws'));
     this.visibleMaxDelayMs = options.visibleMaxDelayMs ?? DEFAULT_VISIBLE_MAX_DELAY_MS;
     this.recovery = options.recovery ?? onPageRecovery;
@@ -529,7 +516,10 @@ export class MeshEventSource {
       this.liveness.stop();
       const wasConnected = this.connectedFlag;
       this.setConnected(false);
-      if (closeCodeOf(event) === WS_UNAUTHORIZED_CLOSE_CODE) {
+      const code = closeCodeOf(event);
+      // 持有证明被拒不是会话失效：按普通关闭走退避重连（重连会重新签名）；签不了才落到下面的未授权分支。
+      const popRetry = this.absorbPopClose(code ?? 0, closeReasonOf(event), this.url);
+      if (code === WS_UNAUTHORIZED_CLOSE_CODE && !popRetry) {
         // 会话已失效：继续重连只会被反复关掉，必须停下并派发一次全局未授权。
         this.started = false;
         this.unauthorizedFlag = true;

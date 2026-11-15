@@ -37,6 +37,8 @@ const SHARED: Record<string, string> = {
   CHALLENGE_CONSUMED: 'auth.errors.CHALLENGE_CONSUMED',
   CHALLENGE_MISMATCH: 'auth.errors.CHALLENGE_MISMATCH',
   KEY_LOG_FORK: 'auth.errors.KEY_LOG_FORK',
+  POP_REQUIRED: 'auth.errors.POP_REQUIRED',
+  POP_INVALID: 'auth.errors.POP_INVALID',
 };
 
 /**

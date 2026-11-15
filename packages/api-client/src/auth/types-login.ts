@@ -36,6 +36,8 @@ export interface AuthLoginRequest {
     /** base64url(borsh(PasskeyAssertion)) */
     sig: string;
   };
+  /** 会话钥以不可导出形态持久化在本机、可在会话全程逐请求签名时为 true：服务端据此要求该会话带持有证明。 */
+  pop?: true;
 }
 
 /**

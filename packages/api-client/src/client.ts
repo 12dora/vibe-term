@@ -1,6 +1,7 @@
 // REST 客户端核心：baseUrl 注入 + 可选 fetch-like transport + 统一错误解析。
 // 端点函数一律以 `client: ApiClient = defaultApiClient` 收尾（单实例宿主零改动，多实例宿主按连接注入）。
 
+import { POP_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { adaptiveDeadlineMs } from '@vibeterm/shared/net';
 import { NODE_LOGIN_REQUIRED } from './auth/types';
 import { type UploadInit, type XhrCtor, xhrUpload } from './xhr-upload';
@@ -119,6 +120,88 @@ function runResponseHooks(res: Response, ctx: ResponseHookContext): void {
   }
 }
 
+/**
+ * 会话持有证明（PoP）提供方：宿主持有会话钥时注册，`ApiClient` 在每次发送前向它要证明头。
+ * 没有注册（或返回 null）的请求一律原样发出。
+ */
+export interface RequestPopProvider {
+  /** 该请求要带的 `x-vibeterm-pop` 值；同步返回 null = 不需要证明。 */
+  sign(method: string, url: string): Promise<string | null> | null;
+  /**
+   * 能否替该 URL 所属的 node 签名。不能（钥已丢失，或该 node 的会话不是用这把钥登录的）时，
+   * POP 类 401 与「会话过期」同义，由会话拦截器走重新登录流程。
+   */
+  canSign(url: string): boolean;
+}
+
+export const POP_REQUIRED = 'POP_REQUIRED';
+export const POP_INVALID = 'POP_INVALID';
+
+export function isPopErrorCode(code: unknown): boolean {
+  return code === POP_REQUIRED || code === POP_INVALID;
+}
+
+let popProvider: RequestPopProvider | null = null;
+
+export function setRequestPopProvider(provider: RequestPopProvider | null): void {
+  popProvider = provider;
+}
+
+export function getRequestPopProvider(): RequestPopProvider | null {
+  return popProvider;
+}
+
+async function isPopRejection(res: Response): Promise<boolean> {
+  if (res.status !== 401) return false;
+  try {
+    const body = (await res.clone().json()) as { code?: unknown } | null;
+    return isPopErrorCode(body?.code);
+  } catch {
+    return false;
+  }
+}
+
+function isReplayableBody(body: unknown): boolean {
+  return typeof ReadableStream === 'undefined' || !(body instanceof ReadableStream);
+}
+
+async function retryOnPopRejection(
+  provider: RequestPopProvider,
+  target: { method: string; url: string },
+  res: Response,
+  send: (pop: string | null) => Promise<Response>
+): Promise<Response> {
+  if (!(await isPopRejection(res))) return res;
+  const proof = await provider.sign(target.method, target.url);
+  return proof === null ? res : send(proof);
+}
+
+/**
+ * 逐次尝试签名：每次发送都重新签（时间戳 + 一次性 nonce），POP 类 401 在钥还在时重签重发一次。
+ * 没有提供方 / 无需证明时与直接发送完全一致，不引入额外等待。
+ */
+function sendSigned(
+  method: string,
+  url: string,
+  replayable: boolean,
+  send: (pop: string | null) => Promise<Response>
+): Promise<Response> {
+  const provider = popProvider;
+  if (!provider) return send(null);
+  const first = provider.sign(method, url);
+  const attempt = first === null ? send(null) : first.then(send);
+  if (!replayable) return attempt;
+  return attempt.then((res) =>
+    res.status === 401 ? retryOnPopRejection(provider, { method, url }, res, send) : res
+  );
+}
+
+function withPopHeader(headers: HeadersInit | undefined, pop: string): Headers {
+  const next = new Headers(headers);
+  next.set(POP_HEADER, pop);
+  return next;
+}
+
 export class ApiClient {
   private ewmaMs: number | null = null;
 
@@ -149,8 +232,14 @@ export class ApiClient {
         };
     const url = this.url(path);
     // 每次调用时读取 globalThis.fetch，禁止在模块加载或构造时捕获。
-    return this.dispatch(path, { method: request.method ?? 'GET', purpose }, () =>
-      this.transport ? this.transport(url, nextInit) : globalThis.fetch(url, nextInit)
+    const method = request.method ?? 'GET';
+    const replayable = isReplayableBody(request.body);
+    return this.dispatch(path, { method, purpose }, () =>
+      sendSigned(method, url, replayable, (pop) => {
+        const signed =
+          pop === null ? nextInit : { ...nextInit, headers: withPopHeader(nextInit.headers, pop) };
+        return this.transport ? this.transport(url, signed) : globalThis.fetch(url, signed);
+      })
     );
   }
 
@@ -167,7 +256,15 @@ export class ApiClient {
     if (!Xhr) return this.uploadViaFetch(path, init);
     const url = this.url(path);
     const meta: RequestMeta = { method: init.method ?? 'POST', purpose: init.purpose };
-    return this.dispatch(path, meta, () => xhrUpload(Xhr, url, init));
+    return this.dispatch(path, meta, () =>
+      sendSigned(meta.method, url, true, (pop) =>
+        xhrUpload(
+          Xhr,
+          url,
+          pop === null ? init : { ...init, headers: { ...init.headers, [POP_HEADER]: pop } }
+        )
+      )
+    );
   }
 
   private async uploadViaFetch(path: string, init: UploadInit): Promise<Response> {

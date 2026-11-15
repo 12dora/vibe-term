@@ -1,6 +1,8 @@
 // WS 传输层的最小契约与缺省实现：端点推导、readyState 常量、socket 工厂、字节视图转换。
 // 与协议、连接状态都无关，独立于 `client.ts` 的门面存在。
 
+import { openSignedSocket } from './socket-pop';
+
 // 惰性求值：允许在非浏览器环境 import 本模块，也允许宿主在构造时注入自定义端点
 export function defaultWsUrl(): string {
   return `${typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${typeof window !== 'undefined' ? window.location.host : ''}/ws`;
@@ -31,7 +33,7 @@ export type SocketFactory = (url: string) => WebSocketLike;
 // DOM 的 onmessage 事件参数是 MessageEvent，在 strictFunctionTypes 下与 WebSocketLike 的
 // 结构化参数互不可赋值（参数逆变）。把这层不兼容收敛在此一处断言，不向接口撒 any。
 export const defaultSocketFactory: SocketFactory = (url) =>
-  new WebSocket(url) as unknown as WebSocketLike;
+  openSignedSocket(url, (target) => new WebSocket(target) as unknown as WebSocketLike);
 
 /** 屏障内部一律用 Uint8Array；交回 dispatcher 时零拷贝还原成 ArrayBuffer。 */
 export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {

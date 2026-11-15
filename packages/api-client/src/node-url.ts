@@ -127,6 +127,23 @@ export function nodeWsUrl(nodeId: string | null | undefined, options?: NodeWsUrl
   return `${scheme}//${loc.host}${path}${query}`;
 }
 
+// 与 `@vibeterm/shared/auth` 的 POP_QUERY_PARAM 同值；不直接 import，免得把整个椭圆曲线依赖带进常驻路径。
+const POP_QUERY_PARAM = 'pop';
+
+/** 把会话证明拼进 WS 升级 URL 的 `pop` 查询参数；其余参数保持原顺序与编码，已有的 `pop` 被替换。 */
+export function withPopParam(wsUrl: string, proof: string): string {
+  const hashAt = wsUrl.indexOf('#');
+  const base = hashAt === -1 ? wsUrl : wsUrl.slice(0, hashAt);
+  const hash = hashAt === -1 ? '' : wsUrl.slice(hashAt);
+  const queryAt = base.indexOf('?');
+  const head = queryAt === -1 ? base : base.slice(0, queryAt);
+  const kept = (queryAt === -1 ? '' : base.slice(queryAt + 1))
+    .split('&')
+    .filter((part) => part.length > 0 && part.split('=', 1)[0] !== POP_QUERY_PARAM);
+  kept.push(`${POP_QUERY_PARAM}=${encodeURIComponent(proof)}`);
+  return `${head}?${kept.join('&')}${hash}`;
+}
+
 /**
  * 一个 `GatewayConnection` 的 ws URL 来源：**每建一条 socket 换一个 nonce**。
  *

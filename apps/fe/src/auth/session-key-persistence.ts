@@ -13,6 +13,11 @@ import type { Delegation } from '@vibeterm/shared/auth';
 import type { SessionKeyInfo } from './session-key-types';
 
 const DB_NAME = 'vibeterm-auth';
+/**
+ * 持有证明（PoP）用的会话钥单独存一个库：它的寿命是会话的 7 天硬上限，而上面那条记录的寿命是
+ * delegation 的 18 小时，两者不能共用一条记录，也不能让改名搬运逻辑碰到它。
+ */
+const POP_DB_NAME = 'vibeterm-auth-pop';
 /** 改名前的库名。首次访问时把会话记录搬过来，搬完删掉，失败就当没有持久化（用户重登）。 */
 const LEGACY_DB_NAME = 'tmex-auth';
 const STORE_NAME = 'session';
@@ -36,6 +41,17 @@ export interface PersistedSession {
   passkeyCredentialId?: string | null;
   passkeySig?: Uint8Array | null;
 }
+
+export interface PersistedPopKey {
+  version: number;
+  /** 不可导出的 `sk_sess`（与登录时同一把）。 */
+  privateKey: CryptoKey;
+  sessPk: Uint8Array;
+  /** nodeId → 该节点会话的硬过期时刻（ms）；钥保留到最晚的那一个。 */
+  nodes: Record<string, number>;
+}
+
+export const PERSISTED_POP_VERSION = 1;
 
 function factory(): IDBFactory | null {
   try {
@@ -185,9 +201,9 @@ export function resetLegacyDbMigrationForTest(): void {
   legacyMigration = null;
 }
 
-async function openDb(): Promise<IDBDatabase | null> {
-  await ensureLegacyMigration();
-  return (await rawOpen(DB_NAME, createSessionStore))?.db ?? null;
+async function openDb(dbName: string): Promise<IDBDatabase | null> {
+  if (dbName === DB_NAME) await ensureLegacyMigration();
+  return (await rawOpen(dbName, createSessionStore))?.db ?? null;
 }
 
 type TxOutcome<T> = { ok: true; value: T } | { ok: false; value: null };
@@ -204,9 +220,10 @@ const TX_FAILED = { ok: false, value: null } as const;
  */
 async function withStore<T>(
   mode: IDBTransactionMode,
-  run: (store: IDBObjectStore) => IDBRequest
+  run: (store: IDBObjectStore) => IDBRequest,
+  dbName: string = DB_NAME
 ): Promise<TxOutcome<T | null>> {
-  const db = await openDb();
+  const db = await openDb(dbName);
   if (!db) return TX_FAILED;
   const needsCommit = mode === 'readwrite';
   try {
@@ -276,6 +293,50 @@ export function clearPersistedSession(): Promise<boolean> {
     const outcome = await withStore('readwrite', (store) => store.delete(RECORD_KEY));
     return outcome.ok;
   });
+}
+
+/** `true` = 事务已提交。 */
+export function savePersistedPopKey(record: PersistedPopKey): Promise<boolean> {
+  return enqueue(async () => {
+    const outcome = await withStore(
+      'readwrite',
+      (store) => store.put(record, RECORD_KEY),
+      POP_DB_NAME
+    );
+    return outcome.ok;
+  });
+}
+
+export function loadPersistedPopKey(): Promise<PersistedPopKey | null> {
+  return enqueue(async () => {
+    const outcome = await withStore<PersistedPopKey | undefined>(
+      'readonly',
+      (store) => store.get(RECORD_KEY),
+      POP_DB_NAME
+    );
+    const record = outcome.ok ? outcome.value : null;
+    return isUsablePopRecord(record) ? record : null;
+  });
+}
+
+/** `true` = 删除已提交；登出必须等它，否则下一个 document 还能用这把钥签请求。 */
+export function clearPersistedPopKey(): Promise<boolean> {
+  return enqueue(async () => {
+    const outcome = await withStore('readwrite', (store) => store.delete(RECORD_KEY), POP_DB_NAME);
+    return outcome.ok;
+  });
+}
+
+function isUsablePopRecord(record: PersistedPopKey | null | undefined): record is PersistedPopKey {
+  if (!record || typeof record !== 'object' || record.version !== PERSISTED_POP_VERSION) {
+    return false;
+  }
+  const key = record.privateKey as CryptoKey | undefined;
+  if (!key || typeof key !== 'object' || key.extractable !== false) return false;
+  if (!(record.sessPk instanceof Uint8Array)) return false;
+  const nodes = record.nodes as unknown;
+  if (!nodes || typeof nodes !== 'object') return false;
+  return Object.values(nodes as Record<string, unknown>).every((at) => typeof at === 'number');
 }
 
 /** 结构不对（换过格式 / 被人塞了别的东西）一律当成没有，不去猜。 */

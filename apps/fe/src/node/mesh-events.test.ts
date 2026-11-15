@@ -1,8 +1,9 @@
 // `/mesh/ws` 帧解码与重连退避。
 
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
 import { encodeBase64url } from '@vibeterm/shared/auth';
+import { setWsPopRecovery } from '@vibeterm/ws-client/socket-pop';
 import {
   type EnrollRedeemedPayload,
   KIND_ENROLL_REDEEMED,
@@ -101,8 +102,8 @@ class FakeSocket implements MeshSocketLike {
   emit(data: unknown): void {
     this.onmessage?.({ data });
   }
-  drop(code?: number): void {
-    this.onclose?.(code === undefined ? {} : { code });
+  drop(code?: number, reason?: string): void {
+    this.onclose?.(code === undefined ? {} : { code, ...(reason === undefined ? {} : { reason }) });
   }
 }
 
@@ -514,6 +515,56 @@ describe('MeshEventSource', () => {
     expect(timers).toHaveLength(0);
     expect(source.unauthorized).toBe(true);
     expect(source.connected).toBe(false);
+  });
+
+  describe('4401 + POP_*（持有证明被拒，不是登出）', () => {
+    afterEach(() => setWsPopRecovery(null));
+
+    test('钥还能签：不派发未授权，按退避重连（重连重新签名）', () => {
+      setWsPopRecovery(() => true);
+      const { source, sockets, timers, unauthorized } = harness();
+      source.start();
+      sockets[0].open();
+      sockets[0].drop(4401, 'POP_INVALID');
+      expect(unauthorized).toHaveLength(0);
+      expect(source.unauthorized).toBe(false);
+      expect(timers).toHaveLength(1);
+      timers.at(-1)?.fn();
+      expect(sockets).toHaveLength(2);
+      source.stop();
+    });
+
+    test('窗口内第二次仍被拒：落到原有的会话失效流程', () => {
+      setWsPopRecovery(() => true);
+      const { source, sockets, timers, unauthorized } = harness();
+      source.start();
+      sockets[0].open();
+      sockets[0].drop(4401, 'POP_REQUIRED');
+      timers.at(-1)?.fn();
+      sockets[1].open();
+      sockets[1].drop(4401, 'POP_REQUIRED');
+      expect(unauthorized).toHaveLength(1);
+      expect(source.unauthorized).toBe(true);
+    });
+
+    test('钥签不了：与会话过期同义，走未授权', () => {
+      setWsPopRecovery(() => false);
+      const { source, sockets, unauthorized } = harness();
+      source.start();
+      sockets[0].open();
+      sockets[0].drop(4401, 'POP_INVALID');
+      expect(unauthorized).toHaveLength(1);
+      expect(source.unauthorized).toBe(true);
+    });
+
+    test('没有原因的 4401 仍是会话失效', () => {
+      setWsPopRecovery(() => true);
+      const { source, sockets, unauthorized } = harness();
+      source.start();
+      sockets[0].open();
+      sockets[0].drop(4401);
+      expect(unauthorized).toHaveLength(1);
+    });
   });
 
   test('退避有上限，且带 [0.5,1] 抖动', () => {
