@@ -17,26 +17,26 @@ import {
 } from '@vibeterm/shared/auth';
 import { POP_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { openSignedSocket, setWsUrlSigner } from '@vibeterm/ws-client/socket-pop';
-import type { PersistedPopKey } from './session-key-persistence';
+import type { PersistedPopState } from './session-key-persistence';
 import type { SessionKeySecrets } from './session-key-types';
 import {
   POP_SESSION_HARD_TTL_MS,
   clearSessionPop,
   installSessionPop,
   loadPopState,
-  loginWithPop,
   onPopNodesChange,
   popNodeIds,
   resetSessionPopForTest,
   setPopStorageForTest,
 } from './session-pop-client';
+import { loginWithPop, popKeyId } from './session-pop-login';
 
 const NODE_B = 'b'.repeat(32);
 const NODE_C = 'c'.repeat(32);
 
 interface Disk {
-  record: PersistedPopKey | null;
-  saves: PersistedPopKey[];
+  record: PersistedPopState | null;
+  saves: PersistedPopState[];
   clears: number;
   failSave: boolean;
 }
@@ -123,7 +123,9 @@ describe('登录声明 pop', () => {
     const { body } = await login('self');
     expect(body.pop).toBe(true);
     expect(popNodeIds()).toEqual(['self']);
-    expect(disk.record?.nodes.self).toBeGreaterThan(Date.now() + POP_SESSION_HARD_TTL_MS - 5_000);
+    expect(disk.record?.nodes.self?.expiresAt).toBeGreaterThan(
+      Date.now() + POP_SESSION_HARD_TTL_MS - 5_000
+    );
   });
 
   test('@noble 回退钥（没有 CryptoKey）：不声明、不记录', async () => {
@@ -150,13 +152,6 @@ describe('登录声明 pop', () => {
     await login('self');
     await login(NODE_B);
     expect(popNodeIds().sort()).toEqual(['self', NODE_B].sort());
-  });
-
-  test('换了一把钥（重新登录）：旧集合清空重来', async () => {
-    await login('self');
-    const other = await generateWebCryptoEd25519KeyPair();
-    await login(NODE_B, secrets({ sessKey: other.privateKey, sessPk: other.publicKey }));
-    expect(popNodeIds()).toEqual([NODE_B]);
   });
 });
 
@@ -225,7 +220,9 @@ describe('请求签名', () => {
       return { readyState: 1 } as never;
     });
     expect(shim.readyState).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    for (let i = 0; i < 50 && opened === ''; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
     const proof = new URL(opened).searchParams.get('pop');
     expect(opened).toBe(withPopParam(url, proof as string));
     const target = popTargetFromUrl('GET', '/ws?cid=abc');
@@ -243,12 +240,99 @@ describe('请求签名', () => {
   });
 });
 
+async function otherSecrets() {
+  const pair = await generateWebCryptoEd25519KeyPair();
+  return { pair, secrets: secrets({ sessKey: pair.privateKey, sessPk: pair.publicKey }) };
+}
+
+describe('钥按 node 绑定', () => {
+  test('新 node 用新钥登录：旧 node 仍用旧钥签名，新 node 用新钥签名', async () => {
+    await login('self');
+    const other = await otherSecrets();
+    await login(NODE_B, other.secrets);
+    expect(popNodeIds().sort()).toEqual(['self', NODE_B].sort());
+    expect(Object.keys(disk.record?.keys ?? {})).toHaveLength(2);
+
+    const selfProof = await signOf('GET', '/api/x');
+    const nodeProof = await signOf('GET', `/n/${NODE_B}/api/x`);
+    const target = popTargetFromUrl('GET', '/api/x');
+    expect(verifyPop(keyPair.publicKey, selfProof, target).ok).toBe(true);
+    expect(verifyPop(other.pair.publicKey, selfProof, target).ok).toBe(false);
+    expect(verifyPop(other.pair.publicKey, nodeProof, target).ok).toBe(true);
+    expect(verifyPop(keyPair.publicKey, nodeProof, target).ok).toBe(false);
+  });
+
+  test('新钥登录失败（响应不成功）：已有 node 与钥原样保留，新钥不留盘', async () => {
+    await login('self');
+    const before = JSON.stringify(Object.keys(disk.record?.keys ?? {}));
+    const other = await otherSecrets();
+    const { body } = await login(NODE_B, other.secrets, false);
+    expect(body.pop).toBe(true);
+    expect(popNodeIds()).toEqual(['self']);
+    expect(JSON.stringify(Object.keys(disk.record?.keys ?? {}))).toBe(before);
+    expect(disk.record?.nodes.self?.pk).toBe(popKeyId(keyPair.publicKey));
+    const proof = await signOf('GET', '/api/x');
+    expect(verifyPop(keyPair.publicKey, proof, popTargetFromUrl('GET', '/api/x')).ok).toBe(true);
+  });
+
+  test('登录请求抛错（如取消通行密钥、网络断开）同样不动已有状态', async () => {
+    await login('self');
+    const other = await otherSecrets();
+    const api = { login: () => Promise.reject(new Error('offline')) } as unknown as AuthApi;
+    await expect(loginWithPop(api, NODE_B, baseBody, other.secrets)).rejects.toThrow('offline');
+    expect(popNodeIds()).toEqual(['self']);
+    expect(Object.keys(disk.record?.keys ?? {})).toEqual([popKeyId(keyPair.publicKey)]);
+  });
+
+  test('第一次登录就失败：盘上不留任何记录', async () => {
+    await login('self', secrets(), false);
+    expect(popNodeIds()).toEqual([]);
+    expect(disk.record).toBeNull();
+  });
+
+  test('钥在最后一个引用它的 node 消失时才删', async () => {
+    await login('self');
+    await login(NODE_B);
+    const other = await otherSecrets();
+    await login(NODE_C, other.secrets);
+    const idA = popKeyId(keyPair.publicKey);
+    const idB = popKeyId(other.pair.publicKey);
+    expect(Object.keys(disk.record?.keys ?? {}).sort()).toEqual([idA, idB].sort());
+
+    handleNodeLoginRequired('self');
+    expect(Object.keys(disk.record?.keys ?? {}).sort()).toEqual([idA, idB].sort());
+    handleNodeLoginRequired(NODE_B);
+    expect(Object.keys(disk.record?.keys ?? {})).toEqual([idB]);
+    handleNodeLoginRequired(NODE_C);
+    expect(disk.record).toBeNull();
+  });
+
+  test('同一 node 用新钥重新登录：旧钥没人引用就回收', async () => {
+    await login('self');
+    const other = await otherSecrets();
+    await login('self', other.secrets);
+    expect(Object.keys(disk.record?.keys ?? {})).toEqual([popKeyId(other.pair.publicKey)]);
+    expect(disk.record?.nodes.self?.pk).toBe(popKeyId(other.pair.publicKey));
+  });
+
+  test('在途登录占用的钥不会被别的 node 的回收误删', async () => {
+    const other = await otherSecrets();
+    const slow = new Promise<{ ok: true; expires_at: number }>((resolve) =>
+      setTimeout(() => resolve({ ok: true, expires_at: 1 }), 10)
+    );
+    const slowApi = { login: () => slow } as unknown as AuthApi;
+    const pending = loginWithPop(slowApi, NODE_B, baseBody, other.secrets);
+    await login('self', secrets(), false);
+    await pending;
+    expect(popNodeIds()).toEqual([NODE_B]);
+    expect(Object.keys(disk.record?.keys ?? {})).toEqual([popKeyId(other.pair.publicKey)]);
+  });
+});
+
 describe('钥的寿命', () => {
   test('冷启动从盘上读回：恢复 PoP node，同一把钥再登录别的 node 不丢旧集合', async () => {
     await login('self');
-    const persisted = disk.record as PersistedPopKey;
     resetSessionPopForTest();
-    disk.record = { ...persisted, privateKey: keyPair.privateKey };
     await loadPopState();
     expect(popNodeIds()).toEqual(['self']);
     expect(await signOf('GET', '/api/x')).not.toBeNull();
@@ -259,10 +343,14 @@ describe('钥的寿命', () => {
 
   test('读回时已过硬上限的 node 不再签名，全部过期则删盘', async () => {
     disk.record = {
-      version: 1,
-      privateKey: keyPair.privateKey,
-      sessPk: keyPair.publicKey,
-      nodes: { self: Date.now() - 1 },
+      version: 2,
+      keys: {
+        [popKeyId(keyPair.publicKey)]: {
+          privateKey: keyPair.privateKey,
+          sessPk: keyPair.publicKey,
+        },
+      },
+      nodes: { self: { pk: popKeyId(keyPair.publicKey), expiresAt: Date.now() - 1 } },
     };
     await loadPopState();
     expect(popNodeIds()).toEqual([]);
@@ -272,7 +360,7 @@ describe('钥的寿命', () => {
 
   test('钥保留到最晚的 node 会话硬过期，与 delegation 的 18 小时无关', async () => {
     await login('self');
-    const expiresAt = disk.record?.nodes.self as number;
+    const expiresAt = disk.record?.nodes.self?.expiresAt as number;
     expect(expiresAt - Date.now()).toBeGreaterThan(18 * 3_600_000);
   });
 

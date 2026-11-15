@@ -42,16 +42,30 @@ export interface PersistedSession {
   passkeySig?: Uint8Array | null;
 }
 
+/** 一把 PoP 会话钥：同一次登录的 delegation 下，各 node 会话共用它。 */
 export interface PersistedPopKey {
-  version: number;
   /** 不可导出的 `sk_sess`（与登录时同一把）。 */
   privateKey: CryptoKey;
   sessPk: Uint8Array;
-  /** nodeId → 该节点会话的硬过期时刻（ms）；钥保留到最晚的那一个。 */
-  nodes: Record<string, number>;
 }
 
-export const PERSISTED_POP_VERSION = 1;
+/** node 会话绑定的钥（`keys` 的下标）与该会话的硬过期时刻（ms）。 */
+export interface PersistedPopNode {
+  pk: string;
+  expiresAt: number;
+}
+
+/**
+ * 按 node 绑定钥：重新登录会生成新的 `sk_sess`，而其它 node 的旧会话仍绑着旧钥，
+ * 所以多把钥并存，每把钥在没有任何 node 引用时才删。
+ */
+export interface PersistedPopState {
+  version: number;
+  keys: Record<string, PersistedPopKey>;
+  nodes: Record<string, PersistedPopNode>;
+}
+
+export const PERSISTED_POP_VERSION = 2;
 
 function factory(): IDBFactory | null {
   try {
@@ -296,7 +310,7 @@ export function clearPersistedSession(): Promise<boolean> {
 }
 
 /** `true` = 事务已提交。 */
-export function savePersistedPopKey(record: PersistedPopKey): Promise<boolean> {
+export function savePersistedPopKey(record: PersistedPopState): Promise<boolean> {
   return enqueue(async () => {
     const outcome = await withStore(
       'readwrite',
@@ -307,15 +321,14 @@ export function savePersistedPopKey(record: PersistedPopKey): Promise<boolean> {
   });
 }
 
-export function loadPersistedPopKey(): Promise<PersistedPopKey | null> {
+export function loadPersistedPopKey(): Promise<PersistedPopState | null> {
   return enqueue(async () => {
-    const outcome = await withStore<PersistedPopKey | undefined>(
+    const outcome = await withStore<unknown>(
       'readonly',
       (store) => store.get(RECORD_KEY),
       POP_DB_NAME
     );
-    const record = outcome.ok ? outcome.value : null;
-    return isUsablePopRecord(record) ? record : null;
+    return await normalizePopRecord(outcome.ok ? outcome.value : null);
   });
 }
 
@@ -327,16 +340,29 @@ export function clearPersistedPopKey(): Promise<boolean> {
   });
 }
 
-function isUsablePopRecord(record: PersistedPopKey | null | undefined): record is PersistedPopKey {
-  if (!record || typeof record !== 'object' || record.version !== PERSISTED_POP_VERSION) {
-    return false;
-  }
-  const key = record.privateKey as CryptoKey | undefined;
-  if (!key || typeof key !== 'object' || key.extractable !== false) return false;
-  if (!(record.sessPk instanceof Uint8Array)) return false;
-  const nodes = record.nodes as unknown;
-  if (!nodes || typeof nodes !== 'object') return false;
-  return Object.values(nodes as Record<string, unknown>).every((at) => typeof at === 'number');
+export const isPopKey = (key: unknown): key is CryptoKey =>
+  !!key && typeof key === 'object' && (key as CryptoKey).extractable === false;
+
+function usableEntries(record: PersistedPopState): boolean {
+  const keys = Object.values(record.keys);
+  const nodeList = Object.values(record.nodes);
+  return (
+    keys.every((entry) => isPopKey(entry?.privateKey) && entry.sessPk instanceof Uint8Array) &&
+    nodeList.every((node) => typeof node?.expiresAt === 'number' && node.pk in record.keys)
+  );
+}
+
+export async function normalizePopRecord(raw: unknown): Promise<PersistedPopState | null> {
+  const record = raw as (Record<string, unknown> & { version?: unknown }) | null;
+  if (!record || typeof record !== 'object' || !record.nodes) return null;
+  // v1（单钥）只在升级后读到一次：迁移实现懒加载，不占常驻体积。
+  const next =
+    record.version === 1
+      ? (await import('./session-pop-v1')).upgradePopV1(record)
+      : record.version === PERSISTED_POP_VERSION && record.keys
+        ? (record as unknown as PersistedPopState)
+        : null;
+  return next && usableEntries(next) ? next : null;
 }
 
 /** 结构不对（换过格式 / 被人塞了别的东西）一律当成没有，不去猜。 */

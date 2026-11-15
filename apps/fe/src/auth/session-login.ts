@@ -48,7 +48,7 @@ import {
   setPasskeyAssertion,
 } from './session-key-store';
 import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-types';
-import { loginWithPop } from './session-pop-client';
+import { loginWithPop } from './session-pop-login';
 
 /**
  * WebAuthn 断言仪式。真实实现来自 `@vibeterm/api-client`，测试用 `setPasskeyCeremonyForTest()`
