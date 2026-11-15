@@ -136,6 +136,7 @@ describe('ControlModeLifecycle', () => {
       },
       nextBlockIsLiteral: () => {},
       handleBlock: () => false,
+      expectAttach: () => new Promise(() => {}),
     } as unknown as ControlModeCommandQueue;
     const current = lifecycle.buildControlModeCallbacks(
       () => {},
@@ -165,6 +166,7 @@ describe('ControlModeLifecycle', () => {
         return args?.includes(' 3 ') ?? false;
       },
       handleBlock: () => false,
+      expectAttach: () => new Promise(() => {}),
     } as unknown as ControlModeCommandQueue;
     const callbacks = lifecycle.buildControlModeCallbacks(
       () => {},
@@ -187,6 +189,8 @@ describe('ControlModeLifecycle', () => {
       () => {},
       () => true
     );
+    expect(callbacks.onBlockBegin?.('1 1 0')).toBe(false);
+    callbacks.onBlockEnd?.({ args: '1 1 0', isError: false, lines: [] });
     const probe = queue.execute(() => {}, 'display-message -p', {
       timeoutMs: 20,
       poisonOnTimeout: false,
@@ -299,6 +303,53 @@ describe('ControlModeLifecycle', () => {
     await Promise.resolve();
     expect(host.heartbeatPending).toBe(false);
     expect(host.heartbeatTimeoutTimer).toBeNull();
+    queue.dispose();
+  });
+
+  test('commands queued before a late attach block do not claim it', async () => {
+    const { host } = createHost();
+    const lifecycle = new ControlModeLifecycle(host);
+    const queue = new ControlModeCommandQueue();
+    let attached = 0;
+    const callbacks = lifecycle.buildControlModeCallbacks(
+      () => {
+        attached += 1;
+      },
+      queue,
+      () => {},
+      () => true
+    );
+    const subscribe = queue.execute(() => {}, 'refresh-client -B a', {
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(callbacks.onBlockBegin?.('1 1 0')).toBe(false);
+    callbacks.onBlockEnd?.({ args: '1 1 0', isError: false, lines: [] });
+    await Promise.resolve();
+    expect(attached).toBe(1);
+    expect(queue.busy).toBe(true);
+    expect(callbacks.onBlockBegin?.('1 2 0')).toBe(false);
+    callbacks.onBlockEnd?.({ args: '1 2 0', isError: false, lines: ['sub-reply'] });
+    await expect(subscribe).resolves.toBe('sub-reply');
+    queue.dispose();
+  });
+
+  test('a fast attach resolves readiness from the first block', async () => {
+    const { host } = createHost();
+    const lifecycle = new ControlModeLifecycle(host);
+    const queue = new ControlModeCommandQueue();
+    let attached = 0;
+    const callbacks = lifecycle.buildControlModeCallbacks(
+      () => {
+        attached += 1;
+      },
+      queue,
+      () => {},
+      () => true
+    );
+    callbacks.onBlockEnd?.({ args: '1 1 0', isError: false, lines: [] });
+    await Promise.resolve();
+    expect(attached).toBe(1);
+    expect(queue.busy).toBe(false);
     queue.dispose();
   });
 });

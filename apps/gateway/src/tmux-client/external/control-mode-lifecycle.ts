@@ -219,6 +219,7 @@ export class ControlModeLifecycle {
     isCurrent: () => boolean
   ): ControlModeSubscriptionCallbacks {
     const host = this.host;
+    void controlCommands.expectAttach().then(onAttachReady, () => undefined);
     return {
       onTerminalOutput: (paneId, data) => {
         host.callbacks.onTerminalOutput(paneId, data);

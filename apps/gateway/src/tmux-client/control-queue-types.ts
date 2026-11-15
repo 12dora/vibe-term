@@ -48,3 +48,26 @@ export interface ControlCommandOptions<T> {
   poisonOnTimeout?: boolean;
   transform: (block: ControlModeBlock) => T;
 }
+
+export function buildPendingCommand<T>(
+  label: string,
+  options: ControlCommandOptions<T>,
+  resolve: (value: T) => void,
+  reject: (error: Error) => void,
+  timing: { timeoutMs: number; now: number }
+): PendingControlCommand<T> {
+  return {
+    label,
+    literal: options.literal ?? false,
+    onAck: options.onAck,
+    transform: options.transform,
+    resolve,
+    reject,
+    sampleStartedAt: null,
+    settled: false,
+    timeoutMs: timing.timeoutMs,
+    enqueuedAt: timing.now,
+    headSince: null,
+    poisonOnStall: options.poisonOnTimeout !== false,
+  };
+}

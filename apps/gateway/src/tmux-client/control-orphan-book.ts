@@ -26,9 +26,12 @@ export class ControlOrphanBook {
     return this.orphans.some((orphan) => orphan.poisonOnStall);
   }
 
+  /** 只有已拿到 command-number 的 orphan 会按截止时间淘汰，无号的不参与定时。 */
   earliestDeadline(): number {
     let at = Number.POSITIVE_INFINITY;
-    for (const orphan of this.orphans) at = Math.min(at, orphan.deadline);
+    for (const orphan of this.orphans) {
+      if (orphan.seq !== undefined) at = Math.min(at, orphan.deadline);
+    }
     return at;
   }
 
@@ -41,15 +44,19 @@ export class ControlOrphanBook {
     this.discardedSeqs.length = 0;
   }
 
-  /** 返回是否丢掉了计入卡死判定的 orphan（tmux 仍欠它一个回执）。 */
+  /**
+   * 只淘汰已收到 `%begin`（有 command-number）且过期的 orphan，其迟到 `%end` 靠 discardedSeqs 识别。
+   * 无号 orphan 在流上的顺位仍在：一直保留到它的 `%begin` 到达，从不回的通道交给卡死判定整条重建。
+   * 返回是否丢掉了计入卡死判定的 orphan（tmux 仍欠它一个回执）。
+   */
   prune(now: number): boolean {
     let droppedStallCandidate = false;
     while (this.orphans.length > 0) {
       const head = this.orphans[0];
-      if (!head || head.deadline > now) break;
+      if (!head || head.seq === undefined || head.deadline > now) break;
       this.orphans.shift();
       if (head.poisonOnStall) droppedStallCandidate = true;
-      if (head.seq !== undefined) this.rememberDiscardedSeq(head.seq);
+      this.rememberDiscardedSeq(head.seq);
     }
     return droppedStallCandidate;
   }
@@ -83,16 +90,14 @@ export class ControlOrphanBook {
     return true;
   }
 
-  /** 与 consume 对齐：已知 seq 且对不上的 orphan 跳过，把 %begin 交给 pending。 */
+  /** 新 `%begin` 严格按 FIFO 归第一条还没拿到 command-number 的 orphan；都已编号则交给 pending。 */
   private orphanForBegin(seq: number | undefined): OrphanControlBlock | undefined {
     if (seq !== undefined) {
       const matched = this.orphans.find((orphan) => orphan.seq === seq);
       if (matched) return matched;
+      return this.orphans.find((orphan) => orphan.seq === undefined);
     }
-    const head = this.orphans[0];
-    if (!head) return undefined;
-    if (seq !== undefined && head.seq !== undefined) return undefined;
-    return head;
+    return this.orphans[0];
   }
 
   private rememberDiscardedSeq(seq: number): void {

@@ -289,7 +289,7 @@ describe('control command latency sampling', () => {
     expect(queue.busy).toBe(false);
   });
 
-  test('expired orphan does not swallow the next command block', async () => {
+  test('an unnumbered orphan keeps its FIFO slot past its deadline', async () => {
     const queue = new ControlModeCommandQueue();
     const probe = queue.execute(() => {}, 'display-message -p', {
       timeoutMs: 20,
@@ -301,6 +301,9 @@ describe('control command latency sampling', () => {
     const user = queue.execute(() => {}, 'send-keys', {
       transform: (block) => block.lines.join('\n'),
     });
+    // 无号 orphan 不按截止时间淘汰：它的迟到块仍先于下一条命令。
+    expect(queue.nextBlockIsLiteral()).toBe(false);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['late-probe'] })).toBe(true);
     expect(queue.nextBlockIsLiteral()).toBe(false);
     expect(queue.handleBlock({ args: '', isError: false, lines: ['user-out'] })).toBe(true);
     await expect(user).resolves.toBe('user-out');

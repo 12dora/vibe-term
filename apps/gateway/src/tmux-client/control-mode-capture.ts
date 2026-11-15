@@ -8,11 +8,12 @@ import {
   parseNonNegativeInteger,
   stampSeq,
 } from './control-orphan-book';
-import type {
-  ControlCommandLatencyOptions,
-  ControlCommandOptions,
-  ControlQueueOptions,
-  PendingControlCommand,
+import {
+  type ControlCommandLatencyOptions,
+  type ControlCommandOptions,
+  type ControlQueueOptions,
+  type PendingControlCommand,
+  buildPendingCommand,
 } from './control-queue-types';
 import {
   type ControlQueueClock,
@@ -132,25 +133,13 @@ export class ControlModeCommandQueue {
       return Promise.reject(new ControlQueueFullError());
     }
     return new Promise<T>((resolve, reject) => {
-      const now = this.clock.now();
-      const pending: PendingControlCommand<T> = {
-        label: command.slice(0, 80),
-        literal: options.literal ?? false,
-        onAck: options.onAck,
-        transform: options.transform,
-        resolve,
-        reject,
-        sampleStartedAt: null,
-        settled: false,
-        timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs(),
-        enqueuedAt: now,
-        headSince: null,
-        poisonOnStall: options.poisonOnTimeout !== false,
-      };
       const sampled = options.sample === true && this.latency !== undefined && !this.busy;
-      if (!this.hasBacklog()) this.stall.noteBacklogStart(now);
-      this.pending.push(pending as PendingControlCommand);
-      this.promoteHead(now);
+      const pending = this.enqueue(
+        buildPendingCommand(command.slice(0, 80), options, resolve, reject, {
+          timeoutMs: options.timeoutMs ?? this.defaultTimeoutMs(),
+          now: this.clock.now(),
+        })
+      );
       this.armTimer();
       try {
         if (sampled) pending.sampleStartedAt = this.latencyNow();
@@ -159,6 +148,30 @@ export class ControlModeCommandQueue {
         this.poison(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  /**
+   * 占住 `attach-session` 自己的首个 `%begin/%end`：attach 就绪前入队的命令排在它后面，
+   * 不会认领它的空块。不写 stdin、不计时、不计入卡死判定。
+   */
+  expectAttach(): Promise<void> {
+    if (this.poisoned) return Promise.reject(new Error('tmux control command queue is closed'));
+    return new Promise<void>((resolve, reject) => {
+      const options = { poisonOnTimeout: false, transform: () => undefined };
+      this.enqueue(
+        buildPendingCommand('attach-session', options, resolve, reject, {
+          timeoutMs: Number.POSITIVE_INFINITY,
+          now: this.clock.now(),
+        })
+      );
+    });
+  }
+
+  private enqueue<T>(pending: PendingControlCommand<T>): PendingControlCommand<T> {
+    if (!this.hasBacklog()) this.stall.noteBacklogStart(pending.enqueuedAt);
+    this.pending.push(pending as PendingControlCommand);
+    this.promoteHead(pending.enqueuedAt);
+    return pending;
   }
 
   nextBlockIsLiteral(args?: string): boolean {

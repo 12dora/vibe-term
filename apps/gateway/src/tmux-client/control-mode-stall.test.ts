@@ -256,3 +256,67 @@ describe('control queue health transitions', () => {
     queue.dispose();
   });
 });
+
+describe('unnumbered orphans keep FIFO alignment', () => {
+  test('a literal head that timed out before its %begin still owns the next block', async () => {
+    const { clock, queue, settle } = createQueue({ stallMs: 600_000 });
+    const capture = settle(
+      queue.execute(() => {}, 'capture-pane -p', {
+        literal: true,
+        timeoutMs: 100,
+        transform: (blk) => blk.lines.join('\n'),
+      })
+    );
+    const next = settle(
+      queue.execute(() => {}, 'send-keys', { timeoutMs: 10_000, transform: (blk) => blk.lines[0] })
+    );
+    clock.advance(100);
+    await flush();
+    expect(capture.error).toBeDefined();
+    clock.advance(5_000);
+    expect(queue.nextBlockIsLiteral('1 5 0')).toBe(true);
+    expect(queue.handleBlock(block(['%output %1 screen text'], '1 5 0'))).toBe(true);
+    expect(queue.nextBlockIsLiteral('1 6 0')).toBe(false);
+    expect(queue.handleBlock(block(['next-out'], '1 6 0'))).toBe(true);
+    await flush();
+    expect(next.value).toBe('next-out');
+    queue.dispose();
+  });
+
+  test('two unnumbered orphans take late %begin blocks strictly in FIFO order', async () => {
+    const { clock, queue, settle } = createQueue({ stallMs: 600_000 });
+    void queue
+      .execute(() => {}, 'a', { timeoutMs: 100, transform: () => 'a' })
+      .catch(() => undefined);
+    void queue
+      .execute(() => {}, 'b', { literal: true, timeoutMs: 100, transform: () => 'b' })
+      .catch(() => undefined);
+    clock.advance(10_000);
+    const user = settle(queue.execute(() => {}, 'c', { transform: (blk) => blk.lines[0] }));
+    expect(queue.nextBlockIsLiteral('1 7 0')).toBe(false);
+    expect(queue.handleBlock(block(['late-a'], '1 7 0'))).toBe(true);
+    expect(queue.nextBlockIsLiteral('1 8 0')).toBe(true);
+    expect(queue.handleBlock(block(['late-b'], '1 8 0'))).toBe(true);
+    expect(queue.nextBlockIsLiteral('1 9 0')).toBe(false);
+    expect(queue.handleBlock(block(['c-out'], '1 9 0'))).toBe(true);
+    await flush();
+    expect(user.value).toBe('c-out');
+    queue.dispose();
+  });
+
+  test('a numbered orphan past its deadline is discarded by seq', async () => {
+    const { clock, queue, settle } = createQueue({ stallMs: 600_000 });
+    const a = settle(queue.execute(() => {}, 'a', { timeoutMs: 100, transform: () => 'a' }));
+    expect(queue.nextBlockIsLiteral('1 3 0')).toBe(false);
+    clock.advance(300);
+    await flush();
+    expect(a.error).toBeDefined();
+    const user = settle(queue.execute(() => {}, 'u', { transform: (blk) => blk.lines[0] }));
+    expect(queue.handleBlock(block(['late-a'], '1 3 0'))).toBe(true);
+    expect(queue.nextBlockIsLiteral('1 4 0')).toBe(false);
+    expect(queue.handleBlock(block(['u-out'], '1 4 0'))).toBe(true);
+    await flush();
+    expect(user.value).toBe('u-out');
+    queue.dispose();
+  });
+});

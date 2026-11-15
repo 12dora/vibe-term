@@ -138,6 +138,7 @@ describe('input control transport lifecycle', () => {
     const h = harness();
     const encoder = new TextEncoder();
     try {
+      h.subscription.push(encoder.encode('%begin 1 1 0\n%end 1 1 0\n'));
       const probe = h.queue.execute(() => {}, 'display-message -p "vibeterm-lat"', {
         timeoutMs: 20,
         poisonOnTimeout: false,
