@@ -15,6 +15,7 @@ import WebSocket from 'ws';
 import { cliVersion } from '../version';
 import { AuthError, NetworkError } from './errors';
 import type { HttpClient } from './http';
+import { popAuthError, popCodeFromMessage, stampPopRecord } from './session-pop';
 import { type TlsConnectOptions, wsTlsOptions } from './tls';
 
 /** entry 的 http(s) 基址 → 该 node 的 ws(s) 端点（带一次性 cid）。 */
@@ -109,24 +110,24 @@ export async function openGatewaySocket(
 ): Promise<GatewaySocket> {
   const timeoutMs = options.timeoutMs ?? 15_000;
   let currentCid: string | null = null;
-  const socketFactory = createWsSocketFactory({
-    // 握手头每次建 socket 重算：会话可能在重连之间被续期换了新 sid。
-    get headers() {
-      return buildHandshakeHeaders(http, nodeId);
-    },
-    handshakeTimeoutMs: timeoutMs,
-    tls: wsTlsOptions(http.tls),
-  });
+  const socketFactory: SocketFactory = (url) =>
+    createWsSocket(url, {
+      headers: buildHandshakeHeaders(http, nodeId, url),
+      handshakeTimeoutMs: timeoutMs,
+      tls: wsTlsOptions(http.tls),
+    });
 
   let closeCode: number | null = null;
+  let closeReason = '';
   const connection = createGatewayConnection({
     socketFactory,
     wsUrlFactory: () => {
       currentCid = generateClientNonce();
       return nodeGatewayWsUrl(http.entry, nodeId, currentCid);
     },
-    onClose: (code) => {
+    onClose: (code, reason) => {
       closeCode = code;
+      closeReason = reason;
     },
     clientOptions: {
       clientImpl: 'vibeterm-cli',
@@ -166,12 +167,14 @@ export async function openGatewaySocket(
     cleanups.push(
       connection.client.onStateChange((state) => {
         if (state === 'READY') settle();
-        else if (state === 'CLOSED') settle(closeError(nodeId, closeCode));
+        else if (state === 'CLOSED') settle(closeError(nodeId, closeCode, closeReason));
       })
     );
     cleanups.push(
       connection.client.onError((error) => {
-        if (connection.client.getState() !== 'READY') settle(closeError(nodeId, closeCode, error));
+        if (connection.client.getState() !== 'READY') {
+          settle(closeError(nodeId, closeCode, closeReason, error));
+        }
       })
     );
     connection.client.connect();
@@ -180,14 +183,21 @@ export async function openGatewaySocket(
   return socket;
 }
 
-function buildHandshakeHeaders(http: HttpClient, nodeId: string): Record<string, string> {
+function buildHandshakeHeaders(
+  http: HttpClient,
+  nodeId: string,
+  url: string
+): Record<string, string> {
   const headers: Record<string, string> = { origin: http.origin };
   const cookie = http.cookieHeader(nodeId);
   if (cookie) headers.cookie = cookie;
+  stampPopRecord(headers, 'GET', url, cookie, http.jar.popKey(nodeId));
   return headers;
 }
 
-function closeError(nodeId: string, code: number | null, cause?: Error): Error {
+function closeError(nodeId: string, code: number | null, reason: string, cause?: Error): Error {
+  const pop = popCodeFromMessage(reason);
+  if (pop) return popAuthError(pop);
   if (code === WS_SESSION_INVALID_CODE) {
     return new AuthError(
       `gateway websocket to node ${nodeId} was rejected (session invalid)`,

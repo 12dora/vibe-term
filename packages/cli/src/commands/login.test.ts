@@ -3,10 +3,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
-import { decodeBase64url, encodeBase64url, generateEd25519KeyPair } from '@vibeterm/shared/auth';
+import {
+  decodeBase64url,
+  encodeBase64url,
+  generateEd25519KeyPair,
+  popTargetFromUrl,
+  verifyPop,
+} from '@vibeterm/shared/auth';
 import { buildContext } from '../core/context';
 import { AuthError, NetworkError, UsageError } from '../core/errors';
 import type { FetchLike } from '../core/http';
+import { parsePopKey, signSessionPop } from '../core/session-pop';
 import { type FakeGateway, createFakeGateway, createFakeUser } from '../core/test-fakes';
 import { command as login } from './login';
 import { command as logout } from './logout';
@@ -91,6 +98,27 @@ describe('vibeterm login', () => {
     expect(stored?.uid).toBe(user.uid);
     expect(stored?.username).toBe('root');
     expect(stored?.nodes.self.sid).toBe(gateway.issued.get('self'));
+    expect(stored?.nodes.self.sessSk).toBeTruthy();
+    expect(stored?.nodes.self.sessPk).toBeTruthy();
+    expect((stored as { sessSk?: string } | null)?.sessSk).toBeUndefined();
+    expect([32, 64]).toContain(decodeBase64url(stored?.nodes.self.sessSk ?? '').byteLength);
+    expect(decodeBase64url(stored?.nodes.self.sessPk ?? '').byteLength).toBe(32);
+    expect(ctx.sessions.snapshot().version).toBe(2);
+    expect(gateway.loginBodies.every((row) => row.body.pop === true)).toBe(true);
+  });
+
+  test('a second login replaces the stored session key', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({ user });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+    const first = ctx.sessions.entry(ENTRY)?.nodes.self.sessSk;
+    await login.run(ctx, []);
+    const second = ctx.sessions.entry(ENTRY)?.nodes.self.sessSk;
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    expect(second).not.toBe(first);
   });
 
   test('sends Origin = entry origin on every request', async () => {
@@ -206,6 +234,44 @@ describe('vibeterm login', () => {
     const payload = JSON.parse(stdout.text()) as { nodes: Array<{ node: string }> };
     expect(payload.nodes.map((row) => row.node)).toEqual(['self', NODE_A]);
     expect(gateway.issued.has('b'.repeat(32))).toBe(false);
+  });
+
+  test('re-login of node B keeps node A’s key; A’s proofs still verify', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [NODE_HOME]: 'home' },
+    });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+    await login.run(ctx, []);
+
+    const before = ctx.sessions.entry(ENTRY);
+    const keyA = before?.nodes[NODE_A].sessSk;
+    const pkA = before?.nodes[NODE_A].sessPk;
+    const keyHome = before?.nodes[NODE_HOME].sessSk;
+    expect(keyA).toBeTruthy();
+    expect(keyHome).toBeTruthy();
+
+    ctx.globals.node = 'home';
+    await login.run(ctx, []);
+
+    const after = ctx.sessions.entry(ENTRY);
+    expect(after?.nodes[NODE_A].sessSk).toBe(keyA);
+    expect(after?.nodes[NODE_A].sessPk).toBe(pkA);
+    expect(after?.nodes[NODE_HOME].sessSk).toBeTruthy();
+    expect(after?.nodes[NODE_HOME].sessSk).not.toBe(keyHome);
+
+    const stored = parsePopKey(after?.nodes[NODE_A].sessSk, after?.nodes[NODE_A].sessPk);
+    expect(stored).toBeTruthy();
+    const proof = await signSessionPop(stored?.sessSk ?? new Uint8Array(), 'GET', `${ENTRY}/api/x`);
+    expect(
+      verifyPop(
+        stored?.sessPk ?? new Uint8Array(),
+        proof,
+        popTargetFromUrl('GET', `${ENTRY}/api/x`)
+      ).ok
+    ).toBe(true);
   });
 
   test('--node and --all-nodes conflict', async () => {

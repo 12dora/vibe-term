@@ -13,6 +13,7 @@ import {
 } from './auth';
 import { AuthError, CliError, NetworkError, NotFoundError, PermissionError } from './errors';
 import { HttpClient, createMemoryCookieJar } from './http';
+import { POP_ERROR_MESSAGE_EN } from './session-pop';
 
 const ENTRY = 'http://entry.example:9883';
 
@@ -84,6 +85,16 @@ describe('fetchMeshNodes', () => {
     await expect(fetchMeshNodes(httpWith(403, { code: 'FORBIDDEN' }))).rejects.toBeInstanceOf(
       NetworkError
     );
+  });
+
+  test('POP_REQUIRED is not treated as logged out', async () => {
+    const error = (await fetchMeshNodes(httpWith(401, { code: 'POP_REQUIRED' })).catch(
+      (err) => err
+    )) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.code).toBe('POP_REQUIRED');
+    expect(error.message).toBe(POP_ERROR_MESSAGE_EN);
+    expect(error.hint).toBe('run: vibeterm login');
   });
 });
 

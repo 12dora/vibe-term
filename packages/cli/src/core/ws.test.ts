@@ -3,15 +3,19 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { AddressInfo } from 'node:net';
 import { wsBorsh } from '@vibeterm/shared';
+import { generateEd25519KeyPair, popTargetFromUrl, verifyPop } from '@vibeterm/shared/auth';
+import { POP_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { WebSocketServer, type WebSocket as WsSocket } from 'ws';
 import { AuthError, NetworkError } from './errors';
 import { HttpClient, createMemoryCookieJar } from './http';
+import { POP_ERROR_MESSAGE_EN } from './session-pop';
 import { nodeGatewayWsUrl, openGatewaySocket } from './ws';
 
 interface Handshake {
   cookie: string | undefined;
   origin: string | undefined;
   cid: string | null;
+  pop: string | undefined;
 }
 
 interface FakeServer {
@@ -38,17 +42,21 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.close()));
 });
 
-async function startServer(options: { closeWith?: number } = {}): Promise<FakeServer> {
+async function startServer(
+  options: { closeWith?: number; closeReason?: string } = {}
+): Promise<FakeServer> {
   const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   const handshakes: Handshake[] = [];
   wss.on('connection', (socket: WsSocket, request) => {
+    const popHeader = request.headers[POP_HEADER];
     handshakes.push({
       cookie: request.headers.cookie,
       origin: request.headers.origin,
       cid: new URL(request.url ?? '/', 'http://x').searchParams.get('cid'),
+      pop: Array.isArray(popHeader) ? popHeader[0] : popHeader,
     });
     if (options.closeWith) {
-      socket.close(options.closeWith, 'session invalid');
+      socket.close(options.closeWith, options.closeReason ?? 'session invalid');
       return;
     }
     // 客户端先发 HELLO_C2S，收到即回 HELLO_S2C，与真实网关同序。
@@ -98,6 +106,7 @@ describe('openGatewaySocket', () => {
       expect(socket.connection.client.getState()).toBe('READY');
       expect(server.handshakes[0].cookie).toContain('vibeterm_s_self=sid-self');
       expect(server.handshakes[0].origin).toBe(server.entry);
+      expect(server.handshakes[0].pop).toBeUndefined();
       expect(socket.cid()).toBe(server.handshakes[0].cid);
       expect(socket.cid()).toBeTruthy();
     } finally {
@@ -147,6 +156,28 @@ describe('openGatewaySocket', () => {
     expect(error.hint).toBe(`run: vibeterm login --node ${node}`);
   });
 
+  test('a 4401 close with POP_REQUIRED is the same PoP error as HTTP', async () => {
+    const server = await startServer({ closeWith: 4401, closeReason: 'POP_REQUIRED' });
+    const error = (await openGatewaySocket(httpFor(server.entry), 'self', {
+      timeoutMs: 3000,
+    }).catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.code).toBe('POP_REQUIRED');
+    expect(error.message).toBe(POP_ERROR_MESSAGE_EN);
+    expect(error.hint).toBe('run: vibeterm login');
+    expect(error.message).not.toContain('session invalid');
+  });
+
+  test('a 4401 close with POP_INVALID is the same PoP error as HTTP', async () => {
+    const server = await startServer({ closeWith: 4401, closeReason: 'POP_INVALID' });
+    const error = (await openGatewaySocket(httpFor(server.entry), 'self', {
+      timeoutMs: 3000,
+    }).catch((err) => err)) as AuthError;
+    expect(error.code).toBe('POP_INVALID');
+    expect(error.message).toBe(POP_ERROR_MESSAGE_EN);
+  });
+
   test('any other close is a network error', async () => {
     const server = await startServer({ closeWith: 1011 });
     const error = (await openGatewaySocket(httpFor(server.entry), 'self', {
@@ -154,5 +185,30 @@ describe('openGatewaySocket', () => {
     }).catch((err) => err)) as NetworkError;
     expect(error).toBeInstanceOf(NetworkError);
     expect(error.exitCode).toBe(5);
+  });
+
+  test('adds a verifiable x-vibeterm-pop header when a key exists', async () => {
+    const server = await startServer();
+    const pair = generateEd25519KeyPair();
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-self', 0);
+    jar.setPopKey('self', { sessSk: pair.secretKey, sessPk: pair.publicKey });
+    const http = new HttpClient({
+      entry: server.entry,
+      timeoutMs: 2000,
+      jar,
+      fetchImpl: async () => new Response('{}'),
+    });
+    const socket = await openGatewaySocket(http, 'self', { timeoutMs: 3000 });
+    try {
+      const handshake = server.handshakes[0];
+      expect(handshake.pop).toBeTruthy();
+      const upgradeUrl = nodeGatewayWsUrl(server.entry, 'self', handshake.cid ?? '');
+      expect(verifyPop(pair.publicKey, handshake.pop, popTargetFromUrl('GET', upgradeUrl)).ok).toBe(
+        true
+      );
+    } finally {
+      socket.close();
+    }
   });
 });

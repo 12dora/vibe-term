@@ -1,14 +1,27 @@
 import { describe, expect, test } from 'bun:test';
-import { SESSION_RENEWED_HEADER, SET_SESSION_HEADER } from '@vibeterm/shared/http/mesh-headers';
+import {
+  generateEd25519KeyPair,
+  parsePopProof,
+  popTargetFromUrl,
+  verifyPop,
+} from '@vibeterm/shared/auth';
+import {
+  POP_HEADER,
+  SESSION_RENEWED_HEADER,
+  SET_SESSION_HEADER,
+} from '@vibeterm/shared/http/mesh-headers';
 import { AuthError, CliError, NetworkError, NotFoundError, PermissionError } from './errors';
 import {
   type FetchLike,
   HttpClient,
   createMemoryCookieJar,
   isAuthFlowPath,
+  isSessionAuthFailure,
+  loginRequiredError,
   parseSessionSetCookie,
   parseSetSessionHeader,
 } from './http';
+import { POP_ERROR_MESSAGE_EN, POP_ERROR_MESSAGE_ZH } from './session-pop';
 import type { TokenSource } from './token-store';
 
 const ENTRY = 'http://entry.example:9883';
@@ -483,5 +496,175 @@ describe('token cookies', () => {
     expect(error.message).toContain('/api/files/list');
     expect(error.hint).toContain('vibeterm token create --name');
     expect(error.hint).toContain('vibeterm login');
+  });
+});
+
+describe('session PoP header', () => {
+  function jarWithPop(nodeId = 'self') {
+    const pair = generateEd25519KeyPair();
+    const jar = createMemoryCookieJar();
+    jar.set(nodeId, `sid-${nodeId}`, 0);
+    if (nodeId !== 'self') jar.set('self', 'sid-self', 0);
+    jar.setPopKey(nodeId, { sessSk: pair.secretKey, sessPk: pair.publicKey });
+    return { jar, pair };
+  }
+
+  test('signs a verifiable x-vibeterm-pop when the entry has a key', async () => {
+    const { jar, pair } = jarWithPop();
+    let seen: { url: string; pop: string | null } | undefined;
+    const http = client(async (url, init) => {
+      seen = { url, pop: new Headers(init?.headers).get(POP_HEADER) };
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }, jar);
+    await http.json('self', 'GET', '/api/devices');
+    expect(seen?.pop).toBeTruthy();
+    const target = popTargetFromUrl('GET', seen?.url ?? '');
+    expect(verifyPop(pair.publicKey, seen?.pop, target).ok).toBe(true);
+  });
+
+  test('strips /n/<id> in the signed path for forwarded requests', async () => {
+    const { jar, pair } = jarWithPop(NODE);
+    let seen: { url: string; pop: string | null } | undefined;
+    const http = client(async (url, init) => {
+      seen = { url, pop: new Headers(init?.headers).get(POP_HEADER) };
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }, jar);
+    await http.json(NODE, 'GET', '/api/devices');
+    expect(seen?.url).toBe(`${ENTRY}/n/${NODE}/api/devices`);
+    expect(verifyPop(pair.publicKey, seen?.pop, popTargetFromUrl('GET', seen?.url ?? '')).ok).toBe(
+      true
+    );
+    expect(verifyPop(pair.publicKey, seen?.pop, popTargetFromUrl('GET', '/api/devices')).ok).toBe(
+      true
+    );
+  });
+
+  test('retries a POP_INVALID 401 with a different nonce', async () => {
+    const { jar, pair } = jarWithPop();
+    const proofs: string[] = [];
+    const http = client(async (url, init) => {
+      const pop = new Headers(init?.headers).get(POP_HEADER);
+      if (pop) proofs.push(pop);
+      if (proofs.length === 1) {
+        return new Response(JSON.stringify({ code: 'POP_INVALID' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      expect(verifyPop(pair.publicKey, pop, popTargetFromUrl('GET', url)).ok).toBe(true);
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }, jar);
+    await http.json('self', 'GET', '/api/devices');
+    expect(proofs).toHaveLength(2);
+    expect(proofs[0]).not.toBe(proofs[1]);
+    expect(parsePopProof(proofs[0])?.nonce).not.toBe(parsePopProof(proofs[1])?.nonce);
+  });
+
+  test('v1 entries (no key) send no pop header', async () => {
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-self', 0);
+    let pop: string | null = 'sentinel';
+    const http = client(async (_url, init) => {
+      pop = new Headers(init?.headers).get(POP_HEADER);
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }, jar);
+    await http.json('self', 'GET', '/api/devices');
+    expect(pop).toBeNull();
+  });
+
+  test('POP_REQUIRED is not a logged-out 401 and does not drop the sid', async () => {
+    const { jar } = jarWithPop();
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ code: 'POP_REQUIRED' }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        }),
+      jar
+    );
+    const error = (await http.json('self', 'GET', '/api/devices').catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.code).toBe('POP_REQUIRED');
+    expect(error.message).toBe(POP_ERROR_MESSAGE_EN);
+    expect(error.hint).toBe('run: vibeterm login');
+    expect(jar.get('self')?.sid).toBe('sid-self');
+    expect(isSessionAuthFailure(401, JSON.stringify({ code: 'POP_REQUIRED' }))).toBe(false);
+  });
+
+  test('POP_INVALID uses the zh-cn copy when VIBETERM_CLI_LANG is zh', async () => {
+    const { jar } = jarWithPop();
+    const prev = process.env.VIBETERM_CLI_LANG;
+    process.env.VIBETERM_CLI_LANG = 'zh-CN';
+    try {
+      const http = client(
+        async () =>
+          new Response(JSON.stringify({ code: 'POP_INVALID' }), {
+            status: 401,
+            headers: { 'content-type': 'application/json' },
+          }),
+        jar
+      );
+      const error = (await http
+        .json('self', 'GET', '/api/devices')
+        .catch((err) => err)) as AuthError;
+      expect(error.message).toBe(POP_ERROR_MESSAGE_ZH);
+      expect(error.code).toBe('POP_INVALID');
+    } finally {
+      if (prev === undefined) delete process.env.VIBETERM_CLI_LANG;
+      else process.env.VIBETERM_CLI_LANG = prev;
+    }
+  });
+
+  test('signs node X with node X’s key, not another node’s', async () => {
+    const keyA = generateEd25519KeyPair();
+    const keyB = generateEd25519KeyPair();
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-self', 0);
+    jar.set(NODE, 'sid-node', 0);
+    jar.setPopKey('self', { sessSk: keyA.secretKey, sessPk: keyA.publicKey });
+    jar.setPopKey(NODE, { sessSk: keyB.secretKey, sessPk: keyB.publicKey });
+    let pop: string | null = null;
+    const http = client(async (url, init) => {
+      pop = new Headers(init?.headers).get(POP_HEADER);
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }, jar);
+    await http.json(NODE, 'GET', '/api/devices');
+    expect(
+      verifyPop(keyB.publicKey, pop, popTargetFromUrl('GET', `${ENTRY}/n/${NODE}/api/devices`)).ok
+    ).toBe(true);
+    expect(
+      verifyPop(keyA.publicKey, pop, popTargetFromUrl('GET', `${ENTRY}/n/${NODE}/api/devices`)).ok
+    ).toBe(false);
+  });
+
+  test('token-only requests do not send a pop header', async () => {
+    const pair = generateEd25519KeyPair();
+    const jar = createMemoryCookieJar();
+    jar.setPopKey('self', { sessSk: pair.secretKey, sessPk: pair.publicKey });
+    let pop: string | null = 'sentinel';
+    const http = new HttpClient({
+      entry: ENTRY,
+      timeoutMs: 1000,
+      jar,
+      tokens: { get: () => ({ secret: 'vtk_x' }) },
+      fetchImpl: async (_url, init) => {
+        pop = new Headers(init?.headers).get(POP_HEADER);
+        return new Response('{}');
+      },
+    });
+    await http.fetch('self', '/api/devices');
+    expect(pop).toBeNull();
+  });
+
+  test('loginRequiredError maps POP close reasons the same as HTTP 401 JSON', () => {
+    for (const raw of ['POP_REQUIRED', 'POP_INVALID', JSON.stringify({ code: 'POP_REQUIRED' })]) {
+      const error = loginRequiredError('self', raw);
+      expect(error.message).toBe(POP_ERROR_MESSAGE_EN);
+      expect(error.hint).toBe('run: vibeterm login');
+      expect(error.exitCode).toBe(3);
+      expect(error.code === 'POP_REQUIRED' || error.code === 'POP_INVALID').toBe(true);
+    }
+    const login = loginRequiredError('self', JSON.stringify({ code: 'expired' }));
+    expect(login.message).toContain('not authenticated');
   });
 });

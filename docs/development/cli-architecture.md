@@ -19,7 +19,7 @@
 
 1. 登录流程与浏览器逐步一致：`GET /api/auth/mode` → `POST /api/auth/challenge` → argon2id 派生根种子 → 生成临时会话密钥对 → 签 `Delegation(method='root')` + `Login` → `POST /api/auth/login`（可带 TOTP）。服务端没有为「本机 CLI」新开任何信任面；`client-source.ts` 的回环 / 内网通行密钥豁免照旧生效。
 2. **CLI 从不使用本机节点的 mesh 身份、数据库、主密钥或 `app.env` 里的密钥**去访问别的 node。访问别的 node 一律经 entry 的 `/n/<nodeId>/…` 转发，并携带**那个 node 自己的**会话 cookie（`vibeterm_s_<nodeId>`），该 cookie 由 `/n/<id>/api/auth/login` 换来——与网页端的 `loginToNode` 完全相同。
-3. 根种子与根钥私钥只在内存里活到 delegation 签完，随即清零（`core/auth.ts` 的 `buildSessionMaterial`）。**落盘的只有会话 sid 与到期时刻**，密码、种子、会话私钥一概不写盘。
+3. 根种子与根钥私钥只在内存里活到 delegation 签完，随即清零（`core/auth.ts` 的 `buildSessionMaterial`）。密码与根种子不落盘。**会话私钥按节点会话写入 `session.json`（0600）**，每个 `nodes[nodeId]` 保存产生该 sid 的 `sessSk` / `sessPk`，之后每个请求用对应节点的密钥签持有证明。把 `session.json` 当私钥对待。
 4. 两步验证由 TOTP 满足（`--totp` / `VIBETERM_TOTP` / TTY 提示）。服务端 `/api/auth/mode.secondFactorPolicy` 为 `either` 时，一个有效 TOTP 码即可通过通行密钥这一关；为 `passkey`（账号没开 TOTP、但本 origin 注册了通行密钥）时 CLI 做不了断言，退出码 3 并说明补救办法。CLI 不实现 WebAuthn。
    `k_totp`（TOTP 密文的解密钥）在签完 delegation、清零种子**之前无条件派生**：旧版本入口的 `/api/auth/mode` 不下发 `totpEnabled` / `secondFactorPolicy`，要等它回 `TOTP_REQUIRED` 才知道要交码，那时种子已经没了。所以只要用户给了码就一定带得上，不会出现「反复重试直到撞限流」。
 5. 登录 entry 之后照浏览器的 `verifySelfPublicKey` 再核一道：challenge 里 entry 当场出示的 `nodePk`，必须与 `/api/mesh/nodes` 里它自己那行的 `publicKey` 逐字节一致。对不上就地删掉刚拿到的会话并以 `NODE_PK_MISMATCH`（退出码 3）中止——入口可能被掉包或配置错乱。名册里没有自己那行（standalone / 旧网关 / 成员表未同步）时跳过。
@@ -173,22 +173,22 @@ Node 上的 `--insecure` 落地方式是 TOFU：先用 `rejectUnauthorized:false
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "lastEntry": "https://vt.example.com",
   "entries": {
     "https://vt.example.com": {
       "entry": "https://vt.example.com",
       "uid": "u-...", "username": "admin", "updatedAt": 1757000000000,
       "nodes": {
-        "self": { "nodeId": "self", "sid": "…", "expiresAt": 1757064000000 },
-        "<32 位 hex node id>": { "nodeId": "…", "sid": "…", "expiresAt": 1757064000000 }
+        "self": { "nodeId": "self", "sid": "…", "expiresAt": 1757064000000, "sessSk": "…", "sessPk": "…" },
+        "<32 位 hex node id>": { "nodeId": "…", "sid": "…", "expiresAt": 1757064000000, "sessSk": "…", "sessPk": "…" }
       }
     }
   }
 }
 ```
 
-文件里**只有** sid 与到期时刻。会话被服务端续期时（`X-Vibeterm-Session-Renewed`）就地更新到期时刻；`X-Vibeterm-Set-Session` 与 `Set-Cookie` 两种下发形态都认（前者是转发链路内部头，后者是浏览器看到的形态），`;0` / `Max-Age=0` 视为登出并清掉本地记录。手工改坏文件不会让 CLI 起不来：认不出的字段一律丢弃。
+v2 每个节点会话带 `sessSk` / `sessPk`（登录该节点时的密钥）；v1 没有这两项，读入后请求不带持有证明。早期把密钥写在 entry 上的 v2 文件，读入时复制到当时每一个 node 记录。`--node` 重登只替换被登节点的密钥。会话被服务端续期时（`X-Vibeterm-Session-Renewed`）就地更新到期时刻；`X-Vibeterm-Set-Session` 与 `Set-Cookie` 两种下发形态都认（前者是转发链路内部头，后者是浏览器看到的形态），`;0` / `Max-Age=0` 视为登出并清掉本地记录。手工改坏文件不会让 CLI 起不来：认不出的字段一律丢弃。该文件含会话私钥，须按密钥保护。
 
 回收 Set-Cookie 时**只收 `self` 与本次请求的目标 node** 这两把：浏览器靠 cookie 作用域挡住越权写入，CLI 只有一个进程内的罐子，得自己挡——一次重定向或一个被塞了第三台 node cookie 的响应，不该把我们手上那台的会话换成对面给的值。
 

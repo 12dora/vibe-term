@@ -3,8 +3,17 @@ import { symlinkSync } from 'node:fs';
 import { chmod, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type CliError, UsageError } from './errors';
 import {
+  decodeBase64url,
+  encodeBase64url,
+  generateEd25519KeyPair,
+  popTargetFromUrl,
+  verifyPop,
+} from '@vibeterm/shared/auth';
+import { type CliError, UsageError } from './errors';
+import { signSessionPop } from './session-pop';
+import {
+  SESSION_FILE_VERSION,
   SessionStore,
   isLiveNodeSession,
   parseSessionFile,
@@ -119,7 +128,7 @@ describe('SessionStore', () => {
     expect(error).toBeInstanceOf(UsageError);
     expect(error?.exitCode).toBe(2);
     expect(error?.message).toContain('group/world readable');
-    expect(error?.message).toContain('full session capability');
+    expect(error?.message).toContain('session private key');
   });
 
   test('does not chmod a pre-existing user-specified parent directory', async () => {
@@ -190,7 +199,7 @@ describe('SessionStore', () => {
     expect(parsed.entries['http://entry:1'].nodes.bad).toBeUndefined();
   });
 
-  test('never persists secrets beyond the session id', async () => {
+  test('never persists password or seed; v1 writes have no sessSk', async () => {
     const dir = await tempDir();
     const store = SessionStore.open(dir, {});
     store.setIdentity('http://entry:1', { uid: 'u-1', username: 'admin' });
@@ -200,5 +209,152 @@ describe('SessionStore', () => {
     expect(text).not.toContain('password');
     expect(text).not.toContain('seed');
     expect(text).not.toContain('sessSk');
+  });
+
+  test('reads a v1 file without keys and writes v2 per-node keys at 0600', async () => {
+    const dir = await tempDir();
+    const path = join(dir, 'session.json');
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        lastEntry: 'http://entry:1',
+        entries: {
+          'http://entry:1': {
+            entry: 'http://entry:1',
+            uid: 'u-1',
+            nodes: { self: { nodeId: 'self', sid: 'sid-v1', expiresAt: 9 } },
+          },
+        },
+      }),
+      { mode: 0o600 }
+    );
+    await chmod(path, 0o600);
+
+    const store = SessionStore.open(dir, {});
+    const loaded = store.entry('http://entry:1');
+    expect(loaded?.nodes.self.sid).toBe('sid-v1');
+    expect(loaded?.nodes.self.sessSk).toBeUndefined();
+    expect(store.popKey('http://entry:1', 'self')).toBeNull();
+
+    const pair = generateEd25519KeyPair();
+    store.setPopKey('http://entry:1', 'self', { sessSk: pair.secretKey, sessPk: pair.publicKey });
+    store.save();
+
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    const raw = JSON.parse(await Bun.file(path).text()) as {
+      version: number;
+      entries: Record<
+        string,
+        { sessSk?: string; nodes: Record<string, { sessSk?: string; sessPk?: string }> }
+      >;
+    };
+    expect(raw.version).toBe(SESSION_FILE_VERSION);
+    expect(raw.version).toBe(2);
+    expect(raw.entries['http://entry:1'].sessSk).toBeUndefined();
+    const saved = raw.entries['http://entry:1'].nodes.self;
+    expect(decodeBase64url(saved.sessSk ?? '')).toEqual(pair.secretKey);
+    expect(decodeBase64url(saved.sessPk ?? '')).toEqual(pair.publicKey);
+
+    const reopened = SessionStore.open(dir, {});
+    const key = reopened.popKey('http://entry:1', 'self');
+    expect(key?.sessPk).toEqual(pair.publicKey);
+    expect(reopened.entry('http://entry:1')?.nodes.self.sid).toBe('sid-v1');
+  });
+
+  test('copies an entry-level v2 key onto every node on read', async () => {
+    const dir = await tempDir();
+    const path = join(dir, 'session.json');
+    const pair = generateEd25519KeyPair();
+    const sessSk = encodeBase64url(pair.secretKey);
+    const sessPk = encodeBase64url(pair.publicKey);
+    const other = 'b'.repeat(32);
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 2,
+        lastEntry: 'http://entry:1',
+        entries: {
+          'http://entry:1': {
+            sessSk,
+            sessPk,
+            nodes: {
+              self: { nodeId: 'self', sid: 'sid-self', expiresAt: 1 },
+              [other]: { nodeId: other, sid: 'sid-b', expiresAt: 2 },
+            },
+          },
+        },
+      }),
+      { mode: 0o600 }
+    );
+    await chmod(path, 0o600);
+
+    const store = SessionStore.open(dir, {});
+    const entry = store.entry('http://entry:1');
+    expect((entry as { sessSk?: string } | null)?.sessSk).toBeUndefined();
+    expect(entry?.nodes.self.sessSk).toBe(sessSk);
+    expect(entry?.nodes[other].sessSk).toBe(sessSk);
+    expect(store.popKey('http://entry:1', 'self')?.sessPk).toEqual(pair.publicKey);
+    expect(store.popKey('http://entry:1', other)?.sessPk).toEqual(pair.publicKey);
+  });
+
+  test('replacing node B’s key keeps node A’s key', async () => {
+    const dir = await tempDir();
+    const store = SessionStore.open(dir, {});
+    const keyA = generateEd25519KeyPair();
+    const keyB = generateEd25519KeyPair();
+    const keyB2 = generateEd25519KeyPair();
+    const nodeA = 'a'.repeat(32);
+    const nodeB = 'b'.repeat(32);
+    store.setNodeSession('http://entry:1', { nodeId: nodeA, sid: 'sid-a', expiresAt: 0 });
+    store.setNodeSession('http://entry:1', { nodeId: nodeB, sid: 'sid-b', expiresAt: 0 });
+    store.setPopKey('http://entry:1', nodeA, { sessSk: keyA.secretKey, sessPk: keyA.publicKey });
+    store.setPopKey('http://entry:1', nodeB, { sessSk: keyB.secretKey, sessPk: keyB.publicKey });
+    store.setPopKey('http://entry:1', nodeB, { sessSk: keyB2.secretKey, sessPk: keyB2.publicKey });
+    store.save();
+
+    expect(store.popKey('http://entry:1', nodeA)?.sessPk).toEqual(keyA.publicKey);
+    expect(store.popKey('http://entry:1', nodeB)?.sessPk).toEqual(keyB2.publicKey);
+    expect(store.entry('http://entry:1')?.nodes[nodeA].sid).toBe('sid-a');
+
+    const storedA = store.popKey('http://entry:1', nodeA);
+    const url = 'http://entry:1/api/devices';
+    const proof = await signSessionPop(storedA?.sessSk ?? new Uint8Array(), 'GET', url);
+    expect(
+      verifyPop(storedA?.sessPk ?? new Uint8Array(), proof, popTargetFromUrl('GET', url)).ok
+    ).toBe(true);
+    expect(verifyPop(keyB2.publicKey, proof, popTargetFromUrl('GET', url)).ok).toBe(false);
+  });
+
+  test('clearEntry wipes the stored session key with the sids', async () => {
+    const dir = await tempDir();
+    const store = SessionStore.open(dir, {});
+    const pair = generateEd25519KeyPair();
+    store.setNodeSession('http://entry:1', { nodeId: 'self', sid: 'sid', expiresAt: 0 });
+    store.setPopKey('http://entry:1', 'self', { sessSk: pair.secretKey, sessPk: pair.publicKey });
+    store.clearEntry('http://entry:1');
+    store.save();
+    expect(store.entry('http://entry:1')).toBeNull();
+    expect(store.popKey('http://entry:1', 'self')).toBeNull();
+    expect(await Bun.file(store.path).text()).not.toContain(encodeBase64url(pair.secretKey));
+  });
+
+  test('parseSessionFile keeps v1 entries and drops malformed keys', () => {
+    const parsed = parseSessionFile(
+      JSON.stringify({
+        version: 1,
+        lastEntry: 'http://entry:1',
+        entries: {
+          'http://entry:1': {
+            uid: 'u-1',
+            sessSk: 'not-a-key',
+            sessPk: 'also-bad',
+            nodes: { self: { nodeId: 'self', sid: 'sid' } },
+          },
+        },
+      })
+    );
+    expect(parsed.entries['http://entry:1'].nodes.self.sid).toBe('sid');
+    expect(parsed.entries['http://entry:1'].nodes.self.sessSk).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 // 浏览器登录流程的 CLI 移植（apps/fe/src/auth/session-login.ts 去掉 WebAuthn 的那一半）：
 //
-//   GET /api/auth/mode → POST /api/auth/challenge → argon2id 根种子 → 临时会话密钥对
-//   → 签 Delegation(method='root') + Login → POST /api/auth/login（可带 TOTP）
+//   GET /api/auth/mode → POST /api/auth/challenge → argon2id 根种子 → 会话密钥对
+//   → 签 Delegation(method='root') + Login → POST /api/auth/login（可带 TOTP、pop: true）
 //
 // 安全边界与浏览器完全一致：根种子只在内存里活到签完 delegation，之后立即清零；访问别的
 // node 一律经 entry 的 `/n/<id>/…` 转发并用该 node 自己的会话 cookie，CLI 不碰本机 mesh 身份。
@@ -30,7 +30,13 @@ import {
   NotFoundError,
   PermissionError,
 } from './errors';
-import { type HttpClient, type RequestOptions, isSessionAuthFailure } from './http';
+import {
+  type HttpClient,
+  type RequestOptions,
+  httpStatusError,
+  isSessionAuthFailure,
+} from './http';
+import { codeFromBody, isPopErrorCode } from './session-pop';
 
 /**
  * 服务端的两步验证策略：`either` = 有效 TOTP 或本 origin 的通行密钥断言其一即可。
@@ -282,6 +288,7 @@ async function loginToNodeOnce(args: LoginToNodeArgs): Promise<LoginNodeResult> 
     sig: encodeBase64url(signLogin(material.sessSk, login)),
     delegation: encodeBase64url(material.delegationBytes),
     delegation_sig: encodeBase64url(material.delegationSig),
+    pop: true,
   };
   if (args.totpCode) {
     // 手上没有 k_totp 就别发了：服务端解不开 TOTP 密文，只会回 TOTP_INVALID 并计一次失败。
@@ -310,6 +317,9 @@ export async function fetchMeshNodes(
   if (response.status === 404) return { ok: true, nodes: [] };
   if (!response.ok) {
     const body = await response.text();
+    if (isPopErrorCode(codeFromBody(body))) {
+      throw httpStatusError(SELF_NODE_ID, '/api/mesh/nodes', response.status, body);
+    }
     if (isSessionAuthFailure(response.status, body)) return { ok: false, unauthorized: true };
     throw new NetworkError(`GET /api/mesh/nodes → HTTP ${response.status}`);
   }

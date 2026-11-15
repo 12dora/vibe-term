@@ -462,7 +462,7 @@ VIBETERM_PASSWORD='<密码>' VIBETERM_TOTP='<6 位码>' \
   vibeterm login --entry https://<入口地址> --user <用户名>
 ```
 
-- 默认把入口后面**每个节点**都登一遍，之后访问任意节点都不用再登。落盘的只有会话 sid 与到期时刻（`~/.config/vibeterm/session.json`，`0600`）；密码、根种子、会话私钥都不落盘。
+- 默认把入口后面**每个节点**都登一遍，之后访问任意节点都不用再登。密码与根种子不落盘。会话私钥按节点写入 `~/.config/vibeterm/session.json`（`0600`），每个请求用对应节点的密钥签名；把该文件当私钥对待。
 - 账户开了两步验证时，**一次有效 TOTP 验证码就够**（通行密钥同样满足二次验证，但 CLI 做不了 WebAuthn）。只在本 origin 注册了通行密钥、又没开 TOTP 的账户，CLI 登不上，退出码 3 并提示去网页端开 TOTP。
 - 之后**每条命令都带 `--json`**：stdout 只有结构化结果，提示与进度走 stderr，便于解析。
 - 收工或换机器时 `vibeterm logout`：撤销的是**服务端**会话，等同于网页端退出登录。

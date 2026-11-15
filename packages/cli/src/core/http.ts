@@ -17,9 +17,25 @@ import {
   NotFoundError,
   PermissionError,
 } from './errors';
-import { type NodeSession, type SessionStore, isLiveNodeSession } from './session-store';
+import {
+  isPopErrorCode,
+  isPopUnauthorizedResponse,
+  isReplayableBody,
+  popAuthError,
+  popCodeFromMessage,
+  stampPopHeader,
+} from './session-pop';
+import {
+  type CookieJar,
+  createMemoryCookieJar,
+  createSessionCookieJar,
+  isLiveNodeSession,
+} from './session-store';
 import { DEFAULT_TLS, type TlsSettings, fetchTlsInit } from './tls';
 import type { TokenSource } from './token-store';
+
+export type { CookieJar } from './session-store';
+export { createMemoryCookieJar, createSessionCookieJar };
 
 /** 与 apps/gateway/src/auth/cookies.ts 保持一致；混合版本期两个名字都发。 */
 export const NODE_SESSION_COOKIE_PREFIX = 'vibeterm_s_';
@@ -60,47 +76,6 @@ const REJECTED_SESSION_REASONS: ReadonlySet<string> = new Set([
   'NODE_LOGIN_REQUIRED',
   'UNAUTHORIZED',
 ]);
-
-export interface CookieJar {
-  get(nodeId: string): NodeSession | null;
-  set(nodeId: string, sid: string, expiresAt: number): void;
-  clear(nodeId: string): void;
-  list(): NodeSession[];
-}
-
-/** 落盘的 cookie 罐：每次写入立即持久化，命令中途被打断也不会丢掉刚拿到的会话。 */
-export function createSessionCookieJar(store: SessionStore, entry: string): CookieJar {
-  return {
-    get(nodeId) {
-      return store.entry(entry)?.nodes[nodeId] ?? null;
-    },
-    set(nodeId, sid, expiresAt) {
-      store.setNodeSession(entry, { nodeId, sid, expiresAt });
-      store.save();
-    },
-    clear(nodeId) {
-      store.clearNodeSession(entry, nodeId);
-      store.save();
-    },
-    list() {
-      return Object.values(store.entry(entry)?.nodes ?? {});
-    },
-  };
-}
-
-export function createMemoryCookieJar(): CookieJar {
-  const nodes = new Map<string, NodeSession>();
-  return {
-    get: (nodeId) => nodes.get(nodeId) ?? null,
-    set: (nodeId, sid, expiresAt) => {
-      nodes.set(nodeId, { nodeId, sid, expiresAt });
-    },
-    clear: (nodeId) => {
-      nodes.delete(nodeId);
-    },
-    list: () => [...nodes.values()],
-  };
-}
 
 function setCookieHeaders(response: Response): string[] {
   const headers = response.headers as Headers & { getSetCookie?: () => string[] };
@@ -248,6 +223,7 @@ export class HttpClient {
     ]);
 
     const url = this.url(nodeId, path);
+    const method = (rest.method ?? 'GET').toUpperCase();
     let response: Response;
     try {
       const init: FetchInit = {
@@ -260,12 +236,30 @@ export class HttpClient {
       };
       // NDJSON 长流：不要让 Bun fetch 的空闲超时（或 BUN_CONFIG_HTTP_IDLE_TIMEOUT）掐断 body。
       if (effectiveTimeout === null) init.timeout = false;
-      response = await this.fetchImpl(url, init);
+      response = await this.sendWithPop(url, init, method, cookie, nodeId);
     } catch (error) {
       throw new NetworkError(`${describeRequest(rest.method, url)}: ${describeFetchError(error)}`);
     }
     this.captureSession(nodeId, response);
     return response;
+  }
+
+  /** 每次尝试单独签名；POP_* 401 且 body 可重放时换 nonce 再发一次。 */
+  private async sendWithPop(
+    url: string,
+    init: FetchInit,
+    method: string,
+    cookie: string,
+    nodeId: string
+  ): Promise<Response> {
+    const headers = init.headers as Headers;
+    const key = this.options.jar.popKey(nodeId);
+    const signed = await stampPopHeader(headers, method, url, cookie, key);
+    const first = await this.fetchImpl(url, init);
+    if (!signed || !isReplayableBody(init.body)) return first;
+    if (!(await isPopUnauthorizedResponse(first))) return first;
+    await stampPopHeader(headers, method, url, cookie, key);
+    return this.fetchImpl(url, init);
   }
 
   /**
@@ -421,9 +415,11 @@ function isAuthErrorCode(code: string | null): boolean {
 
 /** 401，或 403 且业务码属于会话失效（`via_mismatch` / `expired` / `revoked` / `SESSION_*`）。 */
 export function isSessionAuthFailure(status: number, body: string): boolean {
+  const code = reasonFromBody(body);
+  if (isPopErrorCode(code)) return false;
   if (status === 401) return true;
   if (status !== 403) return false;
-  return isAuthErrorCode(reasonFromBody(body));
+  return isAuthErrorCode(code);
 }
 
 function isUnupgradedAuthPath(path: string): boolean {
@@ -466,6 +462,7 @@ export function httpStatusError(
   body: string
 ): CliError {
   const code = reasonFromBody(body);
+  if (isPopErrorCode(code)) return popAuthError(code);
   if (status === 401 || (status === 403 && isAuthErrorCode(code))) {
     return loginRequiredError(nodeId, body);
   }
@@ -482,6 +479,8 @@ export function httpStatusError(
 }
 
 export function loginRequiredError(nodeId: string, body: string): AuthError {
+  const pop = popCodeFromMessage(body);
+  if (pop) return popAuthError(pop);
   const reason = reasonFromBody(body);
   const hintNode = nodeIdFromBody(body) ?? nodeId;
   const target = hintNode === SELF_NODE_ID ? '' : ` --node ${hintNode}`;

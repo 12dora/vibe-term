@@ -172,6 +172,7 @@ async function loginOne(
       result = await attempt();
     }
   }
+  if (result.ok) persistNodePopKey(ctx, target.nodeId, material);
   return {
     node: target.nodeId,
     name: target.name,
@@ -179,6 +180,14 @@ async function loginOne(
     code: result.code,
     nodePk: result.nodePk,
   };
+}
+
+function persistNodePopKey(ctx: CliContext, nodeId: string, material: SessionMaterial): void {
+  ctx.sessions.setPopKey(ctx.globals.entry, nodeId, {
+    sessSk: material.sessSk,
+    sessPk: material.sessPk,
+  });
+  ctx.sessions.save();
 }
 
 function emitOpenStandalone(ctx: CliContext): void {
@@ -289,8 +298,9 @@ export const command: Command = {
     '',
     'Logs into the entry (self) and, by default, into every node from /api/mesh/nodes',
     'using the same in-memory root seed. The seed is zeroized as soon as the delegation',
-    'is signed; only session cookies are written to <config dir>/session.json (mode 0600),',
-    'or to $VIBETERM_SESSION_FILE when set (the file is a full session capability, protect it).',
+    'is signed; session cookies and the session private key are written to',
+    '<config dir>/session.json (mode 0600), or to $VIBETERM_SESSION_FILE when set',
+    '(the file holds a private key, protect it).',
     '',
     'The entry is logged in first (other nodes need that session). Remaining nodes run with',
     'bounded concurrency (default 4). Each node has a wall-clock deadline (default 25000 ms);',

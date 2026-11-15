@@ -5,6 +5,7 @@ import type { IncomingMessage } from 'node:http';
 import { resolveNodeUrl } from '@vibeterm/api-client/node-url';
 import WebSocket from 'ws';
 import type { CliContext } from './context';
+import { stampPopRecord } from './session-pop';
 import { type TlsConnectOptions, wsTlsOptions } from './tls';
 
 export const EXEC_CLOSE_UNAUTHORIZED = 4401;
@@ -47,8 +48,10 @@ export function execSocketTarget(ctx: CliContext, nodeId: string): ExecSocketTar
   const headers: Record<string, string> = { origin: ctx.http.origin };
   const cookie = ctx.http.cookieHeader(nodeId);
   if (cookie) headers.cookie = cookie;
+  const url = execWsUrl(ctx.http.entry, nodeId);
+  stampPopRecord(headers, 'GET', url, cookie, ctx.http.jar.popKey(nodeId));
   return {
-    url: execWsUrl(ctx.http.entry, nodeId),
+    url,
     headers,
     tls: wsTlsOptions(ctx.http.tls),
     handshakeTimeoutMs: ctx.globals.timeoutMs,
@@ -65,13 +68,20 @@ function statusToCloseCode(status: number): number {
 function readBody(res: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
     let body = '';
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve(body);
+    };
     res.setEncoding('utf8');
     res.on('data', (piece: string) => {
       if (body.length < BODY_LIMIT_CHARS) body += piece;
     });
-    res.once('end', () => resolve(body));
-    res.once('error', () => resolve(body));
-    res.once('close', () => resolve(body));
+    res.once('end', done);
+    res.once('error', done);
+    // bun 上 rejected upgrade 可能不发 `end`；稍等 data 再关。
+    res.once('close', () => setTimeout(done, 0));
   });
 }
 
@@ -111,16 +121,20 @@ export const connectWsExecSocket: ExecSocketConnect = (target) => {
   ws.on('message', (data, isBinary) => {
     if (isBinary) adapter.onmessage?.(toBytes(data));
   });
+  let handshakeRejected = false;
   ws.on('unexpected-response', (req, res) => {
+    handshakeRejected = true;
     const status = res.statusCode ?? 0;
     void readBody(res).then((body) => {
-      req.destroy();
+      req.destroy?.();
       fireClose(statusToCloseCode(status), body || `HTTP ${status}`);
     });
   });
   ws.on('error', () => {
     // 细节在随后的 close 里体现；这里只防未处理的 error 事件。
   });
-  ws.on('close', (code, reason) => fireClose(code, reason.toString('utf8')));
+  ws.on('close', (code, reason) => {
+    if (!handshakeRejected) fireClose(code, reason.toString('utf8'));
+  });
   return adapter;
 };
