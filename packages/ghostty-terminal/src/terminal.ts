@@ -49,13 +49,10 @@ import type {
 } from './types';
 
 const TERMINAL_ENGINE = 'ghostty-official';
-// 同步输出（DECSET 2026）激活期间挂起渲染的兜底时限：应用悬挂或关闭帧迟迟不到时，
-// 最迟此间隔后仍强制渲染一次，与主流终端对 2026 的安全阀行为一致。
+// 同步输出（DECSET 2026）挂起渲染的兜底时限：应用悬挂或关闭帧迟迟不到时最迟此间隔后强制渲染一次，与主流终端一致。
 const SYNCHRONIZED_OUTPUT_FALLBACK_MS = 150;
 
-// 终端控制器：持有 WASM handle 的生命周期，并把 DOM 外壳（TerminalDomSurface）、
-// 输入编码（TerminalInputBridge）、渲染编排（TerminalRenderCoordinator）与选择状态机
-// 串起来，对外暴露 xterm 兼容 API。
+// 终端控制器：持有 WASM handle 生命周期，串起 DOM 外壳、输入编码、渲染编排与选择状态机，对外暴露 xterm 兼容 API。
 export class GhosttyTerminalController implements CompatibleTerminalLike {
   readonly buffer = new TerminalBuffer();
   readonly options: GhosttyTerminalInitOptions;

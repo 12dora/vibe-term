@@ -27,26 +27,23 @@ export function tunnelErrorFrom(error: unknown): { code: TunnelErrorCode; messag
   };
 }
 
+const TUNNEL_HTTP_STATUS: Partial<Record<TunnelErrorCode, number>> = {
+  busy: 409,
+  tunnel_exists: 409,
+  auth_required: 409,
+  exposure_ack_required: 409,
+  invalid_request: 400,
+  invalid_hostname: 400,
+  not_configured: 400,
+  unsupported_platform: 400,
+  binary_missing: 400,
+  binary_checksum_mismatch: 400,
+  not_logged_in: 400,
+  access_api_failed: 400,
+  connector_down: 503,
+};
+
 export function tunnelHttpStatus(code: TunnelErrorCode, override?: number): number {
   if (override) return override;
-  switch (code) {
-    case 'busy':
-    case 'tunnel_exists':
-    case 'auth_required':
-    case 'exposure_ack_required':
-      return 409;
-    case 'invalid_request':
-    case 'invalid_hostname':
-    case 'not_configured':
-    case 'unsupported_platform':
-    case 'binary_missing':
-    case 'binary_checksum_mismatch':
-    case 'not_logged_in':
-    case 'access_api_failed':
-      return 400;
-    case 'connector_down':
-      return 503;
-    default:
-      return 500;
-  }
+  return TUNNEL_HTTP_STATUS[code] ?? 500;
 }
