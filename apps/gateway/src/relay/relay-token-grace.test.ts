@@ -90,12 +90,12 @@ describe('relay tokens after a revoke', () => {
     expect(relayTokenHashAccepted(again, 'fresh', 700)).toBe(true);
   });
 
-  test('node_only 出示（含当前令牌的吊销标记）可识别，未知哈希不是', () => {
+  test('已换掉的 node_only 旧令牌可识别；当前令牌与未知哈希不是', () => {
     const revoked: RelayTokenGraceRow = {
       ...row,
       previousTokens: relayTokensAfterRevoke(row, 200),
     };
-    expect(relayPresentedTokenIsNodeOnly(revoked, 'current')).toBe(true);
+    expect(relayPresentedTokenIsNodeOnly(revoked, 'current')).toBe(false);
     expect(relayPresentedTokenIsNodeOnly(revoked, 'third')).toBe(true);
     expect(relayPresentedTokenIsNodeOnly(revoked, 'unknown')).toBe(false);
     const reissued: RelayTokenGraceRow = {

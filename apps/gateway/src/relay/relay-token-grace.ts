@@ -88,11 +88,12 @@ export function relayTokenHashAccepted(
   return relayTokenHashState(row, presentedHash, now, scope) !== 'kicked';
 }
 
-/** 出示的哈希落在吊销后的 `node_only` 环（含「当前令牌签发于吊销之前」的标记）。 */
+/** 出示的是已被换掉的旧令牌，且落在吊销后的 `node_only` 环；当前令牌照常走后续校验。 */
 export function relayPresentedTokenIsNodeOnly(
   row: RelayTokenGraceRow,
   presentedHash: string
 ): boolean {
+  if (constantTimeEqual(presentedHash, row.tokenHash)) return false;
   return relayPreviousTokens(row).some(
     (entry) => entry.node_only === true && constantTimeEqual(presentedHash, entry.hash)
   );
