@@ -254,8 +254,8 @@ export function publicRequestUrl(req: Request): URL {
   if (!isTrustedProxyHop(req)) {
     return fallback;
   }
-  const proto = firstForwarded(req.headers.get('x-forwarded-proto'));
-  const host = firstForwarded(req.headers.get('x-forwarded-host'));
+  const proto = lastForwarded(req.headers.get('x-forwarded-proto'));
+  const host = lastForwarded(req.headers.get('x-forwarded-host'));
   if (!proto && !host) {
     return fallback;
   }
@@ -267,10 +267,11 @@ export function publicRequestUrl(req: Request): URL {
   }
 }
 
-function firstForwarded(value: string | null): string | null {
+function lastForwarded(value: string | null): string | null {
   if (!value) return null;
-  const first = value.split(',')[0]?.trim() ?? '';
-  return first || null;
+  const parts = value.split(',');
+  const last = parts[parts.length - 1]?.trim() ?? '';
+  return last || null;
 }
 
 function readSelfCookie(req: Request): string | null {

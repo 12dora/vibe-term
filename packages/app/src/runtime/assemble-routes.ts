@@ -117,6 +117,7 @@ export function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): 
     clientIp,
     trustProxy: gatewayConfig.trustProxy,
     clientIpHeader: gatewayConfig.clientIpHeader,
+    trustedProxyCidrs: gatewayConfig.trustedProxyCidrs,
   });
 }
 

@@ -5,6 +5,7 @@ import {
   clientIpFromRequest,
   clientLimiterKey,
   directLocalClass,
+  isTrustedProxyHop,
   limiterIpKey,
   localClientClass,
   observedIpv4FromClientIp,
@@ -14,11 +15,14 @@ import {
 } from './client-ip';
 import { ownMdnsName } from './domain-access-policy';
 import { MESH_VIA_SELF, type MeshRequestContext, setMeshRequestContext } from './mesh-deps';
+import { parseTrustedProxyCidrs } from './trusted-proxy-cidrs';
 
 const PROXY = '127.0.0.1';
 const LAN_PROXY = '10.0.0.9';
 const PUBLIC_SOCKET = '203.0.113.5';
 const REAL = '198.51.100.7';
+const CDN_CIDRS = parseTrustedProxyCidrs('203.0.113.0/24');
+const V6_CIDRS = parseTrustedProxyCidrs('2001:db8::/32');
 
 function resolve(
   socketIp: string | undefined,
@@ -91,14 +95,65 @@ describe('resolveClientIp', () => {
     ).toBe('fe80::1');
   });
 
+  test('public Cloudflare/CDN socket in a trusted CIDR uses the forwarded header', () => {
+    const h = { 'x-forwarded-for': REAL };
+    expect(resolve(PUBLIC_SOCKET, h, { trustedProxyCidrs: CDN_CIDRS })).toBe(REAL);
+    expect(
+      resolve(
+        PUBLIC_SOCKET,
+        { 'cf-connecting-ip': REAL },
+        {
+          clientIpHeader: 'cf-connecting-ip',
+          trustedProxyCidrs: CDN_CIDRS,
+        }
+      )
+    ).toBe(REAL);
+    expect(resolve('198.51.100.9', h, { trustedProxyCidrs: CDN_CIDRS })).toBe('198.51.100.9');
+  });
+
+  test('IPv6 CIDR treats a matching socket as a trusted hop', () => {
+    const socket = '2001:db8::5';
+    expect(resolve(socket, { 'x-forwarded-for': REAL }, { trustedProxyCidrs: V6_CIDRS })).toBe(
+      REAL
+    );
+    expect(
+      resolve('2001:db8:1::1', { 'x-forwarded-for': REAL }, { trustedProxyCidrs: V6_CIDRS })
+    ).toBe(REAL);
+    expect(
+      resolve('2001:db9::1', { 'x-forwarded-for': REAL }, { trustedProxyCidrs: V6_CIDRS })
+    ).toBe('2001:db9::1');
+  });
+
+  test('XFF walks right-to-left and skips trusted hops', () => {
+    expect(resolve(PROXY, { 'x-forwarded-for': `${REAL}, 10.0.0.1, 127.0.0.1` })).toBe(REAL);
+    expect(
+      resolve(
+        PUBLIC_SOCKET,
+        { 'x-forwarded-for': `${REAL}, ${PUBLIC_SOCKET}` },
+        {
+          trustedProxyCidrs: CDN_CIDRS,
+        }
+      )
+    ).toBe(REAL);
+    expect(resolve(PROXY, { 'x-forwarded-for': '10.0.0.1, 127.0.0.1' })).toBeUndefined();
+  });
+
   test('clientIpFromRequest reads trustProxy and clientIpHeader from the request context', () => {
-    const h = { 'x-forwarded-for': '10.0.0.1', 'cf-connecting-ip': REAL };
+    const h = { 'x-forwarded-for': '198.51.100.1', 'cf-connecting-ip': REAL };
     expect(
       clientIpFromRequest(
         req(h, { clientIp: PROXY, trustProxy: true, clientIpHeader: 'cf-connecting-ip' })
       )
     ).toBe(REAL);
-    expect(clientIpFromRequest(req(h, { clientIp: PROXY, trustProxy: true }))).toBe('10.0.0.1');
+    expect(clientIpFromRequest(req(h, { clientIp: PROXY, trustProxy: true }))).toBe('198.51.100.1');
+    expect(
+      clientIpFromRequest(
+        req(
+          { 'x-forwarded-for': REAL },
+          { clientIp: PUBLIC_SOCKET, trustProxy: true, trustedProxyCidrs: CDN_CIDRS }
+        )
+      )
+    ).toBe(REAL);
   });
 });
 
@@ -129,6 +184,19 @@ describe('localClientClass / requestIsLoopback', () => {
     expect(localClientClass(req({}, { via: 'ab'.repeat(16), clientIp: '127.0.0.1' }))).toBeNull();
     expect(localClientClass(req({}, {}))).toBeNull();
     expect(localClientClass(req({}, { clientIp: 'local' }))).toBeNull();
+  });
+
+  test('extra trusted proxy CIDRs never make a public socket local', () => {
+    const ctx = {
+      clientIp: PUBLIC_SOCKET,
+      trustProxy: true,
+      trustedProxyCidrs: CDN_CIDRS,
+    };
+    expect(localClientClass(req({}, ctx))).toBeNull();
+    expect(directLocalClass(req({}, ctx))).toBeNull();
+    expect(requestIsLoopback(req({}, ctx))).toBe(false);
+    expect(localClientClass(req({ 'x-forwarded-for': '127.0.0.1' }, ctx))).toBeNull();
+    expect(isTrustedProxyHop(req({}, ctx))).toBe(true);
   });
 });
 

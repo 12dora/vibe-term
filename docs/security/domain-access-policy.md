@@ -27,7 +27,7 @@
 **源地址豁免**（这些来源即使带着域名 Host 也照常可用）：loopback、RFC1918 私网、链路本地、CGNAT `100.64/10`（Tailscale）、IPv6 ULA / 链路本地 / loopback，以及它们的 IPv4-mapped 写法。源地址取自 `client-ip.ts` 的 `trustedSourceIp`，只有两种来源算数：
 
 - 直连：请求没有任何经代理的迹象（`forwarded`、`x-forwarded-for`、`x-real-ip`、`cf-connecting-ip`、`x-forwarded-proto`、`x-forwarded-host`、`via`、`true-client-ip`、`x-client-ip`），按 socket 对端地址判；
-- 受信反代那一跳：`VIBETERM_TRUST_PROXY` 开启且 socket 对端是回环 / 内网时，按 `clientIpFromRequest` 解析出的客户端地址判（只读 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头，缺省 `x-forwarded-for` 取最右一项，隧道向导写 `cf-connecting-ip`）。
+- 受信反代那一跳：`VIBETERM_TRUST_PROXY` 开启且 socket 对端是回环 / 内网或落在 `VIBETERM_TRUSTED_PROXY_CIDRS` 内时，按 `clientIpFromRequest` 解析出的客户端地址判（只读 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头；缺省 `x-forwarded-for` 从右向左跳过受信代理地址，取第一个非受信地址；隧道向导写 `cf-connecting-ip`）。
 
 其余情况一律按公网处理（fail closed）：经代理却没开信任代理头时，代理自己的回环 / 内网 socket **不**算本机来源；配置头缺失或不合法时同样拒绝。这里不看 `Host`，经未配置的局域网域名直连的内网客户端照常豁免。**反向代理部署要开启信任代理头并选对头**，否则关闭开关后所有经代理的访问都会被拒。
 

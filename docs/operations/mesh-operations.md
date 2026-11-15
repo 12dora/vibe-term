@@ -86,8 +86,9 @@
 | `VIBETERM_TURN_HOST` | 未设 | **仅中继角色**：广告出去的 host；未设时广告解析到的公网 IPv4 字面量 |
 | `VIBETERM_TURN_DENIED_PEERS` | 空 | **仅中继角色**：追加到内置 TURN peer 拒绝名单的 IPv4 CIDR，逗号或空白分隔，裸 IPv4 视为 `/32`；非法项告警一次并跳过。内置名单与本机地址拒绝规则见 [中继架构](../architecture/relay.md) |
 | `VIBETERM_TURN_BIND_HOST` | `auto` | **仅中继角色**：控制口与分配口绑定的本机地址。`auto` = 主出站 IPv4；也可写 IPv4 或 `0.0.0.0`（TUN 宿主上通配会吞 Binding 回包，见 [KI-4](../known-issues.md)） |
-| `VIBETERM_TRUST_PROXY` | `false` | 仅 **本机 Bun socket（via=self）** 信任 `X-Forwarded-Proto` / `X-Forwarded-Host`，用于公网 origin、`Secure` cookie、passkey 可用性；同时允许从回环 / 内网代理那一跳读取客户端 IP（见下一行）。转发请求永不信任。Cloudflare Tunnel 等反代场景必须设 `true` |
-| `VIBETERM_CLIENT_IP_HEADER` | `x-forwarded-for` | 信任代理时读取客户端 IP 的**唯一**头：`x-forwarded-for`（取最右一项）、`x-real-ip`、`cf-connecting-ip` 三选一，其它值启动失败。只在 `VIBETERM_TRUST_PROXY=true` 且 socket 对端是回环 / 内网时生效。隧道向导开「信任代理」时写 `cf-connecting-ip`、关时删除；nginx（`proxy_add_x_forwarded_for`）与 Caddy 用缺省值。本机特权判定（通行密钥豁免、`exemptLocal`、setup / bootstrap）从不读这个头，带任何转发头都不算本机 |
+| `VIBETERM_TRUST_PROXY` | `false` | 仅 **本机 Bun socket（via=self）** 信任 `X-Forwarded-Proto` / `X-Forwarded-Host`，用于公网 origin、`Secure` cookie、passkey 可用性；同时允许从受信代理那一跳读取客户端 IP（见下一行）。转发请求永不信任。Cloudflare Tunnel 等反代场景必须设 `true` |
+| `VIBETERM_CLIENT_IP_HEADER` | `x-forwarded-for` | 信任代理时读取客户端 IP 的**唯一**头：`x-forwarded-for`（从右往左跳过受信跳，取第一个非受信合法字面量）、`x-real-ip`、`cf-connecting-ip` 三选一，其它值启动失败。只在 `VIBETERM_TRUST_PROXY=true` 且 socket 对端是回环 / 内网 / CGNAT、或落在 `VIBETERM_TRUSTED_PROXY_CIDRS` 时生效。最右一项为空或非法时不回退。隧道向导开「信任代理」时写 `cf-connecting-ip`、关时删除；nginx（`proxy_add_x_forwarded_for`）与 Caddy 用缺省值。本机特权判定（通行密钥豁免、`exemptLocal`、setup / bootstrap）从不读这个头，也不因额外 CIDR 把公网 socket 当成本机 |
+| `VIBETERM_TRUSTED_PROXY_CIDRS` | 空 | 追加的受信反代网段，逗号或空白分隔的 IPv4 / IPv6 CIDR，裸地址视为 `/32` 或 `/128`。缺省仍只信回环 / 内网 / CGNAT。非法项启动失败并点名该条目。CDN / 公网反代直连源站端口时把对方网段写在这里；源站端口必须只对这些地址开放，否则任何人都能伪造转发头。`X-Forwarded-Host` / `X-Forwarded-Proto` 取最右一项（受信跳写入的那一项），与 `X-Forwarded-For` 同一跳。多跳时每一跳都须在回环 / 内网 / CGNAT 或本名单里 |
 | `VIBETERM_NATIVE_DIR` | `run.sh` 导出 `<installDir>/native` | native addon 目录。未设则 loader 返回 `null`，`direct_capable=false`。不要指向本机生产安装目录去做开发验证 |
 | `RTC_LIVENESS_INTERVAL_MS` | `3000` | node↔node DataChannel 空闲时发 ping 的间隔。通道上有入站流量则重置，不给忙通道加 ping |
 | `RTC_LIVENESS_TIMEOUT_MS` | `10000` | 连续无任何入站（含 ping/pong 与业务帧）超过此时长则判定直连死亡，关闭 DC/PC 并回落 relay。须大于 `RTC_LIVENESS_INTERVAL_MS` |
@@ -385,7 +386,7 @@ Cloudflare Tunnel / Access 可放在中继或任一 node 前面。推荐：
    - cookie 可能缺 `Secure`；
    - passkey 的 origin / `passkeyAvailable` 按 `http://127.0.0.1` 计算，公网域名下无法注册或登录。
 
-客户端 IP 只从 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头读取，且只认回环 / 内网 socket 来的请求；经隧道来的请求永远不算「本机」（不免通行密钥、不豁免登录限流）。
+客户端 IP 只从 `VIBETERM_CLIENT_IP_HEADER` 指定的一个头读取，且只认回环 / 内网 / CGNAT socket，或 `VIBETERM_TRUSTED_PROXY_CIDRS` 里的那一跳；经隧道来的请求永远不算「本机」（不免通行密钥、不豁免登录限流）。公网 CDN 直连源站时把 CDN 网段写入该变量，并保证源站端口不能被名单外的地址打到。
 
 ### 安装与校验
 

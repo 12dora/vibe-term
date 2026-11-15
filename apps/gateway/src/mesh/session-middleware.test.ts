@@ -15,6 +15,7 @@ import {
   SET_SHARE_MAX_AGE_HEADER,
   setShareAccessVerifier,
 } from './share-credential';
+import { parseTrustedProxyCidrs } from './trusted-proxy-cidrs';
 
 describe('session-middleware', () => {
   test('standalone bypasses with uid=null', async () => {
@@ -188,6 +189,15 @@ describe('session-middleware', () => {
     expect(publicRequestUrl(req).origin).toBe('https://app.example.com');
     expect(isHttps(req)).toBe(true);
 
+    const chained = new Request('http://127.0.0.1:19663/api/auth/mode', {
+      headers: {
+        'x-forwarded-proto': 'http, https',
+        'x-forwarded-host': 'spoof.example, app.example.com',
+      },
+    });
+    setMeshRequestContext(chained, { via: 'self', trustProxy: true, clientIp: '127.0.0.1' });
+    expect(publicRequestUrl(chained).origin).toBe('https://app.example.com');
+
     const direct = new Request('http://127.0.0.1:19663/api/auth/mode', {
       headers: {
         'x-forwarded-proto': 'https',
@@ -206,6 +216,38 @@ describe('session-middleware', () => {
     setMeshRequestContext(forwarded, { via: 'entry-node', trustProxy: true });
     expect(publicRequestUrl(forwarded).origin).toBe('http://127.0.0.1:19663');
     expect(isHttps(forwarded)).toBe(false);
+  });
+
+  test('public socket in trusted CIDRs uses rightmost forwarded Host/Proto', () => {
+    const cidrs = parseTrustedProxyCidrs('203.0.113.0/24');
+    const req = new Request('http://127.0.0.1:19663/api/auth/mode', {
+      headers: {
+        'x-forwarded-proto': 'http, https',
+        'x-forwarded-host': 'spoof.example, app.example.com',
+      },
+    });
+    setMeshRequestContext(req, {
+      via: 'self',
+      trustProxy: true,
+      clientIp: '203.0.113.9',
+      trustedProxyCidrs: cidrs,
+    });
+    expect(publicRequestUrl(req).origin).toBe('https://app.example.com');
+    expect(isHttps(req)).toBe(true);
+
+    const outside = new Request('http://127.0.0.1:19663/api/auth/mode', {
+      headers: {
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'app.example.com',
+      },
+    });
+    setMeshRequestContext(outside, {
+      via: 'self',
+      trustProxy: true,
+      clientIp: '198.51.100.9',
+      trustedProxyCidrs: cidrs,
+    });
+    expect(publicRequestUrl(outside).origin).toBe('http://127.0.0.1:19663');
   });
 
   test('requestDispatchContext via is the trusted source', () => {

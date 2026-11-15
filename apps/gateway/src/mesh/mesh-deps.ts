@@ -9,6 +9,7 @@ import {
 import type { LinkSession } from '@vibeterm/shared/link';
 import type { ShareScope } from '@vibeterm/shared/share';
 import type { ClientIpHeader } from './client-ip-header';
+import type { CidrSet } from './trusted-proxy-cidrs';
 import { type DispatchContext, requestDispatchContext } from './types';
 
 export { isStandaloneRoles, requestDispatchContext };
@@ -224,6 +225,7 @@ export type MeshRequestContext = {
   renewedExpiresAt?: number;
   trustProxy?: boolean;
   clientIpHeader?: ClientIpHeader;
+  trustedProxyCidrs?: CidrSet;
   tokenId?: string | null;
   tokenScopes?: readonly AccessTokenScope[] | null;
 };
@@ -271,6 +273,7 @@ export function getMeshRequestContext(req: Request): MeshRequestContext {
     renewedExpiresAt: dispatch?.renewedExpiresAt ?? local?.renewedExpiresAt,
     trustProxy: local?.trustProxy,
     clientIpHeader: local?.clientIpHeader,
+    trustedProxyCidrs: local?.trustedProxyCidrs,
     tokenId: dispatch?.tokenId ?? local?.tokenId ?? null,
     tokenScopes: dispatch?.tokenScopes ?? local?.tokenScopes ?? null,
   };

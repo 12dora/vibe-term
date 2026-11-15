@@ -12,6 +12,7 @@ import { parseBoolEnv, parsePort } from '../../../packages/shared/src/env/parse'
 import { resolveMemoryProfile } from './memory-profile';
 import { classifyRemoteAddress, isCgnatIpv4, isFakeIpv4 } from './mesh/address-class';
 import { parseClientIpHeader } from './mesh/client-ip-header';
+import { parseTrustedProxyCidrs } from './mesh/trusted-proxy-cidrs';
 import {
   parseTurnExternalIp,
   parseTurnHost,
@@ -371,8 +372,9 @@ export const config = {
   // x-forwarded-host for public origin, Secure cookies, and passkeyAvailable.
   // Never applied to forwarded (via ≠ self) requests. Default false.
   trustProxy: getBooleanEnv('VIBETERM_TRUST_PROXY', false),
-  // 仅在 trustProxy 开启且套接字对端是回环/内网（代理那一跳）时才读，且只读这一个头。
+  // 仅在 trustProxy 开启且套接字对端是回环/内网或配置 CIDR（代理那一跳）时才读，且只读这一个头。
   clientIpHeader: parseClientIpHeader(process.env.VIBETERM_CLIENT_IP_HEADER),
+  trustedProxyCidrs: parseTrustedProxyCidrs(process.env.VIBETERM_TRUSTED_PROXY_CIDRS),
 
   // 环境
   isDev: getEnv('NODE_ENV', 'development') === 'development',

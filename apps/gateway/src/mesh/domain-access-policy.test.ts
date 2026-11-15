@@ -121,12 +121,13 @@ describe('x-forwarded-host via publicRequestUrl', () => {
     expect(isViaDomain(publicRequestUrl(req), ['evil.example'])).toBe(false);
   });
 
-  test('trusted x-forwarded-host is used (first value only)', () => {
+  test('trusted x-forwarded-host is used (rightmost value only)', () => {
     const req = new Request('http://192.168.1.5/', {
-      headers: { 'x-forwarded-host': 'vibeterm.example.com, other.example' },
+      headers: { 'x-forwarded-host': 'other.example, vibeterm.example.com' },
     });
     setMeshRequestContext(req, { via: MESH_VIA_SELF, trustProxy: true, clientIp: '127.0.0.1' });
     expect(isViaDomain(publicRequestUrl(req), ['vibeterm.example.com'])).toBe(true);
+    expect(isViaDomain(publicRequestUrl(req), ['other.example'])).toBe(false);
   });
 
   test('trusted x-forwarded-host is ignored when via is not self', () => {

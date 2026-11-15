@@ -51,6 +51,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   originUrl: string;
   trustProxy: boolean;
   clientIpHeader: string;
+  trustedProxyCidrs: { entries: readonly string[]; contains(ip: string): boolean };
 }> {
   const saved = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(env)) {
@@ -86,6 +87,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         turnBindHost: string;
         trustProxy: boolean;
         clientIpHeader: string;
+        trustedProxyCidrs: { entries: readonly string[]; contains(ip: string): boolean };
         originUrl: string;
       };
     };
@@ -514,6 +516,34 @@ describe('config.clientIpHeader', () => {
     await expect(
       loadConfigWith({ VIBETERM_CLIENT_IP_HEADER: 'cf-connecting-ip,x-real-ip' })
     ).rejects.toThrow('VIBETERM_CLIENT_IP_HEADER must be one of');
+  });
+});
+
+describe('config.trustedProxyCidrs', () => {
+  test('defaults empty and parses IPv4/IPv6 CIDRs and bare addresses', async () => {
+    const unset = await loadConfigWith({ VIBETERM_TRUSTED_PROXY_CIDRS: undefined });
+    expect(unset.trustedProxyCidrs.entries).toEqual([]);
+    expect(unset.trustedProxyCidrs.contains('203.0.113.9')).toBe(false);
+    const parsed = await loadConfigWith({
+      VIBETERM_TRUSTED_PROXY_CIDRS: '203.0.113.0/24, 2001:db8::/32 198.51.100.7',
+    });
+    expect(parsed.trustedProxyCidrs.contains('203.0.113.9')).toBe(true);
+    expect(parsed.trustedProxyCidrs.contains('2001:db8::1')).toBe(true);
+    expect(parsed.trustedProxyCidrs.contains('198.51.100.7')).toBe(true);
+    expect(parsed.trustedProxyCidrs.contains('198.51.100.8')).toBe(false);
+    expect(parsed.trustedProxyCidrs.contains('198.51.100.1')).toBe(false);
+  });
+
+  test('rejects invalid CIDRs at startup and names the entry', async () => {
+    await expect(loadConfigWith({ VIBETERM_TRUSTED_PROXY_CIDRS: 'not-a-cidr' })).rejects.toThrow(
+      'VIBETERM_TRUSTED_PROXY_CIDRS contains invalid CIDR not-a-cidr'
+    );
+    await expect(
+      loadConfigWith({ VIBETERM_TRUSTED_PROXY_CIDRS: '203.0.113.0/24, 10.0.0.0/33' })
+    ).rejects.toThrow('VIBETERM_TRUSTED_PROXY_CIDRS contains invalid CIDR 10.0.0.0/33');
+    await expect(loadConfigWith({ VIBETERM_TRUSTED_PROXY_CIDRS: 'example.com' })).rejects.toThrow(
+      'VIBETERM_TRUSTED_PROXY_CIDRS contains invalid CIDR example.com'
+    );
   });
 });
 

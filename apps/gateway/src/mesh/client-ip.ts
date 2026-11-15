@@ -8,6 +8,7 @@ import { type ClientIpHeader, DEFAULT_CLIENT_IP_HEADER } from './client-ip-heade
 import { isLocalClientSource } from './domain-access-policy';
 import { MESH_VIA_SELF, getMeshRequestContext } from './mesh-deps';
 import { authorityAllowed, requestAuthority } from './request-authority';
+import { type CidrSet, EMPTY_CIDR_SET } from './trusted-proxy-cidrs';
 
 const IPV4_MAPPED_DOTTED = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
 
@@ -61,28 +62,60 @@ export type ClientIpInput = {
   headers: Headers;
   trustProxy: boolean;
   clientIpHeader?: ClientIpHeader;
+  trustedProxyCidrs?: CidrSet;
 };
 
 function isLocalAddress(ip: string): boolean {
   return isLoopbackClientIp(ip) || isLocalClientSource(ip);
 }
 
-/** 本请求是否来自受信反代那一跳：trustProxy 开启、via=self、套接字对端是回环/内网。 */
+function cidrsOf(input: { trustedProxyCidrs?: CidrSet }): CidrSet {
+  return input.trustedProxyCidrs ?? EMPTY_CIDR_SET;
+}
+
+function isTrustedHopAddress(ip: string, cidrs: CidrSet): boolean {
+  return isLocalAddress(ip) || cidrs.contains(ip);
+}
+
+function isTrustedProxySocket(ip: string, cidrs: CidrSet): boolean {
+  return Boolean(ip) && !ip.startsWith('peer:') && isTrustedHopAddress(ip, cidrs);
+}
+
+function clientFromXff(raw: string, cidrs: CidrSet): string | undefined {
+  const parts = raw.split(',');
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const parsed = parseIpLiteral(parts[i]?.trim() ?? '');
+    if (!parsed) return undefined;
+    if (!isTrustedHopAddress(parsed, cidrs)) return parsed;
+  }
+  return undefined;
+}
+
+function clientFromForwardedHeader(
+  name: ClientIpHeader,
+  raw: string,
+  cidrs: CidrSet
+): string | undefined {
+  if (name !== 'x-forwarded-for') return parseIpLiteral(raw.trim());
+  return clientFromXff(raw, cidrs);
+}
+
+/** 本请求是否来自受信反代那一跳：trustProxy 开启、via=self、套接字对端是回环/内网或配置 CIDR。 */
 export function isTrustedProxyHop(req: Request): boolean {
   const ctx = getMeshRequestContext(req);
   if (ctx.trustProxy !== true || ctx.via !== MESH_VIA_SELF) return false;
-  const socket = ctx.clientIp ?? '';
-  return Boolean(socket) && !socket.startsWith('peer:') && isLocalAddress(socket);
+  return isTrustedProxySocket(ctx.clientIp ?? '', cidrsOf(ctx));
 }
 
 /**
- * 唯一的「客户端是谁」解析：只有 trustProxy 开启、且套接字对端是回环/内网（代理那一跳）时，
- * 才读配置的那一个转发头；`x-forwarded-for` 取最右一项（受信代理追加的那一项）。
+ * 唯一的「客户端是谁」解析：只有 trustProxy 开启、且套接字对端是回环/内网或配置 CIDR（代理那一跳）时，
+ * 才读配置的那一个转发头；`x-forwarded-for` 从右往左跳过受信跳，取第一个非受信合法字面量。
  * 已经过代理但取不到合法地址时返回 undefined，不退回代理自己的套接字地址。
  */
 export function resolveClientIp(input: ClientIpInput): string | undefined {
   const socket = trimOrUndef(input.socketIp);
-  if (!input.trustProxy || !socket || !isLocalAddress(socket)) return socket;
+  const cidrs = cidrsOf(input);
+  if (!input.trustProxy || !socket || !isTrustedProxySocket(socket, cidrs)) return socket;
   const name = input.clientIpHeader ?? DEFAULT_CLIENT_IP_HEADER;
   const raw = input.headers.get(name);
   if (raw === null) {
@@ -90,8 +123,7 @@ export function resolveClientIp(input: ClientIpInput): string | undefined {
     warnMissingClientIpHeader(name, input.headers);
     return undefined;
   }
-  const value = name === 'x-forwarded-for' ? raw.slice(raw.lastIndexOf(',') + 1) : raw;
-  return parseIpLiteral(value.trim());
+  return clientFromForwardedHeader(name, raw, cidrs);
 }
 
 export function clientIpFromRequest(req: Request): string | undefined {
@@ -101,6 +133,7 @@ export function clientIpFromRequest(req: Request): string | undefined {
     headers: req.headers,
     trustProxy: ctx.trustProxy === true,
     clientIpHeader: ctx.clientIpHeader,
+    trustedProxyCidrs: ctx.trustedProxyCidrs,
   });
 }
 
